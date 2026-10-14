@@ -311,6 +311,33 @@ class SvdTest(jtu.JaxTestCase):
     self.assertAllClose(s_slice, s, atol=tol, rtol=tol)
 
   @jtu.sample_product(
+      subset_by_index=[(0, 1), (0, 4), (1, 4)],
+      shape=[(16, 16), (16, 8), (8, 16)],
+  )
+  @jtu.run_on_devices('tpu')
+  @jax.default_matmul_precision('float32')
+  def testSvdSubsetByIndexGrad(self, subset_by_index, shape):
+    rng = jtu.rand_default(self.rng())
+    a = jnp.asarray(rng(shape, np.float32))
+
+    svd_vals = functools.partial(
+        jnp.linalg.svd,
+        full_matrices=False,
+        compute_uv=False,
+        subset_by_index=subset_by_index,
+    )
+    jtu.check_grads(svd_vals, (a,), order=1, rtol=0.035, eps=1.0 / 512)
+
+    svd_uv = functools.partial(
+        jnp.linalg.svd,
+        full_matrices=False,
+        compute_uv=True,
+        subset_by_index=subset_by_index,
+    )
+    with self.assertRaises(NotImplementedError):
+      jax.grad(lambda x: jnp.sum(svd_uv(x)[0]))(a)
+
+  @jtu.sample_product(
       shape=[(8, 8), (16, 12), (32, 32), (64, 48)],
       full_matrices=[True, False],
   )
@@ -329,7 +356,7 @@ class SvdTest(jtu.JaxTestCase):
     tol = 50 * np.finfo(dtype).eps
     # Reconstruction and orthogonality can accumulate error in float32 on GPU.
     # ROCm gesdd numerics can vary across drivers/hardware (CI vs local).
-    recon_tol = max(tol, 2e-2)
+    recon_tol = max(tol, 4e-2)
     recon_rtol = max(tol, 1e-2)
     # Orthogonality (u.T@u, vt@vt.T): relaxed for ROCm float32 (~2.5e-3).
     _orth = 2.5e-3

@@ -11,29 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""SparseCore Pallas tests with runtime assertions.
-
-Runtime assertions halt TPU execution, which can cause subsequent tests to get
-stuck. Therefore, each test with a failing assertion should run in a separate
-process. By separating these tests from the rest, we can set the shard count
-such that each test runs in its own shard.
-
-The test class in this file makes an attempt to detect the simple scenario where
-there are more test methods in the module than shards.
-"""
+"""SparseCore Pallas tests for vector debug check assertions."""
 
 import functools
-import os
-import sys
-import unittest
 
 from absl.testing import absltest
-from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
 import jax.numpy as jnp
 
@@ -41,58 +27,16 @@ import jax.numpy as jnp
 config.parse_flags_with_absl()
 
 
+@jtu.skip_under_pytest("Tests can only be run with Bazel.")
 class DebugCheckTest(jtu.JaxTestCase):
-
-  @classmethod
-  def setUpClass(cls):
-    super().setUpClass()
-
-    total_shards = int(os.environ.get("TEST_TOTAL_SHARDS", -1))
-    if total_shards == -1:
-      raise unittest.SkipTest("Tests can only be run with Bazel.")
-
-    loader = unittest.TestLoader()
-    test_cases = loader.loadTestsFromModule(
-        sys.modules["__main__"]
-    ).countTestCases()
-    if test_cases > total_shards:
-      raise RuntimeError(
-          "Each test with a failing assertion should be in a separate test"
-          " shard because they put the hardware in a halt state, causing"
-          " subsequent tests to fail. Make sure sharding is enabled and the"
-          f" shard count is at least {test_cases}."
-      )
 
   def setUp(self):
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
 
     super().setUp()
-
-  def test_scalar_debug_check(self):
-    if not jtu.is_device_tpu_at_least(8):
-      # TODO: b/469486032 - Figure out why the test gets stuck on v5p, v6e, v7.
-      self.skipTest("Fails on v5p, v6e, and v7.")
-
-    x = jnp.arange(8)
-
-    @pl.kernel(
-        out_type=x,
-        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
-    )
-    def kernel(_):
-      pl.debug_check(True, "Check success!")
-      pl.debug_check(False, "Check failure!")
-
-    with config.jax_pallas_enable_debug_checks(True), self.assertRaises(
-        jax.errors.JaxRuntimeError
-    ) as error:
-      jax.block_until_ready(kernel())
-
-    self.assertNotIn("Check success!", str(error.exception))
-    self.assertIn("Check failure!", str(error.exception))
-    self.assertIn(
-        "check at DebugCheckTest.test_scalar_debug_check", str(error.exception)
+    self.enter_context(
+        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
     )
 
   def test_vector_debug_check(self):
@@ -118,58 +62,6 @@ class DebugCheckTest(jtu.JaxTestCase):
       self.assertIn("Check failure!", str(error.exception))
       self.assertIn(
           "check at DebugCheckTest.test_vector_debug_check",
-          str(error.exception),
-      )
-
-  @parameterized.product(oob=[False, True])
-  def test_trigger_bounds_checker(self, oob):
-    size = plsc.get_sparse_core_info().num_lanes
-    x = jnp.arange(size, dtype=jnp.int32)
-    indices = jnp.arange(size, dtype=jnp.int32) + jnp.astype(oob * 128, jnp.int32)
-
-    @pl.kernel(
-        out_type=x,
-        mesh=plsc.VectorSubcoreMesh(
-            core_axis_name="core", subcore_axis_name="subcore", num_cores=1
-        ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-        scratch_types=dict(
-            x_ref=pltpu.VMEM.like(x),
-            indices_ref=pltpu.VMEM.like(indices),
-            o_ref=pltpu.VMEM.like(x),
-        ),
-    )
-    def kernel(
-        x_hbm_ref, indices_hbm_ref, o_hbm_ref, *, x_ref, indices_ref, o_ref
-    ):
-      pltpu.sync_copy((x_hbm_ref, indices_hbm_ref), (x_ref, indices_ref))
-      o_ref[...] = plsc.load_gather(x_ref, [indices_ref[...]])
-      pltpu.sync_copy(o_ref, o_hbm_ref)
-
-    compiled_kernel = jax.jit(
-        kernel, compiler_options=dict(xla_sc_assert_level="all-loads-stores")
-    )
-
-    if not oob:
-      # TODO(b/479427406): Remove this once the bug is fixed.
-      if jtu.is_device_tpu(7, "x"):
-        self.skipTest("Bounds checker fails on TPU v7x")
-
-      # No errors expected.
-      jax.block_until_ready(compiled_kernel(x, indices))
-      return
-
-    with config.jax_pallas_enable_debug_checks(True), self.assertRaises(
-        jax.errors.JaxRuntimeError
-    ) as error:
-      jax.block_until_ready(compiled_kernel(x, indices))
-
-    # TODO(b/479427406): Remove this once the bug is fixed.
-    if not (jtu.is_cloud_tpu() and jtu.is_device_tpu_at_least(7)):
-      # We expect this to fail with a runtime error from the bounds checker.
-      self.assertIn(
-          "Trying to perform an indexed vector load from out of bounds"
-          " address.",
           str(error.exception),
       )
 

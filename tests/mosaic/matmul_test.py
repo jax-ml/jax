@@ -70,10 +70,10 @@ class MatmulTestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
     self.enter_context(ir.Location.unknown())
 
   @parameterized.named_parameters(
-      (f"_shard{i}", i) for i in range(5)
+      (f"_shard{i}", i) for i in range(10)
   )
   @seed_hypothesis
-  @hp.settings(max_examples=100)  # Add verbosity=hp.Verbosity.verbose to debug
+  @hp.settings(max_examples=50)  # Add verbosity=hp.Verbosity.verbose to debug
   @hp.given(hps.data())
   def test_matmul_sm90(self, data):
     if not jtu.is_cuda_compute_capability_equal("9.0"):
@@ -138,11 +138,10 @@ class MatmulTestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
       raise e
 
   @parameterized.named_parameters(
-      # TODO(apaszke): Increase shard count once we have more B200s in CI.
-      (f"_shard{i}", i) for i in range(1)
+      (f"_shard{i}", i) for i in range(10)
   )
   @seed_hypothesis
-  @hp.settings(max_examples=100)  # Add verbosity=hp.Verbosity.verbose to debug
+  @hp.settings(max_examples=50)  # Add verbosity=hp.Verbosity.verbose to debug
   @hp.given(hps.data())
   def test_matmul_sm100(self, data):
     self.skip_unless_tcgen05()
@@ -197,7 +196,7 @@ class MatmulTestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):
     a = jax.random.normal(key=ka, shape=(m, k), dtype=dtype)
     b = jax.random.normal(key=kb, shape=(n, k), dtype=dtype)
     out = kernel(a, b)
-    out_ref = jnp.dot(a, b.T)
+    out_ref = jnp.dot(a, b.T, precision="high")
     np.testing.assert_allclose(
         out, out_ref, atol=2e-3, rtol=1e-2
     )

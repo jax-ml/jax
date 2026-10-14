@@ -27,11 +27,11 @@ import logging
 from typing import Any, TypedDict
 
 from jax._src import api
+from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import sharding_impls
-from jax._src.cloud_tpu_init import is_libtpu_at_least
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -74,12 +74,10 @@ ir_version_override: Callable[[], int | None] | None = None
 _FWD_COMPAT_VERSION = 15
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
-  if (
-      ctx.is_forward_compat()
-      or backend is None
-      or not is_libtpu_at_least("0.0.48")
-  ):
+  if ctx.is_forward_compat() or backend is None:
     return _FWD_COMPAT_VERSION
+  if not cloud_tpu_init.is_libtpu_at_least("0.0.50"):
+    return 17
   if ir_version_override is not None:
     return ir_version_override()
   return None
@@ -201,6 +199,7 @@ class CustomCallBackendConfig:
   shape_invariant_numerics: bool
   tiling: Tiling | None = None  # Only used for SparseCore.
   opt_level: OptLevel | None = None  # Only used for SparseCore.
+  debug_locations: bytes | None = None
 
   def __post_init__(self):
     if self.allow_input_fusion is not None:
@@ -245,7 +244,7 @@ class CustomCallBackendConfig:
         lowered_module_asm_version=version,
     )
 
-  def to_json(self) -> bytes:
+  def to_json(self, use_core_ids: bool = False) -> bytes:
     """Serializes the backend config into JSON."""
     # We format the JSON ourselves, because json.dumps seems to be overly slow.
     config = io.BytesIO()
@@ -341,10 +340,16 @@ class CustomCallBackendConfig:
     if self.skip_device_barrier:
       config.write(b', "skip_device_barrier": ')
       config.write(str(self.skip_device_barrier).lower().encode("ascii"))
+    if self.debug_locations:
+      config.write(b', "debug_locations": "')
+      config.write(base64.b64encode(self.debug_locations))
+      config.write(b'"')
     config.write(b"}")  # End of custom_call_config.
     if self.device_type == "sparsecore":
       config.write(b', "sparse_core_config": ')
       sparse_core_config: dict[str, Any] = {}
+      if use_core_ids and self.active_core_count == 1:
+        sparse_core_config["core_ids"] = ["0"]
       tiling = self.tiling if self.tiling is not None else Tiling.COMPACT
       sparse_core_config["tiling"] = tiling.value
       if self.opt_level is not None:
@@ -385,7 +390,11 @@ class CustomCallBackendConfig:
         if i + 1 != len(self.flags):
           config.write(b",")
       config.write(b"]")
-    if self.device_type == "sparsecore" and self.active_core_count == 1:
+    if (
+        not use_core_ids
+        and self.device_type == "sparsecore"
+        and self.active_core_count == 1
+    ):
       config.write(b', "megachip_parallelism_config": {"cores": ["0"]}')
     config.write(b"}")
     return config.getvalue()
@@ -457,11 +466,17 @@ def _tpu_custom_call_lowering(
       ir_version != config.lowered_module_asm_version
   ):
     config = config.downgrade_lowered_module_asm(ir_version)
+  # Compilers before libtpu 0.0.50 only read megachip_parallelism_config.
+  # TODO(b/536052236): Always use core_ids after 2026-11-06.
+  use_core_ids = (
+      not ctx.is_forward_compat()
+      and cloud_tpu_init.is_libtpu_at_least("0.0.50")
+  )
   call = mlir.custom_call(
       "tpu_custom_call",
       result_types=result_types,
       operands=in_nodes,
-      backend_config=config.to_json(),
+      backend_config=config.to_json(use_core_ids=use_core_ids),
       api_version=1,
       has_side_effect=has_side_effects != TpuSideEffectType.PURE,
       operand_output_aliases=dict(input_output_aliases),
@@ -491,7 +506,8 @@ def _lower_mosaic_module_to_asm(
     module: ir.Module,
     *,
     ir_version: int | None = None,
-) -> tuple[bytes, tuple[bool, bool]]:
+    unzip_debug_locations: bool = True,
+) -> tuple[bytes, tuple[bool, bool], bytes | None]:
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
@@ -510,14 +526,24 @@ def _lower_mosaic_module_to_asm(
       )
       pipeline.enable_verifier(bool(config.enable_checks.value))
       pipeline.run(module_op)
+      if unzip_debug_locations and hasattr(
+          tpu, "private_unzip_debug_locations"
+      ):
+        debug_locations = tpu.private_unzip_debug_locations(module_op.operation)
+      else:
+        debug_locations = None
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
     bytecode_buffer = io.BytesIO()
     module_op.write_bytecode(bytecode_buffer, desired_version=0)
     asm = bytecode_buffer.getvalue()
-    return asm, (
-        has_communication,
-        has_custom_barrier,
+    return (
+        asm,
+        (
+            has_communication,
+            has_custom_barrier,
+        ),
+        debug_locations,
     )
 
 
@@ -662,12 +688,22 @@ def _lower_to_custom_call_config(
   needs_hlo_passes = config.jax_mosaic_allow_hlo.value
   # TC kernels always require layout passes.
   needs_layout_passes = needs_layout_passes or not device_type
-  lowered_module_asm, (
-      has_communication,
-      has_custom_barrier,
+  unzip_debug_locations = (
+      config.jax_mosaic_unzip_debug_locations.value
+      and (ctx is None or not ctx.is_forward_compat())
+      and cloud_tpu_init.is_libtpu_at_least("0.0.50")
+  )
+  (
+      lowered_module_asm,
+      (
+          has_communication,
+          has_custom_barrier,
+      ),
+      debug_locations,
   ) = _lower_mosaic_module_to_asm(
       module,
       ir_version=ir_version,
+      unzip_debug_locations=unzip_debug_locations,
   )
   active_core_count = _get_active_core_count(module)
   return _lowered_to_custom_call_config(
@@ -697,6 +733,7 @@ def _lower_to_custom_call_config(
       tiling=tiling,
       opt_level=opt_level,
       ctx=ctx,
+      debug_locations=debug_locations,
   )
 
 
@@ -729,6 +766,7 @@ def _lowered_to_custom_call_config(
     opt_level: OptLevel | None = None,
     kernel_name: str | None = None,
     ctx: mlir.LoweringRuleContext | None = None,
+    debug_locations: bytes | None = None,
 ):
   config_mode = config.jax_pallas_auto_assign_collective_ids.value
   id_limit = config.jax_pallas_auto_assign_collective_ids_limit.value
@@ -834,6 +872,7 @@ def _lowered_to_custom_call_config(
       shape_invariant_numerics=shape_invariant_numerics,
       tiling=tiling,
       opt_level=opt_level,
+      debug_locations=debug_locations,
   )
 
 
@@ -996,7 +1035,7 @@ def lowered_as_tpu_kernel(
     # We hardcode a specific version both here and below, since this path is
     # only used by some internal tests that don't need serialization, but we do
     # need a concrete version on the module.
-    current_ir_version = 17
+    current_ir_version = 18
     try:
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true"

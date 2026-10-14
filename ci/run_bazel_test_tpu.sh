@@ -94,7 +94,7 @@ echo "Running Bazel TPU tests..."
 set +e
 
 # TODO(emilyaf): Debug and re-enable this test.
-IGNORE_TESTS_MULTIPROCESS="-//tests/multiprocess:array_test_tpu"
+IGNORE_TESTS_MULTIPROCESS="-//tests/multiprocess:array_test_tpu $JAXCI_IGNORE_TESTS_MULTIPROCESS"
 
 multiprocess_bazel_cmd_retval=0
 
@@ -103,7 +103,7 @@ echo "::endgroup::" >&2
 PYTHON_BIN="$JAXCI_PYTHON" source ci/utilities/setup_portserver.sh
 
 if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
-  IGNORE_TESTS="-//tests/pallas:tpu_pallas_interpret_thread_map_test_tpu"
+  IGNORE_TESTS="-//tests/pallas:tpu_pallas_interpret_thread_map_test_tpu $JAXCI_IGNORE_TESTS"
 
   # Run single-accelerator tests in parallel
   TEST_ARTIFACTS_DIR="${JAXCI_TEST_ARTIFACTS_DIR}-single"

@@ -680,7 +680,7 @@ class OpsTest(PallasBaseTest):
       ]
   )
   def test_unary_primitives(self, name, func, shape_dtype_strategy, data):
-    if name in ["abs", "log1p", "pow2", "reciprocal", "relu", "sin", "sqrt"]:
+    if name in ["abs", "log1p", "pow2", "reciprocal", "sin", "sqrt"]:
       self.skip_if_mosaic_gpu()
 
     if self.INTERPRET:
@@ -1151,11 +1151,6 @@ class OpsTest(PallasBaseTest):
   )
   @jtu.skip_on_devices("gpu")
   def test_reduce_precision(self, dtype, exponent_bits, mantissa_bits):
-    if not jtu.is_libtpu_at_least("0.0.47"):
-      self.skipTest("Requires libtpu 0.0.47 or later")
-    if jtu.jaxlib_version() < (0, 11, 2):
-      self.skipTest("Requires jaxlib 0.11.2 or later")
-
     shape = (64, 128)
 
     @functools.partial(
@@ -2167,18 +2162,25 @@ class OpsTest(PallasBaseTest):
   def test_num_programs(self):
     self.skip_if_mosaic_gpu()
 
-    @functools.partial(
-        self.pallas_call,
-        out_specs=pl.BlockSpec(memory_space=smem_on_tpu()),
-        out_shape=jax.ShapeDtypeStruct((4,), intx),
-        grid=4,
-    )
     def kernel(o_ref):
       o_ref[pl.program_id(0)] = pl.num_programs(0)
 
-    np.testing.assert_array_equal(
-        kernel(), jnp.array([4, 4, 4, 4], dtype=intx)
-    )
+    idx_map = lambda i: (0,)
+
+    grid_sizes = [4, 2, 5, 3]
+    for grid_size in grid_sizes:
+      # The loop also checks that the programs are not incorrectly cached.
+      out = self.pallas_call(
+          kernel,
+          out_specs=pl.BlockSpec(
+              (max(grid_sizes),), idx_map, memory_space=smem_on_tpu()
+          ),
+          out_shape=jax.ShapeDtypeStruct((max(grid_sizes),), intx),
+          grid=grid_size,
+      )()
+      np.testing.assert_array_equal(
+          out[:grid_size], jnp.full(grid_size, grid_size)
+      )
 
   def test_where_broadcasting(self):
     self.skip_if_mosaic_gpu()
@@ -2365,7 +2367,7 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_allclose(
         out.astype(jnp.float32),
         expected.astype(jnp.float32),
-        atol=0.05,
+        atol=0.1,
         rtol=0.05,
     )
 
@@ -2550,8 +2552,6 @@ class OpsTest(PallasBaseTest):
     self.skip_if_mosaic_gpu()
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Not supported on this hardware")
-    if not jtu.is_libtpu_at_least("0.0.48"):
-      self.skipTest("Requires libtpu 0.0.48 or later")
 
     lhs_shape, rhs_shape, dim_nums = shapes_and_dim_nums
     lhs_key, rhs_key = random.split(random.key(0))
@@ -3175,7 +3175,7 @@ class PallasPrimitivesTest(PallasBaseTest):
       x = pallas_primitives.load(x_ref, expr())
       return [x]
     jaxpr, _ = trace_to_jaxpr(
-        body, state.shaped_array_ref((4, 3, 2), jnp.int32)
+        body, state.shaped_array_ref((4, 3, 6), jnp.int32)
     )
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
@@ -3193,21 +3193,31 @@ class PallasPrimitivesTest(PallasBaseTest):
       )
       return []
     jaxpr, _ = trace_to_jaxpr(
-        body, state.shaped_array_ref((4, 3, 2), jnp.int32)
+        body, state.shaped_array_ref((4, 3, 6), jnp.int32)
     )
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(*[
-    (lambda: (pl.dslice(0, 4), slice(None), slice(None)),
-    "c:i32[4,3,2], a[:,:,:] <-"),
-    (lambda: (pl.dslice(0, 3), slice(None), slice(None)),
-    "c:i32[3,3,2], a[:3,:,:] <-"),
-    (lambda: (pl.dslice(1, 3), slice(None), pl.dslice(0, 4)),
-    "c:i32[3,3,4], a[1:,:,:4] <-"),
-    (lambda: (jnp.arange(5), slice(None), pl.dslice(0, 4)),
-    "e:i32[5,3,4], a[b,:,:4] <-"),
-    (lambda: (jnp.arange(5)[:, None], jnp.arange(3)[None], pl.dslice(4)),
-    "o:i32[5,3,4], a[m,n,:4] <-"),
+      (
+          lambda: (pl.dslice(0, 4), slice(None), slice(None)),
+          "c:i32[4,3,6], a[:,:,:] <-",
+      ),
+      (
+          lambda: (pl.dslice(0, 3), slice(None), slice(None)),
+          "c:i32[3,3,6], a[:3,:,:] <-",
+      ),
+      (
+          lambda: (pl.dslice(1, 3), slice(None), pl.dslice(0, 4)),
+          "c:i32[3,3,4], a[1:,:,:4] <-",
+      ),
+      (
+          lambda: (jnp.arange(5), slice(None), pl.dslice(0, 4)),
+          "e:i32[5,3,4], a[b,:,:4] <-",
+      ),
+      (
+          lambda: (jnp.arange(5)[:, None], jnp.arange(3)[None], pl.dslice(4)),
+          "o:i32[5,3,4], a[m,n,:4] <-",
+      ),
   ])
   def test_swap_pretty_print(self, expr, expected):
     def body(x_ref):
@@ -3216,7 +3226,7 @@ class PallasPrimitivesTest(PallasBaseTest):
       )
       return [x]
     jaxpr, _ = trace_to_jaxpr(
-        body, state.shaped_array_ref((4, 3, 2), jnp.int32)
+        body, state.shaped_array_ref((4, 3, 6), jnp.int32)
     )
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 

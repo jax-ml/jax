@@ -62,7 +62,7 @@ def dump_to_file_or_stdout(
     return
   filepath = os.path.join(path, name)
   try:
-    with open(filepath, "w") as f:
+    with open(filepath, "w", encoding="utf-8") as f:
       f.write(content)
       f.write("\n")
   except OSError as e:
@@ -199,23 +199,13 @@ def inline_ptx(
   in_constraints = [_ptx_constraint(arg.type) for arg in args]
   constraints = ",".join(out_constraints + in_constraints)
 
-  # TODO(bchetioui): pass `convergent` unconditionally the minimum jaxlib
-  # version is 0.11.2.
-  extra_kwargs = {}
-  if hasattr(llvm.InlineAsmOp, "convergent"):
-    extra_kwargs["convergent"] = convergent
-  elif convergent:
-    raise NotImplementedError(
-        "Marking inline PTX as convergent requires a jaxlib >= 0.11.2"
-    )
-
   result = llvm.inline_asm(
       asm_ret_type,
       args,
       ptx,
       constraints,
       has_side_effects=has_side_effects,
-      **extra_kwargs,  # pyrefly: ignore[bad-argument-type]
+      convergent=convergent,
   )
   if result_types is None:
     return None
@@ -246,6 +236,35 @@ WORKGROUP_NVPTX_ADDRESS_SPACE = gpu_address_space_to_nvptx(
 )
 
 
+def memref_descriptor_type(memref_ty: ir.MemRefType) -> llvm.StructType:
+  i64 = ir.IntegerType.get_signless(64)
+  rank = len(memref_ty.shape)
+  address_space = get_memref_llvm_address_space(memref_ty)
+  ptr_ty = llvm.PointerType.get(address_space)
+  desc_ty_fields = [ptr_ty, ptr_ty, i64]
+  if rank > 0:
+    desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
+  return llvm.StructType.get_literal(desc_ty_fields)
+
+
+def to_memref_descriptor(memref_arg: ir.Value) -> ir.Value:
+  """Casts a memref to its underlying LLVM struct descriptor.
+
+  The returned struct has the following fields (matching MLIR's MemRefToLLVM
+  lowering convention):
+    [0]: allocated pointer (!llvm.ptr)
+    [1]: aligned base pointer (!llvm.ptr)
+    [2]: offset in elements (i64)
+    [3]: sizes in elements (!llvm.array<rank x i64>, only if rank > 0)
+    [4]: strides in elements (!llvm.array<rank x i64>, only if rank > 0)
+  """
+  memref_ty = ir.MemRefType(memref_arg.type)
+  desc_ty = memref_descriptor_type(memref_ty)
+  desc = builtin.unrealized_conversion_cast([desc_ty], [memref_arg])
+  assert isinstance(desc, ir.Value)
+  return desc
+
+
 def ptr_as_memref(ptr, memref_ty: ir.MemRefType):
   ptr_ty = llvm.PointerType(ptr.type)
   if ptr_ty.address_space != (get_memref_llvm_address_space(memref_ty) or 0):
@@ -259,25 +278,16 @@ def ptr_as_memref(ptr, memref_ty: ir.MemRefType):
     raise ValueError("Non-zero offset is not supported for ptr_as_memref")
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
-  desc_ty_fields = [ptr_ty, ptr_ty, i64]
-  if rank > 0:
-    desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
-  desc_ty = llvm.StructType.get_literal(desc_ty_fields)
-  desc = llvm.UndefOp(desc_ty).result
-  desc = llvm.InsertValueOp(desc, ptr, [0]).result  # Allocation
-  desc = llvm.InsertValueOp(desc, ptr, [1]).result  # Aligned Base
-  desc = llvm.InsertValueOp(
-      desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, 0)).result, [2]
-  ).result
+  desc_ty = memref_descriptor_type(memref_ty)
+  desc = llvm.mlir_undef(desc_ty)
+  desc = llvm.insertvalue(desc, ptr, [0])  # Allocation
+  desc = llvm.insertvalue(desc, ptr, [1])  # Aligned Base
+  desc = llvm.insertvalue(desc, c(0, i64), [2])
   if rank > 0:
     for i, s in enumerate(memref_ty.shape):
-      desc = llvm.InsertValueOp(
-          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)).result, [3, i]
-      ).result
+      desc = llvm.insertvalue(desc, c(s, i64), [3, i])
     for i, s in enumerate(strides):
-      desc = llvm.InsertValueOp(
-          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)).result, [4, i]
-      ).result
+      desc = llvm.insertvalue(desc, c(s, i64), [4, i])
   result = builtin.unrealized_conversion_cast([memref_ty], [desc])
   assert isinstance(result, ir.Value)
   return result
@@ -594,7 +604,8 @@ def warp_idx(sync=True):
 
 
 def warpgroup_idx(sync=True):
-  if get_arch().major < 9:  # Unlikely to have any benefit.
+  major = get_arch().major
+  if major < 9 or major == 12:  # Unlikely to have any benefit.
     sync = False
   i32 = ir.IntegerType.get_signless(32)
   wg_idx = arith.shrui(thread_idx(), c(7, i32))
@@ -1083,7 +1094,11 @@ def memref_transpose(ref: ir.Value, permutation: Sequence[int]) -> ir.Value:
 
 
 def parse_indices(
-    index, shape: Sequence[int], *, check_oob: bool = True
+    index,
+    shape: Sequence[int],
+    *,
+    check_oob: bool = True,
+    allow_negative: bool = False,
 ) -> tuple[list[ir.Value | int], list[int], list[bool]]:
   if not isinstance(index, tuple):
     index = (index,)
@@ -1096,25 +1111,35 @@ def parse_indices(
     if isinstance(idx, (ir.Operation, ir.OpView)):
       idx = idx.result
     if isinstance(idx, int):
-      if check_oob and (idx >= bound or (idx < 0 and -idx > bound)):
+      if not allow_negative and idx < 0:
+        raise NotImplementedError(
+            f"Index {idx} along axis {axis} has negative bounds"
+        )
+      if check_oob and idx >= bound:
         raise IndexError(
             f"Index {idx} along axis {axis} is out of bounds for shape {shape}"
         )
-      base_indices.append(idx if idx >= 0 else bound + idx)
+      base_indices.append(idx)
       slice_shape.append(1)
       is_squeezed.append(True)
     elif isinstance(idx, slice):
+      if any(isinstance(v, ir.Value) for v in (idx.start, idx.stop, idx.step)):
+        raise NotImplementedError(
+            f"Slice {idx} along axis {axis} has dynamic bounds. Use"
+            " ds(base, length) to slice at a dynamic offset with a"
+            " static length."
+        )
       if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices not implemented")
-      start = idx.start or 0
-      if start < 0:
-        start = bound + start
-      stop = idx.stop or bound
-      if stop < 0:
-        stop = bound + stop
-      if check_oob and (
-          start < 0 or start >= bound or stop < 0 or stop > bound
+      if not allow_negative and any(
+          v is not None and v < 0 for v in (idx.start, idx.stop)
       ):
+        raise NotImplementedError(
+            f"Slice {idx} along axis {axis} has negative bounds"
+        )
+      start = idx.start or 0
+      stop = idx.stop or bound
+      if check_oob and (start >= bound or stop > bound):
         raise IndexError(
             f"Slice {idx} along axis {axis} is out of bounds for shape {shape}"
         )
@@ -1164,6 +1189,21 @@ def warpgroup_barrier():
 
 def warp_barrier():
   nvvm.bar_warp_sync(c(0xFFFFFFFF, ir.IntegerType.get_signless(32)))
+
+
+def before_thread_sync(
+    *,
+    sync_threads: bool,
+    scope: ThreadSubset = ThreadSubset.WARPGROUP,
+):
+  nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
+  if sync_threads:
+    if scope == ThreadSubset.WARPGROUP:
+      warpgroup_barrier()
+    elif scope == ThreadSubset.WARP:
+      warp_barrier()
+    else:
+      raise ValueError(f"Unsupported scope: {scope}")
 
 
 def prefetch_tensormap(
@@ -1242,12 +1282,6 @@ class BarrierRef:
     if self.base_address.type == ir.Type.parse("!llvm.ptr<7>"):
       return "cluster"
     return "cta"
-
-  @property
-  def _nvvm_scope(self) -> nvvm.MemScopeKind:
-    if self.base_address.type == ir.Type.parse("!llvm.ptr<7>"):
-      return nvvm.MemScopeKind.CLUSTER
-    return nvvm.MemScopeKind.CTA
 
   def test_parity(
       self,
@@ -1336,16 +1370,9 @@ class BarrierRef:
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ):
     if orders_tensor_core:
-      nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
-      if predicate is not None:
-        # We need to synchronize the threads after `::before_thread_sync`, as
-        # not all threads arrive on the barrier.
-        if scope == ThreadSubset.WARPGROUP:
-          warpgroup_barrier()
-        elif scope == ThreadSubset.WARP:
-          warp_barrier()
-        else:
-          raise ValueError(f"Unsupported scope: {scope}")
+      # We need to synchronize the threads after `::before_thread_sync` if a
+      # predicate is used, as not all threads arrive on the barrier.
+      before_thread_sync(sync_threads=predicate is not None, scope=scope)
 
     ptx_scope = self._ptx_scope
     if can_complete or ptx_scope != "cta":
@@ -1371,18 +1398,32 @@ class BarrierRef:
       nvvm.mbarrier_arrive_nocomplete(self.get_ptr(), count)
 
   def arrive_expect_tx(
-      self, tx_count: int | ir.Value, predicate: ir.Value | None = None
+      self,
+      tx_count: int | ir.Value,
+      predicate: ir.Value | None = None,
+      tensor_core_order_scope: ThreadSubset | None = None,
   ):
     if get_arch().major < 9:
       raise NotImplementedError("arrive_expect_tx is only supported on Hopper+ hardware")
+
+    if tensor_core_order_scope is not None:
+      before_thread_sync(
+          sync_threads=predicate is not None, scope=tensor_core_order_scope
+      )
 
     i32 = ir.IntegerType.get_signless(32)
     if isinstance(tx_count, int):
       tx_count = c(tx_count, i32)
     elif isinstance(tx_count.type, ir.IndexType):
       tx_count = arith.index_cast(i32, tx_count)
-    nvvm.mbarrier_arrive_expect_tx(
-        self.get_ptr(), tx_count, predicate=predicate, scope=self._nvvm_scope
+    ptx_scope = self._ptx_scope
+    inline_ptx(
+        f"mbarrier.arrive.expect_tx.release.{ptx_scope}.shared::{ptx_scope}.b64 _, [$0], $1;",
+        self.get_ptr(),
+        tx_count,
+        predicate=predicate,
+        has_side_effects=True,
+        convergent=True
     )
 
   def complete_tx(
@@ -1423,7 +1464,7 @@ class BarrierRef:
     idxs: list[ir.Value] = [gpu.cluster_block_id(d) for d in gpu.Dimension]
     idxs[dim] = idx
     flat_block = arith.index_cast(i32, cluster_idx(dim_idx=idxs))
-    cptr = get_cluster_ptr(self.get_ptr(), flat_block, generic=False)
+    cptr = get_cluster_ptr(self.base_address, flat_block, generic=False)
     return BarrierRef(cptr, self.offset, self.phases, self.num_barriers)
 
 
@@ -1502,16 +1543,11 @@ class DialectBarrierRef:
       predicate: ir.Value | None = None,
   ):
     assert self.orders_tensor_core == orders_tensor_core
-    # TODO(cjfj): remove when minimum jaxlib version is 0.11.2.
-    if hasattr(dialect.ArriveOp, "predicate"):
-      dialect.ArriveOp(
-          self.as_barrier_memref(),
-          orders_tensor_core=orders_tensor_core,
-          predicate=predicate,  # pyrefly: ignore[unexpected-keyword]
-      )
-    else:
-      with contextlib.nullcontext() if predicate is None else when(predicate):
-        dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
+    dialect.ArriveOp(
+        self.as_barrier_memref(),
+        orders_tensor_core=orders_tensor_core,
+        predicate=predicate,
+    )
 
   def arrive_expect_tx(self, tx_count: int | ir.Value):
     if isinstance(tx_count, int):
@@ -1654,10 +1690,9 @@ class CollectiveBarrierRef:
       )
 
     if orders_tensor_core:
-      nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.BEFORE_THREAD_SYNC)
-      # We need to synchronize the threads after `::before_thread_sync`, as not
-      # all threads arrive on the barrier.
-      warpgroup_barrier()
+      # We need to synchronize the threads after `::before_thread_sync`, as
+      # not all threads arrive on the barrier.
+      before_thread_sync(sync_threads=True)
 
     i32 = ir.IntegerType.get_signless(32)
     thread_in_warpgroup = arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32))
@@ -1695,6 +1730,65 @@ class CollectiveBarrierRef:
 
   def wait_parity(self, *args, **kwargs):
     self.barrier.wait_parity(*args, **kwargs)
+
+
+@dataclasses.dataclass(frozen=True)
+class CtaBarrierRef:
+  base_id: int
+  offset: ir.Value
+  arrival_count: int
+  num_barriers: int = 1
+
+  @staticmethod
+  def initialize(
+      base_id: int,
+      arrival_count: int = 1,
+      num_barriers: int = 1,
+  ) -> "CtaBarrierRef":
+    i32 = ir.IntegerType.get_signless(32)
+    return CtaBarrierRef(base_id, c(0, i32), arrival_count, num_barriers)
+
+  def __getitem__(self, offset: ir.Value | int) -> "CtaBarrierRef":
+    i32 = ir.IntegerType.get_signless(32)
+    if isinstance(offset, int):
+      if offset < 0 or offset >= self.num_barriers:
+        raise IndexError(
+            f"Barrier offset {offset} is out of bounds for"
+            f" num_barriers={self.num_barriers}"
+        )
+      offset = c(offset, i32)
+    elif isinstance(offset.type, ir.IndexType):
+      offset = arith.index_castui(i32, offset)
+    elif offset.type != i32:
+      raise ValueError(f"Expected a dynamic index or an integer, got {offset}")
+    return CtaBarrierRef(
+        self.base_id, arith.addi(self.offset, offset), self.arrival_count, 1
+    )
+
+  def get_barrier_id(self) -> ir.Value:
+    if self.num_barriers != 1:
+      raise ValueError(
+          "Operation is only valid for a single barrier, but barrier ref"
+          f" contains {self.num_barriers}. Individual barriers can be accessed"
+          " by indexing into the ref."
+      )
+    i32 = ir.IntegerType.get_signless(32)
+    return arith.addi(c(self.base_id, i32), self.offset)
+
+  def arrive(self, *, predicate: ir.Value | None = None) -> None:
+    inline_ptx(
+        f"bar.arrive $0, {self.arrival_count};",
+        self.get_barrier_id(),
+        predicate=predicate,
+        has_side_effects=True,
+    )
+
+  def arrive_and_wait(self) -> None:
+    inline_ptx(
+        f"bar.sync $0, {self.arrival_count};",
+        self.get_barrier_id(),
+        has_side_effects=True,
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1991,15 +2085,9 @@ def get_memref_llvm_address_space(memref_ty: ir.MemRefType) -> int | None:
 def memref_ptr(memref_arg) -> ir.Value:
   i64 = ir.IntegerType.get_signless(64)
   memref_ty = ir.MemRefType(memref_arg.type)
-  rank = len(memref_ty.shape)
   address_space = get_memref_llvm_address_space(memref_ty)
   ptr_ty = llvm.PointerType.get(address_space)
-  desc_ty_fields = [ptr_ty, ptr_ty, i64]
-  if rank > 0:
-    desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
-  desc_ty = llvm.StructType.get_literal(desc_ty_fields)
-  desc = builtin.unrealized_conversion_cast([desc_ty], [memref_arg])
-  assert isinstance(desc, ir.Value)
+  desc = to_memref_descriptor(memref_arg)
   aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
   offset_elems = llvm.extractvalue(i64, desc, [2])
 
@@ -2524,7 +2612,12 @@ def get_cluster_ptr(
   i32 = ir.IntegerType.get_signless(32)
   assert cluster_block.type == i32, cluster_block.type
   assert ptr.type == llvm.PointerType.get(3), ptr.type
-  mapped_smem_ptr = nvvm.mapa(llvm.PointerType.get(7), ptr, cluster_block)
+  mapped_smem_ptr = inline_ptx(
+      "mapa.shared::cluster.u32 $0, $1, $2;",
+      ptr,
+      cluster_block,
+      result_types=llvm.PointerType.get(7),
+  )
   if not generic:
     return mapped_smem_ptr
   return llvm.addrspacecast(llvm.PointerType.get(), mapped_smem_ptr)
@@ -2534,28 +2627,41 @@ def get_cluster_ref(
     ref: ir.Value, dim: gpu.Dimension, idx: ir.Value, generic: bool = True
 ):
   i32 = ir.IntegerType.get_signless(32)
-  # We replace the offset in the ref type by 0, because memref_ptr always
-  # folds the offset into the pointer.
+  i64 = ir.IntegerType.get_signless(64)
   ref_ty = ir.MemRefType(ref.type)
-  strides, offset = ref_ty.get_strides_and_offset()
-  if offset != 0:
-    new_layout = ir.StridedLayoutAttr.get(0, strides)
-  else:
-    new_layout = ref_ty.layout
+  if not is_smem_ref(ref_ty):
+    raise ValueError(f"Expected SMEM but got: {ref_ty.memory_space}")
   result_type = ir.MemRefType.get(
       ref_ty.shape,
       ref_ty.element_type,
-      new_layout,
+      ref_ty.layout,
       None if generic else ir.IntegerAttr.get(i32, 7),
   )
-  if not is_smem_ref(ref_ty):
-    raise ValueError(f"Expected SMEM but got: {ref_ty.memory_space}")
   idxs: list[ir.Value] = [gpu.cluster_block_id(d) for d in gpu.Dimension]
   idxs[dim] = idx
   flat_block = arith.index_cast(i32, cluster_idx(dim_idx=idxs))
-  return ptr_as_memref(
-      get_cluster_ptr(memref_ptr(ref), flat_block, generic), result_type
+  desc = to_memref_descriptor(ref)
+  aligned_ptr = llvm.extractvalue(
+      llvm.PointerType.get(WORKGROUP_NVPTX_ADDRESS_SPACE), desc, [1]
   )
+  cluster_ptr = get_cluster_ptr(aligned_ptr, flat_block, generic)
+  result_desc = llvm.mlir_undef(memref_descriptor_type(result_type))
+  result_desc = llvm.insertvalue(result_desc, cluster_ptr, [0])
+  result_desc = llvm.insertvalue(result_desc, cluster_ptr, [1])
+  result_desc = llvm.insertvalue(
+      result_desc, llvm.extractvalue(i64, desc, [2]), [2]
+  )
+  if ref_ty.rank > 0:
+    array_ty = llvm.ArrayType.get(i64, ref_ty.rank)
+    result_desc = llvm.insertvalue(
+        result_desc, llvm.extractvalue(array_ty, desc, [3]), [3]
+    )
+    result_desc = llvm.insertvalue(
+        result_desc, llvm.extractvalue(array_ty, desc, [4]), [4]
+    )
+  result = builtin.unrealized_conversion_cast([result_type], [result_desc])
+  assert isinstance(result, ir.Value)
+  return result
 
 
 def elements_to_bytes(offset: ir.Value, element_bitwidth: int) -> ir.Value:

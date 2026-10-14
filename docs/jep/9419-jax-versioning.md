@@ -123,7 +123,7 @@ no released `jax` version uses that API.
 and in the
 [XLA source tree, which lives inside the XLA repository](https://github.com/openxla/xla).
 The JAX-specific pieces inside XLA are primarily in the
-[`xla/python` subdirectory](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla/python).
+[`xla/python` subdirectory](https://github.com/openxla/xla/tree/main/xla/python).
 
 
 The reason that C++ pieces of JAX, such as Python bindings and runtime

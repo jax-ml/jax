@@ -157,6 +157,8 @@ def _device_id_dict_to_mesh(device_id_dict, axis_sizes, axis_indices):
   physical_axis_dict = {}
   axis_names = axis_sizes.keys()
   for axis, idx in device_id_dict.items():
+    if isinstance(axis, tuple) and len(axis) == 1:
+      axis = axis[0]
     if isinstance(axis, tuple) and any(a in axis_names for a in axis):
       if not all(a in axis_names for a in axis):
         raise NotImplementedError(
@@ -194,12 +196,15 @@ def _device_id_dict_to_mesh(device_id_dict, axis_sizes, axis_indices):
   return tuple(device_id), non_mesh_axes
 
 
-def device_coords_to_logical_id(device_coords, axis_sizes, axis_indices):
+def device_coords_to_logical_id(
+    device_coords, axis_sizes, axis_indices, *, allow_non_mesh_axes: bool = False
+):
+  non_mesh_axes = {}
   if isinstance(device_coords, dict):
     device_coords, non_mesh_axes = _device_id_dict_to_mesh(
         device_coords, axis_sizes, axis_indices
     )
-    if non_mesh_axes:
+    if non_mesh_axes and not allow_non_mesh_axes:
       raise NotImplementedError(non_mesh_axes)
   if not isinstance(device_coords, tuple):
     device_coords = (device_coords,)
@@ -208,16 +213,37 @@ def device_coords_to_logical_id(device_coords, axis_sizes, axis_indices):
   ret = 0
   for i in range(len(device_coords)):
     ret += device_coords[i] * math.prod(sizes[i + 1 :])
+  if allow_non_mesh_axes:
+    return ret, non_mesh_axes
   return ret
 
 
-def _device_id_to_logical(device_id, device_id_type, axis_sizes, axis_indices):
+def _device_id_to_logical(
+    device_id,
+    device_id_type,
+    axis_sizes,
+    axis_indices,
+    *,
+    core_axis_names: Sequence[jax_core.AxisName] = (),
+):
   if device_id is None:
-    return None
+    return None, None
   if device_id_type == primitives.DeviceIdType.MESH:
-    return device_coords_to_logical_id(device_id, axis_sizes, axis_indices)
+    logical_id, non_mesh_axes = device_coords_to_logical_id(
+        device_id, axis_sizes, axis_indices, allow_non_mesh_axes=True
+    )
+    core_index = None
+    if non_mesh_axes:
+      if (
+          set(non_mesh_axes.keys()) <= set(core_axis_names)
+          and len(non_mesh_axes) == 1
+      ):
+        (core_index,) = non_mesh_axes.values()
+      else:
+        raise ValueError(f"Unrecognized axes in device_id: {non_mesh_axes}")
+    return logical_id, core_index
   elif device_id_type == primitives.DeviceIdType.LOGICAL:
-    return device_id
+    return device_id, None
   else:
     raise ValueError(f"Unsupported device ID type: {device_id_type}")
 

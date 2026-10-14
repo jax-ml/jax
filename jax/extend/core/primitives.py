@@ -105,6 +105,7 @@ from jax._src.lax.lax import (
   one_minus_square_p as one_minus_square_p,
   or_p as or_p,
   pad_p as pad_p,
+  polynomial_p as polynomial_p,
   population_count_p as population_count_p,
   pow_p as pow_p,
   real_p as real_p,

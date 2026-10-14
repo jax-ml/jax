@@ -647,19 +647,6 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       self._CompileAndCheck(op, args_maker)
       self._CheckAgainstNumpy(np_op, op, args_maker)
 
-  # This test can be deleted once we test against NumPy 2.0.
-  @jtu.sample_product(
-      shape=all_shapes,
-      dtype=complex_dtypes
-  )
-  def testSignComplex(self, shape, dtype):
-    rng = jtu.rand_default(self.rng())
-    np_fun = np.sign
-    jnp_fun = jnp.sign
-    args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker)
-
   def testDeferToNamedTuple(self):
     class MyArray(NamedTuple):
       arr: jax.Array

@@ -5,6 +5,7 @@ common --enable_bzlmod --noenable_workspace
 ## Make sure direct dependencies specified match the resolved version.
 common --check_direct_dependencies=warning
 common --incompatible_disallow_empty_glob=false
+common --incompatible_autoload_externally=+@rules_cc,+@rules_java,+@rules_python,+@rules_shell
 
 
 # Make Bazel print out all options from rc files.
@@ -28,13 +29,6 @@ common --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
 
 # Increase the timeout scaling factor
 common --http_timeout_scaling=3
-
-# external_include_paths feature forces passing external repositories headers
-# via -isystem alters how Clang resolves their file paths. This feature with
-# old versions of rules_cc triggering errors.
-# Following lines can be removed after rules_cc will be updated to >= 0.2.20
-common --features=-external_include_paths
-common --host_features=-external_include_paths
 
 # TODO: Migrate for https://github.com/bazelbuild/bazel/issues/7260
 common:clang_local --noincompatible_enable_cc_toolchain_resolution
@@ -160,16 +154,17 @@ common:posix --copt=-Wno-sign-compare
 common:posix --cxxopt=-std=c++17
 common:posix --host_cxxopt=-std=c++17
 
-common:avx_posix --copt=-mavx
-common:avx_posix --host_copt=-mavx
+common:avx_posix --copt=-march=haswell
+common:avx_posix --host_copt=-march=haswell
 
 common:native_arch_posix --copt=-march=native
 common:native_arch_posix --host_copt=-march=native
 
-common:avx_linux --copt=-mavx
-common:avx_linux --host_copt=-mavx
+common:avx_linux --copt=-march=haswell
+common:avx_linux --host_copt=-march=haswell
 
-common:avx_windows --copt=/arch:AVX
+common:avx_windows --copt=-march=haswell
+common:avx_windows --host_copt=-march=haswell
 
 common:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 
@@ -186,8 +181,6 @@ common:mkl_aarch64_threadpool -c opt
 common:clang --copt=-Wno-gnu-offsetof-extensions
 # Disable clang extention that rejects unknown arguments.
 common:clang --copt=-Qunused-arguments
-# Error on struct/class mismatches, since this causes link failures on Windows.
-common:clang --copt=-Werror=mismatched-tags
 # Required when building with clang>=19, see jax-ml/jax#27091
 common:clang --copt=-Wno-error=c23-extensions
 
@@ -251,6 +244,8 @@ common:win_clang --config=clang_local
 common:win_clang --extra_toolchains=@local_config_cc//:cc-toolchain-x64_windows-clang-cl
 common:win_clang --extra_execution_platforms=//jax/tools/toolchains:x64_windows-clang-cl
 common:win_clang --compiler=clang-cl
+# Error on struct/class mismatches, which cause link failures on Windows.
+common:win_clang --copt=-Werror=mismatched-tags
 
 # Sanitizers (work only for Linux x86_64)
 # ASan common config
@@ -393,6 +388,8 @@ common:ci_darwin_arm64 --color=yes
 common:ci_windows_amd64 --config=clang_local
 common:ci_windows_amd64 --config=avx_windows
 common:ci_windows_amd64 --compiler=clang-cl --config=clang --verbose_failures=true
+# Error on struct/class mismatches, which cause link failures on Windows.
+common:ci_windows_amd64 --copt=-Werror=mismatched-tags
 common:ci_windows_amd64 --crosstool_top="@xla//tools/toolchains/win2022/t20260812:toolchain"
 common:ci_windows_amd64 --extra_toolchains="@xla//tools/toolchains/win2022/t20260812:cc-toolchain-x64_windows-clang-cl"
 common:ci_windows_amd64 --host_linkopt=/FORCE:MULTIPLE --linkopt=/FORCE:MULTIPLE
@@ -428,6 +425,9 @@ common:ci_rbe_cache --remote_upload_local_results=true
 common:ci_rbe_cache --bes_instance_name="ml-oss-rbe-testing"
 common:ci_rbe_cache --remote_cache="grpcs://remotebuildexecution.googleapis.com"
 common:ci_rbe_cache --remote_instance_name=projects/ml-oss-rbe-testing/instances/default_instance
+common:ci_rbe_cache --host_platform="@ml_build_config_platform//:platform"
+common:ci_rbe_cache --extra_execution_platforms="@ml_build_config_platform//:platform"
+common:ci_rbe_cache --platforms="@ml_build_config_platform//:platform"
 
 common:use_tar_archive_files --repo_env=USE_CUDA_TAR_ARCHIVE_FILES=1
 common:use_tar_archive_files --repo_env=USE_NVSHMEM_TAR_ARCHIVE_FILES=1

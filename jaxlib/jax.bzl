@@ -18,10 +18,11 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@com_github_google_flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", _cc_proto_library = "cc_proto_library")
 load("@com_google_protobuf//bazel:proto_library.bzl", _proto_library = "proto_library")
+load("@config_rocm_hipcc//rocm:build_defs.bzl", _rocm_library = "rocm_library")
 load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
 load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFFIX")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
-load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
+load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured")
 
 # TODO(Intel-tf): Update `sycl` with `oneapi` when xla changes to use `oneapi`.
 load("@local_config_sycl//sycl:build_defs.bzl", _if_oneapi_is_configured = "if_sycl_is_configured", _oneapi_library = "sycl_library")
@@ -29,7 +30,8 @@ load("@nvidia_wheel_versions//:versions.bzl", "NVIDIA_WHEEL_VERSIONS")
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("@rocm_external_test_deps//:external_deps.bzl", "EXTERNAL_DEPS")
 load("@rocm_prebuilt_test_deps//:external_deps.bzl", PREBUILT_EXTERNAL_DEPS = "EXTERNAL_DEPS")
-load("@rules_python//python:defs.bzl", _py_binary = "py_binary", _py_library = "py_library", _py_test = "py_test")
+load("@rules_python//python:defs.bzl", "PyInfo", _py_binary = "py_binary", _py_library = "py_library", _py_test = "py_test")
+load("@rules_shell//shell:sh_binary.bzl", _sh_binary = "sh_binary")
 load("@test_shard_count//:test_shard_count.bzl", "USE_MINIMAL_SHARD_COUNT")
 load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load("@xla//xla/tsl:tsl.bzl", "transitive_hdrs", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
@@ -43,6 +45,7 @@ cuda_library = _cuda_library
 rocm_library = _rocm_library
 oneapi_library = _oneapi_library
 proto_library = _proto_library
+sh_binary = _sh_binary
 if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured
 if_oneapi_is_configured = _if_oneapi_is_configured
@@ -58,6 +61,7 @@ mosaic_gpu_internal_users = []
 mosaic_internal_users = []
 pallas_triton_internal_users = []
 pallas_sc_internal_users = []
+pallas_tpu_ops_users = []
 pallas_fuser_users = []
 serialize_executable_internal_users = []
 buffer_callback_internal_users = []
@@ -87,6 +91,7 @@ _py_deps = {
     "epath": ["@pypi//etils"],  # etils.epath
     "filelock": ["@pypi//filelock"],
     "flatbuffers": ["@pypi//flatbuffers"],
+    "google_benchmark": [],  # TODO(phawkins): need newer pypi wheels
     "hypothesis": ["@pypi//hypothesis"],
     "magma": [],
     "matplotlib": ["//:pypi_optional_matplotlib"],
@@ -228,7 +233,10 @@ def _gpu_test_deps():
         "//jax:config_build_jaxlib_true": if_cuda_is_configured([
             "//jaxlib/cuda:gpu_only_test_deps",
             "//jax_plugins:gpu_plugin_only_test_deps",
-        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
+        ]) + if_rocm_is_configured(EXTERNAL_DEPS) + if_oneapi_is_configured([
+            "//jaxlib/oneapi:gpu_only_test_deps",
+            "//jax_plugins:gpu_plugin_only_test_deps",
+        ]),
         "//jax:config_build_jaxlib_false": if_cuda_is_configured([
             "//jaxlib/tools:pypi_jax_cuda_plugin_with_cuda_deps",
             "//jaxlib/tools:pypi_jax_cuda_pjrt_with_cuda_deps",
@@ -236,7 +244,10 @@ def _gpu_test_deps():
         "//jax:config_build_jaxlib_wheel": if_cuda_is_configured([
             "//jaxlib/tools:jax_cuda_plugin_py_import",
             "//jaxlib/tools:jax_cuda_pjrt_py_import",
-        ]) + if_rocm_is_configured(EXTERNAL_DEPS),
+        ]) + if_rocm_is_configured(EXTERNAL_DEPS) + if_oneapi_is_configured([
+            "//jaxlib/tools:jax_oneapi_pjrt_py_import",
+            "//jaxlib/tools:jax_oneapi_plugin_py_import",
+        ]),
     })
 
 def _get_jax_test_deps(deps):
@@ -649,7 +660,7 @@ def deploy_wheel(name, wheel):
         outs = [name + ".sh"],
         cmd = "echo '#!/bin/bash\ncp $(rootpath {wheel}) $$1' > $@".format(wheel = wheel),
     )
-    native.sh_binary(
+    sh_binary(
         name = name,
         srcs = [name + ".sh"],
         data = [wheel],
@@ -777,6 +788,11 @@ def jax_multiprocess_test(
         config_tags_overrides = None,
         tags = [],
         main = None):
+    # For TPU, we dynamically derive:
+    #   num_processes = num_available_tpu_chips // tpu_chips_per_process
+    # based on the number of physical TPU chips detected on the host machine.
+    # This automatically matches the host's physical topology (e.g. 4 chips on
+    # v4/v5p, 8 chips on v5e/v6e) without hardcoding process counts.
     # TODO(emilyaf): Avoid hard-coding the number of processes and chips/gpus per process.
     multiprocess_backend_args = {
         "cpu": backend_variant_args.get("cpu", []) + [
@@ -787,7 +803,6 @@ def jax_multiprocess_test(
             "--gpus_per_process=2",
         ],
         "tpu": backend_variant_args.get("tpu", []) + [
-            "--num_processes=4",
             "--tpu_chips_per_process=1",
         ],
     }

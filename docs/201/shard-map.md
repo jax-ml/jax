@@ -26,7 +26,7 @@ kernelspec:
 
 By reading this tutorial, you'll learn how to use `shard_map` to get full control over your multi-device code. You'll see in detail how it composes with `jax.jit`'s automatic parallelization and `jax.grad`'s automatic differentiation. We'll also give some basic examples of neural network parallelization strategies.
 
-We'll assume this tutorial is being run in an environment with eight devices:
+This tutorial uses eight devices, which we simulate here on CPU:
 
 ```{code-cell}
 import jax
@@ -87,7 +87,7 @@ jax.debug.visualize_array_sharding(c)
 At a high level, `shard_map` is kind of like `vmap`, in that we're
 mapping a function over pieces of array data, but notice that
 * `shard_map` slices up inputs into blocks (and the output is formed by concatenating result blocks), keeping the rank the same, whereas `vmap` would reduce the rank by mapping away an axis;
-* the `mesh` argument lets us control precise device placement of computation and results;
+* the mesh (here set with `jax.set_mesh`) lets us control precise device placement of computation and results;
 * we're mapping over multiple data axes at once, and setting up multiple axis names for collectives (both `'x'` and `'y'` here);
 * since we're not using `jax.jit` yet, everything is eagerly evaluated, and we can even `print` intermediate values for debugging.
 
@@ -106,8 +106,8 @@ allclose(c_ref, jnp.dot(a, b, out_sharding=jax.P('x', None)))
 ```
 
 We can think of `shard_map` as performing a `device_put` or
-`with_sharding_constraint` on its inputs according to its `mesh` and `in_specs`
-arguments, so the blocks over which `matmul_basic` operates are the same as in
+`with_sharding_constraint` on its inputs according to the mesh and its
+`in_specs`, so the blocks over which `matmul_basic` operates are the same as in
 `matmul_reference`:
 
 ```{code-cell}
@@ -219,7 +219,7 @@ def f2(x_block):
 
 x = jnp.arange(12 * 12).reshape(12, 12)
 x_ = jnp.tile(x, (1, mesh.shape['j']))  # x_ has shape (12, 24)
-x_ = jax.device_put(x, jax.P('i', 'j'))
+x_ = jax.device_put(x_, jax.P('i', 'j'))
 y = f2(x_)  # prints (3,12), and f1(x) == f2(x_)
 ```
 
@@ -234,7 +234,7 @@ along the first axis, and used the pspec `jax.P(('j', 'i'), None)`.
 Physical data movement is possible on inputs, as each device needs to have a
 copy of the appropriate data.
 
-#### Controlling how each output assembled by concatenation, block transposition, and untiling using `out_specs`
+#### Controlling how each output is assembled by concatenation, block transposition, and untiling using `out_specs`
 
 Analogously to the input side, each of the `out_specs` identifies some of the
 corresponding output array's axes with mesh axes by name, representing how the
@@ -242,7 +242,7 @@ output blocks (one for each application of the body function, or equivalently
 one for each physical device) should be assembled back together to form the
 final output value. For example, in both the `f1` and `f2` examples above the
 `out_specs` indicate we should form the final output by concatenating together
-the block results along both axes, resulting in both cases an array `y` of
+the block results along both axes, resulting in both cases in an array `y` of
 shape `(12, 24)`. (It's an error if an output shape of the body function, i.e.
 an output block shape, has a rank too small for the concatenation described by
 the corresponding output pspec.)
@@ -252,7 +252,8 @@ un-tiling: when the user writes an output pspec which does not mention one of
 the mesh axis names, they promise that the output blocks are equal along that
 mesh axis, and so only one block along that axis is used in the output (rather
 than concatenating all the blocks together along that mesh axis). For example,
-using the same mesh as above:
+using a mesh of the same shape (with `Auto` axes, since closing over arrays in
+a `shard_map` body isn't yet implemented for `Explicit` axes):
 
 ```{code-cell}
 auto_mesh = jax.make_mesh((4, 2), ('i', 'j'), (Auto, Auto))
@@ -263,15 +264,15 @@ with jax.set_mesh(auto_mesh):
   print(z)  # prints the same as jnp.tile(x, (4, 2))
 
   z = jax.shard_map(lambda: x, in_specs=(), out_specs=jax.P('i', None))()
-  print(z)  # prints the same as jnp.tile(x, (4, 1)), or just jnp.tile(x, (4,))
+  print(z)  # prints the same as jnp.tile(x, (4, 1))
 
   z = jax.shard_map(lambda: x, in_specs=(), out_specs=jax.P(None, None))()
   print(z)  # prints the same as jnp.tile(x, (1, 1)), or just x
 ```
 
 The body function closing over an array value is equivalent to passing it as an
-augment with a corresponding input pspec of jax.P(None, None). As another example,
-following more closely to the other examples above:
+argument with a corresponding input pspec of `jax.P(None, None)`. As another
+example, more closely following the other examples above:
 
 ```{code-cell}
 @jax.shard_map(in_specs=jax.P('i', 'j'), out_specs=jax.P('i', None))
@@ -315,8 +316,8 @@ along that mesh axis.
 There is no runtime check that the output blocks are actually equal along a
 mesh axis to be un-tiled along, or equivalently that the corresponding physical
 buffers have equal values and thus can be interpreted as a replicated layout
-for a single logical array. But we can provide a static check mechanism which
-raises an error on all potentially-incorrect programs.
+for a single logical array. But `shard_map` does provide a static check,
+described next, that raises an error on all potentially incorrect programs.
 
 Because the `out_specs` can mention mesh axis names zero or one times, and
 because they can be mentioned in any order, we can say that in addition to the
@@ -376,24 +377,25 @@ f(x)
 ```
 
 In general, each intermediate value in a `shard_map` can be either invarying or
-possibly-varying over each manual mesh axis. That information can be tracked in
-the JAX type system, enabled by the `check_vma=True` argument to `shard_map`:
+possibly-varying over each manual mesh axis. That information, the value's set
+of *varying manual axes* (VMA), can be tracked in the JAX type system, enabled
+by the `check_vma=True` argument to `shard_map`:
 
 ```{code-cell}
 @jax.shard_map(in_specs=jax.P('i'), out_specs=jax.P())
 def f(x):
-  print(jax.typeof(x))  # f32[3]{V:i}
+  print(jax.typeof(x))  # float32[3]{V:i}
   y = jax.lax.psum(x, 'i')
-  print(jax.typeof(y))  # f32[3]
+  print(jax.typeof(y))  # float32[3]
   return y
 
 x = jax.device_put(jnp.arange(6.), jax.P('i'))
 f(x)
 ```
 
-Here, the type `f32[3]{V:i}` means that the value of `x` is varying over mesh
-axis `'i'`. The type of `y` printing as `f32[3]` indicates it is invarying over
-all mesh axes; that is, empty sets are not printed. We call this part of the
+Here, the type `float32[3]{V:i}` means that the value of `x` is varying over
+mesh axis `'i'`. The type of `y` printing as `float32[3]` indicates it is
+invarying over all mesh axes; that is, empty sets are not printed. We call this part of the
 type the _manual axis type_, and it can be accessed via
 `jax.typeof(x).manual_axis_type.varying`.
 
@@ -406,10 +408,10 @@ jax.set_mesh(mesh)
 
 @jax.shard_map(in_specs=jax.P('i', 'j'), out_specs=jax.P('i'))
 def f(x):
-  print(jax.typeof(x))  # f32[2,2]{V:(i,j)}
+  print(jax.typeof(x))  # float32[2,2]{V:(i,j)}
   y = jax.lax.psum(x, 'j')
   assert jax.typeof(y).manual_axis_type.varying == {'i'}
-  print(jax.typeof(y))  # f32[2,2]{V:i}
+  print(jax.typeof(y))  # float32[2,2]{V:i}
   return y
 
 x = jax.device_put(jnp.arange(8 * 4.).reshape(8, 4), jax.P('i', 'j'))
@@ -450,21 +452,21 @@ varying over that mesh axis. That's what `jax.lax.pcast` does:
 ```{code-cell}
 @jax.shard_map(in_specs=jax.P(), out_specs=None)
 def f(x):
-  print(jax.typeof(x))  # f32[6]
+  print(jax.typeof(x))  # float32[6]
   y = jax.lax.pcast(x, 'i', to='varying')
-  print(jax.typeof(y))  # f32[6]{V:i}
+  print(jax.typeof(y))  # float32[6]{V:i}
 
 x = jnp.arange(6.)
 f(x)
 ```
 
-Think of `jax.lax.pcast(..., to='varying')` as applying a
-type cast: it's a no-op at runtime,
-though under reverse-mode autodiff it transposes to a `jax.lax.psum` (see
+Think of `jax.lax.pcast(..., to='varying')` as applying a type cast: it's a
+no-op at runtime, though under reverse-mode autodiff it transposes to a
+`jax.lax.psum` (see
 [JEP](https://docs.jax.dev/en/latest/jep/17111-shmap-transpose.html)). That
-makes sense because they do opposite things to the VMA: where `y: f32[3]{V:i} =
-jax.lax.pcast(x: f32[3], 'i', to='varying')`,
-we correspondingly have `x_grad: f32[3] = jax.lax.psum(y_grad: f32[3]{V:i}, 'i')`.
+makes sense because they do opposite things to the VMA: where
+`y: f32[3]{V:i} = jax.lax.pcast(x: f32[3], 'i', to='varying')`, we
+correspondingly have `x_grad: f32[3] = jax.lax.psum(y_grad: f32[3]{V:i}, 'i')`.
 
 JAX implicitly inserts `jax.lax.pcast(..., to='varying')` calls in many cases,
 especially for binary operations:
@@ -479,11 +481,11 @@ y = jnp.arange(3.)
 print(jax.jit(f).trace(x, y).jaxpr)
 ```
 
-In a jaxpr, the multiplication operation requires the varying bits of its
+In a jaxpr, the multiplication operation requires the VMA types of its
 arguments to match, but for convenience the `jax.numpy` and `jax.lax` APIs
 automatically apply `jax.lax.pcast(..., to='varying')` to make argument VMA
 types agree. In a jaxpr, these `jax.lax.pcast` calls show up as `pvary` since
-`jax.lax.pcast(..., to='varying')` dispatches to `lax.pvary`.
+`jax.lax.pcast(..., to='varying')` dispatches to the `pvary` primitive.
 
 <a name="scan-vma"></a>
 
@@ -503,7 +505,7 @@ def f(x, y):
   (x_, y_), _ = jax.lax.scan(body, (x, y), (), length=2)
   return x_, y_
 
-x = jnp.arange(6.)
+x = jax.device_put(jnp.arange(6.), jax.P('i'))
 y = jnp.arange(3.)
 
 try:
@@ -539,21 +541,23 @@ Here's a summary of collective primitives and how they affect varying manual axi
 
 | Name | Device variance type | Example | Lowers to HLO | Transpose |
 | ---  |         ---          |   ---   |     ---       |    ---    |
-| `psum_invariant` | `Varying -> Invariant` | `y:f32[3]{j} = psum(x:f32[3]{i,j}, axis='i')` | `AllReduceSum` (communication) | `pvary` |
-| `pvary` | `Invariant -> Varying` | `y:f32[3]{i} = pvary(x:f32[3], 'i')` | no-op (no communication) | `psum_invariant` |
-| `all_to_all` | `Varying -> Varying` | `y:f32[16]{i} = all_to_all(x:f32[16]{i}, 'i', 0, 0)` `AllToAll` (communication) | `all_to_all` |
-| `axis_index` | `() -> Varying` | `idx:i32[]{i} = axis_index('i')` | `ReplicaId` and some arithmetic (no communication) | n/a |
-| `psum_scatter` | `Varying -> Varying` | `y:f32[2]{i} = psum_scatter(x:f32[16]{i}, 'i')` | `ReduceScatterSum` (communication) | `all_gather` |
-| `all_gather` | `Varying -> Varying` | `y:f32[16]{i} = all_gather(x:f32[2]{i}, 'i')` | `AllGather` (communication) | `psum_scatter` |
-| `pscatter` | `Invariant -> Varying` | `y:f32[2]{i} = pscatter(x:f32[16], 'i')` | `lambda x: x[axis_index('i'), None]` (no communication) | `all_gather_invariant` |
-| `all_gather_invariant` | `Varying -> Invariant` | `y:f32[16] = all_gather_invariant(x:f32[2]{i}, 'i')` | `AllGather` (communication) | `pscatter` |
+| `psum_invariant` | `Varying -> Invariant` | `y:f32[3]{V:j} = psum(x:f32[3]{V:(i,j)}, 'i')` | `AllReduceSum` (communication) | `pvary` |
+| `pvary` | `Invariant -> Varying` | `y:f32[3]{V:i} = pvary(x:f32[3], 'i')` | no-op (no communication) | `psum_invariant` |
+| `all_to_all` | `Varying -> Varying` | `y:f32[16]{V:i} = all_to_all(x:f32[16]{V:i}, 'i', 0, 0)` | `AllToAll` (communication) | `all_to_all` |
+| `axis_index` | `() -> Varying` | `idx:i32[]{V:i} = axis_index('i')` | `ReplicaId` and some arithmetic (no communication) | n/a |
+| `psum_scatter` | `Varying -> Varying` | `y:f32[2]{V:i} = psum_scatter(x:f32[16]{V:i}, 'i')` | `ReduceScatterSum` (communication) | `all_gather` |
+| `all_gather` | `Varying -> Varying` | `y:f32[16]{V:i} = all_gather(x:f32[2]{V:i}, 'i')` | `AllGather` (communication) | `psum_scatter` |
+| `pscatter` | `Invariant -> Varying` | `y:f32[2]{V:i} = pscatter(x:f32[16], 'i')` | `lambda x: x[axis_index('i'), None]` (no communication) | `all_gather_invariant` |
+| `all_gather_invariant` | `Varying -> Invariant` | `y:f32[16] = all_gather_invariant(x:f32[2]{V:i}, 'i')` | `AllGather` (communication) | `pscatter` |
 
 A few notes on the table:
 * The function `jax.lax.psum` is a convenience wrapper around `psum_invariant`.
-* It's surprising that `all_gather` is `Varying -> Varying`, but that's because
-  it's really the transpose of `psum_scatter` which is `Varying -> Varying`.
-* Neither `pscatter` nor `all_gather_invariant` have user APIs at the time of
-  writing, but they're described here for completeness.
+* It may be surprising that `all_gather` is `Varying -> Varying`, but that's
+  because it's really the transpose of `psum_scatter`, which is
+  `Varying -> Varying`.
+* `all_gather_invariant` is available as `jax.lax.all_gather(..., to='invarying')`.
+  `pscatter` has no user API at the time of writing, but it's described here
+  for completeness.
 
 #### Two more manual types: `unreduced` and `reduced`
 
@@ -598,10 +602,10 @@ x_reduced = jax.reshard(x_replicated, jax.P(reduced={'i'}))
                          jax.P(reduced={'i'})),
                out_specs=jax.P('i'))
 def f(a, b, c, d):
-  print(jax.typeof(a))  # f32[4]{V:i}
-  print(jax.typeof(b))  # f32[4]
-  print(jax.typeof(c))  # f32[]{U:i}
-  print(jax.typeof(d))  # f32[4]{R:i}
+  print(jax.typeof(a))  # float32[4]{V:i}
+  print(jax.typeof(b))  # float32[4]
+  print(jax.typeof(c))  # float32[]{U:i}
+  print(jax.typeof(d))  # float32[4]{R:i}
   return a
 
 _ = f(x_sharded, x_replicated, x_unreduced, x_reduced)
@@ -613,27 +617,30 @@ communication: `to='varying'` works from invarying or reduced values,
 values. To actually perform a pending reduction, `jax.lax.psum` and
 `jax.lax.psum_scatter` accept unreduced inputs.
 
-## API Specification
+## API specification
 
 ```python
-from jax.sharding import Mesh
+from jax.sharding import Mesh, AbstractMesh, Infer
 Specs = PyTree[PartitionSpec]
 
 def shard_map(
-    f: Callable, /, *, out_specs: Specs, mesh: Mesh | None = None,
-    in_specs: Specs | None = None,
-    axis_names: collections.abc.Set[AxisName] = set(),
+    f: Callable | None = None, /, *, out_specs: Specs,
+    in_specs: Specs | Infer = Infer,
+    mesh: Mesh | AbstractMesh | None = None,
+    axis_names: collections.abc.Set[AxisName] = frozenset(),
     check_vma: bool = True,
 ) -> Callable:
   ...
 ```
 where:
+* `f` can be omitted, in which case `shard_map` returns a decorator, as in the
+  `@jax.shard_map(in_specs=..., out_specs=...)` examples above;
 * communication collectives like `psum` in the body of `f` can mention the axis names of `mesh`;
-* `mesh` encodes devices arranged in an array and with associated axis names, just like it does for `sharding.NamedSharding`; If None, mesh will be inferred from the
-context which can be set via the `jax.set_mesh` context manager.
-* `in_specs` are `PartitionSpec`s which can zero or one times mention axis names from `mesh` to express slicing/unconcatenation of inputs, respectively, with unmentioned names corresponding to replication and untiling (assert-replicated-so-give-me-one-copy). If None, all mesh axes must be of type `Explicit`, in which case the in_specs are inferred from the argument types;
-* `out_specs` are `PartitionSpec`s which can zero or one times mention axis names from `mesh` to express concatenation of outputs, with unmentioned names corresponding to replication and untiling (assert-replicated-so-give-me-one-copy), respectively;
-* `axis_names` is an optional set of axis names corresponding to the subset of names of `mesh` to treat manual in the body. If empty,  `f` is manual over all axes of the mesh.
+* `mesh` encodes devices arranged in an array and with associated axis names, just like it does for `sharding.NamedSharding`; if None, the mesh is inferred from the
+context, which can be set with `jax.set_mesh`;
+* `in_specs` are `PartitionSpec`s which can zero or one times mention axis names from `mesh` to express slicing/unconcatenation of inputs, with unmentioned names corresponding to replication (tiling). If omitted (the default, `Infer`), all mesh axes must be of type `Explicit`, in which case the `in_specs` are inferred from the argument types;
+* `out_specs` are `PartitionSpec`s which can zero or one times mention axis names from `mesh` to express concatenation of outputs, with unmentioned names corresponding to untiling (assert-replicated-so-give-me-one-copy);
+* `axis_names` is an optional set of axis names corresponding to the subset of names of `mesh` to treat manual in the body. If empty, `f` is manual over all axes of the mesh.
 * `check_vma` is an optional boolean indicating whether to check statically for any replication errors in `out_specs`, and also whether to enable a related automatic differentiation optimization (see [JEP](https://docs.jax.dev/en/latest/jep/17111-shmap-transpose.html)).
 
 The shapes of the arguments passed to `f` have the same ranks as the arguments
@@ -647,8 +654,7 @@ the corresponding `PartitionSpec` `spec` as roughly
 ## Collectives tutorial
 
 A `shard_map` need not be a pure map: function applications can communicate
-with each other via _collectives_, using axis names defined in the `mesh`
-argument.
+with each other via _collectives_, using the mesh's axis names.
 
 Recall that `shard_map` maps a function over shards, or blocks, of input data,
 so that this:
@@ -660,7 +666,7 @@ f_shmapped = jax.shard_map(f, in_specs=jax.P('i'), out_specs=jax.P('i'))
 y = f_shmapped(x)
 ```
 
-Computes the same values, evaluating applications of `f` to the same argument
+computes the same values, evaluating applications of `f` to the same argument
 values, as this reference function:
 
 ```python
@@ -694,7 +700,7 @@ would look more like:
 
 ```python
 def f_shmapped_ref(x):
-  x_blocks = jnp.array_split(x, mesh.shape[0])
+  x_blocks = jnp.array_split(x, mesh.shape[axis_name])
   z_blocks = [f_part1(x_blk) for x_blk in x_blocks]
   u_blocks = [collective_ref(i, z_blocks) for i in range(len(z_blocks))]
   v_blocks = [f_part2(x_blk, z_blk, u_blk) for x_blk, z_blk, u_blk
@@ -777,7 +783,7 @@ print('FINAL RESULT:\n', y)
 ```
 
 By applying a `psum` over mesh axis `'i'`, we get values of `y_block` which
-are equal along axis '`i'`, but not axis `'j'`. (So we can use
+are equal along axis `'i'`, but not axis `'j'`. (So we can use
 `out_specs=jax.P(None, 'j')` to get a single logical result along that axis.)
 
 If we apply the `psum` over both axes, the `y_block` value is equal along both
@@ -830,9 +836,9 @@ value, computed by concatenating the values of `x_block`.
 (Notice that we actually can't set `out_specs=jax.P()` here. For technical
 reasons related to automatic differentiation, we consider the output of
 `all_gather` not to be guaranteed invariant across devices. If we wanted it to
-be guaranteed invariant, we could use `jax.lax.all_gather_invariant`, or in
-this case we could just avoid doing the `all_gather` in the function body and
-instead just use `out_specs=jax.P('i')` to perform the concatenation.)
+be guaranteed invariant, we could use `jax.lax.all_gather(..., to='invarying')`,
+or in this case we could just avoid doing the `all_gather` in the function body
+and instead use `out_specs=jax.P('i')` to perform the concatenation.)
 
 When `tiled=False` (the default), results are stacked along a new axis instead
 of concatenated:
@@ -915,8 +921,8 @@ def psum(x, axis_name):
 
 Indeed, this implementation is often used on both TPU and GPU!
 
-The reason `psum_scatter` can require about half the communication as a full
-`psum` is illustrated in the `ppermute` section.
+The reason `psum_scatter` can require about half as much communication as a
+full `psum` is illustrated in the `ppermute` section.
 
 Another intuition is that we can use `psum_scatter` to implement a distributed
 matrix multiplication with inputs and outputs sharded over the same axis. In
@@ -945,8 +951,8 @@ y = f7(jnp.arange(8))
 print('FINAL RESULT:\n', y)
 ```
 
-In this case, with just two function instances, each instance's value of
-`y_block` is the other's value of `x_block`.
+In this case, with four function instances shifting cyclically, each
+instance's value of `y_block` is its predecessor's value of `x_block`.
 
 Source indices and destination indices can't be repeated. If an index does not
 appear as a destination, then the value of the corresponding function
@@ -1019,7 +1025,7 @@ parallelism, where we divide our network along its depth into stages and
 evaluate the applications of stages in parallel. Or we might use `ppermute` in
 parallelizing the evaluation of convolutional layers, where we shard over
 spatial axes and thus devices must communicate "halos" to each other. Or it
-may be used under-the-hood in tensor-parallel matrix multiplies.
+may be used under the hood in tensor-parallel matrix multiplies.
 
 ### `all_to_all`
 
@@ -1066,7 +1072,7 @@ def all_to_all_ref(_, x_blocks, *, tiled=False):
     return [jnp.stack(s) for s in zip(*splits)]
 ```
 
-In deep learning, we might use `all_to_all` in mixture-of-expert routing,
+In deep learning, we might use `all_to_all` in mixture-of-experts routing,
 where we first sort our local batch of examples according to which expert they
 should go to, then apply an `all_to_all` to redistribute examples to experts.
 
@@ -1098,7 +1104,7 @@ def device_put(x, pspec):
   return jax.device_put(x, pspec)
 ```
 
-#### Example 1: `all-gather` on one side
+#### Example 1: `all_gather` on one side
 
 Consider performing a matrix multiplication where we shard the left-hand side
 argument (think: parameters) on its leading (non-contracting) dimension:
@@ -1143,8 +1149,8 @@ Here's a profile (captured and viewed with the tools described in
 ![Profile of an all-gather matmul without overlap.](../_static/shard_map_08_profile_of_an_all_gather_matmul_without_overlap.png)
 
 We can get compute/communication overlap if instead of calling `all_gather` we
-basically inline our above implementation of `all_gather` in terms of
-`ppermute`, then interleave steps of the gather permutation with local matrix
+inline our above implementation of `all_gather` in terms of `ppermute`, then
+interleave steps of the gather permutation with local matrix
 multiplies:
 
 ```{code-cell}
@@ -1243,7 +1249,8 @@ rhs_spec = jax.P('i', None)
 rhs = device_put(rhs, rhs_spec)
 ```
 
-Here we can use a `reduce_scatter` to perform the contraction sum over shards:
+Here we can use a reduce-scatter (`psum_scatter`) to perform the contraction
+sum over shards:
 
 ```{code-cell}
 @jax.shard_map(in_specs=(lhs_spec, rhs_spec),
@@ -1362,10 +1369,8 @@ batch_size = 32
 params, batch = init(jax.random.key(0), layer_sizes, batch_size)
 ```
 
-Compare these examples with the purely [automatic partitioning examples in the
-"Distributed arrays and automatic partitioning"
-doc](sharding.md).
-While in those automatic partitioning examples we don't need to edit the model
+Compare these examples with the purely automatic partitioning examples in
+{doc}`sharding`. While in those automatic partitioning examples we don't need to edit the model
 functions to use different parallelization strategies, with `shard_map` we
 often do.
 
@@ -1390,7 +1395,7 @@ params = jax.device_put(params, jax.P())
 @jax.shard_map(out_specs=jax.P())
 def loss_dp(params, local_batch):
   inputs, targets = local_batch
-  predictions = predict(params, inputs)  # use reference 'predict`
+  predictions = predict(params, inputs)  # use reference `predict`
   local_loss = jnp.mean(jnp.sum((predictions - targets)**2, axis=-1))
   return jax.lax.pmean(local_loss, 'batch')
 ```
@@ -1410,10 +1415,19 @@ print(allclose(jax.jit(jax.grad(loss))(params, batch),
                jax.jit(jax.grad(loss_dp))(params, batch)))
 ```
 
-We can print the compiler IR to inspect the gradient computation and verify
-that the collective all-reduce-sum operations happen where we'd expect: at the
-end of the forward pass to compute the loss value, and in the backward pass to
-compute the total parameter gradients.
+We can inspect the gradient computation to verify that the collective
+all-reduce-sum operations happen where we'd expect: at the end of the forward
+pass to compute the loss value, and in the backward pass to compute the total
+parameter gradients. Filtering the jaxpr for sums (which appear as
+`psum_invariant`, from the table above) shows exactly that: one scalar sum for
+the loss, then one sum per parameter, from the last layer back to the first:
+
+```{code-cell}
+jaxpr = jax.jit(jax.value_and_grad(loss_dp)).trace(params, batch).jaxpr
+for line in str(jaxpr).splitlines():
+  if 'psum' in line:
+    print(line)
+```
 
 #### 8-way fully sharded data parallelism (FSDP)
 
@@ -1430,12 +1444,16 @@ So now we need collectives in two places: the model prediction function
 DP case the loss function needs to sum the local losses to compute the total
 loss.
 
-There's one other ingredient we need: we don't want to store the fully gathered
-parameters from the forward pass for use on the backward pass. Instead, we want
-to gather them again on the backward pass. We can express that by using
-`jax.remat` with a custom policy (see {ref}`jax-301-remat`), or a
-`custom_vjp`, though XLA typically does that rematerialization
-automatically.
+There's one other ingredient we need: we don't want to store the fully
+gathered parameters from the forward pass for use on the backward pass, since
+then every device would end up holding all the parameters after all. Instead,
+we want to gather them again on the backward pass. We can express that by
+applying `jax.remat` to each layer (see {ref}`jax-301-remat`). The backward
+pass then recomputes what it needs from the layer's inputs, which here are
+the parameter shards: it re-gathers the full parameters, but doesn't redo the
+matrix multiplication, since the backward pass doesn't need the layer's
+output. (For a more explicit version that saves the shards and re-gathers
+them by hand, see {ref}`jax-301-fsdp-vjp`.)
 
 This general [FSDP
 approach](https://engineering.fb.com/2021/07/15/open-source/fsdp/) is similar
@@ -1444,19 +1462,22 @@ to [weight update sharding (WUS)](https://arxiv.org/abs/2004.13336) and
 
 ```{code-cell}
 # shard data batch *and params* over devices
-mesh = jax.make_mesh((4,), ('batch',))
+mesh = jax.make_mesh((8,), ('batch',))
 jax.set_mesh(mesh)
 batch = jax.device_put(batch, jax.P('batch'))
 params = jax.device_put(params, jax.P('batch'))
 
-# adapt the prediction function to gather weights just before their use,
-# and to re-gather them on the backward pass (rather than saving them)
-@partial(jax.remat, policy=lambda op, *_, **__: str(op) != 'all_gather')
+# gather weights just before their use, and (via remat) re-gather them on the
+# backward pass rather than saving them
+@jax.remat
+def layer_fsdp(W_frag, b_frag, inputs):
+  W = jax.lax.all_gather(W_frag, 'batch', tiled=True)
+  b = jax.lax.all_gather(b_frag, 'batch', tiled=True)
+  return jnp.dot(inputs, W) + b
+
 def predict_fsdp(params_frag, inputs):
   for W_frag, b_frag in params_frag:
-    W = jax.lax.all_gather(W_frag, 'batch', tiled=True)
-    b = jax.lax.all_gather(b_frag, 'batch', tiled=True)
-    outputs = jnp.dot(inputs, W) + b
+    outputs = layer_fsdp(W_frag, b_frag, inputs)
     inputs = jax.nn.relu(outputs)
   return outputs
 
@@ -1480,6 +1501,19 @@ print(allclose(jax.jit(jax.grad(loss))(repl_params, repl_batch),
                jax.jit(jax.grad(loss_fsdp))(params, batch)))
 ```
 
+And we can confirm the re-gathering by counting all-gathers in the compiled
+gradient computation. There are 12 in the forward pass, a weight and a bias
+for each of the 6 layers, plus 5 in the backward pass that re-gather weights.
+(Biases aren't needed on the backward pass, and the first layer's weights
+would be needed only for a gradient with respect to the input data, which we
+don't compute.) Without the `jax.remat`, there would be just the 12, with
+every gathered weight saved for the backward pass.
+
+```{code-cell}
+hlo = jax.jit(jax.grad(loss_fsdp)).lower(params, batch).compile().as_text()
+print(hlo.count('all-gather('))
+```
+
 #### 8-way tensor parallelism (TP)
 
 Usually we don't use tensor model parallelism by itself, but seeing it in
@@ -1488,7 +1522,7 @@ example of using `shard_map` in a library function, called in a larger
 `jit`-based computation.
 
 The parallelization idea is that we'll keep the data/activations sharded over
-its feature axis (rather than its batch axis), and we'll similarly shard weight
+their feature axis (rather than their batch axis), and we'll similarly shard weight
 matrices over their input-feature axis (and biases over their feature axis).
 Then to perform the parallel matrix multiplication, we'll perform local matrix
 multiplications followed by a `psum_scatter` to sum the local results and
@@ -1520,6 +1554,18 @@ def loss_tp(params, batch):
   return jnp.mean(jnp.sum((predictions - targets) ** 2, axis=-1))  # NOTE psum!
 ```
 
+Once more, the loss and its gradients match the reference model:
+
+```{code-cell}
+repl_params = jax.device_put(params, jax.P())
+repl_batch = jax.device_put(batch, jax.P())
+print(jax.jit(loss)(repl_params, repl_batch))
+print(jax.jit(loss_tp)(params, batch))
+
+print(allclose(jax.jit(jax.grad(loss))(repl_params, repl_batch),
+               jax.jit(jax.grad(loss_tp))(params, batch)))
+```
+
 #### FSDP + TP, with `shard_map` at the top level
 
 We can compose these strategies together, using multiple axes of parallelism.
@@ -1531,15 +1577,18 @@ jax.set_mesh(mesh)
 batch = jax.device_put(batch, jax.P('batch', 'feats'))
 params = jax.device_put(params, jax.P(('feats', 'batch')))
 
-# mostly same as previous predict_fsdp definition, except we call gemm_tp
-@partial(jax.remat, policy=lambda op, *_, **__: str(op) != 'all_gather')
+# same as layer_fsdp, except the matmul is also tensor-parallel, as in gemm_tp
+@jax.remat
+def layer_fsdp_tp(W_frag, b_frag, inputs):
+  W = jax.lax.all_gather(W_frag, 'batch', tiled=True)
+  b = jax.lax.all_gather(b_frag, 'batch', tiled=True)
+  block_result = jnp.dot(inputs, W)
+  return jax.lax.psum_scatter(block_result, 'feats',
+                              scatter_dimension=1, tiled=True) + b
+
 def predict_fsdp_tp(params_frag, inputs):
   for W_frag, b_frag in params_frag:
-    W = jax.lax.all_gather(W_frag, 'batch', tiled=True)
-    b = jax.lax.all_gather(b_frag, 'batch', tiled=True)
-    block_result = jnp.dot(inputs, W)
-    outputs = jax.lax.psum_scatter(block_result, 'feats',
-                                   scatter_dimension=1, tiled=True) + b
+    outputs = layer_fsdp_tp(W_frag, b_frag, inputs)
     inputs = jax.nn.relu(outputs)
   return outputs
 
@@ -1580,7 +1629,7 @@ different from the number of layers, as each stage may be responsible for
 multiple layers.
 
 With SPMD pipelining, we exploit the fact that most layers in the network apply
-the computation, just with different parameter values. In particular, we can
+the same computation, just with different parameter values. In particular, we can
 stack together all the parameters except for those for the first and last
 layers, then use a `shard_map` to map over blocks of those layer parameters,
 where each block of parameters corresponds to a pipeline stage. We then use the

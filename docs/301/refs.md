@@ -36,12 +36,12 @@ internally. For example:
 
 ```{code-cell}
 @jax.jit
-def pure2(x):
+def pure(x):
   ref = jax.new_ref(x)
   ref[...] = ref[...] + ref[...]
   return ref[...]
 
-print(jax.grad(pure2)(3.0))  # 2.0
+print(jax.grad(pure)(3.0))  # 2.0
 ```
 
 Autodiff can also be applied to functions that take array refs as arguments.
@@ -52,14 +52,14 @@ other positions just pass through. Only non-differentiated values
 can be written into such plumbing refs:
 
 ```{code-cell}
-# error
-def err6(x, some_plumbing_ref):
+# error under jax.grad: writes a differentiated value into a plumbing ref
+def bad(x, some_plumbing_ref):
   y = x + x
   some_plumbing_ref[...] += y
   return y
 
 # fine
-def foo(x, some_plumbing_ref):
+def good(x, some_plumbing_ref):
   y = x + x
   some_plumbing_ref[...] += jax.lax.stop_gradient(y)
   return y
@@ -105,10 +105,10 @@ jax.grad(f)(1., grads_ref)
 print(grads_ref)  # Ref(0.54), the gradient at the stash point: cos(1.)
 ```
 
-Notice `stash_grads_fwd` is returning a `Ref` here. That's a special
+Notice that `stash_grads_fwd` returns a `Ref` here. That's a special
 allowance for `custom_vjp` fwd rules: it's really syntax for indicating which
-ref arguments should be shared by both the fwd and bwd rules. So any refs
-returned by a fwd rule must be arguments to that fwd rule.
+ref arguments the fwd and bwd rules share. So any refs returned by a fwd rule
+must be arguments to that fwd rule.
 
 ## Differentiating with respect to `Ref` arguments
 
@@ -169,7 +169,7 @@ def g(x_ref):
   return x_ref[...] ** 2
 
 x_ref = jax.new_ref(2.)
-_, g_vjp = jax.vjp(g, x_ref)  # runs g, so x_ref is updated in-place here
+_, g_vjp = jax.vjp(g, x_ref)  # runs g, so x_ref is updated in place here
 g_grad_ref = jax.new_ref(0.)
 g_vjp.with_refs(g_grad_ref)(1.0)
 print(g_grad_ref)  # Ref(-0.757), i.e. 2*sin(2)*cos(2)
@@ -180,7 +180,7 @@ print(g_grad_ref)  # Ref(-0.757), i.e. 2*sin(2)*cos(2)
 When differentiating with respect to an ordinary `Array` argument,
 `with_refs` is optional: we can call the VJP function directly and get the
 gradient back as a value in the usual way, or we can bind a ref and have the
-gradient accumulated into it in-place:
+gradient accumulated into it in place:
 
 ```{code-cell}
 _, sin_vjp = jax.vjp(jnp.sin, 1.0)
@@ -195,7 +195,7 @@ print(grad_ref)  # Ref(0.54)
 
 We can mix and match. Each entry of `with_refs` can be:
 
-* a `Ref`, meaning accumulate this argument's gradient into the ref in-place
+* a `Ref`, meaning accumulate this argument's gradient into the ref in place
   (the VJP call then returns a `jax.ad.GradRef()` placeholder in that
   position);
 * `jax.ad.GradValue()`, meaning return this argument's gradient as a value in
@@ -286,8 +286,8 @@ print(W_bar[0])  # [1., 1., 1., 1.]
 print(x_bar)  # DidntWant()
 ```
 
-This can save real work in the backward pass,
-like an eager form of dead code elimination. Transpose rules can check for
+This can save real work in the backward pass, like an eager form of dead
+code elimination. Transpose rules can check for
 `DontWant` and skip computing the corresponding cotangents. For example, the
 transpose of matrix multiplication usually computes two dot products, one for
 each operand's gradient, but with `DontWant` it computes only one. We can see
@@ -344,7 +344,8 @@ Each iteration of the outer scan runs a forward and backward pass for one
 microbatch, and `with_refs(grad_acc)` makes the backward pass add that
 microbatch's gradient contribution directly into `grad_acc`. Note that the
 scan body closes over `grad_acc`, which is fine for `scan` (though it
-wouldn't be for `vmap` or `shard_map`, as discussed above). Once all the
+wouldn't be for `vmap` or `shard_map`; see the ref restrictions in
+{ref}`jax-101-refs`). Once all the
 microbatches are processed, we `freeze` the accumulator to get the total
 batch gradient as an immutable `Array`.
 
@@ -357,21 +358,22 @@ grads_expected = jax.grad(
 print(jnp.allclose(grads, grads_expected, atol=1e-3, rtol=1e-3))  # True
 ```
 
-But unlike that version, the ref-based version never materializes
-per-microbatch gradients as separate arrays: there's one gradient buffer,
-allocated once, no matter how many microbatches we process.
+But unlike that version, the ref-based version never materializes a
+whole-model gradient per microbatch: each layer's contribution is added
+straight into one gradient buffer, allocated once, no matter how many
+microbatches we process.
 
 ## `foreach`, a new way to write `scan`
 
-As you may know, `jax.lax.scan` is a loop construct with a built-in fixed access
-pattern for scanned-over inputs and outputs. The access pattern is built in for
-autodiff reasons: if we were instead to slice into immutable inputs directly,
+`jax.lax.scan` is a loop construct with a built-in fixed access pattern for
+scanned-over inputs and outputs. The access pattern is built in for autodiff
+reasons: if we were instead to slice into immutable inputs directly,
 reverse-mode autodiff would end up creating one-hot gradients and summing them
-up, which can be asymptotically inefficient. See [Sec 5.3.3 of the Dex
-paper](https://arxiv.org/pdf/2104.05372).
+up, as in the `take` example above, which can be asymptotically inefficient.
+See [Sec 5.3.3 of the Dex paper](https://arxiv.org/pdf/2104.05372).
 
-But reading slices of `Ref`s doesn't have this efficiency problem: when we
-apply reverse-mode autodiff, we always generate in-place accumulation
+But reading slices of `Ref`s doesn't have this efficiency problem: under
+reverse-mode autodiff, those reads always become in-place accumulation
 operations. As a result, we no longer need to be constrained by `scan`'s fixed
 access pattern. We can write more flexible loops, e.g. with non-sequential
 access.
@@ -403,5 +405,58 @@ print(r)   # Ref(45, dtype=int32)
 print(ys)  # [ 0  2  4  6  8 10 12 14 16 18]
 ```
 
-Here, the loop runs immediately, updating `r` in-place and binding `ys` to be
-the mapped result.
+Here, the loop runs immediately, updating `r` in place and binding `ys` to
+the stacked outputs of the body.
+
+### Reading more than one element per iteration
+
+Looping over indices, rather than over the data itself, lets each iteration
+read whatever it needs from a ref. A common case that's awkward with `scan`'s
+access pattern is a loop that needs both `x[n]` and `x[n-1]`: with `scan`,
+you'd scan over two shifted copies of the input, `(xs[1:], xs[:-1])`, or
+thread the previous element through the loop carry. With a ref, each
+iteration just reads both. Here's a first-order high-pass filter,
+$y_n = \alpha (y_{n-1} + x_n - x_{n-1})$, with its state in a ref too:
+
+```{code-cell}
+def highpass(xs, alpha=0.9):
+  xs_ref = jax.new_ref(xs)
+  y_ref = jax.new_ref(0.)
+
+  @foreach(jnp.arange(1, len(xs)))
+  def ys(n):
+    y_ref[...] = alpha * (y_ref[...] + xs_ref[n] - xs_ref[n - 1])
+    return y_ref[...]
+
+  return ys
+```
+
+It matches a `scan` version that zips shifted copies, gradients included:
+
+```{code-cell}
+def highpass_scan(xs, alpha=0.9):
+  def step(y, x_and_prev):
+    x, x_prev = x_and_prev
+    y = alpha * (y + x - x_prev)
+    return y, y
+  return scan(step, 0., (xs[1:], xs[:-1]))[1]
+
+xs = jnp.sin(jnp.arange(8.)) + jnp.arange(8.) / 4
+loss = lambda f: lambda xs: jnp.sum(f(xs) ** 2)
+print(jnp.allclose(highpass(xs), highpass_scan(xs)))
+print(jnp.allclose(jax.grad(loss(highpass))(xs),
+                   jax.grad(loss(highpass_scan))(xs)))
+```
+
+And the backward pass is what we'd hope for:
+
+```{code-cell}
+ys, highpass_vjp = jax.vjp(highpass, xs)
+print(jax.make_jaxpr(highpass_vjp)(jnp.ones_like(ys)))
+```
+
+Each iteration of the reversed scan adds into exactly two entries of a single
+`f32[8]` gradient ref, `h[j]` and `h[k]`, one for `x[n]` and one for
+`x[n-1]`, with no shifted copies of the input and no one-hot arrays. The same
+approach works for any fixed set of neighbors, like reading `x[n-2]`,
+`x[n-1]`, and `x[n]` together.

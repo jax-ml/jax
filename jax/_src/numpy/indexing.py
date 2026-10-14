@@ -207,8 +207,8 @@ class NDIndexer:
   @classmethod
   def from_raw_indices(cls, indices: Index | tuple[Index, ...], shape: tuple[int, ...]) -> NDIndexer:
     """Create an NDIndexer object from raw user-supplied indices."""
-    indices = eliminate_deprecated_list_indexing(indices)
-    parsed = _parse_indices(indices, shape)
+    index_tuple = eliminate_deprecated_list_indexing(indices)
+    parsed = _parse_indices(index_tuple, shape)
     return cls(shape=shape, indices=parsed)
 
   def validate_static_indices(self, normalize_indices: bool = True) -> None:
@@ -253,7 +253,9 @@ class NDIndexer:
   @staticmethod
   def is_sharded(arr) -> bool:
     """Check whether the array is sharded."""
-    return isinstance(arr, array.ArrayImpl) and not arr.sharding.num_devices == 1
+    return isinstance(arr, array.ArrayImpl) and not (
+        arr.sharding.num_devices == 1 or arr.is_fully_replicated
+    )
 
   def has_partial_slices(self) -> bool:
     """Check whether the indexer contains partial slices.
@@ -1098,6 +1100,17 @@ class IndexingStrategy(enum.Enum):
   STATIC_SLICE = 'static_slice'
   DYNAMIC_SLICE = 'dynamic_slice'
 
+  @classmethod
+  def from_any(cls, s: IndexingStrategy | str) -> IndexingStrategy:
+    if isinstance(s, cls):
+      return s
+    if isinstance(s, str):
+      try:
+        return cls(s)
+      except ValueError:
+        raise ValueError(f"Unknown indexing strategy: {s!r}") from None
+    raise TypeError(f"Expected strategy to be IndexingStrategy or str; got {s!r}")
+
 
 def rewriting_take(
     arr: Array,
@@ -1117,6 +1130,9 @@ def rewriting_take(
 
   if not isinstance(strategy, IndexingStrategy):
     raise TypeError(f"Expected strategy to be IndexingStrategy; got {strategy}")
+
+  if strategy == IndexingStrategy.SCATTER:
+    raise ValueError(f"Indexing strategy {strategy} is not supported for take.")
 
   if config.check_static_indices.value and (mode is None or slicing.GatherScatterMode.from_any(mode) == slicing.GatherScatterMode.PROMISE_IN_BOUNDS):
     indexer.validate_static_indices(normalize_indices=normalize_indices)
@@ -1518,7 +1534,7 @@ def _should_unpack_list_index(x):
           or isinstance(x, (Sequence, slice))
           or x is Ellipsis or x is None)
 
-def eliminate_deprecated_list_indexing(idx):
+def eliminate_deprecated_list_indexing(idx: Any) -> tuple[Any, ...]:
   # "Basic slicing is initiated if the selection object is a non-array,
   # non-tuple sequence containing slice objects, [Ellipses, or newaxis
   # objects]". Detects this and raises a TypeError.

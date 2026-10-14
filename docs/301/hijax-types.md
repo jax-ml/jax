@@ -20,10 +20,9 @@ kernelspec:
 JAX's built-in data type is the array: functions you transform take arrays in
 and produce arrays out, and every intermediate the tracing machinery sees has
 an array type like `f32[3,4]`. When you want to work with aggregate data, the
-usual tool is a
-pytree ({ref}`jax-101-pytrees`): you
-bundle arrays into containers, and JAX transparently flattens the bundle
-into its array leaves at every boundary.
+usual tool is a pytree ({ref}`jax-101-pytrees`): you bundle arrays into
+containers, and JAX transparently flattens the bundle into its array leaves
+at every boundary.
 
 But sometimes you don't want transparency. Some data is best
 modeled as a new *type*, with its own identity:
@@ -51,7 +50,7 @@ We'll assume some familiarity with hijax primitives; see
 hijax, this is experimental: expect imports from `jax.experimental.hijax`,
 and expect the APIs to evolve.
 
-### TL;DR
+## TL;DR
 
 * Subclass `HiType` and implement `lo_ty`, `lower_val`, and `raise_val` to
   say how the type and its values lower to ordinary ("lojax") arrays, then
@@ -63,8 +62,9 @@ and expect the APIs to evolve.
   on the primitives.
 * For `vmap`, implement `dec_rank` and `inc_rank` on the type along with a
   `MappingSpec` subclass of your own design, and `batch` rules on the
-  primitives. Mapped-over hi type arguments require an explicit `axis_size`
-  and spec-valued `in_axes`/`out_axes` entries.
+  primitives. Mapped-over hi type arguments take spec-valued
+  `in_axes`/`out_axes` entries, plus an explicit `axis_size` when no array
+  argument is mapped.
 * For sharding in types (explicit mode), record sharding data on your type
   (e.g. a `NamedSharding` field), consume it in `lo_ty`, and propagate it
   in your primitives' typing rules.
@@ -104,7 +104,7 @@ give up:
   code as two unrelated array values. We'd rather see one value, of one
   type, so jaxprs say what they mean.
 * **Tangents.** A quantized array's values live on a discrete grid, so it
-  makes no sense to perturb them along the grid. But a pytree's tangent
+  makes no sense to perturb them infinitesimally. But a pytree's tangent
   type is forced to be the pytree of its leaves' tangent types, and the
   tangent type of an integer array like `qvalue` is a `float0` array,
   which can only carry a trivial payload. So as a pytree, a quantized
@@ -245,7 +245,7 @@ def dequantize(qx):
 
 Notice that `Quantize`'s `out_aval` and `Dequantize`'s `in_avals` are
 `QArrayTy`s: the new type appears in primitive type signatures just like
-array types do. Also notice `expand` freely constructs and inspects the
+array types do. Also notice that `expand` freely constructs and inspects the
 `QArray` value class; primitive implementations are inside the abstraction
 boundary.
 
@@ -305,9 +305,9 @@ components, and its `QArray` arguments are genuine `QArray` instances
 value as a plain container is exactly right.
 
 (The top-level peeks at attributes like `qx.qvalue` elsewhere in this
-document are fine for the same reason eager `expand` is fine: they run
-eagerly, on concrete values. But inside any function that might get
-traced, stick to primitives.)
+document are fine too: they run eagerly, so `qx` is a genuine `QArray`
+holding concrete arrays. But inside any function that might get traced,
+stick to primitives.)
 
 ### A more realistic op: dense × quantized matmul
 
@@ -360,7 +360,7 @@ operand types pretty-printed. And `expand` exploits the representation:
 because the scales apply per-row along the contraction axis, they can be
 folded into the dense operand, so the heavy matmul runs directly against
 the `int8` payload rather than a dequantized copy. Owning the op as a
-single primitive lets us state that rewriting once, in one place.
+single primitive lets us express that rewrite once, in one place.
 
 Also notice the discipline from the previous section: `expand` reads
 `qw.scale` and `qw.qvalue` as container attributes, while the VJP rules,
@@ -391,8 +391,10 @@ When we trace, the quantized array appears as a single value of type
 jax.jit(lambda x: dequantize(quantize(x))).trace(x).jaxpr
 ```
 
-Compare to the pytree approach, where the same computation would show four
-array-typed intermediates with no indication that they pair up. The hi type
+Compare to the pytree approach, where the jaxpr would inline the whole
+computation, and the quantized array would appear only as two unrelated
+intermediates, an `i8[2,3]` and an `f32[2]`, with no indication that they
+pair up. The hi type
 only disappears at lowering time, when `expand` is traced and each
 `q8[...]`-typed value is expanded into the array components given by
 `lo_ty`.
@@ -402,10 +404,10 @@ Ops with mixed operand kinds read just as directly, as one equation with a
 
 ```{code-cell}
 jax.jit(matmul_q).trace(x, qw).jaxpr
-#
-# `jit` works, with quantized arrays as arguments, results, and
-# intermediates:
 ```
+
+And `jit` works, with quantized arrays as arguments, results, and
+intermediates:
 
 ```{code-cell}
 print(jax.jit(lambda x: dequantize(quantize(x)))(x))   # QArray internal
@@ -423,7 +425,8 @@ we implemented
 
 ```python
   def to_tangent_aval(self):
-    return ShapedArray(self.shape, jnp.dtype('float32'))
+    return ShapedArray(self.shape, jnp.dtype('float32'),
+                       sharding=self.sharding)
 ```
 
 which says: the tangent type of a quantized array is a plain `f32` array.
@@ -657,7 +660,7 @@ design choice to make, and we made it back in `lo_ty`: `qvalue` carries
 the type's sharding, and `scale` shards like it with the last axis
 dropped, so every row travels with its scale.
 
-Let's see it work. We make a mesh (this is where we use the 8 CPU devices
+Let's see it work. We make a mesh (this is where we use the CPU devices
 requested in this document's first cell), shard some rows across it, and
 quantize. The shardings propagate through our typing rules into the
 result type, which `jax.typeof` displays with `@` markers:
@@ -712,7 +715,7 @@ except TypeError as e:
 Autodiff composes with all of this. Recall that `MatmulQ`'s backward rule
 passed `out_sharding` hints to its matmuls: that's because the cotangent
 for `qw` contracts over the row axis, which may be sharded (as it is
-here), and explicit mode refuses to guess how an all-sharded contraction
+here), and explicit mode refuses to guess how a contraction over a sharded axis
 should land. The right answer is the primal operand's sharding, since
 cotangents live where their primals live:
 

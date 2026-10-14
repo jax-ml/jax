@@ -360,7 +360,7 @@ class CoreTest(jtu.JaxTestCase):
       g_jit(1)
 
     with self.assertRaisesRegex(TypeError,
-          'This BatchTracer with object id'):
+          'This VmapTracer with object id'):
       g_vmap(jnp.ones((1, )))
 
   def test_aval_str_short_mem_space(self):

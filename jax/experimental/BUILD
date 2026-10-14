@@ -22,6 +22,7 @@ load(
     "mosaic_internal_users",
     "pallas_fuser_users",
     "pallas_sc_internal_users",
+    "pallas_tpu_ops_users",
     "pallas_triton_internal_users",
     "py_deps",
     "py_library_providing_imports_info",
@@ -76,6 +77,12 @@ package_group(
     name = "pallas_sc_users",
     includes = ["//jax:internal"],
     packages = pallas_sc_internal_users,
+)
+
+package_group(
+    name = "pallas_tpu_ops_users",
+    includes = ["//jax:internal"],
+    packages = pallas_tpu_ops_users,
 )
 
 package_group(
@@ -161,8 +168,7 @@ pytype_strict_library(
     srcs = ["overlap.py"],
     visibility = ["//visibility:public"],
     deps = [
-        "//jax/_src:api",
-        "//jax/_src:ffi",
+        "//jax/_src:program_order",
     ],
 )
 
@@ -452,6 +458,7 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic:lowering",
         "//jax/_src/pallas/mosaic:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic:pipeline",
+        "//jax/_src/pallas/mosaic:prefetch",
         "//jax/_src/pallas/mosaic:primitives",
         "//jax/_src/pallas/mosaic:random",
         "//jax/_src/pallas/mosaic:tpu_info",
@@ -476,7 +483,9 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_tpu_ops",
     srcs = glob(["pallas/ops/tpu/**/*.py"]),
-    visibility = ["//visibility:public"],
+    visibility = [
+        ":pallas_tpu_ops_users",
+    ],
     deps = [
         ":pallas",
         ":pallas_tpu",
@@ -650,6 +659,7 @@ pytype_strict_library(
         "//jax/_src:dtypes",
         "//jax/_src:ffi",
         "//jax/_src:flattree",
+        "//jax/_src:hijax",
         "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:numpy",
@@ -686,6 +696,7 @@ pytype_strict_library(
     deps = [
         ":mesh_utils",
         "//jax",
+        "//jax/_src:internal_mesh_utils",
         "//jax/_src:xla_bridge",
         "//jax/_src/lib",
     ],
@@ -712,6 +723,17 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src:xla_metadata",
+    ],
+)
+
+pytype_strict_library(
+    name = "thunky",
+    srcs = ["thunky.py"],
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("thunky"),
+    deps = [
+        "//jax/_src/thunky",
     ],
 )
 
@@ -747,6 +769,7 @@ filegroup(
         "pjit.py",
         "scheduling_groups.py",
         "shard_map.py",
+        "topologies.py",
         "xla_metadata.py",
     ],
     visibility = ["//jax:internal"],

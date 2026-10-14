@@ -28,25 +28,31 @@ from jax._src.pallas.mosaic.core import SemaphoreType as SemaphoreType
 from jax._src.pallas.mosaic.core import SideEffectType as SideEffectType
 from jax._src.pallas.mosaic.core import TensorCoreMesh as TensorCoreMesh
 from jax._src.pallas.mosaic.helpers import core_barrier as core_barrier
+from jax._src.pallas.mosaic.helpers import join_bits as join_bits
+from jax._src.pallas.mosaic.helpers import pack_fp6 as pack_fp6
 from jax._src.pallas.mosaic.helpers import run_on_first_core as run_on_first_core
+from jax._src.pallas.mosaic.helpers import split_bits as split_bits
 from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
+from jax._src.pallas.mosaic.helpers import unpack_fp6 as unpack_fp6
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import force_tpu_interpret_mode as force_tpu_interpret_mode
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import reset_tpu_interpret_mode_state as reset_tpu_interpret_mode_state
 from jax._src.pallas.mosaic.interpret.interpret_pallas_call import set_tpu_interpret_mode as set_tpu_interpret_mode
 from jax._src.pallas.mosaic.interpret.params import InterpretParams as InterpretParams
 from jax._src.pallas.mosaic.lowering import LoweringException as LoweringException
 from jax._src.pallas.mosaic.pipeline import BufferedRef as BufferedRef
-from jax._src.pallas.mosaic.pipeline import BufferedRefBase as BufferedRefBase
+from jax._src.pallas.mosaic.pipeline import BufferedRefBase as _deprecated_BufferedRefBase
 from jax._src.pallas.mosaic.pipeline import BufferType as BufferType
 from jax._src.pallas.mosaic.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as emit_pipeline_with_allocations
 from jax._src.pallas.mosaic.pipeline import PipelineStep as PipelineStep
+from jax._src.pallas.mosaic.prefetch import emit_pipeline_with_async_prefetch as emit_pipeline_with_async_prefetch
 from jax._src.pallas.mosaic.primitives import annotate as annotate
 from jax._src.pallas.mosaic.primitives import async_copy as async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
 from jax._src.pallas.mosaic.primitives import conv as conv
 from jax._src.pallas.mosaic.primitives import get_barrier_semaphore as get_barrier_semaphore
+from jax._src.pallas.mosaic.primitives import has_memory_space as has_memory_space
 from jax._src.pallas.mosaic.primitives import load as load
 from jax._src.pallas.mosaic.primitives import make_async_copy as make_async_copy
 from jax._src.pallas.mosaic.primitives import make_async_remote_copy as make_async_remote_copy
@@ -95,6 +101,12 @@ SEMAPHORE = MemorySpace.SEMAPHORE
 
 
 _deprecations = {
+    # Added October 13, 2026
+    "BufferedRefBase": (
+        "pltpu.BufferedRefBase is deprecated. It is internal to the pipeline"
+        " implementation and should not be used.",
+        _deprecated_BufferedRefBase,
+    ),
     # Added June 30, 2026
     "create_tensorcore_mesh": (
         "pltpu.create_tensorcore_mesh is deprecated, use pltpu.TensorCoreMesh"
@@ -108,37 +120,11 @@ _deprecations = {
         " Use pl.HOST instead.",
         None,
     ),
-    # Finalized in JAX v0.11.0
-    # TODO(jakevdp): remove these for JAX v0.12.0.
-    "semaphore": (
-        "pltpu.semaphore was deprecated in JAX v0.10.0, and removed in JAX"
-        " v0.11.0. Use pl.semaphore instead.",
-        None
-      ),
-    "DeviceIdType": (
-        "pltpu.DeviceIdType was deprecated in JAX v0.10.0, and removed in JAX"
-        " v0.11.0. Use pl.DeviceIdType instead.",
-        None,
-    ),
-    "semaphore_read": (
-        "pltpu.semaphore_read was deprecated in JAX v0.10.0, and removed in"
-        " JAX v0.11.0. Use pl.semaphore_read instead.",
-        None,
-    ),
-    "semaphore_signal": (
-        "pltpu.semaphore_signal was deprecated in JAX v0.10.0, and removed in"
-        " JAX v0.11.0. Use pl.semaphore_signal instead.",
-        None,
-    ),
-    "semaphore_wait": (
-        "pltpu.semaphore_wait was deprecated in JAX v0.10.0, and removed in"
-        " JAX v0.11.0. Use pl.semaphore_wait instead.",
-        None,
-    ),
 }
 
 if typing.TYPE_CHECKING:
   from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
+  BufferedRefBase = _deprecated_BufferedRefBase
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

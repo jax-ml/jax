@@ -40,6 +40,9 @@ class RemoteDMATest(parameterized.TestCase):
       self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('SparseCore only supported on TPU v5+')
+    self.enter_context(
+        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
+    )
 
   @parameterized.product(direction=['left', 'right'], num_devices=[2, None])
   def test_collective_permute_1d(self, direction, num_devices):
@@ -63,10 +66,10 @@ class RemoteDMATest(parameterized.TestCase):
         neighbor = lax.rem(my_id + 1, axis_size)
       else:
         neighbor = lax.rem(my_id + axis_size - 1, axis_size)
-      pl.semaphore_signal(ready_sem, device_id=neighbor)
+      pl.semaphore_signal(ready_sem, device_id={'x': neighbor})
       pl.semaphore_wait(ready_sem)
       pltpu.async_remote_copy(
-          x_ref, y_ref, send_sem, recv_sem, device_id=neighbor
+          x_ref, y_ref, send_sem, recv_sem, device_id={'x': neighbor}
       ).wait()
 
     num_devices = num_devices or jax.device_count()
@@ -113,11 +116,17 @@ class RemoteDMATest(parameterized.TestCase):
         neighbor = lax.rem(my_id + 1, axis_size)
       else:
         neighbor = lax.rem(my_id + axis_size - 1, axis_size)
-      pl.semaphore_signal(ready_sem, device_id=(my_other_id, neighbor))
+      pl.semaphore_signal(
+          ready_sem, device_id={'y': my_other_id, 'x': neighbor}
+      )
       pl.semaphore_wait(ready_sem)
       pltpu.async_remote_copy(
-            x_ref, y_ref, send_sem, recv_sem, device_id=(my_other_id, neighbor)
-        ).wait()
+          x_ref,
+          y_ref,
+          send_sem,
+          recv_sem,
+          device_id={'y': my_other_id, 'x': neighbor},
+      ).wait()
 
     axis_size = jax.device_count() // 2
     x = jnp.arange(axis_size * 8 * 128).reshape((axis_size * 8, 128))
@@ -170,9 +179,6 @@ class RemoteDMATest(parameterized.TestCase):
         mesh=s_mesh,
         out_type=jax.ShapeDtypeStruct(local_out_shape, x.dtype),
         scratch_types=scratch_types,
-        compiler_params=pltpu.CompilerParams(
-            needs_layout_passes=False,
-        ),
     )
     def shift_kernel(x_ref, out_ref, *, scratch_recv, send_sem, recv_sem, scratch_send=None):
       assert x_ref.shape == (1, num_cores, num_subcores, sc_info.num_lanes)
@@ -220,6 +226,9 @@ class DistributedMpmdTest(parameterized.TestCase):
       self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('SparseCore only supported on TPU v5+')
+    self.enter_context(
+        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
+    )
 
   def test_mpmd_reduce_scatter(self):
     P = jax.P
@@ -353,10 +362,6 @@ class DistributedMpmdTest(parameterized.TestCase):
               scs_to_vec=pltpu.SemaphoreType.REGULAR(()) @ vec_mesh,
               barrier_scs_sem=pltpu.SemaphoreType.REGULAR(()) @ scs_mesh,
               barrier_vec_sem=pltpu.SemaphoreType.REGULAR(()) @ vec_mesh,
-          ),
-          compiler_params=pltpu.CompilerParams(
-              # TODO(ivyzheng): Remove this when the layout pass flag is gone.
-              needs_layout_passes=False,
           ),
       )()
       actual = result.reshape(-1)

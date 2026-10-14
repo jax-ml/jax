@@ -814,7 +814,7 @@ class StateDischargeTest(jtu.JaxTestCase):
     jaxpr, _ = trace_to_jaxpr(f, scalar_ref_1, scalar_ref_2)
 
     discharged_jaxpr = discharge_state(
-        core.ClosedJaxpr(jaxpr, ()), should_discharge=[False, True]
+        jaxpr, should_discharge=[False, True]
     )
     prim_count = lambda p, j: sum(eqn.primitive == p for eqn in j.eqns)
     self.assertEqual(
@@ -1273,7 +1273,7 @@ class StateControlFlowTest(jtu.JaxTestCase):
       return run_state(body)((1., 0., 2.))
     jaxpr = jax.make_jaxpr(f)(True).jaxpr
     [run_state_eqn] = jaxpr.eqns
-    *_, cond_eqn = discharge_state(core.ClosedJaxpr(run_state_eqn.params["jaxpr"], ())).eqns
+    *_, cond_eqn = discharge_state(run_state_eqn.params["jaxpr"]).eqns
     self.assertIs(cond_eqn.primitive, lax.cond_p)
     self.assertLen(cond_eqn.invars, 4)  # pred + 3x ref values
     self.assertLen(cond_eqn.outvars, 1)  # only the updated ref value
@@ -1581,7 +1581,7 @@ class StateControlFlowTest(jtu.JaxTestCase):
           transforms=(state_types.SelectTransform(idx),),
       )
       with self.assertRaisesRegex(
-          ValueError, "Found inconsistent memory spaces in multiref"
+          TypeError, "Cannot select from Refs of different types"
       ):
         _ = multi_ref.memory_space
     fn(0)
@@ -2158,6 +2158,43 @@ class PinnedBuffersTest(jtu.JaxTestCase):
         core.MemorySpace.Host,
     )
 
+  def test_shard_map_ref_preserves_memory_space_and_kind(self):
+    mesh = jtu.create_mesh((1,), ("x",))
+    ref_aval = AbstractRef(
+        core.ShapedArray((4,), jnp.int32),
+        memory_space=core.MemorySpace.Host,
+        kind="custom_kind",
+    )
+    sharded = core.shard_aval(
+        mesh, frozenset({"x"}), False, jax.sharding.PartitionSpec(), ref_aval
+    )
+    self.assertIsInstance(sharded, AbstractRef)
+    self.assertEqual(sharded.memory_space, core.MemorySpace.Host)
+    self.assertEqual(sharded.kind, "custom_kind")
+
+    with jax.set_mesh(mesh):
+
+      def f(x):
+        host_ref = jax.new_ref(x, memory_space=core.MemorySpace.Host)
+
+        @jax.shard_map(
+            in_specs=(
+                jax.sharding.PartitionSpec(),
+                jax.sharding.PartitionSpec(),
+            ),
+            out_specs=(),
+            check_vma=False,
+        )
+        def _write(v, r):
+          self.assertEqual(jax.typeof(r).memory_space, core.MemorySpace.Host)
+          r[...] = v
+          return ()
+
+        _write(jnp.ones((4,), dtype=jnp.int32), host_ref)
+        return host_ref[...]
+
+      jax.make_jaxpr(f)(jnp.zeros((4,), dtype=jnp.int32))
+
 
 class WithMemorySpaceConstraintTest(jtu.JaxTestCase):
 
@@ -2273,18 +2310,67 @@ class RefTransformTest(jtu.JaxTestCase):
     expected = jnp.ones((4, 3))
     self.assertAllClose(f(), expected)
 
-  def test_addupdate_on_reshaped_slice_raises_error(self):
+  def test_addupdate_on_reshaped_slice(self):
     @jax.jit
     def f():
       ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
       ref_addupdate(ref.reshape(2, 6), (0, slice(0, 3)), jnp.ones(3, dtype=jnp.float32))
       return ref[...]
 
+    expected = jnp.array(
+        [[1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    self.assertAllClose(f(), expected)
+
+  def test_addupdate_on_reshaped_view_slice(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
+      view = ref.reshape(2, 6).at[0, :3]
+      ref_addupdate(view, (), jnp.ones(3, dtype=jnp.float32))
+      return ref[...]
+
+    expected = jnp.array(
+        [[1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    self.assertAllClose(f(), expected)
+
+  def test_addupdate_on_sliced_ref_reshape(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 6), dtype=jnp.float32))
+      ref_addupdate(ref.at[0].reshape(2, 3), (), jnp.ones((2, 3), dtype=jnp.float32))
+      return ref[...]
+
+    expected = jnp.zeros((4, 6), dtype=jnp.float32).at[0].set(1.0)
+    self.assertAllClose(f(), expected)
+
+  def test_addupdate_on_reshaped_sliced_reshaped(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
+      view = ref.reshape(2, 6).at[0].reshape(3, 2)
+      ref_addupdate(view, (), jnp.ones((3, 2), dtype=jnp.float32))
+      return ref[...]
+
+    expected = jnp.array(
+        [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    self.assertAllClose(f(), expected)
+  def test_addupdate_on_multiple_indexers_raises_error(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.zeros((4, 3), dtype=jnp.float32))
+      ref_addupdate(ref.at[0].at[0], (), jnp.array(1.0, dtype=jnp.float32))
+      return ref[...]
+
     with self.assertRaisesRegex(
-        NotImplementedError, "does not support combining an indexer"
+        NotImplementedError, "Multiple indexers are not supported"
     ):
       f()
-
   def test_addupdate_on_bitcast_raises_error(self):
     @jax.jit
     def f():
@@ -2320,6 +2406,34 @@ class RefTransformTest(jtu.JaxTestCase):
 
     self.assertEqual(f().shape, (1,))
     self.assertAllClose(f(), jnp.array([5.0]))
+
+  def test_new_ref_host_memory_space_outside_jit(self):
+    ref1 = jax.new_ref(
+        jnp.ones((4,), dtype=jnp.int32), memory_space=core.MemorySpace.Host
+    )
+    self.assertEqual(core.typeof(ref1).memory_space, core.MemorySpace.Host)
+    self.assertEqual(
+        core.typeof(ref1).inner_aval.memory_space, core.MemorySpace.Device
+    )
+    self.assertEqual(ref1.sharding.memory_kind, "pinned_host")
+
+    host_arr = jax.device_put(
+        jnp.arange(4, dtype=jnp.int32), core.MemorySpace.Host
+    )
+    ref2 = jax.new_ref(host_arr)
+    self.assertEqual(core.typeof(ref2).memory_space, core.MemorySpace.Host)
+    self.assertEqual(
+        core.typeof(ref2).inner_aval.memory_space, core.MemorySpace.Device
+    )
+    self.assertEqual(ref2.sharding.memory_kind, "pinned_host")
+    np.testing.assert_array_equal(
+        np.asarray(jax.freeze(ref2)), np.arange(4, dtype=np.int32)
+    )
+
+  def test_concrete_ref_at(self):
+    ref = jax.new_ref(jnp.arange(4, dtype=jnp.int32))
+    ref.at[1:3][...] += 10
+    self.assertArraysEqual(ref[...], jnp.array([0, 11, 12, 3], dtype=jnp.int32))
 
 
 if __name__ == '__main__':

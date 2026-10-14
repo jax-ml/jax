@@ -223,6 +223,7 @@ py_library_providing_imports_info(
         "//jax/_src:pmap",
         "//jax/_src:pretty_printer",
         "//jax/_src:profiler",
+        "//jax/_src:program_order",
         "//jax/_src:public_test_util",
         "//jax/_src:random",
         "//jax/_src:ref",

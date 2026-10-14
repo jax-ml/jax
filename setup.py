@@ -19,12 +19,12 @@ from setuptools import setup, find_packages
 
 project_name = 'jax'
 
-_current_jaxlib_version = '0.11.1'
+_current_jaxlib_version = '0.11.2'
 
 # The following should be updated after each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.11.1'
+_latest_jaxlib_version_on_pypi = '0.11.2'
 
-_libtpu_version = '0.0.46.*'
+_libtpu_version = '0.0.50.*'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -64,7 +64,7 @@ setup(
     install_requires=[
         f'jaxlib >={_minimum_jaxlib_version}, <={_jax_version}',
         'ml_dtypes>=0.5.0',
-        'numpy>=2.1',
+        'numpy>=2.2',
         'opt_einsum',
         'scipy>=1.15',
     ],

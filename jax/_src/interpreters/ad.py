@@ -303,8 +303,7 @@ def backward_pass3(
   # Returns a dict of backward-pass log entries. A fancy transpose rule can
   # contribute entries by returning a dict (None, which all accumulator-style
   # rules return today, means the same as {}). Entries are merged in backward
-  # execution order with clobber semantics, so on a key collision the entry
-  # from the earlier-in-forward-order equation wins.
+  # execution order, and repeated keys are an error.
   if all(type(ct) is Zero for ct in cotangents_in) and not jaxpr.effects:
     return {}
 
@@ -320,7 +319,7 @@ def backward_pass3(
     if eqn.primitive.ref_primitive:
       v, = eqn.outvars
       lin_eqns.append(eqn)
-      if eqn.primitive is core.ref_p or eqn.primitive is core.empty_ref_p:
+      if eqn.primitive.ref_allocating:
         env[v] = RefAccum(v.aval.inner_aval.to_ct_aval())  # type: ignore
       elif eqn.primitive is core.freeze_p:
         env[v] = ValAccum(v.aval.to_ct_aval())
@@ -328,7 +327,8 @@ def backward_pass3(
         env[v] = RefAccum(v.aval.to_ct_aval())
       else:
         assert False
-    elif any(isinstance(read(x), GradAccum) for x in eqn.invars):
+    elif (isinstance(eqn.primitive, VJPNode) or
+          any(isinstance(read(x), GradAccum) for x in eqn.invars)):
       for v in eqn.outvars:
         env[v] = ValAccum(v.aval.to_ct_aval())
       lin_eqns.append(eqn)
@@ -381,6 +381,12 @@ def _merge_rule_logs(logs: dict, eqn_logs, primitive) -> dict:
         f"the fancy transpose rule for '{primitive}' should return None or a "
         "dict of backward-pass log entries (see VJP.with_logs), but it "
         f"returned a {type(eqn_logs).__name__}")
+  for key in eqn_logs:
+    if key in logs:
+      raise ValueError(
+          f"Duplicate backward-pass log key {key!r} from the fancy transpose "
+          f"rule for '{primitive}'. Each key must be unique within a "
+          "backward pass.")
   return {**logs, **eqn_logs} if eqn_logs else logs
 
 def _name_stack_ctx(src_info):
@@ -465,13 +471,18 @@ class NullAccum(GradAccum):
 fancy_transposes: dict[core.Primitive, Callable] = {}
 
 def project_accums(args):
-  result, specs = [], []
+  result, specs, ref_idx = [], [], {}
   for x in args:
     if isinstance(x, ValAccum):
       specs.append((ValAccum, x.aval))
     elif isinstance(x, RefAccum):
-      result.append(x.inst().ref)
-      specs.append((RefAccum, x.aval))
+      ref = x.inst().ref
+      if (i := ref_idx.get(id(core.get_referent(ref)))) is None:
+        ref_idx[id(core.get_referent(ref))] = len(result)
+        result.append(ref)
+        specs.append((RefAccum, x.aval))
+      else:
+        specs.append((i, x.aval))
     elif isinstance(x, NullAccum):
       specs.append((NullAccum, x.aval))
     else:
@@ -486,6 +497,8 @@ def unproject_accums(specs, result):
       args.append(ValAccum(aval))
     elif k is RefAccum:
       args.append(RefAccum(aval, next(result_)))
+    elif type(k) is int:
+      args.append(RefAccum(aval, result[k]))
     elif k is NullAccum:
       args.append(NullAccum(aval))
     elif k is None:
@@ -538,7 +551,7 @@ class JVPTrace(Trace):
   def process_primitive(self, primitive, tracers, params, /):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if (all(type(t) is Zero for t in tangents_in) and
-        primitive is not core.ref_p and primitive is not core.empty_ref_p and
+        not primitive.ref_allocating and
         not any(isinstance(typeof(x), AbstractRef) for x in primals_in)):
       avals = tuple(core.typeof(x) for x in primals_in)
       return primitive.bind_with_trace(self.parent_trace, primals_in, avals, params)
@@ -1110,6 +1123,37 @@ def _interleave(xs, ys):
   return [e for pair in zip(xs, ys) for l in pair for e in l]
 
 
+class VJPNode(core.Primitive):
+  def __init__(self, prim):
+    super().__init__(f'vjp_node[{prim}]')
+    self.prim, self.multiple_results = prim, prim.multiple_results
+
+  def bind_with_trace(self, trace, args, avals, params, /):
+    if isinstance(trace, pe.DynamicJaxprTrace):
+      return trace.process_primitive(self, args, params)
+    prim = self.prim
+    return prim.bind_with_trace(trace, args, avals, prim.get_bind_params(params))
+
+  def abstract_eval(self, *avals, **params):
+    return self.prim.abstract_eval(*avals, **params)
+
+  def is_high(self, *avals, **params):
+    return self.prim.is_high(*avals, **params)
+
+@functools.cache
+def vjp_node(prim):
+  node = VJPNode(prim)
+  for rules in (fancy_transposes, primitive_transposes, core.custom_typechecks):
+    if prim in rules:
+      rules[node] = rules[prim]
+  pe.dce_rules[node] = partial(_vjp_node_dce, prim)
+  return node
+
+def _vjp_node_dce(prim, used_outs, live_ins, eqn):
+  rule = pe.dce_rules.get(prim, pe._default_dce_rule)
+  used_ins, new_eqn = rule(used_outs, live_ins, eqn.replace(primitive=prim))
+  return used_ins, new_eqn and new_eqn.replace(primitive=eqn.primitive)
+
 custom_lin_p: core.Primitive = core.Primitive('custom_lin')
 custom_lin_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
 custom_lin_p.multiple_results = True
@@ -1119,14 +1163,28 @@ def raise_custom_vjp_error_on_jvp(*_, **__):
                   "function.")
 custom_lin_p.def_impl(raise_custom_vjp_error_on_jvp)
 
+class CustomBwdWithAccums:
+  """A custom_vjp bwd rule that takes gradient accumulators.
+
+  Called as a function, it follows the usual protocol for bwd rules,
+  ``(*res, *cts_out) -> (cts_in, logs)``, so transformations that wrap bwd
+  rules (e.g. vmap) needn't know about accumulators. When a bwd rule reaches
+  the transpose of custom_lin unwrapped, it gets the accumulators instead.
+  """
+  def call_with_accums(self, res, cts_out, accums):
+    """Takes one accumulator per primal input (None for zero tangents), and
+    returns backward-pass logs (or None)."""
+    raise NotImplementedError
+
 def _custom_lin_transpose_fancy(cts_out, *invals, num_res,
                                 bwd: lu.WrappedFun, out_avals,
                                 symbolic_zeros, in_zeros):
   res, accums = split_list(invals, [num_res])
-  if symbolic_zeros:
-    cts_out = map(replace_internal_symbolic_zeros, cts_out)
-  else:
-    cts_out = map(instantiate_zeros, cts_out)
+  cts_out = map(replace_internal_symbolic_zeros, cts_out)
+  if not bwd.transforms and isinstance(bwd.f, CustomBwdWithAccums):
+    accums_ = iter(accums)
+    all_accums = [None if z else next(accums_) for z in in_zeros]
+    return bwd.f.call_with_accums(res, cts_out, all_accums)
   cts_in, logs = bwd.call_wrapped(*res, *cts_out)
   cts_in = map(replace_rule_output_symbolic_zeros, cts_in)
   nz_cts_in, _ = partition_list(in_zeros, cts_in)

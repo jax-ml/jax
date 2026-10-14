@@ -25,11 +25,12 @@ describe them.
 
 This page is about the general case: the batched, N-dimensional convolutions
 used in deep neural networks, computed by
-{func}`jax.lax.conv_general_dilated`. It's a very general function, and it's
-not very obvious how to use it, so we'll work through the common use-cases.
+{func}`jax.lax.conv_general_dilated`. It's very general, and not obvious to use,
+so we'll work through the common use cases.
 
-A survey of the family of convolutional operators, [a guide to convolutional
-arithmetic](https://arxiv.org/abs/1603.07285), is highly recommended reading.
+For a survey of the family of convolutional operators, [A guide to
+convolution arithmetic for deep learning](https://arxiv.org/abs/1603.07285)
+is highly recommended reading.
 
 ## Setup: a kernel and an image
 
@@ -201,10 +202,12 @@ plt.plot(out[0]);
 
 ## 3D convolutions
 
+The same pattern extends to three spatial dimensions:
+
 ```{code-cell}
 import matplotlib as mpl
 
-# Random 3D kernel - HWDIO layout
+# 3D kernel - HWDIO layout
 kernel = jnp.array([
   [[0, 0,  0], [0,  1,  0], [0,  0,   0]],
   [[0, -1, 0], [-1, 0, -1], [0,  -1,  0]],

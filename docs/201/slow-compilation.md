@@ -8,7 +8,7 @@ compilation, and how to avoid common performance gotchas.
 
 ---
 
-## 1. Configuring Diagnostic Flags
+## 1. Configuring diagnostic flags
 
 JAX provides several built-in configuration options to log tracing and
 compilation times.
@@ -16,11 +16,11 @@ You can enable these via environment variables,
 Python API calls (`jax.config.update`),
 or ABSL command-line flags (if `jax.config.config_with_absl()` is called).
 
-### Logging Compilations and Cache Misses
+### Logging compilations and cache misses
 
 * **`jax_log_compiles`**: Logs elapsed time for tracing, lowering, and
-  compilation as a warning. If the flag is unset (default) the elapsed times
-  are still logged as debug messages.
+  compilation as a warning. If the flag is unset (the default), the elapsed
+  times are still logged as debug messages.
 
 * **`jax_explain_cache_misses`**: Logs an explanation whenever JAX misses
   its in-memory tracing cache or persistent compilation cache.
@@ -46,10 +46,11 @@ jax.config.update("jax_dump_ir_modes", "eqn_count_pprof")
 JAX_LOG_COMPILES=1 JAX_EXPLAIN_CACHE_MISSES=1 JAX_DUMP_IR_TO=/tmp/jax_ir JAX_DUMP_IR_MODES=eqn_count_pprof python my_script.py
 ```
 
-You can then try to use an LLM to summarize the log to identify
+The resulting logs can be long; an LLM can help summarize them to identify
 slow stages and diagnose the problem.
 
-OSS users of JAX may need to enable `INFO` logs from JAX and XLA by setting
+Depending on your setup, you may also need to enable `INFO` logs from JAX and
+XLA by setting
 
 ```bash
 export TF_CPP_MIN_LOG_LEVEL=0
@@ -57,15 +58,16 @@ export TF_CPP_MIN_LOG_LEVEL=0
 
 ---
 
-## 2. What to Look for in the Logs
+## 2. What to look for in the logs
 
 Once you have enabled `JAX_LOG_COMPILES` and `JAX_EXPLAIN_CACHE_MISSES`,
 look for the following markers in the logs.
 
-### Tracing, Lowering, and Compilation Durations
+### Tracing, lowering, and compilation durations
 
-When `JAX_LOG_COMPILES` is enabled, JAX logs the exact elapsed time for
-each major phase of execution for each top-level function.
+When `JAX_LOG_COMPILES` is enabled, JAX logs the elapsed time of each major
+phase (tracing, lowering to MLIR, and XLA compilation) for each top-level
+function.
 
 ```text
 W0610 23:50:26.227175 dispatch.py:205] Finished tracing flax_forward for jit in 0.057370424 sec
@@ -74,10 +76,10 @@ W0610 23:50:26.521261 dispatch.py:205] Finished jaxpr to MLIR module conversion 
 W0610 23:50:44.162414 pxla.py:1234] Finished XLA compilation of jit(flax_forward) in 10.1791505315 sec
 ```
 
-You may see too many stages, or a few stages that are very slow.
-Read further for more details.
+You may see too many of these, or a few that are very slow. The sections
+below explain what to look for.
 
-### Many Eager Op-by-Op Compilations
+### Many eager op-by-op compilations
 
 If your log exhibits a flood of compilations for tiny
 primitive operations before your main computation starts:
@@ -89,13 +91,13 @@ I0610 23:32:22.665594 isa_program_util_common.cc:346] (HLO module jit_add): Exec
 ```
 * **What it means:** Operations like `jnp.abs`, `jnp.round`, `jnp.where`,
   or `jnp.clip` are being executed eagerly on the TPU/GPU outside of a
-  `@jax.jit` context (e.g., during weight parameter initialization).
+  `@jax.jit` context (e.g., during parameter initialization).
   JAX dispatches eager ops individually,
-  forcing XLA to perform a separate compilation for every unique tensor shape.
+  forcing XLA to perform a separate compilation for every unique array shape.
 * **Action:** Wrap this logic in `@jax.jit`.
 
 
-### Tracing Cache Misses
+### Tracing cache misses
 
 When JAX retraces a function and `JAX_EXPLAIN_CACHE_MISSES` is specified,
 it logs a warning explaining why:
@@ -113,7 +115,7 @@ W0610 23:49:11.800984 partial_eval.py:2179] TRACING CACHE MISS at my_script.py:6
   few Python patterns that cause cache misses.)
 
 
-### XLA Compilation Stage Durations
+### XLA compilation stage durations
 
 XLA prints a timing breakdown by compiler stage:
 
@@ -132,18 +134,17 @@ I0610 23:33:59.678832 deepsea_compiler_base.cc:984] END_TO_END stage duration: 1
 ---
 
 (jax-201-slow-compilation-caching-gotchas)=
-## 3. Common Gotchas That Trigger Cache Misses
+## 3. Common gotchas that trigger cache misses
 
 JAX uses multiple levels of caches to avoid duplicate work.
 Within a JAX process there are caches for tracing, lowering, and compilation.
 Many compilation bottlenecks are caused by Python patterns
-that unintentionally invalidate JAX's caches.
+that unintentionally defeat JAX's caches.
 
-JAX can also use a persistent compilation cache for use across multiple
-JAX processes.
-See {ref}`jax-501-compilation-cache`.
+JAX can also use a persistent compilation cache, shared across JAX processes;
+see {ref}`jax-501-compilation-cache`.
 
-### Gotcha: Dynamically Recreating Function Objects
+### Gotcha: dynamically recreating function objects
 
 ```python
 # ❌ BAD: Recreating function object on every call
@@ -173,8 +174,8 @@ W0610 23:49:19.396763 partial_eval.py:2179] TRACING CACHE MISS at aqt_flax.py:65
   being re-defined repeatedly, preventing caching?
 ```
 
-* **The Fix:** Define the function globally outside the class,
-  or cache the callable instance in `__init__`.
+* **The Fix:** Define the function once, outside `top_function` (for example,
+  at module level). Inside a class, create it once in `__init__` and reuse it.
 
 ```python
 # ✔️ GOOD: Reusing the same function handle
@@ -185,10 +186,10 @@ def top_function(...):
   return jax.jit(custom_einsum)(x, y)
 ```
 
-### Gotcha: JIT Compiling a Lambda Instead of `functools.partial`
+### Gotcha: JIT compiling a freshly created `lambda` or `functools.partial`
 
-A very similar caching failure occurs when using a `lambda` inside `jax.jit`
-to fix arguments or implement partial evaluation.
+A very similar caching failure occurs when using a `lambda` (or a
+`functools.partial`) inside `jax.jit` to fix some of a function's arguments.
 
 ```python
 # ❌ BAD: JIT compiling a freshly created lambda on every call
@@ -196,7 +197,7 @@ def add_multiply(a, b, scale):
   return (a + b) * scale
 
 def top_function(x, y, scale_factor):
-  # Creates a brand new lambda object with a new memory id on every pass!
+  # Creates a brand new lambda object with a new memory id on every call!
   return jax.jit(lambda a, b: add_multiply(a, b, scale=scale_factor))(x, y)
 ```
 * **Why it fails:** Just like dynamically created inner functions,
@@ -204,34 +205,35 @@ def top_function(x, y, scale_factor):
   `lambda a, b: ...` every time `top_function` executes.
   Because `id(lambda)` changes on every call,
   JAX misses the in-memory tracing cache and retraces the computation
-  repeatedly.
+  repeatedly. Wrapping the function in a fresh `functools.partial` on every
+  call has the same problem, since each new `partial` object is a new function
+  as far as the cache is concerned.
 
-
-* **The Fix:** Use `functools.partial`. JAX has built-in support for 
-  `functools.partial` objects: it unwraps them and indexes the tracing cache
-  using the underlying function's `id` (`add_multiply`) along with the
-  partially bound arguments (`scale_factor`).
+* **The Fix:** Jit the long-lived function itself, and pass the value as an
+  argument instead of baking it into a new callable. If the value must be a
+  Python constant at trace time, mark it static; JAX then retraces once per
+  distinct value, not once per call (see {ref}`jax-201-jit-static-arguments`).
 
 ```python
-# ✔️ GOOD: Using functools.partial
+# ✔️ GOOD: Jitting the same function object, and passing `scale` as an argument
 import functools
 
+@functools.partial(jax.jit, static_argnames=['scale'])
 def add_multiply(a, b, scale):
   return (a + b) * scale
 
 def top_function(x, y, scale_factor):
-  # JAX correctly unwraps functools.partial and hits the tracing cache!
-  return jax.jit(functools.partial(add_multiply, scale=scale_factor))(x, y)
+  return add_multiply(x, y, scale=scale_factor)
 ```
 
-### Gotcha: Eager Python Loops
+### Gotcha: eager Python loops
 
-Iterating over large Python containers of arrays to apply some JAX operations,
-such as normalization or quantization, in eager mode, forces XLA to compile a
+Applying JAX operations eagerly (outside `jit`) across large Python containers
+of arrays, for example to normalize or quantize them, forces XLA to compile a
 separate binary for every unique shape among those arrays.
 
 ```python
-# ❌ BAD: Eager op-by-op PyTree mapping
+# ❌ BAD: Eager op-by-op pytree mapping
 def quantize(x):
   scale = jnp.max(jnp.abs(x))
   return jnp.round(x * scale)
@@ -239,19 +241,19 @@ def quantize(x):
 # Eagerly dispatches jnp.max, jnp.abs, jnp.round for every weight tensor!
 params = jax.tree.map(quantize, params)
 ```
-* **The Fix:** Wrap the entire PyTree transformation in `@jax.jit`.
+* **The Fix:** Wrap the entire pytree transformation in `@jax.jit`.
 
 ```python
-# ✔️ GOOD: Compiles a single fused XLA graph for the entire PyTree
+# ✔️ GOOD: Compiles a single fused XLA graph for the entire pytree
 params = jax.jit(lambda p: jax.tree.map(quantize, p))(params)
 ```
 
-### Gotcha: Python Control Flow (Loop Unrolling in JIT)
+### Gotcha: Python control flow (loop unrolling in JIT)
 
-If your `@jax.jit` decorated function takes tens of seconds (or more) to
+If your `@jax.jit`-decorated function takes tens of seconds (or more) to
 trace or compile the first time you call it,
-but executes quickly when called again, calling your function likely generates
-a large amount of code in JAX's internal representation (Jaxpr).
+but executes quickly when called again, tracing it likely generates
+a large jaxpr, JAX's internal representation.
 
 This typically happens because the function makes heavy use of Python control
 flow such as `for` loops.
@@ -262,7 +264,7 @@ XLA must optimize thousands of unrolled HLO instructions.
 * **How to verify (using `eqn_count_pprof`):** If you configure
 `JAX_DUMP_IR_TO=/tmp/jax_ir` and `JAX_DUMP_IR_MODES=eqn_count_pprof`,
 JAX dumps a [pprof](https://github.com/google/pprof)-compatible profile where
-each sample corresponds to a primitive equation in the Jaxpr.
+each sample corresponds to a primitive equation in the jaxpr.
 The stack trace of each equation points to the exact line of Python code
 where that equation was created.
 
@@ -274,7 +276,7 @@ import jax.numpy as jnp
 
 @jax.jit
 def unrolled_loop(x):
-  # ❌ BAD: Unrolls 5,000 identical add equations into the Jaxpr!
+  # ❌ BAD: Unrolls 5,000 identical add equations into the jaxpr!
   for _ in range(5000):
     x = x + 1.0
   return x
@@ -312,18 +314,17 @@ the profile width, pointing at line 8:
   JAX's [structured control flow primitives](control-flow.md)
   (such as `jax.lax.scan`).
 
-If your code makes use of many arrays with different variable shapes
-across loop iterations,
-make use of functions like `jax.numpy.where`
-to do your computation on padded arrays with fixed shapes.
+If the arrays in your loop change shape from one iteration to the next,
+pad them to a fixed shape and use functions like `jax.numpy.where` to mask
+out the padding.
 
-### Gotcha: Varying Shapes and Dtypes
+### Gotcha: varying shapes and dtypes
 
-XLA specializes compiled binaries to exact tensor dimensions and dtypes.
+XLA specializes compiled binaries to exact array shapes and dtypes.
 * **Symptom:** Retracing and recompiling whenever a dynamic batch size
   (e.g., final partial batch in a dataset) or variable sequence length occurs.
 * **The Fix:** Pad dynamic batches to a fixed bucket size
   (e.g., `batch_size=32`),
-  or use JAX's experimental support for polymorphic shapes (`jax.export`)
-  which can reduce the number of times the code needs to be traced and lowered,
-  but does not reduce the number of compilations.
+  or use `jax.export`'s support for polymorphic shapes
+  ({ref}`jax-501-shape-poly`), which can reduce the number of times the code
+  needs to be traced and lowered, but not the number of compilations.

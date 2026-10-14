@@ -598,15 +598,20 @@ random_split_p = core.Primitive('random_split')
 ad.defjvp_zero(random_split_p)
 batching.defvectorized(random_split_p)
 
+def _random_split_sharding_rule(keys_aval, *, shape):
+  if keys_aval.sharding.mesh.empty:
+    return core.get_cur_mesh_sharding()
+  else:
+    new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
+    return keys_aval.sharding.update(spec=new_spec)
+
 @random_split_p.def_abstract_eval
 def random_split_abstract_eval(keys_aval, *, shape):
   # TODO(yashkatariya): random_split should take sharding as an arg too so we
   # don't choose None here?
-  if keys_aval.sharding.mesh.empty:
-    out_sharding = core.get_cur_mesh_sharding()
-  else:
-    new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
-    out_sharding = keys_aval.sharding.update(spec=new_spec)
+  out_sharding = lax.lax_utils.call_sharding_rule(
+      random_split_p, _random_split_sharding_rule, None, None, keys_aval,
+      shape=shape)
   return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
                            out_sharding, keys_aval.mat)
 
@@ -646,8 +651,9 @@ batching.defbroadcasting(random_fold_in_p)
 def random_fold_in_abstract_eval(keys_aval, msgs_aval):
   shape = lax.broadcasting_shape_rule(
       'random_fold_in', keys_aval, msgs_aval)
-  sharding = lax.broadcasting_sharding_rule(
-      'random_fold_in', keys_aval, msgs_aval)
+  sharding = lax.lax_utils.call_sharding_rule(
+      random_fold_in_p, partial(lax.broadcasting_sharding_rule, 'random_fold_in'),
+      None, None, keys_aval, msgs_aval)
   vma = core.standard_vma_rule('random_fold_in', keys_aval, msgs_aval)
   out_mat = core.ManualAxisType(varying=vma)
   return core.ShapedArray(shape, keys_aval.dtype, sharding=sharding,
@@ -690,11 +696,9 @@ def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
   out_shape = (*keys_aval.shape, *shape)
   out_dtype = dtypes.dtype(f'uint{bit_width}')
   # TODO(yashkatariya): random_bits should take an out_sharding argument.
-  if keys_aval.sharding.mesh.empty:
-    out_sharding = core.get_cur_mesh_sharding()
-  else:
-    new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
-    out_sharding = keys_aval.sharding.update(spec=new_spec)
+  out_sharding = lax.lax_utils.call_sharding_rule(
+      random_bits_p, _random_split_sharding_rule, None, None, keys_aval,
+      shape=shape)
   return core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
                           manual_axis_type=keys_aval.mat)
 

@@ -28,7 +28,7 @@ jtu.request_cpu_devices(2)
 
 class StringArrayTest(jtu.JaxTestCase):
 
-  def make_test_string_array(self, device=None):
+  def make_test_string_array(self, device=None, strings=("abcd", "efgh")):
     """Makes and returns a simple 2x1 string array on the first CPU device."""
     if device is None:
       cpu_devices = jax.devices("cpu")
@@ -38,9 +38,7 @@ class StringArrayTest(jtu.JaxTestCase):
         )
       device = cpu_devices[0]
 
-    numpy_string_array = np.array(
-        ["abcd", "efgh"], dtype=np.dtypes.StringDType()
-    )
+    numpy_string_array = np.array(strings, dtype=np.dtypes.StringDType())
     jax_string_array = jax.device_put(numpy_string_array, device=device)
     jax_string_array.block_until_ready()
     return jax_string_array
@@ -87,6 +85,41 @@ class StringArrayTest(jtu.JaxTestCase):
         [["abcd", "efgh"], ["ijkl", "mnop"]], dtype=np.dtypes.StringDType()
     )
     mesh = jax.sharding.Mesh(np.array(cpu_devices)[:2].reshape((2, 1)), ("x", "y"))
+    sharding = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec("x", "y")
+    )
+
+    if asarray:
+      jax_string_array = jnp.asarray(numpy_string_array, device=sharding)
+    else:
+      jax_string_array = jax.device_put(numpy_string_array, device=sharding)
+    jax_string_array.block_until_ready()
+
+    array_read_back = jax.device_get(jax_string_array)
+    self.assertEqual(array_read_back.dtype, np.dtypes.StringDType())
+    np.testing.assert_array_equal(array_read_back, numpy_string_array)
+
+  @parameterized.named_parameters(
+      ("asarray", True),
+      ("device_put", False),
+  )
+  @jtu.run_on_devices("cpu")
+  def test_non_contiguous_multi_device_array(self, asarray):
+    cpu_devices = jax.devices("cpu")
+    if len(cpu_devices) < 2:
+      self.skipTest(
+          f"Skipping this test because only {len(cpu_devices)} host"
+          " devices are available. Need at least 2."
+      )
+
+    numpy_string_array = np.array(
+        [["abcd", "efgh"], ["ijkl", "mnop"]], dtype=np.dtypes.StringDType()
+    )
+    # Sharding along columns (non-major axis) results in non-contiguous shards
+    # in the global flat row-major buffer.
+    mesh = jax.sharding.Mesh(
+        np.array(cpu_devices)[:2].reshape((1, 2)), ("x", "y")
+    )
     sharding = jax.sharding.NamedSharding(
         mesh, jax.sharding.PartitionSpec("x", "y")
     )
@@ -208,7 +241,9 @@ class StringArrayTest(jtu.JaxTestCase):
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
       for _ in range(10):
-        arr = self.make_test_string_array()
+        arr = self.make_test_string_array(
+            strings=["abcd" * 2048, "efgh" * 2048]
+        )
         futures = [executor.submit(worker, arr) for _ in range(8)]
         for f in futures:
           f.result()

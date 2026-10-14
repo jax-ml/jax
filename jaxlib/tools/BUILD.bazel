@@ -249,6 +249,7 @@ wheel_sources(
     ]) + if_sycl([
         "//jax_plugins/oneapi:plugin_pyproject.toml",
         "//jax_plugins/oneapi:plugin_setup.py",
+        "//jax_plugins/oneapi:README.md",
     ]),
 )
 
@@ -388,6 +389,7 @@ wheel_sources(
     ]) + if_sycl([
         "//jax_plugins/oneapi:pyproject.toml",
         "//jax_plugins/oneapi:setup.py",
+        "//jax_plugins/oneapi:README-pjrt.md",
         "//jax_plugins/oneapi:__init__.py",
     ]),
 )
@@ -564,6 +566,16 @@ py_import(
     name = "jax_rocm_pjrt_py_import",
     wheel = ":jax_rocm_pjrt_wheel",
     deps = [":rocm_pjrt_libs"],
+)
+
+py_import(
+    name = "jax_oneapi_plugin_py_import",
+    wheel = ":jax_oneapi_plugin_wheel",
+)
+
+py_import(
+    name = "jax_oneapi_pjrt_py_import",
+    wheel = ":jax_oneapi_pjrt_wheel",
 )
 
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.
@@ -747,6 +759,8 @@ _IGNORED_INIT_PY_FILES = [
     # These files do not exist in JAX sources.
     "jaxlib/mosaic/dialect/gpu/__init__.py",
     "jaxlib/mosaic/python/__init__.py",
+    "jaxlib/thunky/dialect/__init__.py",
+    "jaxlib/thunky/python/__init__.py",
 ]
 
 compare_srcs_and_test_deps_test(
@@ -805,6 +819,7 @@ compare_srcs_and_test_deps_test(
             "tests/mosaic",
             "tests/multiprocess",
             "tests/pallas",
+            "tests/thunky",
         ],
     ),
 )

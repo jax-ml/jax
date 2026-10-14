@@ -65,13 +65,13 @@ def _rank_promotion_warning_or_error(fun_name: str, shapes: Sequence[Shape]):
     msg = ("Following NumPy automatic rank promotion for {} on shapes {}. "
            "Set the jax_numpy_rank_promotion config option to 'allow' to "
            "disable this warning; for more information, see "
-           "https://docs.jax.dev/en/latest/rank_promotion_warning.html.")
+           "https://docs.jax.dev/en/latest/101/rank_promotion_warning.html.")
     warnings.warn(msg.format(fun_name, ' '.join(map(str, shapes))))
   elif config.numpy_rank_promotion.value == "raise":
     msg = ("Operands could not be broadcast together for {} on shapes {} "
            "and with the config option jax_numpy_rank_promotion='raise'. "
            "For more information, see "
-           "https://docs.jax.dev/en/latest/rank_promotion_warning.html.")
+           "https://docs.jax.dev/en/latest/101/rank_promotion_warning.html.")
     raise ValueError(msg.format(fun_name, ' '.join(map(str, shapes))))
 
 
@@ -82,6 +82,7 @@ def promote_dtypes(*args: ArrayLike) -> list[Array]:
     return [lax.asarray(arg) for arg in args]
   else:
     to_dtype, weak_type = dtypes.lattice_result_type(*args)
+    args = core.auto_insert_reshard(*args)
     return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
 
 
@@ -91,6 +92,7 @@ def promote_dtypes_inexact(*args: ArrayLike) -> list[Array]:
   Promotes arguments to an inexact type."""
   to_dtype, weak_type = dtypes.lattice_result_type(*args)
   to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)
+  args = core.auto_insert_reshard(*args)
   return [lax._convert_element_type(x, to_dtype_inexact, weak_type)
           for x in args]
 
@@ -101,6 +103,7 @@ def promote_dtypes_numeric(*args: ArrayLike) -> list[Array]:
   Promotes arguments to a numeric (non-bool) type."""
   to_dtype, weak_type = dtypes.lattice_result_type(*args)
   to_dtype_numeric = dtypes.to_numeric_dtype(to_dtype)
+  args = core.auto_insert_reshard(*args)
   return [lax._convert_element_type(x, to_dtype_numeric, weak_type)
           for x in args]
 
@@ -111,6 +114,7 @@ def promote_dtypes_complex(*args: ArrayLike) -> list[Array]:
   Promotes arguments to a complex type."""
   to_dtype, weak_type = dtypes.lattice_result_type(*args)
   to_dtype_complex = dtypes.to_complex_dtype(to_dtype)
+  args = core.auto_insert_reshard(*args)
   return [lax._convert_element_type(x, to_dtype_complex, weak_type)
           for x in args]
 
@@ -168,12 +172,22 @@ def ensure_arraylike_tuple(fun_name: str, tup: Sequence[Any]) -> tuple[Array, ..
   return tuple(_arraylike_asarray(arg) for arg in tup)
 
 
+def _ref_arg_error(fun_name: str, arg: Any, pos: int | None = None) -> TypeError:
+  where = "" if pos is None else f" at position {pos}"
+  return TypeError(
+      f"{fun_name} got a Ref of type {core.typeof(arg)}{where}, but a Ref "
+      "can't be passed where an array is expected. Did you forget to read "
+      "its value with `ref[...]`?")
+
+
 def check_arraylike(fun_name: str, *args: Any, emit_warning=False, stacklevel=3):
   """Check if all args fit JAX's definition of arraylike."""
   assert isinstance(fun_name, str), f"fun_name must be a string. Got {fun_name}"
   if any(not _arraylike(arg) for arg in args):
     pos, arg = next((i, arg) for i, arg in enumerate(args)
                     if not _arraylike(arg))
+    if isinstance(arg, core.Ref):
+      raise _ref_arg_error(fun_name, arg, pos)
     msg = f"{fun_name} requires ndarray or scalar arguments, got {type(arg)} at position {pos}."
     if emit_warning:
       warnings.warn(msg + " In a future JAX release this will be an error.",
@@ -187,6 +201,8 @@ def check_arraylike_or_none(fun_name: str, *args: Any):
   if any(not (_arraylike(arg) or arg is None) for arg in args):
     pos, arg = next((i, arg) for i, arg in enumerate(args)
                     if not (_arraylike(arg) or arg is None))
+    if isinstance(arg, core.Ref):
+      raise _ref_arg_error(fun_name, arg, pos)
     msg = "{} requires ndarray, scalar, or None arguments, got {} at position {}."
     raise TypeError(msg.format(fun_name, type(arg), pos))
 

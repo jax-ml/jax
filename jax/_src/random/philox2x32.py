@@ -92,7 +92,10 @@ def _philox2x32_abstract_eval(*args):
     raise TypeError(f"philox2x32_p expects 3 arguments, got {len(args)}.")
   if all(isinstance(arg, core.ShapedArray) for arg in args):
     shape = lax.broadcasting_shape_rule("philox2x32", *args)
-    sharding = lax.broadcasting_sharding_rule("philox2x32", *args)
+    sharding = lax.lax_utils.call_sharding_rule(
+        philox2x32_p,
+        functools.partial(lax.broadcasting_sharding_rule, "philox2x32"),
+        None, None, *args)
     aval = core.ShapedArray(shape, np.dtype("uint32"), sharding=sharding)
   else:
     raise TypeError(f"Arguments to philox2x32 must all be arrays, got {args}")

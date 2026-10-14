@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jax
-from jax.experimental import mesh_utils
+from jax._src import mesh_utils
 from jax._src.lib import _jax
 from jax._src import xla_bridge as xb
 
@@ -62,6 +62,28 @@ def get_topology_desc(
       raise NotImplementedError(msg) from e
     else:
       raise
+
+
+_DEVICE_KIND_TO_TOPOLOGY: dict[str, tuple[str, str]] = {
+    "TPU v2": ("v2=1x1", "tpu"),
+    "TPU v3": ("v3=1x1", "tpu"),
+    "TPU v4 lite": ("v4 lite=1x1", "tpu"),
+    "TPU v4": ("v4=1x1x1", "tpu"),
+    "TPU v5 lite": ("v5e=1x1", "tpu"),
+    "TPU v5e": ("v5e=1x1", "tpu"),
+    "TPU v5": ("v5p=1x1x1", "tpu"),
+    "TPU v5p": ("v5p=1x1x1", "tpu"),
+    "TPU v6 lite": ("v6e=1x1", "tpu"),
+    "TPU v6e": ("v6e=1x1", "tpu"),
+    "TPU7x": ("tpu7x=1x1x1", "tpu"),
+}
+
+
+def _get_compile_only_device(device_kind: str) -> Device:
+  if device_kind not in _DEVICE_KIND_TO_TOPOLOGY:
+    raise ValueError(f"Unsupported device_kind: {device_kind}")
+  topology_name, platform = _DEVICE_KIND_TO_TOPOLOGY[device_kind]
+  return get_topology_desc(topology_name, platform=platform).devices[0]
 
 
 # -- future mesh_utils --

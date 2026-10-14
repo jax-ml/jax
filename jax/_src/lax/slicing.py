@@ -3102,10 +3102,14 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
     # tangents for the values in updates.
 
     initial_vals = gather(
-        operand, indices, gather_dnums, slice_sizes)
+        operand, indices, gather_dnums, slice_sizes,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode)
 
     target_vals = gather(
-        val_out, indices, gather_dnums, slice_sizes)
+        val_out, indices, gather_dnums, slice_sizes,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode)
 
     successful_updates = (updates == target_vals)
     retained_values = (initial_vals == target_vals)
@@ -3115,19 +3119,31 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
             lax._zeros(operand), indices,
             lax.select(successful_updates, lax._ones(updates),
                        lax._zeros(updates)),
-            scatter_dnums),
+            scatter_dnums,
+            indices_are_sorted=indices_are_sorted,
+            unique_indices=unique_indices,
+            mode=mode),
         indices,
         gather_dnums,
-        slice_sizes)
+        slice_sizes,
+        indices_are_sorted=indices_are_sorted,
+        unique_indices=unique_indices,
+        mode=mode)
 
     num_refs = gather(
         scatter_add(lax._zeros(operand),
                     indices,
                     lax._ones(updates),
-                    scatter_dnums),
+                    scatter_dnums,
+                    indices_are_sorted=indices_are_sorted,
+                    unique_indices=unique_indices,
+                    mode=mode),
         indices,
         gather_dnums,
-        slice_sizes)
+        slice_sizes,
+        indices_are_sorted=indices_are_sorted,
+        unique_indices=unique_indices,
+        mode=mode)
 
     updates_normalizer = lax.select(retained_values,
                                     1.0 / (num_updates + 1),
@@ -3145,7 +3161,9 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
 
     # This can be simplified once scatter has transpose implemented
     target_tangents = gather(
-        g_operand, indices, gather_dnums, slice_sizes)
+        g_operand, indices, gather_dnums, slice_sizes,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode)
 
     tangent_updates = (target_tangents * operand_coef +
                        g_updates * updates_coef)
@@ -3338,6 +3356,12 @@ ad.primitive_jvps[scatter_p] = _scatter_jvp
 ad.primitive_transposes[scatter_p] = _scatter_transpose_rule
 batching.fancy_primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter_p))
+
+def _scatter_to_lojax(*args, update_jaxpr, update_consts, **params):
+  lo_jaxpr = pe.lower_jaxpr2(update_jaxpr)
+  return scatter_p.bind(*args, update_jaxpr=lo_jaxpr,
+                        update_consts=tuple(lo_jaxpr.consts), **params)
+scatter_p.to_lojax = _scatter_to_lojax
 
 
 def _scatter_lower_opaque(ctx, operand, indices, updates, *,

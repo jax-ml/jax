@@ -157,6 +157,20 @@ mlirMosaicGpuCopyPartitionedAttrGetAxis(MlirAttribute attr);
 
 MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuCopyPartitionedAttrGetTypeID();
 
+//===----------------------------------------------------------------------===//
+// SmemAllocAttr
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsASmemAllocAttr(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirMosaicGpuSmemAllocAttrGet(MlirContext ctx, MlirAttribute alignment);
+
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirMosaicGpuSmemAllocAttrGetAlignment(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuSmemAllocAttrGetTypeID();
+
 #ifdef __cplusplus
 }
 #endif

@@ -102,8 +102,8 @@ class NamedSharding(jsharding.Sharding):
     >>> spec = P('x', 'y')
     >>> named_sharding = jax.sharding.NamedSharding(mesh, spec)
 
-  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/parallel.html
-  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/parallel.html
+  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/201/sharding.html
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
 
   mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh

@@ -158,5 +158,66 @@ def test_num_multiply_eqns_trace_no_cache_clear(state):
     _ = fn.trace(jnp.ones((1024,)))
 
 
+def _custom_root_function(depth):
+  def root(a):
+    def f(x):
+      for _ in range(depth):
+        x = x + 0.01 * jnp.sin(x)
+      return x - a
+
+    def solve(f, x):
+      def step(state):
+        i, x = state
+        y, dy = jax.jvp(f, (x,), (jnp.ones_like(x),))
+        return i + 1, x - y / dy
+      return jax.lax.while_loop(lambda s: s[0] < 8, step, (0, x))[1]
+
+    return jax.lax.custom_root(f, jnp.ones_like(a), solve,
+                               lambda g, y: y / g(jnp.ones_like(y)))
+  return root
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+@google_benchmark.option.arg(0)
+@google_benchmark.option.arg(32)
+@google_benchmark.option.arg(128)
+def test_custom_root_trace(state):
+  fn = jax.jit(_custom_root_function(state.range(0)))
+  arg = jax.ShapeDtypeStruct((32,), np.float32)
+  while state:
+    # Include expansion to lojax so deferring work alone is not a speedup.
+    _ = fn.trace(arg).lojax
+    clear_caches(state)
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+@google_benchmark.option.arg(0)
+@google_benchmark.option.arg(32)
+@google_benchmark.option.arg(128)
+def test_custom_root_grad_trace(state):
+  root = _custom_root_function(state.range(0))
+  fn = jax.jit(jax.grad(lambda a: root(a).sum()))
+  arg = jax.ShapeDtypeStruct((32,), np.float32)
+  while state:
+    _ = fn.trace(arg).lojax
+    clear_caches(state)
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+@google_benchmark.option.arg(0)
+@google_benchmark.option.arg(32)
+@google_benchmark.option.arg(128)
+def test_custom_root_grad_eager(state):
+  root = _custom_root_function(state.range(0))
+  fn = jax.grad(lambda a: root(a).sum())
+  arg = jnp.full((32,), 0.5, dtype=jnp.float32)
+  jax.block_until_ready(fn(arg))
+  while state:
+    jax.block_until_ready(fn(arg))
+
+
 if __name__ == "__main__":
   google_benchmark.main()

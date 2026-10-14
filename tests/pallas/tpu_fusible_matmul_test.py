@@ -127,8 +127,6 @@ def _fusible_matmul(
   z_block_spec = pl.BlockSpec(block_shape=(bm, bn), index_map=z_index_map)
   dimension_semantics = (pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY)
 
-  z_out_type = jax.eval_shape(z, z_type)
-
   # First thing we do is extract the values from the fusions. These will be
   # values that are passed in directly and values that are passed in via
   # scalar prefetch.
@@ -154,13 +152,14 @@ def _fusible_matmul(
       grid_len=len(grid),
   )(y_values)
 
-  z_out_block_spec = fuser.push_block_spec(z, z_block_spec)(z_type)
-  z_fn, (z_value_block_specs, _), _ = fuser.pull_block_spec(
-      z_fn,
-      z_out_block_spec,
-      scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
-      grid_len=len(grid),
-  )(z_values, z_type)
+  z_fn, z_value_block_specs, _, z_out_type, z_out_block_spec = (
+      fuser.push_pull_block_spec(
+          z_fn,
+          z_block_spec,
+          scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
+          grid_len=len(grid),
+      )(z_values, z_type)
+  )
 
   # TODO(sharadmv): This is a hack. We should be able to pass in the scalar
   # prefetch arguments directly to the kernel but don't have Mosaic support atm.
@@ -347,6 +346,27 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     np.testing.assert_allclose(
         matmul_relu(x, y), matmul_relu_ref(x, y), atol=5e-5
     )
+
+  @parameterized.product(dtype=['float32'], impl=list(KernelImpl))
+  def test_nested_fuse(self, dtype, impl):
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+
+    @fuser.fuse
+    def inner(x, y):
+      return fusible_matmul(x, y, impl=impl) + 1.0
+
+    @jax.jit
+    @fuser.fuse
+    def outer(x, y):
+      return jnp.maximum(inner(x, y), 0.0)
+
+    @jit_no_excess_precision
+    def ref(x, y):
+      return jax.nn.relu(mm_ref(x, y) + 1.0)
+
+    np.testing.assert_allclose(outer(x, y), ref(x, y), atol=5e-5)
 
   @parameterized.parameters(KernelImpl)
   def test_matmul_reduce_sum(self, impl):

@@ -237,6 +237,27 @@ class TransposeTransform(Transform):
 
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
+class MemorySpaceCastTransform(Transform):
+  memory_space: Any = tree.static()
+
+  def transform_type(self, x):
+    match x:
+      case AbstractRef():
+        return x.update(memory_space=self.memory_space)
+      case core.ShapedArray():
+        return x
+      case _:
+        raise TypeError(
+            f"Cannot cast memory space of {x} to {self.memory_space}"
+        )
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{memory_space_cast({self.memory_space})}}")
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
 class SelectTransform(MultiRefTransform):
   idx: Array | int
 
@@ -383,6 +404,17 @@ class TransformedRef:
       return TransformedRef(self, (transposer,))
     return TransformedRef(self.ref, (*self.transforms, transposer))
 
+  def memory_space_cast(self, memory_space: Any):
+    if self.multiref:
+      raise NotImplementedError(
+          "memory_space_cast with multiref is not supported."
+      )
+    if any(isinstance(t, MemorySpaceCastTransform) for t in self.transforms):
+      raise ValueError("Multiple memory_space_casts are not allowed.")
+    return TransformedRef(
+        self.ref, (*self.transforms, MemorySpaceCastTransform(memory_space))
+    )
+
   def set(self, value, idx=()):
     from jax._src.state.primitives import ref_set  # pyrefly: ignore[missing-import]
     return ref_set(self, idx, value)
@@ -397,20 +429,9 @@ class TransformedRef:
 
   @property
   def memory_space(self):
-    def _mem_space(ref):
-      if isinstance(ref, TransformedRef):
-        return ref.memory_space
-      return core.typeof(ref).memory_space if hasattr(ref, "aval") else ref.memory_space
-
-    if self.multiref:
-      ms, *rest = tuple(_mem_space(r) for r in self.ref)
-      if not all(m == ms for m in rest):
-        raise ValueError(
-            f"Found inconsistent memory spaces in multiref: {self.ref}"
-        )
-      return ms
-
-    return _mem_space(self.ref)
+    if not hasattr(self.type, "memory_space"):
+      raise AttributeError(f"{self!r} has no `memory_space`.") from None
+    return self.type.memory_space
 
   def __getattr__(self, name):
     if self.multiref:
@@ -457,7 +478,7 @@ class AbstractRef(core.AbstractValue):
 
   Refer to the `Ref guide`_ for more information.
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   __slots__ = ["inner_aval", "memory_space", "kind"]
 
@@ -581,6 +602,10 @@ class AbstractRef(core.AbstractValue):
   def transpose(self, *permutation):
     return TransformedRef(self, ()).transpose(*permutation)
 
+  @core.aval_method
+  def memory_space_cast(self, memory_space):
+    return TransformedRef(self, ()).memory_space_cast(memory_space)
+
   @core.aval_property
   def T(self):
     return TransformedRef(self, ()).T
@@ -666,7 +691,7 @@ def shaped_array_ref(
 
 def _shard_ref(mesh, auto, check_rep, names, ref_aval: AbstractRef):
   aval = core.shard_aval(mesh, auto, check_rep, names, ref_aval.inner_aval)
-  return AbstractRef(aval)
+  return AbstractRef(aval, ref_aval.memory_space, ref_aval.kind)
 core.shard_aval_handlers[AbstractRef] = _shard_ref
 
 def _unshard_ref(mesh, check_rep, names, ref_aval: AbstractRef):

@@ -61,7 +61,7 @@ from jax._src.named_sharding import NamedSharding, get_replicated_axes
 from jax._src import named_sharding as ns
 from jax._src.sharding import Sharding
 from jax._src.layout import (Format, AutoLayout, AutoLayoutSingleton,
-                             get_layout_mode, LayoutMode)
+                             get_layout_mode, LayoutMode, layout_tracing_mode)
 from jax._src.lib import _jax
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
@@ -330,14 +330,6 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
     yield from jaxprs_in_params(eqn.params)
 
 
-# ClosedJaxpr and Jaxpr have been merged into a single class: a Jaxpr carries
-# a possibly-empty list of constant argument values, `consts`. The name
-# ClosedJaxpr remains as an alias for callers that construct closed jaxprs via
-# ClosedJaxpr(jaxpr, consts) or use it in isinstance checks and annotations.
-# TODO(dougalm): migrate users and remove the alias.
-ClosedJaxpr = Jaxpr
-
-
 @curry
 def jaxpr_as_fun(closed_jaxpr: Jaxpr, *args):
   # TODO(dougalm): remove this hack when we add contexts to jaxpr.
@@ -378,9 +370,9 @@ class JaxprEqnContextManager:
         self.context.threefry_partitionable)
     self.prev_compute_type = config.compute_on_context_manager.swap_local(
         self.context.compute_type)
-    self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
+    self.prev_abstract_mesh = mesh_lib.abstract_mesh_context_manager.swap_local(
         self.context.cur_abstract_mesh)
-    self.prev_layout_mode = config.layout_tracing_mode.swap_local(
+    self.prev_layout_mode = layout_tracing_mode.swap_local(
         self.context.cur_layout_mode)
     self.prev_remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.swap_local(
         self.context.remove_size_one_mesh_axis)
@@ -389,8 +381,8 @@ class JaxprEqnContextManager:
     config.xla_metadata_context_manager.set_local(self.prev_xla_metadata)
     config.threefry_partitionable.set_local(self.prev_threefry_partitionable)
     config.compute_on_context_manager.set_local(self.prev_compute_type)
-    config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
-    config.layout_tracing_mode.set_local(self.prev_layout_mode)
+    mesh_lib.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
+    layout_tracing_mode.set_local(self.prev_layout_mode)
     config.remove_size_one_mesh_axis_from_type.set_local(self.prev_remove_size_one_mesh_axis)
 
 
@@ -1900,6 +1892,9 @@ class AbstractValue:
   def unshard(self, mesh, check_vma, spec):
     return unshard_aval(mesh, check_vma, spec, self)
 
+  def reshard(self, sharding):
+    return reshard_aval(self, sharding)
+
   def vspace_add(self, x, y):
     from jax._src.ad_util import add_jaxvals  # pyrefly: ignore[missing-import]
     return add_jaxvals(x, y)
@@ -2203,8 +2198,7 @@ def getu(aval, kind=UnreducedKind.sum):
     return out_u
   # Revise this after partial manual unreduced is supported
   assert not aval.mat.unreduced
-  assert not aval.sharding.spec.unreduced
-  return frozenset()
+  return aval.sharding.spec.unreduced
 
 def getr(aval):
   if aval.sharding.mesh.are_all_axes_manual:
@@ -2213,8 +2207,7 @@ def getr(aval):
     return aval.sharding.spec.reduced
   # Revise this after partial manual reduced is supported
   assert not aval.mat.reduced
-  assert not aval.sharding.spec.reduced
-  return frozenset()
+  return aval.sharding.spec.reduced
 
 def _make_lengths_same(sharding, ndim):
   pspec = sharding.spec
@@ -2406,8 +2399,8 @@ class ManualAxisType:
 
   def __repr__(self):
     return (f"ManualAxisType(varying={self.varying}, "
-            f"unreduced={self.unreduced}, reduced={self.reduced}), "
-            f"unreduced_kind={self.unreduced_kind}")
+            f"unreduced={self.unreduced}, reduced={self.reduced}, "
+            f"unreduced_kind={self.unreduced_kind})")
 
   def __getnewargs_ex__(self):
     return (), {'varying': self.varying, 'unreduced': self.unreduced,
@@ -2441,15 +2434,6 @@ class ManualAxisType:
   @property
   def vur(self) -> frozenset:
     return self.varying | self.unreduced | self.reduced
-
-def get_layout(layout):
-  cur_layout_mode = get_layout_mode()
-  if (cur_layout_mode is not LayoutMode.AUTO and
-      isinstance(layout, AutoLayoutSingleton)):
-    raise ValueError(
-        "The layout of ShapedArray should not be `AutoLayout` when layout mode"
-        f" is {cur_layout_mode}")
-  return layout
 
 
 empty_mat = ManualAxisType()
@@ -2501,11 +2485,10 @@ class ShapedArray(AbstractValue):
       assert manual_axis_type.empty, manual_axis_type
     else:
       sharding = get_sharding(sharding, shape)
-      # https://docs.jax.dev/en/latest/notebooks/shard_map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
+      # https://docs.jax.dev/en/latest/201/shard-map.html#tracking-how-values-vary-over-manual-mesh-axes-and-check-vma-true
       manual_axis_type = get_mat(manual_axis_type, sharding.mesh)
     # See description of https://github.com/jax-ml/jax/pull/30556
     memory_space = get_memory_space(memory_space)
-    layout = get_layout(layout)
     return cls._create(shape, dtype, weak_type, sharding, manual_axis_type,
                        memory_space, layout)
 
@@ -2737,7 +2720,7 @@ def reduced_vary_cast(x, axis_name):
   del axes
   return tree_map(lambda leaf: reduced_vary_cast_p.bind(leaf, axes=new_axes), x)
 
-reduced_vary_cast_p = Primitive('reduced_vary_cast_p')
+reduced_vary_cast_p = Primitive('reduced_vary_cast')
 
 #######################################################################
 
@@ -2786,8 +2769,6 @@ def auto_insert_reshard(*args):
     return args
   if not config._check_vma.value:
     return insert_reduced_reshard(args)
-  if not config.auto_pcast.value:
-    return args
   in_vma = [aval.mat.varying if isinstance(aval := typeof(a), ShapedArray)
             else frozenset() for a in args]
   in_reduced = [aval.mat.reduced
@@ -2796,11 +2777,13 @@ def auto_insert_reshard(*args):
   out_vma = frozenset.union(*in_vma)
   out = []
   for arg, src_vma, src_reduced in zip(args, in_vma, in_reduced):
-    if (isinstance(typeof(arg), ShapedArray) and
+    if (isinstance(aval := typeof(arg), ShapedArray) and
         (rest_vma := out_vma - src_vma)):
       # TODO(yashkatariya): Handle partial reduced_vary_cast and partial pvary.
       # Will need more changes to pvary to allow such partialness.
-      if src_reduced == rest_vma:
+      if not config.auto_pcast.value and dtypes.issubdtype(aval.dtype, np.inexact):
+        out.append(arg)
+      elif src_reduced == rest_vma:
         out.append(
             reduced_vary_cast(arg, tuple(n for n in out_vma if n in rest_vma)))
       else:
@@ -2855,7 +2838,7 @@ class Ref(metaclass=RefMeta):
   via :func:`jax.ref.new_ref`. For examples of how this can be
   used, refer to the `Ref guide`_.
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   _aval: AbstractValue
   _refs: PyTree  # list of ArrayRefImpl
@@ -2891,7 +2874,7 @@ class Ref(metaclass=RefMeta):
   def unsafe_buffer_pointer(self): return self._refs._buf.unsafe_buffer_pointer()
 
   @property
-  def at(self): raise NotImplementedError()  # TODO(mattjj)
+  def at(self): return self._aval.at.fget(self)  # pyrefly: ignore[missing-attribute]
 
 class ArrayRefImpl:
   _aval: AbstractValue
@@ -2929,7 +2912,7 @@ def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None,
   Returns:
     A :class:`jax.ref.Ref` containing a reference to a mutable buffer.
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   return ref_p.bind(init_val, memory_space=memory_space, kind=kind, pin=pin)
 ref_p = Primitive('new_ref')
@@ -2950,34 +2933,40 @@ def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any, pin: bool):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   # If no memory space is specified, use the memory space of the initial value
   # but we make sure to reset it to Device because the Ref owns the memory space
-  if (memory_space is None
-      and isinstance(init_aval, ShapedArray)):
-    if init_aval.memory_space is not MemorySpace.Device:
+  if isinstance(init_aval, ShapedArray):
+    if (
+        memory_space is None
+        and init_aval.memory_space is not MemorySpace.Device
+    ):
       memory_space = init_aval.memory_space
-    init_aval = init_aval.update(memory_space=MemorySpace.Device)
-  if isinstance(init_aval, ShapedArray) and init_aval.weak_type:
-    init_aval = init_aval.update(weak_type=False)
+    init_aval = init_aval.update(
+        memory_space=MemorySpace.Device, weak_type=False
+    )
   return (AbstractRef(init_aval, memory_space=memory_space, kind=kind),
           {internal_mutable_array_effect})
 
 @ref_p.def_impl
 def _ref_impl(init_val, *, memory_space: Any, kind: Any, pin: bool):
-  if memory_space is not None:
+  if memory_space not in (None, MemorySpace.Device, MemorySpace.Host):
     raise NotImplementedError(
         "array ref with memory space only works inside of a `jit`.")
   if pin:
     raise NotImplementedError(
         "pinned array ref only works inside of a `jit`.")
   from jax._src.api import device_put  # pyrefly: ignore[missing-import]
-  from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   from jax._src.lax.lax import _array_copy, _convert_element_type  # pyrefly: ignore[missing-import]
+
+  if memory_space is not None:
+    init_val = device_put(init_val, memory_space)
   if dtypes.is_weakly_typed(init_val):
     buf = _convert_element_type(
         init_val, dtypes.dtype(init_val), weak_type=False
     )
   else:
     buf = _array_copy(init_val)
-  aval = AbstractRef(typeof(buf), kind=kind)
+  aval, _ = _ref_abstract_eval(
+      typeof(buf), memory_space=memory_space, kind=kind, pin=pin
+  )
   if not buf.committed:
     buf = device_put(buf, buf.sharding)
   return Ref(aval, ArrayRefImpl(aval, buf))
@@ -3055,7 +3044,7 @@ def freeze(ref: Ref) -> Array:
     >>> jax.ref.freeze(ref)
     Array([  0,   1,   2, 100,   4], dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   return freeze_p.bind(ref)
 freeze_p = Primitive('freeze')
@@ -3075,7 +3064,7 @@ def freeze_abstract_eval(ref_aval):
 
 @freeze_p.def_impl
 def _freeze_impl(ref):
-  return ref[()]
+  return ref._refs._buf
 
 def accum_grad_in_ref(x):
   return accum_grad_in_ref_p.bind(x)
@@ -3127,6 +3116,10 @@ class AbstractFuture(AbstractValue):
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: math.prod(self.shape))
+
+  def update(self, **kwargs):
+    return AbstractFuture(kwargs.pop("inner_aval", self.inner_aval),
+                          kwargs.pop("done_fun", self.done_fun))
 
   @aval_method
   def done(tracer):
@@ -3627,7 +3620,14 @@ class JaxprTypeError(TypeError):
 
 custom_typechecks: dict[Primitive, Callable] = {}
 
+def check_distinct_refs(prim, atoms) -> None:
+  from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
+  refs = [id(x) for x in atoms if isinstance(x.aval, AbstractRef)]
+  if len(set(refs)) < len(refs):
+    raise JaxprTypeError(f"{prim} passes the same Ref as more than one operand")
+
 def _check_closed_call(_, *in_atoms, call_jaxpr, **__):
+  check_distinct_refs(eval_jaxpr_p, in_atoms)
   in_avals = [x.aval for x in in_atoms]
   if not all(map(typecompat, call_jaxpr.in_avals, in_avals)):
     raise JaxprTypeError("Closed call in_avals mismatch")
@@ -3845,6 +3845,7 @@ def _check_call(ctx_factory, prim, in_atoms, params):
                            f"{x.aval} to jaxpr expecting type "
                            f"{v.aval}")
     env[v] = x.val if type(x) is Literal else x
+  check_distinct_refs(prim, in_atoms)
 
   check_jaxpr(call_jaxpr)
 
@@ -4102,15 +4103,10 @@ def pp_toplevel_jaxpr(jaxpr_to_print: Jaxpr, *,
       if jaxpr is not jaxpr_to_print and len(jaxpr.eqns) > 10:
         jaxpr_counts[jaxpr] += 1
       for eqn in jaxpr.eqns:
-        # TODO(slebedev): Come up with a more elaborate heuristic for name=.
-        name = eqn.params.get("name")
-        if name is None:
-          s.extend(jaxprs_in_params(eqn.params))
-          continue
-        name = name.strip("<>")  # <lambda> -> lambda
-        for subjaxpr in jaxprs_in_params(eqn.params):
+        for name, subjaxpr in _pp_subjaxprs(eqn, settings):
           s.append(subjaxpr)
-          names.setdefault(subjaxpr, name)
+          if name is not None:
+            names.setdefault(subjaxpr, name.strip("<>"))  # <lambda> -> lambda
 
     # Pull jaxprs occurring more than once to the top-level, making sure
     # that their names are unique.
@@ -4135,6 +4131,21 @@ def pp_toplevel_jaxpr(jaxpr_to_print: Jaxpr, *,
       docs.append(pp_shared_jaxpr(name, jaxpr, context, settings))
     docs.append(pp_jaxpr(jaxpr_to_print, context, settings))
     return pp.concat(docs)
+
+
+# Rules giving the jaxprs an eqn prints, each paired with a name (or None) to use
+# if it's hoisted as a shared jaxpr, for primitives that print jaxprs other than
+# their Jaxpr-valued params (e.g. hijax primitives, which nest them in `_prim`).
+pp_subjaxprs_rules: dict[
+    Primitive, Callable[[JaxprEqn], Iterable[tuple[str | None, Jaxpr]]]] = {}
+
+def _pp_subjaxprs(eqn: JaxprEqn, settings: JaxprPpSettings
+                  ) -> Iterable[tuple[str | None, Jaxpr]]:
+  if settings.custom_pp_eqn_rules and eqn.primitive in pp_subjaxprs_rules:
+    return pp_subjaxprs_rules[eqn.primitive](eqn)
+  # TODO(slebedev): Come up with a more elaborate heuristic for name=.
+  name = eqn.params.get("name")
+  return [(name, j) for j in jaxprs_in_params(eqn.params)]
 
 
 class JaxprPpSettings(NamedTuple):
@@ -4227,6 +4238,8 @@ def pp_kv_pair(k:str, v: Any, context: JaxprPpContext, settings: JaxprPpSettings
     pp_v = pp_jaxpr(v, context, settings)
   elif isinstance(v, frozenset):
     pp_v = pp.text(f"frozenset({{{', '.join(repr(e) for e in sorted(v))}}})")
+  elif isinstance(v, pp.Doc):
+    pp_v = v
   else:
     s = str(v)
     s = re.sub(
@@ -4254,7 +4267,8 @@ def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
           else pp.source_map(doc, eqn.source_info.traceback))
 
 def _pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings,
-            params: Sequence[str] | None = None) -> pp.Doc:
+            params: Sequence[str] | None = None, name: str | None = None
+            ) -> pp.Doc:
   annotation = (source_info_util.summarize(eqn.source_info)
                 if settings.source_info else None)
   if params is None:
@@ -4262,7 +4276,7 @@ def _pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings,
   name_stack_annotation = f'[{eqn.source_info.name_stack}]' if settings.name_stack else None
   lhs = pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes,
                 is_binder=True)
-  rhs = [pp.text(eqn.primitive.name, annotation=name_stack_annotation),
+  rhs = [pp.text(name or eqn.primitive.name, annotation=name_stack_annotation),
          pp_kv_pairs([(p, eqn.params[p]) for p in params], context, settings),
          pp.text(" ") + pp_vars(eqn.invars, context)]
   if eqn.outvars:
@@ -4390,9 +4404,10 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
       # Delete ref to variable when it is no longer needed by next equations.
       del env[v]
 
-# Used in shard_map for converting avals
+# Used in shard_map and reshard for converting avals
 shard_aval_handlers = {}
 unshard_aval_handlers = {}
+reshard_aval_handlers = {}
 
 def shard_aval(mesh, manual_axes, check_vma, spec, aval: AbstractValue
                ) -> AbstractValue:
@@ -4410,6 +4425,14 @@ def unshard_aval(mesh, check_vma, spec, aval: AbstractValue
     return aval.unshard(mesh, check_vma, spec)
   if (handler := unshard_aval_handlers.get(type(aval))):
     return handler(mesh, check_vma, spec, aval)
+  raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
+
+def reshard_aval(aval: AbstractValue, dst_sharding) -> AbstractValue:
+  from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
+  if isinstance(aval, HiType):
+    return aval.reshard(dst_sharding)
+  if (handler := reshard_aval_handlers.get(type(aval))):
+    return handler(aval, dst_sharding)
   raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
 
 

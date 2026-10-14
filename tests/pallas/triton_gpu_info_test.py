@@ -22,6 +22,7 @@ from jax._src.pallas.triton import gpu_info
 
 if sys.platform != "win32":
   from jax.experimental.pallas import triton as plgpu
+
   GpuVersion = plgpu.GpuVersion
 else:
   plgpu = None
@@ -67,9 +68,15 @@ class GpuInfoTest(jtu.JaxTestCase):
         self.assertEqual(cc, 100)
       case GpuVersion.B300 | GpuVersion.GB300:
         self.assertEqual(cc, 103)
+      case GpuVersion.VR200:
+        self.assertEqual(cc, 107)
       case GpuVersion.THOR:
         self.assertEqual(cc, 110)
-      case GpuVersion.RTX_PRO_4500 | GpuVersion.RTX_PRO_5000 | GpuVersion.RTX_PRO_6000:
+      case (
+          GpuVersion.RTX_PRO_4500
+          | GpuVersion.RTX_PRO_5000
+          | GpuVersion.RTX_PRO_6000
+      ):
         self.assertEqual(cc, 120)
       case GpuVersion.GB10:
         self.assertEqual(cc, 121)
@@ -84,38 +91,43 @@ class GpuInfoTest(jtu.JaxTestCase):
     self.assertEqual(info, info_version)
 
   @parameterized.parameters([
-    ("NVIDIA A100-SXM4-40GB", GpuVersion.A100),
-    ("NVIDIA A100-SXM4-80GB", GpuVersion.A100),
-    ("NVIDIA A100-PCIE-40GB", GpuVersion.A100),
-    ("NVIDIA A100 80GB PCIe", GpuVersion.A100),
-    ("NVIDIA A10 WHATEVER", GpuVersion.A10),
-    ("NVIDIA H100 80GB HBM3", GpuVersion.H100),
-    ("NVIDIA H100 PCIe", GpuVersion.H100),
-    ("NVIDIA H100 NVL", GpuVersion.H100),
-    ("NVIDIA RTX 123", None),
-    ("UNKNOWN", None),
-    ("gfx908", None),
-    ("gfx90a:sramecc+:xnack-", None),
-    ("gfx942", None),
-    ("gfx950", None),
-    ("AMD Instinct MI355X", None),
+      ("NVIDIA A100-SXM4-40GB", GpuVersion.A100),
+      ("NVIDIA A100-SXM4-80GB", GpuVersion.A100),
+      ("NVIDIA A100-PCIE-40GB", GpuVersion.A100),
+      ("NVIDIA A100 80GB PCIe", GpuVersion.A100),
+      ("NVIDIA A10 WHATEVER", GpuVersion.A10),
+      ("NVIDIA H100 80GB HBM3", GpuVersion.H100),
+      ("NVIDIA H100 PCIe", GpuVersion.H100),
+      ("NVIDIA H100 NVL", GpuVersion.H100),
+      ("NVIDIA VR200", GpuVersion.VR200),
+      ("NVIDIA RTX 123", None),
+      ("UNKNOWN", None),
+      ("gfx908", None),
+      ("gfx90a:sramecc+:xnack-", None),
+      ("gfx942", None),
+      ("gfx950", None),
+      ("AMD Instinct MI355X", None),
   ])
   def test_gpu_version_from_device_kind(self, device_kind, expected):
     info = gpu_info.gpu_version_from_device_kind(device_kind)
     self.assertEqual(info, expected)
 
   @parameterized.parameters([
-    "gfx942",
-    "gfx950",
-    "gfx950:sramecc+:xnack-",
-    "gfx1201",
+      "gfx942",
+      "gfx950",
+      "gfx950:sramecc+:xnack-",
+      "gfx1201",
   ])
   def test_gfx_device_kind_used_as_arch(self, device_kind):
     abstract_device = jax.sharding.AbstractDevice(
-        device_kind=device_kind, num_cores=None, platform="gpu")
+        device_kind=device_kind, num_cores=None, platform="gpu"
+    )
     abstract_mesh = jax.sharding.AbstractMesh(
-        (1,), ("x",), (jax.sharding.AxisType.Explicit,),
-        abstract_device=abstract_device)
+        (1,),
+        ("x",),
+        (jax.sharding.AxisType.Explicit,),
+        abstract_device=abstract_device,
+    )
     with jax.sharding.use_abstract_mesh(abstract_mesh):
       info = plgpu.get_gpu_info()
       self.assertIsNone(info.gpu_version)

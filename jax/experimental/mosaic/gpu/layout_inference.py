@@ -576,9 +576,7 @@ def find_assignments_for(
         "A satisfiable system should not have remaining unsatisfied"
         " constraints. This is a bug."
     )
-    return {
-        v: k for v, k in constraint_system.assignments.items() if v in unknowns
-    }, fuel
+    return {u: constraint_system.assignments[u] for u in unknowns}, fuel
 
   # If unknowns remain and we have fully reduced the system, we may still
   # be able to make progress by trying out potential assignments. These
@@ -641,6 +639,11 @@ class DerivationContext:
       default_factory=dict, init=False
   )
   slice_tmem_aliases: dict[int, cs.Variable] = dataclasses.field(
+      default_factory=dict, init=False
+  )
+
+  # For each constraint, records the operation it was derived from.
+  op_for_constraint: dict[cs.Constraint, ir.OpView] = dataclasses.field(
       default_factory=dict, init=False
   )
 
@@ -791,10 +794,8 @@ def _vector_load_constraint_system(
   constraints: list[cs.Constraint]
   constraints = [cs.NotOfType(dest_var, fa.WGSplatFragLayout)]
 
-  if op.optimized is None or op.optimized:
-    optimized = cs.OptimizedTransferKind.OPTIMIZED
-  else:
-    optimized = cs.OptimizedTransferKind.UNOPTIMIZED
+  # An unset `optimized` attribute means that we require an optimized transfer.
+  optimized = op.optimized is None or bool(op.optimized)
 
   # SMEM
   if _is_smem_ref(op.source):
@@ -839,14 +840,8 @@ def _vector_store_constraint_system(
   value_var = cs.Variable(value)
   value_sites_for_variable = {value_var: [value]}
 
-  # Store is a special case in Pallas, where we are willing to downgrade from
-  # requiring an optimized transfer in some cases.
-  if op.optimized is None:
-    optimized = cs.OptimizedTransferKind.DOWNGRADABLE
-  elif op.optimized:
-    optimized = cs.OptimizedTransferKind.OPTIMIZED
-  else:
-    optimized = cs.OptimizedTransferKind.UNOPTIMIZED
+  # An unset `optimized` attribute means that we require an optimized transfer.
+  optimized = op.optimized is None or bool(op.optimized)
 
   # SMEM
   constraints = []
@@ -1119,11 +1114,13 @@ def _layout_cast_constraint_system(
         f"compatible with the operand shape {operand.shape} in {op}."
     )
   bitwidth = utils.bitwidth(op.x.type.element_type)
+  # TODO(bchetioui): remove `getattr` once minimum jaxlib version is 0.12.0.
+  strict = bool(getattr(op, "strict", False))
   return (
       cs.ConstraintSystem(
           assignments={result_var: out_layout},
           constraints=[
-              cs.Relayout(operand_var, result_var, bitwidth, strict=False),
+              cs.Relayout(operand_var, result_var, bitwidth, strict=strict),
           ],
       ),
       {operand_var: [operand], result_var: [result]},
@@ -1754,8 +1751,7 @@ def _async_load_tmem_constraint_system(
       source_variable: [source],
       destination_variable: [destination],
   }
-  # TODO(apaszke): Remove once 0.11.1 is the minimum jaxlib version.
-  if getattr(op, "reduce", None) is not None:
+  if op.reduce is not None:
     reduced = ValueSite(op, VariableType.RESULT, 1)
     reduced_variable = cs.Variable(reduced)
     operands_for_variable[reduced_variable] = [reduced]
@@ -1860,10 +1856,8 @@ def _slice_tmem_constraint_system(
   operand_variable = ctx.producer_ref(operand)
   result = ValueSite(op, VariableType.RESULT, 0)
   # TODO(bchetioui): enforce that the parent is a TmemAllocOp.
-  # TODO(allanrenucci): Use alias_id directly from SliceTmemOp after jaxlib
-  # v0.10.3 release.
-  if "alias_id" in op.attributes:
-    alias_id = ir.IntegerAttr(op.attributes["alias_id"]).value
+  if op.alias_id is not None:
+    alias_id = op.alias_id.value
     if (cached_variable := ctx.slice_tmem_aliases.get(alias_id)) is not None:
       result_variable = cached_variable
     else:
@@ -2674,6 +2668,112 @@ def _check_unsatisfiable_divisibility_constraints(
           raise _construct_value_error_with_op_stacktrace(msg, idx)
 
 
+def try_raise_constraint_specific_error(op: ir.OpView, constraint: cs.Constraint):
+  # TODO(bchetioui): handle other constraint types.
+  msg: str | None = None
+  match constraint:
+    case cs.IsTransferableSmemRegisters(
+        source=cs.RegisterLayout(value=reg_layout),
+        target=cs.SMEMTransforms() as smem_transforms,
+        optimized=optimized
+    ) | cs.IsTransferableSmemRegisters(
+        source=cs.SMEMTransforms() as smem_transforms,
+        target=cs.RegisterLayout(value=reg_layout),
+        optimized=optimized
+    ):
+      match smem_transforms:
+        case cs.SMEMTransforms(tiling=None, swizzle=None):
+          ref_str = "untransformed ref"
+        case cs.SMEMTransforms(tiling=lc.TileTransform() as t, swizzle=None):
+          ref_str = f"ref with transforms (TilingTransform({t.tiling}),)"
+        case cs.SMEMTransforms(tiling=None, swizzle=s) if s is not None:
+          ref_str = f"ref with transforms (SwizzleTransform({s}),)"
+        case cs.SMEMTransforms(tiling=t, swizzle=s):
+          assert t is not None and s is not None
+          ref_str = (
+              "ref with transforms "
+              f"(TilingTransform({t.tiling}), SwizzleTransform({s}))"
+          )
+      opt_str = "optimized " if optimized else ""
+      msg = (
+          f"no {opt_str}SMEM <-> registers transfer plan could be synthesized "
+          f"for register layout {layouts_lib.pprint_layout(reg_layout)} and "
+          f"{ref_str}"
+      )
+    case cs.Relayout(
+        source=cs.RegisterLayout(value=source_layout),
+        target=cs.RegisterLayout(value=target_layout),
+    ):
+      msg = (
+          "cannot relayout from register layout "
+          f"{layouts_lib.pprint_layout(source_layout)} to "
+          f"{layouts_lib.pprint_layout(target_layout)}"
+      )
+    case cs.Equals(
+        lhs=cs.RegisterLayout(value=lhs_layout),
+        rhs=cs.RegisterLayout(value=rhs_layout),
+    ):
+      msg = (
+          "expected register layouts "
+          f"{layouts_lib.pprint_layout(lhs_layout)} and "
+          f"{layouts_lib.pprint_layout(rhs_layout)} to be equal"
+      )
+
+  if msg is not None:
+    raise _construct_value_error_with_op_stacktrace(
+        f"Failed to infer a possible set of layouts: {msg}", op
+    )
+
+
+def diagnose_unsatisfiable_system(
+    ctx: DerivationContext, initial_system: cs.ConstraintSystem
+):
+  """Raises the most specific error message possible for an unsatisfiable system."""
+  # First, we deduce as many assignments as possible, until we reach the
+  # expected unsatisfiable state, or can not reduce further.
+  system = initial_system
+  unsatisfied_assignments: dict[cs.Variable, cs.Constant] | None = None
+  while True:
+    match cs._reduce_system_once(system):
+      case cs.Unsatisfiable():
+        unsatisfied_assignments = system.assignments
+        break
+      case cs.ConstraintSystem() as reduced:
+        system = reduced
+      case None:
+        break
+
+  # If the constraint system is already known to be unsatisfiable here, we can
+  # attempt to raise a specialized error message.
+  if unsatisfied_assignments is not None:
+    for constraint, op in ctx.op_for_constraint.items():
+      reduced = cs.reduce_constraint(constraint, unsatisfied_assignments)
+      if not isinstance(reduced, cs.Unsatisfiable) and reduced.holds() is False:
+        try_raise_constraint_specific_error(op, reduced)
+
+  # In the case below, we have not yet been able to find a single contradiction
+  # to point to as the culprit. We reuse the initial, unreduced constraint
+  # system to check for divisibility constraints.
+  #
+  # We saturate `cs.OneOf` constraints across equal variables to propagate
+  # layout candidates (e.g. from ops like WGMMA) to equal variables/subviews
+  # (e.g. created by slicing), allowing
+  # `_check_unsatisfiable_divisibility_constraints` to inspect all relevant
+  # candidate layouts for each variable when constructing error messages.
+  saturated_system = cs.saturate_one_of_constraints_for_equal_vars(
+      initial_system
+  )
+  if not isinstance(saturated_system, cs.Unsatisfiable):
+    _check_unsatisfiable_divisibility_constraints(ctx, saturated_system)
+
+  # TODO(bchetioui): add more error diagnostics.
+  raise ValueError(
+      "Failed to infer a possible set of layouts. This should only happen if "
+      "user-provided layout casts are unsatisfiable. To dump the constraint "
+      "system for debugging, use `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM=1`."
+  )
+
+
 def _is_expensive_relayout(
     layout1: fa.FragmentedLayout, layout2: fa.FragmentedLayout
 ) -> bool:
@@ -2779,6 +2879,10 @@ def infer_layout(
               f"Shape mismatch between variable and {site}:"
               f" {var.shape} != {site.shape}."
           )
+
+    for constraint in constraint_system.constraints:
+      ctx.op_for_constraint.setdefault(constraint, op)
+
     global_constraint_system &= constraint_system
     ctx.update(mapping)
 
@@ -2790,12 +2894,21 @@ def infer_layout(
       break
 
   if isinstance(global_constraint_system, cs.Unsatisfiable):
+    # TODO(bchetioui): rework this to raise a nicer error message here too. This
+    # case is only hit if there are directly conflicting assignments (not even
+    # constraints), so it should be easy.
     raise ValueError(
         "Failed to infer a possible set of layouts. This should only happen if "
-        "user-provided layout casts are unsatisfiable."
+        "user-provided layout casts are unsatisfiable. To dump the constraint "
+        "system for debugging, use `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM=1`."
     )
 
   constraints = derive_relayout_constraints(ctx.value_sites_for_variable)
+  for constraint in constraints:
+    assert isinstance(constraint.target, cs.Variable)
+    ctx.op_for_constraint.setdefault(
+        constraint, constraint.target.key.operation
+    )
   global_constraint_system &= cs.ConstraintSystem(constraints=constraints)
   assert not isinstance(global_constraint_system, cs.Unsatisfiable)
 
@@ -2814,9 +2927,8 @@ def infer_layout(
       global_constraint_system
   )
 
-  # TODO(bchetioui): Remove this fallback once minimum jaxlib version is 0.11.2.
   dump_options = mgpu.get_or_set_dump_options(module)  # pyrefly: ignore[missing-attribute]
-  if getattr(dump_options, "constraint_system", False):
+  if dump_options.constraint_system:
     utils.dump_to_file_or_stdout(
         str(global_constraint_system),
         f"{dump_options.module_basename}.constraint_system.txt",
@@ -2839,24 +2951,8 @@ def infer_layout(
     # At this point we know the system is unsatisfiable. We attempt to find
     # contradictions in the `cs.ConstraintSystem`, and raise a meaningful error
     # message.
-    # We saturate `cs.OneOf` constraints across equal variables to propagate
-    # layout candidates (e.g. from ops like WGMMA) to equal variables/subviews
-    # (e.g. created by slicing), allowing
-    # `_check_unsatisfiable_divisibility_constraints` to inspect all relevant
-    # candidate layouts for each variable when constructing error messages.
-    global_constraint_system = cs.saturate_one_of_constraints_for_equal_vars(
-        global_constraint_system
-    )
-    if not isinstance(global_constraint_system, cs.Unsatisfiable):
-      _check_unsatisfiable_divisibility_constraints(
-          ctx, global_constraint_system
-      )
-
-    raise ValueError(
-        "Failed to infer a possible set of layouts. This should only happen if "
-        "user-provided layout casts are unsatisfiable. To dump the constraint "
-        "system for debugging, use `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM=1`."
-    )
+    diagnose_unsatisfiable_system(ctx, global_constraint_system)
+    raise RuntimeError("Unreachable")
 
   layout_for_value_site: dict[ValueSite, cs.Constant] = {}
   for variable, value_sites in ctx.value_sites_for_variable.items():

@@ -22,6 +22,7 @@ import functools
 import hashlib
 import io
 import itertools
+import json
 import math
 import os
 import pathlib
@@ -77,7 +78,13 @@ def artificial_shared_memory_limit(limit):
         _SMEM_SIZE_BOUND = old_limit
 
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
-FWD_COMPAT_IR_VERSION = 6
+FWD_COMPAT_IR_VERSION = 9
+
+# jaxlib 0.12.0 changes the Mosaic GPU C API (MosaicGpuLaunch takes kernel and
+# device_ordinal arguments).
+# TODO(sohaibiftikhar): Remove conditioning once the minimum jaxlib version is
+# >= 0.12.0.
+_ABI_V2 = lib.version >= (0, 12, 0)
 
 c = utils.c  # This is too common to fully qualify.
 
@@ -188,6 +195,25 @@ def _has_communication(module, **_):
 KNOWN_KERNELS: dict[bytes, bytes] = {}
 
 
+# Frontend attributes understood by the XLA:GPU compiler. They let a custom
+# call request a specific memory space for its operands and results. See
+# xla/service/gpu/gpu_memory_space_assignment.h for the definitions.
+_OPERANDS_MEMORY_SPACES_ATTR = "operands_memory_spaces"
+_RESULTS_MEMORY_SPACES_ATTR = "results_memory_spaces"
+
+# Must be kept in sync with xla::gpu::MemorySpaceColor::kCollective. Buffers
+# in this memory space are allocated as symmetric memory, which is a
+# prerequisite for peer-to-peer and multimem accesses.
+_COLLECTIVE_MEMORY_SPACE = 1
+
+
+def _memory_spaces_attr_value(indices: Sequence[int]) -> str:
+  """Formats ``indices`` as an XLA ``{index:memory_space,...}`` attribute."""
+  return "{%s}" % ",".join(
+      f"{index}:{_COLLECTIVE_MEMORY_SPACE}" for index in indices
+  )
+
+
 def _mosaic_gpu_lowering_rule(
     ctx,
     *args,
@@ -195,6 +221,7 @@ def _mosaic_gpu_lowering_rule(
     out_types,
     inout_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
+    cost_estimate: Any = None,
     use_custom_barrier: bool = False,
     skip_device_barrier: bool = False,
 ):
@@ -209,12 +236,13 @@ def _mosaic_gpu_lowering_rule(
       mesh = axis_context.mesh
       if isinstance(mesh, mesh_lib.Mesh):
         replica_ids = mesh.device_ids.ravel()
-        # Skip the check for AbstractMesh
         if not np.array_equal(mesh.device_ids.ravel(), np.arange(mesh.size)):
           raise NotImplementedError(
               "Mosaic GPU only supports meshes with device ordering that follows"
               f" row-major device ids. Got: {mesh.device_ids.ravel()} device ids."
           )
+      elif isinstance(mesh, mesh_lib.AbstractMesh):
+        replica_ids = np.arange(mesh.size)
     elif isinstance(axis_context, sharding_impls.ShardingContext):
       if axis_context.num_devices != 1:
         raise NotImplementedError(
@@ -242,6 +270,18 @@ def _mosaic_gpu_lowering_rule(
       serialize=True,
       ir_version=FWD_COMPAT_IR_VERSION if ctx.is_forward_compat() else None,
   )
+
+  # Prior to computing the kernel hash, we temporarily remove the dump basename
+  # attribute from the module. This ensures that modules with different dump
+  # basenames but otherwise identical will have the same kernel hash, and thus
+  # will share the same compiled kernel.
+  dump_basename_attr_name = "mosaic_gpu.dump_basename"
+  if dump_basename_attr_name in module.operation.attributes:
+    dump_basename_attr = module.operation.attributes[dump_basename_attr_name]
+  else:
+    dump_basename_attr = None
+  module.operation.attributes[dump_basename_attr_name] = ir.UnitAttr.get()
+
   bytecode_buffer = io.BytesIO()
   module.operation.write_bytecode(bytecode_buffer, desired_version=0)
   module_asm = bytecode_buffer.getvalue()
@@ -255,6 +295,9 @@ def _mosaic_gpu_lowering_rule(
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
 
+  if dump_basename_attr is not None:
+    module.operation.attributes[dump_basename_attr_name] = dump_basename_attr
+
   backend_config: dict[str, ir.Attribute] = dict(
       kernel_hash=ir.StringAttr.get(kernel_id),
       module=ir.StringAttr.get(module_asm),
@@ -264,6 +307,12 @@ def _mosaic_gpu_lowering_rule(
           launch_context.uses_collective_metadata(module)
       ),
   )
+  if cost_estimate is not None:
+    backend_config["cost_estimate_json"] = ir.StringAttr.get(
+        json.dumps(dataclasses.asdict(cost_estimate))
+    )
+
+  frontend_attributes: dict[str, ir.Attribute] = {}
 
   # If NVSHMEM is available it will be used by default, otherwise we will use
   # collective metadata.
@@ -283,9 +332,35 @@ def _mosaic_gpu_lowering_rule(
           ),
           dtype=bool,
       )
+      # The Mosaic runtime uses this to decide which buffers to exchange with
+      # the peers through the collective metadata.
       backend_config["symmetric_memory_parameters"] = ir.StringAttr.get(
           ",".join(map(str, map(int, symmetric_memory_args)))
       )
+      # Mosaic kernel parameters are the flat list of the custom call buffers:
+      # all the operands first, followed by all the results. Ask the XLA
+      # compiler to allocate the symmetric ones in the collective memory space.
+      num_operands = len(ctx.avals_in)
+      operand_indices = [
+          i for i, s in enumerate(symmetric_memory_args[:num_operands]) if s
+      ]
+      result_indices = [
+          i for i, s in enumerate(symmetric_memory_args[num_operands:]) if s
+      ]
+      if operand_indices:
+        frontend_attributes[_OPERANDS_MEMORY_SPACES_ATTR] = ir.StringAttr.get(
+            _memory_spaces_attr_value(operand_indices)
+        )
+      if result_indices:
+        frontend_attributes[_RESULTS_MEMORY_SPACES_ATTR] = ir.StringAttr.get(
+            _memory_spaces_attr_value(result_indices)
+        )
+
+  extra_attributes: dict[str, ir.Attribute] | None = None
+  if frontend_attributes:
+    extra_attributes = {
+        "mhlo.frontend_attributes": ir.DictAttr.get(frontend_attributes)
+    }
 
   result_types, _ = mlir.ir_tree_registry.flatten([
       mlir.aval_to_ir_type(ctx.module_context, aval) for aval in ctx.avals_out
@@ -299,6 +374,7 @@ def _mosaic_gpu_lowering_rule(
       backend_config=backend_config,
       operand_output_aliases=dict(input_output_aliases),
       api_version=4,
+      extra_attributes=extra_attributes,
   ).results
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
@@ -315,10 +391,6 @@ class Union[T]:
 
   def __iter__(self):
     return iter(self.members)
-
-@dataclasses.dataclass(frozen=True)
-class TMABarrier:
-  num_barriers: int = 1
 
 @dataclasses.dataclass(frozen=True)
 class Barrier:
@@ -340,6 +412,24 @@ class ClusterBarrier:
   _: dataclasses.KW_ONLY
   orders_tensor_core: bool = False
   leader_tracked: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class CtaBarrier:
+  arrival_count: int
+  num_barriers: int = 1
+
+  def __post_init__(self):
+    if (self.arrival_count < 1) or (self.arrival_count % utils.WARP_SIZE != 0):
+      raise ValueError(
+          f"Arrival count must be a multiple of {utils.WARP_SIZE}, but got"
+          f" {self.arrival_count}"
+      )
+    if self.num_barriers < 1:
+      raise ValueError(
+          f"Num barriers must be at least 1, but got {self.num_barriers}"
+      )
+
 
 @dataclasses.dataclass(frozen=True)
 class TMEM:
@@ -441,6 +531,7 @@ def _construct_smem_reftree(
     ],  # Mutated by this function!
     lowering_semantics: LoweringSemantics,
     dynamic_smem_offset: int = 0,
+    cta_barrier_offset: int = 0,
 ) -> Callable[[], RefTree]:
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
@@ -478,25 +569,17 @@ def _construct_smem_reftree(
                 tmem_allocs,
                 lowering_semantics,
                 dynamic_smem_offset,
+                cta_barrier_offset,
             )
             for m in members
         ]
         # TODO(apaszke): This is quadratic, but it shouldn't matter for now...
         dynamic_smem_offset += _smem_tree_size(ref_ty)
+        cta_barrier_offset += _cta_barrier_tree_count(ref_ty)
 
         def ref(member_thunks=member_thunks):
           return Union([t() for t in member_thunks])
 
-      case TMABarrier(num_barriers):
-        init_fn: Callable[..., Any] = (
-            functools.partial(
-                utils.DialectBarrierRef.initialize,
-                orders_tensor_core=False,
-            )
-            if lowering_semantics == LoweringSemantics.Warpgroup
-            else utils.BarrierRef.initialize
-        )
-        ref = init_fn(barrier_memref(num_barriers), arrival_count=1)
       case Barrier(arrival_count, num_barriers, orders_tensor_core):
         init_fn = (
             functools.partial(
@@ -512,6 +595,13 @@ def _construct_smem_reftree(
             barrier_memref(num_barriers), arrival_count, collective_dims,
             cluster_shape, leader_tracked=ref_ty.leader_tracked
         )
+      case CtaBarrier(arrival_count, num_barriers):
+        ref = utils.CtaBarrierRef.initialize(
+            cta_barrier_offset,
+            arrival_count=arrival_count,
+            num_barriers=num_barriers,
+        )
+        cta_barrier_offset += num_barriers
       case TMEM(shape, dtype, layout=layout, collective=collective, packing=packing):
         addr_ref = _slice_smem(
             ir.MemRefType.get([], i32, memory_space=utils.smem()),
@@ -578,9 +668,8 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
       case Union(members):
         size += max(_smem_tree_size(s) for s in members)
       case (
-          TMABarrier(num_barriers)
+          Barrier(num_barriers=num_barriers)
           | ClusterBarrier(num_barriers=num_barriers)
-          | Barrier(num_barriers=num_barriers)
       ):
         if size % utils.MBARRIER_BYTES:
           raise NotImplementedError(
@@ -589,6 +678,8 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
               f" {utils.MBARRIER_BYTES} bytes."
           )
         size += num_barriers * utils.MBARRIER_BYTES
+      case CtaBarrier():
+        pass
       case TMEM(_):
         # TODO(justinfu): This can trigger misaligned barrier allocations
         # if TMEM is requested before barriers b/c it's not divisible by 8.
@@ -596,6 +687,20 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
       case _:
         size += _count_buffer_bytes(l)
   return size
+
+
+def _cta_barrier_tree_count(smem_buffers: ShapeTree) -> int:
+  leaves = jax.tree.leaves(smem_buffers, is_leaf=lambda x: isinstance(x, Union))
+  count = 0
+  for l in leaves:
+    match l:
+      case Union(members):
+        count += max(_cta_barrier_tree_count(s) for s in members)
+      case CtaBarrier(num_barriers=num_barriers):
+        count += num_barriers
+      case _:
+        pass
+  return count
 
 
 def _is_known_multihost_mesh(
@@ -662,6 +767,7 @@ def _launch(
     num_peers: int = 0,
     num_params: int = 0,
     jax_mesh: mesh_lib.Mesh | None = None,
+    is_multi_process: bool = False,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
     raise ValueError(
@@ -763,12 +869,29 @@ def _launch(
         prof,
         num_peers=num_peers,
         num_params=num_params,
-        multihost_kernel=_is_known_multihost_mesh(jax_mesh),
+        multihost_kernel=is_multi_process or _is_known_multihost_mesh(
+            jax_mesh
+        ),
     )
     with ctx.named_region("Init"):
+      num_warpgroups = math.prod(block) // utils.WARPGROUP_SIZE
+      reserved_cta_barriers = 1 + num_warpgroups
+      total_cta_barriers = _cta_barrier_tree_count(smem_buffers)
+      if reserved_cta_barriers + total_cta_barriers > 16:
+        raise ValueError(
+            f"Too many CTA barriers requested: {total_cta_barriers} requested,"
+            f" but only {16 - reserved_cta_barriers} available"
+            f" ({num_warpgroups} warpgroup barriers and 1 CTA-wide barrier"
+            " reserved)."
+        )
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
       smem_ref_tree_thunk = _construct_smem_reftree(
-          cluster, dynamic_smem, smem_buffers, tmem_allocs, lowering_semantics
+          cluster,
+          dynamic_smem,
+          smem_buffers,
+          tmem_allocs,
+          lowering_semantics,
+          cta_barrier_offset=reserved_cta_barriers,
       )
       # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
@@ -856,6 +979,7 @@ def _lower_as_gpu_kernel(
     jax_mesh: mesh_lib.Mesh | None = None,
     base_loc: ir.Location | None = None,
     uses_pdl: bool = False,
+    is_multi_process: bool = False,
 ):
   ptr_ty = llvm.PointerType.get()
   token_ty = gpu.AsyncTokenType.get()
@@ -948,6 +1072,7 @@ def _lower_as_gpu_kernel(
           num_peers,
           num_params,
           jax_mesh,
+          is_multi_process=is_multi_process,
       ) as (_launch_ctx, smem_refs):
         launch_ctx = _launch_ctx
         body(launch_ctx, *arg_refs, smem_refs)
@@ -987,7 +1112,6 @@ def _run_serde_pass(
   module.context.allow_unregistered_dialects = True
   try:
     pipeline.run(module.operation)
-    module.operation.verify()
   except ir.MLIRError as e:
     raise error.mlir_error_to_verification_error(e) from e
   finally:
@@ -1004,6 +1128,15 @@ def _declare_runtime_functions():
   func.FuncOp(
       "mosaic_gpu_init_tma_desc", init_tma_desc_type, visibility="private"
   )
+  im2col_arg_tys = [
+      ptr_ty, ptr_ty, i64, i64, ptr_ty, ptr_ty, i64, ptr_ty, ptr_ty, i64, i64, ptr_ty,
+  ]
+  init_tma_im2col_desc_type = ir.FunctionType.get(im2col_arg_tys, [])
+  func.FuncOp(
+      "mosaic_gpu_init_tma_im2col_desc",
+      init_tma_im2col_desc_type,
+      visibility="private",
+  )
 
 
 def lower_mgpu_module(
@@ -1014,20 +1147,17 @@ def lower_mgpu_module(
     auto_barriers: bool = True,
 ) -> None:
   if lowering_semantics == LoweringSemantics.Warpgroup:
-    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.1.
-    if hasattr(dialect, "get_or_set_dump_options"):
-      dump_options = dialect.get_or_set_dump_options(module)
-    else:
-      dump_options = None
+    dump_options = dialect.get_or_set_dump_options(module)
 
     # We need to run a pass that removes dead-code for which layout inference
     # does not work.
     pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize,cse)", module.context)
+    pm.enable_verifier(False)
     pm.run(module.operation)
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
-    if dump_options is not None and dump_options.mlir_passes:
+    if dump_options.mlir_passes:
       utils.dump_to_file_or_stdout(
           str(module),
           f"{dump_options.module_basename}.before_layout_inference.txt",
@@ -1036,7 +1166,7 @@ def lower_mgpu_module(
 
     layout_inference.infer_layout(module, arch=utils._infer_arch())
 
-    if dump_options is not None and dump_options.mlir_passes:
+    if dump_options.mlir_passes:
       utils.dump_to_file_or_stdout(
           str(module),
           f"{dump_options.module_basename}.after_layout_inference.txt",
@@ -1067,6 +1197,7 @@ def _kernel_to_module(
     kernel_name: str | None = None,
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
     inout_shape = (),
+    is_multi_process: bool = False,
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -1088,7 +1219,7 @@ def _kernel_to_module(
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, inout_shape,
           smem_scratch_shape, thread_semantics, module_name, kernel_name,
-          prof_spec, jax_mesh=jax_mesh
+          prof_spec, jax_mesh=jax_mesh, is_multi_process=is_multi_process,
       )
   )
 
@@ -1118,10 +1249,12 @@ def as_gpu_kernel(
     ir_version: int | None = None,
     thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
     inout_shape = (),
+    is_multi_process: bool = False,
 ):
   module, in_shape, inout_shape, out_shape, unwrap_output_tuple, is_device_collective = _kernel_to_module(
       body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec,
-      cluster, module_name, kernel_name, thread_semantics, inout_shape
+      cluster, module_name, kernel_name, thread_semantics, inout_shape,
+      is_multi_process=is_multi_process,
   )
 
   expected_arg_tys, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))
@@ -1254,17 +1387,33 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
   compiled = compile_func(ctypes.c_char_p(module_asm), ctypes.c_int(len(module_asm)))
   if not compiled:
     raise RuntimeError("Failed to compile the module")
-  function, launch_ptr = compiled[0], compiled[1]
-  launch_c = ctypes.CFUNCTYPE(
-      None, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
-  )(launch_ptr)
+  function, launch_ptr, kernel = compiled[0], compiled[1], compiled[2]
+  launch_arg_types = [
+      ctypes.c_void_p, # kernel
+      ctypes.c_void_p, # function
+      ctypes.c_void_p, # stream
+      ctypes.POINTER(ctypes.c_void_p), # arg_ptrs
+      ctypes.c_int, # device_ordinal
+  ]
+  if not _ABI_V2:
+    # Drop kernel and device_ordinal for ABI v1.
+    launch_arg_types = launch_arg_types[1:-1]
+  launch_c = ctypes.CFUNCTYPE(None, *launch_arg_types)(launch_ptr)
 
   def launch(arg_ptrs, device):
-    launch_c(
+    device = torch.device(device)
+    args = [
+        kernel,
         function,
         torch.cuda.default_stream(device)._as_parameter_,
         arg_ptrs,
-    )
+        device.index
+        if device.index is not None
+        else torch.cuda.current_device(),
+    ]
+    if not _ABI_V2:
+      args = args[1:-1]
+    launch_c(*args)
 
   return launch, functools.partial(unload_func, compiled)
 

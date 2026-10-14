@@ -168,7 +168,7 @@ was reduced-precision matmul accumulation rather than a bug.
 
 Finally, a distinction: everything on this page controls how dot products
 are *computed* for given inputs. That's separate from the choice of dtype
-your data is *stored* in ({ref}`jax-101-arrays` covers defaults and
+your data is *stored* in ({ref}`default-dtypes` covers defaults and
 {doc}`/101/type_promotion` the promotion rules). Storing model parameters
 or activations in `bfloat16` changes memory footprint and bandwidth
 everywhere; `precision` changes arithmetic inside individual operations.

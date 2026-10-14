@@ -130,6 +130,7 @@ Operators
     optimization_barrier
     pad
     platform_dependent
+    polynomial
     polygamma
     population_count
     pow

@@ -48,48 +48,44 @@ class MultiPageAsyncCopyDescriptor:
     self._vmem_buffer = vmem_buffer
     self._scales_vmem_buffer = scales_vmem_buffer
     self._num_pages_to_load = num_pages_to_load
-    if head_index is not None:
-      self._pages_hbm_ref = pages_hbm_ref.at[head_index]
-      if scales_pages_hbm_ref is not None:
-        self._scales_pages_hbm_ref = scales_pages_hbm_ref.at[head_index]
-      else:
-        self._scales_pages_hbm_ref = None
-    else:
-      self._pages_hbm_ref = pages_hbm_ref
-      self._scales_pages_hbm_ref = scales_pages_hbm_ref
+    self._pages_hbm_ref = pages_hbm_ref
+    self._scales_pages_hbm_ref = scales_pages_hbm_ref
+    self._head_index = head_index
     self._sem = sem
     self._page_indices = page_indices
     self._page_indices_start_offset = page_indices_start_offset
-    self._async_copies = [
-        self._make_async_copy(i) for i in range(self._num_pages_to_load)
-    ]
-    if (
-        self._scales_pages_hbm_ref is not None
-        and self._scales_vmem_buffer is not None
-    ):
-      self._async_copies += [
-          self._make_scales_async_copy(i)
-          for i in range(self._num_pages_to_load)
-      ]
-
-  def _make_async_copy(self, i):
-    page_index = self._page_indices[self._page_indices_start_offset + i]
-    return pltpu.make_async_copy(
-        self._pages_hbm_ref.at[page_index], self._vmem_buffer.at[i], self._sem
-    )
-
-  def _make_scales_async_copy(self, i):
-    page_index = self._page_indices[self._page_indices_start_offset + i]
-    return pltpu.make_async_copy(
-        self._scales_pages_hbm_ref.at[page_index],  # pyrefly: ignore[missing-attribute]
-        self._scales_vmem_buffer.at[i],
-        self._sem,
-    )
 
   def start(self):
     """Starts the async copies."""
-    for async_copy in self._async_copies:
-      async_copy.start()
+    pages_hbm_ref = (
+        self._pages_hbm_ref.at[self._head_index]
+        if self._head_index is not None
+        else self._pages_hbm_ref
+    )
+    scales_pages_hbm_ref = (
+        self._scales_pages_hbm_ref.at[self._head_index]
+        if (
+            self._head_index is not None
+            and self._scales_pages_hbm_ref is not None
+        )
+        else self._scales_pages_hbm_ref
+    )
+    for i in range(self._num_pages_to_load):
+      page_index = self._page_indices[self._page_indices_start_offset + i]
+      pltpu.make_async_copy(
+          pages_hbm_ref.at[page_index],
+          self._vmem_buffer.at[i],
+          self._sem,
+      ).start()
+      if (
+          scales_pages_hbm_ref is not None
+          and self._scales_vmem_buffer is not None
+      ):
+        pltpu.make_async_copy(
+            scales_pages_hbm_ref.at[page_index],  # pyrefly: ignore[missing-attribute]
+            self._scales_vmem_buffer.at[i],
+            self._sem,
+        ).start()
 
   def _maybe_dequantize(
       self, x, x_scale, dtype: jax.typing.DTypeLike = jnp.bfloat16
@@ -100,10 +96,18 @@ class MultiPageAsyncCopyDescriptor:
 
   def wait_and_get_loaded(self) -> jax.Array:
     """Wait async copies and gets the loaded buffer as a jax.Array."""
-    for async_copy in self._async_copies:
-      async_copy.wait()
+    pltpu.make_async_copy(
+        self._vmem_buffer, self._vmem_buffer, self._sem
+    ).wait()
+    if (
+        self._scales_pages_hbm_ref is not None
+        and self._scales_vmem_buffer is not None
+    ):
+      pltpu.make_async_copy(
+          self._scales_vmem_buffer, self._scales_vmem_buffer, self._sem
+      ).wait()
     head_dim = self._vmem_buffer.shape[-1]
-    jax_array = self._vmem_buffer[...].astype(jnp.float32)
+    jax_array = self._vmem_buffer[...]
     if self._scales_vmem_buffer is not None:
       scales_jax_array = self._scales_vmem_buffer[...].astype(jnp.float32)
     else:
@@ -139,6 +143,7 @@ def paged_flash_attention_kernel(
     attn_logits_soft_cap: float | None,
     megacore_mode: str | None,
     program_ids=(),
+    length=None,
 ):
   """Pallas kernel for paged attention."""
   if program_ids:
@@ -161,7 +166,8 @@ def paged_flash_attention_kernel(
 
   h = h * h_step + h_start
   b = b * b_step + b_start
-  length = lengths_ref[b]
+  if length is None:
+    length = lengths_ref[b]
 
   def compute_block_indices(b, h, i):
 
@@ -193,7 +199,7 @@ def paged_flash_attention_kernel(
       next_h = h + h_step
       return lax.cond(next_h < num_kv_heads, lambda: (b, next_h, 0), advance_b)
 
-    return lax.cond(i * bk < lengths_ref[b], lambda: (b, h, i), advance_h)
+    return lax.cond(i * bk < length, lambda: (b, h, i), advance_h)
 
   def create_kv_async_copy_descriptors(b, h, i, buffer_index):
     page_offset = b * pages_per_sequence + i * pages_per_compute_block
@@ -226,7 +232,6 @@ def paged_flash_attention_kernel(
     )
     return async_copy_k, async_copy_v
 
-  @pl.when(i * bk < length)
   def flash_attention():
     init_flag = init_flag_ref[0]
     init_flag_ref[0] = 0
@@ -241,11 +246,13 @@ def paged_flash_attention_kernel(
       async_copy_k.start()
       async_copy_v.start()
 
-    @pl.when(i == 0)
-    def init():
-      m_ref[...] = jnp.full_like(m_ref, -jnp.inf)
-      l_ref[...] = jnp.zeros_like(l_ref)
-      o_ref[...] = jnp.zeros_like(o_ref)
+    if not program_ids:
+
+      @pl.when(i == 0)
+      def init():
+        m_ref[...] = jnp.full_like(m_ref, -jnp.inf)
+        l_ref[...] = jnp.zeros_like(l_ref)
+        o_ref[...] = jnp.zeros_like(o_ref)
 
     @pl.when(next_b < batch_size)
     def prefetch_next_block():
@@ -288,6 +295,11 @@ def paged_flash_attention_kernel(
         (l_prev * alpha * o_ref[...] + beta * o_curr) / l_next
     ).astype(o_ref.dtype)
 
+  if program_ids:
+    flash_attention()
+  else:
+    pl.when(i * bk < length)(flash_attention)
+
 
 def paged_flash_attention_kernel_inline_seq_dim(
     lengths_ref,
@@ -324,6 +336,14 @@ def paged_flash_attention_kernel_inline_seq_dim(
   l_ref[...] = jnp.zeros_like(l_ref)
   o_ref[...] = jnp.zeros_like(o_ref)
 
+  bk = pages_per_compute_block * k_pages_hbm_ref.shape[-2]
+
+  if megacore_mode == "batch":
+    num_cores = pl.num_programs(0)
+    length = lengths_ref[b * num_cores + core_index]
+  else:
+    length = lengths_ref[b]
+
   def body(i, _):
     paged_flash_attention_kernel(
         lengths_ref,
@@ -351,16 +371,9 @@ def paged_flash_attention_kernel_inline_seq_dim(
         attn_logits_soft_cap=attn_logits_soft_cap,
         megacore_mode=megacore_mode,
         program_ids=(core_index, b, h, i),
+        length=length,
     )
     return ()
-
-  bk = pages_per_compute_block * k_pages_hbm_ref.shape[-2]
-
-  if megacore_mode == "batch":
-    num_cores = pl.num_programs(0)
-    length = lengths_ref[b * num_cores + core_index]
-  else:
-    length = lengths_ref[b]
 
   lax.fori_loop(0, lax.div(length + bk - 1, bk), body, ())
 

@@ -38,9 +38,11 @@ allowed_artifacts=("jax" "jaxlib" "jax-cuda-plugin" "jax-cuda-pjrt")
 os=$(uname -s | awk '{print tolower($0)}')
 arch=$(uname -m)
 
-bazel_startup_options=""
+bazel_startup_options=()
 if [[ -n "${JAXCI_BAZEL_OUTPUT_BASE}" ]]; then
-  bazel_startup_options="--output_base=${JAXCI_BAZEL_OUTPUT_BASE}"
+  bazel_startup_options+=(
+    "--bazel_startup_options=--output_base=${JAXCI_BAZEL_OUTPUT_BASE}"
+  )
 fi
 
 # Adjust the values when running on Windows x86 to match the config in
@@ -48,6 +50,10 @@ fi
 if [[ $os =~ "msys_nt"  && $arch == "x86_64" ]]; then
   os="windows"
   arch="amd64"
+  workspace_path=$(cygpath -m "$PWD")
+  bazel_startup_options+=(
+    "--bazel_startup_options=--host_jvm_args=-Djava.security.properties=file:///$workspace_path/ci/bazel_dns_windows.security"
+  )
 fi
 
 # Determine the Bazel flags that stamp the wheel's version.
@@ -95,7 +101,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
   python build/build.py build --wheels="$artifact" \
     --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
     --bazel_options=--config=rbe_cpu_pool \
-    --bazel_startup_options="$bazel_startup_options" \
+    "${bazel_startup_options[@]}" \
     --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
     $cuda_version_flag \
     --verbose --detailed_timestamped_log \
@@ -109,7 +115,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     python build/build.py build --wheels="$artifact" \
       --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
       --bazel_options=--config=rbe_cpu_pool \
-      --bazel_startup_options="$bazel_startup_options" \
+      "${bazel_startup_options[@]}" \
       --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
       $cuda_version_flag \
       --verbose --detailed_timestamped_log \

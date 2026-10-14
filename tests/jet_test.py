@@ -477,6 +477,20 @@ class JetTest(jtu.JaxTestCase):
     _, (term1,) = jet(lax.one_minus_square, (tiny,), ([jnp.float32(1.0)],))
     self.assertArraysAllClose(term1, jnp.array(-2e-20, dtype=jnp.float32))
 
+  def test_polynomial(self):
+    rng = self.rng()
+    x = rng.randn(4, 3)
+    coeffs = (1.0, -0.5, 0.25, -0.125, 0.0625)
+    for order in [2, 4, 6]:
+      terms_in = [rng.randn(*x.shape) for _ in range(order)]
+      self.check_jet(
+          lambda z: lax.polynomial(z, coeffs, unroll=2),
+          (x,),
+          (terms_in,),
+          atol=1e-3,
+          rtol=1e-3,
+      )
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

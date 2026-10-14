@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import functools
 import itertools
@@ -395,7 +396,7 @@ def mma(
           f" {a_scale.shape[1]}"
       )
     scale_block = k // a_scale.shape[1]
-    k_group_elems = max(k_group_elems, 4 * scale_block)
+    k_group_elems = max(k_group_elems, 4 * scale_block)  # pyrefly: ignore[unsupported-operation]
   required_multiple = 16 if collective else 8
   mode_name = "2 CTA" if collective else "1 CTA"
   if d.dtype == s32:
@@ -875,6 +876,8 @@ def commit_arrive(
     barrier: utils.BarrierRef | ir.Value,
     collective: bool = False,
     ctx: LaunchContext | None = None,
+    *,
+    predicate: ir.Value | None = None,
 ) -> None:
   if isinstance(barrier, utils.BarrierRef):
     barrier = barrier.get_ptr()
@@ -883,6 +886,10 @@ def commit_arrive(
         "barrier must be a Mosaic barrier or a SMEM pointer, got:"
         f" {barrier.type}"
     )
+  if predicate is None:
+    predicate_ctx = contextlib.nullcontext()
+  else:
+    predicate_ctx = utils.when(predicate)
   if collective:
     if ctx is None:
       raise ValueError("ctx must be provided for collective barriers")
@@ -907,21 +914,15 @@ def commit_arrive(
     #
     # While it seems like this shouldn't change anything, it appears that ptxas
     # messes up in that case, producing incorrect code.
-    llvm.call_intrinsic(
-        None,
-        "llvm.nvvm.tcgen05.commit.mc.cg2",
-        [barrier, mask],
-        [],
-        [],
-    )
+    with predicate_ctx:
+      llvm.call_intrinsic(
+          None, "llvm.nvvm.tcgen05.commit.mc.cg2", [barrier, mask], [], []
+      )
   else:
-    llvm.call_intrinsic(
-        None,
-        "llvm.nvvm.tcgen05.commit.cg1",
-        [barrier],
-        [],
-        [],
-    )
+    with predicate_ctx:
+      llvm.call_intrinsic(
+          None, "llvm.nvvm.tcgen05.commit.cg1", [barrier], [], []
+      )
 
 
 def tmem_alloc_exact_ncols(ncols: int, exact: bool) -> int:
@@ -1085,6 +1086,11 @@ class TMEMLayout(fa.TiledLayout):
   in row-major order, with each vector padded up to 32 bits (wider vectors are
   unsupported).
   """
+
+  def __post_init__(self, _check_canonical: bool = True):
+    super().__post_init__(_check_canonical)
+    if self.has_unreduced_dims:
+      raise ValueError("TMEMLayout does not support unreduced layouts")
 
   def check_type(self, shape: tuple[int, ...], bitwidth: int) -> None:
     if len(shape) != 2:

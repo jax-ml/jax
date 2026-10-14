@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 import enum
 import functools
 from functools import partial
@@ -34,10 +34,11 @@ from jax._src import profiler
 from jax._src import util
 from jax._src import xla_bridge
 from jax._src.op_shardings import are_hlo_shardings_equal
+from jax._src.indexing import dslice
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
-from jax._src.lib import _jax, jaxlib_extension_version
+from jax._src.lib import _jax, ifrt_version, jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import (empty_concrete_mesh, empty_abstract_mesh,
                            use_abstract_mesh)
@@ -145,6 +146,9 @@ def _cached_index_calc(s, shape):
 
 @cache(max_size=4096, trace_context_in_key=False)
 def _process_has_full_value_in_mcjax(s, shape):
+  if s.is_fully_replicated and s.has_addressable_devices:
+    return True
+
   # Return False for single host as a fast path.
   if xla_bridge.process_count() == 1:
     return False
@@ -176,6 +180,47 @@ def _validate_shape_and_dtype_for_per_device_arrays(
           f"device array shape {db.shape}. Shape of Array is "
           f"{aval.str_short()} with sharding {sharding}"
       )
+
+
+def _chunk_iter(x: basearray.Array, size: int, *, reverse: bool = False) -> Iterator[basearray.Array]:
+  """Iterate over equally-sized chunks of an array.
+
+  This accesses chunks via dynamic_slice to avoid recompilation of
+  static slices for large arrays.
+  """
+  if size > x.shape[0]:
+    yield x
+    return
+  num_chunks, tail = divmod(x.shape[0], size)
+  if reverse:
+    if tail:
+      yield x.at[dslice(num_chunks * size, tail)].get(strategy="dynamic_slice")
+    for i in reversed(range(num_chunks)):
+      yield x.at[dslice(i * size, size)].get(strategy="dynamic_slice")
+  else:
+    for i in range(num_chunks):
+      yield x.at[dslice(i * size, size)].get(strategy="dynamic_slice")
+    if tail:
+      yield x.at[dslice(num_chunks * size, tail)].get(strategy="dynamic_slice")
+
+
+def _iter(x: ArrayImpl, *, reverse: bool = False) -> Iterator[ArrayImpl]:
+  """Efficient chunked iteration over an Array.
+
+  This implements ArrayImpl.__iter__ and ArrayImpl.__reversed__
+  """
+  if x.ndim == 0:
+    raise TypeError("iteration over a 0-d array")  # same as numpy error
+  else:
+    assert x.is_fully_replicated or x.is_fully_addressable
+    if x.sharding.num_devices == 1 or x.is_fully_replicated:
+      return (sl for chunk in _chunk_iter(x, 100, reverse=reverse)
+              for sl in (reversed(chunk._unstack()) if reverse else chunk._unstack()))  # pyrefly: ignore[missing-attribute]
+    else:
+      # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
+      # here after uneven partitioning support is added.
+      indices = range(x.shape[0])[::-1] if reverse else range(x.shape[0])
+      return (api.device_put(x._value[i]) for i in indices)
 
 
 @use_cpp_class(xc.ArrayImpl)
@@ -337,16 +382,10 @@ class ArrayImpl(basearray.Array):
     return indexing.rewriting_take(self, idx)
 
   def __iter__(self):
-    if self.ndim == 0:
-      raise TypeError("iteration over a 0-d array")  # same as numpy error
-    else:
-      assert self.is_fully_replicated or self.is_fully_addressable
-      if self.sharding.num_devices == 1 or self.is_fully_replicated:
-        return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # pyrefly: ignore[missing-attribute]
-      else:
-        # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
-        # here after uneven partitioning support is added.
-        return (api.device_put(self._value[i]) for i in range(self.shape[0]))
+    return _iter(self)
+
+  def __reversed__(self):
+    return _iter(self, reverse=True)
 
   @property
   def is_fully_replicated(self) -> bool:
@@ -613,6 +652,10 @@ class ArrayImpl(basearray.Array):
     ...
 
   @use_cpp_method()
+  def _to_np_array_did_copy(self) -> tuple[np.ndarray, bool]:
+    ...
+
+  @use_cpp_method()
   def _copy_single_device_array_to_host_async(self):
     self._arrays[0].copy_to_host_async()
 
@@ -620,11 +663,14 @@ class ArrayImpl(basearray.Array):
   def copy_to_host_async(self):
     self._check_if_deleted()
     if self._npy_value is None:
-      if self.is_fully_replicated and self.sharding.has_addressable_devices:
-        self._copy_single_device_array_to_host_async()
-        return
-      for i, _ in _cached_index_calc(self.sharding, self.shape):
-        self._arrays[i]._copy_single_device_array_to_host_async()
+      if jaxlib_extension_version >= 495 and ifrt_version >= 71:
+        _jax.batched_copy_to_host_async([self])
+      else:
+        if self.is_fully_replicated and self.sharding.has_addressable_devices:
+          self._copy_single_device_array_to_host_async()
+          return
+        for i, _ in _cached_index_calc(self.sharding, self.shape):
+          self._arrays[i]._copy_single_device_array_to_host_async()
 
   @property
   @functools.partial(profiler.annotate_function, name="np.asarray(jax.Array)")
@@ -632,13 +678,6 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
 
     if self._npy_value is None:
-      # addressable_device_list can be empty. If it's empty, we will error below
-      if self.is_fully_replicated and self.sharding.has_addressable_devices:
-        npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
-        if did_copy:
-          self._npy_value = npy_value
-        return npy_value
-
       # TODO(yashkatariya): Merge `_process_has_full_value_in_mcjax` with
       # is_fully_addressable.
       # is_fully_addressable return False if addressable_device_list is empty.
@@ -652,14 +691,28 @@ class ArrayImpl(basearray.Array):
             " inspect the addressable (process local) shards."
         )
 
-      for i, _ in _cached_index_calc(self.sharding, self.shape):
-        self._arrays[i]._copy_single_device_array_to_host_async()
+      if jaxlib_extension_version >= 495 and ifrt_version >= 71:
+        # Copy the entire array to host in one go.
+        npy_value, did_copy = self._to_np_array_did_copy()
+        if did_copy:
+          self._npy_value = npy_value
+        return npy_value
+      else:
+        if self.is_fully_replicated and self.sharding.has_addressable_devices:
+          npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
+          if did_copy:
+            self._npy_value = npy_value
+          return npy_value
 
-      npy_value = np.empty(self.shape, self.dtype)
-      for i, ind in _cached_index_calc(self.sharding, self.shape):
-        npy_value[ind], _ = self._arrays[i]._single_device_array_to_np_array_did_copy()
-      npy_value.flags.writeable = False
-      self._npy_value = npy_value
+        # Copy each unique shard to host.
+        for i, _ in _cached_index_calc(self.sharding, self.shape):
+          self._arrays[i]._copy_single_device_array_to_host_async()
+
+        npy_value = np.empty(self.shape, self.dtype)
+        for i, ind in _cached_index_calc(self.sharding, self.shape):
+          npy_value[ind], _ = self._arrays[i]._single_device_array_to_np_array_did_copy()
+        npy_value.flags.writeable = False
+        self._npy_value = npy_value
     return self._npy_value
 
 

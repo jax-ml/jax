@@ -144,7 +144,10 @@ def _threefry4x32_abstract_eval(*args):
     raise TypeError(f"threefry4x32_p expects 8 arguments, got {len(args)}.")
   if all(isinstance(arg, core.ShapedArray) for arg in args):
     shape = lax.broadcasting_shape_rule("threefry4x32", *args)
-    sharding = lax.broadcasting_sharding_rule("threefry4x32", *args)
+    sharding = lax.lax_utils.call_sharding_rule(
+        threefry4x32_p,
+        functools.partial(lax.broadcasting_sharding_rule, "threefry4x32"),
+        None, None, *args)
     aval = core.ShapedArray(shape, np.dtype("uint32"), sharding=sharding)
   else:
     raise TypeError(f"Arguments to threefry4x32 must all be arrays, got {args}")

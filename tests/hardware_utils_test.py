@@ -24,7 +24,9 @@ from jax._src import config
 from jax._src import test_util as jtu
 
 from jax._src.hardware_utils import (
+  TpuVersion,
   num_available_amd_gpus as count_amd_gpus_impl,
+  num_available_tpu_chips_and_device_id,
 )
 from jax._src.hardware_utils import get_shm_size_in_mb as get_shm_size_impl
 
@@ -80,6 +82,35 @@ class TestGetShmSize(absltest.TestCase):
       with patch("os.statvfs", side_effect=OSError("Error"), create=True):
         size = get_shm_size_impl()
         self.assertEqual(size, 0)
+
+
+class TestNumAvailableTpuChips(absltest.TestCase):
+  """Test TPU chip counting logic."""
+
+  def test_ignore_secondary_pci_functions(self):
+    """Verify dual virtual functions (e.g. .0 and .1 on TPU 7x) only count .0."""
+    fake_paths = [
+        "/sys/bus/pci/devices/0000:00:07.0/vendor",
+        "/sys/bus/pci/devices/0000:00:07.1/vendor",
+        "/sys/bus/pci/devices/0000:00:08.0/vendor",
+        "/sys/bus/pci/devices/0000:00:08.1/vendor",
+    ]
+
+    def fake_read_text(path_obj):
+      path_str = str(path_obj)
+      if "vendor" in path_str:
+        return "0x1ae0"
+      elif "device" in path_str:
+        return "0x0076"
+      return ""
+
+    with patch("glob.glob", return_value=fake_paths):
+      with patch(
+          "pathlib.Path.read_text", side_effect=fake_read_text, autospec=True
+      ):
+        num_chips, tpu_version = num_available_tpu_chips_and_device_id()
+        self.assertEqual(num_chips, 2)
+        self.assertEqual(tpu_version, TpuVersion.tpu7x)
 
 
 if __name__ == "__main__":

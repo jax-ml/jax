@@ -17,14 +17,14 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Hashable, Iterator, Generator, MutableMapping, MutableSequence, Sequence
+from collections.abc import Callable, Generator, Hashable, Iterator, MutableMapping, MutableSequence, Sequence
 import contextlib
 import dataclasses
 import functools
 import itertools
 import math
 import operator
-from typing import Any, Protocol, Self, assert_never, cast, overload
+from typing import Any, Protocol, assert_never, cast, overload
 
 import jax
 from jax import api_util
@@ -32,7 +32,9 @@ from jax import lax
 from jax._src import checkify
 from jax._src import config
 from jax._src import core as jax_core
+from jax._src import custom_derivatives
 from jax._src import debugging
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import flattree as ft
 from jax._src import layout as jax_layout
@@ -82,26 +84,7 @@ partial = functools.partial
 SMEM = gpu_core.SMEM
 WARPGROUP_SIZE = 128
 
-
-# This is morally ``ShapedArray | state.AbstractRef``, but pytype does not
-# allow calling methods on a union type, making ``update`` non-callable, so
-# we use a protocol instead of a union.
-class ShapedAbstractValue(Protocol):
-  shape: tuple[jax_core.DimSize, ...]
-  dtype: jnp.dtype
-  weak_type: bool
-
-  @property
-  def ndim(self) -> int:
-    ...
-
-  @property
-  def size(self) -> int:
-    ...
-
-  def update(self, **kwargs: Any) -> Self:
-    raise NotImplementedError
-
+type ShapedAbstractValue = pallas_utils.ShapedAbstractValue
 
 # TODO(slebedev): The type argument should also be comparable.
 CollectiveAxesType = Sequence[Hashable]
@@ -317,6 +300,21 @@ def _pjit_resource_estimator(
   return _estimate_resources(ctx, jaxpr)
 
 
+@_register_resource_estimator(pe.eval_jaxpr_p)
+@_register_resource_estimator(custom_derivatives.custom_jvp_call_p)
+@_register_resource_estimator(custom_derivatives.custom_vjp_call_p)
+def _eval_jaxpr_resource_estimator(
+    ctx: ResourceEstimatorContext,
+    *args,
+    call_jaxpr: jax_core.Jaxpr,
+    **params,
+) -> Resources:
+  del args, params  # Unused.
+  if call_jaxpr.consts:
+    raise NotImplementedError
+  return _estimate_resources(ctx, call_jaxpr)
+
+
 @_register_resource_estimator(mpmd.mpmd_map_p)
 def _mpmd_map_resource_estimator(
     ctx: ResourceEstimatorContext, *args, jaxprs: tuple[jax_core.Jaxpr, ...],
@@ -402,6 +400,7 @@ def _run_scoped_resource_estimator(
 @_register_resource_estimator(lax.reduce_sum_p)
 @_register_resource_estimator(lax.reduce_max_p)
 @_register_resource_estimator(lax.reduce_min_p)
+@_register_resource_estimator(lax.reduce_prod_p)
 def _reduce_resource_estimator(
     ctx: ResourceEstimatorContext, x_aval: jax_core.ShapedArray, *, axes,
     **kwargs
@@ -970,6 +969,14 @@ def lower_jaxpr_to_module(
   else:
     base_loc = None
 
+  def _to_physical_shape(
+      s: jax.ShapeDtypeStruct | jax_core.ShapedArray,
+  ) -> jax.ShapeDtypeStruct:
+    dtype = s.dtype
+    if isinstance(dtype, dtypes.ExtendedDType):
+      dtype = jax_core.physical_element_aval(dtype).dtype
+    return jax.ShapeDtypeStruct(s.shape, dtype)
+
   # NOTE: new_out_shapes has out_shapes, then semaphores_shape and
   # optionally the profiler buffer.
   module, new_out_shapes, _, launch_ctx = mgpu_core._lower_as_gpu_kernel(
@@ -977,7 +984,7 @@ def lower_jaxpr_to_module(
       grid=cuda_grid,
       cluster=cast(tuple[int, int, int], cluster),
       block=block,
-      in_shapes=(*in_shapes, *scoped_semaphores_shape),
+      in_shapes=tuple(_to_physical_shape(s) for s in (*in_shapes, *scoped_semaphores_shape)),
       out_shape=(*out_shapes, *scoped_semaphores_shape),
       inout_shape=(),
       smem_scratch_shape=scratch_buffers,
@@ -988,6 +995,7 @@ def lower_jaxpr_to_module(
       jax_mesh=jax_mesh,
       base_loc=base_loc,
       uses_pdl=uses_pdl,
+      is_multi_process=params.is_multi_process,
   )
 
   mgpu_core.lower_mgpu_module(
@@ -998,8 +1006,10 @@ def lower_jaxpr_to_module(
   )
 
   dump_options = mgpu.dialect.get_or_set_dump_options(module)
-  # TODO(bchetioui): clean up when the minimum jaxlib version is 0.11.2.
-  if getattr(dump_options, "resources", False):
+  if dump_options.resources:
+    if prof_spec is not None:
+      smem_scratch_bytes = rs.smem_scratch_bytes + prof_spec.smem_bytes(block)
+      rs = dataclasses.replace(rs, smem_scratch_bytes=smem_scratch_bytes)
     mgpu_utils.dump_to_file_or_stdout(
         str(rs),
         f"{dump_options.module_basename}.resources.txt",
@@ -1068,7 +1078,10 @@ def lower_jaxpr_to_mosaic_gpu(
       if module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
         # Shaped arrays must be vectors if and only if their shape is non-empty.
         # Those with empty shapes should be represented by their scalar type.
-        mlir_dtype = mgpu_utils.dtype_to_ir_type(aval.dtype)
+        dtype = aval.dtype
+        if isinstance(dtype, dtypes.ExtendedDType):
+          dtype = jax_core.physical_element_aval(dtype).dtype
+        mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
         if not isinstance(val, ir.Value):
           if require_value:
             raise AssertionError(f"Shaped arrays must be represented by ir.Values, got: {val}")
@@ -1175,6 +1188,12 @@ def lower_jaxpr_to_mosaic_gpu(
 def _program_id_lowering_rule(ctx: LoweringRuleContext, axis):
   if ctx.module_ctx.program_ids is None:
     raise NotImplementedError("pl.program_id() is not supported in this context")
+  deprecations.warn(
+      "jax-pallas-mgpu-program-id",
+      "Using pl.program_id in Pallas MGPU is deprecated. Use jax.lax.axis_index"
+      " instead.",
+      stacklevel=2,
+  )
   return ctx.module_ctx.program_ids[axis]
 
 
@@ -1280,63 +1299,6 @@ def _lower_fun(
 
   return f_lowered
 
-def _handle_dtype_bitcast(
-    ref: ir.Value, src_dtype: ir.Type, dst_dtype: ir.Type
-) -> ir.Value:
-  """Allows bitcasting a SMEM ref from one element type to another.
-
-  Args:
-    ref: the reference to bitcast.
-    src_dtype: the source element type.
-    dst_dtype: the destination element type.
-
-  Returns:
-    A bitcasted version of `ref` with element type `dst_dtype`.
-
-  Raises:
-    ValueError: if the source ref is not in SMEM.
-  """
-  if src_dtype == dst_dtype:
-    return ref
-  if src_dtype != ir.IntegerType.get_signless(8):
-    raise NotImplementedError(
-        "Data type bitcast is only supported from i8 to other types."
-    )
-  ref_ty = ir.MemRefType(ref.type)
-  if not mgpu_utils.is_smem_ref(ref_ty):
-    raise ValueError(f"Only workgroup memory is supported but got {ref}.")
-  if len(ref_ty.shape) != 1:
-    raise NotImplementedError(
-        "Data type bitcast is only supported for 1D arrays."
-    )
-  [stride], _ = ref_ty.get_strides_and_offset()
-  if stride != 1:
-    raise ValueError(
-        "Data type bitcast is only supported for contiguous 1D arrays, but got "
-        f"stride={stride}."
-    )
-  [shape_bytes] = ref_ty.shape
-  shape_bitwidth = shape_bytes * 8
-  target_bitwidth = mgpu_utils.bitwidth(dst_dtype)
-
-  if shape_bitwidth % target_bitwidth:
-    raise ValueError(
-        f"Can not bitcast memory region of size {shape_bitwidth} bits to dtype "
-        f"with {target_bitwidth} bits."
-    )
-
-  result_type = ir.MemRefType.get(
-      shape=(shape_bitwidth // target_bitwidth,),
-      element_type=dst_dtype,
-      memory_space=ref_ty.memory_space,
-  )
-
-  # Do a memref_ptr/ptr_as_memref roundtrip instead of using `memref.view`,
-  # which refuses to take in our source ref. This is because `memref.view` only
-  # works on a super restricted set of `memref`s. E.g., it does not work if an
-  # offset is specified, which can be the case for our SMEM refs.
-  return mgpu_utils.ptr_as_memref(mgpu_utils.memref_ptr(ref), result_type)
-
 
 @overload
 def _extract_aliased_ref(
@@ -1415,6 +1377,9 @@ def _extract_aliased_ref(
             raise NotImplementedError("Only byte-aligned bitcasts are supported.")
           assert offset % gpu_core.SMEM_ALIGNMENT == 0
 
+          ref_ty = ir.MemRefType.get(
+              transformed_shape, mlir_dtype, memory_space=mgpu_utils.smem()
+          )
           if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
             if not isinstance(ref.owner, mgpu.dialect.SliceSMEMOp):
               # This restriction can be lifted by:
@@ -1429,9 +1394,6 @@ def _extract_aliased_ref(
             base_offset = ref.owner.offset.value
             total_offset = base_offset + offset
 
-            ref_ty = ir.MemRefType.get(
-                transformed_shape, mlir_dtype, memory_space=mgpu_utils.smem()
-            )
             assert ref.owner.alias_id is not None
             alloc_id = ref.owner.alias_id.value
             # TODO(bchetioui): Use a scheme resilient to hash collisions.
@@ -1450,14 +1412,7 @@ def _extract_aliased_ref(
                 ref_ty, total_offset, alias_id=alias_id
             )
           else:
-            ref_bytes = ref_bits // 8
-            ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))
-            ref = _handle_dtype_bitcast(
-                ref,
-                ir.MemRefType(ref.type).element_type,
-                mlir_dtype,
-            )
-            ref = mgpu.memref_reshape(ref, transformed_shape)
+            ref = memref_dialect.view(ref_ty, ref, _as_index(offset), [])
         elif input_ref_ty.memory_space == mgpu_utils.tmem():
 
           if isinstance(ref.owner, mgpu.dialect.SliceTmemOp):
@@ -2073,23 +2028,29 @@ def _get_lowering_rule_wg(
 @register_lowering_rule(sp.swap_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(sp.swap_p, *gpu_core.LANExWARP_SEMANTICS)
 def _swap_lowering_rule(
-    ctx: LoweringRuleContext, x_ref, value, *leaves, tree
+    ctx: LoweringRuleContext,
+    x_ref,
+    value,
+    *leaves,
+    tree,
+    optimized: bool = True,
+    return_old: bool = True,
 ):
   if isinstance(x_ref, tcgen05.TMEMRef):
     raise RuntimeError(
         "Stores to TMEM are asynchronous operations and cannot be performed"
         " using the usual syntax. Please use plgpu.async_store_tmem instead."
     )
+  v_aval = ctx.avals_in[1]
   barrier = mgpu.warpgroup_barrier
   if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
-    if ctx.avals_out[0].shape:
+    if v_aval.shape:
       raise NotImplementedError("Can only store scalars in warp-level lowering.")
     barrier = mgpu_utils.warp_barrier
-  value = _ensure_fa(value, ctx.avals_in[1].dtype)
+  value = _ensure_fa(value, v_aval.dtype)
 
   if not isinstance(x_ref, ir.Value) and isinstance(x_ref, ir.MemRefType):
     raise TypeError(f"Can only store to references (got {x_ref}).")
-  v_aval = ctx.avals_in[1]
   transforms = jax.tree.unflatten(tree, leaves)
   transform_avals = jax.tree.unflatten(tree, ctx.avals_in[2:])
 
@@ -2139,46 +2100,60 @@ def _swap_lowering_rule(
   )
   del x_ref  # Don't use x_ref anymore. Use x_smem instead!
 
+  old_value = ()
+
   match transforms:
-    case _ if math.prod(ctx.avals_out[0].shape) == 1:  # Scalar case.
+    case _ if math.prod(v_aval.shape) == 1:  # Scalar case.
       zero_idx = _ir_constant(0, ir.IndexType.get())
-      indices = [zero_idx] * len(ctx.avals_out[0].shape)
-      old_value = mgpu.FragmentedArray.splat(
-          memref_dialect.load(x_smem, indices),
-          shape=(),
-          is_signed=mgpu_utils.is_signed(v_aval.dtype),
-      )
+      indices = [zero_idx] * len(v_aval.shape)
+      if return_old:
+        old_value = mgpu.FragmentedArray.splat(
+            memref_dialect.load(x_smem, indices),
+            shape=(),
+            is_signed=mgpu_utils.is_signed(v_aval.dtype),
+        )
       value.store_untiled(x_smem)
     case (gpu_core.UntilingTransform(tiling),):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
-      old_value = mgpu.FragmentedArray.load_tiled(
+      if return_old:
+        old_value = mgpu.FragmentedArray.load_tiled(
+            x_smem,
+            is_signed=mgpu_utils.is_signed(v_aval.dtype),
+            swizzle=swizzle,
+            layout=value.layout,
+            optimized=optimized,
+            tiling_rank=len(tiling),
+        )
+      value.store_tiled(
           x_smem,
-          is_signed=mgpu_utils.is_signed(v_aval.dtype),
           swizzle=swizzle,
-          layout=value.layout,
+          optimized=optimized,
           tiling_rank=len(tiling),
       )
-      value.store_tiled(x_smem, swizzle=swizzle, tiling_rank=len(tiling))
     case ():
       match value.layout:
         case mgpu.TiledLayout():
-          old_value = mgpu.FragmentedArray.load_untiled(
-              x_smem,
-              layout=value.layout,
-              is_signed=mgpu_utils.is_signed(v_aval.dtype),
-              swizzle=swizzle or 16,
-              optimized=False,
+          if return_old:
+            old_value = mgpu.FragmentedArray.load_untiled(
+                x_smem,
+                layout=value.layout,
+                is_signed=mgpu_utils.is_signed(v_aval.dtype),
+                swizzle=swizzle or 16,
+                optimized=optimized,
+            )
+          value.store_untiled(
+              x_smem, swizzle=swizzle or 16, optimized=optimized
           )
-          value.store_untiled(x_smem, swizzle=swizzle or 16, optimized=False)
         case _:
           if swizzle is not None:
             raise NotImplementedError(
                 "Unsupported swizzle transform with strided layout"
             )
-          old_value = mgpu.FragmentedArray.load_strided(
-              x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
-          )
+          if return_old:
+            old_value = mgpu.FragmentedArray.load_strided(
+                x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
+            )
           value.store_untiled(x_smem)
     case _:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
@@ -2190,9 +2165,16 @@ def _swap_lowering_rule(
 @register_lowering_rule(sp.swap_p, mgpu.LoweringSemantics.Warpgroup)
 @register_lowering_rule(sp.swap_p, *gpu_core.WGxWARP_SEMANTICS)
 def _swap_lowering_rule_wg(
-    ctx: LoweringRuleContext, x_smem, value, *leaves, tree
+    ctx: LoweringRuleContext,
+    x_smem,
+    value,
+    *leaves,
+    tree,
+    optimized: bool = True,
+    return_old: bool = True,
 ):
-  shape = ctx.avals_out[0].shape
+  v_aval = ctx.avals_in[1]
+  shape = v_aval.shape
   if shape and not isinstance(value.type, ir.VectorType):
     raise TypeError(f"Can only store scalars or vectors (got {value}).")
   if not (
@@ -2213,12 +2195,15 @@ def _swap_lowering_rule_wg(
         "Transforms are not yet implemented for warpgroup semantics"
     )
   assert isinstance(x_smem, ir.Value)
-  value = _ensure_ir_value(value, ctx.avals_in[1].dtype)
+  value = _ensure_ir_value(value, v_aval.dtype)
+  old_value = ()
   if shape:
-    old_value = mgpu.dialect.vector_load(x_smem)
-    mgpu.dialect.vector_store(value, x_smem)
+    if return_old:
+      old_value = mgpu.dialect.vector_load(x_smem, optimized=optimized)
+    mgpu.dialect.vector_store(value, x_smem, optimized=optimized)
   else:
-    old_value = memref_dialect.load(x_smem, [])
+    if return_old:
+      old_value = memref_dialect.load(x_smem, [])
     memref_dialect.store(value, x_smem, [])
   return old_value
 
@@ -2232,6 +2217,45 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **kwargs):
     raise NotImplementedError
   return lower_jaxpr_to_mosaic_gpu(
       ctx.module_ctx, ctx.launch_ctx, jaxpr, args,
+  )
+
+
+@register_lowering_rule(pe.eval_jaxpr_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(pe.eval_jaxpr_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(pe.eval_jaxpr_p, *gpu_core.LANExWARP_SEMANTICS)
+@register_lowering_rule(pe.eval_jaxpr_p, *gpu_core.WGxWARP_SEMANTICS)
+@register_lowering_rule(
+    custom_derivatives.custom_jvp_call_p, mgpu.LoweringSemantics.Lane
+)
+@register_lowering_rule(
+    custom_derivatives.custom_jvp_call_p, mgpu.LoweringSemantics.Warpgroup
+)
+@register_lowering_rule(
+    custom_derivatives.custom_jvp_call_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@register_lowering_rule(
+    custom_derivatives.custom_jvp_call_p, *gpu_core.WGxWARP_SEMANTICS
+)
+@register_lowering_rule(
+    custom_derivatives.custom_vjp_call_p, mgpu.LoweringSemantics.Lane
+)
+@register_lowering_rule(
+    custom_derivatives.custom_vjp_call_p, mgpu.LoweringSemantics.Warpgroup
+)
+@register_lowering_rule(
+    custom_derivatives.custom_vjp_call_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@register_lowering_rule(
+    custom_derivatives.custom_vjp_call_p, *gpu_core.WGxWARP_SEMANTICS
+)
+def _eval_jaxpr_lowering_rule(
+    ctx: LoweringRuleContext, *args, call_jaxpr: jax_core.Jaxpr, **kwargs
+):
+  del kwargs  # Unused.
+  if call_jaxpr.consts:
+    raise NotImplementedError
+  return lower_jaxpr_to_mosaic_gpu(
+      ctx.module_ctx, ctx.launch_ctx, call_jaxpr, args
   )
 
 
@@ -3093,7 +3117,16 @@ def _squeeze_lowering_rule_wg(ctx: LoweringRuleContext, x, dimensions):
     return vector_dialect.shape_cast(res_ty, x)
 
 
-def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
+def _reduce_lowering_rule(
+    op,
+    ctx: LoweringRuleContext,
+    x,
+    *,
+    axes,
+    accumulator_ilp: int | None = None,
+    **kwargs,
+):
+  del kwargs
   [x_aval] = ctx.avals_in
   match x.layout:
     case mgpu.WGStridedFragLayout():
@@ -3109,7 +3142,7 @@ def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
         )
       scratch_ty = jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)
       with ctx.module_ctx.scratch_view(scratch_ty) as scratch:
-        return x.reduce(op, axes, scratch)
+        return x.reduce(op, axes, scratch, acc_ilp=accumulator_ilp)
     case mgpu.TiledLayout():
       if len(axes) != 1:
         raise NotImplementedError("Multi-axis reductions not supported")
@@ -3124,7 +3157,7 @@ def _reduce_lowering_rule(op, ctx: LoweringRuleContext, x, *, axes, **kwargs):
       else:
         scratch_ctx = contextlib.nullcontext(None)
       with scratch_ctx as scratch:
-        return x.reduce(op, axes[0], scratch=scratch)
+        return x.reduce(op, axes[0], scratch=scratch, acc_ilp=accumulator_ilp)
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
 
@@ -3137,6 +3170,9 @@ register_lowering_rule(lax.reduce_max_p, mgpu.LoweringSemantics.Lane)(
 register_lowering_rule(lax.reduce_min_p, mgpu.LoweringSemantics.Lane)(
     functools.partial(_reduce_lowering_rule, "min")
 )
+register_lowering_rule(lax.reduce_prod_p, mgpu.LoweringSemantics.Lane)(
+    functools.partial(_reduce_lowering_rule, "prod")
+)
 
 
 def _reduce_lowering_rule_wg(
@@ -3145,6 +3181,7 @@ def _reduce_lowering_rule_wg(
     acc: int | float,
     x,
     axes,
+    accumulator_ilp: int | None = None,
 ) -> ir.Value:
   [x_aval] = ctx.avals_in
   [out_aval] = ctx.avals_out
@@ -3170,19 +3207,36 @@ def _reduce_lowering_rule_wg(
   # TODO(bchetioui): here, we could just donate all the remaining free SMEM that
   # we have at this point in time.
   reduction.attributes["scratch_size"] = i32_attr(ctx.module_ctx.reduction_scratch_bytes)
+  if accumulator_ilp is not None:
+    reduction.attributes["acc_ilp"] = i32_attr(accumulator_ilp)
   return reduction.result
 
 
 @register_lowering_rule(lax.reduce_sum_p, mgpu.LoweringSemantics.Warpgroup)
-def _reduce_sum_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
-                                 out_sharding):
+def _reduce_sum_lowering_rule_wg(
+    ctx: LoweringRuleContext,
+    x,
+    *,
+    axes,
+    out_sharding=None,
+    accumulator_ilp: int | None = None,
+):
+  del out_sharding
   kind = vector_dialect.CombiningKind.ADD
-  return _reduce_lowering_rule_wg(ctx, kind, 0, x, axes)
+  return _reduce_lowering_rule_wg(
+      ctx, kind, 0, x, axes, accumulator_ilp=accumulator_ilp
+  )
 
 
 @register_lowering_rule(lax.reduce_max_p, mgpu.LoweringSemantics.Warpgroup)
-def _reduce_max_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
-                                 out_sharding):
+def _reduce_max_lowering_rule_wg(
+    ctx: LoweringRuleContext,
+    x,
+    *,
+    axes,
+    out_sharding=None,
+    accumulator_ilp: int | None = None,
+):
   del out_sharding
   [x_aval] = ctx.avals_in
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
@@ -3196,12 +3250,20 @@ def _reduce_max_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
     acc = np.iinfo(x_aval.dtype).min
   else:
     raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
-  return _reduce_lowering_rule_wg(ctx, kind, acc, x, axes)
+  return _reduce_lowering_rule_wg(
+      ctx, kind, acc, x, axes, accumulator_ilp=accumulator_ilp
+  )
 
 
 @register_lowering_rule(lax.reduce_min_p, mgpu.LoweringSemantics.Warpgroup)
-def _reduce_min_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
-                                 out_sharding):
+def _reduce_min_lowering_rule_wg(
+    ctx: LoweringRuleContext,
+    x,
+    *,
+    axes,
+    out_sharding=None,
+    accumulator_ilp: int | None = None,
+):
   del out_sharding
   [x_aval] = ctx.avals_in
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
@@ -3215,11 +3277,19 @@ def _reduce_min_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
     acc = np.iinfo(x_aval.dtype).max
   else:
     raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
-  return _reduce_lowering_rule_wg(ctx, kind, acc, x, axes)
+  return _reduce_lowering_rule_wg(
+      ctx, kind, acc, x, axes, accumulator_ilp=accumulator_ilp
+  )
 
 
 @register_lowering_rule(lax.reduce_prod_p, mgpu.LoweringSemantics.Warpgroup)
-def _reduce_prod_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
+def _reduce_prod_lowering_rule_wg(
+    ctx: LoweringRuleContext,
+    x,
+    *,
+    axes,
+    accumulator_ilp: int | None = None,
+):
   [x_aval] = ctx.avals_in
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
     acc = 1.0
@@ -3228,7 +3298,9 @@ def _reduce_prod_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
   else:
     raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
   kind = vector_dialect.CombiningKind.MUL
-  return _reduce_lowering_rule_wg(ctx, kind, acc, x, axes)
+  return _reduce_lowering_rule_wg(
+      ctx, kind, acc, x, axes, accumulator_ilp=accumulator_ilp
+  )
 
 
 def _block_id(ctx: LoweringRuleContext, dim: gpu_dialect.Dimension) -> ir.Value:

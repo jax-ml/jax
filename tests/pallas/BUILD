@@ -486,6 +486,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax/_src/pallas:pallas_test_util",
+        "//jax/experimental:layout",
         "//jax/experimental:mesh_utils",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
@@ -794,6 +795,7 @@ jax_multiplatform_test(
         "tpu_pallas_interpret_distributed_test.py",
     ],
     enable_backends = ["cpu"],
+    shard_count = 4,
     tags = [
         "noasan",  # Times out.
         "nomsan",
@@ -1289,8 +1291,8 @@ jax_multiplatform_test(
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     tags = [
+        "mosaic_gpu_test",
         "noasan",
-        "notap",  # TODO(b/477964663): Broken by PyTorch 2.10.0 upgrade.
     ],
     deps = [
         "//jax/experimental:pallas",
@@ -1387,6 +1389,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax/_src/pallas/fuser",
+        "//jax/experimental:checkify",
         "//jax/experimental:pallas",
     ] + py_deps([
         "absl/testing",
@@ -1538,9 +1541,6 @@ jax_multiplatform_test(
         google_value = [
             "--xla_tpu_enable_mlir_verifier=ALL",
             "--xla_sc_assert_level=san",
-            "--xla_msa_enable=false",
-            "--xla_tpu_vmem_scavenging_mode=NONE",
-            "--xla_mosaic_unsafe_allow_multicore_remote_dma=true",
         ],
     ),
     enable_backends = [],
@@ -1579,9 +1579,70 @@ jax_multiplatform_test(
         "tpu_v5p",
         "tpu_v6e",
         "tpu_7x",
-        "cpu",  # Just to make sure we at least check the shard_count in presubmit.
+        "cpu",
     ],
-    shard_count = 4,
+    tags = ["sparsecore_test"],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+        "absl/flags",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_sparsecore_pallas_scalar_debug_check_test",
+    srcs = ["tpu_sparsecore_pallas_scalar_debug_check_test.py"],
+    backend_variant_args = {
+        "tpu": if_oss(
+            [],
+            google_value = [
+                "--xla_tpu_enable_mlir_verifier=ALL",
+                "--xla_sc_assert_level=san",
+            ],
+        ),
+    },
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5p",
+        "tpu_v6e",
+        "tpu_7x",
+        "cpu",
+    ],
+    tags = ["sparsecore_test"],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+        "absl/flags",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_sparsecore_pallas_bounds_check_test",
+    srcs = ["tpu_sparsecore_pallas_bounds_check_test.py"],
+    backend_variant_args = {
+        "tpu": if_oss(
+            [],
+            google_value = [
+                "--xla_tpu_enable_mlir_verifier=ALL",
+                "--xla_sc_assert_level=san",
+            ],
+        ),
+    },
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5p",
+        "tpu_v6e",
+        "tpu_7x",
+        "cpu",
+    ],
     tags = ["sparsecore_test"],
     deps = [
         "//jax/experimental:pallas",

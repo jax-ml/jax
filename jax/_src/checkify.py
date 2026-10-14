@@ -40,12 +40,14 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util as jtu
 from jax._src.ad_util import SymbolicZero
-from jax._src.hijax import call_hi_primitive_p
+from jax._src.hijax import (
+    call_hi_primitive_p, CustomJVPTraced, CustomVJPTraced)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec as P
+from jax._src.state.types import AbstractRef
 from jax._src.tree_util import tree_flatten
 from jax._src import flattree as ft
 from jax._src.tree_util import tree_map
@@ -1003,6 +1005,13 @@ error_checks[ad_checkpoint.remat_p] = remat_error_check
 
 def call_hi_primitive_error_check(ctx: CheckifyContext, error, enabled_errors,
                                   *vals_in, _prim):
+  if (isinstance(_prim, (CustomJVPTraced, CustomVJPTraced))
+      and not _prim.traced.jaxpr.effects
+      and not any(isinstance(core.typeof(x), AbstractRef) for x in vals_in)):
+    out_vals = call_hi_primitive_p.bind(*vals_in, _prim=_prim)
+    error, _ = checkify_jaxpr(ctx, _prim.traced.jaxpr, enabled_errors, error,
+                              *map(lax.stop_gradient, vals_in))
+    return error, out_vals
   if not isinstance(_prim, ad_checkpoint.RematTraced):
     return default_checkify_rule(call_hi_primitive_p, ctx, error, enabled_errors,
                                  *vals_in, _prim=_prim)

@@ -15,12 +15,10 @@
 
 import gc
 import threading
-import unittest
 
 from absl.testing import absltest
 
 from jax.jaxlib import _jax
-from jax.jaxlib import xla_client
 
 config = _jax.config
 
@@ -73,10 +71,6 @@ class ConfigTest(absltest.TestCase):
     for t in threads:
       t.join()
 
-  @unittest.skipIf(
-      xla_client._version < 491,
-      "Requires jaxlib_extension_version >= 491",
-  )
   def testConcurrentGlobalStateRace(self):
     def writer():
       for _ in range(2000):

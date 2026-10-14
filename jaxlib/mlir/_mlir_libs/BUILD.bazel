@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 load("//jaxlib:jax.bzl", "if_windows", "pytype_library")
 load(
@@ -189,6 +190,27 @@ nanobind_pywrap_extension(
         "@llvm-project//mlir:CAPITransforms",
         "@llvm-project//mlir:MLIRBindingsPythonNanobindHeadersAndDeps",
         "@nanobind",
+    ],
+)
+
+nanobind_pywrap_extension(
+    name = "_thunky_ext",
+    srcs = ["thunky_ext.cc"],
+    copts = COPTS,
+    pytype_srcs = ["_thunky_ext.pyi"],
+    deps = [
+        "//jaxlib/thunky:mlir_to_proto",
+        "//jaxlib/thunky/dialect:thunky_dialect_capi",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//mlir:CAPIDebug",
+        "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:CAPITransforms",
+        "@llvm-project//mlir:FuncExtensions",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeadersAndDeps",
+        "@nanobind",
+        "@xla//xla/service/gpu:gpu_executable_proto_cc",
     ],
 )
 

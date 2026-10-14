@@ -23,6 +23,8 @@ limitations under the License.
 #include "mlir/CAPI/Support.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/StorageUniquerSupport.h"
 #include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
@@ -230,4 +232,33 @@ int32_t mlirMosaicGpuCopyPartitionedAttrGetAxis(MlirAttribute attr) {
 
 MlirTypeID mlirMosaicGpuCopyPartitionedAttrGetTypeID() {
   return wrap(mosaic_gpu::CopyPartitionedAttr::getTypeID());
+}
+
+//===----------------------------------------------------------------------===//
+// SmemAllocAttr
+//===----------------------------------------------------------------------===//
+
+bool mlirMosaicGpuIsASmemAllocAttr(MlirAttribute attr) {
+  return mlir::isa<mosaic_gpu::SmemAllocAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirMosaicGpuSmemAllocAttrGet(MlirContext ctx,
+                                            MlirAttribute alignment) {
+  mlir::MLIRContext* mlir_ctx = unwrap(ctx);
+  mlir::IntegerAttr alignment_attr;
+  if (!mlirAttributeIsNull(alignment)) {
+    alignment_attr = mlir::cast<mlir::IntegerAttr>(unwrap(alignment));
+  }
+  return wrap(mosaic_gpu::SmemAllocAttr::getChecked(
+      mlir::detail::getDefaultDiagnosticEmitFn(mlir_ctx), mlir_ctx,
+      alignment_attr));
+}
+
+MlirAttribute mlirMosaicGpuSmemAllocAttrGetAlignment(MlirAttribute attr) {
+  return wrap(
+      mlir::cast<mosaic_gpu::SmemAllocAttr>(unwrap(attr)).getAlignment());
+}
+
+MlirTypeID mlirMosaicGpuSmemAllocAttrGetTypeID() {
+  return wrap(mosaic_gpu::SmemAllocAttr::getTypeID());
 }

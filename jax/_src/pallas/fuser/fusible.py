@@ -19,7 +19,6 @@ from typing import Any, Callable
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
-from jax._src import effects
 from jax._src import flattree as ft
 from jax._src import hijax
 from jax._src import tree_util
@@ -29,13 +28,6 @@ from jax._src.lax.control_flow.loops import eval_jaxpr_p
 from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.traceback_util import api_boundary
-
-
-def _positional_effects(jaxpr: jax_core.Jaxpr) -> frozenset[effects.Effect]:
-  if not any(isinstance(e, effects.JaxprInputEffect) for e in jaxpr.effects):
-    return frozenset(jaxpr.effects)
-  idx = {v: i for i, v in enumerate(jaxpr.constvars + jaxpr.invars)}
-  return frozenset(jax_core.subst_input_effects(jaxpr.effects, idx))
 
 
 class Fusible(hijax.HiPrim):
@@ -66,7 +58,7 @@ class Fusible(hijax.HiPrim):
         "num_consts": num_consts,
         "args_tree": args_tree,
     }
-    self.effects = _positional_effects(jaxpr)
+    self.effects = frozenset(jax_core.positional_effects(jaxpr))
     super().__init__()
 
   def inline(self, *consts_and_args):
@@ -80,8 +72,8 @@ class Fusible(hijax.HiPrim):
     out, vjp_fun = jax.vjp(self.inline, *args)
     return out, vjp_fun
 
-  def vjp_bwd_retval(self, vjp_fun, outgrad):
-    return vjp_fun(outgrad)
+  def vjp_bwd(self, vjp_fun, outgrad, *arg_accums):
+    vjp_fun.with_refs(*arg_accums)(outgrad)
 
   def jvp(self, primals, tangents):
     ps_ft = ft.flatten(primals)
@@ -98,7 +90,7 @@ class Fusible(hijax.HiPrim):
     def unbatch_leaf(a, d):
       if d is None:
         return a
-      return a[d]
+      return jax.lax.squeeze(a, (d,))
 
     unbatched_args = tree_util.tree_map(unbatch_leaf, args, dims)
     out_unbatched = self(*unbatched_args)  # pyrefly: ignore[not-callable]
@@ -115,7 +107,7 @@ class Fusible(hijax.HiPrim):
     del ctx
     consts = args[: self.num_consts]
     new_jaxpr = fusible_dtype.physicalize_closed_jaxpr(
-        jax_core.ClosedJaxpr(self.jaxpr, list(consts))
+        self.jaxpr.with_consts(consts)
     )
 
     const_avals = tuple(map(jax_core.typeof, new_jaxpr.consts))
@@ -151,14 +143,16 @@ def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
 @partial(api_boundary, repro_api_name="fuser.fusible")
 def fusible(f=None, *, output_fusion_prefix: Any = True):
   def decorator(f):
-    def wrapper(*args):
+    def wrapper(*args, **kwargs):
+      f_bound = partial(f, **kwargs) if kwargs else f
+
       def wrapped(*args):
         in_fusions = tree_util.tree_map(_make_trivial_fusion, args)
         output_fusions = tree_util.tree_unflatten(
             tree_util.tree_structure(output_fusion_prefix),
             [None] * len(tree_util.tree_leaves(output_fusion_prefix)),
         )
-        return f(*in_fusions, output_fusions)
+        return f_bound(*in_fusions, output_fusions)
 
       args_ft = ft.flatten(args)
       debug_info = api_util.debug_info("fusible", wrapped, args, {})
@@ -174,8 +168,8 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
           out_aval=tree_util.tree_unflatten(
               out_avals_ft.tree, out_avals_ft.vals),
           output_fusion_prefix=output_fusion_prefix,
-          func=f,
-          num_consts=len(jaxpr.consts),
+          func=f_bound,
+          num_consts=len(consts),
           args_tree=args_ft.tree,
       )
       return prim(*consts, *args_ft.vals)

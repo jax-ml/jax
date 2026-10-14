@@ -398,14 +398,14 @@ The op name `while/body/.../while/body` shows that this AllReduce sits
 inside the transposed layer scan, inside the microbatch scan: it runs once
 per layer per microbatch. Hoisting the gradient reduction out of both loops,
 from once per layer per microbatch to once per step, has produced large wins
-in production LLM training (in one case cutting per-step time spent in
-gradient reduction by several times). The compiler cannot make this
+in production LLM training (in one case cutting the per-step time spent in
+gradient reduction several-fold). The compiler cannot make this
 transformation on its own, because it can't pattern-match collectives
 through a loop.
 
 ## Why this design?
 
-Some design questions that come up.
+A few design questions come up often.
 
 **Why not make the cotangent of Replicated be Unreduced?** It would be
 coherent, but it takes options away. Lots of code returns replicated values
@@ -443,7 +443,7 @@ shape.)
 In manual mode ({ref}`jax-201-shard-map`), you write per-device code and
 communication is explicit: an AllReduce isn't implied by an `out_sharding`
 or performed by a `reshard`; it's a `jax.lax.psum` you place yourself. All
-the machinery above has a manual-mode counterpart, run by the same rule:
+the machinery above has a manual-mode counterpart, governed by the same rule:
 cotangent types are a function of primal types.
 
 Inside a `shard_map`, types track how each value relates to its counterparts
@@ -463,7 +463,7 @@ binds to a varying value inside, `P()` to an invarying one, and
 `P(unreduced={'X'})` / `P(reduced={'X'})` pass through as themselves. (One
 difference from the outside types: sharded names the array axis that is
 split, as in `8@X`, while inside the split has already happened, so varying
-is a fact about the mesh axis alone.) The cotangent map is the image of the
+is a fact about the mesh axis alone.) The cotangent map mirrors the
 one above: varying and invarying are each their own cotangent type, and
 unreduced and reduced swap.
 
@@ -483,8 +483,9 @@ print(jax.typeof(c))
 
 Each device multiplies its column block of `a` with its row block of `b`, a
 computation whose result is *varying* over `X`: each device holds a
-different partial sum. Declaring `out_specs` unreduced makes `shard_map`
-insert a free varying-to-unreduced cast, and outside we get exactly the
+different partial sum. The `pcast` to unreduced is a free
+varying-to-unreduced cast, which `shard_map` requires here because the body's
+output type must match the unreduced `out_specs`. Outside, we get exactly the
 `float32[2,2]{U:X}` value we built with `out_sharding` before. The backward
 pass:
 

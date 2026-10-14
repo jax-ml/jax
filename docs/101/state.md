@@ -123,7 +123,7 @@ class StatefulClass:
 
   state: State
 
-  def stateful_method(*args, **kwargs) -> Output:
+  def stateful_method(self, *args, **kwargs) -> Output:
     ...
 ```
 
@@ -169,16 +169,16 @@ print(jax.tree.map(lambda x: round(float(x), 2), params))  # fits y = 2x + 1
 ```
 
 Notice that the state here is a *pytree*, so the pattern scales from a single
-counter to an entire model without changing shape (see {ref}`jax-101-pytrees`).
+counter to an entire model without changing form (see {ref}`jax-101-pytrees`).
 This is also the convention you'll meet everywhere in the JAX ecosystem:
 optimizer libraries like [Optax](https://optax.readthedocs.io/) are built
 around `update(grads, opt_state, ...) -> (updates, new_opt_state)`, and neural
 network libraries handle parameters the same way.
 
 Threading state as values has another benefit: because each state is an
-immutable snapshot, transformations apply to the whole loop. You can
-differentiate through an update step, or `vmap` it to run many independent
-training runs at once, without worrying about aliased mutations.
+immutable snapshot, transformations apply cleanly. You can differentiate
+through an update step, or `vmap` it to run many independent training runs at
+once, without worrying about aliased mutations.
 
 (jax-101-refs)=
 ## Refs: mutable arrays
@@ -219,8 +219,8 @@ print(jax.grad(g)(1.0))  # 0.54
 
 Refs are a distinct type from `Array`, and come with some important
 constraints and limitations. In particular, indexed reading and writing is
-just about the *only* thing you can do with a ref. References can't be passed
-where `Array`s are expected:
+just about the *only* thing you can do with a ref. Refs can't be passed where
+`Array`s are expected:
 
 ```{code-cell}
 :tags: [raises-exception]
@@ -274,16 +274,17 @@ main benefits: it makes code and transformations easier for the user to reason
 about; it makes code easier for the compiler to optimize, parallelize, and
 scale; and it makes code easier for JAX to trace.
 
-Because operations on refs are intercepted, tracing isn't a problem.
-Their use does somewhat constrain the compiler's ability to transform code, but
-only as much as explicit state threading would.
-The main new thing to learn is how refs interact with transformations.
+Take them in reverse order. Tracing isn't a problem, because operations on
+refs are intercepted. Refs do somewhat constrain the compiler's ability to
+optimize code, but only as much as explicit state threading would. That leaves
+reasoning, and the main new thing to learn is how refs interact with
+transformations.
 
-A function still counts as pure if it only uses refs internally. That
-is, a function is impure if and only if it takes a ref as an input (either an
-explicit argument or via closure). Purity is in the eye of the caller. So
-functions that use refs internally transform the same way any pure function
-would:
+A function still counts as pure if it only uses refs internally. More
+precisely, a function is impure if and only if it takes a ref as an input,
+either as an explicit argument or via closure: purity is in the eye of the
+caller. So functions that use refs internally transform the same way any pure
+function would:
 
 ```{code-cell}
 def normalize(x):        # pure: refs used internally only
@@ -291,7 +292,7 @@ def normalize(x):        # pure: refs used internally only
   acc[...] = jnp.sum(x)  # (a real program would do something less trivial)
   return x / acc[...]
 
-jax.grad(lambda x: normalize(x).sum())(jnp.arange(1.0, 4.0))
+jax.grad(lambda x: normalize(x)[0])(jnp.arange(1.0, 4.0))
 ```
 
 Impure functions, meaning those that take refs as inputs, are more
@@ -325,7 +326,7 @@ jax.vmap(write_shared)(jnp.arange(3.0))
 
 ### Ref restrictions
 
-Refs come with rules designed to rule out *aliasing*, meaning two refs
+Refs come with restrictions designed to rule out *aliasing*, meaning two refs
 pointing at the same memory, and other situations where the meaning of a
 program would become unclear:
 
@@ -348,7 +349,7 @@ covered in {ref}`jax-201-jit`.
 
 Refs also interact with automatic differentiation: you can plumb values out of
 backward passes, accumulate gradients in place across microbatches, and
-differentiate with respect to ref arguments. That material lives with
+differentiate with respect to ref arguments. That material is covered in
 {ref}`jax-301-refs`.
 
 ## Next steps
@@ -357,5 +358,6 @@ This completes the tour of how to express computations in JAX: arrays and
 `jax.numpy`, `grad` and `vmap`, pytrees for structure, keys for randomness,
 and threaded values or refs for state.
 
-Making it *fast* is a matter of `jax.jit`, sharding, and profiling, which is
-where the performance and scaling docs pick up: {ref}`jax-201-jit`.
+Making those computations *fast* is a matter of `jax.jit`, sharding, and
+profiling, which is where the performance and scaling docs pick up:
+{ref}`jax-201-jit`.

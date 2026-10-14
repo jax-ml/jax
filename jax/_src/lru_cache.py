@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import heapq
 import logging
+import os
 import time
 from typing import Any
 import warnings
@@ -66,6 +67,7 @@ class LRUCache(CacheInterface):
     self.path = self._path = pathlib.Path(path)
     self.path.mkdir(parents=True, exist_ok=True)
 
+    self._is_local = _is_local_filesystem(path)
     self.eviction_enabled = max_size != -1  # no eviction if `max_size` is set to -1
 
     if self.eviction_enabled:
@@ -76,7 +78,7 @@ class LRUCache(CacheInterface):
       self.lock_timeout_secs = lock_timeout_secs
 
       self.lock_path = self.path / ".lockfile"
-      if _is_local_filesystem(path):
+      if self._is_local:
         self.lock = filelock.FileLock(self.lock_path)
       else:
         self.lock = filelock.SoftFileLock(self.lock_path)
@@ -176,12 +178,12 @@ class LRUCache(CacheInterface):
     h: list[tuple[int, str, int]] = []
     dir_size = 0
     for cache_path in self.path.glob(f"*{_CACHE_SUFFIX}"):
-      file_stat = cache_path.stat()
-
-      # `pathlib` and `etils[epath]` have different API for obtaining the size
-      # of a file, and we need to support them both.
-      # See also https://github.com/google/etils/issues/630
-      file_size = file_stat.st_size if not pathlib.epath_installed else file_stat.length  # pyrefly: ignore[missing-attribute]
+      if self._is_local:
+        # `etils[epath]` also resolves the owner via `pwd`, which raises
+        # `KeyError` under a uid that has no /etc/passwd entry.
+        file_size = os.stat(cache_path).st_size
+      else:
+        file_size = cache_path.stat().length  # pyrefly: ignore[missing-attribute]
 
       key = cache_path.name.removesuffix(_CACHE_SUFFIX)
       atime_path = self.path / f"{key}{_ATIME_SUFFIX}"

@@ -90,6 +90,7 @@ class ConstraintSystemTest(parameterized.TestCase):
       (mgpu.TCGEN05_LAYOUT, mgpu.TCGEN05_TRANSPOSED_LAYOUT),
       (mgpu.TCGEN05_TRANSPOSED_LAYOUT, mgpu.TCGEN05_LAYOUT),
       (mgpu.WGMMA_LAYOUT_UPCAST_2X, mgpu.WGMMA_LAYOUT),
+      (mgpu.WGMMA_LAYOUT, mgpu.WGMMA_LAYOUT_UPCAST_2X),
       (mgpu.WGMMA_LAYOUT_UPCAST_4X, mgpu.WGMMA_LAYOUT_UPCAST_2X),
       (mgpu.WGMMA_LAYOUT_UPCAST_4X, mgpu.WGMMA_LAYOUT),
       (mgpu.tmem_native_layout(2), mgpu.tmem_native_layout(1)),
@@ -519,11 +520,11 @@ class ConstraintSystemTest(parameterized.TestCase):
     strides = (128, 1)
     reg_to_smem = cs.IsTransferableSmemRegisters(
         reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
-        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+        optimized=False,
     )
     smem_to_reg = cs.IsTransferableSmemRegisters(
         smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
-        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+        optimized=False,
     )
     self.assertEqual(reg_to_smem.holds(), holds)
     self.assertEqual(smem_to_reg.holds(), holds)
@@ -543,39 +544,14 @@ class ConstraintSystemTest(parameterized.TestCase):
     strides = (1, 128)
     reg_to_smem = cs.IsTransferableSmemRegisters(
         reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
-        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+        optimized=False,
     )
     smem_to_reg = cs.IsTransferableSmemRegisters(
         smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
-        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+        optimized=False,
     )
     self.assertEqual(reg_to_smem.holds(), holds)
     self.assertEqual(smem_to_reg.holds(), holds)
-
-  @parameterized.parameters(
-      # Should hold for any layout with compatible vector dim.
-      mgpu.WGMMA_LAYOUT,
-      mgpu.TCGEN05_LAYOUT,
-      mgpu.WGMMA_ROW_LAYOUT,
-      mgpu.WGMMA_COL_LAYOUT,
-      mgpu.TCGEN05_ROW_LAYOUT,
-      mgpu.WGSplatFragLayout((128, 128)),
-      mgpu.WGStridedFragLayout((128, 128), vec_size=4),
-  )
-  def test_untiled_contiguous_smem_is_transferable_holds_downgradable(self, layout):
-    reg_layout = cs.RegisterLayout(layout)
-    smem_layout = cs.SMEMTransforms(None, None)
-    strides = (128, 1)
-    reg_to_smem = cs.IsTransferableSmemRegisters(
-        reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
-        optimized=cs.OptimizedTransferKind.DOWNGRADABLE,
-    )
-    smem_to_reg = cs.IsTransferableSmemRegisters(
-        smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
-        optimized=cs.OptimizedTransferKind.DOWNGRADABLE,
-    )
-    self.assertTrue(reg_to_smem.holds())
-    self.assertTrue(smem_to_reg.holds())
 
   @parameterized.parameters(
       # Works for some tiled layouts.
@@ -596,11 +572,11 @@ class ConstraintSystemTest(parameterized.TestCase):
     strides = (128, 1)
     reg_to_smem = cs.IsTransferableSmemRegisters(
         reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
-        optimized=cs.OptimizedTransferKind.OPTIMIZED,
+        optimized=True,
     )
     smem_to_reg = cs.IsTransferableSmemRegisters(
         smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
-        optimized=cs.OptimizedTransferKind.OPTIMIZED,
+        optimized=True,
     )
     self.assertEqual(reg_to_smem.holds(), holds)
     self.assertEqual(smem_to_reg.holds(), holds)
@@ -609,14 +585,14 @@ class ConstraintSystemTest(parameterized.TestCase):
     reg_layout = cs.RegisterLayout(mgpu.WGStridedFragLayout((128, 128), vec_size=4))
     smem_layout = cs.SMEMTransforms(None, swizzle=128)
     strides = (128, 1)
-    # Testing UNOPTIMIZED level, but constraints don't hold regardless of its value.
+    # Testing unoptimized transfers, but constraints don't hold regardless.
     reg_to_smem = cs.IsTransferableSmemRegisters(
         reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
-        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+        optimized=False,
     )
     smem_to_reg = cs.IsTransferableSmemRegisters(
         smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
-        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+        optimized=False,
     )
     self.assertFalse(reg_to_smem.holds())
     self.assertFalse(smem_to_reg.holds())
@@ -844,9 +820,10 @@ class ConstraintSystemTest(parameterized.TestCase):
     )
 
   @parameterized.parameters(
-    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 8),
-    (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 8),
-    (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, 32),
+      (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 8),
+      (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 8),
+      (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, 32),
+      (fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_UPCAST_2X, 32),
   )
   def test_forcing_relayout_on_unsupported_bitwidth_raises(self, src, dst, bitwidth):
     self.assertFalse(cs.Relayout(cs.RegisterLayout(src), cs.RegisterLayout(dst), bitwidth).holds())
@@ -855,6 +832,7 @@ class ConstraintSystemTest(parameterized.TestCase):
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 4),
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 4),
       (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, 16),
+      (fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_UPCAST_2X, 16),
   )
   def test_forcing_relayout_on_supported_bitwidth_succeeds(self, src, dst, bitwidth):
     self.assertTrue(cs.Relayout(cs.RegisterLayout(src), cs.RegisterLayout(dst), bitwidth).holds())
@@ -1008,7 +986,7 @@ class ConstraintSystemTest(parameterized.TestCase):
         shape,
         strides,
         bitwidth=16,
-        optimized=cs.OptimizedTransferKind.OPTIMIZED,
+        optimized=True,
     )
     self.assertEqual(constraint.holds(), expected_holds)
 

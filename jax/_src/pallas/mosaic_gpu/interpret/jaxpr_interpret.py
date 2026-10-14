@@ -125,8 +125,9 @@ def _get_barrier_allocation_key_from_inval(
   `barrier.at[i]`. Omitted axes select index 0.
   """
   keys = inval
-  # `keys.shape[-1]` is the number of `HostAllocationKey` fields.
-  assert keys.ndim >= 2
+  # `keys.shape[-1]` is the number of `HostAllocationKey` fields, so the
+  # preceding axes are the shape of the barrier array. They are absent when the
+  # reference is to a single barrier.
   assert keys.shape[-1:] == gpu_callbacks.HostAllocationKey.shape_and_dtype().shape
   rank = keys.ndim - 1
 
@@ -412,17 +413,20 @@ class JaxprInterpreter:
   def _interpret_swap_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is state_primitives.swap_p
-    assert isinstance(eqn.outvars[0].aval, jax_core.ShapedArray)
+    assert eqn.primitive in (state_primitives.swap_p, gpu_primitives.store_p)
+    # `store_p` has no results, so we use the value aval to describe the result
+    # of the underlying swap.
+    val_aval = eqn.invars[1].aval
+    assert isinstance(val_aval, jax_core.ShapedArray)
     invals = get_invals()
     ref, transforms = resolve_ref(
         eqn.invars[0].aval,
         invals[0],
         jax.tree.unflatten(eqn.params["tree"], invals[2:]),
     )
-    return gpu_callbacks.call_swap(
+    token, old_val = gpu_callbacks.call_swap(
         token=token,
-        result_shape_and_dtype=eqn.outvars[0].aval,
+        result_shape_and_dtype=val_aval,
         mesh_location=self.mesh_location,
         thread=self.thread,
         allocation_key_as_array=ref,
@@ -431,6 +435,9 @@ class JaxprInterpreter:
         mask=None,
         source_info=eqn.source_info,
     )
+    if eqn.primitive is gpu_primitives.store_p:
+      return token, []
+    return token, old_val
 
   def _interpret_run_scoped_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
@@ -764,7 +771,10 @@ class JaxprInterpreter:
   def _interpret_barrier_arrive_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is gpu_primitives.barrier_arrive_p
+    assert eqn.primitive in (
+        gpu_primitives.barrier_arrive_p,
+        gpu_primitives.barrier_arrive_and_wait_p,
+    )
     invals = get_invals()
     if eqn.params.get("has_user_predicate", False):
       *invals, predicate = invals
@@ -793,7 +803,10 @@ class JaxprInterpreter:
   def _interpret_barrier_wait_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is gpu_primitives.barrier_wait_p
+    assert eqn.primitive in (
+        gpu_primitives.barrier_wait_p,
+        gpu_primitives.barrier_arrive_and_wait_p,
+    )
     invals = get_invals()
     allocation_key_as_array = _get_barrier_allocation_key_from_inval(
         invals[0], eqn.params["transforms_treedef"], invals[1:]
@@ -1239,34 +1252,51 @@ class JaxprInterpreter:
       eqn,
       token: jax.Array,
       barrier,
-      *barrier_transforms_flat,
+      *flat_args,
       collective_axis,
       barrier_transforms_tree,
+      has_user_predicate: bool = False,
   ):
     assert eqn.primitive is gpu_primitives.tcgen05_commit_arrive_p
+    if has_user_predicate:
+      *flat_args, predicate = flat_args
+    else:
+      predicate = None
+
     barrier_key = _get_barrier_allocation_key_from_inval(
         barrier,
         barrier_transforms_tree,
-        barrier_transforms_flat,
+        flat_args,
     )
-    return callback.io_callback(
+    call_commit_arrive = functools.partial(
+        callback.io_callback,
         functools.partial(
             gpu_callbacks.tcgen05_commit_arrive,
             source_info=eqn.source_info,
             collective_axis=collective_axis,
         ),
         gpu_callbacks.TOKEN_SHAPE_DTYPE,
-        token=token,
         mesh_location=self.mesh_location,
         thread=self.thread,
         barrier_key_as_array=barrier_key,
-    ), []
+    )
+    if predicate is None:
+      token = call_commit_arrive(token=token)
+    else:
+      token = lax.cond(
+          predicate,
+          lambda tok: call_commit_arrive(token=tok),
+          lambda tok: tok,
+          token,
+      )
+    return token, []
 
   def _interpret_wait_smem_to_gmem_p(
       self, eqn, token: jax.Array, get_invals: Callable[[], Sequence[Any]]
   ):
     assert eqn.primitive is gpu_primitives.wait_smem_to_gmem_p
-    n, = get_invals()
+    del get_invals  # Unused.
+    n = eqn.params["n"]
     wait_read_only = eqn.params["wait_read_only"]
     return callback.io_callback(
         functools.partial(
@@ -1373,7 +1403,7 @@ class JaxprInterpreter:
             token, out = self._interpret_get_p(eqn, token, deferred_invals)
           case primitives.load_p:
             raise NotImplementedError("load_p is not supported on GPU yet")
-          case state_primitives.swap_p:
+          case state_primitives.swap_p | gpu_primitives.store_p:
             token, out = self._interpret_swap_p(eqn, token, deferred_invals)
           case primitives.swap_p:
             raise NotImplementedError("swap_p is not supported on GPU yet")
@@ -1394,6 +1424,14 @@ class JaxprInterpreter:
           case gpu_primitives.barrier_arrive_p:
             token, out = self._interpret_barrier_arrive_p(
                 eqn, token, deferred_invals)
+          case gpu_primitives.barrier_arrive_and_wait_p:
+            invals = deferred_invals()
+            token, _ = self._interpret_barrier_arrive_p(
+                eqn, token, lambda: invals
+            )
+            token, out = self._interpret_barrier_wait_p(
+                eqn, token, lambda: invals
+            )
           case gpu_primitives.copy_gmem_to_smem_p:
             token, out = self._interpret_copy_gmem_to_smem_p(
                 eqn, token, deferred_invals)

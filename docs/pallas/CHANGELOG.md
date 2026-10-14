@@ -13,6 +13,76 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* New features
+  * Added `ref.memory_space_cast` to cast the memory space of a reference.
+
+* Deprecations
+
+  * {class}`jax.experimental.pallas.DeviceIdType` and the `device_id_type`
+    parameter of {func}`jax.experimental.pallas.semaphore_signal` are deprecated.
+
+### Mosaic GPU
+
+* Changes
+
+  * `ref[...] = value` now always requires an optimized transfer; use
+    {func}`jax.experimental.pallas.mosaic_gpu.store` with `optimized=False` to
+    opt out. This is necessary when storing to GMEM, since optimized transfers
+    are currently only supported for SMEM.
+  * {func}`jax.experimental.pallas.mosaic_gpu.atomic_add`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_max`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_min`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_and`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_or`, and
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_xor` now take an
+    `optimized` argument (defaulting to `True`) that controls whether an
+    optimized transfer is required. Setting `optimized=False` is necessary when
+    storing to GMEM, since optimized transfers are currently only supported for
+    SMEM.
+
+* New features
+
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.min`,
+  {func}`jax.experimental.pallas.mosaic_gpu.max`,
+  {func}`jax.experimental.pallas.mosaic_gpu.sum`, and
+  {func}`jax.experimental.pallas.mosaic_gpu.prod`. These mirror the equivalent
+  `jax.numpy` functions, but add an `accumulator_ilp` parameter.
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.alloc_semaphore`, which
+    allocates GMEM semaphores that can be shared across kernel invocations.
+  * {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` with
+    `leader_tracked=CopyPartition.PARTITIONED(...)` or
+    `leader_tracked=CopyPartition.REPLICATED` now support clusters of total size
+    greater than 2, provided the collective axis is the minormost cluster
+    dimension and has size 2.
+
+* Deprecations
+
+  * The `device_id_type` parameter of
+    {func}`jax.experimental.pallas.mosaic_gpu.remote_ref` is deprecated.
+
+* Removals
+
+  * Removed the previously deprecated `idx` parameter of
+    {func}`jax.experimental.pallas.mosaic_gpu.load`. Index the ref explicitly
+    via `ref.at[idx]` prior to loading from it.
+
+### TPU
+
+* New features
+
+  * Added {func}`jax.experimental.pallas.tpu.has_memory_space` to dynamically
+    query the memory space of an `ANY` reference.
+
+* Deprecations
+
+  * The `device_id_type` parameter of
+    {func}`jax.experimental.pallas.tpu.async_remote_copy` and
+    {func}`jax.experimental.pallas.tpu.make_async_remote_copy` is deprecated.
+  * {class}`jax.experimental.pallas.tpu.BufferedRefBase` and
+    {data}`jax.experimental.pallas.tpu.BufferType.MANUAL` are deprecated.
+
+## Released with JAX 0.11.2 (September 17, 2026)
+
 * Deprecations
 
   * `pl.reciprocal` was moved into {mod}`jax.experimental.pallas.tpu`.
@@ -51,11 +121,19 @@ Remember to align the itemized text with the first line of an item within a list
     dumps the constraint system built during layout inference. This is useful
     for debugging layout inference failures. Like the other dump variables, it
     is also enabled by `MOSAIC_GPU_DUMP_TO`.
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.store`, the counterpart to
+    {func}`jax.experimental.pallas.mosaic_gpu.load`. Like `load`, it takes an
+    `optimized` argument that controls whether a conflict-free transfer is
+    required.
 
 * Deprecations
 
   * {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref` is
     deprecated. Use `ref.transpose(...)` directly instead.
+  * Using {func}`jax.experimental.pallas.program_id` and
+    {func}`jax.experimental.pallas.num_programs` in Pallas MGPU kernels is
+    deprecated. Use {func}`jax.lax.axis_index` and {func}`jax.lax.axis_size`
+    instead.
 
 * Removals
 

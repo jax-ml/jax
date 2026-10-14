@@ -269,11 +269,11 @@ def segment_sum(data: ArrayLike,
     >>> jit(segment_sum, static_argnums=2)(data, segment_ids, 3)
     Array([1, 5, 4], dtype=int32)
   """
-  out_sharding = canonicalize_sharding(out_sharding, 'segment_sum')
+  sharding = canonicalize_sharding(out_sharding, 'segment_sum')
   return _segment_update(
       "segment_sum", data, segment_ids, slicing.scatter_add, num_segments,
       indices_are_sorted, unique_indices, bucket_size, reductions.sum, mode=mode,
-      out_sharding=out_sharding)
+      out_sharding=sharding)
 
 
 def segment_prod(data: ArrayLike,
@@ -327,13 +327,13 @@ def segment_prod(data: ArrayLike,
     >>> jit(segment_prod, static_argnums=2)(data, segment_ids, 3)
     Array([ 0,  6, 20], dtype=int32)
   """
-  out_sharding = canonicalize_sharding(out_sharding, 'segment_prod')
-  if out_sharding is not None and out_sharding.spec.unreduced:
+  sharding = canonicalize_sharding(out_sharding, 'segment_prod')
+  if sharding is not None and sharding.spec.unreduced:
     raise NotImplementedError('unreduced for prod is not yet supported.')
   return _segment_update(
       "segment_prod", data, segment_ids, slicing.scatter_mul, num_segments,
       indices_are_sorted, unique_indices, bucket_size, reductions.prod,
-      mode=mode, out_sharding=out_sharding)
+      mode=mode, out_sharding=sharding)
 
 
 def segment_max(data: ArrayLike,
@@ -386,13 +386,13 @@ def segment_max(data: ArrayLike,
     >>> jit(segment_max, static_argnums=2)(data, segment_ids, 3)
     Array([1, 3, 5], dtype=int32)
   """
-  out_sharding = canonicalize_sharding(out_sharding, 'segment_max')
-  if out_sharding is not None and out_sharding.spec.unreduced:
+  sharding = canonicalize_sharding(out_sharding, 'segment_max')
+  if sharding is not None and sharding.spec.unreduced:
     raise NotImplementedError('unreduced for max is not yet supported.')
   return _segment_update(
       "segment_max", data, segment_ids, slicing.scatter_max, num_segments,
       indices_are_sorted, unique_indices, bucket_size, reductions.max,
-      mode=mode, out_sharding=out_sharding)
+      mode=mode, out_sharding=sharding)
 
 
 def segment_min(data: ArrayLike,
@@ -445,10 +445,10 @@ def segment_min(data: ArrayLike,
     >>> jit(segment_min, static_argnums=2)(data, segment_ids, 3)
     Array([0, 2, 4], dtype=int32)
   """
-  out_sharding = canonicalize_sharding(out_sharding, 'segment_min')
-  if out_sharding is not None and out_sharding.spec.unreduced:
+  sharding = canonicalize_sharding(out_sharding, 'segment_min')
+  if sharding is not None and sharding.spec.unreduced:
     raise NotImplementedError('unreduced for min is not yet supported.')
   return _segment_update(
       "segment_min", data, segment_ids, slicing.scatter_min, num_segments,
       indices_are_sorted, unique_indices, bucket_size, reductions.min,
-      mode=mode, out_sharding=out_sharding)
+      mode=mode, out_sharding=sharding)

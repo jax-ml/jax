@@ -79,9 +79,9 @@ print(x.committed)
 print(x.sharding)
 ```
 
-Uncommitted means the array isn't attached to its location: it's free to
-follow. If it's used in a computation together with data that *is* committed
-somewhere, JAX will move it there implicitly.
+Uncommitted means the array isn't tied to its location: if it's used in a
+computation together with data that *is* committed somewhere, JAX moves it
+there implicitly.
 
 To place an array deliberately, use {func}`jax.device_put` with a sharding,
 which is a mesh plus a description of how the array is laid out over it:
@@ -143,7 +143,7 @@ There are two related operations:
 One more case: because a mesh is an *arrangement* of devices, keeping an
 array's data on the same set of devices but changing the device *order* in
 the sharding is also a change of mesh, and therefore a `device_put` rather
-than a reshard. The same partition spec over differently-ordered meshes
+than a reshard. The same partition spec over differently ordered meshes
 assigns different data to each device, so real data movement is required.
 
 ```{code-cell}
@@ -229,8 +229,9 @@ interconnects. That story is in the multi-process systems docs; see
 
 ## Notes
 
-- `jax.device_put(x)` with no target is (at most) a transfer to the default
-  placement, and the result is uncommitted.
+- `jax.device_put(x)` with no target leaves a JAX array where it is,
+  committed or not, and transfers anything else (like a NumPy array) to the
+  default placement, uncommitted.
 - `jax.device_put` accepts `donate=True` to reuse the input's buffers when
   possible, in the same spirit as `jit`'s buffer donation
   ({ref}`jax-201-buffer-donation`).

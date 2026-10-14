@@ -283,16 +283,22 @@ class FilteredTracebackTest(jtu.JaxTestCase):
 
     @jax.custom_jvp
     def f(x):
+      return x
+
+    @jax.custom_jvp
+    def f_err(x):
       return err(x)
 
-    @f.defjvp
     def f_jvp(x, tx):
       x = err(x)
       return x, tx
 
-    check_filtered_stack_trace(self, AssertionError, lambda: f(1.), [
-        ('f', 'return err(x)'),
+    f_err.defjvp(f_jvp)
+    check_filtered_stack_trace(self, AssertionError, lambda: f_err(1.), [
+        ('f_err', 'return err(x)'),
         ('err', 'assert False')], filter_mode=filter_mode)
+
+    f.defjvp(f_jvp)
     check_filtered_stack_trace(self, AssertionError, lambda: jax.jvp(f, [1.], [1.]), [
         ('f_jvp', 'x = err(x)'),
         ('err', 'assert False')], filter_mode=filter_mode)
@@ -485,7 +491,7 @@ class CustomErrorsTest(jtu.JaxTestCase):
     ErrorClass = getattr(jax.errors, errorclass)
     err = ErrorClass(FakeTracer(None))
 
-    self.assertIn(f'https://docs.jax.dev/en/latest/errors.html#jax.errors.{errorclass}', str(err))
+    self.assertIn(f'https://docs.jax.dev/en/latest/101/errors.html#jax.errors.{errorclass}', str(err))
 
 
 class TracerAttributeProbeTest(jtu.JaxTestCase):

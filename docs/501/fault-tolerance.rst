@@ -7,7 +7,7 @@
     <script src="../_static/fault_tolerance/fault_tolerance.js"></script>
 
 
-Fault Tolerant Distributed JAX
+Fault-tolerant distributed JAX
 ==============================
 
 Recall that :doc:`multi-controller JAX <multiprocess>` allows you to run a JAX program distributed
@@ -16,7 +16,7 @@ across multiple machines. By default, if *any* of these machines fail, then
 **fault-tolerant** by default.
 
 This article has three parts. In the first part, we'll explain the basics of
-how to write fault tolerant multi-controller JAX programs. In the second part,
+how to write fault-tolerant multi-controller JAX programs. In the second part,
 we'll show some example fault-tolerant multi-controller JAX programs. In the
 third part, we'll look at how multi-controller JAX implements fault
 tolerance.
@@ -35,10 +35,10 @@ tolerance.
 
 .. _jax-501-ft-part1:
 
-Part 1: Fault Tolerance Basics
+Part 1: Fault tolerance basics
 ------------------------------
 
-Fault Intolerant By Default
+Fault intolerant by default
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 By default, multi-controller JAX programs are not fault tolerant. If *any*
@@ -90,7 +90,7 @@ The first three processes crash about ten seconds after you kill the fourth
 because we passed ``heartbeat_timeout_seconds=10`` as an argument to
 ``jax.distributed.initialize``.
 
-Surviving Faults
+Surviving faults
 ^^^^^^^^^^^^^^^^
 
 We can disable fate-sharing by adding the
@@ -124,7 +124,7 @@ If the coordination service fails, all other processes have no choice but to
 fail.
 See :ref:`jax-501-ft-part3` for more details.
 
-Getting Stuck in Collectives
+Getting stuck in collectives
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``example.py`` is now able to survive faults, but the processes do not
@@ -149,7 +149,7 @@ rest of the processes participating in the computation will get stuck
 
 .. _`jax-501-ft-canceling-collectives`:
 
-Cancelling Collectives
+Cancelling collectives
 ^^^^^^^^^^^^^^^^^^^^^^
 
 We can avoid getting stuck by cancelling collectives with a failed participant.
@@ -178,13 +178,13 @@ something like this:
     jaxlib._jax.XlaRuntimeError: FAILED_PRECONDITION: Task with incarnation id 3446767950926952685 is not connected
 
 
-Knowing Who's Alive
+Knowing who's alive
 ^^^^^^^^^^^^^^^^^^^
 
 After a process dies, the remaining *alive* processes need to learn who is dead
 and who is alive. For this, we can use the core JAX fault tolerance API:
 ``live_devices``. ``live_devices`` is a context manager that takes a list of
-devices as an argument and returns the subset of these devices that are alive.
+devices as an argument and yields the subset of these devices that are alive.
 Below, we edit ``example.py`` to call ``live_devices``.
 
 .. literalinclude:: ../_static/fault_tolerance/live_devices.py
@@ -224,7 +224,7 @@ Unfortunately, as with `many things in distributed systems`_, there are a lot
 of subtleties to iron out. Next, we explain the **barrier** semantics and
 **atomicity** properties of ``live_devices``.
 
-Barrier Semantics
+Barrier semantics
 ^^^^^^^^^^^^^^^^^
 
 Recall that every process in a :doc:`multi-controller JAX <multiprocess>` program should run in
@@ -236,9 +236,10 @@ In the context of ``live_devices``, we need to ensure that every process agrees
 on which processes are currently alive. This is difficult to ensure because
 every process is executing independently at potentially different speeds and
 processes can fail at any time. Consider again the ``example.py`` script from
-above running on four processes. Imagine process 1 and 2 call ``live_devices``,
-then process 4 fails, and then process 3 calls ``live_devices``. Process 1 and
-2 might think process 4 is alive while process 3 thinks it is dead.
+above running on four processes. Imagine processes 0 and 1 call
+``live_devices``, then process 3 fails, and then process 2 calls
+``live_devices``. Processes 0 and 1 might think process 3 is alive while
+process 2 thinks it is dead.
 
 To avoid situations like these, ``live_devices`` guarantees that it returns the
 same set of live devices to every process. It accomplishes this using a
@@ -252,7 +253,7 @@ same set of live devices to every process.
     ``live_devices`` uses a barrier to ensure that it will *always* return the
     same set of live devices to every live process.
 
-Because ``live_devices`` implements a barrier it is susceptible to deadlock if
+Because ``live_devices`` implements a barrier, it is susceptible to deadlock if
 used improperly. We recommend only having a single ``with live_devices`` block
 in a program. Multiple calls to ``live_devices`` are hard to reason about and
 can lead to deadlock.
@@ -311,9 +312,9 @@ processes to execute A while others execute B.
     will not be propagated to the other processes.
 
 Recall that JAX uses :ref:`asynchronous dispatch <jax-201-async-dispatch>`. Operations like ``jnp.sum`` do
-not block until the operation is complete. Instead, they return ``jax.Arrays``
-that act as futures. This asynchrony can interact with ``live_devices`` in
-unexpected ways. For example, consider the following code that performs a
+not block until the operation is complete. Instead, they return ``jax.Array``
+objects that act as futures. This asynchrony can interact with
+``live_devices`` in unexpected ways. For example, consider the following code that performs a
 ``jnp.sum``, assigns the result to ``y``, and then prints ``y``:
 
 .. code-block:: python
@@ -365,12 +366,12 @@ Part 2: Examples
 tolerant. It is a tool for implementing fault tolerance yourself, in the way
 that is best for your application.
 
-The exact details of how you implement fault-tolerance will vary greatly based
+The exact details of how you implement fault tolerance will vary greatly based
 on the nature of your application. In this section, we present some examples of
 how to use ``live_devices``. The examples are meant to be illustrative but not
 prescriptive. There are many other ways to implement fault tolerance.
 
-Example 1: Fault Tolerant Data Parallel Training
+Example 1: Fault-tolerant data-parallel training
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 In this example, we train a trivial single-parameter linear model (:math:`y =
@@ -398,7 +399,7 @@ Next, we define a ``replicated`` function that returns an array replicated
 across a set of devices. Note that ``replicated`` doesn't actually move any
 data. It assumes the argument ``x`` already has equal value across all
 processes. It returns a new view of that data, in a process-spanning
-`jax.Array` with a replicated sharding.
+``jax.Array`` with a replicated sharding.
 
 .. literalinclude:: ../_static/fault_tolerance/data_parallelism.py
     :language: python
@@ -462,7 +463,7 @@ Here is the full example:
     :linenos:
     :lines: 15-
 
-Example 2: Fault Tolerant Data Parallel Training With Recovery
+Example 2: Fault-tolerant data-parallel training with recovery
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Now, we modify the example above to allow failed processes to recover. When a
@@ -503,7 +504,7 @@ recovering processes.
 1. To detect which processes are recovering, we perform an AllGather on all
    live processes' steps. When a failed process recovers, its ``step`` will be
    ``0``, while the ``step`` on process ``0`` will be some positive number, so
-   if a process' step is not equal to process 0's step, then it is recovering.
+   if a process's step is not equal to process 0's step, then it is recovering.
 2. Then, we call the ``send`` and ``recv`` functions we defined above to
    transfer the current step and model weights from process 0 to the recovering
    processes.
@@ -518,7 +519,7 @@ Here is the full example:
 .. _jax-501-ft-part3:
 
 
-Part 3: Implementation Details
+Part 3: Implementation details
 ------------------------------
 
 This part covers the architecture of multi-controller JAX and the semantics
@@ -526,7 +527,7 @@ and implementation of ``live_devices`` in detail. If you're only interested in
 writing fault-tolerant multi-controller JAX programs, the first two parts of
 this article suffice.
 
-The Coordination Service
+The coordination service
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
 When you launch a multi-controller JAX program, the first process (i.e. process
@@ -552,9 +553,10 @@ process has failed.
 
 This is shown in the interactive visualization below. The coordination service
 is shown at the top and three multi-controller JAX processes are shown at the
-bottom. Note how the processes periodically send heartbeats to the controller,
-and the controller keeps track of the health of each process based on when it
-last received a heartbeat. Try failing process 2 by clicking the "Fail" button.
+bottom. Note how the processes periodically send heartbeats to the
+coordination service, and the coordination service keeps track of the health
+of each process based on when it last received a heartbeat. Try failing
+process 2 by clicking the "Fail" button.
 Observe how the process stops sending heartbeats and the coordination service
 eventually considers the process dead.
 
@@ -587,7 +589,7 @@ and observe how the coordination service notifies the other processes to fail.
     </script>
 
 This fate sharing means that multi-controller JAX programs are not at all
-fault-tolerant. They are fault-*intolerant*. To enable fault-tolerance, we
+fault-tolerant. They are fault-*intolerant*. To enable fault tolerance, we
 need to do two things:
 
 - First, we need to remove fate sharing and allow processes to continue
@@ -600,15 +602,15 @@ need to do two things:
 
 There is a surprising amount of technical depth and subtlety in implementing
 the ``live_devices`` API. We'll walk through the design and implementation of
-the API step-by-step. We'll begin by introducing a simpler ``live_processes``
+the API step by step. We'll begin by introducing a simpler ``live_processes``
 API and slowly improve it until we arrive at the ``live_devices`` API.
 
-Live Processes
+Live processes
 ^^^^^^^^^^^^^^
 
 Let's try to design a new hypothetical JAX API: ``jax.live_processes``. As the
 name suggests, we want ``jax.live_processes()`` to return the set of all
-currently alive processes.  Here is a naive but (as we'll see momentarily)
+currently alive processes. Here is a naive but (as we'll see momentarily)
 incorrect implementation. When a process calls ``jax.live_processes()``, it
 sends an RPC request to the coordination service. Remember that the
 coordination service already uses heartbeats to keep track of which processes
@@ -662,7 +664,7 @@ If processes disagree on which processes are alive, they will almost certainly
 diverge. We can avoid this divergence by augmenting ``jax.live_processes``
 with barrier semantics.
 
-Barrier Semantics
+Barrier semantics
 ^^^^^^^^^^^^^^^^^
 
 Let's change the implementation of ``jax.live_processes`` so that when the
@@ -673,9 +675,9 @@ entered the ``jax.live_processes()`` barrier, the coordination service returns
 the set of live processes. The coordination service returns the *same* set
 of live processes to all processes, which prevents them from diverging.
 
-This is illustrated below. Note that coordination server now keeps track of
-which devices are in the ``live_processes`` barrier.  Try calling
-``live_processes`` from every process.  Notice how the coordination service
+This is illustrated below. Note that the coordination service now keeps track
+of which processes are in the ``live_processes`` barrier. Try calling
+``live_processes`` from every process. Notice how the coordination service
 doesn't respond until every process has entered the barrier. Then fail process
 2 and call ``live_processes`` from process 0 and process 1.
 
@@ -690,7 +692,7 @@ doesn't respond until every process has entered the barrier. Then fail process
       });
     </script>
 
-Formal Semantics
+Formal semantics
 ^^^^^^^^^^^^^^^^
 
 Distributed systems are notoriously complex. Machines can fail at arbitrary
@@ -708,7 +710,7 @@ types of events:
 
 1. A process can **start** (👶). We'll assume that when a process starts, it
    connects to the coordination service, so the coordination service is aware
-   that is has started.
+   that it has started.
 2. A process can **fail** (💀). Unlike starting, the coordination service may
    not immediately be aware that a process has failed.
 3. A process can **send** a ``jax.live_processes`` request to the coordination
@@ -721,7 +723,7 @@ progresses from left to right. First, all three processes start. This is shown
 with the baby emojis. Then all three processes send ``jax.live_processes``
 requests to the coordination service. This is shown as the start of the thick
 colored regions. Later, all three processes receive a reply from the
-coordination service with ``0,1,2`` as the set of live devices.
+coordination service with ``0,1,2`` as the set of live processes.
 
 .. raw:: html
 
@@ -810,7 +812,7 @@ red bar.
 
 There is nothing special about the specific moment in time we chose in the
 visualization above. All that's important is that *there exists some* moment in
-time where all processes in `P` are in the barrier and all other processes are
+time where all processes in ``P`` are in the barrier and all other processes are
 dead. There are many moments in time that satisfy this property, as shown
 below.
 
@@ -851,8 +853,8 @@ below.
       </svg>
     </div>
 
-In the next example, processes 0 and 1 start, call ``live_devices``, and
-receive ``0,1`` as a reply. Process 2 is dead throughout the execution.
+In the next example, processes 0 and 1 start, call ``jax.live_processes``,
+and receive ``0,1`` as a reply. Process 2 is dead throughout the execution.
 
 .. raw:: html
 
@@ -884,7 +886,7 @@ receive ``0,1`` as a reply. Process 2 is dead throughout the execution.
     </div>
 
 This is a valid execution under our formal semantics because there exists a
-moment a time in which processes 0 and 1 are in the barrier and process 2 is
+moment in time in which processes 0 and 1 are in the barrier and process 2 is
 dead.
 
 .. raw:: html
@@ -1078,7 +1080,7 @@ a reply.
     </div>
 
 Using the formal semantics described thus far, this is *not* a valid execution.
-There is never a point in time where process 0 and 1 are both alive. However,
+There is never a point in time where processes 0 and 1 are both alive. However,
 this *should* be a valid execution.
 
 The reason has to do with the unavoidable fact that in a distributed system, it
@@ -1214,7 +1216,7 @@ responds with ``0``.
       </svg>
     </div>
 
-We cannot move a process failure past the process' other events, however. For
+We cannot move a process failure past the process's other events, however. For
 example, the following execution is *invalid* because no matter where we move
 the failure of process 1, there is never a moment in time where both processes
 are in the barrier.
@@ -1434,8 +1436,8 @@ failed to execute successfully. We don't want some processes succeeding and
 others failing.
 
 We can achieve atomicity by calling ``live_processes`` twice, once before a
-code block and once after. If all the
-processes that were alive before the block are also alive after the block, then
+code block and once after. If all the processes that were alive before the
+block are also alive after the block, then
 the code block executed successfully on all live processes. On the other hand,
 if any process died, then all remaining processes can agree the code block
 failed to execute properly. Here's a sketch of what that might look like:
@@ -1473,7 +1475,7 @@ issues we need to address before it is fully correct. For example,
   of processes hasn't changed, we also check that their incarnation ids haven't
   changed.
 - What if a process recovers and its first call to ``live_processes`` matches
-  up with a different process' second call to ``live_processes``? Couldn't this
+  up with a different process's second call to ``live_processes``? Couldn't this
   lead to a deadlock? Yes. We can avoid the problem by only calling
   ``live_processes`` at a single program point. We can be clever and use a
   single call to ``live_processes`` for two purposes. It can be used to check
@@ -1492,14 +1494,14 @@ will see the code succeed (branch ``C``).
 .. code-block:: python
 
     try:
-      with live_devices() as devices:
+      with live_devices(jax.devices()) as devices:
         pass # A
     except Exception as e:
       pass # B
     else:
       pass # C
 
-Cancelling Collectives
+Cancelling collectives
 ^^^^^^^^^^^^^^^^^^^^^^
 
 As mentioned in :ref:`jax-501-ft-canceling-collectives`, if a process participating in a
@@ -1512,7 +1514,7 @@ collective cancelling.
 
 The GPU backend implements collectives using `NCCL`_, NVIDIA's collective
 communication library. When a set of processes wants to perform a collective,
-they form a **NCCL communicator**. Processes can then repeatedly perform
+they form an **NCCL communicator**. Processes can then repeatedly perform
 collectives using this communicator. Creating a communicator is expensive---it
 requires network communication---so the JAX backend caches communicators keyed
 by the set of participating processes and their incarnation ids.

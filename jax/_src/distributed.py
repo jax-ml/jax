@@ -23,7 +23,7 @@ import warnings
 from jax._src import clusters
 from jax._src import config
 from jax._src import xla_bridge
-from jax._src.lib import _jax, jaxlib_extension_version
+from jax._src.lib import _jax
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +77,6 @@ def _get_mtls_kwargs(
           verify_secure_credentials,
           config.distributed_verify_secure_credentials),
   )
-  if jaxlib_extension_version < 483:
-    verify_secure_credentials = kwargs.pop('verify_secure_credentials')
-    if (verify_secure_credentials
-        or any(v is not None for v in kwargs.values())):
-      raise RuntimeError('mTLS for the JAX distributed service requires '
-                         'jaxlib 0.11.2 or newer.')
-    return {}
   return kwargs
 
 
@@ -165,6 +158,7 @@ class State:
       logger.info('JAX distributed initialized with visible devices: %s', visible_devices)
       config.update("jax_cuda_visible_devices", visible_devices)
       config.update("jax_rocm_visible_devices", visible_devices)
+      config.update("jax_oneapi_visible_devices", visible_devices)
 
     self.process_id = process_id
 
@@ -352,7 +346,7 @@ def initialize(coordinator_address: str | None = None,
     mtls_cert_file: Path to this process' PEM-encoded certificate chain. When
       set (together with ``mtls_key_file`` and ``mtls_ca_file``), the
       coordination service and its clients authenticate each other with
-      mutual TLS; see :ref:`coordination-service-mtls` for what this does
+      mutual TLS; see :ref:`jax-501-coordination-service-mtls` for what this does
       and does not protect. The files are re-read periodically, so rotated
       certificates are picked up without a restart. If ``None``, falls
       back to the ``jax_mtls_cert_file`` config.

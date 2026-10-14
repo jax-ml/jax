@@ -15,16 +15,45 @@
 """Precision testing utilities for elementary floating-point functions."""
 
 import collections
+from collections.abc import Callable, Iterator, Sequence
 import concurrent.futures
+import functools
+import math
 import os
+import sys
+from typing import Any
 
 from absl import flags
+from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src import tpu_info
 import jax.numpy as jnp
 import mpmath
 import numpy as np
+
+try:
+  import google_benchmark
+except ImportError:
+  google_benchmark = None
+
+
+class ClassShardedTestLoader(jtu.JaxTestLoader):
+  """Test loader that assigns each TestCase class to its own shard."""
+
+  def shardTestCaseNames(
+      self,
+      iterator: Iterator[Any],
+      ordered_names: Sequence[str],
+      shard_index: int,
+  ) -> Sequence[str]:
+    if not ordered_names:
+      return []
+    bucket = next(iterator)
+    if bucket == shard_index:
+      return ordered_names
+    return []
+
 
 
 def _default_num_workers() -> int:
@@ -43,14 +72,14 @@ NUM_WORST_CASES = flags.DEFINE_integer(
 MAX_SAMPLES = flags.DEFINE_integer(
     "jax_numerics_max_samples",
     2**20,
-    "Maximum number of samples to test per dtype. If total elements <= this,"
-    " tests exhaustively.",
+    "Maximum number of samples to test per dtype (for bf16, f16, f32). If total"
+    " elements <= this, tests exhaustively.",
 )
 
-MAX_ULP_BIN = flags.DEFINE_integer(
-    "jax_numerics_max_bincount",
-    100000,
-    "Maximum ULP difference tracked in bincount histogram. Differences larger than this are clipped.",
+MAX_F64_SAMPLES = flags.DEFINE_integer(
+    "jax_numerics_max_f64_samples",
+    10000,
+    "Maximum number of samples to test for float64 (evaluated using mpmath).",
 )
 
 NUM_WORKERS = flags.DEFINE_integer(
@@ -75,13 +104,21 @@ def get_hardware_variant() -> str:
   return dut
 
 
+def _default_ftz(dtype) -> bool:
+  """Returns whether subnormals flush to zero by default for `dtype`."""
+  if dtype is not None and np.dtype(dtype) == np.float16:
+    return False
+  return True
+
+
 def _resolve_override(spec, variant: str, dtype, default):
   """Resolves a per-platform/per-dtype configuration override.
 
   `spec` may be either a scalar value (returned directly) or a list of
-  `(variants, {dtype: value})` pairs, where `variants` is a string or list of
+  `(variants, overrides)` pairs, where `variants` is a string or list of
   strings matching either the specific hardware variant (e.g. 'tpu_v5p') or the
-  broad device type (e.g. 'tpu', 'cpu', 'gpu').
+  broad device type (e.g. 'tpu', 'cpu', 'gpu'), and `overrides` is either a
+  `{dtype: value}` dict or a single value applying to all dtypes on `variants`.
   """
   if not isinstance(spec, list):
     return spec if spec is not None else default
@@ -89,135 +126,379 @@ def _resolve_override(spec, variant: str, dtype, default):
   for variants, overrides in spec:
     if isinstance(variants, str):
       variants = [variants]
-    if (variant in variants or dut in variants) and dtype in overrides:
-      return overrides[dtype]
+    if variant in variants or dut in variants:
+      if isinstance(overrides, dict):
+        if dtype in overrides:
+          return overrides[dtype]
+      else:
+        return overrides
   return default
 
 
 def resolve_ignore_inputs(
     ignore_inputs: list | None, variant: str, dtype
-) -> np.ndarray:
-  """Resolves list of ignored inputs as an array of unsigned integer bit patterns."""
-  udt = np.dtype(f"u{np.dtype(dtype).itemsize}")
+) -> Callable[..., np.ndarray] | None:
+  """Resolves per-variant/per-dtype ignore_inputs into a callable predicate.
+
+  The callable must have the signature:
+    `ignore_fn(*args: np.ndarray) -> np.ndarray[bool]`
+  where each argument in `*args` is a 1D NumPy array corresponding to an input
+  argument to `jax_fn(*args)`, and the return value is a boolean mask where
+  True indicates that the input should be excluded from accuracy checking.
+  """
   vals = _resolve_override(ignore_inputs, variant, dtype, None)
-  if not vals:
-    return np.array([], dtype=udt)
-  res = [
-      int(v) if isinstance(v, (int, np.integer))
-      else int(np.array(v, dtype=dtype).view(udt))
-      for v in vals
-  ]
-  return np.asarray(res, dtype=udt)
+  if vals is None:
+    return None
+  if callable(vals):
+    return vals
+  if isinstance(vals, (list, tuple, set)):
+    udt = np.dtype(f"u{np.dtype(dtype).itemsize}")
+    res = [
+        int(v) if isinstance(v, (int, np.integer))
+        else int(np.array(v, dtype=dtype).view(udt))
+        for v in vals
+    ]
+    ignored_arr = np.asarray(res, dtype=udt)
+    return lambda *args: np.isin(args[0].view(udt), ignored_arr)
+  raise TypeError(
+      f"ignore_inputs for variant {variant!r} and dtype {dtype} must be a"
+      f" callable (*args: np.ndarray) -> np.ndarray[bool] or sequence, got {type(vals)}."
+  )
+
 
 
 @jax.jit(static_argnames=("dtype", "ftz"))
-def _ulp_diff_and_sign_jax(x, y, dtype, ftz: bool = True):
-  """Computes unsigned uint64 ULP distance and sign (x > y) in JAX.
+def _ulp_diff_jax(computed, reference, dtype, ftz: bool = True):
+  """Computes signed real float64 ULP difference `(computed - reference) / ulp(reference)` in JAX for < float64 dtypes.
+
+  For a target `dtype` with `p = nmant + 1` significand bits, minimum normal
+  exponent `emin = minexp`, and maximum normal exponent `emax = maxexp - 1`,
+  `ulp(reference)` is `2^(min(max(floor(log2(|reference|)), emin), emax) - (p - 1))`,
+  clamped below to the subnormal quantum `ulp_tiny = 2^(emin - (p - 1))` for
+  `|reference| < 2^emin` and capped above at the top normal binade's ULP
+  `2^(emax - (p - 1))`.
+
+  Behavior at infinity and the overflow boundary:
+    - Matching `NaN`s, or matching infinities of the same sign (treating finite
+      `|reference| >= 2^(emax + 1) - 0.5 * ulp(max_float)` as overflowing to
+      `±inf` in round-to-nearest-even), return `0.0`.
+    - When `reference` is finite with `|reference| >= 2^emax` (in or above the
+      top normal binade) and `computed` has the same sign, rounding across the
+      overflow threshold—either `computed = ±inf` below the threshold or finite
+      `computed` (such as `±max_float`) at or above the threshold—is measured
+      continuously by placing `±inf` at `±2^(emax + 1) = ±(max_float + 1 ULP)`.
+    - All other `NaN` or infinity mismatches (such as opposite-signed
+      infinities, finite `computed` for an actually infinite `reference`, or
+      infinite `computed` when `|reference| < 2^emax`) return `+inf` or `-inf`
+      according to the sign of `computed`.
+
+  Behavior with respect to subnormals:
+    - When `ftz=False` (gradual underflow), subnormal values use the uncollapsed
+      difference `computed - reference` divided by `ulp(reference)` (which is
+      `ulp_tiny` throughout `|reference| < 2^emin`).
+    - When `ftz=True` (flush-to-zero), subnormal magnitudes `|v| < tiny = 2^emin`
+      are treated as flushing to `0.0`:
+      * If both `|computed| < tiny` and `|reference| < tiny`, returns `0.0`.
+      * If both are normal (`>= tiny`) with the same sign, returns the standard
+        `(computed - reference) / ulp(reference)`.
+      * When comparing across the subnormal region (one normal and one
+        subnormal/zero, or normal values of opposite signs), applies the
+        piecewise-linear contraction
+        `collapse(v) = sign(v) * max(0, |v| - (tiny - ulp_tiny))` to both
+        operands before subtracting, so that the adjacent FTZ-representable
+        values `(-tiny, 0.0, +tiny)` are spaced `1 ULP` apart without an
+        artificial `(2^(p - 1) - 1)`-ULP gap across the subnormal range.
 
   Returns:
-    ulp: uint64 array of ULP distances between `x` and `y`.
-    pos: bool array, True where `x > y` (signed ULP difference is positive).
+    float64 array of signed real ULP differences between `computed` and `reference`.
+    Positive values indicate `computed > reference`. Mismatches return +inf or -inf.
   """
-  x = jnp.asarray(x, dtype=dtype)
-  y = jnp.asarray(y, dtype=dtype)
-  itemsize = np.dtype(dtype).itemsize
-  udt = jnp.dtype(f"u{itemsize}")
-  ux = jax.lax.bitcast_convert_type(x, udt)
-  uy = jax.lax.bitcast_convert_type(y, udt)
+  comp_f64 = jnp.asarray(computed, dtype=jnp.float64)
+  ref_f64 = jnp.asarray(reference, dtype=jnp.float64)
 
-  nan_x = jnp.isnan(x)
-  nan_y = jnp.isnan(y)
-  both_nan = nan_x & nan_y
-
-  inf_x = jnp.isinf(x)
-  inf_y = jnp.isinf(y)
-
-  sign_x = jnp.signbit(x)
-  sign_y = jnp.signbit(y)
-  same_sign = sign_x == sign_y
-
-  both_inf = inf_x & inf_y
-  both_inf_same = both_inf & same_sign
-
-  # Any mismatch between finite/NaN/Inf or between +Inf and -Inf is maximal error.
-  mismatch = (nan_x != nan_y) | (inf_x != inf_y) | (both_inf & ~same_sign)
-
-  # Extract unsigned integer magnitude (all bits except the sign bit).
-  # In IEEE-754 sign-magnitude encoding, incrementing the magnitude bits by 1
-  # steps to the next adjacent floating-point number away from zero (1 ULP).
-  mag_mask = udt.type((1 << (itemsize * 8 - 1)) - 1)
-  mag_x = (ux & mag_mask).astype(jnp.uint64)
-  mag_y = (uy & mag_mask).astype(jnp.uint64)
-  if ftz:
-    # Subnormal numbers have exponent 0, so their magnitude bits are <= mant_mask.
-    # Under Flush-To-Zero (FTZ), all subnormals collapse to magnitude 0, and
-    # normal numbers shift down by `mant_mask` so the smallest normal number
-    # (`tiny`) sits at distance 1 ULP from zero.
-    mant_mask = jnp.uint64((1 << np.finfo(dtype).nmant) - 1)
-    mag_x = jnp.where(mag_x <= mant_mask, jnp.uint64(0), mag_x - mant_mask)
-    mag_y = jnp.where(mag_y <= mant_mask, jnp.uint64(0), mag_y - mant_mask)
-
-  # For same sign, ULP distance is |mag_x - mag_y|.
-  # For opposite signs, ULP distance includes the step across +0.0 and -0.0,
-  # so +0.0 (mag=0, sign=0) and -0.0 (mag=0, sign=1) are 1 ULP apart.
-  diff_same = jnp.maximum(mag_x, mag_y) - jnp.minimum(mag_x, mag_y)
-  diff_opp = mag_x + mag_y + jnp.uint64(1)
-  ulp = jnp.where(same_sign, diff_same, diff_opp)
-  ulp = jnp.where(both_nan | both_inf_same, jnp.uint64(0), ulp)
-  ulp = jnp.where(mismatch, jnp.uint64(np.iinfo(np.uint64).max), ulp)
-
-  # `pos` is True when `x` is strictly greater than `y` on the ordered real line
-  # (where +0.0 > -0.0).
-  pos_same = jnp.where(sign_x, mag_x < mag_y, mag_x > mag_y)
-  pos = jnp.where(same_sign, pos_same, ~sign_x)
-  return ulp, pos
-
-
-def _map_to_31_bins(ulp: jax.Array, pos: jax.Array) -> jax.Array:
-  """Maps unsigned ULP distance and sign to 31 compact histogram bin indices."""
-  decade = (
-      11
-      + (ulp >= 100).astype(jnp.int32)
-      + (ulp >= 1000).astype(jnp.int32)
-      + (ulp >= 10000).astype(jnp.int32)
-      + (ulp >= 100000).astype(jnp.int32)
+  # Target dtype precision parameters.
+  finfo = np.finfo(dtype)
+  p = finfo.nmant + 1  # Total significand bits (including implicit leading 1).
+  emin = finfo.minexp
+  emax = finfo.maxexp - 1
+  tiny = float(np.ldexp(1.0, emin))  # Smallest positive normal number.
+  ulp_tiny = float(np.ldexp(1.0, emin - (p - 1)))  # LSB weight for subnormals.
+  # Span of the subnormal region [0, tiny). Under FTZ, this region collapses to 0.
+  subnormal_span = tiny - ulp_tiny
+  # In round-to-nearest-even (RNE), reference values at or beyond this threshold
+  # (halfway between max_float and 2^(emax+1)) round to infinity in target dtype.
+  overflow_thresh = float(
+      np.ldexp(1.0, emax + 1) - np.ldexp(0.5, emax - (p - 1))
   )
-  offset = jnp.where(ulp <= 10, ulp.astype(jnp.int32), decade)
-  return jnp.where(pos, 15 + offset, 15 - offset)
+  overflow_val = float(np.ldexp(1.0, emax + 1))
+  top_binade = float(np.ldexp(1.0, emax))
+
+  # Check NaN and Inf conditions.
+  nan_comp = jnp.isnan(comp_f64)
+  nan_ref = jnp.isnan(ref_f64)
+  both_nan = nan_comp & nan_ref
+
+  inf_comp = jnp.isinf(comp_f64)
+  # A reference value that overflows the target precision is treated as Inf.
+  inf_ref = jnp.isinf(ref_f64) | (jnp.abs(ref_f64) >= overflow_thresh)
+  sign_comp = jnp.signbit(comp_f64)
+  sign_ref = jnp.signbit(ref_f64)
+  same_sign = sign_comp == sign_ref
+
+  abs_comp = jnp.abs(comp_f64)
+  abs_ref = jnp.abs(ref_f64)
+
+  both_inf = inf_comp & inf_ref
+  both_inf_same = both_inf & same_sign
+  # When `ref` is finite in the top binade (`abs_ref >= 2^emax`) and `comp` has
+  # the same sign, rounding across `overflow_thresh` (either `comp = ±inf` for
+  # `abs_ref < overflow_thresh`, or finite `comp` for `abs_ref >= overflow_thresh`)
+  # is measured continuously by placing `±inf` at `±2^(emax+1) = ±(max_float + 1 ULP)`.
+  near_overflow = (
+      ~jnp.isinf(ref_f64)
+      & ~nan_ref
+      & ~nan_comp
+      & same_sign
+      & (abs_ref >= top_binade)
+  )
+  # Mismatch occurs when NaN/Inf status differs (outside near-overflow boundary
+  # rounding), or infinities have opposite signs.
+  mismatch = (
+      (nan_comp != nan_ref)
+      | ((inf_comp != inf_ref) & ~near_overflow)
+      | (both_inf & ~same_sign)
+  )
+
+  comp_eff = jnp.where(
+      inf_comp & near_overflow,
+      jnp.where(sign_comp, -overflow_val, overflow_val),
+      comp_f64,
+  )
+
+  if ftz:
+    both_subnormal = (abs_comp < tiny) & (abs_ref < tiny)
+    both_normal_same_sign = (abs_comp >= tiny) & (abs_ref >= tiny) & same_sign
+    # Under FTZ, the subnormal range (-tiny, +tiny) is not representable and
+    # flushes to 0. To avoid an artificial (2^(p-1) - 1)-ULP gap when comparing
+    # values across the subnormal region, we apply a piecewise-linear
+    # contraction `collapse(v) = sign(v) * max(0, |v| - subnormal_span)` where
+    # `subnormal_span = tiny - ulp_tiny`. This maps [-subnormal_span,
+    # +subnormal_span] to 0 and shifts `±tiny` to `±ulp_tiny`, making the
+    # adjacent FTZ floats (-tiny, 0.0, +tiny) spaced 1 ULP apart on the
+    # collapsed number line.
+    comp_collapsed = jnp.sign(comp_f64) * jnp.maximum(
+        0.0, abs_comp - subnormal_span
+    )
+    ref_collapsed = jnp.sign(ref_f64) * jnp.maximum(0.0, abs_ref - subnormal_span)
+    delta_collapsed = jnp.where(
+        both_subnormal, 0.0, comp_collapsed - ref_collapsed
+    )
+    # Normal numbers of the same sign use standard difference without collapsing.
+    delta = jnp.where(
+        both_normal_same_sign, comp_eff - ref_f64, delta_collapsed
+    )
+  else:
+    delta = comp_eff - ref_f64
+
+  # Compute the ULP size corresponding to the reference value.
+  # For normal numbers, ulp(ref) = 2^(floor(log2(|ref|)) - (p - 1)).
+  # Clamping |ref| from below at `tiny` fixes subnormal/zero ulp(ref) to ulp_tiny.
+  _, exp2_ref = jnp.frexp(jnp.where(abs_ref >= tiny, abs_ref, tiny))
+  ulp_size = jnp.ldexp(1.0, jnp.minimum(exp2_ref - 1, emax) - (p - 1))
+
+  # Scale difference by ULP size; handle NaN/Inf identity and mismatches.
+  signed_ulp = delta / ulp_size
+  signed_ulp = jnp.where(both_nan | both_inf_same, 0.0, signed_ulp)
+  mismatch_inf = jnp.where(~sign_comp, jnp.inf, -jnp.inf)
+  return jnp.where(mismatch, mismatch_inf, signed_ulp)
 
 
-# Representative signed ULP integer for each of the 31 bins produced by
-# `_map_to_31_bins`, chosen so `_histogram_bin(val)` maps each bin index to its
-# corresponding bucket in `render_histogram_from_counts`.
-_BIN_REPRESENTATIVES = (
-    -100000,
-    -10000,
-    -1000,
-    -100,
-    -11,
-    *range(-10, 11),
-    11,
-    100,
-    1000,
-    10000,
-    100000,
+def ulp_diff_mpmath(
+    computed: np.ndarray, reference: np.ndarray, dtype, ftz: bool = True
+) -> np.ndarray:
+  """Computes signed real ULP differences `(computed - reference) / ulp(reference)` with mpmath.
+
+  Follows the exact same semantics as `_ulp_diff_jax` for `ulp(reference)`,
+  infinity/overflow-boundary handling (`±inf` placed at `±2^(emax + 1)` when
+  `reference` is finite with `|reference| >= 2^emax` and `computed` has the same
+  sign), and subnormal handling (`ftz=False` gradual underflow vs. `ftz=True`
+  subnormal-range contraction), evaluated in arbitrary-precision `mpmath`
+  arithmetic so `float64` inputs and overflowing reference values do not suffer
+  double-precision rounding or overflow.
+  """
+  comp_arr = np.asarray(computed, dtype=np.float64).ravel()
+  ref_arr = np.asarray(reference).ravel()
+
+  # Target dtype precision parameters.
+  finfo = np.finfo(dtype)
+  p = finfo.nmant + 1  # Total significand bits (including implicit leading 1).
+  emin = finfo.minexp
+  emax = finfo.maxexp - 1
+  tiny = mpmath.ldexp(1, emin)  # Smallest positive normal number.
+  ulp_tiny = mpmath.ldexp(1, emin - (p - 1))  # LSB weight for subnormals.
+  # Span of the subnormal region [0, tiny). Under FTZ, this region collapses to 0.
+  subnormal_span = tiny - ulp_tiny
+  # In round-to-nearest-even (RNE), reference values at or beyond this threshold
+  # (halfway between max_float and 2^(emax+1)) round to infinity in target dtype.
+  overflow_thresh = mpmath.ldexp(1, emax + 1) - mpmath.ldexp(1, emax - p)
+  overflow_val = mpmath.ldexp(1, emax + 1)
+  top_binade = mpmath.ldexp(1, emax)
+
+  def _scalar_diff(c: float, r) -> float:
+    ref = (
+        r
+        if isinstance(r, mpmath.mpf)
+        else (mpmath.nan if np.isnan(r) else mpmath.mpf(float(r)))
+    )
+    nan_comp = bool(np.isnan(c))
+    nan_ref = bool(mpmath.isnan(ref))
+    if nan_comp and nan_ref:
+      return 0.0
+
+    inf_comp = bool(np.isinf(c))
+    abs_ref = abs(ref) if not nan_ref else mpmath.nan
+    # A reference value that overflows the target precision is treated as Inf.
+    inf_ref = bool(mpmath.isinf(ref)) or (
+        not nan_ref and abs_ref >= overflow_thresh
+    )
+
+    sign_comp = bool(np.signbit(c))
+    sign_ref = bool(ref < 0) if not nan_ref else False
+    same_sign = sign_comp == sign_ref
+
+    if inf_comp and inf_ref and same_sign:
+      return 0.0
+    near_overflow = (
+        not bool(mpmath.isinf(ref))
+        and not nan_ref
+        and not nan_comp
+        and same_sign
+        and abs_ref >= top_binade
+    )
+    # Mismatch occurs when NaN/Inf status differs (outside near-overflow boundary
+    # rounding), or infinities have opposite signs.
+    if (
+        (nan_comp != nan_ref)
+        or ((inf_comp != inf_ref) and not near_overflow)
+        or (inf_comp and inf_ref and not same_sign)
+    ):
+      return float("-inf") if sign_comp else float("inf")
+
+    if inf_comp and near_overflow:
+      mp_comp = -overflow_val if sign_comp else overflow_val
+    else:
+      mp_comp = mpmath.mpf(c)
+    abs_comp = abs(mp_comp)
+
+    if ftz:
+      if abs_comp < tiny and abs_ref < tiny:
+        return 0.0
+
+      # Normal numbers of the same sign use standard difference without collapsing.
+      if abs_comp >= tiny and abs_ref >= tiny and (mp_comp > 0) == (ref > 0):
+        delta = mp_comp - ref
+      else:
+        # When bridging across the subnormal boundary, collapse the subnormal range
+        # by subtracting `subnormal_span` so normal numbers meeting at zero do not
+        # incur an artificial (2^p - 1) ULP discontinuity.
+        comp_col = (1 if mp_comp >= 0 else -1) * max(
+            mpmath.mpf(0.0), abs_comp - subnormal_span
+        )
+        ref_col = (1 if ref >= 0 else -1) * max(
+            mpmath.mpf(0.0), abs_ref - subnormal_span
+        )
+        delta = comp_col - ref_col
+    else:
+      delta = mp_comp - ref
+
+    # Compute the ULP size corresponding to the reference value.
+    # For normal numbers, ulp(ref) = 2^(floor(log2(|ref|)) - (p - 1)).
+    # Clamping |ref| from below at `tiny` fixes subnormal/zero ulp(ref) to ulp_tiny.
+    _, exp2 = mpmath.frexp(max(abs_ref, tiny))
+    ulp_size = mpmath.ldexp(1, min(exp2 - 1, emax) - (p - 1))
+
+    return float(delta / ulp_size)
+
+  res = [_scalar_diff(float(ci), ri) for ci, ri in zip(comp_arr, ref_arr)]
+  return np.asarray(res, dtype=np.float64).reshape(np.shape(computed))
+
+
+_MAX_ULP_BIN = 100000.0
+
+_POS_BIN_LABELS = (
+    "(0, +0.5] ULP",
+    "(+0.5, +1] ULP",
+    "(+1, +1.5] ULP",
+    "(+1.5, +2] ULP",
+    *(f"(+{i - 1}, +{i}] ULP" for i in range(3, 11)),
+    "(+10, +100] ULP",
+    "(+100, +1000] ULP",
+    "(+1000, +10000] ULP",
+    "(+10000, +100000] ULP",
+    ">=+100000 ULP",
 )
+_NEG_BIN_LABELS = (
+    "<=-100000 ULP",
+    "[-100000, -10000) ULP",
+    "[-10000, -1000) ULP",
+    "[-1000, -100) ULP",
+    "[-100, -10) ULP",
+    *(f"[-{i}, -{i - 1}) ULP" for i in range(10, 2, -1)),
+    "[-2, -1.5) ULP",
+    "[-1.5, -1) ULP",
+    "[-1, -0.5) ULP",
+    "[-0.5, 0) ULP",
+)
+_BIN_LABELS = (*_NEG_BIN_LABELS, "0 ULP", *_POS_BIN_LABELS)
+
+
+def _map_to_bins(signed_ulp: jax.Array) -> jax.Array:
+  """Maps signed real ULP distance to compact histogram bin indices."""
+  ulp = jnp.abs(signed_ulp)
+  decade = (
+      13
+      + (ulp > 100.0).astype(jnp.int32)
+      + (ulp > 1000.0).astype(jnp.int32)
+      + (ulp > 10000.0).astype(jnp.int32)
+      + (ulp >= _MAX_ULP_BIN).astype(jnp.int32)
+  )
+  # Offset 0: exact 0.0
+  # Offset 1: (0, 0.5] ULP
+  # Offset 2: (0.5, 1] ULP
+  # Offset 3: (1, 1.5] ULP
+  # Offset 4..12: (1.5, 2], (2, 3], ..., (9, 10] ULP
+  # Offset 13..17: decades (10, 100], ..., >=100000 ULP
+  small_offset = jnp.select(
+      [ulp == 0.0, ulp <= 0.5, ulp <= 1.0, ulp <= 1.5],
+      [0, 1, 2, 3],
+      default=jnp.ceil(ulp).astype(jnp.int32) + 2,
+  )
+  offset = jnp.where(ulp <= 10.0, small_offset, decade)
+  pos = signed_ulp > 0.0
+  zero_bin = len(_NEG_BIN_LABELS)
+  return jnp.where(pos, zero_bin + offset, zero_bin - offset)
 
 
 def ulp_diff(
-    x: np.ndarray, y: np.ndarray, dtype, ftz: bool = True
+    computed: np.ndarray,
+    reference: np.ndarray,
+    dtype,
+    ftz: bool | None = None,
 ) -> np.ndarray:
-  """Computes integer ULP distance between x and y.
-
-  When x and y have opposite signs, the distance includes the signed zero
-  transition, so +0.0 and -0.0 differ by 1 ULP.
-  """
+  """Computes real float64 ULP distance between computed (in dtype) and reference."""
+  if ftz is None:
+    ftz = _default_ftz(dtype)
+  if np.dtype(dtype) == np.float64:
+    return np.abs(ulp_diff_mpmath(computed, reference, dtype, ftz=ftz))
   cpu_dev = jax.devices("cpu")[0]
   with jax.enable_x64(True), jax.default_device(cpu_dev):
-    ulp, _ = _ulp_diff_and_sign_jax(
-        np.asarray(x, dtype=dtype), np.asarray(y, dtype=dtype), dtype, ftz
+    signed_ulp = _ulp_diff_jax(
+        np.asarray(computed, dtype=dtype).astype(np.float64),
+        np.asarray(reference, dtype=np.float64),
+        dtype,
+        ftz,
     )
-    return np.asarray(ulp, dtype=np.uint64)
+    return np.asarray(jnp.abs(signed_ulp), dtype=np.float64)
 
 
 def _flush_subnormals(x: np.ndarray, dtype) -> np.ndarray:
@@ -230,56 +511,46 @@ def _flush_subnormals(x: np.ndarray, dtype) -> np.ndarray:
   return np.where(mask, np.where(np.signbit(x), dtype(-0.0), dtype(0.0)), x)
 
 
-def _round_mpmath_to_dtype(mp_val, dtype) -> np.ndarray:
-  """Rounds an mpmath.mpf directly to dtype (RNE) without double rounding.
+class _FloatMpf(mpmath.mpf):
+  """mpmath.mpf subclass that preserves IEEE-754 signbit of -0.0 and NaN on float()."""
 
-  Converting a 100-bit `mpmath.mpf` via Python `float` (`float64`) before
-  casting to `float32`, `float16`, or `bfloat16` can suffer from double
-  rounding when the true value lies within 2^-53 of a target precision midpoint.
-  This function scales `mp_val` directly to the target least-significant bit
-  (accounting for subnormal gradual underflow) and rounds to nearest-even.
-  """
-  if mpmath.isnan(mp_val):
-    return np.array(np.nan, dtype=dtype)
-  if mpmath.isinf(mp_val):
-    return np.array(np.inf if mp_val > 0 else -np.inf, dtype=dtype)
-  if mp_val == 0:
-    return np.array(0.0, dtype=dtype)
+  def __new__(cls, val: float):
+    f = float(val)
+    obj = super().__new__(cls, mpmath.nan if np.isnan(f) else f)
+    obj._orig_float = f
+    return obj
 
-  finfo = np.finfo(dtype)
-  p = finfo.nmant + 1
-  emin = finfo.minexp
-  _, exp2 = mpmath.frexp(mp_val)
-  # Exponent of the unit in the last place (clamp to subnormal minimum exponent).
-  lsb_exp = max(exp2 - p, emin - (p - 1))
-  scaled = mpmath.ldexp(mp_val, -lsb_exp)
-  q = int(mpmath.floor(scaled))
-  r = scaled - q
-  # Round to nearest, ties to even (RNE).
-  if r > 0.5 or (r == 0.5 and (q & 1)):
-    q += 1
-  if q == 0 and mp_val < 0:
-    return np.array(-0.0, dtype=dtype)
-  return np.array(float(mpmath.ldexp(q, lsb_exp)), dtype=dtype)
+  def __float__(self) -> float:
+    return self._orig_float
 
 
-def _eval_mpmath(mpmath_fn, val, dtype=None, input_ftz: bool = True):
+def eval_mpmath(mpmath_fn, *vals, dtype=None, input_ftz: bool | None = None):
   """Evaluates scalar mpmath function at current mpmath precision."""
+  if input_ftz is None:
+    input_ftz = _default_ftz(dtype)
   if input_ftz and dtype is not None:
-    val = _flush_subnormals(np.array(val, dtype=dtype), dtype).item()
-  res = mpmath_fn(mpmath.mpf(float(val)))
+    vals = tuple(
+        _flush_subnormals(np.array(v, dtype=dtype), dtype).item()
+        if np.issubdtype(np.dtype(dtype), np.floating)
+        else v
+        for v in vals
+    )
+  res = mpmath_fn(*(_FloatMpf(float(v)) for v in vals))
   if isinstance(res, mpmath.mpc):
     return mpmath.nan
+  if isinstance(res, mpmath.ctx_mp_python.mpnumeric):
+    return +res
   return res
 
 
+
 @jax.jit(static_argnames=("dtype", "ftz", "k"))
-def _eval_chunk_ulp_stats_pruned(inputs, computed, reference, dtype, ftz, k):
-  """JIT-compiled exact k-block pruned top_k + 31-bin vmap(bincount) kernel.
+def _eval_chunk_ulp_stats_pruned(computed, ref, dtype, ftz, k):
+  """JIT-compiled exact k-block pruned top_k + vmap(bincount) kernel.
 
   Reshapes inputs into `n_blocks` rows so that:
   1. Histogram counts are accumulated in parallel across rows via `vmap(bincount)`
-     into 31 compact bins rather than a single 200k-bin atomic bincount.
+     into compact bins rather than a single atomic bincount.
   2. By the pigeonhole principle, the global top `k` elements across the entire
      chunk can reside in at most `k` distinct rows. Finding the `k` rows with the
      largest row-maximums (`jnp.max(ulp_2d, axis=1)`) and running a second
@@ -287,15 +558,16 @@ def _eval_chunk_ulp_stats_pruned(inputs, computed, reference, dtype, ftz, k):
      top `k` worst cases while avoiding sorting the full array.
   """
   n_blocks = 16384
-  block_size = inputs.shape[0] // n_blocks
+  block_size = computed.shape[0] // n_blocks
   comp_2d = computed.reshape(n_blocks, block_size)
-  ref_2d = reference.reshape(n_blocks, block_size)
-  ulp_2d, pos_2d = _ulp_diff_and_sign_jax(comp_2d, ref_2d, dtype, ftz)
+  ref_2d = ref.reshape(n_blocks, block_size)
+  signed_ulp_2d = _ulp_diff_jax(comp_2d, ref_2d, dtype, ftz)
+  ulp_2d = jnp.abs(signed_ulp_2d)
 
-  bins_2d = _map_to_31_bins(ulp_2d, pos_2d)
-  chunk_counts = jax.vmap(lambda b: jnp.bincount(b, length=31))(bins_2d).sum(
-      axis=0
-  )
+  bins_2d = _map_to_bins(signed_ulp_2d)
+  chunk_counts = jax.vmap(
+      lambda b: jnp.bincount(b, length=len(_BIN_LABELS))
+  )(bins_2d).sum(axis=0)
 
   block_max_ulp = jnp.max(ulp_2d, axis=1)
   _, top_blocks = jax.lax.top_k(block_max_ulp, k)
@@ -306,24 +578,19 @@ def _eval_chunk_ulp_stats_pruned(inputs, computed, reference, dtype, ftz, k):
   top_indices = (
       win_block.astype(jnp.int64) * block_size + win_col.astype(jnp.int64)
   )
-  top_x = jnp.asarray(inputs, dtype=dtype)[top_indices]
-  top_y = jnp.asarray(computed, dtype=dtype)[top_indices]
-  top_y_ref = jnp.asarray(reference, dtype=dtype)[top_indices]
-  return chunk_counts, top_ulps, top_x, top_y, top_y_ref
+  return chunk_counts, top_ulps, top_indices
 
 
 @jax.jit(static_argnames=("dtype", "ftz", "k"))
-def _eval_chunk_ulp_stats_small(inputs, computed, reference, dtype, ftz, k):
+def _eval_chunk_ulp_stats_small(computed, ref, dtype, ftz, k):
   """JIT-compiled ULP stats kernel for smaller arrays."""
-  ulp, pos = _ulp_diff_and_sign_jax(computed, reference, dtype, ftz)
-  bins = _map_to_31_bins(ulp, pos)
-  chunk_counts = jnp.bincount(bins, length=31)
+  signed_ulp = _ulp_diff_jax(computed, ref, dtype, ftz)
+  ulp = jnp.abs(signed_ulp)
+  bins = _map_to_bins(signed_ulp)
+  chunk_counts = jnp.bincount(bins, length=len(_BIN_LABELS))
   top_k_count = min(k, ulp.shape[0])
   top_ulps, top_indices = jax.lax.top_k(ulp, top_k_count)
-  top_x = jnp.asarray(inputs, dtype=dtype)[top_indices]
-  top_y = jnp.asarray(computed, dtype=dtype)[top_indices]
-  top_y_ref = jnp.asarray(reference, dtype=dtype)[top_indices]
-  return chunk_counts, top_ulps, top_x, top_y, top_y_ref
+  return chunk_counts, top_ulps, top_indices
 
 
 def eval_ulp_stats(
@@ -331,118 +598,224 @@ def eval_ulp_stats(
     computed,
     reference,
     dtype,
-    ftz: bool = True,
-    max_bincount: int = 100000,
+    ftz: bool | None = None,
     k: int = 20,
-) -> tuple[dict[int, int], list[tuple[int, float, float, float]]]:
+) -> tuple[dict[str, int], list[tuple[float, ...]]]:
   """Computes signed ULP histogram counts and top-k worst cases for a chunk."""
-  del max_bincount  # Unused; 31 compact bins are always used.
-  n = len(inputs)
+  if ftz is None:
+    ftz = _default_ftz(dtype)
+  is_tuple_inputs = isinstance(inputs, (tuple, list))
+  n = len(inputs[0]) if is_tuple_inputs else len(inputs)
   if n == 0:
     return {}, []
+  if is_tuple_inputs:
+    in_arrs = [np.asarray(a, dtype=dtype).ravel() for a in inputs]
+  else:
+    in_arr = np.asarray(inputs, dtype=dtype).ravel()
+  comp_arr = np.asarray(computed, dtype=dtype).ravel()
+  if np.dtype(dtype) == np.float64:
+    ref_arr = np.asarray(reference).ravel()
+    signed_ulps = ulp_diff_mpmath(comp_arr, ref_arr, dtype, ftz=ftz)
+    ref_f64 = np.array([float(r) for r in ref_arr], dtype=np.float64)
+    cpu_dev = jax.devices("cpu")[0]
+    with jax.enable_x64(True), jax.default_device(cpu_dev):
+      bins = np.asarray(_map_to_bins(jnp.asarray(signed_ulps)))
+    counts = np.bincount(bins, minlength=len(_BIN_LABELS))
+    counts_dict = {
+        label: int(counts[b])
+        for b, label in enumerate(_BIN_LABELS)
+        if counts[b] > 0
+    }
+    ulps = np.abs(signed_ulps)
+    order = sorted(
+        range(n), key=lambda idx: (np.isnan(ulps[idx]), ulps[idx]), reverse=True
+    )[: min(k, n)]
+    if is_tuple_inputs:
+      top_k = [
+          (float(ulps[i]), tuple(a[i].item() for a in in_arrs), float(comp_arr[i]),
+           float(ref_f64[i]))
+          for i in order
+      ]
+    else:
+      top_k = [
+          (float(ulps[i]), float(in_arr[i]), float(comp_arr[i]),
+           float(ref_f64[i]))
+          for i in order
+      ]
+    return counts_dict, top_k
+
+  ref_f64 = np.asarray(reference, dtype=np.float64).ravel()
   cpu_dev = jax.devices("cpu")[0]
   with jax.enable_x64(True), jax.default_device(cpu_dev):
-    j_in = jax.device_put(np.asarray(inputs, dtype=dtype).ravel(), cpu_dev)
-    j_comp = jax.device_put(np.asarray(computed, dtype=dtype).ravel(), cpu_dev)
-    j_ref = jax.device_put(np.asarray(reference, dtype=dtype).ravel(), cpu_dev)
-    if n >= 16384 * 20 and n % 16384 == 0:
-      chunk_counts, top_ulps, top_x, top_y, top_y_ref = (
-          _eval_chunk_ulp_stats_pruned(j_in, j_comp, j_ref, dtype, ftz, k)
+    j_comp = jax.device_put(comp_arr.astype(np.float64), cpu_dev)
+    j_ref = jax.device_put(ref_f64, cpu_dev)
+    if k <= 16384 and n >= 16384 * max(k, 20) and n % 16384 == 0:
+      chunk_counts, top_ulps, top_indices = (
+          _eval_chunk_ulp_stats_pruned(j_comp, j_ref, dtype, ftz, k)
       )
     else:
-      chunk_counts, top_ulps, top_x, top_y, top_y_ref = (
-          _eval_chunk_ulp_stats_small(j_in, j_comp, j_ref, dtype, ftz, k)
+      chunk_counts, top_ulps, top_indices = (
+          _eval_chunk_ulp_stats_small(j_comp, j_ref, dtype, ftz, k)
       )
   counts = np.asarray(chunk_counts, dtype=np.int64)
   counts_dict = {
-      _BIN_REPRESENTATIVES[b]: int(counts[b])
-      for b in range(31)
+      label: int(counts[b])
+      for b, label in enumerate(_BIN_LABELS)
       if counts[b] > 0
   }
-  top_k = [
-      (int(u), x.item(), y.item(), yr.item())
-      for u, x, y, yr in zip(
-          np.asarray(top_ulps),
-          np.asarray(top_x),
-          np.asarray(top_y),
-          np.asarray(top_y_ref),
-      )
-  ]
+  if is_tuple_inputs:
+    top_k = [
+        (float(u), tuple(a[idx].item() for a in in_arrs), comp_arr[idx].item(), ref_f64[idx].item())
+        for u, idx in zip(np.asarray(top_ulps), np.asarray(top_indices))
+    ]
+  else:
+    top_k = [
+        (float(u), in_arr[idx].item(), comp_arr[idx].item(), ref_f64[idx].item())
+        for u, idx in zip(np.asarray(top_ulps), np.asarray(top_indices))
+    ]
   return counts_dict, top_k
 
 
-def _fail_precision(
-    test_case, jax_fn, mpmath_fn, dtype, max_ulp, top_k, udt, label="",
-    input_ftz: bool = True, output_ftz: bool = True
-):
-  variant = get_hardware_variant()
-  max_diff = int(top_k[0][0])
-  suffix = f" [{label}]" if label else ""
+def _format_worst_cases(
+    top_k, udt, mpmath_fn, dtype, input_ftz: bool = True,
+) -> str:
+  is_tuple = len(top_k) > 0 and isinstance(top_k[0][1], (tuple, list))
+  ref_header = "mpmath" if mpmath_fn is not None else "Reference y*"
+  if is_tuple:
+    lines = [
+        f"Top {len(top_k)} worst cases:",
+        (f"{'Rank':<4} | {'ULP (real)':<11} | {'Inputs':<28} |"
+         f" {'Inputs (hex)':<36} | {'Computed y':<24} | {'Nearest y*':<24} |"
+         f" {ref_header}"),
+        "-" * 170,
+    ]
+    with np.errstate(all="ignore"):
+      for rank, (d, in_vals, y, y_ref) in enumerate(top_k, 1):
+        in_str = "(" + ", ".join(f"{float(v):.6g}" if isinstance(v, (float, np.floating)) else str(v) for v in in_vals) + ")"
+        hex_str = "(" + ", ".join(hex(int(np.array(v, dtype=dtype).view(udt))) for v in in_vals) + ")"
+        y_hex = hex(int(np.array(y, dtype=dtype).view(udt)))
+        ref_dt = np.array(y_ref, dtype=dtype)
+        ref_hex = hex(int(ref_dt.view(udt)))
+
+        if mpmath_fn is not None:
+          mp_val = eval_mpmath(mpmath_fn, *in_vals, dtype=dtype, input_ftz=input_ftz)
+          mp_exact_str = mpmath.nstr(mp_val, 30)
+        else:
+          mp_exact_str = str(y_ref)
+
+        comp_str = f"{y} ({y_hex})"
+        nearest_str = f"{ref_dt.item()} ({ref_hex})"
+        lines.append(
+            f"{rank:<4} | {d:<11.4f} | {in_str:<28} | {hex_str:<36} | {comp_str:<24}"
+            f" | {nearest_str:<24} | {mp_exact_str}")
+    return "\n".join(lines)
 
   lines = [
-      f"Max integer ULP error for {jax_fn.__name__} on {variant} "
-      f"({np.dtype(dtype).name}){suffix} exceeded bound: {max_diff} > {max_ulp}",
       f"Top {len(top_k)} worst cases:",
-      f"{'Rank':<4} | {'ULP (ref)':<9} | {'ULP (mp)':<8} | {'Input x':<16} | {'x (hex)':<18} | {'Computed y':<24} | {'Reference y*':<24} | {'mpmath exact'}",
-      "-" * 155,
+      (f"{'Rank':<4} | {'ULP (real)':<11} | {'Input x':<16} |"
+       f" {'x (hex)':<18} | {'Computed y':<24} | {'Nearest y*':<24} |"
+       f" {ref_header}"),
+      "-" * 146,
   ]
+  with np.errstate(all="ignore"):
+    for rank, (d, x, y, y_ref) in enumerate(top_k, 1):
+      x_hex = hex(int(np.array(x, dtype=dtype).view(udt)))
+      y_hex = hex(int(np.array(y, dtype=dtype).view(udt)))
+      ref_dt = np.array(y_ref, dtype=dtype)
+      ref_hex = hex(int(ref_dt.view(udt)))
 
-  for rank, (d, x, y, y_ref) in enumerate(top_k, 1):
-    x_hex = hex(int(np.array(x, dtype=dtype).view(udt)))
-    y_hex = hex(int(np.array(y, dtype=dtype).view(udt)))
-    ref_hex = hex(int(np.array(y_ref, dtype=dtype).view(udt)))
-    mp_val = _eval_mpmath(mpmath_fn, x, dtype=dtype, input_ftz=input_ftz)
-    y_mp = _round_mpmath_to_dtype(mp_val, dtype)
-    ulp_mp = int(ulp_diff(np.array([y]), np.array([y_mp]), dtype, ftz=output_ftz)[0])
-    mp_exact_str = mpmath.nstr(mp_val, 30)
+      if mpmath_fn is not None:
+        mp_val = eval_mpmath(mpmath_fn, x, dtype=dtype, input_ftz=input_ftz)
+        mp_exact_str = mpmath.nstr(mp_val, 30)
+      else:
+        mp_exact_str = str(y_ref)
 
-    comp_str = f"{y} ({y_hex})"
-    ref_str = f"{y_ref} ({ref_hex})"
-    lines.append(
-        f"{rank:<4} | {int(d):<9} | {ulp_mp:<8} | {str(x):<16} | {x_hex:<18} | {comp_str:<24} | {ref_str:<24} | {mp_exact_str}"
-    )
-
-  test_case.fail("\n".join(lines))
-
-
-def _fmt_signed(v: int) -> str:
-  return "0" if v == 0 else f"{v:+d}"
+      comp_str = f"{y} ({y_hex})"
+      nearest_str = f"{ref_dt.item()} ({ref_hex})"
+      lines.append(
+          f"{rank:<4} | {d:<11.4f} | {str(x):<16} | {x_hex:<18} | {comp_str:<24}"
+          f" | {nearest_str:<24} | {mp_exact_str}")
+  return "\n".join(lines)
 
 
-def _histogram_bin(v: int) -> tuple[int, str]:
-  """Maps a signed ULP error integer to a `(sort_key, label)` bucket.
+def _fail_precision(
+    test_case, jax_fn, dtype, max_ulp, max_diff, worst_cases_str, label="",
+):
+  variant = get_hardware_variant()
+  suffix = f" [{label}]" if label else ""
+  fn_name = getattr(jax_fn, "__name__", str(jax_fn))
+  header = (
+      f"Max real ULP error for {fn_name} on {variant}"
+      f" ({np.dtype(dtype).name}){suffix} exceeded bound: {max_diff:.4f} >"
+      f" {max_ulp}"
+  )
+  test_case.fail(f"{header}\n{worst_cases_str}")
 
-  Errors in [-10, +10] are mapped to individual 1-ULP bins; larger errors are
-  grouped into power-of-10 decade intervals up to `+-MAX_ULP_BIN`.
-  """
-  max_bin = MAX_ULP_BIN.value
-  if v <= -max_bin:
-    return (-max_bin, f"<={_fmt_signed(-max_bin)} ULP")
-  if v >= max_bin:
-    return (max_bin, f">={_fmt_signed(max_bin)} ULP")
-  if -10 <= v <= 10:
-    return (v, f"{_fmt_signed(v)} ULP")
-  low = 10 ** int(np.floor(np.log10(abs(v))))
-  high = low * 10
-  if v > 0:
-    return (low, f"[{_fmt_signed(low)}, {_fmt_signed(high)}) ULP")
-  return (-high + 1, f"({_fmt_signed(-high)}, {_fmt_signed(-low)}] ULP")
+
+def _fail_signed_zero(
+    test_case,
+    jax_fn: Callable,
+    dtype,
+    signed_zero_errors: list[tuple[object, object, object]],
+    udt: np.dtype,
+    itemsize: int,
+    label: str = "",
+) -> None:
+  """Fails test_case when a function returns +0.0 instead of -0.0 or vice versa."""
+  variant = get_hardware_variant()
+  suffix = f" [{label}]" if label else ""
+  fn_name = getattr(jax_fn, "__name__", str(jax_fn))
+  header = (
+      f"Signed zero mismatch for {fn_name} on {variant}"
+      f" ({np.dtype(dtype).name}){suffix}:"
+  )
+  rows = []
+  for in_val, comp_val, ref_val in signed_zero_errors[:10]:
+    comp_sign = "-" if np.signbit(float(comp_val)) else "+"
+    ref_sign = "-" if np.signbit(float(ref_val)) else "+"
+    if isinstance(in_val, (tuple, list)):
+      in_str = "(" + ", ".join(repr(x) for x in in_val) + ")"
+      in_b_str = (
+          "("
+          + ", ".join(
+              f"{int(np.array(x, dtype=dtype).view(udt)):#0{itemsize * 2 + 2}x}"
+              for x in in_val
+          )
+          + ")"
+      )
+      rows.append(
+          f"    inputs = {in_str} {in_b_str}: expected"
+          f" {ref_sign}0.0, got {comp_sign}0.0"
+      )
+    else:
+      in_b = int(np.array(in_val, dtype=dtype).view(udt))
+      rows.append(
+          f"    x = {in_val!r} ({in_b:#0{itemsize * 2 + 2}x}): expected"
+          f" {ref_sign}0.0, got {comp_sign}0.0"
+      )
+  if len(signed_zero_errors) > 10:
+    rows.append(f"    ... and {len(signed_zero_errors) - 10} more")
+  test_case.fail(f"{header}\n" + "\n".join(rows))
+
 
 
 def render_histogram_from_counts(
-    counts_dict: dict[int, int], total: int, width: int = 40
+    counts_dict: dict[str, int], total: int, width: int = 40
 ) -> str:
-  """Renders a text histogram from a dictionary mapping signed ULP error to count."""
-  if not counts_dict:
+  """Renders a text histogram from a dictionary mapping bin label to count."""
+  non_empty = [
+      i for i, label in enumerate(_BIN_LABELS) if counts_dict.get(label, 0) > 0
+  ]
+  if not non_empty:
     return ""
-  bins: dict[tuple[int, str], int] = collections.defaultdict(int)
-  for val, count in counts_dict.items():
-    bins[_histogram_bin(val)] += count
-
-  sorted_bins = sorted(bins.items(), key=lambda item: item[0][0])
-  max_count = max(count for _, count in sorted_bins)
+  min_idx, max_idx = non_empty[0], non_empty[-1]
+  rows = [
+      (_BIN_LABELS[i], counts_dict.get(_BIN_LABELS[i], 0))
+      for i in range(min_idx, max_idx + 1)
+  ]
+  max_count = max(count for _, count in rows)
   lines = []
-  for (_, label), count in sorted_bins:
+  for label, count in rows:
     pct = (count / total) * 100
     bar_len = int(round((count / max_count) * width)) if max_count > 0 else 0
     bar = "█" * bar_len
@@ -450,151 +823,735 @@ def render_histogram_from_counts(
   return "\n".join(lines)
 
 
-def check_unary_precision(
-    test_case, jax_fn, mpmath_fn, dtype, max_ulp: int | None = None,
-    bounds: list | None = None, input_ftz: bool | list = True,
-    output_ftz: bool | list = True,
-    ignore_inputs: list | None = None,
-):
-  """Checks unary precision of `jax_fn` against a higher-precision reference.
+def _dedup_preserving_order(arr: np.ndarray, dtype) -> np.ndarray:
+  """Deduplicates `arr` by unsigned bit pattern while preserving first-seen order."""
+  udt = np.dtype(f"u{np.dtype(dtype).itemsize}")
+  u = arr.view(udt)
+  _, first_idx = np.unique(u, return_index=True)
+  return u[np.sort(first_idx)].view(dtype)
 
-  Evaluates `jax_fn` across either all possible bit patterns of `dtype` (when
-  `total_elements <= MAX_SAMPLES`, e.g. `bfloat16` and `float16` by default, or
-  `float32` when `--jax_numerics_max_samples=4294967296`) or a uniform random
-  sample of `MAX_SAMPLES` bit patterns.
+
+@functools.cache
+def _common_interesting_points(dtype) -> tuple[float, ...]:
+  """Returns common interesting floating-point domain points for `dtype`."""
+  dt = np.dtype(dtype).type
+  finfo = np.finfo(dtype)
+  with np.errstate(all="ignore"):
+    min_subnormal = float(np.nextafter(dt(0.0), dt(1.0)))
+    max_subnormal = float(np.nextafter(dt(finfo.tiny), dt(0.0)))
+    tiny = float(finfo.tiny)
+    fmax = float(finfo.max)
+
+  pos_magnitudes = [
+      # Smallest and largest subnormal and normal values:
+      min_subnormal,
+      max_subnormal,
+      tiny,
+      fmax,
+      # Overflow/underflow boundaries for x^2, x^3, hypot, and roots:
+      math.sqrt(tiny),
+      math.sqrt(fmax),
+      math.cbrt(tiny),
+      math.cbrt(fmax),
+      # Overflow/underflow boundaries for exp and exp2:
+      math.log(fmax),
+      -math.log(tiny),
+      -math.log(min_subnormal),
+      math.log2(fmax),
+      -math.log2(tiny),
+      -math.log2(min_subnormal),
+      # Small integers and simple dyadic fractions:
+      0.25,
+      0.5,
+      0.75,
+      1.0,
+      1.5,
+      2.0,
+      2.5,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0,
+      10.0,
+      # Common mathematical constants:
+      math.e,
+      1.0 / math.e,
+      0.5 * math.log(2.0),
+      math.log(2.0),
+      math.log(10.0),
+      math.log2(math.e),
+      math.log10(math.e),
+      math.sqrt(2.0),
+      math.sqrt(0.5),
+      math.sqrt(3.0),
+      math.sqrt(math.pi),
+      2.0 / math.sqrt(math.pi),
+  ]
+
+  # Points approaching 1 from below and above (1 +- 2^-k):
+  for k in range(1, finfo.nmant + 1):
+    pos_magnitudes.append(1.0 - math.ldexp(1.0, -k))
+    pos_magnitudes.append(1.0 + math.ldexp(1.0, -k))
+
+  # Multiples of pi (quarter- and sixth-multiples near zero, plus large
+  # multiples for trigonometric range reduction).
+  for k in range(1, 17):
+    pos_magnitudes.append(k * (math.pi / 4.0))
+  for k in (1, 2, 4, 5):
+    pos_magnitudes.append(k * (math.pi / 6.0))
+  for k in range(1, 7):
+    pos_magnitudes.append((10.0**k) * math.pi)
+  for k in (10, 20, 30, 50):
+    pos_magnitudes.append(math.ldexp(math.pi, k))
+
+  # Powers of two: all exponents in [-32, 32], plus exponents across the
+  # full normal and subnormal range of dtype.
+  min_exp = finfo.minexp - finfo.nmant
+  max_exp = finfo.maxexp - 1
+  exp_step = max(1, (max_exp - min_exp) // 32)
+  exponents = (
+      set(range(max(-32, min_exp), min(32, max_exp) + 1))
+      | set(range(min_exp, max_exp + 1, exp_step))
+      | {
+          min_exp,
+          finfo.minexp - 1,
+          finfo.minexp,
+          finfo.minexp + 1,
+          -(max_exp // 2),
+          -finfo.nmant - 1,
+          -finfo.nmant,
+          -(finfo.nmant // 2),
+          finfo.nmant // 2,
+          finfo.nmant,
+          finfo.nmant + 1,
+          max_exp // 2,
+          max_exp - 1,
+          max_exp,
+      }
+  )
+  for k in sorted(exponents):
+    if min_exp <= k <= max_exp:
+      pos_magnitudes.append(math.ldexp(1.0, k))
+
+  pts = [0.0, -0.0, math.inf, -math.inf, math.nan]
+  for v in pos_magnitudes:
+    if v <= fmax:
+      pts.append(v)
+      pts.append(-v)
+  return tuple(pts)
+
+
+def _with_ulp_neighbors(
+    vals: Sequence[float],
+    dtype,
+    radius: int = 2,
+    max_points: int | None = None,
+    include_specials: bool = True,
+) -> np.ndarray:
+  """Returns `vals` and the floats within `radius` ULPs of each value."""
+  fmax = float(np.finfo(dtype).max)
+  valid = [
+      fv
+      for v in vals
+      if not math.isnan(fv := float(v)) and (math.isinf(fv) or abs(fv) <= fmax)
+  ]
+  with np.errstate(all="ignore"):
+    arr = _dedup_preserving_order(np.asarray(valid, dtype=dtype), dtype)
+    neg_inf = np.asarray(-np.inf, dtype=dtype)
+    pos_inf = np.asarray(np.inf, dtype=dtype)
+    if len(arr) > 0:
+      cols = [arr]
+      lo = hi = arr
+      for _ in range(radius):
+        lo = np.nextafter(lo, neg_inf)
+        hi = np.nextafter(hi, pos_inf)
+        cols.extend([lo, hi])
+      expanded = np.column_stack(cols).ravel()
+    else:
+      expanded = arr
+    if include_specials:
+      specials = np.array([0.0, -0.0, np.inf, -np.inf, np.nan], dtype=dtype)
+      expanded = np.concatenate([specials, expanded])
+    out = _dedup_preserving_order(expanded, dtype)
+  if max_points is not None and len(out) > max_points:
+    out = out[:max_points]
+  return out
+
+
+def _make_interesting_samples(
+    nargs: int,
+    dtype,
+    rng: np.random.RandomState,
+    max_points: int,
+    interesting_points: Sequence[Any] | None = None,
+) -> tuple[np.ndarray, ...]:
+  """Generates up to `max_points` test inputs at and near interesting values.
+
+  For a 1-argument function, this returns the common interesting values for
+  `dtype` (such as 0, +-1, +-inf, nan, and smallest/largest normal and
+  subnormal values), any extra values from `interesting_points`, and the floats
+  within 3 ULPs of each.
+
+  For a multi-argument function, testing every combination of 1D interesting
+  values would produce too many inputs. Instead, we combine:
+    1. Any explicit input tuples in `interesting_points` (and values within 1
+       ULP of each coordinate).
+    2. All combinations of a small list of key boundary values (0,
+       +-min_subnormal, +-tiny, +-0.5, +-1, +-2, +-max_float, +-inf, nan, and up
+       to 8 custom scalars).
+    3. Tuples where arguments are equal or 1 ULP apart, up to sign (`y = +-x`
+       or `y = +-(x +- 1 ULP)`).
+    4. Tuples where one argument is an interesting 1D value and the other
+       arguments are random floats.
+
+  Args:
+    nargs: Number of input arguments to the function under test.
+    dtype: Floating-point dtype of the generated arrays.
+    rng: Random number generator.
+    max_points: Maximum number of test inputs to return.
+    interesting_points: Optional extra test values. Each entry can be a scalar
+      float or a tuple/list of `nargs` floats.
+
+  Returns:
+    A tuple of `nargs` 1D arrays of `dtype`, each of length at most
+    `max_points`.
+  """
+  if max_points <= 0:
+    return tuple(np.empty((0,), dtype=dtype) for _ in range(nargs))
+
+  custom_scalars: list[float] = []
+  custom_tuples: list[tuple[float, ...]] = []
+  for item in interesting_points or ():
+    if isinstance(item, (tuple, list)):
+      if len(item) != nargs:
+        raise ValueError(
+            f"Tuple in interesting_points must have length nargs={nargs}, got"
+            f" {item!r}."
+        )
+      custom_tuples.append(tuple(float(x) for x in item))
+    else:
+      custom_scalars.append(float(item))
+
+  # Put caller-supplied scalars first so they are kept if `max_points` is small.
+  vals_1d = _with_ulp_neighbors(
+      (*custom_scalars, *_common_interesting_points(dtype)),
+      dtype,
+      radius=3,
+      max_points=max_points if nargs == 1 else max(256, max_points // (2 * nargs)),
+  )
+  if nargs == 1:
+    return (vals_1d,)
+
+  finfo = np.finfo(dtype)
+  fmax = float(finfo.max)
+  dt = np.dtype(dtype).type
+  with np.errstate(all="ignore"):
+    min_sub = float(np.nextafter(dt(0.0), dt(1.0)))
+    tiny = float(finfo.tiny)
+    neg_inf = dt(-np.inf)
+    pos_inf = dt(np.inf)
+
+  coords: list[list[np.ndarray]] = [[] for _ in range(nargs)]
+
+  def _add_grid(axes_1d: Sequence[np.ndarray]):
+    for i, g in enumerate(np.meshgrid(*axes_1d, indexing="ij")):
+      coords[i].append(g.ravel())
+
+  # 1. Explicit tuples from interesting_points, plus +-1 ULP on each coordinate.
+  for tup in custom_tuples:
+    if all(math.isnan(x) or math.isinf(x) or abs(x) <= fmax for x in tup):
+      axes = [
+          np.asarray([x], dtype=dtype)
+          if math.isnan(x)
+          else _with_ulp_neighbors([x], dtype, radius=1, include_specials=False)
+          for x in tup
+      ]
+      _add_grid(axes)
+
+  # 2. All combinations of a small set of boundary values.
+  max_cart = max(4, int(round((max_points // 2) ** (1.0 / nargs))))
+  core_1d = _with_ulp_neighbors(
+      custom_scalars[:8]
+      + [0.0, min_sub, tiny, 0.5, 1.0, 2.0, fmax, -min_sub, -tiny, -0.5, -1.0, -2.0, -fmax],
+      dtype,
+      radius=1,
+      max_points=max_cart,
+  )
+  _add_grid([core_1d] * nargs)
+  tier1_len = sum(len(c) for c in coords[0])
+
+  # 3. Tuples where arguments are equal or 1 ULP apart (up to sign).
+  non_nan = vals_1d[~np.isnan(vals_1d)]
+  with np.errstate(all="ignore"):
+    for shifted in (non_nan, np.nextafter(non_nan, pos_inf), np.nextafter(non_nan, neg_inf)):
+      for sign in (1, -1):
+        coords[0].append(non_nan)
+        for i in range(1, nargs):
+          coords[i].append(sign * shifted)
+
+  # 4. Tuples where one argument is an interesting 1D value and the rest are random.
+  rand_gen = jtu.rand_fullrange(rng)
+  for fixed_axis in range(nargs):
+    for i in range(nargs):
+      coords[i].append(vals_1d if i == fixed_axis else rand_gen((len(vals_1d),), dtype))
+
+  out = [np.concatenate(c) for c in coords]
+  if len(out[0]) > max_points:
+    if tier1_len < max_points:
+      perm = tier1_len + rng.permutation(len(out[0]) - tier1_len)
+      keep = np.concatenate([np.arange(tier1_len), perm[: max_points - tier1_len]])
+      out = [a[keep] for a in out]
+    else:
+      out = [a[:max_points] for a in out]
+  return tuple(out)
+
+
+def _make_exhaustive_chunk(
+    start: int, count: int, nargs: int, dtype
+) -> tuple[np.ndarray, ...]:
+  """Generates `count` exhaustive n-ary bit-pattern tuples starting at flat index `start`."""
+  itemsize = np.dtype(dtype).itemsize
+  bits_per_arg = itemsize * 8
+  udt = np.dtype(f"u{itemsize}")
+  if nargs == 1:
+    return (np.arange(start, start + count, dtype=udt).view(dtype),)
+  radix = 1 << bits_per_arg
+  if nargs == 2 and start % radix == 0 and count % radix == 0:
+    n_rows = count // radix
+    row_start = start // radix
+    arg0 = np.tile(np.arange(radix, dtype=udt).view(dtype), n_rows)
+    arg1 = np.repeat(
+        np.arange(row_start, row_start + n_rows, dtype=udt).view(dtype), radix
+    )
+    return (arg0, arg1)
+  arg_mask = np.uint64(radix - 1)
+  idx = np.arange(start, start + count, dtype=np.uint64)
+  return tuple(
+      ((idx >> np.uint64(i * bits_per_arg)) & arg_mask).astype(udt).view(dtype)
+      for i in range(nargs)
+  )
+
+
+def check_nary_precision(
+    test_case,
+    jax_fn: Callable,
+    ref_fn: Callable,
+    mpmath_fn: Callable | None = None,
+    dtype=None,
+    nargs: int = 2,
+    bounds: float | tuple[float, float] | list | None = None,
+    input_ftz: bool | list | None = None,
+    output_ftz: bool | list | None = None,
+    ignore_inputs: list | None = None,
+    check_signed_zeros: bool | list = True,
+    ref_dtype: object | None = None,
+    max_samples: int | None = None,
+    interesting_points: Sequence[Any] | None = None,
+):
+  """Checks precision of n-ary `jax_fn` against reference implementations.
+
+  Evaluates `jax_fn` across either all possible bit-pattern combinations of
+  `dtype` (when `total_elements <= MAX_SAMPLES`, e.g. unary `bfloat16` and
+  `float16` by default, or unary `float32` and binary `bfloat16`/`float16` when
+  `--jax_numerics_max_samples=4294967296`) or a sample of `MAX_SAMPLES`
+  (`MAX_F64_SAMPLES` for `float64`) inputs consisting of values at and near
+  interesting points (such as 0, +-1, +-inf, smallest/largest normal and
+  subnormal values, poles, and approximation thresholds) together with random
+  floating-point values across all exponents.
 
   Args:
     test_case: The `jtu.JaxTestCase` instance running the test.
-    jax_fn: The JAX unary function under test (e.g. `jnp.sin`).
-    mpmath_fn: The corresponding `mpmath` reference function used to format
-      exact values on failure.
-    dtype: Floating-point dtype to test (`bfloat16`, `float16`, `float32`, `float64`).
-    max_ulp: Explicit maximum allowed ULP error (overrides `bounds` if set).
-    bounds: List of `(variants, {dtype: max_ulp})` override rules. Defaults to 0
-      ULP if a platform/dtype combination is not listed.
+    jax_fn: The JAX function under test (e.g. `jnp.atan2`).
+    ref_fn: The vectorized NumPy/SciPy reference function operating on float64
+      arrays (or `ref_dtype` arrays if `ref_dtype` is specified).
+    mpmath_fn: Optional `mpmath` reference function used to compute
+      high-precision reference values and real ULP errors with mpmath (used for
+      `float64` and printed as part of the logging for the top K worst cases).
+      If omitted or None, `ref_fn` is used as the reference across all dtypes
+      including float64.
+    dtype: Floating-point dtype to test (`bfloat16`, `float16`, `float32`,
+      `float64`).
+    nargs: Number of input arguments to `jax_fn`.
+    bounds: Scalar `max_ulp`, `(min_ulp, max_ulp)` tuple, or list of
+      `(variants, bound | {dtype: bound})` override rules. Bounds are quantized
+      to upward-rounded multiples of `0.5` ULP
+      (`expected_bound = max(0.5, ceil(worst_ulp * 2) / 2)`), where `0.5` ULP
+      corresponds to faithful round-to-nearest rounding. In exhaustive runs, the
+      observed error bound is checked for tightness against
+      `min_ulp <= expected_bound <= max_ulp` (where a scalar `max_ulp` sets
+      `min_ulp = max_ulp`). A range allows accommodating host architecture or
+      vendor differences (e.g. AMD vs Intel) where different machines produce
+      different tight bounds. Defaults to 0.5 ULP (correctly rounded) if a
+      platform/dtype combination is not listed.
     input_ftz: Whether subnormal inputs are flushed to zero before reference
-      evaluation (bool or per-variant override list).
-    output_ftz: Whether subnormal outputs are flushed to zero when computing
-      ULP distances (bool or per-variant override list).
-    ignore_inputs: Optional per-variant list of specific input values or uint
-      bit patterns to exclude from error checking.
+      evaluation (bool or per-variant override list). Defaults to False for
+      float16 (which does not flush subnormals on CPU, GPU, or TPU) and True
+      for other dtypes.
+    output_ftz: Whether subnormal outputs are flushed to zero when computing ULP
+      distances (bool or per-variant override list). Defaults to False for
+      float16 and True for other dtypes.
+    ignore_inputs: Optional per-variant list of callable predicates
+      `ignore_fn(*args: np.ndarray) -> np.ndarray[bool]` where True indicates
+      that the input should be excluded from accuracy checking.
+    check_signed_zeros: Whether to verify that the sign of zero matches the
+      reference when the computed and reference values are both zero (bool or
+      per-variant override list).
+    ref_dtype: Optional dtype for evaluating `ref_fn` before casting to float64
+      (useful for discrete operations like `nextafter` where rounding must occur
+      in the target dtype).
+    max_samples: Optional override for the maximum number of sample inputs to
+      test. Defaults to `MAX_F64_SAMPLES.value` for float64 and
+      `MAX_SAMPLES.value` otherwise.
+    interesting_points: Optional sequence of additional function-specific
+      test points (scalars, or `nargs`-tuples for n-ary functions) to sample at
+      and near during non-exhaustive runs.
   """
-  variant = get_hardware_variant()
-  in_ftz = _resolve_override(input_ftz, variant, dtype, True)
-  out_ftz = _resolve_override(output_ftz, variant, dtype, True)
-  ignored_bits = resolve_ignore_inputs(ignore_inputs, variant, dtype)
-  if max_ulp is None:
-    if bounds is None:
-      raise ValueError("Either bounds or max_ulp must be provided.")
-    max_ulp = _resolve_override(bounds, variant, dtype, 0)
+  if dtype is None:
+    dtype = mpmath_fn
+    mpmath_fn = None
 
+  if ((dtype == jnp.float64 or dtype == np.float64)
+      and jtu.device_under_test() == "tpu"):
+    test_case.skipTest("float64 on TPU is ef57 double-double")
+
+  variant = get_hardware_variant()
+  default_ftz = _default_ftz(dtype)
+  in_ftz = _resolve_override(input_ftz, variant, dtype, default_ftz)
+  out_ftz = _resolve_override(output_ftz, variant, dtype, default_ftz)
+  chk_signed_zeros = _resolve_override(check_signed_zeros, variant, dtype, True)
+  ignore_predicate = resolve_ignore_inputs(ignore_inputs, variant, dtype)
+  raw_bound = _resolve_override(bounds, variant, dtype, 0.5)
+  if isinstance(raw_bound, tuple):
+    min_ulp, max_ulp = float(raw_bound[0]), float(raw_bound[1])
+  else:
+    min_ulp = max_ulp = float(raw_bound)
+
+  is_f64 = dtype == jnp.float64 or dtype == np.float64
   itemsize = np.dtype(dtype).itemsize
+  bits_per_arg = itemsize * 8
   udt = np.dtype(f"u{itemsize}")
-  total_elements = 1 << (itemsize * 8)
-  max_samples = MAX_SAMPLES.value
+
+  if max_samples is None:
+    max_samples = MAX_F64_SAMPLES.value if is_f64 else MAX_SAMPLES.value
+
+  total_elements = 1 << (bits_per_arg * nargs)
   is_exhaustive = total_elements <= max_samples
   total_points = min(total_elements, max_samples)
 
-  jitted_jax_fn = jax.jit(jax_fn)
-  np_fn = getattr(np, jax_fn.__name__)
   k = NUM_WORST_CASES.value
-  max_bin = MAX_ULP_BIN.value
+  eval_k = max(k, 1)
 
-  def _compute_reference(in_arr: np.ndarray) -> np.ndarray:
-    ref_in = _flush_subnormals(in_arr, dtype) if in_ftz else in_arr
-    return np_fn(ref_in.astype(np.float64)).astype(dtype)
+  def _compute_reference(chunk_inputs: tuple[np.ndarray, ...]):
+    if is_f64 and mpmath_fn is not None:
+      return np.array(
+          [
+              eval_mpmath(mpmath_fn, *vals, dtype=dtype, input_ftz=in_ftz)
+              for vals in zip(*chunk_inputs)
+          ],
+          dtype=object,
+      )
+    ref_inputs = tuple(
+        _flush_subnormals(a, dtype) if in_ftz else a for a in chunk_inputs
+    )
+    if ref_dtype is not None:
+      return np.asarray(
+          ref_fn(*(a.astype(ref_dtype) for a in ref_inputs)), dtype=np.float64
+      )
+    return ref_fn(*(a.astype(np.float64) for a in ref_inputs))
 
-  # Process in chunks of at most 64 MB per array to bound concurrent memory
-  # usage across worker threads during exhaustive (2**32 element) runs.
-  chunk_size = (64 * 1024 * 1024) // itemsize
+  # Process in power-of-two chunks of at most 64 MB across all input arrays to
+  # bound concurrent memory usage across worker threads during exhaustive runs
+  # while keeping chunk sizes divisible by 16384 for the pruned top_k kernel.
+  raw_chunk_size = (64 * 1024 * 1024) // (itemsize * max(1, nargs))
+  chunk_size = 1 << max(14, raw_chunk_size.bit_length() - 1)
 
   if is_exhaustive:
     label = "exhaustive"
     chunks = [
-        lambda s=start, c=min(chunk_size, total_points - start): np.arange(
-            s, s + c, dtype=udt
-        ).view(dtype)
+        lambda s=start, c=min(chunk_size, total_points - start): (
+            _make_exhaustive_chunk(s, c, nargs, dtype)
+        )
         for start in range(0, total_points, chunk_size)
     ]
   else:
     label = f"sampled {total_points} points"
     base_rng = test_case.rng()
+    max_interesting_cap = 4096 if is_f64 else 32768
     chunks = []
     for start in range(0, total_points, chunk_size):
       count = min(chunk_size, total_points - start)
       seed = int(base_rng.randint(0, 1 << 31))
-      chunks.append(
-          lambda c=count, s=seed: jtu.rand_fullrange(np.random.RandomState(s))(
-              (c,), dtype
+      is_first_chunk = start == 0
+
+      def _make_chunk(c=count, s=seed, first=is_first_chunk):
+        rng = np.random.RandomState(s)
+        if first:
+          interesting_budget = min(max_interesting_cap, c // 2)
+          int_samples = _make_interesting_samples(
+              nargs, dtype, rng, interesting_budget, interesting_points
           )
-      )
+          n_int = len(int_samples[0])
+          n_rand = c - n_int
+          rand_samples = tuple(
+              jtu.rand_fullrange(rng)((n_rand,), dtype) for _ in range(nargs)
+          )
+          return tuple(
+              np.concatenate([int_a, rand_a])
+              for int_a, rand_a in zip(int_samples, rand_samples)
+          )
+        return tuple(jtu.rand_fullrange(rng)((c,), dtype) for _ in range(nargs))
+
+      chunks.append(_make_chunk)
 
   def _eval_chunk(make_chunk):
     with np.errstate(all="ignore"):
       chunk_inputs = make_chunk()
-      chunk_computed = np.asarray(jitted_jax_fn(chunk_inputs))
-      chunk_reference = _compute_reference(chunk_inputs)
+      if ignore_predicate is not None:
+        mask = np.asarray(ignore_predicate(*chunk_inputs), dtype=bool)
+        idxs = np.flatnonzero(mask)
+        if len(idxs) > 0:
+          chunk_inputs = tuple(a.copy() for a in chunk_inputs)
+          for a in chunk_inputs:
+            a[idxs] = np.nan
+      else:
+        idxs = ()
 
-      if len(ignored_bits) > 0:
-        if is_exhaustive:
-          # In exhaustive mode, chunk_inputs is a contiguous ascending range of
-          # uint bit patterns starting at `start_b`, allowing O(1) index lookup.
-          start_b = int(chunk_inputs[0].view(udt))
-          end_b = int(chunk_inputs[-1].view(udt))
-          for b in ignored_bits:
-            if start_b <= b <= end_b:
-              if not chunk_computed.flags.writeable:
-                chunk_computed = chunk_computed.copy()
-              idx = int(b - start_b)
-              chunk_computed[idx] = chunk_reference[idx]
+      chunk_computed = np.asarray(jax_fn(*chunk_inputs))
+      chunk_ref = _compute_reference(chunk_inputs)
+
+      if len(idxs) > 0:
+        chunk_computed = chunk_computed.copy()
+        chunk_computed[idxs] = np.nan
+        chunk_ref[idxs] = (
+            mpmath.nan if (is_f64 and mpmath_fn is not None) else np.nan
+        )
+
+      signed_zero_errors = []
+      if chk_signed_zeros:
+        if is_f64 and mpmath_fn is not None:
+          # mpmath.mpf has no signed zero (-0.0) representation, so fall back
+          # to ref_fn to check the sign of zero.
+          comp_zeros = np.flatnonzero(chunk_computed == 0.0)
+          if len(comp_zeros) > 0:
+            in_z = tuple(a[comp_zeros] for a in chunk_inputs)
+            ref_in_z = tuple(
+                _flush_subnormals(a, dtype) if in_ftz else a for a in in_z
+            )
+            ref_at_zeros = ref_fn(*(a.astype(np.float64) for a in ref_in_z))
+            bad_mask = (ref_at_zeros == 0.0) & (
+                np.signbit(chunk_computed[comp_zeros])
+                != np.signbit(ref_at_zeros)
+            )
+            for z_idx in np.flatnonzero(bad_mask):
+              idx = comp_zeros[z_idx]
+              err_input = (
+                  chunk_inputs[0][idx]
+                  if nargs == 1
+                  else tuple(a[idx] for a in chunk_inputs)
+              )
+              signed_zero_errors.append(
+                  (err_input, chunk_computed[idx], ref_at_zeros[z_idx])
+              )
         else:
-          mask = np.isin(chunk_inputs.view(udt), ignored_bits)
-          chunk_computed = np.where(mask, chunk_reference, chunk_computed)
+          mismatches = np.flatnonzero(
+              (chunk_computed == 0.0)
+              & (chunk_ref == 0.0)
+              & (np.signbit(chunk_computed) != np.signbit(chunk_ref))
+          )
+          for idx in mismatches:
+            err_input = (
+                chunk_inputs[0][idx]
+                if nargs == 1
+                else tuple(a[idx] for a in chunk_inputs)
+            )
+            signed_zero_errors.append(
+                (err_input, chunk_computed[idx], chunk_ref[idx])
+            )
 
-      return eval_ulp_stats(
-          chunk_inputs,
+      chunk_counts, chunk_top_k = eval_ulp_stats(
+          chunk_inputs[0] if nargs == 1 else chunk_inputs,
           chunk_computed,
-          chunk_reference,
+          chunk_ref,
           dtype=dtype,
           ftz=out_ftz,
-          max_bincount=max_bin,
-          k=k,
+          k=eval_k,
       )
+      return chunk_counts, chunk_top_k, signed_zero_errors
 
   with jtu.ignore_warning(category=RuntimeWarning):
     if len(chunks) == 1:
-      counts_dict, top_k = _eval_chunk(chunks[0])
+      counts_dict, top_k, signed_zero_errors = _eval_chunk(chunks[0])
     else:
       counts_dict = collections.Counter()
       all_top_k = []
+      signed_zero_errors = []
       with concurrent.futures.ThreadPoolExecutor(
           max_workers=NUM_WORKERS.value
       ) as executor:
-        for chunk_counts, chunk_top_k in executor.map(_eval_chunk, chunks):
+        for chunk_counts, chunk_top_k, chunk_sz_errors in executor.map(
+            _eval_chunk, chunks
+        ):
           counts_dict.update(chunk_counts)
           all_top_k.extend(chunk_top_k)
-      top_k = sorted(all_top_k, key=lambda item: item[0], reverse=True)[:k]
+          signed_zero_errors.extend(chunk_sz_errors)
+      top_k = sorted(
+          all_top_k, key=lambda item: (np.isnan(item[0]), item[0]), reverse=True
+      )[:eval_k]
 
-  max_diff = int(top_k[0][0]) if top_k else 0
+  if signed_zero_errors:
+    _fail_signed_zero(
+        test_case, jax_fn, dtype, signed_zero_errors, udt, itemsize, label=label
+    )
 
-  ignored_str = (
-      f", ignored {len(ignored_bits)} inputs" if len(ignored_bits) > 0 else ""
-  )
+  max_diff = float(top_k[0][0]) if top_k else 0.0
+  top_k = top_k[:k]
+
+  ignored_str = ", ignored custom inputs" if ignore_predicate is not None else ""
   hist_str = render_histogram_from_counts(counts_dict, total_points)
+  worst_cases_str = _format_worst_cases(
+      top_k, udt, mpmath_fn, dtype, input_ftz=in_ftz
+  )
+  fn_name = getattr(jax_fn, "__name__", str(jax_fn))
   output = (
-      f"[{variant}] {jax_fn.__name__} ({np.dtype(dtype).name}): "
-      f"max ULP error = {max_diff} (bound = {max_ulp}, {label}{ignored_str})\n"
-      f"{hist_str}\n"
+      f"[{variant}] {fn_name} ({np.dtype(dtype).name}): max real ULP"
+      f" error = {max_diff:.4f} (bound = {max_ulp},"
+      f" {label}{ignored_str})\n{hist_str}\n{worst_cases_str}\n"
   )
   print(output, end="", flush=True)
 
+  expected_bound = (
+      max(0.5, float(np.ceil(max_diff * 2.0) / 2.0))
+      if not np.isinf(max_diff)
+      else np.inf
+  )
   if max_diff > max_ulp:
     _fail_precision(
-        test_case, jax_fn, mpmath_fn, dtype, max_ulp, top_k, udt,
-        label=label, input_ftz=in_ftz, output_ftz=out_ftz
+        test_case, jax_fn, dtype, max_ulp, max_diff, worst_cases_str,
+        label=label)
+  elif (
+      is_exhaustive
+      and not np.isinf(max_ulp)
+      and not (min_ulp <= expected_bound <= max_ulp)
+  ):
+    bound_str = (
+        f"({min_ulp}, {max_ulp})" if min_ulp != max_ulp else f"{max_ulp}"
     )
-  elif is_exhaustive and max_diff < max_ulp:
     test_case.fail(
-        f"ULP bound for {jax_fn.__name__} on {variant} ({np.dtype(dtype).name}) "
-        f"is not tight in exhaustive run: observed max ULP error {max_diff} < bound {max_ulp}."
+        f"ULP bound for {fn_name} on {variant} ({np.dtype(dtype).name})"
+        " is not tight in exhaustive run: observed max real ULP error"
+        f" {max_diff:.4f} (expected bound {expected_bound}, got {bound_str})."
     )
+
+
+def check_unary_precision(
+    test_case,
+    jax_fn: Callable,
+    ref_fn: Callable,
+    mpmath_fn: Callable | None = None,
+    dtype=None,
+    bounds: float | tuple[float, float] | list | None = None,
+    input_ftz: bool | list | None = None,
+    output_ftz: bool | list | None = None,
+    ignore_inputs: list | None = None,
+    check_signed_zeros: bool | list = True,
+    max_samples: int | None = None,
+    interesting_points: Sequence[Any] | None = None,
+):
+  """Checks unary precision of `jax_fn` against reference implementations.
+
+  This is a convenience wrapper for `check_nary_precision(..., nargs=1)`.
+  See `check_nary_precision` for detailed parameter documentation, bounds
+  quantization semantics, and tightness checks.
+  """
+  if dtype is None:
+    dtype = mpmath_fn
+    mpmath_fn = None
+  check_nary_precision(
+      test_case,
+      jax_fn,
+      ref_fn,
+      mpmath_fn,
+      dtype,
+      nargs=1,
+      bounds=bounds,
+      input_ftz=input_ftz,
+      output_ftz=output_ftz,
+      ignore_inputs=ignore_inputs,
+      check_signed_zeros=check_signed_zeros,
+      max_samples=max_samples,
+      interesting_points=interesting_points,
+  )
+
+
+def register_benchmark(
+    jax_fn: Callable,
+    *,
+    name: str | None = None,
+    dtypes: Sequence[Any] = (
+        jnp.bfloat16,
+        jnp.float16,
+        jnp.float32,
+        jnp.float64,
+    ),
+    nargs: int = 1,
+    size: int = 10**6,
+) -> None:
+  """Registers google_benchmark execution and compilation benchmarks for `jax_fn` across `dtypes`."""
+  if google_benchmark is None:
+    return
+  fn_name = name or getattr(jax_fn, "__name__", str(jax_fn)).lstrip("_")
+  for dtype in dtypes:
+    dtype = np.dtype(dtype)
+
+    def _bench_exec(state, dtype=dtype):
+      is_f64 = dtype == np.float64
+      if is_f64 and jtu.device_under_test() == "tpu":
+        state.skip_with_error("float64 on TPU is ef57 double-double")
+        return
+      with jax.enable_x64(is_f64):
+        rng = jtu.rand_fullrange(np.random.RandomState(0))
+        args = tuple(jax.device_put(rng((size,), dtype)) for _ in range(nargs))
+        f = jax.jit(jax_fn)
+        f(*args).block_until_ready()
+        while state:
+          f(*args).block_until_ready()
+
+    def _bench_compile(state, dtype=dtype):
+      is_f64 = dtype == np.float64
+      if is_f64 and jtu.device_under_test() == "tpu":
+        state.skip_with_error("float64 on TPU is ef57 double-double")
+        return
+      with jax.enable_x64(is_f64):
+        rng = jtu.rand_fullrange(np.random.RandomState(0))
+        args = tuple(jax.device_put(rng((size,), dtype)) for _ in range(nargs))
+        f = jax.jit(jax_fn)
+        f.lower(*args).compile()
+        while state:
+          state.pause_timing()
+          jax.clear_caches()
+          state.resume_timing()
+          f.lower(*args).compile()
+
+    google_benchmark.register(_bench_exec, name=f"{fn_name}_{dtype.name}")
+    google_benchmark.register(
+        _bench_compile, name=f"{fn_name}_{dtype.name}_compile"
+    )
+
+
+def main() -> None:
+  """Runs google_benchmark if `--benchmark*` flags are passed, else absltest."""
+  if google_benchmark is not None and any(
+      arg.startswith("--benchmark") for arg in sys.argv[1:]
+  ):
+    shard_status_file = os.environ.get("TEST_SHARD_STATUS_FILE")
+    if shard_status_file:
+      with open(shard_status_file, "w"):
+        pass
+    if int(os.environ.get("TEST_SHARD_INDEX", "0")) != 0:
+      return
+    google_benchmark.main()
+  else:
+    absltest.main(testLoader=ClassShardedTestLoader())

@@ -74,7 +74,10 @@ def _maybe_concretize(x: Any):
   # This is roughly the same logic as core.concrete_or_error, but we avoid
   # calling that because constructing the ConcretizationTypeError can be
   # expensive as the size of the tracing context (i.e. the jaxpr) grows.
-  return core.to_concrete_value(x)
+  if core.is_symbolic_dim(x):
+    return None
+  val = core.to_concrete_value(x)
+  return None if isinstance(val, Array) else val
 
 # This registry is used to allow hitypes that are being indexed to register
 # type transformation rules.
@@ -99,8 +102,10 @@ class NDIndexer(state_types.Transform):
     # We validate integer indexing shapes here
     for idx, s in zip(self.indices, self.shape):
       if isinstance(idx, Slice):
+        if core.is_symbolic_dim(s):
+          continue
         start = idx.start
-        if value := _maybe_concretize(start):
+        if (value := _maybe_concretize(start)) is not None:
           if value >= s:
             raise ValueError(f"Out of bound slice: start={value}, dim={s}.")
           if size := _maybe_concretize(idx.size):
@@ -126,7 +131,11 @@ class NDIndexer(state_types.Transform):
           else core.typeof(flat_idx).shape
       )
       if not idx_shape:
-        if (value := _maybe_concretize(idx)) and value >= s:
+        if (
+            not core.is_symbolic_dim(s)
+            and (value := _maybe_concretize(idx)) is not None
+            and value >= s
+        ):
           raise ValueError(f"Out of bound indexer: idx={value}, dim={s}.")
         # For ()-shaped indexers, we can broadcast no problm.
         continue
@@ -148,7 +157,10 @@ class NDIndexer(state_types.Transform):
 
   @property
   def is_dynamic_size(self):
-    return any(isinstance(i, Slice) and i.is_dynamic_size for i in self.indices)
+    return (
+        any(isinstance(i, Slice) and i.is_dynamic_size for i in self.indices)
+        or not all(isinstance(i, int) for i in self.int_indexer_shape)
+    )
 
   def tree_flatten(self):
     flat_idx, idx_tree = tree_util.tree_flatten(self.indices)
@@ -242,6 +254,10 @@ class NDIndexer(state_types.Transform):
         raise ValueError(
             "Cannot broadcast shapes for indexing: {indexer_shapes}"
         ) from e
+
+      if validate and core.trace_ctx.is_top_level():
+        cls(indices, shape, indexer_shape, validate=True)
+        validate = False
 
       # Here we use the `broadcast_to` primitive instead of composing lax
       # primitives together because it is easier to lower in targets like

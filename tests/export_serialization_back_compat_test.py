@@ -175,7 +175,6 @@ class CompatTest(jtu.JaxTestCase):
       self.assertEqual(out.addressable_shards[0].index, (slice(0, 8), slice(None)))
       self.assertEqual(out.addressable_shards[1].index, (slice(8, 16), slice(None)))
 
-
   @jtu.parameterized_filterable(
     kwargs=[
       dict(testdata=testdata,
@@ -257,7 +256,13 @@ class CompatTest(jtu.JaxTestCase):
 
     (placed_inputs, placed_weights) = jax.device_put((inputs, weights), in_shardings)
     out = _export.deserialize(serialized).call(placed_inputs, placed_weights)
-    self.assertAllClose(out, tuple(i @ w for i, w in zip(inputs, weights)))
+    self.assertAllClose(
+        out,
+        tuple(
+            jax.lax.dot(i, w)  # use the accelerator explicitly
+            for i, w in zip(inputs, weights)
+        ),
+    )
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

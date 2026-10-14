@@ -18,7 +18,6 @@ import unittest
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 
 try:
   import portpicker
@@ -47,7 +46,6 @@ class DistributedInitializeTest(jtu.JaxTestCase):
     self.assertTrue(jax.distributed.is_initialized())
 
   @jtu.skip_under_pytest("jax.distributed.initialize uses global state.")
-  @unittest.skipIf(jaxlib_extension_version < 483, "Requires jaxlib 0.11.2")
   def test_mtls(self):
     # testdata/mtls_cert.pem is a self-signed certificate for localhost that
     # serves as both this process' identity and the CA bundle. Generated with:

@@ -38,12 +38,12 @@ import warnings
 from jax._src import config
 from jax._src import distributed
 from jax._src import hardware_utils
-from jax._src import lib as jaxlib
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
 from jax._src.lib import _jax
 from jax._src.lib import _profiler
+from jax._src.lib import ifrt_proxy
 from jax._src.lib import xla_client
 
 logger = logging.getLogger(__name__)
@@ -225,7 +225,7 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
     warnings.warn(
       f'TPU backend initialization is taking more than {timer_secs} seconds. '
       'Did you run your code on all TPU hosts? '
-      'See https://docs.jax.dev/en/latest/multi_process.html '
+      'See https://docs.jax.dev/en/latest/501/multiprocess.html '
       'for more information.')
 
   # Will log a warning after `timer_secs`.
@@ -379,6 +379,30 @@ def get_num_nodes_from_gpu_topology(topology: str) -> int:
 register_backend_factory(
   'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300,
   fail_quietly=True)
+
+
+def make_ifrt_proxy_client() -> xla_client.Client:
+  """Returns a client for the IFRT Proxy server at ``jax_backend_target``.
+
+  IFRT Proxy lets JAX use devices that are managed by a remote IFRT runtime,
+  such as Pathways on Cloud. The server address has the form
+  ``<transport>://<address>``, e.g. ``grpc://localhost:29000``.
+  """
+  target = BACKEND_TARGET.value
+  if not target:
+    raise RuntimeError(
+        "The 'proxy' backend requires the address of an IFRT Proxy server. Set "
+        "it via the JAX_BACKEND_TARGET environment variable or the "
+        "jax_backend_target config option, e.g. "
+        "JAX_BACKEND_TARGET=grpc://localhost:29000.")
+  return ifrt_proxy.get_client(target, ifrt_proxy.ClientConnectionOptions())
+
+
+# The proxy backend fails fast, without making any RPCs, unless
+# `jax_backend_target` is set. Its negative priority means that it is never
+# chosen as the default backend over a local backend; select it explicitly with
+# JAX_PLATFORMS=proxy.
+register_backend_factory("proxy", make_ifrt_proxy_client, priority=-1)
 
 
 def _get_pjrt_plugin_names_and_library_paths(
@@ -869,7 +893,7 @@ def _suggest_missing_backends():
         warning_msg += (
           "This may be due to JAX pre-allocating too much device "
           "memory, leaving too little for CUDA library initialization. See "
-          "https://docs.jax.dev/en/latest/gpu_memory_allocation.html "
+          "https://docs.jax.dev/en/latest/201/gpu-memory.html "
           "for more details and potential workarounds."
         )
       warning_msg += "(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)"
@@ -1167,8 +1191,6 @@ def host_ids(
 
 
 def using_pjrt_c_api(backend=None):
-  if jaxlib.jaxlib_extension_version < 492:
-    return "PJRT C API" in get_backend(backend).platform_version
   return get_backend(backend).is_c_api
 
 def make_pjrt_topology(platform: str, topology_name='', **kwargs):

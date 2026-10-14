@@ -567,7 +567,7 @@ class _LiveDevices:
   # Example Usage
 
       try:
-        with jax.live_devices(jax.devices()) as devices:
+        with multihost_utils.live_devices(jax.devices()) as devices:
           # Run JAX code here with devices.
           pass
       except:
@@ -615,7 +615,7 @@ class _LiveDevices:
   # Atomicity
 
   `live_devices` also provides the following transaction-like atomicity
-  property. When a process exits the body of a `with jax.live_devices(...) as
+  property. When a process exits the body of a `with live_devices(...) as
   devices:` block, there are two possibilities.
 
     1. All processes in `devices` successfully executed all code in the block
@@ -626,7 +626,7 @@ class _LiveDevices:
   Consider the following code.
 
       try:
-        with jax.live_devices(...) as devices:
+        with multihost_utils.live_devices(...) as devices:
           pass
       except:
         pass # A

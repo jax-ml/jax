@@ -14,19 +14,15 @@ want to fully compile prior to execution time, or you want control over when
 different parts of the compilation process take place, JAX has some options for
 you.
 
-First, let's review the stages of compilation. Suppose that `f` is a
-function/callable output by {func}`jax.jit`, say `f = jax.jit(F)` for some input
-callable `F`. When it is invoked with arguments, say `f(x, y)` where `x` and `y`
-are arrays, JAX does the following in order:
+First, let's review the stages of compilation. Suppose that
+`f = jax.jit(F)` for some Python callable `F`. When `f` is invoked with
+arguments, say `f(x, y)` where `x` and `y` are arrays, JAX does the following
+in order:
 
-1. **Stage out** a specialized version of the original Python callable
-   `F` to an internal representation. The specialization reflects a
-   restriction of `F` to input types inferred from properties of the
-   arguments `x` and `y` (usually their shape and dtype). JAX
-   carries out this specialization by a process that we call
-   _tracing_. During tracing, JAX stages the specialization of `F` to
-   a jaxpr, a function in JAX's intermediate language (see
-   {ref}`jax-101-tracing`).
+1. **Stage out** a version of the original Python callable `F`, specialized
+   to the JAX types of the arguments `x` and `y` (usually their shape and
+   dtype), as a jaxpr: a function in JAX's intermediate language. This is the
+   _tracing_ step from {ref}`jax-101-tracing`.
 
 2. **Lower** this specialized, staged-out computation to the XLA compiler's
    input language, StableHLO.
@@ -82,7 +78,7 @@ Array(10, dtype=int32, weak_type=True)
 ```
 
 See the {mod}`jax.stages` documentation for more details on what functionality
-the lowering and compiled functions provide.
+the lowered and compiled objects provide.
 
 The `compile` step accepts the same `compiler_options` dictionary as
 {func}`jax.jit` itself, for setting XLA flags on a per-compilation basis; see
@@ -128,7 +124,7 @@ Array(10, dtype=int32)
 More generally, `trace` only needs its arguments to structurally supply what JAX
 must know for specialization and lowering. For typical array arguments like the
 ones above, this means `shape` and `dtype` fields. For static arguments, by
-contrast, JAX needs actual array values (more on this
+contrast, JAX needs actual values (more on this
 [below](#tracing-with-static-arguments)).
 
 Invoking an AOT-compiled function with arguments that are incompatible with its
@@ -153,7 +149,7 @@ Argument 'y' compiled with int32[] and called with float32[]
 
 ```
 
-Relatedly, AOT-compiled functions [cannot be transformed by JAX's just-in-time
+Relatedly, AOT-compiled functions [cannot be transformed by JAX
 transformations](#aot-compiled-functions-cannot-be-transformed) such as
 `jax.jit`, {func}`jax.grad`, and {func}`jax.vmap`.
 
@@ -189,8 +185,8 @@ lowered computation, where it is possibly folded in with other constants. In
 this case, its multiplication by 2 is simplified, resulting in the constant 14.
 
 Although the second argument to `trace` above can be replaced by a hollow
-shape/dtype structure, it is necessary that the static first argument be a
-concrete value. Otherwise, tracing raises an error:
+shape/dtype structure, the static first argument must be a concrete value.
+Otherwise, tracing raises an error:
 
 ```python
 >>> jax.jit(f, static_argnums=0).trace(i32_scalar, i32_scalar)  # doctest: +SKIP
@@ -211,8 +207,8 @@ Compiled functions are specialized to a particular set of argument JAX types,
 such as arrays with a specific shape and dtype in our running example.
 From JAX's internal point of view, transformations such as {func}`jax.vmap`
 alter the type signature of functions in a way that invalidates the
-compiled-for type signature. As a policy, JAX disallows compiled
-functions to be involved in transformations. Example:
+compiled-for type signature. As a policy, JAX doesn't allow compiled
+functions to be transformed at all. Example:
 
 ```python
 >>> def g(x):

@@ -141,11 +141,13 @@ pytype_strict_library(
         "//jax/_src:random",
         "//jax/_src:source_info_util",
         "//jax/_src:traceback_util",
+        "//jax/_src:tree_util",
         "//jax/_src:typing",
         "//jax/_src:util",
         "//jax/_src:xla_bridge",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//jax/_src/pallas/fuser:custom_fusion",
         "//jax/experimental:mosaic",
     ] + py_deps("numpy"),
 )
@@ -185,6 +187,8 @@ pytype_strict_library(
         ":tpu_info",
         "//jax",
         "//jax/_src:core",
+        "//jax/_src:pretty_printer",
+        "//jax/_src:state_types",
         "//jax/_src:tree_util",
         "//jax/_src/pallas",
     ],
@@ -198,11 +202,13 @@ pytype_strict_library(
     deps = [
         ":core",
         ":lowering",
+        ":primitives",
         ":sc_core",
         ":sc_lowering",
         "//jax",
         "//jax/_src:api_util",
         "//jax/_src:core",
+        "//jax/_src:deprecations",
         "//jax/_src:dtypes",
         "//jax/_src:effects",
         "//jax/_src:flattree",
@@ -228,6 +234,7 @@ pytype_library(
         "//jax/_src:lax",
         "//jax/_src:util",
         "//jax/_src/pallas",
+        "//jax/_src/pallas/fuser:fusible_dtype",
         "//jax/_src/pallas/mosaic:lowering",
         "//jax/extend:backend",
     ] + py_deps("numpy"),
@@ -261,5 +268,20 @@ pytype_strict_library(
     visibility = ["//jax:internal"] + jax_visibility("pallas/mosaic/tpu_info"),
     deps = [
         "//jax/_src:api",
+    ],
+)
+
+pytype_library(
+    name = "prefetch",
+    srcs = ["prefetch.py"],
+    deps = [
+        ":core",
+        ":helpers",
+        ":pipeline",
+        "//jax",
+        "//jax/_src:core",
+        "//jax/_src:lax",
+        "//jax/_src:tree_util",
+        "//jax/_src/pallas",
     ],
 )

@@ -20,7 +20,7 @@ kernelspec:
 
 _The later sections of this tutorial, which add custom transformation rules, use the experimental `jax.experimental.hijax` API._
 
-While a wide range of numerical operations can be easily and efficiently implemented using JAX's built in `jax.numpy` and `jax.lax` interfaces, it can sometimes be useful to explicitly call out to external compiled libraries via a "foreign function interface" (FFI).
+While a wide range of numerical operations can be easily and efficiently implemented using JAX's built-in `jax.numpy` and `jax.lax` interfaces, it can sometimes be useful to explicitly call out to external compiled libraries via a "foreign function interface" (FFI).
 This can be particularly useful when particular operations have been previously implemented in an optimized C or CUDA library, and it would be non-trivial to reimplement these computations directly using JAX, but it can also be useful for optimizing runtime or memory performance of JAX programs.
 That being said, the FFI should typically be considered a last resort option because the XLA compiler that sits in the backend, or the Pallas kernel language, which provides lower level control, typically produce performant code with a lower development and maintenance cost.
 
@@ -216,7 +216,7 @@ template <typename T>
 nb::capsule EncapsulateFfiCall(T *fn) {
   // This check is optional, but it can be helpful for avoiding invalid handlers.
   static_assert(std::is_invocable_r_v<XLA_FFI_Error *, T, XLA_FFI_CallFrame *>,
-                "Encapsulated function must be and XLA FFI handler");
+                "Encapsulated function must be an XLA FFI handler");
   return nb::capsule(reinterpret_cast<void *>(fn));
 }
 
@@ -264,7 +264,7 @@ def rms_norm(x, eps=1e-5):
     jax.ShapeDtypeStruct.like(x),
   )
 
-  # Note that here we're use `numpy` (not `jax.numpy`) to specify a dtype for
+  # Note that here we use `numpy` (not `jax.numpy`) to specify a dtype for
   # the attribute `eps`. Our FFI function expects this to have the C++ `float`
   # type (which corresponds to numpy's `float32` type), and it must be a
   # static parameter (i.e. not a JAX array).
@@ -293,24 +293,24 @@ The `rms_norm` function above works whenever we evaluate it directly, but as wri
 As far as JAX is concerned, an {func}`~jax.ffi.ffi_call` is an opaque black box: JAX can't look inside it to work out how it should behave under {func}`~jax.vmap`, or how to differentiate it.
 So, for example, trying to differentiate `rms_norm` as defined above would fail.
 
-To teach JAX how to transform our foreign function, we wrap it in a _HiJAX primitive_: a custom JAX operation defined by subclassing `HiPrim` from the experimental `jax.experimental.hijax` module.
+To teach JAX how to transform our foreign function, we wrap it in a _hijax primitive_: a custom JAX operation defined by subclassing `HiPrim` from the experimental `jax.experimental.hijax` module (see {doc}`/301/custom-derivatives` for the full story).
 On the primitive, we define a handful of methods:
 
 * `expand` implements the operation in terms of other ("lojax") JAX operations. Here, that's just a call to {func}`~jax.ffi.ffi_call`, and it is what runs when the primitive isn't being transformed.
 * `vjp_fwd` and `vjp_bwd_retval` together define the reverse-mode automatic differentiation rule (used by {func}`~jax.grad`, {func}`~jax.vjp`, and friends).
-* `jvp` defines the forward-mode rule (used by {func}`~jax.jvp`). Unlike {func}`~jax.custom_vjp`, a single HiJAX primitive can supply *both* forward- and reverse-mode AD rules.
+* `jvp` defines the forward-mode rule (used by {func}`~jax.jvp`). Unlike {func}`~jax.custom_vjp`, a single hijax primitive can supply *both* forward- and reverse-mode AD rules.
 * `batch` defines the {func}`~jax.vmap` rule.
 
 ```{note}
-HiJAX is a new and experimental API. The details of the interface may change in future releases of JAX.
+Hijax is a new and experimental API. The details of the interface may change in future releases of JAX.
 ```
 
 To support differentiation, we use two additional FFI targets for the forward and backward passes:
 
-1. `rms_norm_fwd` returns two outputs: (a) the "primal" result, and (b) the "residuals" which are saved for use on the backwards pass, and
-2. `rms_norm_bwd` takes the residuals and the output co-tangents, and returns the input co-tangents.
+1. `rms_norm_fwd` returns two outputs: (a) the "primal" result, and (b) the "residuals" which are saved for use on the backward pass, and
+2. `rms_norm_bwd` takes the residuals and the output cotangents, and returns the input cotangents.
 
-We won't get into the details of the RMS normalization backwards pass, but take a look at the [C++ source code](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc) to see how these functions are implemented on the back end.
+We won't get into the details of the RMS normalization backward pass, but take a look at the [C++ source code](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc) to see how these functions are implemented on the back end.
 
 Note that the residual computed by `rms_norm_fwd` has a different shape than the primal output (it stores one value per row), so its {func}`~jax.ffi.ffi_call` returns two outputs with different shapes.
 We'll access these two FFI targets through small helper functions, `rms_norm_fwd` and `rms_norm_bwd`, and call those from the primitive's AD rules:
@@ -332,7 +332,7 @@ def rms_norm_fwd(x, eps):
 
 
 def rms_norm_bwd(res, x, ct):
-  # Maps the output co-tangent `ct` back to the input co-tangent.
+  # Maps the output cotangent `ct` back to the input cotangent.
   return jax.ffi.ffi_call("rms_norm_bwd", jax.typeof(x))(res, x, ct)
 
 
@@ -404,12 +404,12 @@ np.testing.assert_allclose(jax.vmap(rms_norm)(xs), jax.vmap(rms_norm_ref)(xs), r
 ### Composing transformations
 
 Each of {func}`~jax.grad`, {func}`~jax.jvp`, and {func}`~jax.vmap` works on its own, but _composing_ them doesn't work yet.
-For example, {func}`~jax.vmap` of {func}`~jax.grad` (a batched gradient) currently fails with an error like `Batching rule for 'ffi_call' not implemented`.
+For example, {func}`~jax.vmap` of {func}`~jax.grad` (a batched gradient) currently fails with a `NotImplementedError` saying that `vmap` isn't supported for the `ffi_call` primitive.
 
 The reason is that our AD rules call the `rms_norm_fwd` and `rms_norm_bwd` helpers, which call {func}`~jax.ffi.ffi_call` directly, and a raw {func}`~jax.ffi.ffi_call` has no batching rule of its own.
 So when {func}`~jax.vmap` tries to push through the differentiation rule, it eventually reaches an un-batchable {func}`~jax.ffi.ffi_call` and gives up.
 
-The fix is to give those FFI calls a `batch` rule, by wrapping each one in its own small HiJAX primitive (exactly as we did for `rms_norm`).
+The fix is to give those FFI calls a `batch` rule, by wrapping each one in its own small hijax primitive (exactly as we did for `rms_norm`).
 Because `RMSNorm`'s rules already call the `rms_norm_fwd` and `rms_norm_bwd` helpers by name, we only need to replace those two helpers; `RMSNorm` itself doesn't change:
 
 ```{code-cell}
@@ -471,13 +471,13 @@ np.testing.assert_allclose(
   rtol=1e-4, atol=1e-5)
 ```
 
-Note that this primitive supports only first-order AD. Higher-order AD (such as {func}`~jax.grad` of {func}`~jax.grad`) isn't available here, because the `rms_norm_bwd` primitive has no differentiation rule of its own (its `expand` is an opaque FFI call).
+Note that this primitive supports only first-order AD. Higher-order AD (such as {func}`~jax.grad` of {func}`~jax.grad`) isn't available here, because the `rms_norm_fwd` and `rms_norm_bwd` primitives have no differentiation rules of their own (each `expand` is an opaque FFI call).
 
 +++
 
 ## Sharding
 
-Most large scale users of JAX use its APIs for distributed computation across multiple devices.
+Most large-scale users of JAX use its APIs for distributed computation across multiple devices.
 As discussed in {ref}`jax-201-sharding`, parallelism in JAX is controlled by sharding data across devices.
 The story is a little more complicated for FFI calls, though: since the internals of an FFI call are opaque to both JAX and XLA, an FFI call won't typically partition well when its inputs are sharded.
 
@@ -562,7 +562,7 @@ XLA_FFI_DEFINE_HANDLER(
 );
 ```
 
-Then, the `RmsNormImpl` can use the CUDA stream to launch CUDA kernels.
+Then `RmsNormImpl` can use the CUDA stream to launch CUDA kernels.
 
 On the front end, the registration code would be updated to specify the appropriate platform:
 
@@ -623,9 +623,9 @@ As you can see in the lowered program above, the FFI call now targets `rms_norm_
 
 ## The deprecated `vmap_method` argument
 
-The approach above, where {func}`~jax.vmap` support comes from a HiJAX primitive's `batch` rule, is the recommended way to make a foreign function batchable.
+The approach above, where {func}`~jax.vmap` support comes from a hijax primitive's `batch` rule, is the recommended way to make a foreign function batchable.
 But you may encounter older code that instead passes a `vmap_method` string argument directly to {func}`~jax.ffi.ffi_call`.
-This argument is deprecated in favor of the HiJAX primitive approach; this section describes what it did.
+This argument is deprecated in favor of the hijax primitive approach; this section describes what it did.
 
 When `vmap_method` was specified, a bare {func}`~jax.ffi.ffi_call` could be mapped under {func}`~jax.vmap` without defining a custom primitive.
 For example, the batching behavior of our RMS normalization example used to be written like this:
@@ -648,7 +648,7 @@ The allowed values, which mirror those of {func}`~jax.pure_callback`, were:
 * `"legacy_vectorized"`: a legacy mode retained for backwards compatibility.
 
 See the {func}`~jax.pure_callback` documentation for more on the semantics of each method.
-If you have code that relies on `vmap_method`, the recommended migration is to wrap the {func}`~jax.ffi.ffi_call` in a HiJAX primitive and implement a `batch` rule, as described in {ref}`the transformations section <jax-401-ffi-call-vmap>` above.
+If you have code that relies on `vmap_method`, the recommended migration is to wrap the {func}`~jax.ffi.ffi_call` in a hijax primitive and implement a `batch` rule, as described in {ref}`the transformations section <jax-401-ffi-call-vmap>` above.
 
 +++
 
@@ -657,6 +657,6 @@ If you have code that relies on `vmap_method`, the recommended migration is to w
 This tutorial covers most of the basic steps that are required to get up and running with JAX's FFI, but advanced use cases may require more features.
 We will leave these topics to future tutorials, but here are some possibly useful references:
 
-* **Supporting multiple dtypes**: In this tutorial's example, we restricted to only support `float32` inputs and outputs, but many use cases require supporting multiple different input types. One option to handle this is to register different FFI targets for all supported input types and then use Python to select the appropriate target for {func}`jax.ffi.ffi_call` depending on the input types. But, this approach could get quickly unwieldy depending on the combinatorics of the supported cases. So it is also possible to define the C++ handler to accept `ffi::AnyBuffer` instead of `ffi::Buffer<Dtype>`. Then, the input buffer will include a `element_type()` method which can be used to define the appropriate dtype dispatching logic in the backend.
+* **Supporting multiple dtypes**: In this tutorial's example, we restricted to only support `float32` inputs and outputs, but many use cases require supporting multiple different input types. One option to handle this is to register different FFI targets for all supported input types and then use Python to select the appropriate target for {func}`jax.ffi.ffi_call` depending on the input types. But this approach could quickly get unwieldy, depending on the combinatorics of the supported cases. So it is also possible to define the C++ handler to accept `ffi::AnyBuffer` instead of `ffi::Buffer<Dtype>`. Then, the input buffer will include an `element_type()` method which can be used to define the appropriate dtype dispatching logic in the backend.
 
 * **Stateful foreign functions**: It is also possible to use the FFI to wrap functions with associated state. There is a [low-level example included in the XLA test suite](https://github.com/openxla/xla/blob/737a7da3c5405583dc95773ac0bb11b1349fc9ea/xla/service/gpu/custom_call_test.cc#L794-L845), and a future tutorial will include more details.

@@ -28,8 +28,10 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import effects
+from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src import state
+from jax._src.state import primitives as state_primitives
 from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import util
@@ -203,6 +205,7 @@ def _mpmd_map_discharge_rule(
     jaxprs,
     meshes,
     input_output_aliases,
+    out_avals,
     debug,
     interpret,
     compiler_params,
@@ -243,7 +246,7 @@ def _mpmd_map_discharge_rule(
 
   write_indices = sorted(write_indices)
   num_in = len(ctx.in_avals)
-  num_out_orig = len(ctx.out_avals)
+  num_out_orig = len(out_avals)
   num_out_new = len(write_indices)
 
   new_jaxprs = []
@@ -285,15 +288,18 @@ def _mpmd_map_discharge_rule(
     with mpmd_map_tracing_context(mesh, all_meshes):
       new_jaxprs.append(_rewrite_to_include_new_outputs(jaxpr))
 
-  new_out_avals = [
-      state_discharge.discharged_aval(
-          ctx.in_avals[i],
-          discharge=True,
-          strip_memory_space=ctx.strip_memory_space,
-      )
-      for i in write_indices
+  outin_aliases = {o: i for i, o in input_output_aliases.items()}
+  orig_out_avals = [
+      ctx.in_avals[outin_aliases[i]] if i in outin_aliases else a
+      for i, a in enumerate(out_avals)
   ]
-  updated_out_avals = list(ctx.out_avals) + new_out_avals
+  new_out_avals = [ctx.in_avals[i] for i in write_indices]
+  updated_out_avals = [
+      state_discharge.discharged_aval(
+          a, discharge=True, strip_memory_space=ctx.strip_memory_space
+      )
+      for a in orig_out_avals + new_out_avals
+  ]
 
   new_aliases = dict(input_output_aliases)
   for out_idx, in_idx in enumerate(write_indices):
@@ -339,7 +345,7 @@ state_discharge.register_discharge_rule(mpmd_map_p)(_mpmd_map_discharge_rule)
 
 
 def _mpmd_map_dce_rule(
-    used_outs: list[bool], eqn: pe.JaxprEqn
+    used_outs: list[bool], live_ins: list[bool], eqn: pe.JaxprEqn
 ) -> tuple[list[bool], pe.JaxprEqn | None]:
   return [True] * len(eqn.invars), eqn
 
@@ -374,6 +380,127 @@ def _mpmd_map_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 
 
 pe.partial_eval_jaxpr_custom_rules[mpmd_map_p] = _mpmd_map_partial_eval_custom
+
+
+def _jaxpr_has_unbatchable_dataflow(
+    jaxpr: jax_core.Jaxpr,
+    batched_vars: set[jax_core.Var],
+) -> bool:
+  """Checks if jaxpr needs explicit loop fallback.
+
+  Returns True if:
+  1) emit_pipeline's index map uses any batched variable, or
+  2) A primitive other than emit_pipeline uses any batched variable.
+  """
+  if not batched_vars:
+    return False
+  for eqn in jaxpr.eqns:
+    if eqn.primitive.name == "emit_pipeline":
+      all_args = eqn.params["args_tree"].unflatten(eqn.invars)
+      if any(
+          isinstance(v, jax_core.Var) and v in batched_vars
+          for v in all_args.all_index_map_consts
+      ):
+        return True
+    else:
+      if any(
+          isinstance(v, jax_core.Var) and v in batched_vars for v in eqn.invars
+      ):
+        return True
+
+  return False
+
+
+def _mpmd_map_batch_with_explicit_loop(
+    args,
+    dims,
+    *,
+    jaxprs,
+    meshes,
+    out_avals,
+    input_output_aliases,
+    axis_size,
+    **params,
+):
+  """Batches ``mpmd_map`` by looping over the batch dimension.
+
+  This is a fallback for cases in which adding a batch dimension to the kernel
+  body is not supported -- currently when a scalar-prefetch (SMEM/index)
+  argument is batched. It mirrors ``pallas_call._batch_with_explicit_loop``.
+  """
+  # Original memory-space constraints of the inputs. Slicing an array along the
+  # batch dimension drops any memory-space annotation and needs to be reapplied.
+  orig_memory_spaces = [
+      getattr(jax_core.typeof(arg), "memory_space", None) for arg in args
+  ]
+
+  # Move the batch dimension to axis 0 for all batched args. For non-ref array
+  # inputs we also strip any pallas memory-space annotation (e.g. SMEM), since
+  # ops like ``dynamic_slice`` used to slice the batch dimension cannot operate
+  # on pallas memory spaces outside a kernel. The original constraint is
+  # re-applied to each slice in ``loop_body`` below.
+  moved_args = []
+  for arg, dim, memory_space in zip(args, dims, orig_memory_spaces):
+    if dim is None:
+      moved_args.append(arg)
+      continue
+    if memory_space is not None and not isinstance(
+        jax_core.typeof(arg), state.AbstractRef
+    ):
+      arg = state_primitives.with_memory_space_constraint(
+          arg, jax_core.MemorySpace.Device
+      )
+    moved_args.append(batching.moveaxis(arg, dim, 0))
+
+  batched_out_refs = [
+      jax_core.new_ref(
+          lax.empty((axis_size, *out_aval.shape), out_aval.dtype),
+      )
+      for out_aval in out_avals
+  ]
+
+  def loop_body(i, _):
+    sliced_args = []
+    for arg, dim, memory_space in zip(moved_args, dims, orig_memory_spaces):
+      if dim is None:
+        sliced_args.append(arg)
+      elif isinstance(arg_aval := jax_core.typeof(arg), state.AbstractRef):
+        sliced_args.append(
+            jax_core.new_ref(arg[i], memory_space=arg_aval.memory_space)
+        )
+      else:
+        sliced = arg[i]
+        # Re-apply the memory-space constraint (e.g. SMEM)
+        if memory_space is not None:
+          sliced = state_primitives.with_memory_space_constraint(
+              sliced, memory_space
+          )
+        sliced_args.append(sliced)
+
+    outs = mpmd_map_p.bind(
+        *sliced_args,
+        jaxprs=jaxprs,
+        meshes=meshes,
+        out_avals=out_avals,
+        input_output_aliases=input_output_aliases,
+        **params,
+    )
+
+    # Write outputs into the batched output refs at position i.
+    for batched_ref, out in zip(batched_out_refs, outs):
+      batched_ref[i] = out
+
+    # Write back any modified input refs.
+    for arg, sliced_arg, dim in zip(moved_args, sliced_args, dims):
+      if dim is not None and isinstance(jax_core.typeof(arg), state.AbstractRef):
+        arg[i] = jax_core.freeze(sliced_arg)
+
+    return None
+
+  lax.fori_loop(0, axis_size, loop_body, init_val=None)
+
+  batched_outs = [jax_core.freeze(ref) for ref in batched_out_refs]
+  return batched_outs, (0,) * len(batched_outs)
 
 
 def _mpmd_map_batching_rule(
@@ -448,6 +575,32 @@ def _mpmd_map_batching_rule(
         arg[...] = jnp.expand_dims(jax_core.freeze(squeezed_arg), dim)
     return [jnp.expand_dims(out, 0) for out in outs], (0,) * len(outs)
 
+  # Check if any batched argument reaches an unbatchable op.
+  # If so, fall back to an explicit loop over the batch dimension (mirroring
+  # ``pallas_call._batch_with_explicit_loop``).
+  needs_explicit_loop = any(
+      _jaxpr_has_unbatchable_dataflow(
+          jaxpr,
+          {
+              var
+              for var, dim in zip(jaxpr.invars[: len(args)], dims)
+              if dim is not None
+          },
+      )
+      for jaxpr in jaxprs
+  )
+  if needs_explicit_loop:
+    return _mpmd_map_batch_with_explicit_loop(
+        args,
+        dims,
+        jaxprs=jaxprs,
+        meshes=meshes,
+        out_avals=out_avals,
+        input_output_aliases=input_output_aliases,
+        axis_size=axis_data.size,
+        **params,
+    )
+
   # Move the batch dimension to axis 0 for all batched args.
   moved_args = [
       batching.moveaxis(arg, dim, 0) if dim is not None else arg
@@ -470,7 +623,8 @@ def _mpmd_map_batching_rule(
 
   # Update out_avals to include the batch dimension at axis 0.
   out_avals = tree_util.tree_map(
-      lambda a: a.update(shape=(axis_data.size, *a.shape)), out_avals)
+      lambda a: a.update(shape=(axis_data.size, *a.shape)), out_avals
+  )
 
   outs = mpmd_map_p.bind(
       *moved_args,

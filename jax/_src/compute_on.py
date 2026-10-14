@@ -156,7 +156,7 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
 
   if compiler_options_json is not None:
     dict_attr |= {'backend_config': ir.StringAttr.get(compiler_options_json)}
-  elif compute_type in {'device'}:
+  elif compute_type in {'device', 'tpu_sparsecore'}:
     dict_attr |= {'backend_config': ir.StringAttr.get('{}')}
 
   call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
@@ -165,12 +165,12 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))
   ctx.set_tokens_out(tokens_out)
-  return [
-      on if compute_type == 'tpu_sparsecore' and oms is core.MemorySpace.Device else
-      mlir.wrap_with_memory_kind(ctx.module_context, on, core.mem_space_to_kind(oms), out_aval)
-      for on, out_aval, oms in zip(out_nodes, ctx.avals_out, out_memory_spaces)
-  ]
-
+  out = [mlir.lower_with_sharding_in_types(ctx, o, a)
+         if isinstance(a, core.ShapedArray) else o
+         for o, a in zip(out_nodes, ctx.avals_out)]
+  return [on if compute_type == 'tpu_sparsecore' and oms is core.MemorySpace.Device else
+          mlir.wrap_with_memory_kind(ctx.module_context, on, core.mem_space_to_kind(oms), a)
+          for on, a, oms in zip(out, ctx.avals_out, out_memory_spaces)]
 mlir.register_lowering(compute_on_p, _compute_on_lowering)
 
 
@@ -234,10 +234,11 @@ def _compute_on_lin(is_vjp, nzs, *primals, jaxpr, compute_type,
         len(residuals), len(tangents_nz), len(sres_flat),
         len(tangent_jaxpr.invars))
     tangent_out_mem_spaces = _filter_zeros(nzs_out, out_memory_spaces)
-    nz_outs = compute_on_p.bind(*residuals, *tangents_nz, *sres_flat,
-                                jaxpr=tangent_jaxpr, compute_type=compute_type,
-                                out_memory_spaces=tangent_out_mem_spaces,
-                                compiler_options_json=compiler_options_json)
+    prim = ad.vjp_node(compute_on_p) if is_vjp else compute_on_p
+    nz_outs = prim.bind(*residuals, *tangents_nz, *sres_flat,
+                        jaxpr=tangent_jaxpr, compute_type=compute_type,
+                        out_memory_spaces=tangent_out_mem_spaces,
+                        compiler_options_json=compiler_options_json)
     nz_outs_ = iter(nz_outs)
     outs = [next(nz_outs_) if nz else ad.Zero(a)
             for nz, a in zip(nzs_out, tangent_avals_out)]
@@ -400,13 +401,14 @@ def _compute_on_to_lojax(*hi_args, jaxpr, compute_type, out_memory_spaces,
   return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
 compute_on_p.to_lojax = _compute_on_to_lojax
 
-def dce_jaxpr_compute_on_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
+def dce_jaxpr_compute_on_rule(used_outputs: list[bool], live_ins: list[bool],
+                              eqn: pe.JaxprEqn
                               ) -> tuple[list[bool], pe.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
 
   dced_jaxpr, used_inputs = pe._cached_closed_call_dce(
-      eqn.params['jaxpr'], tuple(used_outputs))
+      eqn.params['jaxpr'], tuple(used_outputs), tuple(live_ins))
 
   def keep_where(xs, keeps):
     return tuple(x for x, keep in zip(xs, keeps) if keep)

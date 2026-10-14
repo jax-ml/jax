@@ -482,7 +482,7 @@ def debug_callback(
     - :func:`jax.debug.print`: callback designed for printing.
 
   .. _External Callbacks:
-     https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
+     https://docs.jax.dev/en/latest/201/callbacks.html
   """
   def _debug_callback(
       callback: Callable[..., None], *c_args: Any, **c_kwargs: Any

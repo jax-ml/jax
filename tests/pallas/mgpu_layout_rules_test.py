@@ -70,7 +70,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
         y_layout = GPUTiledLayout.for_array(y_val, plgpu.Layout.WGMMA)
 
         o_val = add_val(x_val, y_val, in_layouts=(x_layout, y_layout))
-        o_gmem[...] = o_val
+        plgpu.store(o_gmem, o_val, optimized=False)
       return plgpu.kernel(add, out_type=jax.typeof(x))(x, y)
 
     f.trace(arr1, arr2)

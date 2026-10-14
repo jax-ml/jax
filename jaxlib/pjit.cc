@@ -88,6 +88,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
@@ -488,10 +489,22 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     const std::vector<nb::object>& in_device_local_layouts,
     const nb::callable& shard_arg_fallback,
     std::vector<nb::object>& keep_alive_objects) {
+#if JAX_IFRT_VERSION_NUMBER >= 73
+  std::optional<xla::ifrt::DeviceListRef> devices =
+      executable.ifrt_loaded_executable()->devices();
+  const absl::Span<xla::ifrt::Device* const> addressable_devices =
+      devices.has_value() ? (*devices)->AddressableDeviceList()->devices()
+                          : absl::Span<xla::ifrt::Device* const>();
+#else
   const auto& addressable_devices =
       executable.ifrt_loaded_executable()->addressable_devices();
+#endif
+#if JAX_IFRT_VERSION_NUMBER >= 74
+  const int num_global_devices = devices.has_value() ? (*devices)->size() : 1;
+#else
   const auto& num_global_devices =
       executable.ifrt_loaded_executable()->num_devices();
+#endif
   int num_args = flat_dynamic_args.size();
 
   std::vector<xla::ifrt::ArrayRef> num_args_arrays;
@@ -510,10 +523,16 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
   options.squash_64bit_types = !enable_x64;
   options.allow_zero_copy = true;
   xla::ifrt::Device* data_device = nullptr;
+#if JAX_IFRT_VERSION_NUMBER >= 74
+  if (num_global_devices == 1 && !addressable_devices.empty()) {
+    data_device = addressable_devices[0];
+  }
+#else
   if (executable.ifrt_loaded_executable()->num_devices() == 1 &&
       !addressable_devices.empty()) {
     data_device = addressable_devices[0];
   }
+#endif
   int dce_i = 0;
   for (int i = 0; i < num_args; ++i) {
     if (!kept_args[i]) {
@@ -882,11 +901,9 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // If there is a post-hook function, call it with the inputs and the outputs.
   std::optional<nb::object> post_hook = GetPostHook();
   if (post_hook) {
-    nb::tuple args_tuple =
-        nb::steal<nb::tuple>(PyTuple_New(num_positional_args));
+    nb::tuple_builder args_tuple(num_positional_args);
     for (size_t i = 0; i < num_positional_args; ++i) {
-      Py_INCREF(args[i]);
-      PyTuple_SET_ITEM(args_tuple.ptr(), i, args[i]);
+      args_tuple.put(nb::handle(args[i]));
     }
     nb::dict kwargs;
     if (kwnames) {
@@ -895,7 +912,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
             nb::borrow(args[num_positional_args + i]);
       }
     }
-    (*post_hook)(nb::handle(callable.ptr()), args_tuple, kwargs,
+    (*post_hook)(nb::handle(callable.ptr()), args_tuple.commit(), kwargs,
                  nb::handle(out.ptr()));
   }
 

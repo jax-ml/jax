@@ -107,6 +107,10 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "erfc", 1, float_dtypes, jtu.rand_small_positive, True
     ),
     op_record(
+        "erfcinv", 1, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=0.05, high=1.95), True
+    ),
+    op_record(
         "erfcx", 1, float_dtypes + jtu.dtypes.complex, jtu.rand_default, True
     ),
     op_record(
@@ -177,9 +181,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record(
         "expi", 1, [np.float32],
         functools.partial(jtu.rand_not_small, offset=0.1), True),
-    op_record("exp1", 1, [np.float32], jtu.rand_positive, True),
+    op_record("exp1", 1, float_dtypes, jtu.rand_positive, True),
     op_record(
-        "expn", 2, (int_dtypes, [np.float32]), jtu.rand_positive, True, (0,)),
+        "expn", 2, (int_dtypes, float_dtypes), jtu.rand_positive, True, (0,)),
     op_record("kl_div", 2, float_dtypes, jtu.rand_positive, True),
     op_record(
         "rel_entr", 2, float_dtypes, jtu.rand_positive, True,
@@ -250,18 +254,77 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
                       atol=.1 if jtu.test_device_matches(["tpu"]) else 1e-3,
                       rtol=.1, eps=1e-3)
 
-  def testErfcxLargeX(self):
-    # Verify no overflow and agreement with scipy in the asymptotic regime
-    # (float32: x > ~9.4, float64: x > ~26.6 — where exp(x^2) would overflow naively)
-    x = np.array([10., 20., 50., 100.], dtype=np.float32)
-    jax_val = lsp_special.erfcx(x)
-    scipy_val = osp_special.erfcx(x)
-    self.assertAllClose(jax_val, scipy_val, rtol=1e-5)
-    if jax.config.x64_enabled:
-      x = np.array([27., 50., 100., 500.], dtype=np.float64)
-      jax_val = lsp_special.erfcx(x)
-      scipy_val = osp_special.erfcx(x)
-      self.assertAllClose(jax_val, scipy_val, rtol=1e-12)
+  @jtu.sample_product(dtype=float_dtypes)
+  def testExp1BranchesTerminate(self, dtype):
+    # jnp.piecewise evaluates expn's continued-fraction branch on x <= 1
+    # inputs, where it does not converge; this must not hang (#13543).
+    x = np.array([1e-8, 1e-6, 0.5, 1.0, np.nextafter(1.0, 2.0),
+                  np.nextafter(1.0, 0.0), 2.0, 100.0], dtype=dtype)
+    rtol = {np.float32: 1e-4, np.float64: 1e-5}[dtype]
+    atol = {np.float32: 1e-5, np.float64: 1e-6}[dtype]
+    self.assertAllClose(
+        lsp_special.exp1(x),
+        osp_special.exp1(x.astype(np.float64)).astype(dtype),
+        rtol=rtol, atol=atol)
+
+  @jtu.sample_product(dtype=float_dtypes, n=[0, 1, 2, 10])
+  def testExpnBranchesTerminate(self, dtype, n):
+    x = np.array([1e-8, 1e-6, 0.5, 1.0, np.nextafter(1.0, 2.0),
+                  np.nextafter(1.0, 0.0), 2.0, 100.0], dtype=dtype)
+    rtol = {np.float32: 1e-4, np.float64: 1e-5}[dtype]
+    atol = {np.float32: 1e-5, np.float64: 1e-6}[dtype]
+    self.assertAllClose(
+        lsp_special.expn(n, x),
+        osp_special.expn(n, x.astype(np.float64)).astype(dtype),
+        rtol=rtol, atol=atol)
+
+  @jtu.sample_product(dtype=float_dtypes, n=[-1, 0, 1, 2, 3, 4, 5, 10, 50, 5000])
+  def testExpnAtZeroBoundary(self, dtype, n):
+    # Regression test for https://github.com/jax-ml/jax/issues/41205
+    x = np.array(0.0, dtype=dtype)
+    tol = {np.float32: 1e-6, np.float64: 1e-14}
+    expected = osp_special.expn(n, x.astype(np.float64)).astype(dtype)
+    self.assertAllClose(lsp_special.expn(n, x), expected, rtol=tol, atol=tol)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testExpnOutOfDomainAndInf(self, dtype):
+    n = np.array([-2, -1, -1, 0, 1, 5000, 0, 1, 2, 5000, 1, 2], dtype=dtype)
+    x = np.array([0.0, 0.5, 2.0, -1.0, -1.0, -1.0, np.inf, np.inf, np.inf,
+                  np.inf, 1e20, np.nan], dtype=dtype)
+    expected = osp_special.expn(n.astype(np.float64), x.astype(np.float64)).astype(dtype)
+    self.assertAllClose(lsp_special.expn(n, x), expected)
+    self.assertAllClose(lsp_special.exp1(np.array(np.inf, dtype=dtype)),
+                        np.array(0.0, dtype=dtype))
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testExpnFloatNTruncation(self, dtype):
+    # Verify non-integer float n is truncated to integer like scipy.special.expn
+    n_float = np.array([0.8, 1.8, 2.5, 3.9], dtype=dtype)
+    x_float = np.array([0.3, 0.3, 0.0, 2.0], dtype=dtype)
+    n_int = np.trunc(n_float)
+    self.assertAllClose(lsp_special.expn(n_float, x_float),
+                        lsp_special.expn(n_int, x_float))
+
+  @jtu.sample_product(dtype=float_dtypes, n=[40, 100, 200, 5000, 5001])
+  def testExpnLargeN(self, dtype, n):
+    x = np.array([0.0, 0.5, 1.0, 2.0, 10.0], dtype=dtype)
+    rtol = {np.float32: 1e-4, np.float64: 1e-5}
+    atol = {np.float32: 1e-5, np.float64: 1e-6}
+    expected = osp_special.expn(n, x.astype(np.float64)).astype(dtype)
+    self.assertAllClose(lsp_special.expn(n, x), expected, rtol=rtol, atol=atol)
+    self.assertAllClose(
+        lsp_special.expn(dtype(1e20), dtype(1.0)),
+        dtype(np.exp(-1.0) / 1e20), rtol=rtol, atol=atol)
+
+  @jtu.sample_product(dtype=float_dtypes, n=[0, 1, 2, 3])
+  def testExpnGrads(self, dtype, n):
+    x = np.array([0.5, 1.5, 3.0], dtype=dtype)
+    tol = 1e-2 if jtu.test_device_matches(["tpu"]) else 1e-3
+    jtu.check_grads(lambda x_: lsp_special.expn(n, x_), (x,), order=2,
+                    atol=tol, rtol=tol, eps=1e-3)
+    if n == 1:
+      jtu.check_grads(lsp_special.exp1, (x,), order=2,
+                      atol=tol, rtol=tol, eps=1e-3)
 
   def testWofzAccuracy(self):
     # Verify wofz agrees with scipy over the full complex plane (float32).
@@ -365,14 +428,118 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
         f(0.0)
 
-  def testRelEntrExtremeValues(self):
-    # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
-    dtype = jnp.zeros(0).dtype  # default float dtype.
-    args_maker = lambda: [np.array([-2, -2, -2, -1, -1, -1, 0, 0, 0]).astype(dtype),
-                          np.array([-1, 0, 1, -1, 0, 1, -1, 0, 1]).astype(dtype)]
+  def testErfcinvExtremeValues(self):
+    dtype = jnp.zeros(0).dtype
+    args_maker = lambda: [np.array([-1.0, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, np.nan], dtype=dtype)]
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
-    self._CheckAgainstNumpy(osp_special.rel_entr, lsp_special.rel_entr, args_maker, rtol=rtol)
-    self._CompileAndCheck(lsp_special.rel_entr, args_maker, rtol=rtol)
+    self._CheckAgainstNumpy(osp_special.erfcinv, lsp_special.erfcinv, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.erfcinv, args_maker, rtol=rtol)
+
+  @parameterized.parameters([True, False])
+  def testErfcinvDebugInfs(self, with_jit):
+    f = jax.jit(lsp_special.erfcinv) if with_jit else lsp_special.erfcinv
+    with jax.debug_infs(True):
+      f(1.0)  # Doesn't crash
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
+        f(0.0)
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
+        f(2.0)
+
+  @parameterized.parameters("rel_entr", "kl_div")
+  def testRelEntrExtremeValues(self, op):
+    # Testing at the extreme values, including inf and nan inputs (see
+    # https://github.com/jax-ml/jax/issues/38262 and
+    # https://github.com/jax-ml/jax/issues/38239).
+    dtype = jnp.zeros(0).dtype  # default float dtype.
+    vals = np.array([np.nan, -np.inf, -2, -1, 0, 1, np.inf], dtype=dtype)
+    args_maker = lambda: [vals[:, None], vals[None, :]]
+    scipy_op, lax_op = getattr(osp_special, op), getattr(lsp_special, op)
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, rtol=rtol)
+    self._CompileAndCheck(lax_op, args_maker, rtol=rtol)
+
+  @parameterized.parameters("rel_entr", "kl_div")
+  def testRelEntrPrecision(self, op):
+    # Regression test for https://github.com/jax-ml/jax/issues/41200: p close
+    # to q must not lose precision or produce negative kl_div, and large p must
+    # not overflow to nan.
+    dtype = jnp.zeros(0).dtype  # default float dtype.
+    finfo = jnp.finfo(dtype)
+    big = finfo.max / 4  # p * log(p) overflows for p this large.
+    args_maker = lambda: [
+        np.array([2 ** 20 * (1 + finfo.eps), big, big], dtype=dtype),
+        np.array([2 ** 20, big, big / 2], dtype=dtype),
+    ]
+    if op == "rel_entr":
+      expected_fn = osp_special.rel_entr
+    else:
+      expected_fn = lambda p, q: np.array(
+          [0.5 * 2 ** 20 * finfo.eps ** 2, 0.0, big * (np.log(2.0) - 0.5)],
+          dtype=dtype,
+      )
+    lax_op = getattr(lsp_special, op)
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(expected_fn, lax_op, args_maker, atol=0, rtol=rtol)
+    self._CompileAndCheck(lax_op, args_maker, atol=0, rtol=rtol)
+
+    p32, q32 = np.float32(7.742924), np.float32(7.7429233)
+    delta32 = p32 - q32
+    expected32 = (
+        delta32 if op == "rel_entr" else np.float32(0.5) * delta32 * (delta32 / q32)
+    )
+    self.assertAllClose(lax_op(p32, q32), expected32, atol=0, rtol=1e-6)
+
+    if dtype == np.float64:
+      p64 = np.float64(9.999999999999978e29)
+      q64 = np.float64(9.999998737240631e29)
+      expected64 = (
+          osp_special.rel_entr(p64, q64)
+          if op == "rel_entr"
+          else np.float64(7.972806512934917e15)
+      )
+      self.assertAllClose(lax_op(p64, q64), expected64, atol=0, rtol=1e-15)
+
+  @jtu.sample_product(
+      op=["rel_entr", "kl_div"],
+      dtype=float_dtypes,
+  )
+  def testRelEntrSmallQGrad(self, op, dtype):
+    # Differentiating at 0 < q < finfo(dtype).max**(-0.5) must not overflow
+    # 1 / q^2 to inf or nan.
+    lax_op = getattr(lsp_special, op)
+    small = {
+        np.float16: 2e-3,
+        dtypes.bfloat16: 1e-20,
+        np.float32: 1e-20,
+        np.float64: 1e-160,
+    }[dtype]
+    p = jnp.array([small, 2 * small], dtype=dtype)
+    q = jnp.array([small, small], dtype=dtype)
+    dp, dq = jax.grad(lambda p, q: lax_op(p, q).sum(), argnums=(0, 1))(p, q)
+    if op == "rel_entr":
+      expected_dp = np.array([1.0, np.log(2.0) + 1.0], dtype=dtype)
+      expected_dq = np.array([-1.0, -2.0], dtype=dtype)
+    else:
+      expected_dp = np.array([0.0, np.log(2.0)], dtype=dtype)
+      expected_dq = np.array([0.0, -1.0], dtype=dtype)
+    rtol = 1e-2 if dtypes.finfo(dtype).bits < 32 else 1e-5
+    self.assertAllClose(dp, expected_dp, atol=0, rtol=rtol)
+    self.assertAllClose(dq, expected_dq, atol=0, rtol=rtol)
+
+  @parameterized.product(op=["rel_entr", "kl_div"], with_jit=[True, False])
+  def testRelEntrDebugNansAndInfs(self, op, with_jit):
+    lax_op = getattr(lsp_special, op)
+    f = jax.jit(lax_op) if with_jit else lax_op
+    with jax.debug_nans(True), jax.debug_infs(True):
+      f(1.0, 2.0)  # Doesn't crash
+      jax.grad(f, argnums=(0, 1))(1.0, 2.0)
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(inf\\)"):
+        f(1.0, 0.0)
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(nan\\)"):
+        f(np.nan, 1.0)
+    if op == "rel_entr":
+      with jax.debug_nans(True):
+        self.assertEqual(f(1.0, np.inf), -np.inf)
 
   def testBetaParameterDeprecation(self):
     with self.assertNoWarnings():
@@ -395,6 +562,9 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     with jax.disable_jit(False):
       result_jit = lsp_special.expi(x)
     self.assertAllClose(result_jit, result_nojit)
+
+  def testExpiZero(self):
+    self.assertEqual(lsp_special.expi(0.0), -np.inf)
 
   def testGammaIncBoundaryValues(self):
     dtype = dtypes.default_float_dtype()
@@ -435,6 +605,21 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         osp_special.gammaincc, lsp_special.gammaincc, args_maker, rtol=rtol
     )
     self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testBetaIncResultDoesNotDependOnBatch(self, dtype):
+    # Each element of the continued fraction should stop iterating once it has
+    # converged, so the result for an element must not depend on the other
+    # elements in the batch (#28547).
+    n = 20
+    a = jtu.rand_uniform(self.rng(), low=0.5, high=10.)((n,), dtype)
+    b = jtu.rand_uniform(self.rng(), low=0.5, high=10.)((n,), dtype)
+    x = jtu.rand_uniform(self.rng())((n,), dtype)
+    betainc = jax.jit(lsp_special.betainc)
+    expected = np.concatenate(
+        [betainc(a[i:i + 1], b[i:i + 1], x[i:i + 1]) for i in range(n)])
+    self.assertAllClose(betainc(a, b, x), expected,
+                        rtol={np.float32: 1e-6, np.float64: 1e-14})
 
   def testBetaIncBoundaryValues(self):
     dtype = dtypes.default_float_dtype()
@@ -555,5 +740,176 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jax.vmap(f), d_i1, args_maker, rtol=1e-5)
     self._CompileAndCheck(jax.vmap(f), args_maker, rtol=1e-5)
 
+  def testBetalnHessianAtZero(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/34353
+    def f(log_a, log_b):
+      a = jnp.exp(log_a)
+      b = jnp.exp(log_b)
+      return lsp_special.betaln(a, b) - lsp_special.betaln(a + 1, b)
+    hess = jax.hessian(f, argnums=(0, 1))(0., 0.)
+    expected = jnp.array([[0.25, -0.25], [-0.25, 0.25]])
+    tol = {
+        np.float32: 1e-4 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-13,
+    }
+    self.assertAllClose(jnp.array(hess), expected, atol=tol, rtol=tol)
+
+  def test_gammaln_exact_zeros_and_special_values(self):
+    # Exact zeros at x = 1.0 and x = 2.0
+    self.assertEqual(float(lsp_special.gammaln(np.float32(1.0))), 0.0)
+    self.assertEqual(float(lsp_special.gammaln(np.float32(2.0))), 0.0)
+
+    # Special values: poles, overflow threshold, infinities, NaN
+    max_finite_arg = np.float32(4.085003e36)
+    first_overflow_arg = np.nextafter(max_finite_arg, np.float32(np.inf))
+    self.assertTrue(np.isfinite(float(lsp_special.gammaln(max_finite_arg))))
+    special_inf = np.array([
+        0.0, -0.0, -1.0, -2.0, -3.0, -10.0, -1000.0, -1e7,
+        first_overflow_arg, np.inf, -np.inf
+    ], dtype=np.float32)
+    res_inf = np.asarray(lsp_special.gammaln(special_inf))
+    self.assertTrue(np.all(np.isposinf(res_inf)), f"Expected +inf, got {res_inf}")
+    self.assertTrue(np.isnan(float(lsp_special.gammaln(np.float32(np.nan)))))
+
+  def test_gammaln_grad(self):
+    x_grad = np.array([0.25, 0.75, 1.5, 3.5, 12.0, -0.5, -1.5, -2.5], dtype=np.float32)
+    self.assertAllClose(
+        jax.vmap(jax.grad(lsp_special.gammaln))(x_grad),
+        lsp_special.digamma(x_grad),
+        rtol=1e-5, atol=1e-5)
+
+  def test_gammaln_negative_roots_ulp(self):
+    # 75 certified points (5 float32 neighbors around each of the 15 negative
+    # roots of lgamma on (-10, -2)), with reference values computed via 60-digit
+    # mpmath: `float(mpmath.log(abs(mpmath.gamma(mpmath.mpf(float(x))))))`.
+    certified_root_pts = [
+        (-2.457024335861206, 6.098183754018183e-07),
+        (-2.457024574279785, 2.484696988890678e-07),
+        (-2.4570248126983643, -1.1287842529645816e-07),
+        (-2.4570250511169434, -4.742259971548743e-07),
+        (-2.4570252895355225, -8.355730166862955e-07),
+        (-3.143580436706543, 3.5146424031690423e-06),
+        (-3.143580675125122, 1.659292425530781e-06),
+        (-3.143580913543701, -1.9605461541614247e-07),
+        (-3.1435811519622803, -2.051398719680857e-06),
+        (-3.1435813903808594, -3.906739887272491e-06),
+        (-2.7476820945739746, -1.0570121172887281e-06),
+        (-2.7476823329925537, -6.005974428686868e-07),
+        (-2.747682571411133, -1.4418167987778365e-07),
+        (-2.747682809829712, 3.1223517168561536e-07),
+        (-2.747683048248291, 7.686531118231443e-07),
+        (-4.039361000061035, 2.249564626449368e-05),
+        (-4.039361476898193, 9.720763558572296e-06),
+        (-4.039361953735352, -3.053971690394376e-06),
+        (-4.03936243057251, -1.5828559485961922e-05),
+        (-4.039362907409668, -2.8602999831685795e-05),
+        (-3.955293893814087, -8.104382793261057e-06),
+        (-3.955294132232666, -3.1631758619440246e-06),
+        (-3.955294370651245, 1.7780596858250852e-06),
+        (-3.955294609069824, 6.7193238503496265e-06),
+        (-3.9552948474884033, 1.1660616631932957e-05),
+        (-5.0082173347473145, 0.00010283681295424625),
+        (-5.008217811584473, 4.400893627975495e-05),
+        (-5.008218288421631, -1.4815572806334704e-05),
+        (-5.008218765258789, -7.363671469471415e-05),
+        (-5.008219242095947, -0.00013245448977600686),
+        (-4.991543769836426, -0.00010146515471314859),
+        (-4.991544246673584, -4.590078166675967e-05),
+        (-4.991544723510742, 9.666772148365217e-06),
+        (-4.9915452003479, 6.523750709091674e-05),
+        (-4.991545677185059, 0.00012081142351964627),
+        (-6.001384258270264, 0.0007502033977111201),
+        (-6.001384735107422, 0.0004049005350435363),
+        (-6.00138521194458, 5.9716251821000246e-05),
+        (-6.001385688781738, -0.00028534953358012286),
+        (-6.0013861656188965, -0.0006302969026992184),
+        (-5.9986066818237305, -0.000571583788528323),
+        (-5.998607158660889, -0.0002301889621487998),
+        (-5.998607635498047, 0.00011132306745354033),
+        (-5.998608112335205, 0.0004529523805681395),
+        (-5.998608589172363, 0.0007946990575669714),
+        (-7.000197410583496, 0.0046656094182512976),
+        (-7.000197887420654, 0.002252102177623758),
+        (-7.0001983642578125, -0.0001555986874670934),
+        (-7.000198841094971, -0.0025575210588133666),
+        (-7.000199317932129, -0.004953692617858581),
+        (-6.999800682067871, -0.004150185635306569),
+        (-6.999801158905029, -0.00175593634176963),
+        (-6.9998016357421875, 0.0006440637640683667),
+        (-6.999802112579346, 0.0030498423636509397),
+        (-6.999802589416504, 0.0054614273387702),
+        (-8.000022888183594, 0.08023788354150395),
+        (-8.00002384185791, 0.03941384761713908),
+        (-8.000024795532227, 0.00019109306263327084),
+        (-8.000025749206543, -0.037551276318553026),
+        (-8.00002670288086, -0.0739209618848819),
+        (-7.999974250793457, -0.03744103667945246),
+        (-7.999974727630615, -0.01874992444328908),
+        (-7.999975204467773, 0.0002972497521375302),
+        (-7.999975681304932, 0.019714314834692555),
+        (-7.99997615814209, 0.03951592135704702),
+        (-9.000000953674316, 1.0611139836802737),
+        (-9.000001907348633, 0.367964655686062),
+        (-9.00000286102295, -0.037502599853472283),
+        (-9.000003814697266, -0.32518681973372665),
+        (-9.000004768371582, -0.5483325184735134),
+        (-8.999995231628418, -0.5483110440874025),
+        (-8.999996185302734, -0.3251696402248379),
+        (-8.99999713897705, -0.03748971522180572),
+        (-8.999998092651367, 0.3679732454405064),
+        (-8.999999046325684, 1.061118278557496),
+    ]
+    cert_xs = np.array([p[0] for p in certified_root_pts], dtype=np.float32)
+    cert_ref = np.array([p[1] for p in certified_root_pts], dtype=np.float64)
+    ys_f32 = np.asarray(lsp_special.gammaln(cert_xs), dtype=np.float64)
+    ulp = np.abs(np.spacing(cert_ref.astype(np.float32)).astype(np.float64))
+    errs = np.abs(ys_f32 - cert_ref) / ulp
+    idx = int(np.argmax(errs))
+    max_root_ulp, worst_root_x = float(errs[idx]), float(cert_xs[idx])
+    self.assertLessEqual(
+        max_root_ulp, 2.0,
+        f"Max ULP {max_root_ulp} at negative root x={worst_root_x} exceeds 2.0")
+
+  def test_gammaln_sweep_ulp(self):
+    sweep_xs = np.concatenate([
+        np.array([1.4012985e-45, 1e-42, 1e-40, 1.1754942e-38,
+                  -1.4012985e-45, -1e-42, -1e-40, -1.1754942e-38], dtype=np.float32),
+        np.logspace(-37, -1, 500, dtype=np.float32),
+        np.linspace(0.1, 0.4999, 500, dtype=np.float32),
+        np.linspace(0.5, 0.9999, 500, dtype=np.float32),
+        np.linspace(1.0001, 1.9999, 1000, dtype=np.float32),
+        np.linspace(2.0001, 4.0, 500, dtype=np.float32),
+        np.linspace(4.001, 16.0, 500, dtype=np.float32),
+        np.logspace(1.21, 35.0, 500, dtype=np.float32),
+        np.array([
+            np.nextafter(np.float32(1.0), np.float32(0.0)),
+            np.nextafter(np.float32(1.0), np.float32(2.0)),
+            np.nextafter(np.float32(2.0), np.float32(1.0)),
+            np.nextafter(np.float32(2.0), np.float32(3.0)),
+            np.float32(1.4616321),
+            np.float32(10.92287),
+            np.float32(4.085003e36),
+            # Worst-case inputs across positive and negative float32 domains:
+            np.float32(0.70681477),
+            np.float32(2.0086858),
+            np.float32(4.012665),
+            np.float32(-3.1757019),
+            np.float32(-2.5576105),
+            np.float32(-2.5056348),
+        ], dtype=np.float32),
+        np.linspace(-1.999, -1.001, 400, dtype=np.float32),
+        np.linspace(-0.999, -0.001, 400, dtype=np.float32),
+        np.linspace(-99.9, -10.1, 400, dtype=np.float32),
+    ])
+    sweep_xs = sweep_xs[sweep_xs != np.floor(sweep_xs)]
+    sweep_ref = osp_special.gammaln(sweep_xs.astype(np.float64))
+    ys_f32 = np.asarray(lsp_special.gammaln(sweep_xs), dtype=np.float64)
+    ulp = np.abs(np.spacing(sweep_ref.astype(np.float32)).astype(np.float64))
+    errs = np.abs(ys_f32 - sweep_ref) / ulp
+    idx = int(np.argmax(errs))
+    max_sweep_ulp, worst_sweep_x = float(errs[idx]), float(sweep_xs[idx])
+    self.assertLessEqual(
+        max_sweep_ulp, 3.6,
+        f"Max ULP {max_sweep_ulp} at x={worst_sweep_x} exceeds 3.6")
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

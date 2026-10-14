@@ -15,8 +15,8 @@ that created them, and the machinery that keeps it all fast and safe.
    shards onto the right hosts, for data-parallel and model-parallel
    workloads.
 3. :doc:`fault-tolerance` — fault-tolerant distributed JAX: surviving
-   machine failures with ``jax.live_devices``, barrier semantics, and
-   recovery, with worked training examples.
+   machine failures with ``multihost_utils.live_devices``, barrier
+   semantics, and recovery, with worked training examples.
 4. :doc:`security` — securing JAX's network services: mTLS for the
    coordination service and the TPU runtime's internal services, and which
    connections remain unprotected.
@@ -37,14 +37,14 @@ A few systems topics are small enough to cover right here.
 **Concurrency and threads.** JAX has limited support for Python concurrency:
 it's fine to call JAX APIs like :func:`jax.jit` or :func:`jax.grad` from
 multiple Python threads, but you must not use threads to manipulate JAX
-trace values *inside* a traced function — the likely outcome is a mysterious
+trace values *inside* a traced function; the likely outcome is a mysterious
 error. In multi-controller JAX (:doc:`multiprocess`) threading has a further
 hazard: every process must enqueue the same operations in the same order on
 a given device, and threads can schedule work in different orders in
 different processes, causing non-deterministic crashes. The
-:func:`jax.thread_guard` context manager helps detect this: once set, an
-error is raised if a JAX operation is issued from a thread other than the
-one where the guard was set.
+:func:`jax.thread_guard` context manager helps detect this: once it's set,
+JAX raises an error if an operation is issued from a thread other than the
+one that set it.
 
 **Multi-process coordination helpers.** The
 :mod:`jax.experimental.multihost_utils` module collects small utilities for

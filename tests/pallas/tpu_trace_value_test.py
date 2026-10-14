@@ -71,6 +71,9 @@ class SparseCoreTraceValueTest(jtu.JaxTestCase):
     super().setUp()
     if not jtu.is_device_tpu(5, "p") and not jtu.is_device_tpu_at_least(6):
       self.skipTest("SparseCore only supported on TPU v5p+")
+    self.enter_context(
+        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
+    )
 
   def test_trace_value(self):
     nl = plsc.get_sparse_core_info().num_lanes

@@ -11,10 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import collections
 import functools
 import logging
 import textwrap
+import threading
+import time
 import unittest
 
 from absl.testing import absltest, parameterized
@@ -58,6 +61,37 @@ class DebugCallbackTest(jtu.JaxTestCase):
   def test_error_with_non_callable(self):
     with self.assertRaisesRegex(TypeError, "callable"):
       jax.debug.callback("this is not debug.print!")
+
+  def test_ordered_callback_sequential_and_in_order(self):
+    # Tests that ordered=True callbacks run sequentially and in program order.
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+    order = []
+
+    def cb(i, x):
+      nonlocal active, max_active
+      del x
+      with lock:
+        active += 1
+        max_active = max(max_active, active)
+        order.append(i)
+      time.sleep(0.002)
+      with lock:
+        active -= 1
+
+    n = 32
+
+    @jax.jit
+    def f(x):
+      for i in range(n):
+        jax.debug.callback(functools.partial(cb, i), x, ordered=True)
+      return x
+
+    f(jnp.zeros(1024, jnp.float32)).block_until_ready()
+    jax.effects_barrier()
+    self.assertEqual(max_active, 1)
+    self.assertEqual(order, list(range(n)))
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   @jtu.run_on_devices("cpu")

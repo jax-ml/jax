@@ -29,7 +29,6 @@ from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src import numpy as jnp
-from jax._src import tree_util
 from jax._src.hijax import (
     linearize_from_jvp,
     vjp_from_jvp,
@@ -193,22 +192,47 @@ class Nonzero(HiPrim):
       size: int,
       axes: tuple[int, ...],
       out_dtype: np.dtype):
-    if core.is_symbolic_dim(size):
-      pass
-    else:
+    if not core.is_symbolic_dim(size):
       size = operator.index(size)
-      if size < 0:
-        raise ValueError(f"size must be a positive integer; got {size=}")
-    if not dtypes.issubdtype(out_dtype, np.integer):
-      raise ValueError(f"out_dtype must be integer typed; got {out_dtype=}")
-    if not all(0 <= ax < a_aval.ndim for ax in axes):
-      raise ValueError(f"axes out of range for array with {a_aval.ndim} dimensions:  {axes=}")
-    if len(axes) != len(set(axes)):
-      raise ValueError(f"duplicate axes are not allowed: {axes=}")
     if fill_value_avals and len(fill_value_avals) != len(axes):
       raise ValueError(f"Expected {len(axes)} fill values, got {len(fill_value_avals)}")
     if any(fv.dtype != out_dtype for fv in fill_value_avals):
       raise ValueError(f"Expected fill values to have dtype {out_dtype}, got {fill_value_avals}")
+
+    self.in_avals = (a_aval, *fill_value_avals)
+    out_dtype = dtypes._maybe_canonicalize_explicit_dtype(out_dtype, "nonzero")
+    out_shape = self._shape_rule(a_aval, *fill_value_avals, size=size, axes=axes)
+    out_sharding = self._sharding_rule(a_aval, *fill_value_avals, axes=axes)
+    out_vma = core.standard_vma_rule("nonzero", *self.in_avals)
+    out_aval = a_aval.update(
+        shape=out_shape,
+        dtype=out_dtype,
+        weak_type=False,
+        sharding=out_sharding,
+        manual_axis_type=a_aval.mat.update(varying=out_vma),
+    )
+    self.out_aval = (out_aval,) * len(axes)
+
+    self.params = dict(
+        size=size,
+        axes=axes,
+        out_dtype=out_dtype,
+    )
+    super().__init__()
+
+  @staticmethod
+  def _shape_rule(
+      a_aval: core.ShapedArray,
+      *fill_value_avals: core.ShapedArray,
+      size: int,
+      axes: tuple[int, ...],
+  ) -> core.Shape:
+    if not core.is_symbolic_dim(size) and size < 0:
+      raise ValueError(f"size must be a positive integer; got {size=}")
+    if not all(0 <= ax < a_aval.ndim for ax in axes):
+      raise ValueError(f"axes out of range for array with {a_aval.ndim} dimensions:  {axes=}")
+    if len(axes) != len(set(axes)):
+      raise ValueError(f"duplicate axes are not allowed: {axes=}")
     batch_shape = tuple(
         s for i, s in enumerate(a_aval.shape) if i not in axes
     )
@@ -225,19 +249,33 @@ class Nonzero(HiPrim):
             f"fill_value shape {fv_aval.shape} cannot be broadcast to "
             f"batch shape {batch_shape} without expanding it."
         )
-    self.in_avals = (a_aval, *fill_value_avals)
+    return (*batch_shape, size)
 
-    # Evaluate shape to set out_aval
-    self.out_aval = tree_util.tree_map(core.typeof, api.eval_shape(
-        functools.partial(_nonzero_impl, size=size, axes=axes, out_dtype=out_dtype),
-        a_aval, *fill_value_avals))
-
-    self.params = dict(
-        size=size,
-        axes=axes,
-        out_dtype=out_dtype,
+  @staticmethod
+  def _sharding_rule(
+      a_aval: core.ShapedArray,
+      *fill_value_avals: core.ShapedArray,
+      axes: tuple[int, ...],
+  ):
+    if any(a_aval.sharding.spec[i] is not None for i in axes):
+      raise ValueError(
+          f"Cannot apply nonzero over sharded axes {axes} for array with"
+          f" sharding {a_aval.sharding}"
+      )
+    batch_spec = P(
+        *(s for i, s in enumerate(a_aval.sharding.spec) if i not in axes)
     )
-    super().__init__()
+    for fv_aval in fill_value_avals:
+      nlead = len(batch_spec) - fv_aval.ndim
+      if any(
+          fv_s is not None and fv_s != b_s
+          for fv_s, b_s in zip(fv_aval.sharding.spec, batch_spec[nlead:])
+      ):
+        raise ValueError(
+            f"fill_value sharding {fv_aval.sharding.spec} is not compatible"
+            f" with batch sharding {batch_spec}"
+        )
+    return a_aval.sharding.update(spec=P(*batch_spec, None))
 
   def expand(self, a: ArrayLike, *fill_value: ArrayLike) -> tuple[Array, ...]:  # pyrefly: ignore[bad-override]
     return _nonzero_impl(a, *fill_value, size=self.size, axes=self.axes, out_dtype=self.out_dtype)
@@ -499,9 +537,22 @@ def _nonzero_impl(a: ArrayLike, *fill_value: ArrayLike, size: int, axes: tuple[i
 
   batch_axes = [ax for ax in range(a.ndim) if ax not in axes]
   batch_shape = tuple(a.shape[ax] for ax in batch_axes)
+  a_aval = core.typeof(a)
   if a.size == 0 or size == 0:
-    return tuple(jnp.empty((*batch_shape, size), dtype=out_dtype)
-                 for _ in axes)
+    out_spec = P(*(a_aval.sharding.spec[ax] for ax in batch_axes), None)
+    out_sharding = a_aval.sharding.update(spec=out_spec)
+    vma = tuple(
+        core.standard_vma_rule(
+            "nonzero", a_aval, *(core.typeof(fv) for fv in fill_value)
+        )
+    )
+    return tuple(
+        core.pvary(
+            jnp.empty((*batch_shape, size), dtype=out_dtype, out_sharding=out_sharding),
+            vma,
+        )
+        for _ in axes
+    )
 
   transposed_a = jnp.transpose(a, (*batch_axes, *axes))
   sub_shape = transposed_a.shape[len(batch_axes):]
@@ -512,10 +563,18 @@ def _nonzero_impl(a: ArrayLike, *fill_value: ArrayLike, size: int, axes: tuple[i
   mask = flattened_a if flattened_a.dtype == bool else (flattened_a != 0)
   cs_mask = jnp.cumsum(mask, axis=-1)
 
-  bincount = jnp.zeros((*batch_shape, size), dtype=cs_mask.dtype)
-  mesh_dims = jnp.ogrid[tuple(slice(None, sz) for sz in batch_shape)]
-  mesh_dims = [lax.expand_dims(m, [m.ndim]) for m in mesh_dims]
-  bincount = bincount.at[(*mesh_dims, cs_mask)].add(1, mode='drop')
+  def _bincount(c):
+    c_aval = core.typeof(c)
+    z = jnp.zeros(
+        size, dtype=c.dtype, out_sharding=c_aval.sharding.update(spec=P())
+    )
+    z = core.pvary(z, tuple(c_aval.mat.varying))
+    return z.at[c].add(1, mode='drop')
+
+  bincount_fn = _bincount
+  for _ in range(len(batch_shape)):
+    bincount_fn = api.vmap(bincount_fn)
+  bincount = bincount_fn(cs_mask)
   flat_indices = jnp.cumsum(bincount, axis=-1)
 
   out = [lax.convert_element_type((flat_indices // stride) % sz, out_dtype)
@@ -677,33 +736,6 @@ def searchsorted(
   return prim(sorted_arr, query)
 
 
-# TODO(jakevdp): delete this function when hijax is finalized.
-def searchsorted_via_expand(
-    sorted_arr: ArrayLike,
-    query: ArrayLike,
-    /,
-    *,
-    side: str = "left",
-    dimension: int = 0,
-    batch_dims: int = 0,
-    method: str = "scan",
-    dtype: DTypeLike = "int32",
-):
-  """Compute searchsorted() without binding the hijax primitive."""
-  sorted_arr, query = core.auto_insert_reshard(sorted_arr, query)
-  out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "searchsorted")
-  prim = SearchSorted(
-    core.typeof(sorted_arr),
-    core.typeof(query),
-    side=side,
-    dimension=dimension,
-    batch_dims=batch_dims,
-    method=method,
-    out_dtype=out_dtype,
-  )
-  return prim.expand(sorted_arr, query)
-
-
 def nonzero(
     a: ArrayLike,
     /,
@@ -729,7 +761,6 @@ def nonzero(
   Returns:
     Tuple of length ``len(axes)`` containing the indices of each nonzero value.
   """
-  a, = core.auto_insert_reshard(a)
   out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "nonzero")
   axes = util.canonicalize_axis_tuple(axes, np.ndim(a))
 
@@ -747,6 +778,7 @@ def nonzero(
   else:
     fill_value_tup = ()
 
+  a, *fill_value_tup = core.auto_insert_reshard(a, *fill_value_tup)
   prim = Nonzero(
     core.typeof(a),
     *[core.typeof(fv) for fv in fill_value_tup],

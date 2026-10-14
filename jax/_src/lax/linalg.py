@@ -108,6 +108,12 @@ def cholesky(x: Array, *, symmetrize_input: bool = True) -> Array:
     shape ``[..., n, n]``. If Cholesky decomposition fails, returns a matrix
     full of NaNs. The behavior on failure may change in the future.
   """
+  x = lax.asarray(x)
+  if x.ndim < 2 or x.shape[-1] != x.shape[-2]:
+    raise ValueError(
+        f"The input to linalg.cholesky must have shape [..., n, n], got shape {x.shape}"
+    )
+
   if symmetrize_input:
     x = symmetrize(x)
   return _tril(cholesky_p.bind(x))
@@ -285,6 +291,11 @@ def eigh(
     If ``subset_by_index`` is ``None`` then ``d`` is equal to ``n``. Otherwise
     ``d`` is equal to ``subset_by_index[1] - subset_by_index[0]``.
   """
+  x = lax.asarray(x)
+  if x.ndim < 2 or x.shape[-1] != x.shape[-2]:
+    raise ValueError(
+        f"The input to linalg.eigh must have shape [..., n, n], got shape {x.shape}"
+    )
   if symmetrize_input:
     x = symmetrize(x)
   v, w = eigh_p.bind(
@@ -992,6 +1003,9 @@ cholesky_update_p = standard_linalg_primitive(
 mlir.register_lowering(
     cholesky_update_p, partial(_cholesky_update_gpu_lowering_rule, "cu"),
     platform="cuda")
+mlir.register_lowering(
+    cholesky_update_p, partial(_cholesky_update_gpu_lowering_rule, "oneapi"),
+    platform="oneapi")
 mlir.register_lowering(
     cholesky_update_p,
     mlir.lower_fun(_cholesky_update_jax_fn, multiple_results=False))
@@ -1959,7 +1973,7 @@ mlir.register_lowering(
     mlir.lower_fun(_generic_lu_pivots_to_permutation, multiple_results=False))
 register_cpu_gpu_lowering(
     lu_pivots_to_permutation_p, _lu_pivots_to_permutation_gpu_lowering,
-    ("cuda", "rocm"))
+    ("cuda", "rocm", "oneapi"))
 
 
 # QR decomposition
@@ -2358,6 +2372,15 @@ def _svd_jvp_rule(
     raise NotImplementedError(
       "Singular value decomposition JVP not implemented for full matrices")
 
+  if compute_uv and not (
+      subset_by_index is None
+      or subset_by_index == (0, core.min_dim(A.shape[-2], A.shape[-1]))
+  ):
+    raise NotImplementedError(
+        "Singular value decomposition JVP not implemented for "
+        "subset_by_index with compute_uv=True"
+    )
+
   Ut, V = _H(U), _H(Vt)
   s_dim = s[..., None, :]
   dS = Ut @ dA @ V
@@ -2685,6 +2708,9 @@ mlir.register_lowering(
     partial(_symmetric_product_gpu_lowering, "cu"), platform="cuda")
 mlir.register_lowering(
     symmetric_product_p,
+    partial(_symmetric_product_gpu_lowering, "oneapi"), platform="oneapi")
+mlir.register_lowering(
+    symmetric_product_p,
     mlir.lower_fun(_symmetric_product_jax_fn, multiple_results=False))
 
 
@@ -2912,7 +2938,9 @@ def _tridiagonal_cpu_gpu_lowering(ctx, a, *, lower, target_name_prefix):
 tridiagonal_p = linalg_primitive(
     _tridiagonal_dtype_rule, (_float | _complex,), (2,),
     _tridiagonal_shape_rule, "tridiagonal", multiple_results=True)
-register_cpu_gpu_lowering(tridiagonal_p, _tridiagonal_cpu_gpu_lowering)
+register_cpu_gpu_lowering(
+    tridiagonal_p, _tridiagonal_cpu_gpu_lowering,
+    ("cpu", "cuda", "rocm", "oneapi"))
 
 
 # Tridiagonal solve
@@ -2938,7 +2966,8 @@ def _tridiagonal_solve_gpu_lowering(ctx, dl, d, du, b, *, target_name_prefix,
     return rule(ctx, dl, d, du, b)
 
   # The cusolver implementation requires m >= 3.
-  if m <= 2:
+  # OneAPI uses the JAX decomposition for non-perturbed solves.
+  if m <= 2 or target_name_prefix == "oneapi":
     return mlir.lower_fun(_tridiagonal_solve_jax, multiple_results=False)(
         ctx, dl, d, du, b, perturb_singular=perturb_singular)
   target_name = f"{target_name_prefix}sparse_gtsv2_ffi"
@@ -3070,6 +3099,10 @@ mlir.register_lowering(
     tridiagonal_solve_p,
     partial(_tridiagonal_solve_gpu_lowering, target_name_prefix='hip'),
     platform='rocm')
+mlir.register_lowering(
+    tridiagonal_solve_p,
+  partial(_tridiagonal_solve_gpu_lowering, target_name_prefix='oneapi'),
+    platform='oneapi')
 mlir.register_lowering(tridiagonal_solve_p, mlir.lower_fun(
     _tridiagonal_solve_jax, multiple_results=False))
 

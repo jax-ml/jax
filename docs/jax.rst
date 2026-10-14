@@ -107,7 +107,6 @@ Automatic differentiation
     custom_gradient
     closure_convert
     checkpoint
-    custom_remat
 
 Vectorization
 -------------
@@ -156,6 +155,7 @@ Customization
 
   custom_vjp
   custom_vjp.defvjp
+  custom_vjp.defremat
 
 ``custom_batching``
 ~~~~~~~~~~~~~~~~~~~

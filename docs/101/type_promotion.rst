@@ -3,7 +3,7 @@
 Type promotion semantics
 ========================
 
-This document describes JAX's type promotion rules–i.e., the result of :func:`jax.numpy.promote_types` for each pair of types.
+This document describes JAX's type promotion rules: that is, the result of :func:`jax.numpy.promote_types` for each pair of types.
 For some background on the considerations that went into the design of what is described below, see `Design of Type Promotion Semantics for JAX <https://docs.jax.dev/en/latest/jep/9407-type-promotion.html>`_.
 
 JAX's type promotion behavior is determined via the following type promotion lattice:
@@ -42,7 +42,7 @@ where, for example:
 * ``f*`` means Python :code:`float` or weakly-typed :code:`float`, and
 * ``c*`` means Python :code:`complex` or weakly-typed :code:`complex`.
 
-(for more about weak types, see :ref:`weak-types` below).
+For more about weak types, see :ref:`weak-types` below.
 
 Promotion between any two types is given by their `join <https://en.wikipedia.org/wiki/Join_and_meet>`_
 on this lattice, which generates the following binary promotion table:
@@ -128,16 +128,20 @@ on this lattice, which generates the following binary promotion table:
 
     print(out)
 
-Jax's type promotion rules differ from those of NumPy, as given by
+JAX's type promotion rules differ from those of NumPy, as given by
 :func:`numpy.promote_types`, in those cells highlighted with a green background
 in the table above. There are three classes of differences:
 
 * When promoting a weakly typed value against a typed JAX value of the same category,
   JAX always prefers the precision of the JAX value. For example, ``jnp.int16(1) + 1``
-  will return ``int16`` rather than promoting to ``int64`` as in NumPy.
+  returns ``int16``, where :func:`numpy.promote_types` would give ``int64``. (NumPy 1.x
+  arithmetic promoted to ``int64`` too; NumPy 2 adopted weak Python scalars in
+  `NEP 50 <https://numpy.org/neps/nep-0050-scalar-promotion.html>`_, so its
+  arithmetic now agrees with JAX here.)
   Note that this applies only to Python scalar values; if the constant is a NumPy
   array then the above lattice is used for type promotion.
-  For example, ``jnp.int16(1) + np.array(1)`` will return ``int64``.
+  For example, ``jnp.int16(1) + np.array(1)`` returns ``int64`` (or ``int32`` when
+  64-bit types are disabled; see :ref:`default-dtypes`).
 
 * When promoting an integer or boolean type against a floating-point or complex
   type, JAX always prefers the type of the floating-point or complex type.
@@ -163,12 +167,13 @@ those used by PyTorch.
 
 Effects of Python operator dispatch
 -----------------------------------
-Keep in mind that Python operators like `+` will dispatch based on the Python type of
-the two values being added. This means that, for example, ``np.int16(1) + 1`` will
-promote using NumPy rules, whereas ``jnp.int16(1) + 1`` will promote using JAX rules.
-This can lead to potentially confusing non-associative promotion semantics when
-the two types of promotion are combined;
-for example with ``np.int16(1) + 1 + jnp.int16(1)``.
+Keep in mind that Python operators like ``+`` dispatch based on the Python types of
+the two values being added. This means that, for example, ``np.int32(1) + np.float16(1)``
+promotes using NumPy rules, whereas ``jnp.int32(1) + jnp.float16(1)`` promotes using JAX
+rules. Combining the two can make promotion confusingly non-associative:
+``np.int32(1) + np.float16(1) + jnp.float16(1)`` promotes to a 64-bit float under NumPy's
+rules first, while ``np.int32(1) + (np.float16(1) + jnp.float16(1))`` applies JAX's rules
+throughout and stays ``float16``.
 
 .. _weak-types:
 
@@ -193,9 +198,9 @@ the expression above would lead to an implicit type promotion:
    >>> jnp.int32(2) * x
    Array([0, 2, 4, 6, 8], dtype=int32)
 
-When used in JAX, Python scalars are sometimes promoted to :class:`~jax.numpy.DeviceArray`
-objects, for example during JIT compilation. To maintain the desired promotion
-semantics in this case, :class:`~jax.numpy.DeviceArray` objects carry a ``weak_type`` flag
+When used in JAX, Python scalars are sometimes converted to :class:`jax.Array`
+objects, for example when they're passed to a jitted function. To maintain the desired
+promotion semantics in this case, :class:`jax.Array` objects carry a ``weak_type`` flag
 that can be seen in an array's string representation:
 
 .. code-block:: python
@@ -218,7 +223,7 @@ Strict dtype promotion
 ----------------------
 In some contexts it can be useful to disable implicit type promotion behavior, and
 instead require all promotions to be explicit. This can be done in JAX by setting the
-``jax_numpy_dtype_promotion`` flag to ``'strict'``. Locally, it can be done with a\
+``jax_numpy_dtype_promotion`` flag to ``'strict'``. Locally, it can be done with a
 context manager:
 
 .. code-block:: python
@@ -234,7 +239,7 @@ context manager:
   inputs to the desired output type, or set jax_numpy_dtype_promotion=standard.
 
 For convenience, strict promotion mode will still allow safe weakly-typed promotions,
-so you can still write code code that mixes JAX arrays and Python scalars:
+so you can still write code that mixes JAX arrays and Python scalars:
 
 .. code-block:: python
 

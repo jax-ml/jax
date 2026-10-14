@@ -40,7 +40,9 @@ class MMALayouts:
       bitwidth = utils.bitwidth(element_type)
     else:
       bitwidth = dtypes.itemsize_bits(element_type)
-    elems_per_reg = 32 // bitwidth
+    # 64-bit operands use the same layouts as 32-bit operands on Hopper+: one
+    # element per (wide) register.
+    elems_per_reg = max(32 // bitwidth, 1)
     k = 8 * elems_per_reg
     sub_k = 4 * elems_per_reg
     self.lhs = fa.TiledLayout(
@@ -105,11 +107,21 @@ def _mma_single_tile(
 ) -> fa.FragmentedArray:
   """Performs `acc + a @ b` using warp level MMA instructions."""
   i32 = ir.IntegerType.get_signless(32)
+  f64 = ir.F64Type.get()
 
-  k_tile = 256 // utils.bitwidth(a.mlir_dtype)
   assert a.mlir_dtype == b.mlir_dtype
   is_integer = isinstance(a.mlir_dtype, ir.IntegerType)
-  assert acc.mlir_dtype == i32 if is_integer else ir.F32Type.get()
+  is_f64 = a.mlir_dtype == f64
+  if is_f64 and utils.get_arch().major < 9:
+    # TODO(bchetioui): Support sm_80 via the `m8n8k4` MMA shape.
+    raise NotImplementedError("f64 MMA is only supported on Hopper+ hardware.")
+  k_tile = 8 if is_f64 else 256 // utils.bitwidth(a.mlir_dtype)
+  if is_integer:
+    assert acc.mlir_dtype == i32
+  elif is_f64:
+    assert acc.mlir_dtype == f64
+  else:
+    assert acc.mlir_dtype == ir.F32Type.get()
   assert acc.is_signed in {None, True}
   assert (
       isinstance(acc.layout, fa.TiledLayout)
@@ -127,8 +139,12 @@ def _mma_single_tile(
       for reg in acc.registers.flatten()
       for pos in range(acc.layout.vector_length)
   ]
-  a_regs = [utils.bitcast(r, i32) for r in a.registers.flatten()]
-  b_regs = [utils.bitcast(r, i32) for r in b.registers.flatten()]
+  if is_f64:
+    ab_reg_type, ab_constraint = ir.IntegerType.get_signless(64), "l"
+  else:
+    ab_reg_type, ab_constraint = i32, "r"
+  a_regs = [utils.bitcast(r, ab_reg_type) for r in a.registers.flatten()]
+  b_regs = [utils.bitcast(r, ab_reg_type) for r in b.registers.flatten()]
 
   # Make sure we have the right number of registers for the instruction.
   assert len(a_regs) == num_a_regs
@@ -137,8 +153,12 @@ def _mma_single_tile(
 
   a_ptx_dtype = _ptx_dtype_str(a.mlir_dtype, is_signed=a.is_signed)
   b_ptx_dtype = _ptx_dtype_str(b.mlir_dtype, is_signed=b.is_signed)
-  acc_ptx_dtype = "s32" if is_integer else "f32"
-  acc_constraint = "r" if is_integer else "f"
+  if is_integer:
+    acc_ptx_dtype, acc_constraint = "s32", "r"
+  elif is_f64:
+    acc_ptx_dtype, acc_constraint = "f64", "d"
+  else:
+    acc_ptx_dtype, acc_constraint = "f32", "f"
   instr = f"mma.sync.aligned.m16n8k{k_tile}.row.col.{acc_ptx_dtype}.{a_ptx_dtype}.{b_ptx_dtype}.{acc_ptx_dtype}"
   counter = itertools.count()
   n_regs_str = lambda n: (
@@ -152,8 +172,8 @@ def _mma_single_tile(
   # See: https://llvm.org/docs/LangRef.html#inline-assembler-expressions
   constraints = (
       f"{','.join([f'={acc_constraint}']*num_acc_regs)},"
-      f"{','.join(['r']*num_a_regs)},"
-      f"{','.join(['r']*num_b_regs)},"
+      f"{','.join([ab_constraint]*num_a_regs)},"
+      f"{','.join([ab_constraint]*num_b_regs)},"
       f"{','.join([acc_constraint]*num_acc_regs)}"
   )
 
@@ -224,18 +244,25 @@ def mma(
   i32 = ir.IntegerType.get_signless(32)
   bf16 = ir.BF16Type.get()
   f16 = ir.F16Type.get()
+  f32 = ir.F32Type.get()
+  f64 = ir.F64Type.get()
   f8e4m3fn = ir.Float8E4M3FNType.get()
   f8e5m2 = ir.Float8E5M2Type.get()
   if (element_type := a.mlir_dtype) != b.mlir_dtype:
     raise ValueError(f"Dtype mismatch: {a.mlir_dtype} != {b.mlir_dtype}")
-  if element_type not in (bf16, f16, f8e4m3fn, f8e5m2, i8, i4):
+  if element_type not in (bf16, f16, f64, f8e4m3fn, f8e5m2, i8, i4):
     raise NotImplementedError(f"Unsupported operand type: {element_type}")
   if isinstance(element_type, ir.IntegerType):
     if acc.mlir_dtype != i32:
       raise NotImplementedError("Only s32 accumulator supported for integer operands.")
     if not acc.is_signed:
       raise ValueError("Only signed accumulator supported for integer operands.")
-  elif acc.mlir_dtype != ir.F32Type.get():
+  elif element_type == f64:
+    if acc.mlir_dtype != f64:
+      raise NotImplementedError(
+          "Only f64 accumulator supported for f64 operands."
+      )
+  elif acc.mlir_dtype != f32:
     raise NotImplementedError("Only f32 accumulator supported for floating operands.")
 
   can_infer_from_acc_layout = (

@@ -849,6 +849,8 @@ def get_out_layouts_via_propagation(closed_jaxpr: core.Jaxpr
       out_eqn_layouts = [eqn.params['layout']]
     elif eqn.primitive is pjit.layout_constraint_p:
       out_eqn_layouts = [eqn.params['layout']]
+    elif eqn.primitive is pjit.relayout_p:
+      out_eqn_layouts = [o.aval.layout for o in eqn.outvars]  # type: ignore
     else:
       out_eqn_layouts = [None] * len(eqn.outvars)
     safe_map(write, eqn.outvars, out_eqn_layouts)

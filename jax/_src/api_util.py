@@ -231,8 +231,9 @@ def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
   """Ensure argnum is within bounds. Also resolves negative argnums."""
   result = []
   for i in argnums:
-    if i >= num_args and allow_invalid: continue
     if not -num_args <= i < num_args:
+      if allow_invalid:
+        continue
       raise ValueError(
           "Positional argument indices, e.g. for `static_argnums`, must have "
           "value greater than or equal to -len(args) and less than len(args), "
@@ -540,9 +541,10 @@ def infer_argnums_and_argnames(
     )
   else:
     argnums = _ensure_index_tuple(argnums)
+    num_params = len(parameters)
     argnames = tuple(
         k for i, (k, param) in enumerate(parameters.items())
-        if param.kind == _POSITIONAL_OR_KEYWORD and i in argnums
+        if param.kind == _POSITIONAL_OR_KEYWORD and (i in argnums or i - num_params in argnums)
     )
 
   return argnums, argnames
@@ -591,6 +593,14 @@ def resolve_argnums(
     _validate_argnames(signature, static_argnames, "static_argnames")
     _validate_argnums(signature, donate_argnums, "donate_argnums")
     _validate_argnames(signature, donate_argnames, "donate_argnames")
+
+    if not any(param.kind == inspect.Parameter.VAR_POSITIONAL
+               for param in signature.parameters.values()):
+      n_pos_args = sum(param.kind in _POSITIONAL_ARGUMENTS
+                       for param in signature.parameters.values())
+      if n_pos_args > 0:
+        static_argnums = tuple(i % n_pos_args if i < 0 else i for i in static_argnums)
+        donate_argnums = tuple(i % n_pos_args if i < 0 else i for i in donate_argnums)
 
   # Compensate for static argnums absorbing args
   _assert_no_intersection(static_argnames, donate_argnames)

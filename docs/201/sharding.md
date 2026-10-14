@@ -104,10 +104,10 @@ class AxisType(enum.Enum):
   Auto = enum.auto()
   Explicit = enum.auto()
   Manual = enum.auto()
-
-# A concrete mesh additionally includes physical device objects with e.g.
-# precise coordinates:
 ```
+
+A concrete mesh additionally includes physical device objects, with, e.g.,
+precise coordinates:
 
 ```{code-cell}
 import numpy as np
@@ -174,9 +174,9 @@ print(jax.typeof(z))  # f32[8@A, 4]
 
 ## A `Sharding` describes how array values are laid out over a `Mesh`
 
-A `jax.sharding.Sharding` describes distributed memory layout. That is, it
-describes how an array's entries are stored in the physical memories of
-different devices, i.e. how it's _sharded_ over devices.
+A `jax.sharding.Sharding` describes distributed memory layout: how an array's
+entries are stored in the physical memories of different devices, that is,
+how the array is _sharded_ over devices.
 
 At the top level, every `jax.Array` has an associated `Sharding`. Because we
 set a mesh above, our arrays carry a `jax.NamedSharding`: a concrete `Mesh`
@@ -200,11 +200,9 @@ for s in x.addressable_shards:
 
 We can use `jax.device_put` (or `jax.reshard`) to produce a new array that is
 sharded over the same mesh of devices but with a different layout specified by
-a `jax.P`.
-(`jax.device_put` is a runtime-level API with more features than
-`jax.reshard`.)
-Since we have a mesh in context, via the `jax.set_mesh` above, we can pass
-`jax.P` instances directly to `jax.device_put`:
+a `jax.P`. (`jax.device_put` is a runtime-level API with more features than
+`jax.reshard`.) Since we have a mesh in context, via the `jax.set_mesh` above,
+we can pass `jax.P` instances directly to `jax.device_put`:
 
 ```{code-cell}
 y = jax.device_put(x, jax.P('Y', 'X'))
@@ -228,8 +226,8 @@ jax.debug.visualize_array_sharding(y)
 
 Here, because the mesh axis name 'Y' is not mentioned in `jax.P('X', None)`,
 the array is replicated over the mesh axis 'Y'. (As a shorthand, trailing
-`None` placeholders can be omitted, so that P('X', None) here means the same
-thing as P('X'). But it doesn’t hurt to be explicit!)
+`None` placeholders can be omitted, so that `P('X', None)` here means the same
+thing as `P('X')`. But it doesn't hurt to be explicit!)
 
 ```{code-cell}
 for s in y.addressable_shards:
@@ -383,14 +381,14 @@ pattern is:
 
 Here are some example rules:
 * nullary ops like `jnp.zeros`, `jnp.arange`: These ops create arrays from
-scratch so they don’t have input shardings to propagate. Their output is
+scratch so they don't have input shardings to propagate. Their output is
 unsharded by default unless overridden by the `out_sharding` kwarg.
 * unary elementwise ops like `sin`, `exp`: The output is sharded the same as
 the input.
-* binary ops (`+`, `-`, `*` etc.): Axis shardings of “zipped” dimensions must
-match (or be None). “Outer product” dimensions (dimensions that appear in only
+* binary ops (`+`, `-`, `*` etc.): Axis shardings of "zipped" dimensions must
+match (or be None). "Outer product" dimensions (dimensions that appear in only
 one argument) are sharded as they are in the input. If the result ends up
-mentioning a mesh axis more than once it’s an error.
+mentioning a mesh axis more than once, it's an error.
 
 The contraction ops like `jnp.dot` and `jnp.einsum` also have some interesting
 cases. For example, the result of `jnp.dot(x: f32[8,4@X], y:f32[4@X,16])`,
@@ -421,8 +419,8 @@ z = jnp.dot(x, y, out_sharding=jax.P('X', None))
 print(jax.typeof(z))
 ```
 
-But there are other `jnp.dot` cases that induce communication that JAX does
-perform automatically. For example, `jnp.dot(x:f32[8,4], y:f32[4@X,16])`
+In other `jnp.dot` cases, though, JAX does insert the communication
+automatically. For example, `jnp.dot(x:f32[8,4], y:f32[4@X,16])`
 results in an `f32[8,16]`, likely by doing an all-gather on `y` as in FSDP.
 
 ### With `@auto_axes` the compiler chooses shardings within the decorated function
@@ -457,7 +455,7 @@ except Exception as e:
   print(e)
 ```
 
-If we just want to specify the sharding of the result and for the compiler to
+If we just want to specify the sharding of the result and let the compiler
 handle the rest, we can use `auto_axes`:
 
 ```{code-cell}
@@ -475,7 +473,7 @@ So `auto_axes` lets you add an `out_sharding` argument to any composition of
 operations.
 
 An `auto_axes`-decorated function can be called when the context mesh's axis
-types are `Explicit` or `Auto`, but none can be in `Manual`. By default it
+types are `Explicit` or `Auto`, but not when any are `Manual`. By default it
 switches all mesh axis types to `Auto`; use `axes=...` to switch only a subset.
 
 ## Auto sharding mode decides shardings automatically during compilation
@@ -498,7 +496,7 @@ z = jnp.dot(x, y)  # not an error!
 Instead of getting an error, the compiler decided the sharding of the result!
 
 ```{code-cell}
-print(z.sharding)  # works at the top-level only (i.e. outside `jit`)
+print(z.sharding)  # works at the top level only (i.e. outside `jit`)
 ```
 
 Whether using top-level `Auto` mesh axes, or using the `auto_axes` decorator,
@@ -549,13 +547,13 @@ than `out_sharding`.
 ### Concrete array shardings can mention `Auto` mesh axes
 
 The sharding of a concrete `jax.Array` can be queried via `x.sharding`.
-This can only be done at the top-level. You might expect the result to be the
-same as the sharding associated with the value’s type, `jax.typeof(x).sharding`.
+This can only be done at the top level. You might expect the result to be the
+same as the sharding associated with the value's type, `jax.typeof(x).sharding`.
 It might not be! The concrete array sharding, `x.sharding`, describes the
-sharding along both `Explicit` and `Auto` mesh axes. It’s the sharding that the
-compiler eventually chose. Whereas the type-specified sharding,
+sharding along both `Explicit` and `Auto` mesh axes: it's the sharding that the
+compiler eventually chose. The type-specified sharding,
 `jax.typeof(x).sharding`, only describes the sharding along `Explicit` mesh axes.
-The `Auto` axes are deliberately hidden from the type because they’re the purview
+The `Auto` axes are deliberately hidden from the type because they're the purview
 of the compiler. We can think of the concrete array sharding as being
 consistent with, but more specific than, the type-specified sharding. For
 example:
@@ -579,12 +577,12 @@ def check_in_auto_context(x):
 check_in_auto_context(my_array, out_sharding=jax.P("X"))
 ```
 
-Notice that at the top level, where we’re currently in a fully `Explicit` mesh context,
+Notice that at the top level, where we're currently in a fully `Explicit` mesh context,
 the concrete array sharding and type-specified sharding agree.
 
-But under the `auto_axes` decorator we’re in a fully `Auto` mesh context and the
+But under the `auto_axes` decorator we're in a fully `Auto` mesh context and the
 two shardings disagree: the type-specified sharding is `P(None)` whereas the concrete
-array sharding is `P("X")` (though it could be anything! It’s up to the compiler).
+array sharding is `P("X")` (though it could be anything! It's up to the compiler).
 
 ## Manual mode lets you write explicit collectives with a per-device view of data
 
@@ -787,7 +785,7 @@ y major_to_minor = (0, 1)
 ### Constraining intermediate layouts
 
 We can also enforce a specific layout on an intermediate value within a
-JIT-compiled function using `with_layout_constraint`:
+jitted function using `with_layout_constraint`:
 
 ```python
 from jax.experimental.layout import with_layout_constraint
