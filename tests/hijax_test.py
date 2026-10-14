@@ -1688,6 +1688,27 @@ class HijaxTest(jtu.JaxTestCase):
     g(x)
     jax.jit(g)(x)
 
+  @jtu.with_explicit_mesh((2,), ('data',))
+  def test_hijax_primitive_with_consts_under_shard_map(self, mesh):
+    class AddConst(HiPrim):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x + np.ones((1,), dtype=x.dtype)
+
+    x = jax.device_put(jnp.arange(10), jax.P('data'))
+    g = jax.shard_map(
+        lambda x: AddConst(typeof(x))(x),
+        in_specs=(jax.P('data'),),
+        out_specs=jax.P('data'),
+    )
+    self.assertArraysEqual(g(x), x + 1)
+    self.assertArraysEqual(jax.jit(g)(x), x + 1)
+
   def test_hijax_cond_platform_dependent(self):
     x = jnp.arange(10)
     result = jax.jit(partial(jax.lax.platform_dependent, cpu=square, default=square))(x)

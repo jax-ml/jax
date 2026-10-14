@@ -762,6 +762,7 @@ def _shard_map_to_lojax(*hi_args, jaxpr, in_specs, out_specs, **params):
         config._check_vma(check_vma)):
     lo_jaxpr_, out_avals_ft = pe.lower_jaxpr(jaxpr, lo_avals_ft)
     lo_jaxpr, consts = pe.separate_consts(lo_jaxpr_)
+  in_specs = (*(_repspec(typeof(c)) for c in consts), *in_specs)
   out_avals_ft = out_avals_ft.map2(
       lo_out_specs, lambda a, s: unshard_aval(mesh, check_vma, s, a))
   trace = core.trace_ctx.trace
