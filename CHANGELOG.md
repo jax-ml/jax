@@ -36,6 +36,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     elements with one E8M0 scale per block of 32, for
     {func}`jax.nn.scaled_dot_general`. The quantization is executed natively
     on AMD gfx950 GPUs and by a dequantize-and-dot fallback elsewhere.
+  * JAX now registers a `proxy` backend, which connects to an IFRT Proxy server
+    such as [Pathways on Cloud](https://docs.cloud.google.com/ai-hypercomputer/docs/workloads/pathways-on-cloud/pathways-intro).
+    To use it, set `JAX_PLATFORMS=proxy` and set `JAX_BACKEND_TARGET` to the
+    server address, e.g. `grpc://localhost:29000`.
 
 * Breaking changes
   * Removed `jax.custom_remat`. Use {func}`jax.custom_vjp.defremat` instead:
