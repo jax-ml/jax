@@ -83,11 +83,6 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     normal floating-point numbers, replacing floating-point arithmetic with
     bitwise operations. Subnormal inputs and underflowing outputs are flushed to
     signed zero.
-  * {obj}`jax.numpy.int32`, {obj}`jax.numpy.float32`, and other scalar constructors
-    now have proper type annotations; prior to v0.12.0 they were typed `Any`.
-    This may lead to new typecheck errors in cases where they were being misused;
-    for example, if they were assumed to be instances of `jnp.dtype` (which they
-    are not) or used as annotations for arrays of a given type (which is invalid).
   * Several {mod}`jax.numpy` functions are now implemented in terms of HiJax
     primitives (see {ref}`jax-301-hijax-types`). This includes
     {func}`~jax.numpy.searchsorted`, {func}`~jax.numpy.nonzero`,
@@ -101,6 +96,18 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     16). This avoids long compile times for sorts with many keys. Fixes the
     poor performance of {func}`jax.numpy.unique` for high-dimensional arrays
     ({jax-issue}`#17370`).
+
+* Type annotation improvements
+  * {obj}`jax.numpy.int32`, {obj}`jax.numpy.float32`, and other scalar constructors
+    now have proper type annotations; prior to v0.12.0 they were typed `Any`.
+    This may lead to new typecheck errors in cases where they were being misused;
+    for example, if they were assumed to be instances of `jnp.dtype` (which they
+    are not) or used as annotations for arrays of a given type (which is invalid).
+  * {func}`jax.Array.__iter__` and {func}`jax.Array.__reversed__` are now annotated
+    as returning `Iterator[Self]` rather than `Any`.
+  * {obj}`jax.random.Key` was introduced as an `Array` type alias. Starting in JAX
+    v0.13.0, this will be the return type for {func}`jax.random.key`,
+    {func}`jax.random.split`, and {func}`jax.random.fold_in`.
 
 * Bug fixes
   * Fixed the gradient of {func}`jax.numpy.ldexp` at `x = 0.0`, which previously
