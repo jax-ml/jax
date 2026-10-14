@@ -195,7 +195,6 @@ pytype_strict_library(
     deps = [
         "//jax/_src:api_util",
         "//jax/_src:core",
-        "//jax/_src:effects",
         "//jax/_src:flattree",
         "//jax/_src:lax",
         "//jax/_src:partial_eval",

@@ -71,6 +71,18 @@ class FuserUtilsTest(jtu.JaxTestCase):
     jaxpr2 = jax.make_jaxpr(func2)(1.0, 1.0)
     self.assertFalse(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
+  def test_dead_code_identity(self):
+    def func1(x):
+      _ = jnp.sin(x)
+      return x * 2.0
+
+    def func2(x):
+      return x * 2.0
+
+    jaxpr1 = jax.make_jaxpr(func1)(1.0)
+    jaxpr2 = jax.make_jaxpr(func2)(1.0)
+    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
+
   def test_vmap_topo_identity(self):
     def func1(x, y):
       a = jnp.sin(x)
@@ -242,17 +254,18 @@ class FuserUtilsTest(jtu.JaxTestCase):
     self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
   def test_embedded_constant_identity(self):
-    c_arr = jnp.array([1.0, 2.0])
+    c_np = np.array([1.0, 2.0], dtype=np.float32)
+    c_jax = jnp.array([3.0, 4.0], dtype=jnp.float32)
 
     def func1(x, y):
       a = x * 2.0  # scalar const
-      b = y + c_arr  # array const
-      return a + b
+      b = y + c_np  # array const
+      return a + b + c_jax
 
     def func2(x, y):
-      b = y + c_arr
+      b = y + c_np
       a = x * 2.0
-      return a + b
+      return a + b + c_jax
 
     jaxpr1 = jax.make_jaxpr(func1)(jnp.ones(2), jnp.ones(2))
     jaxpr2 = jax.make_jaxpr(func2)(jnp.ones(2), jnp.ones(2))
@@ -260,16 +273,16 @@ class FuserUtilsTest(jtu.JaxTestCase):
     self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
   def test_embedded_constant_nonidentity(self):
-    c_arr1 = jnp.array([1.0, 2.0])
-    c_arr2 = jnp.array([1.0, 3.0])
+    c_np1 = np.array([1.0, 2.0], dtype=np.float32)
+    c_np2 = np.array([1.0, 3.0], dtype=np.float32)
 
     def func1(x, y):
       a = x * 2.0
-      b = y + c_arr1
+      b = y + c_np1
       return a + b
 
     def func2(x, y):
-      b = y + c_arr2
+      b = y + c_np2
       a = x * 2.0
       return a + b
 
@@ -277,7 +290,13 @@ class FuserUtilsTest(jtu.JaxTestCase):
     jaxpr2 = jax.make_jaxpr(func2)(jnp.ones(2), jnp.ones(2))
     self.assertFalse(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
-  def test_ref_effects_topo_identity(self):
+    c_jax1 = jnp.array([1.0, 2.0], dtype=jnp.float32)
+    c_jax2 = jnp.array([1.0, 2.0], dtype=jnp.float32)
+    jaxpr3 = jax.make_jaxpr(lambda x: x + c_jax1)(jnp.ones(2))
+    jaxpr4 = jax.make_jaxpr(lambda x: x + c_jax2)(jnp.ones(2))
+    self.assertFalse(fuser_utils.compare_jaxprs(jaxpr3, jaxpr4))
+
+  def test_ref_effects_topo_nonidentity(self):
     def func1(x, y):
       ref1 = jax.new_ref(x)
       ref2 = jax.new_ref(y)
@@ -297,9 +316,10 @@ class FuserUtilsTest(jtu.JaxTestCase):
       return a + b
 
     jaxpr1 = jax.make_jaxpr(func1)(1.0, 1.0)
+    jaxpr1_copy = jax.make_jaxpr(lambda x, y: func1(x, y))(1.0, 1.0)
     jaxpr2 = jax.make_jaxpr(func2)(1.0, 1.0)
-    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr1))
-    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
+    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr1_copy))
+    self.assertFalse(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
   def test_ref_effects_nonidentity(self):
     def func1(x, y):
@@ -316,15 +336,15 @@ class FuserUtilsTest(jtu.JaxTestCase):
       ref2 = jax.new_ref(y)
       jax.ref.set(ref1, (), y + 1.0)
       jax.ref.set(ref2, (), x * 2.0)
-      b = jax.ref.get(ref1, ())
-      a = jax.ref.get(ref2, ())
+      a = jax.ref.get(ref1, ())
+      b = jax.ref.get(ref2, ())
       return a + b
 
     jaxpr1 = jax.make_jaxpr(func1)(1.0, 1.0)
     jaxpr2 = jax.make_jaxpr(func2)(1.0, 1.0)
     self.assertFalse(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
-  def test_ref_effects_outside_topo_identity(self):
+  def test_ref_effects_outside_topo_nonidentity(self):
     ref1 = jax.new_ref(1.0)
     ref2 = jax.new_ref(1.0)
 
@@ -343,9 +363,10 @@ class FuserUtilsTest(jtu.JaxTestCase):
       return a + b
 
     jaxpr1 = jax.make_jaxpr(func1)(1.0, 1.0)
+    jaxpr1_copy = jax.make_jaxpr(lambda x, y: func1(x, y))(1.0, 1.0)
     jaxpr2 = jax.make_jaxpr(func2)(1.0, 1.0)
-    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr1))
-    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
+    self.assertTrue(fuser_utils.compare_jaxprs(jaxpr1, jaxpr1_copy))
+    self.assertFalse(fuser_utils.compare_jaxprs(jaxpr1, jaxpr2))
 
   def test_ref_effects_outside_nonidentity(self):
     ref1 = jax.new_ref(1.0)
@@ -361,8 +382,8 @@ class FuserUtilsTest(jtu.JaxTestCase):
     def func2(x, y):
       jax.ref.set(ref1, (), y + 1.0)
       jax.ref.set(ref2, (), x * 2.0)
-      b = jax.ref.get(ref1, ())
-      a = jax.ref.get(ref2, ())
+      a = jax.ref.get(ref1, ())
+      b = jax.ref.get(ref2, ())
       return a + b
 
     jaxpr1 = jax.make_jaxpr(func1)(1.0, 1.0)
