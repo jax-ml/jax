@@ -332,6 +332,10 @@ class Exported:
 def deserialize(blob: bytearray) -> Exported:
   """Deserializes an Exported.
 
+  .. warning::
+    The serialized bytearray must be trusted input. If you deserialized it, when
+    you execute it, it may execute any custom call registered in the jaxlib.
+
   Args:
     blob: a bytearray obtained from :meth:`jax.export.Exported.serialize`.
   """
