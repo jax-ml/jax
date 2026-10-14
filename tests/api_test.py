@@ -2663,6 +2663,26 @@ class APITest(jtu.JaxTestCase):
     expected = [3., 0.]
     self.assertEqual(actual, expected)
 
+  def test_linear_transpose_symbolic_zeros(self):
+    f32 = core.ShapedArray((), np.dtype(np.float32))
+    z_f32 = ad.Zero(f32)
+    z_f0 = ad.Zero(core.ShapedArray((), float0))
+
+    def f(x, y, z):
+      assert isinstance(z, ad.Zero)
+      return 2.0 * x, 3.0 * x, z_f0
+
+    transpose = api.linear_transpose(f, f32, f32, z_f32, symbolic_zeros=True)
+    x_ct, y_ct, z_ct = transpose((jnp.float32(5.0), z_f32, z_f0))
+    self.assertArraysEqual(x_ct, jnp.float32(10.0))
+    self.assertIsInstance(y_ct, ad.Zero)
+    self.assertIsInstance(z_ct, ad.Zero)
+
+    x_ct0, y_ct0, z_ct0 = transpose((z_f32, z_f32, z_f0))
+    self.assertIsInstance(x_ct0, ad.Zero)
+    self.assertIsInstance(y_ct0, ad.Zero)
+    self.assertIsInstance(z_ct0, ad.Zero)
+
   @parameterized.product(jit=[False, True], dtype=[np.float32, np.complex64,
                                                 np.int32])
   def test_linear_transpose_float0(self, jit, dtype):

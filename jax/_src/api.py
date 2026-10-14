@@ -61,7 +61,6 @@ from jax._src import pjit
 from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray, typeof
 from jax._src.api_util import (
-  flatten_fun_nokwargs,
   flatten_axes, _ensure_index, check_callable, debug_info, argnums_partial2)
 from jax._src.lib import jax_jit
 from jax._src.lib import _jax
@@ -2088,7 +2087,8 @@ register_pytree_node(
 
 
 @partial(api_boundary, repro_api_name="jax.linear_transpose")
-def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
+def linear_transpose(fun: Callable, *primals, reduce_axes=(),
+                     symbolic_zeros: bool = False) -> Callable:
   """Transpose a function that is promised to be linear.
 
   For linear functions, this transformation is equivalent to :py:func:`vjp`, but
@@ -2110,6 +2110,10 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
       is not required: only the ``shape`` and ``dtype`` attributes are accessed.
       See below for an example. (Note that the duck-typed objects cannot be
       namedtuples because those are treated as standard Python containers.)
+    symbolic_zeros: boolean (default ``False``) indicating whether to accept
+      and return symbolic zeros (``ad_util.Zero`` / ``SymbolicZero``) in
+      ``primals``, ``fun`` outputs, and cotangents instead of instantiating
+      zeros.
 
   Returns:
     A callable that calculates the transpose of ``fun``. Valid input into this
@@ -2128,20 +2132,39 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   if reduce_axes:
     raise NotImplementedError("reduce_axes argument to transpose is deprecated")
   del reduce_axes
-  primals_flat, in_tree = tree_flatten(primals)
-  flat_fun, out_tree = flatten_fun_nokwargs(
-      lu.wrap_init(fun,
-                   debug_info=debug_info("linear_transpose", fun, primals, {})),
-      in_tree)
-  in_avals = [shaped_abstractify(x) for x in primals_flat]
-  in_dtypes = [a.dtype for a in in_avals if not a.is_high]
+  zero = lambda x: isinstance(x, (ad.Zero, ad.SymbolicZero))
+  is_zero = zero if symbolic_zeros else None
+  primals_flat, in_tree = tree_flatten(primals, is_leaf=is_zero)
+  in_nzs = [not (symbolic_zeros and zero(x)) for x in primals_flat]
+  in_avals = [x.aval if (symbolic_zeros and zero(x)) else shaped_abstractify(x)
+              for x in primals_flat]
+  nz_in_avals = [a for a, nz in zip(in_avals, in_nzs) if nz]
+  in_dtypes = [a.dtype for a in nz_in_avals if not a.is_high]
+  zero_primals = [x for x, nz in zip(primals_flat, in_nzs) if not nz]
 
-  in_pvals = map(pe.PartialVal.unknown, in_avals)
-  jaxpr, out_pvals, const = pe.trace_to_jaxpr_nounits(flat_fun, in_pvals,
+  @lu.transformation_with_aux2
+  def flat_fun(f: Callable, store: lu.Store, *nz_args_flat):
+    args_flat = util.merge_lists(in_nzs, zero_primals, nz_args_flat)
+    ans = f(*tree_unflatten(in_tree, args_flat))
+    ans_flat, out_tree = tree_flatten(ans, is_leaf=is_zero)
+    out_nzs = [not (symbolic_zeros and zero(x)) for x in ans_flat]
+    zero_out_avals = [x.aval for x, nz in zip(ans_flat, out_nzs) if not nz]
+    store.store((out_tree, out_nzs, zero_out_avals))
+    return [x for x, nz in zip(ans_flat, out_nzs) if nz]
+
+  dbg = debug_info("linear_transpose", fun, primals, {})
+  if symbolic_zeros:
+    dbg = dbg.with_unknown_names()
+  flat_fun_wrapped, out_info = flat_fun(lu.wrap_init(fun, debug_info=dbg))
+
+  in_pvals = map(pe.PartialVal.unknown, nz_in_avals)
+  jaxpr, out_pvals, const = pe.trace_to_jaxpr_nounits(flat_fun_wrapped, in_pvals,
                                                       instantiate=True)
   jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), True)
-  out_avals, _ = unzip2(out_pvals)
-  out_dtypes = [a.dtype for a in out_avals if not a.is_high]
+  out_tree, out_nzs, zero_out_avals = out_info()
+  nz_out_avals, _ = unzip2(out_pvals)
+  out_avals = util.merge_lists(out_nzs, zero_out_avals, nz_out_avals)
+  out_dtypes = [a.dtype for a in nz_out_avals if not a.is_high]
   if not (all(d == float0 or dtypes.issubdtype(d, np.inexact)
               for d in in_dtypes + out_dtypes)
           or all(d == float0 or dtypes.issubdtype(d, np.integer)
@@ -2150,22 +2173,32 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
                     "[float, complex, or float0], and integer -> integer functions, "
                     f"but got {in_dtypes} -> {out_dtypes}.")
 
+  def _typecheck_ct(a, ct):
+    if symbolic_zeros and zero(ct):
+      return core.typecompat(a, ct.aval) or core.typecompat(a.to_ct_aval(), ct.aval)
+    return core.typecheck(a, ct) or (symbolic_zeros and core.typecheck(a.to_ct_aval(), ct))
+
   @api_boundary
   def transposed_fun(const, out_cotangent):
-    out_cts, out_tree2 = tree_flatten(out_cotangent)
-    if out_tree() != out_tree2:
+    out_cts, out_tree2 = tree_flatten(out_cotangent, is_leaf=is_zero)
+    if out_tree != out_tree2:
       raise TypeError("cotangent tree does not match function output, "
-                      f"expected {out_tree()} but got {out_tree2}")
-    if not all(map(core.typecheck, out_avals, out_cts)):
+                      f"expected {out_tree} but got {out_tree2}")
+    if not all(map(_typecheck_ct, out_avals, out_cts)):
       raise TypeError("cotangent type does not match function output, "
                       f"expected {out_avals} but got {out_cts}")
     # float0 has only one value; represent it symbolically during transposition
     # so transpose rules never need to add or otherwise operate on float0 arrays.
-    out_cts = [ad.Zero(a.to_ct_aval()) if getattr(a, 'dtype', None) == float0
-               else ct for a, ct in zip(out_avals, out_cts)]
-    dummies = [ad.UndefinedPrimal(a.to_ct_aval()) for a in in_avals]
-    in_cts = ad.backward_pass(jaxpr, True, const, dummies, out_cts)
-    in_cts = map(ad.instantiate_zeros, in_cts)
+    nz_out_cts = [ad.Zero(a.to_ct_aval())
+                  if (symbolic_zeros and zero(ct)) or getattr(a, 'dtype', None) == float0
+                  else ct
+                  for a, ct, nz in zip(out_avals, out_cts, out_nzs) if nz]
+    dummies = [ad.UndefinedPrimal(a.to_ct_aval()) for a in nz_in_avals]
+    nz_in_cts = ad.backward_pass(jaxpr, True, const, dummies, nz_out_cts)
+    zero_in_cts = [ad.Zero(a.to_ct_aval()) for a, nz in zip(in_avals, in_nzs) if not nz]
+    in_cts = util.merge_lists(in_nzs, zero_in_cts, nz_in_cts)
+    if not symbolic_zeros:
+      in_cts = map(ad.instantiate_zeros, in_cts)
     return tree_unflatten(in_tree, in_cts)
 
   # Ensure that transposed_fun is a PyTree

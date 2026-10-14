@@ -729,26 +729,15 @@ def _transpose_jvp(self, res, out_ct):
   """The `vjp_bwd_retval` half of the `vjp_from_jvp` pair."""
   primals, nzs_in = res
   nzs_flat = api.tuptree_flags(nzs_in, self.in_tree, 'nzs_in', 'vjp_fwd nzs_in')
-  zero = lambda x: isinstance(x, (ad_util.Zero, ad_util.SymbolicZero))
-  inst = lambda x: ad_util.zeros_like_aval(x.aval) if zero(x) else x
 
-  def tangent_map(*nz_tangents_flat):
-    nz_ = iter(nz_tangents_flat)
-    tangents_flat = [next(nz_) if nz else ad_util.Zero(a.to_tangent_aval())
-                     for a, nz in zip(self.in_avals_flat, nzs_flat)]
-    assert next(nz_, None) is None
+  def tangent_map(*tangents_flat):
     tangents = tree_unflatten(self.in_tree, tangents_flat)
-    _, out_tangents = self.jvp(primals, tangents)
-    return tree_map(inst, out_tangents, is_leaf=zero)
+    return self.jvp(primals, tangents)[1]
 
-  out_ct = tree_map(ad_util.instantiate, out_ct, is_leaf=zero)
-  dummies = [ad_util.zeros_like_aval(a.to_tangent_aval())
-             for a, nz in zip(self.in_avals_flat, nzs_flat) if nz]
-  in_cts_nz = api.linear_transpose(tangent_map, *dummies)(out_ct)
-  in_cts_nz_ = iter(in_cts_nz)
-  in_cts_flat = [next(in_cts_nz_) if nz else ad_util.Zero(a.to_tangent_aval())
-                 for a, nz in zip(self.in_avals_flat, nzs_flat)]
-  assert next(in_cts_nz_, None) is None
+  dummies = [a.to_tangent_aval() if nz else ad_util.a2tz(a)
+             for a, nz in zip(self.in_avals_flat, nzs_flat)]
+  in_cts_flat = api.linear_transpose(
+      tangent_map, *dummies, symbolic_zeros=True)(out_ct)
   return tree_unflatten(self.in_tree, in_cts_flat)
 
 def _vjp_fwd_from_lin(self, nzs_in, *primals):
@@ -760,21 +749,16 @@ def _transpose_linearized(self, residuals, out_ct):
   """The `vjp_bwd_retval` half of the `vjp_from_lin` pair."""
   res, nzs = residuals
   nzs_in = api.tuptree_flags(nzs.val, self.in_tree, 'nzs_in', 'vjp_fwd nzs_in')
-  inst = lambda x: tree_map(ad_util.instantiate, x,
-                            is_leaf=lambda x: isinstance(x, ad_util.Zero))
 
-  def tangent_map(*ts):
-    ts = iter(ts)
-    tangents = tree_unflatten(self.in_tree,
-        [next(ts) if nz else ad_util.a2tz(a)
-         for nz, a in zip(nzs_in, self.in_avals_flat)])
-    return inst(self.linearized(res, *tangents))
-  dummies = [a.to_tangent_aval()
-             for a, nz in zip(self.in_avals_flat, nzs_in) if nz]
-  cts = iter(api.linear_transpose(tangent_map, *dummies)(inst(out_ct)))
-  return tree_unflatten(self.in_tree,
-      [next(cts) if nz else ad_util.a2tz(a)
-       for nz, a in zip(nzs_in, self.in_avals_flat)])
+  def tangent_map(*tangents_flat):
+    tangents = tree_unflatten(self.in_tree, tangents_flat)
+    return self.linearized(res, *tangents)
+
+  dummies = [a.to_tangent_aval() if nz else ad_util.a2tz(a)
+             for a, nz in zip(self.in_avals_flat, nzs_in)]
+  in_cts_flat = api.linear_transpose(
+      tangent_map, *dummies, symbolic_zeros=True)(out_ct)
+  return tree_unflatten(self.in_tree, in_cts_flat)
 
 class _LinearizeFromJVP(NamedTuple):
   lin: Callable
@@ -1349,11 +1333,9 @@ class CustomJVPTraced(HiPrim):
       full = merge_lists(is_lin, vals, list(lin_flat))
       return self.expand(*tree_unflatten(self.in_tree, full))
 
-    zero = lambda x: isinstance(x, (ad_util.Zero, ad_util.SymbolicZero))
-    out_ct = tree_map(ad_util.instantiate, out_ct, is_leaf=zero)
-    dummies = [ad_util.zeros_like_aval(x.aval)
-               for x, l in zip(args_flat, is_lin) if l]
-    cts = iter(api.linear_transpose(lin_map, *dummies)(out_ct))
+    dummies = [x.aval for x, l in zip(args_flat, is_lin) if l]
+    cts = iter(api.linear_transpose(
+        lin_map, *dummies, symbolic_zeros=True)(out_ct))
     for x in args_flat:
       if isinstance(x, ad.GradAccum): x.accum(next(cts))
     assert next(cts, None) is None
