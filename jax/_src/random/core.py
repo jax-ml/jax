@@ -3115,7 +3115,7 @@ def _generalized_normal(key: Key, p, shape, dtype):
 def ball(
   key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   d: int,
-  p: float = 2,
+  p: RealArray = 2,
   shape: Shape = (),
   dtype: DTypeLikeFloat | None = None,
   *,
@@ -3144,6 +3144,7 @@ def ball(
   Returns:
     A random array of shape `(*shape, d)` and specified dtype.
   """
+  check_arraylike("ball", p)
   shape = core.canonicalize_shape(shape)
   key, _ = _check_prng_key("ball", key)
   dtype = dtypes.check_and_canonicalize_user_dtype(
