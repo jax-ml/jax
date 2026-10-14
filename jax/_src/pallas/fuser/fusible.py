@@ -19,7 +19,6 @@ from typing import Any, Callable
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
-from jax._src import effects
 from jax._src import flattree as ft
 from jax._src import hijax
 from jax._src import tree_util
@@ -29,13 +28,6 @@ from jax._src.lax.control_flow.loops import eval_jaxpr_p
 from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.traceback_util import api_boundary
-
-
-def _positional_effects(jaxpr: jax_core.Jaxpr) -> frozenset[effects.Effect]:
-  if not any(isinstance(e, effects.JaxprInputEffect) for e in jaxpr.effects):
-    return frozenset(jaxpr.effects)
-  idx = {v: i for i, v in enumerate(jaxpr.constvars + jaxpr.invars)}
-  return frozenset(jax_core.subst_input_effects(jaxpr.effects, idx))
 
 
 class Fusible(hijax.HiPrim):
@@ -66,7 +58,7 @@ class Fusible(hijax.HiPrim):
         "num_consts": num_consts,
         "args_tree": args_tree,
     }
-    self.effects = _positional_effects(jaxpr)
+    self.effects = frozenset(jax_core.positional_effects(jaxpr))
     super().__init__()
 
   def inline(self, *consts_and_args):
