@@ -2183,22 +2183,18 @@ def get_cur_mesh_sharding(spec=None):
   spec = P() if spec is None else spec
   return NamedSharding(mesh_lib.get_abstract_mesh(), spec)
 
-def getu(aval, kind=UnreducedKind.sum):
+def getu(aval, kind: UnreducedKind | None = UnreducedKind.sum):
   if aval.sharding.mesh.are_all_axes_manual:
-    out_u = aval.mat.unreduced
-    if out_u:
-      if (aval_k := aval.mat.unreduced_kind) is not kind:
-        raise ValueError(f'Expected unreduced_kind={kind} but got {aval_k}')
-    return out_u
-  if aval.sharding.mesh.are_all_axes_explicit:
-    out_u = aval.sharding.spec.unreduced
-    if out_u:
-      if (aval_k := aval.sharding.spec.unreduced_kind) is not kind:
-        raise ValueError(f'Expected unreduced_kind={kind} but got {aval_k}')
-    return out_u
-  # Revise this after partial manual unreduced is supported
-  assert not aval.mat.unreduced
-  return aval.sharding.spec.unreduced
+    out_u, aval_k = aval.mat.unreduced, aval.mat.unreduced_kind
+  elif aval.sharding.mesh.are_all_axes_explicit:
+    out_u, aval_k = aval.sharding.spec.unreduced, aval.sharding.spec.unreduced_kind
+  else:
+    # Revise this after partial manual unreduced is supported
+    assert not aval.mat.unreduced
+    out_u, aval_k = aval.sharding.spec.unreduced, aval.sharding.spec.unreduced_kind
+  if out_u and kind is not None and aval_k is not kind:
+    raise ValueError(f'Expected unreduced_kind={kind} but got {aval_k}')
+  return out_u, aval_k
 
 def getr(aval):
   if aval.sharding.mesh.are_all_axes_manual:

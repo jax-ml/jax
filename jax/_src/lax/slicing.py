@@ -1406,8 +1406,7 @@ def _get_sharding_for_varying_out_shape(out_shape, operand, name):
   return operand.sharding
 
 def _slice_ur_rule(operand, *, start_indices, limit_indices, strides):
-  out_unreduced = core.getu(operand)
-  kind = UnreducedKind.sum if out_unreduced else None
+  out_unreduced, kind = core.getu(operand, None)
   return out_unreduced, core.getr(operand), kind
 
 def _slice_sharding_rule(operand, *, start_indices, limit_indices, strides):
@@ -1525,7 +1524,7 @@ def _dynamic_slice_sharding_rule(operand, *starts_and_dyn_sizes, slice_sizes):
   return _get_sharding_for_varying_out_shape(out_shape, operand, 'dynamic_slice')
 
 def _dynamic_slice_ur_rule(operand, *starts_and_dyn_sizes, slice_sizes):
-  if core.getu(operand):
+  if core.getu(operand)[0]:
     raise NotImplementedError(
         'unreduced rule for dynamic_slice is not implemented. Please'
         ' file an issue at https://github.com/jax-ml/jax/issues')
@@ -1666,13 +1665,13 @@ def _dynamic_update_slice_sharding_rule(operand, update, *start_indices):
   return operand.sharding
 
 def _dus_unreduced_rule(operand, update):
-  if core.getu(operand) != core.getu(update):
+  if core.getu(operand)[0] != core.getu(update)[0]:
     raise core.ShardingTypeError(
         "dynamic_update_slice operand and update must be unreduced along the"
         " same axes. Got operand sharding"
         f" {operand.str_short(mesh_axis_types=True)} and update sharding"
         f" {update.str_short(mesh_axis_types=True)}.")
-  out_u = core.getu(operand)
+  out_u, _ = core.getu(operand)
   return out_u, UnreducedKind.sum if out_u else None
 
 def _dus_reduced_rule(operand, update):
@@ -2138,7 +2137,7 @@ def _gather_reduced_rule(operand, indices):
   return out_reduced
 
 def _gather_ur_rule(operand, indices, **kwargs):
-  if core.getu(operand) or core.getu(indices):
+  if core.getu(operand)[0] or core.getu(indices)[0]:
     raise NotImplementedError(
         "unreduced rule for gather is not implemented. Please file an issue at"
         " https://github.com/jax-ml/jax/issues")
@@ -2780,16 +2779,16 @@ def _scatter_sharding_rule(
 
 
 def _scatter_unreduced_rule(operand, indices, updates, **kwargs):
-  if core.getu(indices):
+  if core.getu(indices)[0]:
     raise core.ShardingTypeError(
         "scatter indices cannot be unreduced. Got indices sharding"
         f" {indices.str_short(mesh_axis_types=True)}.")
-  if core.getu(operand) != core.getu(updates):
+  if core.getu(operand)[0] != core.getu(updates)[0]:
     raise core.ShardingTypeError(
         "scatter operand and updates must be unreduced along the same axes."
         f" Got operand sharding {operand.str_short(mesh_axis_types=True)} and"
         f" updates sharding {updates.str_short(mesh_axis_types=True)}.")
-  out_u = core.getu(operand)
+  out_u, _ = core.getu(operand)
   if out_u and not all(s is None for s in indices.sharding.spec):
     raise NotImplementedError
   return out_u, UnreducedKind.sum if out_u else None

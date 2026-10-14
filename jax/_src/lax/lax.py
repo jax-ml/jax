@@ -4445,7 +4445,7 @@ def default_unop_reduced_rule(aval):
 
 def unop_ur_rule(name, aval, **kwargs):
   reduced = default_unop_reduced_rule(aval)
-  if getu(aval):
+  if getu(aval)[0]:
     raise core.ShardingTypeError(
         f'{name} is a non-linear operation and cannot accept input that is'
         f' unreduced. Got {aval}')
@@ -4591,7 +4591,7 @@ def default_nary_reduced_rule(*avals, **params):
 
 def nary_ur_rule(name, *avals, **params):
   reduced = default_nary_reduced_rule(*avals, **params)
-  if any(getu(a) for a in avals):
+  if any(getu(a)[0] for a in avals):
     raise core.ShardingTypeError(
         f'{name} is a non-linear operation and cannot accept inputs that are'
         f' unreduced. Got {avals}')
@@ -4708,7 +4708,7 @@ _bool_or_int = _int | _bool
 _ordered = _int | _float | _bool
 
 def _neg_ur_rule(aval, **kwargs):
-  out_u = getu(aval)
+  out_u, _ = getu(aval)
   return out_u, getr(aval), UnreducedKind.sum if out_u else None
 
 neg_p = unop(_identity, _num, 'neg', ur_rule=_neg_ur_rule)
@@ -5481,7 +5481,7 @@ def _add_transpose(t, x, y):
 
 def _add_ur_rule(name, x, y):
   out_reduced = default_nary_reduced_rule(x, y)
-  x_ur, y_ur = getu(x), getu(y)
+  (x_ur, _), (y_ur, _) = getu(x), getu(y)
   if x_ur and y_ur:
     if x_ur != y_ur:
       raise core.ShardingTypeError(
@@ -5544,7 +5544,7 @@ mlir.register_lowering(sub_p, partial(_nary_lower_hlo, hlo.subtract))
 def _mul_ur_rule(x, y, *, out_dtype=None):
   del out_dtype  # unused
   out_reduced = default_nary_reduced_rule(x, y)
-  x_ur, y_ur = getu(x), getu(y)
+  (x_ur, _), (y_ur, _) = getu(x), getu(y)
   if x_ur and y_ur:
     raise core.ShardingTypeError(
           'lhs and rhs to `mul` cannot be unreduced since mul is bilinear. '
@@ -5608,7 +5608,7 @@ def _div_transpose_rule(cotangent, x, y):
 
 def _div_ur_rule(x, y):
   out_reduced = default_nary_reduced_rule(x, y)
-  x_ur, y_ur = getu(x), getu(y)
+  (x_ur, _), (y_ur, _) = getu(x), getu(y)
   if y_ur:
     raise ValueError(
         f'The denominator cannot be unreduced passed to `div`. Got {y=}')
@@ -5775,7 +5775,7 @@ def _convert_element_type_ur_rule(operand, *, new_dtype, weak_type, sharding):
           f' unreduced of kind `sum`. Got sharding={sharding}')
     unreduced = sharding.spec.unreduced
   else:
-    unreduced = getu(operand)
+    unreduced, _ = getu(operand)
   reduced = (sharding.spec.reduced
              if sharding is not None and isinstance(sharding, NamedSharding)
              and sharding.spec.reduced else getr(operand))
@@ -5932,7 +5932,7 @@ stage_p.def_abstract_eval(
             lambda aval: aval.weak_type,
             lambda x: x.sharding,
             lambda x: x.mat.varying,
-            lambda x: (getu(x), getr(x)),
+            lambda x: (getu(x)[0], getr(x)),
             None))
 
 def _stage_impl(x):
@@ -6280,7 +6280,7 @@ def _dot_general_sharding_computation(
 
 
 def _dot_general_unreduced_rule(lhs, rhs, dimension_numbers, out_sharding):
-  if getu(lhs) or getu(rhs):
+  if getu(lhs)[0] or getu(rhs)[0]:
     raise core.ShardingTypeError(
         f'lhs or rhs passed to dot_general cannot be unreduced. Got {lhs=} and'
         f' {rhs=}')
@@ -7489,7 +7489,7 @@ def _broadcast_in_dim_unreduced_rule(operand, sharding):
           '`out_sharding` passed to `broadcast_in_dim` can only contain'
           f' unreduced of kind `sum`. Got out_sharding={sharding}')
   else:
-    out = getu(operand)
+    out, _ = getu(operand)
   kind = UnreducedKind.sum if out else None
   return out, kind
 
@@ -7807,13 +7807,14 @@ def _concatenate_reduced_rule(*operands, **kwargs):
   return reduced_s
 
 def _concatenate_unreduced_rule(*operands, **kwargs):
-  unreduced_specs = {u for o in operands if (u := getu(o))}
+  unreduced_specs = {uk for o in operands if (uk := getu(o, None))[0]}
   if len(unreduced_specs) > 1:
     raise core.ShardingTypeError(
-        'All operands should be unreduced along the same mesh axes. Got'
-        f' unreduced specs: {unreduced_specs}')
-  unreduced_s, = unreduced_specs if unreduced_specs else (frozenset(),)
-  return unreduced_s, UnreducedKind.sum if unreduced_s else None
+        'All operands should be unreduced along the same mesh axes and have the'
+        f' same unreduced_kind. Got unreduced specs: {unreduced_specs}')
+  (unreduced_s, kind), = (unreduced_specs if unreduced_specs else
+                          ((frozenset(), None),))
+  return unreduced_s, kind
 
 def _concatenate_ur_rule(*operands, **kwargs):
   out_unreduced, kind = _concatenate_unreduced_rule(*operands, **kwargs)
@@ -8002,7 +8003,7 @@ def _unstack_vma_rule(operand, *, axis):
   return [out_vma] * operand.shape[axis]
 
 def _unstack_ur_rule(operand, *, axis):
-  out_u = getu(operand)
+  out_u, _ = getu(operand)
   kind = UnreducedKind.sum if out_u else None
   return ([out_u] * operand.shape[axis], [getr(operand)] * operand.shape[axis],
           [kind] * operand.shape[axis])
@@ -8128,7 +8129,7 @@ def _split_sharding_rule(operand, *, sizes, axis):
 
 def _split_ur_rule(operand, *, sizes, axis):
   out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
-  out_u = getu(operand)
+  out_u, _ = getu(operand)
   kind = UnreducedKind.sum if out_u else None
   return ([out_u] * len(out_shapes), [getr(operand)] * len(out_shapes),
           [kind] * len(out_shapes))
@@ -8185,7 +8186,7 @@ def _pad_sharding_rule(operand, padding_value, *, padding_config):
       out_shape, operand, 'padding')
 
 def _pad_ur_rule(operand, padding_value, *, padding_config):
-  out_unreduced = core.getu(operand)
+  out_unreduced, _ = core.getu(operand)
   kind = UnreducedKind.sum if out_unreduced else None
   return out_unreduced, core.getr(operand), kind
 
@@ -8268,8 +8269,7 @@ def _squeeze_sharding_rule(operand, *, dimensions):
       spec=operand.sharding.spec.update(partitions=new_spec))
 
 def _squeeze_ur_rule(operand, *, dimensions):
-  out_unreduced = core.getu(operand)
-  kind = UnreducedKind.sum if out_unreduced else None
+  out_unreduced, kind = core.getu(operand, None)
   return out_unreduced, core.getr(operand), kind
 
 def _compute_squeeze_shape(shape, dimensions):
@@ -8423,8 +8423,9 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
 
 
 def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
-  filtered_spec = [sp for sh, sp in zip(operand.shape, operand.sharding.spec)
-                   if sh != 1]
+  filtered_spec = [
+      sp for sh, sp in zip(operand.shape, operand.sharding.spec.partitions)
+      if sh != 1]
   fs = iter(filtered_spec)
   new_spec = [None if n == 1 else next(fs) for n in new_sizes]
   assert next(fs, None) is None
@@ -8526,15 +8527,19 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, orig_new_sizes,
 
 
 def _reshape_unreduced_rule(operand, *, new_sizes, dimensions, sharding):
-  op_unreduced = getu(operand)
-  kind = UnreducedKind.sum if op_unreduced else None
+  op_unreduced, kind = getu(operand, None)
   if op_unreduced:
-    if (sharding is not None and
-        operand.sharding.spec.unreduced != sharding.spec.unreduced):  # Explicit mode
-      raise ValueError(
-          'out_sharding passed to reshape must be unreduced over the same mesh'
-          f' axes as operand. Got out_sharding: {sharding.spec} and operand'
-          f' type: {operand.str_short(True)}')
+    if sharding is not None:  # Explicit mode
+      if operand.sharding.spec.unreduced != sharding.spec.unreduced:
+        raise ValueError(
+            'out_sharding passed to reshape must be unreduced over the same mesh'
+            f' axes as operand. Got out_sharding: {sharding.spec} and operand'
+            f' type: {operand.str_short(True)}')
+      if operand.sharding.spec.unreduced_kind != sharding.spec.unreduced_kind:
+        raise ValueError(
+            'out_sharding passed to reshape must have the same unreduced_kind'
+            f' as operand. Got out_sharding: {sharding.spec} and operand'
+            f' type: {operand.str_short(True)}')
     return op_unreduced, kind
   if sharding is not None and sharding.spec.unreduced:
     raise ValueError('out_sharding passed to `reshape` cannot contain '
@@ -8783,8 +8788,7 @@ def _transpose_sharding_rule(operand, *, permutation):
   return operand.sharding.update(spec=o_spec.update(partitions=new_spec))
 
 def _transpose_ur_rule(operand, *, permutation):
-  out_unreduced = core.getu(operand)
-  kind = UnreducedKind.sum if out_unreduced else None
+  out_unreduced, kind = core.getu(operand, None)
   return out_unreduced, core.getr(operand), kind
 
 def _transpose_layout_rule(out_aval, operand, *, permutation):
@@ -8858,7 +8862,7 @@ def _select_ur_rule(which, *cases):
     return frozenset(), frozenset(), None
   # which and all cases have the same sharding check is already done in select
   # sharding rule.
-  out_unreduced = core.getu(non_empty_cs[0])
+  out_unreduced, _ = core.getu(non_empty_cs[0])
   kind = UnreducedKind.sum if out_unreduced else None
   return out_unreduced, core.getr(non_empty_cs[0]), kind
 
@@ -9219,7 +9223,7 @@ def _reduce_op_unreduced_rule(operand, axes, out_sharding, out_kind, name):
     out_u = out_sharding.spec.unreduced
   else:
     # TODO(yashkatariya): For max/min, do getu(operand, out_kind) and add tests
-    out_u = getu(operand)
+    out_u, _ = getu(operand)
   return out_u, out_kind if out_u else None
 
 def _reduce_op_reduced_rule(operand, out_sharding, name):
@@ -9480,7 +9484,7 @@ def _reduce_precision_memory_space_rule(operand, *, exponent_bits, mantissa_bits
   return operand.memory_space
 
 def _reduce_precision_ur_rule(operand, *, exponent_bits, mantissa_bits):
-  out_unreduced = core.getu(operand)
+  out_unreduced, _ = core.getu(operand)
   kind = UnreducedKind.sum if out_unreduced else None
   return out_unreduced, core.getr(operand), kind
 
