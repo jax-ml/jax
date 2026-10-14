@@ -998,6 +998,7 @@ jax_multiplatform_test(
     srcs = ["lax_vmap_op_test.py"],
     backend_tags = {
         "cpu": ["noasan"],
+        "gpu": ["noasan"],  # Times out.
     },
     shard_count = {
         "cpu": 20,
