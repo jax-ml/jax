@@ -188,11 +188,20 @@ class Expm1Test(jtu.JaxTestCase):
       cpu_bounds = ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0})
     else:
       cpu_bounds = ("cpu", {f16: 2.5, f32: 6.5, f64: 3.5})
+    if jtu.is_libtpu_at_least("0.0.51"):
+      tpu_bounds = [
+          ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 1.0}),
+          (["tpu_v6e", "tpu_7x"], {f32: 1.0}),
+      ]
+    else:
+      tpu_bounds = [
+          ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 2.0}),
+          (["tpu_v6e", "tpu_7x"], {f32: 2.0}),
+      ]
     bounds = [
         cpu_bounds,
         ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
-        ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 2.0}),
-        (["tpu_v6e", "tpu_7x"], {f32: 2.0}),
+        *tpu_bounds,
     ]
     util.check_unary_precision(
         self,

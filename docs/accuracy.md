@@ -177,7 +177,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.exp` (`highest`) | 1.5 | 2.0 | 1.5 | 1.5 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.exp2` | 68.5 | 69.0 | 141.5 | 133.0 | 90.0 | 90.0 | |
 | {func}`~jax.lax.expm1` | 1.0 | 1.5 | 1772.0 | 1357.5 | 3.5 | 3.5 | |
-| {func}`~jax.lax.expm1` (`highest`) | 1.0 | 1.5 | 2.0 | 2.0 | 2.0 | 2.0 | `accuracy=lax.AccuracyMode.HIGHEST` |
+| {func}`~jax.lax.expm1` (`highest`) | 1.0 | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.lgamma` | 4.0 | 4.0 | 4.0 | 4.0 | 4.0 | 4.0 | |
 | {func}`~jax.lax.log` | 1.5 | 1.0 | 4030.5 | 62.0 | 2.5 | 2.5 | |
 | {func}`~jax.lax.log1p` | 3.0 | 1.0 | 4034.0 | 63.0 | 3.0 | 3.0 | |
