@@ -162,6 +162,8 @@ class BatchTracer(Tracer['BatchTrace']):
     self.batch_dim = batch_dim
     self.source_info = source_info
 
+  _user_facing_name = 'VmapTracer'
+
   def _short_repr(self):
     return f"VmapTracer(aval={self.aval}, batched={core.typeof(self.val)})"
 
