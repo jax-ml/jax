@@ -3842,6 +3842,243 @@ class EmitPipelinePrefetchTest(jtu.JaxTestCase):
     res = run(x)
     np.testing.assert_allclose(res, x + 1)
 
+  def test_p1a_plain_ref_prefetch(self):
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+
+    @jax.jit
+    def run(x):
+      x_ref = jax.new_ref(x)
+      in_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2, prefetched_count=1),
+          memory_space=pltpu.VMEM,
+      )
+      out_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2),
+          memory_space=pltpu.VMEM,
+      )
+      pipeline, async_prefetch = pltpu.emit_pipeline_with_async_prefetch(
+          lambda x_vmem, o_vmem: o_vmem.set(x_vmem[...] + 1),
+          grid=(4,),
+          in_specs=[in_spec],
+          out_specs=out_spec,
+          mesh=mesh,
+      )
+      pref = async_prefetch(x_ref)
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((32, 128), jnp.float32),
+          mesh=mesh,
+      )
+      def copy_kernel(x_hbm_ref, o_hbm_ref):
+        pipeline(x_hbm_ref, o_hbm_ref, allocations=pref)
+
+      return copy_kernel(x_ref)
+
+    x = jnp.arange(32 * 128, dtype=jnp.float32).reshape((32, 128))
+    np.testing.assert_allclose(run(x), x + 1)
+
+  def test_p1b_no_pipelining_prefetch(self):
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+
+    @jax.jit
+    def run(x):
+      in_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2, prefetched_count=1),
+          memory_space=pltpu.VMEM,
+      )
+      out_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2),
+          memory_space=pltpu.VMEM,
+      )
+      pipeline, async_prefetch = pltpu.emit_pipeline_with_async_prefetch(
+          lambda x_vmem, o_vmem: o_vmem.set(x_vmem[...] + 1),
+          grid=(4,),
+          in_specs=[in_spec],
+          out_specs=out_spec,
+          mesh=mesh,
+          no_pipelining=True,
+      )
+      pref = async_prefetch(x)
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((32, 128), jnp.float32),
+          mesh=mesh,
+      )
+      def copy_kernel(x_hbm_ref, o_hbm_ref):
+        pipeline(x_hbm_ref, o_hbm_ref, allocations=pref)
+
+      return copy_kernel(x)
+
+    x = jnp.arange(32 * 128, dtype=jnp.float32).reshape((32, 128))
+    expected = np.arange(32 * 128, dtype=np.float32).reshape((32, 128)) + 1
+    np.testing.assert_allclose(run(x), expected)
+    np.testing.assert_allclose(x + 1, expected)
+
+  def test_p1c_tiling_sparse_core_oob_prefetch(self):
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+
+    @jax.jit
+    def run(x):
+      in_spec = pl.BlockSpec(
+          (4, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2, prefetched_count=1),
+          memory_space=pltpu.VMEM,
+      )
+      out_spec = pl.BlockSpec(
+          (4, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2),
+          memory_space=pltpu.VMEM,
+      )
+      pipeline, async_prefetch = pltpu.emit_pipeline_with_async_prefetch(
+          lambda x_vmem, o_vmem: o_vmem.set(x_vmem[...] + 1),
+          grid=(2,),
+          in_specs=[in_spec],
+          out_specs=out_spec,
+          mesh=mesh,
+          tiling=pltpu.Tiling.SPARSE_CORE,
+      )
+      pref = async_prefetch(x)
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((6, 128), jnp.float32),
+          mesh=mesh,
+      )
+      def copy_kernel(x_hbm_ref, o_hbm_ref):
+        pipeline(x_hbm_ref, o_hbm_ref, allocations=pref)
+
+      return copy_kernel(x)
+
+    x = jnp.arange(6 * 128, dtype=jnp.float32).reshape((6, 128))
+    np.testing.assert_allclose(run(x), x + 1)
+
+  def test_p1d_trivial_windowing_default_block_spec_prefetch(self):
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+
+    @jax.jit
+    def run(x):
+      in_spec = pl.BlockSpec(
+          memory_space=pltpu.VMEM,
+          pipeline_mode=pl.Buffered(buffer_count=1, prefetched_count=1),
+      )
+      out_spec = pl.BlockSpec(
+          (8, 128),
+          lambda i: (i, 0),
+          pipeline_mode=pl.Buffered(buffer_count=2),
+          memory_space=pltpu.VMEM,
+      )
+      pipeline, async_prefetch = pltpu.emit_pipeline_with_async_prefetch(
+          lambda x_vmem, o_vmem: o_vmem.set(
+              x_vmem[pl.ds(pl.program_id(0) * 8, 8), :] + 1
+          ),
+          grid=(4,),
+          in_specs=[in_spec],
+          out_specs=out_spec,
+          mesh=mesh,
+      )
+      pref = async_prefetch(x)
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((32, 128), jnp.float32),
+          mesh=mesh,
+      )
+      def copy_kernel(x_hbm_ref, o_hbm_ref):
+        pipeline(x_hbm_ref, o_hbm_ref, allocations=pref)
+
+      return copy_kernel(x)
+
+    x = jnp.arange(32 * 128, dtype=jnp.float32).reshape((32, 128))
+    np.testing.assert_allclose(run(x), x + 1)
+
+  def test_p1e_manual_allocations_lookahead_repeated_index(self):
+    if config.use_emit_pipeline_primitive.value:
+      self.skipTest(
+          'allocations are not yet supported by the emit_pipeline primitive.'
+      )
+
+    def prefetch_start(x_hbm_ref, x_vmem_ref, sem):
+      pltpu.async_copy(x_hbm_ref.at[0:128], x_vmem_ref.at[0], sem.at[0])
+      pltpu.async_copy(x_hbm_ref.at[128:256], x_vmem_ref.at[1], sem.at[1])
+
+    def prefetch_done(x_hbm_ref, x_vmem_ref, sem, x_vmem_out_ref):
+      del x_vmem_out_ref
+      pltpu.make_async_copy(x_hbm_ref.at[0:128], x_vmem_ref.at[0], sem.at[0]).wait()
+      pltpu.make_async_copy(x_hbm_ref.at[128:256], x_vmem_ref.at[1], sem.at[1]).wait()
+
+    def kernel(x_hbm_ref, x_prefetched_vmem, o_hbm_ref):
+      pipeline, make_allocs = pltpu.emit_pipeline_with_allocations(
+          lambda x_ref, o_ref: o_ref.set(x_ref[...]),
+          grid=(4,),
+          in_specs=[
+              pl.BlockSpec(
+                  (128,),
+                  lambda i: (i // 2,),
+                  pipeline_mode=pl.Buffered(
+                      buffer_count=2,
+                      use_lookahead=True,
+                      prefetched_count=2,
+                  ),
+              )
+          ],
+          out_specs=[pl.BlockSpec((128,), lambda i: (i,))],
+      )
+
+      @functools.partial(
+          pl.run_scoped, allocs=make_allocs(x_hbm_ref, o_hbm_ref)
+      )
+      def _(allocs):
+        x_bref, o_bref = allocs
+        allocs = (x_bref.with_window_ref(x_prefetched_vmem), o_bref)
+        return pipeline(x_hbm_ref, o_hbm_ref, allocations=allocs)
+
+    @jax.jit
+    def run(x):
+      prefetched, sem = pl.pallas_call(
+          prefetch_start,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+          out_specs=[
+              pl.BlockSpec(memory_space=pltpu.VMEM),
+              pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+          ],
+          out_shape=(
+              pltpu.VMEM((2, 128), jnp.float32),
+              pltpu.SemaphoreType.DMA((2,)),
+          ),
+      )(x)
+      prefetched = pl.pallas_call(
+          prefetch_done,
+          in_specs=[
+              pl.BlockSpec(memory_space=pltpu.HBM),
+              pl.BlockSpec(memory_space=pltpu.VMEM),
+              pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+          ],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+          out_shape=pltpu.VMEM((2, 128), jnp.float32),
+          input_output_aliases={1: 0},
+      )(x, prefetched, sem)
+      return pl.pallas_call(
+          kernel,
+          in_specs=[
+              pl.BlockSpec(memory_space=pltpu.HBM),
+              pl.BlockSpec(memory_space=pltpu.VMEM),
+          ],
+          out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+          out_shape=jax.ShapeDtypeStruct((512,), jnp.float32),
+      )(x, prefetched)
+
+    x = jnp.arange(512, dtype=jnp.float32)
+    expected = jnp.concatenate([x[0:128], x[0:128], x[128:256], x[128:256]])
+    np.testing.assert_allclose(run(x), expected)
+
 
 class EmitPipelinePrefetchPrimitiveTest(EmitPipelinePrefetchTest):
 

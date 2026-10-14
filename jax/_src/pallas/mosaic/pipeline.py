@@ -1018,10 +1018,13 @@ class BufferedRef(BufferedRefBase):
     if not self.is_buffered: return
     assert self.sem_recvs is not None
     slot = self.current_copy_in_slot
-    src_slice = self.get_dma_slice(_ref_to_value_aval(src_ref), grid_indices)
-    dst_slice = self._to_window_slice(src_slice)
+    dst_slice = None
+    if not self.is_trivial_windowing:
+      src_slice = self.get_dma_slice(_ref_to_value_aval(src_ref), grid_indices)
+      dst_slice = self._to_window_slice(src_slice)
+      src_ref = src_ref.at[src_slice]
     tpu_primitives.make_async_copy(
-        src_ref.at[src_slice],
+        src_ref,
         self._window_ref_at(slot, dst_slice),
         self.sem_recvs.at[slot],
     ).start()
@@ -1056,11 +1059,14 @@ class BufferedRef(BufferedRefBase):
     assert self.is_input
     if not self.is_buffered: return
     assert self.sem_recvs is not None
-    src_slice = self.get_dma_slice(_ref_to_value_aval(src_ref), grid_indices)
-    dst_slice = self._to_window_slice(src_slice)
+    dst_slice = None
+    if not self.is_trivial_windowing:
+      src_slice = self.get_dma_slice(_ref_to_value_aval(src_ref), grid_indices)
+      dst_slice = self._to_window_slice(src_slice)
+      src_ref = src_ref.at[src_slice]
     wait_slot = self.current_wait_in_slot
     tpu_primitives.make_async_copy(
-        src_ref.at[src_slice],  # nb: doesn't matter
+        src_ref,  # nb: doesn't matter
         self._window_ref_at(
             wait_slot, dst_slice
         ),  # only dst shape is important
@@ -1450,7 +1456,12 @@ class Scheduler:
       return buffered_ref
     pred = self.has_changed(buffered_ref) | self.first_step
     if not buffered_ref.await_prefetch:
-      pred = pred & (self.step >= buffered_ref.prefetched_count)
+      step = (
+          buffered_ref.cumulative_wait_in
+          if buffered_ref.use_lookahead
+          else self.step
+      )
+      pred = pred & (step >= buffered_ref.prefetched_count)
 
     @when(pred)
     @self._named_scope("ep_wait_in")
