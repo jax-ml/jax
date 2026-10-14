@@ -65,6 +65,7 @@ wheel_sources(
         "//jax/experimental:source_mapper",
         "//jax/experimental:sparse_test_util",
         "//jax/experimental:sparse",
+        "//jax/experimental:thunky",
         "//jax/experimental:topologies",
         "//jax/experimental:transfer",
         "//jax/experimental:xla_metadata",
