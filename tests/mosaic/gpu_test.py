@@ -645,6 +645,99 @@ class MemRefTest(TestCase):
     np.testing.assert_array_equal(result[1], np_op(id_arr, x[0]))
 
 
+class CtaBarrierTest(TestCase):
+
+  def test_cta_barrier_basic(self):
+    i32 = ir.IntegerType.get_signless(32)
+
+    def kernel(ctx, src, dst, scratch):
+      del ctx
+      smem, barrier = scratch
+      wg_id = mgpu.warpgroup_idx(sync=True)
+      is_producer = arith.cmpi(arith.CmpIPredicate.eq, wg_id, c(0, i32))
+      is_consumer = arith.cmpi(arith.CmpIPredicate.eq, wg_id, c(1, i32))
+      with mgpu.when(is_producer):
+        mgpu.FragmentedArray.load_strided(src).store_untiled(smem)
+        mgpu.commit_shared()
+        barrier.arrive()
+      with mgpu.when(is_consumer):
+        barrier.arrive_and_wait()
+        mgpu.FragmentedArray.load_strided(smem).store_untiled(dst)
+
+    barrier = mgpu.CtaBarrier(arrival_count=256)
+    x = np.arange(128, dtype=jnp.float32)
+    smem = jax.ShapeDtypeStruct(shape=x.shape, dtype=jnp.float32)
+    f = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (256, 1, 1),
+        x,
+        x,
+        (smem, barrier),
+    )
+    np.testing.assert_array_equal(f(x), x)
+
+  def test_cta_barrier_multiple(self):
+    i32 = ir.IntegerType.get_signless(32)
+
+    def kernel(ctx, src, dst, scratch):
+      del ctx
+      smem, barrier = scratch
+      wg_id = mgpu.warpgroup_idx(sync=True)
+      with mgpu.when(arith.cmpi(arith.CmpIPredicate.eq, wg_id, c(0, i32))):
+        mgpu.FragmentedArray.load_strided(src).store_untiled(smem)
+        mgpu.commit_shared()
+        barrier[1].arrive()
+      with mgpu.when(arith.cmpi(arith.CmpIPredicate.eq, wg_id, c(1, i32))):
+        barrier[1].arrive_and_wait()
+        mgpu.FragmentedArray.load_strided(smem).store_untiled(dst)
+
+    barrier = mgpu.CtaBarrier(arrival_count=256, num_barriers=3)
+    x = np.arange(128, dtype=jnp.float32)
+    smem = jax.ShapeDtypeStruct(shape=x.shape, dtype=jnp.float32)
+    f = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (256, 1, 1), x, x, (smem, barrier)
+    )
+    np.testing.assert_array_equal(f(x), x)
+
+  def test_cta_barrier_invalid_indexing_raises(self):
+    x = jax.ShapeDtypeStruct((128,), jnp.float32)
+    barrier = mgpu.CtaBarrier(arrival_count=128, num_barriers=2)
+
+    def unindexed_kernel(ctx, dst, barrier):
+      del ctx, dst
+      barrier.arrive_and_wait()
+
+    with self.assertRaisesRegex(
+        ValueError, "Operation is only valid for a single barrier"
+    ):
+      mgpu.as_gpu_kernel(
+          unindexed_kernel, (1, 1, 1), (128, 1, 1), (), x, barrier
+      )
+
+    def oob_kernel(ctx, dst, barrier):
+      del ctx, dst
+      barrier[2].arrive_and_wait()
+
+    with self.assertRaisesRegex(IndexError, "Barrier offset 2 is out of bounds"):
+      mgpu.as_gpu_kernel(oob_kernel, (1, 1, 1), (128, 1, 1), (), x, barrier)
+
+  def test_cta_barrier_oversubscribed_raises(self):
+    x = jax.ShapeDtypeStruct((128,), jnp.float32)
+    barrier = mgpu.CtaBarrier(arrival_count=256, num_barriers=14)
+
+    def kernel(ctx, dst, barrier):
+      del ctx, dst
+      barrier[0].arrive_and_wait()
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Too many CTA barriers requested: 14 requested, but only 13 available",
+    ):
+      mgpu.as_gpu_kernel(kernel, (1, 1, 1), (256, 1, 1), (), x, barrier)
+
+
+
 def get_packed_shape(strides, shape):
   perm = sorted(range(len(strides)), key=lambda i: strides[i], reverse=True)
   ordered_strides = [strides[i] for i in perm]

@@ -413,6 +413,24 @@ class ClusterBarrier:
   orders_tensor_core: bool = False
   leader_tracked: bool = False
 
+
+@dataclasses.dataclass(frozen=True)
+class CtaBarrier:
+  arrival_count: int
+  num_barriers: int = 1
+
+  def __post_init__(self):
+    if (self.arrival_count < 1) or (self.arrival_count % utils.WARP_SIZE != 0):
+      raise ValueError(
+          f"Arrival count must be a multiple of {utils.WARP_SIZE}, but got"
+          f" {self.arrival_count}"
+      )
+    if self.num_barriers < 1:
+      raise ValueError(
+          f"Num barriers must be at least 1, but got {self.num_barriers}"
+      )
+
+
 @dataclasses.dataclass(frozen=True)
 class TMEM:
   shape: tuple[int, int]
@@ -513,6 +531,7 @@ def _construct_smem_reftree(
     ],  # Mutated by this function!
     lowering_semantics: LoweringSemantics,
     dynamic_smem_offset: int = 0,
+    cta_barrier_offset: int = 0,
 ) -> Callable[[], RefTree]:
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
@@ -550,11 +569,13 @@ def _construct_smem_reftree(
                 tmem_allocs,
                 lowering_semantics,
                 dynamic_smem_offset,
+                cta_barrier_offset,
             )
             for m in members
         ]
         # TODO(apaszke): This is quadratic, but it shouldn't matter for now...
         dynamic_smem_offset += _smem_tree_size(ref_ty)
+        cta_barrier_offset += _cta_barrier_tree_count(ref_ty)
 
         def ref(member_thunks=member_thunks):
           return Union([t() for t in member_thunks])
@@ -574,6 +595,13 @@ def _construct_smem_reftree(
             barrier_memref(num_barriers), arrival_count, collective_dims,
             cluster_shape, leader_tracked=ref_ty.leader_tracked
         )
+      case CtaBarrier(arrival_count, num_barriers):
+        ref = utils.CtaBarrierRef.initialize(
+            cta_barrier_offset,
+            arrival_count=arrival_count,
+            num_barriers=num_barriers,
+        )
+        cta_barrier_offset += num_barriers
       case TMEM(shape, dtype, layout=layout, collective=collective, packing=packing):
         addr_ref = _slice_smem(
             ir.MemRefType.get([], i32, memory_space=utils.smem()),
@@ -650,6 +678,8 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
               f" {utils.MBARRIER_BYTES} bytes."
           )
         size += num_barriers * utils.MBARRIER_BYTES
+      case CtaBarrier():
+        pass
       case TMEM(_):
         # TODO(justinfu): This can trigger misaligned barrier allocations
         # if TMEM is requested before barriers b/c it's not divisible by 8.
@@ -657,6 +687,20 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
       case _:
         size += _count_buffer_bytes(l)
   return size
+
+
+def _cta_barrier_tree_count(smem_buffers: ShapeTree) -> int:
+  leaves = jax.tree.leaves(smem_buffers, is_leaf=lambda x: isinstance(x, Union))
+  count = 0
+  for l in leaves:
+    match l:
+      case Union(members):
+        count += max(_cta_barrier_tree_count(s) for s in members)
+      case CtaBarrier(num_barriers=num_barriers):
+        count += num_barriers
+      case _:
+        pass
+  return count
 
 
 def _is_known_multihost_mesh(
@@ -830,9 +874,24 @@ def _launch(
         ),
     )
     with ctx.named_region("Init"):
+      num_warpgroups = math.prod(block) // utils.WARPGROUP_SIZE
+      reserved_cta_barriers = 1 + num_warpgroups
+      total_cta_barriers = _cta_barrier_tree_count(smem_buffers)
+      if reserved_cta_barriers + total_cta_barriers > 16:
+        raise ValueError(
+            f"Too many CTA barriers requested: {total_cta_barriers} requested,"
+            f" but only {16 - reserved_cta_barriers} available"
+            f" ({num_warpgroups} warpgroup barriers and 1 CTA-wide barrier"
+            " reserved)."
+        )
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
       smem_ref_tree_thunk = _construct_smem_reftree(
-          cluster, dynamic_smem, smem_buffers, tmem_allocs, lowering_semantics
+          cluster,
+          dynamic_smem,
+          smem_buffers,
+          tmem_allocs,
+          lowering_semantics,
+          cta_barrier_offset=reserved_cta_barriers,
       )
       # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.

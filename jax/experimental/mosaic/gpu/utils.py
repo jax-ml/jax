@@ -1733,6 +1733,65 @@ class CollectiveBarrierRef:
 
 
 @dataclasses.dataclass(frozen=True)
+class CtaBarrierRef:
+  base_id: int
+  offset: ir.Value
+  arrival_count: int
+  num_barriers: int = 1
+
+  @staticmethod
+  def initialize(
+      base_id: int,
+      arrival_count: int = 1,
+      num_barriers: int = 1,
+  ) -> "CtaBarrierRef":
+    i32 = ir.IntegerType.get_signless(32)
+    return CtaBarrierRef(base_id, c(0, i32), arrival_count, num_barriers)
+
+  def __getitem__(self, offset: ir.Value | int) -> "CtaBarrierRef":
+    i32 = ir.IntegerType.get_signless(32)
+    if isinstance(offset, int):
+      if offset < 0 or offset >= self.num_barriers:
+        raise IndexError(
+            f"Barrier offset {offset} is out of bounds for"
+            f" num_barriers={self.num_barriers}"
+        )
+      offset = c(offset, i32)
+    elif isinstance(offset.type, ir.IndexType):
+      offset = arith.index_castui(i32, offset)
+    elif offset.type != i32:
+      raise ValueError(f"Expected a dynamic index or an integer, got {offset}")
+    return CtaBarrierRef(
+        self.base_id, arith.addi(self.offset, offset), self.arrival_count, 1
+    )
+
+  def get_barrier_id(self) -> ir.Value:
+    if self.num_barriers != 1:
+      raise ValueError(
+          "Operation is only valid for a single barrier, but barrier ref"
+          f" contains {self.num_barriers}. Individual barriers can be accessed"
+          " by indexing into the ref."
+      )
+    i32 = ir.IntegerType.get_signless(32)
+    return arith.addi(c(self.base_id, i32), self.offset)
+
+  def arrive(self, *, predicate: ir.Value | None = None) -> None:
+    inline_ptx(
+        f"bar.arrive $0, {self.arrival_count};",
+        self.get_barrier_id(),
+        predicate=predicate,
+        has_side_effects=True,
+    )
+
+  def arrive_and_wait(self) -> None:
+    inline_ptx(
+        f"bar.sync $0, {self.arrival_count};",
+        self.get_barrier_id(),
+        has_side_effects=True,
+    )
+
+
+@dataclasses.dataclass(frozen=True)
 class SemaphoreRef:
   ptr: ir.Value
 
