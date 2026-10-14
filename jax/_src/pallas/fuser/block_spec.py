@@ -569,7 +569,6 @@ def _pull_block_transform(
         dict[int, Any],
     ],
 ]:
-  jaxpr_invar_usages = util.safe_map(read_usage_env, jaxpr.invars)
   env: dict[core.Var, BlockIndexTransform | NoBlockIndexTransform] = {}
   scalar_prefetch_fn_env = {}
   scalar_prefetch_avals = tuple(
@@ -690,9 +689,7 @@ def _pull_block_transform(
         in_block_transform = BlockIndexTransform(_illegal, _illegal)
       _write_block_spec(v, in_block_transform)
 
-  def _get_in_block_transforms(v, usage):
-    if usage == {Usage.SCALAR_PREFETCH}:
-      return None
+  def _get_in_block_transforms(v):
     bs = env.get(v, no_block_index_transform)
     if bs is not no_block_index_transform:
       if bs.block_shape is _illegal:
@@ -702,8 +699,7 @@ def _pull_block_transform(
     return bs
 
   in_block_transforms = tuple(
-      _get_in_block_transforms(v, usage)
-      for v, usage in zip(jaxpr.invars, jaxpr_invar_usages)
+      _get_in_block_transforms(v) for v in jaxpr.invars
   )
 
   return (
@@ -759,7 +755,6 @@ def make_kernel_function(
     scalar_prefetch_handler,
     grid_len,
 ):
-  invar_usages = util.safe_map(read_usage_env, jaxpr.invars)
   bs_env, scalar_prefetch_fn_env = block_spec_env
 
   def _read_block_spec(atom: core.Atom) -> pallas_core.BlockSpec | Any:
@@ -798,11 +793,8 @@ def make_kernel_function(
                       for c, is_sp in zip(consts, sp_mask, strict=True)]
     for const, constvar in zip(bound_consts, jaxpr.constvars, strict=True):
       env[constvar] = const
-    for invar, arg, usage in zip(
-        jaxpr.invars, flat_args, invar_usages, strict=True
-    ):
-      if Usage.REGULAR in usage:
-        env[invar] = arg
+    for invar, arg in zip(jaxpr.invars, flat_args, strict=True):
+      env[invar] = arg
     for i, eqn in enumerate(jaxpr.eqns):
       outvar_usages = [
           read_usage_env(v) if not isinstance(v, core.Literal) else set()
@@ -1104,21 +1096,6 @@ def _pull_bcast_block_spec(
       block_shape=new_block_shape,
       block_index_transform=new_block_index_transform,
   )
-
-
-def _push_bcast_block_spec(
-    block_spec: pallas_core.BlockSpec,
-    i: int,
-    size: int,
-) -> pallas_core.BlockSpec:
-
-  bcast_dim_block_shape = size
-  if isinstance(block_spec.block_shape[i], pallas_core.Element):
-    bcast_dim_block_shape = pallas_core.Element(size)
-  new_block_shape = util.tuple_update(
-      block_spec.block_shape, i, bcast_dim_block_shape
-  )
-  return block_spec.replace(block_shape=new_block_shape)
 
 
 def _binop_usage_rule(ctx: UsageRuleContext, used_out: set[Usage], **params):

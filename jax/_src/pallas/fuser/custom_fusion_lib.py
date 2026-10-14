@@ -121,7 +121,7 @@ class custom_fusion:
       ) from e
 
     # flatten and get jaxpr
-    args_flat, in_tree = tree_util.tree_flatten(args)
+    args_flat = tree_util.tree_leaves(args)
     args_avals = tree_util.tree_map(core.typeof, args)
     in_avals_ft = ft.flatten((args_avals, {}))
     closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
@@ -155,10 +155,7 @@ class custom_fusion:
         pull_block_spec_rule=self.pull_block_spec_rule,
         push_block_spec_rule=self.push_block_spec_rule,
         pallas_jaxpr=pallas_jaxpr,
-        pallas_num_consts=len(pallas_consts),
-        in_tree=in_tree,
-        out_tree=out_tree_val,
-        kernel_out_tree=out_tree_val)
+        pallas_num_consts=len(pallas_consts))
 
     return tree_util.tree_unflatten(out_tree_val, out_flat)
 
