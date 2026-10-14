@@ -8626,6 +8626,14 @@ def _reshape_layout_rule(out_aval, operand, *, new_sizes, dimensions, sharding):
   if dimensions is not None:
     raise_reshape_layout_error(operand, new_sizes)
   op_m2m = operand.layout.major_to_minor
+  num_tiles = (None if not operand.layout.tiling else
+               len(operand.layout.tiling[0]))
+  if (num_tiles is not None and
+      any(op_shape[d] == 1 for d in op_m2m[-num_tiles:])):
+    raise_reshape_layout_error(
+        operand, new_sizes,
+        f'cannot reshape when any of the {num_tiles} minor-most dimensions'
+        ' has size 1.')
 
   non_1_dims = [d for d, s in enumerate(op_shape) if s != 1]
   phys_op_dims = [non_1_dims.index(m) for m in op_m2m if op_shape[m] != 1]
@@ -8634,8 +8642,6 @@ def _reshape_layout_rule(out_aval, operand, *, new_sizes, dimensions, sharding):
   if non_1s_op_shape == non_1s_new_shape:
     return _restore_singleton_dims_layout(operand, phys_op_dims, new_sizes)
 
-  num_tiles = (None if not operand.layout.tiling else
-               len(operand.layout.tiling[0]))
   try:
     is_split, _, out_indices = _split_on_one_axis(op_shape, new_sizes)
   except ReshapeExplicitError:

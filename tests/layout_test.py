@@ -1305,13 +1305,13 @@ class LayoutInTypesTest(jtu.JaxTestCase):
       (src_shape, dst_shape, src_m2m, dst_m2m, fun)
       for fun in [jnp.reshape, jax.lax.reshape]
       for src_shape, dst_shape, src_m2m, dst_m2m in [
-          ((4, 8, 1), (1, 4, 8, 1), (0, 1, 2), (0, 3, 1, 2)),
-          ((4, 8, 1), (1, 4, 8, 1), (1, 0, 2), (0, 3, 2, 1)),
+          ((4, 8, 1), (1, 4, 8, 1), (2, 0, 1), (0, 3, 1, 2)),
+          ((4, 8, 1), (1, 4, 8, 1), (2, 1, 0), (0, 3, 2, 1)),
           ((1, 4, 1, 8, 16, 1), (1, 4, 8, 16), (0, 2, 5, 3, 1, 4), (0, 2, 1, 3)),
           ((4, 8), (4, 8), (1, 0), (1, 0)),
           ((8, 4, 16), (4, 2, 4, 1, 1, 16), (0, 1, 2), (3, 4, 0, 1, 2, 5)),
           ((8, 4, 16), (8, 1, 1, 4, 16), (1, 0, 2), (1, 2, 3, 0, 4)),
-          ((4, 8, 2, 1, 1, 16), (32, 2, 16), (0, 1, 2, 3, 4, 5), (0, 1, 2)),
+          ((4, 8, 2, 1, 1, 16), (32, 2, 16), (0, 1, 3, 4, 2, 5), (0, 1, 2)),
           ((4, 1, 8, 1, 16), (4, 1, 2, 4, 1, 16), (1, 3, 2, 0, 4), (1, 4, 2, 3, 0, 5)),
           ((4, 1, 2, 4, 1, 16), (4, 1, 8, 1, 16), (1, 4, 2, 3, 0, 5), (1, 3, 2, 0, 4)),
       ]
@@ -1372,6 +1372,19 @@ class LayoutInTypesTest(jtu.JaxTestCase):
        'cannot merge the 2 minor-most dimensions'),
       ((4, 2, 3, 8), (4, 6, 8), (0, 1, 2, 3), (0, 1, 2),
        'cannot merge the 2 minor-most dimensions'),
+      # Singleton in the 2 minor-most dimensions (errors on TPU, succeeds on CPU/GPU)
+      ((4, 8, 1), (1, 4, 8, 1), (0, 1, 2), (0, 3, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((4, 8, 1), (1, 4, 8, 1), (1, 0, 2), (0, 3, 2, 1),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((10, 4, 8, 1), (10, 4, 8), (0, 1, 2, 3), (0, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((10, 4, 8, 1), (2, 5, 4, 8, 1), (0, 1, 2, 3), (4, 0, 1, 2, 3),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((2, 5, 4, 8, 1), (10, 4, 8, 1), (0, 1, 2, 3, 4), (3, 0, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((4, 8, 2, 1, 1, 16), (32, 2, 16), (0, 1, 2, 3, 4, 5), (0, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
       # Error cases: merging out-of-order or non-contiguous physical dims, or multi-axis splits/merges
       ((4, 2, 3, 8), (4, 6, 8), (2, 1, 0, 3), None,
        'is not possible without a physical copy'),
