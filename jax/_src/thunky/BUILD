@@ -27,7 +27,10 @@ package(
 
 pytype_strict_library(
     name = "thunky",
-    srcs = ["thunky.py"],
+    srcs = [
+        "__init__.py",
+        "thunky.py",
+    ],
     deps = [
         "//jax",
         "//jax/_src:api",
