@@ -312,6 +312,10 @@ def _shard_map[F: Callable](
     if (dbg.arg_names is not None and len(dyn_args) != len(dbg.arg_names)):
       dbg = dbg.with_unknown_names()
 
+    if config.mutable_array_checks.value:
+      avals = [typeof(x) for x in dyn_args]
+      api_util.check_no_aliased_ref_args(lambda: dbg, avals, dyn_args)
+
     def f_wrapped(*dyn_args):
       dyn_args_iter = iter(dyn_args)
       static_args_iter = iter(static_args)
@@ -977,6 +981,7 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_specs, out_specs,
     if not core.typecompat(v.aval, sharded_aval):
       raise core.JaxprTypeError("shard_map argument avals not compatible with "
                                 "jaxpr binder avals and in_specs")
+  core.check_distinct_refs(shard_map_p, in_atoms)
   with _extend_axis_env(mesh, newly_manual_axes), config._check_vma(check_vma):
     core.check_jaxpr(jaxpr)
   if check_vma:
