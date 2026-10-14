@@ -5723,6 +5723,22 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertIn('axes = [#stablehlo.axis_ref<name = "x">]', mlir)
     self.assertRegex(mlir, r'mesh = (@mesh|#sdy\.mesh)')
 
+  def test_shmap_custom_vjp_empty_mesh(self):
+    @jax.custom_vjp
+    def h(x):
+      return x
+    h.defvjp(lambda x: (x, None), lambda _, g: (g,))
+
+    mesh = jax.make_mesh((1,), ('i',))
+
+    @jax.jit
+    @jax.shard_map(mesh=mesh, in_specs=P(), out_specs=P())
+    def f(x):
+      return h(jax.new_ref(0.)[...]) + jax.lax.stop_gradient(x) + x
+
+    out = jax.grad(f)(1.)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   @jax.default_matmul_precision('float32')
   def test_reduced_shmap_inside_partially_manual_shmap(self, mesh):

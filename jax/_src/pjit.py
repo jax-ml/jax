@@ -2271,13 +2271,13 @@ batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_
 
 # -------------------- reshard ------------------------------------
 
-def _canonicalize_reshard_sharding(s, aval):
+def _canonicalize_reshard_sharding(s, aval, error_on_none=True):
   ds = canonicalize_sharding(s, 'reshard', check_mesh_consistency=False)
-  if ds is None:
+  if error_on_none and ds is None:
     raise ValueError(
         'Reshard should only be used with out_shardings which are non-None '
         f'and have a non-empty mesh. Got sharding {s}.')
-  if hasattr(aval, 'ndim'):
+  if hasattr(aval, 'ndim') and ds is not None:
     ds = ds.update(spec=ds.spec._normalized_spec_for_aval(aval.ndim))
   return ds
 
@@ -2313,6 +2313,8 @@ def _reshard_to_lojax(hi_val, *, dst_sharding, concrete_mesh):
 reshard_p.to_lojax = _reshard_to_lojax
 
 def _check_unreduced_reshard(aval, dst_sharding):
+  if dst_sharding is None:
+    return
   # dst_sharding can't be more unreduced than src_sharding in case of
   # UnreducedKind.{max,min}.
   if (dst_sharding.spec.unreduced and
@@ -2332,7 +2334,7 @@ def _check_unreduced_reshard(aval, dst_sharding):
 
 def _reshard_shaped_array(aval: core.ShapedArray, dst_sharding) -> core.ShapedArray:
   assert isinstance(aval, core.ShapedArray)
-  dst_sharding = _canonicalize_reshard_sharding(dst_sharding, aval)
+  dst_sharding = _canonicalize_reshard_sharding(dst_sharding, aval, False)
   _check_unreduced_reshard(aval, dst_sharding)
   if aval.sharding == dst_sharding:
     return aval
