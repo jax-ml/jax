@@ -7953,9 +7953,11 @@ def _stack_lower(ctx, *xs, axis):
   out_sharding = aval_out.sharding
   expanded_xs = []
   for x, aval in zip(xs, ctx.avals_in):
-    expanded_aval = aval.update(shape=new_shape, sharding=out_sharding)
+    expanded_aval = aval.update(shape=tuple(new_shape), sharding=out_sharding)
     expanded_x = mlir.broadcast_in_dim(
         ctx, x, expanded_aval, broadcast_dimensions=broadcast_dimensions)
+    expanded_x = mlir.lower_with_sharding_in_types(
+        ctx, expanded_x, expanded_aval)
     expanded_xs.append(expanded_x)
 
   out = _concatenate_tree(expanded_xs, axis)
@@ -8010,13 +8012,13 @@ def _unstack_weak_type_rule(operand, *, axis):
   return (operand.weak_type,) * num_results
 
 def _unstack_sharding_rule(operand, *, axis):
-  if operand.sharding.spec[axis] is not None:
+  if operand.sharding.spec.partitions[axis] is not None:
     raise core.ShardingTypeError(
         f"unstack operand cannot be sharded on the unstacking axis {axis}. "
         f"Got operand type={operand.str_short(True)}"
     )
   out_shapes = _unstack_shape_rule(operand, axis=axis)
-  new_spec = list(operand.sharding.spec)
+  new_spec = list(operand.sharding.spec.partitions)
   new_spec.pop(axis)
   out_sharding = operand.sharding.update(
     spec=operand.sharding.spec.update(partitions=tuple(new_spec)))
@@ -8053,9 +8055,11 @@ def _unstack_lower(ctx, x, *, axis):
   outs = []
   for aval_out in ctx.avals_out:
     limit_indices[axis] = start_indices[axis] + 1
-    slice_out = mlir.slice_op(ctx, x, x_aval.update(shape=slice_shape),
+    slice_aval = x_aval.update(shape=slice_shape)
+    slice_out = mlir.slice_op(ctx, x, slice_aval,
                               start_indices=start_indices,
                               limit_indices=limit_indices, strides=strides)
+    slice_out = mlir.lower_with_sharding_in_types(ctx, slice_out, slice_aval)
     squeezed_out = mlir.reshape(ctx, slice_out, aval_out)
     outs.append(mlir.lower_with_sharding_in_types(ctx, squeezed_out, aval_out))
 
@@ -8338,7 +8342,7 @@ def _squeeze_lower(ctx, operand, *, dimensions):
   del dimensions  # Implied by the output aval.
   aval_out, = ctx.avals_out
   out = mlir.reshape(ctx, operand, aval_out)
-  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(squeeze_p, _squeeze_lower)
 
