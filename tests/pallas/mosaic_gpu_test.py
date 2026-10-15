@@ -658,6 +658,20 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(math.prod(shape1), dtype=dtype).reshape(shape1)
     np.testing.assert_array_equal(kernel(x), x[1].reshape(shape2))
 
+  @parameterized.parameters((128,), (256,), (384,))
+  def test_store_splat_smem(self, dim):
+    shape = (dim,)
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((shape), jnp.int32),
+        scratch_shapes=[plgpu.SMEM(shape, jnp.int32)],
+    )
+    def kernel(out_ref, smem_ref):
+      smem_ref[...] = jnp.zeros(shape, jnp.int32)
+      out_ref[...] = smem_ref[...]
+
+    np.testing.assert_array_equal(kernel(), jnp.zeros(shape, jnp.int32))
+
   def test_reshape_splat(self):
     shape = (1, 1, 1)
 

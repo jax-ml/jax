@@ -4153,11 +4153,11 @@ class FragmentedArray:
       )
       return
 
-    vec_size = 64 // mgpu.bitwidth(self.mlir_dtype)
-    if np.prod(self.shape) < vec_size * WARPGROUP_SIZE:
-      vec_size = 1
-
-    if np.prod(self.shape) % WARPGROUP_SIZE * vec_size:
+    vec_size = math.gcd(
+        64 // mgpu.bitwidth(self.mlir_dtype),
+        np.prod(self.shape) // WARPGROUP_SIZE,
+    )
+    if np.prod(self.shape) % (WARPGROUP_SIZE * vec_size):
       raise NotImplementedError(
           "Arrays with the splat layout can only be stored when they have a"
           f" single element or a multiple of {WARPGROUP_SIZE} elements"
