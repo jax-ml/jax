@@ -225,7 +225,6 @@ def mma(
   if a_swizzle == 16 or b_swizzle == 16:
     raise NotImplementedError("No swizzle is not supported")
   i8 = ir.IntegerType.get_signless(8)
-  i32 = ir.IntegerType.get_signless(32)
   if isinstance(accumulate, bool):
     accumulate = arith.constant(ir.IntegerType.get_signless(1), accumulate)
   num_cta = 2 if collective else 1
@@ -610,7 +609,10 @@ def mma(
       if m_groups != 1:
         raise NotImplementedError("A address calculation for multiple M tiles")
       a_k_group_elems = k_group_elems // (1 + is_sparse)
-      a_mk = a.slice(slice(None), utils.ds(ki * a_k_group_elems, a_k_group_elems)).address
+      a_k_group_cols = a.layout.cols_in_shape(
+          (a.shape[0], a_k_group_elems), utils.bitwidth(a.dtype)
+      )
+      a_mk = (a.address, ki * a_k_group_cols)
     else:
       assert a_desc_base is not None
       a_offset = mi * a_m_group_stride + ki * a_k_group_stride
@@ -622,7 +624,7 @@ def mma(
         raise NotImplementedError("A sparse metadata address calculation for multiple tiles")
       # Each sparse group has 2 entries, each TMEM column holds 16 i2 entries.
       cols_per_k_group = k_group_elems // sparse_group_elems(mma_a_element_type) * 2 // 16
-      a_sparse_addr = arith.addi(a_sparse_addr_base, utils.c(ki * cols_per_k_group, i32))
+      a_sparse_addr = (a_sparse_addr_base, ki * cols_per_k_group)
     else:
       a_sparse_addr = None
     if a_scale_addr_base is not None and b_scale_addr_base is not None:
@@ -633,14 +635,15 @@ def mma(
       assert scale_block is not None  # For type checkers.
       assert k_group_elems % (scale_block * 4) == 0
       assert m_group_elems % 32 == 0 and n_group_elems % (8 * num_cta) == 0
+      assert a_scale_m_stride is not None and b_scale_n_stride is not None
       k_scales_per_group = k_group_elems // (scale_block * 4)
-      a_scale_addr = arith.addi(
+      a_scale_addr = (
           a_scale_addr_base,
-          utils.c(ki * k_scales_per_group * a_scale_m_stride, i32),
+          ki * k_scales_per_group * a_scale_m_stride,
       )
-      b_scale_addr = arith.addi(
+      b_scale_addr = (
           b_scale_addr_base,
-          utils.c(ki * k_scales_per_group * b_scale_n_stride, i32)
+          ki * k_scales_per_group * b_scale_n_stride,
       )
     else:
       a_scale_addr = b_scale_addr = None
@@ -653,7 +656,7 @@ def mma(
     if m_groups != 1:
       raise NotImplementedError("D address calculation for multiple M tiles")
     _do_mma(
-        arith.addi(d.address, arith.constant(i32, d_offset)),
+        (d.address, d_offset),
         a_mk,
         b_nk,
         d_type=d.dtype,
@@ -679,18 +682,18 @@ def mma(
 
 
 def _do_mma(
-    d_addr: ir.Value,
-    a_desc_or_addr: tuple[ir.Value, int] | ir.Value,  # TMEM address if a_k_stride is None
+    d_addr: tuple[ir.Value, int],
+    a_desc_or_addr: tuple[ir.Value, int],  # TMEM address if a_k_stride is None
     b_desc: tuple[ir.Value, int],
     a_transpose: bool,
     b_transpose: bool,
     a_k_strides: tuple[tuple[int, ...], tuple[int, ...]] | None,
     b_k_strides: tuple[tuple[int, ...], tuple[int, ...]],
-    a_scale_addr: ir.Value | None,
-    b_scale_addr: ir.Value | None,
+    a_scale_addr: tuple[ir.Value, int] | None,
+    b_scale_addr: tuple[ir.Value, int] | None,
     a_scale_m_stride: int | None,
     b_scale_n_stride: int | None,
-    a_sparse_addr: ir.Value | None,
+    a_sparse_addr: tuple[ir.Value, int] | None,
     m: int,
     n: int,
     k: int,
@@ -751,7 +754,6 @@ def _do_mma(
       raise NotImplementedError(
           f"Unsupported element type for block scaling: {a_element_type}"
       )
-    extra_ptx = "[$5], [$6], "
     extra_constraints = ",r,r"
   else:
     if isinstance(a_element_type, (ir.F16Type, ir.BF16Type)):
@@ -768,23 +770,23 @@ def _do_mma(
       raise NotImplementedError(
           f"Unsupported input element type: {a_element_type}"
       )
-    extra_constraints = extra_ptx = ""
+    extra_constraints = ""
 
     def create_scaled_instr_descriptor(*args):
       raise NotImplementedError
 
   num_cta = 2 if collective else 1
   a_in_tmem = a_k_strides is None
-  a_ptx = "[a_desc]" if a_in_tmem else "a_desc"
   sparse_mod = ".sp" if is_sparse else ""
   sparse_meta_ptx = ""
+  extra_ptx = ""
+  sparse_meta_idx = 5 + (2 if is_scaled else 0)
   if is_sparse:
-    sparse_meta_idx = 5 + (2 if is_scaled else 0)
-    sparse_meta_ptx = f"[${sparse_meta_idx}], "
     extra_constraints += ",r"
   sp_selector = None
   sparse_addr: tuple[Any, ...] = ()
   scales_addrs: tuple[Any, ...] = ()
+  d_addr_base, d_offset = d_addr
   def _get_offset(idx: int, idx_tiling: tuple[int, ...], strides: tuple[int, ...]):
     assert len(idx_tiling) + 1 == len(strides)
     idxs = []
@@ -797,6 +799,7 @@ def _do_mma(
   for k_step in range(k // instr_k):
     if is_sparse:
       assert a_sparse_addr is not None
+      a_sparse_base, a_sparse_offset = a_sparse_addr
       # Sparse metadata is organised as 32-row columns of 32-bit cells in TMEM; 4 bits
       # of metadata map to 2 (1:2 sparsity), 4 (2:4 sparsity) or 8 (4:8 sparsity)
       # of the `instr_k` columns in A consumed by each tcgen05.mma.sp instruction.
@@ -807,7 +810,9 @@ def _do_mma(
       # have one metadata column per instruction (e.g. .kind::f16).
       meta_col = k_step * meta_cols_per_instr
       sp_selector = meta_col % 2
-      sparse_addr = (arith.addi(a_sparse_addr, utils.c(meta_col // 2 * 2, i32)),)
+      a_sparse_offset += meta_col // 2 * 2
+      sparse_addr = (a_sparse_base,)
+      sparse_meta_ptx = f"[${sparse_meta_idx} + {a_sparse_offset}], "
     if is_scaled:
       assert scale_steps is not None
       scale_vec_width = 4 // scale_steps
@@ -823,13 +828,13 @@ def _do_mma(
       assert b_scale_addr is not None
       assert a_scale_m_stride is not None
       assert b_scale_n_stride is not None
+      a_scale_base, a_scale_offset = a_scale_addr
+      b_scale_base, b_scale_offset = b_scale_addr
       # A scales are sharded, B scales are replicated across CTAs.
-      a_scale_addr_offset = arith.constant(i32, k_step // scale_steps * a_scale_m_stride)
-      b_scale_addr_offset = arith.constant(i32, k_step // scale_steps * b_scale_n_stride)
-      scales_addrs = (
-          arith.addi(a_scale_addr, a_scale_addr_offset),
-          arith.addi(b_scale_addr, b_scale_addr_offset),
-      )
+      a_scale_offset += k_step // scale_steps * a_scale_m_stride
+      b_scale_offset += k_step // scale_steps * b_scale_n_stride
+      scales_addrs = (a_scale_base, b_scale_base)
+      extra_ptx = f"[$5 + {a_scale_offset}], [$6 + {b_scale_offset}], "
     elif is_sparse:
       i_desc = create_instr_descriptor(
           m * num_cta, n * num_cta, d_type, a_element_type, b_element_type, a_transpose, b_transpose, sparsity_selector=sp_selector
@@ -838,33 +843,35 @@ def _do_mma(
       i_desc = create_instr_descriptor(
           m * num_cta, n * num_cta, d_type, a_element_type, b_element_type, a_transpose, b_transpose
       )
+    a_enc_addr_base, a_offset = a_desc_or_addr
     if a_in_tmem:
+      assert a_enc_addr_base.type == i32
       cols_per_k_group = instr_k // packing // (1 + is_sparse)
-      a_offset = k_step * cols_per_k_group
-      assert isinstance(a_desc_or_addr, ir.Value)
-      assert a_desc_or_addr.type == ir.IntegerType.get_signless(32)
-      a_enc_addr_base = a_desc_or_addr
+      a_offset += k_step * cols_per_k_group
+      a_ptx = f"[$1 + {a_offset}]"
+      a_desc_ptx = ""
     else:
-      assert not isinstance(a_desc_or_addr, ir.Value)
       assert a_k_idx_tiling is not None and a_k_strides is not None
-      a_enc_addr_base, a_offset = a_desc_or_addr
       a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)  # pyrefly: ignore[bad-argument-type]
+      a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
+      a_ptx = "a_desc"
+      a_desc_ptx = f"""
+            .reg .b32 a_desc_low;
+            .reg .b64 a_desc;
+            add.s32 a_desc_low, $1, {a_offset_low};
+            mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"""
     b_enc_addr_base, b_offset = b_desc
     b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)  # pyrefly: ignore[bad-argument-type]
-    a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
     b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
-        [d_addr, a_enc_addr_base, b_enc_addr_base, i_desc, accumulate, *scales_addrs, *sparse_addr],
+        [d_addr_base, a_enc_addr_base, b_enc_addr_base, i_desc, accumulate, *scales_addrs, *sparse_addr],
         f"""{{
-            .reg .b32 a_desc_low, a_desc_high, b_desc_low, b_desc_high;
-            .reg {".b32" if a_in_tmem else ".b64"} a_desc;
-            .reg .b64 b_desc;
-            add.s32 a_desc_low, $1, {a_offset_low};
+            .reg .b32 b_desc_low;
+            .reg .b64 b_desc;{a_desc_ptx}
             add.s32 b_desc_low, $2, {b_offset_low};
             mov.b64 b_desc, {{b_desc_low, {b_offset_high}}};
-            {"mov.b32 a_desc, a_desc_low;" if a_in_tmem else f"mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"}
-            tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
+            tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0 + {d_offset}], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
         }}""",
         "r,r,r,r,b" + extra_constraints,
         has_side_effects=True,
