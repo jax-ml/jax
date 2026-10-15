@@ -286,6 +286,10 @@ def jit(
       parameters listed in either ``donate_argnums`` or ``donate_argnames`` will
       be donated.
 
+      Note: Buffer donation is disabled when ``jax_debug_nans`` is enabled.
+      This is because debug mode needs to inspect intermediate values that
+      would be invalidated by donation.
+
       For more details on buffer donation see the
       `buffer donation docs <https://docs.jax.dev/en/latest/201/jit.html#jax-201-buffer-donation>`_.
     donate_argnames: optional, a string or collection of strings specifying
