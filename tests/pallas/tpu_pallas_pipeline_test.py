@@ -762,10 +762,6 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
       vmem_shape,
       vmem_slice_type,
   ):
-    if config.use_emit_pipeline_primitive.value:
-      self.skipTest(
-          'allocations are not yet supported by the emit_pipeline primitive.'
-      )
     def pipeline_body(x_ref, o_ref):
       o_ref[...] = x_ref[...]
 
@@ -903,6 +899,169 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
         ValueError, 'Expected external window buffer to be bound for prefetched input'
     ):
       run(x)
+
+  def test_pipeline_scratches(self):
+    def pipeline_body(x_ref, o_ref, scratch_ref):
+      scratch_ref[...] = x_ref[...] + 1.0
+      o_ref[...] = scratch_ref[...] * 2.0
+
+    def kernel(x_hbm_ref, o_hbm_ref, scratch_ref):
+      pltpu.emit_pipeline(
+          pipeline_body,
+          grid=(4,),
+          in_specs=[pl.BlockSpec((128,), lambda i: (i,))],
+          out_specs=[pl.BlockSpec((128,), lambda i: (i,))],
+      )(x_hbm_ref, o_hbm_ref, scratches=[scratch_ref])
+
+    x = jnp.arange(512, dtype=jnp.float32)
+    out = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((512,), jnp.float32),
+        scratch_shapes=[pltpu.VMEM((128,), jnp.float32)],
+    )(x)
+    np.testing.assert_allclose(out, (x + 1.0) * 2.0)
+
+  def test_allocations_rebind_closed_over_tracer(self):
+    def pipeline_body(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    def kernel(offset_smem_ref, x_hbm_ref, o_hbm_ref):
+      base = offset_smem_ref[0]
+      in_spec = pl.BlockSpec((128,), lambda i: (base + i,))
+      out_spec = pl.BlockSpec((128,), lambda i: (i,))
+      pipeline, make_allocs = pltpu.emit_pipeline_with_allocations(
+          pipeline_body,
+          grid=(2,),
+          in_specs=[in_spec],
+          out_specs=[out_spec],
+      )
+      pl.run_scoped(
+          lambda allocs: pipeline(x_hbm_ref, o_hbm_ref, allocations=allocs),
+          make_allocs(x_hbm_ref, o_hbm_ref),
+      )
+
+    x = jnp.arange(512, dtype=jnp.float32)
+    offset = jnp.array([2], dtype=jnp.int32)
+    out = pl.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((256,), jnp.float32),
+    )(offset, x)
+    np.testing.assert_allclose(out, x[256:] + 1.0)
+
+  def test_input_window_write_effect(self):
+    def pipeline_body(x_ref, o_ref):
+      x_ref[...] = x_ref[...] + 1.0
+      o_ref[...] = x_ref[...] * 2.0
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      pltpu.emit_pipeline(
+          pipeline_body,
+          grid=(4,),
+          in_specs=[pl.BlockSpec((128,), lambda i: (i,))],
+          out_specs=[pl.BlockSpec((128,), lambda i: (i,))],
+      )(x_hbm_ref, o_hbm_ref)
+
+    x = jnp.arange(512, dtype=jnp.float32)
+    out = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((512,), jnp.float32),
+    )(x)
+    np.testing.assert_allclose(out, (x + 1.0) * 2.0)
+
+  def test_custom_buffered_ref_reshaped_window(self):
+    @jax.tree_util.register_dataclass
+    @dataclasses.dataclass(frozen=True)
+    class ReshapedView:
+      base_ref: jax.Ref
+
+      def get(self):
+        return self.base_ref[...].reshape((2, 4, 128))
+
+    @jax.tree_util.register_dataclass
+    @dataclasses.dataclass(frozen=True)
+    class CustomReshapeBufferedRef(pltpu.BufferedRef):
+
+      def with_spec(self, spec):
+        del spec
+        return self
+
+      @property
+      def current_ref(self):
+        return ReshapedView(super().current_ref)
+
+      def unwrap_window_ref(self, body_ref):
+        return (
+            body_ref.base_ref
+            if isinstance(body_ref, ReshapedView)
+            else body_ref
+        )
+
+    def pipeline_body(x_view, o_ref):
+      val = x_view.get()
+      assert val.shape == (2, 4, 128)
+      o_ref[...] = val.reshape((8, 128)) + 1.0
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      dma_spec = pl.BlockSpec((8, 128), lambda i: (i, 0))
+      logical_in_spec = pl.BlockSpec((2, 4, 128), lambda i: (i, 0, 0))
+      allocs = (
+          CustomReshapeBufferedRef.input(dma_spec, jnp.float32),
+          pltpu.BufferedRef.output(dma_spec, jnp.float32),
+      )
+      pl.run_scoped(
+          lambda a: pltpu.emit_pipeline(
+              pipeline_body,
+              grid=(2,),
+              in_specs=[logical_in_spec],
+              out_specs=[dma_spec],
+          )(x_hbm_ref, o_hbm_ref, allocations=a),
+          allocs,
+      )
+
+    x = jnp.arange(16 * 128, dtype=jnp.float32).reshape((16, 128))
+    out = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+    )(x)
+    np.testing.assert_allclose(out, x + 1.0)
+
+  def test_allocations_without_specs_reordered(self):
+    def pipeline_body(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 3.0
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      spec = pl.BlockSpec((128,), lambda i: (i,))
+      allocs = (
+          pltpu.BufferedRef.output(spec, jnp.float32),
+          pltpu.BufferedRef.input(spec, jnp.float32),
+      )
+      pl.run_scoped(
+          lambda a: pltpu.emit_pipeline(
+              pipeline_body,
+              grid=(4,),
+          )(o_hbm_ref, x_hbm_ref, allocations=a),
+          allocs,
+      )
+
+    x = jnp.arange(512, dtype=jnp.float32)
+    out = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((512,), jnp.float32),
+    )(x)
+    np.testing.assert_allclose(out, x + 3.0)
 
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
@@ -1795,12 +1954,7 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
 
     out = func()
     out_np = np.array(out)
-    if config.use_emit_pipeline_primitive.value:
-      # New primitives resolves num_programs to the full grid.
-      expected_nprogs = grid_size
-    else:
-      # Legacy behavior: num_programs reports the partitioned grid size.
-      expected_nprogs = grid_size // num_cores
+    expected_nprogs = grid_size // num_cores
     for i in range(grid_size):
       pid, nprogs = int(out_np[i, 0]), int(out_np[i, 1])
       asize, aindex = int(out_np[i, 2]), int(out_np[i, 3])
@@ -2871,6 +3025,55 @@ class EmitPipelineVmapTest(jtu.JaxTestCase):
     )
     out = jax.jit(run_kernel)(x)
     expected_out = x + grid_size
+    np.testing.assert_allclose(out, expected_out)
+
+  @parameterized.product(dynamic_grid=[True, False])
+  def test_vmap_megacore_partitions_batch_axis(self, dynamic_grid):
+    if not jax.config.jax_use_emit_pipeline_primitive:
+      self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
+    num_cores = pltpu.get_tpu_info().num_cores
+    grid_size = 3
+    out_type = jax.ShapeDtypeStruct(
+        (num_cores, 16, 128 * grid_size), jnp.int32
+    )
+    mesh = pltpu.TensorCoreMesh(axis_name='core')
+
+    @pl.kernel(out_type=out_type, mesh=mesh)
+    def run_kernel(x_ref, o_ref):
+      core_id = jax.lax.axis_index('core')
+
+      def body(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + pl.num_programs(1) + 100 * core_id
+
+      grid = (1, jnp.array(grid_size)) if dynamic_grid else (1, grid_size)
+      jax.vmap(
+          pltpu.emit_pipeline(
+              body,
+              grid=grid,
+              in_specs=[
+                  pl.BlockSpec(
+                      (16, 128), lambda _, i: (0, pl.num_programs(1) - 1 - i)
+                  )
+              ],
+              out_specs=[
+                  pl.BlockSpec(
+                      (16, 128), lambda _, i: (0, pl.num_programs(1) - 1 - i)
+                  )
+              ],
+              core_axis_name='core',
+              dimension_semantics=(pltpu.ARBITRARY, pltpu.PARALLEL),
+          )
+      )(x_ref, o_ref)
+
+    x = jnp.arange(num_cores * 16 * grid_size * 128, dtype=jnp.int32).reshape(
+        (num_cores, 16, grid_size * 128)
+    )
+    out = jax.jit(run_kernel)(x)
+    expected_out = (
+        x
+        + grid_size
+        + 100 * jnp.arange(num_cores, dtype=jnp.int32)[:, None, None]
+    )
     np.testing.assert_allclose(out, expected_out)
 
   @parameterized.product(dynamic_grid=[True, False])
