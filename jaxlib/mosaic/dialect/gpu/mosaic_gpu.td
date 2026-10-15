@@ -413,6 +413,62 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
   let hasVerifier = 1;
 }
 
+def MosaicGPU_AsyncLoadIm2colOp : Op<MosaicGPU_Dialect, "async_load_im2col",
+      [AttrSizedOperandSegments]> {
+  let summary = "Schedules an async im2col load of a MemRef from GMEM to SMEM";
+  let description = [{
+    Schedules an async im2col copy of the contents of the `source` MemRef in
+    GMEM to the `destination` MemRef in SMEM. Each row of `destination` receives
+    the channels of one pixel of one window in `source`. The `destination`
+    MemRef in SMEM must be contiguous.
+
+    Upon completion of the copy, the `complete-tx(complete-count)` operation
+    will be executed on the provided `barrier`.
+
+    - `source` is a batch of channels-last images of shape `(N, W, C)`,
+      `(N, H, W, C)` or `(N, D, H, W, C)` (rank 3, 4 or 5) with an element
+      bitwidth of at least 8.
+    - `destination` has shape `(*rows, cols)` of rank at least 2. Its leading
+      dimensions are flattened into `prod(rows)` windows (in `[1, 1024]`) of
+      `cols` channels each (in `[1, 256]`), where `cols` has a bytewidth
+      divisible by 16.
+    - `window_lower_bounds` and `window_upper_bounds` give, for each spatial
+      dimension `i` of size `S`, the `(lo, hi)` bounds such that windows start
+      at positions `lo`, `lo + s`, `lo + 2 * s`, ... below `S + hi`, where `s`
+      is `window_strides[i]`, with the image implicitly zero-padded outside
+      `[0, S)`. Each bound must fit in a signed `16 / (rank - 2)`-bit integer.
+    - `indices` has length equal to the rank of `source` and specifies
+      `(n, *start, c)`: the batch index and start position of the window loaded
+      into the first row, and the first channel to load. Each subsequent row
+      takes the next window in row-major order over `(n, *start)`, so a copy can
+      span several images. Rows past the last image are zero-filled.
+    - `filter_offsets` has length `rank - 2` and selects the pixel to load
+      within each window as an offset in `[0, 2**(16 / (rank - 2)) - 1]` from
+      the window's start position.
+    - `window_strides` has length `rank - 2` and gives the step in `[1, 8]`
+      between consecutive window start positions along each spatial dimension.
+
+    The `predicate` allows scheduling the transfer conditionally. The async copy
+    is always scheduled by at most a single lane in the warpgroup.
+  }];
+
+  let arguments = (ins
+    AnyMemRef:$source,
+    AnyStaticShapeMemRef:$destination,
+    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    Variadic<I32>:$indices,
+    Variadic<I16>:$filter_offsets,
+    PtxPredicate:$predicate,
+
+    // Attributes
+    DenseI64ArrayAttr:$window_lower_bounds,
+    DenseI64ArrayAttr:$window_upper_bounds,
+    DenseI64ArrayAttr:$window_strides
+  );
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_AsyncPrefetchOp : Op<MosaicGPU_Dialect, "async_prefetch",
       [AttrSizedOperandSegments]> {
   let summary = "Schedules an async prefetch of a MemRef from GMEM to L2";

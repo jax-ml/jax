@@ -16,6 +16,7 @@
 
 import contextlib
 import os
+import re
 import tempfile
 
 from absl.testing import parameterized
@@ -455,6 +456,139 @@ class DialectTest(MosaicGpuTest):
         ir.MLIRError,
         "Only one index may be a vector.*dimensions 0 and 1.",
     ):
+      self.module.operation.verify()
+
+  @parameterized.parameters(
+      ((2, 8, 16), (32, 16), (-1,), (0,), (1,)),
+      ((2, 8, 8, 16), (32, 16), (-1, -1), (-1, -1), (1, 2)),
+      ((2, 4, 8, 8, 16), (4, 8, 16), (-16, 0, -1), (15, 0, 1), (1, 4, 8)),
+  )
+  def test_async_load_im2col_op_valid(
+      self, source_shape, dest_shape, lower_bounds, upper_bounds, strides
+  ):
+    f16 = ir.F16Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    i16 = ir.IntegerType.get_signless(16)
+    rank = len(source_shape)
+    with ir.InsertionPoint(self.module.body):
+      source, destination, barrier, *rest = undefs(
+          ir.MemRefType.get(source_shape, f16),
+          ir.MemRefType.get(dest_shape, f16),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
+          *([i32] * rank),
+          *([i16] * (rank - 2)),
+      )
+      mgpu.dialect.async_load_im2col(
+          source,
+          destination,
+          barrier,
+          rest[:rank],
+          rest[rank:],
+          window_lower_bounds=lower_bounds,
+          window_upper_bounds=upper_bounds,
+          window_strides=strides,
+      )
+    self.assertTrue(self.module.operation.verify())
+
+  @parameterized.parameters(
+      dict(dest_bitwidth=32, error="must have the same element type"),
+      dict(
+          source_bitwidth=4,
+          dest_bitwidth=4,
+          error="Sub-byte types are not supported",
+      ),
+      dict(
+          source_shape=(8, 16),
+          num_indices=2,
+          error="rank of `source` must be in [3, 5]",
+      ),
+      dict(dest_shape=(16,), error="rank of `destination` must be at least 2"),
+      dict(
+          dest_shape=(2, ir.ShapedType.get_dynamic_size(), 16),
+          error="statically shaped memref",
+      ),
+      dict(
+          dest_shape=(1025, 16),
+          error="number of rows in `destination` must be in [1, 1024]",
+      ),
+      dict(
+          dest_shape=(32, 264),
+          error="number of columns in `destination` must be in [1, 256]",
+      ),
+      dict(dest_shape=(32, 12), error="bytewidth divisible by 16"),
+      dict(
+          num_indices=3,
+          error="size of `indices` must be equal to the rank of `source`",
+      ),
+      dict(
+          num_filter_offsets=1,
+          error="size of `filter_offsets` must be equal",
+      ),
+      dict(
+          window_lower_bounds=[0],
+          error="size of `window_lower_bounds` must be equal",
+      ),
+      dict(
+          window_upper_bounds=[0],
+          error="size of `window_upper_bounds` must be equal",
+      ),
+      dict(
+          window_strides=[1],
+          error="size of `window_strides` must be equal",
+      ),
+      dict(
+          window_lower_bounds=[-129, 0],
+          error="Window bounds at spatial dimension 0 must be in [-128, 127]",
+      ),
+      dict(
+          window_lower_bounds=[4, 0],
+          window_upper_bounds=[-4, 0],
+          error="Window bounds must have non-zero extent",
+      ),
+      dict(
+          window_strides=[1, 9],
+          error="Window stride at spatial dimension 1 must be in [1, 8]",
+      ),
+  )
+  def test_async_load_im2col_op_invalid(
+      self,
+      *,
+      error,
+      source_shape=(2, 8, 8, 16),
+      dest_shape=(32, 16),
+      source_bitwidth=16,
+      dest_bitwidth=16,
+      num_indices=4,
+      num_filter_offsets=2,
+      window_lower_bounds=(0, 0),
+      window_upper_bounds=(0, 0),
+      window_strides=(1, 1),
+  ):
+    i32 = ir.IntegerType.get_signless(32)
+    i16 = ir.IntegerType.get_signless(16)
+    with ir.InsertionPoint(self.module.body):
+      source, destination, barrier, *rest = undefs(
+          ir.MemRefType.get(
+              source_shape, ir.IntegerType.get_signless(source_bitwidth)
+          ),
+          ir.MemRefType.get(
+              dest_shape, ir.IntegerType.get_signless(dest_bitwidth)
+          ),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
+          *([i32] * num_indices),
+          *([i16] * num_filter_offsets),
+      )
+      mgpu.dialect.async_load_im2col(
+          source,
+          destination,
+          barrier,
+          rest[:num_indices],
+          rest[num_indices:],
+          window_lower_bounds=window_lower_bounds,
+          window_upper_bounds=window_upper_bounds,
+          window_strides=window_strides,
+      )
+    with self.assertRaisesRegex(ir.MLIRError, re.escape(error)):
       self.module.operation.verify()
 
   def test_async_store_op_source_and_dest_must_have_same_element_type(self):
