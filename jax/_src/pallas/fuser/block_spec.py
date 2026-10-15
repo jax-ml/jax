@@ -3174,7 +3174,7 @@ def register_push_block_spec_rule(
 
 
 def _binop_push_rule(
-    ctx: PullRuleContext,
+    ctx: PushRuleContext,
     left_block_spec: pallas_core.BlockSpec,
     right_block_spec: pallas_core.BlockSpec,
     **params: Any,
@@ -3232,7 +3232,7 @@ register_binop_rule(lax.pow_p)
 
 
 def _eltwise_push_rule(
-    ctx: PullRuleContext,
+    ctx: PushRuleContext,
     block_spec: pallas_core.BlockSpec,
     **params,
 ) -> pallas_core.BlockSpec:
@@ -3384,7 +3384,7 @@ register_eltwise_rule(pallas_primitives.multiple_of_p)
 
 @register_push_block_spec_rule(lax.reshape_p)
 def _reshape_push_rule(
-    ctx: PullRuleContext,
+    ctx: PushRuleContext,
     block_spec: pallas_core.BlockSpec,
     *,
     dimensions: tuple[int, ...] | None,
