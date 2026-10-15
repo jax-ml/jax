@@ -4153,8 +4153,13 @@ class FragmentedArray:
       )
       return
 
+    if (bitwidth := mgpu.bitwidth(self.mlir_dtype)) > 64:
+      raise NotImplementedError(
+          f"Storing splat arrays with {bitwidth}-bit elements is not supported"
+      )
+
     vec_size = math.gcd(
-        64 // mgpu.bitwidth(self.mlir_dtype),
+        64 // bitwidth,
         np.prod(self.shape) // WARPGROUP_SIZE,
     )
     if np.prod(self.shape) % (WARPGROUP_SIZE * vec_size):
