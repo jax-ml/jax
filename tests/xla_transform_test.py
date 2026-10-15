@@ -96,6 +96,34 @@ class XlaTransformTest(jtu.JaxTestCase):
     expected = jnp.cos(x)
     self.assertAllClose(result, expected, atol=1e-5)
 
+  @parameterized.parameters(
+      jex_xla.PipelineStage.PRE_SCHEDULER,
+      jex_xla.PipelineStage.POST_SCHEDULER,
+  )
+  def test_callback_receives_fdo_profile(self, stage):
+    seen = []
+
+    def record(serialized_hlo: bytes, fdo_profile: bytes) -> None:
+      del serialized_hlo
+      seen.append(fdo_profile)
+
+    name = f"record_fdo_profile_{stage.name}_test"
+    jex_xla.register_hlo_module_transformation(
+        record, name=name, stage=stage)
+    self._registered_transforms.append((name, stage))
+
+    jax.clear_caches()
+    x = jnp.arange(3.0)
+    jax.jit(jnp.sin)(x)
+    self.assertNotEmpty(seen)
+    self.assertTrue(all(p == b"" for p in seen), seen)
+
+    seen.clear()
+    profile = b"fdo-profile-bytes"
+    jax.jit(lambda x: jnp.cos(x) + 1, compiler_options={
+        "fdo_profile": profile})(x)
+    self.assertIn(profile, seen)
+
   @jtu.skip_on_devices("cpu")
   def test_sin_to_cos_platform_filtering(self):
     # TODO(skyewm, yashkatariya): Fix this
