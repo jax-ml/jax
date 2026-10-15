@@ -21,6 +21,7 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 
 # Under pytest, tests run against an installed wheel that does not
@@ -78,10 +79,14 @@ class RsqrtTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_rsqrt_accuracy(self, dtype):
-    # The max ULP for float32 is either 1.0 and 2.0 depend on CPU vendor (AMD
-    # vs Intel). The (min, max) tuple allows tightness checks to pass on both.
+    if jaxlib_extension_version >= 506:
+      cpu_bounds = ("cpu", {f32: 1.0, f64: 1.5})
+    else:
+      # The max ULP for float32 is either 1.0 and 2.0 depend on CPU vendor (AMD
+      # vs Intel). The (min, max) tuple allows tightness checks to pass on both.
+      cpu_bounds = ("cpu", {f32: (1.0, 2.0), f64: 1.5})
     bounds = [
-        ("cpu", {f32: (1.0, 2.0), f64: 1.5}),
+        cpu_bounds,
         ("gpu", {f32: 2.0, f64: 1.5}),
         ([*TPU_EUPV1, "tpu_v5p"], {f32: 2.5}),
         ("tpu_v6e", {f32: 1.5}),
