@@ -1316,6 +1316,16 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker,
                             rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testTLogPdfLargeDf(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41203
+    x = np.array([-2.0, 0.0, 1.5], dtype=dtype)[:, None]
+    df = np.array([1e5, 1e6, 1e7, 1e10], dtype=dtype)
+    self.assertAllClose(lsp_stats.t.logpdf(x, df), osp_stats.t.logpdf(x, df),
+                        check_dtypes=False)
+    self.assertAllClose(lsp_stats.t.pdf(x, df), osp_stats.t.pdf(x, df),
+                        check_dtypes=False)
+
 
   @genNamedParametersNArgs(3)
   def testUniformLogPdf(self, shapes, dtypes):
