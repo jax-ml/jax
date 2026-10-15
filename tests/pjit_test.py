@@ -11976,6 +11976,44 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(manual_fn(u), ref[:, 1:3])
 
+  @parameterized.named_parameters([
+      ('max', jax.lax.reduce_max, jnp.max, jax.lax.pmax, UnreducedKind.max),
+      ('min', jax.lax.reduce_min, jnp.min, jax.lax.pmin, UnreducedKind.min),
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unreduced_max_min_nested_shard_map_add_manual_axes(
+      self, lax_op, jnp_op, p_op, u_kind, mesh
+  ):
+    arr = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(4, 4), P('x', 'y')
+    )
+    u_spec = P(None, unreduced={'y'}, unreduced_kind=u_kind)
+
+    @jax.jit
+    def g(z):
+      return z
+
+    @jax.shard_map(
+        in_specs=u_spec,
+        out_specs=P(None),
+        axis_names={'y'},
+    )
+    def inner(z):
+      return p_op(z, 'y')
+
+    @jax.jit
+    @jax.shard_map(
+        in_specs=P('x', None),
+        out_specs=P('x'),
+        axis_names={'x'},
+        check_vma=False,
+    )
+    def f(x):
+      u = lax_op(x, axes=(1,), out_sharding=u_spec)
+      return inner(g(u))
+
+    self.assertArraysEqual(f(arr), jnp_op(arr, axis=1))
+
   @jtu.with_explicit_mesh((1, 2), ('x', 'y'))
   def test_reshape_preserve_singleton_dim_spec(self, mesh):
     # https://github.com/jax-ml/jax/issues/39309
