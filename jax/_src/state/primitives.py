@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 
 from jax._src import ad_util
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -256,6 +257,7 @@ def ref_swap(
   if hasattr(ref, 'dtype'):
     value = _maybe_implicit_cast(ref.dtype, value)
   ref, transforms = get_ref_and_transforms(ref, idx, _function_name)
+  value = _insert_pvary_for_write(ref, value)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return swap_p.bind(ref, value, *flat_transforms, tree=tree)
 
@@ -386,8 +388,20 @@ def ref_addupdate(
   .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   ref, transforms = get_ref_and_transforms(ref, idx, "ref_addupdate")
+  x = _insert_pvary_for_write(ref, x)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   addupdate_p.bind(ref, x, *flat_transforms, tree=tree)
+
+def _insert_pvary_for_write(ref, value):
+  if not (config._check_vma.value and config.auto_pcast.value):
+    return value
+  ref_aval, val_aval = core.typeof(ref), core.typeof(value)
+  if not (isinstance(ref_aval.inner_aval, core.ShapedArray) and
+          isinstance(val_aval, core.ShapedArray)):
+    return value
+  if names := ref_aval.inner_aval.mat.varying - val_aval.mat.varying:
+    value = core.pvary(value, tuple(names))
+  return value
 
 
 ## get/set/addupdate abstract evaluation rules
@@ -409,6 +423,19 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
     out_aval = ref_aval.inner_aval
   return (out_aval, {ReadEffect(0)})
 get_p.def_effectful_abstract_eval(_get_abstract_eval)
+
+def _check_write_vma(name, inner_aval, val_aval, idx_avals):
+  if not config._check_vma.value:
+    return
+  ref_vma, val_vma = inner_aval.mat.varying, val_aval.mat.varying
+  idx_vma = frozenset().union(*(a.mat.varying for a in idx_avals
+                                if isinstance(a, core.ShapedArray)))
+  if val_vma != ref_vma or not idx_vma <= ref_vma:
+    raise ValueError(
+        f"Primitive {name} requires the value's varying manual axes to match "
+        f"the Ref's, and the index's varying manual axes to be a subset of "
+        f"them, but got {val_vma} for the value, {idx_vma} for the index, and "
+        f"{ref_vma} for the Ref.")
 
 def _swap_abstract_eval(ref_aval: AbstractRef,
                         val_aval: core.AbstractValue,
@@ -440,6 +467,7 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
           f"Ref dtype: {expected_out_ty.dtype}. "
           f"Value dtype: {val_aval.dtype}. "
       )
+    _check_write_vma('swap', ref_aval.inner_aval, val_aval, args)
     out_aval = expected_out_ty
   else:
     if transforms:
@@ -471,6 +499,7 @@ def _addupdate_abstract_eval(ref_aval: AbstractRef,
       raise ValueError("Invalid dtype for `addupdate`. "
                        f"Ref dtype: {ref_aval.dtype}. "
                        f"Value shape: {val_aval.dtype}. ")
+    _check_write_vma('addupdate', ref_aval.inner_aval, val_aval, args)
     out_sharding = expected_out_ty.sharding
     if ((out_sharding.mesh._any_axis_explicit or
          val_aval.sharding.mesh._any_axis_explicit) and
