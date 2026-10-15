@@ -863,7 +863,6 @@ class LaunchContext:
     i8 = ir.IntegerType.get_signless(8)
     i32 = ir.IntegerType.get_signless(32)
     i64 = ir.IntegerType.get_signless(64)
-    ptr_ty = llvm.PointerType.get()
     is_dynamic_peer = False
     if isinstance(gmem_peer_id, ir.Value):
       if gmem_peer_id.type != i32:
@@ -904,7 +903,6 @@ class LaunchContext:
         for t in gmem_transform:
           ref = t.apply(ref)
         ref_ty = ir.MemRefType(ref.type)
-        # TODO(apaszke): Use utils.memref_ptr to compute base_ptr
         strides, _ = ref_ty.get_strides_and_offset()
         if strides[-1] != 1:
           raise ValueError(
@@ -914,14 +912,9 @@ class LaunchContext:
           )
 
         # pyrefly: ignore[not-iterable]
-        _, offset, *sizes_and_strides = memref.extract_strided_metadata(ref)
-        aligned_ptr_idx = memref.extract_aligned_pointer_as_index(ref)
+        _, _, *sizes_and_strides = memref.extract_strided_metadata(ref)
+        base_ptr = utils.memref_ptr(ref)
         as_i64 = lambda i: arith.index_cast(i64, i)
-        alloc_ptr = llvm.inttoptr(ptr_ty, as_i64(aligned_ptr_idx))
-        llvm_dyn = -2147483648  # TODO(apaszke): Improve the MLIR bindings...
-        base_ptr = llvm.getelementptr(
-            ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type, llvm.GEPNoWrapFlags.none,
-        )
         rank = ref_ty.rank
         assert rank * 2 == len(sizes_and_strides)
         swizzle_arg = (
