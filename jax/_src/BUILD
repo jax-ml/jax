@@ -1619,6 +1619,8 @@ pytype_strict_library(
         ":lax",
         ":mlir",
         ":numpy",
+        ":partial_eval",
+        ":remat",
         ":sharding_impls",
         ":tree_util",
         ":typing",

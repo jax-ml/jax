@@ -19,6 +19,7 @@ from functools import partial, reduce
 
 import numpy as np
 
+from jax._src import ad_checkpoint
 from jax._src import api
 from jax._src import core
 from jax._src import dispatch
@@ -30,6 +31,8 @@ from jax._src.custom_derivatives import custom_vjp
 from jax._src.custom_partitioning import custom_partitioning
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import remat
 from jax._src.interpreters.mlir import ir
 from jax._src.lax import lax
 from jax._src.lax import parallel as lax_parallel
@@ -205,6 +208,50 @@ _scaled_matmul_p_wrapper = core.Primitive("scaled_matmul_wrapper")
 _scaled_matmul_p_wrapper.multiple_results = True
 _scaled_matmul_p_wrapper.def_impl(_scaled_matmul_impl)
 _scaled_matmul_p_wrapper.def_abstract_eval(_scaled_matmul_abstract)
+
+
+def _scaled_matmul_remat(trace, lhs, rhs, lhs_scales, rhs_scales, **params):
+  call = partial(_scaled_matmul_p_wrapper.bind, **params)
+  (out,) = call(lhs, rhs, lhs_scales, rhs_scales)
+  if trace.policy is None:
+    return [out], (), lambda _, *args: call(*args)
+  case = pe.ensure_enum(
+      trace.policy(
+          _scaled_matmul_p_wrapper,
+          core.typeof(lhs),
+          core.typeof(rhs),
+          core.typeof(lhs_scales),
+          core.typeof(rhs_scales),
+          **params,
+      )
+  )
+  if isinstance(case, pe.SaveableType):
+    out = remat.reduce_precision(out)
+    if not trace.custom_vjp_rules:
+      return [out], out, lambda out, *_: [out]
+    return (
+        [out],
+        out,
+        lambda out, *args: [
+            ad_checkpoint.primal_left_tangent_right(out, call(*args)[0])
+        ],
+    )
+  if isinstance(case, pe.Offloadable):
+    out = remat.reduce_precision(out)
+    out_host = api.device_put(
+        out, core.mem_kind_to_space(case.dst), may_alias=False
+    )
+    src_space = core.mem_kind_to_space(case.src)
+    def rem(out_host, *args):
+      out_dev = api.device_put(out_host, src_space, may_alias=False)
+      if not trace.custom_vjp_rules:
+        return [out_dev]
+      return [ad_checkpoint.primal_left_tangent_right(out_dev, call(*args)[0])]
+    return [out], out_host, rem
+  return [out], (), lambda _, *args: call(*args)
+
+
+remat.rules[_scaled_matmul_p_wrapper] = _scaled_matmul_remat
 
 # Given the inputs already sharded as
 #   ([B], M, K1), ([B], N, K2)
