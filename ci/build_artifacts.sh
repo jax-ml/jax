@@ -101,7 +101,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
   python build/build.py build --wheels="$artifact" \
     --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
     --bazel_options=--config=rbe_cpu_pool \
-    "${bazel_startup_options[@]}" \
+    ${bazel_startup_options[@]+"${bazel_startup_options[@]}"} \
     --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
     $cuda_version_flag \
     --verbose --detailed_timestamped_log \
@@ -115,7 +115,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     python build/build.py build --wheels="$artifact" \
       --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
       --bazel_options=--config=rbe_cpu_pool \
-      "${bazel_startup_options[@]}" \
+      ${bazel_startup_options[@]+"${bazel_startup_options[@]}"} \
       --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
       $cuda_version_flag \
       --verbose --detailed_timestamped_log \
