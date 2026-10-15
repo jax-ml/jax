@@ -845,6 +845,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         tol = 6e-4
       self.assertArraysAllClose(t_out, d.real, atol=tol, rtol=tol)
 
+  @jtu.sample_product(dtype=float_types + complex_types)
+  def testHermitianSVDZeroSingularValue(self, dtype):
+    a = np.diag(np.array([1, 0], dtype=dtype))
+    u, s, vh = jnp.linalg.svd(a, hermitian=True)
+    self.assertAllClose(s, np.array([1, 0], dtype=s.dtype))
+    self.assertAllClose(vh @ vh.conj().T, np.eye(2, dtype=dtype))
+    self.assertAllClose((u * s.astype(dtype)[None, :]) @ vh, a)
+
   def testJspSVDBasic(self):
     # since jax.scipy.linalg.svd is almost the same as jax.numpy.linalg.svd
     # do not check it functionality here

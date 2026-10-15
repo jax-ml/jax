@@ -301,7 +301,7 @@ def svd(
     w, v = lax_linalg.eigh(a, subset_by_index=subset_by_index)
     s = lax.abs(v)
     if compute_uv:
-      sign = lax.sign(v)
+      sign = lax.select(v < 0, lax.full_like(v, -1), lax.full_like(v, 1))
       idx_dtype = lax_utils.int_dtype_for_dim(
           s.shape[s.ndim - 1], signed=False)
       idxs = lax.broadcasted_iota(idx_dtype, s.shape, dimension=s.ndim - 1)
