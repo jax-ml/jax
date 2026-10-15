@@ -19,6 +19,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New features
   * Added {func}`jax.scipy.special.erfcinv` for the inverse complementary
     error function.
+  * Added {func}`jax.scipy.special.gammaincinv` and
+    {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
+    incomplete gamma functions, with gradients with respect to both arguments.
   * Added {func}`jax.lax.polynomial` for polynomial evaluation. The polynomial
     primitive is faster and uses less memory when computing gradients.
   * Added {func}`jax.custom_vjp.defremat`, which customizes how a

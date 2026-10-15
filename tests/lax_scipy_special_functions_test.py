@@ -98,6 +98,14 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "gammaincc", 2, float_dtypes, jtu.rand_positive, True
     ),
     op_record(
+        "gammaincinv", 2, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=0.05, high=0.95), True
+    ),
+    op_record(
+        "gammainccinv", 2, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=0.05, high=0.95), True
+    ),
+    op_record(
         "gammasgn", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
@@ -605,6 +613,106 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         osp_special.gammaincc, lsp_special.gammaincc, args_maker, rtol=rtol
     )
     self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
+
+  @jtu.sample_product(
+      op=["gammaincinv", "gammainccinv"],
+      dtype=jtu.dtypes.floating,
+  )
+  def testGammaIncInvAccuracy(self, op, dtype):
+    # Comprehensive accuracy tests are in tests/numerics/gamma_test.py; this
+    # checks a grid that spans the tails of the distribution.
+    finfo = jnp.finfo(dtype)
+    a = np.logspace(-3, 4, 29)
+    y = np.concatenate([
+        np.logspace(-30, -1, 30),
+        np.linspace(0.1, 0.9, 17)[1:-1],
+        1 - np.logspace(-1, np.log10(finfo.eps), 20),
+    ])
+    a, y = (v.astype(dtype).ravel() for v in np.meshgrid(a, y))
+    scipy_op = getattr(osp_special, op)
+    expected = scipy_op(a.astype(np.float64), y.astype(np.float64))
+    # Skip points whose result underflows or overflows in `dtype`.
+    keep = ((expected > 1e3 * float(finfo.tiny))
+            & (expected < float(finfo.max) / 10))
+    a, y = a[keep], y[keep]
+    args_maker = lambda: [a, y]
+    if jtu.test_device_matches(["cpu"]):
+      rtol = {dtypes.bfloat16: 1e-2, np.float16: 1e-3, np.float32: 3e-4,
+              np.float64: 1e-10}
+    else:
+      rtol = {dtypes.bfloat16: 1e-2, np.float16: 1e-3, np.float32: 1e-2,
+              np.float64: 1e-9}
+    self._CheckAgainstNumpy(
+        lambda a, y: scipy_op(a.astype(np.float64), y.astype(np.float64)),
+        getattr(lsp_special, op), args_maker, check_dtypes=False, atol=0,
+        rtol=rtol)
+    self._CompileAndCheck(getattr(lsp_special, op), args_maker, rtol=rtol)
+
+  @jtu.sample_product(
+      op=["gammaincinv", "gammainccinv"],
+      dtype=jtu.dtypes.floating,
+  )
+  def testGammaIncInvGrads(self, op, dtype):
+    a = np.array([0.05, 0.3, 0.9, 1.0, 1.7, 5.0, 40.0, 300.0], dtype=dtype)
+    y = np.array([0.6, 0.2, 0.5, 0.8, 0.99, 0.05, 0.3, 0.7], dtype=dtype)
+    lax_op = getattr(lsp_special, op)
+    tol = {dtypes.bfloat16: 2e-1, np.float16: 1e-1, np.float32: 5e-2,
+           np.float64: 1e-5}
+    eps = {dtypes.bfloat16: 1e-1, np.float16: 1e-2, np.float32: 1e-3,
+           np.float64: 1e-6}[dtype]
+    jtu.check_grads(lax_op, (a, y), order=1, modes=["fwd", "rev"],
+                    atol=tol, rtol=tol, eps=eps)
+    if dtype == np.float64:
+      # Finite differences of lower precision JVPs are too noisy for order 2.
+      jtu.check_grads(lambda y: lax_op(a, y), (y,), order=2,
+                      modes=["fwd", "rev"], atol=tol, rtol=tol, eps=eps)
+
+  @parameterized.product(op=["gammaincinv", "gammainccinv"],
+                         with_jit=[True, False])
+  def testGammaIncInvDebugNans(self, op, with_jit):
+    # Every branch of the initial approximation and of the refinement is
+    # evaluated for every element, so the branches that are not selected must
+    # not produce NaNs either. Without jit, debug_nans checks the result of
+    # every primitive, including those of the unselected branches.
+    finfo = jnp.finfo(dtypes.default_float_dtype())
+    # a < 1 and a >= 1, the thresholds of the initial approximation (0.3, 1,
+    # 500, 1e5), of the refinement (200 in float32, 1e6 in float64) and of the
+    # gradients (1e4 in float32, 1e6 in float64), and huge a.
+    a = [float(finfo.tiny), 1e-6, 0.05, 0.3, 0.5, 0.999, 1.0, 1.5, 5.0, 30.0,
+         150.0, 300.0, 600.0, 1e4, 2e5, 1e7, 1e30, float(finfo.max)]
+    # Both tails, the switch between them at 0.5, and the endpoints.
+    y = [0.0, float(finfo.tiny), 1e-30, 1e-5, 0.01, 0.15, 0.3, 0.5, 0.6, 0.9,
+         0.99, 1 - 1e-5, 1 - float(finfo.eps), 1.0]
+    a, y = (jnp.asarray(v.ravel(), dtype=finfo.dtype)
+            for v in np.meshgrid(a, y))
+    f = getattr(lsp_special, op)
+    # With jit disabled, only the gradient with respect to y is checked, since
+    # the one with respect to a uses lax.random_gamma_grad, which creates a NaN
+    # constant.
+    argnums = (0, 1) if with_jit else 1
+    df = jax.grad(lambda a, y: f(a, y).sum(), argnums=argnums)
+    if with_jit:
+      f, df = jax.jit(f), jax.jit(df)
+    with jax.debug_nans(True), jax.disable_jit(not with_jit):
+      f(a, y)  # Doesn't crash
+      df(a, y)
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(nan\\)"):
+        f(2.0, 1.5)
+
+  @parameterized.parameters("gammaincinv", "gammainccinv")
+  def testGammaIncInvGradsAtEndpoints(self, op):
+    # The result is constant (0 or inf) at y in {0, 1}, so the gradient with
+    # respect to a is zero there.
+    lax_op = getattr(lsp_special, op)
+    a = jnp.array([0.5, 1.0, 2.0, 0.5, 1.0, 2.0])
+    y = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
+    da, dy = jax.grad(lambda a, y: lax_op(a, y).sum(), argnums=(0, 1))(a, y)
+    self.assertArraysEqual(da, jnp.zeros_like(a))
+    if op == "gammaincinv":
+      expected_dy = jnp.array([0.0, 1.0, np.inf, np.inf, np.inf, np.inf])
+    else:
+      expected_dy = jnp.array([-np.inf] * 3 + [0.0, -1.0, -np.inf])
+    self.assertAllClose(dy, expected_dy.astype(dy.dtype))
 
   @jtu.sample_product(dtype=float_dtypes)
   def testBetaIncResultDoesNotDependOnBatch(self, dtype):
