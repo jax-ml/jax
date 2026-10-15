@@ -1293,6 +1293,7 @@ jax_multiplatform_test(
     tags = [
         "mosaic_gpu_test",
         "noasan",
+        "noassert",  # Times out.
     ],
     deps = [
         "//jax/experimental:pallas",
