@@ -1,0 +1,89 @@
+diff --git a/absl/base/attributes.h b/absl/base/attributes.h
+--- a/absl/base/attributes.h
++++ b/absl/base/attributes.h
+@@ -844,7 +844,7 @@
+ // just using the standard `constinit` keyword directly over this macro.
+ //
+ // Note that this attribute is redundant if the variable is declared constexpr.
+-#if defined(__cpp_constinit) && __cpp_constinit >= 201907L
++#if defined(__cpp_constinit) && __cpp_constinit >= 201907L && !defined(__NVCC__)
+ #define ABSL_CONST_INIT constinit
+ #elif ABSL_HAVE_CPP_ATTRIBUTE(clang::require_constant_initialization)
+ #define ABSL_CONST_INIT [[clang::require_constant_initialization]]
+diff --git a/absl/base/internal/nullability_traits.h b/absl/base/internal/nullability_traits.h
+--- a/absl/base/internal/nullability_traits.h
++++ b/absl/base/internal/nullability_traits.h
+@@ -31,7 +31,7 @@
+ //
+ // NOTE: This should not be used to detect if the compiler is Clang (since
+ // Clang is the only compiler that supports nullability annotations).
+-#if defined(__clang__) && !defined(__OBJC__) && \
++#if defined(__clang__) && !defined(__OBJC__) && !defined(__NVCC__) && \
+     ABSL_HAVE_FEATURE(nullability_on_classes)
+ template <class T, class = void>
+ struct IsNullabilityCompatibleType {
+diff --git a/absl/base/nullability.h b/absl/base/nullability.h
+--- a/absl/base/nullability.h
++++ b/absl/base/nullability.h
+@@ -223,7 +223,7 @@
+ // No-op except for being a human readable signal.
+ #define ABSL_POINTERS_DEFAULT_NONNULL
+ 
+-#if defined(__clang__) && !defined(__OBJC__) && \
++#if defined(__clang__) && !defined(__OBJC__) && !defined(__NVCC__) && \
+     ABSL_HAVE_FEATURE(nullability_on_classes)
+ // absl_nonnull (default with `ABSL_POINTERS_DEFAULT_NONNULL`)
+ //
+@@ -309,7 +309,7 @@
+ // Note: Compilers that don't support the `nullability_on_classes` feature will
+ // allow nullability annotations to be applied to any type, not just ones marked
+ // with `ABSL_NULLABILITY_COMPATIBLE`.
+-#if ABSL_HAVE_FEATURE(nullability_on_classes)
++#if ABSL_HAVE_FEATURE(nullability_on_classes) && !defined(__NVCC__)
+ #define ABSL_NULLABILITY_COMPATIBLE _Nullable
+ #else
+ #define ABSL_NULLABILITY_COMPATIBLE
+diff --git a/absl/base/options.h b/absl/base/options.h
+--- a/absl/base/options.h
++++ b/absl/base/options.h
+@@ -99,7 +99,7 @@
+ // the source location type is an alias of std::source_location type, use the
+ // feature macro ABSL_USES_STD_SOURCE_LOCATION.
+ //
+-#define ABSL_OPTION_USE_STD_SOURCE_LOCATION 2
++#define ABSL_OPTION_USE_STD_SOURCE_LOCATION 0
+ 
+ // ABSL_OPTION_USE_STD_ORDERING
+ //
+diff --git a/absl/container/internal/raw_hash_set.h b/absl/container/internal/raw_hash_set.h
+--- a/absl/container/internal/raw_hash_set.h
++++ b/absl/container/internal/raw_hash_set.h
+@@ -2703,13 +2703,13 @@
+   //   s.insert({"abc", 42});
+   std::pair<iterator, bool> insert(init_type&& value)
+       ABSL_ATTRIBUTE_LIFETIME_BOUND
+-#if ABSL_INTERNAL_CPLUSPLUS_LANG >= 202002L
++#if ABSL_INTERNAL_CPLUSPLUS_LANG >= 202002L && !defined(__NVCC__)
+     requires(!IsLifetimeBoundAssignmentFrom<init_type>::value)
+ #endif
+   {
+     return emplace(std::move(value));
+   }
+-#if ABSL_INTERNAL_CPLUSPLUS_LANG >= 202002L
++#if ABSL_INTERNAL_CPLUSPLUS_LANG >= 202002L && !defined(__NVCC__)
+   std::pair<iterator, bool> insert(
+       init_type&& value ABSL_INTERNAL_ATTRIBUTE_CAPTURED_BY(this))
+       ABSL_ATTRIBUTE_LIFETIME_BOUND
+diff --git a/absl/meta/type_traits.h b/absl/meta/type_traits.h
+--- a/absl/meta/type_traits.h
++++ b/absl/meta/type_traits.h
+@@ -464,7 +464,8 @@
+ //
+ // According to https://github.com/abseil/abseil-cpp/issues/1479, this does not
+ // work with NVCC either.
+-#if ABSL_HAVE_BUILTIN(__builtin_is_cpp_trivially_relocatable)
++#if ABSL_HAVE_BUILTIN(__builtin_is_cpp_trivially_relocatable) && \
++    !defined(__NVCC__)
+ // https://github.com/llvm/llvm-project/pull/127636#pullrequestreview-2637005293
+ // In the current implementation, __builtin_is_cpp_trivially_relocatable will
+ // only return true for types that are trivially relocatable according to the
