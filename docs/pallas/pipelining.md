@@ -115,7 +115,7 @@ With these two constraints in mind, we'll have to rethink our strategy for getti
 
 How can we take advantage of the strengths of each form of type memory in the hierarchy, and be able to operate on large arrays stored in HBM while still utilizing fast SRAM for compute? Pipelining is a very general programming pattern which will allow us to do exactly this, but it requires transforming your problem into smaller sub-problems that can be overlapped in parallel.
 
-The first step in pipelining is to divide our problem into smaller subproblems that can fit inside of SRAM. For example, an elementwise operation is can be trivially transformed by operating on one slice of the source array at a time, which results in the following 3 steps (also known as stages):  
+The first step in pipelining is to divide our problem into smaller subproblems that can fit inside of SRAM. For example, an elementwise operation can be trivially transformed by operating on one slice of the source array at a time, which results in the following 3 steps (also known as stages):  
 
 1. **copy_in**: Copy a slice `A[i]` from HBM to SRAM `X`.
 2. **compute**: Load `X` into registers, compute a result, and store in SRAM `Y`
