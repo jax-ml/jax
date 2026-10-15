@@ -8122,6 +8122,105 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         (x[input_slice]).reshape(test_case.shape_sliced),
     )
 
+  @parameterized.product(
+      rank=(3, 4, 5),
+      swizzle=(None, 32, 64, 128),
+  )
+  # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
+  @absltest.skipIf(jaxlib_version < (0, 12, 0), "Requires jaxlib >=0.12.0")
+  def test_kernel_with_tma_im2col(self, rank, swizzle):
+    dtype = jnp.bfloat16
+    num_channels = 16 if swizzle is None else 8 * swizzle // 16
+    num_rows = 32
+    num_spatial = rank - 2
+    spatial_sizes = (3, 4, 5)[-num_spatial:]
+    grid_shape = (2, *spatial_sizes)
+    src_shape = (*grid_shape, 2 * num_channels)
+    first_channel = num_channels
+    lower_bounds = tuple(-(d + 1) for d in range(num_spatial))
+    upper_bounds = tuple((-1) ** (d + 1) * (d + 1) for d in range(num_spatial))
+    filter_offsets = tuple(d + 1 for d in range(num_spatial))
+    window_strides = tuple(range(2, num_spatial + 2))
+    windows = list(
+        itertools.product(
+            range(grid_shape[0]),
+            *(
+                range(lo, size + hi, s)
+                for lo, hi, size, s in zip(
+                    lower_bounds, upper_bounds, spatial_sizes, window_strides
+                )
+            ),
+        )
+    )
+    first_window = len(windows) // grid_shape[0] // 2
+    start_indices = (*windows[first_window], first_channel)
+    dst_shape = (num_rows, num_channels)
+
+    def body(
+        ctx: launch_context.LaunchContext,
+        in_gmem_ref: ir.Value,
+        result_gmem_ref: ir.Value,
+        smem: list[ir.Value],
+    ):
+      del ctx
+      smem_ref, tma_barrier = smem
+      i32 = ir.IntegerType.get_signless(32)
+      i16 = ir.IntegerType.get_signless(16)
+      elt_type = ir.MemRefType(in_gmem_ref.type).element_type
+      memref_bytes = utils.bytewidth(elt_type) * math.prod(dst_shape)
+
+      tma_barrier.arrive_expect_tx(memref_bytes)
+      if swizzle is not None:
+        transforms_attr = ir.ArrayAttr.get([
+            mgpu_dialect.TileTransformAttr.get((8, num_channels)),
+            mgpu_dialect.SwizzleTransformAttr.get(swizzle),
+        ])
+        smem_ref = mgpu_dialect.with_transforms(smem_ref, transforms_attr)
+      mgpu_dialect.async_load_im2col(
+          source=in_gmem_ref,
+          destination=smem_ref,
+          barrier=tma_barrier.as_barrier_memref(),
+          indices=[arith.constant(i32, v) for v in start_indices],
+          filter_offsets=[arith.constant(i16, v) for v in filter_offsets],
+          window_lower_bounds=lower_bounds,
+          window_upper_bounds=upper_bounds,
+          window_strides=window_strides,
+      )
+      tma_barrier.wait()
+
+      mgpu_dialect.async_store(
+          source=smem_ref,
+          destination=result_gmem_ref,
+          indices=[arith.constant(i32, 0)] * len(dst_shape),
+          slice_lengths=dst_shape,
+      )
+      nvvm.cp_async_bulk_wait_group(0)
+      utils.warpgroup_barrier()
+
+    in_spec = jax.ShapeDtypeStruct(src_shape, dtype)
+    out_spec = jax.ShapeDtypeStruct(dst_shape, dtype)
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=in_spec,
+        out_shape=out_spec,
+        smem_scratch_shape=[out_spec, mgpu.Barrier(1)],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    x = np.arange(math.prod(src_shape), dtype=dtype).reshape(src_shape)
+    channels = slice(first_channel, first_channel + num_channels)
+    expected = np.zeros(dst_shape, dtype=dtype)
+    for row, (n, *window) in enumerate(
+        windows[first_window : first_window + num_rows]
+    ):
+      pixel = (n, *(w + o for w, o in zip(window, filter_offsets)))
+      if all(0 <= p < s for p, s in zip(pixel, grid_shape)):
+        expected[row] = x[(*pixel, channels)]
+
+    self.assertArraysEqual(kernel(x), expected)
+
   def test_pointwise_kernel_with_tma(self):
     def add(
         ctx: launch_context.LaunchContext,
