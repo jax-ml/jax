@@ -1665,14 +1665,16 @@ def _dynamic_update_slice_sharding_rule(operand, update, *start_indices):
   return operand.sharding
 
 def _dus_unreduced_rule(operand, update):
-  if core.getu(operand)[0] != core.getu(update)[0]:
+  op_u, op_k = core.getu(operand, None)
+  up_u, up_k = core.getu(update, None)
+  if op_u != up_u or op_k is not up_k:
     raise core.ShardingTypeError(
         "dynamic_update_slice operand and update must be unreduced along the"
-        " same axes. Got operand sharding"
+        " same axes and with the same unreduced_kind. Got operand sharding"
         f" {operand.str_short(mesh_axis_types=True)} and update sharding"
-        f" {update.str_short(mesh_axis_types=True)}.")
-  out_u, _ = core.getu(operand)
-  return out_u, UnreducedKind.sum if out_u else None
+        f" {update.str_short(mesh_axis_types=True)}."
+    )
+  return op_u, op_k
 
 def _dus_reduced_rule(operand, update):
   if core.getr(operand) != core.getr(update):
@@ -1684,8 +1686,20 @@ def _dus_reduced_rule(operand, update):
   return core.getr(operand)
 
 def _dynamic_update_slice_ur_rule(operand, update, *start_indices):
+  if any(core.getu(i, None)[0] or core.getr(i) for i in start_indices):
+    raise core.ShardingTypeError(
+        "dynamic_update_slice start_indices cannot have unreduced or reduced"
+        f" axes. Got start_indices={start_indices}"
+    )
   out_u, kind = _dus_unreduced_rule(operand, update)
-  return out_u, _dus_reduced_rule(operand, update), kind
+  out_r = _dus_reduced_rule(operand, update)
+  if (out_u or out_r) and any(i.mat.varying for i in start_indices):
+    raise core.ShardingTypeError(
+        "dynamic_update_slice start_indices cannot be varying when operand or"
+        " update has unreduced or reduced axes. Got"
+        f" start_indices={start_indices}"
+    )
+  return out_u, out_r, kind
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
   lax.check_same_dtypes("dynamic_update_slice", operand, update)

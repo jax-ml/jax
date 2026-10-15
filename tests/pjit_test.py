@@ -11976,6 +11976,64 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(manual_fn(u), ref[:, 1:3])
 
+  @parameterized.named_parameters([
+      ('max', jax.lax.reduce_max, jnp.max, UnreducedKind.max),
+      ('min', jax.lax.reduce_min, jnp.min, UnreducedKind.min),
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unreduced_max_min_dynamic_update_slice(
+      self, lax_op, jnp_op, u_kind, mesh
+  ):
+    np1 = np.arange(32, dtype=np.float32).reshape(4, 2, 4)
+    np2 = np.arange(16, dtype=np.float32).reshape(4, 2, 2)
+    arr1 = jax.device_put(np1, P('x', 'y', None))
+    arr2 = jax.device_put(np2, P('x', 'y', None))
+    u_spec = P('y', None, unreduced={'x'}, unreduced_kind=u_kind)
+
+    @jax.jit
+    def f(x, y):
+      u1 = lax_op(x, axes=(0,), out_sharding=u_spec)
+      u2 = lax_op(y, axes=(0,), out_sharding=u_spec)
+      return jax.lax.dynamic_update_slice(u1, u2, (0, 1))
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, u_spec))
+
+    ex_out = jax.lax.dynamic_update_slice(
+        jnp_op(np1, axis=0), jnp_op(np2, axis=0), (0, 1))
+    self.assertArraysEqual(jax.reshard(out, P('y', None)), ex_out)
+
+    r_idx = jax.device_put(np.int32(1), P(reduced={'x'}))
+
+    @jax.jit
+    def f_err(x, y, i):
+      u1 = lax_op(x, axes=(0,), out_sharding=u_spec)
+      u2 = lax_op(y, axes=(0,), out_sharding=u_spec)
+      return jax.lax.dynamic_update_slice(
+          u1, u2, (jnp.int32(0), i), allow_negative_indices=False
+      )
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        'dynamic_update_slice start_indices cannot have unreduced or reduced'):
+      f_err(arr1, arr2, r_idx)
+
+    @jax.jit
+    @jax.shard_map(in_specs=(u_spec, u_spec), out_specs=u_spec)
+    def f_vma_err(u1, u2):
+      idx = jax.lax.axis_index('y')
+      return jax.lax.dynamic_update_slice(
+          u1, u2, (jnp.int32(0), idx), allow_negative_indices=False
+      )
+
+    u1 = jax.jit(lambda x: lax_op(x, axes=(0,), out_sharding=u_spec))(arr1)
+    u2 = jax.jit(lambda y: lax_op(y, axes=(0,), out_sharding=u_spec))(arr2)
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        'dynamic_update_slice start_indices cannot be varying when operand or'
+        ' update has unreduced or reduced axes'):
+      f_vma_err(u1, u2)
+
   @jtu.with_explicit_mesh((1, 2), ('x', 'y'))
   def test_reshape_preserve_singleton_dim_spec(self, mesh):
     # https://github.com/jax-ml/jax/issues/39309
