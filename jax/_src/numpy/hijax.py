@@ -64,16 +64,7 @@ class SearchSorted(HiPrim):
       method: str,
       out_dtype: np.dtype):
     batch_dims = operator.index(batch_dims)
-    if batch_dims < 0 or batch_dims >= sorted_arr_aval.ndim:
-      raise ValueError(
-          f"batch_dims={batch_dims} must be in range [0, {sorted_arr_aval.ndim})"
-      )
     dimension = operator.index(dimension)
-    if not batch_dims <= dimension < sorted_arr_aval.ndim:
-      raise ValueError(
-          f"dimension={dimension} must be in range [{batch_dims},"
-          f" {sorted_arr_aval.ndim})"
-      )
     if sorted_arr_aval.dtype != query_aval.dtype:
       raise ValueError(
           "dtypes of sorted_arr and query must match; got "
@@ -87,21 +78,28 @@ class SearchSorted(HiPrim):
       raise ValueError(
           f"invalid argument {method=}, expected one of {list(self.valid_methods)}"
       )
-    if sorted_arr_aval.shape[:batch_dims] != query_aval.shape[:batch_dims]:
-      raise ValueError(
-          "batch dimension sizes must match; got"
-          f" {sorted_arr_aval.shape[:batch_dims]} != {query_aval.shape[:batch_dims]}"
-      )
     if not dtypes.issubdtype(out_dtype, np.integer):
       raise ValueError(f"out_dtype should be an integer type; got {out_dtype}")
-    # Attempt this here to catch overflow errors early.
-    out_dtype.type(sorted_arr_aval.shape[dimension])
+
     self.in_avals = (sorted_arr_aval, query_aval)
-    self.out_aval = core.typeof(api.eval_shape(
-      functools.partial(_searchsorted_impl,
-        dimension=dimension, batch_dims=batch_dims, side=side,
-        dtype=out_dtype, method=method),
-        sorted_arr_aval, query_aval))
+    out_dtype = dtypes._maybe_canonicalize_explicit_dtype(out_dtype, "searchsorted")
+    out_shape = self._shape_rule(
+        sorted_arr_aval, query_aval, dimension=dimension, batch_dims=batch_dims
+    )
+    # Attempt this here to catch overflow errors early.
+    if not core.is_symbolic_dim(sorted_arr_aval.shape[dimension]):
+      out_dtype.type(sorted_arr_aval.shape[dimension])
+    out_sharding = self._sharding_rule(
+        sorted_arr_aval, query_aval, dimension=dimension, batch_dims=batch_dims
+    )
+    out_vma = core.standard_vma_rule("searchsorted", *self.in_avals)
+    self.out_aval = sorted_arr_aval.update(
+        shape=out_shape,
+        dtype=out_dtype,
+        weak_type=False,
+        sharding=out_sharding,
+        manual_axis_type=sorted_arr_aval.mat.update(varying=out_vma),
+    )
     self.params = dict(
       side=side,
       dimension=dimension,
@@ -109,6 +107,80 @@ class SearchSorted(HiPrim):
       method=method,
     )
     super().__init__()
+
+  @staticmethod
+  def _shape_rule(
+      sorted_arr_aval: core.ShapedArray,
+      query_aval: core.ShapedArray,
+      *,
+      dimension: int,
+      batch_dims: int,
+  ) -> core.Shape:
+    if batch_dims < 0 or batch_dims >= sorted_arr_aval.ndim:
+      raise ValueError(
+          f"batch_dims={batch_dims} must be in range [0, {sorted_arr_aval.ndim})"
+      )
+    if not batch_dims <= dimension < sorted_arr_aval.ndim:
+      raise ValueError(
+          f"dimension={dimension} must be in range [{batch_dims},"
+          f" {sorted_arr_aval.ndim})"
+      )
+    if sorted_arr_aval.shape[:batch_dims] != query_aval.shape[:batch_dims]:
+      raise ValueError(
+          "batch dimension sizes must match; got"
+          f" {sorted_arr_aval.shape[:batch_dims]} != {query_aval.shape[:batch_dims]}"
+      )
+    return (
+        *sorted_arr_aval.shape[:dimension],
+        *sorted_arr_aval.shape[dimension + 1:],
+        *query_aval.shape[batch_dims:],
+    )
+
+  @staticmethod
+  def _sharding_rule(
+      sorted_arr_aval: core.ShapedArray,
+      query_aval: core.ShapedArray,
+      *,
+      dimension: int,
+      batch_dims: int,
+  ):
+    if (
+        not sorted_arr_aval.sharding.mesh.empty
+        and not query_aval.sharding.mesh.empty
+        and sorted_arr_aval.sharding.mesh != query_aval.sharding.mesh
+    ):
+      raise ValueError(
+          "sharding meshes must match; got"
+          f" {sorted_arr_aval.sharding.mesh} != {query_aval.sharding.mesh}"
+      )
+    sa_spec = sorted_arr_aval.sharding.spec
+    q_spec = query_aval.sharding.spec
+    if sa_spec[:batch_dims] != q_spec[:batch_dims]:
+      raise ValueError(
+          "batch dimension shardings must match; got"
+          f" {sa_spec[:batch_dims]} != {q_spec[:batch_dims]}"
+      )
+    if sa_spec[dimension] is not None:
+      raise ValueError(
+          f"Cannot apply searchsorted over sharded search dimension {dimension}"
+          f" for array with sharding {sorted_arr_aval.sharding}"
+      )
+    sa_other_spec = (*sa_spec[batch_dims:dimension], *sa_spec[dimension + 1:])
+    q_other_spec = q_spec[batch_dims:]
+    if any(s is not None for s in sa_other_spec) and any(
+        s is not None for s in q_other_spec
+    ):
+      raise ValueError(
+          "Cannot shard non-batch dimensions of both sorted_arr and query; got"
+          f" {sa_spec} and {q_spec}"
+      )
+    out_spec = P(*sa_spec[:batch_dims], *sa_other_spec, *q_other_spec)
+    base_sharding = (
+        query_aval.sharding
+        if sorted_arr_aval.sharding.mesh.empty
+        else sorted_arr_aval.sharding
+    )
+    return base_sharding.update(spec=out_spec)
 
   def expand(self, sorted_arr: ArrayLike, query: ArrayLike) -> Array:  # pyrefly: ignore[bad-override]
     return _searchsorted_impl(
@@ -591,8 +663,23 @@ def _nonzero_impl(a: ArrayLike, *fill_value: ArrayLike, size: int, axes: tuple[i
 def _searchsorted_impl(sorted_arr: ArrayLike, query: ArrayLike, *, dimension: int,
                        batch_dims: int, side: str, dtype: np.dtype, method: str):
   """Main implementation of searchsorted primitive."""
-  sorted_arr = jnp.moveaxis(sorted_arr, dimension, -1)
+  sorted_arr = jnp.asarray(sorted_arr)
+  query = jnp.asarray(query)
   dtype = dtypes._maybe_canonicalize_explicit_dtype(dtype, "searchsorted")
+  if sorted_arr.size == 0 or query.size == 0:
+    sa_aval, q_aval = core.typeof(sorted_arr), core.typeof(query)
+    out_shape = SearchSorted._shape_rule(
+        sa_aval, q_aval, dimension=dimension, batch_dims=batch_dims
+    )
+    out_sharding = SearchSorted._sharding_rule(
+        sa_aval, q_aval, dimension=dimension, batch_dims=batch_dims
+    )
+    vma = tuple(core.standard_vma_rule("searchsorted", sa_aval, q_aval))
+    return core.pvary(
+        jnp.zeros(out_shape, dtype=dtype, out_sharding=out_sharding), vma
+    )
+
+  sorted_arr = jnp.moveaxis(sorted_arr, dimension, -1)
 
   if method == "scan":
     impl: Callable[..., Array] = functools.partial(_searchsorted_scan_impl, unrolled=False)
@@ -624,9 +711,20 @@ def _searchsorted_scan_impl(
   if sorted_arr.size == 0:
     return lax.full(query.shape, fill_value=0, dtype=dtype)
   if query.ndim > 0:
+    if (s := core.typeof(query).sharding.spec[0]) is not None:
+      sorted_arr = lax.broadcast(
+          sorted_arr,
+          (query.shape[0],),
+          out_sharding=core.typeof(query).sharding.update(
+              spec=P(s, *core.typeof(sorted_arr).sharding.spec)
+          ),
+      )
+      in_axes: tuple[int | None, int] = (0, 0)
+    else:
+      in_axes = (None, 0)
     return api.vmap(functools.partial(_searchsorted_scan_impl, side=side,
                                       dtype=dtype, unrolled=unrolled),
-                    in_axes=(None, 0))(sorted_arr, query)
+                    in_axes=in_axes)(sorted_arr, query)
 
   op = lax._sort_le_comparator if side == "left" else lax._sort_lt_comparator
   unsigned_dtype = np.uint64 if dtypes.iinfo(dtype).bits == 64 else np.uint32
@@ -654,6 +752,20 @@ def _searchsorted_sort_impl(
   """Cosorting-based implementation of searchsorted."""
   assert sorted_arr.ndim == 1
   assert side in ["left", "right"]
+  for d, s in enumerate(core.typeof(query).sharding.spec):
+    if s is not None:
+      sorted_arr = lax.broadcast(
+          sorted_arr,
+          (query.shape[d],),
+          out_sharding=core.typeof(query).sharding.update(
+              spec=P(s, *core.typeof(sorted_arr).sharding.spec)
+          ),
+      )
+      return api.vmap(
+          functools.partial(_searchsorted_sort_impl, side=side, dtype=dtype),
+          in_axes=(0, d),
+          out_axes=d,
+      )(sorted_arr, query)
   working_dtype = (
       np.int32
       if sorted_arr.size + query.size <= np.iinfo(np.int32).max
@@ -662,6 +774,7 @@ def _searchsorted_sort_impl(
 
   def _rank(x):
     idx = lax.iota(working_dtype, len(x))
+    idx = core.pvary(idx, tuple(core.typeof(x).mat.varying))
     return lax.full_like(idx, 0).at[lax.sort_key_val(x, idx)[1]].set(idx)
 
   if side == "left":
