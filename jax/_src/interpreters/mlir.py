@@ -1227,10 +1227,9 @@ _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu", "neuron", "oneapi"]
 
 def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
   mesh = axis_ctx.mesh.abstract_mesh
-  sharding_mesh = sharding.mesh.abstract_mesh
   if (isinstance(sharding, sharding_impls.NamedSharding) and
-      sharding_mesh.shape == mesh.shape):
-    out_mesh, spec = sharding_mesh, sharding.spec
+      sharding.mesh.abstract_mesh.shape == mesh.shape):
+    out_mesh, spec = sharding.mesh.abstract_mesh, sharding.spec
   else:
     out_mesh, spec = mesh, sharding_impls.parse_flatten_op_sharding(
         sharding._to_xla_hlo_sharding(ndim), mesh)[0]

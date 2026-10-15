@@ -1229,6 +1229,18 @@ class PythonPmapTest(jtu.JaxTestCase):
         ans = f(x)
       self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testPmapConstantDifferentDevice(self):
+    const_sds = jax.device_put(
+        np.arange(16, dtype=np.int32), jax.devices()[0]
+    )
+    f_sds = pmap(
+        jax.jit(lambda x: x + const_sds[15]), devices=jax.devices()[:1]
+    )
+    x_sds = jnp.arange(1, dtype=np.int32)
+    self.assertAllClose(
+        f_sds(x_sds), x_sds + np.int32(15), check_dtypes=False
+    )
+
   def testPmapConstantDevices(self):
     if jax.device_count() == 1:
       raise SkipTest("this test requires multiple devices")
