@@ -15,6 +15,7 @@
 import collections
 from functools import partial
 import itertools
+import math
 import unittest
 
 from absl.testing import absltest
@@ -585,6 +586,133 @@ class NNFunctionsTest(jtu.JaxTestCase):
   @parameterized.parameters([float] + jtu.dtypes.floating)
   def testSquareplusZero(self, dtype):
     self.assertEqual(dtype(1), nn.squareplus(dtype(0), dtype(4)))
+
+  @parameterized.product(
+      dtype=jtu.dtypes.all_floating, b=[0.25, 4.], disable_jit=[False, True])
+  def testSquareplusStableValueAndGrad(self, dtype, b, disable_jit):
+    x = jnp.array([-100., 300.], dtype=dtype)
+    h = [math.hypot(float(v), math.sqrt(b)) for v in x]
+    expected = [b / (2 * (r - float(v))) if v < 0 else float(v) / 2 + r / 2
+                for v, r in zip(x, h)]
+    fun = jax.jit(jax.vmap(
+        jax.value_and_grad(nn.squareplus, argnums=(0, 1)), in_axes=(0, None)))
+    with jax.disable_jit(disable_jit):
+      value, (dx, db) = fun(x, jnp.array(b, dtype=dtype))
+    tol = 4 * float(jnp.finfo(dtype).eps)
+    self.assertAllClose(value, jnp.array(expected, dtype), atol=0, rtol=tol)
+    self.assertAllClose(dx, jnp.array([y / r for y, r in zip(expected, h)],
+                                    dtype), atol=0, rtol=tol)
+    self.assertAllClose(db, jnp.array([0.25 / r for r in h], dtype),
+                        atol=0, rtol=tol)
+
+  @parameterized.product(dtype=jtu.dtypes.all_floating, disable_jit=[False, True])
+  def testSquareplusFiniteExtremes(self, dtype, disable_jit):
+    limit = float(jnp.finfo(dtype).max)
+    x = jnp.array([-limit, 0, limit], dtype=dtype)
+    fun = jax.jit(jax.vmap(
+        jax.value_and_grad(nn.squareplus, argnums=(0, 1)), in_axes=(0, None)))
+    with jax.disable_jit(disable_jit):
+      value, (dx, db) = fun(x, jnp.array(limit, dtype=dtype))
+    self.assertAllClose(
+        value, jnp.array([0.25, math.sqrt(limit) / 2, limit], dtype),
+        atol=0, rtol=4 * float(jnp.finfo(dtype).eps))
+    self.assertTrue(jnp.all(jnp.isfinite(dx)))
+    self.assertTrue(jnp.all(jnp.isfinite(db)))
+    self.assertEqual(dx[1], dtype(0.5))
+    self.assertEqual(dx[2], dtype(1))
+
+  @parameterized.product(dtype=jtu.dtypes.all_floating, disable_jit=[False, True])
+  def testSquareplusZeroParameter(self, dtype, disable_jit):
+    tiny = float(jnp.finfo(dtype).smallest_normal)
+    x = jnp.array([-2., -tiny, tiny, 2.], dtype=dtype)
+    fun = jax.jit(jax.vmap(
+        jax.value_and_grad(nn.squareplus, argnums=(0, 1)), in_axes=(0, None)))
+    with jax.disable_jit(disable_jit):
+      value, (dx, db) = fun(x, jnp.array(0., dtype))
+    self.assertArraysEqual(value, jnp.array([0., 0., tiny, 2.], dtype))
+    self.assertArraysEqual(dx, jnp.array([0., 0., 1., 1.], dtype))
+    self.assertAllClose(db, jnp.array([0.125, 0.25 / tiny, 0.25 / tiny, 0.125],
+                                     dtype))
+
+  @parameterized.parameters(False, True)
+  def testSquareplusSubnormalJvp(self, disable_jit):
+    x = jnp.array([-2.**-17, -2.**-18, 2.**-18, 2.**-17], jnp.float16)
+    b = jnp.zeros_like(x)
+    with jax.disable_jit(disable_jit):
+      value, tangent = jax.jvp(nn.squareplus, (x, b),
+                              (jnp.ones_like(x), jnp.zeros_like(b)))
+      dx, db = jax.grad(lambda x, b: nn.squareplus(x, b).sum(), (0, 1))(x, b)
+    expected_dx = jnp.array([0., 0., 1., 1.], jnp.float16)
+    self.assertArraysEqual(value, jnp.maximum(x, 0))
+    self.assertArraysEqual(tangent, expected_dx)
+    self.assertArraysEqual(dx, expected_dx)
+    self.assertArraysEqual(
+        db, jnp.array([32768., jnp.inf, jnp.inf, 32768.], jnp.float16))
+
+  @parameterized.product(dtype=jtu.dtypes.all_floating, disable_jit=[False, True])
+  def testSquareplusJvpScaleBoundary(self, dtype, disable_jit):
+    eps = float(jnp.finfo(dtype).eps)
+    x = jnp.array([-1 - eps, -1., -1 + eps, 1 - eps, 1., 1 + eps], dtype)
+    b = jnp.zeros_like(x)
+    expected_dx = jnp.array([0., 0., 0., 1., 1., 1.], dtype)
+    expected_db = jnp.array([0.25 / abs(float(v)) for v in x], dtype)
+    with jax.disable_jit(disable_jit):
+      _, dx = jax.jvp(nn.squareplus, (x, b),
+                     (jnp.ones_like(x), jnp.zeros_like(b)))
+      _, db = jax.jvp(nn.squareplus, (x, b),
+                     (jnp.zeros_like(x), jnp.ones_like(b)))
+      reverse = jax.grad(lambda x, b: nn.squareplus(x, b).sum(), (0, 1))(x, b)
+    self.assertArraysEqual(dx, expected_dx)
+    self.assertAllClose(db, expected_db, atol=0, rtol=4 * eps)
+    self.assertAllClose(reverse, (expected_dx, expected_db),
+                        atol=0, rtol=4 * eps)
+
+  @parameterized.product(x=[-1., 0., 1.], mode=["fwd", "rev"])
+  def testSquareplusGradScaleBoundary(self, x, mode):
+    check_grads(nn.squareplus, (x, 1 - x * x), order=4, modes=[mode],
+                eps=1e-3, atol=1e-2, rtol=1e-2)
+
+  def testSquareplusOrigin(self):
+    value, (dx, db) = jax.value_and_grad(nn.squareplus, (0, 1))(0., 0.)
+    self.assertEqual(value, 0.)
+    self.assertTrue(jnp.isnan(dx))
+    self.assertEqual(db, jnp.inf)
+
+  @parameterized.parameters((-2., 0.), (2., 0.), (-2., 4.), (0., 4.), (3., -4.))
+  def testSquareplusParameterGrad(self, x, b):
+    check_grads(nn.squareplus, (x, b), order=2, eps=1e-3,
+                atol=1e-2, rtol=1e-2)
+
+  def testSquareplusNegativeParameter(self):
+    x = jnp.array([-3., -1., 0., 1., 3.])
+    reference = lambda x, b: (x + jnp.sqrt(x * x + b)) / 2
+    actual = jax.vmap(jax.value_and_grad(nn.squareplus, (0, 1)),
+                      in_axes=(0, None))(x, -4.)
+    expected = jax.vmap(jax.value_and_grad(reference, (0, 1)),
+                        in_axes=(0, None))(x, -4.)
+    self.assertAllClose(actual, expected)
+
+  @parameterized.parameters(
+      (float("-inf"), 4.), (float("inf"), 4.), (float("nan"), 4.),
+      (-1., float("inf")), (1., float("-inf")), (0., float("nan")))
+  def testSquareplusNonfinite(self, x, b):
+    reference = lambda x, b: (x + jnp.sqrt(x * x + b)) / 2
+    self.assertAllClose(jax.value_and_grad(nn.squareplus, (0, 1))(x, b),
+                        jax.value_and_grad(reference, (0, 1))(x, b))
+
+  def testSquareplusBroadcastParameters(self):
+    x = jnp.array([[-3.], [3.]])
+    b = jnp.array([[-4., 0., 4.]])
+    reference = lambda x, b: jnp.sum((x + jnp.sqrt(x * x + b)) / 2)
+    actual = jax.value_and_grad(lambda x, b: nn.squareplus(x, b).sum(),
+                               (0, 1))(x, b)
+    expected = jax.value_and_grad(reference, (0, 1))(x, b)
+    self.assertAllClose(actual, expected)
+
+  def testSquareplusComplex(self):
+    x = jnp.array([-1. + 2j, 1. - 2j])
+    b = jnp.array([4., -4.])
+    self.assertAllClose(nn.squareplus(x, b), (x + jnp.sqrt(x * x + b)) / 2)
 
   def testMishGrad(self):
     check_grads(nn.mish, (1e-8,), order=4,
