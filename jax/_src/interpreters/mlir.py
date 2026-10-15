@@ -1239,7 +1239,7 @@ def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
   out = sharding_impls.NamedSharding(out_mesh, spec,
                                      memory_kind=sharding.memory_kind)
   manual_axes = out.mesh.manual_axes
-  if any(p in manual_axes for s in out.spec
+  if any(p in manual_axes for s in out.spec.partitions
          if s is not None and s is not PartitionSpec.UNCONSTRAINED
          for p in (s if isinstance(s, tuple) else (s,))):
     raise ValueError(
