@@ -633,6 +633,18 @@ class PrngTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(TypeError, "JAX encountered invalid PRNG key data"):
         random.uniform(invalid_key)
 
+  def test_high_dynamic_range_gumbel_jit_key(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40609
+    key = random.key(0)
+    f = jax.jit(lambda k: random.gumbel(k, (4,)))
+    with config.use_high_dynamic_range_gumbel(False):
+      low = f(key)
+    with config.use_high_dynamic_range_gumbel(True):
+      high = f(key)
+    self.assertArraysEqual(low, random.gumbel(key, (4,), mode='low'))
+    self.assertArraysEqual(high, random.gumbel(key, (4,), mode='high'))
+    self.assertFalse(jnp.array_equal(low, high))
+
 
 class ThreefryPrngTest(jtu.JaxTestCase):
   @parameterized.parameters([{'make_key': ctor} for ctor in [
