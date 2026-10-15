@@ -97,8 +97,7 @@ class NameStackTest(jtu.JaxTestCase):
     self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
 
     hlo_text = _get_hlo(f)(2)
-    self.assertIn('jit(f)/foo/eval_jaxpr', hlo_text)
-    self.assertIn('bar/add', hlo_text)
+    self.assertIn('jit(f)/foo/bar/add', hlo_text)
 
   def test_jit_jaxpr_should_not_store_outer_name_stack(self):
     @jax.named_scope('foo')

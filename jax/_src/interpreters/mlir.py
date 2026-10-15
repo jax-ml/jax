@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Hashable, Iterable, Iterator, Sequence
+import contextlib
 import dataclasses
 import functools
 from functools import partial
@@ -2887,13 +2888,19 @@ def core_call_lowering(
     call_jaxpr: core.Jaxpr, **params):
   effects = list(effects_lib.ordered_effects.filter_in(call_jaxpr.effects))
   tokens_in = ctx.tokens_in.subset(effects)
-  out_nodes, tokens = call_lowering(
-      name, call_jaxpr, backend, ctx.module_context,
-      ctx.avals_in, ctx.avals_out, tokens_in, *args,
-      dim_var_values=ctx.dim_var_values,
-      const_lowering=ctx.const_lowering,
-      inline_jax_late=inline_jax_late)
+  loc = (source_info_to_location(
+             ctx.module_context, None, ctx.name_stack, ctx.traceback)
+         if inline_jax_late else contextlib.nullcontext())
+  with loc:
+    out_nodes, tokens = call_lowering(
+        name, call_jaxpr, backend, ctx.module_context,
+        ctx.avals_in, ctx.avals_out, tokens_in, *args,
+        dim_var_values=ctx.dim_var_values,
+        const_lowering=ctx.const_lowering,
+        inline_jax_late=inline_jax_late)
   ctx.set_tokens_out(ctx.tokens_in.update_tokens(tokens))
+  if inline_jax_late:
+    return out_nodes
   return [lower_with_sharding_in_types(ctx, o, a)
           for o, a in zip(out_nodes, ctx.avals_out)]
 
