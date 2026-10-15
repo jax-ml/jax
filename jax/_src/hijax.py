@@ -224,7 +224,8 @@ class HiPrim:
   # optional dce control
   def dce(self, used_outs, live_ins):
     del live_ins
-    used_outs_flat = tree_leaves_checked(self.out_tree, used_outs)
+    used_outs_flat = api.tuptree_flags(
+        used_outs, self.out_tree, 'used_outs', 'dce used_outs')
     if not any(used_outs_flat) and not self.effects:
       return False, False, None
     else:
@@ -295,8 +296,11 @@ def check_custom_effects(effs, name):
     raise NotImplementedError(f'Effects not supported in `{name}`: {disallowed}')
 
 def _accum_args_grad(arg_accums, args_grad):
-  leaves, treedef = tree_flatten(arg_accums)
-  for acc, v in zip(leaves, treedef.flatten_up_to(args_grad)):
+  accums_flat, treedef = tree_flatten(arg_accums)
+  grads_flat = api.tuptree_flat(
+      args_grad, treedef, lambda x: x is None or isinstance(x, ad_util.Zero)
+      or tracing_registry.flatten_one_level(x) is None)
+  for acc, v in zip(accums_flat, grads_flat):
     if isinstance(acc, ad.GradAccum):
       acc.accum(v)
 
@@ -312,15 +316,27 @@ def _vjp_bwd_to_retval_logs(prim, res_args, outgrad):
 def _ref_inner_aval(a):
   return a.inner_aval if isinstance(a, AbstractRef) else a
 
+def _is_axis_spec(x):
+  return (x is None or type(x) in {int, *batching.spec_types} or
+          isinstance(x, MappingSpec))
+
+def _tuptree_axes(prefix, treedef) -> list[Any]:
+  return api.tuptree_flat(prefix, treedef, _is_axis_spec)
+
+def _tuptree_axes_map(f, tree, *axes, is_leaf=None):
+  flat, treedef = tracing_registry.flatten(tree, is_leaf)
+  axes_flat = [_tuptree_axes(a, treedef) for a in axes]
+  return tree_unflatten(treedef, map(f, flat, *axes_flat))
+
 def unmap_avals(axis_data, avals, dims):
   unmap = lambda a, d: core.unmapped_aval(axis_data.size, d, a,
                                           axis_data.explicit_mesh_axis)
-  return tree_map(unmap, avals, dims)
+  return _tuptree_axes_map(unmap, avals, dims)
 
 def bdims_at_front(axis_data, args, dims):
   bdim = lambda x, d: batching.bdim_at_front(x, d, axis_data.size,
                                              axis_data.explicit_mesh_axis)
-  return tree_map(bdim, args, dims)
+  return _tuptree_axes_map(bdim, args, dims, is_leaf=batching.is_vmappable)
 
 def vmap_rule(axis_data, f, in_axes, out_axes, *, sum_match=False):
   """Returns ``f`` vmapped along ``axis_data``, as a ``batch`` rule needs it.
@@ -328,11 +344,10 @@ def vmap_rule(axis_data, f, in_axes, out_axes, *, sum_match=False):
   Symbolic zeros among the arguments and results have their avals mapped and
   unmapped, so that tangents and cotangents can pass through.
   """
-  is_none = lambda x: x is None
   zero = lambda x: isinstance(x, ad_util.Zero)
-  map_zero = lambda d, x: (ad_util.Zero(core.mapped_aval(axis_data.size, d, x.aval))
+  map_zero = lambda x, d: (ad_util.Zero(core.mapped_aval(axis_data.size, d, x.aval))
                            if zero(x) else x)
-  unmap_zero = lambda d, x: (ad_util.Zero(unmap_avals(axis_data, x.aval, d))
+  unmap_zero = lambda x, d: (ad_util.Zero(unmap_avals(axis_data, x.aval, d))
                              if zero(x) and d is not batching.sum_axis
                              and d is not batching.infer else x)
   infer = any(d is batching.infer for d in tree_leaves(out_axes))
@@ -342,9 +357,9 @@ def vmap_rule(axis_data, f, in_axes, out_axes, *, sum_match=False):
                      spmd_axis_name=axis_data.spmd_name or axis_data.explicit_mesh_axis,
                      sum_match=sum_match)
   def batched(*args):
-    args = tree_map(map_zero, in_axes, args, is_leaf=is_none)
+    args = _tuptree_axes_map(map_zero, args, in_axes, is_leaf=zero)
     out, inferred = vmapped(*args) if infer else (vmapped(*args), None)
-    out = tree_map(unmap_zero, out_axes, out, is_leaf=is_none)
+    out = _tuptree_axes_map(unmap_zero, out, out_axes, is_leaf=zero)
     return (out, inferred) if infer else out
   return batched
 
@@ -354,23 +369,23 @@ def _infer_shared(dims):
 
 def _take_first_example(dims, inferred, xs):
   from jax._src.lax import slicing  # pyrefly: ignore[missing-import]
-  d_flat, tree = tree_flatten(dims, is_leaf=lambda x: x is None)
-  take = lambda d, i, x: (x if d is not None or i is None or isinstance(x, ad_util.Zero)
+  zero = lambda x: isinstance(x, ad_util.Zero)
+  take = lambda x, d, i: (x if d is not None or i is None or zero(x)
                           else slicing.index_in_dim(x, 0, i, keepdims=False))
-  return tree_unflatten(tree, map(take, d_flat, tree.flatten_up_to(inferred),
-                                  tree.flatten_up_to(xs)))
+  return _tuptree_axes_map(take, xs, dims, inferred, is_leaf=zero)
 
 def _pad_first_example(axis_data, dims, xs):
   from jax._src.lax import lax  # pyrefly: ignore[missing-import]
-  d_flat, tree = tree_flatten(dims, is_leaf=lambda x: x is None)
+  xs_flat, tree = tree_flatten(xs, is_leaf=lambda x: isinstance(x, ad_util.Zero))
+  d_flat = _tuptree_axes(dims, tree)
   def pad(d, x):
     if d is not None or isinstance(x, ad_util.Zero):
       return x, d
     x = lax.broadcast(x, (1,))
     return lax.pad(x, lax._zero(x), [(0, axis_data.size - 1, 0)] +
                    [(0, 0, 0)] * (x.ndim - 1)), 0
-  xs, ds = unzip2(map(pad, d_flat, tree.flatten_up_to(xs)))
-  return tree_unflatten(tree, xs), tree_unflatten(tree, ds)
+  xs, ds = unzip2(map(pad, d_flat, xs_flat))
+  return tree_unflatten(tree, xs), api.mirror_tree_map(lambda x: x, tree, ds)
 
 
 call_hi_primitive_p = core.Primitive("call_hi_primitive")
@@ -453,10 +468,10 @@ def _pp_hi_subjaxprs(prim):
 
 def _call_hi_primitive_batcher(axis_data, args_flat, dims_flat, _prim):
   args = tree_unflatten(_prim.in_tree, args_flat)
-  dims = tree_unflatten(_prim.in_tree, dims_flat)
+  dims = api.mirror_tree_map(lambda x: x, _prim.in_tree, dims_flat)
   ans, dims = _prim.batch(axis_data, args, dims)
   ans_flat = tree_leaves_checked(_prim.out_tree, ans)
-  dims_flat = _prim.out_tree.flatten_up_to(dims)
+  dims_flat = _tuptree_axes(dims, _prim.out_tree)
   return ans_flat, dims_flat
 batching.fancy_primitive_batchers[call_hi_primitive_p] = _call_hi_primitive_batcher
 
@@ -472,7 +487,7 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
     linearized = lambda _, __, *ts: [ad_util.p2tz(x) for x in ans_flat]
     return ans_flat, [False] * len(ans_flat), None, None, linearized
   args = tree_unflatten(_prim.in_tree, args_flat)
-  nzs_in = tree_unflatten(_prim.in_tree, nz_in_flat)
+  nzs_in = api.mirror_tree_map(lambda x: x, _prim.in_tree, nz_in_flat)
   if is_vjp:
     ans, residuals, *rest = _prim.vjp_fwd(nzs_in, *args)
     linearized = partial(fake_linear_op, _prim, nz_in_flat)
@@ -543,7 +558,11 @@ def _call_hi_primitive_linearized_transpose(
   accums_flat = [next(accums_flat_) if nz else ad.NullAccum(aval.to_ct_aval())
                  for aval, nz in zip(_prim.in_avals_flat, nz_in_flat)]
   assert next(accums_flat_, None) is None
-  accums = tree_unflatten(_prim.in_tree, accums_flat)
+  if (getattr(_prim, 'bwd_accums', None) is None and
+      type(_prim).vjp_bwd in (HiPrim.vjp_bwd, CustomVJPTraced.vjp_bwd)):
+    accums = api.mirror_tree_map(lambda x: x, _prim.in_tree, accums_flat)
+  else:
+    accums = tree_unflatten(_prim.in_tree, accums_flat)
   cts_flat_iter = iter(cts_flat_)
   cts_flat = [next(cts_flat_iter) if nz else ad_util.Zero(a.to_ct_aval())
               for a, nz in zip(_prim.out_avals_flat, nz_out_flat)]
@@ -609,8 +628,8 @@ ad.fancy_transposes[call_hi_primitive_p] = _call_hi_primitive_transpose
 
 def _call_hi_primitive_dce(used_outs_flat, live_ins_flat, eqn):
   _prim = eqn.params['_prim']
-  used_out = tree_unflatten(_prim.out_tree, used_outs_flat)
-  live_in = tree_unflatten(_prim.in_tree, live_ins_flat)
+  used_out = api.mirror_tree_map(lambda x: x, _prim.out_tree, used_outs_flat)
+  live_in = api.mirror_tree_map(lambda x: x, _prim.in_tree, live_ins_flat)
   used_ins, produced_outs, new_prim = _prim.dce(used_out, live_in)
   if new_prim is None:
     if pe.has_effects(eqn, live_ins_flat):
@@ -664,7 +683,7 @@ register_pytree_node(DerivedLinearization,
 def _lin_from_jvp(self, nzs_in, *primals):
   """The `lin` half of the `linearize_from_jvp` pair."""
   primals_flat = tree_leaves_checked(self.in_tree, primals)
-  nzs_in_flat = tree_leaves_checked(self.in_tree, nzs_in)
+  nzs_in_flat = api.tuptree_flags(nzs_in, self.in_tree, 'nzs_in', 'lin nzs_in')
 
   def jvp_flat(primals_flat, tangents_flat):
     primals = tree_unflatten(self.in_tree, primals_flat)
@@ -679,7 +698,7 @@ def _lin_from_jvp(self, nzs_in, *primals):
       lu.wrap_init(jvp_flat, debug_info=dbg), True, nzs_in_flat,
       False, False, primals_flat, {})
   out_primals = tree_unflatten(self.out_tree, out_primals_flat)
-  nzs_out = tree_unflatten(self.out_tree, list(nzs_out_flat))
+  nzs_out = api.mirror_tree_map(lambda x: x, self.out_tree, list(nzs_out_flat))
   return out_primals, DerivedLinearization(consts, linearized), nzs_out
 
 def _linearized_from_jvp(self, residuals, *tangents):
@@ -695,8 +714,8 @@ def jvp_from_lin(self, primals, tangents):
         "`lin, linearized = linearize_from_jvp`, since each would be defined "
         "in terms of the other")
   tangents_flat = self.in_tree.flatten_up_to(tangents)
-  nzs_in = tree_unflatten(
-      self.in_tree, [not isinstance(t, ad_util.Zero) for t in tangents_flat])
+  nzs_in = api.mirror_tree_map(
+      lambda t: not isinstance(t, ad_util.Zero), self.in_tree, tangents_flat)
   out_primals, residuals, *rest = self.lin(nzs_in, *primals)
   out_tangents = (self.linearized(residuals, *tangents) if len(rest) < 2 else
                   self.linearized(residuals, rest[1], *tangents))
@@ -709,7 +728,7 @@ def _vjp_fwd_from_jvp(self, nzs_in, *primals):
 def _transpose_jvp(self, res, out_ct):
   """The `vjp_bwd_retval` half of the `vjp_from_jvp` pair."""
   primals, nzs_in = res
-  nzs_flat = tree_leaves_checked(self.in_tree, nzs_in)
+  nzs_flat = api.tuptree_flags(nzs_in, self.in_tree, 'nzs_in', 'vjp_fwd nzs_in')
   zero = lambda x: isinstance(x, (ad_util.Zero, ad_util.SymbolicZero))
   inst = lambda x: ad_util.zeros_like_aval(x.aval) if zero(x) else x
 
@@ -740,7 +759,7 @@ def _vjp_fwd_from_lin(self, nzs_in, *primals):
 def _transpose_linearized(self, residuals, out_ct):
   """The `vjp_bwd_retval` half of the `vjp_from_lin` pair."""
   res, nzs = residuals
-  nzs_in = tree_leaves_checked(self.in_tree, nzs.val)
+  nzs_in = api.tuptree_flags(nzs.val, self.in_tree, 'nzs_in', 'vjp_fwd nzs_in')
   inst = lambda x: tree_map(ad_util.instantiate, x,
                             is_leaf=lambda x: isinstance(x, ad_util.Zero))
 
@@ -896,7 +915,9 @@ class CustomVJPTraced(HiPrim):
 
   def jvp(self, primals, tangents):
     zero = lambda x: isinstance(x, ad_util.Zero)
-    nzs_in = tuple(tree_map(lambda t: not zero(t), t, is_leaf=zero) for t in tangents)
+    nzs_in = api.mirror_tree_map(
+        lambda t: not zero(t), self.in_tree,
+        tracing_registry.flatten(tangents, zero)[0])
     if self.opt_remat:
       fwd_traced = api.jit(partial(self.vjp_fwd, nzs_in)).trace(*primals)
       primals_out, residuals = OptRemat(self, fwd_traced)(*primals)
@@ -907,8 +928,8 @@ class CustomVJPTraced(HiPrim):
   def batch(self, axis_data, args, dims):
     _, primal_in_tree = tracing_registry.flatten(self.drop_fwd_consts(*self.in_avals))
     traced, out_dims_flat = self.traced._batch(
-        axis_data, primal_in_tree.flatten_up_to(self.drop_fwd_consts(*dims)))
-    out_dims = tree_unflatten(self.out_tree, out_dims_flat)
+        axis_data, _tuptree_axes(self.drop_fwd_consts(*dims), primal_in_tree))
+    out_dims = api.mirror_tree_map(lambda x: x, self.out_tree, out_dims_flat)
     ct_dims = tree_map(lambda d: batching.sum_axis if d is None else d, dims[2:],
                        is_leaf=lambda x: x is None)
     take_first = self.generic_batching and None in out_dims_flat
@@ -966,7 +987,9 @@ class CustomVJPTraced(HiPrim):
     else:
       # custom_vjp_rules=False so that custom_vjp applications inside fwd hit
       # the early return above rather than recursively tracing their fwds.
-      fwd = partial(self.fwd, tree_map(lambda _: True, args))
+      nzs_in = api.mirror_tree_map(
+          lambda _: True, self.in_tree, [True] * self.in_tree.num_leaves)
+      fwd = partial(self.fwd, nzs_in)
       (out, _), rem_ = remat.remat_transform(trace.policy, fwd, *args,
                                              custom_vjp_rules=False)
       res, rem, bwd = tuple(rem_.args[0]), rem_.func, self.bwd
@@ -983,7 +1006,10 @@ def _custom_vjp_fwd(traced, fwd, symbolic_zeros):
   out_tree = tracing_registry.flatten(traced.out_avals)[1]
   def rule(nzs_in, *args):
     if symbolic_zeros:
-      args = tree_map(CustomVJPPrimal, args, nzs_in)  # tree_map skips Statics
+      args_flat, args_tree = tree_flatten(args)
+      args = tree_unflatten(
+          args_tree, map(CustomVJPPrimal, args_flat,
+                         api.tuptree_flags(nzs_in, args_tree, 'nzs_in', 'fwd nzs_in')))
     args_ = tuple(x.val if isinstance(x, Static) else x for x in args)
     out, res = fwd(*args_[2:])
     if config.mutable_array_checks.value:
@@ -1334,8 +1360,8 @@ class CustomJVPTraced(HiPrim):
 
   def batch(self, axis_data, args, dims):
     traced, out_dims_flat = self.traced._batch(
-        axis_data, self.in_tree.flatten_up_to(dims))
-    out_dims = tree_unflatten(self.out_tree, out_dims_flat)
+        axis_data, _tuptree_axes(dims, self.in_tree))
+    out_dims = api.mirror_tree_map(lambda x: x, self.out_tree, out_dims_flat)
     jvp = vmap_rule(axis_data, self.jvp_rule, (dims, dims), (out_dims, out_dims))
     def jvp_rule(primals, tangents):
       with _explain_overbatched(lambda: _overbatched_rule_error(self, 'jvp rule')):

@@ -1212,7 +1212,10 @@ def vmap[F: Callable](
     api_util.check_no_transformed_refs_args(lambda: dbg, args_flat)
     f = lu.wrap_init(fun, debug_info=dbg)
     flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
-    in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
+    def _flatten_axes(name, tree, axes, **kw):
+      try: return tuptree_flat(axes, tree, hijax._is_axis_spec)
+      except ValueError: return flatten_axes(name, tree, axes, **kw)
+    in_axes_flat = _flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
 
     if config.mutable_array_checks.value:
       avals = [None if d is None or batching.is_vmappable(x) else core.typeof(x)
@@ -1240,11 +1243,11 @@ def vmap[F: Callable](
                                     explicit_mesh_axis)
       out_flat, inferred_out_axes = batching.batch(
           flat_fun, axis_data, in_axes_flat,
-          lambda: flatten_axes("vmap out_axes", out_tree(), out_axes),
+          lambda: _flatten_axes("vmap out_axes", out_tree(), out_axes),
           sum_match=sum_match
       ).call_wrapped(*args_flat)
     except batching.SpecMatchError as e:
-      out_axes_flat = flatten_axes("vmap out_axes", out_tree(), out_axes)
+      out_axes_flat = _flatten_axes("vmap out_axes", out_tree(), out_axes)
       out_axes_full = tree_unflatten(out_tree(), out_axes_flat)
       pairs, _ = tree_flatten_with_path(out_axes_full, is_leaf=lambda x: x is None)
 
@@ -1253,7 +1256,7 @@ def vmap[F: Callable](
                        f'but output was batched on axis {e.src}') from None
     if any(d is batching.infer for d in tree_leaves(out_axes)):
       return (tree_unflatten(out_tree(), out_flat),
-              tree_unflatten(out_tree(), inferred_out_axes))
+              mirror_tree_map(lambda x: x, out_tree(), inferred_out_axes))
     else:
       return tree_unflatten(out_tree(), out_flat)
 
@@ -1886,24 +1889,30 @@ def _mirror_tree_map(f, td, leaves):
 def _out_nzs(out_tree, out_zeros):
   return mirror_tree_map(lambda z: not z, out_tree, out_zeros)
 
-def tuptree_flags(prefix, treedef, name: str, full_name: str) -> list[bool]:
-  """Expand a flags prefix into per-leaf flags for `treedef`.
+def tuptree_flat(prefix, treedef, is_leaf, name: str = '',
+                 full_name: str = 'prefix', plural: str = 'values',
+                 singular: str = 'value') -> list[Any]:
+  """Expand a prefix into per-leaf values for `treedef`.
 
-  The prefix is a tree with bool leaves forming a tree prefix of `treedef` up
-  to container types: its containers are matched against those of `treedef`
-  only by their number of children (and keys, if both are dicts). So it may be
-  a pytree prefix of `treedef`, or a tuple-tree made of bools and tuples only,
-  or a tree produced by `mirror_tree_map`."""
-  ret: list[bool] = []
-  _tuptree_flags_rec(prefix, treedef, name, full_name, (), ret)
+  The prefix is a tree with leaves satisfying `is_leaf` forming a tree prefix of
+  `treedef` up to container types: its containers are matched against those of
+  `treedef` only by their number of children (and keys, if both are dicts). So
+  it may be a pytree prefix of `treedef`, or a tuple-tree made of leaves and
+  tuples only, or a tree produced by `mirror_tree_map`."""
+  ret: list[Any] = []
+  _tuptree_flat_rec(is_leaf, plural, singular, prefix, treedef, name, full_name, (), ret)
   return ret
+
+def tuptree_flags(prefix, treedef, name: str, full_name: str) -> list[bool]:
+  return tuptree_flat(prefix, treedef, lambda x: isinstance(x, bool),
+                      name, full_name, 'bools', 'bool')
 
 def _saveable_args_flags(saveable_args, treedef) -> list[bool]:
   return tuptree_flags(saveable_args, treedef, 'saveable_args',
                        'the saveable_args argument to jax.vjp')
 
-def _tuptree_flags_rec(prefix, td, name, full_name, path, ret):
-  if isinstance(prefix, bool):
+def _tuptree_flat_rec(is_leaf, plural, singular, prefix, td, name, full_name, path, ret):
+  if is_leaf(prefix):
     ret.extend([prefix] * td.num_leaves)
     return
   where = name + ''.join(f'[{i}]' for i in path)
@@ -1911,8 +1920,8 @@ def _tuptree_flags_rec(prefix, td, name, full_name, path, ret):
     children, _ = flatten_one_level(prefix)
   except ValueError:
     raise ValueError(
-        f"{full_name} must be a tree of bools, like a tuple-tree (made of "
-        f"bools and tuples only), but {where} is {prefix!r} of type "
+        f"{full_name} must be a tree of {plural}, like a tuple-tree (made of "
+        f"{plural} and tuples only), but {where} is {prefix!r} of type "
         f"{type(prefix).__name__}") from None
   children = list(children)
   if treedef_is_strict_leaf(td):
@@ -1920,7 +1929,7 @@ def _tuptree_flags_rec(prefix, td, name, full_name, path, ret):
         f"{full_name} must form a tree prefix of "
         f"the corresponding values (up to container types), but {where} is "
         "a container while the corresponding part of the values is a leaf; "
-        "use a single bool there instead")
+        f"use a single {singular} there instead")
   td_children = td.children()
   if len(children) != len(td_children):
     raise ValueError(
@@ -1936,7 +1945,7 @@ def _tuptree_flags_rec(prefix, td, name, full_name, path, ret):
         f"but {where} is a dict with keys {sorted(prefix)} while the "
         f"corresponding dict has keys {list(node_data[1])}")
   for i, (p, td_) in enumerate(zip(children, td_children)):
-    _tuptree_flags_rec(p, td_, name, full_name, (*path, i), ret)
+    _tuptree_flat_rec(is_leaf, plural, singular, p, td_, name, full_name, (*path, i), ret)
 
 def _is_ref(x):
   from jax._src.state.types import AbstractRef

@@ -3787,6 +3787,48 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     self.assertEqual(f(-3), 3)
     self.assertEqual(calls, 2)
 
+  def test_custom_pytree_constructor_in_custom_vjp_dce_vmap_and_grad(self):
+    @jax.tree_util.register_pytree_node_class
+    class CheckingNode:
+      def __init__(self, x=None):
+        self.x = jnp.asarray(0.01) if x is None else x
+        _ = getattr(self.x, 'value', self.x).shape
+
+      def tree_flatten(self):
+        return (self.x,), None
+
+      @classmethod
+      def tree_unflatten(cls, _, children):
+        return cls(*children)
+
+    @jax.custom_vjp
+    def f(node, y):
+      return CheckingNode(node.x * y)
+
+    def f_fwd(node, y):
+      x = node.x.value if hasattr(node.x, 'value') else node.x
+      yv = y.value if hasattr(y, 'value') else y
+      return CheckingNode(x * yv), (CheckingNode(x), yv)
+
+    def f_bwd(res, g):
+      node, y = res
+      gx = g.aval if isinstance(g, jax.custom_derivatives.SymbolicZero) else g.x
+      return (CheckingNode(gx * y), gx * node.x)
+
+    f.defvjp(f_fwd, f_bwd, symbolic_zeros=True)
+
+    node = CheckingNode(jnp.ones((4,)))
+    ys = jnp.arange(12.).reshape(3, 4)
+
+    # DCE + vmap with unbatched CheckingNode (dims leaf is None) + grad + remat
+    def loss(node, ys):
+      out = jax.vmap(jax.remat(f), in_axes=(None, 0))(node, ys)
+      return jnp.sum(out.x)
+
+    g_node, g_ys = jax.jit(jax.grad(loss, argnums=(0, 1)))(node, ys)
+    self.assertAllClose(g_node.x, jnp.sum(ys, axis=0))
+    self.assertAllClose(g_ys, jnp.broadcast_to(node.x, ys.shape))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
