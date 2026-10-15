@@ -1,0 +1,73 @@
+--- a/third_party/cccl/workspace.bzl
++++ b/third_party/cccl/workspace.bzl
+@@ -23,12 +23,12 @@
+     "strip_prefix": "cccl-src-v2.8.5",
+ }
+ 
+-# CCCL version 3.2.0
+-# https://github.com/NVIDIA/cccl/releases/tag/v3.2.0
++# CCCL version 3.4.3
++# https://github.com/NVIDIA/cccl/releases/tag/v3.4.3
+ _CCCL_3_2_0_GITHUB_ARCHIVE = {
+-    "full_path": "https://github.com/NVIDIA/cccl/releases/download/v3.2.0/cccl-src-v3.2.0.tar.gz",
+-    "sha256": "b5cd66e240201f5a06af2a75eaffdf05a6c63829edada33ff569ada0037f8086",
+-    "strip_prefix": "cccl-src-v3.2.0",
++    "full_path": "https://github.com/NVIDIA/cccl/releases/download/v3.4.3/cccl-src-v3.4.3.tar.gz",
++    "sha256": "3871f7589dc0fa38d74b164ff81b298e1551d5478a06fe20c6947d7328f9fd53",
++    "strip_prefix": "cccl-src-v3.4.3",
+ }
+ 
+ CCCL_2_8_5_DIST_DICT = {
+--- a/third_party/raft/clang_cuda_intrinsics.h.patch
++++ b/third_party/raft/clang_cuda_intrinsics.h.patch
+@@ -15,10 +15,10 @@
+ diff --git a/cpp/include/raft/compat/clang_cuda_intrinsics.h b/cpp/include/raft/compat/clang_cuda_intrinsics.h
+ --- /dev/null
+ +++ b/cpp/include/raft/compat/clang_cuda_intrinsics.h
+-@@ -0,0 +1,274 @@
++@@ -0,0 +1,285 @@
+ +#pragma once
+ +
+-+#if defined(__clang__) && defined(__CUDA__) && !defined(__NVCC__) && (__clang_major__ < 21)
+++#if defined(__clang__) && defined(__CUDA__) && !defined(__NVCC__) && (__clang_major__ < 23)
+ +
+ +#if defined(__cplusplus) && (__cplusplus >= 201103L)
+ +
+@@ -148,9 +148,15 @@
+ +  __INTRINSIC_LOAD_ULONG(__Mode)
+ +
+ +__INTRINSIC_LOAD_FAMILY(ca, __volatile__, /* no clobber */)
+++#if __clang_major__ < 21
+ +__INTRINSIC_LOAD_FAMILY(cg, __volatile__, /* no clobber */)
+ +__INTRINSIC_LOAD_FAMILY(cs, __volatile__, /* no clobber */)
+ +__INTRINSIC_LOAD_FAMILY(cv, /* not volatile */, : "memory")
+++#else
+++__INTRINSIC_LOAD_ULONG(cg)
+++__INTRINSIC_LOAD_ULONG(cs)
+++__INTRINSIC_LOAD_ULONG(cv)
+++#endif
+ +__INTRINSIC_LOAD_FAMILY(lu, /* not volatile */, : "memory")
+ +
+ +#pragma pop_macro("__INTRINSIC_LOAD")
+@@ -278,7 +284,12 @@
+ +__INTRINSIC_STORE_FAMILY(cg)
+ +__INTRINSIC_STORE_FAMILY(cs)
+ +__INTRINSIC_STORE_FAMILY(wb)
+++#if __clang_major__ < 21
+ +__INTRINSIC_STORE_FAMILY(wt)
+++#else
+++__INTRINSIC_STORE_LONG(wt)
+++__INTRINSIC_STORE_ULONG(wt)
+++#endif
+ +
+ +#pragma pop_macro("__INTRINSIC_STORE")
+ +#pragma pop_macro("__INTRINSIC_STORE2")
+@@ -289,7 +300,7 @@
+ +
+ +#endif // defined(__cplusplus) && (__cplusplus >= 201103L)
+ +
+-+#endif  // clang < 21
+++#endif  // clang < 23
+ diff --git a/cpp/include/raft/matrix/detail/select_warpsort.cuh b/cpp/include/raft/matrix/detail/select_warpsort.cuh
+ --- a/cpp/include/raft/matrix/detail/select_warpsort.cuh
+ +++ b/cpp/include/raft/matrix/detail/select_warpsort.cuh
