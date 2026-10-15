@@ -328,10 +328,10 @@ def _copy_smem_to_gmem_lowering(
       ctx, src_aval, src, src_transform_avals, src_transforms,
       handle_transposes=handle_transposes
   )
-  copy_params = {
-      **_extract_gmem_copy_params(ctx, dst_transforms, dst_transform_avals, supports_multicast=True),
-      **_extract_smem_copy_params(src_aval, src_transforms),
-  }
+  copy_params = _extract_gmem_copy_params(
+      ctx, dst_transforms, dst_transform_avals, supports_multicast=True
+  )
+  swizzle, gmem_transforms = _extract_smem_copy_params(src_aval, src_transforms)
   is_scatter = False
   if gmem_slice := copy_params.get("gmem_slice", ()):
     first_idx = gmem_slice[0]
@@ -355,6 +355,8 @@ def _copy_smem_to_gmem_lowering(
         arrive=commit_group,
         reduction_op=reduction_op,
         oob_mode=OOBFillMode.UNDEFINED,
+        swizzle=swizzle,
+        gmem_transform=gmem_transforms,
         **copy_params,
         **(dict(predicate=predicate) if predicate is not None else {}),  # pyrefly: ignore[bad-argument-type]
     )
@@ -367,7 +369,7 @@ def _copy_smem_to_gmem_lowering(
     slice_lengths = ir.MemRefType(src.type).shape
     indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
 
-  assert copy_params.get("swizzle") is None
+  assert swizzle is None
   peer_id = copy_params.get("gmem_peer_id")
   if peer_id is mgpu.GLOBAL_BROADCAST:
     is_global_broadcast = True
@@ -375,7 +377,7 @@ def _copy_smem_to_gmem_lowering(
   else:
     is_global_broadcast = False
 
-  assert not copy_params.get("gmem_transform")
+  assert not gmem_transforms
   if reduction_op is not None:
     reduction_op_attr = getattr(mgpu.dialect.TMAReduction, reduction_op.capitalize())
   else:
@@ -420,6 +422,59 @@ def _split_gmem_slice(gmem_slice):
       case _:
         raise NotImplementedError(f"Unsupported GMEM slice: {idx}")
   return indices, slice_lengths
+
+
+_IM2COL_INDEXING_ERROR = (
+    "im2col_ref must be indexed with a unit-stride row slice, scalar filter"
+    " offsets for each window dimension, and a unit-stride channel slice."
+)
+
+
+def _extract_im2col_copy_params(
+    gmem_shape: tuple[int, ...],
+    im2col_transform: gpu_core.Im2ColTransform,
+    indexers: Sequence[indexing.NDIndexer],
+) -> dict[str, Any]:
+  match lowering.merge_indexers(indexers):
+    case indexing.NDIndexer(
+        indices=[
+            indexing.Slice(stride=1) as row_idx,
+            *filter_idxs,
+            indexing.Slice(stride=1) as col_idx,
+        ],
+        int_indexer_shape=(),
+    ) if not any(isinstance(idx, indexing.Slice) for idx in filter_idxs):
+      pass
+    case _:
+      raise ValueError(_IM2COL_INDEXING_ERROR)
+
+  row_base = lowering._as_index(row_idx.start)
+  col_base = lowering._as_index(col_idx.start)
+
+  # Transform the linearized window index into the ND index of the upper-left
+  # corner of the first window in this slice in the input operand.
+  spatial_out = im2col_transform.spatial_out_shape(gmem_shape)
+  window_start_bounds = im2col_transform.window_start_bounds
+  index_ty = ir.IndexType.get()
+  flat_idx = row_base
+  window_starts: list[ir.Value] = []
+  for s_out, (lo, _) in zip(
+      reversed(spatial_out), reversed(window_start_bounds)
+  ):
+    s_out_val = mgpu.c(s_out, index_ty)
+    window_starts.append(
+        arith_dialect.addi(
+            arith_dialect.remui(flat_idx, s_out_val), mgpu.c(lo, index_ty)
+        )
+    )
+    flat_idx = arith_dialect.divui(flat_idx, s_out_val)
+  window_starts.reverse()
+  n = flat_idx
+  return dict(
+      window_start_bounds=window_start_bounds,
+      start_indices=(n, *window_starts, col_base),
+      filter_offsets=tuple(map(lowering._as_index, filter_idxs)),
+  )
 
 
 def _extract_gmem_copy_params(
@@ -477,7 +532,7 @@ def _extract_gmem_copy_params(
 
 def _extract_smem_copy_params(aval, transforms):
   if not transforms:
-    return {}
+    return None, ()
   # Split off swizzling, if present
   match transforms:
     case [gpu_core.UnswizzleRef(swizzle), *transforms]:
@@ -488,10 +543,7 @@ def _extract_smem_copy_params(aval, transforms):
   gpu_transforms = tuple(
       gpu_core.to_gpu_transform(t) for t in reversed_transforms
   )
-  return dict(
-      gmem_transform=gpu_transforms,
-      swizzle=swizzle,
-  )
+  return swizzle, gpu_transforms
 
 
 def copy_smem_to_gmem(
@@ -796,6 +848,16 @@ def _copy_gmem_to_smem_abstract_eval(src, dst, *args, has_barrier, **params):
   src_ref = pallas_core.TransformedRef(src, src_transforms)
   dst_ref = pallas_core.TransformedRef(dst, dst_transforms)
 
+  match src_transforms:
+    case [gpu_core.Im2ColTransform(), *indexers]:
+      if not all(isinstance(t, indexing.NDIndexer) for t in indexers):
+        raise NotImplementedError(
+            "Only indexing is supported on im2col-transformed refs, got"
+            f" {indexers}"
+        )
+      if src_ref.ndim != 2:
+        raise ValueError(_IM2COL_INDEXING_ERROR)
+
   if src_ref.dtype != dst_ref.dtype:
     raise ValueError(
         "Expected dtypes to match but src had type "
@@ -969,10 +1031,9 @@ def _copy_gmem_to_smem_lowering(
       ctx, dst_ref_aval, dst, dst_transform_avals, dst_transforms,
       handle_transposes=handle_transposes)
 
-  copy_params = {
-      **_extract_smem_copy_params(dst_ref_aval, dst_transforms),
-      **_extract_gmem_copy_params(ctx, src_transforms, src_transform_avals),
-  }
+  swizzle, gmem_transforms = _extract_smem_copy_params(
+      dst_ref_aval, dst_transforms
+  )
   orders_tensor_core = False
   if barrier is not None:
     barrier_ref_aval = ctx.avals_in[2]
@@ -1025,6 +1086,11 @@ def _copy_gmem_to_smem_lowering(
   # TMA is only available on Hopper and newer. On older architectures we fall
   # back to the cp.async implementation.
   if is_cp_async := mgpu.utils.get_arch().major < 9:
+    if any(isinstance(t, gpu_core.Im2ColTransform) for t in src_transforms):
+      raise ValueError(
+          "im2col copies are only supported on Hopper and newer GPUs, which"
+          " use TMA."
+      )
     if barrier is not None:
       raise ValueError(
           "copy_gmem_to_smem with a barrier is only supported Hopper and newer"
@@ -1055,6 +1121,38 @@ def _copy_gmem_to_smem_lowering(
       raise ValueError(
           "copy_gmem_to_smem without a barrier is only supported on pre-Hopper"
           " GPUs, which use the cp.async implementation"
+      )
+
+  match src_transforms:
+    case [gpu_core.Im2ColTransform() as im2col_transform, *indexers]:
+      if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+        raise NotImplementedError(
+            "im2col copies are not supported under Warpgroup lowering"
+            " semantics."
+        )
+      if collective_axes is not None:
+        raise NotImplementedError(
+            "im2col copies do not support collective_axes or leader_tracked."
+        )
+      match gmem_transforms:
+        case ():
+          pass
+        case (TileTransform(tiling=(_, _)),) if dst_ty.shape[-3] == 1:
+          pass
+        case _:
+          raise NotImplementedError(
+              "im2col copies only support untiled 2D SMEM refs or 2D-tiled SMEM"
+              f" refs with a single column tile, got transforms {gmem_transforms}"
+              f" on SMEM shape {dst_ty.shape}."
+          )
+      im2col_params = _extract_im2col_copy_params(
+          src_ref_aval.shape, im2col_transform, indexers
+      )
+      copy_params = {}
+    case _:
+      im2col_params = None
+      copy_params = _extract_gmem_copy_params(
+          ctx, src_transforms, src_transform_avals
       )
 
   i32 = ir.IntegerType.get_signless(32)
@@ -1121,6 +1219,18 @@ def _copy_gmem_to_smem_lowering(
 
     lane_pred = ctx.module_ctx.single_lane_predicate
     predicate = _andi_maybe_none(predicate, lane_pred)
+    if im2col_params is not None:
+      assert barrier is not None
+      ctx.launch_ctx.async_copy_im2col(
+          src_ref=src,
+          dst_ref=dst,
+          barrier=barrier,
+          **im2col_params,
+          swizzle=swizzle,
+          arrive=False,
+          predicate=predicate,
+      )
+      return ()
     predicate_kwarg = (
         {}
         if is_cp_async
@@ -1146,6 +1256,8 @@ def _copy_gmem_to_smem_lowering(
             if is_cp_async
             else AsyncCopyImplementation.TMA
         ),
+        swizzle=swizzle,
+        gmem_transform=gmem_transforms,
         **copy_params,
         **predicate_kwarg,  # pyrefly: ignore[bad-argument-type]
     )
@@ -1155,8 +1267,8 @@ def _copy_gmem_to_smem_lowering(
     indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
   else:
     indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
-  assert copy_params.get("swizzle") is None
-  assert not copy_params.get("gmem_transform")
+  assert swizzle is None
+  assert not gmem_transforms
 
   if is_cp_async:
     mgpu.dialect.async_load(
@@ -1242,7 +1354,8 @@ def copy_gmem_to_smem(
     finished the copy.
 
   Args:
-    src: The source Ref. Must be in GMEM.
+    src: The source Ref. Must be in GMEM. Can be an im2col view created by
+      :func:`jax.experimental.pallas.mosaic_gpu.im2col_ref`.
     dst: The destination Ref. Must be in SMEM.
     barrier: The barrier to use for tracking completion of the copy. Required on
       Hopper and newer GPUs, which use the TMA implementation, and must be
