@@ -34,6 +34,8 @@ bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
     integrity = "sha256-UKZ/Qqn4U274TL4t5cmI87M9yYRIVzksbmFpCy5/34g=",
+    patch_strip = 1,
+    patches = ["//third_party/xla:xpu_triton_hook.patch"],
     strip_prefix = "xla-d867969800d4a8fd045505eabc65e1e66f30794f",
     urls = ["https://github.com/openxla/xla/archive/d867969800d4a8fd045505eabc65e1e66f30794f.tar.gz"],
 )
@@ -91,7 +93,11 @@ use_repo(rocm, "config_rocm_hipcc", "local_config_rocm")
 # rules_ml_toolchain's own config_rocm_hipcc is a fixed ROCm tarball it documents as
 # test-only, and its ROCm cc toolchain reads it. Point that toolchain at our ROCm.
 rocm_hermetic = use_extension("@rules_ml_toolchain//extensions:rocm_hermetic_download.bzl", "rocm_hermetic_download_ext")
-override_repo(rocm_hermetic, config_rocm_hipcc = "config_rocm_hipcc")
+
+override_repo(
+    rocm_hermetic,
+    config_rocm_hipcc = "config_rocm_hipcc",
+)
 
 python_version_ext = use_extension("@rules_ml_toolchain//extensions:python_version.bzl", "python_version_ext")
 use_repo(python_version_ext, "python_version_repo")
