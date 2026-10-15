@@ -12152,6 +12152,140 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(reshard(u, P()), np.zeros((4, 2)), check_dtypes=False)
     self.assertArraysEqual(r, np.zeros((4, 2)), check_dtypes=False)
 
+  @jtu.with_explicit_mesh((2, 2), ('replica', 'data'))
+  def test_no_collectives_allowed(self, mesh):
+    x = jax.device_put(np.arange(16.).reshape(4, 4), P('replica', None))
+    rep = jax.device_put(np.arange(16.).reshape(4, 4), P(None, None))
+    red = jax.device_put(
+        np.arange(16.).reshape(4, 4), P(None, None, reduced={'replica'}))
+    x_data = jax.device_put(np.arange(16.).reshape(4, 4), P('data', None))
+
+    with jax.sharding.no_collectives({'replica'}):
+      self.assertEqual((x * 2).sharding.spec, P('replica', None))
+
+      self.assertEqual(x.T.sharding.spec, P(None, 'replica'))
+
+      self.assertEqual(x.reshape(2, 2, 4).sharding.spec, P('replica', None, None))
+      self.assertEqual(
+          jnp.reshape(x, (2, 2, 4), out_sharding=P('replica', None, None)).sharding.spec,
+          P('replica', None, None))
+      self.assertEqual(
+          lax.broadcast_in_dim(
+              x, (2, 4, 4), (1, 2), out_sharding=P(None, 'replica', None)
+          ).sharding.spec,
+          P(None, 'replica', None))
+
+      u = lax.reduce_sum(x, axes=(0,), out_sharding=P(None, unreduced={'replica'}))
+      self.assertEqual(u.sharding.spec, P(None, unreduced={'replica'}))
+
+      u_dot = jnp.einsum('ij,ik->jk', x, x,
+                         out_sharding=P(None, None, unreduced={'replica'}))
+      self.assertEqual(u_dot.sharding.spec, P(None, None, unreduced={'replica'}))
+
+      self.assertEqual(reshard(red, P('replica', None)).sharding.spec, P('replica', None))
+
+      self.assertEqual(reshard(red, P(None, None)).sharding.spec, P(None, None))
+
+      self.assertEqual(reshard(rep, P('replica', None)).sharding.spec, P('replica', None))
+
+      self.assertEqual(jnp.sum(x_data, axis=0).sharding.spec, P(None))
+
+      self.assertEqual(reshard(x_data, P(None, None)).sharding.spec, P(None, None))
+
+  @parameterized.parameters([
+      (lambda x, _: jnp.sum(x, axis=0), P('replica', None)),
+      (lambda x, _: lax.reduce_sum(
+          x, axes=(0,), out_sharding=P(None)), P('replica', None)),
+      (lambda x, _: lax.reduce_sum(
+          x, axes=(0,), out_sharding=P('replica')), P('replica', None)),
+      (lambda x, _: jnp.einsum(
+          'ij,ik->jk', x, x, out_sharding=P(None, None)), P('replica', None)),
+      (lambda x, _: jnp.einsum(
+          'ij,ik->jk', x, x, out_sharding=P('replica', None)), P('replica', None)),
+      (lambda x, rep: jnp.einsum(
+          'ij,jk->ik', x, rep, out_sharding=P(None, 'replica')), P('replica', None)),
+      (lambda x, _: lax.broadcast_in_dim(
+          x, (2, 4, 4), (1, 2), out_sharding=P(None, None, None)), P('replica', None)),
+      (lambda x, _: lax.broadcast_in_dim(
+          x, (2, 4, 4), (1, 2), out_sharding=P('replica', None, None)), P('replica', None)),
+      (lambda x, _: jnp.reshape(
+          x, (16,), out_sharding=P(None)), P('replica', None)),
+      (lambda x, _: reshard(x, P(None, None)), P('replica', None)),
+      (lambda x, _: reshard(x, P(None, 'replica')), P('replica', None)),
+      (lambda u, _: reshard(u, P(None, None)), P(None, None, unreduced={'replica'})),
+      (lambda u, _: reshard(u, P('replica', None)), P(None, None, unreduced={'replica'})),
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('replica', 'data'))
+  def test_no_collectives_forbidden(self, fn, in_spec, mesh):
+    x = jax.device_put(jnp.arange(16.).reshape(4, 4), in_spec)
+    rep = jax.device_put(jnp.arange(16.).reshape(4, 4), P(None, None))
+    with jax.sharding.no_collectives({'replica'}):
+      with self.assertRaises(core.ForbiddenCollectiveError):
+        fn(x, rep)
+
+  @parameterized.parameters([
+      (lambda x, w: x @ w, (4, 4), True),
+      (lambda x, w: x + reshard(w, P('replica', None)), (4, 4), True),
+      (lambda x, b: x + lax.broadcast_in_dim(
+          b, (4, 4), (1,), out_sharding=P('replica', None)), (4,), True),
+      (lambda x, w: x + jax.shard_map(
+          lambda a: lax.pcast(a, 'replica', to='varying'),
+          out_specs=P('replica', None))(w), (2, 4), True),
+      (lambda x, w: x + w, (4, 4), False),
+      (lambda x, w: x * w, (4, 4), False),
+      (lambda x, b: x + b[None, :], (4,), False),
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('replica', 'data'))
+  def test_no_collectives_grad(self, op_fn, w_shape, supports_reduced, mesh):
+    x = jax.device_put(np.arange(16.).reshape(4, 4), P('replica', None))
+    w_rep = jax.device_put(
+        np.arange(float(math.prod(w_shape))).reshape(w_shape), P())
+
+    def loss(x, w):
+      return lax.reduce_sum(
+          op_fn(x, w), axes=(0, 1), out_sharding=P(unreduced={'replica'}))
+
+    with jax.sharding.no_collectives({'replica'}):
+      _ = jax.jit(loss)(x, w_rep)
+
+      dx = jax.jit(jax.grad(loss, argnums=0))(x, w_rep)
+      self.assertEqual(dx.sharding.spec, P('replica', None))
+
+      with self.assertRaises(core.ForbiddenCollectiveError):
+        jax.jit(jax.grad(loss, argnums=1))(x, w_rep)
+
+      if supports_reduced:
+        w_red = jax.device_put(w_rep, P(reduced={'replica'}))
+        dw = jax.jit(jax.grad(loss, argnums=1))(x, w_red)
+        self.assertEqual(
+            dw.sharding.spec,
+            P(*([None] * len(w_shape)), unreduced={'replica'}))
+
+  @parameterized.parameters([
+      (lambda a: lax.psum(a, 'replica'), P(None, 'data')),
+      (lambda a: lax.pmax(a, 'replica'), P(None, 'data')),
+      (lambda a: lax.pmin(a, 'replica'), P(None, 'data')),
+      (lambda a: lax.all_gather(a, 'replica', tiled=True), P(None, 'data')),
+      (lambda a: lax.psum_scatter(a, 'replica', tiled=True), P('replica', 'data')),
+      (lambda a: lax.all_to_all(a, 'replica', 0, 0, tiled=True), P('replica', 'data')),
+      (lambda a: lax.ppermute(a, 'replica', [(0, 1), (1, 0)]), P('replica', 'data')),
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('replica', 'data'))
+  def test_no_collectives_parallel(self, fn, out_specs, mesh):
+    x = jax.device_put(np.arange(16.).reshape(4, 4), P('replica', 'data'))
+
+    with jax.sharding.no_collectives({'replica'}):
+      out = jax.shard_map(
+          lambda a: lax.psum(a, 'data'), out_specs=P('replica', None))(x)
+      self.assertEqual(out.sharding.spec, P('replica', None))
+
+      idx = jax.shard_map(
+          lambda: lax.axis_index('replica')[None], out_specs=P('replica'))()
+      self.assertEqual(idx.sharding.spec, P('replica'))
+
+      with self.assertRaises(core.ForbiddenCollectiveError):
+        jax.shard_map(fn, out_specs=out_specs)(x)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

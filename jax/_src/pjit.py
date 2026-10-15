@@ -2333,10 +2333,22 @@ def _check_unreduced_reshard(aval, dst_sharding):
           ' `jax.reshard` should be the same. Got input spec:'
           f' {aval.sharding.spec} and output spec: {dst_sharding.spec}')
 
+def _check_no_collectives_reshard(aval, dst_sharding):
+  if not config.no_collectives.value:
+    return
+  from jax._src.lax import utils as lax_utils  # type: ignore
+  lax_utils._check_no_collectives(reshard_p, [dst_sharding], [aval])
+  if (isinstance(aval.sharding, NamedSharding) and
+      isinstance(dst_sharding, NamedSharding)):
+    lax_utils._check_no_collectives_dim_change(
+        'reshard', aval.sharding.spec.partitions,
+        dst_sharding.spec.partitions)
+
 def _reshard_shaped_array(aval: core.ShapedArray, dst_sharding) -> core.ShapedArray:
   assert isinstance(aval, core.ShapedArray)
   dst_sharding = _canonicalize_reshard_sharding(dst_sharding, aval, False)
   _check_unreduced_reshard(aval, dst_sharding)
+  _check_no_collectives_reshard(aval, dst_sharding)
   if aval.sharding == dst_sharding:
     return aval
   return aval.update(sharding=dst_sharding)

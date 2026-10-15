@@ -21,6 +21,7 @@ from functools import partial
 import numpy as np
 from typing import cast
 
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -34,6 +35,64 @@ from jax._src.util import safe_zip
 from jax._src.typing import DimSize, DType, Shape
 
 zip, unsafe_zip = safe_zip, zip
+
+
+def _get_spec_set(partitions) -> set:
+  axes = set()
+  for p in partitions:
+    if isinstance(p, tuple):
+      axes.update(p)
+    elif p is not None and p is not P.UNCONSTRAINED:
+      axes.add(p)
+  return axes
+
+
+def _axis_dims(partitions, axis) -> list[int]:
+  return [i for i, p in enumerate(partitions)
+          if (axis in p if isinstance(p, tuple) else p == axis)]
+
+
+def _check_no_collectives_dim_change(prim_name: str, in_parts, out_parts):
+  forbidden_axes = config.no_collectives.value
+  if not forbidden_axes:
+    return
+  in_axes = _get_spec_set(in_parts)
+  out_axes = _get_spec_set(out_parts)
+  for r in forbidden_axes:
+    if (r in in_axes and r in out_axes and
+        _axis_dims(in_parts, r) != _axis_dims(out_parts, r)):
+      raise core.ForbiddenCollectiveError(
+          f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
+          f" `{prim_name}` changes the sharded dimension of axis '{r}'.")
+
+
+def _check_no_collectives(prim, out_s_list, avals):
+  forbidden_axes = config.no_collectives.value
+  if not forbidden_axes or not avals:
+    return
+  in_specs = [a.sharding.spec for a in avals if isinstance(a, core.ShapedArray)]
+  out_specs = [s.spec for s in out_s_list]
+  if not in_specs or not out_specs:
+    return
+
+  in_part = set().union(*(_get_spec_set(s.partitions) for s in in_specs))
+  in_unreduced = set().union(*(s.unreduced for s in in_specs))
+  out_part = set().union(*(_get_spec_set(s.partitions) for s in out_specs))
+  out_unreduced = set().union(*(s.unreduced for s in out_specs))
+
+  for r in forbidden_axes:
+    if r in in_unreduced and r not in out_unreduced:
+      raise core.ForbiddenCollectiveError(
+          f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
+          f" `{prim.name}` consumes unreduced axis '{r}' without keeping it"
+          " unreduced in the output."
+      )
+    if r in in_part and r not in out_part and r not in out_unreduced:
+      raise core.ForbiddenCollectiveError(
+          f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
+          f" `{prim.name}` loses sharding axis '{r}' in the output without"
+          " marking it unreduced."
+      )
 
 
 def input_dtype(x, *_, out_dtype=None, **__):
@@ -110,8 +169,10 @@ def call_sharding_rule(prim, sh_rule, ur_rule, num_out, *avals, **kwargs):
       prim, ur_rule, out_s, num_out, *avals, **kwargs)
   up = lambda sh, u, r, k: sh.update(spec=sh.spec.update(unreduced=u, reduced=r,
                                                          unreduced_kind=k))
-  return (up(out_s, unreduced, reduced, u_kind) if num_out is None else
-          [up(s, u, r, k) for s, u, r, k in zip(out_s, unreduced, reduced, u_kind)])
+  res = (up(out_s, unreduced, reduced, u_kind) if num_out is None else
+         [up(s, u, r, k) for s, u, r, k in zip(out_s, unreduced, reduced, u_kind)])
+  _check_no_collectives(prim, [res] if num_out is None else res, avals)
+  return res
 
 def call_shape_dtype_sharding_rule(
     prim, shape_rule, dtype_rule, sharding_rule, ur_rule, multi_out, *avals,

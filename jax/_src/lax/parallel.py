@@ -1039,14 +1039,20 @@ def _pmin_pmax_abstract_eval(name, aval, *, axes, axis_index_groups):
         aval, axes=axes, axis_index_groups=axis_index_groups)
   return _psum_invariant_abstract_eval(name, aval, axes=axes)
 
-def _check_axis_names(axes, api_name):
+def _check_axis_names(axes, api_name, check_no_collectives=True):
   named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
   axis_env = core.get_axis_env()
+  forbidden_axes = config.no_collectives.value if check_no_collectives else ()
   for name in named_axes:
     if not axis_env.axis_exists(name):
       raise NameError(
           f"Found an unbound axis name: {name}. To fix this, please call"
           f" {api_name} under `jax.shard_map`.")
+    if name in forbidden_axes:
+      raise core.ForbiddenCollectiveError(
+          f"Collective across axis '{name}' is forbidden by `no_collectives`,"
+          f" but `{api_name}` acts on axis '{name}'."
+      )
 
 def _lower_reducer_into_block(ctx, prim, scalar_aval, block):
   with ir.InsertionPoint(block):
@@ -2590,7 +2596,7 @@ def _axis_index_lowering(ctx, *, axis_name):
 def _axis_index_effectful_abstract_eval(*, axis_name):
   effect = {core.NamedAxisEffect(axis_name)}
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
-  _check_axis_names(axis_name, 'axis_index')
+  _check_axis_names(axis_name, 'axis_index', check_no_collectives=False)
   mesh = get_abstract_mesh()
   sharding = NamedSharding(mesh, P())
   vma = ((frozenset(axis_name) if mesh._any_axis_manual else frozenset())
@@ -2675,7 +2681,7 @@ core.pvary_p.def_impl(partial(_raise_valueerror, 'pvary'))
 mlir.register_lowering(core.pvary_p, lambda ctx, x, *, axes: [x])
 
 def _pvary_abstract_eval(aval, *, axes):
-  _check_axis_names(axes, 'pvary')
+  _check_axis_names(axes, 'pvary', check_no_collectives=False)
   check_unreduced_args([aval], axes, 'pvary')
   assert isinstance(axes, tuple)
   if set(axes).intersection(aval.mat.varying):
@@ -3019,7 +3025,7 @@ mlir.register_lowering(preduced_p, lambda ctx, x, *, axes: [x])
 
 def _preduced_abstract_eval(aval, *, axes):
   assert isinstance(axes, tuple)
-  _check_axis_names(axes, 'preduced')
+  _check_axis_names(axes, 'preduced', check_no_collectives=False)
   if aval.mat.varying.intersection(set(axes)):
     raise ValueError(
         "preduced is a Invariant->Reduced collective. This means that the"
@@ -3067,7 +3073,7 @@ mlir.register_lowering(vary_unreduced_cast_p, lambda ctx, x, *, axes: [x])
 
 def _vary_unreduced_cast_abstract_eval(aval, *, axes):
   assert isinstance(axes, tuple)
-  _check_axis_names(axes, 'vary_unreduced_cast')
+  _check_axis_names(axes, 'vary_unreduced_cast', check_no_collectives=False)
   check_unreduced_args([aval], axes, 'vary_unreduced_cast')
   if not aval.mat.varying:
     raise ValueError('vary_unreduced_cast only accepts inputs that are'
@@ -3110,7 +3116,7 @@ mlir.register_lowering(core.reduced_vary_cast_p, lambda ctx, x, *, axes: [x])
 
 def _reduced_vary_cast_abstract_eval(aval, *, axes):
   assert isinstance(axes, tuple)
-  _check_axis_names(axes, 'reduced_vary_cast')
+  _check_axis_names(axes, 'reduced_vary_cast', check_no_collectives=False)
   if not aval.mat.reduced:
     raise ValueError('reduced_vary_cast only accepts inputs that are'
                      f' reduced. Got {aval.str_short(True)}')

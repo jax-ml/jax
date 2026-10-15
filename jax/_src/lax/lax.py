@@ -6235,15 +6235,29 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
         'Mesh of both lhs and rhs should match. Got lhs:'
         f' {lhs.sharding.mesh} and rhs: {rhs.sharding.mesh}')
 
-  if out_sharding is not None:
-    assert isinstance(out_sharding, NamedSharding)
-    return out_sharding
-
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_contracting_spec = tuple(lhs.sharding.spec.partitions[i]
                                for i in lhs_contracting)
   rhs_contracting_spec = tuple(rhs.sharding.spec.partitions[i]
                                for i in rhs_contracting)
+  if out_sharding is not None:
+    assert isinstance(out_sharding, NamedSharding)
+    if forbidden_axes := config.no_collectives.value:
+      out_parts = _dot_general_sharding_computation(
+          lhs.sharding.spec, rhs.sharding.spec, dimension_numbers)
+      contract_axes = lax_utils._get_spec_set(
+          lhs_contracting_spec + rhs_contracting_spec)
+      for r in forbidden_axes:
+        if r in contract_axes and r not in out_sharding.spec.unreduced:
+          raise core.ForbiddenCollectiveError(
+              f"Collective across axis '{r}' is forbidden by `no_collectives`,"
+              f" but `dot_general` contracts over axis '{r}' without marking"
+              " it unreduced in the output."
+          )
+      lax_utils._check_no_collectives_dim_change(
+          'dot_general', out_parts, out_sharding.spec.partitions)
+    return out_sharding
+
   lhs_batch_spec = tuple(lhs.sharding.spec.partitions[i] for i in lhs_batch)
   rhs_batch_spec = tuple(rhs.sharding.spec.partitions[i] for i in rhs_batch)
 
@@ -6265,18 +6279,18 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
     mesh = rhs.sharding.mesh
   else:
     mesh = lhs.sharding.mesh
-  return _dot_general_sharding_computation(
-      lhs.sharding.spec, rhs.sharding.spec, dimension_numbers, mesh)
+  out_parts = _dot_general_sharding_computation(
+      lhs.sharding.spec, rhs.sharding.spec, dimension_numbers)
+  return NamedSharding(mesh, P(*out_parts))
 
-def _dot_general_sharding_computation(
-    lhs_spec, rhs_spec, dimension_numbers, mesh):
+def _dot_general_sharding_computation(lhs_spec, rhs_spec, dimension_numbers):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   batch_spec = tuple(lhs_spec.partitions[i] for i in lhs_batch)
   lhs_contract_or_batch = tuple(sorted(tuple(lhs_contracting) + tuple(lhs_batch)))
   lhs_tensored_spec = tuple_delete(lhs_spec.partitions, lhs_contract_or_batch)
   rhs_contract_or_batch = tuple(sorted(tuple(rhs_contracting) + tuple(rhs_batch)))
   rhs_tensored_spec = tuple_delete(rhs_spec.partitions, rhs_contract_or_batch)
-  return NamedSharding(mesh, P(*(batch_spec + lhs_tensored_spec + rhs_tensored_spec)))
+  return batch_spec + lhs_tensored_spec + rhs_tensored_spec
 
 
 def _dot_general_unreduced_rule(lhs, rhs, dimension_numbers, out_sharding):
@@ -7468,12 +7482,14 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions,
 
 def _broadcast_in_dim_sharding_rule(operand, *, shape, broadcast_dimensions,
                                     sharding):
-  if sharding is not None:
-    return sharding
   bds = set(broadcast_dimensions)
   orig_spec = iter(operand.sharding.spec.partitions)
   new_spec = [next(orig_spec) if i in bds else None for i in range(len(shape))]
   assert next(orig_spec, None) is None
+  if sharding is not None:
+    lax_utils._check_no_collectives_dim_change(
+        'broadcast_in_dim', new_spec, sharding.spec.partitions)
+    return sharding
   mesh = (get_abstract_mesh() if operand.sharding.mesh.empty else
           operand.sharding.mesh)
   return operand.sharding.update(
@@ -9196,13 +9212,26 @@ def _reduce_op_shape_rule(operand, *, axes, **_):
   return tuple(d for i, d in enumerate(operand.shape) if i not in axes)
 
 def _reduce_op_sharding_rule_with_out_sharding(operand, *, axes, out_sharding):
+  axes = frozenset(axes)
+  natural_parts = tuple(s for i, s in enumerate(operand.sharding.spec.partitions)
+                        if i not in axes)
   if out_sharding is not None:
     assert isinstance(out_sharding, NamedSharding)
+    if (forbidden_axes := config.no_collectives.value):
+      reduced_axes = lax_utils._get_spec_set(
+          s for i, s in enumerate(operand.sharding.spec.partitions) if i in axes
+      )
+      for r in forbidden_axes:
+        if r in reduced_axes and r not in out_sharding.spec.unreduced:
+          raise core.ForbiddenCollectiveError(
+              f"Collective across axis '{r}' is forbidden by `no_collectives`,"
+              f" but reduction over axis '{r}' does not mark it unreduced in"
+              " the output."
+          )
+      lax_utils._check_no_collectives_dim_change(
+          'reduce', natural_parts, out_sharding.spec.partitions)
     return out_sharding
-  axes = frozenset(axes)
-  new_spec = P(*tuple(s for i, s in enumerate(operand.sharding.spec.partitions)
-                      if i not in axes))
-  return operand.sharding.update(spec=new_spec)
+  return operand.sharding.update(spec=P(*natural_parts))
 
 def _reduce_op_unreduced_rule(operand, axes, out_sharding, out_kind, name):
   if out_sharding is not None and out_sharding.spec.unreduced:  # explicit mode

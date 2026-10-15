@@ -351,7 +351,7 @@ def jaxpr_as_fun(closed_jaxpr: Jaxpr, *args):
 class JaxprEqnContextManager:
   __slots__ = ['context', 'prev_compute_type', 'prev_threefry_partitionable',
                'prev_xla_metadata', 'prev_abstract_mesh', 'prev_layout_mode',
-               'prev_remove_size_one_mesh_axis']
+               'prev_remove_size_one_mesh_axis', 'prev_no_collectives']
 
   def __init__(self, context):
     self.context = context
@@ -376,6 +376,8 @@ class JaxprEqnContextManager:
         self.context.cur_layout_mode)
     self.prev_remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.swap_local(
         self.context.remove_size_one_mesh_axis)
+    self.prev_no_collectives = config.no_collectives.swap_local(
+        self.context.no_collectives)
 
   def __exit__(self, exc_type, exc_value, traceback):
     config.xla_metadata_context_manager.set_local(self.prev_xla_metadata)
@@ -384,14 +386,15 @@ class JaxprEqnContextManager:
     mesh_lib.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
     layout_tracing_mode.set_local(self.prev_layout_mode)
     config.remove_size_one_mesh_axis_from_type.set_local(self.prev_remove_size_one_mesh_axis)
+    config.no_collectives.set_local(self.prev_no_collectives)
 
 
 @immutable
 class JaxprEqnContext:
 
   __slots__ = ['compute_type', 'threefry_partitionable', 'cur_abstract_mesh',
-               'cur_layout_mode', 'remove_size_one_mesh_axis', 'xla_metadata',
-               'configs', '__weakref__']
+               'cur_layout_mode', 'remove_size_one_mesh_axis', 'no_collectives',
+               'xla_metadata', 'configs', '__weakref__']
 
   compute_type: str | None
   threefry_partitionable: bool
@@ -399,17 +402,20 @@ class JaxprEqnContext:
   cur_abstract_mesh: mesh_lib.AbstractMesh
   cur_layout_mode: LayoutMode
   remove_size_one_mesh_axis: bool
+  no_collectives: frozenset[Any]
 
   @staticmethod
   @weak_value_interner
   def _create(compute_type, threefry_partitionable, cur_abstract_mesh,
-              cur_layout_mode, remove_size_one_mesh_axis, xla_metadata):
+              cur_layout_mode, remove_size_one_mesh_axis, no_collectives,
+              xla_metadata):
     obj = object.__new__(JaxprEqnContext)
     object.__setattr__(obj, 'compute_type', compute_type)
     object.__setattr__(obj, 'threefry_partitionable', threefry_partitionable)
     object.__setattr__(obj, 'cur_abstract_mesh', cur_abstract_mesh)
     object.__setattr__(obj, 'cur_layout_mode', cur_layout_mode)
     object.__setattr__(obj, 'remove_size_one_mesh_axis', remove_size_one_mesh_axis)
+    object.__setattr__(obj, 'no_collectives', no_collectives)
     object.__setattr__(obj, 'xla_metadata',
                        None if xla_metadata is None else dict(xla_metadata))
     return obj
@@ -420,11 +426,13 @@ class JaxprEqnContext:
     cur_abstract_mesh = mesh_lib.get_abstract_mesh()
     cur_layout_mode = get_layout_mode()
     remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.value
+    no_collectives = config.no_collectives.value
     xla_metadata = (None if (xm := current_xla_metadata()) is None
                     else tuple(sorted(xm.items())))
     return JaxprEqnContext._create(
         compute_type, threefry_partitionable, cur_abstract_mesh,
-        cur_layout_mode, remove_size_one_mesh_axis, xla_metadata)
+        cur_layout_mode, remove_size_one_mesh_axis, no_collectives,
+        xla_metadata)
 
   # No __eq__ or __hash__: interned classes use object identity.
 
@@ -438,6 +446,7 @@ class JaxprEqnContext:
             f"cur_abstract_mesh={self.cur_abstract_mesh}, "
             f"cur_layout_mode={self.cur_layout_mode}, "
             f"remove_size_one_mesh_axis={self.remove_size_one_mesh_axis}, "
+            f"no_collectives={self.no_collectives}, "
             f"xla_metadata={self.xla_metadata})")
 
 
@@ -2163,6 +2172,10 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
 
 class ShardingTypeError(Exception):
+  pass
+
+
+class ForbiddenCollectiveError(Exception):
   pass
 
 

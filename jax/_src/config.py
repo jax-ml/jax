@@ -1460,6 +1460,23 @@ remove_size_one_mesh_axis_from_type = bool_state(
     include_in_jit_key=True,
     include_in_trace_context=True)
 
+
+def _parse_no_collectives(val):
+  if not isinstance(val, (set, frozenset)):
+    raise TypeError(
+        f"Expected axis name(s) as set or frozenset, got {val} of type {type(val)}")
+  return frozenset(val)
+
+
+no_collectives = State[frozenset[Any]](
+    'jax_no_collectives',
+    frozenset(),
+    help='Forbid collectives across the specified mesh axes in Explicit mode.',
+    parser=_parse_no_collectives,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 # TODO make it so people don't use this, this is internal...
 _check_vma = bool_state(
     name='check_vma',
