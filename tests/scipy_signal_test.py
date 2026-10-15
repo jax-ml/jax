@@ -427,5 +427,31 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
                             check_dtypes=False)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
+  def testIstftZeroNoverlapAgainstNumpy(self):
+    rng = jtu.rand_default(self.rng())
+    Zxx = rng((33, 10), np.complex64)
+    kwds = dict(window='boxcar', noverlap=0, input_onesided=True,
+                boundary=False)
+
+    _, osp_x = osp_signal.istft(Zxx, **kwds)
+    _, jsp_x = jsp_signal.istft(Zxx, **kwds)
+
+    self.assertEqual(jsp_x.shape, osp_x.shape)
+    self.assertAllClose(jsp_x, osp_x, rtol=1e-6, atol=1e-6,
+                        check_dtypes=False)
+
+  def testIstftInferredNfftWithOddNpersegAgainstNumpy(self):
+    rng = jtu.rand_default(self.rng())
+    Zxx = rng((4, 10), np.complex64)
+    kwds = dict(window='boxcar', nperseg=7, nfft=None,
+                input_onesided=True, boundary=False)
+
+    _, osp_x = osp_signal.istft(Zxx, **kwds)
+    _, jsp_x = jsp_signal.istft(Zxx, **kwds)
+
+    self.assertEqual(jsp_x.shape, osp_x.shape)
+    self.assertAllClose(jsp_x, osp_x, rtol=1e-6, atol=1e-6,
+                        check_dtypes=False)
+
 if __name__ == "__main__":
-    absltest.main(testLoader=jtu.JaxTestLoader())
+  absltest.main(testLoader=jtu.JaxTestLoader())
