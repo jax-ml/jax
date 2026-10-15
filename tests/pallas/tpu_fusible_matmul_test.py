@@ -100,6 +100,9 @@ def _fusible_matmul(
   z_type = jax.ShapeDtypeStruct((m, n), dtype=out_dtype)
   if not z:
     z = lambda x: x
+    strict_mode = True
+  else:
+    strict_mode = z.strict_mode
   if k != k_:
     raise ValueError(f'X and Y shapes must be compatible. Got {k} != {k_}')
 
@@ -158,6 +161,7 @@ def _fusible_matmul(
           z_block_spec,
           scalar_prefetch_handler=fuser.make_scalar_prefetch_handler(2),
           grid_len=len(grid),
+          strict_mode=strict_mode,
       )(z_values, z_type)
   )
 

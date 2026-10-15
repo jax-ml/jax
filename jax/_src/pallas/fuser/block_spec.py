@@ -463,17 +463,6 @@ def pull_block_spec(
         scalar_prefetch_handler,
         grid_len,
     )
-    # The scalars this fusion prefetches, in the order its index maps and body
-    # expect to be handed them back.
-    kernel_fn.scalar_prefetch = tuple(
-        c for c, sp in zip(consts, _scalar_prefetch_mask(jaxpr, read_usage_env),
-                           strict=True) if sp)
-    if non_scalars := [c for c in kernel_fn.scalar_prefetch if jnp.ndim(c) != 0]:
-      raise ValueError(
-          f'Fusion {jaxpr.debug_info.func_name} computes a block index from'
-          f' non-scalar values of shapes {[jnp.shape(c) for c in non_scalars]}.'
-          ' Only scalars can be prefetched; index into the array outside the'
-          ' fusion and close over the resulting scalar instead.')
     in_block_specs = jax.tree.unflatten(in_tree, in_block_specs)
     in_block_specs = jax.tree.map(
         functools.partial(
@@ -505,6 +494,8 @@ def _block_shapes_equal(
 def _block_specs_equal(
     bs1: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
     bs2: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
+    *,
+    strict_mode: bool = True,
 ) -> bool:
   if bs1 is pallas_core.no_block_spec or bs2 is pallas_core.no_block_spec:
     return bs1 is bs2
@@ -516,7 +507,7 @@ def _block_specs_equal(
           or isinstance(bs2.index_map, pallas_core._IndexMapFunc)), msg
   return (
       _block_shapes_equal(bs1.block_shape, bs2.block_shape)
-      and bs1.index_map == bs2.index_map
+      and (not strict_mode or bs1.index_map == bs2.index_map)
       and bs1.memory_space == bs2.memory_space
       and bs1.pipeline_mode == bs2.pipeline_mode
   )
@@ -595,6 +586,9 @@ def _pull_block_transform(
     scalar_prefetch_handler: Any | None = None,
     grid_len: int,
     strict_mode: bool = True,
+    init_transform_env: (
+        dict[core.Var, BlockIndexTransform | NoBlockIndexTransform] | None
+    ) = None,
 ) -> tuple[
     tuple[BlockIndexTransform | NoBlockIndexTransform, ...],
     tuple[
@@ -612,18 +606,23 @@ def _pull_block_transform(
       ) if sp
     )
 
+  if init_transform_env is not None:
+    env.update(init_transform_env)
+    base_transforms = tuple(init_transform_env.values())
+  else:
+    for outvar, bs in zip(jaxpr.outvars, out_block_transforms, strict=True):
+      assert isinstance(outvar, core.Var)
+      env[outvar] = bs
+    base_transforms = out_block_transforms
+
   block_idxs_avals = tuple(
       None
       if out_block_transform is no_block_index_transform
       else (
           (core.ShapedArray((), jnp.int32),) * len(out_block_transform.block_shape)
       )
-      for out_block_transform in out_block_transforms
+      for out_block_transform in base_transforms
   )
-
-  for outvar, bs in zip(jaxpr.outvars, out_block_transforms, strict=True):
-    assert isinstance(outvar, core.Var)
-    env[outvar] = bs
 
   def _read_block_spec(
       atom: core.Atom,
@@ -643,6 +642,11 @@ def _pull_block_transform(
   for i, eqn in reversed(list(enumerate(jaxpr.eqns))):
     eqn_out_block_transforms = tuple(util.safe_map(_read_block_spec, eqn.outvars))
     if all(bs is no_block_index_transform for bs in eqn_out_block_transforms):
+      continue
+    if init_transform_env is not None and all(
+        isinstance(v, core.Literal) or v in init_transform_env
+        for v in eqn.invars
+    ):
       continue
     rule = pull_block_spec_rules.get(eqn.primitive, None)
     if not rule:
@@ -710,6 +714,8 @@ def _pull_block_transform(
     else:
       in_block_transforms = rule(ctx, eqn_out_block_transforms[0], **eqn.params)
     for v, in_block_transform in zip(eqn.invars, in_block_transforms, strict=True):
+      if init_transform_env is not None and v in init_transform_env:
+        continue
       if (
           not isinstance(v, core.Literal)
           and v in env
@@ -749,28 +755,52 @@ def _pull_block_spec(
     scalar_prefetch_handler: Any | None = None,
     grid_len: int,
     strict_mode: bool = True,
+    push_env: (
+        dict[core.Var, pallas_core.BlockSpec | pallas_core.NoBlockSpec] | None
+    ) = None,
 ) -> tuple[
     tuple[pallas_core.BlockSpec | pallas_core.NoBlockSpec, ...],
     tuple[dict[core.Var, pallas_core.BlockSpec], dict[int, Any]],
 ]:
-  # initialize block transforms to identity for each output
-  out_block_transforms = _init_block_transforms(out_block_specs)
+  if push_env is not None:
+    pushed_vars = [
+        v
+        for v, bs in push_env.items()
+        if bs is not pallas_core.no_block_spec
+    ]
+    base_block_specs = tuple(push_env[v] for v in pushed_vars)
+    pushed_transforms = _init_block_transforms(base_block_specs)
+    init_transform_env = dict(zip(pushed_vars, pushed_transforms, strict=True))
+    out_block_transforms = ()
+  else:
+    base_block_specs = out_block_specs
+    init_transform_env = None
+    # initialize block transforms to identity for each output
+    out_block_transforms = _init_block_transforms(out_block_specs)
 
-  in_block_transforms, (env, scalar_prefetch_fn_env) = _pull_block_transform(
+  _, (env, scalar_prefetch_fn_env) = _pull_block_transform(
       jaxpr,
       out_block_transforms,
       read_usage_env=read_usage_env,
       scalar_prefetch_handler=scalar_prefetch_handler,
       grid_len=grid_len,
       strict_mode=strict_mode,
+      init_transform_env=init_transform_env,
   )
 
   # apply accumulated block transforms to get final block specs
-  env = {v: _apply_block_transform(out_block_specs, bt)
-         for v, bt in env.items()}
+  env = {
+      v: (
+          push_env[v]
+          if init_transform_env is not None and v in init_transform_env
+          else _apply_block_transform(base_block_specs, bt)
+      )
+      for v, bt in env.items()
+  }
   env = cast(dict[core.Var, pallas_core.BlockSpec], env)
-  in_block_specs = tuple(_apply_block_transform(out_block_specs, bt)
-                         for bt in in_block_transforms)
+  in_block_specs = tuple(
+      env.get(v, pallas_core.no_block_spec) for v in jaxpr.invars
+  )
 
   return (
       in_block_specs,
@@ -879,6 +909,22 @@ def make_kernel_function(
     out = util.safe_map(read_env, jaxpr.outvars)
     return tree_util.tree_unflatten(out_tree, out)
 
+  # The scalars this fusion prefetches, in the order its index maps and body
+  # expect to be handed them back.
+  kernel_fn.scalar_prefetch = tuple(
+      c
+      for c, sp in zip(
+          consts, _scalar_prefetch_mask(jaxpr, read_usage_env), strict=True
+      )
+      if sp
+  )
+  if non_scalars := [c for c in kernel_fn.scalar_prefetch if jnp.ndim(c) != 0]:
+    raise ValueError(
+        f'Fusion {jaxpr.debug_info.func_name} computes a block index from'
+        f' non-scalar values of shapes {[jnp.shape(c) for c in non_scalars]}.'
+        ' Only scalars can be prefetched; index into the array outside the'
+        ' fusion and close over the resulting scalar instead.'
+    )
   return kernel_fn
 
 
@@ -2800,6 +2846,7 @@ def _call_jaxpr_eval_rule(
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       read_usage_env=read_usage_env,
       grid_len=ctx.grid_len,
+      strict_mode=False,
   )
   kernel_fn = make_kernel_function(
       jaxpr,
@@ -2909,8 +2956,9 @@ def push_block_spec(
       the input `BlockSpec` index maps are expected to take `grid_len` grid
       indices followed by the scalar prefetch refs, and the returned output
       `BlockSpec` index maps follow the same convention.
-    strict_mode: Forwarded to push rules as `PushRuleContext.strict_mode`; the
-      built-in push rules currently ignore it.
+    strict_mode: If `True`, converging paths to the same operation must have
+      identical block index maps. If `False`, only block shapes, memory spaces,
+      and pipeline modes must match.
     return_out_type: If `True`, also return a PyTree of `ShapeDtypeStruct`s
       describing the output types of `f`.
     **in_spec_kwargs: Keyword input `BlockSpec`s (or PyTrees of
@@ -2933,7 +2981,7 @@ def push_block_spec(
     jaxpr, _, in_tree, out_tree = fuser_utils.make_jaxpr(f, *args, **kwargs)
     if in_tree != in_tree_:
       raise ValueError(f'Expected {in_tree} PyTree, got {in_tree_}')
-    out_bs = _push_block_spec_jaxpr(
+    out_bs, _ = _push_block_spec_jaxpr(
         jaxpr,
         *flat_block_specs,
         scalar_prefetch_handler=scalar_prefetch_handler,
@@ -2969,6 +3017,7 @@ def push_pull_block_spec(
     *block_specs: Any,
     scalar_prefetch_handler: Any | None = None,
     grid_len: int | None = None,
+    strict_mode: bool = True,
     **block_spec_kwargs: Any,
 ):
   """Pushes `BlockSpec`s forward through an output fusion, then pulls them back.
@@ -3005,22 +3054,80 @@ def push_pull_block_spec(
     values_block_specs = jax.tree.map(
         lambda _: pallas_core.no_block_spec, values
     )
-    out_block_specs, out_type = push_block_spec(
-        f,
-        values_block_specs,
-        *block_specs,
+    in_spec_args = (values_block_specs, *block_specs)
+    flat_in_block_specs, in_tree_ = tree_util.tree_flatten(
+        (in_spec_args, block_spec_kwargs)
+    )
+    if grid_len is not None:
+      flat_in_block_specs = jax.tree.map(
+          _unwrap_block_spec_scalar_prefetch, flat_in_block_specs
+      )
+    jaxpr, consts, in_tree, out_tree = fuser_utils.make_jaxpr(
+        f, values, *args, **kwargs
+    )
+    if in_tree != in_tree_:
+      raise ValueError(f'Expected {in_tree} PyTree, got {in_tree_}')
+    jaxpr, used_consts, used_invars = pe.dce_jaxpr_consts(
+        jaxpr,
+        used_outputs=[True] * len(jaxpr.outvars),
+        instantiate=True,
+    )
+    assert all(used_invars)
+    assert all(used_consts)
+    jaxpr_out_usages = [{Usage.REGULAR}] * len(jaxpr.outvars)
+    read_usage_env = compute_usage(jaxpr, jaxpr_out_usages)
+    flat_out_block_specs, push_env = _push_block_spec_jaxpr(
+        jaxpr,
+        *flat_in_block_specs,
         scalar_prefetch_handler=scalar_prefetch_handler,
         grid_len=grid_len,
-        return_out_type=True,
-        **block_spec_kwargs,
-    )(values, *args, **kwargs)
-    kernel_fn, (values_block_specs, *_), kwarg_block_specs = pull_block_spec(
-        f,
-        out_block_specs,
+        strict_mode=strict_mode,
+        read_usage_env=read_usage_env,
+    )
+    in_block_specs, env = _pull_block_spec(
+        jaxpr,
+        flat_out_block_specs,
         scalar_prefetch_handler=scalar_prefetch_handler,
+        read_usage_env=read_usage_env,
         grid_len=grid_len,
-        strict_mode=False,
-    )(values, *args, **kwargs)
+        strict_mode=strict_mode,
+        push_env=push_env,
+    )
+    kernel_fn = make_kernel_function(
+        jaxpr,
+        consts,
+        in_tree,
+        out_tree,
+        read_usage_env,
+        env,
+        scalar_prefetch_handler,
+        grid_len,
+    )
+    if grid_len is not None:
+      in_block_specs = jax.tree.map(
+          functools.partial(
+              _wrap_block_spec_scalar_prefetch,
+              num_grid_args=grid_len,
+          ),
+          in_block_specs,
+      )
+      flat_out_block_specs = jax.tree.map(
+          functools.partial(
+              _wrap_block_spec_scalar_prefetch,
+              num_grid_args=grid_len,
+          ),
+          flat_out_block_specs,
+      )
+    in_block_specs = jax.tree.unflatten(in_tree, in_block_specs)
+    (values_block_specs, *_), kwarg_block_specs = in_block_specs
+    out_block_specs = tree_util.tree_unflatten(out_tree, flat_out_block_specs)
+    out_type = tree_util.tree_unflatten(
+        out_tree,
+        [
+            jax.ShapeDtypeStruct(v.aval.shape, v.aval.dtype)
+            for v in jaxpr.outvars
+        ],
+    )
     return (
         kernel_fn,
         values_block_specs,
@@ -3038,7 +3145,11 @@ def _push_block_spec_jaxpr(
     scalar_prefetch_handler: Any | None = None,
     grid_len: int | None = None,
     strict_mode: bool = True,
-) -> tuple[pallas_core.BlockSpec, ...]:
+    read_usage_env: Callable[[core.Var], set[Usage]] | None = None,
+) -> tuple[
+    tuple[pallas_core.BlockSpec, ...],
+    dict[core.Var, pallas_core.BlockSpec | pallas_core.NoBlockSpec],
+]:
   num_inputs = len(jaxpr.invars)
   if len(flat_block_specs) != num_inputs:
     raise ValueError(
@@ -3052,7 +3163,10 @@ def _push_block_spec_jaxpr(
   for constvar in jaxpr.constvars:
     env[constvar] = pallas_core.no_block_spec
 
-  read_usage_env = compute_usage(jaxpr, [{Usage.REGULAR}] * len(jaxpr.outvars))
+  if read_usage_env is None:
+    read_usage_env = compute_usage(
+        jaxpr, [{Usage.REGULAR}] * len(jaxpr.outvars)
+    )
 
   def _read_block_spec(
       atom: core.Atom,
@@ -3142,7 +3256,7 @@ def _push_block_spec_jaxpr(
   out_block_specs = tuple(util.safe_map(_read_block_spec, jaxpr.outvars))
   if any(bs is pallas_core.no_block_spec for bs in out_block_specs):
     raise ValueError('No block spec found for output')
-  return out_block_specs
+  return out_block_specs, env
 
 
 push_block_spec_rules: dict[core.Primitive, PushBlockSpecRuleFn] = {}
@@ -3190,7 +3304,9 @@ def _binop_push_rule(
   if not (lhs_has_block_spec ^ rhs_has_block_spec):
     # We can only do a push if one of the block specs is unspecified
     # or they are identical.
-    if _block_specs_equal(left_block_spec, right_block_spec):
+    if _block_specs_equal(
+        left_block_spec, right_block_spec, strict_mode=ctx.strict_mode
+    ):
       return left_block_spec
     raise ValueError('Illegal binary push. One of the block specs must be no_block_spec.')
   for l, r in zip(left_aval.shape, right_aval.shape, strict=True):
@@ -3280,12 +3396,14 @@ def _select_n_push_rule(
     ctx: PushRuleContext,
     *args: pallas_core.BlockSpec,
 ):
-  del ctx
   block_specs = [b for b in args if b is not pallas_core.no_block_spec]
   assert len(block_specs) > 0
   block_spec = block_specs[0]
   if len(block_specs) > 1:
-    if any(b is not block_spec for b in block_specs):
+    if any(
+        not _block_specs_equal(b, block_spec, strict_mode=ctx.strict_mode)
+        for b in block_specs[1:]
+    ):
       raise NotImplementedError(
           'select_n with multiple differing inputs not supported yet'
       )
@@ -3299,13 +3417,16 @@ def _clamp_push_rule(
     x_block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
     max_block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
 ):
-  del ctx
   if (
-      min_block_spec is not pallas_core.no_block_spec and
-      min_block_spec is not x_block_spec
+      min_block_spec is not pallas_core.no_block_spec
+      and not _block_specs_equal(
+          min_block_spec, x_block_spec, strict_mode=ctx.strict_mode
+      )
   ) or (
-      max_block_spec is not pallas_core.no_block_spec and
-      max_block_spec is not x_block_spec
+      max_block_spec is not pallas_core.no_block_spec
+      and not _block_specs_equal(
+          max_block_spec, x_block_spec, strict_mode=ctx.strict_mode
+      )
   ):
     raise NotImplementedError(
         'clamp with multiple differing inputs not supported yet.'
@@ -3332,9 +3453,15 @@ def _call_jaxpr_push_block_spec_rule(
     jaxpr: core.Jaxpr,
     **_,
 ):
-  del ctx
   assert not jaxpr.consts
-  return _push_block_spec_jaxpr(jaxpr, *block_specs)
+  out_bs, _ = _push_block_spec_jaxpr(
+      jaxpr,
+      *block_specs,
+      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
+      grid_len=ctx.grid_len,
+      strict_mode=ctx.strict_mode,
+  )
+  return out_bs
 
 
 @register_push_block_spec_rule(custom_derivatives.custom_jvp_call_p)

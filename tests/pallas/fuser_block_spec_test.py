@@ -3145,6 +3145,91 @@ class PushBlockSpecTest(parameterized.TestCase):
           lambda x, y: (x + 1, y + 1), block_spec, pl.no_block_spec
       )(x_type, y_type)
 
+  def test_push_strict_mode(self):
+    x_type = jax.ShapeDtypeStruct((256, 256), jnp.float32)
+    bs1 = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    bs2 = pl.BlockSpec((128, 128), lambda i, j: (j, i))
+
+    with self.assertRaisesRegex(ValueError, 'Illegal binary push'):
+      block_spec_lib.push_block_spec(
+          lambda x, y: x + y, bs1, bs2, strict_mode=True
+      )(x_type, x_type)
+
+    out_spec = block_spec_lib.push_block_spec(
+        lambda x, y: x + y, bs1, bs2, strict_mode=False
+    )(x_type, x_type)
+    self.assertEqual(out_spec.block_shape, (128, 128))
+    self.assertEqual(out_spec.index_map(0, 1), (0, 1))
+
+  def test_push_pull_block_spec_traces_once(self):
+    x_type = jax.ShapeDtypeStruct((256, 256), jnp.float32)
+    v = np.ones((256, 256), dtype=np.float32)
+    trace_count = 0
+
+    def fn(x):
+      nonlocal trace_count
+      trace_count += 1
+      return x + v
+
+    f, values, _ = block_spec_lib.get_fusion_values(fn, x_type)
+    self.assertEqual(trace_count, 1)
+
+    trace_count = 0
+
+    def traced_f(values, x):
+      nonlocal trace_count
+      trace_count += 1
+      return f(values, x)
+
+    bs = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    _, values_specs, _, out_type, out_spec = (
+        block_spec_lib.push_pull_block_spec(traced_f, bs, grid_len=2)(
+            values, x_type
+        )
+    )
+    self.assertEqual(trace_count, 1)
+    self.assertLen(values_specs, 1)
+    self.assertEqual(values_specs[0].block_shape, (128, 128))
+    self.assertEqual(out_spec.block_shape, (128, 128))
+    self.assertEqual(out_type.shape, (256, 256))
+
+  def test_push_pull_block_spec_strict_mode(self):
+    x_type = jax.ShapeDtypeStruct((256, 256), jnp.float32)
+    v = jnp.ones((256, 256), dtype=jnp.float32)
+    bs = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+
+    def bad_values_dag(x):
+      return x + (v + jnp.transpose(v, (1, 0)))
+
+    f_bad, values_bad, _ = block_spec_lib.get_fusion_values(
+        bad_values_dag, x_type
+    )
+    with self.assertRaisesRegex(ValueError, 'Fusion contains a DAG'):
+      block_spec_lib.push_pull_block_spec(f_bad, bs, grid_len=2)(
+          values_bad, x_type
+      )
+
+    _, values_specs, _, _, _ = block_spec_lib.push_pull_block_spec(
+        f_bad, bs, grid_len=2, strict_mode=False
+    )(values_bad, x_type)
+    self.assertLen(values_specs, 1)
+    self.assertEqual(values_specs[0].block_shape, (128, 128))
+
+    def arg_fanout_dag(x):
+      return (jnp.transpose(x, (1, 0)) + v, x * 2.0)
+
+    f_arg_dag, values_arg_dag, _ = block_spec_lib.get_fusion_values(
+        arg_fanout_dag, x_type
+    )
+    _, values_specs_ok, _, _, (out_spec0, out_spec1) = (
+        block_spec_lib.push_pull_block_spec(
+            f_arg_dag, bs, grid_len=2, strict_mode=True
+        )(values_arg_dag, x_type)
+    )
+    self.assertEqual(values_specs_ok[0].index_map(1, 2), (2, 1))
+    self.assertEqual(out_spec0.index_map(1, 2), (2, 1))
+    self.assertEqual(out_spec1.index_map(1, 2), (1, 2))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
