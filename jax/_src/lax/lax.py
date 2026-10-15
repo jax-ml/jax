@@ -6243,8 +6243,11 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
   if out_sharding is not None:
     assert isinstance(out_sharding, NamedSharding)
     if forbidden_axes := config.no_collectives.value:
-      out_parts = _dot_general_sharding_computation(
+      lhs_out_parts = _dot_general_sharding_computation(
           lhs.sharding.spec, rhs.sharding.spec, dimension_numbers)
+      rhs_out_parts = _dot_general_sharding_computation(
+          lhs.sharding.spec, rhs.sharding.spec, dimension_numbers,
+          use_rhs_batch=True)
       contract_axes = lax_utils._get_spec_set(
           lhs_contracting_spec + rhs_contracting_spec)
       for r in forbidden_axes:
@@ -6255,7 +6258,9 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
               " it unreduced in the output."
           )
       lax_utils._check_no_collectives_dim_change(
-          'dot_general', out_parts, out_sharding.spec.partitions)
+          'dot_general', lhs_out_parts, out_sharding.spec.partitions)
+      lax_utils._check_no_collectives_dim_change(
+          'dot_general', rhs_out_parts, out_sharding.spec.partitions)
     return out_sharding
 
   lhs_batch_spec = tuple(lhs.sharding.spec.partitions[i] for i in lhs_batch)
@@ -6283,9 +6288,12 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
       lhs.sharding.spec, rhs.sharding.spec, dimension_numbers)
   return NamedSharding(mesh, P(*out_parts))
 
-def _dot_general_sharding_computation(lhs_spec, rhs_spec, dimension_numbers):
+def _dot_general_sharding_computation(
+    lhs_spec, rhs_spec, dimension_numbers, use_rhs_batch: bool = False):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
-  batch_spec = tuple(lhs_spec.partitions[i] for i in lhs_batch)
+  batch_spec = (tuple(rhs_spec.partitions[i] for i in rhs_batch)
+                if use_rhs_batch else
+                tuple(lhs_spec.partitions[i] for i in lhs_batch))
   lhs_contract_or_batch = tuple(sorted(tuple(lhs_contracting) + tuple(lhs_batch)))
   lhs_tensored_spec = tuple_delete(lhs_spec.partitions, lhs_contract_or_batch)
   rhs_contract_or_batch = tuple(sorted(tuple(rhs_contracting) + tuple(rhs_batch)))

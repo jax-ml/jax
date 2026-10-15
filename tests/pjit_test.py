@@ -12182,6 +12182,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                          out_sharding=P(None, None, unreduced={'replica'}))
       self.assertEqual(u_dot.sharding.spec, P(None, None, unreduced={'replica'}))
 
+      b_dot = jnp.einsum('bi,bj->bij', rep, x,
+                         out_sharding=P('replica', None, None))
+      self.assertEqual(b_dot.sharding.spec, P('replica', None, None))
+
       self.assertEqual(reshard(red, P('replica', None)).sharding.spec, P('replica', None))
 
       self.assertEqual(reshard(red, P(None, None)).sharding.spec, P(None, None))
@@ -12204,6 +12208,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
           'ij,ik->jk', x, x, out_sharding=P('replica', None)), P('replica', None)),
       (lambda x, rep: jnp.einsum(
           'ij,jk->ik', x, rep, out_sharding=P(None, 'replica')), P('replica', None)),
+      (lambda x, _: jnp.einsum(
+          'bi,bj->bij', x.T, x, out_sharding=P(None, 'replica')), P('replica', None)),
+      (lambda x, rep: jnp.einsum(
+          'bi,bj->bij', rep, x, out_sharding=P(None, 'replica')), P('replica', None)),
       (lambda x, _: lax.broadcast_in_dim(
           x, (2, 4, 4), (1, 2), out_sharding=P(None, None, None)), P('replica', None)),
       (lambda x, _: lax.broadcast_in_dim(
