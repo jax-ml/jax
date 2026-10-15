@@ -2334,15 +2334,12 @@ def _check_unreduced_reshard(aval, dst_sharding):
           f' {aval.sharding.spec} and output spec: {dst_sharding.spec}')
 
 def _check_no_collectives_reshard(aval, dst_sharding):
-  if not config.no_collectives.value:
+  if not config.no_collectives.value or dst_sharding is None:
     return
   from jax._src.lax import utils as lax_utils  # type: ignore
   lax_utils._check_no_collectives(reshard_p, [dst_sharding], [aval])
-  if (isinstance(aval.sharding, NamedSharding) and
-      isinstance(dst_sharding, NamedSharding)):
-    lax_utils._check_no_collectives_dim_change(
-        'reshard', aval.sharding.spec.partitions,
-        dst_sharding.spec.partitions)
+  lax_utils._check_no_collectives_dim_change(
+      'reshard', aval.sharding.spec.partitions, dst_sharding.spec.partitions)
 
 def _reshard_shaped_array(aval: core.ShapedArray, dst_sharding) -> core.ShapedArray:
   assert isinstance(aval, core.ShapedArray)
@@ -2505,12 +2502,19 @@ def _auto_axes(fun, *, axes_, out_sharding):
       return fun(*args, **kwargs)
     if set(mesh_info.prev.auto_axes) == set(mesh_info.axes):
       return fun(*args, **kwargs)
+    in_avals = [core.typeof(a) for a in tree_leaves(args)]
     with mesh_lib.use_abstract_mesh(mesh_info.new):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
           core.typeof(a).sharding.spec, mesh_info.new), args)
       args = reshard(args, in_specs)
       out = fun(*args, **kwargs)
-    return reshard(out, _out_sharding)
+    res = reshard(out, _out_sharding)
+    if config.no_collectives.value:
+      from jax._src.lax import utils as lax_utils  # type: ignore
+      out_shardings = [core.typeof(o).sharding for o in tree_leaves(res)
+                       if isinstance(core.typeof(o), core.ShapedArray)]
+      lax_utils._check_no_collectives(reshard_p, out_shardings, in_avals)
+    return res
   return decorator
 
 

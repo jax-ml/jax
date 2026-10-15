@@ -12352,6 +12352,51 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       with self.assertRaises(core.ForbiddenCollectiveError):
         jax.shard_map(fn, out_specs=out_specs)(x)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_no_collectives_three_operand_einsum(self, mesh):
+    w = jax.device_put(np.ones((2, 4, 2)), P(None, None, 'x'))
+    c = jax.device_put(np.ones((2, 4, 3, 2)), P(None, None, None, 'x'))
+    m = jax.device_put(np.ones((2, 4)), P(None, None))
+
+    @jax.jit
+    def f(w, c, m):
+      return jnp.einsum('BLE,BLKE,BL->KE', w, c, m, out_sharding=P(None, 'x'))
+
+    with jax.sharding.no_collectives({'x'}):
+      out = f(w, c, m)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_no_collectives_three_operand_einsum_contracting(self, mesh):
+    w = jax.device_put(np.ones((2, 4, 2)), P('x'))
+    c = jax.device_put(np.ones((2, 4, 3, 2)), P('x'))
+    m = jax.device_put(np.ones((2, 4)), P('x'))
+
+    @jax.jit(static_argnames=('out_s',))
+    def g(w, c, m, out_s):
+      return jnp.einsum('BLE,BLKE,BL->KE', w, c, m, out_sharding=out_s)
+
+    with jax.sharding.no_collectives({'x'}):
+      with self.assertRaises(core.ForbiddenCollectiveError):
+        g(w, c, m, out_s=P())
+
+      out_u = g(w, c, m, out_s=P(None, None, unreduced={'x'}))
+      self.assertEqual(out_u.sharding,
+                       NamedSharding(mesh, P(None, None, unreduced={'x'})))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_no_collectives_three_operand_einsum_vmap(self, mesh):
+    w = jax.device_put(np.ones((4, 2, 4, 2)), P(('x', 'y')))
+    c = jax.device_put(np.ones((4, 2, 4, 3, 2)), P(('x', 'y')))
+    m = jax.device_put(np.ones((4, 2, 4)), P(('x', 'y')))
+
+    def g(w, c, m):
+      return jnp.einsum('BLE,BLKE,BL->KE', w, c, m, out_sharding=P())
+
+    with jax.sharding.no_collectives({'x'}):
+      out = jax.jit(jax.vmap(g))(w, c, m)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(('x', 'y'), None, None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

@@ -70,10 +70,15 @@ def _check_no_collectives(prim, out_s_list, avals):
   forbidden_axes = config.no_collectives.value
   if not forbidden_axes or not avals:
     return
-  in_specs = [a.sharding.spec for a in avals if isinstance(a, core.ShapedArray)]
-  out_specs = [s.spec for s in out_s_list]
-  if not in_specs or not out_specs:
+  avals = [a for a in avals if isinstance(a, core.ShapedArray)]
+  if not avals or not out_s_list:
     return
+
+  in_mesh = _get_abstract_mesh_from_avals(avals)
+  out_mesh = out_s_list[0].mesh
+
+  in_specs = [a.sharding.spec for a in avals]
+  out_specs = [s.spec for s in out_s_list]
 
   in_part = set().union(*(_get_spec_set(s.partitions) for s in in_specs))
   in_unreduced = set().union(*(s.unreduced for s in in_specs))
@@ -81,6 +86,9 @@ def _check_no_collectives(prim, out_s_list, avals):
   out_unreduced = set().union(*(s.unreduced for s in out_specs))
 
   for r in forbidden_axes:
+    if (in_mesh._name_to_type.get(r) != mesh_lib.AxisType.Explicit or
+        out_mesh._name_to_type.get(r) != mesh_lib.AxisType.Explicit):
+      continue
     if r in in_unreduced and r not in out_unreduced:
       raise core.ForbiddenCollectiveError(
           f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
