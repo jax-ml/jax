@@ -147,6 +147,9 @@ def _resolve_memory_spaces(
     *,
     input_output_aliases: tuple[tuple[int, int], ...],
     kernel_type: tpu_core.CoreType | None,
+    input_memory_space_fallbacks: (
+        tuple[tpu_custom_call.MemorySpace | None, ...] | None
+    ),
 ) -> tuple[
     tuple[tpu_custom_call.MemorySpace | None, ...] | None,
     tuple[tpu_custom_call.MemorySpace | None, ...] | None,
@@ -161,27 +164,36 @@ def _resolve_memory_spaces(
     input_memory_spaces = _get_memory_spaces_from_avals(
         in_avals, kernel_type=kernel_type
     )
-    # ShapedArrayWithMemorySpace wasn't allowed to escape the Pallas kernel, so
-    # it was stripped from the original out_avals. We need to resolve this for
-    # outputs aliased to inputs with pltpu.with_memory_space_constraint.
-    if input_memory_spaces is not None:
-      output_memory_spaces_list: list[tpu_custom_call.MemorySpace | None]
-      if output_memory_spaces is None:
-        output_memory_spaces_list = [None] * len(out_avals)
-      else:
-        output_memory_spaces_list = list(output_memory_spaces)
-      modified = False
-      for in_idx, out_idx in input_output_aliases:
-        if (ms := input_memory_spaces[in_idx]) is not None:
-          if (out_ms := output_memory_spaces_list[out_idx]) not in (None, ms):
-            raise ValueError(
-                f"In/out memory space conflict for alias {in_idx}->{out_idx}:"
-                f" {ms} != {out_ms}"
-            )
-          output_memory_spaces_list[out_idx] = ms
-          modified = True
-      if modified:
-        output_memory_spaces = tuple(output_memory_spaces_list)
+  if input_memory_space_fallbacks is not None:
+    assert len(input_memory_space_fallbacks) == len(in_avals)
+    if input_memory_spaces is None:
+      input_memory_spaces = input_memory_space_fallbacks
+    else:
+      input_memory_spaces = tuple(
+          memory_space if memory_space is not None else fallback
+          for memory_space, fallback in zip(
+              input_memory_spaces, input_memory_space_fallbacks, strict=True
+          )
+      )
+  if input_memory_spaces is not None:
+    # An output aliased to a constrained input must use the same memory space.
+    output_memory_spaces_list: list[tpu_custom_call.MemorySpace | None]
+    if output_memory_spaces is None:
+      output_memory_spaces_list = [None] * len(out_avals)
+    else:
+      output_memory_spaces_list = list(output_memory_spaces)
+    modified = False
+    for in_idx, out_idx in input_output_aliases:
+      if (ms := input_memory_spaces[in_idx]) is not None:
+        if (out_ms := output_memory_spaces_list[out_idx]) not in (None, ms):
+          raise ValueError(
+              f"In/out memory space conflict for alias {in_idx}->{out_idx}:"
+              f" {ms} != {out_ms}"
+          )
+        output_memory_spaces_list[out_idx] = ms
+        modified = True
+    if modified:
+      output_memory_spaces = tuple(output_memory_spaces_list)
   if output_memory_spaces is not None:
     input_memory_spaces_list: list[tpu_custom_call.MemorySpace | None]
     if input_memory_spaces is None:
@@ -279,6 +291,9 @@ def _lower_to_custom_call(
     mosaic_params: tpu_core.CompilerParams,
     kernel_type: tpu_core.CoreType | None,
     num_dynamic_grid_bounds: int,
+    input_memory_space_fallbacks: (
+        tuple[tpu_custom_call.MemorySpace | None, ...] | None
+    ),
     input_output_aliases: tuple[tuple[int, int], ...],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
@@ -322,6 +337,7 @@ def _lower_to_custom_call(
       out_avals,
       input_output_aliases=input_output_aliases,
       kernel_type=kernel_type,
+      input_memory_space_fallbacks=input_memory_space_fallbacks,
   )
 
   if cost_estimate is not None:
@@ -473,6 +489,21 @@ def pallas_call_tpu_lowering_rule(
     print(f"\nThe Mosaic module for pallas_call {debug_info.func_src_info}:")
     print(mosaic_module.operation.get_asm(use_name_loc_as_prefix=True))
 
+  block_input_memory_spaces = tuple(
+      tpu_custom_call.MemorySpace.HBM
+      if tpu_core.memory_space_to_tpu_memory_space(
+          block_mapping.block_aval.memory_space, tpu_core.CoreType.TC
+      ) is tpu_core.MemorySpace.HBM
+      else None
+      for block_mapping in grid_mapping.block_mappings[:grid_mapping.num_inputs]
+  )
+  input_memory_space_fallbacks = (
+      (None,) * (len(ctx.avals_in) - grid_mapping.num_inputs)
+      + block_input_memory_spaces
+      if any(block_input_memory_spaces)
+      else None
+  )
+
   return _lower_to_custom_call(
       ctx,
       *in_nodes,
@@ -480,6 +511,7 @@ def pallas_call_tpu_lowering_rule(
       mosaic_params=mosaic_params,
       kernel_type=tpu_core.CoreType.TC,
       num_dynamic_grid_bounds=grid_mapping.num_dynamic_grid_bounds,
+      input_memory_space_fallbacks=input_memory_space_fallbacks,
       input_output_aliases=input_output_aliases,
       cost_estimate=cost_estimate,
       out_avals=out_avals,
@@ -776,6 +808,7 @@ def mpmd_map_tpu_lowering_rule(
       mosaic_params=mosaic_params,
       kernel_type=kernel_type,
       num_dynamic_grid_bounds=0,
+      input_memory_space_fallbacks=None,
       input_output_aliases=tuple(input_output_aliases.items()),
       cost_estimate=cost_estimate,
       out_avals=out_avals,
