@@ -9259,8 +9259,7 @@ def _reduce_op_unreduced_rule(operand, axes, out_sharding, out_kind, name):
           f' unreduced_spec={out_sharding.spec.unreduced}')
     out_u = out_sharding.spec.unreduced
   else:
-    # TODO(yashkatariya): For max/min, do getu(operand, out_kind) and add tests
-    out_u, _ = getu(operand)
+    out_u, _ = getu(operand, out_kind)
   return out_u, out_kind if out_u else None
 
 def _reduce_op_reduced_rule(operand, out_sharding, name):

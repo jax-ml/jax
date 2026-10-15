@@ -32,7 +32,7 @@ import jax.ad_checkpoint
 from jax import api_util
 from jax import lax
 from jax.sharding import Mesh, NamedSharding
-from jax.sharding import PartitionSpec as P
+from jax.sharding import PartitionSpec as P, UnreducedKind
 from jax._src import config
 from jax._src import core
 from jax._src.random import prng
@@ -5370,6 +5370,42 @@ class ShardMapTest(jtu.JaxTestCase):
       out_g = jax.jit(jax.grad(lambda x: g(x).sum()))(out)
       self.assertEqual(out_g.sharding,
                        NamedSharding(mesh, P(None, reduced={'x'})))
+
+  @parameterized.named_parameters([
+      ('max', jax.lax.reduce_max, UnreducedKind.max),
+      ('min', jax.lax.reduce_min, UnreducedKind.min),
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unreduced_max_min_local_reduce(self, lax_op, u_kind, mesh):
+    np_inp = np.arange(32.).reshape(4, 2, 4)
+    arr = jax.device_put(np_inp, P('x', 'y', None))
+
+    @jax.jit
+    def f(x):
+      return lax_op(x, axes=(0,),
+                    out_sharding=P('y', None, unreduced={'x'},
+                                   unreduced_kind=u_kind))
+
+    u = f(arr)
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('y', unreduced={'x'}, unreduced_kind=u_kind))
+    def g(x):
+      return lax_op(x, axes=(1,))
+
+    out_sm = g(u)
+    self.assertEqual(
+        out_sm.sharding,
+        NamedSharding(mesh, P('y', unreduced={'x'}, unreduced_kind=u_kind)))
+    self.assertArraysEqual(
+        jax.reshard(out_sm, P('y')), lax_op(np_inp, axes=(0, 2)))
+
+    @jax.jit
+    def f_err(x):
+      return jax.lax.reduce_sum(x, axes=(1,))
+
+    with self.assertRaisesRegex(ValueError, 'Expected unreduced_kind='):
+      f_err(u)
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_unreduced_replicated_bitcast(self, mesh):
