@@ -4022,6 +4022,11 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_unreduced_max_min_nested_shard_map_add_manual_axes(
       self, lax_op, jnp_op, p_op, u_kind, mesh
   ):
+    if jaxlib_extension_version < 500:
+      self.skipTest('Requires jaxlib_extension_version >= 500')
+    if ifrt_version < 72:
+      self.skipTest('Requires ifrt_version >= 72')
+
     arr = jax.device_put(np.arange(16).reshape(4, 4), P('x', 'y'))
     u_spec = P(None, unreduced={'y'}, unreduced_kind=u_kind)
 
