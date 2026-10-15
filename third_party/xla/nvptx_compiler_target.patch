@@ -1,0 +1,535 @@
+# XLA PR #50873: [GPU] Align PTX compilation and linking targets with the generated code.
+# https://github.com/openxla/xla/pull/50873
+diff --git a/xla/service/gpu/BUILD b/xla/service/gpu/BUILD
+index d10ad3500ed111..35607b5e5bc0e1 100644
+--- a/xla/service/gpu/BUILD
++++ b/xla/service/gpu/BUILD
+@@ -2534,7 +2534,6 @@ cc_library(
+         "//xla/service:hlo_verifier",
+         "//xla/service/gpu/llvm_gpu_backend:nvptx_backend",
+         "//xla/service/gpu/llvm_gpu_backend:nvptx_utils",
+-        "//xla/service/gpu/llvm_gpu_backend:ptx_version_util",
+         "//xla/service/llvm_ir:llvm_util",
+         "//xla/stream_executor:device_description",
+         "//xla/stream_executor:dnn",
+@@ -2547,7 +2546,6 @@ cc_library(
+         "//xla/stream_executor/cuda:cuda_compute_capability",
+         "//xla/stream_executor/cuda:cuda_diagnostics",
+         "//xla/stream_executor/cuda:cuda_platform_id",
+-        "//xla/stream_executor/cuda:subprocess_compilation",
+         "//xla/tsl/platform:env",
+         "//xla/tsl/platform:errors",
+         "//xla/tsl/platform:statusor",
+@@ -2568,15 +2566,52 @@ cc_library(
+         "@com_google_absl//absl/types:span",
+         "@llvm-project//llvm:IRReader",
+         "@llvm-project//llvm:Support",
++        "@llvm-project//llvm:TargetParser",
+         "@llvm-project//llvm:ir_headers",
+         "@llvm-project//mlir:IR",
+-        "@local_config_cuda//cuda:cuda_headers",
+         "@tsl//tsl/platform:path",
+         "@tsl//tsl/profiler/lib:scoped_annotation",
+         "@tsl//tsl/profiler/lib:traceme",
+     ],
+ )
+ 
++genrule(
++    name = "nvptx_compiler_target_test_ptxas",
++    testonly = True,
++    outs = ["nvptx_compiler_target_test_cuda/bin/ptxas"],
++    cmd = "printf '#!/bin/sh\\necho ptxas V13.0.0\\n' > $@",
++    executable = True,
++)
++
++xla_cc_test(
++    name = "nvptx_compiler_target_test",
++    srcs = ["nvptx_compiler_target_test.cc"],
++    data = [":nvptx_compiler_target_test_ptxas"],
++    tags = [
++        "cuda-only",
++        "gpu",
++        "nomsan",
++    ],
++    deps = [
++        ":nvptx_compiler_impl",
++        "//xla:xla_proto_cc",
++        "//xla/service:hlo_module_config",
++        "//xla/stream_executor:device_description",
++        "//xla/stream_executor/cuda:compilation_provider",
++        "//xla/stream_executor/cuda:compilation_provider_options",
++        "//xla/stream_executor/cuda:cuda_compute_capability",
++        "//xla/stream_executor/cuda:mock_compilation_provider",
++        "//xla/tsl/platform:test",
++        "@com_google_absl//absl/status:statusor",
++        "@com_google_absl//absl/strings",
++        "@com_google_absl//absl/synchronization",
++        "@com_google_googletest//:gtest_main",
++        "@llvm-project//llvm:Core",
++        "@llvm-project//llvm:ir_headers",
++        "@tsl//tsl/platform:path",
++    ],
++)
++
+ xla_test(
+     name = "nvptx_compiler_test",
+     srcs = [
+diff --git a/xla/service/gpu/llvm_gpu_backend/nvptx_backend.cc b/xla/service/gpu/llvm_gpu_backend/nvptx_backend.cc
+index ce3c54fb750e63..ffd7be0c606cee 100644
+--- a/xla/service/gpu/llvm_gpu_backend/nvptx_backend.cc
++++ b/xla/service/gpu/llvm_gpu_backend/nvptx_backend.cc
+@@ -62,8 +62,6 @@ limitations under the License.
+ #include "llvm/Transforms/IPO/AlwaysInliner.h"
+ #include "llvm/Transforms/IPO/Internalize.h"
+ #include "llvm/Transforms/Scalar.h"
+-#include "tsl/profiler/lib/scoped_annotation.h"
+-#include "tsl/profiler/lib/traceme.h"
+ #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
+ #include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
+ #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
+@@ -71,9 +69,12 @@ limitations under the License.
+ #include "xla/service/llvm_ir/llvm_command_line_options.h"
+ #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+ #include "xla/stream_executor/device_description.h"
++#include "xla/stream_executor/semantic_version.h"
+ #include "xla/tsl/platform/env.h"
+ #include "xla/util.h"
+ #include "xla/xla.pb.h"
++#include "tsl/profiler/lib/scoped_annotation.h"
++#include "tsl/profiler/lib/traceme.h"
+ 
+ namespace xla::gpu::nvptx {
+ 
+@@ -149,22 +150,13 @@ absl::Status NVPTXTargetModuleLinker(llvm::Module* module,
+ absl::StatusOr<std::unique_ptr<llvm::TargetMachine>> NVPTXGetTargetMachine(
+     llvm::Triple target_triple, se::CudaComputeCapability compute_capability,
+     const DebugOptions& debug_options, std::optional<int> max_ptx_isa_version) {
+-  ABSL_ASSIGN_OR_RETURN(int llvm_max_ptx_version,
+-                        GetMaxPtxVersionSupportedByLlvm(target_triple));
+-
+-  int highest_supported_ptx_version = llvm_max_ptx_version;
+-  if (max_ptx_isa_version.has_value()) {
+-    highest_supported_ptx_version =
+-        std::min(*max_ptx_isa_version, llvm_max_ptx_version);
+-  }
++  ABSL_ASSIGN_OR_RETURN(
++      se::SemanticVersion ptx_version,
++      GetPtxVersionForCompilation(target_triple, max_ptx_isa_version));
+ 
+-  VLOG(1) << "Targeting PTX version: " << highest_supported_ptx_version;
+-  std::string feature_str =
+-      absl::StrFormat("+ptx%d", highest_supported_ptx_version);
+-
+-  const se::SemanticVersion ptx_version{
+-      static_cast<unsigned>(highest_supported_ptx_version / 10),
+-      static_cast<unsigned>(highest_supported_ptx_version % 10), 0};
++  VLOG(1) << "Targeting PTX version: " << ptx_version;
++  std::string feature_str = absl::StrFormat(
++      "+ptx%d%d", ptx_version.major_version(), ptx_version.minor_version());
+ 
+   return GetTargetMachine(target_triple,
+                           nvptx::GetSmName(compute_capability, ptx_version),
+@@ -186,10 +178,16 @@ void NVPTXBackendInit() {
+   InitializePasses(registry);
+ }
+ 
++void InitializeNVPTXBackend() {
++  static absl::once_flag backend_init_flag;
++  absl::call_once(backend_init_flag, NVPTXBackendInit);
++}
++
+ }  // namespace
+ 
+ absl::StatusOr<int> GetMaxPtxVersionSupportedByLlvm(
+     const llvm::Triple& target_triple) {
++  InitializeNVPTXBackend();
+   std::string error;
+   const llvm::Target* target =
+       llvm::TargetRegistry::lookupTarget(target_triple, error);
+@@ -227,6 +225,17 @@ absl::StatusOr<int> GetMaxPtxVersionSupportedByLlvm(
+   return max_ptx_version;
+ }
+ 
++absl::StatusOr<se::SemanticVersion> GetPtxVersionForCompilation(
++    const llvm::Triple& target_triple, std::optional<int> max_ptx_isa_version) {
++  ABSL_ASSIGN_OR_RETURN(int llvm_max_ptx_version,
++                        GetMaxPtxVersionSupportedByLlvm(target_triple));
++  int ptx_version = max_ptx_isa_version.has_value()
++                        ? std::min(*max_ptx_isa_version, llvm_max_ptx_version)
++                        : llvm_max_ptx_version;
++  return se::SemanticVersion{static_cast<unsigned>(ptx_version / 10),
++                             static_cast<unsigned>(ptx_version % 10), 0};
++}
++
+ std::vector<std::string> GetNVPTXBackendOptions(
+     const DebugOptions& debug_options) {
+   // Feed all customized flags here, so we can override them with llvm_cl_opts
+@@ -425,8 +434,7 @@ absl::StatusOr<std::string> CompileToPtx(
+     const DebugOptions& debug_options,
+     std::function<void(llvm::TargetMachine*)> configure_target,
+     std::optional<int> max_ptx_isa_version) {
+-  static absl::once_flag backend_init_flag;
+-  absl::call_once(backend_init_flag, NVPTXBackendInit);
++  InitializeNVPTXBackend();
+   auto llvm_opts = GetNVPTXBackendOptions(debug_options);
+   llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_opts);
+ 
+diff --git a/xla/service/gpu/llvm_gpu_backend/nvptx_backend.h b/xla/service/gpu/llvm_gpu_backend/nvptx_backend.h
+index 41ac1e5284a61f..f9a743659583ce 100644
+--- a/xla/service/gpu/llvm_gpu_backend/nvptx_backend.h
++++ b/xla/service/gpu/llvm_gpu_backend/nvptx_backend.h
+@@ -34,11 +34,15 @@ limitations under the License.
+ namespace xla::gpu::nvptx {
+ 
+ // Returns the maximum PTX ISA version advertised by LLVM's NVPTX target,
+-// encoded as major * 10 + minor. Returns an error if the target or its MC
+-// subtarget information is not registered.
++// encoded as major * 10 + minor. Initializes the NVPTX backend if necessary.
+ absl::StatusOr<int> GetMaxPtxVersionSupportedByLlvm(
+     const llvm::Triple& target_triple);
+ 
++// Returns the minimum of LLVM's and the compilation provider's PTX limits.
++// Without a provider limit, uses LLVM's maximum supported PTX version.
++absl::StatusOr<stream_executor::SemanticVersion> GetPtxVersionForCompilation(
++    const llvm::Triple& target_triple, std::optional<int> max_ptx_isa_version);
++
+ // Resolves the compute capability that XLA actually compiles for given the
+ // compute capability of the target device. If the device's compute capability
+ // is not directly supported by the bundled LLVM/ptxas, this returns the most
+diff --git a/xla/service/gpu/nvptx_compiler.cc b/xla/service/gpu/nvptx_compiler.cc
+index 5fcd72630df4a5..f9fdb58bcff713 100644
+--- a/xla/service/gpu/nvptx_compiler.cc
++++ b/xla/service/gpu/nvptx_compiler.cc
+@@ -15,7 +15,6 @@ limitations under the License.
+ 
+ #include "xla/service/gpu/nvptx_compiler.h"
+ 
+-#include <algorithm>
+ #include <array>
+ #include <cstdint>
+ #include <fstream>
+@@ -43,11 +42,8 @@ limitations under the License.
+ #include "llvm/IRReader/IRReader.h"
+ #include "llvm/Support/SourceMgr.h"
+ #include "llvm/Support/raw_ostream.h"
++#include "llvm/TargetParser/Triple.h"
+ #include "mlir/IR/MLIRContext.h"
+-#include "third_party/gpus/cuda/include/cuda.h"
+-#include "tsl/platform/path.h"
+-#include "tsl/profiler/lib/scoped_annotation.h"
+-#include "tsl/profiler/lib/traceme.h"
+ #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
+ #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
+ #include "xla/backends/gpu/transforms/conv_fp8_fallback.h"
+@@ -89,7 +85,6 @@ limitations under the License.
+ #include "xla/service/gpu/ir_emission_utils.h"
+ #include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
+ #include "xla/service/gpu/llvm_gpu_backend/nvptx_utils.h"
+-#include "xla/service/gpu/llvm_gpu_backend/ptx_version_util.h"
+ #include "xla/service/gpu/metrics.h"
+ #include "xla/service/gpu/nvptx_alias_info.h"
+ #include "xla/service/gpu/ptx_compile_options_from_debug_options.h"
+@@ -106,7 +101,6 @@ limitations under the License.
+ #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+ #include "xla/stream_executor/cuda/cuda_diagnostics.h"
+ #include "xla/stream_executor/cuda/cuda_platform_id.h"
+-#include "xla/stream_executor/cuda/subprocess_compilation.h"
+ #include "xla/stream_executor/device_description.h"
+ #include "xla/stream_executor/dnn.h"
+ #include "xla/stream_executor/semantic_version.h"
+@@ -118,6 +112,9 @@ limitations under the License.
+ #include "xla/util.h"
+ #include "xla/xla.pb.h"
+ #include "xla/xla_data.pb.h"
++#include "tsl/platform/path.h"
++#include "tsl/profiler/lib/scoped_annotation.h"
++#include "tsl/profiler/lib/traceme.h"
+ 
+ namespace xla {
+ namespace gpu {
+@@ -509,6 +506,22 @@ std::unique_ptr<llvm::Module> MaybeLoadLLVMFromFile(const HloModule* module,
+   return nullptr;
+ }
+ 
++absl::StatusOr<se::SemanticVersion> GetPtxVersionForCompilation(
++    const se::cuda::CompilationProvider& compilation_provider) {
++  absl::StatusOr<int> ptx_isa_version =
++      compilation_provider.GetLatestPtxIsaVersion();
++  std::optional<int> max_ptx_isa_version;
++  if (ptx_isa_version.ok()) {
++    max_ptx_isa_version = *ptx_isa_version;
++  } else {
++    VLOG(2)
++        << "Could not query latest PTX ISA version from compilation provider ("
++        << compilation_provider.name() << "): " << ptx_isa_version.status();
++  }
++  return nvptx::GetPtxVersionForCompilation(llvm::Triple(nvptx::TargetTriple()),
++                                            max_ptx_isa_version);
++}
++
+ }  // namespace
+ 
+ // Prints a warning if the ptx->sass JIT in the driver has known bugs.
+@@ -593,6 +606,7 @@ NVPTXCompiler::CompileTargetBinary(
+   }
+   const DebugOptions& debug_options = module_config.debug_options();
+   const se::cuda::CompilationProvider* compilation_provider = nullptr;
++  std::optional<se::SemanticVersion> ptx_version;
+   std::string ptx;
+   if (!(debug_module &&
+         MaybeLoadPtxFromFile(module_config, debug_module, &ptx))) {
+@@ -611,22 +625,14 @@ NVPTXCompiler::CompileTargetBinary(
+         debug_options.xla_enable_scoped_logging_timers());
+     uint64_t start_usecs = tsl::Env::Default()->NowMicros();
+ 
+-    absl::StatusOr<int> ptx_isa_version =
+-        compilation_provider->GetLatestPtxIsaVersion();
+-    std::optional<int> max_ptx_isa_version;
+-    if (ptx_isa_version.ok()) {
+-      max_ptx_isa_version = *ptx_isa_version;
+-    } else {
+-      VLOG(2) << "Could not query latest PTX ISA version from compilation "
+-                 "provider ("
+-              << compilation_provider->name()
+-              << "): " << ptx_isa_version.status();
+-    }
++    ABSL_ASSIGN_OR_RETURN(ptx_version,
++                          GetPtxVersionForCompilation(*compilation_provider));
+     ABSL_ASSIGN_OR_RETURN(
+-        ptx, nvptx::CompileToPtx(selected_module,
+-                                 device_description.gpu_compute_capability(),
+-                                 debug_options, /*configure_target=*/nullptr,
+-                                 max_ptx_isa_version));
++        ptx,
++        nvptx::CompileToPtx(
++            selected_module, device_description.gpu_compute_capability(),
++            debug_options, /*configure_target=*/nullptr,
++            ptx_version->major_version() * 10 + ptx_version->minor_version()));
+ 
+     uint64_t end_usecs = tsl::Env::Default()->NowMicros();
+     // This won't record values for calls that error out (because if they error
+@@ -658,28 +664,16 @@ NVPTXCompiler::CompileTargetBinary(
+   if (compilation_provider == nullptr) {
+     ABSL_ASSIGN_OR_RETURN(compilation_provider,
+                           GetCompilationProvider(debug_options, nullptr));
++    ABSL_ASSIGN_OR_RETURN(ptx_version,
++                          GetPtxVersionForCompilation(*compilation_provider));
+   }
+ 
+   se::cuda::CompilationOptions compilation_options =
+       PtxCompileOptionsFromDebugOptions(module_config.debug_options());
+ 
+-  absl::StatusOr<stream_executor::SemanticVersion> runtime_cuda_version =
+-      stream_executor::GetAsmCompilerVersion(
+-          module_config.debug_options().xla_gpu_cuda_data_dir());
+-  constexpr stream_executor::SemanticVersion kCompileTimeCudaVersion{
+-      CUDA_VERSION / 1000, (CUDA_VERSION / 10) % 100, CUDA_VERSION % 10};
+-  auto highest_supported_cuda_version = [&] {
+-    if (runtime_cuda_version.ok()) {
+-      return std::min(runtime_cuda_version.value(), kCompileTimeCudaVersion);
+-    }
+-    return kCompileTimeCudaVersion;
+-  }();
+-  auto ptx_version = nvptx::DetermineHighestSupportedPtxVersionFromCudaVersion(
+-      highest_supported_cuda_version);
+-
+   se::CudaComputeCapability cc = nvptx::ResolveSupportedComputeCapability(
+       *device_description.gpu_compute_capability().cuda_compute_capability(),
+-      ptx_version);
++      *ptx_version);
+ 
+   // This may print multiple lines per HLO compilation because of the
+   // parallelized compilation of LLVM modules.
+@@ -741,27 +735,14 @@ absl::StatusOr<std::vector<uint8_t>> NVPTXCompiler::LinkModules(
+     return std::vector<uint8_t>{};
+   }
+ 
+-  absl::StatusOr<stream_executor::SemanticVersion> runtime_cuda_version =
+-      stream_executor::GetAsmCompilerVersion(
+-          debug_options.xla_gpu_cuda_data_dir());
+-  constexpr stream_executor::SemanticVersion kCompileTimeCudaVersion{
+-      CUDA_VERSION / 1000, (CUDA_VERSION / 10) % 100, CUDA_VERSION % 10};
+-  auto highest_supported_cuda_version = [&] {
+-    if (runtime_cuda_version.ok()) {
+-      return std::min(runtime_cuda_version.value(), kCompileTimeCudaVersion);
+-    }
+-    return kCompileTimeCudaVersion;
+-  }();
+-  auto ptx_version = nvptx::DetermineHighestSupportedPtxVersionFromCudaVersion(
+-      highest_supported_cuda_version);
+-
+-  se::CudaComputeCapability cc = nvptx::ResolveSupportedComputeCapability(
+-      *device_description.gpu_compute_capability().cuda_compute_capability(),
+-      ptx_version);
+-
+   ABSL_ASSIGN_OR_RETURN(
+       const se::cuda::CompilationProvider* compilation_provider,
+       GetCompilationProvider(debug_options, stream_exec));
++  ABSL_ASSIGN_OR_RETURN(se::SemanticVersion ptx_version,
++                        GetPtxVersionForCompilation(*compilation_provider));
++  se::CudaComputeCapability cc = nvptx::ResolveSupportedComputeCapability(
++      *device_description.gpu_compute_capability().cuda_compute_capability(),
++      ptx_version);
+ 
+   std::vector<se::cuda::CompilationProvider::RelocatableModuleOrPtx> inputs;
+   inputs.reserve(modules.size());
+diff --git a/xla/service/gpu/nvptx_compiler.h b/xla/service/gpu/nvptx_compiler.h
+index be73be2a2aff51..8e3e78f63f7bc5 100644
+--- a/xla/service/gpu/nvptx_compiler.h
++++ b/xla/service/gpu/nvptx_compiler.h
+@@ -111,6 +111,8 @@ class NVPTXCompiler : public GpuCompiler {
+       se::StreamExecutor* absl_nullable stream_exec) override;
+ 
+  private:
++  friend class NVPTXCompilerTestPeer;
++
+   absl::StatusOr<std::vector<uint8_t>> LinkModules(
+       const stream_executor::DeviceDescription& device_description,
+       std::vector<std::vector<uint8_t>> modules,
+diff --git a/xla/service/gpu/nvptx_compiler_target_test.cc b/xla/service/gpu/nvptx_compiler_target_test.cc
+new file mode 100644
+index 00000000000000..6fc78b0dcaa38a
+--- /dev/null
++++ b/xla/service/gpu/nvptx_compiler_target_test.cc
+@@ -0,0 +1,141 @@
++/* Copyright 2026 The OpenXLA Authors.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++==============================================================================*/
++
++#include <cstdint>
++#include <memory>
++#include <optional>
++#include <tuple>
++#include <utility>
++#include <vector>
++
++#include <gmock/gmock.h>
++#include <gtest/gtest.h>
++#include "absl/status/statusor.h"
++#include "absl/strings/str_cat.h"
++#include "absl/synchronization/mutex.h"
++#include "llvm/IR/Constants.h"
++#include "llvm/IR/GlobalValue.h"
++#include "llvm/IR/GlobalVariable.h"
++#include "llvm/IR/LLVMContext.h"
++#include "llvm/IR/Module.h"
++#include "llvm/IR/Type.h"
++#include "xla/service/gpu/nvptx_compiler.h"
++#include "xla/service/hlo_module_config.h"
++#include "xla/stream_executor/cuda/compilation_provider.h"
++#include "xla/stream_executor/cuda/compilation_provider_options.h"
++#include "xla/stream_executor/cuda/cuda_compute_capability.h"
++#include "xla/stream_executor/cuda/mock_compilation_provider.h"
++#include "xla/stream_executor/device_description.h"
++#include "xla/tsl/platform/test.h"
++#include "xla/xla.pb.h"
++#include "tsl/platform/path.h"
++
++namespace xla::gpu {
++
++class NVPTXCompilerTestPeer {
++ public:
++  static void SetCompilationProvider(
++      NVPTXCompiler& compiler, const DebugOptions& debug_options,
++      std::unique_ptr<se::cuda::CompilationProvider> provider) {
++    absl::MutexLock lock(compiler.compilation_providers_mutex_);
++    compiler.compilation_providers_[se::cuda::CompilationProviderOptions::
++                                        FromDebugOptions(debug_options)] =
++        std::move(provider);
++  }
++
++  static absl::StatusOr<std::vector<uint8_t>> LinkModules(
++      NVPTXCompiler& compiler, const se::DeviceDescription& device_description,
++      const DebugOptions& debug_options) {
++    return compiler.LinkModules(device_description, {{0}}, debug_options,
++                                nullptr);
++  }
++};
++
++namespace {
++
++using ::testing::_;
++using ::testing::HasSubstr;
++using ::testing::NiceMock;
++using ::testing::Return;
++
++class NVPTXCompilerTargetTest
++    : public ::testing::TestWithParam<std::tuple<int, bool>> {
++ protected:
++  void SetUp() override {
++    module_config_.mutable_debug_options().set_xla_gpu_cuda_data_dir(
++        tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "service/gpu",
++                          "nvptx_compiler_target_test_cuda"));
++    device_description_.set_cuda_compute_capability(
++        {10, 7,
++         se::CudaComputeCapability::FeatureExtension::kAcceleratedFeatures});
++    auto provider =
++        std::make_unique<NiceMock<se::cuda::MockCompilationProvider>>();
++    provider_ = provider.get();
++    ON_CALL(*provider_, GetLatestPtxIsaVersion())
++        .WillByDefault(Return(std::get<0>(GetParam())));
++    NVPTXCompilerTestPeer::SetCompilationProvider(
++        compiler_, module_config_.debug_options(), std::move(provider));
++  }
++
++  NVPTXCompiler compiler_;
++  HloModuleConfig module_config_;
++  se::DeviceDescription device_description_;
++  se::cuda::MockCompilationProvider* provider_;
++};
++
++TEST_P(NVPTXCompilerTargetTest, CompilationAndLinkingUseSameTarget) {
++  using FeatureExtension = se::CudaComputeCapability::FeatureExtension;
++  se::CudaComputeCapability expected_cc =
++      std::get<0>(GetParam()) == 94
++          ? se::CudaComputeCapability{10, 7,
++                                      FeatureExtension::kAcceleratedFeatures}
++          : se::CudaComputeCapability{
++                10, 3, FeatureExtension::kFamilyCompatibleFeatures};
++  auto expected_ptx = HasSubstr(absl::StrCat(
++      ".target ", expected_cc.GetPtxAsTargetName(
++                      se::CudaComputeCapability::CompileMode::kSass)));
++
++  // Linking must also work before the LLVM backend has compiled any PTX.
++  EXPECT_CALL(*provider_, CompileAndLink(expected_cc, _, _))
++      .WillOnce(Return(se::cuda::Assembly{}));
++  EXPECT_OK(NVPTXCompilerTestPeer::LinkModules(compiler_, device_description_,
++                                               module_config_.debug_options()));
++
++  llvm::LLVMContext context;
++  llvm::Module module("test", context);
++  new llvm::GlobalVariable(
++      module, llvm::Type::getInt32Ty(context), true,
++      llvm::GlobalValue::ExternalLinkage,
++      llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0), "gv");
++  bool relocatable = std::get<1>(GetParam());
++  if (relocatable) {
++    EXPECT_CALL(*provider_,
++                CompileToRelocatableModule(expected_cc, expected_ptx, _))
++        .WillOnce(Return(se::cuda::RelocatableModule{}));
++  } else {
++    EXPECT_CALL(*provider_, Compile(expected_cc, expected_ptx, _))
++        .WillOnce(Return(se::cuda::Assembly{}));
++  }
++  EXPECT_OK(compiler_.CompileTargetBinary(module_config_, &module,
++                                          device_description_, relocatable,
++                                          nullptr, std::nullopt));
++}
++
++INSTANTIATE_TEST_SUITE_P(ProviderPtxVersion, NVPTXCompilerTargetTest,
++                         ::testing::Combine(::testing::Values(90, 94),
++                                            ::testing::Bool()));
++
++}  // namespace
++}  // namespace xla::gpu
