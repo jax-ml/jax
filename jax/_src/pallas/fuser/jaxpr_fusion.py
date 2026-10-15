@@ -14,9 +14,11 @@
 
 """Fuses a function."""
 
+import collections
 from collections.abc import Iterable, Sequence
 import contextlib
 import functools
+from typing import Any
 
 import jax
 from jax._src import api_util
@@ -195,25 +197,38 @@ def construct_input_fusion(
 
 
 def _find_downstream(
-    jaxpr: jax_core.Jaxpr, in_used: Sequence[bool]
-) -> tuple[bool, ...]:
-  # TODO(sharadmv): We use partial_eval to query downstream dependencies which
-  # is not an officially sanctioned way to do so, since PE is really used for
-  # AD. In the future, we should have a special Jaxpr API that queries this.
-  discharged_jaxpr, *_ = fuser_utils.discharge_state(jaxpr)
-  _, _, out_used, *_ = pe.partial_eval_jaxpr_custom(
-      discharged_jaxpr,
-      in_unknowns=in_used,
-      in_inst=in_used,
-      ensure_out_unknowns=False,
-      ensure_out_inst=False,
-      saveable=lambda *_, **__: False,
-  )
-  # NOTE: out_used[:len(jaxpr.outvars)] reports whether or not the original
-  # outputs depend on the inputs for which `in_used` is True.
-  # out_used[len(jaxpr.outvars):] reports whether or not the new outputs
-  # (updates for discharged Refs) depend on thse inputs.
-  return tuple(out_used)
+    jaxpr: jax_core.Jaxpr, in_groups: Sequence[Any]
+) -> list[tuple[bool, ...]]:
+  # Maps each var to the input group indices it depends on.
+  env: dict[jax_core.Var, set[int]] = collections.defaultdict(set)
+  for g, in_group in enumerate(in_groups):
+    for v in jax.tree.leaves(in_group):
+      env[v].add(g)
+  written_ref_vars: set[jax_core.Var] = set()
+  for eqn in jaxpr.eqns:
+    groups = set().union(
+        *(env[v] for v in eqn.invars if isinstance(v, jax_core.Var))
+    )
+    for v in eqn.outvars:
+      env[v] = set(groups)
+    for e in eqn.effects:
+      if isinstance(e, (state_types.WriteEffect, state_types.AccumEffect)):
+        assert isinstance(e.input, jax_core.Var)
+        env[e.input].update(groups)
+        written_ref_vars.add(e.input)
+  for v in jaxpr.outvars:
+    if isinstance(v, jax_core.Var) and len(env[v]) > 1:
+      raise ValueError(
+          "Outputs must be disjoint in order to use separate output fusions"
+      )
+  if not all(env[r] for r in written_ref_vars):
+    raise ValueError(
+        "A write to a Ref in a fusion must depend on an output of the fusible"
+    )
+  return [
+      tuple(isinstance(v, jax_core.Var) and g in env[v] for v in jaxpr.outvars)
+      for g in range(len(in_groups))
+  ]
 
 
 def _construct_output_permutation(
@@ -259,43 +274,14 @@ def _construct_output_fusions(
   partial_flat = jax.tree.structure(output_fusion_prefix).flatten_up_to(
       unflat_fusible_outvars
   )
-  if len([x for x in partial_flat if jax.tree.leaves(x)]) > 1:
+  if sum(bool(jax.tree.leaves(x)) for x in partial_flat) > 1:
     if any(isinstance(e, (state_types.WriteEffect, state_types.AccumEffect))
            for e in jaxpr_out.effects):
       raise ValueError("Multiple output fusions are not currently supported "
                        "for fusions that write to Refs.")
 
   # 3. Calculate dependencies and check disjointedness
-  downstream_outputs_used_masks = []  # List of bool tuples, one per group
-  already_used_final_outputs = set()  # Indices of final outputs already claimed
-  for outvars_group in partial_flat:
-    # Identify vars in this group
-    used_fusible_outvars = set(jax.tree.leaves(outvars_group))
-    # Create mask for jaxpr_out inputs corresponding to this group
-    in_used_mask = [
-        True if v in used_fusible_outvars else False for v in jaxpr_out.invars
-    ]
-    # Trace dependencies through jaxpr_out to find which final outputs are affected
-    downstream_used_mask = _find_downstream(
-        jaxpr_out, in_used_mask
-    )  # Mask for jaxpr_out.outvars (== jaxpr.outvars)
-
-    # Check for overlap in final output usage across groups
-    for i, used in enumerate(downstream_used_mask):
-      if used:
-        if i in already_used_final_outputs:
-          raise ValueError(
-              "Outputs must be disjoint in order to use separate output fusions"
-          )
-        already_used_final_outputs.add(i)
-    downstream_outputs_used_masks.append(downstream_used_mask)
-
-  for u in list(zip(*downstream_outputs_used_masks))[len(jaxpr_out.outvars):]:
-    if sum(u) == 0:
-      raise ValueError("A write to a Ref in a fusion must depend on "
-                       "an output of the fusible")
-  downstream_outputs_used_masks = [
-      used[:len(jaxpr_out.outvars)] for used in downstream_outputs_used_masks]
+  downstream_outputs_used_masks = _find_downstream(jaxpr_out, partial_flat)
 
   # 4. Construct output permutation needed to restore original output order
   output_permutation = _construct_output_permutation(
