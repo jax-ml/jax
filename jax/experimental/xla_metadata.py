@@ -22,13 +22,47 @@ or setting fusion boundaries).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import contextlib
+from typing import Any
 
 from jax._src.xla_metadata import (
     set_xla_metadata as set_xla_metadata,
-    xla_metadata_call as xla_metadata_call,
     xla_metadata_call2 as xla_metadata_call2,
+    xla_metadata_call as xla_metadata_call,
 )
+
+
+def _must_fuse_kwargs(
+    identifier: Any,
+    buffering_level: int | None = None,
+    kernel_window_bounds: Sequence[int] | None = None,
+    output_window_bounds: Sequence[int] | None = None,
+    scoped_vmem_limit_kib: int | None = None,
+    integer_config: int | None = None,
+) -> dict[str, Any]:
+  if integer_config is not None and (
+      buffering_level is not None
+      or kernel_window_bounds is not None
+      or output_window_bounds is not None
+  ):
+    raise ValueError(
+        "integer_config cannot be set if buffering_level,"
+        " kernel_window_bounds, or output_window_bounds is specified, and vice"
+        " versa."
+    )
+  kwargs = {"MUST_FUSE": str(identifier)}
+  if buffering_level is not None:
+    kwargs["buffering_level"] = str(buffering_level)
+  if kernel_window_bounds is not None:
+    kwargs["kernel_window_bounds"] = ",".join(map(str, kernel_window_bounds))
+  if output_window_bounds is not None:
+    kwargs["output_window_bounds"] = ",".join(map(str, output_window_bounds))
+  if scoped_vmem_limit_kib is not None:
+    kwargs["scoped_vmem_limit_kib"] = str(scoped_vmem_limit_kib)
+  if integer_config is not None:
+    kwargs["integer"] = str(integer_config)
+  return kwargs
 
 
 @contextlib.contextmanager
@@ -44,11 +78,20 @@ def fuse_limit():
     yield
 
 
-def must_fuse_call(identifier: str):
+def must_fuse_call(
+    identifier: Any,
+    buffering_level: int | None = None,
+    kernel_window_bounds: Sequence[int] | None = None,
+    output_window_bounds: Sequence[int] | None = None,
+    scoped_vmem_limit_kib: int | None = None,
+    integer_config: int | None = None,
+):
   """Decorator to force XLA to fuse all operations within a function call.
 
   Annotates the wrapped function call with ``MUST_FUSE=identifier`` XLA
-  metadata.
+  metadata, along with optional compiler lowering configuration attributes for
+  pipeline buffering, window bounds, scoped VMEM limits, or integer backend
+  configs.
 
 
   Example:
@@ -134,12 +177,56 @@ def must_fuse_call(identifier: str):
     to
     form the must-fuse fusion condition is a compile time error.
 
+    Optional lowering parameters can also be provided to configure the fused
+    computation on TPU:
+
+
+    .. code-block:: python
+
+
+      @must_fuse_call(
+          '2',
+          buffering_level=3,
+          kernel_window_bounds=(16, 24, 4),
+          output_window_bounds=(16, 64, 8),
+          scoped_vmem_limit_kib=8192,
+      )
+      def fused_matmul(x, y):
+        return jnp.einsum('bmk,bkn->bmn', x, y)
+
 
   Args:
-    identifier: The identifier (numerical value) for the fusion group.
+    identifier: The identifier (string or numerical value) for the fusion group.
+    buffering_level: Optional integer specifying the pipeline buffering level
+      (for example, 2 for double buffering or 3 for triple buffering) for the
+      fused computation. Mutually exclusive with ``integer_config``.
+    kernel_window_bounds: Optional sequence of integers specifying the kernel
+      (RHS) window bounds for the fused computation. Mutually exclusive with
+      ``integer_config``.
+    output_window_bounds: Optional sequence of integers specifying the output
+      window bounds for the fused computation. Mutually exclusive with
+      ``integer_config``.
+    scoped_vmem_limit_kib: Optional integer specifying the scoped VMEM limit in
+      KiB allocated for the fused computation.
+    integer_config: Optional integer specifying an integer backend configuration
+      value. Mutually exclusive with ``buffering_level``,
+      ``kernel_window_bounds``, and ``output_window_bounds``.
 
   Returns:
     A wrapped version of the function with the fusion metadata applied.
+
+  Raises:
+    ValueError: If ``integer_config`` is specified together with
+      ``buffering_level``, ``kernel_window_bounds``, or
+      ``output_window_bounds``.
   """
 
-  return xla_metadata_call(MUST_FUSE=identifier)
+  kwargs = _must_fuse_kwargs(
+      identifier,
+      buffering_level,
+      kernel_window_bounds,
+      output_window_bounds,
+      scoped_vmem_limit_kib,
+      integer_config,
+  )
+  return xla_metadata_call(**kwargs)
