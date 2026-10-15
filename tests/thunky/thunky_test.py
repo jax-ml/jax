@@ -413,10 +413,6 @@ class ThunkyJaxTest(jtu.JaxTestCase):
     def accum_kernel(x_ref, y_ref):
       y_ref[...] += x_ref[...] * 2.0
 
-    @jax.jit
-    def add_one_val(x):
-      return x + 1.0
-
     @thunky.jit
     def sliced_writes_fn(in_buf, out_buf):
       # Slice input and output buffers along axis 0 using Ref.at[...] views
