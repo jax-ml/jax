@@ -969,6 +969,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_autodiff_test",
     srcs = ["lax_autodiff_test.py"],
+    backend_tags = {
+        "cpu": ["notsan"],  # Times out.
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 20,
