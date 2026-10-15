@@ -410,6 +410,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "svd_test",
     srcs = ["svd_test.py"],
+    backend_tags = {
+        "cpu": [
+            "noasan",
+        ],
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 10,
