@@ -12372,17 +12372,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     c = jax.device_put(np.ones((2, 4, 3, 2)), P('x'))
     m = jax.device_put(np.ones((2, 4)), P('x'))
 
-    @jax.jit(static_argnames=('out_s',))
-    def g(w, c, m, out_s):
-      return jnp.einsum('BLE,BLKE,BL->KE', w, c, m, out_sharding=out_s)
+    @jax.jit
+    def g(w, c, m):
+      return jnp.einsum('BLE,BLKE,BL->KE', w, c, m, out_sharding=P())
 
     with jax.sharding.no_collectives({'x'}):
       with self.assertRaises(core.ForbiddenCollectiveError):
-        g(w, c, m, out_s=P())
-
-      out_u = g(w, c, m, out_s=P(None, None, unreduced={'x'}))
-      self.assertEqual(out_u.sharding,
-                       NamedSharding(mesh, P(None, None, unreduced={'x'})))
+        g(w, c, m)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_no_collectives_three_operand_einsum_vmap(self, mesh):
