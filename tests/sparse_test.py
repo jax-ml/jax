@@ -119,17 +119,23 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(M_out, M)
 
   @jtu.sample_product(
-    [dict(shape=shape, bshape=bshape)
-      for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
-      for bshape in [shape[-1:] + s for s in [(), (1,), (3,)]]
-    ],
-    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+      [
+          dict(shape=shape, bshape=bshape, transpose=transpose)
+          for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
+          for transpose in [True, False]
+          for bshape in [
+              (shape[:1] if transpose else shape[-1:]) + s
+              for s in [(), (1,), (3,)]
+          ]
+      ],
+      dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
-  def test_csr_matmul_ad(self, shape, dtype, bshape):
+  def test_csr_matmul_ad(self, shape, dtype, bshape, transpose):
     csr_matmul = sparse_csr._csr_matvec if len(bshape) == 1 else sparse_csr._csr_matmat
     tol = {np.float32: 2E-5, np.float64: 1E-12, np.complex64: 1E-5,
            np.complex128: 1E-12}
+    op = lambda M: M.T if transpose else M
 
     rng = sptu.rand_sparse(self.rng(), post=jnp.array)
     rng_b = jtu.rand_default(self.rng())
@@ -140,8 +146,10 @@ class cuSparseTest(sptu.SparseTestCase):
     xdot = rng_b(bshape, dtype)
 
     # Forward-mode with respect to the vector
-    f_dense = lambda x: M @ x
-    f_sparse = lambda x: csr_matmul(data, indices, indptr, x, shape=M.shape)
+    f_dense = lambda x: op(M) @ x
+    f_sparse = lambda x: csr_matmul(
+        data, indices, indptr, x, shape=M.shape, transpose=transpose
+    )
     v_sparse, t_sparse = jax.jvp(f_sparse, [x], [xdot])
     v_dense, t_dense = jax.jvp(f_dense, [x], [xdot])
     self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
@@ -156,8 +164,15 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
     # Forward-mode with respect to nonzero elements of the matrix
-    f_sparse = lambda data: csr_matmul(data, indices, indptr, x, shape=M.shape)
-    f_dense = lambda data: sparse_csr._csr_todense(data, indices, indptr, shape=M.shape) @ x
+    f_sparse = lambda data: csr_matmul(
+        data, indices, indptr, x, shape=M.shape, transpose=transpose
+    )
+    f_dense = (
+        lambda data: op(
+            sparse_csr._csr_todense(data, indices, indptr, shape=M.shape)
+        )
+        @ x
+    )
     data = rng((len(data),), data.dtype)
     data_dot = rng((len(data),), data.dtype)
     v_sparse, t_sparse = jax.jvp(f_sparse, [data], [data_dot])
