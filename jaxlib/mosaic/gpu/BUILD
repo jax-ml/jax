@@ -175,6 +175,7 @@ cc_library(
     deps = [
         ":dump",
         "//jaxlib/mosaic:pass_boilerplate",
+        "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
