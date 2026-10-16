@@ -55,7 +55,7 @@ from jax._src.lib.mlir import ir
 from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
                            get_concrete_mesh)
 from jax._src.partition_spec import PartitionSpec
-from jax._src.sharding import ( IndivisibleError,Sharding as JSharding,
+from jax._src.sharding import ( IndivisibleError, Sharding as JSharding,
                                common_is_equivalent_to)
 from jax._src.sharding_impls import (
     ArrayMapping, GSPMDSharding,
@@ -893,17 +893,24 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
 def hoist_constants_as_args(
     closed_jaxpr: core.Jaxpr, global_in_avals, in_shardings, in_layouts,
     donated_invars, kept_var_idx: set[int], inout_aliases, mut,
-    all_args_info: AllArgsInfo):
+    all_args_info: AllArgsInfo,
+    *,
+    out_shardings: Sequence[MaybeSharding] = ()):
   const_args, const_arg_avals = unzip2(
       core.jaxpr_const_args(closed_jaxpr)
   )
   num_const_args = len(const_args)
   if num_const_args:
     global_in_avals = list(const_arg_avals) + global_in_avals
-    ca_shardings = pjit.const_args_shardings(const_args)
+    device_or_backend_set = (
+        check_device_backend_on_shardings(in_shardings) or
+        check_device_backend_on_shardings(out_shardings))
+    ca_shardings = pjit.const_args_shardings(
+        const_args,
+        device_or_backend_set=device_or_backend_set)
     in_shardings = (*ca_shardings, *in_shardings)
     ca_layouts = pjit.const_args_layouts(const_args, const_arg_avals,
-                                          ca_shardings)
+                                         ca_shardings)
     in_layouts = (*ca_layouts, *in_layouts)
 
     donated_invars = (False,) * num_const_args + donated_invars
@@ -1012,7 +1019,8 @@ def lower_sharding_computation(
     (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
      kept_var_idx, inout_aliases, mut, all_args_info) = hoist_constants_as_args(
          closed_jaxpr, global_in_avals, in_shardings, in_layouts,
-         donated_invars, kept_var_idx, inout_aliases, mut, all_args_info)
+         donated_invars, kept_var_idx, inout_aliases, mut, all_args_info,
+         out_shardings=out_shardings)
   else:
     const_args = []
 
@@ -1024,7 +1032,6 @@ def lower_sharding_computation(
       len(out_shardings), len(out_layouts), len(global_out_avals))
 
   context_mesh = _get_context_mesh(context_mesh)
-
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
   unique_intermediate_shardings = util.stable_unique(

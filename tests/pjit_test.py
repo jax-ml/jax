@@ -3134,6 +3134,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = f(np.arange(16))
     self.assertEqual(out.sharding, const.sharding)
 
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      out_dev0 = jax.jit(lambda x: x + const, device=jax.devices()[0])(arr)
+    self.assertEqual(out_dev0.sharding, arr.sharding)
+    self.assertArraysEqual(out_dev0, np.arange(16) * 2)
+
+    mesh = jtu.create_mesh((2,), ('x',))
+    arr_multi = jax.device_put(np.arange(16), NamedSharding(mesh, P('x')))
+    out_multi = f(arr_multi)
+    self.assertEqual(out_multi.sharding, arr_multi.sharding)
+    self.assertArraysEqual(out_multi, np.arange(16) * 2)
+
   @jtu.with_mesh([('x', 2)])
   def test_closed_over_constant_sharded_and_cache_hit(self):
     if not config.use_simplified_jaxpr_constants.value:

@@ -1330,7 +1330,12 @@ def _pjit_lower_jaxpr_to_fun(
   const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_arg_avals = util.unzip2(const_args_and_avals)
   in_avals = (*const_arg_avals, *jaxpr.in_avals)
-  ca_shardings = const_args_shardings(const_args)
+  device_or_backend_set = (
+      pxla.check_device_backend_on_shardings(in_shardings) or
+      pxla.check_device_backend_on_shardings(out_shardings))
+  ca_shardings = const_args_shardings(
+      const_args,
+      device_or_backend_set=device_or_backend_set)
   in_shardings_expanded = ca_shardings + in_shardings
   ca_layouts = const_args_layouts(const_args, const_arg_avals, ca_shardings)
   in_layouts_expanded = ca_layouts + in_layouts
@@ -1426,7 +1431,13 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 # the metadata problem and consolidate the caches.
 mlir.register_lowering(jit_p, _pjit_lowering, cacheable=False)
 
-def const_args_shardings(const_args: Sequence[Array | np.ndarray]) -> Sequence[PjitSharding]:
+def const_args_shardings(
+    const_args: Sequence[Array | np.ndarray],
+    *,
+    device_or_backend_set: bool = False,
+) -> Sequence[PjitSharding]:
+  if device_or_backend_set:
+    return (sharding_impls.UNSPECIFIED,) * len(const_args)
   const_args_types = map(convert_to_metaty, const_args)
   return _resolve_in_shardings(
       const_args_types, (sharding_impls.UNSPECIFIED,) * len(const_args))
