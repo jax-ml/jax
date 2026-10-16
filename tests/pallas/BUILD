@@ -464,6 +464,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_test",
     srcs = ["tpu_pallas_test.py"],
+    backend_tags = {
+        "cpu": ["notsan"],  # Times out.
+    },
     backend_variant_args = {
         "tpu": if_oss(
             [],
