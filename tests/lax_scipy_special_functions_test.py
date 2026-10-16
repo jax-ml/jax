@@ -410,6 +410,20 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         self.assertAllClose(osp_special.gammasgn(inp),
                             lsp_special.gammasgn(inp))
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_log_ndtr_accuracy(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41676:
+    # log_ndtr(x) for 0 < x <= upper_segment must avoid precision loss from
+    # evaluating log(ndtr(x)) when ndtr(x) is close to 1.
+    upper = 8.0 if dtype == np.float64 else 5.0
+    x = np.linspace(0.1, upper, 200, dtype=dtype)
+    expected = osp_special.log_ndtr(x.astype(np.float64)).astype(dtype)
+    rtol = {
+        np.float32: 1e-3 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-13,
+    }
+    self.assertAllClose(lsp_special.log_ndtr(x), expected, atol=0, rtol=rtol)
+
   def testNdtriExtremeValues(self):
     # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
     dtype = jnp.zeros(0).dtype  # default float dtype.
@@ -918,5 +932,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertLessEqual(
         max_sweep_ulp, 3.6,
         f"Max ULP {max_sweep_ulp} at x={worst_sweep_x} exceeds 3.6")
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

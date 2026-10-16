@@ -1874,7 +1874,10 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
 
   - For `x > upper_segment`, use the approximation `-ndtr(-x)` based on
     :math:`\log(1-x) \approx -x, x \ll 1`.
-  - For `lower_segment < x <= upper_segment`, use the existing `ndtr` technique
+  - For `0 < x <= upper_segment`, use `log1p(-ndtr(-x))` based on
+    :math:`\mathrm{ndtr}(x) = 1 - \mathrm{ndtr}(-x)` to avoid loss of precision
+    when :math:`\mathrm{ndtr}(x)` is close to 1.
+  - For `lower_segment < x <= 0`, use the existing `ndtr` technique
     and take a log.
   - For `x <= lower_segment`, we use the series approximation of `erf` to compute
     the log CDF directly.
@@ -1958,17 +1961,24 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   #   regardless of whether dy is finite. Note that the minimum is a NOP if
   #   the branch is chosen.
   x_arr_gt_upper_segment = lax.gt(x_arr, upper_segment)
-  ndtr_arg = jnp.where(x_arr_gt_upper_segment, -x_arr,
+  x_arr_gt_zero = lax.gt(x_arr, _lax_const(x_arr, 0))
+  ndtr_arg = jnp.where(x_arr_gt_zero, -x_arr,
                        lax.max(x_arr, lower_segment))
   # We combine both ndtr calls to minimize program size
   ndtr_res = _ndtr(ndtr_arg)
   return jnp.where(
       x_arr_gt_upper_segment,
       -ndtr_res,  # log(1-x) ~= -x, x << 1
-      jnp.where(lax.gt(x_arr, lower_segment),
-                       lax.log(ndtr_res),
-                       _log_ndtr_lower(lax.min(x_arr, lower_segment),
-                                       series_order)))
+      jnp.where(
+          x_arr_gt_zero,
+          lax.log1p(lax.neg(ndtr_res)),
+          jnp.where(
+              lax.gt(x_arr, lower_segment),
+              lax.log(ndtr_res),
+              _log_ndtr_lower(lax.min(x_arr, lower_segment), series_order),
+          ),
+      ),
+  )
 
 def _log_ndtr_jvp(series_order, primals, tangents):
   (x,), (t,) = primals, tangents
