@@ -95,6 +95,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace jax {
 namespace {
@@ -680,6 +681,10 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // Calls the cache_miss_ function. This just calls the Python function; it may
   // return nullptr value if a Python exception is thrown.
   auto cache_miss = [&]() -> nb::tuple {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode("PjitFunction::Call::CacheMissPython",
+                                          {{"function", function_name_}});
+    });
     return nb::steal<nb::tuple>(
         PyObject_Vectorcall(cache_miss_.ptr(), args, nargs, kwnames));
   };
@@ -687,7 +692,15 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // Call the cache_miss() function, extracting the output data and ignoring
   // the fastpath data. If the cache miss returns a Python error, returns
   // nullptr and leaves the Python error set.
-  auto fallback_to_cache_miss = [&]() {
+  //
+  // `reason` records why the C++ fastpath was abandoned, so that a profile
+  // makes it obvious which check pushed the call back into Python. Each caller
+  // passes a distinct, stable literal.
+  auto fallback_to_cache_miss = [&](std::string_view reason) {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode(
+          "PjitFunction::Call::FallbackToPython", {{"reason", reason}});
+    });
     nb::tuple cache_miss_output = cache_miss();
     if (!cache_miss_output.ptr()) {
       return nb::object();
@@ -709,7 +722,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
       pytree_registry_.get(), call_signature.arg_signature, flat_dynamic_args);
   if (!status.ok()) {
     VLOG(2) << "ParseArguments failed: " << status;
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("parse_arguments_failed");
   }
 
   // Perform a few checks for the arguments. Currently we are only allowing
@@ -734,7 +747,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     if (!py_array.committed() && sharding_num_devices > 1) {
       VLOG(2) << "PyArray argument is not committed and number of global "
                  "devices is more than 1; fallback to python.";
-      return fallback_to_cache_miss();
+      return fallback_to_cache_miss("uncommitted_multi_device_array");
     }
   }
 
@@ -742,7 +755,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   status = ComputeCallSignature(flat_dynamic_args, enable_x64, call_signature);
   if (!status.ok()) {
     VLOG(2) << "ComputeCallSignature failed: " << status;
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("compute_call_signature_failed");
   }
 
   VLOG(2) << "CallSignature:\n" << call_signature.DebugString();
@@ -812,7 +825,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
 
   if (cache_entry->fall_back_to_python) {
     VLOG(2) << "cpp pjit fallback to python.";
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("cache_entry_fall_back_to_python");
   }
 
   absl::InlinedVector<PyArgSignature, 2> dynamic_arg_signatures;
@@ -845,7 +858,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
 
   if (!num_args_arrays.ok()) {
     VLOG(2) << "Failed to prepare IFRT inputs: " << num_args_arrays.status();
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("prepare_ifrt_inputs_failed");
   }
 
   xla::ifrt::ExecuteOptions execute_options =

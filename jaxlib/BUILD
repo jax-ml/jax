@@ -1007,6 +1007,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@nanobind",
         "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/profiler/lib:traceme_encode",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla:shape_util",
         "@xla//xla:util",
