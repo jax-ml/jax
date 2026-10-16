@@ -25,7 +25,7 @@ Approach overview:
      lgamma(x) = (x - 0.5)(ln(x) - 1) + (0.5 ln(2 pi) - 0.5) + (1/x) S(1/x^2),
      using 12-bit splits on (x - 0.5) and (ln(x) - 1) so the leading product
      p_hi = b_hi * (h_x - 1) is exact in float32.
-- Arguments x < 0.5 (including (0, 0.5), subnormals, and all negative inputs)
+- Arguments x < 0.5 (including (0, 0.5) and all negative inputs)
   reflect to y = 1 - x > 0.5 via two complementary paths:
   1. Euler reflection: evaluates
      lgamma(x) = -(ln|delta| + lgamma(1 - x) - ln(pi delta / sin(pi delta))),
@@ -99,13 +99,13 @@ _LOG_Q_HI = [
 
 
 @jit
-def _log_f32(x, sub_shift=0):
-  """Computes ln(x * 2^-sub_shift) as a compensated (log_hi, log_lo) pair."""
+def _log_f32(x):
+  """Computes ln(x) as a compensated (log_hi, log_lo) pair."""
   bits = lax.bitcast_convert_type(x, np.int32)
   exp_off = lax.shift_right_arithmetic(
       bits - _SQRT2_OVER_2_BITS, lax.full_like(bits, 23)
   )
-  k = lax.convert_element_type(exp_off - sub_shift, np.float32)
+  k = lax.convert_element_type(exp_off, np.float32)
   mant_bits = bits - lax.shift_left(exp_off, lax.full_like(bits, 23))
   m = lax.bitcast_convert_type(mant_bits, np.float32)
 
@@ -374,9 +374,7 @@ def _lgamma_neg_root(x_neg_safe, n):
       offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)
   )
   cols = [
-      slicing.gather(
-          lax._const(x_neg_safe, row), idx_exp, dnums, slice_sizes=(1,)
-      )
+      slicing.gather(row, idx_exp, dnums, slice_sizes=(1,))
       for row in _NEG_TABLE
   ]
   r_hi, r_lo, w_bound = cols[0], cols[1], cols[2]
@@ -395,26 +393,14 @@ def _lgamma_neg_root(x_neg_safe, n):
 
 @jit
 def lgamma_impl(x):
-  """Computes float32 lgamma(x) across all normal, subnormal, and special inputs."""
-  # Normalize subnormals in integer bitwise arithmetic before any float ops so
-  # execution is exact even on hardware that flushes subnormals to zero (FTZ).
-  bits = lax.bitcast_convert_type(x, np.int32)
-  abs_bits = bits & 0x7FFFFFFF
-  is_zero = abs_bits == 0
-  is_sub = (abs_bits > 0) & (abs_bits < 0x00800000)
-  sub_shift = lax.select(is_sub, lax.clz(abs_bits) - 8, lax.full_like(bits, 0))
-  x_norm = lax.bitcast_convert_type(
-      lax.select(
-          is_sub,
-          (bits & -0x80000000) | lax.shift_left(abs_bits, sub_shift),
-          bits,
-      ),
-      np.float32,
-  )
-
-  is_pos = x_norm >= 0.5
+  """Computes float32 lgamma(x) across all normal and special inputs."""
+  x = lax.convert_element_type(x, np.float32)
+  # Flush subnormals to zero (< finfo(float32).tiny) so non-FTZ backends
+  # behave consistently with FTZ backends without subnormal bit-normalization.
+  is_zero = lax.abs(x) < np.finfo(np.float32).tiny
+  is_pos = x >= 0.5
   # Substitute 1.0 for 0.0 so inactive branches avoid 0/0 or log(0) NaNs.
-  x_safe = lax.select(is_zero, lax.full_like(x, 1.0), x_norm)
+  x_safe = lax.select(is_zero, lax.full_like(x, 1.0), x)
 
   # For x <= -2^23 (_ALL_INTEGERS_BELOW), every float32 is an exact integer
   # pole. Clamp inputs with x >= 0.5 and large negative integers to -0.5 so
@@ -440,10 +426,8 @@ def lgamma_impl(x):
   arg_pos = lax.select(is_pos, x_safe, y)
   x_bounded = lax.min(arg_pos, lax.full_like(x, _MAX_FINITE_ARG))
 
-  # Compute ln|delta| for Euler's reflection formula on x < 0.5, applying
-  # sub_shift when x is a positive or negative subnormal (where n = 0 and
-  # |delta| = |x|).
-  log_hi, log_lo = _log_f32(abs_delta, sub_shift)
+  # Compute ln|delta| for Euler's reflection formula on x < 0.5.
+  log_hi, log_lo = _log_f32(abs_delta)
 
   # Evaluate lgamma on [0.5, 4] and [4, inf), keeping both the summed result
   # lg_pos (for x >= 0.5) and the unsummed (lg_pos_hi, lg_pos_lo) pair so Euler

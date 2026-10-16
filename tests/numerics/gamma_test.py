@@ -104,13 +104,6 @@ class LgammaTest(jtu.JaxTestCase):
         ("gpu", {f16: 1.0, f32: 4.0, f64: math.inf}),
         ("tpu", {f16: 1.0, f32: 4.0}),
     ]
-    input_ftz = [
-        (
-            ["cpu", "gpu", "tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i"],
-            {bf16: False, f16: False, f32: False},
-        ),
-        ("tpu", {f16: False, f32: False}),
-    ]
     ref_fn = lambda x: np.where(x == -np.inf, np.inf, scipy.special.gammaln(x))
     interesting_points = [
         # Non-positive integer poles of gamma(x):
@@ -146,7 +139,6 @@ class LgammaTest(jtu.JaxTestCase):
         _mpmath_lgamma,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 

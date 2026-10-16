@@ -28,6 +28,7 @@ import jax
 import jax.numpy as jnp
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src.lax import lax as lax_internal
 from jax.scipy import special as lsp_special
 
 jax.config.parse_flags_with_absl()
@@ -778,6 +779,14 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         lsp_special.digamma(x_grad),
         rtol=1e-5, atol=1e-5)
 
+  def test_lgamma_weak_type_scalar(self):
+    x = lax_internal._convert_element_type(
+        2.0, np.dtype(np.float32), weak_type=True
+    )
+    y = jax.lax.lgamma(x)
+    self.assertTrue(dtypes.is_weakly_typed(y))
+    self.assertEqual(float(y), 0.0)
+
   def test_gammaln_negative_roots_ulp(self):
     # 75 certified points (5 float32 neighbors around each of the 15 negative
     # roots of lgamma on (-10, -2)), with reference values computed via 60-digit
@@ -872,8 +881,6 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
 
   def test_gammaln_sweep_ulp(self):
     sweep_xs = np.concatenate([
-        np.array([1.4012985e-45, 1e-42, 1e-40, 1.1754942e-38,
-                  -1.4012985e-45, -1e-42, -1e-40, -1.1754942e-38], dtype=np.float32),
         np.logspace(-37, -1, 500, dtype=np.float32),
         np.linspace(0.1, 0.4999, 500, dtype=np.float32),
         np.linspace(0.5, 0.9999, 500, dtype=np.float32),
