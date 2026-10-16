@@ -4017,6 +4017,25 @@ class CustomVJPTest(jtu.JaxTestCase):
         self.assertAllClose(jax.jit(jax.grad(g))(1.), jnp.cos(1.),
                             check_dtypes=False)
 
+  def test_literal_input_in_fwd(self):
+    @jax.custom_vjp
+    def f(x, y):
+      return x * y
+
+    def f_fwd(x, y):
+      self.assertIsInstance(y, jax.Array)
+      return x * y, (x, y)
+
+    def f_bwd(res, g):
+      x, y = res
+      return g * y, g * x
+
+    f.defvjp(f_fwd, f_bwd)
+
+    for y in [2.0, np.array(2.0)]:
+      g = jax.jit(lambda x: f(x, y))
+      self.assertAllClose(jax.grad(g)(3.0), 2.0, check_dtypes=False)
+
 @jtu.with_config(jax_custom_vjp3=True)
 class CustomVJP3Test(CustomVJPTest):
 

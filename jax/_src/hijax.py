@@ -1005,6 +1005,7 @@ def _custom_vjp_fwd(traced, fwd, symbolic_zeros):
   """A user's custom_vjp fwd rule, called like ``CustomVJPTraced.fwd``."""
   out_tree = tracing_registry.flatten(traced.out_avals)[1]
   def rule(nzs_in, *args):
+    args = tree_map(lambda x: core.stage_p.bind(x) if not isinstance(x, core.Array) and type(x) in core.literalable_types else x, args)
     if symbolic_zeros:
       args_flat, args_tree = tree_flatten(args)
       args = tree_unflatten(
