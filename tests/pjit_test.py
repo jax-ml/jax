@@ -3134,6 +3134,55 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = f(np.arange(16))
     self.assertEqual(out.sharding, const.sharding)
 
+  @jtu.with_mesh([('x', 2)])
+  def test_closed_over_constant_sharded_and_cache_hit(self):
+    if not config.use_simplified_jaxpr_constants.value:
+      self.skipTest('Requires use_simplified_jaxpr_constants=True')
+
+    s = P('x')
+    const = np.arange(16, dtype=np.float32)
+
+    # Spy on ExecuteReplicated.__call__ to verify that the hoisted constant
+    # passed to the runtime executable is already a sharded jax.Array (on-device)
+    # and NOT a raw host np.ndarray (which would indicate a regression to un-sharded const_args).
+    first_call_args = []
+    orig_call = pxla.ExecuteReplicated.__call__
+    def spy_call(self, *args):
+      if not first_call_args:
+        first_call_args.extend(args)
+      return orig_call(self, *args)
+
+    @partial(pjit, in_shardings=s, out_shardings=s)
+    def f(x):
+      return x + const
+
+    x = np.arange(16, dtype=np.float32)
+
+    # First call compiles, shards const_args, misses C++ cache (cpp=1)
+    with unittest.mock.patch.object(pxla.ExecuteReplicated, '__call__', spy_call):
+      self.assertCacheMisses(lambda: f(x), cpp=1)
+
+    self.assertNotEmpty(first_call_args)
+    # Verify hoisted const argument passed to unsafe_call is already a sharded jax.Array
+    self.assertIsInstance(first_call_args[0], jax.Array)
+    self.assertLen(first_call_args[0].addressable_shards, 2)
+
+    out1 = f(x)
+    self.assertLen(out1.addressable_shards, 2)
+    self.assertArraysEqual(out1, np.arange(16, dtype=np.float32) * 2)
+
+    # Second call hits C++ fastpath cache with pre-sharded const_args (cpp=0)
+    self.assertCacheMisses(lambda: f(x), cpp=0, tracing=0, lowering=0)
+    out2 = f(x)
+    self.assertLen(out2.addressable_shards, 2)
+    self.assertArraysEqual(out2, np.arange(16, dtype=np.float32) * 2)
+
+    # AOT compile path
+    compiled = f.lower(x).compile()
+    out3 = compiled(x)
+    self.assertLen(out3.addressable_shards, 2)
+    self.assertArraysEqual(out3, np.arange(16, dtype=np.float32) * 2)
+
   def test_device_put_grad(self):
     if jax.device_count() < 8:
       self.skipTest("Requires >=8 devices.")
@@ -3636,12 +3685,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     jaxpr = f.trace(const).jaxpr
     pjit_e, = (e for e in jaxpr.eqns if e.primitive.name == "jit")
     inner_pjit_jaxpr = pjit_e.params["jaxpr"]
-    if config.use_simplified_jaxpr_constants.value:
-      self.assertEmpty(jaxpr.consts)
-      self.assertEmpty(inner_pjit_jaxpr.consts)
-    else:
-      self.assertEmpty(jaxpr.consts)
-      self.assertIs(const, inner_pjit_jaxpr.consts[0])
+    self.assertEmpty(jaxpr.consts)
+    self.assertIs(const, inner_pjit_jaxpr.consts[0])
 
   @parameterized.named_parameters(
       ("hoist", True),

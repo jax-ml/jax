@@ -5973,10 +5973,7 @@ class APITest(jtu.JaxTestCase):
     def f():
       return jnp.array(c), jnp.sum(c), c, jnp.array(c), jnp.sum(c), c
 
-    if config.use_simplified_jaxpr_constants.value:
-      consts = uniq(find_constants(f()))
-    else:
-      consts = f().consts
+    consts = f().consts
 
     self.assertLen(consts, 1)
 
@@ -7389,10 +7386,7 @@ class RematTest(jtu.JaxTestCase):
     res = saved_residuals(f, (2., 3.), y=4.)
     self.assertLen(res, 6)
     self.assertEqual(res[0][0].shape, (1,))
-    if config.use_simplified_jaxpr_constants.value:
-      self.assertEqual(res[0][1], "from a literal")
-    else:
-      self.assertEqual(res[0][1], "from a constant")
+    self.assertEqual(res[0][1], "from a constant")
     self.assertEqual(res[1][0].shape, ())
     self.assertEqual(res[1][1], "from the argument x[0]")
     self.assertEqual(res[2][0].shape, ())
@@ -7412,32 +7406,18 @@ class RematTest(jtu.JaxTestCase):
 
     res = saved_residuals(f, (2., 3.), y=4.)
     self.assertLen(res, 6)
-    if config.use_simplified_jaxpr_constants.value:
-      self.assertEqual(res[0][1], "from the argument x[0]")
-      self.assertEqual(res[0][0].shape, ())
-      self.assertEqual(res[1][1], "from the argument x[1]")
-      self.assertEqual(res[1][0].shape, ())
-      self.assertEqual(res[2][1], "from the argument y")
-      self.assertEqual(res[2][0].shape, ())
-      self.assertStartsWith(res[3][1], "output of jitted function 'f'")
-      self.assertEqual(res[3][0].shape, ())
-      self.assertStartsWith(res[4][1], "output of jitted function 'f'")
-      self.assertEqual(res[4][0].shape, ())
-      self.assertStartsWith(res[5][1], "output of jitted function 'f'")
-      self.assertEqual(res[5][0].shape, (1,))
-    else:
-      self.assertEqual(res[0][1], "from a constant")
-      self.assertEqual(res[0][0].shape, (1,))
-      self.assertEqual(res[1][1], "from the argument x[0]")
-      self.assertEqual(res[1][0].shape, ())
-      self.assertEqual(res[2][1], "from the argument x[1]")
-      self.assertEqual(res[2][0].shape, ())
-      self.assertEqual(res[3][1], "from the argument y")
-      self.assertEqual(res[4][0].shape, ())
-      self.assertStartsWith(res[4][1], "output of jitted function 'f'")
-      self.assertEqual(res[4][0].shape, ())
-      self.assertStartsWith(res[5][1], "output of jitted function 'f'")
-      self.assertEqual(res[5][0].shape, ())
+    self.assertEqual(res[0][1], "from a constant")
+    self.assertEqual(res[0][0].shape, (1,))
+    self.assertEqual(res[1][1], "from the argument x[0]")
+    self.assertEqual(res[1][0].shape, ())
+    self.assertEqual(res[2][1], "from the argument x[1]")
+    self.assertEqual(res[2][0].shape, ())
+    self.assertEqual(res[3][1], "from the argument y")
+    self.assertEqual(res[4][0].shape, ())
+    self.assertStartsWith(res[4][1], "output of jitted function 'f'")
+    self.assertEqual(res[4][0].shape, ())
+    self.assertStartsWith(res[5][1], "output of jitted function 'f'")
+    self.assertEqual(res[5][0].shape, ())
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -8951,10 +8931,7 @@ class JaxprTest(jtu.JaxTestCase):
       return (x, 1., np.zeros(1, dtype=jnp.float32))
 
     dtype = "f64" if config.enable_x64.value else "f32"
-    if config.use_simplified_jaxpr_constants.value:
-      expected = f"{{ lambda ; a:f32[]. let  in (a, 1.0:{dtype}[], [...]:f32[1]) }}"
-    else:
-      expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
+    expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
@@ -8963,7 +8940,7 @@ class JaxprTest(jtu.JaxTestCase):
     def fun(x):
       return (x, np.zeros(3, dtype=jnp.float32))
 
-    expected = "{ lambda ; a:f32[]. let  in (a, [...]:f32[3]) }"
+    expected = "{ lambda a:f32[3]; b:f32[]. let  in (b, a) }"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 

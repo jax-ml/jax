@@ -620,8 +620,6 @@ class PallasCallTest(ptu.PallasTest):
       self.assertAllClose(res, x)
 
   def test_const_args(self):
-    if config.use_simplified_jaxpr_constants.value:
-      self.skipTest("TODO: decide if we want to keep these errors")
     # See https://github.com/jax-ml/jax/issues/21557.
     # to_store will be hoisted as a constant. Choose distinct shapes from in/outs.
     to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
@@ -1277,8 +1275,6 @@ class ApiErrorTest(ptu.PallasTest):
       f(a)
 
   def test_pallas_call_index_map_captures_consts(self):
-    if config.use_simplified_jaxpr_constants.value:
-      self.skipTest("TODO: decide if we want to keep these errors")
     a = np.arange(256, dtype=np.int32)
     index_map_result = np.array([0], dtype=np.int32)
     f = self.pallas_call(lambda x_ref, o1_ref: None,

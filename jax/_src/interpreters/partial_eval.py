@@ -164,7 +164,7 @@ class JaxprTrace(Trace):
     if const is None:
       return tracer
     else:
-      if core.is_literalable(const, True):
+      if core.is_literalable(const):
         return self.new_instantiated_literal(const)
       else:
         return self.new_instantiated_const(const)
@@ -1785,7 +1785,7 @@ class DynamicJaxprTrace(core.Trace):
     id_c = id(c)
     assert type(c) not in (int, float, complex, np.generic, np.ndarray), (
         f"non-canonical constant of type {type(c).__name__}: {c!r}")
-    if core.is_literalable(c, self.frame.auto_dce):
+    if core.is_literalable(c):
       val = Literal(c, aval)
       return DynamicJaxprTracer(self, aval, val, source_info)
     else:

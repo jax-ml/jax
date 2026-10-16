@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from jax._src import api
 from jax._src import basearray
-from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import errors
@@ -1183,9 +1182,6 @@ def _array_mlir_constant_handler(val, aval):
     raise
 
 mlir.register_constant_handler(ArrayImpl, _array_mlir_constant_handler)
-
-if config.use_simplified_jaxpr_constants.value:
-  core.literalable_types.add(ArrayImpl)
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would

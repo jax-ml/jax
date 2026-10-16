@@ -2275,7 +2275,8 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     cond_args = cond_args[num_tokens:]  # Remove tokens from cond args
     x, _, z = util.split_list(cond_args, [cond_nconsts, body_nconsts])
     cond_consts = mlir.ir_consts(
-        cond_jaxpr.consts, [v.aval for v in cond_jaxpr.constvars])
+        cond_jaxpr.consts, [v.aval for v in cond_jaxpr.constvars],
+        const_lowering=ctx.const_lowering)
     cond_name_stack = name_stack.extend('cond')
     (pred,), _ = mlir.jaxpr_subcomp(
         ctx.module_context,
@@ -2323,7 +2324,8 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     x, y, z = util.split_list(body_args, [cond_nconsts, body_nconsts])
     body_name_stack = name_stack.extend('body')
     body_consts = mlir.ir_consts(
-        body_jaxpr.consts, [v.aval for v in body_jaxpr.constvars])
+        body_jaxpr.consts, [v.aval for v in body_jaxpr.constvars],
+        const_lowering=ctx.const_lowering)
     new_z, tokens_out = mlir.jaxpr_subcomp(
         ctx.module_context, body_jaxpr, body_name_stack,
         tokens_in, body_consts, *(y + z),
@@ -2333,7 +2335,8 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     if batched:
       body_pred_name_stack = name_stack.extend('body_pred')
       cond_consts = mlir.ir_consts(
-          cond_jaxpr.consts, [v.aval for v in cond_jaxpr.constvars])
+          cond_jaxpr.consts, [v.aval for v in cond_jaxpr.constvars],
+          const_lowering=ctx.const_lowering)
       (body_pred,), _ = mlir.jaxpr_subcomp(
           ctx.module_context, cond_jaxpr, body_pred_name_stack,
           mlir.TokenSet(), cond_consts, *(x + z),

@@ -17,7 +17,6 @@ import re
 import unittest
 from absl.testing import absltest
 import jax
-from jax import lax
 from jax._src import compilation_cache
 from jax._src import config
 from jax._src import core
@@ -316,7 +315,7 @@ class JaxAotTest(jtu.JaxTestCase):
 
       @jax.jit
       def f(x):
-        return lax.convert_element_type(const, np.float32) + x
+        return const, x
 
     inp = np.arange(16., dtype=np.float32)
     with config.enable_x64(True) if lower else contextlib.nullcontext():
@@ -347,8 +346,9 @@ class JaxAotTest(jtu.JaxTestCase):
       self.assertLen(compiled._params.const_args, 0)
       self.assertLen(compiled._executable.in_avals, 1)
 
-    self.assertArraysEqual(run(),
-                           lax.convert_element_type(const, inp.dtype) + inp)
+    out_const, out_inp = run()
+    self.assertArraysEqual(out_const, const)
+    self.assertArraysEqual(out_inp, inp)
     # Trigger cache hit
     self.assertCacheMisses(run, cpp=0, aot_call=0)
 

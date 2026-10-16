@@ -1130,8 +1130,8 @@ def _shard_map_lowering_shardy(
         (), *in_args,
         dim_var_values=dim_var_values,
         const_lowering={
-            (id(c), aval): ca
-            for c, aval, ca in zip(const_args, const_avals, const_arg_values)
+            id(c): ca
+            for c, ca in zip(const_args, const_arg_values)
         },
         outer_traceback=_jax.Traceback())
     flat_return_vals, _ = mlir.ir_tree_registry.flatten(

@@ -609,47 +609,37 @@ class Literal:
 literalable_types: set[type] = set()
 literalable_scalar_types: set[type] = set()
 
-def is_literalable(x: Any, for_ad: bool = False) -> bool:
+def is_literalable(x: Any) -> bool:
   x_type = type(x)
   # Faster path for scalar types, which avoids an np.ndarray conversion.
   if x_type in literalable_scalar_types:
     return True
 
-  # See https://docs.jax.dev/en/latest/internals/constants.html
-  # for_ad: we want to preserve under AD
-  if config.use_simplified_jaxpr_constants.value:
-    from jax._src.array import ArrayImpl  # pyrefly: ignore[missing-import]
-    do_lit_array = not for_ad
-    if isinstance(x, ArrayImpl):
-      return do_lit_array
-  else:
-    do_lit_array = False
   for t in x_type.__mro__:
     if t in literalable_types:
-      return (do_lit_array or not np.ndim(x))
+      return not np.ndim(x)
   return False
 
-def is_hoistable(v: Literal) -> bool:
-  return (np.ndim(v.val) > 0 and
-          getattr(v.val, "nbytes", 4) > config.embedded_constants_max_bytes.value)
+def is_hoistable(val: Any) -> bool:
+  return (not isinstance(val, Tracer) and
+          np.ndim(val) > 0 and
+          getattr(val, "nbytes", 4) > config.embedded_constants_max_bytes.value)
 
 @partial(weakref_lru_cache, trace_context_in_key=False)
 def jaxpr_const_args(jaxpr: Jaxpr) -> list[tuple[ArrayLike, AbstractValue]]:
-  # The non-scalar constants in core.Literal, in the entire Jaxpr,
+  # The non-scalar constants in jaxpr.consts, in the entire Jaxpr,
   # uniquified by id. These will be hoisted as const arguments to the functions
   # in which they appear.
   # See https://docs.jax.dev/en/latest/internals/constants.html
   if not config.use_simplified_jaxpr_constants.value:
     return []
   consts_by_id: dict[int, tuple[ArrayLike, AbstractValue]] = {}
-  for v in jaxpr.outvars:
-    if type(v) is Literal and is_hoistable(v):
-      consts_by_id[id(v)] = (v.val, v.aval)
+
+  for c, var in zip(jaxpr.consts, jaxpr.constvars):
+    if is_hoistable(c):
+      consts_by_id[id(c)] = (c, var.aval)
 
   for eqn in jaxpr.eqns:
-    for v in eqn.invars:
-      if type(v) is Literal and is_hoistable(v):
-        consts_by_id[id(v)] = (v.val, v.aval)
     consts_by_id.update({id(v_aval[0]): v_aval
                          for v_aval in eqn_params_const_args(eqn.params)})
   return list(consts_by_id.values())
