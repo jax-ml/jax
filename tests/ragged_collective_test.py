@@ -89,7 +89,6 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -175,7 +174,6 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -256,7 +254,6 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -345,7 +342,6 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -418,7 +414,6 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -548,7 +543,6 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -616,7 +610,6 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -783,7 +776,6 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             x_partition_spec,
             ),
         out_specs=(x_partition_spec),
-        check_vma=False,
     )
     def ra2a_wrapper(x, output_shape, input_offsets, send_sizes, output_offsets, recv_sizes):
         input_offsets = input_offsets.reshape(input_offsets.shape[1:])
@@ -853,6 +845,171 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     self.assertEqual(vmap_output.shape, (pipeline_parallelism, batch, model))
     for i in range(pipeline_parallelism):
       self.assertAllClose(vmap_output[i,:,:], expected_array, check_dtypes=False)
+
+  def test_ragged_all_to_all_vma_invariant_output_buffer(self):
+    if jax.devices()[0].platform == 'tpu' and jtu.get_tpu_version() < 4:
+      raise unittest.SkipTest('ragged-all-to-all requires TPU v4+')
+    mesh = jtu.create_mesh((2,), ('x',))
+    io = oo = jnp.zeros((2, 2), jnp.int32)
+    ss = rs = jnp.array([[0, 1], [1, 0]], jnp.int32)
+    x = jnp.array([[1.0], [2.0]])
+    w = jnp.array([[10.0], [20.0]])
+
+    def body(x, io, ss, oo, rs):
+      out = jnp.zeros((1,), dtype=x.dtype)
+      y = lax.ragged_all_to_all(x[0], out, io[0], ss[0], oo[0], rs[0], axis_name='x')
+      self.assertEqual(jax.typeof(y).mat.varying, frozenset({'x'}))
+      return y[None]
+
+    f = jax.jit(jax.shard_map(body, mesh=mesh, in_specs=P('x'), out_specs=P('x')))
+    ref = lambda x: x[::-1]
+    self.assertAllClose(f(x, io, ss, oo, rs), ref(x))
+    got = jax.grad(lambda x: jnp.sum(f(x, io, ss, oo, rs) * w))(x)
+    want = jax.grad(lambda x: jnp.sum(ref(x) * w))(x)
+    self.assertAllClose(got, want)
+
+    with self.assertRaises(ValueError):
+      jax.jit(jax.shard_map(body, mesh=mesh, in_specs=P('x'), out_specs=P())).lower(
+          x, io, ss, oo, rs)
+
+  def test_ragged_all_to_all_vma_offsets_vary_over_second_axis(self):
+    if jax.devices()[0].platform == 'tpu' and jtu.get_tpu_version() < 4:
+      raise unittest.SkipTest('ragged-all-to-all requires TPU v4+')
+    if len(jax.devices()) < 4:
+      raise unittest.SkipTest('test requires at least 4 devices')
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    io = oo = jnp.zeros((2, 2, 2), jnp.int32)
+    ss = rs = jnp.array([[[0, 1], [1, 0]], [[1, 0], [0, 1]]], jnp.int32)
+    x = jnp.array([[1.0], [2.0]])
+    out = jnp.zeros((2, 1))
+    w = jnp.array([[[1.0], [2.0]], [[4.0], [8.0]]])
+
+    def smap(out_specs, lead):
+      def body(x, out, io, ss, oo, rs):
+        y = lax.ragged_all_to_all(x[0], out[0], io[0, 0], ss[0, 0], oo[0, 0], rs[0, 0], axis_name='x')
+        self.assertEqual(jax.typeof(y).mat.varying, frozenset({'x', 'y'}))
+        return y.reshape((1,) * lead + y.shape)
+      return jax.jit(jax.shard_map(
+          body, mesh=mesh, in_specs=(P('x'), P('x')) + (P('x', 'y'),) * 4,
+          out_specs=out_specs))
+
+    f = smap(P('x', 'y'), 2)
+    ref = lambda x: jnp.stack([x[::-1], x], axis=1)
+    self.assertAllClose(f(x, out, io, ss, oo, rs), ref(x))
+    got = jax.grad(lambda x: jnp.sum(f(x, out, io, ss, oo, rs) * w))(x)
+    want = jax.grad(lambda x: jnp.sum(ref(x) * w))(x)
+    self.assertAllClose(got, want)
+
+    with self.assertRaises(ValueError):
+      smap(P('x'), 1).lower(x, out, io, ss, oo, rs)
+
+  def test_ragged_all_to_all_vma_replicated_operand(self):
+    if jax.devices()[0].platform == 'tpu' and jtu.get_tpu_version() < 4:
+      raise unittest.SkipTest('ragged-all-to-all requires TPU v4+')
+    mesh = jtu.create_mesh((2,), ('x',))
+    io = jnp.array([[0, 0], [1, 0]], jnp.int32)
+    oo = jnp.zeros((2, 2), jnp.int32)
+    ss = rs = jnp.array([[0, 1], [1, 0]], jnp.int32)
+    x = jnp.array([[1.0], [2.0]])
+    out = jnp.zeros((2, 1))
+    w = jnp.array([[10.0], [20.0]])
+
+    f = jax.jit(jax.shard_map(
+        lambda x, out, io, ss, oo, rs: lax.ragged_all_to_all(
+            x, out, io[0], ss[0], oo[0], rs[0], axis_name='x'),
+        mesh=mesh, in_specs=(P(), P('x'), P('x'), P('x'), P('x'), P('x')),
+        out_specs=P('x')))
+    ref = lambda x: x[::-1]
+    self.assertAllClose(f(x, out, io, ss, oo, rs), ref(x))
+    got = jax.grad(lambda x: jnp.sum(f(x, out, io, ss, oo, rs) * w))(x)
+    want = jax.grad(lambda x: jnp.sum(ref(x) * w))(x)
+    self.assertAllClose(got, want)
+
+  def test_ragged_all_to_all_transpose_zero_size_update(self):
+    if jax.devices()[0].platform == 'tpu' and jtu.get_tpu_version() < 4:
+      raise unittest.SkipTest('ragged-all-to-all requires TPU v4+')
+    mesh = jtu.create_mesh((2,), ('x',))
+    io = jnp.array([[0, 0], [0, 0]], jnp.int32)
+    ss = jnp.array([[0, 0], [2, 0]], jnp.int32)
+    oo = jnp.array([[0, 0], [0, 0]], jnp.int32)
+    rs = jnp.array([[0, 2], [0, 0]], jnp.int32)
+    x = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+    out = jnp.zeros((2, 2))
+    w = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+
+    @jax.shard_map(mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def ra2a(x, out, io, ss, oo, rs):
+      return lax.ragged_all_to_all(x[0], out[0], io[0], ss[0], oo[0], rs[0], axis_name='x')[None]
+
+    ref = lambda x, out: out.at[0, 0:2].set(x[1, 0:2])
+    self.assertAllClose(ra2a(x, out, io, ss, oo, rs), ref(x, out))
+    got = jax.grad(lambda out: jnp.sum(ra2a(x, out, io, ss, oo, rs) * w))(out)
+    want = jax.grad(lambda out: jnp.sum(ref(x, out) * w))(out)
+    self.assertAllClose(got, want)
+
+  def test_ragged_all_to_all_transpose_axis_index_groups(self):
+    if jax.devices()[0].platform == 'tpu' and jtu.get_tpu_version() < 4:
+      raise unittest.SkipTest('ragged-all-to-all requires TPU v4+')
+    if len(jax.devices()) < 4:
+      raise unittest.SkipTest('test requires at least 4 devices')
+    mesh = jtu.create_mesh((4,), ('x',))
+    groups = ((0, 1), (2, 3))
+    x = jnp.arange(8.0).reshape(4, 2)
+    out = jnp.zeros((4, 2))
+    w = jnp.arange(1.0, 9.0).reshape(4, 2)
+    ref = lambda x, out: out.at[0, 1].set(x[1, 1])
+
+    for K in (2, 4):
+      io = jnp.zeros((4, K), jnp.int32).at[1, 0].set(1)
+      ss = jnp.zeros((4, K), jnp.int32).at[1, 0].set(1)
+      oo = jnp.zeros((4, K), jnp.int32).at[1, 0].set(1)
+      rs = jnp.zeros((4, K), jnp.int32).at[0, K // 2].set(1)
+
+      @jax.shard_map(mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+      def ra2a(x, out, io, ss, oo, rs):
+        return lax.ragged_all_to_all(
+            x[0], out[0], io[0], ss[0], oo[0], rs[0], axis_name='x',
+            axis_index_groups=groups)[None]
+
+      self.assertAllClose(ra2a(x, out, io, ss, oo, rs), ref(x, out))
+      got_x, got_out = jax.grad(
+          lambda x, out: jnp.sum(ra2a(x, out, io, ss, oo, rs) * w),
+          argnums=(0, 1))(x, out)
+      want_x, want_out = jax.grad(
+          lambda x, out: jnp.sum(ref(x, out) * w),
+          argnums=(0, 1))(x, out)
+      self.assertAllClose(got_x, want_x)
+      self.assertAllClose(got_out, want_out)
+
+  def test_ragged_all_to_all_vmap_unbatched_offsets_and_jacobians(self):
+    if jax.devices()[0].platform == 'tpu' and jtu.get_tpu_version() < 4:
+      raise unittest.SkipTest('ragged-all-to-all requires TPU v4+')
+    mesh = jtu.create_mesh((2,), ('x',))
+    io = oo = jnp.zeros((2, 2), jnp.int32)
+    ss = rs = jnp.array([[0, 1], [1, 0]], jnp.int32)
+    x_batched = jnp.array([[[1.0], [2.0]], [[3.0], [4.0]]])
+    out_batched = jnp.zeros((2, 2, 1))
+
+    @jax.shard_map(mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def ra2a_vmap(x, out, io, ss, oo, rs):
+      f = lambda x, out: lax.ragged_all_to_all(x, out, io[0], ss[0], oo[0], rs[0], axis_name='x')
+      return jax.vmap(f)(x[0], out[0])[None]
+
+    self.assertAllClose(ra2a_vmap(x_batched, out_batched, io, ss, oo, rs), x_batched[::-1])
+
+    x = jnp.array([[1.0], [2.0]])
+    out = jnp.zeros((2, 1))
+    w = jnp.array([[10.0], [20.0]])
+
+    @jax.shard_map(mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def ra2a(x, out, io, ss, oo, rs):
+      return lax.ragged_all_to_all(x[0], out[0], io[0], ss[0], oo[0], rs[0], axis_name='x')[None]
+
+    loss = lambda x: jnp.sum(ra2a(x, out, io, ss, oo, rs) * w)
+    want_grad = jax.grad(lambda x: jnp.sum(x[::-1] * w))(x)
+    self.assertAllClose(jax.jacfwd(loss)(x), want_grad)
+    self.assertAllClose(jax.jacrev(loss)(x), want_grad)
+    self.assertAllClose(jax.hessian(loss)(x), jnp.zeros(x.shape + x.shape))
 
 
 if __name__ == '__main__':
