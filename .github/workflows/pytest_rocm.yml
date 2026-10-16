@@ -44,6 +44,14 @@ on:
         description: "Release version for S3 path resolution (e.g., 7.2.0 or therock-latest)"
         type: string
         default: ""
+      therock-index-url:
+        description: "TheRock ROCm pip index URL (public fallback when the in-cluster mirror ROCM_PIP_INDEX_URL is unset)"
+        type: string
+        default: "https://stable.repo.amd.com/rocm/whl-next/"
+      therock-version:
+        description: "TheRock ROCm version to pip install (e.g. 10.0.0)"
+        type: string
+        default: "10.0.0"
       jaxlib-version:
         description: "Which jaxlib version to use? (head/pypi_latest)"
         type: choice
@@ -92,6 +100,14 @@ on:
         description: "Release version for S3 path resolution (e.g., 7.2.0 or therock-latest)"
         type: string
         default: ""
+      therock-index-url:
+        description: "TheRock ROCm pip index URL (public fallback when the in-cluster mirror ROCM_PIP_INDEX_URL is unset)"
+        type: string
+        default: "https://stable.repo.amd.com/rocm/whl-next/"
+      therock-version:
+        description: "TheRock ROCm version to pip install (e.g. 10.0.0)"
+        type: string
+        default: "10.0.0"
       jaxlib-version:
         description: "Which jaxlib version to use? (head/pypi_latest)"
         type: string
@@ -136,9 +152,10 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     continue-on-error: true
-    # Run in ROCm team's GHCR container with GPU access
+    # Run in the rocmless build container (no ROCm baked in); ROCm is installed
+    # per job from TheRock pip packages in the "Install TheRock" step below.
     container:
-      image: ghcr.io/rocm/jax-base-ubu24.${{ inputs.rocm-tag }}:latest  # zizmor: ignore[unpinned-images]
+      image: ghcr.io/rocm/jax-build-ubu24.rocmless@sha256:68854ed30b800d3e8c390f6e651721e2bead58830da1c59e1b828354eb8f077f
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -173,6 +190,20 @@ jobs:
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
           s3_download_uri: ${{ inputs.s3_download_uri }}
           jax-jaxlib-source: ${{ inputs.jax-jaxlib-source }}
+      - name: Install TheRock (ROCm via pip)
+        env:
+          THEROCK_INDEX_URL: ${{ inputs.therock-index-url }}
+          THEROCK_VERSION: ${{ inputs.therock-version }}
+        run: |
+          set -euo pipefail
+          # The rocmless image ships no ROCm; install it from TheRock. Prefer the
+          # in-cluster mirror (ROCM_PIP_INDEX_URL, injected by the runner) and
+          # fall back to the public index when it is unset.
+          $JAXCI_PYTHON -m pip install --break-system-packages --pre \
+            --index-url "${ROCM_PIP_INDEX_URL:-$THEROCK_INDEX_URL}" \
+            "rocm[libraries,devel,device-gfx950]==${THEROCK_VERSION}"
+          rocm-sdk init
+          rocm-sdk path --root
       - name: Install Python dependencies
         run: |
           $JAXCI_PYTHON -m pip install uv~=0.12.3
