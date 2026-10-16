@@ -1203,6 +1203,50 @@ def _mgpu_async_load_op_lowering_rule(
   return []
 
 
+# TODO(slebedev): Remove `hasattr` once the minimum jaxlib version is 0.12.0.
+if hasattr(mgpu, "AsyncLoadIm2colOp"):
+  @_register_lowering(mgpu.AsyncLoadIm2colOp, support_warp_semantics=True)
+  def _mgpu_async_load_im2col_op_lowering_rule(
+      ctx: LoweringContext, load_op: mgpu.AsyncLoadIm2colOp
+  ) -> Sequence[ir.Value]:
+    barrier = utils.DialectBarrierRef.from_barrier_memref(load_op.barrier)
+    [transforms_attr] = inference_utils.in_transforms(load_op)
+    swizzle = swizzle_from_transforms_attr(transforms_attr)
+    unwrapped_dst = unwrap_transformed_memref(
+        load_op.destination, transforms_attr
+    )
+
+    predicate = ctx.single_lane_predicate
+    if load_op.predicate is not None:
+      predicate = arith.andi(predicate, load_op.predicate)
+
+    if ctx.auto_barriers and ctx.thread_semantics == utils.ThreadSubset.WARPGROUP:
+      utils.warpgroup_barrier()  # Make sure the writes have completed.
+
+    index = ir.IndexType.get()
+    ctx.launch_context.async_copy_im2col(
+        src_ref=load_op.source,
+        dst_ref=unwrapped_dst,
+        barrier=barrier.barrier_ref,
+        window_start_bounds=tuple(
+            zip(
+                load_op.window_lower_bounds,
+                load_op.window_upper_bounds,
+                strict=True,
+            )
+        ),
+        start_indices=[arith.index_cast(index, i) for i in load_op.indices],
+        filter_offsets=[
+            arith.index_cast(index, o) for o in load_op.filter_offsets
+        ],
+        window_strides=tuple(load_op.window_strides),
+        swizzle=swizzle,
+        arrive=False,
+        predicate=predicate,
+    )
+    return []
+
+
 @_register_lowering(mgpu.AsyncPrefetchOp, support_warp_semantics=True)
 def _mgpu_async_prefetch_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncPrefetchOp
