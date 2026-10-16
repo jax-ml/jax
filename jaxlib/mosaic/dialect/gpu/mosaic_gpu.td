@@ -388,8 +388,7 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     accesses. `zeros` and `undefined` are only supported with TMA (Hopper and
     newer); the `cp.async` implementation only supports `promise_in_bounds`.
 
-    The `predicate` allows scheduling the transfer conditionally. The async copy
-    is always scheduled by at most a single lane in the warpgroup.
+    The `predicate` allows scheduling the transfer conditionally.
 
     The `gmem_peer_id` parameter specifies a particular device id to load from
     in a multi-GPU setting.
@@ -448,8 +447,7 @@ def MosaicGPU_AsyncLoadIm2colOp : Op<MosaicGPU_Dialect, "async_load_im2col",
     - `window_strides` has length `rank - 2` and gives the step in `[1, 8]`
       between consecutive window start positions along each spatial dimension.
 
-    The `predicate` allows scheduling the transfer conditionally. The async copy
-    is always scheduled by at most a single lane in the warpgroup.
+    The `predicate` allows scheduling the transfer conditionally.
   }];
 
   let arguments = (ins
@@ -528,8 +526,7 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     `source` data in SMEM needs to be contiguous, but the `destination` GMEM
     does not.
 
-    The `predicate` allows scheduling the transfer conditionally. The async copy
-    is always scheduled by at most a single lane in the warpgroup.
+    The `predicate` allows scheduling the transfer conditionally.
 
     The `reduction_op` attribute can be provided to perform a reduction when
     storing to GMEM. For example, using `add` will add the SMEM values to
@@ -1442,4 +1439,3 @@ def MosaicGPU_AllocaScopeReturnOp : Op<MosaicGPU_Dialect, "alloca_scope.return",
 }
 
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_
-
