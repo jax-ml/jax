@@ -3055,6 +3055,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         lambda dtype, device: jnp.linspace(5, 6, 7, dtype=dtype, device=device),
         lambda dtype, device: jnp.linspace(5, 6, 7, retstep=True, dtype=dtype, device=device),
         lambda dtype, device: jnp.array([1, 2, 3, 4, 5], dtype=dtype, device=device),
+        lambda dtype, device: jnp.logspace(-3, 3, dtype=dtype, device=device),
+        lambda dtype, device: jnp.geomspace(1e-3, 1e3, dtype=dtype, device=device),
       ],
       dtype=default_dtypes,
   )
@@ -3073,6 +3075,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         lambda dtype, device: jnp.linspace(5, 6, 7, dtype=dtype, device=device),
         lambda dtype, device: jnp.linspace(5, 6, 7, retstep=True, dtype=dtype, device=device),
         lambda dtype, device: jnp.array([1, 2, 3, 4, 5], dtype=dtype, device=device),
+        lambda dtype, device: jnp.logspace(-3, 3, dtype=dtype, device=device),
+        lambda dtype, device: jnp.geomspace(1e-3, 1e3, dtype=dtype, device=device),
       ],
       dtype=default_dtypes,
   )
