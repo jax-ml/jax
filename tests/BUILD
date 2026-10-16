@@ -1512,7 +1512,7 @@ jax_multiplatform_test(
     srcs = ["scipy_spatial_test.py"],
     shard_count = {
         "cpu": 2,
-        "gpu": 2,
+        "gpu": 5,
     },
     deps = py_deps([
         "absl/testing",
