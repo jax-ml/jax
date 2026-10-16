@@ -176,6 +176,18 @@ jax_multiprocess_test(
 )
 
 jax_multiprocess_test(
+    name = "ppermute_test",
+    srcs = ["ppermute_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
+    },
+    main = "ppermute_test.py",
+    deps = [
+        "//jax/_src:test_multiprocess",
+    ],
+)
+
+jax_multiprocess_test(
     name = "socket_transfer_test",
     srcs = ["socket_transfer_test.py"],
     # TODO(b/476419684): Remove the following line once OSS tests are fixed.
