@@ -27,7 +27,11 @@ from jax._src.debugger import core as debugger_core
 @functools.cache
 def _web_pdb_version() -> tuple[int, ...]:
   import web_pdb  # pyrefly: ignore[missing-import]
-  return tuple(map(int, web_pdb.__version__.split(".")))
+  version = getattr(web_pdb, "__version__", None)
+  if version is None:
+    # web_pdb stopped defining __version__ in 2.0.0.
+    return (2,)
+  return tuple(map(int, version.split(".")))
 
 
 _web_consoles: dict[tuple[str, int], Any] = {}
