@@ -711,7 +711,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertTrue(np.isnan(jnp_fn(x, ddof=size + 2)))
 
   @jtu.sample_product(
-    test_fns=[(np.nanvar, jnp.nanvar), (np.nanstd, jnp.nanstd)],
+    test_fn=['nanvar', 'nanstd'],
     shape=[(5,), (10, 5)],
     dtype=all_dtypes,
     out_dtype=inexact_dtypes,
@@ -720,8 +720,9 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                      (None, 0), (None, 1), (None, 2), (0, 0), (1, 0)],
     keepdims=[False, True],
   )
-  def testNanStdOrVar(self, test_fns, shape, dtype, out_dtype, axis, ddof_correction, keepdims):
-    np_fn, jnp_fn = test_fns
+  def testNanStdOrVar(self, test_fn, shape, dtype, out_dtype, axis, ddof_correction, keepdims):
+    np_fn = getattr(np, test_fn)
+    jnp_fn = getattr(jnp, test_fn)
     ddof, correction = ddof_correction
     rng = jtu.rand_some_nan(self.rng())
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
