@@ -99,6 +99,7 @@ _py_deps = {
     "opt_einsum": ["@pypi//opt_einsum"],
     "pil": ["@pypi//pillow"],
     "portpicker": ["//:pypi_optional_portpicker"],
+    "protobuf": ["@pypi//protobuf"],
     "ml_dtypes": ["@pypi//ml_dtypes"],
     "numpy": ["@pypi//numpy"],
     "scipy": ["@pypi//scipy"],

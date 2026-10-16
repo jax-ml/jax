@@ -2287,6 +2287,19 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "protobuf_test",
+    srcs = ["protobuf_test.py"],
+    deps = [
+        "//jax/_src:protobuf",
+        "//jax/experimental:protobuf",
+        "//jax/extend:xla",
+    ] + py_deps([
+        "absl/testing",
+        "protobuf",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "unary_ops_accuracy_test",
     srcs = ["unary_ops_accuracy_test.py"],
     enable_backends = [
