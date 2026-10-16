@@ -217,6 +217,7 @@ class FftTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fn, args_maker, atol={np.complex64: 3e-6},
                           rtol={np.float32: 2e-6, np.complex64: 3e-6})
 
+  @jtu.run_on_devices("gpu")
   def testIrfftnGpuLoweringIsASingleFft(self):
     # On GPU a multi-dimensional IRFFT lowers to a single C2R FFT op (preceded
     # by the symmetrization of the DC/Nyquist slices of the last axis), not to
