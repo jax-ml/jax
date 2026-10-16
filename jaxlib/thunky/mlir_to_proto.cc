@@ -71,7 +71,7 @@ limitations under the License.
 #include "xla/mlir/utils/type_util.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/python/pjrt_ifrt/executable_metadata.pb.h"
-#include "xla/service/buffer_assignment.pb.h"
+#include "xla/service/buffer_assignment/buffer_assignment.pb.h"
 #include "xla/service/gpu/dense_data_intermediate.h"
 #include "xla/service/gpu/dense_data_intermediate.pb.h"
 #include "xla/service/gpu/gpu_executable.pb.h"

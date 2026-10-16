@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/convolution_filter_thunk.pb.h"
 #include "xla/backends/gpu/runtime/copy_thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
-#include "xla/service/buffer_assignment.pb.h"
+#include "xla/service/buffer_assignment/buffer_assignment.pb.h"
 #include "xla/service/shaped_slice.pb.h"
 
 namespace xla::gpu {

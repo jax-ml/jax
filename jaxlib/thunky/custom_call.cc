@@ -28,7 +28,7 @@ limitations under the License.
 #include "xla/ffi/attributes.h"
 #include "xla/ffi/ffi.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/buffer_assignment.h"
+#include "xla/service/buffer_assignment/buffer_assignment.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/shape_util.h"
 

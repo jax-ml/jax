@@ -30,8 +30,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_proto_deserialization.h"
-#include "xla/service/buffer_assignment.h"
-#include "xla/service/buffer_assignment.pb.h"
+#include "xla/service/buffer_assignment/buffer_assignment.h"
+#include "xla/service/buffer_assignment/buffer_assignment.pb.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/stream_executor/device_description.h"
 
