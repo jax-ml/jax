@@ -960,7 +960,10 @@ def _check_block_mappings(
     )
     if memory_space == tpu_core.MemorySpace.SMEM and bm.has_trivial_window():
       continue
-    if memory_space == tpu_core.MemorySpace.SEMAPHORE:
+    if (
+        tpu_core.unwrap_core_memory_space(memory_space)
+        == tpu_core.MemorySpace.SEMAPHORE
+    ):
       continue
 
     def err_details():
@@ -1189,10 +1192,11 @@ def lower_jaxpr_into_pipelined_module(
       tpu_memory_space = tpu_core.memory_space_to_tpu_memory_space(
           block_memory_space, kernel_type
       )
+      inner_tpu_ms = tpu_core.unwrap_core_memory_space(tpu_memory_space)
       if (
           tpu_memory_space is ANY
-          or tpu_memory_space == tpu_core.MemorySpace.HBM
-          or tpu_memory_space == tpu_core.MemorySpace.SEMAPHORE
+          or inner_tpu_ms == tpu_core.MemorySpace.HBM
+          or inner_tpu_ms == tpu_core.MemorySpace.SEMAPHORE
       ):
         # We checked above that the block does not require windowing.
         window_params.append(ir.DictAttr.get())
@@ -1541,10 +1545,11 @@ def lower_jaxpr_into_unpipelined_module(
         tpu_core.CoreType.SC_SCALAR_SUBCORE,
         tpu_core.CoreType.SC_VECTOR_SUBCORE,
     )
+    inner_tpu_ms = tpu_core.unwrap_core_memory_space(tpu_memory_space)
     if not is_sc and (
         tpu_memory_space is ANY
-        or tpu_memory_space == tpu_core.MemorySpace.HBM
-        or tpu_memory_space == SEMAPHORE
+        or inner_tpu_ms == tpu_core.MemorySpace.HBM
+        or inner_tpu_ms == SEMAPHORE
     ):
       window_params.append(ir.DictAttr.get())
       continue
@@ -5538,7 +5543,9 @@ def _dma_start_lowering_rule(
     device_id_type: primitives.DeviceIdType,
     priority: int,
     add: bool,
+    _unsafe_no_write_effect: bool = False,
 ):
+  del _unsafe_no_write_effect
   if add:
     raise NotImplementedError("DMA with add=True is not supported.")
   src_ref, dst_ref, sem, src_sem, device_id = _dma_unflatten(tree, args)
@@ -5594,7 +5601,9 @@ def _dma_start_lowering_rule(
 @register_lowering_rule(tpu_primitives.dma_wait_p)
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: primitives.DeviceIdType,
-                            is_wait_send: bool = False):
+                            is_wait_send: bool = False,
+                            _unsafe_no_write_effect: bool = False):
+  del _unsafe_no_write_effect
   src, dst, sem, src_sem, device_id = _dma_unflatten(tree, args)
   if is_wait_send and device_id is None:
     raise NotImplementedError(
