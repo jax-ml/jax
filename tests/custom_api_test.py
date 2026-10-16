@@ -1468,6 +1468,49 @@ class CustomJVPTest(jtu.JaxTestCase):
     x = jnp.arange(3.0)
     jax.jvp(jax.vmap(jax.jit(f)), (x,), (x,))  # doesn't crash
 
+  def test_zero_cotangents_stay_symbolic(self):
+    @jax.custom_jvp
+    def f(x):
+      return x, jnp.sqrt(x)
+    f.defjvp(lambda p, t: (f(*p), (t[0], t[0] / (2 * jnp.sqrt(p[0])))))
+    self.assertAllClose(jax.grad(lambda x: f(x)[0])(0.), 1.)
+
+    @jax.custom_jvp
+    def g(x, y):
+      return x, y
+    g.defjvp(lambda p, t: (g(*p), t))
+    self.assertAllClose(jax.grad(lambda x: g(x, jnp.sqrt(x))[0])(0.), 1.)
+
+    @jax.custom_jvp
+    def h(x, y):
+      return x, y
+    h.defjvp(lambda p, t: (h(*p), h(*t)))
+    self.assertAllClose(jax.grad(lambda x: h(x, jnp.sqrt(x))[0])(0.), 1.)
+
+  def test_zero_cotangent_for_custom_pytree_input(self):
+    @jax.tree_util.register_pytree_node_class
+    class CheckingNode:
+      def __init__(self, x):
+        self.x = x
+        _ = self.x.shape
+
+      def tree_flatten(self):
+        return (self.x,), None
+
+      @classmethod
+      def tree_unflatten(cls, _, children):
+        return cls(*children)
+
+    @jax.custom_jvp
+    def f(node, y):
+      return node.x * 2., y * 3.
+    f.defjvp(lambda p, t: (f(*p), (t[0].x * 2., t[1] * 3.)))
+
+    g_node, g_y = jax.grad(lambda n, y: f(n, y)[1], argnums=(0, 1))(
+        CheckingNode(jnp.array(1.)), 1.)
+    self.assertAllClose(g_node.x, 0.)
+    self.assertAllClose(g_y, 3.)
+
   def test_pretty_print(self):
     @jax.custom_jvp
     def f(x):
