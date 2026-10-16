@@ -125,9 +125,13 @@ class CompilerParams:
     profile_dir: The directory to which profiling traces will be written to.
     profile_trace_scope: The scope at which traces are collected (WARP or
       WARPGROUP).
-    profile_bounds_check: If True, profiler events past profile_space are
+    profile_bounds_check: If True, profiler events exceeding ``profile_space`` are
       dropped (the trace is truncated) instead of corrupting SMEM, at the cost
-      of a slightly higher per-event profiling overhead.
+      of a slightly higher per-event profiling overhead. If False, profiler events
+      are written without bounds checking. To avoid possible SMEM errors during
+      profiling, it is advised to reduce the grid size or other related parameters
+      to collect fewer profiler events. Defaults to False, to avoid the overhead
+      related from bounds checking which may distort performance measurements.
     skip_device_barrier: If True, skips the cross-device barrier before kernel
       launch. Improper use of this flag can lead to race conditions. !!!Use with
       caution!!! Defaults to False.
