@@ -534,6 +534,7 @@ def source_info_to_location(
       loc = ir.Location.file(get_canonical_source_file(frame.file_name,
                                                        ctx.traceback_caches),
                              frame.start_line, frame.start_column)
+      loc = ir.Location.name(frame.function_name, childLoc=loc)
   if primitive is None:
     if name_stack.stack:
       loc = ir.Location.name(str(name_stack), childLoc=loc)
