@@ -12091,6 +12091,217 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ' update has unreduced or reduced axes'):
       f_vma_err(u1, u2)
 
+  @parameterized.named_parameters([
+      ('max', jax.lax.reduce_max, jnp.max, jax.lax.pmax, UnreducedKind.max),
+      ('min', jax.lax.reduce_min, jnp.min, jax.lax.pmin, UnreducedKind.min),
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unreduced_max_min_broadcast_in_dim(
+      self, lax_op, jnp_op, p_op, u_kind, mesh):
+    np_inp = np.arange(32, dtype=np.float32).reshape(4, 2, 4)
+    arr = jax.device_put(np_inp, P('x', 'y', None))
+    u_spec = P('y', None, unreduced={'x'}, unreduced_kind=u_kind)
+    expected_spec = P(None, 'y', None, unreduced={'x'}, unreduced_kind=u_kind)
+    ref = jnp_op(np_inp, axis=0)
+
+    @jax.jit
+    def make_unreduced(x):
+      return lax_op(x, axes=(0,), out_sharding=u_spec)
+
+    @jax.jit
+    def bcast(x):
+      return jnp.broadcast_to(x, (3, 2, 4))
+
+    @jax.jit
+    def bcast_with_sharding(x):
+      return jax.lax.broadcast_in_dim(
+          x, (3, 2, 4), (1, 2), out_sharding=expected_spec)
+
+    u = make_unreduced(arr)
+
+    out = bcast(u)
+    self.assertEqual(out.sharding, NamedSharding(mesh, expected_spec))
+    self.assertArraysEqual(
+        jax.reshard(out, P(None, 'y', None)), jnp.broadcast_to(ref, (3, 2, 4)))
+
+    out_with_sharding = bcast_with_sharding(u)
+    self.assertEqual(
+        out_with_sharding.sharding, NamedSharding(mesh, expected_spec))
+    self.assertArraysEqual(
+        jax.reshard(out_with_sharding, P(None, 'y', None)),
+        jnp.broadcast_to(ref, (3, 2, 4)))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'out_sharding passed to broadcast_in_dim must have the same'
+        ' unreduced_kind as operand'):
+      jax.lax.broadcast_in_dim(
+          u, (3, 2, 4), (1, 2),
+          out_sharding=P(None, 'y', None, unreduced={'x'},
+                         unreduced_kind=UnreducedKind.sum))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'out_sharding passed to broadcast_in_dim must be unreduced over the'
+        ' same mesh axes as operand'):
+      jax.lax.broadcast_in_dim(
+          u, (3, 2, 4), (1, 2), out_sharding=P(None, 'y', None))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(None, 'y', None))
+    def manual_fn(x):
+      b = jnp.broadcast_to(x, (3, 1, 4))
+      self.assertEqual(b.aval.mat.unreduced, frozenset({'x'}))
+      self.assertIs(b.aval.mat.unreduced_kind, u_kind)
+      return p_op(b, 'x')
+
+    self.assertArraysEqual(manual_fn(u), jnp.broadcast_to(ref, (3, 2, 4)))
+
+  @parameterized.named_parameters([
+      ('max', jax.lax.reduce_max, jnp.max, jax.lax.max, jnp.maximum,
+       jax.lax.pmax, UnreducedKind.max),
+      ('min', jax.lax.reduce_min, jnp.min, jax.lax.min, jnp.minimum,
+       jax.lax.pmin, UnreducedKind.min),
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unreduced_max_min_elementwise_max_min(
+      self, reduce_lax_op, reduce_jnp_op, binary_lax_op, binary_jnp_op, p_op,
+      u_kind, mesh):
+    np_inp1 = np.arange(32, dtype=np.float32).reshape(4, 2, 4)
+    np_inp2 = (np.arange(32, dtype=np.float32) * -2.0 + 15.0).reshape(4, 2, 4)
+    arr1 = jax.device_put(np_inp1, P('x', 'y', None))
+    arr2 = jax.device_put(np_inp2, P('x', 'y', None))
+    u_spec = P('y', None, unreduced={'x'}, unreduced_kind=u_kind)
+
+    @jax.jit
+    def make_unreduced(x):
+      return reduce_lax_op(x, axes=(0,), out_sharding=u_spec)
+
+    u1 = make_unreduced(arr1)
+    u2 = make_unreduced(arr2)
+    ref1 = reduce_jnp_op(np_inp1, axis=0)
+    ref2 = reduce_jnp_op(np_inp2, axis=0)
+
+    out = jax.jit(binary_jnp_op)(u1, u2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, u_spec))
+    self.assertArraysEqual(
+        jax.reshard(out, P('y', None)), binary_jnp_op(ref1, ref2))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('y', None))
+    def manual_fn(x, y):
+      m = binary_lax_op(x, y)
+      self.assertEqual(m.aval.mat.unreduced, frozenset({'x'}))
+      self.assertIs(m.aval.mat.unreduced_kind, u_kind)
+      return p_op(m, 'x')
+
+    self.assertArraysEqual(manual_fn(u1, u2), binary_jnp_op(ref1, ref2))
+
+    other_kind = (
+        UnreducedKind.min if u_kind is UnreducedKind.max else UnreducedKind.max)
+    other_reduce = (
+        jax.lax.reduce_min if u_kind is UnreducedKind.max else jax.lax.reduce_max)
+
+    @jax.jit
+    def make_other_unreduced(x):
+      return other_reduce(
+          x, axes=(0,),
+          out_sharding=P('y', None, unreduced={'x'}, unreduced_kind=other_kind))
+
+    u_other = make_other_unreduced(arr2)
+    with self.assertRaisesRegex(ValueError, 'Expected unreduced_kind='):
+      jax.jit(binary_lax_op)(u1, u_other)
+
+    non_unreduced = jax.device_put(ref2, P('y', None))
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, 'lhs is unreduced while rhs is not'):
+      jax.jit(binary_lax_op)(u1, non_unreduced)
+
+  @parameterized.named_parameters([
+      ('max', jax.lax.reduce_max, jnp.max, jax.lax.pmax, UnreducedKind.max),
+      ('min', jax.lax.reduce_min, jnp.min, jax.lax.pmin, UnreducedKind.min),
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unreduced_max_min_unstack(
+      self, lax_op, jnp_op, p_op, u_kind, mesh):
+    np_inp = np.arange(32, dtype=np.float32).reshape(4, 2, 4)
+    arr = jax.device_put(np_inp, P('x', 'y', None))
+    u_spec = P('y', None, unreduced={'x'}, unreduced_kind=u_kind)
+    ref = jnp_op(np_inp, axis=0)
+
+    @jax.jit
+    def make_unreduced(x):
+      return lax_op(x, axes=(0,), out_sharding=u_spec)
+
+    @jax.jit
+    def unstack_fn(x):
+      return jnp.unstack(x, axis=1)
+
+    u = make_unreduced(arr)
+    outs = unstack_fn(u)
+    expected_spec = P('y', unreduced={'x'}, unreduced_kind=u_kind)
+    ref_outs = jnp.unstack(ref, axis=1)
+    self.assertLen(outs, 4)
+    for o, r in zip(outs, ref_outs):
+      self.assertEqual(o.sharding, NamedSharding(mesh, expected_spec))
+      self.assertArraysEqual(jax.reshard(o, P('y')), r)
+
+    @jax.jit
+    @jax.shard_map(out_specs=(P('y'),) * 4)
+    def manual_fn(x):
+      us = jnp.unstack(x, axis=1)
+      res = []
+      for item in us:
+        self.assertEqual(item.aval.mat.unreduced, frozenset({'x'}))
+        self.assertIs(item.aval.mat.unreduced_kind, u_kind)
+        res.append(p_op(item, 'x'))
+      return tuple(res)
+
+    for o, r in zip(manual_fn(u), ref_outs):
+      self.assertArraysEqual(o, r)
+
+  @parameterized.named_parameters([
+      ('max', jax.lax.reduce_max, jnp.max, jax.lax.pmax, UnreducedKind.max),
+      ('min', jax.lax.reduce_min, jnp.min, jax.lax.pmin, UnreducedKind.min),
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unreduced_max_min_split(
+      self, lax_op, jnp_op, p_op, u_kind, mesh):
+    np_inp = np.arange(32, dtype=np.float32).reshape(4, 2, 4)
+    arr = jax.device_put(np_inp, P('x', 'y', None))
+    u_spec = P('y', None, unreduced={'x'}, unreduced_kind=u_kind)
+    ref = jnp_op(np_inp, axis=0)
+
+    @jax.jit
+    def make_unreduced(x):
+      return lax_op(x, axes=(0,), out_sharding=u_spec)
+
+    @jax.jit
+    def split_fn(x):
+      return jax.lax.split(x, sizes=(1, 3), axis=1)
+
+    u = make_unreduced(arr)
+    outs = split_fn(u)
+    ref_outs = jax.lax.split(ref, sizes=(1, 3), axis=1)
+    self.assertLen(outs, 2)
+    for o, r in zip(outs, ref_outs):
+      self.assertEqual(o.sharding, NamedSharding(mesh, u_spec))
+      self.assertArraysEqual(jax.reshard(o, P('y', None)), r)
+
+    @jax.jit
+    @jax.shard_map(out_specs=(P('y', None), P('y', None)))
+    def manual_fn(x):
+      sp = jax.lax.split(x, sizes=(1, 3), axis=1)
+      res = []
+      for item in sp:
+        self.assertEqual(item.aval.mat.unreduced, frozenset({'x'}))
+        self.assertIs(item.aval.mat.unreduced_kind, u_kind)
+        res.append(p_op(item, 'x'))
+      return tuple(res)
+
+    for o, r in zip(manual_fn(u), ref_outs):
+      self.assertArraysEqual(o, r)
+
   @jtu.with_explicit_mesh((1, 2), ('x', 'y'))
   def test_reshape_preserve_singleton_dim_spec(self, mesh):
     # https://github.com/jax-ml/jax/issues/39309

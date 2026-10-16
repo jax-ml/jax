@@ -5479,9 +5479,9 @@ def _add_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
 
-def _add_ur_rule(name, x, y):
+def _add_ur_rule(name, u_kind, x, y):
   out_reduced = default_nary_reduced_rule(x, y)
-  (x_ur, _), (y_ur, _) = getu(x), getu(y)
+  (x_ur, _), (y_ur, _) = getu(x, u_kind), getu(y, u_kind)
   if x_ur and y_ur:
     if x_ur != y_ur:
       raise core.ShardingTypeError(
@@ -5500,11 +5500,11 @@ def _add_ur_rule(name, x, y):
         f' reduce {lhs_str} via `reshard` before calling `{name}`.')
   else:
     out_unreduced = frozenset()
-  kind = UnreducedKind.sum if out_unreduced else None
+  kind = u_kind if out_unreduced else None
   return out_unreduced, out_reduced, kind
 
 add_p: Primitive = naryop(input_dtype, [_num, _num], 'add',
-                          ur_rule=partial(_add_ur_rule, 'add'))
+                          ur_rule=partial(_add_ur_rule, 'add', UnreducedKind.sum))
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.add))
@@ -5536,7 +5536,7 @@ def _sub_transpose(t, x, y):
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, neg(t))]
 
 sub_p = standard_naryop([_num, _num], 'sub',
-                        ur_rule=partial(_add_ur_rule, 'sub'))
+                        ur_rule=partial(_add_ur_rule, 'sub', UnreducedKind.sum))
 ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
 mlir.register_lowering(sub_p, partial(_nary_lower_hlo, hlo.subtract))
@@ -5639,13 +5639,15 @@ ad.defjvp(
     lambda g, x, y: mul(neg(g), mul(sign(div(x, y)), floor(abs(div(x, y))))))
 mlir.register_lowering(rem_p, partial(_nary_lower_hlo, hlo.remainder))
 
-max_p: core.Primitive = standard_naryop([_any, _any], 'max')
+max_p: core.Primitive = standard_naryop(
+    [_any, _any], 'max', ur_rule=partial(_add_ur_rule, 'max', UnreducedKind.max))
 ad.defjvp(max_p,
           lambda g, x, y: mul(g, _balanced_cmp(x, y)),
           lambda g, x, y: mul(g, _balanced_cmp(y, x)))
 mlir.register_lowering(max_p, partial(_nary_lower_hlo, mlir.max_hlo))
 
-min_p: core.Primitive = standard_naryop([_any, _any], 'min')
+min_p: core.Primitive = standard_naryop(
+    [_any, _any], 'min', ur_rule=partial(_add_ur_rule, 'min', UnreducedKind.min))
 ad.defjvp(min_p,
           lambda g, x, y: mul(g, _balanced_cmp(y, x)),
           lambda g, x, y: mul(g, _balanced_cmp(x, y)))
@@ -7507,15 +7509,25 @@ def _broadcast_in_dim_unreduced_rule(operand, sharding):
   if (sharding is not None and sharding.mesh.explicit_axes and
       sharding.mesh.are_all_axes_explicit_or_manual):
     assert not operand.mat.unreduced
-    out = sharding.spec.unreduced
-    if out and sharding.spec.unreduced_kind is not UnreducedKind.sum:
+    if operand.sharding.spec.unreduced:
+      if operand.sharding.spec.unreduced != sharding.spec.unreduced:
+        raise ValueError(
+            'out_sharding passed to broadcast_in_dim must be unreduced over'
+            f' the same mesh axes as operand. Got out_sharding:'
+            f' {sharding.spec} and operand type: {operand.str_short(True)}')
+      if operand.sharding.spec.unreduced_kind != sharding.spec.unreduced_kind:
+        raise ValueError(
+            'out_sharding passed to broadcast_in_dim must have the same'
+            f' unreduced_kind as operand. Got out_sharding: {sharding.spec}'
+            f' and operand type: {operand.str_short(True)}')
+    elif (sharding.spec.unreduced and
+          sharding.spec.unreduced_kind is not UnreducedKind.sum):
       raise ValueError(
           '`out_sharding` passed to `broadcast_in_dim` can only contain'
-          f' unreduced of kind `sum`. Got out_sharding={sharding}')
-  else:
-    out, _ = getu(operand)
-  kind = UnreducedKind.sum if out else None
-  return out, kind
+          f' unreduced of kind `sum` when operand is not unreduced.'
+          f' Got out_sharding={sharding}')
+    return sharding.spec.unreduced, sharding.spec.unreduced_kind
+  return getu(operand, None)
 
 def _broadcast_in_dim_reduced_rule(operand, sharding):
   if (sharding is not None and sharding.mesh.explicit_axes and
@@ -8010,13 +8022,13 @@ def _unstack_weak_type_rule(operand, *, axis):
   return (operand.weak_type,) * num_results
 
 def _unstack_sharding_rule(operand, *, axis):
-  if operand.sharding.spec[axis] is not None:
+  if operand.sharding.spec.partitions[axis] is not None:
     raise core.ShardingTypeError(
         f"unstack operand cannot be sharded on the unstacking axis {axis}. "
         f"Got operand type={operand.str_short(True)}"
     )
   out_shapes = _unstack_shape_rule(operand, axis=axis)
-  new_spec = list(operand.sharding.spec)
+  new_spec = list(operand.sharding.spec.partitions)
   new_spec.pop(axis)
   out_sharding = operand.sharding.update(
     spec=operand.sharding.spec.update(partitions=tuple(new_spec)))
@@ -8027,8 +8039,7 @@ def _unstack_vma_rule(operand, *, axis):
   return [out_vma] * operand.shape[axis]
 
 def _unstack_ur_rule(operand, *, axis):
-  out_u, _ = getu(operand)
-  kind = UnreducedKind.sum if out_u else None
+  out_u, kind = getu(operand, None)
   return ([out_u] * operand.shape[axis], [getr(operand)] * operand.shape[axis],
           [kind] * operand.shape[axis])
 
@@ -8153,8 +8164,7 @@ def _split_sharding_rule(operand, *, sizes, axis):
 
 def _split_ur_rule(operand, *, sizes, axis):
   out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
-  out_u, _ = getu(operand)
-  kind = UnreducedKind.sum if out_u else None
+  out_u, kind = getu(operand, None)
   return ([out_u] * len(out_shapes), [getr(operand)] * len(out_shapes),
           [kind] * len(out_shapes))
 
