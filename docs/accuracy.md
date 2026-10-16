@@ -87,7 +87,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.sin` | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
-| {func}`~jax.lax.sinh` | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.sinh` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.sqrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.square` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.tan` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
@@ -136,7 +136,7 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.sin` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
-| {func}`~jax.lax.sinh` | 1.0 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.sinh` | 1.0 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.sqrt` | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.square` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.tan` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
@@ -187,7 +187,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.reciprocal` | 0.5 | 1.0 | 198.0 | 40.0 | 1.5 | 1.5 | |
 | {func}`~jax.lax.rsqrt` | 1.0 | 2.0 | 2.5 | 2.5 | 1.5 | 1.0 | |
 | {func}`~jax.lax.sin` | 0.5 | 1.5 | 3.5 | 3.5 | 3.5 | 3.5 | |
-| {func}`~jax.lax.sinh` | 25.0 | 3.0 | 1794.0 | 1332.5 | 59.0 | 59.5 | |
+| {func}`~jax.lax.sinh` | 1.0 | 3.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.sqrt` | 0.5 | 1.0 | 3.0 | 3.0 | 2.0 | 2.0 | |
 | {func}`~jax.lax.square` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | |
 | {func}`~jax.lax.tan` | 0.5 | 3.5 | 6.5 | 7.0 | 5.5 | 5.5 | |
@@ -242,7 +242,7 @@ these are empirical bounds.
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 1.5 | 1.5 |
 | {func}`~jax.lax.sin` | 0.5 | 2.5 |
-| {func}`~jax.lax.sinh` | 496.0 | 2.5 |
+| {func}`~jax.lax.sinh` | 1.5 | 2.5 |
 | {func}`~jax.lax.sqrt` | 0.5 | 0.5 |
 | {func}`~jax.lax.square` | 0.5 | 0.5 |
 | {func}`~jax.lax.tan` | 0.5 | 2.5 |
