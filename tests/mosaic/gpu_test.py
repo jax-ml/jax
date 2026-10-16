@@ -8427,6 +8427,51 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       red = jax.lax.max(red, acc)
     self.assertArraysEqual(kernel(), red)
 
+  @parameterized.product(
+      kind=("Add", "Max", "Min"),
+      reverse=(False, True),
+  )
+  def test_scan(self, kind, reverse):
+    shape = (128, 64)
+    dtype = jnp.int32
+
+    def body(ctx, src_ref, dst_ref, scratch):
+      del ctx, scratch
+      src = mgpu_dialect.vector_load(src_ref, optimized=False)
+      src = mgpu_dialect.layout_cast(
+          src, layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+      )
+      result = mgpu_dialect.scan(
+          src,
+          kind=getattr(mgpu_dialect.ScanKind, kind),
+          dimension=1,
+          reverse=reverse,
+          offset=0,
+          scratch_size=0,
+      )
+      mgpu_dialect.vector_store(result, dst_ref, optimized=False)
+
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(jax.ShapeDtypeStruct(shape, dtype),),
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        smem_scratch_shape=[],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+    x = self.prng.integers(-100, 100, shape).astype(dtype)
+    ref = {
+        "Add": np.cumsum,
+        "Max": np.maximum.accumulate,
+        "Min": np.minimum.accumulate,
+    }[kind]
+    if reverse:
+      expected = ref(x[:, ::-1], axis=1)[:, ::-1]
+    else:
+      expected = ref(x, axis=1)
+    np.testing.assert_array_equal(kernel(x), expected.astype(dtype))
+
   @parameterized.parameters(fa.WGMMA_ROW_LAYOUT, fa.WGMMA_COL_LAYOUT)
   def test_wgmma_row_col_store(self, in_layout):
     element_value = 42.0
