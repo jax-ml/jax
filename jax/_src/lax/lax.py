@@ -10545,14 +10545,16 @@ empty_p = core.Primitive('empty')
 empty_p.def_impl(partial(dispatch.apply_primitive, empty_p))
 
 def _empty_abstract_eval(*, shape, dtype, out_sharding):
+  if out_sharding is None:
+    out_sharding = core.get_cur_mesh_sharding()
   return core.ShapedArray(shape, dtype, sharding=out_sharding)
 empty_p.def_abstract_eval(_empty_abstract_eval)
+ad.defjvp_zero(empty_p)
 
 def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding):
   if not core.is_constant_shape(shape):
     return _empty_lower(ctx, shape=shape, dtype=dtype, out_sharding=out_sharding)
-  dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
+  aval_out, = ctx.avals_out
   phys_aval = core.physical_aval(aval_out)
   custom_call_op = hlo.CustomCallOp(
       [mlir.ir.RankedTensorType.get(
@@ -10568,8 +10570,7 @@ mlir.register_lowering(empty_p, _empty_custom_call_lower, 'tpu')
 mlir.register_lowering(empty_p, _empty_custom_call_lower, 'gpu')
 
 def _empty_lower(ctx, *, shape, dtype, out_sharding):
-  dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
+  aval_out, = ctx.avals_out
   phys_aval = core.physical_aval(aval_out)
   out = mlir.ir_constant(np.zeros((), phys_aval.dtype))
   out = mlir.broadcast_in_dim(ctx, out, phys_aval, broadcast_dimensions=[])
@@ -10586,6 +10587,7 @@ dispatch.simple_impl(empty2_p)
 def _empty2_abstract_eval(*, dtype, memory_space):
   return core.ShapedArray((), dtype, memory_space=memory_space)
 empty2_p.def_abstract_eval(_empty2_abstract_eval)
+ad.defjvp_zero(empty2_p)
 
 def _empty2_lower(ctx, *, dtype, memory_space):
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
