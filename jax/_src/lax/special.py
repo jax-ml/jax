@@ -848,16 +848,29 @@ erf_inv_p = standard_unop(_float, 'erf_inv')
 ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
                                             mul(g, exp(square(ans)))))
 
-def _erf_inv_impl(x: Array) -> Array:
+def erf_inv_impl(
+    x: Array, *, use_optimization_barrier: bool = True
+) -> Array:
   if x.dtype not in (np.float32, np.float64):
-    return convert_element_type(_erf_inv_impl(convert_element_type(x, np.float32)), x.dtype)
+    return convert_element_type(
+        erf_inv_impl(
+            convert_element_type(x, np.float32),
+            use_optimization_barrier=use_optimization_barrier,
+        ),
+        x.dtype,
+    )
   ax = abs(x)
   one = _const(x, 1.0)
   out_of_bounds = bitwise_or(gt(ax, one), _isnan(x))
   is_one = eq(ax, one)
   x_safe = select(bitwise_or(out_of_bounds, is_one), full_like(x, 0.0), x)
   q_safe = sub(one, abs(x_safe))
-  res = erf_inv_core(x_safe, q_safe, has_far_tail=False)
+  res = erf_inv_core(
+      x_safe,
+      q_safe,
+      has_far_tail=False,
+      use_optimization_barrier=use_optimization_barrier,
+  )
   return select(
       out_of_bounds,
       full_like(x, np.nan),
@@ -866,7 +879,7 @@ def _erf_inv_impl(x: Array) -> Array:
 
 def _erf_inv_lowering(ctx, x):
   if config.jax_accurate_erf_inv.value:
-    return mlir.lower_fun(_erf_inv_impl, multiple_results=False)(ctx, x)
+    return mlir.lower_fun(erf_inv_impl, multiple_results=False)(ctx, x)
   return _nary_lower_hlo(chlo.erf_inv, ctx, x)
 
 mlir.register_lowering(erf_inv_p, _erf_inv_lowering)

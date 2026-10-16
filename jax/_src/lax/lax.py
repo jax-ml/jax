@@ -5294,7 +5294,7 @@ def _polynomial_transpose(ct, x, *coeffs, unroll=None):
 
 ad.primitive_transposes[polynomial_p] = _polynomial_transpose
 
-def _polynomial_lower(x, *coeffs, unroll=None):
+def polynomial_lower(x, *coeffs, unroll=None):
   unroll_threshold = 8 if unroll is None else unroll
   if len(coeffs) <= unroll_threshold:
     acc = coeffs[-1]
@@ -5317,7 +5317,7 @@ def _polynomial_lower(x, *coeffs, unroll=None):
 
 mlir.register_lowering(
     polynomial_p,
-    mlir.lower_fun(_polynomial_lower, multiple_results=False),
+    mlir.lower_fun(polynomial_lower, multiple_results=False),
 )
 
 def _pow_dtype_rule(x, y):

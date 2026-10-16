@@ -25,6 +25,7 @@ from jax._src import dtypes
 from jax._src import numpy as jnp
 from jax._src import typing as jax_typing
 from jax._src.lax import lax
+from jax._src.lax import special
 from jax._src.util import split_list
 import numpy as np
 
@@ -261,10 +262,7 @@ def _erf_inv_32_lowering_helper(x):
     0.00943887047,   1.00167406,     2.83297682,
   ]
 
-  if config.jax_accurate_erf_inv.value:
-    w = -jnp.log((1 - x) * (1 + x))
-  else:
-    w = -jnp.log1p(x * -x)
+  w = -jnp.log1p(x * -x)
   w_lt_5 = w < 5.0
 
   w = jnp.where(w_lt_5, w - 2.5, jnp.sqrt(w) - 3.0)
@@ -319,10 +317,7 @@ def _erf_inv_64_lowering_helper(x):
     4.8499064014085844221,
   ]  # should add "as jnp.float64 array"?
 
-  if config.jax_accurate_erf_inv.value:
-    w = -jnp.log((1 - x) * (1 + x))
-  else:
-    w = -jnp.log1p(x * -x)
+  w = -jnp.log1p(x * -x)
   w_lt_625 = w < 6.25
   w_lt_16 = w < 16.0
 
@@ -350,6 +345,8 @@ def _erf_inv_64_lowering_helper(x):
 
 
 def erf_inv_lowering_helper(x):
+  if config.jax_accurate_erf_inv.value:
+    return special.erf_inv_impl(x, use_optimization_barrier=False)
   if x.dtype == jnp.float32:
     return _erf_inv_32_lowering_helper(x)
   if x.dtype == jnp.float64:
@@ -369,6 +366,20 @@ def sign_lowering_helper(x):
     return jnp.where(jnp.isnan(x), jnp.nan, out)
 
   raise NotImplementedError(f"sign_lowering_helper not implemented for {x.dtype}")
+
+
+def select_n_lowering_helper(which, *cases):
+  def _select(offset, cases):
+    if len(cases) == 1:
+      return cases[0]
+    mid = len(cases) // 2
+    return lax.select(
+        which < offset + mid,
+        _select(offset, cases[:mid]),
+        _select(offset + mid, cases[mid:]),
+    )
+
+  return _select(0, cases)
 
 
 # based on https://github.com/openxla/xla/blob/a7a09d56c3599123f8148bbf3e44c9ebc04624b9/xla/mlir_hlo/mhlo/transforms/chlo_legalize_to_hlo/chlo_legalize_to_hlo.cc#L1339-L1422

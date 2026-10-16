@@ -19,8 +19,8 @@ from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax.lax import (
     AccuracyMode, _const, asarray, bitcast_convert_type, clamp,
     convert_element_type, exp, full_like, log, max as lax_max, min as lax_min,
-    neg, optimization_barrier, polynomial, reciprocal, select, select_n, sqrt,
-    square,
+    neg, optimization_barrier, polynomial, reciprocal, select, select_n,
+    shift_left, sqrt, square,
 )
 from jax._src.typing import Array
 import numpy as np
@@ -1054,7 +1054,7 @@ def _half_mantissa(x: Array) -> Array:
   elif x.dtype == np.float64:
     x_u = bitcast_convert_type(x, np.uint64)
     return bitcast_convert_type(
-        x_u & _const(x_u, 0xFFFFFFFFF8000000), np.float64
+        x_u & shift_left(_const(x_u, 0x1FFFFFFFFF), _const(x_u, 27)), np.float64
     )
   else:
     raise TypeError(f"Unsupported dtype for _half_mantissa: {x.dtype}")
@@ -1066,6 +1066,7 @@ def erf_inv_core(
     *,
     has_far_tail: bool = True,
     is_ndtri: bool = False,
+    use_optimization_barrier: bool = True,
 ) -> Array:
   """Evaluates `erfinv(x)` (or `sqrt(2) * erfinv(x)` when `is_ndtri=True`).
 
@@ -1136,6 +1137,9 @@ def erf_inv_core(
   # Add the two small parts (`k_h * z_l` and `poly`) before adding them to the
   # exact main term `k_h * z_h`. Use `optimization_barrier` so XLA does not
   # regroup the sum into `(k_h * z_h + k_h * z_l) + poly` and round away `z_l`.
-  tail_mag = k_h * z_h + optimization_barrier(k_h * z_l + poly)
+  rem = k_h * z_l + poly
+  if use_optimization_barrier:
+    rem = optimization_barrier(rem)
+  tail_mag = k_h * z_h + rem
   sign_x = select(x < 0.0, full_like(x, -1.0), full_like(x, 1.0))
   return select(conds[0], x * poly, sign_x * tail_mag)

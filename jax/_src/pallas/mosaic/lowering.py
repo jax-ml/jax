@@ -4514,7 +4514,9 @@ def _not_lowering_rule(ctx: LoweringRuleContext, x):
 @register_lowering_rule(lax.select_n_p, kernel_types=[*tpu_core.CoreType])
 def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, *args):
   if len(args) > 1:
-    raise NotImplementedError("select_n only supported with <= 2 arguments")
+    return lower_fun(pallas_utils.select_n_lowering_helper)(
+        ctx, pred, x, *args
+    )
   pred_aval, x_aval = ctx.avals_in[:2]
   if pred_aval.dtype != np.dtype(np.bool_):
     lower_ctx = LoweringRuleContext(
@@ -5131,6 +5133,15 @@ def _erf_inv_lowering_rule(ctx: LoweringRuleContext, x):
   return lower_fun(
       pallas_utils.erf_inv_lowering_helper,
   )(ctx, x)
+
+
+@register_lowering_rule(lax.polynomial_p, kernel_types=[*tpu_core.CoreType])
+def _polynomial_lowering_rule(
+    ctx: LoweringRuleContext, x, *coeffs, unroll=None
+):
+  return lower_fun(lax_internal.polynomial_lower)(
+      ctx, x, *coeffs, unroll=unroll
+  )
 
 
 @register_lowering_rule(primitives.reciprocal_p)
