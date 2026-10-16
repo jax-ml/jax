@@ -3004,7 +3004,8 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   operand_aval = typeof(operand)
   if (operand_aval.shape == shape and
       list(broadcast_dimensions) == list(range(operand_aval.ndim)) and
-      out_sharding is not None and operand_aval.sharding != out_sharding):
+      out_sharding is not None and operand_aval.sharding != out_sharding and
+      not out_sharding.spec.unreduced and not out_sharding.spec.reduced):
     return pjit.reshard(operand, out_sharding)
   return broadcast_in_dim_p.bind(
       operand, shape=tuple(shape),
@@ -5479,9 +5480,9 @@ def _add_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
 
-def _add_ur_rule(name, x, y):
+def _add_ur_rule(name, kind, x, y):
   out_reduced = default_nary_reduced_rule(x, y)
-  (x_ur, _), (y_ur, _) = getu(x), getu(y)
+  (x_ur, _), (y_ur, _) = getu(x, kind), getu(y, kind)
   if x_ur and y_ur:
     if x_ur != y_ur:
       raise core.ShardingTypeError(
@@ -5500,11 +5501,11 @@ def _add_ur_rule(name, x, y):
         f' reduce {lhs_str} via `reshard` before calling `{name}`.')
   else:
     out_unreduced = frozenset()
-  kind = UnreducedKind.sum if out_unreduced else None
-  return out_unreduced, out_reduced, kind
+  out_kind = kind if out_unreduced else None
+  return out_unreduced, out_reduced, out_kind
 
 add_p: Primitive = naryop(input_dtype, [_num, _num], 'add',
-                          ur_rule=partial(_add_ur_rule, 'add'))
+                          ur_rule=partial(_add_ur_rule, 'add', UnreducedKind.sum))
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.add))
@@ -5536,7 +5537,7 @@ def _sub_transpose(t, x, y):
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, neg(t))]
 
 sub_p = standard_naryop([_num, _num], 'sub',
-                        ur_rule=partial(_add_ur_rule, 'sub'))
+                        ur_rule=partial(_add_ur_rule, 'sub', UnreducedKind.sum))
 ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
 mlir.register_lowering(sub_p, partial(_nary_lower_hlo, hlo.subtract))
@@ -5639,13 +5640,17 @@ ad.defjvp(
     lambda g, x, y: mul(neg(g), mul(sign(div(x, y)), floor(abs(div(x, y))))))
 mlir.register_lowering(rem_p, partial(_nary_lower_hlo, hlo.remainder))
 
-max_p: core.Primitive = standard_naryop([_any, _any], 'max')
+max_p: core.Primitive = standard_naryop(
+    [_any, _any], 'max',
+    ur_rule=partial(_add_ur_rule, 'max', UnreducedKind.max))
 ad.defjvp(max_p,
           lambda g, x, y: mul(g, _balanced_cmp(x, y)),
           lambda g, x, y: mul(g, _balanced_cmp(y, x)))
 mlir.register_lowering(max_p, partial(_nary_lower_hlo, mlir.max_hlo))
 
-min_p: core.Primitive = standard_naryop([_any, _any], 'min')
+min_p: core.Primitive = standard_naryop(
+    [_any, _any], 'min',
+    ur_rule=partial(_add_ur_rule, 'min', UnreducedKind.min))
 ad.defjvp(min_p,
           lambda g, x, y: mul(g, _balanced_cmp(y, x)),
           lambda g, x, y: mul(g, _balanced_cmp(x, y)))
@@ -5768,18 +5773,13 @@ def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
 def _convert_element_type_ur_rule(operand, *, new_dtype, weak_type, sharding):
   if (sharding is not None and isinstance(sharding, NamedSharding) and
       sharding.spec.unreduced):
-    kind = sharding.spec.unreduced_kind
-    if kind is not None and kind is not UnreducedKind.sum:
-      raise ValueError(
-          '`sharding` passed to `convert_element_type` can only contain'
-          f' unreduced of kind `sum`. Got sharding={sharding}')
     unreduced = sharding.spec.unreduced
+    kind = sharding.spec.unreduced_kind
   else:
-    unreduced, _ = getu(operand)
+    unreduced, kind = getu(operand, None)
   reduced = (sharding.spec.reduced
              if sharding is not None and isinstance(sharding, NamedSharding)
              and sharding.spec.reduced else getr(operand))
-  kind = UnreducedKind.sum if unreduced else None
   return unreduced, reduced, kind
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
@@ -7508,13 +7508,19 @@ def _broadcast_in_dim_unreduced_rule(operand, sharding):
       sharding.mesh.are_all_axes_explicit_or_manual):
     assert not operand.mat.unreduced
     out = sharding.spec.unreduced
-    if out and sharding.spec.unreduced_kind is not UnreducedKind.sum:
-      raise ValueError(
-          '`out_sharding` passed to `broadcast_in_dim` can only contain'
-          f' unreduced of kind `sum`. Got out_sharding={sharding}')
+    kind = sharding.spec.unreduced_kind if out else None
+    op_u, op_k = getu(operand, None)
+    if (out - op_u) and operand.ndim != 0:
+      raise core.ShardingTypeError(
+          'broadcast_in_dim can only introduce new unreduced axes from a 0D'
+          f' scalar operand, got operand shape {operand.shape} with unreduced'
+          f' {op_u} and out_sharding {sharding}.')
+    if op_u and out and kind is not op_k:
+      raise core.ShardingTypeError(
+          'broadcast_in_dim cannot change unreduced_kind from'
+          f' {op_k} to {kind}.')
   else:
-    out, _ = getu(operand)
-  kind = UnreducedKind.sum if out else None
+    out, kind = getu(operand, None)
   return out, kind
 
 def _broadcast_in_dim_reduced_rule(operand, sharding):
@@ -8027,8 +8033,7 @@ def _unstack_vma_rule(operand, *, axis):
   return [out_vma] * operand.shape[axis]
 
 def _unstack_ur_rule(operand, *, axis):
-  out_u, _ = getu(operand)
-  kind = UnreducedKind.sum if out_u else None
+  out_u, kind = getu(operand, None)
   return ([out_u] * operand.shape[axis], [getr(operand)] * operand.shape[axis],
           [kind] * operand.shape[axis])
 
@@ -8153,8 +8158,7 @@ def _split_sharding_rule(operand, *, sizes, axis):
 
 def _split_ur_rule(operand, *, sizes, axis):
   out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
-  out_u, _ = getu(operand)
-  kind = UnreducedKind.sum if out_u else None
+  out_u, kind = getu(operand, None)
   return ([out_u] * len(out_shapes), [getr(operand)] * len(out_shapes),
           [kind] * len(out_shapes))
 
@@ -8886,8 +8890,7 @@ def _select_ur_rule(which, *cases):
     return frozenset(), frozenset(), None
   # which and all cases have the same sharding check is already done in select
   # sharding rule.
-  out_unreduced, _ = core.getu(non_empty_cs[0])
-  kind = UnreducedKind.sum if out_unreduced else None
+  out_unreduced, kind = core.getu(non_empty_cs[0], None)
   return out_unreduced, core.getr(non_empty_cs[0]), kind
 
 def _select_dtype_rule(which, *cases):
@@ -9520,8 +9523,7 @@ def _reduce_precision_memory_space_rule(operand, *, exponent_bits, mantissa_bits
   return operand.memory_space
 
 def _reduce_precision_ur_rule(operand, *, exponent_bits, mantissa_bits):
-  out_unreduced, _ = core.getu(operand)
-  kind = UnreducedKind.sum if out_unreduced else None
+  out_unreduced, kind = core.getu(operand, None)
   return out_unreduced, core.getr(operand), kind
 
 reduce_precision_p = standard_primitive(
