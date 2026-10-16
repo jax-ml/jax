@@ -605,7 +605,11 @@ def mma(
     b_scale_n_stride = b_scale.layout.cols_in_shape((b_scale.shape[0], 4), bitwidth=8)
   else:
     a_scale_m_stride = b_scale_n_stride = None
-  for mi, ni, ki in np.ndindex(m_groups, n_groups, k_groups):
+  # TODO: support larger K values on newer hardware
+  instr_k = (1 + is_sparse) * 8 * 32 // utils.bitwidth(mma_a_element_type)
+  for ki, k_step, mi, ni in np.ndindex(
+      k_groups, k_group_elems // instr_k, m_groups, n_groups
+  ):
     if isinstance(a, TMEMRef):
       if m_groups != 1:
         raise NotImplementedError("A address calculation for multiple M tiles")
@@ -644,7 +648,15 @@ def mma(
       )
     else:
       a_scale_addr = b_scale_addr = None
-    acc = accumulate if ki == 0 else true
+    acc = accumulate if (ki == 0 and k_step == 0) else true
+    if n_groups == 1:
+      a_collector = ""
+    elif ni == 0:
+      a_collector = ".collector::a::fill"
+    elif ni == n_groups - 1:
+      a_collector = ".collector::a::lastuse"
+    else:
+      a_collector = ".collector::a::use"
     ni_lane_group, ni_col = ni // n_col_groups, ni % n_col_groups
     d_offset = (
         ((ni_lane_group * lanes_per_n_group) << 16)
@@ -659,7 +671,7 @@ def mma(
         d_type=d.dtype,
         m=m_group_elems,
         n=n_group_elems,
-        k=k_group_elems,
+        k_step=k_step,
         collective=collective,
         a_transpose=a_fastest != mma_utils.Dim.K,
         b_transpose=b_fastest != mma_utils.Dim.K,
@@ -675,6 +687,7 @@ def mma(
         b_element_type=mma_b_element_type,
         scale_element_type=scale_element_type,
         scale_block=scale_block,
+        a_collector=a_collector,
     )
 
 
@@ -693,7 +706,7 @@ def _do_mma(
     a_sparse_addr: ir.Value | None,
     m: int,
     n: int,
-    k: int,
+    k_step: int,
     a_element_type: ir.Type,
     b_element_type: ir.Type,
     scale_element_type: ir.Type | None,
@@ -701,8 +714,8 @@ def _do_mma(
     d_type: ir.Type,
     accumulate: ir.Value,
     collective: bool,
+    a_collector: str = "",
 ) -> None:
-  i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
   a_k_idx_tiling, a_k_strides = a_k_strides or (None, None)  # pyrefly: ignore[bad-assignment]
   b_k_idx_tiling, b_k_strides = b_k_strides  # pyrefly: ignore[bad-assignment]
@@ -794,82 +807,80 @@ def _do_mma(
     idxs.append(idx)
     offset = sum(i * s for i, s in zip(idxs, strides, strict=True))
     return offset >> 4
-  for k_step in range(k // instr_k):
-    if is_sparse:
-      assert a_sparse_addr is not None
-      # Sparse metadata is organised as 32-row columns of 32-bit cells in TMEM; 4 bits
-      # of metadata map to 2 (1:2 sparsity), 4 (2:4 sparsity) or 8 (4:8 sparsity)
-      # of the `instr_k` columns in A consumed by each tcgen05.mma.sp instruction.
-      meta_cols_per_instr = instr_k // sparse_group_elems(a_element_type) * 2 // 16
-      # The metadata operand always names a column pair, and the descriptor's
-      # sparsity selector picks which half of that pair to read if needed. This
-      # selector is only non-zero for wider types (smaller instr_k) that only
-      # have one metadata column per instruction (e.g. .kind::f16).
-      meta_col = k_step * meta_cols_per_instr
-      sp_selector = meta_col % 2
-      sparse_addr = (arith.addi(a_sparse_addr, utils.c(meta_col // 2 * 2, i32)),)
-    if is_scaled:
-      assert scale_steps is not None
-      scale_vec_width = 4 // scale_steps
-      scale_id = (k_step % scale_steps) * scale_vec_width
-      assert sp_selector in {None, 0}  # Scaled instr descriptor has no selector
-      i_desc = create_scaled_instr_descriptor(
-          m * num_cta, n * num_cta, a_element_type, b_element_type,
-          scale_id, scale_id, a_transpose, b_transpose
-      )
-      assert (m == 64 and collective) or m == 128
-      assert n % (8 * num_cta) == 0
-      assert a_scale_addr is not None
-      assert b_scale_addr is not None
-      assert a_scale_m_stride is not None
-      assert b_scale_n_stride is not None
-      # A scales are sharded, B scales are replicated across CTAs.
-      a_scale_addr_offset = arith.constant(i32, k_step // scale_steps * a_scale_m_stride)
-      b_scale_addr_offset = arith.constant(i32, k_step // scale_steps * b_scale_n_stride)
-      scales_addrs = (
-          arith.addi(a_scale_addr, a_scale_addr_offset),
-          arith.addi(b_scale_addr, b_scale_addr_offset),
-      )
-    elif is_sparse:
-      i_desc = create_instr_descriptor(
-          m * num_cta, n * num_cta, d_type, a_element_type, b_element_type, a_transpose, b_transpose, sparsity_selector=sp_selector
-      )
-    else:
-      i_desc = create_instr_descriptor(
-          m * num_cta, n * num_cta, d_type, a_element_type, b_element_type, a_transpose, b_transpose
-      )
-    if a_in_tmem:
-      cols_per_k_group = instr_k // packing // (1 + is_sparse)
-      a_offset = k_step * cols_per_k_group
-      assert isinstance(a_desc_or_addr, ir.Value)
-      assert a_desc_or_addr.type == ir.IntegerType.get_signless(32)
-      a_enc_addr_base = a_desc_or_addr
-    else:
-      assert not isinstance(a_desc_or_addr, ir.Value)
-      assert a_k_idx_tiling is not None and a_k_strides is not None
-      a_enc_addr_base, a_offset = a_desc_or_addr
-      a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)  # pyrefly: ignore[bad-argument-type]
-    b_enc_addr_base, b_offset = b_desc
-    b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)  # pyrefly: ignore[bad-argument-type]
-    a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
-    b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [d_addr, a_enc_addr_base, b_enc_addr_base, i_desc, accumulate, *scales_addrs, *sparse_addr],
-        f"""{{
-            .reg .b32 a_desc_low, a_desc_high, b_desc_low, b_desc_high;
-            .reg {".b32" if a_in_tmem else ".b64"} a_desc;
-            .reg .b64 b_desc;
-            add.s32 a_desc_low, $1, {a_offset_low};
-            add.s32 b_desc_low, $2, {b_offset_low};
-            mov.b64 b_desc, {{b_desc_low, {b_offset_high}}};
-            {"mov.b32 a_desc, a_desc_low;" if a_in_tmem else f"mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"}
-            tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
-        }}""",
-        "r,r,r,r,b" + extra_constraints,
-        has_side_effects=True,
+  if is_sparse:
+    assert a_sparse_addr is not None
+    # Sparse metadata is organised as 32-row columns of 32-bit cells in TMEM; 4 bits
+    # of metadata map to 2 (1:2 sparsity), 4 (2:4 sparsity) or 8 (4:8 sparsity)
+    # of the `instr_k` columns in A consumed by each tcgen05.mma.sp instruction.
+    meta_cols_per_instr = instr_k // sparse_group_elems(a_element_type) * 2 // 16
+    # The metadata operand always names a column pair, and the descriptor's
+    # sparsity selector picks which half of that pair to read if needed. This
+    # selector is only non-zero for wider types (smaller instr_k) that only
+    # have one metadata column per instruction (e.g. .kind::f16).
+    meta_col = k_step * meta_cols_per_instr
+    sp_selector = meta_col % 2
+    sparse_addr = (arith.addi(a_sparse_addr, utils.c(meta_col // 2 * 2, i32)),)
+  if is_scaled:
+    assert scale_steps is not None
+    scale_vec_width = 4 // scale_steps
+    scale_id = (k_step % scale_steps) * scale_vec_width
+    assert sp_selector in {None, 0}  # Scaled instr descriptor has no selector
+    i_desc = create_scaled_instr_descriptor(
+        m * num_cta, n * num_cta, a_element_type, b_element_type,
+        scale_id, scale_id, a_transpose, b_transpose
     )
-    accumulate = arith.constant(i1, 1)
+    assert (m == 64 and collective) or m == 128
+    assert n % (8 * num_cta) == 0
+    assert a_scale_addr is not None
+    assert b_scale_addr is not None
+    assert a_scale_m_stride is not None
+    assert b_scale_n_stride is not None
+    # A scales are sharded, B scales are replicated across CTAs.
+    a_scale_addr_offset = arith.constant(i32, k_step // scale_steps * a_scale_m_stride)
+    b_scale_addr_offset = arith.constant(i32, k_step // scale_steps * b_scale_n_stride)
+    scales_addrs = (
+        arith.addi(a_scale_addr, a_scale_addr_offset),
+        arith.addi(b_scale_addr, b_scale_addr_offset),
+    )
+  elif is_sparse:
+    i_desc = create_instr_descriptor(
+        m * num_cta, n * num_cta, d_type, a_element_type, b_element_type, a_transpose, b_transpose, sparsity_selector=sp_selector
+    )
+  else:
+    i_desc = create_instr_descriptor(
+        m * num_cta, n * num_cta, d_type, a_element_type, b_element_type, a_transpose, b_transpose
+    )
+  if a_in_tmem:
+    cols_per_k_group = instr_k // packing // (1 + is_sparse)
+    a_offset = k_step * cols_per_k_group
+    assert isinstance(a_desc_or_addr, ir.Value)
+    assert a_desc_or_addr.type == ir.IntegerType.get_signless(32)
+    a_enc_addr_base = a_desc_or_addr
+  else:
+    assert not isinstance(a_desc_or_addr, ir.Value)
+    assert a_k_idx_tiling is not None and a_k_strides is not None
+    a_enc_addr_base, a_offset = a_desc_or_addr
+    a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)  # pyrefly: ignore[bad-argument-type]
+  b_enc_addr_base, b_offset = b_desc
+  b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)  # pyrefly: ignore[bad-argument-type]
+  a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
+  b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [d_addr, a_enc_addr_base, b_enc_addr_base, i_desc, accumulate, *scales_addrs, *sparse_addr],
+      f"""{{
+          .reg .b32 a_desc_low, a_desc_high, b_desc_low, b_desc_high;
+          .reg {".b32" if a_in_tmem else ".b64"} a_desc;
+          .reg .b64 b_desc;
+          add.s32 a_desc_low, $1, {a_offset_low};
+          add.s32 b_desc_low, $2, {b_offset_low};
+          mov.b64 b_desc, {{b_desc_low, {b_offset_high}}};
+          {"mov.b32 a_desc, a_desc_low;" if a_in_tmem else f"mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"}
+          tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind}{a_collector} [$0], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
+      }}""",
+      "r,r,r,r,b" + extra_constraints,
+      has_side_effects=True,
+  )
 
 
 def commit_arrive(
