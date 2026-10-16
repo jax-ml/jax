@@ -1590,6 +1590,24 @@ class OpsTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(two_bits_out, two_bits_in)
     np.testing.assert_array_equal(four_bits_out, four_bits_in)
 
+  def test_load_transpose_with_sliced_leading_dim(self) -> None:
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPUv5+")
+    if not jtu.is_libtpu_at_least("0.0.51"):
+      self.skipTest("Requires libtpu >= 0.0.51")
+
+    def kernel(in_ref, out_ref):
+      out_ref[...] = jnp.swapaxes(in_ref[:, 1:3], 2, 3)
+
+    in_shape = (2, 3, 8, 4, 128)
+    out_shape = (2, 2, 4, 8, 128)
+    inputs = np.arange(np.prod(in_shape), dtype=np.float32).reshape(in_shape)
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
+    )(inputs)
+    np.testing.assert_array_equal(result, np.swapaxes(inputs[:, 1:3], 2, 3))
+
 
 class ConvTest(ptu.PallasTPUTest):
 
