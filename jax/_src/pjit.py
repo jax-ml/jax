@@ -1218,10 +1218,14 @@ def _pjit_call_impl(*args, jaxpr: core.Jaxpr,
       out_shardings_treedef=None, out_shardings_leaves=out_shardings,
       in_layouts_treedef=None, in_layouts_leaves=in_layouts,
       out_layouts_treedef=None, out_layouts_leaves=out_layouts)
-  return _jax.pjit(
-      name, f, call_impl_cache_miss, [], [], cache_key,
-      tree_util.dispatch_registry, pxla.cc_shard_arg,
-      _get_cpp_global_cache(cache_key.contains_explicit_attributes))(*args)
+  try:
+    return _jax.pjit(
+        name, f, call_impl_cache_miss, [], [], cache_key,
+        tree_util.dispatch_registry, pxla.cc_shard_arg,
+        _get_cpp_global_cache(cache_key.contains_explicit_attributes))(*args)
+  except api_util.InternalFloatingPointError as e:
+    api_util.maybe_recursive_nan_check(
+        e, partial(core.eval_jaxpr, jaxpr, jaxpr.consts), args, {})
 
 jit_p.def_impl(_pjit_call_impl)
 
