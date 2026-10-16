@@ -1160,21 +1160,16 @@ def custom_vjp_call_rule(ctx: CheckifyContext, in_err, enabled_errors, *in_vals,
   checkified_fun, fun_metadata = _flatten_and_get_error_metadata_thunk(
       checkified_fun)
 
+  fwd = custom_derivatives.lift_fwd(num_consts, fwd_jaxpr_thunk)
   def checkified_fwd(*args):
     # TODO(lenamartens, sharadmv): why not checkify here?
-    xs, zeros = args[::2], args[1::2]
-    xs, zeros = xs[num_errs:], zeros[num_errs:]
-    fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk.call_wrapped(*zeros)
-    xs_without_consts = xs[num_consts:]
-    return core.eval_jaxpr(fwd_jaxpr, fwd_consts, *xs_without_consts)
+    return fwd.call_wrapped(*args[2 * num_errs:])  # drop the errs' (val, nz)s
 
   # TODO(necula): the fwd result_paths are not quite the same as fun_jaxpr
   checkified_fwd_wrapped = lu.wrap_init(checkified_fwd,
                                         debug_info=fwd_jaxpr_thunk.debug_info)
-  def bwd_with_errs(*args):
-    cts, logs = bwd.call_wrapped(*args)  # flat bwd returns a (cts, logs) pair
-    return (*(None,) * num_errs, *cts), logs
-  bwd_ = lu.wrap_init(bwd_with_errs, debug_info=bwd.debug_info)
+  bwd_ = custom_derivatives.prepend_input_cts(
+      bwd, (None,) * (num_errs + num_consts))
   checkified_fwd_wrapped, fwd_out_tree = flatten_fun_output(checkified_fwd_wrapped)
   all_outs = custom_derivatives.custom_vjp_call_p.bind(
       *err_vals, *in_vals, out_trees=out_trees, symbolic_zeros=symbolic_zeros,

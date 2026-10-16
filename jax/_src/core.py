@@ -870,7 +870,7 @@ def escaped_tracer_error(tracer, detail=None):
           'JAX_CHECK_TRACER_LEAKS or using the `jax.checking_leaks` context '
           'manager.')
   if detail:
-    msg += f'Detail: {detail}'
+    msg += f'\nDetail: {detail}'
   return UnexpectedTracerError(msg)
 
 

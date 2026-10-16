@@ -4808,6 +4808,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
+  def testMoveaxis(self):
+    x = jnp.arange(24.).reshape(2, 3, 4)
+    for source, destination in [(0, 2), (-1, 0), ((0, 1), (2, 0))]:
+      self.assertArraysEqual(jnp.moveaxis(x, source, destination),
+                             np.moveaxis(np.asarray(x), source, destination))
+    # if no axis moves, the input comes back, rather than a copy from an
+    # identity transpose outside of jit
+    for source, destination in [(0, 0), (-1, 2), ((0, 1), (0, -2))]:
+      self.assertIs(jnp.moveaxis(x, source, destination), x)
+    self.assertIsInstance(jnp.moveaxis(np.asarray(x), 0, 0), jax.Array)
+    with self.assertRaises((TypeError, ValueError)):
+      jnp.moveaxis(x, (0, 0), (0, 0))  # repeated axes
+
   @jtu.sample_product(
     dtype=int_dtypes + unsigned_dtypes + bool_dtypes,
     bitorder=['big', 'little'],

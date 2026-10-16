@@ -740,9 +740,9 @@ class custom_vjp[ReturnValue]:
     :py:func:`~jax.custom_vjp.defvjp_with_logs`. The accumulators are the
     ``ValAccum``, ``RefAccum`` and ``NullAccum`` objects that the ``vjp_bwd``
     method of a hijax primitive receives (see :ref:`jax-301-vjp-bwd-accums`).
-    Under transformations that wrap the backward rule, such as :func:`jax.vmap`
-    applied before differentiation, ``bwd`` receives a ``ValAccum`` in place of
-    a ``RefAccum``, and the result is added to the ``Ref`` afterward.
+    Under :func:`jax.vmap` applied before differentiation, ``bwd`` receives a
+    ``ValAccum``, and passing a ``Ref`` to ``with_refs`` raises a
+    ``ValueError`` (see :ref:`jax-301-vmap-ref-accums`).
     """
     self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
                 optimize_remat=optimize_remat, generic_batching=generic_batching)
@@ -1211,10 +1211,31 @@ def lift_fwd(num_consts: int, fwd_jaxpr_thunk: lu.WrappedFun) -> lu.WrappedFun:
     return core.eval_jaxpr(fwd_jaxpr, fwd_consts, *primals)
   return lu.wrap_init(fwd, debug_info=fwd_jaxpr_thunk.debug_info)
 
+def _handle_consts_in_bwd(bwd: lu.WrappedFun, const_avals) -> lu.WrappedFun:
+  return prepend_input_cts(bwd, tuple(Zero(a) for a in const_avals))
+
+def prepend_input_cts(bwd: lu.WrappedFun, cts: tuple) -> lu.WrappedFun:
+  if not bwd.transforms and isinstance(bwd.f, ad.CustomBwdWithAccums):
+    return lu.wrap_init(_PrependCtsBwdWithAccums(bwd.f, cts),
+                        debug_info=bwd.debug_info)
+  return _prepend_input_cts(bwd, cts)
+
 @lu.transformation2
-def _handle_consts_in_bwd(f, const_avals, *args):
-  cts, logs = f(*args)
-  return [Zero(a) for a in const_avals] + list(cts), logs
+def _prepend_input_cts(f, cts, *args):
+  cts_in, logs = f(*args)
+  return [*cts, *cts_in], logs
+
+class _PrependCtsBwdWithAccums(ad.CustomBwdWithAccums):
+  def __init__(self, bwd, cts):
+    self.bwd, self.cts = bwd, cts
+
+  def call_with_accums(self, res, cts_out, accums):
+    _, accums = split_list(accums, [len(self.cts)])
+    return self.bwd.call_with_accums(res, cts_out, accums)
+
+  def __call__(self, *args):
+    cts_in, logs = self.bwd(*args)
+    return [*self.cts, *cts_in], logs
 
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
 # TODO(phawkins,mattjj): make this primitive cacheable.
@@ -1378,8 +1399,11 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False,
       ``NullAccum`` whatever is declared. On the backward pass, the caller of
       autodiff must supply the declared kinds, except that it can discard the
       cotangent of an argument declared as a ``ValAccum`` (with
-      ``jax.ad.DontWant()``); any other kind is an error. Can't yet be
-      combined with ``remat``, or with the ``jax_custom_vjp3`` implementation.
+      ``jax.ad.DontWant()``); any other kind is an error. Under
+      :func:`jax.vmap` applied before differentiation, the VJP function can't
+      be handed a ``Ref``, so an argument declared as a ``RefAccum`` can't be
+      differentiated there (see :ref:`jax-301-vmap-ref-accums`). Can't yet be
+      combined with ``remat``.
 
   Returns:
     A Python callable that accepts the same arguments as ``fun`` and returns the
@@ -1567,11 +1591,12 @@ def _apply_accums_closure_residuals(name, res, cts, *accums):
       raise TypeError(
           f"custom_gradient function {name} declared a {k.__name__} for its "
           f"argument{keystr(path)} with with_accums, but its backward pass got "
-          f"a {type(acc).__name__}. (A ValAccum comes from jax.grad, a VJP "
-          "applied without with_refs, or transformations applied before "
-          "differentiation, like vmap. A RefAccum comes from passing a Ref to "
-          "a VJP's with_refs method, and a NullAccum from passing "
-          "jax.ad.DontWant() to it.)")
+          f"a {type(acc).__name__}. (A ValAccum comes from jax.grad, or from a "
+          "VJP applied without with_refs or with jax.ad.GradValue() for this "
+          "argument. An argument computed from the differentiated function's "
+          "inputs, rather than one of them, gets a ValAccum too. A RefAccum "
+          "comes from passing a Ref to a VJP's with_refs method, and a "
+          "NullAccum from passing jax.ad.DontWant() to it.)")
   outs = core.eval_jaxpr(jaxpr, consts, *tree_leaves((cts, refs)))
   logs, vals = tree_unflatten(out_tree, outs)
   for acc, v in zip(val_accums, vals):

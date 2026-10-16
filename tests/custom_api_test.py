@@ -2002,13 +2002,9 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_closed_over_jit_tracer(self):
-    # See the comment in CustomJVPTest.test_nondiff_arg_jit_tracer.
-    raise unittest.SkipTest("behavior no longer supported")
-
-    # This test is similar to test_nondiff_arg_tracer except it uses lexical
-    # closure rather than the nondiff_argnums mechanism. We decided to disallow
-    # tracers in nondiff_argnums to greatly simplify bookkeeping while still
-    # supporting the cases for which it is necessary.
+    # Like test_nondiff_arg_jit_tracer, but closing over the jit tracer: the
+    # fwd rule is traced only when the jitted function is differentiated, after
+    # the jit trace has ended. That's an error, unlike differentiating inside.
     def outer(x):
       @jax.custom_vjp
       def f(y):
@@ -2024,13 +2020,22 @@ class CustomVJPTest(jtu.JaxTestCase):
     def g(x, y):
       return outer(x)(y)
 
-    ans = g(2, 3.)
-    expected = 6.
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(g(2., 3.), 6., check_dtypes=False)
+    self.assertAllClose(jit(api.grad(lambda x, y: outer(x)(y), 1))(2., 3.),
+                        jnp.cos(3.), check_dtypes=False)
+    with self.assertRaisesRegex(UnexpectedTracerError, "custom_vjp"):
+      api.grad(g, 1)(2., 3.)
 
-    ans = api.grad(g, 1)(2., 3.)
-    expected = jnp.cos(3.)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    @jax.custom_gradient
+    def take(xs, i):
+      return xs[i], lambda g: (jnp.zeros_like(xs).at[i].set(g), None)
+    take2 = lambda xs, i: jax.custom_gradient(
+        lambda xs: (xs[i], lambda g: (jnp.zeros_like(xs).at[i].set(g),)))(xs)
+    xs, i = jnp.arange(3.), jnp.int32(1)
+    self.assertAllClose(api.grad(jit(take))(xs, i), jnp.array([0., 1., 0.]),
+                        check_dtypes=False)
+    with self.assertRaisesRegex(UnexpectedTracerError, "custom_"):
+      api.grad(jit(take2))(xs, i)
 
   def test_closed_over_vmap_tracer(self):
     def outer(x):
@@ -2932,14 +2937,14 @@ class CustomVJPTest(jtu.JaxTestCase):
         api.grad(lambda x: jax.vmap(lambda x: mul(x, 2.))(x).sum())(xs[0]),
         2 * jnp.ones(3))
 
-    # vmap before differentiation hands the rule ValAccums, even with refs
+    # vmap before differentiation can't hand the rule the caller's refs
     @partial(jax.custom_gradient, with_accums=ad.RefAccum)
     def sin_ref(x):
       def rule(g, x_acc):
         x_acc.ref[...] += g * jnp.cos(x)
       return jnp.sin(x), rule
     _, f_vjp = jax.vjp(jax.vmap(sin_ref), xs)
-    with self.assertRaisesRegex(TypeError, "got a ValAccum"):
+    with self.assertRaisesRegex(ValueError, "under vmap.*HiPrim"):
       f_vjp.with_refs(jax.new_ref(jnp.zeros_like(xs)))(jnp.ones_like(xs))
 
     for spec in [int, ad.NullAccum]:
@@ -2949,6 +2954,61 @@ class CustomVJPTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(NotImplementedError, "remat"):
       jax.custom_gradient(lambda x: (x, None), with_accums=ad.ValAccum,
                           remat=True)
+
+  @parameterized.product(remat3=[False, True])
+  def test_with_accums_jit_scan_remat(self, remat3):
+    # rules staged into jaxprs, by jit, scan, and remat (whose transpose
+    # rematerializes them), still get the caller's RefAccums
+    seen = []
+    accum = self._take_with_accums(seen)
+    ones = jnp.ones(10)
+
+    # closing over ones gives take's staged custom_vjp_call a const
+    @partial(jax.custom_vjp, nondiff_argnums=(1,))
+    def take(x, i):
+      return x[i] * ones[i]
+    take.defvjp_with_accums(lambda x, i: (x[i], None),
+                            lambda i, _, g, x_acc: accum(x_acc, g))
+
+    @partial(jax.custom_gradient, with_accums=ad.RefAccum)
+    def take3(x):
+      def rule(g, x_acc):
+        x_acc.ref[3] += g
+      return x[3], rule
+
+    scan = lambda f: lambda x: lax.scan(lambda c, _: (c + f(x), None), 0.,
+                                        None, length=2)[0] / 2
+    saveable = jax.checkpoint_policies.everything_saveable
+    x = jnp.arange(10.)
+    expected = jnp.zeros(10).at[3].set(1.)
+    with config.remat3(remat3):
+      for f in [lambda x: take(x, 3), take3]:
+        for g in [jax.jit(f), scan(f), jax.remat(f), jax.jit(jax.remat(f)),
+                  jax.remat(jax.remat(f)), scan(jax.remat(f)),
+                  jax.remat(f, policy=saveable),
+                  jax.jit(jax.remat(f, prevent_cse=(False,)))]:
+          ref = jax.new_ref(jnp.zeros(10))
+          jax.vjp(g, x)[1].with_refs(ref)(1.)
+          self.assertAllClose(ref[...], expected)
+
+        # with a ref, the rematerialized backward pass updates x[3] in place
+        def bwd(ref):
+          jax.vjp(jax.remat(f), x)[1].with_refs(ref)(1.)
+        jaxpr = jax.jit(bwd).trace(jax.new_ref(jnp.zeros(10))).jaxpr
+        self.assertNotIn('[10] =', str(jaxpr))
+    self.assertEqual(set(seen), {'RefAccum'})
+
+    # under vmap, a staged rule gets a ValAccum, and the caller's refs are an
+    # error
+    seen.clear()
+    take_xs = jax.vmap(jax.jit(lambda x: take(x, 3)))
+    xs = jnp.stack([x, x])
+    self.assertAllClose(api.grad(lambda xs: take_xs(xs).sum())(xs),
+                        jnp.stack([expected, expected]))
+    self.assertEqual(set(seen), {'ValAccum'})
+    _, f_vjp = jax.vjp(take_xs, xs)
+    with self.assertRaisesRegex(ValueError, "under vmap.*HiPrim"):
+      f_vjp.with_refs(jax.new_ref(jnp.zeros_like(xs)))(jnp.ones(2))
 
   def test_closure_convert(self):
     def cos_after(fn, x):

@@ -322,6 +322,13 @@ def _ir_constant(val: Any, *,
       out = handler(val, aval)
       assert _is_ir_values(out), (type(val), out)
       return out
+  if isinstance(val, core.Tracer):
+    raise core.escaped_tracer_error(val, (
+        "The tracer reached lowering as a constant. One way that happens is a "
+        "custom_vjp fwd rule or custom_gradient function that closes over a "
+        "value traced by an enclosing jax.jit, when the jitted function is "
+        "differentiated (as in grad(jit(f))). Pass such values as arguments "
+        "instead."))
   m = getattr(val, '__jax_array__', None)
   if m is not None:
     return ir_constant(m())

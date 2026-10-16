@@ -8323,6 +8323,32 @@ class RematTest(jtu.JaxTestCase):
     txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()
     self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
 
+  def test_remat_partial_cse_prevention_rule_consts(self):
+    # rules closing over an array give the jvp, transposed and batched jaxprs
+    # consts, which need prevent_cse entries too
+    c = jnp.arange(3.)
+
+    @jax.custom_jvp
+    def f(x):
+      return x * c
+    f.defjvp(lambda primals, tangents: (f(*primals), tangents[0] * c))
+
+    @jax.custom_vjp
+    def g(x):
+      return x * c
+    g.defvjp(lambda x: (g(x), None), lambda _, ct: (ct * c,))
+
+    @jax.custom_batching.custom_vmap
+    def h(x):
+      return x * 2.
+    h.def_vmap(lambda axis_size, in_batched, x: (x * 2. + c, True))
+
+    remat = partial(jax.remat, prevent_cse=(False,))
+    x = jnp.ones(3)
+    self.assertAllClose(jax.jvp(remat(f), (x,), (x,))[1], c)
+    self.assertAllClose(jax.grad(lambda x: remat(g)(x).sum())(x), c)
+    self.assertAllClose(jax.vmap(remat(h))(x), 2. + c)
+
   def test_remat_grad_accum_refs(self):
     @jax.remat
     def f(param: jax.Array) -> jax.Array:
