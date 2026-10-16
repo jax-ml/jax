@@ -544,6 +544,28 @@ def memory_space_to_tpu_memory_space(
       raise ValueError(f"Invalid memory space: {memory_space!r}")
 
 
+def unwrap_core_memory_space(
+    memory_space: (
+        MemorySpace
+        | AccMemorySpace
+        | pallas_core.MemorySpace
+        | pallas_core.CoreMemorySpace
+        | jax_core.MemorySpace
+        | None
+    ),
+) -> (
+    MemorySpace
+    | AccMemorySpace
+    | pallas_core.MemorySpace
+    | jax_core.MemorySpace
+    | None
+):
+  """Extracts the inner memory space from a `CoreMemorySpace` if wrapped."""
+  if isinstance(memory_space, pallas_core.CoreMemorySpace):
+    return memory_space.memory_space
+  return memory_space
+
+
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, slots=True)
 class AccessAssumptionTransform(state_types.Transform):
