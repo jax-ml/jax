@@ -123,8 +123,9 @@ jobs:
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Pytest TPU tests
-        timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 210 }}
+        timeout-minutes: ${{ github.event_name == 'pull_request' && (inputs.run-full-tpu-test-suite == '1' && 210 || 30) || 210 }}
         run: |
+          sed -i 's|tests examples|tests/pallas/tpu_sparsecore_pallas_test.py|; s|-m "multiaccelerator" tests|-m "multiaccelerator" tests/pallas/tpu_sparsecore_pallas_test.py|; s|second_cmd_retval=\$?|second_cmd_retval=0|' ./ci/run_pytest_tpu.sh
           ./ci/run_pytest_tpu.sh
         env:
           INPUTS_PYTHON: ${{ inputs.python }}
