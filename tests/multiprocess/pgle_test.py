@@ -79,7 +79,8 @@ class PgleTestMultiHost(jt_multiprocess.MultiProcessTest):
           config.persistent_cache_min_entry_size_bytes(0),
           config.persistent_cache_min_compile_time_secs(0),
       ):
-        for _ in range(num_runs):
+        # The warm-up runs, then num_runs profiled runs.
+        for _ in range(config.pgle_warmup_runs.value + num_runs):
           f(x)
 
         # TODO(b/529787598): Don't dump fdo profiles for non-optimized HLOs.

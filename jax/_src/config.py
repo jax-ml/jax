@@ -1683,6 +1683,17 @@ pgle_profiling_runs = int_state(
     include_in_trace_context=True,
 )
 
+pgle_warmup_runs = int_state(
+    name='jax_pgle_warmup_runs',
+    default=2,
+    help=(
+        'Number of runs of a module that are executed, but not profiled, '
+        'before its jax_pgle_profiling_runs profiled runs when PGLE is used.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 pgle_barrier = bool_state(
     name='jax_pgle_barrier',
     default=True,
@@ -1691,6 +1702,20 @@ pgle_barrier = bool_state(
         'across all the devices/processes of the computation, that absorbs '
         'skew induced by profiler startup time.'
     ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+pgle_delay_ms = int_state(
+    name='jax_pgle_delay_ms',
+    default=25,
+    help=(
+        'If positive, the devices of a computation sleep for about this many '
+        'milliseconds before the barrier that precedes each run profiled for '
+        'PGLE (see jax_pgle_barrier).'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
 )
 
 pgle_aggregation_percentile = int_state(

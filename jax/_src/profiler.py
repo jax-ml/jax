@@ -626,9 +626,15 @@ def save_device_memory_profile(filename, backend: str | None = None) -> None:
 # of retries achieved client can collect FDO data.
 class PGLEProfiler:
 
-  def __init__(self, retries: int, percentile: int):
+  def __init__(self, retries: int, percentile: int, warmup_runs: int = 0):
+    """Profiles `retries` runs, after `warmup_runs` runs that are not profiled.
+
+    Warm-up runs keep one-time costs of the first executions, e.g. lazy
+    initialization, out of the profiles.
+    """
     self.retries: int = retries
     self.percentile: int = percentile
+    self.warmup_runs: int = warmup_runs
     self.collected_fdo: bytes | None = None
     self.called_times: int = 0
     self.fdo_profiles: list[Any] = []
@@ -668,6 +674,14 @@ class PGLEProfiler:
     """Profiles the enclosed run for PGLE, if `runner` still needs profiles."""
     if (runner is None or runner.is_running()
         or not runner.is_enabled() or runner.is_fdo_consumed()):
+      yield
+    elif runner.warmup_runs > 0:
+      # A warm-up run is not profiled, but it is preceded by the barrier like
+      # the profiled runs, so that the barrier's first execution is not
+      # profiled either.
+      runner.warmup_runs -= 1
+      if runner.barrier is not None:
+        runner.barrier()
       yield
     else:
       options = _profiler.ProfileOptions()

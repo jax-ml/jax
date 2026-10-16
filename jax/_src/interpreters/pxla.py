@@ -336,20 +336,33 @@ def global_avals_to_results_handler(
 
 
 @util.cache(max_size=None, trace_context_in_key=False)
-def _device_barrier_fn(devices: tuple[xc.Device, ...]):
+def _device_barrier_fn(devices: tuple[xc.Device, ...], delay_ms: int = 0):
   """Compiles a barrier across `devices`, and returns it and its input.
 
-  The barrier is a reduction over all the devices, so no device finishes it
-  before every device has reached it.
+  If `delay_ms` is positive, each device first sleeps for about that long (on
+  CUDA; elsewhere the sleep is skipped). The barrier is then a reduction over
+  all the devices, so no device finishes it before every device has reached
+  it: the devices leave the barrier together however unevenly they slept.
   """
   # pylint: disable=g-import-not-at-top
+  from jax._src import ffi
   from jax._src import shard_map
+  from jax._src.lax import control_flow
   from jax._src.lax import parallel
   # pylint: enable=g-import-not-at-top
   mesh = Mesh(np.array(devices, dtype=object), ('devices',))
   in_sharding = NamedSharding(mesh, PartitionSpec('devices'))
 
+  def sleep(x):
+    # `like` keeps `x` varying across `devices` so `psum` emits a collective.
+    return ffi.ffi_call(
+        'cu_sleep_ffi', api.ShapeDtypeStruct.like(x),
+        input_output_aliases={0: 0})(
+            x, microseconds=np.int64(delay_ms * 1000))
+
   def barrier(x):
+    if delay_ms > 0:
+      x = control_flow.platform_dependent(x, cuda=sleep, default=lambda x: x)
     return parallel.psum(x.sum(), 'devices')
 
   # The barrier has its own mesh, even if the caller set a different one.
@@ -373,14 +386,16 @@ def pgle_barrier(device_list: xc.DeviceList) -> Callable[[], Any] | None:
   first collective of the profiled run. It is a separate module whose costs are
   keyed by its own fingerprint in the profile, so they do not affect the
   profiled module. Work enqueued after it on any of the devices starts once all
-  of them have reached it.
+  of them have reached it. The delay gives the host time to run ahead and submit
+  the profiled computation, as in steady state operation, even with no barrier.
 
-  Returns None if the jax_pgle_barrier option is off or there is only one
-  device.
+  Returns None if the jax_pgle_barrier option is off, or if there is only one
+  device and no sleep.
   """
-  if not config.pgle_barrier.value or len(device_list) < 2:
+  delay_ms = max(config.pgle_delay_ms.value, 0)
+  if not config.pgle_barrier.value or (len(device_list) < 2 and delay_ms == 0):
     return None
-  compiled, x = _device_barrier_fn(tuple(device_list))
+  compiled, x = _device_barrier_fn(tuple(device_list), delay_ms)
   return partial(compiled, x)
 
 

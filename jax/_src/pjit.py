@@ -1110,9 +1110,13 @@ def _get_pgle_profiler(
   profilers = _pgle_profiler_dict.setdefault(jaxpr, {})
   pgle_profiler = profilers.get(device_list)
   if pgle_profiler is None:
+    # The first config.jax_pgle_warmup_runs runs are warm-ups, the next
+    # config.jax_pgle_profiling_runs runs are profiled, and the run after
+    # them recompiles the module.
     pgle_profiler = profiler.PGLEProfiler(
         config.pgle_profiling_runs.value,
-        config.pgle_aggregation_percentile.value)
+        config.pgle_aggregation_percentile.value,
+        warmup_runs=config.pgle_warmup_runs.value)
     profilers[device_list] = pgle_profiler
   return pgle_profiler
 
