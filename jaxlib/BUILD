@@ -722,6 +722,7 @@ cc_library(
         "@xla//xla/pjrt:pjrt_common",
         "@xla//xla/pjrt:pjrt_compiler",
         "@xla//xla/python:dlpack_types",
+        "@xla//xla/python:nb_numpy",
         "@xla//xla/python:types",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:rtti",

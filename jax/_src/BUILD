@@ -716,6 +716,7 @@ pytype_strict_library(
         ":deprecations",
         ":dtypes",
         ":lax",
+        ":layout",
         ":numpy",
         ":sharding",
         ":typing",

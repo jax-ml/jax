@@ -17,6 +17,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * {func}`jax.dlpack.from_dlpack` now accepts `Format` in its `device` argument
+    to specify device-local layouts (such as linear layout `tiling=((1,),)` for
+    `kDLTPUHost` buffers) and supports `copy=None` fallback for `kDLTPUHost`.
   * Added {func}`jax.scipy.special.erfcinv` for the inverse complementary
     error function.
   * Added {func}`jax.lax.polynomial` for polynomial evaluation. The polynomial
