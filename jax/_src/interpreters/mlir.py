@@ -863,6 +863,7 @@ class ModuleContext:
   axis_context: AxisContext
   keepalives: list[Any]
   channel_iterator: Iterator[int]
+  hlo_output_callback_id_iterator: Iterator[int]
   host_callbacks: list[Any]
   # Keep state for the lowering of shape polymorphism
   shape_poly_state: ShapePolyLoweringState
@@ -894,6 +895,7 @@ class ModuleContext:
       channel_iterator: Iterator[int],
       host_callbacks: list[Any],
       lowering_parameters: LoweringParameters,
+      hlo_output_callback_id_iterator: Iterator[int] | None = None,
       context: ir.Context | None = None,
       module: ir.Module | None = None,
       ip: ir.InsertionPoint | None = None,
@@ -901,12 +903,13 @@ class ModuleContext:
       lowering_cache: None | dict[LoweringCacheKey, Any] = None,
       cached_primitive_lowerings: None | dict[Any, Any] = None,
       traceback_caches: None | TracebackCaches = None,
-      shape_poly_state = None,
+      shape_poly_state=None,
       all_default_mem_kind: bool = True,
       sharding_attr_cache: None | dict[SdyArray, sdy.TensorShardingAttr] = None,
       aval_to_ir_types_cache: None | dict[core.AbstractValue, IrTypes] = None,
       pallas_lowering_cache: None | dict[Any, Any] = None,
-      pallas_collective_id_mapping: None | CollectiveIdMapping = None):
+      pallas_collective_id_mapping: None | CollectiveIdMapping = None,
+  ):
 
     self.context = context or make_ir_context()
     if module is None:
@@ -925,6 +928,11 @@ class ModuleContext:
       self.traceback_caches = (TracebackCaches() if traceback_caches is None
                               else traceback_caches)
     self.channel_iterator = channel_iterator
+    self.hlo_output_callback_id_iterator = (
+        hlo_output_callback_id_iterator
+        if hlo_output_callback_id_iterator is not None
+        else itertools.count(1)
+    )
     self.keepalives = keepalives
     self.host_callbacks = host_callbacks
     self.shape_poly_state = (
@@ -965,6 +973,9 @@ class ModuleContext:
           "Host callback lowering created too many channels. PjRt does not"
           " support more than 65535 channels")
     return channel
+
+  def new_hlo_output_callback_id(self) -> int:
+    return next(self.hlo_output_callback_id_iterator)
 
   # Adds an IFRT host callback object to the context. A reference to these
   # callbacks will be provided to IFRT during compilation so it can do things
@@ -1462,6 +1473,7 @@ def lower_jaxpr_to_module(
 
   # HLO channels need to start at 1. We reserve 1 for collectives.
   channel_iter = itertools.count(COLLECTIVE_CHANNEL_ID + 1)
+  hlo_output_callback_id_iter = itertools.count(1)
   # Create a keepalives list that will be mutated during the lowering.
   keepalives: list[Any] = []
   host_callbacks: list[Any] = []
@@ -1471,20 +1483,22 @@ def lower_jaxpr_to_module(
   dim_vars = tuple(sorted(functools.reduce(lambda acc, new: acc.union(new._get_vars()),
                                            all_dim_poly, set())))
 
-
-  ctx = ModuleContext(backend=backend,
-                      platforms=platforms, axis_context=axis_context,
-                      keepalives=keepalives,
-                      channel_iterator=channel_iter,
-                      host_callbacks=host_callbacks,
-                      lowering_parameters=lowering_parameters,
-                      shape_poly_state=ShapePolyLoweringState(dim_vars, platforms),
-                      all_default_mem_kind=all_default_mem_kind,
-                      pallas_collective_id_mapping=(
-                          CollectiveIdMapping.from_jaxpr(jaxpr.jaxpr)
-                          if "tpu" in platforms
-                          else None
-                      ),
+  ctx = ModuleContext(
+      backend=backend,
+      platforms=platforms,
+      axis_context=axis_context,
+      keepalives=keepalives,
+      channel_iterator=channel_iter,
+      hlo_output_callback_id_iterator=hlo_output_callback_id_iter,
+      host_callbacks=host_callbacks,
+      lowering_parameters=lowering_parameters,
+      shape_poly_state=ShapePolyLoweringState(dim_vars, platforms),
+      all_default_mem_kind=all_default_mem_kind,
+      pallas_collective_id_mapping=(
+          CollectiveIdMapping.from_jaxpr(jaxpr.jaxpr)
+          if "tpu" in platforms
+          else None
+      ),
   )
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
@@ -1723,7 +1737,6 @@ def _get_res_shardings(result_shardings, out_avals, num_tokens):
     if all(s is None for s in result_shardings):
       return None
   return [*token_shardings, *result_shardings]
-
 
 
 def lower_jaxpr_to_fun(

@@ -722,6 +722,7 @@ pytype_strict_library(
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
+        "//jax/_src:xla_debug_log",
         "//jax/_src:xla_metadata",
     ],
 )

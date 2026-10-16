@@ -18,6 +18,7 @@ load(
     "jax_export_file_visibility",
     "jax_internal_export_back_compat_test_util_visibility",
     "jax_internal_test_harnesses_visibility",
+    "jax_multiplatform_test",
     "jax_test_util_visibility",
     "jax_visibility",
     "py_deps",
@@ -1705,5 +1706,60 @@ pytype_strict_library(
     deps = [
         ":xla_bridge",
         "//jax/_src/lib",
+    ],
+)
+
+genrule(
+    name = "xla_debug_log_flags_src",
+    srcs = select({
+        "//buildenv/platforms/settings:gce": ["xla_debug_log_flags_external.py"],
+        "//conditions:default": ["xla_debug_log_flags_internal.py"],
+    }),
+    outs = ["xla_debug_log_flags.py"],
+    cmd = "cp $< $@",
+)
+
+pytype_strict_library(
+    name = "xla_debug_log_flags",
+    srcs = [":xla_debug_log_flags_src"],
+    deps = select({
+        "//buildenv/platforms/settings:gce": [],
+        "//conditions:default": ["//third_party/py/absl/flags"],
+    }),
+)
+
+pytype_strict_library(
+    name = "xla_debug_log",
+    srcs = ["xla_debug_log.py"],
+    deps = [
+        ":ad",
+        ":api",
+        ":batching",
+        ":core",
+        ":debugging",
+        ":effects",
+        ":mlir",
+        ":xla_bridge",
+        ":xla_debug_log_flags",
+    ],
+)
+
+jax_multiplatform_test(
+    name = "xla_debug_log_test",
+    srcs = ["xla_debug_log_test.py"],
+    backend_tags = {
+        "cpu": [
+            "manual",
+            "notap",
+        ],
+        "gpu": [
+            "manual",
+            "notap",
+        ],
+    },
+    enable_backends = ["tpu"],
+    deps = [
+        ":xla_debug_log",
+        "//third_party/py/numpy",
     ],
 )
