@@ -236,6 +236,14 @@ absl::StatusOr<ModuleImage*> GetModuleImage(
     if (it != module_images.end()) return it->second.get();
   }
 
+  // Compile under the writer lock so that concurrent first uses (e.g. one
+  // thread per device) compile each image only once. On HIP this is required
+  // for correctness: `CompileModuleImage` reads and then deletes the HSACO
+  // file, so a second reader would fail with "No such file or directory".
+  absl::MutexLock writer_lock(cached_images_mutex);
+  auto it = module_images.find(lookup_key);
+  if (it != module_images.end()) return it->second.get();
+
   std::vector<uint8_t> module_image;
   if (pre_compiled_module_image.empty()) {
     JAX_ASSIGN_OR_RETURN(module_image,
@@ -245,16 +253,12 @@ absl::StatusOr<ModuleImage*> GetModuleImage(
                         pre_compiled_module_image.end());
   }
 
-  absl::MutexLock writer_lock(cached_images_mutex);
   auto key = KeyType{kernel_name, shared_mem_bytes, ptx, compute_capability};
   // the `key` object must be created before we move kernel_name below.
-  auto [it, success] = module_images.try_emplace(std::move(key), nullptr);
-
-  if (success) {
-    it->second = std::make_unique<ModuleImage>(
-        std::get<0>(it->first), std::move(module_image), shared_mem_bytes,
-        compute_capability);
-  }
+  it = module_images.emplace(std::move(key), nullptr).first;
+  it->second = std::make_unique<ModuleImage>(
+      std::get<0>(it->first), std::move(module_image), shared_mem_bytes,
+      compute_capability);
   return it->second.get();
 }
 
