@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_xla_transform_extension.h"
 #include "xla/python/version.h"
 #include "xla/service/hlo.pb.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/xla_transform.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 
@@ -48,7 +49,8 @@ namespace {
 
 // An HloXlaTransform that delegates to a Python callback.
 //
-// The callback receives a serialized HloModuleProto (bytes) and returns either
+// The callback receives a serialized HloModuleProto (bytes) and the serialized
+// HloModuleConfigProto of the module's compilation (bytes), and returns either
 // modified serialized HloModuleProto bytes if the module was changed, or None
 // if no changes were made.
 class PyHloXlaTransform : public xla::HloXlaTransform {
@@ -72,7 +74,14 @@ class PyHloXlaTransform : public xla::HloXlaTransform {
       nb::gil_scoped_acquire gil;
       try {
         nb::bytes input_bytes(serialized_proto.data(), serialized_proto.size());
-        nb::object result = callback_(input_bytes);
+        std::string serialized_config;
+        if (!tsl::SerializeToStringDeterministic(module->config().ToProto(),
+                                                 &serialized_config)) {
+          return absl::InternalError("Failed to serialize HLO module config");
+        }
+        nb::bytes config_bytes(serialized_config.data(),
+                               serialized_config.size());
+        nb::object result = callback_(input_bytes, config_bytes);
 
         if (!result.is_none()) {
           nb::bytes result_bytes = nb::cast<nb::bytes>(result);
@@ -141,7 +150,15 @@ void CApiTransformHloModuleCallback(PJRT_XlaTransform_Callbacks* callbacks,
   nb::gil_scoped_acquire gil;
   try {
     nb::bytes input_bytes(args->hlo_module.data, args->hlo_module.size);
-    nb::object result = state->py_callback(input_bytes);
+    // A plugin built against an older header has a smaller struct with no
+    // hlo_module_config member.
+    nb::bytes config_bytes("", 0);
+    if (args->struct_size >=
+        PJRT_STRUCT_SIZE(PJRT_XlaTransform_Args, hlo_module_config)) {
+      config_bytes =
+          nb::bytes(args->hlo_module_config.data, args->hlo_module_config.size);
+    }
+    nb::object result = state->py_callback(input_bytes, config_bytes);
 
     if (result.is_none()) {
       args->changed = false;

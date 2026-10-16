@@ -100,14 +100,14 @@ class XlaTransformTest(jtu.JaxTestCase):
       jex_xla.PipelineStage.PRE_SCHEDULER,
       jex_xla.PipelineStage.POST_SCHEDULER,
   )
-  def test_callback_receives_fdo_profile(self, stage):
+  def test_callback_receives_module_config(self, stage):
     seen = []
 
-    def record(serialized_hlo: bytes, fdo_profile: bytes) -> None:
+    def record(serialized_hlo: bytes, *, module_config: bytes) -> None:
       del serialized_hlo
-      seen.append(fdo_profile)
+      seen.append(module_config)
 
-    name = f"record_fdo_profile_{stage.name}_test"
+    name = f"record_module_config_{stage.name}_test"
     jex_xla.register_hlo_module_transformation(
         record, name=name, stage=stage)
     self._registered_transforms.append((name, stage))
@@ -116,13 +116,14 @@ class XlaTransformTest(jtu.JaxTestCase):
     x = jnp.arange(3.0)
     jax.jit(jnp.sin)(x)
     self.assertNotEmpty(seen)
-    self.assertTrue(all(p == b"" for p in seen), seen)
+    self.assertTrue(all(b"fdo-profile-bytes" not in c for c in seen), seen)
 
     seen.clear()
     profile = b"fdo-profile-bytes"
     jax.jit(lambda x: jnp.cos(x) + 1, compiler_options={
         "fdo_profile": profile})(x)
-    self.assertIn(profile, seen)
+    # HloModuleConfigProto.fdo_profile is a bytes field, so it appears verbatim.
+    self.assertTrue(any(profile in c for c in seen), seen)
 
   @jtu.skip_on_devices("cpu")
   def test_sin_to_cos_platform_filtering(self):

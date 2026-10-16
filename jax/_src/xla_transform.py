@@ -41,13 +41,17 @@ def _normalize_platforms(
   return list(set(platforms))
 
 
-def _accepts_fdo_profile(callback: Callable[..., bytes | None]) -> bool:
-  """Whether `callback` can be called as ``callback(hlo_module, fdo_profile)``."""
+def _accepts_module_config(callback: Callable[..., bytes | None]) -> bool:
+  """Whether `callback` can be called as ``callback(hlo_module, module_config=...)``."""
   try:
-    inspect.signature(callback).bind(b"", b"")
+    params = inspect.signature(callback).parameters
   except (TypeError, ValueError):  # ValueError: no introspectable signature.
     return False
-  return True
+  param = params.get("module_config")
+  if param is not None:
+    return param.kind in (
+        inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+  return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 def register_hlo_module_transformation(
@@ -64,8 +68,8 @@ def register_hlo_module_transformation(
 
   The registered pass will be called during XLA compilation at the specified
   pipeline stage. The callback receives a serialized ``HloModuleProto`` as
-  bytes, optionally followed by the FDO profile the module is being compiled
-  with, and should return either:
+  bytes, optionally followed by the serialized ``HloModuleConfigProto`` the
+  module is being compiled with, and should return either:
 
   - Modified serialized ``HloModuleProto`` bytes if the module was changed.
   - ``None`` if no changes were made.
@@ -75,12 +79,15 @@ def register_hlo_module_transformation(
 
   Args:
     callback: A function ``(hlo_module: bytes) -> bytes | None`` or
-      ``(hlo_module: bytes, fdo_profile: bytes) -> bytes | None``. It receives a
-      serialized HloModuleProto and optionally returns a modified one. If it
-      accepts a second positional argument, that is the serialized FDO profile
-      the module is compiled with (for PGLE, a ``ProfiledInstructionsProto``),
-      or empty bytes if there is none. Plugins built before the FDO profile was
-      added to the PJRT transform extension always pass empty bytes.
+      ``(hlo_module: bytes, *, module_config: bytes) -> bytes | None``. It
+      receives a serialized HloModuleProto and optionally returns a modified
+      one. If it declares a ``module_config`` parameter (or ``**kwargs``), that
+      is passed by keyword and is the serialized
+      ``HloModuleConfigProto`` the module is compiled with, which carries the
+      FDO profile (``fdo_profile``, for PGLE a ``ProfiledInstructionsProto``),
+      ``debug_options``, ``static_device_assignment``, etc. Plugins built before
+      the module config was added to the PJRT transform extension always pass
+      empty bytes.
     name: A name for the compiler pass.
     stage: The pipeline stage at which the pass runs. Must be a
       ``PipelineStage`` enum.
@@ -88,12 +95,12 @@ def register_hlo_module_transformation(
       ``"tpu"``). If ``None``, the pass is registered for all known backends by
       default. Can be a single platform string or a sequence of strings.
   """
-  wants_fdo_profile = _accepts_fdo_profile(callback)
+  wants_module_config = _accepts_module_config(callback)
 
-  # The default covers a jaxlib that predates the FDO profile argument.
-  def native_callback(hlo_module: bytes, fdo_profile: bytes = b""):
-    if wants_fdo_profile:
-      return callback(hlo_module, fdo_profile)  # type: ignore[call-arg]
+  # The default covers a jaxlib that predates the module config argument.
+  def native_callback(hlo_module: bytes, module_config: bytes = b""):
+    if wants_module_config:
+      return callback(hlo_module, module_config=module_config)  # type: ignore[call-arg]
     return callback(hlo_module)  # type: ignore[call-arg]
 
   # Unconditionally trigger backend initialization so that all PJRT plugins are loaded
