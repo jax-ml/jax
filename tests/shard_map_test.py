@@ -840,6 +840,25 @@ class ShardMapTest(jtu.JaxTestCase):
       for j, block in enumerate(np.split(row_block, 2, axis=-1)):
         self.assertAllClose(block, c.addressable_data(2 * i + j))
 
+  def test_all_to_all_with_axis_index_groups_vmap(self):
+    mesh = jtu.create_mesh((4,), ('x',))
+    a2a = partial(lax.all_to_all, axis_name='x', split_axis=0, concat_axis=0,
+                  axis_index_groups=((0, 1), (2, 3)), tiled=True)
+
+    # vmap over an axis other than 'x', with the operand batched and unbatched
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      c = jnp.arange(2.)
+      ys = jax.vmap(a2a)(x)
+      ys_expected = jnp.stack([a2a(x[0]), a2a(x[1])])
+      zs = jax.vmap(lambda c: c * a2a(x[0]))(c)
+      zs_expected = c[:, None] * a2a(x[0])[None]
+      return ys, ys_expected, zs, zs_expected
+
+    ys, ys_expected, zs, zs_expected = f(jnp.arange(16.).reshape(8, 2))
+    self.assertAllClose(ys, ys_expected)
+    self.assertAllClose(zs, zs_expected)
+
   def test_all_to_all_grad(self):
     mesh = jtu.create_mesh((4,), 'x')
     a = jax.device_put(

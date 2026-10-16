@@ -764,6 +764,12 @@ def ragged_all_to_all(
     axis index 1:
       result = [2, 2, 4, 0]
 
+  Reverse-mode differentiation with respect to ``operand`` assumes that the sent
+  slices ``operand[input_offsets[i]:input_offsets[i]+send_sizes[i]]`` don't
+  overlap, i.e. that each row of ``operand`` is sent at most once. If slices
+  overlap, the gradient for a row sent more than once is the cotangent of only
+  one of its copies, rather than their sum.
+
   Args:
     operand: data array of shape (N, A, B, ...) representing concatenated
       (possibly padded) ragged data to be sent.
@@ -781,7 +787,10 @@ def ragged_all_to_all(
       an axis of size 4, [[0, 1], [2, 3]] would run ragged all to all over the
       first two and last two replicas). Groups must cover all axis indices
       exactly once, and all groups must be the same size. Otherwise, the
-      behavior is undefined.
+      behavior is undefined. With groups, the length of the offset and size
+      arrays must be divisible by the group size rather than the axis size,
+      and the ``all_to_all`` expressions in this docstring also take
+      ``axis_index_groups``.
 
   Returns:
     Array of shape (M, A, B, ...) with the same value as the ``output`` except
@@ -794,9 +803,10 @@ def ragged_all_to_all(
     axis_name = (axis_name,)
 
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
-  return ragged_all_to_all_p.bind(operand, output, input_offsets, send_sizes,
-                                  output_offsets, recv_sizes,
-                                  axis_name=axis_name,
+  operand = insert_collective_pvary(axis_name, operand)
+  args = core.auto_insert_reshard(operand, output, input_offsets, send_sizes,
+                                  output_offsets, recv_sizes)
+  return ragged_all_to_all_p.bind(*args, axis_name=axis_name,
                                   axis_index_groups=axis_index_groups)
 
 
@@ -1664,8 +1674,6 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis,
 def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
                                    axis_name, split_axis, concat_axis,
                                    axis_index_groups, tiled):
-  if axis_index_groups is not None:
-    raise NotImplementedError("Please open a feature request!")
   x, = vals_in
   d, = dims_in
   axis_size, frame_name = axis_data.size, axis_data.name
@@ -1679,6 +1687,8 @@ def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
     return _all_to_all_batcher(
       vals_in, dims_in, axis_name=axis_name, split_axis=split_axis,
       concat_axis=concat_axis, axis_index_groups=axis_index_groups, tiled=tiled)
+  if axis_index_groups is not None:
+    raise NotImplementedError("Please open a feature request!")
 
   if d is None:
     # TODO(sharadmv,apaszke): Remove this broadcast that comes from
@@ -1806,7 +1816,7 @@ def _ragged_all_to_all_effectful_abstract_eval(
     operand, output, input_offsets, send_sizes, output_offsets, recv_sizes,
     axis_name, axis_index_groups
 ):
-  del operand, axis_index_groups
+  del axis_index_groups
   if not dtypes.issubdtype(input_offsets.dtype, np.integer):
     raise ValueError("ragged_all_to_all input_offsets must be integer type.")
   if not dtypes.issubdtype(send_sizes.dtype, np.integer):
@@ -1837,7 +1847,13 @@ def _ragged_all_to_all_effectful_abstract_eval(
     )
 
   _check_axis_names(axis_name, 'ragged_all_to_all')
-  out_aval = output.update(shape=output.shape, weak_type=False)
+  check_unreduced_args([operand, output], axis_name, 'ragged_all_to_all')
+  collective_vma_rule('ragged_all_to_all', axis_name, operand)
+  vma = core.standard_vma_rule('ragged_all_to_all', operand, output,
+                               input_offsets, send_sizes, output_offsets,
+                               recv_sizes)
+  out_aval = output.update(shape=output.shape, weak_type=False,
+                           manual_axis_type=output.mat.update(varying=vma))
   effects = {*map(core.NamedAxisEffect, axis_name)}
   return out_aval, effects
 
@@ -1861,18 +1877,27 @@ def _ragged_all_to_all_transpose(
   if type(t) is ad.Zero:
     operand_t = ad.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
     output_t = ad.Zero(output.aval) if ad.is_undefined_primal(output) else None
-  else:
-    zero = ad.zeros_like_aval(operand.aval)
-    output_offsets_ = all_to_all(output_offsets, axis_name, 0, 0, tiled=True)
-    input_offsets_ = all_to_all(input_offsets, axis_name, 0, 0, tiled=True)
+    return [operand_t, output_t] + [None] * 4
+  operand_t = output_t = None
+  output_offsets_ = all_to_all(output_offsets, axis_name, 0, 0, tiled=True,
+                               axis_index_groups=axis_index_groups)
+  if ad.is_undefined_primal(operand):
+    input_offsets_ = all_to_all(input_offsets, axis_name, 0, 0, tiled=True,
+                                axis_index_groups=axis_index_groups)
     operand_t = ragged_all_to_all_p.bind(
-        t, zero, output_offsets_, recv_sizes, input_offsets_, send_sizes,
-        axis_name=axis_name, axis_index_groups=axis_index_groups)
+        t, ad.zeros_like_aval(operand.aval), output_offsets_, recv_sizes,
+        input_offsets_, send_sizes, axis_name=axis_name,
+        axis_index_groups=axis_index_groups)
+  if ad.is_undefined_primal(output):
+    # Count the updates covering each row of t. Starts must be added, not set,
+    # because an empty update starts and ends on the same row, which may also be
+    # the start of another update.
     mask = control_flow.cumsum(
-        lax.full(t.shape[0], 0, dtype='int32').at[output_offsets_].set(1)
-        .at[output_offsets_ + recv_sizes].add(-1))
+        lax.full(t.shape[0], 0, dtype='int32').at[output_offsets_].add(1)
+        .at[output_offsets_ + recv_sizes].add(-1)) > 0
     mask = lax.expand_dims(mask, (*range(1, t.ndim),))
-    mask = lax.broadcast_in_dim(mask, shape=t.shape, broadcast_dimensions=tuple(range(t.ndim)))
+    mask = lax.broadcast_in_dim(mask, shape=t.shape,
+                                broadcast_dimensions=tuple(range(t.ndim)))
     output_t = lax.select(mask, lax._zeros(t), t)
   return [operand_t, output_t] + [None] * 4
 
@@ -1884,14 +1909,13 @@ def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
     return out, None
   if axis_data.name in axis_name:
     raise NotImplementedError("Please open a feature request!")
-  if axis_index_groups:
-    raise NotImplementedError("Please open a feature request!")
   size = axis_data.size
 
   def bdim_at_second(x, d):
+    if d is None:
+      return batching.broadcast(x, size, 1, None)
     assert x.ndim == 2
-    return (batching.broadcast(x, size, 1, None) if d is None else
-            x if d == 1 else x.T)
+    return x if d == 1 else x.T
   def merge(x): return x.reshape(-1, *x.shape[2:])
   def split(x): return x.reshape(size, -1, *x.shape[1:])
 
@@ -1901,8 +1925,11 @@ def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
       map(bdim_at_second, vals_in[2:], dims_in[2:])
   input_offsets += lax.iota(input_offsets.dtype, size)[None, :] * N
   output_offsets += lax.iota(output_offsets.dtype, size)[None, :] * M
+  # Merging batch element b of slot i into slot i * size + b keeps the slot's
+  # destination, with or without axis_index_groups.
   vals_in = operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
-  result = split(ragged_all_to_all(*map(merge, vals_in), axis_name=axis_name))
+  result = split(ragged_all_to_all(*map(merge, vals_in), axis_name=axis_name,
+                                   axis_index_groups=axis_index_groups))
   return result, 0
 
 def _ragged_all_to_all_impl(*args, **kwargs):
