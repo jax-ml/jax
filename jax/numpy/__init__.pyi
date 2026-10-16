@@ -524,6 +524,7 @@ def geomspace(
     endpoint: builtins.bool = ...,
     dtype: DTypeLike | None = ...,
     axis: int = ...,
+    *, device: _Device | _Sharding | None = ...,
 ) -> Array: ...
 get_printoptions = _np.get_printoptions
 def gradient(f: ArrayLike, *varargs: ArrayLike,
@@ -667,7 +668,8 @@ logical_or: BinaryUfunc
 logical_xor: BinaryUfunc
 def logspace(start: ArrayLike, stop: ArrayLike, num: int = ...,
              endpoint: builtins.bool = ..., base: ArrayLike = ...,
-             dtype: DTypeLike | None = ..., axis: int = ...) -> Array: ...
+             dtype: DTypeLike | None = ..., axis: int = ...,
+             *, device: _Device | _Sharding | None = ...) -> Array: ...
 def mask_indices(
     n: int, mask_func: Callable, k: int = ..., *, size: int | None = ...
 ) -> tuple[Array, ...]: ...
