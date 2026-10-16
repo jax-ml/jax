@@ -458,6 +458,34 @@ class FusionTest(jtu.JaxTestCase):
 
     np.testing.assert_allclose(ref[...], 5.0)
 
+  def test_fuse_output_ref_write_dependency(self):
+    @fuser.fusible
+    def f(x_fn, out_fn):
+      if out_fn is None:
+        out_fn = lambda v: v
+      return out_fn(x_fn() * 2.0)
+
+    ref = jax.new_ref(jnp.array(0.0))
+
+    @fuser.fuse
+    def valid(x):
+      ref[...] = f(x) + 1.0
+      return ref[...] * 3.0
+
+    np.testing.assert_allclose(valid(jnp.array(1.0)), 9.0)
+    np.testing.assert_allclose(ref[...], 3.0)
+
+    @fuser.fuse
+    def invalid(x):
+      ref[...] = x + 1.0
+      return f(x)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "A write to a Ref in a fusion must depend on an output of the fusible",
+    ):
+      invalid(jnp.array(1.0))
+
   def test_physicalize_fusible(self):
 
     @fuser.fusible
