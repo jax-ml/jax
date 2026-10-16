@@ -606,7 +606,7 @@ def _device_put_impl(
       raise TypeError(
           f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
 
-  if isinstance(device, core.MemorySpace):
+  if core.is_memory_space(device):
     return apply_primitive(device_put_p, x, devices=(device,), srcs=(src,),
                            copy_semantics=(copy,))[0]
 
@@ -714,7 +714,7 @@ def update_dp_aval(aval, d):
     if d.memory_kind is not None:
       aval = aval.update(memory_space=core.mem_kind_to_space(d.memory_kind))
     return aval
-  elif isinstance(d, core.MemorySpace):
+  elif core.is_memory_space(d):
     return aval.update(memory_space=d)
   return aval
 
@@ -773,7 +773,7 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
     return xs
   def lower(x, device, aval, out_aval):
     if ((isinstance(device, Sharding) and device.memory_kind is not None) or
-        isinstance(device, core.MemorySpace)):
+        core.is_memory_space(device)):
       if isinstance(device, Sharding):
         if config.use_shardy_partitioner.value:
           x = mlir.wrap_with_sharding_op(
@@ -784,7 +784,7 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
               ctx, x, out_aval,
               device._to_xla_hlo_sharding(aval.ndim).to_proto())
       mem_kind = (core.mem_space_to_kind(device)
-                  if isinstance(device, core.MemorySpace) else device.memory_kind)
+                  if core.is_memory_space(device) else device.memory_kind)
       assert mem_kind is not None
       x = mlir.wrap_with_memory_kind(ctx.module_context, x, mem_kind, out_aval)
       return x

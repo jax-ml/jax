@@ -803,7 +803,7 @@ def jaxpr_transfer_mem_kinds(jaxpr: core.Jaxpr):
   for eqn in jaxpr.eqns:
     if eqn.primitive is dispatch.device_put_p:
       out.extend(d for d in eqn.params['devices']
-                 if isinstance(d, core.MemorySpace))
+                 if core.is_memory_space(d))
     elif eqn.primitive.name == 'compute_on':
       out.extend(o for o in eqn.params['out_memory_spaces'])
     elif eqn.primitive.name == 'call_exported':
@@ -818,7 +818,7 @@ def are_all_shardings_default_mem_kind(shardings):
   for i in shardings:
     if isinstance(i, UnspecifiedValue):
       continue
-    mem_kind = (core.mem_space_to_kind(i) if isinstance(i, core.MemorySpace)
+    mem_kind = (core.mem_space_to_kind(i) if core.is_memory_space(i)
                 else i.memory_kind)
     if mem_kind is None:
       continue
