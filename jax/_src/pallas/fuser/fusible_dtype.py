@@ -23,12 +23,14 @@ from typing import Any
 
 import jax
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import dtypes
 from jax._src import flattree as ft
 from jax._src import hijax
 from jax._src import linear_util as lu
+from jax._src import shard_map
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import tree_util
@@ -225,7 +227,7 @@ def _physical_aval(aval):
   if isinstance(aval, core.ShapedArray):
     if isinstance(aval.dtype, FusionDType):
       return aval.dtype.abstract_unpack(aval)
-    return core.ShapedArray(aval.shape, aval.dtype)
+    return aval
   if isinstance(aval, state.AbstractRef):
     if _is_fusion_type(aval):
       unpacked = aval.dtype.abstract_unpack(aval.inner_aval)
@@ -487,6 +489,60 @@ def _mpmd_map_rule(ctx: Context, *args, jaxprs, meshes, external_meshes, **param
 
 
 _physicalize_rules[mpmd.mpmd_map_p] = _mpmd_map_rule
+
+
+def _shard_map_rule(
+    ctx: Context,
+    *args,
+    jaxpr: core.Jaxpr,
+    mesh,
+    in_specs,
+    out_specs,
+    check_vma,
+    newly_manual_axes,
+    **params,
+):
+  def _expand(specs, avals):
+    return tuple(
+        s
+        for s, a in zip(specs, avals)
+        for _ in (
+            tree_util.tree_leaves(_physical_aval(a))
+            if _is_fusion_type(a)
+            else (None,)
+        )
+    )
+
+  inner_mesh = shard_map._as_manual_mesh(
+      mesh, newly_manual_axes | set(mesh.manual_axes)
+  )
+  with (
+      shard_map._extend_axis_env(mesh, newly_manual_axes),
+      shard_map.use_abstract_mesh(inner_mesh),
+      config._check_vma(check_vma),
+  ):
+    new_jaxpr = physicalize_closed_jaxpr(jaxpr)
+  bind_params = shard_map.shard_map_p.get_bind_params(
+      dict(
+          jaxpr=new_jaxpr,
+          mesh=mesh,
+          in_specs=_expand(in_specs, ctx.avals_in),
+          out_specs=_expand(out_specs, ctx.avals_out),
+          check_vma=check_vma,
+          newly_manual_axes=newly_manual_axes,
+          **params,
+      )
+  )
+  flat_outs = shard_map.shard_map_p.bind(
+      *tree_util.tree_leaves(args), **bind_params
+  )
+  out_tree = tree_util.tree_structure(
+      [_physical_aval(a) for a in ctx.avals_out]
+  )
+  return tree_util.tree_unflatten(out_tree, flat_outs)
+
+
+_physicalize_rules[shard_map.shard_map_p] = _shard_map_rule
 
 
 def _run_scoped_rule(ctx: Context, *args, jaxpr, **params):

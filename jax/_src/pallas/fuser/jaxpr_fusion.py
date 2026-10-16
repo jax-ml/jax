@@ -17,21 +17,28 @@
 from collections.abc import Iterable, Sequence
 import contextlib
 import functools
+import math
+from typing import Any
 
 import jax
+from jax import lax
 from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import flattree as ft
 from jax._src import hijax
+from jax._src import shard_map
 from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
+from jax._src.pallas import core as pallas_core
+from jax._src.pallas.fuser import block_spec
 from jax._src.pallas.fuser import fuser_utils
 from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.pallas.fuser.fusible import Fusible
 from jax._src.state import types as state_types
 from jax._src.traceback_util import api_boundary
+import jax.numpy as jnp
 
 
 _disable_nested_fuse = config.config_ext.Config[bool](
@@ -327,6 +334,15 @@ def _construct_output_fusions(
 
     def _fn(jaxpr, vals, *args, **kwargs):
       flat_args, _ = tree_util.tree_flatten((args, kwargs))
+      if config._check_vma.value:
+        flat_args = [
+            jax_core.pvary(a, tuple(v.aval.mat.varying - a_aval.mat.varying))
+            if isinstance(v.aval, jax_core.ShapedArray)
+            and isinstance(a_aval := jax_core.typeof(a), jax_core.ShapedArray)
+            and (v.aval.mat.varying - a_aval.mat.varying)
+            else a
+            for v, a in zip(jaxpr.invars, flat_args, strict=True)
+        ]
       out_flat = jax_core.eval_jaxpr(jaxpr, vals, *flat_args)
       return tuple(out_flat)
 
@@ -349,19 +365,351 @@ def _construct_output_fusions(
   )
 
 
+def _is_fusible_eqn(eqn: jax_core.JaxprEqn) -> bool:
+  return eqn.primitive is hijax.call_hi_primitive_p and isinstance(
+      eqn.params.get("_prim"), Fusible
+  )
+
+
+def _count_fusible_eqns(jaxpr: jax_core.Jaxpr) -> int:
+  return sum(
+      _count_fusible_eqns(eqn.params["jaxpr"])
+      if eqn.primitive is shard_map.shard_map_p
+      else int(_is_fusible_eqn(eqn))
+      for eqn in jaxpr.eqns
+  )
+
+
+def _block_spec_from_sharding(
+    shape: tuple[int, ...],
+    spec: jax.sharding.PartitionSpec,
+    mesh: jax.sharding.Mesh,
+    manual_axes: tuple[Any, ...],
+    axis_idx_cache: dict[tuple[Any, ...], Any],
+) -> pallas_core.BlockSpec:
+  names = shard_map._spec_to_names(spec)
+  block_shape = tuple(
+      sz
+      // math.prod(mesh.shape[n] for n in names.get(i, ()) if n in manual_axes)
+      for i, sz in enumerate(shape)
+  )
+
+  def index_map(*axis_indices):
+    axis_map = dict(zip(manual_axes, axis_indices, strict=True))
+    out = []
+    for i in range(len(shape)):
+      axes = tuple(n for n in names.get(i, ()) if n in manual_axes)
+      if not axes:
+        out.append(0)
+      else:
+        key = (axes, tuple(map(id, axis_indices)))
+        if key not in axis_idx_cache:
+          idx = axis_map[axes[0]]
+          for n in axes[1:]:
+            idx = idx * mesh.shape[n] + axis_map[n]
+          axis_idx_cache[key] = idx
+        out.append(axis_idx_cache[key])
+    return tuple(out)
+
+  return pallas_core.BlockSpec(block_shape=block_shape, index_map=index_map)
+
+
+def _extract_local_block(
+    v_local: jax.Array,
+    shard_bs: pallas_core.BlockSpec,
+    pulled_bs: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
+    axis_indices: tuple[jax.Array, ...],
+    sp_vals: tuple[Any, ...],
+) -> jax.Array:
+  if not isinstance(pulled_bs, pallas_core.BlockSpec) or v_local.ndim == 0:
+    return v_local
+  assert shard_bs.index_map is not None and pulled_bs.index_map is not None
+  assert pulled_bs.block_shape is not None
+  shard_idx = shard_bs.index_map(*axis_indices)
+  pulled_idx = pulled_bs.index_map(*axis_indices, *sp_vals)
+  starts, sizes, squeezed = [], [], []
+  for d, (s_d, bd) in enumerate(zip(v_local.shape, pulled_bs.block_shape)):
+    b_d = pallas_core.get_block_size(bd)
+    sizes.append(b_d)
+    if bd is None or isinstance(bd, pallas_core.Squeezed):
+      squeezed.append(d)
+    if pulled_idx[d] is shard_idx[d] and b_d == s_d:
+      starts.append(0)
+    else:
+      p_off = (
+          pulled_idx[d]
+          if bd is None
+          or isinstance(bd, (pallas_core.Squeezed, pallas_core.Element))
+          else pulled_idx[d].start
+          if isinstance(bd, pallas_core.BoundedSlice)
+          else pulled_idx[d] * b_d
+      )
+      s_off = shard_idx[d] * s_d
+      starts.append(
+          p_off if isinstance(s_off, int) and s_off == 0 else p_off - s_off
+      )
+  out = v_local
+  if all(isinstance(s, int) for s in starts):
+    if any(
+        s != 0 or sz != d_sz
+        for s, sz, d_sz in zip(starts, sizes, v_local.shape)
+    ):
+      out = lax.slice(out, starts, [s + sz for s, sz in zip(starts, sizes)])
+  else:
+    dtypes = [s.dtype for s in starts if hasattr(s, "dtype")]
+    dtype = jax.dtypes.result_type(*dtypes) if dtypes else jnp.int32
+    idx_arrays = [jnp.asarray(s, dtype=dtype) for s in starts]
+    if config._check_vma.value:
+      vma = frozenset().union(*(
+          a.mat.varying
+          for v in (out, *idx_arrays)
+          if isinstance(a := jax_core.typeof(v), jax_core.ShapedArray)
+      ))
+      if vma:
+        out, *idx_arrays = [
+            jax_core.pvary(v, tuple(vma - a.mat.varying))
+            if isinstance(a := jax_core.typeof(v), jax_core.ShapedArray)
+            and (vma - a.mat.varying)
+            else v
+            for v in (out, *idx_arrays)
+        ]
+    out = lax.dynamic_slice(out, idx_arrays, sizes)
+  return lax.squeeze(out, squeezed) if squeezed else out
+
+
+def _fuse_shard_map_jaxpr(
+    jaxpr: jax_core.Jaxpr,
+    consts: Sequence[Any],
+    args: Sequence[Any],
+    shmap_eqn_index: int,
+    *,
+    strict_mode: bool = True,
+):
+  shmap_eqn = jaxpr.eqns[shmap_eqn_index]
+  inner_jaxpr: jax_core.Jaxpr = shmap_eqn.params["jaxpr"]
+  mesh: jax.sharding.Mesh = shmap_eqn.params["mesh"]
+  shmap_in_specs = shmap_eqn.params["in_specs"]
+  shmap_out_specs = shmap_eqn.params["out_specs"]
+  check_vma: bool = shmap_eqn.params["check_vma"]
+  newly_manual: frozenset[Any] = shmap_eqn.params["newly_manual_axes"]
+  manual_axes = tuple(a for a in mesh.axis_names if a in newly_manual)
+  num_axes = len(manual_axes)
+  axis_idx_cache: dict[tuple[Any, ...], Any] = {}
+  outer_vars = [*jaxpr.constvars, *jaxpr.invars]
+  outer_vals = [*consts, *args]
+  outer_val_map = dict(zip(outer_vars, outer_vals, strict=True))
+  cand_vars = [*outer_vars, *shmap_eqn.outvars]
+  cand_vals = [*outer_vals, *(v.aval for v in shmap_eqn.outvars)]
+  non_shmap_jaxpr = jaxpr.replace(
+      eqns=jaxpr.eqns[:shmap_eqn_index] + jaxpr.eqns[shmap_eqn_index + 1 :],
+      constvars=cand_vars,
+      invars=[],
+      consts=tuple(cand_vals),
+      debug_info=jaxpr.debug_info.with_unknown_names(),
+  )
+
+  def _manual(aval):
+    if not isinstance(aval, jax_core.ShapedArray):
+      return jax.P()
+    return shard_map._manual_spec(newly_manual, aval.sharding.spec, mesh)
+
+  def _bs(aval, spec):
+    return _block_spec_from_sharding(
+        aval.shape, spec, mesh, manual_axes, axis_idx_cache
+    )
+
+  has_auto = any(
+      mesh._name_to_type[a] == jax_core.AxisType.Auto for a in newly_manual
+  )
+  var_specs = {
+      **{v: _manual(v.aval) for v in outer_vars},
+      **dict(zip(shmap_eqn.outvars, shmap_out_specs, strict=True)),
+  }
+  if has_auto:
+    var_specs.update(
+        (v, s)
+        for v, s in zip(shmap_eqn.invars, shmap_in_specs, strict=True)
+        if isinstance(v, jax_core.Var)
+    )
+    for eqn in reversed(jaxpr.eqns[:shmap_eqn_index]):
+      specs = [var_specs[v] for v in eqn.outvars if v in var_specs]
+      for v in eqn.invars:
+        if isinstance(v, jax_core.Var) and not any(var_specs.get(v, ())):
+          if specs and getattr(v.aval, "ndim", -1) == getattr(
+              eqn.outvars[0].aval, "ndim", -2
+          ):
+            var_specs[v] = specs[0]
+    for eqn in jaxpr.eqns[shmap_eqn_index + 1 :]:
+      specs = [
+          var_specs[v]
+          for v in eqn.invars
+          if isinstance(v, jax_core.Var) and v in var_specs
+      ]
+      for v in eqn.outvars:
+        if specs and getattr(v.aval, "ndim", -1) == getattr(
+            eqn.invars[0].aval, "ndim", -2
+        ):
+          var_specs[v] = specs[0]
+  var_shard_bs = {
+      v: _bs(v.aval, s)
+      for v, s in var_specs.items()
+      if isinstance(v.aval, jax_core.ShapedArray)
+  }
+  used_outer_vars: list[jax_core.Var] = []
+
+  def _pull(v: jax_core.Var, spec: jax.sharding.PartitionSpec):
+    sub_jaxpr, used, _ = pe.dce_jaxpr_consts(
+        non_shmap_jaxpr.replace(outvars=[v]),
+        [True],
+        instantiate=[False] * len(cand_vars),
+    )
+    used_vars = [u for keep, u in zip(used, cand_vars, strict=True) if keep]
+    used_vals = [c for keep, c in zip(used, cand_vals, strict=True) if keep]
+    usage = block_spec.compute_usage(sub_jaxpr, ({block_spec.Usage.REGULAR},))
+    sp_mask = block_spec._scalar_prefetch_mask(sub_jaxpr, usage)
+    sp_vars = [u for u, sp in zip(used_vars, sp_mask, strict=True) if sp]
+    sp_vals = [c for c, sp in zip(used_vals, sp_mask, strict=True) if sp]
+    reg_vars = [u for u, sp in zip(used_vars, sp_mask, strict=True) if not sp]
+    for u in (*reg_vars, *sp_vars):
+      if u in outer_val_map and u not in used_outer_vars:
+        used_outer_vars.append(u)
+    split_jaxpr = sub_jaxpr.replace(
+        constvars=sp_vars, invars=reg_vars, consts=tuple(sp_vals)
+    )
+    usage = block_spec.compute_usage(split_jaxpr, ({block_spec.Usage.REGULAR},))
+    in_bs, env = block_spec._pull_block_spec(
+        split_jaxpr,
+        (_bs(v.aval, spec),),
+        scalar_prefetch_handler=None,
+        read_usage_env=usage,
+        grid_len=num_axes,
+        strict_mode=strict_mode,
+    )
+    kfn = block_spec.make_kernel_function(
+        split_jaxpr,
+        tuple(sp_vals),
+        tree_util.tree_structure((tuple(reg_vars), {})),
+        tree_util.tree_structure((v,)),
+        usage,
+        env,
+        None,
+        num_axes,
+    )
+    in_bs = tuple(
+        block_spec._wrap_block_spec_scalar_prefetch(bs, num_grid_args=num_axes)
+        if isinstance(bs, pallas_core.BlockSpec)
+        else bs
+        for bs in in_bs
+    )
+
+    def _eval(val_env, axis_indices):
+      sp = tuple(val_env[u] for u in sp_vars)
+      reg = tuple(
+          _extract_local_block(
+              val_env[u], var_shard_bs[u], bs, axis_indices, sp
+          )
+          for u, bs in zip(reg_vars, in_bs, strict=True)
+      )
+      return kfn(axis_indices, sp, *reg)[0]
+
+    return _eval
+
+  pre_fns = [
+      (lambda _env, _idx, val=v.val: val)
+      if isinstance(v, jax_core.Literal)
+      else _pull(v, s)
+      for v, s in zip(shmap_eqn.invars, shmap_in_specs, strict=True)
+  ]
+  post_fns, final_out_specs, out_resolvers = [], [], []
+  for v in jaxpr.outvars:
+    if isinstance(v, jax_core.Literal):
+      out_resolvers.append(lambda _outs, val=v.val: val)
+    elif v in outer_val_map:
+      out_resolvers.append(lambda _outs, val=outer_val_map[v]: val)
+    else:
+      sub_jaxpr, used, _ = pe.dce_jaxpr_consts(
+          non_shmap_jaxpr.replace(outvars=[v]),
+          [True],
+          instantiate=[False] * len(cand_vars),
+      )
+      if not any(used[len(outer_vars) :]):
+        consts_v = [c for u, c in zip(used[: len(outer_vars)], outer_vals) if u]
+        val = jax_core.eval_jaxpr(sub_jaxpr, consts_v)[0]
+        out_resolvers.append(lambda _outs, val=val: val)
+      else:
+        spec = var_specs.get(v, _manual(v.aval))
+        post_fns.append(_pull(v, spec))
+        final_out_specs.append(spec)
+        out_resolvers.append(lambda outs, idx=len(post_fns) - 1: outs[idx])
+
+  def combined_inner_fn(*local_outer_vals):
+    env = dict(zip(used_outer_vars, local_outer_vals, strict=True))
+    axis_indices = tuple(lax.axis_index(a) for a in manual_axes)
+    in_locals = [fn(env, axis_indices) for fn in pre_fns]
+    out_locals = jax_core.eval_jaxpr(
+        inner_jaxpr, inner_jaxpr.consts, *in_locals
+    )
+    env.update(zip(shmap_eqn.outvars, out_locals, strict=True))
+    return tuple(fn(env, axis_indices) for fn in post_fns)
+
+  def fused_shmap_body(*local_outer_vals):
+    in_ft = ft.flatten((local_outer_vals, {}))
+    dbg = api_util.debug_info(
+        "fuse_shard_map", combined_inner_fn, local_outer_vals, {}
+    )
+    with disable_nested_fuse(True):
+      combined_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+          combined_inner_fn, in_ft.map(jax_core.typeof), dbg
+      )
+    return tuple(
+        fuse_jaxpr(
+            combined_jaxpr,
+            out_avals_ft.tree,
+            combined_jaxpr.consts,
+            *in_ft.vals,
+            strict_mode=strict_mode,
+        )
+    )
+
+  shmap_outs = (
+      shard_map.shard_map(
+          fused_shmap_body,
+          mesh=mesh,
+          in_specs=tuple(var_specs[v] for v in used_outer_vars),
+          out_specs=tuple(final_out_specs),
+          axis_names=newly_manual,
+          check_vma=check_vma,
+      )(*(outer_val_map[v] for v in used_outer_vars))
+      if post_fns
+      else ()
+  )
+  return [resolve(shmap_outs) for resolve in out_resolvers]
+
+
 def fuse_jaxpr(
     jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args,
     strict_mode: bool = True,
 ):
   # Collect input fusions
-  for i, eqn in enumerate(jaxpr.eqns):
-    if eqn.primitive is hijax.call_hi_primitive_p and isinstance(
-        eqn.params.get("_prim"), Fusible
-    ):
-      fusion_eqn_index = i
-      break
-  else:
+  top_fusibles = [i for i, eqn in enumerate(jaxpr.eqns) if _is_fusible_eqn(eqn)]
+  shmap_fusibles = [
+      i
+      for i, eqn in enumerate(jaxpr.eqns)
+      if eqn.primitive is shard_map.shard_map_p
+      and _count_fusible_eqns(eqn.params["jaxpr"]) > 0
+  ]
+  total_fusibles = len(top_fusibles) + sum(
+      _count_fusible_eqns(jaxpr.eqns[i].params["jaxpr"]) for i in shmap_fusibles
+  )
+  if total_fusibles == 0:
     raise ValueError("No fusible eqn found")
+  if total_fusibles > 1:
+    raise ValueError("Multiple fusible equations found")
+  if shmap_fusibles:
+    return _fuse_shard_map_jaxpr(
+        jaxpr, consts, args, shmap_fusibles[0], strict_mode=strict_mode
+    )
+  fusion_eqn_index = top_fusibles[0]
   fusion_eqn = jaxpr.eqns[fusion_eqn_index]
   fusible: Fusible = fusion_eqn.params["_prim"]
 
