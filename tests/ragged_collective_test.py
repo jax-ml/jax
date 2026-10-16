@@ -37,19 +37,13 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     super().setUp()
     if jtu.test_device_matches(['cpu']):
       self.skipTest('ragged-all-to-all is not supported on CPU')
+    if jtu.test_device_matches(['tpu']) and jtu.get_tpu_version() < 4:
+      self.skipTest('UNSUPPORTED: HLO opcode `ragged-all-to-all` is not '
+                    f'supported by TPU v{jtu.get_tpu_version()}')
 
-  @parameterized.named_parameters(
-      dict(
-          testcase_name='_single_axis_name', axis_name='x', mesh_axes=dict(x=2)
-      ),
-  )
-  def test_ragged_all_to_all(self, axis_name, mesh_axes):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
+  @parameterized.product(axis_name=['x'], mesh_axes=[dict(x=2)],
+                         check_vma=[True, False])
+  def test_ragged_all_to_all(self, axis_name, mesh_axes, check_vma):
     mesh = jtu.create_mesh(tuple(mesh_axes.values()), tuple(mesh_axes.keys()))
     operand = jax.device_put(
         jnp.array([[1, 2, 2], [3, 4, 0]], dtype=jnp.int32),
@@ -89,7 +83,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
+        check_vma=check_vma,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -125,18 +119,9 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
         c, jnp.array([[1, 3, 0, 0], [2, 2, 4, 0]], dtype=jnp.int32)
     )
 
-  @parameterized.named_parameters(
-      dict(
-          testcase_name='_single_axis_name', axis_name='x', mesh_axes=dict(x=2)
-      ),
-  )
-  def test_ragged_all_to_all_grad(self, axis_name, mesh_axes):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
+  @parameterized.product(axis_name=['x'], mesh_axes=[dict(x=2)],
+                         check_vma=[True, False])
+  def test_ragged_all_to_all_grad(self, axis_name, mesh_axes, check_vma):
     mesh = jtu.create_mesh(tuple(mesh_axes.values()), tuple(mesh_axes.keys()))
     operand = jax.device_put(
         jnp.array([[1, 2, 2], [3, 4, 0]], dtype=jnp.float32),
@@ -175,7 +160,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
+        check_vma=check_vma,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -205,16 +190,12 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     y, f_vjp = jax.vjp(lambda out: fwd(operand, out, *args), output)
     self.assertNotIn('ragged_all_to_all', str(jax.make_jaxpr(f_vjp)(y)))
 
-  def test_ragged_all_to_all_grad_empty_updates(self):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
+  @parameterized.product(check_vma=[True, False])
+  def test_ragged_all_to_all_grad_empty_updates(self, check_vma):
     mesh = jtu.create_mesh((2,), ('x',))
 
-    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'),
+             check_vma=check_vma)
     def fwd(operand, output, input_offsets, send_sizes, output_offsets,
             recv_sizes):
       return lax.ragged_all_to_all(
@@ -236,17 +217,13 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     jtu.check_grads(lambda op, out: fwd(op, out, *args), (operand, output),
                     order=1)
 
-  @parameterized.parameters(1, 2)
-  def test_ragged_all_to_all_grad_axis_index_groups(self, updates_per_peer):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
+  @parameterized.product(updates_per_peer=[1, 2], check_vma=[True, False])
+  def test_ragged_all_to_all_grad_axis_index_groups(self, updates_per_peer,
+                                                    check_vma):
     mesh = jtu.create_mesh((4,), ('x',))
 
-    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'),
+             check_vma=check_vma)
     def fwd(operand, output, input_offsets, send_sizes, output_offsets,
             recv_sizes):
       return lax.ragged_all_to_all(
@@ -277,18 +254,10 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
       self.assertAllClose(jac(f, (0, 1))(operand, output),
                           jac(f_ref, (0, 1))(operand, output))
 
-  @parameterized.named_parameters(
-      dict(
-          testcase_name='_single_axis_name', axis_name='x', mesh_axes=dict(x=4)
-      ),
-  )
-  def test_ragged_all_to_all_axis_index_groups(self, axis_name, mesh_axes):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
+  @parameterized.product(axis_name=['x'], mesh_axes=[dict(x=4)],
+                         check_vma=[True, False])
+  def test_ragged_all_to_all_axis_index_groups(self, axis_name, mesh_axes,
+                                               check_vma):
     mesh = jtu.create_mesh(tuple(mesh_axes.values()), tuple(mesh_axes.keys()))
     operand = jax.device_put(
         jnp.array([[1, 2, 2], [3, 4, 0],
@@ -334,7 +303,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
+        check_vma=check_vma,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -371,12 +340,10 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
                       [10, 30, 0, 0], [20, 20, 40, 0]], dtype=jnp.int32)
     )
 
-  @parameterized.named_parameters(
-      dict(
-          testcase_name='_single_axis_name', axis_name='x', mesh_axes=dict(x=2)
-      ),
-  )
-  def test_ragged_all_to_all_degenerate_groups(self, axis_name, mesh_axes):
+  @parameterized.product(axis_name=['x'], mesh_axes=[dict(x=2)],
+                         check_vma=[True, False])
+  def test_ragged_all_to_all_degenerate_groups(self, axis_name, mesh_axes,
+                                               check_vma):
     device_type = jax.devices()[0].platform
     if device_type == 'tpu':
       raise unittest.SkipTest(
@@ -423,7 +390,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
+        check_vma=check_vma,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -459,14 +426,8 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
         c, jnp.array([[0, 0, 1, 0], [0, 2, 3, 4]], dtype=jnp.int32)
     )
 
-  def test_ragged_all_to_all_vmap_multi_dim_operand(self):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
-
+  @parameterized.product(check_vma=[True, False])
+  def test_ragged_all_to_all_vmap_multi_dim_operand(self, check_vma):
     axis_name = 'x'
     mesh = jtu.create_mesh((2,), ('x',))
     data_sharding = P(axis_name, None, None)
@@ -496,7 +457,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
+        check_vma=check_vma,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -517,43 +478,13 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     self.assertEqual(res.shape, ref.shape)
     self.assertAllClose(res, ref, check_dtypes=False)
 
-  @parameterized.named_parameters(
-    dict(
-        testcase_name='_batch_0_data_shard_axis_0_input_0',
-        axis_name='x',
-        vmap_axis_name='y',
-        mesh_axes=dict(x=2, y=2),
-        vmap_batch_axis=0,
-        data_shard_axis=0,
-        input_config=0,
-    ),
-    dict(
-        testcase_name='_batch_0_data_shard_axis_1_input_0',
-        axis_name='x',
-        vmap_axis_name='y',
-        mesh_axes=dict(x=2, y=2),
-        vmap_batch_axis=0,
-        data_shard_axis=1,
-        input_config=0,
-    ),
-    dict(
-        testcase_name='_batch_1_data_shard_axis_0_input_1',
-        axis_name='x',
-        vmap_axis_name='y',
-        mesh_axes=dict(x=2, y=2),
-        vmap_batch_axis=1,
-        data_shard_axis=0,
-        input_config=1,
-    ),
-    dict(
-        testcase_name='_batch_1_data_shard_axis_1_input_1',
-        axis_name='x',
-        vmap_axis_name='y',
-        mesh_axes=dict(x=2, y=2),
-        vmap_batch_axis=1,
-        data_shard_axis=1,
-        input_config=1,
-    ),
+  @parameterized.product(
+      [dict(vmap_batch_axis=0, data_shard_axis=0, input_config=0),
+       dict(vmap_batch_axis=0, data_shard_axis=1, input_config=0),
+       dict(vmap_batch_axis=1, data_shard_axis=0, input_config=1),
+       dict(vmap_batch_axis=1, data_shard_axis=1, input_config=1)],
+      axis_name=['x'], vmap_axis_name=['y'], mesh_axes=[dict(x=2, y=2)],
+      check_vma=[True, False],
   )
   def test_ragged_all_to_all_vmap(
       self,
@@ -563,13 +494,8 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
       vmap_batch_axis,
       data_shard_axis,
       input_config,
+      check_vma,
   ):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
     mesh = jtu.create_mesh(tuple(mesh_axes.values()), tuple(mesh_axes.keys()))
 
     def get_data_sharding(axis):
@@ -626,7 +552,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_vma=False,
+        check_vma=check_vma,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -656,16 +582,12 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     expected_res = jnp.stack(expected_res)
     self.assertAllClose(res, expected_res)
 
-  def test_ragged_all_to_all_vmap_axis_index_groups(self):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
+  @parameterized.product(check_vma=[True, False])
+  def test_ragged_all_to_all_vmap_axis_index_groups(self, check_vma):
     mesh = jtu.create_mesh((4,), ('x',))
 
-    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'),
+             check_vma=check_vma)
     def fwd(operand, output, input_offsets, send_sizes, output_offsets,
             recv_sizes):
       return lax.ragged_all_to_all(
@@ -689,16 +611,12 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
                           [10, 30, 0, 0], [20, 20, 40, 0]], dtype=jnp.int32)
     self.assertAllClose(res, jnp.stack([expected, 2 * expected]))
 
-  def test_ragged_all_to_all_vmap_unbatched_offsets(self):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
+  @parameterized.product(check_vma=[True, False])
+  def test_ragged_all_to_all_vmap_unbatched_offsets(self, check_vma):
     mesh = jtu.create_mesh((2,), ('x',))
 
-    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'),
+             check_vma=check_vma)
     def fwd(operand, output, input_offsets, send_sizes, output_offsets,
             recv_sizes):
       return lax.ragged_all_to_all(
@@ -721,16 +639,12 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
         res, jnp.array([[[1, 3, 0, 0], [2, 2, 4, 0]],
                         [[5, 7, 0, 0], [6, 6, 8, 0]]], dtype=jnp.int32))
 
-  def test_ragged_all_to_all_jacfwd_jacrev(self):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
+  @parameterized.product(check_vma=[True, False])
+  def test_ragged_all_to_all_jacfwd_jacrev(self, check_vma):
     mesh = jtu.create_mesh((2,), ('x',))
 
-    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'),
+             check_vma=check_vma)
     def fwd(operand, output, input_offsets, send_sizes, output_offsets,
             recv_sizes):
       return lax.ragged_all_to_all(
@@ -871,13 +785,8 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
           operand, output, input_offsets, send_sizes, output_offsets,
           jnp.array([], dtype=jnp.int32), axis_name=axis_name)
 
-  def test_vmap_basic(self):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
+  @parameterized.product(check_vma=[True, False])
+  def test_vmap_basic(self, check_vma):
     num_devices = len(jax.devices()) # we expect either 4 or 8 total devices
     if num_devices not in (4, 8):
       raise unittest.SkipTest("test requires 4 or 8 devices")
@@ -905,7 +814,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             x_partition_spec,
             ),
         out_specs=(x_partition_spec),
-        check_vma=False,
+        check_vma=check_vma,
     )
     def ra2a_wrapper(x, output_shape, input_offsets, send_sizes, output_offsets, recv_sizes):
         input_offsets = input_offsets.reshape(input_offsets.shape[1:])
@@ -977,12 +886,6 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
       self.assertAllClose(vmap_output[i,:,:], expected_array, check_dtypes=False)
 
   def test_ragged_all_to_all_vma_invariant_output(self):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
     mesh = jtu.create_mesh((2,), ('x',))
 
     def f(operand, input_offsets, send_sizes, output_offsets, recv_sizes):
@@ -1002,18 +905,14 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, 'require replication'):
       shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P())(operand, *args)
     g = shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
-    self.assertAllClose(g(operand, *args), jnp.array([[2.], [1.]]))
+    self.assertAllClose(g(operand, *args), operand[::-1])
     w = jnp.array([[10.], [20.]], dtype=jnp.float32)
     grad = jax.grad(lambda x: (g(x, *args) * w).sum())(operand)
-    self.assertAllClose(grad, jnp.array([[20.], [10.]]))
+    self.assertAllClose(grad, w[::-1])
+    _, y_dot = jax.jvp(lambda x: g(x, *args), (operand,), (w,))
+    self.assertAllClose(y_dot, w[::-1])
 
   def test_ragged_all_to_all_vma_offsets_vary_over_other_axis(self):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
 
     def f(operand, output, input_offsets, send_sizes, output_offsets,
@@ -1039,19 +938,16 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
       shard_map(lambda *args: f(*args)[:, 0], mesh=mesh, in_specs=in_specs,
                 out_specs=P('x'))(operand, output, *args)
     g = shard_map(f, mesh=mesh, in_specs=in_specs, out_specs=P('x', 'y'))
-    self.assertAllClose(g(operand, output, *args),
-                        jnp.array([[[2.], [1.]], [[1.], [2.]]]))
+    swap_then_keep = lambda x: jnp.stack([x[::-1], x], axis=1)
+    self.assertAllClose(g(operand, output, *args), swap_then_keep(operand))
     w = jnp.array([[[1.], [2.]], [[4.], [8.]]], dtype=jnp.float32)
     grad = jax.grad(lambda x: (g(x, output, *args) * w).sum())(operand)
-    self.assertAllClose(grad, jnp.array([[6.], [9.]]))
+    self.assertAllClose(grad, jnp.array([[6.], [9.]], dtype=jnp.float32))
+    t = jnp.array([[3.], [5.]], dtype=jnp.float32)
+    _, y_dot = jax.jvp(lambda x: g(x, output, *args), (operand,), (t,))
+    self.assertAllClose(y_dot, swap_then_keep(t))
 
   def test_ragged_all_to_all_vma_replicated_operand(self):
-    device_type = jax.devices()[0].platform
-    if device_type == 'tpu' and jtu.get_tpu_version() < 4:
-      raise unittest.SkipTest(
-          'UNSUPPORTED: HLO opcode `ragged-all-to-all` is not supported by TPU'
-          f' v{jtu.get_tpu_version()}'
-      )
     mesh = jtu.create_mesh((2,), ('x',))
 
     @partial(shard_map, mesh=mesh, in_specs=(P(),) + (P('x'),) * 5,
@@ -1071,22 +967,29 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     operand = jnp.array([1., 2.], dtype=jnp.float32)
     output = jnp.zeros((2, 1), dtype=jnp.float32)
 
-    self.assertAllClose(f(operand, output, *args), jnp.array([[2.], [1.]]))
+    self.assertAllClose(f(operand, output, *args), operand[::-1, None])
     w = jnp.array([[10.], [20.]], dtype=jnp.float32)
     grad = jax.grad(lambda x: (f(x, output, *args) * w).sum())(operand)
-    self.assertAllClose(grad, jnp.array([20., 10.]))
+    self.assertAllClose(grad, w[::-1, 0])
+    t = jnp.array([3., 5.], dtype=jnp.float32)
+    _, y_dot = jax.jvp(lambda x: f(x, output, *args), (operand,), (t,))
+    self.assertAllClose(y_dot, t[::-1, None])
 
+  @parameterized.product(arg=['operand', 'output'],
+                         kind=['unreduced', 'reduced'])
   @jtu.with_explicit_mesh((2,), ('x',))
-  def test_ragged_all_to_all_unreduced_and_reduced_args(self, mesh):
-    def f(get_operand, x, input_offsets, send_sizes, output_offsets,
-          recv_sizes):
-      return lax.ragged_all_to_all(
-          get_operand(x[0]), x[0], input_offsets[0], send_sizes[0],
-          output_offsets[0], recv_sizes[0], axis_name='x')[None]
-    operands = {
+  def test_ragged_all_to_all_unreduced_and_reduced_args(self, arg, kind, mesh):
+    cast = {
         'unreduced': lambda x: lax.pcast(x, 'x', to='unreduced'),
         'reduced': lambda x: lax.pcast(jnp.zeros_like(x), 'x', to='reduced'),
-    }
+    }[kind]
+
+    def f(x, input_offsets, send_sizes, output_offsets, recv_sizes):
+      operand = cast(x[0]) if arg == 'operand' else x[0]
+      output = cast(x[0]) if arg == 'output' else x[0]
+      return lax.ragged_all_to_all(
+          operand, output, input_offsets[0], send_sizes[0], output_offsets[0],
+          recv_sizes[0], axis_name='x')[None]
 
     x = jnp.array([[1.], [2.]], dtype=jnp.float32)
     offsets = jnp.zeros((2, 2), dtype=jnp.int32)
@@ -1095,12 +998,9 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
                                                 sizes)]
 
     # With auto_pcast, the pvary that ragged_all_to_all inserts rejects these.
-    msg = 'ragged_all_to_all cannot accept args which are {}'
-    with config.auto_pcast(False):
-      for kind, get_operand in operands.items():
-        with self.assertRaisesRegex(ValueError, msg.format(kind)):
-          jax.make_jaxpr(shard_map(partial(f, get_operand), in_specs=P('x'),
-                                   out_specs=P('x')))(*args)
+    msg = f'ragged_all_to_all cannot accept args which are {kind}'
+    with config.auto_pcast(False), self.assertRaisesRegex(ValueError, msg):
+      jax.make_jaxpr(shard_map(f, in_specs=P('x'), out_specs=P('x')))(*args)
 
 
 if __name__ == '__main__':

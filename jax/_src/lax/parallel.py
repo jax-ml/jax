@@ -698,10 +698,11 @@ def ragged_all_to_all(
   written on their corresponding receivers. The sizes of received slices are
   indicated by ``recv_sizes``. See below for details.
 
-  The arrays ``input_offsets``, ``send_sizes``,``output_offsets``, and
+  The arrays ``input_offsets``, ``send_sizes``, ``output_offsets``, and
   ``recv_sizes`` must all be the same length, and that length must be divisible
-  by the size of the mapped axis ``axis_name``. Moreover, ``send_sizes`` and
-  ``recv_sizes`` must satisfy::
+  by the size of the mapped axis ``axis_name``, or by the group size when
+  ``axis_index_groups`` is given. Moreover, ``send_sizes`` and ``recv_sizes``
+  must satisfy::
 
     jnp.all(send_sizes == jax.lax.all_to_all(recv_sizes, axis_name, 0, 0, tiled=True))
 
@@ -787,10 +788,8 @@ def ragged_all_to_all(
       an axis of size 4, [[0, 1], [2, 3]] would run ragged all to all over the
       first two and last two replicas). Groups must cover all axis indices
       exactly once, and all groups must be the same size. Otherwise, the
-      behavior is undefined. With groups, the length of the offset and size
-      arrays must be divisible by the group size rather than the axis size,
-      and the ``all_to_all`` expressions in this docstring also take
-      ``axis_index_groups``.
+      behavior is undefined. With groups, the ``all_to_all`` expressions in
+      this docstring also take ``axis_index_groups``.
 
   Returns:
     Array of shape (M, A, B, ...) with the same value as the ``output`` except
@@ -1895,9 +1894,7 @@ def _ragged_all_to_all_transpose(
     mask = control_flow.cumsum(
         lax.full(t.shape[0], 0, dtype='int32').at[output_offsets_].add(1)
         .at[output_offsets_ + recv_sizes].add(-1)) > 0
-    mask = lax.expand_dims(mask, (*range(1, t.ndim),))
-    mask = lax.broadcast_in_dim(mask, shape=t.shape,
-                                broadcast_dimensions=tuple(range(t.ndim)))
+    mask = lax.broadcast_in_dim(mask, shape=t.shape, broadcast_dimensions=(0,))
     output_t = lax.select(mask, lax._zeros(t), t)
   return [operand_t, output_t] + [None] * 4
 
