@@ -2103,6 +2103,91 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
       idx[axis] = slice(start, end)
       np.testing.assert_allclose(out[tuple(idx)], x[tuple(idx)])
 
+  @parameterized.parameters(
+      ((2, 20, 100), (2, 8, 128)),
+      ((2, 20, 3), (2, 8, 3)),
+  )
+  def test_pipeline_unaligned_hbm_shape(self, shape, block_shape):
+    if not jtu.is_libtpu_at_least('0.0.51'):
+      self.skipTest('Requires libtpu >= 0.0.51')
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
+
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+
+    @functools.partial(
+        jax.jit, compiler_options=dict(xla_mosaic_on_device_checks='bounds')
+    )
+    def f(x):
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name='core'),
+          out_type=x,
+      )
+      def kernel_fn(x_ref, y_ref):
+        spec = pl.BlockSpec(block_shape, lambda i: (0, i, 0))
+        pltpu.emit_pipeline(
+            body,
+            grid=(3,),
+            in_specs=(spec,),
+            out_specs=spec,
+        )(x_ref, y_ref)
+
+      return kernel_fn(x)
+
+    out = f(x)
+    np.testing.assert_allclose(out, x + 1.0)
+
+  def test_block_spec_bounded_slice_unaligned_hbm_shape(self):
+    if not jtu.is_libtpu_at_least('0.0.51'):
+      self.skipTest('Requires libtpu >= 0.0.51')
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
+
+    shape = (2, 20, 128)
+    block_shape = (2, pl.BoundedSlice(16), 128)
+    # The slice [8, 20] has size 12, which is rounded up to the next tile
+    # multiple (16) by _make_block_slice, reaching 8 + 16 = 24 > 20 and
+    # requiring HBM ref padding via pad_ref.
+    slices = jnp.array([[0, 8], [8, 20]], dtype=jnp.int32)
+
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(shape)
+
+    @functools.partial(
+        jax.jit, compiler_options=dict(xla_mosaic_on_device_checks='bounds')
+    )
+    def f(x, slices):
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name='core'),
+          out_type=x,
+          scratch_types=[pltpu.SMEM(slices.shape, slices.dtype)],
+      )
+      def kernel_fn(x_ref, slices_ref, y_ref, slices_smem):
+        pltpu.sync_copy(slices_ref, slices_smem)
+
+        def index_map(i):
+          start = pl.multiple_of(slices_smem[i, 0], 8)
+          size = slices_smem[i, 1] - slices_smem[i, 0]
+          return (0, pl.ds(start, size), 0)
+
+        spec = pl.BlockSpec(block_shape, index_map)
+        pltpu.emit_pipeline(
+            body,
+            grid=(slices.shape[0],),
+            in_specs=(spec,),
+            out_specs=spec,
+        )(x_ref, y_ref)
+
+      return kernel_fn(x, slices)
+
+    out = f(x, slices)
+    np.testing.assert_allclose(out, x + 1)
+
 
 class PipelineHijaxTest(jtu.JaxTestCase):
 

@@ -62,6 +62,7 @@ from jax._src.pallas.mosaic.primitives import matmul_pop as matmul_pop
 from jax._src.pallas.mosaic.primitives import matmul_pop_fifo as matmul_pop_fifo
 from jax._src.pallas.mosaic.primitives import matmul_push_rhs as matmul_push_rhs
 from jax._src.pallas.mosaic.primitives import pack_elementwise as pack_elementwise
+from jax._src.pallas.mosaic.primitives import pad_ref as pad_ref
 from jax._src.pallas.mosaic.primitives import prng_random_bits as prng_random_bits
 from jax._src.pallas.mosaic.primitives import prng_seed as prng_seed
 from jax._src.pallas.mosaic.primitives import roll as roll

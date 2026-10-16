@@ -585,3 +585,40 @@ class AccessAssumptionTransform(state_types.Transform):
   def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
     del context
     return pp.text(f"{{annotate({self.assumption})}}")
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class _UnpadRef(state_types.Transform):
+  shape: tuple[int, ...] = jax.tree.static()
+
+  def transform_array(self, x: Any) -> Any:
+    return jax.lax.slice(x, (0,) * len(self.shape), self.shape)
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class PadRef(state_types.Transform):
+  """A TPU-specific ref transform that pads a Ref within its tile alignment."""
+
+  shape: tuple[int, ...] = jax.tree.static()
+
+  def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
+    if isinstance(x, state.AbstractRef):
+      return x.update(inner_aval=self.transform_type(x.inner_aval))
+    if isinstance(x, jax_core.ShapedArray):
+      return x.update(shape=self.shape)
+    raise TypeError(f"Cannot pad {x}")
+
+  def transform_array(self, x: Any) -> Any:
+    padding_config = [
+        (0, padded_dim - dim, 0) for dim, padded_dim in zip(x.shape, self.shape)
+    ]
+    return jax.lax.pad(x, jnp.zeros((), x.dtype), padding_config)
+
+  def undo(self, x: Any) -> state_types.Transform:
+    return _UnpadRef(tuple(x.shape))
+
+  def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
+    del context
+    return pp.text(f"{{pad({list(self.shape)})}}")

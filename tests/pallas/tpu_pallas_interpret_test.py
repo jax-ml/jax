@@ -1849,6 +1849,35 @@ class InterpretTest(jtu.JaxTestCase):
         out = jax.vmap(kernel)(x)
         np.testing.assert_array_equal(out, x + 1)
 
+  def test_pad_ref_unaligned_hbm(self):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (),
+        (),
+        abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
+    )
+    with config.use_emit_pipeline_primitive(True):
+      with jax.sharding.use_abstract_mesh(abstract_mesh):
+
+        def pipeline_body(x_ref, o_ref):
+          o_ref[...] = x_ref[...] + 1.0
+
+        @pl.kernel(
+            out_type=jax.ShapeDtypeStruct((20, 128), jnp.float32),
+            mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+            interpret=pltpu.InterpretParams(buffer_bounds='padded'),
+        )
+        def kernel(x_hbm_ref, o_hbm_ref):
+          pltpu.emit_pipeline(
+              pipeline_body,
+              grid=(3,),
+              in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          )(x_hbm_ref, o_hbm_ref)
+
+        x = jnp.arange(20 * 128, dtype=jnp.float32).reshape(20, 128)
+        out = kernel(x)
+        np.testing.assert_array_equal(out, x + 1)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

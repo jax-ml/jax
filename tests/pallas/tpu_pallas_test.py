@@ -2940,6 +2940,72 @@ class PallasCallTest(ptu.PallasTPUTest):
     with self.assertRaisesRegex(ValueError, error_regex):
       kernel(jnp.ones((8, 128), dtype=jnp.float32))
 
+  @parameterized.parameters(
+      ((3, 100), jnp.float32, (4, 128)),
+      ((5, 100), jnp.float32, (8, 128)),
+      ((4, 1, 64), jnp.bfloat16, (4, 2, 128)),
+  )
+  def test_pad_ref_vmem(self, shape, dtype, expected_padded_shape):
+    if not jtu.is_libtpu_at_least('0.0.51'):
+      self.skipTest('Requires libtpu >= 0.0.51')
+    if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Requires TPU v4+')
+
+    def kernel(x_ref, out_ref):
+      padded_x = pltpu.pad_ref(x_ref)
+      padded_out = pltpu.pad_ref(out_ref)
+      self.assertEqual(padded_x.shape, expected_padded_shape)
+      self.assertEqual(padded_out.shape, expected_padded_shape)
+      idx = tuple(pl.ds(0, s) for s in expected_padded_shape)
+      padded_out[idx] = padded_x[idx] + 1
+
+    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    out = jax.jit(
+        self.pallas_call(
+            kernel,
+            out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        ),
+        compiler_options=dict(xla_mosaic_on_device_checks='bounds'),
+    )(x)
+    np.testing.assert_array_equal(out, x + 1)
+
+  def test_pad_ref_hbm_dma(self):
+    if not jtu.is_libtpu_at_least('0.0.51'):
+      self.skipTest('Requires libtpu >= 0.0.51')
+
+    shape = (20, 100)
+
+    def kernel(x_hbm_ref, out_hbm_ref, vmem_ref, sem):
+      padded_x = pltpu.pad_ref(x_hbm_ref)
+      padded_out = pltpu.pad_ref(out_hbm_ref)
+      self.assertEqual(padded_x.shape, (24, 128))
+      self.assertEqual(padded_out.shape, (24, 128))
+      # Copy the trailing tile [16:24, 0:128] that straddles the logical shape
+      # (20, 100).
+      pltpu.async_copy(
+          padded_x.at[pl.ds(16, 8), pl.ds(0, 128)], vmem_ref, sem
+      ).wait()
+      vmem_ref[...] = vmem_ref[...] + 10.0
+      pltpu.async_copy(
+          vmem_ref, padded_out.at[pl.ds(16, 8), pl.ds(0, 128)], sem
+      ).wait()
+
+    x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+    out = jax.jit(
+        self.pallas_call(
+            kernel,
+            out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+            in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+            out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+            scratch_shapes=[
+                pltpu.VMEM((8, 128), jnp.float32),
+                pltpu.SemaphoreType.DMA,
+            ],
+        ),
+        compiler_options=dict(xla_mosaic_on_device_checks='bounds'),
+    )(x)
+    np.testing.assert_array_equal(out[16:20, :100], x[16:20, :100] + 10.0)
+
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPoisonTest(ptu.PallasTPUTest):
