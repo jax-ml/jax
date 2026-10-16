@@ -1228,20 +1228,26 @@ class BarrierRef:
   offset: ir.Value
   phases: ir.Value
   num_barriers: int
+  phase_offset: int = 0
 
   @staticmethod
   def initialize(
-      barrier_memref: ir.Value, arrival_count: int = 1
+      barrier_memref: ir.Value,
+      arrival_count: int = 1,
+      *,
+      phases: ir.Value | None = None,
+      phase_offset: int = 0,
   ) -> "BarrierRef":
     barrier_ty = ir.MemRefType(barrier_memref.type)
     [num_barriers] = barrier_ty.shape
-    if num_barriers > 32:
+    if phase_offset + num_barriers > 32:
       raise NotImplementedError("Only up to 32 barriers per group supported")
     i32 = ir.IntegerType.get_signless(32)
     i64 = ir.IntegerType.get_signless(64)
     address = memref_ptr(barrier_memref)
-    phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
-    memref.store(c(0, i32), phases, [])
+    if phases is None:
+      phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
+      memref.store(c(0, i32), phases, [])
     predicate = single_thread_predicate(scope=ThreadSubset.BLOCK)
     for i in range(num_barriers):
       nvvm.mbarrier_init(
@@ -1249,7 +1255,7 @@ class BarrierRef:
           c(arrival_count, i32),
           predicate=predicate,
       )
-    return BarrierRef(address, c(0, i32), phases, num_barriers)
+    return BarrierRef(address, c(0, i32), phases, num_barriers, phase_offset)
 
   def __iter__(self) -> Iterator["BarrierRef"]:
     if self.num_barriers == 1:
@@ -1273,6 +1279,7 @@ class BarrierRef:
         arith.addi(self.offset, offset),
         self.phases,
         1,
+        self.phase_offset,
     )
 
   @property
@@ -1353,7 +1360,7 @@ class BarrierRef:
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     i32 = ir.IntegerType.get_signless(32)
-    bitmask = arith.shli(c(1, i32), self.offset)
+    bitmask = arith.shli(c(1 << self.phase_offset, i32), self.offset)
     parity = arith.cmpi(
         arith.CmpIPredicate.ne, arith.andi(parities, bitmask), c(0, i32)
     )
@@ -1463,7 +1470,9 @@ class BarrierRef:
     idxs[dim] = idx
     flat_block = arith.index_cast(i32, cluster_idx(dim_idx=idxs))
     cptr = get_cluster_ptr(self.base_address, flat_block, generic=False)
-    return BarrierRef(cptr, self.offset, self.phases, self.num_barriers)
+    return BarrierRef(
+        cptr, self.offset, self.phases, self.num_barriers, self.phase_offset
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1476,10 +1485,13 @@ class DialectBarrierRef:
       barrier_memref: ir.Value,
       arrival_count: int,
       orders_tensor_core: bool,
+      *,
+      phases: ir.Value | None = None,
+      phase_offset: int = 0,
   ) -> "DialectBarrierRef":
     barrier_ty = ir.MemRefType(barrier_memref.type)
     [num_barriers] = barrier_ty.shape
-    if num_barriers > 32:
+    if phase_offset + num_barriers > 32:
       raise NotImplementedError("Only up to 32 barriers per group supported")
 
     address = memref_ptr(barrier_memref)
@@ -1487,10 +1499,13 @@ class DialectBarrierRef:
         address, arrival_count, num_barriers, orders_tensor_core
     )
     i32 = ir.IntegerType.get_signless(32)
-    phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
-    memref.store(c(0, i32), phases, [])
+    if phases is None:
+      phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
+      memref.store(c(0, i32), phases, [])
     return DialectBarrierRef(
-        barrier_ref=BarrierRef(address, c(0, i32), phases, num_barriers),
+        barrier_ref=BarrierRef(
+            address, c(0, i32), phases, num_barriers, phase_offset
+        ),
         orders_tensor_core=orders_tensor_core,
     )
 
@@ -1607,6 +1622,9 @@ class CollectiveBarrierRef:
       dims: Sequence[gpu.Dimension | Sequence[gpu.Dimension]],
       cluster_shape: tuple[int, int, int],
       leader_tracked: bool = False,
+      *,
+      phases: ir.Value | None = None,
+      phase_offset: int = 0,
   ) -> "CollectiveBarrierRef":
     if leader_tracked:
       # TODO(bchetioui): expand for multiple collective dimensions. Not sure
@@ -1646,7 +1664,10 @@ class CollectiveBarrierRef:
             cluster_mask, cluster_collective_mask(cluster_shape, d, leader_tracked)
         )
     barrier = BarrierRef.initialize(
-        barrier_memref, arrival_count=arrival_count * cluster_arrival_count
+        barrier_memref,
+        arrival_count=arrival_count * cluster_arrival_count,
+        phases=phases,
+        phase_offset=phase_offset,
     )
     return CollectiveBarrierRef(barrier, cluster_mask, leader_tracked)
 
