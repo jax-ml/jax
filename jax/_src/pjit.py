@@ -2494,6 +2494,15 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
   return MeshInfo(prev=mesh_to_use, new=new_mesh, axes=axes)
 
 
+def _modify_spec_for_auto_manual_hi(x, mesh):
+  from jax._src.hijax import HiPspec  # type: ignore
+  s = core.typeof(x).sharding
+  if isinstance(s, HiPspec):
+    return s.from_lo([core.modify_spec_for_auto_manual(ls, mesh)
+                      for ls in s.to_lo()])
+  return s.strip_auto_manual_mesh_axes(mesh)
+
+
 def auto_axes(f=None, /, *, axes: str | tuple[str, ...] | None = None,
               out_sharding=None):
   kwargs = dict(axes_=axes, out_sharding=out_sharding)
@@ -2519,8 +2528,8 @@ def _auto_axes(fun, *, axes_, out_sharding):
       return fun(*args, **kwargs)
     in_avals = [core.typeof(a) for a in tree_leaves(args)]
     with mesh_lib.use_abstract_mesh(mesh_info.new):
-      in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
-          core.typeof(a).sharding.spec, mesh_info.new), args)
+      in_specs = tree_map(
+          lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
       args = reshard(args, in_specs)
       out = fun(*args, **kwargs)
     res = reshard(out, _out_sharding)
@@ -2558,8 +2567,9 @@ def _explicit_axes(fun, *, axes, in_sharding):
     with mesh_lib.use_abstract_mesh(mesh_info.new):
       args = reshard(args, _in_sharding)
       out = fun(*args, **kwargs)
-    out_specs = tree_map(lambda o: core.modify_spec_for_auto_manual(
-        core.typeof(o).sharding.spec, mesh_lib.get_abstract_mesh()), out)
+    out_specs = tree_map(
+        lambda o: _modify_spec_for_auto_manual_hi(o, mesh_lib.get_abstract_mesh()),
+        out)
     return reshard(out, out_specs)
   return decorator
 

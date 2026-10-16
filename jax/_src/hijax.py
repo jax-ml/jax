@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from functools import partial, reduce, update_wrapper
 import inspect
 from typing import Any, NoReturn, NamedTuple
-from collections.abc import Hashable, Callable
+from collections.abc import Hashable, Callable, Sequence
 
 from jax._src import api
 from jax._src import config
@@ -1553,7 +1553,12 @@ class MappingSpec: pass
 class HiPspec:
   def to_lo(self) -> tuple[PartitionSpec, ...]:
     _must_override(self, "to_lo", "shard_map")
+  def from_lo(self, lo_specs: Sequence[PartitionSpec]) -> HiPspec:
+    _must_override(self, "from_lo", "explicit_axes / auto_axes")
   def to_tangent_spec(self) -> HiPspec:
     _must_override(self, "to_tangent_spec", "autodiff through shard_map")
   def to_ct_spec(self) -> HiPspec:
     _must_override(self, "to_ct_spec", "autodiff through shard_map")
+  # TODO(yashkatariya): Define a way to strip away auto/manual axes on HiPspec
+  # for full generality instead of doing `to_lo -> strip -> from_lo`.
+  # Look at strip_auto_manual_mesh_axes on NamedSharding as an API to expose.

@@ -273,6 +273,9 @@ class TupP(HiPspec):
   def to_lo(self) -> tuple[jax.PartitionSpec, ...]:
     return self.val
 
+  def from_lo(self, lo_specs) -> TupP:
+    return TupP(tuple(lo_specs))
+
 class MakeTup(HiPrim):
   def __init__(self, in_avals):
     in_avals = tuple(in_avals)
@@ -3537,6 +3540,40 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
                      TupP((jax.P('x', None), jax.P(None))))
     self.assertAllClose(get_tuple_element(ct_in, 0), x * 4.0)
     self.assertAllClose(get_tuple_element(ct_in, 1), y * 9.0)
+
+    # explicit_axes and auto_axes with TupTy
+    auto_mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'),
+        axis_types=(jax.sharding.AxisType.Auto, jax.sharding.AxisType.Auto))
+    with jax.set_mesh(auto_mesh):
+      x_auto = jax.device_put(
+          jnp.arange(8, dtype=jnp.float32).reshape(4, 2), jax.P('x', None))
+      y_auto = jax.device_put(jnp.ones((4,), dtype=jnp.float32), jax.P('x'))
+      tup_auto = make_tup(x_auto, y_auto)
+
+      @jax.sharding.explicit_axes(in_sharding=TupP((jax.P('x', None), jax.P('x'))))
+      def g(t):
+        self.assertEqual(jax.typeof(t).sharding,
+                         TupP((jax.P('x', None), jax.P('x'))))
+        return jax.sharding.reshard(t, TupP((jax.P(None, 'y'), jax.P('y'))))
+
+      out_g = jax.jit(g)(tup_auto)
+      self.assertEqual(jax.typeof(out_g).sharding,
+                       TupP((jax.P(None, None), jax.P(None))))
+      self.assertAllClose(get_tuple_element(out_g, 0), x_auto)
+      self.assertAllClose(get_tuple_element(out_g, 1), y_auto)
+
+    @jax.sharding.auto_axes(out_sharding=TupP((jax.P(None, 'y'), jax.P('x'))))
+    def h(t):
+      self.assertEqual(jax.typeof(t).sharding,
+                       TupP((jax.P(None, None), jax.P(None))))
+      return t
+
+    out_h = jax.jit(h)(tup)
+    self.assertEqual(jax.typeof(out_h).sharding,
+                     TupP((jax.P(None, 'y'), jax.P('x'))))
+    self.assertAllClose(get_tuple_element(out_h, 0), x)
+    self.assertAllClose(get_tuple_element(out_h, 1), y)
 
 
 @jtu.with_config(jax_remat3=True, jax_custom_vjp3=True)
