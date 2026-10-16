@@ -1937,6 +1937,7 @@ class LaunchContext:
       rank = len(slice_shape)
       idx_operands = ",".join(f"${i}" for i in range(4, 4 + rank))
       if collective_size > 1 and leader_tracked is not None:
+        assert collective == (gpu.Dimension.x,)
         assert collective_size == 2
         if arrive:
           first_block = arith.cmpi(
@@ -1958,15 +1959,26 @@ class LaunchContext:
           smem_space = "shared::cta"
           multicast_mod = ""
           multicast_operand = ""
-        mapped_barrier_ptr = barrier.remap_to_cluster(
-            gpu.Dimension.x, c(0, index)
-        ).get_ptr()
+        # Map the leader barrier inside the asm block to avoid LICM/CSE
+        # coalescing the rank operand with TMA coordinates (ptxas bug).
+        if math.prod(self.cluster_size) == 2:
+          map_leader_ptx = "@$0 mapa.shared::cluster.u32 mapped_addr, $3, 0;"
+        else:
+          map_leader_ptx = (
+              "@$0 mov.u32 mapped_addr, %cluster_ctarank;\n"
+              "            @$0 and.b32 mapped_addr, mapped_addr, 0xfffffffe;\n"
+              "            @$0 mapa.shared::cluster.u32 mapped_addr, $3, mapped_addr;"
+          )
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
-            [predicate, smem_ptr, tma_desc, mapped_barrier_ptr, *rev_dyn_base_indices, *multicast_mask],
+            [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices, *multicast_mask],
             f"""
+            {{
+            .reg .b32 mapped_addr;
+            {map_leader_ptx}
             @$0 cp.async.bulk.tensor.{rank}d.{smem_space}.global.tile.mbarrier::complete_tx::bytes{multicast_mod}.cta_group::2
-                                  [$1], [$2, {{{idx_operands}}}], [$3]{multicast_operand};
+                                  [$1], [$2, {{{idx_operands}}}], [mapped_addr]{multicast_operand};
+            }}
             """,
             "b,r,l,r" + ",r" * rank + ",h" * len(multicast_mask),
             has_side_effects=True,
