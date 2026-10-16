@@ -1935,6 +1935,8 @@ def valid_jaxtype(x) -> bool:
 def mem_kind_to_space(mem_kind: str | None) -> MemorySpace:
   if mem_kind == 'pinned_host':
     return MemorySpace.Host
+  elif mem_kind == 'collective':
+    return MemorySpace.Collective
   return MemorySpace.Device
 
 
@@ -1949,6 +1951,8 @@ def mem_space_to_kind(mem_space: Any) -> str:
       return "device"
     elif mem_space == MemorySpace.Host:
       return "pinned_host"
+    elif mem_space == MemorySpace.Collective:
+      return "collective"
   elif hasattr(mem_space, "memory_kind"):
     return mem_space.memory_kind
   assert False, f"unreachable: {mem_space}"
@@ -2182,6 +2186,7 @@ class ForbiddenCollectiveError(Exception):
 class MemorySpace(enum.Enum):
   Device = enum.auto()
   Host = enum.auto()
+  Collective = enum.auto()
   Any = enum.auto()
 
   def __repr__(self):
