@@ -75,7 +75,9 @@ import numpy as np
 #   abstract meshes and avals.
 # Version 11, May 15th, 2026, add AbstractDevice.platform.
 # Version 12, July 29th, 2026, add JAX version for the serializer.
-_SERIALIZATION_VERSION = 12
+# Version 13, September 27th, 2026, adds serialization for aval weak_type.
+#   This version is backwards compatible with Version 2 to 12.
+_SERIALIZATION_VERSION = 13
 
 
 def _expired_error_msg(exp: ser_flatbuf.Exported) -> str:
@@ -810,6 +812,7 @@ def _serialize_aval(
   ser_flatbuf.AbstractValueAddShape(builder, shape_vector_offset)
   ser_flatbuf.AbstractValueAddDtype(builder, _dtype_to_dtype_kind[aval.dtype])
   ser_flatbuf.AbstractValueAddMemorySpace(builder, _memory_space_to_enum[aval.memory_space])
+  ser_flatbuf.AbstractValueAddWeakType(builder, aval.weak_type)
   return ser_flatbuf.AbstractValueEnd(builder)
 
 
@@ -830,7 +833,8 @@ def _deserialize_aval(aval: ser_flatbuf.AbstractValue, *,
     mem_space = core.MemorySpace.Device
 
   return core.update_aval_with_sharding(
-      core.ShapedArray(shape, dtype, memory_space=mem_space), sharding
+      core.ShapedArray(shape, dtype, weak_type=aval.WeakType(),
+                       memory_space=mem_space), sharding
   )
 
 

@@ -135,6 +135,7 @@ table AbstractValue {
   shape: [string];  // Support shape polymorphism
   dtype: DType;
   memory_space: MemorySpace;
+  weak_type: bool;  // Added 9/27/2026 (v13)
 }
 
 // Deprecated 3/17/2026
