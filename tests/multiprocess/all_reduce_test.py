@@ -185,6 +185,74 @@ class AllReduceTest(jt_multiprocess.MultiProcessTest):
               f" got {shard.data.ravel()[wrong[0]]}, want {expected}"
           )
 
+  def test_psum_in_cond_and_after_cond(self):
+    if jaxlib_extension_version < 508:
+      self.skipTest("Requires jaxlib_extension_version >= 508")
+    n = jax.device_count()
+    mesh = jtu.create_mesh((n,), ("x",))
+    num_elements = 200_000
+
+    def branch(k):
+      def f(a):
+        # 200k float32 elements (800 KiB) splits across CPU worker threads and
+        # completes asynchronously.
+        h = jnp.sin(a + k)
+        return lax.psum(h, "x"), h
+      return f
+
+    def program(i, a, b, c):
+      a, b, c = a[0], b[0], c[0]
+      y, h = lax.cond(i > 0, branch(0.0), branch(1.0), a)
+      z = lax.psum(b + 0.0 * c.sum(), "x")
+      # More than 8 thunks in the entry computation so XLA:CPU runs it
+      # asynchronously.
+      more = sum(jnp.sort(c * (k + 2.0))[::-1] for k in range(12))
+      return y[None], z[None], h[None], more[None]
+
+    split = jax.NamedSharding(mesh, jax.P("x"))
+    whole = jax.NamedSharding(mesh, jax.P())
+    put = lambda v, s: jax.make_array_from_callback(v.shape, s, lambda ix: v[ix])
+
+    a0 = np.linspace(0.0, 3.0, n * num_elements, dtype=np.float32).reshape(
+        n, num_elements
+    )
+    b0 = (
+        np.full((n, num_elements), 1_000_000.0, dtype=np.float32)
+        + np.arange(n, dtype=np.float32)[:, None]
+    )
+    c0 = np.arange(n * 5000, dtype=np.float32).reshape(n, 5000)
+    args = (
+        put(np.asarray(1, np.int32), whole),
+        put(a0, split),
+        put(b0, split),
+        put(c0, split),
+    )
+
+    fn = jax.jit(
+        jax.shard_map(
+            program,
+            mesh=mesh,
+            in_specs=(jax.P(), jax.P("x"), jax.P("x"), jax.P("x")),
+            out_specs=jax.P("x"),
+            check_vma=False,
+        )
+    )
+    expected_z = b0.sum(axis=0)
+    for trial in range(10):
+      y, z, *_ = jax.block_until_ready(fn(*args))
+      for s in y.addressable_shards:
+        self.assertLessEqual(
+            np.max(np.abs(np.asarray(s.data))),
+            float(n),
+            msg=f"trial {trial}: y took values from the second psum",
+        )
+      for s in z.addressable_shards:
+        np.testing.assert_array_equal(
+            np.asarray(s.data)[0],
+            expected_z,
+            err_msg=f"trial {trial}: z mismatch on shard {s.index}",
+        )
+
 
 if __name__ == "__main__":
   jt_multiprocess.main()
