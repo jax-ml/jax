@@ -327,6 +327,19 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       jtu.check_grads(lsp_special.exp1, (x,), order=2,
                       atol=tol, rtol=tol, eps=1e-3)
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def testLogNdtrPositiveX(self, dtype):
+    # log_ndtr(x) for x > 0 must keep relative accuracy where ndtr(x) rounds
+    # to 1: log(ndtr(x)) lost up to 8% for 5 < x <= 8 (float64) and
+    # 2 < x <= 5 (float32). The reference is scipy's log1p(-ndtr(-x)) form.
+    # Stop before the result underflows (ndtr(-x) is subnormal beyond ~37 in
+    # float64 and ~13 in float32).
+    x = np.linspace(0.5, 30 if dtype == np.float64 else 12, 2001).astype(dtype)
+    expected = osp_special.log_ndtr(x.astype(np.float64)).astype(dtype)
+    rtol = 1e-12 if dtype == np.float64 else 2e-5
+    self.assertAllClose(lsp_special.log_ndtr(x), expected, rtol=rtol, atol=0)
+    jtu.check_grads(lsp_special.log_ndtr, (x[::100],), order=1, rtol=1e-2)
+
   def testWofzAccuracy(self):
     # Verify wofz agrees with scipy over the full complex plane (float32).
     rng = jtu.rand_default(np.random.RandomState(0))
