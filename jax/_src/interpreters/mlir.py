@@ -2368,10 +2368,10 @@ def _cached_lowering_miss(
   opted out of inlining."""
   ordered_effects = (tuple(effects_lib.ordered_effects.filter_in(eqn.effects))
                      if eqn.effects else ())
-  platform_rules, default_rule, inline = _get_lowering_rules(
-      ctx, eqn.primitive, eqn.ctx)
   with (source_info_util.user_context(eqn.source_info.traceback),
         eqn.ctx.manager):
+    platform_rules, default_rule, inline = _get_lowering_rules(
+        ctx, eqn.primitive, eqn.ctx)
     avals_out = map(lambda v: v.aval, eqn.outvars)
     cache_entry = _emit_lowering_rule_as_fun(
         partial(_uncached_lowering, eqn.primitive, eqn.ctx, eqn.effects,
@@ -2577,9 +2577,9 @@ def _platforms_for_eqn_ctx(eqn_ctx: core.JaxprEqnContext | None
   """Returns platforms to override based on compute type of jaxpr equation."""
   if eqn_ctx is None:
     return ()
-  if eqn_ctx.compute_type == 'device_host':
+  if config.compute_on_context_manager.value == 'device_host':
     return ('cpu',)
-  if eqn_ctx.compute_type == 'tpu_sparsecore':
+  if config.compute_on_context_manager.value == 'tpu_sparsecore':
     return ('tpu',)
   return ()
 
@@ -2936,20 +2936,20 @@ def _update_frontend_attributes(op, attrs):
 # TODO(yashkatariya): Delete this after legacy compute_on is deleted.
 def wrap_compute_type_in_place(ctx: LoweringRuleContext,
                                op: ir.Value | ir.Operation) -> None:
-  if ctx.jaxpr_eqn_ctx is None or ctx.jaxpr_eqn_ctx.compute_type is None:
+  if (ctx.jaxpr_eqn_ctx is None or
+      (compute_type := config.compute_on_context_manager.value) is None):
     return
   op = _get_owner(op)
 
-  if ctx.jaxpr_eqn_ctx.compute_type.startswith("gpu_stream:"):
-    _, stream = ctx.jaxpr_eqn_ctx.compute_type.split(":", 1)
+  if compute_type.startswith("gpu_stream:"):
+    _, stream = compute_type.split(":", 1)
     dict_attr = {
         "_xla_stream_annotation": ir.StringAttr.get(stream),
         "inlineable": ir.StringAttr.get("false")
     }
   else:
     dict_attr = {
-        "_xla_compute_type": ir.StringAttr.get(
-            map_compute_type(ctx.jaxpr_eqn_ctx.compute_type))
+        "_xla_compute_type": ir.StringAttr.get(map_compute_type(compute_type))
     }
   _update_frontend_attributes(op, dict_attr)
 

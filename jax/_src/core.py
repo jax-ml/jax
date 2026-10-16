@@ -60,8 +60,7 @@ import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding, get_replicated_axes
 from jax._src import named_sharding as ns
 from jax._src.sharding import Sharding
-from jax._src.layout import (Format, AutoLayout, AutoLayoutSingleton,
-                             get_layout_mode, LayoutMode, layout_tracing_mode)
+from jax._src.layout import Format, AutoLayout, AutoLayoutSingleton
 from jax._src.lib import _jax
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
@@ -349,9 +348,7 @@ def jaxpr_as_fun(closed_jaxpr: Jaxpr, *args):
 # We also in effect fuse four other context managers into one, mostly to
 # save allocations.
 class JaxprEqnContextManager:
-  __slots__ = ['context', 'prev_compute_type', 'prev_threefry_partitionable',
-               'prev_xla_metadata', 'prev_abstract_mesh', 'prev_layout_mode',
-               'prev_remove_size_one_mesh_axis', 'prev_no_collectives']
+  __slots__ = ['context', 'prev_xla_metadata', 'prev_configs']
 
   def __init__(self, context):
     self.context = context
@@ -366,73 +363,34 @@ class JaxprEqnContextManager:
           self.prev_xla_metadata, self.context.xla_metadata)
       config.xla_metadata_context_manager.set_local(updated)
 
-    self.prev_threefry_partitionable = config.threefry_partitionable.swap_local(
-        self.context.threefry_partitionable)
-    self.prev_compute_type = config.compute_on_context_manager.swap_local(
-        self.context.compute_type)
-    self.prev_abstract_mesh = mesh_lib.abstract_mesh_context_manager.swap_local(
-        self.context.cur_abstract_mesh)
-    self.prev_layout_mode = layout_tracing_mode.swap_local(
-        self.context.cur_layout_mode)
-    self.prev_remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.swap_local(
-        self.context.remove_size_one_mesh_axis)
-    self.prev_no_collectives = config.no_collectives.swap_local(
-        self.context.no_collectives)
+    self.prev_configs = config.swap_local_jaxpr_eqn_ctx(self.context.configs)
 
   def __exit__(self, exc_type, exc_value, traceback):
     config.xla_metadata_context_manager.set_local(self.prev_xla_metadata)
-    config.threefry_partitionable.set_local(self.prev_threefry_partitionable)
-    config.compute_on_context_manager.set_local(self.prev_compute_type)
-    mesh_lib.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
-    layout_tracing_mode.set_local(self.prev_layout_mode)
-    config.remove_size_one_mesh_axis_from_type.set_local(self.prev_remove_size_one_mesh_axis)
-    config.no_collectives.set_local(self.prev_no_collectives)
+    config.set_local_jaxpr_eqn_ctx(self.prev_configs)
 
 
 @immutable
 class JaxprEqnContext:
 
-  __slots__ = ['compute_type', 'threefry_partitionable', 'cur_abstract_mesh',
-               'cur_layout_mode', 'remove_size_one_mesh_axis', 'no_collectives',
-               'xla_metadata', 'configs', '__weakref__']
+  __slots__ = ['xla_metadata', 'configs', '__weakref__']
 
-  compute_type: str | None
-  threefry_partitionable: bool
   xla_metadata: dict[str, Any] | None
-  cur_abstract_mesh: mesh_lib.AbstractMesh
-  cur_layout_mode: LayoutMode
-  remove_size_one_mesh_axis: bool
-  no_collectives: frozenset[Any]
+  configs: tuple[Any, ...]
 
   @staticmethod
   @weak_value_interner
-  def _create(compute_type, threefry_partitionable, cur_abstract_mesh,
-              cur_layout_mode, remove_size_one_mesh_axis, no_collectives,
-              xla_metadata):
+  def _create(xla_metadata, configs):
     obj = object.__new__(JaxprEqnContext)
-    object.__setattr__(obj, 'compute_type', compute_type)
-    object.__setattr__(obj, 'threefry_partitionable', threefry_partitionable)
-    object.__setattr__(obj, 'cur_abstract_mesh', cur_abstract_mesh)
-    object.__setattr__(obj, 'cur_layout_mode', cur_layout_mode)
-    object.__setattr__(obj, 'remove_size_one_mesh_axis', remove_size_one_mesh_axis)
-    object.__setattr__(obj, 'no_collectives', no_collectives)
     object.__setattr__(obj, 'xla_metadata',
                        None if xla_metadata is None else dict(xla_metadata))
+    object.__setattr__(obj, 'configs', configs)
     return obj
 
   def __new__(cls):
-    compute_type = config.compute_on_context_manager.value
-    threefry_partitionable = config.threefry_partitionable.value
-    cur_abstract_mesh = mesh_lib.get_abstract_mesh()
-    cur_layout_mode = get_layout_mode()
-    remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.value
-    no_collectives = config.no_collectives.value
     xla_metadata = (None if (xm := current_xla_metadata()) is None
                     else tuple(sorted(xm.items())))
-    return JaxprEqnContext._create(
-        compute_type, threefry_partitionable, cur_abstract_mesh,
-        cur_layout_mode, remove_size_one_mesh_axis, no_collectives,
-        xla_metadata)
+    return JaxprEqnContext._create(xla_metadata, config.jaxpr_eqn_ctx_vals())
 
   # No __eq__ or __hash__: interned classes use object identity.
 
@@ -441,13 +399,9 @@ class JaxprEqnContext:
     return JaxprEqnContextManager(self)
 
   def __repr__(self):
-    return (f"JaxprEqnContext(compute_type={self.compute_type}, "
-            f"threefry_partitionable={self.threefry_partitionable}, "
-            f"cur_abstract_mesh={self.cur_abstract_mesh}, "
-            f"cur_layout_mode={self.cur_layout_mode}, "
-            f"remove_size_one_mesh_axis={self.remove_size_one_mesh_axis}, "
-            f"no_collectives={self.no_collectives}, "
-            f"xla_metadata={self.xla_metadata})")
+    s = ', '.join(f"{name}={val}" for name, val in
+                  zip(config.jaxpr_eqn_ctx_names(), self.configs))
+    return f"JaxprEqnContext({s}, xla_metadata={self.xla_metadata})"
 
 
 @cache()  # Everything in the context is a trace cache key also.
