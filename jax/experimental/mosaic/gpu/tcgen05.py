@@ -554,7 +554,6 @@ def mma(
         group_size=(m_group_elems, k_group_elems // (1 + is_sparse)),
         logical_k_major=False,
         mma_bytewidth_k=32,
-        split_const=True,
     )
   else:
     a_fastest = mma_utils.Dim.K
@@ -570,7 +569,6 @@ def mma(
       group_size=(k_group_elems, n_group_elems),
       logical_k_major=True,
       mma_bytewidth_k=64 if is_sparse else 32,
-      split_const=True,
   )
 
   if is_scaled and utils.bitwidth(mma_a_element_type) == 4:
@@ -614,9 +612,9 @@ def mma(
     else:
       assert a_desc_base is not None
       a_offset = mi * a_m_group_stride + ki * a_k_group_stride
-      a_mk = (a_desc_base[0], a_desc_base[1] + mma_utils.encode_addr(a_offset))
+      a_mk = (a_desc_base, mma_utils.encode_addr(a_offset))
     b_offset = ni * b_n_group_stride + ki * b_k_group_stride
-    b_nk = (b_desc_base[0], b_desc_base[1] + mma_utils.encode_addr(b_offset))
+    b_nk = (b_desc_base, mma_utils.encode_addr(b_offset))
     if a_sparse_addr_base is not None:
       if n_groups != 1 or m_groups != 1:
         raise NotImplementedError("A sparse metadata address calculation for multiple tiles")
@@ -704,6 +702,7 @@ def _do_mma(
 ) -> None:
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
+  i64 = ir.IntegerType.get_signless(64)
   a_k_idx_tiling, a_k_strides = a_k_strides or (None, None)  # pyrefly: ignore[bad-assignment]
   b_k_idx_tiling, b_k_strides = b_k_strides  # pyrefly: ignore[bad-assignment]
   assert all(
@@ -776,6 +775,8 @@ def _do_mma(
   num_cta = 2 if collective else 1
   a_in_tmem = a_k_strides is None
   a_ptx = "[a_desc]" if a_in_tmem else "a_desc"
+  a_ptx_width = 32 if a_in_tmem else 64
+  a_constraint = "r" if a_in_tmem else "l"
   sparse_mod = ".sp" if is_sparse else ""
   sparse_meta_ptx = ""
   if is_sparse:
@@ -842,31 +843,28 @@ def _do_mma(
       cols_per_k_group = instr_k // packing // (1 + is_sparse)
       a_offset = k_step * cols_per_k_group
       assert isinstance(a_desc_or_addr, ir.Value)
-      assert a_desc_or_addr.type == ir.IntegerType.get_signless(32)
-      a_enc_addr_base = a_desc_or_addr
+      assert a_desc_or_addr.type == i32
+      a_desc_base = a_desc_or_addr
     else:
       assert not isinstance(a_desc_or_addr, ir.Value)
       assert a_k_idx_tiling is not None and a_k_strides is not None
-      a_enc_addr_base, a_offset = a_desc_or_addr
+      a_desc_base, a_offset = a_desc_or_addr
+      assert a_desc_base.type == i64
       a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)  # pyrefly: ignore[bad-argument-type]
-    b_enc_addr_base, b_offset = b_desc
+    b_desc_base, b_offset = b_desc
+    assert b_desc_base.type == i64
     b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)  # pyrefly: ignore[bad-argument-type]
-    a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
-    b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
-        [d_addr, a_enc_addr_base, b_enc_addr_base, i_desc, accumulate, *scales_addrs, *sparse_addr],
+        [d_addr, a_desc_base, b_desc_base, i_desc, accumulate, *scales_addrs, *sparse_addr],
         f"""{{
-            .reg .b32 a_desc_low, a_desc_high, b_desc_low, b_desc_high;
-            .reg {".b32" if a_in_tmem else ".b64"} a_desc;
+            .reg .b{a_ptx_width} a_desc;
             .reg .b64 b_desc;
-            add.s32 a_desc_low, $1, {a_offset_low};
-            add.s32 b_desc_low, $2, {b_offset_low};
-            mov.b64 b_desc, {{b_desc_low, {b_offset_high}}};
-            {"mov.b32 a_desc, a_desc_low;" if a_in_tmem else f"mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"}
+            add.s{a_ptx_width} a_desc, $1, {a_offset};
+            add.s64 b_desc, $2, {b_offset};
             tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
         }}""",
-        "r,r,r,r,b" + extra_constraints,
+        f"r,{a_constraint},l,r,b" + extra_constraints,
         has_side_effects=True,
     )
     accumulate = arith.constant(i1, 1)
