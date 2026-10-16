@@ -24,6 +24,7 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import flattree as ft
 from jax._src import hijax
+from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas.fuser import fuser_utils
@@ -354,14 +355,26 @@ def fuse_jaxpr(
     strict_mode: bool = True,
 ):
   # Collect input fusions
-  for i, eqn in enumerate(jaxpr.eqns):
-    if eqn.primitive is hijax.call_hi_primitive_p and isinstance(
-        eqn.params.get("_prim"), Fusible
-    ):
-      fusion_eqn_index = i
-      break
-  else:
-    raise ValueError("No fusible eqn found")
+  fusion_eqn_indices = [
+      i
+      for i, eqn in enumerate(jaxpr.eqns)
+      if eqn.primitive is hijax.call_hi_primitive_p
+      and isinstance(eqn.params.get("_prim"), Fusible)
+  ]
+  match fusion_eqn_indices:
+    case []:
+      raise ValueError("No fusible found")
+    case [fusion_eqn_index]:
+      pass
+    case _:
+      call_sites = "\n  ".join(
+          source_info_util.summarize(jaxpr.eqns[i].source_info)
+          for i in fusion_eqn_indices
+      )
+      raise ValueError(
+          "Only a single fusible is allowed in a fused function, but found"
+          f" {len(fusion_eqn_indices)} at:\n  {call_sites}"
+      )
   fusion_eqn = jaxpr.eqns[fusion_eqn_index]
   fusible: Fusible = fusion_eqn.params["_prim"]
 

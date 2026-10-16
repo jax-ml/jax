@@ -141,6 +141,7 @@ pytype_strict_library(
         "//jax/_src:hijax",
         "//jax/_src:lax",
         "//jax/_src:partial_eval",
+        "//jax/_src:source_info_util",
         "//jax/_src:traceback_util",
         "//jax/_src:tree_util",
     ],

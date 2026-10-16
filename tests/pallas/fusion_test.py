@@ -47,6 +47,27 @@ class FusionTest(jtu.JaxTestCase):
     x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)
     np.testing.assert_array_equal(f(x), x)
 
+  def test_multiple_fusibles_error(self):
+    def f(x_fn, y_fn):
+      x = x_fn()
+      return x if y_fn is None else y_fn(x)
+
+    f1 = fuser.fusible(f)
+    f2 = fuser.fusible(f)
+
+    @fuser.fuse
+    def g(x):
+      y = f1(x)
+      return f2(y)
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Only a single fusible is allowed in a fused function, but found 2"
+        r" at:\n  .*_test\.py:\d+.*\n  .*_test\.py:\d+",
+    ):
+      g(x)
+
   def test_nested_fuse(self):
     @fuser.fusible
     def f(x_fn, y_fn):
