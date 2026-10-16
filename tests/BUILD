@@ -666,7 +666,7 @@ jax_multiplatform_test(
         "cpu": ["notsan"],
     },
     shard_count = {
-        "gpu": 4,
+        "gpu": 10,
         "cpu": select({
             "//tests/config:tsan_freethreading_rbe": 8,
             "//conditions:default": 1,
