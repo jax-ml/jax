@@ -698,10 +698,14 @@ def ragged_all_to_all(
   written on their corresponding receivers. The sizes of received slices are
   indicated by ``recv_sizes``. See below for details.
 
-  The arrays ``input_offsets``, ``send_sizes``,``output_offsets``, and
+  The arrays ``input_offsets``, ``send_sizes``, ``output_offsets``, and
   ``recv_sizes`` must all be the same length, and that length must be divisible
-  by the size of the mapped axis ``axis_name``. Moreover, ``send_sizes`` and
-  ``recv_sizes`` must satisfy::
+  by the size of the mapped axis ``axis_name`` (or the group size if
+  ``axis_index_groups`` is provided). The sent slices
+  ``operand[input_offsets[i]:input_offsets[i]+send_sizes[i]]`` on each sender
+  and the received slices on each receiver must be pairwise disjoint; in
+  particular, reverse-mode differentiation assumes disjoint input slices.
+  Moreover, ``send_sizes`` and ``recv_sizes`` must satisfy::
 
     jnp.all(send_sizes == jax.lax.all_to_all(recv_sizes, axis_name, 0, 0, tiled=True))
 
@@ -794,8 +798,11 @@ def ragged_all_to_all(
     axis_name = (axis_name,)
 
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
-  return ragged_all_to_all_p.bind(operand, output, input_offsets, send_sizes,
-                                  output_offsets, recv_sizes,
+  operand = insert_collective_pvary(axis_name, operand)
+  output = insert_collective_pvary(axis_name, output)
+  args = core.auto_insert_reshard(operand, output, input_offsets, send_sizes,
+                                  output_offsets, recv_sizes)
+  return ragged_all_to_all_p.bind(*args,
                                   axis_name=axis_name,
                                   axis_index_groups=axis_index_groups)
 
@@ -1664,8 +1671,6 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis,
 def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
                                    axis_name, split_axis, concat_axis,
                                    axis_index_groups, tiled):
-  if axis_index_groups is not None:
-    raise NotImplementedError("Please open a feature request!")
   x, = vals_in
   d, = dims_in
   axis_size, frame_name = axis_data.size, axis_data.name
@@ -1675,6 +1680,8 @@ def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
         x, axis_name=axis_name, split_axis=split_axis, concat_axis=concat_axis,
         axis_index_groups=axis_index_groups, tiled=tiled)
     return out, None
+  if axis_index_groups is not None:
+    raise NotImplementedError("Please open a feature request!")
   if frame_name not in axes_names:
     return _all_to_all_batcher(
       vals_in, dims_in, axis_name=axis_name, split_axis=split_axis,
@@ -1806,7 +1813,7 @@ def _ragged_all_to_all_effectful_abstract_eval(
     operand, output, input_offsets, send_sizes, output_offsets, recv_sizes,
     axis_name, axis_index_groups
 ):
-  del operand, axis_index_groups
+  del axis_index_groups
   if not dtypes.issubdtype(input_offsets.dtype, np.integer):
     raise ValueError("ragged_all_to_all input_offsets must be integer type.")
   if not dtypes.issubdtype(send_sizes.dtype, np.integer):
@@ -1837,7 +1844,15 @@ def _ragged_all_to_all_effectful_abstract_eval(
     )
 
   _check_axis_names(axis_name, 'ragged_all_to_all')
-  out_aval = output.update(shape=output.shape, weak_type=False)
+  check_unreduced_args([operand, output, input_offsets, send_sizes,
+                        output_offsets, recv_sizes], axis_name,
+                       'ragged_all_to_all')
+  collective_vma_rule('ragged_all_to_all', axis_name, operand)
+  vma = core.standard_vma_rule('ragged_all_to_all', operand, output,
+                               input_offsets, send_sizes, output_offsets,
+                               recv_sizes)
+  out_aval = output.update(shape=output.shape, weak_type=False,
+                           manual_axis_type=output.mat.update(varying=vma))
   effects = {*map(core.NamedAxisEffect, axis_name)}
   return out_aval, effects
 
@@ -1863,14 +1878,16 @@ def _ragged_all_to_all_transpose(
     output_t = ad.Zero(output.aval) if ad.is_undefined_primal(output) else None
   else:
     zero = ad.zeros_like_aval(operand.aval)
-    output_offsets_ = all_to_all(output_offsets, axis_name, 0, 0, tiled=True)
-    input_offsets_ = all_to_all(input_offsets, axis_name, 0, 0, tiled=True)
+    output_offsets_ = all_to_all(output_offsets, axis_name, 0, 0, tiled=True,
+                                 axis_index_groups=axis_index_groups)
+    input_offsets_ = all_to_all(input_offsets, axis_name, 0, 0, tiled=True,
+                                axis_index_groups=axis_index_groups)
     operand_t = ragged_all_to_all_p.bind(
         t, zero, output_offsets_, recv_sizes, input_offsets_, send_sizes,
         axis_name=axis_name, axis_index_groups=axis_index_groups)
     mask = control_flow.cumsum(
-        lax.full(t.shape[0], 0, dtype='int32').at[output_offsets_].set(1)
-        .at[output_offsets_ + recv_sizes].add(-1))
+        lax.full(t.shape[0], 0, dtype='int32').at[output_offsets_].add(1)
+        .at[output_offsets_ + recv_sizes].add(-1)) > 0
     mask = lax.expand_dims(mask, (*range(1, t.ndim),))
     mask = lax.broadcast_in_dim(mask, shape=t.shape, broadcast_dimensions=tuple(range(t.ndim)))
     output_t = lax.select(mask, lax._zeros(t), t)
@@ -1889,9 +1906,11 @@ def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
   size = axis_data.size
 
   def bdim_at_second(x, d):
+    if d is None:
+      assert x.ndim == 1
+      return batching.broadcast(x, size, 1, None)
     assert x.ndim == 2
-    return (batching.broadcast(x, size, 1, None) if d is None else
-            x if d == 1 else x.T)
+    return x if d == 1 else x.T
   def merge(x): return x.reshape(-1, *x.shape[2:])
   def split(x): return x.reshape(size, -1, *x.shape[1:])
 
