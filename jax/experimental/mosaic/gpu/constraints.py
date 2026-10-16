@@ -653,6 +653,62 @@ class IsTransferableTmemRegisters(IsTransferable):
     return f"IsTransferableTmemRegisters({self.source} ⟶ {self.target})"
 
 
+def _is_supported_tiled_transfer(
+    shape: tuple[int, ...],
+    strides: tuple[int, ...],
+    bitwidth: int,
+    optimized: bool,
+    reg_layout: fa.FragmentedLayout,
+    smem_layout: SMEMTransforms | None = None,
+) -> bool:
+  tiling_transform = smem_layout.tiling if smem_layout is not None else None
+  swizzle = smem_layout.swizzle if smem_layout is not None else None
+
+  if not isinstance(reg_layout, fa.TiledLayout):
+    return tiling_transform is None and swizzle is None
+  tiling = tiling_transform.tiling if tiling_transform is not None else ()
+  tiling_rank = len(tiling)
+
+  # If `tiling_rank` is 0, then we tile by the shape. This is the logic that
+  # is implemented in `load_untiled` and `store_untiled`.
+  if tiling_rank == 0:
+    tiling = shape
+    tiling_rank = len(tiling)
+
+  int_ty = ir.IntegerType.get_signless(bitwidth)
+  layout = ir.StridedLayoutAttr.get(0, lowering.tile_strides(strides, tiling))
+  ref_shape = utils.tile_shape(shape, tiling)
+  assert len(layout.strides) == len(ref_shape), (len(layout.strides), len(ref_shape))
+  memref_ty = ir.MemRefType.get(
+      ref_shape, int_ty, layout, None if smem_layout is None else utils.smem()
+  )
+  dummy_func = func.FuncOp("dummy_transfer_test", ir.FunctionType.get([], []))
+  dummy_block = dummy_func.add_entry_block()
+  try:
+    with ir.InsertionPoint(dummy_block):
+      fake_ref_op = builtin.UnrealizedConversionCastOp([memref_ty], [])
+      fake_ref = fake_ref_op.results[0]
+      for use_txmatrix in ([False] if smem_layout is None else [True, False]):
+        try:
+          next(
+              fa.FragmentedArray.transfer_tiled(
+                  fake_ref,
+                  swizzle or 16,
+                  reg_layout,
+                  shape,
+                  optimized=optimized,
+                  ref_tiling_rank=tiling_rank,
+                  use_txmatrix=use_txmatrix,
+              )
+          )
+          return True
+        except (fa.TxMatrixIneligible, fa.TransferPlanDerivationError, fa.UnsupportedTransferError):
+          continue
+      return False
+  finally:
+    dummy_func.erase()
+
+
 @dataclasses.dataclass(frozen=True)
 class IsTransferableSmemRegisters(IsTransferable):
   """States that `source` layout must be transferable across memory spaces to `target` layout.
@@ -664,62 +720,16 @@ class IsTransferableSmemRegisters(IsTransferable):
   bitwidth: int
   optimized: bool
 
-  def _is_supported_smem_transfer(
-      self,
-      smem_layout: SMEMTransforms,
-      reg_layout: fa.FragmentedLayout,
-  ) -> bool:
-    tiling_transform = smem_layout.tiling
-    swizzle = smem_layout.swizzle
-
-    if not isinstance(reg_layout, fa.TiledLayout):
-      return tiling_transform is None and swizzle is None
-    tiling = tiling_transform.tiling if tiling_transform is not None else ()
-    tiling_rank = len(tiling)
-
-    # If `tiling_rank` is 0, then we tile by the shape. This is the logic that
-    # is implemented in `load_untiled` and `store_untiled`.
-    if tiling_rank == 0:
-      tiling = self.shape
-      tiling_rank = len(tiling)
-
-    int_ty = ir.IntegerType.get_signless(self.bitwidth)
-    layout = ir.StridedLayoutAttr.get(0, lowering.tile_strides(self.strides, tiling))
-    ref_shape = utils.tile_shape(self.shape, tiling)
-    assert len(layout.strides) == len(ref_shape), (len(layout.strides), len(ref_shape))
-    memref_ty = ir.MemRefType.get(ref_shape, int_ty, layout, utils.smem())
-    dummy_func = func.FuncOp("dummy_transfer_test", ir.FunctionType.get([], []))
-    dummy_block = dummy_func.add_entry_block()
-    try:
-      with ir.InsertionPoint(dummy_block):
-        fake_ref_op = builtin.UnrealizedConversionCastOp([memref_ty], [])
-        fake_ref = fake_ref_op.results[0]
-        for use_txmatrix in [True, False]:
-          try:
-            next(
-                fa.FragmentedArray.transfer_tiled(
-                    fake_ref,
-                    swizzle or 16,
-                    reg_layout,
-                    self.shape,
-                    optimized=self.optimized,
-                    ref_tiling_rank=tiling_rank,
-                    use_txmatrix=use_txmatrix,
-                )
-            )
-            return True
-          except (fa.TxMatrixIneligible, fa.TransferPlanDerivationError, fa.UnsupportedTransferError):
-            continue
-        return False
-    finally:
-      dummy_func.erase()
-
   def _constant_holds(self) -> bool:
     match self.source, self.target:
       case SMEMTransforms() as src, RegisterLayout(value=dst):
-        return self._is_supported_smem_transfer(src, dst)
+        return _is_supported_tiled_transfer(
+            self.shape, self.strides, self.bitwidth, self.optimized, dst, src
+        )
       case RegisterLayout(value=src), SMEMTransforms() as dst:
-        return self._is_supported_smem_transfer(dst, src)
+        return _is_supported_tiled_transfer(
+            self.shape, self.strides, self.bitwidth, self.optimized, src, dst
+        )
       case _:
         raise ValueError(
             f"{self.source} -> {self.target} is not a SMEM <-> Registers transfer."
@@ -727,6 +737,36 @@ class IsTransferableSmemRegisters(IsTransferable):
 
   def __str__(self):
     return f"IsTransferableSmemRegisters({self.source} ⟶ {self.target})"
+
+
+@dataclasses.dataclass(frozen=True)
+class IsTransferableGmemRegisters(_BaseConstraint):
+  """States that a register layout `expr` must be transferable to/from GMEM."""
+
+  expr: Expression
+  shape: tuple[int, ...]
+  strides: tuple[int, ...]
+  bitwidth: int
+  optimized: bool
+
+  @property
+  def _is_constant(self) -> bool:
+    return isinstance(self.expr, Constant)
+
+  def _constant_holds(self) -> bool:
+    match self.expr:
+      case RegisterLayout(value=reg_layout):
+        return _is_supported_tiled_transfer(
+            self.shape, self.strides, self.bitwidth, self.optimized, reg_layout
+        )
+      case _:
+        raise ValueError(
+            f"{self.expr} is not a register layout in a GMEM <-> Registers"
+            " transfer."
+        )
+
+  def __str__(self):
+    return f"IsTransferableGmemRegisters({self.expr})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -923,6 +963,7 @@ Constraint = (
     | Relayout
     | NotOfType
     | IsTransferable
+    | IsTransferableGmemRegisters
     | Divides
     | IsSupportedBroadcast
     | MinorDimDivisibleBy
@@ -982,6 +1023,11 @@ def reduce_constraint(
       if source_red is source and target_red is target:
         return transfer
       return dataclasses.replace(transfer, source=source_red, target=target_red)
+    case IsTransferableGmemRegisters(expr=expr) as transfer:
+      expr_red = reduce_expression(expr, assignments)
+      if isinstance(expr_red, Unsatisfiable):
+        return Unsatisfiable()
+      return dataclasses.replace(transfer, expr=expr_red)
     case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
@@ -1072,6 +1118,8 @@ class ConstraintSystem:
         case IsTransferable(source=source, target=target):
           extract_variables(source)
           extract_variables(target)
+        case IsTransferableGmemRegisters(expr=expr):
+          extract_variables(expr)
         case Divides(expr=expr):
           extract_variables(expr)
         case MinorDimDivisibleBy(expr=expr):
