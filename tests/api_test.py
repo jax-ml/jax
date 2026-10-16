@@ -2663,6 +2663,45 @@ class APITest(jtu.JaxTestCase):
     expected = [3., 0.]
     self.assertEqual(actual, expected)
 
+  def test_linear_transpose_symbolic_zeros(self):
+    f32 = core.ShapedArray((), np.dtype('float32'))
+    zero = ad_internal.Zero(f32)
+    f = lambda x, y, z: (2. * x, 3. * x, zero)
+    one = np.float32(1.)
+
+    transpose = api._linear_transpose(f, f32, f32, zero, instantiate=False)
+    x_bar, y_bar, z_bar = transpose((one, zero, one))
+    self.assertAllClose(x_bar, 2 * one)
+    self.assertIsInstance(y_bar, ad_internal.Zero)
+    self.assertIsInstance(z_bar, ad_internal.Zero)
+    x_bar, y_bar, z_bar = transpose((zero, zero, zero))
+    self.assertIsInstance(x_bar, ad_internal.Zero)
+    self.assertIsInstance(y_bar, ad_internal.Zero)
+    self.assertIsInstance(z_bar, ad_internal.Zero)
+
+    x_bar, y_bar, z_bar = api.linear_transpose(f, f32, f32, zero)(
+        (one, zero, one))
+    self.assertAllClose(x_bar, 2 * one)
+    self.assertAllClose(y_bar, 0 * one)
+    self.assertIsInstance(z_bar, ad_internal.Zero)
+
+  def test_linear_transpose_custom_pytree_output(self):
+    @jax.tree_util.register_pytree_node_class
+    class CheckingNode:
+      def __init__(self, x):
+        self.x = jnp.asarray(x)
+
+      def tree_flatten(self):
+        return (self.x,), None
+
+      @classmethod
+      def tree_unflatten(cls, _, children):
+        return cls(*children)
+
+    transpose = api.linear_transpose(lambda x: CheckingNode(2. * x), 1.)
+    x_bar, = transpose(CheckingNode(3.))
+    self.assertAllClose(x_bar, 6., check_dtypes=False)
+
   @parameterized.product(jit=[False, True], dtype=[np.float32, np.complex64,
                                                 np.int32])
   def test_linear_transpose_float0(self, jit, dtype):

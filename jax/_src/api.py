@@ -61,7 +61,6 @@ from jax._src import pjit
 from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray, typeof
 from jax._src.api_util import (
-  flatten_fun_nokwargs,
   flatten_axes, _ensure_index, check_callable, debug_info, argnums_partial2)
 from jax._src.lib import jax_jit
 from jax._src.lib import _jax
@@ -2128,8 +2127,11 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   if reduce_axes:
     raise NotImplementedError("reduce_axes argument to transpose is deprecated")
   del reduce_axes
+  return _linear_transpose(fun, *primals, instantiate=True)
+
+def _linear_transpose(fun: Callable, *primals, instantiate: bool) -> Callable:
   primals_flat, in_tree = tree_flatten(primals)
-  flat_fun, out_tree = flatten_fun_nokwargs(
+  flat_fun, out_info = _flatten_fun_nonzero_outs(
       lu.wrap_init(fun,
                    debug_info=debug_info("linear_transpose", fun, primals, {})),
       in_tree)
@@ -2149,14 +2151,18 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
     raise TypeError("linear_transpose only supports [float, complex, or float0] -> "
                     "[float, complex, or float0], and integer -> integer functions, "
                     f"but got {in_dtypes} -> {out_dtypes}.")
+  out_tree, out_zeros = out_info()
 
   @api_boundary
   def transposed_fun(const, out_cotangent):
-    out_cts, out_tree2 = tree_flatten(out_cotangent)
-    if out_tree() != out_tree2:
+    out_cts, out_tree2 = tree_flatten(out_cotangent, is_leaf=_is_zero)
+    if out_tree != out_tree2:
       raise TypeError("cotangent tree does not match function output, "
-                      f"expected {out_tree()} but got {out_tree2}")
-    if not all(map(core.typecheck, out_avals, out_cts)):
+                      f"expected {out_tree} but got {out_tree2}")
+    out_cts = [ct for ct, z in zip(out_cts, out_zeros) if not z]
+    if not all(_is_zero(ct) or core.typecheck(a, ct) or
+               core.typecheck(a.to_ct_aval(), ct)
+               for a, ct in zip(out_avals, out_cts)):
       raise TypeError("cotangent type does not match function output, "
                       f"expected {out_avals} but got {out_cts}")
     # float0 has only one value; represent it symbolically during transposition
@@ -2165,11 +2171,23 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
                else ct for a, ct in zip(out_avals, out_cts)]
     dummies = [ad.UndefinedPrimal(a.to_ct_aval()) for a in in_avals]
     in_cts = ad.backward_pass(jaxpr, True, const, dummies, out_cts)
-    in_cts = map(ad.instantiate_zeros, in_cts)
+    if instantiate:
+      in_cts = map(ad.instantiate_zeros, in_cts)
     return tree_unflatten(in_tree, in_cts)
 
   # Ensure that transposed_fun is a PyTree
   return Partial(transposed_fun, const)
+
+_is_zero = lambda x: isinstance(x, ad.Zero)
+
+@lu.transformation_with_aux2
+def _flatten_fun_nonzero_outs(f: Callable, store: lu.Store,
+                              in_tree: PyTreeDef, *args_flat):
+  ans = f(*tree_unflatten(in_tree, args_flat))
+  ans_flat, out_tree = tree_flatten(ans, is_leaf=_is_zero)
+  out_zeros = [_is_zero(x) for x in ans_flat]
+  store.store((out_tree, out_zeros))
+  return [x for x, z in zip(ans_flat, out_zeros) if not z]
 
 
 @overload

@@ -11271,6 +11271,40 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     ex_g1 = jax.jit(jax.grad(lambda x: f(x).sum()))(rep_arr)
     self.assertArraysEqual(reshard(g1, P()), ex_g1)
 
+  @config.custom_jvp3(True)
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_custom_jvp_reduced_transpose(self, mesh):
+    arr = jax.device_put(np.arange(8.), P(reduced={'x'}))
+
+    @jax.custom_jvp
+    def f(x):
+      return 2. * x
+    f.defjvp(lambda p, t: (f(*p), 2. * t[0]))
+
+    g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(g.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
+  @config.custom_jvp3(True)
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_custom_jvp_applied_to_tangents_reduced_transpose(self, mesh):
+    arr = jax.device_put(np.arange(8.), P(reduced={'x'}))
+
+    @jax.custom_jvp
+    def f(x):
+      return 2. * x
+    f.defjvp(lambda p, t: (f(*p), f(*t)))
+
+    g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(g.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_linear_transpose_reduced(self, mesh):
+    arr = jax.device_put(np.arange(8.), P(reduced={'x'}))
+    ct = jax.reshard(jnp.arange(8.), P(unreduced={'x'}))
+    x_bar, = jax.linear_transpose(lambda x: 2. * x, arr)(ct)
+    self.assertEqual(x_bar.sharding,
+                     NamedSharding(mesh, P(None, unreduced={'x'})))
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_select_unreduced(self, mesh):
     np_inp = jnp.arange(16.).reshape(8, 2)
