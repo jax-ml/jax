@@ -1708,21 +1708,35 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     expected = jnp.zeros_like(x[0:1, 0:2]).at[0, 1].set(x[4, 4])
     np.testing.assert_allclose(y, expected)
 
-  def test_vmem_vmem_dma(self):
-    def kernel(x_ref, y_ref):
-      def body(sem):
-        pltpu.async_copy(x_ref, y_ref, sem).wait()
-      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
-    x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = self.pallas_call(
+  @parameterized.product(
+      dtype=(jnp.float32, jnp.bfloat16, jnp.int8),
+      slice_rows=(None, 8, 24),
+  )
+  def test_vmem_vmem_dma(
+      self, dtype: jnp.dtype, slice_rows: int | None
+  ) -> None:
+    if slice_rows is not None and not jtu.is_libtpu_at_least('0.0.51'):
+      self.skipTest('Requires libtpu >= 0.0.51')
+    shape = (64, 256)
+    window = slice(None) if slice_rows is None else slice(0, slice_rows)
+
+    def kernel(x_ref, y_ref, o_ref):
+      pltpu.sync_copy(y_ref, o_ref)
+      pltpu.sync_copy(x_ref.at[window], o_ref.at[window])
+
+    x = jnp.arange(math.prod(shape)).astype(dtype).reshape(shape)
+    y = jnp.zeros_like(x)
+    out = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.VMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
         ],
         out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-    )(x)
-    np.testing.assert_allclose(y, x)
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        input_output_aliases={1: 0},
+    )(x, y)
+    np.testing.assert_array_equal(out, y.at[window].set(x[window]))
 
   def test_hbm_vmem_dma_slicing(self):
     def kernel(x_hbm_ref, y_ref):
