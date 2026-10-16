@@ -49,7 +49,8 @@ def _mpmath_digamma(x):
 def _mpmath_lgamma(x):
   if (x <= 0 and mpmath.isint(x)) or x == -mpmath.inf:
     return mpmath.inf
-  return mpmath.log(abs(mpmath.gamma(x)))
+  with mpmath.workprec(200):
+    return +mpmath.log(abs(mpmath.gamma(x)))
 
 
 @jtu.thread_unsafe_test_class()
@@ -97,39 +98,91 @@ class LgammaTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_lgamma_accuracy(self, dtype):
-    # TODO(phawkins): In float64, chlo.lgamma has large errors near negative
-    # zero-crossings (where |gamma(x)| = 1, e.g. x ~= -3.14358).
     bounds = [
-        ("cpu", {f16: 1.0, f32: 4.0, f64: math.inf}),
-        ("gpu", {f16: 1.0, f32: 4.0, f64: math.inf}),
+        ("cpu", {f16: 1.0, f32: 2.5, f64: 2.0}),
+        ("gpu", {f16: 1.0, f32: 4.0, f64: 2.0}),
         ("tpu", {f16: 1.0, f32: 4.0}),
     ]
     ref_fn = lambda x: np.where(x == -np.inf, np.inf, scipy.special.gammaln(x))
+    neg_roots = [
+        # Negative zero crossings where |gamma(x)| = 1 (lgamma(x) = 0), computed
+        # via mpmath.findroot(lambda x: abs(mpmath.gamma(x)) - 1, x0):
+        -2.4570247382208006,
+        -2.7476826467274127,
+        -3.14358088834998,
+        -3.955294284858598,
+        -4.039361839740537,
+        -4.991544640560048,
+        -5.0082181683225935,
+        -5.998607480080875,
+        -6.001385294453155,
+        -6.999801507890638,
+        -7.000198333407325,
+        -7.999975197095821,
+        -8.000024800270682,
+        -8.999997244250977,
+        -9.000002755714823,
+        -9.99999972442663,
+        -10.000000275573013,
+        -10.99999997494789,
+        -11.000000025052106,
+        -11.999999997912324,
+        -12.000000002087676,
+        -12.99999999983941,
+        -13.00000000016059,
+        -13.99999999998853,
+        -14.00000000001147,
+        -14.999999999999236,
+        -15.000000000000764,
+        -15.999999999999952,
+        -16.000000000000046,
+    ]
+    # Root-window switch boundaries |w| = 0.06 for neg_roots[0] (delta / r in
+    # {47/53, 53/47}) and |w| = 0.08 for the rest (delta / r in {23/27, 27/23})
+    # where negative-root rational approximations hand off to Euler reflection.
+    neg_root_boundaries = [
+        round(x) + (x - round(x)) * factor
+        for i, x in enumerate(neg_roots)
+        for factor in (
+            (47.0 / 53.0, 53.0 / 47.0)
+            if i == 0
+            else (23.0 / 27.0, 27.0 / 23.0)
+        )
+    ]
     interesting_points = [
-        # Non-positive integer poles of gamma(x):
+        # Non-positive integer poles of gamma(x) and large negative half-integer:
         *(float(-k) for k in range(21)),
         -100.0,
         -1000.0,
-        # Positive zero crossings where gamma(1) = gamma(2) = 1:
+        -4503599627370495.5,  # -2**52 + 0.5 (last negative non-integer in f64)
+        -4503599627370496.0,  # -2**52 (all f64 below this are even integers)
+        # Positive zero crossings where gamma(1) = gamma(2) = 1, plus offsets
+        # where (x - 1) and (x - 2) cross half-precision scale:
         1.0,
         2.0,
+        1.0 - 2**-26,
+        1.0 + 2**-26,
+        2.0 - 2**-26,
+        2.0 + 2**-26,
         # Local minimum of gamma(x) on (0, inf), where digamma(x) = 0
         # (computed via mpmath.findroot(mpmath.digamma, 1.5)):
         1.4616321449683623,
-        # Negative zero crossings where |gamma(x)| = 1 (lgamma(x) = 0), computed
-        # via mpmath.findroot(lambda x: abs(mpmath.gamma(x)) - 1, x0):
-        -2.151610527686942,  # first root in (-3, -2)
-        -2.8115278800280976,  # second root in (-3, -2)
-        -3.1435830219538416,  # first root in (-4, -3)
-        -3.9533289185258997,  # second root in (-4, -3)
-        -4.026705717226458,  # first root in (-5, -4)
-        -4.990151042516608,  # second root in (-5, -4)
-        # Stirling / Lanczos asymptotic switch thresholds:
+        *neg_roots,
+        *neg_root_boundaries,
+        # Polynomial and recurrence-to-asymptotic switch thresholds:
+        2.5,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
         8.0,
         10.0,
         # Overflow thresholds where lgamma(x) == finfo.max, computed via
-        # mpmath.findroot(lambda x: mpmath.loggamma(x) - finfo.max, x0):
+        # mpmath.findroot(lambda x: mpmath.loggamma(x) - finfo.max, x0), plus
+        # values just below the float64 overflow boundary:
         2.556348e36,  # float32 overflow threshold
+        2.556348163871691e305,  # finite in float64, just above 2.556348e305
         2.559983327851638e305,  # float64 overflow threshold
     ]
     util.check_unary_precision(
