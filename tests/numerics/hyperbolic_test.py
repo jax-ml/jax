@@ -20,6 +20,7 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import config
+from jax._src.lib import jaxlib_extension_version
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 
@@ -98,25 +99,37 @@ class SinhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_sinh_accuracy(self, dtype):
-    bounds = [
-        ("cpu", {f16: 1.0, f32: 25.0, f64: 496.0}),
-        ("gpu", {f32: 3.0, f64: 2.5}),
-        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1794.0}),
-        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 1332.5}),
-        ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 59.0}),
-        ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 59.5}),
-    ]
+    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.51"):
+      self.skipTest("Requires libtpu >= 0.0.51")
+    if jaxlib_extension_version >= 507:
+      bounds = [
+          ("cpu", {f16: 1.0, f32: 1.0, f64: 1.5}),
+          ("gpu", {f32: 3.0, f64: 2.5}),
+          ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 1.0}),
+          (["tpu_v6e", "tpu_7x"], {f32: 1.0}),
+      ]
+      ignore_inputs = []
+      check_signed_zeros = True
+    else:
+      bounds = [
+          ("cpu", {f16: 1.0, f32: 25.0, f64: 496.0}),
+          ("gpu", {f32: 3.0, f64: 2.5}),
+          (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1794.0}),
+          ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 1332.5}),
+          ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 59.0}),
+          ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 59.5}),
+      ]
+      # Ignore x = +-89.415985: near the float32 overflow threshold, where the
+      # true value is finite (~3.40282e+38) but XLA's lowering on CPU/TPU
+      # computes 0.5 * exp(x), where exp(x) overflows float32 to inf.
+      ignore_inputs = [
+          (["cpu", "tpu"], {f32: [0x42B2D4FC, 0xC2B2D4FC]}),
+      ]
+      check_signed_zeros = [
+          ("tpu", False),
+      ]
     input_ftz = [
         ("gpu", False),
-    ]
-    # Ignore x = +-89.415985: near the float32 overflow threshold, where the
-    # true value is finite (~3.40282e+38) but XLA's lowering on CPU/TPU computes
-    # 0.5 * exp(x), where exp(x) overflows float32 to inf.
-    ignore_inputs = [
-        (["cpu", "tpu"], {f32: [0x42B2D4FC, 0xC2B2D4FC]}),
-    ]
-    check_signed_zeros = [
-        ("tpu", False),
     ]
     util.check_unary_precision(
         self,
