@@ -588,7 +588,7 @@ class Traced(Stage):
         lowering_platforms = (abd.platform,)
       lowering = _resolve_and_lower(
           lo._meta_tys_flat, **lo._params, lowering_platforms=lowering_platforms,
-          lowering_parameters=_private_parameters, pgle_profiler=None)
+          lowering_parameters=_private_parameters)
     except DeviceAssignmentMismatchError as e:
       fails, = e.args
       msg = _device_assignment_mismatch_error(
