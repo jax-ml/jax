@@ -34,6 +34,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
+from jax._src import monitoring
 from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import tree_util
@@ -1614,6 +1615,12 @@ class JaxprStackFrame:
     all_vars = it.chain(constvars, self.invars, outvars)
     is_high = self.is_high or any(v.aval.is_high for v in all_vars)
 
+    core.add_frame_tracing_stats(
+        len(self.tracing_eqns),
+        len(eqns),
+        len(constvars) + len(self.invars) + len(outvars),
+    )
+
     jaxpr = Jaxpr(constvars, self.invars, outvars, eqns, effs, debug_info, is_high)
     return jaxpr, list(constvals)
 
@@ -2126,6 +2133,53 @@ def _lower_debug_info(hi_jaxpr):
     debug_info = debug_info._replace(result_paths=lo_result_paths)
   return debug_info
 
+
+def _record_jaxpr_trace_metrics(
+    fun_name: str,
+    start_counts: tuple[int, int, int, int, int],
+    start_abs_eval_misses: int,
+) -> None:
+  end_bind, end_frames, end_emitted, end_surviving, end_vars = (
+      core.get_tracing_counts()
+  )
+  start_bind, start_frames, start_emitted, start_surviving, start_vars = (
+      start_counts
+  )
+  abs_eval_misses = (
+      _cached_abstract_eval.cache_info().misses - start_abs_eval_misses
+  )
+  monitoring.record_scalar(
+      "/jax/core/jaxpr_trace/bind_count",
+      end_bind - start_bind,
+      fun_name=fun_name,
+  )
+  monitoring.record_scalar(
+      "/jax/core/jaxpr_trace/emitted_eqn_count",
+      end_emitted - start_emitted,
+      fun_name=fun_name,
+  )
+  monitoring.record_scalar(
+      "/jax/core/jaxpr_trace/surviving_eqn_count",
+      end_surviving - start_surviving,
+      fun_name=fun_name,
+  )
+  monitoring.record_scalar(
+      "/jax/core/jaxpr_trace/subtrace_count",
+      end_frames - start_frames,
+      fun_name=fun_name,
+  )
+  monitoring.record_scalar(
+      "/jax/core/jaxpr_trace/vars_allocated",
+      end_vars - start_vars,
+      fun_name=fun_name,
+  )
+  monitoring.record_scalar(
+      "/jax/core/jaxpr_trace/abstract_eval_misses",
+      abs_eval_misses,
+      fun_name=fun_name,
+  )
+
+
 def trace_to_jaxpr_nocache(
     fun: Callable,
     in_avals: ft.FlatTree,  # (args, kwargs) pair
@@ -2143,6 +2197,8 @@ def trace_to_jaxpr_nocache(
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace,
                             lower=requires_low)
+  start_counts = core.get_tracing_counts()
+  start_abs_eval_misses = _cached_abstract_eval.cache_info().misses
   # Name stack and the traceback scope are reset because the metadata on jaxpr
   # equations should be rooted at the enclosing jaxpr and not contain any
   # context from the callsite. Otherwise metadata from one caller would bleed
@@ -2200,6 +2256,9 @@ def trace_to_jaxpr_nocache(
     _check_no_returned_refs(debug_info, list(flat_out_tracers))
     jaxpr, consts = trace.frame.to_jaxpr(trace, list(flat_out_tracers), debug_info,
                                          source_info)
+    _record_jaxpr_trace_metrics(
+        debug_info.func_name, start_counts, start_abs_eval_misses
+    )
     del trace, fun, in_tracers, flat_out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr.with_consts(consts), out_avals
@@ -2220,6 +2279,8 @@ def trace_to_jaxpr_dynamic(
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(fun.debug_info, parent_trace=parent_trace,
                             lower=lower, auto_dce=auto_dce)
+  start_counts = core.get_tracing_counts()
+  start_abs_eval_misses = _cached_abstract_eval.cache_info().misses
   # Name stack and the traceback scope are reset because the metadata on jaxpr
   # equations should be rooted at the enclosing jaxpr and not contain any
   # context from the callsite. Otherwise metadata from one caller would bleed
@@ -2237,6 +2298,9 @@ def trace_to_jaxpr_dynamic(
     _check_no_returned_refs(fun.debug_info, out_tracers)
     jaxpr, consts = trace.frame.to_jaxpr(trace, out_tracers, fun.debug_info,
                                          source_info)
+    _record_jaxpr_trace_metrics(
+        fun.debug_info.func_name, start_counts, start_abs_eval_misses
+    )
     del trace, fun, in_tracers, out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts

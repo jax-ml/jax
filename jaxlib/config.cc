@@ -17,8 +17,10 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -30,6 +32,7 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/typing.h"
 #include "jaxlib/free_threading.h"
 #include "jaxlib/python_ref_manager.h"
@@ -367,6 +370,40 @@ nanobind::tuple TraceContextNames() {
   return result.commit();
 }
 
+namespace {
+
+struct ThreadLocalTracingCounters {
+  int64_t bind_count = 0;
+  int64_t frames_traced = 0;
+  int64_t emitted_eqns = 0;
+  int64_t surviving_eqns = 0;
+  int64_t vars_allocated = 0;
+};
+
+ThreadLocalTracingCounters& GetTracingCounters() {
+  thread_local ThreadLocalTracingCounters counters;
+  return counters;
+}
+
+void IncrementBindCount() { ++GetTracingCounters().bind_count; }
+
+void AddFrameTracingStats(int64_t emitted_eqns, int64_t surviving_eqns,
+                          int64_t vars_allocated) {
+  auto& c = GetTracingCounters();
+  ++c.frames_traced;
+  c.emitted_eqns += emitted_eqns;
+  c.surviving_eqns += surviving_eqns;
+  c.vars_allocated += vars_allocated;
+}
+
+std::tuple<int64_t, int64_t, int64_t, int64_t, int64_t> GetTracingCounts() {
+  const auto& c = GetTracingCounters();
+  return {c.bind_count, c.frames_traced, c.emitted_eqns, c.surviving_eqns,
+          c.vars_allocated};
+}
+
+}  // namespace
+
 void BuildConfigSubmodule(nanobind::module_& m) {
   nb::module_ config_module = m.def_submodule("config", "Config library");
 
@@ -405,6 +442,11 @@ void BuildConfigSubmodule(nanobind::module_& m) {
 
   config_module.def("trace_context", &TraceContext);
   config_module.def("trace_context_names", &TraceContextNames);
+  config_module.def("increment_bind_count", &IncrementBindCount);
+  config_module.def("add_frame_tracing_stats", &AddFrameTracingStats,
+                    nb::arg("emitted_eqns"), nb::arg("surviving_eqns"),
+                    nb::arg("vars_allocated"));
+  config_module.def("get_tracing_counts", &GetTracingCounts);
 }
 
 }  // namespace jax

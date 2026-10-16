@@ -17,6 +17,8 @@ Verify that callbacks are registered/uregistered and invoked correctly to record
 events.
 """
 from absl.testing import absltest
+import jax
+from jax import lax
 from jax import monitoring
 from jax._src import monitoring as jax_src_monitoring
 from jax._src import test_util as jtu
@@ -87,6 +89,126 @@ class MonitoringTest(absltest.TestCase):
         observed_values,
         [1, 2.5, 5e5],
     )
+
+  def test_bind_calls_metric(self):
+    scalars = []
+
+    def listener(key, value, **kwargs):
+      scalars.append((key, value, kwargs))
+
+    monitoring.register_scalar_listener(listener)
+
+    def f(x):
+      return lax.add(lax.sin(x), lax.cos(x))
+
+    jax.make_jaxpr(f)(1.0)
+
+    bind_calls = [
+        s for s in scalars if s[0] == "/jax/core/jaxpr_trace/bind_count"
+    ]
+    self.assertNotEmpty(bind_calls)
+    f_calls = [s for s in bind_calls if s[2].get("fun_name") == "f"]
+    self.assertNotEmpty(f_calls)
+    self.assertEqual(f_calls[0][1], 3)
+
+  def test_bind_calls_metric_with_inner_jit(self):
+    scalars = []
+
+    def listener(key, value, **kwargs):
+      scalars.append((key, value, kwargs))
+
+    monitoring.register_scalar_listener(listener)
+
+    @jax.jit
+    def g(x):
+      return lax.sin(x)
+
+    # Warm up g to cache it
+    g(1.0)
+
+    def f(x):
+      return lax.add(g(x), lax.cos(x))
+
+    jax.make_jaxpr(f)(1.0)
+
+    bind_calls = [
+        s for s in scalars if s[0] == "/jax/core/jaxpr_trace/bind_count"
+    ]
+    self.assertNotEmpty(bind_calls)
+    f_calls = [s for s in bind_calls if s[2].get("fun_name") == "f"]
+    self.assertNotEmpty(f_calls)
+    self.assertEqual(f_calls[0][1], 3)
+
+  def test_tracing_work_vector_metrics(self):
+    scalars = {}
+
+    def listener(key, value, **kwargs):
+      if kwargs.get("fun_name") == "f_fold":
+        scalars[key] = value
+
+    monitoring.register_scalar_listener(listener)
+
+    def f_fold(x):
+      # Constant-folded bind (convert_element_type) and two emitted equations (cos, add).
+      c = lax.convert_element_type(2, jax.numpy.float32)
+      y = lax.cos(x)
+      return lax.add(c, y)
+
+    jax.jit(f_fold).trace(1.0)
+
+    self.assertEqual(scalars.get("/jax/core/jaxpr_trace/bind_count"), 3)
+    self.assertEqual(scalars.get("/jax/core/jaxpr_trace/emitted_eqn_count"), 2)
+    self.assertEqual(
+        scalars.get("/jax/core/jaxpr_trace/surviving_eqn_count"), 2
+    )
+    self.assertEqual(scalars.get("/jax/core/jaxpr_trace/subtrace_count"), 1)
+    self.assertGreaterEqual(
+        scalars.get("/jax/core/jaxpr_trace/vars_allocated", 0), 2
+    )
+    self.assertIn("/jax/core/jaxpr_trace/abstract_eval_misses", scalars)
+
+  def test_tracing_work_vector_metrics_with_grad_auto_dce(self):
+    scalars = {}
+
+    def listener(key, value, **kwargs):
+      if kwargs.get("fun_name") == "f_grad_outer":
+        scalars[key] = value
+
+    monitoring.register_scalar_listener(listener)
+
+    def f_primal(x):
+      _ = lax.sin(x)
+      return lax.cos(x)
+
+    def f_grad_outer(x):
+      return jax.grad(f_primal)(x)
+
+    jax.jit(f_grad_outer).trace(1.0)
+
+    self.assertGreaterEqual(
+        scalars.get("/jax/core/jaxpr_trace/subtrace_count", 0), 2
+    )
+    self.assertGreater(
+        scalars.get("/jax/core/jaxpr_trace/emitted_eqn_count", 0),
+        scalars.get("/jax/core/jaxpr_trace/surviving_eqn_count", 0),
+    )
+
+  def test_mlir_lowering_unique_rules_metric(self):
+    scalars = []
+
+    def listener(key, value, **kwargs):
+      if key == "/jax/core/mlir_lowering/unique_rules":
+        scalars.append((value, kwargs))
+
+    monitoring.register_scalar_listener(listener)
+
+    def f_lower(x):
+      return lax.add(lax.sin(x), lax.cos(x))
+
+    jax.jit(f_lower).lower(1.0)
+
+    self.assertNotEmpty(scalars)
+    self.assertGreaterEqual(scalars[-1][0], 3)
 
   def test_unregister_exist_callback_success(self):
     original_duration_listeners = jax_src_monitoring.get_event_duration_listeners()
