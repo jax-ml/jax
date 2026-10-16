@@ -2048,12 +2048,14 @@ def diff_tracing_cache_keys(new_key, old_key) -> tuple[int, int, str]:
   try:
     new_ctx, new_args, new_kwargs = new_key
     old_ctx, old_args, old_kwargs = old_key
+    new_kwargs_dict = dict(new_kwargs) if isinstance(new_kwargs, (tuple, frozenset, list, dict)) else {}
+    old_kwargs_dict = dict(old_kwargs) if isinstance(old_kwargs, (tuple, frozenset, list, dict)) else {}
     new_tree = new_args[0] if len(new_args) > 0 else None
     new_dbg = (new_args[1] if len(new_args) > 1 else
-               (new_kwargs.get('debug_info') if isinstance(new_kwargs, dict) else None))
+               new_kwargs_dict.get('debug_info'))
     old_tree = old_args[0] if len(old_args) > 0 else None
     old_dbg = (old_args[1] if len(old_args) > 1 else
-               (old_kwargs.get('debug_info') if isinstance(old_kwargs, dict) else None))
+               old_kwargs_dict.get('debug_info'))
     return (diff_tracing_ctx(new_ctx, old_ctx) or
             (diff_trees(new_tree.tree, old_tree.tree)
              if new_tree is not None and old_tree is not None and hasattr(new_tree, 'tree') and hasattr(old_tree, 'tree')

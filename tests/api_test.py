@@ -5531,7 +5531,16 @@ class APITest(jtu.JaxTestCase):
     in_avals2 = ft.flatten(((core.ShapedArray((1,), np.float32), core.ShapedArray((1,), np.float32)), {}))
     debug_info2 = api_util.debug_info("test", body, (2, 2), {})
     with config.explain_cache_misses(True):
-      pe.trace_to_jaxpr(body, in_avals2, debug_info=debug_info2)
+      with self.assertLogs(level='WARNING') as cm:
+        pe.trace_to_jaxpr(body, in_avals2, debug_info=debug_info2)
+    self.assertTrue(any("different input types" in msg for msg in cm.output))
+
+    in_avals3 = ft.flatten(((core.ShapedArray((), np.float32), core.ShapedArray((), np.float32)), {}))
+    debug_info3 = api_util.debug_info("other", body, (3, 3), {})
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level='WARNING') as cm2:
+        pe.trace_to_jaxpr(body, in_avals3, debug_info=debug_info3)
+    self.assertTrue(any("Debug info doesn't match" in msg for msg in cm2.output))
 
   def test_cache_miss_explanations_are_thread_safe(self):
     @jax.jit
