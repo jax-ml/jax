@@ -3799,7 +3799,7 @@ def _hyp2f1_serie(a, b, c, x):
   return lax.while_loop(cond, body, init)[0]
 
 
-def _hyp2f1_terminal_or_serie(a, b, c, x):
+def _hyp2f1_terminal_or_serie(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
   """
   Check for recurrence relations along with whether or not the series
   terminates. True recursion is not possible; however, the recurrence
@@ -3826,11 +3826,13 @@ def _hyp2f1_terminal_or_serie(a, b, c, x):
 
   return lax.select_n(index,
                       _hyp2f1_serie(a, b, c, x),
-                      _hyp2f1_digamma_transform(a, b, c, x),
+                      _hyp2f1_digamma_transform(
+                          a, b, c, x, log_gamma_ratio, sgn_gamma_ratio
+                      ),
                       _hyp2f1_terminal(a, b, c, x))
 
 
-def _hyp2f1_digamma_transform(a, b, c, x):
+def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
   """
   Digamma transformation of the 2F1 hypergeometric function.
   See AMS55 #15.3.10, #15.3.11, #15.3.12
@@ -3846,71 +3848,107 @@ def _hyp2f1_digamma_transform(a, b, c, x):
   d2 = jnp.where(rd >= 0, jnp.array(0, dtype=d.dtype), d)
   ard = jnp.where(rd >= 0, rd, -rd).astype('int32')
 
-  ax = jnp.log(s)
+  zero = jnp.array(0, dtype=x.dtype)
+  one = jnp.array(1, dtype=x.dtype)
+  s_safe = jnp.where(s > 0, s, one)
+  ax = jnp.log(s_safe)
+  psi_1 = jnp.array(-np.euler_gamma, dtype=x.dtype)
 
-  y = digamma(1.0) + digamma(1.0 + e) - digamma(a + d1) - digamma(b + d1) - ax
-  y /= gamma(e + 1.0)
+  # Accumulate the finite sum in 15.3.11/15.3.12 along with the integer
+  # Pochhammer shifts (a + d2)_m * (b + d2)_m and m! = Gamma(e + 1) in log-space.
+  def for_body(i, state):
+    t, p, y1, log_poch_ab, sgn_poch_ab, log_fact_e = state
+    y1 = y1 + p
+    at = a + d2 + t
+    bt = b + d2 + t
+    ab_t = at * bt
+    log_poch_ab = log_poch_ab + jnp.log(jnp.where(ab_t == 0, one, jnp.abs(ab_t)))
+    sgn_poch_ab = jnp.where(
+        ab_t == 0, zero, jnp.where(ab_t < 0, -sgn_poch_ab, sgn_poch_ab)
+    )
+    log_fact_e = log_fact_e + jnp.log(e - t)
+    r = 1.0 - e + t
+    t_next = t + 1.0
+    keep_going = i + 1 < ard
+    denom = jnp.where(keep_going, r * t_next, one)
+    p = jnp.where(keep_going, p * s * ab_t / denom, p)
+    return t_next, p, y1, log_poch_ab, sgn_poch_ab, log_fact_e
 
-  p = (a + d1) * (b + d1) * s / gamma(e + 2.0)
+  _, _, y1, log_poch_ab, sgn_poch_ab, log_fact_e = lax.fori_loop(
+      0, ard, for_body, (zero, one, zero, zero, one, zero)
+  )
 
-  def cond(state):
-    _, _, _, _, _, _, q, _, _, t, y = state
-
-    return jnp.logical_and(
-      t < 250,
-      jnp.abs(q) >= rtol * jnp.abs(y)
+  def _digamma_and_next(z):
+    need_shift = (z > -0.5) & (z < 1.0)
+    psi_eval = digamma(jnp.where(need_shift, z + 1.0, z))
+    inv_z = 1.0 / jnp.where(z == 0, one, z)
+    return (
+        jnp.where(need_shift, psi_eval - inv_z, psi_eval),
+        jnp.where(need_shift, psi_eval, psi_eval + inv_z),
     )
 
+  psi_a1, psi_a1_next = _digamma_and_next(a + d1)
+  psi_b1, psi_b1_next = _digamma_and_next(b + d1)
+  psi_1pe = digamma(1.0 + e)
+  y = psi_1 + psi_1pe - psi_a1 - psi_b1 - ax
+  p = (a + d1) * (b + d1) * s / (e + 1.0)
+
+  def cond(state):
+    t, _, q, y, _, _, _, _ = state
+    return jnp.logical_and(t < 250, jnp.abs(q) >= rtol * jnp.abs(y))
+
   def body(state):
-    a, ax, b, d1, e, p, q, r, s, t, y = state
-
-    r = digamma(1.0 + t) + digamma(1.0 + t + e) - digamma(a + t + d1) \
-        - digamma(b + t + d1) - ax
+    t, p, _, y, psi_1t, psi_et, psi_at, psi_bt = state
+    r = psi_1t + psi_et - psi_at - psi_bt - ax
     q = p * r
-    y += q
-    p *= s * (a + t + d1) / (t + 1.0)
-    p *= (b + t + d1) / (t + 1.0 + e)
-    t += 1.0
+    y = y + q
+    at = a + d1 + t
+    bt = b + d1 + t
+    t1 = t + 1.0
+    t1e = t1 + e
+    p = p * (s * at / t1)
+    p = p * (bt / t1e)
+    psi_1t = psi_1t + 1.0 / t1
+    psi_et = psi_et + 1.0 / t1e
+    psi_at = psi_at + 1.0 / jnp.where(at == 0, one, at)
+    psi_bt = psi_bt + 1.0 / jnp.where(bt == 0, one, bt)
+    return t1, p, q, y, psi_1t, psi_et, psi_at, psi_bt
 
-    return a, ax, b, d1, e, p, q, r, s, t, y
-
-  init = (a, ax, b, d1, e, p, y, jnp.array(0, dtype=x.dtype), s,
-          jnp.array(1, dtype=x.dtype), y)
-  _, _, _, _, _, _, q, r, _, _, y = lax.while_loop(cond, body, init)
-
-  def compute_sum(y):
-    y1 = jnp.array(1, dtype=x.dtype)
-    t = jnp.array(0, dtype=x.dtype)
-    p = jnp.array(1, dtype=x.dtype)
-
-    def for_body(i, state):
-      a, b, d2, e, p, s, t, y1 = state
-
-      r = 1.0 - e + t
-      p *= s * (a + t + d2) * (b + t + d2) / r
-      t += 1.0
-      p /= t
-      y1 += p
-
-      return a, b, d2, e, p, s, t, y1
-
-    init_val = a, b, d2, e, p, s, t, y1
-    y1 = lax.fori_loop(1, ard, for_body, init_val)[-1]
-
-    p = gamma(c)
-    y1 *= gamma(e) * p / (gamma(a + d1) * gamma(b + d1))
-    y *= p / (gamma(a + d2) * gamma(b + d2))
-
-    y = jnp.where((ard & 1) != 0, -y, y)
-    q = s ** rd
-
-    return jnp.where(rd > 0, y * q + y1, y + y1 * q)
-
-  return jnp.where(
-    rd == 0,
-    y * gamma(c) / (gamma(a) * gamma(b)),
-    compute_sum(y)
+  init = (
+      one,
+      p,
+      y,
+      y,
+      psi_1 + 1.0,
+      psi_1pe + 1.0 / (1.0 + e),
+      psi_a1_next,
+      psi_b1_next,
   )
+  _, _, _, y, _, _, _, _ = lax.while_loop(cond, body, init)
+
+  log_ge1 = log_fact_e + psi_1 * (e - jnp.abs(rd))
+  log_poch_corr = (psi_a1 + psi_b1) * (d - rd)
+
+  log_y_scale = (
+      log_gamma_ratio - log_ge1
+      + jnp.where(rd < 0, log_poch_ab - log_poch_corr, zero)
+  )
+  sgn_y = jnp.where(rd < 0, sgn_gamma_ratio * sgn_poch_ab, sgn_gamma_ratio)
+  sgn_y = jnp.where((ard & 1) != 0, -sgn_y, sgn_y)
+  y = y * sgn_y * jnp.exp(log_y_scale)
+
+  log_ge = log_ge1 - jnp.log(jnp.where(rd == 0, one, e))
+  log_y1_scale = (
+      log_gamma_ratio + log_ge
+      - jnp.where(rd > 0, log_poch_ab + log_poch_corr, zero)
+  )
+  sgn_y1 = jnp.where(rd > 0, sgn_gamma_ratio * sgn_poch_ab, sgn_gamma_ratio)
+  y1 = y1 * sgn_y1 * jnp.exp(log_y1_scale)
+
+  q = s_safe ** rd
+  res_nonzero_rd = jnp.where(rd > 0, y * q + y1, y + y1 * q)
+
+  return jnp.where(rd == 0, y, res_nonzero_rd)
 
 
 @jit
@@ -3924,19 +3962,20 @@ def _hyp2f1_a_derivative(a, b, c, x):
   precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
-    serie, k, term = state
-    serie += term * (digamma(a + k) - digamma(a))
+    serie, k, term, h = state
+    serie += term * h
     term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
+    h += 1 / (a + k)
     k += 1
 
-    return serie, k, term
+    return serie, k, term, h
 
   def cond(state):
-    serie, k, term = state
+    serie, k, term, _ = state
 
     return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
-  init = 0, 1, a * b / c * x
+  init = 0, 1, a * b / c * x, 1 / a
 
   return lax.while_loop(cond, body, init)[0]
 
@@ -3952,19 +3991,20 @@ def _hyp2f1_b_derivative(a, b, c, x):
   precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
-    serie, k, term = state
-    serie += term * (digamma(b + k) - digamma(b))
+    serie, k, term, h = state
+    serie += term * h
     term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
+    h += 1 / (b + k)
     k += 1
 
-    return serie, k, term
+    return serie, k, term, h
 
   def cond(state):
-    serie, k, term = state
+    serie, k, term, _ = state
 
     return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
-  init = 0, 1, a * b / c * x
+  init = 0, 1, a * b / c * x, 1 / b
 
   return lax.while_loop(cond, body, init)[0]
 
@@ -3980,19 +4020,20 @@ def _hyp2f1_c_derivative(a, b, c, x):
   precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
-    serie, k, term = state
-    serie += term * (digamma(c) - digamma(c + k))
+    serie, k, term, h = state
+    serie += term * h
     term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
+    h -= 1 / (c + k)
     k += 1
 
-    return serie, k, term
+    return serie, k, term, h
 
   def cond(state):
-    serie, k, term = state
+    serie, k, term, _ = state
 
     return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
-  init = 0, 1, a * b / c * x
+  init = 0, 1, a * b / c * x, -1 / c
 
   return lax.while_loop(cond, body, init)[0]
 
@@ -4054,14 +4095,29 @@ def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
                       jnp.where(x > 1, 1,
                         jnp.where(x == 1, 5, 6))))))))
 
+  use_euler = index == 2
+  use_gauss = index == 5
+  a_eff = jnp.where(use_euler, ca, a)
+  b_eff = jnp.where(use_euler, cb, b)
+  ga_arg = jnp.where(use_euler | use_gauss, ca, a)
+  gb_arg = jnp.where(use_euler | use_gauss, cb, b)
+  log_gamma_ratio = lax.lgamma(c) - lax.lgamma(ga_arg) - lax.lgamma(gb_arg)
+  sgn_gamma_ratio = gammasgn(c) * gammasgn(ga_arg) * gammasgn(gb_arg)
+  term_or_serie = _hyp2f1_terminal_or_serie(
+      a_eff, b_eff, c, x, log_gamma_ratio, sgn_gamma_ratio
+  )
+  gauss_val = (
+      sgn_gamma_ratio * gammasgn(d) * lax.exp(log_gamma_ratio + lax.lgamma(d))
+  )
+
   return lax.select_n(index,
                       jnp.array(1, dtype=x.dtype),
                       jnp.array(np.inf, dtype=x.dtype),
-                      s ** d * _hyp2f1_terminal_or_serie(ca, cb, c, x),
+                      s ** d * term_or_serie,
                       s ** (-a),
                       s ** (-b),
-                      gamma(c) * gamma(d) / (gamma(ca) * gamma(cb)),
-                      _hyp2f1_terminal_or_serie(a, b, c, x))
+                      gauss_val,
+                      term_or_serie)
 
 
 hyp2f1.defjvps(
