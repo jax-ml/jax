@@ -27,7 +27,7 @@ from jax._src import core
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import ifrt_version, jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
 from jax._src.mesh import AxisType, AbstractMesh, Mesh
@@ -1063,6 +1063,70 @@ class JaxArrayTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(f)(np.arange(3))
     primitives = [eqn.primitive for eqn in jaxpr.eqns]
     self.assertIn(jax.lax.unstack_p, primitives)
+
+  @parameterized.parameters(jnp.float32, jnp.bfloat16)
+  def test_donate_after_host_read(self, dtype):
+    if ifrt_version < 78:
+      self.skipTest('Requires ifrt_version >= 78')
+    f = jax.jit(lambda x: x + 1, donate_argnums=0)
+
+    for read_fn in [
+        jax.device_get,
+        str,
+        lambda a: a.copy_to_host_async(),
+        int,
+        np.asarray,
+    ]:
+      x = jnp.ones((), dtype=dtype)
+      read_fn(x)
+      y = f(x)
+      self.assertTrue(x.is_deleted())
+      self.assertArraysEqual(y, jnp.full((), 2, dtype=dtype))
+
+    if len(jax.devices()) >= 2:
+      mesh = jtu.create_mesh((2,), ('x',))
+      replicated = jax.sharding.NamedSharding(
+          mesh, jax.sharding.PartitionSpec()
+      )
+      sharded = jax.sharding.NamedSharding(
+          mesh, jax.sharding.PartitionSpec('x')
+      )
+      for sharding in [replicated, sharded]:
+        for read_fn in [
+            jax.device_get,
+            str,
+            lambda a: a.copy_to_host_async(),
+            np.asarray,
+        ]:
+          x = jax.device_put(jnp.ones((2,), dtype=dtype), sharding)
+          read_fn(x)
+          y = f(x)
+          self.assertTrue(x.is_deleted())
+          self.assertArraysEqual(y, jnp.full((2,), 2, dtype=dtype))
+
+  def test_donate_with_live_host_view(self):
+    if ifrt_version < 78:
+      self.skipTest('Requires ifrt_version >= 78')
+    f = jax.jit(lambda x: x + 1, donate_argnums=0)
+
+    x = jnp.ones((4,), dtype=jnp.float32)
+    view = np.asarray(x)
+    y = f(x)
+    self.assertTrue(x.is_deleted())
+    self.assertArraysEqual(y, jnp.full((4,), 2.0, dtype=jnp.float32))
+    np.testing.assert_array_equal(view, np.ones((4,), dtype=np.float32))
+
+    if len(jax.devices()) >= 2:
+      mesh = jtu.create_mesh((2,), ('x',))
+      replicated = jax.sharding.NamedSharding(
+          mesh, jax.sharding.PartitionSpec()
+      )
+      x = jax.device_put(jnp.ones((4,), dtype=jnp.float32), replicated)
+      view = jax.device_get(x)
+      y = f(x)
+      self.assertTrue(x.is_deleted())
+      self.assertArraysEqual(y, jnp.full((4,), 2.0, dtype=jnp.float32))
+      np.testing.assert_array_equal(view, np.ones((4,), dtype=np.float32))
 
 
 class ShardingTest(jtu.JaxTestCase):
