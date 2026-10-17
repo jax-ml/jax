@@ -1246,6 +1246,7 @@ pytype_strict_library(
         ":core",
         ":flattree",
         ":layout",
+        ":literals",
         ":mesh",
         ":mlir",
         ":partial_eval",
