@@ -24,12 +24,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     error function.
   * Added {func}`jax.lax.polynomial` for polynomial evaluation. The polynomial
     primitive is faster and uses less memory when computing gradients.
-  * Added {func}`jax.custom_vjp.defremat`, which customizes how a
-    {func}`jax.custom_vjp` function is rematerialized when it's differentiated
-    under {func}`jax.remat`. It requires the `jax_custom_vjp3` and `jax_remat3`
-    implementations.
-  * Added a `remat` option to {func}`jax.custom_gradient`, for writing
-    {func}`jax.custom_vjp.defremat` rules with closures.
+  * Added {func}`jax.custom_vjp.defvjp_general`, which defines custom VJP rules
+    with every rule feature on: the `fwd` rule learns which primal inputs are
+    perturbed, the `bwd` rule gets symbolic zeros and pushes left cotangents
+    into gradient accumulators, returning backward-pass logs, and an optional
+    `rem` rule customizes how the function is rematerialized under
+    {func}`jax.remat`. See {ref}`jax-301-defvjp-general`.
+  * Added `with_accums` and `remat` options to {func}`jax.custom_gradient`,
+    for writing VJP functions that take gradient accumulators, and
+    rematerialization rules, with closures.
   * `arr.at[...].get()` now accepts a `strategy` argument that allows choosing
     whether the operation lowers to `gather`, `dynamic_slice`, or `slice`.
   * Added a `generic_batching` option to {func}`jax.custom_vjp.defvjp`, for
@@ -45,9 +48,16 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     server address, e.g. `grpc://localhost:29000`.
 
 * Breaking changes
-  * Removed `jax.custom_remat`. Use {func}`jax.custom_vjp.defremat` instead:
-    `custom_remat(f, f_fwd, f_rem, f_bwd)` becomes `f = jax.custom_vjp(f)`
-    followed by `f.defremat(f_fwd, f_rem, f_bwd)`.
+  * Removed `jax.custom_remat`. Use a `rem` rule with
+    {func}`jax.custom_vjp.defvjp_general` instead: `custom_remat(f, f_fwd,
+    f_rem, f_bwd)` becomes `f = jax.custom_vjp(f)` followed by
+    `f.defvjp_general(fwd, bwd, rem=f_rem)`, where `fwd` takes the perturbation
+    flags `nzs` as a first argument and `bwd` pushes the left cotangents into
+    gradient accumulators. See {ref}`jax-301-defvjp-general-upgrade`.
+  * Removed `jax.custom_vjp.defvjp_with_logs` and the `with_logs` option of
+    {func}`jax.custom_gradient`, which were added in JAX 0.11.1. Use
+    {func}`jax.custom_vjp.defvjp_general`, whose `bwd` rule returns its logs,
+    or the `with_accums` option of {func}`jax.custom_gradient`.
   * On x86-64, JAX and `jaxlib` now require an Intel Haswell or newer CPU
     (roughly 2013 onwards, requiring AVX2 and FMA support). Older CPUs that
     only support AVX are no longer supported, though you can still build from

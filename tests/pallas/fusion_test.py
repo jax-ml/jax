@@ -552,7 +552,7 @@ class FusionTest(jtu.JaxTestCase):
       np.testing.assert_allclose(gy, 2.0)
 
   @parameterized.product(cvjp3=[False, True])
-  def test_fusible_physicalize_custom_vjp_with_accums_grad(self, cvjp3):
+  def test_fusible_physicalize_custom_vjp_general_grad(self, cvjp3):
     with (
         config.custom_vjp3(cvjp3),
         mock.patch.object(
@@ -562,8 +562,8 @@ class FusionTest(jtu.JaxTestCase):
       @functools.partial(jax.custom_vjp, nondiff_argnums=(1,))
       def custom_fn(x, scale):
         return x * scale
-      custom_fn.defvjp_with_accums(
-          lambda x, scale: (custom_fn(x, scale), None),
+      custom_fn.defvjp_general(
+          lambda nzs, x, scale: (custom_fn(x, scale), None),
           lambda scale, res, g, x_acc: x_acc.accum(g * scale))
 
       def f(x):

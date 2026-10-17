@@ -8368,10 +8368,11 @@ class RematTest(jtu.JaxTestCase):
 @jtu.with_config(jax_remat3=True, jax_remat_barrier_no_cotangents=False)
 class Remat3Test(RematTest):
   # The original versions of these tests used a "save cosine" policy that can't
-  # be expressed the same way with remat3. Instead, we use custom_vjp.defremat.
+  # be expressed the same way with remat3. Instead, we use a rem rule from
+  # custom_vjp.defvjp_general.
   @config.custom_vjp3(True)
   def test_remat_custom_policy_save_cos(self):
-    sin = self._sin_with_defremat(save_cos=True)
+    sin = self._sin_with_rem(save_cos=True)
     f = jax.remat(lambda x: sin(sin(x)))
     _, f_lin = api.linearize(f, 1.)
     jaxpr_text = str(jax.jit(f_lin).trace(1.).jaxpr)
@@ -8379,16 +8380,16 @@ class Remat3Test(RematTest):
     self.assertNotIn(' cos ', jaxpr_text)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
 
-  def _sin_with_defremat(self, save_cos):
+  def _sin_with_rem(self, save_cos):
     # a sin that, when rematerialized, saves its cosine only if save_cos is set
-    def sin_fwd(x):
+    def sin_fwd(nzs, x):
       return jnp.sin(x), (jnp.cos(x) if save_cos else None)
     def sin_rem(cos_x, x):
       return jnp.sin(x), (jnp.cos(x) if cos_x is None else cos_x)
-    def sin_bwd(cos_x, g):
-      return cos_x * g,
+    def sin_bwd(cos_x, g, x_acc):
+      x_acc.accum(cos_x * g)
     sin = jax.custom_vjp(jnp.sin)
-    sin.defremat(sin_fwd, sin_rem, sin_bwd)
+    sin.defvjp_general(sin_fwd, sin_bwd, rem=sin_rem)
     return sin
 
   @config.custom_vjp3(True)
@@ -8397,7 +8398,7 @@ class Remat3Test(RematTest):
       y, _ = lax.scan(lambda x, _: (f(x), None), x, None, length=1)
       return y
 
-    sin = self._sin_with_defremat(save_cos=True)
+    sin = self._sin_with_rem(save_cos=True)
     f = jax.checkpoint(partial(scan_apply, sin))
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     _, f_lin = api.linearize(f, 4.)
@@ -8405,7 +8406,7 @@ class Remat3Test(RematTest):
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 0)
 
-    sin = self._sin_with_defremat(save_cos=False)
+    sin = self._sin_with_rem(save_cos=False)
     f = jax.checkpoint(partial(scan_apply, sin))
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
@@ -8425,7 +8426,7 @@ class Remat3Test(RematTest):
     def cond_apply(f, x):
       return lax.cond(x.sum() > -jnp.inf, f, lambda x: x, x)
 
-    sin = self._sin_with_defremat(save_cos=True)
+    sin = self._sin_with_rem(save_cos=True)
     f = jax.checkpoint(partial(cond_apply, sin))
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
@@ -8433,7 +8434,7 @@ class Remat3Test(RematTest):
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 0)
 
-    sin = self._sin_with_defremat(save_cos=False)
+    sin = self._sin_with_rem(save_cos=False)
     f = jax.checkpoint(partial(cond_apply, sin))
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
@@ -8453,7 +8454,7 @@ class Remat3Test(RematTest):
 
   @config.custom_vjp3(True)
   def test_remat_of_cond_policy(self):
-    sin = self._sin_with_defremat(save_cos=True)
+    sin = self._sin_with_rem(save_cos=True)
     f = jax.checkpoint(lambda x: lax.cond(x > 0, sin, lambda x: x, x))
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     _, f_lin = api.linearize(f, 4.)
@@ -8466,7 +8467,7 @@ class Remat3Test(RematTest):
 
   @config.custom_vjp3(True)
   def test_remat_of_scan_policy(self):
-    sin = self._sin_with_defremat(save_cos=True)
+    sin = self._sin_with_rem(save_cos=True)
     to_scan = lambda c, _: (sin(c), sin(c))
     f = jax.checkpoint(lambda x: lax.scan(to_scan, x, None, length=3))
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
@@ -8703,7 +8704,7 @@ class Remat3Test(RematTest):
       self.assertArraysAllClose(x_bar, jnp.cos(x))
 
   @config.custom_vjp3(True)
-  def test_defremat_nested_remat(self):
+  def test_defvjp_general_rem_nested_remat(self):
     x = jnp.arange(3.)
 
     def bwd_recomputes_cos(f):
@@ -8713,7 +8714,7 @@ class Remat3Test(RematTest):
       return '= cos' in jaxpr.pretty_print(use_color=False)
 
     for save_cos in [True, False]:
-      sin = self._sin_with_defremat(save_cos)
+      sin = self._sin_with_rem(save_cos)
       self.assertEqual(bwd_recomputes_cos(jax.remat(jax.remat(sin))),
                        not save_cos)
 

@@ -439,44 +439,51 @@ print_saved_residuals(f_offload, jnp.arange(4.))
 The `f32<host>[4]` residual is the offloaded value: it's kept, but in host
 memory rather than device memory.
 
-## Custom remat behavior with `custom_vjp.defremat`
+## Custom remat behavior with a `rem` rule
 
-Name-based policies choose among values a function has named. Sometimes a
-function *author* knows something better: a specific quantity that's worth
-saving because it makes the backward pass cheap, or a way to restructure the
-recomputation entirely. A {func}`jax.custom_vjp` function can carry its own
-rematerialization behavior, defined with {func}`~jax.custom_vjp.defremat`.
+Name-based policies choose among intermediate values a function has named.
+Sometimes a function's author knows a better strategy, such as saving a
+specific value that makes the backward pass cheap or restructuring the
+recomputation altogether. A {func}`jax.custom_vjp` function can define its
+own rematerialization behavior with an optional `rem` rule passed to
+{func}`~jax.custom_vjp.defvjp_general` (see {ref}`jax-301-defvjp-general`).
 
-Under {func}`jax.remat`, the `fwd` rule a `custom_vjp` function gets from
-`defvjp` is rematerialized like any other code. Calling
-`f.defremat(fwd, rem, bwd)` replaces that default with three rules:
+Under {func}`jax.remat`, the `fwd` rule of a `custom_vjp` function is
+rematerialized like any other code by default. Calling
+`f.defvjp_general(fwd, bwd, rem=rem)` replaces that default:
 
-* `fwd(*args) -> (out, res)` runs on the forward pass *inside a
-  rematerialized region*, and decides what residuals (if any) to keep;
+* `fwd(nzs, *args) -> (out, res)` runs on the forward pass inside a
+  rematerialized region, with `nzs` all `True`, and produces the primal
+  output `out` and whatever residuals `res` (if any) to save;
 * `rem(res, *args) -> (out, res2)` runs on the backward pass to
-  rematerialize: given whatever `fwd` kept, plus the original arguments,
-  it (re)computes the output and the residuals the backward rule needs;
-* `bwd(res2, g) -> arg_cotangents` is the backward rule.
+  rematerialize: given the saved residuals `res` and the primal inputs
+  `args`, it recomputes the primal output `out` and computes the residuals
+  `res2` needed by `bwd`;
+* `bwd(res2, g, *arg_accums)` runs on the backward pass, taking `res2` and
+  the right cotangent `g` and pushing left cotangents into the gradient
+  accumulators `arg_accums`.
 
-When `f` is differentiated outside of {func}`jax.remat`, `rem` runs right
-after `fwd` on the forward pass, and only what `bwd` needs is saved, as if
-not rematerializing. (Running `rem` on the backward pass instead is what
-wrapping `f` in {func}`jax.remat` does.) To define a different VJP for use
-outside of {func}`jax.remat`, call `defvjp` as well. `defremat` requires the
-new `custom_vjp` implementation, enabled with the `jax_custom_vjp3` flag.
+When `f` is differentiated outside {func}`jax.remat`, `rem` runs right
+after `fwd` on the forward pass, and only `res2` is saved for `bwd`, as if
+not rematerializing. A `rem` rule requires the `jax_custom_vjp3`
+implementation of {func}`jax.custom_vjp`, and running it on the backward pass
+under {func}`jax.remat` also requires `jax_remat3`; with the default remat
+implementation, {func}`jax.remat` runs `rem` right after `fwd` and
+rematerializes both together by policy.
 
 For example, the derivative of `sin` is `cos`, so a good memory/FLOPs
 tradeoff for `sin` under rematerialization can be to save the cosine, a
-value the standard rules would recompute. Here's a `sin` that always saves
-its cosine when rematerialized:
+value the standard rules would recompute. Here is a `sin` that saves its
+cosine when rematerialized:
 
 ```{code-cell}
 jax.config.update('jax_custom_vjp3', True)
 
 sin = jax.custom_vjp(jnp.sin)
-sin.defremat(lambda x: (jnp.sin(x), jnp.cos(x)),     # keep cos(x)
-             lambda cos_x, x: (jnp.sin(x), cos_x),  # rematerialize
-             lambda cos_x, g: (cos_x * g,))         # backward rule
+sin.defvjp_general(
+    lambda nzs, x: (jnp.sin(x), jnp.cos(x)),         # keep cos(x)
+    lambda cos_x, g, x_acc: x_acc.accum(cos_x * g),  # backward rule
+    rem=lambda cos_x, x: (jnp.sin(x), cos_x))        # rematerialize
 
 f = jax.remat(lambda x: sin(sin(x)))
 print(jax.grad(f)(1.0))
@@ -484,18 +491,20 @@ print(jax.grad(jnp.sin)(jnp.sin(1.0)) * jnp.cos(1.0))  # chain rule, for referen
 ```
 
 With {func}`jax.custom_gradient`, you can write the same rules with closures
-instead of explicit residuals, by passing `remat=True`. The decorated function
-then returns a function `rem` along with its output, and `rem` takes the same
-arguments and returns the output along with the VJP function. Whatever `rem`
-closes over is saved on the forward pass, and whatever the VJP function closes
-over is what `rem` recomputes:
+instead of explicit residuals by passing `remat=True` along with
+`with_accums`. The decorated function returns `(out, rem)`, where `out` is
+the primal output and `rem` takes the primal inputs and returns `(out, vjp)`.
+Values that `rem` closes over are saved on the forward pass, and values that
+the VJP function `vjp` closes over are recomputed by `rem`:
 
 ```{code-cell}
-@jax.custom_gradient(remat=True)
+from jax.experimental.hijax import ValAccum
+
+@jax.custom_gradient(remat=True, with_accums=ValAccum)
 def sin(x):
   cos_x = jnp.cos(x)             # rem closes over it, so it's saved
   def rem(x):                    # runs on the backward pass
-    return jnp.sin(x), lambda g: (g * cos_x,)
+    return jnp.sin(x), lambda g, x_acc: x_acc.accum(g * cos_x)
   return jnp.sin(x), rem
 
 f = jax.remat(lambda x: sin(sin(x)))

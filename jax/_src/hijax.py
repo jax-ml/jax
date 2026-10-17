@@ -807,9 +807,8 @@ class CustomVJPTraced(HiPrim):
   user's rule takes them rather than returning cotangents. ``custom_vjp3``
   builds the rules from the user's with ``_custom_vjp_fwd`` and
   ``_custom_vjp_bwd``, and ``batch`` builds them by vmapping another
-  application's rules. ``remat_rules`` is None, or
-  ``(fwd, rem, bwd, with_accums)`` from defremat, with ``fwd(*args)`` and
-  ``rem(res, *args)``.
+  application's rules. ``remat_rules`` is None, or ``(fwd, rem)`` from
+  defvjp_general, with ``fwd(*args)`` and ``rem(res, *args)``, sharing ``bwd``.
   """
   skip_linearization_on_zero_tangents = True  # run the primal, not the fwd rule
   traced: Any
@@ -866,9 +865,7 @@ class CustomVJPTraced(HiPrim):
         _accum_args_grad(arg_accums, in_cts)
         return logs
       return update_wrapper(new_bwd, bwd)
-    remat_rules = self.remat_rules and (
-        *map(phys, self.remat_rules[:2]), phys_bwd(self.remat_rules[2]),
-        self.remat_rules[3])
+    remat_rules = self.remat_rules and tuple(map(phys, self.remat_rules))
     return self.replace(
         traced=self.traced.physicalize(ctx), fwd=new_fwd,
         bwd=phys_bwd(self.bwd), remat_rules=remat_rules,
@@ -929,10 +926,10 @@ class CustomVJPTraced(HiPrim):
         out = _take_first_example(out_dims, out_dims_, out)
       return out, (res, Static(res_dims))
 
-    def vmap_bwd(bwd, with_accums):
+    def vmap_bwd(bwd):
       def batched_bwd(res, out_ct, *arg_accums):
-        if with_accums and any(isinstance(a, ad.RefAccum)
-                               for a in tree_leaves(arg_accums)):
+        if self.with_accums and any(isinstance(a, ad.RefAccum)
+                                    for a in tree_leaves(arg_accums)):
           raise batching.ref_accum_error(self.traced.fun_name)
         (res, res_dims), ct_in_dims, left_dims = res, out_dims, ct_dims
         if any(d is None and not isinstance(ct, ad_util.Zero) for d, ct in
@@ -954,15 +951,14 @@ class CustomVJPTraced(HiPrim):
     fwd = lambda nzs_in, *args: vmap_fwd(partial(self.fwd, nzs_in), dims, *args)
     remat_rules = None
     if self.remat_rules is not None:
-      rfwd, rem, rbwd, raccums = self.remat_rules
+      rfwd, rem = self.remat_rules
       remat_rules = (
           update_wrapper(lambda *args: vmap_fwd(rfwd, dims, *args), rfwd),
           update_wrapper(lambda res, *args: vmap_fwd(
-              rem, (res[1].val, *dims), res[0], *args), rem),
-          vmap_bwd(rbwd, raccums), raccums)
+              rem, (res[1].val, *dims), res[0], *args), rem))
     new_prim = self.replace(
         traced=traced, fwd=update_wrapper(fwd, self.fwd),
-        bwd=vmap_bwd(self.bwd, self.with_accums),
+        bwd=vmap_bwd(self.bwd),
         in_avals=unmap_avals(axis_data, self.in_avals, dims),
         remat_rules=remat_rules)
     return new_prim(*args), out_dims
@@ -976,7 +972,7 @@ class CustomVJPTraced(HiPrim):
     # On the rem side we apply a helper custom_vjp with the same primal, whose
     # fwd rule computes the residuals for bwd from the values `res` saved here.
     if self.remat_rules:
-      rfwd, rem, bwd, with_accums = self.remat_rules
+      rfwd, rem = self.remat_rules
       out, res = rfwd(*args)
     else:
       # custom_vjp_rules=False so that custom_vjp applications inside fwd hit
@@ -986,15 +982,13 @@ class CustomVJPTraced(HiPrim):
       fwd = partial(self.fwd, nzs_in)
       (out, _), rem_ = remat.remat_transform(trace.policy, fwd, *args,
                                              custom_vjp_rules=False)
-      res, rem, bwd = tuple(rem_.args[0]), rem_.func, self.bwd
-      with_accums = self.with_accums
+      res, rem = tuple(rem_.args[0]), rem_.func
     fwd2 = lambda _, consts, fc_res, *rest: rem(fc_res[1], consts, fc_res[0], *rest)
     in_avals = (self.in_avals[0],
                 (self.in_avals[1], tree_map(typeof, res)),
                 *self.in_avals[2:])
-    helper = self.replace(fwd=fwd2, bwd=bwd, in_avals=in_avals,
-                          symbolic_zeros=False, opt_remat=False,
-                          remat_rules=None, with_accums=with_accums)
+    helper = self.replace(fwd=fwd2, in_avals=in_avals, symbolic_zeros=False,
+                          opt_remat=False, remat_rules=None)
     return out, res, lambda res, consts, fc, *rest: helper(consts, (fc, res), *rest)
 
 def _retval_bwd(prim, bwd, arg_accums):
@@ -1010,18 +1004,23 @@ def _retval_bwd(prim, bwd, arg_accums):
   rule.__name__ = fun_name(bwd)
   return rule
 
-def _custom_vjp_fwd(traced, fwd, symbolic_zeros):
+def _custom_vjp_fwd(traced, fwd, symbolic_zeros, general=False):
   """A user's custom_vjp fwd rule, called like ``CustomVJPTraced.fwd``."""
   out_tree = tracing_registry.flatten(traced.out_avals)[1]
   def rule(nzs_in, *args):
     args = tree_map(lambda x: core.stage_p.bind(x) if not isinstance(x, core.Array) and type(x) in core.literalable_types else x, args)
-    if symbolic_zeros:
+    if symbolic_zeros and not general:
       args_flat, args_tree = tree_flatten(args)
       args = tree_unflatten(
           args_tree, map(CustomVJPPrimal, args_flat,
                          api.tuptree_flags(nzs_in, args_tree, 'nzs_in', 'fwd nzs_in')))
     args_ = tuple(x.val if isinstance(x, Static) else x for x in args)
-    out, res = fwd(*args_[2:])
+    if general:
+      nzs = tuple(False if isinstance(x, Static) else nz
+                  for x, nz in zip(args[2:], nzs_in[2:]))
+      out, res = fwd(nzs, *args_[2:])
+    else:
+      out, res = fwd(*args_[2:])
     if config.mutable_array_checks.value:
       _check_for_returned_refs(fwd, (out, res), "fwd", tree_leaves(args),
                                out_tree.num_leaves)
@@ -1041,7 +1040,7 @@ def _bwd_out_ct(out_ct, symbolic_zeros):
   return tree_map(ad_util.instantiate, out_ct, is_leaf=leaf)
 
 def _custom_vjp_bwd_accums(bwd, in_avals, symbolic_zeros):
-  """A user's defvjp_with_accums bwd rule, called like ``CustomVJPTraced.bwd``."""
+  """A user's defvjp_general bwd rule, called like ``CustomVJPTraced.bwd``."""
   in_tree = tracing_registry.flatten(in_avals[2:])[1]
   static_args = tuple(x.val for x in in_avals[2:] if isinstance(x, Static))
   def rule(res, out_ct, *arg_accums):
@@ -1050,15 +1049,14 @@ def _custom_vjp_bwd_accums(bwd, in_avals, symbolic_zeros):
                *[a for a in arg_accums if not isinstance(a, Static)])
     if logs is not None and type(logs) is not dict:
       raise TypeError(
-          f"Custom VJP bwd rule {bwd} was registered with defvjp_with_accums, "
+          f"Custom VJP bwd rule {bwd} was registered with defvjp_general, "
           "and so must return None or a dict of backward-pass log entries, "
           f"but got {type(logs).__name__}.")
     return logs
   rule.__name__ = fun_name(bwd)
   return rule
 
-def _custom_vjp_bwd(traced, bwd, in_avals, symbolic_zeros, with_logs,
-                    with_accums=False):
+def _custom_vjp_bwd(traced, bwd, in_avals, symbolic_zeros, with_accums=False):
   """A user's custom_vjp bwd rule, called like ``CustomVJPTraced.bwd``."""
   if with_accums:
     return _custom_vjp_bwd_accums(bwd, in_avals, symbolic_zeros)
@@ -1068,20 +1066,6 @@ def _custom_vjp_bwd(traced, bwd, in_avals, symbolic_zeros, with_logs,
   in_avals_ = tuple(x for x in in_avals if not isinstance(x, Static))
   def rule(res, out_ct, *arg_accums):
     in_cts = bwd(*static_args, res, _bwd_out_ct(out_ct, symbolic_zeros))
-    logs = None
-    if with_logs:
-      if not (isinstance(in_cts, (list, tuple)) and len(in_cts) == 2):
-        raise TypeError(
-            f"Custom VJP bwd rule {bwd} was registered with "
-            "defvjp_with_logs and so must produce a pair (in_cts, logs), "
-            f"but got {in_cts}.")
-      in_cts, logs = in_cts
-      if logs is not None and type(logs) is not dict:
-        raise TypeError(
-            f"Custom VJP bwd rule {bwd} was registered with "
-            "defvjp_with_logs, and so the second element of the pair it "
-            "returns must be None or a dict of backward-pass log entries, "
-            f"but got {type(logs).__name__}.")
     if isinstance(in_cts, list):
       in_cts = tuple(in_cts)
     if not isinstance(in_cts, tuple):
@@ -1099,7 +1083,6 @@ def _custom_vjp_bwd(traced, bwd, in_avals, symbolic_zeros, with_logs,
     if symbolic_zeros:
       in_cts = tree_map(ad_util.replace_rule_output_symbolic_zeros, in_cts)
     _accum_args_grad(arg_accums, in_cts)
-    return logs
   rule.__name__ = fun_name(bwd)
   return rule
 
@@ -1155,11 +1138,10 @@ def _replace_none(primal_in_aval, maybe_ct):
 class custom_vjp3:
   fwd: Callable | None = None
   bwd: Callable | None = None
+  rem: Callable | None = None
   symz: bool = False
   opt_remat: bool = False
-  with_logs: bool = False
-  with_accums: bool = False
-  remat_rules: tuple[Callable, Callable, Callable, bool, bool] | None = None
+  general: bool = False
   generic_batching: bool = False
 
   def __init__(self, f, nondiff_argnums=(), nondiff_argnames=()):
@@ -1168,33 +1150,21 @@ class custom_vjp3:
     self.f = f
 
   def defvjp(self, fwd, bwd, *, symbolic_zeros=False, optimize_remat=False):
-    self.fwd = fwd
-    self.bwd = bwd
+    self.fwd, self.bwd, self.rem = fwd, bwd, None
     self.symz = symbolic_zeros
     self.opt_remat = optimize_remat
+    self.general = False
 
-  def defvjp_with_logs(self, fwd, bwd, *, symbolic_zeros=False,
-                       optimize_remat=False):
-    self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
-                optimize_remat=optimize_remat)
-    self.with_logs = True
-
-  def defvjp_with_accums(self, fwd, bwd, *, symbolic_zeros=False,
-                         optimize_remat=False):
-    self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
-                optimize_remat=optimize_remat)
-    self.with_accums = True
-
-  def defremat(self, fwd, rem, bwd):
-    self.remat_rules = (fwd, rem, bwd, False, False)
-
-  def defremat_with_logs(self, fwd, rem, bwd):
-    self.remat_rules = (fwd, rem, bwd, True, False)
+  def defvjp_general(self, fwd, bwd, rem=None, *, optimize_remat=False):
+    self.fwd, self.bwd, self.rem = fwd, bwd, rem
+    self.symz = True
+    self.opt_remat = optimize_remat
+    self.general = True
 
   def __call__(self, *args, **kwargs):
-    if not (self.fwd and self.bwd) and not self.remat_rules:
+    if not (self.fwd and self.bwd):
       msg = (f"No VJP defined for custom_vjp function {self.f.__name__} using "
-             "defvjp or defremat.")
+             "defvjp or defvjp_general.")
       raise AttributeError(msg)
 
     args = resolve_kwargs(self.f, args, kwargs)
@@ -1230,37 +1200,32 @@ class custom_vjp3:
       )
     args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
     consts, traced = traced.with_consts_as_arg()
-    fwd, bwd, with_logs = self.fwd, self.bwd, self.with_logs
-    with_accums = self.with_accums
-    if fwd is None:
-      assert self.remat_rules is not None  # checked above
-      fwd, bwd, with_logs, with_accums = _vjp_from_remat_rules(
-          *self.remat_rules)
     in_avals = tree_map(typeof, (consts, (), *args))
+    fwd = _custom_vjp_fwd(traced, self.fwd, self.symz, self.general)
+    bwd = _custom_vjp_bwd(traced, self.bwd, in_avals, self.symz, self.general)
     remat_rules = None
-    if self.remat_rules is not None:
-      rfwd, rrem, rbwd, rlogs, raccums = self.remat_rules
+    if self.rem is not None:
+      rem = self.rem
       unwrap = lambda args: [x.val if isinstance(x, Static) else x for x in args[2:]]
-      remat_rules = (
-          update_wrapper(lambda *args: tuple(rfwd(*unwrap(args))), rfwd),
-          update_wrapper(lambda res, *args: tuple(rrem(res, *unwrap(args))), rrem),
-          _custom_vjp_bwd(traced, rbwd, in_avals, False, rlogs, raccums),
-          raccums)
+      rem_ = update_wrapper(lambda res, *args: tuple(rem(res, *unwrap(args))), rem)
+      in_tree = tracing_registry.flatten(in_avals)[1]
+      nzs_in = api.mirror_tree_map(
+          lambda _: True, in_tree, [True] * in_tree.num_leaves)
+      remat_rules = (update_wrapper(partial(fwd, nzs_in), fwd), rem_)
+      fwd = _vjp_from_remat_rules(fwd, rem_)
     prim = CustomVJPTraced(
-        traced, _custom_vjp_fwd(traced, fwd, self.symz),
-        _custom_vjp_bwd(traced, bwd, in_avals, self.symz, with_logs, with_accums),
-        in_avals, self.symz, self.opt_remat, remat_rules, with_accums,
-        self.generic_batching)
+        traced, fwd, bwd, in_avals, self.symz, self.opt_remat, remat_rules,
+        self.general, self.generic_batching)
     return prim(consts, (), *args)
 
-def _vjp_from_remat_rules(remat_fwd, rem, bwd, with_logs, with_accums):
+def _vjp_from_remat_rules(remat_fwd, rem):
   # Not under jax.remat, run rem right after fwd on the forward pass, saving what
   # bwd needs. (Running rem on the backward pass instead is what jax.remat does.)
-  def fwd(*args):
-    out, res = remat_fwd(*args)
+  def fwd(nzs_in, *args):
+    out, res = remat_fwd(nzs_in, *args)
     _, res2 = rem(res, *args)
     return out, res2
-  return update_wrapper(fwd, remat_fwd), bwd, with_logs, with_accums
+  return update_wrapper(fwd, remat_fwd)
 
 class OptRemat(HiPrim):
   orig: CustomVJPTraced
