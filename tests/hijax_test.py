@@ -3914,6 +3914,21 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
         f_vjp.with_refs(jax.new_ref(jnp.zeros((2, 10))), jax.ad.GradValue())(
             jnp.ones(2))
 
+    # under vmap, an argument that isn't differentiated gets a scratch ref too
+    @partial(jax.custom_gradient, remat=True,
+             with_accums=(ad.ValAccum, ad.RefAccum))
+    def scale(x, c):
+      def rem(x, c):
+        def rule(g, x_acc, c_acc):
+          x_acc.accum(g * c)
+          c_acc.ref[...] += (g * x).sum()
+        return x * c, rule
+      return x * c, rem
+    xs = jnp.stack([x, x])
+    for f in [scale, jax.remat(scale)]:
+      loss = lambda xs: jax.vmap(f, (0, None))(xs, c).sum()
+      self.assertAllClose(jax.grad(loss)(xs), jnp.full_like(xs, 2.))
+
     # an integer argument gets a NullAccum, and the rule's logs come out
     @partial(jax.custom_gradient, remat=True, with_accums=ad.RefAccum)
     def take(x, i):
@@ -3943,6 +3958,44 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
 
     for f in [sin, jax.remat(sin)]:
       self.assertAllClose(jax.grad(lambda x: f(x).sum())(x), jnp.cos(x))
+
+  def test_with_accums_vmap_null_accums(self):
+    seen = []
+    @jax.custom_vjp
+    def f(x, c):
+      return x * c
+    def f_bwd(res, g, x_acc, c_acc):
+      seen.append(type(c_acc).__name__)
+      x, c = res
+      x_acc.accum(g * c)
+      c_acc.accum((g * x).sum())
+    f.defvjp_with_accums(lambda x, c: (f(x, c), (x, c)), f_bwd)
+
+    # as without vmap, the rule gets a NullAccum for an argument that isn't
+    # differentiated
+    xs, c = jnp.ones((2, 3)), jnp.array(2.)
+    for g in [jax.vmap(f, (0, None)), jax.vmap(jax.remat(f), (0, None)),
+              jax.remat(jax.vmap(f, (0, None)))]:
+      seen.clear()
+      loss = lambda xs: g(xs, c).sum()
+      self.assertAllClose(jax.grad(loss)(xs), jnp.full_like(xs, 2.))
+      self.assertEqual(seen, ['NullAccum'])
+
+  def test_defvjp_with_accums_and_defremat_under_vmap(self):
+    f = jax.custom_vjp(jnp.sin)
+    f.defvjp_with_accums(lambda x: (jnp.sin(x), jnp.cos(x)),
+                         lambda c, g, x_acc: x_acc.accum(g * c))
+    f.defremat(lambda x: (jnp.sin(x), None),
+               lambda _, x: (jnp.sin(x), jnp.cos(x)),
+               lambda c, g: (g * c,))
+    xs = jnp.arange(6.).reshape(2, 3)
+    _, f_vjp = jax.vjp(jax.vmap(f), xs)
+    with self.assertRaisesRegex(ValueError, "under vmap"):
+      f_vjp.with_refs(jax.new_ref(jnp.zeros_like(xs)))(jnp.ones_like(xs))
+    for g in [jax.vmap(jax.remat(f)), jax.remat(jax.vmap(f))]:
+      ref = jax.new_ref(jnp.zeros_like(xs))
+      jax.vjp(g, xs)[1].with_refs(ref)(jnp.ones_like(xs))
+      self.assertAllClose(ref[...], jnp.cos(xs))
 
   def test_defremat_with_logs(self):
     # the plain and remat bwd rules each decide whether they log
