@@ -375,6 +375,8 @@ def lax_ops():
           "mul", 2, default_dtypes + complex_dtypes, test_util.rand_small
       ),
       op_record("mulhi", 2, int_dtypes + uint_dtypes, test_util.rand_fullrange),
+      op_record("fma", 3, float_dtypes, test_util.rand_default, tol=0),
+      op_record("fmuladd", 3, float_dtypes, test_util.rand_default),
       op_record(
           "div", 2, default_dtypes + complex_dtypes, test_util.rand_nonzero
       ),

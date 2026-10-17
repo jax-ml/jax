@@ -5172,6 +5172,17 @@ def _erf_inv_lowering_rule(ctx: LoweringRuleContext, x):
   )(ctx, x)
 
 
+@register_lowering_rule(lax.fmuladd_p, kernel_types=[*tpu_core.CoreType])
+def _fmuladd_lowering_rule(ctx: LoweringRuleContext, a, b, c):
+  (aval_out,) = ctx.avals_out
+  out_ty = ctx.aval_to_ir_type(aval_out)
+  a, b, c = (
+      vector.broadcast(out_ty, x) if x_aval.shape != aval_out.shape else x
+      for x, x_aval in zip((a, b, c), ctx.avals_in)
+  )
+  return arith.addf(arith.mulf(a, b), c)
+
+
 @register_lowering_rule(lax.polynomial_p, kernel_types=[*tpu_core.CoreType])
 def _polynomial_lowering_rule(
     ctx: LoweringRuleContext, x, *coeffs, unroll=None

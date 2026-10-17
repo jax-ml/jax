@@ -46,7 +46,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.remat import remat_transform
 from jax._src import linear_util as lu
 from jax._src import tree_util
-from jax._src.lib import ifrt_version
+from jax._src.lib import ifrt_version, jaxlib_extension_version
 from jax.custom_derivatives import SymbolicZero
 import jax.numpy as jnp
 
@@ -2815,6 +2815,74 @@ class ShardMapTest(jtu.JaxTestCase):
       expected = -expected
     self.assertAllClose(dx, expected)
     self.assertAllClose(d2x, -2 * np.asarray(x) * expected)
+    hlo = compiled.as_text()
+    for collective in ('all-reduce', 'all-gather', 'all-to-all',
+                       'collective-permute'):
+      self.assertNotIn(collective, hlo)
+
+  @parameterized.product(
+      fma_op=[lax.fma, lax.fmuladd], varying_c=[False, True]
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_fma_and_fmuladd_mixed_vma(self, fma_op, varying_c, mesh):
+    if fma_op is lax.fma and (
+        jaxlib_extension_version < 515
+        or not jtu.is_libtpu_at_least('0.0.52')
+    ):
+      self.skipTest(
+          'fma requires jaxlib_extension_version >= 515 and libtpu >= 0.0.52'
+      )
+    a = jax.device_put(np.linspace(-0.5, 0.5, 8, dtype=np.float32), P('x'))
+    c = jax.device_put(
+        np.linspace(0.5, 1.5, 8 if varying_c else 4, dtype=np.float32),
+        P('y') if varying_c else P())
+    out_spec = P(('x', 'y')) if varying_c else P('x')
+
+    @shard_map(in_specs=(P('x'), P('y') if varying_c else P()),
+               out_specs=out_spec)
+    def f(a, c):
+      return fma_op(fma_op(c, a, np.float32(1.0)), a, c)
+
+    a_ref = np.asarray(a).reshape(2, 4)
+    c_ref = np.asarray(c).reshape(-1, 4)
+    expected = (c_ref[None, :, :] + a_ref[:, None, :]
+                + c_ref[None, :, :] * a_ref[:, None, :] ** 2).ravel()
+    for fun in (f, jax.jit(f)):
+      self.assertAllClose(fun(a, c), expected)
+
+    da, dc = jax.jit(jax.grad(lambda a, c: f(a, c).sum(), (0, 1)))(a, c)
+    expected_da = (c_ref.shape[0] + 2 * a_ref * c_ref.sum(axis=0)).ravel()
+    expected_dc = np.tile((1 + a_ref ** 2).sum(axis=0), c_ref.shape[0])
+    self.assertAllClose(da, expected_da)
+    self.assertAllClose(dc, expected_dc)
+    with config.auto_pcast(False):
+      with self.assertRaisesRegex(
+          ValueError, 'requires varying manual axes to match'):
+        jax.jit(f)(a, c)
+
+  @parameterized.named_parameters(('fma', lax.fma), ('fmuladd', lax.fmuladd))
+  @jtu.with_explicit_mesh((2,), 'i')
+  def test_fma_and_fmuladd_derivatives_vma(self, fma_op, mesh):
+    if fma_op is lax.fma and (
+        jaxlib_extension_version < 515
+        or not jtu.is_libtpu_at_least('0.0.52')
+    ):
+      self.skipTest(
+          'fma requires jaxlib_extension_version >= 515 and libtpu >= 0.0.52'
+      )
+    x = jax.device_put(np.linspace(-0.5, 0.5, 8, dtype=np.float32), P('i'))
+    grad = jax.grad(lambda x: fma_op(x, x, np.float32(1.5)).sum())
+    grad2 = jax.grad(lambda x: grad(x).sum())
+
+    @jax.jit
+    @shard_map(in_specs=P('i'), out_specs=(P('i'), P('i')))
+    def g(x):
+      return grad(x), grad2(x)
+
+    compiled = g.lower(x).compile()
+    dx, d2x = compiled(x)
+    self.assertAllClose(dx, 2 * np.asarray(x))
+    self.assertAllClose(d2x, np.full_like(x, 2.0))
     hlo = compiled.as_text()
     for collective in ('all-reduce', 'all-gather', 'all-to-all',
                        'collective-permute'):

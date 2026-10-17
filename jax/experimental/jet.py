@@ -651,6 +651,23 @@ jet_rules[lax.dot_general_p] = partial(_bilinear_taylor_rule, lax.dot_general_p)
 jet_rules[lax.mul_p] = partial(_bilinear_taylor_rule, lax.mul_p)
 jet_rules[lax.conv_general_dilated_p] = partial(_bilinear_taylor_rule, lax.conv_general_dilated_p)
 
+def _fma_taylor_rule(op, primals_in, series_in):
+  a, b, c = primals_in
+  a_terms, b_terms, c_terms = series_in
+  u = [a] + a_terms
+  w = [b] + b_terms
+  z = [c] + c_terms
+  v: list[Any] = []
+  for k in range(len(u)):
+    acc = z[k]
+    for j in range(k + 1):
+      acc = op(u[j], w[k - j], acc)
+    v.append(acc)
+  primal_out, *series_out = v
+  return primal_out, series_out
+jet_rules[lax.fma_p] = partial(_fma_taylor_rule, lax.fma)
+jet_rules[lax.fmuladd_p] = partial(_fma_taylor_rule, lax.fmuladd)
+
 def _gather_taylor_rule(primals_in, series_in, **params):
   operand, start_indices = primals_in
   gs, _ = series_in
