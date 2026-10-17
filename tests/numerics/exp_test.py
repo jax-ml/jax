@@ -21,7 +21,7 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import ifrt_version, jaxlib_extension_version
 import jax.numpy as jnp
 
 # Under pytest, tests run against an installed wheel that does not
@@ -45,6 +45,11 @@ TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
 @jax.jit
 def _exp_highest(x):
   return lax.exp(x, accuracy=lax.AccuracyMode.HIGHEST)
+
+
+@jax.jit
+def _exp2_highest(x):
+  return lax.exp2(x, accuracy=lax.AccuracyMode.HIGHEST)
 
 
 @jax.jit
@@ -110,24 +115,51 @@ class Exp2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp2_accuracy(self, dtype):
-    # lax.exp2 lowers as exp(x * ln(2)) where ln(2) is cast to the input dtype.
-    # In bfloat16, ln(2) has ~0.25% relative error, which causes large output
-    # errors (~93 ULP) and causes x = 128.0 to evaluate to finite 2.72e+38
-    # instead of overflowing to inf.
-    bounds = [
-        ("cpu", {bf16: 101.0, f16: 14.0, f32: 68.5, f64: 719.0}),
-        ("gpu", {bf16: 101.0, f16: 14.0, f32: 69.0, f64: 719.0}),
-        (TPU_EUPV1, {bf16: 44.0, f16: 7.5, f32: 141.5}),
-        ("tpu_v5p", {bf16: 44.0, f16: 7.5, f32: 133.0}),
-        ("tpu_v6e", {bf16: 44.0, f16: 7.5, f32: 90.0}),
-        ("tpu_7x", {bf16: 75.0, f16: 7.5, f32: 90.0}),
-    ]
+    if ifrt_version >= 78:
+      bounds = [
+          ("cpu", {f16: 1.0}),
+          ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),
+          (TPU_EUPV1, {f16: 1.0, f32: 61.0}),
+          ("tpu_v5p", {f16: 1.0, f32: 65.5}),
+          (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
+      ]
+    else:
+      bounds = [
+          ("cpu", {bf16: 101.0, f16: 14.0, f32: 68.5, f64: 719.0}),
+          ("gpu", {bf16: 101.0, f16: 14.0, f32: 69.0, f64: 719.0}),
+          (TPU_EUPV1, {bf16: 44.0, f16: 7.5, f32: 141.5}),
+          ("tpu_v5p", {bf16: 44.0, f16: 7.5, f32: 133.0}),
+          ("tpu_v6e", {bf16: 44.0, f16: 7.5, f32: 90.0}),
+          ("tpu_7x", {bf16: 75.0, f16: 7.5, f32: 90.0}),
+      ]
     ignore_inputs = [
         (["cpu", "gpu", "tpu"], {bf16: [0x4300]}),
     ]
     util.check_unary_precision(
         self,
         jnp.exp2,
+        np.exp2,
+        lambda x: mpmath.power(2, x),
+        dtype,
+        bounds=bounds,
+        ignore_inputs=ignore_inputs,
+    )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_exp2_highest_accuracy(self, dtype):
+    if ifrt_version < 78:
+      self.skipTest("Requires ifrt_version >= 78")
+    bounds = [
+        ("cpu", {f16: 1.0}),
+        ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),
+        ("tpu", {f16: 1.0, f32: 1.5}),
+    ]
+    ignore_inputs = [
+        (["cpu", "gpu", "tpu"], {bf16: [0x4300]}),
+    ]
+    util.check_unary_precision(
+        self,
+        _exp2_highest,
         np.exp2,
         lambda x: mpmath.power(2, x),
         dtype,
@@ -241,6 +273,7 @@ class LogisticTest(jtu.JaxTestCase):
 util.register_benchmark(jnp.exp)
 util.register_benchmark(_exp_highest)
 util.register_benchmark(jnp.exp2)
+util.register_benchmark(_exp2_highest)
 util.register_benchmark(jnp.expm1)
 util.register_benchmark(_expm1_highest)
 util.register_benchmark(lax.logistic)
