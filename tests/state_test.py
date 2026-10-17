@@ -1410,6 +1410,19 @@ class StateControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(jax.jit(f)(0, 5, 2), 12)
     self.assertAllClose(jax.jit(f)(1, 2, 3), 10)
 
+  def test_while_with_state_in_cond_disable_jit_error(self):
+    def f(x, y, z):
+      @run_state
+      def body(x_ref):
+        def cond(i):
+          x_ref[...] += z
+          return i < y
+        lax.while_loop(cond, lambda i: i + 1, 0)
+      return body(x)
+    with jax.disable_jit():
+      with self.assertRaisesRegex(NotImplementedError, "disable_jit"):
+        f(0, 5, 2)
+
   def test_while_with_same_ref_in_body_and_cond(self):
     def f(x, y, z):
       @run_state

@@ -1714,10 +1714,12 @@ def while_loop[T](cond_fun: Callable[[T], BooleanNumeric],
   """
   if not (callable(body_fun) and callable(cond_fun)):
     raise TypeError("lax.while_loop: body_fun and cond_fun arguments should be callable.")
+  body_ran = False
   if config.disable_jit.value:
     try:
       val = tree_map(lax.asarray, init_val)
       while cond_fun(val):
+        body_ran = True
         val = tree_map(lax.asarray, body_fun(val))
       return val
     except core.ConcretizationTypeError:
@@ -1764,6 +1766,13 @@ def while_loop[T](cond_fun: Callable[[T], BooleanNumeric],
   if any(changed):
     init_aval = init_val_flat.map(core.typeof)
     cond_jaxpr, body_jaxpr, body_out_avals = _create_jaxpr(init_aval)
+  if config.disable_jit.value and (
+      _writes_refs(cond_jaxpr) or body_ran and _writes_refs(body_jaxpr)):
+    raise NotImplementedError(
+        "lax.while_loop under jax.disable_jit() couldn't run as a Python loop "
+        "because its predicate isn't concrete, and falling back to the "
+        "while_loop primitive would repeat the Ref writes already made by the "
+        "Python attempt.")
 
   cond_jaxpr, cond_consts = pe.separate_consts(cond_jaxpr)
   body_jaxpr, body_consts = pe.separate_consts(body_jaxpr)
@@ -1814,9 +1823,12 @@ def while_loop[T](cond_fun: Callable[[T], BooleanNumeric],
 
   return body_out_avals.update(outs).unflatten()
 
+def _writes_refs(jaxpr) -> bool:
+  return any(isinstance(e, (state.WriteEffect, state.AccumEffect))
+             for e in jaxpr.effects)
+
 def _cond_needs_carried_pred(cond_jaxpr, cond_consts, body_consts) -> bool:
-  if any(isinstance(e, (state.WriteEffect, state.AccumEffect))
-         for e in cond_jaxpr.effects):
+  if _writes_refs(cond_jaxpr):
     return True
   ref_ids = lambda xs: {id(core.get_referent(x)) for x in xs
                         if isinstance(core.typeof(x), AbstractRef)}
