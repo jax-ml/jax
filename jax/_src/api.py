@@ -182,6 +182,7 @@ def jit(
   backend: str | None = ...,
   inline: bool | Inline = ...,
   compiler_options: dict[str, Any] | None = ...,
+  cache_key: str | None = ...,
 ) -> pjit.JitWrapped:
   ...
 
@@ -199,6 +200,7 @@ def jit(
   backend: str | None = ...,
   inline: bool | Inline = ...,
   compiler_options: dict[str, Any] | None = ...,
+  cache_key: str | None = ...,
 ) -> Callable[[Callable], pjit.JitWrapped]:
   ...
 
@@ -215,6 +217,7 @@ def jit(
   backend: str | None = None,
   inline: bool | Inline = False,
   compiler_options: dict[str, Any] | None = None,
+  cache_key: str | None = None,
 ) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
@@ -360,7 +363,8 @@ def jit(
       static_argnums=static_argnums, static_argnames=static_argnames,
       donate_argnums=donate_argnums, donate_argnames=donate_argnames,
       keep_unused=keep_unused, device=device, backend=backend, inline=inline,
-      compiler_options=compiler_options, use_resource_env=False)
+      compiler_options=compiler_options, use_resource_env=False,
+      cache_key=cache_key)
   if isinstance(fun, NotSpecified):
     return lambda fun: pjit.make_jit(fun, **kwds)
   else:

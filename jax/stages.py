@@ -31,4 +31,6 @@ from jax._src.stages import (
   Wrapped as Wrapped,
   ArgInfo as ArgInfo,
   Traced as Traced,
+  Cache as Cache,
+  set_cache as set_cache,
 )

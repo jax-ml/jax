@@ -21,3 +21,16 @@ Classes
 .. autoclass:: Compiled
    :members: in_tree, out_tree, as_text, cost_analysis, memory_analysis, runtime_executable
    :special-members: __call__
+
+.. autoclass:: Cache
+   :members: get, put
+
+Functions
+---------
+
+.. currentmodule:: jax.stages
+
+.. autosummary::
+  :toctree: _autosummary
+
+  set_cache
