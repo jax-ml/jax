@@ -2256,6 +2256,38 @@ def _async_load_store_constraint_system(
   return cs.ConstraintSystem(constraints=constraints), value_sites_for_variable
 
 
+# TODO(slebedev): Remove `hasattr` once the minimum jaxlib version is 0.12.0.
+if hasattr(mgpu, "AsyncLoadIm2colOp"):
+  @_add_constraint_system_derivation_rule(mgpu.AsyncLoadIm2colOp)
+  def _async_load_im2col_constraint_system(
+      ctx: DerivationContext,
+      op: mgpu.AsyncLoadIm2colOp,
+  ) -> ConstraintSystemDerivationRuleResult:
+    dst_ty = ir.MemRefType(op.destination.type)
+    dst_strides, _ = dst_ty.get_strides_and_offset()
+    if any(
+        s != cs_stride and d != 1
+        for s, cs_stride, d in zip(
+            dst_strides,
+            utils.get_contiguous_strides(dst_ty.shape),
+            dst_ty.shape,
+            strict=True,
+        )
+    ):
+      raise ValueError(
+          "async_load_im2col requires the destination SMEM memref to be"
+          f" contiguous, got strides {dst_strides} for shape {dst_ty.shape}."
+      )
+    operand = ValueSite(op, VariableType.OPERAND, 1)
+    var = ctx.producer_ref(operand)
+    # The destination must have a single tile along the channel dimension.
+    constraints: list[cs.Constraint] = [
+        cs.Divides(expr=var, tiling_multiple=tuple(dst_ty.shape[-2:])),
+        cs.MinorDimDivisibleBy(expr=var, divisor=dst_ty.shape[-1]),
+    ]
+    return cs.ConstraintSystem(constraints=constraints), {var: [operand]}
+
+
 @_add_constraint_system_derivation_rule(mgpu.AsyncPrefetchOp)
 def _async_prefetch_constraint_system(
     ctx: DerivationContext,
