@@ -908,6 +908,33 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         max_root_ulp, 2.0,
         f"Max ULP {max_root_ulp} at negative root x={worst_root_x} exceeds 2.0")
 
+  @jtu.skip_on_flag("jax_enable_x64", False)
+  def test_gamma_float64_ulp(self):
+    # Reference values via 60-digit mpmath:
+    # `float(mpmath.gamma(mpmath.mpf(x)))`.
+    certified_pts = [
+        (0.5, 1.772453850905516),
+        (5.0, 24.0),
+        (20.0, 1.21645100408832e+17),
+        (50.25, 1.6144764712412441e+63),
+        (170.0, 4.269068009004705e+304),
+        (171.6000020007015, 1.5859132256275007e+308),
+        (-0.5, -3.544907701811032),
+        (-50.21846812810949, -6.916145190915793e-65),
+        (-170.5, -3.3127395215386074e-308),
+    ]
+    xs = np.array([p[0] for p in certified_pts], dtype=np.float64)
+    ref = np.array([p[1] for p in certified_pts], dtype=np.float64)
+    got = np.asarray(lsp_special.gamma(xs))
+    errs = np.abs(got - ref) / np.spacing(np.abs(ref))
+    self.assertLessEqual(float(errs.max()), 4.0,
+                         f"Max ULP {errs.max()} at x={xs[np.argmax(errs)]}")
+    # Gamma(n) = (n - 1)! is exact in float64 for n <= 23.
+    ns = np.arange(1, 24, dtype=np.float64)
+    self.assertArraysEqual(
+        lsp_special.gamma(ns),
+        np.array([math.factorial(n - 1) for n in range(1, 24)], np.float64))
+
   def test_gammaln_sweep_ulp(self):
     sweep_xs = np.concatenate([
         np.logspace(-37, -1, 500, dtype=np.float32),

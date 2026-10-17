@@ -312,7 +312,90 @@ def gamma(x: ArrayLike) -> Array:
   x, = promote_args_inexact("gamma", x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     return _complex_gamma(x)
+  if x.dtype == np.float64:
+    return _gamma_f64(x)
   return gammasgn(x) * lax.exp(lax.lgamma(x))
+
+
+# Lanczos approximation for float64 as a ratio of polynomials, N=13.
+# Coefficients: Boost.Math lanczos13m53,
+#   boost/math/special_functions/lanczos.hpp
+_LANCZOS13_G = 6.024680040776729583740234375
+_LANCZOS13_NUM = (
+    23531376880.41075968857200767445163675473,
+    42919803642.64909876895789904700198885093,
+    35711959237.35566804944018545154716670596,
+    17921034426.03720969991975575445893111267,
+    6039542586.35202800506429164430729792107,
+    1439720407.311721673663223072794912393972,
+    248874557.8620541565114603864132294232163,
+    31426415.58540019438061423162831820536287,
+    2876370.628935372441225409051620849613599,
+    186056.2653952234950402949897160456992822,
+    8071.672002365816210638002902272250613822,
+    210.8242777515793458725097339207133627117,
+    2.506628274631000270164908177133837338626,
+)
+_LANCZOS13_DEN = (0., 39916800., 120543840., 150917976., 105258076., 45995730.,
+                  13339535., 2637558., 357423., 32670., 1925., 66., 1.)
+_FACTORIALS_F64 = np.array([math.factorial(n) for n in range(171)], np.float64)
+
+
+@custom_derivatives.custom_jvp
+def _gamma_f64(x: Array) -> Array:
+  return _gamma_f64_impl(x)
+
+
+@jit
+def _gamma_f64_impl(x: Array) -> Array:
+  # Direct evaluation instead of exp(lgamma(x)): the rounding error of lgamma
+  # becomes a relative error of |lgamma(x)| ulp in exp, ~1e3 ulp near x = 170.
+  y = lax.abs(x)
+  # Horner in y for small y and in 1/y for large y, as Boost does.
+  small = y <= 10
+  w = jnp.where(small, y, 1 / y)
+  num = den = jnp.zeros_like(y)
+  for i in range(13):
+    num = num * w + jnp.where(small, _LANCZOS13_NUM[12 - i], _LANCZOS13_NUM[i])
+    den = den * w + jnp.where(small, _LANCZOS13_DEN[12 - i], _LANCZOS13_DEN[i])
+  # t = y + g - 1/2 is rounded; the result's sensitivity to t is
+  # ((y - 1/2) / t - 1), so correct with the exact rounding error of the sum.
+  c = _LANCZOS13_G - 0.5
+  t = y + c
+  b = t - y
+  t_err = (y - (t - b)) + (c - b)
+  a = y - 0.5
+  lanczos = num / den * (1 + t_err * (a / t - 1))
+  # Gamma(y) = lanczos * t**a / exp(t), with t**a split to avoid overflow.
+  p = t ** (a / 2)
+  e = lax.exp(t)
+  pos = lanczos * (p / e) * p
+  # Reflection with y = -x, which is exact:
+  # Gamma(x) = -pi / (x * sin(pi * x) * Gamma(y)).
+  n = jnp.round(x)
+  sinpi = lax.sin(np.pi * (x - n)) * (1 - 2 * (n % 2))
+  neg = ((-np.pi / (x * sinpi * lanczos)) * e / p) / p
+  is_int = x == lax.floor(x)
+  table = jnp.asarray(_FACTORIALS_F64)[jnp.clip(x, 1, 170).astype(np.int32) - 1]
+  return jnp.select(
+      [jnp.isnan(x) | ((x < 0) & is_int),
+       y < 1.4901161193847656e-08,  # sqrt(eps): Gamma(x) = 1/x - euler + O(x)
+       is_int & (x <= 170),
+       x > 172,
+       x < -190],
+      [np.nan,
+       1 / x - np.euler_gamma,
+       table,
+       np.inf,
+       jnp.where(lax.floor(x) % 2 == 0, 0.0, -0.0)],
+      jnp.where(x > 0, pos, neg))
+
+
+@_gamma_f64.defjvp
+def _gamma_f64_jvp(primals, tangents):
+  (x,), (x_dot,) = primals, tangents
+  g = _gamma_f64(x)
+  return g, x_dot * g * lax.digamma(x)
 
 
 def betaln(a: ArrayLike, b: ArrayLike) -> Array:
