@@ -21,6 +21,7 @@ from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
+import jax.scipy as jsp
 
 # Under pytest, tests run against an installed wheel that does not
 # include `jax.tests`, so skip before importing `jax.tests.numerics`.
@@ -143,8 +144,161 @@ class LgammaTest(jtu.JaxTestCase):
     )
 
 
+def _with_special_values(a, y, x, x_at_0, x_at_1):
+  """Sets the documented special values of the JAX version in scipy's `x`.
+
+  The inverse is `x_at_0` at y = 0 and `x_at_1` at y = 1 for any a >= 0, and
+  nan for y outside [0, 1], for a < 0, and for a in {0, inf} with 0 < y < 1.
+  scipy is inconsistent for a = 0 and for some y < 0, for example
+  `scipy.special.gammaincinv(0.001, -6e-8) == 0`.
+  """
+  x = np.where(y == 0, x_at_0, np.where(y == 1, x_at_1, x))
+  interior = (y > 0) & (y < 1)
+  invalid = (
+      np.isnan(a) | np.isnan(y) | (a < 0) | (y < 0) | (y > 1)
+      | (((a == 0) | np.isinf(a)) & interior)
+  )
+  return np.where(invalid, np.nan, x)
+
+
+def _gammaincinv_ref(a, y):
+  x = scipy.special.gammaincinv(a, y)
+  return _with_special_values(a, y, x, x_at_0=0.0, x_at_1=np.inf)
+
+
+def _gammainccinv_ref(a, y):
+  x = scipy.special.gammainccinv(a, y)
+  return _with_special_values(a, y, x, x_at_0=np.inf, x_at_1=0.0)
+
+
+def _ignored_inputs(a, y, x):
+  """Inputs (a, y) with reference result x excluded from the accuracy checks."""
+  finfo = jnp.finfo(a.dtype)
+  tiny = float(finfo.tiny)
+  # Whether subnormal a is flushed to zero, which changes the result from 0
+  # (it underflows for all but subnormal y) to nan, depends on the platform.
+  # So does whether a negative subnormal y compares as zero (giving the result
+  # at y = 0) or as negative (giving nan): GPUs flush subnormals in arithmetic
+  # but not in comparisons.
+  ignored = (np.abs(a) > 0) & (np.abs(a) < tiny)
+  ignored |= (np.abs(y) > 0) & (np.abs(y) < tiny)
+  # Within a factor 1 / eps of the smallest normal number, the density of the
+  # gamma distribution at the result underflows.
+  near_underflow = tiny / float(finfo.eps)
+  for v in (a, y, x):
+    ignored |= (v > 0) & (v < near_underflow)
+  if a.dtype == np.float64:
+    # For finite a >= 1e6 in float64, the initial approximation is used without
+    # refinement (relative error up to about 1e-6), and scipy's relative error
+    # also grows beyond 1e-7 (checked against mpmath for a >= 1e7).
+    ignored |= (a >= 1e6) & np.isfinite(a)
+  return ignored
+
+
+def _gammaincinv_ignored(a, y):
+  with np.errstate(all="ignore"):
+    x = scipy.special.gammaincinv(a.astype(np.float64), y.astype(np.float64))
+  return _ignored_inputs(a, y, x)
+
+
+def _gammainccinv_ignored(a, y):
+  with np.errstate(all="ignore"):
+    x = scipy.special.gammainccinv(a.astype(np.float64), y.astype(np.float64))
+  return _ignored_inputs(a, y, x)
+
+
+# (a, y) inputs at the special values set by _with_special_values.
+_GAMMAINCINV_SPECIAL_POINTS = [
+    (2.0, 0.0),
+    (2.0, 1.0),
+    (0.0, 0.0),
+    (0.0, 1.0),
+    (math.inf, 0.0),
+    (math.inf, 1.0),
+    (0.0, 0.5),
+    (math.inf, 0.5),
+    (-1.0, 0.5),
+    (2.0, -0.1),
+    (2.0, 1.1),
+    (2.0, -math.inf),
+    (2.0, math.inf),
+    (2.0, math.nan),
+    (math.nan, 0.5),
+    (math.nan, 0.0),
+]
+
+_GAMMAINCINV_INTERESTING_POINTS = [
+    *_GAMMAINCINV_SPECIAL_POINTS,
+    # Thresholds in a of the initial approximation (a < 0.3, a < 1, a >= 500)
+    # and of the Halley refinement (a < 200 in float32, a < 1e6 in float64):
+    0.3,
+    200.0,
+    500.0,
+    1e6,
+    # Values of y near thresholds of the initial approximation for a < 1,
+    # which are on b = (1 - p) * Gamma(a), close to 1 - p for a near 1:
+    1e-5,
+    0.15,
+    0.35,
+    0.6,
+]
+
+
+@jtu.thread_unsafe_test_class()
+class GammaincinvTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_gammaincinv_accuracy(self, dtype):
+    # mpmath has no inverse incomplete gamma function, so scipy is the
+    # reference for all dtypes. In float32 the accuracy for small a is limited
+    # by that of gammainc. The result is refined against lax.igamma, so on GPU
+    # and TPU it inherits the accuracy of igamma there, amplified by about 1 / a
+    # for small a.
+    bounds = [
+        ("cpu", {bf16: 1.0, f16: 1.0, f32: 600.0, f64: 14500.0}),
+        (["gpu", "tpu"],
+         {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
+    ]
+    util.check_nary_precision(
+        self,
+        jsp.special.gammaincinv,
+        _gammaincinv_ref,
+        mpmath_fn=None,
+        dtype=dtype,
+        nargs=2,
+        bounds=bounds,
+        ignore_inputs=_gammaincinv_ignored,
+        interesting_points=_GAMMAINCINV_INTERESTING_POINTS,
+    )
+
+
+@jtu.thread_unsafe_test_class()
+class GammainccinvTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_gammainccinv_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {bf16: 1.0, f16: 1.0, f32: 1250.0, f64: 16500.0}),
+        (["gpu", "tpu"],
+         {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
+    ]
+    util.check_nary_precision(
+        self,
+        jsp.special.gammainccinv,
+        _gammainccinv_ref,
+        mpmath_fn=None,
+        dtype=dtype,
+        nargs=2,
+        bounds=bounds,
+        ignore_inputs=_gammainccinv_ignored,
+        interesting_points=_GAMMAINCINV_INTERESTING_POINTS,
+    )
+
+
 util.register_benchmark(lax.digamma)
 util.register_benchmark(lax.lgamma)
+util.register_benchmark(jsp.special.gammaincinv, nargs=2)
+util.register_benchmark(jsp.special.gammainccinv, nargs=2)
 
 
 if __name__ == "__main__":

@@ -189,6 +189,8 @@ jax.scipy.special
    gamma
    gammainc
    gammaincc
+   gammainccinv
+   gammaincinv
    gammaln
    gammasgn
    hyp1f1
