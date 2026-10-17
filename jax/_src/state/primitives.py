@@ -952,6 +952,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
       else:
         # We only trigger this case when the int_indexer shape is empty,
         # so we don't need to account for int_indexer_shape.
+        assert ref_dim is not None  # https://github.com/facebook/pyrefly/issues/5255
         int_indexers_before_ref_dim = sum(is_new_int_indexing[:ref_dim])
         out_bdim = ref_dim - int_indexers_before_ref_dim
     else:
@@ -982,6 +983,7 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
       val = batching.broadcast(val, axis_data.size, ref_dim,
                                axis_data.explicit_mesh_axis)
     else:
+      assert ref_dim is not None  # https://github.com/facebook/pyrefly/issues/5255
       val = batching.moveaxis(val, val_dim, ref_dim)
     return swap_p.bind(ref, val, *flat_idxs, tree=tree), ref_dim
   if len(indexers) > 1:
