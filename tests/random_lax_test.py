@@ -32,7 +32,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src.random.core import (_safe_int_to_float, _check_broadcast_shapes,
-                                  _poisson_from_normal)
+                                  _poisson_from_normal, _poisson_log_pmf)
 from jax._src import test_util as jtu
 from jax import vmap
 
@@ -810,6 +810,90 @@ class DistributionsTest(RandomTestBase):
     # based on the central limit theorem).
     self.assertAllClose(samples.mean(), lam, rtol=0.02, check_dtypes=False)
     self.assertAllClose(samples.var(), lam, rtol=0.03, check_dtypes=False)
+
+  def testPoissonLargeLambdaLogPmf(self):
+    lam = jnp.float32(1e8)
+    k = lam + jnp.array([-10000.0, 0.0, 10000.0], dtype=jnp.float32)
+    actual = np.asarray(_poisson_log_pmf(k, lam), dtype=np.float64)
+    expected = scipy.stats.poisson.logpmf(np.asarray(k, dtype=np.float64), 1e8)
+    self.assertAllClose(actual, expected, rtol=2e-3, atol=2e-3)
+
+  @jtu.sample_product(lam=[10.0, 100.0, 1e4, 1e8])
+  def testPoissonRejectionLogPmfMatchesScipy(self, lam):
+    lam32 = jnp.float32(lam)
+    width = max(2, int(np.sqrt(lam) * 2))
+    k = lam32 + jnp.asarray([-width, -1, 0, 1, width], dtype=jnp.float32)
+    k = jnp.maximum(k, 0)
+    actual = np.asarray(_poisson_log_pmf(k, lam32), dtype=np.float64)
+    expected = scipy.stats.poisson.logpmf(np.asarray(k, dtype=np.float64), lam)
+    self.assertAllClose(actual, expected, rtol=2e-3, atol=2e-3)
+
+  @jtu.sample_product(lam=[1e7, 1e8, 1e9])
+  def testPoissonCentralDevianceAvoidsFloat32Cancellation(self, lam):
+    # Regression for loss of O(1e-3) to O(1e-2) in log probability when
+    # k - lam = O(sqrt(lam)), even after the leading Stirling rewrite.
+    # Compare at the exact float32 representable k values.
+    center = jnp.float32(lam)
+    offsets = jnp.asarray(
+        [-5.0, -3.0, -1.0, 0.0, 1.0, 3.0, 5.0], dtype=center.dtype)
+    k = center + offsets * jnp.sqrt(center)
+    expected = scipy.stats.poisson.logpmf(
+        np.asarray(k, dtype=np.float64), float(np.float32(lam)))
+    eager = np.asarray(_poisson_log_pmf(k, center))
+    compiled = np.asarray(jax.jit(_poisson_log_pmf)(k, center))
+    self.assertTrue(np.isfinite(expected).all())
+    self.assertAllClose(
+        eager, expected, rtol=1e-6, atol=5e-5, check_dtypes=False)
+    self.assertAllClose(
+        compiled, expected, rtol=1e-5, atol=5e-4, check_dtypes=False)
+
+  def testPoissonLogPmfTinyRateGradientsRemainFinite(self):
+    # Inactive log1p(-1) and log(0) branches used to contaminate
+    # reverse-mode differentiation, even when the returned PMF was correct.
+    for mu in [0.0, 1e-12, 1e-8, 1e-5]:
+      for k in [0.0, 1.0, 2.0]:
+        rate = jnp.float32(mu)
+        logpmf = lambda r: _poisson_log_pmf(jnp.float32(k), r)
+        value = np.asarray(logpmf(rate))
+        scipy_value = scipy.stats.poisson.logpmf(k, mu)
+        self.assertAllClose(value, scipy_value, rtol=2e-6,
+                            atol=2e-5, check_dtypes=False)
+        if mu == 0.0 and k > 0:
+          self.assertTrue(np.isneginf(value))
+          continue
+        expected_grad = np.float32(-1.0 if k == 0 else k / mu - 1.0)
+        gradient = np.asarray(jax.grad(logpmf)(rate))
+        gradient_jit = np.asarray(jax.jit(jax.grad(logpmf))(rate))
+        self.assertTrue(np.isfinite(gradient))
+        np.testing.assert_allclose(gradient, expected_grad, rtol=3e-5)
+        np.testing.assert_allclose(gradient_jit, expected_grad, rtol=3e-5)
+
+  def testPoissonCentralLogPmfNearFloat32Maximum(self):
+    # At a finite k near 1e38, the intermediate 2*pi*k overflows
+    # float32 even though -0.5*log(2*pi*k) remains finite.
+    lam = jnp.array([1e36, 1e37, 1e38], dtype=jnp.float32)
+    expected = -0.5 * (
+        np.log(2 * np.pi) + np.log(np.asarray(lam, dtype=np.float64)))
+    # At the mode the Stirling correction is < 1e-36, so the normal
+    # approximation is accurate far beyond float32 precision.
+    actual = np.asarray(_poisson_log_pmf(lam, lam))
+    compiled = np.asarray(jax.jit(_poisson_log_pmf)(lam, lam))
+    public = np.asarray(jax.scipy.stats.poisson.logpmf(lam, lam))
+    self.assertTrue(np.isfinite(actual).all())
+    self.assertAllClose(
+        actual, expected, rtol=1e-6, atol=2e-5, check_dtypes=False)
+    self.assertAllClose(
+        compiled, expected, rtol=1e-6, atol=2e-5, check_dtypes=False)
+    self.assertAllClose(
+        public, expected, rtol=1e-6, atol=2e-5, check_dtypes=False)
+
+  def testPoissonLargeLambdaVariance(self):
+    lam = 1e8
+    samples = np.asarray(
+        random.poisson(self.make_key(0), lam, shape=(20000,), dtype=np.int32)
+    ).astype(np.float64)
+    self.assertAllClose(samples.mean(), lam, rtol=1e-4, check_dtypes=False)
+    self.assertAllClose(samples.var(), lam, rtol=0.05, check_dtypes=False)
 
   def testPoissonBatched(self):
     key = self.make_key(1)
