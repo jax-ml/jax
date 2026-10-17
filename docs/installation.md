@@ -246,14 +246,19 @@ JAX is not supported on Mac/OSX GPU; instead use the standard {ref}`CPU installa
 (install-amd-gpu)=
 ## AMD GPU (Linux)
 
-AMD GPU support is provided by a ROCm JAX plugin supported by AMD. The [ROCm compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) lists the GPU SKUs supported by ROCm. Please follow the [ROCm installation guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html) to install ROCm on your system before installing JAX.
+AMD GPU support is provided by a ROCm JAX plugin supported by AMD. The [ROCm compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) lists the GPU SKUs supported by ROCm.
+
+There are two install paths:
+
+* **ROCm from pip** (`jax[rocm7-device-gfx950]`, `jax[rocm10-device-gfx942]`,
+  and so on). TheRock wheels come from AMD's stable index, named with
+  `--extra-index-url`. ROCm 7: `https://repo.amd.com/rocm/whl-multi-arch/`.
+  ROCm 10: `https://stable.repo.amd.com/rocm/whl-next/`.
+* **System ROCm** (`jax[rocm7-local]`). ROCm is already installed, typically
+  under `/opt/rocm`. Follow the [ROCm installation guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html)
+  before installing JAX.
 
 ### ROCm version compatibility
-
-JAX currently does **not** ship a pip extra that installs
-ROCm itself. ROCm must already be present on the host system or inside the
-container, and the `jax[rocm7-local]` extra installs only the JAX ROCm
-plugin/PJRT packages on top of it.
 
 Each JAX ROCm plugin release targets a specific ROCm version, so the installed
 ROCm must match the version the plugin was built against. AMD maintains the
@@ -261,6 +266,7 @@ authoritative mapping in the
 [JAX on ROCm compatibility matrix](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/jax-install.html);
 consult it to confirm which ROCm version your target JAX release requires before
 installing. The `rocm7` plugin packages require a ROCm 7.x installation.
+The `rocm10` extra requires a ROCm 10.x installation from its own index.
 
 ### pip installation: AMD GPU (ROCm, pre-installed)
 
@@ -287,14 +293,54 @@ To build the ROCm JAX wheels from source, see [Build ROCm JAX from Source](https
 
 ### pip installation: AMD GPU (ROCm, installed via pip)
 
-AMD is rolling out installing the ROCm wheels directly from AMD's package
-indexes, currently available as a **technology preview** in
-[ROCm 7.13.0 (preview)](https://rocm.docs.amd.com/en/7.13.0-preview/install/rocm.html).
+JAX can pull [TheRock](https://github.com/ROCm/TheRock) ROCm wheels from AMD's
+package index, so no system ROCm is needed. Those wheels are not on PyPI, so
+pass `--extra-index-url` for the index of the ROCm line you want.
 
-This is a preview and not yet generally available; the ROCm Core SDK must still
-be installed separately (the JAX packages do not pull in `rocm[libraries]`
-automatically). For the per-architecture index URLs and exact commands, follow
-the [ROCm 7.13.0 installation guide](https://rocm.docs.amd.com/en/7.13.0-preview/install/rocm.html).
+Name your GPU architecture in the extra. The ROCm math libraries
+(rocBLAS, MIOpen, and others) ship their GPU kernels in a separate
+per-architecture wheel, and pip does no hardware detection at install time, so
+the architecture has to come from the command line:
+
+```bash
+# ROCm 7, on gfx950 (MI350 series)
+pip install --upgrade "jax[rocm7-device-gfx950]" \
+  --extra-index-url https://repo.amd.com/rocm/whl-multi-arch/
+
+# ROCm 10, on gfx942 (MI300 series)
+pip install --upgrade "jax[rocm10-device-gfx942]" \
+  --extra-index-url https://stable.repo.amd.com/rocm/whl-next/
+```
+
+To find your architecture on a machine with ROCm installed:
+
+```bash
+rocminfo | grep -m1 -o 'gfx[0-9a-f]\+'
+```
+
+Without ROCm, AMD's `rocm-bootstrap` package on PyPI detects it instead:
+
+```bash
+pip install rocm-bootstrap && rocm-bootstrap-detect
+```
+
+`gfx908`, `gfx90a`, `gfx942`, and `gfx950` cover the Instinct accelerators;
+the `gfx10xx`, `gfx11xx`, and `gfx12xx` targets cover Radeon cards.
+
+If the GPU is not known at install time, the architecture-free extras need no
+architecture flag and pull the kernels for every supported target instead:
+
+```bash
+# any ROCm 7 target; jax[rocm] is an alias of jax[rocm7]
+pip install --upgrade "jax[rocm7]" \
+  --extra-index-url https://repo.amd.com/rocm/whl-multi-arch/
+
+# any ROCm 10 target
+pip install --upgrade "jax[rocm10]" \
+  --extra-index-url https://stable.repo.amd.com/rocm/whl-next/
+```
+
+
 
 As part of the same preview effort, the ROCm JAX fork
 ([ROCm/jax](https://github.com/ROCm/jax)) publishes
