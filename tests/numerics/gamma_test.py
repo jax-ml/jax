@@ -100,7 +100,7 @@ class LgammaTest(jtu.JaxTestCase):
     # TODO(phawkins): In float64, chlo.lgamma has large errors near negative
     # zero-crossings (where |gamma(x)| = 1, e.g. x ~= -3.14358).
     bounds = [
-        ("cpu", {f16: 1.0, f32: 4.0, f64: math.inf}),
+        ("cpu", {f16: 1.0, f32: 2.5, f64: math.inf}),
         ("gpu", {f16: 1.0, f32: 4.0, f64: math.inf}),
         ("tpu", {f16: 1.0, f32: 4.0}),
     ]
