@@ -830,6 +830,17 @@ transpose checks for a ref-backed accumulator and add-updates only the
 sliced window, which is what makes the sparse-gradient examples in
 {doc}`refs` work.
 
+`jax.custom_vjp` backward rules can take accumulators too, with no hijax
+rewrite needed: register the rules with `defvjp_with_accums` instead of
+`defvjp`. The backward rule then takes one accumulator per primal argument
+after its usual two arguments, as in `bwd(res, g, *arg_accums)`, and returns
+`None` (or a dict of logs). The `jax.custom_gradient` convenience wrapper
+supports the same thing via `@custom_gradient(with_accums=...)`. Since its VJP
+function is traced on the forward pass, `with_accums` declares which kind of
+accumulator each argument gets. Unlike a hijax primitive's `vjp_bwd`, these
+rules can't get the caller's gradient refs when `vmap` is applied before
+differentiation; see {ref}`jax-301-vmap-ref-accums`.
+
 ### Custom JVPs with `jvp`
 
 The `jvp` method defines forward-mode differentiation. It takes a tuple of
@@ -1272,6 +1283,111 @@ xs = jnp.arange(3.)
 print(jvp(vmap(zeros_straight_through), (xs,), (jnp.array([1., 2., 3.]),))[1])
 print(grad(lambda x: vmap(zeros_straight_through)(x).sum())(xs))
 ```
+
+(jax-301-vmap-ref-accums)=
+
+### `vmap` and gradient refs
+
+When `vmap` is applied before differentiation, as in `jax.vjp(vmap(f), xs)`,
+a gradient ref bound with `.with_refs(...)` has the batched input's shape: it
+holds the gradient for every example. A hijax primitive with a `batch` rule
+can update that ref in place, but a {func}`jax.custom_vjp` rule registered with
+`defvjp_with_accums` (or a `jax.custom_gradient` VJP function with
+`with_accums`) can't. That rule is batched by running it under `vmap`, which
+can hand it fresh `ValAccum`s but not the caller's refs: for a batched input,
+each example would need a view of the ref, and for an input shared across the
+batch, every example would update the same ref. So passing a ref there is an
+error:
+
+```{code-cell}
+@jax.custom_vjp
+def take3(x):
+  return x[3]
+
+def take3_bwd(_, g, x_acc):
+  if isinstance(x_acc, RefAccum):
+    x_acc.ref[3] += g
+  else:
+    x_acc.accum(jnp.zeros(x_acc.aval.shape, x_acc.aval.dtype).at[3].add(g))
+
+take3.defvjp_with_accums(lambda x: (take3(x), None), take3_bwd)
+
+xs = jnp.arange(20.).reshape(2, 10)
+_, f_vjp = jax.vjp(vmap(take3), xs)
+try:
+  f_vjp.with_refs(jax.new_ref(jnp.zeros((2, 10))))(jnp.ones(2))
+except ValueError as e:
+  print(e)
+```
+
+With a hijax primitive, `vmap` instead applies the batched primitive that your
+`batch` rule builds, and the backward pass calls that primitive's `vjp_bwd`
+with the caller's accumulators for the whole batch: here, a `RefAccum` over the
+batched ref. Indexing with `...` lets one class serve as its own batched
+version:
+
+```{code-cell}
+class Take(HiPrim):  # x[..., i], for x with any number of leading batch axes
+  def __init__(self, x_aval, i):
+    self.in_avals = (x_aval,)
+    self.out_aval = ShapedArray(x_aval.shape[:-1], x_aval.dtype)
+    self.params = dict(i=i)
+    super().__init__()
+
+  def expand(self, x):
+    return x[..., self.i]
+
+  def vjp_fwd(self, nzs_in, x):
+    return self(x), None
+
+  def vjp_bwd(self, res, g, x_acc):
+    if isinstance(x_acc, RefAccum):
+      x_acc.ref[..., self.i] += g  # one column, for the whole batch, in place
+    else:
+      zeros = jnp.zeros(x_acc.aval.shape, x_acc.aval.dtype)
+      x_acc.accum(zeros.at[..., self.i].add(g))
+
+  def batch(self, axis_data, args, dims):
+    (x,), (x_dim,) = args, dims
+    if x_dim is None:
+      return take(x, self.i), None
+    x = jnp.moveaxis(x, x_dim, 0)  # returns x itself if x_dim is already 0
+    return take(x, self.i), 0
+
+def take(x, i):
+  return Take(jax.typeof(x), i)(x)
+
+grad_ref = jax.new_ref(jnp.zeros((2, 10)))
+_, f_vjp = jax.vjp(vmap(lambda x: take(x, 3)), xs)
+f_vjp.with_refs(grad_ref)(jnp.ones(2))
+print(grad_ref)
+```
+
+```{code-cell}
+def bwd_jaxpr():
+  _, f_vjp = jax.vjp(vmap(lambda x: take(x, 3)), xs)
+  f_vjp.with_refs(grad_ref)(jnp.ones(2))
+
+print(jax.jit(bwd_jaxpr).trace().jaxpr)
+```
+
+The batched backward pass is a read-add-write of column 3 for the whole batch
+at once. To keep updates in place, `batch` should pass a batched input to the
+batched primitive as is: only an input of the differentiated function gets the
+caller's accumulator, while a value computed from an input gets a fresh
+`ValAccum`. Here `jnp.moveaxis` returns `x` itself when the batch axis is
+already in front, as with the default `in_axes=0`. With another `in_axes`,
+`moveaxis` makes a new value, and the update takes the dense path, which is
+still correct. To keep it in place for any batch axis, have the batched
+primitive take the batch axis as a parameter instead, so that `batch` can pass
+`x` to it unchanged.
+
+For an input shared across the batch (`in_axes=None`) of a primitive with
+other, batched inputs, the batched primitive's `vjp_bwd` gets the caller's
+accumulator for the shared value and adds the whole batch's contribution to it,
+summing over the batch axis of the cotangent, as in
+`x_acc.ref[self.i] += g.sum(0)`, much as `FBatched` does for its shared input
+`y` above.
 
 ## More features and details
 

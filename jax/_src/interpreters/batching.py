@@ -547,6 +547,10 @@ def batch_custom_vjp_bwd(bwd: lu.WrappedFun, tag: core.TraceTag,
     num_cts, log_tree = pair_info_thunk()
     cts, log_leaves = split_list(outs, [num_cts])
     return cts, tree_unflatten(log_tree, log_leaves)
+  from jax._src.interpreters import ad
+  if not bwd.transforms and isinstance(bwd.f, ad.CustomBwdWithAccums):
+    rule = ad.CustomBwdWithValAccums(new_bwd, partial(ref_accum_error, name))
+    return lu.wrap_init(rule, debug_info=bwd.debug_info)
   return lu.wrap_init(new_bwd, debug_info=bwd.debug_info)
 
 @lu.transformation_with_aux2
@@ -584,6 +588,22 @@ def shared_cotangent_error(name):
       "correct bwd rule, but bwd's work on it then happens once per example), "
       "or define the operation as a jax.experimental.hijax.HiPrim with an "
       f"explicit `batch` rule. See {SHARED_OUTPUTS_DOCS}")
+
+REF_ACCUMS_DOCS = ("https://docs.jax.dev/en/latest/301/custom-derivatives.html"
+                   "#jax-301-vmap-ref-accums")
+
+def ref_accum_error(name):
+  return ValueError(
+      f"under vmap, the custom_vjp function {name} has a bwd rule that takes "
+      "gradient accumulators, and the caller passed a gradient ref for one of "
+      "its inputs (with a VJP's with_refs method), but vmap can't hand the "
+      "rule that ref, only accumulators for values, so the gradient can't be "
+      "accumulated in place. To accumulate it in place under vmap, define the "
+      "operation as a jax.experimental.hijax.HiPrim with an explicit `batch` "
+      "rule: the batched primitive's `vjp_bwd` gets the caller's refs. "
+      "Otherwise, apply vmap after differentiation, or, for a rule that also "
+      "takes a ValAccum, pass jax.ad.GradValue() in place of the ref to get "
+      f"the gradient as a value. See {REF_ACCUMS_DOCS}")
 
 def _matchaxis_symzeros(axis_data, src, dst, x, sum_match=False):
   # Just like `matchaxis`, but handles symbolic zeros using ad_util.py

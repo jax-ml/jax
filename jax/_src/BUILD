@@ -954,6 +954,7 @@ pytype_strict_library(
     srcs = ["interpreters/batching.py"],
     visibility = ["//jax:internal"] + jax_visibility("batching"),
     deps = [
+        ":ad",
         ":ad_util",
         ":config",
         ":core",

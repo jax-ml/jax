@@ -2374,6 +2374,100 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(logs, {'sq': {'x': 3.0, 'ct_in': 2.0}},
                         check_dtypes=False)
 
+  def test_vjp_bwd_refs_under_vmap(self):
+    # vmap applies the batched primitive that `batch` builds, whose vjp_bwd gets
+    # the caller's gradient refs
+    seen = []
+
+    class Take(HiPrim):  # x[..., i]
+      def __init__(self, x_aval, i):
+        self.in_avals = (x_aval,)
+        self.out_aval = ShapedArray(x_aval.shape[:-1], x_aval.dtype)
+        self.params = dict(i=i)
+        super().__init__()
+
+      def expand(self, x):
+        return x[..., self.i]
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), None
+
+      def vjp_bwd(self, res, g, x_acc):
+        seen.append(type(x_acc).__name__)
+        if isinstance(x_acc, ad.RefAccum):
+          x_acc.ref[..., self.i] += g
+        else:
+          x_acc.accum(jnp.zeros(x_acc.aval.shape, x_acc.aval.dtype)
+                      .at[..., self.i].add(g))
+
+      def batch(self, axis_data, args, dims):
+        (x,), (d,) = args, dims
+        if d is None:
+          return Take(jax.typeof(x), self.i)(x), None
+        x = jnp.moveaxis(x, d, 0)
+        return Take(jax.typeof(x), self.i)(x), 0
+
+    take3 = lambda x: Take(jax.typeof(x), 3)(x)
+    xs = jnp.arange(60.).reshape(2, 3, 10)
+    x0 = xs[0]
+    for f, x in [(jax.vmap(take3), x0), (jax.jit(jax.vmap(take3)), x0),
+                 (jax.vmap(jax.vmap(take3)), xs)]:
+      ref = jax.new_ref(jnp.zeros_like(x))
+      jax.vjp(f, x)[1].with_refs(ref)(jnp.ones(x.shape[:-1]))
+      self.assertAllClose(ref[...], jnp.zeros_like(x).at[..., 3].set(1.))
+    self.assertEqual(set(seen), {'RefAccum'})
+
+    def bwd(ref):
+      jax.vjp(jax.vmap(take3), x0)[1].with_refs(ref)(jnp.ones(3))
+    jaxpr = jax.jit(bwd).trace(jax.new_ref(jnp.zeros((3, 10)))).jaxpr
+    self.assertNotIn('3,10] =', str(jaxpr))  # updated in place
+
+    # with the batch axis elsewhere, moveaxis makes a new value, which gets a
+    # ValAccum of its own, so the rule takes the dense path
+    seen.clear()
+    x = x0.T
+    ref = jax.new_ref(jnp.zeros_like(x))
+    jax.vjp(jax.vmap(take3, in_axes=1), x)[1].with_refs(ref)(jnp.ones(3))
+    self.assertAllClose(ref[...], jnp.zeros_like(x).at[3].set(1.))
+    self.assertEqual(seen, ['ValAccum'])
+
+    # a batched primitive's input that's shared across the batch gets the
+    # caller's ref too, and the rule sums the batch's contributions into it
+    class ScaleTake(HiPrim):  # x[i] * s, for shared x and batched s
+      def __init__(self, x_aval, s_aval, i):
+        self.in_avals = (x_aval, s_aval)
+        self.out_aval = s_aval
+        self.params = dict(i=i)
+        super().__init__()
+
+      def expand(self, x, s):
+        return x[self.i] * s
+
+      def vjp_fwd(self, nzs_in, x, s):
+        return self(x, s), (x, s)
+
+      def vjp_bwd(self, res, g, x_acc, s_acc):
+        x, s = res
+        seen.append(type(x_acc).__name__)
+        x_acc.ref[self.i] += (g * s).sum()
+        s_acc.accum(g * x[self.i])
+
+      def batch(self, axis_data, args, dims):
+        (x, s), (x_dim, s_dim) = args, dims
+        assert x_dim is None and s_dim == 0
+        return ScaleTake(jax.typeof(x), jax.typeof(s), self.i)(x, s), 0
+
+    seen.clear()
+    f = jax.vmap(lambda x, s: ScaleTake(jax.typeof(x), jax.typeof(s), 3)(x, s),
+                 in_axes=(None, 0))
+    ref = jax.new_ref(jnp.zeros_like(x0[0]))
+    s = jnp.arange(3.) + 1.
+    _, s_ct = jax.vjp(f, x0[0], s)[1].with_refs(ref, jax.ad.GradValue())(
+        jnp.ones(3))
+    self.assertAllClose(ref[...], jnp.zeros_like(x0[0]).at[3].set(s.sum()))
+    self.assertAllClose(s_ct, jnp.full(3, x0[0, 3]))
+    self.assertEqual(seen, ['RefAccum'])
+
   def test_backward_pass_logging_vjp_pytree_roundtrip(self):
     _, f_vjp = jax.vjp(jnp.sin, 1.0)
 

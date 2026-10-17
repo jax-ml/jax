@@ -1176,6 +1176,22 @@ class CustomBwdWithAccums:
     returns backward-pass logs (or None)."""
     raise NotImplementedError
 
+class CustomBwdWithValAccums(CustomBwdWithAccums):
+  def __init__(self, bwd: Callable, ref_error: Callable[[], Exception]):
+    self.bwd, self.ref_error = bwd, ref_error
+
+  def __call__(self, *res_and_cts_out):
+    return self.bwd(*res_and_cts_out)
+
+  def call_with_accums(self, res, cts_out, accums):
+    if any(isinstance(acc, RefAccum) for acc in accums):
+      raise self.ref_error()
+    cts_in, logs = self.bwd(*res, *cts_out)
+    for acc, ct in zip(accums, cts_in):
+      if acc is not None:
+        acc.accum(replace_rule_output_symbolic_zeros(ct))
+    return logs
+
 def _custom_lin_transpose_fancy(cts_out, *invals, num_res,
                                 bwd: lu.WrappedFun, out_avals,
                                 symbolic_zeros, in_zeros):

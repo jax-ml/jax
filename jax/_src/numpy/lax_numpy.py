@@ -2487,7 +2487,8 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
     destination: index or indices of the axes destinations
 
   Returns:
-    Copy of ``a`` with axes moved from ``source`` to ``destination``.
+    Copy of ``a`` with axes moved from ``source`` to ``destination``, or ``a``
+    itself if no axis moves.
 
   Notes:
     Unlike :func:`numpy.moveaxis`, :func:`jax.numpy.moveaxis` will return a copy rather
@@ -2523,8 +2524,13 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
     (4, 5, 3, 2)
   """
   arr = util.ensure_arraylike("moveaxis", a)
-  return _moveaxis(arr, _ensure_index_tuple(source),
-                   _ensure_index_tuple(destination))
+  source = tuple(_canonicalize_axis(i, np.ndim(arr))
+                 for i in _ensure_index_tuple(source))
+  destination = tuple(_canonicalize_axis(i, np.ndim(arr))
+                      for i in _ensure_index_tuple(destination))
+  if source == destination and len(set(source)) == len(source):
+    return arr  # nothing moves, so don't apply even an identity transpose
+  return _moveaxis(arr, source, destination)
 
 @api.jit(static_argnames=('source', 'destination'), inline=api.Inline.JAX_EARLY)
 def _moveaxis(a: Array, source: tuple[int, ...], destination: tuple[int, ...]) -> Array:

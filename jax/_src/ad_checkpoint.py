@@ -572,7 +572,8 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   nonzero_tangents = [t for t in tangents if type(t) is not ad_util.Zero]
   jaxpr_jvp = pe.convert_constvars_jaxpr(jaxpr_jvp_)
   if isinstance(prevent_cse, tuple):
-    prevent_cse += (True,) * len(nonzero_tangents)
+    prevent_cse = ((False,) * len(jaxpr_jvp_.consts) + prevent_cse +
+                   (True,) * len(nonzero_tangents))
   outs = remat_p.bind(
       *jaxpr_jvp_.consts, *primals, *nonzero_tangents, jaxpr=jaxpr_jvp,
       prevent_cse=prevent_cse, differentiated=differentiated, policy=policy)
@@ -711,52 +712,40 @@ pe.partial_eval_jaxpr_custom_rules[remat_p] = \
             remat_partial_eval_custom_params_updater)
 
 def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
-  # TODO(mattjj): avoid round-tripping into UndefinedPrimals
-  args_ = [ad.UndefinedPrimal(x.aval) if isinstance(x, ad.GradAccum) else x
-           for x in args]
-
   assert not jaxpr.constvars
-  in_linear = [ad.is_undefined_primal(x) for x in args_]
-  out_zeros = [type(ct) is ad_util.Zero for ct in out_cts]
-  transposed_jaxpr_, in_zeros, out_tree = transpose_jaxpr(
-      jaxpr, in_linear, out_zeros)
+  primals_refs, specs = ad.project_accums(args)
+  in_avals = tuple(map(core.typeof, primals_refs))
+  out_zeros = tuple(type(ct) is ad_util.Zero for ct in out_cts)
+  transposed_jaxpr_, out_tree = _transpose_jaxpr(
+      jaxpr, specs, in_avals, out_zeros)
   transposed_jaxpr, consts = transposed_jaxpr_, transposed_jaxpr_.consts
   transposed_jaxpr = pe.convert_constvars_jaxpr(transposed_jaxpr)
-  flat_args, _ = tree_flatten((args_, out_cts))
+  out_cts_nz = [ct for ct in out_cts if type(ct) is not ad_util.Zero]
   if isinstance(prevent_cse, tuple):
-    prevent_cse_, _ = partition_list(in_linear, prevent_cse)
-    prevent_cse = tuple(prevent_cse_) + (True,) * (len(out_zeros) - sum(out_zeros))
-  outs = remat_p.bind(*consts, *flat_args, jaxpr=transposed_jaxpr,
-                      prevent_cse=prevent_cse, **params)
-  in_cts_nz, logs = tree_unflatten(out_tree, outs)
-  in_cts_nz_, in_zeros_ = iter(in_cts_nz), iter(in_zeros)
-  for x in args:
-    if isinstance(x, ad.GradAccum) and not next(in_zeros_):
-      x.accum(next(in_cts_nz_))
+    _, prevent_cse_ = partition_list(
+        [k is None or k is ad.RefAccum for k, _ in specs], prevent_cse)
+    prevent_cse = ((False,) * len(consts) + tuple(prevent_cse_) +
+                   (True,) * len(out_cts_nz))
+  outs = remat_p.bind(*consts, *primals_refs, *out_cts_nz,
+                      jaxpr=transposed_jaxpr, prevent_cse=prevent_cse, **params)
+  cts, logs = tree_unflatten(out_tree, outs)
+  for x, ct in zip(args, cts):
+    if isinstance(x, ad.ValAccum):
+      x.accum(ct)
   return logs
 ad.fancy_transposes[remat_p] = remat_transpose
 
-# TODO(mattjj): move this to ad.py
-def transpose_jaxpr(jaxpr: core.Jaxpr, in_linear: bool | Sequence[bool],
-                    out_zeros: bool | Sequence[bool],
-                    ) -> tuple[core.Jaxpr, list[bool], PyTreeDef]:
-  if isinstance(in_linear, bool):
-    in_linear = (in_linear,) * len(jaxpr.in_avals)
-  if isinstance(out_zeros, bool):
-    out_zeros = (out_zeros,) * len(jaxpr.out_avals)
-  return _transpose_jaxpr(jaxpr, tuple(in_linear), tuple(out_zeros))
-
 @weakref_lru_cache
-def _transpose_jaxpr(jaxpr: core.Jaxpr,
-                     in_lin: Sequence[bool],
-                     out_zeros: Sequence[bool]):
-  in_avals = ([a for a,  lin in zip(jaxpr.in_avals,  in_lin   ) if not lin] +
-              [a.to_ct_aval() for a, zero in zip(jaxpr.out_avals, out_zeros)
-               if not zero])
+def _transpose_jaxpr(jaxpr: core.Jaxpr, specs, in_avals, out_zeros):
+  in_lin = [k is not None for k, _ in specs]
+  ct_avals = [a.to_ct_aval() for a, zero in zip(jaxpr.out_avals, out_zeros)
+              if not zero]
   cell = lambda: None
 
   def transposed(*args_flat):
-    ins_flat, out_cts_flat = split_list(args_flat, [len(in_lin) - sum(in_lin)])
+    primals_refs, out_cts_flat = split_list(args_flat, [len(in_avals)])
+    args = ad.unproject_accums(specs, primals_refs)
+    ins_flat, accums = partition_list(in_lin, args)
 
     # Evaluate nonlinear parts using partial evaluation to get a linear jaxpr.
     jaxpr_rematted, lin_jaxpr, out_uk, res_avals, in_fwd_res = \
@@ -770,27 +759,19 @@ def _transpose_jaxpr(jaxpr: core.Jaxpr,
     out_cts = [ad_util.Zero(aval.to_ct_aval()) if zero else next(out_cts_iter)
                for aval, zero in zip(jaxpr.out_avals, out_zeros)]
     assert next(out_cts_iter, None) is None
-    dummy_args = [ad.UndefinedPrimal(aval.to_ct_aval())
-                  for aval in lin_jaxpr.in_avals[len(consts):]]
-    in_cts, logs = ad.backward_pass(lin_jaxpr, False, lin_jaxpr.consts,
-                                    [*consts, *dummy_args], out_cts,
-                                    return_logs=True)
-    in_cts = in_cts[len(consts):]
-
-    # Identify symbolic zeros in the resulting cotangents, and return nonzeros,
-    # with any backward-pass log leaves riding along as extra outputs.
-    in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]  # pyrefly: ignore[missing-attribute]
-    in_cts_nz, _ = partition_list(in_zeros, in_cts)
-    outs, cell.out_tree = tree_flatten((in_cts_nz, logs))  # pyrefly: ignore[missing-attribute]
+    logs = ad.backward_pass3(lin_jaxpr, False, lin_jaxpr.consts,
+                             [*consts, *accums], out_cts)
+    cts = [x.freeze() if isinstance(x, ad.ValAccum) else None for x in args]
+    outs, cell.out_tree = tree_flatten((cts, logs))  # pyrefly: ignore[missing-attribute]
     return outs
 
   dbg = jaxpr.debug_info.with_unknown_names()
-  in_avals_flat_tree = ft.flatten((tuple(in_avals), {}))
+  in_avals_flat_tree = ft.flatten(((*in_avals, *ct_avals), {}))
   transposed_closed_jaxpr, _ = pe.trace_to_jaxpr(
       transposed, in_avals_flat_tree, dbg)
-  return transposed_closed_jaxpr, cell.in_cts_zero, cell.out_tree  # pyrefly: ignore[missing-attribute]
+  return transposed_closed_jaxpr, cell.out_tree  # pyrefly: ignore[missing-attribute]
 
-def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
+def remat_vmap(axis_data, args, dims, *, jaxpr, prevent_cse, **params):
   assert not jaxpr.constvars
   jaxpr_batched_, out_batched = batching.batch_jaxpr_axes(
       jaxpr, axis_data, dims,
@@ -798,8 +779,11 @@ def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
   jaxpr_batched, consts = jaxpr_batched_, jaxpr_batched_.consts
   if consts:
     jaxpr_batched = pe.convert_constvars_jaxpr(jaxpr_batched)
+  if isinstance(prevent_cse, tuple):
+    prevent_cse = (False,) * len(consts) + prevent_cse
   out_dims = [0 if b else None for b in out_batched]
-  return remat_p.bind(*consts, *args, jaxpr=jaxpr_batched, **params), out_dims
+  return remat_p.bind(*consts, *args, jaxpr=jaxpr_batched,
+                      prevent_cse=prevent_cse, **params), out_dims
 batching.fancy_primitive_batchers[remat_p] = remat_vmap
 
 # TODO(mattjj,sharadmv): de-duplicate with pe.dce_jaxpr_call_rule

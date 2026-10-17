@@ -1944,6 +1944,9 @@ class DynamicJaxprTrace(core.Trace):
       for store in fwd.stores: store and store.reset()
       fwd_ = _interleave_fun(fwd.with_unknown_names(), zeros)
       jaxpr, _, consts = trace_to_jaxpr_dynamic(fwd_, in_avals, lower=self.requires_low)
+      for c in consts:
+        if isinstance(c, DynamicJaxprTracer) and c._trace is self:
+          raise _custom_vjp_closure_error(fun.debug_info.func_name, c)
       return jaxpr, consts
 
     def out_trees_():
@@ -1985,6 +1988,16 @@ def _memoize(fn):
         out = cells[args] = fn(*args)
     return out
   return memoized
+
+def _custom_vjp_closure_error(name, tracer):
+  return core.escaped_tracer_error(tracer, (
+      f"The fwd rule of the custom_vjp function {name} (for a "
+      "custom_gradient function, the function itself) closes over this "
+      "value, which was traced along with the call to it, as by jax.jit or "
+      "jax.remat. But the fwd rule is traced later, when the staged call is "
+      "differentiated (as in grad(jit(f))), after that trace has ended. Pass "
+      "the value to the function as an argument instead, or differentiate "
+      "before staging, as in jit(grad(f))."))
 
 @lu.transformation_with_aux2
 def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
