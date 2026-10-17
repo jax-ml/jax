@@ -2951,9 +2951,6 @@ class CustomVJPTest(jtu.JaxTestCase):
       bad = jax.custom_gradient(lambda x: (x, None), with_accums=spec)
       with self.assertRaisesRegex(TypeError, "with_accums must be"):
         api.grad(bad)(1.)
-    with self.assertRaisesRegex(NotImplementedError, "remat"):
-      jax.custom_gradient(lambda x: (x, None), with_accums=ad.ValAccum,
-                          remat=True)
 
   @parameterized.product(remat3=[False, True])
   def test_with_accums_jit_scan_remat(self, remat3):

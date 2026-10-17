@@ -805,11 +805,12 @@ class CustomVJPTraced(HiPrim):
   (or None). ``custom_vjp3`` builds them from the user's rules with
   ``_custom_vjp_fwd`` and ``_custom_vjp_bwd``, and ``batch`` builds them by
   vmapping another application's rules. ``remat_rules`` is None, or
-  ``(fwd, rem, bwd)`` from defremat, with ``fwd(*args)`` and
-  ``rem(res, *args)``. ``bwd_accums`` is None, or for a rule from
-  defvjp_with_accums, ``bwd_accums(res, out_ct, *arg_accums)``, which
-  ``vjp_bwd`` calls with the caller's accumulators; ``batch`` drops it, and
-  sets ``disallow_ref_accums`` so that ``vjp_bwd`` raises if given a RefAccum.
+  ``(fwd, rem, bwd, bwd_accums)`` from defremat, with ``fwd(*args)``,
+  ``rem(res, *args)``, and ``bwd_accums`` None or like the one below.
+  ``bwd_accums`` is None, or for a rule from defvjp_with_accums,
+  ``bwd_accums(res, out_ct, *arg_accums)``, which ``vjp_bwd`` calls with the
+  caller's accumulators; ``batch`` drops it, and sets ``disallow_ref_accums``
+  so that ``vjp_bwd`` raises if given a RefAccum.
   """
   skip_linearization_on_zero_tangents = True  # run the primal, not the fwd rule
   traced: Any
@@ -860,7 +861,7 @@ class CustomVJPTraced(HiPrim):
     fwd = self.fwd
     new_fwd = update_wrapper(
         lambda nzs_in, *args: ctx.physicalize(partial(fwd, nzs_in))(*args), fwd)
-    remat_rules = self.remat_rules and tuple(map(phys, self.remat_rules))
+    remat_rules = self.remat_rules and (*map(phys, self.remat_rules[:3]), None)
     return CustomVJPTraced(
         self.traced.physicalize(ctx), new_fwd, phys(self.bwd),
         tree_map(ctx.physicalize_aval, self.in_avals), self.symbolic_zeros,
@@ -945,12 +946,12 @@ class CustomVJPTraced(HiPrim):
     fwd = lambda nzs_in, *args: vmap_fwd(partial(self.fwd, nzs_in), dims, *args)
     remat_rules = None
     if self.remat_rules is not None:
-      rfwd, rem, rbwd = self.remat_rules
+      rfwd, rem, rbwd, _ = self.remat_rules
       remat_rules = (
           update_wrapper(lambda *args: vmap_fwd(rfwd, dims, *args), rfwd),
           update_wrapper(lambda res, *args: vmap_fwd(
               rem, (res[1].val, *dims), res[0], *args), rem),
-          vmap_bwd(rbwd))
+          vmap_bwd(rbwd), None)
     new_prim = CustomVJPTraced(
         traced, update_wrapper(fwd, self.fwd), vmap_bwd(self.bwd),
         unmap_avals(axis_data, self.in_avals, dims), self.symbolic_zeros,
@@ -968,9 +969,8 @@ class CustomVJPTraced(HiPrim):
       return self(*args), (), lambda _, *args: self(*args)  # see https://github.com/jax-ml/jax/pull/38914
     # On the rem side we apply a helper custom_vjp with the same primal, whose
     # fwd rule computes the residuals for bwd from the values `res` saved here.
-    bwd_accums = None
     if self.remat_rules:
-      rfwd, rem, bwd = self.remat_rules
+      rfwd, rem, bwd, bwd_accums = self.remat_rules
       out, res = rfwd(*args)
     else:
       # custom_vjp_rules=False so that custom_vjp applications inside fwd hit
@@ -1143,7 +1143,7 @@ class custom_vjp3:
   opt_remat: bool = False
   with_logs: bool = False
   with_accums: bool = False
-  remat_rules: tuple[Callable, Callable, Callable, bool] | None = None
+  remat_rules: tuple[Callable, Callable, Callable, bool, bool] | None = None
   generic_batching: bool = False
 
   def __init__(self, f, nondiff_argnums=(), nondiff_argnames=()):
@@ -1170,10 +1170,10 @@ class custom_vjp3:
     self.with_accums = True
 
   def defremat(self, fwd, rem, bwd):
-    self.remat_rules = (fwd, rem, bwd, False)
+    self.remat_rules = (fwd, rem, bwd, False, False)
 
   def defremat_with_logs(self, fwd, rem, bwd):
-    self.remat_rules = (fwd, rem, bwd, True)
+    self.remat_rules = (fwd, rem, bwd, True, False)
 
   def __call__(self, *args, **kwargs):
     if not (self.fwd and self.bwd) and not self.remat_rules:
@@ -1215,20 +1215,25 @@ class custom_vjp3:
     args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
     consts, traced = traced.with_consts_as_arg()
     fwd, bwd, with_logs = self.fwd, self.bwd, self.with_logs
+    with_accums = self.with_accums
     if fwd is None:
       assert self.remat_rules is not None  # checked above
-      fwd, bwd, with_logs = _vjp_from_remat_rules(*self.remat_rules)
+      fwd, bwd, with_logs, with_accums = _vjp_from_remat_rules(
+          *self.remat_rules)
     in_avals = tree_map(typeof, (consts, (), *args))
     remat_rules = None
     if self.remat_rules is not None:
-      rfwd, rrem, rbwd, rlogs = self.remat_rules
+      rfwd, rrem, rbwd, rlogs, raccums = self.remat_rules
       unwrap = lambda args: [x.val if isinstance(x, Static) else x for x in args[2:]]
+      rbwd_accums = (_custom_vjp_bwd_accums(rbwd, in_avals, False)
+                     if raccums else None)
       remat_rules = (
           update_wrapper(lambda *args: tuple(rfwd(*unwrap(args))), rfwd),
           update_wrapper(lambda res, *args: tuple(rrem(res, *unwrap(args))), rrem),
-          _custom_vjp_bwd(traced, rbwd, in_avals, False, rlogs))
+          _custom_vjp_bwd(traced, rbwd, in_avals, False, rlogs, rbwd_accums),
+          rbwd_accums)
     bwd_accums = (_custom_vjp_bwd_accums(bwd, in_avals, self.symz)
-                  if self.with_accums else None)
+                  if with_accums else None)
     prim = CustomVJPTraced(
         traced, _custom_vjp_fwd(traced, fwd, self.symz),
         _custom_vjp_bwd(traced, bwd, in_avals, self.symz, with_logs, bwd_accums),
@@ -1236,14 +1241,14 @@ class custom_vjp3:
         generic_batching=self.generic_batching)
     return prim(consts, (), *args)
 
-def _vjp_from_remat_rules(remat_fwd, rem, bwd, with_logs):
+def _vjp_from_remat_rules(remat_fwd, rem, bwd, with_logs, with_accums):
   # Not under jax.remat, run rem right after fwd on the forward pass, saving what
   # bwd needs. (Running rem on the backward pass instead is what jax.remat does.)
   def fwd(*args):
     out, res = remat_fwd(*args)
     _, res2 = rem(res, *args)
     return out, res2
-  return update_wrapper(fwd, remat_fwd), bwd, with_logs
+  return update_wrapper(fwd, remat_fwd), bwd, with_logs, with_accums
 
 class OptRemat(HiPrim):
   orig: CustomVJPTraced

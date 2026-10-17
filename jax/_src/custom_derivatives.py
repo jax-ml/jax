@@ -582,7 +582,8 @@ class custom_vjp[ReturnValue]:
     self.with_logs = False
     self.with_accums = False
     self.generic_batching = False
-    self.remat_rules: tuple[Callable, Callable, Callable, bool] | None = None
+    self.remat_rules: (tuple[Callable, Callable, Callable, bool, bool]
+                       | None) = None
 
   __getattr__ = custom_api_util.forward_attr
 
@@ -780,7 +781,7 @@ class custom_vjp[ReturnValue]:
     Returns:
       None.
     """
-    self.remat_rules = (fwd, rem, bwd, False)
+    self.remat_rules = (fwd, rem, bwd, False, False)
     self.generic_batching = generic_batching
 
   def defremat_with_logs(self,
@@ -794,7 +795,7 @@ class custom_vjp[ReturnValue]:
     As with :py:func:`~jax.custom_vjp.defvjp_with_logs`, ``bwd`` must return a
     pair ``(in_cts, logs)``.
     """
-    self.remat_rules = (fwd, rem, bwd, True)
+    self.remat_rules = (fwd, rem, bwd, True, False)
     self.generic_batching = generic_batching
 
   @partial(traceback_util.api_boundary,
@@ -1402,8 +1403,12 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False,
       ``jax.ad.DontWant()``); any other kind is an error. Under
       :func:`jax.vmap` applied before differentiation, the VJP function can't
       be handed a ``Ref``, so an argument declared as a ``RefAccum`` can't be
-      differentiated there (see :ref:`jax-301-vmap-ref-accums`). Can't yet be
-      combined with ``remat``.
+      differentiated there (see :ref:`jax-301-vmap-ref-accums`). With
+      ``remat``, the VJP function that the rematerialization function returns
+      takes the accumulators. It's traced before it's known which arguments
+      are differentiated, so a non-integer argument that isn't gets its
+      declared kind rather than a ``NullAccum``: a ``RefAccum`` over a scratch
+      ``Ref``, or a ``ValAccum`` whose value is discarded.
 
   Returns:
     A Python callable that accepts the same arguments as ``fun`` and returns the
@@ -1461,10 +1466,6 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False,
   if fun is None:
     return lambda f: custom_gradient(f, with_logs=with_logs, remat=remat,
                                      with_accums=with_accums)
-  if with_accums is not None and remat:
-    raise NotImplementedError(
-        "custom_gradient doesn't yet support with_accums together with remat")
-
   def wrapped_fun(*args, **kwargs):
     ans, _ = fun(*args, **kwargs)
     return ans
@@ -1492,7 +1493,32 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False,
       cts_out = (cts_out,)
     return cts_out
 
-  if with_accums is not None:
+  if remat:
+    # The residuals saved on the forward pass are the values `rem` closes over,
+    # and those for bwd are the values the VJP function closes over. Outside of
+    # jax.remat, the VJP is the one defremat derives from these rules.
+    def remat_fwd(*args):
+      ans, rem = fun(*args)
+      @wraps(rem)
+      def rem_(*args):
+        ans, rule = rem(*args)
+        if with_accums is not None:
+          kinds = _accum_kinds(with_accums, args, tree_map(_perturbable, args))
+          return ans, _accums_closure_residuals(rule, ans, args, kinds)
+        if with_logs:
+          rule = _custom_gradient_logs_rule(rule)
+        return ans, _closure_residuals("custom_gradient fwd", rule, (ans,), ct=True)
+      return ans, _closure_residuals("custom_gradient rem", rem_, args, ct=False)
+    if with_accums is not None:
+      accums_bwd = partial(_apply_accums_closure_residuals,
+                           wrapped_fun.__name__, nulls_ok=True)
+      wrapped_fun.remat_rules = (remat_fwd, _apply_closure_residuals,
+                                 accums_bwd, False, True)
+    else:
+      defremat = (wrapped_fun.defremat_with_logs if with_logs
+                  else wrapped_fun.defremat)
+      defremat(remat_fwd, _apply_closure_residuals, bwd)
+  elif with_accums is not None:
     # symbolic_zeros tells us on the forward pass which inputs are perturbed,
     # and so will get NullAccums
     def accums_fwd(*primals):
@@ -1504,21 +1530,6 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False,
     wrapped_fun.defvjp_with_accums(
         accums_fwd, partial(_apply_accums_closure_residuals, wrapped_fun.__name__),
         symbolic_zeros=True)
-  elif remat:
-    # The residuals saved on the forward pass are the values `rem` closes over,
-    # and those for bwd are the values the VJP function closes over. Outside of
-    # jax.remat, the VJP is the one defremat derives from these rules.
-    def remat_fwd(*args):
-      ans, rem = fun(*args)
-      @wraps(rem)
-      def rem_(*args):
-        ans, rule = rem(*args)
-        if with_logs:
-          rule = _custom_gradient_logs_rule(rule)
-        return ans, _closure_residuals("custom_gradient fwd", rule, (ans,), ct=True)
-      return ans, _closure_residuals("custom_gradient rem", rem_, args, ct=False)
-    defremat = wrapped_fun.defremat_with_logs if with_logs else wrapped_fun.defremat
-    defremat(remat_fwd, _apply_closure_residuals, bwd)
   elif with_logs:
     wrapped_fun.defvjp_with_logs(fwd, bwd)
   else:
@@ -1577,7 +1588,10 @@ def _accums_closure_residuals(rule, ans, args, kinds):
   jaxpr, consts = pe.separate_consts(closed_jaxpr)
   return Residuals(jaxpr, rule_out.tree, in_tree, consts, kinds)
 
-def _apply_accums_closure_residuals(name, res, cts, *accums):
+def _perturbable(x):
+  return getattr(core.typeof(x).to_ct_aval(), 'dtype', None) != dtypes.float0
+
+def _apply_accums_closure_residuals(name, res, cts, *accums, nulls_ok=False):
   jaxpr, out_tree, _, consts = res
   cts = tree_map(lambda c: zeros_like_aval(c.aval)
                  if isinstance(c, SymbolicZero) else c, cts)
@@ -1587,6 +1601,8 @@ def _apply_accums_closure_residuals(name, res, cts, *accums):
       val_accums.append(acc)  # a NullAccum here is from DontWant, and discards
     elif k is ad.RefAccum and isinstance(acc, ad.RefAccum):
       refs.append(acc.inst().ref)
+    elif k is ad.RefAccum and isinstance(acc, ad.NullAccum) and nulls_ok:
+      refs.append(core.new_ref(zeros_like_aval(acc.aval)))  # a scratch ref
     elif k is not ad.NullAccum:
       raise TypeError(
           f"custom_gradient function {name} declared a {k.__name__} for its "
