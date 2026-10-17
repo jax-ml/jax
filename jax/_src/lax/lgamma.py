@@ -75,19 +75,6 @@ def _split12(x):
   return x_hi, x - x_hi
 
 
-@jit
-def _horner(x, coeffs):
-  """Evaluates polynomial sum_{i=0}^{n} coeffs[i] * x^i via Horner's rule."""
-  p = (
-      lax.full_like(x, coeffs[-1])
-      if isinstance(coeffs[-1], (int, float))
-      else coeffs[-1]
-  )
-  for c in reversed(coeffs[:-1]):
-    p = p * x + c
-  return p
-
-
 # Degree-9 minimax polynomial for (ln(1 + f) - (f - 0.5 f^2)) / f^3 on
 # f = m - 1 in [sqrt(2)/2 - 1, sqrt(2) - 1], stored in ascending powers of f.
 _LOG_Q_HI = [
@@ -113,7 +100,9 @@ def _log_f32(x):
   # split f with _split12(f) and use 2Sum on (f, -0.5 * f_hi^2) and (h_d, q_hi).
   f = m - 1.0
   f2 = f * f
-  ln1pf = f - 0.5 * f2 + (f2 * f) * _horner(f, _LOG_Q_HI)
+  ln1pf = f - 0.5 * f2 + (f2 * f) * lax.polynomial(
+      f, _LOG_Q_HI, unroll=len(_LOG_Q_HI)
+  )
   h_d = k * _LN2_HI
   l_d = ln1pf + k * _LN2_LO
   log_hi = h_d + l_d
@@ -303,7 +292,7 @@ def _lgamma_pos_small(x_small):
       lax.select(in_15_4, lax.full_like(x_small, c2), lax.full_like(x_small, c1))
       for c1, c2 in zip(_POS_HI_05_15, _POS_HI_15_4)
   ]
-  p = _horner(d, coeffs_hi)
+  p = lax.polynomial(d, coeffs_hi, unroll=len(coeffs_hi))
   u_hi, u_lo = _split12(u)
   v_hi, v_lo = _split12(v)
   uv_hi = u_hi * v_hi
@@ -332,7 +321,7 @@ def _lgamma_pos_large(x_gt4):
   p_hi = b_hi * hx_m1
   p_lo = b_lo * hx_m1 + b * l_x
   inv_x = lax.reciprocal(x_gt4)
-  sp = _horner(inv_x * inv_x, _STIRLING_HI)
+  sp = lax.polynomial(inv_x * inv_x, _STIRLING_HI, unroll=len(_STIRLING_HI))
   s_pos = p_lo + _HALF_LN_2PI_MINUS_HALF + inv_x * sp
   return p_hi, s_pos, s - 0.5 * inv_x
 
@@ -341,7 +330,7 @@ def _lgamma_pos_large(x_gt4):
 def _lgamma_neg_reflection(delta, log_delta_hi, lg_pos_hi, lg_pos_lo, dy_corr):
   """Evaluates Euler's reflection formula -(ln|delta| + lgamma(1 - x) - ln(pi delta / sin(pi delta)))."""
   d2 = delta * delta
-  sinc_term = d2 * _horner(d2, _SINC_HI)
+  sinc_term = d2 * lax.polynomial(d2, _SINC_HI, unroll=len(_SINC_HI))
   # TODO(phawkins): Using 2Sum on (log_delta_hi, lg_pos_hi) avoids cancellation
   # loss when log_delta_hi + lg_pos_hi cancels outside root windows.
   return -((log_delta_hi + lg_pos_hi) + (lg_pos_lo + (sinc_term + dy_corr)))
@@ -388,7 +377,9 @@ def _lgamma_neg_root(x_neg_safe, n):
   w = w + ((d0 - w * d) - r_lo * (1.0 + w)) * rcp
   in_root_win = lax.abs(w) <= w_bound
   w_safe = lax.select(in_root_win, w, lax.full_like(x_neg_safe, 0.0))
-  return in_root_win, w_safe * _horner(w_safe, cols[3:])
+  return in_root_win, w_safe * lax.polynomial(
+      w_safe, cols[3:], unroll=len(cols) - 3
+  )
 
 
 @jit

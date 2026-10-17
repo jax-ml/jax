@@ -2145,10 +2145,8 @@ def _peizer_pratt_t(y):
   # series: T(1 + d) = sum_{k>=1} 2 (-1)^k d^k / ((k+1) (k+2)); 9 terms are the
   # fewest that keep the truncation error at the cutoff (~2e-8) below float32
   # resolution; in float64 the Peizer-Pratt error dominates anyway
-  series = jnp.zeros_like(d)
-  for k in reversed(range(1, 10)):
-    coef = 2 * (-1) ** k / ((k + 1) * (k + 2))
-    series = d * (coef + series)
+  coeffs = [2 * (-1) ** k / ((k + 1) * (k + 2)) for k in range(1, 10)]
+  series = d * lax.polynomial(d, coeffs, unroll=len(coeffs))
 
   y_safe = jnp.where(small, 2.0, y)
   d_safe = jnp.where(small, 1.0, d)

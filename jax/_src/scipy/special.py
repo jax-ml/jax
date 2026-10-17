@@ -1424,12 +1424,7 @@ def _rel_entr(p: Array, q: Array, kl: bool) -> Array:
     # For |u| = |(p - q) / q| < 0.05, evaluate the Taylor series
     # p * log(1 + u) - (p - q) = (p - q) * u * (1/2 - u/6 + u^2/12 - u^3/20 + u^4/30 - ...)
     # directly to avoid catastrophic cancellation and negative values near p ≈ q.
-    c1 = _lax_const(p, 1 / 2)
-    c2 = _lax_const(p, 1 / 6)
-    c3 = _lax_const(p, 1 / 12)
-    c4 = _lax_const(p, 1 / 20)
-    c5 = _lax_const(p, 1 / 30)
-    poly = c1 - u * (c2 - u * (c3 - u * (c4 - u * c5)))
+    poly = lax.polynomial(u, [1 / 2, -1 / 6, 1 / 12, -1 / 20, 1 / 30])
     series_val = lax.mul(lax.mul(near_one_delta, u), poly)
     small_u = lax.bitwise_and(
         near_one, lax.lt(lax.abs(u), _lax_const(p, 0.05))
@@ -3233,10 +3228,9 @@ def _expn3(x: Array, n: Array) -> Array:
   xk = x_safe + n_safe
   lam = x_safe / n_safe
   m = (n_safe / xk) / xk
-  ans = _c(x, 6) * lam * lam - _c(x, 8) * lam + one
-  ans = m * ans + (one - _c(x, 2) * lam)
-  ans = m * ans + one
-  ans = m * ans + one
+  ans = lax.polynomial(
+      m, [1.0, 1.0, 1.0 - _c(x, 2) * lam, lax.polynomial(lam, [1.0, -8.0, 6.0])]
+  )
   return ans * jnp.exp(-x_safe) / xk
 
 
