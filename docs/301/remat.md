@@ -439,69 +439,6 @@ print_saved_residuals(f_offload, jnp.arange(4.))
 The `f32<host>[4]` residual is the offloaded value: it's kept, but in host
 memory rather than device memory.
 
-## Custom remat behavior with `custom_vjp.defremat`
-
-Name-based policies choose among values a function has named. Sometimes a
-function *author* knows something better: a specific quantity that's worth
-saving because it makes the backward pass cheap, or a way to restructure the
-recomputation entirely. A {func}`jax.custom_vjp` function can carry its own
-rematerialization behavior, defined with {func}`~jax.custom_vjp.defremat`.
-
-Under {func}`jax.remat`, the `fwd` rule a `custom_vjp` function gets from
-`defvjp` is rematerialized like any other code. Calling
-`f.defremat(fwd, rem, bwd)` replaces that default with three rules:
-
-* `fwd(*args) -> (out, res)` runs on the forward pass *inside a
-  rematerialized region*, and decides what residuals (if any) to keep;
-* `rem(res, *args) -> (out, res2)` runs on the backward pass to
-  rematerialize: given whatever `fwd` kept, plus the original arguments,
-  it (re)computes the output and the residuals the backward rule needs;
-* `bwd(res2, g) -> arg_cotangents` is the backward rule.
-
-When `f` is differentiated outside of {func}`jax.remat`, `rem` runs right
-after `fwd` on the forward pass, and only what `bwd` needs is saved, as if
-not rematerializing. (Running `rem` on the backward pass instead is what
-wrapping `f` in {func}`jax.remat` does.) To define a different VJP for use
-outside of {func}`jax.remat`, call `defvjp` as well. `defremat` requires the
-new `custom_vjp` implementation, enabled with the `jax_custom_vjp3` flag.
-
-For example, the derivative of `sin` is `cos`, so a good memory/FLOPs
-tradeoff for `sin` under rematerialization can be to save the cosine, a
-value the standard rules would recompute. Here's a `sin` that always saves
-its cosine when rematerialized:
-
-```{code-cell}
-jax.config.update('jax_custom_vjp3', True)
-
-sin = jax.custom_vjp(jnp.sin)
-sin.defremat(lambda x: (jnp.sin(x), jnp.cos(x)),     # keep cos(x)
-             lambda cos_x, x: (jnp.sin(x), cos_x),  # rematerialize
-             lambda cos_x, g: (cos_x * g,))         # backward rule
-
-f = jax.remat(lambda x: sin(sin(x)))
-print(jax.grad(f)(1.0))
-print(jax.grad(jnp.sin)(jnp.sin(1.0)) * jnp.cos(1.0))  # chain rule, for reference
-```
-
-With {func}`jax.custom_gradient`, you can write the same rules with closures
-instead of explicit residuals, by passing `remat=True`. The decorated function
-then returns a function `rem` along with its output, and `rem` takes the same
-arguments and returns the output along with the VJP function. Whatever `rem`
-closes over is saved on the forward pass, and whatever the VJP function closes
-over is what `rem` recomputes:
-
-```{code-cell}
-@jax.custom_gradient(remat=True)
-def sin(x):
-  cos_x = jnp.cos(x)             # rem closes over it, so it's saved
-  def rem(x):                    # runs on the backward pass
-    return jnp.sin(x), lambda g: (g * cos_x,)
-  return jnp.sin(x), rem
-
-f = jax.remat(lambda x: sin(sin(x)))
-print(jax.grad(f)(1.0))
-```
-
 ## Advanced: recursive `jax.checkpoint`
 
 Applied in the right way, {func}`jax.checkpoint` can express many tradeoffs

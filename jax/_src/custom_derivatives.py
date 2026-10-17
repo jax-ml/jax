@@ -1372,38 +1372,6 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False,
       :py:meth:`jax.custom_vjp.defvjp_with_logs`.
       Log keys must be unique within a backward pass; repeated keys raise a
       ``ValueError``, even when the logs are ignored.
-    remat: optional bool, default ``False``. If ``True``, ``fun`` also
-      specifies custom rematerialization behavior, as with
-      :py:func:`jax.custom_vjp.defremat`. The second element of the pair it
-      returns is then a rematerialization function ``rem`` rather than a VJP
-      function. ``rem`` takes the same arguments as ``fun`` and returns a
-      pair of the output value and the VJP function. When differentiating
-      under :func:`jax.remat`, ``rem`` runs on the backward pass, and the
-      values it closes over are saved from the forward pass (so it should use
-      its own arguments rather than closing over those of ``fun``); otherwise,
-      it runs right after ``fun`` on the forward pass. Requires the
-      ``jax_custom_vjp3`` and ``jax_remat3`` implementations.
-    with_accums: optional, default ``None``. If given, the VJP function takes
-      gradient accumulators rather than returning cotangents, as with
-      :py:func:`jax.custom_vjp.defvjp_with_accums`: it's called as
-      ``vjp(g, *arg_accums)``, with one accumulator per argument of ``fun``
-      (matching its pytree structure), and returns ``None`` or a dict of
-      backward-pass logs. The VJP function is traced on the forward pass, so
-      ``with_accums`` declares which kinds of accumulators it gets: it's a
-      pytree prefix of the tuple of arguments of ``fun`` (like the
-      ``in_axes`` of :func:`jax.vmap`), with ``ValAccum`` or ``RefAccum``
-      leaves. For example, ``(ValAccum, RefAccum)`` declares a ``ValAccum``
-      for the first argument and a ``RefAccum`` for the second, and a single
-      ``RefAccum`` declares a ``RefAccum`` for every argument. Inputs that
-      aren't being differentiated, including any integer inputs, get a
-      ``NullAccum`` whatever is declared. On the backward pass, the caller of
-      autodiff must supply the declared kinds, except that it can discard the
-      cotangent of an argument declared as a ``ValAccum`` (with
-      ``jax.ad.DontWant()``); any other kind is an error. Under
-      :func:`jax.vmap` applied before differentiation, the VJP function can't
-      be handed a ``Ref``, so an argument declared as a ``RefAccum`` can't be
-      differentiated there (see :ref:`jax-301-vmap-ref-accums`). Can't yet be
-      combined with ``remat``.
 
   Returns:
     A Python callable that accepts the same arguments as ``fun`` and returns the
@@ -1446,17 +1414,6 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False,
   >>> (x_ct,), logs = f_vjp.with_logs(1.)
   >>> print(logs['ct_out'])
   1.0
-
-  With ``remat=True``, ``fun`` returns a rematerialization function in place of
-  the VJP function. Here, under :func:`jax.remat`, the cosine is saved rather
-  than recomputed on the backward pass::
-
-    @jax.custom_gradient(remat=True)
-    def sin(x):
-      cos_x = jnp.cos(x)             # rem closes over it, so it's saved
-      def rem(x):                    # runs on the backward pass
-        return jnp.sin(x), lambda g: (g * cos_x,)
-      return jnp.sin(x), rem
   """
   if fun is None:
     return lambda f: custom_gradient(f, with_logs=with_logs, remat=remat,

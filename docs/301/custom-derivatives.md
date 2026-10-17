@@ -830,17 +830,6 @@ transpose checks for a ref-backed accumulator and add-updates only the
 sliced window, which is what makes the sparse-gradient examples in
 {doc}`refs` work.
 
-`jax.custom_vjp` backward rules can take accumulators too, with no hijax
-rewrite needed: register the rules with `defvjp_with_accums` instead of
-`defvjp`. The backward rule then takes one accumulator per primal argument
-after its usual two arguments, as in `bwd(res, g, *arg_accums)`, and returns
-`None` (or a dict of logs). The `jax.custom_gradient` convenience wrapper
-supports the same thing via `@custom_gradient(with_accums=...)`. Since its VJP
-function is traced on the forward pass, `with_accums` declares which kind of
-accumulator each argument gets. Unlike a hijax primitive's `vjp_bwd`, these
-rules can't get the caller's gradient refs when `vmap` is applied before
-differentiation; see {ref}`jax-301-vmap-ref-accums`.
-
 ### Custom JVPs with `jvp`
 
 The `jvp` method defines forward-mode differentiation. It takes a tuple of
@@ -1291,36 +1280,7 @@ print(grad(lambda x: vmap(zeros_straight_through)(x).sum())(xs))
 When `vmap` is applied before differentiation, as in `jax.vjp(vmap(f), xs)`,
 a gradient ref bound with `.with_refs(...)` has the batched input's shape: it
 holds the gradient for every example. A hijax primitive with a `batch` rule
-can update that ref in place, but a {func}`jax.custom_vjp` rule registered with
-`defvjp_with_accums` (or a `jax.custom_gradient` VJP function with
-`with_accums`) can't. That rule is batched by running it under `vmap`, which
-can hand it fresh `ValAccum`s but not the caller's refs: for a batched input,
-each example would need a view of the ref, and for an input shared across the
-batch, every example would update the same ref. So passing a ref there is an
-error:
-
-```{code-cell}
-@jax.custom_vjp
-def take3(x):
-  return x[3]
-
-def take3_bwd(_, g, x_acc):
-  if isinstance(x_acc, RefAccum):
-    x_acc.ref[3] += g
-  else:
-    x_acc.accum(jnp.zeros(x_acc.aval.shape, x_acc.aval.dtype).at[3].add(g))
-
-take3.defvjp_with_accums(lambda x: (take3(x), None), take3_bwd)
-
-xs = jnp.arange(20.).reshape(2, 10)
-_, f_vjp = jax.vjp(vmap(take3), xs)
-try:
-  f_vjp.with_refs(jax.new_ref(jnp.zeros((2, 10))))(jnp.ones(2))
-except ValueError as e:
-  print(e)
-```
-
-With a hijax primitive, `vmap` instead applies the batched primitive that your
+can update that ref in place. `vmap` applies the batched primitive that your
 `batch` rule builds, and the backward pass calls that primitive's `vjp_bwd`
 with the caller's accumulators for the whole batch: here, a `RefAccum` over the
 batched ref. Indexing with `...` lets one class serve as its own batched
@@ -1357,6 +1317,7 @@ class Take(HiPrim):  # x[..., i], for x with any number of leading batch axes
 def take(x, i):
   return Take(jax.typeof(x), i)(x)
 
+xs = jnp.arange(20.).reshape(2, 10)
 grad_ref = jax.new_ref(jnp.zeros((2, 10)))
 _, f_vjp = jax.vjp(vmap(lambda x: take(x, 3)), xs)
 f_vjp.with_refs(grad_ref)(jnp.ones(2))
