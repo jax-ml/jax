@@ -1675,7 +1675,8 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
 
     np.testing.assert_allclose(out, expected)
 
-  def test_megacore_mul(self):
+  @parameterized.product(no_pipelining=[False, True])
+  def test_megacore_mul(self, no_pipelining):
     x = jax.random.uniform(jax.random.key(0), (512, 512))
 
     def matmul_pipeline(x_ref, y_ref):
@@ -1691,6 +1692,7 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
           out_specs=pl.BlockSpec((128, 128), lambda i, j: (i, j)),
           core_axis_name='core',
           dimension_semantics=(pltpu.ARBITRARY, pltpu.PARALLEL),
+          no_pipelining=no_pipelining,
       )(x_ref, y_ref)
 
     @jax.jit

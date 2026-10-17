@@ -5971,6 +5971,37 @@ class EmitPipelineTest(ptu.PallasTPUTest):
       )(x, y)
       np.testing.assert_array_equal(out, x + y)
 
+  @parameterized.product(
+      use_primitive=[False, True],
+      no_pipelining=[False, True],
+  )
+  def test_emit_pipeline_multicore_no_pipelining(
+      self, use_primitive, no_pipelining
+  ):
+    with config.use_emit_pipeline_primitive(use_primitive):
+      def pipeline_body(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1.0
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((4 * 8, 128), jnp.float32),
+          mesh=pltpu.TensorCoreMesh(axis_name='core'),
+          interpret=self.INTERPRET,
+      )
+      def kernel(x_hbm_ref, o_hbm_ref):
+        pltpu.emit_pipeline(
+            pipeline_body,
+            grid=(4,),
+            in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            core_axis_name='core',
+            dimension_semantics=(pltpu.PARALLEL,),
+            no_pipelining=no_pipelining,
+        )(x_hbm_ref, o_hbm_ref)
+
+      x = jnp.arange(4 * 8 * 128, dtype=jnp.float32).reshape(4 * 8, 128)
+      out = kernel(x)
+      np.testing.assert_array_equal(out, x + 1)
+
 
 class PallasHloNamesTest(ptu.PallasTPUTest):
 
