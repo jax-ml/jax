@@ -56,7 +56,6 @@ def _t_stable_quadratic(operand):
   )
   return jnp.where(abs_delta == 0, 0, stable_tail)
 
-
 def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   r"""Student's T log probability distribution function.
 
@@ -89,7 +88,7 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
   df_over_two = lax.mul(df, half)
   df_plus_one_over_two = lax.add(df_over_two, half)
   # Avoid under/overflow of scale**2 * df before taking its logarithm.
-  normalize_term_tmp = lax.add(lax.log(lax.abs(scale)), lax.mul(lax.log(df), half))
+  normalize_term_tmp = lax.add(lax.log(scale), lax.mul(lax.log(df), half))
   normalize_term = lax.add(betaln(df_over_two, half), normalize_term_tmp)
 
   # Even when the normalization is stable, ((x - loc) / scale)**2
