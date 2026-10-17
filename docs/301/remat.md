@@ -498,9 +498,7 @@ Values that `rem` closes over are saved on the forward pass, and values that
 the VJP function `vjp` closes over are recomputed by `rem`:
 
 ```{code-cell}
-from jax.experimental.hijax import ValAccum
-
-@jax.custom_gradient(remat=True, with_accums=ValAccum)
+@jax.custom_gradient(remat=True, with_accums=jax.ad.ValAccum)
 def sin(x):
   cos_x = jnp.cos(x)             # rem closes over it, so it's saved
   def rem(x):                    # runs on the backward pass

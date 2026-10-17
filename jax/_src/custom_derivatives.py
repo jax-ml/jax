@@ -729,6 +729,7 @@ class custom_vjp[ReturnValue]:
         ``nondiff_argnums`` inputs. ``res`` is the residuals, and ``g`` is the
         right cotangent, which holds a ``jax.custom_derivatives.SymbolicZero``
         for each part that's zero. ``arg_accums`` has one gradient accumulator
+        (a ``jax.ad.ValAccum``, ``jax.ad.RefAccum`` or ``jax.ad.NullAccum``)
         per primal input, with that input's pytree structure. ``bwd`` pushes
         each left cotangent into its accumulator with ``acc.accum(ct)`` (or
         updates a ``RefAccum``'s ref in place), and returns ``None`` or a dict
@@ -1351,18 +1352,18 @@ def custom_gradient(fun=None, *, remat: bool = False, with_accums: Any = None):
       VJP function is traced on the forward pass, so ``with_accums`` declares
       which kinds of accumulators it gets: it's a pytree prefix of the tuple of
       arguments of ``fun`` (like the ``in_axes`` of :func:`jax.vmap`), with
-      ``ValAccum`` or ``RefAccum`` leaves. For example, ``(ValAccum,
-      RefAccum)`` declares a ``ValAccum`` for the first argument and a
-      ``RefAccum`` for the second, and a single ``RefAccum`` declares a
+      ``jax.ad.ValAccum`` or ``jax.ad.RefAccum`` leaves. For example,
+      ``(ValAccum, RefAccum)`` declares a ``ValAccum`` for the first argument
+      and a ``RefAccum`` for the second, and a single ``RefAccum`` declares a
       ``RefAccum`` for every argument. Arguments that aren't being
-      differentiated, including any integer arguments, get a ``NullAccum``
-      whatever is declared. On the backward pass, the caller of autodiff must
-      supply the declared kinds, except that it can discard the cotangent of an
-      argument declared as a ``ValAccum`` (with ``jax.ad.DontWant()``); any
-      other kind is an error. Under :func:`jax.vmap` applied before
-      differentiation, the VJP function can't be handed a ``Ref``, so an
-      argument declared as a ``RefAccum`` can't be differentiated there (see
-      :ref:`jax-301-vmap-ref-accums`).
+      differentiated, including any integer arguments, get a
+      ``jax.ad.NullAccum`` whatever is declared. On the backward pass, the
+      caller of autodiff must supply the declared kinds, except that it can
+      discard the cotangent of an argument declared as a ``ValAccum`` (with
+      ``jax.ad.DontWant()``); any other kind is an error. Under
+      :func:`jax.vmap` applied before differentiation, the VJP function can't
+      be handed a ``Ref``, so an argument declared as a ``RefAccum`` can't be
+      differentiated there (see :ref:`jax-301-vmap-ref-accums`).
     remat: optional bool, default ``False``. If ``True``, which requires
       ``with_accums`` and the ``jax_custom_vjp3`` implementation, ``fun`` also
       specifies custom rematerialization behavior, like the ``rem`` rule of
@@ -1411,8 +1412,7 @@ def custom_gradient(fun=None, *, remat: bool = False, with_accums: Any = None):
   can return a dict of backward-pass logs, which the ``with_logs`` method of
   the VJP function that :py:func:`jax.vjp` returns gives back:
 
-  >>> from jax.experimental.hijax import ValAccum
-  >>> @jax.custom_gradient(with_accums=ValAccum)
+  >>> @jax.custom_gradient(with_accums=jax.ad.ValAccum)
   ... def f(x):
   ...   def vjp(g, x_acc):
   ...     x_acc.accum(g * 2 * x)
@@ -1430,7 +1430,7 @@ def custom_gradient(fun=None, *, remat: bool = False, with_accums: Any = None):
   the VJP function. Here, under :func:`jax.remat`, the cosine is saved rather
   than recomputed on the backward pass::
 
-    @jax.custom_gradient(remat=True, with_accums=ValAccum)
+    @jax.custom_gradient(remat=True, with_accums=jax.ad.ValAccum)
     def sin(x):
       cos_x = jnp.cos(x)             # rem closes over it, so it's saved
       def rem(x):                    # runs on the backward pass
@@ -1441,9 +1441,8 @@ def custom_gradient(fun=None, *, remat: bool = False, with_accums: Any = None):
     raise TypeError(
         "custom_gradient's remat option requires with_accums, so that the VJP "
         "function takes gradient accumulators for its left cotangents, as in "
-        "custom_gradient(remat=True, with_accums=ValAccum) with "
-        "ValAccum from jax.experimental.hijax and a VJP function like "
-        "lambda g, x_acc: x_acc.accum(g * jnp.cos(x)).")
+        "custom_gradient(remat=True, with_accums=jax.ad.ValAccum) with a VJP "
+        "function like lambda g, x_acc: x_acc.accum(g * jnp.cos(x)).")
   if fun is None:
     return partial(custom_gradient, remat=remat, with_accums=with_accums)
 
@@ -1519,8 +1518,8 @@ def _accum_kinds(spec, args, perturbed):
     if k not in (ad.ValAccum, ad.RefAccum):
       raise TypeError(
           "custom_gradient's with_accums must be a pytree prefix of the "
-          "function's arguments with ValAccum or RefAccum leaves, but got a "
-          f"leaf {k}.")
+          "function's arguments with jax.ad.ValAccum or jax.ad.RefAccum "
+          f"leaves, but got a leaf {k}.")
   return tuple(k if p and _perturbable(x) else ad.NullAccum for k, p, x
                in zip(kinds, tree_leaves(perturbed), tree_leaves(args)))
 

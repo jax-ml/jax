@@ -30,6 +30,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     into gradient accumulators, returning backward-pass logs, and an optional
     `rem` rule customizes how the function is rematerialized under
     {func}`jax.remat`. See {ref}`jax-301-defvjp-general`.
+  * `jax.ad` now includes `ValAccum`, `RefAccum` and `NullAccum`, the gradient
+    accumulators that {func}`jax.custom_vjp.defvjp_general` rules and
+    {func}`jax.custom_gradient` VJP functions with `with_accums` take.
   * Added `with_accums` and `remat` options to {func}`jax.custom_gradient`,
     for writing VJP functions that take gradient accumulators, and
     rematerialization rules, with closures.

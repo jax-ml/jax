@@ -734,8 +734,9 @@ An accumulator is a `GradAccum` instance. It carries the expected cotangent
 type as `acc.aval` (determined by the corresponding primal input's type,
 since cotangent types are always a function of primal types) and accepts
 contributions via `acc.accum(ct)`. There are three subclasses, importable
-from `jax.experimental.hijax`, and which one your rule receives is decided
-by the caller of autodiff:
+from `jax.experimental.hijax` and also available as `jax.ad.ValAccum`,
+`jax.ad.RefAccum` and `jax.ad.NullAccum`. Which one your rule receives is
+decided by the caller of autodiff:
 
 * `ValAccum` holds a value and adds contributions to it functionally. This
   is what you get in ordinary `jax.grad` or `jax.vjp` usage, where the

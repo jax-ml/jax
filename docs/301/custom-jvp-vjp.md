@@ -829,7 +829,7 @@ print(grad(f)(2., 3.))
 print(grad(f, 1)(2., 3.))
 ```
 
-The accumulator for an unperturbed primal input is a `NullAccum`, which discards contributions, so `bwd` can push into an accumulator (like `y_acc` above) without checking whether that primal input is differentiated. To get the logs, call the VJP function's `with_logs` method:
+The accumulators are `jax.ad.ValAccum`, `jax.ad.RefAccum` and `jax.ad.NullAccum` objects. The accumulator for an unperturbed primal input is a `NullAccum`, which discards contributions, so `bwd` can push into an accumulator (like `y_acc` above) without checking whether that primal input is differentiated. To get the logs, call the VJP function's `with_logs` method:
 
 ```{code-cell}
 _, f_vjp = jax.vjp(f, 2., 3.)
