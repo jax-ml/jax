@@ -5978,6 +5978,8 @@ class EmitPipelineTest(ptu.PallasTPUTest):
   def test_emit_pipeline_multicore_no_pipelining(
       self, use_primitive, no_pipelining
   ):
+    if not self.INTERPRET and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
     with config.use_emit_pipeline_primitive(use_primitive):
       def pipeline_body(x_ref, o_ref):
         o_ref[...] = x_ref[...] + 1.0
