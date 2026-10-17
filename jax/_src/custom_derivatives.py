@@ -23,6 +23,7 @@ from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import custom_api_util
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import flattree as ft
@@ -615,43 +616,13 @@ class custom_vjp[ReturnValue]:
         function, and the tuple elements may be arrays or nested
         tuples/lists/dicts thereof so as to match the structure of the primal
         input arguments.
-      symbolic_zeros: boolean, determining whether to indicate symbolic zeros
-        to the ``fwd`` and ``bwd`` rules. Enabling this option allows custom
-        derivative rules to detect when certain inputs, and when certain
-        output cotangents, are not involved in differentiation. If ``True``:
-
-        * ``fwd`` must accept, in place of each leaf value ``x`` in
-          the pytree comprising an argument to the original function,
-          an object (of type
-          ``jax.custom_derivatives.CustomVJPPrimal``) with two
-          attributes instead: ``value`` and ``perturbed``. The
-          ``value`` field is the original primal argument, and
-          ``perturbed`` is a boolean.  The ``perturbed`` bit indicates
-          whether the argument is involved in differentiation (i.e.,
-          if it is ``False``, then the corresponding Jacobian "column"
-          is zero).
-
-        * ``bwd`` will be passed objects representing static symbolic zeros in
-          its cotangent argument in correspondence with unperturbed values;
-          otherwise, only standard JAX types (e.g. array-likes) are passed.
-
-        Setting this option to ``True`` allows these rules to detect whether
-        certain inputs and outputs are not involved in differentiation, but at
-        the cost of special handling. For instance:
-
-        * The signature of ``fwd`` changes, and the objects it is passed cannot
-          be output from the rule directly.
-
-        * The ``bwd`` rule is passed objects that are not entirely array-like,
-          and that cannot be passed to most ``jax.numpy`` functions.
-
-        * Any custom pytree nodes involved in the primal function's arguments
-          must accept, in their unflattening functions, the two-field record
-          objects that are given as input leaves to the ``fwd`` rule.
-
-        Default ``False``. :py:func:`~jax.custom_vjp.defvjp_general` gives
-        rules the same information without these costs (see
-        :ref:`jax-301-defvjp-general-upgrade`).
+      symbolic_zeros: deprecated, use :py:func:`~jax.custom_vjp.defvjp_general`
+        instead, whose rules always see symbolic zeros (see
+        :ref:`jax-301-defvjp-general-upgrade`). If ``True``, ``fwd`` gets a
+        ``jax.custom_derivatives.CustomVJPPrimal`` object, with ``value`` and
+        ``perturbed`` attributes, in place of each leaf of its arguments, and
+        ``bwd`` may get symbolic zeros in its cotangent argument. Default
+        ``False``.
       optimize_remat: boolean, an experimental flag to enable an automatic
         optimization when this function is used under :func:`jax.remat`. This
         will be most useful when the ``fwd`` rule is an opaque call such as a
@@ -692,6 +663,16 @@ class custom_vjp[ReturnValue]:
       ...   print(jax.value_and_grad(f)(x, y))
       (Array(1.68, dtype=float32), Array(1.08, dtype=float32))
     """
+    if symbolic_zeros:
+      deprecations.warn('jax-custom-vjp-symbolic-zeros', (
+          "custom_vjp.defvjp's symbolic_zeros option is deprecated: use "
+          "custom_vjp.defvjp_general instead. Its rules always get "
+          "perturbation information and symbolic zeros: fwd gets the tuple nzs "
+          "of perturbation flags rather than CustomVJPPrimal objects, and bwd "
+          "gets accumulators for its left cotangents. See "
+          "https://docs.jax.dev/en/latest/301/custom-jvp-vjp.html"
+          "#jax-301-defvjp-general-upgrade for how to upgrade."),
+          stacklevel=2, error_class=TypeError)
     self.fwd, self.bwd, self.rem = fwd, bwd, None
     self.symbolic_zeros = symbolic_zeros
     self.optimize_remat = optimize_remat

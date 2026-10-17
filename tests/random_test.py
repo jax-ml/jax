@@ -1275,6 +1275,8 @@ class KeyArrayTest(jtu.JaxTestCase):
     result = jax.grad(lambda theta: f(theta, state)[0])(3.0)
     self.assertEqual(result, 1.0)
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="custom_vjp.defvjp's symbolic_zeros")
   def test_keyarray_custom_vjp_symbolic_zeros(self):
     @jax.custom_vjp
     def f(_, state):

@@ -4000,6 +4000,8 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     self.assertEqual(f(-3), 3)
     self.assertEqual(calls, 2)
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="custom_vjp.defvjp's symbolic_zeros")
   def test_custom_pytree_constructor_in_custom_vjp_dce_vmap_and_grad(self):
     @jax.tree_util.register_pytree_node_class
     class CheckingNode:

@@ -846,7 +846,7 @@ For a pytree primal input, its entry in `nzs` is a tree of booleans with the inp
 
 +++
 
-`defvjp_general` gives rules the perturbation information and symbolic zeros that `defvjp(..., symbolic_zeros=True)` does, in the form hijax primitives use. To move a function from `symbolic_zeros=True` to `defvjp_general`:
+`defvjp(..., symbolic_zeros=True)` is deprecated in favor of `defvjp_general`. To upgrade:
 
 1. Add `nzs` as the first argument to `fwd`: `fwd(nzs, *args)`. If `fwd` used `symbolic_zeros=True`, `*args` are now the primal inputs themselves rather than `CustomVJPPrimal` objects: replace `x.perturbed` with `x`'s entry in `nzs`, replace `x.value` with `x`, and remove any calls to `custom_vjp_primal_tree_values`.
 2. Add one accumulator per primal input at the end of `bwd`'s arguments: `bwd(res, g, *arg_accums)` (after any `nondiff_argnums` inputs). Rather than returning a tuple of left cotangents, push each left cotangent into its accumulator with `acc.accum(ct)`, skipping any that were returned as `None`.

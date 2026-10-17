@@ -50,6 +50,9 @@ from jax._src.interpreters import partial_eval as pe
 
 config.parse_flags_with_absl()
 
+ignore_symbolic_zeros_deprecation = partial(
+    jtu.ignore_warning, category=DeprecationWarning,
+    message=r"custom_vjp\.defvjp's symbolic_zeros")
 
 
 @jtu.with_config(jax_custom_jvp3=False)
@@ -1848,6 +1851,7 @@ class CustomVJPTest(jtu.JaxTestCase):
         r"can't apply forward-mode autodiff \(jvp\) to a custom_vjp function.",
         lambda: api.jvp(jit(f), (3.,), (1.,)))
 
+  @ignore_symbolic_zeros_deprecation()
   def test_jvp_error_symbolic_zeros(self):
     @jax.custom_vjp
     def f(x):
@@ -2563,6 +2567,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = 3. * 2. * np.cos(2. * 0.5)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zeros_nondiff_argnums(self):
     # With symbolic_zeros=True, fwd should receive nondiff args raw, and only
     # diff args wrapped as CustomVJPPrimal (with a bool perturbed flag).
@@ -2891,6 +2896,21 @@ class CustomVJPTest(jtu.JaxTestCase):
     d_ct = api.grad(lambda d: f(2., p, d))(d)
     self.assertAllClose(d_ct, {'a': 4., 'b': 0.}, check_dtypes=False)
     self.assertEqual(seen[-1], (False, (False, False), {'a': True, 'b': True}))
+
+  def test_symbolic_zeros_deprecation_warning(self):
+    f = jax.custom_vjp(jnp.sin)
+    with self.assertWarnsRegex(
+        DeprecationWarning, "symbolic_zeros option is deprecated: use "
+        "custom_vjp.defvjp_general.*jax-301-defvjp-general-upgrade"):
+      f.defvjp(lambda x: (jnp.sin(x.value), jnp.cos(x.value)),
+               lambda c, g: (c * g,), symbolic_zeros=True)
+    self.assertAllClose(api.grad(f)(1.), jnp.cos(1.), check_dtypes=False)
+
+    # the warning points at the caller
+    with jtu.test_warning_util.record_warnings() as ws:
+      f.defvjp(lambda x: (jnp.sin(x.value), jnp.cos(x.value)),
+               lambda c, g: (c * g,), symbolic_zeros=True)
+    self.assertEqual([w.filename for w in ws], [__file__])
 
   def test_defvjp_and_defvjp_general_replace_each_other(self):
     f = jax.custom_vjp(jnp.sin)
@@ -3337,6 +3357,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     f_vjp(jnp.array([3.]))
     f_vjp(jnp.array([3.]))  # doesn't crash
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zero_custom_vjp_basic(self):
     ZERO = jax.custom_derivatives.SymbolicZero
 
@@ -3408,6 +3429,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     gx, = vjp(x)
     self.assertArraysAllClose(gx, zero)
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zero_custom_vjp_bwd_shape_error(self):
     @jax.custom_vjp
     def f(x, y, z):
@@ -3434,6 +3456,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       ('vmap', False, True),
       ('', False, False),
   )
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zero_custom_vjp(self, maybe_jit, maybe_vmap):
     # below:
     # * static_scalar will be static in and out
@@ -3525,6 +3548,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertIsInstance(ct_in2, jax.Array)
     self.assertArraysAllClose(ct_in2, jnp.array([101., 102.]))
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zero_custom_vjp_vmap_output(self):
     @jax.custom_vjp
     def f(x, y):
@@ -3543,6 +3567,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(fwd, bwd, symbolic_zeros=True)
     jax.grad(lambda x, y: jax.vmap(f)(x, y)[0].sum())(jnp.ones(3), jnp.ones(3))
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zero_custom_vjp_custom_pytree(self):
     tree_values = jax.custom_derivatives.custom_vjp_primal_tree_values
 
@@ -3605,6 +3630,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(fwd_strict, bwd_strict)
     jax.grad(f)(x, y)
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zeros_memoization_caching(self):
     # Tests multiple zero patterns for partial_eval._memoize, and also tests
     # that we're okay with stores being occupied with equal values.
@@ -3642,6 +3668,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     count_traces(1)  # warm up
     self.assertEqual(count_traces(2), count_traces(10))
 
+  @ignore_symbolic_zeros_deprecation()
   def test_run_rules_more_than_once(self):
     # https://github.com/jax-ml/jax/issues/16614
 
@@ -3672,6 +3699,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     g(1.)  # doesn't crash
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zeros_remat(self):
     @jax.custom_vjp
     def f(x):

@@ -79,6 +79,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `generic_batching` option. See {ref}`jax-301-vmap-shared-outputs`.
 
 * Deprecations
+  * The `symbolic_zeros` option of {func}`jax.custom_vjp.defvjp` is deprecated
+    in favor of {func}`jax.custom_vjp.defvjp_general`. See
+    {ref}`jax-301-defvjp-general-upgrade`.
   * {func}`jax.lax.psend` and {func}`jax.lax.precv` are deprecated.
 
 * Changes
