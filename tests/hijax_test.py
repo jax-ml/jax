@@ -3873,6 +3873,77 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
       self.assertArraysAllClose(y_ct, 2 * x)
       self.assertArraysAllClose(logs['g'], 2 * y)
 
+  def test_custom_gradient_remat_with_accums(self):
+    seen = []
+
+    @partial(jax.custom_gradient, remat=True, with_accums=ad.RefAccum)
+    def scale_take3(x, c):
+      def rem(x, c):
+        def rule(g, x_acc, c_acc):
+          seen.append(type(c_acc).__name__)
+          x_acc.ref[3] += g * c
+          c_acc.ref[...] += g * x[3]
+        return x[3] * c, rule
+      return x[3] * c, rem
+
+    x, c = jnp.arange(10.), jnp.array(2.)
+    expected = jnp.zeros(10).at[3].set(2.)
+    for f in [scale_take3, jax.remat(scale_take3),
+              jax.jit(jax.remat(scale_take3))]:
+      x_ref, c_ref = jax.new_ref(jnp.zeros(10)), jax.new_ref(jnp.zeros(()))
+      jax.vjp(f, x, c)[1].with_refs(x_ref, c_ref)(1.)
+      self.assertAllClose(x_ref[...], expected)
+      self.assertAllClose(c_ref[...], x[3])
+      # c isn't differentiated, but the rule still gets a (scratch) RefAccum
+      x_ref = jax.new_ref(jnp.zeros(10))
+      jax.vjp(lambda x: f(x, c), x)[1].with_refs(x_ref)(1.)
+      self.assertAllClose(x_ref[...], expected)
+    self.assertEqual(set(seen), {'RefAccum'})
+
+    def bwd(ref):
+      jax.vjp(jax.remat(lambda x: scale_take3(x, c)), x)[1].with_refs(ref)(1.)
+    jaxpr = jax.jit(bwd).trace(jax.new_ref(jnp.zeros(10))).jaxpr
+    self.assertNotIn('[10] =', str(jaxpr))  # updated in place
+
+    with self.assertRaisesRegex(TypeError, "declared a RefAccum"):
+      jax.grad(jax.remat(scale_take3))(x, c)
+    for g in [jax.vmap(scale_take3, (0, None)),
+              jax.remat(jax.vmap(scale_take3, (0, None)))]:
+      _, f_vjp = jax.vjp(g, jnp.stack([x, x]), c)
+      with self.assertRaisesRegex(ValueError, "under vmap"):
+        f_vjp.with_refs(jax.new_ref(jnp.zeros((2, 10))), jax.ad.GradValue())(
+            jnp.ones(2))
+
+    # an integer argument gets a NullAccum, and the rule's logs come out
+    @partial(jax.custom_gradient, remat=True, with_accums=ad.RefAccum)
+    def take(x, i):
+      def rem(x, i):
+        def rule(g, x_acc, i_acc):
+          seen.append(type(i_acc).__name__)
+          x_acc.ref[i] += g
+          return {'g': g}
+        return x[i], rule
+      return x[i], rem
+
+    for f in [take, jax.remat(take)]:
+      seen.clear()
+      ref = jax.new_ref(jnp.zeros(10))
+      _, logs = jax.vjp(f, x, jnp.int32(3))[1].with_logs.with_refs(
+          ref, jax.ad.DontWant())(2.)
+      self.assertAllClose(ref[...], jnp.zeros(10).at[3].set(2.))
+      self.assertAllClose(logs['g'], 2., check_dtypes=False)
+      self.assertEqual(seen, ['NullAccum'])
+
+    @partial(jax.custom_gradient, remat=True, with_accums=ad.ValAccum)
+    def sin(x):
+      cos_x = jnp.cos(x)
+      def rem(x):
+        return jnp.sin(x), lambda g, x_acc: x_acc.accum(g * cos_x)
+      return jnp.sin(x), rem
+
+    for f in [sin, jax.remat(sin)]:
+      self.assertAllClose(jax.grad(lambda x: f(x).sum())(x), jnp.cos(x))
+
   def test_defremat_with_logs(self):
     # the plain and remat bwd rules each decide whether they log
     f = jax.custom_vjp(jnp.sin)
