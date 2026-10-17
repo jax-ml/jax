@@ -155,7 +155,7 @@ Customization
 
   custom_vjp
   custom_vjp.defvjp
-  custom_vjp.defremat
+  custom_vjp.defvjp_general
 
 ``custom_batching``
 ~~~~~~~~~~~~~~~~~~~
