@@ -689,10 +689,13 @@ def local_to_global_shape(
       global_shape = (None, None)
 
   Args:
-    local_shape: global shape of the tensor.
+    sharding: The sharding of the global tensor.
+    local_shape: The shape of the tensor local to the current process.
 
   Returns:
-    global_shape with Nones in non-uniform dimensions.
+    The global shape, with None for dimensions whose global size cannot
+    be computed.
+
   """
 
   global_shape : list[int | None] = [None] * len(local_shape)
