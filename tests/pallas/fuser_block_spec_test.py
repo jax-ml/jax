@@ -3145,6 +3145,22 @@ class PushBlockSpecTest(parameterized.TestCase):
           lambda x, y: (x + 1, y + 1), block_spec, pl.no_block_spec
       )(x_type, y_type)
 
+  def test_push_strict_mode(self):
+    x_type = jax.ShapeDtypeStruct((256, 256), jnp.float32)
+    bs1 = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    bs2 = pl.BlockSpec((128, 128), lambda i, j: (j, i))
+
+    with self.assertRaisesRegex(ValueError, 'Illegal binary push'):
+      block_spec_lib.push_block_spec(
+          lambda x, y: x + y, bs1, bs2, strict_mode=True
+      )(x_type, x_type)
+
+    out_spec = block_spec_lib.push_block_spec(
+        lambda x, y: x + y, bs1, bs2, strict_mode=False
+    )(x_type, x_type)
+    self.assertEqual(out_spec.block_shape, (128, 128))
+    self.assertEqual(out_spec.index_map(0, 1), (0, 1))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
