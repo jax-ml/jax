@@ -473,7 +473,7 @@ def lower_fun(
                                      args, params,
                                      static_argnames=tuple(params.keys()))
     jaxpr, _ = pe.trace_to_jaxpr(
-        fn, in_avals_ft, debug_info=debug_info, requires_low=True
+        fn, in_avals_ft, debug_info, requires_low=True
     )
     out = _eval_jaxpr_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
     return out if multiple_results else out[0]
@@ -538,7 +538,7 @@ def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   debug_info = api_util.debug_info("pallas triton associative_scan",
                                  body, (args, args), {})
   combine_jaxpr, _ = pe.trace_to_jaxpr(
-      body, in_avals_ft, debug_info=debug_info
+      body, in_avals_ft, debug_info
   )
 
   if combine_jaxpr.consts:
@@ -2607,7 +2607,7 @@ def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
 
   debug_info = api_util.debug_info("pallas triton reduction", body, (a, a), {})
   combine_jaxpr, _ = pe.trace_to_jaxpr(
-      body, in_avals_ft, debug_info=debug_info
+      body, in_avals_ft, debug_info
   )
 
   if combine_jaxpr.consts:
