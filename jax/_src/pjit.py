@@ -315,10 +315,36 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
 @api_boundary
 def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
-  p, args_flat = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
+  from jax._src.export import shape_poly  # pyrefly: ignore[missing-import]
+  args_flat, _ = tree_util.tree_flatten((args, kwargs))
+  has_sym = any(
+      hasattr(a, "shape")
+      and any(shape_poly.is_symbolic_dim(d) for d in a.shape)
+      for a in args_flat
+  )
+  if has_sym:
+    try:
+      from jax._src.pallas import core as pallas_core  # pyrefly: ignore[missing-import]
+      ctx = pallas_core.pallas_export_experimental(dynamic_shapes=True)
+    except Exception:
+      ctx = contextlib.nullcontext()
+    with ctx:
+      p, args_flat = _infer_params(
+          jit_func._fun, jit_func._jit_info, args, kwargs
+      )
+  else:
+    p, args_flat = _infer_params(
+        jit_func._fun, jit_func._jit_info, args, kwargs
+    )
   arg_types = map(convert_to_metaty, args_flat)
-  return stages.Traced(arg_types, p.params, p.in_tree, p.out_tree, p.consts,
-                       jit_func._jit_info.fun_sourceinfo)
+  return stages.Traced(
+      arg_types,
+      p.params,
+      p.in_tree,
+      p.out_tree,
+      p.consts,
+      jit_func._jit_info.fun_sourceinfo,
+  )
 
 @api_boundary
 def jit_lower(jit_func, *args, **kwargs):

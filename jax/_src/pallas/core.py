@@ -1422,11 +1422,18 @@ def get_grid_mapping(
 
 def unzip_dynamic_grid_bounds(
     grid_spec: GridSpec) -> tuple[GridSpec, tuple[Any, ...]]:
+  is_static_bound = lambda d: isinstance(d, int) or jax_core.is_constant_dim(d)
   if dynamic_shapes_export_enabled():
     new_grid: Any = grid_spec.grid
+    dynamic_bounds = tuple(
+        d for d in grid_spec.grid
+        if not is_static_bound(d) and not jax_core.is_dim(d)
+    )
   else:
-    new_grid: Any = tuple(d if isinstance(d, int) else None for d in grid_spec.grid)
-  dynamic_bounds = tuple(d for d in grid_spec.grid if not isinstance(d, int))
+    new_grid: Any = tuple(
+        int(d) if is_static_bound(d) else None for d in grid_spec.grid
+    )
+    dynamic_bounds = tuple(d for d in grid_spec.grid if not is_static_bound(d))
   # We can't use dataclasses.replace, because our fields are incompatible
   # with __init__'s signature.
   static_self = copy.copy(grid_spec)
@@ -1452,24 +1459,33 @@ def pytreedef_mismatch_err_msg(
 
 @dataclasses.dataclass(frozen=True)
 class CostEstimate:
-  flops: int
-  transcendentals: int
-  bytes_accessed: int
-  remote_bytes_transferred: int = 0
+  flops: int | Any
+  transcendentals: int | Any
+  bytes_accessed: int | Any
+  remote_bytes_transferred: int | Any = 0
 
   def __post_init__(self):
     for k, v in dataclasses.asdict(self).items():
-      if not isinstance(v, int):
+      if v is None:
+        continue
+      if not (isinstance(v, int) or jax_core.is_dim(v)):
         raise ValueError(
-            "All fields in CostEstimate must be ints. "
-            f"{k} is not an int: {type(v)}({v})"
+            "All fields in CostEstimate must be ints or symbolic dimensions. "
+            f"{k} is not an int or DimExpr: {type(v)}({v})"
         )
 
   def to_json(self) -> bytes:
+
+    def _val(x):
+      if isinstance(x, int) or jax_core.is_constant_dim(x):
+        return str(int(x))
+      return f'"{x}"'
+
     return (
-        f'{{"flops": {self.flops}, "transcendentals": {self.transcendentals},'
-        f' "bytes_accessed": {self.bytes_accessed},'
-        f' "remote_bytes_transferred": {self.remote_bytes_transferred}}}'
+        f'{{"flops": {_val(self.flops)}, '
+        f'"transcendentals": {_val(self.transcendentals)}, '
+        f'"bytes_accessed": {_val(self.bytes_accessed)}, '
+        f'"remote_bytes_transferred": {_val(self.remote_bytes_transferred)}}}'
     ).encode("ascii")
 
 

@@ -1281,6 +1281,83 @@ class MeshComputation(stages.Lowering):
     return _jax.hlo_module_cost_analysis(backend, self.hlo().as_hlo_module())
 
 
+def specialize_mesh_computation(
+    comp: MeshComputation,
+    concrete_args_flat: Sequence[Any],
+    in_tree: tree_util.PyTreeDef,
+) -> MeshComputation:
+  shape_poly_state = comp.compile_args.get("shape_poly_state")
+  if shape_poly_state is None or not shape_poly_state.uses_dim_vars:
+    return comp
+
+  from jax._src.export import shape_poly  # pyrefly: ignore[missing-import]
+
+  concrete_avals = [
+      core.shaped_abstractify(a) if not isinstance(a, core.AbstractValue) else a
+      for a in concrete_args_flat
+  ]
+  num_const_args = len(comp.const_args)
+  poly_user_in_avals = comp.compile_args["global_in_avals"][num_const_args:]
+  dim_vars = shape_poly_state.dim_vars
+
+  solution, constraints, synth_vars = shape_poly.solve_dim_vars(
+      tuple(poly_user_in_avals), in_tree
+  )
+  env = {}
+  for synth_name, arg_idx, dim_idx in synth_vars:
+    actual_dim = concrete_avals[arg_idx].shape[dim_idx]
+    env[synth_name] = actual_dim
+  evaluator = shape_poly.ShapeEvaluator(env)
+  constraints.check_statically(evaluator)
+  dim_values = {v: int(evaluator.evaluate(solution[v])) for v in solution}
+  dim_val_list = [dim_values[v] for v in dim_vars]
+
+  new_global_in_avals = [
+      a.update(shape=core.evaluate_shape(a.shape, dim_vars, *dim_val_list))  # pyrefly: ignore[bad-argument-type]
+      for a in comp.compile_args["global_in_avals"]
+  ]
+  new_global_out_avals = [
+      a.update(shape=core.evaluate_shape(a.shape, dim_vars, *dim_val_list))  # pyrefly: ignore[bad-argument-type]
+      for a in comp.compile_args["global_out_avals"]
+  ]
+
+  refined_hlo = mlir.specialize_polymorphic_module(
+      comp._hlo,
+      dim_val_list,
+      new_global_in_avals,
+      new_global_out_avals,
+      num_tokens=len(comp.compile_args.get("ordered_effects", ())),
+  )
+
+  new_compile_args = dict(comp.compile_args)
+  new_compile_args["global_in_avals"] = new_global_in_avals
+  new_compile_args["global_out_avals"] = new_global_out_avals
+  new_compile_args["shape_poly_state"] = mlir.ShapePolyLoweringState(
+      (), tuple(comp._platforms)
+  )
+
+  all_args_info = comp.compile_args.get("all_args_info")
+  if all_args_info is not None:
+    new_all_in_avals = [
+        a.update(shape=core.evaluate_shape(a.shape, dim_vars, *dim_val_list))  # pyrefly: ignore[bad-argument-type]
+        for a in all_args_info.in_avals
+    ]
+    new_compile_args["all_args_info"] = all_args_info._replace(
+        in_avals=new_all_in_avals
+    )
+
+  return MeshComputation(
+      comp._name,
+      refined_hlo,
+      comp.const_args,
+      comp._donated_invars,
+      comp._platforms,
+      comp._compiler_options_kvs,
+      comp._device_list,
+      **new_compile_args,
+  )
+
+
 def get_op_sharding_from_executable(
     executable) -> tuple[Sequence[xc.OpSharding], Sequence[xc.OpSharding]]:
   in_op_shardings: list[xc.OpSharding] = []

@@ -1360,13 +1360,21 @@ dim_as_value_p = core.Primitive("dim_as_value")
 dim_as_value_p.def_abstract_eval(lambda dim: core.dim_value_aval())
 
 def dim_as_value_impl(dim: DimSize):
+  if core.is_constant_dim(dim):
+    return np.asarray(int(dim), dtype=core.dim_value_dtype())
   raise NotImplementedError(
       "Evaluation rule for 'dim_as_value' is not implemented. "
       "It seems that you are using shape polymorphism outside jax.export.")
 
+
 dim_as_value_p.def_impl(dim_as_value_impl)
-def _dim_as_value(dim: DimSize):
+def dim_as_value(dim: DimSize):
+  if core.is_constant_dim(dim):
+    return np.asarray(int(dim), dtype=core.dim_value_dtype())
   return dim_as_value_p.bind(dim=dim)
+
+
+_dim_as_value = dim_as_value
 
 def _dim_as_value_lowering(ctx: mlir.LoweringRuleContext, *,
                            dim):
