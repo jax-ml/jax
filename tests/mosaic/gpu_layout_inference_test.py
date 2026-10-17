@@ -777,6 +777,51 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(yield1, out_layouts)
     self.checkInLayouts(yield2, out_layouts)
 
+  @parameterized.parameters(
+      (None, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT),
+      (mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT, None),
+  )
+  def test_infer_if_op_layouts(
+      self,
+      out0_layout: mgpu.FragmentedLayout | None,
+      out1_layout: mgpu.FragmentedLayout,
+      out2_layout: mgpu.FragmentedLayout | None,
+  ):
+    out_layouts = [out0_layout or out2_layout, out1_layout]
+    assert None not in out_layouts
+    f32 = ir.F32Type.get()
+    out_type = ir.VectorType.get((128, 128), f32)
+    with ir.InsertionPoint(self.module.body):
+      i1 = ir.IntegerType.get_signless(1)
+      [condition] = undefs(i1)
+      if_op = scf.IfOp(
+          condition,
+          [out_type, out_type, f32],
+          has_else=True,
+      )
+      with ir.InsertionPoint(if_op.then_block):
+        out0, out1, dummy0 = undefs(out_type, out_type, f32)
+        if out0_layout is not None:
+          out0 = layout_cast(out0, out0_layout)
+        yield0 = scf.YieldOp([out0, out1, dummy0])
+      with ir.InsertionPoint(if_op.else_block):
+        out2, out3, dummy1 = undefs(out_type, out_type, f32)
+        if out1_layout is not None:
+          out3 = layout_cast(out3, out1_layout)
+        if out2_layout is not None:
+          out2 = layout_cast(out2, out2_layout)
+        yield1 = scf.YieldOp([out2, out3, dummy1])
+
+    mgpu.infer_layout(self.module)
+
+    self.assertNotIn("in_layouts", if_op.attributes)
+    self.assertNotIn("out_layouts", yield0.attributes)
+    self.assertNotIn("out_layouts", yield1.attributes)
+
+    self.checkOutLayouts(if_op, out_layouts)
+    self.checkInLayouts(yield0, out_layouts)
+    self.checkInLayouts(yield1, out_layouts)
+
   def test_infer_layout_has_no_layout_for_non_vector_types(self):
     shape = (32, 4)
     elt_ty = ir.BF16Type.get()
