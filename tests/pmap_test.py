@@ -797,6 +797,67 @@ class PythonPmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jtu.sample_product(dtype=[np.int32, np.float32, np.bool_],
+                      reverse_groups=[False, True])
+  @jtu.skip_on_devices("tpu")
+  def testPsumConstantUnevenReplicaGroups(self, dtype, reverse_groups):
+    replicas = jax.device_count()
+    if replicas < 3:
+      raise SkipTest("Test requires at least 3 devices.")
+    groups = [[0], list(range(1, replicas))]
+    if reverse_groups:
+      groups.reverse()
+    constants = {'scalar': dtype(1), 'vector': np.array([1, 2], dtype=dtype)}
+    f = pmap(lambda _: lax.psum(constants, 'i', axis_index_groups=groups), 'i')
+
+    def expected_sum(value):
+      value = value.astype(np.int32) if dtype == np.bool_ else value
+      expected = np.empty((replicas, *value.shape), dtype=value.dtype)
+      for group in groups:
+        expected[group] = len(group) * value
+      return expected
+
+    expected = jax.tree.map(expected_sum, constants)
+    self.assertAllClose(f(np.zeros(replicas)), expected)
+
+  @jtu.sample_product(dtype=[np.float32, np.complex64],
+                      dtype_promotion=['standard', 'strict'],
+                      reverse_groups=[False, True])
+  @jtu.skip_on_devices("tpu")
+  def testPmeanUnevenReplicaGroups(self, dtype, dtype_promotion, reverse_groups):
+    replicas = jax.device_count()
+    if replicas < 3:
+      raise SkipTest("Test requires at least 3 devices.")
+    groups = [[0], list(range(1, replicas))]
+    if reverse_groups:
+      groups.reverse()
+    x = {'scalar': np.arange(replicas, dtype=dtype),
+         'vector': np.arange(replicas * 4, dtype=dtype).reshape(replicas, 4)}
+    f = pmap(lambda x: lax.pmean(x, 'i', axis_index_groups=groups), 'i')
+
+    def expected_mean(value):
+      expected = np.empty_like(value)
+      for group in groups:
+        expected[group] = np.mean(value[group], axis=0)
+      return expected
+
+    expected = jax.tree.map(expected_mean, x)
+    with jax.numpy_dtype_promotion(dtype_promotion):
+      self.assertAllClose(f(x), expected)
+
+  @parameterized.parameters(False, True)
+  @jtu.skip_on_devices("tpu")
+  def testGradOfPmeanUnevenReplicaGroups(self, reverse_groups):
+    replicas = jax.device_count()
+    if replicas < 3:
+      raise SkipTest("Test requires at least 3 devices.")
+    groups = [[0], list(range(1, replicas))]
+    if reverse_groups:
+      groups.reverse()
+    f = pmap(lambda x: lax.pmean(x, 'i', axis_index_groups=groups), 'i')
+    x = np.arange(replicas, dtype=np.float32)
+    self.assertAllClose(grad(lambda x: f(x).sum())(x), np.ones_like(x))
+
   @jtu.skip_on_devices("tpu")
   def testPsumUnevenReplicaGroups(self):
     replicas = jax.device_count()
