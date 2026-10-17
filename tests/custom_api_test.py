@@ -1639,6 +1639,18 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(jax.grad(jax.remat(g))(1.), jnp.cos(1.),
                         check_dtypes=False)
 
+  def test_eager_custom_jvp_python_scalar_output(self):
+    @partial(jax.custom_jvp, nondiff_argnums=(0,))
+    def f(n, x):
+      return n + 1
+    f.defjvp(lambda n, p, t: (f(n, *p), t[0]))
+    out = f(1, 2.)
+    self.assertIs(type(out), int)
+    self.assertEqual(out, 2)
+    traced_out = jax.jit(lambda: 2).trace()()
+    self.assertIs(type(traced_out), int)
+    self.assertEqual(traced_out, 2)
+
 
 @jtu.with_config(jax_custom_vjp3=False)
 class CustomVJPTest(jtu.JaxTestCase):
