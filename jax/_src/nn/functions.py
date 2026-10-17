@@ -117,13 +117,57 @@ def squareplus(x: ArrayLike, b: ArrayLike = 4) -> Array:
 
   as described in https://arxiv.org/abs/2112.11687.
 
+  For ``b=0``, the value is ``max(x, 0)``; the derivative at ``x=0``
+  is undefined and evaluates to ``NaN``.
+
   Args:
     x : input array
     b : smoothness parameter
   """
-  x, b = numpy_util.ensure_arraylike("squareplus", x, b)
-  y = x + jnp.sqrt(jnp.square(x) + b)
-  return y / 2
+  x, b = numpy_util.promote_args_inexact("squareplus", x, b)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return (x + jnp.sqrt(jnp.square(x) + b)) / 2
+
+  # Keep the original formula for nonfinite inputs and negative parameters.
+  # Mask inputs before evaluation so unused branches have finite derivatives.
+  stable = (b >= 0) & jnp.isfinite(b) & jnp.isfinite(x)
+  safe_x = jnp.where(stable, x, 0)
+  safe_b = jnp.where(stable, b, 1)
+  y, _ = _squareplus(safe_x, safe_b)
+  other_x = jnp.where(stable, 0, x)
+  other_b = jnp.where(stable, 1, b)
+  other_y = (other_x + jnp.sqrt(jnp.square(other_x) + other_b)) / 2
+  return jnp.where(stable, y, other_y)
+
+
+@custom_derivatives.custom_jvp
+def _squareplus(x, b):
+  h = jnp.hypot(x, jnp.sqrt(b))
+  negative = x < 0
+  # Rationalize for negative x, halving before subtraction to avoid overflow.
+  # When b=0 the negative branch is zero, even if h/2 and x/2 underflow.
+  denominator = jnp.where(negative & (b > 0), h / 2 - x / 2, 1)
+  negative_value = (b / denominator) * 0.25
+  positive_x = jnp.where(negative, 0, x)
+  positive_h = jnp.where(negative, 0, h)
+  positive_value = positive_x + (positive_h - positive_x) / 2
+  return jnp.where(negative, negative_value, positive_value), h
+
+
+@_squareplus.defjvp
+def _squareplus_jvp(primals, tangents):
+  x, b = primals
+  x_dot, b_dot = tangents
+  y, h = _squareplus(x, b)
+  # Recurse through this rule for higher derivatives without differentiating
+  # sqrt(b), whose derivative is singular at b=0 even when x is nonzero.
+  # Scale the denominator to avoid overflowing a partial before multiplying a
+  # zero tangent, while keeping cotangent scaling before division in reverse AD.
+  scale = jnp.where(h < 1, 4., 1.)
+  scaled_b_dot = b_dot / (h * scale)
+  y_dot = (y / h) * x_dot + (scale * 0.25) * scaled_b_dot
+  h_dot = (x / h) * x_dot + (scale * 0.5) * scaled_b_dot
+  return (y, h), (y_dot, h_dot)
 
 @api.jit
 def softplus(x: ArrayLike) -> Array:
