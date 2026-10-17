@@ -734,8 +734,9 @@ An accumulator is a `GradAccum` instance. It carries the expected cotangent
 type as `acc.aval` (determined by the corresponding primal input's type,
 since cotangent types are always a function of primal types) and accepts
 contributions via `acc.accum(ct)`. There are three subclasses, importable
-from `jax.experimental.hijax`, and which one your rule receives is decided
-by the caller of autodiff:
+from `jax.experimental.hijax` and also available as `jax.ad.ValAccum`,
+`jax.ad.RefAccum` and `jax.ad.NullAccum`. Which one your rule receives is
+decided by the caller of autodiff:
 
 * `ValAccum` holds a value and adds contributions to it functionally. This
   is what you get in ordinary `jax.grad` or `jax.vjp` usage, where the
@@ -831,15 +832,16 @@ sliced window, which is what makes the sparse-gradient examples in
 {doc}`refs` work.
 
 `jax.custom_vjp` backward rules can take accumulators too, with no hijax
-rewrite needed: register the rules with `defvjp_with_accums` instead of
-`defvjp`. The backward rule then takes one accumulator per primal argument
-after its usual two arguments, as in `bwd(res, g, *arg_accums)`, and returns
-`None` (or a dict of logs). The `jax.custom_gradient` convenience wrapper
-supports the same thing via `@custom_gradient(with_accums=...)`. Since its VJP
-function is traced on the forward pass, `with_accums` declares which kind of
-accumulator each argument gets. Unlike a hijax primitive's `vjp_bwd`, these
-rules can't get the caller's gradient refs when `vmap` is applied before
-differentiation; see {ref}`jax-301-vmap-ref-accums`.
+rewrite needed: register the rules with `defvjp_general` instead of `defvjp`
+(see {ref}`jax-301-defvjp-general`). The backward rule then takes one
+accumulator per primal input after its usual two arguments, as in
+`bwd(res, g, *arg_accums)`, and returns `None` (or a dict of logs). The
+`jax.custom_gradient` convenience wrapper supports the same thing via
+`@custom_gradient(with_accums=...)`. Since its VJP function is traced on the
+forward pass, `with_accums` declares which kind of accumulator each argument
+gets. Unlike a hijax primitive's `vjp_bwd`, these rules can't get the caller's
+gradient refs when `vmap` is applied before differentiation; see
+{ref}`jax-301-vmap-ref-accums`.
 
 ### Custom JVPs with `jvp`
 
@@ -1292,8 +1294,8 @@ When `vmap` is applied before differentiation, as in `jax.vjp(vmap(f), xs)`,
 a gradient ref bound with `.with_refs(...)` has the batched input's shape: it
 holds the gradient for every example. A hijax primitive with a `batch` rule
 can update that ref in place, but a {func}`jax.custom_vjp` rule registered with
-`defvjp_with_accums` (or a `jax.custom_gradient` VJP function with
-`with_accums`) can't. That rule is batched by running it under `vmap`, which
+`defvjp_general` (or a `jax.custom_gradient` VJP function with `with_accums`)
+can't. That rule is batched by running it under `vmap`, which
 can hand it fresh `ValAccum`s but not the caller's refs: for a batched input,
 each example would need a view of the ref, and for an input shared across the
 batch, every example would update the same ref. So passing a ref there is an
@@ -1310,7 +1312,7 @@ def take3_bwd(_, g, x_acc):
   else:
     x_acc.accum(jnp.zeros(x_acc.aval.shape, x_acc.aval.dtype).at[3].add(g))
 
-take3.defvjp_with_accums(lambda x: (take3(x), None), take3_bwd)
+take3.defvjp_general(lambda nzs, x: (take3(x), None), take3_bwd)
 
 xs = jnp.arange(20.).reshape(2, 10)
 _, f_vjp = jax.vjp(vmap(take3), xs)
@@ -1443,8 +1445,8 @@ backward rule can contain *symbolic zeros*. When part of the primitive's
 output doesn't affect the value being differentiated (here `fun` doesn't use
 `dct['b'][1]`), the corresponding cotangent is not an array of zeros but an
 instance of the special `Zero` class, which records only the type. That's in
-contrast to `jax.custom_vjp`, where symbolic zeros are opt-in via
-`symbolic_zeros=True`.
+contrast to `jax.custom_vjp`, where symbolic zeros come with the rules of
+`defvjp_general`.
 
 Symbolic zeros let a rule avoid doing work (or avoid errors, for
 non-differentiable outputs like integer values). If you don't want to handle
@@ -1596,7 +1598,7 @@ rematted region: a hijax primitive with only `vjp_fwd`/`vjp_bwd` rules
 can't be differentiated under it at all. Under the new implementation
 (`jax_remat3`), rematted code is differentiated through the same `vjp`
 rules as everywhere else, and logs flow out as described above. (Logs from
-`jax.custom_vjp` rules registered with `defvjp_with_logs` are the
+`jax.custom_vjp` rules registered with `defvjp_general` are the
 exception: they flow out of rematted code under either implementation.)
 This caveat disappears once `jax_remat3` becomes the default.
 ```
@@ -1638,27 +1640,26 @@ branch that doesn't log the key at all. Branches needn't agree on keys or
 types, and nested `cond`s nest their `CondSum`s.
 
 `jax.custom_vjp` backward rules can log too, with no hijax rewrite needed:
-register the rules with `defvjp_with_logs` instead of `defvjp`. The only
-difference is the backward rule's return convention: it returns a pair
-`(in_cts, logs)`, where `in_cts` is the usual tuple of cotangents and
-`logs` is a dict of named pytrees, or `None` to log nothing. (The separate
-registration is needed because a plain `defvjp` backward rule can already
-return any pytree of cotangents, so a trailing log dict would be
-ambiguous.)
+register the rules with `defvjp_general` instead of `defvjp` (see
+{ref}`jax-301-defvjp-general`). Its backward rule pushes the left cotangents
+into gradient accumulators, like `vjp_bwd`, and returns a dict of named
+pytrees to log, or `None` to log nothing.
 
 ```{code-cell}
 @jax.custom_vjp
 def f(x, y):
   return jnp.sin(x) * y
 
-def f_fwd(x, y):
+def f_fwd(nzs, x, y):
   return f(x, y), (jnp.cos(x), jnp.sin(x), y)
 
-def f_bwd(res, g):
+def f_bwd(res, g, x_acc, y_acc):
   cos_x, sin_x, y = res
-  return (cos_x * g * y, sin_x * g), {'f': {'ct_out': g}}
+  x_acc.accum(cos_x * g * y)
+  y_acc.accum(sin_x * g)
+  return {'f': {'ct_out': g}}
 
-f.defvjp_with_logs(f_fwd, f_bwd)
+f.defvjp_general(f_fwd, f_bwd)
 
 _, f_vjp = jax.vjp(f, 1., 2.)
 _, logs = f_vjp.with_logs(1.)
@@ -1666,8 +1667,8 @@ print(logs)
 ```
 
 The `jax.custom_gradient` convenience wrapper supports the same thing via
-`@custom_gradient(with_logs=True)`, with the returned VJP function producing
-a pair `(in_cts, logs)`.
+`@custom_gradient(with_accums=...)`, with the returned VJP function taking
+accumulators and returning its logs.
 
 Retval-style hijax rules can log too: override `vjp_bwd_retval_logs`
 instead of `vjp_bwd_retval`, returning a pair `(args_grad, logs)` instead of
@@ -1820,7 +1821,10 @@ down to symbolic zeros and logs:
 @jax.custom_vjp
 def log_ct(x):
   return x
-log_ct.defvjp_with_logs(lambda x: (x, None), lambda _, g: ((g,), {'ct': g}))
+def log_ct_bwd(_, g, x_acc):
+  x_acc.accum(g)
+  return {'ct': g}
+log_ct.defvjp_general(lambda nzs, x: (x, None), log_ct_bwd)
 
 def f(x, y):
   return {'a': log_ct(jnp.sin(x)) * y, 'b': 2. * y}

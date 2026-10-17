@@ -217,10 +217,13 @@ from jax._src.array import Shard as Shard
 from types import SimpleNamespace
 import jax._src.api as jax_api
 import jax._src.core as jax_core
+import jax._src.interpreters.ad as jax_ad
 ad = SimpleNamespace(DontWant=jax_api.DontWant, DidntWant=jax_api.DidntWant,
-                     GradRef=jax_api.GradRef, GradValue=jax_api.GradValue)
+                     GradRef=jax_api.GradRef, GradValue=jax_api.GradValue,
+                     ValAccum=jax_ad.ValAccum, RefAccum=jax_ad.RefAccum,
+                     NullAccum=jax_ad.NullAccum)
 memory = SimpleNamespace(Space=jax_core.MemorySpace)
-del jax_api, jax_core, SimpleNamespace
+del jax_api, jax_core, jax_ad, SimpleNamespace
 
 import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache

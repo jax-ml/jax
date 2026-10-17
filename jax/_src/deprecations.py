@@ -128,6 +128,7 @@ def warn(deprecation_id: str, message: str, stacklevel: int, *,
 # Register a number of deprecations: we do this here to ensure they're
 # always registered by the time `accelerate` and `is_acelerated` are called.
 register('jax-array-numpy-dtype')
+register('jax-custom-vjp-symbolic-zeros')
 register('jax-nn-one-hot-float-input')
 register('jax-numpy-astype-complex-to-real')
 register('jax-pallas-triton')

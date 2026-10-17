@@ -50,6 +50,10 @@ from jax._src.interpreters import partial_eval as pe
 
 config.parse_flags_with_absl()
 
+ignore_symbolic_zeros_deprecation = partial(
+    jtu.ignore_warning, category=DeprecationWarning,
+    message=r"custom_vjp\.defvjp's symbolic_zeros")
+
 
 @jtu.with_config(jax_custom_jvp3=False)
 class CustomJVPTest(jtu.JaxTestCase):
@@ -1847,6 +1851,7 @@ class CustomVJPTest(jtu.JaxTestCase):
         r"can't apply forward-mode autodiff \(jvp\) to a custom_vjp function.",
         lambda: api.jvp(jit(f), (3.,), (1.,)))
 
+  @ignore_symbolic_zeros_deprecation()
   def test_jvp_error_symbolic_zeros(self):
     @jax.custom_vjp
     def f(x):
@@ -2562,6 +2567,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = 3. * 2. * np.cos(2. * 0.5)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zeros_nondiff_argnums(self):
     # With symbolic_zeros=True, fwd should receive nondiff args raw, and only
     # diff args wrapped as CustomVJPPrimal (with a bool perturbed flag).
@@ -2725,10 +2731,14 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(api.grad(f)(3.), 3., check_dtypes=False)
     self.assertAllClose(api.grad(api.grad(f))(3.), 1., check_dtypes=False)
 
-  def test_custom_gradient_with_logs(self):
-    @jax.custom_gradient(with_logs=True)
+  def test_custom_gradient_with_accums_logs(self):
+    @partial(jax.custom_gradient, with_accums=ad.ValAccum)
     def f(x, y):
-      return x * y, lambda g: ((g * y, g * x), {'f': {'ct_out': g, 'x': x}})
+      def vjp(g, x_acc, y_acc):
+        x_acc.accum(g * y)
+        y_acc.accum(g * x)
+        return {'f': {'ct_out': g, 'x': x}}
+      return x * y, vjp
 
     self.assertAllClose(f(3., 4.), 12., check_dtypes=False)
     self.assertAllClose(api.grad(f)(3., 4.), 4., check_dtypes=False)
@@ -2745,27 +2755,11 @@ class CustomVJPTest(jtu.JaxTestCase):
         lambda x, y, ct: jax.vjp(f, x, y)[1].with_logs(ct))(3., 4., 1.)
     self.assertAllClose(logsj['f']['x'], 3., check_dtypes=False)
 
-    @jax.custom_gradient(with_logs=True)
-    def g(x):
-      return x ** 2, lambda ct: (ct * 2 * x, {'ct': ct})  # singleton cts
-
-    self.assertAllClose(api.grad(g)(3.), 6., check_dtypes=False)
-    (x_ct,), logsg = jax.vjp(g, 3.)[1].with_logs(1.)
-    self.assertAllClose(x_ct, 6., check_dtypes=False)
-    self.assertAllClose(logsg['ct'], 1., check_dtypes=False)
-
-  def test_custom_gradient_with_logs_bad_return_errors(self):
-    @jax.custom_gradient(with_logs=True)
+    @partial(jax.custom_gradient, with_accums=ad.ValAccum)
     def e(x):
-      return x, lambda ct: (ct,)
-    with self.assertRaisesRegex(TypeError, "pair"):
-      api.grad(e)(1.)
-
-    @jax.custom_gradient(with_logs=True)
-    def e2(x):
-      return x, lambda ct: (ct, [1.0])
+      return x, lambda ct, x_acc: [ct]
     with self.assertRaisesRegex(TypeError, "None or a dict"):
-      api.grad(e2)(1.)
+      api.grad(e)(1.)
 
   def _take_with_accums(self, seen, i=3):
     # the rule for x[i] that the docs on hijax's vjp_bwd use, recording the
@@ -2778,7 +2772,7 @@ class CustomVJPTest(jtu.JaxTestCase):
         x_acc.accum(jnp.zeros(x_acc.aval.shape, x_acc.aval.dtype).at[i].add(g))
     return accum
 
-  def test_defvjp_with_accums(self):
+  def test_defvjp_general(self):
     seen = []
     accum = self._take_with_accums(seen)
 
@@ -2790,7 +2784,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       c_acc.accum(g * x[3])
       accum(x_acc, g * c)
       return {'g': g}
-    f.defvjp_with_accums(lambda c, x: (f(c, x), (c, x)), f_bwd)
+    f.defvjp_general(lambda nzs, c, x: (f(c, x), (c, x)), f_bwd)
 
     x = jnp.arange(10.)
     expected = jnp.zeros(10).at[3].set(2.)
@@ -2815,15 +2809,15 @@ class CustomVJPTest(jtu.JaxTestCase):
     jaxpr = jax.jit(bwd).trace(jax.new_ref(jnp.zeros(10))).jaxpr
     self.assertNotIn('f32[10] =', str(jaxpr))
 
-  def test_defvjp_with_accums_transformations(self):
+  def test_defvjp_general_transformations(self):
     seen = []
     accum = self._take_with_accums(seen)
 
     @partial(jax.custom_vjp, nondiff_argnums=(1,))
     def take(x, i):
       return x[i]
-    take.defvjp_with_accums(lambda x, i: (x[i], None),
-                            lambda i, _, g, x_acc: accum(x_acc, g))
+    take.defvjp_general(lambda nzs, x, i: (x[i], None),
+                        lambda i, _, g, x_acc: accum(x_acc, g))
 
     xs = jnp.arange(20.).reshape(2, 10)
     expected = jnp.zeros(10).at[3].set(1.)
@@ -2838,6 +2832,172 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(jax.jit(api.grad(jax.remat(lambda x: take(x, 3))))(xs[0]),
                         expected)
     self.assertNotIn('RefAccum', seen)
+
+  def test_defvjp_general_symbolic_zeros(self):
+    # fwd learns which primal inputs are perturbed, and bwd gets a SymbolicZero
+    # for each right cotangent that's zero
+    ZERO = jax.custom_derivatives.SymbolicZero
+    nzs_seen, g_seen = [], []
+
+    @jax.custom_vjp
+    def f(x, y, z):
+      return x, x * y
+    def f_fwd(nzs, x, y, z):
+      nzs_seen.append(nzs)
+      return f(x, y, z), (x, y)
+    def f_bwd(res, g, x_acc, y_acc, z_acc):
+      x, y = res
+      g1, g2 = g
+      g_seen.append((type(g1) is ZERO, type(g2) is ZERO))
+      if type(g1) is not ZERO:
+        x_acc.accum(g1)
+      if type(g2) is not ZERO:
+        x_acc.accum(g2 * y)
+        y_acc.accum(g2 * x)
+    f.defvjp_general(f_fwd, f_bwd)
+
+    x, y, z = 4., 5., 6.
+    self.assertAllClose(api.grad(lambda x: f(x, y, z)[1])(x), 5.,
+                        check_dtypes=False)
+    self.assertEqual(nzs_seen[-1], (True, False, False))
+    self.assertEqual(g_seen[-1], (True, False))
+    grads = jax.jit(api.grad(lambda x, y: f(x, y, z)[0], (0, 1)))(x, y)
+    self.assertAllClose(grads, (1., 0.), check_dtypes=False)
+    self.assertEqual(nzs_seen[-1], (True, True, False))
+    self.assertEqual(g_seen[-1], (False, True))
+    i = np.array(7, np.int32)
+    jax.jacrev(lambda x, i: f(x, y, i)[1], (0, 1), allow_int=True)(x, i)
+    self.assertEqual(nzs_seen[-1], (True, False, False))
+
+  def test_defvjp_general_nzs_structure(self):
+    # nzs follows the primal inputs' pytrees, with tuples in place of custom
+    # nodes and False for nondiff_argnums inputs, while bwd's accumulators
+    # keep the inputs' pytree structure
+    Point = collections.namedtuple('Point', ['x', 'y'])
+    seen = []
+
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def f(k, p, d):
+      return k * p.x * d['a']
+    def f_fwd(nzs, k, p, d):
+      seen.append(nzs)
+      self.assertIsInstance(k, float)
+      return f(k, p, d), (p, d)
+    def f_bwd(k, res, g, p_acc, d_acc):
+      p, d = res
+      p_acc.x.accum(k * g * d['a'])
+      d_acc['a'].accum(k * g * p.x)
+    f.defvjp_general(f_fwd, f_bwd)
+
+    p, d = Point(2., 3.), {'a': 4., 'b': 5.}
+    p_ct = api.grad(lambda p: f(2., p, d))(p)
+    self.assertAllClose(p_ct, Point(8., 0.), check_dtypes=False)
+    self.assertEqual(seen[-1], (False, (True, True), {'a': False, 'b': False}))
+    d_ct = api.grad(lambda d: f(2., p, d))(d)
+    self.assertAllClose(d_ct, {'a': 4., 'b': 0.}, check_dtypes=False)
+    self.assertEqual(seen[-1], (False, (False, False), {'a': True, 'b': True}))
+
+  def test_symbolic_zeros_deprecation_warning(self):
+    f = jax.custom_vjp(jnp.sin)
+    with self.assertWarnsRegex(
+        DeprecationWarning, "symbolic_zeros option is deprecated: use "
+        "custom_vjp.defvjp_general.*jax-301-defvjp-general-upgrade"):
+      f.defvjp(lambda x: (jnp.sin(x.value), jnp.cos(x.value)),
+               lambda c, g: (c * g,), symbolic_zeros=True)
+    self.assertAllClose(api.grad(f)(1.), jnp.cos(1.), check_dtypes=False)
+
+    # the warning points at the caller
+    with jtu.test_warning_util.record_warnings() as ws:
+      f.defvjp(lambda x: (jnp.sin(x.value), jnp.cos(x.value)),
+               lambda c, g: (c * g,), symbolic_zeros=True)
+    self.assertEqual([w.filename for w in ws], [__file__])
+
+  def test_defvjp_and_defvjp_general_replace_each_other(self):
+    f = jax.custom_vjp(jnp.sin)
+    f.defvjp_general(lambda nzs, x: (jnp.sin(x), None),
+                     lambda _, g, x_acc: x_acc.accum(2. * g),
+                     rem=lambda _, x: (jnp.sin(x), None))
+    with config.custom_vjp3(True):
+      self.assertAllClose(api.grad(f)(1.), 2., check_dtypes=False)
+    # defvjp drops the rem rule, which the classic implementation would reject
+    f.defvjp(lambda x: (jnp.sin(x), jnp.cos(x)), lambda c, g: (c * g,))
+    for g in [f, jax.remat(f)]:
+      self.assertAllClose(api.grad(g)(1.), jnp.cos(1.), check_dtypes=False)
+
+  def test_defvjp_general_optimize_remat(self):
+    @jax.custom_vjp
+    def f(x, y):
+      return jnp.sin(x) * y
+    def f_fwd(nzs, x, y):
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+    def f_bwd(res, g, x_acc, y_acc):
+      cos_x, sin_x, y = res
+      x_acc.accum(cos_x * g * y)
+      y_acc.accum(sin_x * g)
+    f.defvjp_general(f_fwd, f_bwd, optimize_remat=True)
+    x = jnp.arange(3.)
+    for g in [f, jax.remat(f), jax.jit(jax.remat(f))]:
+      self.assertAllClose(api.grad(lambda x: g(x, 2.).sum())(x), 2 * jnp.cos(x))
+
+  def test_defvjp_general_implementation(self):
+    # general rules use the classic implementation unless jax_custom_vjp3 is
+    # set, except with options only custom_vjp3 implements
+    for kwargs in [{}, {'optimize_remat': True}, {'generic_batching': True}]:
+      sin = jax.custom_vjp(jnp.sin)
+      sin.defvjp_general(lambda nzs, x: (jnp.sin(x), jnp.cos(x)),
+                         lambda cos_x, g, x_acc: x_acc.accum(cos_x * g),
+                         **kwargs)
+      with config.custom_vjp3(False):
+        self.assertIn('CustomVJPTraced' if kwargs else 'custom_vjp_call',
+                      str(jax.make_jaxpr(sin)(1.)))
+        self.assertAllClose(api.grad(sin)(1.), jnp.cos(1.))
+
+  def test_defvjp_general_classic(self):
+    f = jax.custom_vjp(lambda x, c: x * c)
+    def bwd(res, g, x_acc, c_acc):
+      x, c = res
+      x_acc.accum(g * c)
+      c_acc.accum((g * x).sum())
+      return {'g': g}
+    f.defvjp_general(lambda nzs, x, c: (x * c, (x, c)), bwd)
+    xs, c = jnp.ones((2, 3)), jnp.array(2.)
+    with config.custom_vjp3(False):
+      # under vmap before differentiation, the logs come out batched
+      _, f_vjp = jax.vjp(jax.vmap(f, (0, None)), xs, c)
+      (x_ct, c_ct), logs = f_vjp.with_logs(jnp.ones((2, 3)))
+      self.assertAllClose(x_ct, 2 * xs)
+      self.assertAllClose(c_ct, 6.)
+      self.assertAllClose(logs['g'], jnp.ones((2, 3)))
+      self.assertAllClose(jax.vmap(api.grad(lambda x: f(x, c).sum()))(xs),
+                          2 * xs)
+
+      # fwd's output gets the usual check that it's a pair
+      bad = jax.custom_vjp(lambda x: x)
+      bad.defvjp_general(lambda nzs, x: x, lambda res, g, x_acc: None)
+      with self.assertRaisesRegex(TypeError, "must produce a pair"):
+        api.grad(bad)(1.)
+
+  def test_rem_requires_custom_vjp3(self):
+    sin = jax.custom_vjp(jnp.sin)
+    sin.defvjp_general(lambda nzs, x: (jnp.sin(x), None),
+                       lambda cos_x, g, x_acc: x_acc.accum(cos_x * g),
+                       rem=lambda _, x: (jnp.sin(x), jnp.cos(x)))
+
+    @partial(jax.custom_gradient, remat=True, with_accums=ad.ValAccum)
+    def sin2(x):
+      def rem(x):
+        return jnp.sin(x), lambda g, x_acc: x_acc.accum(g * jnp.cos(x))
+      return jnp.sin(x), rem
+
+    # the classic implementation can't customize rematerialization, so rather
+    # than quietly ignoring rem under jax.remat, it raises
+    for f in [sin, sin2]:
+      with config.custom_vjp3(False):
+        with self.assertRaisesRegex(NotImplementedError,
+                                    "rem rules.*require the jax_custom_vjp3"):
+          f(1.)
+      with config.custom_vjp3(True):
+        self.assertAllClose(api.grad(f)(1.), jnp.cos(1.), check_dtypes=False)
 
   def test_custom_gradient_with_accums(self):
     seen = []
@@ -2951,9 +3111,6 @@ class CustomVJPTest(jtu.JaxTestCase):
       bad = jax.custom_gradient(lambda x: (x, None), with_accums=spec)
       with self.assertRaisesRegex(TypeError, "with_accums must be"):
         api.grad(bad)(1.)
-    with self.assertRaisesRegex(NotImplementedError, "remat"):
-      jax.custom_gradient(lambda x: (x, None), with_accums=ad.ValAccum,
-                          remat=True)
 
   @parameterized.product(remat3=[False, True])
   def test_with_accums_jit_scan_remat(self, remat3):
@@ -2967,8 +3124,8 @@ class CustomVJPTest(jtu.JaxTestCase):
     @partial(jax.custom_vjp, nondiff_argnums=(1,))
     def take(x, i):
       return x[i] * ones[i]
-    take.defvjp_with_accums(lambda x, i: (x[i], None),
-                            lambda i, _, g, x_acc: accum(x_acc, g))
+    take.defvjp_general(lambda nzs, x, i: (x[i], None),
+                        lambda i, _, g, x_acc: accum(x_acc, g))
 
     @partial(jax.custom_gradient, with_accums=ad.RefAccum)
     def take3(x):
@@ -3200,6 +3357,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     f_vjp(jnp.array([3.]))
     f_vjp(jnp.array([3.]))  # doesn't crash
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zero_custom_vjp_basic(self):
     ZERO = jax.custom_derivatives.SymbolicZero
 
@@ -3271,6 +3429,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     gx, = vjp(x)
     self.assertArraysAllClose(gx, zero)
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zero_custom_vjp_bwd_shape_error(self):
     @jax.custom_vjp
     def f(x, y, z):
@@ -3297,6 +3456,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       ('vmap', False, True),
       ('', False, False),
   )
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zero_custom_vjp(self, maybe_jit, maybe_vmap):
     # below:
     # * static_scalar will be static in and out
@@ -3388,6 +3548,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertIsInstance(ct_in2, jax.Array)
     self.assertArraysAllClose(ct_in2, jnp.array([101., 102.]))
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zero_custom_vjp_vmap_output(self):
     @jax.custom_vjp
     def f(x, y):
@@ -3406,6 +3567,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(fwd, bwd, symbolic_zeros=True)
     jax.grad(lambda x, y: jax.vmap(f)(x, y)[0].sum())(jnp.ones(3), jnp.ones(3))
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zero_custom_vjp_custom_pytree(self):
     tree_values = jax.custom_derivatives.custom_vjp_primal_tree_values
 
@@ -3468,6 +3630,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(fwd_strict, bwd_strict)
     jax.grad(f)(x, y)
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zeros_memoization_caching(self):
     # Tests multiple zero patterns for partial_eval._memoize, and also tests
     # that we're okay with stores being occupied with equal values.
@@ -3505,6 +3668,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     count_traces(1)  # warm up
     self.assertEqual(count_traces(2), count_traces(10))
 
+  @ignore_symbolic_zeros_deprecation()
   def test_run_rules_more_than_once(self):
     # https://github.com/jax-ml/jax/issues/16614
 
@@ -3535,6 +3699,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     g(1.)  # doesn't crash
 
+  @ignore_symbolic_zeros_deprecation()
   def test_symbolic_zeros_remat(self):
     @jax.custom_vjp
     def f(x):
@@ -3913,19 +4078,21 @@ class CustomVJPTest(jtu.JaxTestCase):
         """).strip()
     self.assertEqual(actual, expected)
 
-  def test_defvjp_with_logs(self):
+  def test_defvjp_general_logs(self):
     @jax.custom_vjp
     def f(x, y):
       return jnp.sin(x) * y
 
-    def f_fwd(x, y):
+    def f_fwd(nzs, x, y):
       return f(x, y), (jnp.cos(x), jnp.sin(x), y)
 
-    def f_bwd(res, g):
+    def f_bwd(res, g, x_acc, y_acc):
       cos_x, sin_x, y = res
-      return (cos_x * g * y, sin_x * g), {'f': {'ct_out': g, 'y': y}}
+      x_acc.accum(cos_x * g * y)
+      y_acc.accum(sin_x * g)
+      return {'f': {'ct_out': g, 'y': y}}
 
-    f.defvjp_with_logs(f_fwd, f_bwd)
+    f.defvjp_general(f_fwd, f_bwd)
 
     _, f_vjp = jax.vjp(f, 1.0, 2.0)
     (x_ct, y_ct), logs = f_vjp.with_logs(1.0)
@@ -3972,34 +4139,30 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(x_ct, 3.0 * jnp.cos(1.0) * 2.0, check_dtypes=False)
     self.assertAllClose(logsr['f']['ct_out'], 3.0, check_dtypes=False)
 
-  def test_defvjp_with_logs_nondiff_argnums_and_none_logs(self):
+  def test_defvjp_general_logs_nondiff_argnums_and_none_logs(self):
     g = jax.custom_vjp(lambda n, x: x * n, nondiff_argnums=(0,))
-    g.defvjp_with_logs(lambda n, x: (g(n, x), None),
-                       lambda n, res, ct: ((ct * n,), {'g': ct * n}))
+    def g_bwd(n, res, ct, x_acc):
+      x_acc.accum(ct * n)
+      return {'g': ct * n}
+    g.defvjp_general(lambda nzs, n, x: (g(n, x), None), g_bwd)
     (x_ct,), logs = jax.vjp(lambda x: g(3.0, x), 2.0)[1].with_logs(1.0)
     self.assertAllClose(x_ct, 3.0, check_dtypes=False)
     self.assertAllClose(logs['g'], 3.0, check_dtypes=False)
 
     h = jax.custom_vjp(lambda x: x * 2.)
-    h.defvjp_with_logs(lambda x: (h(x), None), lambda _, ct: ((2. * ct,), None))
+    h.defvjp_general(lambda nzs, x: (h(x), None),
+                     lambda _, ct, x_acc: x_acc.accum(2. * ct))
     (ct,), logs = jax.vjp(h, 1.0)[1].with_logs(1.0)
     self.assertAllClose(ct, 2.0, check_dtypes=False)
     self.assertEqual(logs, {})
 
-  def test_defvjp_with_logs_bad_return_errors(self):
+  def test_defvjp_general_bad_logs_error(self):
     @jax.custom_vjp
     def e(x):
       return x
-    e.defvjp_with_logs(lambda x: (e(x), None), lambda _, ct: (ct,))
-    with self.assertRaisesRegex(TypeError, "must produce a pair"):
-      jax.grad(e)(1.0)
-
-    @jax.custom_vjp
-    def e2(x):
-      return x
-    e2.defvjp_with_logs(lambda x: (e2(x), None), lambda _, ct: ((ct,), [1.0]))
+    e.defvjp_general(lambda nzs, x: (e(x), None), lambda _, ct, x_acc: [1.0])
     with self.assertRaisesRegex(TypeError, "None or a dict"):
-      jax.grad(e2)(1.0)
+      jax.grad(e)(1.0)
 
   def test_linear_transpose_of_jvp_and_linearize_of_vmap(self):
     @jax.custom_vjp
@@ -4049,7 +4212,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     loss = lambda y: sum(o.sum() for o in jax.vmap(f, (0, None))(xs, y))
     self.assertAllClose(jax.grad(loss)(2.), 6.)
 
-  def test_vmap_shared_output_with_accums(self):
+  def test_vmap_shared_output_general(self):
     def shared_output_fun(generic_batching):
       @jax.custom_vjp
       def f(x, y):
@@ -4057,8 +4220,8 @@ class CustomVJPTest(jtu.JaxTestCase):
       def f_bwd(res, cts, x_acc, y_acc):
         x_acc.accum(cts[1] * res[1])
         y_acc.accum(cts[0] + cts[1] * res[0])
-      f.defvjp_with_accums(lambda x, y: ((y, x * y), (x, y)), f_bwd,
-                           generic_batching=generic_batching)
+      f.defvjp_general(lambda nzs, x, y: ((y, x * y), (x, y)), f_bwd,
+                       generic_batching=generic_batching)
       return f
 
     xs = jnp.arange(3.)

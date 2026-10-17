@@ -791,3 +791,85 @@ print(grad(app, 1)(lambda x: x ** 2, 4.))
 (With a hijax primitive, the analogous move is to put such arguments in `params`, as the `fixed_point` example in {doc}`custom-derivatives` does.)
 
 **You don't need to use** `nondiff_argnums` **with array-valued arguments**, for example ones with integer dtype. Instead, `nondiff_argnums` should only be used for argument values that don't correspond to JAX types (essentially don't correspond to array types), like Python callables or strings. If JAX detects that an argument indicated by a `custom_vjp` function's `nondiff_argnums` contains a tracer, it raises an error. The `clip_gradient` function above is a good example of not using `nondiff_argnums` for array arguments: its bounds `lo` and `hi` are ordinary inputs, with `None` cotangents.
+
+(jax-301-defvjp-general)=
+### More rule features with `defvjp_general`
+
++++
+
+`defvjp` covers most needs. When a rule needs more, `defvjp_general` enables the full rule protocol used by hijax primitives' `vjp_fwd` and `vjp_bwd` methods (see {doc}`custom-derivatives`):
+
+* the `fwd` rule, called as `fwd(nzs, *args)`, takes a first argument `nzs` with one entry per primal input indicating whether that input is perturbed (has a nonzero tangent), so `fwd` can skip saving residuals needed only for the left cotangents of unperturbed primal inputs;
+* the `bwd` rule, called as `bwd(res, g, *arg_accums)`, gets a *symbolic zero* (an instance of `jax.custom_derivatives.SymbolicZero`) for each zero part of the right cotangent `g`;
+* instead of returning left cotangents, `bwd` pushes them into *gradient accumulators* (`arg_accums`), one per primal input, and returns `None` or a dict of logs to pass out of the backward pass (see {ref}`jax-301-vjp-bwd-accums` and {ref}`jax-301-bwd-logging`);
+* an optional `rem` rule, called as `rem(res, *args)`, customizes what is saved on the forward pass and what is recomputed on the backward pass under `jax.remat` (see {doc}`remat`).
+
+```{code-cell}
+import jax
+
+@custom_vjp
+def f(x, y):
+  return jnp.sin(x) * y
+
+def f_fwd(nzs, x, y):
+  x_perturbed, _ = nzs
+  cos_x = jnp.cos(x) if x_perturbed else None
+  return f(x, y), (cos_x, jnp.sin(x), y)
+
+def f_bwd(res, g, x_acc, y_acc):
+  cos_x, sin_x, y = res
+  if cos_x is not None:
+    x_acc.accum(cos_x * g * y)
+  y_acc.accum(sin_x * g)
+  return {'g': g}
+
+f.defvjp_general(f_fwd, f_bwd)
+
+print(grad(f)(2., 3.))
+print(grad(f, 1)(2., 3.))
+```
+
+The accumulators are `jax.ad.ValAccum`, `jax.ad.RefAccum` and `jax.ad.NullAccum` objects. The accumulator for an unperturbed primal input is a `NullAccum`, which discards contributions, so `bwd` can push into an accumulator (like `y_acc` above) without checking whether that primal input is differentiated. To get the logs, call the VJP function's `with_logs` method:
+
+```{code-cell}
+_, f_vjp = jax.vjp(f, 2., 3.)
+cts, logs = f_vjp.with_logs(1.)
+print(logs)
+```
+
+For a pytree primal input, its entry in `nzs` is a tree of booleans with the input's structure, but with tuples in place of custom pytree nodes such as namedtuples, while its entry in `arg_accums` keeps the input's own structure. With `nondiff_argnums`, `fwd` gets the non-differentiable primal inputs in their usual positions in `args`, with `False` for them in `nzs`, and `bwd` gets them before `(res, g, *arg_accums)`, as with `defvjp`.
+
++++
+
+(jax-301-defvjp-general-upgrade)=
+### Upgrading from `symbolic_zeros=True`
+
++++
+
+`defvjp(..., symbolic_zeros=True)` is deprecated in favor of `defvjp_general`. To upgrade:
+
+1. Add `nzs` as the first argument to `fwd`: `fwd(nzs, *args)`. If `fwd` used `symbolic_zeros=True`, `*args` are now the primal inputs themselves rather than `CustomVJPPrimal` objects: replace `x.perturbed` with `x`'s entry in `nzs`, replace `x.value` with `x`, and remove any calls to `custom_vjp_primal_tree_values`.
+2. Add one accumulator per primal input at the end of `bwd`'s arguments: `bwd(res, g, *arg_accums)` (after any `nondiff_argnums` inputs). Rather than returning a tuple of left cotangents, push each left cotangent into its accumulator with `acc.accum(ct)`, skipping any that were returned as `None`.
+3. Return `None` from `bwd` (or a dict of logs, as described in {ref}`jax-301-defvjp-general`).
+4. Register the rules with `f.defvjp_general(fwd, bwd)`.
+
+For example, here is a function using `symbolic_zeros=True`:
+
+```python
+@custom_vjp
+def f(x, y):
+  return jnp.sin(x) * y
+
+def f_fwd(x, y):
+  cos_x = jnp.cos(x.value) if x.perturbed else None
+  return f(x.value, y.value), (cos_x, jnp.sin(x.value), y.value)
+
+def f_bwd(res, g):
+  cos_x, sin_x, y = res
+  x_ct = None if cos_x is None else cos_x * g * y
+  return x_ct, sin_x * g
+
+f.defvjp(f_fwd, f_bwd, symbolic_zeros=True)
+```
+
+Its upgraded version is `f` in {ref}`jax-301-defvjp-general` (without the logs return).
