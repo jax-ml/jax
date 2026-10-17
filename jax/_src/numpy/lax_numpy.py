@@ -6161,15 +6161,12 @@ def i0(x: ArrayLike) -> Array:
 @partial(custom_jvp, nondiff_argnums=(0,))
 def _i1_maclaurin(k: int, x: Array) -> Array:
   # compute the kth derivative of i1 evaluated near zero using a two-term
-  # Maclaurin series.
-  if k % 2 == 0:
-    m = (k + 1) // 2
-    c = math.comb(k + 1, m) / (2 ** (k + 1))
-    return lax.mul(lax._const(x, c), x)
-  else:
-    m = k // 2
-    c = math.comb(k, m) / (2 ** k)
-    return lax.full_like(x, c)
+  # Maclaurin series, i.e. the terms a(k+j) x^j / j! for the two smallest j
+  # with a(k+j) = i1^(k+j)(0) nonzero.
+  a = lambda n: math.comb(n, n // 2) / 2 ** n / math.factorial(n - k)
+  j = 1 - k % 2
+  p = lax.add(lax._const(x, a(k + j)), lax.mul(lax._const(x, a(k + j + 2)), lax.mul(x, x)))
+  return lax.mul(p, x) if j else p
 
 @_i1_maclaurin.defjvp
 def _i1_maclaurin_jvp(k: int, primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:

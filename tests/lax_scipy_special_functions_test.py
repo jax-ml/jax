@@ -741,6 +741,35 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jax.vmap(f), d_i1, args_maker, rtol=1e-5)
     self._CompileAndCheck(jax.vmap(f), args_maker, rtol=1e-5)
 
+  def test_i1_vmap_jacfwd_maclaurin(self):
+    def d_i1_ref(x, n):
+      x64 = np.asarray(x, dtype=np.float64)
+      return sum(
+          math.comb(n + 1, k) * osp_special.iv(abs(2 * k - n - 1), x64)
+          for k in range(n + 2)
+      ) / (2 ** (n + 1))
+
+    # Nested vmap(jacfwd) through i1's Maclaurin series branch (|x| <= sqrt(eps)).
+    xs = jnp.array([0.0, 1e-4], dtype=jnp.float32)
+    g = jax.scipy.special.i1
+    derivs_0 = []
+    derivs_small = []
+    for n in range(1, 5):
+      g = (jax.vmap(jax.jacfwd(g)) if n == 1
+           else jax.vmap(jax.jacfwd(lambda z, g=g: g(z[None])[0])))
+      vals = g(xs)
+      derivs_0.append(vals[0])
+      derivs_small.append(vals[1])
+
+    self.assertAllClose(
+        jnp.stack(derivs_0),
+        jnp.array([0.5, 0.0, 0.375, 0.0], dtype=jnp.float32),
+        atol=1e-6)
+    expected_small = jnp.array(
+        [d_i1_ref(1e-4, n) for n in range(1, 5)], dtype=jnp.float32)
+    self.assertAllClose(
+        jnp.stack(derivs_small), expected_small, atol=1e-6, rtol=1e-5)
+
   def testBetalnHessianAtZero(self):
     # Regression test for https://github.com/jax-ml/jax/issues/34353
     def f(log_a, log_b):
