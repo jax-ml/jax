@@ -1950,10 +1950,10 @@ def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
 
 
 @export
-@api.jit(static_argnames=('axis', 'dtype', 'keepdims'))
 def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
-           ddof: int = 0, keepdims: bool = False,
-           where: ArrayLike | None = None, mean: ArrayLike | None = None) -> Array:
+           ddof: int | None = None, keepdims: bool = False,
+           where: ArrayLike | None = None, mean: ArrayLike | None = None, *,
+           correction: int | float | None = None) -> Array:
   r"""Compute the variance of array elements along a given axis, ignoring NaNs.
 
   JAX implementation of :func:`numpy.nanvar`.
@@ -1974,6 +1974,8 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
       computing it from the input array. If specified, mean must be broadcast-compatible
       with the input array. In the general case, this can be achieved by computing the mean with
       ``keepdims=True`` and ``axis`` matching this function's ``axis`` argument.
+    correction: int or float, default=None. Alternative name for ``ddof``.
+      Both ddof and correction can't be provided simultaneously.
     out: Unused by JAX.
 
   Returns:
@@ -2031,16 +2033,22 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
            [0.  ],
            [4.  ]], dtype=float32)
   """
+  if ddof is not None and correction is not None:
+    raise ValueError("ddof and correction can't be provided simultaneously.")
+  if correction is None:
+    correction = 0 if ddof is None else ddof
   a = ensure_arraylike("nanvar", a)
   where = check_where("nanvar", where)
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "nanvar")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
-  return _nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof, keepdims=keepdims, where=where, a_mean=mean)
+  return _nanvar(a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out, correction=correction,
+                 keepdims=keepdims, where=where, a_mean=mean)
 
+@api.jit(static_argnames=('axis', 'dtype', 'keepdims'))
 def _nanvar(a: Array, *, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
-           ddof: int = 0, keepdims: bool = False,
+           correction: int | float = 0, keepdims: bool = False,
            where: ArrayLike | None = None, a_mean: ArrayLike | None = None) -> Array:
   computation_dtype, dtype = _var_promote_types(a.dtype, dtype)
   a = lax.asarray(a).astype(computation_dtype)
@@ -2057,7 +2065,7 @@ def _nanvar(a: Array, *, axis: Axis = None, dtype: DTypeLike | None = None, out:
 
   normalizer = sum(lax.bitwise_not(lax._isnan(a)),
                    axis=axis, keepdims=keepdims, where=where)
-  normalizer = normalizer - ddof
+  normalizer = normalizer - correction
   normalizer_mask = lax.le(normalizer, lax._zero(normalizer))
   result = sum(centered, axis, keepdims=keepdims, where=where)
   result = _where(normalizer_mask, np.nan, result)
@@ -2067,10 +2075,10 @@ def _nanvar(a: Array, *, axis: Axis = None, dtype: DTypeLike | None = None, out:
 
 
 @export
-@api.jit(static_argnames=('axis', 'dtype', 'keepdims'))
 def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
-           ddof: int = 0, keepdims: bool = False,
-           where: ArrayLike | None = None, mean: ArrayLike | None = None) -> Array:
+           ddof: int | None = None, keepdims: bool = False,
+           where: ArrayLike | None = None, mean: ArrayLike | None = None, *,
+           correction: int | float | None = None) -> Array:
   r"""Compute the standard deviation along a given axis, ignoring NaNs.
 
   JAX implementation of :func:`numpy.nanstd`.
@@ -2092,6 +2100,8 @@ def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
       computing it from the input array. If specified, mean must be broadcast-compatible
       with the input array. In the general case, this can be achieved by computing the mean with
       ``keepdims=True`` and ``axis`` matching this function's ``axis`` argument.
+    correction: int or float, default=None. Alternative name for ``ddof``.
+      Both ddof and correction can't be provided simultaneously.
     out: Unused by JAX.
 
   Returns:
@@ -2140,13 +2150,24 @@ def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
     >>> jnp.nanstd(x, axis=0, keepdims=True, where=where)
     Array([[0.5, 0.5, 0. , 0. ]], dtype=float32)
   """
+  if ddof is not None and correction is not None:
+    raise ValueError("ddof and correction can't be provided simultaneously.")
+  if correction is None:
+    correction = 0 if ddof is None else ddof
   a = ensure_arraylike("nanstd", a)
+  return _nanstd(a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out, correction=correction,
+                 keepdims=keepdims, where=where, mean=mean)
+
+@api.jit(static_argnames=('axis', 'dtype', 'keepdims'))
+def _nanstd(a: Array, *, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
+            correction: int | float = 0, keepdims: bool = False,
+            where: ArrayLike | None = None, mean: ArrayLike | None = None) -> Array:
   where = check_where("nanstd", where)
   if dtype is not None:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "nanstd")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanstd is not supported.")
-  return lax.sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof,
+  return lax.sqrt(nanvar(a, axis=axis, dtype=dtype, correction=correction,
                          keepdims=keepdims, where=where, mean=mean))
 
 
