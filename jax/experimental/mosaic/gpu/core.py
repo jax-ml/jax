@@ -204,7 +204,7 @@ _RESULTS_MEMORY_SPACES_ATTR = "results_memory_spaces"
 # Must be kept in sync with xla::gpu::MemorySpaceColor::kCollective. Buffers
 # in this memory space are allocated as symmetric memory, which is a
 # prerequisite for peer-to-peer and multimem accesses.
-_COLLECTIVE_MEMORY_SPACE = 1
+_COLLECTIVE_MEMORY_SPACE = 7
 
 
 def _memory_spaces_attr_value(indices: Sequence[int]) -> str:
