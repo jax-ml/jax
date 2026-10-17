@@ -46,6 +46,9 @@ def _device_to_device_funcs():
 
   with jax.transfer_guard_host_to_device("allow"):
     device_arrays = [jnp.ones(1) for _ in range(2)]
+    device_arrays.append(  # An array on the CPU device
+        jax.jit(lambda x: x, device=jax.devices("cpu")[0])(42.)
+    )
   return [
       # (function name, is an explicit transfer?, function)
       ("device_to_device_jax_device_put", True,
@@ -53,13 +56,16 @@ def _device_to_device_funcs():
       ("device_to_device_jax_jit", False,
        lambda: jax.jit(lambda x: x, device=jax.local_devices()[1])
        (device_arrays[1])),
+      ("cpu_device_to_device_jax_jit", False,
+       lambda: jax.jit(lambda x: x, device=jax.local_devices()[1])
+       (device_arrays[2])),
   ]
 
 
 def _device_to_host_funcs():
   """Generates device-to-host transfer functions."""
   if jax.default_backend() == "cpu":
-    # device-to-host does not incur transfer on the CPU backend.
+    # device-to-host does not use transfer_guard on the CPU backend.
     return []
 
   with jax.transfer_guard_host_to_device("allow"):
@@ -276,6 +282,76 @@ class TransferGuardTest(jtu.JaxTestCase):
       jax.config.update("jax_transfer_guard_host_to_device", None)
 
     self.assertEmpty(errors)
+
+  @parameterized.parameters(2, 16)
+  def test_jit_call_with_constants(self, size):
+    const = np.arange(size, dtype=np.int32)
+    @jax.jit
+    def f():
+      return const
+
+    with jax.transfer_guard("disallow"):
+      f()
+
+  @parameterized.parameters(2, 16)
+  def test_cached_jit_call_with_constants(self, size):
+    const = np.arange(size, dtype=np.int32)
+    @jax.jit
+    def f():
+      return const
+
+    self.assertCacheMisses(lambda: f(), cpp=1)
+    self.assertCacheMisses(lambda: f(), cpp=0)
+    with jax.transfer_guard("disallow"):
+      f()
+
+  def test_aot_call(self):
+    @jax.jit
+    def f(x):
+      return x + x
+
+    arg = np.ones(2, dtype=np.int32)
+    compiled = f.lower(arg).compile()
+    with self.assertDisallows("aot_call"):
+      with jax.transfer_guard("disallow"):
+        compiled(arg)
+
+  @parameterized.parameters(2, 16)
+  def test_aot_call_with_constants(self, size):
+    const = np.arange(size, dtype=np.int32)
+    @jax.jit
+    def f():
+      return const
+
+    compiled = f.lower().compile()
+    with jax.transfer_guard("disallow"):
+      compiled()
+
+  @parameterized.parameters(2, 16)
+  def test_aot_call_with_constants_fallback(self, size):
+    const = np.arange(size, dtype=np.int32)
+    @jax.jit
+    def f():
+      return const
+
+    compiled = f.lower().compile()
+    compiled._executable.create_cpp_call = lambda params: None
+    with jax.transfer_guard("disallow"):
+      compiled()
+
+  @parameterized.parameters(2, 16)
+  def test_cached_aot_call_with_constants(self, size):
+    const = np.arange(size, dtype=np.int32)
+    @jax.jit
+    def f():
+      return const
+
+    compiled = f.lower().compile()
+
+    self.assertCacheMisses(lambda: compiled(), aot_call=1)
+    self.assertCacheMisses(lambda: compiled(), aot_call=0)
+    with jax.transfer_guard("disallow"):
+      compiled()
 
 
 if __name__ == "__main__":

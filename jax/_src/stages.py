@@ -86,6 +86,10 @@ class Executable:
     """Optionally constructs a fast c++ dispatcher."""
     return None
 
+  def shard_const_args(self, const_args: Sequence[ArrayLike]) -> list[ArrayLike]:
+    raise NotImplementedError(
+        f"sharding const_args unsupported on {type(self)}")
+
   def input_shardings(self) -> Sequence[sharding_lib.Sharding]:
     """Flat sequence of input shardings.
 
@@ -963,7 +967,8 @@ class Compiled(Stage):
     if self._call is None:
       self._call = self._executable.create_cpp_call(self._params)
       if self._call is None:
-        params = self._params
+        params = self._params._replace(
+            const_args=list(self._executable.shard_const_args(self._params.const_args)))
         def cpp_call_fallback(*args, **kwargs):
           outs, _, _ = Compiled.call(params, *args, **kwargs)
           return outs
