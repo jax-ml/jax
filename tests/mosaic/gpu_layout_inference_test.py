@@ -600,6 +600,47 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInLayouts(red, [reduced_layout, reduced_layout])
     self.checkOutLayouts(red, [reduced_layout])
 
+  @parameterized.product(
+      layout=(mgpu.WGMMA_LAYOUT, mgpu.TCGEN05_LAYOUT),
+      dimension=(0, 1),
+      hint_on_input=(True, False),
+  )
+  def test_infer_scan_layout(self, layout, dimension, hint_on_input):
+    with ir.InsertionPoint(self.module.body):
+      [x] = undefs(ir.VectorType.get((128, 128), ir.F32Type.get()))
+      if hint_on_input:
+        x = layout_cast(x, layout)
+      scan = mgpu.dialect.scan(
+          x,
+          kind=mgpu.dialect.ScanKind.Add,
+          dimension=dimension,
+          offset=0,
+          scratch_size=0,
+      ).owner
+      if not hint_on_input:
+        layout_cast(scan.result, layout)
+
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(scan, [layout])
+    self.checkOutLayouts(scan, [layout])
+
+  def test_infer_strided_layout_for_rank_one_scan(self):
+    shape = (128,)
+    with ir.InsertionPoint(self.module.body):
+      [x] = undefs(ir.VectorType.get(shape, ir.F32Type.get()))
+      scan = mgpu.dialect.scan(
+          x,
+          kind=mgpu.dialect.ScanKind.LogAddExp,
+          dimension=0,
+          offset=0,
+          scratch_size=0,
+      ).owner
+
+    mgpu.infer_layout(self.module)
+    layout = mgpu.WGStridedFragLayout.from_shaped_type(x.type)
+    self.checkInLayouts(scan, [layout])
+    self.checkOutLayouts(scan, [layout])
+
   def test_infer_layout_traverses_ops_correctly(self):
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
