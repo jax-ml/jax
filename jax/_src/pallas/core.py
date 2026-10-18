@@ -368,6 +368,8 @@ _dynamic_shapes = config.config_ext.Config[bool](
 @dataclasses.dataclass
 class PallasTracingEnv(threading.local):
   grid_env_stack: list[GridEnv] = dataclasses.field(default_factory=list)
+  # The trace and the cache of the active ``index_map_memo``, if any.
+  index_map_memo: tuple[jax_core.Trace, dict[Any, Any]] | None = None
 
 _pallas_tracing_env = PallasTracingEnv()
 
@@ -532,6 +534,29 @@ def _get_ref_block_shape(block_shape: tuple[BlockDim, ...]) -> tuple[int, ...]:
   )
 
 
+@contextlib.contextmanager
+def index_map_memo(enabled: bool = True) -> Generator[None]:
+  """Memoizes the ``_IndexMapFunc`` calls in its scope if ``enabled``.
+
+  An index map called again with the same arguments, directly or through an
+  index map that composes it (e.g. the block specs a fusion derives from one
+  block spec), returns the result of its first call. Index maps must therefore
+  be pure functions of their arguments and of the Refs they read.
+
+  Only results computed in the current trace are kept: a nested trace (a
+  ``lax.cond`` branch, a loop body) reuses them, but its own values never leak
+  out of it.
+  """
+  prev = _pallas_tracing_env.index_map_memo
+  _pallas_tracing_env.index_map_memo = (
+      (jax_core.trace_ctx.trace, {}) if enabled else None
+  )
+  try:
+    yield
+  finally:
+    _pallas_tracing_env.index_map_memo = prev
+
+
 class _IndexMapFunc:
   """Helper class that checks for index_map equality."""
 
@@ -548,6 +573,19 @@ class _IndexMapFunc:
     return hash(self.index_map)
 
   def __call__(self, *args, **kwargs):
+    if (memo := _pallas_tracing_env.index_map_memo) is None or kwargs:
+      return self._call(*args, **kwargs)
+    trace, cache = memo
+    key = (id(self), *map(id, args))
+    if (hit := cache.get(key)) is not None:
+      return hit[0]
+    out = self._call(*args)
+    if jax_core.trace_ctx.trace is trace:
+      # Holding the keyed objects keeps their ids unique.
+      cache[key] = (out, self, args)
+    return out
+
+  def _call(self, *args, **kwargs):
     out_indices = self.index_map(*args, **kwargs)
     if isinstance(out_indices, list):
       out_indices = tuple(out_indices)
