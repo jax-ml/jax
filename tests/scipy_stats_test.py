@@ -1327,7 +1327,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                         check_dtypes=False)
 
 
-  @jtu.sample_product(dtype=[np.float32, np.float64])
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testTLogPdfExtremeScale(self, dtype):
     # Squaring extreme scales and multiplying by df may overflow or
     # underflow float32 even though the log density itself is finite.
@@ -1344,7 +1344,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker)
 
 
-  @jtu.sample_product(dtype=[np.float32, np.float64])
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testTLogPdfStandardizedSquareOverflow(self, dtype):
     # At scale=1e-22 and x=1, float32 squaring the standardized
     # coordinate overflows, yet the Student-t log density is finite.
