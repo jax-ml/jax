@@ -17,16 +17,18 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import hypothesis as hp
 import hypothesis.strategies as hps
 import jax
+from jax._src import config
+from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import hypothesis_test_util as htu
 from jax._src import state
 from jax._src import test_util as jtu
-from jax._src import config
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax.experimental import pallas as pl
@@ -951,6 +953,67 @@ class PallasCallPipelinePoisonTest(jtu.JaxTestCase):
       )
 
 
+def _shared_index_map_gather(
+    block_indices, *, buffer_count, use_lookahead, memoize_index_maps
+):
+  """A gather whose inputs compose one data dependent index map.
+
+  Like the block specs that a fusion derives from one block spec, the first two
+  inputs share the row block index; the second writes a literal 0 for the size
+  1 grid dimension. The third transforms the row block index, so it changes
+  blocks at other steps.
+  """
+
+  def kernel(x_hbm, y_hbm, idx_ref, o_hbm):
+    shared = pl.BlockSpec(index_map=lambda i, j: (idx_ref[i], j))
+    mode = pl.Buffered(buffer_count=buffer_count, use_lookahead=use_lookahead)
+    in_specs = [
+        pl.BlockSpec(
+            (128, 128), lambda i, j: shared.index_map(i, j), pipeline_mode=mode
+        ),
+        pl.BlockSpec(
+            (8, 128),
+            lambda i, j: (shared.index_map(i, j)[0], 0),
+            pipeline_mode=mode,
+        ),
+        pl.BlockSpec(
+            (256, 128),
+            lambda i, j: (shared.index_map(i, j)[0] // 2, j),
+            pipeline_mode=mode,
+        ),
+    ]
+
+    def body(a_ref, b_ref, c_ref, o_ref):
+      o_ref[...] = a_ref[...] + 2 * b_ref[:1, :] + 3 * c_ref[:128, :]
+
+    pltpu.emit_pipeline(
+        body,
+        grid=(len(block_indices), 1),
+        in_specs=in_specs,
+        out_specs=pl.BlockSpec((128, 128), lambda i, j: (i, j)),
+        memoize_index_maps=memoize_index_maps,
+    )(x_hbm, y_hbm, x_hbm, o_hbm)
+
+  return pl.pallas_call(
+      kernel,
+      out_shape=jax.ShapeDtypeStruct(
+          (len(block_indices) * 128, 128), jnp.int32
+      ),
+      in_specs=[
+          pl.BlockSpec(memory_space=pl.ANY),
+          pl.BlockSpec(memory_space=pl.ANY),
+          pl.BlockSpec(memory_space=pltpu.SMEM),
+      ],
+      out_specs=pl.BlockSpec(memory_space=pl.ANY),
+  )
+
+
+def _count_eqns(jaxpr, pred) -> int:
+  return sum(map(pred, jaxpr.eqns)) + sum(
+      _count_eqns(sub, pred) for sub in jax_core.subjaxprs(jaxpr)
+  )
+
+
 class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -1273,6 +1336,59 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
       expected.append(x[blk_idx * block_size:(blk_idx + 1) * block_size, :])
     expected = jnp.concatenate(expected, axis=0)
     np.testing.assert_allclose(result, expected)
+
+  @parameterized.product(buffer_count=[2, 3], use_lookahead=[False, True])
+  def test_memoize_index_maps(self, buffer_count, use_lookahead):
+    block_indices = [0, 0, 2, 3, 3, 3, 1, 7, 6, 6]
+    x = jnp.arange(1024 * 128, dtype=jnp.int32).reshape(1024, 128)
+    y = 7 * jnp.arange(64 * 128, dtype=jnp.int32).reshape(64, 128)
+    expected = jnp.concatenate([
+        x[b * 128 : (b + 1) * 128]
+        + 2 * y[b * 8 : b * 8 + 1]
+        + 3 * x[b // 2 * 256 : b // 2 * 256 + 128]
+        for b in block_indices
+    ])
+    for memoize_index_maps in (False, True):
+      out = _shared_index_map_gather(
+          block_indices,
+          buffer_count=buffer_count,
+          use_lookahead=use_lookahead,
+          memoize_index_maps=memoize_index_maps,
+      )(x, y, jnp.array(block_indices))
+      np.testing.assert_array_equal(out, expected)
+
+  def test_memoize_index_maps_shares_scans_and_loads(self):
+    # What the memo buys: the two inputs that share the row block index share
+    # one lookahead scan loop, and the index table is loaded less often.
+    block_indices = jnp.array([0, 0, 2, 3, 3, 3, 1, 7, 6, 6], jnp.int32)
+    x = jnp.zeros((1024, 128), jnp.int32)
+    y = jnp.zeros((64, 128), jnp.int32)
+    counts = {}
+    for memoize_index_maps in (False, True):
+      fn = _shared_index_map_gather(
+          block_indices,
+          buffer_count=2,
+          use_lookahead=True,
+          memoize_index_maps=memoize_index_maps,
+      )
+      with config.use_emit_pipeline_primitive(False):
+        jaxpr = jax.make_jaxpr(fn)(x, y, block_indices)
+      [kernel] = [
+          e.params['jaxpr']
+          for e in jaxpr.eqns
+          if e.primitive.name == 'pallas_call'
+      ]
+      counts[memoize_index_maps] = (
+          _count_eqns(kernel, lambda e: e.primitive.name == 'while'),
+          _count_eqns(
+              kernel,
+              lambda e: e.primitive.name == 'get'
+              and not e.outvars[0].aval.shape,
+          ),
+      )
+    self.assertEqual(counts[False][0], 3)
+    self.assertEqual(counts[True][0], 2)
+    self.assertLess(counts[True][1], counts[False][1])
 
   @parameterized.product(
       in_buffer_count=[2, 4],
@@ -2104,6 +2220,51 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
       idx = [slice(None), slice(None), slice(None)]
       idx[axis] = slice(start, end)
       np.testing.assert_allclose(out[tuple(idx)], x[tuple(idx)])
+
+  @parameterized.parameters(False, True)
+  def test_memoize_index_maps(self, use_lookahead):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
+    # Both inputs take their dynamic DMA sizes from the same memoized block
+    # indices; the repeated slice is fetched once.
+    slices = jnp.array([[11, 5], [3, 8], [3, 8], [0, 3]], jnp.int32)
+    x = jnp.arange(16 * 8 * 128, dtype=jnp.int32).reshape(16, 8, 128)
+    block_shape = (pl.BoundedSlice(16), 8, 128)
+
+    @functools.partial(jax.jit, static_argnames='memoize_index_maps')
+    def f(x, slices, memoize_index_maps):
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name='core'),
+          out_type=x,
+          scratch_types=[pltpu.SMEM(slices.shape, slices.dtype)],
+      )
+      def kernel_fn(x_ref, slices_ref, o_ref, slices_smem):
+        pltpu.sync_copy(slices_ref, slices_smem)
+
+        def index_map(i):
+          return pl.ds(slices_smem[i, 0], slices_smem[i, 1]), 0, 0
+
+        in_spec = pl.BlockSpec(
+            block_shape,
+            index_map,
+            pipeline_mode=pl.Buffered(2, use_lookahead=use_lookahead),
+        )
+
+        def body(a_ref, b_ref, o_ref):
+          o_ref[...] = a_ref[...] + b_ref[...]
+
+        pltpu.emit_pipeline(
+            body,
+            grid=(slices.shape[0],),
+            in_specs=(in_spec, in_spec),
+            out_specs=pl.BlockSpec(block_shape, index_map),
+            memoize_index_maps=memoize_index_maps,
+        )(x_ref, x_ref, o_ref)
+
+      return kernel_fn(x, slices)
+
+    for memoize_index_maps in (False, True):
+      np.testing.assert_array_equal(f(x, slices, memoize_index_maps), 2 * x)
 
 
 class PipelineHijaxTest(jtu.JaxTestCase):
