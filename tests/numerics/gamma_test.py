@@ -295,10 +295,61 @@ class GammainccinvTest(jtu.JaxTestCase):
     )
 
 
+def _scipy_gamma(x):
+  # scipy.special.gamma returns +0.0 when it underflows for negative x.
+  r = scipy.special.gamma(x)
+  return np.where(r == 0, np.where(np.floor(x) % 2 == 1, -0.0, 0.0), r)
+
+
+def _mpmath_gamma(x):
+  if x == 0:
+    return -mpmath.inf if np.signbit(float(x)) else mpmath.inf
+  if (x < 0 and mpmath.isint(x)) or x == -mpmath.inf:
+    return mpmath.nan
+  return mpmath.gamma(x)
+
+
+@jtu.thread_unsafe_test_class()
+class GammaTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_gamma_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 10.0, f64: 7.0}),
+        ("gpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
+        ("tpu", {bf16: math.inf, f16: math.inf, f32: math.inf}),
+    ]
+    interesting_points = [
+        # Non-positive integer poles of gamma(x):
+        *(float(-k) for k in range(21)),
+        -100.0,
+        -1000.0,
+        # Horner switch from z to 1/z:
+        10.0,
+        # Largest n with finite (n - 1)! in float32 and float64:
+        35.0,
+        171.0,
+        # Overflow thresholds where gamma(x) == finfo.max, computed via
+        # mpmath.findroot(lambda x: mpmath.loggamma(x) - log(finfo.max), x0):
+        35.040098403112816,  # float32
+        171.6243769563027,  # float64
+    ]
+    util.check_unary_precision(
+        self,
+        jsp.special.gamma,
+        _scipy_gamma,
+        _mpmath_gamma,
+        dtype,
+        bounds=bounds,
+        interesting_points=interesting_points,
+    )
+
+
 util.register_benchmark(lax.digamma)
 util.register_benchmark(lax.lgamma)
 util.register_benchmark(jsp.special.gammaincinv, nargs=2)
 util.register_benchmark(jsp.special.gammainccinv, nargs=2)
+util.register_benchmark(jsp.special.gamma, name="gamma")
 
 
 if __name__ == "__main__":
