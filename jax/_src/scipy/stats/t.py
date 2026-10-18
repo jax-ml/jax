@@ -14,11 +14,44 @@
 
 
 from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.scipy.special import betaln
 from jax._src.typing import Array, ArrayLike
 
+
+def _t_regular_quadratic(operand):
+  _, df, _, scale, delta = operand
+  scaled_x = lax.div(delta, scale)
+  return lax.log1p(lax.div(lax.mul(scaled_x, scaled_x), df))
+
+def _t_stable_quadratic(operand):
+  x, df, loc, scale, delta = operand
+  abs_delta = lax.abs(delta)
+  safe_abs_delta = jnp.where(abs_delta == 0, 1, abs_delta)
+  # A subtraction of finite, opposite-signed inputs can overflow even when
+  # (x - loc) / scale and the final log-density are finite. In this case
+  # |x - loc| = |x| + |loc|, so recover its log magnitude with logaddexp.
+  overflowed_subtraction = (
+      jnp.isinf(delta) & jnp.isfinite(x) & jnp.isfinite(loc)
+  )
+  safe_abs_x = jnp.where(x == 0, 1, lax.abs(x))
+  safe_abs_loc = jnp.where(loc == 0, 1, lax.abs(loc))
+  log_abs_delta = jnp.where(
+      overflowed_subtraction,
+      jnp.logaddexp(lax.log(safe_abs_x), lax.log(safe_abs_loc)),
+      lax.log(safe_abs_delta),
+  )
+  log_abs_scaled = lax.sub(log_abs_delta, lax.log(lax.abs(scale)))
+  log_quadratic = lax.sub(
+      lax.mul(_lax_const(x, 2), log_abs_scaled), lax.log(df)
+  )
+  stable_tail = lax.add(
+      jnp.maximum(log_quadratic, 0),
+      lax.log1p(lax.exp(lax.neg(lax.abs(log_quadratic)))),
+  )
+  return jnp.where(abs_delta == 0, 0, stable_tail)
 
 def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   r"""Student's T log probability distribution function.
@@ -47,15 +80,39 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
     :func:`jax.scipy.stats.t.pdf`
   """
   x, df, loc, scale = promote_args_inexact("t.logpdf", x, df, loc, scale)
-  two = _lax_const(x, 2)
-  scaled_x = lax.div(lax.sub(x, loc), scale)
-  df_over_two = lax.div(df, two)
-  df_plus_one_over_two = lax.add(df_over_two, _lax_const(x, 0.5))
-  normalize_term_tmp = lax.add(lax.div(lax.log(df), two), lax.log(scale))
-  normalize_term = lax.add(betaln(df_over_two, _lax_const(x, 0.5)),
-                           normalize_term_tmp)
-  quadratic = lax.div(lax.mul(scaled_x, scaled_x), df)
-  return lax.neg(lax.add(normalize_term, lax.mul(df_plus_one_over_two, lax.log1p(quadratic))))
+  half = _lax_const(x, 0.5)
+  delta = lax.sub(x, loc)
+  df_over_two = lax.mul(df, half)
+  df_plus_one_over_two = lax.add(df_over_two, half)
+  # Avoid under/overflow of scale**2 * df before taking its logarithm.
+  normalize_term_tmp = lax.add(lax.log(scale), lax.mul(lax.log(df), half))
+  normalize_term = lax.add(betaln(df_over_two, half), normalize_term_tmp)
+
+  # Even when the normalization is stable, ((x - loc) / scale)**2
+  # can overflow while the log density remains finite. Preserve the fast
+  # ordinary-input path; use a log-domain formula only if the batch contains
+  # an extreme standardized input or a scale/df that risks overflow.
+
+  # In float16, even a standardized coordinate around 300 has a
+  # finite log-density but its square overflows. The ordinary float32/64
+  # threshold (1e12) itself overflows float16, so always take the stable
+  # tail path for half-precision inputs, without materializing that constant.
+  if x.dtype == jnp.float16:
+    use_stable = jnp.asarray(True)
+  else:
+    use_stable = jnp.any(
+        (jnp.isinf(delta) & jnp.isfinite(x) & jnp.isfinite(loc))
+        | (lax.abs(scale) < _lax_const(x, 1e-16))
+        | (lax.abs(delta) > lax.mul(lax.abs(scale), _lax_const(x, 1e12)))
+        | (df < _lax_const(x, 1e-5))
+    )
+  log_one_plus_quadratic = lax.cond(
+      use_stable, _t_stable_quadratic, _t_regular_quadratic,
+      operand=(x, df, loc, scale, delta),
+  )
+  return lax.neg(lax.add(
+      normalize_term, lax.mul(df_plus_one_over_two, log_one_plus_quadratic)
+  ))
 
 
 def pdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
