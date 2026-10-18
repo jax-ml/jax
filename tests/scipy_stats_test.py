@@ -1327,6 +1327,116 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                         check_dtypes=False)
 
 
+  @jtu.sample_product(dtype=[np.float32, np.float64])
+  def testTLogPdfExtremeScale(self, dtype):
+    # Squaring extreme scales and multiplying by df may overflow or
+    # underflow float32 even though the log density itself is finite.
+    scipy_fun = osp_stats.t.logpdf
+    lax_fun = lsp_stats.t.logpdf
+    args_maker = lambda: [
+        np.zeros(6, dtype=dtype),
+        np.full(6, 1e7, dtype=dtype),
+        np.zeros(6, dtype=dtype),
+        np.array([1e-22, 1e-19, 1e-14, 1e16, 1e19, 1e22], dtype=dtype),
+    ]
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=1e-5)
+    self._CompileAndCheck(lax_fun, args_maker)
+
+
+  @jtu.sample_product(dtype=[np.float32, np.float64])
+  def testTLogPdfStandardizedSquareOverflow(self, dtype):
+    # At scale=1e-22 and x=1, float32 squaring the standardized
+    # coordinate overflows, yet the Student-t log density is finite.
+    scipy_fun = osp_stats.t.logpdf
+    lax_fun = lsp_stats.t.logpdf
+    args_maker = lambda: [
+        np.array([0.0, 1e-22, 1e-10, 1.0], dtype=dtype),
+        np.full(4, 1e7, dtype=dtype),
+        np.zeros(4, dtype=dtype),
+        np.full(4, 1e-22, dtype=dtype),
+    ]
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=2e-5)
+    self._CompileAndCheck(lax_fun, args_maker)
+
+  def testTLogPdfStandardizedSquareOverflowGrad(self):
+    # Masking the inactive direct path must preserve gradients at the mode
+    # and in tails that otherwise overflow the squared ratio.
+    df = jnp.float32(1e7)
+    scale = jnp.float32(1e-22)
+    logpdf = lambda x: lsp_stats.t.logpdf(x, df, 0, scale)
+    for x, expected_grad in [(0.0, 0.0), (1.0, -1e7)]:
+      actual = np.asarray(jax.grad(logpdf)(jnp.float32(x)))
+      compiled = np.asarray(jax.jit(jax.grad(logpdf))(jnp.float32(x)))
+      self.assertTrue(np.isfinite(actual))
+      self.assertAllClose(actual, expected_grad, rtol=2e-5, atol=1e-4,
+                          check_dtypes=False)
+      self.assertAllClose(compiled, expected_grad, rtol=2e-5, atol=1e-4,
+                          check_dtypes=False)
+
+  def testTLogPdfHalfPrecisionSquaredOverflow(self):
+    # A standardized value of 300 overflows when squared in float16,
+    # despite the Student-t log-density being finite. Cover eager, JIT and
+    # reverse-mode gradients without requiring a float16 SciPy backend.
+    x = jnp.array([0.0, 300.0, 10000.0], dtype=jnp.float16)
+    df = jnp.array([10.0, 10.0, 1000.0], dtype=jnp.float16)
+    scale = jnp.ones_like(x)
+    expected = osp_stats.t.logpdf(
+        np.asarray(x, dtype=np.float64),
+        np.asarray(df, dtype=np.float64),
+        scale=np.asarray(scale, dtype=np.float64),
+    )
+    actual = np.asarray(lsp_stats.t.logpdf(x, df, scale=scale))
+    compiled = np.asarray(jax.jit(lsp_stats.t.logpdf)(x, df, scale=scale))
+    self.assertTrue(np.all(np.isfinite(actual)))
+    self.assertTrue(np.all(np.isfinite(compiled)))
+    self.assertAllClose(actual, expected, rtol=5e-3, atol=0.05,
+                        check_dtypes=False)
+    self.assertAllClose(compiled, expected, rtol=5e-3, atol=0.05,
+                        check_dtypes=False)
+    mode = jnp.float16(0)
+    tail = jnp.float16(300)
+    logpdf = lambda x: lsp_stats.t.logpdf(x, jnp.float16(10))
+    self.assertAllClose(jax.grad(logpdf)(mode), 0.0, atol=5e-3,
+                        check_dtypes=False)
+    self.assertAllClose(
+        jax.jit(jax.grad(logpdf))(tail), -11.0 * 300.0 / (10.0 + 300.0**2),
+        rtol=1e-2, atol=5e-4, check_dtypes=False)
+
+  @jtu.sample_product(dtype=[np.float16, np.float32])
+  def testTLogPdfFiniteSubtractionOverflow(self, dtype):
+    # x, loc and scale fit in their dtype, and their standardized difference
+    # is only 2. The intermediate x - loc overflows before division by scale.
+    magnitude = 60000.0 if dtype == np.float16 else 3e38
+    x = jnp.asarray(magnitude, dtype=dtype)
+    loc = -x
+    scale = x
+    df = jnp.asarray(10.0, dtype=dtype)
+    expected = osp_stats.t.logpdf(
+        float(np.asarray(x)), 10.0,
+        loc=float(np.asarray(loc)), scale=float(np.asarray(scale)),
+    )
+    logpdf = lambda value: lsp_stats.t.logpdf(value, df, loc, scale)
+    actual = np.asarray(logpdf(x))
+    compiled = np.asarray(jax.jit(logpdf)(x))
+    self.assertTrue(np.isfinite(actual))
+    self.assertTrue(np.isfinite(compiled))
+    atol = 0.05 if dtype == np.float16 else 1e-3
+    self.assertAllClose(actual, expected, rtol=5e-3 if dtype == np.float16
+                        else 1e-5, atol=atol, check_dtypes=False)
+    self.assertAllClose(compiled, expected, rtol=5e-3 if dtype == np.float16
+                        else 1e-5, atol=atol, check_dtypes=False)
+    if dtype == np.float16:
+      # The derivative is representable in float16 and must not be polluted
+      # by the inactive log(inf) branch.
+      reference_grad = -11.0 * 2.0 / (10.0 + 2.0**2) / float(np.asarray(scale))
+      self.assertAllClose(jax.grad(logpdf)(x), reference_grad,
+                          rtol=1e-2, atol=1e-6, check_dtypes=False)
+      self.assertAllClose(jax.jit(jax.grad(logpdf))(x), reference_grad,
+                          rtol=1e-2, atol=1e-6, check_dtypes=False)
+
+
   @genNamedParametersNArgs(3)
   def testUniformLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
