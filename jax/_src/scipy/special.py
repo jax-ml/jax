@@ -40,6 +40,7 @@ from jax._src.lax.erf import (
 )
 from jax._src.lax.lax import AccuracyMode, _const as _lax_const
 from jax._src.lax.special import ndtr as _ndtr
+from jax._src.lax.special import random_gamma_grad
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import vectorize as jnp_vectorize
@@ -549,6 +550,466 @@ def gammaincc(a: ArrayLike, x: ArrayLike) -> Array:
   """
   a, x = promote_args_inexact("gammaincc", a, x)
   return lax.igammac(a, x)
+
+
+def gammaincinv(a: ArrayLike, y: ArrayLike) -> Array:
+  r"""The inverse of the regularized lower incomplete gamma function.
+
+  JAX implementation of :obj:`scipy.special.gammaincinv`.
+
+  Returns :math:`x \ge 0` such that :math:`\mathrm{gammainc}(a, x) = y`.
+  Equivalently, ``gammaincinv(a, y)`` is the quantile function of the
+  standard gamma distribution with shape parameter ``a``.
+
+  Args:
+    a: arraylike, real-valued. Positive shape parameter of the gamma distribution.
+    y: arraylike, real-valued. Probability in the interval :math:`[0, 1]`.
+
+  Returns:
+    array containing values of the gammaincinv function. Returns ``0`` for
+    ``y == 0`` and ``inf`` for ``y == 1``, and ``nan`` for ``y`` outside
+    :math:`[0, 1]`, ``a < 0``, or ``a`` in ``{0, inf}`` with ``0 < y < 1``.
+
+  Notes:
+    Gradients with respect to both ``a`` and ``y`` are supported.
+
+  Examples:
+    >>> y = jnp.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    >>> with jnp.printoptions(precision=4):
+    ...   print(jax.scipy.special.gammaincinv(2.0, y))
+    [0.     0.9613 1.6783 2.6926    inf]
+
+  See Also:
+    - :func:`jax.scipy.special.gammainc`
+    - :func:`jax.scipy.special.gammainccinv`
+  """
+  a, y = promote_args_inexact("gammaincinv", a, y)
+  return _gammaincinv_dispatch("gammaincinv", a, y, False)
+
+
+def gammainccinv(a: ArrayLike, y: ArrayLike) -> Array:
+  r"""The inverse of the regularized upper incomplete gamma function.
+
+  JAX implementation of :obj:`scipy.special.gammainccinv`.
+
+  Returns :math:`x \ge 0` such that :math:`\mathrm{gammaincc}(a, x) = y`.
+  This is more accurate than ``gammaincinv(a, 1 - y)`` when ``y`` is small.
+
+  Args:
+    a: arraylike, real-valued. Positive shape parameter of the gamma distribution.
+    y: arraylike, real-valued. Probability in the interval :math:`[0, 1]`.
+
+  Returns:
+    array containing values of the gammainccinv function. Returns ``inf`` for
+    ``y == 0`` and ``0`` for ``y == 1``, and ``nan`` for ``y`` outside
+    :math:`[0, 1]`, ``a < 0``, or ``a`` in ``{0, inf}`` with ``0 < y < 1``.
+
+  Notes:
+    Gradients with respect to both ``a`` and ``y`` are supported.
+
+  Examples:
+    >>> y = jnp.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    >>> with jnp.printoptions(precision=4):
+    ...   print(jax.scipy.special.gammainccinv(2.0, y))
+    [   inf 2.6926 1.6783 0.9613 0.    ]
+
+  See Also:
+    - :func:`jax.scipy.special.gammaincc`
+    - :func:`jax.scipy.special.gammaincinv`
+  """
+  a, y = promote_args_inexact("gammainccinv", a, y)
+  return _gammaincinv_dispatch("gammainccinv", a, y, True)
+
+
+def _gammaincinv_dispatch(name: str, a: Array, y: Array,
+                          complement: bool) -> Array:
+  if dtypes.issubdtype(a.dtype, np.complexfloating):
+    raise ValueError(f"{name} does not support complex-valued inputs.")
+  a, y = jnp.broadcast_arrays(a, y)
+  if dtypes.finfo(a.dtype).bits < 32:
+    return _gammaincinv(
+        a.astype(np.float32), y.astype(np.float32), complement
+    ).astype(a.dtype)
+  return _gammaincinv(a, y, complement)
+
+
+# The initial approximation below follows A. R. DiDonato and A. H. Morris,
+# "Computation of the Incomplete Gamma Function Ratios and their Inverse",
+# ACM Trans. Math. Softw. 12(4), 377-393 (1986),
+# https://doi.org/10.1145/22721.23109, and is adapted from the TensorFlow
+# Probability implementation of `tfp.math.igammainv` (Apache 2.0 license),
+# https://github.com/tensorflow/probability/blob/main/tensorflow_probability/python/math/special.py
+# Equation numbers refer to the paper.
+
+def _gammaincinv_eq23(log_b: Array, v: Array, a: Array) -> Array:
+  return -log_b + xlogy(a - 1.0, v) - lax.log1p((1.0 - a) / (1.0 + v))
+
+
+def _gammaincinv_eq25(a: Array, y: Array) -> Array:
+  # x = y + c1 + c2 / y + c3 / y^2 + c4 / y^3 + c5 / y^4, where c1 is
+  # (a - 1) log(y) and, for k >= 2, c_k is (a - 1) times a polynomial in c1
+  # whose coefficients are polynomials in a.
+  poly = lax.polynomial
+  c1 = xlogy(a - 1.0, y)
+  c2 = poly(c1, [1.0, 1.0])
+  c3 = poly(c1, [poly(a, [-5 / 2, 3 / 2]), a - 2.0, -1 / 2])
+  c4 = poly(c1, [poly(a, [47 / 6, -46 / 6, 11 / 6]), poly(a, [7.0, -6.0, 1.0]),
+                 poly(a, [5 / 2, -3 / 2]), 1 / 3])
+  c5 = poly(c1, [poly(a, [-379 / 12, 477 / 12, -195 / 12, 25 / 12]),
+                 poly(a, [-61 / 2, 36.0, -25 / 2, 1.0]),
+                 poly(a, [-13.0, 13.0, -3.0]), poly(a, [-17 / 6, 11 / 6]),
+                 -1 / 4])
+  return y + c1 + (a - 1.0) * poly(1.0 / y, [0.0, c2, c3, c4, c5])
+
+
+def _gammaincinv_eq32(p: Array, q: Array) -> Array:
+  # Rational approximation to the standard normal quantile of p.
+  t = lax.sqrt(-2.0 * lax.log(jnp.minimum(p, q)))
+  num = lax.polynomial(t, [3.31125922108741, 11.6616720288968,
+                           4.28342155967104, 0.213623493715853])
+  den = lax.polynomial(t, [1.0, 6.61053765625462, 6.40691597760039,
+                           1.27364489782223, 0.36117081018842e-1])
+  s = t - num / den
+  return jnp.where(p < 0.5, -s, s)
+
+
+def _lgamma1p(a: Array) -> Array:
+  # lgamma(1 + a), also for small a, where 1 + a rounds. For a < 0.01 this is
+  # the Taylor series a (-euler_gamma + sum_k (-1)^k zeta(k) / k a^(k - 1)).
+  # log(a) + lgamma(a) is no alternative there: both terms are about -log(a)
+  # in magnitude while their sum is about -euler_gamma a, so it cancels.
+  zeta = [1.6449340668482264, 1.2020569031595942, 1.0823232337111382,
+          1.0369277551433699, 1.0173430619844491, 1.0083492773819228,
+          1.0040773561979443, 1.0020083928260822]
+  is_small = a < 0.01
+  a_small = jnp.where(is_small, a, 0.0)
+  series = a_small * lax.polynomial(a_small, [-np.euler_gamma] + [
+      (-1) ** k * z / k for k, z in enumerate(zeta, start=2)], unroll=9)
+  return jnp.where(is_small, series, lax.lgamma(1.0 + a))
+
+
+def _gammaincc_small_x(a: Array, x: Array) -> Array:
+  # gammaincc(a, x) for 0 < x < 1.1 as
+  #   1 - x^a / Gamma(a + 1) - x^a / Gamma(a) sum_{n>=1} (-x)^n / (n! (a + n))
+  #   = -expm1(u) - a x e^u sum_{n>=1} (-1)^n x^(n - 1) / (n! (a + n)),
+  # with u = log(x^a / Gamma(a + 1)). Unlike 1 - gammainc(a, x), this stays
+  # accurate when the result is small (for small a). This follows igamc_series
+  # in Cephes.
+  terms = [(-1) ** n / math.factorial(n) / (a + n) for n in range(1, 21)]
+  u = a * lax.log(x) - _lgamma1p(a)
+  return (-lax.expm1(u)
+          - a * x * lax.exp(u) * lax.polynomial(x, terms, unroll=20))
+
+
+def _gammaincinv_eq34(a: Array, x: Array, enabled: Array) -> Array:
+  # Partial sum of 1 + x / (a + 1) + x^2 / ((a + 1) (a + 2)) + ... up to the
+  # first term below 1e-4. Where enabled, x <= 0.7 (a + 1), so that each term
+  # is at most 0.7 times the previous one and the 26th term is below 1e-4
+  # (0.7^26 < 1e-4).
+  def cond_fn(carry):
+    return (carry["n"] <= 26) & ~jnp.all(carry["done"])
+
+  def body_fn(carry):
+    term = carry["term"] * x / (a + carry["n"])
+    return {
+        "n": carry["n"] + 1,
+        "done": carry["done"] | (term < 1e-4),
+        "term": term,
+        "total": jnp.where(carry["done"], carry["total"],
+                           carry["total"] + term),
+    }
+
+  one = jnp.ones_like(x)
+  init = {"n": lax.full((), 1, x.dtype), "done": ~enabled, "term": one,
+          "total": one}
+  return lax.while_loop(cond_fn, body_fn, init)["total"]
+
+
+def _gammaincinv_initial_guess(a: Array, p: Array, q: Array,
+                               complement: bool) -> Array:
+  # Each approximation below is used in part of the domain but evaluated for
+  # all elements. Its inputs are clamped, or replaced by placeholder values,
+  # outside of that part, so that the approximations that are not selected
+  # don't produce NaNs or overflow.
+  log_p = lax.log1p(-q) if complement else lax.log(p)
+  log_q = lax.log(q) if complement else lax.log1p(-p)
+  is_small_a = a < 1.0
+  # |s| < 40 below even for subnormal p or q, so for a > 1e5,
+  # 0.7 (a + 1) < w < 3 a and w is used as is. Elsewhere, a is clamped to 1e5,
+  # which keeps lgamma(a) finite.
+  is_large_a = a > 1e5
+  lgamma_a = lax.lgamma(jnp.minimum(a, 1e5))
+  log_b = log_q + lgamma_a  # log(q Gamma(a))
+
+  # a < 1.
+  a_lo = jnp.where(is_small_a, a, 0.5)
+  # Eqs. 23-25 and the approximation for a < 0.3 are only used for b <= 0.6.
+  log_b_lo = jnp.minimum(log_b, math.log(0.6))
+  v = -log_b_lo - (1.0 - a_lo) * lax.log(-log_b_lo)
+  v_sq = v * v
+  x_small_a = jnp.where(
+      log_b_lo >= math.log(0.15),
+      _gammaincinv_eq23(log_b_lo, v, a_lo),
+      jnp.where(
+          log_b_lo > math.log(0.01),
+          -log_b_lo - (1.0 - a_lo) * lax.log(v) - lax.log(
+              (v_sq + 2.0 * (3.0 - a_lo) * v + (2.0 - a_lo) * (3.0 - a_lo))
+              / (v_sq + (5.0 - a_lo) * v + 2.0)),  # Eq. 24
+          _gammaincinv_eq25(a_lo, -log_b_lo)))
+  t = lax.exp(-np.euler_gamma - lax.exp(log_b_lo))
+  x_small_a = jnp.where(
+      (a_lo < 0.3) & (log_b >= math.log(0.35)), t * lax.exp(t * lax.exp(t)),
+      x_small_a)
+  # Eq. 21: (p * Gamma(a + 1)) ** (1 / a), Taylor expanded for small q. For
+  # small a, this divides log(p * Gamma(a + 1)) by a, so avoid the rounding of
+  # 1 - q and of 1 + a.
+  u = jnp.where(
+      (log_b + log_q > math.log(1e-8)) & (q > 1e-5),
+      lax.exp((log_p + _lgamma1p(a_lo)) / a_lo),
+      lax.exp(-q / a_lo - np.euler_gamma))
+  x_small_a = jnp.where(
+      (log_b > math.log(0.6)) | ((log_b >= math.log(0.45)) & (a_lo >= 0.3)),
+      u / (1.0 - u / (a_lo + 1.0)), x_small_a)
+
+  # a >= 1. Eq. 31: Cornish-Fisher expansion around the normal quantile.
+  # w = a + s sqrt(a) + d0 + d1 / sqrt(a) + d2 / a + d3 / a^(3/2), a polynomial
+  # in 1 / sqrt(a) whose coefficients d_k are polynomials in s.
+  poly = lax.polynomial
+  a_hi = jnp.where(is_small_a, 1.0, a)
+  sqrt_a = lax.sqrt(a_hi)
+  s = _gammaincinv_eq32(p, q)
+  w = a_hi + sqrt_a * poly(1.0 / sqrt_a, [
+      s,
+      poly(s, [-1 / 3, 0.0, 1 / 3]),
+      poly(s, [0.0, -7 / 36, 0.0, 1 / 36]),
+      poly(s, [16 / 810, 0.0, -7 / 810, 0.0, -3 / 810]),
+      poly(s, [0.0, -433 / 38880, 0.0, 256 / 38880, 0.0, 9 / 38880]),
+  ])
+  a_hi = jnp.minimum(a_hi, 1e5)
+  log_pg = log_p + lax.lgamma(1.0 + a_hi)  # log(p Gamma(a + 1))
+
+  # a >= 1 and p > 0.5.
+  use_w = (is_large_a | (w < 3.0 * a_hi)
+           | ((a_hi >= 500.0) & (lax.abs(1.0 - w / a_hi) < 1e-6)))
+  d = jnp.maximum(2.0, a_hi * (a_hi - 1.0))
+  use_eq25 = (~is_small_a & (p > 0.5) & ~use_w
+              & (log_b <= -d * math.log(10.0)))
+  use_eq23 = ~is_small_a & (p > 0.5) & ~use_w & ~use_eq25
+  x_eq25 = _gammaincinv_eq25(jnp.where(use_eq25, a_hi, 1.0),
+                             jnp.where(use_eq25, -log_b, 1.0))
+  a_23 = jnp.where(use_eq23, a_hi, 1.0)
+  log_b_23 = jnp.where(use_eq23, log_b, -1.0)
+  x_eq23 = _gammaincinv_eq23(
+      log_b_23,
+      _gammaincinv_eq23(log_b_23, jnp.where(use_eq23, w, 1.0), a_23), a_23)
+  x_large_p = jnp.where(use_w, w, jnp.where(use_eq25, x_eq25, x_eq23))
+
+  # a >= 1 and p <= 0.5. Eq. 35.
+  use_eq35 = (~is_small_a & ~is_large_a & (p <= 0.5)
+              & (w <= 0.15 * (a_hi + 1.0)))
+  a_35 = jnp.where(use_eq35, a_hi, 1.0)
+  log_pg_35 = jnp.where(use_eq35, log_pg, 0.0)
+  z = lax.exp((log_pg_35 + jnp.where(use_eq35, w, 0.0)) / a_35)
+  for _ in range(2):
+    z = lax.exp((log_pg_35 + z - lax.log1p(
+        z / (a_35 + 1.0) * (1.0 + z / (a_35 + 2.0)))) / a_35)
+  z = lax.exp((log_pg_35 + z - lax.log1p(
+      z / (a_35 + 1.0) * (1.0 + z / (a_35 + 2.0) * (1.0 + z / (a_35 + 3.0)))))
+      / a_35)
+  z = jnp.where(use_eq35, z, w)
+  use_series = (~is_small_a & ~is_large_a & (p <= 0.5)
+                & (z > 0.01 * (a_hi + 1.0)) & (z <= 0.7 * (a_hi + 1.0)))
+  a_s = jnp.where(use_series, a_hi, 2.0)
+  log_pg_s = jnp.where(use_series, log_pg, 0.0)
+  z_s = jnp.where(use_series, z, 0.0)
+  ls = lax.log(_gammaincinv_eq34(a_s, z_s, use_series))
+  z_mid = lax.exp((log_pg_s + z_s - ls) / a_s)
+  x_small_p = jnp.where(
+      use_series,
+      z_mid * (1.0 - (a_s * lax.log(z_mid) - z_mid - log_pg_s + ls)
+               / (a_s - z_mid)),
+      z)
+
+  x = jnp.where(is_small_a, x_small_a,
+                jnp.where(p <= 0.5, x_small_p, x_large_p))
+  return jnp.where(a == 1.0, -log_q, x)
+
+
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(2,))
+def _gammaincinv(a: Array, y: Array, complement: bool) -> Array:
+  return _gammaincinv_impl(a, y, complement)
+
+
+@partial(jit, static_argnums=(2,))
+def _gammaincinv_impl(a: Array, y: Array, complement: bool) -> Array:
+  if complement:
+    q = y
+    p = 1.0 - q
+  else:
+    p = y
+    q = 1.0 - p
+  is_lower_edge = (q == 1.0) if complement else (p == 0.0)
+  is_upper_edge = (q == 0.0) if complement else (p == 1.0)
+  is_nan = jnp.isnan(a) | jnp.isnan(y) | (a < 0.0) | (y < 0.0) | (y > 1.0)
+  is_edge = ~is_nan & (is_lower_edge | is_upper_edge)
+  is_nan = is_nan | (~is_edge & ((a == 0.0) | jnp.isinf(a)))
+  safe = ~(is_nan | is_edge)
+  a = jnp.where(safe, a, 1.0)
+  p = jnp.where(safe, p, 0.5)
+  q = jnp.where(safe, q, 0.5)
+
+  x0 = _gammaincinv_initial_guess(a, p, q, complement)
+  x0 = jnp.where(x0 > 0.0, x0, 0.0)  # The guess may underflow for tiny p.
+
+  # Refine with Halley's method on f(x) = gammainc(a, x) - p. The residual uses
+  # gammainc when p <= 0.5 and gammaincc otherwise, so that the target
+  # probability it is compared against is exact.
+  #
+  # For large a the initial guess, an asymptotic expansion in 1 / a, is kept
+  # as is. In float32, gammainc loses accuracy for large a (the terms of
+  # a * log(x) - x - lgamma(a) cancel), and for a >= 200 the guess is more
+  # accurate than its refinement. In float64, the series in gammainc needs
+  # O(sqrt(a)) terms near x = a (and never terminates once a + 1 == a), and
+  # the relative error of the guess is at most about 1e-6 for a >= 1e6.
+  refine = a < (200.0 if dtypes.finfo(a.dtype).bits <= 32 else 1e6)
+  use_lower = p <= 0.5
+  # The elements that are not refined use a = x = 1 in the refinement.
+  a_r = jnp.where(refine, a, 1.0)
+  lgamma_a = lax.lgamma(a_r)
+
+  def halley_step(_, x):
+    is_positive = x > 0.0
+    x_pos = jnp.where(is_positive, x, 1.0)
+    x_pdf = lax.exp(xlogy(a_r, x_pos) - x_pos - lgamma_a)  # x d/dx gammainc
+    # Evaluating igamma and igammac at x = 0 for the elements that use another
+    # function (or are not refined) skips their iterations there.
+    use_series = ~use_lower & (x < 1.1)
+    upper = jnp.where(
+        use_series,
+        _gammaincc_small_x(a_r, jnp.where(use_series, x_pos, 1.0)),
+        lax.igammac(a_r, jnp.where(refine & ~use_lower & ~use_series, x, 0.0)))
+    residual = jnp.where(
+        use_lower,
+        lax.igamma(a_r, jnp.where(refine & use_lower, x, 0.0)) - p,
+        q - upper)
+    # residual / x_pdf is about the relative error of x, whereas residual * x
+    # can underflow.
+    f_over_df = residual / jnp.where(x_pdf > 0.0, x_pdf, 1.0) * x
+    d2f_over_df = (a_r - 1.0) / x_pos - 1.0
+    # Fall back to a Newton step when the Halley correction is unusable. Mask
+    # the factors rather than the product: one can be 0 where the other is
+    # infinite (e.g. on GPU, where subnormals are flushed to zero), and
+    # 0 * inf would create a NaN even where it is not selected.
+    use_halley = jnp.isfinite(f_over_df) & jnp.isfinite(d2f_over_df)
+    denom = (1.0 - 0.5 * jnp.where(use_halley, f_over_df, 0.0)
+             * jnp.where(use_halley, d2f_over_df, 0.0))
+    use_halley &= denom > 0.0
+    step = f_over_df / jnp.where(use_halley, denom, 1.0)
+    x_new = x - step
+    x_new = jnp.where(x_new > 0.0, x_new, 0.5 * x)  # Never step past zero.
+    return jnp.where(is_positive & (x_pdf > 0.0) & jnp.isfinite(x_new),
+                     x_new, x)
+
+  # Two steps from the initial guess already reach the accuracy of gammainc
+  # itself in float32 and float64 for a in [1e-3, 1e4]; the third is a margin.
+  x = lax.fori_loop(0, 3, halley_step, jnp.where(refine, x0, 1.0))
+  x = jnp.where(refine, x, x0)
+
+  x = jnp.where(is_lower_edge, 0.0, x)
+  x = jnp.where(is_upper_edge, np.inf, x)
+  # Like jnp.where(is_nan, np.nan, x), but without a NaN constant, so that
+  # with jit disabled, debug_nans only raises for inputs with a NaN result.
+  inf_if_nan = jnp.where(is_nan, np.inf, 0.0)
+  return jnp.where(is_nan, inf_if_nan - inf_if_nan, x)
+
+
+@partial(_gammaincinv.defjvp, symbolic_zeros=True)
+def _gammaincinv_jvp(complement, primals, tangents):
+  (a, y), (a_dot, y_dot) = primals, tangents
+  x = _gammaincinv(a, y, complement)
+  x_dot = jnp.zeros_like(x)
+  if type(y_dot) is not custom_derivatives.SymbolicZero:
+    dx_dy = _gammaincinv_grad_y(a, y, x, complement)
+    x_dot = x_dot + (-dx_dy if complement else dx_dy) * y_dot
+  if type(a_dot) is not custom_derivatives.SymbolicZero:
+    x_dot = x_dot + _gammaincinv_grad_a(a, y, x, complement) * a_dot
+  return x, x_dot
+
+
+# Implicit differentiation of gammainc(a, x) = y (or gammaincc(a, x) = y):
+#   dx/dy = 1 / d/dx gammainc(a, x) = Gamma(a) x^(1 - a) e^x
+#           (negated for gammainccinv),
+#   dx/da = -(d/da gammainc(a, x)) / (d/dx gammainc(a, x)).
+#
+# For large a (a >= 1e4 in float32, a >= 1e6 in float64), these are instead
+# the derivatives of the Wilson-Hilferty approximation x = a c^3 with
+# c = 1 - 1 / (9 a) + s / (3 sqrt(a)), where s is the standard normal quantile
+# of p:
+#   dx/dp = sqrt(2 pi a) c^2 exp(s^2 / 2),
+#   dx/da = c^2 (c + 1 / (3 a) - s / (2 sqrt(a))).
+# Their relative error is at most about 40 / a in the far tails (3e-2 / a at
+# the median). There, the terms of log(dx/dy) above cancel, x is not refined
+# (or, for huge a, does not resolve the distribution), and random_gamma_grad
+# needs O(sqrt(a)) iterations.
+
+def _gammaincinv_grad_masks(a: Array, x: Array) -> tuple[Array, Array]:
+  # x is constant (0 or inf) at the endpoints y in {0, 1}.
+  is_interior = (x > 0.0) & (x < np.inf)
+  is_large_a = a >= (1e4 if dtypes.finfo(a.dtype).bits <= 32 else 1e6)
+  return is_interior & ~is_large_a, is_interior & is_large_a
+
+
+def _gammaincinv_wilson_hilferty(a: Array, y: Array, complement: bool,
+                                 enabled: Array) -> tuple[Array, Array]:
+  # Wilson-Hilferty is only accurate for large a: the relative error of these
+  # derivatives is about 1e-4 at a = 1e4 and 1e-6 at a = 1e6, but 1e-2 at
+  # a = 10 and off by orders of magnitude in the tails for a <= 1. So it is
+  # only used where `enabled` (a >= 1e4 in float32, a >= 1e6 in float64, with
+  # 0 < x < inf). jnp.where evaluates both branches, so elsewhere a and y are
+  # replaced by placeholders: at y = 0 or 1 (s = -inf or inf) or a = 0
+  # (1 / a = inf) the expressions below would produce inf and NaN, which trip
+  # debug_nans even though they are not selected.
+  a = jnp.where(enabled, a, 1.0)
+  y = jnp.where(enabled, y, 0.5)
+  s = -ndtri(y) if complement else ndtri(y)
+  sqrt_a = lax.sqrt(a)
+  c = 1.0 - (1.0 / 9.0) / a + s / (3.0 * sqrt_a)
+  dx_dp = math.sqrt(2.0 * math.pi) * sqrt_a * c * c * lax.exp(0.5 * s * s)
+  dx_da = c * c * (c + (1.0 / 3.0) / a - s / (2.0 * sqrt_a))
+  return dx_dp, dx_da
+
+
+@partial(jit, static_argnums=(3,))
+def _gammaincinv_grad_y(a: Array, y: Array, x: Array,
+                        complement: bool) -> Array:
+  use_exact, use_wh = _gammaincinv_grad_masks(a, x)
+  a_exact = jnp.where(use_exact, a, 1.0)
+  x_exact = jnp.where(use_exact, x, 1.0)
+  dx_dy = lax.exp(x_exact - xlogy(a_exact - 1.0, x_exact)
+                  + lax.lgamma(a_exact))
+  dx_dy_wh, _ = _gammaincinv_wilson_hilferty(a, y, complement, use_wh)
+  dx_dy = jnp.where(use_wh, dx_dy_wh, dx_dy)
+  # At x = 0, dx/dy is inf for a > 1, 1 for a = 1 and 0 for a < 1.
+  dx_dy = jnp.where(x == 0.0,
+                    jnp.where(a > 1.0, np.inf, jnp.where(a == 1.0, 1.0, 0.0)),
+                    dx_dy)
+  dx_dy = jnp.where(isposinf(x), np.inf, dx_dy)
+  return jnp.where(jnp.isnan(x), x, dx_dy)
+
+
+@partial(jit, static_argnums=(3,))
+def _gammaincinv_grad_a(a: Array, y: Array, x: Array,
+                        complement: bool) -> Array:
+  # dx/da is the reparameterization gradient of gamma samples, which
+  # random_gamma_grad (used by jax.random.gamma) evaluates directly from the
+  # igamma series and continued fraction instead of as a quotient of
+  # igamma_grad_a and the density, both of which are tiny in the tails.
+  use_exact, use_wh = _gammaincinv_grad_masks(a, x)
+  dx_da = random_gamma_grad(jnp.where(use_exact, a, 1.0),
+                            jnp.where(use_exact, x, 1.0))
+  _, dx_da_wh = _gammaincinv_wilson_hilferty(a, y, complement, use_wh)
+  dx_da = jnp.where(use_exact, dx_da, jnp.where(use_wh, dx_da_wh, 0.0))
+  return jnp.where(jnp.isnan(x), x, dx_da)
 
 
 def erf(x: ArrayLike) -> Array:
