@@ -466,7 +466,6 @@ py_library_providing_imports_info(
         ":api_util",
         ":batching",
         ":callback",
-        ":cloud_tpu_init",
         ":config",
         ":core",
         ":custom_batching",
