@@ -15,10 +15,14 @@
 import collections
 import functools
 import logging
+import sys
 import textwrap
 import threading
 import time
 import unittest
+
+if sys.version_info >= (3, 14):
+  from string.templatelib import Interpolation, Template
 
 from absl.testing import absltest, parameterized
 import jax
@@ -1445,6 +1449,66 @@ class TwoCallPatternTest(jtu.JaxTestCase):
         "debug_print received unexpected arguments in the two-call form",
     ):
       jax.debug.print(None, 42, ordered=True)("hello {a}")
+
+
+  @unittest.skipIf(sys.version_info < (3, 14), "Test requires Python 3.14 or later")
+  def test_template_debug_print_jit(self):
+    def f(x):
+      # TODO: in Python 3.14, use template string syntax directly
+      # jax.debug.print(t"x: {x}")
+      jax.debug.print(Template("x: ", Interpolation(x, "x")))
+
+    with jtu.capture_stdout() as output:
+      f(42)
+      jax.effects_barrier()
+
+    self.assertEqual(output(), "x: 42\n")
+
+  @unittest.skipIf(sys.version_info < (3, 14), "Test requires Python 3.14 or later")
+  def test_template_debug_print_formatting(self):
+    def f(x):
+      # TODO: in Python 3.14, use template string syntax directly
+      # jax.debug.print(t"float: {x:.2f}, hex: {x:#x}, repr: {s!r}")
+      jax.debug.print(Template(
+          "float: ", Interpolation(x, "x", format_spec=".2f"),
+          ", hex: ", Interpolation(x, "x", format_spec="#x"),
+          ", repr: ", Interpolation("hello", "s", conversion="r"),
+      ))
+
+    with jtu.capture_stdout() as output:
+      f(42)
+      jax.effects_barrier()
+
+    self.assertEqual(
+        output(), "float: 42.00, hex: 0x2a, repr: 'hello'\n")
+
+  @unittest.skipIf(sys.version_info < (3, 14), "Test requires Python 3.14 or later")
+  def test_template_debug_print_two_call_form(self):
+    def f(x):
+      jax.debug.print(ordered=True)(
+          # TODO: in Python 3.14, use template string syntax directly
+          # t"hello {x}", x=x)
+          Template("x: ", Interpolation(x, "x")))
+
+    with jtu.capture_stdout() as output:
+      f(42)
+      jax.effects_barrier()
+
+    self.assertEqual(output(), "x: 42\n")
+
+  @unittest.skipIf(sys.version_info < (3, 14), "Test requires Python 3.14 or later")
+  def test_template_debug_print_rejects_extra_arguments(self):
+    x = 42
+    # TODO: in Python 3.14, use template string syntax directly
+    # template = t"x: {x}"
+    template = Template("x: ", Interpolation(x, "x"))
+
+    with self.assertRaisesRegex(TypeError, "unexpected arguments"):
+      jax.debug.print(template, 1)
+
+    with self.assertRaisesRegex(TypeError, "unexpected arguments"):
+      jax.debug.print(template, x=1)
+
 
 
 if not rich:
