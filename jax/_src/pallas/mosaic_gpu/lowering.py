@@ -651,68 +651,6 @@ class LoweringError(Exception):
   pass
 
 
-def _eval_index_map(
-    module_ctx: ModuleContext,
-    launch_ctx: mgpu.LaunchContext,
-    idx: Sequence[ir.Value],
-    block_mapping: pallas_core.BlockMapping,
-) -> Sequence[ir.Value]:
-  block_indices = lower_jaxpr_to_mosaic_gpu(
-      module_ctx, launch_ctx, block_mapping.index_map_jaxpr, idx
-  )
-  result = []
-  for i, b in zip(block_indices, block_mapping.block_shape):
-    match b:
-      case pallas_core.Squeezed() | pallas_core.Element():
-        result.append(i)
-      case pallas_core.Blocked():
-        result.append(arith_dialect.muli(_as_index(i), _as_index(b)))
-      case _:
-        raise ValueError(f"Unsupported block dim type: {b}")
-  return tuple(result)
-
-
-def _check_block_mappings(
-    block_mappings: Sequence[pallas_core.BlockMapping],
-    debug_info: jax_core.DebugInfo,
-) -> None:
-  def err_details(bm: pallas_core.BlockMapping) -> str:
-    return (
-        f"Block spec for {bm.origin} in pallas_call {debug_info.func_src_info}"
-        f" has block shape {bm.block_shape}, array shape"
-        f" {bm.array_aval.shape},"
-        # TODO(necula): add index_map source location info
-        f" and index_map {bm.index_map_jaxpr} in"
-        f" memory space {bm.transformed_block_aval.memory_space}."
-        " See details at"
-        " https://docs.jax.dev/en/latest/pallas/grid_blockspec.html#pallas-blockspec."
-    )
-
-  for bm in block_mappings:
-    if (
-        bm.transformed_block_aval.memory_space == gpu_core.GMEM
-        and not bm.has_trivial_window()
-    ):
-      raise NotImplementedError(
-          "Mosaic GPU lowering currently requires blocks in GMEM memory space "
-          "to have same block shape as the array shape "
-          "and a trivial index_map (returning all 0s).\n\n"
-          + err_details(bm)
-      )
-
-    if any(isinstance(b, pallas_core.Element) for b in bm.block_shape):
-      raise NotImplementedError(
-          "Only Blocked indexing mode is supported in Mosaic GPU lowering.\n\n"
-          + err_details(bm)
-      )
-
-    if bm.pipeline_mode is not None:
-      raise NotImplementedError(
-          "Pipeline mode is not supported in Mosaic GPU lowering.\n\n"
-          + err_details(bm)
-      )
-
-
 def lower_unpipelined_jaxpr_to_module(
     gpu_mesh: gpu_core.Mesh,
     jax_mesh: mesh_lib.Mesh | None,
@@ -1300,44 +1238,14 @@ def _lower_fun(
   return f_lowered
 
 
-@overload
 def _extract_aliased_ref(
-  ref: ir.Value,
-  ref_aval: state_types.AbstractRef,
-  transform_avals: Sequence[state_types.Transform],
-  transforms: Sequence[state_types.Transform],
-  lowering_semantics: mgpu.LoweringSemantics,
-) -> tuple[
-    ir.Value,
-    state_types.AbstractRef,
-    Sequence[state_types.Transform],
-    Sequence[state_types.Transform]
-]:
-  ...
-
-@overload
-def _extract_aliased_ref(
-  ref: tcgen05.TMEMRef,
-  ref_aval: state_types.AbstractRef,
-  transform_avals: Sequence[state_types.Transform],
-  transforms: Sequence[state_types.Transform],
-  lowering_semantics: mgpu.LoweringSemantics,
-) -> tuple[
-    tcgen05.TMEMRef,
-    state_types.AbstractRef,
-    Sequence[state_types.Transform],
-    Sequence[state_types.Transform]
-]:
-  ...
-
-def _extract_aliased_ref(
-    ref: ir.Value | tcgen05.TMEMRef,
+    ref: tcgen05.TMEMRef | ir.Value,
     ref_aval: state_types.AbstractRef,
     transform_avals: Sequence[state_types.Transform],
     transforms: Sequence[state_types.Transform],
     lowering_semantics: mgpu.LoweringSemantics,
 ) -> tuple[
-    ir.Value | tcgen05.TMEMRef,
+    tcgen05.TMEMRef | ir.Value,
     state_types.AbstractRef,
     Sequence[state_types.Transform],
     Sequence[state_types.Transform],
@@ -1698,7 +1606,7 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
 ) -> tuple[T, state_types.AbstractRef, Sequence[state_types.Transform]]:
   # Before we handle other transforms, we resolve any possible leading
   # aliasing transform.
-  ref, ref_aval, transform_avals, transforms = _extract_aliased_ref(  # pyrefly: ignore[bad-assignment,no-matching-overload]
+  ref, ref_aval, transform_avals, transforms = _extract_aliased_ref(  # pyrefly: ignore[bad-assignment]
       ref,
       ref_aval,
       transform_avals,
