@@ -2160,20 +2160,13 @@ def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
 # >
 
 # log_ndtr uses different functions over the ranges
-# (-infty, lower](lower, upper](upper, infty)
+# (-infty, lower](lower, 0](0, infty)
 # Lower bound values were chosen by examining where the support of ndtr
 # appears to be zero, relative to scipy's (which is always 64bit). They were
 # then made more conservative just to be safe. (Conservative means use the
 # expansion more than we probably need to.)
 _LOGNDTR_FLOAT64_LOWER = np.array(-20, np.float64)
 _LOGNDTR_FLOAT32_LOWER = np.array(-10, np.float32)
-
-# Upper bound values were chosen by examining for which values of 'x'
-# Log[cdf(x)] is 0, after which point we need to use the approximation
-# Log[cdf(x)] = Log[1 - cdf(-x)] approx -cdf(-x). We chose a value slightly
-# conservative, meaning we use the approximation earlier than needed.
-_LOGNDTR_FLOAT64_UPPER = np.array(8, np.float64)
-_LOGNDTR_FLOAT32_UPPER = np.array(5, np.float32)
 
 
 def ndtr(x: ArrayLike) -> Array:
@@ -2328,9 +2321,10 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   This function calculates :math:`\log(\mathrm{ndtr}(x))` by either calling
   :math:`\log(\mathrm{ndtr}(x))` or using an asymptotic series. Specifically:
 
-  - For `x > upper_segment`, use the approximation `-ndtr(-x)` based on
-    :math:`\log(1-x) \approx -x, x \ll 1`.
-  - For `lower_segment < x <= upper_segment`, use the existing `ndtr` technique
+  - For `x > 0`, use `log1p(-ndtr(-x))` based on
+    :math:`\mathrm{ndtr}(x) = 1 - \mathrm{ndtr}(-x)` to avoid loss of precision
+    when :math:`\mathrm{ndtr}(x)` is close to 1.
+  - For `lower_segment < x <= 0`, use the existing `ndtr` technique
     and take a log.
   - For `x <= lower_segment`, we use the series approximation of `erf` to compute
     the log CDF directly.
@@ -2338,18 +2332,11 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   The `lower_segment` is set based on the precision of the input:
 
   .. math::
-    \begin{align}
-    \mathit{lower\_segment} =&
+    \mathit{lower\_segment} =
       \ \begin{cases}
         -20 &  x.\mathrm{dtype}=\mathit{float64} \\
         -10 &  x.\mathrm{dtype}=\mathit{float32} \\
-        \end{cases} \\
-    \mathit{upper\_segment} =&
-      \ \begin{cases}
-        8&  x.\mathrm{dtype}=\mathit{float64} \\
-        5&  x.\mathrm{dtype}=\mathit{float32} \\
         \end{cases}
-    \end{align}
 
 
   When `x < lower_segment`, the `ndtr` asymptotic series approximation is:
@@ -2392,19 +2379,18 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
 
   if dtype == np.float64:
     lower_segment: np.ndarray = _LOGNDTR_FLOAT64_LOWER
-    upper_segment: np.ndarray = _LOGNDTR_FLOAT64_UPPER
   elif dtype == np.float32:
     lower_segment = _LOGNDTR_FLOAT32_LOWER
-    upper_segment = _LOGNDTR_FLOAT32_UPPER
   else:
     raise TypeError(f"x.dtype={np.dtype(dtype)} is not supported.")
 
   # The basic idea here was ported from:
   #   https://root.cern.ch/doc/v608/SpecFuncCephesInv_8cxx_source.html
   # We copy the main idea, with a few changes
-  # * For x >> 1, and X ~ Normal(0, 1),
-  #     Log[P[X < x]] = Log[1 - P[X < -x]] approx -P[X < -x],
-  #     which extends the range of validity of this function.
+  # * For x > 0, and X ~ Normal(0, 1),
+  #     Log[P[X < x]] = Log[1 - P[X < -x]] = log1p(-ndtr(-x)),
+  #     which avoids cancellation when P[X < x] is close to 1 and extends the
+  #     range of validity of this function.
   # * We use one fixed series_order for all of 'x', rather than adaptive.
   # * Our docstring properly reflects that this is an asymptotic series, not a
   #   Taylor series. We also provided a correct bound on the remainder.
@@ -2413,18 +2399,20 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   #   the gradient of a select involves the calculation 1*dy+0*(-inf)=nan
   #   regardless of whether dy is finite. Note that the minimum is a NOP if
   #   the branch is chosen.
-  x_arr_gt_upper_segment = lax.gt(x_arr, upper_segment)
-  ndtr_arg = jnp.where(x_arr_gt_upper_segment, -x_arr,
+  x_arr_gt_zero = lax.gt(x_arr, _lax_const(x_arr, 0))
+  ndtr_arg = jnp.where(x_arr_gt_zero, -x_arr,
                        lax.max(x_arr, lower_segment))
   # We combine both ndtr calls to minimize program size
   ndtr_res = _ndtr(ndtr_arg)
   return jnp.where(
-      x_arr_gt_upper_segment,
-      -ndtr_res,  # log(1-x) ~= -x, x << 1
-      jnp.where(lax.gt(x_arr, lower_segment),
-                       lax.log(ndtr_res),
-                       _log_ndtr_lower(lax.min(x_arr, lower_segment),
-                                       series_order)))
+      x_arr_gt_zero,
+      lax.log1p(lax.neg(ndtr_res)),
+      jnp.where(
+          lax.gt(x_arr, lower_segment),
+          lax.log(ndtr_res),
+          _log_ndtr_lower(lax.min(x_arr, lower_segment), series_order),
+      ),
+  )
 
 def _log_ndtr_jvp(series_order, primals, tangents):
   (x,), (t,) = primals, tangents
