@@ -947,5 +947,136 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertLessEqual(
         max_sweep_ulp, 3.6,
         f"Max ULP {max_sweep_ulp} at x={worst_sweep_x} exceeds 3.6")
+
+  @jtu.sample_product(
+      n=[-50, -25, -12, -5, -2, -1, 0, 1, 2, 5, 12, 25, 50],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_jn_orders_and_regimes(self, n, dtype):
+    x = np.array(
+        [-15.0, -2.5, 0.0, 0.2, 0.5, 1.5, 2.0, 3.5, 8.0, 10.0, 15.0, 24.0,
+         30.0, 60.0, 150.0],
+        dtype=dtype,
+    )
+    args_maker = lambda: [x]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 5e-4 if jtu.test_device_matches(["tpu"]) else 3e-5,
+        np.float64: 1e-12,
+    }
+    osp_jn = lambda z: osp_special.jn(n, z).astype(dtype)
+    lsp_jn = lambda z: lsp_special.jn(n, z)
+    self._CheckAgainstNumpy(osp_jn, lsp_jn, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_jn, args_maker, tol=tol)
+
+  @jtu.sample_product(
+      n=[-15, -3, -2, -1, 0, 1, 2, 3, 8, 15],
+      dtype=jtu.dtypes.complex,
+  )
+  def test_jn_complex(self, n, dtype):
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    zs = np.array(
+        [0.0 + 0.0j, 0.3 + 0.4j, -0.3 + 0.4j, 0.3 - 0.4j, -0.3 - 0.4j,
+         1.5 + 2.0j, -2.5 + 0.0j, 0.0 + 20.0j, 0.0 - 20.0j, 5.0 + 1.2j,
+         -5.0 - 1.2j, 15.0 + 3.0j, 25.0 + 2.0j, -25.0 + 2.0j],
+        dtype=dtype,
+    )
+    args_maker = lambda: [zs]
+    tol = {np.complex64: 5e-5, np.complex128: 1e-12}
+    osp_jn = lambda z: osp_special.jn(n, z.astype(np.complex128)).astype(dtype)
+    lsp_jn = lambda z: lsp_special.jn(n, z)
+    self._CheckAgainstNumpy(osp_jn, lsp_jn, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_jn, args_maker, tol=tol)
+
+    # Check complex special values and overflow behavior using the same shape
+    # so the compiled executable for (n, dtype) is reused.
+    big_y = 1000.0 if dtype == np.complex128 else 100.0
+    special_zs = np.array(
+        [
+            # 0..3: infinite real part with finite imaginary part -> 0 + 0j
+            complex(np.inf, 0.0),
+            complex(-np.inf, 0.0),
+            complex(np.inf, 1.0),
+            complex(-np.inf, -2.5),
+            # 4..8: infinite imaginary part or NaN -> nan + nan*j
+            complex(0.0, np.inf),
+            complex(1.0, -np.inf),
+            complex(np.inf, np.inf),
+            complex(np.nan, 1.0),
+            complex(1.0, np.nan),
+            # 9..10: large |Im(z)| overflow without inf - inf = NaN
+            complex(0.0, big_y),
+            complex(1.0, big_y),
+            # 11..13: origin
+            complex(0.0, 0.0),
+            complex(-0.0, 0.0),
+            complex(0.0, -0.0),
+        ],
+        dtype=dtype,
+    )
+    res_spec = np.asarray(lsp_special.jn(n, special_zs))
+    self.assertArraysEqual(res_spec[:4], np.zeros(4, dtype=dtype))
+    self.assertTrue(np.all(np.isnan(res_spec[4:9].real)))
+    self.assertTrue(np.all(np.isnan(res_spec[4:9].imag)))
+    if n % 2 == 0:
+      self.assertTrue(np.isinf(res_spec[9].real))
+      self.assertEqual(res_spec[9].imag, 0.0)
+    else:
+      self.assertEqual(res_spec[9].real, 0.0)
+      self.assertTrue(np.isinf(res_spec[9].imag))
+    self.assertFalse(np.isnan(res_spec[10].real))
+    self.assertFalse(np.isnan(res_spec[10].imag))
+    self.assertTrue(np.isinf(res_spec[10].real) or np.isinf(res_spec[10].imag))
+    expected_zero = np.ones(3, dtype=dtype) if n == 0 else np.zeros(3, dtype=dtype)
+    self.assertArraysEqual(res_spec[11:], expected_zero)
+
+  @jtu.sample_product(
+      n=[-2, -1, 0, 1, 2, 3],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_jn_grad(self, n, dtype):
+    xs = np.array([0.0, 0.5, 1.5, 2.5, 6.0, 12.0, 30.0], dtype=dtype)
+    args_maker = lambda: [xs]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 1e-4 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-13,
+    }
+    fn = lambda x: lsp_special.jn(n, x)
+    d1_ref = lambda x: (
+        0.5
+        * (
+            osp_special.jn(n - 1, x.astype(np.float64))
+            - osp_special.jn(n + 1, x.astype(np.float64))
+        )
+    ).astype(dtype)
+    d2_ref = lambda x: (
+        0.25
+        * (
+            osp_special.jn(n - 2, x.astype(np.float64))
+            - 2.0 * osp_special.jn(n, x.astype(np.float64))
+            + osp_special.jn(n + 2, x.astype(np.float64))
+        )
+    ).astype(dtype)
+    self._CheckAgainstNumpy(d1_ref, jax.vmap(jax.grad(fn)), args_maker, tol=tol)
+    self._CompileAndCheck(jax.vmap(jax.grad(fn)), args_maker, tol=tol)
+    self._CheckAgainstNumpy(
+        d2_ref, jax.vmap(jax.grad(jax.grad(fn))), args_maker, tol=tol
+    )
+    self._CompileAndCheck(
+        jax.vmap(jax.grad(jax.grad(fn))), args_maker, tol=tol
+    )
+
+  def test_jn_non_integer_n(self):
+    xs = jnp.arange(5.0)
+    with self.assertRaisesRegex(
+        TypeError, "'float' object cannot be interpreted as an integer"
+    ):
+      lsp_special.jn(0.5, xs)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
