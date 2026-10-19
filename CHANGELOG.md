@@ -23,6 +23,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.scipy.special.gammaincinv` and
     {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
     incomplete gamma functions, with gradients with respect to both arguments.
+* Bug fixes
+  * The persistent compilation cache key of a computation that spans processes
+    now hashes the topology fingerprints of all of them. A process's
+    fingerprint describes its own devices down to their NVLink links, so on a
+    host where only some GPUs share NVLink the processes of one computation
+    keyed it apart: some loaded the executable that process 0 had written while
+    the others compiled it and waited for ever for their peers' shares of its
+    sharded autotuning ({jax-issue}`#40940`).
 
 ## JAX 0.12.0 (October 19, 2026)
 

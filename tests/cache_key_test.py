@@ -16,6 +16,7 @@ import hashlib
 import os
 import re
 import sys
+import threading
 import unittest
 from typing import cast as type_cast
 
@@ -31,6 +32,7 @@ from jax._src import compiler
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src.lib import _jax
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.mesh import Mesh
@@ -40,6 +42,34 @@ from jax._src.custom_partitioning import custom_partitioning
 
 
 config.parse_flags_with_absl()
+
+
+class _FakeDistributedClient:
+  """The key-value store of a distributed runtime client, shared by the
+  processes a test runs as threads, counting the calls it answers."""
+
+  def __init__(self):
+    self._values: dict[str, str] = {}
+    self._changed = threading.Condition()
+    self.sets = 0
+    self.gets = 0
+
+  def key_value_set(self, key: str, value: str,
+                    allow_overwrite: bool = False) -> None:
+    with self._changed:
+      if key in self._values and not allow_overwrite:
+        raise ValueError(f"{key} is already set")
+      self._values[key] = value
+      self.sets += 1
+      self._changed.notify_all()
+
+  def blocking_key_value_get(self, key: str, timeout_in_ms: int) -> str:
+    with self._changed:
+      if not self._changed.wait_for(lambda: key in self._values,
+                                    timeout_in_ms / 1000):
+        raise TimeoutError(key)
+      self.gets += 1
+      return self._values[key]
 
 
 class CacheKeyTest(jtu.JaxTestCase):
@@ -88,6 +118,85 @@ class CacheKeyTest(jtu.JaxTestCase):
     acc_hash2 = self.get_hashed_value(
         cache_key._hash_accelerator_config, devices)
     self.assertEqual(acc_hash1, acc_hash2)
+
+  def test_processes_of_a_computation_read_one_set_of_fingerprints(self):
+    # Two processes whose topologies fingerprint apart, as GPUs with and
+    # without NVLink do on one host, each publish their own fingerprint and
+    # accelerators and read both, so they decide on one key for a
+    # computation they share.
+    client = _FakeDistributedClient()
+    read = {}
+
+    def process(process_id, fingerprint):
+      fingerprints = cache_key._TopologyFingerprints(
+          client, process_id, timeout_ms=60_000)
+      read[process_id] = fingerprints.of(
+          [0, 1], (fingerprint, "gpu cuda 12090: RTX 3090 8.6 82"))
+
+    threads = [threading.Thread(target=process, args=arguments)
+               for arguments in ((0, 7), (1, 11))]
+    for thread in threads:
+      thread.start()
+    for thread in threads:
+      thread.join()
+    pool = {0: (7, "gpu cuda 12090: RTX 3090 8.6 82"),
+            1: (11, "gpu cuda 12090: RTX 3090 8.6 82")}
+    self.assertEqual(read, {0: pool, 1: pool})
+
+  def test_a_process_publishes_once_and_reads_each_peer_once(self):
+    # The exchange costs a run one publish and one read per peer, however
+    # many computations it compiles and whichever processes they span.
+    client = _FakeDistributedClient()
+    for process_id in (1, 2, 3):
+      client.key_value_set(cache_key._fingerprint_key(process_id),
+                           f"{process_id} cpu")
+    fingerprints = cache_key._TopologyFingerprints(client, 0, timeout_ms=1)
+    for process_ids in ([0, 1], [0, 1, 2, 3], [0, 2], [0, 1, 2, 3]):
+      fingerprints.of(process_ids, (0, "cpu"))
+    self.assertEqual((client.sets, client.gets), (3 + 1, 3))
+
+  def test_processes_linked_differently_share_one_key(self):
+    # The same accelerators, fingerprinted apart by their links: every
+    # process hashes the same sorted set, whichever process it is.
+    self.assertEqual(
+        cache_key._shared_fingerprints({0: (11, "gpu a"), 1: (7, "gpu a")}),
+        [7, 11])
+    self.assertEqual(
+        cache_key._shared_fingerprints({1: (7, "gpu a"), 0: (11, "gpu a")}),
+        [7, 11])
+
+  def test_processes_that_fingerprint_alike_keep_their_key(self):
+    # One fingerprint in the set: the key hashes its eight bytes, as a
+    # single process's does, so a pool of like processes (a TPU slice, a
+    # cluster of like GPU hosts) keeps the key it had.
+    self.assertEqual(
+        cache_key._shared_fingerprints({0: (7, "gpu a"), 1: (7, "gpu a"),
+                                        2: (7, "gpu a")}),
+        [7])
+
+  def test_processes_with_different_accelerators_share_no_key(self):
+    # Different GPU architectures, or runtimes, must not share an
+    # executable: the computation gets no key, which callers of the key
+    # take as compiling without the cache, and the error names each group.
+    with self.assertRaisesRegex(
+        _jax.JaxRuntimeError,
+        r"processes \[0, 2\]: gpu cuda 12090: RTX 3090 8.6 82; "
+        r"processes \[1\]: gpu cuda 12090: RTX 4080 8.9 76"):
+      cache_key._shared_fingerprints({
+          0: (7, "gpu cuda 12090: RTX 3090 8.6 82"),
+          1: (9, "gpu cuda 12090: RTX 4080 8.9 76"),
+          2: (8, "gpu cuda 12090: RTX 3090 8.6 82")})
+
+  def test_a_process_names_its_platform_and_devices(self):
+    backend = xla_bridge.get_backend()
+    accelerators = cache_key._accelerators(backend)
+    self.assertStartsWith(accelerators, backend.platform)
+    self.assertIn(jax.local_devices()[0].device_kind, accelerators)
+    self.assertNotIn("\n", accelerators)
+    if jtu.test_device_matches(["cuda"]):
+      self.assertIn(f" {jax.local_devices()[0].compute_capability} ",
+                    accelerators)
+      self.assertIn(" cudnn ", accelerators)
 
   def test_hash_platform(self):
     hash1 = self.get_hashed_value(
