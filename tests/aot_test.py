@@ -516,6 +516,31 @@ class JaxAotTest(jtu.JaxTestCase):
     self.assertIsInstance(version_bytes, bytes)
     self.assertNotEmpty(version_bytes)
 
+  @jtu.run_on_devices('tpu')
+  def test_tpu_aot_memory_analysis_temp_size(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41166
+    if not jtu.is_libtpu_at_least('0.0.51'):
+      self.skipTest('Requires libtpu >= 0.0.51')
+    topo = topologies.get_topology_desc(
+        platform='tpu',
+        topology_name='v6e:2x2',
+        chips_per_host_bounds=(2, 2, 1),
+        num_slices=1,
+    )
+    sharding = jax.sharding.NamedSharding(
+        jax.sharding.Mesh(topo.devices, ('x',)), P('x')
+    )
+    compiled = (
+        jax.jit(lambda a: jnp.tanh(a @ a.T).sum(), in_shardings=sharding)
+        .lower(jax.ShapeDtypeStruct((128, 128), jnp.float32, sharding=sharding))
+        .compile()
+    )
+    stats = compiled.memory_analysis()
+    self.assertIsNotNone(stats)
+    self.assertGreater(stats.temp_size_in_bytes, 0)
+    self.assertLessEqual(stats.temp_size_in_bytes, stats.total_allocation_bytes)
+    self.assertEqual(stats.temp_size_in_bytes % (16 * 1024), 0)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
