@@ -143,7 +143,6 @@ cc_library(
     srcs = ["serde.cc"],
     hdrs = ["serde.h"],
     deps = [
-        "//jaxlib/mosaic:pass_boilerplate",
         "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AsmParser",
@@ -154,6 +153,7 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:VectorDialect",
+        "@xla//xla/mosaic:pass_boilerplate",
         "@xla//xla/mosaic:serde",
     ],
 )
@@ -174,7 +174,6 @@ cc_library(
     ],
     deps = [
         ":dump",
-        "//jaxlib/mosaic:pass_boilerplate",
         "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
@@ -199,6 +198,7 @@ cc_library(
         "@llvm-project//mlir:TargetLLVM",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:VectorDialect",
+        "@xla//xla/mosaic:pass_boilerplate",
         "@xla//xla/service/gpu/llvm_gpu_backend:load_ir_module",
         "@xla//xla/stream_executor/cuda:compilation_options",
         "@xla//xla/stream_executor/cuda:compilation_provider",
