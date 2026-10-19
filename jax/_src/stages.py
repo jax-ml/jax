@@ -39,6 +39,7 @@ from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from jax._src import config
 from jax._src import core
+from jax._src import literals
 from jax._src import sharding as sharding_lib
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -463,6 +464,8 @@ class Traced(Stage):
   def __call__(self, *args, **kwargs):
     args_flat = tree_util.tree_leaves_checked(self.in_tree, (args, kwargs))
     out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=self.jaxpr)
+    out_flat = [type(x).__base__(x) if type(x) in literals.typed_scalar_types  # pyrefly: ignore[not-callable]
+                else x for x in out_flat]
     return tree_unflatten(self.out_tree, out_flat)
 
   def closure_convert(self):
