@@ -30,6 +30,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jaxlib_extension_version
+from jax._src.scipy import special as special_internal
 from jax.scipy import special as lsp_special
 
 jax.config.parse_flags_with_absl()
@@ -817,18 +818,66 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_special.betainc, lsp_special.betainc, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.betainc, args_maker, rtol=rtol)
 
-  def testHyp2f1SpecialCases(self):
-    dtype = dtypes.default_float_dtype()
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp2f1SpecialCases(self, dtype):
+    eps = np.finfo(dtype).eps
 
-    a_samples = np.array([0, 1, 1, 1, 1, 5, 5, 0.245, 0.45, 0.45, 2, 0.4, 0.32, 4, 4], dtype=dtype)
-    b_samples = np.array([1, 0, 1, 1, 1, 1, 1, 3, 0.7, 0.7, 1, 0.7, 0.76, 2, 3], dtype=dtype)
-    c_samples = np.array([1, 1, 0, 1, -1, 3, 3, 3, 0.45, 0.45, 5, 0.3, 0.11, 7, 7], dtype=dtype)
-    x_samples = np.array([1, 1, 1, 0, 1, 0.5, 1, 0.35, 0.35, 1.5, 1, 0.4, 0.95, 0.95, 0.95], dtype=dtype)
+    a_samples = np.array([
+        0, 1, 1, 1, 1, 5, 5, 0.245, 0.45, 0.45, 2, 0.4, 0.32, 4, 4,
+        0.3, 1.5, 1.2, 2.5, 0.5, 2.1, 1e-4, 0.46,
+    ], dtype=dtype)
+    b_samples = np.array([
+        1, 0, 1, 1, 1, 1, 1, 3, 0.7, 0.7, 1, 0.7, 0.76, 2, 3,
+        0.7, 2.5, 1.8, 3.5, 22.5, 3.2, 0.9999, 0.54,
+    ], dtype=dtype)
+    c_samples = np.array([
+        1, 1, 0, 1, -1, 3, 3, 3, 0.45, 0.45, 5, 0.3, 0.11, 7, 7,
+        3.0, 7.0, 1.0, 3.0, 2.0, 2.1 + 3.2 + 3.0 + 10 * eps, 1.0, 1.0,
+    ], dtype=dtype)
+    x_samples = np.array([
+        1, 1, 1, 0, 1, 0.5, 1, 0.35, 0.35, 1.5, 1, 0.4, 0.95, 0.95, 0.95,
+        0.97, 0.95, 0.93, 0.95, 0.91, 0.95, 0.95, 0.95,
+    ], dtype=dtype)
 
     args_maker = lambda: (a_samples, b_samples, c_samples, x_samples)
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 5e-5
     self._CheckAgainstNumpy(osp_special.hyp2f1, lsp_special.hyp2f1, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.hyp2f1, args_maker, rtol=rtol)
+
+    with jax.debug_nans(True), jax.debug_infs(True):
+      a_dbg = jnp.array([4.0, 2.0, 1e-4], dtype=dtype)
+      b_dbg = jnp.array([2.0, 1.0, 0.9999], dtype=dtype)
+      c_dbg = jnp.array([7.0, 5.0, 1.0], dtype=dtype)
+      x_dbg = jnp.array([0.95, 1.0, 0.95], dtype=dtype)
+      out = lsp_special.hyp2f1(a_dbg, b_dbg, c_dbg, x_dbg)
+      self.assertAllClose(
+          out,
+          osp_special.hyp2f1(
+              np.array([4.0, 2.0, 1e-4], dtype=dtype),
+              np.array([2.0, 1.0, 0.9999], dtype=dtype),
+              np.array([7.0, 5.0, 1.0], dtype=dtype),
+              np.array([0.95, 1.0, 0.95], dtype=dtype),
+          ),
+          rtol=rtol,
+      )
+      # Run _hyp2f1_digamma_transform eagerly to check loop carries for NaN/Inf.
+      log_gamma_ratio = (
+          jax.lax.lgamma(c_dbg) - jax.lax.lgamma(a_dbg) - jax.lax.lgamma(b_dbg)
+      )
+      sgn_gamma_ratio = jnp.ones_like(c_dbg)
+      jax.vmap(special_internal._hyp2f1_digamma_transform)(
+          a_dbg, b_dbg, c_dbg, x_dbg, log_gamma_ratio, sgn_gamma_ratio
+      )
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp2f1ParameterDerivatives(self, dtype):
+    a = np.array([0.15, 5.0], dtype=dtype)
+    b = np.array([0.25, 3.0], dtype=dtype)
+    c = np.array([0.8, 8.0], dtype=dtype)
+    x = np.array([0.4, 0.25], dtype=dtype)
+    tol = 1e-2 if jtu.test_device_matches(["tpu"]) else 1e-3
+    jtu.check_grads(lsp_special.hyp2f1, (a, b, c, x), order=1,
+                    atol=tol, rtol=tol, eps=1e-3)
 
   def testSiciEdgeCases(self):
     dtype = jnp.zeros(0).dtype
