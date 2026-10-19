@@ -919,7 +919,7 @@ def lower_jaxpr_to_module(
   # optionally the profiler buffer.
   module, new_out_shapes, _, launch_ctx = mgpu_core._lower_as_gpu_kernel(
       body,
-      grid=cuda_grid,
+      grid=cast(tuple[int, int, int], cuda_grid),
       cluster=cast(tuple[int, int, int], cluster),
       block=block,
       in_shapes=tuple(_to_physical_shape(s) for s in (*in_shapes, *scoped_semaphores_shape)),

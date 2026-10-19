@@ -5056,7 +5056,7 @@ def _slice_lowering_rule(
   out_type = ctx.aval_to_ir_type(aval_out)
   if strides is None:
     strides = [1] * len(start_indices)
-  sizes = np.array(limit_indices) - np.array(start_indices)
+  sizes = [l - s for l, s in zip(limit_indices, start_indices)]
   return vector.extract_strided_slice(
       out_type, x, start_indices, sizes, strides
   )
