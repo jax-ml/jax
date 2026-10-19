@@ -1836,6 +1836,103 @@ class InterpretTest(jtu.JaxTestCase):
     y = kernel(jnp.array([num_barriers - 1], jnp.int32), x)
     np.testing.assert_array_equal(y, np.asarray(x) + 1.0)
 
+  def test_run_state_with_accumulator_and_closed_over_refs(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=(
+            jax.ShapeDtypeStruct((64, 64), jnp.float32),
+            jax.ShapeDtypeStruct((64, 64), jnp.float32),
+        ),
+        scratch_types=dict(
+            a_smem=plgpu.SMEM((64, 64), jnp.float16),
+            b_smem=plgpu.SMEM((64, 64), jnp.float16),
+            flag=plgpu.SMEM((1,), jnp.float32),
+        ),
+        interpret=InterpretParams(detect_races=True),
+    )
+    def kernel(
+        a_ref, b_ref, c_ref, acc_out_ref, l_out_ref, a_smem, b_smem, flag
+    ):
+      a_smem[...] = a_ref[...]
+      b_smem[...] = b_ref[...]
+      flag[...] = jnp.full((1,), 5.0, jnp.float32)
+      bias = jnp.full((64, 64), 0.5, jnp.float32)
+
+      def body(refs):
+        acc_ref, l_ref = refs
+        plgpu.wgmma(acc_ref, a_smem, b_smem)
+        plgpu.wgmma_wait(0)
+        l_ref[...] += flag[0] + bias
+
+      acc = plgpu.ACC.init(c_ref[...])
+      acc, l = pl.run_state(body)((acc, jnp.full((64, 64), 2.0, jnp.float32)))
+      acc_out_ref[...] = acc
+      l_out_ref[...] = l
+
+    a = (jnp.arange(64 * 64, dtype=jnp.float16).reshape(64, 64) % 7) - 3
+    b = (jnp.arange(64 * 64, dtype=jnp.float16).reshape(64, 64) % 5) - 2
+    c = jnp.arange(64 * 64, dtype=jnp.float32).reshape(64, 64) / 64
+    acc, l = kernel(a, b, c)
+    np.testing.assert_allclose(
+        acc, np.asarray(a, np.float32) @ np.asarray(b, np.float32) + c,
+        atol=1e-3,
+    )
+    np.testing.assert_allclose(l, np.full((64, 64), 7.5), atol=1e-3)
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+
+  def test_run_state_with_closed_over_accumulator(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((64, 64), jnp.float32),
+        scratch_types=dict(
+            a_smem=plgpu.SMEM((64, 64), jnp.float16),
+            b_smem=plgpu.SMEM((64, 64), jnp.float16),
+        ),
+        interpret=InterpretParams(detect_races=True),
+    )
+    def kernel(a_ref, b_ref, o_ref, a_smem, b_smem):
+      a_smem[...] = a_ref[...]
+      b_smem[...] = b_ref[...]
+
+      def scoped(acc_ref):
+        def body(l_ref):
+          plgpu.wgmma(acc_ref, a_smem, b_smem)
+          plgpu.wgmma_wait(0)
+          l_ref[...] += 1.0
+
+        l = pl.run_state(body)(jnp.zeros((64, 64), jnp.float32))
+        return acc_ref[...] + l
+
+      o_ref[...] = pl.run_scoped(scoped, plgpu.ACC((64, 64), jnp.float32))
+
+    a = (jnp.arange(64 * 64, dtype=jnp.float16).reshape(64, 64) % 7) - 3
+    b = (jnp.arange(64 * 64, dtype=jnp.float16).reshape(64, 64) % 5) - 2
+    expected = np.asarray(a, np.float32) @ np.asarray(b, np.float32) + 1.0
+    np.testing.assert_allclose(kernel(a, b), expected, atol=1e-3)
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+
+  def test_wgmma_with_register_a_operand(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((64, 64), jnp.float32),
+        scratch_types=dict(b_smem=plgpu.SMEM((64, 64), jnp.float16)),
+        interpret=InterpretParams(),
+    )
+    def kernel(a_ref, b_ref, o_ref, b_smem):
+      b_smem[...] = b_ref[...]
+      a = a_ref[...]
+
+      def body(acc_ref):
+        plgpu.wgmma(acc_ref, a, b_smem)
+        return acc_ref[...]
+
+      o_ref[...] = pl.run_scoped(body, plgpu.ACC((64, 64), jnp.float32))
+
+    a = (jnp.arange(64 * 64, dtype=jnp.float16).reshape(64, 64) % 7) - 3
+    b = (jnp.arange(64 * 64, dtype=jnp.float16).reshape(64, 64) % 5) - 2
+    expected = np.asarray(a, np.float32) @ np.asarray(b, np.float32)
+    np.testing.assert_allclose(kernel(a, b), expected, atol=1e-3)
+
   def test_not_waiting_for_all_barrier_completions_in_thread_raises(self):
     @functools.partial(
         plgpu.kernel,
