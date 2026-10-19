@@ -18,19 +18,20 @@ Approach overview:
 - Arguments x >= 0.5 are evaluated directly on the positive half-line:
   1. x in [0.5, 4]: evaluated via factored minimax polynomials (x - 1)(x - 2)P(d)
      that vanish identically at the roots x = 1 and x = 2, split across [0.5, 1.5]
-     (center d = x - 1.0) and (1.5, 4] (center d = x - 2.75). 12-bit mantissa
-     truncation (`& -0x1000`) splits the factors and polynomial value into
-     high/low parts so the product retains precision under reflection.
+     (center d = x - 1.0) and (1.5, 4] (center d = x - 2.75). In pure float32,
+     12-bit mantissa truncation (`& -0x1000`) splits the factors and polynomial
+     value into high/low parts so the product retains precision under reflection.
   2. x > 4: evaluated via the asymptotic Stirling series
-     lgamma(x) = (x - 0.5)(ln(x) - 1) + (0.5 ln(2 pi) - 0.5) + (1/x) S(1/x^2),
-     using 12-bit splits on (x - 0.5) and (ln(x) - 1) so the leading product
-     p_hi = b_hi * (h_x - 1) is exact in float32.
+     lgamma(x) = (x - 0.5)(ln(x) - 1) + (0.5 ln(2 pi) - 0.5) + (1/x) S(1/x^2).
+     In pure float32, 12-bit splits on (x - 0.5) and (ln(x) - 1) keep the
+     leading product p_hi = b_hi * (h_x - 1) exact.
 - Arguments x < 0.5 (including (0, 0.5) and all negative inputs)
   reflect to y = 1 - x > 0.5 via two complementary paths:
   1. Euler reflection: evaluates
      lgamma(x) = -(ln|delta| + lgamma(1 - x) - ln(pi delta / sin(pi delta))),
-     where n = round(x), delta = x - n in [-0.5, 0.5], y = (1 - n) - delta, and
-     a first-order Taylor correction psi(y) * y_lo compensates for rounding in y.
+     where n = round(x), delta = x - n in [-0.5, 0.5], and y = (1 - n) - delta.
+     In pure float32, a first-order Taylor correction psi(y) * y_lo compensates
+     for rounding in y.
   2. Root windows near negative zeros: near zeros of lgamma(x) on (-10, -2),
      where Euler reflection suffers catastrophic cancellation, each root
      x_root = -k + r (k in {2, ..., 9}, side in {0, 1}) lies close to the
@@ -42,10 +43,20 @@ Approach overview:
      into a rapidly converging odd power series. Each window is evaluated as
      w * P(w) using a 14 x 16 lookup table of degree-10 ULP-weighted minimax
      polynomials.
+
+Two intermediate-precision modes are supported:
+- Pure float32 (`use_f64_for_f32=False`, used on GPU and TPU) uses float32
+  polynomials, 12-bit mantissa splits, `(hi, lo)` pairs, the `psi(y) * y_lo`
+  reflection correction, one residual refinement step on `w`, and `_NEG_TABLE`.
+- Float64 intermediates (`use_f64_for_f32=True`, used on CPU) use higher-degree
+  float64 minimax polynomials (~49-52 bits, enough to absorb up to 23.3 bits of
+  cancellation near negative roots in float32) so Euler's reflection formula is
+  accurate across all negative inputs without `_NEG_TABLE`.
 """
 
 from __future__ import annotations
 
+from jax._src import config
 from jax._src.api import jit
 from jax._src.lax import lax
 from jax._src.lax import slicing
@@ -62,6 +73,8 @@ _LN2_LO = 3.19461832987e-05
 # Constant term 0.5 * ln(2 * pi) - 0.5 in Stirling's expansion when the leading
 # product is written as (x - 0.5) * (ln(x) - 1) = (x - 0.5) * ln(x) - x + 0.5.
 _HALF_LN_2PI_MINUS_HALF = 0.4189385175704956
+_HALF_LN_2PI_MINUS_HALF_F64 = 0.41893853320467274
+_LN2_F64 = 0.6931471805599453
 
 
 def _split12(x):
@@ -82,6 +95,17 @@ _LOG_Q_HI = [
     -0.16668006777763367, 0.14287430047988892, -0.12451331317424774,
     0.11021918058395386, -0.10625848919153214, 0.10618706792593002,
     -0.06354549527168274,
+]
+
+# Degree-16 float64 minimax polynomial for (ln(1 + f) - (f - 0.5 f^2)) / f^3 on
+# f = m - 1 in [sqrt(2)/2 - 1, sqrt(2) - 1] (~51.4-bit relative accuracy).
+_LOG_Q_F64 = [
+    0.3333333333333261, -0.25000000000345535, 0.20000000000697915,
+    -0.16666666594619337, 0.1428571412724866, -0.12500005436363315,
+    0.11111125324064747, -0.09999801375585593, 0.09090283898105432,
+    -0.08337109600190651, 0.07707064490152053, -0.07108586385305052,
+    0.06478328342758392, -0.06310141921529044, 0.07058883671019928,
+    -0.06663032331509593, 0.030711639087442108,
 ]
 
 
@@ -108,6 +132,24 @@ def _log_f32(x):
   log_hi = h_d + l_d
   log_lo = (h_d - log_hi) + l_d
   return log_hi, log_lo
+
+
+@jit
+def _log_f32_with_f64(x):
+  """Computes ln(x) in float64 using a float64 minimax polynomial."""
+  bits = lax.bitcast_convert_type(x, np.int32)
+  exp_off = lax.shift_right_arithmetic(
+      bits - _SQRT2_OVER_2_BITS, lax.full_like(bits, 23)
+  )
+  k = lax.convert_element_type(exp_off, np.float64)
+  mant_bits = bits - lax.shift_left(exp_off, lax.full_like(bits, 23))
+  m = lax.bitcast_convert_type(mant_bits, np.float32)
+
+  f_d = lax.convert_element_type(m - 1.0, np.float64)
+  q = lax.polynomial(f_d, _LOG_Q_F64, unroll=len(_LOG_Q_F64))
+  f2_d = f_d * f_d
+  poly_d = f_d - 0.5 * f2_d + (f2_d * f_d) * q
+  return k * _LN2_F64 + poly_d
 
 
 # Degree-12 Sollya fpminimax polynomials for lgamma(x) / ((x - 1)(x - 2)) in
@@ -143,6 +185,50 @@ _SINC_HI = [
     -1.644934058189392, -0.5411607623100281, -0.3391686975955963,
     -0.24974527955055237, -0.21417342126369476, -0.09055595844984055,
     -0.33258557319641113,
+]
+
+# Degree-23 float64 Sollya fpminimax polynomials for lgamma(x) / ((x - 1)(x - 2))
+# in ascending powers of d = x - center, fitted for float32 lgamma reflection:
+# - _POS_05_15_F64: x in [0.5, 1.5] around center = 1.0 (~49.5-bit rel accuracy).
+# - _POS_15_4_F64: x in [1.5, 4.0] around center = 2.75 (~52.1-bit rel accuracy).
+_POS_05_15_F64 = [
+    0.5772156649015322, -0.2452513685225703, 0.1554342658647344,
+    -0.11514654256790671, 0.09223900831635617, -0.07731816804434827,
+    0.06673173918441967, -0.05877796840964052, 0.05255590945458782,
+    -0.04754229079873885, 0.04342012573655991, -0.039959068720920164,
+    0.03685996405243268, -0.03424304179664488, 0.033410878458216185,
+    -0.03193612275579251, 0.021414012659978037, -0.017813063448699765,
+    0.053308287436331876, -0.05757720110254376, -0.04170677971103274,
+    0.05084438630620622, 0.09857378154450186, -0.1022005082529236,
+]
+
+_POS_15_4_F64 = [
+    0.36206831764947583, -0.06572934792248143, 0.016030995033300615,
+    -0.004419488380429822, 0.0013029063335328588, -0.0004005636052229375,
+    0.0001266990626986635, -4.0898695804588575e-05, 1.3403831584135535e-05,
+    -4.4444160863060155e-6, 1.4873885491971618e-6, -5.014860559989504e-7,
+    1.6994335939762067e-7, -5.7915617286448015e-8, 2.0090005970320186e-8,
+    -6.9370808324906276e-9, 2.1333154316934285e-9, -7.153446240703879e-10,
+    4.207448247253875e-10, -1.5630927610098696e-10, -1.8647641985504433e-11,
+    9.089155242178041e-12, 1.459639735381569e-11, -5.396724340229409e-12,
+]
+
+# Degree-6 float64 minimax coefficients in ascending powers of 1/x^2 for the
+# Stirling remainder S(1/x^2) on x >= 4 (~47.7-bit absolute accuracy in S).
+_STIRLING_F64 = [
+    0.08333333333332908, -0.002777777770848688, 0.0007936489447267786,
+    -0.0005950513428842073, 0.0008325836509206451, -0.0016760106456934216,
+    0.0028786348131155308,
+]
+
+# Degree-11 float64 minimax coefficients in ascending powers of delta^2 for
+# -ln(pi * delta / sin(pi * delta)) / delta^2 on |delta| <= 0.5 (~49.1-bit rel
+# accuracy).
+_SINC_F64 = [
+    -1.6449340668482237, -0.5411616168587046, -0.3391143534032649,
+    -0.25101938254889333, -0.20019726882272687, -0.16674427259742153,
+    -0.142353419429977, -0.1296848567043034, -0.08295902231943517,
+    -0.20914242809307546, 0.16492085267622705, -0.3875246085244428,
 ]
 
 # Negative-argument root lookup table of shape (14, 16) for zeros x_root = -k + r
@@ -303,6 +389,21 @@ def _lgamma_pos_small(x_small):
   return res_hi + res_lo, res_hi, res_lo
 
 
+def _lgamma_pos_small_with_f64(u):
+  """Evaluates lgamma(1 + u) on u in [-0.5, 3] in float64."""
+  in_15_4 = u > 0.5
+  u_d = lax.convert_element_type(u, np.float64)
+  d_d = u_d - lax.select(
+      in_15_4, lax.full_like(u_d, 1.75), lax.full_like(u_d, 0.0)
+  )
+  coeffs_f64 = [
+      lax.select(in_15_4, lax.full_like(d_d, c2), lax.full_like(d_d, c1))
+      for c1, c2 in zip(_POS_05_15_F64, _POS_15_4_F64)
+  ]
+  p_d = lax.polynomial(d_d, coeffs_f64, unroll=len(coeffs_f64))
+  return (u_d * (u_d - 1.0)) * p_d
+
+
 @jit
 def _lgamma_pos_large(x_gt4):
   """Evaluates the asymptotic Stirling series for x >= 4.
@@ -326,6 +427,21 @@ def _lgamma_pos_large(x_gt4):
   return p_hi, s_pos, s - 0.5 * inv_x
 
 
+def _lgamma_pos_large_with_f64(x_f32, x_d):
+  """Evaluates the asymptotic Stirling series for x >= 4 in float64."""
+  inv_x_0 = lax.convert_element_type(lax.reciprocal(x_f32), np.float64)
+  inv_x_d = inv_x_0 * (2.0 - x_d * inv_x_0)
+  du = (x_d - lax.convert_element_type(x_f32, np.float64)) * inv_x_d
+  # Since du = (x_d - x_f32) / x_d = 1 - x_f32 / x_d,
+  # ln(x_d) = ln(x_f32) - ln(1 - du) = ln(x_f32) + du * (1 + 0.5 * du + ...).
+  ln_x = _log_f32_with_f64(x_f32) + du * (1.0 + 0.5 * du)
+  sp_d = lax.polynomial(
+      inv_x_d * inv_x_d, _STIRLING_F64, unroll=len(_STIRLING_F64)
+  )
+  main_d = (x_d - 0.5) * (ln_x - 1.0)
+  return main_d + _HALF_LN_2PI_MINUS_HALF_F64 + inv_x_d * sp_d
+
+
 @jit
 def _lgamma_neg_reflection(delta, log_delta_hi, lg_pos_hi, lg_pos_lo, dy_corr):
   """Evaluates Euler's reflection formula -(ln|delta| + lgamma(1 - x) - ln(pi delta / sin(pi delta)))."""
@@ -336,13 +452,11 @@ def _lgamma_neg_reflection(delta, log_delta_hi, lg_pos_hi, lg_pos_lo, dy_corr):
   return -((log_delta_hi + lg_pos_hi) + (lg_pos_lo + (sinc_term + dy_corr)))
 
 
-@jit
 def _lgamma_neg_root(x_neg_safe, n):
   """Evaluates lgamma(x) near negative roots via rational root-window polynomials.
 
   The offset delta_root = x - n_root is mapped to the rational variable
-  w = (delta_root - r) / (delta_root + r) using one residual refinement step on
-  w. Returns (in_root_win, w * P(w)).
+  w = (delta_root - r) / (delta_root + r). Returns (in_root_win, w * P(w)).
   """
   # On (-3, -2), the two zeros of lgamma(x) lie at -2.748 and -2.457 (midpoint
   # -2.602), whereas round(x) switches from -2 to -3 at -2.5 (inside the root
@@ -382,8 +496,7 @@ def _lgamma_neg_root(x_neg_safe, n):
   )
 
 
-@jit
-def lgamma_impl(x):
+def _lgamma_impl_f32(x, *, use_f64=False):
   """Computes float32 lgamma(x) across all normal and special inputs."""
   x = lax.convert_element_type(x, np.float32)
   # Flush subnormals to zero (< finfo(float32).tiny) so non-FTZ backends
@@ -402,44 +515,78 @@ def lgamma_impl(x):
       lax.full_like(x, -0.5),
   )
   # Decompose x < 0.5 as x = n + delta with n = round(x) and delta in [-0.5, 0.5]
-  # (exact by Sterbenz's lemma). Form the reflected argument y = 1 - x =
-  # (1 - n) - delta as a Fast2Sum pair (y, y_lo) because (1 - n) can be much
-  # larger than |delta|, losing low bits of delta in y.
+  # (exact by Sterbenz's lemma).
   n = lax.round(x_neg_safe, lax.RoundingMethod.TO_NEAREST_EVEN)
   delta = x_neg_safe - n
   abs_delta = lax.abs(delta)
-  y = (1.0 - n) - delta
-  y_lo = ((1.0 - n) - y) - delta
 
-  # Both x >= 0.5 (at x) and x < 0.5 (via reflection at y = 1 - x > 0.5) evaluate
-  # lgamma at an argument >= 0.5. Clamp to _MAX_FINITE_ARG to prevent inf - inf
-  # NaNs in Stirling's series.
-  arg_pos = lax.select(is_pos, x_safe, y)
-  x_bounded = lax.min(arg_pos, lax.full_like(x, _MAX_FINITE_ARG))
+  if use_f64:
+    # Float64 minimax polynomials provide ~49-52 bits of precision, which is
+    # enough to absorb the worst-case 23.3 bits of cancellation near negative
+    # roots in float32 without 12-bit splits or the _NEG_TABLE lookup.
+    x_pos_bounded = lax.min(x_safe, lax.full_like(x, _MAX_FINITE_ARG))
+    u = lax.select(is_pos, x_pos_bounded - 1.0, -x_neg_safe)
+    x_bounded = lax.select(is_pos, x_pos_bounded, 1.0 - x_neg_safe)
+    x_bounded_d = lax.select(
+        is_pos,
+        lax.convert_element_type(x_pos_bounded, np.float64),
+        1.0 - lax.convert_element_type(x_neg_safe, np.float64),
+    )
+    lg_small_d = _lgamma_pos_small_with_f64(u)
+    lg_large_d = _lgamma_pos_large_with_f64(x_bounded, x_bounded_d)
+    lg_pos_d = lax.select(u <= 3.0, lg_small_d, lg_large_d)
 
-  # Compute ln|delta| for Euler's reflection formula on x < 0.5.
-  log_hi, log_lo = _log_f32(abs_delta)
+    log_delta_d = _log_f32_with_f64(abs_delta)
+    d_d = lax.convert_element_type(delta, np.float64)
+    d2_d = d_d * d_d
+    sinc_d = d2_d * lax.polynomial(d2_d, _SINC_F64, unroll=len(_SINC_F64))
+    refl = lax.convert_element_type(
+        -(log_delta_d + lg_pos_d + sinc_d), np.float32
+    )
+    res = lax.select(
+        is_pos, lax.convert_element_type(lg_pos_d, np.float32), refl
+    )
+    # At x = -1.5639554e-09 (0xb0d6f2ca), the exact value sits 0.19 float64
+    # ULPs above a float32 midpoint, causing float64 -> float32 double rounding.
+    res = lax.select(
+        x == -1.5639554096225083e-09, lax.full_like(x, 20.27604866027832), res
+    )
+  else:
+    # Form the reflected argument y = 1 - x = (1 - n) - delta as a Fast2Sum pair
+    # (y, y_lo) because (1 - n) can be much larger than |delta|, losing low bits
+    # of delta in y.
+    y = (1.0 - n) - delta
+    y_lo = ((1.0 - n) - y) - delta
 
-  # Evaluate lgamma on [0.5, 4] and [4, inf), keeping both the summed result
-  # lg_pos (for x >= 0.5) and the unsummed (lg_pos_hi, lg_pos_lo) pair so Euler
-  # reflection can cancel leading terms before adding low-order corrections.
-  lg_small, lg_small_hi, lg_small_lo = _lgamma_pos_small(x_bounded)
-  p_hi, s_pos, psi = _lgamma_pos_large(x_bounded)
-  in_le_four = x_bounded <= 4.0
-  lg_pos = lax.select(in_le_four, lg_small, p_hi + s_pos)
-  lg_pos_hi = lax.select(in_le_four, lg_small_hi, p_hi)
-  lg_pos_lo = lax.select(in_le_four, lg_small_lo, s_pos)
+    # Both x >= 0.5 (at x) and x < 0.5 (via reflection at y = 1 - x > 0.5)
+    # evaluate lgamma at an argument >= 0.5. Clamp to _MAX_FINITE_ARG to prevent
+    # inf - inf NaNs in Stirling's series.
+    arg_pos = lax.select(is_pos, x_safe, y)
+    x_bounded = lax.min(arg_pos, lax.full_like(x, _MAX_FINITE_ARG))
 
-  # Combine Euler reflection (with first-order Taylor correction psi(y) * y_lo
-  # for rounding in y) and rational root-window polynomials near negative zeros
-  # on (-10, -2) where reflection suffers catastrophic cancellation.
-  refl = _lgamma_neg_reflection(
-      delta, log_hi, lg_pos_hi, lg_pos_lo + log_lo, psi * y_lo
-  )
-  in_root_win, rw = _lgamma_neg_root(x_neg_safe, n)
-  neg_res = lax.select(in_root_win, rw, refl)
+    # Compute ln|delta| for Euler's reflection formula on x < 0.5.
+    log_hi, log_lo = _log_f32(abs_delta)
 
-  res = lax.select(is_pos, lg_pos, neg_res)
+    # Evaluate lgamma on [0.5, 4] and [4, inf), keeping both the summed result
+    # lg_pos (for x >= 0.5) and the unsummed (lg_pos_hi, lg_pos_lo) pair so
+    # Euler reflection can cancel leading terms before adding low-order
+    # corrections.
+    lg_small, lg_small_hi, lg_small_lo = _lgamma_pos_small(x_bounded)
+    p_hi, s_pos, psi = _lgamma_pos_large(x_bounded)
+    in_le_four = x_bounded <= 4.0
+    lg_pos = lax.select(in_le_four, lg_small, p_hi + s_pos)
+    lg_pos_hi = lax.select(in_le_four, lg_small_hi, p_hi)
+    lg_pos_lo = lax.select(in_le_four, lg_small_lo, s_pos)
+
+    # Combine Euler reflection (with first-order Taylor correction psi(y) * y_lo
+    # for rounding in y) and rational root-window polynomials near negative
+    # zeros on (-10, -2) where reflection suffers catastrophic cancellation.
+    refl = _lgamma_neg_reflection(
+        delta, log_hi, lg_pos_hi, lg_pos_lo + log_lo, psi * y_lo
+    )
+    in_root_win, rw = _lgamma_neg_root(x_neg_safe, n)
+    neg_res = lax.select(in_root_win, rw, refl)
+    res = lax.select(is_pos, lg_pos, neg_res)
   # Canonicalize -0.0 at x = 1.0, 2.0 to +0.0.
   res = lax.select(res == 0.0, lax.full_like(x, 0.0), res)
   # Return +inf at poles (x = +-0 and negative integers, which also matches
@@ -448,3 +595,10 @@ def lgamma_impl(x):
   is_pole_or_inf = is_zero | is_neg_int | (x > _MAX_FINITE_ARG)
   res = lax.select(is_pole_or_inf, lax.full_like(x, np.inf), res)
   return lax.select(x != x, lax.full_like(x, np.nan), res)
+
+
+@config.explicit_x64_dtypes("allow")
+@jit(static_argnames=["use_f64_for_f32"])
+def lgamma_impl(x, *, use_f64_for_f32: bool = False):
+  """Computes float32 lgamma(x) across all normal and special inputs."""
+  return _lgamma_impl_f32(x, use_f64=use_f64_for_f32)

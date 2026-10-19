@@ -757,22 +757,29 @@ ad.defjvp(regularized_incomplete_beta_p,
   betainc_grad_not_implemented,
   betainc_gradx)
 
-def _lgamma_lowering(ctx, x):
+def _lgamma_lowering(ctx, x, *, use_f64_for_f32=False):
   aval = ctx.avals_in[0]
   if aval.dtype == np.float64:
     return _nary_lower_hlo(chlo.lgamma, ctx, x)
   def _impl(v):
     if aval.dtype != np.float32:
       return convert_element_type(
-          lgamma_impl(convert_element_type(v, np.float32)), aval.dtype
+          lgamma_impl(
+              convert_element_type(v, np.float32),
+              use_f64_for_f32=use_f64_for_f32,
+          ),
+          aval.dtype,
       )
-    return lgamma_impl(v)
+    return lgamma_impl(v, use_f64_for_f32=use_f64_for_f32)
   return mlir.lower_fun(_impl, multiple_results=False)(ctx, x)
 
 
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
 mlir.register_lowering(lgamma_p, _lgamma_lowering)
+mlir.register_lowering(
+    lgamma_p, partial(_lgamma_lowering, use_f64_for_f32=True), platform='cpu'
+)
 
 digamma_p = standard_unop(_float, 'digamma')
 mlir.register_lowering(digamma_p, partial(_nary_lower_hlo, chlo.digamma))
