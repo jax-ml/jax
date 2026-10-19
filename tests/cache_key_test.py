@@ -26,6 +26,7 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import triton as pl_triton
 from jax._src import cache_key
 from jax._src import compiler
 from jax._src import config
@@ -268,21 +269,33 @@ class CacheKeyTest(jtu.JaxTestCase):
 
   @parameterized.parameters([False, True])
   def test_identical_pallas_kernels_different_metadata(self, include_metadata):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Pallas TPU lowering requires TPU backend")
+    if jtu.test_device_matches(["tpu"]):
+      compiler_params = None
+    elif jtu.test_device_matches(["cuda"]):
+      compiler_params = pl_triton.CompilerParams()
+      self.enter_context(
+          jtu.ignore_warning(
+              category=DeprecationWarning,
+              message="The Pallas Triton backend is deprecated",
+          )
+      )
+    else:
+      self.skipTest("Pallas lowers its kernels for TPU and CUDA")
 
     # Same kernel body at different source lines; same __name__ to avoid kernel_name diff
     def make_caller_a():
       def kernel(x_ref, o_ref):
         o_ref[...] = x_ref[...] + 1.0
       return jax.jit(lambda x: pl.pallas_call(
-          kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype))(x))
+          kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          compiler_params=compiler_params)(x))
 
     def make_caller_b():
       def kernel(x_ref, o_ref):
         o_ref[...] = x_ref[...] + 1.0
       return jax.jit(lambda x: pl.pallas_call(
-          kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype))(x))
+          kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          compiler_params=compiler_params)(x))
 
     x = np.ones((128,), dtype=np.float32)
     computation1 = make_caller_a().lower(x).compiler_ir()
