@@ -34,6 +34,9 @@ jax_generate_backend_suites()
 jax_multiplatform_test(
     name = "api_test",
     srcs = ["api_test.py"],
+    backend_tags = {
+        "cpu": ["noasan"],  # Times out.
+    },
     enable_configs = ["tpu_v3_x4"],
     shard_count = {
         "cpu": select({
