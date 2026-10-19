@@ -29,6 +29,7 @@ import jax.numpy as jnp
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import jaxlib_extension_version
 from jax.scipy import special as lsp_special
 
 jax.config.parse_flags_with_absl()
@@ -334,6 +335,24 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     if n == 1:
       jtu.check_grads(lsp_special.exp1, (x,), order=2,
                       atol=tol, rtol=tol, eps=1e-3)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  @jax.numpy_dtype_promotion('standard')  # polygamma mixes int n with float x.
+  def testZetaLargeQ(self, dtype):
+    if jaxlib_extension_version < 510:
+      self.skipTest("Requires jaxlib_extension_version >= 510")
+    # Regression test for https://github.com/jax-ml/jax/issues/38637,
+    # https://github.com/jax-ml/jax/issues/38608 and
+    # https://github.com/jax-ml/jax/issues/41366.
+    # For q_big, q**-4 underflows to zero but zeta(4, q) ~ q**-3 / 3 does not.
+    q_big = {np.float32: 1e12, np.float64: 1e100}[dtype]
+    x = np.array([2.0, 4.0, 4.0], dtype=dtype)
+    q = np.array([np.inf, np.inf, q_big], dtype=dtype)
+    expected = np.array([0.0, 0.0, osp_special.zeta(4.0, q_big)], dtype=dtype)
+    rtol = {np.float32: 1e-5, np.float64: 1e-12}
+    self.assertAllClose(lsp_special.zeta(x, q), expected, rtol=rtol)
+    self.assertAllClose(lsp_special.polygamma(np.array([1, 2]), q[:2]),
+                        np.zeros(2, dtype))
 
   def testWofzAccuracy(self):
     # Verify wofz agrees with scipy over the full complex plane (float32).
