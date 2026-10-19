@@ -29,6 +29,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     a no-op. JAX always lowers to Shardy, and the flag will be removed in a
     future release.
 
+* Changes
+  * On GPU and TPU, `accumulate` for {func}`jax.numpy.bitwise_and`,
+    {func}`jax.numpy.bitwise_or`, {func}`jax.numpy.bitwise_xor`,
+    {func}`jax.numpy.logical_and`, {func}`jax.numpy.logical_or`,
+    {func}`jax.numpy.logical_xor`, {func}`jax.numpy.maximum` and
+    {func}`jax.numpy.minimum` now uses a parallel prefix scan for integer and
+    boolean outputs, which is much faster for long axes ({jax-issue}`#28097`).
+
 ## JAX 0.12.0 (October 19, 2026)
 
 * New features

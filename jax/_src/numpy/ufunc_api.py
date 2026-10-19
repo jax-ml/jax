@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 import math
 import operator
 from typing import Any, cast
@@ -24,6 +25,7 @@ from typing import Any, cast
 import numpy as np
 
 from jax._src import api
+from jax._src import dtypes
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.lax import control_flow
 from jax._src.lax import slicing
@@ -380,25 +382,10 @@ class ufunc:
   def _accumulate_via_scan(self, arr: ArrayLike, axis: int = 0,
                            dtype: DTypeLike | None = None) -> Array:
     assert self.nin == 2 and self.nout == 1
-    check_arraylike(f"{self.__name__}.accumulate", arr)
-    arr = lax.asarray(arr)
-
-    if dtype is None:
-      dtype = api.eval_shape(self._func, lax._one(arr), lax._one(arr)).dtype
-
-    if axis is None or isinstance(axis, tuple):
-      raise ValueError("accumulate does not allow multiple axes")
-    axis = canonicalize_axis(axis, np.ndim(arr))
-
+    arr, axis, dtype = _accumulate_args(self._func, self.__name__, arr, axis, dtype)
     if arr.size == 0:
       return lax.full(arr.shape, 0, dtype)
-    arr = _moveaxis(arr, axis, 0)
-    def scan_fun(carry, _):
-      i, x = carry
-      y = _where(i == 0, arr[0].astype(dtype), self(x.astype(dtype), arr[i].astype(dtype)))
-      return (i + 1, y), y
-    _, result = control_flow.scan(scan_fun, (0, arr[0].astype(dtype)), None, length=arr.shape[0])
-    return _moveaxis(result, 0, axis)
+    return _accumulate_sequential(self, arr, axis, dtype)
 
   @api.jit(static_argnums=[0], static_argnames=['inplace'])
   def at(self, a: ArrayLike, indices: Any, b: ArrayLike | None = None, /, *,
@@ -594,6 +581,76 @@ class ufunc:
     _ravel = lambda A: lax.reshape(A, (np.size(A),))
     result = api.vmap(api.vmap(self, (None, 0)), (0, None))(_ravel(A), _ravel(B))
     return result.reshape(*np.shape(A), *np.shape(B))
+
+
+def _accumulate_args(func: Callable[..., Any], name: str, arr: ArrayLike,
+                     axis: int, dtype: DTypeLike | None
+                     ) -> tuple[Array, int, DTypeLike]:
+  """Validate and normalize the arguments of ufunc.accumulate.
+
+  Returns ``arr`` as an array, ``axis`` as a non-negative integer, and the
+  output dtype, which defaults to the dtype ``func`` returns for ``arr``.
+  """
+  check_arraylike(f"{name}.accumulate", arr)
+  arr = lax.asarray(arr)
+
+  if dtype is None:
+    dtype = api.eval_shape(func, lax._one(arr), lax._one(arr)).dtype
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, f"{name}.accumulate")
+
+  if axis is None or isinstance(axis, tuple):
+    raise ValueError("accumulate does not allow multiple axes")
+  axis = canonicalize_axis(axis, np.ndim(arr))
+  return arr, axis, dtype
+
+
+def _accumulate_sequential(func: Callable[..., Any], arr: Array, axis: int,
+                           dtype: DTypeLike) -> Array:
+  """Accumulate ``func`` along ``axis`` with a sequential scan.
+
+  The first element along ``axis`` is passed through unchanged, and each later
+  element is combined with the running result. ``arr`` must have a non-empty
+  ``axis``.
+  """
+  arr = _moveaxis(arr, axis, 0).astype(dtype)
+  def scan_fun(carry, arr_i):
+    i, x = carry
+    y = _where(i == 0, arr_i, func(x, arr_i).astype(dtype))
+    return (i + 1, y), y
+  _, result = control_flow.scan(scan_fun, (0, arr[0]), arr)
+  return _moveaxis(result, 0, axis)
+
+
+def _accumulate_parallel(func: Callable[..., Any], arr: Array, axis: int,
+                         dtype: DTypeLike) -> Array:
+  """Accumulate ``func`` along ``axis`` with ``lax.associative_scan``.
+
+  ``func`` must be associative. Like ``_accumulate_sequential``, each result of
+  ``func`` is cast to ``dtype``.
+  """
+  return control_flow.associative_scan(
+      lambda x, y: func(x, y).astype(dtype), arr.astype(dtype), axis=axis)
+
+
+def _accumulate_associative(func: Callable[..., Any], arr: ArrayLike,
+                            axis: int = 0, dtype: DTypeLike | None = None) -> Array:
+  """ufunc.accumulate for a binary function that is associative.
+
+  On CPU a sequential scan is fastest, while on GPU and TPU a parallel prefix
+  scan is usually much faster, so other backends use associative_scan. This is
+  limited to integer and boolean outputs: associative_scan interleaves its
+  results with an addition, which does not preserve the sign of a floating
+  point zero.
+  """
+  arr, axis, dtype = _accumulate_args(func, func.__name__, arr, axis, dtype)
+  if arr.size == 0:
+    return lax.full(arr.shape, 0, dtype)
+  sequential = partial(_accumulate_sequential, func, axis=axis, dtype=dtype)
+  if not (dtypes.issubdtype(dtype, np.integer) or dtypes.issubdtype(dtype, np.bool_)):
+    return sequential(arr)
+  parallel = partial(_accumulate_parallel, func, axis=axis, dtype=dtype)
+  return control_flow.platform_dependent(arr, cpu=sequential, default=parallel)
 
 
 @export
