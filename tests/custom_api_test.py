@@ -5477,18 +5477,6 @@ class CustomJVP3Remat3Test(CustomJVP3Test):
 
 class LinearCallTest(jtu.JaxTestCase):
 
-  @staticmethod
-  def scaled(r, x):
-    # Linear in x, not in r. Its transpose is 7 times the true one, so a test
-    # can tell when the custom transpose ran.
-    def f(r, x):
-      return x * r
-    def t(r, ct):
-      return 7. * ct * r
-    return jax.custom_derivatives.linear_call(f, t, r, x)
-
-  @parameterized.parameters([(0, None), (None, 0), (0, 0), (1, 0)])
-  @parameterized.parameters([(0, None), (None, 0), (0, 0)])
   def test_jvp_in_residuals(self):
     def f(r, x):
       return x / r
