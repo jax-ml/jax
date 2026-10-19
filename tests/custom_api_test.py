@@ -5475,5 +5475,47 @@ class CustomJVP3Remat3Test(CustomJVP3Test):
   ...
 
 
+class LinearCallTest(jtu.JaxTestCase):
+
+  @staticmethod
+  def scaled(r, x):
+    # Linear in x, not in r. Its transpose is 7 times the true one, so a test
+    # can tell when the custom transpose ran.
+    def f(r, x):
+      return x * r
+    def t(r, ct):
+      return 7. * ct * r
+    return jax.custom_derivatives.linear_call(f, t, r, x)
+
+  @parameterized.parameters([(0, None), (None, 0), (0, 0), (1, 0)])
+  def test_vmap(self, r_axis, x_axis):
+    r = jnp.arange(1., 7.).reshape(2, 3)
+    x = jnp.arange(2., 8.).reshape(2, 3)
+    if r_axis == 1:
+      r = r.T
+    r_in = r if r_axis is not None else r[0]
+    x_in = x if x_axis is not None else x[0]
+    ans = jax.vmap(self.scaled, in_axes=(r_axis, x_axis))(r_in, x_in)
+    expected = jax.vmap(lambda r, x: x * r, in_axes=(r_axis, x_axis))(r_in, x_in)
+    self.assertAllClose(ans, expected)
+
+  @parameterized.parameters([(0, None), (None, 0), (0, 0)])
+  def test_vmap_of_grad_keeps_the_custom_transpose(self, r_axis, x_axis):
+    r = jnp.arange(1., 7.).reshape(2, 3)
+    x = jnp.arange(2., 8.).reshape(2, 3)
+    r_in = r if r_axis is not None else r[0]
+    x_in = x if x_axis is not None else x[0]
+    grad = jax.grad(lambda r, x: jnp.sum(self.scaled(r, x)), argnums=1)
+    ans = jax.vmap(grad, in_axes=(r_axis, x_axis))(r_in, x_in)
+    expected = jnp.broadcast_to(7. * r_in, ans.shape)
+    self.assertAllClose(ans, expected)
+
+  def test_vmap_of_transpose(self):
+    r = jnp.arange(1., 7.).reshape(2, 3)
+    transpose = lambda r: jax.linear_transpose(
+        partial(self.scaled, r), jnp.zeros(3))(jnp.ones(3))[0]
+    self.assertAllClose(jax.vmap(transpose)(r), 7. * r)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -1912,6 +1912,41 @@ def _linear_call_jvp_rule(primals, tangents, callee, transpose_thunk,
       num_callee_consts=num_callee_consts, num_res=num_res)
   return primals_out, tangents_out
 
+def _linear_call_batching_rule(axis_data, args, dims, *, callee,
+                               transpose_thunk, num_callee_consts, num_res):
+  num_fixed = num_callee_consts + num_res
+  fixed, operands_lin = split_list(args, [num_fixed])
+  fixed_dims, lin_dims = split_list(dims, [num_fixed])
+  # The linear operands are all batched along axis 0, so the outputs and their
+  # cotangents are too, and the batched transpose takes batched cotangents to
+  # batched linear cotangents.
+  operands_lin = [
+      batching.bdim_at_front(x, d, axis_data.size, axis_data.explicit_mesh_axis)
+      for x, d in zip(operands_lin, lin_dims)]
+  num_out = len(callee.out_avals)
+  lin_axes = [0] * len(operands_lin)
+  batched = batching.batch_jaxpr_axes(
+      callee, axis_data, [*fixed_dims, *lin_axes], [0] * num_out)[0]
+  batched_consts = batched.consts
+  res_dims = fixed_dims[num_callee_consts:]
+
+  @pe._memoize
+  def batched_transpose_thunk():
+    transpose, t_consts = transpose_thunk()
+    batched_t = batching.batch_jaxpr_axes(
+        transpose, axis_data, [*[None] * len(t_consts), *res_dims, *[0] * num_out],
+        lin_axes)[0]
+    return (pe.convert_constvars_jaxpr(batched_t),
+            [*batched_t.consts, *t_consts])
+
+  outs = linear_call_p.bind(
+      *batched_consts, *fixed, *operands_lin,
+      callee=pe.convert_constvars_jaxpr(batched),
+      transpose_thunk=batched_transpose_thunk,
+      num_callee_consts=len(batched_consts) + num_callee_consts,
+      num_res=num_res)
+  return outs, [0] * num_out
+
 def _linear_call_transpose_rule(cts, *args, callee, transpose_thunk,
                                 num_callee_consts, num_res):
   transpose, t_consts = transpose_thunk()
@@ -1945,6 +1980,7 @@ linear_call_p.def_impl(_linear_call_impl)
 linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
 ad.primitive_jvps[linear_call_p] = _linear_call_jvp_rule
 ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule
+batching.fancy_primitive_batchers[linear_call_p] = _linear_call_batching_rule
 mlir.register_lowering(linear_call_p, mlir.lower_fun(
     _linear_call_impl, multiple_results=True))
 
