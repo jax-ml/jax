@@ -32,6 +32,7 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import array
+from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -5137,13 +5138,17 @@ def hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
   s_down, s_up, one = (
       full_like(x1, 2.0**-k), full_like(x1, 2.0**k), full_like(x1, 1.0)
   )
-  # TODO(phawkins): Revert to `scale = select(...)` and `x1 * scale, x2 * scale`
-  # after fixing XLA's algebraic simplifier not to reassociate `(x * scale)^2`
-  # into `(scale * scale) * (x * x)` when `x` is a compile-time constant (which
-  # overflows `scale^2` to `inf` and produces `inf * 0 = NaN` at `x = 0`).
-  y1 = select(hi, x1 * s_down, select(lo, x1 * s_up, x1))
-  y2 = select(hi, x2 * s_down, select(lo, x2 * s_up, x2))
   inv_scale = select(hi, s_up, select(lo, s_down, one))
+  # TODO(phawkins): Remove the < 0.0.51 branch once the minimum libtpu version
+  # is at least 0.0.51 (which includes the XLA algebraic simplifier fix not to
+  # reassociate `(x * scale)^2` into `(scale * scale) * (x * x)` when `x` is a
+  # compile-time constant).
+  if cloud_tpu_init.is_libtpu_at_least("0.0.51"):
+    scale = select(hi, s_down, select(lo, s_up, one))
+    y1, y2 = x1 * scale, x2 * scale
+  else:
+    y1 = select(hi, x1 * s_down, select(lo, x1 * s_up, x1))
+    y2 = select(hi, x2 * s_down, select(lo, x2 * s_up, x2))
   r_scaled = sqrt(square(y1) + square(y2))
   r = r_scaled * inv_scale
   if dtypes.supports_inf(x1.dtype):

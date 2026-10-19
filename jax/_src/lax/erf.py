@@ -15,6 +15,7 @@
 """Polynomial approximations for `erfc`, `erfcx`, `erfinv`, and `erfcinv`."""
 
 import math
+from jax._src import cloud_tpu_init
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax.lax import (
     AccuracyMode, _const, asarray, bitcast_convert_type, clamp,
@@ -412,9 +413,11 @@ def _erfcx_from_grad_large(ax: Array, grad_large: Array) -> Array:
   mathematical quotient.
   """
   if ax.dtype == np.float32:
-    num = _INV_SQRT_PI_F32_HI + optimization_barrier(
-        _INV_SQRT_PI_F32_LO + 0.5 * grad_large
-    )
+    rem = _INV_SQRT_PI_F32_LO + 0.5 * grad_large
+    # TODO(phawkins): Remove once minimum libtpu version is at least 0.0.51.
+    if not cloud_tpu_init.is_libtpu_at_least("0.0.51"):
+      rem = optimization_barrier(rem)
+    num = _INV_SQRT_PI_F32_HI + rem
     scale = select(ax > 2.0**64, full_like(ax, 2.0**-64), full_like(ax, 1.0))
     return (num * scale) / (ax * scale)
   num = _const(grad_large, _INV_SQRT_PI_F64_HI) + 0.5 * grad_large
@@ -1135,10 +1138,13 @@ def erf_inv_core(
   coeffs = [_select_piece(w, idx, cs) for cs in zip(*ps)]
   poly = polynomial(t, coeffs, unroll=unroll)
   # Add the two small parts (`k_h * z_l` and `poly`) before adding them to the
-  # exact main term `k_h * z_h`. Use `optimization_barrier` so XLA does not
-  # regroup the sum into `(k_h * z_h + k_h * z_l) + poly` and round away `z_l`.
+  # exact main term `k_h * z_h`.
+  # TODO(phawkins): Remove `use_optimization_barrier` once minimum libtpu
+  # version is at least 0.0.51.
   rem = k_h * z_l + poly
-  if use_optimization_barrier:
+  if use_optimization_barrier and not cloud_tpu_init.is_libtpu_at_least(
+      "0.0.51"
+  ):
     rem = optimization_barrier(rem)
   tail_mag = k_h * z_h + rem
   sign_x = select(x < 0.0, full_like(x, -1.0), full_like(x, 1.0))
