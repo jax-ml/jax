@@ -13,6 +13,8 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+## Released with JAX 0.12.0 (October 19, 2026)
+
 * New features
   * Added `ref.memory_space_cast` to cast the memory space of a reference.
 
