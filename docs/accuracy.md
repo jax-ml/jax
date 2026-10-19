@@ -235,6 +235,7 @@ these are empirical bounds.
 | {func}`~jax.lax.exp` | 2.0 | 1.5 |
 | {func}`~jax.lax.exp2` | 719.0 | 719.0 |
 | {func}`~jax.lax.expm1` | 1.0 | 1.5 |
+| {func}`~jax.lax.lgamma` | 2.0 | 2.0 |
 | {func}`~jax.lax.log` | 0.5 | 1.5 |
 | {func}`~jax.lax.log1p` | 2.0 | 1.5 |
 | {func}`~jax.lax.log2` | 1.5 | 1.5 |

@@ -759,10 +759,8 @@ ad.defjvp(regularized_incomplete_beta_p,
 
 def _lgamma_lowering(ctx, x, *, use_f64_for_f32=False):
   aval = ctx.avals_in[0]
-  if aval.dtype == np.float64:
-    return _nary_lower_hlo(chlo.lgamma, ctx, x)
   def _impl(v):
-    if aval.dtype != np.float32:
+    if aval.dtype not in (np.float32, np.float64):
       return convert_element_type(
           lgamma_impl(
               convert_element_type(v, np.float32),
