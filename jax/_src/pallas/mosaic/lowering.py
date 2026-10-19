@@ -2213,6 +2213,37 @@ def _reshape_memref(
   )
 
 
+def _pad_memref(
+    ref: ir.Value,
+    padder: pallas_core.PadTransform,
+    ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
+) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
+  if not is_libtpu_at_least("0.0.51"):
+    raise NotImplementedError("pad_ref requires libtpu >= 0.0.51")
+  ref_ty = ir.MemRefType(ref.type)
+  padded_iter = iter(padder.shape)
+  new_shape: list[int] = []
+  new_block_shape: list[int | pallas_core.Squeezed] = []
+  for ir_dim, s in zip(ref_ty.shape, ref_block_shape):
+    if isinstance(s, pallas_core.Squeezed):
+      new_shape.append(ir_dim)
+      new_block_shape.append(s)
+    else:
+      d = next(padded_iter)
+      new_shape.append(d)
+      new_block_shape.append(d)
+  assert next(padded_iter, None) is None
+  target_ref_ty = ir.MemRefType.get(
+      new_shape,
+      ref_ty.element_type,
+      memory_space=ref_ty.memory_space,
+  )
+  return (
+      tpu.memref_pad(target_ref_ty, ref),  # pyrefly: ignore[missing-attribute]
+      tuple(new_block_shape),
+  )
+
+
 def _memory_space_cast_memref(
     ref: ir.Value[ir.MemRefType],
     caster: state_types.MemorySpaceCastTransform,
@@ -2288,6 +2319,8 @@ def _transform_ref(
         ref, ref_block_shape = _reshape_memref(
             ref, transform, ref_ty, ref_block_shape
         )
+      case pallas_core.PadTransform():
+        ref, ref_block_shape = _pad_memref(ref, transform, ref_block_shape)
       case state_types.MemorySpaceCastTransform():
         ref, ref_block_shape = _memory_space_cast_memref(
             ref, transform, ref_block_shape, kernel_type
