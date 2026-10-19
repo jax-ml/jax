@@ -242,6 +242,28 @@ class LaxTest(jtu.JaxTestCase):
         1.0 / (x * ln2),
     )
 
+  @jtu.sample_product(dtype=lax_test_util.float_dtypes)
+  @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
+  def testLogPow(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41261
+    if jaxlib_extension_version < 510:
+      self.skipTest("Requires jaxlib_extension_version >= 510")
+    if not jtu.is_libtpu_at_least("0.0.51"):
+      self.skipTest("Requires libtpu >= 0.0.51")
+    a = np.array([-1.0, -2.0, -2.0, -2.0, 2.0, -1.0], dtype=dtype)
+    b = np.array([0.5, 0.5, 3.0, 2.0, 0.5, 0.0], dtype=dtype)
+    args_maker = lambda: [a, b]
+    tol = {np.float32: 2e-4} if jtu.test_device_matches(["tpu"]) else None
+    self._CheckAgainstNumpy(
+        lambda x, y: np.log(np.power(x, y)),
+        lambda x, y: lax.log(lax.pow(x, y)),
+        args_maker,
+        tol=tol,
+    )
+    self._CompileAndCheck(
+        lambda x, y: lax.log(lax.pow(x, y)), args_maker, tol=tol
+    )
+
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
   @jtu.sample_product(
