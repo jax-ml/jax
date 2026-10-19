@@ -31,10 +31,14 @@ executable protocols described above.
 from __future__ import annotations
 
 from collections.abc import Sequence
+import abc
+import contextlib
 import dataclasses
 from dataclasses import dataclass
 import enum
+import hashlib
 import itertools as it
+import re
 from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from jax._src import config
@@ -54,7 +58,7 @@ from jax._src.lib import hlo
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.sharding_impls import UnspecifiedValue
-from jax._src.mesh import AbstractMesh
+from jax._src.mesh import AbstractMesh, _ThreadResourcesLocalState
 from jax._src import flattree as ft
 from jax._src.tree_util import tree_unflatten
 from jax._src.typing import ArrayLike
@@ -358,6 +362,12 @@ class Stage:
         i for i, x in enumerate(tree_util.tree_leaves(self.args_info))
         if x.donated)
 
+  @property
+  def can_cache(self) -> bool:
+    """Whether this stage instance is eligible for stage caching."""
+    # Base stages are not cacheable by default.
+    return False
+
 
 def make_args_info(in_tree, in_avals, donate_argnums):
   donate_argnums = frozenset(donate_argnums)
@@ -388,6 +398,8 @@ def _traced_args_info(self):
   return make_args_info(self._in_tree, arg_avals, don8_rgn)
 
 def _traced_out_info(self):
+  if (cached_lowered := self._params.get("cached_lowered")) is not None:
+    return cached_lowered.out_info
   out_shardings = [None if isinstance(s, UnspecifiedValue) else s
                    for s in self._params['out_shardings']]
   out_layouts = [None if isinstance(l, AutoLayoutSingleton) else l
@@ -450,6 +462,7 @@ class Traced(Stage):
   fun_name = property(lambda self: self._params['name'])
   args_info = property(_traced_args_info)  # pyrefly: ignore[bad-override]
   out_info = property(_traced_out_info)
+  cached_lowered = property(lambda self: self._params.get("cached_lowered"))
   _num_consts = property(lambda self: len(self._consts))
 
   @property
@@ -571,6 +584,8 @@ class Traced(Stage):
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
             _private_parameters: mlir.LoweringParameters | None = None):
     """Lower to compiler input, returning a ``Lowered`` instance."""
+    if (cached_lowered := self._params.get("cached_lowered")) is not None:
+      return cached_lowered
     from jax._src.pjit import _resolve_and_lower  # pyrefly: ignore[missing-import]
     lo = self.lojax
     if _private_parameters is None:
@@ -649,6 +664,11 @@ class Lowered(Stage):
     self._no_kwargs = no_kwargs
     self._in_types = in_types
     self._out_types = out_types
+
+  @property
+  def can_cache(self) -> bool:
+    ca = getattr(self._lowering, "compile_args", {})
+    return not (ca.get("unordered_effects") or ca.get("ordered_effects") or ca.get("host_callbacks"))
 
   @property
   def in_avals(self):
@@ -1130,3 +1150,54 @@ def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
     extra_msg = f" Got{first._str(api_name)} and{second._str(api_name)}"
   msg = (f"Received incompatible devices for {api_name}ted computation.{extra_msg}")
   return msg
+
+
+class Cache(abc.ABC):
+  """Abstract base class for JAX stage caching."""
+
+  @abc.abstractmethod
+  def get(self, key: str) -> Stage | None:
+    """Retrieve a cached Stage by key, or return None."""
+
+  @abc.abstractmethod
+  def put(self, key: str, value: Stage) -> None:
+    """Store a Stage in the cache under key."""
+
+
+class _ActiveCacheLocalState(_ThreadResourcesLocalState):
+
+  def __init__(self):
+    super().__init__()
+    self.cache: Cache | None = None
+
+
+_active_cache_tls = _ActiveCacheLocalState()
+
+
+@contextlib.contextmanager
+def set_cache(cache: Cache):
+  if _active_cache_tls.cache is not None:
+    raise ValueError(
+        "Nesting set_cache contexts is not currently supported. If you need"
+        " this functionality, please contact dsuo@ or file an issue."
+    )
+  prev = _active_cache_tls.cache
+  _active_cache_tls.cache = cache
+  try:
+    yield
+  finally:
+    _active_cache_tls.cache = prev
+
+
+def _get_active_cache(cache_key: str | None = None) -> Cache | None:
+  if cache_key is None or not core.trace_state_clean() or config.debug_key_reuse.value:
+    return None
+  return _active_cache_tls.cache
+
+
+def _compute_cache_key(
+    stage: type[Stage], user_key: str | None, key_tuple: tuple[Any, ...]
+) -> str:
+  r = re.sub(r" at 0x[0-9a-fA-F]+", "", repr((key_tuple, config.trace_context())))
+  fingerprint = hashlib.sha256(r.encode("utf-8")).hexdigest()[:16]
+  return f"{user_key}:{stage.__name__}:{fingerprint}"
