@@ -3703,7 +3703,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(x):
       return shard_map(lambda k: k,
                        mesh=mesh, in_specs=P('i'), out_specs=P('i'),
-                       check_vma=False, axis_names=frozenset({'i'}))(keys)
+                       check_vma=False, axis_names=frozenset({'i'}))(x)
 
     y = f(keys)  # doesn't crash
     self.assertAllClose(jax.random.key_data(y), jax.random.key_data(keys),
