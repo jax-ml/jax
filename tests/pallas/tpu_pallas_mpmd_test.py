@@ -1556,11 +1556,7 @@ class MpmdTest(PallasSCTest):
         kernel(x, indices), jnp.zeros_like(x).at[indices].set(x)
     )
 
-  @parameterized.named_parameters(
-      ("wait_read", True, "`wait_read`"),
-      ("src_sem", False, "Source semaphore \\(`src_sem`\\)"),
-  )
-  def test_async_copy_error_tc_local(self, is_wait_read, error_prefix):
+  def test_async_copy_error_tc_local_wait_read_without_src_sem(self):
     mesh = pltpu.TensorCoreMesh(axis_name="c", num_cores=1)
     x = jnp.zeros((self.num_lanes,), dtype=jnp.int32)
 
@@ -1575,15 +1571,11 @@ class MpmdTest(PallasSCTest):
     )
     def body(_, out_ref, src_ref, dst_ref, sem):
       del out_ref
-      if is_wait_read:
-        pltpu.make_async_copy(src_ref, dst_ref, sem=sem).wait_read()
-      else:
-        pltpu.async_copy(src_ref, dst_ref, sem=sem, src_sem=sem)
+      pltpu.make_async_copy(src_ref, dst_ref, sem=sem).wait_read()
 
     with self.assertRaisesRegex(
         NotImplementedError,
-        f"{error_prefix} on a local copy without device_id is not implemented"
-        " on TensorCore",
+        "DMA semaphore cannot be None on TensorCore",
     ):
       body(x)
 
