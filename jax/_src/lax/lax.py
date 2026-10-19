@@ -32,7 +32,6 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import array
-from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
