@@ -240,7 +240,7 @@ def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
 
   def read_usage_env(atom: core.Atom) -> set[Usage]:
     assert not isinstance(atom, core.Literal)
-    return usage_env.get(atom, {Usage.REGULAR})
+    return usage_env.get(atom, set())
 
   def write_usage_env(atom: core.Atom, usage: set[Usage]):
     if isinstance(atom, core.Literal):
@@ -653,7 +653,7 @@ def _pull_block_transform(
         prim=eqn.primitive,
         avals_in=tuple(v.aval for v in eqn.invars),
         avals_out=tuple(v.aval for v in eqn.outvars),
-        out_usages=tuple(read_usage_env(v) for v in jaxpr.outvars),
+        out_usages=tuple(read_usage_env(v) for v in eqn.outvars),
         scalar_prefetch_handler=scalar_prefetch_handler,
         grid_len=grid_len,
         strict_mode=strict_mode,
@@ -2780,6 +2780,18 @@ def _custom_derivative_usage_rule(
   return _call_jaxpr_usage_rule(ctx, used_out, jaxpr=call_jaxpr)
 
 
+@register_usage_rule(hijax.call_hi_primitive_p)
+def _custom_call_hi_primitive_usage_rule(
+    ctx: UsageRuleContext,
+    used_out: list[set[Usage]],
+    *,
+    _prim,
+):
+  if isinstance(_prim, (hijax.CustomVJPTraced, hijax.CustomJVPTraced)):
+    return _call_jaxpr_usage_rule(ctx, used_out, jaxpr=_prim.traced.jaxpr)
+  return [set().union(*used_out)] * len(ctx.avals_in)
+
+
 @register_eval_rule(pjit.jit_p)
 def _call_jaxpr_eval_rule(
     ctx: KernelEvalContext,
@@ -2792,10 +2804,10 @@ def _call_jaxpr_eval_rule(
     raise NotImplementedError(f'{ctx.prim.name} with consts not supported yet')
   out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
   in_tree = tree_util.tree_structure((tuple(jaxpr.invars), {}))
-
-  def read_usage_env(_: core.Var):
-    return {Usage.REGULAR}
-
+  # ``SCALAR_PREFETCH`` vars must depend only on ``constvars``, but a call
+  # receives all inputs via ``invars``, so collapse live usage to ``REGULAR``.
+  raw_usage_env = compute_usage(jaxpr, ctx.out_usages)
+  read_usage_env = lambda v: {Usage.REGULAR} if raw_usage_env(v) else set()
   _, env = _pull_block_spec(
       jaxpr,
       ctx.out_block_specs,
@@ -2831,7 +2843,7 @@ def _custom_derivative_eval_rule(
 @register_pull_block_spec_rule(pjit.jit_p)
 def _call_jaxpr_pull_block_spec_rule(
     ctx: PullRuleContext,
-    out_block_specs,
+    out_block_transforms,
     *,
     jaxpr: core.Jaxpr,
     **kwargs,
@@ -2839,44 +2851,44 @@ def _call_jaxpr_pull_block_spec_rule(
   del kwargs
   if jaxpr.consts:
     raise NotImplementedError(f'{ctx.prim.name} with consts not supported yet')
-
-  def read_usage_env(_: core.Var):
-    return {Usage.REGULAR}
-
-  in_block_specs, _ = _pull_block_transform(
+  # ``SCALAR_PREFETCH`` vars must depend only on ``constvars``, but a call
+  # receives all inputs via ``invars``, so collapse live usage to ``REGULAR``.
+  raw_usage_env = compute_usage(jaxpr, ctx.out_usages)
+  read_usage_env = lambda v: {Usage.REGULAR} if raw_usage_env(v) else set()
+  in_block_transforms, _ = _pull_block_transform(
       jaxpr,
-      out_block_specs,
+      out_block_transforms,
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       read_usage_env=read_usage_env,
       grid_len=ctx.grid_len,
       strict_mode=ctx.strict_mode,
   )
-  return in_block_specs
+  return in_block_transforms
 
 
 @register_pull_block_spec_rule(custom_derivatives.custom_jvp_call_p)
 @register_pull_block_spec_rule(custom_derivatives.custom_vjp_call_p)
 def _custom_derivative_pull_block_spec_rule(
     ctx: PullRuleContext,
-    out_block_specs,
+    out_block_transforms,
     *,
     call_jaxpr: core.Jaxpr,
     **kwargs,
 ):
   return _call_jaxpr_pull_block_spec_rule(
-      ctx, out_block_specs, jaxpr=call_jaxpr, **kwargs
+      ctx, out_block_transforms, jaxpr=call_jaxpr, **kwargs
   )
 
 
 @register_pull_block_spec_rule(hijax.call_hi_primitive_p)
 def _custom_call_hi_primitive_pull_block_spec_rule(
-    ctx: PullRuleContext, out_block_specs, *, _prim
+    ctx: PullRuleContext, out_block_transforms, *, _prim
 ):
   if isinstance(_prim, (hijax.CustomVJPTraced, hijax.CustomJVPTraced)):
     return _call_jaxpr_pull_block_spec_rule(
-        ctx, out_block_specs, jaxpr=_prim.traced.jaxpr
+        ctx, out_block_transforms, jaxpr=_prim.traced.jaxpr
     )
-  return _prim.pull_block_spec_rule(ctx, out_block_specs)
+  return _prim.pull_block_spec_rule(ctx, out_block_transforms)
 
 
 @register_eval_rule(hijax.call_hi_primitive_p)
