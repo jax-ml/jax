@@ -1094,22 +1094,34 @@ class BufferedRef(BufferedRefBase):
     return self.with_next_fetch(_next_index(tuple(self.next_fetch), grid))
 
 
-def fetch_with_lookahead(buffered_ref, src_ref,
-                         grid,
-                         grid_offsets,
-                         predicate: jax.Array | bool = True,
-                         max_num_fetches: int | None = None):
+def fetch_with_lookahead(
+    buffered_refs,
+    src_refs,
+    grid,
+    grid_offsets,
+    predicate: jax.Array | bool = True,
+    max_num_fetches: int | None = None,
+    memoize_index_maps: bool = False,
+):
   """Fetch future blocks using unbounded lookahead.
 
   Args:
-    buffered_ref: the BufferedRef to fetch for.
-    src_ref: the source Ref.
+    buffered_refs: the BufferedRefs to fetch for. They share one scan loop, so
+      they must change blocks at the same grid steps and have the same slots and
+      prefetched count; the first one stands for all of them.
+    src_refs: the source Refs, one per BufferedRef.
     grid: the grid bounds.
     grid_offsets: the grid offsets (used for megacore).
     predicate: a boolean predicate for whether to perform the fetch.
-    max_num_fetches: the maximum number of fetches to perform. If None,
-      this will continually fetch until all copy_in slots are full.
+    max_num_fetches: the maximum number of fetches to perform. If None, this
+      will continually fetch until all copy_in slots are full.
+    memoize_index_maps: whether to evaluate each index map once per scan
+      position.
+
+  Returns:
+    The updated BufferedRefs.
   """
+  buffered_ref = buffered_refs[0]
   assert buffered_ref.use_lookahead
   add_offset = lambda x: tuple(
       i + j for i, j in zip(x, grid_offsets, strict=True))
@@ -1141,16 +1153,20 @@ def fetch_with_lookahead(buffered_ref, src_ref,
     current_indices, next_indices, cumulative_copy_in = carry
     cur_indices_offset = add_offset(current_indices)
     next_indices_offset = add_offset(next_indices)
-    block_indices = buffered_ref.compute_index(*cur_indices_offset)
-    next_block_indices = buffered_ref.compute_index(*next_indices_offset)
-    will_change = _tuples_differ(block_indices, next_block_indices)
-    pred = will_change
-    if buffered_ref.prefetched_count > 0:
-      pred &= cumulative_copy_in >= buffered_ref.prefetched_count
-    bref = buffered_ref.with_slot_index(copy_in_slot=cumulative_copy_in)
-    @when(pred)
-    def _start():
-      bref.copy_in(src_ref, next_indices_offset)
+    with pallas_core.index_map_memo(memoize_index_maps):
+      block_indices = buffered_ref.compute_index(*cur_indices_offset)
+      next_block_indices = buffered_ref.compute_index(*next_indices_offset)
+      will_change = _tuples_differ(block_indices, next_block_indices)
+      pred = will_change
+      if buffered_ref.prefetched_count > 0:
+        pred &= cumulative_copy_in >= buffered_ref.prefetched_count
+
+      @when(pred)
+      def _start():
+        for bref, src_ref in zip(buffered_refs, src_refs, strict=True):
+          bref = bref.with_slot_index(copy_in_slot=cumulative_copy_in)
+          bref.copy_in(src_ref, next_indices_offset)
+
     next_copy_in = cumulative_copy_in + as_uint32(will_change)
     next_next_indices = increment_indices(next_indices)
     return next_indices, next_next_indices, next_copy_in
@@ -1160,9 +1176,12 @@ def fetch_with_lookahead(buffered_ref, src_ref,
       _loop_cond, _loop_body,
       (current_indices, next_fetch, buffered_ref.cumulative_copy_in))
 
-  return buffered_ref.with_next_fetch(final_indices).with_slot_index(
-      copy_in_slot=final_copy_in_slot
-  )
+  return [
+      bref.with_next_fetch(final_indices).with_slot_index(
+          copy_in_slot=final_copy_in_slot
+      )
+      for bref in buffered_refs
+  ]
 
 
 # Helper to tree map over BufferedRefs as leaves.
@@ -1256,6 +1275,7 @@ class Scheduler:
       num_stages: int,
       trace_scopes=True,
       _explicit_indices: bool = False,
+      memoize_index_maps: bool = False,
   ):
     """Initializes scheduler.
 
@@ -1267,6 +1287,7 @@ class Scheduler:
       num_stages: number of stages in the pipeline.
       trace_scopes: whether to use named_scope to trace blocks in the pipeline.
       _explicit_indices: whether the pipeline uses explicit indices.
+      memoize_index_maps: see ``_emit_pipeline``.
     """
     self.step = step
     self.grid = grid
@@ -1274,6 +1295,7 @@ class Scheduler:
     self.num_stages = num_stages
     self.trace_scopes = trace_scopes
     self._explicit_indices = _explicit_indices
+    self.memoize_index_maps = memoize_index_maps
 
     # Total number of linear steps.
     self.num_steps = math.prod(grid)
@@ -1423,9 +1445,9 @@ class Scheduler:
               self.add_offset(buffered_ref.next_fetch_indices))
           buffered_ref = buffered_ref.advance_copy_in_slot(predicate)
         else:
-          buffered_ref = fetch_with_lookahead(
-              buffered_ref,
-              src_ref,
+          [buffered_ref] = fetch_with_lookahead(
+              [buffered_ref],
+              [src_ref],
               self.grid,
               self.grid_offsets,
               predicate=self.first_step & in_bounds,
@@ -1450,10 +1472,11 @@ class Scheduler:
         buffered_ref = buffered_ref.advance_copy_in_slot(predicate)
     return buffered_ref
 
-  def wait_in(self, buffered_ref, src_ref) -> BufferedRef:
+  def wait_in_predicate(self, buffered_ref):
+    """Returns the predicate of the wait in ``wait_in``, None if it has none."""
     # Non-async trivial windows are copied synchronously before the loop.
     if buffered_ref.is_trivial_windowing and not buffered_ref.await_prefetch:
-      return buffered_ref
+      return None
     pred = self.has_changed(buffered_ref) | self.first_step
     if not buffered_ref.await_prefetch:
       step = (
@@ -1462,13 +1485,76 @@ class Scheduler:
           else self.step
       )
       pred = pred & (step >= buffered_ref.prefetched_count)
+    return pred
 
+  def wait_in(self, buffered_ref, src_ref) -> BufferedRef:
+    if (pred := self.wait_in_predicate(buffered_ref)) is not None:
+      self._wait_in(buffered_ref, src_ref, pred)
+    return buffered_ref
+
+  def _wait_in(self, buffered_ref, src_ref, pred):
     @when(pred)
     @self._named_scope("ep_wait_in")
     def _wait():
       if buffered_ref.is_input:
         buffered_ref.wait_in(src_ref, self.indices)
-    return buffered_ref
+
+  def copy_in_and_wait_in(self, brefs, refs):
+    """The input phase of a step with memoized index maps.
+
+    All wait predicates come first, so the step's index map evaluations precede
+    its scan loops and waits. Lookahead inputs whose index maps return the same
+    dynamic block indices (shared through the memo) change blocks at the same
+    steps, so one scan loop fetches for all of them.
+    """
+    is_bref = lambda x: isinstance(x, BufferedRefBase)
+    leaves, treedef = jax.tree.flatten(brefs, is_leaf=is_bref)
+    ref_leaves = treedef.flatten_up_to(refs)
+    preds = [self.wait_in_predicate(bref) for bref in leaves]
+    # The indices of size 1 grid dimensions, like Python scalars, never change.
+    constant_ids = {
+        id(i)
+        for i, d in zip(self.indices, self.grid, strict=True)
+        if isinstance(d, int) and d == 1
+    }
+    groups: dict[Any, list[int]] = {}
+    for i, bref in enumerate(leaves):
+      key: Any = i
+      if (
+          bref.is_input
+          and bref.use_lookahead
+          and not bref.is_trivial_windowing
+          and not bref.has_indirect
+      ):
+        block_indices = self._compute_index(bref, *self.indices)
+        key = (
+            bref.in_buffer_count,
+            bref.prefetched_count,
+            *(
+                id(x)
+                for x in jax.tree.leaves(block_indices)
+                if not isinstance(x, (bool, int, float))
+                and id(x) not in constant_ids
+            ),
+        )
+      groups.setdefault(key, []).append(i)
+    for group in groups.values():
+      if len(group) == 1:
+        leaves[group[0]] = self.copy_in(leaves[group[0]], ref_leaves[group[0]])
+        continue
+      fetched = fetch_with_lookahead(
+          [leaves[i] for i in group],
+          [ref_leaves[i] for i in group],
+          self.grid,
+          self.grid_offsets,
+          memoize_index_maps=True,
+      )
+      for i, bref in zip(group, fetched, strict=True):
+        leaves[i] = bref
+    for bref, ref, pred in zip(leaves, ref_leaves, preds, strict=True):
+      if pred is not None:
+        self._wait_in(bref, ref, pred)
+    return treedef.unflatten(leaves)
 
   def copy_in(self, buffered_ref, src_ref) -> BufferedRef:
     if buffered_ref.is_trivial_windowing:
@@ -1484,8 +1570,13 @@ class Scheduler:
       return buffered_ref
 
     if buffered_ref.use_lookahead:
-      buffered_ref = fetch_with_lookahead(
-          buffered_ref, src_ref, self.grid, self.grid_offsets, predicate=True
+      [buffered_ref] = fetch_with_lookahead(
+          [buffered_ref],
+          [src_ref],
+          self.grid,
+          self.grid_offsets,
+          predicate=True,
+          memoize_index_maps=self.memoize_index_maps,
       )
     else:
       needs_copy_in = True
@@ -1860,6 +1951,7 @@ def _emit_pipeline(
     num_cores: int | None = None,
     core_id: jax.Array | int | None = None,
     _explicit_indices: bool = False,
+    memoize_index_maps: bool = False,
 ):
   """Creates a function to emit a manual pallas pipeline.
 
@@ -1886,6 +1978,12 @@ def _emit_pipeline(
     core_id: If set, the core ID of the current core for partitioning the grid.
     _explicit_indices: If True, the body will receive the iteration indices as
       its first argument. This parameter is meant for internal use only.
+    memoize_index_maps: If True, the pipeline evaluates each index map once per
+      grid step and lookahead position, including an index map that several
+      block specs compose (e.g. the operands of a fusion), and lookahead inputs
+      whose index maps return the same traced block indices share one scan loop.
+      The DMAs are unchanged. Index maps must then be pure, and the body must
+      not write the Refs they read.
   """
 
   if any(not isinstance(d, (int, jax.Array)) for d in grid):
@@ -1981,22 +2079,30 @@ def _emit_pipeline(
           num_stages=max_buffer_count,
           trace_scopes=trace_scopes,
           _explicit_indices=_explicit_indices,
+          memoize_index_maps=memoize_index_maps,
       )
 
     def loop_body(step, carry):
       unaliased_brefs, indices = carry
       indices = _filter_indices(indices, grid)
       scheduler = make_scheduler(step, indices)
-      with scheduler.grid_env():
+      with scheduler.grid_env(), pallas_core.index_map_memo(memoize_index_maps):
         # prepare any local VMEM aliases
         brefs = map_brefs(scheduler.alias_local_refs, unaliased_brefs, refs)
         # loop input handling phase
-        brefs = map_brefs(scheduler.copy_in, brefs, refs)
-        brefs = map_brefs(scheduler.wait_in, brefs, refs)
+        if memoize_index_maps:
+          brefs = scheduler.copy_in_and_wait_in(brefs, refs)
+        else:
+          brefs = map_brefs(scheduler.copy_in, brefs, refs)
+          brefs = map_brefs(scheduler.wait_in, brefs, refs)
 
         # run the kernel!
         current_refs = map_brefs(lambda x: x.current_ref, brefs)
-        with scheduler._named_scope("ep_run_kernel"):
+        # The body may write Refs that index maps read, so it is not memoized.
+        with (
+            scheduler._named_scope("ep_run_kernel"),
+            pallas_core.index_map_memo(False),
+        ):
           if _explicit_indices:
             pipeline_step = PipelineStep(
                 tuple(jnp.asarray(i, jnp.int32) for i in scheduler.indices),
@@ -2176,6 +2282,7 @@ def _zip_grid(dynamic_grid_spec, static_grid_spec):
   return tuple(next(dynamic_it) if pallas_core.is_dynamic_dim(d) else d
               for d in static_grid_spec)
 
+
 def emit_pipeline(
     body,
     *,
@@ -2190,6 +2297,7 @@ def emit_pipeline(
     no_pipelining: bool = False,
     output_wait_read_only: bool = False,
     _explicit_indices: bool = False,
+    memoize_index_maps: bool = False,
 ):
   in_specs = _normalize_specs(in_specs)
   out_specs = _normalize_specs(out_specs)
@@ -2251,6 +2359,7 @@ def emit_pipeline(
           _explicit_indices=_explicit_indices,
           num_cores=num_cores,
           core_id=core_id,
+          memoize_index_maps=memoize_index_maps,
       )(*in_refs, *out_refs, allocations=allocations, **kwargs)
 
     in_specs_flat, _ = tree_util.tree_flatten(in_specs_)
@@ -2345,6 +2454,7 @@ def emit_pipeline(
         output_wait_read_only=output_wait_read_only,
         _explicit_indices=_explicit_indices,
         num_cores=num_cores,
+        memoize_index_maps=memoize_index_maps,
     )
   return wrapped
 
