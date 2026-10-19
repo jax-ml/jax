@@ -51,7 +51,10 @@ nb::dict Registrations() {
   nb::dict gpu_dict;
   gpu_dict["instantiate"] =
       EncapsulateFfiHandler(kTritonKernelCallFfiInstantiate);
+  gpu_dict["initialize"] =
+      EncapsulateFfiHandler(kTritonKernelCallFfiInitialize);
   gpu_dict["execute"] = EncapsulateFfiHandler(kTritonKernelCallFfi);
+  gpu_dict["record"] = EncapsulateFfiHandler(kTritonKernelCallFfiRecord);
   dict["triton_kernel_call_ffi"] = gpu_dict;
   return dict;
 }
