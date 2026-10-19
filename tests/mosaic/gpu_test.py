@@ -6747,16 +6747,21 @@ class FragmentedArrayTest(TestCase):
     )(inp)
     np.testing.assert_allclose(result, np.full((128, 32), 3.14, np.float32))
 
-  @parameterized.product(in_shape=((128, 128), (128, 64), (64, 128)))
-  def test_strided_load_store(self, in_shape):
+  @parameterized.product(
+      in_shape=((128, 128), (128, 64), (64, 128), (12, 128)),
+      dtype=(jnp.float16, jnp.int4),
+  )
+  def test_strided_load_store(self, in_shape, dtype):
     def kernel(ctx, *args):
       gmem_input, gmem_output, (smem_input, smem_output) = args
       copy(gmem_input, smem_input)
-      t = mgpu.FragmentedArray.load_strided(smem_input)
+      t = mgpu.FragmentedArray.load_strided(
+          smem_input, is_signed=utils.is_signed(dtype)
+      )
       t.store_untiled(smem_output)
       copy(smem_output, gmem_output)
 
-    inp = out = self.prng.uniform(-1, 1, in_shape).astype(jnp.float16)
+    inp = out = self.prng.integers(-8, 8, in_shape).astype(dtype)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (inp,), out, [inp, out],
     )(inp)
