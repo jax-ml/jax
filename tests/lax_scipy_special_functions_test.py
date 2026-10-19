@@ -418,6 +418,32 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         self.assertAllClose(osp_special.gammasgn(inp),
                             lsp_special.gammasgn(inp))
 
+  @parameterized.parameters([True, False])
+  def testGammaDebugNans(self, with_jit):
+    finfo = jnp.finfo(dtypes.default_float_dtype())
+    # Cover all branches of _gamma_lanczos_impl: |x| < sqrt(eps) (including
+    # +/-0.0), negative non-integers (reflection), positive integers <= max_int
+    # (factorial table) and > max_int, x > overflow (including where both p and
+    # e overflow), x < underflow, and +inf.
+    x = jnp.asarray(
+        [-1000.5, -100.5, -50.5, -5.5, -0.5, -float(finfo.tiny), -0.0, 0.0,
+         float(finfo.tiny), 1e-5, 0.5, 1.0, 2.0, 10.0, 15.5, 35.0, 50.0, 100.0,
+         220.0, 1000.0, float(finfo.max), np.inf],
+        dtype=finfo.dtype)
+    x_grad = jnp.asarray([-50.5, -5.5, -0.5, 0.5, 1.0, 2.5, 10.0, 15.5],
+                         dtype=finfo.dtype)
+    f = lsp_special.gamma
+    df = jax.grad(lambda x: f(x).sum())
+    if with_jit:
+      f, df = jax.jit(f), jax.jit(df)
+    with jax.debug_nans(True), jax.disable_jit(not with_jit):
+      f(x)  # Doesn't crash
+      df(x_grad)
+      for nan_input in (-1.0, -2.0, -100.0, -float(finfo.max), -np.inf, np.nan):
+        with self.assertRaisesRegex(FloatingPointError,
+                                    "invalid value \\(nan\\)"):
+          f(jnp.asarray(nan_input, dtype=finfo.dtype))
+
   @jtu.sample_product(dtype=float_dtypes)
   def test_log_ndtr_accuracy(self, dtype):
     # Regression test for https://github.com/jax-ml/jax/issues/41676:

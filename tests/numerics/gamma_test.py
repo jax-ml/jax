@@ -39,6 +39,7 @@ config.parse_flags_with_absl()
 
 bf16, f16, f32, f64 = jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64
 DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
+TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
 
 
 def _mpmath_digamma(x):
@@ -295,10 +296,72 @@ class GammainccinvTest(jtu.JaxTestCase):
     )
 
 
+def _scipy_gamma(x):
+  # scipy.special.gamma returns +0.0 when it underflows for negative x.
+  r = scipy.special.gamma(x)
+  return np.where(r == 0, np.where(np.floor(x) % 2 == 1, -0.0, 0.0), r)
+
+
+def _mpmath_gamma(x):
+  if x == 0:
+    return -mpmath.inf if np.signbit(float(x)) else mpmath.inf
+  if (x < 0 and mpmath.isint(x)) or x == -mpmath.inf:
+    return mpmath.nan
+  return mpmath.gamma(x)
+
+
+@jtu.thread_unsafe_test_class()
+class GammaTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_gamma_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 10.0, f64: 8.0}),
+        ("gpu", {f16: 1.0, f32: 11.5, f64: 8.5}),
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 307.0}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 320.0}),
+        ("tpu_v6e", {f16: 1.0, f32: 278.5}),
+        ("tpu_7x", {f16: 1.0, f32: 274.5}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    interesting_points = [
+        # Non-positive integer poles of gamma(x):
+        *(float(-k) for k in range(21)),
+        -100.0,
+        -1000.0,
+        # Horner switch from z to 1/z:
+        10.0,
+        # Largest n with finite (n - 1)! in float32 and float64:
+        35.0,
+        171.0,
+        # Overflow thresholds where gamma(x) == finfo.max, computed via
+        # mpmath.findroot(lambda x: mpmath.loggamma(x) - log(finfo.max), x0):
+        35.040098403112816,  # float32
+        171.6243769563027,  # float64
+        # Negative inputs where |gamma(x)| lands just below a power of two,
+        # maximizing ULP error in the reflection formula in float64:
+        -6.2469100857178725,  # gamma(x) ~= -2**-8
+        -13.999975942555134,  # gamma(x) ~= +2**-21
+    ]
+    util.check_unary_precision(
+        self,
+        jsp.special.gamma,
+        _scipy_gamma,
+        _mpmath_gamma,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        interesting_points=interesting_points,
+    )
+
+
 util.register_benchmark(lax.digamma)
 util.register_benchmark(lax.lgamma)
 util.register_benchmark(jsp.special.gammaincinv, nargs=2)
 util.register_benchmark(jsp.special.gammainccinv, nargs=2)
+util.register_benchmark(jsp.special.gamma, name="gamma")
 
 
 if __name__ == "__main__":
