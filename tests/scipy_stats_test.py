@@ -1298,6 +1298,19 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       )
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @jtu.sample_product(
+    fun=["logpdf", "pdf", "cdf", "logcdf", "sf", "logsf", "ppf"],
+  )
+  def testParetoGradOutsideSupport(self, fun):
+    # Regression test for https://github.com/jax-ml/jax/issues/41445
+    fn = getattr(lsp_stats.pareto, fun)
+    x = jnp.array([-0.5, 1.5]) if fun == "ppf" else jnp.array([-1.0, 0.0, 0.5])
+    b = 2.0
+    grad_x = jax.vmap(jax.grad(fn), in_axes=(0, None))(x, b)
+    self.assertAllClose(grad_x, jnp.zeros_like(x))
+    grad_b = jax.vmap(jax.grad(fn, argnums=1), in_axes=(0, None))(x, b)
+    self.assertAllClose(grad_b, jnp.zeros_like(x))
+
   @genNamedParametersNArgs(4)
   def testTLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
