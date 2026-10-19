@@ -23,6 +23,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.scipy.special.gammaincinv` and
     {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
     incomplete gamma functions, with gradients with respect to both arguments.
+  * Added {func}`jax.execution_options` to pass runtime-defined custom options
+    to each execution of jitted and AOT-compiled functions without retracing or
+    recompiling. Nested contexts merge their options, with inner values taking
+    precedence.
 
 ## JAX 0.12.0 (October 19, 2026)
 
