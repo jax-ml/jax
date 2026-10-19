@@ -2772,8 +2772,15 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 
 @register_lowering_rule(lax.clamp_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.clamp_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.clamp_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(lax.clamp_p, *gpu_core.WGxWARP_SEMANTICS)
 def _clamp_lowering_rule(ctx: LoweringRuleContext, l, x, u):
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    if any(aval_in.shape for aval_in in ctx.avals_in):
+      raise NotImplementedError(
+          "Non-scalar arithmetic is not supported in warp-level lowering."
+      )
   return _lower_fun(lambda l, x, u: lax.min(lax.max(x, l), u))(ctx, l, x, u)
 
 
