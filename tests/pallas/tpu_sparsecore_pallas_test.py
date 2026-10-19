@@ -3665,6 +3665,48 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
     o = jax.block_until_ready(foo(x))
     np.testing.assert_array_equal(o, x)
 
+  def test_vector_subcore_vmem_live_out(self):
+    shape = (8, self.num_lanes)
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    scv_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=1,
+        num_subcores=1,
+    )
+    compiler_params = pltpu.CompilerParams(
+        use_tc_tiling_on_sc=self.USE_TC_TILING
+    )
+
+    # Produces a vector subcore VMEM array that outlives the kernel.
+    @pl.kernel(
+        mesh=scv_mesh,
+        out_type=pltpu.VMEM(shape, x.dtype) @ scv_mesh,
+        compiler_params=compiler_params,
+    )
+    def produce(x_hbm_ref, o_vmem_ref):
+      pltpu.sync_copy(x_hbm_ref, o_vmem_ref)
+
+    # Consumes the live-out VMEM array in a separate kernel.
+    @pl.kernel(
+        mesh=scv_mesh,
+        out_type=jax.ShapeDtypeStruct(shape, x.dtype),
+        compiler_params=compiler_params,
+    )
+    def consume(vmem_ref, o_hbm_ref):
+      vmem_ref[...] += 1
+      pltpu.sync_copy(vmem_ref, o_hbm_ref)
+
+    @jax.jit
+    def f(x):
+      vmem_ref = jax.new_ref(produce(x), memory_space=pltpu.VMEM @ scv_mesh)
+      return consume(vmem_ref)
+
+    hlo = f.lower(x).compile().as_text()
+    # The live-out array is placed in TileSpmem.
+    self.assertIn("S(15)", hlo)
+    np.testing.assert_array_equal(f(x), x + 1)
+
   def test_memory_space_annotations_aliased_input_core_map(self):
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
