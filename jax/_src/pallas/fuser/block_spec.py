@@ -505,6 +505,8 @@ def _block_shapes_equal(
 def _block_specs_equal(
     bs1: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
     bs2: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
+    *,
+    strict_mode: bool = True,
 ) -> bool:
   if bs1 is pallas_core.no_block_spec or bs2 is pallas_core.no_block_spec:
     return bs1 is bs2
@@ -516,7 +518,7 @@ def _block_specs_equal(
           or isinstance(bs2.index_map, pallas_core._IndexMapFunc)), msg
   return (
       _block_shapes_equal(bs1.block_shape, bs2.block_shape)
-      and bs1.index_map == bs2.index_map
+      and (not strict_mode or bs1.index_map == bs2.index_map)
       and bs1.memory_space == bs2.memory_space
       and bs1.pipeline_mode == bs2.pipeline_mode
   )
@@ -2800,6 +2802,7 @@ def _call_jaxpr_eval_rule(
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       read_usage_env=read_usage_env,
       grid_len=ctx.grid_len,
+      strict_mode=False,
   )
   kernel_fn = make_kernel_function(
       jaxpr,
@@ -2909,8 +2912,9 @@ def push_block_spec(
       the input `BlockSpec` index maps are expected to take `grid_len` grid
       indices followed by the scalar prefetch refs, and the returned output
       `BlockSpec` index maps follow the same convention.
-    strict_mode: Forwarded to push rules as `PushRuleContext.strict_mode`; the
-      built-in push rules currently ignore it.
+    strict_mode: If `True`, converging paths to the same operation must have
+      identical block index maps. If `False`, only block shapes, memory spaces,
+      and pipeline modes must match.
     return_out_type: If `True`, also return a PyTree of `ShapeDtypeStruct`s
       describing the output types of `f`.
     **in_spec_kwargs: Keyword input `BlockSpec`s (or PyTrees of
@@ -3190,7 +3194,9 @@ def _binop_push_rule(
   if not (lhs_has_block_spec ^ rhs_has_block_spec):
     # We can only do a push if one of the block specs is unspecified
     # or they are identical.
-    if _block_specs_equal(left_block_spec, right_block_spec):
+    if _block_specs_equal(
+        left_block_spec, right_block_spec, strict_mode=ctx.strict_mode
+    ):
       return left_block_spec
     raise ValueError('Illegal binary push. One of the block specs must be no_block_spec.')
   for l, r in zip(left_aval.shape, right_aval.shape, strict=True):
@@ -3280,12 +3286,14 @@ def _select_n_push_rule(
     ctx: PushRuleContext,
     *args: pallas_core.BlockSpec,
 ):
-  del ctx
   block_specs = [b for b in args if b is not pallas_core.no_block_spec]
   assert len(block_specs) > 0
   block_spec = block_specs[0]
   if len(block_specs) > 1:
-    if any(b is not block_spec for b in block_specs):
+    if any(
+        not _block_specs_equal(b, block_spec, strict_mode=ctx.strict_mode)
+        for b in block_specs[1:]
+    ):
       raise NotImplementedError(
           'select_n with multiple differing inputs not supported yet'
       )
@@ -3299,13 +3307,16 @@ def _clamp_push_rule(
     x_block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
     max_block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
 ):
-  del ctx
   if (
-      min_block_spec is not pallas_core.no_block_spec and
-      min_block_spec is not x_block_spec
+      min_block_spec is not pallas_core.no_block_spec
+      and not _block_specs_equal(
+          min_block_spec, x_block_spec, strict_mode=ctx.strict_mode
+      )
   ) or (
-      max_block_spec is not pallas_core.no_block_spec and
-      max_block_spec is not x_block_spec
+      max_block_spec is not pallas_core.no_block_spec
+      and not _block_specs_equal(
+          max_block_spec, x_block_spec, strict_mode=ctx.strict_mode
+      )
   ):
     raise NotImplementedError(
         'clamp with multiple differing inputs not supported yet.'
@@ -3332,9 +3343,14 @@ def _call_jaxpr_push_block_spec_rule(
     jaxpr: core.Jaxpr,
     **_,
 ):
-  del ctx
   assert not jaxpr.consts
-  return _push_block_spec_jaxpr(jaxpr, *block_specs)
+  return _push_block_spec_jaxpr(
+      jaxpr,
+      *block_specs,
+      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
+      grid_len=ctx.grid_len,
+      strict_mode=ctx.strict_mode,
+  )
 
 
 @register_push_block_spec_rule(custom_derivatives.custom_jvp_call_p)

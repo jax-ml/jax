@@ -3145,6 +3145,36 @@ class PushBlockSpecTest(parameterized.TestCase):
           lambda x, y: (x + 1, y + 1), block_spec, pl.no_block_spec
       )(x_type, y_type)
 
+  @parameterized.parameters(
+      (lambda x, y: x + y, ValueError, 'Illegal binary push'),
+      (jax.jit(lambda x, y: x + y), ValueError, 'Illegal binary push'),
+      (
+          lambda x, y: jnp.where(x > 0, x, y),
+          NotImplementedError,
+          'select_n with multiple differing inputs',
+      ),
+      (
+          lambda x, y: jax.lax.clamp(x, x, y),
+          NotImplementedError,
+          'clamp with multiple differing inputs',
+      ),
+  )
+  def test_push_strict_mode(self, fn, err_type, err_regex):
+    x_type = jax.ShapeDtypeStruct((256, 256), jnp.float32)
+    bs1 = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    bs2 = pl.BlockSpec((128, 128), lambda i, j: (j, i))
+
+    with self.assertRaisesRegex(err_type, err_regex):
+      block_spec_lib.push_block_spec(fn, bs1, bs2, strict_mode=True)(
+          x_type, x_type
+      )
+
+    out_spec = block_spec_lib.push_block_spec(fn, bs1, bs2, strict_mode=False)(
+        x_type, x_type
+    )
+    self.assertEqual(out_spec.block_shape, (128, 128))
+    self.assertEqual(out_spec.index_map(0, 1), (0, 1))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
