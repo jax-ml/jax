@@ -5510,6 +5510,10 @@ class LinearCallTest(jtu.JaxTestCase):
     expected = jnp.broadcast_to(7. * r_in, ans.shape)
     self.assertAllClose(ans, expected)
 
+  def test_vmap_leaves_an_unmapped_call_unmapped(self):
+    ans = jax.vmap(lambda _: self.scaled(2., 3.), out_axes=None)(jnp.arange(4.))
+    self.assertAllClose(ans, 6.)
+
   def test_vmap_of_transpose(self):
     r = jnp.arange(1., 7.).reshape(2, 3)
     transpose = lambda r: jax.linear_transpose(

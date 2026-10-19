@@ -1914,6 +1914,11 @@ def _linear_call_jvp_rule(primals, tangents, callee, transpose_thunk,
 
 def _linear_call_batching_rule(axis_data, args, dims, *, callee,
                                transpose_thunk, num_callee_consts, num_res):
+  if all(d is None for d in dims):
+    outs = linear_call_p.bind(
+        *args, callee=callee, transpose_thunk=transpose_thunk,
+        num_callee_consts=num_callee_consts, num_res=num_res)
+    return outs, [None] * len(outs)
   num_fixed = num_callee_consts + num_res
   fixed, operands_lin = split_list(args, [num_fixed])
   fixed_dims, lin_dims = split_list(dims, [num_fixed])
