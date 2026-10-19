@@ -2058,8 +2058,12 @@ def diff_tracing_cache_keys(new_key, old_key) -> tuple[int, int, str]:
     A tuple of (severity, num_diffs, explanation) for the diff between the two
     keys. Severity is an int, where lower is better.
   """
-  new_ctx, (new_tree, new_dbg, *_), () = new_key
-  old_ctx, (old_tree, old_dbg, *_), () = old_key
+  new_ctx, new_pos, new_kw = new_key
+  old_ctx, old_pos, old_kw = old_key
+  new_tree = new_pos[0]
+  new_dbg = new_pos[1] if len(new_pos) > 1 else dict(new_kw).get('debug_info')
+  old_tree = old_pos[0]
+  old_dbg = old_pos[1] if len(old_pos) > 1 else dict(old_kw).get('debug_info')
   return (diff_tracing_ctx(new_ctx, old_ctx) or
           diff_trees(new_tree.tree, old_tree.tree) or
           diff_debug(new_dbg, old_dbg) or

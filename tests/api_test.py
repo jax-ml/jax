@@ -5472,6 +5472,27 @@ class APITest(jtu.JaxTestCase):
         run_state_reference(body)((jnp.ones(7), jnp.ones(7)))
     self.assertTrue(any("different input types" in msg for msg in cm.output))
 
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_explain_cache_misses_kwarg_debug_info(self):
+    # https://github.com/jax-ml/jax/issues/41455
+    from jax._src import flattree as ft
+
+    def f(x):
+      return jnp.sin(x)
+
+    x1 = jnp.ones(3, 'float32')
+    x2 = jnp.ones(7, 'float32')
+    dbg1 = api_util.debug_info("test", f, (x1,), {})
+    dbg2 = api_util.debug_info("test", f, (x2,), {})
+    pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x1)), debug_info=dbg1,
+                      requires_low=True)
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x2)), debug_info=dbg2,
+                          requires_low=True)
+    self.assertTrue(any("at x, now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
   @unittest.skip('TODO(mattjj): re-enable after updating cache miss explainer')
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_shape_explain_closest(self):
