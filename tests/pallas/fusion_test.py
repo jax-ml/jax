@@ -1152,6 +1152,12 @@ class FusionTest(jtu.JaxTestCase):
         mixed_jaxpr.eqns[-1].params["jaxpr"],
     )
 
+  def test_evaluate_kwargs(self):
+    x = jnp.arange(4, dtype=jnp.float32)
+    out = fuser.evaluate(lambda a, *, b: a + b)(x, b=x * 2)
+    np.testing.assert_array_equal(out, x * 3)
+
+
 @dataclasses.dataclass(frozen=True)
 class ArrayTuple:
   x0: jax.Array
