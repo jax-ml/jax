@@ -422,6 +422,13 @@ def _closure_converted_fun(jaxpr, consts_tree, in_tree, out_tree):
     return tree_unflatten(out_tree, out_flat)
   return fun
 
+@util.weakref_lru_cache
+def _flat_args_fun(fun, in_tree):
+  def flat_fun(consts, *args_flat):
+    args, kwargs = tree_unflatten(in_tree, args_flat)
+    return fun(consts, *args, **kwargs)
+  return flat_fun
+
 
 class Traced(Stage):
   """Traced form of a function specialized to argument types and values.
@@ -452,6 +459,7 @@ class Traced(Stage):
   args_info = property(_traced_args_info)  # pyrefly: ignore[bad-override]
   out_info = property(_traced_out_info)
   _num_consts = property(lambda self: len(self._consts))
+  in_tree = property(lambda self: self._in_tree)  # pyrefly: ignore[bad-override]
 
   @property
   def out_avals(self):
@@ -500,8 +508,13 @@ class Traced(Stage):
     from jax._src.api import jit  # type: ignore
     consts, fun = self.closure_convert()
     arg_avals = self.jaxpr.in_avals[len(self._consts):]
-    args, kwargs = tree_unflatten(self.in_tree, arg_avals)
-    traced = jit(fun).trace(consts, *args, **kwargs)
+    # trace on flat avals, never unflattening avals into user pytrees
+    traced = jit(_flat_args_fun(fun, self.in_tree)).trace(consts, *arg_avals)
+    args_tree, kwargs_tree = self.in_tree.children()
+    consts_tree = traced.in_tree.children()[0].children()[0]
+    tup = tree_util.treedef_tuple_tracing_registry
+    traced._in_tree = tup((tup((consts_tree, *args_tree.children())), kwargs_tree))
+    assert traced._in_tree.num_leaves == len(traced.jaxpr.in_avals)
     jaxpr = traced.jaxpr
     if (not jaxpr.consts and len(jaxpr.eqns) == 1 and
         (eqn := jaxpr.eqns[0]).primitive is core.eval_jaxpr_p and
