@@ -2725,7 +2725,7 @@ def _multiple_of_lowering_rule(ctx: LoweringRuleContext, val, *, values):
   return val
 
 
-def reduce_lowering_rule(reduce_fn, type_to_kind, type_to_identity):
+def reduce_lowering_rule(type_to_kind, type_to_identity):
   def _lowering_rule(ctx: LoweringRuleContext, x, *, axes, **kwargs):
     (x_aval,) = ctx.avals_in
 
@@ -2762,7 +2762,8 @@ REDUCE_MAX_IDENTITY = {
     jnp.signedinteger: np.iinfo(np.int32).min,
 }
 _reduce_max_lowering_rule = reduce_lowering_rule(
-    jnp.max, REDUCE_MAX_KINDS, REDUCE_MAX_IDENTITY)
+    REDUCE_MAX_KINDS, REDUCE_MAX_IDENTITY
+)
 register_lowering_rule(lax.reduce_max_p)(_reduce_max_lowering_rule)
 
 
@@ -2776,7 +2777,8 @@ REDUCE_MIN_IDENTITY = {
     jnp.signedinteger: np.iinfo(np.int32).max,
 }
 _reduce_min_lowering_rule = reduce_lowering_rule(
-    jnp.min, REDUCE_MIN_KINDS, REDUCE_MIN_IDENTITY)
+    REDUCE_MIN_KINDS, REDUCE_MIN_IDENTITY
+)
 register_lowering_rule(lax.reduce_min_p)(_reduce_min_lowering_rule)
 
 
@@ -2790,7 +2792,8 @@ REDUCE_SUM_IDENTITY = {
     jnp.signedinteger: 0,
 }
 _reduce_sum_lowering_rule = reduce_lowering_rule(
-    jnp.sum, REDUCE_SUM_KINDS, REDUCE_SUM_IDENTITY)
+    REDUCE_SUM_KINDS, REDUCE_SUM_IDENTITY
+)
 register_lowering_rule(lax.reduce_sum_p)(_reduce_sum_lowering_rule)
 
 
