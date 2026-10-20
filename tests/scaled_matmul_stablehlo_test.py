@@ -398,11 +398,6 @@ expected_output_spec = [
     PartitionSpec(None, ('dp', 'tp'), None),
 ]
 
-# GSPMD uses a different output sharding for this case, and may also emit an
-# extra reduce-scatter in compiled HLO.
-if not config.use_shardy_partitioner.value:
-    expected_output_spec[5] = PartitionSpec(None, 'dp', 'tp')
-
 sharding_configs = {
     input_sharding: (hlo, output_spec)
     for input_sharding, hlo, output_spec in zip(input_shardings,

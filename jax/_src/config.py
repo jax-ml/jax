@@ -2310,12 +2310,7 @@ use_shardy_partitioner = bool_state(
     name='jax_use_shardy_partitioner',
     default=True,
     upgrade=True,
-    help=(
-        'Whether to lower to Shardy. See the migration guide for more '
-        'information: https://docs.jax.dev/en/latest/shardy_jax_migration.html.'
-    ),
-    include_in_jit_key=True,
-    include_in_trace_context=True,
+    help='DEPRECATED: Shardy is now always enabled; this flag has no effect.',
 )
 
 use_cpp_shard_args = bool_state(

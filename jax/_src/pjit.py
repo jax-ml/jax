@@ -2228,10 +2228,7 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
   if (isinstance(axis_ctx, sharding_impls.SPMDAxisContext) and
       axis_ctx.manual_axes):
     sharding = mlir.add_manual_axes(axis_ctx, sharding, in_aval.ndim)
-  if config.use_shardy_partitioner.value:
-    sharding = sharding._to_sdy_sharding(in_aval.ndim)
-  else:
-    sharding = sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
+  sharding = sharding._to_sdy_sharding(in_aval.ndim)
   out = mlir.wrap_with_sharding_op(
       ctx, x_node, out_aval, sharding, unspecified_dims=unconstrained_dims)
   if layout is not None:

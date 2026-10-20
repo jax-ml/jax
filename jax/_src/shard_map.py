@@ -1150,29 +1150,9 @@ def _shard_map_lowering_shardy(
 def _shard_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes,
                         jaxpr: core.Jaxpr, mesh, in_specs, out_specs,
                         check_vma, newly_manual_axes):
-  if config.use_shardy_partitioner.value:
-    return _shard_map_lowering_shardy(
-        ctx, in_nodes, jaxpr, mesh, in_specs, out_specs, newly_manual_axes,
-        check_vma)
-
-  in_avals_ = [v.aval for v in jaxpr.invars]
-  out_avals_ = [x.aval for x in jaxpr.outvars]
-  in_nodes_ = map(partial(_xla_shard, ctx, mesh, newly_manual_axes), in_specs,
-                  ctx.avals_in, in_avals_, in_nodes)
-  new_axis_context = sharding_impls.SPMDAxisContext(
-      _get_spmdaxis_ctx_mesh(mesh), newly_manual_axes | set(mesh.manual_axes))
-  sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
-  with _extend_axis_env(mesh, newly_manual_axes), config._check_vma(check_vma):
-    out_nodes_, tokens_out = mlir.call_lowering(
-        "shmap_body", jaxpr, None, sub_ctx, in_avals_,
-        out_avals_, ctx.tokens_in, *in_nodes_,
-        dim_var_values=ctx.dim_var_values,
-        const_lowering=ctx.const_lowering,
-        arg_names=map(_pspec_mhlo_attrs, in_specs, in_avals_),
-        result_names=map(_pspec_mhlo_attrs, out_specs, out_avals_))
-  ctx.set_tokens_out(tokens_out)
-  return map(partial(_xla_unshard, ctx, mesh, newly_manual_axes), out_specs,
-             out_avals_, ctx.avals_out, out_nodes_)
+  return _shard_map_lowering_shardy(
+      ctx, in_nodes, jaxpr, mesh, in_specs, out_specs, newly_manual_axes,
+      check_vma)
 mlir.register_lowering(shard_map_p, _shard_map_lowering)
 
 def _make_scoped_manual_sharding(ctx, mesh, spec):
@@ -1182,50 +1162,6 @@ def _make_scoped_manual_sharding(ctx, mesh, spec):
     mesh = mesh.update_axis_types(
         {a: AxisType.Manual for a in axis_ctx.manual_axes})
   return NamedSharding(mesh, spec)
-
-def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, manual_axes, spec,
-               aval_in, aval_out, x):
-  if prod([size for n, size in mesh.shape.items() if n in manual_axes]) == 1:
-    return x
-  ns = _make_scoped_manual_sharding(ctx, mesh, spec)
-  if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
-    ns = sharding_impls.physical_sharding(aval_in, ns)
-    aval_in = core.physical_aval(aval_in)
-  shard_proto = ns._to_xla_hlo_sharding(aval_in.ndim).to_proto()
-  unspecified = (set(range(aval_in.ndim))
-                 if len(manual_axes) < len(mesh.axis_names) else set())
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,
-                                  unspecified_dims=unspecified)
-  manual_proto = pxla.manual_proto(
-      aval_in, manual_axes | set(mesh.manual_axes), mesh)
-  return mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto,
-                                         unspecified)
-
-def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, manual_axes, spec,
-                 aval_in, aval_out, x):
-  if prod([size for n, size in mesh.shape.items() if n in manual_axes]) == 1:
-    return x
-  ns = _make_scoped_manual_sharding(ctx, mesh, spec)
-  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    ns = sharding_impls.physical_sharding(aval_out, ns)
-    aval_out = core.physical_aval(aval_out)
-  unspecified = (set(range(aval_in.ndim))
-                 if len(manual_axes) < len(mesh.axis_names) else set())
-  if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
-    aval_in = core.physical_aval(aval_in)
-  manual_proto = pxla.manual_proto(
-      aval_in, manual_axes | set(mesh.manual_axes), mesh)
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_proto,
-                                  unspecified_dims=unspecified)
-  shard_proto = ns._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-  return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_proto,
-                                         unspecified)
-
-def _pspec_mhlo_attrs(spec, aval: core.AbstractValue) -> str:
-  if isinstance(aval, core.ShapedArray):
-    names = _spec_to_names(spec)
-    return str(map(names.get, range(aval.ndim)))
-  return ''
 
 # Eager evaluation
 

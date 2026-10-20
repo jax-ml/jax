@@ -2234,24 +2234,11 @@ class ShardMapTest(jtu.JaxTestCase):
       return x
 
     hlo_str = jax.jit(foo).lower(x).as_text("stablehlo", debug_info=True)
-    if config.use_shardy_partitioner.value:
-      if len(jax.devices()) > 1:
-        self.assertEqual(2, hlo_str.count('sdy.manual_computation'))
-      else:
-        # When devices == 1, the `sdy.manual_computation` is inlined.
-        self.assertEqual(0, hlo_str.count('sdy.manual_computation'))
+    if len(jax.devices()) > 1:
+      self.assertEqual(2, hlo_str.count('sdy.manual_computation'))
     else:
-      self.assertIn('call @shmap_body(', hlo_str)
-      self.assertIn('call @shmap_body_', hlo_str)
-      self.assertIn('%arg0: tensor<1xf32>', hlo_str)
-      if not config.use_simplified_jaxpr_constants.value:
-        # A constvar is turned into an argument with location None in @shmap_body
-        self.assertIn('"[None]"', hlo_str)
-        self.assertIn('%arg1: tensor<1xf32>', hlo_str)
-      self.assertIn('"[(\'i\',)]"', hlo_str)
-      self.assertIn(
-          '-> (tensor<1xf32> {jax.result_info = "[(\'i\',)]"})', hlo_str
-      )
+      # When devices == 1, the `sdy.manual_computation` is inlined.
+      self.assertEqual(0, hlo_str.count('sdy.manual_computation'))
 
   def test_rewrite_process_call(self):
     def f(x):
@@ -3246,18 +3233,11 @@ class ShardMapTest(jtu.JaxTestCase):
 
     v = jnp.arange(32.).reshape(4, 8)
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
-    if config.use_shardy_partitioner.value:
-      self.assertIn(
-          'in_shardings=[<@mesh, [{"i", ?}, {?}]>]'
-          ' out_shardings=[<@mesh, [{"i", ?}, {?}]>] manual_axes={"i"}',
-          f.lower(v).as_text(),
-      )
-    else:
-      self.assertIn(
-          'sharding={devices=[1,1,2,2]<=[4] last_tile_dims={manual,'
-          ' replicated}}',
-          f.lower(v).as_text('hlo'),
-      )
+    self.assertIn(
+        'in_shardings=[<@mesh, [{"i", ?}, {?}]>]'
+        ' out_shardings=[<@mesh, [{"i", ?}, {?}]>] manual_axes={"i"}',
+        f.lower(v).as_text(),
+    )
     self.assertAllClose(v * v, f(v), check_dtypes=False)
 
   def test_partial_auto_explicit_no_set_mesh(self):
@@ -3311,13 +3291,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('i', 'j')))
     self.assertAllClose(v * v, out, check_dtypes=False)
 
-    if config.use_shardy_partitioner.value:
-      self.assertIn('<@mesh, [{}, {"j"}]>', f.lower(v).as_text())
-    else:
-      self.assertIn(
-          'mhlo.sharding = "{devices=[1,2,2]<=[2,2]T(1,0) last_tile_dims={manual}}"}',
-          f.lower(v).as_text(),
-      )
+    self.assertIn('<@mesh, [{}, {"j"}]>', f.lower(v).as_text())
 
     @jax.jit
     def h(x):
@@ -3371,18 +3345,11 @@ class ShardMapTest(jtu.JaxTestCase):
 
     v = jnp.arange(32.0).reshape(4, 8)
     v = jax.device_put(v, sharding)
-    if config.use_shardy_partitioner.value:
-      self.assertIn(
-          'in_shardings=[<@mesh, [{?}, {?}]>]'
-          ' out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={"j", "k"}',
-          f.lower(v).as_text(),
-      )
-    else:
-      self.assertIn(
-          'sharding={devices=[1,1,4,2]<=[2,4]T(1,0) last_tile_dims={manual,'
-          ' replicated}}',
-          f.lower(v).as_text('hlo'),
-      )
+    self.assertIn(
+        'in_shardings=[<@mesh, [{?}, {?}]>]'
+        ' out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={"j", "k"}',
+        f.lower(v).as_text(),
+    )
     actual = f(v)
     self.assertAllClose(v * v, actual, check_dtypes=False)
     self.assertEqual(actual.sharding, sharding)
@@ -3696,29 +3663,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
     self.assertAllClose(jax.jit(f)(), jnp.zeros((2,)))
 
-  def test_partial_auto_of_pjit_different_mesh(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest(
-          'Shardy requires the mesh axis names to be the same across '
-          'the entire computation.'
-      )
-    mesh = jtu.create_mesh((2, 2), ('i', 'j'))
-    mesh2 = jax.sharding.Mesh(mesh.devices, ('k', 'l'))
-
-    def h():
-      def _make_zeros():
-        return jnp.zeros(())
-      s = jax.sharding.NamedSharding(mesh2, P())
-      y = jax.jit(_make_zeros, out_shardings=s)()
-      return y.reshape((1,))
-
-    def f():
-      return shard_map(
-          h, mesh=mesh, in_specs=(),
-          out_specs=P('i'), check_vma=False, axis_names=frozenset({'i'}))()
-
-    self.assertAllClose(jax.jit(f)(), jnp.zeros((2,)))
-
   def test_partial_auto_axis_index(self):
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
     out_sharding = NamedSharding(mesh, P('i', None))
@@ -3781,8 +3725,7 @@ class ShardMapTest(jtu.JaxTestCase):
   #   f(x)  # don't crash
 
   def test_partial_auto_debug_print(self):
-    if config.use_shardy_partitioner.value:
-      raise unittest.SkipTest("shardy error")
+    raise unittest.SkipTest("shardy error")
 
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
     x = jnp.arange(8.)
@@ -3869,10 +3812,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jnp.sin(x)
 
     ir_text = jax.jit(jax.grad(lambda x: f(x).sum())).lower(xs).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn('out_shardings=[<@mesh, [{"i", "k"}]>]', ir_text)
-    else:
-      self.assertIn("{jax.result_info = \"[('i', 'k')]\"}", ir_text)
+    self.assertIn('out_shardings=[<@mesh, [{"i", "k"}]>]', ir_text)
 
   def test_dynamic_slice_transpose(self):
     mesh = jtu.create_mesh((2,), ('x',))
@@ -4207,8 +4147,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   def test_rep_none_canonicalization(self):
     # https://github.com/jax-ml/jax/issues/26621
-    if config.use_shardy_partitioner.value:
-      self.skipTest('complex values fail under shardy')
+    self.skipTest('complex values fail under shardy')
     N = 8
     xs = jnp.ones((8, N), dtype=jnp.int32)
     variables = jax.random.normal(jax.random.key(1), (N, N), jnp.complex64)

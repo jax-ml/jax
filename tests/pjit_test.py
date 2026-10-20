@@ -479,16 +479,10 @@ class PJitTest(jtu.BufferDonationTestCase):
                         check_dtypes=False)
 
     hlo = f.lower(np.ones(shape)).compiler_ir()
-    if config.use_shardy_partitioner.value:
-      # Annotation from with_sharding_constraint
-      self.assertIn('<@mesh, [{"x"}, {"y"}]>', str(hlo))
-      # Annotation from pjit
-      self.assertIn('sharding = #sdy.sharding<@mesh, [{}, {}]>}', str(hlo))
-    else:
-      # Annotation from with_sharding_constraint
-      self.assertIn('sharding = "{devices=[2,1]<=[2]}"', str(hlo))
-      # Annotation from pjit
-      self.assertIn('sharding = "{replicated}"', str(hlo))
+    # Annotation from with_sharding_constraint
+    self.assertIn('<@mesh, [{"x"}, {"y"}]>', str(hlo))
+    # Annotation from pjit
+    self.assertIn('sharding = #sdy.sharding<@mesh, [{}, {}]>}', str(hlo))
 
   def testShardingConstraintWithArray(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
@@ -560,12 +554,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertLen(actual[0]['a'].addressable_shards, 4)
 
     mlir_str = str(f.lower(x).compiler_ir())
-    if config.use_shardy_partitioner.value:
-      self.assertIn('<@mesh, [{?}, {"y"}, {}]>', mlir_str)
-      self.assertIn('<@mesh, [{"x"}, {?}, {}]>', mlir_str)
-    else:
-      self.assertIn("unspecified_dims=[0]", mlir_str)
-      self.assertIn("unspecified_dims=[1]", mlir_str)
+    self.assertIn('<@mesh, [{?}, {"y"}, {}]>', mlir_str)
+    self.assertIn('<@mesh, [{"x"}, {?}, {}]>', mlir_str)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testShardingConstraintPyTreeVmapWithUnconstrainedDims(self):
@@ -584,12 +574,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = [{'a': v, 'b': v * 2}, v * 3]
 
     mlir_str = str(f.lower(x).compiler_ir())
-    if config.use_shardy_partitioner.value:
-      self.assertIn('<@mesh, [{?}, {?}, {"y"}]>', mlir_str)
-      self.assertIn('<@mesh, [{?}, {"x"}, {?}]>', mlir_str)
-    else:
-      self.assertIn("unspecified_dims=[0,1]", mlir_str)
-      self.assertIn("unspecified_dims=[0,2]", mlir_str)
+    self.assertIn('<@mesh, [{?}, {?}, {"y"}]>', mlir_str)
+    self.assertIn('<@mesh, [{?}, {"x"}, {?}]>', mlir_str)
 
   def testCaching(self):
     def f(x):
@@ -2128,19 +2114,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     a = jax.device_put(x, out_p.sharding)
     self.assertTrue(jax.dtypes.issubdtype(a.dtype, jax.dtypes.prng_key))
     self.assertEqual(a.sharding, out_p.sharding)
-
-    if config.use_shardy_partitioner.value:
-      # OpSharding is not supported in shardy.
-      return
-
-    op = xc.OpSharding()
-    op.type = xc.OpSharding.Type.OTHER
-    op.tile_assignment_dimensions = [8]
-    op.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
-    gs = GSPMDSharding(tuple(mesh.devices.flat), op)
-    b = jax.device_put(x, gs)
-    self.assertTrue(jax.dtypes.issubdtype(b.dtype, jax.dtypes.prng_key))
-    self.assertEqual(b.sharding, gs)
 
   def test_device_put_on_different_sharding(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
@@ -3865,10 +3838,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(base_array.sharding, NamedSharding(mesh, P('y', 'x', None)))
 
     lowered_text = make_keys.lower(seeds).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn('<@empty_mesh, [{?}, {?}, {}]>', lowered_text)
-    else:
-      self.assertIn('unspecified_dims=[0,1]', lowered_text)
+    self.assertIn('<@empty_mesh, [{?}, {?}, {}]>', lowered_text)
 
   def test_prng_sharding_propagation_with_nested_jit(self):
     input_shape = (8, 2)
@@ -3894,10 +3864,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(base_array.sharding, NamedSharding(mesh, P(None, 'y', None)))
 
     lowered_text = make_keys.lower(seeds).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn('<@empty_mesh, [{?}, {?}, {}]>', lowered_text)
-    else:
-      self.assertIn('unspecified_dims=[0,1]', lowered_text)
+    self.assertIn('<@empty_mesh, [{?}, {?}, {}]>', lowered_text)
 
   def test_partial_sharded_prng_key_inp(self):
     input_shape = (8, 2, 2)
@@ -3922,10 +3889,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
                      NamedSharding(mesh, P(None, 'y', 'x', None)))
 
     lowered_text = make_keys.lower(seeds).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn('<@empty_mesh, [{?}, {?}, {?}, {}]>', lowered_text)
-    else:
-      self.assertIn('unspecified_dims=[0,1,2]', lowered_text)
+    self.assertIn('<@empty_mesh, [{?}, {?}, {?}, {}]>', lowered_text)
 
   def test_wsc_with_scalar(self):
     mesh = jtu.create_mesh((2,), 'x')
@@ -4173,8 +4137,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     f(jnp.zeros((2, 16)), jnp.ones(2))
 
   def test_empty_io_callback_under_shard_map_reshard_to_singledev(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/384938613): Failing under shardy.")
+    self.skipTest("TODO(b/384938613): Failing under shardy.")
     mesh = jtu.create_mesh((4,), 'i')
 
     def empty_callback(x):
@@ -4958,10 +4921,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 class ShardingInTypesTest(jtu.JaxTestCase):
 
   def check_wsc_in_lowered(self, text):
-    if config.use_shardy_partitioner.value:
-      self.assertIn('sdy.sharding_constraint', text)
-    else:
-      self.assertIn('@Sharding', text)
+    self.assertIn('sdy.sharding_constraint', text)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_basic_mul(self, mesh):
@@ -4990,10 +4950,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     sds = jax.ShapeDtypeStruct(arr.shape, arr.dtype, sharding=s)
     lowered_text = f.lower(sds).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertEqual(lowered_text.count('sdy.sharding_constraint'), 3)
-    else:
-      self.assertEqual(lowered_text.count('@Sharding'), 3)
+    self.assertEqual(lowered_text.count('sdy.sharding_constraint'), 3)
 
     @jax.jit
     def g(x):
@@ -6095,10 +6052,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = f(arr, arr2)
       self.assertEqual(out.sharding, NamedSharding(mesh2, P('x', None)))
       lowered_text = f.lower(arr, arr2).as_text()
-      if config.use_shardy_partitioner.value:
-        self.assertTrue(lowered_text.count("{?}") == 4)
-      else:
-        self.assertTrue(lowered_text.count("unspecified_dims") == 4)
+      self.assertTrue(lowered_text.count("{?}") == 4)
 
     mesh3 = jtu.create_mesh((2, 2), ('x', 'y'),
                             axis_types=(mesh_lib.AxisType.Auto,
@@ -6109,11 +6063,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = f(arr, arr2)
       self.assertEqual(out.sharding, NamedSharding(mesh3, P('x')))
       lowered_text = f.lower(arr, arr2).as_text()
-      if config.use_shardy_partitioner.value:
-        self.assertTrue(lowered_text.count("{?}") == 5)
-        self.assertIn('replicated={"y"}', lowered_text)
-      else:
-        self.assertTrue(lowered_text.count("unspecified_dims") == 4)
+      self.assertTrue(lowered_text.count("{?}") == 5)
+      self.assertIn('replicated={"y"}', lowered_text)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_where_with_scalar(self, mesh):
@@ -6377,11 +6328,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp * 2)
 
     lowered_text = f.lower(arr).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertTrue(lowered_text.count(
-          '[{"x", ?}, {?}, {?}], replicated={"y"}') == 2)
-    else:
-      self.assertTrue(lowered_text.count("unspecified_dims=[0,1,2]") == 3)
+    self.assertTrue(lowered_text.count(
+        '[{"x", ?}, {?}, {?}], replicated={"y"}') == 2)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_auto_mode_mix(self, mesh):
@@ -7834,21 +7782,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
 
     lowered_text = f.lower(key).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn('sdy.sharding_constraint', lowered_text)
-      if out_spec == P('x', 'y'):
-        self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
-      else:
-        assert out_spec == P('x')
-        self.assertIn('<@mesh, [{"x"}]>', lowered_text)
+    self.assertIn('sdy.sharding_constraint', lowered_text)
+    if out_spec == P('x', 'y'):
+      self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
     else:
-      if out_spec == P('x', 'y'):
-        self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
-      else:
-        assert out_spec == P('x')
-        self.assertIn(
-            'mhlo.sharding = "{devices=[2,2]<=[4] last_tile_dim_replicate}"}',
-            lowered_text)
+      assert out_spec == P('x')
+      self.assertIn('<@mesh, [{"x"}]>', lowered_text)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_random_truncated_normal(self, mesh):
@@ -7864,11 +7803,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
     lowered_text = f.lower(key, -1.).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn('sdy.sharding_constraint', lowered_text)
-      self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
-    else:
-      self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
+    self.assertIn('sdy.sharding_constraint', lowered_text)
+    self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_random_bernoulli(self, mesh):
@@ -8845,11 +8781,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp * 2)
 
     lowered_text = f.lower(arr).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertEqual(lowered_text.count("{?}"), 2)
-      self.assertEqual(lowered_text.count('{"x", ?}'), 2)
-    else:
-      self.assertEqual(lowered_text.count('unspecified_dims=[0,1]'), 2)
+    self.assertEqual(lowered_text.count("{?}"), 2)
+    self.assertEqual(lowered_text.count('{"x", ?}'), 2)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
   def test_vmap_spmd_axis_name_explicit_axes_inside(self, mesh):

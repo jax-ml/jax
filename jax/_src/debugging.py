@@ -179,26 +179,16 @@ def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params)
     elif set(axis_context.manual_axes) == set(axis_context.mesh.axis_names):
       # If we have fully manual sharding during lowering, that means the JAX
       # program has per-device semantics, so we run the callback on each device.
-      if config.use_shardy_partitioner.value:
-        sharding = cb._get_sdy_array_list_for_callbacks(ctx.avals_out)
-      else:
-        sharding = xc.OpSharding()
-        sharding.type = xc.OpSharding.Type.MANUAL
+      sharding = cb._get_sdy_array_list_for_callbacks(ctx.avals_out)
     else:
       assert False  # Unreachable
   elif isinstance(axis_context, sharding_impls.ShardingContext):
     # If we have fully automatic sharding during lowering, that means the JAX
     # program has bulk array semantics, so we run the callback with a MAXIMAL
     # sharding and hence execute it only once on the full logical value).
-    if config.use_shardy_partitioner.value:
-      sharding = sharding_impls.SdyArrayList((
-          sharding_impls.SdyArray(
-              mesh_shape=(), dim_shardings=(), logical_device_ids=(0,)),))
-    else:
-      sharding = xc.OpSharding()
-      sharding.type = xc.OpSharding.Type.MAXIMAL
-      sharding.tile_assignment_dimensions = [1]
-      sharding.tile_assignment_devices = [0]
+    sharding = sharding_impls.SdyArrayList((
+        sharding_impls.SdyArray(
+            mesh_shape=(), dim_shardings=(), logical_device_ids=(0,)),))
   else:
     # When there's no SPMD partitioning going on, don't annotate a sharding.
     sharding = None

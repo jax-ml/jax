@@ -3279,10 +3279,11 @@ def _linalg_ffi_lowering(target_name, avals_in=None, avals_out=None,
     num_batch_dims = max_num_dims - num_non_batch_dims
     frontend_attrs = mlir.ir_attribute({"num_batch_dims": str(num_batch_dims)})
     if batch_partitionable_:
-      extra_attributes = {"mhlo.frontend_attributes": frontend_attrs}
-      if config.use_shardy_partitioner.value:
-        extra_attributes["sdy.sharding_rule"] = _build_sdy_sharding_rule(
-            ctx.module_context, num_batch_dims, avals_in_, avals_out_)
+      extra_attributes = {
+          "mhlo.frontend_attributes": frontend_attrs,
+          "sdy.sharding_rule": _build_sdy_sharding_rule(
+              ctx.module_context, num_batch_dims, avals_in_, avals_out_),
+      }
     else:
       extra_attributes = None
     rule = ffi.ffi_lowering(target_name, operand_layouts=operand_layouts,

@@ -24,6 +24,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
     incomplete gamma functions, with gradients with respect to both arguments.
 
+* Deprecations
+  * The `jax_use_shardy_partitioner` configuration flag is deprecated and is now
+    a no-op. JAX always lowers to Shardy, and the flag will be removed in a
+    future release.
+
 ## JAX 0.12.0 (October 19, 2026)
 
 * New features

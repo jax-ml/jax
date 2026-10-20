@@ -170,12 +170,7 @@ def _callback_op_sharding(
           "callbacks do not support specifying sharding inside spmd"
           " computations"
       )
-    if config.use_shardy_partitioner.value:
-      op_sharding = _get_sdy_array_list_for_callbacks(avals_out)
-    else:
-      op_sharding = xc.OpSharding()
-      op_sharding.type = xc.OpSharding.Type.MANUAL
-    return op_sharding
+    return _get_sdy_array_list_for_callbacks(avals_out)
 
   if isinstance(axis_context, sharding_impls.ShardingContext):
     if sharding is not None:
@@ -205,20 +200,13 @@ def _callback_op_sharding(
     # If we have fully automatic sharding during lowering, that means the JAX
     # program has bulk array semantics, so we run the callback with a MAXIMAL
     # sharding and hence execute it only once on the full logical value).
-    if config.use_shardy_partitioner.value:
-      # For shardy, we need to have the same number of shardy annotations as the
-      # number of result ops. If there are no result ops, we need 1 shardy
-      # annotation.
-      num_sdy_shardings = max(1, len(avals_out))
-      op_sharding = SdyArrayList((
-          SdyArray(mesh_shape=(), dim_shardings=(),
-                   logical_device_ids=(device_index,)),) * num_sdy_shardings)
-    else:
-      op_sharding = xc.OpSharding()
-      op_sharding.type = xc.OpSharding.Type.MAXIMAL
-      op_sharding.tile_assignment_dimensions = [1]
-      op_sharding.tile_assignment_devices = [device_index]
-    return op_sharding
+    # For shardy, we need to have the same number of shardy annotations as the
+    # number of result ops. If there are no result ops, we need 1 shardy
+    # annotation.
+    num_sdy_shardings = max(1, len(avals_out))
+    return SdyArrayList((
+        SdyArray(mesh_shape=(), dim_shardings=(),
+                 logical_device_ids=(device_index,)),) * num_sdy_shardings)
 
   # When there's no SPMD partitioning going on, don't annotate a sharding.
   return None
@@ -627,17 +615,16 @@ def send_to_host(
       )
   )
   if sharding is not None:
-    if config.use_shardy_partitioner.value:
-      # `SendOp`'s return type is a StableHLO `TokenType`. However JAX passed
-      # in the maximal sharding of the array type. Since a token has no rank,
-      # we need to create an equivalent sharding with no dimensions. If there
-      # are multiple shardings, just grab the first one since all these
-      # shardings should be the same.
-      assert isinstance(sharding, SdyArrayList)
-      assert len(sharding.shardings) >= 1
-      sharding = SdyArrayList((SdyArray(
-          mesh_shape=(), dim_shardings=(),
-          logical_device_ids=sharding.shardings[0].logical_device_ids),))
+    # `SendOp`'s return type is a StableHLO `TokenType`. However JAX passed
+    # in the maximal sharding of the array type. Since a token has no rank,
+    # we need to create an equivalent sharding with no dimensions. If there
+    # are multiple shardings, just grab the first one since all these
+    # shardings should be the same.
+    assert isinstance(sharding, SdyArrayList)
+    assert len(sharding.shardings) >= 1
+    sharding = SdyArrayList((SdyArray(
+        mesh_shape=(), dim_shardings=(),
+        logical_device_ids=sharding.shardings[0].logical_device_ids),))
     mlir.set_sharding(ctx, send_op, sharding)
   return send_op.result
 
@@ -665,19 +652,18 @@ def receive_from_host(
       )
   )
   if sharding is not None:
-    if config.use_shardy_partitioner.value:
-      assert isinstance(sharding, SdyArrayList)
-      assert len(sharding.shardings) >= 1
-      # `RecvOp`'s last argument is a `TokenType`. Since Shardy requires the
-      # number of shardings to match the number of results, but JAX only sees
-      # the array result, we need to add an equivalent sharding for the token.
-      # Note that even if a function returns N results, we will end up with N
-      # `RecvOp`s, so we only need to get the first sharding. All shardings are
-      # the same anyways, operating on the same single device ID.
-      sharding = SdyArrayList((
-          sharding.shardings[0],
-          SdyArray(mesh_shape=(), dim_shardings=(),
-                   logical_device_ids=sharding.shardings[0].logical_device_ids)))
+    assert isinstance(sharding, SdyArrayList)
+    assert len(sharding.shardings) >= 1
+    # `RecvOp`'s last argument is a `TokenType`. Since Shardy requires the
+    # number of shardings to match the number of results, but JAX only sees
+    # the array result, we need to add an equivalent sharding for the token.
+    # Note that even if a function returns N results, we will end up with N
+    # `RecvOp`s, so we only need to get the first sharding. All shardings are
+    # the same anyways, operating on the same single device ID.
+    sharding = SdyArrayList((
+        sharding.shardings[0],
+        SdyArray(mesh_shape=(), dim_shardings=(),
+                 logical_device_ids=sharding.shardings[0].logical_device_ids)))
     mlir.set_sharding(ctx, recv_op, sharding)
   # Token should be at the end of the results
   result, token = recv_op.results
@@ -882,8 +868,7 @@ def emit_python_callback(
       return (token, *callback_without_token(*args))
     operands = [token, *operands]
     if (
-        config.use_shardy_partitioner.value
-        and sharding is not None
+        sharding is not None
         and len(ctx.avals_out) > 0
         and isinstance(sharding, SdyArrayList)
     ):

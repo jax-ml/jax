@@ -91,9 +91,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     self.devices = np.array(jax.devices()[:2])  # use 2 devices
 
   def get_xla_options(self):
-    return tf.tpu.XLAOptions(
-        use_shardy_partitioner=jax.config.jax_use_shardy_partitioner
-    )
+    return tf.tpu.XLAOptions(use_shardy_partitioner=True)
 
   def log_jax_hlo(self, f_jax, args: Sequence[Any], *,
                   num_replicas=1, num_partitions=2):

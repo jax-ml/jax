@@ -992,7 +992,6 @@ def _device_list_replica_groups_hlo(
 def _try_mesh_axes_replica_group(ctx, axis_names, axis_index_groups):
   axis_ctx = ctx.module_context.axis_context
   if (config.use_rgv3.value
-      and config.use_shardy_partitioner.value
       and axis_index_groups is None
       and isinstance(axis_ctx, SPMDAxisContext)
       and axis_ctx.mesh.size > 1):

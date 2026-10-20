@@ -3479,9 +3479,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
       return immutbox_new(immutbox_get(b2) * 2.0)
 
     lowered_text = f.lower(box).as_text()
-    self.assertIn(
-        'sdy.sharding_constraint' if config.use_shardy_partitioner.value else '@Sharding',
-        lowered_text)
+    self.assertIn('sdy.sharding_constraint', lowered_text)
 
     out, f_vjp = jax.vjp(f, box)
     self.assertEqual(jax.typeof(out).sharding.spec, jax.P(None, 'y'))
@@ -3508,9 +3506,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
         return b_resharded
 
       lowered_g = jax.jit(g).lower(box).as_text()
-      self.assertIn(
-          'sdy.sharding_constraint' if config.use_shardy_partitioner.value else '@Sharding',
-          lowered_g)
+      self.assertIn('sdy.sharding_constraint', lowered_g)
 
       out = jax.jit(g)(box)
       self.assertEqual(jax.typeof(out).sharding.spec, jax.P(None, None))
@@ -3533,9 +3529,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
         return immutbox_new(immutbox_get(b) * 2.0)
 
       lowered_h = jax.jit(h).lower(box).as_text()
-      self.assertIn(
-          'sdy.sharding_constraint' if config.use_shardy_partitioner.value else '@Sharding',
-          lowered_h)
+      self.assertIn('sdy.sharding_constraint', lowered_h)
 
       out = jax.jit(h)(box)
       self.assertEqual(jax.typeof(out).sharding.spec, jax.P(None, 'y'))
@@ -3603,12 +3597,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
         return q_resharded
 
       lowered = jax.jit(f).lower(q).as_text()
-      self.assertIn(
-          'sdy.sharding_constraint'
-          if config.use_shardy_partitioner.value
-          else '@Sharding',
-          lowered,
-      )
+      self.assertIn('sdy.sharding_constraint', lowered)
 
       out = jax.jit(f)(q)
       self.assertEqual(jax.typeof(out).arr_aval.sharding.spec, jax.P(None, None))

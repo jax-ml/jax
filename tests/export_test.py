@@ -1275,30 +1275,16 @@ class JaxExportTest(jtu.JaxTestCase):
     run_devices = export_devices[::-1]  # We can use other devices
     run_mesh = Mesh(run_devices, "y")
     a_device = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P()))
-    if config.use_shardy_partitioner.value:
-      expected_re = re.compile(
-          # The top-level input is replicated
-          r"func.func .* @main\(%arg0: tensor<16x4xf32>.*sdy.sharding ="
-          r" #sdy.sharding<@mesh_0, \[\{\}\, \{\}\]>}\).*"
-          # We apply the in_shardings for f_jax
-          r".*sdy.sharding_constraint %arg0 <@mesh, \[\{\"x\"\}\, \{\}\]>.*"
-          r"%1 = .*call @call_exported_f_jax.*"
-          # We apply the out_shardings for f_jax
-          r".*sdy.sharding_constraint %1 <@mesh, \[\{\}, \{\"x\"\}\]>.*",
-          re.DOTALL)
-    else:
-      expected_re = re.compile(
-          # The top-level input it replicated
-          r"func.func .* @main\(%arg0: tensor<16x4xf32>.*mhlo.sharding ="
-          r" \"{replicated}\"}\).*"
-          # We apply the in_shardings for f_jax
-          r".*custom_call @Sharding\(%arg0\).*mhlo.sharding ="
-          r" \"{devices=\[2,1\]<=\[2\]}\"}.*"
-          r"%1 = .*call @call_exported_f_jax.*"
-          # We apply the out_shardings for f_jax
-          r".*custom_call @Sharding\(%1\).*mhlo.sharding ="
-          r" \"{devices=\[1,2\]<=\[2\]}\"}.*",
-          re.DOTALL)
+    expected_re = re.compile(
+        # The top-level input is replicated
+        r"func.func .* @main\(%arg0: tensor<16x4xf32>.*sdy.sharding ="
+        r" #sdy.sharding<@mesh_0, \[\{\}\, \{\}\]>}\).*"
+        # We apply the in_shardings for f_jax
+        r".*sdy.sharding_constraint %arg0 <@mesh, \[\{\"x\"\}\, \{\}\]>.*"
+        r"%1 = .*call @call_exported_f_jax.*"
+        # We apply the out_shardings for f_jax
+        r".*sdy.sharding_constraint %1 <@mesh, \[\{\}, \{\"x\"\}\]>.*",
+        re.DOTALL)
     hlo = jax.jit(exp.call).lower(a_device).as_text()
     self.assertRegex(hlo, expected_re)
 
@@ -1705,11 +1691,7 @@ class JaxExportTest(jtu.JaxTestCase):
                                          collective_name, mesh):
     # Based on pjit_test::test_dot_general
     def check_wsc_in_lowered(text):
-      assert config.use_shardy_partitioner.value  # TODO(necula): is shardy always on?
-      if config.use_shardy_partitioner.value:
-        self.assertIn('sdy.sharding_constraint', text)
-      else:
-        self.assertIn('@Sharding', text)
+      self.assertIn('sdy.sharding_constraint', text)
 
     np_inp1 = np.arange(16.).reshape(8, 2)
     arr1 = jax.device_put(np_inp1, NamedSharding(mesh, spec1))
@@ -1802,18 +1784,11 @@ class JaxExportTest(jtu.JaxTestCase):
         r"\) -> \(tensor<10x20xf32> (.*)",  # the result
         vjp_module_str).groups()
 
-    if config.use_shardy_partitioner.value:
-      attr_name = "sdy.sharding"
-    else:
-      attr_name = "mhlo.sharding"
+    attr_name = "sdy.sharding"
 
     if in_shardings == "P":
-      if config.use_shardy_partitioner.value:
-        sharding = r'#sdy.sharding<@mesh, \[{}, {"d"}\]>'
-        primal_in_sharding = '#sdy.sharding<@mesh, [{}, {"d"}]>'
-      else:
-        sharding = re.escape("{devices=[1,2]<=[2]}")
-        primal_in_sharding = "{devices=[1,2]<=[2]}"
+      sharding = r'#sdy.sharding<@mesh, \[{}, {"d"}\]>'
+      primal_in_sharding = '#sdy.sharding<@mesh, [{}, {"d"}]>'
       self.assertRegex(arg0_attrs, sharding)
       self.assertRegex(res_attrs, sharding)
     else:
@@ -1822,19 +1797,11 @@ class JaxExportTest(jtu.JaxTestCase):
       self.assertNotIn(attr_name, res_attrs)
 
     if out_shardings == "P":
-      if config.use_shardy_partitioner.value:
-        self.assertRegex(arg1_attrs,
-                         re.escape('#sdy.sharding<@mesh, [{"d"}, {}]>'))
-        primal_out_sharding = '#sdy.sharding<@mesh, [{"d"}, {}]>'
-      else:
-        self.assertRegex(arg1_attrs, re.escape("{devices=[2,1]<=[2]}"))
-        primal_out_sharding = "{devices=[2,1]<=[2]}"
+      self.assertRegex(arg1_attrs,
+                       re.escape('#sdy.sharding<@mesh, [{"d"}, {}]>'))
+      primal_out_sharding = '#sdy.sharding<@mesh, [{"d"}, {}]>'
     else:
-      if config.use_shardy_partitioner.value:
-        primal_out_sharding = '#sdy.sharding<@mesh, [{}, {}]>'
-      else:
-        primal_out_sharding = "{replicated}"
-
+      primal_out_sharding = '#sdy.sharding<@mesh, [{}, {}]>'
       self.assertNotIn(attr_name, arg1_attrs)
 
     # Sharding custom calls for the primal input shape all match primal_in_sharding
@@ -2359,9 +2326,8 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(res_native, res_exported)
 
   def test_different_meshes(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/394265659) can't create NameShardings for Shardy "
-                    "since there are multiple different meshes")
+    self.skipTest("TODO(b/394265659) can't create NameShardings for Shardy "
+                  "since there are multiple different meshes")
     # Make sure we can save with various meshes, and load with various meshes,
     # all different from one another.
     if jax.local_device_count() < 8:

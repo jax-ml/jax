@@ -782,15 +782,14 @@ def _export_lowered(
                                          len(args_avals_flat))
 
   cur_mesh = None
-  if config.use_shardy_partitioner.value:
-    for sharding in itertools.chain(
-        all_in_shardings, lowering.compile_args["out_shardings"]
-    ):
-      if isinstance(sharding, sharding_impls.NamedSharding):
-        cur_mesh = sharding.mesh
-        break
-    if cur_mesh is not None and isinstance(cur_mesh, mesh_lib.Mesh):
-      cur_mesh = cur_mesh.abstract_mesh
+  for s in itertools.chain(
+      all_in_shardings, lowering.compile_args["out_shardings"]
+  ):
+    if isinstance(s, sharding_impls.NamedSharding):
+      cur_mesh = s.mesh
+      break
+  if cur_mesh is not None and isinstance(cur_mesh, mesh_lib.Mesh):
+    cur_mesh = cur_mesh.abstract_mesh
 
   in_named_shardings = tuple(
     to_named_sharding_with_abstract_mesh(s, aval, cur_mesh)
@@ -1521,11 +1520,6 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   symtab = ir.SymbolTable(submodule.operation)
   shardy_enabled = has_sdy_mesh(symtab, submodule)
   if shardy_enabled:
-    if not config.use_shardy_partitioner.value:
-      raise ValueError(
-          "The function was exported with shardy enabled but you are calling "
-          "it with Shardy disabled. Please enable Shardy using "
-          "`--jax_use_shardy_partitioner=True`.")
     # TODO(b/422690222): remove this pass once we don't need to support 6m
     # old exported modules.
     if has_sdy_meshes_in_frontend_attributes(submodule):

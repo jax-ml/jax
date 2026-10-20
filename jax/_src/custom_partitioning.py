@@ -29,7 +29,6 @@ import numpy as np
 
 from jax._src import api
 from jax._src import api_util
-from jax._src import config
 from jax._src import core
 from jax._src import custom_api_util
 from jax._src import dispatch
@@ -352,10 +351,6 @@ class custom_partitioning:
     the sizes of the factors that are only used in compound factors in a string
     `sharding_rule`.
 
-  When config.use_shardy_partitioner.value is True, `sharding_rule` is used;
-  otherwise, `propagate_user_sharding` and `infer_sharding_from_operands` are
-  used.
-
   Positional arguments can be specified as static using static_argnums. JAX uses
   :code:`inspect.signature(fun)` to resolve these positional arguments.
 
@@ -549,22 +544,17 @@ class custom_partitioning:
           f_, ft.pack((ft.treedef_args_to_ft(in_tree, in_avals), {})), debug)
     assert not closed_call.consts
 
+    if (self.sharding_rule is None and
+        (self.propagate_user_sharding is not None or
+          self.infer_sharding_from_operands is not None)):
+      raise NotImplementedError(
+          "Shardy is used, but sharding propagation callbacks instead of "
+          "sharding_rule are provided. Need to provide sharding_rule to "
+          "migrate to Shardy."
+      )
     propagate_user_sharding = None
     infer_sharding_from_operands = None
-    sharding_rule = None
-    if config.use_shardy_partitioner.value:
-      if (self.sharding_rule is None and
-          (self.propagate_user_sharding is not None or
-            self.infer_sharding_from_operands is not None)):
-        raise NotImplementedError(
-            "Shardy is used, but sharding propagation callbacks instead of "
-            "sharding_rule are provided. Need to provide sharding_rule to "
-            "migrate to Shardy."
-        )
-      sharding_rule = self.sharding_rule
-    else:
-      propagate_user_sharding = self.propagate_user_sharding
-      infer_sharding_from_operands = self.infer_sharding_from_operands
+    sharding_rule = self.sharding_rule
 
     out_flat = custom_partitioning_p.bind(
         *args_flat,
@@ -611,16 +601,6 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   if not devices or len(devices) == 1:
     return mlir.lower_fun(
         core.jaxpr_as_fun(call), multiple_results=True)(ctx, *values)
-
-  if (not config.use_shardy_partitioner.value and
-      infer_sharding_from_operands is None):
-    function = call.jaxpr.debug_info.func_src_info
-    raise NotImplementedError(
-        f"Custom-partitioned function {function!r} does not support GSPMD "
-        "sharding propagation rules. GSPMD is deprecated; please upgrade "
-        "to and enable the Shardy partitioner "
-        "(jax_use_shardy_partitioner=True, which is the default)."
-    )
 
   def to_mesh_pspec_sharding(hlo_sharding: xc.HloSharding | None, ndim):
     if hlo_sharding is None:

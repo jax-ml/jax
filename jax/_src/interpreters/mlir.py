@@ -1290,9 +1290,7 @@ def _to_physical_op_sharding(
   if (isinstance(axis_ctx, sharding_impls.SPMDAxisContext) and
       axis_ctx.manual_axes):
     sharding = add_manual_axes(axis_ctx, sharding, aval.ndim)
-  if config.use_shardy_partitioner.value:
-    return sharding._to_sdy_sharding(aval.ndim)
-  return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
+  return sharding._to_sdy_sharding(aval.ndim)
 
 
 def _to_xla_layout(layout: Layout | None | AutoLayoutSingleton,
@@ -1553,10 +1551,9 @@ def lower_jaxpr_to_module(
                      dump_module_message(ctx.module, "verification")) from e
 
   with ctx.context:
-    if config.use_shardy_partitioner.value:
-      pipeline = passmanager.PassManager.parse(
-          'builtin.module(sdy-lift-inlined-meshes)')
-      pipeline.run(ctx.module.operation)
+    pipeline = passmanager.PassManager.parse(
+        'builtin.module(sdy-lift-inlined-meshes)')
+    pipeline.run(ctx.module.operation)
 
   util.test_event("mlir.collect_lowered_jaxprs", jaxpr, ctx.module)
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
@@ -1975,10 +1972,7 @@ def lower_jaxpr_to_fun(
         if (ir_s is not None and
             (use_sharding_annotations or
             (isinstance(arg_s, NamedSharding) and arg_s.spec.unreduced))):
-          if config.use_shardy_partitioner.value:
-            attrs["sdy.sharding"] = get_sharding_attr(ctx, ir_s)
-          else:
-            attrs["mhlo.sharding"] = get_sharding_attr(ctx, ir_s)
+          attrs["sdy.sharding"] = get_sharding_attr(ctx, ir_s)
 
     if ir_arg_memory_kinds is not None:
       for attrs, memory_kind in zip(arg_attrs, ir_arg_memory_kinds):
@@ -2052,10 +2046,7 @@ def lower_jaxpr_to_fun(
       if (ir_s is not None and not cu and
           (use_sharding_annotations or
           (isinstance(res_s, NamedSharding) and res_s.spec.unreduced))):
-        if config.use_shardy_partitioner.value:
-          attrs["sdy.sharding"] = get_sharding_attr(ctx, ir_s)
-        else:
-          attrs["mhlo.sharding"] = get_sharding_attr(ctx, ir_s)
+        attrs["sdy.sharding"] = get_sharding_attr(ctx, ir_s)
 
   if ir_result_memory_kinds is not None:
     for attrs, mem_kind in zip(result_attrs, ir_result_memory_kinds):
@@ -2215,19 +2206,14 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
   # then the sharding will be P(P.UNCONSTRAINED, P.UNCONSTRAINED, None).
   # The below custom call achieves the sharding like above example.
   assert isinstance(aval, core.ShapedArray)
-  if config.use_shardy_partitioner.value:
-    physical_ndim = core.physical_aval(aval).ndim
-    s = SdyArray(
-        mesh_shape=None,
-        dim_shardings=tuple(
-            sharding_impls.SdyDim(axes=(), is_open=i < aval.ndim)
-            for i in range(physical_ndim)
-        ))
-    return wrap_with_sharding_op(ctx, val, aval, s)
-  else:
-    return wrap_with_sharding_op(
-      ctx, val, aval, xc.HloSharding.replicate().to_proto(),
-      unspecified_dims=set(range(aval.ndim)))
+  physical_ndim = core.physical_aval(aval).ndim
+  s = SdyArray(
+      mesh_shape=None,
+      dim_shardings=tuple(
+          sharding_impls.SdyDim(axes=(), is_open=i < aval.ndim)
+          for i in range(physical_ndim)
+      ))
+  return wrap_with_sharding_op(ctx, val, aval, s)
 
 
 _uncacheable_primitives: set[core.Primitive] = set()
@@ -3283,7 +3269,7 @@ def _wrap_with_spmd_op(name: str,
                        unspecified_dims: set[int] | None = None,
                        has_side_effect: bool = False,
                        allow_shardy_lowering: bool = False):
-  if config.use_shardy_partitioner.value and allow_shardy_lowering:
+  if allow_shardy_lowering:
     return dialects.sdy.sharding_constraint(
         x, sharding.build(ctx.module_context.sharding_attr_cache))  # type: ignore
 
@@ -3335,15 +3321,8 @@ def lower_with_sharding_in_types(ctx, op, aval):
   # `return op` early and avoid bloating HLO size.
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     aval = core.physical_aval(aval)
-  if config.use_shardy_partitioner.value:
-    proto = aval.sharding._to_sdy_sharding(aval.ndim, modify_wrt_axis_types=True)
-    return wrap_with_sharding_op(ctx, op, aval, proto)
-  else:
-    proto = aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
-    unspecified_dims = None
-    if aval.sharding.mesh._any_axis_auto:
-      unspecified_dims = set(range(aval.ndim))
-    return wrap_with_sharding_op(ctx, op, aval, proto, unspecified_dims)
+  proto = aval.sharding._to_sdy_sharding(aval.ndim, modify_wrt_axis_types=True)
+  return wrap_with_sharding_op(ctx, op, aval, proto)
 
 
 def lower_with_layout_in_types(ctx, op, aval):
@@ -3710,8 +3689,7 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
             mlir_module=module_to_bytecode(module),
             enable_shape_assertions=True,
             validate_static_shapes=True)
-    refined_module_str = refine_polymorphic_shapes(
-        enable_shardy=config.use_shardy_partitioner.value)
+    refined_module_str = refine_polymorphic_shapes(enable_shardy=True)
   except Exception as e:
     raise ValueError(
         "Error refining shapes. " +
