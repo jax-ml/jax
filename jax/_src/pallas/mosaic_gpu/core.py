@@ -1432,12 +1432,17 @@ class SwizzleTransform(state_types.Transform):
 @dataclasses.dataclass(frozen=True)
 class UnswizzleRef(state_types.Transform):
   swizzle: int = jax.tree.static()
+  swizzled_dim: int = jax.tree.static(default=-1, kw_only=True)
 
   def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
     # Swizzling preserves the type
     return x
 
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
+    if self.swizzled_dim != -1:
+      raise ValueError(
+          "Cannot undo UnswizzleRef with a transposed swizzled dimension"
+      )
     return SwizzleTransform(self.swizzle)
 
   def swizzle_elems(self, dtype: jax.typing.DTypeLike | ir.Type) -> int:
@@ -1449,15 +1454,21 @@ class UnswizzleRef(state_types.Transform):
       self, _: jax_core.AbstractValue, transpose: state_types.TransposeTransform
   ) -> tuple[state_types.TransposeTransform, UnswizzleRef]:
     perm = transpose.permutation
-    if perm[-1] != len(perm) - 1:
-      raise ValueError("Can't transpose the swizzled dimension.")
-    return transpose, self
+    ndim = len(perm)
+    new_swizzled_dim = perm.index(ndim + self.swizzled_dim) - ndim
+    if new_swizzled_dim not in (-1, -2):
+      raise ValueError("Cannot transpose the swizzled dimension")
+    return transpose, dataclasses.replace(self, swizzled_dim=new_swizzled_dim)
 
   def commute_reshape(
       self, aval: jax_core.ShapedArray, transform: state_types.ReshapeTransform
   ) -> tuple[state_types.ReshapeTransform, UnswizzleRef]:
-    shape = aval.shape
-    if shape[-1] != self.swizzle_elems(aval.dtype):
+    if self.swizzled_dim != -1:
+      raise ValueError(
+          "Cannot reshape a reference with a transposed swizzled dimension"
+      )
+    shape = transform.shape
+    if not shape or shape[-1] != self.swizzle_elems(aval.dtype):
       raise ValueError(
           f"Reshape shape {shape} is not divisible by swizzle elements"
           f" {self.swizzle_elems(aval.dtype)}"
@@ -1481,16 +1492,19 @@ class UnswizzleRef(state_types.Transform):
       raise NotImplementedError(
           f"Non-slice indices are not supported in 2 minormost dims: {idxs}"
       )
-    last_idx = idxs[-1]
-    if isinstance(last_idx, indexing.Slice):
-      if last_idx.start != 0 or last_idx.size != swizzle_elems:
+    swizzled_idx = idxs[self.swizzled_dim]
+    if isinstance(swizzled_idx, indexing.Slice):
+      if swizzled_idx.start != 0 or swizzled_idx.size != swizzle_elems:
         raise ValueError("Swizzled dims cannot be sliced")
     else:
-      assert isinstance(last_idx, slice)
+      assert isinstance(swizzled_idx, slice)
       if (
-          (last_idx.step is not None and last_idx.step != 1)
-          or (last_idx.start is not None and last_idx.start != 0)
-          or (last_idx.stop is not None and last_idx.stop != swizzle_elems)
+          (swizzled_idx.step is not None and swizzled_idx.step != 1)
+          or (swizzled_idx.start is not None and swizzled_idx.start != 0)
+          or (
+              swizzled_idx.stop is not None
+              and swizzled_idx.stop != swizzle_elems
+          )
       ):
         raise ValueError("Swizzled dims cannot be sliced")
     return indexer, self

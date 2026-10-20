@@ -1446,30 +1446,23 @@ def _commute_transform(
     ):
       return gpu_core.commute_transpose_indexer(aval, t1, t2)
     case (
-        gpu_core.UnswizzleRef() as t1,
-        state_types.ReshapeTransform() as t2,
-    ):
-      # pyrefly: ignore[bad-argument-type]
-      new_reshape, new_unswizzle = t1.commute_reshape(aval, t2)
-      return new_reshape, new_unswizzle
-    case (
         gpu_core.UntilingTransform() | gpu_core.UnswizzleRef() as t1,
         gpu_core.TransposeTransform() as t2,
     ):
       if isinstance(aval, state_types.AbstractRef):
         aval = aval.inner_aval
       assert isinstance(aval, jax_core.ShapedArray)
-      new_reshape, new_unswizzle = t1.commute_transpose(aval, t2)
-      return new_reshape, new_unswizzle
+      new_transpose, new_t1 = t1.commute_transpose(aval, t2)
+      return new_transpose, new_t1
     case (
-        gpu_core.UntilingTransform() as t1,
+        gpu_core.UntilingTransform() | gpu_core.UnswizzleRef() as t1,
         state_types.ReshapeTransform() as t2,
     ):
       if isinstance(aval, state_types.AbstractRef):
         aval = aval.inner_aval
       assert isinstance(aval, jax_core.ShapedArray)
-      new_reshape, new_untile = t1.commute_reshape(aval, t2)
-      return new_reshape, new_untile
+      new_reshape, new_t1 = t1.commute_reshape(aval, t2)
+      return new_reshape, new_t1
     case (
         gpu_core.UntilingTransform() | gpu_core.UnswizzleRef() as t1,
         gpu_core.ClusterRefTransform()
@@ -1848,45 +1841,6 @@ def _get_lowering_rule(
   assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
   transform_avals = tree.unflatten(ctx.avals_in[1:])
 
-  # Swizzle always applies first, to the raw addresses, so we pop it immediately.
-  if transforms and isinstance(transforms[0], gpu_core.UnswizzleRef):
-    swizzle = transforms[0].swizzle
-    transforms = transforms[1:]
-    transform_avals = transform_avals[1:]
-  elif (
-      len(transforms) > 1
-      and isinstance(transforms[0], gpu_core.ExtractAliasedRef)
-      and isinstance(transforms[1], gpu_core.UnswizzleRef)
-  ):
-    swizzle = transforms[1].swizzle
-    transforms = [transforms[0], *transforms[2:]]
-    transform_avals = [transform_avals[0], *transform_avals[2:]]
-  else:
-    swizzle = None
-
-  # We verify tiling against swizzling in memory before transposes flip it.
-  # Note: we do not check len(tiling) == 2 here because subsequent transforms
-  # (e.g. ReshapeTransform) may commute with it to produce 2D tiling.
-  tiling_transform = None
-  if transforms and isinstance(transforms[0], gpu_core.UntilingTransform):
-    tiling_transform = transforms[0]
-  elif (
-      len(transforms) > 1
-      and isinstance(transforms[0], gpu_core.ExtractAliasedRef)
-      and isinstance(transforms[1], gpu_core.UntilingTransform)
-  ):
-    tiling_transform = transforms[1]
-  if tiling_transform is not None:
-    if swizzle is None:
-      raise NotImplementedError("Tiling without swizzle is not supported.")
-    bw = dtypes.itemsize_bits(ctx.avals_out[0].dtype)
-    expected_minor_tiling = swizzle * 8 // bw
-    if tiling_transform.tiling[-1] != expected_minor_tiling:
-      raise NotImplementedError(
-          "Minor tiling dimension does not fit swizzle: "
-          f" expected {expected_minor_tiling}, got {tiling_transform.tiling[-1]}"
-      )
-
   x_smem, _, transforms = _handle_transforms(
       ctx, ctx.avals_in[0], x_ref, transform_avals, transforms,
       allow_peer_refs=True
@@ -1900,7 +1854,7 @@ def _get_lowering_rule(
     return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
 
   match transforms:
-    case (gpu_core.UntilingTransform(tiling),):
+    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntilingTransform(tiling)):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
       return mgpu.FragmentedArray.load_tiled(
@@ -1911,6 +1865,18 @@ def _get_lowering_rule(
           optimized=optimized,
           tiling_rank=len(tiling),
       )
+    case (gpu_core.UnswizzleRef(swizzle),):
+      if not isinstance(ctx.out_layout_hint, mgpu.TiledLayout):
+        raise NotImplementedError(
+            f"Unsupported swizzle transform for layout: {ctx.out_layout_hint}"
+        )
+      return mgpu.FragmentedArray.load_untiled(
+          x_smem,
+          is_signed=is_signed,
+          layout=ctx.out_layout_hint,
+          swizzle=swizzle,
+          optimized=optimized,
+      )
     case ():
       match ctx.out_layout_hint:
         case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
@@ -1919,20 +1885,12 @@ def _get_lowering_rule(
             raise ValueError(
                 f"Unsupported shape {shape}, (expected {tuple(ref_ty.shape)})"
             )
-          if swizzle is not None:
-            raise NotImplementedError(
-                "Unsupported swizzle transform with strided layout"
-            )
           return mgpu.FragmentedArray.load_strided(
               x_smem,
               is_signed=is_signed,
               vec_size=vec_size,
           )
         case None:
-          if swizzle is not None:
-            raise NotImplementedError(
-                "Unsupported swizzle transform with strided layout"
-            )
           return mgpu.FragmentedArray.load_strided(x_smem, is_signed=is_signed)
         case _:
           assert isinstance(ctx.out_layout_hint, mgpu.TiledLayout)
@@ -1940,7 +1898,7 @@ def _get_lowering_rule(
               x_smem,
               is_signed=is_signed,
               layout=ctx.out_layout_hint,
-              swizzle=swizzle or 16,
+              swizzle=16,
               optimized=optimized,
           )
     case _:
@@ -2011,42 +1969,6 @@ def _swap_lowering_rule(
   if ctx.module_ctx.auto_barriers:
     barrier()  # Make sure reads have completed before we write.
 
-  if transforms and isinstance(transforms[0], gpu_core.UnswizzleRef):
-    swizzle = transforms[0].swizzle
-    transforms = transforms[1:]
-    transform_avals = transform_avals[1:]
-  elif (
-      len(transforms) > 1
-      and isinstance(transforms[0], gpu_core.ExtractAliasedRef)
-      and isinstance(transforms[1], gpu_core.UnswizzleRef)
-  ):
-    swizzle = transforms[1].swizzle
-    transforms = [transforms[0], *transforms[2:]]
-    transform_avals = [transform_avals[0], *transform_avals[2:]]
-  else:
-    swizzle = None
-
-  # We verify tiling against swizzling in memory before transposes flip it.
-  tiling_transform = None
-  if transforms and isinstance(transforms[0], gpu_core.UntilingTransform):
-    tiling_transform = transforms[0]
-  elif (
-      len(transforms) > 1
-      and isinstance(transforms[0], gpu_core.ExtractAliasedRef)
-      and isinstance(transforms[1], gpu_core.UntilingTransform)
-  ):
-    tiling_transform = transforms[1]
-  if tiling_transform is not None:
-    if swizzle is None:
-      raise NotImplementedError("Tiling without swizzle is not supported.")
-    bw = dtypes.itemsize_bits(v_aval.dtype)
-    expected_minor_tiling = swizzle * 8 // bw
-    if tiling_transform.tiling[-1] != expected_minor_tiling:
-      raise NotImplementedError(
-          "Minor tiling dimension does not fit swizzle: "
-          f" expected {expected_minor_tiling}, got {tiling_transform.tiling[-1]}"
-      )
-
   assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
   x_smem, _, transforms = _handle_transforms(
       ctx, ctx.avals_in[0], x_ref, transform_avals, transforms,
@@ -2067,7 +1989,7 @@ def _swap_lowering_rule(
             is_signed=mgpu_utils.is_signed(v_aval.dtype),
         )
       value.store_untiled(x_smem)
-    case (gpu_core.UntilingTransform(tiling),):
+    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntilingTransform(tiling)):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
       if return_old:
@@ -2085,6 +2007,20 @@ def _swap_lowering_rule(
           optimized=optimized,
           tiling_rank=len(tiling),
       )
+    case (gpu_core.UnswizzleRef(swizzle),):
+      if not isinstance(value.layout, mgpu.TiledLayout):
+        raise NotImplementedError(
+            f"Unsupported swizzle transform for layout: {value.layout}"
+        )
+      if return_old:
+        old_value = mgpu.FragmentedArray.load_untiled(
+            x_smem,
+            layout=value.layout,
+            is_signed=mgpu_utils.is_signed(v_aval.dtype),
+            swizzle=swizzle,
+            optimized=optimized,
+        )
+      value.store_untiled(x_smem, swizzle=swizzle, optimized=optimized)
     case ():
       match value.layout:
         case mgpu.TiledLayout():
@@ -2093,17 +2029,11 @@ def _swap_lowering_rule(
                 x_smem,
                 layout=value.layout,
                 is_signed=mgpu_utils.is_signed(v_aval.dtype),
-                swizzle=swizzle or 16,
+                swizzle=16,
                 optimized=optimized,
             )
-          value.store_untiled(
-              x_smem, swizzle=swizzle or 16, optimized=optimized
-          )
+          value.store_untiled(x_smem, swizzle=16, optimized=optimized)
         case _:
-          if swizzle is not None:
-            raise NotImplementedError(
-                "Unsupported swizzle transform with strided layout"
-            )
           if return_old:
             old_value = mgpu.FragmentedArray.load_strided(
                 x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
