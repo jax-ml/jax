@@ -153,6 +153,22 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "hypergeometric_test",
+    srcs = ["hypergeometric_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 2,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "mpmath",
+        "numpy",
+        "scipy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "log_test",
     srcs = ["log_test.py"],
     disable_configs = DISABLED_CONFIGS,

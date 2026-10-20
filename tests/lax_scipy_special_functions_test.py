@@ -819,6 +819,19 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_special.betainc, args_maker, rtol=rtol)
 
   @jtu.sample_product(dtype=float_dtypes)
+  @jax.numpy_dtype_promotion('standard')  # hyp1f1 promotes bool masks to int.
+  def testHyp1f1Grads(self, dtype):
+    samples = [(0.5, 1.5, -50.0), (1.0, 2.0, -30.0), (2.0, 3.0, -90.0),
+               (2.0, 3.0, -150.0), (0.5, 1.5, -150.0), (2.5, 4.0, -500.0),
+               (2.0, 2.0, -20.0), (2.0, 2.0, -150.0), (3.0, 1.0, -20.0),
+               (3.0, 1.0, -150.0), (1.5, 2.5, 3.0)]
+    if dtype == np.float64:
+      samples += [(1.5, 2.5, 300.0), (4.0, 2.0, 600.0)]
+    a, b, x = (np.array(v, dtype=dtype) for v in zip(*samples))
+    jtu.check_grads(lsp_special.hyp1f1, (a, b, x), order=1,
+                    modes=["fwd", "rev"], atol=1e-3, rtol=1e-3, eps=1e-3)
+
+  @jtu.sample_product(dtype=float_dtypes)
   def testHyp2f1SpecialCases(self, dtype):
     eps = np.finfo(dtype).eps
 
