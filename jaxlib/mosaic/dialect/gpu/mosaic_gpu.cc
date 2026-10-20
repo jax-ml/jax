@@ -60,7 +60,6 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/OperationSupport.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Types.h"
@@ -1490,72 +1489,6 @@ llvm::LogicalResult RunScopedOp::verify() {
   return llvm::success();
 }
 
-llvm::LogicalResult ReinterpretCastOp::verify() {
-  auto source_type = getSource().getType();
-  auto result_type = getResult().getType();
-
-  if (source_type.getElementType() != result_type.getElementType()) {
-    return emitOpError(
-        "source and result memrefs must have the same element type");
-  }
-
-  int64_t source_num_elements = source_type.getNumElements();
-  int64_t result_num_elements = result_type.getNumElements();
-
-  if (source_num_elements != result_num_elements) {
-    return emitOpError(llvm::formatv(
-        "source and result memrefs must have the same number of elements, "
-        "but got {0} and {1}",
-        source_num_elements, result_num_elements));
-  }
-
-  return llvm::success();
-}
-
-mlir::OpFoldResult ReinterpretCastOp::fold(FoldAdaptor) {
-  // Eliminate no-op casts: if source and result types are identical, return the
-  // source directly.
-  if (getSource().getType() == getResult().getType()) {
-    return getSource();
-  }
-
-  // Fold chains: reinterpret_cast(reinterpret_cast(x)) -> reinterpret_cast(x).
-  if (auto parent_cast = getSource().getDefiningOp<ReinterpretCastOp>()) {
-    getSourceMutable().assign(parent_cast.getSource());
-    return getResult();
-  }
-
-  return {};
-}
-
-namespace {
-
-// Rewrites `mgpu.reinterpret_cast(ty, mgpu.slice_smem(...))` to
-// `mgpu.slice_smem(ty, ...)`.
-struct FoldMGPUReinterpretCastOfSliceSMEM
-    : public mlir::OpRewritePattern<ReinterpretCastOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult matchAndRewrite(
-      ReinterpretCastOp op, mlir::PatternRewriter& rewriter) const override {
-    auto slice_op = op.getSource().getDefiningOp<SliceSMEMOp>();
-    if (!slice_op) {
-      return mlir::failure();
-    }
-
-    MemRefType result_type = op.getResult().getType();
-    rewriter.replaceOpWithNewOp<SliceSMEMOp>(
-        op, result_type, slice_op.getOffsetAttr(), slice_op.getAliasIdAttr());
-    return mlir::success();
-  }
-};
-}  // namespace
-
-void ReinterpretCastOp::getCanonicalizationPatterns(
-    mlir::RewritePatternSet& patterns, mlir::MLIRContext* context) {
-  patterns.add<FoldMGPUReinterpretCastOfSliceSMEM>(context);
-}
-
 mlir::OpFoldResult BroadcastInDimOp::fold(FoldAdaptor) {
   // Fold chains: broadcast_in_dim(broadcast_in_dim(x)) -> broadcast_in_dim(x).
   auto parent_bcast = getOperand().getDefiningOp<BroadcastInDimOp>();
@@ -1574,56 +1507,6 @@ mlir::OpFoldResult BroadcastInDimOp::fold(FoldAdaptor) {
   getOperandMutable().assign(parent_bcast.getOperand());
   setBroadcastDimensions(new_dims);
   return getResult();
-}
-
-namespace {
-
-struct HoistReinterpretCastOutOfWarpMap
-    : public mlir::OpRewritePattern<WarpMapOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult matchAndRewrite(
-      WarpMapOp op, mlir::PatternRewriter& rewriter) const override {
-    bool modified = false;
-    mlir::Block& body = op.getRegion().front();
-    for (auto [i, operand, body_operand] :
-        llvm::enumerate(op->getOperands(), body.getArguments())) {
-      Type user_type = nullptr;
-      // It is only safe to rewrite the type of the argument if all of its uses
-      // are reinterpret_cast operations producing the same return type.
-      if (body_operand.hasNUsesOrMore(1) &&
-          absl::c_all_of(
-              body_operand.getUsers(), [&user_type](mlir::Operation* user) {
-                if (auto rc_op = llvm::dyn_cast<ReinterpretCastOp>(user)) {
-                  if (!user_type) {
-                    user_type = rc_op.getType();
-                  }
-                  return rc_op.getType() == user_type;
-                }
-                return false;
-              })) {
-        auto new_cast = ReinterpretCastOp::create(rewriter, op.getLoc(),
-                                                  user_type, operand);
-        rewriter.modifyOpInPlace(op, [&]() {
-          op->setOperand(i, new_cast);
-          body_operand.setType(user_type);
-        });
-        // Copy the users of the body operand to a vector to avoid invalidating
-        // the iterator while erasing them.
-        for (auto user : llvm::to_vector(body_operand.getUsers())) {
-          rewriter.replaceOp(user, body_operand);
-        }
-        modified = true;
-      }
-    }
-    return modified ? mlir::success() : mlir::failure();
-  }
-};
-}  // namespace
-
-void WarpMapOp::getCanonicalizationPatterns(mlir::RewritePatternSet& patterns,
-                                            mlir::MLIRContext* context) {
-  patterns.add<HoistReinterpretCastOutOfWarpMap>(context);
 }
 
 llvm::LogicalResult GetClusterRefOp::inferReturnTypes(
