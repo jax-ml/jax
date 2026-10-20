@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -22,22 +23,55 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/base/log_severity.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/globals.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
+#include "mlir/AsmParser/AsmParser.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/Support/LLVM.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_cliques.h"
+#include "xla/backends/gpu/runtime/collective_memory.h"
+#include "xla/backends/gpu/runtime/collective_memory_requests.h"
+#include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/custom_call_thunk.h"
+#include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/core/collectives/rank_id.h"
+#include "xla/core/collectives/symmetric_memory.h"
+#include "xla/ffi/attribute_map.h"
 #include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
+#include "xla/runtime/device_id.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/device_assignment.h"
+#include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/service_executable_run_options.h"
+#include "xla/service/shaped_slice.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"  // IWYU pragma: keep
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/xla_data.pb.h"
 
 namespace {
 
@@ -267,7 +301,8 @@ TEST_F(CustomCallTest, MetadataAllocationNotCalledAfterWarmup) {
 
   {
     // On the second execution (after warmup), metadata allocation should be
-    // skipped.
+    // skipped, but metadata copy still occurs because parameters are not in
+    // collective memory.
     absl::ScopedMockLog log;
     EXPECT_CALL(
         log,
@@ -275,8 +310,238 @@ TEST_F(CustomCallTest, MetadataAllocationNotCalledAfterWarmup) {
             HasSubstr(
                 "Allocating device memory for Mosaic GPU collective metadata")))
         .Times(0);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         HasSubstr("Constructed device state")))
+        .Times(1);
     log.StartCapturingLogs();
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+}
+
+class TestSymmetricMemory : public xla::SymmetricMemory {
+ public:
+  TestSymmetricMemory(stream_executor::DeviceAddressBase addr,
+                      stream_executor::DeviceAddressBase peer_addr)
+      : addr_(addr), peer_addr_(peer_addr) {}
+
+  stream_executor::DeviceAddressBase addr() const override { return addr_; }
+  absl::StatusOr<stream_executor::DeviceAddressBase> peer_addr(
+      xla::RankId rank) const override {
+    return peer_addr_;
+  }
+  std::string ToString() const override { return "TestSymmetricMemory"; }
+  PackedKernelArg PackKernelArg() const override { return addr_.opaque(); }
+
+ private:
+  stream_executor::DeviceAddressBase addr_;
+  stream_executor::DeviceAddressBase peer_addr_;
+};
+
+TEST_F(CustomCallTest, MetadataCopySkippedWhenPointerDeltasAreUnchanged) {
+  std::string module_str = TestMGPUHloModule(
+      "uses_xla_collective_metadata = true, xla_replica_ids = \"0,1\", "
+      "symmetric_memory_parameters = \"1\"");
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(module_str));
+  const xla::HloInstruction* instr =
+      module->entry_computation()->root_instruction();
+  mlir::MLIRContext mlir_context;
+  auto dict = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(
+      mlir::parseAttribute(instr->raw_backend_config_string(), &mlir_context));
+  ASSERT_NE(dict, nullptr);
+  ASSERT_OK_AND_ASSIGN(xla::ffi::AttributesMap attributes,
+                       xla::ffi::BuildAttributesMap(dict));
+
+  ASSERT_OK_AND_ASSIGN(stream_executor::Platform * platform,
+                       stream_executor::PlatformManager::PlatformWithName(
+                           "CUDA"));
+  ASSERT_OK_AND_ASSIGN(stream_executor::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<stream_executor::Stream> stream,
+                       executor->CreateStream());
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
+
+  xla::BufferAllocation alloc(/*index=*/0, /*size=*/4, /*color=*/0);
+  xla::BufferAllocation::Slice result_slice(&alloc, /*offset=*/0, /*size=*/4);
+  xla::ShapedSlice shaped_slice{result_slice,
+                                xla::ShapeUtil::MakeShape(xla::S32, {})};
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::gpu::CustomCallThunk> thunk,
+      xla::gpu::CustomCallThunk::Create(
+          xla::gpu::Thunk::ThunkInfo(), "mosaic_gpu_v2",
+          /*operands=*/{}, /*results=*/{shaped_slice}, std::move(attributes),
+          /*called_computation=*/nullptr, executor->GetPlatform()->Name(),
+          executor->GetDeviceDescription().gpu_compute_capability()));
+
+  xla::DeviceAssignment device_assn(/*replica_count=*/2,
+                                    /*computation_count=*/1);
+  device_assn(0, 0) = 0;
+  device_assn(1, 0) = 1;
+
+  xla::ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  run_options.mutable_run_options()->set_device_assignment(&device_assn);
+  ASSERT_OK_AND_ASSIGN(
+      xla::gpu::CollectiveParams collective_params,
+      xla::gpu::CollectiveParams::Create(
+          run_options, /*async_streams=*/{},
+          xla::LocalDeviceId(executor->device_ordinal())));
+
+  ASSERT_OK_AND_ASSIGN(
+      stream_executor::ScopedDeviceAddress<uint8_t> buf0,
+      allocator.Allocate(executor->device_ordinal(), /*size=*/256));
+  ASSERT_OK_AND_ASSIGN(
+      stream_executor::ScopedDeviceAddress<uint8_t> buf1,
+      allocator.Allocate(executor->device_ordinal(), /*size=*/256));
+  ASSERT_NE(buf0.cref().opaque(), buf1.cref().opaque());
+
+  xla::gpu::BufferAllocations allocations0({buf0.cref()}, 0, &allocator);
+  xla::gpu::BufferAllocations allocations1({buf1.cref()}, 0, &allocator);
+
+  xla::gpu::CollectiveCliqueRequests clique_requests;
+  xla::gpu::CollectiveMemoryRequests memory_requests(allocations0);
+  xla::gpu::Thunk::PrepareParams prepare_params{
+      &collective_params, &clique_requests, &memory_requests, executor,
+      &allocations0};
+  ASSERT_THAT(thunk->Prepare(prepare_params), IsOk());
+  ASSERT_THAT(clique_requests.OrderedRequestedCliques(), SizeIs(1));
+  const xla::gpu::GpuCliqueKey clique_key =
+      clique_requests.OrderedRequestedCliques()[0].key;
+
+  xla::gpu::CollectiveCliques collective_cliques;
+  auto run_initialize =
+      [&](const xla::gpu::BufferAllocations& allocations,
+          stream_executor::DeviceAddressBase peer_addr,
+          xla::gpu::CollectiveParams* params = nullptr,
+          const xla::gpu::GpuCliqueKey* custom_clique_key =
+              nullptr) -> absl::Status {
+    absl::flat_hash_map<xla::gpu::CollectiveMemory::Key,
+                        std::shared_ptr<xla::SymmetricMemory>>
+        sym_memories;
+    const xla::gpu::GpuCliqueKey& active_clique_key =
+        custom_clique_key != nullptr ? *custom_clique_key : clique_key;
+    sym_memories[{active_clique_key, 0}] =
+        std::make_shared<TestSymmetricMemory>(allocations.GetDeviceAddress(0),
+                                              peer_addr);
+    xla::gpu::CollectiveMemory collective_memory(
+        allocations, std::move(sym_memories), /*mcast_memories=*/{},
+        /*peer_memories=*/{});
+    xla::gpu::Thunk::InitializeParams init_params;
+    init_params.stream = stream.get();
+    init_params.buffer_allocations = &allocations;
+    init_params.collective_params =
+        params != nullptr ? params : &collective_params;
+    init_params.collective_cliques = &collective_cliques;
+    init_params.collective_memory = &collective_memory;
+    return thunk->Initialize(init_params);
+  };
+
+  auto peer_with_delta = [](stream_executor::DeviceAddressBase local_addr,
+                            intptr_t delta) {
+    return stream_executor::DeviceAddressBase(
+        reinterpret_cast<void*>(
+            reinterpret_cast<uintptr_t>(local_addr.opaque()) + delta),
+        local_addr.size());
+  };
+  constexpr intptr_t kPeerDelta = 0x10000;
+
+  absl::SetVLogLevel("custom_call", 5);
+
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         HasSubstr("Constructed device state")))
+        .Times(1);
+    log.StartCapturingLogs();
+    EXPECT_THAT(
+        run_initialize(allocations0, peer_with_delta(buf0.cref(), kPeerDelta)),
+        IsOk());
+  }
+
+  {
+    // Both local and peer buffer addresses change (`buf0` -> `buf1`), while the
+    // `(peer_addr - local_addr)` delta (`kPeerDelta`) remains constant; the
+    // metadata copy should be skipped.
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         HasSubstr("Constructed device state")))
+        .Times(0);
+    EXPECT_CALL(
+        log,
+        Log(absl::LogSeverity::kInfo, _,
+            HasSubstr(
+                "Skipping collective metadata copy since pointer deltas are "
+                "unchanged.")))
+        .Times(1);
+    log.StartCapturingLogs();
+    EXPECT_THAT(
+        run_initialize(allocations1, peer_with_delta(buf1.cref(), kPeerDelta)),
+        IsOk());
+  }
+
+  {
+    // When the `(peer_addr - local_addr)` delta changes, the metadata copy is
+    // not skipped.
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         HasSubstr("Constructed device state")))
+        .Times(1);
+    EXPECT_CALL(
+        log,
+        Log(absl::LogSeverity::kInfo, _,
+            HasSubstr(
+                "Skipping collective metadata copy since pointer deltas are "
+                "unchanged.")))
+        .Times(0);
+    log.StartCapturingLogs();
+    EXPECT_THAT(run_initialize(allocations1,
+                               peer_with_delta(buf1.cref(), 2 * kPeerDelta)),
+                IsOk());
+  }
+
+  {
+    // When the device rank changes (even if pointer deltas relative to the new
+    // rank entry match the cached peer table), the metadata copy is not
+    // skipped.
+    xla::DeviceAssignment swapped_device_assn(/*replica_count=*/2,
+                                              /*computation_count=*/1);
+    swapped_device_assn(0, 0) = 1;
+    swapped_device_assn(1, 0) = 0;
+    xla::ServiceExecutableRunOptions swapped_run_options;
+    swapped_run_options.mutable_run_options()->set_stream(stream.get());
+    swapped_run_options.mutable_run_options()->set_device_assignment(
+        &swapped_device_assn);
+    ASSERT_OK_AND_ASSIGN(
+        xla::gpu::CollectiveParams swapped_collective_params,
+        xla::gpu::CollectiveParams::Create(
+            swapped_run_options, /*async_streams=*/{},
+            xla::LocalDeviceId(executor->device_ordinal())));
+    xla::gpu::CollectiveCliqueRequests swapped_clique_requests;
+    xla::gpu::CollectiveMemoryRequests swapped_memory_requests(allocations1);
+    xla::gpu::Thunk::PrepareParams swapped_prepare_params{
+        &swapped_collective_params, &swapped_clique_requests,
+        &swapped_memory_requests, executor, &allocations1};
+    ASSERT_THAT(thunk->Prepare(swapped_prepare_params), IsOk());
+    ASSERT_THAT(swapped_clique_requests.OrderedRequestedCliques(), SizeIs(1));
+    const xla::gpu::GpuCliqueKey swapped_clique_key =
+        swapped_clique_requests.OrderedRequestedCliques()[0].key;
+
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         HasSubstr("Constructed device state")))
+        .Times(1);
+    EXPECT_CALL(
+        log,
+        Log(absl::LogSeverity::kInfo, _,
+            HasSubstr(
+                "Skipping collective metadata copy since pointer deltas are "
+                "unchanged.")))
+        .Times(0);
+    log.StartCapturingLogs();
+    EXPECT_THAT(run_initialize(allocations1,
+                               peer_with_delta(buf1.cref(), -2 * kPeerDelta),
+                               &swapped_collective_params, &swapped_clique_key),
+                IsOk());
   }
 }
 
