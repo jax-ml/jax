@@ -21,7 +21,6 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 
 # Under pytest, tests run against an installed wheel that does not
@@ -149,12 +148,8 @@ class Expm1Test(jtu.JaxTestCase):
     check_signed_zeros = [
         ([*TPU_EUPV1, "tpu_v5p"], False),
     ]
-    if jaxlib_extension_version >= 505:
-      cpu_bounds = ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0})
-    else:
-      cpu_bounds = ("cpu", {f16: 2.5, f32: 6.5, f64: 4.5})
     bounds = [
-        cpu_bounds,
+        ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0}),
         ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
         *tpu_bounds,
     ]
@@ -171,10 +166,7 @@ class Expm1Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_expm1_highest_accuracy(self, dtype):
-    if jaxlib_extension_version >= 505:
-      cpu_bounds = ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0})
-    else:
-      cpu_bounds = ("cpu", {f16: 2.5, f32: 6.5, f64: 3.5})
+    cpu_bounds = ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0})
     if jtu.is_libtpu_at_least("0.0.51"):
       tpu_bounds = [
           ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 1.0}),

@@ -24,7 +24,6 @@ import math
 from typing import cast, Any, ClassVar, Literal
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
-from jax._src.lib import version as jaxlib_version
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import _gpu_ops_gen
 from jaxlib.mlir.dialects import arith
@@ -2144,9 +2143,6 @@ class LaunchContext:
     ``barrier``, ``swizzle``, ``arrive`` and ``predicate`` work as in
     ``async_copy``.
     """
-    # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
-    if jaxlib_version < (0, 12, 0):
-      raise NotImplementedError("async_copy_im2col requires jaxlib >=0.12.0")
     c = utils.c
     index = ir.IndexType.get()
     i16 = ir.IntegerType.get_signless(16)

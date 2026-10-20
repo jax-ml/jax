@@ -247,26 +247,12 @@ class AsinTest(jtu.JaxTestCase):
           ("gpu", {f16: 1.0, f32: 1.5, f64: 2.5}),
           ("tpu", {f32: 1.0}),
       ]
-    elif jaxlib_extension_version >= 504:
+    else:
       bounds = [
           ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 1.5}),
           ("gpu", {f16: 1.0, f32: 1.5, f64: 2.5}),
           ([*TPU_EUPV1, "tpu_v5p"], {bf16: 0.5, f32: 5.0}),
           (["tpu_v6e", "tpu_7x"], {bf16: 0.5, f32: 4.5}),
-      ]
-    else:
-      # Large errors occur for normal inputs in the first exponent bin
-      # (|x| < 2 * tiny) on CPU/TPU because XLA lowers asin(x) to
-      # 2 * atan2(x, 1 + sqrt(1 - x^2)), where the intermediate x / 2 is
-      # subnormal and flushes to zero under FTZ mode, causing asin(x) to
-      # evaluate to 0.0.
-      bounds = [
-          (
-              "cpu",
-              {bf16: 128.0, f16: 1.5, f32: 8388608.0, f64: 4503599627370496.0},
-          ),
-          ("gpu", {f16: 1.0, f32: 1.5, f64: 2.5}),
-          ("tpu", {bf16: 128.0, f32: 8388607.0}),
       ]
     util.check_unary_precision(
         self,

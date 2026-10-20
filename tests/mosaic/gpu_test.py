@@ -32,7 +32,6 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
 from jax._src.interpreters import mlir
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
 from jax._src.lib.mlir.dialects import arith
@@ -4397,8 +4396,6 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       swizzle=(None, 32, 64, 128),
       dynamic=(False, True),
   )
-  # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
-  @absltest.skipIf(jaxlib_version < (0, 12, 0), "Requires jaxlib >=0.12.0")
   def test_tma_load_im2col(self, rank, offset, strided, swizzle, dynamic):
     dtype = jnp.int16
     tiled = swizzle is not None
@@ -4483,8 +4480,6 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
 
     np.testing.assert_array_equal(y, expected)
 
-  # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
-  @absltest.skipIf(jaxlib_version < (0, 12, 0), "Requires jaxlib >=0.12.0")
   @jtu.thread_unsafe_test()
   def test_tma_load_im2col_reuses_descriptor(self):
     dtype = jnp.int16

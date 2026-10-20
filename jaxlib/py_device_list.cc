@@ -44,7 +44,6 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/types.h"
-#include "xla/python/version.h"
 #include "xla/util.h"
 
 namespace jax {
@@ -404,21 +403,12 @@ void PyDeviceList::PopulateMemoryKindInfo() {
     memory_kind_info_ = default_memory.status();
     return;
   }
-#if JAX_IFRT_VERSION_NUMBER >= 64
   info.default_memory_kind = nb::cast((*default_memory)->Kind().value());
   nb::tuple_builder memory_kinds(device->Memories().size());
   for (xla::ifrt::Memory* memory : device->Memories()) {
     memory_kinds.put(
         nb::str(memory->Kind().value().data(), memory->Kind().value().size()));
   }
-#else
-  info.default_memory_kind = nb::cast(*(*default_memory)->Kind().memory_kind());
-  nb::tuple_builder memory_kinds(device->Memories().size());
-  for (xla::ifrt::Memory* memory : device->Memories()) {
-    memory_kinds.put(nb::str(memory->Kind().memory_kind()->data(),
-                             memory->Kind().memory_kind()->size()));
-  }
-#endif
   info.memory_kinds = memory_kinds.commit();
   memory_kind_info_ = std::move(info);
 }

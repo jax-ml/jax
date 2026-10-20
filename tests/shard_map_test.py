@@ -46,7 +46,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.remat import remat_transform
 from jax._src import linear_util as lu
 from jax._src import tree_util
-from jax._src.lib import ifrt_version, jaxlib_extension_version
+from jax._src.lib import ifrt_version
 from jax.custom_derivatives import SymbolicZero
 import jax.numpy as jnp
 
@@ -890,8 +890,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("gpu")
   def test_pbroadcast_dynamic_root(self):
-    if jaxlib_extension_version < 502:
-      self.skipTest("Requires jaxlib_extension_version >= 502")
     # Test pbroadcast with dynamic source (has_dynamic_root=True) via shard_map.
     # The broadcast root is passed as a jitted function argument (not hardcoded),
     # exercising the has_dynamic_root path end-to-end.
@@ -4100,11 +4098,6 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_unreduced_max_min_nested_shard_map_add_manual_axes(
       self, lax_op, jnp_op, p_op, u_kind, mesh
   ):
-    if jaxlib_extension_version < 500:
-      self.skipTest('Requires jaxlib_extension_version >= 500')
-    if ifrt_version < 72:
-      self.skipTest('Requires ifrt_version >= 72')
-
     arr = jax.device_put(np.arange(16).reshape(4, 4), P('x', 'y'))
     u_spec = P(None, unreduced={'y'}, unreduced_kind=u_kind)
 
@@ -6128,11 +6121,6 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   @jax.default_matmul_precision('float32')
   def test_reduced_shmap_inside_partially_manual_shmap(self, mesh):
-    if jaxlib_extension_version < 500:
-      self.skipTest('Requires jaxlib_extension_version >= 500')
-    if ifrt_version < 72:
-      self.skipTest('Requires ifrt_version >= 72')
-
     np_x = np.arange(2 * 8 * 16, dtype=np.float32).reshape(2, 8, 16)
     np_w = np.arange(16 * 32, dtype=np.float32).reshape(16, 32)
     arr = jax.device_put(np_x, P('x', 'y', None))
@@ -6160,11 +6148,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_partial_manual_basic(self, mesh):
-    if jaxlib_extension_version < 500:
-      self.skipTest('Requires jaxlib_extension_version >= 500')
-    if ifrt_version < 72:
-      self.skipTest('Requires ifrt_version >= 72')
-
     arr = jax.device_put(jnp.arange(24).reshape(4, 6), P('x', 'y'))
     arr1 = jax.lax.reduce_sum(arr, [1], out_sharding=P('x', unreduced={'y'}))
 

@@ -73,7 +73,6 @@ limitations under the License.
 #include "xla/python/ifrt/user_context_status_util.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
-#include "xla/python/version.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
@@ -413,7 +412,6 @@ PyLoadedExecutable::~PyLoadedExecutable() {
 
 std::vector<nb_class_ptr<PyDevice>> PyLoadedExecutable::AddressableDevices()
     const {
-#if JAX_IFRT_VERSION_NUMBER >= 73
   std::optional<ifrt::DeviceListRef> device_list =
       ifrt_loaded_executable_->devices();
   if (!device_list.has_value()) {
@@ -427,14 +425,6 @@ std::vector<nb_class_ptr<PyDevice>> PyLoadedExecutable::AddressableDevices()
     devices.push_back(client_->GetPyDevice(device));
   }
   return devices;
-#else
-  std::vector<nb_class_ptr<PyDevice>> devices;
-  devices.reserve(ifrt_loaded_executable_->addressable_devices().size());
-  for (ifrt::Device* device : ifrt_loaded_executable_->addressable_devices()) {
-    devices.push_back(client_->GetPyDevice(device));
-  }
-  return devices;
-#endif
 }
 
 namespace {
@@ -445,14 +435,10 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
     absl::Span<const PyArray> args,
     std::optional<std::vector<xla::Future<>>>& returned_futures) {
   std::vector<ifrt::ArrayRef> output_arrays;
-#if JAX_IFRT_VERSION_NUMBER >= 73
   std::optional<ifrt::DeviceListRef> devices =
       ifrt_loaded_executable->devices();
   int num_computations =
       devices.has_value() ? (*devices)->AddressableDeviceList()->size() : 0;
-#else
-  int num_computations = ifrt_loaded_executable->addressable_devices().size();
-#endif
   xla::Future<> result_status;
   {
     nb::gil_scoped_release gil_release;

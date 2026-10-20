@@ -12407,11 +12407,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_jnp_zeros_out_sharding_partial_manual_unreduced_reduced(self, mesh):
-    if jaxlib_extension_version < 500:
-      self.skipTest('Requires jaxlib_extension_version >= 500')
-    if ifrt_version < 72:
-      self.skipTest('Requires ifrt_version >= 72')
-
     @jax.jit
     @jax.shard_map(in_specs=(), out_specs=P(), axis_names={'x'})
     def f():

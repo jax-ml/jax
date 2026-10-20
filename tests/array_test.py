@@ -25,7 +25,7 @@ from jax._src import core
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.lib import ifrt_version, jaxlib_extension_version
+from jax._src.lib import ifrt_version
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, AxisType, Mesh
 from jax._src.random import threefry2x32
@@ -272,9 +272,8 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertTrue(arr.sharding.num_devices == 1)
     self.assertEqual(arr._committed, False)
     self.assertFalse(arr.weak_type)
-    if jaxlib_extension_version >= 490:
-      with self.assertRaises(AttributeError):
-        arr.aval = arr.aval
+    with self.assertRaises(AttributeError):
+      arr.aval = arr.aval
 
   def test_jnp_array_jit_add(self):
     a = jnp.array([1, 2, 3])

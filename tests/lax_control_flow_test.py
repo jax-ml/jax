@@ -46,7 +46,6 @@ from jax._src import dispatch
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lib import ifrt_version
 
 jax.config.parse_flags_with_absl()
 
@@ -3509,9 +3508,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_scan_counter_where(self):
     # https://github.com/jax-ml/jax/issues/41027
-    if ifrt_version < 75:
-      self.skipTest('Requires ifrt_version >= 75')
-
     @jax.jit
     def gt_zero(x):
       def body(carry, _):

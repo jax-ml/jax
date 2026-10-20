@@ -30,7 +30,6 @@ from jax._src import tree_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import thunky_dialect
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
@@ -54,17 +53,8 @@ import numpy as np
 _thunky: Any = thunky_dialect
 
 
-def _check_thunky_available():
-  if _thunky is None:
-    raise RuntimeError(
-        "jax.experimental.thunky requires jaxlib_extension_version >= 503, got"
-        f" {jaxlib_extension_version}."
-    )
-
-
 def make_ir_context() -> ir.Context:
   """Creates an MLIR Context with the `thunky` dialect registered."""
-  _check_thunky_available()
   ctx = mlir.make_ir_context()
   _thunky.register_dialect(ctx)
   return ctx
@@ -74,7 +64,6 @@ def jax_executable_to_mlir(
     compiled: jax.stages.Compiled, ctx: ir.Context | None = None
 ) -> ir.Module:
   """Converts a compiled JAX executable directly into an `ir.Module` in the `thunky` dialect."""
-  _check_thunky_available()
   runtime_exe = compiled.runtime_executable()
   if runtime_exe is None:
     raise ValueError("Compiled executable has no runtime_executable()")
@@ -2129,7 +2118,6 @@ def jit(
     scratch_shapes: Any = (),
 ) -> Any:
   """Compiles a thunky DSL function into an XLA:GPU ThunkExecutor via Jaxpr -> MLIR."""
-  _check_thunky_available()
   if fn is None:
     return functools.partial(jit, scratch_shapes=scratch_shapes)
 

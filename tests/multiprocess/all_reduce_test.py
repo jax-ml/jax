@@ -18,7 +18,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
-from jax._src.lib import ifrt_version, jaxlib_extension_version
+from jax._src.lib import ifrt_version
 import numpy as np
 
 
@@ -144,8 +144,6 @@ class AllReduceTest(jt_multiprocess.MultiProcessTest):
       np.testing.assert_array_equal(np.squeeze(shard.data), expected)
 
   def test_psum_scatter_large(self):
-    if jaxlib_extension_version < 496:
-      self.skipTest("Requires jaxlib_extension_version >= 496")
     n = jax.device_count()
     mesh = jtu.create_mesh((n,), ("x",))
     spec = jax.P("x", None)

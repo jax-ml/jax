@@ -29,7 +29,6 @@ from jax._src import effects
 from jax._src import flattree as ft
 from jax._src.api_util import check_no_transformed_refs_args
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lib import ifrt_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
@@ -631,14 +630,6 @@ def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
         x.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000)))
     x = arith.xori(x, sign_bit_vec)
     tpu_reduction_kind = "maxui" if tpu_reduction_kind == "maxsi" else "minui"
-
-  if ifrt_version < 76:
-    # Switch to the old enum names
-    match tpu_reduction_kind:
-      case "maxf" | "maxui":
-        tpu_reduction_kind = "max"
-      case "minf" | "minui":
-        tpu_reduction_kind = "min"
 
   result = tpu.scan(
       x.type,

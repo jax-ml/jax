@@ -21,7 +21,7 @@ import functools
 from functools import partial
 import math
 import operator as op
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from jax._src import api
 from jax._src import basearray
@@ -37,7 +37,7 @@ from jax._src.indexing import dslice
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
-from jax._src.lib import _jax, ifrt_version, jaxlib_extension_version
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import (empty_concrete_mesh, empty_abstract_mesh,
                            use_abstract_mesh)
@@ -662,14 +662,7 @@ class ArrayImpl(basearray.Array):
   def copy_to_host_async(self):
     self._check_if_deleted()
     if self._npy_value is None:
-      if jaxlib_extension_version >= 495 and ifrt_version >= 71:
-        _jax.batched_copy_to_host_async([self])
-      else:
-        if self.is_fully_replicated and self.sharding.has_addressable_devices:
-          self._copy_single_device_array_to_host_async()
-          return
-        for i, _ in _cached_index_calc(self.sharding, self.shape):
-          self._arrays[i]._copy_single_device_array_to_host_async()
+      _jax.batched_copy_to_host_async([self])
 
   @property
   @functools.partial(profiler.annotate_function, name="np.asarray(jax.Array)")
@@ -690,28 +683,11 @@ class ArrayImpl(basearray.Array):
             " inspect the addressable (process local) shards."
         )
 
-      if jaxlib_extension_version >= 495 and ifrt_version >= 71:
-        # Copy the entire array to host in one go.
-        npy_value, did_copy = self._to_np_array_did_copy()
-        if did_copy:
-          self._npy_value = npy_value
-        return npy_value
-      else:
-        if self.is_fully_replicated and self.sharding.has_addressable_devices:
-          npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
-          if did_copy:
-            self._npy_value = npy_value
-          return npy_value
-
-        # Copy each unique shard to host.
-        for i, _ in _cached_index_calc(self.sharding, self.shape):
-          self._arrays[i]._copy_single_device_array_to_host_async()
-
-        npy_value = np.empty(self.shape, self.dtype)
-        for i, ind in _cached_index_calc(self.sharding, self.shape):
-          npy_value[ind], _ = self._arrays[i]._single_device_array_to_np_array_did_copy()
-        npy_value.flags.writeable = False
+      # Copy the entire array to host in one go.
+      npy_value, did_copy = self._to_np_array_did_copy()
+      if did_copy:
         self._npy_value = npy_value
+      return npy_value
     return self._npy_value
 
 
@@ -1337,25 +1313,15 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
       return literals.TypedNdArray(np.zeros(global_aval.shape, dtypes.float0),
                                    aval=global_aval)
     phys_aval = core.physical_aval(global_aval)
-    if TYPE_CHECKING or jaxlib_extension_version >= 489:
-      return xc.array_result_handler(
-          phys_aval, out_sharding, committed=committed
-      ).wrap(handler)
-    else:
-      return xc.array_result_handler(
-          phys_aval, out_sharding, committed=committed, _skip_checks=True
-      ).wrap(handler)
+    return xc.array_result_handler(
+        phys_aval, out_sharding, committed=committed
+    ).wrap(handler)
   if dtypes.issubdtype(global_aval.dtype, dtypes.extended):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed)
-  if TYPE_CHECKING or jaxlib_extension_version >= 489:
-    return xc.array_result_handler(
-        global_aval, out_sharding, committed=committed
-    )
-  else:
-    return xc.array_result_handler(
-        global_aval, out_sharding, committed=committed, _skip_checks=True
-    )
+  return xc.array_result_handler(
+      global_aval, out_sharding, committed=committed
+  )
 pxla.global_result_handlers[core.ShapedArray] = _array_global_result_handler
 
 # Token handlers

@@ -33,7 +33,7 @@ from jax._src.typing import Array, DLDeviceType, DTypeLike
 
 import numpy as np
 
-DLPACK_VERSION = _jax.dlpack_version if jaxlib_extension_version >= 499 else (0, 8)
+DLPACK_VERSION = _jax.dlpack_version
 MIN_DLPACK_VERSION = (0, 5)
 
 # A set of dtypes that dlpack supports.
@@ -85,13 +85,9 @@ def _to_dlpack(x: Array, stream: int | Any | None,
     copied = True
   else:
     arr = x
-  if jaxlib_extension_version >= 496:
-    return _jax.buffer_to_dlpack_managed_tensor(
-      arr.addressable_data(0), stream=stream, max_version=max_version,
-      copied=copied
-    )
   return _jax.buffer_to_dlpack_managed_tensor(
-    arr.addressable_data(0), stream=stream
+    arr.addressable_data(0), stream=stream, max_version=max_version,
+    copied=copied
   )
 
 

@@ -39,7 +39,6 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
@@ -1366,8 +1365,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     ):
       jax.jit(kernel).lower()
 
-  # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
-  @absltest.skipIf(jaxlib_version < (0, 12, 0), "Requires jaxlib >=0.12.0")
   @parameterized.product(
       num_spatial=[1, 2, 3],
       swizzle=[None, 32, 64, 128],
@@ -1444,8 +1441,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     )[row_base : row_base + num_rows]
     np.testing.assert_array_equal(y, expected)
 
-  # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
-  @absltest.skipIf(jaxlib_version < (0, 12, 0), "Requires jaxlib >=0.12.0")
   def test_copy_gmem_to_smem_im2col_out_of_bounds(self):
     self.skip_if_wg_semantics()
     dtype = jnp.int16
@@ -9238,8 +9233,6 @@ class PipelineTest(PallasTest):
     active_rows = ((jnp.arange(shape[0]) - 1) % 10 < 8).astype(x.dtype)
     np.testing.assert_array_equal(run(x), x + active_rows[..., None])
 
-  # TODO(slebedev): Remove once the minimum jaxlib version is 0.12.0.
-  @absltest.skipIf(jaxlib_version < (0, 12, 0), "Requires jaxlib >=0.12.0")
   def test_emit_with_im2col_ref(self):
     self.skip_if_wg_semantics()
 

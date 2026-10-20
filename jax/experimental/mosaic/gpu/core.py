@@ -80,12 +80,6 @@ def artificial_shared_memory_limit(limit):
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
 FWD_COMPAT_IR_VERSION = 9
 
-# jaxlib 0.12.0 changes the Mosaic GPU C API (MosaicGpuLaunch takes kernel and
-# device_ordinal arguments).
-# TODO(sohaibiftikhar): Remove conditioning once the minimum jaxlib version is
-# >= 0.12.0.
-_ABI_V2 = lib.version >= (0, 12, 0)
-
 c = utils.c  # This is too common to fully qualify.
 
 
@@ -1398,9 +1392,6 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
       ctypes.POINTER(ctypes.c_void_p), # arg_ptrs
       ctypes.c_int, # device_ordinal
   ]
-  if not _ABI_V2:
-    # Drop kernel and device_ordinal for ABI v1.
-    launch_arg_types = launch_arg_types[1:-1]
   launch_c = ctypes.CFUNCTYPE(None, *launch_arg_types)(launch_ptr)
 
   def launch(arg_ptrs, device):
@@ -1414,8 +1405,6 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
         if device.index is not None
         else torch.cuda.current_device(),
     ]
-    if not _ABI_V2:
-      args = args[1:-1]
     launch_c(*args)
 
   return launch, functools.partial(unload_func, compiled)
