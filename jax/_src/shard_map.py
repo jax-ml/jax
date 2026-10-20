@@ -1041,9 +1041,9 @@ def _get_spmdaxis_ctx_mesh(mesh):
   return mesh
 
 
-def _shard_map_lowering_shardy(
-    ctx: mlir.LoweringRuleContext, in_nodes, jaxpr: core.Jaxpr, mesh, in_specs,
-    out_specs, newly_manual_axes, check_vma):
+def _shard_map_lowering(
+    ctx: mlir.LoweringRuleContext, *in_nodes, jaxpr: core.Jaxpr, mesh, in_specs,
+    out_specs, check_vma, newly_manual_axes):
   in_avals_ = [v.aval for v in jaxpr.invars]
   new_axis_context = sharding_impls.SPMDAxisContext(
       _get_spmdaxis_ctx_mesh(mesh), newly_manual_axes | set(mesh.manual_axes))
@@ -1145,14 +1145,6 @@ def _shard_map_lowering_shardy(
   outs = manual_computation_op.results[num_tokens:]
   return [mlir.lower_with_sharding_in_types(ctx, o, a)
           for o, a in zip(outs, ctx.avals_out)]
-
-
-def _shard_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes,
-                        jaxpr: core.Jaxpr, mesh, in_specs, out_specs,
-                        check_vma, newly_manual_axes):
-  return _shard_map_lowering_shardy(
-      ctx, in_nodes, jaxpr, mesh, in_specs, out_specs, newly_manual_axes,
-      check_vma)
 mlir.register_lowering(shard_map_p, _shard_map_lowering)
 
 def _make_scoped_manual_sharding(ctx, mesh, spec):

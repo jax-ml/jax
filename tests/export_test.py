@@ -1787,35 +1787,33 @@ class JaxExportTest(jtu.JaxTestCase):
     attr_name = "sdy.sharding"
 
     if in_shardings == "P":
-      sharding = r'#sdy.sharding<@mesh, \[{}, {"d"}\]>'
-      primal_in_sharding = '#sdy.sharding<@mesh, [{}, {"d"}]>'
-      self.assertRegex(arg0_attrs, sharding)
-      self.assertRegex(res_attrs, sharding)
+      primal_in_sharding = '<@mesh, [{}, {"d"}]>'
+      self.assertRegex(arg0_attrs, re.escape(f"#sdy.sharding{primal_in_sharding}"))
+      self.assertRegex(res_attrs, re.escape(f"#sdy.sharding{primal_in_sharding}"))
     else:
-      primal_in_sharding = "{replicated}"
+      primal_in_sharding = '<@mesh, [{}, {}]>'
       self.assertNotIn(attr_name, arg0_attrs)
       self.assertNotIn(attr_name, res_attrs)
 
     if out_shardings == "P":
-      self.assertRegex(arg1_attrs,
-                       re.escape('#sdy.sharding<@mesh, [{"d"}, {}]>'))
-      primal_out_sharding = '#sdy.sharding<@mesh, [{"d"}, {}]>'
+      primal_out_sharding = '<@mesh, [{"d"}, {}]>'
+      self.assertRegex(arg1_attrs, re.escape(f"#sdy.sharding{primal_out_sharding}"))
     else:
-      primal_out_sharding = '#sdy.sharding<@mesh, [{}, {}]>'
+      primal_out_sharding = '<@mesh, [{}, {}]>'
       self.assertNotIn(attr_name, arg1_attrs)
 
-    # Sharding custom calls for the primal input shape all match primal_in_sharding
+    # Sharding constraints for the primal input shape all match primal_in_sharding
     primal_in_sharding_calls = re.findall(
-      r"custom_call @Sharding.*mhlo.sharding = \"(.+)\".*:.*tensor<10x20xf32>",
+      r"sdy\.sharding_constraint .+ (<@mesh, \[.*\]>).*:.*tensor<10x20xf32>",
       vjp_module_str)
     self.assertTrue(
       all(s == primal_in_sharding for s in primal_in_sharding_calls),
       primal_in_sharding_calls
     )
 
-    # Custom calls for the primal output shape all match primal_out_sharding
+    # Sharding constraints for the primal output shape all match primal_out_sharding
     primal_out_sharding_calls = re.findall(
-      r"custom_call @Sharding.*mhlo.sharding = \"(.+)\".*:.*tensor<20x10xf32>",
+      r"sdy\.sharding_constraint .+ (<@mesh, \[.*\]>).*:.*tensor<20x10xf32>",
       vjp_module_str)
     self.assertTrue(
       all(s == primal_out_sharding for s in primal_out_sharding_calls),
