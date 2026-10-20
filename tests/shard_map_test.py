@@ -381,6 +381,116 @@ class ShardMapTest(jtu.JaxTestCase):
     c = fwd(a)
     self.assertAllClose(c[1, :], a[0, :])
 
+  def test_collective_permute_in_loop_and_after_loop(self):
+    if ifrt_version < 79:
+      self.skipTest('Requires ifrt_version >= 79')
+    n = jax.device_count()
+    if n < 2:
+      self.skipTest('Requires at least 2 devices')
+    mesh = jtu.create_mesh((n,), 'x')
+    pairs = [(i, (i + 1) % n) for i in range(n)]
+    swap = lambda v: lax.ppermute(v, 'x', pairs)
+
+    def program(a, b):
+      # Regression test for https://github.com/openxla/xla/issues/50882.
+      # On XLA:CPU, 10 local arrays of 65536 int32s exceed the sequential
+      # execution thresholds so both the loop body and outer thunk executors
+      # run on worker threads.
+      local = tuple(jnp.full((1, 65536), k, jnp.int32) for k in range(10))
+      a, local = lax.fori_loop(
+          0,
+          8,
+          lambda i, c: (
+              swap(c[0]) + 1,
+              tuple(e * 3 + k for k, e in enumerate(c[1])),
+          ),
+          (a, local),
+      )
+      chain = []
+      for _ in range(8):
+        b = swap(b)
+        chain.append(b)
+      return a, chain, local
+
+    spec = P('x', None)
+    sh = NamedSharding(mesh, spec)
+    fn = jax.jit(shard_map(program, mesh=mesh, in_specs=spec, out_specs=spec))
+
+    for trial in range(10):
+      a_np = (
+          np.arange(n, dtype=np.int32)[:, None] * 10_000 + 1_000_000 + trial
+      ) + np.zeros((n, 1024), np.int32)
+      b_np = a_np + 1_000_000
+      a, chain, _ = fn(jax.device_put(a_np, sh), jax.device_put(b_np, sh))
+
+      expected_a = np.roll(a_np, shift=8, axis=0) + 8
+      self.assertArraysEqual(a, expected_a)
+      for k, c in enumerate(chain):
+        self.assertArraysEqual(c, np.roll(b_np, shift=k + 1, axis=0))
+
+  def test_psum_in_cond_and_after_cond(self):
+    if ifrt_version < 79:
+      self.skipTest('Requires ifrt_version >= 79')
+    n = jax.device_count()
+    if n < 2:
+      self.skipTest('Requires at least 2 devices')
+    mesh = jtu.create_mesh((n,), 'x')
+    num_elements = 200_000
+
+    def branch(k):
+      def f(a):
+        # On XLA:CPU, 200k float32 elements (800 KiB) splits across worker
+        # threads and completes asynchronously.
+        h = jnp.sin(a + k)
+        return lax.psum(h, 'x'), h
+      return f
+
+    def program(i, a, b, c):
+      a, b, c = a[0], b[0], c[0]
+      y, h = lax.cond(i > 0, branch(0.0), branch(1.0), a)
+      # Depend on c.sum() so XLA schedules this psum after lax.cond.
+      z = lax.psum(b + 0.0 * c.sum(), 'x')
+      # On XLA:CPU, more than 8 thunks in the entry computation forces the
+      # outer thunk executor to run asynchronously.
+      more = sum(jnp.sort(c * (k + 2.0))[::-1] for k in range(12))
+      return y[None], z[None], h[None], more[None]
+
+    split = NamedSharding(mesh, P('x'))
+    whole = NamedSharding(mesh, P())
+    a0 = np.linspace(0.0, 3.0, n * num_elements, dtype=np.float32).reshape(
+        n, num_elements
+    )
+    b0 = (
+        np.full((n, num_elements), 1_000_000.0, dtype=np.float32)
+        + np.arange(n, dtype=np.float32)[:, None]
+    )
+    c0 = np.arange(n * 5000, dtype=np.float32).reshape(n, 5000)
+    args = (
+        jax.device_put(np.asarray(1, np.int32), whole),
+        jax.device_put(a0, split),
+        jax.device_put(b0, split),
+        jax.device_put(c0, split),
+    )
+
+    fn = jax.jit(
+        shard_map(
+            program,
+            mesh=mesh,
+            in_specs=(P(), P('x'), P('x'), P('x')),
+            out_specs=P('x'),
+            check_vma=False,
+        )
+    )
+    expected_z = np.broadcast_to(b0.sum(axis=0), (n, num_elements))
+    for trial in range(10):
+      y, z, *_ = jax.block_until_ready(fn(*args))
+      self.assertLessEqual(
+          np.max(np.abs(np.asarray(y))),
+          float(n),
+          msg=f'trial {trial}: y took values from the second psum',
+      )
+      self.assertArraysEqual(z, expected_z)
+
   @jtu.run_on_devices("gpu")
   @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.psend is deprecated")
   @jtu.ignore_warning(category=DeprecationWarning, message="jax.lax.precv is deprecated")
