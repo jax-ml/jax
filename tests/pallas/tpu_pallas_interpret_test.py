@@ -1885,6 +1885,236 @@ class InterpretTest(jtu.JaxTestCase):
         out = kernel(x)
         np.testing.assert_array_equal(out, x + 1)
 
+  @parameterized.product(
+      use_prim=[False, True],
+      mode=['interpret_true', 'interpret_params', 'tpu_lowering'],
+  )
+  def test_emit_pipeline_explicit_indices_captured_ref_and_outer_program_id(
+      self, use_prim, mode
+  ):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (),
+        abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
+    )
+
+    def kernel(x_hbm, o_hbm, scratch_vmem):
+      c = pl.program_id(0)
+      scratch_vmem[...] = jnp.zeros_like(scratch_vmem)
+
+      def body(step: pltpu.PipelineStep, x_ref, o_ref):
+        # TODO(rdyro): hlo_interpreter (interpret=True) lowers run_scoped_p
+        # outside grid_env, so outer pl.program_id inside run_scoped is tested
+        # under InterpretParams and TPU lowering, while interpret_true exercises
+        # pipeline_body_discharge_rule's consts_should write-back on
+        # scratch_vmem.
+        outer_pid = (
+            jnp.float32(0.0)
+            if mode == 'interpret_true'
+            else pl.program_id(0).astype(jnp.float32)
+        )
+        scratch_vmem[...] = scratch_vmem[...] + x_ref[...]
+        o_ref[...] = (
+            scratch_vmem[...]
+            + step.index[0].astype(jnp.float32)
+            + outer_pid * 100.0
+        )
+
+      pltpu.emit_pipeline(
+          body,
+          grid=(2,),
+          in_specs=(pl.BlockSpec((8, 128), lambda i: (i, 0)),),
+          out_specs=(pl.BlockSpec((8, 128), lambda i: (i, 0)),),
+          _explicit_indices=True,
+      )(x_hbm.at[c], o_hbm.at[c])
+
+    x = jnp.ones((2, 16, 128), dtype=jnp.float32)
+    interpret = (
+        True
+        if mode == 'interpret_true'
+        else (pltpu.InterpretParams() if mode == 'interpret_params' else False)
+    )
+    with (
+        config.use_emit_pipeline_primitive(use_prim),
+        jax.sharding.use_abstract_mesh(abstract_mesh),
+    ):
+      fn = pl.pallas_call(
+          kernel,
+          grid=(2,),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+          out_shape=jax.ShapeDtypeStruct((2, 16, 128), jnp.float32),
+          scratch_shapes=[pltpu.VMEM((8, 128), jnp.float32)],
+          interpret=interpret,
+      )
+      if mode == 'tpu_lowering':
+        jax.jit(fn).trace(x).lower(lowering_platforms=('tpu',)).compiler_ir()
+      else:
+        out = fn(x)
+        np.testing.assert_allclose(out[0, :8], 1.0)
+        np.testing.assert_allclose(out[0, 8:], 3.0)
+        if mode != 'interpret_true':
+          np.testing.assert_allclose(out[1, :8], 101.0)
+          np.testing.assert_allclose(out[1, 8:], 103.0)
+
+  @parameterized.product(
+      use_prim=[False, True],
+      mode=['interpret_true', 'interpret_params', 'tpu_lowering'],
+  )
+  def test_emit_pipeline_dynamic_and_megacore_num_programs(
+      self, use_prim, mode
+  ):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (),
+        abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
+    )
+    interpret = (
+        True
+        if mode == 'interpret_true'
+        else (pltpu.InterpretParams() if mode == 'interpret_params' else False)
+    )
+    with (
+        config.use_emit_pipeline_primitive(use_prim),
+        jax.sharding.use_abstract_mesh(abstract_mesh),
+    ):
+      # 1. Dynamic grid num_programs in body
+      def dyn_kernel(n_ref, x_hbm, o_hbm):
+        def body(x_ref, o_ref):
+          nprogs = jnp.asarray(pl.num_programs(0), jnp.float32)
+          o_ref[...] = x_ref[...] + nprogs
+
+        pltpu.emit_pipeline(
+            body,
+            grid=(n_ref[0],),
+            in_specs=(pl.BlockSpec((8, 128), lambda i: (i, 0)),),
+            out_specs=(pl.BlockSpec((8, 128), lambda i: (i, 0)),),
+        )(x_hbm, o_hbm)
+
+      n = jnp.array([2], dtype=jnp.int32)
+      x = jnp.ones((16, 128), dtype=jnp.float32)
+      dyn_fn = pl.pallas_call(
+          dyn_kernel,
+          in_specs=[
+              pl.BlockSpec(memory_space=pltpu.SMEM),
+              pl.BlockSpec(memory_space=pltpu.HBM),
+          ],
+          out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+          out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+          interpret=interpret,
+      )
+      if mode == 'tpu_lowering':
+        jax.jit(dyn_fn).trace(n, x).lower(
+            lowering_platforms=('tpu',)
+        ).compiler_ir()
+      else:
+        np.testing.assert_allclose(dyn_fn(n, x), x + 2.0)
+
+      # 2. Megacore partitioned num_programs in body
+      if mode != 'interpret_true':
+        mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=2)
+
+        @pl.kernel(
+            out_type=jax.ShapeDtypeStruct((32, 128), jnp.float32),
+            mesh=mesh,
+            interpret=interpret,
+        )
+        def mega_kernel(x_hbm, o_hbm):
+          def body(x_ref, o_ref):
+            nprogs = jnp.asarray(pl.num_programs(0), jnp.float32)
+            o_ref[...] = x_ref[...] + nprogs
+
+          pltpu.emit_pipeline(
+              body,
+              grid=(4,),
+              in_specs=(pl.BlockSpec((8, 128), lambda i: (i, 0)),),
+              out_specs=(pl.BlockSpec((8, 128), lambda i: (i, 0)),),
+              core_axis_name='core',
+              dimension_semantics=(pltpu.PARALLEL,),
+          )(x_hbm, o_hbm)
+
+        x_mega = jnp.ones((32, 128), dtype=jnp.float32)
+        if mode == 'tpu_lowering':
+          jax.jit(mega_kernel).trace(x_mega).lower(
+              lowering_platforms=('tpu',)
+          ).compiler_ir()
+        else:
+          np.testing.assert_allclose(mega_kernel(x_mega), x_mega + 2.0)
+
+      # 3. Megacore vmap over emit_pipeline: late partitioning partitions the
+      # vmap PARALLEL batch axis (size 2 across 2 cores) rather than the inner
+      # grid axis (size 3).
+      if use_prim and mode != 'interpret_true':
+        mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=2)
+
+        @pl.kernel(
+            out_type=jax.ShapeDtypeStruct((2, 24, 128), jnp.float32),
+            mesh=mesh,
+            interpret=interpret,
+        )
+        def vmap_mega_kernel(x_hbm, o_hbm):
+          core_id = jnp.asarray(jax.lax.axis_index('core'), jnp.float32)
+
+          def body(x_ref, o_ref):
+            nprogs = jnp.asarray(pl.num_programs(0), jnp.float32)
+            o_ref[...] = x_ref[...] + nprogs + 100.0 * core_id
+
+          jax.vmap(
+              pltpu.emit_pipeline(
+                  body,
+                  grid=(3,),
+                  in_specs=(
+                      pl.BlockSpec(
+                          (8, 128), lambda i: (pl.num_programs(0) - 1 - i, 0)
+                      ),
+                  ),
+                  out_specs=(
+                      pl.BlockSpec(
+                          (8, 128), lambda i: (pl.num_programs(0) - 1 - i, 0)
+                      ),
+                  ),
+                  core_axis_name='core',
+                  dimension_semantics=(pltpu.PARALLEL,),
+              )
+          )(x_hbm, o_hbm)
+
+        x_vmap = jnp.arange(2 * 24 * 128, dtype=jnp.float32).reshape(
+            (2, 24, 128)
+        )
+        if mode == 'tpu_lowering':
+          jax.jit(vmap_mega_kernel).trace(x_vmap).lower(
+              lowering_platforms=('tpu',)
+          ).compiler_ir()
+        else:
+          expected_vmap = (
+              x_vmap
+              + 3.0
+              + 100.0 * jnp.arange(2, dtype=jnp.float32)[:, None, None]
+          )
+          np.testing.assert_allclose(vmap_mega_kernel(x_vmap), expected_vmap)
+
+      # 4. Calling pl.program_id() inside an emit_pipeline BlockSpec index_map
+      # raises a clear ValueError on the primitive path.
+      if use_prim:
+        def bad_kernel(x_hbm, o_hbm):
+          pltpu.emit_pipeline(
+              lambda x_ref, o_ref: None,
+              grid=(2,),
+              in_specs=(pl.BlockSpec((8, 128), lambda i: (pl.program_id(0), 0)),),
+              out_specs=(pl.BlockSpec((8, 128), lambda i: (i, 0)),),
+          )(x_hbm, o_hbm)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r'pl\.program_id\(\) is not supported inside emit_pipeline'
+            r' BlockSpec index_map',
+        ):
+          pl.pallas_call(
+              bad_kernel,
+              in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+              out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+              out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+              interpret=interpret,
+          )(x)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

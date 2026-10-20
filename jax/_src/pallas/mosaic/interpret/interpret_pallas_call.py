@@ -1650,20 +1650,8 @@ def _interpret_jaxpr(
         all_args = eqn.params['in_tree'].unflatten(invals)
         ps, body_consts, refs = all_args
         ps_flat, _ = tree_util.tree_flatten(ps)
-        if eqn.params.get('_explicit_indices', False):
-          body_invals = (*body_consts, *ps_flat, *refs)
-        else:
-          body_invals = (*body_consts, *refs)
-        cur_env = pallas_core.current_grid_env() or ()
-        body_grid_env = tuple(
-            pallas_core.GridAxis(
-                idx,
-                cur_env[i].size if i < len(cur_env) else 0,
-            )
-            for i, idx in enumerate(ps.index)
-        ) + tuple(cur_env[len(ps.index) :])
-        with pallas_core.grid_env(body_grid_env):
-          token, _ = _interpret(eqn.params['jaxpr'], *body_invals, token=token)
+        body_invals = (*body_consts, *ps_flat, *refs)
+        token, _ = _interpret(eqn.params['jaxpr'], *body_invals, token=token)
         out = []
 
       elif prim is mosaic_primitives.dma_start_p:

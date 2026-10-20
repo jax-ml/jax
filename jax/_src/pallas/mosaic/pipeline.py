@@ -51,7 +51,6 @@ from jax._src.pallas.mosaic import tpu_info
 from jax._src.pallas.mosaic.lowering import (
     _transform_ref,
     _uncacheable_primitives,
-    ir_constant,
     jaxpr_subcomp,
     register_lowering_rule,
 )
@@ -530,8 +529,50 @@ class BufferedRefBase:
     return self
 
   def with_spec(self, spec: pallas_core.BlockSpec) -> BufferedRefBase:
-    """Returns a new BufferedRefBase with the given block spec."""
+    """Returns a new BufferedRefBase with the given block spec.
+
+    Must be implemented by subclasses that are passed via ``allocations`` when
+    ``in_specs`` or ``out_specs`` are also provided to ``emit_pipeline``.
+    """
     raise NotImplementedError()
+
+  def get_dma_aval(
+      self, ref_aval: jax_core.ShapedArray
+  ) -> jax_core.ShapedArray:
+    """Returns the ShapedArray aval against which DMA specs are indexed."""
+    return ref_aval
+
+  def sample_window_ref(self) -> Any:
+    """Returns a single-slot window Ref representing the buffer's window aval."""
+    return None
+
+  def wrap_window_ref(self, window_ref: Any) -> Any:
+    """Wraps a single-slot window ref into the view expected by the pipeline body.
+
+    Subclasses whose ``current_ref`` wraps the window ref in a non-Ref view must
+    override ``unwrap_window_ref`` to inverse this transformation.
+    """
+    return window_ref
+
+  def unwrap_window_ref(self, body_ref: Any) -> Any:
+    """Unwraps a body ref view back to the underlying JAX Ref/TransformedRef.
+
+    Must be overridden alongside ``wrap_window_ref`` (or ``current_ref``) when
+    the body receives a custom wrapper around the window ref.
+    """
+    return body_ref
+
+
+def _resolve_buffer_memory_space(memory_space: Any) -> Any:
+  buffer_memory_space = (
+      VMEM
+      if memory_space in (None, pallas_core.MemorySpace.DEFAULT)
+      else memory_space
+  )
+  # TODO(sharadmv): Don't hard-code TC here, infer from context.
+  return tpu_core.memory_space_to_tpu_memory_space(
+      buffer_memory_space, tpu_core.CoreType.TC
+  )
 
 
 def _ref_to_value_aval(ref):
@@ -669,12 +710,7 @@ class BufferedRef(BufferedRefBase):
         else jax_core.ShapedArray((123, 456), dtype_or_type)
     )
 
-    buffer_memory_space = (
-          VMEM if spec.memory_space is None else spec.memory_space)
-    # TODO(sharadmv): Don't hard-code TC here, infer from context.
-    buffer_memory_space = tpu_core.memory_space_to_tpu_memory_space(
-        buffer_memory_space, tpu_core.CoreType.TC
-    )
+    buffer_memory_space = _resolve_buffer_memory_space(spec.memory_space)
     if buffer_memory_space not in (SMEM, VMEM, HBM):
       raise ValueError(
           f"Unsupported buffer memory space: {buffer_memory_space}"
@@ -790,6 +826,23 @@ class BufferedRef(BufferedRefBase):
   def with_spec(self, spec: pallas_core.BlockSpec) -> BufferedRef:
     """Returns a new BufferedRef with the given block spec."""
     return dataclasses.replace(self, _spec=spec)
+
+  def sample_window_ref(self) -> Any:
+    if self.window_ref is None:
+      if self.prefetched_count > 0:
+        raise ValueError(
+            "Expected external window buffer to be bound for prefetched input,"
+            " got window_ref=None"
+        )
+      return None
+    if not self.is_buffered or self.is_trivial_windowing:
+      return self.window_ref
+    return self._window_ref_at(0)
+
+  def wrap_window_ref(self, window_ref: Any) -> Any:
+    return dataclasses.replace(
+        self, is_trivial_windowing=True, window_ref=window_ref
+    ).current_ref
 
   def with_next_fetch(
       self,
@@ -1958,6 +2011,10 @@ def _emit_pipeline(
                 tiling=tiling,
             ),
         )
+    elif len(allocations) == len(in_specs) + len(out_specs):
+      allocations = map_brefs(
+          lambda b, s: b.with_spec(s), allocations, (*in_specs, *out_specs)
+      )
 
     if output_wait_read_only:
       allocations = map_brefs(
@@ -2154,6 +2211,7 @@ class EmitPipelinePrimitiveArgs:
   core_id: jax.Array | None
   body_consts: tuple[jax.Array, ...]
   refs_flat: tuple[jax.Array | state.TransformedRef | state.AbstractRef, ...]
+  scratches: Any | None = None
   allocations: Any | None = None
 
   @property
@@ -2175,6 +2233,15 @@ def _zip_grid(dynamic_grid_spec, static_grid_spec):
   dynamic_it = iter(dynamic_grid_spec)
   return tuple(next(dynamic_it) if pallas_core.is_dynamic_dim(d) else d
               for d in static_grid_spec)
+
+
+def _jaxpr_has_primitive(
+    jaxpr: jax_core.Jaxpr, prim: jax_core.Primitive
+) -> bool:
+  return any(eqn.primitive is prim for eqn in jaxpr.eqns) or any(
+      _jaxpr_has_primitive(sub, prim) for sub in jax_core.subjaxprs(jaxpr)
+  )
+
 
 def emit_pipeline(
     body,
@@ -2207,35 +2274,73 @@ def emit_pipeline(
 
   num_in_specs = len(in_specs)
 
-  def wrapped(*args, allocations=None, **kwargs):
+  def wrapped(*args, scratches=None, allocations=None, **kwargs):
     num_cores, core_id = _resolve_core_info(core_axis_)
 
+    def _specs_from_allocs(allocs):
+      return jax.tree.map(
+          lambda b: pallas_core.no_block_spec if b is None else b.spec,
+          allocs,
+          is_leaf=lambda x: isinstance(x, BufferedRefBase) or x is None,
+      )
+
     if allocations is not None and not in_specs and not out_specs:
-      flat_allocs = [
-          b for b in allocations if isinstance(b, BufferedRefBase) or b is None
-      ]
-      in_specs_ = tuple(
-          b.spec if isinstance(b, BufferedRefBase) else None
-          for b in flat_allocs if b is None or b.buffer_type == BufferType.INPUT
+      in_specs_list, in_refs_list, in_allocs_list = [], [], []
+      out_specs_list, out_refs_list, out_allocs_list = [], [], []
+      for alloc_item, arg_item in zip(allocations, args, strict=True):
+        bref_leaves = jax.tree.leaves(
+            alloc_item, is_leaf=lambda x: isinstance(x, BufferedRefBase)
+        )
+        spec_item = _specs_from_allocs(alloc_item)
+        is_in = [b.buffer_type == BufferType.INPUT for b in bref_leaves]
+        if any(is_in) and not all(is_in):
+          raise ValueError(
+              "Cannot mix INPUT and OUTPUT/INPUT_OUTPUT BufferedRefs within a"
+              " single allocation argument pytree."
+          )
+        if all(is_in):
+          in_specs_list.append(spec_item)
+          in_refs_list.append(arg_item)
+          in_allocs_list.append(alloc_item)
+        else:
+          out_specs_list.append(spec_item)
+          out_refs_list.append(arg_item)
+          out_allocs_list.append(alloc_item)
+      allocations = (*in_allocs_list, *out_allocs_list)
+      in_specs_, in_refs = _filter_specs_and_refs(
+          tuple(in_specs_list), tuple(in_refs_list)
       )
-      out_specs_ = tuple(
-          b.spec if isinstance(b, BufferedRefBase) else None
-          for b in flat_allocs
-          if b is not None and b.buffer_type != BufferType.INPUT
+      out_specs_, out_refs = _filter_specs_and_refs(
+          tuple(out_specs_list), tuple(out_refs_list)
       )
-      num_in_specs_alloc = sum(
-          1 for b in flat_allocs
-          if b is None or b.buffer_type == BufferType.INPUT
-      )
-      in_refs = args[:num_in_specs_alloc]
-      out_refs = args[num_in_specs_alloc:]
-      in_specs_, in_refs = _filter_specs_and_refs(in_specs_, in_refs)
-      out_specs_, out_refs = _filter_specs_and_refs(out_specs_, out_refs)
     else:
       in_specs_, in_refs = _filter_specs_and_refs(
           in_specs, args[:num_in_specs])
       out_specs_, out_refs = _filter_specs_and_refs(
           out_specs, args[num_in_specs:])
+      if allocations is not None:
+        if isinstance(allocations, list):
+          allocations = tuple(allocations)
+        in_allocs = map_brefs(
+            lambda b, s: b.with_spec(s),
+            allocations[:num_in_specs],
+            in_specs_,
+        )
+        in_specs_, in_refs = _filter_specs_and_refs(
+            _specs_from_allocs(in_allocs), in_refs
+        )
+        if len(allocations) > num_in_specs:
+          out_allocs = map_brefs(
+              lambda b, s: b.with_spec(s),
+              allocations[num_in_specs:],
+              out_specs_,
+          )
+          out_specs_, out_refs = _filter_specs_and_refs(
+              _specs_from_allocs(out_allocs), out_refs
+          )
+          allocations = (*in_allocs, *out_allocs)
+        else:
+          allocations = in_allocs
 
     if not config.use_emit_pipeline_primitive.value:
       return _emit_pipeline(
@@ -2251,33 +2356,103 @@ def emit_pipeline(
           _explicit_indices=_explicit_indices,
           num_cores=num_cores,
           core_id=core_id,
-      )(*in_refs, *out_refs, allocations=allocations, **kwargs)
+      )(
+          *in_refs,
+          *out_refs,
+          scratches=scratches,
+          allocations=allocations,
+          **kwargs,
+      )
 
     in_specs_flat, _ = tree_util.tree_flatten(in_specs_)
     out_specs_flat, _ = tree_util.tree_flatten(out_specs_)
     in_refs_flat, _ = tracing_registry.flatten(in_refs, is_transformed_ref)
     out_refs_flat, _ = tracing_registry.flatten(out_refs, is_transformed_ref)
 
+    flat_alloc_brefs = (
+        jax.tree.leaves(
+            allocations, is_leaf=lambda x: isinstance(x, BufferedRefBase)
+        )
+        if allocations is not None
+        else ()
+    )
+
     # Split the grid into static and dynamic parts the latter passed as args.
     in_avals = [_ref_to_value_aval(r) for r in in_refs_flat]
     out_avals = [_ref_to_value_aval(r) for r in out_refs_flat]
+    for i, bref in enumerate(flat_alloc_brefs):
+      if i < len(in_avals):
+        in_avals[i] = bref.get_dma_aval(in_avals[i])
+      else:
+        out_idx = i - len(in_avals)
+        out_avals[out_idx] = bref.get_dma_aval(out_avals[out_idx])
 
     grid_spec = pallas_core.GridSpec(
         grid=grid, in_specs=in_specs_flat, out_specs=out_specs_flat)
     static_grid_spec, dynamic_grid_specs = (
         pallas_core.unzip_dynamic_grid_bounds(grid_spec))
+    static_grid = static_grid_spec.grid
+    # static_grid_spec is a fresh copy from unzip_dynamic_grid_bounds;
+    # GridSpec's custom __init__ is incompatible with dataclasses.replace.
+    static_grid_spec.grid = (None,) * len(grid)  # pyrefly: ignore[bad-assignment]
 
-    # TODO(rdyro): Move this method to pallas_core or vendor it here.
-    kernel_args, grid_mapping = pallas_core.get_grid_mapping(
-        static_grid_spec,
-        in_avals,
-        tree_util.tree_structure(tuple(in_refs_flat)),
-        [""] * len(in_avals),
-        out_avals,
-        tree_util.tree_structure(tuple(out_refs_flat)),
-        [""] * len(out_avals),
-        allow_captured_consts=True,
-    )
+    # Mask any enclosing grid_env so index_map tracing falls through to the
+    # inner pipeline's axis_frame() with deferred dynamic grid bounds.
+    with pallas_core.grid_env(()):
+      # TODO(rdyro): Move this method to pallas_core or vendor it here.
+      kernel_args, grid_mapping = pallas_core.get_grid_mapping(
+          static_grid_spec,
+          in_avals,
+          tree_util.tree_structure(tuple(in_refs_flat)),
+          [""] * len(in_avals),
+          out_avals,
+          tree_util.tree_structure(tuple(out_refs_flat)),
+          [""] * len(out_avals),
+          allow_captured_consts=True,
+      )
+    grid_mapping = grid_mapping.replace(grid=static_grid)
+    for bm in grid_mapping.block_mappings:
+      if _jaxpr_has_primitive(bm.index_map_jaxpr.jaxpr, primitives.program_id_p):
+        raise ValueError(
+            "pl.program_id() is not supported inside emit_pipeline BlockSpec"
+            " index_map; use the index_map arguments instead."
+        )
+    resolved_kernel_args = []
+    for i, bm in enumerate(grid_mapping.block_mappings):
+      bref = flat_alloc_brefs[i] if i < len(flat_alloc_brefs) else None
+      win_ref = bref.sample_window_ref() if bref is not None else None
+      if win_ref is not None:
+        win_mem_space = (
+            win_ref.memory_space
+            if isinstance(win_ref, state.TransformedRef)
+            else jax_core.typeof(win_ref).memory_space
+        )
+        resolved_kernel_args.append(
+            bm.transformed_block_aval.update(
+                inner_aval=_ref_to_value_aval(win_ref),
+                memory_space=win_mem_space,
+            )
+        )
+      else:
+        spec = bm.to_block_spec()
+        inner_shape = (
+            _get_block_shape(spec)
+            if bm.block_shape is not None
+            else bm.transformed_block_aval.shape
+        )
+        mem_space = _resolve_buffer_memory_space(
+            bm.transformed_block_aval.memory_space
+        )
+        resolved_kernel_args.append(
+            bm.transformed_block_aval.update(
+                inner_aval=bm.transformed_block_aval.inner_aval.update(
+                    shape=inner_shape
+                ),
+                memory_space=mem_space,
+            )
+        )
+    kernel_args = tuple(resolved_kernel_args)
+
     # Trace the kernel body to a jaxpr.
     filtered_args = (*in_refs, *out_refs)
     _, refs_tree = tracing_registry.flatten(
@@ -2290,18 +2465,53 @@ def emit_pipeline(
     assert all(
         not isinstance(x, state.TransformedRef) for x in flat_kernel_args)
 
-    if _explicit_indices:
-      scalar_aval: Any = jax_core.ShapedArray((), jnp.int32)
-      ps_aval = PipelineStep(
-          index=tuple([scalar_aval] * len(grid)),
-          local_index=scalar_aval,
-      )
-      kernel_args = (ps_aval, *kernel_args)
+    scalar_aval: Any = jax_core.ShapedArray((), jnp.int32)
+    ps_aval = PipelineStep(
+        index=tuple([scalar_aval] * len(grid)),
+        local_index=scalar_aval,
+    )
+    grid_sizes_aval = tuple([scalar_aval] * len(grid))
+    scratches_ = () if scratches is None else tuple(scratches)
+    scratch_avals = jax.tree.map(
+        lambda r: state.AbstractRef(
+            _ref_to_value_aval(r),
+            memory_space=(
+                r.memory_space
+                if isinstance(r, state.TransformedRef)
+                else jax_core.typeof(r).memory_space
+            ),
+        ),
+        scratches_,
+        is_leaf=is_transformed_ref,
+    )
+    num_ref_args = len(kernel_args)
+    kernel_args = ((ps_aval, grid_sizes_aval), *kernel_args, *scratch_avals)
 
-    # Trace with the global grid mapping to let the body resolve the mesh axes.
-    with grid_mapping.trace_env():
+    def _trace_body(ps_and_grid, *b_args):
+      ps, grid_sizes = ps_and_grid
+      ref_b_args, scratch_b_args = b_args[:num_ref_args], b_args[num_ref_args:]
+      if flat_alloc_brefs:
+        flat_b_args, b_args_tree = tracing_registry.flatten(
+            ref_b_args, is_transformed_ref
+        )
+        flat_b_args = [
+            flat_alloc_brefs[i].wrap_window_ref(arg)
+            if i < len(flat_alloc_brefs)
+            else arg
+            for i, arg in enumerate(flat_b_args)
+        ]
+        ref_b_args = b_args_tree.unflatten(flat_b_args)
+      if _explicit_indices:
+        return body(ps, *ref_b_args, *scratch_b_args)
+      with pallas_core.grid_env([
+          pallas_core.GridAxis(idx, size)
+          for idx, size in zip(ps.index, grid_sizes, strict=True)
+      ]):
+        return body(*ref_b_args, *scratch_b_args)
+
+    with config._check_vma(False):
       body_fun_dbg = api_util.debug_info(
-          "emit_pipeline body", body, kernel_args, {}
+          "emit_pipeline body", _trace_body, kernel_args, {}
       )
       in_avals_ft = ft.flatten(
           (kernel_args, {}),
@@ -2312,7 +2522,7 @@ def emit_pipeline(
       assert all(
           not isinstance(x, state.TransformedRef) for x in in_avals_ft.vals)
       body_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
-          body, in_avals_ft, debug_info=body_fun_dbg
+          _trace_body, in_avals_ft, debug_info=body_fun_dbg
       )
       if out_avals_ft.tree.num_leaves != 0:
         raise ValueError("The emit_pipeline body function must return None.")
@@ -2327,6 +2537,7 @@ def emit_pipeline(
         core_id=core_id,
         body_consts=tuple(body_jaxpr.consts),
         refs_flat=tuple(refs_flat),
+        scratches=scratches_,
         allocations=allocations,
     )
     args_flat, args_tree = tracing_registry.flatten(prim_args)
@@ -2359,16 +2570,39 @@ def _emit_pipeline_effectful_abstract_eval(
 ):
   del params
   all_args = args_tree.unflatten(avals)
+  all_idx = args_tree.unflatten(list(range(len(avals))))
   # Because we can have TransformedRefs as arguments to the body, but the flat
   # arguments are flattened Refs and transforms, we unflatten the positional
   # indices to be able to identify the index of an n-th Ref from a positional
   # index.
-  indices_flat = list(range(all_args.refs_offset,
-                            all_args.refs_offset + len(all_args.refs_flat)))
   flat_refs_idx, _ = tracing_registry.flatten(
-      refs_tree.unflatten(indices_flat), is_transformed_ref)
+      refs_tree.unflatten(all_idx.refs_flat), is_transformed_ref)
+  flat_scratches_idx, _ = tracing_registry.flatten(
+      all_idx.scratches, is_transformed_ref
+  )
+  flat_body_ref_idx = [*flat_refs_idx, *flat_scratches_idx]
   # Helper to resolve the underlying AbstractRef index in `avals` for any leaf.
   get_ref_idx = lambda x: x.ref if isinstance(x, state.TransformedRef) else x
+
+  flat_alloc_brefs = (
+      jax.tree.leaves(
+          all_args.allocations, is_leaf=lambda x: isinstance(x, BufferedRefBase)
+      )
+      if all_args.allocations is not None
+      else ()
+  )
+
+  def _has_private_window(ref_invar_idx: int, ref_idx: int) -> bool:
+    if ref_invar_idx < len(flat_alloc_brefs):
+      return flat_alloc_brefs[ref_invar_idx].has_allocated_buffer
+    bm = grid_mapping.block_mappings[ref_invar_idx]
+    src_mem = avals[ref_idx].memory_space
+    if src_mem not in (None, ANY):
+      src_mem = _resolve_buffer_memory_space(src_mem)
+    buf_mem = _resolve_buffer_memory_space(
+        bm.transformed_block_aval.memory_space
+    )
+    return src_mem is not buf_mem and buf_mem is not HBM
 
   out_effects: set[effects.Effect] = set()
   num_inputs = grid_mapping.num_inputs
@@ -2376,19 +2610,22 @@ def _emit_pipeline_effectful_abstract_eval(
   for i, x in enumerate(flat_refs_idx):
     ref_idx = get_ref_idx(x)
     if isinstance(avals[ref_idx], state.AbstractRef):
-      out_effects.add(ReadEffect(ref_idx)
-                      if i < num_inputs else WriteEffect(ref_idx))
+      if i < len(flat_alloc_brefs):
+        bref = flat_alloc_brefs[i]
+        if bref.is_input:
+          out_effects.add(ReadEffect(ref_idx))
+        if bref.is_output:
+          out_effects.add(WriteEffect(ref_idx))
+      else:
+        out_effects.add(ReadEffect(ref_idx)
+                        if i < num_inputs else WriteEffect(ref_idx))
 
-  allocations_offset = all_args.refs_offset + len(all_args.refs_flat)
-  for ref_idx in range(allocations_offset, len(avals)):
+  for ref_idx in jax.tree.leaves(all_idx.allocations):
     if isinstance(avals[ref_idx], state.AbstractRef):
       out_effects.add(ReadEffect(ref_idx))
       out_effects.add(WriteEffect(ref_idx))
 
-  num_ps_leaves = (
-      len(body_jaxpr.invars) - len(flat_refs_idx)
-      if _explicit_indices else 0
-  )
+  num_ps_leaves = len(body_jaxpr.invars) - len(flat_body_ref_idx)
 
   # Propagate effects from `body_jaxpr`, mapping them to the correct indices in
   # `avals`.
@@ -2407,11 +2644,23 @@ def _emit_pipeline_effectful_abstract_eval(
       if invar_idx < num_ps_leaves:
         continue
       ref_invar_idx = invar_idx - num_ps_leaves
-      if ref_invar_idx < num_inputs and isinstance(e, WriteEffect):
-        raise ValueError(
-            f"WriteEffect should not apply to an input buffer {ref_invar_idx} in"
-            f" pipeline body jaxpr: {body_jaxpr}")
-      ref_idx = get_ref_idx(flat_refs_idx[ref_invar_idx])
+      ref_idx = get_ref_idx(flat_body_ref_idx[ref_invar_idx])
+      if ref_invar_idx < len(flat_refs_idx):
+        is_input_only = (
+            flat_alloc_brefs[ref_invar_idx].buffer_type == BufferType.INPUT
+            if ref_invar_idx < len(flat_alloc_brefs)
+            else ref_invar_idx < num_inputs
+        )
+        is_output_only = (
+            flat_alloc_brefs[ref_invar_idx].buffer_type == BufferType.OUTPUT
+            if ref_invar_idx < len(flat_alloc_brefs)
+            else ref_invar_idx >= num_inputs
+        )
+        if _has_private_window(ref_invar_idx, ref_idx):
+          if is_input_only and isinstance(e, WriteEffect):
+            continue
+          if is_output_only and isinstance(e, ReadEffect):
+            continue
       out_effects.add(e.replace(ref_idx))
   return (), frozenset(out_effects)
 
@@ -2437,9 +2686,7 @@ def _pipeline_body_effectful_abstract_eval(
   indices_flat = list(range(len(avals)))
   _, consts_idx, refs_idx = in_tree.unflatten(indices_flat)
   flat_refs_idx, _ = tracing_registry.flatten(refs_idx, is_transformed_ref)
-  num_ps_leaves = (
-      len(jaxpr.invars) - len(flat_refs_idx) if _explicit_indices else 0
-  )
+  num_ps_leaves = len(jaxpr.invars) - len(flat_refs_idx)
   flat_consts_idx, _ = tracing_registry.flatten(consts_idx)
   # Helper to resolve the underlying AbstractRef index in `avals` for any leaf.
   get_ref_idx = lambda x: x.ref if isinstance(x, state.TransformedRef) else x
@@ -2465,8 +2712,6 @@ def _pipeline_body_effectful_abstract_eval(
       if invar_idx < num_ps_leaves:
         continue
       ref_invar_idx = invar_idx - num_ps_leaves
-      if ref_invar_idx < num_inputs and isinstance(e, WriteEffect):
-        raise ValueError(f"WriteEffect on input buffer {ref_invar_idx}")
       ref_idx = get_ref_idx(flat_refs_idx[ref_invar_idx])
       out_effects.add(e.replace(ref_idx))
   return (), frozenset(out_effects)
@@ -2483,7 +2728,7 @@ def _emit_pipeline_physicalize_rule(
 ):
   del ctx
   all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
-  with grid_mapping.trace_env():
+  with config._check_vma(False):
     new_closed = fusible_dtype.physicalize_closed_jaxpr(
         body_jaxpr.with_consts(all_args.body_consts)
     )
@@ -2505,49 +2750,45 @@ fusible_dtype._physicalize_rules[emit_pipeline_p] = (
 
 @register_lowering_rule(pipeline_body_p, kernel_types=[*tpu_core.CoreType])
 def _pipeline_body_lowering_rule(
-    ctx, *args_flat, jaxpr, in_tree, _explicit_indices=False, **_):
+    ctx, *args_flat, jaxpr, in_tree, **_):
   # TODO(rdyro): This function is a near duplicate of _jaxpr_call_lowering_rule
   # from sc_lowering.py, we should factor out and unify the two.
   (ps, body_consts, refs) = in_tree.unflatten(args_flat)
+  (_, _, refs_avals) = in_tree.unflatten(ctx.avals_in)
   (_, body_const_shapes, refs_shapes) = in_tree.unflatten(
       ctx.block_shapes)
   ps_flat = tree_util.tree_leaves(ps)
-  if _explicit_indices:
-    ps_block_shapes = [()] * len(ps_flat)
-    refs_avals = tuple(var.aval for var in jaxpr.invars[len(ps_flat):])
-  else:
-    ps_block_shapes = []
-    refs_avals = tuple(var.aval for var in jaxpr.invars)
+  ps_block_shapes = [()] * len(ps_flat)
   # manually resolve the transformed refs
   if refs:
     resolved_refs, resolved_ref_shapes = zip(
-        *(_transform_ref(ref, ref_aval, ref_shape)
-          for ref, ref_aval, ref_shape in zip(refs, refs_avals, refs_shapes)))
+        *(
+            _transform_ref(
+                ref,
+                ref_aval,
+                ref_shape,
+                kernel_type=ctx.lowering_context.kernel_type,
+            )
+            for ref, ref_aval, ref_shape in zip(
+                refs, refs_avals, refs_shapes, strict=True
+            )
+        ),
+        strict=True,
+    )
   else:
     resolved_refs, resolved_ref_shapes = (), ()
 
-  user_grid_indices = ctx.lowering_context.user_grid_indices
-  # TODO(rdyro): As a temporary workaround, to support both core mesh axes
-  # (jax.lax.axis_(index|size)) and memory pipeline axes
-  # (pl.(program_id|num_programs)), we append the core grid to the end of the
-  # end of the user grid dimensions. This is error prone (the user could request
-  # a core grid dimension with pl.program_id); we should fix this soon.
   lowering_context = ctx.lowering_context.replace(
-      user_grid_indices=(*ps.index, *user_grid_indices[len(ps.index) :]),
-      block_shapes=(*ps_block_shapes, *body_const_shapes, *resolved_ref_shapes),
+      block_shapes=(*body_const_shapes, *ps_block_shapes, *resolved_ref_shapes),
   )
   # Lift the constants out of the jaxpr, disabling checks to avoid a redundant
   # re-checking of jaxpr, like its grid and sharding information.
   with config.enable_checks(False):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   assert len(jaxpr.invars) == len(lowering_context.block_shapes)
-  if _explicit_indices:
-    return jaxpr_subcomp(
-        lowering_context, jaxpr,
-        *body_consts, *ps_flat, *resolved_refs)
-  else:
-    return jaxpr_subcomp(
-        lowering_context, jaxpr, *body_consts, *resolved_refs)
+  return jaxpr_subcomp(
+      lowering_context, jaxpr, *body_consts, *ps_flat, *resolved_refs
+  )
 
 
 def _pipeline_body_is_high(*avals, jaxpr, **_):
@@ -2563,61 +2804,65 @@ def pipeline_body_discharge_rule(
     *invals,
     jaxpr: jax_core.Jaxpr,
     in_tree,
-    _explicit_indices: bool = False,
+    num_inputs: int,
     **params,
 ):
   del params
   ps, body_consts, refs = in_tree.unflatten(invals)
-  _, _, refs_should = in_tree.unflatten(ctx.should_discharge)
+  _, consts_should, refs_should = in_tree.unflatten(ctx.should_discharge)
 
   ps_flat, _ = tree_util.tree_flatten(ps)
-  body_in_args = list(ps_flat) if _explicit_indices else []
-  body_should_discharge = [False] * len(body_in_args)
+  body_in_args = [*body_consts, *ps_flat]
+  body_should_discharge = [
+      *consts_should,
+      *([False] * len(ps_flat)),
+  ]
 
-  for ref, ref_sh in zip(refs, refs_should):
-    base, transforms = tpu_primitives._get_ref_and_transforms(ref)
-    should_discharge = tpu_primitives._get_ref(ref_sh)
-    body_should_discharge.append(should_discharge)
-    if should_discharge:
+  for ref, ref_sh in zip(refs, refs_should, strict=True):
+    if tpu_primitives._get_ref(ref_sh):
+      base, transforms = tpu_primitives._get_ref_and_transforms(ref)
+      body_should_discharge.append(True)
       body_in_args.append(state_discharge.transform_array(base, transforms))
+    elif isinstance(ref, state.TransformedRef):
+      # TransformedRefs cannot be abstractified as undischarged jaxpr invars.
+      body_should_discharge.append(True)
+      body_in_args.append(ref[...])
     else:
+      body_should_discharge.append(False)
       body_in_args.append(ref)
 
-  # Add program ID info into the grid
-  cur_env = pallas_core.current_grid_env() or ()
-  body_grid_env = tuple(
-      pallas_core.GridAxis(
-          idx,
-          cur_env[i].size if i < len(cur_env) else 0,
-      )
-      for i, idx in enumerate(ps.index)
-  ) + tuple(cur_env[len(ps.index) :])
+  with config.enable_checks(False):
+    open_jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+  phys_jaxpr, phys_consts = hlo_interpreter.resolve_physical_types(
+      open_jaxpr, ()
+  )
+  discharged_body_closed = state_discharge.discharge_state(
+      phys_jaxpr.with_consts(phys_consts),
+      should_discharge=tuple(body_should_discharge),
+      strip_memory_space=ctx.strip_memory_space,
+  )
+  out = jax_core.eval_jaxpr(
+      discharged_body_closed.jaxpr,
+      discharged_body_closed.consts,
+      *body_in_args,
+  )
 
-  body_closed_jaxpr = jaxpr.with_consts(body_consts)
-  with pallas_core.grid_env(body_grid_env):
-    discharged_body_closed = state_discharge.discharge_state(
-        body_closed_jaxpr,
-        should_discharge=tuple(body_should_discharge),
-        strip_memory_space=ctx.strip_memory_space,
-    )
-    out = jax_core.eval_jaxpr(
-        discharged_body_closed.jaxpr,
-        discharged_body_closed.consts,
-        *body_in_args,
-    )
-
-  num_outvars = len(body_closed_jaxpr.jaxpr.outvars)
+  num_outvars = len(open_jaxpr.outvars)
   ans = out[:num_outvars]
   updated_slices = iter(out[num_outvars:])
 
-  new_bases = []
-  for ref, ref_sh in zip(refs, refs_should):
+  new_bases = [next(updated_slices) for c_sh in consts_should if c_sh]
+  for i, (ref, ref_sh) in enumerate(zip(refs, refs_should, strict=True)):
     if tpu_primitives._get_ref(ref_sh):
       base, transforms = tpu_primitives._get_ref_and_transforms(ref)
       _, new_base = state_discharge.transform_swap_array(
           base, transforms, next(updated_slices)
       )
       new_bases.append(new_base)
+    elif isinstance(ref, state.TransformedRef):
+      updated_val = next(updated_slices)
+      if i >= num_inputs:
+        ref[...] = updated_val
 
   new_bases_iter = iter(new_bases)
   new_invals = [
@@ -2667,6 +2912,17 @@ def emit_pipeline_to_jaxpr(
     refs_flat, _ = tracing_registry.flatten(  # flatten to TransformedRefs
         refs_tree.unflatten(all_args.refs_flat), is_transformed_ref)
     grid = _zip_grid(all_args.dynamic_grid_spec, grid_mapping.grid)
+    local_grid, _ = _partition_grid(
+        grid, dimension_semantics, num_cores, all_args.core_id
+    )
+    local_user_grid = tuple(
+        d
+        for i, d in enumerate(local_grid)
+        if i not in grid_mapping.vmapped_dims
+    )
+    local_grid_sizes = tuple(
+        jnp.asarray(d, jnp.int32) for d in local_user_grid
+    )
 
     in_specs = [
         bm.to_block_spec()
@@ -2675,46 +2931,69 @@ def emit_pipeline_to_jaxpr(
         bm.to_block_spec()
         for bm in grid_mapping.block_mappings[grid_mapping.num_inputs:]]
 
+    allocations = (
+        tuple(jax.tree.leaves(all_args.allocations,
+                              is_leaf=lambda x: isinstance(x, BufferedRefBase)))
+        if all_args.allocations is not None else None
+    )
+    scratches = (
+        tuple(
+            tracing_registry.flatten(all_args.scratches, is_transformed_ref)[0]
+        )
+        if all_args.scratches is not None
+        else None
+    )
+
     def new_body(ps: PipelineStep, *args):
+      if allocations is not None:
+        args = (
+            *(
+                b.unwrap_window_ref(a)
+                for b, a in zip(allocations, args[: len(allocations)], strict=True)
+            ),
+            *args[len(allocations) :],
+        )
       original_indices = tuple(
           idx for i, idx in enumerate(ps.index)
           if i not in grid_mapping.vmapped_dims)
       ps = dataclasses.replace(ps, index=original_indices)
-      indices_consts_args = (ps, all_args.body_consts, args)
+      indices_consts_args = (
+          (ps, local_grid_sizes),
+          all_args.body_consts,
+          args,
+      )
       args_flat, args_tree = tracing_registry.flatten(indices_consts_args)
       return pipeline_body_p.bind(
           *args_flat,
           jaxpr=body_jaxpr,
           in_tree=args_tree,
           num_inputs=grid_mapping.num_inputs,
-          _explicit_indices=_explicit_indices,
       )
-
-    # Use a logical grid env (excluding vmapped dims) so that
-    # num_programs(axis) resolves against the user's original grid axes.
-    pipeline_grid = tuple(d for i, d in enumerate(grid_mapping.grid)
-                          if i not in grid_mapping.vmapped_dims)
 
     # re-create the pallas core grid env
     names = (None,) * len(grid_sizes) if grid_names is None else grid_names
-    axis_env_ctx = jax_core.extend_axis_env_nd(
-        [(name, size) for name, size in zip(names, grid_sizes)
-        if name is not None and isinstance(size, int)]
+    axis_env_ctx = jax_core.extend_axis_env_nd([
+        (name, size)
+        for name, size in zip(names, grid_sizes, strict=True)
+        if name is not None and isinstance(size, int)
+    ])
+    index_map_grid_env = (
+        contextlib.nullcontext()
+        if _explicit_indices
+        else pallas_core.grid_env([
+            pallas_core.GridAxis(jnp.int32(0), d)  # pyrefly: ignore[bad-argument-type]
+            for d in local_grid_sizes
+        ])
     )
 
     # run the actual pipeline function
-    allocations = (
-        tuple(jax.tree.leaves(all_args.allocations,
-                              is_leaf=lambda x: isinstance(x, BufferedRefBase)))
-        if all_args.allocations is not None else None
-    )
-    with (axis_env_ctx, pallas_core.tracing_grid_env(pipeline_grid, ())):
+    with axis_env_ctx, index_map_grid_env:
       pipeline_fun = _emit_pipeline(
           new_body, grid=grid, in_specs=in_specs, out_specs=out_specs,
           num_cores=num_cores, core_id=all_args.core_id,
           dimension_semantics=dimension_semantics, _explicit_indices=True,
           **params)
-      pipeline_fun(*refs_flat, allocations=allocations)
+      pipeline_fun(*refs_flat, scratches=scratches, allocations=allocations)
     return ()
 
   dbg = api_util.debug_info(
@@ -2753,35 +3032,11 @@ def _emit_pipeline_lowering_rule(
       f"{jaxpr.consts=} {jaxpr.constvars=}"
   )
 
-  all_args = args_tree.unflatten(args_flat)
-  global_grid = _zip_grid(all_args.dynamic_grid_spec, grid_mapping.grid)
-  grid_sizes = tuple(ir_constant(d) if isinstance(d, int) else d
-                     for d in global_grid)
-
-  # TODO(rdyro): We append the core grid dimensions to the end of the memory
-  # pipeline grid dimensions as a temporary workaround, but this conflates the
-  # pipeline and core grid.  Separate them in the lowering definition.
-  grid_names = ctx.lowering_context.grid_names
-  if grid_names is None:
-    grid_names = (None,) * len(ctx.lowering_context.grid_sizes)
-  grid_names = (tuple(None for _ in grid_sizes)
-                + (tuple(grid_names)))
-  user_grid_indices = tuple(
-      g for i, g in enumerate(grid_sizes) if i not in grid_mapping.vmapped_dims
-  ) + tuple(ctx.lowering_context.user_grid_indices)
-  grid_sizes += tuple(ctx.lowering_context.grid_sizes)
-
   lowering_context = ctx.lowering_context.replace(
       block_shapes=ctx.block_shapes,
-      grid_sizes=grid_sizes,
-      grid_names=grid_names,
-      user_grid_indices=user_grid_indices,
-      vmapped_dims=grid_mapping.vmapped_dims,
-      emit_pipeline_mode=True,
   )
 
   assert len(jaxpr.invars) == len(lowering_context.block_shapes)
-  assert len(lowering_context.grid_sizes) == len(lowering_context.grid_names)
   return jaxpr_subcomp(lowering_context, jaxpr, *args_flat)
 
 def _emit_pipeline_is_high(*avals, body_jaxpr, grid_mapping, args_tree, **_):
@@ -2804,17 +3059,26 @@ def _emit_pipeline_to_lojax(
 ):
   all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
   closed_hi_jaxpr = body_jaxpr.with_consts(all_args.body_consts)
-  with grid_mapping.trace_env():
+  with config._check_vma(False):
     closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
 
   refs_avals = [jax.typeof(x) for x in all_args.refs_flat]
   lo_flat_refs, new_refs_tree = tracing_registry.flatten(
-      refs_tree.unflatten(
-          [aval.lower_val(x)
-           for aval, x in zip(refs_avals, all_args.refs_flat)]
-      ),
+      refs_tree.unflatten([
+          aval.lower_val(x)
+          for aval, x in zip(refs_avals, all_args.refs_flat, strict=True)
+      ]),
       is_transformed_ref,
   )
+  # Mask any enclosing grid_env while re-tracing index_maps with dynamic grid dims.
+  with pallas_core.grid_env(()):
+    lo_grid_mapping = (
+        grid_mapping.replace(
+            grid=(pallas_core.dynamic_grid_dim,) * len(grid_mapping.grid)
+        )
+        .to_lojax()
+        .replace(grid=grid_mapping.grid)
+    )
 
   new_prim_args = dataclasses.replace(
       all_args,
@@ -2825,7 +3089,7 @@ def _emit_pipeline_to_lojax(
   return emit_pipeline_p.bind(
       *new_args_flat,
       body_jaxpr=closed_lo_jaxpr,
-      grid_mapping=grid_mapping.to_lojax(),
+      grid_mapping=lo_grid_mapping,
       args_tree=new_args_tree,
       refs_tree=new_refs_tree,
       **params,
@@ -2859,10 +3123,21 @@ def _emit_pipeline_batching_rule(
     raise NotImplementedError(
       "Batching over dynamic grid values is not supported yet.")
 
-  batched_block_mappings = map(
-      functools.partial(_batch_block_mapping, grid_mapping, batch_size),
-      map(_ref_to_value_aval, all_args.refs_flat),
-      flat_ref_dims, grid_mapping.block_mappings)
+  dynamic_grid_mapping = grid_mapping.replace(
+      grid=(pallas_core.dynamic_grid_dim,) * len(grid_mapping.grid)
+  )
+  # Mask any enclosing grid_env while re-tracing batched index_maps.
+  with pallas_core.grid_env(()):
+    batched_block_mappings = tuple(
+        map(
+            functools.partial(
+                _batch_block_mapping, dynamic_grid_mapping, batch_size
+            ),
+            map(_ref_to_value_aval, all_args.refs_flat),
+            flat_ref_dims,
+            grid_mapping.block_mappings,
+        )
+    )
 
   index_map_tree_args, index_map_tree_kwargs = (
       grid_mapping.index_map_tree.unflatten(grid_mapping.index_map_avals))
