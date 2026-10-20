@@ -63,6 +63,12 @@ TMAReductionOp = Literal[
 # Plus alignment to 16 bytes.
 COLLECTIVE_METADATA_SIZE = 4
 
+# Maximum number of pre-reserved barrier semaphores in XLA per collective_id.
+MAX_BARRIER_SEMAPHORES = 1024
+
+# Maximum number of unique collective IDs supported in XLA.
+MAX_COLLECTIVE_IDS = 32
+
 # Attribute used to merk the module which uses collective metadata.
 COLLECTIVE_ATTR = "mosaic_gpu.collective_metadata_used"
 # Attribute used to cache the kernel argument which corresponds to a given
@@ -716,11 +722,17 @@ class LaunchContext:
   profiler: OnDeviceProfiler | None = None
   num_peers: int = 0
   num_params: int = 0
+  use_barrier_semaphore: bool = False
   tma_descriptors: dict[Any, ir.Value] = dataclasses.field(
       default_factory=dict, init=False
   )
   is_device_collective: bool = False
   multihost_kernel: bool = False
+
+  @property
+  def num_metadata_params(self) -> int:
+    """Returns the number of parameters per peer in the collective metadata."""
+    return self.num_params + int(self.use_barrier_semaphore)
 
   @contextlib.contextmanager
   def named_region(self, *args, **kwargs):
@@ -742,7 +754,11 @@ class LaunchContext:
       )
       metadata_ptr = llvm.load(ptr_ty, buffer_ptr)
       metadata_ty = ir.MemRefType.get(
-          (get_collective_metadata_size(self.num_params, self.num_peers),),
+          (
+              get_collective_metadata_size(
+                  self.num_metadata_params, self.num_peers
+              ),
+          ),
           ir.IntegerType.get_signless(64),
       )
       return utils.ptr_as_memref(metadata_ptr, metadata_ty)
@@ -754,6 +770,49 @@ class LaunchContext:
   @functools.cached_property
   def host_collective_metadata(self) -> ir.Value | None:
     return self._collective_metadata(1)
+
+  @functools.cached_property
+  def barrier_semaphore(self) -> ir.Value:
+    if self.device_collective_metadata is None:
+      raise ValueError(
+          "Barrier semaphores require collective metadata (a multi-device mesh"
+          " without NVSHMEM)."
+      )
+    if not self.use_barrier_semaphore:
+      raise ValueError("Barrier semaphores are not enabled for this kernel.")
+    self._mark_parameters_if_multiprocess()
+    self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
+    host_block = self.buffers.owner
+    assert isinstance(host_block, ir.Block)
+    with ir.InsertionPoint.at_block_begin(host_block):
+      ptr_ty = llvm.PointerType.get()
+      i32 = ir.IntegerType.get_signless(32)
+      # In the raw `buffers` pointer array passed to `main` (see
+      # `MosaicGpuExecute` in `custom_call.cc`), the slots after the
+      # `num_params` regular kernel buffer pointers are:
+      #   - `num_params + 0`: device collective metadata pointer
+      #   - `num_params + 1`: host collective metadata pointer
+      #   - `num_params + 2`: local clique barrier semaphore pointer
+      semaphore_buffer_index = self.num_params + 2
+      buffer_ptr = utils.getelementptr(
+          self.buffers, [semaphore_buffer_index], ptr_ty
+      )
+      semaphore_ptr = llvm.load(ptr_ty, buffer_ptr)
+      semaphore_ty = ir.MemRefType.get((MAX_BARRIER_SEMAPHORES,), i32)
+      semaphore_memref = utils.ptr_as_memref(semaphore_ptr, semaphore_ty)
+      # Unlike `self.buffers` (which has the two collective metadata pointers
+      # at `num_params + 0` and `num_params + 1`), the `param_to_peers` table
+      # in `CollectiveKernelMetadata` (populated in `MosaicGpuInitialize` in
+      # `custom_call.cc` and indexed by `KERNEL_ARG_ID_ATTR` in `to_remote`)
+      # only stores peer addresses for the `num_params` kernel buffers
+      # followed immediately by the barrier semaphore at slot `num_params`.
+      semaphore_memref.owner.attributes[KERNEL_ARG_ID_ATTR] = (
+          ir.IntegerAttr.get(i32, self.num_params)
+      )
+      semaphore_memref.owner.attributes[ORIGINAL_KERNEL_ARG_ATTR] = (
+          ir.UnitAttr.get()
+      )
+      return semaphore_memref
 
   def _alloc_scratch(
       self,
@@ -2568,6 +2627,8 @@ class LaunchContext:
       return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
 
     parameter_id = self._find_kernel_argument_index(ref)
+    if parameter_id >= self.num_params:
+      raise ValueError("Multicast is not supported on barrier semaphores.")
     # In multiprocess mode, all parameters should be allocated within collective
     # memory.
     module_attributes = self.module.operation.attributes
@@ -2593,7 +2654,7 @@ class LaunchContext:
     # Load the multimem address of the parameter from the collective metadata.
     multimem_addresses_offset = (
         COLLECTIVE_METADATA_SIZE
-        + self.num_peers * self.num_params
+        + self.num_peers * self.num_metadata_params
         + parameter_id
     )
     multimem_ptr_offset = arith.constant(

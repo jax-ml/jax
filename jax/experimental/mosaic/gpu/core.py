@@ -222,8 +222,8 @@ def _mosaic_gpu_lowering_rule(
     inout_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     cost_estimate: Any = None,
-    use_custom_barrier: bool = False,
     skip_device_barrier: bool = False,
+    collective_id: int | None = None,
 ):
   axis_context = ctx.module_context.axis_context
   replica_ids = []
@@ -301,7 +301,6 @@ def _mosaic_gpu_lowering_rule(
   backend_config: dict[str, ir.Attribute] = dict(
       kernel_hash=ir.StringAttr.get(kernel_id),
       module=ir.StringAttr.get(module_asm),
-      use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
       skip_device_barrier=ir.BoolAttr.get(skip_device_barrier),
       uses_xla_collective_metadata=ir.BoolAttr.get(
           launch_context.uses_collective_metadata(module)
@@ -311,6 +310,16 @@ def _mosaic_gpu_lowering_rule(
     backend_config["cost_estimate_json"] = ir.StringAttr.get(
         json.dumps(dataclasses.asdict(cost_estimate))
     )
+  if collective_id is not None:
+    if not (0 <= collective_id < launch_context.MAX_COLLECTIVE_IDS):
+      raise ValueError(
+          f"collective_id must be in [0, {launch_context.MAX_COLLECTIVE_IDS}),"
+          f" got {collective_id}"
+      )
+    # The presence of collective_id enables the barrier semaphores in the
+    # custom call.
+    i64 = ir.IntegerType.get_signless(64)
+    backend_config["collective_id"] = ir.IntegerAttr.get(i64, collective_id)
 
   frontend_attributes: dict[str, ir.Attribute] = {}
 
@@ -376,6 +385,7 @@ def _mosaic_gpu_lowering_rule(
       api_version=4,
       extra_attributes=extra_attributes,
   ).results
+
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 
@@ -768,6 +778,7 @@ def _launch(
     num_params: int = 0,
     jax_mesh: mesh_lib.Mesh | None = None,
     is_multi_process: bool = False,
+    use_barrier_semaphore: bool = False,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
     raise ValueError(
@@ -869,9 +880,8 @@ def _launch(
         prof,
         num_peers=num_peers,
         num_params=num_params,
-        multihost_kernel=is_multi_process or _is_known_multihost_mesh(
-            jax_mesh
-        ),
+        use_barrier_semaphore=use_barrier_semaphore,
+        multihost_kernel=is_multi_process or _is_known_multihost_mesh(jax_mesh),
     )
     with ctx.named_region("Init"):
       num_warpgroups = math.prod(block) // utils.WARPGROUP_SIZE
@@ -980,6 +990,7 @@ def _lower_as_gpu_kernel(
     base_loc: ir.Location | None = None,
     uses_pdl: bool = False,
     is_multi_process: bool = False,
+    use_barrier_semaphore: bool = False,
 ):
   ptr_ty = llvm.PointerType.get()
   token_ty = gpu.AsyncTokenType.get()
@@ -1073,6 +1084,7 @@ def _lower_as_gpu_kernel(
           num_params,
           jax_mesh,
           is_multi_process=is_multi_process,
+          use_barrier_semaphore=use_barrier_semaphore,
       ) as (_launch_ctx, smem_refs):
         launch_ctx = _launch_ctx
         body(launch_ctx, *arg_refs, smem_refs)

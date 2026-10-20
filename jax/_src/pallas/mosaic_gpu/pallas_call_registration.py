@@ -42,6 +42,7 @@ def _emit_mosaic_gpu_custom_call(
     debug_info,
     cost_estimate: Any = None,
     skip_device_barrier: bool = False,
+    collective_id: int | None = None,
 ):
   module = lowering_result.module
   new_avals_in = list(ctx.avals_in)
@@ -63,6 +64,11 @@ def _emit_mosaic_gpu_custom_call(
     scratch_args = mlir.lower_fun(
         zero_init_gmem_scratch, multiple_results=True
     )(ctx.replace(avals_in=()))
+
+  if lowering_result.use_barrier_semaphore and collective_id is None:
+    raise ValueError(
+        "collective_id has to be specified when using a custom barrier"
+    )
   outs = mgpu.core._mosaic_gpu_lowering_rule(
       ctx.replace(avals_in=new_avals_in, avals_out=new_avals_out),
       *args,
@@ -72,9 +78,10 @@ def _emit_mosaic_gpu_custom_call(
       inout_types=(),
       input_output_aliases=input_output_aliases,
       cost_estimate=cost_estimate,
-      # False until we add get_barrier_semaphore() feature.
-      use_custom_barrier=False,
       skip_device_barrier=skip_device_barrier,
+      collective_id=collective_id
+      if lowering_result.use_barrier_semaphore
+      else None,
   )
   if (prof_spec := lowering_result.profiler_spec) is not None:
     *outs, prof_buffer = outs
@@ -197,4 +204,5 @@ def mpmd_map_mgpu_lowering_rule(
       jaxpr.debug_info,
       cost_estimate=cost_estimate,
       skip_device_barrier=gpu_params.skip_device_barrier,
+      collective_id=gpu_params.collective_id,
   )

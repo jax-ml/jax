@@ -6294,3 +6294,60 @@ sum = functools.partial(_reduce, reduce_sum_p)
 max = functools.partial(_reduce, reduce_max_p)
 min = functools.partial(_reduce, reduce_min_p)
 prod = functools.partial(_reduce, reduce_prod_p)
+
+
+get_barrier_semaphore_p = jax_core.Primitive("get_barrier_semaphore")
+
+
+@get_barrier_semaphore_p.def_abstract_eval
+def _get_barrier_semaphore_abstract_eval():
+  return state_types.AbstractRef(
+      jax_core.ShapedArray(
+          (mgpu.launch_context.MAX_BARRIER_SEMAPHORES,),
+          pallas_core.BarrierSemaphore(),
+      ),
+      gpu_core.MemorySpace.GMEM,
+  )
+
+
+def get_barrier_semaphore():
+  """Returns a 1D array of barrier semaphores.
+
+  Barrier semaphores are allocated by XLA in clique-bound memory and are
+  guaranteed to be zeroed before the module starts executing, which lets kernels
+  skip the cross-device synchronization that is otherwise required to safely
+  use a GMEM semaphore (see skip_device_barrier in CompilerParams).
+
+  Using barrier semaphores requires collective_id to be set in
+  CompilerParams. Each collective_id has its own array of
+  MAX_BARRIER_SEMAPHORES (1024) semaphores, shared by all kernels using the
+  same collective_id (and the same device clique), and at most
+  MAX_COLLECTIVE_IDS (32) distinct collective IDs are supported.
+  """
+  return get_barrier_semaphore_p.bind()
+
+
+@lowering._register_resource_estimator(get_barrier_semaphore_p)
+def _get_barrier_semaphore_resource_estimator(
+    ctx: lowering.ResourceEstimatorContext,
+) -> lowering.Resources:
+  del ctx
+  return lowering.Resources(use_barrier_semaphore=True)
+
+
+@lowering.register_lowering_rule(
+    get_barrier_semaphore_p, mgpu.LoweringSemantics.Lane
+)
+@lowering.register_lowering_rule(
+    get_barrier_semaphore_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@lowering.register_lowering_rule(
+    get_barrier_semaphore_p, mgpu.LoweringSemantics.Warpgroup
+)
+@lowering.register_lowering_rule(
+    get_barrier_semaphore_p, *gpu_core.WGxWARP_SEMANTICS
+)
+def _get_barrier_semaphore_lowering_rule(
+    ctx: lowering.LoweringRuleContext,
+):
+  return ctx.launch_ctx.barrier_semaphore

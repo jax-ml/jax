@@ -146,6 +146,7 @@ class Resources:
   scoped_gmem_semaphores: dict[CollectiveAxesType, int] = dataclasses.field(
       default_factory=dict
   )
+  use_barrier_semaphore: bool = False
 
   def __post_init__(self):
     object.__setattr__(
@@ -186,6 +187,9 @@ class Resources:
         + other.tmem_collective_scratch_cols,
         barrier_counts=self.barrier_counts + other.barrier_counts,
         scoped_gmem_semaphores=scoped_gmem_semaphores,
+        use_barrier_semaphore=(
+            self.use_barrier_semaphore or other.use_barrier_semaphore
+        ),
     )
 
   def or_(self, other: Resources, axis_names: _AxisNames) -> Resources:
@@ -211,6 +215,9 @@ class Resources:
         ),
         barrier_counts=self.barrier_counts | other.barrier_counts,
         scoped_gmem_semaphores=scoped_gmem_semaphores,
+        use_barrier_semaphore=(
+            self.use_barrier_semaphore or other.use_barrier_semaphore
+        ),
     )
 
 
@@ -645,6 +652,7 @@ class LoweringResult:
   new_out_shapes: tuple[jax.ShapeDtypeStruct, ...]  # Does not include gmem scratch!
   profiler_spec: mgpu_profiler.ProfilerSpec | None
   gmem_scratch_shapes: tuple[jax.ShapeDtypeStruct, ...]
+  use_barrier_semaphore: bool = False
 
 
 class LoweringError(Exception):
@@ -922,7 +930,9 @@ def lower_jaxpr_to_module(
       grid=cast(tuple[int, int, int], cuda_grid),
       cluster=cast(tuple[int, int, int], cluster),
       block=block,
-      in_shapes=tuple(_to_physical_shape(s) for s in (*in_shapes, *scoped_semaphores_shape)),
+      in_shapes=tuple(
+          _to_physical_shape(s) for s in (*in_shapes, *scoped_semaphores_shape)
+      ),
       out_shape=(*out_shapes, *scoped_semaphores_shape),
       inout_shape=(),
       smem_scratch_shape=scratch_buffers,
@@ -934,6 +944,7 @@ def lower_jaxpr_to_module(
       base_loc=base_loc,
       uses_pdl=uses_pdl,
       is_multi_process=params.is_multi_process,
+      use_barrier_semaphore=rs.use_barrier_semaphore,
   )
 
   mgpu_core.lower_mgpu_module(
@@ -955,8 +966,13 @@ def lower_jaxpr_to_module(
     )
 
   return LoweringResult(
-      module, cuda_grid, block, new_out_shapes, prof_spec,
+      module,
+      cuda_grid,
+      block,
+      new_out_shapes,
+      prof_spec,
       scoped_semaphores_shape,
+      use_barrier_semaphore=rs.use_barrier_semaphore,
   )
 
 

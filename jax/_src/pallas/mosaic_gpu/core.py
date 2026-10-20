@@ -137,6 +137,12 @@ class CompilerParams:
       AbstractMesh, as with a concrete Mesh in standard JIT compilation,
       multi-process execution is detected automatically from the mesh devices.
       Defaults to False.
+    collective_id: The ID of the collective kernel. Kernels with different
+      collective IDs will not share the same semaphores when using
+      plgpu.get_barrier_semaphore. If two kernels use a barrier semaphore, they
+      must have a different collective_id if they perform communication between
+      different sets of devices (e.g. if one kernel does neighbor comms on mesh
+      axis x, while another does neighbor comms on mesh axis y).
   """
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
@@ -150,8 +156,17 @@ class CompilerParams:
   lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Warpgroup
   skip_device_barrier: bool = False
   is_multi_process: bool = False
+  collective_id: int | None = None
 
   def __post_init__(self):
+    if self.collective_id is not None and not (
+        0 <= self.collective_id < mgpu.launch_context.MAX_COLLECTIVE_IDS
+    ):
+      raise ValueError(
+          "collective_id must be in [0,"
+          f" {mgpu.launch_context.MAX_COLLECTIVE_IDS}), got"
+          f" {self.collective_id}"
+      )
     if self.dimension_semantics is not None:
       object.__setattr__(
           self, "dimension_semantics", tuple(self.dimension_semantics)
