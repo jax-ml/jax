@@ -3451,10 +3451,7 @@ def _debug_print_lowering_rule(
 
 
 def _wgmma_fence_aligned():
-  void = ir.Type.parse("!llvm.void")
-  llvm_dialect.inline_asm(
-      void, [], "wgmma.fence.sync.aligned;", "", has_side_effects=True
-  )
+  mgpu_utils.inline_ptx("wgmma.fence.sync.aligned;", convergent=True)
 
 
 @register_lowering_rule(primitives.run_scoped_p, mgpu.LoweringSemantics.Lane)
@@ -3699,10 +3696,7 @@ def _run_state_lowering_rule(
   # always used with at least one accumulator though, we need to await here
   # anyway.
   deref_acc = iter(should_deref_acc)
-  void = ir.Type.parse("!llvm.void")
-  llvm_dialect.inline_asm(
-      void, [], "wgmma.wait_group.sync.aligned 0;", "", has_side_effects=True,
-  )
+  mgpu_utils.inline_ptx("wgmma.wait_group.sync.aligned 0;", convergent=True)
   outs = [
       out.value if isinstance(out, mgpu.WGMMAAccumulator) and next(deref_acc) else out
       for out in outs

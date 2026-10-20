@@ -81,7 +81,7 @@ def _ptx_constraint(t: ir.Type) -> str:
     return {1: "b", 16: "h", 32: "r", 64: "l"}[width]
   if isinstance(t, ir.FloatType):
     width = ir.FloatType(t).width
-    return {16: "h", 32: "f"}[width]
+    return {16: "h", 32: "f", 64: "d"}[width]
   if isinstance(t, llvm.PointerType):
     # Treat global memory pointers as 64-bit, and others as 32-bit. This is not
     # entirely correct, since SMEM pointers may also be using 64 bits unless in
@@ -148,11 +148,12 @@ def inline_ptx(
       This must be `None` if `result_types` is not `None`.
     has_side_effects: Whether the inline asm has side effects. If the assembly
       does not return any result, this must be `True`.
-    convergent: Whether the inline asm is convergent, i.e. whether it interacts
-      with a dynamically-determined set of threads (barriers, shuffles, and
-      other warp/warpgroup collectives). This prevents passes from moving or
-      merging it across divergent control flow. `has_side_effects` does not
-      imply this.
+    convergent: Whether the inline asm is convergent, i.e. whether it performs
+      inter-thread communication or synchronization outside the memory model
+      whose participating threads are implicitly affected by control flow (such
+      as barriers, shuffles, and `.aligned` warp/warpgroup collectives). This
+      prevents passes from moving, merging, or duplicating it across control
+      flow. `has_side_effects` does not imply this.
 
   Returns:
     `None` if `result_types` is `None`, a single `ir.Value` if `result_types` is
@@ -1182,7 +1183,12 @@ def warpgroup_barrier_idx(sync: bool = True) -> ir.Value[ir.IntegerType]:
 
 def warpgroup_barrier():
   wg_idx = warpgroup_barrier_idx(sync=False)
-  inline_ptx(f"bar.sync $0, {WARPGROUP_SIZE};", wg_idx, has_side_effects=True)
+  inline_ptx(
+      f"bar.sync $0, {WARPGROUP_SIZE};",
+      wg_idx,
+      has_side_effects=True,
+      convergent=True,
+  )
 
 
 def warp_barrier():
@@ -1299,6 +1305,7 @@ class BarrierRef:
           wait_complete,
           result_types=i1,
           has_side_effects=True,
+          convergent=True,
       )
       wait_complete = cast(ir.OpResult[ir.IntegerType], wait_complete)
     elif scope == ThreadSubset.WARP:
@@ -1778,6 +1785,7 @@ class CtaBarrierRef:
         self.get_barrier_id(),
         predicate=predicate,
         has_side_effects=True,
+        convergent=True,
     )
 
   def arrive_and_wait(self) -> None:
@@ -1785,6 +1793,7 @@ class CtaBarrierRef:
         f"bar.sync $0, {self.arrival_count};",
         self.get_barrier_id(),
         has_side_effects=True,
+        convergent=True,
     )
 
 

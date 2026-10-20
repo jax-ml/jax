@@ -2340,10 +2340,7 @@ def _wgmma_lowering(
     acc_out = mgpu.WGMMAAccumulator(
         _value=acc_value, _original_layout=acc._original_layout, _sync=False
     )
-  void = ir.Type.parse("!llvm.void")
-  llvm_dialect.inline_asm(
-      void, [], "wgmma.commit_group.sync.aligned;", "", has_side_effects=True
-  )
+  mgpu_utils.inline_ptx("wgmma.commit_group.sync.aligned;", convergent=True)
   return acc_out
 
 
@@ -2447,10 +2444,7 @@ def _wgmma_warpgroup_lowering(
         new_acc, acc, offsets, strides
     )
 
-  void = ir.Type.parse("!llvm.void")
-  llvm_dialect.inline_asm(
-      void, [], "wgmma.commit_group.sync.aligned;", "", has_side_effects=True
-  )
+  mgpu_utils.inline_ptx("wgmma.commit_group.sync.aligned;", convergent=True)
   return new_acc
 
 
@@ -2544,10 +2538,7 @@ def wgmma_wait_effectful_abstract_eval(*, n: int):
 @lowering.register_lowering_rule(wgmma_wait_p, mgpu.LoweringSemantics.Warpgroup)
 def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, *, n: int):
   del ctx
-  void = ir.Type.parse("!llvm.void")
-  llvm_dialect.inline_asm(
-      void, [], f"wgmma.wait_group.sync.aligned {n};", "", has_side_effects=True,
-  )
+  mgpu_utils.inline_ptx(f"wgmma.wait_group.sync.aligned {n};", convergent=True)
   return ()
 
 
@@ -2594,9 +2585,8 @@ def _wgmma_accumulator_deref_lowering(
     ctx: lowering.LoweringRuleContext, acc, *, wait_n: int | None
 ):
   if wait_n is not None:
-    void = ir.Type.parse("!llvm.void")
-    llvm_dialect.inline_asm(
-        void, [], f"wgmma.wait_group.sync.aligned {int(wait_n)};", "", has_side_effects=True,
+    mgpu_utils.inline_ptx(
+        f"wgmma.wait_group.sync.aligned {int(wait_n)};", convergent=True
     )
   return (
       acc.value
@@ -3558,12 +3548,8 @@ def _set_max_registers_lowering(
 ):
   del ctx
   action_str = "inc" if action == "increase" else "dec"
-  llvm_dialect.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      f"setmaxnreg.{action_str}.sync.aligned.u32 {n};",
-      "",
-      has_side_effects=True,
+  mgpu_utils.inline_ptx(
+      f"setmaxnreg.{action_str}.sync.aligned.u32 {n};", convergent=True
   )
   return ()
 

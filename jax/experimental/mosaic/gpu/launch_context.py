@@ -1842,21 +1842,26 @@ class LaunchContext:
           )
           col_offset = arith.addi(col_base_offset, arith.constant(i32, col_slice_offset))
           if smem_ref is src_ref:
-            llvm.inline_asm(
-                ir.Type.parse("!llvm.void"),
-                [predicate, tma_desc, smem_ptr, col_offset, *gather_rows],
-                "@$0 cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group [$1, {$3, $4, $5, $6, $7}], [$2];",
-                "b,l,r" + ",r" * (ROWS_PER_INSTR + 1),
-                has_side_effects=True,
+            utils.inline_ptx(
+                "cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group"
+                " [$0, {$2, $3, $4, $5, $6}], [$1];",
+                tma_desc,
+                smem_ptr,
+                col_offset,
+                *gather_rows,
+                predicate=predicate,
             )
           else:
             assert barrier is not None
-            llvm.inline_asm(
-                ir.Type.parse("!llvm.void"),
-                [predicate, smem_ptr, tma_desc, barrier.get_ptr(), col_offset, *gather_rows],
-                "@$0 cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes [$1], [$2, {$4, $5, $6, $7, $8}], [$3];",
-                "b,r,l,r" + ",r" * (ROWS_PER_INSTR + 1),
-                has_side_effects=True,
+            utils.inline_ptx(
+                "cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes"
+                " [$0], [$1, {$3, $4, $5, $6, $7}], [$2];",
+                smem_ptr,
+                tma_desc,
+                barrier.get_ptr(),
+                col_offset,
+                *gather_rows,
+                predicate=predicate,
             )
       if smem_ref is src_ref and arrive:
         nvvm.cp_async_bulk_commit_group()
@@ -1952,25 +1957,23 @@ class LaunchContext:
             left_to_complete = arith.subi(transfer_bytes, clamped_transfer_bytes)
             barrier.complete_tx(left_to_complete, predicate=predicate)
 
-        llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
-          [predicate, smem_ptr, gmem_base_ptr, clamped_transfer_bytes, barrier_ptr],
-          """
-          @$0 cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes [$1], [$2], $3, [$4];
-          """,
-          "b,l,l,r,l",
-          has_side_effects=True,
+        utils.inline_ptx(
+            "cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes"
+            " [$0], [$1], $2, [$3];",
+            smem_ptr,
+            gmem_base_ptr,
+            clamped_transfer_bytes,
+            barrier_ptr,
+            predicate=predicate,
         )
       else:
-        llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
-          [predicate, gmem_base_ptr, smem_ptr, clamped_transfer_bytes],
-          """
-          @$0 cp.async.bulk.global.shared::cta.bulk_group [$1], [$2], $3;
-          """,
-          "b,l,l,r",
-          has_side_effects=True,
-          )
+        utils.inline_ptx(
+            "cp.async.bulk.global.shared::cta.bulk_group [$0], [$1], $2;",
+            gmem_base_ptr,
+            smem_ptr,
+            clamped_transfer_bytes,
+            predicate=predicate,
+        )
         if arrive:
           nvvm.cp_async_bulk_commit_group()
       return
@@ -2028,9 +2031,7 @@ class LaunchContext:
               "            @$0 and.b32 mapped_addr, mapped_addr, 0xfffffffe;\n"
               "            @$0 mapa.shared::cluster.u32 mapped_addr, $3, mapped_addr;"
           )
-        llvm.inline_asm(
-            ir.Type.parse("!llvm.void"),
-            [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices, *multicast_mask],
+        utils.inline_ptx(
             f"""
             {{
             .reg .b32 mapped_addr;
@@ -2039,8 +2040,12 @@ class LaunchContext:
                                   [$1], [$2, {{{idx_operands}}}], [mapped_addr]{multicast_operand};
             }}
             """,
-            "b,r,l,r" + ",r" * rank + ",h" * len(multicast_mask),
-            has_side_effects=True,
+            predicate,
+            smem_ptr,
+            tma_desc,
+            barrier_ptr,
+            *rev_dyn_base_indices,
+            *multicast_mask,
         )
       else:
         if arrive:
@@ -2053,33 +2058,35 @@ class LaunchContext:
           ),)
           smem_space = "shared::cluster"
           multicast_mod = ".multicast::cluster"
-          multicast_operand = f", ${4 + rank}"
+          multicast_operand = f", ${3 + rank}"
         else:
           multicast_mask = ()
           smem_space = "shared::cta"
           multicast_mod = ""
           multicast_operand = ""
-        llvm.inline_asm(
-            ir.Type.parse("!llvm.void"),
-            [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices, *multicast_mask],
-            (
-                f"@$0 cp.async.bulk.tensor.{rank}d"
-                f".{smem_space}.global.mbarrier::complete_tx::bytes{multicast_mod} "
-                f"[$1], [$2, {{{idx_operands}}}], [$3]{multicast_operand};"
-            ),
-            "b,r,l,r" + ",r" * rank + ",h" * len(multicast_mask),
-            has_side_effects=True,
+        idx_operands = ",".join(f"${i}" for i in range(3, 3 + rank))
+        utils.inline_ptx(
+            f"cp.async.bulk.tensor.{rank}d"
+            f".{smem_space}.global.mbarrier::complete_tx::bytes{multicast_mod} "
+            f"[$0], [$1, {{{idx_operands}}}], [$2]{multicast_operand};",
+            smem_ptr,
+            tma_desc,
+            barrier_ptr,
+            *rev_dyn_base_indices,
+            *multicast_mask,
+            predicate=predicate,
         )
     else:
       if reduction_op is not None:
         rank = len(slice_shape)
-        idx_operands = ",".join(f"${i}" for i in range(3, 3 + rank))
-        llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
-          [predicate,smem_ptr,tma_desc,*rev_dyn_base_indices],
-          f"@$0 cp.reduce.async.bulk.tensor.{rank}d.global.shared::cta.{_reduction_op_to_ptx(reduction_op)}.tile.bulk_group [$2,{{{idx_operands}}}], [$1];",
-          "b,r,l" + ",r" * rank,
-          has_side_effects=True,
+        idx_operands = ",".join(f"${i}" for i in range(2, 2 + rank))
+        utils.inline_ptx(
+            f"cp.reduce.async.bulk.tensor.{rank}d.global.shared::cta.{_reduction_op_to_ptx(reduction_op)}.tile.bulk_group"
+            f" [$1,{{{idx_operands}}}], [$0];",
+            smem_ptr,
+            tma_desc,
+            *rev_dyn_base_indices,
+            predicate=predicate,
         )
         if arrive:
           nvvm.cp_async_bulk_commit_group()
@@ -2398,13 +2405,12 @@ class LaunchContext:
     if predicate is None:
       predicate = c(1, ir.IntegerType.get_signless(1))
     rank = len(slice_shape)
-    idx_operands = ",".join(f"${i}" for i in range(2, 2 + rank))
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [predicate, tma_desc, *rev_dyn_base_indices],
-        f"@$0 cp.async.bulk.prefetch.tensor.{rank}d.L2.global.tile [$1, {{{idx_operands}}}];",
-        "b,l" + ",r" * rank,
-        has_side_effects=True,
+    idx_operands = ",".join(f"${i}" for i in range(1, 1 + rank))
+    utils.inline_ptx(
+        f"cp.async.bulk.prefetch.tensor.{rank}d.L2.global.tile [$0, {{{idx_operands}}}];",
+        tma_desc,
+        *rev_dyn_base_indices,
+        predicate=predicate,
     )
 
   def await_async_copy(

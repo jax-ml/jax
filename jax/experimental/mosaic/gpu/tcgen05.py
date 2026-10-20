@@ -961,7 +961,7 @@ def tmem_alloc(
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
   ptx = f"tcgen05.alloc.cta_group::{cta_group}.sync.aligned.shared::cta.b32 [$0], $1;"
-  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32))
+  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32), convergent=True)
   return ncols
 
 
@@ -972,13 +972,13 @@ def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exac
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
   ptx = f"tcgen05.dealloc.cta_group::{cta_group}.sync.aligned.b32 $0, $1;"
-  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32))
+  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32), convergent=True)
 
 
 def tmem_relinquish_alloc_permit(collective: bool) -> None:
   cta_group = "2" if collective else "1"
   ptx = f"tcgen05.relinquish_alloc_permit.cta_group::{cta_group}.sync.aligned;"
-  utils.inline_ptx(ptx)
+  utils.inline_ptx(ptx, convergent=True)
 
 
 def _tmem_access_helper(shape, num) -> tuple[int, str]:
@@ -1046,6 +1046,7 @@ def _tmem_load(
       tmem_addr,
       result_types=[i32] * num_out_regs,
       has_side_effects=True,
+      convergent=True,
   )
 
 
@@ -1058,6 +1059,7 @@ def _tmem_store(tmem_addr, shape, num, regs, unpack: bool) -> None:
       f"tcgen05.st.sync.aligned.{shape}.x{num}{pack_mod}.b32 [${num_out_regs}], {regs_vector};",
       "r," * num_out_regs + "r",
       has_side_effects=True,
+      convergent=True,
   )
 
 
@@ -1854,12 +1856,12 @@ def _load_32xcols_native(
 
 
 def commit_tmem() -> None:
-  utils.inline_ptx("tcgen05.wait::st.sync.aligned;")
+  utils.inline_ptx("tcgen05.wait::st.sync.aligned;", convergent=True)
   utils.warpgroup_barrier()
 
 
 def wait_load_tmem() -> None:
-  utils.inline_ptx("tcgen05.wait::ld.sync.aligned;")
+  utils.inline_ptx("tcgen05.wait::ld.sync.aligned;", convergent=True)
   utils.warpgroup_barrier()
 
 

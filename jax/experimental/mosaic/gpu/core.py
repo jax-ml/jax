@@ -742,23 +742,11 @@ def _is_known_multihost_mesh(
 
 
 def _cluster_arrive_relaxed_aligned():
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      "barrier.cluster.arrive.relaxed.aligned;",
-      "",
-      has_side_effects=True,
-  )
+  utils.inline_ptx("barrier.cluster.arrive.relaxed.aligned;", convergent=True)
 
 
 def _cluster_wait_aligned():
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      "barrier.cluster.wait.aligned;",
-      "",
-      has_side_effects=True,
-  )
+  utils.inline_ptx("barrier.cluster.wait.aligned;", convergent=True)
 
 
 # TODO(apaszke): Inline this
