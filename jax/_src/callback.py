@@ -601,7 +601,7 @@ def send_to_host(
     operand: Any,
     name: str | None = None,
     *,
-    sharding: SdyArrayList | xc.OpSharding | None = None,
+    sharding: SdyArrayList | None = None,
 ) -> ir.Value:
   channel_handle = hlo.ChannelHandle.get(channel, mlir.SEND_TO_HOST_TYPE)
   send_op = hlo.SendOp([operand], token, channel_handle,
@@ -636,7 +636,7 @@ def receive_from_host(
     out_aval: core.ShapedArray,
     name: str | None = None,
     *,
-    sharding: SdyArrayList | xc.OpSharding | None = None,
+    sharding: SdyArrayList | None = None,
 ) -> tuple[ir.Value, ir.Value]:
   channel_handle = hlo.ChannelHandle.get(channel, mlir.RECV_FROM_HOST_TYPE)
   out_type = mlir.aval_to_ir_type(ctx, out_aval)
@@ -700,7 +700,7 @@ def _emit_tpu_python_callback(
     result_shapes: Sequence[xc.Shape],
     *,
     returns_token: bool,
-    sharding: SdyArrayList | xc.OpSharding | None = None,
+    sharding: SdyArrayList | None = None,
 ) -> tuple[Sequence[ir.Value], Any]:
   token = token or hlo.create_token()
   _wrapped_callback = callback
@@ -772,7 +772,7 @@ def emit_python_callback(
     has_side_effect: bool,
     returns_token: bool = True,
     partitioned: bool = False,
-    sharding: SdyArrayList | xc.OpSharding | None = None,
+    sharding: SdyArrayList | None = None,
 ) -> tuple[Sequence[mlir.IrValues], Any, Any]:
   """Emits MLIR that calls back to a provided Python function.
 

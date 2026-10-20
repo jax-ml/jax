@@ -1274,7 +1274,7 @@ def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
 def _to_physical_op_sharding(
     ctx: ModuleContext,
     aval: core.AbstractValue, sharding: JSharding | None,
-) -> xc.OpSharding | SdyArray | None:
+) -> SdyArray | None:
   if sharding is None:
     return None
   if all_unconstrained(sharding, aval):
@@ -3261,45 +3261,13 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
   (result_type,) = aval_to_ir_types(ctx.module_context, aval_out)
   return hlo.convert(result_type, x)
 
-def _wrap_with_spmd_op(name: str,
-                       ctx: LoweringRuleContext,
-                       x: ir.Value,
-                       aval_out: core.AbstractValue,
-                       sharding: xc.OpSharding | SdyArray,
-                       unspecified_dims: set[int] | None = None,
-                       has_side_effect: bool = False,
-                       allow_shardy_lowering: bool = False):
-  if allow_shardy_lowering:
-    return dialects.sdy.sharding_constraint(
-        x, sharding.build(ctx.module_context.sharding_attr_cache))  # type: ignore
-
-  # unspecified_dims indicate dimensions whose shardings are not specified and
-  # XLA sharding propagation can change them.
-  if unspecified_dims:
-    backend_config = "unspecified_dims=[" + ",".join(
-        [str(i) for i in sorted(unspecified_dims)]) + "]"
-  else:
-    backend_config = ""
-  (result_type,) = aval_to_ir_types(ctx.module_context, aval_out)
-  out_shape = core.physical_aval(aval_out).shape  # type: ignore
-  if core.is_constant_shape(out_shape):
-    result_shapes = None
-  else:
-    result_shapes = [eval_dynamic_shape_as_tensor(ctx, out_shape)]
-
-  op = custom_call(name, result_types=[result_type], operands=[x],
-                   backend_config=backend_config,
-                   api_version=1,
-                   result_shapes=result_shapes,
-                   has_side_effect=has_side_effect)
-  set_sharding(ctx.module_context, op, sharding)
-  return op.result
-
-
-wrap_with_sharding_op = partial(_wrap_with_spmd_op, "Sharding",
-                                allow_shardy_lowering=True)
-wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
-wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
+def wrap_with_sharding_op(ctx: LoweringRuleContext,
+                          x: ir.Value,
+                          aval_out: core.AbstractValue,
+                          sharding: SdyArray):
+  del aval_out
+  return dialects.sdy.sharding_constraint(
+      x, sharding.build(ctx.module_context.sharding_attr_cache))
 
 
 def lower_with_explicit_types(ctx, op, aval):
@@ -3335,27 +3303,15 @@ def lower_with_layout_in_types(ctx, op, aval):
 
 
 def set_sharding(ctx: ModuleContext, op,
-                 sharding: xc.OpSharding | SdyArray | SdyArrayList):
-  if isinstance(sharding, (SdyArray, SdyArrayList)):
-    op.attributes["sdy.sharding"] = get_sharding_attr(ctx, sharding)
-  else:
-    op.attributes["mhlo.sharding"] = get_sharding_attr(ctx, sharding)
+                 sharding: SdyArray | SdyArrayList):
+  op.attributes["sdy.sharding"] = get_sharding_attr(ctx, sharding)
 
 
 def get_sharding_attr(
     ctx: ModuleContext,
-    sharding: xc.OpSharding | SdyArray | SdyArrayList
+    sharding: SdyArray | SdyArrayList
 ) -> ir.Attribute:
-  if isinstance(sharding, (SdyArray, SdyArrayList)):
-    return sharding.build(ctx.sharding_attr_cache)
-  else:
-    # If there are very large numbers of devices, use the proto representation.
-    # The MHLO to HLO conversion supports both, and the proto representation is
-    # more compact.
-    if len(sharding.tile_assignment_devices) > 100:
-      return ir.StringAttr.get(sharding.SerializeToString())
-    else:
-      return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding)))
+  return sharding.build(ctx.sharding_attr_cache)
 
 
 def wrap_with_layout_op(ctx: LoweringRuleContext, x: ir.Value,

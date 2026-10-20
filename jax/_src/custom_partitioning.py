@@ -58,15 +58,12 @@ def _resolve_kwargs(fun, args, kwargs):
 
 class _ShardingCallbackInfo:
 
-  def __init__(self, propagate_user_sharding, partition, to_mesh_pspec_sharding,
-      in_tree, out_tree, infer_sharding_from_operands, module_context, mesh,
-      static_args):
-    self.propagate_user_sharding = propagate_user_sharding
+  def __init__(self, partition, to_mesh_pspec_sharding, in_tree, out_tree,
+      module_context, mesh, static_args):
     self.partition = partition
     self.to_mesh_pspec_sharding = to_mesh_pspec_sharding
     self.in_tree = in_tree
     self.out_tree = out_tree
-    self.infer_sharding_from_operands = infer_sharding_from_operands
     self.module_context = module_context
     self.mesh = mesh
     self.static_args = static_args
@@ -118,27 +115,8 @@ def _flatten_sharding(tree, shardings, shapes):
 
 def _custom_partitioning_propagate_user_sharding(user_sharding, shape,
                                                  backend_string):
-  info = _sharding_callbacks[backend_string]
-  if info.propagate_user_sharding is None:
-    return user_sharding
-  if shape.is_tuple():
-    user_shapes = shape.tuple_shapes()
-    user_shardings = user_sharding.tuple_elements()
-  else:
-    user_shapes = (shape,)
-    user_shardings = (user_sharding,)
-  user_shape = info.out_tree.unflatten(
-      [
-          info.unflatten_arg_shape(s, sharding)
-          for s, sharding in zip(user_shapes, user_shardings)
-      ]
-  )
-  result_sharding = info.propagate_user_sharding(
-      *info.static_args, info.mesh, user_shape
-  )
-  result_shardings = _flatten_sharding(
-      info.out_tree, result_sharding, user_shapes)
-  return _pack_result_sharding(shape, result_shardings)
+  del shape, backend_string
+  return user_sharding
 
 
 def _to_hlo_sharding(sharding, num_dimensions):
@@ -207,20 +185,8 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
 def _custom_partitioning_infer_sharding_from_operands(arg_shapes, arg_shardings,
                                                       result_shape,
                                                       backend_string):
-  info = _sharding_callbacks[backend_string]
-  if result_shape.is_tuple():
-    result_shapes = result_shape.tuple_shapes()
-  else:
-    result_shapes = (result_shape,)
-  result_sharding = info.infer_sharding_from_operands(
-      *info.static_args,
-      info.mesh,
-      info.unflatten_arg_shapes(arg_shapes, arg_shardings),
-      info.out_tree.unflatten([_to_jax_shape(s) for s in result_shapes]),
-  )
-  result_shardings = _flatten_sharding(
-      info.out_tree, result_sharding, result_shapes)
-  return _pack_result_sharding(result_shape, result_shardings)
+  del arg_shapes, arg_shardings, result_shape, backend_string
+  return None
 
 
 custom_partitioning_p = core.Primitive("custom_partitioning")
@@ -229,23 +195,15 @@ dispatch.prim_requires_devices_during_lowering.add(custom_partitioning_p)
 
 
 def _custom_partitioning_abstract_eval(*avals, call, in_tree, out_tree,
-                                       propagate_user_sharding, partition,
-                                       infer_sharding_from_operands,
-                                       decode_shardings,
-                                       sharding_rule,
-                                       static_args):
-  del in_tree, out_tree, propagate_user_sharding, partition
-  del infer_sharding_from_operands, decode_shardings, sharding_rule
-  del static_args
+                                       partition, decode_shardings,
+                                       sharding_rule, static_args):
+  del in_tree, out_tree, partition, decode_shardings, sharding_rule, static_args
   return call.out_avals
 
 
-def _custom_partitioning_impl(*args, call, in_tree, out_tree,
-                              propagate_user_sharding,
-                              partition, infer_sharding_from_operands,
+def _custom_partitioning_impl(*args, call, in_tree, out_tree, partition,
                               decode_shardings, sharding_rule, static_args):
-  del in_tree, out_tree, propagate_user_sharding, partition
-  del infer_sharding_from_operands, decode_shardings, static_args, sharding_rule
+  del in_tree, out_tree, partition, decode_shardings, static_args, sharding_rule
   return core.jaxpr_as_fun(call)(*args)
 
 
@@ -552,18 +510,13 @@ class custom_partitioning:
           "sharding_rule are provided. Need to provide sharding_rule to "
           "migrate to Shardy."
       )
-    propagate_user_sharding = None
-    infer_sharding_from_operands = None
-    sharding_rule = self.sharding_rule
 
     out_flat = custom_partitioning_p.bind(
         *args_flat,
         call=closed_call,
         partition=self.partition,
-        propagate_user_sharding=propagate_user_sharding,
-        infer_sharding_from_operands=infer_sharding_from_operands,
         decode_shardings=self.decode_shardings,
-        sharding_rule=sharding_rule,
+        sharding_rule=self.sharding_rule,
         in_tree=in_tree,
         out_tree=out_avals.tree,
         static_args=static_args
@@ -572,11 +525,8 @@ class custom_partitioning:
 
 
 def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
-                                       call, in_tree, out_tree,
-                                       propagate_user_sharding, partition,
-                                       infer_sharding_from_operands,
-                                       decode_shardings,
-                                       sharding_rule,
+                                       call, in_tree, out_tree, partition,
+                                       decode_shardings, sharding_rule,
                                        static_args):
   axis_context = ctx.module_context.axis_context
   if (isinstance(axis_context, sharding_impls.SPMDAxisContext) and
@@ -613,9 +563,9 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     pspec = sharding_impls.PartitionSpec(*pspec, *((None,) * (ndim - len(pspec))))
     return sharding_impls.NamedSharding(mesh, pspec)
 
-  sharding_callback_info = _ShardingCallbackInfo(propagate_user_sharding,
+  sharding_callback_info = _ShardingCallbackInfo(
       partition, to_mesh_pspec_sharding, in_tree, out_tree,
-      infer_sharding_from_operands, ctx.module_context, mesh, static_args)
+      ctx.module_context, mesh, static_args)
   key = str(id(sharding_callback_info))
   _sharding_callbacks[bytes(key, 'utf8')] = sharding_callback_info
   # We need to make sure `sharding_callback_info` is still alive when the SPMD

@@ -1556,9 +1556,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                        for a in exported.in_avals]
   args = tuple(
       wrap_with_sharding(
-          ctx, x, x_aval,
-          _get_named_sharding(named_sharding, None),
-          use_shardy=True)
+          ctx, x, x_aval, _get_named_sharding(named_sharding, None))
       for x, named_sharding, x_aval in zip(
         args, exported._in_named_shardings, exported_in_avals))
 
@@ -1655,9 +1653,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   # Apply out_shardings
   results = tuple(
       wrap_with_sharding(
-          ctx, x, x_aval,
-          _get_named_sharding(x_sharding, None),
-          use_shardy=True)
+          ctx, x, x_aval, _get_named_sharding(x_sharding, None))
       for x, x_aval, x_sharding in zip(
           results, out_avals, exported._out_named_shardings))
   return results
@@ -1674,13 +1670,8 @@ def wrap_with_sharding(
     x: ir.Value,
     x_aval: core.AbstractValue,
     x_sharding: sharding_impls.NamedSharding | sharding_impls.GSPMDSharding | HloSharding | None,
-    use_shardy: bool,
 ) -> ir.Value:
   if x_sharding is None:
     return x
-  if use_shardy:
-    x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # pyrefly: ignore[missing-attribute]
-  else:
-    x_sharding = x_sharding.to_proto()  # pyrefly: ignore[missing-attribute]
-  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding,
-                                    allow_shardy_lowering=use_shardy)
+  x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # pyrefly: ignore[missing-attribute]
+  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding)

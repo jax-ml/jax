@@ -2114,12 +2114,6 @@ def with_sharding_constraint(x, shardings):
           ' not allowed. Please only pass `jax.sharding.Sharding` instances.')
   del user_shardings_flat
 
-  # TODO(bartchr): remove `unconstrained_dims` after migrating to Shardy. It's
-  # already part of the shardings.
-  unconstrained_dims = [get_unconstrained_dims(s)
-                        if isinstance(s, NamedSharding) else frozenset()
-                        for s in shardings_flat]
-
   pjit_check_aval_sharding(
       shardings_flat, x_avals_flat, ("",) * len(shardings_flat),
       "with_sharding_constraint arguments",
@@ -2129,8 +2123,8 @@ def with_sharding_constraint(x, shardings):
                                   "with_sharding_constraint arguments")
 
   outs = []
-  for xf, x_aval, s, l, ud in zip(x_flat, x_avals_flat, shardings_flat,
-                                  user_layouts_flat, unconstrained_dims):
+  for xf, x_aval, s, l in zip(x_flat, x_avals_flat, shardings_flat,
+                              user_layouts_flat):
     if (mesh_lib.get_abstract_mesh().are_all_axes_explicit and l is None and
         isinstance(s, NamedSharding)):
       assert_shardings_equal(x_aval, s)
@@ -2138,14 +2132,12 @@ def with_sharding_constraint(x, shardings):
     else:
       check_shardings_are_auto(s)
       outs.append(sharding_constraint_p.bind(
-          xf, sharding=s, layout=l, context_mesh=context_mesh,
-          unconstrained_dims=ud))
+          xf, sharding=s, layout=l, context_mesh=context_mesh))
   return tree_unflatten(tree, outs)
 
 def _identity_fn(x): return x
 
-def _sharding_constraint_impl(x, sharding, layout, context_mesh,
-                              unconstrained_dims):
+def _sharding_constraint_impl(x, sharding, layout, context_mesh):
   if (isinstance(sharding, NamedSharding) and
       isinstance(sharding.mesh, AbstractMesh)):
     if (not context_mesh.empty and isinstance(context_mesh, AbstractMesh) and
@@ -2177,8 +2169,8 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
       # Can't do identity_jit because UNCONSTRAINED in out_shardings parameter
       # of jit is not supported.
       return dispatch.apply_primitive(
-          sharding_constraint_p, x,  sharding=sharding, layout=layout,
-          context_mesh=context_mesh, unconstrained_dims=unconstrained_dims)
+          sharding_constraint_p, x, sharding=sharding, layout=layout,
+          context_mesh=context_mesh)
     else:
       return api.jit(_identity_fn, out_shardings=sharding)(x)
   else:
@@ -2191,7 +2183,7 @@ ad.deflinear2(sharding_constraint_p,
               lambda ct, _, **params: (sharding_constraint_p.bind(ct, **params),))
 
 def _sharding_constraint_abstract_eval(
-    x_aval, *, sharding, layout, context_mesh, unconstrained_dims):
+    x_aval, *, sharding, layout, context_mesh):
   if isinstance(sharding, NamedSharding):
     return x_aval.update(
         sharding=x_aval.sharding.update(mesh=sharding.mesh.abstract_mesh))
@@ -2199,7 +2191,7 @@ def _sharding_constraint_abstract_eval(
 sharding_constraint_p.def_abstract_eval(_sharding_constraint_abstract_eval)
 
 def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
-                                      context_mesh, unconstrained_dims):
+                                      context_mesh):
   in_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   axis_ctx = ctx.module_context.axis_context
@@ -2229,8 +2221,7 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
       axis_ctx.manual_axes):
     sharding = mlir.add_manual_axes(axis_ctx, sharding, in_aval.ndim)
   sharding = sharding._to_sdy_sharding(in_aval.ndim)
-  out = mlir.wrap_with_sharding_op(
-      ctx, x_node, out_aval, sharding, unspecified_dims=unconstrained_dims)
+  out = mlir.wrap_with_sharding_op(ctx, x_node, out_aval, sharding)
   if layout is not None:
     out = mlir.wrap_with_layout_op(ctx, out, out_aval, layout, in_aval)
   return [out]
@@ -2239,14 +2230,12 @@ mlir.register_lowering(sharding_constraint_p,
 
 
 def _sharding_constraint_batcher(
-    axis_data, vals_in, dims_in, sharding, layout, context_mesh,
-    unconstrained_dims):
+    axis_data, vals_in, dims_in, sharding, layout, context_mesh):
   x, = vals_in
   d, = dims_in
   if d is None:
     out = sharding_constraint_p.bind(
-        x, sharding=sharding, layout=layout, context_mesh=context_mesh,
-        unconstrained_dims=unconstrained_dims)
+        x, sharding=sharding, layout=layout, context_mesh=context_mesh)
     return out, None
 
   if axis_data.spmd_name is not None and isinstance(sharding, NamedSharding):
@@ -2256,16 +2245,19 @@ def _sharding_constraint_batcher(
       raise ValueError(f"vmap spmd_axis_name {axis_data.spmd_name} cannot appear in "
                        "with_sharding_constraint spec, but got spec "
                        f"{sharding.spec}")
-  unconstrained_dims = {ud + (d <= ud) for ud in unconstrained_dims}
+  unconstrained = {
+      ud + (d <= ud) for ud, axes in enumerate(sharding.spec)
+      if axes is PartitionSpec.UNCONSTRAINED
+  } if isinstance(sharding, NamedSharding) else set()
   if axis_data.spmd_name is None:
-    unconstrained_dims.add(d)
+    unconstrained.add(d)
 
   aval = core.typeof(x)
   vmapped_sharding = _pjit_batcher_for_sharding(
       sharding, d, axis_data.spmd_name, context_mesh, aval)
-  if unconstrained_dims and isinstance(vmapped_sharding, NamedSharding):
+  if unconstrained and isinstance(vmapped_sharding, NamedSharding):
     new_spec = list(vmapped_sharding.spec) + [None] * (aval.ndim - len(vmapped_sharding.spec))
-    for u in unconstrained_dims:
+    for u in unconstrained:
       new_spec[u] = PartitionSpec.UNCONSTRAINED
     vmapped_sharding = NamedSharding(
         vmapped_sharding.mesh, PartitionSpec(*new_spec))
@@ -2277,8 +2269,7 @@ def _sharding_constraint_batcher(
       x,
       sharding=vmapped_sharding,
       layout=vmapped_layout,
-      context_mesh=context_mesh,
-      unconstrained_dims=frozenset(unconstrained_dims))
+      context_mesh=context_mesh)
   return y, d
 batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
 
@@ -2721,10 +2712,3 @@ def _relayout_transpose_fancy(ct, x, *, dst_layout):
     x_bar = relayout_p.bind(ct, dst_layout=out_layout)
     x.accum(x_bar)
 ad.fancy_transposes[relayout_p] = _relayout_transpose_fancy
-
-# ------------------------------- helpers --------------------------------------
-
-def get_unconstrained_dims(sharding: NamedSharding):
-  assert sharding.spec is not None
-  return frozenset(i for i, axes in enumerate(sharding.spec)
-                   if axes is PartitionSpec.UNCONSTRAINED)

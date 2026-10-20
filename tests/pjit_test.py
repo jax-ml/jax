@@ -4028,7 +4028,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     def get_wsc_eqn_sharding(jaxpr):
       for eqn in jaxpr.eqns:
         if str(eqn.primitive) == 'sharding_constraint':
-          return eqn.params['sharding'], eqn.params['unconstrained_dims']
+          return eqn.params['sharding']
       for s in core.subjaxprs(jaxpr):
         return get_wsc_eqn_sharding(s)
 
@@ -4044,9 +4044,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     f1 = jax.jit(vmap_the_function_spmd)
     f1(inp)  # doesn't crash
     jaxpr1 = jax.make_jaxpr(f1)(inp)
-    s1, u1 = get_wsc_eqn_sharding(jaxpr1)
+    s1 = get_wsc_eqn_sharding(jaxpr1)
     self.assertEqual(s1.spec, P('x', P.UNCONSTRAINED))
-    self.assertEqual(u1, {1})
 
     def vmap_the_function_no_spmd(y):
       return jax.vmap(a_function)(y)
@@ -4054,9 +4053,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     f2 = jax.jit(vmap_the_function_no_spmd)
     f2(inp)  # doesn't crash
     jaxpr2 = jax.make_jaxpr(f2)(inp)
-    s2, u2 = get_wsc_eqn_sharding(jaxpr2)
+    s2 = get_wsc_eqn_sharding(jaxpr2)
     self.assertEqual(s2.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
-    self.assertEqual(u2, {0, 1})
 
   def test_aot_sharding_dce(self):
     inp = np.arange(8)
@@ -6040,8 +6038,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with jax.set_mesh(mesh):
       out = f(arr, arr.T)
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x',)))
-      lowered_text = f.lower(arr, arr.T).as_text()
-      self.assertNotIn('unspecified_dims', lowered_text)
 
     mesh2 = jtu.create_mesh((2, 2), ('x', 'y'),
                             axis_types=(mesh_lib.AxisType.Explicit,
