@@ -3755,6 +3755,22 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(jax.random.key_data(y), jax.random.key_data(keys),
                         check_dtypes=False)
 
+  def test_constant_random_keys_shard_map(self):
+    mesh = jtu.create_mesh((4, 2), ('i', 'j'))
+    keys = jax.random.split(jax.random.key(0), 8).reshape(4, 2)
+    assert keys.nbytes > config.embedded_constants_max_bytes.value,\
+        "Key constants are hoisted as arguments"
+
+    @jax.jit
+    def f():
+      return shard_map(lambda k: k,
+                       mesh=mesh, in_specs=P('i'), out_specs=P('i'),
+                       check_vma=False, axis_names=frozenset({'i'}))(keys)
+
+    y = f()
+    self.assertAllClose(jax.random.key_data(y), jax.random.key_data(keys),
+                        check_dtypes=False)
+
   def test_partial_auto_of_random_keys_slice(self):
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
     keys = jax.random.split(jax.random.key(0), 8).reshape(4, 2)
