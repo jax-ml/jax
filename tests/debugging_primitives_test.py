@@ -1392,6 +1392,7 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     self.assertEqual(_get_output_set(output, 1), expected)
 
 
+@jtu.thread_unsafe_test_class()  # printing isn't thread-safe
 class TwoCallPatternTest(jtu.JaxTestCase):
 
   def test_debug_print_two_call_form(self):
