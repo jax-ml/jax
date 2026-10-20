@@ -82,6 +82,18 @@ def undefs(*tys: ir.Type) -> list[ir.Value]:
   return [llvm.mlir_undef(ty) for ty in tys]
 
 
+def transforms_attr(
+    tiling: tuple[int, ...] | None = None, swizzle: int | None = None
+) -> ir.ArrayAttr:
+  """Returns a transforms attribute for the given tiling and swizzle."""
+  attrs = []
+  if tiling is not None:
+    attrs.append(mgpu.dialect.TileTransformAttr.get(tiling))
+  if swizzle is not None:
+    attrs.append(mgpu.dialect.SwizzleTransformAttr.get(swizzle))
+  return ir.ArrayAttr.get(attrs)
+
+
 V = cs.Variable
 E = cs.Equals
 RL = cs.RegisterLayout
@@ -2860,6 +2872,118 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module)
     [in_transform] = inference_utils.in_transforms(async_load_op)
     self.assertSequenceEqual(in_transform, ir.ArrayAttr.get([]))
+
+  @parameterized.named_parameters(
+      ("default", (32, 64), None, ((8, 64), 128)),
+      ("default_rank3", (2, 16, 64), None, ((8, 64), 128)),
+      ("default_no_swizzle", (32, 128), None, ((8, 128), None)),
+      ("default_no_tiling", (4, 64), None, (None, 128)),
+      ("untiled_unswizzled", (32, 64), (None, None), (None, None)),
+      ("tiled_unswizzled", (32, 64), ((8, 64), None), ((8, 64), None)),
+      ("single_column_tile", (32, 64), ((8, 64), 128), ((8, 64), 128)),
+  )
+  def test_infer_transforms_for_async_load_im2col_ok(
+      self, dst_shape, transforms, expected
+  ):
+    elt_ty = ir.BF16Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    i16 = ir.IntegerType.get_signless(16)
+
+    with ir.InsertionPoint(self.module.body):
+      gmem_ref, smem_ref, barrier, dyn_idx = undefs(
+          ir.MemRefType.get((2, 8, 8, dst_shape[-1]), elt_ty),
+          ir.MemRefType.get(dst_shape, elt_ty, memory_space=mgpu.utils.smem()),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
+          i32,
+      )
+      if transforms is not None:
+        smem_ref = mgpu.dialect.with_transforms(
+            smem_ref, transforms_attr(*transforms)
+        )
+      op = mgpu.dialect.AsyncLoadIm2colOp(
+          source=gmem_ref,
+          destination=smem_ref,
+          barrier=barrier,
+          indices=[dyn_idx] * 4,
+          filter_offsets=[arith.constant(i16, 1)] * 2,
+          window_lower_bounds=[0, 0],
+          window_upper_bounds=[0, 0],
+          window_strides=[1, 1],
+      )
+
+    mgpu.infer_layout(self.module)
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(op), [transforms_attr(*expected)]
+    )
+
+  @parameterized.named_parameters(
+      ("split_channels", (32, 64), ((8, 32), 64)),
+      ("narrow_swizzle", (32, 64), ((8, 64), 64)),
+      ("narrow_swizzle_untiled", (32, 64), (None, 64)),
+      ("non_mma_row_tile", (32, 64), ((16, 64), 128)),
+      ("3d_tiling", (2, 16, 64), ((2, 8, 64), 128)),
+  )
+  def test_infer_transforms_for_async_load_im2col_invalid(
+      self, dst_shape, transforms
+  ):
+    elt_ty = ir.BF16Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    i16 = ir.IntegerType.get_signless(16)
+
+    with ir.InsertionPoint(self.module.body):
+      gmem_ref, smem_ref, barrier = undefs(
+          ir.MemRefType.get((2, 8, 8, dst_shape[-1]), elt_ty),
+          ir.MemRefType.get(dst_shape, elt_ty, memory_space=mgpu.utils.smem()),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
+      )
+      smem_ref = mgpu.dialect.with_transforms(
+          smem_ref, transforms_attr(*transforms)
+      )
+      mgpu.dialect.AsyncLoadIm2colOp(
+          source=gmem_ref,
+          destination=smem_ref,
+          barrier=barrier,
+          indices=[arith.constant(i32, 0)] * 4,
+          filter_offsets=[arith.constant(i16, 0)] * 2,
+          window_lower_bounds=[0, 0],
+          window_upper_bounds=[0, 0],
+          window_strides=[1, 1],
+      )
+
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts"
+    ):
+      mgpu.infer_layout(self.module)
+
+  def test_infer_transforms_for_async_load_im2col_non_contiguous(self):
+    elt_ty = ir.BF16Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    i16 = ir.IntegerType.get_signless(16)
+
+    with ir.InsertionPoint(self.module.body):
+      gmem_ref, smem_ref, barrier = undefs(
+          ir.MemRefType.get((2, 8, 8, 64), elt_ty),
+          ir.MemRefType.get((32, 64), elt_ty, memory_space=mgpu.utils.smem()),
+          ir.MemRefType.get([], mgpu.dialect.BarrierType.get()),
+      )
+      smem_ref = memref.subview(
+          smem_ref, offsets=[0, 0], sizes=[32, 32], strides=[1, 1]
+      )
+      mgpu.dialect.AsyncLoadIm2colOp(
+          source=gmem_ref,
+          destination=smem_ref,
+          barrier=barrier,
+          indices=[arith.constant(i32, 0)] * 4,
+          filter_offsets=[arith.constant(i16, 0)] * 2,
+          window_lower_bounds=[0, 0],
+          window_upper_bounds=[0, 0],
+          window_strides=[1, 1],
+      )
+
+    with self.assertRaisesRegex(
+        ValueError, "requires the destination SMEM memref to be contiguous"
+    ):
+      mgpu.infer_layout(self.module)
 
   @parameterized.parameters([False, True])
   def test_infer_transforms_for_memref_cast_op(self, annotate_producer):
