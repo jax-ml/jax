@@ -24,13 +24,19 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
     incomplete gamma functions, with gradients with respect to both arguments.
 * Bug fixes
-  * The persistent compilation cache key of a computation that spans processes
-    now hashes the topology fingerprints of all of them. A process's
-    fingerprint describes its own devices down to their NVLink links, so on a
-    host where only some GPUs share NVLink the processes of one computation
-    keyed it apart: some loaded the executable that process 0 had written while
-    the others compiled it and waited for ever for their peers' shares of its
-    sharded autotuning ({jax-issue}`#40940`).
+  * When a computation's devices span processes, a topology fingerprint and the
+    distributed runtime client are available, and the processes describe the
+    same accelerators, the accelerator part of its persistent compilation cache
+    key now hashes the set of their topology fingerprints, so that part is the
+    same in every process. With jaxlib 0.11.2, one process per GPU, processes on
+    GPUs with and without NVLink fingerprinted differently and keyed one
+    computation apart: on a warm run some loaded the executable process 0 had
+    written while the others compiled it and waited for their peers' shares of
+    its sharded autotuning ({jax-issue}`#40940`). jaxlib 0.12.0's GPU runtime
+    instead fails initialization when the fingerprints differ, unless
+    `XLA_PJRT_GPU_VALIDATE_TOPOLOGY=false` turns that check off. When the
+    processes' accelerators differ, the computation compiles without the
+    persistent cache.
 
 ## JAX 0.12.0 (October 19, 2026)
 
