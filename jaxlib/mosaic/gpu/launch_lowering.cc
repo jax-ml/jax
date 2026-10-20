@@ -152,9 +152,8 @@ void emitRuntimeDecls(mlir::ModuleOp module) {
   auto i32 = mlir::IntegerType::get(module.getContext(), 32);
   auto decl_builder = mlir::OpBuilder::atBlockBegin(module.getBody());
 
-  mlir::func::FuncOp::create(
-      decl_builder, module.getLoc(),
-      decl_builder.getStringAttr("mosaic_gpu_build_kernel_spec"),
+  auto decl = mlir::func::FuncOp::create(
+      decl_builder, module.getLoc(), "mosaic_gpu_build_kernel_spec",
       mlir::FunctionType::get(module.getContext(),
                               {
                                   ptr_ty,         // MosaicKernelSpec*
@@ -167,9 +166,8 @@ void emitRuntimeDecls(mlir::ModuleOp module) {
                                   ptr_ty,         // arg_ptrs
                                   ptr_ty          // arg_bytes
                               },
-                              {}),
-      decl_builder.getStringAttr("private"), /*arg_attr=*/nullptr,
-      /*res_attrs=*/nullptr);
+                              {}));
+  decl.setPrivate();
 }
 
 int32_t getClusterSize(mlir::gpu::LaunchFuncOp launch) {
