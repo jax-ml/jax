@@ -492,15 +492,11 @@ class JaxprInterpreter:
         case state_types.AbstractRef(
             inner_aval=inner, memory_space=memory_space, kind=_
         ):
-          if transforms:
-            # The invar/aval's shape in the jaxpr may be the tiled shape, after
-            # tiling and/or swizzling transforms have been applied.  The
-            # elements of `transforms` -- to undo the swizzling and/or tiling --
-            # are applied any time the variable is used in the jaxpr.
-            #
-            # We want to allocate a buffer with the logical shape, instead of
-            # the tiled shape, so we undo the swizzing and/or tiling here to get
-            # the logical shape.
+          if transforms and memory_space != mosaic_gpu_core.MemorySpace.SMEM:
+            # The invar/aval's shape in the jaxpr may be the physical shape
+            # (e.g. collapsed 2D shape for TMEM). The elements of `transforms`
+            # are applied any time the variable is used in the jaxpr; we apply
+            # them here to allocate a buffer with the logical shape.
             inner = apply_layout_transforms(transforms, inner)
           match inner:
             case jax_core.ShapedArray(shape=shape, dtype=dtype):
