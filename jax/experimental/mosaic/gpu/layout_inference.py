@@ -2927,7 +2927,7 @@ def infer_layout(
       global_constraint_system
   )
 
-  dump_options = mgpu.get_or_set_dump_options(module)  # pyrefly: ignore[missing-attribute]
+  dump_options = mgpu.get_or_set_dump_options(module)
   if dump_options.constraint_system:
     utils.dump_to_file_or_stdout(
         str(global_constraint_system),

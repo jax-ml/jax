@@ -3228,7 +3228,7 @@ def _conv_lowering_rule(
 
   padding_flat = [int(p) for pair in padding for p in pair]
 
-  return tpu.ConvOp(  # pyrefly: ignore[missing-attribute]
+  return tpu.ConvOp(
       out_type,
       lhs,
       rhs,
@@ -3238,8 +3238,8 @@ def _conv_lowering_rule(
       lhs_dilation=[int(d) for d in lhs_dilation],
       rhs_dilation=[int(d) for d in rhs_dilation],
       window_reversal=[bool(r) for r in window_reversal],
-      feature_group_count=feature_group_count,  # pyrefly: ignore[unexpected-keyword]
-      batch_group_count=batch_group_count,  # pyrefly: ignore[unexpected-keyword]
+      feature_group_count=feature_group_count,
+      batch_group_count=batch_group_count,
       precision=precision_attr,
       dimension_numbers=tpu_conv_dims,
   ).result
@@ -4193,7 +4193,7 @@ def _logistic_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
       )
     denom = arith.addf(one, exp_neg_x)
     return arith.divf(one, denom)
-  return tpu.logistic(x)  # pyrefly: ignore[missing-attribute]
+  return tpu.logistic(x)
 
 
 @register_lowering_rule(lax.sin_p)
@@ -4306,7 +4306,7 @@ def _reduce_precision_lowering_rule(
     ctx: LoweringRuleContext, x, *, exponent_bits: int, mantissa_bits: int
 ):
   if hasattr(tpu, "reduce_precision"):
-    return tpu.reduce_precision(  # pyrefly: ignore[missing-attribute]
+    return tpu.reduce_precision(
         x, exponent_bits=exponent_bits, mantissa_bits=mantissa_bits
     )
   raise NotImplementedError("reduce_precision is not supported")

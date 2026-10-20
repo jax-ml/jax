@@ -1550,7 +1550,6 @@ class DialectBarrierRef:
   def arrive_expect_tx(self, tx_count: int | ir.Value):
     if isinstance(tx_count, int):
       tx_count = c(tx_count, ir.IntegerType.get_signless(32))
-    # pyrefly: ignore[bad-argument-type]
     dialect.ArriveExpectTxOp(barrier=self.as_barrier_memref(), expect_tx=tx_count)
 
   def get_ptr(self):

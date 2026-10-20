@@ -181,7 +181,7 @@ def mpmd_map_mgpu_lowering_rule(
   # ``run_scoped`` traces during lowering) resolve mesh axes from the JAX core
   # axis environment. The pipelined path binds them via ``grid_mapping.trace_env``;
   # here we bind them straight from the mesh.
-  from jax._src.pallas import mpmd  # pyrefly: ignore[import-cycle]
+  from jax._src.pallas import mpmd
   with mpmd.mpmd_map_tracing_context(mesh, (*meshes, *external_meshes)):
     lowering_result = lowering.lower_unpipelined_jaxpr_to_module(
         mesh,

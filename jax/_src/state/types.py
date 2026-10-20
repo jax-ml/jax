@@ -511,13 +511,13 @@ class AbstractRef(core.AbstractValue):
   def lower_val(self, ref, /):
     if not self.is_high:
       return [ref]
-    return self.inner_aval.lower_val(ref._refs)  # pyrefly: ignore[missing-attribute]
+    return self.inner_aval.lower_val(ref._refs)
 
   def raise_val(self, *vals):
     if not self.is_high:
       ref, = vals
       return ref
-    return core.Ref(self, self.inner_aval.raise_val(*vals))  # pyrefly: ignore[missing-attribute]
+    return core.Ref(self, self.inner_aval.raise_val(*vals))
 
   @property
   def weak_type(self) -> bool:

@@ -1274,7 +1274,7 @@ def _copy_gmem_to_smem_lowering(
     mgpu.dialect.async_load(
         src,
         dst,
-        barrier=None,  # pyrefly: ignore[bad-argument-type]
+        barrier=None,
         indices=indices,
         slice_lengths=slice_lengths,
         collective=ir.ArrayAttr.get([]),
@@ -1305,11 +1305,11 @@ def _copy_gmem_to_smem_lowering(
   mgpu.dialect.async_load(
       src,
       dst,
-      indices,  # pyrefly: ignore[bad-argument-type]
-      slice_lengths,  # pyrefly: ignore[bad-argument-type]
-      barrier=barrier_ref,  # pyrefly: ignore[bad-keyword-argument]
+      indices,
+      slice_lengths,
+      barrier=barrier_ref,
       predicate=predicate,
-      collective=ir.ArrayAttr.get(  # pyrefly: ignore[bad-keyword-argument]
+      collective=ir.ArrayAttr.get(
           [ir.IntegerAttr.get(i32, axis) for axis in collective or []]
       ),
       leader_tracked=leader_tracked_attr,
@@ -3133,7 +3133,7 @@ def _tcgen05_mma_lowering(
       a_sparse_metadata_transform_avals = ()
     assert isinstance(a_sparse_metadata_ref_aval, state_types.AbstractRef)
     a_sparse_metadata_ref, _, a_sparse_metadata_transforms = (
-        lowering._handle_transforms(  # pyrefly: ignore[bad-specialization]
+        lowering._handle_transforms(
             ctx, a_sparse_metadata_ref_aval, a_sparse_metadata_ref,
             a_sparse_metadata_transform_avals, a_sparse_metadata_transforms)
     )
@@ -3465,7 +3465,7 @@ def _tcgen05_commit_arrive_lowering(
     # TODO(cjfj): remove when minimum jaxlib version is 0.12.
     if hasattr(mgpu.dialect.TcGen05CommitArriveOp, "predicate"):
       mgpu.dialect.tcgen05_commit_arrive(
-          memref, collective=collective, predicate=predicate  # pyrefly: ignore[unexpected-keyword]
+          memref, collective=collective, predicate=predicate
       )
     elif predicate is None:
       mgpu.dialect.tcgen05_commit_arrive(memref, collective=collective)
@@ -4495,13 +4495,13 @@ def _async_load_tmem_lowering_rule_wg(
       reduce = "abs" + reduce  # type: ignore
     match reduce:
       case "min":
-        reduce_attr = mgpu.dialect.TMEMLoadReduction.Min  # pyrefly: ignore[missing-attribute]
+        reduce_attr = mgpu.dialect.TMEMLoadReduction.Min
       case "max":
-        reduce_attr = mgpu.dialect.TMEMLoadReduction.Max  # pyrefly: ignore[missing-attribute]
+        reduce_attr = mgpu.dialect.TMEMLoadReduction.Max
       case "absmin":
-        reduce_attr = mgpu.dialect.TMEMLoadReduction.AbsMin  # pyrefly: ignore[missing-attribute]
+        reduce_attr = mgpu.dialect.TMEMLoadReduction.AbsMin
       case "absmax":
-        reduce_attr = mgpu.dialect.TMEMLoadReduction.AbsMax  # pyrefly: ignore[missing-attribute]
+        reduce_attr = mgpu.dialect.TMEMLoadReduction.AbsMax
       case _:
         raise ValueError(f"Unsupported load reduce operation: {orig_reduce}")
     return tuple(mgpu.dialect.async_load_tmem(x_tmem, reduce=reduce_attr))  # type: ignore

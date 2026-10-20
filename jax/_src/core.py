@@ -1853,10 +1853,10 @@ class AbstractValue:
     return add_jaxvals(x, y)
 
   def raise_val2(self, lo_vals_ft):
-    return self.raise_val(*lo_vals_ft.unflatten())  # pyrefly: ignore[missing-attribute]
+    return self.raise_val(*lo_vals_ft.unflatten())
 
   def lower_val2(self, hi_val):
-    return ft.flatten(self.lower_val(hi_val))  # pyrefly: ignore[missing-attribute]
+    return ft.flatten(self.lower_val(hi_val))
 
 InputType = tuple[AbstractValue, ...]
 OutputType = tuple[AbstractValue, ...]

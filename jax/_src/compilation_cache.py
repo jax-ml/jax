@@ -144,7 +144,7 @@ class VerificationCache(CacheInterface):
     self.base_cache_hits: dict[str, int] = {}
 
   @property
-  def _path(self):  # pyrefly: ignore[bad-override]
+  def _path(self):
     return self._base_cache._path
 
   @_path.setter

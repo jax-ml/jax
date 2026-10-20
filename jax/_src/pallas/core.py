@@ -1259,7 +1259,7 @@ class GridSpec:
     if isinstance(grid, int):
       grid = (grid,)
     elif grid and isinstance(grid[0], tuple):  # Check if we have a named grid
-      grid_names, grid = util.unzip2(grid)  # pyrefly: ignore[bad-argument-type]
+      grid_names, grid = util.unzip2(grid)
 
     # TODO(b/353730556): allow NumPy scalars in grids
     if not all(_is_valid_grid_dim(g) for g in grid):  # pyrefly: ignore[bad-argument-type]

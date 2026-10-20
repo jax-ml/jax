@@ -445,7 +445,7 @@ class KeyTyRules:
     physical_buf = random_unwrap(val)
     phys_sharding = physical_sharding(aval, sharding)
     physical_result = pxla.batched_device_put(
-        physical_aval, phys_sharding, [physical_buf] * len(devices), devices)  # pyrefly: ignore[bad-argument-type]
+        physical_aval, phys_sharding, [physical_buf] * len(devices), devices)
     return random_wrap(physical_result, impl=aval.dtype._impl)
 
   @staticmethod

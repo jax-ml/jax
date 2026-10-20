@@ -645,7 +645,7 @@ def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
       x,
       ir.Attribute.parse(f"#tpu.reduction_kind<{tpu_reduction_kind}>"),
       mask=mask,
-      dimension=x.type.rank - 1,  # pyrefly: ignore[unexpected-keyword]
+      dimension=x.type.rank - 1,
   )
   if sign_bit_vec is not None:  # Flip the sign bit back
     return arith.xori(result, sign_bit_vec)
@@ -743,7 +743,7 @@ def _cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axis,
       x,
       ir.Attribute.parse("#tpu.reduction_kind<sum>"),
       mask=c1v,
-      dimension=x.type.rank - 1,  # pyrefly: ignore[unexpected-keyword]
+      dimension=x.type.rank - 1,
   )
 
 

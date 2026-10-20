@@ -879,7 +879,7 @@ class CustomVJPTraced(HiPrim):
 
   lin = vjp_fwd
 
-  def linearized(self, residuals, *tangents):  # pyrefly: ignore[bad-param-name-override]
+  def linearized(self, residuals, *tangents):
     tangents_flat, in_tree = tracing_registry.flatten(
         tangents, lambda x: isinstance(x, ad_util.Zero))
     assert in_tree == self.in_tree

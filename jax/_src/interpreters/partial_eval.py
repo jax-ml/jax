@@ -254,7 +254,7 @@ class JaxprTrace(Trace):
     eqn = new_eqn_recipe(self, in_tracers, out_tracers, prim, params, effs,
                          source)
     if effects.partial_eval_kept_effects.filter_in(effs):
-      self.effect_handles.append(EffectHandle(in_tracers, eqn))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      self.effect_handles.append(EffectHandle(in_tracers, eqn))  # pyrefly#2385
     for t in out_tracers: t.recipe = eqn
     return out_tracers
 
@@ -662,7 +662,7 @@ def tracers_to_jaxpr(
   outvars = map(get_atom, out_tracers)
   jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
   is_high |= any(x.aval.is_high for x in it.chain(const_vars, invars, outvars))
-  jaxpr = Jaxpr(const_vars, invars,  # pyrefly: ignore[bad-argument-type]
+  jaxpr = Jaxpr(const_vars, invars,
                 outvars, eqns, jaxpr_effects, debug_info, is_high)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!

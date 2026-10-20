@@ -2143,7 +2143,7 @@ def _load(
         ptr,
         mask=mask,
         other=other,
-        cache_policy=cache_policy,  # pyrefly: ignore[unexpected-keyword]
+        cache_policy=cache_policy,
         is_volatile=is_volatile,
     )
   else:  # TODO(suvorovv): Remove this fallback once jax oss has been updated.
@@ -2361,7 +2361,7 @@ def _store(
         ptr,
         value,
         mask=mask,
-        cache_policy=cache_policy,  # pyrefly: ignore[unexpected-keyword]
+        cache_policy=cache_policy,
     )
   else:  # TODO(suvorovv): Remove this fallback once jax oss has been updated.
     tt_dialect.store(
