@@ -1157,6 +1157,18 @@ class FusionTest(jtu.JaxTestCase):
     out = fuser.evaluate(lambda a, *, b: a + b)(x, b=x * 2)
     np.testing.assert_array_equal(out, x * 3)
 
+  def test_evaluate_nested_subjaxprs(self):
+    x = jnp.ones((2, 3), dtype=jnp.float32)
+    with self.assertRaisesRegex(ValueError, "Transpose not allowed"):
+      fuser.evaluate(jax.jit(lambda a: a.T), allow_transpose=False)(x)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, r"Primitives \{.*cond.*\} not supported"
+    ):
+      fuser.evaluate(
+          jax.jit(lambda a: lax.cond(a.sum() > 0, lambda y: y, lambda y: -y, a))
+      )(x)
+
 
 @dataclasses.dataclass(frozen=True)
 class ArrayTuple:

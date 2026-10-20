@@ -180,9 +180,7 @@ pytype_strict_library(
         ":fuser_utils",
         "//jax",
         "//jax/_src:core",
-        "//jax/_src:source_info_util",
         "//jax/_src:tree_util",
-        "//jax/_src:util",
     ],
 )
 
