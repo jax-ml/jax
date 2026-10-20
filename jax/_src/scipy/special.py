@@ -834,7 +834,7 @@ def _lgamma1p(a: Array) -> Array:
   return jnp.where(is_small, series, lax.lgamma(1.0 + a))
 
 
-def _gammaincc_small_x(a: Array, x: Array) -> Array:
+def _gammaincc_small_x(a: Array, x: Array, lgamma1p_a: Array) -> Array:
   # gammaincc(a, x) for 0 < x < 1.1 as
   #   1 - x^a / Gamma(a + 1) - x^a / Gamma(a) sum_{n>=1} (-x)^n / (n! (a + n))
   #   = -expm1(u) - a x e^u sum_{n>=1} (-1)^n x^(n - 1) / (n! (a + n)),
@@ -842,7 +842,7 @@ def _gammaincc_small_x(a: Array, x: Array) -> Array:
   # accurate when the result is small (for small a). This follows igamc_series
   # in Cephes.
   terms = [(-1) ** n / math.factorial(n) / (a + n) for n in range(1, 21)]
-  u = a * lax.log(x) - _lgamma1p(a)
+  u = a * lax.log(x) - lgamma1p_a
   return (-lax.expm1(u)
           - a * x * lax.exp(u) * lax.polynomial(x, terms, unroll=20))
 
@@ -871,8 +871,14 @@ def _gammaincinv_eq34(a: Array, x: Array, enabled: Array) -> Array:
   return lax.while_loop(cond_fn, body_fn, init)["total"]
 
 
-def _gammaincinv_initial_guess(a: Array, p: Array, q: Array,
-                               complement: bool) -> Array:
+def _gammaincinv_initial_guess(
+    a: Array,
+    p: Array,
+    q: Array,
+    complement: bool,
+    lgamma_a: Array,
+    lgamma1p_a: Array,
+) -> Array:
   # Each approximation below is used in part of the domain but evaluated for
   # all elements. Its inputs are clamped, or replaced by placeholder values,
   # outside of that part, so that the approximations that are not selected
@@ -881,11 +887,10 @@ def _gammaincinv_initial_guess(a: Array, p: Array, q: Array,
   log_q = lax.log(q) if complement else lax.log1p(-p)
   is_small_a = a < 1.0
   # |s| < 40 below even for subnormal p or q, so for a > 1e5,
-  # 0.7 (a + 1) < w < 3 a and w is used as is. Elsewhere, a is clamped to 1e5,
-  # which keeps lgamma(a) finite.
+  # 0.7 (a + 1) < w < 3 a and w is used as is. Elsewhere, a <= 1e5, so the
+  # precomputed lgamma(a) is finite.
   is_large_a = a > 1e5
-  lgamma_a = lax.lgamma(jnp.minimum(a, 1e5))
-  log_b = log_q + lgamma_a  # log(q Gamma(a))
+  log_b = log_q + jnp.where(is_large_a, 0.0, lgamma_a)  # log(q Gamma(a))
 
   # a < 1.
   a_lo = jnp.where(is_small_a, a, 0.5)
@@ -911,7 +916,7 @@ def _gammaincinv_initial_guess(a: Array, p: Array, q: Array,
   # 1 - q and of 1 + a.
   u = jnp.where(
       (log_b + log_q > math.log(1e-8)) & (q > 1e-5),
-      lax.exp((log_p + _lgamma1p(a_lo)) / a_lo),
+      lax.exp((log_p + jnp.where(is_small_a, lgamma1p_a, 0.0)) / a_lo),
       lax.exp(-q / a_lo - np.euler_gamma))
   x_small_a = jnp.where(
       (log_b > math.log(0.6)) | ((log_b >= math.log(0.45)) & (a_lo >= 0.3)),
@@ -932,7 +937,7 @@ def _gammaincinv_initial_guess(a: Array, p: Array, q: Array,
       poly(s, [0.0, -433 / 38880, 0.0, 256 / 38880, 0.0, 9 / 38880]),
   ])
   a_hi = jnp.minimum(a_hi, 1e5)
-  log_pg = log_p + lax.lgamma(1.0 + a_hi)  # log(p Gamma(a + 1))
+  log_pg = log_p + jnp.where(is_small_a | is_large_a, 0.0, lgamma1p_a)
 
   # a >= 1 and p > 0.5.
   use_w = (is_large_a | (w < 3.0 * a_hi)
@@ -1004,7 +1009,11 @@ def _gammaincinv_impl(a: Array, y: Array, complement: bool) -> Array:
   p = jnp.where(safe, p, 0.5)
   q = jnp.where(safe, q, 0.5)
 
-  x0 = _gammaincinv_initial_guess(a, p, q, complement)
+  a_clamped = jnp.minimum(a, 1e6)
+  lgamma_a = lax.lgamma(a_clamped)
+  lgamma1p_a = _lgamma1p(a_clamped)
+
+  x0 = _gammaincinv_initial_guess(a, p, q, complement, lgamma_a, lgamma1p_a)
   x0 = jnp.where(x0 > 0.0, x0, 0.0)  # The guess may underflow for tiny p.
 
   # Refine with Halley's method on f(x) = gammainc(a, x) - p. The residual uses
@@ -1021,18 +1030,21 @@ def _gammaincinv_impl(a: Array, y: Array, complement: bool) -> Array:
   use_lower = p <= 0.5
   # The elements that are not refined use a = x = 1 in the refinement.
   a_r = jnp.where(refine, a, 1.0)
-  lgamma_a = lax.lgamma(a_r)
+  lgamma_a_r = jnp.where(refine, lgamma_a, 0.0)
+  lgamma1p_a_r = jnp.where(refine, lgamma1p_a, 0.0)
 
   def halley_step(_, x):
     is_positive = x > 0.0
     x_pos = jnp.where(is_positive, x, 1.0)
-    x_pdf = lax.exp(xlogy(a_r, x_pos) - x_pos - lgamma_a)  # x d/dx gammainc
+    x_pdf = lax.exp(xlogy(a_r, x_pos) - x_pos - lgamma_a_r)  # x d/dx gammainc
     # Evaluating igamma and igammac at x = 0 for the elements that use another
     # function (or are not refined) skips their iterations there.
     use_series = ~use_lower & (x < 1.1)
     upper = jnp.where(
         use_series,
-        _gammaincc_small_x(a_r, jnp.where(use_series, x_pos, 1.0)),
+        _gammaincc_small_x(
+            a_r, jnp.where(use_series, x_pos, 1.0), lgamma1p_a_r
+        ),
         lax.igammac(a_r, jnp.where(refine & ~use_lower & ~use_series, x, 0.0)))
     residual = jnp.where(
         use_lower,
