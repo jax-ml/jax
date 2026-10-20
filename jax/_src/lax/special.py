@@ -774,10 +774,16 @@ def _lgamma_lowering(ctx, x, *, use_f64_for_f32=False):
 
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
-mlir.register_lowering(lgamma_p, _lgamma_lowering)
+mlir.register_lowering(lgamma_p, _lgamma_lowering, inline=core.Inline.XLA_LATE)
 mlir.register_lowering(
-    lgamma_p, partial(_lgamma_lowering, use_f64_for_f32=True), platform='cpu'
+    lgamma_p,
+    partial(_lgamma_lowering, use_f64_for_f32=True),
+    platform='cpu',
+    inline=core.Inline.XLA_LATE,
 )
+# XLA:TPU's post-layout-assignment CallInliner hits tile-layout mismatches when
+# inlining calls inside fused loops; use early inlining on TPU instead.
+mlir.register_lowering(lgamma_p, _lgamma_lowering, platform='tpu', inline=False)
 
 digamma_p = standard_unop(_float, 'digamma')
 mlir.register_lowering(digamma_p, partial(_nary_lower_hlo, chlo.digamma))

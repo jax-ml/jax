@@ -29,7 +29,6 @@ import atexit
 import collections
 from collections.abc import Callable, Hashable, Iterable, Sequence
 import dataclasses
-import enum
 from functools import partial
 import inspect
 from typing import Any, Literal, overload, cast, TYPE_CHECKING
@@ -97,22 +96,7 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 ShapeDtypeStruct = core.ShapeDtypeStruct
-
-class Inline(enum.Enum):
-  """Enumeration specifying inlining behavior for nested jitted functions.
-
-  Values:
-    JAX_EARLY: Inlined during JAX tracing into enclosing JAXPRs.
-    JAX_LATE: Inlined during during JAX to MLIR lowering.
-    XLA_EARLY: Preserved in MLIR and marked for early inlining by the XLA compiler.
-    XLA_LATE: Preserved in MLIR and marked for late inlining by the XLA compiler.
-    AUTO: Automatic inlining policy determined by JAX and XLA.
-  """
-  JAX_EARLY = "jax_early"
-  JAX_LATE = "jax_late"
-  XLA_EARLY = "xla_early"
-  XLA_LATE = "xla_late"
-  AUTO = "auto"
+Inline = core.Inline
 
 @api_boundary
 def _nan_check_posthook(fun, args, kwargs, output):

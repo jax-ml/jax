@@ -4846,6 +4846,63 @@ class APITest(jtu.JaxTestCase):
     else:
       self.assertIn("call(", get_hlo(jax.Inline.XLA_LATE))
 
+  def test_register_lowering_inline_mode(self):
+    prim = jax._src.core.Primitive("inline_mode_test")
+    prim.def_abstract_eval(lambda x: x)
+
+    def lowering(ctx, x):
+      return mlir.lower_fun(lambda v: v * 2, multiple_results=False)(ctx, x)
+
+    with self.assertRaisesRegex(ValueError, "JAX_EARLY is not supported"):
+      mlir.register_lowering(prim, lowering, inline=jax.Inline.JAX_EARLY)
+
+    def lower_and_compile(inline_mode):
+      mlir.register_lowering(prim, lowering, inline=inline_mode)
+      lowered = api.jit(lambda x: prim.bind(x) + 1.0).lower(1.0)
+      return lowered.as_text(), lowered.compile().as_text()
+
+    mlir_text, hlo_text = lower_and_compile(True)
+    self.assertNotIn("func.func private @inline_mode_test", mlir_text)
+    self.assertNotIn("call(", hlo_text)
+
+    mlir_text, _ = lower_and_compile(False)
+    self.assertIn("func.func private @inline_mode_test", mlir_text)
+    self.assertNotIn("inlineable", mlir_text)
+
+    mlir_text, hlo_text = lower_and_compile(jax.Inline.XLA_EARLY)
+    self.assertIn("func.func private @inline_mode_test", mlir_text)
+    self.assertIn('inlineable = "xla_early"', mlir_text)
+    self.assertNotIn("call(", hlo_text)
+
+    mlir_text, hlo_text = lower_and_compile(jax.Inline.XLA_LATE)
+    self.assertIn("func.func private @inline_mode_test", mlir_text)
+    self.assertIn('inlineable = "xla_late"', mlir_text)
+    if jtu.device_under_test() == "tpu":
+      self.assertNotIn("call(", hlo_text)
+    else:
+      self.assertIn("call(", hlo_text)
+
+    # A platform-specific rule's inline setting overrides the default rule's.
+    mlir.register_lowering(prim, lowering, inline=jax.Inline.XLA_EARLY)
+    mlir.register_lowering(
+        prim, lowering, platform=jtu.device_under_test(), inline=True
+    )
+    mlir_text = api.jit(lambda x: prim.bind(x) + 1.0).lower(1.0).as_text()
+    self.assertNotIn("func.func private @inline_mode_test", mlir_text)
+
+    # Conflicting inline modes across multi-platform export fall back to AUTO.
+    mlir.register_lowering(
+        prim, lowering, platform="cpu", inline=jax.Inline.XLA_EARLY
+    )
+    mlir.register_lowering(
+        prim, lowering, platform="cuda", inline=jax.Inline.XLA_LATE
+    )
+    exported_mlir = jax.export.export(
+        api.jit(lambda x: prim.bind(x) + 1.0), platforms=("cpu", "cuda")
+    )(1.0).mlir_module()
+    self.assertIn("func.func private @inline_mode_test", exported_mlir)
+    self.assertNotIn("inlineable", exported_mlir)
+
   # Repro for https://github.com/jax-ml/jax/issues/7229.
   def test_compute_with_large_transfer(self):
     def f(x, delta):

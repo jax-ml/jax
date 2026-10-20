@@ -854,7 +854,7 @@ class LoweringCacheValue:
   output_treedef: pytree.PyTreeDef
   const_args: Sequence[ArrayLike]  # The hoisted constants expected by `func`
   const_arg_avals: Sequence[core.AbstractValue]
-  inline: bool  # Inline calls to this lowered function?
+  inline: core.Inline  # Inline mode for calls to this lowered function
 
 @dataclasses.dataclass(slots=True)
 class ModuleContext:
@@ -1050,14 +1050,15 @@ LoweringRule = Callable[..., Sequence[ir.Value | Sequence[ir.Value]]]
 @dataclasses.dataclass(frozen=True, slots=True)
 class LoweringRuleEntry:
   rule: LoweringRule
-  inline: bool
+  inline: core.Inline
 
 _lowerings: dict[core.Primitive, LoweringRuleEntry] = {}
 _platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRuleEntry]]
 _platform_specific_lowerings = collections.defaultdict(dict)
 
 def register_lowering(prim: core.Primitive, rule: LoweringRule,
-                      platform: str | None = None, inline: bool = True,
+                      platform: str | None = None,
+                      inline: bool | core.Inline = True,
                       cacheable: bool = True) -> None:
   """Registers a lowering rule for a primitive.
 
@@ -1067,18 +1068,30 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     platform: The platform to register the rule for. If None, this is a common
       rule applicable to all platforms. Platform-specific rules take precedence
       over common rules.
-    inline: Whether to emit the lowering inline. If False, the lowering will be
-      emitted in a separate function, called by similar instances of the
-      lowering.
+    inline: Controls inlining of calls to the lowered function. ``True``
+      (equivalent to ``Inline.JAX_LATE``) emits the lowering inline; ``False``
+      (equivalent to ``Inline.AUTO``) emits a separate private function called
+      by similar instances without an ``inlineable`` attribute;
+      ``Inline.XLA_EARLY`` and ``Inline.XLA_LATE`` emit a private function with
+      the corresponding ``inlineable`` frontend attribute.
     uncacheable: Whether this primitive's lowering can be cached. This is a
       temporary flag that will be removed after primitives that have problems
       with caching are fixed.
   """
   assert not isinstance(rule, LoweringRuleEntry)
+  if isinstance(inline, bool):
+    inline_mode = core.Inline.JAX_LATE if inline else core.Inline.AUTO
+  elif inline == core.Inline.JAX_EARLY:
+    raise ValueError(
+        "Inline.JAX_EARLY is not supported for MLIR lowering rules; "
+        "use Inline.JAX_LATE instead."
+    )
+  else:
+    inline_mode = inline
   if not cacheable:
     _uncacheable_primitives.add(prim)
   if platform is None:
-    _lowerings[prim] = LoweringRuleEntry(rule, inline)
+    _lowerings[prim] = LoweringRuleEntry(rule, inline_mode)
   else:
     if not xb.is_known_platform(platform):
       known_platforms = sorted(xb.known_platforms())
@@ -1091,7 +1104,7 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     # TODO(phawkins): fix up users to specify either "cuda" or "rocm" and remove
     # this expansion.
     for p in xb.expand_platform_alias(platform):
-      _platform_specific_lowerings[p][prim] = LoweringRuleEntry(rule, inline)
+      _platform_specific_lowerings[p][prim] = LoweringRuleEntry(rule, inline_mode)
 
 
 ir_tree_registry = pytree.PyTreeRegistry(
@@ -2413,14 +2426,19 @@ def _emit_cached_call(
 
   flat_args, _ = ir_tree_registry.flatten(
       dim_var_values + tokens_in_args + const_arg_values + args)
-  if cache_entry.inline:
+  if cache_entry.inline == core.Inline.JAX_LATE:
     outs = jax_mlir_ext.inlined_func_call(cache_entry.func.operation, flat_args)
   else:
-    outs = func_dialect.CallOp(
+    call = func_dialect.CallOp(
         cache_entry.flat_output_types,
         ir.FlatSymbolRefAttr.get(cache_entry.func.sym_name.value),
-        flat_args
-    ).results
+        flat_args,
+    )
+    if cache_entry.inline != core.Inline.AUTO:
+      call.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
+          {"inlineable": ir.StringAttr.get(cache_entry.inline.value)}
+      )
+    outs = call.results
   out_nodes = cache_entry.output_treedef.unflatten(outs)
 
   if not eqn.effects:
@@ -2433,29 +2451,41 @@ def _emit_cached_call(
 def _get_lowering_rules(
     ctx: ModuleContext, primitive: core.Primitive,
     eqn_ctx: core.JaxprEqnContext | None
-) -> tuple[dict[str, LoweringRule], LoweringRule | None, bool]:
+) -> tuple[dict[str, LoweringRule], LoweringRule | None, core.Inline]:
   override_rule = _get_override_lowering_rule(ctx, primitive)
   # See lower_per_platform for meaning of `platform_rules` and `default_rule`
   platform_rules: dict[str, LoweringRule] = {}
   default_rule: LoweringRule | None = None
-  inline = True  # Should calls to this lowering rule be inlined?
+  platforms = _platforms_for_eqn_ctx(eqn_ctx) or ctx.platforms
 
   if override_rule is not None:
     default_rule = override_rule
     assert not isinstance(default_rule, LoweringRuleEntry)
+    return platform_rules, default_rule, core.Inline.JAX_LATE
+
+  inlines: set[core.Inline] = set()
+  if primitive in _lowerings:
+    default_entry = _lowerings[primitive]
+    default_rule = default_entry.rule
+    assert not isinstance(default_rule, LoweringRuleEntry)
   else:
-    # First the platform-specific rules
-    for p in _platforms_for_eqn_ctx(eqn_ctx) or ctx.platforms:
-      if primitive in _platform_specific_lowerings[p]:
-        r = _platform_specific_lowerings[p][primitive]
-        platform_rules[p] = r.rule
-        inline = inline and r.inline
-    # Now the default rule
-    if primitive in _lowerings:
-      r = _lowerings[primitive]
-      default_rule = r.rule
-      assert not isinstance(default_rule, LoweringRuleEntry)
-      inline = inline and r.inline
+    default_entry = None
+
+  for p in platforms:
+    entry = _platform_specific_lowerings[p].get(primitive)
+    if entry is not None:
+      platform_rules[p] = entry.rule
+    else:
+      entry = default_entry
+    if entry is not None:
+      inlines.add(entry.inline)
+
+  if not inlines:
+    inline = core.Inline.JAX_LATE
+  elif len(inlines) == 1:
+    (inline,) = inlines
+  else:
+    inline = core.Inline.AUTO
 
   return platform_rules, default_rule, inline
 
@@ -2468,7 +2498,7 @@ def _emit_lowering_rule_as_fun(
     ordered_effects: Sequence[core.Effect],
     avals_in: Sequence[core.AbstractValue],
     avals_out: Sequence[core.AbstractValue],
-    inline: bool,
+    inline: core.Inline,
     **params,
 ) -> LoweringCacheValue:
   """Emits the contents of a lowering rule as a private function."""
@@ -2489,7 +2519,7 @@ def _emit_lowering_rule_as_fun(
   flat_input_types, input_treedef = ir_tree_registry.flatten(input_types)
   flat_output_types, output_treedef = ir_tree_registry.flatten(output_types)
   ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
-  if inline:
+  if inline == core.Inline.JAX_LATE:
     func_op = func_dialect.FuncOp(primitive.name, ftype, ip=False)
   else:
     func_op = func_dialect.FuncOp(primitive.name, ftype, ip=ctx.ip)
