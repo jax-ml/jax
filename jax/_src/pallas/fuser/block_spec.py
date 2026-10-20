@@ -2797,10 +2797,11 @@ def _call_jaxpr_eval_rule(
     ctx: KernelEvalContext,
     *args,
     jaxpr: core.Jaxpr,
+    num_consts: int = 0,
     **kwargs,
 ):
   del kwargs
-  if jaxpr.consts:
+  if jaxpr.consts or num_consts:
     raise NotImplementedError(f'{ctx.prim.name} with consts not supported yet')
   out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
   in_tree = tree_util.tree_structure((tuple(jaxpr.invars), {}))
@@ -2846,10 +2847,11 @@ def _call_jaxpr_pull_block_spec_rule(
     out_block_transforms,
     *,
     jaxpr: core.Jaxpr,
+    num_consts: int = 0,
     **kwargs,
 ):
   del kwargs
-  if jaxpr.consts:
+  if jaxpr.consts or num_consts:
     raise NotImplementedError(f'{ctx.prim.name} with consts not supported yet')
   # ``SCALAR_PREFETCH`` vars must depend only on ``constvars``, but a call
   # receives all inputs via ``invars``, so collapse live usage to ``REGULAR``.
@@ -2886,7 +2888,10 @@ def _custom_call_hi_primitive_pull_block_spec_rule(
 ):
   if isinstance(_prim, (hijax.CustomVJPTraced, hijax.CustomJVPTraced)):
     return _call_jaxpr_pull_block_spec_rule(
-        ctx, out_block_transforms, jaxpr=_prim.traced.jaxpr
+        ctx,
+        out_block_transforms,
+        jaxpr=_prim.traced.jaxpr,
+        num_consts=len(_prim.in_avals[0]),
     )
   return _prim.pull_block_spec_rule(ctx, out_block_transforms)
 
@@ -2896,7 +2901,12 @@ def _custom_call_hi_primitive_eval_rule(
     ctx: KernelEvalContext, *args, _prim
 ):
   if isinstance(_prim, (hijax.CustomVJPTraced, hijax.CustomJVPTraced)):
-    return _call_jaxpr_eval_rule(ctx, *args, jaxpr=_prim.traced.jaxpr)
+    return _call_jaxpr_eval_rule(
+        ctx,
+        *args,
+        jaxpr=_prim.traced.jaxpr,
+        num_consts=len(_prim.in_avals[0]),
+    )
   return jax.tree.leaves(_prim.block_eval_rule(ctx, *args))
 
 
@@ -3353,9 +3363,11 @@ def _call_jaxpr_push_block_spec_rule(
     ctx: PushRuleContext,
     *block_specs,
     jaxpr: core.Jaxpr,
+    num_consts: int = 0,
     **_,
 ):
-  assert not jaxpr.consts
+  if jaxpr.consts or num_consts:
+    raise NotImplementedError(f'{ctx.prim.name} with consts not supported yet')
   return _push_block_spec_jaxpr(
       jaxpr,
       *block_specs,
@@ -3371,9 +3383,11 @@ def _custom_derivative_push_block_spec_rule(
     ctx: PushRuleContext,
     *block_specs,
     call_jaxpr: core.Jaxpr,
-    **_,
+    **kwargs,
 ):
-  return _call_jaxpr_push_block_spec_rule(ctx, *block_specs, jaxpr=call_jaxpr)
+  return _call_jaxpr_push_block_spec_rule(
+      ctx, *block_specs, jaxpr=call_jaxpr, **kwargs
+  )
 
 
 @register_push_block_spec_rule(hijax.call_hi_primitive_p)
@@ -3382,7 +3396,10 @@ def _custom_call_hi_primitive_push_block_spec_rule(
 ):
   if isinstance(_prim, (hijax.CustomVJPTraced, hijax.CustomJVPTraced)):
     return _call_jaxpr_push_block_spec_rule(
-        ctx, *block_specs, jaxpr=_prim.traced.jaxpr
+        ctx,
+        *block_specs,
+        jaxpr=_prim.traced.jaxpr,
+        num_consts=len(_prim.in_avals[0]),
     )
   return _prim.push_block_spec_rule(ctx, block_specs)
 

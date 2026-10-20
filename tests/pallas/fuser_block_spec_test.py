@@ -2760,6 +2760,36 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
   @parameterized.parameters(
       'jit', 'custom_jvp', 'custom_jvp3', 'custom_vjp', 'custom_vjp3'
   )
+  def test_higher_order_with_consts_raises(self, wrapper):
+    c = jnp.ones((512, 512), dtype=jnp.float32)
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+
+    with (
+        config.custom_jvp3(wrapper == 'custom_jvp3'),
+        config.custom_vjp3(wrapper == 'custom_vjp3'),
+    ):
+      if wrapper == 'jit':
+        fn = jax.jit(lambda x: x + c)
+      elif wrapper in ('custom_jvp', 'custom_jvp3'):
+        fn = jax.custom_jvp(lambda x: x + c)
+        fn.defjvp(lambda p, t: (fn(*p), *t))
+      elif wrapper in ('custom_vjp', 'custom_vjp3'):
+        fn = jax.custom_vjp(lambda x: x + c)
+        fn.defvjp(lambda x: (fn(x), ()), lambda _, g: (g,))
+
+      with self.assertRaisesRegex(
+          NotImplementedError, 'with consts not supported yet'
+      ):
+        block_spec_lib.pull_block_spec(fn, block_spec, grid_len=2)(in_type)
+      with self.assertRaisesRegex(
+          NotImplementedError, 'with consts not supported yet'
+      ):
+        block_spec_lib.push_block_spec(fn, block_spec)(in_type)
+
+  @parameterized.parameters(
+      'jit', 'custom_jvp', 'custom_jvp3', 'custom_vjp', 'custom_vjp3'
+  )
   def test_higher_order_pull_and_eval_usage(self, wrapper):
     def dus_pair(operand, update):
       dus = jax.lax.dynamic_update_slice(operand + 1.0, update, (0, 0))
