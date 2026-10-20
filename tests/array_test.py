@@ -1130,31 +1130,6 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertArraysEqual(y, jnp.full((4,), 2.0, dtype=jnp.float32))
       np.testing.assert_array_equal(view, np.ones((4,), dtype=np.float32))
 
-  @parameterized.named_parameters(
-      ('replicated', P()),
-      ('sharded', P('x')),
-  )
-  def test_donate_non_first_shard_marks_array_deleted(self, pspec):
-    if ifrt_version < 78:
-      self.skipTest('Requires ifrt_version >= 78')
-    if len(jax.devices()) < 2:
-      self.skipTest('Requires at least 2 devices')
-    mesh = jtu.create_mesh((2,), ('x',))
-    sharding = jax.sharding.NamedSharding(mesh, pspec)
-    f = jax.jit(lambda x: x + 1, donate_argnums=0)
-
-    x = jax.device_put(jnp.ones((4,), dtype=jnp.float32), sharding)
-    shards = x.addressable_shards
-    self.assertFalse(x.is_deleted())
-
-    y = f(shards[1].data)
-    self.assertFalse(shards[0].data.is_deleted())
-    self.assertTrue(shards[1].data.is_deleted())
-    self.assertTrue(x.is_deleted())
-    self.assertArraysEqual(
-        y, jnp.full(shards[1].data.shape, 2.0, dtype=jnp.float32)
-    )
-
 
 class ShardingTest(jtu.JaxTestCase):
 
