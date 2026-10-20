@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
