@@ -1,0 +1,295 @@
+# XLA commit 3af77b5776fbc41a65d54876cc837bdc57540005: [XLA:CPU] Generate cpp-gen intrinsic IR on Windows with clang-cl
+# https://github.com/openxla/xla/commit/3af77b5776fbc41a65d54876cc837bdc57540005
+diff --git a/build_tools/ci/build.py b/build_tools/ci/build.py
+index dc4310eca8b19c..375f90386db99c 100755
+--- a/build_tools/ci/build.py
++++ b/build_tools/ci/build.py
+@@ -474,8 +474,6 @@ Build(
+         "-//xla/backends/gpu/...",
+         "-//xla/codegen/emitters/tests/...",
+         "-//xla/service/gpu/...",
+-        # eigen is not windows compatible
+-        "-//xla/codegen/intrinsic/cpp:eigen_unary_test",
+     ),
+     build_tag_filters=windows_x86_tag_filter,
+     test_tag_filters=windows_x86_tag_filter,
+diff --git a/build_tools/ci/golden_commands.txt b/build_tools/ci/golden_commands.txt
+index ec31f8dd4346fc..471d1d8627494f 100644
+--- a/build_tools/ci/golden_commands.txt
++++ b/build_tools/ci/golden_commands.txt
+@@ -91,5 +91,5 @@ mkdir -p /Volumes/BuildData/bazel_output
+ bazel test --build_tag_filters=-no_oss,-gpu,-no_mac,-mac_excluded,-requires-gpu-nvidia,-requires-gpu-amd,-requires-gpu-intel --test_tag_filters=-no_oss,-gpu,-no_mac,-mac_excluded,-requires-gpu-nvidia,-requires-gpu-amd,-requires-gpu-intel --config=nonccl --color=yes --test_output=errors --verbose_failures --keep_going --nobuild_tests_only --profile=profile.json.gz --flaky_test_attempts=3 --jobs=150 --bes_upload_mode=fully_async --macos_minimum_os=10.15 --test_tmpdir=/Volumes/BuildData/bazel_output --//xla/tsl:ci_build -- //xla/... -//xla/python_api/... -//xla/python/... -//xla/service/gpu/...
+ # END BuildType.XLA_MACOS_X86_CPU_KOKORO
+ # BEGIN BuildType.XLA_WINDOWS_X86_CPU_GITHUB_ACTIONS
+-bazel --output_user_root=C:/x build --build_tag_filters=-no_windows,-no_oss,-gpu,-tpu,-requires-gpu-nvidia,-requires-gpu-amd,-requires-gpu-intel --test_tag_filters=-no_windows,-no_oss,-gpu,-tpu,-requires-gpu-nvidia,-requires-gpu-amd,-requires-gpu-intel --config=warnings --config=nonccl --config=rbe_xla_windows_x86_cpu_2022 --color=yes --test_output=errors --verbose_failures --keep_going --nobuild_tests_only --profile=profile.json.gz --flaky_test_attempts=3 --jobs=150 --bes_upload_mode=fully_async --//xla/tsl:ci_build -- //xla/... //build_tools/... @tsl//tsl/... -//xla/tpu/... -//xla/backends/cpu/collectives:gloo_collectives_test -//xla/backends/cpu/collectives:mpi_collectives -//xla/backends/cpu/collectives:mpi_communicator -//xla/python/transfer/... -//xla/backends/profiler/subprocess:subprocess_profiling_session -//xla/backends/profiler/subprocess:subprocess_profiling_session_test -//xla/backends/profiler/subprocess:subprocess_registry -//xla/backends/profiler/subprocess:subprocess_registry_test -//xla/backends/cpu/runtime/ynnpack:ynn_fusion_thunk -//xla/backends/cpu/runtime/ynnpack:ynn_interop -//xla/backends/cpu/runtime/ynnpack:ynn_threadpool -//xla/backends/gpu/... -//xla/codegen/emitters/tests/... -//xla/service/gpu/... -//xla/codegen/intrinsic/cpp:eigen_unary_test
++bazel --output_user_root=C:/x build --build_tag_filters=-no_windows,-no_oss,-gpu,-tpu,-requires-gpu-nvidia,-requires-gpu-amd,-requires-gpu-intel --test_tag_filters=-no_windows,-no_oss,-gpu,-tpu,-requires-gpu-nvidia,-requires-gpu-amd,-requires-gpu-intel --config=warnings --config=nonccl --config=rbe_xla_windows_x86_cpu_2022 --color=yes --test_output=errors --verbose_failures --keep_going --nobuild_tests_only --profile=profile.json.gz --flaky_test_attempts=3 --jobs=150 --bes_upload_mode=fully_async --//xla/tsl:ci_build -- //xla/... //build_tools/... @tsl//tsl/... -//xla/tpu/... -//xla/backends/cpu/collectives:gloo_collectives_test -//xla/backends/cpu/collectives:mpi_collectives -//xla/backends/cpu/collectives:mpi_communicator -//xla/python/transfer/... -//xla/backends/profiler/subprocess:subprocess_profiling_session -//xla/backends/profiler/subprocess:subprocess_profiling_session_test -//xla/backends/profiler/subprocess:subprocess_registry -//xla/backends/profiler/subprocess:subprocess_registry_test -//xla/backends/cpu/runtime/ynnpack:ynn_fusion_thunk -//xla/backends/cpu/runtime/ynnpack:ynn_interop -//xla/backends/cpu/runtime/ynnpack:ynn_threadpool -//xla/backends/gpu/... -//xla/codegen/emitters/tests/... -//xla/service/gpu/...
+ # END BuildType.XLA_WINDOWS_X86_CPU_GITHUB_ACTIONS
+diff --git a/xla/codegen/intrinsic/cpp/BUILD b/xla/codegen/intrinsic/cpp/BUILD
+index f0ef230b0eb3d6..cf16e8ff8588f9 100644
+--- a/xla/codegen/intrinsic/cpp/BUILD
++++ b/xla/codegen/intrinsic/cpp/BUILD
+@@ -208,6 +208,7 @@ xla_cc_test(
+         "@com_google_absl//absl/strings:string_view",
+         "@com_google_googletest//:gtest_main",
+         "@llvm-project//llvm:Support",
++        "@llvm-project//llvm:TargetParser",
+         "@llvm-project//llvm:ir_headers",
+         "@tsl//tsl/platform:denormal",
+     ],
+diff --git a/xla/codegen/intrinsic/cpp/cc_to_llvm_ir.bzl b/xla/codegen/intrinsic/cpp/cc_to_llvm_ir.bzl
+index 89bf66f9cb02ab..e823a4c3cc7cb4 100644
+--- a/xla/codegen/intrinsic/cpp/cc_to_llvm_ir.bzl
++++ b/xla/codegen/intrinsic/cpp/cc_to_llvm_ir.bzl
+@@ -20,13 +20,40 @@ This rule is critical for generating LLVM IR bitcode that is embedded into the X
+ It uses standard cc_library with clang flags to generate IR, then extracts it.
+ """
+ 
+-load("@bazel_skylib//lib:selects.bzl", "selects")
+ load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+ load("//xla/tsl:package_groups.bzl", "DEFAULT_LOAD_VISIBILITY")
+ load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
+ 
+ visibility(DEFAULT_LOAD_VISIBILITY)
+ 
++def _to_clang_cl_flags(flags):
++    """Translates clang-style flags into the form clang-cl accepts.
++
++    clang-cl silently ignores (or rejects under -Werror) most GNU-style flags such
++    as -emit-llvm, so they must be forwarded to the clang driver with /clang:.
++
++    Args:
++      flags: A list of clang-style flags.
++
++    Returns:
++      The flags in a form accepted by clang-cl.
++    """
++    out = []
++    for flag in flags:
++        if flag == "-emit-llvm":
++            # With -emit-llvm clang-cl ignores /Fo and writes <src>.bc to the working
++            # directory, where Bazel cannot find it. -flto instead makes the declared
++            # .obj itself contain LLVM bitcode.
++            out.append("/clang:-flto")
++        elif flag.startswith("-D") or flag.startswith("/"):
++            out.append(flag)
++        elif flag.startswith("-std="):
++            # The Windows toolchain already passes /std:c++17.
++            continue
++        else:
++            out.append("/clang:" + flag)
++    return out
++
+ def to_camel_case(s):
+     """Converts a snake_case or kebab-case string to CamelCase."""
+     return "".join([p.capitalize() for p in s.replace("-", "_").split("_")])
+@@ -113,7 +140,7 @@ def cc_ir_header(name, src, deps = [], copts = [], **kwargs):
+     out_o = name + ".o"
+     out_header = name + ".h"
+ 
+-    compile_flags = [
++    clang_flags = [
+         "-emit-llvm",
+         "-O3",
+         "-DNDEBUG",
+@@ -130,7 +157,21 @@ def cc_ir_header(name, src, deps = [], copts = [], **kwargs):
+         "-fno-profile-generate",
+         "-fno-profile-arcs",
+         "-fno-test-coverage",
+-    ] + copts
++    ]
++    list_copts = copts if type(copts) == "list" else []
++    select_copts = copts if type(copts) != "list" else []
++
++    compile_flags = select({
++        # /GS- and /EHs- /EHc- (which override the toolchain's /EHsc) keep MSVC
++        # runtime hooks (stack-protector cookie, __CxxFrameHandler3 personality)
++        # out of the IR, matching the ELF output.
++        "//xla/tsl:windows": [
++            "/GS-",
++            "/EHs-",
++            "/EHc-",
++        ] + _to_clang_cl_flags(clang_flags + list_copts),
++        "//conditions:default": clang_flags + list_copts,
++    }) + select_copts
+ 
+     # Disabled features to avoid instrumentations in the IR. ALL sanitizers must be disabled.
+     # AND disable thin archives to ensure we have actual content to extract.
+@@ -178,41 +219,18 @@ def cc_ir_header(name, src, deps = [], copts = [], **kwargs):
+     variable_name = "k{}Ir".format(to_camel_case(base_name))
+     embed_bitcode_tool = "//xla/codegen/intrinsic/cpp:embed_bitcode"
+ 
+-    # Generate an empty bitcode file for Windows.
+-    native.genrule(
+-        name = name + "_empty_bc",
+-        outs = [name + "_empty.bc"],
+-        cmd = "touch $@",
+-        tags = ["manual"],
+-        **common_attrs
+-    )
+-
+-    if "empty_bitcode" not in native.existing_rules():
+-        selects.config_setting_group(
+-            name = "empty_bitcode",
+-            match_any = [
+-                "//xla/tsl:windows",
+-            ],
+-        )
+-
+     native.genrule(
+         name = name + "_gen_object_and_header",
+-        srcs = select({
+-            "empty_bitcode": [":" + name + "_empty_bc"],
+-            "//conditions:default": [":" + name + "_extract_bc"],
+-        }),
++        srcs = [":" + name + "_extract_bc"],
+         outs = [out_o, out_header],
+         tools = [embed_bitcode_tool],
+-        cmd = "$(location {}) $< $(location {}) $(location {}) {} {}".format(
++        cmd = "$(location {}) $< $(location {}) $(location {}) {} {} --fail_if_no_bitcode".format(
+             embed_bitcode_tool,
+             out_o,
+             out_header,
+             variable_name,
+             namespace,
+-        ) + select({
+-            "empty_bitcode": "",
+-            "//conditions:default": " --fail_if_no_bitcode",
+-        }),
++        ),
+         tags = ["manual"],
+         **common_attrs
+     )
+@@ -220,10 +238,7 @@ def cc_ir_header(name, src, deps = [], copts = [], **kwargs):
+     # Exposed library
+     cc_library(
+         name = name,
+-        srcs = select({
+-            "empty_bitcode": [],
+-            "//conditions:default": [":" + out_o],
+-        }),
++        srcs = [":" + out_o],
+         hdrs = [":" + out_header],
+         deps = [
+             "//xla/util:embedded_constant_buffers",
+diff --git a/xla/codegen/intrinsic/cpp/cpp_gen_intrinsics.cc b/xla/codegen/intrinsic/cpp/cpp_gen_intrinsics.cc
+index af0108bb6eb0f9..fcb405966a3fd9 100644
+--- a/xla/codegen/intrinsic/cpp/cpp_gen_intrinsics.cc
++++ b/xla/codegen/intrinsic/cpp/cpp_gen_intrinsics.cc
+@@ -88,9 +88,7 @@ bool AreEigenIntrinsicsAvailable(absl::string_view features) {
+   return !GetCppGenIrString(options).empty();
+ }
+ 
+-bool AreCppGenIntrinsicsAvailable() {
+-  return !GetCppGenIrString(intrinsics::IntrinsicOptions()).empty();
+-}
++bool AreCppGenIntrinsicsAvailable() { return !::llvm_ir::kExpm132LlIr.empty(); }
+ 
+ std::vector<CppGenIntrinsicLibrary> GetCppGenLibraries(
+     const intrinsics::IntrinsicOptions& options) {
+diff --git a/xla/codegen/intrinsic/cpp/cpp_gen_intrinsics_test.cc b/xla/codegen/intrinsic/cpp/cpp_gen_intrinsics_test.cc
+index 22e7c0a499cf6d..c45475bd3da9b1 100644
+--- a/xla/codegen/intrinsic/cpp/cpp_gen_intrinsics_test.cc
++++ b/xla/codegen/intrinsic/cpp/cpp_gen_intrinsics_test.cc
+@@ -42,6 +42,7 @@ limitations under the License.
+ #include "llvm/Support/Casting.h"
+ #include "llvm/Support/TypeSize.h"
+ #include "llvm/Support/raw_ostream.h"
++#include "llvm/TargetParser/Triple.h"
+ #include "tsl/platform/denormal.h"
+ #include "xla/codegen/intrinsic/cpp/eigen_unary_16_ll.h"
+ #include "xla/codegen/intrinsic/simple_jit_runner.h"
+@@ -176,17 +177,20 @@ void ExpectAtan16NearStd(const std::vector<T>& xs) {
+   }
+ }
+ 
+-// x86-64 without AVX-512 and AArch64 pass 512-bit vectors indirectly, so these
+-// go through CreateDirectAdapter.
++// x86-64 SysV without AVX-512 and AArch64 pass 512-bit vectors indirectly, so
++// these go through CreateDirectAdapter. The Windows x64 ABI that clang-cl emits
++// IR for passes them by value, so there is nothing to adapt there.
+ TEST(CppGenIntrinsicsTest, WideAtanIsAdaptedFromLibraryIr) {
+   {
+     llvm::LLVMContext context;
+     std::unique_ptr<llvm::Module> module =
+         ParseEmbeddedBitcode(context, llvm_ir::kEigenUnary16LlIr);
+-    for (const char* name : {"xla.atan.v16f32", "xla.atan.v8f64"}) {
+-      EXPECT_TRUE(
+-          module->getFunction(name)->getArg(0)->getType()->isPointerTy())
+-          << name;
++    if (!module->getTargetTriple().isOSWindows()) {
++      for (const char* name : {"xla.atan.v16f32", "xla.atan.v8f64"}) {
++        EXPECT_TRUE(
++            module->getFunction(name)->getArg(0)->getType()->isPointerTy())
++            << name;
++      }
+     }
+   }
+   ExpectAtan16NearStd<float, 16>({0.0f, 0.5f, -1.0f, 1.5f, -2.0f, 3.0f, 0.1f,
+@@ -195,6 +199,11 @@ TEST(CppGenIntrinsicsTest, WideAtanIsAdaptedFromLibraryIr) {
+   ExpectAtan16NearStd<double, 8>({0.0, 0.5, -1.0, 1.5, -2.0, 3.0, 1e-4, -1e3});
+ }
+ 
++TEST(CppGenIntrinsicsTest, EigenIntrinsicsAreAvailable) {
++  EXPECT_TRUE(AreEigenIntrinsicsAvailable());
++  EXPECT_TRUE(AreCppGenIntrinsicsAvailable());
++}
++
+ TEST(CppGenIntrinsicsTest, AtanV2F64FromLibraryIr) {
+   ExpectAtan16NearStd<double, 2>({0.5, -3.0, 1.0, -0.1, 1e-4, 1e3});
+ }
+diff --git a/xla/codegen/intrinsic/cpp/eigen_unary_test.cc b/xla/codegen/intrinsic/cpp/eigen_unary_test.cc
+index 81004b89e9136c..62e1850e333ac4 100644
+--- a/xla/codegen/intrinsic/cpp/eigen_unary_test.cc
++++ b/xla/codegen/intrinsic/cpp/eigen_unary_test.cc
+@@ -37,7 +37,9 @@ limitations under the License.
+ 
+ namespace xla::codegen {
+ namespace {
++using ::testing::AnyOf;
+ using ::testing::ContainsRegex;
++using ::testing::HasSubstr;
+ using ::testing::Not;
+ using ::xla::codegen::intrinsic::NearUlps;
+ 
+@@ -208,11 +210,15 @@ TEST(EigenUnaryTest, AtanIsVectorized16) {
+   std::string v2f64_ir = GetFunctionIr(*module, "xla.atan.v2f64");
+   std::string v8f32_ir = GetFunctionIr(*module, "xla.atan.v8f32");
+ 
+-  EXPECT_THAT(v4f32_ir, ContainsRegex("(fmuladd\\.v4f32|fmul <4 x float>)"));
++  // gtest's Windows regex engine has no alternation, so use AnyOf.
++  EXPECT_THAT(v4f32_ir,
++              AnyOf(HasSubstr("fmuladd.v4f32"), HasSubstr("fmul <4 x float>")));
+   EXPECT_THAT(v4f32_ir, Not(ContainsRegex("llvm.atan")));
+-  EXPECT_THAT(v2f64_ir, ContainsRegex("(fmuladd\\.v2f64|fmul <2 x double>)"));
++  EXPECT_THAT(v2f64_ir, AnyOf(HasSubstr("fmuladd.v2f64"),
++                              HasSubstr("fmul <2 x double>")));
+   EXPECT_THAT(v2f64_ir, Not(ContainsRegex("@atan")));
+-  EXPECT_THAT(v8f32_ir, ContainsRegex("(fmuladd\\.v4f32|fmul <4 x float>)"));
++  EXPECT_THAT(v8f32_ir,
++              AnyOf(HasSubstr("fmuladd.v4f32"), HasSubstr("fmul <4 x float>")));
+   EXPECT_THAT(v8f32_ir, Not(ContainsRegex("llvm.atan")));
+ }
+ 
+diff --git a/xla/codegen/intrinsic/cpp/expm1.cc b/xla/codegen/intrinsic/cpp/expm1.cc
+index 8233375811d65b..756277964ec283 100644
+--- a/xla/codegen/intrinsic/cpp/expm1.cc
++++ b/xla/codegen/intrinsic/cpp/expm1.cc
+@@ -13,9 +13,8 @@ See the License for the specific language governing permissions and
+ limitations under the License.
+ ==============================================================================*/
+ 
+-#if defined(__FLT16_MANT_DIG__) && defined(__has_attribute) &&    \
+-    __has_attribute(ext_vector_type) && defined(__has_builtin) && \
+-    __has_builtin(__builtin_vectorelements)
++#if defined(__has_attribute) && __has_attribute(ext_vector_type) && \
++    defined(__has_builtin) && __has_builtin(__builtin_vectorelements)
+ 
+ #include "xla/codegen/intrinsic/cpp/expm1.h"
+ 
+@@ -370,4 +369,5 @@ Vec4d expm1_v4f64(Vec4d x) { return Expm1F64Impl(x); }
+ Vec8d expm1_v8f64(Vec8d x) { return Expm1F64Impl(x); }
+ 
+ }  // namespace xla::codegen
+-#endif  // defined(__FLT16_MANT_DIG__) && defined(__has_attribute) && ...
++#endif  // defined(__has_attribute) && __has_attribute(ext_vector_type) &&
++        // defined(__has_builtin) && __has_builtin(__builtin_vectorelements)
