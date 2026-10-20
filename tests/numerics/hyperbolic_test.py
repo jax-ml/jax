@@ -150,20 +150,30 @@ class CoshTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_cosh_accuracy(self, dtype):
-    bounds = [
-        ("cpu", {f16: 1.0, f32: 25.0, f64: 496.0}),
-        ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
-        (TPU_EUPV1, {f16: 1.0, f32: 93.5}),
-        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 99.0}),
-        ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 59.0}),
-        ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 59.5}),
-    ]
-    # Ignore x = +-89.415985: near the float32 overflow threshold, where the
-    # true value is finite (~3.40282e+38) but XLA's lowering on CPU/TPU computes
-    # 0.5 * exp(x), where exp(x) overflows float32 to inf.
-    ignore_inputs = [
-        (["cpu", "tpu"], {f32: [0x42B2D4FC, 0xC2B2D4FC]}),
-    ]
+    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.51"):
+      self.skipTest("Requires libtpu >= 0.0.51")
+    if jaxlib_extension_version >= 511:
+      bounds = [
+          ("cpu", {f16: 1.0, f32: 1.0, f64: 2.0}),
+          ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
+          ("tpu", {f16: 1.0, f32: 1.0}),
+      ]
+      ignore_inputs = []
+    else:
+      bounds = [
+          ("cpu", {f16: 1.0, f32: 25.0, f64: 496.0}),
+          ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
+          (TPU_EUPV1, {f16: 1.0, f32: 93.5}),
+          ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 99.0}),
+          ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 59.0}),
+          ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 59.5}),
+      ]
+      # Ignore x = +-89.415985: near the float32 overflow threshold, where the
+      # true value is finite (~3.40282e+38) but XLA's lowering on CPU/TPU
+      # computes 0.5 * exp(x), where exp(x) overflows float32 to inf.
+      ignore_inputs = [
+          (["cpu", "tpu"], {f32: [0x42B2D4FC, 0xC2B2D4FC]}),
+      ]
     util.check_unary_precision(
         self,
         jnp.cosh,
