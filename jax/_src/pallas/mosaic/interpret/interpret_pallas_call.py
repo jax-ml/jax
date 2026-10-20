@@ -245,7 +245,11 @@ def _barrier(token, device_id):
   del device_id
   shared_memory = _get_shared_memory()
   if shared_memory.num_devices > 1:
-    shared_memory.barrier.wait()
+    try:
+      shared_memory.barrier.wait()
+    except threading.BrokenBarrierError:
+      shared_memory.check_failed()
+      raise
   return token
 
 
