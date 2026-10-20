@@ -306,6 +306,9 @@ def _mosaic_gpu_lowering_rule(
           launch_context.uses_collective_metadata(module)
       ),
   )
+  # TODO(patrios): Remove once the minimum jaxlib version is > 0.12.0.
+  if lib.version <= (0, 12, 0):
+    backend_config["use_custom_barrier"] = ir.BoolAttr.get(False)
   if cost_estimate is not None:
     backend_config["cost_estimate_json"] = ir.StringAttr.get(
         json.dumps(dataclasses.asdict(cost_estimate))
