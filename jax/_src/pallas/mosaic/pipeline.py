@@ -51,7 +51,6 @@ from jax._src.pallas.mosaic import tpu_info
 from jax._src.pallas.mosaic.lowering import (
     _transform_ref,
     _uncacheable_primitives,
-    ir_constant,
     jaxpr_subcomp,
     register_lowering_rule,
 )
@@ -2176,6 +2175,15 @@ def _zip_grid(dynamic_grid_spec, static_grid_spec):
   return tuple(next(dynamic_it) if pallas_core.is_dynamic_dim(d) else d
               for d in static_grid_spec)
 
+
+def _jaxpr_has_primitive(
+    jaxpr: jax_core.Jaxpr, prim: jax_core.Primitive
+) -> bool:
+  return any(eqn.primitive is prim for eqn in jaxpr.eqns) or any(
+      _jaxpr_has_primitive(sub, prim) for sub in jax_core.subjaxprs(jaxpr)
+  )
+
+
 def emit_pipeline(
     body,
     *,
@@ -2266,18 +2274,40 @@ def emit_pipeline(
         grid=grid, in_specs=in_specs_flat, out_specs=out_specs_flat)
     static_grid_spec, dynamic_grid_specs = (
         pallas_core.unzip_dynamic_grid_bounds(grid_spec))
+    static_grid = static_grid_spec.grid
+    # static_grid_spec is a fresh copy from unzip_dynamic_grid_bounds;
+    # GridSpec's custom __init__ is incompatible with dataclasses.replace.
+    if (num_cores or 1) > 1:
+      if len(dimension_semantics) != len(static_grid):
+        raise ValueError("dimension_semantics must be the same length as grid.")
+      static_grid_spec.grid = tuple(  # pyrefly: ignore[bad-assignment]
+          None if sem == PARALLEL else d
+          for d, sem in zip(static_grid, dimension_semantics, strict=True)
+      )
 
-    # TODO(rdyro): Move this method to pallas_core or vendor it here.
-    kernel_args, grid_mapping = pallas_core.get_grid_mapping(
-        static_grid_spec,
-        in_avals,
-        tree_util.tree_structure(tuple(in_refs_flat)),
-        [""] * len(in_avals),
-        out_avals,
-        tree_util.tree_structure(tuple(out_refs_flat)),
-        [""] * len(out_avals),
-        allow_captured_consts=True,
-    )
+    # Mask any enclosing grid_env so index_map tracing falls through to the
+    # inner pipeline's axis_frame() with deferred dynamic grid bounds.
+    with pallas_core.grid_env(()):
+      # TODO(rdyro): Move this method to pallas_core or vendor it here.
+      kernel_args, grid_mapping = pallas_core.get_grid_mapping(
+          static_grid_spec,
+          in_avals,
+          tree_util.tree_structure(tuple(in_refs_flat)),
+          [""] * len(in_avals),
+          out_avals,
+          tree_util.tree_structure(tuple(out_refs_flat)),
+          [""] * len(out_avals),
+          allow_captured_consts=True,
+      )
+    grid_mapping = grid_mapping.replace(grid=static_grid)
+    for bm in grid_mapping.block_mappings:
+      if _jaxpr_has_primitive(
+          bm.index_map_jaxpr.jaxpr, primitives.program_id_p
+      ):
+        raise ValueError(
+            "pl.program_id() is not supported inside emit_pipeline BlockSpec"
+            " index_map; use the index_map arguments instead."
+        )
     # Trace the kernel body to a jaxpr.
     filtered_args = (*in_refs, *out_refs)
     _, refs_tree = tracing_registry.flatten(
@@ -2290,18 +2320,29 @@ def emit_pipeline(
     assert all(
         not isinstance(x, state.TransformedRef) for x in flat_kernel_args)
 
-    if _explicit_indices:
-      scalar_aval: Any = jax_core.ShapedArray((), jnp.int32)
-      ps_aval = PipelineStep(
-          index=tuple([scalar_aval] * len(grid)),
-          local_index=scalar_aval,
-      )
-      kernel_args = (ps_aval, *kernel_args)
+    scalar_aval: Any = jax_core.ShapedArray((), jnp.int32)
+    ps_aval = PipelineStep(
+        index=tuple([scalar_aval] * len(grid)),
+        local_index=scalar_aval,
+    )
+    grid_sizes_aval = tuple([scalar_aval] * len(grid))
+    kernel_args = ((ps_aval, grid_sizes_aval), *kernel_args)
 
-    # Trace with the global grid mapping to let the body resolve the mesh axes.
-    with grid_mapping.trace_env():
+    def _trace_body(ps_and_grid, *b_args):
+      ps, grid_sizes = ps_and_grid
+      if _explicit_indices:
+        return body(ps, *b_args)
+      with pallas_core.grid_env([
+          pallas_core.GridAxis(idx, d if isinstance(d, int) else size)
+          for idx, size, d in zip(
+              ps.index, grid_sizes, static_grid_spec.grid, strict=True
+          )
+      ]):
+        return body(*b_args)
+
+    with config._check_vma(False):
       body_fun_dbg = api_util.debug_info(
-          "emit_pipeline body", body, kernel_args, {}
+          "emit_pipeline body", _trace_body, kernel_args, {}
       )
       in_avals_ft = ft.flatten(
           (kernel_args, {}),
@@ -2312,7 +2353,7 @@ def emit_pipeline(
       assert all(
           not isinstance(x, state.TransformedRef) for x in in_avals_ft.vals)
       body_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
-          body, in_avals_ft, debug_info=body_fun_dbg
+          _trace_body, in_avals_ft, debug_info=body_fun_dbg
       )
       if out_avals_ft.tree.num_leaves != 0:
         raise ValueError("The emit_pipeline body function must return None.")
@@ -2385,10 +2426,7 @@ def _emit_pipeline_effectful_abstract_eval(
       out_effects.add(ReadEffect(ref_idx))
       out_effects.add(WriteEffect(ref_idx))
 
-  num_ps_leaves = (
-      len(body_jaxpr.invars) - len(flat_refs_idx)
-      if _explicit_indices else 0
-  )
+  num_ps_leaves = len(body_jaxpr.invars) - len(flat_refs_idx)
 
   # Propagate effects from `body_jaxpr`, mapping them to the correct indices in
   # `avals`.
@@ -2437,9 +2475,7 @@ def _pipeline_body_effectful_abstract_eval(
   indices_flat = list(range(len(avals)))
   _, consts_idx, refs_idx = in_tree.unflatten(indices_flat)
   flat_refs_idx, _ = tracing_registry.flatten(refs_idx, is_transformed_ref)
-  num_ps_leaves = (
-      len(jaxpr.invars) - len(flat_refs_idx) if _explicit_indices else 0
-  )
+  num_ps_leaves = len(jaxpr.invars) - len(flat_refs_idx)
   flat_consts_idx, _ = tracing_registry.flatten(consts_idx)
   # Helper to resolve the underlying AbstractRef index in `avals` for any leaf.
   get_ref_idx = lambda x: x.ref if isinstance(x, state.TransformedRef) else x
@@ -2483,7 +2519,7 @@ def _emit_pipeline_physicalize_rule(
 ):
   del ctx
   all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
-  with grid_mapping.trace_env():
+  with config._check_vma(False):
     new_closed = fusible_dtype.physicalize_closed_jaxpr(
         body_jaxpr.with_consts(all_args.body_consts)
     )
@@ -2504,50 +2540,45 @@ fusible_dtype._physicalize_rules[emit_pipeline_p] = (
 
 
 @register_lowering_rule(pipeline_body_p, kernel_types=[*tpu_core.CoreType])
-def _pipeline_body_lowering_rule(
-    ctx, *args_flat, jaxpr, in_tree, _explicit_indices=False, **_):
+def _pipeline_body_lowering_rule(ctx, *args_flat, jaxpr, in_tree, **_):
   # TODO(rdyro): This function is a near duplicate of _jaxpr_call_lowering_rule
   # from sc_lowering.py, we should factor out and unify the two.
   (ps, body_consts, refs) = in_tree.unflatten(args_flat)
   (_, body_const_shapes, refs_shapes) = in_tree.unflatten(
       ctx.block_shapes)
   ps_flat = tree_util.tree_leaves(ps)
-  if _explicit_indices:
-    ps_block_shapes = [()] * len(ps_flat)
-    refs_avals = tuple(var.aval for var in jaxpr.invars[len(ps_flat):])
-  else:
-    ps_block_shapes = []
-    refs_avals = tuple(var.aval for var in jaxpr.invars)
+  ps_block_shapes = [()] * len(ps_flat)
+  refs_avals = tuple(var.aval for var in jaxpr.invars[len(ps_flat) :])
   # manually resolve the transformed refs
   if refs:
     resolved_refs, resolved_ref_shapes = zip(
-        *(_transform_ref(ref, ref_aval, ref_shape)
-          for ref, ref_aval, ref_shape in zip(refs, refs_avals, refs_shapes)))
+        *(
+            _transform_ref(
+                ref,
+                ref_aval,
+                ref_shape,
+                kernel_type=ctx.lowering_context.kernel_type,
+            )
+            for ref, ref_aval, ref_shape in zip(
+                refs, refs_avals, refs_shapes, strict=True
+            )
+        ),
+        strict=True,
+    )
   else:
     resolved_refs, resolved_ref_shapes = (), ()
 
-  user_grid_indices = ctx.lowering_context.user_grid_indices
-  # TODO(rdyro): As a temporary workaround, to support both core mesh axes
-  # (jax.lax.axis_(index|size)) and memory pipeline axes
-  # (pl.(program_id|num_programs)), we append the core grid to the end of the
-  # end of the user grid dimensions. This is error prone (the user could request
-  # a core grid dimension with pl.program_id); we should fix this soon.
   lowering_context = ctx.lowering_context.replace(
-      user_grid_indices=(*ps.index, *user_grid_indices[len(ps.index) :]),
-      block_shapes=(*ps_block_shapes, *body_const_shapes, *resolved_ref_shapes),
+      block_shapes=(*body_const_shapes, *ps_block_shapes, *resolved_ref_shapes),
   )
   # Lift the constants out of the jaxpr, disabling checks to avoid a redundant
   # re-checking of jaxpr, like its grid and sharding information.
   with config.enable_checks(False):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   assert len(jaxpr.invars) == len(lowering_context.block_shapes)
-  if _explicit_indices:
-    return jaxpr_subcomp(
-        lowering_context, jaxpr,
-        *body_consts, *ps_flat, *resolved_refs)
-  else:
-    return jaxpr_subcomp(
-        lowering_context, jaxpr, *body_consts, *resolved_refs)
+  return jaxpr_subcomp(
+      lowering_context, jaxpr, *body_consts, *ps_flat, *resolved_refs
+  )
 
 
 def _pipeline_body_is_high(*avals, jaxpr, **_):
@@ -2563,61 +2594,62 @@ def pipeline_body_discharge_rule(
     *invals,
     jaxpr: jax_core.Jaxpr,
     in_tree,
-    _explicit_indices: bool = False,
+    num_inputs: int,
     **params,
 ):
   del params
   ps, body_consts, refs = in_tree.unflatten(invals)
-  _, _, refs_should = in_tree.unflatten(ctx.should_discharge)
+  _, consts_should, refs_should = in_tree.unflatten(ctx.should_discharge)
 
   ps_flat, _ = tree_util.tree_flatten(ps)
-  body_in_args = list(ps_flat) if _explicit_indices else []
-  body_should_discharge = [False] * len(body_in_args)
+  body_in_args = [*body_consts, *ps_flat]
+  body_should_discharge = [
+      *consts_should,
+      *([False] * len(ps_flat)),
+  ]
 
-  for ref, ref_sh in zip(refs, refs_should):
-    base, transforms = tpu_primitives._get_ref_and_transforms(ref)
-    should_discharge = tpu_primitives._get_ref(ref_sh)
-    body_should_discharge.append(should_discharge)
-    if should_discharge:
+  for ref, ref_sh in zip(refs, refs_should, strict=True):
+    if tpu_primitives._get_ref(ref_sh):
+      base, transforms = tpu_primitives._get_ref_and_transforms(ref)
+      body_should_discharge.append(True)
       body_in_args.append(state_discharge.transform_array(base, transforms))
+    elif isinstance(ref, state.TransformedRef):
+      # TransformedRefs cannot be abstractified as undischarged jaxpr invars.
+      body_should_discharge.append(True)
+      body_in_args.append(ref[...])
     else:
+      body_should_discharge.append(False)
       body_in_args.append(ref)
 
-  # Add program ID info into the grid
-  cur_env = pallas_core.current_grid_env() or ()
-  body_grid_env = tuple(
-      pallas_core.GridAxis(
-          idx,
-          cur_env[i].size if i < len(cur_env) else 0,
-      )
-      for i, idx in enumerate(ps.index)
-  ) + tuple(cur_env[len(ps.index) :])
+  with config.enable_checks(False):
+    open_jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+  discharged_body_closed = state_discharge.discharge_state(
+      open_jaxpr.with_consts(()),
+      should_discharge=tuple(body_should_discharge),
+      strip_memory_space=ctx.strip_memory_space,
+  )
+  out = jax_core.eval_jaxpr(
+      discharged_body_closed.jaxpr,
+      discharged_body_closed.consts,
+      *body_in_args,
+  )
 
-  body_closed_jaxpr = jaxpr.with_consts(body_consts)
-  with pallas_core.grid_env(body_grid_env):
-    discharged_body_closed = state_discharge.discharge_state(
-        body_closed_jaxpr,
-        should_discharge=tuple(body_should_discharge),
-        strip_memory_space=ctx.strip_memory_space,
-    )
-    out = jax_core.eval_jaxpr(
-        discharged_body_closed.jaxpr,
-        discharged_body_closed.consts,
-        *body_in_args,
-    )
-
-  num_outvars = len(body_closed_jaxpr.jaxpr.outvars)
+  num_outvars = len(open_jaxpr.outvars)
   ans = out[:num_outvars]
   updated_slices = iter(out[num_outvars:])
 
-  new_bases = []
-  for ref, ref_sh in zip(refs, refs_should):
+  new_bases = [next(updated_slices) for c_sh in consts_should if c_sh]
+  for i, (ref, ref_sh) in enumerate(zip(refs, refs_should, strict=True)):
     if tpu_primitives._get_ref(ref_sh):
       base, transforms = tpu_primitives._get_ref_and_transforms(ref)
       _, new_base = state_discharge.transform_swap_array(
           base, transforms, next(updated_slices)
       )
       new_bases.append(new_base)
+    elif isinstance(ref, state.TransformedRef):
+      updated_val = next(updated_slices)
+      if i >= num_inputs:
+        ref[...] = updated_val
 
   new_bases_iter = iter(new_bases)
   new_invals = [
@@ -2630,6 +2662,24 @@ def pipeline_body_discharge_rule(
 state_discharge.register_discharge_rule(pipeline_body_p)(
     pipeline_body_discharge_rule
 )
+
+
+def _rebind_grid_mapping_consts(
+    grid_mapping: pallas_core.GridMapping, all_index_map_consts: Sequence[Any]
+) -> pallas_core.GridMapping:
+  counts = [
+      len(bm.index_map_jaxpr.consts) for bm in grid_mapping.block_mappings
+  ]
+  consts_per_bm = jax_util.split_list_checked(all_index_map_consts, counts)
+  return dataclasses.replace(
+      grid_mapping,
+      block_mappings=tuple(
+          bm.replace(index_map_jaxpr=bm.index_map_jaxpr.with_consts(consts))
+          for bm, consts in zip(
+              grid_mapping.block_mappings, consts_per_bm, strict=True
+          )
+      ),
+  )
 
 
 def emit_pipeline_to_jaxpr(
@@ -2649,24 +2699,25 @@ def emit_pipeline_to_jaxpr(
     **params,
 ) -> jax_core.Jaxpr:
   del core_axis, core_axis_name
-  index_map_consts_counts = tuple(
-      len(bm.index_map_jaxpr.consts) for bm in grid_mapping.block_mappings)
 
   def wrapped_pipeline_fun(*all_args, grid_mapping=grid_mapping):
     all_args = args_tree.unflatten(all_args)
-
-    index_map_consts = jax_util.split_list(
-        all_args.all_index_map_consts, index_map_consts_counts)
-    new_bms = []
-    for i, bm in enumerate(grid_mapping.block_mappings):
-      bm = bm.replace(index_map_jaxpr=bm.index_map_jaxpr.with_consts(
-          index_map_consts[i]))
-      new_bms.append(bm)
-    grid_mapping = dataclasses.replace(grid_mapping, block_mappings=new_bms)
+    grid_mapping = _rebind_grid_mapping_consts(
+        grid_mapping, all_args.all_index_map_consts
+    )
 
     refs_flat, _ = tracing_registry.flatten(  # flatten to TransformedRefs
         refs_tree.unflatten(all_args.refs_flat), is_transformed_ref)
     grid = _zip_grid(all_args.dynamic_grid_spec, grid_mapping.grid)
+    local_grid, _ = _partition_grid(
+        grid, dimension_semantics, num_cores, all_args.core_id
+    )
+    local_user_grid = tuple(
+        d
+        for i, d in enumerate(local_grid)
+        if i not in grid_mapping.vmapped_dims
+    )
+    local_grid_sizes = tuple(jnp.asarray(d, jnp.int32) for d in local_user_grid)
 
     in_specs = [
         bm.to_block_spec()
@@ -2680,26 +2731,35 @@ def emit_pipeline_to_jaxpr(
           idx for i, idx in enumerate(ps.index)
           if i not in grid_mapping.vmapped_dims)
       ps = dataclasses.replace(ps, index=original_indices)
-      indices_consts_args = (ps, all_args.body_consts, args)
+      indices_consts_args = (
+          (ps, local_grid_sizes),
+          all_args.body_consts,
+          args,
+      )
       args_flat, args_tree = tracing_registry.flatten(indices_consts_args)
       return pipeline_body_p.bind(
           *args_flat,
           jaxpr=body_jaxpr,
           in_tree=args_tree,
           num_inputs=grid_mapping.num_inputs,
-          _explicit_indices=_explicit_indices,
       )
-
-    # Use a logical grid env (excluding vmapped dims) so that
-    # num_programs(axis) resolves against the user's original grid axes.
-    pipeline_grid = tuple(d for i, d in enumerate(grid_mapping.grid)
-                          if i not in grid_mapping.vmapped_dims)
 
     # re-create the pallas core grid env
     names = (None,) * len(grid_sizes) if grid_names is None else grid_names
-    axis_env_ctx = jax_core.extend_axis_env_nd(
-        [(name, size) for name, size in zip(names, grid_sizes)
-        if name is not None and isinstance(size, int)]
+    axis_env_ctx = jax_core.extend_axis_env_nd([
+        (name, size)
+        for name, size in zip(names, grid_sizes, strict=True)
+        if name is not None and isinstance(size, int)
+    ])
+    index_map_grid_env = (
+        contextlib.nullcontext()
+        if _explicit_indices
+        else pallas_core.grid_env([
+            pallas_core.GridAxis(
+                jnp.int32(0), d  # pyrefly: ignore[bad-argument-type]
+            )
+            for d in local_grid_sizes
+        ])
     )
 
     # run the actual pipeline function
@@ -2708,7 +2768,7 @@ def emit_pipeline_to_jaxpr(
                               is_leaf=lambda x: isinstance(x, BufferedRefBase)))
         if all_args.allocations is not None else None
     )
-    with (axis_env_ctx, pallas_core.tracing_grid_env(pipeline_grid, ())):
+    with axis_env_ctx, index_map_grid_env:
       pipeline_fun = _emit_pipeline(
           new_body, grid=grid, in_specs=in_specs, out_specs=out_specs,
           num_cores=num_cores, core_id=all_args.core_id,
@@ -2753,35 +2813,11 @@ def _emit_pipeline_lowering_rule(
       f"{jaxpr.consts=} {jaxpr.constvars=}"
   )
 
-  all_args = args_tree.unflatten(args_flat)
-  global_grid = _zip_grid(all_args.dynamic_grid_spec, grid_mapping.grid)
-  grid_sizes = tuple(ir_constant(d) if isinstance(d, int) else d
-                     for d in global_grid)
-
-  # TODO(rdyro): We append the core grid dimensions to the end of the memory
-  # pipeline grid dimensions as a temporary workaround, but this conflates the
-  # pipeline and core grid.  Separate them in the lowering definition.
-  grid_names = ctx.lowering_context.grid_names
-  if grid_names is None:
-    grid_names = (None,) * len(ctx.lowering_context.grid_sizes)
-  grid_names = (tuple(None for _ in grid_sizes)
-                + (tuple(grid_names)))
-  user_grid_indices = tuple(
-      g for i, g in enumerate(grid_sizes) if i not in grid_mapping.vmapped_dims
-  ) + tuple(ctx.lowering_context.user_grid_indices)
-  grid_sizes += tuple(ctx.lowering_context.grid_sizes)
-
   lowering_context = ctx.lowering_context.replace(
       block_shapes=ctx.block_shapes,
-      grid_sizes=grid_sizes,
-      grid_names=grid_names,
-      user_grid_indices=user_grid_indices,
-      vmapped_dims=grid_mapping.vmapped_dims,
-      emit_pipeline_mode=True,
   )
 
   assert len(jaxpr.invars) == len(lowering_context.block_shapes)
-  assert len(lowering_context.grid_sizes) == len(lowering_context.grid_names)
   return jaxpr_subcomp(lowering_context, jaxpr, *args_flat)
 
 def _emit_pipeline_is_high(*avals, body_jaxpr, grid_mapping, args_tree, **_):
@@ -2804,20 +2840,38 @@ def _emit_pipeline_to_lojax(
 ):
   all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
   closed_hi_jaxpr = body_jaxpr.with_consts(all_args.body_consts)
-  with grid_mapping.trace_env():
+  with config._check_vma(False):
     closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
 
   refs_avals = [jax.typeof(x) for x in all_args.refs_flat]
   lo_flat_refs, new_refs_tree = tracing_registry.flatten(
-      refs_tree.unflatten(
-          [aval.lower_val(x)
-           for aval, x in zip(refs_avals, all_args.refs_flat)]
-      ),
+      refs_tree.unflatten([
+          aval.lower_val(x)
+          for aval, x in zip(refs_avals, all_args.refs_flat, strict=True)
+      ]),
       is_transformed_ref,
   )
+  grid_mapping = _rebind_grid_mapping_consts(
+      grid_mapping, all_args.all_index_map_consts
+  )
+  # Mask enclosing grid_env while re-tracing index_maps with dynamic grid dims.
+  with pallas_core.grid_env(()):
+    lo_grid_mapping = (
+        grid_mapping.replace(
+            grid=(pallas_core.dynamic_grid_dim,) * len(grid_mapping.grid)
+        )
+        .to_lojax()
+        .replace(grid=grid_mapping.grid)
+    )
 
+  lo_index_map_consts = tuple(
+      itertools.chain.from_iterable(
+          bm.index_map_jaxpr.consts for bm in lo_grid_mapping.block_mappings
+      )
+  )
   new_prim_args = dataclasses.replace(
       all_args,
+      all_index_map_consts=lo_index_map_consts,
       body_consts=tuple(closed_lo_jaxpr.consts),
       refs_flat=tuple(lo_flat_refs),
   )
@@ -2825,7 +2879,7 @@ def _emit_pipeline_to_lojax(
   return emit_pipeline_p.bind(
       *new_args_flat,
       body_jaxpr=closed_lo_jaxpr,
-      grid_mapping=grid_mapping.to_lojax(),
+      grid_mapping=lo_grid_mapping,
       args_tree=new_args_tree,
       refs_tree=new_refs_tree,
       **params,
@@ -2859,10 +2913,24 @@ def _emit_pipeline_batching_rule(
     raise NotImplementedError(
       "Batching over dynamic grid values is not supported yet.")
 
-  batched_block_mappings = map(
-      functools.partial(_batch_block_mapping, grid_mapping, batch_size),
-      map(_ref_to_value_aval, all_args.refs_flat),
-      flat_ref_dims, grid_mapping.block_mappings)
+  grid_mapping = _rebind_grid_mapping_consts(
+      grid_mapping, all_args.all_index_map_consts
+  )
+  dynamic_grid_mapping = grid_mapping.replace(
+      grid=(pallas_core.dynamic_grid_dim,) * len(grid_mapping.grid)
+  )
+  # Mask any enclosing grid_env while re-tracing batched index_maps.
+  with pallas_core.grid_env(()):
+    batched_block_mappings = tuple(
+        map(
+            functools.partial(
+                _batch_block_mapping, dynamic_grid_mapping, batch_size
+            ),
+            map(_ref_to_value_aval, all_args.refs_flat),
+            flat_ref_dims,
+            grid_mapping.block_mappings,
+        )
+    )
 
   index_map_tree_args, index_map_tree_kwargs = (
       grid_mapping.index_map_tree.unflatten(grid_mapping.index_map_avals))
