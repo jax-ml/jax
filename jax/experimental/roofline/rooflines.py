@@ -752,9 +752,7 @@ def _ppermute_roofline(
     ici_latency={axis: int(ici_latency) for axis in axis_name},
   )
 
-
-@roofline.register_roofline(lax.reduce_sum_p)
-def _reduce_sum_p_roofline(
+def _axis_reduction_p_roofline(
     ctx: roofline.RooflineRuleContext,
     *args,
     axes: tuple[int, ...],
@@ -766,13 +764,24 @@ def _reduce_sum_p_roofline(
   result_size = np.prod([x.shape[i] for i in other_axes])
 
   return roofline.RooflineResult(
-      # To add n values, we do n - 1 add operations, and we have to do that
+      # To reduce n values, we do n - 1 operations, and we have to do that
       # for every element in the result.
       unfused_flops=int((domain_size - 1) * result_size),
       # Size of input, plus output. (We assume that the output is also used
       # as accumulator.)
       unfused_hbm_bytes=int(x.dtype.itemsize * (x.size + result_size)),
   )
+
+for prim in (
+  lax.reduce_sum_p,
+  lax.reduce_prod_p,
+  lax.reduce_max_p,
+  lax.reduce_min_p,
+  lax.reduce_or_p,
+  lax.reduce_and_p,
+  lax.reduce_xor_p
+):
+  roofline.register_roofline(prim)(_axis_reduction_p_roofline)
 
 @roofline.register_roofline(lax.select_n_p)
 def _select_n_p_roofline(
