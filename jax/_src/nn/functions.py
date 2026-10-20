@@ -122,8 +122,11 @@ def squareplus(x: ArrayLike, b: ArrayLike = 4) -> Array:
     b : smoothness parameter
   """
   x, b = numpy_util.ensure_arraylike("squareplus", x, b)
-  y = x + jnp.sqrt(jnp.square(x) + b)
-  return y / 2
+  neginf = jnp.isneginf(x)
+  x = jnp.where(neginf, 0, x)
+  sqz = jnp.hypot(x, jnp.sqrt(b))
+  y = jnp.where(x < 0, b / (sqz - jnp.minimum(x, 0)), x + sqz) / 2
+  return jnp.where(neginf, 0, y)
 
 @api.jit
 def softplus(x: ArrayLike) -> Array:

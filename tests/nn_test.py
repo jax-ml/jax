@@ -19,9 +19,9 @@ import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
-import scipy.stats
-
+import jax
+from jax import nn
+from jax import random
 from jax._src import ad_checkpoint
 from jax._src import config
 from jax._src import core
@@ -30,11 +30,10 @@ from jax._src import test_util as jtu
 from jax._src.cudnn.scaled_matmul_stablehlo import (
     quantize,
 )
-from jax.test_util import check_grads
-from jax import nn
-from jax import random
-import jax
 import jax.numpy as jnp
+from jax.test_util import check_grads
+import numpy as np
+import scipy.stats
 
 config.parse_flags_with_absl()
 
@@ -645,6 +644,33 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSquareplusValue(self):
     val = nn.squareplus(1e3)
     self.assertAllClose(val, 1e3, check_dtypes=False, atol=1e-3)
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testSquareplusValueAndGrad(self, dtype):
+    tol = {
+        np.float16: 1e-2,
+        _dtypes.bfloat16: 1e-2,
+        np.float32: 1e-4,
+        np.float64: 1e-4,
+    }
+
+    def ref_squareplus(x):
+      return np.where(
+          x < 0, 2.0 / (np.hypot(x, 2.0) - x), (x + np.hypot(x, 2.0)) / 2.0
+      )
+
+    def ref_grad(x):
+      return ref_squareplus(x) / np.hypot(x, 2.0)
+
+    x = jnp.array([-100.0, -10.0, 0.0, 10.0, 300.0], dtype=dtype)
+    expected = ref_squareplus(np.asarray(x, dtype=np.float64)).astype(dtype)
+
+    val = nn.squareplus(x)
+    self.assertAllClose(val, expected, atol=tol, rtol=tol)
+
+    grad_expected = ref_grad(np.asarray(x, dtype=np.float64)).astype(dtype)
+    grad_val = jax.vmap(jax.grad(nn.squareplus))(x)
+    self.assertAllClose(grad_val, grad_expected, atol=tol, rtol=tol)
 
   def testMishValue(self):
     val = nn.mish(1e3)

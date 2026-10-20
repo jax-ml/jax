@@ -211,6 +211,8 @@ from jax._src.numpy.ufuncs import (
     isinf as isinf,
     isfinite as isfinite,
     isnan as isnan,
+    isneginf as isneginf,
+    isposinf as isposinf,
     less as less,
     less_equal as less_equal,
     log as log,
