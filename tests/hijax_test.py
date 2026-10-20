@@ -253,6 +253,9 @@ class TupTy(HiType):
   def reshard(self, sharding):
     return TupTy(tuple(ty.reshard(s) for ty, s in zip(self.tys, sharding.val)))
 
+  def vspace_zero(self):
+    return make_tup(*map(ad.zeros_like_aval, self.tys))
+
   def vspace_add(self, x_tup, y_tup):
     n = len(self.tys)
     x_elts = [get_tuple_element(x_tup, i) for i in range(n)]
@@ -3041,6 +3044,11 @@ class HijaxTest(jtu.JaxTestCase):
     _, f_vjp = jax.vjp(f, MulH(arr1), MulH(arr2))
     x = jax.device_put(jnp.ones((8,), dtype=jnp.float32), jax.P('x'))
     f_vjp(MulH(x))  # doesn't crash
+
+  def test_instantiate_zeros_hipspec_sharding(self):
+    tup = HiTup((jnp.ones(2),))
+    _, f_vjp = jax.vjp(lambda x, t: x, 1.0, tup)
+    f_vjp(1.0)  # doesn't crash
 
   @parameterized.parameters([False, True])
   def test_ref_prim(self, jit):

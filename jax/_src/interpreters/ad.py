@@ -30,6 +30,7 @@ from jax._src.tree_util import (
 from jax._src import mesh as mesh_lib
 from jax._src import core
 from jax._src import source_info_util
+from jax._src.named_sharding import NamedSharding
 from jax._src.ad_util import (
     add_jaxvals, replace_internal_symbolic_zeros,
     replace_rule_output_symbolic_zeros, Zero, zeros_like_aval, SymbolicZero,
@@ -1050,7 +1051,10 @@ def instantiate_zeros(tangent):
     if hasattr(tangent.aval, 'sharding'):
       # TODO(dougalm, yashkatariya): Delete this context manager once we figure
       # out how to ensure jaxpr arguments always have the context mesh.
-      with mesh_lib.use_abstract_mesh(tangent.aval.sharding.mesh):
+      ctx = (mesh_lib.use_abstract_mesh(tangent.aval.sharding.mesh)  # type: ignore
+             if isinstance(tangent.aval.sharding, NamedSharding)
+             else contextlib.nullcontext())
+      with ctx:
         return zeros_like_aval(tangent.aval)
     return zeros_like_aval(tangent.aval)
   return tangent

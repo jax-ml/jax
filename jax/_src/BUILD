@@ -942,6 +942,7 @@ pytype_strict_library(
         ":dtypes",
         ":flattree",
         ":mesh",
+        ":named_sharding",
         ":partial_eval",
         ":source_info_util",
         ":state_types",
