@@ -1125,11 +1125,6 @@ def _copy_gmem_to_smem_lowering(
 
   match src_transforms:
     case [gpu_core.Im2ColTransform() as im2col_transform, *indexers]:
-      if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-        raise NotImplementedError(
-            "im2col copies are not supported under Warpgroup lowering"
-            " semantics."
-        )
       if collective_axes is not None:
         raise NotImplementedError(
             "im2col copies do not support collective_axes or leader_tracked."
@@ -1301,6 +1296,31 @@ def _copy_gmem_to_smem_lowering(
 
   with arrive_ctx:
     mgpu.dialect.arrive_expect_tx(barrier_ref, mgpu.c(bytes, i32))
+
+  if im2col_params is not None:
+    i16 = ir.IntegerType.get_signless(16)
+    window_lower_bounds, window_upper_bounds = zip(
+        *im2col_params["window_start_bounds"], strict=True
+    )
+    # TODO(slebedev): Remove the ignore once the minimum jaxlib is >0.12.0.
+    mgpu.dialect.async_load_im2col(  # pyrefly: ignore[missing-attribute]
+        src,
+        dst,
+        barrier_ref,
+        indices=[
+            arith_dialect.index_cast(i32, i)
+            for i in im2col_params["start_indices"]
+        ],
+        filter_offsets=[
+            arith_dialect.index_cast(i16, o)
+            for o in im2col_params["filter_offsets"]
+        ],
+        window_lower_bounds=window_lower_bounds,
+        window_upper_bounds=window_upper_bounds,
+        window_strides=[1] * len(window_lower_bounds),
+        predicate=predicate,
+    )
+    return ()
 
   mgpu.dialect.async_load(
       src,

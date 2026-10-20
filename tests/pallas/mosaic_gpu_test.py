@@ -1367,13 +1367,16 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @parameterized.product(
       num_spatial=[1, 2, 3],
+      tiled=[False, True],
       swizzle=[None, 32, 64, 128],
       dynamic=[False, True],
   )
-  def test_copy_gmem_to_smem_im2col(self, num_spatial, swizzle, dynamic):
+  def test_copy_gmem_to_smem_im2col(
+      self, num_spatial, tiled, swizzle, dynamic
+  ):
     dtype = jnp.int16
-    num_rows = 32
-    num_channels = 8 if swizzle is None else (8 * swizzle) // 16
+    num_rows = 32 if tiled else 28
+    num_channels = 48 if swizzle is None else (8 * swizzle) // 16
     batch_size = 6
     spatial_sizes = (3, 4, 8)[-num_spatial:]
     window_shape = tuple(d + 2 for d in range(num_spatial))
@@ -1389,11 +1392,10 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     dst_shape = (num_rows, num_channels)
 
     smem_transforms = ()
+    if tiled:
+      smem_transforms += (plgpu.TilingTransform((8, num_channels)),)
     if swizzle is not None:
-      smem_transforms = (
-          plgpu.TilingTransform((8, num_channels)),
-          plgpu.SwizzleTransform(swizzle),
-      )
+      smem_transforms += (plgpu.SwizzleTransform(swizzle),)
 
     @self.kernel(
         out_type=jax.ShapeDtypeStruct(dst_shape, dtype),
@@ -1422,14 +1424,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       plgpu.wait_smem_to_gmem(0)
 
     x = jnp.arange(math.prod(src_shape), dtype=dtype).reshape(src_shape)
-    if self.is_wg_semantics():
-      with self.assertRaisesRegex(
-          NotImplementedError,
-          "im2col copies are not supported under Warpgroup lowering semantics",
-      ):
-        jax.jit(kernel).lower(x)
-      return
-
     y = kernel(x)
     x_padded = np.pad(x, ((0, 0), *padding, (0, 0)))
     spatial_slices = tuple(
@@ -1442,7 +1436,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(y, expected)
 
   def test_copy_gmem_to_smem_im2col_out_of_bounds(self):
-    self.skip_if_wg_semantics()
     dtype = jnp.int16
     src_shape = (2, 6, 6, 16)
     window_shape = (3, 3)
@@ -1528,7 +1521,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   def test_copy_gmem_to_smem_im2col_unsupported(
       self, index, dst_shape, error_type, error, smem_transforms=()
   ):
-    self.skip_if_wg_semantics()
+    if self.is_wg_semantics() and smem_transforms:
+      error_type = ValueError
+      error = "Failed to infer a possible set of layouts"
     dtype = jnp.int16
 
     @self.kernel(
@@ -9234,8 +9229,6 @@ class PipelineTest(PallasTest):
     np.testing.assert_array_equal(run(x), x + active_rows[..., None])
 
   def test_emit_with_im2col_ref(self):
-    self.skip_if_wg_semantics()
-
     dtype = jnp.float16
     batch_size, h, w, channels = 2, 4, 8, 32
     kh, kw = 3, 3
