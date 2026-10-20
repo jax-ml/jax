@@ -51,7 +51,7 @@ def main(_):
   print_ir(np.float32(0))(lax.acosh)
 
   # CHECK-LABEL: TEST: asin float32[]
-  # CHECK: hlo.atan2
+  # CHECK: chlo.asin
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1))(lax.asin)
 

@@ -65,6 +65,7 @@ from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive, standard_abstract_eval)
 from jax._src.core import typeof, getu, getr, stage_p
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -4964,10 +4965,17 @@ core.pp_eqn_rules[tan_p] = _unary_with_accuracy_pp_rule
 asin_p = standard_unop(_float | _complex, 'asin')
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(one_minus_square(x))))
 
-# TODO(phawkins): Revert the default lowering to chlo.asin when
-# https://github.com/openxla/stablehlo/pull/3024 is integrated into XLA.
-def _asin_lowering(ctx, x, **params):
-  if dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
+
+def _asin_lowering(ctx, x, *, is_tpu=False, **params):
+  # On TPU, CHLO legalization runs inside libtpu; libtpu < 0.0.51 still uses
+  # the old 2 * atan2(x, 1 + sqrt((1 - x) * (1 + x))) decomposition, which
+  # flushes tiny normal inputs to 0 under FTZ.
+  use_chlo = (
+      jaxlib_extension_version >= 512
+      and not ctx.is_forward_compat()
+      and (not is_tpu or cloud_tpu_init.is_libtpu_at_least('0.0.51'))
+  )
+  if use_chlo or dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
     return _nary_lower_hlo(chlo.asin, ctx, x, **params)
   def _asin_real(x):
     one = _const(x, 1)
@@ -4975,7 +4983,12 @@ def _asin_lowering(ctx, x, **params):
   return mlir.lower_fun(_asin_real, multiple_results=False)(ctx, x, **params)
 
 mlir.register_lowering(asin_p, _asin_lowering)
-mlir.register_lowering(asin_p, partial(_nary_lower_hlo, chlo.asin), platform='gpu')
+mlir.register_lowering(
+    asin_p, partial(_asin_lowering, is_tpu=True), platform='tpu'
+)
+mlir.register_lowering(
+    asin_p, partial(_nary_lower_hlo, chlo.asin), platform='gpu'
+)
 
 acos_p = standard_unop(_float | _complex, 'acos')
 ad.defjvp(acos_p, lambda g, x: mul(g, neg(rsqrt(one_minus_square(x)))))
