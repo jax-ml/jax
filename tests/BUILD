@@ -459,6 +459,12 @@ jax_multiplatform_test(
         "tpu": ["notsan"],  # Times out under tsan.
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
+    # TODO(b/513227167): Remove once Shardy supports custom partitioning in
+    # CONVERT_GLOBAL_TO_LOCAL.
+    backend_variant_args = {
+        "tpu_7x": ["--xla_shardy_options=partitioner_stage:PARTITIONER_STAGE_UNSPECIFIED"],
+        "tpu_7x_x4": ["--xla_shardy_options=partitioner_stage:PARTITIONER_STAGE_UNSPECIFIED"],
+    },
     enable_configs = [
         "tpu_v3_x4",
         "gpu_h100x2_full",
