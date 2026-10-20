@@ -1152,6 +1152,22 @@ class FusionTest(jtu.JaxTestCase):
         mixed_jaxpr.eqns[-1].params["jaxpr"],
     )
 
+  def test_ref_write_before_fusible_error(self):
+    f = fuser.fusible(lambda x_fn, out_fn: x_fn())
+    ref = jax.new_ref(0.0)
+
+    @fuser.fuse
+    def g(x):
+      ref[...] = x
+      ref[...] = f(x)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "A write to a Ref in a fusion must depend on an output of the fusible",
+    ):
+      g(1.0)
+
+
 @dataclasses.dataclass(frozen=True)
 class ArrayTuple:
   x0: jax.Array

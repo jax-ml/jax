@@ -410,6 +410,15 @@ def fuse_jaxpr(
       assert not any(out_used)
     return jax_core.eval_jaxpr(independent_jaxpr, candidate_values)
 
+  for eqn in jaxpr.eqns[:fusion_eqn_index]:
+    if any(
+        isinstance(e, (state_types.WriteEffect, state_types.AccumEffect))
+        for e in eqn.effects
+    ):
+      raise ValueError(
+          "A write to a Ref in a fusion must depend on an output of the fusible"
+      )
+
   # Construct fusions for non-constant inputs to the fusible.
   in_fusions_flat = [
       construct_input_fusion(
