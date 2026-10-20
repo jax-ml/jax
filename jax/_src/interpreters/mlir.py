@@ -2081,8 +2081,12 @@ def lower_jaxpr_to_fun(
       if main_function
       else source_info_util.new_name_stack()
   )
+  # Exported functions will be merged and called as non-main functions by future
+  # callers, so do not bake in the exporter's call-site traceback.
   outer_traceback = (
-      source_info_util.current().traceback if main_function else None
+      source_info_util.current().traceback
+      if main_function and not ctx.lowering_parameters.for_export
+      else None
   )
   func_loc = source_info_to_location(ctx, None, name_stack, outer_traceback)
   with ir.InsertionPoint(entry_block), func_loc:
