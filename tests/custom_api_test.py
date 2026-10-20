@@ -5521,5 +5521,139 @@ class LinearCallTest(jtu.JaxTestCase):
     self.assertAllClose(jax.vmap(transpose)(r), 7. * r)
 
 
+  @staticmethod
+  def closed(c, x):
+    # Linear in x; its function and its transpose both close over c, which is
+    # mapped when c is. The transpose is 7 times the true one.
+    def f(_, x):
+      return x * c
+    def t(_, ct):
+      return 7. * ct * c
+    return jax.custom_derivatives.linear_call(f, t, (), x)
+
+  @parameterized.parameters([(0, None), (None, 0), (0, 0)])
+  def test_grad_of_vmap_with_a_transpose_closed_over_a_mapped_value(
+      self, c_axis, x_axis):
+    c = jnp.arange(1., 7.).reshape(2, 3)
+    x = jnp.arange(2., 8.).reshape(2, 3)
+    c_in = c if c_axis is not None else c[0]
+    x_in = x if x_axis is not None else x[0]
+    loss = lambda x: jnp.sum(jax.vmap(self.closed, in_axes=(c_axis, x_axis))(c_in, x))
+    ans = jax.grad(loss)(x_in)
+    expected = jnp.broadcast_to(
+        7. * (c_in if x_axis is not None else jnp.sum(c, 0)), x_in.shape)
+    self.assertAllClose(ans, expected)
+
+  def test_vmap_of_grad_with_a_transpose_closed_over_a_mapped_value(self):
+    c = jnp.arange(1., 7.).reshape(2, 3)
+    x = jnp.arange(2., 8.).reshape(2, 3)
+    grad = jax.grad(lambda c, x: jnp.sum(self.closed(c, x)), argnums=1)
+    self.assertAllClose(jax.vmap(grad)(c, x), 7. * c)
+
+  def test_jvp_of_grad_with_a_transpose_closed_over_a_mapped_value(self):
+    c = jnp.arange(1., 7.).reshape(2, 3)
+    x = jnp.arange(2., 8.).reshape(2, 3)
+    grad = jax.grad(lambda x: jnp.sum(jax.vmap(self.closed)(c, x) ** 2))
+    ans = jax.jvp(grad, (x,), (jnp.ones_like(x),))
+    # d/dx sum((x c)^2) through the 7-fold transpose is 7 * 2 x c * c, and its
+    # tangent along ones is 7 * 2 c * c.
+    self.assertAllClose(ans, (14. * x * c * c, 14. * c * c))
+
+  def test_grad_of_jvp_with_a_transpose_closed_over_a_mapped_value(self):
+    c = jnp.arange(1., 7.).reshape(2, 3)
+    x = jnp.arange(2., 8.).reshape(2, 3)
+    def tangent(x):
+      return jax.jvp(lambda x: jax.vmap(self.closed)(c, x), (x,), (x,))[1]
+    # The tangent x c is linear in x through the call, so its gradient takes
+    # the custom transpose: 7 c, summed.
+    self.assertAllClose(jax.grad(lambda x: jnp.sum(tangent(x)))(x), 7. * c)
+
+
+  @parameterized.parameters([jax.jit, jax.checkpoint])
+  def test_vmap_of_a_staged_call_whose_transpose_closes_over_a_value(self, stage):
+    c = jnp.arange(1., 7.).reshape(2, 3)
+    x = jnp.arange(2., 8.).reshape(2, 3)
+    self.assertAllClose(jax.vmap(stage(self.closed))(c, x), c * x)
+    loss = lambda x: jnp.sum(jax.vmap(stage(self.closed))(c, x))
+    self.assertAllClose(jax.grad(loss)(x), 7. * c)
+
+  def test_grad_of_vmap_with_a_capture_only_the_transpose_maps(self):
+    c = jnp.arange(1., 7.).reshape(2, 3)
+    x = jnp.arange(2., 5.)
+    def g(c, x):
+      return jax.custom_derivatives.linear_call(
+          lambda _, x: x, lambda _, ct: 7. * c * ct, (), x)
+    loss = lambda x: jnp.sum(jax.vmap(g, in_axes=(0, None))(c, x))
+    self.assertAllClose(jax.grad(loss)(x), 7. * jnp.sum(c, 0))
+
+  def test_nested_vmap_and_jit_of_grad_of_vmap(self):
+    c = jnp.arange(1., 13.).reshape(2, 2, 3)
+    x = jnp.arange(2., 14.).reshape(2, 2, 3)
+    loss = lambda x: jnp.sum(jax.vmap(jax.vmap(self.closed))(c, x))
+    self.assertAllClose(jax.grad(loss)(x), 7. * c)
+    self.assertAllClose(jax.jit(jax.grad(loss))(x), 7. * c)
+    inner = lambda c, x: jax.grad(lambda x: jnp.sum(jax.vmap(self.closed)(c, x)))(x)
+    self.assertAllClose(jax.vmap(inner)(c, x), 7. * c)
+
+
+  def test_grad_of_vmap_of_grad_and_transpose_of_vmap_of_transpose(self):
+    c = jnp.arange(1., 7.).reshape(2, 3)
+    x = jnp.arange(2., 8.).reshape(2, 3)
+    inner = jax.grad(lambda c, x: jnp.sum(self.closed(c, x) ** 2), argnums=1)
+    # The inner gradient is 7 * 2 x c * c through the custom transpose; the
+    # outer one differentiates that linear map in x through the custom
+    # transpose of the transpose, the call itself.
+    ans = jax.grad(lambda x: jnp.sum(jax.vmap(inner)(c, x)))(x)
+    self.assertAllClose(ans, 14. * c * c)
+    ct = jnp.ones_like(c)
+    def transposed(c, ct):
+      return jax.linear_transpose(partial(self.closed, c), jnp.zeros_like(ct))(ct)[0]
+    twice = jax.linear_transpose(lambda ct: jax.vmap(transposed)(c, ct), jnp.zeros_like(c))(ct)[0]
+    self.assertAllClose(twice, c)
+
+  def test_a_transpose_that_calls_itself_traces_when_transposed(self):
+    def f(_, x):
+      return x
+    def t(_, ct):
+      return 7. * jax.custom_derivatives.linear_call(f, t, (), ct)
+    call = lambda x: jax.custom_derivatives.linear_call(f, t, (), x)
+    self.assertAllClose(call(1.), 1.)
+    self.assertAllClose(jax.linear_transpose(call, 1.)(1.)[0], 7.)
+    # The same through a fresh partial, or a fresh lambda, at every call.
+    def wrapped(_, ct):
+      return 7. * jax.custom_derivatives.linear_call(f, partial(wrapped), (), ct)
+    def fresh(_, ct):
+      return 7. * jax.custom_derivatives.linear_call(f, lambda r, g: fresh(r, g), (), ct)
+    for transpose in (wrapped, fresh):
+      call = lambda x: jax.custom_derivatives.linear_call(f, transpose, (), x)
+      self.assertAllClose(call(1.), 1.)
+      self.assertAllClose(jax.linear_transpose(call, 1.)(1.)[0], 7.)
+
+
+  def test_grad_of_nested_vmap_of_unequal_sizes(self):
+    c = jnp.arange(1., 25.).reshape(2, 3, 4)
+    x = jnp.arange(2., 26.).reshape(2, 3, 4)
+    loss = lambda x: jnp.sum(jax.vmap(jax.vmap(self.closed))(c, x))
+    self.assertAllClose(jax.grad(loss)(x), 7. * c)
+
+  def test_grad_of_vmap_with_residuals_captures_unused_outputs_and_a_later_axis(self):
+    # A call with residuals of its own, a transpose that also closes over c,
+    # two outputs of which the loss reads one, and c and x mapped along axis 1.
+    def g(c, r, x):
+      def f(r, x):
+        return x * r, x * 2.
+      def t(r, cts):
+        ct, ct2 = cts
+        return 7. * c * r * ct + 3. * ct2
+      return jax.custom_derivatives.linear_call(f, t, r, x)
+    c = jnp.arange(1., 7.).reshape(3, 2)
+    r = jnp.arange(2., 5.)
+    x = jnp.arange(3., 9.).reshape(3, 2)
+    def loss(x):
+      first, _ = jax.vmap(g, in_axes=(1, None, 1), out_axes=1)(c, r, x)
+      return jnp.sum(first)
+    # The second output's cotangent is a symbolic zero; the first's is one.
+    self.assertAllClose(jax.grad(loss)(x), 7. * c * r[:, None])
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
