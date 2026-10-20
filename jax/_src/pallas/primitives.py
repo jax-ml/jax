@@ -718,6 +718,13 @@ def run_scoped(
         f_with_transforms,
         avals,
         api_util.debug_info("pallas run_scoped", f, types, kw_types))
+  # For `TransformedRef`s (e.g. 3D+ TMEM), `ref_transforms` records the inverse
+  # transforms applied at trace time; for refs with logical avals (e.g. SMEM),
+  # it records the forward layout transforms from the allocation type.
+  ref_transforms = tuple(
+      t or tuple(getattr(s, "transforms", ()))
+      for s, t in zip(flat_types.vals, ref_transforms)
+  )
   out = run_scoped_p.bind(*jaxpr.consts,
                           jaxpr=jaxpr,
                           collective_axes=collective_axes,

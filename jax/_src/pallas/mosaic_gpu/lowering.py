@@ -466,6 +466,9 @@ class ModuleContext:
   reduction_scratch_bytes: int
   warp_axis_name: jax_core.AxisName | None = None
   outer_traceback: xc.Traceback | None = None
+  scratch_transforms: dict[ir.Value, Sequence[state_types.Transform]] = (
+      dataclasses.field(default_factory=dict)
+  )
   _smem_allocation_counter: int = dataclasses.field(default=0, init=False)
   _tmem_allocation_counter: int = dataclasses.field(default=0, init=False)
 
@@ -570,7 +573,9 @@ class ModuleContext:
 
   @contextlib.contextmanager
   def scratch_view(
-      self, struct: jax.ShapeDtypeStruct
+      self,
+      struct: jax.ShapeDtypeStruct,
+      transforms: Sequence[state_types.Transform] = (),
   ) -> Generator[ir.Value]:
     """Creates a view into the runtime scratch buffer for the given struct.
 
@@ -580,6 +585,7 @@ class ModuleContext:
 
     Args:
       struct: The shape and dtype of the view to create.
+      transforms: Optional transforms for the SMEM allocation.
 
     Returns:
       A memref view into the runtime scratch buffer.
@@ -620,7 +626,9 @@ class ModuleContext:
     assert off % gpu_core.SMEM_ALIGNMENT == 0
 
     self.smem_used_bytes = off
+    self.scratch_transforms[view] = transforms
     yield view
+    del self.scratch_transforms[view]
     self.smem_used_bytes = initial_used_bytes
 
 
@@ -1265,7 +1273,8 @@ def _extract_aliased_ref(
     ir.Value,
     state_types.AbstractRef,
     Sequence[state_types.Transform],
-    Sequence[state_types.Transform]
+    Sequence[state_types.Transform],
+    Sequence[state_types.Transform],
 ]:
   ...
 
@@ -1280,7 +1289,8 @@ def _extract_aliased_ref(
     tcgen05.TMEMRef,
     state_types.AbstractRef,
     Sequence[state_types.Transform],
-    Sequence[state_types.Transform]
+    Sequence[state_types.Transform],
+    Sequence[state_types.Transform],
 ]:
   ...
 
@@ -1295,12 +1305,20 @@ def _extract_aliased_ref(
     state_types.AbstractRef,
     Sequence[state_types.Transform],
     Sequence[state_types.Transform],
+    Sequence[state_types.Transform],
 ]:
   # Looks for the first transform being an ExtractAliasedRef and pulls out the
   # Ref there, updating the transforms.
   match transforms:
     case (
-        gpu_core.ExtractAliasedRef(dtype, transformed_shape, offset, alias_group_idx, layout) as t,
+        gpu_core.ExtractAliasedRef(
+            dtype,
+            transformed_shape,
+            offset,
+            alias_group_idx,
+            layout,
+            smem_transforms,
+        ) as t,
         *other_transforms,
     ):
       ref_aval = t.transform_type(ref_aval)
@@ -1404,10 +1422,11 @@ def _extract_aliased_ref(
           ref_aval,
           transform_avals[1:],
           tuple(other_transforms),
+          smem_transforms,
       )
     case _:
       # No ExtractAliasedRef found, don't do anything.
-      return ref, ref_aval, transform_avals, transforms
+      return ref, ref_aval, transform_avals, transforms, ()
 
 
 def _commute_transform(
@@ -1446,30 +1465,23 @@ def _commute_transform(
     ):
       return gpu_core.commute_transpose_indexer(aval, t1, t2)
     case (
-        gpu_core.UnswizzleRef() as t1,
-        state_types.ReshapeTransform() as t2,
-    ):
-      # pyrefly: ignore[bad-argument-type]
-      new_reshape, new_unswizzle = t1.commute_reshape(aval, t2)
-      return new_reshape, new_unswizzle
-    case (
         gpu_core.UntilingTransform() | gpu_core.UnswizzleRef() as t1,
         gpu_core.TransposeTransform() as t2,
     ):
       if isinstance(aval, state_types.AbstractRef):
         aval = aval.inner_aval
       assert isinstance(aval, jax_core.ShapedArray)
-      new_reshape, new_unswizzle = t1.commute_transpose(aval, t2)
-      return new_reshape, new_unswizzle
+      new_transpose, new_t1 = t1.commute_transpose(aval, t2)
+      return new_transpose, new_t1
     case (
-        gpu_core.UntilingTransform() as t1,
+        gpu_core.UntilingTransform() | gpu_core.UnswizzleRef() as t1,
         state_types.ReshapeTransform() as t2,
     ):
       if isinstance(aval, state_types.AbstractRef):
         aval = aval.inner_aval
       assert isinstance(aval, jax_core.ShapedArray)
-      new_reshape, new_untile = t1.commute_reshape(aval, t2)
-      return new_reshape, new_untile
+      new_reshape, new_t1 = t1.commute_reshape(aval, t2)
+      return new_reshape, new_t1
     case (
         gpu_core.UntilingTransform() | gpu_core.UnswizzleRef() as t1,
         gpu_core.ClusterRefTransform()
@@ -1525,35 +1537,6 @@ def _bubble_up_transform[T: state_types.Transform](
       new_transforms_rev,
       new_transforms_avals_rev,
   )
-
-
-def _reinterpret_cast(ref: ir.Value, new_ref_aval: state_types.AbstractRef) -> ir.Value:
-  ref_ty = ir.MemRefType(ref.type)
-  strides, offset = ref_ty.get_strides_and_offset()
-  # A sanity check. It doesn't do much to check that an offset is dynamic, but
-  # if we ever get here through an unexpected path that slices with a non-zero
-  # static offset, we'll at least catch it.
-  assert offset == 0  or offset == ir.ShapedType.get_dynamic_stride_or_offset()
-  expected_strides = mgpu_utils.get_contiguous_strides(ref_ty.shape)
-  if expected_strides != strides:
-    raise NotImplementedError(
-        f"Expected contiguous strides {expected_strides} when applying "
-        f"reinterpret_cast to {ref_ty} but got {strides}"
-    )
-  if offset == 0:
-    layout = None
-  else:
-    layout = ir.StridedLayoutAttr.get(
-        offset, mgpu_utils.get_contiguous_strides(new_ref_aval.shape)
-    )
-  new_ty = ir.MemRefType.get(
-      new_ref_aval.shape, mgpu_utils.dtype_to_ir_type(new_ref_aval.dtype),
-      memory_space=ref_ty.memory_space,
-      layout=layout
-  )
-  if new_ty == ref_ty:
-    return ref
-  return mgpu.dialect.reinterpret_cast(new_ty, ref)
 
 
 def _bubble_up_transforms_for_lowering(
@@ -1652,49 +1635,51 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
 ) -> tuple[T, state_types.AbstractRef, Sequence[state_types.Transform]]:
   # Before we handle other transforms, we resolve any possible leading
   # aliasing transform.
-  ref, ref_aval, transform_avals, transforms = _extract_aliased_ref(  # pyrefly: ignore[bad-assignment,no-matching-overload]
-      ref,
-      ref_aval,
-      transform_avals,
-      transforms,
-      ctx.module_ctx.lowering_semantics,
+  ref, ref_aval, transform_avals, transforms, aliased_smem_transforms = (  # pyrefly: ignore[bad-assignment]
+      _extract_aliased_ref(  # pyrefly: ignore[no-matching-overload]
+          ref,
+          ref_aval,
+          transform_avals,
+          transforms,
+          ctx.module_ctx.lowering_semantics,
+      )
   )
 
-  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-    # We only bubble up transforms here to verify that all the specified
-    # transforms can be commuted correctly with the BlockSpec transforms.
-    _bubble_up_transforms_for_lowering(
-        ctx,
-        ref_aval,
-        transforms,
-        transform_avals,
-        handle_transposes=False,
-        handle_reshapes=handle_reshapes,
-    )
-
-    spec_transforms = []
-    num_block_spec_transforms = 0
-    for t in transforms:
-      if isinstance(t, (gpu_core.UntilingTransform, gpu_core.UnswizzleRef)):
-        spec_transforms = [t.undo(ref_aval)] + spec_transforms
-        ref_aval = cast(state_types.AbstractRef, t.transform_type(ref_aval))
-        num_block_spec_transforms += 1
-      else:
-        break
+  spec_transforms = aliased_smem_transforms or (
+      ctx.module_ctx.scratch_transforms.get(cast(Any, ref), ())
+  )
+  if spec_transforms:
     assert isinstance(ref, ir.Value)
-    if spec_transforms:
+    physical_ref_aval = cast(
+        state_types.AbstractRef,
+        state_types.transform_type(spec_transforms, ref_aval),
+    )
+    untransforms = tuple(
+        pallas_core.undo_transforms(ref_aval, spec_transforms)
+    )
+    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+      # We only bubble up transforms here to verify that all the specified
+      # transforms can be commuted correctly with the BlockSpec transforms.
+      _bubble_up_transforms_for_lowering(
+          ctx,
+          physical_ref_aval,
+          (*untransforms, *transforms),
+          (*untransforms, *transform_avals),
+          handle_transposes=False,
+          handle_reshapes=handle_reshapes,
+      )
       transforms_attr = ir.ArrayAttr.get([
           gpu_core.to_transform_attr(t) for t in spec_transforms
       ])
       ref = cast(
           T,
-          mgpu.dialect.with_transforms(_reinterpret_cast(ref, ref_aval), transforms_attr)
+          mgpu.dialect.with_transforms(ref, transforms_attr),
       )
-      transforms = transforms[num_block_spec_transforms:]
-      transform_avals = transform_avals[num_block_spec_transforms:]
-      if any(isinstance(t, (gpu_core.UntilingTransform, gpu_core.UnswizzleRef)) for t in transforms):
-        raise ValueError("Unexpected untiling or unswizzle transform found in "
-                         f"remaining transforms: {transforms}.")
+    else:
+      ref = cast(T, mgpu.memref_reshape(ref, physical_ref_aval.shape))
+      ref_aval = physical_ref_aval
+      transforms = (*untransforms, *transforms)
+      transform_avals = (*untransforms, *transform_avals)
 
   (
       bubbled_up_transforms,
@@ -1848,45 +1833,6 @@ def _get_lowering_rule(
   assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
   transform_avals = tree.unflatten(ctx.avals_in[1:])
 
-  # Swizzle always applies first, to the raw addresses, so we pop it immediately.
-  if transforms and isinstance(transforms[0], gpu_core.UnswizzleRef):
-    swizzle = transforms[0].swizzle
-    transforms = transforms[1:]
-    transform_avals = transform_avals[1:]
-  elif (
-      len(transforms) > 1
-      and isinstance(transforms[0], gpu_core.ExtractAliasedRef)
-      and isinstance(transforms[1], gpu_core.UnswizzleRef)
-  ):
-    swizzle = transforms[1].swizzle
-    transforms = [transforms[0], *transforms[2:]]
-    transform_avals = [transform_avals[0], *transform_avals[2:]]
-  else:
-    swizzle = None
-
-  # We verify tiling against swizzling in memory before transposes flip it.
-  # Note: we do not check len(tiling) == 2 here because subsequent transforms
-  # (e.g. ReshapeTransform) may commute with it to produce 2D tiling.
-  tiling_transform = None
-  if transforms and isinstance(transforms[0], gpu_core.UntilingTransform):
-    tiling_transform = transforms[0]
-  elif (
-      len(transforms) > 1
-      and isinstance(transforms[0], gpu_core.ExtractAliasedRef)
-      and isinstance(transforms[1], gpu_core.UntilingTransform)
-  ):
-    tiling_transform = transforms[1]
-  if tiling_transform is not None:
-    if swizzle is None:
-      raise NotImplementedError("Tiling without swizzle is not supported.")
-    bw = dtypes.itemsize_bits(ctx.avals_out[0].dtype)
-    expected_minor_tiling = swizzle * 8 // bw
-    if tiling_transform.tiling[-1] != expected_minor_tiling:
-      raise NotImplementedError(
-          "Minor tiling dimension does not fit swizzle: "
-          f" expected {expected_minor_tiling}, got {tiling_transform.tiling[-1]}"
-      )
-
   x_smem, _, transforms = _handle_transforms(
       ctx, ctx.avals_in[0], x_ref, transform_avals, transforms,
       allow_peer_refs=True
@@ -1900,7 +1846,7 @@ def _get_lowering_rule(
     return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
 
   match transforms:
-    case (gpu_core.UntilingTransform(tiling),):
+    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntilingTransform(tiling)):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
       return mgpu.FragmentedArray.load_tiled(
@@ -1911,6 +1857,18 @@ def _get_lowering_rule(
           optimized=optimized,
           tiling_rank=len(tiling),
       )
+    case (gpu_core.UnswizzleRef(swizzle),):
+      if not isinstance(ctx.out_layout_hint, mgpu.TiledLayout):
+        raise NotImplementedError(
+            f"Unsupported swizzle transform for layout: {ctx.out_layout_hint}"
+        )
+      return mgpu.FragmentedArray.load_untiled(
+          x_smem,
+          is_signed=is_signed,
+          layout=ctx.out_layout_hint,
+          swizzle=swizzle,
+          optimized=optimized,
+      )
     case ():
       match ctx.out_layout_hint:
         case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
@@ -1919,20 +1877,12 @@ def _get_lowering_rule(
             raise ValueError(
                 f"Unsupported shape {shape}, (expected {tuple(ref_ty.shape)})"
             )
-          if swizzle is not None:
-            raise NotImplementedError(
-                "Unsupported swizzle transform with strided layout"
-            )
           return mgpu.FragmentedArray.load_strided(
               x_smem,
               is_signed=is_signed,
               vec_size=vec_size,
           )
         case None:
-          if swizzle is not None:
-            raise NotImplementedError(
-                "Unsupported swizzle transform with strided layout"
-            )
           return mgpu.FragmentedArray.load_strided(x_smem, is_signed=is_signed)
         case _:
           assert isinstance(ctx.out_layout_hint, mgpu.TiledLayout)
@@ -1940,7 +1890,7 @@ def _get_lowering_rule(
               x_smem,
               is_signed=is_signed,
               layout=ctx.out_layout_hint,
-              swizzle=swizzle or 16,
+              swizzle=16,
               optimized=optimized,
           )
     case _:
@@ -2011,42 +1961,6 @@ def _swap_lowering_rule(
   if ctx.module_ctx.auto_barriers:
     barrier()  # Make sure reads have completed before we write.
 
-  if transforms and isinstance(transforms[0], gpu_core.UnswizzleRef):
-    swizzle = transforms[0].swizzle
-    transforms = transforms[1:]
-    transform_avals = transform_avals[1:]
-  elif (
-      len(transforms) > 1
-      and isinstance(transforms[0], gpu_core.ExtractAliasedRef)
-      and isinstance(transforms[1], gpu_core.UnswizzleRef)
-  ):
-    swizzle = transforms[1].swizzle
-    transforms = [transforms[0], *transforms[2:]]
-    transform_avals = [transform_avals[0], *transform_avals[2:]]
-  else:
-    swizzle = None
-
-  # We verify tiling against swizzling in memory before transposes flip it.
-  tiling_transform = None
-  if transforms and isinstance(transforms[0], gpu_core.UntilingTransform):
-    tiling_transform = transforms[0]
-  elif (
-      len(transforms) > 1
-      and isinstance(transforms[0], gpu_core.ExtractAliasedRef)
-      and isinstance(transforms[1], gpu_core.UntilingTransform)
-  ):
-    tiling_transform = transforms[1]
-  if tiling_transform is not None:
-    if swizzle is None:
-      raise NotImplementedError("Tiling without swizzle is not supported.")
-    bw = dtypes.itemsize_bits(v_aval.dtype)
-    expected_minor_tiling = swizzle * 8 // bw
-    if tiling_transform.tiling[-1] != expected_minor_tiling:
-      raise NotImplementedError(
-          "Minor tiling dimension does not fit swizzle: "
-          f" expected {expected_minor_tiling}, got {tiling_transform.tiling[-1]}"
-      )
-
   assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
   x_smem, _, transforms = _handle_transforms(
       ctx, ctx.avals_in[0], x_ref, transform_avals, transforms,
@@ -2067,7 +1981,7 @@ def _swap_lowering_rule(
             is_signed=mgpu_utils.is_signed(v_aval.dtype),
         )
       value.store_untiled(x_smem)
-    case (gpu_core.UntilingTransform(tiling),):
+    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntilingTransform(tiling)):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
       if return_old:
@@ -2085,6 +1999,20 @@ def _swap_lowering_rule(
           optimized=optimized,
           tiling_rank=len(tiling),
       )
+    case (gpu_core.UnswizzleRef(swizzle),):
+      if not isinstance(value.layout, mgpu.TiledLayout):
+        raise NotImplementedError(
+            f"Unsupported swizzle transform for layout: {value.layout}"
+        )
+      if return_old:
+        old_value = mgpu.FragmentedArray.load_untiled(
+            x_smem,
+            layout=value.layout,
+            is_signed=mgpu_utils.is_signed(v_aval.dtype),
+            swizzle=swizzle,
+            optimized=optimized,
+        )
+      value.store_untiled(x_smem, swizzle=swizzle, optimized=optimized)
     case ():
       match value.layout:
         case mgpu.TiledLayout():
@@ -2093,17 +2021,11 @@ def _swap_lowering_rule(
                 x_smem,
                 layout=value.layout,
                 is_signed=mgpu_utils.is_signed(v_aval.dtype),
-                swizzle=swizzle or 16,
+                swizzle=16,
                 optimized=optimized,
             )
-          value.store_untiled(
-              x_smem, swizzle=swizzle or 16, optimized=optimized
-          )
+          value.store_untiled(x_smem, swizzle=16, optimized=optimized)
         case _:
-          if swizzle is not None:
-            raise NotImplementedError(
-                "Unsupported swizzle transform with strided layout"
-            )
           if return_old:
             old_value = mgpu.FragmentedArray.load_strided(
                 x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
@@ -3464,6 +3386,7 @@ def _run_scoped_lowering_rule(
     *consts,
     jaxpr: jax_core.Jaxpr,
     collective_axes,
+    ref_transforms=(),
     **_,
 ):
   if pallas_core.poison_buffers_enabled():
@@ -3483,7 +3406,7 @@ def _run_scoped_lowering_rule(
   if is_multithreaded and is_thread_collective:
     gpu_dialect.barrier()
   with contextlib.ExitStack() as alloc_stack:
-    for v in jaxpr.invars:
+    for v, transform in zip(jaxpr.invars, ref_transforms):
       aval = cast(ShapedAbstractValue, v.aval)
       if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
         if collective_axes:
@@ -3556,7 +3479,8 @@ def _run_scoped_lowering_rule(
       if aval.memory_space == gpu_core.SMEM:
         input_ref = alloc_stack.enter_context(
             ctx.module_ctx.scratch_view(
-                jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype)
+                jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
+                transforms=transform,
             )
         )
         input_refs.append(input_ref)
