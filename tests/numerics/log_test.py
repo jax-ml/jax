@@ -17,8 +17,11 @@
 import math
 
 from absl.testing import parameterized
+import jax
+from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lib import ifrt_version
 import jax.numpy as jnp
 
 # Under pytest, tests run against an installed wheel that does not
@@ -45,6 +48,11 @@ _LOG_INTERESTING_POINTS = [
     2.0 / 3.0,
     4.0 / 3.0,
 ]
+
+
+@jax.jit
+def _log2_highest(x):
+  return lax.log2(x, accuracy=lax.AccuracyMode.HIGHEST)
 
 
 @jtu.thread_unsafe_test_class()
@@ -100,13 +108,21 @@ class Log2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_log2_accuracy(self, dtype):
-    bounds = [
-        ("cpu", {bf16: 2.0, f16: 2.0, f32: 2.5, f64: 1.5}),
-        ("gpu", {bf16: 2.0, f16: 2.0, f32: 2.0, f64: 1.5}),
-        (TPU_EUPV1, {bf16: 1.0, f16: 1.5, f32: 5159.0}),
-        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 57.5}),
-        (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 2.5}),
-    ]
+    if ifrt_version >= 80:
+      bounds = [
+          ("gpu", {f32: 1.0, f64: 1.5}),
+          (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 5159.0}),
+          ("tpu_v5p", {f16: 1.0, f32: 56.5}),
+          (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
+      ]
+    else:
+      bounds = [
+          ("cpu", {bf16: 2.0, f16: 2.0, f32: 2.5, f64: 1.5}),
+          ("gpu", {bf16: 2.0, f16: 2.0, f32: 2.0, f64: 1.5}),
+          (TPU_EUPV1, {bf16: 1.0, f16: 1.5, f32: 5159.0}),
+          ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 57.5}),
+          (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 2.5}),
+      ]
     input_ftz = [
         ("gpu", False),
     ]
@@ -140,6 +156,28 @@ class Log2Test(jtu.JaxTestCase):
         bounds=bounds,
         input_ftz=input_ftz,
         interesting_points=interesting_points,
+    )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_log2_highest_accuracy(self, dtype):
+    if ifrt_version < 80:
+      self.skipTest("Requires ifrt_version >= 80")
+    bounds = [
+        ("gpu", {f32: 1.0, f64: 1.5}),
+        ([*TPU_EUPV1, "tpu_v5p"], {f32: 3.0}),
+        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    util.check_unary_precision(
+        self,
+        _log2_highest,
+        np.log2,
+        mpmath.log2,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
     )
 
 
@@ -239,6 +277,7 @@ class Log1pTest(jtu.JaxTestCase):
 
 util.register_benchmark(jnp.log)
 util.register_benchmark(jnp.log2)
+util.register_benchmark(_log2_highest)
 util.register_benchmark(jnp.log10)
 util.register_benchmark(jnp.log1p)
 

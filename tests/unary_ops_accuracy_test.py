@@ -205,6 +205,9 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
       *generate_test_cases(["exp", "expm1", "exp2", "log", "log1p", "tanh"])
   )
   def test_unary_ops_choose_impl(self, op, x, tp, **kwargs):
+    if op is lax.exp2 and jtu.get_tpu_version() < 6:
+      self.skipTest("exp2 tolerance accuracy is not supported.")
+
     @jax.jit
     def f_default(x):
       y = op(x, accuracy=tp.high)
@@ -240,6 +243,9 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
       *generate_test_cases(["exp", "expm1", "exp2", "log", "log1p", "tanh"])
   )
   def test_unary_vmap(self, op, x, tp, min_error_val):
+    if op is lax.exp2 and jtu.get_tpu_version() < 6:
+      self.skipTest("exp2 tolerance accuracy is not supported.")
+
     @jax.jit
     def f(x, y):
       diff = lambda val: abs(
@@ -275,6 +281,9 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
       *generate_test_cases(["exp", "expm1", "exp2"])
   )
   def test_diff_grad(self, op, x, tp, **kwargs):
+    if op is lax.exp2 and jtu.get_tpu_version() < 6:
+      self.skipTest("exp2 tolerance accuracy is not supported.")
+
     @jax.jit
     def f_default(x):
       default_op = op(x, accuracy=tp.low)
@@ -384,6 +393,8 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
       ])
   )
   def test_low_tol(self, op, x, **kwargs):
+    if op is lax.exp2 and jtu.get_tpu_version() < 6:
+      self.skipTest("exp2 tolerance accuracy is not supported.")
     with self.assertRaisesRegex(
         jax.errors.JaxRuntimeError, "impl_type.ok()"
     ):

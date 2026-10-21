@@ -65,7 +65,7 @@ from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive, standard_abstract_eval)
 from jax._src.core import typeof, getu, getr, stage_p
-from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import ifrt_version, jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -4794,14 +4794,16 @@ ad.defjvp2(
 )
 
 def _exp2_lower(ctx, x, accuracy):
-  x_aval, = ctx.avals_in
-  log2 = mlir.ir_constant(np.array(np.log(2), x_aval.dtype))
-  log2 = mlir.broadcast_in_dim(ctx, log2, x_aval, broadcast_dimensions=())
-  return [
-      hlo.exponential(
-          hlo.multiply(log2, x), result_accuracy=accuracy_attr(accuracy)
-      )
-  ]
+  if ctx.is_forward_compat() or ifrt_version < 80:
+    x_aval, = ctx.avals_in
+    log2 = mlir.ir_constant(np.array(np.log(2), x_aval.dtype))
+    log2 = mlir.broadcast_in_dim(ctx, log2, x_aval, broadcast_dimensions=())
+    return [
+        hlo.exponential(
+            hlo.multiply(log2, x), result_accuracy=accuracy_attr(accuracy)
+        )
+    ]
+  return _nary_lower_hlo(hlo.exp2, ctx, x, accuracy=accuracy)  # pyrefly: ignore[missing-attribute]
 
 mlir.register_lowering(exp2_p, _exp2_lower)
 core.pp_eqn_rules[exp2_p] = _unary_with_accuracy_pp_rule
@@ -4815,21 +4817,23 @@ log2_p = standard_unop(_float | _complex, 'log2')
 ad.defjvp(log2_p, lambda g, x, **kwargs: div(g, mul(x, log(_const(x, 2)))))
 
 def _log2_lower(ctx, x, accuracy):
-  x_aval, = ctx.avals_in
-  log_x = hlo.log(x, result_accuracy=accuracy_attr(accuracy))
-  if np.issubdtype(x_aval.dtype, np.complexfloating):
-    re = hlo.real(log_x)
-    im = hlo.imag(log_x)
-    real_dtype = _real_dtype(x_aval.dtype)
-    one_over_ln2 = mlir.ir_constant(np.array(1.4426950408889634, real_dtype))
-    one_over_ln2 = mlir.broadcast_in_dim(
-        ctx, one_over_ln2, core.ShapedArray(x_aval.shape, real_dtype), broadcast_dimensions=()
-    )
-    return [hlo.complex(hlo.multiply(re, one_over_ln2), hlo.multiply(im, one_over_ln2))]
-  else:
-    one_over_ln2 = mlir.ir_constant(np.array(1.4426950408889634, x_aval.dtype))
-    one_over_ln2 = mlir.broadcast_in_dim(ctx, one_over_ln2, x_aval, broadcast_dimensions=())
-    return [hlo.multiply(log_x, one_over_ln2)]
+  if ctx.is_forward_compat() or ifrt_version < 80:
+    x_aval, = ctx.avals_in
+    log_x = hlo.log(x, result_accuracy=accuracy_attr(accuracy))
+    if np.issubdtype(x_aval.dtype, np.complexfloating):
+      re = hlo.real(log_x)
+      im = hlo.imag(log_x)
+      real_dtype = _real_dtype(x_aval.dtype)
+      one_over_ln2 = mlir.ir_constant(np.array(1.4426950408889634, real_dtype))
+      one_over_ln2 = mlir.broadcast_in_dim(
+          ctx, one_over_ln2, core.ShapedArray(x_aval.shape, real_dtype), broadcast_dimensions=()
+      )
+      return [hlo.complex(hlo.multiply(re, one_over_ln2), hlo.multiply(im, one_over_ln2))]
+    else:
+      one_over_ln2 = mlir.ir_constant(np.array(1.4426950408889634, x_aval.dtype))
+      one_over_ln2 = mlir.broadcast_in_dim(ctx, one_over_ln2, x_aval, broadcast_dimensions=())
+      return [hlo.multiply(log_x, one_over_ln2)]
+  return _nary_lower_hlo(hlo.log2, ctx, x, accuracy=accuracy)  # pyrefly: ignore[missing-attribute]
 
 mlir.register_lowering(log2_p, _log2_lower)
 core.pp_eqn_rules[log2_p] = _unary_with_accuracy_pp_rule
