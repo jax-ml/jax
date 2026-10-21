@@ -7994,7 +7994,7 @@ def _stack_lower(ctx, *xs, axis):
 def _stack_batch_rule(batched_args, batch_dims, *, axis):
   bdim = batch_dims[0]
   if all(b == bdim for b in batch_dims) and bdim is not None:
-    if axis <= bdim:
+    if axis < bdim:
       out_axis = axis
       out_bdim = bdim + 1
     else:

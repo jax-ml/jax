@@ -370,6 +370,14 @@ class LaxVmapTest(jtu.JaxTestCase):
     for bdims in lax_test_util.all_bdims(shape, shape):
       self._CheckBatching(op, 5, bdims, (shape, shape), (dtype, dtype), rng)
 
+  def testStackNoTransposeOnVmap(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41794
+    # Ensure vmap of jnp.stack with axis=bdim does not emit a transpose.
+    f = jax.jit(jax.vmap(lambda a, b: lax.stack([a, b], axis=0)))
+    x = jnp.ones((8, 16))
+    hlo_text = f.lower(x, x).as_text()
+    self.assertNotIn("transpose", hlo_text)
+
   def testUnstack(self):
     shape = (2, 3)
     dtype = np.float32
