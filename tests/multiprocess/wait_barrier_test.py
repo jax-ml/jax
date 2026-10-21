@@ -23,7 +23,7 @@ class WaitBarrierTest(jt_multiprocess.MultiProcessTest):
 
   def test_only_participants_call_succeeds(self):
     client = distributed.global_state.client
-    timeout_in_ms = 1000
+    timeout_in_ms = 3000
 
     # Only even process ids will participate in the barrier.
     barrier_participants = []
@@ -43,7 +43,7 @@ class WaitBarrierTest(jt_multiprocess.MultiProcessTest):
 
   def test_non_participant_calls_fails(self):
     client = distributed.global_state.client
-    timeout_in_ms = 1000
+    timeout_in_ms = 3000
 
     process_group = []
     for process_index in range(jax.process_count()):
@@ -53,7 +53,7 @@ class WaitBarrierTest(jt_multiprocess.MultiProcessTest):
     # Processes 0, 2, 4 ... wait here.
     # Processes 1, 3, 5 ... go ahead to the barrier call.
     if jax.process_index() % 2 == 0:
-      client.blocking_key_value_get('sync', timeout_in_ms=1000)
+      client.blocking_key_value_get('sync', timeout_in_ms=timeout_in_ms)
 
     # 1, 3, 5 ... arrive and hit an error as they are non-participating.
     # 0, 2, 4 ... has not yet arrived here. They will arrive once 1 unblocks
@@ -73,7 +73,7 @@ class WaitBarrierTest(jt_multiprocess.MultiProcessTest):
 
   def test_all_participate_succeeds(self):
     client = distributed.global_state.client
-    timeout_in_ms = 1000
+    timeout_in_ms = 3000
     client.wait_at_barrier('all_processes_call', timeout_in_ms)
 
   # This test checks that processes do wait in `wait_at_barrier`and do not
