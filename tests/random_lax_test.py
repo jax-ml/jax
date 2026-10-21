@@ -1307,6 +1307,17 @@ class DistributionsTest(RandomTestBase):
         samples, lambda x: double_sided_maxwell_cdf(x, loc, scale))
 
   @jtu.sample_product(use_jit=[False, True])
+  def testDoublesidedMaxwellParameterShape(self, use_jit):
+    key = self.make_key(0)
+    rand = random.double_sided_maxwell if not use_jit else jax.jit(
+        random.double_sided_maxwell, static_argnames=['shape'])
+    loc = jnp.arange(4.)
+    scale = 1.
+
+    self.assertEqual((4,), rand(key, loc, scale).shape)
+    self.assertEqual((2, 4), rand(key, loc, scale, shape=(2,)).shape)
+
+  @jtu.sample_product(use_jit=[False, True])
   def testRadamacher(self, use_jit):
     key = self.make_key(0)
     num_samples = 10**5
