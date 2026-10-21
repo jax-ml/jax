@@ -62,6 +62,27 @@ class LogTest(jtu.JaxTestCase):
     input_ftz = [
         ("gpu", False),
     ]
+    interesting_points = [
+        *_LOG_INTERESTING_POINTS,
+        # Worst-case inputs across math libraries from Gladman et al.,
+        # "Accuracy of Mathematical Functions in Single, Double, Double
+        # Extended, and Quadruple Precision":
+        *(
+            float.fromhex(h)
+            for h in (
+                "0x1.1211bef8f68e9p+0",
+                "0x1.008000db2e8bep+0",
+                "0x1.108058fed54b3p+0",
+                "0x1.48ae5a67204f5p+0",
+                "0x1.dc0b586f2b26p-1",
+                "0x1.490af72a25a81p-1",
+                "0x1.5b6e7e4e96f86p+2",
+                "0x1.0ffc349469a2fp+0",
+                "0x1.69e7aa6da2df5p-1",
+                "0x1.5556123e8a2bp-1",
+            )
+        ),
+    ]
     util.check_unary_precision(
         self,
         jnp.log,
@@ -70,7 +91,7 @@ class LogTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
-        interesting_points=_LOG_INTERESTING_POINTS,
+        interesting_points=interesting_points,
     )
 
 
@@ -89,6 +110,27 @@ class Log2Test(jtu.JaxTestCase):
     input_ftz = [
         ("gpu", False),
     ]
+    interesting_points = [
+        *_LOG_INTERESTING_POINTS,
+        # Worst-case inputs across math libraries from Gladman et al.:
+        *(
+            float.fromhex(h)
+            for h in (
+                "0x1.1406d79e1b574p+0",
+                "0x1.fea11b9451f9bp-1",
+                "0x1.0b541b6746bd1p+0",
+                "0x1.68d778f076021p+0",
+                "0x1.67eaf07ce24d1p+0",
+                "0x1.0b53197bd66c8p+0",
+                "0x1.6d0092bcf066dp-1",
+                "0x1.b4ebe40c95a01p+0",
+                "0x1.160732376ad7fp+0",
+                "0x1.0b53f741fb8c4p+0",
+                "0x1.670c5aa6680abp+0",
+                "0x1.55571e90ee956p+0",
+            )
+        ),
+    ]
     util.check_unary_precision(
         self,
         jnp.log2,
@@ -97,7 +139,7 @@ class Log2Test(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
-        interesting_points=_LOG_INTERESTING_POINTS,
+        interesting_points=interesting_points,
     )
 
 
@@ -128,6 +170,22 @@ class Log10Test(jtu.JaxTestCase):
             *_LOG_INTERESTING_POINTS,
             # Exact powers of 10 where log10(x) is an integer.
             *(10.0**k for k in (-10, -3, -2, -1, 1, 2, 3, 10)),
+            # Worst-case inputs across math libraries from Gladman et al.:
+            *(
+                float.fromhex(h)
+                for h in (
+                    "0x1.de02157073b31p-1",
+                    "0x1.feda7b62c1033p-1",
+                    "0x1.10fdf4211fd45p+0",
+                    "0x1.55535a0140a21p+0",
+                    "0x1.553e1cb579ee9p+0",
+                    "0x1.2501ee5628b08p-1",
+                    "0x1.e12d66744ff81p+429",
+                    "0x1.e005e1e891807p-1",
+                    "0x1.803dea263187fp-1",
+                    "0x1.55558bf0b2328p+0",
+                )
+            ),
         ],
     )
 
@@ -149,6 +207,24 @@ class Log1pTest(jtu.JaxTestCase):
         math.sqrt(0.5) - 1.0,
         math.sqrt(2.0) - 1.0,
         math.e - 1.0,
+        # Worst-case inputs across math libraries from Gladman et al.:
+        *(
+            float.fromhex(h)
+            for h in (
+                "0x1p-149",
+                "-0x1.2bf183e0344b2p-2",
+                "0x1.000aee2a2757fp-9",
+                "0x1.e0013fd35cbbp-4",
+                "-0x1.2bf1de6b04a8ap-2",
+                "-0x1.2bf32aaf122e2p-2",
+                "-0x1.ffffff3fffffdp-28",
+                "0x1p-53",
+                "-0x1.8000000000000p-53",
+                "-0x1.2e496d25897ecp-2",
+                "-0x1.ffffffbaefe27p-2",
+                "-0x1.5efad5491a79bp-1022",
+            )
+        ),
     ]
     util.check_unary_precision(
         self,

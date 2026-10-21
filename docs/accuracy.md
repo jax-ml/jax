@@ -215,17 +215,17 @@ these are empirical bounds.
 
 | Function | CPU | NVIDIA GPU |
 |:---|:---:|:---:|
-| {func}`~jax.lax.acos` | 1.5 | 1.5 |
-| {func}`~jax.lax.acosh` | 3.5 | 2.5 |
+| {func}`~jax.lax.acos` | 1.5 | 2.0 |
+| {func}`~jax.lax.acosh` | 3.5 | 3.0 |
 | {func}`~jax.lax.asin` | 1.5 | 2.5 |
 | {func}`~jax.lax.asinh` | 2.5 | 2.5 |
 | {func}`~jax.lax.atan` | 3.5 | 2.5 |
-| {func}`~jax.lax.atan2` | 0.5 | 1.5 |
+| {func}`~jax.lax.atan2` | 0.5 | 2.0 |
 | {func}`~jax.lax.atanh` | 2.5 | 3.5 |
 | {func}`~jax.lax.bessel_i0e` | 7.5 | 7.5 |
 | {func}`~jax.lax.bessel_i1e` | 10.5 | 7.5 |
 | {func}`~jax.lax.cbrt` | 0.5 | 1.5 |
-| {func}`~jax.lax.cos` | 0.5 | 1.5 |
+| {func}`~jax.lax.cos` | 0.5 | 2.0 |
 | {func}`~jax.lax.cosh` | 2.0 | 2.5 |
 | {func}`~jax.lax.erf` | 2.5 | 2.5 |
 | {func}`~jax.lax.erf_inv` | 500000.0 | 500000.0 |
@@ -243,7 +243,7 @@ these are empirical bounds.
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 1.5 | 1.5 |
 | {func}`~jax.lax.sin` | 0.5 | 2.5 |
-| {func}`~jax.lax.sinh` | 1.5 | 2.5 |
+| {func}`~jax.lax.sinh` | 2.0 | 2.5 |
 | {func}`~jax.lax.sqrt` | 0.5 | 0.5 |
 | {func}`~jax.lax.square` | 0.5 | 0.5 |
 | {func}`~jax.lax.tan` | 0.5 | 2.5 |

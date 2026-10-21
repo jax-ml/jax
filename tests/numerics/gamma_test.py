@@ -187,6 +187,20 @@ class LgammaTest(jtu.JaxTestCase):
         2.556348e36,  # float32 overflow threshold
         2.556348163871691e305,  # finite in float64, just above 2.556348e305
         2.559983327851638e305,  # float64 overflow threshold
+        # Worst-case inputs across math libraries from Gladman et al.,
+        # "Accuracy of Mathematical Functions in Single, Double, Double
+        # Extended, and Quadruple Precision":
+        *(
+            float.fromhex(h)
+            for h in (
+                "0x0.00000002f6806p-1022",
+                "-0x1.3f62c60e23b31p+2",
+                "-0x1.3a7fc9600f86cp+1",
+                "-0x1.bffcbf76b86fp+2",
+                "-0x1.bffe071eea741p+2",
+                "-0x1.fa471547c2fe5p+1",
+            )
+        ),
     ]
     util.check_unary_precision(
         self,
@@ -417,6 +431,22 @@ class GammaTest(jtu.JaxTestCase):
         # maximizing ULP error in the reflection formula in float64:
         -6.2469100857178725,  # gamma(x) ~= -2**-8
         -13.999975942555134,  # gamma(x) ~= +2**-21
+        # Worst-case inputs across math libraries from Gladman et al.:
+        *(
+            float.fromhex(h)
+            for h in (
+                "0x1.8b9710d0adf83p-702",
+                "-0x1.3e0001ad3bee3p+6",
+                "-0x1.535175475cc8dp+7",
+                "-0x1.540b170c4e65ep+7",
+                "-0x1.fc4b534c8eccp+2",
+                "-0x1.5456e56919a19p+7",
+                "-0x1.5c00000003c15p+7",
+                "-0x1.547cf3ddaaddap+7",
+                "-0x1.2baa17692a3f2p+7",
+                "-0x1.e7b39f8d17722p+3",
+            )
+        ),
     ]
     util.check_unary_precision(
         self,

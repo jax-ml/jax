@@ -52,14 +52,52 @@ def _expm1_highest(x):
 
 
 # Additional range-reduction boundaries (k * ln(2)) beyond +-0.5*ln(2) and
-# +-ln(2) (which are already in _common_interesting_points).
-_EXP_INTERESTING_POINTS = [k * math.log(2.0) for k in (-10, -2, 2, 10)]
+# +-ln(2) (which are already in _common_interesting_points), plus worst-case
+# inputs across math libraries from Gladman et al., "Accuracy of Mathematical
+# Functions in Single, Double, Double Extended, and Quadruple Precision".
+_EXP_INTERESTING_POINTS = [
+    *(k * math.log(2.0) for k in (-10, -2, 2, 10)),
+    *(
+        float.fromhex(h)
+        for h in (
+            "-0x1.49f33ad2c1c58p+9",
+            "0x1.fce66609f7428p+5",
+            "0x1.b97dc8345c55p+5",
+            "0x1.2e8f20cf3cbe7p+8",
+            "-0x1.18209ecd19a8cp+6",
+            "-0x1.4133f4fd79c1cp-13",
+            "0x1p-53",
+            "-0x1.ffffffa000001p-27",
+            "-0x1.625f1b359729ep+9",
+            "-0x1.625f1c27780c8p+9",
+        )
+    ),
+]
 
 
 def _expm1_interesting_points(dtype):
-  # Thresholds where expm1(x) saturates to -1.0 for `dtype`.
+  # Thresholds where expm1(x) saturates to -1.0 for `dtype`, plus worst-case
+  # inputs across math libraries from Gladman et al.
   p = jnp.finfo(dtype).nmant + 1
-  return [-p * math.log(2.0), -(p + 1) * math.log(2.0)]
+  return [
+      -p * math.log(2.0),
+      -(p + 1) * math.log(2.0),
+      *(
+          float.fromhex(h)
+          for h in (
+              "0x1.63e063d87938p-2",
+              "-0x1.62fe464c64f65p-8",
+              "0x1.9a5796c0b73b8p-2",
+              "0x1.62ff47a01658fp-2",
+              "0x1.e7f93188565ecp-5",
+              "0x1p-52",
+              "-0x1.62d7c116d2e32p-1",
+              "0x1.633f993a730c9p-2",
+              "0x1.a0e95d59498e9p-2",
+              "0x1.6339ea76a70cap-2",
+          )
+      ),
+  ]
 
 
 @jtu.thread_unsafe_test_class()
@@ -124,6 +162,23 @@ class Exp2Test(jtu.JaxTestCase):
     ignore_inputs = [
         (["cpu", "gpu", "tpu"], {bf16: [0x4300]}),
     ]
+    # Worst-case inputs across math libraries from Gladman et al.
+    interesting_points = [
+        float.fromhex(h)
+        for h in (
+            "-0x1.1a4ce073ea908p-5",
+            "-0x1.8002f29666b99p-6",
+            "0x1.fffbff4152bafp+9",
+            "-0x1.ff95ecb4e6331p-2",
+            "-0x1.ff1eb5acee46bp+9",
+            "-0x1.b3d9b47ad1b2fp-13",
+            "0x1.71547652b82fep-53",
+            "-0x1.e383ca1fd4462p+9",
+            "-0x1.f7087fb1cf9e8p+9",
+            "-0x1.ff40169bd093bp+9",
+            "-0x1.ff3e09d141586p+9",
+        )
+    ]
     util.check_unary_precision(
         self,
         jnp.exp2,
@@ -132,6 +187,7 @@ class Exp2Test(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         ignore_inputs=ignore_inputs,
+        interesting_points=interesting_points,
     )
 
 

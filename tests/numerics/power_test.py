@@ -55,6 +55,10 @@ class SqrtTest(jtu.JaxTestCase):
     input_ftz = [
         ("gpu", False),
     ]
+    # Worst-case input across math libraries from Gladman et al., "Accuracy of
+    # Mathematical Functions in Single, Double, Double Extended, and Quadruple
+    # Precision".
+    interesting_points = [float.fromhex("0x1.fffffffffffffp-1")]
     util.check_unary_precision(
         self,
         jnp.sqrt,
@@ -63,6 +67,7 @@ class SqrtTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
+        interesting_points=interesting_points,
     )
 
 
@@ -97,6 +102,17 @@ class RsqrtTest(jtu.JaxTestCase):
     input_ftz = [
         ("gpu", False),
     ]
+    # Worst-case inputs across math libraries from Gladman et al.
+    interesting_points = [
+        float.fromhex(h)
+        for h in (
+            "0x1.fff002p-27",
+            "0x1.000080005p-620",
+            "0x1.00018f5913816p-458",
+            "0x1.f81ab000eb7d9p+479",
+            "0x1.0000000000002p+484",
+        )
+    ]
     util.check_unary_precision(
         self,
         lax.rsqrt,
@@ -105,6 +121,7 @@ class RsqrtTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
+        interesting_points=interesting_points,
     )
 
 
@@ -122,6 +139,23 @@ class CbrtTest(jtu.JaxTestCase):
     input_ftz = [
         ("gpu", False),
     ]
+    # Worst-case inputs across math libraries from Gladman et al.
+    interesting_points = [
+        float.fromhex(h)
+        for h in (
+            "0x1.7a337e1ba1ec2p-257",
+            "-0x1.f7af4893d1d51p-616",
+            "-0x1.0c8125f4f1c39p+998",
+            "-0x1.00ddafe7d9deep-885",
+            "-0x1.13a5ccd87c9bbp+1008",
+            "0x1.fed1fe9f1122dp+11",
+            "0x1.a202bfc89ddffp-1",
+            "-0x1.55cd285f321f6p-64",
+            "0x1.fffad1cec59fep-332",
+            "-0x1.588a24f7a97d3p+535",
+            "-0x1.1683e6953f0ep+235",
+        )
+    ]
     util.check_unary_precision(
         self,
         jnp.cbrt,
@@ -130,6 +164,7 @@ class CbrtTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
+        interesting_points=interesting_points,
     )
 
 
@@ -227,6 +262,28 @@ class HypotTest(jtu.JaxTestCase):
                 3.0 * s_hi / 4.0,
             )
             for sign in (-1, 1)
+        ),
+        # Worst-case (x, y) inputs across math libraries from Gladman et al.:
+        *(
+            (float.fromhex(x), float.fromhex(y))
+            for x, y in (
+                ("-0x1.003222p-20", "-0x1.6a2d58p-32"),
+                ("-0x1.0554acp+44", "-0x1.6dc9e6p+32"),
+                ("-0x1.6b05c4p-127", "0x1.6b3146p-126"),
+                ("0x1.26b188p-127", "-0x1.a4f2fp-128"),
+                ("0x1.65e2cp+124", "0x1.ac1p+112"),
+                ("0x1.007594p+1", "-0x1.003512p+1"),
+                ("0x1.b881fep+7", "0x1.7f482ep+15"),
+                ("0x0.603e52daf0bfdp-1022", "-0x0.a622d0a9a433bp-1022"),
+                ("0x0.19deaac345ffap-1022", "0x0.92c8727c389b6p-1022"),
+                ("-0x1.a9a537a197f59p+427", "0x1.254f84c458eb4p+428"),
+                ("0x1.6a0a41410b1abp-1004", "-0x0.a24afe71b539fp-1022"),
+                ("0x1.00014d4b1c6b9p-1015", "-0x1.000105ba9bf4p-1015"),
+                ("0x1.a308e1455f447p+0", "0x1.9d931a83ef879p+0"),
+                ("-0x1.6a5a0ce661358p+890", "-0x1.0151c108425b1p+890"),
+                ("-0x1.41fcfeeb2e246p+420", "-0x1.8d4d41eacdeccp+420"),
+                ("0x1.afa7134ad6d8p-403", "0x1.6a0ff6e086067p-384"),
+            )
         ),
     ]
     util.check_nary_precision(
