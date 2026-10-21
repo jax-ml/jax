@@ -24,6 +24,15 @@ from jax._src.lib import xla_client as xc
 from collections.abc import Sequence
 
 
+# The first pickled element is the serialization version. Try to extend
+# the serialization format in a backwards-compatible way by adding tuple
+# elements at the end.
+# Serialization version 1 is for pre 10/20/2026.
+# Serialization version 2 is for post 10/20/2026, when we introduced
+# the serialization versions.
+_SERIALIZATION_VERSION = 2
+
+
 def serialize(compiled: jax.stages.Compiled):
   """Serializes a compiled binary.
 
@@ -42,7 +51,8 @@ def serialize(compiled: jax.stages.Compiled):
     raise NotImplementedError("serialize_executables with const_args")
   with io.BytesIO() as file:
     _JaxPjrtPickler(file).dump(
-        (unloaded_executable, args_info_flat, compiled._no_kwargs))
+        (_SERIALIZATION_VERSION, unloaded_executable, args_info_flat,
+         compiled._no_kwargs))
     return file.getvalue(), in_tree, compiled.out_tree
 
 
@@ -74,9 +84,22 @@ def deserialize_and_load(serialized,
           'execution devices client: '
           f'{(device_backend.platform, device_backend.platform_version)}')
 
-  (unloaded_executable, args_info_flat,
-   no_kwargs) = _JaxPjrtUnpickler(
-       io.BytesIO(serialized), backend, execution_devices).load()
+  loaded = _JaxPjrtUnpickler(
+      io.BytesIO(serialized), backend, execution_devices).load()
+
+  if not isinstance(loaded, tuple):
+    raise ValueError(
+        'Cannot deserialize executable: corrupted or unrecognized serialized'
+        ' format.')
+
+  # Executable serialization is not really promised to be stable across versions.
+  if len(loaded) <= 3:
+    serialized_version = 1
+  else:
+    serialized_version = loaded[0]
+  if serialized_version != _SERIALIZATION_VERSION:
+    raise ValueError(f'Unexpected serialized version {serialized_version}.')
+  _, unloaded_executable, args_info_flat, no_kwargs = loaded
 
   args_info = in_tree.unflatten(args_info_flat)
 

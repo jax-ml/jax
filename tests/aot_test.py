@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import contextlib
+import io
 import re
 import unittest
 from absl.testing import absltest
@@ -27,6 +28,7 @@ from jax.experimental import topologies
 from jax.experimental.serialize_executable import (
     deserialize_and_load,
     serialize,
+    _JaxPjrtPickler,
 )
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
@@ -362,6 +364,28 @@ class JaxAotTest(jtu.JaxTestCase):
     f_lowered = f.lower(1)
     with self.assertRaisesRegex(ValueError, 'serialize with a closed-over'):
       serialized, in_tree, out_tree = serialize(f_lowered.compile())
+
+  def test_deserialize_version_1_legacy(self):
+    @jax.jit
+    def f(x, y):
+      return x * 2 + y
+
+    x = np.arange(4, dtype=np.int32)
+    y = np.arange(4, dtype=np.int32) * 3
+    compiled = f.lower(x, y).compile()
+    unloaded_executable = getattr(compiled._executable, '_unloaded_executable', None)
+    args_info_flat, in_tree = jax.tree_util.tree_flatten(compiled.args_info)
+    out_tree = compiled.out_tree
+
+    # Simulate legacy unversioned 3-tuple format (version 1)
+    with io.BytesIO() as file:
+      _JaxPjrtPickler(file).dump((unloaded_executable, args_info_flat,
+                                  compiled._no_kwargs))
+      legacy_serialized = file.getvalue()
+
+    with self.assertRaisesRegex(ValueError, "Unexpected serialized version"):
+      deserialize_and_load(legacy_serialized, in_tree, out_tree,
+                           execution_devices=jax.devices()[:1])
 
   @jtu.run_on_devices('gpu', 'tpu')
   def test_mismatched_backends_raises(self):
