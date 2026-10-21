@@ -785,16 +785,16 @@ def _lgamma_lowering(ctx, x, *, use_f64_for_f32=False):
 
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
-mlir.register_lowering(lgamma_p, _lgamma_lowering, inline=core.Inline.XLA_LATE)
+# Only CPU uses XLA_LATE; XLA:GPU does not inline XLA_LATE calls (turning each
+# op inside into a separate kernel), and XLA:TPU's late CallInliner hits
+# tile-layout mismatches inside fused loops.
+mlir.register_lowering(lgamma_p, _lgamma_lowering, inline=False)
 mlir.register_lowering(
     lgamma_p,
     partial(_lgamma_lowering, use_f64_for_f32=True),
     platform='cpu',
     inline=core.Inline.XLA_LATE,
 )
-# XLA:TPU's post-layout-assignment CallInliner hits tile-layout mismatches when
-# inlining calls inside fused loops; use early inlining on TPU instead.
-mlir.register_lowering(lgamma_p, _lgamma_lowering, platform='tpu', inline=False)
 
 def _digamma_lowering(
     ctx, x, *, use_f64_for_f32=False, use_optimization_barrier=False
@@ -820,17 +820,13 @@ def _digamma_lowering(
 
 digamma_p = standard_unop(_float, 'digamma')
 ad.defjvp(digamma_p, lambda g, x: mul(g, polygamma(_const(x, 1), x)))
-mlir.register_lowering(
-    digamma_p, _digamma_lowering, inline=core.Inline.XLA_LATE
-)
+mlir.register_lowering(digamma_p, _digamma_lowering, inline=False)
 mlir.register_lowering(
     digamma_p,
     partial(_digamma_lowering, use_f64_for_f32=True),
     platform='cpu',
     inline=core.Inline.XLA_LATE,
 )
-# XLA:TPU's post-layout-assignment CallInliner hits tile-layout mismatches when
-# inlining calls inside fused loops; use early inlining on TPU instead.
 mlir.register_lowering(
     digamma_p,
     partial(_digamma_lowering, use_optimization_barrier=True),
