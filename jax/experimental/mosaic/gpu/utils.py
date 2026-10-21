@@ -1442,13 +1442,12 @@ class BarrierRef:
 @dataclasses.dataclass(frozen=True)
 class DialectBarrierRef:
   barrier_ref: BarrierRef
-  orders_tensor_core: bool
 
   @staticmethod
   def initialize(
       barrier_memref: ir.Value,
       arrival_count: int,
-      orders_tensor_core: bool,
+      orders_tensor_core: bool = False,
   ) -> "DialectBarrierRef":
     barrier_ty = ir.MemRefType(barrier_memref.type)
     [num_barriers] = barrier_ty.shape
@@ -1464,7 +1463,6 @@ class DialectBarrierRef:
     memref.store(c(0, i32), phases, [])
     return DialectBarrierRef(
         barrier_ref=BarrierRef(address, c(0, i32), phases, num_barriers),
-        orders_tensor_core=orders_tensor_core,
     )
 
   def __iter__(self) -> Iterator["DialectBarrierRef"]:
@@ -1475,7 +1473,7 @@ class DialectBarrierRef:
         yield self[offset]
 
   def __getitem__(self, offset: ir.Value | int) -> "DialectBarrierRef":
-    return DialectBarrierRef(self.barrier_ref[offset], self.orders_tensor_core)
+    return DialectBarrierRef(self.barrier_ref[offset])
 
   def test_parity(
       self,
@@ -1483,7 +1481,6 @@ class DialectBarrierRef:
       orders_tensor_core: bool = False,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ) -> ir.Value:
-    assert self.orders_tensor_core == orders_tensor_core
     return self.barrier_ref.test_parity(parity, orders_tensor_core, scope=scope)
 
   def test(
@@ -1491,16 +1488,13 @@ class DialectBarrierRef:
       orders_tensor_core: bool = False,
       scope: ThreadSubset = ThreadSubset.WARPGROUP,
   ) -> ir.Value:
-    assert self.orders_tensor_core == orders_tensor_core
     assert self.barrier_ref.phases is not None
     return self.barrier_ref.test(orders_tensor_core, scope=scope)
 
   def wait_parity(self, parity, orders_tensor_core: bool = False):
-    assert self.orders_tensor_core == orders_tensor_core
     self.barrier_ref.wait_parity(parity, orders_tensor_core)
 
   def wait(self, orders_tensor_core: bool = False):
-    assert self.orders_tensor_core == orders_tensor_core
     assert self.barrier_ref.phases is not None
     self.barrier_ref.wait(orders_tensor_core)
 
@@ -1513,9 +1507,8 @@ class DialectBarrierRef:
       orders_tensor_core: bool = False,
       predicate: ir.Value | None = None,
   ):
-    assert self.orders_tensor_core == orders_tensor_core
     dialect.ArriveOp(
-        self.as_barrier_memref(),
+        self.as_barrier_memref(orders_tensor_core=orders_tensor_core),
         orders_tensor_core=orders_tensor_core,
         predicate=predicate,
     )
@@ -1528,10 +1521,10 @@ class DialectBarrierRef:
   def get_ptr(self):
     return self.barrier_ref.get_ptr()
 
-  def as_barrier_memref(self) -> ir.Value:
+  def as_barrier_memref(self, orders_tensor_core: bool = False) -> ir.Value:
     num_barriers = self.barrier_ref.num_barriers
     shape = () if num_barriers == 1 else (num_barriers,)
-    barrier_type = dialect.BarrierType.get(self.orders_tensor_core)
+    barrier_type = dialect.BarrierType.get(orders_tensor_core)
     ptr_type = llvm.PointerType(self.get_ptr().type)
     assert ptr_type.address_space == WORKGROUP_NVPTX_ADDRESS_SPACE
     memref_type = ir.MemRefType.get(shape, barrier_type, memory_space=smem())
@@ -1562,7 +1555,6 @@ class DialectBarrierRef:
             phases=None,  # pyrefly: ignore[bad-argument-type]
             num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
         ),
-        orders_tensor_core=memref_type.element_type.orders_tensor_core,
     )
 
 
