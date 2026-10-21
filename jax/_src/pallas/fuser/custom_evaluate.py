@@ -27,21 +27,16 @@ class CustomEvaluateSettings:
 
 
 def evaluate(f, *, allow_transpose: bool = True):
-  """Re-binds `f`'s traced jaxpr equation-by-equation under fuser constraints.
+  """Returns a function equivalent to ``f`` that rejects some primitives.
 
-  Used inside fused kernels to evaluate `f` primitive-by-primitive so that
-  fuser evaluation rules apply while rejecting unsupported higher-order
-  primitives (`scan`, `while_loop`, `cond`) and optionally `transpose`.
+  The returned function raises an error if ``f`` uses control flow (``scan``,
+  ``while_loop`` or ``cond``), which is not supported inside fusions yet, or a
+  transpose when ``allow_transpose`` is ``False``. Kernels can use this to
+  check up front that a fusion only contains ops they can handle.
 
   Args:
-    f: The function to trace and evaluate.
-    allow_transpose: Whether `lax.transpose_p` primitives are allowed in `f`.
-
-  Returns:
-    A wrapped function taking `*args` and `**kwargs` that traces `f` and
-    evaluates its jaxpr equation by equation, raising `NotImplementedError` for
-    `scan`, `while_loop`, and `cond` primitives and, if `allow_transpose` is
-    `False`, `ValueError` for transposes.
+    f: The function to wrap.
+    allow_transpose: Whether ``f`` may contain transposes.
   """
 
   def wrapped(*args, **kwargs):

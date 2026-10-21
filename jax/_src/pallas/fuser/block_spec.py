@@ -72,8 +72,6 @@ def _null_block_index_trafo(*block_indices):
 
 @dataclasses.dataclass
 class BlockIndexTransform:
-  """Represents a block shape and index transform during block spec propagation."""
-
   block_shape: Sequence[pallas_core.BlockDim | int | None] | None
   block_index_transform: Callable[..., Any] = _null_block_index_trafo
   # NOTE(levskaya): for "terminal" transforms to mark MemorySpace.KEY
@@ -181,16 +179,18 @@ class PushRuleContext:
 
 @functools.partial(api_boundary, repro_api_name="fuser.make_scalar_prefetch_handler")
 def make_scalar_prefetch_handler(*args):
-  """Creates a handler function that extracts a fusion's scalar prefetch values.
+  """Selects one fusion's scalar prefetch values from a kernel's shared ones.
+
+  A ``pallas_call`` has a single set of scalar prefetch arguments, so a kernel
+  with several fusions passes all of their scalar prefetch values together.
+  The handler tells each fusion where to find its own. For example, if the
+  kernel's scalar prefetch arguments are ``(x_scalars, y_scalars)``, pass
+  ``scalar_prefetch_handler=make_scalar_prefetch_handler(1)`` when pulling
+  block specs for ``y``'s fusion.
 
   Args:
-    *args: Sequence of indices or keys used to index sequentially into the
-      kernel's `scalar_prefetch` argument tuple.
-
-  Returns:
-    A callable `scalar_prefetch_getter(*sp_inputs)` that indexes into
-    `sp_inputs` along `args` to return a single fusion's scalar prefetch
-    group.
+    *args: The indices to follow, one level at a time, to reach this fusion's
+      values.
   """
   def scalar_prefetch_getter(*sp_inputs):
     result = sp_inputs
@@ -407,25 +407,45 @@ def pull_block_spec(
     grid_len: int | None = None,
     strict_mode: bool = True,
 ):
-  """Pulls output ``BlockSpecs`` backward through ``f`` to derive input ``BlockSpecs``.
+  """Derives the input block specs of ``f`` from the block specs of its outputs.
+
+  "Pulling" works backward from the output: given which block of ``f``'s
+  output a kernel computes at each grid step, it finds which blocks of
+  ``f``'s inputs are needed to compute it. For example, if ``f`` is
+  ``lambda x: x.T`` and ``out_block_specs`` is
+  ``BlockSpec((8, 128), lambda i, j: (i, j))``, the pulled input spec is
+  ``BlockSpec((128, 8), lambda i, j: (j, i))``.
 
   Args:
-    f: The fusion function to propagate block specs backward through.
-    out_block_specs: A ``BlockSpec`` or PyTree of ``BlockSpecs`` matching the
-      output structure of ``f``.
-    scalar_prefetch_handler: Optional getter created by
-      ``make_scalar_prefetch_handler`` that selects this fusion's scalar
-      prefetch values from the kernel's scalar prefetch inputs.
-    grid_len: Optional number of grid dimensions in the enclosing kernel
-      (required if any block index depends on scalar prefetch values).
-    strict_mode: If ``True``, converging paths to the same value must have
-      equivalent block index transforms; if ``False``, only block shapes must
-      match.
+    f: The function to pull block specs through, usually an input fusion.
+    out_block_specs: Block specs matching the output structure of ``f``.
+    scalar_prefetch_handler: Selects this fusion's scalar prefetch values in a
+      kernel with several fusions; see :func:`make_scalar_prefetch_handler`. If
+      not given, the kernel's scalar prefetch arguments must contain only this
+      fusion's values.
+    grid_len: The number of grid dimensions in the kernel. Required if block
+      indices depend on scalar prefetch values.
+    strict_mode: Controls how DAGs in ``f`` are checked when a value (an input
+      or intermediate) reaches the output along more than one path, so each
+      path pulls its own ``BlockSpec`` for it:
+
+      - If ``True`` (default), all paths to a shared value must pull both the
+        same ``block_shape`` and equivalent ``index_map``s (loading the same
+        block indices at every grid step), raising ``ValueError`` otherwise.
+        For example, ``lambda x: x + jnp.exp(x)`` succeeds, whereas
+        ``lambda x: x + x.T`` with square blocks ``(128, 128)`` raises because
+        grid step ``(i, j)`` would need both block ``(i, j)`` and block
+        ``(j, i)`` of ``x``.
+      - If ``False``, only ``block_shape``s are checked and ``index_map``
+        comparison is skipped (used e.g. by :func:`push_pull_block_spec`, where
+        paths from different outputs do not share output block indices).
 
   Returns:
-    A function taking example ``(*args, **kwargs)`` (or their abstract types)
-    and returning ``(kernel_fn, in_block_arg_specs, in_block_kwarg_specs)`` for
-    evaluating ``f`` on a single block inside a Pallas kernel.
+    A function that takes the arguments of ``f`` and returns
+    ``(kernel_fn, arg_specs, kwarg_specs)``. ``arg_specs`` and ``kwarg_specs``
+    are the pulled input block specs, and
+    ``kernel_fn(program_ids, scalar_prefetch, *args, **kwargs)`` computes one
+    output block of ``f`` inside the kernel.
   """
   if scalar_prefetch_handler is None:
     scalar_prefetch_handler = _identity_scalar_prefetch_handler
@@ -978,27 +998,42 @@ def get_fusion_values(
 ) -> tuple[
     Callable, tuple[typing.SupportsShape, ...], tuple[typing.SupportsShape, ...]
 ]:
-  """Extracts closed-over regular and scalar prefetch values from a ``fusion``.
+  """Splits the values that ``fusion`` closes over into kernel inputs.
 
-  Traces ``fusion`` on ``*args`` and ``**kwargs`` to separate closed-over constants
-  into regular array inputs (pipelined via ``BlockSpecs``) and scalar prefetch
-  values (used to compute block indices, e.g. ``dynamic_slice`` start indices).
-  Raises ``ValueError`` if ``fusion`` closes over ``Refs`` or uses stateful
-  primitives.
+  A fusion usually closes over arrays from its surrounding scope, which a
+  kernel must receive as explicit inputs. Not every closed-over scalar is a
+  scalar prefetch value; ``get_fusion_values`` traces ``fusion`` and classifies
+  each closed-over value by how it is used:
+
+  - *Scalar prefetch values* are closed-over 0-D scalars that the fuser stages
+    into SMEM as scalar prefetch arguments: scalars used to compute
+    ``BlockSpec`` ``index_map`` block indices (such as the dynamic start
+    indices of ``lax.dynamic_slice`` or ``lax.dynamic_update_slice``, and any
+    scalars they depend on) as well as 0-D scalars broadcast via
+    ``jnp.broadcast_to``. If such a scalar is also used in arithmetic, the
+    kernel body reads it from scalar prefetch as well.
+  - *Regular values* are all other closed-over values, including arrays and
+    0-D scalars used only in elementwise arithmetic (e.g. ``x * scale``). The
+    kernel passes them as ordinary inputs (with block specs derived for arrays
+    via :func:`pull_block_spec` or :func:`push_pull_block_spec`).
 
   Args:
-    fusion: The pure fusion callable (or ``Fusion`` object) to trace.
-    *args: Example positional arguments (or ``ShapeDtypeStructs``) to pass to
-      ``fusion``.
-    **kwargs: Example keyword arguments (or ``ShapeDtypeStructs``) to pass to
-      ``fusion``.
+    fusion: The pure fusion callable (or :class:`Fusion` object) to trace.
+    *args: Positional arguments of ``fusion``.
+    **kwargs: Keyword arguments of ``fusion``.
 
   Returns:
-    A tuple ``(new_fusion_fn, regular_values, scalar_prefetch_values)``, where
-    ``new_fusion_fn(values, *args, **kwargs)`` evaluates the fusion given explicit
-    ``regular_values``, ``regular_values`` is a tuple of closed-over arrays, and
-    ``scalar_prefetch_values`` is a tuple of closed-over values used to compute
-    block indices.
+    A tuple ``(new_fusion, regular_values, scalar_prefetch_values)``, where
+    ``new_fusion(regular_values, *args, **kwargs)`` computes the same result
+    as ``fusion(*args, **kwargs)`` but takes the regular values explicitly.
+
+  Raises:
+    ValueError: If ``fusion`` closes over refs or uses stateful primitives.
+      Unlike :func:`jax.jit`, ``get_fusion_values`` cannot discharge refs
+      transparently because the caller must still unwrap ``Ref`` inputs and
+      wire ``output_input_aliases`` into the kernel; use
+      :func:`get_stateful_input_fusion_values` or
+      :func:`get_stateful_output_fusion_values` instead.
   """
   return _get_fusion_values(fusion, args, kwargs)
 
@@ -1010,18 +1045,11 @@ def get_stateful_input_fusion_values(
     *args,
     **kwargs,
 ):
-  """Extracts values from a read-only input ``fusion`` that may close over ``Refs``.
+  """Like :func:`get_fusion_values`, for input fusions that read from refs.
 
-  Discharges stateful ``Ref`` reads in ``fusion`` into pure array inputs before
-  partitioning closed-over constants as in ``get_fusion_values`` (see
-  ``get_fusion_values`` for arguments). ``fusion`` must be read-only on ``Refs``, as
-  writes to ``Refs`` are dropped.
-
-  Returns:
-    A tuple ``(new_fusion_fn, regular_values, scalar_prefetch_values)``. While
-    ``regular_values`` may contain closed-over ``Refs`` read by ``fusion``,
-    ``new_fusion_fn(values, *args, **kwargs)`` has state discharged and expects
-    pure arrays (or inner array types when tracing) for ``values``.
+  ``fusion`` may read from refs it closes over but must not write into them;
+  writes are dropped. The refs are returned among ``regular_values``, and
+  ``new_fusion`` takes their values as arrays.
   """
   return _get_fusion_values(fusion, args, kwargs, discharge_refs=True)
 
@@ -1033,23 +1061,19 @@ def get_stateful_output_fusion_values(
     *args,
     **kwargs,
 ):
-  """Extracts values and aliases from an output ``fusion`` that may write ``Refs``.
+  """Like :func:`get_fusion_values`, for output fusions that write into refs.
 
-  Discharges stateful ``Ref`` effects in ``fusion`` into pure array inputs and
-  additional outputs for any modified ``Refs`` (see ``get_fusion_values`` for
-  arguments).
+  Refs that ``fusion`` closes over are returned among ``regular_values``, and
+  ``new_fusion`` takes their values as arrays. If ``fusion`` writes into any
+  of them, ``new_fusion`` returns ``(out, updated_refs)`` instead of ``out``,
+  where ``updated_refs`` holds the new values of the written refs.
 
   Returns:
-    A tuple ``(new_fusion_fn, regular_values, scalar_prefetch_values,
-    output_input_aliases)``. ``new_fusion_fn(values, *args, **kwargs)`` has state
-    discharged (expecting pure arrays or inner array types for ``values`` even
-    when ``regular_values`` contains closed-over ``Refs``) and returns
-    ``(out, extra_updated_ref_outputs)`` when any ``Refs`` are written, or just
-    ``out`` when no ``Refs`` are written. ``output_input_aliases`` is a dict mapping
-    the absolute output index of each extra output in
-    ``tree_leaves(out) + list(extra_updated_ref_outputs)`` (starting at
-    ``len(tree_leaves(out))``) to the index of the ``Ref`` it updates in
-    ``regular_values`` followed by the flattened ``args`` and ``kwargs``.
+    A tuple ``(new_fusion, regular_values, scalar_prefetch_values,
+    output_input_aliases)``. ``output_input_aliases`` maps the output
+    position of each written ref to its input position: keys index into
+    ``jax.tree.leaves(out) + updated_refs`` and values index into
+    ``jax.tree.leaves((regular_values, args, kwargs))``.
   """
   return _get_fusion_values(
       fusion, args, kwargs, discharge_refs=True, allow_additional_outputs=True)
@@ -1184,7 +1208,6 @@ eval_rules: dict[core.Primitive, EvalRuleFn] = {}
 def register_eval_rule(
     prim: core.Primitive,
 ) -> Callable[[Any], EvalRuleFn]:
-  """Returns a decorator registering a block-level kernel eval rule for `prim`."""
   def wrapper(
       f: EvalRuleFn,
   ) -> EvalRuleFn:
@@ -1215,8 +1238,6 @@ class PullBlockSpecRuleFn(Protocol):
 def register_pull_block_spec_rule(
     prim: core.Primitive,
 ) -> Callable[[Any], PullBlockSpecRuleFn]:
-  """Returns a decorator registering a backward block spec pull rule for `prim`."""
-
   def wrapper(
       f: PullBlockSpecRuleFn,
   ) -> PullBlockSpecRuleFn:
@@ -3107,32 +3128,30 @@ def push_block_spec(
     return_out_type: bool = False,
     **in_spec_kwargs,
 ):
-  """Pushes input ``BlockSpecs`` forward through ``f`` to get output ``BlockSpecs``.
+  """Derives the output block specs of ``f`` from the block specs of its inputs.
+
+  "Pushing" is the reverse of :func:`pull_block_spec`: given which block of
+  each input a kernel produces at each grid step, it finds the matching block
+  of ``f``'s output. This is used for output fusions, where the kernel's own
+  output block spec is known and the block spec of the final, fused output is
+  not. For example, if ``f`` is ``lambda y: y.T`` and the input spec is
+  ``BlockSpec((8, 128), lambda i, j: (i, j))``, the pushed output spec is
+  ``BlockSpec((128, 8), lambda i, j: (j, i))``.
 
   Args:
-    f: The function to propagate block specs forward through.
-    *in_spec_args: Positional input ``BlockSpecs`` (or PyTrees of
-      ``BlockSpecs``) matching the positional arguments of ``f``.
-    scalar_prefetch_handler: Optional getter created by
-      ``make_scalar_prefetch_handler`` that selects this fusion's scalar
-      prefetch values from the kernel's scalar prefetch inputs.
-    grid_len: Optional number of grid dimensions in the enclosing kernel.
-      Required if any block index depends on scalar prefetch values. When set,
-      the input ``BlockSpec`` index maps are expected to take ``grid_len`` grid
-      indices followed by the scalar prefetch refs, and the returned output
-      ``BlockSpec`` index maps follow the same convention.
-    strict_mode: If ``True``, converging paths to the same operation must have
-      identical block index maps. If ``False``, only block shapes, memory spaces,
-      and pipeline modes must match.
-    return_out_type: If ``True``, also return a PyTree of ``ShapeDtypeStructs``
-      describing the output types of ``f``.
-    **in_spec_kwargs: Keyword input ``BlockSpecs`` (or PyTrees of
-      ``BlockSpecs``) matching the keyword arguments of ``f``.
+    f: The function to push block specs through, usually an output fusion.
+    *in_spec_args: Block specs matching the positional arguments of ``f``.
+    scalar_prefetch_handler: See :func:`pull_block_spec`.
+    grid_len: See :func:`pull_block_spec`.
+    strict_mode: See :func:`pull_block_spec`.
+    return_out_type: If ``True``, also return the output types of ``f``, e.g.
+      to use as the ``out_shape`` of the kernel.
+    **in_spec_kwargs: Block specs matching the keyword arguments of ``f``.
 
   Returns:
-    A function taking example ``(*args, **kwargs)`` (or their abstract types)
-    and returning the output ``BlockSpec`` PyTree, or a tuple
-    ``(out_block_specs, out_type)`` when ``return_out_type=True``.
+    A function that takes the arguments of ``f`` and returns the output block
+    specs, or ``(out_block_specs, out_type)`` if ``return_out_type`` is
+    ``True``.
   """
   if scalar_prefetch_handler is None:
     scalar_prefetch_handler = _identity_scalar_prefetch_handler
@@ -3197,35 +3216,33 @@ def push_pull_block_spec(
     grid_len: int | None = None,
     **block_spec_kwargs: Any,
 ):
-  """Pushes ``BlockSpecs`` forward through an output fusion, then pulls them back.
+  """Pushes, then pulls, block specs through an output fusion.
 
-  For an output fusion ``f(values, *args, **kwargs)`` with closed-over side inputs
-  ``values`` (assigned ``no_block_spec`` during the forward push) and unfused kernel
-  outputs ``*args, **kwargs``, pushes ``block_specs`` forward through ``f`` and then
-  pulls the resulting output ``BlockSpecs`` backward (with ``strict_mode=False``) to
-  derive ``BlockSpecs`` for ``values`` and build the block-level kernel function.
+  An output fusion ``f(values, *args, **kwargs)``, as returned by
+  :func:`get_fusion_values`, takes the arrays it closes over as ``values`` and
+  the kernel's outputs as ``*args`` and ``**kwargs``. The block specs of the
+  kernel's outputs are known, but those of ``values`` are not. This pushes the
+  known block specs forward to get the block specs of ``f``'s outputs, and
+  then pulls those back to get the block specs of ``values``.
 
   Args:
-    f: Output fusion function taking ``(values, *args, **kwargs)``.
-    *block_specs: ``BlockSpecs`` for the positional kernel outputs ``*args``.
-    scalar_prefetch_handler: Optional getter created by
-      ``make_scalar_prefetch_handler`` that selects this fusion's scalar
-      prefetch values from the kernel's scalar prefetch inputs.
-    grid_len: Optional number of grid dimensions in the enclosing kernel; see
-      ``pull_block_spec``.
-    **block_spec_kwargs: ``BlockSpecs`` for the keyword kernel outputs
+    f: The output fusion.
+    *block_specs: Block specs of the kernel outputs passed as ``*args``.
+    scalar_prefetch_handler: See :func:`pull_block_spec`.
+    grid_len: See :func:`pull_block_spec`.
+    **block_spec_kwargs: Block specs of the kernel outputs passed as
       ``**kwargs``.
 
   Returns:
-    A function taking ``(values, *args, **kwargs)`` (or their abstract types)
-    and returning ``(kernel_fn, values_block_specs, kwarg_block_specs,
-    out_type, out_block_specs)``, where ``kernel_fn(program_ids,
-    scalar_prefetch, values, *args, **kwargs)`` evaluates ``f`` on a single
-    block, ``values_block_specs`` and ``kwarg_block_specs`` are the pulled
-    ``BlockSpecs`` for ``values`` and ``**kwargs`` (pulled specs for positional
-    ``*args`` are omitted because they are already given by ``*block_specs``), and
-    ``out_type`` and ``out_block_specs`` are the ``ShapeDtypeStructs`` and pushed
-    ``BlockSpecs`` for the outputs of ``f``.
+    A function that takes ``(values, *args, **kwargs)`` and returns
+    ``(kernel_fn, values_specs, kwarg_specs, out_type, out_specs)``. The first
+    three come from :func:`pull_block_spec` (the specs for ``*args`` are
+    omitted since they are given); the last two come from
+    :func:`push_block_spec`.
+
+  Raises:
+    ValueError: If a used kernel output pulls back a ``BlockSpec`` whose block
+      shape, memory space, or pipeline mode differs from its pushed spec.
   """
   def wrapper(values, *args, **kwargs):
     values_block_specs = jax.tree.map(
@@ -3384,8 +3401,6 @@ class PushBlockSpecRuleFn(Protocol):
 def register_push_block_spec_rule(
     prim: core.Primitive,
 ) -> Callable[[Any], PushBlockSpecRuleFn]:
-  """Returns a decorator registering a forward `BlockSpec` push rule for `prim`."""
-
   def wrapper(
       f: PushBlockSpecRuleFn,
   ) -> PushBlockSpecRuleFn:

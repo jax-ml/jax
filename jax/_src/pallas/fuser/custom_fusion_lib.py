@@ -59,42 +59,65 @@ class CustomEvalRuleFn(Protocol):
 
 @custom_api_util.register_custom_decorator_type
 class custom_fusion:
-  """Wraps a pure JAX function as a primitive with user-defined fuser rules.
+  """Defines an op with custom rules for how it is fused into a kernel.
 
-  ``custom_fusion`` allows defining custom block spec propagation and block-level
-  evaluation rules for an operation so that it can participate in input and
-  output fusions without decomposing into its constituent JAX primitives.
-  Effects are not supported.
+  By default, fuser derives block specs and per-block code for a fusion from
+  the JAX primitives it is made of. ``custom_fusion`` lets you define these
+  yourself, e.g. for an op that uses a primitive without fuser rules, or when
+  the default rules pick a more conservative block spec than necessary.
+  Outside of fused kernels, the op behaves like the decorated function.
 
-  Rule registration methods and expected callback signatures:
-    - ``def_eval_rule(fn)``: Required. ``fn(ctx: CustomEvalContext, *args) ->
-      Sequence[Any]`` evaluates the operation on a single block and must return
-      a sequence of flat output leaves (even for a single output).
-    - ``def_pull_block_spec(fn)``: Required. ``fn(out_block_transforms:
-      tuple[BlockIndexTransform, ...]) -> Sequence[BlockIndexTransform]``
-      propagates output block transforms backward to the inputs.
-    - ``def_push_block_spec(fn)``: Optional (only needed for output fusions).
-      ``fn(in_block_specs: tuple[BlockSpec, ...]) -> tuple[BlockSpec, ...]``
-      propagates input ``BlockSpecs`` forward to the outputs.
-    - ``def_pallas_impl(fn)``: Optional alternative implementation for use inside
-      a Pallas kernel; must produce the same output abstract values as ``fun``.
+  For example, adding a row ``(1, N)`` to a matrix ``(M, N)``::
 
-  Args:
-    fun: The pure JAX function defining the operation's abstract evaluation and
-      default eager/lowering behavior outside of a fused Pallas kernel.
+    @fuser.custom_fusion
+    def add_row(x, row):
+      return x + row
+
+    @add_row.def_pull_block_spec
+    def _(out_transforms):
+      (t,) = out_transforms
+      # Every output block reads the matching column block of `row`.
+      row_t = t.replace(
+          block_shape=(1, *t.block_shape[1:]),
+          block_index_transform=lambda *idxs: (
+              0, *t.block_index_transform(*idxs)[1:]),
+      )
+      return (t, row_t)
+
+    @add_row.def_push_block_spec
+    def _(in_specs):
+      x_spec, _ = in_specs
+      return (x_spec,)
+
+    @add_row.def_eval_rule
+    def _(ctx, x_block, row_block):
+      return (add_row(x_block, row_block),)
+
+  Effects are not supported. See the `custom fusion guide
+  <https://docs.jax.dev/en/latest/pallas/tpu/fuser.html#custom-fusion>`_ for
+  more details.
   """
 
+  #: The function that defines the op.
   fun: Callable[..., Any]
 
+  #: Computes the op on one block inside a kernel. Called as
+  #: ``eval_rule(ctx, *in_blocks)`` and returns a sequence of output blocks,
+  #: even if there is only one. Required.
   eval_rule: CustomEvalRuleFn | None = None
 
+  #: Derives the block index transform of each input from those of the
+  #: outputs. Called as ``pull_block_spec_rule(out_transforms)``. Required.
   pull_block_spec_rule: CustomPullBlockSpecRuleFn | None = None
 
-  # Optional if this custom_fusion is only used as an input fusion.
+  #: Derives the block spec of each output from those of the inputs. Called as
+  #: ``push_block_spec_rule(in_specs)``. Only required if the op is used in an
+  #: output fusion.
   push_block_spec_rule: CustomPushBlockSpecRuleFn | None = None
 
-  # Optional alternative implementation to use instead of `fun` for when this
-  # custom fusion is run inside a Pallas kernel.
+  #: An alternative implementation used instead of ``fun`` when the op is
+  #: called inside a Pallas kernel, e.g. from ``eval_rule``. It must return
+  #: outputs of the same shapes and dtypes as ``fun``. Optional.
   pallas_impl: Callable[..., Any] | None = None
 
   def __init__(self, fun: Callable[..., Any]):
