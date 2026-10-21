@@ -19,6 +19,7 @@ from functools import partial
 from typing import Any
 
 from jax._src import ad_util
+from jax._src import api
 from jax._src import api_util
 from jax._src import core
 from jax._src import dispatch
@@ -425,6 +426,51 @@ def _generic_reduce_window_batch_rule(
 reduce_window_p = core.Primitive('reduce_window')
 
 
+def _reduce_window_fold(
+    operands,
+    init_values,
+    reducer,
+    window_dimensions,
+    window_strides,
+    padding,
+    base_dilation,
+    window_dilation,
+):
+  """Computes a generic reduce_window as a fold over the window offsets.
+
+  Each output element starts at its init value and absorbs the elements of its
+  window in row-major order, skipping padding and base-dilation holes, which is
+  how XLA evaluates reduce_window. Unlike reduce_window_p, it is built only from
+  primitives that can be transposed, so its JVP also supports reverse mode.
+  """
+  out_shape = reduce_window_shape_tuple(
+      operands[0].shape, window_dimensions, window_strides, padding,
+      base_dilation, window_dilation)
+  acc = [lax.broadcast(init, out_shape) for init in init_values]
+  if 0 in out_shape or 0 in window_dimensions:
+    return acc  # empty output, or every window is empty
+  pads = [(lo, hi, d - 1) for (lo, hi), d in zip(padding, base_dilation)]
+  padded = [lax.pad(x, init, pads) for x, init in zip(operands, init_values)]
+  needs_mask = any(lo or hi for lo, hi in padding) or any(
+      d != 1 for d in base_dilation)
+  if needs_mask:
+    valid = lax.pad(lax.full(operands[0].shape, True), np.bool_(False), pads)
+  for _ in out_shape:
+    reducer = api.vmap(reducer)
+  for offset in np.ndindex(*window_dimensions):
+    start = [o * d for o, d in zip(offset, window_dilation)]
+    limit = [s + (n - 1) * st + 1
+             for s, n, st in zip(start, out_shape, window_strides)]
+    window = [slicing.slice(x, start, limit, window_strides) for x in padded]
+    new_acc = reducer(*acc, *window)
+    if needs_mask:
+      in_bounds = slicing.slice(valid, start, limit, window_strides)
+      new_acc = [lax.select(in_bounds, new, old)
+                 for new, old in zip(new_acc, acc)]
+    acc = list(new_acc)
+  return acc
+
+
 def reduce_window_jvp(
     primals,
     tangents,
@@ -436,36 +482,29 @@ def reduce_window_jvp(
     jaxpr,
     consts,
 ):
-
-  reduction_jaxpr = jaxpr
-
   n = len(primals) // 2  # number of primal operands
-  operand, init_value = util.split_list(primals, [n])
-  operand_tangent, init_value_tangent = util.split_list(tangents, [n])
-  if not all(isinstance(t, ad.Zero) for t in init_value_tangent):
+  operands, init_values = util.split_list(primals, [n])
+  operand_tangents, init_value_tangents = util.split_list(tangents, [n])
+  if not all(isinstance(t, ad.Zero) for t in init_value_tangents):
     raise TypeError("reduce_window jvp does not support non-zero init_value_tangent.")
 
-  init_value_tangent = map(ad_util.instantiate, init_value_tangent)
-  c_reduction_jaxpr = reduction_jaxpr.with_consts(consts)
-  jvp_reduction = ad.jvp_jaxpr(c_reduction_jaxpr, (True,) * len(tangents), [False] * len(init_value_tangent))[0]
-
-  def wrapper(left, right):
-    pl, tl = util.split_list(left, [n])
-    pr, tr = util.split_list(right, [n])
-    return jaxpr_as_fun(jvp_reduction)(*pl, *pr, *tl, *tr)
-
-  jvp_primals_tangents = _reduce_window(
-      operand=[*operand, *operand_tangent],
-      init_value=[*init_value, *init_value_tangent],
-      computation=wrapper,
+  # Operands with no tangent (e.g. constant indices) get explicit zeros, so the
+  # fold sees one tangent per operand.
+  operand_tangents = map(ad_util.instantiate, operand_tangents)
+  reducer = jaxpr_as_fun(jaxpr.with_consts(consts))
+  fold = partial(
+      _reduce_window_fold,
+      init_values=init_values,
+      reducer=reducer,
       window_dimensions=window_dimensions,
       window_strides=window_strides,
       padding=padding,
       base_dilation=base_dilation,
       window_dilation=window_dilation,
   )
-  primals, tangents = util.split_list(jvp_primals_tangents, [len(jvp_primals_tangents) // 2])
-  return [*primals], [*tangents]
+  primals_out, tangents_out = api.jvp(
+      lambda *xs: fold(list(xs)), operands, operand_tangents)
+  return list(primals_out), list(tangents_out)
 
 ad.primitive_jvps[reduce_window_p] = reduce_window_jvp
 reduce_window_p.multiple_results = True
