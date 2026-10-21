@@ -127,6 +127,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Deprecations
   * {func}`jax.lax.psend` and {func}`jax.lax.precv` are deprecated.
 
+* Breaking changes
+  * Fixed a numerical issue in the gradients produced by `jax.remat`. This may
+    cause ``f(x) != jax.value_and_grad(f)(x)[0]`` (due to numerical differences)
+    for more functions f than previously. See
+    https://github.com/google/jax/pull/22244 for more information.
+
 * Changes
   * Improved the numerical accuracy of {func}`jax.scipy.special.ndtri` and its
     derivatives by replacing the piecewise rational approximations with
