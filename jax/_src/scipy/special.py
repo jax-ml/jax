@@ -4169,9 +4169,12 @@ def _hyp1f1_serie(a, b, x, scale=1):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
+    # The terms may be negligible at first and grow until k ~ |x| - min(b, 0),
+    # e.g. when a is close to zero or to a negative integer.
+    return (k < 250) & ((lax.abs(term) / lax.abs(serie) > precision) |
+                        (k <= lax.abs(x) - jnp.minimum(b, 0)))
 
-  init = scale, 1, scale * a / b * x
+  init = scale, 1, scale * (a / b * x)
 
   return lax.while_loop(cond, body, init)[0]
 
@@ -4261,11 +4264,12 @@ def _hyp1f1_serie_derivatives(a, b, x, scale=1):
     serie_a, serie_b, k, term, term_a, term_b = state
 
     return (k < 250) & ((lax.abs(term_a) > precision * lax.abs(serie_a)) |
-                        (lax.abs(term_b) > precision * lax.abs(serie_b)))
+                        (lax.abs(term_b) > precision * lax.abs(serie_b)) |
+                        (k <= lax.abs(x) - jnp.minimum(b, 0)))
 
   term_a = scale * x / b
-  term_b = -scale * a * x / b ** 2
-  init = term_a, term_b, 1, scale * a / b * x, term_a, term_b
+  term_b = -term_a * (a / b)
+  init = term_a, term_b, 1, scale * (a / b * x), term_a, term_b
 
   return lax.while_loop(cond, body, init)[:2]
 
@@ -4277,8 +4281,9 @@ def _rgamma_and_derivative(z):
   """
 
   pole = (z <= 0) & (z == lax.floor(z))
-  sign = jnp.where(lax.rem(z, _lax_const(z, 2)) == 0, 1.0, -1.0)
-  rgamma = jnp.where(pole, 0, 1 / gamma(z))
+  sign = jnp.where(lax.rem(z, _lax_const(z, 2)) == 0, _lax_const(z, 1),
+                   _lax_const(z, -1))
+  rgamma = jnp.where(pole, _lax_const(z, 0), 1 / gamma(z))
   rgamma_derivative = jnp.where(pole, sign * gamma(1 - z), -digamma(z) * rgamma)
 
   return rgamma, rgamma_derivative
@@ -4410,7 +4415,9 @@ def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
     return lax.cond(x < 100, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
 
   result = lax.cond(x < 0, _hyp1f1_negative, positive, a, b, x)
-  index = (a == 0) * 1 + ((a == b) & (a != 0)) * 2 + ((b == 0) & (a != 0)) * 3
+  index = ((a == 0).astype(np.int32)
+           + ((a == b) & (a != 0)).astype(np.int32) * 2
+           + ((b == 0) & (a != 0)).astype(np.int32) * 3)
 
   return lax.select_n(index,
                       result,
