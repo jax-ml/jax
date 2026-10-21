@@ -850,6 +850,13 @@ def flash_attention_kernel(
       )
 
 
+def _div(dividend: int, divisor: int):
+  if divisor == 1:
+    return dividend
+
+  return lax.div(dividend, divisor)
+
+
 @overload
 def _splash_attention_forward(
     fwd_mask_info: mask_info_lib.MaskInfo,
@@ -888,13 +895,6 @@ def _splash_attention_forward(
     interpret: bool = False,
 ) -> SplashCustomReturnType:
   ...
-
-
-def _div(dividend: int, divisor: int):
-  if divisor == 1:
-    return dividend
-
-  return lax.div(dividend, divisor)
 
 
 def _splash_attention_forward(
