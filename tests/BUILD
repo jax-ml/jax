@@ -688,6 +688,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_control_flow_test",
     srcs = ["lax_control_flow_test.py"],
+    backend_tags = {
+        "cpu": ["noasan"],  # Test times out.
+    },
     shard_count = {
         "cpu": 15,
         "gpu": 15,
@@ -779,6 +782,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_numpy_reducers_test",
     srcs = ["lax_numpy_reducers_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Test times out.
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 20,
@@ -2000,6 +2006,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "mutable_array_test",
     srcs = ["mutable_array_test.py"],
+    backend_tags = {
+        "cpu": ["noasan"],  # Test times out.
+    },
     shard_count = {
         "cpu": select({
             "//tests/config:is_tsan": 20,
