@@ -231,6 +231,37 @@ class PinnedBufferTest(jtu.JaxTestCase):
     hlo = f.lower(x).compile().as_text()
     self.assertNotIn('"color"', hlo)
 
+  def test_distinct_pinned_buffers_with_equal_init_are_not_merged(self):
+    if not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Requires libtpu >= 0.0.52")
+
+    def kernel(a_in_ref, b_in_ref, a_ref, b_ref, scratch_ref):
+      del a_in_ref, b_in_ref
+      scratch_ref[...] = jnp.full(scratch_ref.shape, 1.0, scratch_ref.dtype)
+      pltpu.sync_copy(scratch_ref, a_ref)
+      scratch_ref[...] = jnp.full(scratch_ref.shape, 2.0, scratch_ref.dtype)
+      pltpu.sync_copy(scratch_ref, b_ref)
+
+    @jax.jit
+    def f():
+      # Two independent pinned buffers that happen to start out equal.
+      a = pin(jnp.zeros((8, 128), jnp.float32))
+      b = pin(jnp.zeros((8, 128), jnp.float32))
+      any_spec = pl.BlockSpec(memory_space=pl.ANY)
+      a, b = pl.pallas_call(
+          kernel,
+          out_shape=(a, b),
+          in_specs=[any_spec, any_spec],
+          out_specs=(any_spec, any_spec),
+          scratch_shapes=[pltpu.VMEM((8, 128), jnp.float32)],
+          input_output_aliases={0: 0, 1: 1},
+      )(a, b)
+      return unpin(a), unpin(b)
+
+    a, b = f()
+    np.testing.assert_array_equal(a, np.full((8, 128), 1.0, np.float32))
+    np.testing.assert_array_equal(b, np.full((8, 128), 2.0, np.float32))
+
   def test_error_if_not_aliased(self):
 
     @jax.jit
