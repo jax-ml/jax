@@ -14,7 +14,6 @@
 """Utilities for generating source mappings for MLIR dialects."""
 import collections
 import re
-from typing import cast
 
 from jax._src import sourcemap
 
@@ -39,6 +38,7 @@ CALLSITE_REGEX = re.compile(
 
 Location = collections.namedtuple("Location", ["file", "line", "col"])
 Redirect = collections.namedtuple("Redirect", ["tgt_id"])
+Callsite = collections.namedtuple("Callsite", ["callee", "caller"])
 
 
 def create_mlir_sourcemap(mlir_dump: str) -> sourcemap.SourceMap:
@@ -82,7 +82,7 @@ def create_mlir_sourcemap(mlir_dump: str) -> sourcemap.SourceMap:
 def parse_mlir_locations(
     mlir_dump: list[str],
 ) -> tuple[dict[int, sourcemap.Segment], list[str]]:
-  locations: dict[int, Location | Redirect] = {}
+  locations: dict[int, Location | Redirect | Callsite] = {}
   source_files = []
   for line in mlir_dump:
     if line.startswith("#loc"):
@@ -108,30 +108,38 @@ def parse_mlir_locations(
       callsite_match = CALLSITE_REGEX.match(line)
       if callsite_match:
         match_dict = callsite_match.groupdict()
-        locations[int(match_dict["id"])] = Redirect(
-            tgt_id=int(match_dict["callee"])
+        locations[int(match_dict["id"])] = Callsite(
+            callee=int(match_dict["callee"]),
+            caller=int(match_dict["caller"]),
         )
         continue
       if "loc(unknown)" in line:
         continue
-  # Resolve redirects
-  while True:
-    new_locations: dict[int, Location | Redirect] = {}
-    updated = False
-    for loc_id, loc in locations.items():
-      if isinstance(loc, Redirect):
-        new_locations[loc_id] = locations[loc.tgt_id]
-        updated = True
-      else:
-        new_locations[loc_id] = loc
-    locations = new_locations
-    if not updated:
-      break
+
+  def resolve_location(
+      loc_id: int, visited: frozenset[int] = frozenset()
+  ) -> Location | None:
+    if loc_id in visited or loc_id not in locations:
+      return None
+    loc = locations[loc_id]
+    if isinstance(loc, Location):
+      return loc
+    next_visited = visited | {loc_id}
+    if isinstance(loc, Redirect):
+      return resolve_location(loc.tgt_id, next_visited)
+    if isinstance(loc, Callsite):
+      return resolve_location(loc.callee, next_visited) or resolve_location(
+          loc.caller, next_visited
+      )
+    return None
+
   segment_dict: dict[int, sourcemap.Segment] = {}
-  for id_, loc in locations.items():
+  for id_ in locations:
+    loc = resolve_location(id_)
+    if loc is None:
+      continue
     # A segment is a tuple of the form:
     # (generated_col, src_file_idx, src_line, src_col)
-    loc = cast(Location, loc)
     segment_dict[id_] = (
         0,
         source_files.index(loc.file),
