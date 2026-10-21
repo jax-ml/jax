@@ -6185,6 +6185,21 @@ class MosaicLoweringForLoopTest(jtu.JaxTestCase):
 
     self.assertEqual(get_output().count('scf.for'), 1)
 
+  def test_kernel_captures_pinned_ref(self):
+    # https://github.com/jax-ml/jax/issues/41847
+    def f(x):
+      ref = jax.new_ref(x, memory_space=pltpu.VMEM, pin=True)
+
+      @pl.kernel(mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1))
+      def kernel():
+        ref[...] += 1
+
+      kernel()
+      return jax.freeze(ref)
+
+    x = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    jax.jit(f).trace(x).lower(lowering_platforms=('tpu',))
+
 
 class PallasKernelMetadataTest(ptu.PallasTPUTest):
 
