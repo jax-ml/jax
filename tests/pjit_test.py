@@ -12757,6 +12757,35 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = jax.jit(jax.vmap(g))(w, c, m)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(('x', 'y'), None, None)))
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_unreduced_squeeze_stack_unstack(self, mesh):
+    arr = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(2, 4, 2), P('x', None, None)
+    )
+    u_spec = P(None, None, unreduced={'x'})
+    u = jax.jit(lambda a: lax.reduce_sum(a, axes=(0,), out_sharding=u_spec))(arr)
+    ref = np.sum(arr, axis=0)
+
+    u_exp_spec = P(None, None, None, unreduced={'x'})
+    u_exp = jax.jit(
+        lambda a: jnp.reshape(a, (1, 4, 2), out_sharding=u_exp_spec)
+    )(u)
+    sq = jax.jit(lambda a: jnp.squeeze(a, axis=0))(u_exp)
+    self.assertEqual(sq.sharding, NamedSharding(mesh, u_spec))
+    self.assertArraysEqual(reshard(sq, P()), ref)
+
+    @jax.jit
+    def stack_unstack_fn(a):
+      s = lax.stack([a, a + a], axis=0)
+      u0, u1 = lax.unstack(s, axis=0)
+      return u0, u1
+
+    u0, u1 = stack_unstack_fn(u)
+    self.assertEqual(u0.sharding, NamedSharding(mesh, u_spec))
+    self.assertEqual(u1.sharding, NamedSharding(mesh, u_spec))
+    self.assertArraysEqual(reshard(u0, P()), ref)
+    self.assertArraysEqual(reshard(u1, P()), ref * 2.0)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
