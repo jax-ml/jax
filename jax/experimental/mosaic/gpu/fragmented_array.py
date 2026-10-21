@@ -2979,10 +2979,11 @@ class FragmentedArray:
 
     # Here we handle all conversions involving f8 types.
     # TODO(apaszke): Figure out proper satfinite control.
+    arch = utils.get_arch()
     supported_f8_f16: dict[ir.Type, tuple[ir.Type, ...]] = {
         f8e4m3fn: (f16,), f8e5m2: (f16,), f8e8m0fnu: (bf16,)
     }
-    if ptx_isa_version >= 92:
+    if ptx_isa_version >= 92 and arch.major >= 10:
       # Technically those downcasts are already supported in 91, but the casts
       # only become symmetric in 92 so that's what we use as the cutoff.
       supported_f8_f16[f8e4m3fn] += (bf16,)
@@ -2993,7 +2994,7 @@ class FragmentedArray:
     f16_ptx_names: dict[ir.Type, str] = {f16: "f16", bf16: "bf16"}
     f8_types = f8_ptx_names.keys()
     f16_types = f16_ptx_names.keys()
-    if f8e8m0fnu in {cur_dtype, new_dtype} and utils.get_arch().major < 10:
+    if f8e8m0fnu in {cur_dtype, new_dtype} and arch.major < 10:
       raise ValueError(
           "f8e8m0fnu type only supported on Blackwell and newer GPUs"
       )
@@ -3021,7 +3022,6 @@ class FragmentedArray:
         allowed_rounding = (Rounding.TO_NEAREST_EVEN,)
         # .rz rounding for cvt.{e4m3x2,e5m2x2}.{f32,f16x2,bf16x2} was added in
         # PTX ISA 9.4 and is only supported on sm_107f.
-        arch = utils.get_arch()
         if arch.major == 10 and arch.minor >= 7 and ptx_isa_version >= 94:
           allowed_rounding += (Rounding.TO_ZERO,)
       check_supported_rounding(allowed_rounding)
@@ -3055,7 +3055,11 @@ class FragmentedArray:
       supported_16 = supported_f8_f16[cur_dtype if cur_dtype in f8_types else new_dtype]
       ok_new_dtype = " or ".join(map(str, supported_16))
       ptx_hint = ""
-      if ptx_isa_version < 92 and f8e8m0fnu not in {cur_dtype, new_dtype}:
+      if (
+          ptx_isa_version < 92
+          and arch.major >= 10
+          and f8e8m0fnu not in {cur_dtype, new_dtype}
+      ):
         ptx_hint = (
             " This conversion would be supported if a newer CUDA (ptxas)"
             " version was available."

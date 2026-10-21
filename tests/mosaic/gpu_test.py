@@ -5723,10 +5723,16 @@ class FragmentedArrayTest(TestCase):
   def test_rounding_f8(self, src_dtype, dst_dtype):
     if src_dtype == dst_dtype:
       self.skipTest("Identical types, so nothing to test")
-    # bf16 -> f8e4m3fn/f8e5m2 support added in PTX ISA 9.1.
-    # f8e4m3fn/f8e5m2 -> bf16 support added in PTX ISA 9.2 (CUDA 13.1).
-    if src_dtype == jnp.bfloat16 and not jtu.is_cuda_version_at_least(13, 1):
-      self.skipTest("bf16 -> f8 requires CUDA 13.1+ (PTX ISA 9.2+)")
+    # bf16 -> f8e4m3fn/f8e5m2 support added in PTX ISA 9.1 on Blackwell+.
+    # f8e4m3fn/f8e5m2 -> bf16 support added in PTX ISA 9.2 (CUDA 13.1) on
+    # Blackwell+.
+    if src_dtype == jnp.bfloat16 and not (
+        jtu.is_cuda_compute_capability_at_least("10.0")
+        and jtu.is_cuda_version_at_least(13, 1)
+    ):
+      self.skipTest(
+          "bf16 -> f8 requires Blackwell+ and CUDA 13.1+ (PTX ISA 9.2+)"
+      )
 
     values = self.prng.uniform(-5.0, 5.0, size=(128, 256)).astype(src_dtype)
     expected_rn = values.astype(dst_dtype)
