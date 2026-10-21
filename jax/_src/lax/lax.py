@@ -4153,6 +4153,7 @@ def polynomial(
     out_shape = broadcasting_shape_rule('polynomial', typeof(x), typeof(c_args[0]))
     out_sharding = broadcasting_sharding_rule('polynomial', typeof(x), typeof(c_args[0]))
     return _maybe_broadcast(out_shape, c_args[0], out_sharding)
+  x, *c_args = core.auto_insert_reshard(x, *c_args)
   kwargs = {} if unroll is None else {'unroll': unroll}
   return polynomial_p.bind(x, *c_args, **kwargs)
 
