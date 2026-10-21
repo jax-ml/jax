@@ -99,11 +99,51 @@ def _mpmath_hyp1f1_grad_x(a, b, x):
   return a / b * mpmath.hyp1f1(a + 1, b + 1, x)
 
 
-def _vectorized_mpmath(mpmath_fn):
-  # Reference for float32, since scipy has no derivatives of hyp1f1.
-  fn = np.frompyfunc(
-      lambda *args: float(util.eval_mpmath(mpmath_fn, *args)), 3, 1)
-  return lambda *args: fn(*args).astype(np.float64)
+def _hyp1f1_series_reference(a, b, x):
+  """Float64 1F1(a, b, x) and its derivatives in a and b, for x <= 0.
+
+  Used as the reference for float32 (float64 tests use mpmath), since scipy
+  has no derivatives of hyp1f1 and mpmath is too slow for the float32 sample
+  count. Uses Kummer's transform
+    1F1(a, b, x) = exp(x) * sum_k (c)_k / (b)_k * z^k / k!,  c = b - a, z = -x,
+  whose terms do not alternate in sign once k > -c. The a and b derivatives of
+  each term are carried along with the product rule, so integer c <= 0 (where
+  the series terminates) needs no special case. In the tested domain this
+  agrees with mpmath to within 1e-3 float32 ULP.
+  """
+  a, b, x = np.broadcast_arrays(*(np.asarray(v, np.float64) for v in (a, b, x)))
+  f, f_a, f_b = (np.full(a.shape, np.nan) for _ in range(3))
+  ok = np.isfinite(a) & (b > 0) & (b < np.inf) & (x <= 0) & (x >= -1000)
+  if np.any(ok):
+    b_, x_ = b[ok], x[ok]
+    c, z = b_ - a[ok], -x_
+    u = np.exp(x_)  # exp(x) * (c)_k / (b)_k * z^k / k!
+    v = np.zeros_like(u)  # exp(x) * d/dc[(c)_k] / (b)_k * z^k / k!
+    h = np.zeros_like(u)  # sum_{j < k} 1 / (b + j)
+    s, s_a, s_b = u.copy(), np.zeros_like(u), np.zeros_like(u)
+    # The terms peak near k = z and are negligible by k = z + 15 sqrt(z) + 100.
+    for k in range(int(z.max() + 15 * np.sqrt(z.max()) + 100)):
+      r = z / ((b_ + k) * (k + 1))
+      v = (v * (c + k) + u) * r
+      h += 1 / (b_ + k)
+      u = u * (c + k) * r
+      s += u
+      s_a -= v
+      s_b += v - u * h
+    f[ok], f_a[ok], f_b[ok] = s, s_a, s_b
+  return f, f_a, f_b
+
+
+def _hyp1f1_grad_a_reference(a, b, x):
+  return _hyp1f1_series_reference(a, b, x)[1]
+
+
+def _hyp1f1_grad_b_reference(a, b, x):
+  return _hyp1f1_series_reference(a, b, x)[2]
+
+
+def _hyp1f1_grad_x_reference(a, b, x):
+  return a / b * _hyp1f1_series_reference(a + 1, b + 1, x)[0]
 
 
 @jtu.thread_unsafe_test_class()
@@ -134,17 +174,21 @@ class Hyp1f1Test(jtu.JaxTestCase):
 @jtu.thread_unsafe_test_class()
 class Hyp1f1GradTest(jtu.JaxTestCase):
 
-  def _check_grad(self, jax_fn, mpmath_fn, dtype, bounds):
+  def _check_grad(self, jax_fn, ref_fn, mpmath_fn, dtype, bounds):
     util.check_nary_precision(
         self,
         jax_fn,
-        _vectorized_mpmath(mpmath_fn),
+        ref_fn,
         mpmath_fn,
         dtype,
         nargs=3,
         bounds=bounds,
         ignore_inputs=_hyp1f1_ignored,
         interesting_points=_HYP1F1_INTERESTING_POINTS,
+        # Almost all full-range random samples fall outside the tested domain
+        # and are ignored, so beyond the 32768 samples near the interesting
+        # points they only add evaluation time.
+        max_samples=2**16 if dtype == f32 else None,
     )
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
@@ -154,7 +198,8 @@ class Hyp1f1GradTest(jtu.JaxTestCase):
         ("cpu", {f32: 700.0, f64: 650.0}),
         (["gpu", "tpu"], {f32: math.inf, f64: math.inf}),
     ]
-    self._check_grad(hyp1f1_grad_a, _mpmath_hyp1f1_grad_a, dtype, bounds)
+    self._check_grad(hyp1f1_grad_a, _hyp1f1_grad_a_reference,
+                     _mpmath_hyp1f1_grad_a, dtype, bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   @jax.numpy_dtype_promotion("standard")
@@ -163,7 +208,8 @@ class Hyp1f1GradTest(jtu.JaxTestCase):
         ("cpu", {f32: 1000.0, f64: 1300.0}),
         (["gpu", "tpu"], {f32: math.inf, f64: math.inf}),
     ]
-    self._check_grad(hyp1f1_grad_b, _mpmath_hyp1f1_grad_b, dtype, bounds)
+    self._check_grad(hyp1f1_grad_b, _hyp1f1_grad_b_reference,
+                     _mpmath_hyp1f1_grad_b, dtype, bounds)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   @jax.numpy_dtype_promotion("standard")
@@ -172,7 +218,8 @@ class Hyp1f1GradTest(jtu.JaxTestCase):
         ("cpu", {f32: 1500.0, f64: 1400.0}),
         (["gpu", "tpu"], {f32: math.inf, f64: math.inf}),
     ]
-    self._check_grad(hyp1f1_grad_x, _mpmath_hyp1f1_grad_x, dtype, bounds)
+    self._check_grad(hyp1f1_grad_x, _hyp1f1_grad_x_reference,
+                     _mpmath_hyp1f1_grad_x, dtype, bounds)
 
 
 util.register_benchmark(jsp.special.hyp1f1, nargs=3, dtypes=[f32, f64])
