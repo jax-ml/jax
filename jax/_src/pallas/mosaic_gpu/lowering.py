@@ -3990,22 +3990,22 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
     ]
     del outs
 
-  switch_op = scf_dialect.IndexSwitchOp(
-      yielded_types,
-      _as_index(_ensure_ir_value(index, index_aval.dtype)),
-      range(len(branches) - 1),
-  )
-
-  # ``RegionSequence`` in MLIR does not support slicing, so the
-  # auto-generated Python bindings for ``caseRegions`` fail at runtime!
-  # We convert it to a list to work around that.
-  regions = list(switch_op.regions)
-  # Move the default region to the back.
-  regions = regions[1:] + regions[:1]
+  index = _ensure_ir_value(index, index_aval.dtype)
+  if len(branches) <= 2:
+    pred = arith_dialect.cmpi(
+        arith_dialect.CmpIPredicate.ne, index, _ir_constant(0, index.type)
+    )
+    op = scf_dialect.IfOp(pred, yielded_types, has_else=len(branches) > 1)
+  else:
+    op = scf_dialect.IndexSwitchOp(
+        yielded_types, _as_index(index), range(len(branches) - 1)
+    )
+  if len(branches) > 1:
+    # Move the true/default branch to the front to match the MLIR region order.
+    branches = branches[-1:] + branches[:-1]
   treedef: tree_util.PyTreeDef | None = None
-  for branch, region in zip(branches, regions):
-    block = region.blocks[0]
-    with ir.InsertionPoint(block):
+  for branch, region in zip(branches, op.regions):
+    with ir.InsertionPoint(region.blocks[0]):
       outs = lower_jaxpr_to_mosaic_gpu(
           ctx.module_ctx, ctx.launch_ctx, branch, args, consts=branch.consts
       )
@@ -4019,7 +4019,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
       scf_dialect.yield_(yielded_leaves)
 
   assert treedef is not None
-  return treedef.unflatten(list(switch_op.results))
+  return treedef.unflatten(list(op.results))
 
 
 @register_lowering_rule(lax.bitcast_convert_type_p, mgpu.LoweringSemantics.Lane)

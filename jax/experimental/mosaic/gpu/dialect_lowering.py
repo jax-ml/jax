@@ -1644,9 +1644,21 @@ def _select_op_lowering_rule(
   [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
-  pred = _fragmented_array_from_ir(op.condition, layout)
   true_value = _fragmented_array_from_ir(op.true_value, layout)
   false_value = _fragmented_array_from_ir(op.false_value, layout)
+  if not isinstance(op.condition.type, ir.VectorType):
+    result_regs = [
+        arith.select(op.condition, t, f)
+        for t, f in zip(
+            true_value.registers.flat, false_value.registers.flat, strict=True
+        )
+    ]
+    conversion_cast = builtin.UnrealizedConversionCastOp(
+        [op.result.type], result_regs
+    )
+    conversion_cast.attributes["layout"] = layout
+    return [conversion_cast.result]
+  pred = _fragmented_array_from_ir(op.condition, layout)
   result = pred.select(true_value, false_value)
   return [fragmented_array_to_ir(result, op.result.type)]
 
@@ -2889,39 +2901,35 @@ def _infer_flat_result_types(
 
 
 @_register_lowering(scf.IfOp, support_warp_semantics=True)
-def _if_op_lowering_rule(
-    ctx: LoweringContext, if_op: scf.IfOp
-) -> MlirLoweringRuleResult:
-  if not inference_utils.should_have_layout(if_op):
-    return _traverse_op_lowering_rule(ctx, if_op)
-
-  raise NotImplementedError
-
-
 @_register_lowering(scf.IndexSwitchOp, support_warp_semantics=True)
-def _index_switch_op_lowering_rule(
-    ctx: LoweringContext, switch_op: scf.IndexSwitchOp
+def _branching_op_lowering_rule(
+    ctx: LoweringContext, op: scf.IfOp | scf.IndexSwitchOp
 ) -> MlirLoweringRuleResult:
-  if not inference_utils.should_have_layout(switch_op):
-    return _traverse_op_lowering_rule(ctx, switch_op)
+  if not inference_utils.should_have_layout(op):
+    return _traverse_op_lowering_rule(ctx, op)
 
-  out_layouts = inference_utils.out_layouts(switch_op)
-  new_switch_op = scf.IndexSwitchOp(
-      _infer_flat_result_types(switch_op, out_layouts),
-      switch_op.arg,
-      switch_op.cases,
-  )
+  out_layouts = inference_utils.out_layouts(op)
+  result_types = _infer_flat_result_types(op, out_layouts)
+  match op:
+    case scf.IfOp():
+      new_op = scf.IfOp(
+          op.condition,
+          result_types,
+          has_else=bool(op.elseRegion.blocks),
+      )
+    case scf.IndexSwitchOp():
+      new_op = scf.IndexSwitchOp(result_types, op.arg, op.cases)
+    case _:
+      assert_never(op)
 
   results_template: Sequence[_VectorTemplate | None] = []
-  for region, new_region in zip(
-      switch_op.regions, new_switch_op.regions, strict=True
-  ):
+  for region, new_region in zip(op.regions, new_op.regions, strict=True):
     [block] = region.blocks
     new_block = new_region.blocks[0]
     results_template = _move_scf_block_to_block_with_flattened_arguments(
         ctx, block, new_block, scf.YieldOp, []
     )
-  return _unflatten_ir_values(new_switch_op.results, results_template)
+  return _unflatten_ir_values(new_op.results, results_template)
 
 @_register_lowering(mgpu.TryClusterCancelOp)
 def _try_cluster_cancel_op_lowering_rule(

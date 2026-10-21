@@ -2804,6 +2804,52 @@ class DialectLoweringTest(MosaicGpuTest):
     # expected.
     self.assertEmpty(self.find_ops(mgpu.dialect.SliceSMEMOp))
 
+  @parameterized.product(
+      dtype=(jnp.int4, jnp.int8, jnp.float8_e4m3fn, jnp.bfloat16),
+      splat_layout=(True, False),
+  )
+  def test_lowering_select_op_scalar_condition(self, dtype, splat_layout):
+    shape = (4, 128)
+    with self.kernel() as launch_ctx:
+      elt_ty = mgpu_utils.dtype_to_ir_type(dtype)
+      vec_ty = ir.VectorType.get(shape, elt_ty)
+      i1 = ir.IntegerType.get_signless(1)
+      if splat_layout:
+        layout = mgpu.WGSplatFragLayout(shape)
+      else:
+        layout = mgpu.WGStridedFragLayout.from_shaped_type(vec_ty)
+        assert layout is not None
+      layout_attr = layouts.to_layout_attr(layout)
+      if isinstance(elt_ty, ir.IntegerType):
+        zero = ir.IntegerAttr.get(elt_ty, 0)
+        one = ir.IntegerAttr.get(elt_ty, 1)
+      else:
+        zero = ir.FloatAttr.get(elt_ty, 0)
+        one = ir.FloatAttr.get(elt_ty, 1)
+      v_true = arith.ConstantOp(
+          vec_ty, ir.DenseElementsAttr.get_splat(vec_ty, one)
+      )
+      v_false = arith.ConstantOp(
+          vec_ty, ir.DenseElementsAttr.get_splat(vec_ty, zero)
+      )
+      v_true.attributes["out_layouts"] = ir.ArrayAttr.get([layout_attr])
+      v_false.attributes["out_layouts"] = ir.ArrayAttr.get([layout_attr])
+      cond = arith.constant(i1, 1)
+      select_op = arith.SelectOp(cond, v_true, v_false)
+      select_op.attributes["in_layouts"] = ir.ArrayAttr.get([layout_attr] * 2)
+      select_op.attributes["out_layouts"] = ir.ArrayAttr.get([layout_attr])
+
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
+    self.assertTrue(self.module.operation.verify())
+    select_ops = self.find_ops(arith.SelectOp)
+    self.assertNotEmpty(select_ops)
+    for op in select_ops:
+      self.assertEqual(op.condition.type, i1)
+      if splat_layout:
+        self.assertEqual(op.result.type, elt_ty)
+      else:
+        self.assertIsInstance(op.result.type, ir.VectorType)
+
   @parameterized.parameters(
       (arith.ExtFOp, jnp.bfloat16, jnp.float32),
       (arith.ExtSIOp, jnp.int16, jnp.int32),
