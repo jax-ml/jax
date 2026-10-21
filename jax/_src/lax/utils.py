@@ -216,6 +216,19 @@ def _shard_aval(aval):
   return aval.update(shape=shard_shape, sharding=None,
                      manual_axis_type=core.empty_mat)
 
+def check_minor_dims_tile_size(prim_name: str, in_aval, out_aval):
+  if not in_aval.layout.tiling:
+    return
+  tiles = in_aval.layout.tiling[0]
+  for d, tile_size in zip(in_aval.layout.major_to_minor[-len(tiles):], tiles):
+    in_size, out_size = in_aval.shape[d], out_aval.shape[d]
+    if in_size != out_size and (in_size < tile_size or out_size < tile_size):
+      raise ValueError(
+          f'`{prim_name}` cannot change the shard shape of a tiled minor'
+          f' dimension below its tile size. Dimension {d} has tile size'
+          f' {tile_size}, input shard shape {in_aval.shape}, and output shard'
+          f' shape {out_aval.shape} with layout {in_aval.layout}.')
+
 def call_layout_rule(prim, layout_rule, in_avals, out_avals, **kwargs):
   cur_layout_mode = get_layout_mode()
   if cur_layout_mode is LayoutMode.AUTO:

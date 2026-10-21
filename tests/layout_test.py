@@ -1499,6 +1499,157 @@ class LayoutInTypesTest(jtu.JaxTestCase):
       lowered_text = f.lower(arr).as_text()
       self.assertIn('LayoutConstraint', lowered_text)
 
+  @parameterized.named_parameters(
+      ('integer_pow', lambda x: jax.lax.integer_pow(x, 3)),
+      ('reduce_precision', lambda x: jax.lax.reduce_precision(x, 5, 10)),
+      ('slice', lambda x: jax.lax.slice(x, (0, 1, 0), (8, 5, 128))),
+      ('dynamic_slice', lambda x: jax.lax.dynamic_slice(x, (0, 1, 0), (8, 4, 128))),
+  )
+  def test_noop_unop_layouts(self, op_fn):
+    shape = (16, 8, 256)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(np_inp, Format(Layout((1, 0, 2)), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      y = op_fn(x)
+      self.assertEqual(y.aval.layout, arr.format.layout)
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.format.layout, arr.format.layout)
+    self.assertArraysAllClose(out, jax.jit(op_fn)(np_inp))
+    self.assertEqual(f.lower(arr).as_text().count('LayoutConstraint'), 2)
+
+  def test_split_layout(self):
+    shape = (8, 8, 16)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(np_inp, Format(Layout((1, 0, 2)), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      y0, y1 = jax.lax.split(x, (2, 6), axis=1)
+      self.assertEqual(y0.aval.layout, arr.format.layout)
+      self.assertEqual(y1.aval.layout, arr.format.layout)
+      return y0, y1
+
+    out0, out1 = f(arr)
+    self.assertEqual(out0.format.layout, arr.format.layout)
+    self.assertEqual(out1.format.layout, arr.format.layout)
+    ref0, ref1 = np.split(np_inp, [2], axis=1)
+    self.assertArraysEqual(out0, ref0)
+    self.assertArraysEqual(out1, ref1)
+    self.assertEqual(f.lower(arr).as_text().count('LayoutConstraint'), 3)
+
+  @parameterized.named_parameters(
+      ('clamp',
+       lambda x, y: jax.lax.clamp(np.float32(0.0), x, y),
+       (8, 8, 16)),
+      ('select_n',
+       lambda x, y: jax.lax.select_n(x > np.float32(10.0), x, y),
+       (8, 8, 16)),
+      ('concatenate',
+       lambda x, y: jax.lax.concatenate([x, y], dimension=1),
+       (8, 8, 16)),
+      ('dynamic_update_slice',
+       lambda x, y: jax.lax.dynamic_update_slice(x, y, (0, 1, 0)),
+       (8, 4, 16)),
+  )
+  def test_noop_multi_operand_layouts(self, op_fn, y_shape):
+    x_shape = (8, 8, 16)
+    np_x = np.arange(math.prod(x_shape), dtype=np.float32).reshape(x_shape)
+    np_y = np.ones(y_shape, dtype=np.float32)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr_x = jax.device_put(np_x, Format(Layout((1, 0, 2)), s))
+    arr_y = jax.device_put(np_y, Format(Layout((1, 0, 2)), s))
+    arr_y_bad = jax.device_put(np_y, Format(Layout((0, 1, 2)), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=(arr_x.format.layout, arr_y.format.layout))
+    def f(x, y):
+      out = op_fn(x, y)
+      self.assertEqual(out.aval.layout, arr_x.format.layout)
+      return out
+
+    out = f(arr_x, arr_y)
+    self.assertEqual(out.format.layout, arr_x.format.layout)
+    self.assertArraysAllClose(out, jax.jit(op_fn)(np_x, np_y))
+    self.assertIn('LayoutConstraint', f.lower(arr_x, arr_y).as_text())
+
+    @jax.jit
+    @explicit_layout(in_layouts=(arr_x.format.layout, arr_y_bad.format.layout))
+    def f_bad(x, y):
+      return op_fn(x, y)
+
+    with self.assertRaisesRegex(
+        ValueError, 'layout of all inputs passed to .* must be the same'):
+      f_bad(arr_x, arr_y_bad)
+
+  @jtu.run_on_devices('tpu')
+  def test_minor_dim_tile_size_error(self):
+    shape = (16, 128)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(np_inp, Format(Layout((0, 1)), s))
+
+    for op_fn in [
+        lambda x: jax.lax.slice(x, (0, 0), (4, 128)),
+        lambda x: jax.lax.dynamic_slice(x, (0, 0), (4, 128)),
+        lambda x: jax.lax.split(x, (4, 12), axis=0)[0],
+    ]:
+      @jax.jit
+      @explicit_layout(in_layouts=arr.format.layout)
+      def f_bad(x):
+        return op_fn(x)
+
+      with self.assertRaisesRegex(
+          ValueError,
+          'cannot change the shard shape of a tiled minor dimension below its'
+          ' tile size'):
+        f_bad(arr)
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_reshard_layout(self, mesh):
+    shape = (16, 32, 256)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    s_in = NamedSharding(mesh, P('x', None, None))
+    s_out = NamedSharding(mesh, P(None, 'x', None))
+    arr = jax.device_put(np_inp, Format(Layout((0, 1, 2)), s_in))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      # Minor-most dims are (1, 2); dim 1 shard shape changes 32 -> 16 (>= 8).
+      y = jax.reshard(x, s_out)
+      self.assertEqual(y.aval.layout, arr.format.layout)
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.format.layout, arr.format.layout)
+    self.assertArraysEqual(out, np_inp)
+    self.assertEqual(f.lower(arr).as_text().count('LayoutConstraint'), 2)
+
+    if jtu.test_device_matches(['tpu']):
+      small_shape = (16, 12, 128)
+      np_small = np.ones(small_shape, dtype=np.float32)
+      arr_small = jax.device_put(np_small, Format(Layout((0, 1, 2)), s_in))
+
+      @jax.jit
+      @explicit_layout(in_layouts=arr_small.format.layout)
+      def f_bad(x):
+        # Dim 1 shard shape changes 12 -> 6 (< 8 tile size on TPU).
+        return jax.reshard(x, s_out)
+
+      with self.assertRaisesRegex(
+          ValueError,
+          '`reshard` cannot change the shard shape of a tiled minor'
+          ' dimension below its tile size'):
+        f_bad(arr_small)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

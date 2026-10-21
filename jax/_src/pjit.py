@@ -2344,14 +2344,25 @@ def _check_no_collectives_reshard(aval, dst_sharding):
   lax_utils._check_no_collectives_dim_change(
       'reshard', aval.sharding.spec.partitions, dst_sharding.spec.partitions)
 
-def _reshard_shaped_array(aval: core.ShapedArray, dst_sharding) -> core.ShapedArray:
+def _reshard_layout_rule(out_aval, operand, *, dst_sharding):
+  from jax._src.lax import utils as lax_utils  # type: ignore
+  lax_utils.check_minor_dims_tile_size('reshard', operand, out_aval)
+  return operand.layout
+
+def _reshard_shaped_array(aval: core.ShapedArray, dst_sharding
+                          ) -> core.ShapedArray:
+  from jax._src.lax import utils as lax_utils  # type: ignore
   assert isinstance(aval, core.ShapedArray)
   dst_sharding = _canonicalize_reshard_sharding(dst_sharding, aval, False)
   _check_unreduced_reshard(aval, dst_sharding)
   _check_no_collectives_reshard(aval, dst_sharding)
   if aval.sharding == dst_sharding:
     return aval
-  return aval.update(sharding=dst_sharding)
+  out_aval = aval.update(sharding=dst_sharding)
+  out_layout = lax_utils.call_layout_rule(
+      reshard_p, _reshard_layout_rule, [aval], [out_aval],
+      dst_sharding=dst_sharding)
+  return out_aval.update(layout=out_layout)
 core.reshard_aval_handlers[core.ShapedArray] = _reshard_shaped_array
 
 def _reshard_abstract_eval(aval, *, dst_sharding, concrete_mesh):
@@ -2409,7 +2420,7 @@ ad.fancy_transposes[reshard_p] = _reshard_transpose_fancy
 
 def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding, concrete_mesh):
   aval_out, = ctx.avals_out
-  return [mlir.lower_with_sharding_in_types(ctx, x_node, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, x_node, aval_out)]
 mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
 
 def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding, concrete_mesh):

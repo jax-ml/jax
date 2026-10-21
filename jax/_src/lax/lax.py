@@ -5406,9 +5406,13 @@ def _integer_pow_jvp(g, x, *, y):
     return mul(g, mul(_const(x, y), x))
   return mul(g, mul(_const(x, y), integer_pow(x, y - 1)))
 
+def _integer_pow_layout_rule(out_aval, x, *, y):
+  return x.layout
+
 integer_pow_p = standard_primitive(
   _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow',
-  sharding_rule=_attrgetter('sharding'), vma_rule=lambda x, **_: x.mat.varying)
+  sharding_rule=_attrgetter('sharding'), vma_rule=lambda x, **_: x.mat.varying,
+  layout_rule=_integer_pow_layout_rule)
 batching.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
 
@@ -5446,7 +5450,7 @@ def _integer_pow_lowering(ctx, x, *, y):
     lowering = mlir.lower_fun(_integer_pow, multiple_results=False)
     out, = lowering(ctx, x, y=y)
   aval_out, = ctx.avals_out
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(integer_pow_p, _integer_pow_lowering)
 
@@ -5816,7 +5820,9 @@ def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type,
 
 def _convert_element_type_layout_rule(out_aval, operand, *, new_dtype, weak_type,
                                       sharding):
-  if operand.layout.tiling is not None:
+  if not operand.ndim:
+    return operand.layout
+  if operand.layout.tiling:
     raise NotImplementedError()
   return operand.layout
 
@@ -7802,9 +7808,23 @@ def _clamp_batch_rule(batched_args, batch_dims, **params):
     x = broadcast(x, min.shape)
   return clamp_p.bind(min, x, max), 0
 
+def _clamp_layout_rule(out_aval, min, operand, max):
+  if min.ndim and min.layout != operand.layout:
+    raise ValueError(
+        'layout of all inputs passed to `clamp` must be the same. Got min'
+        f' with layout: {min.layout} and operand with layout:'
+        f' {operand.layout}')
+  if max.ndim and max.layout != operand.layout:
+    raise ValueError(
+        'layout of all inputs passed to `clamp` must be the same. Got max'
+        f' with layout: {max.layout} and operand with layout:'
+        f' {operand.layout}')
+  return operand.layout
+
 clamp_p = standard_primitive(_clamp_shape_rule, _clamp_dtype_rule, 'clamp',
                              sharding_rule=_clamp_sharding_rule,
-                             vma_rule=partial(core.standard_vma_rule, 'clamp'))
+                             vma_rule=partial(core.standard_vma_rule, 'clamp'),
+                             layout_rule=_clamp_layout_rule)
 ad.defjvp(clamp_p,
           lambda g, min, operand, max:
           select(bitwise_and(gt(min, operand), lt(min, max)),
@@ -7905,11 +7925,24 @@ def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
               for op, bdim in zip(batched_args, batch_dims)]
   return concatenate(operands, dimension + 1), 0
 
+def _concatenate_layout_rule(out_aval, *operands, dimension):
+  first_layout = operands[0].layout
+  for o in operands[1:]:
+    if o.layout != first_layout:
+      raise ValueError(
+          'layout of all inputs passed to `concatenate` must be the same. Got'
+          f' one operand with layout: {first_layout} and another operand with'
+          f' layout: {o.layout}')
+  for o in operands:
+    lax_utils.check_minor_dims_tile_size('concatenate', o, out_aval)
+  return first_layout
+
 concatenate_p = standard_primitive(
     _concatenate_shape_rule, _concatenate_dtype_rule, 'concatenate',
     sharding_rule=_concatenate_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'concatenate'),
-    ur_rule=_concatenate_ur_rule)
+    ur_rule=_concatenate_ur_rule,
+    layout_rule=_concatenate_layout_rule)
 ad.deflinear2(concatenate_p, _concatenate_transpose_rule)
 ad.primitive_transposes[concatenate_p] = _concatenate_transpose_rule
 batching.primitive_batchers[concatenate_p] = _concatenate_batch_rule
@@ -7929,7 +7962,7 @@ def _concatenate_tree(xs, dimension: int):
 def _concatenate_lower(ctx, *xs, dimension):
   aval_out, = ctx.avals_out
   out = _concatenate_tree(xs, dimension)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(concatenate_p, _concatenate_lower)
 
@@ -8173,7 +8206,7 @@ def _split_lower(ctx, x, *, sizes, axis):
     limit_indices[axis] = start_indices[axis] + aval_out.shape[axis]
     out = mlir.slice_op(ctx, x, aval_out, start_indices=start_indices,
                         limit_indices=limit_indices, strides=strides)
-    outs.append(mlir.lower_with_sharding_in_types(ctx, out, aval_out))
+    outs.append(mlir.lower_with_explicit_types(ctx, out, aval_out))
     start_indices[axis] = limit_indices[axis]
   return outs
 
@@ -8195,12 +8228,17 @@ def _split_vma_rule(operand, *, sizes, axis):
   out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
   return [out_vma] * len(out_shapes)
 
+def _split_layout_rule(out_avals, operand, *, sizes, axis):
+  for out_aval in out_avals:
+    lax_utils.check_minor_dims_tile_size('split', operand, out_aval)
+  return [operand.layout] * len(sizes)
+
 split_p = core.Primitive('split')
 split_p.multiple_results = True
 split_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, split_p, _split_shape_rule,
             _split_dtype_rule, _split_weak_type_rule, _split_sharding_rule,
-            _split_vma_rule, _split_ur_rule, None))
+            _split_vma_rule, _split_ur_rule, _split_layout_rule))
 split_p.def_impl(partial(dispatch.apply_primitive, split_p))
 ad.deflinear2(split_p, _split_transpose_rule)
 batching.primitive_batchers[split_p] = _split_batch_rule
@@ -9045,13 +9083,13 @@ def _select_hlo_lowering(ctx, which, *cases):
 
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     op = _select_hlo_lowering_opaque(ctx, which, *cases)
-    return [mlir.lower_with_sharding_in_types(ctx, op, aval_out)]
+    return [mlir.lower_with_explicit_types(ctx, op, aval_out)]
 
   if which_aval.dtype == np.dtype(np.bool_):
     assert len(cases) <= 2
     if len(cases) == 1: return cases
     op = hlo.select(which, cases[1], cases[0])
-    return [mlir.lower_with_sharding_in_types(ctx, op, aval_out)]
+    return [mlir.lower_with_explicit_types(ctx, op, aval_out)]
 
   if dtypes.issubdtype(which_aval.dtype, np.signedinteger):
     compare_type = 'SIGNED'
@@ -9071,13 +9109,29 @@ def _select_hlo_lowering(ctx, which, *cases):
                       _select(offset + mid, cases[mid:]))
 
   op = _select(0, cases)
-  return [mlir.lower_with_sharding_in_types(ctx, op, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, op, aval_out)]
+
+def _select_layout_rule(out_aval, which, *cases):
+  first_layout = cases[0].layout
+  for c in cases[1:]:
+    if c.layout != first_layout:
+      raise ValueError(
+          'layout of all inputs passed to `select_n` must be the same. Got'
+          f' one case with layout: {first_layout} and another case with'
+          f' layout: {c.layout}')
+  if which.ndim and which.layout != first_layout:
+    raise ValueError(
+        'layout of all inputs passed to `select_n` must be the same. Got'
+        f' `which` with layout: {which.layout} and case with layout:'
+        f' {first_layout}')
+  return first_layout
 
 select_n_p = standard_primitive(
     _select_shape_rule, _select_dtype_rule, 'select_n',
     weak_type_rule=_select_weak_type_rule, sharding_rule=_select_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'select_n'),
-    ur_rule=_select_ur_rule)
+    ur_rule=_select_ur_rule,
+    layout_rule=_select_layout_rule)
 ad.primitive_jvps[select_n_p] = _select_jvp
 ad.primitive_transposes[select_n_p] = _select_transpose_rule
 batching.fancy_primitive_batchers[select_n_p] = _select_batch_rule
@@ -9556,13 +9610,18 @@ def _reduce_precision_ur_rule(operand, *, exponent_bits, mantissa_bits):
   kind = UnreducedKind.sum if out_unreduced else None
   return out_unreduced, core.getr(operand), kind
 
+def _reduce_precision_layout_rule(out_aval, operand, *, exponent_bits,
+                                  mantissa_bits):
+  return operand.layout
+
 reduce_precision_p = standard_primitive(
     _reduce_precision_shape_rule,
     partial(unop_dtype_rule, _identity, _float, 'reduce_precision'),
     name='reduce_precision', sharding_rule=_reduce_precision_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'reduce_precision'),
     ur_rule=_reduce_precision_ur_rule,
-    memory_space_rule=_reduce_precision_memory_space_rule)
+    memory_space_rule=_reduce_precision_memory_space_rule,
+    layout_rule=_reduce_precision_layout_rule)
 ad.deflinear(reduce_precision_p, lambda t, **kwargs: [reduce_precision_p.bind(t, **kwargs)])
 batching.defvectorized(reduce_precision_p)
 
@@ -9570,7 +9629,7 @@ def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
   aval_out, = ctx.avals_out
   out = hlo.reduce_precision(operand, mlir.i32_attr(exponent_bits),
                              mlir.i32_attr(mantissa_bits))
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
 
