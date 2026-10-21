@@ -17,6 +17,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * When neither `XLA_CLIENT_MEM_FRACTION` nor its deprecated alias
+    `XLA_PYTHON_CLIENT_MEM_FRACTION` is set, the GPU client now selects XLA's
+    `0.75+` memory policy. The default preallocated spatial BFC pool starts at
+    75% of total GPU memory and can grow for ordinary buffers as needed, up to
+    available device memory. Set `XLA_CLIENT_MEM_FRACTION=0.75` to retain the
+    previous fixed limit. Explicit XLA memory-policy flags take precedence;
+    allocator modes that do not support growth retain their existing behavior.
   * {func}`jax.dlpack.from_dlpack` now accepts `Format` in its `device` argument
     to specify device-local layouts (such as linear layout `tiling=((1,),)` for
     `kDLTPUHost` buffers) and supports `copy=None` fallback for `kDLTPUHost`.
