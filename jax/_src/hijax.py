@@ -892,7 +892,8 @@ class CustomVJPTraced(HiPrim):
     if self.bwd_accums is not None:
       return self.bwd_accums(res, outgrad, *arg_accums[2:])
     if self.disallow_ref_accums and any(
-        isinstance(acc, ad.RefAccum) for acc in tree_leaves(arg_accums[2:])):
+        isinstance(acc, ad.RefAccum) and not acc.is_reshaped_view
+        for acc in tree_leaves(arg_accums[2:])):
       raise batching.ref_accum_error(self.traced.fun_name)
     in_cts, logs = self.bwd(res, outgrad)
     _accum_args_grad(arg_accums[2:], in_cts)

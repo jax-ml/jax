@@ -10796,14 +10796,24 @@ ad.primitive_jvps[optimization_barrier_p] = _opt_barrier_jvp
 def _opt_barrier_fancy_transpose(cts, *accums):
   nzs = [not isinstance(ct, ad.Zero) for ct in cts]
   nz_cts = [ct for ct, nz in zip(cts, nzs) if nz]
-  ct_refs = [x.ref for x in accums if isinstance(x, ad.RefAccum)]
+  ct_refs, seen_refs = [], set()
+  for x in accums:
+    if isinstance(x, ad.RefAccum) and (r := x._root._raw_ref) is not None:
+      if (key := id(core.get_referent(r))) not in seen_refs:
+        seen_refs.add(key)
+        ct_refs.append(r)
   if not nz_cts and not ct_refs:
     return
   out = iter(optimization_barrier_p.bind(*nz_cts, *ct_refs))
   cts_out = (next(out) if nz else ct for ct, nz in zip(cts, nzs))
   for x in accums:
-    if not isinstance(x, ad.RefAccum):
-      x.accum(next(cts_out))
+    is_ref = (x.is_ref if isinstance(x, ad.RefAccum) else
+              isinstance(x.aval if isinstance(x, ad.GradAccum) else core.typeof(x),
+                         AbstractRef))
+    if not is_ref:
+      ct = next(cts_out)
+      if isinstance(x, ad.GradAccum):
+        x.accum(ct)
   assert next(cts_out, None) is None
 ad.fancy_transposes[optimization_barrier_p] = _opt_barrier_fancy_transpose
 

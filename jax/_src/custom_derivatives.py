@@ -34,7 +34,7 @@ from jax._src.api_util import (
   prepend_static_args, debug_info, fun_signature,
   infer_argnums_and_argnames, fun_sourceinfo)
 from jax._src.errors import UnexpectedTracerError
-from jax._src.state.types import AbstractRef
+from jax._src.state.types import AbstractRef, TransformedRef
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -1577,13 +1577,88 @@ def _accums_closure_residuals(rule, ans, args, kinds):
   jaxpr, consts = pe.separate_consts(closed_jaxpr)
   return Residuals(jaxpr, rule_out.tree, in_tree, consts, kinds)
 
+def _eval_jaxpr_with_transformed_refs(
+    jaxpr: core.Jaxpr, consts, *args
+) -> list[Any]:
+  from jax._src.state import primitives as sp  # pyrefly: ignore[missing-module-attribute]
+
+  def read(v: core.Atom) -> Any:
+    return v.val if isinstance(v, core.Literal) else env[v]
+
+  def write(v: core.Var, val: Any) -> None:
+    env[v] = val
+
+  env: dict[core.Var, Any] = {}
+  for v, val in zip(jaxpr.all_invars, [*consts, *args]):
+    write(v, val)
+  lu_ = core.last_used(jaxpr)
+  for eqn in jaxpr.eqns:
+    invals = map(read, eqn.invars)
+    bind_params = eqn.primitive.get_bind_params(eqn.params)
+    name_stack = (
+        core.source_info_util.current_name_stack() + eqn.source_info.name_stack
+    )
+    with (
+        core.source_info_util.user_context(
+            eqn.source_info.traceback, name_stack=name_stack
+        ),
+        eqn.ctx.manager,
+    ):
+      if invals and isinstance(invals[0], TransformedRef):
+        tref = invals[0]
+        if eqn.primitive is sp.get_p:
+          transforms = tree_unflatten(bind_params["tree"], invals[1:])
+          ans = sp.ref_get(
+              TransformedRef(tref.ref, (*tref.transforms, *transforms)), ()
+          )
+        elif eqn.primitive is sp.swap_p:
+          transforms = tree_unflatten(bind_params["tree"], invals[2:])
+          ans = sp.ref_swap(
+              TransformedRef(tref.ref, (*tref.transforms, *transforms)),
+              (),
+              invals[1],
+          )
+        elif eqn.primitive is sp.addupdate_p:
+          transforms = tree_unflatten(bind_params["tree"], invals[2:])
+          sp.ref_addupdate(
+              TransformedRef(tref.ref, (*tref.transforms, *transforms)),
+              (),
+              invals[1],
+          )
+          ans = []
+        elif eqn.primitive.name == "jit":
+          sub_jaxpr = bind_params["jaxpr"]
+          ans = _eval_jaxpr_with_transformed_refs(
+              sub_jaxpr.jaxpr, sub_jaxpr.consts, *invals
+          )
+        else:
+          ans = eqn.primitive.bind(*invals, **bind_params)
+      elif any(isinstance(x, TransformedRef) for x in invals) and eqn.primitive.name == "jit":
+        sub_jaxpr = bind_params["jaxpr"]
+        ans = _eval_jaxpr_with_transformed_refs(
+            sub_jaxpr.jaxpr, sub_jaxpr.consts, *invals
+        )
+      else:
+        ans = eqn.primitive.bind(*invals, **bind_params)
+    if eqn.primitive.multiple_results:
+      for outvar, outval in zip(eqn.outvars, ans):
+        write(outvar, outval)
+    else:
+      write(eqn.outvars[0], ans)
+    core.clean_up_dead_vars(eqn, env, lu_)
+  return map(read, jaxpr.outvars)
+
+
 def _apply_accums_closure_residuals(name, res, cts, *accums):
   jaxpr, out_tree, _, consts = res
   cts = tree_map(lambda c: zeros_like_aval(c.aval)
                  if isinstance(c, SymbolicZero) else c, cts)
   refs, val_accums = [], []
   for (path, acc), k in zip(tree_flatten_with_path(accums)[0], res.aux):
-    if k is ad.ValAccum and isinstance(acc, (ad.ValAccum, ad.NullAccum)):
+    if k is ad.ValAccum and (
+        isinstance(acc, (ad.ValAccum, ad.NullAccum))
+        or (isinstance(acc, ad.RefAccum) and acc.is_reshaped_view)
+    ):
       val_accums.append(acc)  # a NullAccum here is from DontWant, and discards
     elif k is ad.RefAccum and isinstance(acc, ad.RefAccum):
       refs.append(acc.inst().ref)
@@ -1597,7 +1672,12 @@ def _apply_accums_closure_residuals(name, res, cts, *accums):
           "inputs, rather than one of them, gets a ValAccum too. A RefAccum "
           "comes from passing a Ref to a VJP's with_refs method, and a "
           "NullAccum from passing jax.ad.DontWant() to it.)")
-  outs = core.eval_jaxpr(jaxpr, consts, *tree_leaves((cts, refs)))
+  eval_fn = (
+      _eval_jaxpr_with_transformed_refs
+      if any(isinstance(r, TransformedRef) for r in refs)
+      else core.eval_jaxpr
+  )
+  outs = eval_fn(jaxpr, consts, *tree_leaves((cts, refs)))
   logs, vals = tree_unflatten(out_tree, outs)
   for acc, v in zip(val_accums, vals):
     if v is not None:

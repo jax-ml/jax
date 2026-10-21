@@ -169,6 +169,7 @@ def _canonicalize_reshape(
 @dataclasses.dataclass(frozen=True, slots=True)
 class ReshapeTransform(Transform):
   shape: tuple[int, ...] = tree.static()
+  is_singleton_view: bool = tree.static(default=False)
 
   def _validate_shape(self, input_shape: tuple[int, ...]):
     if np.prod(self.shape) != np.prod(input_shape):
@@ -340,7 +341,7 @@ class TransformedRef:
     def _type(ref):
       if isinstance(ref, TransformedRef):
         return ref.type
-      elif type(ref) in core.pytype_aval_mappings:
+      elif isinstance(ref, core.Tracer) or type(ref) in core.pytype_aval_mappings:
         return core.typeof(ref)
       else:
         return ref
@@ -426,6 +427,10 @@ class TransformedRef:
   def get(self, idx=()):
     from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(self, idx)
+
+  def addupdate(self, value, idx=()):
+    from jax._src.state.primitives import ref_addupdate  # pyrefly: ignore[missing-import]
+    return ref_addupdate(self, idx, value)
 
   @property
   def memory_space(self):

@@ -42,6 +42,7 @@ from jax._src.state.types import (
     AbstractLinVal,
     AccumEffect,
     ReadEffect,
+    ReshapeTransform,
     Transform,
     TransformedRef,
     WriteEffect,
@@ -118,6 +119,314 @@ def get_ref_and_transforms(
   nd_indexer = indexing.NDIndexer.from_indices_shape(idx, ref_or_view.shape)
   return ref, (*transforms, nd_indexer)
 
+
+def _indexer_slice_and_int_pos(
+    indexer: indexing.NDIndexer,
+) -> tuple[tuple[int | Array, ...], int, bool]:
+  is_int = [not isinstance(i, indexing.Slice) for i in indexer.indices]
+  slice_shape = tuple(
+      i.size for i in indexer.indices if isinstance(i, indexing.Slice)
+  )
+  has_int = any(is_int)
+  if not has_int:
+    return slice_shape, 0, False
+  contiguous = bool(np.all(np.diff(np.where(is_int)[0]) == 1))
+  int_pos = is_int.index(True) if contiguous else 0
+  return slice_shape, int_pos, True
+
+
+def _non_singleton_count(shape: tuple[int | Array, ...]) -> int:
+  return sum(1 for d in shape if not (isinstance(d, int) and d == 1))
+
+
+class _SingletonReshapeAdapter:
+
+  def __init__(
+      self,
+      view_out_shape: tuple[int | Array, ...],
+      root_out_shape: tuple[int | Array, ...],
+      view_slice_shape: tuple[int | Array, ...],
+      root_slice_shape: tuple[int | Array, ...],
+      int_shape: tuple[int | Array, ...],
+      view_int_pos: int,
+      root_int_pos: int,
+      has_root_int: bool,
+  ):
+    self.view_out_shape = view_out_shape
+    self.root_out_shape = root_out_shape
+    self.view_slice_shape = view_slice_shape
+    self.root_slice_shape = root_slice_shape
+    self.int_shape = int_shape
+    self.view_int_pos = view_int_pos
+    self.root_int_pos = root_int_pos
+    self.has_root_int = has_root_int
+    self.needs_int_transpose = (
+        bool(int_shape)
+        and has_root_int
+        and _non_singleton_count(view_slice_shape[:view_int_pos])
+        != _non_singleton_count(root_slice_shape[:root_int_pos])
+    )
+
+  @classmethod
+  def for_shapes(
+      cls, root_shape: tuple[int, ...], view_shape: tuple[int, ...]
+  ) -> _SingletonReshapeAdapter:
+    return cls(
+        view_out_shape=view_shape,
+        root_out_shape=root_shape,
+        view_slice_shape=view_shape,
+        root_slice_shape=root_shape,
+        int_shape=(),
+        view_int_pos=0,
+        root_int_pos=0,
+        has_root_int=False,
+    )
+
+  @classmethod
+  def for_indexers(
+      cls,
+      view_indexer: indexing.NDIndexer,
+      root_indexer: indexing.NDIndexer,
+  ) -> _SingletonReshapeAdapter:
+    view_slice_shape, view_int_pos, _ = _indexer_slice_and_int_pos(view_indexer)
+    root_slice_shape, root_int_pos, has_root_int = _indexer_slice_and_int_pos(
+        root_indexer
+    )
+    return cls(
+        view_out_shape=view_indexer.get_indexer_shape(),
+        root_out_shape=root_indexer.get_indexer_shape(),
+        view_slice_shape=view_slice_shape,
+        root_slice_shape=root_slice_shape,
+        int_shape=view_indexer.int_indexer_shape,
+        view_int_pos=view_int_pos,
+        root_int_pos=root_int_pos,
+        has_root_int=has_root_int,
+    )
+
+  @property
+  def is_noop(self) -> bool:
+    return (
+        not self.needs_int_transpose
+        and (self.has_root_int or not self.int_shape)
+        and self.view_out_shape == self.root_out_shape
+    )
+
+  def _transpose_and_reshape_to_root(self, x):
+    k = len(self.int_shape)
+    if self.view_int_pos != 0:
+      n = len(self.view_out_shape)
+      perm = (
+          *range(self.view_int_pos, self.view_int_pos + k),
+          *range(0, self.view_int_pos),
+          *range(self.view_int_pos + k, n),
+      )
+      x = lax.transpose(x, perm)
+    if self.view_slice_shape != self.root_slice_shape:
+      x = lax.reshape(x, (*self.int_shape, *self.root_slice_shape))
+    if self.root_int_pos != 0:
+      n = k + len(self.root_slice_shape)
+      perm = (
+          *range(k, k + self.root_int_pos),
+          *range(0, k),
+          *range(k + self.root_int_pos, n),
+      )
+      x = lax.transpose(x, perm)
+    return x
+
+  def to_root_addupdate(self, x):
+    if not self.has_root_int and self.int_shape:
+      k = len(self.int_shape)
+      axes = tuple(range(self.view_int_pos, self.view_int_pos + k))
+      x = lax.reduce(x, lax._const(x, 0), lax.add, axes)
+      if self.view_slice_shape != self.root_slice_shape:
+        x = lax.reshape(x, self.root_slice_shape)
+      return x
+    if self.needs_int_transpose:
+      return self._transpose_and_reshape_to_root(x)
+    if self.view_out_shape != self.root_out_shape:
+      x = lax.reshape(x, self.root_out_shape)
+    return x
+
+  def to_root_swap(self, value):
+    if not self.has_root_int and self.int_shape:
+      from jax._src.lax import slicing as lax_slicing  # pyrefly: ignore[missing-module-attribute]
+
+      k = len(self.int_shape)
+      for ax in reversed(range(self.view_int_pos, self.view_int_pos + k)):
+        d = self.view_out_shape[ax]
+        value = lax_slicing.index_in_dim(value, d - 1, axis=ax, keepdims=False)
+      if self.view_slice_shape != self.root_slice_shape:
+        value = lax.reshape(value, self.root_slice_shape)
+      return value
+    if self.needs_int_transpose:
+      return self._transpose_and_reshape_to_root(value)
+    if self.view_out_shape != self.root_out_shape:
+      value = lax.reshape(value, self.root_out_shape)
+    return value
+
+  def from_root(self, out):
+    if not self.has_root_int and self.int_shape:
+      k = len(self.int_shape)
+      bcast_src_shape = (
+          *self.view_slice_shape[: self.view_int_pos],
+          *((1,) * k),
+          *self.view_slice_shape[self.view_int_pos :],
+      )
+      if self.root_slice_shape != bcast_src_shape:
+        out = lax.reshape(out, bcast_src_shape)
+      return broadcast_to(out, self.view_out_shape)
+    if self.needs_int_transpose:
+      k = len(self.int_shape)
+      if self.root_int_pos != 0:
+        n = len(self.root_out_shape)
+        perm = (
+            *range(self.root_int_pos, self.root_int_pos + k),
+            *range(0, self.root_int_pos),
+            *range(self.root_int_pos + k, n),
+        )
+        out = lax.transpose(out, perm)
+      if self.root_slice_shape != self.view_slice_shape:
+        out = lax.reshape(out, (*self.int_shape, *self.view_slice_shape))
+      if self.view_int_pos != 0:
+        n = k + len(self.view_slice_shape)
+        perm = (
+            *range(k, k + self.view_int_pos),
+            *range(0, k),
+            *range(k + self.view_int_pos, n),
+        )
+        out = lax.transpose(out, perm)
+      return out
+    if self.root_out_shape != self.view_out_shape:
+      out = lax.reshape(out, self.view_out_shape)
+    return out
+
+
+def _rewrite_singleton_reshape_indexer(
+    root_shape: tuple[int, ...],
+    view_shape: tuple[int, ...],
+    view_indexer: indexing.NDIndexer,
+) -> indexing.NDIndexer | None:
+  alignment: list[tuple[int | None, int | None]] = []
+  r, v = 0, 0
+  while r < len(root_shape) or v < len(view_shape):
+    if (r < len(root_shape) and v < len(view_shape) and
+        core.definitely_equal(root_shape[r], view_shape[v])):
+      alignment.append((r, v))
+      r += 1
+      v += 1
+    elif r < len(root_shape) and core.definitely_equal(root_shape[r], 1):
+      alignment.append((r, None))
+      r += 1
+    elif v < len(view_shape) and core.definitely_equal(view_shape[v], 1):
+      alignment.append((None, v))
+      v += 1
+    else:
+      raise ValueError(
+          f"Non-trivial reshape from {root_shape} to {view_shape}"
+      )
+
+  for r_ax, v_ax in alignment:
+    if r_ax is None and v_ax is not None:
+      v_idx = view_indexer.indices[v_ax]
+      if isinstance(v_idx, indexing.Slice) and not (
+          isinstance(v_idx.size, int) and v_idx.size == 1
+      ):
+        return None
+
+  paired_int_root_axes = [
+      r for r, v in alignment
+      if r is not None and v is not None
+      and not isinstance(view_indexer.indices[v], indexing.Slice)
+  ]
+  removed_root_axes = {r for r, v in alignment if r is not None and v is None}
+
+  zero_idx = (
+      broadcast_to(np.int32(0), view_indexer.int_indexer_shape)
+      if view_indexer.int_indexer_shape
+      else 0
+  )
+
+  if not paired_int_root_axes:
+    int_removed_axes = (
+        removed_root_axes if not view_indexer.int_indexer_shape else set()
+    )
+  else:
+    min_int, max_int = min(paired_int_root_axes), max(paired_int_root_axes)
+    paired_int_set = set(paired_int_root_axes)
+    if all(
+        ax in paired_int_set or ax in removed_root_axes
+        for ax in range(min_int, max_int + 1)
+    ):
+      while min_int - 1 in removed_root_axes:
+        min_int -= 1
+      while max_int + 1 in removed_root_axes:
+        max_int += 1
+      int_removed_axes = {
+          ax for ax in removed_root_axes if min_int <= ax <= max_int
+      }
+    else:
+      int_removed_axes = set()
+
+  root_indices: list[Any] = []
+  for r_ax, v_ax in alignment:
+    if r_ax is None:
+      continue
+    if v_ax is not None:
+      root_indices.append(view_indexer.indices[v_ax])
+    elif r_ax in int_removed_axes:
+      root_indices.append(zero_idx)
+    else:
+      root_indices.append(indexing.Slice(0, 1, 1))
+
+  has_root_int = any(
+      not isinstance(i, indexing.Slice) for i in root_indices
+  )
+  root_int_shape = view_indexer.int_indexer_shape if has_root_int else ()
+  return indexing.NDIndexer(
+      tuple(root_indices), root_shape, root_int_shape, validate=False
+  )
+
+
+def _maybe_rewrite_singleton_reshape(
+    ref: Any, transforms: tuple[Transform, ...], *, is_swap: bool = False
+) -> tuple[tuple[Transform, ...], _SingletonReshapeAdapter | None]:
+  if not (
+      transforms
+      and isinstance(transforms[0], ReshapeTransform)
+      and transforms[0].is_singleton_view
+  ):
+    return transforms, None
+  ref_aval = core.typeof(ref)
+  if not (
+      isinstance(ref_aval, AbstractRef)
+      and isinstance(ref_aval.inner_aval, core.ShapedArray)
+  ):
+    return transforms, None
+  root_shape = ref_aval.inner_aval.shape
+  view_shape = transforms[0].shape
+  if len(transforms) == 1:
+    if root_shape == view_shape:
+      return (), None
+    return (), _SingletonReshapeAdapter.for_shapes(root_shape, view_shape)
+  if len(transforms) == 2 and isinstance(transforms[1], indexing.NDIndexer):
+    view_indexer = transforms[1]
+    root_indexer = _rewrite_singleton_reshape_indexer(
+        root_shape, view_shape, view_indexer
+    )
+    if root_indexer is None:
+      return transforms, None
+    adapter = _SingletonReshapeAdapter.for_indexers(view_indexer, root_indexer)
+    if (
+        is_swap
+        and not adapter.has_root_int
+        and any(isinstance(d, int) and d == 0 for d in adapter.int_shape)
+    ):
+      return transforms, None
+    if adapter.is_noop:
+      return (root_indexer,), None
+    return (root_indexer,), adapter
+  return transforms, None
+
 @partial(traceback_util.api_boundary, repro_api_name="jax.ref.get")
 def ref_get(
     ref: core.Ref | TransformedRef,
@@ -159,8 +468,12 @@ def ref_get(
         "ref_get with multi-ref TransformedRef is not supported."
     )
   ref, transforms = get_ref_and_transforms(ref, idx, "ref_get")
+  transforms, adapter = _maybe_rewrite_singleton_reshape(ref, transforms)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
-  return get_p.bind(ref, *flat_transforms, tree=tree)
+  out = get_p.bind(ref, *flat_transforms, tree=tree)
+  if adapter is not None:
+    out = adapter.from_root(out)
+  return out
 
 
 # `swap` mutates a `Ref`, setting its value and returns its previous value.
@@ -257,9 +570,17 @@ def ref_swap(
   if hasattr(ref, 'dtype'):
     value = _maybe_implicit_cast(ref.dtype, value)
   ref, transforms = get_ref_and_transforms(ref, idx, _function_name)
+  transforms, adapter = _maybe_rewrite_singleton_reshape(
+      ref, transforms, is_swap=True
+  )
+  if adapter is not None:
+    value = adapter.to_root_swap(value)
   value = _insert_pvary_for_write(ref, value)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
-  return swap_p.bind(ref, value, *flat_transforms, tree=tree)
+  out = swap_p.bind(ref, value, *flat_transforms, tree=tree)
+  if adapter is not None:
+    out = adapter.from_root(out)
+  return out
 
 # TODO(slebedev,mattjj): replace with special handling of Python numeric types:
 # if (isinstance(value, (int, float, complex)) and
@@ -388,6 +709,9 @@ def ref_addupdate(
   .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   ref, transforms = get_ref_and_transforms(ref, idx, "ref_addupdate")
+  transforms, adapter = _maybe_rewrite_singleton_reshape(ref, transforms)
+  if adapter is not None:
+    x = adapter.to_root_addupdate(x)
   x = _insert_pvary_for_write(ref, x)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   addupdate_p.bind(ref, x, *flat_transforms, tree=tree)

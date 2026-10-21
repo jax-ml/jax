@@ -1880,17 +1880,51 @@ pe.partial_eval_jaxpr_custom_rules[jit_p] = \
             _pjit_partial_eval_custom_params_updater)
 
 
+def _is_reshaped_ref_accum(x):
+  return isinstance(x, ad.RefAccum) and x.is_reshaped_view
+
+def _is_unpartitioned_spec(spec):
+  return (not spec.unreduced and not spec.reduced and
+          all(p is None for p in spec.partitions))
+
+def _can_keep_reshaped_ref_accum(x, s, l):
+  if l is not None:
+    return False
+  if isinstance(s, UnspecifiedValue):
+    return True
+  if not isinstance(s, NamedSharding) or not _is_unpartitioned_spec(s.spec):
+    return False
+  root_s = x._root.aval.sharding
+  return (s.mesh.abstract_mesh == root_s.mesh.abstract_mesh and
+          _is_unpartitioned_spec(root_s.spec))
+
 def _pjit_transpose_fancy(
     cts_in, *args, jaxpr, in_shardings, out_shardings, in_layouts,
     out_layouts, donated_invars, ctx_mesh, name, keep_unused, inline,
     compiler_options_kvs):
-  primals_ctrefs, specs = ad.project_accums(args)
+  args_for_project = [
+      ad.ValAccum(x.aval)
+      if _is_reshaped_ref_accum(x) and not _can_keep_reshaped_ref_accum(x, s, l)
+      else x
+      for x, s, l in zip(args, in_shardings, in_layouts)
+  ]
+  primals_ctrefs, specs = ad.project_accums(args_for_project)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = [typeof(x) for x in in_flat]
   trans_jaxpr, out_tree = _transpose_jaxpr_fancy(jaxpr, in_tree, (*in_avals,), specs)
 
+  def _ref_in_sharding(x, s):
+    if _is_reshaped_ref_accum(x) and isinstance(s, NamedSharding):
+      raw_ref = x._root._raw_ref
+      if not isinstance(raw_ref, core.Tracer) and isinstance(
+          ref_s := getattr(raw_ref, 'sharding', None), NamedSharding):
+        return ref_s
+      return s.update(spec=PartitionSpec())
+    return s
+
   trans_in_shardings = (
-      [s for (k, _), s in zip(specs, in_shardings)
+      [_ref_in_sharding(x, s)
+       for x, (k, _), s in zip(args_for_project, specs, in_shardings)
        if k is None or k is ad.RefAccum] +
       [s for x, s in zip(cts_in, out_shardings) if not isinstance(x, ad.Zero)])
   trans_in_layouts = (
@@ -1928,7 +1962,7 @@ def _pjit_transpose_fancy(
   # pyrefly: ignore[unbound-name]  # pyrefly#2219
   cts_out, logs = tree_unflatten(out_tree, cts_out)
   for x, ct in zip(args, cts_out):
-    if isinstance(x, ad.ValAccum): x.accum(ct)
+    if ct is not None and isinstance(x, ad.GradAccum): x.accum(ct)
   return logs
 
 @weakref_lru_cache
