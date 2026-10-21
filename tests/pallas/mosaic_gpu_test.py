@@ -47,6 +47,7 @@ from jax._src.pallas.mosaic.error_handling import VerificationError
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
+from jax._src.state import indexing
 from jax._src.state import types as state_types
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
@@ -157,6 +158,187 @@ class MonkeyPatchTest(jtu.JaxTestCase):
   def test_calling_kernel_directly_raises(self):
     with self.assertRaises(RuntimeError):
       plgpu.kernel()
+
+
+class UnswizzleRefTest(jtu.JaxTestCase):
+
+  @parameterized.parameters(16, 256)
+  def test_invalid_swizzle_raises(self, swizzle):
+    with self.assertRaisesRegex(
+        ValueError, f"Swizzle {swizzle} is not supported"
+    ):
+      gpu_core.UnswizzleRef(swizzle)
+
+  @parameterized.parameters(0, 1)
+  def test_non_negative_swizzled_dim_raises(self, swizzled_dim):
+    with self.assertRaisesRegex(
+        ValueError, f"swizzled_dim must be negative, but got: {swizzled_dim}"
+    ):
+      gpu_core.UnswizzleRef(64, swizzled_dim=swizzled_dim)
+
+  def test_transform_type_valid(self):
+    aval = jax_core.ShapedArray((8, 32), jnp.bfloat16)
+    ref_aval = state_types.AbstractRef(aval)
+    transform = gpu_core.UnswizzleRef(64)
+
+    self.assertEqual(transform.transform_type(aval), aval)
+    self.assertEqual(transform.transform_type(ref_aval), ref_aval)
+
+  @parameterized.named_parameters(
+      ("wrong_size", (8, 16), -1),
+      ("rank_too_small", (32,), -2),
+  )
+  def test_transform_type_invalid_shape_raises(self, shape, swizzled_dim):
+    aval = jax_core.ShapedArray(shape, jnp.bfloat16)
+    transform = gpu_core.UnswizzleRef(64, swizzled_dim=swizzled_dim)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        f"Swizzle 64 requires dimension {swizzled_dim} to be of size 32",
+    ):
+      transform.transform_type(aval)
+
+  def test_undo(self):
+    aval = jax_core.ShapedArray((8, 32), jnp.bfloat16)
+    self.assertEqual(
+        gpu_core.UnswizzleRef(64).undo(aval), plgpu.SwizzleTransform(64)
+    )
+
+  def test_undo_transposed_swizzled_dim_raises(self):
+    aval = jax_core.ShapedArray((32, 8), jnp.bfloat16)
+    transform = gpu_core.UnswizzleRef(64, swizzled_dim=-2)
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Cannot undo UnswizzleRef with a transposed swizzled dimension",
+    ):
+      transform.undo(aval)
+
+  @parameterized.named_parameters(
+      ("2d_swap", (8, 32), -1, (1, 0), -2),
+      ("3d_to_major", (2, 8, 32), -1, (2, 1, 0), -3),
+      ("3d_back_to_minor", (32, 8, 2), -3, (2, 1, 0), -1),
+  )
+  def test_commute_transpose(
+      self, shape, swizzled_dim, perm, expected_swizzled_dim
+  ):
+    aval = jax_core.ShapedArray(shape, jnp.bfloat16)
+    transform = gpu_core.UnswizzleRef(64, swizzled_dim=swizzled_dim)
+    transpose = state_types.TransposeTransform(perm)
+
+    new_transpose, new_transform = transform.commute_transpose(aval, transpose)
+
+    self.assertEqual(new_transpose, transpose)
+    self.assertEqual(
+        new_transform,
+        gpu_core.UnswizzleRef(64, swizzled_dim=expected_swizzled_dim),
+    )
+
+  def test_commute_reshape(self):
+    aval = jax_core.ShapedArray((256,), jnp.bfloat16)
+    transform = gpu_core.UnswizzleRef(64)
+    reshape = state_types.ReshapeTransform((8, 32))
+
+    new_reshape, new_transform = transform.commute_reshape(aval, reshape)
+
+    self.assertEqual(new_reshape, reshape)
+    self.assertEqual(new_transform, transform)
+
+  def test_commute_reshape_wrong_minor_dim_raises(self):
+    aval = jax_core.ShapedArray((8, 32), jnp.bfloat16)
+    transform = gpu_core.UnswizzleRef(64)
+    reshape = state_types.ReshapeTransform((16, 16))
+
+    with self.assertRaisesRegex(
+        ValueError, "is not divisible by swizzle elements 32"
+    ):
+      transform.commute_reshape(aval, reshape)
+
+  def test_commute_reshape_transposed_swizzled_dim_raises(self):
+    aval = jax_core.ShapedArray((2, 32, 8), jnp.bfloat16)
+    transform = gpu_core.UnswizzleRef(64, swizzled_dim=-2)
+    reshape = state_types.ReshapeTransform((64, 8))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Cannot reshape a reference with a transposed swizzled dimension",
+    ):
+      transform.commute_reshape(aval, reshape)
+
+  @parameterized.named_parameters(
+      (
+          "index_leading_dim",
+          (2, 8, 32),
+          -1,
+          (0, slice(None), slice(None)),
+          -1,
+      ),
+      (
+          "index_dim_after_swizzled_dim",
+          (32, 8, 2),
+          -3,
+          (slice(0, 32), 0, slice(None)),
+          -2,
+      ),
+      (
+          "index_two_dims_after_swizzled_dim",
+          (32, 8, 2),
+          -3,
+          (indexing.Slice(0, 32), 0, 1),
+          -1,
+      ),
+  )
+  def test_commute_ndindexer(
+      self, shape, swizzled_dim, indices, expected_swizzled_dim
+  ):
+    aval = jax_core.ShapedArray(shape, jnp.bfloat16)
+    transform = gpu_core.UnswizzleRef(64, swizzled_dim=swizzled_dim)
+    indexer = indexing.NDIndexer.from_indices_shape(indices, shape)
+
+    new_indexer, new_transform = transform.commute_ndindexer(aval, indexer)
+
+    self.assertEqual(new_indexer, indexer)
+    self.assertEqual(
+        new_transform,
+        gpu_core.UnswizzleRef(64, swizzled_dim=expected_swizzled_dim),
+    )
+
+  @parameterized.named_parameters(
+      ("partial_slice", lambda _: slice(0, 16)),
+      ("partial_ds", lambda _: indexing.Slice(0, 16)),
+      ("nonzero_start_slice", lambda _: slice(8, 32)),
+      ("nonzero_start_ds", lambda _: indexing.Slice(8, 32)),
+      ("strided_slice", lambda _: slice(0, 32, 2)),
+      ("strided_ds", lambda _: indexing.Slice(0, 32, 2)),
+      ("dynamic_start_ds", lambda i: indexing.Slice(i, 32)),
+      ("dynamic_size_ds", lambda n: indexing.Slice(0, n)),
+  )
+  def test_commute_ndindexer_sliced_swizzled_dim_raises(self, make_idx):
+    shape = (8, 32)
+    aval = jax_core.ShapedArray(shape, jnp.bfloat16)
+    transform = gpu_core.UnswizzleRef(64)
+
+    @jax.jit
+    def f(x):
+      indexer = indexing.NDIndexer(
+          indices=(slice(None), make_idx(x)), shape=shape, int_indexer_shape=()
+      )
+      transform.commute_ndindexer(aval, indexer)
+
+    with self.assertRaisesRegex(ValueError, "Swizzled dims cannot be sliced"):
+      f(jnp.int32(0))
+
+  def test_commute_ndindexer_int_index_swizzled_dim_raises(self):
+    shape = (8, 32)
+    aval = jax_core.ShapedArray(shape, jnp.bfloat16)
+    transform = gpu_core.UnswizzleRef(64)
+    indexer = indexing.NDIndexer.from_indices_shape((slice(None), 0), shape)
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Non-slice indices are not supported in swizzled dim",
+    ):
+      transform.commute_ndindexer(aval, indexer)
 
 
 def run_on_sm80(method):

@@ -49,7 +49,6 @@ from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import tcgen05
-from jax.experimental.mosaic.gpu import utils as mgpu_utils
 from jax.experimental.mosaic.gpu.launch_context import OOBFillMode
 import jax.numpy as jnp
 from jaxlib.mlir import ir
@@ -1432,32 +1431,69 @@ class SwizzleTransform(state_types.Transform):
 @dataclasses.dataclass(frozen=True)
 class UnswizzleRef(state_types.Transform):
   swizzle: int = jax.tree.static()
+  swizzled_dim: int = jax.tree.static(default=-1, kw_only=True)
+
+  def __post_init__(self):
+    if self.swizzle not in {32, 64, 128}:
+      raise ValueError(
+          f"Swizzle {self.swizzle} is not supported. Only 32, 64 and 128 are"
+          " accepted."
+      )
+    if self.swizzled_dim >= 0:
+      raise ValueError(
+          f"swizzled_dim must be negative, but got: {self.swizzled_dim}"
+      )
 
   def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
-    # Swizzling preserves the type
-    return x
+    match x:
+      case jax_core.ShapedArray():
+        swizzle_elems = self.swizzle_elems(x.dtype)
+        if (
+            len(x.shape) < -self.swizzled_dim
+            or x.shape[self.swizzled_dim] != swizzle_elems
+        ):
+          raise ValueError(
+              f"Swizzle {self.swizzle} requires dimension {self.swizzled_dim}"
+              f" to be of size {swizzle_elems}, but got shape: {x.shape}"
+          )
+        return x
+      case state_types.AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case _:
+        raise NotImplementedError(f"Unsupported type: {x}")
 
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
+    if self.swizzled_dim != -1:
+      # SwizzleTransform always applies to the minormost dimension (-1).
+      raise NotImplementedError(
+          "Cannot undo UnswizzleRef with a transposed swizzled dimension"
+      )
     return SwizzleTransform(self.swizzle)
 
   def swizzle_elems(self, dtype: jax.typing.DTypeLike | ir.Type) -> int:
-    if not isinstance(dtype, ir.Type):
-      dtype = mgpu_utils.dtype_to_ir_type(dtype)
-    return (self.swizzle * 8) // mgpu.bitwidth(dtype)
+    if isinstance(dtype, ir.Type):
+      bitwidth = mgpu.bitwidth(dtype)
+    else:
+      bitwidth = dtypes.itemsize_bits(dtype)
+    return (self.swizzle * 8) // bitwidth
 
   def commute_transpose(
       self, _: jax_core.AbstractValue, transpose: state_types.TransposeTransform
   ) -> tuple[state_types.TransposeTransform, UnswizzleRef]:
     perm = transpose.permutation
-    if perm[-1] != len(perm) - 1:
-      raise ValueError("Can't transpose the swizzled dimension.")
-    return transpose, self
+    ndim = len(perm)
+    new_swizzled_dim = perm.index(ndim + self.swizzled_dim) - ndim
+    return transpose, dataclasses.replace(self, swizzled_dim=new_swizzled_dim)
 
   def commute_reshape(
       self, aval: jax_core.ShapedArray, transform: state_types.ReshapeTransform
   ) -> tuple[state_types.ReshapeTransform, UnswizzleRef]:
-    shape = aval.shape
-    if shape[-1] != self.swizzle_elems(aval.dtype):
+    if self.swizzled_dim != -1:
+      raise ValueError(
+          "Cannot reshape a reference with a transposed swizzled dimension"
+      )
+    shape = transform.shape
+    if not shape or shape[-1] != self.swizzle_elems(aval.dtype):
       raise ValueError(
           f"Reshape shape {shape} is not divisible by swizzle elements"
           f" {self.swizzle_elems(aval.dtype)}"
@@ -1477,23 +1513,31 @@ class UnswizzleRef(state_types.Transform):
     idxs = indexer.indices
     if not idxs:
       return indexer, self
-    if not all(isinstance(idx, (slice, indexing.Slice)) for idx in idxs[-2:]):
-      raise NotImplementedError(
-          f"Non-slice indices are not supported in 2 minormost dims: {idxs}"
+    swizzled_idx = idxs[self.swizzled_dim]
+    if isinstance(swizzled_idx, slice):
+      swizzled_idx = indexing.Slice.from_slice(
+          swizzled_idx, indexer.shape[self.swizzled_dim]
       )
-    last_idx = idxs[-1]
-    if isinstance(last_idx, indexing.Slice):
-      if last_idx.start != 0 or last_idx.size != swizzle_elems:
-        raise ValueError("Swizzled dims cannot be sliced")
-    else:
-      assert isinstance(last_idx, slice)
+    if isinstance(swizzled_idx, indexing.Slice):
       if (
-          (last_idx.step is not None and last_idx.step != 1)
-          or (last_idx.start is not None and last_idx.start != 0)
-          or (last_idx.stop is not None and last_idx.stop != swizzle_elems)
+          swizzled_idx.is_dynamic_start
+          or swizzled_idx.is_dynamic_size
+          or swizzled_idx.start != 0
+          or swizzled_idx.size != swizzle_elems
+          or swizzled_idx.stride != 1
       ):
         raise ValueError("Swizzled dims cannot be sliced")
-    return indexer, self
+    else:
+      raise NotImplementedError(
+          f"Non-slice indices are not supported in swizzled dim: {idxs}"
+      )
+    removed_dims_after = sum(
+        not isinstance(idx, (slice, indexing.Slice))
+        for idx in idxs[len(idxs) + self.swizzled_dim + 1 :]
+    )
+    return indexer, dataclasses.replace(
+        self, swizzled_dim=self.swizzled_dim + removed_dims_after
+    )
 
   def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
     return pp.text(f"{{unswizzle({self.swizzle})}}")
