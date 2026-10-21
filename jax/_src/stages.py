@@ -59,6 +59,9 @@ from jax._src.mesh import AbstractMesh
 from jax._src import flattree as ft
 from jax._src.tree_util import tree_unflatten
 from jax._src.typing import ArrayLike
+from jax import version as jax_version
+from jax._src.lib import version_str as jaxlib_version_str
+from jax._src.lib.mlir.dialects import hlo as stablehlo
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
@@ -73,6 +76,11 @@ CompilerOptions = dict[str, Any]
 
 
 class Executable:
+
+  @property
+  def cache_key(self) -> tuple[Any, ...]:
+    raise NotImplementedError(
+        f"cache_key is not implemented for {type(self).__name__}")
 
   def xla_extension_executable(self) -> xc.LoadedExecutable:
     raise NotImplementedError(
@@ -233,6 +241,7 @@ class Lowering:
   # after the tokens.
   # See https://docs.jax.dev/en/latest/internals/constants.html.
   const_args: list[ArrayLike]
+  cache_key: tuple[Any, ...]
 
   def hlo(self) -> xc.XlaComputation:
     """Return an HLO representation of this computation."""
@@ -359,6 +368,15 @@ class Stage:
         i for i, x in enumerate(tree_util.tree_leaves(self.args_info))
         if x.donated)
 
+  def version(self, **kwargs: Any) -> tuple[Any, ...]:
+    """Returns the version tuple used for stage caching."""
+    raise NotImplementedError(f"version is not implemented for {type(self).__name__}")
+
+  @property
+  def cache_key(self) -> tuple[Any, ...]:
+    """In-memory cache key for this stage."""
+    raise NotImplementedError(f"cache_key is not implemented for {type(self).__name__}")
+
 
 def make_args_info(in_tree, in_avals, donate_argnums):
   donate_argnums = frozenset(donate_argnums)
@@ -434,10 +452,10 @@ class Traced(Stage):
   representations via `.jaxpr` and `.lojax` properties respectively.
   """
   __slots__ = ['_meta_tys_flat', '_params', '_in_tree', 'out_tree', '_consts',
-               '_fun_sourceinfo', '_lojax', '_closure_converted']
+               '_fun_sourceinfo', '_lojax', '_closure_converted', '_cache_key']
 
   def __init__(self, meta_tys_flat, params, in_tree, out_tree, consts,
-               fun_sourceinfo):
+               fun_sourceinfo, *, cache_key: tuple[Any, ...] = ()):
     self._meta_tys_flat = meta_tys_flat
     self._params = params
     self._in_tree = in_tree
@@ -446,12 +464,20 @@ class Traced(Stage):
     self._fun_sourceinfo = fun_sourceinfo
     self._lojax = None
     self._closure_converted = None
+    self._cache_key = cache_key
 
   jaxpr = property(lambda self: self._params['jaxpr'])
   fun_name = property(lambda self: self._params['name'])
   args_info = property(_traced_args_info)  # pyrefly: ignore[bad-override]
   out_info = property(_traced_out_info)
   _num_consts = property(lambda self: len(self._consts))
+
+  def version(self, **kwargs: Any) -> tuple[Any, ...]:
+    return (jax_version.__version__,)
+
+  @property
+  def cache_key(self) -> tuple[Any, ...]:
+    return self._cache_key
 
   @property
   def out_avals(self):
@@ -653,6 +679,16 @@ class Lowered(Stage):
     self._in_types = in_types
     self._out_types = out_types
 
+  def version(self, **kwargs: Any) -> tuple[Any, ...]:
+    return (
+        jaxlib_version_str,
+        stablehlo.get_current_version(),
+    )
+
+  @property
+  def cache_key(self) -> tuple[Any, ...]:
+    return self._lowering.cache_key
+
   @property
   def in_avals(self):
     in_avals_ = self._lowering.compile_args["global_in_avals"]
@@ -770,6 +806,21 @@ class Compiled(Stage):
         self._executable, self._no_kwargs, self.in_tree, self.out_tree,
         const_args, in_types, out_types)
     self._call = None
+
+  def version(self, **kwargs: Any) -> tuple[Any, ...]:
+    unloaded = getattr(self._executable, "_unloaded_executable", None)
+    backend = getattr(unloaded, "backend", None)
+    platform = getattr(backend, "platform", None) if backend else None
+    platform_version = getattr(backend, "platform_version", None) if backend else None
+    return (
+        jaxlib_version_str,
+        platform,
+        platform_version,
+    )
+
+  @property
+  def cache_key(self) -> tuple[Any, ...]:
+    return self._executable.cache_key
 
   def as_text(self) -> str | None:
     """A human-readable text representation of this executable.
