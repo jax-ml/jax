@@ -481,6 +481,24 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       res = exp.call(x, y)
       self.assertAllClose(res, x + y)
 
+  def test_export_signed_int_floor_divide(self):
+    # Signed integer // lowers through sign, which must not need a TPU device.
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] // 3
+
+    def f(x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct.like(x),
+          in_specs=[pl.BlockSpec((8, 128), lambda i: (i // 2, 0))],
+          out_specs=pl.BlockSpec((8, 128), lambda i: (i // 2, 0)),
+          grid=(4,),
+      )(x)
+
+    export.export(jax.jit(f), platforms=["tpu"])(
+        jax.ShapeDtypeStruct((16, 128), jnp.int32)
+    )  # No crash
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
