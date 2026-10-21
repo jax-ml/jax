@@ -6032,8 +6032,11 @@ def _to_edtype_abstract_eval(x, *, edtype):
           "axes that are not explicitly sharded, but tried to convert from "
           f"{x.str_short(short_dtypes=True)} to an extended dtype with element "
           f"shape {rep_aval.shape}")
-    return x.update(shape=shape_prefix, dtype=edtype,
-                    sharding=x.sharding.update(spec=spec_prefix))
+    out_aval = x.update(shape=shape_prefix, dtype=edtype,
+                        sharding=x.sharding.update(spec=spec_prefix))
+    out_layout = lax_utils.call_layout_rule(
+        to_edtype_p, None, [x], [out_aval], edtype=edtype)
+    return out_aval.update(layout=out_layout)
   else:
     assert False  # unreachable, see isinstance check above
 
@@ -6072,7 +6075,10 @@ def _from_edtype_abstract_eval(x, *, dtype):
         f"{dtype_to_string(dtype)} which doesn't match the representation type "
         f"{dtype_to_string(rep_aval.dtype)}.")
   if isinstance(x, ShapedArray):
-    return x.update(shape=(*x.shape, *rep_aval.shape), dtype=dtype)
+    out_aval = x.update(shape=(*x.shape, *rep_aval.shape), dtype=dtype)
+    out_layout = lax_utils.call_layout_rule(
+        from_edtype_p, None, [x], [out_aval], dtype=dtype)
+    return out_aval.update(layout=out_layout)
   else:
     assert False  # unreachable, see isinstance check above
 
@@ -7727,7 +7733,10 @@ def _tile_abstract_eval(x, reps):
         f"and {x.ndim=}.")
   out_s = lax_utils.call_sharding_rule(
       tile_p, _tile_sharding_rule, None, None, x, reps=reps)
-  return x.update(shape=tuple(np.multiply(x.shape, reps)), sharding=out_s)
+  out_aval = x.update(shape=tuple(np.multiply(x.shape, reps)), sharding=out_s)
+  out_layout = lax_utils.call_layout_rule(
+      tile_p, None, [x], [out_aval], reps=reps)
+  return out_aval.update(layout=out_layout)
 
 def _tile_transpose_rule(ct, operand, *, reps):
   if type(ct) is ad_util.Zero:
@@ -9670,7 +9679,11 @@ def _sort_abstract_eval(*avals, dimension, is_stable, num_keys):
   out_shardings = lax_utils.call_sharding_rule(
       sort_p, _sort_sharding_rule, None, len(avals), *avals,
       dimension=dimension, is_stable=is_stable, num_keys=num_keys)
-  return tuple(a.update(sharding=s) for a, s in zip(avals, out_shardings))
+  out_avals = [a.update(sharding=s) for a, s in zip(avals, out_shardings)]
+  out_layouts = lax_utils.call_layout_rule(
+      sort_p, None, avals, out_avals, dimension=dimension,
+      is_stable=is_stable, num_keys=num_keys)
+  return tuple(o.update(layout=l) for o, l in zip(out_avals, out_layouts))
 
 
 def _canonicalize_float_for_sort(x):
@@ -9853,8 +9866,11 @@ def _top_k_abstract_eval(operand, *, k, axis, is_stable):
   s0, s1 = lax_utils.call_sharding_rule(
       top_k_p, _top_k_sharding_rule, None, 2, operand, k=k, axis=axis,
       is_stable=is_stable)
-  return (operand.update(shape=shape, sharding=s0),
-          operand.update(shape=shape, dtype=np.dtype(np.int32), sharding=s1))
+  out_avals = [operand.update(shape=shape, sharding=s0),
+               operand.update(shape=shape, dtype=np.dtype(np.int32), sharding=s1)]
+  out_layouts = lax_utils.call_layout_rule(
+      top_k_p, None, [operand], out_avals, k=k, axis=axis, is_stable=is_stable)
+  return tuple(o.update(layout=l) for o, l in zip(out_avals, out_layouts))
 
 def _top_k_jvp(primals, tangents, *, k, axis, is_stable):
   operand, = primals

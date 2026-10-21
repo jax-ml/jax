@@ -262,11 +262,16 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
   s0, s1 = lax_utils.call_sharding_rule(
       approx_top_k_p, _approx_top_k_sharding_rule, None, 2, operand,
       reduction_dimension=reduction_dimension)
-  return (operand.update(shape=dims, dtype=operand.dtype,
-                         weak_type=operand.weak_type,
-                         manual_axis_type=operand.mat, sharding=s0),
-          operand.update(shape=dims, dtype=np.dtype(np.int32),
-                         manual_axis_type=operand.mat, sharding=s1))
+  out_avals = [
+      operand.update(shape=dims, dtype=operand.dtype,
+                     weak_type=operand.weak_type,
+                     manual_axis_type=operand.mat, sharding=s0),
+      operand.update(shape=dims, dtype=np.dtype(np.int32),
+                     manual_axis_type=operand.mat, sharding=s1)]
+  out_layouts = lax_utils.call_layout_rule(
+      approx_top_k_p, None, [operand], out_avals,
+      reduction_dimension=reduction_dimension)
+  return tuple(o.update(layout=l) for o, l in zip(out_avals, out_layouts))
 
 def _get_init_val_literal(op_type, is_max_k):
   return np.array(-np.inf if is_max_k else np.inf, dtype=op_type)

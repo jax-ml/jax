@@ -1650,6 +1650,28 @@ class LayoutInTypesTest(jtu.JaxTestCase):
           ' dimension below its tile size'):
         f_bad(arr_small)
 
+  def test_missing_custom_abstract_eval_layout_rules(self):
+    shape = (8, 128)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(np_inp, Format(Layout((0, 1)), s))
+
+    for op_fn in [
+        lambda x: jax.lax.sort(x, dimension=0),
+        lambda x: jax.lax.top_k(x, k=4, axis=0)[0],
+        lambda x: jax.lax.approx_max_k(x, k=4, reduction_dimension=0)[0],
+        lambda x: jax.lax.reduce_window(
+            x, np.float32(0.0), jax.lax.add, (2, 2), (2, 2), 'VALID'),
+    ]:
+      @jax.jit
+      @explicit_layout(in_layouts=arr.format.layout)
+      def f(x):
+        return op_fn(x)
+
+      with self.assertRaisesRegex(
+          NotImplementedError, 'Missing layout rule for'):
+        f(arr)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
