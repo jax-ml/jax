@@ -199,13 +199,13 @@ def _load_lowering_rule(
     )
   if not all(s == 1 for s in strides):
     raise NotImplementedError(
-        "Get only supports slices with stride 1, got {strides}"
+        f"Get only supports slices with stride 1, got {strides}"
     )
 
   if (out_aval.ndim == 0) != (ref_memory_space is MemorySpace.SMEM):
     message = "Get only supports loading scalars from SMEM."
     if ref_memory_space is MemorySpace.SMEM:
-      message += " Trying to load an array of shape {out_aval.shape}."
+      message += f" Trying to load an array of shape {out_aval.shape}."
     elif ref_memory_space is MemorySpace.VMEM:
       message += (
           " To load a scalar from VMEM, load an array first and then extract a"
@@ -319,13 +319,13 @@ def _store_lowering_rule(
     )
   if not all(s == 1 for s in strides):
     raise NotImplementedError(
-        "Swap only supports slices with stride 1, got {strides}"
+        f"Swap only supports slices with stride 1, got {strides}"
     )
 
   if (out_aval.ndim == 0) != (ref_memory_space is MemorySpace.SMEM):
     message = "Swap only supports scalars in SMEM."
     if ref_memory_space is MemorySpace.SMEM:
-      message += " Trying to swap an array of shape {out_aval.shape}."
+      message += f" Trying to swap an array of shape {out_aval.shape}."
     else:
       message += f" Trying to swap a scalar in {ref_memory_space!r}."
     raise NotImplementedError(message)
