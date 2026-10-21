@@ -230,6 +230,13 @@ def constrain(
     return x
   return with_memory_space_constraint(x, ms)
 
+def _pin_target(memory_space: Any) -> str | None:
+  # `pin` only supports targeting the TPU 'vmem' and 'hbm' memory spaces,
+  # identified by their string representations; any other memory space pins to
+  # the default (HBM).
+  target = None if memory_space is None else str(memory_space)
+  return target if target in ('vmem', 'hbm') else None
+
 def _eval_jaxpr_discharge_state(
     jaxpr: core.Jaxpr, should_discharge: Sequence[bool], consts: Sequence[Any],
     strip_memory_space: bool, *args: Any):
@@ -253,7 +260,7 @@ def _eval_jaxpr_discharge_state(
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
         if eqn.params['pin']:
-          ans = pin(ans)
+          ans = pin(ans, to=_pin_target(outvar.aval.memory_space))
         else:
           ms = getattr(outvar.aval, "memory_space", None)
           ans = constrain(ans, ms, strip_memory_space)
@@ -268,7 +275,7 @@ def _eval_jaxpr_discharge_state(
         if eqn.params['pin']:
           # TODO(mattjj,yashkatariya): switch to create_linear once the
           # CreateBuffer custom call is implemented in the runtime
-          ans = pin(ans)
+          ans = pin(ans, to=_pin_target(outvar.aval.memory_space))
         else:
           ms = getattr(outvar.aval, "memory_space", None)
           ans = constrain(ans, ms, strip_memory_space)
