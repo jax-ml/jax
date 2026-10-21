@@ -5710,6 +5710,65 @@ class FragmentedArrayTest(TestCase):
           (1, 1, 1), (128, 1, 1), values, prev_pow2, ()
       )(values)
 
+  @parameterized.product(
+      src_dtype=(
+          jnp.float32,
+          jnp.float16,
+          jnp.bfloat16,
+          jnp.float8_e4m3fn,
+          jnp.float8_e5m2,
+      ),
+      dst_dtype=(jnp.float8_e4m3fn, jnp.float8_e5m2),
+  )
+  def test_rounding_f8(self, src_dtype, dst_dtype):
+    if src_dtype == dst_dtype:
+      self.skipTest("Identical types, so nothing to test")
+    # bf16 -> f8e4m3fn/f8e5m2 support added in PTX ISA 9.1.
+    # f8e4m3fn/f8e5m2 -> bf16 support added in PTX ISA 9.2 (CUDA 13.1).
+    if src_dtype == jnp.bfloat16 and not jtu.is_cuda_version_at_least(13, 1):
+      self.skipTest("bf16 -> f8 requires CUDA 13.1+ (PTX ISA 9.2+)")
+
+    values = self.prng.uniform(-5.0, 5.0, size=(128, 256)).astype(src_dtype)
+    expected_rn = values.astype(dst_dtype)
+
+    def run(rounding, expected=expected_rn):
+      def kernel(ctx, inp, out, smem):
+        del ctx, smem
+        t = mgpu.FragmentedArray.load_untiled(
+            inp, layout=fa.tmem_native_layout(2), optimized=False
+        )
+        t = t.astype(utils.dtype_to_ir_type(dst_dtype), rounding=rounding)
+        t.store_untiled(out, optimized=False)
+
+      res = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), values, expected, ()
+      )(values)
+      np.testing.assert_array_equal(res, expected)
+
+    run(mgpu.Rounding.TO_NEAREST_EVEN)
+
+    # f32/f16/bf16 -> f8e4m3fn/f8e5m2 (.rz) support added in PTX ISA 9.4
+    # (CUDA 13.4) on sm_107f.
+    if (
+        jtu.is_cuda_compute_capability_equal("10.7")
+        and jtu.is_cuda_version_at_least(13, 4)
+    ):
+      rn_bits = jax.lax.bitcast_convert_type(expected_rn, jnp.uint8)
+      rounded_away = np.abs(expected_rn.astype(np.float32)) > np.abs(
+          values.astype(np.float32)
+      )
+      expected_rz = jax.lax.bitcast_convert_type(
+          jnp.where(rounded_away, rn_bits - 1, rn_bits), dst_dtype
+      )
+      run(mgpu.Rounding.TO_ZERO, expected_rz)
+    else:
+      with self.assertRaises(ValueError):
+        run(mgpu.Rounding.TO_ZERO)
+
+    # f32/f16/bf16 -> f8e4m3fn/f8e5m2 (.rp) not supported.
+    with self.assertRaises(ValueError):
+      run(mgpu.Rounding.TO_POSITIVE_INFINITY)
+
   def test_foreach_wgmma_row_array(self):
     def kernel(ctx, out, smem):
       del ctx, smem

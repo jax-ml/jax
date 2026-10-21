@@ -3019,6 +3019,11 @@ class FragmentedArray:
         if rounding is None:
           return Rounding.TO_NEAREST_EVEN.ptx
         allowed_rounding = (Rounding.TO_NEAREST_EVEN,)
+        # .rz rounding for cvt.{e4m3x2,e5m2x2}.{f32,f16x2,bf16x2} was added in
+        # PTX ISA 9.4 and is only supported on sm_107f.
+        arch = utils.get_arch()
+        if arch.major == 10 and arch.minor >= 7 and ptx_isa_version >= 94:
+          allowed_rounding += (Rounding.TO_ZERO,)
       check_supported_rounding(allowed_rounding)
       return rounding.ptx
 
@@ -3070,7 +3075,7 @@ class FragmentedArray:
           None
       )
       if common_f16 is not None:
-        return self.astype(common_f16).astype(new_dtype)
+        return self.astype(common_f16).astype(new_dtype, rounding=rounding)
       raise NotImplementedError(
           f"Conversion from {cur_dtype} to {new_dtype} must go through f32,"
           " which is expensive. Cast to f32 explicitly if you really want it."
