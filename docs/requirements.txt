@@ -11,6 +11,7 @@ sphinxext-rediraffe
 myst-nb>=1.0.0
 sphinxcontrib-mermaid
 filelock
+zipp==4.1.2
 
 # Packages used for CI tests.
 flatbuffers
