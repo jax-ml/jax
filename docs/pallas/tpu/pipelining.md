@@ -147,7 +147,7 @@ pl.BlockSpec(
 )
 ```
 
-The default buffer count is 2 for all inputs and outputs.
+The default buffer count is 2 for all inputs and outputs. Automatic pipelining with `pl.pallas_call` on TPU supports single (`buffer_count=1`) and double (`buffer_count=2`) buffering; for deeper buffering, use {ref}`pallas_tpu_emit_pipeline`.
 
 +++
 
