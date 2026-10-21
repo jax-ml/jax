@@ -1434,8 +1434,7 @@ def _slice_transpose_fancy(out_ct, operand, *, start_indices, limit_indices, str
   if isinstance(operand, ad.RefAccum):
     strides = (1,) * len(start_indices) if strides is None else strides
     slices = map(_slice, start_indices, limit_indices, strides)
-    assert operand.ref is not None
-    operand.ref.addupdate(out_ct, tuple(slices))
+    operand.inst().ref.addupdate(out_ct, tuple(slices))
   else:
     operand_aval, = lax_utils.ensure_shaped(operand.aval)
     if strides is None or np.all(np.equal(strides, 1)):
@@ -1557,8 +1556,7 @@ def _dynamic_slice_transpose_fancy(out_ct, operand, *start_indices, slice_sizes)
   if type(out_ct) is ad_util.Zero or isinstance(operand, ad.NullAccum):
     return
   if isinstance(operand, ad.RefAccum):
-    assert operand.ref is not None
-    operand.ref.addupdate(out_ct, tuple(map(ds, start_indices, slice_sizes)))  # pyrefly: ignore[bad-argument-type]
+    operand.inst().ref.addupdate(out_ct, tuple(map(ds, start_indices, slice_sizes)))  # pyrefly: ignore[bad-argument-type]
   else:
     # use out_ct's dtype, not operand_aval's: cotangents can flow in a
     # different (e.g. higher-precision) dtype than the primal

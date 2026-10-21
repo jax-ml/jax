@@ -24,6 +24,7 @@ from jax._src import core
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.util import safe_map, safe_zip
+from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
@@ -1434,6 +1435,278 @@ class MutableArrayTest(jtu.JaxTestCase):
     f_vjp.with_refs(grad_accum)(jnp.arange(5.))
     self.assertAllClose(grad_accum[...],
                         jnp.zeros(10).at[::2].set(jnp.arange(5.)),
+                        check_dtypes=False)
+
+  def test_ref_accum_trivial_squeeze(self):
+    def f(x, i):
+      y = jnp.squeeze(x, (0, 2))
+      return y[i] ** 2
+
+    x = jnp.arange(10.).reshape((1, 10, 1))
+    expected = jax.grad(f)(x, 3)
+
+    grad_accum = jax.new_ref(jnp.zeros_like(x))
+    _, f_vjp = jax.vjp(f, x, 3)
+    f_vjp.with_refs(grad_accum, jax.ad.DontWant())(1.)
+    self.assertAllClose(grad_accum[...], expected, check_dtypes=False)
+
+    @jax.make_jaxpr
+    def run():
+      _, f_vjp = jax.vjp(jax.jit(f), x, 3)
+      f_vjp.with_refs(grad_accum, jax.ad.DontWant())(1.)
+
+    jaxpr = run()
+    self.assertIn('+=', str(jaxpr))
+    self.assertNotIn('0.0', str(jaxpr))
+
+    # Lazy RefAccum (ref=None) reshaped before inst() / accum() / freeze()
+    root_aval = core.ShapedArray((1, 6, 1), jnp.float32)
+    view_aval = core.ShapedArray((6,), jnp.float32)
+    lazy_acc = ad.RefAccum(root_aval)
+    reshaped_acc = lazy_acc.reshape(view_aval)
+    self.assertIsNone(lazy_acc.ref)
+    self.assertIsNone(reshaped_acc.ref)
+    reshaped_acc.accum(jnp.arange(6., dtype=jnp.float32))
+    self.assertIsNotNone(lazy_acc.ref)
+    self.assertEqual(reshaped_acc.ref.shape, (6,))
+    self.assertAllClose(
+        lazy_acc.freeze(),
+        jnp.arange(6., dtype=jnp.float32).reshape((1, 6, 1)),
+        check_dtypes=False)
+
+  def test_ref_accum_trivial_reshape(self):
+    # Inserting, removing, and simultaneously inserting/removing singleton axes
+    cases = [
+        ((10,), (1, 10, 1), (0, 4, 0)),
+        ((1, 10, 1), (10,), (4,)),
+        ((1, 10, 1), (10, 1, 1), (4, 0, 0)),
+    ]
+    for in_shape, out_shape, idx in cases:
+      x = jnp.arange(1., 11.).reshape(in_shape)
+
+      def f(x, out_shape=out_shape, idx=idx):
+        y = jnp.reshape(x, out_shape)
+        return y[idx] ** 2
+
+      expected = jax.grad(f)(x)
+      grad_accum = jax.new_ref(jnp.zeros_like(x))
+      _, f_vjp = jax.vjp(f, x)
+      f_vjp.with_refs(grad_accum)(1.)
+      self.assertAllClose(grad_accum[...], expected, check_dtypes=False)
+
+      @jax.make_jaxpr
+      def run(f=f, x=x, grad_accum=grad_accum):
+        _, f_vjp = jax.vjp(jax.jit(f), x)
+        f_vjp.with_refs(grad_accum)(1.)
+
+      jaxpr = run()
+      self.assertIn('+=', str(jaxpr))
+      self.assertNotIn('0.0', str(jaxpr))
+
+      # Dense accumulation through trivial reshape
+      def f_dense(x, out_shape=out_shape):
+        y = jax.lax.reshape(x, out_shape, dimensions=tuple(range(x.ndim)))
+        return (y * 2.5).sum()
+
+      grad_accum_dense = jax.new_ref(jnp.zeros_like(x))
+      jax.vjp(f_dense, x)[1].with_refs(grad_accum_dense)(1.)
+      self.assertAllClose(grad_accum_dense[...], jax.grad(f_dense)(x),
+                          check_dtypes=False)
+
+  def test_ref_accum_chained_and_aliased_trivial_reshapes(self):
+    def f(x):
+      y = jnp.squeeze(x, 0)           # (6, 1)
+      z = jnp.reshape(y, (1, 1, 6))   # (1, 1, 6)
+      w = jnp.squeeze(z, (0, 1))      # (6,)
+      # Accumulate through both the original and multiple aliased views,
+      # including across a jit boundary (testing project_accums deduplication).
+      sub = jax.jit(lambda a, b: a[0, 1, 0] * 2. + b[4] * 3.)
+      return sub(x, w) + y[2, 0] * 5. + (w * 0.5).sum()
+
+    x = jnp.arange(1., 7.).reshape((1, 6, 1))
+    expected = jax.grad(f)(x)
+
+    grad_accum = jax.new_ref(jnp.zeros_like(x))
+    _, f_vjp = jax.vjp(f, x)
+    f_vjp.with_refs(grad_accum)(1.)
+    self.assertAllClose(grad_accum[...], expected, check_dtypes=False)
+
+    grad_accum_jit = jax.new_ref(jnp.zeros_like(x))
+    @jax.jit
+    def run_jit(x, r):
+      _, f_vjp = jax.vjp(f, x)
+      f_vjp.with_refs(r)(1.)
+    run_jit(x, grad_accum_jit)
+    self.assertAllClose(grad_accum_jit[...], expected, check_dtypes=False)
+
+  def test_ref_accum_nontrivial_reshape_not_aliased(self):
+    seen = []
+
+    @jax.custom_vjp
+    def probe(y):
+      return y.sum()
+
+    def probe_bwd(_, g, y_acc):
+      seen.append((type(y_acc).__name__, y_acc.aval.shape))
+      if isinstance(y_acc, ad.RefAccum):
+        y_acc.ref[...] += jnp.broadcast_to(g, y_acc.aval.shape)
+      else:
+        y_acc.accum(jnp.broadcast_to(g, y_acc.aval.shape))
+
+    probe.defvjp_with_accums(lambda y: (probe(y), None), probe_bwd)
+
+    # Trivial reshapes pass a RefAccum with the aliased shape to probe_bwd
+    x_triv = jnp.ones((1, 6))
+    ref_triv = jax.new_ref(jnp.zeros_like(x_triv))
+    jax.vjp(lambda x: probe(jax.lax.squeeze(x, (0,))), x_triv)[1].with_refs(ref_triv)(2.)
+    self.assertEqual(seen, [('RefAccum', (6,))])
+    self.assertAllClose(ref_triv[...], jnp.full((1, 6), 2.), check_dtypes=False)
+
+    seen.clear()
+    ref_triv2 = jax.new_ref(jnp.zeros_like(x_triv))
+    jax.vjp(lambda x: probe(jnp.reshape(x, (6, 1, 1))), x_triv)[1].with_refs(ref_triv2)(3.)
+    self.assertEqual(seen, [('RefAccum', (6, 1, 1))])
+    self.assertAllClose(ref_triv2[...], jnp.full((1, 6), 3.), check_dtypes=False)
+
+    seen.clear()
+    ref_triv3 = jax.new_ref(jnp.zeros_like(x_triv))
+    jax.vjp(lambda x: probe(jnp.expand_dims(x, (1, 2))), x_triv)[1].with_refs(ref_triv3)(1.5)
+    self.assertEqual(seen, [('RefAccum', (1, 1, 1, 6))])
+    self.assertAllClose(ref_triv3[...], jnp.full((1, 6), 1.5), check_dtypes=False)
+
+    # Non-trivial reshape (flattening non-singleton axes): must NOT alias as RefAccum
+    seen.clear()
+    x_nontriv = jnp.ones((2, 3))
+    ref_nontriv = jax.new_ref(jnp.zeros_like(x_nontriv))
+    jax.vjp(lambda x: probe(jnp.reshape(x, (6,))), x_nontriv)[1].with_refs(ref_nontriv)(4.)
+    self.assertEqual(seen, [('ValAccum', (6,))])
+    self.assertAllClose(ref_nontriv[...], jnp.full((2, 3), 4.), check_dtypes=False)
+
+    # Non-trivial reshape (axis permutation via dimensions=(1, 0)): must NOT alias as RefAccum
+    seen.clear()
+    x_perm = jnp.ones((2, 1))
+    ref_perm = jax.new_ref(jnp.zeros_like(x_perm))
+    jax.vjp(
+        lambda x: probe(jax.lax.reshape(x, (1, 2), dimensions=(1, 0))), x_perm
+    )[1].with_refs(ref_perm)(5.)
+    self.assertEqual(seen, [('ValAccum', (1, 2))])
+    self.assertAllClose(ref_perm[...], jnp.full((2, 1), 5.), check_dtypes=False)
+
+    # Non-trivial broadcast (expanding size-1 to size > 1): must NOT alias as RefAccum
+    seen.clear()
+    ref_bcast = jax.new_ref(jnp.zeros_like(x_triv))
+    jax.vjp(lambda x: probe(jnp.broadcast_to(x, (3, 6))), x_triv)[1].with_refs(ref_bcast)(2.)
+    self.assertEqual(seen, [('ValAccum', (3, 6))])
+    self.assertAllClose(ref_bcast[...], jnp.full((1, 6), 6.), check_dtypes=False)
+
+  def test_ref_accum_trivial_reshape_with_scan(self):
+    # Intensive (closed-over) aliased RefAccum views in scan, including dedup
+    def f_const(x):
+      y1 = jax.lax.squeeze(x, (0,))      # (4, 1)
+      y2 = jnp.reshape(x, (4,))          # (4,)
+      c, _ = jax.lax.scan(
+          lambda c, i: (c + y1[i, 0] * 2.0 + y2[3 - i] * 5.0, None),
+          0.0, jnp.arange(4))
+      return c
+
+    x = jnp.ones((1, 4, 1))
+    ref = jax.new_ref(jnp.zeros_like(x))
+    jax.vjp(f_const, x)[1].with_refs(ref)(1.0)
+    self.assertAllClose(ref[...], jax.grad(f_const)(x), check_dtypes=False)
+
+    # Extensive (scanned-over) aliased RefAccum with matching leading axis
+    def f_xs_trailing(x):
+      y = jax.lax.squeeze(x, (1,))       # (3, 4)
+      c, _ = jax.lax.scan(lambda c, row: (c + row[2] * 3.0, None), 0.0, y)
+      return c
+
+    x_trail = jnp.ones((3, 1, 4))
+    ref_trail = jax.new_ref(jnp.zeros_like(x_trail))
+    jax.vjp(f_xs_trailing, x_trail)[1].with_refs(ref_trail)(1.0)
+    self.assertAllClose(ref_trail[...], jax.grad(f_xs_trailing)(x_trail),
+                        check_dtypes=False)
+
+    # Extensive (scanned-over) aliased RefAccum where leading singleton was squeezed
+    def f_xs_leading(x):
+      y = jax.lax.squeeze(x, (0,))       # (3, 4)
+      c, _ = jax.lax.scan(lambda c, row: (c + row[1] * 4.0, None), 0.0, y)
+      return c
+
+    x_lead = jnp.ones((1, 3, 4))
+    ref_lead = jax.new_ref(jnp.zeros_like(x_lead))
+    jax.vjp(f_xs_leading, x_lead)[1].with_refs(ref_lead)(1.0)
+    self.assertAllClose(ref_lead[...], jax.grad(f_xs_leading)(x_lead),
+                        check_dtypes=False)
+
+  def test_ref_accum_trivial_reshape_with_optimization_barrier(self):
+    def f(x):
+      y = jax.lax.optimization_barrier(jax.lax.squeeze(x, (0,)))
+      return y[1] * 2.0
+
+    x = jnp.ones((1, 4))
+    ref = jax.new_ref(jnp.zeros_like(x))
+    jax.vjp(f, x)[1].with_refs(ref)(1.0)
+    self.assertAllClose(ref[...], jax.grad(f)(x), check_dtypes=False)
+
+  def test_ref_accum_trivial_reshape_with_sharding_and_jit_in_shardings(self):
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ('a',))
+    s_rep = NamedSharding(mesh, P(None))
+    s_sharded = NamedSharding(mesh, P('a'))
+
+    # Replicated NamedSharding on jit input with different rank than root Ref
+    @partial(jax.jit, in_shardings=s_rep)
+    def g_rep(y):
+      return y[1] * 3.0
+
+    def f_rep(x):
+      return g_rep(jax.lax.squeeze(x, (0,)))
+
+    x = jnp.ones((1, 4))
+    ref_rep = jax.new_ref(jnp.zeros_like(x))
+    jax.vjp(f_rep, x)[1].with_refs(ref_rep)(1.0)
+    self.assertAllClose(ref_rep[...], jax.grad(f_rep)(x), check_dtypes=False)
+
+    # Matching replicated NamedSharding on both root Ref and jit in_shardings
+    s_rep_2d = NamedSharding(mesh, P(None, None))
+    x_rep_2d = jax.device_put(x, s_rep_2d)
+    ref_rep_2d = jax.new_ref(jax.device_put(jnp.zeros_like(x), s_rep_2d))
+    jax.vjp(f_rep, x_rep_2d)[1].with_refs(ref_rep_2d)(1.0)
+    self.assertAllClose(ref_rep_2d[...], jax.grad(f_rep)(x_rep_2d),
+                        check_dtypes=False)
+
+    # Sharded NamedSharding on jit input with different rank than root Ref
+    @partial(jax.jit, in_shardings=s_sharded)
+    def g_sharded(y):
+      return (y * 2.0).sum()
+
+    def f_sharded(x):
+      return g_sharded(jax.lax.squeeze(x, (0,)))
+
+    ref_sharded = jax.new_ref(jnp.zeros_like(x))
+    jax.vjp(f_sharded, x)[1].with_refs(ref_sharded)(1.0)
+    self.assertAllClose(ref_sharded[...], jax.grad(f_sharded)(x),
+                        check_dtypes=False)
+
+    # Sharded input array itself (not aliased as TransformedRef)
+    s_2d = NamedSharding(mesh, P(None, 'a'))
+    x_2d = jax.device_put(jnp.ones((1, 4)), s_2d)
+    ref_2d = jax.new_ref(jax.device_put(jnp.zeros((1, 4)), s_2d))
+    def f_2d(x):
+      return (jax.lax.squeeze(x, (0,)) * 4.0).sum()
+    jax.vjp(f_2d, x_2d)[1].with_refs(ref_2d)(1.0)
+    self.assertAllClose(ref_2d[...], jax.grad(f_2d)(x_2d), check_dtypes=False)
+
+    # shard_map with replicated and sharded in_specs on trivially reshaped RefAccum
+    def f_smap_rep(x):
+      y = jax.lax.squeeze(x, (0,))
+      out = jax.shard_map(
+          lambda z: z[1:2] * 5.0, mesh=mesh, in_specs=P(None), out_specs=P(None)
+      )(y)
+      return out.sum()
+
+    ref_smap = jax.new_ref(jax.device_put(jnp.zeros_like(x), s_rep_2d))
+    jax.jit(lambda r: jax.vjp(f_smap_rep, x_rep_2d)[1].with_refs(r)(1.0))(ref_smap)
+    self.assertAllClose(ref_smap[...], jax.grad(f_smap_rep)(x_rep_2d),
                         check_dtypes=False)
 
   @absltest.skip("Not yet implemented")

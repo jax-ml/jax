@@ -427,6 +427,10 @@ class TransformedRef:
     from jax._src.state.primitives import ref_get  # pyrefly: ignore[missing-import]
     return ref_get(self, idx)
 
+  def addupdate(self, value, idx=()):
+    from jax._src.state.primitives import ref_addupdate  # pyrefly: ignore[missing-import]
+    return ref_addupdate(self, idx, value)
+
   @property
   def memory_space(self):
     if not hasattr(self.type, "memory_space"):

@@ -1914,17 +1914,24 @@ def _unmentioned2(mesh: Mesh, spec, manual_axes: frozenset[AxisName]
           if n not in name_set]
 
 
+def _is_reshaped_ref_accum(x):
+  return (isinstance(x, ad.RefAccum) and
+          isinstance(x.aval, core.ShapedArray) and
+          isinstance(x._root.aval, core.ShapedArray) and
+          x.aval.shape != x._root.aval.shape)
+
 def _check_grad_refs(args, in_specs, mesh, check_vma, newly_manual_axes):
   ref_specs: dict[int, P] = {}
   for x, sp in zip(args, in_specs):
     if not isinstance(x, ad.RefAccum):
       continue
-    if not check_vma and _unmentioned2(mesh, sp.to_ct_spec(), newly_manual_axes):
+    ct_sp = P() if _is_reshaped_ref_accum(x) else sp.to_ct_spec()
+    if not check_vma and _unmentioned2(mesh, ct_sp, newly_manual_axes):
       raise NotImplementedError(
           "Differentiating a shard_map with check_vma=False into a gradient Ref "
           "for an argument whose in_specs don't mention all manual mesh axes.")
-    if sp.to_ct_spec() != ref_specs.setdefault(
-        id(core.get_referent(x.inst().ref)), sp.to_ct_spec()):
+    if ct_sp != ref_specs.setdefault(
+        id(core.get_referent(x.inst()._root._raw_ref)), ct_sp):
       raise NotImplementedError(
           "Differentiating a shard_map into one gradient Ref through arguments "
           "with different in_specs.")
@@ -1942,10 +1949,21 @@ def _shard_map_transpose_fancy(out_cts, *args, jaxpr: core.Jaxpr, mesh,
       for sp, x in zip(out_specs, out_cts)
   ]
 
-  _check_grad_refs(args, in_specs, mesh, check_vma, newly_manual_axes)
-  res_and_refs, specs = ad.project_accums(args)
-  res_and_refs_specs = [sp if k is None else sp.to_ct_spec()
-                        for (k, _), sp in zip(specs, in_specs)
+  def _is_unpartitioned_spec(sp):
+    return (not sp.unreduced and not sp.reduced and
+            all(p is None for p in sp.partitions))
+
+  args_for_project = [
+      ad.ValAccum(x.aval)
+      if _is_reshaped_ref_accum(x) and not _is_unpartitioned_spec(sp.to_ct_spec())
+      else x
+      for x, sp in zip(args, in_specs)
+  ]
+  _check_grad_refs(args_for_project, in_specs, mesh, check_vma, newly_manual_axes)
+  res_and_refs, specs = ad.project_accums(args_for_project)
+  res_and_refs_specs = [sp if k is None else
+                        (P() if _is_reshaped_ref_accum(x) else sp.to_ct_spec())
+                        for x, (k, _), sp in zip(args_for_project, specs, in_specs)
                         if k is None or k is ad.RefAccum]
   specs = tuple((k, a if k is None else shard_aval(
                      mesh, newly_manual_axes, check_vma, sp.to_ct_spec(), a))

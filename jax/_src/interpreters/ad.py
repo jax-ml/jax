@@ -38,7 +38,7 @@ from jax._src.ad_util import (
 from jax._src.api_util import debug_info
 from jax._src.core import (Trace, Tracer, typeof, Primitive, Literal)
 from jax._src.dtypes import dtype, float0
-from jax._src.state.types import AbstractRef
+from jax._src.state.types import AbstractRef, ReshapeTransform, TransformedRef
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
                            weakref_lru_cache, partition_list, foreach)
 
@@ -308,8 +308,14 @@ def backward_pass3(
   if all(type(ct) is Zero for ct in cotangents_in) and not jaxpr.effects:
     return {}
 
-  env: dict = dict(zip((*jaxpr.constvars, *jaxpr.invars),
-                       (*consts, *primals_in)))
+  def _set_is_ref(v: core.Var, x):
+    if isinstance(x, RefAccum):
+      x.is_ref = isinstance(v.aval, AbstractRef)
+    return x
+
+  env: dict = {v: _set_is_ref(v, x)
+               for v, x in zip((*jaxpr.constvars, *jaxpr.invars),
+                               (*consts, *primals_in))}
 
   def read(x: core.Atom) -> Array | GradAccum:
     return x.val if isinstance(x, Literal) else env[x]
@@ -321,13 +327,18 @@ def backward_pass3(
       v, = eqn.outvars
       lin_eqns.append(eqn)
       if eqn.primitive.ref_allocating:
-        env[v] = RefAccum(v.aval.inner_aval.to_ct_aval())  # type: ignore
+        env[v] = RefAccum(v.aval.inner_aval.to_ct_aval(), is_ref=True)  # type: ignore
       elif eqn.primitive is core.freeze_p:
         env[v] = ValAccum(v.aval.to_ct_aval())
       elif eqn.primitive is core.accum_grad_in_ref_p:
         env[v] = RefAccum(v.aval.to_ct_aval())
       else:
         assert False
+    elif (len(eqn.invars) == 1 and
+          isinstance(read(eqn.invars[0]), RefAccum) and
+          _is_trivial_reshape(eqn)):
+      v, = eqn.outvars
+      env[v] = read(eqn.invars[0]).reshape(v.aval.to_ct_aval())  # type: ignore
     elif (isinstance(eqn.primitive, VJPNode) or
           any(isinstance(read(x), GradAccum) for x in eqn.invars)):
       for v in eqn.outvars:
@@ -394,6 +405,40 @@ def _name_stack_ctx(src_info):
   stack = source_info_util.current_name_stack() + src_info.name_stack
   return source_info_util.user_context(src_info.traceback, name_stack=stack)
 
+def _is_trivial_reshape(eqn: core.JaxprEqn) -> bool:
+  from jax._src.lax import lax  # pyrefly: ignore[missing-import]
+  if eqn.primitive not in (lax.squeeze_p, lax.reshape_p, lax.broadcast_in_dim_p):
+    return False
+  in_aval = eqn.invars[0].aval
+  out_aval = eqn.outvars[0].aval
+  if not (isinstance(in_aval, core.ShapedArray) and
+          isinstance(out_aval, core.ShapedArray)):
+    return False
+  in_spec = in_aval.sharding.spec
+  out_spec = out_aval.sharding.spec
+  if (in_spec.unreduced or in_spec.reduced or
+      out_spec.unreduced or out_spec.reduced or
+      not all(p is None for p in in_spec.partitions) or
+      not all(p is None for p in out_spec.partitions)):
+    return False
+  if eqn.primitive is lax.squeeze_p:
+    return True
+  sharding = eqn.params.get('sharding')
+  if sharding is not None and sharding != in_aval.sharding:
+    return False
+  if eqn.primitive is lax.reshape_p:
+    dims = eqn.params['dimensions']
+    if dims is not None and tuple(dims) != tuple(range(in_aval.ndim)):
+      return False
+  else:
+    bdims = tuple(eqn.params['broadcast_dimensions'])
+    if bdims != tuple(sorted(bdims)):
+      return False
+  in_non_ones = [d for d in in_aval.shape if not core.definitely_equal(d, 1)]
+  out_non_ones = [d for d in out_aval.shape if not core.definitely_equal(d, 1)]
+  return core.definitely_equal_shape(in_non_ones, out_non_ones)
+
+
 class GradAccum:
   aval: core.AbstractValue  # cotangent aval
 
@@ -404,31 +449,75 @@ class GradAccum:
 
 class RefAccum(GradAccum):
   aval: core.AbstractValue
-  ref: Ref | None
+  _parent: RefAccum | None
+  _raw_ref: Ref | None
+  is_ref: bool
 
-  def __init__(self, aval, ref=None):
+  def __init__(self, aval, ref=None, *, is_ref: bool = False):
     self.aval = aval
-    self.ref = ref
+    self.is_ref = is_ref
+    if isinstance(ref, TransformedRef):
+      ref = ref.ref
+    if (ref is not None and isinstance(aval, core.ShapedArray) and
+        isinstance(ref_aval := typeof(ref), AbstractRef) and
+        isinstance(ref_aval.inner_aval, core.ShapedArray) and
+        ref_aval.inner_aval.shape != aval.shape):
+      self._parent = RefAccum(ref_aval.inner_aval.to_ct_aval(), ref)
+      self._raw_ref = None
+    else:
+      self._parent = None
+      self._raw_ref = ref
+
+  @property
+  def _root(self) -> RefAccum:
+    return self if self._parent is None else self._parent
+
+  @property
+  def ref(self):
+    raw_ref = self._root._raw_ref
+    if (raw_ref is None or self._parent is None or
+        not isinstance(self.aval, core.ShapedArray) or
+        not isinstance(self._root.aval, core.ShapedArray) or
+        self.aval.shape == self._root.aval.shape):
+      return raw_ref
+    return TransformedRef(raw_ref, (ReshapeTransform(self.aval.shape),))
+
+  def reshape(self, aval: core.AbstractValue) -> RefAccum:
+    out = RefAccum(aval)
+    out._parent = self._root
+    return out
 
   def accum(self, x):
     assert x is not Zero
     if isinstance(x, Zero) or x is None:
       return
-    if self.ref is None:
-      self.ref = core.new_ref(x)
+    ct_check(self, x)
+    if (self._root is not self and
+        isinstance(self.aval, core.ShapedArray) and
+        isinstance(self._root.aval, core.ShapedArray) and
+        self.aval.shape != self._root.aval.shape):
+      from jax._src.lax import lax  # pyrefly: ignore[missing-import]
+      x = lax.reshape(x, self._root.aval.shape)
+    if self._root._raw_ref is None:
+      self._root._raw_ref = core.new_ref(x)
     else:
-      ct_check(self, x)
-      self.ref.addupdate(x)
+      self._root._raw_ref.addupdate(x)
 
   def freeze(self):
-    if self.ref is None:
+    if self._root._raw_ref is None:
       return Zero(self.aval)
-    else:
-      return core.freeze(self.ref)
+    out = core.freeze(self._root._raw_ref)
+    if (self._root is not self and
+        isinstance(self.aval, core.ShapedArray) and
+        isinstance(self._root.aval, core.ShapedArray) and
+        self.aval.shape != self._root.aval.shape):
+      from jax._src.lax import lax  # pyrefly: ignore[missing-import]
+      out = lax.reshape(out, self.aval.shape)
+    return out
 
   def inst(self):
-    if self.ref is None:
-      self.ref = core.new_ref(zeros_like_aval(self.aval))
+    if self._root._raw_ref is None:
+      self._root._raw_ref = core.new_ref(zeros_like_aval(self._root.aval))
     return self
 
 class ValAccum(GradAccum):
@@ -477,7 +566,7 @@ def project_accums(args):
     if isinstance(x, ValAccum):
       specs.append((ValAccum, x.aval))
     elif isinstance(x, RefAccum):
-      ref = x.inst().ref
+      ref = x.inst()._root._raw_ref
       if (i := ref_idx.get(id(core.get_referent(ref)))) is None:
         ref_idx[id(core.get_referent(ref))] = len(result)
         result.append(ref)
