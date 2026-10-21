@@ -627,10 +627,7 @@ def _is_push_stream(
   if not is_local:
     return False
   if core_type == tpu_core.CoreType.SC_VECTOR_SUBCORE:
-    return (src == MemorySpace.VMEM and dst != MemorySpace.VMEM) or (
-        src == MemorySpace.VMEM_SHARED and dst == MemorySpace.SMEM)
-  if core_type == tpu_core.CoreType.SC_SCALAR_SUBCORE:
-    return src == MemorySpace.VMEM_SHARED and dst == MemorySpace.SMEM
+    return src == MemorySpace.VMEM and dst != MemorySpace.VMEM
   return False
 
 
@@ -688,8 +685,8 @@ def _dma_start_lowering_rule(
     if is_push and sem is not None:
       warnings.warn(
           "Destination semaphore is ignored for push streams (VMEM to HBM, "
-          "VMEM_SHARED or SMEM, or VMEM_SHARED to SMEM) on SparseCore; pass "
-          "`sem=None` to `async_copy` to suppress this warning.",
+          "VMEM_SHARED or SMEM) on SparseCore; pass `sem=None` to "
+          "`async_copy` to suppress this warning.",
           sc_core.SparseCorePushStreamWarning,
       )
     if is_local and not is_push and src_sem is not None:
@@ -697,9 +694,9 @@ def _dma_start_lowering_rule(
       # would have no effect, we reject it instead of silently ignoring it.
       raise ValueError(
           "Source semaphore (`src_sem`) on a local copy is only supported for "
-          "push streams (VMEM to HBM, VMEM_SHARED or SMEM, or VMEM_SHARED to "
-          "SMEM) on SparseCore; pass `src_sem=None` and use `wait()`, which "
-          "already guarantees completion of this transfer."
+          "push streams (VMEM to HBM, VMEM_SHARED or SMEM) on SparseCore; pass "
+          "`src_sem=None` and use `wait()`, which already guarantees "
+          "completion of this transfer."
       )
 
     def _dma_start(src_ref, dst_ref, sem, src_sem):
@@ -803,9 +800,8 @@ def _dma_wait_lowering_rule(
     ):
       raise ValueError(
           "`wait_read()` on a local copy is only supported for push streams "
-          "(VMEM to HBM, VMEM_SHARED or SMEM, or VMEM_SHARED to SMEM) on "
-          "SparseCore; use `wait()` to await this transfer and guarantee "
-          "both read and write completion."
+          "(VMEM to HBM, VMEM_SHARED or SMEM) on SparseCore; use `wait()` to "
+          "await this transfer and guarantee both read and write completion."
       )
 
     def _dma_wait(src_ref, dst_ref, sem, src_sem):
