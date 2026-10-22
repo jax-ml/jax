@@ -153,7 +153,7 @@ class Exp2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp2_accuracy(self, dtype):
-    if ifrt_version >= 80:
+    if ifrt_version >= 80 and jtu.is_libtpu_at_least("0.0.52"):
       bounds = [
           ("cpu", {f16: 1.0}),
           ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),
@@ -203,8 +203,8 @@ class Exp2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp2_highest_accuracy(self, dtype):
-    if ifrt_version < 80:
-      self.skipTest("Requires ifrt_version >= 80")
+    if ifrt_version < 80 or not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Requires ifrt_version >= 80 and libtpu >= 0.0.52")
     bounds = [
         ("cpu", {f16: 1.0}),
         ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),

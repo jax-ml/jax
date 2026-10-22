@@ -229,7 +229,7 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
         or (jtu.get_tpu_version() >= 6 and op in [lax.expm1, jnp.expm1])
         or (
             jtu.get_tpu_version() >= 6
-            and jtu.is_libtpu_at_least("0.0.51")
+            and jtu.is_libtpu_at_least("0.0.52")
             and op in [lax.exp2, jnp.exp2]
         )
     ):
@@ -269,7 +269,7 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
         or (jtu.get_tpu_version() >= 6 and op in [lax.expm1, jnp.expm1])
         or (
             jtu.get_tpu_version() >= 6
-            and jtu.is_libtpu_at_least("0.0.51")
+            and jtu.is_libtpu_at_least("0.0.52")
             and op in [lax.exp2, jnp.exp2]
         )
     ):
@@ -306,7 +306,7 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
     diff = abs(f_default_grad(x) - f_accurate_grad(x))
     if (
         jtu.get_tpu_version() >= 6
-        and jtu.is_libtpu_at_least("0.0.51")
+        and jtu.is_libtpu_at_least("0.0.52")
         and op in [lax.exp2, jnp.exp2]
     ):
       self.assertTrue(jnp.all(diff == 0))

@@ -4795,7 +4795,11 @@ ad.defjvp2(
 )
 
 def _exp2_lower(ctx, x, accuracy):
-  if ctx.is_forward_compat() or ifrt_version < 80:
+  if (
+      ctx.is_forward_compat()
+      or ifrt_version < 80
+      or not cloud_tpu_init.is_libtpu_at_least('0.0.52')
+  ):
     x_aval, = ctx.avals_in
     log2 = mlir.ir_constant(np.array(np.log(2), x_aval.dtype))
     log2 = mlir.broadcast_in_dim(ctx, log2, x_aval, broadcast_dimensions=())
@@ -4818,7 +4822,11 @@ log2_p = standard_unop(_float | _complex, 'log2')
 ad.defjvp(log2_p, lambda g, x, **kwargs: div(g, mul(x, log(_const(x, 2)))))
 
 def _log2_lower(ctx, x, accuracy):
-  if ctx.is_forward_compat() or ifrt_version < 80:
+  if (
+      ctx.is_forward_compat()
+      or ifrt_version < 80
+      or not cloud_tpu_init.is_libtpu_at_least('0.0.52')
+  ):
     x_aval, = ctx.avals_in
     log_x = hlo.log(x, result_accuracy=accuracy_attr(accuracy))
     if np.issubdtype(x_aval.dtype, np.complexfloating):
