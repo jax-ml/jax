@@ -1041,6 +1041,8 @@ def defjvp_zero(primitive):
 
 def zero_jvp(primitive, primals, tangents, **params):
   r = primitive.bind(*primals, **params)
+  if primitive.multiple_results:
+    return r, map(p2tz, r)
   return r, p2tz(r)
 
 deflinear2(add_jaxvals_p, lambda t, *args: (t, t))

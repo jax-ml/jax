@@ -136,7 +136,7 @@ def _return_prng_keys(was_wrapped: bool, key: Key) -> Key:
 
 def _random_bits(key: Key, bit_width: int, shape: Shape) -> Array:
   assert dtypes.issubdtype(key.dtype, dtypes.prng_key)
-  return prng.random_bits(key, bit_width=bit_width, shape=shape)
+  return prng.random_bits(key, bit_width=bit_width, shape=shape)[0]
 
 
 # TODO(frostig,vanderplas): remove from public API altogether, or at
@@ -425,11 +425,39 @@ def maybe_auto_axes(f, out_sharding, **hoist_kwargs):
                      axes=out_sharding.mesh.explicit_axes)
 
 
+@typing.overload
+def bits(key: Key | ArrayLike,
+         shape: Shape = (),
+         dtype: DTypeLikeUInt | None = None,
+         *,
+         num_streams: None = None,
+         out_sharding: NamedSharding | P | None = None) -> Array:
+  ...
+
+@typing.overload
+def bits(key: Key | ArrayLike,
+         shape: Shape = (),
+         dtype: DTypeLikeUInt | None = None,
+         *,
+         num_streams: int,
+         out_sharding: NamedSharding | P | None = None) -> tuple[Array, ...]:
+  ...
+
+@typing.overload
+def bits(key: Key | ArrayLike,
+         shape: Shape = (),
+         dtype: DTypeLikeUInt | None = None,
+         *,
+         num_streams: int | None = None,
+         out_sharding: NamedSharding | P | None = None) -> Array | tuple[Array, ...]:
+  ...
+
 def bits(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
          shape: Shape = (),
          dtype: DTypeLikeUInt | None = None,
          *,
-         out_sharding: NamedSharding | P | None = None) -> Array:
+         num_streams: int | None = None,
+         out_sharding: NamedSharding | P | None = None) -> Array | tuple[Array, ...]:
   """Sample uniform bits in the form of unsigned integers.
 
   Args:
@@ -438,6 +466,10 @@ def bits(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
       shape. Default ``()``.
     dtype: optional, an unsigned integer dtype for the returned values (default
       ``uint64`` if ``jax_enable_x64`` is true, otherwise ``uint32``).
+    num_streams: optional, the number of independent random streams to return.
+      If ``None`` (default), returns a single array. If an integer (currently
+      supported values are ``1``, ``2``, or ``4``), returns a tuple of
+      ``num_streams`` independent random arrays of the given shape and dtype.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -448,7 +480,8 @@ def bits(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
       for more details.
 
   Returns:
-    A random array with the specified shape and dtype.
+    A random array with the specified shape and dtype, or a tuple of
+    ``num_streams`` such arrays if ``num_streams`` is specified.
   """
   key, _ = _check_prng_key("bits", key)
   if dtype is None:
@@ -458,11 +491,16 @@ def bits(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   if not dtypes.issubdtype(dtype, np.unsignedinteger):
     raise ValueError("dtype argument to `bits` must be an unsigned int dtype, "
                      f"got {dtype}")
+  if isinstance(num_streams, bool) or num_streams not in (None, 1, 2, 4):
+    raise ValueError(f"num_streams must be None, 1, 2, or 4, got {num_streams}")
   shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "bits", shape)
   bit_width = dtype.itemsize * 8
-  return maybe_auto_axes(_random_bits, out_sharding,
-                         bit_width=bit_width, shape=shape)(key)
+  out = maybe_auto_axes(
+      prng.random_bits, out_sharding,
+      bit_width=bit_width, shape=shape,
+      num_streams=1 if num_streams is None else num_streams)(key)
+  return out[0] if num_streams is None else out
 
 
 def canonicalize_sharding_for_samplers(out_sharding, name, shape):
