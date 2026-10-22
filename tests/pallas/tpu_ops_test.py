@@ -1669,6 +1669,14 @@ class ConvTest(ptu.PallasTPUTest):
           lhs_dilation=(3, 7),
           window_reversal=(True, True),
       ),
+      dict(
+          testcase_name="_sliding_window_reversal",
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+          window_reversal=(True, False),
+      ),
   )
   def test_pltpu_conv_2d(
       self,
@@ -1693,7 +1701,8 @@ class ConvTest(ptu.PallasTPUTest):
           dimension_numbers=("NHWC", "HWIO", "NHWC"),
       )
 
-    ref_kernel = jnp.flip(kernel, axis=(0, 1)) if window_reversal else kernel
+    reversed_axes = tuple(i for i, r in enumerate(window_reversal or ()) if r)
+    ref_kernel = jnp.flip(kernel, axis=reversed_axes)
     expected = lax.conv_general_dilated(
         x,
         ref_kernel,
@@ -1943,6 +1952,18 @@ class ConvTest(ptu.PallasTPUTest):
           dimension_numbers=("NHWC", "IHWO", "NHWC"),
           lhs_shape=(1, 8, 8, 128),
           rhs_shape=(128, 3, 3, 128),
+      ),
+      dict(
+          testcase_name="_nchw_hwio_nchw",
+          dimension_numbers=("NCHW", "HWIO", "NCHW"),
+          lhs_shape=(1, 128, 8, 8),
+          rhs_shape=(3, 3, 128, 128),
+      ),
+      dict(
+          testcase_name="_nhwc_hwio_hwnc",
+          dimension_numbers=("NHWC", "HWIO", "HWNC"),
+          lhs_shape=(2, 8, 8, 128),
+          rhs_shape=(3, 3, 128, 128),
       ),
   )
   def test_conv_dimension_numbers(
