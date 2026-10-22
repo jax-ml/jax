@@ -150,6 +150,9 @@ common --@rules_python//python/config_settings:precompile=force_disabled
 common:nonccl --define=no_nccl_support=true
 
 common:posix --copt=-fvisibility=hidden
+# -fvisibility=hidden leaves the per-library .so files of dynamically linked
+# cc_tests with no exported symbols, so link tests statically.
+test:posix --dynamic_mode=off
 common:posix --copt=-Wno-sign-compare
 common:posix --cxxopt=-std=c++17
 common:posix --host_cxxopt=-std=c++17
