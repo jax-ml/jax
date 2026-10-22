@@ -6225,6 +6225,25 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x', 'y'})))
     self.assertArraysEqual(jax.reshard(out, P()), jax.lax.reduce_sum(arr, [0, 1]))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_zeros_like_eval_shape_partial_manual_abstract_mesh(self, mesh):
+    x = jax.ShapeDtypeStruct((2, 4), jnp.float32, sharding=jax.P('x', 'y'))
+    pred = jax.ShapeDtypeStruct((), jnp.bool_, sharding=jax.P())
+
+    @jax.jit
+    @jax.shard_map(out_specs=jax.P('x', None), axis_names={'x'})
+    def f(x, pred):
+      def true_fn():
+        return x + 1.0
+
+      def false_fn():
+        return jnp.zeros_like(jax.eval_shape(true_fn))
+
+      return jax.lax.cond(pred, true_fn, false_fn)
+
+    traced = f.trace(x, pred)
+    self.assertEqual(traced.out_info.sharding.spec, P('x', 'y'))
+
 
 class FunSpec(NamedTuple):
   name: str
