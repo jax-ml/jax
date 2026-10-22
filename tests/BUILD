@@ -692,7 +692,10 @@ jax_multiplatform_test(
     name = "lax_control_flow_test",
     srcs = ["lax_control_flow_test.py"],
     backend_tags = {
-        "cpu": ["noasan"],  # Test times out.
+        "cpu": [
+            "noasan",  # Test times out.
+            "notsan",  # Test times out.
+        ],
     },
     shard_count = {
         "cpu": 15,
@@ -771,6 +774,12 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_numpy_operators_test",
     srcs = ["lax_numpy_operators_test.py"],
+    backend_tags = {
+        "cpu": [
+            "noasan",  # Test times out.
+            "notsan",  # Test times out.
+        ],
+    },
     shard_count = {
         "cpu": 30,
         "gpu": 30,
@@ -966,6 +975,7 @@ jax_multiplatform_test(
     srcs = ["lax_test.py"],
     backend_tags = {
         "cpu": [
+            "noasan",  # Times out.
             "not_run:arm",  # Numerical issues, including https://github.com/jax-ml/jax/issues/24787
             "notsan",  # Times out.
         ],
