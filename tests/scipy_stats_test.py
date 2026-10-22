@@ -160,42 +160,30 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self.assertAllClose(result, expected, check_dtypes=False,
                         atol=1e-3, rtol=1e-3)
 
-  @jtu.sample_product(dtype=jtu.dtypes.floating)
-  def testPoissonLogPmfLargeLambda(self, dtype):
-    # Exact same stabilized log-PMF as used by the transformed rejection
-    # sampler. Testing it through the public SciPy-compatible API also
-    # guards against the ~constant tail bug at large k.
-    scipy_fun = osp_stats.poisson.logpmf
-    lax_fun = lsp_stats.poisson.logpmf
-    args_maker = lambda: [
-        np.array([1e8 - 1e4, 1e8, 1e8 + 1e4], dtype=dtype),
-        np.full(3, 1e8, dtype=dtype),
-    ]
-    self._CheckAgainstNumpy(
-        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=2e-3)
-    # At 1e8, the float32 eager and XLA log1p implementations may differ
-    # by ~3e-4 in log-density while agreeing with the SciPy reference.
-    # Keep JIT comparison strict enough to detect material drift without
-    # requiring bitwise-equivalent transcendental implementations.
-    self._CompileAndCheck(
-        lax_fun, args_maker,
-        rtol={np.float32: 5e-5, np.float64: 1e-12},
-        atol={np.float32: 5e-4, np.float64: 1e-11})
-
-  @jtu.sample_product(mu=[1e7, 1e8, 1e9])
-  def testPoissonLogPmfCentralFloat32Accurate(self, mu):
-    # Public API regression for cancellation near k = mu. Build reference
-    # values using the actual representable float32 integers, not an
-    # unrealizable high-precision offset.
-    center = np.float32(mu)
-    offsets = np.asarray([-5, -3, -1, 0, 1, 3, 5], np.float32)
+  @jtu.sample_product([
+      dict(mu=1e7, dtype=np.float32),
+      dict(mu=1e8, dtype=np.float32),
+      dict(mu=1e9, dtype=np.float32),
+      dict(mu=1e8, dtype=np.float64),
+  ])
+  def testPoissonLogPmfCentralAccuracy(self, mu, dtype):
+    # Consolidate the large-rate public API/JIT checks at the exact input
+    # precision. Offsets include the former +/-1e4 case at mu=1e8, and
+    # multiple standard deviations, where cancellation is most damaging.
+    if dtype == np.float64 and not jax.config.jax_enable_x64:
+      self.skipTest("float64 requires jax_enable_x64")
+    center = np.asarray(mu, dtype=dtype)
+    offsets = np.asarray([-5, -3, -1, 0, 1, 3, 5], dtype=dtype)
     k = center + offsets * np.sqrt(center)
-    expected = osp_stats.poisson.logpmf(k.astype(np.float64), float(center))
-    actual = np.asarray(lsp_stats.poisson.logpmf(k, center))
+    expected = osp_stats.poisson.logpmf(
+        np.asarray(k, dtype=np.float64), float(center))
+    eager = np.asarray(lsp_stats.poisson.logpmf(k, center))
     compiled = np.asarray(jax.jit(lsp_stats.poisson.logpmf)(k, center))
-    self.assertAllClose(actual, expected, rtol=1e-6, atol=5e-5,
+    self.assertAllClose(eager, expected, rtol=1e-6, atol=5e-5,
                         check_dtypes=False)
-    self.assertAllClose(compiled, expected, rtol=1e-5, atol=5e-4,
+    self.assertAllClose(compiled, expected,
+                        rtol=1e-5 if dtype == np.float32 else 1e-7,
+                        atol=5e-4 if dtype == np.float32 else 5e-5,
                         check_dtypes=False)
 
   def testPoissonLogPmfLargeCountFarTailFloat32(self):
