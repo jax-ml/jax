@@ -4759,7 +4759,11 @@ def _scan_lowering_rule(
       consts, *args, has_loop_index=has_loop_index,
       unroll=unroll)
   if has_loop_index:
-    out = [ir_constant(length, mlir_type=_dtype_to_ir_type(jnp.int32)), *out]
+    lbd = _ensure_mlir_value(loop_index_start, pallas_core.index_map_grid_aval)
+    ubd = arith.addi(
+        lbd, ir_constant(length, mlir_type=_dtype_to_ir_type(jnp.int32))
+    )
+    out = [ubd, *out]
   return out
 
 
@@ -4789,7 +4793,13 @@ def _lower_while_via_fori(
       has_loop_index=True,
       unroll=1,
   )
-  return [ub, ub, *for_out]
+  lb_aval = ctx.avals_in[cond_nconsts + body_nconsts]
+  final_i = (
+      arith.maxui(lb, ub)
+      if jnp.issubdtype(lb_aval.dtype, jnp.unsignedinteger)
+      else arith.maxsi(lb, ub)
+  )
+  return [final_i, ub, *for_out]
 
 
 @register_lowering_rule(lax.while_p, kernel_types=[*tpu_core.CoreType])
