@@ -747,11 +747,11 @@ def mpmd_map_tpu_lowering_rule(
       kernel_type = None
 
   def _maybe_expand_scalar_input(is_scalar, in_node, aval):
-    expand_ctx = ctx.replace(
-        avals_in=[aval],
-        avals_out=[aval.update(shape=(1,))]
-    )
     if is_scalar:
+      expand_ctx = ctx.replace(
+          avals_in=[aval],
+          avals_out=[aval.update(shape=(1,))]
+      )
       return mlir.lower_fun(lambda x: x[None], multiple_results=False)(
           expand_ctx, in_node
       )[0]
