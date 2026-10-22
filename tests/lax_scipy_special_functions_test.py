@@ -1017,6 +1017,20 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertTrue(np.all(np.isposinf(res_inf)), f"Expected +inf, got {res_inf}")
     self.assertTrue(np.isnan(float(lsp_special.gammaln(np.float32(np.nan)))))
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_digamma_special_values(self, dtype):
+    large_neg_int = -1e16 if dtype == np.float64 else -1e7
+    special_in = np.array(
+        [0.0, -0.0, np.inf, -np.inf, -1.0, -2.0, -10.0, large_neg_int, np.nan],
+        dtype=dtype,
+    )
+    expected = np.array(
+        [-np.inf, np.inf, np.inf, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+        dtype=dtype,
+    )
+    actual = np.asarray(lsp_special.digamma(special_in))
+    np.testing.assert_equal(actual, expected)
+
   def test_gammaln_grad(self):
     x_grad = np.array([0.25, 0.75, 1.5, 3.5, 12.0, -0.5, -1.5, -2.5], dtype=np.float32)
     self.assertAllClose(

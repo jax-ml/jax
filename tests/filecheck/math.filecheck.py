@@ -176,11 +176,6 @@ def main(_):
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.cosh)
 
-  # CHECK-LABEL: TEST: digamma float32[]
-  # CHECK: chlo.digamma
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0))(lax.digamma)
-
   # CHECK-LABEL: TEST: div float32[] float32[]
   # CHECK: hlo.div
   # CHECK-SAME: tensor<f32>

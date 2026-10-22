@@ -20,7 +20,9 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import config
+from jax._src import core as jax_core
 from jax._src import test_util as jtu
+from jax._src.lax.digamma import digamma_impl
 import jax.numpy as jnp
 import jax.scipy as jsp
 
@@ -44,9 +46,26 @@ TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
 
 
 def _mpmath_digamma(x):
-  if x <= 0 and mpmath.isint(x):
+  """Evaluates digamma with pole and infinity guards for mpmath."""
+  if mpmath.isnan(x):
     return mpmath.nan
-  return mpmath.digamma(x)
+  if x == 0.0:
+    return mpmath.inf if math.copysign(1.0, float(x)) < 0.0 else -mpmath.inf
+  if x == -mpmath.inf or (x < 0.0 and x == mpmath.floor(x)):
+    return mpmath.nan
+  if x == mpmath.inf:
+    return mpmath.inf
+  with mpmath.workprec(200):
+    return +mpmath.digamma(x)
+
+
+def _digamma_reference(x: np.ndarray) -> np.ndarray:
+  """Evaluates float64 reference digamma, patching scipy float64 cancellation."""
+  res = scipy.special.psi(x)
+  # At x = float32(-95.80821990966797) (0xc2bf9dcf), cephes::psi in float64
+  # loses 26.5 bits of cancellation (0.52 ULP error in float32 ULPs).
+  res[x == np.float64(np.float32(-95.80821990966797))] = 5.3991989474124756e-08
+  return res
 
 
 def _mpmath_lgamma(x):
@@ -56,44 +75,134 @@ def _mpmath_lgamma(x):
     return +mpmath.log(abs(mpmath.gamma(x)))
 
 
+_DIGAMMA_INTERESTING_POINTS = [
+    # Non-positive integer poles of digamma(x):
+    *(float(-k) for k in range(21)),
+    -100.0,
+    -1000.0,
+    # Roots of digamma(x) = 0, computed via mpmath.findroot(mpmath.digamma, x0):
+    1.4616321449683623,  # unique positive root on (0, inf)
+    -0.5040830082644554,  # root in (-1, 0) (53.61 bits cancellation)
+    -1.5734984731623904,  # root in (-2, -1) (52.51 bits cancellation)
+    -2.6107208684441446,  # root in (-3, -2)
+    -3.635293366436901,  # root in (-4, -3)
+    -4.653237761743142,  # root in (-5, -4)
+    # Closest float32 bit patterns to negative zeros across all 2^32 float32s:
+    -56.78992462158203,  # 0xc26328e1
+    -66.79590606689453,  # 0xc2859781 (29.23 bits cancellation)
+    -95.80821990966797,  # 0xc2bf9dcf (26.33 bits cancellation)
+    -347.84320068359375,  # 0xc3adebeb
+    -85156.9140625,  # 0xc7a65275
+    # Remaining 14 float64 inputs on (-2^52, 0) with >51 bits of negative-root
+    # cancellation (besides the (-1, 0) and (-2, -1) roots above), plus -2^52:
+    -5.6671624415568855,  # 55.27 bits cancellation
+    -14.727334416018529,  # 51.94 bits cancellation
+    -87.80536027839507,  # 53.38 bits cancellation
+    -1965.8749921566869,  # 51.21 bits cancellation
+    -2977.8808777877402,  # 55.75 bits cancellation (max on (-2^52, 0))
+    -2401203.932943261,  # 51.63 bits cancellation
+    -3114755.934076784,  # 51.37 bits cancellation
+    -3400673.93445092,  # 51.12 bits cancellation
+    -6066919.936815942,  # 53.67 bits cancellation
+    -101181205.94626413,  # 51.43 bits cancellation
+    -204097275.94819948,  # 54.87 bits cancellation
+    -216428973.94835505,  # 52.21 bits cancellation
+    -71243556817555.97,  # 52.89 bits cancellation (-71243556817556 + 1/32)
+    -71243556817556.97,  # 51.47 bits cancellation (-71243556817557 + 1/32)
+    -4503599627370495.5,  # -2**52 + 0.5 (last negative non-integer in f64)
+    -4503599627370496.0,  # -2**52 (all f64 below this are even integers)
+    # Reflection, positive-root Taylor window, and recurrence switch boundaries:
+    0.5,
+    1.4615321449683622,
+    1.4617321449683622,
+    4.5,
+    6.5,
+    8.5,
+    10.0,
+    12.5,
+]
+
+
 @jtu.thread_unsafe_test_class()
 class DigammaTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_digamma_accuracy(self, dtype):
-    # Digamma has poles at non-positive integers (0, -1, -2, ...) where the
-    # function is ill-conditioned and outputs differ across implementations
-    # (NaN vs +-inf).
     bounds = [
-        ("cpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
-        ("gpu", {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
-        ("tpu", {bf16: math.inf, f16: math.inf, f32: math.inf}),
-    ]
-    interesting_points = [
-        # Non-positive integer poles of digamma(x):
-        *(float(-k) for k in range(21)),
-        -100.0,
-        -1000.0,
-        # Roots of digamma(x) = 0, computed via mpmath.findroot(mpmath.digamma, x0):
-        1.4616321449683623,  # unique positive root on (0, inf)
-        -0.5040830082644554,  # root in (-1, 0)
-        -1.5734984731623905,  # root in (-2, -1)
-        -2.6107208684441446,  # root in (-3, -2)
-        -3.635293366436901,  # root in (-4, -3)
-        -4.653237761743142,  # root in (-5, -4)
-        # Recurrence-to-asymptotic series switch thresholds:
-        8.0,
-        10.0,
+        (["cpu", "gpu", "tpu"], {f16: 1.0, f32: 1.0, f64: 1.0}),
     ]
     util.check_unary_precision(
         self,
         lax.digamma,
-        scipy.special.psi,
+        _digamma_reference,
         _mpmath_digamma,
         dtype,
         bounds=bounds,
-        interesting_points=interesting_points,
+        interesting_points=_DIGAMMA_INTERESTING_POINTS,
     )
+
+  @config.explicit_x64_dtypes("allow")
+  def test_no_intermediate_nonfinite_on_poles_and_extremes(self):
+    if jtu.device_under_test() == "tpu":
+      dtypes_and_modes = [(jnp.float32, False)]
+    else:
+      dtypes_and_modes = [
+          (jnp.float32, True),
+          (jnp.float32, False),
+          (jnp.float64, False),
+      ]
+    for dtype, use_f64_for_f32 in dtypes_and_modes:
+      finfo = jnp.finfo(dtype)
+      x = jnp.array(
+          [-2.0, -1.0, -0.0, 0.0, 0.5, 1.5, finfo.tiny, -finfo.tiny, finfo.max],
+          dtype=dtype,
+      )
+      with jax.disable_jit():
+        jaxpr = jax.make_jaxpr(
+            lambda v: digamma_impl(v, use_f64_for_f32=use_f64_for_f32)
+        )(x)
+      env = dict(zip(jaxpr.jaxpr.constvars, jaxpr.consts))
+      env[jaxpr.jaxpr.invars[0]] = x
+      for eqn in jaxpr.jaxpr.eqns:
+        invals = [
+            v.val if isinstance(v, jax_core.Literal) else env[v]
+            for v in eqn.invars
+        ]
+        ans = eqn.primitive.bind(*invals, **eqn.params)
+        if not eqn.primitive.multiple_results:
+          ans = [ans]
+        if eqn.primitive in (lax.div_p, lax.mul_p):
+          for out in ans:
+            self.assertTrue(
+                bool(jnp.all(jnp.isfinite(out))),
+                f"Non-finite {eqn.primitive.name} output {out} for"
+                f" dtype={dtype}, use_f64_for_f32={use_f64_for_f32}",
+            )
+        for v, out in zip(eqn.outvars, ans):
+          env[v] = out
+
+  @config.explicit_x64_dtypes("allow")
+  def test_explicit_x64_dtypes(self):
+    if jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    fns = [lax.digamma, jsp.special.digamma]
+    pts = [
+        -2977.8808777877402,
+        -87.80536027839507,
+        -5.6671624415568855,
+        -1.5,
+        0.5,
+        1.4616321449683622,
+        12.5,
+    ]
+    with jax.enable_x64(True):
+      x_ref = jnp.array(pts, dtype=jnp.float64)
+      expected = [jax.jit(fn)(x_ref) for fn in fns]
+    with jax.enable_x64(False):
+      x = jnp.array(pts, dtype=jnp.float64)
+      actual = [jax.jit(fn)(x) for fn in fns]
+    for exp_val, act_val in zip(expected, actual):
+      self.assertArraysEqual(act_val, exp_val)
 
 
 @jtu.thread_unsafe_test_class()

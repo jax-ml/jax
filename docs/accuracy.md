@@ -71,6 +71,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.cbrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.cos` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.cosh` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.lax.digamma` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.erf` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.erf_inv` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.erfc` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
@@ -122,6 +123,7 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.lax.cbrt` | 1.0 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.cos` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.cosh` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.digamma` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.erf` | 1.0 | 1.0 | 0.5 | 0.5 | 1.0 | 1.0 |
 | {func}`~jax.lax.erf_inv` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.erfc` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
@@ -173,6 +175,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.cbrt` | 0.5 | 1.5 | 4.5 | 4.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.cos` | 0.5 | 2.0 | 3.5 | 3.5 | 3.5 | 3.0 | |
 | {func}`~jax.lax.cosh` | 1.0 | 2.5 | 1.0 | 1.0 | 1.0 | 1.0 | |
+| {func}`~jax.lax.digamma` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.erf` | 7.0 | 6.5 | 7.5 | 8.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.erf_inv` | 65.0 | 65.0 | 427.0 | 65.5 | 65.0 | 65.5 | |
 | {func}`~jax.lax.erf_inv` (`jax_accurate_erf_inv`) | 2.0 | 2.5 | 427.0 | 5.5 | 2.5 | 2.5 | `jax.config.update('jax_accurate_erf_inv', True)` |
@@ -233,6 +236,7 @@ these are empirical bounds.
 | {func}`~jax.lax.cbrt` | 0.5 | 1.5 |
 | {func}`~jax.lax.cos` | 0.5 | 2.0 |
 | {func}`~jax.lax.cosh` | 2.0 | 2.5 |
+| {func}`~jax.lax.digamma` | 1.0 | 1.0 |
 | {func}`~jax.lax.erf` | 2.5 | 2.5 |
 | {func}`~jax.lax.erf_inv` | 500000.0 | 500000.0 |
 | {func}`~jax.lax.erf_inv` (`jax_accurate_erf_inv`) | 2.5 | 2.5 |

@@ -67,6 +67,18 @@ from jax._src import config
 from jax._src.api import jit
 from jax._src.lax import lax
 from jax._src.lax import slicing
+from jax._src.lax.double_word import (
+    f2_add,
+    f2_add_ordered,
+    f2_mul,
+    f2_mul_exact_high,
+    f2_sum,
+    fast_two_sum,
+    split_half,
+    two_prod,
+    two_prod_big,
+    two_sum,
+)
 import numpy as np
 
 
@@ -82,17 +94,6 @@ _LN2_LO = 3.19461832987e-05
 _HALF_LN_2PI_MINUS_HALF = 0.4189385175704956
 _HALF_LN_2PI_MINUS_HALF_F64 = 0.41893853320467274
 _LN2_F64 = 0.6931471805599453
-
-
-def _split12(x):
-  """Splits float32 `x` into `(x_hi, x_lo)` where `x_hi` has 12 mantissa bits.
-
-  Because 24 = 12 + 12, products `x_hi * y_hi` are exact in float32.
-  """
-  x_hi = lax.bitcast_convert_type(
-      lax.bitcast_convert_type(x, np.int32) & -0x1000, np.float32
-  )
-  return x_hi, x - x_hi
 
 
 # Degree-9 Sollya fpminimax polynomial for (ln(1 + f) - (f - 0.5 f^2)) / f^3 on
@@ -418,11 +419,11 @@ def _lgamma_pos_small(x_small):
       for c1, c2 in zip(_POS_HI_05_15, _POS_HI_15_4)
   ]
   p = lax.polynomial(d, coeffs_hi, unroll=len(coeffs_hi))
-  u_hi, u_lo = _split12(u)
-  v_hi, v_lo = _split12(v)
+  u_hi, u_lo = split_half(u)
+  v_hi, v_lo = split_half(v)
   uv_hi = u_hi * v_hi
   uv_lo = u_lo * v + u_hi * v_lo
-  p_hi, p_lo = _split12(p)
+  p_hi, p_lo = split_half(p)
   res_hi = uv_hi * p_hi
   res_lo = uv_lo * p + uv_hi * p_lo
   return res_hi + res_lo, res_hi, res_lo
@@ -451,11 +452,11 @@ def _lgamma_pos_large(x_gt4):
   psi_large = ln(x) - 1/(2x) approximates the digamma function psi(x).
   """
   s, log_lo = _log_f32(x_gt4)
-  h_x, s_lo = _split12(s)
+  h_x, s_lo = split_half(s)
   l_x = s_lo + log_lo
 
   b = x_gt4 - 0.5
-  b_hi, b_lo = _split12(b)
+  b_hi, b_lo = split_half(b)
   hx_m1 = h_x - 1.0
   p_hi = b_hi * hx_m1
   p_lo = b_lo * hx_m1 + b * l_x
@@ -770,102 +771,6 @@ _PSI_1_5_F64 = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# (hi, lo) pair arithmetic helpers for float64
-# ---------------------------------------------------------------------------
-# A `(hi, lo)` pair stores one high-precision value as `hi + lo`, where `hi` is
-# the rounded float64 sum and `lo` holds the rounding error (`|lo| <= 0.5 *
-# ulp(hi)`). Together they hold about 106 bits of precision.
-
-
-def _veltkamp_split(x):
-  """Splits `x` into `(x_hi, x_lo)` where `x_hi` has 26 mantissa bits.
-
-  Multiplying by `2^27 + 1` (`134217729.0`) and subtracting rounds off the
-  bottom 27 bits of `x` into `x_lo`. Safe when `|x| < 1e300` so `c` does not
-  overflow.
-  """
-  c = 134217729.0 * x
-  x_hi = c - (c - x)
-  return x_hi, x - x_hi
-
-
-def _split26(x):
-  """Splits `x` into 26-bit `x_hi` and 27-bit `x_lo` by masking low bits.
-
-  Unlike `_veltkamp_split`, bitmasking cannot overflow near `DBL_MAX`. Because
-  `26 + 26 = 52 <= 53`, products `x_hi * y_hi` have no rounding error in
-  float64 even without hardware FMA.
-  """
-  x_hi = lax.bitcast_convert_type(
-      lax.bitcast_convert_type(x, np.int64) & -0x08000000, np.float64
-  )
-  return x_hi, x - x_hi
-
-
-def _two_sum(a, b):
-  """Returns `(s, e)` where `s = float64(a + b)` and `e = (a + b) - s`."""
-  s = a + b
-  v = s - a
-  e = (a - (s - v)) + (b - v)
-  return s, e
-
-
-def _fast_two_sum(a, b):
-  """Faster `_two_sum` when `|a| >= |b|` or `a == 0`."""
-  s = a + b
-  return s, b - (s - a)
-
-
-def _two_prod(a, b):
-  """Returns `(p, e)` with `p = float64(a * b)` and `e = (a * b) - p` for `|a|, |b| < 1e300`."""
-  p = a * b
-  ah, al = _veltkamp_split(a)
-  bh, bl = _veltkamp_split(b)
-  e = ((ah * bh - p) + ah * bl + al * bh) + al * bl
-  return p, e
-
-
-def _two_prod_big(a, b):
-  """Same as `_two_prod`, safe up to `DBL_MAX` via bitmask splitting."""
-  p = a * b
-  ah, al = _split26(a)
-  bh, bl = _split26(b)
-  e = ((ah * bh - p) + ah * bl + al * bh) + al * bl
-  return p, e
-
-
-def _dd_add(ah, al, bh, bl):
-  """Adds two `(hi, lo)` pairs `(ah, al)` and `(bh, bl)`."""
-  sh, sl = _two_sum(ah, bh)
-  return _fast_two_sum(sh, sl + (al + bl))
-
-
-def _dd_add_ordered(ah, al, bh, bl):
-  """Adds two `(hi, lo)` pairs when `|ah| >= |bh|`."""
-  sh, sl = _fast_two_sum(ah, bh)
-  return _fast_two_sum(sh, sl + (al + bl))
-
-
-def _dd_add_to_f64(ah, al, bh, bl):
-  """Adds two `(hi, lo)` pairs and rounds the sum to a single float64."""
-  sh, sl = _two_sum(ah, bh)
-  return sh + (sl + (al + bl))
-
-
-def _dd_mul(ah, al, bh, bl):
-  """Multiplies two `(hi, lo)` pairs `(ah, al)` and `(bh, bl)`."""
-  ph, pl = _two_prod(ah, bh)
-  return _fast_two_sum(ph, pl + (ah * bl + al * bh))
-
-
-def _mul_exact26_pairs(ah, al, bh, bl):
-  """Multiplies `(ah, al)` and `(bh, bl)` when `ah` and `bh` have <= 26 bits."""
-  ph = ah * bh
-  pl = ah * bl + al * bh + al * bl
-  return _fast_two_sum(ph, pl)
-
-
 @jit
 def _log_f64(x, k_adj):
   """Computes `ln(x) + k_adj * ln(2)` as a `(log_hi, log_lo)` pair."""
@@ -893,10 +798,10 @@ def _log_f64(x, k_adj):
   f2_l = fl * f_plus_fh
   f3_l = fl * (fh2 + f * f_plus_fh)
   nhf2 = -0.5 * fh2
-  th, tl = _fast_two_sum(f, nhf2)
+  th, tl = fast_two_sum(f, nhf2)
   tl = tl - 0.5 * f2_l
   # 0.3333333333333333 + 1.850371707708594e-17 is the (hi, lo) split of 1/3.
-  qh, ql = _fast_two_sum(
+  qh, ql = fast_two_sum(
       lax.full_like(f, 0.3333333333333333),
       f * lax.polynomial(f, _LOG_Q_F64, unroll=len(_LOG_Q_F64)),
   )
@@ -908,12 +813,12 @@ def _log_f64(x, k_adj):
   q_hl = (qh - q_hh) + ql
   ph = fh3 * q_hh
   pl = fh3 * q_hl + f3_l * qh
-  sh, sl = _dd_add_ordered(th, tl, ph, pl)
+  sh, sl = f2_add_ordered(th, tl, ph, pl)
   kh = k * _LN2_HI_F64
   kl = k * _LN2_LO_F64
   # Combine k * ln(2) + ln(1 + f). |kh| >= ln(2) > 0.5 * ln(2) >= |sh| when
   # k != 0, and kh == 0 when k == 0.
-  return _dd_add_ordered(kh, kl, sh, sl)
+  return f2_add_ordered(kh, kl, sh, sl)
 
 
 def _lgamma_stirling_f64(z):
@@ -921,14 +826,14 @@ def _lgamma_stirling_f64(z):
   # Stirling's expansion:
   #   lgamma(z) = (z - 0.5) * (ln(z) - 1) + (ln(2*pi) - 1)/2 + (1/z) * S(1/z^2).
   lh, ll = _log_f64(z, lax.full_like(z, 0.0))
-  l_m1_h, l_m1_l = _fast_two_sum(lh, lax.full_like(z, -1.0))
+  l_m1_h, l_m1_l = fast_two_sum(lh, lax.full_like(z, -1.0))
   l_m1_l = l_m1_l + ll
   b = z - 0.5
-  # Use _two_prod_big because z can reach 2.56e305, where _veltkamp_split would
+  # Use two_prod_big because z can reach 2.56e305, where Veltkamp splitting would
   # overflow float64.
-  ph, pl = _two_prod_big(b, l_m1_h)
-  ph, pl = _fast_two_sum(ph, pl + b * l_m1_l)
-  sh, sl = _dd_add_ordered(
+  ph, pl = two_prod_big(b, l_m1_h)
+  ph, pl = fast_two_sum(ph, pl + b * l_m1_l)
+  sh, sl = f2_add_ordered(
       ph,
       pl,
       lax.full_like(z, _C_STIRLING_HI_F64),
@@ -939,7 +844,7 @@ def _lgamma_stirling_f64(z):
   sp = lax.polynomial(inv_z2, _STIRLING_F64, unroll=len(_STIRLING_F64))
   # For z >= 8, (1/z) * S(1/z^2) <= 1/96 while |lgamma| >= 0.12 everywhere this
   # path is used, so a single float64 product has <= 0.04 ULP rounding error.
-  res_h, res_l = _fast_two_sum(sh, sl + inv_z * sp)
+  res_h, res_l = fast_two_sum(sh, sl + inv_z * sp)
   # Approximate digamma(z) = d/dz lgamma(z) for first-order rounding corrections.
   psi = (
       lh
@@ -975,17 +880,17 @@ def _lgamma_shifted_f64(w):
     need = m > float(k)
     fh.append(lax.select(need, wh + float(k), one))
     fl.append(lax.select(need, wl, zero))
-  p01_h, p01_l = _mul_exact26_pairs(fh[0], fl[0], fh[1], fl[1])
-  p23_h, p23_l = _mul_exact26_pairs(fh[2], fl[2], fh[3], fl[3])
-  p45_h, p45_l = _mul_exact26_pairs(fh[4], fl[4], fh[5], fl[5])
-  p45_hh, p45_hl = _veltkamp_split(p45_h)
+  p01_h, p01_l = f2_mul_exact_high(fh[0], fl[0], fh[1], fl[1])
+  p23_h, p23_l = f2_mul_exact_high(fh[2], fl[2], fh[3], fl[3])
+  p45_h, p45_l = f2_mul_exact_high(fh[4], fl[4], fh[5], fl[5])
+  p45_hh, p45_hl = split_half(p45_h)
   p456_h = p45_h * fh[6]
   p456_l = ((p45_hh * fh[6] - p456_h) + p45_hl * fh[6]) + (
       p45_h * fl[6] + p45_l * fh[6]
   )
-  p0123_h, p0123_l = _two_prod(p01_h, p23_h)
+  p0123_h, p0123_l = two_prod(p01_h, p23_h)
   p0123_l = p0123_l + (p01_h * p23_l + p01_l * p23_h)
-  prod_h, prod_l = _dd_mul(p0123_h, p0123_l, p456_h, p456_l)
+  prod_h, prod_l = f2_mul(p0123_h, p0123_l, p456_h, p456_l)
   # Adding m to w can round off up to 3 low bits of w (z_lo = w - (z - m));
   # add psi_z * z_lo to correct lgamma(z) for that rounding.
   z = w + m
@@ -1047,16 +952,16 @@ def _lgamma_neg_root_f64(x_neg_safe, n):
   # enough to r0 (within a factor of 2) that d0 = delta_root - r0 has no
   # rounding error, and |d0| >= ulp(r0) >= 2 * |r1| whenever d0 != 0.
   d0 = delta_root - r0
-  num_h, num_l = _fast_two_sum(d0, -r1)
+  num_h, num_l = fast_two_sum(d0, -r1)
   num_l = num_l - r2
-  den_h, den_l = _two_sum(delta_root, r0)
+  den_h, den_l = two_sum(delta_root, r0)
   den_l = den_l + r1
   # Compute w = (delta_root - r) / (delta_root + r) as (w_h, w_l). This maps
   # the zero delta_root = r to w = 0 and turns -ln|delta_root / r| into
   # -2 * atanh(w), which converges fast as an odd polynomial in w.
   rcp = lax.reciprocal(den_h)
   w_h = num_h * rcp
-  wh_dh, wh_dl = _two_prod(w_h, den_h)
+  wh_dh, wh_dl = two_prod(w_h, den_h)
   rem_num = ((num_h - wh_dh) - wh_dl) + num_l - w_h * den_l
   w_l = rem_num * rcp
   in_root_win = lax.abs(w_h) <= w_bound
@@ -1066,8 +971,8 @@ def _lgamma_neg_root_f64(x_neg_safe, n):
   for i in range(23, 4, -1):
     p_tail = p_tail * w_s + _gather_row(i)
   c0 = _gather_row(4)
-  pw_h, pw_l = _fast_two_sum(c0, w_s * p_tail)
-  rw_h, rw_l = _two_prod(w_s, pw_h)
+  pw_h, pw_l = fast_two_sum(c0, w_s * p_tail)
+  rw_h, rw_l = two_prod(w_s, pw_h)
   return in_root_win, rw_h + (rw_l + (w_s * pw_l + w_sl * pw_h))
 
 
@@ -1115,9 +1020,9 @@ def _lgamma_impl_f64(x):
   v = u - 1.0
   d = u - 0.5
   p = lax.polynomial(d, _POS_1_2_F64, unroll=len(_POS_1_2_F64))
-  uv_h, uv_l = _two_prod(u, v)
-  p_h, p_l = _two_prod(uv_h, p)
-  p_h, p_l = _fast_two_sum(p_h, p_l + uv_l * p)
+  uv_h, uv_l = two_prod(u, v)
+  p_h, p_l = two_prod(uv_h, p)
+  p_h, p_l = fast_two_sum(p_h, p_l + uv_l * p)
 
   # Positive inputs >= 2.5 and negative reflection y = 1 - x >= 1 both use
   # shifted Stirling on w_arg >= 1.
@@ -1147,7 +1052,7 @@ def _lgamma_impl_f64(x):
   rcp_both = lax.reciprocal(prod_h * d_for_rcp)
   rcp_prod = d_for_rcp * rcp_both
   qh = abs_d_s * rcp_prod
-  ph_q, pl_q = _two_prod(qh, prod_h)
+  ph_q, pl_q = two_prod(qh, prod_h)
   rem_q = ((abs_d_s - ph_q) - pl_q) - qh * prod_l
 
   pos_log_h = lax.select(in_small, x_small_in, prod_h)
@@ -1161,10 +1066,10 @@ def _lgamma_impl_f64(x):
   # Assemble positive result: subtract ln(x) on (0, 1), keep p_h + p_l on
   # [1, 2.5), and subtract ln(prod) from lgamma(z) on [2.5, inf).
   pos_small = lax.select(
-      is_lt1, _dd_add_to_f64(p_h, p_l, -log_h, -log_l), p_h + p_l
+      is_lt1, f2_sum(p_h, p_l, -log_h, -log_l), p_h + p_l
   )
   lg_pos = lax.select(
-      in_small, pos_small, _dd_add_to_f64(zh, zl, -log_h, -log_l)
+      in_small, pos_small, f2_sum(zh, zl, -log_h, -log_l)
   )
 
   # Euler's reflection formula for x <= 0:
@@ -1178,18 +1083,18 @@ def _lgamma_impl_f64(x):
   dh2 = dh * dh
   d2_l = dl * (delta + dh)
   d2 = delta * delta
-  sh_sinc, sl_sinc = _fast_two_sum(
+  sh_sinc, sl_sinc = fast_two_sum(
       lax.full_like(x, _SINC_F64[0]),
       d2 * lax.polynomial(d2, _SINC_F64[1:], unroll=len(_SINC_F64) - 1),
   )
   sl_sinc = sl_sinc + _SINC_C0_LO_F64
-  s_hh, s_hl = _veltkamp_split(sh_sinc)
+  s_hh, s_hl = split_half(sh_sinc)
   sinc_h = dh2 * s_hh
   sinc_l = dh2 * (s_hl + sl_sinc) + d2_l * sh_sinc
   # Add digamma(y) * y_lo to compensate for rounding in y = (1 - n) - delta.
   dy_corr = psi_y * y_lo
-  sum_h, sum_l = _dd_add(zh, zl, log_h, log_l)
-  refl = -_dd_add_to_f64(sum_h, sum_l, sinc_h, sinc_l + dy_corr)
+  sum_h, sum_l = f2_add(zh, zl, log_h, log_l)
+  refl = -f2_sum(sum_h, sum_l, sinc_h, sinc_l + dy_corr)
 
   # Use root-window polynomials near negative zeros on (-17, -2).
   in_root_win, rw = _lgamma_neg_root_f64(x_neg_safe, n)

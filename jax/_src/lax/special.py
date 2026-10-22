@@ -33,6 +33,7 @@ from jax._src.lax.lax import (AccuracyMode, Tolerance, add, bitwise_and,
                               _const, _dtype, _float, _nary_lower_hlo, _ones,
                               _isnan, _unary_with_accuracy_pp_rule)
 from jax._src.lax.control_flow.loops import while_loop
+from jax._src.lax.digamma import digamma_impl
 from jax._src.lax.lgamma import lgamma_impl
 
 from jax._src import dtypes
@@ -70,7 +71,11 @@ def lgamma(x: ArrayLike) -> Array:
   return lgamma_p.bind(x)
 
 def digamma(x: ArrayLike) -> Array:
-  r"""Elementwise digamma: :math:`\psi(x)`."""
+  r"""Elementwise digamma: :math:`\psi(x)`.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+  """
   return digamma_p.bind(x)
 
 def polygamma(m: ArrayLike, x: ArrayLike) -> Array:
@@ -791,9 +796,47 @@ mlir.register_lowering(
 # inlining calls inside fused loops; use early inlining on TPU instead.
 mlir.register_lowering(lgamma_p, _lgamma_lowering, platform='tpu', inline=False)
 
+def _digamma_lowering(
+    ctx, x, *, use_f64_for_f32=False, use_optimization_barrier=False
+):
+  aval = ctx.avals_in[0]
+  def _impl(v):
+    if aval.dtype not in (np.float32, np.float64):
+      return convert_element_type(
+          digamma_impl(
+              convert_element_type(v, np.float32),
+              use_f64_for_f32=use_f64_for_f32,
+              use_optimization_barrier=use_optimization_barrier,
+          ),
+          aval.dtype,
+      )
+    return digamma_impl(
+        v,
+        use_f64_for_f32=use_f64_for_f32,
+        use_optimization_barrier=use_optimization_barrier,
+    )
+  return mlir.lower_fun(_impl, multiple_results=False)(ctx, x)
+
+
 digamma_p = standard_unop(_float, 'digamma')
-mlir.register_lowering(digamma_p, partial(_nary_lower_hlo, chlo.digamma))
 ad.defjvp(digamma_p, lambda g, x: mul(g, polygamma(_const(x, 1), x)))
+mlir.register_lowering(
+    digamma_p, _digamma_lowering, inline=core.Inline.XLA_LATE
+)
+mlir.register_lowering(
+    digamma_p,
+    partial(_digamma_lowering, use_f64_for_f32=True),
+    platform='cpu',
+    inline=core.Inline.XLA_LATE,
+)
+# XLA:TPU's post-layout-assignment CallInliner hits tile-layout mismatches when
+# inlining calls inside fused loops; use early inlining on TPU instead.
+mlir.register_lowering(
+    digamma_p,
+    partial(_digamma_lowering, use_optimization_barrier=True),
+    platform='tpu',
+    inline=False,
+)
 
 polygamma_p = standard_naryop([_float, _float], 'polygamma')
 mlir.register_lowering(polygamma_p, partial(_nary_lower_hlo, chlo.polygamma))
