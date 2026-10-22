@@ -2680,6 +2680,30 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     np.testing.assert_array_equal(kernel(x), x * 2)
 
+  @parameterized.parameters(False, True)
+  def test_get_swap_with_swizzle_transform_invalid_slice(self, is_store):
+    dtype = jnp.bfloat16
+    swizzle = 128
+    swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+    shape = (swizzle_elems, swizzle_elems)
+    transforms = (plgpu.SwizzleTransform(swizzle),)
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((), dtype),
+        scratch_types=[plgpu.SMEM(shape, dtype, transforms=transforms)],
+    )
+    def kernel(o_ref, scratch_ref):
+      del o_ref
+      if is_store:
+        scratch_ref[:, : swizzle_elems // 2] = jnp.zeros(
+            (swizzle_elems, swizzle_elems // 2), dtype
+        )
+      else:
+        _ = scratch_ref[:, : swizzle_elems // 2]
+
+    with self.assertRaisesRegex(ValueError, "Swizzled dims cannot be sliced"):
+      jax.jit(kernel).lower()
+
   def test_swap_scalar_constant(self):
 
     @self.kernel(out_type=jax.ShapeDtypeStruct((), jnp.int32))
