@@ -9,6 +9,7 @@ Backend specific documentation for the Mosaic GPU backend.
    quickstart
    pipelining
    blackwell_matmul
+   blackwell_geforce_matmul
    collective_matmul
    reference
 
