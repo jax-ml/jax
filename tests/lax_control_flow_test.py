@@ -1069,6 +1069,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                      lambda _: dict(a=jnp.float32(1.))],
                  1.)
 
+  def testCondTypeErrorsAuxDataFromLeaves(self):
+    # Aux data computed from the leaves makes the branches' treedefs differ even
+    # though their structures are the same; output types must still be checked.
+    @jax.tree_util.register_pytree_node_class
+    class Box:
+      def __init__(self, x):
+        self.x = x
+      def tree_flatten(self):
+        return (self.x,), getattr(self.x, 'shape', None)
+      @classmethod
+      def tree_unflatten(cls, aux, children):
+        del aux
+        return cls(*children)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"(?s)cond branches must have equal output types but they differ.*"
+        r"so the shapes do not match"):
+      lax.cond(True, lambda _: Box(jnp.zeros(2)), lambda _: Box(jnp.zeros(3)),
+               1.)
+
   def testCondOneBranchConstant(self):
     def fun(x):
       if x < 3:

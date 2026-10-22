@@ -346,15 +346,15 @@ def _check_branch_outputs(
     paths, _ = unzip2(leaves_and_paths)
     component = lambda p: f' at path {keystr(p)}' if p else ''
 
-  if out_avals1.tree != out_avals2.tree:
+  # Trees that differ only in aux data (e.g. computed from the leaves) have the
+  # same structure, so don't raise here and still compare the types below.
+  if out_avals1.tree != out_avals2.tree and (errs := list(
+      equality_errors_pytreedef(out_avals1.tree, out_avals2.tree))):
     diffs = [f'{name1} output{component(p)} is a {thing1} but '
              f'{name2} output{component(p)} is a {thing2}, so {expl}'
-             for p, thing1, thing2, expl
-             in equality_errors_pytreedef(out_avals1.tree, out_avals2.tree)]
+             for p, thing1, thing2, expl in errs]
 
-    if len(diffs) == 0:
-      return  # the trees may have different aux data, but structures are same
-    elif len(diffs) == 1:
+    if len(diffs) == 1:
       differences = f'{diffs[0]}.\n'
     else:
       differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
