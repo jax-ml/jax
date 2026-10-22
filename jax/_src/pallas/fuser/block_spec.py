@@ -168,7 +168,6 @@ class PullRuleContext:
   avals_out: tuple[ShapedAbstractValue, ...]
   out_usages: tuple[set[Usage], ...]
   scalar_prefetch_fn: Any = dataclasses.field(default=None, init=False)
-  grid_len: int | None
   strict_mode: bool = True
   invars: tuple[core.Atom, ...] | None = None
 
@@ -180,7 +179,6 @@ class PushRuleContext:
   avals_out: tuple[ShapedAbstractValue, ...]
   invars: tuple[core.Atom, ...] | None = None
   scalar_prefetch_fn: Any = dataclasses.field(default=None, init=False)
-  grid_len: int | None = None
   strict_mode: bool = True
 
 
@@ -290,7 +288,6 @@ class KernelEvalContext:
   avals_out: tuple[ShapedAbstractValue, ...] | None
   in_block_specs: tuple[pallas_core.BlockSpec, ...]
   out_block_specs: tuple[pallas_core.BlockSpec, ...]
-  grid_len: int | None
   out_usages: tuple[set[Usage], ...] | None
 
   def get_program_ids(self):
@@ -472,7 +469,6 @@ def pull_block_spec(
         read_usage_env,
         env,
         scalar_prefetch_handler,
-        grid_len,
     )
     # The scalars this fusion prefetches, in the order its index maps and body
     # expect to be handed them back.
@@ -605,7 +601,7 @@ def _pull_block_transform(
     *,
     read_usage_env: Callable[[core.Var], set[Usage]],
     scalar_prefetch_handler: Callable = _identity_scalar_prefetch_handler,
-    grid_len: int,
+    grid_len: int | None = None,
     strict_mode: bool = True,
 ) -> tuple[
     tuple[BlockIndexTransform | NoBlockIndexTransform, ...],
@@ -664,7 +660,6 @@ def _pull_block_transform(
         avals_in=tuple(v.aval for v in eqn.invars),
         avals_out=tuple(v.aval for v in eqn.outvars),
         out_usages=tuple(read_usage_env(v) for v in eqn.outvars),
-        grid_len=grid_len,
         strict_mode=strict_mode,
         invars=tuple(eqn.invars),
     )
@@ -758,7 +753,7 @@ def _pull_block_spec(
     *,
     read_usage_env: Callable[[core.Var], set[Usage]],
     scalar_prefetch_handler: Callable = _identity_scalar_prefetch_handler,
-    grid_len: int,
+    grid_len: int | None = None,
     strict_mode: bool = True,
 ) -> tuple[
     tuple[pallas_core.BlockSpec | pallas_core.NoBlockSpec, ...],
@@ -797,7 +792,6 @@ def make_kernel_function(
     read_usage_env,
     block_spec_env,
     scalar_prefetch_handler,
-    grid_len,
 ):
   bs_env, scalar_prefetch_fn_env = block_spec_env
 
@@ -879,7 +873,6 @@ def make_kernel_function(
             program_ids=tuple(program_ids),
             in_block_specs=in_block_specs,
             out_block_specs=out_block_specs,
-            grid_len=grid_len,
             out_usages=out_usages,
         )
         outs = eval_rule(eval_ctx, *in_vals, **eqn.params)
@@ -2818,7 +2811,6 @@ def _call_jaxpr_eval_rule(
       jaxpr,
       ctx.out_block_specs,
       read_usage_env=read_usage_env,
-      grid_len=ctx.grid_len,
       strict_mode=False,
   )
   kernel_fn = make_kernel_function(
@@ -2829,7 +2821,6 @@ def _call_jaxpr_eval_rule(
       read_usage_env,
       env,
       _identity_scalar_prefetch_handler,
-      ctx.grid_len,
   )
   return kernel_fn(ctx.get_program_ids(), ctx.scalar_prefetch, *args)
 
@@ -2862,7 +2853,6 @@ def _call_jaxpr_pull_block_spec_rule(
       jaxpr,
       out_block_transforms,
       read_usage_env=read_usage_env,
-      grid_len=ctx.grid_len,
       strict_mode=ctx.strict_mode,
   )
   return in_block_transforms
@@ -3115,7 +3105,6 @@ def _push_block_spec_jaxpr(
         avals_in=tuple(v.aval for v in eqn.invars),
         avals_out=tuple(v.aval for v in eqn.outvars),
         invars=tuple(eqn.invars),
-        grid_len=grid_len,
         strict_mode=strict_mode,
     )
     eqn_invar_usages = [
@@ -3380,7 +3369,6 @@ def _call_jaxpr_push_block_spec_rule(
       jaxpr,
       *block_specs,
       read_usage_env=read_usage_env,
-      grid_len=ctx.grid_len,
       strict_mode=ctx.strict_mode,
   )
 
