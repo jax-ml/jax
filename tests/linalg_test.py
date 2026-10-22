@@ -2459,6 +2459,15 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       [1, 4, 5, 6],
       [2, 1, 4, 5],
       [3, 2, 1, 4]], dtype=np.float32))
+
+  def testToeplitzNaN(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38636
+    c = np.array([np.nan, np.inf, -0.0], dtype=np.float32)
+    r = np.array([np.nan, 2.0, 3.0], dtype=np.float32)
+    expected = scipy.linalg.toeplitz(c, r)
+    actual = jsp.linalg.toeplitz(c, r)
+    self.assertAllClose(actual, expected)
+
   def testHankelConstructionWithKnownCases(self):
     # r=None should default to zeros_like(c)
     c = np.array([1, 2, 3], dtype=np.float32)
@@ -2472,6 +2481,14 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     out1 = jsp.linalg.hankel(c, r1)
     out2 = jsp.linalg.hankel(c, r2)
     self.assertAllClose(out1, out2)
+
+  def testHankelNaN(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38635
+    c = np.array([np.nan, 2.0, 3.0], dtype=np.float32)
+    r = np.array([3.0, np.nan, 5.0], dtype=np.float32)
+    expected = scipy.linalg.hankel(c, r)
+    actual = jsp.linalg.hankel(c, r)
+    self.assertAllClose(actual, expected)
 
   @jtu.sample_product(
      cshape = [(3,), (0,), (2, 3), (1, 2, 3)],
