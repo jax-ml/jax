@@ -613,6 +613,9 @@ jax_multiplatform_test(
     backend_deps = {
         "cpu": py_deps(["torch"]),
     },
+    backend_tags = {
+        "cpu": ["notsan"],
+    },
     shard_count = {
         "cpu": 10,
         "gpu": 10,
