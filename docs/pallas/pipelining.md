@@ -321,7 +321,7 @@ Now that we've seen how to manually implement a pipelined loop, let's look into 
 <!-- #region id="niMr39cPkJ2m" -->
 ## Pallas Pipelining API
 
-Pallas offers a pipelining API that abstracts away the boilerplate of maintaining multiple buffers and overlapping asynchronous communication with computation. The basics of this API are covered in {ref}`pallas_quickstart`, so we will go over the API briefly here for completeness and discuss some sharp edges that arise from the use of pipelining.
+Pallas offers a pipelining API that abstracts away the boilerplate of maintaining multiple buffers and overlapping asynchronous communication with computation. The basics of this API are covered in {ref}`pallas_grids_and_blockspecs`, so we will go over the API briefly here for completeness and discuss some sharp edges that arise from the use of pipelining.
 
 
 ### Grid
