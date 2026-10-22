@@ -2824,6 +2824,39 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
           kernel_fn((0, 0), (), None, update_blk), update_blk + update_blk * 2.0
       )
 
+  @parameterized.parameters(
+      'jit', 'custom_jvp', 'custom_jvp3', 'custom_vjp', 'custom_vjp3'
+  )
+  def test_higher_order_push_usage(self, wrapper):
+    def dus(operand, update, i, j):
+      return jax.lax.dynamic_update_slice(operand, update, (i, j))
+
+    with (
+        config.custom_jvp3(wrapper == 'custom_jvp3'),
+        config.custom_vjp3(wrapper == 'custom_vjp3'),
+    ):
+      if wrapper == 'jit':
+        dus = jax.jit(dus)
+      elif wrapper in ('custom_jvp', 'custom_jvp3'):
+        dus = jax.custom_jvp(dus)
+        dus.defjvp(lambda p, t: (dus(*p), t[0]))
+      elif wrapper in ('custom_vjp', 'custom_vjp3'):
+        dus = jax.custom_vjp(dus)
+        dus.defvjp(
+            lambda *args: (dus(*args), ()), lambda _, g: (g, None, None, None)
+        )
+
+      update = jnp.ones((128, 128), dtype=jnp.float32)
+      i, j = jnp.int32(128), jnp.int32(0)
+
+      def f(operand):
+        return dus(operand, update, i, j)
+
+      in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+      block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+      out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(in_type)
+      self.assertIs(out_block_spec, block_spec)
+
   def test_pull_block_spec_handles_closed_over_constants(self):
     x = jnp.ones((2, 512, 512))
     i = jnp.array(1)
