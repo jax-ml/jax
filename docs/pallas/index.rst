@@ -1,3 +1,4 @@
+.. _pallas_quickstart:
 .. _pallas:
 
 Pallas: a JAX kernel language
@@ -53,7 +54,7 @@ but provide distinct, hardware-specific APIs.
    :hidden:
    :caption: Guides
 
-   quickstart
+   refs
    grid_blockspec
    pipelining
 
