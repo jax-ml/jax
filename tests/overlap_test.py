@@ -49,6 +49,8 @@ class OverlapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((8,), ('x',))
   def test_fsdp_pipeline_grad(self, mesh):
+    if jtu.is_device_tpu_at_least(7) and not jtu.is_libtpu_at_least('0.0.52'):
+      self.skipTest('Fails on TPU v7+ with libtpu < 0.0.52')
     def ag(x):
       return jax.reshard(x, P(reduced={'x'}))
 

@@ -1433,11 +1433,6 @@ class MpmdTest(PallasSCTest):
   def test_async_copy_error_sc_vector_subcore_pull_stream(
       self, is_wait_read, spaces
   ):
-    if (
-        spaces == (pltpu.VMEM_SHARED, pltpu.SMEM)
-        and not jtu.is_libtpu_at_least("0.0.51")
-    ):
-      self.skipTest("Requires libtpu >= 0.0.51")
     src_space, dst_space = spaces
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="c", subcore_axis_name="s", num_cores=1, num_subcores=1
@@ -1470,11 +1465,6 @@ class MpmdTest(PallasSCTest):
   def test_async_copy_error_sc_scalar_subcore_non_stream(
       self, is_wait_read, spaces
   ):
-    if (
-        spaces == (pltpu.VMEM_SHARED, pltpu.SMEM)
-        and not jtu.is_libtpu_at_least("0.0.51")
-    ):
-      self.skipTest("Requires libtpu >= 0.0.51")
     src_space, dst_space = spaces
     mesh = plsc.ScalarSubcoreMesh(axis_name="c", num_cores=1)
     x = jnp.zeros((self.num_lanes,), dtype=jnp.int32)

@@ -1715,8 +1715,6 @@ class PallasCallDMATest(ptu.PallasTPUTest):
   def test_vmem_vmem_dma(
       self, dtype: jnp.dtype, slice_rows: int | None
   ) -> None:
-    if slice_rows is not None and not jtu.is_libtpu_at_least('0.0.51'):
-      self.skipTest('Requires libtpu >= 0.0.51')
     shape = (64, 256)
     window = slice(None) if slice_rows is None else slice(0, slice_rows)
 
@@ -2141,8 +2139,8 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       np.testing.assert_array_equal(fn(x), x)
 
   def test_dma_stride_2gib(self):
-    if not jtu.is_libtpu_at_least('0.0.51'):
-      self.skipTest('Requires libtpu >= 0.0.51')
+    if not jtu.is_libtpu_at_least('0.0.52'):
+      self.skipTest('Requires libtpu >= 0.0.52')
 
     def kernel(x_ref, o_ref):
       pltpu.sync_copy(x_ref.at[:, pl.ds(0, 1)], o_ref)
@@ -2936,8 +2934,6 @@ class PallasCallTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(pltpu.VMEM, pltpu.HBM)
   def test_has_memory_space_and_cast(self, input_memory_space):
-    if not jtu.is_libtpu_at_least('0.0.51'):
-      self.skipTest('Requires libtpu >= 0.0.51')
     if input_memory_space is pltpu.VMEM and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Requires TPU V5+ for VMEM')
 

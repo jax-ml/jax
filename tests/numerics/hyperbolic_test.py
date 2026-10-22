@@ -116,8 +116,6 @@ class SinhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_sinh_accuracy(self, dtype):
-    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.51"):
-      self.skipTest("Requires libtpu >= 0.0.51")
     if jaxlib_extension_version >= 507:
       bounds = [
           ("cpu", {f16: 1.0, f32: 1.0, f64: 2.0}),
@@ -186,8 +184,6 @@ class CoshTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_cosh_accuracy(self, dtype):
-    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.51"):
-      self.skipTest("Requires libtpu >= 0.0.51")
     if jaxlib_extension_version >= 511:
       bounds = [
           ("cpu", {f16: 1.0, f32: 1.0, f64: 2.0}),
