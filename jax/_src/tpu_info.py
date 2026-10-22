@@ -289,13 +289,17 @@ class TpuInfo:
         # Large 2nd minor tiling is enabled for other types.
         return self.num_sublanes * (32 // bitwidth)
     # XLA allows large 2nd minor tiling by default starting with TPU7x.
-    if self.generation == 7 or self.generation == 8:
+    if self.generation >= 7:
       return self.num_sublanes * (32 // bitwidth)
     raise NotImplementedError("TPU generation is not supported")
 
 
 def is_tpu_device() -> bool:
-  return chip_version_from_device_kind(get_device_kind()) is not None
+  device_kind = get_device_kind()
+  return (
+      chip_version_from_device_kind(device_kind) is not None
+      or device_kind in registry
+  )
 
 
 registry: dict[str, Callable[[], TpuInfo]] = {}
