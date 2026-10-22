@@ -2171,6 +2171,60 @@ class PinnedBuffersTest(jtu.JaxTestCase):
     y = f(x)
     self.assertAllClose(y, x + 1.)
 
+  def test_pinned_ref_read_and_write(self):
+    # https://github.com/jax-ml/jax/issues/41846
+    # The contents of a pinned ref live in a pinned buffer, which may only be
+    # accessed in place, so a ref that is read or written with ordinary
+    # operations cannot be pinned.
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(x, pin=True)
+      ref[...] = ref[...] + 1.
+      return jax.ref.freeze(ref)
+
+    x = jnp.arange(3.)
+    txt = f.lower(x).as_text('hlo')
+    self.assertNotIn("Pin", txt)
+
+    y = f(x)
+    self.assertAllClose(y, x + 1.)
+
+  def test_empty_pinned_ref_read_and_write(self):
+    # The contents of a pinned ref live in a pinned buffer, which may only be
+    # accessed in place, so an empty ref that is read or written with ordinary
+    # operations cannot be pinned either.
+    @jax.jit
+    def f():
+      ref = jax.empty_ref(jax.ShapeDtypeStruct((3,), jnp.float32), pin=True)
+      ref[...] = ref[...] + 1.
+      return jax.ref.freeze(ref)
+
+    txt = f.lower().as_text('hlo')
+    self.assertNotIn("Pin", txt)
+
+    y = f()  # the contents are uninitialized, only check the type
+    self.assertEqual(y.shape, (3,))
+    self.assertEqual(y.dtype, jnp.float32)
+
+  def test_pinned_ref_kept_when_another_ref_is_read(self):
+    # Two refs with the same shape and dtype are two different refs: reading
+    # one of them with ordinary operations must not unpin the other one, which
+    # is only accessed in place.
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(x, pin=True)
+      other = jax.new_ref(x, pin=True)
+      other[...] = other[...] + 1.
+      return jax.ref.freeze(ref), jax.ref.freeze(other)
+
+    x = jnp.arange(3.)
+    txt = f.lower(x).as_text('hlo')
+    self.assertIn('custom_call_target="Pin"', txt)
+
+    if jtu.test_device_matches(['gpu', 'tpu']):
+      y = f(x)
+      self.assertAllClose(y, (x, x + 1.))
+
   def test_empty_ref_pinned(self):
     @jax.jit
     def f():

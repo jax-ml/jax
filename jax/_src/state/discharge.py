@@ -230,6 +230,28 @@ def constrain(
     return x
   return with_memory_space_constraint(x, ms)
 
+def _refs_read_or_written_normally(jaxpr: core.Jaxpr) -> frozenset[core.Var]:
+  """The refs whose contents are read or written with ordinary JAX operations.
+
+  The contents of a pinned ref live in a pinned buffer, which may only be
+  accessed in place, e.g. from a Pallas kernel that is handed the buffer.
+  Reading or writing the contents of a pinned ref with ordinary operations
+  would require copying the contents out of (or into) the pinned buffer,
+  which a pinned buffer does not support. Such a ref is therefore not
+  pinned, and behaves like an ordinary ref.
+
+  The refs are identified by the variable they are bound to, so that two
+  different refs with the same shape and dtype are not confused with each
+  other.
+  """
+  accessed: set[core.Var] = set()
+  for eqn in jaxpr.eqns:
+    if eqn.primitive in (get_p, swap_p, addupdate_p):
+      ref_var = eqn.invars[0]
+      if isinstance(ref_var, core.Var) and isinstance(ref_var.aval, AbstractRef):
+        accessed.add(ref_var)
+  return frozenset(accessed)
+
 def _eval_jaxpr_discharge_state(
     jaxpr: core.Jaxpr, should_discharge: Sequence[bool], consts: Sequence[Any],
     strip_memory_space: bool, *args: Any):
@@ -243,6 +265,10 @@ def _eval_jaxpr_discharge_state(
   refs_to_discharge = {id(v.aval) for v, d in zip(jaxpr.invars, should_discharge)
                        if d and isinstance(v.aval, AbstractRef)}
 
+  # Refs whose contents are read or written with ordinary JAX operations
+  # cannot be pinned, see `_refs_read_or_written_normally`.
+  unpinnable_refs = _refs_read_or_written_normally(jaxpr)
+
   for eqn in jaxpr.eqns:
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     traceback = eqn.source_info.traceback
@@ -252,7 +278,7 @@ def _eval_jaxpr_discharge_state(
       if eqn.primitive is core.ref_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
-        if eqn.params['pin']:
+        if eqn.params['pin'] and outvar not in unpinnable_refs:
           ans = pin(ans)
         else:
           ms = getattr(outvar.aval, "memory_space", None)
@@ -265,7 +291,7 @@ def _eval_jaxpr_discharge_state(
         if not isinstance(aval, core.ShapedArray):
           raise NotImplementedError  # TODO(sergei)
         ans = lax.empty(aval.shape, aval.dtype)
-        if eqn.params['pin']:
+        if eqn.params['pin'] and outvar not in unpinnable_refs:
           # TODO(mattjj,yashkatariya): switch to create_linear once the
           # CreateBuffer custom call is implemented in the runtime
           ans = pin(ans)
