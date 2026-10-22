@@ -53,7 +53,6 @@ LoweringContext = tc_lowering.LoweringContext
 LoweringRuleContext = tc_lowering.LoweringRuleContext
 MosaicGridMapping = tc_lowering.MosaicGridMapping
 
-_dtype_to_ir_type = tc_lowering._dtype_to_ir_type
 _transform_ref = tc_lowering._transform_ref
 _dma_unflatten = tpu_primitives._dma_unflatten
 _get_ref_and_transforms = tpu_primitives._get_ref_and_transforms
@@ -222,7 +221,7 @@ def _load_lowering_rule(
   if not ctx.lowering_context.needs_layout_passes:
     _check_aval_is_supported("Get", out_aval)
   out_vec_type = ir.VectorType.get(
-      out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
+      out_aval.shape, ctx.dtype_to_ir_type(out_aval.dtype)
   )
   if not ctx.lowering_context.needs_layout_passes:
     return _load_vreg(ctx, out_vec_type, ref, starts, mask, expand)
@@ -233,7 +232,7 @@ def _load_lowering_rule(
       [1 if squeeze else s for s, squeeze in zip(sizes, squeeze_dims)],
   )
   memref_vec_type = ir.VectorType.get(
-      memref_vec_shape, _dtype_to_ir_type(out_aval.dtype)
+      memref_vec_shape, ctx.dtype_to_ir_type(out_aval.dtype)
   )
   load_val = _vector_load(ctx, memref_vec_type, ref, starts, mask, expand)
   return vector.shape_cast(out_vec_type, load_val)
@@ -344,7 +343,7 @@ def _store_lowering_rule(
   if not ctx.lowering_context.needs_layout_passes:
     _check_aval_is_supported("Swap", out_aval)
   out_vec_type = ir.VectorType.get(
-      out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
+      out_aval.shape, ctx.dtype_to_ir_type(out_aval.dtype)
   )
   if not ctx.lowering_context.needs_layout_passes:
     old_val = _load_vreg(ctx, out_vec_type, ref, starts, mask, expand=compress)
@@ -378,7 +377,7 @@ def _store_lowering_rule(
       [1 if squeeze else s for s, squeeze in zip(sizes, squeeze_dims)],
   )
   memref_vec_type = ir.VectorType.get(
-      memref_vec_shape, _dtype_to_ir_type(out_aval.dtype)
+      memref_vec_shape, ctx.dtype_to_ir_type(out_aval.dtype)
   )
   old_val = _vector_load(
       ctx, memref_vec_type, ref, starts, mask, expand=compress
@@ -431,7 +430,7 @@ def _iota_lowering_rule_sc(ctx: LoweringRuleContext, dtype, shape, dimension,
     )
   [out_aval] = ctx.avals_out
   out_type = ir.VectorType.get(
-      [sc_info.num_lanes], _dtype_to_ir_type(out_aval.dtype)
+      [sc_info.num_lanes], ctx.dtype_to_ir_type(out_aval.dtype)
   )
   return tpu.iota(out_type, dimensions=[dimension])
 
@@ -735,7 +734,9 @@ def _dma_start_lowering_rule(
   offset_filter = None
   if indirect_offsets.ignored_value is not None:
     offset_filter = tc_lowering._ensure_mlir_value(
-        indirect_offsets.ignored_value, jax_core.ShapedArray((), jnp.int32)
+        indirect_offsets.ignored_value,
+        jax_core.ShapedArray((), jnp.int32),
+        ctx.dtype_to_ir_type,
     )
 
   sem_aval, _ = _get_ref_and_transforms(sem_aval)

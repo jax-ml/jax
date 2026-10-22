@@ -156,10 +156,40 @@ def test_arith_constant():
     print(module)
 
 
+def test_vector_broadcast_and_arith_binary_op():
+  # CHECK: --- test_vector_broadcast_and_arith_binary_op
+  print("--- test_vector_broadcast_and_arith_binary_op")
+  ctx = mlir.make_ir_context()
+  loc = ir.Location.unknown(context=ctx)
+  with ctx, loc:
+    module = ir.Module.create()
+    f32 = ir.F32Type.get()
+    i32 = ir.IntegerType.get_signless(32)
+    with ir.InsertionPoint(module.body):
+      x = _jax_mlir_ext.arith_constant(2.0, f32)
+      x = _jax_mlir_ext.vector_broadcast(ir.VectorType.get([8, 128], f32), x)
+      _jax_mlir_ext.arith_binary_op("arith.maximumf", x, x)
+      y = _jax_mlir_ext.arith_constant(3, i32)
+      _jax_mlir_ext.arith_binary_op("arith.shrui", y, y)
+      # CHECK: Unsupported binary arith op: arith.cmpi
+      try:
+        _jax_mlir_ext.arith_binary_op("arith.cmpi", y, y)
+      except ValueError as e:
+        print(e)
+    module.operation.verify()
+    # CHECK: %[[X:.*]] = arith.constant 2.000000e+00 : f32
+    # CHECK-NEXT: %[[V:.*]] = vector.broadcast %[[X]] : f32 to vector<8x128xf32>
+    # CHECK-NEXT: arith.maximumf %[[V]], %[[V]] : vector<8x128xf32>
+    # CHECK-NEXT: %[[Y:.*]] = arith.constant 3 : i32
+    # CHECK-NEXT: arith.shrui %[[Y]], %[[Y]] : i32
+    print(module)
+
+
 def main(_):
   test_inlined_func_call()
   test_traceback_to_location()
   test_arith_constant()
+  test_vector_broadcast_and_arith_binary_op()
 
 
 if __name__ == "__main__":

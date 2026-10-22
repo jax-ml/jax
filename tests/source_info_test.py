@@ -330,6 +330,19 @@ class SourceInfoTest(jtu.JaxTestCase):
     self.assertIn('.caller"', lowered_caller)
     self.assertNotIn("export_from_site_a", lowered_caller)
 
+  def test_equations_sharing_a_traceback_keep_their_own_locations(self):
+    def f(x):
+      for scope in ("scope_a", "scope_b"):
+        with jax.named_scope(scope):
+          for primitive in (lax.exp_p, lax.log_p):
+            x = primitive.bind(x)  # All four equations share a traceback.
+      return x
+
+    text = jax.jit(f).lower(1.0).as_text(debug_info=True)
+    for scope in ("scope_a", "scope_b"):
+      for primitive in ("exp", "log"):
+        self.assertIn(f'"jit(f)/{scope}/{primitive}"', text)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
