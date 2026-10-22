@@ -260,8 +260,7 @@ class NamedLocationsTest(PallasSCTest):
 def _sc_log_recorder_options() -> dict[str, str]:
   # On new libtpu the log recorder is enabled automatically when a kernel emits
   # log ops, so the flag is only needed for backwards compatibility.
-  return {}
-  if jtu.is_libtpu_at_least("0.0.51"):
+  if jtu.is_libtpu_at_least("0.0.52"):
     return {}
   return {"xla_tpu_enable_sc_log_recorder": "true"}
 

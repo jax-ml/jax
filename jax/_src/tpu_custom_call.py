@@ -27,6 +27,7 @@ import logging
 from typing import Any, TypedDict
 
 from jax._src import api
+from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -76,6 +77,8 @@ def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
   if ctx.is_forward_compat() or backend is None:
     return _FWD_COMPAT_VERSION
+  if not cloud_tpu_init.is_libtpu_at_least("0.0.52"):
+    return 18
   if ir_version_override is not None:
     return ir_version_override()
   return None
