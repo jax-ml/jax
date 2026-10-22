@@ -61,23 +61,23 @@ class CustomEvalRuleFn(Protocol):
 class custom_fusion:
   """Wraps a pure JAX function as a primitive with user-defined fuser rules.
 
-  `custom_fusion` allows defining custom block spec propagation and block-level
+  ``custom_fusion`` allows defining custom block spec propagation and block-level
   evaluation rules for an operation so that it can participate in input and
   output fusions without decomposing into its constituent JAX primitives.
   Effects are not supported.
 
   Rule registration methods and expected callback signatures:
-    - `def_eval_rule(fn)`: Required. `fn(ctx: CustomEvalContext, *args) ->
-      Sequence[Any]` evaluates the operation on a single block and must return
+    - ``def_eval_rule(fn)``: Required. ``fn(ctx: CustomEvalContext, *args) ->
+      Sequence[Any]`` evaluates the operation on a single block and must return
       a sequence of flat output leaves (even for a single output).
-    - `def_pull_block_spec(fn)`: Required. `fn(out_block_transforms:
-      tuple[BlockIndexTransform, ...]) -> Sequence[BlockIndexTransform]`
+    - ``def_pull_block_spec(fn)``: Required. ``fn(out_block_transforms:
+      tuple[BlockIndexTransform, ...]) -> Sequence[BlockIndexTransform]``
       propagates output block transforms backward to the inputs.
-    - `def_push_block_spec(fn)`: Optional (only needed for output fusions).
-      `fn(in_block_specs: tuple[BlockSpec, ...]) -> tuple[BlockSpec, ...]`
-      propagates input `BlockSpec`s forward to the outputs.
-    - `def_pallas_impl(fn)`: Optional alternative implementation for use inside
-      a Pallas kernel; must produce the same output abstract values as `fun`.
+    - ``def_push_block_spec(fn)``: Optional (only needed for output fusions).
+      ``fn(in_block_specs: tuple[BlockSpec, ...]) -> tuple[BlockSpec, ...]``
+      propagates input ``BlockSpecs`` forward to the outputs.
+    - ``def_pallas_impl(fn)``: Optional alternative implementation for use inside
+      a Pallas kernel; must produce the same output abstract values as ``fun``.
 
   Args:
     fun: The pure JAX function defining the operation's abstract evaluation and
