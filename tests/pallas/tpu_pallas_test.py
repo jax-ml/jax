@@ -2140,6 +2140,27 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       x = jnp.full(shape, i, dtype=jnp.int32)
       np.testing.assert_array_equal(fn(x), x)
 
+  def test_dma_stride_2gib(self):
+    if not jtu.is_libtpu_at_least('0.0.51'):
+      self.skipTest('Requires libtpu >= 0.0.51')
+
+    def kernel(x_ref, o_ref):
+      pltpu.sync_copy(x_ref.at[:, pl.ds(0, 1)], o_ref)
+
+    f = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((2, 1, 8, 128), jnp.bfloat16),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    expected = jnp.arange(2 * 8 * 128, dtype=jnp.bfloat16).reshape(2, 1, 8, 128)
+    x = jax.jit(
+        lambda e: jnp.zeros((2, 2**20, 8, 128), dtype=jnp.bfloat16)
+        .at[:, :1]
+        .set(e)
+    )(expected)
+    np.testing.assert_array_equal(f(x), expected)
+
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
