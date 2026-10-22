@@ -92,6 +92,8 @@ wheel_sources(
         "//jax/extend:ifrt_programs",
         "//jax/extend/mlir",
         "//jax/extend/mlir/dialects",
+        "//jax/pallas",
+        "//jax/pallas:tpu",
         "//jax/tools:jax_to_ir",
         "//jax/tools:pgo_nsys_converter",
     ],

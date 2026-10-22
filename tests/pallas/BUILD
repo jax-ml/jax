@@ -78,6 +78,8 @@ jax_multiplatform_test(
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
         "//jax/experimental:pallas_triton",
+        "//jax/pallas",
+        "//jax/pallas:tpu",
     ] + py_deps([
         "absl/testing",
         "numpy",
