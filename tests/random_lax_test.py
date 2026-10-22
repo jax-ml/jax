@@ -836,11 +836,26 @@ class DistributionsTest(RandomTestBase):
     samples = random.poisson(key, lam, shape=(2, 20), method=method)
     self.assertArraysEqual(samples[:, :10], jnp.zeros_like(samples[:, :10]))
 
-  def testPoissonCornerCases(self):
+  @jtu.sample_product(
+    method=['exact', 'approximate'],
+    dtype=jtu.dtypes.integer,
+  )
+  def testPoissonCornerCases(self, method, dtype):
     key = self.make_key(0)
-    lam = jnp.array([-1, 0, jnp.nan])
-    samples = random.poisson(key, lam, shape=(3,))
-    self.assertArraysEqual(samples, jnp.array([-1, 0, -1]), check_dtypes=False)
+    lam = jnp.array([-1, 0, jnp.nan, jnp.inf, -jnp.inf])
+    samples = random.poisson(key, lam, shape=(2, 5), dtype=dtype, method=method)
+    self.assertArraysEqual(
+        samples,
+        jnp.broadcast_to(jnp.array([-1, 0, -1, -1, -1], dtype=dtype), (2, 5)),
+    )
+    with jax.debug_nans(True):
+      lam_non_nan = jnp.array([-1.0, 0.0, jnp.inf, -jnp.inf])
+      samples_non_nan = random.poisson(
+          key, lam_non_nan, shape=(2, 4), dtype=dtype, method=method)
+      self.assertArraysEqual(
+          samples_non_nan,
+          jnp.broadcast_to(jnp.array([-1, 0, -1, -1], dtype=dtype), (2, 4)),
+      )
 
   def testPoissonInvalidMethod(self):
     key = self.make_key(0)

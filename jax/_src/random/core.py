@@ -1993,8 +1993,8 @@ def _poisson(key: Key, lam, shape, dtype) -> Array:
   # https://github.com/numpy/numpy/blob/v1.18.3/numpy/random/src/distributions/distributions.c#L574
   # For lambda < 10, we use the Knuth algorithm; otherwise, we use transformed
   # rejection sampling.
-  use_knuth = _isnan(lam) | (lam < 10)
-  lam_knuth = lax.select(use_knuth, lam, lax.full_like(lam, 0.0))
+  use_knuth = ~jnp.isfinite(lam) | (lam < 10)
+  lam_knuth = lax.select(lam < 10, lam, lax.full_like(lam, 0.0))
   # The acceptance probability for rejection sampling maxes out at 89% as
   # λ -> ∞, so pick some arbitrary large value.
   lam_rejection = lax.select(use_knuth, lax.full_like(lam, 1e5), lam)
@@ -2074,9 +2074,12 @@ def _poisson_approx(key: Key, lam, shape, dtype) -> Array:
 
 def _poisson_from_normal(z, lam):
   """Map a standard normal variate to an approximate Poisson(lam) variate."""
-  small = _poisson_cdf_inversion(lax_special.ndtr(z), lam)
-  large = _poisson_peizer_pratt(z, lam)
-  return jnp.where(lam < _POISSON_SPLIT, small, large)
+  valid = (lam > 0) & jnp.isfinite(lam)
+  lam_safe = jnp.where(valid, lam, 1.0)
+  small = _poisson_cdf_inversion(lax_special.ndtr(z), lam_safe)
+  large = _poisson_peizer_pratt(z, lam_safe)
+  out = jnp.where(lam_safe < _POISSON_SPLIT, small, large)
+  return jnp.where(lam == 0, 0.0, jnp.where(valid, out, -1.0))
 
 
 def _poisson_cdf_inversion(u, lam):
