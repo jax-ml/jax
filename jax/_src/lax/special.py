@@ -366,7 +366,7 @@ def _any(predicates: Array) -> Array:
   all_dimensions = tuple(range(len(predicates_shape)))
   return reduce(predicates, f, bitwise_or, all_dimensions)
 
-def _igamma_series(ax, x, a, enabled, dtype, mode):
+def _igamma_series(ax, x, a, enabled, dtype, mode, dlogax_da):
   def cond_fn(vals):
     return _any(vals[0])
 
@@ -408,7 +408,7 @@ def _igamma_series(ax, x, a, enabled, dtype, mode):
   if mode == IgammaMode.VALUE:
     return (ans * ax) / a
 
-  dlogax_da = log(x) - digamma(a + _const(a, 1))
+  assert dlogax_da is not None
 
   if mode == IgammaMode.DERIVATIVE:
     return ax * (ans * dlogax_da + dans_da) / a
@@ -449,9 +449,9 @@ def igamma_impl(a, x, *, dtype):
     use_igammac,
     _const(a, 1) -
       _igammac_continued_fraction(ax, x, a, bitwise_and(enabled, use_igammac),
-                                  dtype, IgammaMode.VALUE),
+                                  dtype, IgammaMode.VALUE, None),
     _igamma_series(ax, x, a, bitwise_and(enabled, bitwise_not(use_igammac)),
-                   dtype, IgammaMode.VALUE)
+                   dtype, IgammaMode.VALUE, None)
   )
   output = select(a_is_infinity, full_like(a, 0), output)
   output = select(x_is_zero, full_like(a, 0), output)
@@ -459,7 +459,7 @@ def igamma_impl(a, x, *, dtype):
   output = select(domain_error, full_like(a, float('nan')), output)
   return output
 
-def _igammac_continued_fraction(ax, x, a, enabled, dtype, mode):
+def _igammac_continued_fraction(ax, x, a, enabled, dtype, mode, dlogax_da):
   eps = dtypes.finfo(dtype).eps
 
   def cond_fn(vals):
@@ -554,8 +554,8 @@ def _igammac_continued_fraction(ax, x, a, enabled, dtype, mode):
   ans = vals[1]
   if mode == IgammaMode.VALUE:
     return ans *  ax
+  assert dlogax_da is not None
   dans_da = vals[14]
-  dlogax_da = log(x) -  digamma(a)
 
   if mode == IgammaMode.DERIVATIVE:
     return mul(ax, add(mul(ans, dlogax_da), dans_da))
@@ -592,9 +592,10 @@ def igammac_impl(a, x, *, dtype):
   ax = exp(ax)
 
   igamma_call = _igamma_series(ax, x, a, bitwise_and(enabled, use_igamma),
-                               dtype, IgammaMode.VALUE)
+                               dtype, IgammaMode.VALUE, None)
   igammac_cf_call = _igammac_continued_fraction(ax, x, a,
-    bitwise_and(enabled, bitwise_not(use_igamma)), dtype, IgammaMode.VALUE)
+    bitwise_and(enabled, bitwise_not(use_igamma)), dtype, IgammaMode.VALUE,
+    None)
 
   output = select(use_igamma, _const(a, 1) - igamma_call, igammac_cf_call)
   output = select(a_is_infinity, full_like(a, 1), output)
@@ -607,16 +608,18 @@ def igamma_grad_a_impl(a, x, *, dtype):
   x_is_zero = eq(x, full_like(x,0))
   domain_error = bitwise_or(lt(x, full_like(x, 0)), le(a, full_like(a, 0)))
   use_igammac = bitwise_and(gt(x, full_like(x,1)), gt(x, a))
-  ax = a * log(x) - x - lgamma(a)
+  log_x = log(x)
+  ax = a * log_x - x - lgamma(a)
   underflow = lt(ax, -log(dtypes.finfo(dtype).max))
   ax = exp(ax)
   enabled = bitwise_not(bitwise_or(bitwise_or(bitwise_or(
       x_is_zero, domain_error), underflow), is_nan))
+  dlogax_da = log_x - digamma(select(use_igammac, a, a + _const(a, 1)))
   output = select(use_igammac,
     -_igammac_continued_fraction(ax, x, a, bitwise_and(enabled, use_igammac),
-                                 dtype, IgammaMode.DERIVATIVE),
+                                 dtype, IgammaMode.DERIVATIVE, dlogax_da),
     _igamma_series(ax, x, a, bitwise_and(enabled, bitwise_not(use_igammac)),
-                   dtype, IgammaMode.DERIVATIVE))
+                   dtype, IgammaMode.DERIVATIVE, dlogax_da))
   output = select(x_is_zero, full_like(output,0), output)
   output = select(bitwise_or(domain_error, is_nan),
                   full_like(a, float('nan')), output)
@@ -627,16 +630,19 @@ def random_gamma_grad_impl(a, x, *, dtype):
   x_is_zero = eq(x, full_like(x,0))
   domain_error = bitwise_or(lt(x, full_like(x,0)), le(a, full_like(a,0)))
   use_igammac = bitwise_and(gt(x, full_like(x,1)), gt(x, a))
-  ax = a * log(x) - x - lgamma(a)
+  log_x = log(x)
+  ax = a * log_x - x - lgamma(a)
   underflow = lt(ax, -log(dtypes.finfo(a.dtype).max))
   ax = exp(ax)
   enabled = bitwise_not(bitwise_or(bitwise_or(bitwise_or
     (x_is_zero, domain_error), underflow), is_nan))
+  dlogax_da = log_x - digamma(select(use_igammac, a, a + _const(a, 1)))
   output = select(use_igammac,
     -_igammac_continued_fraction(ax, x, a, bitwise_and(enabled, use_igammac),
-                                 dtype, IgammaMode.SAMPLE_DERIVATIVE),
+                                 dtype, IgammaMode.SAMPLE_DERIVATIVE, dlogax_da),
     _igamma_series(ax, x, a, bitwise_and(enabled, bitwise_not(use_igammac)),
-                                         dtype, IgammaMode.SAMPLE_DERIVATIVE))
+                                         dtype, IgammaMode.SAMPLE_DERIVATIVE,
+                                         dlogax_da))
   output = select(x_is_zero, full_like(output,0), output)
   output = select(bitwise_or(domain_error, is_nan),
                   full_like(a, float('nan')), output)

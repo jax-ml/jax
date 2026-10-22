@@ -4456,9 +4456,10 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
   psi_1 = _lax_const(x, -np.euler_gamma)
 
   # Accumulate the finite sum in 15.3.11/15.3.12 along with the integer
-  # Pochhammer shifts (a + d2)_m * (b + d2)_m and m! = Gamma(e + 1) in log-space.
+  # Pochhammer shifts (a + d2)_m * (b + d2)_m, m! = Gamma(e + 1) in log-space,
+  # and the harmonic shift sum_{t=0}^{m-1} 1 / (e - t) for digamma(1 + e).
   def for_body(i, state):
-    t, p, y1, log_poch_ab, sgn_poch_ab, log_fact_e = state
+    t, p, y1, log_poch_ab, sgn_poch_ab, log_fact_e, harm_e = state
     y1 = y1 + p
     at = a + d2 + t
     bt = b + d2 + t
@@ -4467,16 +4468,18 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
     sgn_poch_ab = jnp.where(
         ab_t == 0, zero, jnp.where(ab_t < 0, -sgn_poch_ab, sgn_poch_ab)
     )
-    log_fact_e = log_fact_e + jnp.log(e - t)
+    et = e - t
+    log_fact_e = log_fact_e + jnp.log(et)
+    harm_e = harm_e + 1.0 / et
     r = 1.0 - e + t
     t_next = t + 1.0
     keep_going = i + 1 < ard
     denom = jnp.where(keep_going, r * t_next, one)
     p = jnp.where(keep_going, p * s * ab_t / denom, p)
-    return t_next, p, y1, log_poch_ab, sgn_poch_ab, log_fact_e
+    return t_next, p, y1, log_poch_ab, sgn_poch_ab, log_fact_e, harm_e
 
-  _, _, y1, log_poch_ab, sgn_poch_ab, log_fact_e = lax.fori_loop(
-      0, ard, for_body, (zero, one, zero, zero, one, zero)
+  _, _, y1, log_poch_ab, sgn_poch_ab, log_fact_e, harm_e = lax.fori_loop(
+      0, ard, for_body, (zero, one, zero, zero, one, zero, zero)
   )
 
   def _digamma_and_next(z):
@@ -4488,9 +4491,10 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
         jnp.where(need_shift, psi_eval, psi_eval + inv_z),
     )
 
+  de = e - jnp.abs(rd)
   psi_a1, psi_a1_next = _digamma_and_next(a + d1)
   psi_b1, psi_b1_next = _digamma_and_next(b + d1)
-  psi_1pe = digamma(1.0 + e)
+  psi_1pe = psi_1 + _lax_const(x, (np.pi ** 2) / 6) * de + harm_e
   y = psi_1 + psi_1pe - psi_a1 - psi_b1 - ax
   p = (a + d1) * (b + d1) * s / (e + 1.0)
 
@@ -4527,7 +4531,7 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
   )
   _, _, _, y, _, _, _, _ = lax.while_loop(cond, body, init)
 
-  log_ge1 = log_fact_e + psi_1 * (e - jnp.abs(rd))
+  log_ge1 = log_fact_e + psi_1 * de
   log_poch_corr = (psi_a1 + psi_b1) * (d - rd)
 
   log_y_scale = (

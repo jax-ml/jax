@@ -63,6 +63,7 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     # with higher-order derivatives.
     new_a = jnp.where(a <= b, a, b)
     new_b = jnp.where(a <= b, b, a)
-    small_b = lax.lgamma(new_a) + (lax.lgamma(new_b) - lax.lgamma(new_a + new_b))
-    large_b = lax.lgamma(new_a) + algdiv(new_a, new_b)
+    lgamma_a = lax.lgamma(new_a)
+    small_b = lgamma_a + (lax.lgamma(new_b) - lax.lgamma(new_a + new_b))
+    large_b = lgamma_a + algdiv(new_a, new_b)
     return jnp.where(new_b < 8, small_b, large_b)
