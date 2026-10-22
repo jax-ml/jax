@@ -14,8 +14,13 @@
 
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
+# The import lists below are not in the formatter's canonical order, and its
+# sorter ignores line ranges, so formatting one line here rewrites ~700 lines.
+# pyformat: disable
 
 from jax._src.lax.lax import (
+  BlockScaling as BlockScaling,
+  StructuredSparsity as StructuredSparsity,
   DotDimensionNumbers as DotDimensionNumbers,
   RaggedDotDimensionNumbers as RaggedDotDimensionNumbers,
   AccuracyMode as AccuracyMode,
