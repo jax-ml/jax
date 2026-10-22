@@ -1284,6 +1284,19 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         max_root_ulp, 2.0,
         f"Max ULP {max_root_ulp} at negative root x={worst_root_x} exceeds 2.0")
 
+  @jtu.sample_product(
+      dtype=[np.float32, np.float64],
+  )
+  def testLoggammaZero(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/38240
+    x = np.array([0.0, -0.0], dtype=dtype)
+    self._CheckAgainstNumpy(
+        osp_special.loggamma,
+        jax.scipy.special.loggamma,
+        args_maker=lambda: (x,),
+        check_dtypes=False,
+    )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

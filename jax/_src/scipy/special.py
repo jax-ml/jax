@@ -257,7 +257,7 @@ def loggamma(x: ArrayLike) -> Array:
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     return _complex_loggamma_scipy(x)
   res = lax.lgamma(x)
-  return jnp.where(x > 0, res, jnp.nan)
+  return jnp.where(x >= 0, res, jnp.nan)
 
 
 def gamma(x: ArrayLike) -> Array:
@@ -3152,7 +3152,6 @@ def lpmn_values(m: int, n: int, z: Array, is_normalized: bool) -> Array:
   l_max = n
 
   return _gen_associated_legendre(l_max, z, is_normalized)
-
 
 
 @jit(static_argnums=(4,))
