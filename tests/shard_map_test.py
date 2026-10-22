@@ -2737,6 +2737,62 @@ class ShardMapTest(jtu.JaxTestCase):
     shard_map(jax.lax.erf,
               mesh=mesh, in_specs=P('i'), out_specs=P('i'))(x)  # don't crash
 
+  @parameterized.product(unroll=[1, 3], varying_coeffs=[False, True])
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_polynomial_mixed_vma(self, unroll, varying_coeffs, mesh):
+    x = jax.device_put(np.linspace(-0.5, 0.5, 8), P('x'))
+    c = jax.device_put(
+        np.linspace(0.5, 1.5, 8 if varying_coeffs else 4),
+        P('y') if varying_coeffs else P())
+    out_spec = P(('x', 'y')) if varying_coeffs else P('x')
+
+    @shard_map(in_specs=(P('x'), P('y') if varying_coeffs else P()),
+               out_specs=out_spec)
+    def f(x, c):
+      return lax.polynomial(x, [c, 1.0, c], unroll=unroll)
+
+    x_ref = np.asarray(x).reshape(2, 4)
+    c_ref = np.asarray(c).reshape(-1, 4)
+    expected = (c_ref[None, :, :] + x_ref[:, None, :]
+                + c_ref[None, :, :] * x_ref[:, None, :] ** 2).ravel()
+    for fun in (f, jax.jit(f)):
+      self.assertAllClose(fun(x, c), expected)
+
+    dx, dc = jax.jit(jax.grad(lambda x, c: f(x, c).sum(), (0, 1)))(x, c)
+    expected_dx = (c_ref.shape[0] + 2 * x_ref * c_ref.sum(axis=0)).ravel()
+    expected_dc = np.tile((1 + x_ref ** 2).sum(axis=0), c_ref.shape[0])
+    self.assertAllClose(dx, expected_dx)
+    self.assertAllClose(dc, expected_dc)
+    with config.auto_pcast(False):
+      with self.assertRaisesRegex(
+          ValueError, 'requires varying manual axes to match'):
+        jax.jit(f)(x, c)
+
+  @parameterized.named_parameters(('erf', lax.erf), ('erfc', lax.erfc))
+  @jtu.with_explicit_mesh((2,), 'i')
+  def test_erf_derivatives_vma(self, op, mesh):
+    # Regression test for https://github.com/jax-ml/jax/issues/41853.
+    x = jax.device_put(np.linspace(-3.0, 3.0, 8), P('i'))
+    grad = jax.grad(lambda x: op(x).sum())
+    grad2 = jax.grad(lambda x: grad(x).sum())
+
+    @jax.jit
+    @shard_map(in_specs=P('i'), out_specs=(P('i'), P('i')))
+    def f(x):
+      return grad(x), grad2(x)
+
+    compiled = f.lower(x).compile()
+    dx, d2x = compiled(x)
+    expected = 2 / np.sqrt(np.pi) * np.exp(-np.asarray(x) ** 2)
+    if op is lax.erfc:
+      expected = -expected
+    self.assertAllClose(dx, expected)
+    self.assertAllClose(d2x, -2 * np.asarray(x) * expected)
+    hlo = compiled.as_text()
+    for collective in ('all-reduce', 'all-gather', 'all-to-all',
+                       'collective-permute'):
+      self.assertNotIn(collective, hlo)
+
   def test_error_for_variable_num_args(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
 
