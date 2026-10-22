@@ -211,9 +211,9 @@ class LgammaTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_lgamma_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 0.5, f64: 2.0}),
-        ("gpu", {f16: 1.0, f32: 4.0, f64: 2.0}),
-        ("tpu", {f16: 1.0, f32: 4.0}),
+        ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0}),
+        ("gpu", {f16: 1.0, f32: 1.0, f64: 1.0}),
+        ("tpu", {f16: 1.0, f32: 1.0}),
     ]
     ref_fn = lambda x: np.where(x == -np.inf, np.inf, scipy.special.gammaln(x))
     neg_roots = [
@@ -249,40 +249,91 @@ class LgammaTest(jtu.JaxTestCase):
         -15.999999999999952,
         -16.000000000000046,
     ]
-    # Root-window switch boundaries |w| = 0.06 for neg_roots[0] (delta / r in
-    # {47/53, 53/47}) and |w| = 0.08 for the rest (delta / r in {23/27, 27/23})
-    # where negative-root rational approximations hand off to Euler reflection.
-    neg_root_boundaries = [
+    # Interval endpoints around negative zeros where lgamma switches between its
+    # lookup table and Euler's reflection formula in float32 and float64:
+    f32_neg_root_boundaries = [
+        -2.33435985,
+        -2.5,
+        -2.70703125,
+        -2.83335972,
+        -3.09179749,
+        -3.21762902,
+        -3.93363558,
+        -3.97260000,
+        -4.02433043,
+        -4.06287674,
+        -4.98589942,
+        -4.99490073,
+        -5.00539967,
+        -5.01300052,
+        -5.99819946,
+        -5.99895049,
+        -6.00104951,
+        -6.00180054,
+        *(
+            round(x) + (x - round(x)) * factor
+            for x in neg_roots[9:15]
+            for factor in (19.0 / 31.0, 121.0 / 79.0)
+        ),
+    ]
+    f64_neg_root_boundaries = [
         round(x) + (x - round(x)) * factor
         for i, x in enumerate(neg_roots)
-        for factor in (
-            (47.0 / 53.0, 53.0 / 47.0)
-            if i == 0
-            else (23.0 / 27.0, 27.0 / 23.0)
-        )
+        for factor in ((0.872, 1.128) if i == 0 else (0.825, 1.175))
     ]
+    neg_root_boundaries = [*f32_neg_root_boundaries, *f64_neg_root_boundaries]
     interesting_points = [
-        # Non-positive integer poles of gamma(x) and large negative half-integer:
+        # Zero and negative integers (where gamma(x) has poles), plus large
+        # negative half-integers:
         *(float(-k) for k in range(21)),
         -100.0,
         -1000.0,
+        -8388607.5,  # -2**23 + 0.5 (last negative non-integer in f32)
+        -8388608.0,  # -2**23 (all f32 below this are integers)
         -4503599627370495.5,  # -2**52 + 0.5 (last negative non-integer in f64)
         -4503599627370496.0,  # -2**52 (all f64 below this are even integers)
-        # Positive zero crossings where gamma(1) = gamma(2) = 1, plus offsets
-        # where (x - 1) and (x - 2) cross half-precision scale:
+        # Zeros at x = 1 and x = 2, plus points just beside them and at the
+        # CPU float32 Taylor window boundaries (|x - 1| <= 3/64, |x - 2| <= 3/64):
         1.0,
         2.0,
         1.0 - 2**-26,
         1.0 + 2**-26,
         2.0 - 2**-26,
         2.0 + 2**-26,
+        1.0 - 3.0 / 64.0,
+        1.0 + 3.0 / 64.0,
+        2.0 - 3.0 / 64.0,
+        2.0 + 3.0 / 64.0,
+        # Float32 inputs near float64->float32 midpoint ties or the -2.4570247 zero:
+        0.0038502016104757786,
+        1.0886335372924805,
+        1.6304548978805542,
+        6.990847948130907e33,
+        -1.5639554096225083e-09,
+        -2.457024574279785,
+        -2.744002342224121,
+        -2.9687294960021973,
+        -3.143528461456299,
         # Local minimum of gamma(x) on (0, inf), where digamma(x) = 0
         # (computed via mpmath.findroot(mpmath.digamma, 1.5)):
         1.4616321449683623,
         *neg_roots,
         *neg_root_boundaries,
-        # Polynomial and recurrence-to-asymptotic switch thresholds:
+        # Local minimum on (-3, -2) and nearby negative test points:
+        -2.70703125,
+        -2.634361,
+        -2.6107208684441446,
+        -2.5234375,
+        -3.7606792,
+        -6.00337,
+        # Interval boundaries between polynomial approximations and Stirling's
+        # series:
+        0.5,
+        0.75,
+        1.5,
+        1.75,
         2.5,
+        2.75,
         3.0,
         4.0,
         5.0,
@@ -290,10 +341,12 @@ class LgammaTest(jtu.JaxTestCase):
         7.0,
         8.0,
         10.0,
+        8388607.5,  # 2**23 - 0.5 (largest positive non-integer in f32)
         # Overflow thresholds where lgamma(x) == finfo.max, computed via
         # mpmath.findroot(lambda x: mpmath.loggamma(x) - finfo.max, x0), plus
-        # values just below the float64 overflow boundary:
-        2.556348e36,  # float32 overflow threshold
+        # values just below the float32 and float64 overflow boundaries:
+        2.556348e36,
+        4.085003e36,  # largest float32 with finite lgamma
         2.556348163871691e305,  # finite in float64, just above 2.556348e305
         2.559983327851638e305,  # float64 overflow threshold
         # Worst-case inputs across math libraries from Gladman et al.,
