@@ -25,7 +25,7 @@ def algdiv(a: ArrayLike, b: ArrayLike) -> Array:
     c5 = -0.165322962780713e-02
     h = a / b
     c = h / (1 + h)
-    x = h / (1 + h)
+    x = 1.0 / (1.0 + h)
     d = b + (a - 0.5)
     # Set sN = (1 - x**n)/(1 - x)
     x2 = x * x
@@ -40,9 +40,18 @@ def algdiv(a: ArrayLike, b: ArrayLike) -> Array:
     w = ((((c5 * s11 * t + c4 * s9) * t + c3 * s7) * t + c2 * s5) * t + c1 * s3) * t + c0
     w = w * (c / b)
     # Combine the results
-    u = d * lax.log1p(a / b)
-    v = a * (lax.log(b) - 1.0)
+    b_is_inf = jnp.isinf(b)
+    d_safe = jnp.where(b_is_inf, 0.0, d)
+    a_safe = jnp.where(b_is_inf & (a == 0.0), 1.0, a)
+    u = jnp.where(b_is_inf, a, d_safe * lax.log1p(a / b))
+    v = jnp.where(b_is_inf & (a == 0.0), 0.0, a_safe * (lax.log(b) - 1.0))
     return jnp.where(u <= v, (w - v) - u, (w - u) - v)
+
+
+def _is_integer(x: Array) -> Array:
+    # Mask non-finite inputs so lax.rem(inf, 1.0) does not produce NaN.
+    x_safe = jnp.where(jnp.isfinite(x), x, 0.5)
+    return lax.rem(x_safe, lax.full_like(x_safe, 1.0, shape=())) == 0
 
 
 def betaln(a: ArrayLike, b: ArrayLike) -> Array:
@@ -63,7 +72,26 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     # with higher-order derivatives.
     new_a = jnp.where(a <= b, a, b)
     new_b = jnp.where(a <= b, b, a)
+    # Apply reflection B(a, b) = (-1)**b B(1 - a - b, b) when new_a is a
+    # negative integer, new_b is a positive integer, and new_a + new_b <= 0.
+    is_neg_int_a = (new_a < 0) & _is_integer(new_a)
+    is_pos_int_b = (new_b > 0) & _is_integer(new_b)
+    reflect = is_neg_int_a & is_pos_int_b & (new_a <= -new_b)
+    reflected_a = (
+        1.0 - jnp.where(reflect, new_a, 0.0) - jnp.where(reflect, new_b, 1.0)
+    )
+    new_a = jnp.where(reflect, reflected_a, new_a)
+    swap = reflect & (new_a > new_b)
+    new_a, new_b = jnp.where(swap, new_b, new_a), jnp.where(swap, new_a, new_b)
+    is_small_b = (new_b < 8) | (new_a < 8 - new_b)
+    is_nonpos_int_a = (new_a <= 0) & _is_integer(new_a)
+    is_nonpos_int_b = (new_b <= 0) & _is_integer(new_b)
+    use_small = is_small_b & ~(is_nonpos_int_a & is_nonpos_int_b)
+    a_small = jnp.where(use_small, new_a, 1.0)
+    b_small = jnp.where(use_small, new_b, 1.0)
+    a_large = jnp.where(is_small_b, 1.0, new_a)
+    b_large = jnp.where(is_small_b, 8.0, new_b)
     lgamma_a = lax.lgamma(new_a)
-    small_b = lgamma_a + (lax.lgamma(new_b) - lax.lgamma(new_a + new_b))
-    large_b = lgamma_a + algdiv(new_a, new_b)
-    return jnp.where(new_b < 8, small_b, large_b)
+    small_b = lgamma_a + (lax.lgamma(b_small) - lax.lgamma(a_small + b_small))
+    large_b = lgamma_a + algdiv(a_large, b_large)
+    return jnp.where(is_small_b, small_b, large_b)
