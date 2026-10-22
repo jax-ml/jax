@@ -619,6 +619,7 @@ pytype_strict_library(
         ":config",
         ":core",
         ":custom_api_util",
+        ":deprecations",
         ":dtypes",
         ":effects",
         ":flattree",
