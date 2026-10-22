@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import math
 import string
-from typing import Any, Literal, TYPE_CHECKING, cast
+from typing import Any, Literal, NamedTuple, TYPE_CHECKING, cast
 
 import jax
 from jax import api_util
@@ -62,9 +62,9 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas.fuser import custom_fusion_lib
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
+from jax._src.pallas.fuser import custom_fusion_lib
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import error_handling
 from jax._src.pallas.mosaic import primitives as tpu_primitives
@@ -410,13 +410,13 @@ def _physical_aval(aval: ShapedAbstractValue) -> ShapedAbstractValue:
   return cast(ShapedAbstractValue, jax_core.physical_aval(aval))
 
 
-@dataclasses.dataclass(frozen=True)
-class PallasLoweringCacheKey:
+class PallasLoweringCacheKey(NamedTuple):
   """Key used when caching the lowering of an equation."""
+
   primitive: jax_core.Primitive
   kernel_type: tpu_core.CoreType
-  avals_in: tuple[ShapedAbstractValue, ...]
-  avals_out: tuple[ShapedAbstractValue, ...]
+  avals_in: tuple[jax_core.AbstractValue, ...]
+  avals_out: tuple[jax_core.AbstractValue, ...]
   params: tuple[tuple[str, Hashable], ...]
   block_shapes: tuple[tuple[int | pallas_core.Squeezed, ...] | None, ...]
   grid_arity: int
@@ -514,6 +514,7 @@ class LoweringRuleContext:
   avals_in: Sequence[ShapedAbstractValue]
   avals_out: Sequence[ShapedAbstractValue]
   block_shapes: Sequence[tuple[int | pallas_core.Squeezed, ...] | None]
+  jaxpr_eqn_ctx: jax_core.JaxprEqnContext | None = None
 
   replace = dataclasses.replace
 
@@ -1715,9 +1716,16 @@ def lower_fun(
         static_argnames=tuple(params.keys())
     )
 
-    closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
-        fun, in_avals_ft, debug_info, requires_low=True
-    )
+    # Tracing reads the configuration of the equation being lowered, e.g.
+    # jax_threefry_partitionable for random_bits.
+    with (
+        ctx.jaxpr_eqn_ctx.manager
+        if ctx.jaxpr_eqn_ctx is not None
+        else contextlib.nullcontext()
+    ):
+      closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+          fun, in_avals_ft, debug_info, requires_low=True
+      )
 
     if closed_jaxpr.consts:
       raise NotImplementedError("lower_fun should not capture constvars")
@@ -1758,6 +1766,26 @@ def _compute_name_stack_updates(
   return old_name_stack[common_prefix_idx:], new_name_stack[common_prefix_idx:]
 
 
+def _can_cache_lowering(
+    primitive: jax_core.Primitive,
+    invals: Sequence[Any],
+    avals_out: Sequence[jax_core.AbstractValue],
+) -> bool:
+  if primitive in _uncacheable_primitives:
+    return False
+  # Loops, since generator expressions cost more for these short sequences.
+  # TODO(phawkins): allow KeyScalarBundle/AccRef here as well as ir.Value.
+  for x in invals:
+    if not isinstance(x, ir.Value):
+      return False
+  for aval in avals_out:
+    if isinstance(aval, state.AbstractRef) and isinstance(
+        aval.memory_space, tpu_core.AccMemorySpace
+    ):
+      return False
+  return True
+
+
 def jaxpr_subcomp(
     ctx: LoweringContext, jaxpr: jax_core.Jaxpr, *args: ir.Value | AccRef
 ) -> list[ir.Value]:
@@ -1791,49 +1819,42 @@ def jaxpr_subcomp(
   current_name_stack: list[str] = []
   # TODO(justinfu): Handle transform scopes.
   current_name_stack.extend(initial_name_stack)
+  locations = mlir.EqnLocations(ctx, ctx.name_stack)
+  last_name_stack = None
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
-    eqn_name_stack = ctx.name_stack + eqn.source_info.name_stack
-    loc = mlir.source_info_to_location(
-        ctx, eqn.primitive, eqn_name_stack, eqn.source_info.traceback
-    )
-    with (source_info_util.user_context(eqn.source_info.traceback), loc,
-          eqn.ctx.manager):
+    loc = locations.location(eqn.primitive, eqn.source_info)
+    with source_info_util.user_context(eqn.source_info.traceback), loc:
       if eqn.primitive in lowering_rules[ctx.kernel_type]:
         if (eqn.primitive, ctx.kernel_type) not in skip_mlir_conversions:
           invals = [
               _ensure_valid_argument(x, cast(ShapedAbstractValue, v.aval))
               for x, v in zip(invals, eqn.invars)
           ]
-        avals_in = cast(tuple[ShapedAbstractValue, ...],
-                        tuple(v.aval for v in eqn.invars))
-        avals_out = cast(tuple[ShapedAbstractValue, ...],
-                         tuple(v.aval for v in eqn.outvars))
-        block_shapes = tuple(read_block_shape(x) for x in eqn.invars)
+        # List comprehensions cost less than generator expressions here.
+        avals_in = tuple([v.aval for v in eqn.invars])
+        avals_out = tuple([v.aval for v in eqn.outvars])
+        block_shapes = tuple([read_block_shape(x) for x in eqn.invars])
 
         # Insert trace_start and trace_stop ops on named_scope boundaries.
-        name_stack = [scope.name for scope in eqn_name_stack.stack]
-        popped, pushed = _compute_name_stack_updates(
-            current_name_stack, name_stack)
-        current_name_stack = name_stack
-        for _ in popped:
-          tpu.trace_stop()
-        for name in pushed:
-          tpu.trace_start(message=name, level=10)
+        if eqn.source_info.name_stack is not last_name_stack:
+          last_name_stack = eqn.source_info.name_stack
+          eqn_name_stack = locations.name_stack(eqn.source_info)
+          name_stack = [scope.name for scope in eqn_name_stack.stack]
+          popped, pushed = _compute_name_stack_updates(
+              current_name_stack, name_stack
+          )
+          current_name_stack = name_stack
+          for _ in popped:
+            tpu.trace_stop()
+          for name in pushed:
+            tpu.trace_start(message=name, level=10)
 
         cache_entry = None
         cache_key = None
         rule_context = None
 
-        def is_acc_aval(aval):
-          return (
-              isinstance(aval, state.AbstractRef) and
-              isinstance(aval.memory_space, tpu_core.AccMemorySpace)
-          )
-        # TODO(phawkins): allow KeyScalarBundle/AccRef here as well as ir.Value.
-        can_cache = (eqn.primitive not in _uncacheable_primitives and
-                     all(isinstance(x, ir.Value) for x in invals) and
-                     not any(is_acc_aval(o) for o in avals_out))
+        can_cache = _can_cache_lowering(eqn.primitive, invals, avals_out)
         if can_cache:
           grid_arity = (
               len(ctx.user_grid_indices)
@@ -1866,6 +1887,7 @@ def jaxpr_subcomp(
               cast(Sequence[ShapedAbstractValue], avals_in),
               cast(Sequence[ShapedAbstractValue], avals_out),
               block_shapes,
+              eqn.ctx,
           )
           if cache_key is not None:
             try:
@@ -1875,8 +1897,7 @@ def jaxpr_subcomp(
                   rule_context, cast(list[ir.Value], invals), **eqn.params
               )
               if ctx.dynamic_shape_env is not None:
-                cache_key = dataclasses.replace(
-                    cache_key,
+                cache_key = cache_key._replace(
                     dynamic_shape_env=ctx.dynamic_shape_env.snapshot(),
                 )
               ctx.lowering_cache[cache_key] = cache_entry
@@ -1887,7 +1908,6 @@ def jaxpr_subcomp(
           call_args = []
           if eqn.primitive in _primitives_needing_grid and ctx.user_grid_indices is not None:
             call_args.extend(ctx.user_grid_indices)
-          assert all(isinstance(x, ir.Value) for x in invals)
           call_args.extend(invals)  # pyrefly: ignore[bad-argument-type]
           outs = jax_mlir_ext.inlined_func_call(
             cache_entry.operation, call_args)
@@ -4541,8 +4561,7 @@ def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, *args):
     )
   pred_aval, x_aval = ctx.avals_in[:2]
   if pred_aval.dtype != np.dtype(np.bool_):
-    lower_ctx = LoweringRuleContext(
-        ctx.lowering_context,
+    lower_ctx = ctx.replace(
         avals_in=[pred_aval],
         avals_out=[pred_aval.update(dtype=np.bool_)],
         block_shapes=[None],
@@ -5023,6 +5042,21 @@ def _debug_callback_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
   del ctx, args, kwargs
   # No-op debug callbacks in Mosaic for now
   return []
+
+
+# Equation parameters that the lowering rules above never read. They hold
+# callables created anew at every trace, so caches of lowered kernels must not
+# key on them. Keep this in sync with the rules.
+params_ignored_by_lowering: dict[jax_core.Primitive, frozenset[str]] = {
+    custom_fusion_lib.custom_fusion_p: frozenset(
+        {"eval_rule", "pull_block_spec_rule", "push_block_spec_rule"}
+    ),
+    custom_derivatives.custom_jvp_call_p: frozenset({"jvp_jaxpr_fun"}),
+    custom_derivatives.custom_vjp_call_p: frozenset(
+        {"fwd_jaxpr_thunk", "out_trees", "bwd"}
+    ),
+    debugging.debug_callback_p: frozenset({"callback"}),
+}
 
 
 @register_lowering_rule(
