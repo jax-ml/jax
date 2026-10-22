@@ -29,10 +29,10 @@ value to log the closed-over constants of at least that size during lowering
 of a function.
 
 We describe below the **future** internal implementation details for
-constants. As of April 2026, this is not yet the default implementation;
+constants. As of October 2026, this is not yet the default implementation;
 it is enabled by the environment variable `JAX_USE_SIMPLIFIED_JAXPR_CONSTANTS=True`.
-See further [below](#previous-implementation) for the details of the previous
-implementation, including its drawbacks.
+See further [below](#previous-implementation-and-migration-hints)
+for the details of the previous implementation, including its drawbacks.
 
 ## Tracing
 
@@ -177,24 +177,29 @@ use different values of the `jax_enable_x64` configuration value.
 If the constants are 64-bit `ndarray` we must use the same value
 of `jax_enable_x64` for lowering and execution.
 
-## Previous implementation
+## Previous implementation and migration hints
 
 This describes the current way we handle closed-over constants, as
 of October 2026 (as long as `JAX_USE_SIMPLIFIED_JAXPR_CONSTANTS=False`).
 
-Previously, JAX experimented with inlining closed-over arrays into `Jaxpr`
-equations as `core.Literal` during tracing (`JAX_USE_SIMPLIFIED_JAXPR_CONSTANTS=True`).
-However, representing non-scalar arrays as `core.Literal` caused several issues across the ecosystem:
-  * Non-scalar arrays are unhashable, causing `TypeError: unhashable type: 'Literal'`
-    in graph-walking libraries (e.g. `jax_verify`, `kfac_jax`) that store equation
-    invars in sets or dictionaries.
-  * Pallas Mosaic lowering assumed `Literal`s are 0D scalars and called `int(x)` / `float(x)`,
-    crashing on array literals.
-  * Pallas Fuser expected shape/stride constants in `jaxpr.constvars` and crashed on empty constvars.
-  * `ClosedJaxpr.consts` was left empty during tracing, breaking VJP residual PyTree leaves
-    and `Traced.closure_convert()`.
+Previously, JAX did not hoist closed-over constants as separate arguments.
+Instead, they were inlined directly in the HLO code as `stablehlo.constant`
+operations. The disadvantages are listed [above](#lowering).
 
-Under the new design, tracing preserves constants in
-`Jaxpr.consts` and `Jaxpr.constvars`, maintaining all existing tracing invariants.
-Constants are then hoisted to leading executable arguments (`const_args`) and MLIR
-entry block arguments purely during lowering in `pxla` and `mlir`.
+Turning on `JAX_USE_SIMPLIFIED_JAXPR_CONSTANTS=True` can have visible effects
+on the behavior of your code. If your code uses internal functions for
+the lowering and execution paths, you will have to update your code as
+described above in [lowering](#lowering) and
+[compilation and execution](#compilation-and-execution).
+
+If your code closes over constants you may notice that your executables are
+smaller now but they take additional arguments. If your code closed over
+`jax.Array` constants you will notice that your code does fewer copies to
+bring those constants to the host during lowering.
+
+If your code closes over `jax.Array` constants that are committed to devices,
+you may get an error "Received incompatible devices for jitted computation".
+This can happen because now those constants become arguments and JAX checks
+that all arguments have a consistent device assignment. The solution is to
+either not close over these constants or explicitly bring them to the host
+or reshard them with a compatible device assignment before closing over them.
