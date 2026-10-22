@@ -3240,6 +3240,10 @@ def sph_harm_y(n: Array,
 
 def _expint1(x: Array) -> Array:
   # 0 < x <= 2
+  # jnp.piecewise evaluates every branch, so bound x to a safe domain.
+  x = jnp.where(
+      (x < _lax_const(x, 0.0)) | jnp.isinf(x), _lax_const(x, 1.0), x
+  )
   A = np.array([
     -5.350447357812542947283e0,
     2.185049168816613393830e2,
@@ -3263,7 +3267,9 @@ def _expint1(x: Array) -> Array:
 
 def _eval_expint_k(A: ArrayLike, B: ArrayLike, x: Array) -> Array:
   # helper function for all subsequent intervals
+  # jnp.piecewise evaluates every branch, so bound x to a safe domain.
   one = _lax_const(x, 1.0)
+  x = jnp.where((x <= _lax_const(x, 0.0)) | jnp.isinf(x), one, x)
   w = one / x
   f = jnp.polyval(A, w) / jnp.polyval(B, w)
   f = w * f + one
@@ -3428,18 +3434,30 @@ def _expint7(x):
 def _expi_pos(x: Array) -> Array:
   # x >= 0
   _c = _lax_const
-  conds = [(_c(x, 0) <= x) & (x <= _c(x, 2))] + [
-    (_c(x, 2 ** i) < x) & (x <= _c(x, 2 ** (i + 1))) for i in range(1, 6)
-  ]
+  conds = (
+      [(_c(x, 0) <= x) & (x <= _c(x, 2))]
+      + [(_c(x, 2**i) < x) & (x <= _c(x, 2 ** (i + 1))) for i in range(1, 6)]
+      + [jnp.isposinf(x)]
+  )
   return jnp.piecewise(
-    x,
-    conds,
-    [_expint1, _expint2, _expint3, _expint4, _expint5, _expint6, _expint7],
+      x,
+      conds,
+      [
+          _expint1,
+          _expint2,
+          _expint3,
+          _expint4,
+          _expint5,
+          _expint6,
+          np.inf,
+          _expint7,
+      ],
   )
 
 def _expi_neg(x: Array) -> Array:
   # x < 0
-  return -exp1(-x)
+  # jnp.piecewise evaluates every branch, so bound x to a safe domain.
+  return -exp1(jnp.where(x >= _lax_const(x, 0.0), _lax_const(x, 1.0), -x))
 
 @custom_derivatives.custom_jvp
 @jit
