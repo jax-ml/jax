@@ -1948,7 +1948,7 @@ def _poisson_log_pmf(k, lam):
   # For large lam, evaluating -lam + k * log(lam) - lgamma(k + 1)
   # directly loses all useful digits in float32.  Rewrite the same quantity
   # around k ~= lam and use the Stirling correction already used by BTRS.
-  safe_k = jnp.maximum(k, lax._const(k, 1.0))
+  safe_k = jnp.maximum(k, 1.0)
   delta = safe_k - lam
   relative_delta = delta / safe_k
   # log1p(-t) + t is O(t**2): separately computing
@@ -1956,17 +1956,17 @@ def _poisson_log_pmf(k, lam):
   # For |t| <= 0.01 use -k * sum(t**n / n, n=2..8); the absolute
   # series remainder is bounded by k * |t|**9 / (9 * (1 - |t|)).
   # Mask the polynomial argument to prevent overflow in unselected tails.
-  small_delta = jnp.abs(relative_delta) <= lax._const(k, 0.01)
-  t = jnp.where(small_delta, relative_delta, lax._const(k, 0.0))
+  small_delta = jnp.abs(relative_delta) <= 0.01
+  t = jnp.where(small_delta, relative_delta, 0.0)
   series = ((((((t / 8 + 1 / 7) * t + 1 / 6) * t + 1 / 5)
               * t + 1 / 4) * t + 1 / 3) * t + 1 / 2)
   central_deviance = -safe_k * (t * t) * series
   # For the far-tail path, log1p(-relative_delta) can hit log(0)
   # even though the result is discarded. Autodiff through an inactive
   # singular branch can produce NaN gradients for tiny positive rates.
-  use_far_tail = lam / safe_k < lax._const(k, 0.5)
+  use_far_tail = lam / safe_k < 0.5
   regular_relative_delta = jnp.where(
-      use_far_tail, lax._const(k, 0.0), relative_delta)
+      use_far_tail, 0.0, relative_delta)
   regular_deviance = safe_k * lax.log1p(-regular_relative_delta) + delta
   deviance = jnp.where(small_delta, central_deviance, regular_deviance)
   # Keep the large-k correction local to Poisson rather than changing the
@@ -1977,8 +1977,8 @@ def _poisson_log_pmf(k, lam):
       - (1.0 / 360 - 1.0 / 1260 / stirling_k_sq) / stirling_k_sq
   ) / safe_k
   stirling_tail = jnp.where(
-      safe_k <= lax._const(k, 10.0),
-      _stirling_approx_tail(safe_k - lax._const(k, 1.0)),
+      safe_k <= 10.0,
+      _stirling_approx_tail(safe_k - 1.0),
       asymptotic_stirling_tail,
   )
   # Log each factor separately: 2*pi*k can overflow float32 for
@@ -1994,10 +1994,10 @@ def _poisson_log_pmf(k, lam):
   # when lam/k underflows. This also serves the public poisson.logpmf API.
   # k=0 is handled exactly. Mask the inactive log-rate branch so its
   # derivative remains -1 at lam=0.
-  safe_rate_for_log = jnp.where(k == 0, lax._const(k, 1.0), lam)
+  safe_rate_for_log = jnp.where(k == 0, 1.0, lam)
   rate_ratio = safe_rate_for_log / safe_k
-  positive_ratio = rate_ratio > lax._const(k, 0.0)
-  safe_ratio = jnp.where(positive_ratio, rate_ratio, lax._const(k, 1.0))
+  positive_ratio = rate_ratio > 0.0
+  safe_ratio = jnp.where(positive_ratio, rate_ratio, 1.0)
   log_ratio = jnp.where(
       positive_ratio, lax.log(safe_ratio),
       lax.log(safe_rate_for_log) - lax.log(safe_k))
@@ -2006,7 +2006,7 @@ def _poisson_log_pmf(k, lam):
   result = jnp.where(k == 0, -lam, log_pmf)
   # An invalid negative rate must not produce a positive log-probability
   # at k=0; follow the public SciPy distribution's domain semantics.
-  return jnp.where(lam < lax._const(k, 0.0), jnp.nan, result)
+  return jnp.where(lam < 0.0, jnp.nan, result)
 
 
 @jit(static_argnums=(2, 3, 4))
