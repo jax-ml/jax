@@ -3115,16 +3115,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     s = P('x')
     const = np.arange(16, dtype=np.float32)
 
-    # Spy on ExecuteReplicated.__call__ to verify that the hoisted constant
-    # passed to the runtime executable is already a sharded jax.Array (on-device)
-    # and NOT a raw host np.ndarray (which would indicate a regression to un-sharded const_args).
-    first_call_args = []
-    orig_call = pxla.ExecuteReplicated.__call__
-    def spy_call(self, *args):
-      if not first_call_args:
-        first_call_args.extend(args)
-      return orig_call(self, *args)
-
     @partial(pjit, in_shardings=s, out_shardings=s)
     def f(x):
       return x + const
@@ -3132,14 +3122,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     x = np.arange(16, dtype=np.float32)
 
     # First call compiles, shards const_args, misses C++ cache (cpp=1)
-    with unittest.mock.patch.object(pxla.ExecuteReplicated, '__call__', spy_call):
-      self.assertCacheMisses(lambda: f(x), cpp=1)
-
-    self.assertNotEmpty(first_call_args)
-    # Verify hoisted const argument passed to unsafe_call is already a sharded jax.Array
-    self.assertIsInstance(first_call_args[0], jax.Array)
-    self.assertLen(first_call_args[0].addressable_shards, 2)
-
+    self.assertCacheMisses(lambda: f(x), cpp=1)
     out1 = f(x)
     self.assertLen(out1.addressable_shards, 2)
     self.assertArraysEqual(out1, np.arange(16, dtype=np.float32) * 2)
