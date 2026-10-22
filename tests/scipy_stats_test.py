@@ -212,41 +212,52 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     np.testing.assert_allclose(actual, expected, rtol=0.0, atol=128.0)
     np.testing.assert_allclose(compiled, expected, rtol=0.0, atol=128.0)
 
-  def testPoissonLogPmfPublicApiTinyRateAutodiff(self):
-    # A correct PMF value can conceal NaN reverse-mode derivatives if
-    # an unselected numerical branch evaluates log(0) or log1p(-1).
-    for mu in [0.0, 1e-12, 1e-8]:
-      for k in [0.0, 1.0, 2.0]:
-        rate = jnp.float32(mu)
-        fun = lambda r: lsp_stats.poisson.logpmf(jnp.float32(k), r)
-        expected = osp_stats.poisson.logpmf(k, mu)
-        actual = np.asarray(fun(rate))
-        self.assertAllClose(actual, expected, check_dtypes=False,
-                            rtol=2e-6, atol=2e-5)
-        if mu == 0.0 and k > 0:
-          self.assertTrue(np.isneginf(actual))
-          continue
-        correct_grad = np.float32(-1.0 if k == 0 else k / mu - 1.0)
-        eager = np.asarray(jax.grad(fun)(rate))
-        compiled = np.asarray(jax.jit(jax.grad(fun))(rate))
-        self.assertTrue(np.isfinite(eager))
-        np.testing.assert_allclose(eager, correct_grad, rtol=3e-5)
-        np.testing.assert_allclose(compiled, correct_grad, rtol=3e-5)
+  @jtu.sample_product(mu=[0.0, 1e-12, 1e-8], k=[0.0, 1.0, 2.0])
+  def testPoissonLogPmfPublicApiTinyRateAutodiff(self, mu, k):
+    # Parameterize independent inputs, so every failure identifies a case.
+    rate = jnp.float32(mu)
+    fun = lambda r: lsp_stats.poisson.logpmf(jnp.float32(k), r)
+    expected = osp_stats.poisson.logpmf(k, mu)
+    actual = np.asarray(fun(rate))
+    self.assertAllClose(actual, expected, check_dtypes=False,
+                        rtol=2e-6, atol=2e-5)
+    if mu == 0.0 and k > 0:
+      self.assertTrue(np.isneginf(actual))
+      return
+    correct_grad = np.float32(-1.0 if k == 0 else k / mu - 1.0)
+    eager = np.asarray(jax.grad(fun)(rate))
+    compiled = np.asarray(jax.jit(jax.grad(fun))(rate))
+    self.assertTrue(np.isfinite(eager))
+    np.testing.assert_allclose(eager, correct_grad, rtol=3e-5)
+    np.testing.assert_allclose(compiled, correct_grad, rtol=3e-5)
 
-    # Negative Poisson rates are outside the probability model's domain.
+  def testPoissonLogPmfNegativeRate(self):
     self.assertTrue(np.isnan(np.asarray(
         lsp_stats.poisson.logpmf(jnp.float32(0.0), jnp.float32(-1.0)))))
 
-  def testPoissonLogPmfTinyRateSecondDerivative(self):
-    # The masked inactive branches must not contaminate higher-order AD.
-    for count, rate in [(0.0, 0.0), (1.0, 1e-8), (2.0, 1e-5)]:
-      f = lambda mu: lsp_stats.poisson.logpmf(jnp.float32(count), mu)
-      mu = jnp.float32(rate)
-      hessian = np.asarray(jax.jit(jax.grad(jax.grad(f)))(mu))
-      expected = np.float32(
-          0.0 if count == 0.0 else -count / (rate * rate))
-      self.assertTrue(np.isfinite(hessian))
-      np.testing.assert_allclose(hessian, expected, rtol=3e-5)
+  @jtu.sample_product(count_rate=[(0.0, 0.0), (1.0, 1e-8), (2.0, 1e-5)])
+  def testPoissonLogPmfTinyRateSecondDerivative(self, count_rate):
+    count, rate = count_rate
+    fun = lambda mu: lsp_stats.poisson.logpmf(jnp.float32(count), mu)
+    mu = jnp.float32(rate)
+    hessian = np.asarray(jax.jit(jax.grad(jax.grad(fun)))(mu))
+    expected = np.float32(
+        0.0 if count == 0.0 else -count / (rate * rate))
+    self.assertTrue(np.isfinite(hessian))
+    np.testing.assert_allclose(hessian, expected, rtol=3e-5)
+
+  def testPoissonLogPmfCentralNearFloat32Maximum(self):
+    # The normalizer must avoid 2*pi*k overflow at finite float32 k.
+    mu = jnp.array([1e36, 1e37, 1e38], dtype=jnp.float32)
+    expected = -0.5 * (
+        np.log(2 * np.pi) + np.log(np.asarray(mu, dtype=np.float64)))
+    public = np.asarray(lsp_stats.poisson.logpmf(mu, mu))
+    compiled = np.asarray(jax.jit(lsp_stats.poisson.logpmf)(mu, mu))
+    self.assertTrue(np.isfinite(public).all())
+    self.assertAllClose(public, expected, rtol=1e-6, atol=2e-5,
+                        check_dtypes=False)
+    self.assertAllClose(compiled, expected, rtol=1e-6, atol=2e-5,
+                        check_dtypes=False)
 
   @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testPoissonLogPmfTinyRateFarTail(self, dtype):
