@@ -4982,6 +4982,21 @@ def _debug_callback_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
   return []
 
 
+# Equation parameters that the lowering rules above never read. They hold
+# callables created anew at every trace, so caches of lowered kernels must not
+# key on them. Keep this in sync with the rules.
+params_ignored_by_lowering: dict[jax_core.Primitive, frozenset[str]] = {
+    custom_fusion_lib.custom_fusion_p: frozenset(
+        {"eval_rule", "pull_block_spec_rule", "push_block_spec_rule"}
+    ),
+    custom_derivatives.custom_jvp_call_p: frozenset({"jvp_jaxpr_fun"}),
+    custom_derivatives.custom_vjp_call_p: frozenset(
+        {"fwd_jaxpr_thunk", "out_trees", "bwd"}
+    ),
+    debugging.debug_callback_p: frozenset({"callback"}),
+}
+
+
 @register_lowering_rule(
     primitives.program_id_p, kernel_types=[*tpu_core.CoreType]
 )

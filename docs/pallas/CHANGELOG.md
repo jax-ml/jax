@@ -13,6 +13,16 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+### Mosaic TPU
+
+* Changes
+
+  * Pallas TPU now lowers structurally identical kernels to Mosaic once per
+    process and reuses the serialized kernel, even when they are traced
+    separately at different call sites. The new `jax_pallas_tpu_lowering_cache_max_bytes`
+    configuration option bounds the size of this cache, and setting it to 0
+    disables it.
+
 ## Released with JAX 0.12.0 (October 19, 2026)
 
 * New features
