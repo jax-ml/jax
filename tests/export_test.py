@@ -356,6 +356,41 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(tree_util.tree_structure(res2),
                      tree_util.tree_structure(res))
 
+  def test_weak_type_serialization(self):
+    # Regression test for https://github.com/google/jax/issues/41007:
+    # serializing and deserializing an exported function must preserve the
+    # weak_type of the output avals. Otherwise, with x64 enabled, subsequent
+    # dtype promotion silently changes (e.g. float32 -> float64).
+    if not CAN_SERIALIZE: raise unittest.SkipTest("test requires flatbuffers")
+
+    @jax.jit
+    def f(x):
+      return x * 1.5 + 1.0
+
+    with config.enable_x64(True):
+      # The weak_type of the output avals must be identical before and after
+      # the serialization round-trip, for both weak and strong outputs.
+      for x in (0., np.float32(0.)):
+        exp = export.export(f)(x)
+        exp2 = export.deserialize(exp.serialize())
+        self.assertEqual(exp2.out_avals[0].weak_type,
+                         exp.out_avals[0].weak_type)
+        # The dtype promotion behavior must be identical before and after
+        # the serialization round-trip.
+        self.assertEqual((exp.call(x) + jnp.float32(1.)).dtype,
+                         (exp2.call(x) + jnp.float32(1.)).dtype)
+
+      # The repro from the issue: a weakly-typed output must stay weak.
+      exp = export.export(f)(0.)
+      self.assertTrue(exp.out_avals[0].weak_type)
+      self.assertTrue(export.deserialize(exp.serialize()).out_avals[0].weak_type)
+
+      # Strongly-typed outputs must also round-trip unchanged.
+      exp_strong = export.export(jax.jit(lambda x: x + np.float32(1.)))(np.float32(0.))
+      self.assertFalse(exp_strong.out_avals[0].weak_type)
+      exp_strong2 = export.deserialize(exp_strong.serialize())
+      self.assertFalse(exp_strong2.out_avals[0].weak_type)
+
   def test_pytree_namedtuple_error(self):
     if not CAN_SERIALIZE: raise unittest.SkipTest("test requires flatbuffers")
     T = collections.namedtuple("SomeType", ("a", "b"))
