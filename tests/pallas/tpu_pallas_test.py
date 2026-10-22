@@ -53,8 +53,10 @@ from jax.experimental import pallas as pl
 from jax.experimental.layout import Layout
 from jax.experimental.layout import with_layout_constraint
 from jax.experimental.mosaic.dialects import tpu
+from jax.experimental.pallas import fuser
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import example_kernel
+from jax.experimental.xla_metadata import set_xla_metadata
 import jax.numpy as jnp
 import numpy as np
 
@@ -2278,15 +2280,22 @@ class PallasCallTest(ptu.PallasTPUTest):
       def on_true():
         y_ref[...] = x_ref[...]
 
+    lower_module = mosaic_lowering.lower_jaxpr_to_pipelined_module
+    modules = []
+
+    def lower_and_record_module(*args, **kwargs):
+      modules.append(lower_module(*args, **kwargs))
+      return modules[-1]
+
+    jax.clear_caches()  # Lowered kernels are cached across lowerings.
     with mock.patch.object(
-        mosaic,
-        'lower_module_to_custom_call',
-        wraps=mosaic.lower_module_to_custom_call,
-    ) as mock_lower:
+        mosaic_lowering,
+        'lower_jaxpr_to_pipelined_module',
+        lower_and_record_module,
+    ):
       jax.jit(kernel).lower(jax.ShapeDtypeStruct((8, 128), jnp.float32))
 
-    mock_lower.assert_called_once()
-    module = mock_lower.call_args.kwargs['module']
+    (module,) = modules
     self.assertRegex(
         str(module),
         r'(?s)%(?P<ext>\d+) = arith\.extui %\d+ : i1 to i32.*'
@@ -6212,6 +6221,240 @@ class PallasHloNamesTest(ptu.PallasTPUTest):
     self.assertRegex(
         hlo, r'%add[.\d]*\.foo_ref_bar__y__[.\d]* = .* add'
     )
+
+
+def _add_kernel(c):
+  def kernel(x_ref, o_ref):
+    o_ref[...] = x_ref[...] + c
+
+  return kernel
+
+
+def _tpu_custom_call_configs(lowered: jax.stages.Lowered) -> list[dict]:
+  configs = []
+
+  def visit(op):
+    if (
+        'call_target_name' in op.attributes
+        and ir.StringAttr(op.attributes['call_target_name']).value
+        == 'tpu_custom_call'
+    ):
+      backend_config = ir.StringAttr(op.attributes['backend_config']).value
+      configs.append(json.loads(backend_config)['custom_call_config'])
+    for region in op.regions:
+      for block in region:
+        for nested_op in block:
+          visit(nested_op)
+
+  visit(lowered.compiler_ir().operation)
+  return configs
+
+
+# Counts lowerings in a process wide cache.
+@jtu.thread_unsafe_test_class()
+class MosaicLoweringCacheTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    jax.clear_caches()
+    self.enter_context(
+        mock.patch.object(
+            mosaic_lowering,
+            'lower_jaxpr_to_pipelined_module',
+            wraps=mosaic_lowering.lower_jaxpr_to_pipelined_module,
+        )
+    )
+
+  def num_kernel_lowerings(self) -> int:
+    return mosaic_lowering.lower_jaxpr_to_pipelined_module.call_count
+
+  def lower(self, f) -> jax.stages.Lowered:
+    x = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    return jax.jit(f).trace(x).lower(lowering_platforms=('tpu',))
+
+  def two_kernels(self, c0, c1):
+    def f(x):
+      out_shape = jax.ShapeDtypeStruct.like(x)
+      y = pl.pallas_call(_add_kernel(c0), out_shape=out_shape)(x)
+      return pl.pallas_call(_add_kernel(c1), out_shape=out_shape)(y)
+
+    return f
+
+  def test_identical_kernels_traced_separately_are_lowered_once(self):
+    configs = _tpu_custom_call_configs(self.lower(self.two_kernels(1.0, 1.0)))
+    self.assertEqual(self.num_kernel_lowerings(), 1)
+    self.assertLen(configs, 2)
+    self.assertEqual(configs[0], configs[1])
+
+  def test_lowering_is_reused_by_later_lowerings(self):
+    configs0 = _tpu_custom_call_configs(self.lower(self.two_kernels(1.0, 1.0)))
+    configs1 = _tpu_custom_call_configs(self.lower(self.two_kernels(1.0, 1.0)))
+    self.assertEqual(self.num_kernel_lowerings(), 1)
+    self.assertEqual(configs0, configs1)
+
+  @parameterized.parameters((1.0, 2.0), (0.0, -0.0))
+  def test_kernels_with_different_literals_are_lowered_separately(self, c0, c1):
+    configs = _tpu_custom_call_configs(self.lower(self.two_kernels(c0, c1)))
+    self.assertEqual(self.num_kernel_lowerings(), 2)
+    self.assertNotEqual(configs[0]['body'], configs[1]['body'])
+
+  def test_kernels_with_different_shapes_are_lowered_separately(self):
+    def f(x):
+      y = pl.pallas_call(
+          _add_kernel(1.0), out_shape=jax.ShapeDtypeStruct.like(x)
+      )(x)
+      z = y[:, :64]
+      return pl.pallas_call(
+          _add_kernel(1.0), out_shape=jax.ShapeDtypeStruct.like(z)
+      )(z)
+
+    configs = _tpu_custom_call_configs(self.lower(f))
+    self.assertEqual(self.num_kernel_lowerings(), 2)
+    self.assertNotEqual(configs[0]['body'], configs[1]['body'])
+
+  @config.jax_pallas_tpu_lowering_cache_max_bytes(0)
+  def test_disabled_cache_lowers_every_kernel(self):
+    configs = _tpu_custom_call_configs(self.lower(self.two_kernels(1.0, 1.0)))
+    self.assertEqual(self.num_kernel_lowerings(), 2)
+    self.assertEqual(configs[0]['body'], configs[1]['body'])
+
+  def test_xla_metadata_does_not_split_lowerings(self):
+    def f(x):
+      out_shape = jax.ShapeDtypeStruct.like(x)
+      with set_xla_metadata(stage='0'):
+        y = pl.pallas_call(_add_kernel(1.0), out_shape=out_shape)(x)
+      with set_xla_metadata(stage='1'):
+        return pl.pallas_call(_add_kernel(1.0), out_shape=out_shape)(y)
+
+    lowered = self.lower(f)
+    configs = _tpu_custom_call_configs(lowered)
+    self.assertEqual(self.num_kernel_lowerings(), 1)
+    self.assertEqual(configs[0], configs[1])
+    # Each custom call still carries the metadata of its own call site.
+    self.assertEqual(
+        re.findall(r'stage = "(\d)"', lowered.as_text()), ['0', '1']
+    )
+
+  def test_kernels_with_custom_fusions_are_lowered_once(self):
+    def make_kernel():
+      # Fuser rules are fresh closures at every trace, as in fused GMMs.
+      @fuser.custom_fusion
+      def double(x):
+        return 2 * x
+
+      double.def_eval_rule(lambda _, x: (2 * x,))
+      double.def_pull_block_spec(lambda transforms: transforms)
+
+      def kernel(x_ref, o_ref):
+        o_ref[...] = double(x_ref[...])
+
+      return kernel
+
+    def f(x):
+      out_shape = jax.ShapeDtypeStruct.like(x)
+      y = pl.pallas_call(make_kernel(), out_shape=out_shape)(x)
+      return pl.pallas_call(make_kernel(), out_shape=out_shape)(y)
+
+    configs = _tpu_custom_call_configs(self.lower(f))
+    self.assertEqual(self.num_kernel_lowerings(), 1)
+    self.assertEqual(configs[0], configs[1])
+
+  @config.use_emit_pipeline_primitive(True)
+  def test_kernels_with_pipelines_closing_over_values_are_lowered_once(self):
+    def make_kernel():
+      def kernel(x_hbm_ref, o_hbm_ref):
+        offset = pl.program_id(0).astype(jnp.float32)
+
+        def body(x_ref, o_ref):
+          o_ref[...] = x_ref[...] + offset
+
+        spec = pl.BlockSpec((8, 128), lambda i: (0, 0))
+        pltpu.emit_pipeline(body, grid=(1,), in_specs=[spec], out_specs=[spec])(
+            x_hbm_ref, o_hbm_ref
+        )
+
+      return kernel
+
+    def f(x):
+      def call(x):
+        return pl.pallas_call(
+            make_kernel(),
+            out_shape=jax.ShapeDtypeStruct.like(x),
+            grid=(1,),
+            in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+            out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        )(x)
+
+      return call(x), call(x)
+
+    tpu7x = jax.sharding.AbstractDevice(
+        device_kind='TPU7x', num_cores=1, platform='tpu'
+    )
+    with jax.sharding.use_abstract_mesh(
+        jax.sharding.AbstractMesh((), (), abstract_device=tpu7x)
+    ):
+      configs = _tpu_custom_call_configs(self.lower(f))
+    self.assertEqual(self.num_kernel_lowerings(), 1)
+    self.assertEqual(configs[0], configs[1])
+
+  def test_kernels_with_custom_derivatives_are_lowered_once(self):
+    @jax.custom_vjp
+    def double(x):
+      return 2 * x
+
+    double.defvjp(lambda x: (2 * x, None), lambda _, g: (2 * g,))
+
+    def make_kernel():
+      def kernel(x_ref, o_ref):
+        o_ref[...] = double(jax.nn.relu(x_ref[...]))
+
+      return kernel
+
+    def f(x):
+      out_shape = jax.ShapeDtypeStruct.like(x)
+      y = pl.pallas_call(make_kernel(), out_shape=out_shape)(x)
+      return pl.pallas_call(make_kernel(), out_shape=out_shape)(y)
+
+    configs = _tpu_custom_call_configs(self.lower(f))
+    self.assertEqual(self.num_kernel_lowerings(), 1)
+    self.assertEqual(configs[0], configs[1])
+
+  def kernels_on_different_lines(self):
+    def f(x):
+      out_shape = jax.ShapeDtypeStruct.like(x)
+      y = pl.pallas_call(_CacheKeyFoo.double, out_shape=out_shape)(x)
+      return pl.pallas_call(_CacheKeyBar.double, out_shape=out_shape)(y)
+
+    return f
+
+  def test_kernels_differing_in_source_lines_share_a_lowering(self):
+    configs = _tpu_custom_call_configs(
+        self.lower(self.kernels_on_different_lines())
+    )
+    self.assertEqual(self.num_kernel_lowerings(), 1)
+    self.assertEqual(configs[0], configs[1])
+
+  @config.compilation_cache_include_metadata_in_key(True)
+  def test_metadata_in_key_keeps_source_lines(self):
+    configs = _tpu_custom_call_configs(
+        self.lower(self.kernels_on_different_lines())
+    )
+    self.assertEqual(self.num_kernel_lowerings(), 2)
+    self.assertEqual(configs[0]['body'], configs[1]['body'])
+    if 'debug_locations' not in configs[0]:
+      self.skipTest('Mosaic does not unzip debug locations.')
+    self.assertNotEqual(
+        configs[0]['debug_locations'], configs[1]['debug_locations']
+    )
+
+  def test_cached_lowering_matches_uncached_lowering(self):
+    cached = _tpu_custom_call_configs(self.lower(self.two_kernels(1.0, 1.0)))
+    with config.jax_pallas_tpu_lowering_cache_max_bytes(0):
+      uncached = _tpu_custom_call_configs(
+          self.lower(self.two_kernels(1.0, 1.0))
+      )
+    self.assertEqual(cached[0], uncached[0])
+    self.assertEqual(cached[1]['body'], uncached[1]['body'])
 
 
 class MosaicLoweringForLoopTest(jtu.JaxTestCase):
