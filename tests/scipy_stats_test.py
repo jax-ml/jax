@@ -195,7 +195,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
 
-
   @genNamedParametersNArgs(3)
   def testBernoulliLogPmf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
@@ -937,7 +936,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
 
-
   @genNamedParametersNArgs(3)
   def testNormLogCdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
@@ -954,7 +952,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
-
 
   @genNamedParametersNArgs(3)
   def testNormCdf(self, shapes, dtypes):
@@ -1339,7 +1336,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self.assertAllClose(lsp_stats.t.pdf(x, df), osp_stats.t.pdf(x, df),
                         check_dtypes=False)
 
-
   @genNamedParametersNArgs(3)
   def testUniformLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
@@ -1418,7 +1414,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     x = np.array([0.0, np.inf])
     self.assertAllClose(lsp_stats.chi2.logpdf(x, 2.0),
                         np.array([-np.log(2.0), -np.inf]), check_dtypes=False)
-
 
   @genNamedParametersNArgs(4)
   def testChi2LogCdf(self, shapes, dtypes):
@@ -1500,6 +1495,34 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   def testBetaBinomLogPmfZerokZeron(self):
     self.assertEqual(lsp_stats.betabinom.logpmf(0, 0, 10, 5, 0),
                      osp_stats.betabinom.logpmf(0, 0, 10, 5, 0))
+
+  def testBetaBinomLogPmfNegativeLoc(self):
+    lax_fun = lsp_stats.betabinom.logpmf
+    scipy_fun = osp_stats.betabinom.logpmf
+
+    def args_maker():
+      k = np.array([-2.0, -1.0, 0.0, 1.0, 2.0])
+      n, a, b, loc = 4.0, 2.0, 3.0, -2.0
+      return [k, n, a, b, loc]
+
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=5e-4
+    )
+    self._CompileAndCheck(lax_fun, args_maker)
+
+  def testBetaBinomLogPmfFractionalLoc(self):
+    lax_fun = lsp_stats.betabinom.logpmf
+    scipy_fun = osp_stats.betabinom.logpmf
+
+    def args_maker():
+      k = np.array([-1.5, -0.5, 0.5, 1.5])
+      n, a, b, loc = 4.0, 2.0, 3.0, -2.0
+      return [k, n, a, b, loc]
+
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=5e-4
+    )
+    self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(4)
   def testBinomLogPmf(self, shapes, dtypes):
@@ -1609,7 +1632,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
                           rtol=1e-4, atol=1e-4)
 
-
   @jtu.sample_product(
     [dict(x_shape=x_shape, mean_shape=mean_shape, cov_shape=cov_shape)
       for x_shape, mean_shape, cov_shape in [
@@ -1652,7 +1674,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
                           rtol=1e-4, atol=1e-4)
 
-
   @jtu.sample_product(
     ndim=[2, 3],
     nbatch=[1, 3, 5],
@@ -1669,7 +1690,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     result1 = lsp_stats.multivariate_normal.logpdf(x, mean, cov)
     result2 = jax.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
     self.assertArraysAllClose(result1, result2, check_dtypes=False)
-
 
   @genNamedParametersNArgs(3)
   def testGumbelRLogPdf(self, shapes, dtypes):
