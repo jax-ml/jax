@@ -1018,10 +1018,22 @@ def _sort_lowering_rule(
       [sc_info.num_lanes], ir.IntegerType.get_signless(1))
   mask = arith.constant(mask_type, ir.DenseElementsAttr.get_splat(
       mask_type, ir.BoolAttr.get(True)))
+  key_dtype = ctx.avals_in[0].dtype
+  if key_dtype not in (jnp.float32, jnp.int32, jnp.uint32):
+    raise NotImplementedError(f"Unsupported key dtype for sort: {key_dtype}")
+  sign_bit_vec = None
+  if key_dtype == jnp.int32:
+    i32 = ir.IntegerType.get_signless(32)
+    sign_bit_vec = vector.broadcast(
+        keys.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000))
+    )
+    keys = arith.xori(keys, sign_bit_vec)
   if not values:
     _, sorted_keys, _ = tpu.sort(
         mask_type, keys.type, keys.type, keys, keys, mask=mask
     )
+    if sign_bit_vec is not None:
+      sorted_keys = arith.xori(sorted_keys, sign_bit_vec)
     return (sorted_keys,)
   results: list[ir.Value] = []
   for value in values:
@@ -1029,6 +1041,8 @@ def _sort_lowering_rule(
         mask_type, keys.type, value.type, keys, value, mask=mask
     )
     if not results:
+      if sign_bit_vec is not None:
+        sorted_keys = arith.xori(sorted_keys, sign_bit_vec)
       results.append(sorted_keys)
     results.append(sorted_value)
   return tuple(results)

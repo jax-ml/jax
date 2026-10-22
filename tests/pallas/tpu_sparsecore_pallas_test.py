@@ -2890,7 +2890,7 @@ class VectorSubcoreTest(PallasSCTest):
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
-    keys = np.arange(vec_dim, dtype=dtype)
+    keys = np.arange(-vec_dim // 2, vec_dim // 2, dtype=dtype)
     np.random.shuffle(keys)
 
     @self.vector_subcore_kernel(out_shape=(keys, keys))
@@ -2900,18 +2900,22 @@ class VectorSubcoreTest(PallasSCTest):
 
     sorted_desc, reversed_keys = kernel(keys)
     np.testing.assert_array_equal(
-        sorted_desc, jnp.arange(vec_dim, dtype=dtype)[::-1])
+        sorted_desc, jnp.arange(-vec_dim // 2, vec_dim // 2, dtype=dtype)[::-1]
+    )
     np.testing.assert_array_equal(reversed_keys, keys[::-1])
 
   @parameterized.product(
-      keys_dtype=[np.int32, np.float32],
+      keys_dtype=[np.int32, np.uint32, np.float32],
       values_dtypes=[(), (np.int32,), (np.float32, np.int32)],
   )
   def test_sort(self, keys_dtype, values_dtypes):
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
-    keys = np.arange(vec_dim, dtype=keys_dtype)
+    if np.issubdtype(keys_dtype, np.unsignedinteger):
+      keys = np.arange(vec_dim, dtype=keys_dtype)
+    else:
+      keys = np.arange(-vec_dim // 2, vec_dim // 2, dtype=keys_dtype)
     np.random.shuffle(keys)
     values = [np.arange(vec_dim, dtype=dtype) for dtype in values_dtypes]
     _ = [np.random.shuffle(v) for v in values]
