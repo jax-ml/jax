@@ -665,7 +665,8 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
     check_arraylike('spectral_helper', x, y)
     x, y_arr = promote_dtypes_inexact(x, y)
     if x.ndim != y_arr.ndim:
-      raise ValueError("two-arguments must have the same rank ({x.ndim} vs {y.ndim}).")
+      raise ValueError("two-arguments must have the same rank "
+                       f"({x.ndim} vs {y_arr.ndim}).")
     # Check if we can broadcast the outer axes together
     try:
       outershape = jnp.broadcast_shapes(tuple_delete(x.shape, axis),
