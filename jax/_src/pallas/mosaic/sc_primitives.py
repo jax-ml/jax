@@ -319,7 +319,7 @@ def _gather_lowering_rule(
     )
   [out_aval] = ctx.avals_out
   vec_type = ir.VectorType.get(
-      out_aval.shape, sc_lowering._dtype_to_ir_type(tref_aval.dtype)
+      out_aval.shape, ctx.dtype_to_ir_type(tref_aval.dtype)
   )
   return tpu.vector_load_idx(vec_type, ref, indices, mask=mask)
 
@@ -884,9 +884,15 @@ def _parallel_loop_lowering_rule(
 ):
   lower, upper, step, consts, carry = tree.unflatten(flat_args)
   for_op = scf.ForOp(
-      _ensure_ir_value(lower, pallas_core.index_map_grid_aval),
-      _ensure_ir_value(upper, pallas_core.index_map_grid_aval),
-      _ensure_ir_value(step, pallas_core.index_map_grid_aval),
+      _ensure_ir_value(
+          lower, pallas_core.index_map_grid_aval, ctx.dtype_to_ir_type
+      ),
+      _ensure_ir_value(
+          upper, pallas_core.index_map_grid_aval, ctx.dtype_to_ir_type
+      ),
+      _ensure_ir_value(
+          step, pallas_core.index_map_grid_aval, ctx.dtype_to_ir_type
+      ),
       carry,
   )
   for_op.attributes["sc.parallel_access"] = ir.UnitAttr.get()
