@@ -226,14 +226,16 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
             jtu.get_tpu_version() >= 5
             and op in [lax.tanh, jnp.tanh, lax.log, jnp.log]
         )
+        or (jtu.get_tpu_version() >= 6 and op in [lax.expm1, jnp.expm1])
         or (
             jtu.get_tpu_version() >= 6
-            and op in [lax.expm1, jnp.expm1]
+            and jtu.is_libtpu_at_least("0.0.51")
+            and op in [lax.exp2, jnp.exp2]
         )
     ):
       # From tpu version 5 and onwards, even with tighter tolerance, the high performant
       # implementation for tanh and log is chosen because the chip implementation has improved accuracy.
-      # From tpu version 6 and onwards, the high performant implementation for expm1
+      # From tpu version 6 and onwards, the high performant implementation for expm1 and exp2
       # also matches the accurate implementation for the tested range.
       self.assertTrue(jnp.all(diff == 0))
     else:
@@ -264,14 +266,16 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
             jtu.get_tpu_version() >= 5
             and op in [lax.tanh, jnp.tanh, lax.log, jnp.log]
         )
+        or (jtu.get_tpu_version() >= 6 and op in [lax.expm1, jnp.expm1])
         or (
             jtu.get_tpu_version() >= 6
-            and op in [lax.expm1, jnp.expm1]
+            and jtu.is_libtpu_at_least("0.0.51")
+            and op in [lax.exp2, jnp.exp2]
         )
     ):
       # From tpu version 5 and onwards, even with tighter tolerance, the high performant
       # implementation for tanh and log is chosen because the chip implementation has improved accuracy.
-      # From tpu version 6 and onwards, the high performant implementation for expm1
+      # From tpu version 6 and onwards, the high performant implementation for expm1 and exp2
       # also matches the accurate implementation for the tested range.
       self.assertTrue(jnp.all(diff_y == 0))
     else:
@@ -300,7 +304,14 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
     # Accuracy should be carried through to the gradient causing
     # a large diff.
     diff = abs(f_default_grad(x) - f_accurate_grad(x))
-    self.assertTrue(jnp.any(diff > 0))
+    if (
+        jtu.get_tpu_version() >= 6
+        and jtu.is_libtpu_at_least("0.0.51")
+        and op in [lax.exp2, jnp.exp2]
+    ):
+      self.assertTrue(jnp.all(diff == 0))
+    else:
+      self.assertTrue(jnp.any(diff > 0))
 
   @parameterized.named_parameters(
       *generate_test_cases(["log", "log1p", "tanh"])
