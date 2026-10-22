@@ -4294,6 +4294,19 @@ class ShardMapTest(jtu.JaxTestCase):
         r"applying `jax.lax.pcast\(..., \('y',\).*to the output of true_fun"):
       shard_map(f, mesh=mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
 
+  def test_cond_pvary_errors_subset(self):
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'))
+
+    def f(x, y):
+      return jax.lax.cond(True, lambda x, y: x, lambda x, y: y, x, y)
+    x = jnp.arange(4.)
+    with self.assertRaisesRegex(
+        TypeError,
+        r"This might be fixed by applying `jax.lax.pcast\(..., \('y',\), "
+        r"to='varying'\)` to the output of true_fun\."):
+      shard_map(f, mesh=mesh, in_specs=(P('x'), P(('x', 'y'))),
+                out_specs=P(('x', 'y')))(x, x)
+
   def test_scan_pvary_errors(self):
     mesh = jtu.create_mesh((1, 1), ('i', 'j'))
     x = jnp.arange(3.)

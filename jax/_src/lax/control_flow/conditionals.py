@@ -383,16 +383,17 @@ def _check_branch_outputs(
                      + f'\n  * {diffs[-1]}.\n')
 
     # TODO(rdyro): extend this to also cover reduced and unreduced.
-    pvary_applications = [
-        f"applying `jax.lax.pcast(..., "
-        f"{tuple(a1.mat.varying - a2.mat.varying)}, to='varying')` to the"
-        f" output of {n}{component(p)}"
-        for p, aval1, aval2 in zip(paths, out_avals1, out_avals2)
-        for n, a1, a2 in [(name1, aval2, aval1), (name2, aval1, aval2)]
-        if not core.typematch(a1, a2) and
-        isinstance(a1, core.ShapedArray) and isinstance(a2, core.ShapedArray)
-        and a1.mat.varying != a2.mat.varying
-        and a2.mat.varying - a1.mat.varying]
+    pvary_applications = []
+    for p, out1, out2 in zip(paths, out_avals1, out_avals2):
+      if not (isinstance(out1, core.ShapedArray) and
+              isinstance(out2, core.ShapedArray)):
+        continue
+      union = out1.mat.varying | out2.mat.varying
+      for name, out in [(name1, out1), (name2, out2)]:
+        if missing := union - out.mat.varying:
+          pvary_applications.append(
+              f"applying `jax.lax.pcast(..., {tuple(missing)}, "
+              f"to='varying')` to the output of {name}{component(p)}")
 
     if not pvary_applications:
       pvary_msg = ''
