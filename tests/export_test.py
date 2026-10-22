@@ -29,6 +29,7 @@ from jax import export
 from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
+from jax._src import ad_checkpoint
 from jax._src import compute_on
 from jax._src import config
 from jax._src import core
@@ -2502,6 +2503,221 @@ class JaxExportTest(jtu.JaxTestCase):
             export.DisabledSafetyCheck.custom_call("LayoutConstraint")
         ],
     )(arr)
+
+  def test_inner_export_with_custom_vjp(self):
+    """Verifies that exported forward and backward kernels integrate with @jax.custom_vjp under outer JIT."""
+    @jax.custom_vjp
+    def f(x, w):
+      return jnp.tanh(x @ w)
+
+    def f_fwd(x, w):
+      y = jnp.tanh(x @ w)
+      return y, (x, w, y)
+
+    def f_bwd(res, g):
+      x, w, y = res
+      dy = g * (1.0 - y ** 2)
+      return 2.0 * (dy @ w.T), 2.0 * (x.T @ dy)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    x, w = jnp.ones((2, 2), dtype=jnp.float32), jnp.eye(2, dtype=jnp.float32) * 0.5
+    expected_loss, (expected_dx, expected_dw) = jax.jit(
+        jax.value_and_grad(lambda a, b: jnp.sum(f(a, b) ** 2), argnums=(0, 1))
+    )(x, w)
+
+    # 1. Export function containing custom_vjp with vjp_order=1.
+    exp_f = get_exported(jax.jit(f), vjp_order=1)(x, w)
+    loss, (dx, dw) = jax.jit(
+        jax.value_and_grad(lambda a, b: jnp.sum(exp_f.call(a, b) ** 2), argnums=(0, 1))
+    )(x, w)
+    self.assertAllClose(loss, expected_loss)
+    self.assertAllClose(dx, expected_dx)
+    self.assertAllClose(dw, expected_dw)
+
+    # 2. Wire separately exported forward and backward kernels (vjp_order=0).
+    exp_fwd = get_exported(jax.jit(f_fwd), vjp_order=0)(x, w)
+    exp_bwd = get_exported(jax.jit(f_bwd), vjp_order=0)((x, w, x), x)
+
+    @jax.custom_vjp
+    def separate_f(a, b):
+      return exp_fwd.call(a, b)[0]
+    separate_f.defvjp(exp_fwd.call, exp_bwd.call)
+
+    loss_sep, (dx_sep, dw_sep) = jax.jit(
+        jax.value_and_grad(lambda a, b: jnp.sum(separate_f(a, b) ** 2), argnums=(0, 1))
+    )(x, w)
+    self.assertAllClose(loss_sep, expected_loss)
+    self.assertAllClose(dx_sep, expected_dx)
+    self.assertAllClose(dw_sep, expected_dw)
+
+  def test_inner_export_with_remat(self):
+    """Verifies @jax.checkpoint composition both inside an exported function and wrapping Exported.call."""
+    @jax.checkpoint
+    def block(x, w):
+      return jnp.sin(jnp.tanh(x @ w) @ w.T) + x
+
+    x, w = jnp.ones((2, 2), dtype=jnp.float32) * 0.2, jnp.eye(2, dtype=jnp.float32) * 0.3
+    expected_loss, (expected_dx, expected_dw) = jax.jit(
+        jax.value_and_grad(lambda a, b: jnp.sum(block(a, b) ** 2), argnums=(0, 1))
+    )(x, w)
+
+    # Case A: remat inside exported function.
+    exp_inside = get_exported(jax.jit(block), vjp_order=1)(x, w)
+    loss_a, (dx_a, dw_a) = jax.jit(
+        jax.value_and_grad(lambda a, b: jnp.sum(exp_inside.call(a, b) ** 2), argnums=(0, 1))
+    )(x, w)
+    self.assertAllClose(loss_a, expected_loss)
+    self.assertAllClose(dx_a, expected_dx)
+    self.assertAllClose(dw_a, expected_dw)
+
+    # Case B: remat wrapping exported function.
+    exp_plain = get_exported(jax.jit(lambda a, b: jnp.sin(jnp.tanh(a @ b) @ b.T) + a), vjp_order=1)(x, w)
+    loss_b, (dx_b, dw_b) = jax.jit(
+        jax.value_and_grad(jax.checkpoint(lambda a, b: jnp.sum(exp_plain.call(a, b) ** 2)), argnums=(0, 1))
+    )(x, w)
+    self.assertAllClose(loss_b, expected_loss)
+    self.assertAllClose(dx_b, expected_dx)
+    self.assertAllClose(dw_b, expected_dw)
+
+  def test_inner_export_remat_saved_residuals(self):
+    """Verifies that Exported.call recomputes internal activations rather than leaking them as residuals."""
+    def multi_stage(x, w):
+      return jnp.tanh(jnp.cos(jnp.sin(x @ w) @ w.T))
+
+    x, w = jnp.ones((2, 2), dtype=jnp.float32) * 0.2, jnp.eye(2, dtype=jnp.float32) * 0.3
+    exp = get_exported(jax.jit(multi_stage), vjp_order=1)(x, w)
+
+    # Single Exported.call saves only primal inputs as residuals.
+    residuals = ad_checkpoint.saved_residuals(exp.call, x, w)
+    self.assertTrue(all("from the argument" in src for _, src in residuals))
+
+    # Chaining two Exported.call under checkpoint(nothing_saveable) drops intermediate residuals.
+    @functools.partial(jax.checkpoint, policy=jax.checkpoint_policies.nothing_saveable)
+    def chained(a, b):
+      return exp.call(exp.call(a, b), b)
+
+    chained_residuals = ad_checkpoint.saved_residuals(chained, x, w)
+    self.assertFalse(any("custom_vjp_call" in src for _, src in chained_residuals))
+    self.assertTrue(all("from the argument" in src for _, src in chained_residuals))
+
+    # Verify gradients match un-checkpointed chain.
+    g_remat = jax.jit(jax.grad(lambda a, b: jnp.sum(chained(a, b) ** 2)))(x, w)
+    g_plain = jax.jit(jax.grad(lambda a, b: jnp.sum(exp.call(exp.call(a, b), b) ** 2)))(x, w)
+    self.assertAllClose(g_remat, g_plain)
+
+  def test_inner_export_cross_layer_sharding(self):
+    """Verifies XLA SPMD sharding propagation across chained exported layers under outer JIT."""
+    if len(jax.devices()) < 4:
+      self.skipTest("Requires at least 4 devices")
+    devices = np.array(jax.devices()[:4]).reshape(2, 2)
+    mesh = Mesh(devices, ("data", "model"))
+    s_in = NamedSharding(mesh, P("data", None))
+    s_mid = NamedSharding(mesh, P("data", "model"))
+    s_w1 = NamedSharding(mesh, P(None, "model"))
+    s_w2 = NamedSharding(mesh, P("model", None))
+
+    @functools.partial(jax.jit, in_shardings=(s_in, s_w1), out_shardings=s_mid)
+    def layer1(x, w1):
+      return jax.nn.gelu(x @ w1)
+
+    @functools.partial(jax.jit, in_shardings=(s_mid, s_w2), out_shardings=s_in)
+    def layer2(h, w2):
+      return jnp.tanh(h @ w2)
+
+    x = jax.device_put(jnp.ones((4, 2), dtype=jnp.float32), s_in)
+    w1 = jax.device_put(jnp.ones((2, 4), dtype=jnp.float32) * 0.1, s_w1)
+    w2 = jax.device_put(jnp.ones((4, 2), dtype=jnp.float32) * 0.1, s_w2)
+
+    def ref(a, b1, b2):
+      return jnp.sum(layer2(layer1(a, b1), b2) ** 2)
+    expected_loss, (expected_dx, expected_dw1, expected_dw2) = jax.jit(
+        jax.value_and_grad(ref, argnums=(0, 1, 2)),
+        in_shardings=(s_in, s_w1, s_w2),
+    )(x, w1, w2)
+
+    exp_l1 = get_exported(layer1, vjp_order=1)(x, w1)
+    exp_l2 = get_exported(layer2, vjp_order=1)(layer1(x, w1), w2)
+
+    @functools.partial(jax.jit, in_shardings=(s_in, s_w1, s_w2))
+    def step(a, b1, b2):
+      return jax.value_and_grad(lambda u, v1, v2: jnp.sum(exp_l2.call(exp_l1.call(u, v1), v2) ** 2),
+                                argnums=(0, 1, 2))(a, b1, b2)
+
+    loss, (dx, dw1, dw2) = step(x, w1, w2)
+    self.assertAllClose(loss, expected_loss)
+    self.assertAllClose(dx, expected_dx)
+    self.assertAllClose(dw1, expected_dw1)
+    self.assertAllClose(dw2, expected_dw2)
+    self.assertTrue(dx.sharding.is_equivalent_to(s_in, dx.ndim))
+
+  def test_inner_export_shard_map_collectives(self):
+    """Verifies that shard_map collective kernels (lax.psum) survive export and differentiate correctly."""
+    if len(jax.devices()) < 4:
+      self.skipTest("Requires at least 4 devices")
+    mesh = Mesh(np.array(jax.devices()[:4]), ("data",))
+    s_data = NamedSharding(mesh, P("data", None))
+    s_rep = NamedSharding(mesh, P(None, None))
+
+    @functools.partial(jax.jit, in_shardings=(s_data, s_rep), out_shardings=s_data)
+    def collective_kernel(x, w):
+      @functools.partial(shard_map, mesh=mesh, in_specs=(P("data", None), P(None, None)), out_specs=P("data", None))
+      def _kernel(x_s, w_s):
+        local = jnp.tanh(x_s @ w_s)
+        return local + 0.25 * lax.psum(local, axis_name="data")
+      return _kernel(x, w)
+
+    x = jax.device_put(jnp.ones((4, 2), dtype=jnp.float32) * 0.1, s_data)
+    w = jax.device_put(jnp.eye(2, dtype=jnp.float32) * 0.5, s_rep)
+
+    expected_loss, (expected_dx, expected_dw) = jax.jit(
+        jax.value_and_grad(lambda a, b: jnp.sum(collective_kernel(a, b) ** 2), argnums=(0, 1)),
+        in_shardings=(s_data, s_rep),
+    )(x, w)
+
+    exp = get_exported(collective_kernel, vjp_order=1)(x, w)
+    loss, (dx, dw) = jax.jit(
+        jax.value_and_grad(lambda a, b: jnp.sum(exp.call(a, b) ** 2), argnums=(0, 1)),
+        in_shardings=(s_data, s_rep),
+    )(x, w)
+
+    self.assertAllClose(loss, expected_loss)
+    self.assertAllClose(dx, expected_dx)
+    self.assertAllClose(dw, expected_dw)
+
+  def test_inner_export_symbolic_shapes(self):
+    """Verifies shape-polymorphic inner exports specialized across changing batch sizes under outer JIT."""
+    def inner_poly(x, w):
+      return jnp.tanh(x @ w) * 2.0
+
+    w = jnp.eye(2, dtype=jnp.float32) * 0.3
+    b, = export.symbolic_shape("b")
+    exp_poly = get_exported(jax.jit(inner_poly), vjp_order=1)(
+        jax.ShapeDtypeStruct((b, 2), jnp.float32), jax.ShapeDtypeStruct((2, 2), jnp.float32)
+    )
+
+    @jax.jit
+    def step(x, w_in):
+      return jax.value_and_grad(lambda a, b_w: jnp.sum(exp_poly.call(a, b_w) ** 2), argnums=(0, 1))(x, w_in)
+
+    for batch_size in (2, 5, 7):
+      x = jnp.arange(batch_size * 2, dtype=jnp.float32).reshape(batch_size, 2) * 0.1
+      exp_val, (exp_dx, exp_dw) = jax.jit(
+          jax.value_and_grad(lambda a, b_w: jnp.sum(inner_poly(a, b_w) ** 2), argnums=(0, 1))
+      )(x, w)
+      actual_val, (actual_dx, actual_dw) = step(x, w)
+      self.assertAllClose(actual_val, exp_val)
+      self.assertAllClose(actual_dx, exp_dx)
+      self.assertAllClose(actual_dw, exp_dw)
+
+    # Calling same polymorphic export with multiple distinct batch sizes inside one outer JIT.
+    @jax.jit
+    def multi_batch(x1, x2, w_in):
+      return jnp.sum(exp_poly.call(x1, w_in)) + jnp.sum(exp_poly.call(x2, w_in))
+
+    x1, x2 = jnp.ones((3, 2), dtype=jnp.float32), jnp.ones((6, 2), dtype=jnp.float32)
+    expected = jnp.sum(inner_poly(x1, w)) + jnp.sum(inner_poly(x2, w))
+    self.assertAllClose(multi_batch(x1, x2, w), expected)
 
 
 if __name__ == "__main__":
