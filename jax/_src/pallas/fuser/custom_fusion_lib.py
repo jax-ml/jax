@@ -46,7 +46,6 @@ class CustomEvalContext:
   out_block_specs: tuple[pallas_core.BlockSpec, ...]
   out_block_indices: tuple[Any, ...]
   scalar_prefetch: Any | None = None
-  scalar_prefetch_handler: Any | None = None
 
 class CustomEvalRuleFn(Protocol):
 
@@ -241,7 +240,6 @@ def _custom_fusion_eval_rule(
       out_block_specs=ctx.out_block_specs,
       out_block_indices=ctx.get_out_block_indices(),
       scalar_prefetch=ctx.scalar_prefetch,
-      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
   ), *args)
 
 

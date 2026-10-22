@@ -168,7 +168,6 @@ class PullRuleContext:
   avals_out: tuple[ShapedAbstractValue, ...]
   out_usages: tuple[set[Usage], ...]
   scalar_prefetch_fn: Any = dataclasses.field(default=None, init=False)
-  scalar_prefetch_handler: Any | None
   grid_len: int | None
   strict_mode: bool = True
   invars: tuple[core.Atom, ...] | None = None
@@ -181,7 +180,6 @@ class PushRuleContext:
   avals_out: tuple[ShapedAbstractValue, ...]
   invars: tuple[core.Atom, ...] | None = None
   scalar_prefetch_fn: Any = dataclasses.field(default=None, init=False)
-  scalar_prefetch_handler: Any | None = None
   grid_len: int | None = None
   strict_mode: bool = True
 
@@ -206,6 +204,10 @@ def make_scalar_prefetch_handler(*args):
     return result
 
   return scalar_prefetch_getter
+
+
+def _identity_scalar_prefetch_handler(*scalar_prefetch):
+  return scalar_prefetch
 
 
 def _is_squeezed(dim: pallas_core.BlockDim | int | None) -> bool:
@@ -289,7 +291,6 @@ class KernelEvalContext:
   in_block_specs: tuple[pallas_core.BlockSpec, ...]
   out_block_specs: tuple[pallas_core.BlockSpec, ...]
   grid_len: int | None
-  scalar_prefetch_handler: Any | None
   out_usages: tuple[set[Usage], ...] | None
 
   def get_program_ids(self):
@@ -434,6 +435,9 @@ def pull_block_spec(
     and returning `(kernel_fn, in_block_arg_specs, in_block_kwarg_specs)` for
     evaluating `f` on a single block inside a Pallas kernel.
   """
+  if scalar_prefetch_handler is None:
+    scalar_prefetch_handler = _identity_scalar_prefetch_handler
+
   def wrapped(*args, **kwargs):
     jaxpr, consts, in_tree, out_tree_ = fuser_utils.make_jaxpr(
         f, *args, **kwargs
@@ -582,13 +586,12 @@ def _select_scalar_prefetch(scalar_prefetch_handler, scalar_prefetch,
                             num_expected: int, fusion_name: str):
   """Picks one fusion's scalars out of `scalar_prefetch`.
 
-  Two calling conventions are supported. Without a handler, the fusion was
-  handed only its own scalars and they are used as is. With a handler,
-  `scalar_prefetch` is shared by every fusion in the kernel and the handler
-  selects this fusion's group out of it.
+  Two calling conventions are supported. With the identity handler, the fusion
+  was handed only its own scalars and they are used as is. With any other
+  handler, `scalar_prefetch` is shared by every fusion in the kernel and the
+  handler selects this fusion's group out of it.
   """
-  if scalar_prefetch_handler is not None:
-    scalar_prefetch = scalar_prefetch_handler(*scalar_prefetch)
+  scalar_prefetch = scalar_prefetch_handler(*scalar_prefetch)
   if len(scalar_prefetch) != num_expected:
     raise ValueError(
         f'Fusion {fusion_name} prefetches {num_expected} scalars but was'
@@ -601,7 +604,7 @@ def _pull_block_transform(
     out_block_transforms: tuple[BlockIndexTransform | NoBlockIndexTransform, ...],
     *,
     read_usage_env: Callable[[core.Var], set[Usage]],
-    scalar_prefetch_handler: Any | None = None,
+    scalar_prefetch_handler: Callable = _identity_scalar_prefetch_handler,
     grid_len: int,
     strict_mode: bool = True,
 ) -> tuple[
@@ -661,7 +664,6 @@ def _pull_block_transform(
         avals_in=tuple(v.aval for v in eqn.invars),
         avals_out=tuple(v.aval for v in eqn.outvars),
         out_usages=tuple(read_usage_env(v) for v in eqn.outvars),
-        scalar_prefetch_handler=scalar_prefetch_handler,
         grid_len=grid_len,
         strict_mode=strict_mode,
         invars=tuple(eqn.invars),
@@ -755,7 +757,7 @@ def _pull_block_spec(
     out_block_specs: tuple[pallas_core.BlockSpec, ...],
     *,
     read_usage_env: Callable[[core.Var], set[Usage]],
-    scalar_prefetch_handler: Any | None = None,
+    scalar_prefetch_handler: Callable = _identity_scalar_prefetch_handler,
     grid_len: int,
     strict_mode: bool = True,
 ) -> tuple[
@@ -822,8 +824,8 @@ def make_kernel_function(
     # If no scalar_prefetch is given, every const is bound as closed over
     # (this happens when another pull traces this function).
     # If scalar_prefetch is given, the index scalars are loaded from it
-    # instead. It holds either only this fusion's scalars (no handler), or
-    # every fusion's scalars, and the handler picks this fusion's.
+    # instead. It holds either only this fusion's scalars (identity handler),
+    # or every fusion's scalars, and the handler picks this fusion's.
     sp_mask = _scalar_prefetch_mask(jaxpr, read_usage_env)
     bound_consts = consts
     if any(sp_mask) and scalar_prefetch:
@@ -877,7 +879,6 @@ def make_kernel_function(
             program_ids=tuple(program_ids),
             in_block_specs=in_block_specs,
             out_block_specs=out_block_specs,
-            scalar_prefetch_handler=scalar_prefetch_handler,
             grid_len=grid_len,
             out_usages=out_usages,
         )
@@ -2816,7 +2817,6 @@ def _call_jaxpr_eval_rule(
   _, env = _pull_block_spec(
       jaxpr,
       ctx.out_block_specs,
-      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       read_usage_env=read_usage_env,
       grid_len=ctx.grid_len,
       strict_mode=False,
@@ -2828,7 +2828,7 @@ def _call_jaxpr_eval_rule(
       out_tree,
       read_usage_env,
       env,
-      ctx.scalar_prefetch_handler,
+      _identity_scalar_prefetch_handler,
       ctx.grid_len,
   )
   return kernel_fn(ctx.get_program_ids(), ctx.scalar_prefetch, *args)
@@ -2861,7 +2861,6 @@ def _call_jaxpr_pull_block_spec_rule(
   in_block_transforms, _ = _pull_block_transform(
       jaxpr,
       out_block_transforms,
-      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       read_usage_env=read_usage_env,
       grid_len=ctx.grid_len,
       strict_mode=ctx.strict_mode,
@@ -2948,6 +2947,9 @@ def push_block_spec(
     and returning the output `BlockSpec` PyTree, or a tuple
     `(out_block_specs, out_type)` when `return_out_type=True`.
   """
+  if scalar_prefetch_handler is None:
+    scalar_prefetch_handler = _identity_scalar_prefetch_handler
+
   def wrapper(*args, **kwargs):
     flat_block_specs, in_tree_ = tree_util.tree_flatten(
         (in_spec_args, in_spec_kwargs)
@@ -3067,7 +3069,7 @@ def _push_block_spec_jaxpr(
     jaxpr: core.Jaxpr,
     *flat_block_specs,
     read_usage_env: Callable[[core.Var], set[Usage]],
-    scalar_prefetch_handler: Any | None = None,
+    scalar_prefetch_handler: Callable = _identity_scalar_prefetch_handler,
     grid_len: int | None = None,
     strict_mode: bool = True,
 ) -> tuple[pallas_core.BlockSpec, ...]:
@@ -3113,7 +3115,6 @@ def _push_block_spec_jaxpr(
         avals_in=tuple(v.aval for v in eqn.invars),
         avals_out=tuple(v.aval for v in eqn.outvars),
         invars=tuple(eqn.invars),
-        scalar_prefetch_handler=scalar_prefetch_handler,
         grid_len=grid_len,
         strict_mode=strict_mode,
     )
@@ -3379,7 +3380,6 @@ def _call_jaxpr_push_block_spec_rule(
       jaxpr,
       *block_specs,
       read_usage_env=read_usage_env,
-      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       grid_len=ctx.grid_len,
       strict_mode=ctx.strict_mode,
   )
