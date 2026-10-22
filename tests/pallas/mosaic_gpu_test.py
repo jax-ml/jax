@@ -2665,6 +2665,8 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         ],
     )
     def kernel(x_ref, o_ref, scratch_ref, barrier_ref):
+      self.assertNotIsInstance(scratch_ref, state_types.TransformedRef)
+      self.assertEqual(scratch_ref.shape, shape)
       plgpu.copy_gmem_to_smem(x_ref, scratch_ref, barrier_ref)
       plgpu.barrier_wait(barrier_ref)
       if transposed:
@@ -3545,9 +3547,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
       # Ensure that the transforms provided in the scratch shapes have been
       # passed correctly.
-      extract_alias_transform, tile_transform = smem_ref128.transforms
+      [extract_alias_transform] = smem_ref128.transforms
       self.assertIsInstance(extract_alias_transform, gpu_core.ExtractAliasedRef)
-      self.assertIsInstance(tile_transform, gpu_core.UntilingTransform)
+      self.assertEqual(extract_alias_transform.smem_transforms, transforms)
 
       smem_ref256[...] = x_ref[...] + 1
       plgpu.commit_smem()
@@ -8818,8 +8820,8 @@ class PipelineTest(PallasTest):
         )(x_gmem, o_gmem)
 
     def kernel_body(_, x_smem, o_smem):
-      # +1 for the indexing done by ``emit_pipeline`.
-      self.assertLen(x_smem.transforms, len(transforms) + 1)
+      # 1 for the indexing done by ``emit_pipeline`.
+      self.assertLen(x_smem.transforms, 1)
       o_smem[...] = x_smem[...] + 1.0
 
     x = jnp.arange(64 * num_steps * 64)
