@@ -960,8 +960,8 @@ print(grad(fun)(pt))
 # output doesn't affect the value being differentiated (here `fun` doesn't use
 # `dct['b'][1]`), the corresponding cotangent is not an array of zeros but an
 # instance of the special `Zero` class, which records only the type. That's in
-# contrast to `jax.custom_vjp`, where symbolic zeros are opt-in via
-# `symbolic_zeros=True`.
+# contrast to `jax.custom_vjp`, where symbolic zeros come with the rules of
+# `defvjp_general`.
 #
 # Symbolic zeros let a rule avoid doing work (or avoid errors, for
 # non-differentiable outputs like integer values). If you don't want to handle
