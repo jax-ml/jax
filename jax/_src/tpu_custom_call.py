@@ -70,6 +70,7 @@ ir_version_override: Callable[[], int | None] | None = None
 #    return None
 #
 # We should also add a TODO to remove the conditional one month later.
+# TODO(slebedev): Bump to 19 after 2026-11-21.
 _FWD_COMPAT_VERSION = 15
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
@@ -1027,7 +1028,7 @@ def lowered_as_tpu_kernel(
     # We hardcode a specific version both here and below, since this path is
     # only used by some internal tests that don't need serialization, but we do
     # need a concrete version on the module.
-    current_ir_version = 18
+    current_ir_version = 19
     try:
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true"
