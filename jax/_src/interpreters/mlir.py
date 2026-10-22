@@ -1744,7 +1744,6 @@ def _get_res_shardings(result_shardings, out_avals, num_tokens):
   return [*token_shardings, *result_shardings]
 
 
-
 def lower_jaxpr_to_fun(
     ctx: ModuleContext,
     name: str,
@@ -3658,3 +3657,102 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
   context = make_ir_context()
   with context:
     return ir.Module.parse(refined_module_str)
+
+
+def specialize_polymorphic_module(
+    module: ir.Module,
+    dim_values: Sequence[int],
+    new_in_avals: Sequence[core.AbstractValue],
+    new_out_avals: Sequence[core.AbstractValue],
+    num_tokens: int = 0,
+) -> ir.Module:
+  """Specializes a polymorphic MLIR module by binding concrete dimension variables."""
+  module_str = module_to_string(module)
+  context = make_ir_context()
+  with context, ir.Location.unknown(context):
+    module = ir.Module.parse(module_str)
+    symtab = ir.SymbolTable(module.operation)
+    poly_main = type_cast(func_dialect.FuncOp, symtab["main"])
+    poly_main.attributes["sym_name"] = ir.StringAttr.get("_poly_main")
+    poly_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
+    symtab.insert(poly_main)
+
+    token_t = token_type()
+    token_types = [token_t] * num_tokens
+
+    def _to_types(avals):
+      types = []
+      for a in avals:
+        t = ir_type_handlers[type(a)](a)
+        if isinstance(t, ir.Type):
+          types.append(t)
+        else:
+          types.extend(t)
+      return types
+
+    user_in_types = _to_types(new_in_avals)
+    main_in_types = token_types + user_in_types
+
+    user_out_types = _to_types(new_out_avals)
+    main_out_types = token_types + user_out_types
+
+    main_ftype = ir.FunctionType.get(main_in_types, main_out_types)
+    new_main = func_dialect.FuncOp(
+        "main",
+        main_ftype,
+        ip=ir.InsertionPoint.at_block_begin(module.body),
+    )
+    new_main.attributes["sym_visibility"] = ir.StringAttr.get("public")
+    if "mhlo.num_replicas" in poly_main.attributes:
+      new_main.attributes["mhlo.num_replicas"] = poly_main.attributes[
+          "mhlo.num_replicas"
+      ]
+    if "mhlo.num_partitions" in poly_main.attributes:
+      new_main.attributes["mhlo.num_partitions"] = poly_main.attributes[
+          "mhlo.num_partitions"
+      ]
+    if "arg_attrs" in poly_main.attributes:
+      poly_arg_attrs = list(ir.ArrayAttr(poly_main.attributes["arg_attrs"]))
+      new_main.arg_attrs = ir.ArrayAttr.get(poly_arg_attrs[len(dim_values) :])
+    if "result_attrs" in poly_main.attributes:
+      new_main.result_attrs = ir.ArrayAttr(poly_main.attributes["result_attrs"])
+    elif "res_attrs" in poly_main.attributes:
+      new_main.attributes["res_attrs"] = poly_main.attributes["res_attrs"]
+
+    entry_block = new_main.add_entry_block()
+    with ir.InsertionPoint(entry_block):
+      dim_consts = []
+      poly_dim_types = poly_main.type.inputs[: len(dim_values)]
+      for d_val, d_type in zip(dim_values, poly_dim_types):
+        c = ir_constant(np.int64(d_val))
+        if c.type != d_type:
+          c = hlo.convert(d_type, c)
+        dim_consts.append(c)
+
+      tokens = list(entry_block.arguments[:num_tokens])
+      user_args = list(entry_block.arguments[num_tokens:])
+
+      poly_user_in_types = poly_main.type.inputs[len(dim_values) + num_tokens :]
+      converted_user_args = []
+      for arg, expected_type in zip(user_args, poly_user_in_types):
+        if arg.type != expected_type:
+          converted_user_args.append(hlo.convert(expected_type, arg))
+        else:
+          converted_user_args.append(arg)
+
+      poly_call_args = dim_consts + tokens + converted_user_args
+      call_op = func_dialect.CallOp(
+          poly_main.type.results,
+          ir.FlatSymbolRefAttr.get("_poly_main"),
+          poly_call_args,
+      )
+
+      ret_vals = []
+      for res, expected_out_type in zip(call_op.results, main_out_types):
+        if res.type != expected_out_type:
+          ret_vals.append(hlo.convert(expected_out_type, res))
+        else:
+          ret_vals.append(res)
+      func_dialect.ReturnOp(ret_vals)
+
+  return refine_polymorphic_shapes(module)
