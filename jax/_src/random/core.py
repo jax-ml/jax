@@ -1948,7 +1948,7 @@ def _poisson_log_pmf(k, lam):
   # For large lam, evaluating -lam + k * log(lam) - lgamma(k + 1)
   # directly loses all useful digits in float32.  Rewrite the same quantity
   # around k ~= lam and use the Stirling correction already used by BTRS.
-  safe_k = jnp.maximum(k, 1.0)
+  safe_k = jnp.maximum(k, 1)
   delta = safe_k - lam
   relative_delta = delta / safe_k
   # log1p(-t) + t is O(t**2): separately computing
@@ -1984,7 +1984,7 @@ def _poisson_log_pmf(k, lam):
   # Log each factor separately: 2*pi*k can overflow float32 for
   # finite k close to the dtype maximum, while log(k) stays finite.
   log_normalizer = (
-      0.5 * (lax.log(safe_k) + lax._const(k, np.log(2 * np.pi)))
+      0.5 * (lax.log(safe_k) + math.log(2 * math.pi))
       + stirling_tail
   )
   near_mean_log_pmf = deviance - log_normalizer
