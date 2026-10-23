@@ -1137,6 +1137,17 @@ class VisualizeShardingTest(jtu.JaxTestCase):
 
 class InspectShardingTest(jtu.JaxTestCase):
 
+  def _compiler_options(self):
+    # TODO(b/513227167): Remove once Shardy supports @InspectSharding custom
+    # partitioning in CONVERT_GLOBAL_TO_LOCAL.
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu():
+      return {
+          "xla_shardy_options": (
+              "partitioner_stage: PARTITIONER_STAGE_UNSPECIFIED"
+          )
+      }
+    return None
+
   def test_inspect_sharding_is_called_in_jit_sharded(self):
 
     if jtu.is_cloud_tpu():
@@ -1156,7 +1167,12 @@ class InspectShardingTest(jtu.JaxTestCase):
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
     out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    f = jax.jit(f, in_shardings=spec, out_shardings=out_spec)
+    f = jax.jit(
+        f,
+        in_shardings=spec,
+        out_shardings=out_spec,
+        compiler_options=self._compiler_options(),
+    )
     with jax.set_mesh(mesh):
       f(np.arange(8, dtype=jnp.int32))
     self.assertTrue(is_called)
@@ -1174,13 +1190,16 @@ class InspectShardingTest(jtu.JaxTestCase):
       debugging.inspect_array_sharding(x, callback=_cb)
       return jnp.square(x)
 
-    f = jax.jit(f_)
+    f = jax.jit(f_, compiler_options=self._compiler_options())
     f(np.arange(8, dtype=jnp.int32))
     self.assertTrue(is_called)
 
     # Test in grad
     is_called = False
-    f = jax.jit(jax.grad(lambda x: f_(x).sum()))
+    f = jax.jit(
+        jax.grad(lambda x: f_(x).sum()),
+        compiler_options=self._compiler_options(),
+    )
     f(np.arange(8, dtype=jnp.float32))
     self.assertTrue(is_called)
 
@@ -1193,7 +1212,7 @@ class InspectShardingTest(jtu.JaxTestCase):
       debugging.inspect_array_sharding(x, callback=_cb)
       return jnp.square(x)
 
-    f = jax.jit(f_)
+    f = jax.jit(f_, compiler_options=self._compiler_options())
     mesh = jtu.create_mesh((2,), ('x'))
     s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
     arr = jax.device_put(np.arange(8).reshape(2, 2, 2), s)
