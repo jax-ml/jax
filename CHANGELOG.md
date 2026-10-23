@@ -37,6 +37,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.numpy.minimum` now uses a parallel prefix scan for integer and
     boolean outputs, which is much faster for long axes ({jax-issue}`#28097`).
 
+* Bug fixes
+  * {func}`jax.scipy.linalg.polar` with `method="qdwh"` now honors
+    `max_iterations` and accepts `eps`, as documented; previously
+    `max_iterations` was silently ignored and any `eps` raised a `ValueError`.
+    Both arguments are now static, so passing a traced value for either raises
+    an error.
+
 ## JAX 0.12.0.1 (October 23, 2026)
 
 * Bug fixes
