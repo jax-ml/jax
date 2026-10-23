@@ -2207,6 +2207,54 @@ class PinnedBuffersTest(jtu.JaxTestCase):
     with self.assertRaises(NotImplementedError):
       jax.new_ref(jnp.arange(3.), pin=True)
 
+  def test_new_ref_pinned_memory_space(self):
+    from jax.experimental.pallas import tpu as pltpu  # pytype: disable=wrong-arg-count
+
+    def f_vmem(x):
+      return jax.ref.freeze(jax.new_ref(x, memory_space=pltpu.VMEM, pin=True))
+
+    def f_hbm(x):
+      return jax.ref.freeze(jax.new_ref(x, memory_space=pltpu.HBM, pin=True))
+
+    def f_default(x):
+      return jax.ref.freeze(jax.new_ref(x, pin=True))
+
+    def f_empty_vmem():
+      return jax.ref.freeze(
+          jax.empty_ref(jax.ShapeDtypeStruct((2, 3), jnp.float32),
+                        memory_space=pltpu.VMEM, pin=True))
+
+    x = jnp.arange(6.).reshape(2, 3)
+
+    # The discharged jaxpr passes the ref's memory space to `pin`.
+    for f, to in [(f_vmem, 'vmem'), (f_hbm, 'hbm'), (f_default, None)]:
+      jaxpr = discharge_state(jax.make_jaxpr(f)(x))
+      pin_eqns = [e for e in jaxpr.eqns if e.primitive.name == 'pin']
+      self.assertLen(pin_eqns, 1)
+      self.assertEqual(pin_eqns[0].params['to'], to)
+
+    jaxpr = discharge_state(jax.make_jaxpr(f_empty_vmem)())
+    pin_eqns = [e for e in jaxpr.eqns if e.primitive.name == 'pin']
+    self.assertLen(pin_eqns, 1)
+    self.assertEqual(pin_eqns[0].params['to'], 'vmem')
+
+    # The Pin custom call in the lowered HLO targets the requested memory
+    # space. Only lowering is checked because compiling pinned refs with a
+    # memory space is currently broken on TPU nightlies.
+    # See https://github.com/jax-ml/jax/issues/41843.
+    for f, args, color in [(jax.jit(f_vmem), (x,), '1'),
+                           (jax.jit(f_hbm), (x,), '0'),
+                           (jax.jit(f_default), (x,), None),
+                           (jax.jit(f_empty_vmem), (), '1')]:
+      txt = f.lower(*args).as_text('hlo')
+      pin_line = next(ln for ln in txt.splitlines()
+                      if 'custom_call_target="Pin"' in ln)
+      if color is None:
+        self.assertNotIn('output_memory_space_colors', pin_line)
+      else:
+        self.assertIn('output_memory_space_colors', pin_line)
+        self.assertIn(f'"color":"{color}"', pin_line.replace(' ', ''))
+
   def test_discharged_aval_non_ref_preserves_memory_space(self):
     aval = core.ShapedArray((3,), jnp.float32, memory_space=core.MemorySpace.Host)
     discharged = discharged_aval(aval, discharge=True, strip_memory_space=True)
