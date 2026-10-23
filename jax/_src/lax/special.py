@@ -639,11 +639,12 @@ def igammac_impl(a, x, *, dtype):
 
   # Use Temme expansion for large a near x, continued fraction otherwise
   use_temme = bitwise_and(gt(a, _const(a, 100)), bitwise_not(use_igamma))
+  use_cf = bitwise_and(bitwise_not(use_igamma), bitwise_not(use_temme))
   igammac_cf_call = select(
       use_temme,
       _igammac_temme(ax, x, a, bitwise_and(enabled, use_temme), dtype, IgammaMode.VALUE),
       _igammac_continued_fraction(ax, x, a,
-          bitwise_and(enabled, bitwise_not(use_igamma)), dtype, IgammaMode.VALUE, None)
+          bitwise_and(enabled, use_cf), dtype, IgammaMode.VALUE, None)
   )
 
   output = select(use_igamma, _const(a, 1) - igamma_call, igammac_cf_call)
