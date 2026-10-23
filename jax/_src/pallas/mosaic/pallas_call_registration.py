@@ -70,7 +70,13 @@ def _get_memory_space_from_aval(
     case tpu_core.MemorySpace.HBM:
       return tpu_custom_call.MemorySpace.HBM
     case tpu_core.MemorySpace.VMEM:
-      return tpu_custom_call.MemorySpace.VMEM
+      match kernel_type:
+        case tpu_core.CoreType.TC:
+          return tpu_custom_call.MemorySpace.VMEM
+        case tpu_core.CoreType.SC_VECTOR_SUBCORE:
+          return tpu_custom_call.MemorySpace.SC_VECTOR_VMEM
+        case _:
+          raise ValueError(f"Invalid kernel type for VMEM: {kernel_type}")
     case tpu_core.MemorySpace.SMEM:
       match kernel_type:
         case tpu_core.CoreType.SC_SCALAR_SUBCORE:
@@ -95,6 +101,8 @@ def _get_memory_space_from_aval(
       match mesh.core_type:
         case tpu_core.CoreType.TC:
           return tpu_custom_call.MemorySpace.VMEM
+        case tpu_core.CoreType.SC_VECTOR_SUBCORE:
+          return tpu_custom_call.MemorySpace.SC_VECTOR_VMEM
         case _:
           raise ValueError(f"Invalid core type for VMEM: {mesh.core_type}")
     case pallas_core.CoreMemorySpace(tpu_core.MemorySpace.SMEM, mesh):
