@@ -2071,7 +2071,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   eigenvectors = _compute_eigenvectors(alpha, beta, mid, key)
   return mid, eigenvectors.T
 
-@jit(static_argnames=('side', 'method'))
+@jit(static_argnames=('side', 'method', 'eps', 'max_iterations'))
 @config.default_matmul_precision("float32")
 def _polar_2d(a: Array, side: str, method: str, eps: float | None,
               max_iterations: int | None) -> tuple[Array, Array]:
@@ -2079,10 +2079,12 @@ def _polar_2d(a: Array, side: str, method: str, eps: float | None,
   if method == "qdwh":
     # TODO(phawkins): return info also if the user opts in?
     if m >= n and side == "right":
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps,
+                                         max_iterations=max_iterations)
     elif m < n and side == "left":
       a = a.T.conj()
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps,
+                                         max_iterations=max_iterations)
       posdef = posdef.T.conj()
       unitary = unitary.T.conj()
     else:
@@ -2102,7 +2104,7 @@ def _polar_2d(a: Array, side: str, method: str, eps: float | None,
   return unitary, posdef
 
 
-@jit(static_argnames=('side', 'method'))
+@jit(static_argnames=('side', 'method', 'eps', 'max_iterations'))
 def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float | None = None,
           max_iterations: int | None = None) -> tuple[Array, Array]:
   r"""Computes the polar decomposition.
