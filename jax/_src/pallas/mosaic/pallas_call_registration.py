@@ -16,20 +16,29 @@
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Sequence
+import array
+import collections
+from collections.abc import Callable, Hashable, Mapping, Sequence
 import dataclasses
+import enum
+import hashlib
 import json
-from typing import cast
+import logging
+import threading
+from typing import Any, cast
+import weakref
 
 import jax
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import effects as effects_lib
 from jax._src import flattree as ft
 from jax._src import frozen_dict
-from jax._src import jaxpr_util
 from jax._src import sharding_impls
 from jax._src import state
 from jax._src import tpu_custom_call
+from jax._src import util
 from jax._src import xla_metadata
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -47,6 +56,420 @@ from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import types as state_types
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+
+class _UncacheableKernelError(Exception):
+  """A kernel has a component that cannot be keyed structurally."""
+
+
+# Constants larger than this make a kernel uncacheable instead of being hashed.
+_MAX_HASHED_CONST_BYTES = 1 << 20
+_MAX_LEAF_DEPTH = 32
+_MAX_INTERNED_LEAVES = 1 << 20
+
+
+def _include_metadata_in_key() -> bool:
+  # Same policy as the persistent compilation cache: unless metadata is part of
+  # cache keys, kernels that differ only in source locations share a lowering,
+  # so the reused kernel can carry stale debug locations.
+  return config.compilation_cache_include_metadata_in_key.value
+
+
+class _KernelFingerprinter:
+  """Computes structural fingerprints of kernel jaxprs.
+
+  Pallas traces the kernel body anew at every call site, so identical kernels
+  arrive as distinct jaxpr objects, and identity keyed lowering caches miss.
+  This class maps each leaf (aval, parameter value, literal, primitive, ...) to
+  a process unique integer by exact equality, and fingerprints a jaxpr by
+  hashing its structure over those integers. Integers are never reused, so two
+  jaxprs with equal fingerprints have equal structure, parameters, literals and
+  constants; they differ at most in source information, which only feeds debug
+  locations. Evicting a leaf only turns later cache hits into misses.
+  """
+
+  def __init__(self):
+    self._lock = threading.RLock()
+    self._leaf_ids: collections.OrderedDict[Hashable, int] = (
+        collections.OrderedDict()
+    )
+    self._next_leaf_id = 0
+    # Jaxprs are immutable, so their fingerprints can be memoized, separately
+    # for fingerprints with and without source information.
+    self._jaxpr_fingerprints: dict[
+        bool, weakref.WeakKeyDictionary[jax_core.Jaxpr, bytes]
+    ] = {False: weakref.WeakKeyDictionary(), True: weakref.WeakKeyDictionary()}
+    self._include_metadata = False
+
+  def _intern(self, leaf: Hashable) -> int:
+    leaf_ids = self._leaf_ids
+    try:
+      leaf_id = leaf_ids.get(leaf)
+    except Exception as e:  # pylint: disable=broad-except
+      # Some objects define __eq__ that raises, e.g. elementwise on arrays.
+      raise _UncacheableKernelError(f"cannot compare {type(leaf)}") from e
+    if leaf_id is None:
+      leaf_id = self._next_leaf_id
+      self._next_leaf_id += 1
+      leaf_ids[leaf] = leaf_id
+      if len(leaf_ids) > _MAX_INTERNED_LEAVES:
+        leaf_ids.popitem(last=False)
+    else:
+      leaf_ids.move_to_end(leaf)
+    return leaf_id
+
+  def cache_clear(self) -> None:
+    # Leaf ids keep counting up, so ids handed out earlier are never reused.
+    with self._lock:
+      self._leaf_ids.clear()
+      for memo in self._jaxpr_fingerprints.values():
+        memo.clear()
+
+  def cache_info(self) -> dict[str, int]:
+    with self._lock:
+      return dict(
+          leaves=len(self._leaf_ids),
+          jaxprs=sum(map(len, self._jaxpr_fingerprints.values())),
+      )
+
+  def cache_keys(self) -> list[Hashable]:
+    with self._lock:
+      return list(self._leaf_ids)
+
+  def leaf(self, value: Any) -> Hashable:
+    """Returns a hashable whose equality is exact equality of `value`."""
+    with self._lock:
+      self._include_metadata = _include_metadata_in_key()
+      return self._leaf(value, 0)
+
+  def jaxpr_fingerprint(self, jaxpr: jax_core.Jaxpr) -> bytes:
+    with self._lock:
+      self._include_metadata = _include_metadata_in_key()
+      return self._jaxpr_fingerprint(jaxpr)
+
+  def _leaf(self, value: Any, depth: int) -> Hashable:
+    if depth > _MAX_LEAF_DEPTH:
+      raise _UncacheableKernelError("parameter nesting is too deep")
+    depth += 1
+    t = type(value)
+    # Tag every leaf with its type: equal values of different types, such as
+    # 1, 1.0 and True, can lower differently.
+    if value is None or t in (bool, int, str, bytes):
+      return (t, value)
+    if t is float:
+      # float.hex separates 0.0 from -0.0 and makes NaN equal to itself.
+      return (t, value.hex())
+    if t is complex:
+      return (t, value.real.hex(), value.imag.hex())
+    if t is tuple or t is list:
+      return (t, tuple(self._leaf(v, depth) for v in value))
+    if isinstance(value, jax_core.Jaxpr):
+      return (jax_core.Jaxpr, self._jaxpr_fingerprint(value))
+    if isinstance(value, (np.ndarray, np.generic)):
+      if value.dtype.hasobject:
+        raise _UncacheableKernelError("object arrays are not hashable")
+      return (
+          t,
+          value.dtype,
+          value.shape,
+          value.tobytes(),
+          getattr(value, "aval", None),
+      )
+    if isinstance(value, (int, float, complex)):
+      # Subclasses of Python scalars, such as typed literals.
+      if isinstance(value, complex):
+        raw = (complex(value).real.hex(), complex(value).imag.hex())
+      elif isinstance(value, float):
+        raw = float(value).hex()
+      else:
+        raw = int(value)
+      return (t, getattr(value, "dtype", None), raw)
+    if isinstance(value, enum.Enum):
+      return (t, value.name)
+    if isinstance(value, tuple):
+      return (t, tuple(self._leaf(v, depth) for v in value))
+    if isinstance(value, Mapping):
+      return (
+          t,
+          tuple(
+              (self._leaf(k, depth), self._leaf(v, depth))
+              for k, v in value.items()
+          ),
+      )
+    if isinstance(value, (set, frozenset)):
+      return (t, frozenset(self._leaf(v, depth) for v in value))
+    if isinstance(value, jax_core.Tracer):
+      # Some primitives keep the closed jaxprs of nested bodies in their
+      # parameters and pass the constants of those bodies as operands, e.g.
+      # emit_pipeline. The constants left in the parameter are tracers of the
+      # finished kernel trace, so lowering can only depend on their types.
+      return (jax_core.Tracer, value.aval)
+    if isinstance(value, jax.Array):
+      if (
+          not value.is_fully_addressable
+          or value.size * value.dtype.itemsize > _MAX_HASHED_CONST_BYTES
+      ):
+        raise _UncacheableKernelError(
+            f"array of type {jax_core.typeof(value)} is too large to hash"
+        )
+      try:
+        host_value = np.asarray(value)
+      except Exception as e:  # e.g. extended dtypes
+        raise _UncacheableKernelError("array has no host value") from e
+      return (t, jax_core.typeof(value), self._leaf(host_value, depth))
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+      return (
+          t,
+          tuple(
+              self._leaf(getattr(value, f.name), depth)
+              for f in dataclasses.fields(value)
+          ),
+      )
+    try:
+      hash(value)
+    except TypeError as e:
+      raise _UncacheableKernelError(f"unhashable {t}") from e
+    # Avals, primitives, meshes, treedefs, interned eqn contexts and callables
+    # define exact (or identity) equality.
+    return (t, value)
+
+  def _atom(self, atom: jax_core.Atom, var_ids: dict[jax_core.Var, int]) -> int:
+    if type(atom) is jax_core.Literal:
+      return -1 - self._intern((atom.aval, self._leaf(atom.val, 0)))
+    try:
+      return var_ids[atom]
+    except KeyError:
+      raise _UncacheableKernelError(
+          f"jaxpr refers to an unbound var of type {atom.aval}"
+      ) from None
+
+  def _effects(
+      self, effects: jax_core.Effects, var_ids: dict[jax_core.Var, int]
+  ) -> int:
+    if not effects:
+      return -1
+    leaves = []
+    for effect in effects:
+      if isinstance(effect, effects_lib.JaxprInputEffect) and isinstance(
+          effect.input, jax_core.Var
+      ):
+        # The input is a var of this jaxpr, which only matters by position.
+        leaves.append((type(effect), self._atom(effect.input, var_ids)))
+      else:
+        leaves.append(self._leaf(effect, 0))
+    return self._intern(frozenset(leaves))
+
+  def _jaxpr_fingerprint(self, jaxpr: jax_core.Jaxpr) -> bytes:
+    include_metadata = self._include_metadata
+    memo = self._jaxpr_fingerprints[include_metadata]
+    fingerprint = memo.get(jaxpr)
+    if fingerprint is not None:
+      return fingerprint
+    intern = self._intern
+    var_ids: dict[jax_core.Var, int] = {}
+    tokens: list[int] = []
+    put = tokens.append
+    if include_metadata:
+      # Argument names become locations of the kernel's block arguments.
+      put(hash(tuple(jaxpr.debug_info.arg_names or ())))
+    consts = jaxpr.consts
+    put(len(consts))
+    for v, c in zip(jaxpr.constvars, consts):
+      var_ids[v] = len(var_ids)
+      put(intern(v.aval))
+      put(intern(self._leaf(c, 0)))
+    put(len(jaxpr.invars))
+    for v in jaxpr.invars:
+      var_ids[v] = len(var_ids)
+      put(intern(v.aval))
+    put(len(jaxpr.eqns))
+    for eqn in jaxpr.eqns:
+      put(intern(eqn.primitive))
+      put(len(eqn.invars))
+      for a in eqn.invars:
+        put(self._atom(a, var_ids))
+      put(len(eqn.outvars))
+      for v in eqn.outvars:
+        if type(v) is jax_core.DropVar:
+          put(-1 - intern(v.aval))
+        else:
+          var_ids[v] = len(var_ids)
+          put(intern(v.aval))
+      params = eqn.params
+      ignored = lowering.params_ignored_by_lowering.get(eqn.primitive, ())
+      put(
+          intern(
+              tuple(
+                  (k, self._leaf(params[k], 0))
+                  for k in sorted(params)
+                  if k not in ignored
+              )
+          )
+      )
+      # XLA metadata only annotates the custom call in the enclosing HLO
+      # module; Mosaic lowering never reads it.
+      put(intern(eqn.ctx.configs))
+      put(self._effects(eqn.effects, var_ids))
+      if include_metadata:
+        # Source information only feeds debug locations, so a 64 bit hash is
+        # enough: a collision can only make metadata stale.
+        put(hash(eqn.source_info.traceback))
+        put(hash(eqn.source_info.name_stack))
+    put(len(jaxpr.outvars))
+    for a in jaxpr.outvars:
+      put(self._atom(a, var_ids))
+    put(self._effects(jaxpr.effects, var_ids))
+    put(int(jaxpr.is_high))
+    fingerprint = hashlib.blake2b(
+        array.array("q", tokens).tobytes(), digest_size=32
+    ).digest()
+    memo[jaxpr] = fingerprint
+    return fingerprint
+
+
+class _MosaicLoweringCache:
+  """A process wide LRU cache of serialized Mosaic kernels."""
+
+  def __init__(self):
+    self._lock = threading.Lock()
+    self._entries: collections.OrderedDict[
+        Hashable, tpu_custom_call.SerializedMosaicModule
+    ] = collections.OrderedDict()
+    self._total_bytes = 0
+    self.hits = 0
+    self.misses = 0
+
+  @staticmethod
+  def _size(value: tpu_custom_call.SerializedMosaicModule) -> int:
+    return len(value.asm) + len(value.debug_locations or b"")
+
+  def get(self, key: Hashable) -> tpu_custom_call.SerializedMosaicModule | None:
+    with self._lock:
+      value = self._entries.get(key)
+      if value is None:
+        self.misses += 1
+      else:
+        self.hits += 1
+        self._entries.move_to_end(key)
+      return value
+
+  def put(
+      self,
+      key: Hashable,
+      value: tpu_custom_call.SerializedMosaicModule,
+      max_bytes: int,
+  ) -> None:
+    with self._lock:
+      if key in self._entries:
+        return
+      self._entries[key] = value
+      self._total_bytes += self._size(value)
+      while self._total_bytes > max_bytes and self._entries:
+        _, evicted = self._entries.popitem(last=False)
+        self._total_bytes -= self._size(evicted)
+
+  def cache_clear(self) -> None:
+    with self._lock:
+      self._entries.clear()
+      self._total_bytes = 0
+      self.hits = 0
+      self.misses = 0
+
+  def cache_info(self) -> dict[str, int]:
+    with self._lock:
+      return dict(
+          hits=self.hits,
+          misses=self.misses,
+          currsize=len(self._entries),
+          total_bytes=self._total_bytes,
+      )
+
+  def cache_keys(self) -> list[Hashable]:
+    with self._lock:
+      return list(self._entries)
+
+
+_kernel_fingerprinter = _KernelFingerprinter()
+_mosaic_lowering_cache = _MosaicLoweringCache()
+util.register_cache(_kernel_fingerprinter, "pallas_tpu_kernel_fingerprints")
+util.register_cache(_mosaic_lowering_cache, "pallas_tpu_mosaic_lowering")
+
+
+def _lower_and_serialize_mosaic_module(
+    ctx: mlir.LoweringRuleContext,
+    kernel_key: Callable[[], Hashable],
+    lower_module: Callable[[], ir.Module],
+    *,
+    jax_mesh: Any,
+) -> tpu_custom_call.SerializedMosaicModule:
+  """Lowers a kernel to a serialized Mosaic module, reusing earlier lowerings.
+
+  `kernel_key` must cover everything `lower_module` depends on besides the
+  lowering environment, which is added here. Unless metadata is included in
+  compilation cache keys, a kernel that differs from an earlier one only in
+  source information reuses its lowering, including its debug locations.
+  """
+  ir_version = tpu_custom_call.get_ir_version(ctx)
+  unzip_debug_locations = tpu_custom_call.should_unzip_debug_locations(ctx)
+  max_bytes = config.jax_pallas_tpu_lowering_cache_max_bytes.value
+  key = None
+  if (
+      max_bytes > 0
+      and not pallas_core.dynamic_shapes_export_enabled()
+      and not ctx.module_context.shape_poly_state.dim_vars
+  ):
+    try:
+      device = (tpu_info.get_device_kind(), tpu_info.get_num_device_cores())
+    except Exception:  # pylint: disable=broad-except
+      # Kernels that never query the device lower without one.
+      device = None
+    # The enclosing equation's XLA metadata is in the trace context here, but
+    # only annotates the custom call, which is emitted for every call site.
+    with xla_metadata.clear_xla_metadata():
+      trace_context = config.trace_context()
+    try:
+      key = (
+          kernel_key(),
+          tuple(ctx.module_context.platforms),
+          ctx.is_forward_compat(),
+          ir_version,
+          unzip_debug_locations,
+          trace_context,
+          pallas_core.poison_buffers_enabled(),
+          _include_metadata_in_key(),
+          config.include_full_tracebacks_in_locations.value,
+          config.traceback_in_locations_limit.value,
+          device,
+          # Lowering only sees the mesh through `MeshInfo`, not its devices,
+          # so all stages of an MPMD program share kernels.
+          None
+          if jax_mesh is None
+          else (tuple(jax_mesh.axis_names), tuple(jax_mesh.shape.items())),
+      )
+    except _UncacheableKernelError as e:
+      logger.log(
+          logging.WARNING
+          if config.explain_cache_misses.value
+          else logging.DEBUG,
+          "Not caching the Mosaic lowering of a Pallas TPU kernel: %s",
+          e,
+      )
+      key = None
+  if key is not None:
+    cached = _mosaic_lowering_cache.get(key)
+    if cached is not None:
+      return cached
+  serialized = tpu_custom_call.serialize_mosaic_module(
+      lower_module(),
+      ir_version=ir_version,
+      unzip_debug_locations=unzip_debug_locations,
+  )
+  if key is not None:
+    _mosaic_lowering_cache.put(key, serialized, max_bytes)
+  return serialized
 
 
 def _get_memory_space_from_aval(
@@ -275,7 +698,7 @@ def _jax_value_to_mosaic_value(x: jax.Array) -> jax.Array:
 def _lower_to_custom_call(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
-    mosaic_module: ir.Module,
+    mosaic_module: ir.Module | tpu_custom_call.SerializedMosaicModule,
     mosaic_params: tpu_core.CompilerParams,
     kernel_type: tpu_core.CoreType | None,
     num_dynamic_grid_bounds: int,
@@ -394,15 +817,35 @@ def _lower_to_custom_call(
   return mlir.lower_fun(_maybe_cast_outputs)(cast_ctx, *out_nodes)
 
 
+# Kernels refer to the jaxprs of inner jits many times, and call sites traced
+# from the same code share them, so tags are memoized per (immutable) jaxpr.
+_barrier_semaphore_tags_cache: weakref.WeakKeyDictionary[
+    jax_core.Jaxpr, frozenset[Hashable]
+] = weakref.WeakKeyDictionary()
+
+
+def _barrier_semaphore_tags(jaxpr: jax_core.Jaxpr) -> frozenset[Hashable]:
+  """Returns the barrier semaphore tags used in `jaxpr` and its subjaxprs."""
+  tags = _barrier_semaphore_tags_cache.get(jaxpr)
+  if tags is None:
+    found = set()
+    for eqn in jaxpr.eqns:
+      if (
+          eqn.primitive is tpu_primitives.get_barrier_semaphore_p
+          and eqn.params.get("tag") is not None
+      ):
+        found.add(eqn.params["tag"])
+      for subjaxpr in jax_core.jaxprs_in_params(eqn.params):
+        found.update(_barrier_semaphore_tags(subjaxpr))
+    tags = frozenset(found)
+    _barrier_semaphore_tags_cache[jaxpr] = tags
+  return tags
+
+
 def _extract_single_barrier_semaphore_tag(
     jaxpr: jax_core.Jaxpr,
 ) -> Hashable | None:
-  tags = {
-      eqn.params["tag"]
-      for _, eqn in jaxpr_util.all_eqns(jaxpr)
-      if eqn.primitive is tpu_primitives.get_barrier_semaphore_p
-      and eqn.params.get("tag") is not None
-  }
+  tags = _barrier_semaphore_tags(jaxpr)
   if len(tags) > 1:
     raise ValueError(
         "Cannot specify multiple distinct barrier semaphore tags within a"
@@ -451,27 +894,46 @@ def pallas_call_tpu_lowering_rule(
   mlir_ctx = ctx.module_context.context
   tpu.register_dialect(mlir_ctx)
 
-  with (
-      mlir_ctx,
-      ir.Location.unknown(mlir_ctx),
-      xla_metadata.clear_xla_metadata(),
-  ):
-    mosaic_module = lowering.lower_jaxpr_to_pipelined_module(
-        ctx,
-        grid_mapping,
-        jaxpr,
-        dimension_semantics=mosaic_params.dimension_semantics,
-        kernel_type=tpu_core.CoreType.TC,
-        mesh=jax_mesh,
-        dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
-        fuse_transposed_lhs_in_matmul=mosaic_params.fuse_transposed_lhs_in_matmul,
-    )
+  def lower_module() -> ir.Module:
+    with (
+        mlir_ctx,
+        ir.Location.unknown(mlir_ctx),
+        xla_metadata.clear_xla_metadata(),
+    ):
+      return lowering.lower_jaxpr_to_pipelined_module(
+          ctx,
+          grid_mapping,
+          jaxpr,
+          dimension_semantics=mosaic_params.dimension_semantics,
+          kernel_type=tpu_core.CoreType.TC,
+          mesh=jax_mesh,
+          dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+          fuse_transposed_lhs_in_matmul=mosaic_params.fuse_transposed_lhs_in_matmul,
+      )
 
+  mosaic_module: ir.Module | tpu_custom_call.SerializedMosaicModule
   if debug:
+    module = lower_module()
     pm = passmanager.PassManager.parse("builtin.module(canonicalize)", mlir_ctx)
-    pm.run(mosaic_module.operation)
+    pm.run(module.operation)
     print(f"\nThe Mosaic module for pallas_call {debug_info.func_src_info}:")
-    print(mosaic_module.operation.get_asm(use_name_loc_as_prefix=True))
+    print(module.operation.get_asm(use_name_loc_as_prefix=True))
+    mosaic_module = module
+  else:
+    # Everything `lower_module` reads besides the lowering environment.
+    def kernel_key() -> Hashable:
+      return (
+          "pallas_call",
+          _kernel_fingerprinter.jaxpr_fingerprint(jaxpr),
+          debug_info.func_name,
+          _kernel_fingerprinter.leaf(grid_mapping),
+          _kernel_fingerprinter.leaf(mosaic_params.dimension_semantics),
+          mosaic_params.fuse_transposed_lhs_in_matmul,
+      )
+
+    mosaic_module = _lower_and_serialize_mosaic_module(
+        ctx, kernel_key, lower_module, jax_mesh=jax_mesh
+    )
 
   return _lower_to_custom_call(
       ctx,
@@ -658,81 +1120,98 @@ def mpmd_map_tpu_lowering_rule(
       for v in some_jaxpr.invars
   ]
 
-  with mlir_ctx, ir.Location.unknown(mlir_ctx):
-    mosaic_module = ir.Module.create()
-    for mesh, jaxpr in zip(meshes, jaxprs, strict=True):
-      if not hasattr(mesh, "core_type") or not hasattr(
-          mesh, "dimension_semantics"
-      ):
-        raise ValueError(
-            "mpmd_map requires the mesh to define its ``core_type`` and"
-            " ``dimension_semantics``"
-        )
-
-      match kernel_type := mesh.core_type:
-        case tpu_core.CoreType.TC:
-          if mpmd_meshes_map is not None and mpmd_meshes_map.keys() != {
-              tpu_core.CoreType.TC
-          }:
-            raise NotImplementedError(
-                "mpmd_map does not support TC kernels yet."
-            )
-          if mesh.num_cores > 1:
-            actual_invars = (
-                jaxpr.invars[:-num_scratch]
-                if num_scratch > 0
-                else jaxpr.invars
-            )
-            if any(
-                pallas_core.get_memory_space_aval(v.aval)
-                == tpu_core.MemorySpace.VMEM
-                for v in actual_invars
-            ):
-              raise NotImplementedError(
-                  "TensorCoreMesh does not support VMEM inputs/outputs when there"
-                  " are >1 cores. Use HBM or ANY instead."
-              )
-        case (
-            tpu_core.CoreType.SC_SCALAR_SUBCORE
-            | tpu_core.CoreType.SC_VECTOR_SUBCORE
-        ):
-          if not tpu_info.is_tpu_device():
-            raise ValueError(
-                "SparseCore kernels are only supported on TPU, but the current"
-                f" device is {tpu_info.get_device_kind()}."
-            )
-          info = tpu_info.get_tpu_info()
-          if not info.sparse_core:
-            raise ValueError(
-                "SparseCore is not available on the current device"
-                f" ({info.chip_version}), but the kernel type is set to"
-                " SparseCore."
-            )
-        case _:
-          raise ValueError(f"Unsupported kernel type: {kernel_type}")
-
-      if any(is_scalar_input):
-        jaxpr = _rewrite_jaxpr_for_lowering(
-            jaxpr, mesh, (*meshes, *external_meshes)
-        )
-
-      lowering.lower_jaxpr_into_unpipelined_module(
-          ctx,
-          mosaic_module,
-          jaxpr,
-          jax_mesh=jax_mesh,
-          pallas_mesh=mesh,
-          name=mlir.sanitize_name(jaxpr.debug_info.func_name),
-          dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
-          num_scratch=num_scratch,
-          needs_layout_passes=mosaic_params.needs_layout_passes,
+  for mesh, jaxpr in zip(meshes, jaxprs, strict=True):
+    if not hasattr(mesh, "core_type") or not hasattr(
+        mesh, "dimension_semantics"
+    ):
+      raise ValueError(
+          "mpmd_map requires the mesh to define its ``core_type`` and"
+          " ``dimension_semantics``"
       )
 
+    match kernel_type := mesh.core_type:
+      case tpu_core.CoreType.TC:
+        if mpmd_meshes_map is not None and mpmd_meshes_map.keys() != {
+            tpu_core.CoreType.TC
+        }:
+          raise NotImplementedError("mpmd_map does not support TC kernels yet.")
+        if mesh.num_cores > 1:
+          actual_invars = (
+              jaxpr.invars[:-num_scratch] if num_scratch > 0 else jaxpr.invars
+          )
+          if any(
+              pallas_core.get_memory_space_aval(v.aval)
+              == tpu_core.MemorySpace.VMEM
+              for v in actual_invars
+          ):
+            raise NotImplementedError(
+                "TensorCoreMesh does not support VMEM inputs/outputs when there"
+                " are >1 cores. Use HBM or ANY instead."
+            )
+      case (
+          tpu_core.CoreType.SC_SCALAR_SUBCORE
+          | tpu_core.CoreType.SC_VECTOR_SUBCORE
+      ):
+        if not tpu_info.is_tpu_device():
+          raise ValueError(
+              "SparseCore kernels are only supported on TPU, but the current"
+              f" device is {tpu_info.get_device_kind()}."
+          )
+        info = tpu_info.get_tpu_info()
+        if not info.sparse_core:
+          raise ValueError(
+              "SparseCore is not available on the current device"
+              f" ({info.chip_version}), but the kernel type is set to"
+              " SparseCore."
+          )
+      case _:
+        raise ValueError(f"Unsupported kernel type: {kernel_type}")
+
+  def lower_module() -> ir.Module:
+    with mlir_ctx, ir.Location.unknown(mlir_ctx):
+      module = ir.Module.create()
+      for mesh, jaxpr in zip(meshes, jaxprs, strict=True):
+        if any(is_scalar_input):
+          jaxpr = _rewrite_jaxpr_for_lowering(
+              jaxpr, mesh, (*meshes, *external_meshes)
+          )
+        lowering.lower_jaxpr_into_unpipelined_module(
+            ctx,
+            module,
+            jaxpr,
+            jax_mesh=jax_mesh,
+            pallas_mesh=mesh,
+            name=mlir.sanitize_name(jaxpr.debug_info.func_name),
+            dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+            num_scratch=num_scratch,
+            needs_layout_passes=mosaic_params.needs_layout_passes,
+        )
+    return module
+
+  mosaic_module: ir.Module | tpu_custom_call.SerializedMosaicModule
   if debug:
+    module = lower_module()
     pm = passmanager.PassManager.parse("builtin.module(canonicalize)", mlir_ctx)
-    pm.run(mosaic_module.operation)
+    pm.run(module.operation)
     print("\nThe Mosaic module for mpmd_map:")
-    print(mosaic_module.operation.get_asm(use_name_loc_as_prefix=True))
+    print(module.operation.get_asm(use_name_loc_as_prefix=True))
+    mosaic_module = module
+  else:
+    # Everything `lower_module` reads besides the lowering environment.
+    def kernel_key() -> Hashable:
+      return (
+          "mpmd_map",
+          tuple(_kernel_fingerprinter.jaxpr_fingerprint(j) for j in jaxprs),
+          tuple(j.debug_info.func_name for j in jaxprs),
+          _kernel_fingerprinter.leaf(tuple(meshes)),
+          _kernel_fingerprinter.leaf(tuple(external_meshes)),
+          num_scratch,
+          mosaic_params.needs_layout_passes,
+      )
+
+    mosaic_module = _lower_and_serialize_mosaic_module(
+        ctx, kernel_key, lower_module, jax_mesh=jax_mesh
+    )
 
   if name is None:
     name = "_".join(jaxpr.debug_info.func_name for jaxpr in jaxprs)
