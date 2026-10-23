@@ -1905,9 +1905,9 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     def f_sc(operand):
       return jax.lax.sort(operand)
 
-    inputs = (np.linspace(0, 1, 524288).reshape(524288),)
+    inputs = (np.random.randint(524288, size=524288, dtype=np.int32),)
 
-    self.assertAllClose(f_tc(*inputs), f_sc(*inputs))
+    self.assertArraysEqual(f_tc(*inputs), f_sc(*inputs))
 
     compiled_f_sc = jax.jit(f_sc).lower(*inputs).compile()
     compiled_text = compiled_f_sc.as_text()
