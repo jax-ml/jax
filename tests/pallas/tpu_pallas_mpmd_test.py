@@ -288,6 +288,30 @@ class MpmdAsyncTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(tc_out, x + 1)
     self.assertEqual(int(sc_out[0, 0]), 42)
 
+  @parameterized.parameters([TC, SCS])
+  def test_async_copy_unsafe_no_write_effect(self, core_type):
+    mesh = from_core_type(core_type)
+    mem = pltpu.VMEM if core_type == TC else pltpu.SMEM
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+
+    def body(x_ref, out_ref, scratch_ref, sem):
+      pltpu.async_copy(
+          x_ref, scratch_ref, sem, _unsafe_no_write_effect=True
+      ).wait()
+      pltpu.async_copy(scratch_ref, out_ref, sem).wait()
+
+    jaxpr = jax.make_jaxpr(
+        lambda s, d: pltpu.async_copy(s, d, _unsafe_no_write_effect=True).wait()
+    )(jax.new_ref(x), jax.new_ref(x))
+    self.assertTrue(all("Read" in str(e) for e in jaxpr.effects))
+    out = pl.kernel(
+        body,
+        mesh=mesh,
+        out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        scratch_types=[mem(x.shape, x.dtype), pltpu.SemaphoreType.DMA(())],
+    )(x)
+    np.testing.assert_array_equal(out, x)
+
 
 # TODO(rdyro): A temporary workaround to avoid flakiness.
 @jtu.thread_unsafe_test_class()

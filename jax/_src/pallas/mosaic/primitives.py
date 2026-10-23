@@ -224,6 +224,7 @@ class AsyncCopyDescriptor:
   src_sem: Any | None
   device_id: MultiDimDeviceId | IntDeviceId | None
   device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH
+  _unsafe_no_write_effect: bool = False
   _used: bool = dataclasses.field(
       default=False, init=False, compare=False, hash=False
   )
@@ -275,6 +276,7 @@ class AsyncCopyDescriptor:
         device_id_type=self.device_id_type,
         priority=priority,
         add=add,
+        _unsafe_no_write_effect=self._unsafe_no_write_effect,
     )
 
   def wait(self):
@@ -295,7 +297,8 @@ class AsyncCopyDescriptor:
     flat_args, tree = self._get_args_and_tree()
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type,
-        is_wait_send=False
+        is_wait_send=False,
+        _unsafe_no_write_effect=self._unsafe_no_write_effect,
     )
 
   def wait_recv(self):
@@ -311,7 +314,8 @@ class AsyncCopyDescriptor:
     flat_args, tree = self._get_args_and_tree(swap_src_and_dst=True)
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type,
-        is_wait_send=True
+        is_wait_send=True,
+        _unsafe_no_write_effect=self._unsafe_no_write_effect,
     )
 
   def wait_send(self):
@@ -361,6 +365,7 @@ def _get_dma_effects(
     *,
     is_wait: bool = False,
     src_dst_swapped: bool = False,
+    _unsafe_no_write_effect: bool = False,
 ):
   n_src_transforms = len(_dma_tree_leaves(src_ref_aval))
   n_dst_transforms = len(_dma_tree_leaves(dst_ref_aval))
@@ -369,10 +374,11 @@ def _get_dma_effects(
   # TODO(rdyro): We swap read vs write effects when dma_wait is bound via
   # `wait_send`. `wait_send` swaps the src and dst args when binding dma_wait_p.
   # Consider handling this in a cleaner way.
+  write_cls = state.ReadEffect if _unsafe_no_write_effect else state.WriteEffect
   if src_dst_swapped:
-    src_effect_cls, dst_effect_cls = state.WriteEffect, state.ReadEffect
+    src_effect_cls, dst_effect_cls = write_cls, state.ReadEffect
   else:
-    src_effect_cls, dst_effect_cls = state.ReadEffect, state.WriteEffect
+    src_effect_cls, dst_effect_cls = state.ReadEffect, write_cls
   effs: set[jax_core.Effect] = _get_ref_effects(
       src_ref_aval, src_effect_cls, 0
   ) | _get_ref_effects(dst_ref_aval, dst_effect_cls, n_src_transforms)
@@ -406,7 +412,10 @@ def _dma_is_high(*avals, **params):
 
 dma_start_p.is_high = _dma_is_high
 
-def _dma_start_to_lojax(*args, tree, device_id_type, priority, add):
+def _dma_start_to_lojax(
+    *args, tree, device_id_type, priority, add, _unsafe_no_write_effect: bool = False
+):
+  del _unsafe_no_write_effect
   src_ref, dst_ref, dst_sem, src_sem, device_id = _dma_unflatten(tree, args)
   src_ref_aval = jax_core.typeof(_get_ref(src_ref))
   dst_ref_aval = jax_core.typeof(_get_ref(dst_ref))
@@ -432,7 +441,10 @@ def _dma_start_to_lojax(*args, tree, device_id_type, priority, add):
 dma_start_p.to_lojax = _dma_start_to_lojax
 
 @dma_start_p.def_effectful_abstract_eval
-def _dma_start_abstract_eval(*args, tree, device_id_type, priority, add):
+def _dma_start_abstract_eval(
+    *args, tree, device_id_type, priority, add, _unsafe_no_write_effect: bool = False
+):
+  del add
   if priority < 0:
     raise ValueError(f"DMA start priority must be non-negative: {priority}")
   src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, device_id_aval = (
@@ -465,6 +477,7 @@ def _dma_start_abstract_eval(*args, tree, device_id_type, priority, add):
       src_sem_aval,
       device_id_aval,
       device_id_type,
+      _unsafe_no_write_effect=_unsafe_no_write_effect,
   )
 
 def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
@@ -494,10 +507,10 @@ jax_core.pp_eqn_rules[dma_start_p] = _dma_start_pp_eqn
 
 def dma_start_discharge_rule(
     ctx, *args, tree, device_id_type,
-    priority, add
+    priority, add, _unsafe_no_write_effect: bool = False
 ):
   # Note: we ignore the DMA priority in discharge rules.
-  del priority
+  del priority, _unsafe_no_write_effect
   if add:
     raise NotImplementedError(
         "DMA partial discharge add=True not yet implemented.")
@@ -641,7 +654,10 @@ dma_wait_p.multiple_results = True
 
 dma_wait_p.is_high = _dma_is_high
 
-def _dma_wait_to_lojax(*args, tree, device_id_type, is_wait_send: bool):
+def _dma_wait_to_lojax(
+    *args, tree, device_id_type, is_wait_send: bool, _unsafe_no_write_effect: bool = False
+):
+  del _unsafe_no_write_effect
   if is_wait_send:
     raise NotImplementedError(
         "wait_read/wait_send not implemented in LoJAX yet.")
@@ -670,7 +686,7 @@ dma_wait_p.to_lojax = _dma_wait_to_lojax
 
 @dma_wait_p.def_effectful_abstract_eval
 def _dma_wait_abstract_eval(
-    *args, tree, device_id_type, is_wait_send: bool
+    *args, tree, device_id_type, is_wait_send: bool, _unsafe_no_write_effect: bool = False
 ):
   src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, device_id_aval = (
       _dma_unflatten(tree, args)
@@ -699,6 +715,7 @@ def _dma_wait_abstract_eval(
       device_id_type,
       is_wait=True,
       src_dst_swapped=is_wait_send,
+      _unsafe_no_write_effect=_unsafe_no_write_effect,
   )
 
 def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
@@ -728,9 +745,10 @@ def dma_wait_discharge_rule(
     tree,
     device_id_type,
     is_wait_send: bool = False,
+    _unsafe_no_write_effect: bool = False,
 ):
   # TODO(b/370563115): perform ref update in dma_wait discharge rule instead of dma_start
-  del device_id_type, is_wait_send
+  del device_id_type, is_wait_send, _unsafe_no_write_effect
   _, dst_ref, dst_sem, _, _ = _dma_unflatten(tree, args)
   dst_ref, dst_ref_transforms = _get_ref_and_transforms(dst_ref)
   dst_sem, dst_sem_transforms = _get_ref_and_transforms(dst_sem)
@@ -778,7 +796,12 @@ def _get_ref(ref):
 
 
 def make_async_copy(
-    src_ref, dst_ref, sem=None, *, src_sem=None
+    src_ref,
+    dst_ref,
+    sem=None,
+    *,
+    src_sem=None,
+    _unsafe_no_write_effect: bool = False,
 ) -> AsyncCopyDescriptor:
   """Creates a description of an asynchronous copy operation.
 
@@ -787,21 +810,41 @@ def make_async_copy(
     dst_ref: The destination Reference.
     sem: Optional semaphore tracking completion of the write to `dst_ref`.
     src_sem: Optional semaphore tracking completion of the read from `src_ref`.
+    _unsafe_no_write_effect: If True, emits `ReadEffect` instead of
+      `WriteEffect` on `dst_ref`.
 
   Returns:
     An AsyncCopyDescriptor.
   """
   return AsyncCopyDescriptor(
-      src_ref, dst_ref, sem, src_sem, None, primitives.DeviceIdType.MESH
+      src_ref,
+      dst_ref,
+      sem,
+      src_sem,
+      None,
+      primitives.DeviceIdType.MESH,
+      _unsafe_no_write_effect=_unsafe_no_write_effect,
   )
 
 
 def async_copy(
-    src_ref, dst_ref, sem=None, *,
-    src_sem=None, priority: int = 0, add: bool = False,
+    src_ref,
+    dst_ref,
+    sem=None,
+    *,
+    src_sem=None,
+    priority: int = 0,
+    add: bool = False,
+    _unsafe_no_write_effect: bool = False,
 ) -> AsyncCopyDescriptor:
   """Issues a DMA copying from src_ref to dst_ref."""
-  copy_descriptor = make_async_copy(src_ref, dst_ref, sem, src_sem=src_sem)
+  copy_descriptor = make_async_copy(
+      src_ref,
+      dst_ref,
+      sem,
+      src_sem=src_sem,
+      _unsafe_no_write_effect=_unsafe_no_write_effect,
+  )
   copy_descriptor.start(priority=priority, add=add)
   return copy_descriptor
 
