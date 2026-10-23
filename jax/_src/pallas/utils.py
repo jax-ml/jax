@@ -17,13 +17,15 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, overload
+from typing import Any, Protocol, Self, overload
 
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import numpy as jnp
 from jax._src import typing as jax_typing
 from jax._src.lax import lax
+from jax._src.lax import special
 from jax._src.util import split_list
 import numpy as np
 
@@ -343,6 +345,8 @@ def _erf_inv_64_lowering_helper(x):
 
 
 def erf_inv_lowering_helper(x):
+  if config.jax_accurate_erf_inv.value:
+    return special.erf_inv_impl(x)
   if x.dtype == jnp.float32:
     return _erf_inv_32_lowering_helper(x)
   if x.dtype == jnp.float64:
@@ -362,6 +366,20 @@ def sign_lowering_helper(x):
     return jnp.where(jnp.isnan(x), jnp.nan, out)
 
   raise NotImplementedError(f"sign_lowering_helper not implemented for {x.dtype}")
+
+
+def select_n_lowering_helper(which, *cases):
+  def _select(offset, cases):
+    if len(cases) == 1:
+      return cases[0]
+    mid = len(cases) // 2
+    return lax.select(
+        which < offset + mid,
+        _select(offset, cases[:mid]),
+        _select(offset + mid, cases[mid:]),
+    )
+
+  return _select(0, cases)
 
 
 # based on https://github.com/openxla/xla/blob/a7a09d56c3599123f8148bbf3e44c9ebc04624b9/xla/mlir_hlo/mhlo/transforms/chlo_legalize_to_hlo/chlo_legalize_to_hlo.cc#L1339-L1422
@@ -467,3 +485,23 @@ class MeshInfo:
     ))
     mesh_shape = tuple(mesh.shape.values())
     return MeshInfo(mesh_shape, mesh.axis_names, mesh_strides)
+
+
+# This is morally ``ShapedArray | state.AbstractRef``, but Pyrefly does not
+# allow calling methods on a union type, making ``update`` non-callable, so
+# we use a protocol instead of a union.
+class ShapedAbstractValue(Protocol):
+  shape: tuple[jax_core.DimSize, ...]
+  dtype: jnp.dtype
+  weak_type: bool
+
+  @property
+  def ndim(self) -> int:
+    ...
+
+  @property
+  def size(self) -> int:
+    ...
+
+  def update(self, **kwargs: Any) -> Self:
+    raise NotImplementedError

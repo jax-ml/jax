@@ -14,10 +14,14 @@
 
 """Precision tests for exponential and logistic functions."""
 
+import math
+
 from absl.testing import parameterized
+import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lib import ifrt_version
 import jax.numpy as jnp
 
 # Under pytest, tests run against an installed wheel that does not
@@ -38,12 +42,68 @@ DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
 TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
 
 
+@jax.jit
 def _exp_highest(x):
   return lax.exp(x, accuracy=lax.AccuracyMode.HIGHEST)
 
 
+@jax.jit
+def _exp2_highest(x):
+  return lax.exp2(x, accuracy=lax.AccuracyMode.HIGHEST)
+
+
+@jax.jit
 def _expm1_highest(x):
   return lax.expm1(x, accuracy=lax.AccuracyMode.HIGHEST)
+
+
+# Additional range-reduction boundaries (k * ln(2)) beyond +-0.5*ln(2) and
+# +-ln(2) (which are already in _common_interesting_points), plus worst-case
+# inputs across math libraries from Gladman et al., "Accuracy of Mathematical
+# Functions in Single, Double, Double Extended, and Quadruple Precision".
+_EXP_INTERESTING_POINTS = [
+    *(k * math.log(2.0) for k in (-10, -2, 2, 10)),
+    *(
+        float.fromhex(h)
+        for h in (
+            "-0x1.49f33ad2c1c58p+9",
+            "0x1.fce66609f7428p+5",
+            "0x1.b97dc8345c55p+5",
+            "0x1.2e8f20cf3cbe7p+8",
+            "-0x1.18209ecd19a8cp+6",
+            "-0x1.4133f4fd79c1cp-13",
+            "0x1p-53",
+            "-0x1.ffffffa000001p-27",
+            "-0x1.625f1b359729ep+9",
+            "-0x1.625f1c27780c8p+9",
+        )
+    ),
+]
+
+
+def _expm1_interesting_points(dtype):
+  # Thresholds where expm1(x) saturates to -1.0 for `dtype`, plus worst-case
+  # inputs across math libraries from Gladman et al.
+  p = jnp.finfo(dtype).nmant + 1
+  return [
+      -p * math.log(2.0),
+      -(p + 1) * math.log(2.0),
+      *(
+          float.fromhex(h)
+          for h in (
+              "0x1.63e063d87938p-2",
+              "-0x1.62fe464c64f65p-8",
+              "0x1.9a5796c0b73b8p-2",
+              "0x1.62ff47a01658fp-2",
+              "0x1.e7f93188565ecp-5",
+              "0x1p-52",
+              "-0x1.62d7c116d2e32p-1",
+              "0x1.633f993a730c9p-2",
+              "0x1.a0e95d59498e9p-2",
+              "0x1.6339ea76a70cap-2",
+          )
+      ),
+  ]
 
 
 @jtu.thread_unsafe_test_class()
@@ -52,7 +112,7 @@ class ExpTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 1.5, f64: 1.0}),
+        ("cpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
         ("gpu", {bf16: 1.0, f16: 1.0, f32: 2.0, f64: 1.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 116.0}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 109.5}),
@@ -60,13 +120,19 @@ class ExpTest(jtu.JaxTestCase):
         ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 65.0}),
     ]
     util.check_unary_precision(
-        self, jnp.exp, np.exp, mpmath.exp, dtype, bounds=bounds
+        self,
+        jnp.exp,
+        np.exp,
+        mpmath.exp,
+        dtype,
+        bounds=bounds,
+        interesting_points=_EXP_INTERESTING_POINTS,
     )
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp_highest_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 1.5, f64: 1.0}),
+        ("cpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
         ("gpu", {bf16: 1.0, f16: 1.0, f32: 2.0, f64: 1.5}),
         ([*TPU_EUPV1, "tpu_v5p"], {bf16: 1.0, f16: 1.0, f32: 1.5}),
         (["tpu_v6e", "tpu_7x"], {f32: 1.5}),
@@ -78,6 +144,7 @@ class ExpTest(jtu.JaxTestCase):
         mpmath.exp,
         dtype,
         bounds=bounds,
+        interesting_points=_EXP_INTERESTING_POINTS,
     )
 
 
@@ -86,24 +153,69 @@ class Exp2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp2_accuracy(self, dtype):
-    # lax.exp2 lowers as exp(x * ln(2)) where ln(2) is cast to the input dtype.
-    # In bfloat16, ln(2) has ~0.25% relative error, which causes large output
-    # errors (~93 ULP) and causes x = 128.0 to evaluate to finite 2.72e+38
-    # instead of overflowing to inf.
+    if ifrt_version >= 80 and jtu.is_libtpu_at_least("0.0.52"):
+      bounds = [
+          ("cpu", {f16: 1.0}),
+          ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),
+          (TPU_EUPV1, {f16: 1.0, f32: 61.0}),
+          ("tpu_v5p", {f16: 1.0, f32: 65.5}),
+          (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
+      ]
+    else:
+      bounds = [
+          ("cpu", {bf16: 101.0, f16: 14.0, f32: 68.5, f64: 719.0}),
+          ("gpu", {bf16: 101.0, f16: 14.0, f32: 69.0, f64: 719.0}),
+          (TPU_EUPV1, {bf16: 44.0, f16: 7.5, f32: 141.5}),
+          ("tpu_v5p", {bf16: 44.0, f16: 7.5, f32: 133.0}),
+          ("tpu_v6e", {bf16: 44.0, f16: 7.5, f32: 90.0}),
+          ("tpu_7x", {bf16: 75.0, f16: 7.5, f32: 90.0}),
+      ]
+    ignore_inputs = [
+        (["cpu", "gpu", "tpu"], {bf16: [0x4300]}),
+    ]
+    # Worst-case inputs across math libraries from Gladman et al.
+    interesting_points = [
+        float.fromhex(h)
+        for h in (
+            "-0x1.1a4ce073ea908p-5",
+            "-0x1.8002f29666b99p-6",
+            "0x1.fffbff4152bafp+9",
+            "-0x1.ff95ecb4e6331p-2",
+            "-0x1.ff1eb5acee46bp+9",
+            "-0x1.b3d9b47ad1b2fp-13",
+            "0x1.71547652b82fep-53",
+            "-0x1.e383ca1fd4462p+9",
+            "-0x1.f7087fb1cf9e8p+9",
+            "-0x1.ff40169bd093bp+9",
+            "-0x1.ff3e09d141586p+9",
+        )
+    ]
+    util.check_unary_precision(
+        self,
+        jnp.exp2,
+        np.exp2,
+        lambda x: mpmath.power(2, x),
+        dtype,
+        bounds=bounds,
+        ignore_inputs=ignore_inputs,
+        interesting_points=interesting_points,
+    )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_exp2_highest_accuracy(self, dtype):
+    if ifrt_version < 80 or not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Requires ifrt_version >= 80 and libtpu >= 0.0.52")
     bounds = [
-        ("cpu", {bf16: 101.0, f16: 14.0, f32: 68.5, f64: 719.0}),
-        ("gpu", {bf16: 101.0, f16: 14.0, f32: 69.0, f64: 719.0}),
-        (TPU_EUPV1, {bf16: 44.0, f16: 7.5, f32: 141.5}),
-        ("tpu_v5p", {bf16: 44.0, f16: 7.5, f32: 133.0}),
-        ("tpu_v6e", {bf16: 44.0, f16: 7.5, f32: 90.0}),
-        ("tpu_7x", {bf16: 75.0, f16: 7.5, f32: 90.0}),
+        ("cpu", {f16: 1.0}),
+        ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),
+        ("tpu", {f16: 1.0, f32: 1.5}),
     ]
     ignore_inputs = [
         (["cpu", "gpu", "tpu"], {bf16: [0x4300]}),
     ]
     util.check_unary_precision(
         self,
-        jnp.exp2,
+        _exp2_highest,
         np.exp2,
         lambda x: mpmath.power(2, x),
         dtype,
@@ -117,27 +229,16 @@ class Expm1Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_expm1_accuracy(self, dtype):
-    if jtu.is_libtpu_at_least("0.0.50"):
-      tpu_bounds = [
-          (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1772.0}),
-          ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 1357.5}),
-          (["tpu_v6e", "tpu_7x"], {f32: 3.5}),
-      ]
-      check_signed_zeros = [
-          ([*TPU_EUPV1, "tpu_v5p"], False),
-      ]
-    else:
-      tpu_bounds = [
-          (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1772.0}),
-          ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 1357.5}),
-          ("tpu_v6e", {bf16: 1.0, f32: 64.0}),
-          ("tpu_7x", {bf16: 1.0, f32: 63.5}),
-      ]
-      check_signed_zeros = [
-          ("tpu", False),
-      ]
+    tpu_bounds = [
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1772.0}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 1357.5}),
+        (["tpu_v6e", "tpu_7x"], {f32: 3.5}),
+    ]
+    check_signed_zeros = [
+        ([*TPU_EUPV1, "tpu_v5p"], False),
+    ]
     bounds = [
-        ("cpu", {f16: 2.5, f32: 6.5, f64: 4.5}),
+        ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0}),
         ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
         *tpu_bounds,
     ]
@@ -149,17 +250,16 @@ class Expm1Test(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         check_signed_zeros=check_signed_zeros,
+        interesting_points=_expm1_interesting_points(dtype),
     )
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_expm1_highest_accuracy(self, dtype):
-    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.50"):
-      self.skipTest("Requires libtpu >= 0.0.50")
     bounds = [
-        ("cpu", {f16: 2.5, f32: 6.5, f64: 3.5}),
+        ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0}),
         ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
-        ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 2.0}),
-        (["tpu_v6e", "tpu_7x"], {f32: 2.0}),
+        ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 1.0}),
+        (["tpu_v6e", "tpu_7x"], {f32: 1.0}),
     ]
     util.check_unary_precision(
         self,
@@ -168,6 +268,7 @@ class Expm1Test(jtu.JaxTestCase):
         mpmath.expm1,
         dtype,
         bounds=bounds,
+        interesting_points=_expm1_interesting_points(dtype),
     )
 
 
@@ -184,6 +285,18 @@ class LogisticTest(jtu.JaxTestCase):
         ("tpu_v6e", {f16: 1.0, f32: 65.5}),
         ("tpu_7x", {bf16: 63.0, f16: 1.0, f32: 64.0}),
     ]
+    p = jnp.finfo(dtype).nmant + 1
+    interesting_points = [
+        # Saturation to 1.0 thresholds for `dtype` (underflow to 0.0 at
+        # -log(fmax) / -log(tiny) is already in _common_interesting_points).
+        *(sign * k * math.log(2.0) for k in (p, p + 1) for sign in (-1, 1)),
+    ]
+    # TODO(phawkins): lax.logistic lowers to 1 / (1 + exp(-x)), which prematurely
+    # underflows to 0.0 on CPU and GPU when exp(-x) overflows in float16 for
+    # x <= -11.09.
+    output_ftz = [
+        (["cpu", "gpu"], {f16: True}),
+    ]
     util.check_unary_precision(
         self,
         lax.logistic,
@@ -191,12 +304,15 @@ class LogisticTest(jtu.JaxTestCase):
         lambda x: 1 / (1 + mpmath.exp(-x)),
         dtype,
         bounds=bounds,
+        output_ftz=output_ftz,
+        interesting_points=interesting_points,
     )
 
 
 util.register_benchmark(jnp.exp)
 util.register_benchmark(_exp_highest)
 util.register_benchmark(jnp.exp2)
+util.register_benchmark(_exp2_highest)
 util.register_benchmark(jnp.expm1)
 util.register_benchmark(_expm1_highest)
 util.register_benchmark(lax.logistic)

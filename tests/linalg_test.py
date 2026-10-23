@@ -850,6 +850,17 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # do not check it functionality here
     jsp.linalg.svd(np.ones((2, 2), dtype=np.float32))
 
+  @jtu.sample_product(dtype=float_types + complex_types)
+  def testSVDHermitianZeroSingularValue(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41547
+    a = jnp.array([[1, 0, 0], [0, 0, 0], [0, 0, -2]], dtype=dtype)
+    u, s, vh = jnp.linalg.svd(a, hermitian=True)
+    eye = jnp.eye(3, dtype=dtype)
+    self.assertAllClose(s, jnp.array([2, 1, 0], dtype=s.dtype))
+    self.assertAllClose(u @ jnp.diag(s.astype(dtype)) @ vh, a)
+    self.assertAllClose(u.conj().T @ u, eye)
+    self.assertAllClose(vh @ vh.conj().T, eye)
+
   @jtu.sample_product(
       shape=[(1, 1), (4, 4), (2, 5), (5, 2), (5, 5), (2, 5, 5)],
       dtype=float_types + complex_types,
@@ -2448,6 +2459,15 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       [1, 4, 5, 6],
       [2, 1, 4, 5],
       [3, 2, 1, 4]], dtype=np.float32))
+
+  def testToeplitzNaN(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38636
+    c = np.array([np.nan, np.inf, -0.0], dtype=np.float32)
+    r = np.array([np.nan, 2.0, 3.0], dtype=np.float32)
+    expected = scipy.linalg.toeplitz(c, r)
+    actual = jsp.linalg.toeplitz(c, r)
+    self.assertAllClose(actual, expected)
+
   def testHankelConstructionWithKnownCases(self):
     # r=None should default to zeros_like(c)
     c = np.array([1, 2, 3], dtype=np.float32)
@@ -2461,6 +2481,14 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     out1 = jsp.linalg.hankel(c, r1)
     out2 = jsp.linalg.hankel(c, r2)
     self.assertAllClose(out1, out2)
+
+  def testHankelNaN(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38635
+    c = np.array([np.nan, 2.0, 3.0], dtype=np.float32)
+    r = np.array([3.0, np.nan, 5.0], dtype=np.float32)
+    expected = scipy.linalg.hankel(c, r)
+    actual = jsp.linalg.hankel(c, r)
+    self.assertAllClose(actual, expected)
 
   @jtu.sample_product(
      cshape = [(3,), (0,), (2, 3), (1, 2, 3)],
@@ -2774,6 +2802,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
     if jtu.is_device_rocm() and not perturb_singular:
       self.skipTest(
           "Skipped on ROCm: hipsparseSgtsv2 numerical error on pivoting path.")
+    # OneAPI's non-perturbed path uses the non-pivoting Thomas decomposition.
+    if jtu.test_device_matches(["oneapi"]) and not perturb_singular:
+      self.skipTest(
+          "OneAPI non-perturbed path uses the non-pivoting fallback solver.")
     dl = np.array([0.0, 2.0, -2.0, 3.0], dtype=np.float32)
     d = np.array([1.0, 4.0, 1.0, -1.0], dtype=np.float32)
     du = np.array([2.0, -1.0, 1.0, 0.0], dtype=np.float32)
@@ -2787,6 +2819,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
   def test_tridiagonal_solve_requiring_pivoting_last_rows(self, perturb_singular):
     if not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("Pivoting not supported in fallback tridiagonal solve")
+
+    if jtu.test_device_matches(["oneapi"]) and not perturb_singular:
+      self.skipTest(
+          "OneAPI non-perturbed path uses the non-pivoting fallback solver.")
 
     dl = np.array([0.0, 1.0, -6.0, 1.0], dtype=np.float32)
     d = np.array([1.0, -1.0, 2.0, 1.0], dtype=np.float32)

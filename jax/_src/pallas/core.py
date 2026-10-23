@@ -88,6 +88,8 @@ SEMAPHORE_INTERPRET_DTYPE = jnp.int16
 SEMAPHORE_MAX_VALUE = jnp.iinfo(SEMAPHORE_INTERPRET_DTYPE).max
 
 class AbstractSemaphoreTyRules:
+  allow_conversion: bool = True
+
   @staticmethod
   def pallas_interpret_element_aval(_) -> jax_core.ShapedArray:
     return jax_core.ShapedArray((), SEMAPHORE_INTERPRET_DTYPE)
@@ -1257,7 +1259,7 @@ class GridSpec:
     if isinstance(grid, int):
       grid = (grid,)
     elif grid and isinstance(grid[0], tuple):  # Check if we have a named grid
-      grid_names, grid = util.unzip2(grid)  # pyrefly: ignore[bad-argument-type]
+      grid_names, grid = util.unzip2(grid)
 
     # TODO(b/353730556): allow NumPy scalars in grids
     if not all(_is_valid_grid_dim(g) for g in grid):  # pyrefly: ignore[bad-argument-type]

@@ -2663,6 +2663,45 @@ class APITest(jtu.JaxTestCase):
     expected = [3., 0.]
     self.assertEqual(actual, expected)
 
+  def test_linear_transpose_symbolic_zeros(self):
+    f32 = core.ShapedArray((), np.dtype('float32'))
+    zero = ad_internal.Zero(f32)
+    f = lambda x, y, z: (2. * x, 3. * x, zero)
+    one = np.float32(1.)
+
+    transpose = api._linear_transpose(f, f32, f32, zero, instantiate=False)
+    x_bar, y_bar, z_bar = transpose((one, zero, one))
+    self.assertAllClose(x_bar, 2 * one)
+    self.assertIsInstance(y_bar, ad_internal.Zero)
+    self.assertIsInstance(z_bar, ad_internal.Zero)
+    x_bar, y_bar, z_bar = transpose((zero, zero, zero))
+    self.assertIsInstance(x_bar, ad_internal.Zero)
+    self.assertIsInstance(y_bar, ad_internal.Zero)
+    self.assertIsInstance(z_bar, ad_internal.Zero)
+
+    x_bar, y_bar, z_bar = api.linear_transpose(f, f32, f32, zero)(
+        (one, zero, one))
+    self.assertAllClose(x_bar, 2 * one)
+    self.assertAllClose(y_bar, 0 * one)
+    self.assertIsInstance(z_bar, ad_internal.Zero)
+
+  def test_linear_transpose_custom_pytree_output(self):
+    @jax.tree_util.register_pytree_node_class
+    class CheckingNode:
+      def __init__(self, x):
+        self.x = jnp.asarray(x)
+
+      def tree_flatten(self):
+        return (self.x,), None
+
+      @classmethod
+      def tree_unflatten(cls, _, children):
+        return cls(*children)
+
+    transpose = api.linear_transpose(lambda x: CheckingNode(2. * x), 1.)
+    x_bar, = transpose(CheckingNode(3.))
+    self.assertAllClose(x_bar, 6., check_dtypes=False)
+
   @parameterized.product(jit=[False, True], dtype=[np.float32, np.complex64,
                                                 np.int32])
   def test_linear_transpose_float0(self, jit, dtype):
@@ -4418,7 +4457,7 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(fun([jnp.float32(10.)], jnp.float32(3.)),
                         jnp.float32(90.))
     consts2, traced2 = traced.with_consts_as_arg()
-    self.assertAllClose(traced2(consts2, jnp.float32(3.)), jnp.float32(18.))
+    self.assertAllClose(traced2(consts2, jnp.float32(3.)), [jnp.float32(18.)])
 
   def test_traced_with_consts_as_arg_cache_hit(self):
     f = lambda y: y ** 2 * jnp.float32(2.)
@@ -4806,6 +4845,63 @@ class APITest(jtu.JaxTestCase):
       self.assertNotIn("call(", get_hlo(jax.Inline.XLA_LATE))
     else:
       self.assertIn("call(", get_hlo(jax.Inline.XLA_LATE))
+
+  def test_register_lowering_inline_mode(self):
+    prim = jax._src.core.Primitive("inline_mode_test")
+    prim.def_abstract_eval(lambda x: x)
+
+    def lowering(ctx, x):
+      return mlir.lower_fun(lambda v: v * 2, multiple_results=False)(ctx, x)
+
+    with self.assertRaisesRegex(ValueError, "JAX_EARLY is not supported"):
+      mlir.register_lowering(prim, lowering, inline=jax.Inline.JAX_EARLY)
+
+    def lower_and_compile(inline_mode):
+      mlir.register_lowering(prim, lowering, inline=inline_mode)
+      lowered = api.jit(lambda x: prim.bind(x) + 1.0).lower(1.0)
+      return lowered.as_text(), lowered.compile().as_text()
+
+    mlir_text, hlo_text = lower_and_compile(True)
+    self.assertNotIn("func.func private @inline_mode_test", mlir_text)
+    self.assertNotIn("call(", hlo_text)
+
+    mlir_text, _ = lower_and_compile(False)
+    self.assertIn("func.func private @inline_mode_test", mlir_text)
+    self.assertNotIn("inlineable", mlir_text)
+
+    mlir_text, hlo_text = lower_and_compile(jax.Inline.XLA_EARLY)
+    self.assertIn("func.func private @inline_mode_test", mlir_text)
+    self.assertIn('inlineable = "xla_early"', mlir_text)
+    self.assertNotIn("call(", hlo_text)
+
+    mlir_text, hlo_text = lower_and_compile(jax.Inline.XLA_LATE)
+    self.assertIn("func.func private @inline_mode_test", mlir_text)
+    self.assertIn('inlineable = "xla_late"', mlir_text)
+    if jtu.device_under_test() == "tpu":
+      self.assertNotIn("call(", hlo_text)
+    else:
+      self.assertIn("call(", hlo_text)
+
+    # A platform-specific rule's inline setting overrides the default rule's.
+    mlir.register_lowering(prim, lowering, inline=jax.Inline.XLA_EARLY)
+    mlir.register_lowering(
+        prim, lowering, platform=jtu.device_under_test(), inline=True
+    )
+    mlir_text = api.jit(lambda x: prim.bind(x) + 1.0).lower(1.0).as_text()
+    self.assertNotIn("func.func private @inline_mode_test", mlir_text)
+
+    # Conflicting inline modes across multi-platform export fall back to AUTO.
+    mlir.register_lowering(
+        prim, lowering, platform="cpu", inline=jax.Inline.XLA_EARLY
+    )
+    mlir.register_lowering(
+        prim, lowering, platform="cuda", inline=jax.Inline.XLA_LATE
+    )
+    exported_mlir = jax.export.export(
+        api.jit(lambda x: prim.bind(x) + 1.0), platforms=("cpu", "cuda")
+    )(1.0).mlir_module()
+    self.assertIn("func.func private @inline_mode_test", exported_mlir)
+    self.assertNotIn("inlineable", exported_mlir)
 
   # Repro for https://github.com/jax-ml/jax/issues/7229.
   def test_compute_with_large_transfer(self):
@@ -5433,6 +5529,27 @@ class APITest(jtu.JaxTestCase):
         run_state_reference(body)((jnp.ones(7), jnp.ones(7)))
     self.assertTrue(any("different input types" in msg for msg in cm.output))
 
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_explain_cache_misses_kwarg_debug_info(self):
+    # https://github.com/jax-ml/jax/issues/41455
+    from jax._src import flattree as ft
+
+    def f(x):
+      return jnp.sin(x)
+
+    x1 = jnp.ones(3, 'float32')
+    x2 = jnp.ones(7, 'float32')
+    dbg1 = api_util.debug_info("test", f, (x1,), {})
+    dbg2 = api_util.debug_info("test", f, (x2,), {})
+    pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x1)), debug_info=dbg1,
+                      requires_low=True)
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x2)), debug_info=dbg2,
+                          requires_low=True)
+    self.assertTrue(any("at x, now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
   @unittest.skip('TODO(mattjj): re-enable after updating cache miss explainer')
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_shape_explain_closest(self):
@@ -5954,7 +6071,7 @@ class APITest(jtu.JaxTestCase):
     # otherwise the jnp.array(...) calls will induce constant duplication.
     c = np.ones(3).astype(np.float32)
 
-    def find_constants(jaxpr: core.ClosedJaxpr):
+    def find_constants(jaxpr: core.Jaxpr):
       for j in it.chain([jaxpr], core.subjaxprs(jaxpr)):
         for eq in j.eqns:
           for inv in eq.invars:
@@ -5973,10 +6090,7 @@ class APITest(jtu.JaxTestCase):
     def f():
       return jnp.array(c), jnp.sum(c), c, jnp.array(c), jnp.sum(c), c
 
-    if config.use_simplified_jaxpr_constants.value:
-      consts = uniq(find_constants(f()))
-    else:
-      consts = f().consts
+    consts = f().consts
 
     self.assertLen(consts, 1)
 
@@ -7389,10 +7503,7 @@ class RematTest(jtu.JaxTestCase):
     res = saved_residuals(f, (2., 3.), y=4.)
     self.assertLen(res, 6)
     self.assertEqual(res[0][0].shape, (1,))
-    if config.use_simplified_jaxpr_constants.value:
-      self.assertEqual(res[0][1], "from a literal")
-    else:
-      self.assertEqual(res[0][1], "from a constant")
+    self.assertEqual(res[0][1], "from a constant")
     self.assertEqual(res[1][0].shape, ())
     self.assertEqual(res[1][1], "from the argument x[0]")
     self.assertEqual(res[2][0].shape, ())
@@ -7412,32 +7523,18 @@ class RematTest(jtu.JaxTestCase):
 
     res = saved_residuals(f, (2., 3.), y=4.)
     self.assertLen(res, 6)
-    if config.use_simplified_jaxpr_constants.value:
-      self.assertEqual(res[0][1], "from the argument x[0]")
-      self.assertEqual(res[0][0].shape, ())
-      self.assertEqual(res[1][1], "from the argument x[1]")
-      self.assertEqual(res[1][0].shape, ())
-      self.assertEqual(res[2][1], "from the argument y")
-      self.assertEqual(res[2][0].shape, ())
-      self.assertStartsWith(res[3][1], "output of jitted function 'f'")
-      self.assertEqual(res[3][0].shape, ())
-      self.assertStartsWith(res[4][1], "output of jitted function 'f'")
-      self.assertEqual(res[4][0].shape, ())
-      self.assertStartsWith(res[5][1], "output of jitted function 'f'")
-      self.assertEqual(res[5][0].shape, (1,))
-    else:
-      self.assertEqual(res[0][1], "from a constant")
-      self.assertEqual(res[0][0].shape, (1,))
-      self.assertEqual(res[1][1], "from the argument x[0]")
-      self.assertEqual(res[1][0].shape, ())
-      self.assertEqual(res[2][1], "from the argument x[1]")
-      self.assertEqual(res[2][0].shape, ())
-      self.assertEqual(res[3][1], "from the argument y")
-      self.assertEqual(res[4][0].shape, ())
-      self.assertStartsWith(res[4][1], "output of jitted function 'f'")
-      self.assertEqual(res[4][0].shape, ())
-      self.assertStartsWith(res[5][1], "output of jitted function 'f'")
-      self.assertEqual(res[5][0].shape, ())
+    self.assertEqual(res[0][1], "from a constant")
+    self.assertEqual(res[0][0].shape, (1,))
+    self.assertEqual(res[1][1], "from the argument x[0]")
+    self.assertEqual(res[1][0].shape, ())
+    self.assertEqual(res[2][1], "from the argument x[1]")
+    self.assertEqual(res[2][0].shape, ())
+    self.assertEqual(res[3][1], "from the argument y")
+    self.assertEqual(res[4][0].shape, ())
+    self.assertStartsWith(res[4][1], "output of jitted function 'f'")
+    self.assertEqual(res[4][0].shape, ())
+    self.assertStartsWith(res[5][1], "output of jitted function 'f'")
+    self.assertEqual(res[5][0].shape, ())
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -7461,6 +7558,22 @@ class RematTest(jtu.JaxTestCase):
       return c * x
 
     _ = jax.grad(f)(3.)  # doesn't crash
+
+  @parameterized.named_parameters(("remat", False), ("remat3", True))
+  def test_dce_keeps_effectful_remat_with_no_used_outputs(self, remat3):
+    x_ref = jax.new_ref(jnp.zeros(3, jnp.float32))
+    def f():
+      def body():
+        x_ref[...] = jnp.ones(3, jnp.float32)
+      jax.checkpoint(body)()
+
+    with config.remat3(remat3):
+      jaxpr = jax.make_jaxpr(f)()
+      dced, _ = pe.dce_jaxpr(jaxpr, [])
+      self.assertLen(dced.eqns, 1)
+
+      jax.jit(f)()
+    self.assertAllClose(x_ref[...], jnp.ones(3, jnp.float32))
 
   def test_linearize_caching(self):
     # https://github.com/jax-ml/jax/issues/9661
@@ -7623,6 +7736,19 @@ class RematTest(jtu.JaxTestCase):
                                                  jnp.ones((2, 4, 4))))
     self.assertEqual(jaxpr_text.count('MemorySpace.Host'), 1)
     self.assertEqual(jaxpr_text.count('MemorySpace.Device'), 1)
+
+  def test_remat_dce_unused_output(self):
+    @jax.remat
+    def f(x):
+      return jnp.sin(x), jnp.exp(x)
+
+    jaxpr = jax.jit(lambda x: f(x)[0]).trace(0.5).jaxpr
+    jaxpr_dce, _ = pe.dce_jaxpr(jaxpr.jaxpr, [True])
+    self.assertIn(' sin ', str(jaxpr_dce))
+    self.assertNotIn(' exp ', str(jaxpr_dce))
+
+    ans = api.grad(lambda x: f(x)[0])(0.5)
+    self.assertAllClose(ans, np.cos(0.5), check_dtypes=False)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -8275,6 +8401,32 @@ class RematTest(jtu.JaxTestCase):
     txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()
     self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
 
+  def test_remat_partial_cse_prevention_rule_consts(self):
+    # rules closing over an array give the jvp, transposed and batched jaxprs
+    # consts, which need prevent_cse entries too
+    c = jnp.arange(3.)
+
+    @jax.custom_jvp
+    def f(x):
+      return x * c
+    f.defjvp(lambda primals, tangents: (f(*primals), tangents[0] * c))
+
+    @jax.custom_vjp
+    def g(x):
+      return x * c
+    g.defvjp(lambda x: (g(x), None), lambda _, ct: (ct * c,))
+
+    @jax.custom_batching.custom_vmap
+    def h(x):
+      return x * 2.
+    h.def_vmap(lambda axis_size, in_batched, x: (x * 2. + c, True))
+
+    remat = partial(jax.remat, prevent_cse=(False,))
+    x = jnp.ones(3)
+    self.assertAllClose(jax.jvp(remat(f), (x,), (x,))[1], c)
+    self.assertAllClose(jax.grad(lambda x: remat(g)(x).sum())(x), c)
+    self.assertAllClose(jax.vmap(remat(h))(x), 2. + c)
+
   def test_remat_grad_accum_refs(self):
     @jax.remat
     def f(param: jax.Array) -> jax.Array:
@@ -8922,10 +9074,7 @@ class JaxprTest(jtu.JaxTestCase):
       return (x, 1., np.zeros(1, dtype=jnp.float32))
 
     dtype = "f64" if config.enable_x64.value else "f32"
-    if config.use_simplified_jaxpr_constants.value:
-      expected = f"{{ lambda ; a:f32[]. let  in (a, 1.0:{dtype}[], [...]:f32[1]) }}"
-    else:
-      expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
+    expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
@@ -8934,7 +9083,7 @@ class JaxprTest(jtu.JaxTestCase):
     def fun(x):
       return (x, np.zeros(3, dtype=jnp.float32))
 
-    expected = "{ lambda ; a:f32[]. let  in (a, [...]:f32[3]) }"
+    expected = "{ lambda a:f32[3]; b:f32[]. let  in (b, a) }"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 

@@ -22,6 +22,7 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.layout import LayoutMode, use_layout_mode
+from jax._src.pjit import relayout
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
 from jax.experimental.layout import (Format, Layout, with_layout_constraint,
@@ -843,8 +844,6 @@ class LayoutTest(jtu.JaxTestCase):
     if jtu.test_device_matches(['cpu', 'gpu']):
       self.skipTest('This test does not work on CPU or GPU backends.')
 
-    if not jtu.is_libtpu_at_least('0.0.49'):
-      self.skipTest('Needs a newer libtpu')
 
     mesh = jtu.create_mesh((jax.device_count(),), ('data',))
     shape = (5, 2, 1004, 512, 36)
@@ -894,8 +893,6 @@ class LayoutTest(jtu.JaxTestCase):
 class LayoutInTypesTest(jtu.JaxTestCase):
 
   def test_unop_layout(self):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
 
     arr = jnp.arange(16.).reshape(2, 8)
     l = Layout.for_array(arr)
@@ -916,8 +913,6 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, jnp.sin(arr))
 
   def test_naryop_layout(self):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
 
     arr1 = jnp.arange(16., dtype=np.float32).reshape(2, 8)
     arr2 = jnp.arange(16., dtype=np.float32).reshape(2, 8)
@@ -1245,6 +1240,437 @@ class LayoutInTypesTest(jtu.JaxTestCase):
 
     lowered_text = g.lower(arr2).as_text()
     self.assertEqual(lowered_text.count('LayoutConstraint'), 2)
+
+  def test_convert_element_type_layout(self):
+    arr = jnp.arange(64, dtype=jnp.float32).reshape(4, 16)
+    arr_t = jax.device_put(arr, Format(Layout((1, 0)), arr.sharding))
+
+    @jax.jit
+    @explicit_layout(in_layouts=Layout((1, 0)))
+    def f(x):
+      y = jax.lax.convert_element_type(x, jnp.bfloat16)
+      self.assertEqual(y.aval.layout.major_to_minor, (1, 0))
+      return y
+
+    lowered_text = f.lower(arr_t).as_text()
+    self.assertEqual(lowered_text.count('LayoutConstraint'), 2)
+
+    out = f(arr_t)
+    self.assertEqual(out.format.layout.major_to_minor, (1, 0))
+    self.assertEqual(out.dtype, jnp.bfloat16)
+    self.assertArraysAllClose(out, arr.astype(jnp.bfloat16))
+
+    @jax.jit
+    @explicit_layout(in_layouts=Layout((0, 1), tiling=((8, 128),)))
+    def g(x):
+      return jax.lax.convert_element_type(x, jnp.bfloat16)
+
+    with self.assertRaises(NotImplementedError):
+      g(arr)
+
+  def test_relayout_transpose(self):
+    arr1 = jnp.arange(64, dtype=jnp.float32).reshape(4, 16)
+    arr2 = jnp.arange(64, dtype=jnp.float32).reshape(4, 16)
+
+    @explicit_layout(in_layouts=(Layout((0, 1)), Layout((1, 0))))
+    def f(x, y):
+      y = relayout(y, Layout((0, 1)))
+      z = x + y
+      self.assertEqual(z.aval.layout.major_to_minor, (0, 1))
+      return z
+
+    primal_out, tangent_out = jax.jit(
+        lambda x, y: jax.jvp(f, (x, y), (x, y))
+    )(arr1, arr2)
+    self.assertEqual(primal_out.format.layout.major_to_minor, (0, 1))
+    self.assertEqual(tangent_out.format.layout.major_to_minor, (0, 1))
+    self.assertArraysAllClose(primal_out, arr1 + arr2)
+    self.assertArraysAllClose(tangent_out, arr1 + arr2)
+
+    x_bar, y_bar = jax.jit(
+        jax.grad(lambda x, y: f(x, y).sum(), argnums=(0, 1))
+    )(arr1, arr2)
+    self.assertEqual(x_bar.format.layout.major_to_minor, (0, 1))
+    self.assertEqual(y_bar.format.layout.major_to_minor, (1, 0))
+    self.assertArraysAllClose(x_bar, jnp.ones_like(arr1))
+    self.assertArraysAllClose(y_bar, jnp.ones_like(arr1))
+
+  @parameterized.parameters(
+      (src_shape, dst_shape, src_m2m, dst_m2m, fun)
+      for fun in [jnp.reshape, jax.lax.reshape]
+      for src_shape, dst_shape, src_m2m, dst_m2m in [
+          ((4, 8, 1), (1, 4, 8, 1), (2, 0, 1), (0, 3, 1, 2)),
+          ((4, 8, 1), (1, 4, 8, 1), (2, 1, 0), (0, 3, 2, 1)),
+          ((1, 4, 1, 8, 16, 1), (1, 4, 8, 16), (0, 2, 5, 3, 1, 4), (0, 2, 1, 3)),
+          ((4, 8), (4, 8), (1, 0), (1, 0)),
+          ((8, 4, 16), (4, 2, 4, 1, 1, 16), (0, 1, 2), (3, 4, 0, 1, 2, 5)),
+          ((8, 4, 16), (8, 1, 1, 4, 16), (1, 0, 2), (1, 2, 3, 0, 4)),
+          ((4, 8, 2, 1, 1, 16), (32, 2, 16), (0, 1, 3, 4, 2, 5), (0, 1, 2)),
+          ((4, 1, 8, 1, 16), (4, 1, 2, 4, 1, 16), (1, 3, 2, 0, 4), (1, 4, 2, 3, 0, 5)),
+          ((4, 1, 2, 4, 1, 16), (4, 1, 8, 1, 16), (1, 4, 2, 3, 0, 5), (1, 3, 2, 0, 4)),
+      ]
+  )
+  def test_reshape_layout(self, src_shape, dst_shape, src_m2m, dst_m2m, fun):
+    np_inp = np.arange(math.prod(src_shape), dtype=np.float32).reshape(src_shape)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(np_inp, Format(Layout(src_m2m), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      y = fun(x, dst_shape)
+      self.assertEqual(y.aval.layout.major_to_minor, dst_m2m)
+      self.assertEqual(y.shape, dst_shape)
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.format.layout.major_to_minor, dst_m2m)
+    self.assertArraysEqual(out, np_inp.reshape(dst_shape))
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('LayoutConstraint', lowered_text)
+
+  @parameterized.parameters(
+      # Splits on major dimensions
+      ((6, 4, 8), (2, 3, 4, 8), (0, 1, 2), (0, 1, 2, 3), None),
+      ((6, 4, 8), (2, 3, 4, 8), (0, 2, 1), (0, 1, 3, 2), None),
+      ((4, 6, 8), (4, 2, 3, 8), (1, 0, 2), (1, 2, 0, 3), None),
+      ((4, 6, 8), (4, 2, 3, 8), (1, 2, 0), (1, 2, 3, 0), None),
+      ((4, 12, 8, 16), (4, 2, 2, 3, 8, 16), (0, 1, 2, 3), (0, 1, 2, 3, 4, 5), None),
+      ((4, 12, 8, 16), (4, 2, 2, 3, 8, 16), (1, 0, 2, 3), (1, 2, 3, 0, 4, 5), None),
+      ((10, 4, 8, 1), (2, 5, 4, 8, 1), (3, 0, 1, 2), (4, 0, 1, 2, 3), None),
+      ((10, 4, 8, 1), (2, 5, 4, 8, 1, 1), (3, 0, 1, 2), (4, 5, 0, 1, 2, 3), None),
+      ((10, 4, 8, 1, 1), (2, 5, 4, 8, 1, 1), (3, 4, 0, 1, 2), (4, 5, 0, 1, 2, 3), None),
+      ((1, 10, 4, 8), (1, 2, 5, 4, 8), (0, 1, 2, 3), (0, 1, 2, 3, 4), None),
+      # Merges on major dimensions
+      ((2, 3, 4, 8), (6, 4, 8), (0, 1, 2, 3), (0, 1, 2), None),
+      ((2, 3, 4, 8), (6, 4, 8), (0, 1, 3, 2), (0, 2, 1), None),
+      ((4, 2, 3, 8), (4, 6, 8), (1, 2, 0, 3), (1, 0, 2), None),
+      ((4, 2, 3, 8), (4, 6, 8), (1, 2, 3, 0), (1, 2, 0), None),
+      ((4, 2, 2, 3, 8, 16), (4, 12, 8, 16), (0, 1, 2, 3, 4, 5), (0, 1, 2, 3), None),
+      ((4, 2, 2, 3, 8, 16), (4, 12, 8, 16), (1, 2, 3, 0, 4, 5), (1, 0, 2, 3), None),
+      ((4, 2, 2, 8, 16), (4, 4, 8, 16), (1, 2, 0, 3, 4), (1, 0, 2, 3), None),
+      ((2, 5, 4, 8, 1), (10, 4, 8, 1), (4, 0, 1, 2, 3), (3, 0, 1, 2), None),
+      ((16, 8, 4, 2, 8), (16, 32, 1, 2, 8), (0, 1, 2, 3, 4), (2, 0, 1, 3, 4), None),
+      ((16, 32, 1, 2, 8), (16, 8, 4, 2, 8), (2, 0, 1, 3, 4), (0, 1, 2, 3, 4), None),
+      # Splitting or merging the 2 minor-most dimensions (errors on TPU, succeeds on CPU/GPU)
+      ((4, 6, 8), (4, 2, 3, 8), (0, 1, 2), (0, 1, 2, 3),
+       'cannot split the 2 minor-most dimensions'),
+      ((4, 6, 8), (4, 6, 2, 2, 2), (0, 1, 2), (0, 1, 2, 3, 4),
+       'cannot split the 2 minor-most dimensions'),
+      ((4, 6, 8), (2, 2, 6, 8), (1, 0, 2), (2, 0, 1, 3),
+       'cannot split the 2 minor-most dimensions'),
+      ((4, 6, 8), (4, 6, 2, 4), (1, 0, 2), (1, 0, 2, 3),
+       'cannot split the 2 minor-most dimensions'),
+      ((4, 6, 8), (4, 48), (0, 1, 2), (0, 1),
+       'cannot merge the 2 minor-most dimensions'),
+      ((4, 2, 3, 8), (4, 6, 8), (0, 1, 2, 3), (0, 1, 2),
+       'cannot merge the 2 minor-most dimensions'),
+      # Singleton in the 2 minor-most dimensions (errors on TPU, succeeds on CPU/GPU)
+      ((4, 8, 1), (1, 4, 8, 1), (0, 1, 2), (0, 3, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((4, 8, 1), (1, 4, 8, 1), (1, 0, 2), (0, 3, 2, 1),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((10, 4, 8, 1), (10, 4, 8), (0, 1, 2, 3), (0, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((10, 4, 8, 1), (2, 5, 4, 8, 1), (0, 1, 2, 3), (4, 0, 1, 2, 3),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((2, 5, 4, 8, 1), (10, 4, 8, 1), (0, 1, 2, 3, 4), (3, 0, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((4, 8, 2, 1, 1, 16), (32, 2, 16), (0, 1, 2, 3, 4, 5), (0, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      # Error cases: merging out-of-order or non-contiguous physical dims, or multi-axis splits/merges
+      ((4, 2, 3, 8), (4, 6, 8), (2, 1, 0, 3), None,
+       'is not possible without a physical copy'),
+      ((4, 2, 3, 8), (8, 3, 8), (1, 0, 2, 3), None,
+       'is not possible without a physical copy'),
+      ((4, 6, 8, 16), (4, 2, 3, 4, 2, 16), (0, 1, 2, 3), None,
+       'is not possible without a physical copy'),
+      ((4, 6, 8, 16), (4, 4, 2, 6, 16), (0, 1, 2, 3), None,
+       'is not possible without a physical copy'),
+      ((4, 8, 9, 16), (4, 2, 2, 3, 3, 2, 16), (0, 1, 2, 3), None,
+       'is not possible without a physical copy'),
+      ((4, 2, 3, 2, 4, 16), (4, 6, 8, 16), (0, 1, 2, 3, 4, 5), None,
+       'is not possible without a physical copy'),
+      ((4, 2, 3, 8, 16), (4, 8, 6, 16), (0, 1, 2, 3, 4), None,
+       'is not possible without a physical copy'),
+  )
+  def test_reshape_split_merge_one_axis_layout(
+      self, src_shape, dst_shape, src_m2m, dst_m2m, error_msg):
+    np_inp = np.arange(math.prod(src_shape), dtype=np.float32).reshape(src_shape)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(np_inp, Format(Layout(src_m2m), s))
+    should_error = (error_msg is not None and
+                    (dst_m2m is None or jtu.test_device_matches(['tpu'])))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      y = jax.lax.reshape(x, dst_shape)
+      if not should_error:
+        self.assertEqual(y.aval.layout.major_to_minor, dst_m2m)
+      return y
+
+    if should_error:
+      with self.assertRaisesRegex(ValueError, error_msg):
+        f(arr)
+    else:
+      out = f(arr)
+      self.assertEqual(out.format.layout.major_to_minor, dst_m2m)
+      self.assertArraysEqual(out, np_inp.reshape(dst_shape))
+
+      lowered_text = f.lower(arr).as_text()
+      self.assertIn('LayoutConstraint', lowered_text)
+
+  def test_reshape_dimensions_error_layout(self):
+    arr = jnp.arange(4 * 8 * 16, dtype=np.float32).reshape(4, 8, 16)
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      return jax.lax.reshape(x, (4, 2, 4, 16), dimensions=(1, 0, 2))
+
+    with self.assertRaisesRegex(
+        ValueError, 'is not possible without a physical copy'):
+      f(arr)
+
+  @jtu.with_explicit_mesh((2,), ('data',))
+  def test_reshape_sharded_layout(self, mesh):
+    src_shape = (3, 2, 8, 16, 32)
+    dst_shape = (2, 24, 16, 32)
+    np_inp = np.arange(math.prod(src_shape), dtype=np.float32).reshape(src_shape)
+    s = NamedSharding(mesh, P(None, 'data', None, None, None))
+    arr = jax.device_put(np_inp, Format(Layout((0, 1, 2, 3, 4)), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      y = jax.lax.reshape(
+          x, dst_shape, out_sharding=P('data', None, None, None))
+      self.assertEqual(y.aval.layout.major_to_minor, (0, 1, 2, 3))
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.format.layout.major_to_minor, (0, 1, 2, 3))
+    self.assertArraysEqual(out, np_inp.reshape(dst_shape))
+
+  @parameterized.parameters(
+      # Single major singleton dim squeezed
+      ((1, 4, 8, 128), (0,), (0, 1, 2, 3), (0, 1, 2), None),
+      ((10, 4, 8, 1), (3,), (3, 0, 1, 2), (0, 1, 2), None),
+      ((10, 8, 128, 1), (3,), (3, 0, 1, 2), (0, 1, 2), None),
+      ((4, 1, 8, 128), (1,), (1, 2, 0, 3), (1, 0, 2), None),
+      # Multiple major singleton dims (squeezing all or a subset)
+      ((1, 4, 1, 8, 128), (0, 2), (0, 2, 1, 3, 4), (0, 1, 2), None),
+      ((1, 4, 1, 8, 128), (0,), (0, 1, 2, 3, 4), (1, 0, 2, 3), None),
+      ((1, 4, 1, 8, 16, 1), (2, 5), (0, 2, 5, 3, 1, 4), (0, 2, 1, 3), None),
+      # Singleton in the 2 minor-most dimensions (errors on TPU, succeeds on CPU/GPU)
+      ((10, 4, 8, 1), (3,), (0, 1, 2, 3), (0, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((10, 8, 128, 1), (3,), (0, 1, 2, 3), (0, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((10, 3, 1, 128), (2,), (0, 1, 2, 3), (0, 1, 2),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+      ((1, 4, 8, 1), (0,), (0, 1, 2, 3), (2, 0, 1),
+       'cannot reshape when any of the 2 minor-most dimensions has size 1'),
+  )
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_squeeze_layout(
+      self, src_shape, dims, src_m2m, dst_m2m, error_msg, mesh):
+    np_inp = np.arange(math.prod(src_shape), dtype=np.float32).reshape(src_shape)
+    arr = jax.device_put(np_inp, Format(Layout(src_m2m), NamedSharding(mesh, P())))
+    should_error = (error_msg is not None and jtu.test_device_matches(['tpu']))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      y = jax.lax.squeeze(x, dimensions=dims)
+      if not should_error:
+        self.assertEqual(y.aval.layout.major_to_minor, dst_m2m)
+      return y
+
+    if should_error:
+      with self.assertRaisesRegex(ValueError, error_msg):
+        f(arr)
+    else:
+      out = f(arr)
+      self.assertEqual(out.format.layout.major_to_minor, dst_m2m)
+      self.assertArraysEqual(out, np.squeeze(np_inp, axis=dims))
+      lowered_text = f.lower(arr).as_text()
+      self.assertIn('LayoutConstraint', lowered_text)
+
+  @parameterized.named_parameters(
+      ('integer_pow', lambda x: jax.lax.integer_pow(x, 3)),
+      ('reduce_precision', lambda x: jax.lax.reduce_precision(x, 5, 10)),
+      ('slice', lambda x: jax.lax.slice(x, (0, 1, 0), (8, 5, 128))),
+      ('dynamic_slice', lambda x: jax.lax.dynamic_slice(x, (0, 1, 0), (8, 4, 128))),
+  )
+  def test_noop_unop_layouts(self, op_fn):
+    shape = (16, 8, 256)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(np_inp, Format(Layout((1, 0, 2)), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      y = op_fn(x)
+      self.assertEqual(y.aval.layout, arr.format.layout)
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.format.layout, arr.format.layout)
+    self.assertArraysAllClose(out, jax.jit(op_fn)(np_inp))
+    self.assertEqual(f.lower(arr).as_text().count('LayoutConstraint'), 2)
+
+  def test_split_layout(self):
+    shape = (8, 8, 16)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(np_inp, Format(Layout((1, 0, 2)), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      y0, y1 = jax.lax.split(x, (2, 6), axis=1)
+      self.assertEqual(y0.aval.layout, arr.format.layout)
+      self.assertEqual(y1.aval.layout, arr.format.layout)
+      return y0, y1
+
+    out0, out1 = f(arr)
+    self.assertEqual(out0.format.layout, arr.format.layout)
+    self.assertEqual(out1.format.layout, arr.format.layout)
+    ref0, ref1 = np.split(np_inp, [2], axis=1)
+    self.assertArraysEqual(out0, ref0)
+    self.assertArraysEqual(out1, ref1)
+    self.assertEqual(f.lower(arr).as_text().count('LayoutConstraint'), 3)
+
+  @parameterized.named_parameters(
+      ('clamp',
+       lambda x, y: jax.lax.clamp(np.float32(0.0), x, y),
+       (8, 8, 16)),
+      ('select_n',
+       lambda x, y: jax.lax.select_n(x > np.float32(10.0), x, y),
+       (8, 8, 16)),
+      ('concatenate',
+       lambda x, y: jax.lax.concatenate([x, y], dimension=1),
+       (8, 8, 16)),
+      ('dynamic_update_slice',
+       lambda x, y: jax.lax.dynamic_update_slice(x, y, (0, 1, 0)),
+       (8, 4, 16)),
+  )
+  def test_noop_multi_operand_layouts(self, op_fn, y_shape):
+    x_shape = (8, 8, 16)
+    np_x = np.arange(math.prod(x_shape), dtype=np.float32).reshape(x_shape)
+    np_y = np.ones(y_shape, dtype=np.float32)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr_x = jax.device_put(np_x, Format(Layout((1, 0, 2)), s))
+    arr_y = jax.device_put(np_y, Format(Layout((1, 0, 2)), s))
+    arr_y_bad = jax.device_put(np_y, Format(Layout((0, 1, 2)), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=(arr_x.format.layout, arr_y.format.layout))
+    def f(x, y):
+      out = op_fn(x, y)
+      self.assertEqual(out.aval.layout, arr_x.format.layout)
+      return out
+
+    out = f(arr_x, arr_y)
+    self.assertEqual(out.format.layout, arr_x.format.layout)
+    self.assertArraysAllClose(out, jax.jit(op_fn)(np_x, np_y))
+    self.assertIn('LayoutConstraint', f.lower(arr_x, arr_y).as_text())
+
+    @jax.jit
+    @explicit_layout(in_layouts=(arr_x.format.layout, arr_y_bad.format.layout))
+    def f_bad(x, y):
+      return op_fn(x, y)
+
+    with self.assertRaisesRegex(
+        ValueError, 'layout of all inputs passed to .* must be the same'):
+      f_bad(arr_x, arr_y_bad)
+
+  @jtu.run_on_devices('tpu')
+  def test_minor_dim_tile_size_error(self):
+    shape = (16, 128)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(np_inp, Format(Layout((0, 1)), s))
+
+    for op_fn in [
+        lambda x: jax.lax.slice(x, (0, 0), (4, 128)),
+        lambda x: jax.lax.dynamic_slice(x, (0, 0), (4, 128)),
+        lambda x: jax.lax.split(x, (4, 12), axis=0)[0],
+    ]:
+      @jax.jit
+      @explicit_layout(in_layouts=arr.format.layout)
+      def f_bad(x):
+        return op_fn(x)
+
+      with self.assertRaisesRegex(
+          ValueError,
+          'cannot change the shard shape of a tiled minor dimension below its'
+          ' tile size'):
+        f_bad(arr)
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_reshard_layout(self, mesh):
+    shape = (16, 32, 256)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    s_in = NamedSharding(mesh, P('x', None, None))
+    s_out = NamedSharding(mesh, P(None, 'x', None))
+    arr = jax.device_put(np_inp, Format(Layout((0, 1, 2)), s_in))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      # Minor-most dims are (1, 2); dim 1 shard shape changes 32 -> 16 (>= 8).
+      y = jax.reshard(x, s_out)
+      self.assertEqual(y.aval.layout, arr.format.layout)
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.format.layout, arr.format.layout)
+    self.assertArraysEqual(out, np_inp)
+    self.assertEqual(f.lower(arr).as_text().count('LayoutConstraint'), 2)
+
+    if jtu.test_device_matches(['tpu']):
+      small_shape = (16, 12, 128)
+      np_small = np.ones(small_shape, dtype=np.float32)
+      arr_small = jax.device_put(np_small, Format(Layout((0, 1, 2)), s_in))
+
+      @jax.jit
+      @explicit_layout(in_layouts=arr_small.format.layout)
+      def f_bad(x):
+        # Dim 1 shard shape changes 12 -> 6 (< 8 tile size on TPU).
+        return jax.reshard(x, s_out)
+
+      with self.assertRaisesRegex(
+          ValueError,
+          '`reshard` cannot change the shard shape of a tiled minor'
+          ' dimension below its tile size'):
+        f_bad(arr_small)
+
+  def test_missing_custom_abstract_eval_layout_rules(self):
+    shape = (8, 128)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(np_inp, Format(Layout((0, 1)), s))
+
+    for op_fn in [
+        lambda x: jax.lax.sort(x, dimension=0),
+        lambda x: jax.lax.top_k(x, k=4, axis=0)[0],
+        lambda x: jax.lax.approx_max_k(x, k=4, reduction_dimension=0)[0],
+        lambda x: jax.lax.reduce_window(
+            x, np.float32(0.0), jax.lax.add, (2, 2), (2, 2), 'VALID'),
+    ]:
+      @jax.jit
+      @explicit_layout(in_layouts=arr.format.layout)
+      def f(x):
+        return op_fn(x)
+
+      with self.assertRaisesRegex(
+          NotImplementedError, 'Missing layout rule for'):
+        f(arr)
 
 
 if __name__ == '__main__':

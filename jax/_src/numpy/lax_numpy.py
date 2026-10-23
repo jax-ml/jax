@@ -1060,10 +1060,10 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                      f"of {D} pairs or Nones; got {range=}")
 
   try:
-    bins_per_dimension = list(bins)  # pyrefly: ignore[bad-argument-type]
+    bins_per_dimension: Sequence[ArrayLike] = list(bins)  # pyrefly: ignore[bad-argument-type]
   except TypeError:
     # when bin_size is integer, the same bin is used for each dimension
-    bins_per_dimension: list[ArrayLike] = D * [bins]  # pyrefly: ignore[bad-assignment]
+    bins_per_dimension = D * [bins]  # pyrefly: ignore[bad-assignment]
   else:
     if len(bins_per_dimension) != D:
       raise ValueError("should be a bin for each dimension.")
@@ -2487,7 +2487,8 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
     destination: index or indices of the axes destinations
 
   Returns:
-    Copy of ``a`` with axes moved from ``source`` to ``destination``.
+    Copy of ``a`` with axes moved from ``source`` to ``destination``, or ``a``
+    itself if no axis moves.
 
   Notes:
     Unlike :func:`numpy.moveaxis`, :func:`jax.numpy.moveaxis` will return a copy rather
@@ -2523,8 +2524,13 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
     (4, 5, 3, 2)
   """
   arr = util.ensure_arraylike("moveaxis", a)
-  return _moveaxis(arr, _ensure_index_tuple(source),
-                   _ensure_index_tuple(destination))
+  source = tuple(_canonicalize_axis(i, np.ndim(arr))
+                 for i in _ensure_index_tuple(source))
+  destination = tuple(_canonicalize_axis(i, np.ndim(arr))
+                      for i in _ensure_index_tuple(destination))
+  if source == destination and len(set(source)) == len(source):
+    return arr  # nothing moves, so don't apply even an identity transpose
+  return _moveaxis(arr, source, destination)
 
 @api.jit(static_argnames=('source', 'destination'), inline=api.Inline.JAX_EARLY)
 def _moveaxis(a: Array, source: tuple[int, ...], destination: tuple[int, ...]) -> Array:
@@ -6161,15 +6167,12 @@ def i0(x: ArrayLike) -> Array:
 @partial(custom_jvp, nondiff_argnums=(0,))
 def _i1_maclaurin(k: int, x: Array) -> Array:
   # compute the kth derivative of i1 evaluated near zero using a two-term
-  # Maclaurin series.
-  if k % 2 == 0:
-    m = (k + 1) // 2
-    c = math.comb(k + 1, m) / (2 ** (k + 1))
-    return lax.mul(lax._const(x, c), x)
-  else:
-    m = k // 2
-    c = math.comb(k, m) / (2 ** k)
-    return lax.full_like(x, c)
+  # Maclaurin series, i.e. the terms a(k+j) x^j / j! for the two smallest j
+  # with a(k+j) = i1^(k+j)(0) nonzero.
+  a = lambda n: math.comb(n, n // 2) / 2 ** n / math.factorial(n - k)
+  j = 1 - k % 2
+  p = lax.add(lax._const(x, a(k + j)), lax.mul(lax._const(x, a(k + j + 2)), lax.mul(x, x)))
+  return lax.mul(p, x) if j else p
 
 @_i1_maclaurin.defjvp
 def _i1_maclaurin_jvp(k: int, primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
@@ -6177,32 +6180,48 @@ def _i1_maclaurin_jvp(k: int, primals: tuple[Array], tangents: tuple[Array]) -> 
   return _i1_maclaurin(k, x), lax.mul(_i1_maclaurin(k + 1, x), t)
 
 
+def _exp_mul_bessel_ie(abs_x: Array, ie: Array) -> Array:
+  # For |x| <= max_log, evaluate ie * exp(|x|) directly so low-precision dtypes
+  # (e.g. bfloat16) do not accumulate extra rounding error from squaring
+  # exp(|x|/2). For |x| > max_log, exp(|x|) overflows, so split the exponent
+  # as (exp(|x|/2) * ie) * exp(|x|/2) while still issuing a single lax.exp op.
+  max_log = lax._const(abs_x, math.floor(math.log(dtypes.finfo(abs_x.dtype).max)))
+  use_half = lax.gt(abs_x, max_log)
+  e = lax.exp(where(use_half, lax.mul(abs_x, lax._const(abs_x, 0.5)), abs_x))
+  return lax.mul(where(use_half, lax.mul(e, ie), ie), e)
+
+
 def _i1(x: Array) -> Array:
-  return lax.mul(lax.exp(lax.abs(x)), lax_special.bessel_i1e(x))
+  return _exp_mul_bessel_ie(lax.abs(x), lax_special.bessel_i1e(x))
 i1_impl = custom_jvp(_i1)
 
 @i1_impl.defjvp
 def i1_impl_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
-  # A closed-form JVP using Bessel recurrence (e.g. i1'(x) = i0(x) - i1(x)/x)
-  # is not viable due to the 0/0 singularity at x = 0. Meanwhile, autodiff
-  # through exp(abs(x)) * bessel_i1e(x) fails for higher-order derivatives
-  # near 0 due to (1) the cusp in abs(x) and (2) catastrophic cancellation when
-  # evaluating (i0e(x) - i1e(x)/x) / x^2 in floating-point arithmetic.
-  # We therefore use a recursive two-term Maclaurin series approximation for
-  # |x| <= sqrt(eps), where the series truncation error is strictly below
-  # machine precision.
-  primal_out, tangent_out = api.jvp(_i1, primals, tangents)
+  # A closed-form JVP using Bessel recurrence (i1'(x) = i0(x) - i1(x)/x) has a
+  # 0/0 singularity at x = 0 and suffers from catastrophic cancellation near 0
+  # for higher-order derivatives when evaluating (i0(x) - i1(x)/x) / x^2 in
+  # floating-point arithmetic. We therefore use a recursive two-term Maclaurin
+  # series approximation for |x| <= sqrt(eps), where the series truncation
+  # error is strictly below machine precision, and the closed-form Bessel
+  # recurrence for |x| > sqrt(eps).
   x, = primals
   t, = tangents
+  primal_out = i1_impl(x)
   cutoff = math.sqrt(dtypes.finfo(x.dtype).eps)
   use_series = lax.le(lax.abs(x), lax._const(x, cutoff))
-  return primal_out, where(use_series, lax.mul(_i1_maclaurin(1, x), t), tangent_out)
+  safe_x = where(use_series, lax._const(x, 1.0), x)
+  deriv = where(
+      use_series,
+      _i1_maclaurin(1, x),
+      lax.sub(i0_impl(safe_x), lax.div(primal_out, safe_x)),
+  )
+  return primal_out, lax.mul(deriv, t)
 
 
 @custom_jvp
 def i0_impl(x: Array) -> Array:
   abs_x = lax.abs(x)
-  return lax.mul(lax.exp(abs_x), lax_special.bessel_i0e(abs_x))
+  return _exp_mul_bessel_ie(abs_x, lax_special.bessel_i0e(abs_x))
 
 @i0_impl.defjvp
 def i0_impl_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:

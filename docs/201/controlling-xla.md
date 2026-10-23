@@ -205,7 +205,11 @@ regardless of `ad_metadata`.
 
 One application built on this: `must_fuse_call` in
 `jax.experimental.xla_metadata` wraps a function so that XLA must place all of
-its operations in a single fusion.
+its operations in a single fusion, and accepts optional lowering configuration
+parameters (`buffering_level`, `kernel_window_bounds`, `output_window_bounds`,
+`scoped_vmem_limit_kib`, and `integer_config`) for the fused computation. Conversely,
+`fuse_limit` in `jax.experimental.xla_metadata` acts as a context manager that
+sets a fusion boundary (`FUSE_LIMIT="true"`).
 
 ### Tagging one operation in place: `set_xla_metadata`
 

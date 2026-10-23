@@ -135,6 +135,10 @@ def _print_layout_lowering(
         ctx, ctx.avals_in[0], x, transform_avals,
         transforms_tree.unflatten(transforms_leaves),
     )
+  elif isinstance(ctx.avals_in[0], state_types.AbstractRef):
+    x, _, remaining_transforms = lowering._handle_transforms(  # pyrefly: ignore[bad-specialization]
+        ctx, ctx.avals_in[0], x, (), ()
+    )
   else:
     remaining_transforms = []
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
@@ -324,10 +328,10 @@ def _copy_smem_to_gmem_lowering(
       ctx, src_aval, src, src_transform_avals, src_transforms,
       handle_transposes=handle_transposes
   )
-  copy_params = {
-      **_extract_gmem_copy_params(ctx, dst_transforms, dst_transform_avals, supports_multicast=True),
-      **_extract_smem_copy_params(src_aval, src_transforms),
-  }
+  copy_params = _extract_gmem_copy_params(
+      ctx, dst_transforms, dst_transform_avals, supports_multicast=True
+  )
+  swizzle, gmem_transforms = _extract_smem_copy_params(src_aval, src_transforms)
   is_scatter = False
   if gmem_slice := copy_params.get("gmem_slice", ()):
     first_idx = gmem_slice[0]
@@ -351,6 +355,8 @@ def _copy_smem_to_gmem_lowering(
         arrive=commit_group,
         reduction_op=reduction_op,
         oob_mode=OOBFillMode.UNDEFINED,
+        swizzle=swizzle,
+        gmem_transform=gmem_transforms,
         **copy_params,
         **(dict(predicate=predicate) if predicate is not None else {}),  # pyrefly: ignore[bad-argument-type]
     )
@@ -363,7 +369,7 @@ def _copy_smem_to_gmem_lowering(
     slice_lengths = ir.MemRefType(src.type).shape
     indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
 
-  assert copy_params.get("swizzle") is None
+  assert swizzle is None
   peer_id = copy_params.get("gmem_peer_id")
   if peer_id is mgpu.GLOBAL_BROADCAST:
     is_global_broadcast = True
@@ -371,7 +377,7 @@ def _copy_smem_to_gmem_lowering(
   else:
     is_global_broadcast = False
 
-  assert not copy_params.get("gmem_transform")
+  assert not gmem_transforms
   if reduction_op is not None:
     reduction_op_attr = getattr(mgpu.dialect.TMAReduction, reduction_op.capitalize())
   else:
@@ -416,6 +422,59 @@ def _split_gmem_slice(gmem_slice):
       case _:
         raise NotImplementedError(f"Unsupported GMEM slice: {idx}")
   return indices, slice_lengths
+
+
+_IM2COL_INDEXING_ERROR = (
+    "im2col_ref must be indexed with a unit-stride row slice, scalar filter"
+    " offsets for each window dimension, and a unit-stride channel slice."
+)
+
+
+def _extract_im2col_copy_params(
+    gmem_shape: tuple[int, ...],
+    im2col_transform: gpu_core.Im2ColTransform,
+    indexers: Sequence[indexing.NDIndexer],
+) -> dict[str, Any]:
+  match lowering.merge_indexers(indexers):
+    case indexing.NDIndexer(
+        indices=[
+            indexing.Slice(stride=1) as row_idx,
+            *filter_idxs,
+            indexing.Slice(stride=1) as col_idx,
+        ],
+        int_indexer_shape=(),
+    ) if not any(isinstance(idx, indexing.Slice) for idx in filter_idxs):
+      pass
+    case _:
+      raise ValueError(_IM2COL_INDEXING_ERROR)
+
+  row_base = lowering._as_index(row_idx.start)
+  col_base = lowering._as_index(col_idx.start)
+
+  # Transform the linearized window index into the ND index of the upper-left
+  # corner of the first window in this slice in the input operand.
+  spatial_out = im2col_transform.spatial_out_shape(gmem_shape)
+  window_start_bounds = im2col_transform.window_start_bounds
+  index_ty = ir.IndexType.get()
+  flat_idx = row_base
+  window_starts: list[ir.Value] = []
+  for s_out, (lo, _) in zip(
+      reversed(spatial_out), reversed(window_start_bounds)
+  ):
+    s_out_val = mgpu.c(s_out, index_ty)
+    window_starts.append(
+        arith_dialect.addi(
+            arith_dialect.remui(flat_idx, s_out_val), mgpu.c(lo, index_ty)
+        )
+    )
+    flat_idx = arith_dialect.divui(flat_idx, s_out_val)
+  window_starts.reverse()
+  n = flat_idx
+  return dict(
+      window_start_bounds=window_start_bounds,
+      start_indices=(n, *window_starts, col_base),
+      filter_offsets=tuple(map(lowering._as_index, filter_idxs)),
+  )
 
 
 def _extract_gmem_copy_params(
@@ -473,7 +532,7 @@ def _extract_gmem_copy_params(
 
 def _extract_smem_copy_params(aval, transforms):
   if not transforms:
-    return {}
+    return None, ()
   # Split off swizzling, if present
   match transforms:
     case [gpu_core.UnswizzleRef(swizzle), *transforms]:
@@ -484,10 +543,7 @@ def _extract_smem_copy_params(aval, transforms):
   gpu_transforms = tuple(
       gpu_core.to_gpu_transform(t) for t in reversed_transforms
   )
-  return dict(
-      gmem_transform=gpu_transforms,
-      swizzle=swizzle,
-  )
+  return swizzle, gpu_transforms
 
 
 def copy_smem_to_gmem(
@@ -686,7 +742,23 @@ def _async_store_smem_lowering(
     raise NotImplementedError(f"Transfer is not a multiple of {WARPGROUP_SIZE} bytes")
 
   peer_barrier = barrier.remap_to_cluster(gpu_cluster_dim, cluster_idx_val)
-  peer_barrier.arrive_expect_tx(total_bytes // WARPGROUP_SIZE)
+  orders_tensor_core = getattr(
+      barrier_ref_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
+  )
+  if orders_tensor_core:
+    tx_bytes = total_bytes
+    predicate = ctx.module_ctx.single_lane_predicate
+    if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+      scope = mgpu_utils.ThreadSubset.WARP
+    else:
+      scope = mgpu_utils.ThreadSubset.WARPGROUP
+  else:
+    tx_bytes = total_bytes // WARPGROUP_SIZE
+    predicate = None
+    scope = None
+  peer_barrier.arrive_expect_tx(
+      tx_bytes, predicate=predicate, tensor_core_order_scope=scope
+  )
 
   lowering._ensure_fa(src, dtype).store_tiled_async(
       ref_smem,
@@ -775,6 +847,16 @@ def _copy_gmem_to_smem_abstract_eval(src, dst, *args, has_barrier, **params):
 
   src_ref = pallas_core.TransformedRef(src, src_transforms)
   dst_ref = pallas_core.TransformedRef(dst, dst_transforms)
+
+  match src_transforms:
+    case [gpu_core.Im2ColTransform(), *indexers]:
+      if not all(isinstance(t, indexing.NDIndexer) for t in indexers):
+        raise NotImplementedError(
+            "Only indexing is supported on im2col-transformed refs, got"
+            f" {indexers}"
+        )
+      if src_ref.ndim != 2:
+        raise ValueError(_IM2COL_INDEXING_ERROR)
 
   if src_ref.dtype != dst_ref.dtype:
     raise ValueError(
@@ -949,13 +1031,16 @@ def _copy_gmem_to_smem_lowering(
       ctx, dst_ref_aval, dst, dst_transform_avals, dst_transforms,
       handle_transposes=handle_transposes)
 
-  copy_params = {
-      **_extract_smem_copy_params(dst_ref_aval, dst_transforms),
-      **_extract_gmem_copy_params(ctx, src_transforms, src_transform_avals),
-  }
+  swizzle, gmem_transforms = _extract_smem_copy_params(
+      dst_ref_aval, dst_transforms
+  )
+  orders_tensor_core = False
   if barrier is not None:
     barrier_ref_aval = ctx.avals_in[2]
     assert isinstance(barrier_ref_aval, state_types.AbstractRef)
+    orders_tensor_core = getattr(
+        barrier_ref_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
+    )
     base_index = _get_barrier_base_index(
         barrier_ref_aval,
         barrier_transforms_treedef.unflatten(flat_barrier_transforms),
@@ -986,15 +1071,26 @@ def _copy_gmem_to_smem_lowering(
       raise ValueError(
           f"Expected exactly one collective axis, got {collective_axes=}"
       )
-    if math.prod(ctx.launch_ctx.cluster_size) != 2:
+    if (
+        collective != (gpu_dialect.Dimension.x,)
+        or ctx.launch_ctx.cluster_size[0] != 2
+    ):
+      expected_axis = ctx.module_ctx.axis_names.cluster[-1]
+      row_major_cluster_size = tuple(ctx.launch_ctx.cluster_size[::-1])
       raise NotImplementedError(
-          "Partitioned loads only supported for clusters of size 2. Got"
-          f" cluster size {ctx.launch_ctx.cluster_size}."
+          "Partitioned loads only supported along the last cluster dimension "
+          f"{expected_axis} if it has size 2. Got {collective_axes=} and "
+          f"cluster size {row_major_cluster_size}."
       )
 
   # TMA is only available on Hopper and newer. On older architectures we fall
   # back to the cp.async implementation.
-  if is_cp_async := mgpu.utils.get_arch().major < 9:
+  if is_cp_async := mgpu.utils.get_arch() < mgpu.utils.HOPPER:
+    if any(isinstance(t, gpu_core.Im2ColTransform) for t in src_transforms):
+      raise ValueError(
+          "im2col copies are only supported on Hopper and newer GPUs, which"
+          " use TMA."
+      )
     if barrier is not None:
       raise ValueError(
           "copy_gmem_to_smem with a barrier is only supported Hopper and newer"
@@ -1027,7 +1123,43 @@ def _copy_gmem_to_smem_lowering(
           " GPUs, which use the cp.async implementation"
       )
 
+  match src_transforms:
+    case [gpu_core.Im2ColTransform() as im2col_transform, *indexers]:
+      if collective_axes is not None:
+        raise NotImplementedError(
+            "im2col copies do not support collective_axes or leader_tracked."
+        )
+      match gmem_transforms:
+        case ():
+          pass
+        case (TileTransform(tiling=(_, _)),) if dst_ty.shape[-3] == 1:
+          pass
+        case _:
+          raise NotImplementedError(
+              "im2col copies only support untiled 2D SMEM refs or 2D-tiled SMEM"
+              f" refs with a single column tile, got transforms {gmem_transforms}"
+              f" on SMEM shape {dst_ty.shape}."
+          )
+      im2col_params = _extract_im2col_copy_params(
+          src_ref_aval.shape, im2col_transform, indexers
+      )
+      copy_params = {}
+    case _:
+      im2col_params = None
+      copy_params = _extract_gmem_copy_params(
+          ctx, src_transforms, src_transform_avals
+      )
+
   i32 = ir.IntegerType.get_signless(32)
+  arrive_predicate = predicate
+  if is_leader_tracked_copy:
+    first_block = arith_dialect.cmpi(
+        arith_dialect.CmpIPredicate.eq,
+        mgpu.utils.cluster_idx(collective[0]),
+        mgpu.c(0, ir.IndexType.get()),
+    )
+    arrive_predicate = _andi_maybe_none(arrive_predicate, first_block)
+
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if (
         ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup
@@ -1037,30 +1169,34 @@ def _copy_gmem_to_smem_lowering(
 
     if not is_cp_async:
       assert barrier is not None
-      if bytes % WARPGROUP_SIZE:
+      if not orders_tensor_core and bytes % WARPGROUP_SIZE:
         raise NotImplementedError(
             "Only copies transferring a number of bytes divisible by the"
             f" warpgroup size are supported. Got {bytes=} but warpgroup size is"
             f" {WARPGROUP_SIZE}"
         )
-      if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup:
-        # We arrive uniformly from each thread in the WG, so we need to divide the
-        # number of bytes by the number of threads in the WG.
-        # TODO: apaszke - Relax this. We can just select the WG leader and have it
-        # arrive with the whole transfer size, while everyone else arrives with 0.
-        # But we should continue using this scheme as it's likely to be faster.
-        bytes //= WARPGROUP_SIZE
-        if predicate is not None:
-          bytes = arith_dialect.select(predicate, mgpu.c(bytes, i32), mgpu.c(0, i32))
-        if is_leader_tracked_copy:
-          first_block = arith_dialect.cmpi(
-              arith_dialect.CmpIPredicate.eq,
-              mgpu.utils.cluster_idx(collective[0]),
-              mgpu.c(0, ir.IndexType.get()),
-          )
-          barrier.arrive_expect_tx(bytes, predicate=first_block)
+      if orders_tensor_core:
+        if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+          scope = mgpu_utils.ThreadSubset.WARP
         else:
-          barrier.arrive_expect_tx(bytes)
+          scope = mgpu_utils.ThreadSubset.WARPGROUP
+        barrier.arrive_expect_tx(
+            bytes,
+            predicate=_andi_maybe_none(
+                arrive_predicate, ctx.module_ctx.single_lane_predicate
+            ),
+            tensor_core_order_scope=scope,
+        )
+      elif ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup:
+        # We arrive uniformly from each thread in the WG, so we need to divide
+        # the number of bytes by the number of threads in the WG.
+        # TODO: apaszke - Relax this. We can just select the WG leader and
+        # have it arrive with the whole transfer size, while everyone else
+        # arrives with 0.
+        # But we should continue using this scheme as it's likely to be
+        # faster.
+        bytes //= WARPGROUP_SIZE
+        barrier.arrive_expect_tx(bytes, predicate=arrive_predicate)
       else:
         # In Warp-level lowering, we arrive on each CUDA thread in a warp, but
         # the barrier still expects a full 128 arrivals so we arrive 4 times
@@ -1068,23 +1204,28 @@ def _copy_gmem_to_smem_lowering(
         # TODO(justinfu): The arrival counts are wrong if called outside of a
         # single warp. Figure out how to guard against this in user code.
         bytes = bytes // WARP_SIZE
-        if predicate is not None:
-          bytes = arith_dialect.select(predicate, mgpu.c(bytes, i32), mgpu.c(0, i32))
-        if is_leader_tracked_copy:
-          first_block = arith_dialect.cmpi(
-              arith_dialect.CmpIPredicate.eq,
-              mgpu.utils.cluster_idx(collective[0]),
-              mgpu.c(0, ir.IndexType.get()),
-          )
-          with mgpu.when(first_block):
-            barrier.arrive(arrival_count=3, can_complete=False)
-            barrier.arrive_expect_tx(bytes)
+        if arrive_predicate is not None:
+          arrive_ctx = mgpu.when(arrive_predicate)
         else:
+          arrive_ctx = contextlib.nullcontext()
+        with arrive_ctx:
           barrier.arrive(arrival_count=3, can_complete=False)
           barrier.arrive_expect_tx(bytes)
 
     lane_pred = ctx.module_ctx.single_lane_predicate
     predicate = _andi_maybe_none(predicate, lane_pred)
+    if im2col_params is not None:
+      assert barrier is not None
+      ctx.launch_ctx.async_copy_im2col(
+          src_ref=src,
+          dst_ref=dst,
+          barrier=barrier,
+          **im2col_params,
+          swizzle=swizzle,
+          arrive=False,
+          predicate=predicate,
+      )
+      return ()
     predicate_kwarg = (
         {}
         if is_cp_async
@@ -1110,6 +1251,8 @@ def _copy_gmem_to_smem_lowering(
             if is_cp_async
             else AsyncCopyImplementation.TMA
         ),
+        swizzle=swizzle,
+        gmem_transform=gmem_transforms,
         **copy_params,
         **predicate_kwarg,  # pyrefly: ignore[bad-argument-type]
     )
@@ -1119,14 +1262,14 @@ def _copy_gmem_to_smem_lowering(
     indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
   else:
     indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
-  assert copy_params.get("swizzle") is None
-  assert not copy_params.get("gmem_transform")
+  assert swizzle is None
+  assert not gmem_transforms
 
   if is_cp_async:
     mgpu.dialect.async_load(
         src,
         dst,
-        barrier=None,  # pyrefly: ignore[bad-argument-type]
+        barrier=None,
         indices=indices,
         slice_lengths=slice_lengths,
         collective=ir.ArrayAttr.get([]),
@@ -1146,31 +1289,47 @@ def _copy_gmem_to_smem_lowering(
   assert barrier is not None
   barrier_ref = barrier.as_barrier_memref()
 
-  if is_leader_tracked_copy:
-    first_block = arith_dialect.cmpi(
-        arith_dialect.CmpIPredicate.eq,
-        mgpu.utils.cluster_idx(collective[0]),
-        mgpu.c(0, ir.IndexType.get()),
-    )
-    arrive_ctx = mgpu.when(first_block)
+  if arrive_predicate is not None:
+    arrive_ctx = mgpu.when(arrive_predicate)
   else:
     arrive_ctx = contextlib.nullcontext()
 
-  bytes = mgpu.c(bytes, ir.IntegerType.get_signless(32))
-  if predicate is not None:
-    bytes = arith_dialect.select(predicate, bytes, mgpu.c(0, i32))
-
   with arrive_ctx:
-    mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
+    mgpu.dialect.arrive_expect_tx(barrier_ref, mgpu.c(bytes, i32))
+
+  if im2col_params is not None:
+    i16 = ir.IntegerType.get_signless(16)
+    window_lower_bounds, window_upper_bounds = zip(
+        *im2col_params["window_start_bounds"], strict=True
+    )
+    # TODO(slebedev): Remove the ignore once the minimum jaxlib is >0.12.0.
+    mgpu.dialect.async_load_im2col(  # pyrefly: ignore[missing-attribute]
+        src,
+        dst,
+        barrier_ref,
+        indices=[
+            arith_dialect.index_cast(i32, i)
+            for i in im2col_params["start_indices"]
+        ],
+        filter_offsets=[
+            arith_dialect.index_cast(i16, o)
+            for o in im2col_params["filter_offsets"]
+        ],
+        window_lower_bounds=window_lower_bounds,
+        window_upper_bounds=window_upper_bounds,
+        window_strides=[1] * len(window_lower_bounds),
+        predicate=predicate,
+    )
+    return ()
 
   mgpu.dialect.async_load(
       src,
       dst,
-      indices,  # pyrefly: ignore[bad-argument-type]
-      slice_lengths,  # pyrefly: ignore[bad-argument-type]
-      barrier=barrier_ref,  # pyrefly: ignore[bad-keyword-argument]
+      indices,
+      slice_lengths,
+      barrier=barrier_ref,
       predicate=predicate,
-      collective=ir.ArrayAttr.get(  # pyrefly: ignore[bad-keyword-argument]
+      collective=ir.ArrayAttr.get(
           [ir.IntegerAttr.get(i32, axis) for axis in collective or []]
       ),
       leader_tracked=leader_tracked_attr,
@@ -1215,7 +1374,8 @@ def copy_gmem_to_smem(
     finished the copy.
 
   Args:
-    src: The source Ref. Must be in GMEM.
+    src: The source Ref. Must be in GMEM. Can be an im2col view created by
+      :func:`jax.experimental.pallas.mosaic_gpu.im2col_ref`.
     dst: The destination Ref. Must be in SMEM.
     barrier: The barrier to use for tracking completion of the copy. Required on
       Hopper and newer GPUs, which use the TMA implementation, and must be
@@ -1238,7 +1398,8 @@ def copy_gmem_to_smem(
       ``OOBFillMode.ZEROS`` for the TMA implementation, and only
       ``OOBFillMode.PROMISE_IN_BOUNDS`` for the ``cp.async`` one.
     predicate: A boolean indicating whether the copy should be performed. If
-      ``None``, the copy is always performed.
+      ``None``, the copy is always performed. If ``False``, neither the copy nor
+      the barrier arrival is performed.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`
@@ -1315,7 +1476,7 @@ def _wait_gmem_to_smem_abstract_eval(*, n: int):
 @lowering.register_lowering_rule(
     wait_gmem_to_smem_p, *gpu_core.WGxWARP_SEMANTICS)
 def _wait_gmem_to_smem_lowering(ctx: lowering.LoweringRuleContext, *, n: int):
-  if mgpu.utils.get_arch().major >= 9:
+  if mgpu.utils.get_arch() >= mgpu.utils.HOPPER:
     raise ValueError(
         "wait_gmem_to_smem is only supported on pre-Hopper GPUs, which use"
         " cp.async for GMEM->SMEM copies."
@@ -1639,6 +1800,76 @@ def barrier_arrive(
       *() if predicate is None else (predicate,),
       transforms_treedef=transforms_treedef,
       has_user_predicate=predicate is not None,
+  )
+
+
+barrier_arrive_and_wait_p = jax_core.Primitive("barrier_arrive_and_wait")
+barrier_arrive_and_wait_p.multiple_results = True
+
+
+@barrier_arrive_and_wait_p.def_effectful_abstract_eval
+def _barrier_arrive_and_wait_abstract_eval(barrier, *args, **params):
+  del args, params  # Unused.
+  _check_ref(barrier, "barrier", gpu_core.SMEM)
+  return (), {gpu_core._memory_effect}
+
+
+def _barrier_arrive_and_wait_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  del settings
+  barrier, *flat_transforms = eqn.invars
+  transforms_treedef = eqn.params["transforms_treedef"]
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  return pp.concat([
+      pp.text("barrier_arrive_and_wait"),
+      pp.text(" "),
+      state_primitives.pp_ref_transforms(context, barrier, transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[barrier_arrive_and_wait_p] = (
+    _barrier_arrive_and_wait_pp_eqn
+)
+
+
+@lowering.register_lowering_rule(
+    barrier_arrive_and_wait_p, mgpu.LoweringSemantics.Lane
+)
+@lowering.register_lowering_rule(
+    barrier_arrive_and_wait_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@lowering.register_lowering_rule(
+    barrier_arrive_and_wait_p, mgpu.LoweringSemantics.Warpgroup
+)
+@lowering.register_lowering_rule(
+    barrier_arrive_and_wait_p, *gpu_core.WGxWARP_SEMANTICS
+)
+def _barrier_arrive_and_wait_lowering(
+    ctx: lowering.LoweringRuleContext,
+    barrier,
+    *flat_transforms,
+    transforms_treedef,
+):
+  _barrier_arrive_lowering(
+      ctx, barrier, *flat_transforms, transforms_treedef=transforms_treedef
+  )
+  _barrier_wait_lowering(
+      ctx, barrier, *flat_transforms, transforms_treedef=transforms_treedef
+  )
+  return ()
+
+
+def barrier_arrive_and_wait(barrier: state.AbstractRef) -> None:
+  """Arrives at and waits on the given barrier."""
+  barrier, transforms = state_primitives.get_ref_and_transforms(
+      barrier, None, "barrier_arrive_and_wait"
+  )
+  flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
+  barrier_arrive_and_wait_p.bind(
+      barrier, *flat_transforms, transforms_treedef=transforms_treedef
   )
 
 
@@ -2033,15 +2264,19 @@ def _wgmma_lowering(
   transform_avals_list = util.split_list(
       ctx.avals_in[3:], [getattr(tree, "num_leaves", 0) for tree in transform_treedefs]
   )
-  if a_transforms is not None:
-    a_aval = ctx.avals_in[1]
+  a_aval = ctx.avals_in[1]
+  if not isinstance(a, mgpu.FragmentedArray):
     if not isinstance(a_aval, state_types.AbstractRef):
       assert isinstance(a_aval, jax_core.ShapedArray), (type(a_aval),)
       a_ref_aval = state.AbstractRef(a_aval)
     else:
       a_ref_aval = a_aval
-    assert transform_treedefs[1] is not None
-    a_transform_avals = transform_treedefs[1].unflatten(transform_avals_list[1])
+    if a_transforms is not None:
+      assert transform_treedefs[1] is not None
+      a_transform_avals = transform_treedefs[1].unflatten(transform_avals_list[1])
+    else:
+      a_transforms = ()
+      a_transform_avals = ()
     a, _, a_transforms = lowering._handle_transforms(
         ctx, a_ref_aval, a, a_transform_avals, a_transforms,
         handle_transposes=False, handle_reshapes=False)
@@ -2054,6 +2289,11 @@ def _wgmma_lowering(
           state_types.TransposeTransform((1, 0)),
       ):
         lhs_transpose = True
+      case ():
+        raise ValueError(
+            "When WGMMA lhs is passed in as a ref, it must be transformed by"
+            " swizzling and tiling appropriately."
+        )
       case _:
         raise ValueError(f"WGMMA lhs has unsupported transforms: {a_transforms}.")
     a_mlir_dtype = ir.MemRefType(a.type).element_type
@@ -2064,21 +2304,19 @@ def _wgmma_lowering(
       )
   else:
     lhs_transpose = False
-    if not isinstance(a, mgpu.FragmentedArray):
-      raise ValueError(
-          "When WGMMA lhs is passed in as a ref, it must be transformed by"
-          " swizzling and tiling appropriately."
-      )
 
-  assert b_transforms is not None
   b_aval = ctx.avals_in[2]
   if not isinstance(b_aval, state_types.AbstractRef):
     assert isinstance(b_aval, jax_core.ShapedArray)
     b_ref_aval = state_types.AbstractRef(b_aval)
   else:
     b_ref_aval = b_aval
-  assert transform_treedefs[2] is not None
-  b_transform_avals = transform_treedefs[2].unflatten(transform_avals_list[2])
+  if b_transforms is not None:
+    assert transform_treedefs[2] is not None
+    b_transform_avals = transform_treedefs[2].unflatten(transform_avals_list[2])
+  else:
+    b_transforms = ()
+    b_transform_avals = ()
   b, _, b_transforms = lowering._handle_transforms(
       ctx, b_ref_aval, b, b_transform_avals, b_transforms,
       handle_transposes=False)
@@ -2122,10 +2360,7 @@ def _wgmma_lowering(
     acc_out = mgpu.WGMMAAccumulator(
         _value=acc_value, _original_layout=acc._original_layout, _sync=False
     )
-  void = ir.Type.parse("!llvm.void")
-  llvm_dialect.inline_asm(
-      void, [], "wgmma.commit_group.sync.aligned;", "", has_side_effects=True
-  )
+  mgpu_utils.inline_ptx("wgmma.commit_group.sync.aligned;", convergent=True)
   return acc_out
 
 
@@ -2165,10 +2400,13 @@ def _wgmma_warpgroup_lowering(
       ctx.avals_in[3:], [getattr(tree, "num_leaves", 0) for tree in transform_treedefs]
   )
 
-  if a_transforms is not None:
-    a_aval = ctx.avals_in[1]
-    assert isinstance(a_aval, state_types.AbstractRef)
-    a_transform_avals = a_transforms_tree.unflatten(transform_avals_list[1])
+  a_aval = ctx.avals_in[1]
+  if isinstance(a_aval, state_types.AbstractRef):
+    if a_transforms is not None:
+      a_transform_avals = a_transforms_tree.unflatten(transform_avals_list[1])
+    else:
+      a_transforms = ()
+      a_transform_avals = ()
     a, _, a_transforms = lowering._handle_transforms(
         ctx, a_aval, a, a_transform_avals, a_transforms
     )
@@ -2177,10 +2415,13 @@ def _wgmma_warpgroup_lowering(
           f"WGMMA lhs has unsupported transforms: {a_transforms}."
       )
 
-  if b_transforms is not None:
-    b_aval = ctx.avals_in[2]
-    assert isinstance(b_aval, state_types.AbstractRef)
-    b_transform_avals = b_transforms_tree.unflatten(transform_avals_list[2])
+  b_aval = ctx.avals_in[2]
+  if isinstance(b_aval, state_types.AbstractRef):
+    if b_transforms is not None:
+      b_transform_avals = b_transforms_tree.unflatten(transform_avals_list[2])
+    else:
+      b_transforms = ()
+      b_transform_avals = ()
     b, _, b_transforms = lowering._handle_transforms(
         ctx, b_aval, b, b_transform_avals, b_transforms
     )
@@ -2223,10 +2464,7 @@ def _wgmma_warpgroup_lowering(
         new_acc, acc, offsets, strides
     )
 
-  void = ir.Type.parse("!llvm.void")
-  llvm_dialect.inline_asm(
-      void, [], "wgmma.commit_group.sync.aligned;", "", has_side_effects=True
-  )
+  mgpu_utils.inline_ptx("wgmma.commit_group.sync.aligned;", convergent=True)
   return new_acc
 
 
@@ -2320,10 +2558,7 @@ def wgmma_wait_effectful_abstract_eval(*, n: int):
 @lowering.register_lowering_rule(wgmma_wait_p, mgpu.LoweringSemantics.Warpgroup)
 def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, *, n: int):
   del ctx
-  void = ir.Type.parse("!llvm.void")
-  llvm_dialect.inline_asm(
-      void, [], f"wgmma.wait_group.sync.aligned {n};", "", has_side_effects=True,
-  )
+  mgpu_utils.inline_ptx(f"wgmma.wait_group.sync.aligned {n};", convergent=True)
   return ()
 
 
@@ -2370,9 +2605,8 @@ def _wgmma_accumulator_deref_lowering(
     ctx: lowering.LoweringRuleContext, acc, *, wait_n: int | None
 ):
   if wait_n is not None:
-    void = ir.Type.parse("!llvm.void")
-    llvm_dialect.inline_asm(
-        void, [], f"wgmma.wait_group.sync.aligned {int(wait_n)};", "", has_side_effects=True,
+    mgpu_utils.inline_ptx(
+        f"wgmma.wait_group.sync.aligned {int(wait_n)};", convergent=True
     )
   return (
       acc.value
@@ -2747,55 +2981,69 @@ def _tcgen05_mma_lowering(
   if acc_transforms_tree is not None:
     acc_transforms = acc_transforms_tree.unflatten(acc_transforms_leaves)
     acc_transform_avals = acc_transforms_tree.unflatten(acc_transforms_leaves_avals)
-    acc, _, acc_transforms = lowering._handle_transforms(
-        ctx, acc_aval, acc, acc_transform_avals, acc_transforms,
-        handle_transposes=False
+  else:
+    acc_transforms = ()
+    acc_transform_avals = ()
+  acc, _, acc_transforms = lowering._handle_transforms(
+      ctx, acc_aval, acc, acc_transform_avals, acc_transforms
+  )
+  if acc_transforms:
+    raise NotImplementedError(
+        f"Unsupported transforms for ACC: {acc_transforms}."
     )
-    if acc_transforms:
-      raise NotImplementedError(
-          f"Unsupported transforms for ACC: {acc_transforms}."
-      )
 
   if a_transforms_tree is not None:
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
-    a_out_ty = state_types.transform_type(a_transforms, a_aval)
-    assert isinstance(a_out_ty, state_types.AbstractRef)
-    a_dtype = a_out_ty.dtype
     a_transform_avals = a_transforms_tree.unflatten(a_transforms_leaves_avals)
-    a_ref, _, a_transforms = lowering._handle_transforms(
-        ctx, a_aval, a_ref, a_transform_avals, a_transforms,
-        handle_transposes=False, handle_reshapes=True)
-    match a_transforms:
-      case (
-          gpu_core.UnswizzleRef(lhs_swizzle),
-          gpu_core.UntilingTransform(lhs_tiling),
-      ):
-        lhs_transpose = False
-      case (
-          gpu_core.UnswizzleRef(lhs_swizzle),
-          gpu_core.UntilingTransform(lhs_tiling),
-          state_types.TransposeTransform((1, 0)),
-      ):
-        lhs_transpose = True
-      case () if isinstance(a_ref, tcgen05.TMEMRef):
-        lhs_tiling = None
-      case _:
-        raise NotImplementedError(
-            f"Unsupported transforms for LHS: {a_transforms}."
-        )
-    if not isinstance(a_ref, tcgen05.TMEMRef):
-      assert lhs_swizzle is not None
-      swizzle_elems = 8 * lhs_swizzle // dtypes.itemsize_bits(a_dtype)
-      if lhs_tiling != (8, swizzle_elems):
-        raise ValueError("MMA lhs tiling does not fit swizzle. "
-                        f"{lhs_tiling=} expected={(8, swizzle_elems)}")
+  else:
+    a_transforms = ()
+    a_transform_avals = ()
+  a_out_ty = state_types.transform_type(a_transforms, a_aval)
+  assert isinstance(a_out_ty, state_types.AbstractRef)
+  a_dtype = a_out_ty.dtype
+  a_ref, _, a_transforms = lowering._handle_transforms(
+      ctx,
+      a_aval,
+      a_ref,
+      a_transform_avals,
+      a_transforms,
+      handle_transposes=(a_aval.memory_space != gpu_core.SMEM),
+      handle_reshapes=True,
+  )
+  match a_transforms:
+    case (
+        gpu_core.UnswizzleRef(lhs_swizzle),
+        gpu_core.UntilingTransform(lhs_tiling),
+    ):
+      lhs_transpose = False
+    case (
+        gpu_core.UnswizzleRef(lhs_swizzle),
+        gpu_core.UntilingTransform(lhs_tiling),
+        state_types.TransposeTransform((1, 0)),
+    ):
+      lhs_transpose = True
+    case () if isinstance(a_ref, tcgen05.TMEMRef):
+      lhs_tiling = None
+    case _:
+      raise NotImplementedError(
+          f"Unsupported transforms for LHS: {a_transforms}."
+      )
+  if not isinstance(a_ref, tcgen05.TMEMRef):
+    assert lhs_swizzle is not None
+    swizzle_elems = 8 * lhs_swizzle // dtypes.itemsize_bits(a_dtype)
+    if lhs_tiling != (8, swizzle_elems):
+      raise ValueError("MMA lhs tiling does not fit swizzle. "
+                      f"{lhs_tiling=} expected={(8, swizzle_elems)}")
 
-  assert b_transforms_tree is not None
-  b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
+  if b_transforms_tree is not None:
+    b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
+    b_transform_avals = b_transforms_tree.unflatten(b_transforms_leaves_avals)
+  else:
+    b_transforms = ()
+    b_transform_avals = ()
   b_out_ty = state_types.transform_type(b_transforms, b_aval)
   assert isinstance(b_out_ty, state_types.AbstractRef)
   b_dtype = b_out_ty.dtype
-  b_transform_avals = b_transforms_tree.unflatten(b_transforms_leaves_avals)
   b_ref, _, b_transforms = lowering._handle_transforms(
       ctx, b_aval, b_ref, b_transform_avals, b_transforms, handle_transposes=False,
       handle_reshapes=True)
@@ -2836,8 +3084,7 @@ def _tcgen05_mma_lowering(
     raise ValueError("MMA rhs swizzle must match lhs swizzle."
                       f" {lhs_swizzle=} {rhs_swizzle=}")
   if lhs_transpose:
-    if isinstance(a_ref, tcgen05.TMEMRef):
-      raise ValueError("TMEM transpose not allowed.")
+    assert not isinstance(a_ref, tcgen05.TMEMRef)
     a_ref = mgpu.memref_transpose(a_ref, (1, 0, 3, 2))
   if rhs_transpose:
     b_ref = mgpu.memref_transpose(b_ref, (1, 0, 3, 2))
@@ -2847,14 +3094,18 @@ def _tcgen05_mma_lowering(
     accumulate = accumulate.registers.item()
     assert isinstance(accumulate, ir.Value)
 
-  if a_scale_ref is not None and a_scale_transforms_tree is not None:
+  if a_scale_ref is not None:
     assert isinstance(a_scale_ref_aval, state.AbstractRef)
-    a_scale_transforms = a_scale_transforms_tree.unflatten(
-        a_scale_transforms_leaves
-    )
-    a_scale_transform_avals = a_scale_transforms_tree.unflatten(
-        a_scale_transforms_leaves_avals
-    )
+    if a_scale_transforms_tree is not None:
+      a_scale_transforms = a_scale_transforms_tree.unflatten(
+          a_scale_transforms_leaves
+      )
+      a_scale_transform_avals = a_scale_transforms_tree.unflatten(
+          a_scale_transforms_leaves_avals
+      )
+    else:
+      a_scale_transforms = ()
+      a_scale_transform_avals = ()
     a_scale_ref, _, a_scale_transforms = lowering._handle_transforms(
         ctx, a_scale_ref_aval, a_scale_ref, a_scale_transform_avals,
         a_scale_transforms
@@ -2863,32 +3114,40 @@ def _tcgen05_mma_lowering(
       raise NotImplementedError(
           f"Unsupported transforms: {a_scale_transforms}"
       )
-  if b_scale_ref is not None and b_scale_transforms_tree is not None:
+  if b_scale_ref is not None:
     assert isinstance(b_scale_ref_aval, state.AbstractRef)
-    b_scale_transforms = b_scale_transforms_tree.unflatten(
-        b_scale_transforms_leaves
-    )
-    b_scale_transform_avals = b_scale_transforms_tree.unflatten(
-        b_scale_transforms_leaves_avals
-    )
+    if b_scale_transforms_tree is not None:
+      b_scale_transforms = b_scale_transforms_tree.unflatten(
+          b_scale_transforms_leaves
+      )
+      b_scale_transform_avals = b_scale_transforms_tree.unflatten(
+          b_scale_transforms_leaves_avals
+      )
+    else:
+      b_scale_transforms = ()
+      b_scale_transform_avals = ()
     b_scale_ref, _, b_scale_transforms = lowering._handle_transforms(
         ctx, b_scale_ref_aval, b_scale_ref, b_scale_transform_avals,
         b_scale_transforms
     )
     if b_scale_transforms:
       raise NotImplementedError(f"Unsupported transforms: {b_scale_transforms}")
-  if a_sparse_metadata_transforms_tree is not None:
-    a_sparse_metadata_transforms = a_sparse_metadata_transforms_tree.unflatten(
-        a_sparse_metadata_transforms_leaves
-    )
-    a_sparse_metadata_transform_avals = (
-        a_sparse_metadata_transforms_tree.unflatten(
-            a_sparse_metadata_transforms_leaves_avals
-        )
-    )
+  if a_sparse_metadata_ref is not None:
+    if a_sparse_metadata_transforms_tree is not None:
+      a_sparse_metadata_transforms = a_sparse_metadata_transforms_tree.unflatten(
+          a_sparse_metadata_transforms_leaves
+      )
+      a_sparse_metadata_transform_avals = (
+          a_sparse_metadata_transforms_tree.unflatten(
+              a_sparse_metadata_transforms_leaves_avals
+          )
+      )
+    else:
+      a_sparse_metadata_transforms = ()
+      a_sparse_metadata_transform_avals = ()
     assert isinstance(a_sparse_metadata_ref_aval, state_types.AbstractRef)
     a_sparse_metadata_ref, _, a_sparse_metadata_transforms = (
-        lowering._handle_transforms(  # pyrefly: ignore[bad-specialization]
+        lowering._handle_transforms(
             ctx, a_sparse_metadata_ref_aval, a_sparse_metadata_ref,
             a_sparse_metadata_transform_avals, a_sparse_metadata_transforms)
     )
@@ -3012,13 +3271,17 @@ def _tcgen05_mma_lowering_wg(
       a_sparse_metadata_transforms_leaves_avals,
   ) = transforms_avals_lists
 
-  def handle_transforms_and_get_ref(tree, leaves, leaves_avals, ref, ref_aval, handle_transposes=True):
+  def handle_transforms_and_get_ref(tree, leaves, leaves_avals, ref, ref_aval):
+    if ref is None:
+      return None
     if tree is None:
-      return ref
-    transforms = tree.unflatten(leaves)
-    transform_avals = tree.unflatten(leaves_avals)
+      transforms = ()
+      transform_avals = ()
+    else:
+      transforms = tree.unflatten(leaves)
+      transform_avals = tree.unflatten(leaves_avals)
     ref, _, transforms = lowering._handle_transforms(
-        ctx, ref_aval, ref, transform_avals, transforms, handle_transposes=handle_transposes
+        ctx, ref_aval, ref, transform_avals, transforms
     )
     if transforms:
       raise NotImplementedError(
@@ -3032,7 +3295,6 @@ def _tcgen05_mma_lowering_wg(
       acc_transforms_leaves_avals,
       acc_ref,
       acc_aval,
-      handle_transposes=False,
   )
 
   a_ref = handle_transforms_and_get_ref(
@@ -3041,7 +3303,6 @@ def _tcgen05_mma_lowering_wg(
       a_transforms_leaves_avals,
       a_ref,
       a_aval,
-      handle_transposes=a_aval.memory_space == gpu_core.SMEM
   )
 
   b_ref = handle_transforms_and_get_ref(
@@ -3216,7 +3477,7 @@ def _tcgen05_commit_arrive_lowering(
     # TODO(cjfj): remove when minimum jaxlib version is 0.12.
     if hasattr(mgpu.dialect.TcGen05CommitArriveOp, "predicate"):
       mgpu.dialect.tcgen05_commit_arrive(
-          memref, collective=collective, predicate=predicate  # pyrefly: ignore[unexpected-keyword]
+          memref, collective=collective, predicate=predicate
       )
     elif predicate is None:
       mgpu.dialect.tcgen05_commit_arrive(memref, collective=collective)
@@ -3309,12 +3570,8 @@ def _set_max_registers_lowering(
 ):
   del ctx
   action_str = "inc" if action == "increase" else "dec"
-  llvm_dialect.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      f"setmaxnreg.{action_str}.sync.aligned.u32 {n};",
-      "",
-      has_side_effects=True,
+  mgpu_utils.inline_ptx(
+      f"setmaxnreg.{action_str}.sync.aligned.u32 {n};", convergent=True
   )
   return ()
 
@@ -4192,8 +4449,8 @@ def _async_load_tmem_lowering_rule(
       ctx.avals_in[1 : 1 + tree.num_leaves]
   )
   x_tmem, _, transforms = lowering._handle_transforms(
-      ctx, x_aval, x_ref, transform_avals, transforms, handle_transposes=False,
-      handle_reshapes=False)
+      ctx, x_aval, x_ref, transform_avals, transforms
+  )
   if transforms:
     raise NotImplementedError(
         f"Unimplemented transforms for TMEM refs. {transforms=}"
@@ -4231,8 +4488,6 @@ def _async_load_tmem_lowering_rule_wg(
       x_ref,
       transform_avals,
       transforms,
-      handle_transposes=False,
-      handle_reshapes=False,
   )
   if transforms:
     raise NotImplementedError(
@@ -4246,13 +4501,13 @@ def _async_load_tmem_lowering_rule_wg(
       reduce = "abs" + reduce  # type: ignore
     match reduce:
       case "min":
-        reduce_attr = mgpu.dialect.TMEMLoadReduction.Min  # pyrefly: ignore[missing-attribute]
+        reduce_attr = mgpu.dialect.TMEMLoadReduction.Min
       case "max":
-        reduce_attr = mgpu.dialect.TMEMLoadReduction.Max  # pyrefly: ignore[missing-attribute]
+        reduce_attr = mgpu.dialect.TMEMLoadReduction.Max
       case "absmin":
-        reduce_attr = mgpu.dialect.TMEMLoadReduction.AbsMin  # pyrefly: ignore[missing-attribute]
+        reduce_attr = mgpu.dialect.TMEMLoadReduction.AbsMin
       case "absmax":
-        reduce_attr = mgpu.dialect.TMEMLoadReduction.AbsMax  # pyrefly: ignore[missing-attribute]
+        reduce_attr = mgpu.dialect.TMEMLoadReduction.AbsMax
       case _:
         raise ValueError(f"Unsupported load reduce operation: {orig_reduce}")
     return tuple(mgpu.dialect.async_load_tmem(x_tmem, reduce=reduce_attr))  # type: ignore
@@ -4329,8 +4584,8 @@ def _async_store_tmem_lowering_rule(
       ctx.avals_in[2 : 2 + tree.num_leaves]
   )
   x_tmem, _, transforms = lowering._handle_transforms(
-      ctx, x_aval, x_ref, transform_avals, transforms, handle_transposes=False,
-      handle_reshapes=False)
+      ctx, x_aval, x_ref, transform_avals, transforms
+  )
   batch_shape = ()
   if transforms and isinstance(
       transforms[0], gpu_core.ExpandLeadingBatchDimensionsTransform
@@ -4381,8 +4636,6 @@ def _async_store_tmem_lowering_rule_wg(
       x_ref,
       transform_avals,
       transforms,
-      handle_transposes=False,
-      handle_reshapes=False,
   )
   batch_shape = ()
   if transforms and isinstance(
@@ -4815,7 +5068,9 @@ def semaphore_signal_parallel(*signals: SemaphoreSignal):
   of an expensive fence for each signal).
   """
   semaphores = [s.ref for s in signals]
-  device_ids = [s.device_id for s in signals]
+  device_ids = [
+      pallas_primitives.canonicalize_device_id(s.device_id) for s in signals
+  ]
   incs = [jnp.asarray(s.inc, dtype=jnp.int32) for s in signals]
   refs, transforms = util.unzip2(
       map(pallas_primitives._get_ref_and_transforms, semaphores)
@@ -4926,6 +5181,8 @@ def try_cluster_cancel_lowering(
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
 
+  result_aval = ctx.avals_in[0]
+  assert isinstance(result_aval, state_types.AbstractRef)
   if result_transforms_tree is not None:
     res_transforms_leaves, barrier_transforms_leaves = util.split_list(
       transforms_leaves, [result_transforms_tree.num_leaves])
@@ -4933,16 +5190,16 @@ def try_cluster_cancel_lowering(
     res_transform_avals = result_transforms_tree.unflatten(
         ctx.avals_in[2 : 2 + result_transforms_tree.num_leaves]
     )
-    result_aval = ctx.avals_in[0]
-    assert isinstance(result_aval, state_types.AbstractRef)
-    result_ref, _, res_transforms = lowering._handle_transforms(
-        ctx, result_aval, result_ref, res_transform_avals, res_transforms)
-    if res_transforms:
-      raise NotImplementedError(
-          f"Unimplemented transforms for result ref: {res_transforms}"
-      )
   else:
     barrier_transforms_leaves = transforms_leaves
+    res_transforms = ()
+    res_transform_avals = ()
+  result_ref, _, res_transforms = lowering._handle_transforms(
+      ctx, result_aval, result_ref, res_transform_avals, res_transforms)
+  if res_transforms:
+    raise NotImplementedError(
+        f"Unimplemented transforms for result ref: {res_transforms}"
+    )
 
   if barrier_transforms_tree is not None:
     base_index = _get_barrier_base_index(
@@ -5076,17 +5333,20 @@ def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
                                   *transforms_leaves,
                                   grid_names,
                                   transforms_tree):
+  result_aval = ctx.avals_in[0]
+  assert isinstance(result_aval, state_types.AbstractRef)
   if transforms_tree is not None:
     res_transforms = transforms_tree.unflatten(transforms_leaves)
-    result_aval = ctx.avals_in[0]
-    assert isinstance(result_aval, state_types.AbstractRef)
     transform_avals = transforms_tree.unflatten(ctx.avals_in[1:])
-    result_ref, _, res_transforms = lowering._handle_transforms(
-        ctx, result_aval, result_ref, transform_avals, res_transforms)
-    if res_transforms:
-      raise NotImplementedError(
-          f"Unimplemented transforms for result ref: {res_transforms}"
-      )
+  else:
+    res_transforms = ()
+    transform_avals = ()
+  result_ref, _, res_transforms = lowering._handle_transforms(
+      ctx, result_aval, result_ref, transform_avals, res_transforms)
+  if res_transforms:
+    raise NotImplementedError(
+        f"Unimplemented transforms for result ref: {res_transforms}"
+    )
 
   result_ty = ir.MemRefType(result_ref.type)
   bits = math.prod(result_ty.shape) * mgpu.bitwidth(result_ty.element_type)
@@ -5797,6 +6057,7 @@ def semaphore_signal(
   """
   ref, transforms = pallas_primitives._get_ref_and_transforms(semaphore)
   value = jnp.asarray(inc, dtype=jnp.int32)
+  device_id = pallas_primitives.canonicalize_device_id(device_id)
   core_index = None
   args = [ref, transforms, value, device_id, core_index]
   flat_args, args_tree = tree_util.tree_flatten(args)
@@ -6037,3 +6298,60 @@ sum = functools.partial(_reduce, reduce_sum_p)
 max = functools.partial(_reduce, reduce_max_p)
 min = functools.partial(_reduce, reduce_min_p)
 prod = functools.partial(_reduce, reduce_prod_p)
+
+
+get_barrier_semaphore_p = jax_core.Primitive("get_barrier_semaphore")
+
+
+@get_barrier_semaphore_p.def_abstract_eval
+def _get_barrier_semaphore_abstract_eval():
+  return state_types.AbstractRef(
+      jax_core.ShapedArray(
+          (mgpu.launch_context.MAX_BARRIER_SEMAPHORES,),
+          pallas_core.BarrierSemaphore(),
+      ),
+      gpu_core.MemorySpace.GMEM,
+  )
+
+
+def get_barrier_semaphore():
+  """Returns a 1D array of barrier semaphores.
+
+  Barrier semaphores are allocated by XLA in clique-bound memory and are
+  guaranteed to be zeroed before the module starts executing, which lets kernels
+  skip the cross-device synchronization that is otherwise required to safely
+  use a GMEM semaphore (see skip_device_barrier in CompilerParams).
+
+  Using barrier semaphores requires collective_id to be set in
+  CompilerParams. Each collective_id has its own array of
+  MAX_BARRIER_SEMAPHORES (1024) semaphores, shared by all kernels using the
+  same collective_id (and the same device clique), and at most
+  MAX_COLLECTIVE_IDS (32) distinct collective IDs are supported.
+  """
+  return get_barrier_semaphore_p.bind()
+
+
+@lowering._register_resource_estimator(get_barrier_semaphore_p)
+def _get_barrier_semaphore_resource_estimator(
+    ctx: lowering.ResourceEstimatorContext,
+) -> lowering.Resources:
+  del ctx
+  return lowering.Resources(use_barrier_semaphore=True)
+
+
+@lowering.register_lowering_rule(
+    get_barrier_semaphore_p, mgpu.LoweringSemantics.Lane
+)
+@lowering.register_lowering_rule(
+    get_barrier_semaphore_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@lowering.register_lowering_rule(
+    get_barrier_semaphore_p, mgpu.LoweringSemantics.Warpgroup
+)
+@lowering.register_lowering_rule(
+    get_barrier_semaphore_p, *gpu_core.WGxWARP_SEMANTICS
+)
+def _get_barrier_semaphore_lowering_rule(
+    ctx: lowering.LoweringRuleContext,
+):
+  return ctx.launch_ctx.barrier_semaphore

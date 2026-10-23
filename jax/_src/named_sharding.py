@@ -243,6 +243,11 @@ class NamedSharding(jsharding.Sharding):
                                                check_devices=False)
     return jsharding.common_is_equivalent_to(self, other, ndim)
 
+  def strip_auto_manual_mesh_axes(self, new_mesh: mesh_lib.AbstractMesh):
+    from jax._src import core  # type: ignore
+    new_spec = core.modify_spec_for_auto_manual(self.spec, new_mesh)
+    return self.update(mesh=new_mesh, spec=new_spec)
+
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return named_sharding_to_xla_hlo_sharding(
         self.mesh.abstract_mesh, self.spec, self._logical_device_ids,

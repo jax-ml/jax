@@ -21,16 +21,21 @@ from enum import Enum
 import numpy as np
 from functools import partial, reduce as _reduce
 
+from jax._src import cloud_tpu_init
+from jax._src import config
 from jax._src import core
-from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
-                              broadcast_in_dim, broadcast_shapes,
-                              convert_element_type, div, eq, exp, full_like, ge,
-                              gt, le, log, log1p, lt, mul, ne, neg, reciprocal,
-                              reduce, select, sign, sqrt, square,
-                              standard_naryop, standard_unop, sub,
-                              _const, _dtype,
-                              _float, _nary_lower_hlo, _ones, _isnan)
+from jax._src.lax.erf import erf_inv_core, erfc_impl, exp_neg_sq
+from jax._src.lax.lax import (AccuracyMode, Tolerance, add, bitwise_and,
+                              bitwise_not, bitwise_or, broadcast_in_dim,
+                              broadcast_shapes, convert_element_type, div, eq,
+                              exp, full_like, ge, gt, le, log, log1p, lt, mul,
+                              ne, neg, reciprocal, reduce, select, sign, sqrt,
+                              square, standard_naryop, standard_unop, sub,
+                              _const, _dtype, _float, _nary_lower_hlo, _ones,
+                              _isnan, _unary_with_accuracy_pp_rule)
 from jax._src.lax.control_flow.loops import while_loop
+from jax._src.lax.digamma import digamma_impl
+from jax._src.lax.lgamma import lgamma_impl
 
 from jax._src import dtypes
 from jax._src.interpreters import ad
@@ -67,7 +72,11 @@ def lgamma(x: ArrayLike) -> Array:
   return lgamma_p.bind(x)
 
 def digamma(x: ArrayLike) -> Array:
-  r"""Elementwise digamma: :math:`\psi(x)`."""
+  r"""Elementwise digamma: :math:`\psi(x)`.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+  """
   return digamma_p.bind(x)
 
 def polygamma(m: ArrayLike, x: ArrayLike) -> Array:
@@ -129,15 +138,26 @@ def erf(x: ArrayLike) -> Array:
   """
   return erf_p.bind(x)
 
-def erfc(x: ArrayLike) -> Array:
+def erfc(
+    x: ArrayLike, *, accuracy: Tolerance | AccuracyMode | None = None
+) -> Array:
   r"""Elementwise complementary error function:
 
     :math:`\mathrm{erfc}(x) = 1 - \mathrm{erf}(x)`.
 
+  Args:
+    x: input array. Must have floating-point type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object that
+      selects the implementation of the op based on the requested accuracy. If
+      the implementation cannot satisfy the requested tolerance, the
+      compiler will return an error. If mode is specified and there are no
+      multiple implementations available, the default implementation will be
+      used.
+
   Numerical Precision:
     For accuracy bounds, see :ref:`numerical-accuracy`.
   """
-  return erfc_p.bind(x)
+  return erfc_p.bind(x, accuracy=accuracy)
 
 def erf_inv(x: ArrayLike) -> Array:
   r"""Elementwise inverse error function: :math:`\mathrm{erf}^{-1}(x)`.
@@ -195,54 +215,61 @@ def polygamma_gradx(g, m, x):
 # We try to follow the corresponding functions as closely as possible, so that
 # we can quickly incorporate changes.
 def lentz_thompson_barnett_algorithm(*,num_iterations, small, threshold, nth_partial_numerator, nth_partial_denominator, inputs):
-  # Position in the evaluation.
-  kIterationIdx = 0
-  # Whether or not we have reached the desired tolerance.
-  kValuesUnconvergedIdx = 1
-  # Ratio between nth canonical numerator and the nth-1 canonical numerator.
-  kCIdx = 2
-  # Ratio between nth-1 canonical denominator and the nth canonical denominator.
-  kDIdx = 3
-  # Computed approximant in the evaluation.
-  kHIdx = 4
+  # Loop state:
+  #   iteration: position in the evaluation.
+  #   unconverged: per-element mask of values that have not reached the
+  #     desired tolerance.
+  #   c: ratio between nth canonical numerator and the nth-1 canonical
+  #     numerator.
+  #   d: ratio between nth-1 canonical denominator and the nth canonical
+  #     denominator.
+  #   h: computed approximant in the evaluation.
 
-  def while_cond_fn(values):
-    iteration = values[kIterationIdx]
-    iterations_remain_cond = lt(iteration, num_iterations)
-    values_unconverged_cond = values[kValuesUnconvergedIdx]
+  def while_cond_fn(state):
+    iterations_remain_cond = lt(state["iteration"], num_iterations)
+    values_unconverged_cond = _any(state["unconverged"])
     return bitwise_and(iterations_remain_cond, values_unconverged_cond)
 
-  def while_body_fn(values):
-    iteration = values[kIterationIdx]
+  def while_body_fn(state):
+    iteration = state["iteration"]
+    unconverged = state["unconverged"]
     partial_numerator = nth_partial_numerator(iteration, *inputs)
     partial_denominator = nth_partial_denominator(iteration, *inputs)
 
-    c = add(partial_denominator, div(partial_numerator, values[kCIdx]))
+    c = add(partial_denominator, div(partial_numerator, state["c"]))
     small_constant = full_like(c, small)
     c = select(lt(abs(c), small_constant), small_constant, c)
-    d = add(partial_denominator, mul(partial_numerator, values[kDIdx]))
+    d = add(partial_denominator, mul(partial_numerator, state["d"]))
     d = select(lt(abs(d), small_constant), small_constant, d)
     d = reciprocal(d)
     delta = mul(c, d)
-    h = mul(values[kHIdx], delta)
+    h = mul(state["h"], delta)
 
-    # Update values
-    values[kIterationIdx] = iteration + 1
-    values[kCIdx] = c
-    values[kDIdx] = d
-    values[kHIdx] = h
-    # If any values are greater than the tolerance, we have not converged.
+    # Elements that have already converged keep their state, so the result
+    # for each element does not depend on the other elements.
+    # An element stays unconverged while its delta is outside the tolerance.
     tolerance_comparison = ge(abs(sub(delta, _const(delta, 1.0))), threshold)
-    values[kValuesUnconvergedIdx] = _any(tolerance_comparison)
-    return values
+    return {
+        "iteration": iteration + 1,
+        "unconverged": bitwise_and(unconverged, tolerance_comparison),
+        "c": select(unconverged, c, state["c"]),
+        "d": select(unconverged, d, state["d"]),
+        "h": select(unconverged, h, state["h"]),
+    }
 
   partial_denominator = nth_partial_denominator(0, *inputs)
   h = select(lt(abs(partial_denominator), small),
              broadcast_in_dim(small, partial_denominator.shape, ()),
              partial_denominator)
-  values = [1,True,h,full_like(h,0),h]
-  values = while_loop(while_cond_fn, while_body_fn, values)
-  return values[kHIdx]
+  state = {
+      "iteration": 1,
+      "unconverged": full_like(h, True, dtype=bool),
+      "c": h,
+      "d": full_like(h, 0),
+      "h": h,
+  }
+  state = while_loop(while_cond_fn, while_body_fn, state)
+  return state["h"]
 
 
 def regularized_incomplete_beta_impl(a, b, x, *, dtype):
@@ -345,7 +372,7 @@ def _any(predicates: Array) -> Array:
   all_dimensions = tuple(range(len(predicates_shape)))
   return reduce(predicates, f, bitwise_or, all_dimensions)
 
-def _igamma_series(ax, x, a, enabled, dtype, mode):
+def _igamma_series(ax, x, a, enabled, dtype, mode, dlogax_da):
   def cond_fn(vals):
     return _any(vals[0])
 
@@ -387,7 +414,7 @@ def _igamma_series(ax, x, a, enabled, dtype, mode):
   if mode == IgammaMode.VALUE:
     return (ans * ax) / a
 
-  dlogax_da = log(x) - digamma(a + _const(a, 1))
+  assert dlogax_da is not None
 
   if mode == IgammaMode.DERIVATIVE:
     return ax * (ans * dlogax_da + dans_da) / a
@@ -428,9 +455,9 @@ def igamma_impl(a, x, *, dtype):
     use_igammac,
     _const(a, 1) -
       _igammac_continued_fraction(ax, x, a, bitwise_and(enabled, use_igammac),
-                                  dtype, IgammaMode.VALUE),
+                                  dtype, IgammaMode.VALUE, None),
     _igamma_series(ax, x, a, bitwise_and(enabled, bitwise_not(use_igammac)),
-                   dtype, IgammaMode.VALUE)
+                   dtype, IgammaMode.VALUE, None)
   )
   output = select(a_is_infinity, full_like(a, 0), output)
   output = select(x_is_zero, full_like(a, 0), output)
@@ -438,7 +465,7 @@ def igamma_impl(a, x, *, dtype):
   output = select(domain_error, full_like(a, float('nan')), output)
   return output
 
-def _igammac_continued_fraction(ax, x, a, enabled, dtype, mode):
+def _igammac_continued_fraction(ax, x, a, enabled, dtype, mode, dlogax_da):
   eps = dtypes.finfo(dtype).eps
 
   def cond_fn(vals):
@@ -533,8 +560,8 @@ def _igammac_continued_fraction(ax, x, a, enabled, dtype, mode):
   ans = vals[1]
   if mode == IgammaMode.VALUE:
     return ans * ax
+  assert dlogax_da is not None
   dans_da = vals[14]
-  dlogax_da = log(x) -  digamma(a)
 
   if mode == IgammaMode.DERIVATIVE:
     return mul(ax, add(mul(ans, dlogax_da), dans_da))
@@ -578,7 +605,7 @@ def _igammac_temme(ax, x, a, enabled, dtype, mode):
     return result
 
   # For derivatives, fall back to continued fraction (Temme derivative is complex)
-  return _igammac_continued_fraction(ax, x, a, enabled, dtype, mode)
+  return _igammac_continued_fraction(ax, x, a, enabled, dtype, mode, None)
 
 def igammac_impl(a, x, *, dtype):
   is_nan = bitwise_or(_isnan(a), _isnan(x))
@@ -608,7 +635,7 @@ def igammac_impl(a, x, *, dtype):
   ax = exp(ax)
 
   igamma_call = _igamma_series(ax, x, a, bitwise_and(enabled, use_igamma),
-                               dtype, IgammaMode.VALUE)
+                               dtype, IgammaMode.VALUE, None)
 
   # Use Temme expansion for large a near x, continued fraction otherwise
   use_temme = bitwise_and(gt(a, _const(a, 100)), bitwise_not(use_igamma))
@@ -616,7 +643,7 @@ def igammac_impl(a, x, *, dtype):
       use_temme,
       _igammac_temme(ax, x, a, bitwise_and(enabled, use_temme), dtype, IgammaMode.VALUE),
       _igammac_continued_fraction(ax, x, a,
-          bitwise_and(enabled, bitwise_not(use_igamma)), dtype, IgammaMode.VALUE)
+          bitwise_and(enabled, bitwise_not(use_igamma)), dtype, IgammaMode.VALUE, None)
   )
 
   output = select(use_igamma, _const(a, 1) - igamma_call, igammac_cf_call)
@@ -630,16 +657,18 @@ def igamma_grad_a_impl(a, x, *, dtype):
   x_is_zero = eq(x, full_like(x,0))
   domain_error = bitwise_or(lt(x, full_like(x, 0)), le(a, full_like(a, 0)))
   use_igammac = bitwise_and(gt(x, full_like(x,1)), gt(x, a))
-  ax = a * log(x) - x - lgamma(a)
+  log_x = log(x)
+  ax = a * log_x - x - lgamma(a)
   underflow = lt(ax, -log(dtypes.finfo(dtype).max))
   ax = exp(ax)
   enabled = bitwise_not(bitwise_or(bitwise_or(bitwise_or(
       x_is_zero, domain_error), underflow), is_nan))
+  dlogax_da = log_x - digamma(select(use_igammac, a, a + _const(a, 1)))
   output = select(use_igammac,
     -_igammac_continued_fraction(ax, x, a, bitwise_and(enabled, use_igammac),
-                                 dtype, IgammaMode.DERIVATIVE),
+                                 dtype, IgammaMode.DERIVATIVE, dlogax_da),
     _igamma_series(ax, x, a, bitwise_and(enabled, bitwise_not(use_igammac)),
-                   dtype, IgammaMode.DERIVATIVE))
+                   dtype, IgammaMode.DERIVATIVE, dlogax_da))
   output = select(x_is_zero, full_like(output,0), output)
   output = select(bitwise_or(domain_error, is_nan),
                   full_like(a, float('nan')), output)
@@ -650,16 +679,19 @@ def random_gamma_grad_impl(a, x, *, dtype):
   x_is_zero = eq(x, full_like(x,0))
   domain_error = bitwise_or(lt(x, full_like(x,0)), le(a, full_like(a,0)))
   use_igammac = bitwise_and(gt(x, full_like(x,1)), gt(x, a))
-  ax = a * log(x) - x - lgamma(a)
+  log_x = log(x)
+  ax = a * log_x - x - lgamma(a)
   underflow = lt(ax, -log(dtypes.finfo(a.dtype).max))
   ax = exp(ax)
   enabled = bitwise_not(bitwise_or(bitwise_or(bitwise_or
     (x_is_zero, domain_error), underflow), is_nan))
+  dlogax_da = log_x - digamma(select(use_igammac, a, a + _const(a, 1)))
   output = select(use_igammac,
     -_igammac_continued_fraction(ax, x, a, bitwise_and(enabled, use_igammac),
-                                 dtype, IgammaMode.SAMPLE_DERIVATIVE),
+                                 dtype, IgammaMode.SAMPLE_DERIVATIVE, dlogax_da),
     _igamma_series(ax, x, a, bitwise_and(enabled, bitwise_not(use_igammac)),
-                                         dtype, IgammaMode.SAMPLE_DERIVATIVE))
+                                         dtype, IgammaMode.SAMPLE_DERIVATIVE,
+                                         dlogax_da))
   output = select(x_is_zero, full_like(output,0), output)
   output = select(bitwise_or(domain_error, is_nan),
                   full_like(a, float('nan')), output)
@@ -780,13 +812,80 @@ ad.defjvp(regularized_incomplete_beta_p,
   betainc_grad_not_implemented,
   betainc_gradx)
 
+def _lgamma_lowering(ctx, x, *, use_f64_for_f32=False):
+  aval = ctx.avals_in[0]
+  def _impl(v):
+    if aval.dtype not in (np.float32, np.float64):
+      return convert_element_type(
+          lgamma_impl(
+              convert_element_type(v, np.float32),
+              use_f64_for_f32=use_f64_for_f32,
+          ),
+          aval.dtype,
+      )
+    return lgamma_impl(v, use_f64_for_f32=use_f64_for_f32)
+  return mlir.lower_fun(_impl, multiple_results=False)(ctx, x)
+
+
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
-mlir.register_lowering(lgamma_p, partial(_nary_lower_hlo, chlo.lgamma))
+mlir.register_lowering(lgamma_p, _lgamma_lowering, inline=core.Inline.XLA_LATE)
+mlir.register_lowering(
+    lgamma_p,
+    partial(_lgamma_lowering, use_f64_for_f32=True),
+    platform='cpu',
+    inline=core.Inline.XLA_LATE,
+)
+# TODO(zviki): Remove once minimum libtpu version is at least 0.0.52.
+if not cloud_tpu_init.is_libtpu_at_least('0.0.52'):
+  # XLA:TPU's post-layout-assignment CallInliner in libtpu < 0.0.52 hits
+  # tile-layout mismatches when inlining calls inside fused loops; use early
+  # inlining on TPU instead.
+  mlir.register_lowering(
+      lgamma_p, _lgamma_lowering, platform='tpu', inline=False
+  )
+
+def _digamma_lowering(
+    ctx, x, *, use_f64_for_f32=False, use_optimization_barrier=False
+):
+  aval = ctx.avals_in[0]
+  def _impl(v):
+    if aval.dtype not in (np.float32, np.float64):
+      return convert_element_type(
+          digamma_impl(
+              convert_element_type(v, np.float32),
+              use_f64_for_f32=use_f64_for_f32,
+              use_optimization_barrier=use_optimization_barrier,
+          ),
+          aval.dtype,
+      )
+    return digamma_impl(
+        v,
+        use_f64_for_f32=use_f64_for_f32,
+        use_optimization_barrier=use_optimization_barrier,
+    )
+  return mlir.lower_fun(_impl, multiple_results=False)(ctx, x)
+
 
 digamma_p = standard_unop(_float, 'digamma')
-mlir.register_lowering(digamma_p, partial(_nary_lower_hlo, chlo.digamma))
 ad.defjvp(digamma_p, lambda g, x: mul(g, polygamma(_const(x, 1), x)))
+mlir.register_lowering(
+    digamma_p, _digamma_lowering, inline=core.Inline.XLA_LATE
+)
+mlir.register_lowering(
+    digamma_p,
+    partial(_digamma_lowering, use_f64_for_f32=True),
+    platform='cpu',
+    inline=core.Inline.XLA_LATE,
+)
+# XLA:TPU's post-layout-assignment CallInliner hits tile-layout mismatches when
+# inlining calls inside fused loops; use early inlining on TPU instead.
+mlir.register_lowering(
+    digamma_p,
+    partial(_digamma_lowering, use_optimization_barrier=True),
+    platform='tpu',
+    inline=False,
+)
 
 polygamma_p = standard_naryop([_float, _float], 'polygamma')
 mlir.register_lowering(polygamma_p, partial(_nary_lower_hlo, chlo.polygamma))
@@ -834,15 +933,51 @@ ad.defjvp2(bessel_i1e_p, _bessel_i1e_jvp)
 
 erf_p = standard_unop(_float, 'erf')
 ad.defjvp(erf_p, lambda g, x: mul(_const(x, 2. / np.sqrt(np.pi)),
-                                  mul(g, exp(neg(square(x))))))
+                                  mul(g, exp_neg_sq(x))))
 mlir.register_lowering(erf_p, partial(_nary_lower_hlo, chlo.erf))
 
 erfc_p = standard_unop(_float, 'erfc')
-ad.defjvp(erfc_p, lambda g, x: mul(_const(x, -2. / np.sqrt(np.pi)),
-                                   mul(g, exp(neg(square(x))))))
-mlir.register_lowering(erfc_p, partial(_nary_lower_hlo, chlo.erfc))
+ad.defjvp(
+    erfc_p,
+    lambda g, x, **kwargs: mul(
+        _const(x, -2.0 / np.sqrt(np.pi)), mul(g, exp_neg_sq(x))
+    ),
+)
+def _erfc_lowering(ctx, x, *, accuracy=None):
+  if (
+      accuracy is AccuracyMode.HIGHEST
+      and ctx.avals_in[0].dtype in (np.float32, np.float64)
+  ):
+    return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
+  return _nary_lower_hlo(chlo.erfc, ctx, x)
+mlir.register_lowering(erfc_p, _erfc_lowering)
+core.pp_eqn_rules[erfc_p] = _unary_with_accuracy_pp_rule
 
 erf_inv_p = standard_unop(_float, 'erf_inv')
 ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
                                             mul(g, exp(square(ans)))))
-mlir.register_lowering(erf_inv_p, partial(_nary_lower_hlo, chlo.erf_inv))
+
+def erf_inv_impl(x: Array) -> Array:
+  if x.dtype not in (np.float32, np.float64):
+    return convert_element_type(
+        erf_inv_impl(convert_element_type(x, np.float32)), x.dtype
+    )
+  ax = abs(x)
+  one = _const(x, 1.0)
+  out_of_bounds = bitwise_or(gt(ax, one), _isnan(x))
+  is_one = eq(ax, one)
+  x_safe = select(bitwise_or(out_of_bounds, is_one), full_like(x, 0.0), x)
+  q_safe = sub(one, abs(x_safe))
+  res = erf_inv_core(x_safe, q_safe, has_far_tail=False)
+  return select(
+      out_of_bounds,
+      full_like(x, np.nan),
+      select(is_one, mul(x, _const(x, np.inf)), res),
+  )
+
+def _erf_inv_lowering(ctx, x):
+  if config.jax_accurate_erf_inv.value:
+    return mlir.lower_fun(erf_inv_impl, multiple_results=False)(ctx, x)
+  return _nary_lower_hlo(chlo.erf_inv, ctx, x)
+
+mlir.register_lowering(erf_inv_p, _erf_inv_lowering)

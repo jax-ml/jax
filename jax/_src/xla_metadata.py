@@ -402,10 +402,10 @@ def _xla_metadata_call_lin(is_vjp, nzs, *primals, jaxpr, xla_metadata,
             == len(tangent_jaxpr.invars)), (
         len(residuals), len(tangents_nz), len(sres_flat),
         len(tangent_jaxpr.invars))
-    nz_outs = xla_metadata_call_p.bind(*residuals, *tangents_nz, *sres_flat,
-                                       jaxpr=tangent_jaxpr,
-                                       xla_metadata=tangent_metadata,
-                                       ad_metadata='same')
+    prim = ad.vjp_node(xla_metadata_call_p) if is_vjp else xla_metadata_call_p
+    nz_outs = prim.bind(*residuals, *tangents_nz, *sres_flat,
+                        jaxpr=tangent_jaxpr, xla_metadata=tangent_metadata,
+                        ad_metadata='same')
     nz_outs_ = iter(nz_outs)
     outs = [next(nz_outs_) if nz else ad.Zero(a)
             for nz, a in zip(nzs_out, tangent_avals_out)]
@@ -505,15 +505,17 @@ def dce_jaxpr_xla_metadata_rule(used_outputs: list[bool], live_ins: list[bool],
     return [False] * len(eqn.invars), None
   dced_jaxpr, used_inputs = pe._cached_closed_call_dce(
       eqn.params['jaxpr'], tuple(used_outputs), tuple(live_ins))
-  new_params = dict(eqn.params, jaxpr=dced_jaxpr)
   if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
     return used_inputs, None
-  else:
-    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
-    new_effs = core.eqn_effects(dced_jaxpr, new_invars)
-    new_eqn = pe.new_jaxpr_eqn(
-        new_invars,
-        [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
-    return used_inputs, new_eqn
+  if (dced_jaxpr is eqn.params['jaxpr'] and
+      all(used_inputs) and all(used_outputs)):
+    return used_inputs, eqn
+  new_params = dict(eqn.params, jaxpr=dced_jaxpr)
+  new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+  new_effs = core.eqn_effects(dced_jaxpr, new_invars)
+  new_eqn = pe.new_jaxpr_eqn(
+      new_invars,
+      [v for v, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
+  return used_inputs, new_eqn
 pe.dce_rules[xla_metadata_call_p] = dce_jaxpr_xla_metadata_rule

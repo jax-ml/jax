@@ -219,4 +219,7 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
       [*out_primals, *rem_consts], dbg.with_unknown_names(), src)
   fwd_trace.invalidate()
 
-  return fwd_jaxpr_.with_consts(fwd_consts), rem_jaxpr, fwds
+  # Drop primal computation that feeds neither an output nor a residual.
+  fwd_jaxpr, _ = pe.dce_jaxpr(fwd_jaxpr_.with_consts(fwd_consts), True,
+                             instantiate=True)
+  return fwd_jaxpr, rem_jaxpr, fwds

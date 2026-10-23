@@ -43,6 +43,7 @@ from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
 from jax._src.lib import _jax
 from jax._src.lib import _profiler
+from jax._src.lib import ifrt_proxy
 from jax._src.lib import xla_client
 
 logger = logging.getLogger(__name__)
@@ -378,6 +379,30 @@ def get_num_nodes_from_gpu_topology(topology: str) -> int:
 register_backend_factory(
   'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300,
   fail_quietly=True)
+
+
+def make_ifrt_proxy_client() -> xla_client.Client:
+  """Returns a client for the IFRT Proxy server at ``jax_backend_target``.
+
+  IFRT Proxy lets JAX use devices that are managed by a remote IFRT runtime,
+  such as Pathways on Cloud. The server address has the form
+  ``<transport>://<address>``, e.g. ``grpc://localhost:29000``.
+  """
+  target = BACKEND_TARGET.value
+  if not target:
+    raise RuntimeError(
+        "The 'proxy' backend requires the address of an IFRT Proxy server. Set "
+        "it via the JAX_BACKEND_TARGET environment variable or the "
+        "jax_backend_target config option, e.g. "
+        "JAX_BACKEND_TARGET=grpc://localhost:29000.")
+  return ifrt_proxy.get_client(target, ifrt_proxy.ClientConnectionOptions())
+
+
+# The proxy backend fails fast, without making any RPCs, unless
+# `jax_backend_target` is set. Its negative priority means that it is never
+# chosen as the default backend over a local backend; select it explicitly with
+# JAX_PLATFORMS=proxy.
+register_backend_factory("proxy", make_ifrt_proxy_client, priority=-1)
 
 
 def _get_pjrt_plugin_names_and_library_paths(

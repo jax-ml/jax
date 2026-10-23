@@ -56,8 +56,6 @@ Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
 XLADeviceAssignment = tuple[Device, ...]
-# TODO(yashkatariya): Remove this after 3 months of deprecation.
-XLACompatibleSharding = jsharding.Sharding
 
 
 def hashed_index(x) -> int:

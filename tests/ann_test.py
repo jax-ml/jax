@@ -159,8 +159,6 @@ class AnnTest(jtu.JaxTestCase):
       aggregate_to_topk=[True, False],
   )
   def test_sharded_sorted_input(self, is_max_k, aggregate_to_topk):
-    if not jtu.is_libtpu_at_least("0.0.50"):
-      self.skipTest("Requires libtpu >= 0.0.50")
     num_devices = jax.device_count()
     if num_devices % 2 != 0:
       self.skipTest("Works only when number of devices is a multiple of 2.")

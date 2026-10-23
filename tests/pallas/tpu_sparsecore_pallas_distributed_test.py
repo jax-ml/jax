@@ -66,10 +66,10 @@ class RemoteDMATest(parameterized.TestCase):
         neighbor = lax.rem(my_id + 1, axis_size)
       else:
         neighbor = lax.rem(my_id + axis_size - 1, axis_size)
-      pl.semaphore_signal(ready_sem, device_id=neighbor)
+      pl.semaphore_signal(ready_sem, device_id={'x': neighbor})
       pl.semaphore_wait(ready_sem)
       pltpu.async_remote_copy(
-          x_ref, y_ref, send_sem, recv_sem, device_id=neighbor
+          x_ref, y_ref, send_sem, recv_sem, device_id={'x': neighbor}
       ).wait()
 
     num_devices = num_devices or jax.device_count()
@@ -116,11 +116,17 @@ class RemoteDMATest(parameterized.TestCase):
         neighbor = lax.rem(my_id + 1, axis_size)
       else:
         neighbor = lax.rem(my_id + axis_size - 1, axis_size)
-      pl.semaphore_signal(ready_sem, device_id=(my_other_id, neighbor))
+      pl.semaphore_signal(
+          ready_sem, device_id={'y': my_other_id, 'x': neighbor}
+      )
       pl.semaphore_wait(ready_sem)
       pltpu.async_remote_copy(
-            x_ref, y_ref, send_sem, recv_sem, device_id=(my_other_id, neighbor)
-        ).wait()
+          x_ref,
+          y_ref,
+          send_sem,
+          recv_sem,
+          device_id={'y': my_other_id, 'x': neighbor},
+      ).wait()
 
     axis_size = jax.device_count() // 2
     x = jnp.arange(axis_size * 8 * 128).reshape((axis_size * 8, 128))
@@ -145,8 +151,6 @@ class RemoteDMATest(parameterized.TestCase):
   @parameterized.product(src_is_hbm=[False, True])
   def test_scs_remote_dma_spmem(self, src_is_hbm):
     """Tests ScalarSubcore remote DMA to VMEM_SHARED from VMEM_SHARED or HBM."""
-    if src_is_hbm is False and not jtu.is_libtpu_at_least('0.45.0'):
-      self.skipTest('VMEM_SHARED to VMEM_SHARED version is flaky.')
     num_devices = jax.device_count()
     sc_info = pltpu.get_tpu_info().sparse_core
     num_cores = sc_info.num_cores

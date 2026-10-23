@@ -64,8 +64,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   @genNamedParametersNArgs(2)
   def testVonMisesLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
-    scipy_fun = osp_stats.vonmises.pdf
-    lax_fun = lsp_stats.vonmises.pdf
+    scipy_fun = osp_stats.vonmises.logpdf
+    lax_fun = lsp_stats.vonmises.logpdf
 
     def args_maker():
       x, kappa = map(rng, shapes, dtypes)
@@ -76,6 +76,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
+
+  def testVonMisesPdfKappaZero(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38621
+    x = np.array([-np.pi, 0.0, 1.0, np.inf])
+    self.assertAllClose(lsp_stats.vonmises.pdf(x, 0.0),
+                        osp_stats.vonmises.pdf(x, 0.0), check_dtypes=False,
+                        atol=1e-5)
+    self.assertAllClose(lsp_stats.vonmises.logpdf(x, 0.0),
+                        osp_stats.vonmises.logpdf(x, 0.0), check_dtypes=False,
+                        atol=1e-5)
+    grad_fn = jax.vmap(jax.grad(lsp_stats.vonmises.logpdf, argnums=1),
+                       in_axes=(0, None))
+    self.assertAllClose(grad_fn(x[:3], 0.0), np.cos(x[:3]),
+                        check_dtypes=False, atol=1e-5)
 
   @genNamedParametersNArgs(2)
   def testWrappedCauchyPdf(self, shapes, dtypes):
@@ -137,6 +151,15 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker, rtol={np.float64: 1e-14})
 
+  def testPoissonLogPmfFractionalLoc(self):
+    k = np.array([1.5, 2.0])
+    mu = 1.0
+    loc = 0.5
+    result = lsp_stats.poisson.logpmf(jnp.asarray(k), mu=mu, loc=loc)
+    expected = osp_stats.poisson.logpmf(k, mu=mu, loc=loc)
+    self.assertAllClose(result, expected, check_dtypes=False,
+                        atol=1e-3, rtol=1e-3)
+
   @genNamedParametersNArgs(3)
   def testPoissonPmf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
@@ -171,7 +194,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
-
 
   @genNamedParametersNArgs(3)
   def testBernoulliLogPmf(self, shapes, dtypes):
@@ -461,6 +483,18 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=2e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4)
 
+  @jtu.sample_product(fun=["ppf", "isf"], dtype=jtu.dtypes.floating)
+  def testCauchyQuantileEdgeCases(self, fun, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/38318
+    finfo = np.finfo(dtype)
+    q = np.array(
+      [0.0, -0.0, 0.5, 1.0, -0.1, 1.1, np.nan, finfo.tiny, 1 - finfo.epsneg],
+      dtype,
+    )
+    scipy_fun = getattr(osp_stats.cauchy, fun)
+    lax_fun = getattr(lsp_stats.cauchy, fun)
+    self.assertAllClose(lax_fun(q), scipy_fun(q), check_dtypes=False, atol=0)
+
   @jtu.sample_product(
     shapes=[
       [x_shape, alpha_shape]
@@ -608,6 +642,23 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           lsp_stats.expon.ppf(q, loc=loc, scale=scale),
           atol=1e-6,
         )
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testExponLogCdfSmallX(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40965
+    # Previously logcdf returned -inf once exp(-x) rounded to 1.
+    x = np.array([-1.0, 1e-30, 1e-10, 1e-3, 1.0, 20.0], dtype=dtype)
+    tol = {np.float32: 5e-4, np.float64: 1e-12}
+
+    def args_maker():
+      return [x, 0.0, 2.0]
+
+    self._CheckAgainstNumpy(osp_stats.expon.logcdf, lsp_stats.expon.logcdf,
+                            args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(lsp_stats.expon.logcdf, args_maker)
+    grads = jax.vmap(jax.grad(lsp_stats.expon.logcdf))(x)
+    self.assertAllClose(grads, np.where(x < 0, 0, 1 / np.expm1(x)),
+                        check_dtypes=False, rtol=tol)
 
   @genNamedParametersNArgs(4)
   def testGammaLogPdf(self, shapes, dtypes):
@@ -768,6 +819,14 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol={np.float32: 1e-5, np.float64: 1e-6})
       self._CompileAndCheck(lax_fun, args_maker)
 
+  def testLaplaceCdfGradInTails(self):
+    # https://github.com/jax-ml/jax/issues/40966
+    x = jnp.array([-1000., -1., 0., 1., 1000.])
+    self.assertAllClose(lsp_stats.laplace.cdf(x), osp_stats.laplace.cdf(x),
+                        check_dtypes=False)
+    grad = jax.vmap(jax.grad(lsp_stats.laplace.cdf))(x)
+    self.assertAllClose(grad, lsp_stats.laplace.pdf(x))
+
   @genNamedParametersNArgs(3)
   def testLogisticCdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
@@ -877,7 +936,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
 
-
   @genNamedParametersNArgs(3)
   def testNormLogCdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
@@ -894,7 +952,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
-
 
   @genNamedParametersNArgs(3)
   def testNormCdf(self, shapes, dtypes):
@@ -989,6 +1046,21 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4, atol=3e-4)
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testNormIsfExtremeTails(self, dtype):
+    if dtype == np.float32:
+      quantiles = np.array([1e-5, 1e-10, 1e-15, 1e-20, 1e-30], dtype=dtype)
+    else:
+      quantiles = np.array(
+        [1e-10, 1e-16, 1e-17, 1e-20, 1e-50, 1e-100], dtype=dtype
+      )
+
+    def args_maker():
+      return quantiles, 3.5, 2.0
+
+    self._CheckAgainstNumpy(osp_stats.norm.isf, lsp_stats.norm.isf, args_maker, tol=1e-4)
+    self._CompileAndCheck(lsp_stats.norm.isf, args_maker, rtol=3e-4, atol=3e-4)
 
   @genNamedParametersNArgs(5)
   def testTruncnormLogPdf(self, shapes, dtypes):
@@ -1093,6 +1165,22 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
+
+  @jtu.sample_product(
+    fun=["logpdf", "pdf", "cdf", "sf", "logcdf", "logsf"],
+    dtype=jtu.dtypes.floating,
+  )
+  def testTruncnormNanPropagation(self, fun, dtype):
+    # https://github.com/jax-ml/jax/issues/38606: NaN in any argument -> NaN.
+    x = np.array([np.nan, 3, -3, 0.5, 0.5, 0.5], dtype)
+    a = np.array([-1, np.nan, -1, -1, -1, -1], dtype)
+    b = np.array([2, 2, np.nan, 2, 2, 2], dtype)
+    loc = np.array([0, 0, 0, np.nan, 0, 0], dtype)
+    scale = np.array([1, 1, 1, 1, np.nan, 1], dtype)
+    self._CheckAgainstNumpy(getattr(osp_stats.truncnorm, fun),
+                            getattr(lsp_stats.truncnorm, fun),
+                            lambda: [x, a, b, loc, scale],
+                            check_dtypes=False, tol=1e-3)
 
   @genNamedParametersNArgs(4)
   def testParetoLogPdf(self, shapes, dtypes):
@@ -1207,6 +1295,19 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       )
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @jtu.sample_product(
+    fun=["logpdf", "pdf", "cdf", "logcdf", "sf", "logsf", "ppf"],
+  )
+  def testParetoGradOutsideSupport(self, fun):
+    # Regression test for https://github.com/jax-ml/jax/issues/41445
+    fn = getattr(lsp_stats.pareto, fun)
+    x = jnp.array([-0.5, 1.5]) if fun == "ppf" else jnp.array([-1.0, 0.0, 0.5])
+    b = 2.0
+    grad_x = jax.vmap(jax.grad(fn), in_axes=(0, None))(x, b)
+    self.assertAllClose(grad_x, jnp.zeros_like(x))
+    grad_b = jax.vmap(jax.grad(fn, argnums=1), in_axes=(0, None))(x, b)
+    self.assertAllClose(grad_b, jnp.zeros_like(x))
+
   @genNamedParametersNArgs(4)
   def testTLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
@@ -1225,6 +1326,15 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker,
                             rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testTLogPdfLargeDf(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41203
+    x = np.array([-2.0, 0.0, 1.5], dtype=dtype)[:, None]
+    df = np.array([1e5, 1e6, 1e7, 1e10], dtype=dtype)
+    self.assertAllClose(lsp_stats.t.logpdf(x, df), osp_stats.t.logpdf(x, df),
+                        check_dtypes=False)
+    self.assertAllClose(lsp_stats.t.pdf(x, df), osp_stats.t.pdf(x, df),
+                        check_dtypes=False)
 
   @genNamedParametersNArgs(3)
   def testUniformLogPdf(self, shapes, dtypes):
@@ -1271,6 +1381,19 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-5)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @jtu.sample_product(
+    fun=["logpdf", "pdf", "cdf"],
+    dtype=jtu.dtypes.floating,
+  )
+  def testUniformNanPropagation(self, fun, dtype):
+    # https://github.com/jax-ml/jax/issues/38317: NaN in any argument -> NaN.
+    x = np.array([np.nan, -1, 2, 0.5, 0.5], dtype)
+    loc = np.array([0, 0, 0, np.nan, 0], dtype)
+    scale = np.array([1, np.nan, np.nan, 1, 1], dtype)
+    self._CheckAgainstNumpy(getattr(osp_stats.uniform, fun),
+                            getattr(lsp_stats.uniform, fun),
+                            lambda: [x, loc, scale], check_dtypes=False)
+
   @genNamedParametersNArgs(4)
   def testChi2LogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
@@ -1286,6 +1409,11 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=5e-4)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  def testChi2LogPdfBoundary(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38316
+    x = np.array([0.0, np.inf])
+    self.assertAllClose(lsp_stats.chi2.logpdf(x, 2.0),
+                        np.array([-np.log(2.0), -np.inf]), check_dtypes=False)
 
   @genNamedParametersNArgs(4)
   def testChi2LogCdf(self, shapes, dtypes):
@@ -1368,6 +1496,34 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self.assertEqual(lsp_stats.betabinom.logpmf(0, 0, 10, 5, 0),
                      osp_stats.betabinom.logpmf(0, 0, 10, 5, 0))
 
+  def testBetaBinomLogPmfNegativeLoc(self):
+    lax_fun = lsp_stats.betabinom.logpmf
+    scipy_fun = osp_stats.betabinom.logpmf
+
+    def args_maker():
+      k = np.array([-2.0, -1.0, 0.0, 1.0, 2.0])
+      n, a, b, loc = 4.0, 2.0, 3.0, -2.0
+      return [k, n, a, b, loc]
+
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=5e-4
+    )
+    self._CompileAndCheck(lax_fun, args_maker)
+
+  def testBetaBinomLogPmfFractionalLoc(self):
+    lax_fun = lsp_stats.betabinom.logpmf
+    scipy_fun = osp_stats.betabinom.logpmf
+
+    def args_maker():
+      k = np.array([-1.5, -0.5, 0.5, 1.5])
+      n, a, b, loc = 4.0, 2.0, 3.0, -2.0
+      return [k, n, a, b, loc]
+
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=5e-4
+    )
+    self._CompileAndCheck(lax_fun, args_maker)
+
   @genNamedParametersNArgs(4)
   def testBinomLogPmf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
@@ -1404,19 +1560,24 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     [dict(x_dtype=x_dtype, p_dtype=p_dtype)
      for x_dtype, p_dtype in itertools.product(jtu.dtypes.integer, jtu.dtypes.floating)
     ],
-    shape=[(2), (4,), (1, 5)],
+    [dict(x_shape=x_shape, p_shape=p_shape)
+     for x_shape, p_shape in [((4,), (4,)), ((3, 5), (5,)), ((5,), (3, 5)),
+                              ((2, 3, 4), (3, 4))]
+    ],
   )
-  def testMultinomialLogPmf(self, shape, x_dtype, p_dtype):
+  def testMultinomialLogPmf(self, x_shape, p_shape, x_dtype, p_dtype):
     rng = jtu.rand_positive(self.rng())
     scipy_fun = osp_stats.multinomial.logpmf
     lax_fun = lsp_stats.multinomial.logpmf
 
     def args_maker():
-      x = rng(shape, x_dtype)
-      n = np.sum(x, dtype=x.dtype)
-      p = rng(shape, p_dtype)
+      x = rng(x_shape, x_dtype)
+      n = np.sum(x, axis=-1, dtype=x.dtype)
+      if n.ndim > 0:
+        n[0] += 1
+      p = rng(p_shape, p_dtype)
       # Normalize the array such that it sums it's entries sum to 1 (or close enough to)
-      p = p / np.sum(p)
+      p = p / np.sum(p, axis=-1, keepdims=True)
       return [x, n, p]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
@@ -1471,7 +1632,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
                           rtol=1e-4, atol=1e-4)
 
-
   @jtu.sample_product(
     [dict(x_shape=x_shape, mean_shape=mean_shape, cov_shape=cov_shape)
       for x_shape, mean_shape, cov_shape in [
@@ -1514,7 +1674,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
                           rtol=1e-4, atol=1e-4)
 
-
   @jtu.sample_product(
     ndim=[2, 3],
     nbatch=[1, 3, 5],
@@ -1531,7 +1690,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     result1 = lsp_stats.multivariate_normal.logpdf(x, mean, cov)
     result2 = jax.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
     self.assertArraysAllClose(result1, result2, check_dtypes=False)
-
 
   @genNamedParametersNArgs(3)
   def testGumbelRLogPdf(self, shapes, dtypes):
@@ -2124,6 +2282,28 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     tol = ({np.float32: 1e-2, np.float64: 1e-4} if jtu.test_device_matches(["tpu"])
            else {np.float32: 2e-4, np.float64: 5e-6})
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,check_dtypes=False, tol=tol)
+
+  @jtu.sample_product(
+    dtype=jtu.dtypes.floating,
+  )
+  def testPoissonEntropyGrad(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40969
+    mu = np.array([0.0, 1e-25, 1e-3, 0.1, 5.0, 50.0, 150.0, 1e3, 1e6], dtype=dtype)
+
+    def expected_grad(mu):
+      if mu == 0:
+        return 0.0
+      if mu >= 100:  # Derivative of the asymptotic expansion.
+        return 1 / (2 * mu) + 1 / (12 * mu ** 2)
+      k = np.arange(250)
+      logp = osp_stats.poisson.logpmf(k, mu)
+      return -np.sum(np.exp(logp) * (k / mu - 1) * logp)
+
+    expected = np.array([expected_grad(float(m)) for m in mu])
+    actual = jax.vmap(jax.grad(lsp_stats.poisson.entropy))(mu)
+    tol = ({np.float32: 1e-2, np.float64: 1e-4} if jtu.test_device_matches(["tpu"])
+           else {np.float32: 1e-3, np.float64: 1e-5})
+    self.assertAllClose(actual, expected, check_dtypes=False, rtol=tol)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -81,7 +81,7 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
     split_list, split_list_checked, weakref_lru_cache, merge_lists, subs_list,
-    fun_name, foreach, partition_list)
+    fun_name)
 from jax._src.lib import jax_jit
 
 map, unsafe_map = safe_map, map
@@ -134,13 +134,20 @@ def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
   for arg in args_flat:
     dispatch.check_arg(arg)
 
+  jaxpr = p.params['jaxpr']
   try:
     if (core.trace_state_clean() and not config.debug_key_reuse.value
-        and not p.params['jaxpr'].is_high):
+        and not any(a.is_high for a in (*jaxpr.in_avals, *jaxpr.out_avals))):
+      params = p.params
+      if jaxpr.is_high:
+        # Only intermediates are hijax. Lower to lojax here so that we compile
+        # directly, which lets the C++ dispatch path call the executable.
+        params = dict(params, jaxpr=pe.lower_jaxpr2(jaxpr))
+        jaxpr = params['jaxpr']
       args_flat = map(core.full_lower, args_flat)
       core.check_eval_args(args_flat)
       out_flat, compiled, profiler, const_args = _pjit_call_impl_python(
-          *args_flat, **p.params)
+          *args_flat, **params)
     else:
       out_flat = jit_p.bind(*args_flat, **p.params)
       compiled = None
@@ -177,10 +184,9 @@ def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
           f"invalid value ({e.ty}) encountered in {fun.__qualname__}") from None
     api_util.maybe_recursive_nan_check(e, fun, args, kwargs)  # should always raise.
     raise RuntimeError("Internal error") from e  # fall-back error to be safe.
-
   outs = tree_unflatten(p.out_tree, out_flat)
-  return (outs, out_flat, p.out_tree, args_flat,
-          p.params['jaxpr'], compiled, profiler, const_args)
+  return (outs, out_flat, p.out_tree, args_flat, jaxpr, compiled, profiler,
+          const_args)
 
 
 def _need_to_rebuild_with_fdo(pgle_profiler):
@@ -1212,10 +1218,14 @@ def _pjit_call_impl(*args, jaxpr: core.Jaxpr,
       out_shardings_treedef=None, out_shardings_leaves=out_shardings,
       in_layouts_treedef=None, in_layouts_leaves=in_layouts,
       out_layouts_treedef=None, out_layouts_leaves=out_layouts)
-  return _jax.pjit(
-      name, f, call_impl_cache_miss, [], [], cache_key,
-      tree_util.dispatch_registry, pxla.cc_shard_arg,
-      _get_cpp_global_cache(cache_key.contains_explicit_attributes))(*args)
+  try:
+    return _jax.pjit(
+        name, f, call_impl_cache_miss, [], [], cache_key,
+        tree_util.dispatch_registry, pxla.cc_shard_arg,
+        _get_cpp_global_cache(cache_key.contains_explicit_attributes))(*args)
+  except api_util.InternalFloatingPointError as e:
+    api_util.maybe_recursive_nan_check(
+        e, partial(core.eval_jaxpr, jaxpr, jaxpr.consts), args, {})
 
 jit_p.def_impl(_pjit_call_impl)
 
@@ -1320,7 +1330,12 @@ def _pjit_lower_jaxpr_to_fun(
   const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_arg_avals = util.unzip2(const_args_and_avals)
   in_avals = (*const_arg_avals, *jaxpr.in_avals)
-  ca_shardings = const_args_shardings(const_args)
+  device_or_backend_set = (
+      pxla.check_device_backend_on_shardings(in_shardings) or
+      pxla.check_device_backend_on_shardings(out_shardings))
+  ca_shardings = const_args_shardings(
+      const_args,
+      device_or_backend_set=device_or_backend_set)
   in_shardings_expanded = ca_shardings + in_shardings
   ca_layouts = const_args_layouts(const_args, const_arg_avals, ca_shardings)
   in_layouts_expanded = ca_layouts + in_layouts
@@ -1416,7 +1431,13 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 # the metadata problem and consolidate the caches.
 mlir.register_lowering(jit_p, _pjit_lowering, cacheable=False)
 
-def const_args_shardings(const_args: Sequence[Array | np.ndarray]) -> Sequence[PjitSharding]:
+def const_args_shardings(
+    const_args: Sequence[Array | np.ndarray],
+    *,
+    device_or_backend_set: bool = False,
+) -> Sequence[PjitSharding]:
+  if device_or_backend_set:
+    return (sharding_impls.UNSPECIFIED,) * len(const_args)
   const_args_types = map(convert_to_metaty, const_args)
   return _resolve_in_shardings(
       const_args_types, (sharding_impls.UNSPECIFIED,) * len(const_args))
@@ -1606,7 +1627,8 @@ def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings
   def tangent_fun(residuals, structured_residuals, *tangents):
     tangents_nz = _filter_zeros(nzs, tangents)
     sres_flat = tree_leaves(structured_residuals)
-    nz_tangents_out = jit_p.bind(
+    prim = ad.vjp_node(jit_p) if is_vjp else jit_p
+    nz_tangents_out = prim.bind(
         *residuals, *tangents_nz, *sres_flat, jaxpr=tangent_jaxpr,
         in_shardings=_pad(nzs, in_shardings, UNSPECIFIED),
         in_layouts=_pad(nzs, in_layouts, None),
@@ -1868,12 +1890,12 @@ def _pjit_transpose_fancy(
   trans_jaxpr, out_tree = _transpose_jaxpr_fancy(jaxpr, in_tree, (*in_avals,), specs)
 
   trans_in_shardings = (
-      [s for x, s in zip(args, in_shardings)
-       if not isinstance(x, (ad.ValAccum, ad.NullAccum))] +
+      [s for (k, _), s in zip(specs, in_shardings)
+       if k is None or k is ad.RefAccum] +
       [s for x, s in zip(cts_in, out_shardings) if not isinstance(x, ad.Zero)])
   trans_in_layouts = (
-      [l for x, l in zip(args, in_layouts)
-       if not isinstance(x, (ad.ValAccum, ad.NullAccum))] +
+      [l for (k, _), l in zip(specs, in_layouts)
+       if k is None or k is ad.RefAccum] +
       [l for x, l in zip(cts_in, out_layouts) if not isinstance(x, ad.Zero)])
   cts_out_, logs_ = tree_unflatten(out_tree, trans_jaxpr.out_avals)
   num_log_leaves = len(tree_leaves(logs_))
@@ -1925,7 +1947,6 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):
   return trans_jaxpr, cell.out_tree  # pyrefly: ignore[missing-attribute]
 ad.fancy_transposes[jit_p] = _pjit_transpose_fancy
 
-@weakref_lru_cache
 def _dce_jaxpr_pjit(
     jaxpr: core.Jaxpr, used_outputs: tuple[bool, ...],
     live_inputs: tuple[bool, ...],
@@ -1944,6 +1965,11 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], live_ins: list[bool],
 
   dced_jaxpr, used_inputs = _dce_jaxpr_pjit(
       eqn.params['jaxpr'], tuple(used_outputs), tuple(live_ins))
+  if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
+    return used_inputs, None
+  if (dced_jaxpr is eqn.params['jaxpr'] and
+      all(used_inputs) and all(used_outputs)):
+    return used_inputs, eqn
 
   def keep_where(xs, keeps):
     return tuple(x for x, keep in zip(xs, keeps) if keep)
@@ -1958,16 +1984,13 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], live_ins: list[bool],
       out_layouts=keep_where(eqn_params["out_layouts"], used_outputs),
       donated_invars=keep_where(eqn_params["donated_invars"], used_inputs),
   )
-  if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
-    return used_inputs, None
-  else:
-    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
-    new_effs = core.eqn_effects(dced_jaxpr, new_invars)
-    new_eqn = core.new_jaxpr_eqn(
-        new_invars,
-        [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
-    return used_inputs, new_eqn
+  new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+  new_effs = core.eqn_effects(dced_jaxpr, new_invars)
+  new_eqn = core.new_jaxpr_eqn(
+      new_invars,
+      [v for v, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
+  return used_inputs, new_eqn
 
 pe.dce_rules[jit_p] = dce_jaxpr_pjit_rule
 
@@ -2091,12 +2114,6 @@ def with_sharding_constraint(x, shardings):
           ' not allowed. Please only pass `jax.sharding.Sharding` instances.')
   del user_shardings_flat
 
-  # TODO(bartchr): remove `unconstrained_dims` after migrating to Shardy. It's
-  # already part of the shardings.
-  unconstrained_dims = [get_unconstrained_dims(s)
-                        if isinstance(s, NamedSharding) else frozenset()
-                        for s in shardings_flat]
-
   pjit_check_aval_sharding(
       shardings_flat, x_avals_flat, ("",) * len(shardings_flat),
       "with_sharding_constraint arguments",
@@ -2106,8 +2123,8 @@ def with_sharding_constraint(x, shardings):
                                   "with_sharding_constraint arguments")
 
   outs = []
-  for xf, x_aval, s, l, ud in zip(x_flat, x_avals_flat, shardings_flat,
-                                  user_layouts_flat, unconstrained_dims):
+  for xf, x_aval, s, l in zip(x_flat, x_avals_flat, shardings_flat,
+                              user_layouts_flat):
     if (mesh_lib.get_abstract_mesh().are_all_axes_explicit and l is None and
         isinstance(s, NamedSharding)):
       assert_shardings_equal(x_aval, s)
@@ -2115,14 +2132,12 @@ def with_sharding_constraint(x, shardings):
     else:
       check_shardings_are_auto(s)
       outs.append(sharding_constraint_p.bind(
-          xf, sharding=s, layout=l, context_mesh=context_mesh,
-          unconstrained_dims=ud))
+          xf, sharding=s, layout=l, context_mesh=context_mesh))
   return tree_unflatten(tree, outs)
 
 def _identity_fn(x): return x
 
-def _sharding_constraint_impl(x, sharding, layout, context_mesh,
-                              unconstrained_dims):
+def _sharding_constraint_impl(x, sharding, layout, context_mesh):
   if (isinstance(sharding, NamedSharding) and
       isinstance(sharding.mesh, AbstractMesh)):
     if (not context_mesh.empty and isinstance(context_mesh, AbstractMesh) and
@@ -2154,8 +2169,8 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
       # Can't do identity_jit because UNCONSTRAINED in out_shardings parameter
       # of jit is not supported.
       return dispatch.apply_primitive(
-          sharding_constraint_p, x,  sharding=sharding, layout=layout,
-          context_mesh=context_mesh, unconstrained_dims=unconstrained_dims)
+          sharding_constraint_p, x, sharding=sharding, layout=layout,
+          context_mesh=context_mesh)
     else:
       return api.jit(_identity_fn, out_shardings=sharding)(x)
   else:
@@ -2168,7 +2183,7 @@ ad.deflinear2(sharding_constraint_p,
               lambda ct, _, **params: (sharding_constraint_p.bind(ct, **params),))
 
 def _sharding_constraint_abstract_eval(
-    x_aval, *, sharding, layout, context_mesh, unconstrained_dims):
+    x_aval, *, sharding, layout, context_mesh):
   if isinstance(sharding, NamedSharding):
     return x_aval.update(
         sharding=x_aval.sharding.update(mesh=sharding.mesh.abstract_mesh))
@@ -2176,7 +2191,7 @@ def _sharding_constraint_abstract_eval(
 sharding_constraint_p.def_abstract_eval(_sharding_constraint_abstract_eval)
 
 def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
-                                      context_mesh, unconstrained_dims):
+                                      context_mesh):
   in_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   axis_ctx = ctx.module_context.axis_context
@@ -2205,12 +2220,8 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
   if (isinstance(axis_ctx, sharding_impls.SPMDAxisContext) and
       axis_ctx.manual_axes):
     sharding = mlir.add_manual_axes(axis_ctx, sharding, in_aval.ndim)
-  if config.use_shardy_partitioner.value:
-    sharding = sharding._to_sdy_sharding(in_aval.ndim)
-  else:
-    sharding = sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
-  out = mlir.wrap_with_sharding_op(
-      ctx, x_node, out_aval, sharding, unspecified_dims=unconstrained_dims)
+  sharding = sharding._to_sdy_sharding(in_aval.ndim)
+  out = mlir.wrap_with_sharding_op(ctx, x_node, out_aval, sharding)
   if layout is not None:
     out = mlir.wrap_with_layout_op(ctx, out, out_aval, layout, in_aval)
   return [out]
@@ -2219,14 +2230,12 @@ mlir.register_lowering(sharding_constraint_p,
 
 
 def _sharding_constraint_batcher(
-    axis_data, vals_in, dims_in, sharding, layout, context_mesh,
-    unconstrained_dims):
+    axis_data, vals_in, dims_in, sharding, layout, context_mesh):
   x, = vals_in
   d, = dims_in
   if d is None:
     out = sharding_constraint_p.bind(
-        x, sharding=sharding, layout=layout, context_mesh=context_mesh,
-        unconstrained_dims=unconstrained_dims)
+        x, sharding=sharding, layout=layout, context_mesh=context_mesh)
     return out, None
 
   if axis_data.spmd_name is not None and isinstance(sharding, NamedSharding):
@@ -2236,16 +2245,19 @@ def _sharding_constraint_batcher(
       raise ValueError(f"vmap spmd_axis_name {axis_data.spmd_name} cannot appear in "
                        "with_sharding_constraint spec, but got spec "
                        f"{sharding.spec}")
-  unconstrained_dims = {ud + (d <= ud) for ud in unconstrained_dims}
+  unconstrained = {
+      ud + (d <= ud) for ud, axes in enumerate(sharding.spec)
+      if axes is PartitionSpec.UNCONSTRAINED
+  } if isinstance(sharding, NamedSharding) else set()
   if axis_data.spmd_name is None:
-    unconstrained_dims.add(d)
+    unconstrained.add(d)
 
   aval = core.typeof(x)
   vmapped_sharding = _pjit_batcher_for_sharding(
       sharding, d, axis_data.spmd_name, context_mesh, aval)
-  if unconstrained_dims and isinstance(vmapped_sharding, NamedSharding):
+  if unconstrained and isinstance(vmapped_sharding, NamedSharding):
     new_spec = list(vmapped_sharding.spec) + [None] * (aval.ndim - len(vmapped_sharding.spec))
-    for u in unconstrained_dims:
+    for u in unconstrained:
       new_spec[u] = PartitionSpec.UNCONSTRAINED
     vmapped_sharding = NamedSharding(
         vmapped_sharding.mesh, PartitionSpec(*new_spec))
@@ -2257,26 +2269,32 @@ def _sharding_constraint_batcher(
       x,
       sharding=vmapped_sharding,
       layout=vmapped_layout,
-      context_mesh=context_mesh,
-      unconstrained_dims=frozenset(unconstrained_dims))
+      context_mesh=context_mesh)
   return y, d
 batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
 
 # -------------------- reshard ------------------------------------
 
+def _canonicalize_reshard_sharding(s, aval, error_on_none=True):
+  ds = canonicalize_sharding(s, 'reshard', check_mesh_consistency=False)
+  if error_on_none and ds is None:
+    raise ValueError(
+        'Reshard should only be used with out_shardings which are non-None '
+        f'and have a non-empty mesh. Got sharding {s}.')
+  if hasattr(aval, 'ndim') and ds is not None:
+    ds = ds.update(spec=ds.spec._normalized_spec_for_aval(aval.ndim))
+  return ds
+
 def reshard(xs, out_shardings):
+  from jax._src.hijax import HiPspec  # type: ignore
   x_flat, treedef = tree_flatten(xs)
   shardings_flat = flatten_axis_resources(
       "reshard out_shardings", treedef, out_shardings, tupled_args=True)
   x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
   out_flat = []
   for x, x_aval, s in safe_zip(x_flat, x_avals_flat, shardings_flat):
-    ds = canonicalize_sharding(s, 'reshard', check_mesh_consistency=False)
-    if ds is None:
-      raise ValueError(
-          'Reshard should only be used with out_shardings which are non-None '
-          f'and have a non-empty mesh. Got sharding {s}.')
-    ds = ds.update(spec=ds.spec._normalized_spec_for_aval(x_aval.ndim))
+    ds = (s if isinstance(s, HiPspec) else
+          _canonicalize_reshard_sharding(s, x_aval))
     cmesh = (s.mesh if (isinstance(s, NamedSharding) and
                         isinstance(s.mesh, mesh_lib.Mesh))
              else None)
@@ -2285,8 +2303,22 @@ def reshard(xs, out_shardings):
 
 reshard_p = core.Primitive('reshard')
 reshard_p.skip_canonicalization = True
+reshard_p.is_high = lambda aval, **_: aval.is_high
+
+def _reshard_to_lojax(hi_val, *, dst_sharding, concrete_mesh):
+  in_aval = core.typeof(hi_val)
+  out_aval = core.reshard_aval(in_aval, dst_sharding)
+  lo_vals = in_aval.lower_val(hi_val)
+  lo_out_avals = out_aval.lo_ty()
+  lo_outs = [reshard_p.bind(lo_val, dst_sharding=lo_out_aval.sharding,  # type: ignore
+                            concrete_mesh=concrete_mesh)
+             for lo_val, lo_out_aval in safe_zip(lo_vals, lo_out_avals)]
+  return out_aval.raise_val(*lo_outs)
+reshard_p.to_lojax = _reshard_to_lojax
 
 def _check_unreduced_reshard(aval, dst_sharding):
+  if dst_sharding is None:
+    return
   # dst_sharding can't be more unreduced than src_sharding in case of
   # UnreducedKind.{max,min}.
   if (dst_sharding.spec.unreduced and
@@ -2304,12 +2336,37 @@ def _check_unreduced_reshard(aval, dst_sharding):
           ' `jax.reshard` should be the same. Got input spec:'
           f' {aval.sharding.spec} and output spec: {dst_sharding.spec}')
 
-def _reshard_abstract_eval(aval, *, dst_sharding, concrete_mesh):
+def _check_no_collectives_reshard(aval, dst_sharding):
+  if not config.no_collectives.value or dst_sharding is None:
+    return
+  from jax._src.lax import utils as lax_utils  # type: ignore
+  lax_utils._check_no_collectives(reshard_p, [dst_sharding], [aval])
+  lax_utils._check_no_collectives_dim_change(
+      'reshard', aval.sharding.spec.partitions, dst_sharding.spec.partitions)
+
+def _reshard_layout_rule(out_aval, operand, *, dst_sharding):
+  from jax._src.lax import utils as lax_utils  # type: ignore
+  lax_utils.check_minor_dims_tile_size('reshard', operand, out_aval)
+  return operand.layout
+
+def _reshard_shaped_array(aval: core.ShapedArray, dst_sharding
+                          ) -> core.ShapedArray:
+  from jax._src.lax import utils as lax_utils  # type: ignore
   assert isinstance(aval, core.ShapedArray)
+  dst_sharding = _canonicalize_reshard_sharding(dst_sharding, aval, False)
   _check_unreduced_reshard(aval, dst_sharding)
+  _check_no_collectives_reshard(aval, dst_sharding)
   if aval.sharding == dst_sharding:
     return aval
-  return aval.update(sharding=dst_sharding)
+  out_aval = aval.update(sharding=dst_sharding)
+  out_layout = lax_utils.call_layout_rule(
+      reshard_p, _reshard_layout_rule, [aval], [out_aval],
+      dst_sharding=dst_sharding)
+  return out_aval.update(layout=out_layout)
+core.reshard_aval_handlers[core.ShapedArray] = _reshard_shaped_array
+
+def _reshard_abstract_eval(aval, *, dst_sharding, concrete_mesh):
+  return core.reshard_aval(aval, dst_sharding)
 reshard_p.def_abstract_eval(_reshard_abstract_eval)
 
 def _reshard_impl(x, *, dst_sharding, concrete_mesh):
@@ -2351,8 +2408,11 @@ def _reshard_transpose_fancy(ct, x, *, dst_sharding, concrete_mesh):
   assert isinstance(x, ad.GradAccum)
   if type(ct) is ad.Zero or isinstance(x, ad.NullAccum):
     return
-  out_sharding = x.aval.sharding  # pyrefly: ignore[missing-attribute]
-  with mesh_lib.use_abstract_mesh(out_sharding.mesh):
+  out_sharding = x.aval.sharding  # type: ignore
+  ctx = (mesh_lib.use_abstract_mesh(out_sharding.mesh)  # type: ignore
+         if isinstance(out_sharding, NamedSharding)
+         else contextlib.nullcontext())
+  with ctx:
     x_bar = reshard_p.bind(ct, dst_sharding=out_sharding,
                            concrete_mesh=concrete_mesh)
     x.accum(x_bar)
@@ -2360,7 +2420,7 @@ ad.fancy_transposes[reshard_p] = _reshard_transpose_fancy
 
 def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding, concrete_mesh):
   aval_out, = ctx.avals_out
-  return [mlir.lower_with_sharding_in_types(ctx, x_node, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, x_node, aval_out)]
 mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
 
 def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding, concrete_mesh):
@@ -2433,6 +2493,15 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
   return MeshInfo(prev=mesh_to_use, new=new_mesh, axes=axes)
 
 
+def _modify_spec_for_auto_manual_hi(x, mesh):
+  from jax._src.hijax import HiPspec  # type: ignore
+  s = core.typeof(x).sharding
+  if isinstance(s, HiPspec):
+    return s.from_lo([core.modify_spec_for_auto_manual(ls, mesh)
+                      for ls in s.to_lo()])
+  return s.strip_auto_manual_mesh_axes(mesh)
+
+
 def auto_axes(f=None, /, *, axes: str | tuple[str, ...] | None = None,
               out_sharding=None):
   kwargs = dict(axes_=axes, out_sharding=out_sharding)
@@ -2456,12 +2525,19 @@ def _auto_axes(fun, *, axes_, out_sharding):
       return fun(*args, **kwargs)
     if set(mesh_info.prev.auto_axes) == set(mesh_info.axes):
       return fun(*args, **kwargs)
+    in_avals = [core.typeof(a) for a in tree_leaves(args)]
     with mesh_lib.use_abstract_mesh(mesh_info.new):
-      in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
-          core.typeof(a).sharding.spec, mesh_info.new), args)
+      in_specs = tree_map(
+          lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
       args = reshard(args, in_specs)
       out = fun(*args, **kwargs)
-    return reshard(out, _out_sharding)
+    res = reshard(out, _out_sharding)
+    if config.no_collectives.value:
+      from jax._src.lax import utils as lax_utils  # type: ignore
+      out_shardings = [core.typeof(o).sharding for o in tree_leaves(res)
+                       if isinstance(core.typeof(o), core.ShapedArray)]
+      lax_utils._check_no_collectives(reshard_p, out_shardings, in_avals)
+    return res
   return decorator
 
 
@@ -2490,8 +2566,9 @@ def _explicit_axes(fun, *, axes, in_sharding):
     with mesh_lib.use_abstract_mesh(mesh_info.new):
       args = reshard(args, _in_sharding)
       out = fun(*args, **kwargs)
-    out_specs = tree_map(lambda o: core.modify_spec_for_auto_manual(
-        core.typeof(o).sharding.spec, mesh_lib.get_abstract_mesh()), out)
+    out_specs = tree_map(
+        lambda o: _modify_spec_for_auto_manual_hi(o, mesh_lib.get_abstract_mesh()),
+        out)
     return reshard(out, out_specs)
   return decorator
 
@@ -2546,165 +2623,9 @@ def _layout_constraint_batcher(axis_data, vals_in, dims_in, layout):
   return y, d
 batching.fancy_primitive_batchers[layout_constraint_p] = _layout_constraint_batcher
 
-# ------------------------- program_order --------------------------------------
-
-program_order_p = core.Primitive("program_order")
-program_order_p.multiple_results = True
-program_order_p.skip_canonicalization = True
-
-def program_order(f=None, *, enforce: bool,
-                  strict_in_out: bool | tuple[bool, bool] = False,
-                  exclude_argnames: str | Sequence[str] | None = None):
-  if enforce and exclude_argnames is not None:
-    raise ValueError("exclude_argnames cannot be used with enforce=True.")
-  if not enforce and strict_in_out:
-    raise ValueError('strict_in_out=True cannot be used with enforce=False')
-  if isinstance(strict_in_out, bool):
-    strict_in_out = (strict_in_out,) * 2
-  strict_in, strict_out = strict_in_out
-  kwargs = dict(enforce=enforce, strict_in=strict_in, strict_out=strict_out,
-                exclude_argnames=exclude_argnames)
-  if f is None:
-    return lambda g: _program_order(g, **kwargs)
-  return _program_order(f, **kwargs)
-
-
-def _program_order(fun, *, enforce, strict_in, strict_out, exclude_argnames):
-  @wraps(fun)
-  def wrapped(*args, **kwargs):
-    if enforce:
-      traced = api.jit(fun).trace(*args, **kwargs)
-      jaxpr = traced.jaxpr
-      args_flat, _ = tree_flatten(args)
-      flat_outputs = eval_jaxpr_program_order(
-          strict_in, strict_out, jaxpr, jaxpr.consts, *traced._consts,
-          *args_flat)
-      return tree_util.tree_unflatten(traced.out_tree, flat_outputs)
-    else:
-      args_flat, in_tree = tree_flatten((args, kwargs))
-      if exclude_argnames is None:
-        arg_exclude_mask = (False,) * len(args_flat)
-      else:
-        fun_signature = inspect.signature(fun)
-        ex_argnums, ex_argnames, _, _ = resolve_argnums(
-            fun, fun_signature, None, exclude_argnames, None, None)
-        arg_exclude_mask = donation_vector(ex_argnums, ex_argnames, in_tree)
-      assert len(args_flat) == len(arg_exclude_mask)
-      traced = api.jit(fun).trace(*args, **kwargs)
-      assert in_tree == traced.in_tree
-      exclude_mask = (False,) * len(traced._consts) + arg_exclude_mask
-      out_flat = program_order_p.bind(
-          *traced._consts, *args_flat, call_jaxpr=traced.jaxpr,
-          exclude_mask=exclude_mask)
-      return tree_util.tree_unflatten(traced.out_tree, out_flat)
-  return wrapped
-
-
-def opt_barrier_per_input(prev_outvars, prev_outs, cur_invars, cur_inps):
-  from jax._src.lax.lax import optimization_barrier, create_token  # type: ignore
-
-  token = create_token()
-  token, prev_outs = optimization_barrier((token, prev_outs))
-  prev_out_map = dict(zip(prev_outvars, prev_outs))
-  # Tokens are not DCEd by opt_barrier even if they are unused.
-  cur_inps = [prev_out_map[v] if v in prev_out_map
-              else optimization_barrier((token, cinp))[1]
-              for v, cinp in safe_zip(cur_invars, cur_inps)]
-  return prev_outs, cur_inps
-
-
-def insert_opt_barrier(prev_outvars, prev_outs, cur_invars, cur_inps):
-  from jax._src.lax.lax import optimization_barrier  # type: ignore
-
-  in_cur_invars = [v in cur_invars for v in prev_outvars]
-  barrier_pouts, excluded_outs = partition_list(in_cur_invars, prev_outs)
-  barrier_pouts, cur_inps = optimization_barrier((barrier_pouts, cur_inps))
-  prev_outs = merge_lists(in_cur_invars, barrier_pouts, excluded_outs)
-  return prev_outs, cur_inps
-
-
-def eval_jaxpr_program_order(strict_in, strict_out, jaxpr, consts, *args):
-  from jax._src.lax.lax import create_token, optimization_barrier  # type: ignore
-
-  def read(v) -> Any:
-    return v.val if isinstance(v, core.Literal) else env[v]
-
-  def write(v, val: Any) -> None:
-    if config.enable_checks.value:
-      assert core.typecheck(v.aval, val), (v.aval, typeof(val), val)
-    env[v] = val
-
-  def eqn_write(eqn, ans):
-    if eqn.primitive.multiple_results:
-      foreach(write, eqn.outvars, ans)
-    else:
-      ans = ans[0] if isinstance(ans, list) else ans
-      write(eqn.outvars[0], ans)
-
-  env = {}
-  foreach(write, jaxpr.constvars, consts)
-  if strict_in:
-    args = optimization_barrier(args)
-  foreach(write, jaxpr.invars, args)
-  last_used = core.last_used(jaxpr)
-  prev_eqn = None
-  for cur_eqn in jaxpr.eqns:
-    bind_params = cur_eqn.primitive.get_bind_params(cur_eqn.params)
-    name_stack = source_info_util.current_name_stack() + cur_eqn.source_info.name_stack
-    traceback = cur_eqn.source_info.traceback
-    with (source_info_util.user_context(traceback, name_stack=name_stack),
-          cur_eqn.ctx.manager):
-      cur_inps = map(read, cur_eqn.invars)
-      if not cur_inps:  # nullary
-        if prev_eqn is not None:
-          token = create_token()
-          prev_outs = map(read, prev_eqn.outvars)
-          prev_outs, token = optimization_barrier((prev_outs, token))
-          eqn_write(prev_eqn, prev_outs)
-          ans = api.jit(lambda token: cur_eqn.primitive.bind(**bind_params),
-                        inline=api.Inline.XLA_LATE)(token)
-        else:
-          ans = cur_eqn.primitive.bind(*cur_inps, **bind_params)
-      else:
-        if prev_eqn is not None:
-          is_literal = [isinstance(i, core.Literal) for i in cur_eqn.invars]
-          cur_invars, _ = partition_list(is_literal, cur_eqn.invars)
-          cur_inps, literal_inps = partition_list(is_literal, cur_inps)
-          prev_outs = map(read, prev_eqn.outvars)
-          if cur_eqn.primitive is program_order_p:
-            exclude_mask = cur_eqn.params['exclude_mask']
-            barrier_inps, excluded_inps = partition_list(exclude_mask, cur_inps)
-            if barrier_inps:
-              barrier_invars, _ = partition_list(exclude_mask, cur_invars)
-              prev_outs, barrier_inps = opt_barrier_per_input(
-                  prev_eqn.outvars, prev_outs, barrier_invars, barrier_inps)
-              cur_inps = merge_lists(exclude_mask, barrier_inps, excluded_inps)
-          elif cur_eqn.primitive is jit_p:
-            prev_outs, cur_inps = opt_barrier_per_input(
-                prev_eqn.outvars, prev_outs, cur_invars, cur_inps)
-          else:
-            prev_outs, cur_inps = insert_opt_barrier(
-                prev_eqn.outvars, prev_outs, cur_invars, cur_inps)
-          eqn_write(prev_eqn, prev_outs)
-          cur_inps = merge_lists(is_literal, cur_inps, literal_inps)
-        ans = cur_eqn.primitive.bind(*cur_inps, **bind_params)
-    eqn_write(cur_eqn, ans)
-    prev_eqn = cur_eqn
-    core.clean_up_dead_vars(cur_eqn, env, last_used)
-  outvals = map(read, jaxpr.outvars)
-  if strict_out:
-    outvals = optimization_barrier(outvals)
-  return outvals
-
 # ----------------------------- explicit layout --------------------------------
 
-def get_layout_mode_from_args(args):
-  layouts = [core.typeof(a).layout for a in args]
-  if not all(type(l) is type(layouts[0]) for l in layouts):
-    raise TypeError(
-        'All args passed to `explicit_layout` must have the same type of'
-        f' layout. Got {layouts=}')
-  l = layouts[0]
+def get_layout_mode_from_layout(l):
   if isinstance(l, Layout):
     return LayoutMode.JAX
   # TODO(yashkatariya): Replace this with `isinstance(l, ArrayLayout)`.
@@ -2714,6 +2635,14 @@ def get_layout_mode_from_args(args):
     return LayoutMode.PALLAS_GPU
   else:
     return LayoutMode.AUTO
+
+def get_layout_mode_from_args(args):
+  layouts = [core.typeof(a).layout for a in args]
+  if not all(type(l) is type(layouts[0]) for l in layouts):
+    raise TypeError(
+        'All args passed to `explicit_layout` must have the same type of'
+        f' layout. Got {layouts=}')
+  return get_layout_mode_from_layout(layouts[0])
 
 
 def explicit_layout(f=None, /, *, in_layouts=None):
@@ -2763,9 +2692,34 @@ def _relayout_hlo_lowering(ctx, x_node, *, dst_layout):
   return [mlir.lower_with_explicit_types(ctx, x_node, aval_out)]
 mlir.register_lowering(relayout_p, _relayout_hlo_lowering)
 
-# ------------------------------- helpers --------------------------------------
+def _relayout_jvp_rule(primals, tangents, *, dst_layout):
+  (p,), (t,) = primals, tangents
+  primal_out = relayout_p.bind(p, dst_layout=dst_layout)
+  if type(t) is ad.Zero:
+    return primal_out, ad.p2tz(primal_out)
+  else:
+    tangent_out = relayout_p.bind(t, dst_layout=dst_layout)
+    return primal_out, tangent_out
+ad.primitive_jvps[relayout_p] = _relayout_jvp_rule
 
-def get_unconstrained_dims(sharding: NamedSharding):
-  assert sharding.spec is not None
-  return frozenset(i for i, axes in enumerate(sharding.spec)
-                   if axes is PartitionSpec.UNCONSTRAINED)
+def _relayout_linearize(_, nzs, x, *, dst_layout):
+  (nz,) = nzs
+  primal_out = relayout_p.bind(x, dst_layout=dst_layout)
+
+  def linearized(residuals, _, tangent):
+    assert not residuals
+    return (relayout_p.bind(tangent, dst_layout=dst_layout)
+            if nz else ad.p2tz(tangent))
+  return primal_out, nz, (), None, linearized
+ad.primitive_linearizations[relayout_p] = _relayout_linearize
+
+def _relayout_transpose_fancy(ct, x, *, dst_layout):
+  assert isinstance(x, ad.GradAccum)
+  if type(ct) is ad.Zero or isinstance(x, ad.NullAccum):
+    return
+  out_layout = x.aval.layout  # type: ignore
+  mode = get_layout_mode_from_layout(out_layout)
+  with use_layout_mode(mode):
+    x_bar = relayout_p.bind(ct, dst_layout=out_layout)
+    x.accum(x_bar)
+ad.fancy_transposes[relayout_p] = _relayout_transpose_fancy

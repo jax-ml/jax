@@ -711,31 +711,44 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertTrue(np.isnan(jnp_fn(x, ddof=size + 2)))
 
   @jtu.sample_product(
+    test_fn=['nanvar', 'nanstd'],
     shape=[(5,), (10, 5)],
     dtype=all_dtypes,
     out_dtype=inexact_dtypes,
     axis=[None, 0, -1],
-    ddof=[0, 1, 2],
+    ddof_correction=[(None, None), (0, None), (1, None), (2, None),
+                     (None, 0), (None, 1), (None, 2), (0, 0), (1, 0)],
     keepdims=[False, True],
   )
-  def testNanVar(self, shape, dtype, out_dtype, axis, ddof, keepdims):
+  def testNanStdOrVar(self, test_fn, shape, dtype, out_dtype, axis, ddof_correction, keepdims):
+    np_fn = getattr(np, test_fn)
+    jnp_fn = getattr(jnp, test_fn)
+    ddof, correction = ddof_correction
     rng = jtu.rand_some_nan(self.rng())
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Degrees of freedom <= 0 for slice.")
     @jtu.ignore_warning(category=np.exceptions.ComplexWarning)
     def np_fun(x):
+      ddof_correction_kwargs = {}
+      if ddof is not None:
+        ddof_correction_kwargs["ddof"] = ddof
+      if correction is not None:
+        ddof_correction_kwargs["correction"] = correction
       # Numpy fails with bfloat16 inputs
-      out = np.nanvar(x.astype(np.float32 if dtype == dtypes.bfloat16 else dtype),
-                      dtype=np.float32 if out_dtype == dtypes.bfloat16 else out_dtype,
-                      axis=axis, ddof=ddof, keepdims=keepdims)
+      out = np_fn(x.astype(np.float32 if dtype == dtypes.bfloat16 else dtype),
+                  dtype=np.float32 if out_dtype == dtypes.bfloat16 else out_dtype,
+                  axis=axis, keepdims=keepdims, **ddof_correction_kwargs)
       return out.astype(out_dtype)
-    jnp_fun = partial(jnp.nanvar, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
+    jnp_fun = partial(jnp_fn, dtype=out_dtype, axis=axis, ddof=ddof, correction=correction,
+                      keepdims=keepdims)
     tol = jtu.tolerance(out_dtype, {np.float16: 1e-1, np.float32: 1e-3,
                                     np.float64: 1e-3, np.complex64: 1e-3,
                                     np.complex128: 5e-4})
     if (jnp.issubdtype(dtype, jnp.complexfloating) and
         not jnp.issubdtype(out_dtype, jnp.complexfloating)):
+      self.assertRaises(ValueError, lambda: jnp_fun(*args_maker()))
+    elif ddof is not None and correction is not None:
       self.assertRaises(ValueError, lambda: jnp_fun(*args_maker()))
     else:
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,

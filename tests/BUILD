@@ -34,6 +34,9 @@ jax_generate_backend_suites()
 jax_multiplatform_test(
     name = "api_test",
     srcs = ["api_test.py"],
+    backend_tags = {
+        "cpu": ["noasan"],  # Times out.
+    },
     enable_configs = ["tpu_v3_x4"],
     shard_count = {
         "cpu": select({
@@ -64,10 +67,7 @@ jax_multiplatform_test(
         ],  # Times out.
     },
     shard_count = {
-        "cpu": select({
-            "//tests/config:tsan_freethreading_rbe": 2,
-            "//conditions:default": 1,
-        }),
+        "cpu": 2,
         "gpu": 4,
     },
     deps = [
@@ -413,6 +413,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "svd_test",
     srcs = ["svd_test.py"],
+    backend_tags = {
+        "cpu": [
+            "noasan",
+        ],
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 10,
@@ -582,9 +587,18 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "aot_test",
     srcs = ["aot_test.py"],
+    config_tags_overrides = {
+        "tpu_v4_libtpu": {"ondemand": True},
+        "tpu_v5p_libtpu": {"ondemand": True},
+        "tpu_v6e_libtpu": {"ondemand": True},
+    },
+    enable_configs = [
+        "tpu_v4_libtpu",
+        "tpu_v5p_libtpu",
+        "tpu_v6e_libtpu",
+    ],
     tags = ["multiaccelerator"],
     deps = [
-        "//jax/experimental:pjit",
         "//jax/experimental:serialize_executable",
         "//jax/experimental:topologies",
     ] + py_deps([
@@ -598,6 +612,9 @@ jax_multiplatform_test(
     srcs = ["image_test.py"],
     backend_deps = {
         "cpu": py_deps(["torch"]),
+    },
+    backend_tags = {
+        "cpu": ["notsan"],
     },
     shard_count = {
         "cpu": 10,
@@ -655,7 +672,7 @@ jax_multiplatform_test(
         "cpu": ["notsan"],
     },
     shard_count = {
-        "gpu": 4,
+        "gpu": 10,
         "cpu": select({
             "//tests/config:tsan_freethreading_rbe": 8,
             "//conditions:default": 1,
@@ -674,6 +691,12 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_control_flow_test",
     srcs = ["lax_control_flow_test.py"],
+    backend_tags = {
+        "cpu": [
+            "noasan",  # Test times out.
+            "notsan",  # Test times out.
+        ],
+    },
     shard_count = {
         "cpu": 15,
         "gpu": 15,
@@ -708,7 +731,10 @@ jax_multiplatform_test(
     srcs = ["lax_numpy_test.py"],
     backend_tags = {
         "tpu": ["notsan"],  # Test times out.
-        "cpu": ["notsan"],  # Test times out.
+        "cpu": [
+            "nomsan",  # Test times out.
+            "notsan",  # Test times out.
+        ],
     },
     shard_count = {
         "cpu": 45,
@@ -748,6 +774,12 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_numpy_operators_test",
     srcs = ["lax_numpy_operators_test.py"],
+    backend_tags = {
+        "cpu": [
+            "noasan",  # Test times out.
+            "notsan",  # Test times out.
+        ],
+    },
     shard_count = {
         "cpu": 30,
         "gpu": 30,
@@ -762,6 +794,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_numpy_reducers_test",
     srcs = ["lax_numpy_reducers_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Test times out.
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 20,
@@ -806,7 +841,10 @@ jax_multiplatform_test(
     srcs = ["lax_numpy_setops_test.py"],
     backend_tags = {
         "tpu": ["notsan"],  # Test times out.
-        "cpu": ["notsan"],  # Test times out.
+        "cpu": [
+            "nomsan",  # Test times out.
+            "notsan",  # Test times out.
+        ],
     },
     shard_count = {
         "cpu": 5,
@@ -895,11 +933,15 @@ jax_multiplatform_test(
         ],
     },
     shard_count = {
-        "cpu": 30,
-        "gpu": 30,
+        "cpu": 50,
+        "gpu": 50,
         "tpu": 20,
     },
-    tags = ["noasan"],  # Times out under asan.
+    tags = [
+        "noasan",  # Times out under asan.
+        "noassert",  # Times out.
+        "nodebug",  # Times out.
+    ],
     deps = py_deps([
         "numpy",
         "scipy",
@@ -932,7 +974,12 @@ jax_multiplatform_test(
     name = "lax_test",
     srcs = ["lax_test.py"],
     backend_tags = {
-        "cpu": ["not_run:arm"],  # Numerical issues, including https://github.com/jax-ml/jax/issues/24787
+        "cpu": [
+            "noasan",  # Times out.
+            "not_run:arm",  # Numerical issues, including https://github.com/jax-ml/jax/issues/24787
+            "notsan",  # Times out.
+        ],
+        "gpu": ["noasan"],  # Times out.
         "tpu": ["noasan"],  # Times out.
     },
     shard_count = {
@@ -953,6 +1000,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_autodiff_test",
     srcs = ["lax_autodiff_test.py"],
+    backend_tags = {
+        "cpu": ["notsan"],  # Times out.
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 20,
@@ -986,6 +1036,7 @@ jax_multiplatform_test(
     srcs = ["lax_vmap_op_test.py"],
     backend_tags = {
         "cpu": ["noasan"],
+        "gpu": ["noasan"],  # Times out.
     },
     shard_count = {
         "cpu": 20,
@@ -1487,7 +1538,7 @@ jax_multiplatform_test(
     srcs = ["scipy_spatial_test.py"],
     shard_count = {
         "cpu": 2,
-        "gpu": 2,
+        "gpu": 5,
     },
     deps = py_deps([
         "absl/testing",
@@ -1502,6 +1553,10 @@ jax_multiplatform_test(
     backend_tags = {
         "cpu": ["nomsan"],  # Times out
         "tpu": ["nomsan"],  # Times out
+    },
+    # Use fewer cases to prevent timeouts.
+    backend_variant_args = {
+        "cpu": ["--jax_num_generated_cases=40"],
     },
     shard_count = {
         "cpu": 50,
@@ -1971,6 +2026,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "mutable_array_test",
     srcs = ["mutable_array_test.py"],
+    backend_tags = {
+        "cpu": ["noasan"],  # Test times out.
+    },
     shard_count = {
         "cpu": select({
             "//tests/config:is_tsan": 20,
@@ -1997,6 +2055,13 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "ragged_collective_test",
     srcs = ["ragged_collective_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Times out.
+        "tpu": [
+            "noasan",
+            "notsan",
+        ],  # Times out.
+    },
     enable_backends = [
         "gpu",
         "tpu",
@@ -2237,7 +2302,7 @@ jax_multiplatform_test(
     name = "fused_attention_stablehlo_test",
     srcs = ["fused_attention_stablehlo_test.py"],
     enable_backends = ["gpu"],
-    shard_count = 2,
+    shard_count = 4,
     deps = py_deps([
         "absl/testing",
         "numpy",

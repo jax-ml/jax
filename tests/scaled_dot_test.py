@@ -374,8 +374,7 @@ class ScaledDotTest(jtu.JaxTestCase):
     Here we check the mix precison case where the rhs is bf16
     and the lhs is e4m3fn with the lhs scale being e8m0fnu.
     """
-    if jtu.device_under_test() == "tpu":
-      self.skipTest("Skip. TPU does not support f8e8m0fnu.")
+    self._should_skip_test(jnp.float8_e8m0fnu)
     lhs = _e4m3fn((1, 32))
     rhs = _bf16((32, 4))
     lhs_scale = _e8m0fnu((1, 1))

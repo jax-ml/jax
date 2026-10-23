@@ -10,7 +10,7 @@ jobs:
       RELEASE_NAME: ${{github.event.release.name}}
       PUBLISHED_AT: ${{github.event.release.published_at}}
       AUTHOR_LOGIN: ${{github.event.release.author.login}}
-      RELEASE_URL: ${{github.event.release.url}}
+      RELEASE_URL: ${{github.event.release.html_url}}
     runs-on: ubuntu-latest
     steps:
       - name: Google Chat Notification

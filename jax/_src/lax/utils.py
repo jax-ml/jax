@@ -21,6 +21,7 @@ from functools import partial
 import numpy as np
 from typing import cast
 
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -34,6 +35,81 @@ from jax._src.util import safe_zip
 from jax._src.typing import DimSize, DType, Shape
 
 zip, unsafe_zip = safe_zip, zip
+
+
+def _get_spec_set(partitions) -> set:
+  axes = set()
+  for p in partitions:
+    if p is None:
+      continue
+    if isinstance(p, tuple):
+      axes.update(p)
+    else:
+      axes.add(p)
+  return axes
+
+
+def _axis_pos(partitions, axis) -> tuple[int, tuple] | None:
+  for i, p in enumerate(partitions):
+    if p is None:
+      continue
+    p = p if isinstance(p, tuple) else (p,)
+    if axis in p:
+      return i, p[:p.index(axis)]
+  return None
+
+
+def _check_no_collectives_dim_change(prim_name: str, in_parts, out_parts):
+  forbidden_axes = config.no_collectives.value
+  if not forbidden_axes:
+    return
+  in_axes = _get_spec_set(in_parts)
+  out_axes = _get_spec_set(out_parts)
+  for r in forbidden_axes:
+    if (r in in_axes and r in out_axes and
+        _axis_pos(in_parts, r) != _axis_pos(out_parts, r)):
+      raise core.ForbiddenCollectiveError(
+          f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
+          f" `{prim_name}` changes the sharded dimension or sub-axis position"
+          f" of axis '{r}'.")
+
+
+def _check_no_collectives(prim, out_s_list, avals):
+  forbidden_axes = config.no_collectives.value
+  if not forbidden_axes or not avals:
+    return
+  avals = [a for a in avals if isinstance(a, core.ShapedArray)]
+  if not avals or not out_s_list:
+    return
+
+  in_mesh = _get_abstract_mesh_from_avals(avals)
+  out_mesh = out_s_list[0].mesh
+
+  in_specs = [a.sharding.spec for a in avals]
+  out_specs = [s.spec for s in out_s_list]
+
+  in_part = set().union(*(_get_spec_set(s.partitions) for s in in_specs))
+  in_unreduced = set().union(*(s.unreduced for s in in_specs))
+
+  for out_s in out_specs:
+    out_part = _get_spec_set(out_s.partitions)
+    out_unreduced = out_s.unreduced
+    for r in forbidden_axes:
+      if (in_mesh._name_to_type.get(r) != mesh_lib.AxisType.Explicit or
+          out_mesh._name_to_type.get(r) != mesh_lib.AxisType.Explicit):
+        continue
+      if r in in_unreduced and r not in out_unreduced:
+        raise core.ForbiddenCollectiveError(
+            f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
+            f" `{prim.name}` consumes unreduced axis '{r}' without keeping it"
+            " unreduced in the output."
+        )
+      if r in in_part and r not in out_part and r not in out_unreduced:
+        raise core.ForbiddenCollectiveError(
+            f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
+            f" `{prim.name}` loses sharding axis '{r}' in the output without"
+            " marking it unreduced."
+        )
 
 
 def input_dtype(x, *_, out_dtype=None, **__):
@@ -110,8 +186,10 @@ def call_sharding_rule(prim, sh_rule, ur_rule, num_out, *avals, **kwargs):
       prim, ur_rule, out_s, num_out, *avals, **kwargs)
   up = lambda sh, u, r, k: sh.update(spec=sh.spec.update(unreduced=u, reduced=r,
                                                          unreduced_kind=k))
-  return (up(out_s, unreduced, reduced, u_kind) if num_out is None else
-          [up(s, u, r, k) for s, u, r, k in zip(out_s, unreduced, reduced, u_kind)])
+  res = (up(out_s, unreduced, reduced, u_kind) if num_out is None else
+         [up(s, u, r, k) for s, u, r, k in zip(out_s, unreduced, reduced, u_kind)])
+  _check_no_collectives(prim, [res] if num_out is None else res, avals)
+  return res
 
 def call_shape_dtype_sharding_rule(
     prim, shape_rule, dtype_rule, sharding_rule, ur_rule, multi_out, *avals,
@@ -137,6 +215,29 @@ def call_shape_dtype_sharding_rule(
 
 mosaic_tpu_layout_rule = None
 
+def _shard_aval(aval):
+  mesh = aval.sharding.mesh
+  if mesh.are_all_axes_manual or mesh.empty:
+    shard_shape = aval.shape
+  else:
+    assert mesh.are_all_axes_explicit
+    shard_shape = aval.sharding.shard_shape(aval.shape)
+  return aval.update(shape=shard_shape, sharding=None,
+                     manual_axis_type=core.empty_mat)
+
+def check_minor_dims_tile_size(prim_name: str, in_aval, out_aval):
+  if not in_aval.layout.tiling:
+    return
+  tiles = in_aval.layout.tiling[0]
+  for d, tile_size in zip(in_aval.layout.major_to_minor[-len(tiles):], tiles):
+    in_size, out_size = in_aval.shape[d], out_aval.shape[d]
+    if in_size != out_size and (in_size < tile_size or out_size < tile_size):
+      raise ValueError(
+          f'`{prim_name}` cannot change the shard shape of a tiled minor'
+          f' dimension below its tile size. Dimension {d} has tile size'
+          f' {tile_size}, input shard shape {in_aval.shape}, and output shard'
+          f' shape {out_aval.shape} with layout {in_aval.layout}.')
+
 def call_layout_rule(prim, layout_rule, in_avals, out_avals, **kwargs):
   cur_layout_mode = get_layout_mode()
   if cur_layout_mode is LayoutMode.AUTO:
@@ -157,7 +258,10 @@ def call_layout_rule(prim, layout_rule, in_avals, out_avals, **kwargs):
     raise NotImplementedError(
         f'Missing layout rule for {prim}. Please file an issue at'
         ' https://github.com/jax-ml/jax/issues')
-  return layout_rule(*in_avals, **kwargs)
+  in_avals = [_shard_aval(a) for a in in_avals]
+  out_avals = [_shard_aval(a) for a in out_avals]
+  return layout_rule(out_avals if prim.multiple_results else out_avals[0],
+                     *in_avals, **kwargs)
 
 
 def _default_memory_space_rule(prim, *avals, **kwargs):

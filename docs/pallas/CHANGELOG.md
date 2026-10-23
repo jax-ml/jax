@@ -13,6 +13,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+## Released with JAX 0.12.0 (October 19, 2026)
+
+* New features
+  * Added `ref.memory_space_cast` to cast the memory space of a reference.
+
 * Deprecations
 
   * {class}`jax.experimental.pallas.DeviceIdType` and the `device_id_type`
@@ -44,6 +49,16 @@ Remember to align the itemized text with the first line of an item within a list
   {func}`jax.experimental.pallas.mosaic_gpu.sum`, and
   {func}`jax.experimental.pallas.mosaic_gpu.prod`. These mirror the equivalent
   `jax.numpy` functions, but add an `accumulator_ilp` parameter.
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.alloc_semaphore`, which
+    allocates GMEM semaphores that can be shared across kernel invocations.
+  * {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` with
+    `leader_tracked=CopyPartition.PARTITIONED(...)` or
+    `leader_tracked=CopyPartition.REPLICATED` now support clusters of total size
+    greater than 2, provided the collective axis is the minormost cluster
+    dimension and has size 2.
+  * Added support for im2col TMA copies to
+    {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` via the
+    {func}`jax.experimental.pallas.mosaic_gpu.im2col_ref` transformation.
 
 * Deprecations
 
@@ -58,11 +73,18 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### TPU
 
+* New features
+
+  * Added {func}`jax.experimental.pallas.tpu.has_memory_space` to dynamically
+    query the memory space of an `ANY` reference.
+
 * Deprecations
 
   * The `device_id_type` parameter of
     {func}`jax.experimental.pallas.tpu.async_remote_copy` and
     {func}`jax.experimental.pallas.tpu.make_async_remote_copy` is deprecated.
+  * {class}`jax.experimental.pallas.tpu.BufferedRefBase` and
+    {data}`jax.experimental.pallas.tpu.BufferType.MANUAL` are deprecated.
 
 ## Released with JAX 0.11.2 (September 17, 2026)
 

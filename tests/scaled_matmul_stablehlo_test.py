@@ -398,11 +398,6 @@ expected_output_spec = [
     PartitionSpec(None, ('dp', 'tp'), None),
 ]
 
-# GSPMD uses a different output sharding for this case, and may also emit an
-# extra reduce-scatter in compiled HLO.
-if not config.use_shardy_partitioner.value:
-    expected_output_spec[5] = PartitionSpec(None, 'dp', 'tp')
-
 sharding_configs = {
     input_sharding: (hlo, output_spec)
     for input_sharding, hlo, output_spec in zip(input_shardings,
@@ -574,6 +569,21 @@ def create_mxfp8_configs():
   )
 
   return [mxfp8_config for _ in range(3)]
+
+def create_mxfp4_configs():
+  if _dtypes.float8_e8m0fnu is None or _dtypes.float4_e2m1fn is None:
+    return None
+
+  mxfp4_config = BlockScaleConfig(
+        mode='mxfp4',
+        block_size=32,
+        data_type=jnp.float4_e2m1fn,
+        scale_type=jnp.float8_e8m0fnu,
+        global_scale=None,
+        infer_only=False
+  )
+
+  return [mxfp4_config for _ in range(3)]
 
 def get_hlo_text(in_shardings, block_scale_configs):
   mesh_names = ("dp", "tp")
@@ -1040,9 +1050,14 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
           ),
       ],
       output_type=[jnp.float16, jnp.bfloat16, jnp.float32],
+      mode=["mxfp8", "mxfp4"],
   )
   @jtu.run_on_devices("gpu")
-  def test_dot_general(self, configs, output_type):
+  def test_dot_general(self, configs, output_type, mode):
+    # mxfp4 has no cuDNN kernel; on CUDA it exercises the dequantize-and-dot
+    # expansion of the block-scaled custom call.
+    block_scale_configs = (self.block_scale_configs if mode == "mxfp8"
+                           else create_mxfp4_configs())
     cast_to_representable = partial(
         quantize_dequantize,
         scale=jnp.ones((1,)),
@@ -1053,16 +1068,16 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
     a_shape, b_shape, dimension_numbers, is_training = configs
     a = cast_to_representable(
         jax.random.uniform(k1, a_shape, minval=-1.0, dtype=output_type),
-        self.block_scale_configs[0].data_type,
+        block_scale_configs[0].data_type,
     )
     b = cast_to_representable(
         jax.random.uniform(k2, b_shape, minval=-1.0, dtype=output_type),
-        self.block_scale_configs[1].data_type,
+        block_scale_configs[1].data_type,
     )
 
     scaled_dot_general = partial(
         scaled_dot_general_wrapper,
-        configs=self.block_scale_configs
+        configs=block_scale_configs
     )
     def fwd(a, b, is_ref=False):
       fn = jax.lax.dot_general if is_ref else scaled_dot_general
@@ -1217,7 +1232,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
       x = jnp.sin(x)
       x = scaled_dot_general_wrapper(
         x, x,
-        configs=[config, config],
+        configs=[config, config, config],
         dimension_numbers=(([2], [2]), ([0], [0])),
         preferred_element_type=jnp.float32,
       )
@@ -1228,20 +1243,28 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
     nothing_saved_f = jax.checkpoint(
         f, policy=jax.checkpoint_policies.nothing_saveable)
     _, nothing_saved_f_vjp = jax.vjp(nothing_saved_f, input)
-    jaxpr = str(nothing_saved_f_vjp.jaxpr)
+    if jax.config.jax_remat3:
+      jaxpr = str(jax.make_jaxpr(nothing_saved_f_vjp)(input))
+      fwd_jaxpr = str(jax.make_jaxpr(nothing_saved_f)(input))
+    else:
+      jaxpr = fwd_jaxpr = str(nothing_saved_f_vjp.jaxpr)
     self.assertEqual(jaxpr.count(' scaled_matmul_wrapper'), 1)
     # Check that the custom backward for scaled_matmul is used.
-    self.assertEqual(jaxpr.count('bwd=scaled_dot_bwd'), 1)
+    self.assertEqual(fwd_jaxpr.count('bwd=scaled_dot_bwd'), 1)
 
     # With "checkpoint_dots" policy, the backwards pass should reuse
     # the scaled matmul from the forward pass, so it should be missing from vjp.
     saved_dots_f = jax.checkpoint(
         f, policy=jax.checkpoint_policies.checkpoint_dots)
     _, saved_dots_f_vjp = jax.vjp(saved_dots_f, input)
-    jaxpr = str(saved_dots_f_vjp.jaxpr)
+    if jax.config.jax_remat3:
+      jaxpr = str(jax.make_jaxpr(saved_dots_f_vjp)(input))
+      fwd_jaxpr = str(jax.make_jaxpr(saved_dots_f)(input))
+    else:
+      jaxpr = fwd_jaxpr = str(saved_dots_f_vjp.jaxpr)
     self.assertEqual(jaxpr.count(' scaled_matmul_wrapper'), 0)
     # Check that the custom backward for scaled_matmul is used.
-    self.assertEqual(jaxpr.count('bwd=scaled_dot_bwd'), 1)
+    self.assertEqual(fwd_jaxpr.count('bwd=scaled_dot_bwd'), 1)
 
   @jtu.run_on_devices("gpu")
   def test_remat_checkpoint_dots_with_no_batch_dims(self):
@@ -1253,7 +1276,7 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
       x = jnp.sin(x)
       x = scaled_dot_general_wrapper(
         x, x,
-        configs=[config, config],
+        configs=[config, config, config],
         dimension_numbers=(([2], [2]), ([0], [0])),
         preferred_element_type=jnp.float32,
       )
@@ -1264,18 +1287,26 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
     checkpointed_f = jax.checkpoint(
         f, policy=jax.checkpoint_policies.dots_with_no_batch_dims_saveable)
     _, dot_saved_f_vjp = jax.vjp(checkpointed_f, input)
-    jaxpr = str(dot_saved_f_vjp.jaxpr)
+    if jax.config.jax_remat3:
+      jaxpr = str(jax.make_jaxpr(dot_saved_f_vjp)(input))
+      fwd_jaxpr = str(jax.make_jaxpr(checkpointed_f)(input))
+    else:
+      jaxpr = fwd_jaxpr = str(dot_saved_f_vjp.jaxpr)
     self.assertEqual(jaxpr.count(' scaled_matmul_wrapper'), 0)
     # Check that the custom backward for scaled_matmul is used.
-    self.assertEqual(jaxpr.count('bwd=scaled_dot_bwd'), 1)
+    self.assertEqual(fwd_jaxpr.count('bwd=scaled_dot_bwd'), 1)
 
     # Scaled matmuls with batch dimensions will be recomputed
     # on backward pass. Let's verify that here.
     _, dot_not_saved_f_vjp = jax.vjp(checkpointed_f, batched_input)
-    jaxpr = str(dot_not_saved_f_vjp.jaxpr)
+    if jax.config.jax_remat3:
+      jaxpr = str(jax.make_jaxpr(dot_not_saved_f_vjp)(batched_input))
+      fwd_jaxpr = str(jax.make_jaxpr(checkpointed_f)(batched_input))
+    else:
+      jaxpr = fwd_jaxpr = str(dot_not_saved_f_vjp.jaxpr)
     self.assertEqual(jaxpr.count(' scaled_matmul_wrapper'), 1)
     # Check that the custom backward for scaled_matmul is used.
-    self.assertEqual(jaxpr.count('bwd=scaled_dot_bwd'), 1)
+    self.assertEqual(fwd_jaxpr.count('bwd=scaled_dot_bwd'), 1)
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())

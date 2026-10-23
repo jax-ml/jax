@@ -18,10 +18,11 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@com_github_google_flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", _cc_proto_library = "cc_proto_library")
 load("@com_google_protobuf//bazel:proto_library.bzl", _proto_library = "proto_library")
+load("@config_rocm_hipcc//rocm:build_defs.bzl", _rocm_library = "rocm_library")
 load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
 load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFFIX")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
-load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
+load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured")
 
 # TODO(Intel-tf): Update `sycl` with `oneapi` when xla changes to use `oneapi`.
 load("@local_config_sycl//sycl:build_defs.bzl", _if_oneapi_is_configured = "if_sycl_is_configured", _oneapi_library = "sycl_library")
@@ -60,6 +61,7 @@ mosaic_gpu_internal_users = []
 mosaic_internal_users = []
 pallas_triton_internal_users = []
 pallas_sc_internal_users = []
+pallas_tpu_ops_users = []
 pallas_fuser_users = []
 serialize_executable_internal_users = []
 buffer_callback_internal_users = []

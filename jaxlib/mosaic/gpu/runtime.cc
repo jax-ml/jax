@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -44,7 +45,8 @@ struct CommonTmaParams {
 CommonTmaParams prepare_tma_params(const CUtensorMap* tma_desc,
                                    int64_t elem_type, int64_t rank,
                                    int64_t* sizes, int64_t* strides,
-                                   int64_t swizzle_bytes) {
+                                   int64_t swizzle_bytes,
+                                   bool allow_sub_byte = true) {
   if (((uintptr_t)tma_desc) % 64 != 0) {
     fprintf(stderr,
             "TMA descriptor address must be 64 byte aligned, but got: %p\n",
@@ -103,6 +105,10 @@ CommonTmaParams prepare_tma_params(const CUtensorMap* tma_desc,
   // Pack sub byte types in 8 bit pairs.
   int64_t elem_bytewidth;
   if (elem_bitwidth < 8) {
+    if (!allow_sub_byte) {
+      fprintf(stderr, "Sub-byte types are not supported\n");
+      abort();
+    }
     // Check that it's a power of 2.
     assert((elem_bitwidth & (elem_bitwidth - 1)) == 0);
     int packing = 8 / elem_bitwidth;
@@ -217,6 +223,89 @@ void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
                              params.swizzle, CU_TENSOR_MAP_L2_PROMOTION_NONE,
                              CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE),
       "cuTensorMapEncodeTiled failed: %s\n");
+}
+
+void mosaic_gpu_init_tma_im2col_desc(
+    CUtensorMap* tma_desc, void* base_addr, int64_t elem_type, int64_t rank,
+    int64_t* sizes, int64_t* strides, int64_t swizzle_bytes,
+    int32_t* pixel_box_lower_corner, int32_t* pixel_box_upper_corner,
+    int64_t channels_per_pixel, int64_t pixels_per_column,
+    int32_t* window_strides) {
+  if (rank < 3 || rank > 5) {
+    fprintf(stderr, "Rank must be in [3, 5], but got %ld\n", rank);
+    abort();
+  }
+  CommonTmaParams params =
+      prepare_tma_params(tma_desc, elem_type, rank, sizes, strides,
+                         swizzle_bytes, /*allow_sub_byte=*/false);
+
+  int spatial_rank = rank - 2;
+  int bits = 16 / spatial_rank;
+  int32_t min_corner = -(1 << (bits - 1));
+  int32_t max_corner = (1 << (bits - 1)) - 1;
+  for (int i = 0; i < spatial_rank; ++i) {
+    int32_t lower = pixel_box_lower_corner[i];
+    int32_t upper = pixel_box_upper_corner[i];
+    if (std::min(lower, upper) < min_corner ||
+        std::max(lower, upper) > max_corner) {
+      fprintf(stderr,
+              "Bounding box corners at spatial dim %d must be in [%d, %d] for "
+              "rank %ld, but got [%d, %d]\n",
+              i, min_corner, max_corner, rank, lower, upper);
+      abort();
+    }
+    if (int64_t extent = sizes[i + 1] + upper - lower; extent < 1) {
+      fprintf(stderr,
+              "Bounding box must have non-zero extent along spatial dim %d, "
+              "but got %ld + %d - %d\n",
+              i, sizes[i + 1], upper, lower);
+      abort();
+    }
+    if (window_strides[i] < 1 || window_strides[i] > 8) {
+      fprintf(stderr,
+              "Window stride at spatial dim %d must be in [1, 8], but got %d\n",
+              i, window_strides[i]);
+      abort();
+    }
+  }
+
+  int tma_lower_corner[3] = {0, 0, 0};
+  int tma_upper_corner[3] = {0, 0, 0};
+  cuuint32_t element_strides[5] = {1, 1, 1, 1, 1};
+  for (int i = 0; i < spatial_rank; ++i) {
+    tma_lower_corner[i] = pixel_box_lower_corner[spatial_rank - i - 1];
+    tma_upper_corner[i] = pixel_box_upper_corner[spatial_rank - i - 1];
+    element_strides[i + 1] =
+        static_cast<cuuint32_t>(window_strides[spatial_rank - i - 1]);
+  }
+
+  if (channels_per_pixel < 1 || channels_per_pixel > 256) {
+    fprintf(stderr, "channels_per_pixel must be in [1, 256], but got %ld\n",
+            channels_per_pixel);
+    abort();
+  }
+  if ((channels_per_pixel * params.elem_bytewidth) % 16 != 0) {
+    fprintf(stderr,
+            "channels_per_pixel must have a bytewidth divisible by 16, but got "
+            "%ld*%ld\n",
+            channels_per_pixel, params.elem_bytewidth);
+    abort();
+  }
+  if (pixels_per_column < 1 || pixels_per_column > 1024) {
+    fprintf(stderr, "pixels_per_column must be in [1, 1024], but got %ld\n",
+            pixels_per_column);
+    abort();
+  }
+
+  abort_on_error(
+      cuTensorMapEncodeIm2col(
+          tma_desc, params.data_type, rank, base_addr, params.sizes,
+          params.strides, tma_lower_corner, tma_upper_corner,
+          static_cast<cuuint32_t>(channels_per_pixel),
+          static_cast<cuuint32_t>(pixels_per_column), element_strides,
+          CU_TENSOR_MAP_INTERLEAVE_NONE, params.swizzle,
+          CU_TENSOR_MAP_L2_PROMOTION_NONE, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE),
+      "cuTensorMapEncodeIm2col failed: %s\n");
 }
 
 // Fills `cfg` with the kernel spec.

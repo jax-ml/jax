@@ -177,6 +177,7 @@ jax.scipy.special
    entr
    erf
    erfc
+   erfcinv
    erfcx
    erfinv
    exp1
@@ -188,6 +189,8 @@ jax.scipy.special
    gamma
    gammainc
    gammaincc
+   gammainccinv
+   gammaincinv
    gammaln
    gammasgn
    hyp1f1

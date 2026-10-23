@@ -281,4 +281,5 @@ def isf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     - :func:`jax.scipy.stats.norm.logsf`
     - :func:`jax.scipy.stats.norm.ppf`
   """
-  return ppf(lax.sub(_lax_const(q, 1), q), loc, scale)
+  q, loc, scale = promote_args_inexact("norm.isf", q, loc, scale)
+  return -ppf(q, -loc, scale)

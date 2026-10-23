@@ -483,6 +483,7 @@ jax_multiplatform_test(
     shard_count = 8,
     tags = [
         "noasan",
+        "notsan",  # Times out.
     ],
     deps = [
         "//jax/_src/pallas:pallas_test_util",
@@ -795,6 +796,7 @@ jax_multiplatform_test(
         "tpu_pallas_interpret_distributed_test.py",
     ],
     enable_backends = ["cpu"],
+    shard_count = 4,
     tags = [
         "noasan",  # Times out.
         "nomsan",
@@ -884,6 +886,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_splash_attention_kernel_sharded_test",
     srcs = ["tpu_splash_attention_kernel_sharded_test.py"],
+    enable_backends = [],
     enable_configs = [
         "tpu_v5e_x8",
         "tpu_v5p_x4",
@@ -1292,6 +1295,7 @@ jax_multiplatform_test(
     tags = [
         "mosaic_gpu_test",
         "noasan",
+        "noassert",  # Times out.
     ],
     deps = [
         "//jax/experimental:pallas",

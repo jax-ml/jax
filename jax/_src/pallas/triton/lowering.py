@@ -41,6 +41,7 @@ from jax._src import state
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lax import lax as lax_internal
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import math as math_dialect
@@ -1494,6 +1495,11 @@ register_lowering(lax.erf_inv_p)(
 )
 
 
+register_lowering(lax.polynomial_p)(
+    lower_fun(lax_internal.polynomial_lower, multiple_results=False)
+)
+
+
 @register_lowering(lax.iota_p)
 def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension,
                         sharding):
@@ -1767,9 +1773,15 @@ def _convert_element_type_lowering_rule(
 
 
 @register_lowering(lax.select_n_p)
-def select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, y):
-  pred_aval, a_aval, b_aval = ctx.avals_in
+def select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
+  pred_aval = ctx.avals_in[0]
+  if len(cases) != 2 or pred_aval.dtype != np.dtype(np.bool_):
+    return lower_fun(
+        pallas_utils.select_n_lowering_helper, multiple_results=False
+    )(ctx, pred, *cases)
+  _, a_aval, b_aval = ctx.avals_in
   [out_aval] = ctx.avals_out
+  x, y = cases
   pred, x = _bcast(pred, x, pred_aval, a_aval, out_aval)
   pred, y = _bcast(pred, y, pred_aval, b_aval, out_aval)
   return arith_dialect.select(pred, y, x)
@@ -2131,7 +2143,7 @@ def _load(
         ptr,
         mask=mask,
         other=other,
-        cache_policy=cache_policy,  # pyrefly: ignore[unexpected-keyword]
+        cache_policy=cache_policy,
         is_volatile=is_volatile,
     )
   else:  # TODO(suvorovv): Remove this fallback once jax oss has been updated.
@@ -2349,7 +2361,7 @@ def _store(
         ptr,
         value,
         mask=mask,
-        cache_policy=cache_policy,  # pyrefly: ignore[unexpected-keyword]
+        cache_policy=cache_policy,
     )
   else:  # TODO(suvorovv): Remove this fallback once jax oss has been updated.
     tt_dialect.store(

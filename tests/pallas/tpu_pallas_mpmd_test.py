@@ -225,6 +225,93 @@ class MpmdAsyncTest(jtu.JaxTestCase):
     out = f(x)
     np.testing.assert_array_equal(out, x + 1)
 
+  def test_crosscore_tc_to_sc_semaphore_signal(self):
+    num_tc = pltpu.get_tpu_info().num_cores
+    tc_mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=num_tc)
+    sc_mesh = plsc.ScalarSubcoreMesh(axis_name="sc", num_cores=1)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+
+    def tc_fn(x_ref, sc_sem_ref, tc_dma_sem_ref, out_ref, tc_vmem_ref):
+      pltpu.async_copy(x_ref, tc_vmem_ref, tc_dma_sem_ref).wait()
+      tc_vmem_ref[...] = tc_vmem_ref[...] + 1
+      pltpu.async_copy(tc_vmem_ref, out_ref, tc_dma_sem_ref).wait()
+
+      @pl.when(jax.lax.axis_index("tc") == 0)
+      def _signal_sc():
+        pl.semaphore_signal(sc_sem_ref, 1, device_id={"sc": 0})
+
+    def sc_fn(sc_sem_ref, sc_dma_sem_ref, sc_out_ref, sc_smem_ref):
+      pl.semaphore_wait(sc_sem_ref, 1)
+      sc_smem_ref[0, 0] = jnp.int32(42)
+      pltpu.async_copy(sc_smem_ref, sc_out_ref, sc_dma_sem_ref).wait()
+
+    @jax.jit(compiler_options=self.sc_mpmd_compiler_options)
+    def f(x):
+      tc_dma_sem = pl.kernel(
+          lambda *_: None,
+          mesh=tc_mesh,
+          out_type=pltpu.SemaphoreType.DMA(()) @ tc_mesh,
+          name="alloc_tc_sem",
+      )()
+      sc_sem, sc_dma_sem = pl.kernel(
+          lambda *_: None,
+          mesh=sc_mesh,
+          out_type=(
+              pltpu.SemaphoreType.REGULAR(()) @ sc_mesh,
+              pltpu.SemaphoreType.DMA(()) @ sc_mesh,
+          ),
+          name="alloc_sc_sems",
+      )()
+      tc_dma_sem_ref = jax.new_ref(
+          tc_dma_sem, memory_space=pltpu.SEMAPHORE @ tc_mesh
+      )
+      sc_sem_ref = jax.new_ref(sc_sem, memory_space=pltpu.SEMAPHORE @ sc_mesh)
+      sc_dma_sem_ref = jax.new_ref(
+          sc_dma_sem, memory_space=pltpu.SEMAPHORE @ sc_mesh
+      )
+
+      tc_out = pl.kernel(
+          mesh=tc_mesh,
+          out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          scratch_types=[pltpu.VMEM(x.shape, x.dtype)],
+          name="tc_signal_sc",
+      )(tc_fn)(x, sc_sem_ref, tc_dma_sem_ref)
+      sc_out = pl.kernel(
+          mesh=sc_mesh,
+          out_type=jax.ShapeDtypeStruct((1, 128), jnp.int32),
+          scratch_types=[pltpu.SMEM((1, 128), jnp.int32)],
+          name="sc_wait_tc",
+      )(sc_fn)(sc_sem_ref, sc_dma_sem_ref)
+      return tc_out, sc_out
+
+    tc_out, sc_out = f(x)
+    np.testing.assert_array_equal(tc_out, x + 1)
+    self.assertEqual(int(sc_out[0, 0]), 42)
+
+  @parameterized.parameters([TC, SCS])
+  def test_async_copy_unsafe_no_write_effect(self, core_type):
+    mesh = from_core_type(core_type)
+    mem = pltpu.VMEM if core_type == TC else pltpu.SMEM
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+
+    def body(x_ref, out_ref, scratch_ref, sem):
+      pltpu.async_copy(
+          x_ref, scratch_ref, sem, _unsafe_no_write_effect=True
+      ).wait()
+      pltpu.async_copy(scratch_ref, out_ref, sem).wait()
+
+    jaxpr = jax.make_jaxpr(
+        lambda s, d: pltpu.async_copy(s, d, _unsafe_no_write_effect=True).wait()
+    )(jax.new_ref(x), jax.new_ref(x))
+    self.assertTrue(all("Read" in str(e) for e in jaxpr.effects))
+    out = pl.kernel(
+        body,
+        mesh=mesh,
+        out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        scratch_types=[mem(x.shape, x.dtype), pltpu.SemaphoreType.DMA(())],
+    )(x)
+    np.testing.assert_array_equal(out, x)
+
 
 # TODO(rdyro): A temporary workaround to avoid flakiness.
 @jtu.thread_unsafe_test_class()
@@ -1363,8 +1450,14 @@ class MpmdTest(PallasSCTest):
     ):
       body(x)
 
-  @parameterized.named_parameters(("wait_read", True), ("src_sem", False))
-  def test_async_copy_error_sc_vector_subcore_pull_stream(self, is_wait_read):
+  @parameterized.product(
+      is_wait_read=[True, False],
+      spaces=[(pltpu.HBM, pltpu.VMEM), (pltpu.VMEM_SHARED, pltpu.SMEM)],
+  )
+  def test_async_copy_error_sc_vector_subcore_pull_stream(
+      self, is_wait_read, spaces
+  ):
+    src_space, dst_space = spaces
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="c", subcore_axis_name="s", num_cores=1, num_subcores=1
     )
@@ -1374,8 +1467,8 @@ class MpmdTest(PallasSCTest):
         mesh=mesh,
         out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
         scratch_types=[
-            pltpu.HBM.like(x),
-            pltpu.VMEM.like(x),
+            src_space.like(x),
+            dst_space.like(x),
             pltpu.SemaphoreType.DMA(()) @ mesh,
         ],
     )
@@ -1389,8 +1482,14 @@ class MpmdTest(PallasSCTest):
     with self.assertRaisesRegex(ValueError, "only supported for push streams"):
       body(x)
 
-  @parameterized.named_parameters(("wait_read", True), ("src_sem", False))
-  def test_async_copy_error_sc_scalar_subcore_non_stream(self, is_wait_read):
+  @parameterized.product(
+      is_wait_read=[True, False],
+      spaces=[(pltpu.SMEM, pltpu.SMEM), (pltpu.VMEM_SHARED, pltpu.SMEM)],
+  )
+  def test_async_copy_error_sc_scalar_subcore_non_stream(
+      self, is_wait_read, spaces
+  ):
+    src_space, dst_space = spaces
     mesh = plsc.ScalarSubcoreMesh(axis_name="c", num_cores=1)
     x = jnp.zeros((self.num_lanes,), dtype=jnp.int32)
 
@@ -1398,8 +1497,8 @@ class MpmdTest(PallasSCTest):
         mesh=mesh,
         out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
         scratch_types=[
-            pltpu.SMEM.like(x),
-            pltpu.SMEM.like(x),
+            src_space.like(x),
+            dst_space.like(x),
             pltpu.SemaphoreType.DMA(()) @ mesh,
         ],
     )
@@ -1644,8 +1743,6 @@ class MpmdTest(PallasSCTest):
     self.assertEmpty(push_warnings)
 
   def test_cross_subcore_handover_race(self):
-    if not jtu.is_libtpu_at_least("0.0.46"):
-      self.skipTest("Test requires libtpu 0.0.46 or newer.")
     # Stress-test SparseCore producer-consumer handoffs between vector
     # subcores and the scalar subcore. Waiting on a push stream without a
     # destination semaphore waits for all HBM writes to retire, so the data is

@@ -102,17 +102,13 @@ pytype_strict_library(
         "//jax",
         "//jax/_src:ad",
         "//jax/_src:api_util",
-        "//jax/_src:batching",
         "//jax/_src:core",
-        "//jax/_src:effects",
         "//jax/_src:flattree",
         "//jax/_src:hijax",
         "//jax/_src:lax",
-        "//jax/_src:mlir",
         "//jax/_src:partial_eval",
         "//jax/_src:traceback_util",
         "//jax/_src:tree_util",
-        "//jax/_src:util",
     ],
 )
 
@@ -145,6 +141,7 @@ pytype_strict_library(
         "//jax/_src:hijax",
         "//jax/_src:lax",
         "//jax/_src:partial_eval",
+        "//jax/_src:source_info_util",
         "//jax/_src:traceback_util",
         "//jax/_src:tree_util",
     ],
@@ -183,9 +180,7 @@ pytype_strict_library(
         ":fuser_utils",
         "//jax",
         "//jax/_src:core",
-        "//jax/_src:source_info_util",
         "//jax/_src:tree_util",
-        "//jax/_src:util",
     ],
 )
 
@@ -195,7 +190,6 @@ pytype_strict_library(
     deps = [
         "//jax/_src:api_util",
         "//jax/_src:core",
-        "//jax/_src:effects",
         "//jax/_src:flattree",
         "//jax/_src:lax",
         "//jax/_src:partial_eval",

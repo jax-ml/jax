@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
@@ -122,6 +123,11 @@ class GlobalConfigState {
     return include_in_trace_context_;
   }
 
+  // Returns the set of keys that should be included in the jaxpr eqn context.
+  absl::Span<int const> include_in_jaxpr_eqn_ctx() const {
+    return include_in_jaxpr_eqn_ctx_;
+  }
+
   absl::Span<std::string const> names() const { return names_; }
   const std::string& name(int key) const { return names_[key]; }
 
@@ -138,6 +144,7 @@ class GlobalConfigState {
   std::vector<nb::object> entries_ ABSL_GUARDED_BY(entries_mu_);
   std::vector<int> include_in_jit_key_;
   std::vector<int> include_in_trace_context_;
+  std::vector<int> include_in_jaxpr_eqn_ctx_;
   nb::object unset_ = UnsetObject();
 };
 
@@ -226,7 +233,7 @@ int GlobalConfigState::tp_clear(int key, PyObject* self) {
 }
 
 Config::Config(std::string name, nb::object value, bool include_in_jit_key,
-               bool include_in_trace_context) {
+               bool include_in_trace_context, bool include_in_jaxpr_eqn_ctx) {
   auto& instance = GlobalConfigState::Instance();
   ft_lock_guard lock(instance.entries_mu_);
   key_ = instance.entries_.size();
@@ -237,6 +244,9 @@ Config::Config(std::string name, nb::object value, bool include_in_jit_key,
   }
   if (include_in_trace_context) {
     instance.include_in_trace_context_.push_back(key_);
+  }
+  if (include_in_jaxpr_eqn_ctx) {
+    instance.include_in_jaxpr_eqn_ctx_.push_back(key_);
   }
 }
 
@@ -346,33 +356,91 @@ std::vector<std::string> JitConfigNames() {
 nanobind::tuple TraceContext() {
   auto& instance = GlobalConfigState::Instance();
   auto& thread_local_instance = ThreadLocalConfigState::Instance();
-  nb::tuple result = nb::steal<nb::tuple>(
-      PyTuple_New(instance.include_in_trace_context().size()));
-  int pos = 0;
+  nb::tuple_builder result(instance.include_in_trace_context().size());
   for (int i : instance.include_in_trace_context()) {
     nb::object local = thread_local_instance.Get(i);
     if (local.is_valid()) {
-      PyTuple_SET_ITEM(result.ptr(), pos, local.release().ptr());
+      result.put(std::move(local));
     } else {
-      nb::object global = instance.Get(i);
-      PyTuple_SET_ITEM(result.ptr(), pos, global.release().ptr());
+      result.put(instance.Get(i));
     }
-    ++pos;
   }
-  return result;
+  return result.commit();
 }
 
 nanobind::tuple TraceContextNames() {
   auto& instance = GlobalConfigState::Instance();
-  nb::tuple result = nb::steal<nb::tuple>(
-      PyTuple_New(instance.include_in_trace_context().size()));
-  int pos = 0;
+  nb::tuple_builder result(instance.include_in_trace_context().size());
   for (int i : instance.include_in_trace_context()) {
-    PyTuple_SET_ITEM(result.ptr(), pos,
-                     nb::cast(instance.name(i)).release().ptr());
-    ++pos;
+    result.put(instance.name(i));
   }
-  return result;
+  return result.commit();
+}
+
+nanobind::tuple JaxprEqnCtxVals() {
+  auto& instance = GlobalConfigState::Instance();
+  auto& thread_local_instance = ThreadLocalConfigState::Instance();
+  nb::tuple_builder result(instance.include_in_jaxpr_eqn_ctx().size());
+  for (int i : instance.include_in_jaxpr_eqn_ctx()) {
+    nb::object local = thread_local_instance.Get(i);
+    if (local.is_valid()) {
+      result.put(std::move(local));
+    } else {
+      result.put(instance.Get(i));
+    }
+  }
+  return result.commit();
+}
+
+nanobind::tuple JaxprEqnCtxNames() {
+  auto& instance = GlobalConfigState::Instance();
+  nb::tuple_builder result(instance.include_in_jaxpr_eqn_ctx().size());
+  for (int i : instance.include_in_jaxpr_eqn_ctx()) {
+    result.put(instance.name(i));
+  }
+  return result.commit();
+}
+
+nanobind::tuple SwapLocalJaxprEqnCtx(nanobind::tuple values) {
+  const auto& global_instance = GlobalConfigState::Instance();
+  auto& instance = ThreadLocalConfigState::Instance();
+  auto keys = global_instance.include_in_jaxpr_eqn_ctx();
+  if (values.size() != keys.size()) {
+    throw nb::value_error("Invalid tuple size for swap_local_jaxpr_eqn_ctx");
+  }
+  nb::tuple_builder result(keys.size());
+  for (size_t idx = 0; idx < keys.size(); ++idx) {
+    int key = keys[idx];
+    nb::object prev = instance.Get(key);
+    nb::object value = values[idx];
+    if (value.ptr() == global_instance.unset().ptr()) {
+      value = nb::object();
+    }
+    instance.Set(key, std::move(value));
+    if (!prev.is_valid()) {
+      result.put(global_instance.unset());
+    } else {
+      result.put(std::move(prev));
+    }
+  }
+  return result.commit();
+}
+
+void SetLocalJaxprEqnCtx(nanobind::tuple values) {
+  const auto& global_instance = GlobalConfigState::Instance();
+  auto& instance = ThreadLocalConfigState::Instance();
+  auto keys = global_instance.include_in_jaxpr_eqn_ctx();
+  if (values.size() != keys.size()) {
+    throw nb::value_error("Invalid tuple size for set_local_jaxpr_eqn_ctx");
+  }
+  for (size_t idx = 0; idx < keys.size(); ++idx) {
+    int key = keys[idx];
+    nb::object value = values[idx];
+    if (value.ptr() == global_instance.unset().ptr()) {
+      value = nb::object();
+    }
+    instance.Set(key, std::move(value));
+  }
 }
 
 void BuildConfigSubmodule(nanobind::module_& m) {
@@ -383,10 +451,11 @@ void BuildConfigSubmodule(nanobind::module_& m) {
   nb::class_<Config> config(config_module, "Config",
                             nb::type_slots(Config::slots_), nb::is_generic(),
                             nb::sig("class Config[T]"));
-  config.def(nb::init<std::string, nb::object, bool, bool>(), nb::arg("name"),
-             nb::arg("value").none(), nb::kw_only(),
+  config.def(nb::init<std::string, nb::object, bool, bool, bool>(),
+             nb::arg("name"), nb::arg("value").none(), nb::kw_only(),
              nb::arg("include_in_jit_key") = false,
              nb::arg("include_in_trace_context") = false,
+             nb::arg("include_in_jaxpr_eqn_ctx") = false,
              nb::sig(
                  // clang-format off
         "def __init__("
@@ -394,7 +463,8 @@ void BuildConfigSubmodule(nanobind::module_& m) {
         "name: str, "
         "value: T, *, "
         "include_in_jit_key: bool = ..., "
-        "include_in_trace_context: bool = ..."
+        "include_in_trace_context: bool = ..., "
+        "include_in_jaxpr_eqn_ctx: bool = ..."
         ") -> None"
                  // clang-format on
                  ));
@@ -413,6 +483,10 @@ void BuildConfigSubmodule(nanobind::module_& m) {
 
   config_module.def("trace_context", &TraceContext);
   config_module.def("trace_context_names", &TraceContextNames);
+  config_module.def("jaxpr_eqn_ctx_vals", &JaxprEqnCtxVals);
+  config_module.def("jaxpr_eqn_ctx_names", &JaxprEqnCtxNames);
+  config_module.def("swap_local_jaxpr_eqn_ctx", &SwapLocalJaxprEqnCtx);
+  config_module.def("set_local_jaxpr_eqn_ctx", &SetLocalJaxprEqnCtx);
 }
 
 }  // namespace jax

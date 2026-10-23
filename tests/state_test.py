@@ -814,7 +814,7 @@ class StateDischargeTest(jtu.JaxTestCase):
     jaxpr, _ = trace_to_jaxpr(f, scalar_ref_1, scalar_ref_2)
 
     discharged_jaxpr = discharge_state(
-        core.ClosedJaxpr(jaxpr, ()), should_discharge=[False, True]
+        jaxpr, should_discharge=[False, True]
     )
     prim_count = lambda p, j: sum(eqn.primitive == p for eqn in j.eqns)
     self.assertEqual(
@@ -1273,7 +1273,7 @@ class StateControlFlowTest(jtu.JaxTestCase):
       return run_state(body)((1., 0., 2.))
     jaxpr = jax.make_jaxpr(f)(True).jaxpr
     [run_state_eqn] = jaxpr.eqns
-    *_, cond_eqn = discharge_state(core.ClosedJaxpr(run_state_eqn.params["jaxpr"], ())).eqns
+    *_, cond_eqn = discharge_state(run_state_eqn.params["jaxpr"]).eqns
     self.assertIs(cond_eqn.primitive, lax.cond_p)
     self.assertLen(cond_eqn.invars, 4)  # pred + 3x ref values
     self.assertLen(cond_eqn.outvars, 1)  # only the updated ref value
@@ -1407,10 +1407,23 @@ class StateControlFlowTest(jtu.JaxTestCase):
       return body(x)
     jaxpr = jax.make_jaxpr(f)(0, 5, 2).jaxpr
     self.assertEmpty(jaxpr.effects)
-    self.assertAllClose(jax.jit(f)(0, 5, 2), 10)
-    self.assertAllClose(jax.jit(f)(1, 2, 3), 7)
+    self.assertAllClose(jax.jit(f)(0, 5, 2), 12)
+    self.assertAllClose(jax.jit(f)(1, 2, 3), 10)
 
-  def test_while_errors_if_same_ref_in_body_and_cond(self):
+  def test_while_with_state_in_cond_disable_jit_error(self):
+    def f(x, y, z):
+      @run_state
+      def body(x_ref):
+        def cond(i):
+          x_ref[...] += z
+          return i < y
+        lax.while_loop(cond, lambda i: i + 1, 0)
+      return body(x)
+    with jax.disable_jit():
+      with self.assertRaisesRegex(NotImplementedError, "disable_jit"):
+        f(0, 5, 2)
+
+  def test_while_with_same_ref_in_body_and_cond(self):
     def f(x, y, z):
       @run_state
       def body(x_ref):
@@ -1424,9 +1437,73 @@ class StateControlFlowTest(jtu.JaxTestCase):
       return body(x)
     jaxpr = jax.make_jaxpr(f)(0, 5, 2).jaxpr
     self.assertEmpty(jaxpr.effects)
-    with self.assertRaisesRegex(NotImplementedError,
-        "Cannot write to the same ref in both cond and body."):
-      jax.jit(f)(0, 5, 2)
+    self.assertAllClose(jax.jit(f)(0, 5, 2), 6 * 2 + 5 * 2)
+    self.assertAllClose(jax.jit(f)(1, 2, 3), 1 + 3 * 3 + 2 * 3)
+
+  @parameterized.parameters([False, True])
+  def test_while_cond_reads_ref_written_in_body(self, jit):
+    def f(n):
+      ref = jax.new_ref(0)
+      def body(i):
+        ref[...] += 1
+        return i + 1
+      i = lax.while_loop(lambda i: (ref[...] < n) & (i < 100), body, 0)
+      return ref[...], i
+    if jit:
+      f = jax.jit(f)
+    self.assertAllClose(f(4), (4, 4))
+
+  @parameterized.parameters([False, True])
+  def test_while_body_reads_ref_written_in_cond(self, jit):
+    def f(n):
+      ref = jax.new_ref(0)
+      def cond(c):
+        ref[...] += 1
+        return c[0] < n
+      def body(c):
+        i, acc = c
+        return i + 1, acc + ref[...]
+      _, acc = lax.while_loop(cond, body, (0, 0))
+      return ref[...], acc
+    if jit:
+      f = jax.jit(f)
+    self.assertAllClose(f(3), (4, 1 + 2 + 3))
+
+  @parameterized.parameters([False, True])
+  def test_while_refs_in_cond_and_body(self, jit):
+    def f():
+      a, b, c = jax.new_ref(1), jax.new_ref(0), jax.new_ref(0)
+      def body(i):
+        b[...] += 1
+        c[...] += b[...]
+        return i + 1
+      i = lax.while_loop(lambda i: (a[...] + b[...] < 5) & (i < 100), body, 0)
+      return a[...], b[...], c[...], i
+    if jit:
+      f = jax.jit(f)
+    self.assertAllClose(f(), (1, 4, 1 + 2 + 3 + 4, 4))
+
+  def test_while_passes_ref_once(self):
+    def f(n):
+      ref = jax.new_ref(0)
+      def body(i):
+        ref[...] += 1
+        return i + 1
+      return lax.while_loop(lambda i: ref[...] < n, body, 0)
+    jaxpr = jax.make_jaxpr(f)(4).jaxpr
+    ref = jaxpr.eqns[0].outvars[0]
+    eqn, = [e for e in jaxpr.eqns if e.primitive is lax.while_p]
+    self.assertEqual(eqn.params['cond_nconsts'], 0)
+    self.assertEqual(eqn.invars.count(ref), 1)
+    self.assertLen(eqn.outvars, 2)
+
+    def f(n):
+      ref = jax.new_ref(n)
+      return lax.while_loop(lambda i: i < ref[...], lambda i: i + 1, 0)
+    jaxpr = jax.make_jaxpr(f)(4).jaxpr
+    eqn, = [e for e in jaxpr.eqns if e.primitive is lax.while_p]
+    self.assertEqual(eqn.params['cond_nconsts'], 1)
+    self.assertLen(eqn.outvars, 1)
 
   def test_scan_with_state_in_body(self):
     def f(x, w, y, zs):
@@ -1581,7 +1658,7 @@ class StateControlFlowTest(jtu.JaxTestCase):
           transforms=(state_types.SelectTransform(idx),),
       )
       with self.assertRaisesRegex(
-          ValueError, "Found inconsistent memory spaces in multiref"
+          TypeError, "Cannot select from Refs of different types"
       ):
         _ = multi_ref.memory_space
     fn(0)
@@ -2065,6 +2142,23 @@ class PinnedBuffersTest(jtu.JaxTestCase):
       y = f(x)
       self.assertAllClose(y, x)
 
+  @parameterized.parameters(("vmem", "1"), ("hbm", "0"))
+  def test_pin_memory_space_colors(self, to, expected_color):
+    @jax.jit
+    def f(x):
+      return unpin(pin(x, to=to))
+
+    x = jnp.arange(3.0)
+    txt = f.lower(x).as_text("hlo")
+    self.assertRegex(
+        txt,
+        rf"input_memory_space_colors.*operand_index.*0.*color.*{expected_color}",
+    )
+    self.assertRegex(
+        txt,
+        rf"output_memory_space_colors.*color.*{expected_color}",
+    )
+
   def test_new_ref_pinned(self):
     @jax.jit
     def f(x):
@@ -2130,6 +2224,32 @@ class PinnedBuffersTest(jtu.JaxTestCase):
     with self.assertRaises(NotImplementedError):
       jax.new_ref(jnp.arange(3.), pin=True)
 
+  def test_new_ref_pinned_get_swap_addupdate(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41846
+    def f(x):
+      ref = jax.new_ref(x, pin=True)
+      ref[...] = ref[...] + 1.0
+      ref[0] = ref[0] + 2.0
+      ref_addupdate(ref, (), jnp.full_like(x, 3.0))
+      return jax.ref.freeze(ref)
+
+    x = jnp.arange(6.0, dtype=jnp.float32).reshape(2, 3)
+    expected = (x + 1.0).at[0].add(2.0) + 3.0
+    jaxpr = jax.make_jaxpr(f)(x)
+    discharged = discharge_state(jaxpr)
+    prims = [e.primitive.name for e in discharged.eqns]
+    self.assertEqual(prims.count("pin"), 6)
+    self.assertEqual(prims.count("unpin"), 6)
+
+    jitted_f = jax.jit(f)
+    txt = jitted_f.lower(x).as_text("hlo")
+    self.assertEqual(txt.count('custom_call_target="Pin"'), 5)
+    self.assertEqual(txt.count('custom_call_target="Unpin"'), 5)
+
+    if jtu.test_device_matches(["gpu", "tpu"]):
+      y = jitted_f(x)
+      self.assertAllClose(y, expected)
+
   def test_discharged_aval_non_ref_preserves_memory_space(self):
     aval = core.ShapedArray((3,), jnp.float32, memory_space=core.MemorySpace.Host)
     discharged = discharged_aval(aval, discharge=True, strip_memory_space=True)
@@ -2157,6 +2277,43 @@ class PinnedBuffersTest(jtu.JaxTestCase):
         discharged_jaxpr.jaxpr.invars[0].aval.memory_space,
         core.MemorySpace.Host,
     )
+
+  def test_shard_map_ref_preserves_memory_space_and_kind(self):
+    mesh = jtu.create_mesh((1,), ("x",))
+    ref_aval = AbstractRef(
+        core.ShapedArray((4,), jnp.int32),
+        memory_space=core.MemorySpace.Host,
+        kind="custom_kind",
+    )
+    sharded = core.shard_aval(
+        mesh, frozenset({"x"}), False, jax.sharding.PartitionSpec(), ref_aval
+    )
+    self.assertIsInstance(sharded, AbstractRef)
+    self.assertEqual(sharded.memory_space, core.MemorySpace.Host)
+    self.assertEqual(sharded.kind, "custom_kind")
+
+    with jax.set_mesh(mesh):
+
+      def f(x):
+        host_ref = jax.new_ref(x, memory_space=core.MemorySpace.Host)
+
+        @jax.shard_map(
+            in_specs=(
+                jax.sharding.PartitionSpec(),
+                jax.sharding.PartitionSpec(),
+            ),
+            out_specs=(),
+            check_vma=False,
+        )
+        def _write(v, r):
+          self.assertEqual(jax.typeof(r).memory_space, core.MemorySpace.Host)
+          r[...] = v
+          return ()
+
+        _write(jnp.ones((4,), dtype=jnp.int32), host_ref)
+        return host_ref[...]
+
+      jax.make_jaxpr(f)(jnp.zeros((4,), dtype=jnp.int32))
 
 
 class WithMemorySpaceConstraintTest(jtu.JaxTestCase):
@@ -2369,6 +2526,34 @@ class RefTransformTest(jtu.JaxTestCase):
 
     self.assertEqual(f().shape, (1,))
     self.assertAllClose(f(), jnp.array([5.0]))
+
+  def test_new_ref_host_memory_space_outside_jit(self):
+    ref1 = jax.new_ref(
+        jnp.ones((4,), dtype=jnp.int32), memory_space=core.MemorySpace.Host
+    )
+    self.assertEqual(core.typeof(ref1).memory_space, core.MemorySpace.Host)
+    self.assertEqual(
+        core.typeof(ref1).inner_aval.memory_space, core.MemorySpace.Device
+    )
+    self.assertEqual(ref1.sharding.memory_kind, "pinned_host")
+
+    host_arr = jax.device_put(
+        jnp.arange(4, dtype=jnp.int32), core.MemorySpace.Host
+    )
+    ref2 = jax.new_ref(host_arr)
+    self.assertEqual(core.typeof(ref2).memory_space, core.MemorySpace.Host)
+    self.assertEqual(
+        core.typeof(ref2).inner_aval.memory_space, core.MemorySpace.Device
+    )
+    self.assertEqual(ref2.sharding.memory_kind, "pinned_host")
+    np.testing.assert_array_equal(
+        np.asarray(jax.freeze(ref2)), np.arange(4, dtype=np.int32)
+    )
+
+  def test_concrete_ref_at(self):
+    ref = jax.new_ref(jnp.arange(4, dtype=jnp.int32))
+    ref.at[1:3][...] += 10
+    self.assertArraysEqual(ref[...], jnp.array([0, 11, 12, 3], dtype=jnp.int32))
 
 
 if __name__ == '__main__':

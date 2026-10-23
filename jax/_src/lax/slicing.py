@@ -1406,8 +1406,7 @@ def _get_sharding_for_varying_out_shape(out_shape, operand, name):
   return operand.sharding
 
 def _slice_ur_rule(operand, *, start_indices, limit_indices, strides):
-  out_unreduced = core.getu(operand)
-  kind = UnreducedKind.sum if out_unreduced else None
+  out_unreduced, kind = core.getu(operand, None)
   return out_unreduced, core.getr(operand), kind
 
 def _slice_sharding_rule(operand, *, start_indices, limit_indices, strides):
@@ -1472,10 +1471,16 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
+def _slice_layout_rule(out_aval, operand, *, start_indices, limit_indices,
+                       strides):
+  lax_utils.check_minor_dims_tile_size('slice', operand, out_aval)
+  return operand.layout
+
 slice_p = standard_primitive(_slice_shape_rule, input_dtype, 'slice',
                              sharding_rule=_slice_sharding_rule,
                              vma_rule=partial(core.standard_vma_rule, 'slice'),
-                             ur_rule=_slice_ur_rule)
+                             ur_rule=_slice_ur_rule,
+                             layout_rule=_slice_layout_rule)
 ad.primitive_jvps[slice_p] = _slice_jvp_rule
 ad.fancy_transposes[slice_p] = _slice_transpose_fancy
 batching.primitive_batchers[slice_p] = _slice_batching_rule
@@ -1500,7 +1505,7 @@ def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   aval_out, = ctx.avals_out
   out = mlir.slice_op(ctx, x, aval_out, start_indices=start_indices,
                       limit_indices=limit_indices, strides=strides)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(slice_p, _slice_lower)
 
@@ -1525,7 +1530,7 @@ def _dynamic_slice_sharding_rule(operand, *starts_and_dyn_sizes, slice_sizes):
   return _get_sharding_for_varying_out_shape(out_shape, operand, 'dynamic_slice')
 
 def _dynamic_slice_ur_rule(operand, *starts_and_dyn_sizes, slice_sizes):
-  if core.getu(operand):
+  if core.getu(operand)[0]:
     raise NotImplementedError(
         'unreduced rule for dynamic_slice is not implemented. Please'
         ' file an issue at https://github.com/jax-ml/jax/issues')
@@ -1617,12 +1622,17 @@ def _dynamic_slice_typecheck_rule(_, x, *start_indices, slice_sizes):
       x.aval, *(d.aval for d in start_indices), slice_sizes=slice_sizes)
   return [out_aval], effects
 
+def _dynamic_slice_layout_rule(out_aval, operand, *start_indices, slice_sizes):
+  lax_utils.check_minor_dims_tile_size('dynamic_slice', operand, out_aval)
+  return operand.layout
+
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
     weak_type_rule=_argnum_weak_type(0),
     sharding_rule=_dynamic_slice_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'dynamic_slice'),
-    ur_rule=_dynamic_slice_ur_rule)
+    ur_rule=_dynamic_slice_ur_rule,
+    layout_rule=_dynamic_slice_layout_rule)
 ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp
 ad.fancy_transposes[dynamic_slice_p] = _dynamic_slice_transpose_fancy
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
@@ -1633,7 +1643,7 @@ def _dynamic_slice_lower(ctx, x, *start_indices, slice_sizes):
   x_aval, *_ = ctx.avals_in
   aval_out, = ctx.avals_out
   out = mlir.dynamic_slice(ctx, aval_out, x, start_indices=start_indices)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
 
@@ -1666,14 +1676,16 @@ def _dynamic_update_slice_sharding_rule(operand, update, *start_indices):
   return operand.sharding
 
 def _dus_unreduced_rule(operand, update):
-  if core.getu(operand) != core.getu(update):
+  op_u, op_k = core.getu(operand, None)
+  up_u, up_k = core.getu(update, None)
+  if op_u != up_u or op_k is not up_k:
     raise core.ShardingTypeError(
         "dynamic_update_slice operand and update must be unreduced along the"
-        " same axes. Got operand sharding"
+        " same axes and with the same unreduced_kind. Got operand sharding"
         f" {operand.str_short(mesh_axis_types=True)} and update sharding"
-        f" {update.str_short(mesh_axis_types=True)}.")
-  out_u = core.getu(operand)
-  return out_u, UnreducedKind.sum if out_u else None
+        f" {update.str_short(mesh_axis_types=True)}."
+    )
+  return op_u, op_k
 
 def _dus_reduced_rule(operand, update):
   if core.getr(operand) != core.getr(update):
@@ -1685,8 +1697,20 @@ def _dus_reduced_rule(operand, update):
   return core.getr(operand)
 
 def _dynamic_update_slice_ur_rule(operand, update, *start_indices):
+  if any(core.getu(i, None)[0] or core.getr(i) for i in start_indices):
+    raise core.ShardingTypeError(
+        "dynamic_update_slice start_indices cannot have unreduced or reduced"
+        f" axes. Got start_indices={start_indices}"
+    )
   out_u, kind = _dus_unreduced_rule(operand, update)
-  return out_u, _dus_reduced_rule(operand, update), kind
+  out_r = _dus_reduced_rule(operand, update)
+  if (out_u or out_r) and any(i.mat.varying for i in start_indices):
+    raise core.ShardingTypeError(
+        "dynamic_update_slice start_indices cannot be varying when operand or"
+        " update has unreduced or reduced axes. Got"
+        f" start_indices={start_indices}"
+    )
+  return out_u, out_r, kind
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
   lax.check_same_dtypes("dynamic_update_slice", operand, update)
@@ -1749,11 +1773,21 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
     out_axes=0)(operand, index, update), 0
 
 
+def _dynamic_update_slice_layout_rule(out_aval, operand, update, *start_indices):
+  if operand.layout != update.layout:
+    raise ValueError(
+        'layout of all inputs passed to `dynamic_update_slice` must be the'
+        f' same. Got operand with layout: {operand.layout} and update with'
+        f' layout: {update.layout}')
+  lax_utils.check_minor_dims_tile_size('dynamic_update_slice', update, out_aval)
+  return operand.layout
+
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
     'dynamic_update_slice', sharding_rule=_dynamic_update_slice_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'dynamic_update_slice'),
-    ur_rule=_dynamic_update_slice_ur_rule)
+    ur_rule=_dynamic_update_slice_ur_rule,
+    layout_rule=_dynamic_update_slice_layout_rule)
 ad.primitive_jvps[dynamic_update_slice_p] = _dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
@@ -1764,7 +1798,7 @@ def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
   out = mlir.dynamic_update_slice(ctx, aval_out, x, update,
                                   start_indices=start_indices)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(dynamic_update_slice_p, _dynamic_update_slice_lower)
 
@@ -2138,7 +2172,7 @@ def _gather_reduced_rule(operand, indices):
   return out_reduced
 
 def _gather_ur_rule(operand, indices, **kwargs):
-  if core.getu(operand) or core.getu(indices):
+  if core.getu(operand)[0] or core.getu(indices)[0]:
     raise NotImplementedError(
         "unreduced rule for gather is not implemented. Please file an issue at"
         " https://github.com/jax-ml/jax/issues")
@@ -2780,16 +2814,16 @@ def _scatter_sharding_rule(
 
 
 def _scatter_unreduced_rule(operand, indices, updates, **kwargs):
-  if core.getu(indices):
+  if core.getu(indices)[0]:
     raise core.ShardingTypeError(
         "scatter indices cannot be unreduced. Got indices sharding"
         f" {indices.str_short(mesh_axis_types=True)}.")
-  if core.getu(operand) != core.getu(updates):
+  if core.getu(operand)[0] != core.getu(updates)[0]:
     raise core.ShardingTypeError(
         "scatter operand and updates must be unreduced along the same axes."
         f" Got operand sharding {operand.str_short(mesh_axis_types=True)} and"
         f" updates sharding {updates.str_short(mesh_axis_types=True)}.")
-  out_u = core.getu(operand)
+  out_u, _ = core.getu(operand)
   if out_u and not all(s is None for s in indices.sharding.spec):
     raise NotImplementedError
   return out_u, UnreducedKind.sum if out_u else None
@@ -3102,10 +3136,14 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
     # tangents for the values in updates.
 
     initial_vals = gather(
-        operand, indices, gather_dnums, slice_sizes)
+        operand, indices, gather_dnums, slice_sizes,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode)
 
     target_vals = gather(
-        val_out, indices, gather_dnums, slice_sizes)
+        val_out, indices, gather_dnums, slice_sizes,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode)
 
     successful_updates = (updates == target_vals)
     retained_values = (initial_vals == target_vals)
@@ -3115,19 +3153,31 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
             lax._zeros(operand), indices,
             lax.select(successful_updates, lax._ones(updates),
                        lax._zeros(updates)),
-            scatter_dnums),
+            scatter_dnums,
+            indices_are_sorted=indices_are_sorted,
+            unique_indices=unique_indices,
+            mode=mode),
         indices,
         gather_dnums,
-        slice_sizes)
+        slice_sizes,
+        indices_are_sorted=indices_are_sorted,
+        unique_indices=unique_indices,
+        mode=mode)
 
     num_refs = gather(
         scatter_add(lax._zeros(operand),
                     indices,
                     lax._ones(updates),
-                    scatter_dnums),
+                    scatter_dnums,
+                    indices_are_sorted=indices_are_sorted,
+                    unique_indices=unique_indices,
+                    mode=mode),
         indices,
         gather_dnums,
-        slice_sizes)
+        slice_sizes,
+        indices_are_sorted=indices_are_sorted,
+        unique_indices=unique_indices,
+        mode=mode)
 
     updates_normalizer = lax.select(retained_values,
                                     1.0 / (num_updates + 1),
@@ -3145,7 +3195,9 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
 
     # This can be simplified once scatter has transpose implemented
     target_tangents = gather(
-        g_operand, indices, gather_dnums, slice_sizes)
+        g_operand, indices, gather_dnums, slice_sizes,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode)
 
     tangent_updates = (target_tangents * operand_coef +
                        g_updates * updates_coef)

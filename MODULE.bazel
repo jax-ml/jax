@@ -24,18 +24,18 @@ bazel_dep(name = "zlib", version = "1.3.2")
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-Z38HhfFL91M5oxh8un+pXhofiIoYVo7cLl+sh9UT/Hw=",
-    strip_prefix = "rules_ml_toolchain-f56a19573fec3543050a5f4bcd9a07a1de08e8ee",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/f56a19573fec3543050a5f4bcd9a07a1de08e8ee.tar.gz"],
+    integrity = "sha256-9+4rpwQMv77PxA+AGMWpwcjioakWHi4nJ7UQ0iPHrJo=",
+    strip_prefix = "rules_ml_toolchain-3a4df0c8e9e51687ac4c62c793a00a27286e5e83",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/3a4df0c8e9e51687ac4c62c793a00a27286e5e83.tar.gz"],
 )
 
 # TODO: use a released version when available
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
-    integrity = "sha256-c6dzcLJ6YtAjrUt15T0/9EmN/yuOkBZBRR8pQNQIgec=",
-    strip_prefix = "xla-e1ded6c147cd7d0f751641cf75432207e10504bb",
-    urls = ["https://github.com/openxla/xla/archive/e1ded6c147cd7d0f751641cf75432207e10504bb.tar.gz"],
+    integrity = "sha256-gtqnu0vl3wLxlMzz47xOfBAEkg7F/8lb5VmkcCQasSY=",
+    strip_prefix = "xla-4dc8a901243757f98e5e0384816953ef9bd43840",
+    urls = ["https://github.com/openxla/xla/archive/4dc8a901243757f98e5e0384816953ef9bd43840.tar.gz"],
 )
 
 # flatbuffers transitively depends on aspect_rules_esbuild 0.21.0, which is incompatible with Bazel 9.
@@ -79,6 +79,7 @@ use_repo(
     "eigen_archive",
     "gloo",
     "nanobind",
+    "riegeli",
     "shardy",
     "stablehlo",
     "triton",
@@ -172,7 +173,7 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_depen
 
 [pip.parse(
     download_only = True,
-    experimental_index_url = "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
+    experimental_index_url = "https://pypi.org/simple",
     extra_hub_aliases = {
         "numpy": ["numpy_headers"],
     },

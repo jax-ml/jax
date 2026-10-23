@@ -28,6 +28,7 @@ safe_map = util.safe_map
 
 @dataclasses.dataclass
 class Fusion[**A, K]:
+  """Wraps a fused computation together with its input and output types."""
 
   func: Callable[A, K]
   in_type: tuple[tuple[Any, ...], dict[str, Any]]

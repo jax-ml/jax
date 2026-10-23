@@ -41,7 +41,6 @@ from jax._src import stages
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import parallel
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import IndivisibleError
 from jax._src.util import safe_map, safe_zip
@@ -960,8 +959,6 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("gpu")
   def testCollectiveBroadcastDynamicRootNonzeroSource(self):
-    if jaxlib_extension_version < 502:
-      raise SkipTest("Requires jaxlib_extension_version >= 502")
     # Dynamic source selects a non-zero device.
     device_count = jax.device_count()
     if device_count < 2:
@@ -1228,6 +1225,18 @@ class PythonPmapTest(jtu.JaxTestCase):
       with jtu.assert_num_jit_and_pmap_compilations(1):
         ans = f(x)
       self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testPmapConstantDifferentDevice(self):
+    const_sds = jax.device_put(
+        np.arange(16, dtype=np.int32), jax.devices()[0]
+    )
+    f_sds = pmap(
+        jax.jit(lambda x: x + const_sds[15]), devices=jax.devices()[:1]
+    )
+    x_sds = jnp.arange(1, dtype=np.int32)
+    self.assertAllClose(
+        f_sds(x_sds), x_sds + np.int32(15), check_dtypes=False
+    )
 
   def testPmapConstantDevices(self):
     if jax.device_count() == 1:

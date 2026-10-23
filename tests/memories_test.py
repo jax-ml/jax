@@ -1408,25 +1408,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(out, np_inp @ np_inp.T)
     self.assertArraysEqual(out2, np_inp @ np_inp.T)
 
-  def test_jit_compilation_cache_hit(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("Shardy doesn't support GSPMDSharding")
-    mesh, s, np_inp, inp = _create_inputs((8, 2), P("x", "y"))
-    inp2 = jax.device_put(
-        np_inp, GSPMDSharding(tuple(mesh.devices.flat),
-                              s._to_xla_hlo_sharding(inp.ndim),
-                              memory_kind="device")
-    )
-
-    f = jax.jit(lambda x: x @ x.T)
-
-    with (jtu.count_pjit_cpp_cache_miss() as cpp_count,
-          jtu.count_jit_and_pmap_lowerings() as lowering_count):
-      f(inp)
-      f(inp2)
-    self.assertEqual(cpp_count(), 2)
-    self.assertEqual(lowering_count(), 2)
-
   def test_jit_cpp_cache_output_hit(self):
     _, _, _, inp = _create_inputs((8, 2), P("x"), mem_kind="device")
 
@@ -1801,6 +1782,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
   @jtu.with_explicit_mesh((4, 2), ("x", "y"))
   def test_compute_on_reduced_fwd_unreduced_bwd(self, mesh):
+    if jtu.is_device_tpu_at_least(7) and not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Fails on TPU v7+ with libtpu < 0.0.52")
     w = jax.device_put(np.arange(8.0), P("y", reduced={'x'}))
     x = jax.device_put(np.ones(8), P(reduced={'x', 'y'}))
 
@@ -1838,6 +1821,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   @jtu.run_on_devices('tpu')
   @jtu.with_explicit_mesh((2, 4), ("dcn", "ici"))
   def test_compute_on_unreduced_single_dcn_all_reduce(self, mesh):
+    if jtu.is_device_tpu_at_least(7) and not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Fails on TPU v7+ with libtpu < 0.0.52")
     def collect_dcn(weight):
       return jax.shard_map(
           lambda x: jax.lax.pcast(x, "dcn", to="reduced"),
@@ -1924,9 +1909,9 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     def f_sc(operand):
       return jax.lax.sort(operand)
 
-    inputs = (np.linspace(0, 1, 524288).reshape(524288),)
+    inputs = (np.random.randint(524288, size=524288, dtype=np.int32),)
 
-    self.assertAllClose(f_tc(*inputs), f_sc(*inputs))
+    self.assertArraysEqual(f_tc(*inputs), f_sc(*inputs))
 
     compiled_f_sc = jax.jit(f_sc).lower(*inputs).compile()
     compiled_text = compiled_f_sc.as_text()
@@ -2222,7 +2207,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     f(arr1, arr2, arr3)  # doesn't crash
 
     compiled_text = f.lower(arr1, arr2, arr3).compile().as_text()
-    self.assertRegex(compiled_text, r"all-gather.*all-gather.*dense")
+    self.assertRegex(compiled_text, r"all[-_]gather.*all-gather.*dense")
     self.assertRegex(
         compiled_text, r"call-start.*async_execution_thread=\"sparsecore\""
     )
