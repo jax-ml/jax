@@ -34,6 +34,7 @@ from jax import api_util
 from jax import lax
 from jax._src import compilation_cache
 from jax._src import config
+from jax._src import core as jax_core
 from jax._src import flattree as ft
 from jax._src import shard_map
 from jax._src import state
@@ -44,6 +45,7 @@ from jax._src.lib.mlir import ir
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas.mosaic import error_handling
 from jax._src.pallas.mosaic import lowering as mosaic_lowering
+from jax._src.pallas.mosaic import pallas_call_registration
 from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import discharge as state_discharge
 from jax._src.state import utils as state_utils
@@ -6953,6 +6955,27 @@ class ExplicitMXUTest(jtu.JaxTestCase):
         jax.sharding.AbstractMesh((), (), abstract_device=tpu7x)
     ):
       jax.jit(f).trace(x).lower(lowering_platforms=('tpu',))
+
+
+class BarrierSemaphoreTagTest(jtu.JaxTestCase):
+
+  def test_extract_tag_visits_shared_jaxprs_once(self):
+    def f(x):
+      pltpu.get_barrier_semaphore('tag')
+      return x
+
+    for _ in range(12):  # 2**12 calls of f through 12 distinct jaxprs.
+      f = jax.jit(lambda x, f=f: f(f(x)))
+    x = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    jaxpr = jax.make_jaxpr(f)(x).jaxpr
+    with mock.patch.object(
+        jax_core, 'jaxprs_in_params', wraps=jax_core.jaxprs_in_params
+    ) as jaxprs_in_params:
+      tag = pallas_call_registration._extract_single_barrier_semaphore_tag(
+          jaxpr
+      )
+    self.assertEqual(tag, 'tag')
+    self.assertLess(jaxprs_in_params.call_count, 100)
 
 
 @jtu.with_config(jax_pallas_auto_assign_collective_ids='yes')

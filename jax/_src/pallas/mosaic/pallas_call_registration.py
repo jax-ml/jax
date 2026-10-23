@@ -399,7 +399,7 @@ def _extract_single_barrier_semaphore_tag(
 ) -> Hashable | None:
   tags = {
       eqn.params["tag"]
-      for _, eqn in jaxpr_util.all_eqns(jaxpr)
+      for _, eqn in jaxpr_util.all_eqns(jaxpr, revisit_inner_jaxprs=False)
       if eqn.primitive is tpu_primitives.get_barrier_semaphore_p
       and eqn.params.get("tag") is not None
   }
