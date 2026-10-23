@@ -969,15 +969,22 @@ def _wrap_main_func(
     with ir.InsertionPoint(entry_block):
       # Make a context just for lowering the dimension value computations
       module_context = mlir.ModuleContext(
-          backend=None, platforms=["cpu"],
+          backend=None,
+          platforms=["cpu"],
           axis_context=sharding_impls.ShardingContext(0),
-          keepalives=[], channel_iterator=itertools.count(1),
-          host_callbacks=[], module=wrapped_module, context=context,
+          keepalives=[],
+          channel_iterator=itertools.count(1),
+          hlo_output_callback_id_iterator=itertools.count(1),
+          host_callbacks=[],
+          module=wrapped_module,
+          context=context,
           lowering_parameters=mlir.LoweringParameters(
               global_constant_computation=True,
-              for_export=True, hoist_constants_as_args=False,
+              for_export=True,
+              hoist_constants_as_args=False,
               export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value,
-          ))
+          ),
+      )
       ctx = mlir.LoweringRuleContext(
         module_context=module_context,
         name_stack=source_info_util.new_name_stack(), traceback=None,

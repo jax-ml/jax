@@ -119,6 +119,8 @@ package_group(
     name = "internal",
     packages = [
         "//...",
+        "@xla//xla/hlo/utils/...",
+        "@xla//xla/python/pjrt_ifrt/...",
     ] + jax_internal_packages,
 )
 
@@ -241,9 +243,13 @@ py_library_providing_imports_info(
         "//jax/_src:typing",
         "//jax/_src:util",
         "//jax/_src:xla_bridge",
+        "//jax/_src:xla_debug_log",
         "//jax/_src:xla_metadata",
         "//jax/_src:xla_metadata_lib",
         "//jax/_src/lib",
+        "//jax/experimental:jax_public",
+        "//third_party/py/absl/logging",
+        "//third_party/py/setuptools",
     ] + py_deps("numpy") + py_deps("opt_einsum") + py_deps("flatbuffers") + jax_extra_deps,
 )
 
