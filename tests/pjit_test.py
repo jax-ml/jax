@@ -12730,6 +12730,69 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = jax.jit(jax.vmap(g))(w, c, m)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(('x', 'y'), None, None)))
 
+  @jtu.with_explicit_mesh((2, 2), ('r', 's'))
+  def test_no_collectives_tuple_subaxis_order(self, mesh):
+    x = jax.device_put(np.arange(16.).reshape(4, 4), P('r', None))
+    x_rs = jax.device_put(np.arange(16.).reshape(4, 4), P(('r', 's'), None))
+    x_sr = jax.device_put(np.arange(16.).reshape(4, 4), P(('s', 'r'), None))
+
+    @jax.jit
+    def to_rs(a):
+      return reshard(a, P(('r', 's'), None))
+
+    @jax.jit
+    def to_r(a):
+      return reshard(a, P('r', None))
+
+    @jax.jit
+    def to_sr(a):
+      return reshard(a, P(('s', 'r'), None))
+
+    with jax.sharding.no_collectives({'r'}):
+      self.assertEqual(to_rs(x).sharding.spec, P(('r', 's'), None))
+      self.assertEqual(to_r(x_rs).sharding.spec, P('r', None))
+      with self.assertRaises(core.ForbiddenCollectiveError):
+        to_sr(x)
+      with self.assertRaises(core.ForbiddenCollectiveError):
+        to_r(x_sr)
+      with self.assertRaises(core.ForbiddenCollectiveError):
+        to_sr(x_rs)
+
+  @jtu.with_explicit_mesh((2, 2), ('r', 's'))
+  def test_no_collectives_convert_element_type_sharding(self, mesh):
+    x = jax.device_put(np.arange(16.).reshape(4, 4), P('r', None))
+
+    @jax.jit
+    def f_ok(a):
+      return lax_internal._convert_element_type(
+          a, np.dtype(np.int32), sharding=NamedSharding(mesh, P(('r', 's'), None)))
+
+    @jax.jit
+    def f_bad(a):
+      return lax_internal._convert_element_type(
+          a, np.dtype(np.int32), sharding=NamedSharding(mesh, P(None, 'r')))
+
+    with jax.sharding.no_collectives({'r'}):
+      self.assertEqual(f_ok(x).sharding.spec, P(('r', 's'), None))
+      with self.assertRaises(core.ForbiddenCollectiveError):
+        f_bad(x)
+
+  @jtu.with_explicit_mesh((2, 2), ('r', 's'))
+  def test_no_collectives_multi_output_reduce(self, mesh):
+    x = jax.device_put(np.arange(16.).reshape(4, 4), P('r', None))
+    y = jax.device_put(np.arange(16.).reshape(4, 4), P(None, 'r'))
+
+    def add_pair(a, b):
+      return a[0] + b[0], a[1] + b[1]
+
+    @jax.jit
+    def f(a, b):
+      return lax.reduce((a, b), (0., 0.), add_pair, (0,))
+
+    with jax.sharding.no_collectives({'r'}):
+      with self.assertRaises(core.ForbiddenCollectiveError):
+        f(x, y)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

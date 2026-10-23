@@ -5779,10 +5779,16 @@ def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
     return operand.sharding
   if sharding._is_concrete:
     if isinstance(sharding, NamedSharding):
-      return NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
+      out_s = NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
     else:
-      return core.get_cur_mesh_sharding()
-  return sharding
+      out_s = core.get_cur_mesh_sharding()
+  else:
+    out_s = sharding
+  if isinstance(out_s, NamedSharding):
+    lax_utils._check_no_collectives_dim_change(
+        'convert_element_type',
+        operand.sharding.spec.partitions, out_s.spec.partitions)
+  return out_s
 
 def _convert_element_type_ur_rule(operand, *, new_dtype, weak_type, sharding):
   if (sharding is not None and isinstance(sharding, NamedSharding) and
