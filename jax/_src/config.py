@@ -2472,6 +2472,17 @@ jax_pallas_auto_assign_collective_ids_limit = int_state(
     include_in_jit_key=True,
 )
 
+jax_pallas_tpu_lowering_cache_max_bytes = int_state(
+    name='jax_pallas_tpu_lowering_cache_max_bytes',
+    default=1 << 30,
+    help=(
+        'Maximum total size of the serialized Mosaic kernels that Pallas TPU '
+        'lowering keeps in a process wide cache, so that structurally '
+        'identical kernels are lowered to Mosaic only once. 0 disables the '
+        'cache.'
+    ),
+)
+
 mtls_cert_file = optional_string_state(
     name='jax_mtls_cert_file',
     default=None,

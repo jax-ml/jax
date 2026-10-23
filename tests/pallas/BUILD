@@ -489,8 +489,10 @@ jax_multiplatform_test(
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:layout",
         "//jax/experimental:mesh_utils",
+        "//jax/experimental:pallas_fuser",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
+        "//jax/experimental:xla_metadata",
         "//jax/extend",
     ] + py_deps([
         "absl/testing",
