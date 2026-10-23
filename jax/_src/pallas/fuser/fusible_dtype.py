@@ -635,7 +635,6 @@ def _unpack_dtype_pull_rule(
 
 @block_spec.register_eval_rule(unpack_dtype_p)
 def _unpack_dtype_eval_rule(ctx: block_spec.KernelEvalContext, *args):
-  assert ctx.avals_in is not None
   aval_in = ctx.avals_in[0]
   assert isinstance(aval_in, core.ShapedArray)
   assert isinstance(aval_in.dtype, FusionDType), aval_in.dtype
