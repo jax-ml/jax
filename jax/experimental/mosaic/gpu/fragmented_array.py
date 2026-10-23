@@ -2598,7 +2598,7 @@ class FragmentedArray:
           assert 0 <= part < 4
 
           # `cvt` with `.s2f6x2` instruction type introduced in PTX ISA v9.1
-          if utils.get_arch().major >= 10 and ptx_isa_version >= 91:
+          if utils.get_arch() >= utils.BLACKWELL and ptx_isa_version >= 91:
             int_reg = llvm.inline_asm(
                 i32,
                 [reg],
@@ -2983,7 +2983,7 @@ class FragmentedArray:
     supported_f8_f16: dict[ir.Type, tuple[ir.Type, ...]] = {
         f8e4m3fn: (f16,), f8e5m2: (f16,), f8e8m0fnu: (bf16,)
     }
-    if ptx_isa_version >= 92 and arch.major >= 10:
+    if ptx_isa_version >= 92 and arch >= utils.BLACKWELL:
       # Technically those downcasts are already supported in 91, but the casts
       # only become symmetric in 92 so that's what we use as the cutoff.
       supported_f8_f16[f8e4m3fn] += (bf16,)
@@ -2994,7 +2994,7 @@ class FragmentedArray:
     f16_ptx_names: dict[ir.Type, str] = {f16: "f16", bf16: "bf16"}
     f8_types = f8_ptx_names.keys()
     f16_types = f16_ptx_names.keys()
-    if f8e8m0fnu in {cur_dtype, new_dtype} and arch.major < 10:
+    if f8e8m0fnu in {cur_dtype, new_dtype} and arch < utils.BLACKWELL:
       raise ValueError(
           "f8e8m0fnu type only supported on Blackwell and newer GPUs"
       )
@@ -3022,7 +3022,7 @@ class FragmentedArray:
         allowed_rounding = (Rounding.TO_NEAREST_EVEN,)
         # .rz rounding for cvt.{e4m3x2,e5m2x2}.{f32,f16x2,bf16x2} was added in
         # PTX ISA 9.4 and is only supported on sm_107f.
-        if arch.major == 10 and arch.minor >= 7 and ptx_isa_version >= 94:
+        if arch == utils.RUBIN and ptx_isa_version >= 94:
           allowed_rounding += (Rounding.TO_ZERO,)
       check_supported_rounding(allowed_rounding)
       return rounding.ptx
@@ -3057,7 +3057,7 @@ class FragmentedArray:
       ptx_hint = ""
       if (
           ptx_isa_version < 92
-          and arch.major >= 10
+          and arch >= utils.BLACKWELL
           and f8e8m0fnu not in {cur_dtype, new_dtype}
       ):
         ptx_hint = (
@@ -3085,7 +3085,7 @@ class FragmentedArray:
           " which is expensive. Cast to f32 explicitly if you really want it."
       )
     # f4e2m1fn casts
-    if f4e2m1fn in {cur_dtype, new_dtype} and utils.get_arch().major < 10:
+    if f4e2m1fn in {cur_dtype, new_dtype} and utils.get_arch() < utils.BLACKWELL:
       raise ValueError(
           "f4e2m1fn casts only supported on Blackwell and newer GPUs"
       )
@@ -4441,7 +4441,7 @@ class FragmentedArray:
         utils.multimem_store(ptr, get(self.registers))
     else:
       try:
-        if utils.get_arch().major < 9:
+        if utils.get_arch() < utils.HOPPER:
           raise TxMatrixIneligible("TxMatrix not supported on pre-Hopper GPUs")
         stores = self.transfer_tiled(
             ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank, use_txmatrix=True,
@@ -4729,7 +4729,7 @@ class FragmentedArray:
       # formed by pair_tile_dim and major_lane_dim, while the other is formed by
       # minor_lane_dim and vector_dim.
       if is_col_txmatrix_mem_layout and utils.bitwidth(dtype) == 8:
-        if utils.get_arch().major < 10:
+        if utils.get_arch() < utils.BLACKWELL:
           raise TxMatrixIneligible(
               "Transposed 8-bit loads and stores are not supported on"
               " pre-Blackwell architectures"

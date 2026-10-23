@@ -119,7 +119,7 @@ def _mxf4_sparsity_version() -> int:
   """
   arch = utils.get_arch()
   assert arch.major in {10, 11}, arch
-  return int(arch.major == 10 and arch.minor >= 7)
+  return int(arch == utils.RUBIN)
 
 
 def sparse_group_elems(element_type: ir.Type) -> int:

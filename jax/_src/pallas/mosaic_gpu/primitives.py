@@ -1085,7 +1085,7 @@ def _copy_gmem_to_smem_lowering(
 
   # TMA is only available on Hopper and newer. On older architectures we fall
   # back to the cp.async implementation.
-  if is_cp_async := mgpu.utils.get_arch().major < 9:
+  if is_cp_async := mgpu.utils.get_arch() < mgpu.utils.HOPPER:
     if any(isinstance(t, gpu_core.Im2ColTransform) for t in src_transforms):
       raise ValueError(
           "im2col copies are only supported on Hopper and newer GPUs, which"
@@ -1476,7 +1476,7 @@ def _wait_gmem_to_smem_abstract_eval(*, n: int):
 @lowering.register_lowering_rule(
     wait_gmem_to_smem_p, *gpu_core.WGxWARP_SEMANTICS)
 def _wait_gmem_to_smem_lowering(ctx: lowering.LoweringRuleContext, *, n: int):
-  if mgpu.utils.get_arch().major >= 9:
+  if mgpu.utils.get_arch() >= mgpu.utils.HOPPER:
     raise ValueError(
         "wait_gmem_to_smem is only supported on pre-Hopper GPUs, which use"
         " cp.async for GMEM->SMEM copies."

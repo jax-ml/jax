@@ -890,7 +890,7 @@ def _launch(
       )
       # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
-      if utils.get_arch().major >= 9:
+      if utils.get_arch() >= utils.HOPPER:
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
             [],

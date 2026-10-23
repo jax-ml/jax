@@ -582,7 +582,7 @@ def _warp_bcast(val, lane_idx=0):
 
 
 def warp_idx(sync=True):
-  if get_arch().major < 9:  # Unlikely to have any benefit.
+  if get_arch() < HOPPER:  # Unlikely to have any benefit.
     sync = False
   i32 = ir.IntegerType.get_signless(32)
   warp_idx = arith.shrui(thread_idx(), c(5, i32))
@@ -592,8 +592,8 @@ def warp_idx(sync=True):
 
 
 def warpgroup_idx(sync=True):
-  major = get_arch().major
-  if major < 9 or major == 12:  # Unlikely to have any benefit.
+  arch = get_arch()
+  if arch < HOPPER or arch.major == 12:  # Unlikely to have any benefit.
     sync = False
   i32 = ir.IntegerType.get_signless(32)
   wg_idx = arith.shrui(thread_idx(), c(7, i32))
@@ -620,7 +620,7 @@ def single_thread_predicate(scope: ThreadSubset = ThreadSubset.BLOCK):
       example, if the scope is BLOCK, only one thread per block will be
       selected.
   """
-  if get_arch().major < 9:
+  if get_arch() < HOPPER:
     tidx = thread_idx()
     match scope:
       case ThreadSubset.WARP:
@@ -1313,7 +1313,7 @@ class BarrierRef:
       raise ValueError("Can only await on CTA-local barriers")
     i32 = ir.IntegerType.get_signless(32)
     parity = arith.extui(i32, parity)
-    if get_arch().major < 9:
+    if get_arch() < HOPPER:
       # TODO(apaszke): consider using a single lane + barrier for waiting
       i1 = ir.IntegerType.get_signless(1)
       while_op = scf.WhileOp([], [])
@@ -1361,7 +1361,7 @@ class BarrierRef:
     ptx_scope = self._ptx_scope
     if can_complete or ptx_scope != "cta":
       count_ptx = f", {arrival_count}"
-      if get_arch().major < 9:
+      if get_arch() < HOPPER:
         if arrival_count != 1:
           raise ValueError(
               "Only single-thread arrival is supported on pre-Hopper hardware"
@@ -1383,7 +1383,7 @@ class BarrierRef:
       predicate: ir.Value | None = None,
       tensor_core_order_scope: ThreadSubset | None = None,
   ):
-    if get_arch().major < 9:
+    if get_arch() < HOPPER:
       raise NotImplementedError("arrive_expect_tx is only supported on Hopper+ hardware")
 
     if tensor_core_order_scope is not None:
@@ -1405,7 +1405,7 @@ class BarrierRef:
   def complete_tx(
       self, tx_count: int | ir.Value, predicate: ir.Value | None = None
   ):
-    if get_arch().major < 9:
+    if get_arch() < HOPPER:
       raise NotImplementedError("complete_tx is only supported on Hopper+ hardware")
 
     i32 = ir.IntegerType.get_signless(32)
@@ -2629,10 +2629,15 @@ def elements_to_bytes(offset: ir.Value, element_bitwidth: int) -> ir.Value:
     return offset
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, order=True)
 class Arch:
   major: int
   minor: int
+
+
+HOPPER = Arch(9, 0)
+BLACKWELL = Arch(10, 0)
+RUBIN = Arch(10, 7)
 
 
 def _infer_arch() -> tuple[int, int]:
