@@ -61,6 +61,7 @@ common --legacy_external_runfiles=false
 # depending on the platform that is running the build.
 # #############################################################################
 common:linux --config=posix
+common:linux --repo_env=SYSROOT_DIST=linux_glibc_2_31
 common:linux --copt=-Wno-unknown-warning-option
 
 # Workaround for gcc 10+ warnings related to upb.
@@ -109,8 +110,8 @@ common:windows --host_copt=-DNOGDI
 # https://devblogs.microsoft.com/cppblog/announcing-full-support-for-a-c-c-conformant-preprocessor-in-msvc/
 # otherwise, there will be some compiling error due to preprocessing.
 common:windows --copt=/Zc:preprocessor
-common:windows --cxxopt=/std:c++17
-common:windows --host_cxxopt=/std:c++17
+common:windows --cxxopt=/std:c++20
+common:windows --host_cxxopt=/std:c++20
 # Generate PDB files, to generate useful PDBs, in opt compilation_mode
 # --copt /Z7 is needed.
 common:windows --linkopt=/DEBUG
@@ -151,8 +152,8 @@ common:nonccl --define=no_nccl_support=true
 
 common:posix --copt=-fvisibility=hidden
 common:posix --copt=-Wno-sign-compare
-common:posix --cxxopt=-std=c++17
-common:posix --host_cxxopt=-std=c++17
+common:posix --cxxopt=-std=c++20
+common:posix --host_cxxopt=-std=c++20
 
 common:avx_posix --copt=-march=haswell
 common:avx_posix --host_copt=-march=haswell
