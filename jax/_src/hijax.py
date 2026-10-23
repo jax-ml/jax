@@ -511,8 +511,31 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
 ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
 ad.linearize_on_zero_tangents.add(call_hi_primitive_p)
 
+
+def _linearized_effects(prim, residuals_tree, nz_in_flat):
+  offset = residuals_tree.num_leaves
+  in_idx_map = {}
+  j = offset
+  for i, nz in enumerate(nz_in_flat):
+    if nz:
+      in_idx_map[i] = j
+      j += 1
+  effs = set()
+  for eff in prim.effects:
+    if isinstance(eff, effects.JaxprInputEffect):
+      if eff.input in in_idx_map:
+        effs.add(eff.replace(input=in_idx_map[eff.input]))
+    else:
+      effs.add(eff)
+  return frozenset(effs)
+
+
 def fake_linear_op(prim, nz_in_flat, nz_out_flat, rs, sres, *tangents):
-  if not any(nz_out_flat):
+  has_tangent_effects = any(
+      not isinstance(eff, effects.JaxprInputEffect) or nz_in_flat[eff.input]
+      for eff in prim.effects
+  )
+  if not any(nz_out_flat) and not has_tangent_effects:
     return [ad_util.Zero(a.to_tangent_aval()) for a in prim.out_avals_flat]
   rs = rs if sres is None else (rs, sres)  # unpacked in the transpose rule
   residuals_flat, residuals_tree = tree_flatten(rs)
@@ -545,10 +568,23 @@ def flatten_user_linearized(prim, residuals, sres, *tangents_flat):
 call_hi_primitive_linearized_p = core.Primitive("call_hi_primitive_linearized")
 call_hi_primitive_linearized_p.multiple_results = True
 call_hi_primitive_linearized_p.is_high = lambda *args, _prim, **_: True
-@call_hi_primitive_linearized_p.def_abstract_eval
+call_hi_primitive_linearized_p.is_effectful = lambda params: bool(
+    _linearized_effects(
+        params["_prim"], params["residuals_tree"], params["nz_in_flat"]
+    )
+)
+
+
+@call_hi_primitive_linearized_p.def_effectful_abstract_eval
 def _call_hi_primitive_linearized_abstract_eval(
     *_args, _prim, residuals_tree, nz_in_flat, nz_out_flat, has_sres):
-  return [t.to_tangent_aval() for t, nz in zip(_prim.out_avals_flat, nz_out_flat) if nz]
+  out_avals = [
+      t.to_tangent_aval()
+      for t, nz in zip(_prim.out_avals_flat, nz_out_flat)
+      if nz
+  ]
+  effs = _linearized_effects(_prim, residuals_tree, nz_in_flat)
+  return out_avals, effs
 
 def _call_hi_primitive_linearized_transpose(
     cts_flat_, *args, _prim, residuals_tree, nz_in_flat, nz_out_flat, has_sres):

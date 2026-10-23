@@ -3968,6 +3968,58 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     self.assertAllClose(g_node.x, jnp.sum(ys, axis=0))
     self.assertAllClose(g_ys, jnp.broadcast_to(node.x, ys.shape))
 
+  def test_remat_ref_mutation_with_aux(self):
+    def f(x):
+      ref = jax.new_ref(jnp.zeros_like(x))
+
+      @jax.remat
+      def block(y):
+        ref[...] = jnp.sin(y)
+        return y + 2
+
+      z = block(x)
+      return jax.freeze(ref), z
+
+    (val, aux), grad = jax.value_and_grad(f, has_aux=True)(5.0)
+    self.assertAllClose(val, jnp.sin(5.0))
+    self.assertAllClose(aux, 7.0)
+    self.assertAllClose(grad, jnp.cos(5.0))
+
+    (val_jit, aux_jit), grad_jit = jax.jit(jax.value_and_grad(f, has_aux=True))(
+        5.0
+    )
+    self.assertAllClose(val_jit, jnp.sin(5.0))
+    self.assertAllClose(aux_jit, 7.0)
+    self.assertAllClose(grad_jit, jnp.cos(5.0))
+
+    (_, _), vjp_fn = jax.vjp(jax.jit(f), jnp.ones((4,)))
+    (x_bar,) = jax.jit(vjp_fn)((jnp.ones((4,)), jnp.zeros((4,))))
+    self.assertAllClose(x_bar, jnp.cos(jnp.ones((4,))))
+
+  def test_remat_ref_mutation_only(self):
+    def f(x):
+      ref = jax.new_ref(jnp.zeros_like(x))
+
+      @jax.remat
+      def block(y):
+        ref[...] = jnp.sin(y)
+        return None
+
+      _ = block(x)
+      return jax.freeze(ref)
+
+    val, grad = jax.value_and_grad(f)(5.0)
+    self.assertAllClose(val, jnp.sin(5.0))
+    self.assertAllClose(grad, jnp.cos(5.0))
+
+    val_jit, grad_jit = jax.jit(jax.value_and_grad(f))(5.0)
+    self.assertAllClose(val_jit, jnp.sin(5.0))
+    self.assertAllClose(grad_jit, jnp.cos(5.0))
+
+    _, vjp_fn = jax.vjp(jax.jit(f), jnp.ones((4,)))
+    (x_bar,) = jax.jit(vjp_fn)(jnp.ones((4,)))
+    self.assertAllClose(x_bar, jnp.cos(jnp.ones((4,))))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
