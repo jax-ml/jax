@@ -19,10 +19,10 @@ from setuptools import setup, find_packages
 
 project_name = 'jax'
 
-_current_jaxlib_version = '0.12.0'
+_current_jaxlib_version = '0.12.0.1'
 
 # The following should be updated after each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.12.0'
+_latest_jaxlib_version_on_pypi = '0.12.0.1'
 
 _libtpu_version = '0.0.50.*'
 
