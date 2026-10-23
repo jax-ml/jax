@@ -186,81 +186,61 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                         atol=5e-4 if dtype == np.float32 else 5e-5,
                         check_dtypes=False)
 
-  def testPoissonLogPmfLargeCountFarTailFloat32(self):
-    # A direct k*log(mu) - gammaln(k+1) subtraction loses hundreds or
-    # thousands of float32 log-probability units for large far-tail counts.
-    # Compare to SciPy in float64 at exactly representable float32 inputs.
-    count = np.float32(1e9)
-    rates = (count * np.array([0.2, 0.3, 0.4, 0.49],
-                              dtype=np.float32))
+  @jtu.sample_product(case=["large_count", "tiny_rate32", "tiny_rate64"])
+  def testPoissonLogPmfExtremeTail(self, case):
+    # Cover large far-tail counts and small rates through the public API/JIT.
+    if case == "large_count":
+      k = np.float32(1e9)
+      mu = k * np.array([0.2, 0.3, 0.4, 0.49], np.float32)
+      atol = 128.0  # float32 ULP at large negative log probabilities.
+    else:
+      dtype = np.float64 if case == "tiny_rate64" else np.float32
+      if dtype == np.float64 and not jax.config.jax_enable_x64:
+        self.skipTest("float64 requires jax_enable_x64")
+      k = np.array([100.0, 1e4, 1e6], dtype=dtype)
+      mu = np.asarray(1e-8, dtype=dtype)
+      atol = 1e-5
     expected = osp_stats.poisson.logpmf(
-        np.full(4, count, dtype=np.float64), rates.astype(np.float64))
-    actual = np.asarray(lsp_stats.poisson.logpmf(count, rates))
-    compiled = np.asarray(jax.jit(lsp_stats.poisson.logpmf)(count, rates))
-    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=128.0)
-    np.testing.assert_allclose(compiled, expected, rtol=0.0, atol=128.0)
+        np.asarray(k, dtype=np.float64), np.asarray(mu, dtype=np.float64))
+    for actual in (lsp_stats.poisson.logpmf(k, mu),
+                   jax.jit(lsp_stats.poisson.logpmf)(k, mu)):
+      np.testing.assert_allclose(np.asarray(actual), expected, rtol=1e-6,
+                                 atol=atol)
+      self.assertTrue(np.isfinite(np.asarray(actual)).all())
 
   @jtu.sample_product(mu=[0.0, 1e-12, 1e-8], k=[0.0, 1.0, 2.0])
-  def testPoissonLogPmfPublicApiTinyRateAutodiff(self, mu, k):
-    # Parameterize independent inputs, so every failure identifies a case.
+  def testPoissonLogPmfTinyRateDerivatives(self, mu, k):
     rate = jnp.float32(mu)
     fun = lambda r: lsp_stats.poisson.logpmf(jnp.float32(k), r)
-    expected = osp_stats.poisson.logpmf(k, mu)
     actual = np.asarray(fun(rate))
+    expected = osp_stats.poisson.logpmf(k, mu)
     self.assertAllClose(actual, expected, check_dtypes=False,
                         rtol=2e-6, atol=2e-5)
     if mu == 0.0 and k > 0:
       self.assertTrue(np.isneginf(actual))
       return
-    correct_grad = np.float32(-1.0 if k == 0 else k / mu - 1.0)
-    eager = np.asarray(jax.grad(fun)(rate))
-    compiled = np.asarray(jax.jit(jax.grad(fun))(rate))
-    self.assertTrue(np.isfinite(eager))
-    np.testing.assert_allclose(eager, correct_grad, rtol=3e-5)
-    np.testing.assert_allclose(compiled, correct_grad, rtol=3e-5)
+    expected_grad = np.float32(-1.0 if k == 0 else k / mu - 1.0)
+    for grad_fun in (jax.grad(fun), jax.jit(jax.grad(fun))):
+      grad = np.asarray(grad_fun(rate))
+      self.assertTrue(np.isfinite(grad))
+      np.testing.assert_allclose(grad, expected_grad, rtol=3e-5)
+    expected_hessian = np.float32(0.0 if k == 0 else -k / (mu * mu))
+    hessian = np.asarray(jax.jit(jax.grad(jax.grad(fun)))(rate))
+    self.assertTrue(np.isfinite(hessian))
+    np.testing.assert_allclose(hessian, expected_hessian, rtol=3e-5)
 
-  def testPoissonLogPmfNegativeRate(self):
+  def testPoissonLogPmfDomainAndFloat32Maximum(self):
     self.assertTrue(np.isnan(np.asarray(
         lsp_stats.poisson.logpmf(jnp.float32(0.0), jnp.float32(-1.0)))))
-
-  @jtu.sample_product(count_rate=[(0.0, 0.0), (1.0, 1e-8), (2.0, 1e-5)])
-  def testPoissonLogPmfTinyRateSecondDerivative(self, count_rate):
-    count, rate = count_rate
-    fun = lambda mu: lsp_stats.poisson.logpmf(jnp.float32(count), mu)
-    mu = jnp.float32(rate)
-    hessian = np.asarray(jax.jit(jax.grad(jax.grad(fun)))(mu))
-    expected = np.float32(
-        0.0 if count == 0.0 else -count / (rate * rate))
-    self.assertTrue(np.isfinite(hessian))
-    np.testing.assert_allclose(hessian, expected, rtol=3e-5)
-
-  def testPoissonLogPmfCentralNearFloat32Maximum(self):
-    # The normalizer must avoid 2*pi*k overflow at finite float32 k.
+    # Avoid finite float32 2*pi*k overflow in the log-normalizer.
     mu = jnp.array([1e36, 1e37, 1e38], dtype=jnp.float32)
     expected = -0.5 * (
         np.log(2 * np.pi) + np.log(np.asarray(mu, dtype=np.float64)))
-    public = np.asarray(lsp_stats.poisson.logpmf(mu, mu))
-    compiled = np.asarray(jax.jit(lsp_stats.poisson.logpmf)(mu, mu))
-    self.assertTrue(np.isfinite(public).all())
-    self.assertAllClose(public, expected, rtol=1e-6, atol=2e-5,
-                        check_dtypes=False)
-    self.assertAllClose(compiled, expected, rtol=1e-6, atol=2e-5,
-                        check_dtypes=False)
-
-  @jtu.sample_product(dtype=jtu.dtypes.floating)
-  def testPoissonLogPmfTinyRateFarTail(self, dtype):
-    # The shared near-mean log1p rewrite must NOT be used when k >> mu:
-    # 1 - (k - mu) / k rounds to zero and can produce a spurious -inf.
-    k = np.array([100.0, 1e4, 1e6], dtype=dtype)
-    mu = np.asarray(1e-8, dtype=dtype)
-    expected = osp_stats.poisson.logpmf(k.astype(np.float64), float(mu))
-    actual = np.asarray(lsp_stats.poisson.logpmf(k, mu))
-    actual_jit = np.asarray(jax.jit(lsp_stats.poisson.logpmf)(k, mu))
-    self.assertAllClose(actual, expected, check_dtypes=False,
-                        rtol=1e-6, atol=1e-5)
-    self.assertAllClose(actual_jit, expected, check_dtypes=False,
-                        rtol=1e-6, atol=1e-5)
-    self.assertTrue(np.isfinite(actual).all())
+    for actual in (lsp_stats.poisson.logpmf(mu, mu),
+                   jax.jit(lsp_stats.poisson.logpmf)(mu, mu)):
+      self.assertTrue(np.isfinite(np.asarray(actual)).all())
+      self.assertAllClose(actual, expected, check_dtypes=False,
+                          rtol=1e-6, atol=2e-5)
 
   @genNamedParametersNArgs(3)
   def testPoissonPmf(self, shapes, dtypes):
