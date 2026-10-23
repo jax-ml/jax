@@ -43,6 +43,7 @@ from jax._src import xla_bridge as xb
 from jax._src.api_util import (
   _check_no_aliased_closed_over_refs, check_no_aliased_ref_args,
   check_no_transformed_refs_args)
+from jax._src.cloud_tpu_init import is_libtpu_at_least
 from jax._src.core import (AbstractValue, Jaxpr, ShapedArray, typeof)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -3138,7 +3139,11 @@ def _cumred_chlo_lowering(ctx, x, *, axis, reverse, reducer, identity):
     x_arg, carry_arg = body_block.arguments
     res = reducer(x_arg, carry_arg)
     hlo.return_([res, res])
-  return scan_op.results[:1]
+  return [
+      mlir.lower_with_sharding_in_types(
+          ctx, scan_op.results[0], ctx.avals_out[0]
+      )
+  ]
 
 
 def _is_supported_cumred(inp, axis, reverse):
@@ -3163,6 +3168,50 @@ def _cumred_gpu_lowering(
     reverse,
 ):
   if not _is_supported_cumred(ctx.avals_in[0], axis, reverse):
+    fun = partial(cumred_reduce_window_impl, reduce_window_fn)
+    return mlir.lower_fun(fun, multiple_results=False)(
+        ctx, x, axis=axis, reverse=reverse
+    )
+  return _cumred_chlo_lowering(
+      ctx, x, axis=axis, reverse=reverse, reducer=reducer, identity=identity
+  )
+
+
+def _is_supported_cumred_tpu(inp, axis, reverse):
+  # Unlike the GPU path, reverse is supported: the TPU compiler handles
+  # is_reverse natively.
+  del reverse
+  return (
+      isinstance(inp, ShapedArray)
+      and core.is_constant_shape(inp.shape)
+      and inp.shape[axis] > 0
+      and inp.dtype != np.bool_
+      and not np.issubdtype(inp.dtype, np.complexfloating)
+  )
+
+
+def _cumred_tpu_lowering(
+    reduce_window_fn: Callable,
+    reducer: Callable,
+    identity: Callable,
+    ctx: mlir.LoweringRuleContext,
+    x: ir.Value,
+    *,
+    axis: int,
+    reverse: bool,
+) -> Sequence[ir.Value]:
+  # The chlo.ScanOp lowering needs libtpu 0.0.51 or newer, the first release
+  # with the scan emitter fixes it depends on. In forward compatibility mode
+  # or on an older cloud TPU, keep the reduce_window lowering.
+  # TODO(b/524250451): Remove the forward compatibility and cloud TPU version
+  # guards after 2026-11-21.
+  backend = ctx.module_context.get_backend(optional=True)
+  if (
+      not _is_supported_cumred_tpu(ctx.avals_in[0], axis, reverse)
+      or ctx.is_forward_compat()
+      or backend is None
+      or not is_libtpu_at_least('0.0.51')
+  ):
     fun = partial(cumred_reduce_window_impl, reduce_window_fn)
     return mlir.lower_fun(fun, multiple_results=False)(
         ctx, x, axis=axis, reverse=reverse
@@ -3303,3 +3352,37 @@ mlir.register_lowering(
     ),
     platform='gpu',
 )
+
+for prim, reducer, identity, reduce_window_fn in [
+    (
+        cumsum_p,
+        hlo.add,
+        lax._get_sum_identity,
+        windowed_reductions._reduce_window_sum,
+    ),
+    (
+        cumprod_p,
+        hlo.multiply,
+        lax._get_prod_identity,
+        windowed_reductions._reduce_window_prod,
+    ),
+    (
+        cummax_p,
+        hlo.maximum,
+        lax._get_max_identity,
+        windowed_reductions._reduce_window_max,
+    ),
+    (
+        cummin_p,
+        hlo.minimum,
+        lax._get_min_identity,
+        windowed_reductions._reduce_window_min,
+    ),
+]:
+  mlir.register_lowering(
+      prim,
+      partial(_cumred_tpu_lowering, reduce_window_fn, reducer, identity),
+      platform='tpu',
+      inline=False,
+  )
+del prim, reducer, identity, reduce_window_fn

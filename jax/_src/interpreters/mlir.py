@@ -711,7 +711,9 @@ class LoweringParameters:
   # A mapping between primitives and user-defined LoweringRules.
   # When lowering a primitive, give priority to the rule in this map over
   # existing Jax rules.
-  override_lowering_rules: tuple[tuple[core.Primitive, LoweringRule]] | None = None
+  override_lowering_rules: (
+      tuple[tuple[core.Primitive, LoweringRule], ...] | None
+  ) = None
 
   # Signals that the entire computation being lowered operates on global
   # constants. This will result in adding jax.global_constant attributes
@@ -1742,7 +1744,6 @@ def _get_res_shardings(result_shardings, out_avals, num_tokens):
     if all(s is None for s in result_shardings):
       return None
   return [*token_shardings, *result_shardings]
-
 
 
 def lower_jaxpr_to_fun(
