@@ -28,11 +28,12 @@ new pytree node type, that type in effect becomes transparent to the utility
 functions in this file.
 
 The primary purpose of this module is to enable the interoperability between
-user defined data structures and JAX transformations (e.g. `jit`). This is not
+user defined data structures and JAX transformations (e.g. ``jax.jit``). This is not
 meant to be a general purpose tree-like data structure handling library.
 
-See the `JAX pytrees note <pytrees.html>`_
-for examples.
+Refer to the Working with pytrees `[1]`_ tutorial for examples.
+
+.. _[1] https://jax.readthedocs.io/en/latest/working-with-pytrees.html
 """
 
 # Note: import <name> as <name> is required for names to be exported.
