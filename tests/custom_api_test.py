@@ -51,6 +51,24 @@ from jax._src.interpreters import partial_eval as pe
 config.parse_flags_with_absl()
 
 
+@tree_util.register_pytree_node_class
+class CheckingNode:
+  """A pytree node that, like TFP's LinearOperator, validates its leaves."""
+  def __init__(self, a, b):
+    for x in (a, b):
+      if not isinstance(x, jax.Array):
+        raise TypeError(f"Expected jax.Array, got {type(x).__name__}")
+      _ = x.shape, x.dtype
+    self.a, self.b = a, b
+
+  def tree_flatten(self):
+    return (self.a, self.b), None
+
+  @classmethod
+  def tree_unflatten(cls, _, children):
+    return cls(*children)
+
+
 @jtu.with_config(jax_custom_jvp3=False)
 class CustomJVPTest(jtu.JaxTestCase):
 
@@ -1650,6 +1668,82 @@ class CustomJVPTest(jtu.JaxTestCase):
     traced_out = jax.jit(lambda: 2).trace()()
     self.assertIs(type(traced_out), int)
     self.assertEqual(traced_out, 2)
+
+  def test_validating_custom_pytree_node(self):
+    c = jnp.float32(2.0)
+
+    @jax.custom_jvp
+    def f(node, y):
+      return CheckingNode(node.a * y + c, jnp.sin(node.b))
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      node, y = primals
+      node_dot, y_dot = tangents
+      out = f(node, y)
+      out_dot = CheckingNode(node_dot.a * y + node.a * y_dot,
+                             jnp.cos(node.b) * node_dot.b)
+      return out, out_dot
+
+    node = CheckingNode(jnp.float32(3.0), jnp.float32(1.0))
+    y = jnp.float32(4.0)
+    ys = jnp.arange(3, dtype=jnp.float32)
+
+    out = f(node, y)
+    self.assertAllClose(out.a, 14.0, check_dtypes=False)
+    self.assertAllClose(out.b, jnp.sin(1.0), check_dtypes=False)
+    out_jit = jax.jit(f)(node, y)
+    self.assertAllClose((out_jit.a, out_jit.b), (out.a, out.b))
+    out_vmap = jax.vmap(f, in_axes=(None, 0))(node, ys)
+    self.assertAllClose(out_vmap.a, 3.0 * ys + 2.0, check_dtypes=False)
+
+    # jvp wrt y only (node gets zero tangent)
+    _, t_out = jax.jvp(lambda y_: f(node, y_), (y,), (jnp.float32(1.0),))
+    self.assertAllClose((t_out.a, t_out.b), (3.0, 0.0), check_dtypes=False)
+
+    # grad wrt y of .a only (node gets zero tangent, .b gets zero cotangent)
+    loss_y = lambda n, y_: f(n, y_).a
+    self.assertAllClose(jax.grad(loss_y, argnums=1)(node, y), 3.0,
+                        check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(loss_y, argnums=1))(node, y), 3.0,
+                        check_dtypes=False)
+    g_node, g_y = jax.grad(loss_y, argnums=(0, 1))(node, y)
+    self.assertAllClose((g_node.a, g_node.b, g_y), (4.0, 0.0, 3.0),
+                        check_dtypes=False)
+    self.assertAllClose(
+        jax.vmap(jax.grad(loss_y, argnums=1), in_axes=(None, 0))(node, ys),
+        3.0 * jnp.ones(3), check_dtypes=False)
+    _, f_lin = jax.linearize(lambda y_: f(node, y_).a, y)
+    self.assertAllClose(f_lin(jnp.float32(1.0)), 3.0, check_dtypes=False)
+
+  def test_validating_custom_pytree_node_nondiff_symbolic_zeros(self):
+    @partial(jax.custom_jvp, nondiff_argnums=(0, 2))
+    def f(scale, node, unhashable, y):
+      return CheckingNode(scale * node.a * y, unhashable[0] * node.b)
+
+    @partial(f.defjvp, symbolic_zeros=True)
+    def f_jvp(scale, unhashable, primals, tangents):
+      node, y = primals
+      node_dot, y_dot = tangents
+      self.assertIsInstance(node_dot, CheckingNode)
+      out = f(scale, node, unhashable, y)
+      y_dot = 0. if type(y_dot) is custom_derivatives.SymbolicZero else y_dot
+      out_dot = CheckingNode(scale * (node_dot.a * y + node.a * y_dot),
+                             unhashable[0] * node_dot.b)
+      return out, out_dot
+
+    node = CheckingNode(jnp.float32(3.0), jnp.float32(1.0))
+    y = jnp.float32(4.0)
+    unhashable = [5.0]
+    loss = lambda n, y_: f(2.0, n, unhashable, y_).a + f(
+        2.0, n, unhashable, y_).b
+    g_node, g_y = jax.grad(loss, argnums=(0, 1))(node, y)
+    self.assertAllClose((g_node.a, g_node.b, g_y), (8.0, 5.0, 6.0),
+                        check_dtypes=False)
+    g_node = jax.grad(loss)(node, y)  # y gets a symbolic zero tangent
+    self.assertAllClose((g_node.a, g_node.b), (8.0, 5.0), check_dtypes=False)
+    g_node = jax.jit(jax.grad(loss))(node, y)
+    self.assertAllClose((g_node.a, g_node.b), (8.0, 5.0), check_dtypes=False)
 
 
 @jtu.with_config(jax_custom_vjp3=False)
@@ -4156,6 +4250,133 @@ class CustomVJP3Test(CustomVJPTest):
   # regress these, hope no one cares
   def test_python_control_flow(self): pass
   def test_dce(self): pass
+
+  def test_validating_custom_pytree_node(self):
+    c = jnp.float32(2.0)
+
+    @jax.custom_vjp
+    def f(node, y):
+      return CheckingNode(node.a * y + c, jnp.sin(node.b))
+
+    def f_fwd(node, y):
+      return f(node, y), (node, y)
+
+    def f_bwd(res, g):
+      node, y = res
+      return (CheckingNode(g.a * y, g.b * jnp.cos(node.b)), g.a * node.a)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    node = CheckingNode(jnp.float32(3.0), jnp.float32(1.0))
+    y = jnp.float32(4.0)
+    ys = jnp.arange(3, dtype=jnp.float32)
+
+    out = f(node, y)
+    self.assertAllClose(out.a, 14.0, check_dtypes=False)
+    self.assertAllClose(out.b, jnp.sin(1.0), check_dtypes=False)
+    out_jit = jax.jit(f)(node, y)
+    self.assertAllClose((out_jit.a, out_jit.b), (out.a, out.b))
+    out_vmap = jax.vmap(f, in_axes=(None, 0))(node, ys)
+    self.assertAllClose(out_vmap.a, 3.0 * ys + 2.0, check_dtypes=False)
+
+    # grad wrt y of .a only (node gets zero tangent, .b gets zero cotangent)
+    loss_y = lambda n, y_: f(n, y_).a
+    self.assertAllClose(jax.grad(loss_y, argnums=1)(node, y), 3.0,
+                        check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(loss_y, argnums=1))(node, y), 3.0,
+                        check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(jax.remat(loss_y), argnums=1)(node, y), 3.0,
+        check_dtypes=False)
+    g_node, g_y = jax.grad(loss_y, argnums=(0, 1))(node, y)
+    self.assertAllClose((g_node.a, g_node.b, g_y), (4.0, 0.0, 3.0),
+                        check_dtypes=False)
+
+    # vmap of grad and grad of vmap, which batch the rules
+    self.assertAllClose(
+        jax.vmap(jax.grad(loss_y, argnums=1), in_axes=(None, 0))(node, ys),
+        3.0 * jnp.ones(3), check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(lambda y_: jax.vmap(loss_y, in_axes=(None, 0))(node, y_).sum())(ys),
+        3.0 * jnp.ones(3), check_dtypes=False)
+
+    # bwd returning None for CheckingNode argument
+    @jax.custom_vjp
+    def h(node, y):
+      return node.a * y
+    h.defvjp(lambda n, y_: (h(n, y_), (n, y_)),
+             lambda res, g: (None, g * res[0].a))
+    self.assertAllClose(jax.grad(h, argnums=1)(node, y), 3.0,
+                        check_dtypes=False)
+
+  def test_validating_custom_pytree_node_nondiff(self):
+    @partial(jax.custom_vjp, nondiff_argnums=(0, 2))
+    def f(scale, node, unhashable, y):
+      return CheckingNode(scale * node.a * y, unhashable[0] * node.b)
+
+    def f_fwd(scale, node, unhashable, y):
+      return f(scale, node, unhashable, y), (node, y)
+
+    def f_bwd(scale, unhashable, res, g):
+      node, y = res
+      return CheckingNode(scale * g.a * y, unhashable[0] * g.b), scale * g.a * node.a
+
+    f.defvjp(f_fwd, f_bwd)
+
+    node = CheckingNode(jnp.float32(3.0), jnp.float32(1.0))
+    y = jnp.float32(4.0)
+    ys = jnp.arange(3, dtype=jnp.float32)
+    unhashable = [5.0]
+    loss = lambda n, y_: (lambda o: o.a + o.b)(f(2.0, n, unhashable, y_))
+    g_node, g_y = jax.grad(loss, argnums=(0, 1))(node, y)
+    self.assertAllClose((g_node.a, g_node.b, g_y), (8.0, 5.0, 6.0),
+                        check_dtypes=False)
+    g_node, g_y = jax.jit(jax.grad(loss, argnums=(0, 1)))(node, y)
+    self.assertAllClose((g_node.a, g_node.b, g_y), (8.0, 5.0, 6.0),
+                        check_dtypes=False)
+    g_ys = jax.vmap(jax.grad(loss, argnums=1), in_axes=(None, 0))(node, ys)
+    self.assertAllClose(g_ys, 6.0 * jnp.ones(3), check_dtypes=False)
+    g_ys = jax.grad(jax.remat(loss), argnums=1)(node, y)
+    self.assertAllClose(g_ys, 6.0, check_dtypes=False)
+
+  def test_bwd_rule_non_prefix_output_error(self):
+    @jax.custom_vjp
+    def f(x):
+      return x[0]
+    f.defvjp(lambda x: (f(x), None), lambda _, g: ((g, g, g),))
+    with self.assertRaisesRegex(ValueError, "isn't a prefix of the args"):
+      jax.grad(f)((1., 2.))
+
+  def test_validating_custom_pytree_node_defremat(self):
+    @jax.custom_vjp
+    def f(node, y):
+      return CheckingNode(node.a * y, jnp.sin(node.b))
+
+    def f_fwd(node, y):
+      return f(node, y), node
+
+    def f_rem(node, node_, y):
+      del node_
+      return f(node, y), CheckingNode(node.a, jnp.cos(node.b))
+
+    def f_bwd(res, g):
+      return (CheckingNode(g.a * 4.0, g.b * res.b), g.a * res.a)
+
+    f.defremat(f_fwd, f_rem, f_bwd)
+
+    node = CheckingNode(jnp.float32(3.0), jnp.float32(1.0))
+    y = jnp.float32(4.0)
+    loss = lambda n, y_: (lambda o: o.a + o.b)(f(n, y_))
+    expected = (4.0, jnp.cos(1.0), 3.0)
+    for g in [jax.grad(loss, argnums=(0, 1)),
+              jax.grad(jax.remat(loss), argnums=(0, 1)),
+              jax.jit(jax.grad(jax.remat(loss), argnums=(0, 1)))]:
+      g_node, g_y = g(node, y)
+      self.assertAllClose((g_node.a, g_node.b, g_y), expected,
+                          check_dtypes=False)
+    ys = jnp.arange(3, dtype=jnp.float32)
+    g_ys = jax.vmap(jax.grad(jax.remat(loss), argnums=1), in_axes=(None, 0))(node, ys)
+    self.assertAllClose(g_ys, 3.0 * jnp.ones(3), check_dtypes=False)
 
   def test_pretty_print(self):
     @jax.custom_vjp

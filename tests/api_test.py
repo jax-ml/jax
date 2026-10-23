@@ -4457,7 +4457,7 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(fun([jnp.float32(10.)], jnp.float32(3.)),
                         jnp.float32(90.))
     consts2, traced2 = traced.with_consts_as_arg()
-    self.assertAllClose(traced2(consts2, jnp.float32(3.)), jnp.float32(18.))
+    self.assertAllClose(traced2(consts2, jnp.float32(3.)), [jnp.float32(18.)])
 
   def test_traced_with_consts_as_arg_cache_hit(self):
     f = lambda y: y ** 2 * jnp.float32(2.)
