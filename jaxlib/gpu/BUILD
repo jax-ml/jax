@@ -148,7 +148,7 @@ cc_test(
     name = "triton_kernel_aot_test",
     srcs = ["triton_kernel_aot_test.cc"],
     data = ["triton_add_kernel.hlo"],
-    tags = ["requires-gpu-nvidia"],
+    tags = ["requires-gpu-sm90"],
     deps = [
         "//jaxlib/cuda:cuda_vendor",
         "//jaxlib/cuda:triton_kernels",
