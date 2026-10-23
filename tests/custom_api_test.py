@@ -1651,6 +1651,64 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertIs(type(traced_out), int)
     self.assertEqual(traced_out, 2)
 
+  def test_validating_custom_pytree_node(self):
+    @jax.tree_util.register_pytree_node_class
+    class CheckingNode:
+      def __init__(self, a, b):
+        for x in (a, b):
+          if not isinstance(x, jax.Array):
+            raise TypeError(f"Expected jax.Array, got {type(x).__name__}")
+          _ = x.shape, x.dtype
+        self.a, self.b = a, b
+
+      def tree_flatten(self):
+        return (self.a, self.b), None
+
+      @classmethod
+      def tree_unflatten(cls, _, children):
+        return cls(*children)
+
+    c = jnp.float32(2.0)
+
+    @jax.custom_jvp
+    def f(node, y):
+      return CheckingNode(node.a * y + c, jnp.sin(node.b))
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      node, y = primals
+      node_dot, y_dot = tangents
+      out = f(node, y)
+      out_dot = CheckingNode(node_dot.a * y + node.a * y_dot,
+                             jnp.cos(node.b) * node_dot.b)
+      return out, out_dot
+
+    node = CheckingNode(jnp.float32(3.0), jnp.float32(1.0))
+    y = jnp.float32(4.0)
+    ys = jnp.arange(3, dtype=jnp.float32)
+
+    out = f(node, y)
+    self.assertAllClose(out.a, 14.0, check_dtypes=False)
+    self.assertAllClose(out.b, jnp.sin(1.0), check_dtypes=False)
+    out_jit = jax.jit(f)(node, y)
+    self.assertAllClose((out_jit.a, out_jit.b), (out.a, out.b))
+    out_vmap = jax.vmap(f, in_axes=(None, 0))(node, ys)
+    self.assertAllClose(out_vmap.a, 3.0 * ys + 2.0, check_dtypes=False)
+
+    # jvp wrt y only (node gets zero tangent)
+    _, t_out = jax.jvp(lambda y_: f(node, y_), (y,), (jnp.float32(1.0),))
+    self.assertAllClose((t_out.a, t_out.b), (3.0, 0.0), check_dtypes=False)
+
+    # grad wrt y of .a only (node gets zero tangent, .b gets zero cotangent)
+    loss_y = lambda n, y_: f(n, y_).a
+    self.assertAllClose(jax.grad(loss_y, argnums=1)(node, y), 3.0,
+                        check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(loss_y, argnums=1))(node, y), 3.0,
+                        check_dtypes=False)
+    g_node, g_y = jax.grad(loss_y, argnums=(0, 1))(node, y)
+    self.assertAllClose((g_node.a, g_node.b, g_y), (4.0, 0.0, 3.0),
+                        check_dtypes=False)
+
 
 @jtu.with_config(jax_custom_vjp3=False)
 class CustomVJPTest(jtu.JaxTestCase):
@@ -4156,6 +4214,72 @@ class CustomVJP3Test(CustomVJPTest):
   # regress these, hope no one cares
   def test_python_control_flow(self): pass
   def test_dce(self): pass
+
+  def test_validating_custom_pytree_node(self):
+    @jax.tree_util.register_pytree_node_class
+    class CheckingNode:
+      def __init__(self, a, b):
+        for x in (a, b):
+          if not isinstance(x, jax.Array):
+            raise TypeError(f"Expected jax.Array, got {type(x).__name__}")
+          _ = x.shape, x.dtype
+        self.a, self.b = a, b
+
+      def tree_flatten(self):
+        return (self.a, self.b), None
+
+      @classmethod
+      def tree_unflatten(cls, _, children):
+        return cls(*children)
+
+    c = jnp.float32(2.0)
+
+    @jax.custom_vjp
+    def f(node, y):
+      return CheckingNode(node.a * y + c, jnp.sin(node.b))
+
+    def f_fwd(node, y):
+      return f(node, y), (node, y)
+
+    def f_bwd(res, g):
+      node, y = res
+      return (CheckingNode(g.a * y, g.b * jnp.cos(node.b)), g.a * node.a)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    node = CheckingNode(jnp.float32(3.0), jnp.float32(1.0))
+    y = jnp.float32(4.0)
+    ys = jnp.arange(3, dtype=jnp.float32)
+
+    out = f(node, y)
+    self.assertAllClose(out.a, 14.0, check_dtypes=False)
+    self.assertAllClose(out.b, jnp.sin(1.0), check_dtypes=False)
+    out_jit = jax.jit(f)(node, y)
+    self.assertAllClose((out_jit.a, out_jit.b), (out.a, out.b))
+    out_vmap = jax.vmap(f, in_axes=(None, 0))(node, ys)
+    self.assertAllClose(out_vmap.a, 3.0 * ys + 2.0, check_dtypes=False)
+
+    # grad wrt y of .a only (node gets zero tangent, .b gets zero cotangent)
+    loss_y = lambda n, y_: f(n, y_).a
+    self.assertAllClose(jax.grad(loss_y, argnums=1)(node, y), 3.0,
+                        check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(loss_y, argnums=1))(node, y), 3.0,
+                        check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(jax.remat(loss_y), argnums=1)(node, y), 3.0,
+        check_dtypes=False)
+    g_node, g_y = jax.grad(loss_y, argnums=(0, 1))(node, y)
+    self.assertAllClose((g_node.a, g_node.b, g_y), (4.0, 0.0, 3.0),
+                        check_dtypes=False)
+
+    # bwd returning None for CheckingNode argument
+    @jax.custom_vjp
+    def h(node, y):
+      return node.a * y
+    h.defvjp(lambda n, y_: (h(n, y_), (n, y_)),
+             lambda res, g: (None, g * res[0].a))
+    self.assertAllClose(jax.grad(h, argnums=1)(node, y), 3.0,
+                        check_dtypes=False)
 
   def test_pretty_print(self):
     @jax.custom_vjp
