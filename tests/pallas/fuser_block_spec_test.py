@@ -1262,6 +1262,35 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         kernel_fn((row, 1), (), *x_blocks), x_blocks[idx]
     )
 
+  def test_concatenate_element_indexed_other_dimension(self):
+    x = jnp.arange(256 * 256, dtype=jnp.float32).reshape(256, 256)
+    y = -x
+    concat = lambda x, y: jnp.concatenate([x, y], axis=1)
+    # The rows' element offset passes through; the concatenate resolves the
+    # columns to a child.
+    kernel_fn, (x_spec, y_spec), _ = block_spec_lib.pull_block_spec(
+        concat,
+        pl.BlockSpec((pl.Element(64), 128), lambda r, j: (r, j)),
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(x, y)
+    self.assertEqual(x_spec.block_shape, (pl.Element(64), 128))
+    self.assertEqual(y_spec.block_shape, (pl.Element(64), 128))
+    self.assertEqual(y_spec.index_map(96, 3), (96, 1))
+    x_block, y_block = x[96:160, 128:], y[96:160, 128:]
+    np.testing.assert_array_equal(
+        kernel_fn((96, 3), (), x_block, y_block), y_block
+    )
+    with self.assertRaisesRegex(
+        NotImplementedError, 'along the concatenated dimension'
+    ):
+      block_spec_lib.pull_block_spec(
+          concat,
+          pl.BlockSpec((64, pl.Element(128)), lambda i, c: (i, c)),
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(x, y)
+
   @parameterized.product(
       op=['concat', 'stack', 'unstack', 'split', 'reduce_sum'],
       squeezed=[None, pl.Squeezed()],
@@ -1941,6 +1970,30 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     _, y = pl.run_state(outer)((value, y))
     np.testing.assert_array_equal(y, value[3, :256, 512:1024])
 
+  def test_get_with_element_block_spec(self):
+    value = jnp.arange((512 * 1024), dtype=jnp.int32).reshape((512, 1024)) * 2
+
+    def outer(refs):
+      ref, y_ref = refs
+
+      def f():
+        return ref[8:, :]
+
+      # The row block index is an element offset into the sliced rows, so the
+      # unaligned slice start is fine.
+      block_spec = pl.BlockSpec((pl.Element(256), 512), lambda i, j, k: (i, k))
+      kernel_fn, (), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=3,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )()
+      y_ref[...] = kernel_fn((100, 0, 1), ())
+
+    y = jnp.zeros((256, 512), jnp.int32)
+    _, y = pl.run_state(outer)((value, y))
+    np.testing.assert_array_equal(y, value[108:364, 512:1024])
+
   def test_get_with_squeezed_indexer(self):
     value = (
         jnp.arange((4 * 512 * 1024), dtype=jnp.int32).reshape((4, 512, 1024))
@@ -2318,6 +2371,24 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         kernel_fn((0, 0, 0), scalar_prefetch_values, (x_block,)),
         jnp.tile(x_block, block_reps),
     )
+
+  def test_tile_untiled_dim_keeps_block_index(self):
+    x = jax.random.normal(jax.random.key(0), (512, 128), dtype=np.float32)
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        lambda: jnp.tile(x, (1, 4))
+    )
+    _, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        pl.BlockSpec((128, 256), lambda i, j: (i, j)),
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values)
+    [x_block_spec] = value_block_specs
+    jaxpr = jax.make_jaxpr(
+        lambda i, j: x_block_spec.index_map(i, j, *scalar_prefetch_values)
+    )(jnp.int32(0), jnp.int32(0)).jaxpr
+    # The untiled rows keep the block index itself, with no modulo.
+    self.assertIs(jaxpr.outvars[0], jaxpr.invars[0])
 
   @parameterized.parameters((pl.Squeezed(), 128), (None, pl.Blocked(128)))
   def test_tile_with_squeezed(self, squeezed, blocked):

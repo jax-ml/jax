@@ -1792,7 +1792,10 @@ def _get_pull_rule(
   block_shape = []
   if not all(
       bd is None
-      or isinstance(bd, (int, pallas_core.Blocked, pallas_core.Squeezed))
+      or isinstance(
+          bd,
+          (int, pallas_core.Blocked, pallas_core.Squeezed, pallas_core.Element),
+      )
       for bd in block_transform.block_shape
   ):
     raise NotImplementedError('get not supported yet')
@@ -1812,8 +1815,10 @@ def _get_pull_rule(
     bd = next(block_shape_iter)
     if not _is_squeezed(bd) and isinstance(idx_aval.start, int):
       block_size = pallas_core.get_block_size(bd)
+      # An Element block index is an element offset, so any start works.
       _maybe_static_check(
-          idx_aval.start % block_size == 0,
+          isinstance(bd, pallas_core.Element)
+          or idx_aval.start % block_size == 0,
           'slice_start={slice_start} is not a multiple of'
           ' block_size={block_size}',
           slice_start=idx_aval.start,
@@ -1872,6 +1877,8 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
         return indexing.ds(start + i * b, b)
       case pallas_core.Blocked(bs):
         return indexing.ds(start + i * bs, bs)
+      case pallas_core.Element(bs, padding=(0, 0)):
+        return indexing.ds(start + i, bs)
       case pallas_core.Squeezed() | None:
         return start + i
       case _:
@@ -1903,7 +1910,7 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
     if not _is_squeezed(bd):
       block_size = pallas_core.get_block_size(bd)
       _maybe_static_check(
-          idx.start % block_size == 0,
+          isinstance(bd, pallas_core.Element) or idx.start % block_size == 0,
           'slice_start={slice_start} is not a multiple of'
           ' block_size={block_size}',
           slice_start=idx.start,
@@ -1929,10 +1936,11 @@ def _concatenate_eval_rule(ctx: KernelEvalContext, *args, dimension):
   # divides the block size.
   block_spec = ctx.out_block_specs[0]
   block_shape = block_spec.block_shape
-  is_element_block = [isinstance(bd, pallas_core.Element) for bd in block_shape]
-  if any(is_element_block):
+  # Element block indices of the other dimensions pass through to the children.
+  if isinstance(block_shape[dimension], pallas_core.Element):
     raise NotImplementedError(
-        'Concatenation with Element indexing is not yet supported.'
+        'Concatenation with Element indexing along the concatenated dimension'
+        ' is not yet supported.'
     )
   block_dim = pallas_core.get_block_size(block_shape[dimension])
 
@@ -1995,10 +2003,11 @@ def _concatenate_rule(
     dimension: int,
 ):
   block_shape = block_transform.block_shape
-  is_element_block = [isinstance(bd, pallas_core.Element) for bd in block_shape]
-  if any(is_element_block):
+  # Element block indices of the other dimensions pass through to the children.
+  if isinstance(block_shape[dimension], pallas_core.Element):
     raise NotImplementedError(
-        'Concatenation with Element indexing is not yet supported.'
+        'Concatenation with Element indexing along the concatenated dimension'
+        ' is not yet supported.'
     )
   num_blocks = []
   block_dim = pallas_core.get_block_size(block_shape[dimension])
@@ -2337,7 +2346,6 @@ def _tile_pull_rule(
     *,
     reps: tuple[int, ...],
 ):
-  del reps
   block_shape = block_transform.block_shape
   aval_in = ctx.avals_in[0]
   assert len(block_shape) == len(aval_in.shape)
@@ -2369,9 +2377,13 @@ def _tile_pull_rule(
     original_idxs = block_transform.block_index_transform(*idxs)
     return tuple(
         0 if pallas_core.get_block_size(block_dim) >= in_dim
+        # An untiled dimension has the input's size, so its block index already
+        # indexes the input.
+        else orig_idx
+        if rep == 1
         else orig_idx % (in_dim // pallas_core.get_block_size(block_dim))
-        for orig_idx, block_dim, in_dim in zip(
-            original_idxs, block_shape, aval_in.shape
+        for orig_idx, block_dim, in_dim, rep in zip(
+            original_idxs, block_shape, aval_in.shape, reps, strict=True
         )
     )
 
