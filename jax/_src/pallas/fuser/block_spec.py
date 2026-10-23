@@ -644,9 +644,10 @@ def _pull_block_transform(
   for i, eqn in reversed(list(enumerate(jaxpr.eqns))):
     eqn_out_block_transforms = tuple(util.safe_map(_read_block_spec, eqn.outvars))
     if all(bs is None for bs in eqn_out_block_transforms):
-      continue
-    rule = pull_block_spec_rules.get(eqn.primitive, None)
-    if not rule:
+      if not any(Usage.REGULAR in read_usage_env(v) for v in eqn.outvars):
+        continue
+      rule = _unblocked_pull_rule
+    elif not (rule := pull_block_spec_rules.get(eqn.primitive, None)):
       raise NotImplementedError(eqn.primitive, eqn_out_block_transforms)
     ctx = PullRuleContext(
         prim=eqn.primitive,
@@ -833,10 +834,12 @@ def make_kernel_function(
       ]
       if any(Usage.REGULAR in usage for usage in outvar_usages):
         in_vals = util.safe_map(read_env, eqn.invars)
-        # TODO(sharadmv,justinfu): preserve source mapping
-        if not (eval_rule := eval_rules.get(eqn.primitive, None)):
-          raise NotImplementedError(eqn.primitive)
         out_block_specs = tuple(util.safe_map(_read_block_spec, eqn.outvars))
+        # TODO(sharadmv,justinfu): preserve source mapping
+        if all(bs is pallas_core.no_block_spec for bs in out_block_specs):
+          eval_rule = _unblocked_eval_rule
+        elif not (eval_rule := eval_rules.get(eqn.primitive, None)):
+          raise NotImplementedError(eqn.primitive)
         in_block_specs = tuple(util.safe_map(_read_block_spec, eqn.invars))
         out_usages = tuple(read_usage_env(v) for v in eqn.outvars)
         # We need to substitute in scalar prefetch values into equation invars.
@@ -1212,15 +1215,13 @@ def _binop_pull_rule(ctx: PullRuleContext, block_transform, **params):
   return [l_block_transform, r_block_transform]
 
 
-def register_default_eval_rule(prim: core.Primitive):
-  def default_rule(ctx: KernelEvalContext, *args, **params):
-    assert all(bs is pallas_core.no_block_spec for bs in ctx.out_block_specs)
-    return ctx.prim.bind(*args, **params)
-
-  register_eval_rule(prim)(default_rule)
+def _unblocked_pull_rule(ctx: PullRuleContext, *_, **__):
+  # `_unblocked_eval_rule` computes unblocked outputs from full operands.
+  return [None] * len(ctx.avals_in)
 
 
-register_default_eval_rule(lax.axis_index_p)
+def _unblocked_eval_rule(ctx: KernelEvalContext, *args, **params):
+  return ctx.prim.bind(*args, **ctx.prim.get_bind_params(params))
 
 
 @register_eval_rule(lax.select_n_p)

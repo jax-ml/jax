@@ -792,6 +792,47 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Fusion contains a DAG"):
       block_spec_lib.pull_block_spec(f2, block_spec, grid_len=3)(new_values)
 
+  def test_input_needed_both_blocked_and_unblocked_raises(self):
+    i = jnp.array(1, dtype=jnp.int32)
+
+    def f(x):
+      # The subtraction reads a block of `x`, but `x[i, 5]` reads all of it.
+      return x - x[i, 5]
+
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    with self.assertRaisesRegex(ValueError, "Fusion contains a DAG"):
+      block_spec_lib.pull_block_spec(f2, block_spec, grid_len=2)(
+          new_values, in_type
+      )
+
+  def test_unblocked_operand_is_evaluated_unblocked(self):
+    i = jnp.array(1, dtype=jnp.int32)
+
+    def f(x, y):
+      return x - y[i, 5]
+
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        f, in_type, in_type
+    )
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    kernel_fn, (_, x_block_spec, y_block_spec), _ = (
+        block_spec_lib.pull_block_spec(f2, block_spec, grid_len=2)(
+            new_values, in_type, in_type
+        )
+    )
+    self.assertEqual(x_block_spec.index_map(0, 1), (0, 1))
+    self.assertIs(y_block_spec, pl.no_block_spec)
+
+    x, y = jax.random.normal(jax.random.key(0), (2, 512, 512), jnp.float32)
+    x_block = x[:128, 128:256]
+    np.testing.assert_array_equal(
+        kernel_fn((0, 1), scalar_prefetch_values, new_values, x_block, y),
+        x_block - y[1, 5],
+    )
+
   def test_dynamic_slice_derived_scalar_prefetch(self):
     x = jax.random.normal(jax.random.key(0), (3, 4, 512, 512), dtype=np.float32)
     i = jnp.array(1, dtype=jnp.int32)
