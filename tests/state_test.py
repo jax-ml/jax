@@ -2142,6 +2142,23 @@ class PinnedBuffersTest(jtu.JaxTestCase):
       y = f(x)
       self.assertAllClose(y, x)
 
+  @parameterized.parameters(("vmem", "1"), ("hbm", "0"))
+  def test_pin_memory_space_colors(self, to, expected_color):
+    @jax.jit
+    def f(x):
+      return unpin(pin(x, to=to))
+
+    x = jnp.arange(3.0)
+    txt = f.lower(x).as_text("hlo")
+    self.assertRegex(
+        txt,
+        rf"input_memory_space_colors.*operand_index.*0.*color.*{expected_color}",
+    )
+    self.assertRegex(
+        txt,
+        rf"output_memory_space_colors.*color.*{expected_color}",
+    )
+
   def test_new_ref_pinned(self):
     @jax.jit
     def f(x):

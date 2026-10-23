@@ -249,11 +249,6 @@ class PinnedBufferTest(jtu.JaxTestCase):
       f(x)
 
   def test_basic_vmem(self):
-    self.skipTest(
-        "TODO(b/507446729): test_basic_vmem has regressed and "
-        "does not test the intended behavior."
-    )
-
     @jax.jit
     def f(x):
       x_pinned = pin(x, to='vmem')
@@ -266,14 +261,17 @@ class PinnedBufferTest(jtu.JaxTestCase):
       return unpin(x_pinned)
 
     x = jnp.arange(3.)
+    self.assertAllClose(
+        jax.jit(lambda x: unpin(pin(x, to="vmem")))(x), x, check_dtypes=False
+    )
     y = f(x)
     self.assertAllClose(y, x, check_dtypes=False)
 
-    hlo = f.lower(x).compile().as_text()
-    self.assertRegex(
-        hlo,
-        r'output_memory_space_colors.*color.*1'
-    )
+    lowered_hlo = f.lower(x).as_text("hlo")
+    self.assertRegex(lowered_hlo, r"input_memory_space_colors.*color.*1")
+    self.assertRegex(lowered_hlo, r"output_memory_space_colors.*color.*1")
+    compiled_hlo = f.lower(x).compile().as_text()
+    self.assertRegex(compiled_hlo, r'S\(1\)\}.*custom_call_target="Pin"')
 
 
 class CoreMapTest(jtu.JaxTestCase):

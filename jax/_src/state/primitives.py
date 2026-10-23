@@ -1274,12 +1274,12 @@ def _lower_pin(ctx, x_op, *, to):
   if color is not None:
     backend_config = json.dumps({
         "custom_call_config": {
+            "input_memory_space_colors": [
+                {"operand_index": "0", "shape_index": [], "color": str(color)}
+            ],
             "output_memory_space_colors": [
-                {
-                    "shape_index": [],
-                    "color": str(color)
-                }
-            ]
+                {"shape_index": [], "color": str(color)}
+            ],
         }
     })
     config: dict[str, Any] = dict(backend_config=backend_config)
