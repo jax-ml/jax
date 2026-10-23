@@ -472,24 +472,27 @@ def mma(
             f" {scale_block}"
         )
     elif isinstance(a_element_type, ir.Float4E2M1FNType):
-      if isinstance(scale_element_type, ir.Float8E4M3FNType):
-        if base_scale_block != 16:
-          expected = 32 if is_sparse else 16
-          raise ValueError(
-              f"Scale block size mismatch: expected {expected}, got"
-              f" {scale_block}"
-          )
-      elif isinstance(scale_element_type, ir.Float8E8M0FNUType):
-        if base_scale_block not in (16, 32):
-          expected = "32 or 64" if is_sparse else "16 or 32"
-          raise ValueError(
-              f"Scale block size mismatch: expected {expected}, got"
-              f" {scale_block}"
-          )
-      else:
+      if not isinstance(
+          scale_element_type, (ir.Float8E8M0FNUType, ir.Float8E4M3FNType)
+      ):
         raise ValueError(
             "Scale element type mismatch: expected f8e8m0fnu or f8e4m3fn, got"
             f" {scale_element_type}"
+        )
+      arch = utils.get_arch()
+      if isinstance(scale_element_type, ir.Float8E4M3FNType) and not (
+          arch.major == 10 and arch.minor >= 7
+      ):
+        allowed_base_blocks = (16,)
+      else:
+        allowed_base_blocks = (16, 32)
+      if base_scale_block not in allowed_base_blocks:
+        expected = " or ".join(
+            str(b * (2 if is_sparse else 1)) for b in allowed_base_blocks
+        )
+        raise ValueError(
+            f"Scale block size mismatch: expected {expected}, got"
+            f" {scale_block}"
         )
     else:
       raise NotImplementedError(
@@ -740,8 +743,10 @@ def _do_mma(
       )
       base_scale_block = scale_block // (2 if is_sparse else 1)
       assert base_scale_block in (16, 32)
+      assert isinstance(
+          scale_element_type, (ir.Float8E8M0FNUType, ir.Float8E4M3FNType)
+      )
       if base_scale_block == 32:
-        assert isinstance(scale_element_type, ir.Float8E8M0FNUType)
         kind = "mxf4nvf4.block_scale.scale_vec::2X"
         scale_steps = 2
       else:

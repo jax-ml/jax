@@ -2469,10 +2469,11 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     # When swizzle is small, we need to take many steps to make it large enough
     # to make the scale count a multiple of 4.
     k_steps = 4 if swizzle == 32 else 2
-    if block_size == 16 and in_jax_dtype != jnp.float4_e2m1fn:
-      self.skipTest("Only float4_e2m1fn input is supported for block size 16.")
-    if scale_jax_dtype == jnp.float8_e4m3fn and block_size != 16:
-      self.skipTest("e4m3fn scale only supports block size 16.")
+    if in_jax_dtype != jnp.float4_e2m1fn:
+      if block_size == 16:
+        self.skipTest("Only float4_e2m1fn input is supported for block size 16.")
+      if scale_jax_dtype != jnp.float8_e8m0fnu:
+        self.skipTest("Only float8_e8m0fnu scale is supported for float8 inputs.")
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
 
@@ -2567,6 +2568,16 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       )
     a_gpu_scales, b_gpu_scales = map(format_scales, (a_scales, b_scales))
     args = (x, y, a_gpu_scales, b_gpu_scales)
+    if (
+        scale_jax_dtype == jnp.float8_e4m3fn
+        and block_size == 32
+        and not jtu.is_cuda_compute_capability_equal("10.7")
+    ):
+      with self.assertRaisesRegex(ValueError, "Scale block size mismatch"):
+        mgpu.as_gpu_kernel(
+            kernel, (1, 1, 1), (128, 1, 1), args, out_shape, scratch_shape
+        )
+      return
     z = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), args, out_shape, scratch_shape
     )(*args)
@@ -2758,8 +2769,12 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   def test_mma_block_scaled_collective(
       self, m, n, scale_jax_dtype, block_size, lhs_in_tmem
   ):
-    if scale_jax_dtype == jnp.float8_e4m3fn and block_size != 16:
-      self.skipTest("e4m3fn scale only supports block size 16.")
+    if (
+        scale_jax_dtype == jnp.float8_e4m3fn
+        and block_size != 16
+        and not jtu.is_cuda_compute_capability_equal("10.7")
+    ):
+      self.skipTest("e4m3fn scale with block size != 16 requires sm107a.")
     in_jax_dtype = jnp.float4_e2m1fn
     out_jax_dtype = jnp.float32
     scale_block = block_size
@@ -3429,8 +3444,12 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   def test_mma_block_scaled_sparse_f4(
       self, m, n, in_jax_dtype, scale_jax_dtype, base_block_size, swizzle
   ):
-    if scale_jax_dtype == jnp.float8_e4m3fn and base_block_size != 16:
-      self.skipTest("e4m3fn scale only supports block size 16.")
+    if (
+        scale_jax_dtype == jnp.float8_e4m3fn
+        and base_block_size != 16
+        and not jtu.is_cuda_compute_capability_equal("10.7")
+    ):
+      self.skipTest("e4m3fn scale with block size != 16 requires sm107a.")
     out_jax_dtype = jnp.float32
     sparse_meta_dtype = jnp.uint2
     block_size = base_block_size * 2
