@@ -3319,6 +3319,135 @@ class DialectLoweringTest(MosaicGpuTest):
       files = os.listdir(dump_dir)
       self.assertTrue(any(f.endswith(".constraint_system.txt") for f in files))
 
+  def _lower_sm103_fp4_scaled_mma(
+      self, k, scale_block=16, scale_ty_fn=ir.Float8E4M3FNType.get
+  ):
+    i32 = ir.IntegerType.get_signless(32)
+    self.module.operation.attributes["mosaic_gpu.arch_major"] = (
+        ir.IntegerAttr.get(i32, 10)
+    )
+    self.module.operation.attributes["mosaic_gpu.arch_minor"] = (
+        ir.IntegerAttr.get(i32, 3)
+    )
+    m, n = 128, 128
+    tiling = (8, 256)
+    with self.kernel():
+      f4 = ir.Float4E2M1FNType.get()
+      f32 = ir.F32Type.get()
+      scale_ty = scale_ty_fn()
+      smem = mgpu_utils.smem()
+
+      def tiled_ref(shape):
+        tiled_shape = mgpu_utils.tile_shape(shape, tiling)
+        return llvm.mlir_undef(
+            ir.MemRefType.get(tiled_shape, f4, memory_space=smem)
+        )
+
+      a_ref = tiled_ref((m, k))
+      b_ref = mgpu_utils.memref_transpose(tiled_ref((n, k)), (1, 0, 3, 2))
+      tmem_addr = llvm.mlir_undef(i32)
+      acc_ref = tcgen05.TMEMRef(
+          tmem_addr, (m, n), f32, tcgen05.tmem_default_layout(packing=1)
+      )
+      a_scale_ref = tcgen05.TMEMRef(
+          tmem_addr, (128, k // scale_block), scale_ty, tcgen05.scales_layout()
+      )
+      b_scale_ref = tcgen05.TMEMRef(
+          tmem_addr, (128, k // scale_block), scale_ty, tcgen05.scales_layout()
+      )
+      tcgen05.mma(
+          acc_ref,
+          a_ref,
+          b_ref,
+          a_swizzle=128,
+          b_swizzle=128,
+          a_scale=a_scale_ref,
+          b_scale=b_scale_ref,
+      )
+
+    return [
+        op
+        for op in self.find_ops(llvm.InlineAsmOp)
+        if "tcgen05.mma" in op.asm_string.value
+    ]
+
+  @parameterized.parameters(
+      (16, ir.Float8E4M3FNType.get, "block16", [0, 2, 0, 2, 0, 2, 0, 2]),
+      (32, ir.Float8E8M0FNUType.get, "block32", [0, 3, 2, 1, 0, 3, 2, 1]),
+  )
+  def test_tcgen05_mma_sm103_k96_k768_lowering(
+      self, scale_block, scale_ty_fn, expected_block_qual, expected_sf_ids
+  ):
+    mma_asm_ops = self._lower_sm103_fp4_scaled_mma(
+        768, scale_block=scale_block, scale_ty_fn=scale_ty_fn
+    )
+    # K=768 with K=96 instructions issues 8 MMAs (instead of 12 with K=64).
+    self.assertLen(mma_asm_ops, 8)
+
+    k_tile_byte_stride = 8 * 128  # 1024 bytes per (8, 256) MMA swizzle atom
+    expected_chunks_and_offsets = [
+        (0, 0, 0),    # MMA 0: s0, c0 -> s0: c0-2
+        (0, 48, 0),   # MMA 1: s0, c3 -> s0: c3-5
+        (0, 96, 1),   # MMA 2: s0, c6 -> s0: c6-7 + s1: c0
+        (1, 16, 1),   # MMA 3: s1, c1 -> s1: c1-3
+        (1, 64, 1),   # MMA 4: s1, c4 -> s1: c4-6
+        (1, 112, 2),  # MMA 5: s1, c7 -> s1: c7 + s2: c0-1
+        (2, 32, 2),   # MMA 6: s2, c2 -> s2: c2-4
+        (2, 80, 2),   # MMA 7: s2, c5 -> s2: c5-7
+    ]
+    for step_idx, (op, expected_sf_id, (cur_s, in_off, next_s)) in enumerate(
+        zip(
+            mma_asm_ops,
+            expected_sf_ids,
+            expected_chunks_and_offsets,
+            strict=True,
+        )
+    ):
+      asm = op.asm_string.value
+      self.assertIn(
+          f"tcgen05.mma.cta_group::1.kind::mxf4nvf4.block_scale.{expected_block_qual}",
+          asm,
+      )
+      idesc_op = op.operands[3].owner
+      self.assertIsInstance(idesc_op, arith.ConstantOp)
+      idesc = idesc_op.literal_value & 0xFFFFFFFF
+      # Bit 31 == 1 and Bit 3 == 0 encode K=96 on sm_103a.
+      self.assertEqual((idesc >> 31) & 1, 1, msg=f"step {step_idx}")
+      self.assertEqual((idesc >> 3) & 1, 0, msg=f"step {step_idx}")
+      # Bits 4-5 (B SF-ID) and 29-30 (A SF-ID).
+      self.assertEqual((idesc >> 4) & 0x3, expected_sf_id)
+      self.assertEqual((idesc >> 29) & 0x3, expected_sf_id)
+
+      # Verify a_offset_low and a_offset_high in PTX assembly.
+      m_low = re.search(r"add\.s32 a_desc_low, \$1, (\d+);", asm)
+      self.assertIsNotNone(m_low)
+      a_offset_low = int(m_low.group(1))
+      expected_cur_enc = (cur_s * k_tile_byte_stride + in_off) >> 4
+      expected_next_enc = (next_s * k_tile_byte_stride) >> 4
+      self.assertEqual(a_offset_low & 0xFFFF, expected_cur_enc)
+      self.assertEqual((a_offset_low >> 16) & 0xFFFF, expected_next_enc)
+
+      m_high = re.search(r"mov\.b64 a_desc, \{a_desc_low, (\d+)\};", asm)
+      self.assertIsNotNone(m_high)
+      a_offset_high = int(m_high.group(1))
+      # Bit 20 of high 32 bits is Bit 52 of the 64-bit SMEM descriptor (absolute LBO mode).
+      self.assertEqual((a_offset_high >> 20) & 1, 1)
+
+  @parameterized.parameters(
+      (256, [1, 1, 0]),
+      (512, [1, 1, 1, 1, 0, 0]),
+  )
+  def test_tcgen05_mma_sm103_k96_tail_k64_decomposition(
+      self, k, expected_k_dims
+  ):
+    mma_asm_ops = self._lower_sm103_fp4_scaled_mma(k)
+    self.assertLen(mma_asm_ops, len(expected_k_dims))
+    k_dims = [
+        ((op.operands[3].owner.literal_value & 0xFFFFFFFF) >> 31) & 1
+        for op in mma_asm_ops
+    ]
+    self.assertEqual(k_dims, expected_k_dims)
+
 
 if hp is not None:
   @hps.composite
