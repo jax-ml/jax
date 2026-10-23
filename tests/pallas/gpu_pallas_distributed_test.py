@@ -773,18 +773,28 @@ class PallasCallRemoteDMATest(TestCase):
     # device collective metadata unused and prone to DCE.
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
+
+    out_type = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+
     @self.kernel(
-      out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-      scratch_types=[
-          plgpu.SMEM((8, 128), jnp.float32),
-      ],
+        out_type=out_type,
+        scratch_types=[plgpu.SMEM((8, 128), jnp.float32)],
     )
     def kernel(x_ref, other_dev_id_ref, y_ref, x_smem):
       x_smem[...] = x_ref[...]
+      plgpu.commit_smem()
       other_dev_id = {"x": other_dev_id_ref[0]}
       remote_y_ref = plgpu.remote_ref(y_ref, other_dev_id)
       plgpu.copy_smem_to_gmem(x_smem, remote_y_ref)
       plgpu.wait_smem_to_gmem(0)
+
+    # Synchronize in a separate kernel so `kernel` doesn't call `to_remote`
+    # during Pallas lowering, which would mask the WG DCE bug.
+    @self.kernel(out_type=out_type, scratch_types=[plgpu.SemaphoreType.REGULAR])
+    def sync_kernel(y_ref, z_ref, sem):
+      pl.semaphore_signal(sem, device_id=1 - lax.axis_index("x"))
+      pl.semaphore_wait(sem)
+      z_ref[...] = y_ref[...]
 
     x = jnp.arange(2 * 8 * 128, dtype=jnp.float32).reshape((2 * 8, 128))
     other_dev_ids = jnp.array([1, 0], dtype=jnp.int32)
@@ -792,7 +802,7 @@ class PallasCallRemoteDMATest(TestCase):
     mesh = jax.sharding.Mesh(devices, ["x"])
     y = jax.jit(
         jax.shard_map(
-            kernel,
+            lambda x, ids: sync_kernel(kernel(x, ids)),
             mesh=mesh,
             in_specs=(P("x"), P("x")),
             out_specs=P("x"),
