@@ -16,11 +16,13 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import functools
+import importlib
 import itertools
 import math
 import os
 import re
 import sys
+import types
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -3016,6 +3018,93 @@ class PallasDeviceIdTest(jtu.JaxTestCase):
 
     with self.assertRaises(ValueError):
       pallas_primitives.canonicalize_device_id({"x": 0, ("x",): 1})
+
+
+class PallasPublicModuleTest(jtu.JaxTestCase):
+
+  def test_import_jax_pallas(self):
+    from jax import pallas as pallas_from_jax  # pylint: disable=g-import-not-at-top
+    import jax.pallas as pallas_module  # pylint: disable=g-import-not-at-top
+
+    self.assertIs(pallas_from_jax, pallas_module)
+    self.assertIs(pallas_module.kernel, pl.kernel)
+    self.assertIs(pallas_module.BlockSpec, pl.BlockSpec)
+
+  @parameterized.parameters("", ".tpu")
+  def test_experimental_module_is_superset(self, submodule):
+    if submodule and sys.platform == "win32":
+      self.skipTest("Backend-specific Pallas modules are not available.")
+    new = importlib.import_module("jax.pallas" + submodule)
+    old = importlib.import_module("jax.experimental.pallas" + submodule)
+    names = [
+        name for name, value in vars(new).items()
+        if not name.startswith("_") and not isinstance(value, types.ModuleType)
+    ]
+    self.assertNotEmpty(names)
+    for name in names:
+      self.assertIs(getattr(old, name), getattr(new, name), msg=name)
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="pallas",
+          submodule="",
+          names=(
+              "broadcast_to",
+              "dslice",
+              "enable_poison_buffers",
+              "get_global",
+              "GridSpec",
+              "lower_as_mlir",
+              "next_power_of_2",
+              "pallas_call",
+              "pallas_call_p",
+              "pallas_export_experimental",
+              "RevisitMode",
+              "semaphore",
+              "squeezed",
+              "strides_from_shape",
+          ),
+      ),
+      dict(
+          testcase_name="tpu",
+          submodule=".tpu",
+          names=(
+              "CMEM",
+              "conv",
+              "core",
+              "CORE_PARALLEL",
+              "CoreType",
+              "dma_semaphore",
+              "emit_pipeline_with_async_prefetch",
+              "has_memory_space",
+              "join_bits",
+              "load",
+              "LoweringException",
+              "matmul_acc_lhs",
+              "matmul_lhs_fifo",
+              "matmul_pop_fifo",
+              "pack_fp6",
+              "PrefetchScalarGridSpec",
+              "reciprocal",
+              "split_bits",
+              "stateful_bernoulli",
+              "stateful_bits",
+              "stateful_normal",
+              "SUBCORE_PARALLEL",
+              "unpack_fp6",
+              "with_memory_space_constraint",
+          ),
+      ),
+  )
+  def test_experimental_only_apis(self, submodule, names):
+    if submodule and sys.platform == "win32":
+      self.skipTest("Backend-specific Pallas modules are not available.")
+    new = importlib.import_module("jax.pallas" + submodule)
+    old = importlib.import_module("jax.experimental.pallas" + submodule)
+    for name in names:
+      self.assertTrue(hasattr(old, name), msg=name)
+      self.assertFalse(hasattr(new, name), msg=name)
+    self.assertFalse(hasattr(new, "_deprecations"))
 
 
 if __name__ == "__main__":

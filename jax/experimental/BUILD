@@ -373,6 +373,7 @@ pytype_strict_library(
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:sc_core",
         "//jax/_src/pallas/mosaic:sc_primitives",
+        "//jax/pallas",
     ] + py_deps("numpy"),
 )
 
@@ -464,6 +465,7 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic:tpu_info",
         "//jax/_src/pallas/mosaic/interpret:interpret_pallas_call",
         "//jax/_src/pallas/mosaic/interpret:params",
+        "//jax/pallas:tpu",
     ],
 )
 
