@@ -841,13 +841,10 @@ class WGStridedFragLayout:
     shaped_ty = ir.ShapedType(shaped_ty)
     bitwidth = utils.bitwidth(shaped_ty.element_type)
     size = math.prod(shaped_ty.shape)
-    if size % WARPGROUP_SIZE != 0:
+    if size % WARPGROUP_SIZE != 0 or bitwidth > 64:
       return None
-    max_vec_size = size // WARPGROUP_SIZE
-    vec_size = min(64 // bitwidth, max_vec_size)
-    while vec_size > 0 and size % (vec_size * WARPGROUP_SIZE) != 0:
-      vec_size //= 2
-    if vec_size == 0 or (vec_size * bitwidth) % 8 != 0:
+    vec_size = math.gcd(64 // bitwidth, size // WARPGROUP_SIZE)
+    if (vec_size * bitwidth) % 8 != 0:
       return None
     return cls(shape=tuple(shaped_ty.shape), vec_size=vec_size)
 
