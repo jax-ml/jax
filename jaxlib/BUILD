@@ -14,6 +14,7 @@
 
 # JAX is Autograd and XLA
 
+load("@com_google_protobuf//bazel:proto_descriptor_set.bzl", "proto_descriptor_set")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load(
@@ -55,7 +56,10 @@ package_group(
 
 pytype_strict_library(
     name = "jaxlib",
-    data = [":ffi_headers"],
+    data = [
+        ":ffi_headers",
+        ":protobuf_descriptor_set",
+    ],
     deps = [
         ":_ifrt_proxy",
         ":_jax",
@@ -143,6 +147,25 @@ symlink_files(
     srcs = ["@xla//xla/ffi/api:all_headers"],
     dst = "include/xla/ffi/api",
     flatten = True,
+)
+
+proto_descriptor_set(
+    name = "protobuf_descriptor_set",
+    deps = [
+        ":py_host_callback_proto",
+        ":pytree_proto",
+        "//jaxlib/gpu:triton_proto",
+        "//jaxlib/mosaic/gpu:mosaic_gpu_proto",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto",
+        "@tsl//tsl/profiler/protobuf:xplane_proto",
+        "@xla//xla:autotune_results_proto",
+        "@xla//xla:autotuning_proto",
+        "@xla//xla:xla_proto",
+        "@xla//xla/backends/gpu/runtime:thunk_proto",
+        "@xla//xla/pjrt/proto:compile_options_proto",
+        "@xla//xla/service:hlo_proto",
+        "@xla//xla/service/gpu:fusion_process_dump_proto",
+    ],
 )
 
 exports_files([
