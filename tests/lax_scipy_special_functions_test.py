@@ -986,6 +986,55 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(
         jnp.stack(derivs_small), expected_small, atol=1e-6, rtol=1e-5)
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_i0_i1_large_inputs(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/39770 & 39772
+    if dtype == np.float32:
+      x = np.array([-91.0, -90.0, -89.0, 89.0, 90.0, 91.0], dtype=dtype)
+      x_overflow = np.array([-95.0, 95.0], dtype=dtype)
+    else:
+      x = np.array(
+          [-713.0, -712.0, -711.0, -710.0, 710.0, 711.0, 712.0, 713.0],
+          dtype=dtype,
+      )
+      x_overflow = np.array([-720.0, 720.0], dtype=dtype)
+    half_exp = np.exp(np.abs(x) / dtype(2.0))
+    expected_i0 = (
+        (half_exp * osp_special.i0e(x).astype(dtype)) * half_exp
+    ).astype(dtype)
+    expected_i1 = (
+        (half_exp * osp_special.i1e(x).astype(dtype)) * half_exp
+    ).astype(dtype)
+    rtol = {np.float32: 1e-5, np.float64: 1e-12}
+    self.assertAllClose(jnp.i0(x), expected_i0, rtol=rtol)
+    self.assertAllClose(lsp_special.i0(x), expected_i0, rtol=rtol)
+    self.assertAllClose(lsp_special.i1(x), expected_i1, rtol=rtol)
+    self.assertAllClose(jax.vmap(jax.grad(jnp.i0))(x), expected_i1, rtol=rtol)
+    self.assertAllClose(
+        jax.vmap(jax.grad(lsp_special.i1))(x),
+        expected_i0 - expected_i1 / x,
+        rtol=rtol,
+    )
+    self.assertAllClose(
+        jax.vmap(jax.grad(jax.grad(jnp.i0)))(x),
+        expected_i0 - expected_i1 / x,
+        rtol=rtol,
+    )
+    self.assertAllClose(
+        jax.vmap(jax.grad(jax.grad(lsp_special.i1)))(x),
+        expected_i1 - expected_i0 / x + 2 * expected_i1 / (x * x),
+        rtol=rtol,
+    )
+    self._CompileAndCheck(jnp.i0, lambda: [x], rtol=rtol)
+    self._CompileAndCheck(lsp_special.i0, lambda: [x], rtol=rtol)
+    self._CompileAndCheck(lsp_special.i1, lambda: [x], rtol=rtol)
+    self.assertArraysEqual(
+        jnp.i0(x_overflow), np.array([np.inf, np.inf], dtype=dtype)
+    )
+    self.assertArraysEqual(
+        lsp_special.i1(x_overflow), np.array([-np.inf, np.inf], dtype=dtype)
+    )
+
   def testBetalnHessianAtZero(self):
     # Regression test for https://github.com/jax-ml/jax/issues/34353
     def f(log_a, log_b):
