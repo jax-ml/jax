@@ -675,6 +675,26 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     )
     self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testGammaIncCLargeA(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41201
+    # gammaincc(a, x) for large a near x should return ~0.5, not values far outside [0, 1].
+    a_samples = [1e3, 1e4, 1e5, 1e6, 1e7]
+    x_samples = [1e3, 1e4, 1e5, 1e6, 1e7]
+
+    if dtype == np.float64:
+      a_samples.append(1e12)
+      x_samples.append(1e12)
+
+    args_maker = lambda: (np.array(a_samples, dtype=dtype), np.array(x_samples, dtype=dtype))
+    rtol = {np.float32: 1e-3 if jtu.test_device_matches(["tpu"]) else 1e-5,
+            np.float64: 1e-5}
+
+    self._CheckAgainstNumpy(
+        osp_special.gammaincc, lsp_special.gammaincc, args_maker, rtol=rtol
+    )
+    self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
+
   @jtu.sample_product(
       op=["gammaincinv", "gammainccinv"],
       dtype=jtu.dtypes.floating,
