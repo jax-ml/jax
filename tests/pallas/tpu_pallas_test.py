@@ -6260,6 +6260,113 @@ class MosaicLoweringForLoopTest(jtu.JaxTestCase):
     jax.jit(f).trace(x).lower(lowering_platforms=('tpu',))
 
 
+class EmitPipelineTrivialCopiesLoweringTest(jtu.JaxTestCase):
+  """Where emit_pipeline starts and waits for its trivially windowed copies."""
+
+  # Rows per copy: blocks of x and o, the trivial input w, the trivial output s.
+  _BLOCK, _W, _S = 8, 16, 24
+
+  def _dma_ops(self, buffer_count):
+    """The DMA starts and waits in program order, with the rows they move."""
+
+    def body(x_ref, w_ref, o_ref, s_ref):
+      o_ref[...] = x_ref[...] * w_ref[: self._BLOCK, :]
+      s_ref[...] += jnp.full(s_ref.shape, 1.0, s_ref.dtype)
+
+    def kernel(x_hbm, w_hbm, o_hbm, s_hbm):
+      pltpu.emit_pipeline(
+          body,
+          grid=(4,),
+          in_specs=[
+              pl.BlockSpec(
+                  (self._BLOCK, 128),
+                  lambda i: (i, 0),
+                  pipeline_mode=pl.Buffered(buffer_count=buffer_count),
+              ),
+              pl.BlockSpec((self._W, 128), lambda i: (0, 0)),
+          ],
+          out_specs=[
+              pl.BlockSpec((self._BLOCK, 128), lambda i: (i, 0)),
+              pl.BlockSpec((self._S, 128), lambda i: (0, 0)),
+          ],
+      )(x_hbm, w_hbm, o_hbm, s_hbm)
+
+    any_spec = pl.BlockSpec(memory_space=pl.ANY)
+    rows = 4 * self._BLOCK
+    f = pl.pallas_call(
+        kernel,
+        in_specs=[any_spec, any_spec],
+        out_specs=[any_spec, any_spec],
+        out_shape=[
+            jax.ShapeDtypeStruct((rows, 128), jnp.float32),
+            jax.ShapeDtypeStruct((self._S, 128), jnp.float32),
+        ],
+        debug=True,
+    )
+    tpu7x = jax.sharding.AbstractDevice(
+        device_kind='TPU7x', num_cores=1, platform='tpu'
+    )
+    with (
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=tpu7x)
+        ),
+        jtu.capture_stdout() as get_output,
+    ):
+      pl.lower_as_mlir(
+          f,
+          jax.ShapeDtypeStruct((rows, 128), jnp.float32),
+          jax.ShapeDtypeStruct((self._W, 128), jnp.float32),
+          platforms=['tpu'],
+      )
+    module = get_output().split('The Mosaic module for pallas_call')[-1]
+    ops = []
+    for line in module.splitlines():
+      m = re.search(
+          r'tpu\.(enqueue_dma|wait_dma2?)\b.*?memref<(\d+)x128xf32', line
+      )
+      if m:
+        ops.append((m.group(1).rstrip('2'), int(m.group(2))))
+    return ops
+
+  @jtu.thread_unsafe_test()
+  def test_trivial_copies_overlap_with_first_and_last_block_copies(self):
+    ops = self._dma_ops(buffer_count=2)
+    # The trivial input copy runs alongside the step 0 prefetch, and the
+    # trivial output copy alongside the wait for the last output block.
+    self.assertEqual(
+        ops[:3],
+        [
+            ('enqueue_dma', self._W),
+            ('enqueue_dma', self._BLOCK),
+            ('wait_dma', self._W),
+        ],
+    )
+    self.assertEqual(
+        ops[-3:],
+        [
+            ('enqueue_dma', self._S),
+            ('wait_dma', self._BLOCK),
+            ('wait_dma', self._S),
+        ],
+    )
+    self.assertEqual(ops.count(('enqueue_dma', self._W)), 1)
+    self.assertEqual(ops.count(('enqueue_dma', self._S)), 1)
+
+  @jtu.thread_unsafe_test()
+  def test_later_prefetches_wait_for_trivial_input_copies(self):
+    ops = self._dma_ops(buffer_count=3)
+    # The step 1 prefetch starts only after the trivial input copy is done.
+    self.assertEqual(
+        ops[:4],
+        [
+            ('enqueue_dma', self._W),
+            ('enqueue_dma', self._BLOCK),
+            ('wait_dma', self._W),
+            ('enqueue_dma', self._BLOCK),
+        ],
+    )
+
+
 class PallasKernelMetadataTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(
