@@ -2189,6 +2189,22 @@ class PinnedBuffersTest(jtu.JaxTestCase):
     y = f(x)
     self.assertAllClose(y, x + 1.)
 
+  def test_pinned_ref_addupdate(self):
+    # `addupdate` reads and writes the contents of the ref with ordinary
+    # operations, so a ref that is updated that way cannot be pinned either.
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(x, pin=True)
+      jax.ref.addupdate(ref, ..., jnp.ones_like(x))
+      return jax.ref.freeze(ref)
+
+    x = jnp.arange(3.)
+    txt = f.lower(x).as_text('hlo')
+    self.assertNotIn("Pin", txt)
+
+    y = f(x)
+    self.assertAllClose(y, x + 1.)
+
   def test_empty_pinned_ref_read_and_write(self):
     # The contents of a pinned ref live in a pinned buffer, which may only be
     # accessed in place, so an empty ref that is read or written with ordinary
