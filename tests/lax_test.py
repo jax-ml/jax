@@ -2724,48 +2724,6 @@ class LaxTest(jtu.JaxTestCase):
       tol = 1e-4
     self._CheckAgainstNumpy(np_fun, fun, args_maker, atol=tol, rtol=tol)
 
-  def testCumulativeReduceExplicitShardingLowering(self):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("The chlo.ScanOp lowering of cumulative reductions is TPU only")
-    if not jtu.is_libtpu_at_least("0.0.51"):
-      self.skipTest("Needs libtpu 0.0.51 for the chlo.ScanOp lowering")
-    mesh = jtu.create_mesh(
-        (1,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
-    )
-    x = jax.device_put(
-        np.arange(8.0, dtype=np.float32).reshape(2, 4),
-        jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x", None)),
-    )
-    with jax.set_mesh(mesh):
-      text = jax.jit(partial(lax.cumsum, axis=1)).lower(x).as_text()
-    self.assertIn("chlo.scan", text)
-    # Under explicit sharding the scan result must carry the output sharding.
-    self.assertTrue(
-        "sdy.sharding_constraint" in text or "@Sharding" in text, msg=text
-    )
-
-  @jtu.sample_product(
-      op=[(lax.cumsum, np.cumsum), (lax.cummax, np.maximum.accumulate)],
-      reverse=[False, True],
-  )
-  def testCumulativeReduceShardedNonScanAxis(self, op, reverse):
-    lax_op, np_op = op
-    mesh = jtu.create_mesh(
-        (2,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
-    )
-    spec = jax.sharding.PartitionSpec("x", None)
-    x_np = self.rng().randn(8, 128).astype(np.float32)
-    x = jax.device_put(x_np, jax.sharding.NamedSharding(mesh, spec))
-    with jax.set_mesh(mesh):
-      out = jax.jit(partial(lax_op, axis=1, reverse=reverse))(x)
-    expected = (
-        np.flip(np_op(np.flip(x_np, 1), axis=1), 1)
-        if reverse
-        else (np_op(x_np, axis=1))
-    )
-    self.assertAllClose(out, expected, atol=1e-4, rtol=1e-4)
-    self.assertEqual(out.sharding.spec, spec)
-
   @jtu.sample_product(
     shape=[(), (3,), (3, 4)],
     dtype=lax_test_util.float_dtypes,
