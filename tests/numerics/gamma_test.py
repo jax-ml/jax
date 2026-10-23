@@ -42,7 +42,6 @@ config.parse_flags_with_absl()
 
 bf16, f16, f32, f64 = jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64
 DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
-TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
 
 
 def _mpmath_digamma(x):
@@ -512,22 +511,17 @@ class GammaTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_gamma_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 10.0, f64: 8.0}),
-        ("gpu", {f16: 1.0, f32: 11.5, f64: 8.5}),
-        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 307.0}),
-        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 320.0}),
-        ("tpu_v6e", {f16: 1.0, f32: 278.5}),
-        ("tpu_7x", {f16: 1.0, f32: 274.5}),
-    ]
-    input_ftz = [
-        ("gpu", False),
+        (["cpu", "gpu", "tpu"], {f16: 1.0, f32: 1.0, f64: 1.0}),
     ]
     interesting_points = [
         # Non-positive integer poles of gamma(x):
         *(float(-k) for k in range(21)),
         -100.0,
         -1000.0,
-        # Horner switch from z to 1/z:
+        # Unconditional-shift boundaries and integer factorials:
+        0.5,
+        4.5,
+        8.5,
         10.0,
         # Largest n with finite (n - 1)! in float32 and float64:
         35.0,
@@ -564,9 +558,41 @@ class GammaTest(jtu.JaxTestCase):
         _mpmath_gamma,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
+
+  def test_factorial_exact(self):
+    n32 = jnp.arange(35, dtype=jnp.float32)
+    ref32 = np.array([math.factorial(i) for i in range(35)], dtype=np.float32)
+    self.assertArraysEqual(jsp.special.factorial(n32), ref32)
+    self.assertArraysEqual(jsp.special.gamma(n32 + 1), ref32)
+    if jtu.device_under_test() != "tpu":
+      with jax.enable_x64(True):
+        n64 = jnp.arange(171, dtype=jnp.float64)
+        ref64 = np.array(
+            [math.factorial(i) for i in range(171)], dtype=np.float64
+        )
+        self.assertArraysEqual(jsp.special.factorial(n64), ref64)
+        self.assertArraysEqual(jsp.special.gamma(n64 + 1), ref64)
+
+  @config.explicit_x64_dtypes("allow")
+  def test_explicit_x64_dtypes(self):
+    if jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    fns = [
+        jsp.special.gamma,
+        jsp.special.factorial,
+        jax.vmap(jax.grad(jsp.special.gamma)),
+    ]
+    pts = [-6.2469100857178725, -1.5, 0.5, 1.5, 10.0, 35.0, 171.0]
+    with jax.enable_x64(True):
+      x_ref = jnp.array(pts, dtype=jnp.float64)
+      expected = [jax.jit(fn)(x_ref) for fn in fns]
+    with jax.enable_x64(False):
+      x = jnp.array(pts, dtype=jnp.float64)
+      actual = [jax.jit(fn)(x) for fn in fns]
+    for exp_val, act_val in zip(expected, actual):
+      self.assertArraysEqual(act_val, exp_val)
 
 
 util.register_benchmark(lax.digamma)

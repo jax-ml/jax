@@ -93,6 +93,48 @@ _LOG_POLY_F64 = HybridPoly(
     ),
 )
 
+# `(exp(r) - 1 - r) / r^2` on `[-ln(2)/2, ln(2)/2]` for double-word `exp`.
+_EXP_POLY_F32 = HybridPoly(
+    lo_deg_hi=(0.0416666679084301, 0.1666666716337204, 0.5),
+    lo_deg_lo=(
+        -1.1221643614334198e-09,
+        -4.967094735519595e-09,
+        -4.4893255779498986e-13,
+    ),
+    hi_deg=(
+        0.008333333767950535,
+        0.0013888839166611433,
+        0.00019841225002892315,
+        2.486786979716271e-05,
+        2.761756377367419e-06,
+    ),
+)
+_EXP_POLY_F64 = HybridPoly(
+    lo_deg_hi=(
+        0.041666666666666664,
+        0.16666666666666666,
+        0.5,
+    ),
+    lo_deg_lo=(
+        2.3112453133981343e-18,
+        9.251858662483088e-18,
+        2.1072866792986803e-24,
+    ),
+    hi_deg=(
+        0.008333333333333333,
+        0.0013888888888888892,
+        0.00019841269841269844,
+        2.4801587301575863e-05,
+        2.7557319223979163e-06,
+        2.7557319251195953e-07,
+        2.5052108401445554e-08,
+        2.0876723766810705e-09,
+        1.6059024297298586e-10,
+        1.1490855116406605e-11,
+        7.658991821701572e-13,
+    ),
+)
+
 # `ln(2)` split into `(hi, mid, lo)` where `hi` and `mid` have at most 15
 # significand bits in float32 (since `|k| <= 256`, 9 + 15 = 24 bits) and 41
 # significand bits in float64 (since `|k| <= 2048`, 12 + 41 = 53 bits), so
@@ -376,3 +418,53 @@ def log_f2(z0, z1=None, iz=None, k_adj=None):
       zc_corr0, zc_corr1 = f2_div(z1, zero, z0, zero)
     lp0, lp1 = f2_add_ordered(lp0, lp1, zc_corr0, zc_corr1)
   return f2_add(kln_s, kln_e, lp0, lp1)
+
+
+@jit
+def exp_f2_mant_exp(x0, x1):
+  """Computes `(eh, el, kf)` with `exp(x0 + x1) = 2**kf * (eh + el)` (`|x0| <= 1418`)."""
+  dtype = x0.dtype
+  zero = lax.full_like(x0, 0.0)
+  one = lax.full_like(x0, 1.0)
+  if dtype == np.float32:
+    ln2_hi, ln2_mid, ln2_lo = LN2_SPLIT_F32
+    exp_poly = _EXP_POLY_F32
+  else:
+    ln2_hi, ln2_mid, ln2_lo = LN2_SPLIT_F64
+    exp_poly = _EXP_POLY_F64
+  kf = lax.round(
+      x0 * lax._const(x0, 1.4426950408889634),
+      lax.RoundingMethod.TO_NEAREST_EVEN,
+  )
+  r0, e0 = two_sum(x0, -kf * lax._const(x0, ln2_hi))
+  s1, e1 = two_sum(e0, -kf * lax._const(x0, ln2_mid))
+  r0, t0 = fast_two_sum(r0, s1)
+  r1 = t0 + e1 + x1 - kf * lax._const(x0, ln2_lo)
+  p0, p1 = poly_hybrid(r0, r1, exp_poly)
+  r2_0, r2_1 = f2_square(r0, r1)
+  q0, q1 = f2_mul(r2_0, r2_1, p0, p1)
+  o0, o1 = f2_add(one, zero, r0, r1)
+  eh, el = f2_add(o0, o1, q0, q1)
+  return eh, el, kf
+
+
+@jit
+def scale_f2_pow2(m0, m1, k_int):
+  """Scales `(m0 + m1) * 2**k_int` to a single float across normal and overflow exponents."""
+  dtype = m0.dtype
+  if dtype == np.float32:
+    mant_bits, bias, emin, emax = 23, 127, -126, 127
+  else:
+    mant_bits, bias, emin, emax = 52, 1023, -1022, 1023
+  s_mant = lax.full_like(k_int, mant_bits)
+  bias_v = lax.full_like(k_int, bias)
+  k_clamped = lax.clamp(
+      lax.full_like(k_int, 2 * emin), k_int, lax.full_like(k_int, 2 * emax)
+  )
+  k1 = lax.clamp(
+      lax.full_like(k_int, emin), k_clamped, lax.full_like(k_int, emax)
+  )
+  k2 = k_clamped - k1
+  pow1 = lax.bitcast_convert_type(lax.shift_left(k1 + bias_v, s_mant), dtype)
+  pow2 = lax.bitcast_convert_type(lax.shift_left(k2 + bias_v, s_mant), dtype)
+  return ((m0 + m1) * pow2) * pow1

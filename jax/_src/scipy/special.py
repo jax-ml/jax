@@ -46,6 +46,7 @@ from jax._src.numpy import lax_numpy
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import promote_args_complex, promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
+from jax._src.scipy.gamma import gamma_real
 from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
 from jax._src.nn.functions import softmax as nn_softmax
@@ -314,152 +315,8 @@ def gamma(x: ArrayLike) -> Array:
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     return _complex_gamma(x)
   if x.dtype == np.float64:
-    return _gamma_lanczos(x)
-  return _gamma_lanczos(x.astype(np.float32)).astype(x.dtype)
-
-
-# Lanczos rational approximations for float64 and float32:
-#   Gamma(y) ~= (P_N(y) / D_N(y)) * (y + g - 0.5)**(y - 0.5) * exp(-(y + g - 0.5))
-# where D_N(y) = prod_{k=0}^{N-2} (y + k).
-# Using Gamma(y) * D_N(y) = Gamma(y + N - 1), the numerator P_N(y) approximates
-#   F(y) = exp(lgamma(y + N - 1) - (y - 0.5) * log(y + g - 0.5) + (y + g - 0.5)).
-# All coefficients of P_N(y) are positive, so rounding the minimax polynomial
-# coefficients from Sollya's remez() directly to float64 / float32 preserves
-# minimax relative error (< 0.22 ULP in float64, < 0.28 ULP in float32).
-#
-# Sollya script to generate _LANCZOS12_NUM and _LANCZOS6_NUM:
-#   prec = 300!;
-#   procedure lgamma_shifted(u) {
-#     var z, invz, invz2, s, res, k;
-#     z = u + 30; invz = 1 / z; invz2 = invz * invz;
-#     s = 1/12 + invz2*(-1/360 + invz2*(1/1260 + invz2*(-1/1680 + invz2*(1/1188
-#         + invz2*(-691/360360 + invz2*(1/156 + invz2*(-3617/122400
-#         + invz2*(43867/244188 + invz2*(-174611/125400
-#         + invz2*(854513/138600))))))))));
-#     res = (z - 0.5)*log(z) - z + 0.5*log(2*pi) + invz*s;
-#     for k from 0 to 29 do res = res - log(u + k);
-#     return res;
-#   };
-#   /* Float64: N = 12 coeffs (deg 11), g = 6.0 on [0, 184] (rel err 2^-54.19) */
-#   f64 = exp(lgamma_shifted(x + 11) - (x - 0.5)*log(x + 5.5) + (x + 5.5));
-#   p64 = remez(1, 11, [0; 184], 1/f64);
-#   for i from 0 to 11 do print(double(coeff(p64, i)));
-#   /* Float32: N = 6 coeffs (deg 5), g = 3.5 on [0, 42] (rel err 2^-24.87) */
-#   f32 = exp(lgamma_shifted(x + 5) - (x - 0.5)*log(x + 3.0) + (x + 3.0));
-#   p32 = remez(1, 5, [0; 42], 1/f32);
-#   for i from 0 to 5 do print(single(coeff(p32, i)));
-_LANCZOS12_G = 6.0
-_LANCZOS12_NUM = (
-    2082399391.0024135,
-    3619030196.719154,
-    2848040052.9751177,
-    1339440875.3065681,
-    418217772.7248842,
-    91010017.55765133,
-    14082227.338645685,
-    1549029.521250908,
-    118682.98430782286,
-    6030.793140387624,
-    182.87942120328674,
-    2.5066282746310007,
-)
-_LANCZOS12_DEN = (
-    0., 3628800., 10628640., 12753576., 8409500., 3416930.,
-    902055., 157773., 18150., 1320., 55., 1.,
-)
-_LANCZOS6_G = 3.5
-_LANCZOS6_NUM = (
-    834.9400634765625,
-    1314.33935546875,
-    825.3876953125,
-    258.400299072265625,
-    40.314937591552734375,
-    2.5066282749176025390625,
-)
-_LANCZOS6_DEN = (0., 24., 50., 35., 10., 1.)
-
-# dtype -> (g, numerator, denominator, sqrt(eps),
-#           [0!, ..., (max_int - 1)!], overflow threshold, underflow threshold)
-_LANCZOS = {
-    np.dtype(np.float64): (
-        _LANCZOS12_G, _LANCZOS12_NUM, _LANCZOS12_DEN, 1.4901161193847656e-08,
-        np.array([math.factorial(i) for i in range(171)], np.float64),
-        172, -190,
-    ),
-    np.dtype(np.float32): (
-        _LANCZOS6_G, _LANCZOS6_NUM, _LANCZOS6_DEN, 2.44140625e-04,
-        np.array([math.factorial(i) for i in range(35)], np.float32),
-        36, -42,
-    ),
-}
-
-
-@custom_derivatives.custom_jvp
-def _gamma_lanczos(x: Array) -> Array:
-  return _gamma_lanczos_impl(x)
-
-
-@jit
-def _gamma_lanczos_impl(x: Array) -> Array:
-  # Direct evaluation instead of exp(lgamma(x)): the rounding error of lgamma
-  # becomes a relative error of |lgamma(x)| ulp in exp, ~1e3 ulp near x = 170.
-  g, num_coeffs, den_coeffs, sqrt_eps, factorials, overflow, underflow = (
-      _LANCZOS[x.dtype])
-  max_int = len(factorials)
-  k = len(num_coeffs)
-  is_int = x == lax.floor(x)
-  is_nan = jnp.isnan(x) | ((x < 0) & is_int)
-  is_small = lax.abs(x) < sqrt_eps
-  x_safe = jnp.where(is_nan | is_small, 1.0, jnp.clip(x, underflow, overflow))
-  y = lax.abs(x_safe)
-  # Horner in y for small y and in 1/y for large y.
-  small = y <= 10
-  w = jnp.where(small, y, 1 / y)
-  num = den = jnp.zeros_like(y)
-  for i in range(k):
-    num = num * w + jnp.where(small, num_coeffs[k - 1 - i], num_coeffs[i])
-    den = den * w + jnp.where(small, den_coeffs[k - 1 - i], den_coeffs[i])
-  # t = y + g - 1/2 is rounded; the result's sensitivity to t is
-  # ((y - 1/2) / t - 1), so correct with the exact rounding error of the sum.
-  c = g - 0.5
-  t = y + c
-  b = t - y
-  t_err = (y - (t - b)) + (c - b)
-  a = y - 0.5
-  lanczos = num / den * (1 + t_err * (a / t - 1))
-  # Gamma(y) = lanczos * t**a / exp(t), with t**a split to avoid overflow.
-  p = t ** (a / 2)
-  e = lax.exp(t, accuracy=AccuracyMode.HIGHEST)
-  pos = lanczos * (p / e) * p
-  # Reflection with y = -x, which is exact:
-  # Gamma(x) = -pi / (x * sin(pi * x) * Gamma(y)).
-  x_neg = jnp.where(is_int, -0.5, x_safe)
-  n = jnp.round(x_neg)
-  sinpi = lax.sin(np.pi * (x_neg - n)) * (1 - 2 * (n % 2))
-  neg = ((-np.pi / (x_neg * sinpi * lanczos)) * e / p) / p
-  table = jnp.asarray(factorials)[
-      jnp.clip(x_safe, 1, max_int).astype(np.int32) - 1
-  ]
-  x_finite = jnp.where(jnp.isfinite(x), x, 0.0)
-  res = jnp.select(
-      [is_small,  # Gamma(x) = 1/x - euler + O(x)
-       is_int & (x <= max_int),
-       x > overflow,
-       x < underflow],
-      [1 / jnp.where(is_nan, 1.0, x) - np.euler_gamma,
-       table,
-       np.inf,
-       jnp.where(lax.floor(x_finite) % 2 == 0, 0.0, -0.0)],
-      jnp.where(x > 0, pos, neg))
-  inf_if_nan = jnp.where(is_nan, np.inf, 0.0)
-  return jnp.where(is_nan, inf_if_nan - inf_if_nan, res)
-
-
-@_gamma_lanczos.defjvp
-def _gamma_lanczos_jvp(primals, tangents):
-  (x,), (x_dot,) = primals, tangents
-  g = _gamma_lanczos(x)
-  return g, x_dot * g * lax.digamma(x)
+    return gamma_real(x)
+  return gamma_real(x.astype(np.float32)).astype(x.dtype)
 
 
 def betaln(a: ArrayLike, b: ArrayLike) -> Array:
@@ -515,7 +372,8 @@ def factorial(n: ArrayLike, exact: bool = False) -> Array:
   if exact:
     raise NotImplementedError("factorial with exact=True")
   n, = promote_args_inexact("factorial", n)
-  return jnp.where(n < 0, 0, lax.exp(lax.lgamma(n + 1)))
+  is_neg = n < 0
+  return jnp.where(is_neg, 0, gamma(jnp.where(is_neg, 0, n) + 1))
 
 
 def comb(N: ArrayLike, k: ArrayLike, *, repetition: bool = False) -> Array:

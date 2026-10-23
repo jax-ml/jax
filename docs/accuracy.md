@@ -102,6 +102,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.numpy.sinc` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.scipy.special.erfcinv` | 1.0 | 1.0 | 1.0 | 0.5 | 1.0 | 0.5 |
 | {func}`~jax.scipy.special.erfcx` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.scipy.special.gamma` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 
 ---
 
@@ -154,6 +155,7 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.numpy.sinc` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.scipy.special.erfcinv` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.scipy.special.erfcx` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.scipy.special.gamma` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 
 ---
 
@@ -208,6 +210,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.numpy.sinc` | 2.5 | 3.5 | 4.0 | 4.0 | 4.0 | 3.5 | |
 | {func}`~jax.scipy.special.erfcinv` | 2.5 | 3.0 | 427.0 | 6.0 | 3.0 | 3.0 | |
 | {func}`~jax.scipy.special.erfcx` | 3.5 | 4.0 | 4.0 | 4.0 | 4.5 | 4.5 | |
+| {func}`~jax.scipy.special.gamma` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.scipy.special.ndtri` | 2.5 | 3.0 | 302.0 | 5.0 | 3.0 | 3.0 | |
 
 ---
@@ -265,4 +268,5 @@ these are empirical bounds.
 | {func}`~jax.numpy.sinc` | 2.0 | 2.0 |
 | {func}`~jax.scipy.special.erfcinv` | 2.5 | 2.5 |
 | {func}`~jax.scipy.special.erfcx` | 3.0 | 3.0 |
+| {func}`~jax.scipy.special.gamma` | 1.0 | 1.0 |
 | {func}`~jax.scipy.special.ndtri` | 2.0 | 2.0 |

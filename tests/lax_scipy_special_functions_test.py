@@ -441,12 +441,12 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
   @parameterized.parameters([True, False])
   def testGammaDebugNans(self, with_jit):
     finfo = jnp.finfo(dtypes.default_float_dtype())
-    # Cover all branches of _gamma_lanczos_impl: |x| < sqrt(eps) (including
-    # +/-0.0), negative non-integers (reflection), positive integers <= max_int
-    # (factorial table) and > max_int, x > overflow (including where both p and
-    # e overflow), x < underflow, and +inf.
+    # Cover all branches of gamma_real: small |x| (including +/-0.0 and
+    # subnormals), negative non-integers (reflection), positive integers,
+    # x > overflow, x < underflow, and +inf.
     x = jnp.asarray(
-        [-1000.5, -100.5, -50.5, -5.5, -0.5, -float(finfo.tiny), -0.0, 0.0,
+        [-1000.5, -100.5, -50.5, -5.5, -0.5, -float(finfo.tiny),
+         -0.5 * float(finfo.tiny), -0.0, 0.0, 0.5 * float(finfo.tiny),
          float(finfo.tiny), 1e-5, 0.5, 1.0, 2.0, 10.0, 15.5, 35.0, 50.0, 100.0,
          220.0, 1000.0, float(finfo.max), np.inf],
         dtype=finfo.dtype)
@@ -925,6 +925,22 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
     self.assertAllClose(lsp_special.gamma(z), osp_special.gamma(z),
                         atol=1e-5, rtol=rtol)
+
+  def testFactorialExact(self):
+    n32 = jnp.arange(35, dtype=jnp.float32)
+    ref32 = np.array([math.factorial(i) for i in range(35)], dtype=np.float32)
+    self.assertArraysEqual(lsp_special.factorial(n32), ref32)
+    if np.float64 in float_dtypes and not jtu.test_device_matches(["tpu"]):
+      n64 = jnp.arange(171, dtype=np.float64)
+      ref64 = np.array([math.factorial(i) for i in range(171)], dtype=np.float64)
+      self.assertArraysEqual(lsp_special.factorial(n64), ref64)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testFactorialNegativeGrad(self, dtype):
+    x = jnp.array([-0.5, -1.0, -1.5, -2.0, -5.0, -200.5, -jnp.inf], dtype=dtype)
+    grad_fn = jax.vmap(jax.grad(lsp_special.factorial))
+    self.assertArraysEqual(lsp_special.factorial(x), jnp.zeros_like(x))
+    self.assertArraysEqual(grad_fn(x), jnp.zeros_like(x))
 
   @parameterized.parameters(range(1, 5))
   def test_i0_gradients(self, order):
