@@ -209,6 +209,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Unary {class}`jax.Array` methods, {meth}`jax.Array.astype`, and
     `arr.at[...].set()` now use `Self` return type annotations
     ({jax-issue}`#41055`, {jax-issue}`#41324`).
+  * {func}`jax.numpy.linalg.solve` (and {func}`jax.numpy.linalg.inv`) now use
+    an unrolled Gauss-Jordan solver for 1x1, 2x2, and 3x3 systems and unrolled
+    substitution on the LU factors up to 6x6, avoiding the batched LAPACK
+    `getrf`/`getrs`/`trsm` calls when solving many small systems
+    ({jax-issue}`#11321`, {jax-issue}`#4258`).
 
 * Bug fixes
   * Fixed the gradient of {func}`jax.numpy.ldexp` at `x = 0.0`, which previously
