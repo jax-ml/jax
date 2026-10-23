@@ -538,6 +538,7 @@ nanobind_pywrap_extension(
         "@xla//xla/pjrt/c:pjrt_c_api_status_utils",
         "@xla//xla/pjrt/c:pjrt_c_api_xla_transform_extension_hdrs",
         "@xla//xla/python:version",
+        "@xla//xla/service:hlo_module_config",
         "@xla//xla/service:hlo_proto_cc",
         "@xla//xla/service:xla_transform",
         "@xla//xla/tsl/lib/strings:proto_serialization",
