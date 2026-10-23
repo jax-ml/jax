@@ -1735,7 +1735,7 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
         ref_aval = t_aval.transform_type(ref_aval)
       case TransposeTransform() as t:
         assert handle_transposes
-        if isinstance(transformed_ref, tcgen05.TMEMRef):
+        if ref_aval.memory_space == gpu_core.TMEM:
           raise ValueError("TMEM transpose not allowed.")
         transformed_ref = mgpu.memref_transpose(
             transformed_ref, t.permutation
@@ -1743,7 +1743,7 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
         ref_aval = t_aval.transform_type(ref_aval)  # pyrefly: ignore [bad-assignment]
       case ReshapeTransform() as t:
         assert handle_reshapes
-        if isinstance(transformed_ref, tcgen05.TMEMRef):
+        if ref_aval.memory_space == gpu_core.TMEM:
           raise ValueError("TMEM reshape not allowed.")
         transformed_ref = mgpu.memref_reshape(transformed_ref, t.shape)
         ref_aval = t_aval.transform_type(ref_aval)  # pyrefly: ignore [bad-assignment]

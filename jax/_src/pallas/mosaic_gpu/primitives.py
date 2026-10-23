@@ -2985,8 +2985,7 @@ def _tcgen05_mma_lowering(
     acc_transforms = ()
     acc_transform_avals = ()
   acc, _, acc_transforms = lowering._handle_transforms(
-      ctx, acc_aval, acc, acc_transform_avals, acc_transforms,
-      handle_transposes=False
+      ctx, acc_aval, acc, acc_transform_avals, acc_transforms
   )
   if acc_transforms:
     raise NotImplementedError(
@@ -3003,8 +3002,14 @@ def _tcgen05_mma_lowering(
   assert isinstance(a_out_ty, state_types.AbstractRef)
   a_dtype = a_out_ty.dtype
   a_ref, _, a_transforms = lowering._handle_transforms(
-      ctx, a_aval, a_ref, a_transform_avals, a_transforms,
-      handle_transposes=False, handle_reshapes=True)
+      ctx,
+      a_aval,
+      a_ref,
+      a_transform_avals,
+      a_transforms,
+      handle_transposes=(a_aval.memory_space != gpu_core.SMEM),
+      handle_reshapes=True,
+  )
   match a_transforms:
     case (
         gpu_core.UnswizzleRef(lhs_swizzle),
@@ -3079,8 +3084,7 @@ def _tcgen05_mma_lowering(
     raise ValueError("MMA rhs swizzle must match lhs swizzle."
                       f" {lhs_swizzle=} {rhs_swizzle=}")
   if lhs_transpose:
-    if isinstance(a_ref, tcgen05.TMEMRef):
-      raise ValueError("TMEM transpose not allowed.")
+    assert not isinstance(a_ref, tcgen05.TMEMRef)
     a_ref = mgpu.memref_transpose(a_ref, (1, 0, 3, 2))
   if rhs_transpose:
     b_ref = mgpu.memref_transpose(b_ref, (1, 0, 3, 2))
@@ -3267,7 +3271,7 @@ def _tcgen05_mma_lowering_wg(
       a_sparse_metadata_transforms_leaves_avals,
   ) = transforms_avals_lists
 
-  def handle_transforms_and_get_ref(tree, leaves, leaves_avals, ref, ref_aval, handle_transposes=True):
+  def handle_transforms_and_get_ref(tree, leaves, leaves_avals, ref, ref_aval):
     if ref is None:
       return None
     if tree is None:
@@ -3277,7 +3281,7 @@ def _tcgen05_mma_lowering_wg(
       transforms = tree.unflatten(leaves)
       transform_avals = tree.unflatten(leaves_avals)
     ref, _, transforms = lowering._handle_transforms(
-        ctx, ref_aval, ref, transform_avals, transforms, handle_transposes=handle_transposes
+        ctx, ref_aval, ref, transform_avals, transforms
     )
     if transforms:
       raise NotImplementedError(
@@ -3291,7 +3295,6 @@ def _tcgen05_mma_lowering_wg(
       acc_transforms_leaves_avals,
       acc_ref,
       acc_aval,
-      handle_transposes=False,
   )
 
   a_ref = handle_transforms_and_get_ref(
@@ -3300,7 +3303,6 @@ def _tcgen05_mma_lowering_wg(
       a_transforms_leaves_avals,
       a_ref,
       a_aval,
-      handle_transposes=a_aval.memory_space == gpu_core.SMEM
   )
 
   b_ref = handle_transforms_and_get_ref(
@@ -4447,8 +4449,8 @@ def _async_load_tmem_lowering_rule(
       ctx.avals_in[1 : 1 + tree.num_leaves]
   )
   x_tmem, _, transforms = lowering._handle_transforms(
-      ctx, x_aval, x_ref, transform_avals, transforms, handle_transposes=False,
-      handle_reshapes=False)
+      ctx, x_aval, x_ref, transform_avals, transforms
+  )
   if transforms:
     raise NotImplementedError(
         f"Unimplemented transforms for TMEM refs. {transforms=}"
@@ -4486,8 +4488,6 @@ def _async_load_tmem_lowering_rule_wg(
       x_ref,
       transform_avals,
       transforms,
-      handle_transposes=False,
-      handle_reshapes=False,
   )
   if transforms:
     raise NotImplementedError(
@@ -4584,8 +4584,8 @@ def _async_store_tmem_lowering_rule(
       ctx.avals_in[2 : 2 + tree.num_leaves]
   )
   x_tmem, _, transforms = lowering._handle_transforms(
-      ctx, x_aval, x_ref, transform_avals, transforms, handle_transposes=False,
-      handle_reshapes=False)
+      ctx, x_aval, x_ref, transform_avals, transforms
+  )
   batch_shape = ()
   if transforms and isinstance(
       transforms[0], gpu_core.ExpandLeadingBatchDimensionsTransform
@@ -4636,8 +4636,6 @@ def _async_store_tmem_lowering_rule_wg(
       x_ref,
       transform_avals,
       transforms,
-      handle_transposes=False,
-      handle_reshapes=False,
   )
   batch_shape = ()
   if transforms and isinstance(

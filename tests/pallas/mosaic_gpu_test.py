@@ -6587,7 +6587,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       smem_ref[...] = plgpu.async_load_tmem(tmem_ref.transpose((1, 0)))
 
     with self.assertRaisesRegex(
-        NotImplementedError, "Unimplemented transforms for TMEM refs"
+        ValueError, "TMEM transpose not allowed"
     ):
       kernel()
 
