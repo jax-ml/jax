@@ -231,6 +231,44 @@ def _strip_mosaic_debug_info(m: ir.Module) -> None:
   m.operation.walk(_strip_kernel)
 
 
+def _strip_triton_debug_info(m: ir.Module) -> None:
+  """Strips debug info from Pallas Triton kernel bytecode in its custom calls.
+
+  As with Mosaic kernels, the top-level strip-debuginfo pass does not reach into
+  the kernel module serialized in `mhlo.backend_config`, so a kernel's source
+  locations leak into the cache key: the same kernel from two checkouts keyed
+  differently.
+  """
+  try:
+    from jax._src.lib.triton import dialect as tt_dialect
+  except ImportError:
+    return
+
+  def _strip_kernel(op: ir.Operation) -> ir.WalkResult:
+    if (op.name != "stablehlo.custom_call"
+        or op.attributes["call_target_name"].value != "__gpu$xla.gpu.triton"  # type: ignore
+        or "mhlo.backend_config" not in op.attributes):
+      return ir.WalkResult.ADVANCE
+    config = ir.DictAttr(op.attributes["mhlo.backend_config"])
+    ctx = m.context
+    tt_dialect.register_dialect(ctx)
+    with ctx:
+      try:
+        kernel = ir.Module.parse(ir.StringAttr(config["ir"]).value_bytes, context=ctx)
+      except ir.MLIRError:
+        return ir.WalkResult.ADVANCE
+      pm.PassManager.parse("builtin.module(strip-debuginfo)").run(
+          kernel.operation)
+      out = io.BytesIO()
+      kernel.operation.write_bytecode(out)
+      entries = {entry.name: entry.attr for entry in config}
+      entries["ir"] = ir.StringAttr.get(out.getvalue())
+      op.attributes["mhlo.backend_config"] = ir.DictAttr.get(entries)
+    return ir.WalkResult.ADVANCE
+
+  m.operation.walk(_strip_kernel)
+
+
 def _serialize_ir(m: ir.Module, ignore_custom_partitioning: bool) -> bytes:
   output = io.BytesIO()
   if ignore_custom_partitioning:
@@ -251,6 +289,7 @@ def _canonicalize_ir(
     )
     passes.run(m.operation)
     _strip_mosaic_debug_info(m)
+    _strip_triton_debug_info(m)
     return _serialize_ir(m, ignore_custom_partitioning)
 
 
