@@ -13,11 +13,13 @@
 # limitations under the License.
 
 """Fusible primitive."""
+import contextlib
 from functools import partial
 from typing import Any, Callable
 
 import jax
 from jax._src import api_util
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import flattree as ft
 from jax._src import hijax
@@ -28,6 +30,24 @@ from jax._src.lax.control_flow.loops import eval_jaxpr_p
 from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.traceback_util import api_boundary
+
+
+_disable_nested_fuse = config.config_ext.Config[bool](
+    "pallas_fuser_disable_nested_fuse",
+    False,
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+
+@contextlib.contextmanager
+def disable_nested_fuse(value: bool = True):
+  # A way to prevent nested fuse calls from fusing.
+  old_value = _disable_nested_fuse.swap_local(value)
+  try:
+    yield
+  finally:
+    _disable_nested_fuse.set_local(old_value)
 
 
 class Fusible(hijax.HiPrim):
@@ -184,9 +204,17 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
       debug_info = api_util.debug_info("fusible", wrapped, args, {})
       args_avals = tree_util.tree_map(jax_core.typeof, args)
       in_avals_ft = ft.flatten_args(*args_avals)
-      jaxpr, out_avals_ft = pe.trace_to_jaxpr(
-          wrapped, in_avals_ft, debug_info
-      )
+      # An enclosing `fuse` disables nested fusion while it traces its body, but
+      # the kernel wrapper is traced again with fusion enabled when `fuse_jaxpr`
+      # calls `func`. Tracing it with fusion enabled here too keeps both traces
+      # in one trace context, so jitted functions inside the kernel wrapper hit
+      # the trace cache instead of being retraced. Nested fusion is only
+      # disabled so the enclosing `fuse` can find this fusible, which has
+      # already been created, so this does not change what `fuse` produces.
+      with disable_nested_fuse(False):
+        jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+            wrapped, in_avals_ft, debug_info
+        )
       jaxpr, consts = pe.separate_consts(jaxpr)
       prim = Fusible(
           jaxpr=jaxpr,
