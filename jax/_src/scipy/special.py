@@ -4170,9 +4170,11 @@ def _hyp1f1_serie(a, b, x, scale=1):
     serie, k, term = state
 
     # The terms may be negligible at first and grow until k ~ |x| - min(b, 0),
-    # e.g. when a is close to zero or to a negative integer.
-    return (k < 250) & ((lax.abs(term) / lax.abs(serie) > precision) |
-                        (k <= lax.abs(x) - jnp.minimum(b, 0)))
+    # e.g. when a is close to zero or to a negative integer, unless the series
+    # terminates. Multiplying by precision instead of dividing by the sum keeps
+    # this false when scale underflows to 0.
+    return (k < 250) & ((lax.abs(term) > precision * lax.abs(serie)) |
+                        ((term != 0) & (k <= lax.abs(x) - jnp.minimum(b, 0))))
 
   init = scale, 1, scale * (a / b * x)
 
@@ -4199,7 +4201,7 @@ def _hyp1f1_asymptotic_serie(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
+    return (k < 250) & (lax.abs(term) > precision * lax.abs(serie))
 
   init = 1, 1, (b - a) * (1 - a) / x
 

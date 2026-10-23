@@ -131,6 +131,9 @@ def _hyp1f1_reference(a, b, x, shift=0):
   """Float64 1F1(a, b, x) and its derivatives in a and b, for |a|, |b| <= 10.
 
   With shift, these are at (a + shift, b + shift, x), without rounding b - a.
+  Also returns, for |x| <= 1000 (and nan elsewhere), the sums of the absolute
+  values of the terms of the series (see _hyp1f1_series), which
+  _hyp1f1_cancellation needs.
 
   Used as the reference for float32 (float64 tests use mpmath), since scipy
   has no derivatives of hyp1f1 and mpmath is too slow for the float32 sample
@@ -144,30 +147,29 @@ def _hyp1f1_reference(a, b, x, shift=0):
   a, b, x = np.broadcast_arrays(*(np.asarray(v, np.float64) for v in (a, b, x)))
   a, b, x = a.ravel(), b.ravel(), x.ravel()
   d, a, b = b - a, a + shift, b + shift
-  f, f_a, f_b = (np.full(a.shape, np.nan) for _ in range(3))
+  out = np.full((6, len(a)), np.nan)
   ok = np.isfinite(a) & np.isfinite(b)
   with np.errstate(all="ignore"):
     m = ok & (x >= 0) & (x <= 1000)
-    f[m], f_a[m], f_b[m] = _hyp1f1_series(a[m], b[m], x[m], np.ones(m.sum()),
-                                          kummer=False)[:3]
+    out[:, m] = _hyp1f1_series(a[m], b[m], x[m], np.ones(m.sum()),
+                               kummer=False)
     m = ok & (x < 0) & (x >= -1000)
     # exp(x) is applied in two halves, so that the series does not overflow.
     h = np.exp(x[m] / 2)
-    f[m], f_a[m], f_b[m] = h * _hyp1f1_series(a[m], b[m], -x[m], h,
-                                              kummer=True, d=d[m])[:3]
+    out[:, m] = h * _hyp1f1_series(a[m], b[m], -x[m], h, kummer=True, d=d[m])
     m = ok & (x < -1000)
-    f[m], f_a[m], f_b[m] = _hyp1f1_asymptotic(a[m], b[m], -x[m], d[m])
+    out[:3, m] = _hyp1f1_asymptotic(a[m], b[m], -x[m], d[m])
   # The convention of hyp1f1, which also holds for x = nan.
-  f[a == 0] = 1
-  return f, f_a, f_b
+  out[0, a == 0] = 1
+  return out
 
 
-def _hyp1f1_cancellation(a, b, x):
+def _hyp1f1_cancellation(a, b, x, ref):
   """The cancellation in hyp1f1 and in its derivatives in a and b.
 
   That is the ratio of the sum of the absolute values of the terms that hyp1f1
   adds up to the absolute value of the result, by which the relative rounding
-  error grows.
+  error grows. ref is _hyp1f1_reference(a, b, x).
   """
   ratios = np.ones((3, len(a)))
   with np.errstate(all="ignore"):
@@ -176,8 +178,7 @@ def _hyp1f1_cancellation(a, b, x):
     # that at fixed b - a plus the derivative in b - a.
     m = np.isfinite(a) & np.isfinite(b) & (np.abs(x) < 100)
     kummer = x[m] < 0
-    s, s_a, s_b, abs_s, abs_a, abs_b = _hyp1f1_series(
-        a[m], b[m], np.abs(x[m]), np.ones(m.sum()), kummer)
+    s, s_a, s_b, abs_s, abs_a, abs_b = ref[:, m]
     ratios[:, m] = (abs_s / np.abs(s), abs_a / np.abs(s_a),
                     (abs_b + np.where(kummer, abs_a, 0)) / np.abs(s_b))
     # For x <= -100, the derivatives of the asymptotic expansion are dominated
@@ -303,7 +304,23 @@ def _hyp1f1_ignored(a, b, x, which=0):
   These are for 1F1 if which is 0, and for its derivative in a or b if which is
   1 or 2. Only |a|, |b| <= 10 are tested: beyond that the 250 terms that hyp1f1
   sums are not always enough, and the asymptotic expansions lose accuracy. All
-  finite x are tested, except where noted below.
+  finite x are tested, except where noted in _hyp1f1_inaccurate.
+  """
+  ignored, d_err = _hyp1f1_out_of_domain(a, b, x)
+  # Most random samples are out of the domain, so the reference is only
+  # evaluated on the others.
+  keep = ~ignored
+  finfo = np.finfo(a.dtype)
+  a, b, x, d_err = (v[keep].astype(np.float64) for v in (a, b, x, d_err))
+  ref = _hyp1f1_reference(a, b, x)
+  ignored[keep] = _hyp1f1_inaccurate(a, b, x, d_err, ref, which, finfo)
+  return ignored
+
+
+def _hyp1f1_out_of_domain(a, b, x):
+  """Inputs excluded from the accuracy checks before evaluating anything.
+
+  Also returns the rounding error of b - a.
   """
   finfo = np.finfo(a.dtype)
   ignored = ~((np.abs(a) <= 10) & (np.abs(b) <= 10)) | np.isinf(x)
@@ -314,9 +331,17 @@ def _hyp1f1_ignored(a, b, x, which=0):
     ignored |= (v != 0) & (np.abs(v) < finfo.tiny)
   # Poles of 1F1 at b = 0, -1, -2, ...
   ignored |= (b <= 0) & (b == np.round(b))
-  a, b, x, d_err = (v.astype(np.float64) for v in (a, b, x, d_err))
+  return ignored, d_err
+
+
+def _hyp1f1_inaccurate(a, b, x, d_err, ref, which, finfo):
+  """The remaining float64 inputs where hyp1f1 is not expected to be accurate.
+
+  ref is _hyp1f1_reference(a, b, x), and d_err the rounding error of b - a in
+  the tested dtype.
+  """
+  ignored = np.zeros(a.shape, bool)
   with np.errstate(all="ignore"):
-    ref = _hyp1f1_reference(a, b, x)
     f = np.abs(ref[which])
     # Results within a factor 1 / eps of overflowing or underflowing, where
     # intermediate results do.
@@ -346,13 +371,17 @@ def _hyp1f1_ignored(a, b, x, which=0):
     log_ratio = (scipy.special.gammaln(a_k) - scipy.special.gammaln(b - a_k)
                  + (b - 2 * a_k) * np.log(x_k) - x_k)
     ignored |= asymptotic & (log_ratio > np.log(finfo.eps))
-    term = total = np.ones_like(x)
-    converged = ~asymptotic
+    m = asymptotic & ~ignored
+    b_k, a_k, x_k = b[m], a_k[m], x_k[m]
+    term = total = np.ones_like(x_k)
+    converged = np.zeros(x_k.shape, bool)
     for k in range(250):
-      term = term * (b - a_k + k) * (1 - a_k + k) / ((k + 1) * x_k)
+      term = term * (b_k - a_k + k) * (1 - a_k + k) / ((k + 1) * x_k)
       total = total + term
       converged |= np.abs(term) <= finfo.eps * np.abs(total)
-    ignored |= ~converged
+      if converged.all():
+        break
+    ignored[m] |= ~converged
     # It also evaluates exp(x) on its own, which overflows for x > log(max)
     # (and so does 1F1, except for a as above).
     ignored |= x > np.log(finfo.max)
@@ -369,7 +398,7 @@ def _hyp1f1_ignored(a, b, x, which=0):
     # large when it exceeds 100. For |x| < 100 those are the terms of the
     # series, scaled by exp(x / 2) for x < 0, which can also overflow before the
     # result does. The first of them, a / b, overflows for b close to 0.
-    ratio = _hyp1f1_cancellation(a, b, x)[which]
+    ratio = _hyp1f1_cancellation(a, b, x, ref)[which]
     terms = ratio * f * np.exp(np.maximum(-x, 0) / 2)
     ignored |= (ratio > 100) | ((np.abs(x) < 100) & (terms > finfo.max))
     ignored |= np.abs(a / b) > finfo.max
@@ -389,19 +418,23 @@ def _hyp1f1_grad_x_ignored(a, b, x):
   finfo = np.finfo(a.dtype)
   a_1, a_err = _two_sum(a, a.dtype.type(1))
   b_1, b_err = _two_sum(b, b.dtype.type(1))
-  ignored = _hyp1f1_ignored(a_1, b_1, x)
+  ignored, d_err = _hyp1f1_out_of_domain(a_1, b_1, x)
   ignored |= ~((np.abs(a) <= 10) & (np.abs(b) <= 10)) | (b == 0)
   for v in (a, b):
     ignored |= (v != 0) & (np.abs(v) < finfo.tiny)
-  a, b, x, a_1, b_1, a_err, b_err = (
-      v.astype(np.float64) for v in (a, b, x, a_1, b_1, a_err, b_err))
+  keep = ~ignored
+  a, b, x, a_1, b_1, a_err, b_err, d_err = (
+      v[keep].astype(np.float64)
+      for v in (a, b, x, a_1, b_1, a_err, b_err, d_err))
+  ref = _hyp1f1_reference(a_1, b_1, x)
+  inaccurate = _hyp1f1_inaccurate(a_1, b_1, x, d_err, ref, 0, finfo)
   with np.errstate(all="ignore"):
-    f = np.abs(_hyp1f1_grad_x_ref(a, b, x))
-    ignored |= _near_overflow_or_underflow(f, x, finfo)
+    f, f_a, f_b = ref[:3]
+    inaccurate |= _near_overflow_or_underflow(np.abs(a / b * f), x, finfo)
     # The rounding errors of a + 1 and b + 1 can matter, as that of b - a above.
-    f, f_a, f_b = _hyp1f1_reference(a_1, b_1, x)
     err = np.abs(f_a * a_err) + np.abs(f_b * b_err)
-    ignored |= err > 64 * finfo.eps * np.abs(f)
+    inaccurate |= err > 64 * finfo.eps * np.abs(f)
+  ignored[keep] = inaccurate
   return ignored
 
 
@@ -456,26 +489,30 @@ class Hyp1f1Test(jtu.JaxTestCase):
     )
 
 
-@jtu.thread_unsafe_test_class()
-class Hyp1f1GradTest(jtu.JaxTestCase):
+def _check_hyp1f1_grad(test, jax_fn, ref_fn, mpmath_fn, ignored, dtype,
+                       bounds):
+  util.check_nary_precision(
+      test,
+      jax_fn,
+      ref_fn,
+      mpmath_fn,
+      dtype,
+      nargs=3,
+      bounds=bounds,
+      ignore_inputs=ignored,
+      # Results that underflow are +0.0 regardless of their sign, as the
+      # exp(x) factor of Kummer's transformation underflows first.
+      check_signed_zeros=False,
+      interesting_points=_HYP1F1_INTERESTING_POINTS,
+      # The gradients are slower to evaluate than 1F1 itself.
+      max_samples=2**18 if dtype == f32 else None,
+  )
 
-  def _check_grad(self, jax_fn, ref_fn, mpmath_fn, ignored, dtype, bounds):
-    util.check_nary_precision(
-        self,
-        jax_fn,
-        ref_fn,
-        mpmath_fn,
-        dtype,
-        nargs=3,
-        bounds=bounds,
-        ignore_inputs=ignored,
-        # Results that underflow are +0.0 regardless of their sign, as the
-        # exp(x) factor of Kummer's transformation underflows first.
-        check_signed_zeros=False,
-        interesting_points=_HYP1F1_INTERESTING_POINTS,
-        # The gradients are slower to evaluate than 1F1 itself.
-        max_samples=2**18 if dtype == f32 else None,
-    )
+
+# The gradients are tested in separate classes, as the tests are sharded by
+# class.
+@jtu.thread_unsafe_test_class()
+class Hyp1f1GradATest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_hyp1f1_grad_a_accuracy(self, dtype):
@@ -483,9 +520,13 @@ class Hyp1f1GradTest(jtu.JaxTestCase):
         ("cpu", {f32: 150.0, f64: 100.0}),
         (["gpu", "tpu"], {f32: math.inf, f64: math.inf}),
     ]
-    self._check_grad(hyp1f1_grad_a, _hyp1f1_grad_a_ref,
-                     _mpmath_hyp1f1_grad_a, _hyp1f1_grad_a_ignored, dtype,
-                     bounds)
+    _check_hyp1f1_grad(self, hyp1f1_grad_a, _hyp1f1_grad_a_ref,
+                       _mpmath_hyp1f1_grad_a, _hyp1f1_grad_a_ignored, dtype,
+                       bounds)
+
+
+@jtu.thread_unsafe_test_class()
+class Hyp1f1GradBTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_hyp1f1_grad_b_accuracy(self, dtype):
@@ -493,9 +534,13 @@ class Hyp1f1GradTest(jtu.JaxTestCase):
         ("cpu", {f32: 550.0, f64: 600.0}),
         (["gpu", "tpu"], {f32: math.inf, f64: math.inf}),
     ]
-    self._check_grad(hyp1f1_grad_b, _hyp1f1_grad_b_ref,
-                     _mpmath_hyp1f1_grad_b, _hyp1f1_grad_b_ignored, dtype,
-                     bounds)
+    _check_hyp1f1_grad(self, hyp1f1_grad_b, _hyp1f1_grad_b_ref,
+                       _mpmath_hyp1f1_grad_b, _hyp1f1_grad_b_ignored, dtype,
+                       bounds)
+
+
+@jtu.thread_unsafe_test_class()
+class Hyp1f1GradXTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_hyp1f1_grad_x_accuracy(self, dtype):
@@ -503,9 +548,9 @@ class Hyp1f1GradTest(jtu.JaxTestCase):
         ("cpu", {f32: 150.0, f64: 75.0}),
         (["gpu", "tpu"], {f32: math.inf, f64: math.inf}),
     ]
-    self._check_grad(hyp1f1_grad_x, _hyp1f1_grad_x_ref,
-                     _mpmath_hyp1f1_grad_x, _hyp1f1_grad_x_ignored, dtype,
-                     bounds)
+    _check_hyp1f1_grad(self, hyp1f1_grad_x, _hyp1f1_grad_x_ref,
+                       _mpmath_hyp1f1_grad_x, _hyp1f1_grad_x_ignored, dtype,
+                       bounds)
 
 
 util.register_benchmark(jsp.special.hyp1f1, nargs=3, dtypes=[f32, f64])

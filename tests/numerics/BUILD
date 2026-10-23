@@ -156,7 +156,7 @@ jax_multiplatform_test(
     name = "hypergeometric_test",
     srcs = ["hypergeometric_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 2,
+    shard_count = 4,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",

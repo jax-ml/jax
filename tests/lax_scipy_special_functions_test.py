@@ -831,6 +831,18 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
                     modes=["fwd", "rev"], atol=1e-3, rtol=1e-3, eps=1e-3)
 
   @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1TerminatingSeries(self, dtype):
+    # The series of 1F1(a, b, x) for x >= 0, and that of Kummer's transform
+    # 1F1(b - a, b, -x) for x < 0, stop at the term that vanishes, including
+    # before b + k reaches 0 for a negative integer b.
+    samples = [(-1.0, -3.0, 5.0), (-2.0, -5.0, 10.0), (-2.0, 0.5, 8.0),
+               (2.0, 1.0, -50.0), (3.0, 1.0, -300.0)]
+    a, b, x = (np.array(v, dtype=dtype) for v in zip(*samples))
+    args_maker = lambda: (a, b, x)
+    self._CheckAgainstNumpy(osp_special.hyp1f1, lsp_special.hyp1f1, args_maker,
+                            rtol=1e-5)
+
+  @jtu.sample_product(dtype=float_dtypes)
   def testHyp2f1SpecialCases(self, dtype):
     eps = np.finfo(dtype).eps
 
