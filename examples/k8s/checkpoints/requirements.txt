@@ -1,0 +1,6 @@
+jax[k8s]
+jaxlib
+orbax-checkpoint
+flax
+kubernetes==28.1.0
+gcsfs
