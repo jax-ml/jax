@@ -12,44 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Companion CuTe DSL kernels for ``docs/401/cute-dsl.md``.
+
+The guide defines its kernels inline. This module collects the corresponding
+vector add, SAXPY, ReLU, fused bias + ReLU, GEMM, and elementwise add kernels,
+along with a standalone validation driver using ``cutlass.jax.cutlass_call``.
+
+With the guide's CUDA, JAX, and CuTe DSL requirements installed, run the
+validation driver from the repository root:
+
+.. code-block:: bash
+
+    python docs/401/cute_dsl_jax/cute_dsl_jax_kernels.py
+"""
+
 import cutlass
 import cutlass.cute as cute
 import cutlass.jax as cjax
 import cuda.bindings.driver as cuda  # pyrefly: ignore
-
-"""
-CuTe DSL kernels used by the ``cute_dsl_jax.ipynb`` notebook.
-
-This module defines GPU kernels written in CuTe DSL (CUTLASS 4.x Python DSL)
-that are called from JAX via ``cutlass.jax.cutlass_call``. ``cutlass_call`` is a
-JAX primitive that triggers compilation of the kernel during lowering and embeds
-it into the HLO computation, so XLA can launch it efficiently without callback
-to Python.
-
-Kernels provided:
-
-- ``vector_add``        — element-wise c = a + b (3-D CuTe layout)
-- ``saxpy``             — y = alpha * x + y
-- ``relu``              — element-wise ReLU with flat indexing
-- ``fused_bias_relu``   — fused bias addition + ReLU
-- ``gemm``              — tiled matrix multiplication
-- ``elementwise_add``   — 2-D element-wise add (flat indexing, ``jax.export``-compatible)
-
-The notebook imports these kernels and wraps each one with ``cutlass_call``
-inside ``@jax.jit`` functions. See ``cute_dsl_jax.ipynb`` for usage, validation,
-and step-by-step explanations.
-
-This module is imported by the notebook and by ``cute_dsl_jax_kernels.py``. It can also
-be run directly to validate every kernel:
-
-.. code-block:: bash
-
-    # Interactive notebook (recommended for learning)
-    jupyter lab cute_dsl_jax.ipynb
-
-    # Full demo as a standalone script
-    python cute_dsl_jax_kernels.py
-"""
 
 
 # ------------------------------------------------------------------ #
