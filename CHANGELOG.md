@@ -37,6 +37,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.numpy.minimum` now uses a parallel prefix scan for integer and
     boolean outputs, which is much faster for long axes ({jax-issue}`#28097`).
 
+## JAX 0.12.0.1 (October 23, 2026)
+
+* Bug fixes
+  * Built C++-generated intrinsic LLVM IR on Windows with `clang-cl` instead of
+    emitting empty bitcode, enabling vectorized CPU intrinsics on Windows
+    (https://github.com/openxla/xla/commit/3af77b5776fbc41a65d54876cc837bdc57540005).
+
 ## JAX 0.12.0 (October 19, 2026)
 
 * New features
