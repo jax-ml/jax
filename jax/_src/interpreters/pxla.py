@@ -27,6 +27,7 @@ from typing import Any, NamedTuple
 
 from jax._src import api
 from jax._src import array
+from jax._src import compilation_cache
 from jax._src import compiler
 from jax._src import config
 from jax._src import core
@@ -1117,17 +1118,18 @@ def lower_sharding_computation(
   jaxpr_util.maybe_dump_jaxpr_to_file(fun_name, closed_jaxpr)
   module_name = util.wrap_name(api_name, fun_name)
 
+  cache_key = (
+      closed_jaxpr, module_name, backend,
+      len(const_args), tuple(global_in_avals), tuple(global_out_avals),
+      semantic_in_shardings, semantic_out_shardings,
+      in_layouts, out_layouts, num_devices,
+      tuple(device_list) if prim_requires_devices else None,  # pyrefly: ignore[bad-argument-type]
+      donated_invars, all_default_mem_kind, inout_aliases,
+      propagated_out_mem_kinds, platforms,
+      lowering_parameters,
+      abstract_mesh)
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
-   tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
-       closed_jaxpr, module_name, backend,
-       len(const_args), tuple(global_in_avals), tuple(global_out_avals),
-       semantic_in_shardings, semantic_out_shardings,
-       in_layouts, out_layouts, num_devices,
-       tuple(device_list) if prim_requires_devices else None,  # pyrefly: ignore[bad-argument-type]
-       donated_invars, all_default_mem_kind, inout_aliases,
-       propagated_out_mem_kinds, platforms,
-       lowering_parameters=lowering_parameters,
-       abstract_mesh=abstract_mesh)
+   tuple_args, shape_poly_state) = _cached_lowering_to_hlo(*cache_key)
 
   # backend and device_assignment is passed through to MeshExecutable because
   # if keep_unused=False and all in_shardings are pruned, then there is no way
@@ -1142,6 +1144,7 @@ def lower_sharding_computation(
       platforms,
       compiler_options_kvs,
       device_list,
+      cache_key=cache_key,
       global_in_avals=global_in_avals,
       global_out_avals=global_out_avals,
       in_shardings=in_shardings,
@@ -1182,12 +1185,14 @@ def _to_logical_sharding(
 class MeshComputation(stages.Lowering):
   _hlo: ir.Module
   _executable: MeshExecutable | None
+  cache_key: tuple[Any, ...]
 
   def __init__(self, name: str, hlo: ir.Module,
                const_args: list[ArrayLike],
                donated_invars: Sequence[bool], platforms: Sequence[str],
                compiler_options_kvs: tuple[tuple[str, Any], ...],
                device_assignment: xc.DeviceList | tuple[xc.Device, ...] | None,
+               cache_key: tuple[Any, ...] = (),
                **compile_args):
     self._name = name
     self._hlo = hlo
@@ -1196,6 +1201,7 @@ class MeshComputation(stages.Lowering):
     self._platforms = platforms
     self._compiler_options_kvs = compiler_options_kvs
     self._device_list = _create_device_list(device_assignment)
+    self.cache_key = cache_key
     self.compile_args = compile_args
     self._executable = None
 
@@ -1673,13 +1679,14 @@ class UnloadedMeshExecutable:
         self.pgle_profiler)
     return unsafe_call
 
-  def load(self) -> MeshExecutable:
+  def load(self, *, cache_key: tuple[Any, ...] = ()) -> MeshExecutable:
     return MeshExecutable(self.xla_executable, self.build_unsafe_call,
                           self.input_avals, self.output_avals,
                           self.input_shardings, self.output_shardings,
                           self.kept_var_idx, self.xla_in_layouts,
                           self.dispatch_in_layouts, self.xla_out_layouts,
-                          self.mut, self.all_args_info, self)
+                          self.mut, self.all_args_info, self,
+                          cache_key=cache_key)
 
   @staticmethod
   def from_hlo(name: str,
@@ -1730,11 +1737,12 @@ class UnloadedMeshExecutable:
     allow_prop_to_inputs, allow_prop_to_outputs = get_prop_to_input_output(
         in_shardings, out_shardings, len(ordered_effects))
 
+    cache_key = (
+        hlo, name, tuple_args, allow_prop_to_inputs,
+        allow_prop_to_outputs, tuple(host_callbacks), backend, device_list,
+        compiler_options_kvs, pgle_profiler)
     util.test_event("pxla_cached_compilation")
-    xla_executable = _cached_compilation(
-        hlo, name, tuple_args, allow_prop_to_inputs, allow_prop_to_outputs,
-        tuple(host_callbacks), backend, device_list, compiler_options_kvs,
-        pgle_profiler)
+    xla_executable = _cached_compilation(*cache_key)
 
     in_shardings = _maybe_get_and_check_in_shardings(
         xla_executable, in_shardings, device_list, global_in_avals,
@@ -1782,7 +1790,7 @@ class UnloadedMeshExecutable:
         dispatch_in_layouts=dispatch_in_layouts,
         xla_out_layouts=xla_out_layouts,
         all_args_info=all_args_info,
-        pgle_profiler=pgle_profiler).load()
+        pgle_profiler=pgle_profiler).load(cache_key=cache_key)
 
 
 class MeshExecutableFastpathData(NamedTuple):
@@ -1849,13 +1857,16 @@ class MeshExecutable(stages.Executable):
       "out_avals", "_in_shardings", "_out_shardings",
       "_kept_var_idx", "_xla_in_layouts", "_dispatch_in_layouts",
       "_xla_out_layouts", "_mut", "_all_args_info", "_unloaded_executable",
+      "_cache_key",
   ]
 
   def __init__(self, xla_executable, build_unsafe_call, in_avals, out_avals,
                in_shardings, out_shardings, kept_var_idx,
                xla_in_layouts, dispatch_in_layouts, xla_out_layouts, mut,
                all_args_info: AllArgsInfo | None = None,
-               unloaded_executable=None):
+               unloaded_executable=None,
+               *,
+               cache_key: tuple[Any, ...] = ()):
     self.xla_executable = xla_executable
     self.build_unsafe_call = build_unsafe_call
     # in_avals is a list of global and local avals. Aval is global if input
@@ -1873,6 +1884,26 @@ class MeshExecutable(stages.Executable):
     self._mut = mut
     self._all_args_info = all_args_info  # has const_args and also dead args
     self._unloaded_executable = unloaded_executable
+    self._cache_key = cache_key
+
+  @property
+  def cache_key(self) -> tuple[Any, ...]:
+    if self._cache_key and not isinstance(self._cache_key[0], str):
+      (hlo, name, tuple_args, allow_prop_to_inputs,
+       allow_prop_to_outputs, host_callbacks, backend, da,
+       compiler_options_kvs, pgle_profiler) = self._cache_key
+      dev = np.vectorize(lambda i: da[i], otypes=[object])(np.arange(len(da)))
+      compile_options = create_compile_options(
+          hlo, tuple_args, allow_prop_to_inputs, allow_prop_to_outputs,
+          backend, dev, dict(compiler_options_kvs))
+      persistent_key = compilation_cache.get_cache_key(
+          hlo, dev, compile_options, backend,
+          config.remove_custom_partitioning_ptr_from_cache_key.value)
+      self._cache_key = (
+          persistent_key, name, tuple_args, allow_prop_to_inputs,
+          allow_prop_to_outputs, host_callbacks, backend, da,
+          compiler_options_kvs, pgle_profiler)
+    return self._cache_key
 
   @property
   def unsafe_call(self) -> Callable[..., Any]:
