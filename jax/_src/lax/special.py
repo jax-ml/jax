@@ -914,16 +914,10 @@ erf_inv_p = standard_unop(_float, 'erf_inv')
 ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
                                             mul(g, exp(square(ans)))))
 
-def erf_inv_impl(
-    x: Array, *, use_optimization_barrier: bool = True
-) -> Array:
+def erf_inv_impl(x: Array) -> Array:
   if x.dtype not in (np.float32, np.float64):
     return convert_element_type(
-        erf_inv_impl(
-            convert_element_type(x, np.float32),
-            use_optimization_barrier=use_optimization_barrier,
-        ),
-        x.dtype,
+        erf_inv_impl(convert_element_type(x, np.float32)), x.dtype
     )
   ax = abs(x)
   one = _const(x, 1.0)
@@ -931,12 +925,7 @@ def erf_inv_impl(
   is_one = eq(ax, one)
   x_safe = select(bitwise_or(out_of_bounds, is_one), full_like(x, 0.0), x)
   q_safe = sub(one, abs(x_safe))
-  res = erf_inv_core(
-      x_safe,
-      q_safe,
-      has_far_tail=False,
-      use_optimization_barrier=use_optimization_barrier,
-  )
+  res = erf_inv_core(x_safe, q_safe, has_far_tail=False)
   return select(
       out_of_bounds,
       full_like(x, np.nan),

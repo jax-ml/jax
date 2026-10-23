@@ -456,9 +456,8 @@ class DLPackTest(jtu.JaxTestCase):
           (ctypes.c_uint16, np.uint16, (1024,)),
           (ctypes.c_uint16, np.uint16, (1024, 129)),
           (ctypes.c_float, np.float32, (8, 256)),
+          (ctypes.c_uint16, np.uint16, (16, 129)),
       ]
-      if jtu.is_libtpu_at_least("0.0.51"):
-        test_cases.append((ctypes.c_uint16, np.uint16, (16, 129)))
       for c_type, np_dtype, shape in test_cases:
         size = int(np.prod(shape))
         raw = alloc_and_map(c_type, np_dtype, size)

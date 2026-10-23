@@ -265,10 +265,7 @@ class AcosTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_acos_accuracy(self, dtype):
-    has_512_lowering = jaxlib_extension_version >= 512 and (
-        jtu.device_under_test() != "tpu" or jtu.is_libtpu_at_least("0.0.51")
-    )
-    if has_512_lowering:
+    if jaxlib_extension_version >= 512:
       bounds = [
           ("cpu", {f16: 1.0, f32: 1.0, f64: 1.5}),
           ("gpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
@@ -316,10 +313,7 @@ class AsinTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_asin_accuracy(self, dtype):
-    has_512_lowering = jaxlib_extension_version >= 512 and (
-        jtu.device_under_test() != "tpu" or jtu.is_libtpu_at_least("0.0.51")
-    )
-    if has_512_lowering:
+    if jaxlib_extension_version >= 512:
       bounds = [
           ("cpu", {f32: 1.0, f64: 1.5}),
           ("gpu", {f16: 1.0, f32: 1.5, f64: 2.5}),

@@ -1593,8 +1593,6 @@ class OpsTest(ptu.PallasTPUTest):
   def test_load_transpose_with_sliced_leading_dim(self) -> None:
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Requires TPUv5+")
-    if not jtu.is_libtpu_at_least("0.0.51"):
-      self.skipTest("Requires libtpu >= 0.0.51")
 
     def kernel(in_ref, out_ref):
       out_ref[...] = jnp.swapaxes(in_ref[:, 1:3], 2, 3)
@@ -2215,8 +2213,6 @@ class ConvTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(jnp.uint32, jnp.int32)
   def test_mulhi(self, dtype):
-    if not jtu.is_libtpu_at_least("0.0.51"):
-      self.skipTest("Requires libtpu >= 0.0.51")
     shape = (8, 128)
     rng = np.random.default_rng(42)
     if dtype == jnp.uint32:

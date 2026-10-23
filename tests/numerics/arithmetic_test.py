@@ -108,8 +108,6 @@ class RemTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_rem_highest_accuracy(self, dtype):
     if jtu.device_under_test() == "tpu":
-      if not jtu.is_libtpu_at_least("0.0.51"):
-        self.skipTest("Requires libtpu >= 0.0.51")
       jax_fn = jax.jit(
           lax.rem, compiler_options={"xla_tpu_enable_accurate_rem": "true"}
       )

@@ -543,8 +543,6 @@ class JaxAotTest(jtu.JaxTestCase):
   @jtu.run_on_devices('tpu')
   def test_tpu_aot_memory_analysis_temp_size(self):
     # Regression test for https://github.com/jax-ml/jax/issues/41166
-    if not jtu.is_libtpu_at_least('0.0.51'):
-      self.skipTest('Requires libtpu >= 0.0.51')
     topo = topologies.get_topology_desc(
         platform='tpu',
         topology_name='v6e:2x2',

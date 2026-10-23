@@ -12409,8 +12409,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unreduced_while_loop_max(self, mesh):
-    if not jtu.is_libtpu_at_least('0.0.51'):
-      self.skipTest('Requires libtpu >= 0.0.51')
     if jaxlib_extension_version < 508:
       self.skipTest('Requires jaxlib_extension_version >= 508')
     if ifrt_version < 77:
@@ -12436,8 +12434,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unreduced_cond_conflicting_kinds(self, mesh):
-    if not jtu.is_libtpu_at_least('0.0.51'):
-      self.skipTest('Requires libtpu >= 0.0.51')
     if jaxlib_extension_version < 508:
       self.skipTest('Requires jaxlib_extension_version >= 508')
     if ifrt_version < 77:
@@ -12468,8 +12464,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_shard_map_and_remat_max_min(self, mesh):
-    if not jtu.is_libtpu_at_least('0.0.51'):
-      self.skipTest('Requires libtpu >= 0.0.51')
     if jaxlib_extension_version < 508:
       self.skipTest('Requires jaxlib_extension_version >= 508')
     if ifrt_version < 77:
@@ -12504,8 +12498,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_max_all_gather_reshard_max_min(self, mesh):
-    if not jtu.is_libtpu_at_least('0.0.51'):
-      self.skipTest('Requires libtpu >= 0.0.51')
     if jaxlib_extension_version < 508:
       self.skipTest('Requires jaxlib_extension_version >= 508')
     if ifrt_version < 77:
@@ -12528,8 +12520,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unreduced_manual_computation_conflicting_kinds(self, mesh):
-    if not jtu.is_libtpu_at_least('0.0.51'):
-      self.skipTest('Requires libtpu >= 0.0.51')
     if jaxlib_extension_version < 508:
       self.skipTest('Requires jaxlib_extension_version >= 508')
     if ifrt_version < 77:

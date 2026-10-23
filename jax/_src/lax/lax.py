@@ -4979,15 +4979,8 @@ asin_p = standard_unop(_float | _complex, 'asin')
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(one_minus_square(x))))
 
 
-def _asin_lowering(ctx, x, *, is_tpu=False, **params):
-  # On TPU, CHLO legalization runs inside libtpu; libtpu < 0.0.51 still uses
-  # the old 2 * atan2(x, 1 + sqrt((1 - x) * (1 + x))) decomposition, which
-  # flushes tiny normal inputs to 0 under FTZ.
-  use_chlo = (
-      jaxlib_extension_version >= 512
-      and not ctx.is_forward_compat()
-      and (not is_tpu or cloud_tpu_init.is_libtpu_at_least('0.0.51'))
-  )
+def _asin_lowering(ctx, x, **params):
+  use_chlo = jaxlib_extension_version >= 512 and not ctx.is_forward_compat()
   if use_chlo or dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
     return _nary_lower_hlo(chlo.asin, ctx, x, **params)
   def _asin_real(x):
@@ -4996,9 +4989,6 @@ def _asin_lowering(ctx, x, *, is_tpu=False, **params):
   return mlir.lower_fun(_asin_real, multiple_results=False)(ctx, x, **params)
 
 mlir.register_lowering(asin_p, _asin_lowering)
-mlir.register_lowering(
-    asin_p, partial(_asin_lowering, is_tpu=True), platform='tpu'
-)
 mlir.register_lowering(
     asin_p, partial(_nary_lower_hlo, chlo.asin), platform='gpu'
 )
@@ -5165,16 +5155,8 @@ def hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
       full_like(x1, 2.0**-k), full_like(x1, 2.0**k), full_like(x1, 1.0)
   )
   inv_scale = select(hi, s_up, select(lo, s_down, one))
-  # TODO(phawkins): Remove the < 0.0.51 branch once the minimum libtpu version
-  # is at least 0.0.51 (which includes the XLA algebraic simplifier fix not to
-  # reassociate `(x * scale)^2` into `(scale * scale) * (x * x)` when `x` is a
-  # compile-time constant).
-  if cloud_tpu_init.is_libtpu_at_least("0.0.51"):
-    scale = select(hi, s_down, select(lo, s_up, one))
-    y1, y2 = x1 * scale, x2 * scale
-  else:
-    y1 = select(hi, x1 * s_down, select(lo, x1 * s_up, x1))
-    y2 = select(hi, x2 * s_down, select(lo, x2 * s_up, x2))
+  scale = select(hi, s_down, select(lo, s_up, one))
+  y1, y2 = x1 * scale, x2 * scale
   r_scaled = sqrt(square(y1) + square(y2))
   r = r_scaled * inv_scale
   if dtypes.supports_inf(x1.dtype):

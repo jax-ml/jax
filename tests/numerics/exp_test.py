@@ -255,21 +255,11 @@ class Expm1Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_expm1_highest_accuracy(self, dtype):
-    cpu_bounds = ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0})
-    if jtu.is_libtpu_at_least("0.0.51"):
-      tpu_bounds = [
-          ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 1.0}),
-          (["tpu_v6e", "tpu_7x"], {f32: 1.0}),
-      ]
-    else:
-      tpu_bounds = [
-          ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 2.0}),
-          (["tpu_v6e", "tpu_7x"], {f32: 2.0}),
-      ]
     bounds = [
-        cpu_bounds,
+        ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0}),
         ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
-        *tpu_bounds,
+        ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 1.0}),
+        (["tpu_v6e", "tpu_7x"], {f32: 1.0}),
     ]
     util.check_unary_precision(
         self,

@@ -248,8 +248,6 @@ class LaxTest(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/41261
     if jaxlib_extension_version < 510:
       self.skipTest("Requires jaxlib_extension_version >= 510")
-    if not jtu.is_libtpu_at_least("0.0.51"):
-      self.skipTest("Requires libtpu >= 0.0.51")
     a = np.array([-1.0, -2.0, -2.0, -2.0, 2.0, -1.0], dtype=dtype)
     b = np.array([0.5, 0.5, 3.0, 2.0, 0.5, 0.0], dtype=dtype)
     args_maker = lambda: [a, b]
