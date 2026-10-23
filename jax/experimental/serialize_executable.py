@@ -23,6 +23,8 @@ from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from collections.abc import Sequence
 
+import numpy as np
+
 
 # The first pickled element is the serialization version. Try to extend
 # the serialization format in a backwards-compatible way by adding tuple
@@ -30,7 +32,9 @@ from collections.abc import Sequence
 # Serialization version 1 is for pre 10/20/2026.
 # Serialization version 2 is for post 10/20/2026, when we introduced
 # the serialization versions.
-_SERIALIZATION_VERSION = 2
+# Serialization version 3 is for post 10/23/2026, when we added support
+# for serializing closed-over constants (const_args).
+_SERIALIZATION_VERSION = 3
 
 
 def serialize(compiled: jax.stages.Compiled):
@@ -46,13 +50,15 @@ def serialize(compiled: jax.stages.Compiled):
   if getattr(unloaded_executable, 'mut', None) and unloaded_executable.mut.in_mut:
     raise ValueError("can't serialize with a closed-over mutable array ref")
   args_info_flat, in_tree = jax.tree_util.tree_flatten(compiled.args_info)
-  # TODO(necula): deal with constants in serialized executables
-  if compiled._params.const_args:
-    raise NotImplementedError("serialize_executables with const_args")
+  # Ensure ndarray subclasses like TypedNdArray are pickled as plain ndarrays.
+  const_args = [
+      c.view(np.ndarray) if isinstance(c, np.ndarray) else c
+      for c in compiled._params.const_args
+  ]
   with io.BytesIO() as file:
     _JaxPjrtPickler(file).dump(
         (_SERIALIZATION_VERSION, unloaded_executable, args_info_flat,
-         compiled._no_kwargs))
+         compiled._no_kwargs, const_args))
     return file.getvalue(), in_tree, compiled.out_tree
 
 
@@ -99,14 +105,13 @@ def deserialize_and_load(serialized,
     serialized_version = loaded[0]
   if serialized_version != _SERIALIZATION_VERSION:
     raise ValueError(f'Unexpected serialized version {serialized_version}.')
-  _, unloaded_executable, args_info_flat, no_kwargs = loaded
+  _, unloaded_executable, args_info_flat, no_kwargs, const_args = loaded
 
   args_info = in_tree.unflatten(args_info_flat)
 
   loaded_compiled_obj = unloaded_executable.load()
-  # TODO(necula): deal with constants in serialized executables
   return jax.stages.Compiled(
-      loaded_compiled_obj, [], args_info, out_tree, no_kwargs=no_kwargs)
+      loaded_compiled_obj, const_args, args_info, out_tree, no_kwargs=no_kwargs)
 
 
 class _JaxPjrtPickler(pickle.Pickler):
