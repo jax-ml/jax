@@ -1148,17 +1148,15 @@ def unpack_elementwise(x, *, index, packed_dtype, unpacked_dtype):
 
   For logical array, this unpacking results in a strided access pattern.
   For example, if a 2D logical array `x` is packed as `int8` and unpacked to
-  `int16`, then
+  `int16`, then::
 
-  ```python
-  i8_x = pltpu.bitcast(i16_x, jnp.int8)
-  y = unpack_elementwise(
-      i16_x, index=0, packed_dtype=jnp.int8, unpacked_dtype=jnp.int16)
-  z = unpack_elementwise(
-      i16_x, index=1, packed_dtype=jnp.int8, unpacked_dtype=jnp.int16)
-  np.testing.assert_array_equal(y, i8_x[0::2, :].astype(jnp.int16))
-  np.testing.assert_array_equal(z, i8_x[1::2, :].astype(jnp.int16))
-  ```
+    i8_x = pltpu.bitcast(i16_x, jnp.int8)
+    y = unpack_elementwise(
+        i16_x, index=0, packed_dtype=jnp.int8, unpacked_dtype=jnp.int16)
+    z = unpack_elementwise(
+        i16_x, index=1, packed_dtype=jnp.int8, unpacked_dtype=jnp.int16)
+    np.testing.assert_array_equal(y, i8_x[0::2, :].astype(jnp.int16))
+    np.testing.assert_array_equal(z, i8_x[1::2, :].astype(jnp.int16))
 
   Args:
     x: The packed array.
