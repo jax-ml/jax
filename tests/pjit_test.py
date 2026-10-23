@@ -3243,6 +3243,19 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(count(), 2)
     self.assertEqual(lowering_count(), 2)
 
+  def test_recover_user_sharding_trailing_none(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    ns = NamedSharding(mesh, P('x', None, None))
+    arr = jax.device_put(np.ones((2, 4, 4), dtype=np.float32), ns)
+    const = np.ones((2, 2), dtype=np.float32)
+
+    @jax.jit
+    def f(x):
+      return x + const.sum()
+
+    out = f(arr)
+    self.assertEqual(out.sharding.spec, P('x', None, None))
+
   def test_list_in_pspec(self):
     mesh = jtu.create_mesh((2,), ('x',))
     with mesh:

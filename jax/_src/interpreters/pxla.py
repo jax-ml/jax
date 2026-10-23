@@ -1368,20 +1368,34 @@ _orig_out_sharding_handlers[SingleDeviceSharding] = _gspmd_to_single_device_shar
 
 
 def _get_out_sharding_from_orig_sharding(
-    out_shardings, out_avals, orig_in_s, orig_aval):
+    out_shardings, out_avals, orig_in_s, orig_aval,
+    all_orig_in_s=None, all_orig_avals=None):
   out: list[JSharding] = []
   orig_handler = _orig_out_sharding_handlers[type(orig_in_s)]
+  candidates: list[tuple[NamedSharding, Any]] = []
+  if all_orig_in_s is not None and all_orig_avals is not None:
+    for s, a in safe_zip(all_orig_in_s, all_orig_avals):
+      if s is not None and a is not None and isinstance(s, NamedSharding):
+        candidates.append((s, a))
+  elif (orig_in_s is not None and orig_aval is not None
+        and isinstance(orig_in_s, NamedSharding)):
+    candidates.append((orig_in_s, orig_aval))
+
   for o, out_aval in safe_zip(out_shardings, out_avals):
     if (isinstance(o, sharding_impls.GSPMDSharding) and
         out_aval is not core.abstract_token):
       # TODO(yashkatariya): Remove this condition and ask users to drop into
       # explicit mode.
-      if (orig_aval is not None and out_aval is not None
-          and out_aval.ndim == orig_aval.ndim
-          and isinstance(orig_in_s, NamedSharding)
-          and out_aval.sharding.mesh == orig_in_s.mesh.abstract_mesh
-          and o.is_equivalent_to(orig_in_s, orig_aval.ndim)):
-        out.append(orig_in_s)
+      matched_s = None
+      for c_s, c_aval in candidates:
+        if (out_aval is not None
+            and out_aval.ndim == c_aval.ndim
+            and out_aval.sharding.mesh == c_s.mesh.abstract_mesh
+            and o.is_equivalent_to(c_s, c_aval.ndim)):
+          matched_s = c_s
+          break
+      if matched_s is not None:
+        out.append(matched_s)
       else:
         try:
           out.append(orig_handler(o, out_aval, orig_in_s))
@@ -1401,9 +1415,16 @@ def maybe_recover_user_shardings(
     return new_shardings
 
   for oi, o_aval in safe_zip(old_shardings, old_avals):
+    if isinstance(oi, NamedSharding):
+      return _get_out_sharding_from_orig_sharding(
+          new_shardings, new_avals, oi, o_aval,
+          all_orig_in_s=old_shardings, all_orig_avals=old_avals)
+
+  for oi, o_aval in safe_zip(old_shardings, old_avals):
     if oi is not None and type(oi) in _orig_out_sharding_handlers:
       return _get_out_sharding_from_orig_sharding(
-          new_shardings, new_avals, oi, o_aval)
+          new_shardings, new_avals, oi, o_aval,
+          all_orig_in_s=old_shardings, all_orig_avals=old_avals)
 
   if intermediate_shardings is not None:
     for i in intermediate_shardings:
