@@ -2982,6 +2982,7 @@ def push_pull_block_spec(
     *block_specs: Any,
     scalar_prefetch_handler: Any | None = None,
     grid_len: int | None = None,
+    strict_mode: bool = True,
     **block_spec_kwargs: Any,
 ):
   """Pushes `BlockSpec`s forward through an output fusion, then pulls them back.
@@ -2989,19 +2990,20 @@ def push_pull_block_spec(
   For an output fusion `f(values, *args, **kwargs)` with closed-over side inputs
   `values` (assigned `no_block_spec` during the forward push) and unfused kernel
   outputs `*args, **kwargs`, pushes `block_specs` forward through `f` and then
-  pulls the resulting output `BlockSpec`s backward (with `strict_mode=False`) to
-  derive `BlockSpec`s for `values` and build the block-level kernel function.
+  pulls the resulting output `BlockSpec`s backward to derive `BlockSpec`s for
+  `values` and build the block-level kernel function.
 
   Args:
     f: Output fusion function taking `(values, *args, **kwargs)`.
     *block_specs: `BlockSpec`s for the positional kernel outputs `*args`.
     scalar_prefetch_handler: Optional getter created by
-      `make_scalar_prefetch_handler` that selects this fusion's scalar
-      prefetch values from the kernel's scalar prefetch inputs.
+      `make_scalar_prefetch_handler` that selects this fusion's scalar prefetch
+      values from the kernel's scalar prefetch inputs.
     grid_len: Optional number of grid dimensions in the enclosing kernel; see
       `pull_block_spec`.
-    **block_spec_kwargs: `BlockSpec`s for the keyword kernel outputs
-      `**kwargs`.
+    strict_mode: If `True`, converging paths to the same value must have
+      equivalent block index maps; if `False`, only block shapes must match.
+    **block_spec_kwargs: `BlockSpec`s for the keyword kernel outputs `**kwargs`.
 
   Returns:
     A function taking `(values, *args, **kwargs)` (or their abstract types)
@@ -3024,6 +3026,7 @@ def push_pull_block_spec(
         *block_specs,
         scalar_prefetch_handler=scalar_prefetch_handler,
         grid_len=grid_len,
+        strict_mode=strict_mode,
         return_out_type=True,
         **block_spec_kwargs,
     )(values, *args, **kwargs)
@@ -3032,7 +3035,7 @@ def push_pull_block_spec(
         out_block_specs,
         scalar_prefetch_handler=scalar_prefetch_handler,
         grid_len=grid_len,
-        strict_mode=False,
+        strict_mode=strict_mode,
     )(values, *args, **kwargs)
     return (
         kernel_fn,

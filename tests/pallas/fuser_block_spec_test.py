@@ -3275,6 +3275,22 @@ class PushBlockSpecTest(parameterized.TestCase):
     self.assertEqual(out_spec.block_shape, (128, 128))
     self.assertEqual(out_spec.index_map(0, 1), (0, 1))
 
+  def test_push_pull_block_spec_strict_mode(self):
+    x_type = jax.ShapeDtypeStruct((256, 256), jnp.float32)
+    bs = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    bad_dag = lambda v, x: x + (v[0] + v[0].T)
+
+    with self.assertRaisesRegex(ValueError, 'Fusion contains a DAG'):
+      block_spec_lib.push_pull_block_spec(bad_dag, bs, grid_len=2)(
+          (x_type,), x_type
+      )
+
+    _, (v_spec,), _, _, _ = block_spec_lib.push_pull_block_spec(
+        bad_dag, bs, grid_len=2, strict_mode=False
+    )((x_type,), x_type)
+    self.assertEqual(v_spec.block_shape, (128, 128))
+    self.assertEqual(v_spec.index_map(0, 1), (0, 1))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
