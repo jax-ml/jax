@@ -90,3 +90,35 @@ y = jax.device_put(np.ones((1, 3)))  # `y` has different shape than the output
 z = jax.jit(add, donate_argnums=(1,))(x, y)
 # >> UserWarning: Some donated buffers were not usable: f32[1,3]{1,0}
 ```
+
+(buffer-donation-debug-nans)=
+## Donation is disabled under `jax_debug_nans`
+
+Buffer donation is disabled while the `jax_debug_nans` configuration option
+(see {func}`jax.debug_nans`) is enabled. When that mode detects an invalid
+value in the output of a compiled function, JAX re-runs the function without
+`jit` on the original arguments to locate the operation that produced it, and
+that re-run needs the input buffers that donation would have invalidated.
+Donation requests are silently ignored in this mode; there is no warning.
+
+Donation is dropped when the function is traced and compiled, and the compiled
+function is cached. So a `jax.jit`-compiled function first called while
+`jax_debug_nans` is enabled keeps ignoring its donation request even after the
+option is disabled, until the cached executable is dropped:
+
+```python
+f = jax.jit(lambda x: x + 1, donate_argnums=(0,))
+
+with jax.debug_nans(True):
+  f(x)  # Donation is ignored, and the compiled function is cached.
+
+f(y)  # Still no donation: this reuses the cached executable.
+f.clear_cache()
+f(z)  # Donates again.
+```
+
+Conversely, an executable compiled before the option was enabled keeps
+donating while it is on. (`jax.pmap` re-derives donation on every call, so it
+is only affected while the option is enabled.)
+
+The `jax_debug_infs` option does not currently disable buffer donation.
