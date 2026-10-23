@@ -752,7 +752,6 @@ def _do_mma(
           f"Unsupported element type for block scaling: {a_element_type}"
       )
     extra_ptx = "[$5], [$6], "
-    extra_constraints = ",r,r"
   else:
     if isinstance(a_element_type, (ir.F16Type, ir.BF16Type)):
       kind = "f16"
@@ -768,7 +767,7 @@ def _do_mma(
       raise NotImplementedError(
           f"Unsupported input element type: {a_element_type}"
       )
-    extra_constraints = extra_ptx = ""
+    extra_ptx = ""
 
     def create_scaled_instr_descriptor(*args):
       raise NotImplementedError
@@ -781,7 +780,6 @@ def _do_mma(
   if is_sparse:
     sparse_meta_idx = 5 + (2 if is_scaled else 0)
     sparse_meta_ptx = f"[${sparse_meta_idx}], "
-    extra_constraints += ",r"
   sp_selector = None
   sparse_addr: tuple[Any, ...] = ()
   scales_addrs: tuple[Any, ...] = ()
@@ -853,9 +851,7 @@ def _do_mma(
     b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)  # pyrefly: ignore[bad-argument-type]
     a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
     b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [d_addr, a_enc_addr_base, b_enc_addr_base, i_desc, accumulate, *scales_addrs, *sparse_addr],
+    utils.inline_ptx(
         f"""{{
             .reg .b32 a_desc_low, a_desc_high, b_desc_low, b_desc_high;
             .reg {".b32" if a_in_tmem else ".b64"} a_desc;
@@ -866,8 +862,7 @@ def _do_mma(
             {"mov.b32 a_desc, a_desc_low;" if a_in_tmem else f"mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"}
             tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
         }}""",
-        "r,r,r,r,b" + extra_constraints,
-        has_side_effects=True,
+        d_addr, a_enc_addr_base, b_enc_addr_base, i_desc, accumulate, *scales_addrs, *sparse_addr,
     )
     accumulate = arith.constant(i1, 1)
 
@@ -966,7 +961,7 @@ def tmem_alloc(
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
   ptx = f"tcgen05.alloc.cta_group::{cta_group}.sync.aligned.shared::cta.b32 [$0], $1;"
-  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32))
+  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32), convergent=True)
   return ncols
 
 
@@ -977,13 +972,13 @@ def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exac
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
   ptx = f"tcgen05.dealloc.cta_group::{cta_group}.sync.aligned.b32 $0, $1;"
-  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32))
+  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32), convergent=True)
 
 
 def tmem_relinquish_alloc_permit(collective: bool) -> None:
   cta_group = "2" if collective else "1"
   ptx = f"tcgen05.relinquish_alloc_permit.cta_group::{cta_group}.sync.aligned;"
-  utils.inline_ptx(ptx)
+  utils.inline_ptx(ptx, convergent=True)
 
 
 def _tmem_access_helper(shape, num) -> tuple[int, str]:
@@ -1041,27 +1036,18 @@ def _tmem_load(
     num_out_regs += 1
   else:
     suffix = ".b32"
-  if num_out_regs == 1:
-    asm_out_ty = i32
-  else:
-    asm_out_ty = llvm.StructType.get_literal([i32] * num_out_regs)
 
   red_mod = red_reg_arg = ""
   if reduce is not None:
     red_mod = ".red"
     red_reg_arg = f", ${num_out_regs - 1}"
-  regs = llvm.inline_asm(
-      asm_out_ty,
-      [tmem_addr],
+  return utils.inline_ptx(
       f"tcgen05.ld{red_mod}.sync.aligned.{shape}.x{num}{suffix} {regs_vector}{red_reg_arg}, [${num_out_regs}];",
-      "=r," * num_out_regs + "r",
+      tmem_addr,
+      result_types=[i32] * num_out_regs,
       has_side_effects=True,
+      convergent=True,
   )
-  assert isinstance(regs, ir.Value)
-  if num_out_regs == 1:
-    return [regs]
-  else:
-    return [llvm.extractvalue(i32, regs, [i]) for i in range(num_out_regs)]
 
 
 def _tmem_store(tmem_addr, shape, num, regs, unpack: bool) -> None:
@@ -1073,6 +1059,7 @@ def _tmem_store(tmem_addr, shape, num, regs, unpack: bool) -> None:
       f"tcgen05.st.sync.aligned.{shape}.x{num}{pack_mod}.b32 [${num_out_regs}], {regs_vector};",
       "r," * num_out_regs + "r",
       has_side_effects=True,
+      convergent=True,
   )
 
 
@@ -1869,12 +1856,12 @@ def _load_32xcols_native(
 
 
 def commit_tmem() -> None:
-  utils.inline_ptx("tcgen05.wait::st.sync.aligned;")
+  utils.inline_ptx("tcgen05.wait::st.sync.aligned;", convergent=True)
   utils.warpgroup_barrier()
 
 
 def wait_load_tmem() -> None:
-  utils.inline_ptx("tcgen05.wait::ld.sync.aligned;")
+  utils.inline_ptx("tcgen05.wait::ld.sync.aligned;", convergent=True)
   utils.warpgroup_barrier()
 
 

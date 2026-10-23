@@ -316,7 +316,9 @@ def _attention_reference_custom_bwd(
   if sinks is not None:  # the gradient is ``sum(-exp(s) / exp(lse) * o * do)``
     sinks_exp = -jnp.exp(sinks[..., None, None].astype(jnp.float32)
                          - logsumexp[..., None].astype(jnp.float32))
-    dsinks = jnp.sum(sinks_exp.astype(o.dtype) * do * o)
+    dsinks = jnp.sum(
+        sinks_exp * o.astype(jnp.float32) * do.astype(jnp.float32)
+    ).astype(sinks.dtype)
   return None, dq, dk, dv, None, dsinks
 
 
@@ -709,11 +711,12 @@ def flash_attention_kernel(
     mask_ref,
     q_sequence_ref,
     # Outputs
+    o_ref,
+    logsumexp_ref,
+    # Scratch
     m_scratch_ref,
     l_scratch_ref,
     o_scratch_ref,
-    o_ref,
-    logsumexp_ref=None,
     *,
     mask_value: float,
     grid_width: int,
@@ -846,9 +849,12 @@ def flash_attention_kernel(
           logsumexp_ref.dtype
       )
 
-    m_scratch_ref[...] = jnp.zeros_like(m_scratch_ref)
-    l_scratch_ref[...] = jnp.zeros_like(l_scratch_ref)
-    o_scratch_ref[...] = jnp.zeros_like(o_scratch_ref)
+
+def _div(dividend: int, divisor: int):
+  if divisor == 1:
+    return dividend
+
+  return lax.div(dividend, divisor)
 
 
 @overload
@@ -889,13 +895,6 @@ def _splash_attention_forward(
     interpret: bool = False,
 ) -> SplashCustomReturnType:
   ...
-
-
-def _div(dividend: int, divisor: int):
-  if divisor == 1:
-    return dividend
-
-  return lax.div(dividend, divisor)
 
 
 def _splash_attention_forward(
@@ -1096,18 +1095,17 @@ def _splash_attention_forward(
 
   num_scalar_prefetch = 3
 
+  # Outputs only; accumulators live in VMEM scratch
   out_shapes = [
-      jax.ShapeDtypeStruct((bq, NUM_LANES), jnp.float32),  # m_scratch
-      jax.ShapeDtypeStruct((bq, NUM_LANES), jnp.float32),  # l_scratch
-      jax.ShapeDtypeStruct((bq, head_dim_v), jnp.float32),  # o_scratch
       jax.ShapeDtypeStruct((num_q_heads, q_seq_len, head_dim_v), q.dtype),
   ]
   out_specs = [
-      # TODO(sharadmv): convert m/l to be scratch
-      pl.BlockSpec((bq, NUM_LANES), lambda h, i, j, *_: (0, 0)),
-      pl.BlockSpec((bq, NUM_LANES), lambda h, i, j, *_: (0, 0)),
-      pl.BlockSpec((bq, head_dim_v), lambda h, i, j, *_: (0, 0)),
       pl.BlockSpec((None, bq, head_dim_v), out_index_map),
+  ]
+  scratch_shapes = [
+      pltpu.VMEM((bq, NUM_LANES), jnp.float32),  # m_scratch
+      pltpu.VMEM((bq, NUM_LANES), jnp.float32),  # l_scratch
+      pltpu.VMEM((bq, head_dim_v), jnp.float32),  # o_scratch
   ]
   if save_residuals:
     out_shapes += [
@@ -1161,6 +1159,7 @@ def _splash_attention_forward(
             in_specs=in_specs,
             out_specs=out_specs,
             grid=grid,
+            scratch_shapes=scratch_shapes,
         ),
         compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel", "arbitrary", "arbitrary"),
@@ -1182,14 +1181,7 @@ def _splash_attention_forward(
         fwd_mask_info.partial_mask_blocks,
         q_sequence,
     )
-
-  (
-      _,
-      _,
-      _,
-      out,
-      logsumexp,
-  ) = all_out
+  out, logsumexp = all_out
 
   if save_residuals:
     assert logsumexp is not None
@@ -1329,8 +1321,9 @@ def _flash_attention_dq_kernel(
     mask_ref,
     q_sequence_ref,
     # Outputs
-    dq_scratch_ref,
     dq_ref,
+    # Scratch
+    dq_scratch_ref,
     *,
     mask_value: float,
     grid_width: int,
@@ -1408,7 +1401,6 @@ def _flash_attention_dq_kernel(
   @pl.when(j == grid_width - 1)
   def end():
     dq_ref[...] = dq_scratch_ref[...].astype(dq_ref.dtype)
-    dq_scratch_ref[...] = jnp.zeros_like(dq_scratch_ref)
 
 
 def _splash_attention_bwd_dq(
@@ -1607,12 +1599,13 @@ def _splash_attention_bwd_dq(
     in_specs.append(None)
 
   out_shapes = [
-      jax.ShapeDtypeStruct((bq, head_dim_qk), jnp.float32),
       jax.ShapeDtypeStruct.like(q),
   ]
   out_specs = [
-      pl.BlockSpec((bq, head_dim_qk), lambda *_: (0, 0)),
       pl.BlockSpec((None, bq, head_dim_qk), lambda h, i, *_: (h, i, 0)),
+  ]
+  scratch_shapes = [
+      pltpu.VMEM((bq, head_dim_qk), jnp.float32),
   ]
 
   kernel = functools.partial(
@@ -1643,13 +1636,14 @@ def _splash_attention_bwd_dq(
       v_layout=v_layout,
   ))}
   with jax.named_scope(kernel_name):
-    _, dq = pl.pallas_call(
+    (dq,) = pl.pallas_call(
         kernel,
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=num_scalar_prefetch,
             in_specs=in_specs,
             out_specs=out_specs,
             grid=grid,
+            scratch_shapes=scratch_shapes,
         ),
         out_shape=out_shapes,
         compiler_params=pltpu.CompilerParams(
@@ -1695,12 +1689,13 @@ def _flash_attention_dkv_kernel(
     mask_ref,
     q_sequence_ref,
     # Outputs
-    dq_scratch_ref,
-    dk_scratch_ref,
-    dv_scratch_ref,
     dq_ref,
     dk_ref,
     dv_ref,
+    # Scratch
+    dq_scratch_ref,
+    dk_scratch_ref,
+    dv_scratch_ref,
     *,
     num_q_heads: int,
     num_kv_heads: int,
@@ -1860,11 +1855,6 @@ def _flash_attention_dkv_kernel(
   def end():
     dk_ref[...] = dk_scratch_ref[...].astype(dk_ref.dtype)
     dv_ref[...] = dv_scratch_ref[...].astype(dv_ref.dtype)
-    if dq_scratch_ref is not None:
-      dq_scratch_ref[...] = jnp.zeros_like(dq_scratch_ref)
-
-    dk_scratch_ref[...] = jnp.zeros_like(dk_scratch_ref)
-    dv_scratch_ref[...] = jnp.zeros_like(dv_scratch_ref)
 
 
 def _splash_attention_bwd_dkv(
@@ -2010,12 +2000,11 @@ def _splash_attention_bwd_dkv(
     dq_spec = pl.BlockSpec((None, None, bq, head_dim_qk), dq_index_map)
     dq_shape = jax.ShapeDtypeStruct((kv_seq_len // bkv, *q.shape), q.dtype)
     if bkv == bkv_compute:
-      dq_scratch_spec = dq_scratch_shape = None
+      dq_scratch_shape = None
     else:
-      dq_scratch_spec = pl.BlockSpec((bq, head_dim_qk), lambda *_: (0, 0))
-      dq_scratch_shape = jax.ShapeDtypeStruct((bq, head_dim_qk), jnp.float32)
+      dq_scratch_shape = pltpu.VMEM((bq, head_dim_qk), jnp.float32)
   else:
-    dq_spec = dq_shape = dq_scratch_spec = dq_scratch_shape = None
+    dq_spec = dq_shape = dq_scratch_shape = None
 
   def dkv_index_map(kv_index, head_index, *_):
     prefix = () if is_mqa else (_div(head_index, q_heads_per_kv_head),)
@@ -2159,20 +2148,19 @@ def _splash_attention_bwd_dkv(
     in_specs.append(None)
 
   out_shapes = [
-      dq_scratch_shape,
-      jax.ShapeDtypeStruct((bkv, head_dim_qk), jnp.float32),
-      jax.ShapeDtypeStruct((bkv, head_dim_v), jnp.float32),
       dq_shape,
       jax.ShapeDtypeStruct.like(k),
       jax.ShapeDtypeStruct.like(v),
   ]
   out_specs = [
-      dq_scratch_spec,
-      pl.BlockSpec((bkv, head_dim_qk), lambda *_: (0, 0)),
-      pl.BlockSpec((bkv, head_dim_v), lambda *_: (0, 0)),
       dq_spec,
       dk_spec,
       dv_spec,
+  ]
+  scratch_shapes = [
+      dq_scratch_shape,
+      pltpu.VMEM((bkv, head_dim_qk), jnp.float32),
+      pltpu.VMEM((bkv, head_dim_v), jnp.float32),
   ]
 
   kernel = functools.partial(
@@ -2208,13 +2196,14 @@ def _splash_attention_bwd_dkv(
       v_layout=v_layout,
   ))}
   with jax.named_scope(kernel_name):
-    _, _, _, dq_unreduced, dk, dv = pl.pallas_call(
+    dq_unreduced, dk, dv = pl.pallas_call(
         kernel,
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=num_scalar_prefetch,
             in_specs=in_specs,
             out_specs=out_specs,
             grid=grid,
+            scratch_shapes=scratch_shapes,
         ),
         out_shape=out_shapes,
         # We set all dimensions to arbitrary because:
@@ -2357,7 +2346,10 @@ def _splash_attention_bwd(
   if sinks is not None:
     sinks_exp = -jnp.exp(sinks[..., None, None].astype(jnp.float32)
                          - logsumexp[..., None].astype(jnp.float32))
-    dsinks = jnp.sum(sinks_exp.astype(o.dtype) * o * do, axis=(-1, -2))
+    dsinks = jnp.sum(
+        sinks_exp * o.astype(jnp.float32) * do.astype(jnp.float32),
+        axis=(-1, -2),
+    ).astype(sinks.dtype)
   return (
       None,  # fwd_mask_info
       None,  # dq_mask_info

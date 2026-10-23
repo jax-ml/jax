@@ -836,11 +836,26 @@ class DistributionsTest(RandomTestBase):
     samples = random.poisson(key, lam, shape=(2, 20), method=method)
     self.assertArraysEqual(samples[:, :10], jnp.zeros_like(samples[:, :10]))
 
-  def testPoissonCornerCases(self):
+  @jtu.sample_product(
+    method=['exact', 'approximate'],
+    dtype=jtu.dtypes.integer,
+  )
+  def testPoissonCornerCases(self, method, dtype):
     key = self.make_key(0)
-    lam = jnp.array([-1, 0, jnp.nan])
-    samples = random.poisson(key, lam, shape=(3,))
-    self.assertArraysEqual(samples, jnp.array([-1, 0, -1]), check_dtypes=False)
+    lam = jnp.array([-1, 0, jnp.nan, jnp.inf, -jnp.inf])
+    samples = random.poisson(key, lam, shape=(2, 5), dtype=dtype, method=method)
+    self.assertArraysEqual(
+        samples,
+        jnp.broadcast_to(jnp.array([-1, 0, -1, -1, -1], dtype=dtype), (2, 5)),
+    )
+    with jax.debug_nans(True):
+      lam_non_nan = jnp.array([-1.0, 0.0, jnp.inf, -jnp.inf])
+      samples_non_nan = random.poisson(
+          key, lam_non_nan, shape=(2, 4), dtype=dtype, method=method)
+      self.assertArraysEqual(
+          samples_non_nan,
+          jnp.broadcast_to(jnp.array([-1, 0, -1, -1], dtype=dtype), (2, 4)),
+      )
 
   def testPoissonInvalidMethod(self):
     key = self.make_key(0)
@@ -1541,10 +1556,10 @@ class DistributionsTest(RandomTestBase):
     rng = np.random.default_rng(0)
     counts_numpy = jnp.array(rng.multinomial(trials, probs, size=test_samples), dtype)
 
-    shape = (test_samples,) + probs.shape
     key = random.key(0)
-    counts_jax = random.multinomial(key, trials, probs, shape=shape, dtype=dtype)
-    assert counts_jax.shape == shape
+    counts_jax = random.multinomial(
+        key, trials, probs, shape=(test_samples,), dtype=dtype)
+    assert counts_jax.shape == (test_samples, *probs.shape)
 
     energy_distance = get_energy_distance(counts_numpy, counts_jax)
     assert energy_distance < tolerance
@@ -1561,10 +1576,24 @@ class DistributionsTest(RandomTestBase):
     probs = random.dirichlet(subkey, jnp.ones(outcomes))
 
     trials = 1e5
-    counts = random.multinomial(key, trials, probs, shape=(*shape, *probs.shape))
+    counts = random.multinomial(key, trials, probs, shape=shape)
+    self.assertEqual(counts.shape, (*shape, probs.shape[-1]))
     freqs = counts / trials
 
     self.assertAllClose(freqs, jnp.broadcast_to(probs, freqs.shape), atol=1e-2)
+
+  def testMultinomialBatchShape(self):
+    # `shape` is the batch shape, as in numpy: the outcome axis is appended.
+    key = random.key(0)
+    p = jnp.array([[0.2, 0.8], [0.5, 0.5], [1.0, 0.0]])
+    n = jnp.array([10., 20., 30.])
+    counts = random.multinomial(key, n, p, shape=(4, 3))
+    self.assertEqual(counts.shape, (4, 3, 2))
+    self.assertArraysEqual(counts.sum(-1), jnp.broadcast_to(n, (4, 3)))
+    self.assertEqual(random.multinomial(key, 5, p[0], shape=()).shape, (2,))
+    with self.assertRaisesRegex(
+        ValueError, "multinomial parameter shapes must be broadcast-compatible"):
+      random.multinomial(key, n, p, shape=(1,))
 
   @jtu.sample_product([
       dict(n_dtype=n_dtype, p_dtype=p_dtype, dtype=dtype)

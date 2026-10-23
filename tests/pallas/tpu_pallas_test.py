@@ -1708,21 +1708,35 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     expected = jnp.zeros_like(x[0:1, 0:2]).at[0, 1].set(x[4, 4])
     np.testing.assert_allclose(y, expected)
 
-  def test_vmem_vmem_dma(self):
-    def kernel(x_ref, y_ref):
-      def body(sem):
-        pltpu.async_copy(x_ref, y_ref, sem).wait()
-      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
-    x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = self.pallas_call(
+  @parameterized.product(
+      dtype=(jnp.float32, jnp.bfloat16, jnp.int8),
+      slice_rows=(None, 8, 24),
+  )
+  def test_vmem_vmem_dma(
+      self, dtype: jnp.dtype, slice_rows: int | None
+  ) -> None:
+    if slice_rows is not None and not jtu.is_libtpu_at_least('0.0.51'):
+      self.skipTest('Requires libtpu >= 0.0.51')
+    shape = (64, 256)
+    window = slice(None) if slice_rows is None else slice(0, slice_rows)
+
+    def kernel(x_ref, y_ref, o_ref):
+      pltpu.sync_copy(y_ref, o_ref)
+      pltpu.sync_copy(x_ref.at[window], o_ref.at[window])
+
+    x = jnp.arange(math.prod(shape)).astype(dtype).reshape(shape)
+    y = jnp.zeros_like(x)
+    out = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.VMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
         ],
         out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-    )(x)
-    np.testing.assert_allclose(y, x)
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        input_output_aliases={1: 0},
+    )(x, y)
+    np.testing.assert_array_equal(out, y.at[window].set(x[window]))
 
   def test_hbm_vmem_dma_slicing(self):
     def kernel(x_hbm_ref, y_ref):
@@ -2126,6 +2140,27 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       x = jnp.full(shape, i, dtype=jnp.int32)
       np.testing.assert_array_equal(fn(x), x)
 
+  def test_dma_stride_2gib(self):
+    if not jtu.is_libtpu_at_least('0.0.51'):
+      self.skipTest('Requires libtpu >= 0.0.51')
+
+    def kernel(x_ref, o_ref):
+      pltpu.sync_copy(x_ref.at[:, pl.ds(0, 1)], o_ref)
+
+    f = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((2, 1, 8, 128), jnp.bfloat16),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    expected = jnp.arange(2 * 8 * 128, dtype=jnp.bfloat16).reshape(2, 1, 8, 128)
+    x = jax.jit(
+        lambda e: jnp.zeros((2, 2**20, 8, 128), dtype=jnp.bfloat16)
+        .at[:, :1]
+        .set(e)
+    )(expected)
+    np.testing.assert_array_equal(f(x), expected)
+
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
@@ -2225,6 +2260,39 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
 
 
 class PallasCallTest(ptu.PallasTPUTest):
+
+  @jtu.thread_unsafe_test()
+  def test_cond_extui(self):
+    # NOTE: If the ``cond`` lowering changes, we might need to also update
+    # the logic in the canonicalize-memory-space pass.
+    if self.INTERPRET:
+      self.skipTest('Not supported in interpret mode.')
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        grid=(1,),
+    )
+    def kernel(x_ref, y_ref):
+      @pl.when(pl.program_id(0) == 0)
+      def on_true():
+        y_ref[...] = x_ref[...]
+
+    with mock.patch.object(
+        mosaic,
+        'lower_module_to_custom_call',
+        wraps=mosaic.lower_module_to_custom_call,
+    ) as mock_lower:
+      jax.jit(kernel).lower(jax.ShapeDtypeStruct((8, 128), jnp.float32))
+
+    mock_lower.assert_called_once()
+    module = mock_lower.call_args.kwargs['module']
+    self.assertRegex(
+        str(module),
+        r'(?s)%(?P<ext>\d+) = arith\.extui %\d+ : i1 to i32.*'
+        r'%(?P<cmp>\d+) = arith\.cmpi ne, %(?P=ext), %c0_i32[^\s]* : i32.*'
+        r'scf\.if %(?P=cmp)',
+    )
 
   def test_memory_space_like(self):
     x = jax.ShapeDtypeStruct((2, 3), jnp.float32)
@@ -2387,8 +2455,6 @@ class PallasCallTest(ptu.PallasTPUTest):
       ('case_c_i32', jnp.int32, (1, 4, 1), (64, 4, 4), (256, 4, 1)),
   )
   def test_broadcast_then_reshape(self, dtype, src, mid, dst):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
     if src == (1, 8, 1) and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Requires TPU v5+ for sublane gather')
 
@@ -2529,8 +2595,6 @@ class PallasCallTest(ptu.PallasTPUTest):
   ):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Large second minor layout requires TPU v4+')
-    if not jtu.is_libtpu_at_least('0.0.49'):
-      self.skipTest('Test requires libtpu >= 0.0.49')
 
     sublane_count = pltpu.get_tpu_info().num_sublanes
     lane_count = pltpu.get_tpu_info().num_lanes
@@ -2680,6 +2744,46 @@ class PallasCallTest(ptu.PallasTPUTest):
     self.assertEqual(y[0], 10)
     self.assertIn('scf.for', get_output())
 
+  @parameterized.parameters([1, 2, True])
+  def test_scan_and_while_fori_loop_index_carry(self, unroll):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((6,), jnp.int32),
+        in_specs=(pl.BlockSpec(memory_space=pltpu.SMEM),),
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+    )
+    def f(x_ref, y_ref):
+      def scan_body(carry, _):
+        i, acc = carry
+        return (i + 1, acc + i), None
+
+      (static_i, static_acc), _ = lax.scan(
+          scan_body, (jnp.int32(5), jnp.int32(0)), None, length=4, unroll=unroll
+      )
+      (dyn_i, dyn_acc), _ = lax.scan(
+          scan_body, (x_ref[0], jnp.int32(0)), None, length=4, unroll=unroll
+      )
+      while_i, _, while_acc = lax.while_loop(
+          lambda s: s[0] < s[1],
+          lambda s: (s[0] + 1, s[1], s[2] + s[0]),
+          (x_ref[0], x_ref[1], jnp.int32(0)),
+      )
+      y_ref[0] = static_i
+      y_ref[1] = static_acc
+      y_ref[2] = dyn_i
+      y_ref[3] = dyn_acc
+      y_ref[4] = while_i
+      y_ref[5] = while_acc
+
+    y = f(jnp.array([7, 3], dtype=jnp.int32))
+    np.testing.assert_array_equal(
+        y, np.array([9, 26, 11, 34, 7, 0], dtype=np.int32)
+    )
+    y_active = f(jnp.array([2, 6], dtype=jnp.int32))
+    np.testing.assert_array_equal(
+        y_active, np.array([9, 26, 6, 14, 6, 14], dtype=np.int32)
+    )
+
   @jtu.thread_unsafe_test()  # Patches ``sys.stdout``.
   def test_arg_name_locs(self):
     @functools.partial(
@@ -2794,9 +2898,6 @@ class PallasCallTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(jnp.float32, jnp.bfloat16, jnp.int32)
   def test_load_vmem_before_aliasing_store(self, dtype):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
-
     rows, lanes = 32, 256
 
     def kernel(i_ref, a_ref, b_ref, v_ref, o_ref, t):
@@ -2832,6 +2933,87 @@ class PallasCallTest(ptu.PallasTPUTest):
     for k in (2, 1):
       out = jax.jit(fn)(np.array([k, 0], np.int32), a, b, v)
       np.testing.assert_array_equal(out, a)
+
+  @parameterized.parameters(pltpu.VMEM, pltpu.HBM)
+  def test_has_memory_space_and_cast(self, input_memory_space):
+    if not jtu.is_libtpu_at_least('0.0.51'):
+      self.skipTest('Requires libtpu >= 0.0.51')
+    if input_memory_space is pltpu.VMEM and not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Requires TPU V5+ for VMEM')
+
+    expected_offset = {pltpu.VMEM: 1.0, pltpu.HBM: 2.0}
+
+    def kernel(x_ref, y_ref):
+      def on_vmem():
+        x_vmem = x_ref.memory_space_cast(pltpu.VMEM)
+        self.assertEqual(x_vmem.memory_space, pltpu.VMEM)
+        y_ref[...] = x_vmem[...] + 1.0
+
+      def on_other():
+        x_hbm = x_ref.memory_space_cast(pltpu.HBM)
+        self.assertEqual(x_hbm.memory_space, pltpu.HBM)
+        pltpu.sync_copy(x_hbm, y_ref)
+        y_ref[...] += 2.0
+
+      lax.cond(pltpu.has_memory_space(x_ref, pltpu.VMEM), on_vmem, on_other)
+
+    @jax.jit
+    def f(x):
+      x = pltpu.with_memory_space_constraint(x, memory_space=input_memory_space)
+      return self.pallas_call(
+          kernel, out_shape=x, in_specs=[pl.BlockSpec(memory_space=pl.ANY)]
+      )(x)
+
+    x = jnp.ones((8, 128), dtype=jnp.float32)
+    np.testing.assert_array_equal(f(x), x + expected_offset[input_memory_space])
+
+  def test_memory_space_cast_errors(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(),
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+    )
+    def kernel(x_ref):
+      x_ref.memory_space_cast(pltpu.VMEM).memory_space_cast(pltpu.VMEM)
+
+    with self.assertRaisesRegex(
+        ValueError, 'Multiple memory_space_casts are not allowed'
+    ):
+      kernel(jnp.ones((8, 128), dtype=jnp.float32))
+
+  @parameterized.parameters(
+      (
+          pltpu.VMEM,
+          lambda r: r,
+          pltpu.VMEM,
+          'Ref must have pl.ANY memory space',
+      ),
+      (
+          pl.ANY,
+          lambda r: r.memory_space_cast(pltpu.VMEM),
+          pltpu.VMEM,
+          'Ref must have pl.ANY memory space',
+      ),
+      (
+          pl.ANY,
+          lambda r: r,
+          pl.ANY,
+          r'has_memory_space.*pl\.ANY.* is not supported',
+      ),
+  )
+  def test_has_memory_space_errors(
+      self, in_memory_space, transform, target_memory_space, error_regex
+  ):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(),
+        in_specs=[pl.BlockSpec(memory_space=in_memory_space)],
+    )
+    def kernel(x_ref):
+      pltpu.has_memory_space(transform(x_ref), target_memory_space)
+
+    with self.assertRaisesRegex(ValueError, error_regex):
+      kernel(jnp.ones((8, 128), dtype=jnp.float32))
 
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
@@ -3929,9 +4111,6 @@ class PallasCallRefTransformTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(y, x[8:16, :128])
 
   def test_column_sliced_ref_unaligned_sublane_slice(self):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
-
     x = jnp.arange(16 * 256, dtype=jnp.float32).reshape((16, 256))
 
     def load_kernel(x_ref, o_ref):
@@ -5090,6 +5269,9 @@ class MiscellaneousTest(ptu.PallasTPUTest):
           ((2, 3, 8, 15), (6, 2, 60)),
           ((2, 3, 4, 10), (24, 10)),
           ((2, 2, 6, 8), (4, 6, 8)),
+          # 1D <-> 2D / 1D <-> 3D
+          ((16,), (1, 4, 4)),
+          ((32,), (4, 8)),
       ],
       dtype=[
           jnp.float32,
@@ -5106,6 +5288,11 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         (input_shape, output_shape),
         (output_shape, input_shape),
     ]:
+      if len(input_shape) == 1 or len(output_shape) == 1:
+        if dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5):
+          self.skipTest('8-bit subelement masking requires TPU v5+')
+        if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4):
+          self.skipTest('16-bit subelement masking requires TPU v4+')
 
       def kernel(x_ref, y_ref):
         y_ref[...] = x_ref[...].reshape(out_shape)
@@ -5810,11 +5997,7 @@ class EmitPipelineTest(ptu.PallasTPUTest):
   )
   def test_emit_pipeline_small_window(self, tile_major, dtype):
     if not jtu.is_device_tpu_at_least(4) and tile_major == 1:
-      expected_error = (
-          jax.errors.JaxRuntimeError
-          if jtu.is_libtpu_at_least('0.0.48')
-          else error_handling.MosaicError
-      )
+      expected_error = jax.errors.JaxRuntimeError
       expect_ctx = self.assertRaisesRegex(
           expected_error,
           'The contiguous inner slice in the DMA transfer',
@@ -5848,6 +6031,39 @@ class EmitPipelineTest(ptu.PallasTPUTest):
           out_specs=pl.BlockSpec(memory_space=pl.ANY),
       )(x, y)
       np.testing.assert_array_equal(out, x + y)
+
+  @parameterized.product(
+      use_primitive=[False, True],
+      no_pipelining=[False, True],
+  )
+  def test_emit_pipeline_multicore_no_pipelining(
+      self, use_primitive, no_pipelining
+  ):
+    if not self.INTERPRET and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
+    with config.use_emit_pipeline_primitive(use_primitive):
+      def pipeline_body(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1.0
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((4 * 8, 128), jnp.float32),
+          mesh=pltpu.TensorCoreMesh(axis_name='core'),
+          interpret=self.INTERPRET,
+      )
+      def kernel(x_hbm_ref, o_hbm_ref):
+        pltpu.emit_pipeline(
+            pipeline_body,
+            grid=(4,),
+            in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            core_axis_name='core',
+            dimension_semantics=(pltpu.PARALLEL,),
+            no_pipelining=no_pipelining,
+        )(x_hbm_ref, o_hbm_ref)
+
+      x = jnp.arange(4 * 8 * 128, dtype=jnp.float32).reshape(4 * 8, 128)
+      out = kernel(x)
+      np.testing.assert_array_equal(out, x + 1)
 
 
 class PallasHloNamesTest(ptu.PallasTPUTest):
@@ -5996,6 +6212,54 @@ class PallasHloNamesTest(ptu.PallasTPUTest):
     self.assertRegex(
         hlo, r'%add[.\d]*\.foo_ref_bar__y__[.\d]* = .* add'
     )
+
+
+class MosaicLoweringForLoopTest(jtu.JaxTestCase):
+
+  @jtu.thread_unsafe_test()
+  def test_fori_loop_dynamic_unroll_1_skips_remainder_loop(self):
+    def kernel(n_ref, x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+      def body(i, _):
+        y_ref[...] += i
+
+      lax.fori_loop(1, n_ref[0] + 2, body, None, unroll=1)
+
+    f = pl.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+        debug=True,
+    )
+    with jtu.capture_stdout() as get_output:
+      pl.lower_as_mlir(
+          f,
+          jax.ShapeDtypeStruct((1,), jnp.int32),
+          jax.ShapeDtypeStruct((8, 128), jnp.int32),
+          platforms=['tpu'],
+      )
+
+    self.assertEqual(get_output().count('scf.for'), 1)
+
+  def test_kernel_captures_pinned_ref(self):
+    # https://github.com/jax-ml/jax/issues/41847
+    def f(x):
+      ref = jax.new_ref(x, memory_space=pltpu.VMEM, pin=True)
+
+      @pl.kernel(mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1))
+      def kernel():
+        ref[...] += 1
+
+      kernel()
+      return jax.freeze(ref)
+
+    x = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    jax.jit(f).trace(x).lower(lowering_platforms=('tpu',))
 
 
 class PallasKernelMetadataTest(ptu.PallasTPUTest):
@@ -6672,6 +6936,28 @@ class ExplicitMXUTest(jtu.JaxTestCase):
           kernel, out_shape=jax.ShapeDtypeStruct((8, 256), jnp.float32)
       )()
 
+  def test_acc_in_unrolled_fori_loop(self):
+    def kernel(x_ref, o_ref):
+      def scoped(acc):
+        def body(i, _):
+          del i
+          pltpu.matmul_acc_lhs(acc, x_ref[...])
+
+        jax.lax.fori_loop(0, 2, body, None, unroll=True)
+        o_ref[...] = pltpu.matmul_pop(acc)
+
+      pl.run_scoped(scoped, pltpu.ACC(0)((8, 256), jnp.float32))
+
+    x = jax.ShapeDtypeStruct((8, 256), jnp.float32)
+    f = pl.pallas_call(kernel, out_shape=x)
+    tpu7x = jax.sharding.AbstractDevice(
+        device_kind='TPU7x', num_cores=1, platform='tpu'
+    )
+    with jax.sharding.use_abstract_mesh(
+        jax.sharding.AbstractMesh((), (), abstract_device=tpu7x)
+    ):
+      jax.jit(f).trace(x).lower(lowering_platforms=('tpu',))
+
 
 @jtu.with_config(jax_pallas_auto_assign_collective_ids='yes')
 class PallasTPUCollectiveIdTest(ptu.PallasTPUTest):
@@ -7213,9 +7499,6 @@ class TPUPallasCacheKeyTest(ptu.PallasTPUTest):
     super().setUp()
     if self.INTERPRET:
       self.skipTest('Compilation-only test')
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Separating debug locations requires libtpu >= 0.0.50')
-    self.enter_context(config.jax_mosaic_unzip_debug_locations(True))
 
   def test_cache_key_collision_with_fingerprint_matching(self):
     x = jnp.array([1.0], jnp.float32)

@@ -85,14 +85,11 @@ void RegisterPartitionSpec(nb::module_& m) {
   m.def(
       "canonicalize_partitions",
       [](nb::tuple partitions_arg) {
-        nb::tuple partitions =
-            nb::steal<nb::tuple>(PyTuple_New(partitions_arg.size()));
+        nb::tuple_builder partitions(partitions_arg.size());
         for (size_t i = 0; i < partitions_arg.size(); ++i) {
-          PyTuple_SET_ITEM(
-              partitions.ptr(), i,
-              CanonicalizePartition(partitions_arg[i]).release().ptr());
+          partitions.put(CanonicalizePartition(partitions_arg[i]));
         }
-        return partitions;
+        return partitions.commit();
       },
       nb::arg("partitions"));
 }

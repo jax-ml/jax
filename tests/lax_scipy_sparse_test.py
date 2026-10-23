@@ -217,8 +217,80 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(expected, actual.value)
 
   def test_cg_weak_types(self):
-    x, _ = jax.scipy.sparse.linalg.bicgstab(lambda x: x, 1.0)
+    x, _ = jax.scipy.sparse.linalg.cg(lambda x: x, 1.0)
     self.assertTrue(dtypes.is_weakly_typed(x))
+
+  def test_cg_preconditioned_rhs_scale(self):
+    rng = jtu.rand_default(self.rng())
+    n = 8
+    diag = jnp.exp2(jnp.linspace(0.0, 20.0, n, dtype=np.float32))
+    q = jnp.asarray(rng((n, n), np.float32))
+    A = jnp.diag(diag) + matmul_high_precision(q, q.T)
+    M = jnp.diag(1.0 / jnp.diag(A))
+    b = jnp.asarray(rng((n,), np.float32))
+    x0_ref = jnp.asarray(rng((n,), np.float32))
+    atol_ref = jnp.float32(1e-3)
+    x_ref, _ = jax.scipy.sparse.linalg.cg(
+        A, b, x0=x0_ref, tol=1e-6, atol=atol_ref, M=M
+    )
+    for k in (-60, 100):
+      scale = np.float32(2.0**k)
+      x_scaled, _ = jax.scipy.sparse.linalg.cg(
+          A, b * scale, x0=x0_ref * scale, tol=1e-6, atol=atol_ref * scale, M=M
+      )
+      self.assertArraysEqual(x_scaled, x_ref * scale)
+    for k in (-100, 100):
+      scale = np.float32(2.0**k)
+      x_scaled_py_atol, _ = jax.scipy.sparse.linalg.cg(
+          A,
+          b * scale,
+          x0=x0_ref * scale,
+          tol=1e-6,
+          atol=float(atol_ref) * (2.0**k),
+          M=M,
+      )
+      self.assertArraysEqual(x_scaled_py_atol, x_ref * scale)
+
+    # Small or zero b with unscaled x0 (||x0|| >> ||b||), and tiny M where
+    # gamma underflows while ||r||^2 > atol2.
+    x_small_b, _ = jax.scipy.sparse.linalg.cg(
+        A, b * np.float32(2.0**-80), x0=x0_ref, tol=1e-6, M=M
+    )
+    self.assertTrue(jnp.all(jnp.isfinite(x_small_b)))
+    x_zero_b, _ = jax.scipy.sparse.linalg.cg(
+        A, jnp.zeros_like(b), x0=x0_ref * np.float32(2.0**100), tol=1e-6, M=M
+    )
+    self.assertTrue(jnp.all(jnp.isfinite(x_zero_b)))
+    A_large = jnp.diag(
+        jnp.array([2.0**100, 2.0**101], dtype=np.float32)
+    ) + np.float32(2.0**95) * jnp.ones((2, 2), dtype=np.float32)
+    M_small = jnp.diag(1.0 / jnp.diag(A_large))
+    x_tiny_m, _ = jax.scipy.sparse.linalg.cg(
+        A_large, jnp.ones(2, dtype=np.float32), tol=1e-12, M=M_small
+    )
+    self.assertTrue(jnp.all(jnp.isfinite(x_tiny_m)))
+
+  def test_cg_preconditioned_grad_small_cotangent(self):
+    rng = jtu.rand_default(self.rng())
+    n = 8
+    diag = jnp.exp2(jnp.linspace(0.0, 20.0, n, dtype=np.float32))
+    q = jnp.asarray(rng((n, n), np.float32))
+    A0 = jnp.diag(diag) + matmul_high_precision(q, q.T)
+    b = jnp.asarray(rng((n,), np.float32))
+    x0 = jnp.asarray(rng((n,), np.float32))
+
+    def solve_sum(d):
+      A = A0 + jnp.diag(d)
+      M = lambda r: r / jnp.diag(A)
+      x, _ = jax.scipy.sparse.linalg.cg(A, b, x0=x0, tol=1e-6, M=M)
+      return jnp.sum(x)
+
+    d0 = jnp.zeros(n, dtype=np.float32)
+    grad_ref = jax.grad(solve_sum)(d0)
+    for k in (-60, 100):
+      scale = np.float32(2.0**k)
+      grad_scaled = jax.grad(lambda d: scale * solve_sum(d))(d0)
+      self.assertArraysEqual(grad_scaled, grad_ref * scale)
 
   # BICGSTAB
   @jtu.sample_product(
@@ -301,7 +373,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(x, solution, atol=solution_tol, rtol=solution_tol)
     # solve = lambda A, b: jax.scipy.sparse.linalg.bicgstab(A, b)[0]
     # jtu.check_grads(solve, (A, b), order=1, rtol=3e-1)
-
 
   def test_bicgstab_pytree(self):
     A = lambda x: {"a": x["a"] + 0.5 * x["b"], "b": 0.5 * x["a"] + x["b"]}

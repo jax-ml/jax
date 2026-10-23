@@ -44,7 +44,7 @@ from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.lib.mlir.dialects import func as func_dialect, sdy
+from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src import pjit
 from jax._src import sharding
 from jax._src import sharding_impls
@@ -331,6 +331,10 @@ class Exported:
 
 def deserialize(blob: bytearray) -> Exported:
   """Deserializes an Exported.
+
+  .. warning::
+    The serialized bytearray must be trusted input. If you deserialized it, when
+    you execute it, it may execute any custom call registered in the jaxlib.
 
   Args:
     blob: a bytearray obtained from :meth:`jax.export.Exported.serialize`.
@@ -737,12 +741,6 @@ def _export_lowered(
     mlir_module_attrs["jax.uses_shape_polymorphism"] = (
         mlir.ir.BoolAttr.get(shape_poly_state.uses_dim_vars))
 
-  # Shardy was used during lowering if we can find the Shardy mesh in the
-  # module. Note that the mesh should have been lifted by the
-  # `sdy-lift-inlined-meshes` pass in mlir.py.
-  shardy_enabled = has_sdy_mesh(ir.SymbolTable(mlir_module.operation),
-                                mlir_module)
-
   mlir_module_serialized = _module_to_bytecode(mlir_module)
 
   # Figure out the result types and shapes
@@ -764,9 +762,7 @@ def _export_lowered(
         len(mlir_module_serialized),
     )
 
-  _check_module(mlir_module,
-                disabled_checks=disabled_checks,
-                shardy_enabled=shardy_enabled)
+  _check_module(mlir_module, disabled_checks=disabled_checks)
 
   ordered_effects = tuple(lowering.compile_args["ordered_effects"])
   unordered_effects = tuple(lowering.compile_args["unordered_effects"])
@@ -778,15 +774,14 @@ def _export_lowered(
                                          len(args_avals_flat))
 
   cur_mesh = None
-  if config.use_shardy_partitioner.value:
-    for sharding in itertools.chain(
-        all_in_shardings, lowering.compile_args["out_shardings"]
-    ):
-      if isinstance(sharding, sharding_impls.NamedSharding):
-        cur_mesh = sharding.mesh
-        break
-    if cur_mesh is not None and isinstance(cur_mesh, mesh_lib.Mesh):
-      cur_mesh = cur_mesh.abstract_mesh
+  for s in itertools.chain(
+      all_in_shardings, lowering.compile_args["out_shardings"]
+  ):
+    if isinstance(s, sharding_impls.NamedSharding):
+      cur_mesh = s.mesh
+      break
+  if cur_mesh is not None and isinstance(cur_mesh, mesh_lib.Mesh):
+    cur_mesh = cur_mesh.abstract_mesh
 
   in_named_shardings = tuple(
     to_named_sharding_with_abstract_mesh(s, aval, cur_mesh)
@@ -1155,53 +1150,13 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "shape_assertion",  # Used by shape_poly to evaluate assertions
 }
 
-check_sharding_pattern = re.compile(r"^({replicated}|{unknown shard_as.*}|.*\[({}, )*{}\]"")$")
-
-
-def _is_replicated_sdy(attr: ir.Attribute) -> bool:
-  if isinstance(attr, sdy.TensorShardingAttr):
-    return all(len(cast(sdy.DimensionShardingAttr, dim).axes) == 0
-               for dim in attr.dimension_shardings)
-  if isinstance(attr, sdy.TensorShardingPerValueAttr):
-    return all(_is_replicated_sdy(s) for s in attr.shardings)
-  return False
-
-
-def _has_non_replicated_sharding_sdy(op: ir.Operation) -> bool:
-  try:
-    sharding = op.attributes["sharding"]
-  except KeyError:
-    return False
-  return not _is_replicated_sdy(sharding)
-
-
-def _has_non_replicated_sharding_mhlo(op: ir.Operation) -> bool:
-  try:
-    sharding = op.attributes["mhlo.sharding"]
-  except KeyError:
-    return False
-  try:
-    sharding_value = ir.StringAttr(sharding).value
-  except UnicodeDecodeError:
-    # The mhlo.sharding attribute may be in pretty-printed format, or
-    # as an encoding of an HloSharding protobuf in some rare situations.
-    # We handle the latter by conservatively assuming it is non-replicated.
-    return True
-  else:
-    return not check_sharding_pattern.match(sharding_value)
-
-
 def _check_module(mod: ir.Module, *,
-                  disabled_checks: Sequence[DisabledSafetyCheck],
-                  shardy_enabled: bool) -> bool:
+                  disabled_checks: Sequence[DisabledSafetyCheck]) -> None:
   """Run a number of checks on the module.
 
   Args:
     disabled_checks: the safety checks that are disabled.
-
-  Returns True if the module uses non-replicated shardings.
   """
-  sharding_attr = ir.StringAttr.get("Sharding", mod.context)
   allowed_custom_call_targets: set[str] = copy.copy(_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
   for dc in disabled_checks:
     target = dc.is_custom_call()
@@ -1212,35 +1167,17 @@ def _check_module(mod: ir.Module, *,
       ir.StringAttr.get(target, mod.context)
       for target in allowed_custom_call_targets}
   disallowed_custom_call_ops: list[str] = []
-  module_uses_non_replicated_sharding = False
-
-  has_non_replicated_sharding = (
-      _has_non_replicated_sharding_sdy if shardy_enabled else
-      _has_non_replicated_sharding_mhlo
-  )
 
   all_custom_calls_allowed = "ALL" in allowed_custom_call_targets
 
   def check_op(op: ir.Operation):
-    nonlocal module_uses_non_replicated_sharding
-    op_name = op.operation.name
-    if op_name == "func.func":
-      if has_non_replicated_sharding(op.operation):
-        module_uses_non_replicated_sharding = True
-
-    elif op_name == "stablehlo.custom_call":
+    if op.operation.name == "stablehlo.custom_call":
       call_target_name_attr = op.operation.attributes["call_target_name"]
       if (
           not all_custom_calls_allowed
           and call_target_name_attr not in allowed_custom_call_targets_attrs
       ):
         disallowed_custom_call_ops.append(f"{op} at {op.location}")
-      if call_target_name_attr == sharding_attr:
-        if has_non_replicated_sharding(op):
-          module_uses_non_replicated_sharding = True
-    elif op_name == "sdy.sharding_constraint":
-      if has_non_replicated_sharding(op):
-        module_uses_non_replicated_sharding = True
 
   def walk_operations(op: ir.Operation) -> None:
     check_op(op)
@@ -1269,7 +1206,6 @@ def _check_module(mod: ir.Module, *,
               "jax.export.DisabledSafetyCheck.custom_call('<target>') to "
               "disabled_checks.\n")
     raise ValueError(msg)
-  return module_uses_non_replicated_sharding
 
 def expand_in_shardings(in_shardings: Sequence[LoweringSharding],
                         module_kept_var_idx: Sequence[int],
@@ -1500,12 +1436,6 @@ def has_sdy_meshes_in_frontend_attributes(submodule: ir.Module) -> bool:
   )
   return "xla.sdy.meshes" in frontend_attributes
 
-def has_sdy_mesh(symtab: ir.SymbolTable, submodule: ir.Module) -> bool:
-  for mesh_name in ("mesh", "empty_mesh", "maximal_mesh_0"):
-    if mesh_name in symtab:
-      return isinstance(symtab[mesh_name], sdy.MeshOp)
-  return has_sdy_meshes_in_frontend_attributes(submodule)
-
 def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                             exported: Exported):
   _ensure_backends_initialized(exported.platforms)
@@ -1515,20 +1445,13 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     submodule = exported.mlir_module(serialized=False)
 
   symtab = ir.SymbolTable(submodule.operation)
-  shardy_enabled = has_sdy_mesh(symtab, submodule)
-  if shardy_enabled:
-    if not config.use_shardy_partitioner.value:
-      raise ValueError(
-          "The function was exported with shardy enabled but you are calling "
-          "it with Shardy disabled. Please enable Shardy using "
-          "`--jax_use_shardy_partitioner=True`.")
-    # TODO(b/422690222): remove this pass once we don't need to support 6m
-    # old exported modules.
-    if has_sdy_meshes_in_frontend_attributes(submodule):
-      with submodule.context:
-        pipeline = passmanager.PassManager.parse(
-            'builtin.module(xla-sdy-round-trip-import-shardy-attrs)')
-        pipeline.run(submodule.operation)
+  # TODO(b/422690222): remove this pass once we don't need to support 6m
+  # old exported modules.
+  if has_sdy_meshes_in_frontend_attributes(submodule):
+    with submodule.context:
+      pipeline = passmanager.PassManager.parse(
+          'builtin.module(xla-sdy-round-trip-import-shardy-attrs)')
+      pipeline.run(submodule.operation)
 
   with submodule.context:
     pipeline = passmanager.PassManager.parse(
@@ -1558,9 +1481,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                        for a in exported.in_avals]
   args = tuple(
       wrap_with_sharding(
-          ctx, x, x_aval,
-          _get_named_sharding(named_sharding, None),
-          use_shardy=True)
+          ctx, x, x_aval, _get_named_sharding(named_sharding, None))
       for x, named_sharding, x_aval in zip(
         args, exported._in_named_shardings, exported_in_avals))
 
@@ -1657,9 +1578,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   # Apply out_shardings
   results = tuple(
       wrap_with_sharding(
-          ctx, x, x_aval,
-          _get_named_sharding(x_sharding, None),
-          use_shardy=True)
+          ctx, x, x_aval, _get_named_sharding(x_sharding, None))
       for x, x_aval, x_sharding in zip(
           results, out_avals, exported._out_named_shardings))
   return results
@@ -1675,14 +1594,9 @@ def wrap_with_sharding(
     ctx: mlir.LoweringRuleContext,
     x: ir.Value,
     x_aval: core.AbstractValue,
-    x_sharding: sharding_impls.NamedSharding | sharding_impls.GSPMDSharding | HloSharding | None,
-    use_shardy: bool,
+    x_sharding: sharding_impls.NamedSharding | None,
 ) -> ir.Value:
   if x_sharding is None:
     return x
-  if use_shardy:
-    x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # pyrefly: ignore[missing-attribute]
-  else:
-    x_sharding = x_sharding.to_proto()  # pyrefly: ignore[missing-attribute]
-  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding,
-                                    allow_shardy_lowering=use_shardy)
+  return mlir.wrap_with_sharding_op(
+      ctx, x, x_aval, x_sharding._to_sdy_sharding(x_aval.ndim))  # type: ignore

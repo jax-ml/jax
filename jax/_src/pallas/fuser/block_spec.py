@@ -54,6 +54,9 @@ import jax.numpy as jnp
 import numpy as np
 
 
+type ShapedAbstractValue = pallas_utils.ShapedAbstractValue
+
+
 pull_block_spec_rules: dict[core.Primitive, PullBlockSpecRuleFn] = {}
 stateful_primitives: set[core.Primitive] = {
     lax.dynamic_update_slice_p,
@@ -67,6 +70,8 @@ def _null_block_index_trafo(*block_indices):
 
 @dataclasses.dataclass
 class BlockIndexTransform:
+  """Represents a block shape and index transform during block spec propagation."""
+
   block_shape: Sequence[pallas_core.BlockDim | int | None] | None
   block_index_transform: Callable[..., Any] = _null_block_index_trafo
   # NOTE(levskaya): for "terminal" transforms to mark MemorySpace.KEY
@@ -80,12 +85,6 @@ class BlockIndexTransform:
     return dataclasses.replace(self, **kwargs)
 
 
-class NoBlockIndexTransform:
-  def __repr__(self):
-    return "NoBlockIndexTransform"
-no_block_index_transform = NoBlockIndexTransform()
-
-
 def _select_block_indices(i):
   def block_transform(*block_indices):
     return block_indices[i]
@@ -94,26 +93,13 @@ def _select_block_indices(i):
 
 def _init_block_transforms(
     block_specs: tuple[pallas_core.BlockSpec, ...],
-) -> tuple[BlockIndexTransform | NoBlockIndexTransform, ...]:
+) -> tuple[BlockIndexTransform | None, ...]:
   out = []
-
-  # BlockSpec wraps index_map in _IndexMapFunc, so use == to check underlying
-  # callable identity.
-  def compare(x, y):
-    if x is pallas_core.no_block_spec or y is pallas_core.no_block_spec:
-      return x is y
-    msg = (f'We can only compare {x=} and {y=} if their index_map is None.or'
-           ' already wrapped in _IndexMapFunc.')
-    assert (x.index_map is None
-            or isinstance(x.index_map, pallas_core._IndexMapFunc)), msg
-    assert (y.index_map is None
-            or isinstance(y.index_map, pallas_core._IndexMapFunc)), msg
-    return x == y
 
   equivalent_bs_argnums = []
   for i, bs in enumerate(block_specs):
     for j, equiv_idx in enumerate(equivalent_bs_argnums):
-      if compare(bs, block_specs[equiv_idx]):
+      if _block_specs_equal(bs, block_specs[equiv_idx]):
         equivalent_bs_argnums.append(equiv_idx)
         break
     else:
@@ -121,7 +107,7 @@ def _init_block_transforms(
 
   for i, bs in enumerate(block_specs):
     if bs is pallas_core.no_block_spec:
-      out.append(no_block_index_transform)
+      out.append(None)
     else:
       out.append(
           BlockIndexTransform(
@@ -138,7 +124,7 @@ def _init_block_transforms(
 
 def _apply_block_transform(
     block_specs: tuple[pallas_core.BlockSpec, ...],
-    block_index_transform: BlockIndexTransform | NoBlockIndexTransform,
+    block_index_transform: BlockIndexTransform | None,
 ) -> pallas_core.BlockSpec | pallas_core.NoBlockSpec:
 
   def make_new_idx_map(block_index_transform):
@@ -156,7 +142,7 @@ def _apply_block_transform(
 
     return new_idx_map
 
-  if isinstance(block_index_transform, NoBlockIndexTransform):
+  if block_index_transform is None:
     return pallas_core.no_block_spec
   valid_block_specs = [
       bs for bs in block_specs if bs is not pallas_core.no_block_spec
@@ -172,29 +158,38 @@ def _apply_block_transform(
 
 @dataclasses.dataclass
 class PullRuleContext:
-  avals_in: tuple[core.AbstractValue, ...]
-  avals_out: tuple[core.AbstractValue, ...]
+  prim: core.Primitive
+  avals_in: tuple[ShapedAbstractValue, ...]
+  avals_out: tuple[ShapedAbstractValue, ...]
   out_usages: tuple[set[Usage], ...]
   scalar_prefetch_fn: Any = dataclasses.field(default=None, init=False)
-  scalar_prefetch_handler: Any | None
-  grid_len: int | None
   strict_mode: bool = True
   invars: tuple[core.Atom, ...] | None = None
 
 
 @dataclasses.dataclass
 class PushRuleContext:
-  avals_in: tuple[core.AbstractValue, ...]
-  avals_out: tuple[core.AbstractValue, ...]
+  prim: core.Primitive
+  avals_in: tuple[ShapedAbstractValue, ...]
+  avals_out: tuple[ShapedAbstractValue, ...]
   invars: tuple[core.Atom, ...] | None = None
   scalar_prefetch_fn: Any = dataclasses.field(default=None, init=False)
-  scalar_prefetch_handler: Any | None = None
-  grid_len: int | None = None
   strict_mode: bool = True
 
 
 @functools.partial(api_boundary, repro_api_name="fuser.make_scalar_prefetch_handler")
 def make_scalar_prefetch_handler(*args):
+  """Creates a handler function that extracts a fusion's scalar prefetch values.
+
+  Args:
+    *args: Sequence of indices or keys used to index sequentially into the
+      kernel's `scalar_prefetch` argument tuple.
+
+  Returns:
+    A callable `scalar_prefetch_getter(*sp_inputs)` that indexes into
+    `sp_inputs` along `args` to return a single fusion's scalar prefetch
+    group.
+  """
   def scalar_prefetch_getter(*sp_inputs):
     result = sp_inputs
     for i in args:
@@ -204,24 +199,33 @@ def make_scalar_prefetch_handler(*args):
   return scalar_prefetch_getter
 
 
-def _block_size(dim: pallas_core.Element | int | None) -> int | None:
-  match dim:
-    case (
-        pallas_core.Element()
-        | pallas_core.BoundedSlice()
-        | pallas_core.Blocked()
-    ):
-      return dim.block_size
-    case pallas_core.Squeezed() | None:
-      return None
-    case _:
-      return dim
+def _identity_scalar_prefetch_handler(*scalar_prefetch):
+  return scalar_prefetch
+
+
+def _is_squeezed(dim: pallas_core.BlockDim | int | None) -> bool:
+  return dim is None or isinstance(dim, pallas_core.Squeezed)
+
+
+def _ref_block_shape(
+    block_shape: Sequence[pallas_core.BlockDim | int | None],
+) -> tuple[int, ...]:
+  return pallas_core._get_ref_block_shape(
+      pallas_core._canonicalize_block_shape(block_shape)
+  )
+
+
+def _ref_block_axis(
+    block_shape: Sequence[pallas_core.BlockDim | int | None], axis: int
+) -> int:
+  return axis - sum(map(_is_squeezed, block_shape[:axis]))
 
 
 @dataclasses.dataclass
 class UsageRuleContext:
-  avals_in: tuple[core.AbstractValue, ...]
-  avals_out: tuple[core.AbstractValue, ...]
+  prim: core.Primitive
+  avals_in: tuple[ShapedAbstractValue, ...]
+  avals_out: tuple[ShapedAbstractValue, ...]
 
 
 def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
@@ -231,7 +235,7 @@ def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
 
   def read_usage_env(atom: core.Atom) -> set[Usage]:
     assert not isinstance(atom, core.Literal)
-    return usage_env.get(atom, {Usage.REGULAR})
+    return usage_env.get(atom, set())
 
   def write_usage_env(atom: core.Atom, usage: set[Usage]):
     if isinstance(atom, core.Literal):
@@ -240,13 +244,14 @@ def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
       usage_env[atom] = set()
     usage_env[atom] |= usage
 
-  util.safe_map(write_usage_env, jaxpr.outvars, jaxpr_out_usages)
+  util.foreach(write_usage_env, jaxpr.outvars, jaxpr_out_usages)
 
-  for eqn in jaxpr.eqns[::-1]:
+  for eqn in reversed(jaxpr.eqns):
     out_usages = util.safe_map(read_usage_env, eqn.outvars)
     rule = usage_rules.get(eqn.primitive, None)
     if rule:
       usage_rule_ctx = UsageRuleContext(
+          prim=eqn.primitive,
           avals_in=tuple(v.aval for v in eqn.invars),
           avals_out=tuple(v.aval for v in eqn.outvars),
       )
@@ -258,20 +263,26 @@ def compute_usage(jaxpr: core.Jaxpr, jaxpr_out_usages):
       # Usages are forwarded
       all_usages = set.union(*out_usages)
       in_usages = [all_usages] * len(eqn.invars)
-    util.safe_map(write_usage_env, eqn.invars, in_usages)
+    util.foreach(write_usage_env, eqn.invars, in_usages)
   return read_usage_env
+
+
+def _nested_call_usage_env(jaxpr: core.Jaxpr, jaxpr_out_usages):
+  # ``SCALAR_PREFETCH`` vars must depend only on ``constvars``, but a call
+  # receives all inputs via ``invars``, so collapse live usage to ``REGULAR``.
+  raw_usage_env = compute_usage(jaxpr, jaxpr_out_usages)
+  return lambda v: {Usage.REGULAR} if raw_usage_env(v) else set()
 
 
 @dataclasses.dataclass(frozen=True)
 class KernelEvalContext:
+  prim: core.Primitive
   scalar_prefetch: Any | None
   program_ids: tuple[int | jax.Array, ...] | None
-  avals_in: tuple[core.AbstractValue, ...] | None
-  avals_out: tuple[core.AbstractValue, ...] | None
+  avals_in: tuple[ShapedAbstractValue, ...] | None
+  avals_out: tuple[ShapedAbstractValue, ...] | None
   in_block_specs: tuple[pallas_core.BlockSpec, ...]
   out_block_specs: tuple[pallas_core.BlockSpec, ...]
-  grid_len: int | None
-  scalar_prefetch_handler: Any | None
   out_usages: tuple[set[Usage], ...] | None
 
   def get_program_ids(self):
@@ -298,7 +309,7 @@ class KernelEvalContext:
       )
 
 
-_illegal = object()
+_illegal: Any = object()
 
 
 class _SpEnv(threading.local):
@@ -396,6 +407,29 @@ def pull_block_spec(
     grid_len: int | None = None,
     strict_mode: bool = True,
 ):
+  """Pulls output `BlockSpec`s backward through `f` to derive input `BlockSpec`s.
+
+  Args:
+    f: The fusion function to propagate block specs backward through.
+    out_block_specs: A `BlockSpec` or PyTree of `BlockSpec`s matching the
+      output structure of `f`.
+    scalar_prefetch_handler: Optional getter created by
+      `make_scalar_prefetch_handler` that selects this fusion's scalar
+      prefetch values from the kernel's scalar prefetch inputs.
+    grid_len: Optional number of grid dimensions in the enclosing kernel
+      (required if any block index depends on scalar prefetch values).
+    strict_mode: If `True`, converging paths to the same value must have
+      equivalent block index transforms; if `False`, only block shapes must
+      match.
+
+  Returns:
+    A function taking example `(*args, **kwargs)` (or their abstract types)
+    and returning `(kernel_fn, in_block_arg_specs, in_block_kwarg_specs)` for
+    evaluating `f` on a single block inside a Pallas kernel.
+  """
+  if scalar_prefetch_handler is None:
+    scalar_prefetch_handler = _identity_scalar_prefetch_handler
+
   def wrapped(*args, **kwargs):
     jaxpr, consts, in_tree, out_tree_ = fuser_utils.make_jaxpr(
         f, *args, **kwargs
@@ -430,7 +464,6 @@ def pull_block_spec(
         read_usage_env,
         env,
         scalar_prefetch_handler,
-        grid_len,
     )
     # The scalars this fusion prefetches, in the order its index maps and body
     # expect to be handed them back.
@@ -457,46 +490,64 @@ def pull_block_spec(
   return wrapped
 
 
-def _block_dim_equal(
-    b1: int | pallas_core.BlockDim | None, b2: int | pallas_core.BlockDim | None
-) -> bool:
-  block_size1 = pallas_core.get_block_size(b1)
-  block_size2 = pallas_core.get_block_size(b2)
-  match (b1, b2):
-    case (None, _) | (_, None):
-      return b1 == b2
-    case (
-        (pallas_core.Blocked(), int())
-        | (int(), pallas_core.Blocked())
-        | (pallas_core.Blocked(), pallas_core.Blocked())
-        | (int(), int())
-    ):
-      return block_size1 == block_size2
-    case _:
-      return type(b1) == type(b2) and (block_size1 == block_size2)
-
-
 def _block_shapes_equal(
-    bs1: tuple[int | pallas_core.BlockDim | None] | None,
-    bs2: tuple[int | pallas_core.BlockDim | None] | None,
+    bs1: Sequence[int | pallas_core.BlockDim | None] | None,
+    bs2: Sequence[int | pallas_core.BlockDim | None] | None,
 ) -> bool:
   if bs1 is None or bs2 is None:
     return bs1 == bs2
-  return all(_block_dim_equal(b1, b2) for b1, b2 in zip(bs1, bs2))
+  return (
+      pallas_core._canonicalize_block_shape(bs1)
+      == pallas_core._canonicalize_block_shape(bs2)
+  )
 
 
-def _compare_index_transforms(idx_map1, idx_map2, block_idxs_avals) -> bool:
+# BlockSpec wraps index_map in _IndexMapFunc, so use == to check underlying
+# callable identity.
+def _block_specs_equal(
+    bs1: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
+    bs2: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
+    *,
+    strict_mode: bool = True,
+) -> bool:
+  if bs1 is pallas_core.no_block_spec or bs2 is pallas_core.no_block_spec:
+    return bs1 is bs2
+  msg = (f'We can only compare {bs1=} and {bs2=} if their index_map is None.or'
+         ' already wrapped in _IndexMapFunc.')
+  assert (bs1.index_map is None
+          or isinstance(bs1.index_map, pallas_core._IndexMapFunc)), msg
+  assert (bs2.index_map is None
+          or isinstance(bs2.index_map, pallas_core._IndexMapFunc)), msg
+  return (
+      _block_shapes_equal(bs1.block_shape, bs2.block_shape)
+      and (not strict_mode or bs1.index_map == bs2.index_map)
+      and bs1.memory_space == bs2.memory_space
+      and bs1.pipeline_mode == bs2.pipeline_mode
+  )
+
+
+def _compare_index_transforms(
+    idx_map1, idx_map2, block_idxs_avals, scalar_prefetch_avals=()
+) -> bool:
   if idx_map1 is idx_map2:
     return True
-  idx_map_jaxpr1 = jax.make_jaxpr(idx_map1)(*block_idxs_avals)
-  idx_map_jaxpr2 = jax.make_jaxpr(idx_map2)(*block_idxs_avals)
-  return fuser_utils.compare_jaxprs(idx_map_jaxpr1, idx_map_jaxpr2)
+
+  # An index map may read the scalar prefetch; trace it on placeholders.
+  def to_jaxpr(idx_map):
+    def traced(idxs, scalar_prefetch):
+      with _sp_context(*scalar_prefetch):
+        return idx_map(*idxs)
+
+    return jax.make_jaxpr(traced)(block_idxs_avals, scalar_prefetch_avals)
+
+  return fuser_utils.compare_jaxprs(to_jaxpr(idx_map1), to_jaxpr(idx_map2))
 
 
 def _block_transforms_equal(
-    bs1: BlockIndexTransform | NoBlockIndexTransform,
-    bs2: BlockIndexTransform | NoBlockIndexTransform,
-    block_idxs_avals: tuple[tuple[core.AbstractValue, ...], ...],
+    bs1: BlockIndexTransform | None,
+    bs2: BlockIndexTransform | None,
+    block_idxs_avals: tuple[tuple[ShapedAbstractValue, ...], ...],
+    scalar_prefetch_avals: tuple[ShapedAbstractValue, ...] = (),
     strict_mode: bool = True,
 ) -> bool:
   if bs1 is bs2:
@@ -508,7 +559,10 @@ def _block_transforms_equal(
       return False
     if strict_mode:
       return _compare_index_transforms(
-          bs1.block_index_transform, bs2.block_index_transform, block_idxs_avals
+          bs1.block_index_transform,
+          bs2.block_index_transform,
+          block_idxs_avals,
+          scalar_prefetch_avals,
       )
     return True
   return False
@@ -523,13 +577,12 @@ def _select_scalar_prefetch(scalar_prefetch_handler, scalar_prefetch,
                             num_expected: int, fusion_name: str):
   """Picks one fusion's scalars out of `scalar_prefetch`.
 
-  Two calling conventions are supported. Without a handler, the fusion was
-  handed only its own scalars and they are used as is. With a handler,
-  `scalar_prefetch` is shared by every fusion in the kernel and the handler
-  selects this fusion's group out of it.
+  Two calling conventions are supported. With the identity handler, the fusion
+  was handed only its own scalars and they are used as is. With any other
+  handler, `scalar_prefetch` is shared by every fusion in the kernel and the
+  handler selects this fusion's group out of it.
   """
-  if scalar_prefetch_handler is not None:
-    scalar_prefetch = scalar_prefetch_handler(*scalar_prefetch)
+  scalar_prefetch = scalar_prefetch_handler(*scalar_prefetch)
   if len(scalar_prefetch) != num_expected:
     raise ValueError(
         f'Fusion {fusion_name} prefetches {num_expected} scalars but was'
@@ -539,26 +592,34 @@ def _select_scalar_prefetch(scalar_prefetch_handler, scalar_prefetch,
 
 def _pull_block_transform(
     jaxpr: core.Jaxpr,
-    out_block_transforms: tuple[BlockIndexTransform, ...],
+    out_block_transforms: tuple[BlockIndexTransform | None, ...],
     *,
     read_usage_env: Callable[[core.Var], set[Usage]],
-    scalar_prefetch_handler: Any | None = None,
-    grid_len: int,
+    scalar_prefetch_handler: Callable = _identity_scalar_prefetch_handler,
+    grid_len: int | None = None,
     strict_mode: bool = True,
 ) -> tuple[
-    tuple[BlockIndexTransform, ...],
-    tuple[dict[core.Var, BlockIndexTransform], dict[int, Any]],
+    tuple[BlockIndexTransform | None, ...],
+    tuple[
+        dict[core.Var, BlockIndexTransform | None],
+        dict[int, Any],
+    ],
 ]:
-  jaxpr_invar_usages = util.safe_map(read_usage_env, jaxpr.invars)
-  env: dict[core.Var, BlockIndexTransform] = {}
+  env: dict[core.Var, BlockIndexTransform | None] = {}
   scalar_prefetch_fn_env = {}
+  scalar_prefetch_avals = tuple(
+      v.aval for v, sp in zip(
+          jaxpr.constvars,
+          _scalar_prefetch_mask(jaxpr, read_usage_env),
+          strict=True
+      ) if sp
+    )
 
   block_idxs_avals = tuple(
       None
-      if isinstance(out_block_transform, NoBlockIndexTransform)
+      if out_block_transform is None
       else (
-          (jax._src.core.ShapedArray((), jnp.int32),)
-          * len(out_block_transform.block_shape)
+          (core.ShapedArray((), jnp.int32),) * len(out_block_transform.block_shape)
       )
       for out_block_transform in out_block_transforms
   )
@@ -567,37 +628,36 @@ def _pull_block_transform(
     assert isinstance(outvar, core.Var)
     env[outvar] = bs
 
-  def _read_block_spec(atom: core.Atom) -> BlockIndexTransform | Any:
+  def _read_block_spec(
+      atom: core.Atom,
+  ) -> BlockIndexTransform | None:
     if isinstance(atom, core.Literal):
-      return no_block_index_transform
-    return env.get(atom, no_block_index_transform)
+      return None
+    return env.get(atom, None)
 
-  def _write_block_spec(atom: core.Atom, block_transform: BlockIndexTransform):
+  def _write_block_spec(
+      atom: core.Atom,
+      block_transform: BlockIndexTransform | None,
+  ):
     if isinstance(atom, core.Literal):
       return
     env[atom] = block_transform
 
   for i, eqn in reversed(list(enumerate(jaxpr.eqns))):
     eqn_out_block_transforms = tuple(util.safe_map(_read_block_spec, eqn.outvars))
-    if all(bs is no_block_index_transform for bs in eqn_out_block_transforms):
+    if all(bs is None for bs in eqn_out_block_transforms):
       continue
     rule = pull_block_spec_rules.get(eqn.primitive, None)
     if not rule:
       raise NotImplementedError(eqn.primitive, eqn_out_block_transforms)
     ctx = PullRuleContext(
+        prim=eqn.primitive,
         avals_in=tuple(v.aval for v in eqn.invars),
         avals_out=tuple(v.aval for v in eqn.outvars),
-        out_usages=tuple(read_usage_env(v) for v in jaxpr.outvars),
-        scalar_prefetch_handler=scalar_prefetch_handler,
-        grid_len=grid_len,
+        out_usages=tuple(read_usage_env(v) for v in eqn.outvars),
         strict_mode=strict_mode,
         invars=tuple(eqn.invars),
     )
-    if eqn.primitive.multiple_results:
-      in_block_transforms = rule(ctx, eqn_out_block_transforms, **eqn.params)
-    else:
-      in_block_transforms = rule(ctx, eqn_out_block_transforms[0], **eqn.params)
-
     eqn_invar_usages = [
         read_usage_env(v) if not isinstance(v, core.Literal) else set()
         for v in eqn.invars
@@ -615,7 +675,7 @@ def _pull_block_transform(
           jaxpr.constvars,
           jaxpr.invars,
           needed_invars,
-          jaxpr.eqns[: jaxpr.eqns.index(eqn)],
+          jaxpr.eqns[:i],
           debug_info=jaxpr.debug_info._replace(result_paths=None),
       )
       scalar_prefetch_jaxpr, used_inputs = pe.dce_jaxpr(
@@ -645,23 +705,27 @@ def _pull_block_transform(
           _scalar_prefetch_fn, scalar_prefetch_jaxpr
       )
       ctx.scalar_prefetch_fn = scalar_prefetch_fn_env[i] = scalar_prefetch_fn
+
+    if eqn.primitive.multiple_results:
+      in_block_transforms = rule(ctx, eqn_out_block_transforms, **eqn.params)
+    else:
+      in_block_transforms = rule(ctx, eqn_out_block_transforms[0], **eqn.params)
     for v, in_block_transform in zip(eqn.invars, in_block_transforms, strict=True):
       if (
           not isinstance(v, core.Literal)
           and v in env
           and not _block_transforms_equal(
               env[v], in_block_transform, block_idxs_avals,
+              scalar_prefetch_avals=scalar_prefetch_avals,
               strict_mode=strict_mode,
           )
       ):
         in_block_transform = BlockIndexTransform(_illegal, _illegal)
       _write_block_spec(v, in_block_transform)
 
-  def _get_in_block_transforms(v, usage):
-    if usage == {Usage.SCALAR_PREFETCH}:
-      return None
-    bs = env.get(v, no_block_index_transform)
-    if bs is not no_block_index_transform:
+  def _get_in_block_transforms(v):
+    bs = env.get(v, None)
+    if bs is not None:
       if bs.block_shape is _illegal:
         raise ValueError(
             'Fusion contains a DAG, cannot uniquely pull '
@@ -669,8 +733,7 @@ def _pull_block_transform(
     return bs
 
   in_block_transforms = tuple(
-      _get_in_block_transforms(v, usage)
-      for v, usage in zip(jaxpr.invars, jaxpr_invar_usages)
+      _get_in_block_transforms(v) for v in jaxpr.invars
   )
 
   return (
@@ -684,8 +747,8 @@ def _pull_block_spec(
     out_block_specs: tuple[pallas_core.BlockSpec, ...],
     *,
     read_usage_env: Callable[[core.Var], set[Usage]],
-    scalar_prefetch_handler: Any | None = None,
-    grid_len: int,
+    scalar_prefetch_handler: Callable = _identity_scalar_prefetch_handler,
+    grid_len: int | None = None,
     strict_mode: bool = True,
 ) -> tuple[
     tuple[pallas_core.BlockSpec | pallas_core.NoBlockSpec, ...],
@@ -724,9 +787,7 @@ def make_kernel_function(
     read_usage_env,
     block_spec_env,
     scalar_prefetch_handler,
-    grid_len,
 ):
-  invar_usages = util.safe_map(read_usage_env, jaxpr.invars)
   bs_env, scalar_prefetch_fn_env = block_spec_env
 
   def _read_block_spec(atom: core.Atom) -> pallas_core.BlockSpec | Any:
@@ -752,8 +813,8 @@ def make_kernel_function(
     # If no scalar_prefetch is given, every const is bound as closed over
     # (this happens when another pull traces this function).
     # If scalar_prefetch is given, the index scalars are loaded from it
-    # instead. It holds either only this fusion's scalars (no handler), or
-    # every fusion's scalars, and the handler picks this fusion's.
+    # instead. It holds either only this fusion's scalars (identity handler),
+    # or every fusion's scalars, and the handler picks this fusion's.
     sp_mask = _scalar_prefetch_mask(jaxpr, read_usage_env)
     bound_consts = consts
     if any(sp_mask) and scalar_prefetch:
@@ -765,11 +826,8 @@ def make_kernel_function(
                       for c, is_sp in zip(consts, sp_mask, strict=True)]
     for const, constvar in zip(bound_consts, jaxpr.constvars, strict=True):
       env[constvar] = const
-    for invar, arg, usage in zip(
-        jaxpr.invars, flat_args, invar_usages, strict=True
-    ):
-      if Usage.REGULAR in usage:
-        env[invar] = arg
+    for invar, arg in zip(jaxpr.invars, flat_args, strict=True):
+      env[invar] = arg
     for i, eqn in enumerate(jaxpr.eqns):
       outvar_usages = [
           read_usage_env(v) if not isinstance(v, core.Literal) else set()
@@ -796,25 +854,26 @@ def make_kernel_function(
               for v in eqn.invars
           ]
           sp_iter = iter(scalar_prefetch_vals)
-          for i, usage in enumerate(eqn_invar_usages):
-            if usage == {Usage.SCALAR_PREFETCH}:
-              if not isinstance(eqn.invars[i], core.Literal):
-                in_vals[i] = next(sp_iter)
+          for j, usage in enumerate(eqn_invar_usages):
+            if Usage.SCALAR_PREFETCH in usage:
+              sp_val = next(sp_iter)
+              if not isinstance(eqn.invars[j], core.Literal):
+                in_vals[j] = sp_val
+          assert next(sp_iter, None) is None
         eval_ctx = KernelEvalContext(
+            prim=eqn.primitive,
             avals_in=tuple(v.aval for v in eqn.invars),
             avals_out=tuple(v.aval for v in eqn.outvars),
             scalar_prefetch=scalar_prefetch,
             program_ids=tuple(program_ids),
             in_block_specs=in_block_specs,
             out_block_specs=out_block_specs,
-            scalar_prefetch_handler=scalar_prefetch_handler,
-            grid_len=grid_len,
             out_usages=out_usages,
         )
         outs = eval_rule(eval_ctx, *in_vals, **eqn.params)
         if not eqn.primitive.multiple_results:
           outs = [outs]
-        util.safe_map(write_env, eqn.outvars, outs)
+        util.foreach(write_env, eqn.outvars, outs)
     out = util.safe_map(read_env, jaxpr.outvars)
     return tree_util.tree_unflatten(out_tree, out)
 
@@ -827,6 +886,28 @@ def get_fusion_values(
 ) -> tuple[
     Callable, tuple[typing.SupportsShape, ...], tuple[typing.SupportsShape, ...]
 ]:
+  """Extracts closed-over regular and scalar prefetch values from a `fusion`.
+
+  Traces `fusion` on `*args` and `**kwargs` to separate closed-over constants
+  into regular array inputs (pipelined via `BlockSpec`s) and scalar prefetch
+  values (used to compute block indices, e.g. `dynamic_slice` start indices).
+  Raises `ValueError` if `fusion` closes over `Ref`s or uses stateful
+  primitives.
+
+  Args:
+    fusion: The pure fusion callable (or `Fusion` object) to trace.
+    *args: Example positional arguments (or `ShapeDtypeStruct`s) to pass to
+      `fusion`.
+    **kwargs: Example keyword arguments (or `ShapeDtypeStruct`s) to pass to
+      `fusion`.
+
+  Returns:
+    A tuple `(new_fusion_fn, regular_values, scalar_prefetch_values)`, where
+    `new_fusion_fn(values, *args, **kwargs)` evaluates the fusion given explicit
+    `regular_values`, `regular_values` is a tuple of closed-over arrays, and
+    `scalar_prefetch_values` is a tuple of closed-over values used to compute
+    block indices.
+  """
   return _get_fusion_values(fusion, args, kwargs)
 
 
@@ -837,6 +918,19 @@ def get_stateful_input_fusion_values(
     *args,
     **kwargs,
 ):
+  """Extracts values from a read-only input `fusion` that may close over `Ref`s.
+
+  Discharges stateful `Ref` reads in `fusion` into pure array inputs before
+  partitioning closed-over constants as in `get_fusion_values` (see
+  `get_fusion_values` for arguments). `fusion` must be read-only on `Ref`s, as
+  writes to `Ref`s are dropped.
+
+  Returns:
+    A tuple `(new_fusion_fn, regular_values, scalar_prefetch_values)`. While
+    `regular_values` may contain closed-over `Ref`s read by `fusion`,
+    `new_fusion_fn(values, *args, **kwargs)` has state discharged and expects
+    pure arrays (or inner array types when tracing) for `values`.
+  """
   return _get_fusion_values(fusion, args, kwargs, discharge_refs=True)
 
 
@@ -847,6 +941,24 @@ def get_stateful_output_fusion_values(
     *args,
     **kwargs,
 ):
+  """Extracts values and aliases from an output `fusion` that may write `Ref`s.
+
+  Discharges stateful `Ref` effects in `fusion` into pure array inputs and
+  additional outputs for any modified `Ref`s (see `get_fusion_values` for
+  arguments).
+
+  Returns:
+    A tuple `(new_fusion_fn, regular_values, scalar_prefetch_values,
+    output_input_aliases)`. `new_fusion_fn(values, *args, **kwargs)` has state
+    discharged (expecting pure arrays or inner array types for `values` even
+    when `regular_values` contains closed-over `Ref`s) and returns
+    `(out, extra_updated_ref_outputs)` when any `Ref`s are written, or just
+    `out` when no `Ref`s are written. `output_input_aliases` is a dict mapping
+    the absolute output index of each extra output in
+    `tree_leaves(out) + list(extra_updated_ref_outputs)` (starting at
+    `len(tree_leaves(out))`) to the index of the `Ref` it updates in
+    `regular_values` followed by the flattened `args` and `kwargs`.
+  """
   return _get_fusion_values(
       fusion, args, kwargs, discharge_refs=True, allow_additional_outputs=True)
 
@@ -980,6 +1092,7 @@ eval_rules: dict[core.Primitive, EvalRuleFn] = {}
 def register_eval_rule(
     prim: core.Primitive,
 ) -> Callable[[Any], EvalRuleFn]:
+  """Returns a decorator registering a block-level kernel eval rule for `prim`."""
   def wrapper(
       f: EvalRuleFn,
   ) -> EvalRuleFn:
@@ -997,15 +1110,20 @@ class PullBlockSpecRuleFn(Protocol):
   def __call__(
       self,
       ctx: PullRuleContext,
-      block_spec: BlockIndexTransform | tuple[BlockIndexTransform, ...],
+      block_spec: (
+          BlockIndexTransform
+          | None
+          | tuple[BlockIndexTransform | None, ...]
+      ),
       **params: Any,
-  ) -> Sequence[BlockIndexTransform]:
+  ) -> Sequence[BlockIndexTransform | None]:
     ...
 
 
 def register_pull_block_spec_rule(
     prim: core.Primitive,
 ) -> Callable[[Any], PullBlockSpecRuleFn]:
+  """Returns a decorator registering a backward block spec pull rule for `prim`."""
 
   def wrapper(
       f: PullBlockSpecRuleFn,
@@ -1019,25 +1137,23 @@ def register_pull_block_spec_rule(
 # Primitive rule implementations
 
 
-def _eltwise_eval_rule(prim, ctx, x, **params):
-  del ctx
-  return prim.bind(x, **params)
+def _eltwise_eval_rule(ctx: KernelEvalContext, x, **params):
+  return ctx.prim.bind(x, **params)
 
 
 def _eltwise_pull_rule(
-    prim: core.Primitive,
     ctx: PullRuleContext,
     block_transform: BlockIndexTransform,
     **params,
-) -> Sequence[BlockIndexTransform]:
-  del prim, ctx, params
+) -> Sequence[BlockIndexTransform | None]:
+  del ctx, params
   return [block_transform]
 
 
 def _eltwise_usage_rule(
-    prim: core.Primitive, ctx: UsageRuleContext, used_out: set[Usage], **params
+    ctx: UsageRuleContext, used_out: set[Usage], **params
 ) -> Sequence[set[Usage]]:
-  del ctx, prim, params
+  del ctx, params
   return [used_out]
 
 
@@ -1050,7 +1166,7 @@ def _pull_bcast_block_spec(
     idx = util.tuple_update(idx, i, 0)
     return idx
 
-  if block_transform.block_shape[i] is None:
+  if _is_squeezed(block_transform.block_shape[i]):
     return block_transform.replace(
         block_index_transform=new_block_index_transform)
 
@@ -1068,51 +1184,25 @@ def _pull_bcast_block_spec(
   )
 
 
-def _push_bcast_block_spec(
-    block_spec: pallas_core.BlockSpec,
-    i: int,
-    size: int,
-) -> pallas_core.BlockSpec:
-
-  bcast_dim_block_shape = size
-  if isinstance(block_spec.block_shape[i], pallas_core.Element):
-    bcast_dim_block_shape = pallas_core.Element(size)
-  new_block_shape = util.tuple_update(
-      block_spec.block_shape, i, bcast_dim_block_shape
-  )
-  return block_spec.replace(block_shape=new_block_shape)
-
-
-def _binop_usage_rule(prim, ctx, used_out: set[Usage], **params):
-  del prim
+def _binop_usage_rule(ctx: UsageRuleContext, used_out: set[Usage], **params):
   del params  # unused
-  if used_out == {Usage.SCALAR_PREFETCH}:
-    return [{Usage.SCALAR_PREFETCH}, {Usage.SCALAR_PREFETCH}]
-  elif used_out == {Usage.REGULAR}:
-    usage = [{Usage.REGULAR} for _ in ctx.avals_in]
-    return usage
-  else:
-    return [set()] * len(ctx.avals_in)
+  return [used_out] * len(ctx.avals_in)
 
 
-def _binop_eval_rule(prim, ctx, x, y, **params):
-  del ctx
-  return prim.bind(x, y, **params)
+def _binop_eval_rule(ctx: KernelEvalContext, x, y, **params):
+  return ctx.prim.bind(x, y, **params)
 
 
-def _binop_pull_rule(prim, ctx: PullRuleContext, block_transform, **params):
-  del prim
+def _binop_pull_rule(ctx: PullRuleContext, block_transform, **params):
   del params  # unused
   l_block_transform = block_transform
   r_block_transform = block_transform
   left_aval, right_aval = ctx.avals_in
-  assert isinstance(left_aval, core.ShapedArray)
-  assert isinstance(right_aval, core.ShapedArray)
 
   if not right_aval.shape:
-    return [block_transform, no_block_index_transform]
+    return [block_transform, None]
   if not left_aval.shape:
-    return [no_block_index_transform, block_transform]
+    return [None, block_transform]
   for i, (l, r) in enumerate(
       zip(left_aval.shape, right_aval.shape, strict=True)
   ):
@@ -1125,40 +1215,14 @@ def _binop_pull_rule(prim, ctx: PullRuleContext, block_transform, **params):
 
 
 def register_default_eval_rule(prim: core.Primitive):
-  def default_rule(ctx, *args, **params):
+  def default_rule(ctx: KernelEvalContext, *args, **params):
     assert all(bs is pallas_core.no_block_spec for bs in ctx.out_block_specs)
-    return prim.bind(*args, **params)
+    return ctx.prim.bind(*args, **params)
 
   register_eval_rule(prim)(default_rule)
 
 
-def register_binop_rule(prim: core.Primitive):
-  register_pull_block_spec_rule(prim)(functools.partial(_binop_pull_rule, prim))
-  register_usage_rule(prim)(functools.partial(_binop_usage_rule, prim))
-  register_eval_rule(prim)(functools.partial(_binop_eval_rule, prim))
-
-
-register_default_eval_rule(state_primitives.get_p)
 register_default_eval_rule(lax.axis_index_p)
-
-register_binop_rule(lax.mul_p)
-register_binop_rule(lax.add_p)
-register_binop_rule(lax.sub_p)
-register_binop_rule(lax.div_p)
-register_binop_rule(lax.max_p)
-register_binop_rule(lax.min_p)
-register_binop_rule(lax.lt_p)
-register_binop_rule(lax.le_p)
-register_binop_rule(lax.eq_p)
-register_binop_rule(lax.gt_p)
-register_binop_rule(lax.ge_p)
-register_binop_rule(lax.or_p)
-register_binop_rule(lax.xor_p)
-register_binop_rule(lax.and_p)
-register_binop_rule(lax.ne_p)
-register_binop_rule(lax.shift_right_logical_p)
-register_binop_rule(ad_util.add_any_p)
-register_binop_rule(lax.pow_p)
 
 
 @register_eval_rule(lax.select_n_p)
@@ -1169,12 +1233,11 @@ def _select_n_eval_rule(ctx: KernelEvalContext, *args):
 @register_pull_block_spec_rule(lax.select_n_p)
 def _select_n_pull_block_spec_rule(
     ctx: PullRuleContext, block_transform: BlockIndexTransform,
-) -> Sequence[BlockIndexTransform]:
+) -> Sequence[BlockIndexTransform | None]:
   in_aval = ctx.avals_in[0]
-  assert isinstance(in_aval, core.ShapedArray)
   if in_aval.shape:
     return [block_transform] * len(ctx.avals_in)
-  return [no_block_index_transform, *[block_transform] * (len(ctx.avals_in) - 1)]
+  return [None, *[block_transform] * (len(ctx.avals_in) - 1)]
 
 
 @register_eval_rule(lax.clamp_p)
@@ -1187,15 +1250,15 @@ def _clamp_eval_rule(
 @register_pull_block_spec_rule(lax.clamp_p)
 def _clamp_pull_block_spec_rule(
     ctx: PullRuleContext, block_transform: BlockIndexTransform,
-) -> Sequence[BlockIndexTransform]:
+) -> Sequence[BlockIndexTransform | None]:
   min_aval, _, max_aval = ctx.avals_in
   assert hasattr(min_aval, 'shape')
   assert hasattr(max_aval, 'shape')
   min_block_transform = (
-      block_transform if min_aval.shape else no_block_index_transform
+      block_transform if min_aval.shape else None
   )
   max_block_transform = (
-      block_transform if max_aval.shape else no_block_index_transform
+      block_transform if max_aval.shape else None
   )
   return [min_block_transform, block_transform, max_block_transform]
 
@@ -1209,13 +1272,13 @@ def _squeeze_eval_rule(ctx: KernelEvalContext, x: jax.Array, **params: Any):
 @register_pull_block_spec_rule(lax.squeeze_p)
 def _squeeze_block_spec(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transform: BlockIndexTransform | None,
     *,
     dimensions: tuple[int, ...],
-) -> Sequence[BlockIndexTransform]:
+) -> Sequence[BlockIndexTransform | None]:
   del ctx
-  if block_transform is no_block_index_transform:
-    return [no_block_index_transform]
+  if block_transform is None:
+    return [None]
 
   def new_block_index_transform(*idxs):
     idx = block_transform.block_index_transform(*idxs)
@@ -1285,7 +1348,7 @@ def _check_slice_alignment(
         | pallas_core.Element()
         | pallas_core.BoundedSlice()
     ):
-      block_size = _block_size(bs)
+      block_size = pallas_core.get_block_size(bs)
       if slice_start is not None:
         _maybe_static_check(
             slice_start % block_size == 0,
@@ -1326,7 +1389,7 @@ def _offset_indexer(
     case None | pallas_core.Squeezed() | pallas_core.Element():
       return indexer + slice_start
     case int() | pallas_core.Blocked():
-      block_size = _block_size(bs)
+      block_size = pallas_core.get_block_size(bs)
       # indexer is a block index so we need to offset it by the block offset.
       return indexer + slice_start // block_size
     case pallas_core.BoundedSlice():
@@ -1394,8 +1457,6 @@ def _get_clamped_slice_starts(
     slice_sizes: tuple[int, ...],
     start_idx_offset: int = 2,
 ) -> tuple[Any, ...]:
-  static_clamped_starts = None
-
   # TODO(rdyro): Constant fold the static indices to skip scalar prefetch.
   # Ref-write discharge `convert_element_type` makes start indices dynamic.
   if ctx.scalar_prefetch_fn is not None:
@@ -1406,33 +1467,29 @@ def _get_clamped_slice_starts(
             slice_starts, operand_shape, slice_sizes, strict=True
         )
     )
-  else:
-    if static_clamped_starts is None:
-      assert (
-          ctx.invars is not None
-      ), 'ctx.invars required when scalar_prefetch_fn is None'
-      assert all(
-          isinstance(v, core.Literal) for v in ctx.invars[start_idx_offset:]
-      ), (
-          'All start indices must be static literals if scalar_prefetch_fn is'
-          ' None'
+
+  assert (
+      ctx.invars is not None
+  ), 'ctx.invars required when scalar_prefetch_fn is None'
+  assert all(
+      isinstance(v, core.Literal) for v in ctx.invars[start_idx_offset:]
+  ), 'All start indices must be static literals if scalar_prefetch_fn is None'
+  slice_starts = tuple(v.val for v in ctx.invars[start_idx_offset:])
+  static_clamped_starts = tuple(
+      int(np.clip(np.asarray(start), 0, op_dim - size))
+      for start, op_dim, size in zip(
+          slice_starts, operand_shape, slice_sizes, strict=True
       )
-      slice_starts = tuple(v.val for v in ctx.invars[start_idx_offset:])
-      static_clamped_starts = tuple(
-          int(np.clip(np.asarray(start), 0, op_dim - size))
-          for start, op_dim, size in zip(
-              slice_starts, operand_shape, slice_sizes, strict=True
-          )
-      )
-    return static_clamped_starts
+  )
+  return static_clamped_starts
 
 
 @register_usage_rule(lax.dynamic_slice_p)
 def _dynamic_slice_usage_rule(ctx, used_out: set[Usage], **params):
   del params
-  if used_out == {Usage.SCALAR_PREFETCH}:
+  if Usage.SCALAR_PREFETCH in used_out:
     raise NotImplementedError('scalar prefetch not supported yet')
-  elif used_out == {Usage.REGULAR}:
+  elif Usage.REGULAR in used_out:
     usage = [used_out] + [{Usage.SCALAR_PREFETCH}] * (len(ctx.avals_in) - 1)
     return usage
   else:
@@ -1496,7 +1553,7 @@ def _dynamic_slice_rule(
   new_block_transform = block_transform.replace(
       block_index_transform=new_block_index_transform,
   )
-  return [new_block_transform] + [no_block_index_transform] * (len(ctx.avals_in) - 1)
+  return [new_block_transform] + [None] * (len(ctx.avals_in) - 1)
 
 
 @register_usage_rule(lax.dynamic_update_slice_p)
@@ -1505,9 +1562,9 @@ def _dynamic_update_slice_usage_rule(ctx, used_out: set[Usage], **params):
     raise NotImplementedError(
         f'dynamic_update_slice with params={params} not supported yet.'
     )
-  if used_out == {Usage.SCALAR_PREFETCH}:
+  if Usage.SCALAR_PREFETCH in used_out:
     raise NotImplementedError('scalar prefetch not supported yet')
-  elif used_out == {Usage.REGULAR}:
+  elif Usage.REGULAR in used_out:
     usage = [set(), used_out] + [{Usage.SCALAR_PREFETCH}] * (
         len(ctx.avals_in) - 2
     )
@@ -1566,25 +1623,23 @@ def _dynamic_update_slice_rule(
   update_block_transform = block_transform.replace(
       block_index_transform=new_block_index_transform,
   )
-  return [no_block_index_transform, update_block_transform] + [
-      no_block_index_transform
+  return [None, update_block_transform] + [
+      None
   ] * (len(ctx.avals_in) - 2)
 
 
 @register_pull_block_spec_rule(lax.dot_general_p)
 def _dot_general_pull_rule(
     ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
+    block_transform: BlockIndexTransform | None,
     *,
     dimension_numbers,
     **_,
-) -> Sequence[BlockIndexTransform]:
-  if block_transform is no_block_index_transform:
-    return [no_block_index_transform, no_block_index_transform]
+) -> Sequence[BlockIndexTransform | None]:
+  if block_transform is None:
+    return [None, None]
 
   lhs_aval, rhs_aval = ctx.avals_in
-  assert isinstance(lhs_aval, core.ShapedArray)
-  assert isinstance(rhs_aval, core.ShapedArray)
 
   # Check assumptions: strictly 2D and no batch dimensions
   if not lhs_aval.ndim == 2 or not rhs_aval.ndim == 2:
@@ -1649,7 +1704,7 @@ def _swap_pull_rule(
 ):
   del kwargs
   # The output and val block spec are the same.
-  return [block_transform, block_transform] + [no_block_index_transform] * (
+  return [block_transform, block_transform] + [None] * (
       len(ctx.avals_in) - 2
   )
 
@@ -1674,15 +1729,21 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
   block_idx = ctx.get_out_block_indices()[0]
 
   def _slice(i, b, start, size, dim):
-    if not isinstance(b, int):
-      raise NotImplementedError('swap not supported yet')
-    _maybe_static_check(
-        start % b == 0,
-        'slice_start={slice_start} is not a multiple of'
-        ' block_size={block_size}',
-        slice_start=start,
-        block_size=b,
-    )
+    match b:
+      case int() | pallas_core.Blocked():
+        block_size = pallas_core.get_block_size(b)
+        _maybe_static_check(
+            start % block_size == 0,
+            'slice_start={slice_start} is not a multiple of'
+            ' block_size={block_size}',
+            slice_start=start,
+            block_size=block_size,
+        )
+        res = indexing.ds(start + i * block_size, block_size)
+      case pallas_core.Squeezed() | None:
+        res = start + i
+      case _:
+        raise NotImplementedError(f'swap not supported yet for block shape {b}')
     _maybe_static_check(
         start + size <= dim,
         'slice_start={slice_start} + slice_size={slice_size} exceeds'
@@ -1691,7 +1752,7 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
         slice_size=size,
         dim=dim,
     )
-    return i if b is None else indexing.ds(start + i * b, b)
+    return res
 
   block_idx_iter = iter(block_idx)
   block_shape_iter = iter(block_spec.block_shape)
@@ -1720,7 +1781,7 @@ def _get_pull_rule(
     ctx: PullRuleContext, block_transform: BlockIndexTransform, *, tree
 ):
   if block_transform.block_shape is None:
-    return [block_transform] + [no_block_index_transform] * (
+    return [block_transform] + [None] * (
         len(ctx.avals_in) - 1
     )
   ref_aval = ctx.avals_in[0]
@@ -1754,25 +1815,24 @@ def _get_pull_rule(
     if idx_aval.stride != 1:
       raise NotImplementedError('get not supported yet')
     bd = next(block_shape_iter)
-    block_size = _block_size(bd)
-    if block_size is not None:
-      if isinstance(idx_aval.start, int):
-        _maybe_static_check(
-            idx_aval.start % block_size == 0,
-            'slice_start={slice_start} is not a multiple of'
-            ' block_size={block_size}',
-            slice_start=idx_aval.start,
-            block_size=block_size,
-        )
-        _maybe_static_check(
-            idx_aval.start + idx_aval.size <= size,
-            'slice_start={slice_start} + slice_size={slice_size} exceeds'
-            ' ref dimension={dim}',
-            slice_start=idx_aval.start,
-            slice_size=idx_aval.size,
-            dim=size,
-        )
-    block_shape.append(block_size)
+    if not _is_squeezed(bd) and isinstance(idx_aval.start, int):
+      block_size = pallas_core.get_block_size(bd)
+      _maybe_static_check(
+          idx_aval.start % block_size == 0,
+          'slice_start={slice_start} is not a multiple of'
+          ' block_size={block_size}',
+          slice_start=idx_aval.start,
+          block_size=block_size,
+      )
+      _maybe_static_check(
+          idx_aval.start + idx_aval.size <= size,
+          'slice_start={slice_start} + slice_size={slice_size} exceeds'
+          ' ref dimension={dim}',
+          slice_start=idx_aval.start,
+          slice_size=idx_aval.size,
+          dim=size,
+      )
+    block_shape.append(bd)
   assert next(block_shape_iter, None) is None
 
   def new_block_index_transform(*idxs):
@@ -1791,7 +1851,7 @@ def _get_pull_rule(
       block_index_transform=new_block_index_transform,
   )
   return ([new_block_transform]
-          + [no_block_index_transform] * (len(ctx.avals_in) - 1))
+          + [None] * (len(ctx.avals_in) - 1))
 
 
 @register_eval_rule(state_primitives.get_p)
@@ -1845,8 +1905,8 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
       raise NotImplementedError('get not supported yet')
     if idx_aval.stride != 1:
       raise NotImplementedError('get not supported yet')
-    block_size = _block_size(bd)
-    if block_size is not None:
+    if not _is_squeezed(bd):
+      block_size = pallas_core.get_block_size(bd)
       _maybe_static_check(
           idx.start % block_size == 0,
           'slice_start={slice_start} is not a multiple of'
@@ -1879,18 +1939,20 @@ def _concatenate_eval_rule(ctx: KernelEvalContext, *args, dimension):
     raise NotImplementedError(
         'Concatenation with Element indexing is not yet supported.'
     )
-  block_dim = block_shape[dimension]
-  if block_dim is None:
-    block_dim = 1
+  block_dim = pallas_core.get_block_size(block_shape[dimension])
 
-  if block_dim == sum(aval.shape[dimension] for aval in ctx.avals_in):
+  if (
+      not _is_squeezed(block_shape[dimension])
+      and block_dim == sum(aval.shape[dimension] for aval in ctx.avals_in)
+  ):
     # Handle special case if the block contains all of the concatenated
     # array.
-    return jax.lax.concatenate(args, dimension=dimension)
+    return jax.lax.concatenate(
+        args, dimension=_ref_block_axis(block_shape, dimension)
+    )
 
   num_blocks = []
   for aval in ctx.avals_in:
-    assert isinstance(aval, core.ShapedArray)
     if aval.shape[dimension] % block_dim != 0:
       raise ValueError(
           f'Shape along concat dimension {dimension} must be divisible by the'
@@ -1916,12 +1978,18 @@ def _concatenate_eval_rule(ctx: KernelEvalContext, *args, dimension):
 
 @register_eval_rule(lax.stack_p)
 def _stack_eval_rule(ctx: KernelEvalContext, *args, axis):
-  return jax.lax.stack(args, axis=axis)
+  block_shape = ctx.out_block_specs[0].block_shape
+  if _is_squeezed(block_shape[axis]):
+    assert len(args) == 1, len(args)
+    return args[0]
+  return jax.lax.stack(args, axis=_ref_block_axis(block_shape, axis))
 
 
 @register_eval_rule(lax.unstack_p)
 def _unstack_eval_rule(ctx: KernelEvalContext, x, *, axis):
-  return jax.lax.unstack(x, axis=axis)
+  return jax.lax.unstack(
+      x, axis=_ref_block_axis(ctx.in_block_specs[0].block_shape, axis)
+  )
 
 
 @register_pull_block_spec_rule(lax.concatenate_p)
@@ -1938,10 +2006,11 @@ def _concatenate_rule(
         'Concatenation with Element indexing is not yet supported.'
     )
   num_blocks = []
-  block_dim = block_shape[dimension]
-  if block_dim is None or isinstance(block_dim, pallas_core.Squeezed):
-    block_dim = 1
-  if block_dim == sum(aval.shape[dimension] for aval in ctx.avals_in):
+  block_dim = pallas_core.get_block_size(block_shape[dimension])
+  if (
+      not _is_squeezed(block_shape[dimension])
+      and block_dim == sum(aval.shape[dimension] for aval in ctx.avals_in)
+  ):
     # Handle special case if the block contains all of the concatenated
     # array.
     new_shapes = [
@@ -1958,7 +2027,6 @@ def _concatenate_rule(
   # We now handle the case where each of the concatenated array dimensions
   # divides the block size.
   for aval in ctx.avals_in:
-    assert isinstance(aval, core.ShapedArray)
     if aval.shape[dimension] % block_dim != 0:
       raise ValueError(
           f'Shape along concat dimension {dimension} must be divisible by the'
@@ -2003,9 +2071,7 @@ def _stack_pull_rule(
     raise NotImplementedError(
         'Stack with Element indexing is not yet supported.'
     )
-  block_dim = block_shape[axis]
-  if block_dim is None or isinstance(block_dim, pallas_core.Squeezed):
-    block_dim = 1
+  block_dim = pallas_core.get_block_size(block_shape[axis])
 
   n = len(ctx.avals_in)
   if block_dim != n:
@@ -2034,15 +2100,15 @@ def _stack_pull_rule(
 @register_pull_block_spec_rule(lax.unstack_p)
 def _unstack_pull_rule(
     ctx: PullRuleContext,
-    out_block_transforms: tuple[BlockIndexTransform, ...],
+    out_block_transforms: tuple[BlockIndexTransform | None, ...],
     *,
     axis: int,
 ):
   valid_transforms = [
-      bt for bt in out_block_transforms if bt is not no_block_index_transform
+      bt for bt in out_block_transforms if bt is not None
   ]
   if not valid_transforms:
-    return [no_block_index_transform]
+    return [None]
 
   block_transform = valid_transforms[0]
   n = len(out_block_transforms)
@@ -2065,14 +2131,12 @@ def _unstack_pull_rule(
 @register_pull_block_spec_rule(lax.split_p)
 def _split_pull_rule(
     ctx: PullRuleContext,
-    out_block_transforms: tuple[BlockIndexTransform, ...],
+    out_block_transforms: tuple[BlockIndexTransform | None, ...],
     *,
     sizes: Sequence[int],
     axis: int,
 ):
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
-  assert all(isinstance(aval, core.ShapedArray) for aval in ctx.avals_out)
 
   # turn numpy ints into ints
   sizes = [int(s) for s in sizes]
@@ -2082,11 +2146,19 @@ def _split_pull_rule(
         f'Sum of sizes {n} must be equal to dimension {axis} of the operand '
         f'shape {list(aval_in.shape)}.'
     )
+  for size, bt in zip(sizes, out_block_transforms, strict=True):
+    if bt is None:
+      continue
+    if pallas_core.get_block_size(bt.block_shape[axis]) != size:
+      raise NotImplementedError(
+          f'split over partial blocks not supported yet: {aval_in.shape=},'
+          f' {bt.block_shape=}, {sizes=}, {axis=}'
+      )
   valid_transforms = [
-      bt for bt in out_block_transforms if bt is not no_block_index_transform
+      bt for bt in out_block_transforms if bt is not None
   ]
   if not valid_transforms:
-    return [no_block_index_transform]
+    return [None]
 
   block_transform = valid_transforms[0]
 
@@ -2108,9 +2180,9 @@ def _split_pull_rule(
 @register_usage_rule(lax.broadcast_in_dim_p)
 def _broadcast_in_dim_usage_rule(ctx, used_out: set[Usage], **params):
   del params
-  if used_out == {Usage.SCALAR_PREFETCH}:
+  if Usage.SCALAR_PREFETCH in used_out:
     raise NotImplementedError('scalar prefetch not supported yet')
-  elif used_out == {Usage.REGULAR}:
+  elif Usage.REGULAR in used_out:
     return [
         {Usage.SCALAR_PREFETCH}
         if not ctx.avals_in[0].shape
@@ -2129,13 +2201,13 @@ def _broadcast_in_dim_eval_rule(
   if in_shape == shape:
     # Dummy broadcast
     return x
-  shape = tuple(map(_block_size, eval_ctx.out_block_specs[0].block_shape))
+  block_shape = eval_ctx.out_block_specs[0].block_shape
   dims = tuple(
-      d - sum(s is None for s in shape[:d])
+      _ref_block_axis(block_shape, d)
       for d in broadcast_dimensions
-      if shape[d] is not None
+      if not _is_squeezed(block_shape[d])
   )
-  shape = tuple(s for s in shape if s is not None)
+  shape = _ref_block_shape(block_shape)
   return jax.lax.broadcast_in_dim(x, broadcast_dimensions=dims, shape=shape)
 
 
@@ -2152,7 +2224,7 @@ def _broadcast_in_dim_pull_rule(
 
   shape = ctx.avals_in[0].shape
   if not shape:
-    return [no_block_index_transform]
+    return [None]
 
   def new_block_index_transform(*idxs):
     idx = block_transform.block_index_transform(*idxs)
@@ -2162,7 +2234,7 @@ def _broadcast_in_dim_pull_rule(
     )
 
   new_block_shape = tuple(
-      b if ((b := block_transform.block_shape[i]) is None) or (d != 1) else 1
+      b if _is_squeezed(b := block_transform.block_shape[i]) or (d != 1) else 1
       for i, d in zip(broadcast_dimensions, shape, strict=True)
   )
   return [block_transform.replace(
@@ -2174,7 +2246,7 @@ def _broadcast_in_dim_pull_rule(
 def _transpose_eval_rule(
     eval_ctx: KernelEvalContext, x, permutation: tuple[int, ...]
 ):
-  block_spec = eval_ctx.out_block_specs[0]
+  block_spec = eval_ctx.in_block_specs[0]
   block_shape = block_spec.block_shape
   block_shape_no_nones = tuple(
       bs
@@ -2203,18 +2275,18 @@ def _transpose_pull_rule(
 ):
 
   block_shape = block_transform.block_shape
-  new_shape = tuple(block_shape[i] for i in permutation)
+  inv_perm = tuple(np.argsort(permutation))
+  new_shape = tuple(block_shape[i] for i in inv_perm)
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   assert len(block_shape) == len(aval_in.shape)
-  if set(permutation[-2:]) != {permutation[-1], permutation[-2]}:
+  if set(permutation[-2:]) != set(range(len(permutation))[-2:]):
     raise NotImplementedError(
         'Cannot permute last two dimensions with leading dimensions.'
     )
 
   def new_block_index_transform(*idxs):
     original_idxs = block_transform.block_index_transform(*idxs)
-    return tuple(original_idxs[i] for i in permutation)
+    return tuple(original_idxs[i] for i in inv_perm)
 
   return [block_transform.replace(
       block_shape=new_shape,
@@ -2225,8 +2297,15 @@ def _transpose_pull_rule(
 def _split_eval_rule(
     eval_ctx: KernelEvalContext, x, sizes: Sequence[int], axis: int
 ):
-  del eval_ctx
-  return lax.split(x, sizes=sizes, axis=axis)
+  ref_axis = _ref_block_axis(eval_ctx.in_block_specs[0].block_shape, axis)
+  outs = lax.split(x, sizes=sizes, axis=ref_axis)
+  return [
+      lax.squeeze(out, (ref_axis,))
+      if bs is not pallas_core.no_block_spec
+      and _is_squeezed(bs.block_shape[axis])
+      else out
+      for out, bs in zip(outs, eval_ctx.out_block_specs, strict=True)
+  ]
 
 
 @register_eval_rule(lax.tile_p)
@@ -2234,12 +2313,14 @@ def _tile_eval_rule(
     eval_ctx: KernelEvalContext, x, reps: tuple[int, ...]
 ):
   block_spec = eval_ctx.out_block_specs[0]
-  block_shape = tuple(d for d in block_spec.block_shape
-                      if not isinstance(d, pallas_core.Squeezed))
-  if not all(isinstance(dim, int) for dim in block_shape):
+  if not all(
+      _is_squeezed(dim) or isinstance(dim, (int, pallas_core.Blocked))
+      for dim in block_spec.block_shape
+  ):
     raise NotImplementedError(
         'tile with non-int block dimensions not supported yet'
     )
+  block_shape = _ref_block_shape(block_spec.block_shape)
   if not all(
       out_dim % in_dim == 0 for out_dim, in_dim in zip(block_shape, x.shape)
   ):
@@ -2264,10 +2345,11 @@ def _tile_pull_rule(
   del reps
   block_shape = block_transform.block_shape
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   assert len(block_shape) == len(aval_in.shape)
-  if not all(isinstance(dim, (int, pallas_core.Squeezed))
-             for dim in block_shape):
+  if not all(
+      _is_squeezed(dim) or isinstance(dim, (int, pallas_core.Blocked))
+      for dim in block_shape
+  ):
     raise NotImplementedError(
         'tile with non-int block dimensions not supported yet'
     )
@@ -2283,8 +2365,8 @@ def _tile_pull_rule(
     )
 
   new_shape = tuple(
-      block_dim if isinstance(block_dim, pallas_core.Squeezed)
-      else min(block_dim, in_dim)
+      block_dim if _is_squeezed(block_dim)
+      else min(pallas_core.get_block_size(block_dim), in_dim)
       for block_dim, in_dim in zip(block_shape, aval_in.shape)
   )
 
@@ -2351,7 +2433,7 @@ def _random_bits_eval_rule(eval_ctx: KernelEvalContext, key, bit_width, shape):
   del shape
   block_spec = eval_ctx.out_block_specs[0]
   indices = eval_ctx.get_out_block_indices()[0]
-  block_shape = block_spec.block_shape
+  block_shape = _ref_block_shape(block_spec.block_shape)
   # This is the important part here: we fold in block indices into the key so
   # each block gets different random numbers.
   for idx in indices:
@@ -2402,7 +2484,7 @@ def _random_fold_in_pull_rule(
   key_block_transform = BlockIndexTransform(
       block_shape=None, memory_space=pallas_core.MemorySpace.KEY
   )
-  return [key_block_transform, no_block_index_transform]
+  return [key_block_transform, None]
 
 
 @register_eval_rule(lax.iota_p)
@@ -2413,14 +2495,10 @@ def _iota_eval_rule(
   block_spec = eval_ctx.out_block_specs[0]
   block_idx = eval_ctx.get_out_block_indices()[0]
   assert len(block_idx) == len(shape)
-  iota_shape = tuple(
-      _block_size(s) for s in block_spec.block_shape if s is not None
-  )
-  dim_ = dimension - sum(
-      _block_size(s) is None for s in block_spec.block_shape[:dimension]
-  )
+  iota_shape = _ref_block_shape(block_spec.block_shape)
+  dim_ = _ref_block_axis(block_spec.block_shape, dimension)
   local_iota = jax.lax.broadcasted_iota(dtype, iota_shape, dim_)
-  return local_iota + block_idx[dimension] * _block_size(
+  return local_iota + block_idx[dimension] * pallas_core.get_block_size(
       block_spec.block_shape[dimension]
   )
 
@@ -2436,9 +2514,10 @@ def _iota_pull_rule(
     sharding: jax.sharding.Sharding,
 ):
   del ctx, sharding, dtype, shape
-  if block_transform.block_shape[dimension] is None:
+  if _is_squeezed(block_transform.block_shape[dimension]):
     raise ValueError(
-        f'Cannot pull iota along dimension {dimension} with None block size.'
+        f'Cannot pull iota along dimension {dimension} with squeezed block'
+        ' size.'
     )
   return []
 
@@ -2474,9 +2553,7 @@ def _reshape_pull_rule(
   if dimensions is not None:
     raise NotImplementedError('reshape with None dimensions not supported yet')
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   aval_out = ctx.avals_out[0]
-  assert isinstance(aval_out, core.ShapedArray)
 
   block_shape = block_transform.block_shape
   shape_in = aval_in.shape
@@ -2509,7 +2586,7 @@ def _reshape_pull_rule(
 
       if len(merged) == 1:
         new_grids.append((merged[0] // bs,))
-        new_block_shape.append(bd if bd is not None else 1)
+        new_block_shape.append(1 if _is_squeezed(bd) else bd)
         continue
 
       if not isinstance(bd, (int, pallas_core.Blocked)):
@@ -2573,8 +2650,8 @@ def _reshape_pull_rule(
       )
     last_dim = aval_out.shape[-1]
     block_sublane_dim, block_lane_dim = (
-        _block_size(block_shape[-2]),
-        _block_size(block_shape[-1]),
+        pallas_core.get_block_size(block_shape[-2]),
+        pallas_core.get_block_size(block_shape[-1]),
     )
     total_block_size = block_sublane_dim * block_lane_dim
     if total_block_size % 128 != 0:
@@ -2591,7 +2668,7 @@ def _reshape_pull_rule(
     def new_block_index_transform(*idxs):
       *idx, second_to_last, last = block_transform.block_index_transform(*idxs)
       # last should always be 0
-      if not isinstance(last, int) and last != 0:
+      if isinstance(last, int) and last != 0:
         raise NotImplementedError(
             'Must select entire block on last dimension for reshape'
         )
@@ -2609,10 +2686,7 @@ def _reshape_eval_rule(
     eval_ctx: KernelEvalContext, x, *, dimensions, new_sizes, sharding
 ):
   del sharding, dimensions, new_sizes
-  out_shape_nones = tuple(
-      _block_size(s) for s in eval_ctx.out_block_specs[0].block_shape
-  )
-  out_shape = tuple(s for s in out_shape_nones if s is not None)
+  out_shape = _ref_block_shape(eval_ctx.out_block_specs[0].block_shape)
   # Because we have restricted the pull block spec rule, we can just apply a
   # basic reshape here.
   x = x.reshape(out_shape)
@@ -2629,7 +2703,6 @@ def _reduce_sum_pull_rule(
 ):
   del out_sharding
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   new_block_shape = []
   block_shape = iter(block_transform.block_shape)
   for i, d in enumerate(aval_in.shape):
@@ -2668,239 +2741,157 @@ def _reduce_sum_eval_rule(
 ):
   del out_sharding
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   block_shape = tuple(ctx.in_block_specs[0].block_shape)
   for i in axes:
-    if _block_size(block_shape[i]) != aval_in.shape[i]:
+    if pallas_core.get_block_size(block_shape[i]) != aval_in.shape[i]:
       raise NotImplementedError(
           f'reduce_sum on partial blocks not supported: {aval_in=},'
           f' {block_shape=}'
       )
-  return jax.lax.reduce_sum(x, axes=axes)
+  ref_block_axes = tuple(_ref_block_axis(block_shape, i) for i in axes)
+  return jax.lax.reduce_sum(x, axes=ref_block_axes)
 
 
 # Higher order primitives
 
 
 @register_usage_rule(pjit.jit_p)
-def _jit_usage_rule(
-    ctx, used_out: list[set[Usage]], *, jaxpr: core.Jaxpr, **_
+def _call_jaxpr_usage_rule(
+    ctx: UsageRuleContext, used_out: list[set[Usage]], *, jaxpr: core.Jaxpr, **_
 ):
   del ctx
   read_usage_env = compute_usage(jaxpr, used_out)
-  in_usages = util.safe_map(read_usage_env, jaxpr.invars)
-  return in_usages
-
-
-@register_eval_rule(pjit.jit_p)
-def _jit_eval_rule(ctx: KernelEvalContext, *args, jaxpr, **kwargs):
-  jaxpr, consts = jaxpr, jaxpr.consts
-  if consts:
-    raise NotImplementedError('pjit with consts not supported yet')
-  out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
-  in_tree = tree_util.tree_structure((tuple(jaxpr.invars), {}))
-
-  def read_usage_env(_: core.Var):
-    return {Usage.REGULAR}
-
-  _, env = _pull_block_spec(
-      jaxpr,
-      ctx.out_block_specs,
-      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
-      read_usage_env=read_usage_env,
-      grid_len=ctx.grid_len,
-  )
-  kernel_fn = make_kernel_function(
-      jaxpr,
-      (),
-      in_tree,
-      out_tree,
-      read_usage_env,
-      env,
-      ctx.scalar_prefetch_handler,
-      ctx.grid_len,
-  )
-  return kernel_fn(ctx.get_program_ids(), ctx.scalar_prefetch, *args)
-
-
-@register_pull_block_spec_rule(pjit.jit_p)
-def _jit_pull_block_spec_rule(
-    ctx: PullRuleContext, out_block_specs, *, jaxpr, **kwargs
-):
-  del kwargs
-  jaxpr, consts = jaxpr, jaxpr.consts
-  if consts:
-    raise NotImplementedError('pjit with consts not supported yet')
-
-  def read_usage_env(_: core.Var):
-    return {Usage.REGULAR}
-
-  in_block_specs, _ = _pull_block_transform(
-      jaxpr,
-      out_block_specs,
-      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
-      read_usage_env=read_usage_env,
-      grid_len=ctx.grid_len,
-      strict_mode=ctx.strict_mode,
-  )
-  return in_block_specs
+  return util.safe_map(read_usage_env, jaxpr.invars)
 
 
 @register_usage_rule(custom_derivatives.custom_jvp_call_p)
-def _custom_jvp_call_usage_rule(
-    ctx, used_out: list[set[Usage]], *, call_jaxpr: core.Jaxpr, **_
+@register_usage_rule(custom_derivatives.custom_vjp_call_p)
+def _custom_derivative_usage_rule(
+    ctx: UsageRuleContext,
+    used_out: list[set[Usage]],
+    *,
+    call_jaxpr: core.Jaxpr,
+    **_,
 ):
-  del ctx
-  read_usage_env = compute_usage(call_jaxpr, used_out)
-  in_usages = util.safe_map(read_usage_env, call_jaxpr.invars)
-  return in_usages
+  return _call_jaxpr_usage_rule(ctx, used_out, jaxpr=call_jaxpr)
+
+
+@register_usage_rule(hijax.call_hi_primitive_p)
+def _custom_call_hi_primitive_usage_rule(
+    ctx: UsageRuleContext,
+    used_out: list[set[Usage]],
+    *,
+    _prim,
+):
+  if isinstance(_prim, (hijax.CustomVJPTraced, hijax.CustomJVPTraced)):
+    return _call_jaxpr_usage_rule(ctx, used_out, jaxpr=_prim.traced.jaxpr)
+  return [set().union(*used_out)] * len(ctx.avals_in)
+
+
+@register_eval_rule(pjit.jit_p)
+def _call_jaxpr_eval_rule(
+    ctx: KernelEvalContext,
+    *args,
+    jaxpr: core.Jaxpr,
+    num_consts: int = 0,
+    **kwargs,
+):
+  del kwargs
+  if jaxpr.consts or num_consts:
+    raise NotImplementedError(f'{ctx.prim.name} with consts not supported yet')
+  out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
+  in_tree = tree_util.tree_structure((tuple(jaxpr.invars), {}))
+  read_usage_env = _nested_call_usage_env(jaxpr, ctx.out_usages)
+  _, env = _pull_block_spec(
+      jaxpr,
+      ctx.out_block_specs,
+      read_usage_env=read_usage_env,
+      strict_mode=False,
+  )
+  kernel_fn = make_kernel_function(
+      jaxpr,
+      (),
+      in_tree,
+      out_tree,
+      read_usage_env,
+      env,
+      _identity_scalar_prefetch_handler,
+  )
+  return kernel_fn(ctx.get_program_ids(), ctx.scalar_prefetch, *args)
 
 
 @register_eval_rule(custom_derivatives.custom_jvp_call_p)
-def _custom_jvp_call_eval_rule(
-    ctx: KernelEvalContext, *args, call_jaxpr: core.Jaxpr, **kwargs
+@register_eval_rule(custom_derivatives.custom_vjp_call_p)
+def _custom_derivative_eval_rule(
+    ctx: KernelEvalContext,
+    *args,
+    call_jaxpr: core.Jaxpr,
+    **kwargs,
 ):
-  jaxpr, consts = call_jaxpr, call_jaxpr.consts
-  if consts:
-    raise NotImplementedError('custom_jvp_call with consts not supported yet')
-  out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
-  in_tree = tree_util.tree_structure((tuple(jaxpr.invars), {}))
+  return _call_jaxpr_eval_rule(ctx, *args, jaxpr=call_jaxpr, **kwargs)
 
-  def read_usage_env(_: core.Var):
-    return {Usage.REGULAR}
 
-  _, env = _pull_block_spec(
+@register_pull_block_spec_rule(pjit.jit_p)
+def _call_jaxpr_pull_block_spec_rule(
+    ctx: PullRuleContext,
+    out_block_transforms,
+    *,
+    jaxpr: core.Jaxpr,
+    num_consts: int = 0,
+    **kwargs,
+):
+  del kwargs
+  if jaxpr.consts or num_consts:
+    raise NotImplementedError(f'{ctx.prim.name} with consts not supported yet')
+  read_usage_env = _nested_call_usage_env(jaxpr, ctx.out_usages)
+  in_block_transforms, _ = _pull_block_transform(
       jaxpr,
-      ctx.out_block_specs,
-      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
-      grid_len=ctx.grid_len,
+      out_block_transforms,
       read_usage_env=read_usage_env,
+      strict_mode=ctx.strict_mode,
   )
-  kernel_fn = make_kernel_function(
-      jaxpr,
-      (),
-      in_tree,
-      out_tree,
-      read_usage_env,
-      env,
-      ctx.scalar_prefetch_handler,
-      ctx.grid_len,
-  )
-  return kernel_fn(ctx.get_program_ids(), ctx.scalar_prefetch, *args)
+  return in_block_transforms
 
 
 @register_pull_block_spec_rule(custom_derivatives.custom_jvp_call_p)
-def _custom_jvp_call_pull_block_spec_rule(
-    ctx: PullRuleContext, out_block_specs, *, call_jaxpr, **kwargs
-):
-  del kwargs
-  jaxpr, consts = call_jaxpr, call_jaxpr.consts
-  if consts:
-    raise NotImplementedError('custom_jvp_call with consts not supported yet')
-
-  def read_usage_env(_: core.Var):
-    return {Usage.REGULAR}
-
-  in_block_specs, _ = _pull_block_transform(
-      jaxpr,
-      out_block_specs,
-      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
-      grid_len=ctx.grid_len,
-      read_usage_env=read_usage_env,
-      strict_mode=ctx.strict_mode,
-  )
-  return in_block_specs
-
-
-@register_usage_rule(custom_derivatives.custom_vjp_call_p)
-def _custom_vjp_call_usage_rule(
-    ctx, used_out: list[set[Usage]], *, call_jaxpr: core.Jaxpr, **_
-):
-  del ctx
-  read_usage_env = compute_usage(call_jaxpr, used_out)
-  in_usages = util.safe_map(read_usage_env, call_jaxpr.invars)
-  return in_usages
-
-
-@register_eval_rule(custom_derivatives.custom_vjp_call_p)
-def _custom_vjp_call_eval_rule(
-    ctx: KernelEvalContext, *args, call_jaxpr: core.Jaxpr, **kwargs
-):
-  jaxpr, consts = call_jaxpr, call_jaxpr.consts
-  if consts:
-    raise NotImplementedError('custom_vjp_call with consts not supported yet')
-  out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
-  in_tree = tree_util.tree_structure((tuple(jaxpr.invars), {}))
-
-  def read_usage_env(_: core.Var):
-    return {Usage.REGULAR}
-
-  _, env = _pull_block_spec(
-      jaxpr,
-      ctx.out_block_specs,
-      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
-      grid_len=ctx.grid_len,
-      read_usage_env=read_usage_env,
-  )
-  kernel_fn = make_kernel_function(
-      jaxpr,
-      (),
-      in_tree,
-      out_tree,
-      read_usage_env,
-      env,
-      ctx.scalar_prefetch_handler,
-      ctx.grid_len,
-  )
-  return kernel_fn(ctx.get_program_ids(), ctx.scalar_prefetch, *args)
-
-
 @register_pull_block_spec_rule(custom_derivatives.custom_vjp_call_p)
-def _custom_vjp_call_pull_block_spec_rule(
-    ctx: PullRuleContext, out_block_specs, *, call_jaxpr, **kwargs
+def _custom_derivative_pull_block_spec_rule(
+    ctx: PullRuleContext,
+    out_block_transforms,
+    *,
+    call_jaxpr: core.Jaxpr,
+    **kwargs,
 ):
-  del kwargs
-  jaxpr, consts = call_jaxpr, call_jaxpr.consts
-  if consts:
-    raise NotImplementedError('custom_vjp_call with consts not supported yet')
-
-  def read_usage_env(_: core.Var):
-    return {Usage.REGULAR}
-
-  in_block_specs, _ = _pull_block_transform(
-      jaxpr,
-      out_block_specs,
-      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
-      grid_len=ctx.grid_len,
-      read_usage_env=read_usage_env,
-      strict_mode=ctx.strict_mode,
+  return _call_jaxpr_pull_block_spec_rule(
+      ctx, out_block_transforms, jaxpr=call_jaxpr, **kwargs
   )
-  return in_block_specs
 
 
 @register_pull_block_spec_rule(hijax.call_hi_primitive_p)
 def _custom_call_hi_primitive_pull_block_spec_rule(
-    ctx: PullRuleContext, out_block_specs, *, _prim
+    ctx: PullRuleContext, out_block_transforms, *, _prim
 ):
-  if isinstance(_prim, hijax.CustomVJPTraced):
-    return _custom_vjp_call_pull_block_spec_rule(
-        ctx, out_block_specs, call_jaxpr=_prim.traced.jaxpr
+  if isinstance(_prim, (hijax.CustomVJPTraced, hijax.CustomJVPTraced)):
+    return _call_jaxpr_pull_block_spec_rule(
+        ctx,
+        out_block_transforms,
+        jaxpr=_prim.traced.jaxpr,
+        num_consts=len(_prim.in_avals[0]),
     )
-  if isinstance(_prim, hijax.CustomJVPTraced):
-    return _custom_jvp_call_pull_block_spec_rule(
-        ctx, out_block_specs, call_jaxpr=_prim.traced.jaxpr
-    )
-  return _prim.pull_block_spec_rule(ctx, out_block_specs)
+  return _prim.pull_block_spec_rule(ctx, out_block_transforms)
 
 
 @register_eval_rule(hijax.call_hi_primitive_p)
 def _custom_call_hi_primitive_eval_rule(
     ctx: KernelEvalContext, *args, _prim
 ):
-  if isinstance(_prim, hijax.CustomVJPTraced):
-    return _custom_vjp_call_eval_rule(ctx, *args, call_jaxpr=_prim.traced.jaxpr)
-  if isinstance(_prim, hijax.CustomJVPTraced):
-    return _custom_jvp_call_eval_rule(ctx, *args, call_jaxpr=_prim.traced.jaxpr)
+  if isinstance(_prim, (hijax.CustomVJPTraced, hijax.CustomJVPTraced)):
+    return _call_jaxpr_eval_rule(
+        ctx,
+        *args,
+        jaxpr=_prim.traced.jaxpr,
+        num_consts=len(_prim.in_avals[0]),
+    )
   return jax.tree.leaves(_prim.block_eval_rule(ctx, *args))
 
 
@@ -2914,6 +2905,36 @@ def push_block_spec(
     return_out_type: bool = False,
     **in_spec_kwargs,
 ):
+  """Pushes input `BlockSpec`s forward through `f` to get output `BlockSpec`s.
+
+  Args:
+    f: The function to propagate block specs forward through.
+    *in_spec_args: Positional input `BlockSpec`s (or PyTrees of
+      `BlockSpec`s) matching the positional arguments of `f`.
+    scalar_prefetch_handler: Optional getter created by
+      `make_scalar_prefetch_handler` that selects this fusion's scalar
+      prefetch values from the kernel's scalar prefetch inputs.
+    grid_len: Optional number of grid dimensions in the enclosing kernel.
+      Required if any block index depends on scalar prefetch values. When set,
+      the input `BlockSpec` index maps are expected to take `grid_len` grid
+      indices followed by the scalar prefetch refs, and the returned output
+      `BlockSpec` index maps follow the same convention.
+    strict_mode: If `True`, converging paths to the same operation must have
+      identical block index maps. If `False`, only block shapes, memory spaces,
+      and pipeline modes must match.
+    return_out_type: If `True`, also return a PyTree of `ShapeDtypeStruct`s
+      describing the output types of `f`.
+    **in_spec_kwargs: Keyword input `BlockSpec`s (or PyTrees of
+      `BlockSpec`s) matching the keyword arguments of `f`.
+
+  Returns:
+    A function taking example `(*args, **kwargs)` (or their abstract types)
+    and returning the output `BlockSpec` PyTree, or a tuple
+    `(out_block_specs, out_type)` when `return_out_type=True`.
+  """
+  if scalar_prefetch_handler is None:
+    scalar_prefetch_handler = _identity_scalar_prefetch_handler
+
   def wrapper(*args, **kwargs):
     flat_block_specs, in_tree_ = tree_util.tree_flatten(
         (in_spec_args, in_spec_kwargs)
@@ -2926,9 +2947,13 @@ def push_block_spec(
     jaxpr, _, in_tree, out_tree = fuser_utils.make_jaxpr(f, *args, **kwargs)
     if in_tree != in_tree_:
       raise ValueError(f'Expected {in_tree} PyTree, got {in_tree_}')
+    read_usage_env = compute_usage(
+        jaxpr, [{Usage.REGULAR}] * len(jaxpr.outvars)
+    )
     out_bs = _push_block_spec_jaxpr(
         jaxpr,
         *flat_block_specs,
+        read_usage_env=read_usage_env,
         scalar_prefetch_handler=scalar_prefetch_handler,
         grid_len=grid_len,
         strict_mode=strict_mode,
@@ -2964,6 +2989,36 @@ def push_pull_block_spec(
     grid_len: int | None = None,
     **block_spec_kwargs: Any,
 ):
+  """Pushes `BlockSpec`s forward through an output fusion, then pulls them back.
+
+  For an output fusion `f(values, *args, **kwargs)` with closed-over side inputs
+  `values` (assigned `no_block_spec` during the forward push) and unfused kernel
+  outputs `*args, **kwargs`, pushes `block_specs` forward through `f` and then
+  pulls the resulting output `BlockSpec`s backward (with `strict_mode=False`) to
+  derive `BlockSpec`s for `values` and build the block-level kernel function.
+
+  Args:
+    f: Output fusion function taking `(values, *args, **kwargs)`.
+    *block_specs: `BlockSpec`s for the positional kernel outputs `*args`.
+    scalar_prefetch_handler: Optional getter created by
+      `make_scalar_prefetch_handler` that selects this fusion's scalar
+      prefetch values from the kernel's scalar prefetch inputs.
+    grid_len: Optional number of grid dimensions in the enclosing kernel; see
+      `pull_block_spec`.
+    **block_spec_kwargs: `BlockSpec`s for the keyword kernel outputs
+      `**kwargs`.
+
+  Returns:
+    A function taking `(values, *args, **kwargs)` (or their abstract types)
+    and returning `(kernel_fn, values_block_specs, kwarg_block_specs,
+    out_type, out_block_specs)`, where `kernel_fn(program_ids,
+    scalar_prefetch, values, *args, **kwargs)` evaluates `f` on a single
+    block, `values_block_specs` and `kwarg_block_specs` are the pulled
+    `BlockSpec`s for `values` and `**kwargs` (pulled specs for positional
+    `*args` are omitted because they are already given by `*block_specs`), and
+    `out_type` and `out_block_specs` are the `ShapeDtypeStruct`s and pushed
+    `BlockSpec`s for the outputs of `f`.
+  """
   def wrapper(values, *args, **kwargs):
     values_block_specs = jax.tree.map(
         lambda _: pallas_core.no_block_spec, values
@@ -2998,7 +3053,8 @@ def push_pull_block_spec(
 def _push_block_spec_jaxpr(
     jaxpr: core.Jaxpr,
     *flat_block_specs,
-    scalar_prefetch_handler: Any | None = None,
+    read_usage_env: Callable[[core.Var], set[Usage]],
+    scalar_prefetch_handler: Callable = _identity_scalar_prefetch_handler,
     grid_len: int | None = None,
     strict_mode: bool = True,
 ) -> tuple[pallas_core.BlockSpec, ...]:
@@ -3014,8 +3070,6 @@ def _push_block_spec_jaxpr(
     env[invar] = bs
   for constvar in jaxpr.constvars:
     env[constvar] = pallas_core.no_block_spec
-
-  read_usage_env = compute_usage(jaxpr, [{Usage.REGULAR}] * len(jaxpr.outvars))
 
   def _read_block_spec(
       atom: core.Atom,
@@ -3042,11 +3096,10 @@ def _push_block_spec_jaxpr(
     if not rule:
       raise NotImplementedError(eqn.primitive)
     ctx = PushRuleContext(
+        prim=eqn.primitive,
         avals_in=tuple(v.aval for v in eqn.invars),
         avals_out=tuple(v.aval for v in eqn.outvars),
         invars=tuple(eqn.invars),
-        scalar_prefetch_handler=scalar_prefetch_handler,
-        grid_len=grid_len,
         strict_mode=strict_mode,
     )
     eqn_invar_usages = [
@@ -3100,15 +3153,8 @@ def _push_block_spec_jaxpr(
     else:
       out_block_specs = [rule(ctx, *in_block_specs, **eqn.params)]
 
-    util.safe_map(_write_block_spec, eqn.outvars, out_block_specs)
+    util.foreach(_write_block_spec, eqn.outvars, out_block_specs)
   out_block_specs = tuple(util.safe_map(_read_block_spec, jaxpr.outvars))
-  valid_block_spec = [
-      bs for bs in flat_block_specs if bs is not pallas_core.no_block_spec
-  ][0]
-  out_block_specs = tuple(
-      valid_block_spec if obs is pallas_core.no_block_spec else obs
-      for obs in out_block_specs
-  )
   if any(bs is pallas_core.no_block_spec for bs in out_block_specs):
     raise ValueError('No block spec found for output')
   return out_block_specs
@@ -3131,6 +3177,7 @@ class PushBlockSpecRuleFn(Protocol):
 def register_push_block_spec_rule(
     prim: core.Primitive,
 ) -> Callable[[Any], PushBlockSpecRuleFn]:
+  """Returns a decorator registering a forward `BlockSpec` push rule for `prim`."""
 
   def wrapper(
       f: PushBlockSpecRuleFn,
@@ -3142,16 +3189,13 @@ def register_push_block_spec_rule(
 
 
 def _binop_push_rule(
-    prim: core.Primitive,
-    ctx: PullRuleContext,
+    ctx: PushRuleContext,
     left_block_spec: pallas_core.BlockSpec,
     right_block_spec: pallas_core.BlockSpec,
     **params: Any,
 ) -> pallas_core.BlockSpec | tuple[pallas_core.BlockSpec, ...]:
-  del prim, params
+  del params
   left_aval, right_aval = ctx.avals_in
-  assert isinstance(left_aval, core.ShapedArray)
-  assert isinstance(right_aval, core.ShapedArray)
   if not right_aval.shape:
     return left_block_spec
   if not left_aval.shape:
@@ -3161,7 +3205,9 @@ def _binop_push_rule(
   if not (lhs_has_block_spec ^ rhs_has_block_spec):
     # We can only do a push if one of the block specs is unspecified
     # or they are identical.
-    if left_block_spec == right_block_spec:
+    if _block_specs_equal(
+        left_block_spec, right_block_spec, strict_mode=ctx.strict_mode
+    ):
       return left_block_spec
     raise ValueError('Illegal binary push. One of the block specs must be no_block_spec.')
   for l, r in zip(left_aval.shape, right_aval.shape, strict=True):
@@ -3171,38 +3217,43 @@ def _binop_push_rule(
       raise ValueError('Cannot propagate block spec through RHS broadcast.')
   if left_block_spec is pallas_core.no_block_spec:
     return right_block_spec
-  if right_block_spec is pallas_core.no_block_spec:
-    return left_block_spec
-  if right_block_spec != left_block_spec:
-    raise ValueError('Invalid block spec')
+  assert right_block_spec is pallas_core.no_block_spec
   return left_block_spec
 
 
-register_binop_push_rule = lambda prim: register_push_block_spec_rule(prim)(
-    functools.partial(_binop_push_rule, prim)
-)
-register_binop_push_rule(lax.mul_p)
-register_binop_push_rule(lax.add_p)
-register_binop_push_rule(lax.sub_p)
-register_binop_push_rule(lax.div_p)
-register_binop_push_rule(lax.max_p)
-register_binop_push_rule(lax.min_p)
-register_binop_push_rule(lax.lt_p)
-register_binop_push_rule(lax.eq_p)
-register_binop_push_rule(lax.gt_p)
-register_binop_push_rule(lax.and_p)
-register_binop_push_rule(lax.ne_p)
-register_binop_push_rule(lax.pow_p)
-register_binop_push_rule(ad_util.add_any_p)
+def register_binop_rule(prim: core.Primitive):
+  register_pull_block_spec_rule(prim)(_binop_pull_rule)
+  register_usage_rule(prim)(_binop_usage_rule)
+  register_eval_rule(prim)(_binop_eval_rule)
+  register_push_block_spec_rule(prim)(_binop_push_rule)
+
+
+register_binop_rule(lax.mul_p)
+register_binop_rule(lax.add_p)
+register_binop_rule(lax.sub_p)
+register_binop_rule(lax.div_p)
+register_binop_rule(lax.max_p)
+register_binop_rule(lax.min_p)
+register_binop_rule(lax.lt_p)
+register_binop_rule(lax.le_p)
+register_binop_rule(lax.eq_p)
+register_binop_rule(lax.gt_p)
+register_binop_rule(lax.ge_p)
+register_binop_rule(lax.or_p)
+register_binop_rule(lax.xor_p)
+register_binop_rule(lax.and_p)
+register_binop_rule(lax.ne_p)
+register_binop_rule(lax.shift_right_logical_p)
+register_binop_rule(ad_util.add_any_p)
+register_binop_rule(lax.pow_p)
 
 
 def _eltwise_push_rule(
-    prim: core.Primitive,
-    ctx: PullRuleContext,
+    ctx: PushRuleContext,
     block_spec: pallas_core.BlockSpec,
     **params,
 ) -> pallas_core.BlockSpec:
-  del prim, ctx, params
+  del ctx, params
   return block_spec
 
 
@@ -3216,7 +3267,7 @@ def _transpose_push_rule(
   del ctx
   block_shape = block_spec.block_shape
   new_shape = tuple(block_shape[i] for i in permutation)
-  if set(permutation[-2:]) != {permutation[-1], permutation[-2]}:
+  if set(permutation[-2:]) != set(range(len(permutation))[-2:]):
     raise NotImplementedError(
         'Cannot permute last two dimensions with leading dimensions.'
     )
@@ -3246,12 +3297,14 @@ def _select_n_push_rule(
     ctx: PushRuleContext,
     *args: pallas_core.BlockSpec,
 ):
-  del ctx
   block_specs = [b for b in args if b is not pallas_core.no_block_spec]
   assert len(block_specs) > 0
   block_spec = block_specs[0]
   if len(block_specs) > 1:
-    if any(b is not block_spec for b in block_specs):
+    if any(
+        not _block_specs_equal(b, block_spec, strict_mode=ctx.strict_mode)
+        for b in block_specs[1:]
+    ):
       raise NotImplementedError(
           'select_n with multiple differing inputs not supported yet'
       )
@@ -3265,13 +3318,16 @@ def _clamp_push_rule(
     x_block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
     max_block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
 ):
-  del ctx
   if (
-      min_block_spec is not pallas_core.no_block_spec and
-      min_block_spec is not x_block_spec
+      min_block_spec is not pallas_core.no_block_spec
+      and not _block_specs_equal(
+          min_block_spec, x_block_spec, strict_mode=ctx.strict_mode
+      )
   ) or (
-      max_block_spec is not pallas_core.no_block_spec and
-      max_block_spec is not x_block_spec
+      max_block_spec is not pallas_core.no_block_spec
+      and not _block_specs_equal(
+          max_block_spec, x_block_spec, strict_mode=ctx.strict_mode
+      )
   ):
     raise NotImplementedError(
         'clamp with multiple differing inputs not supported yet.'
@@ -3291,53 +3347,59 @@ def _dot_general_push_rule(
   raise NotImplementedError('dot_general not supported yet')
 
 
-@register_push_block_spec_rule(custom_derivatives.custom_jvp_call_p)
-def _custom_jvp_call_push_rule(
-    ctx, *block_specs, call_jaxpr: core.Jaxpr, **_
+@register_push_block_spec_rule(pjit.jit_p)
+def _call_jaxpr_push_block_spec_rule(
+    ctx: PushRuleContext,
+    *block_specs,
+    jaxpr: core.Jaxpr,
+    num_consts: int = 0,
+    **_,
 ):
-  assert not call_jaxpr.consts
-  return _push_block_spec_jaxpr(call_jaxpr, *block_specs)
+  if jaxpr.consts or num_consts:
+    raise NotImplementedError(f'{ctx.prim.name} with consts not supported yet')
+  read_usage_env = _nested_call_usage_env(
+      jaxpr, [{Usage.REGULAR}] * len(jaxpr.outvars)
+  )
+  return _push_block_spec_jaxpr(
+      jaxpr,
+      *block_specs,
+      read_usage_env=read_usage_env,
+      strict_mode=ctx.strict_mode,
+  )
 
 
+@register_push_block_spec_rule(custom_derivatives.custom_jvp_call_p)
 @register_push_block_spec_rule(custom_derivatives.custom_vjp_call_p)
-def _custom_vjp_call_push_rule(
-    ctx,
+def _custom_derivative_push_block_spec_rule(
+    ctx: PushRuleContext,
     *block_specs,
     call_jaxpr: core.Jaxpr,
-    num_consts,
-    fwd_jaxpr_thunk,
-    bwd,
-    out_trees,
-    symbolic_zeros,
+    **kwargs,
 ):
-  del ctx, num_consts, fwd_jaxpr_thunk, bwd, out_trees, symbolic_zeros
-  return _push_block_spec_jaxpr(call_jaxpr, *block_specs)
+  return _call_jaxpr_push_block_spec_rule(
+      ctx, *block_specs, jaxpr=call_jaxpr, **kwargs
+  )
 
 
 @register_push_block_spec_rule(hijax.call_hi_primitive_p)
 def _custom_call_hi_primitive_push_block_spec_rule(
-    ctx: PullRuleContext, *block_specs, _prim
+    ctx: PushRuleContext, *block_specs, _prim
 ):
   if isinstance(_prim, (hijax.CustomVJPTraced, hijax.CustomJVPTraced)):
-    return _push_block_spec_jaxpr(_prim.traced.jaxpr, *block_specs)
+    return _call_jaxpr_push_block_spec_rule(
+        ctx,
+        *block_specs,
+        jaxpr=_prim.traced.jaxpr,
+        num_consts=len(_prim.in_avals[0]),
+    )
   return _prim.push_block_spec_rule(ctx, block_specs)
 
 
-@register_push_block_spec_rule(pjit.jit_p)
-def _pjit_push_rule(ctx, *block_specs, jaxpr: core.Jaxpr, **_):
-  assert not jaxpr.consts
-  return _push_block_spec_jaxpr(jaxpr, *block_specs)
-
-
 def register_eltwise_rule(prim: core.Primitive):
-  register_pull_block_spec_rule(prim)(
-      functools.partial(_eltwise_pull_rule, prim)
-  )
-  register_usage_rule(prim)(functools.partial(_eltwise_usage_rule, prim))
-  register_eval_rule(prim)(functools.partial(_eltwise_eval_rule, prim))
-  register_push_block_spec_rule(prim)(
-      functools.partial(_eltwise_push_rule, prim)
-  )
+  register_pull_block_spec_rule(prim)(_eltwise_pull_rule)
+  register_usage_rule(prim)(_eltwise_usage_rule)
+  register_eval_rule(prim)(_eltwise_eval_rule)
+  register_push_block_spec_rule(prim)(_eltwise_push_rule)
 
 
 register_eltwise_rule(lax.exp_p)
@@ -3358,7 +3420,7 @@ register_eltwise_rule(pallas_primitives.multiple_of_p)
 
 @register_push_block_spec_rule(lax.reshape_p)
 def _reshape_push_rule(
-    ctx: PullRuleContext,
+    ctx: PushRuleContext,
     block_spec: pallas_core.BlockSpec,
     *,
     dimensions: tuple[int, ...] | None,
@@ -3369,9 +3431,7 @@ def _reshape_push_rule(
   if dimensions is not None:
     raise NotImplementedError('reshape with None dimensions not supported yet')
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   aval_out = ctx.avals_out[0]
-  assert isinstance(aval_out, core.ShapedArray)
   if _pattern_match_lanes_to_sublanes_reshape(aval_in, aval_out):
     block_shape = tuple(block_spec.block_shape)
     if not isinstance(block_shape[-1], (int, pallas_core.Blocked)):
@@ -3379,7 +3439,7 @@ def _reshape_push_rule(
           f'reshape must use Blocked block size on lanes: {block_shape}'
       )
     last_dim = aval_out.shape[-1]
-    last_block_dim = _block_size(block_shape[-1])
+    last_block_dim = pallas_core.get_block_size(block_shape[-1])
     if last_block_dim % 128 != 0:
       raise NotImplementedError(
           'reshape with non-128 aligned block size on lanes not supported yet'
@@ -3390,7 +3450,7 @@ def _reshape_push_rule(
           f' {block_shape=}, {last_dim=}, {last_block_dim=}, {aval_out.shape=}'
       )
     num_last_dim_blocks = last_block_dim // last_dim
-    new_block_shape = block_shape[:1] + (num_last_dim_blocks, last_dim)
+    new_block_shape = block_shape[:-1] + (num_last_dim_blocks, last_dim)
 
     def new_index_map(*args):
       *idx, last = block_spec.index_map(*args)
@@ -3412,7 +3472,6 @@ def _reduce_sum_push_rule(
 ):
   del out_sharding
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   if not all(
       aval_in.shape[i] == pallas_core.get_block_size(block_spec.block_shape[i])
       for i in axes
@@ -3445,7 +3504,6 @@ def _broadcast_in_dim_push_rule(
 ):
   del sharding
   in_aval = ctx.avals_in[0]
-  assert isinstance(in_aval, core.ShapedArray)
   in_shape = in_aval.shape
 
   dim_map = {
@@ -3457,11 +3515,11 @@ def _broadcast_in_dim_push_rule(
   for i, s in enumerate(shape):
     if i in dim_map:
       in_dim = dim_map[i]
+      bd = block_spec.block_shape[in_dim]
       if in_shape[in_dim] != s:
-        assert pallas_core.get_block_size(block_spec.block_shape[in_dim]) == 1
-        new_block_shape.append(s)
-      else:
-        new_block_shape.append(block_spec.block_shape[in_dim])
+        assert pallas_core.get_block_size(bd) == 1
+        bd = pallas_core.Element(s) if isinstance(bd, pallas_core.Element) else s
+      new_block_shape.append(bd)
     else:
       new_block_shape.append(s)
 
@@ -3634,7 +3692,6 @@ def _unstack_push_rule(
     axis: int,
 ):
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   block_shape = pallas_core._canonicalize_block_shape(block_spec.block_shape)
 
   n = aval_in.shape[axis]
@@ -3666,7 +3723,6 @@ def _split_push_rule(
     axis: int,
 ):
   aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
   block_shape = pallas_core._canonicalize_block_shape(block_spec.block_shape)
 
   if aval_in.shape[axis] != sum(sizes):

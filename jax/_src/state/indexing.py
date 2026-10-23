@@ -76,7 +76,8 @@ def _maybe_concretize(x: Any):
   # expensive as the size of the tracing context (i.e. the jaxpr) grows.
   if core.is_symbolic_dim(x):
     return None
-  return core.to_concrete_value(x)
+  val = core.to_concrete_value(x)
+  return None if isinstance(val, Array) else val
 
 # This registry is used to allow hitypes that are being indexed to register
 # type transformation rules.
@@ -156,7 +157,10 @@ class NDIndexer(state_types.Transform):
 
   @property
   def is_dynamic_size(self):
-    return any(isinstance(i, Slice) and i.is_dynamic_size for i in self.indices)
+    return (
+        any(isinstance(i, Slice) and i.is_dynamic_size for i in self.indices)
+        or not all(isinstance(i, int) for i in self.int_indexer_shape)
+    )
 
   def tree_flatten(self):
     flat_idx, idx_tree = tree_util.tree_flatten(self.indices)
@@ -250,6 +254,10 @@ class NDIndexer(state_types.Transform):
         raise ValueError(
             "Cannot broadcast shapes for indexing: {indexer_shapes}"
         ) from e
+
+      if validate and core.trace_ctx.is_top_level():
+        cls(indices, shape, indexer_shape, validate=True)
+        validate = False
 
       # Here we use the `broadcast_to` primitive instead of composing lax
       # primitives together because it is easier to lower in targets like

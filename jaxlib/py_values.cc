@@ -74,7 +74,6 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
-#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
@@ -716,17 +715,9 @@ absl::StatusOr<ShardFn> HandlePyArray(nb::handle obj, ifrt::Client* client,
                             to_memory_kind, options);
   }
 
-#if JAX_IFRT_VERSION_NUMBER >= 64
   if (ifrt_array->sharding().devices()->devices().front() == to_device &&
       options.allow_zero_copy &&
       ifrt_array->sharding().memory_kind() == to_memory_kind) {
-#else
-  if (ifrt_array->sharding().devices()->devices().front() == to_device &&
-      options.allow_zero_copy &&
-      (!to_memory_kind.memory_kind().has_value() ||
-       !ifrt_array->sharding().memory_kind().memory_kind().has_value() ||
-       ifrt_array->sharding().memory_kind() == to_memory_kind)) {
-#endif
     Shard result(ifrt_array, py_array.weak_type());
     return [result = std::move(result)]() mutable -> absl::StatusOr<Shard> {
       return std::move(result);

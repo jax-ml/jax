@@ -34,6 +34,7 @@ from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
 from jax._src.pallas.mosaic_gpu.interpret import gpu_callbacks
 from jax._src.pallas.mosaic_gpu.interpret import shared_memory as memory
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
+from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
@@ -439,6 +440,72 @@ class JaxprInterpreter:
       return token, []
     return token, old_val
 
+  def _interpret_run_state_p(
+      self, eqn, token, get_invals: Callable[[], Sequence[Any]]
+  ):
+    assert eqn.primitive is state_discharge.run_state_p
+    if not all(eqn.params["is_initialized"]):
+      raise NotImplementedError(
+          "Uninitialized refs are not supported in `run_state`."
+      )
+    jaxpr = eqn.params["jaxpr"]
+    invals = get_invals()
+    # Closed-over values and value arguments get a ref created for them during this
+    # scope and the value gets updated with the result of the ref at the end.
+    # Closed-over refs and ref arguments are passed through.
+    is_ref = [isinstance(v.aval, state_types.AbstractRef) for v in eqn.invars]
+    keys = []
+    for value, passthrough in safe_zip(invals, is_ref):
+      if passthrough:
+        keys.append(value)
+        continue
+      token, request = gpu_callbacks.call_make_allocation_request_array(
+          token=token,
+          compute_unit=self.thread,
+          memory_space_id=memory.get_memory_space_idx(
+              mosaic_gpu_core.MemorySpace.REGS
+          ),
+          initial_ref_count=1,
+      )
+      token, key = gpu_callbacks.call_allocate_buffer(
+          token=token,
+          mesh_location=self.mesh_location,
+          thread=self.thread,
+          allocation_request_as_array=request,
+          value=value,
+          source_info=eqn.source_info,
+      )
+      keys.append(key)
+
+    token, _ = self.interpret(jaxpr, token, *keys)
+    # TODO(paulbib): When `wgmma` race-checking is added, await all outstanding
+    # WGMMAs here.
+
+    # Update values with the resulting contents of their corresponding refs.
+    outs = []
+    for key, var, passthrough in safe_zip(keys, jaxpr.invars, is_ref):
+      if passthrough:
+        outs.append(key)
+        continue
+      token, value = gpu_callbacks.call_get(
+          token=token,
+          result_shape_and_dtype=var.aval.inner_aval,
+          mesh_location=self.mesh_location,
+          thread=self.thread,
+          allocation_key_as_array=key,
+          transforms=(),
+          source_info=eqn.source_info,
+      )
+      outs.append(value)
+      token = gpu_callbacks.call_deallocate_buffer(
+          token=token,
+          mesh_location=self.mesh_location,
+          thread=self.thread,
+          allocation_key_as_array=key,
+          source_info=eqn.source_info,
+      )
+    return token, outs
+
   def _interpret_run_scoped_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
@@ -771,7 +838,10 @@ class JaxprInterpreter:
   def _interpret_barrier_arrive_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is gpu_primitives.barrier_arrive_p
+    assert eqn.primitive in (
+        gpu_primitives.barrier_arrive_p,
+        gpu_primitives.barrier_arrive_and_wait_p,
+    )
     invals = get_invals()
     if eqn.params.get("has_user_predicate", False):
       *invals, predicate = invals
@@ -800,7 +870,10 @@ class JaxprInterpreter:
   def _interpret_barrier_wait_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
-    assert eqn.primitive is gpu_primitives.barrier_wait_p
+    assert eqn.primitive in (
+        gpu_primitives.barrier_wait_p,
+        gpu_primitives.barrier_arrive_and_wait_p,
+    )
     invals = get_invals()
     allocation_key_as_array = _get_barrier_allocation_key_from_inval(
         invals[0], eqn.params["transforms_treedef"], invals[1:]
@@ -961,6 +1034,12 @@ class JaxprInterpreter:
     src, src_transforms = resolve_ref(
         eqn.invars[0].aval, src, jax.tree.unflatten(
             eqn.params["src_transforms_treedef"], src_transforms_flat))
+    if any(
+        isinstance(t, mosaic_gpu_core.Im2ColTransform) for t in src_transforms
+    ):
+      raise NotImplementedError(
+          "Interpret mode does not support im2col copies."
+      )
     dst, dst_transforms = resolve_ref(
         eqn.invars[1].aval, dst, jax.tree.unflatten(
             eqn.params["dst_transforms_treedef"], dst_transforms_flat))
@@ -1036,10 +1115,14 @@ class JaxprInterpreter:
     )
     acc, acc_transforms = resolve_ref(
         eqn.invars[0].aval, acc, acc_transforms)
-    a, a_transforms = resolve_ref(eqn.invars[1].aval, a, a_transforms)
+    # The A operand may be a register value rather than a ref.
+    a_is_value = not isinstance(eqn.invars[1].aval, state_types.AbstractRef)
+    if not a_is_value:
+      a, a_transforms = resolve_ref(eqn.invars[1].aval, a, a_transforms)
     b, b_transforms = resolve_ref(eqn.invars[2].aval, b, b_transforms)
     return callback.io_callback(
         functools.partial(gpu_callbacks.wgmma,
+                          a_is_value=a_is_value,
                           source_info=eqn.source_info),
         gpu_callbacks.TOKEN_SHAPE_DTYPE,
         token=token,
@@ -1404,6 +1487,9 @@ class JaxprInterpreter:
           case primitives.run_scoped_p:
             token, out = self._interpret_run_scoped_p(
                 eqn, token, deferred_invals)
+          case state_discharge.run_state_p:
+            token, out = self._interpret_run_state_p(
+                eqn, token, deferred_invals)
           case mpmd.mpmd_map_p:
             token, out = self._interpret_mpmd_map_p(eqn, token, deferred_invals)
           case lax.cond_p:
@@ -1418,6 +1504,14 @@ class JaxprInterpreter:
           case gpu_primitives.barrier_arrive_p:
             token, out = self._interpret_barrier_arrive_p(
                 eqn, token, deferred_invals)
+          case gpu_primitives.barrier_arrive_and_wait_p:
+            invals = deferred_invals()
+            token, _ = self._interpret_barrier_arrive_p(
+                eqn, token, lambda: invals
+            )
+            token, out = self._interpret_barrier_wait_p(
+                eqn, token, lambda: invals
+            )
           case gpu_primitives.copy_gmem_to_smem_p:
             token, out = self._interpret_copy_gmem_to_smem_p(
                 eqn, token, deferred_invals)
@@ -1481,11 +1575,6 @@ class JaxprInterpreter:
                 eqn, token, deferred_invals)
           case _:
             out = self._interpret_arithmetic_primitive(eqn, deferred_invals)
-
-        # TODO(jburnim): Handle run_state_p above.  In particular, the Mosaic
-        # GPU docs say (re: wgmma accumulator refs):
-        # "If pl.run_state has accumulator operands, it implicitly awaits all
-        # outstanding WGMMA operations before returning the final values."
 
         out = out if eqn.primitive.multiple_results else [out]
         env.write_many(eqn.outvars, out)

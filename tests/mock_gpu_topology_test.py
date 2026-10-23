@@ -14,7 +14,6 @@
 
 from absl.testing import absltest
 import jax
-from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 from jax.sharding import NamedSharding
@@ -55,13 +54,7 @@ class MockGPUTopologyTest(jtu.JaxTestCase):
     mocked_count = NUM_SLICES * NUM_HOSTS_PER_SLICE
     self.assertIn(f'num_partitions = {mocked_count}', hlo_str)
 
-    if config.use_shardy_partitioner.value:
-      expected_sharding = 'sharding = #sdy.sharding<@mesh, [{"x"}]>'
-    else:
-      expected_sharding = (
-          f'sharding = "{{devices=[{mocked_count}]<=[{mocked_count}]}}"'
-      )
-    self.assertIn(expected_sharding, hlo_str)
+    self.assertIn('sharding = #sdy.sharding<@mesh, [{"x"}]>', hlo_str)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

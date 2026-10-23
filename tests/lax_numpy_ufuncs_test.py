@@ -21,6 +21,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
+from jax._src.numpy import ufunc_api
 
 jax.config.parse_flags_with_absl()
 
@@ -442,6 +443,45 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun_accumulate, args_maker, tol=tol)
 
   @jtu.sample_product(
+      [{'shape': shape, 'axis': axis}
+       for shape in [(1,), (2,), (31,), (257,), (33, 5), (4, 31)]
+       for axis in range(-len(shape), len(shape))],
+      name=['bitwise_and', 'bitwise_or', 'bitwise_xor', 'logical_and',
+            'logical_or', 'logical_xor', 'maximum', 'minimum'],
+      dtype=jtu.dtypes.integer + jtu.dtypes.unsigned + jtu.dtypes.boolean,
+      out_dtype=[None, bool, np.int32],
+  )
+  def test_associative_ufunc_accumulate(self, name, shape, axis, dtype, out_dtype):
+    # These ufuncs use a parallel prefix scan for integer and boolean outputs
+    # on GPU and TPU, so check longer axes than test_binary_ufunc_accumulate.
+    if name.startswith('logical') and out_dtype == np.int32:
+      self.skipTest("numpy logical ufuncs have no accumulate loop for int32 output")
+    jnp_fun = partial(getattr(jnp, name).accumulate, axis=axis, dtype=out_dtype)
+    np_fun = partial(getattr(np, name).accumulate, axis=axis, dtype=out_dtype)
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      shape=[(1,), (31,), (4, 31)],
+      name=['bitwise_and', 'bitwise_or', 'bitwise_xor', 'logical_and',
+            'logical_or', 'logical_xor', 'maximum', 'minimum'],
+      dtype=jtu.dtypes.integer + jtu.dtypes.unsigned + jtu.dtypes.boolean,
+      out_dtype=[bool, np.int8, np.int32],
+  )
+  def test_accumulate_sequential_matches_parallel(self, shape, name, dtype, out_dtype):
+    # CPU only runs the sequential path, so compare the two paths directly.
+    func = getattr(jnp, name)
+    x = jnp.asarray(jtu.rand_default(self.rng())(shape, dtype))
+    sequential = ufunc_api._accumulate_sequential(func, x, 0, out_dtype)
+    parallel = ufunc_api._accumulate_parallel(func, x, 0, out_dtype)
+    self.assertEqual(sequential.dtype, parallel.dtype)
+    self.assertArraysEqual(sequential, parallel)
+
+  @jtu.sample_product(
       SCALAR_FUNCS,
       shape=nonscalar_shapes,
       idx_shape=[(), (2,)],
@@ -577,6 +617,13 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jnp_fun_reduceat, np_fun_reduceat, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun_reduceat, args_maker)
 
-
+  @jtu.sample_product(name=["add", "multiply"])
+  def test_binary_ufunc_reduceat_dtype(self, name):
+    x = np.array([100] * 4, np.int8)
+    i = np.array([0], np.int32)
+    self.assertArraysEqual(
+        getattr(jnp, name).reduceat(x, i, dtype=jnp.int32),
+        getattr(np, name).reduceat(x, i, dtype=np.int32),
+        check_dtypes=True)
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

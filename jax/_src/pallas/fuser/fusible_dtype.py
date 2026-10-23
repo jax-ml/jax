@@ -57,10 +57,23 @@ pack_dtype_p = core.Primitive("pack_dtype")
 def pack_dtype_abstract_eval(*xs, dtype):
   if dtypes.issubdtype(dtype, FusibleElementDType):
     return dtype.abstract_pack(*xs)
-  raise ValueError("Attempted to pack non-fusion dtype: {dtype}")
+  raise ValueError(f"Attempted to pack non-fusion dtype: {dtype}")
 
 
 def pack(*xs, dtype):
+  """Packs physical component arrays into one array with fusion dtype `dtype`.
+
+  `pack` has no eager implementation or lowering; it must be used inside a
+  function that is physicalized, e.g. by `fuse` with `resolve_fusion_dtypes`.
+
+  Args:
+    *xs: Physical component arrays to pack.
+    dtype: Target `FusionDType` instance.
+
+  Returns:
+    An array with dtype `dtype`, whose abstract value is given by
+    `dtype.abstract_pack(*xs)`.
+  """
   return pack_dtype_p.bind(*xs, dtype=dtype)
 
 
@@ -72,12 +85,22 @@ unpack_dtype_p.multiple_results = True
 def unpack_dtype_abstract_eval(x):
   if dtypes.issubdtype(x.dtype, FusibleElementDType):
     return x.dtype.abstract_unpack(x)
-  elif isinstance(x.dtype, state.AbstractRef):
-    raise NotImplementedError()
-  raise ValueError("Attempted to unpack non-fusion dtype: {dtype}")
+  raise ValueError(f"Attempted to unpack non-fusion dtype: {x.dtype}")
 
 
 def unpack(x):
+  """Unpacks an array with a `FusionDType` into its constituent physical arrays.
+
+  Like `pack`, `unpack` has no eager implementation or lowering and must be
+  used inside a function that is physicalized.
+
+  Args:
+    x: An array whose dtype is a `FusionDType`.
+
+  Returns:
+    A tuple of physical component arrays unpacked from `x`, with abstract
+    values given by `x.dtype.abstract_unpack(x)`.
+  """
   return tuple(unpack_dtype_p.bind(x))
 
 
@@ -92,9 +115,16 @@ class FusibleTyRules:
 class FusionDType(dtypes.ExtendedDType, util.StrictABC):
   """Base class for fusible extended dtypes."""
 
-  _op_registry = {}
+  # Per-subclass registry.
+  _op_registry: dict[core.Primitive, Callable[..., Any]] = {}
+
   _rules = FusibleTyRules
   type = FusibleElementDType
+
+  def __init_subclass__(cls, **kwargs):
+    super().__init_subclass__(**kwargs)
+
+    cls._op_registry = {}
 
   @abc.abstractmethod
   def abstract_unpack(self, x) -> Sequence[Any]:
@@ -108,6 +138,7 @@ class FusionDType(dtypes.ExtendedDType, util.StrictABC):
   def register_op(cls, primitive):
     def _register_fn(fn):
       cls._op_registry[primitive] = fn
+      return fn
 
     return _register_fn
 
@@ -177,6 +208,8 @@ def physicalize(
 @util.weakref_lru_cache
 def physicalize_closed_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
   """Replaces all extended dtypes with physical types in a jaxpr."""
+  if not has_fusion_dtypes(jaxpr):
+    return jaxpr
   fun = functools.partial(physicalize_interp, jaxpr, jaxpr.consts)
   in_avals = [_physical_aval(aval) for aval in jaxpr.in_avals]
   in_avals_ft = ft.flatten_args(*in_avals)
@@ -203,6 +236,8 @@ def _physical_aval(aval):
 
 def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
   """Replaces all extended dtypes with physical types in a jaxpr."""
+  if not has_fusion_dtypes(jaxpr):
+    return jaxpr.with_consts(())
 
   def _flat_jaxpr_eval(consts, args):
     return physicalize_interp(jaxpr, consts, *args)
@@ -295,6 +330,35 @@ def _is_fusion_type(aval: core.AbstractValue):
   )
 
 
+def _iter_hi_prim_jaxprs(prim: hijax.HiPrim):
+  for v in tree_util.tree_leaves(prim.params):
+    if isinstance(v, core.Jaxpr):
+      yield v
+    elif isinstance(v, hijax.HiPrim):
+      yield from _iter_hi_prim_jaxprs(v)
+    elif isinstance(jaxpr := getattr(v, 'jaxpr', None), core.Jaxpr):
+      yield jaxpr
+
+
+@util.weakref_lru_cache
+def has_fusion_dtypes(jaxpr: core.Jaxpr) -> bool:
+  """Returns whether jaxpr or any of its subjaxprs contains a ``FusionDType``."""
+  if any(_is_fusion_type(v.aval) for v in jaxpr.all_invars):
+    return True
+  for eqn in jaxpr.eqns:
+    if any(_is_fusion_type(v.aval) for v in eqn.outvars):
+      return True
+    if any(map(has_fusion_dtypes, core.jaxprs_in_params(eqn.params))):
+      return True
+    if eqn.primitive is hijax.call_hi_primitive_p:
+      prim = eqn.params.get('_prim')
+      if isinstance(prim, hijax.HiPrim) and any(
+          map(has_fusion_dtypes, _iter_hi_prim_jaxprs(prim))
+      ):
+        return True
+  return False
+
+
 def _phys_find_rule(primitive, avals: Sequence[core.AbstractValue]):
   """Finds the physicalization rule for a primitive."""
   if primitive in _physicalize_rules:
@@ -368,9 +432,9 @@ def _physicalize_transform(f, *args):
 
 @lu.transformation2
 def _physicalize_transform_bwd(f, const_avals, *args):
-  return [custom_derivatives.Zero(a) for a in const_avals] + list(
-      physicalize(f)(*args)
-  )
+  # Pad the cotangents, not the logs `f` returns alongside them.
+  cts, logs = physicalize(f)(*args)
+  return [custom_derivatives.Zero(a) for a in const_avals] + list(cts), logs
 
 
 def _custom_vjp_call_physicalize_rule(

@@ -30,7 +30,6 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
-from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
@@ -280,12 +279,11 @@ def _initialize_barrier_op_lowering_rule(
   )
   for i in range(op.num_barriers.value):
     bar_ptr = utils.getelementptr(op.base_pointer, [i], _lowered_barrier_type())
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [bar_ptr, utils.c(arrival_count, i32), ctx.single_thread_per_block_predicate],
-        "@$2 mbarrier.init.shared::cta.b64 [$0], $1;",
-        "r,r,b",
-        has_side_effects=True,
+    utils.inline_ptx(
+        "mbarrier.init.shared::cta.b64 [$0], $1;",
+        bar_ptr,
+        utils.c(arrival_count, i32),
+        predicate=ctx.single_thread_per_block_predicate,
     )
   return []
 
@@ -580,13 +578,26 @@ def _async_store_smem_op_lowering_rule(
   cluster_idx = arith.index_cast(index, op.cluster_idx)
   cluster_barrier_ref = barrier_ref.remap_to_cluster(cluster_dim, cluster_idx)
 
-  total_bits = math.prod(value.shape) * utils.bitwidth(value.mlir_dtype)
-  if total_bits % (8 * utils.WARPGROUP_SIZE):
+  transfer_bytes = math.prod(value.shape) * utils.bitwidth(value.mlir_dtype)
+  assert transfer_bytes % 8 == 0
+  transfer_bytes //= 8
+  if transfer_bytes % utils.WARPGROUP_SIZE:
     raise NotImplementedError(
-        f"Transfer of {total_bits} bits is not divisible by "
-        f"{8 * utils.WARPGROUP_SIZE}"
+        f"Transfer of {transfer_bytes} bytes is not divisible by "
+        f"{utils.WARPGROUP_SIZE}"
     )
-  cluster_barrier_ref.arrive_expect_tx(total_bits // 8 // utils.WARPGROUP_SIZE)
+
+  if (orders_tc := dialect_barrier.orders_tensor_core):
+    tx_count = transfer_bytes
+    predicate = ctx.single_lane_predicate
+  else:
+    tx_count = transfer_bytes // utils.WARPGROUP_SIZE
+    predicate = None
+
+  cluster_barrier_ref.arrive_expect_tx(
+      tx_count, predicate=predicate,
+      tensor_core_order_scope=ctx.thread_semantics if orders_tc else None,
+  )
 
   atomic = None
   if op.atomic_type is not None:
@@ -1144,10 +1155,10 @@ def _mgpu_async_load_op_lowering_rule(
 
   gmem_slice, predicate = _gmem_slice_and_predicate(ctx, load_op)
 
-  collective = [
+  collective = tuple(
       gpu.Dimension(ir.IntegerAttr(axis).value)
       for axis in load_op.collective or []
-  ]
+  )
 
   match load_op.leader_tracked:
     case mgpu.CopyReplicatedAttr():
@@ -1188,6 +1199,50 @@ def _mgpu_async_load_op_lowering_rule(
       **{} if is_cp_async else predicate,  # pyrefly: ignore[bad-argument-type]
   )
   return []
+
+
+# TODO(slebedev): Remove ``hasattr`` once the minimum jaxlib version is >0.12.0.
+if hasattr(mgpu, "AsyncLoadIm2colOp"):
+  @_register_lowering(mgpu.AsyncLoadIm2colOp, support_warp_semantics=True)
+  def _mgpu_async_load_im2col_op_lowering_rule(
+      ctx: LoweringContext, load_op: mgpu.AsyncLoadIm2colOp
+  ) -> Sequence[ir.Value]:
+    barrier = utils.DialectBarrierRef.from_barrier_memref(load_op.barrier)
+    [transforms_attr] = inference_utils.in_transforms(load_op)
+    swizzle = swizzle_from_transforms_attr(transforms_attr)
+    unwrapped_dst = unwrap_transformed_memref(
+        load_op.destination, transforms_attr
+    )
+
+    predicate = ctx.single_lane_predicate
+    if load_op.predicate is not None:
+      predicate = arith.andi(predicate, load_op.predicate)
+
+    if ctx.auto_barriers and ctx.thread_semantics == utils.ThreadSubset.WARPGROUP:
+      utils.warpgroup_barrier()  # Make sure the reads have completed.
+
+    index = ir.IndexType.get()
+    ctx.launch_context.async_copy_im2col(
+        src_ref=load_op.source,
+        dst_ref=unwrapped_dst,
+        barrier=barrier.barrier_ref,
+        window_start_bounds=tuple(
+            zip(
+                load_op.window_lower_bounds,
+                load_op.window_upper_bounds,
+                strict=True,
+            )
+        ),
+        start_indices=[arith.index_cast(index, i) for i in load_op.indices],
+        filter_offsets=[
+            arith.index_cast(index, o) for o in load_op.filter_offsets
+        ],
+        window_strides=tuple(load_op.window_strides),
+        swizzle=swizzle,
+        arrive=False,
+        predicate=predicate,
+    )
+    return []
 
 
 @_register_lowering(mgpu.AsyncPrefetchOp, support_warp_semantics=True)
@@ -1589,9 +1644,21 @@ def _select_op_lowering_rule(
   [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
-  pred = _fragmented_array_from_ir(op.condition, layout)
   true_value = _fragmented_array_from_ir(op.true_value, layout)
   false_value = _fragmented_array_from_ir(op.false_value, layout)
+  if not isinstance(op.condition.type, ir.VectorType):
+    result_regs = [
+        arith.select(op.condition, t, f)
+        for t, f in zip(
+            true_value.registers.flat, false_value.registers.flat, strict=True
+        )
+    ]
+    conversion_cast = builtin.UnrealizedConversionCastOp(
+        [op.result.type], result_regs
+    )
+    conversion_cast.attributes["layout"] = layout
+    return [conversion_cast.result]
+  pred = _fragmented_array_from_ir(op.condition, layout)
   result = pred.select(true_value, false_value)
   return [fragmented_array_to_ir(result, op.result.type)]
 
@@ -1722,7 +1789,14 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
       else utils.WARP_SIZE
   )
   num_bytes = arrive_expect_tx_op.expect_tx
-  if isinstance(num_bytes.owner, arith.ConstantOp):
+  barrier = utils.DialectBarrierRef.from_barrier_memref(
+      arrive_expect_tx_op.barrier
+  )
+  orders_tc = barrier.orders_tensor_core
+
+  if orders_tc:
+    tx_bytes = num_bytes
+  elif isinstance(num_bytes.owner, arith.ConstantOp):
     num_bytes_int = int(num_bytes.owner.value)
     if num_bytes_int % num_lanes == 0:
       # Prefer uniform arrival whenever possible because it's more efficient.
@@ -1742,26 +1816,16 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
         utils.c(0, i32),
     )
 
-  barrier = utils.DialectBarrierRef.from_barrier_memref(
-      arrive_expect_tx_op.barrier
-  )
   # In Warp-level lowering, we arrive on each CUDA thread in a warp, but the
   # barrier still expects a full 128 arrivals so we arrive 4 times on each CUDA
   # thread instead.
-  if ctx.thread_semantics == utils.ThreadSubset.WARP:
+  if ctx.thread_semantics == utils.ThreadSubset.WARP and not orders_tc:
     barrier.barrier_ref.arrive(arrival_count=3, can_complete=False)
-  barrier.barrier_ref.arrive_expect_tx(tx_bytes)
-
-  return []
-
-
-@_register_lowering(mgpu.WaitOp)
-def _mgpu_wait_op_lowering_rule(
-    _: LoweringContext, wait_op: mgpu.WaitOp
-) -> Sequence[ir.Value]:
-
-  barrier = utils.DialectBarrierRef.from_barrier_memref(wait_op.barrier)
-  barrier.wait_parity(wait_op.parity)
+  barrier.barrier_ref.arrive_expect_tx(
+      tx_bytes,
+      predicate=ctx.single_lane_predicate if orders_tc else None,
+      tensor_core_order_scope=ctx.thread_semantics if orders_tc else None,
+  )
 
   return []
 
@@ -2837,39 +2901,35 @@ def _infer_flat_result_types(
 
 
 @_register_lowering(scf.IfOp, support_warp_semantics=True)
-def _if_op_lowering_rule(
-    ctx: LoweringContext, if_op: scf.IfOp
-) -> MlirLoweringRuleResult:
-  if not inference_utils.should_have_layout(if_op):
-    return _traverse_op_lowering_rule(ctx, if_op)
-
-  raise NotImplementedError
-
-
 @_register_lowering(scf.IndexSwitchOp, support_warp_semantics=True)
-def _index_switch_op_lowering_rule(
-    ctx: LoweringContext, switch_op: scf.IndexSwitchOp
+def _branching_op_lowering_rule(
+    ctx: LoweringContext, op: scf.IfOp | scf.IndexSwitchOp
 ) -> MlirLoweringRuleResult:
-  if not inference_utils.should_have_layout(switch_op):
-    return _traverse_op_lowering_rule(ctx, switch_op)
+  if not inference_utils.should_have_layout(op):
+    return _traverse_op_lowering_rule(ctx, op)
 
-  out_layouts = inference_utils.out_layouts(switch_op)
-  new_switch_op = scf.IndexSwitchOp(
-      _infer_flat_result_types(switch_op, out_layouts),
-      switch_op.arg,
-      switch_op.cases,
-  )
+  out_layouts = inference_utils.out_layouts(op)
+  result_types = _infer_flat_result_types(op, out_layouts)
+  match op:
+    case scf.IfOp():
+      new_op = scf.IfOp(
+          op.condition,
+          result_types,
+          has_else=bool(op.elseRegion.blocks),
+      )
+    case scf.IndexSwitchOp():
+      new_op = scf.IndexSwitchOp(result_types, op.arg, op.cases)
+    case _:
+      assert_never(op)
 
   results_template: Sequence[_VectorTemplate | None] = []
-  for region, new_region in zip(
-      switch_op.regions, new_switch_op.regions, strict=True
-  ):
+  for region, new_region in zip(op.regions, new_op.regions, strict=True):
     [block] = region.blocks
     new_block = new_region.blocks[0]
     results_template = _move_scf_block_to_block_with_flattened_arguments(
         ctx, block, new_block, scf.YieldOp, []
     )
-  return _unflatten_ir_values(new_switch_op.results, results_template)
+  return _unflatten_ir_values(new_op.results, results_template)
 
 @_register_lowering(mgpu.TryClusterCancelOp)
 def _try_cluster_cancel_op_lowering_rule(

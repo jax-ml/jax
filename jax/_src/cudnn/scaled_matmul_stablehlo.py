@@ -19,6 +19,7 @@ from functools import partial, reduce
 
 import numpy as np
 
+from jax._src import ad_checkpoint
 from jax._src import api
 from jax._src import core
 from jax._src import dispatch
@@ -30,6 +31,8 @@ from jax._src.custom_derivatives import custom_vjp
 from jax._src.custom_partitioning import custom_partitioning
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import remat
 from jax._src.interpreters.mlir import ir
 from jax._src.lax import lax
 from jax._src.lax import parallel as lax_parallel
@@ -205,6 +208,50 @@ _scaled_matmul_p_wrapper = core.Primitive("scaled_matmul_wrapper")
 _scaled_matmul_p_wrapper.multiple_results = True
 _scaled_matmul_p_wrapper.def_impl(_scaled_matmul_impl)
 _scaled_matmul_p_wrapper.def_abstract_eval(_scaled_matmul_abstract)
+
+
+def _scaled_matmul_remat(trace, lhs, rhs, lhs_scales, rhs_scales, **params):
+  call = partial(_scaled_matmul_p_wrapper.bind, **params)
+  (out,) = call(lhs, rhs, lhs_scales, rhs_scales)
+  if trace.policy is None:
+    return [out], (), lambda _, *args: call(*args)
+  case = pe.ensure_enum(
+      trace.policy(
+          _scaled_matmul_p_wrapper,
+          core.typeof(lhs),
+          core.typeof(rhs),
+          core.typeof(lhs_scales),
+          core.typeof(rhs_scales),
+          **params,
+      )
+  )
+  if isinstance(case, pe.SaveableType):
+    out = remat.reduce_precision(out)
+    if not trace.custom_vjp_rules:
+      return [out], out, lambda out, *_: [out]
+    return (
+        [out],
+        out,
+        lambda out, *args: [
+            ad_checkpoint.primal_left_tangent_right(out, call(*args)[0])
+        ],
+    )
+  if isinstance(case, pe.Offloadable):
+    out = remat.reduce_precision(out)
+    out_host = api.device_put(
+        out, core.mem_kind_to_space(case.dst), may_alias=False
+    )
+    src_space = core.mem_kind_to_space(case.src)
+    def rem(out_host, *args):
+      out_dev = api.device_put(out_host, src_space, may_alias=False)
+      if not trace.custom_vjp_rules:
+        return [out_dev]
+      return [ad_checkpoint.primal_left_tangent_right(out_dev, call(*args)[0])]
+    return [out], out_host, rem
+  return [out], (), lambda _, *args: call(*args)
+
+
+remat.rules[_scaled_matmul_p_wrapper] = _scaled_matmul_remat
 
 # Given the inputs already sharded as
 #   ([B], M, K1), ([B], N, K2)
@@ -606,18 +653,22 @@ def quantize(x, config):
   assert contract_dim >= block_size and contract_dim % block_size == 0
   x_new_shape = x_shape[:-1] + (x_shape[-1] // block_size, block_size)
   x = x.reshape(x_new_shape)  # shape = (B, M, K / block_size, block_size)
-  MAX = dtypes.finfo(config.data_type).max.astype(x.dtype)
+  MAX = dtypes.finfo(config.data_type).max.astype(np.float32)
 
   def get_scales_per_block(values):
-    # shape = (B, M, K / block_size, 1)
-    return jnp.max(jnp.abs(values), axis=-1, keepdims=True) / MAX
+    # shape = (B, M, K / block_size, 1). The ratio is computed in float32
+    # whatever the input dtype: XLA rewrites `amax / MAX` as `amax * (1 / MAX)`
+    # with the reciprocal rounded in the division's dtype, and in bfloat16
+    # 6 * bf16(1 / 6) = 1.001953125 selects the E2M1 scale 2 instead of 1.
+    amax = jnp.max(jnp.abs(values), axis=-1, keepdims=True)
+    return amax.astype(np.float32) / MAX
 
-  if config.mode == "mxfp8":
+  if config.mode in ("mxfp8", "mxfp4"):
     assert config.global_scale is None
     assert config.scale_type == dtypes.float8_e8m0fnu
 
     scales_q = cast_to_e8m0_with_rounding_up(get_scales_per_block(x))
-    scaled_x = x / e8m0_to_dtype(scales_q, x.dtype)
+    scaled_x = x.astype(np.float32) / e8m0_to_dtype(scales_q, np.float32)
   elif config.mode == "nvfp4":
     assert config.scale_type == dtypes.float8_e4m3fn
     assert config.global_scale.dtype == np.float32
@@ -638,7 +689,11 @@ def quantize(x, config):
   scales_q = jnp.reshape(scales_q, scales_q.shape[:-1]).view(
       config.scale_type
   )
-  return x_q, scales_q
+  # Without a native kernel XLA expands the scaled matmul into a dequantize
+  # and an ordinary dot, and SimplifyFPConversions (on by default through
+  # xla_allow_excess_precision) then folds `f32 -> e2m1 -> f32` into a no-op,
+  # so the dot would run on unquantized values. The barrier keeps the casts.
+  return lax.optimization_barrier((x_q, scales_q))
 
 def scaled_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type,
                     configs):

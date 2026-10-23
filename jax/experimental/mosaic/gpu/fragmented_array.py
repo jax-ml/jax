@@ -2979,10 +2979,11 @@ class FragmentedArray:
 
     # Here we handle all conversions involving f8 types.
     # TODO(apaszke): Figure out proper satfinite control.
+    arch = utils.get_arch()
     supported_f8_f16: dict[ir.Type, tuple[ir.Type, ...]] = {
         f8e4m3fn: (f16,), f8e5m2: (f16,), f8e8m0fnu: (bf16,)
     }
-    if ptx_isa_version >= 92:
+    if ptx_isa_version >= 92 and arch.major >= 10:
       # Technically those downcasts are already supported in 91, but the casts
       # only become symmetric in 92 so that's what we use as the cutoff.
       supported_f8_f16[f8e4m3fn] += (bf16,)
@@ -2993,7 +2994,7 @@ class FragmentedArray:
     f16_ptx_names: dict[ir.Type, str] = {f16: "f16", bf16: "bf16"}
     f8_types = f8_ptx_names.keys()
     f16_types = f16_ptx_names.keys()
-    if f8e8m0fnu in {cur_dtype, new_dtype} and utils.get_arch().major < 10:
+    if f8e8m0fnu in {cur_dtype, new_dtype} and arch.major < 10:
       raise ValueError(
           "f8e8m0fnu type only supported on Blackwell and newer GPUs"
       )
@@ -3019,6 +3020,10 @@ class FragmentedArray:
         if rounding is None:
           return Rounding.TO_NEAREST_EVEN.ptx
         allowed_rounding = (Rounding.TO_NEAREST_EVEN,)
+        # .rz rounding for cvt.{e4m3x2,e5m2x2}.{f32,f16x2,bf16x2} was added in
+        # PTX ISA 9.4 and is only supported on sm_107f.
+        if arch.major == 10 and arch.minor >= 7 and ptx_isa_version >= 94:
+          allowed_rounding += (Rounding.TO_ZERO,)
       check_supported_rounding(allowed_rounding)
       return rounding.ptx
 
@@ -3050,7 +3055,11 @@ class FragmentedArray:
       supported_16 = supported_f8_f16[cur_dtype if cur_dtype in f8_types else new_dtype]
       ok_new_dtype = " or ".join(map(str, supported_16))
       ptx_hint = ""
-      if ptx_isa_version < 92 and f8e8m0fnu not in {cur_dtype, new_dtype}:
+      if (
+          ptx_isa_version < 92
+          and arch.major >= 10
+          and f8e8m0fnu not in {cur_dtype, new_dtype}
+      ):
         ptx_hint = (
             " This conversion would be supported if a newer CUDA (ptxas)"
             " version was available."
@@ -3070,7 +3079,7 @@ class FragmentedArray:
           None
       )
       if common_f16 is not None:
-        return self.astype(common_f16).astype(new_dtype)
+        return self.astype(common_f16).astype(new_dtype, rounding=rounding)
       raise NotImplementedError(
           f"Conversion from {cur_dtype} to {new_dtype} must go through f32,"
           " which is expensive. Cast to f32 explicitly if you really want it."
@@ -4153,11 +4162,16 @@ class FragmentedArray:
       )
       return
 
-    vec_size = 64 // mgpu.bitwidth(self.mlir_dtype)
-    if np.prod(self.shape) < vec_size * WARPGROUP_SIZE:
-      vec_size = 1
+    if (bitwidth := mgpu.bitwidth(self.mlir_dtype)) > 64:
+      raise NotImplementedError(
+          f"Storing splat arrays with {bitwidth}-bit elements is not supported"
+      )
 
-    if np.prod(self.shape) % WARPGROUP_SIZE * vec_size:
+    vec_size = math.gcd(
+        64 // bitwidth,
+        np.prod(self.shape) // WARPGROUP_SIZE,
+    )
+    if np.prod(self.shape) % (WARPGROUP_SIZE * vec_size):
       raise NotImplementedError(
           "Arrays with the splat layout can only be stored when they have a"
           f" single element or a multiple of {WARPGROUP_SIZE} elements"
@@ -4820,7 +4834,14 @@ class FragmentedArray:
       raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
 
     plan = TrivialTransferPlan()
-    if optimized:
+    if optimized and llvm_memory_space is None:
+      plan = plan_gmem_transfer(
+          nested_ref_shape,
+          nested_ref_strides,
+          layout,
+          element_bits,
+      )
+    elif optimized:
       if llvm_memory_space != 3 and llvm_memory_space != 7:
         raise NotImplementedError("Only optimized transfers to SMEM supported")
       mem_layout = layout
@@ -5279,6 +5300,162 @@ class StaggeredTransferPlan(TransferPlan):
 class TransferPlanDerivationError(Exception):
   """Raised when a transfer plan cannot be derived due to a known limitation."""
   pass
+
+
+def plan_gmem_transfer(
+    nested_ref_shape: Sequence[Sequence[int]],
+    nested_ref_strides: Sequence[Sequence[int]],
+    layout: TiledLayout,
+    element_bits: int,
+) -> TransferPlan:
+  """Plans the tiled transfer for GMEM and verifies sector coalescing."""
+  tiled_nested_shape, tiled_nested_strides = (
+      layout.tiling.tile_nested_shape_strides(
+          tuple(tuple(x) for x in nested_ref_shape),
+          tuple(tuple(x) for x in nested_ref_strides),
+      )
+  )
+  tiles_shape = list(tiled_nested_shape)
+  tiles_strides = list(tiled_nested_strides)
+  for d in (
+      *layout.partitioned_warp_dims,
+      *layout.partitioned_lane_dims,
+      layout.vector_dim,
+  ):
+    tiles_shape[d] = (1,) * len(tiles_shape[d])
+    tiles_strides[d] = (0,) * len(tiles_strides[d])
+  tiles_shape = list(itertools.chain.from_iterable(tiles_shape))
+  tiles_strides = list(itertools.chain.from_iterable(tiles_strides))
+
+  warp_shape = list(
+      itertools.chain.from_iterable(
+          tiled_nested_shape[d] if isinstance(d, int) else (d.times,)
+          for d in layout.warp_dims
+      )
+  )
+  warp_strides = list(
+      itertools.chain.from_iterable(
+          tiled_nested_strides[d] if isinstance(d, int) else (0,)
+          for d in layout.warp_dims
+      )
+  )
+  lane_shape = list(
+      itertools.chain.from_iterable(
+          tiled_nested_shape[d] if isinstance(d, int) else (d.times,)
+          for d in layout.lane_dims
+      )
+  )
+  lane_strides = list(
+      itertools.chain.from_iterable(
+          tiled_nested_strides[d] if isinstance(d, int) else (0,)
+          for d in layout.lane_dims
+      )
+  )
+  vector_length = layout.vector_length
+  transfer_bytes = (vector_length * element_bits) // 8
+  # The logic below relies on transfer_bytes being <= 16, but larger transfers
+  # are inefficient anyway (they are uncoalesced).
+  if transfer_bytes > 16:
+    raise TransferPlanDerivationError(
+        "GMEM transfer with per-thread vector length > 16 bytes is inefficient"
+    )
+  if transfer_bytes.bit_count() != 1:
+    raise TransferPlanDerivationError(
+        "GMEM transfer with non-power-of-2 byte length is inefficient"
+    )
+
+  lane_elem_offsets = np.dot(list(np.ndindex(*lane_shape)), lane_strides)
+  lane_byte_offsets = lane_elem_offsets * element_bits // 8
+
+  # Find the fastest changing tile dimension. If its stride is equal to vector
+  # length, then it's likely that LLVM will auto-vectorize consecutive accesses.
+  # TODO(apaszke): We could also just change the layout to guarantee this.
+  minor_tile_dim = min(
+      (
+          d
+          for d, (sz, st) in enumerate(zip(tiles_shape, tiles_strides))
+          if sz > 1 and st > 0
+      ),
+      key=lambda d: (tiles_strides[d], -d),
+      default=None,
+  )
+  if minor_tile_dim is not None and tiles_strides[minor_tile_dim] == vector_length:
+    max_vector_factor = max(1, 16 // transfer_bytes)
+    # If the dimension is not divisible, we consider the epilogue since it will
+    # have the shortest transfer.
+    llvm_vector_factor = min(
+        max_vector_factor,
+        # Largest power of 2 that divides the tiled dimension.
+        tiles_shape[minor_tile_dim] & -tiles_shape[minor_tile_dim],
+    )
+    # Vectorization can only happen if all transfers are aligned.
+    while llvm_vector_factor > 1:
+      if np.all(lane_byte_offsets % (transfer_bytes * llvm_vector_factor) == 0):
+        tiles_shape[minor_tile_dim] //= llvm_vector_factor
+        tiles_strides[minor_tile_dim] *= llvm_vector_factor
+        transfer_bytes *= llvm_vector_factor
+        break
+      llvm_vector_factor //= 2
+
+  # Transfers narrower than 4 bytes frequently don't perform well.
+  if transfer_bytes < 4:
+    raise TransferPlanDerivationError(
+        f"GMEM transfer width ({transfer_bytes} bytes/thread) is"
+        " smaller than 4 bytes"
+    )
+
+  # We want the transfer to cover a whole number of entire sectors.
+  # We split each sector into slots that are exactly transfer_bytes wide.
+  SECTOR_BYTES = 32
+  slots_per_sector = SECTOR_BYTES // transfer_bytes
+  lane_slot_offsets = lane_byte_offsets // transfer_bytes
+  num_unique_slots = len(np.unique(lane_slot_offsets))
+  unique_lane_sectors = np.unique(lane_slot_offsets // slots_per_sector)
+  if num_unique_slots != len(unique_lane_sectors) * slots_per_sector:
+    raise TransferPlanDerivationError(
+        "GMEM transfer does not access a whole number of complete 32 byte sectors"
+    )
+
+  # Each warp-wide transfer must be aligned to 32-byte sectors.
+  if any(
+      ((s * element_bits) // 8) % SECTOR_BYTES != 0
+      for d, s in zip(
+          itertools.chain(tiles_shape, warp_shape),
+          itertools.chain(tiles_strides, warp_strides),
+      )
+      if d > 1 and s != 0
+  ):
+    raise TransferPlanDerivationError(
+        "GMEM transfer stride is not aligned to 32B sector size"
+    )
+
+  # Across the whole warpgroup (all tiles and warps), we want the transfer to
+  # cover a whole number of complete 128-byte L2 cache lines.
+  CACHE_LINE_BYTES = 128
+  SECTORS_PER_CACHE_LINE = CACHE_LINE_BYTES // SECTOR_BYTES
+  wg_sector_offsets = unique_lane_sectors
+  for d, s in zip(
+      itertools.chain(tiles_shape, warp_shape),
+      itertools.chain(tiles_strides, warp_strides),
+  ):
+    if d <= 1 or s == 0:
+      continue
+    assert (s * element_bits) % (8 * SECTOR_BYTES) == 0
+    s_sectors = (s * element_bits) // (8 * SECTOR_BYTES)
+    wg_sector_offsets = (
+        wg_sector_offsets[:, None] + np.arange(d) * s_sectors
+    ).ravel()
+  num_unique_wg_sectors = len(np.unique(wg_sector_offsets))
+  num_unique_cache_lines = len(
+      np.unique(wg_sector_offsets // SECTORS_PER_CACHE_LINE)
+  )
+  if num_unique_wg_sectors != num_unique_cache_lines * SECTORS_PER_CACHE_LINE:
+    raise TransferPlanDerivationError(
+        "GMEM transfer does not access a whole number of complete 128 byte"
+        " cache lines"
+    )
+
+  return TrivialTransferPlan()
 
 
 def plan_tiled_transfer(

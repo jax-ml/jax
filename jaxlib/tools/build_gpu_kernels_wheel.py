@@ -239,6 +239,10 @@ def prepare_wheel_oneapi(
       dst_dir=wheel_sources_path,
       dst_filename="setup.py",
   )
+  copy_files(
+      f"{source_file_prefix}jax_plugins/oneapi/README.md",
+      dst_dir=wheel_sources_path,
+  )
   write_setup_cfg(wheel_sources_path, cpu)
 
   plugin_dir = wheel_sources_path / "jax_oneapi_plugin"
@@ -247,6 +251,7 @@ def prepare_wheel_oneapi(
   copy_files(
       dst_dir=plugin_dir,
       src_files=[
+          f"{source_file_prefix}jaxlib/oneapi/_linalg.{pyext}",
           f"{source_file_prefix}jaxlib/oneapi/_hybrid.{pyext}",
           f"{source_file_prefix}jaxlib/oneapi/_prng.{pyext}",
           f"{source_file_prefix}jaxlib/oneapi/_solver.{pyext}",

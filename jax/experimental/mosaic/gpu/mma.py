@@ -140,9 +140,9 @@ def _mma_single_tile(
       for pos in range(acc.layout.vector_length)
   ]
   if is_f64:
-    ab_reg_type, ab_constraint = ir.IntegerType.get_signless(64), "l"
+    ab_reg_type = ir.IntegerType.get_signless(64)
   else:
-    ab_reg_type, ab_constraint = i32, "r"
+    ab_reg_type = i32
   a_regs = [utils.bitcast(r, ab_reg_type) for r in a.registers.flatten()]
   b_regs = [utils.bitcast(r, ab_reg_type) for r in b.registers.flatten()]
 
@@ -154,11 +154,11 @@ def _mma_single_tile(
   a_ptx_dtype = _ptx_dtype_str(a.mlir_dtype, is_signed=a.is_signed)
   b_ptx_dtype = _ptx_dtype_str(b.mlir_dtype, is_signed=b.is_signed)
   if is_integer:
-    acc_ptx_dtype, acc_constraint = "s32", "r"
+    acc_ptx_dtype = "s32"
   elif is_f64:
-    acc_ptx_dtype, acc_constraint = "f64", "d"
+    acc_ptx_dtype = "f64"
   else:
-    acc_ptx_dtype, acc_constraint = "f32", "f"
+    acc_ptx_dtype = "f32"
   instr = f"mma.sync.aligned.m16n8k{k_tile}.row.col.{acc_ptx_dtype}.{a_ptx_dtype}.{b_ptx_dtype}.{acc_ptx_dtype}"
   counter = itertools.count()
   n_regs_str = lambda n: (
@@ -168,28 +168,14 @@ def _mma_single_tile(
   a_regs_str = n_regs_str(num_a_regs)
   b_regs_str = n_regs_str(num_b_regs)
   c_regs_str = n_regs_str(num_acc_regs)
-  ptx = f"{instr} {out_regs_str}, {a_regs_str}, {b_regs_str}, {c_regs_str};"
-  # See: https://llvm.org/docs/LangRef.html#inline-assembler-expressions
-  constraints = (
-      f"{','.join([f'={acc_constraint}']*num_acc_regs)},"
-      f"{','.join([ab_constraint]*num_a_regs)},"
-      f"{','.join([ab_constraint]*num_b_regs)},"
-      f"{','.join([acc_constraint]*num_acc_regs)}"
+  out_regs = utils.inline_ptx(
+      f"{instr} {out_regs_str}, {a_regs_str}, {b_regs_str}, {c_regs_str};",
+      *a_regs,
+      *b_regs,
+      *acc_regs,
+      result_types=[acc.mlir_dtype] * len(acc_regs),
+      convergent=True,
   )
-
-  in_operands = [*a_regs, *b_regs, *acc_regs]
-  out_regs_struct = llvm.inline_asm(
-      llvm.StructType.get_literal([acc.mlir_dtype] * len(acc_regs)),
-      in_operands,
-      ptx,
-      constraints,
-      has_side_effects=False,
-  )
-  assert isinstance(out_regs_struct, ir.Value)
-  out_regs = [
-      llvm.extractvalue(acc.mlir_dtype, out_regs_struct, [i])
-      for i in range(len(acc_regs))
-  ]
   vec_regs = []
   vec_undef = llvm.mlir_undef(ir.VectorType.get((2,), acc.mlir_dtype))
   for first, second in zip(out_regs[::2], out_regs[1::2]):

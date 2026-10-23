@@ -22,6 +22,7 @@ load(
     "mosaic_internal_users",
     "pallas_fuser_users",
     "pallas_sc_internal_users",
+    "pallas_tpu_ops_users",
     "pallas_triton_internal_users",
     "py_deps",
     "py_library_providing_imports_info",
@@ -76,6 +77,12 @@ package_group(
     name = "pallas_sc_users",
     includes = ["//jax:internal"],
     packages = pallas_sc_internal_users,
+)
+
+package_group(
+    name = "pallas_tpu_ops_users",
+    includes = ["//jax:internal"],
+    packages = pallas_tpu_ops_users,
 )
 
 package_group(
@@ -161,8 +168,7 @@ pytype_strict_library(
     srcs = ["overlap.py"],
     visibility = ["//visibility:public"],
     deps = [
-        "//jax/_src:api",
-        "//jax/_src:ffi",
+        "//jax/_src:program_order",
     ],
 )
 
@@ -477,7 +483,9 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_tpu_ops",
     srcs = glob(["pallas/ops/tpu/**/*.py"]),
-    visibility = ["//visibility:public"],
+    visibility = [
+        ":pallas_tpu_ops_users",
+    ],
     deps = [
         ":pallas",
         ":pallas_tpu",
@@ -715,6 +723,17 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src:xla_metadata",
+    ],
+)
+
+pytype_strict_library(
+    name = "thunky",
+    srcs = ["thunky.py"],
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("thunky"),
+    deps = [
+        "//jax/_src/thunky",
     ],
 )
 

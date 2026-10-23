@@ -29,7 +29,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.partial_eval import eval_jaxpr_p
 from jax._src.interpreters import remat
 from jax._src.state import discharge
-from jax._src.pjit import program_order_p
 from jax._src.tree_util import tree_leaves, tree_flatten, tree_unflatten
 from jax._src.util import safe_map, safe_zip, split_list, subs_list, weakref_lru_cache
 
@@ -68,8 +67,9 @@ def _eval_jaxpr_linearize(prim, is_vjp, nzs, *primals_in, call_jaxpr, **params):
   def tangent_fun(res, sres, *tangents):
     sres_flat = tree_leaves(sres)
     nz_tangents = [ad.instantiate_zeros(x) for nz, x in zip(nzs, tangents) if nz]
-    nz_tangents_out = prim.bind(*res, *nz_tangents, *sres_flat,
-                                call_jaxpr=tangent_jaxpr, **params)
+    tangent_prim = ad.vjp_node(prim) if is_vjp else prim
+    nz_tangents_out = tangent_prim.bind(*res, *nz_tangents, *sres_flat,
+                                        call_jaxpr=tangent_jaxpr, **params)
     tangent_avals_out = [v.aval.to_tangent_aval() for v in call_jaxpr.outvars]
     nz_tangents_out_ = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_) if nz else ad_util.Zero(aval)
@@ -158,4 +158,3 @@ def create_call_primitive(name: str, inline_jax_late: bool = True
   return prim
 
 register_call_primitive_rules(eval_jaxpr_p, name='eval_jaxpr')
-register_call_primitive_rules(program_order_p, name='program_order')

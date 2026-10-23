@@ -27,6 +27,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import ffi
+from jax._src import mesh as mesh_lib
 from jax._src import pickle_util
 from jax._src import sharding_impls
 from jax._src import tree_util
@@ -38,8 +39,8 @@ from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
 from jax._src.sharding import Sharding
+from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
 from jax._src.typing import Array
 import numpy as np
 
@@ -88,7 +89,12 @@ def pure_callback_impl(
         " JAX_PLATFORMS environment variable."
     ) from e
   args = api.device_put(args, cpu_device)
-  with config.default_device(cpu_device):
+  # The callback may run on the dispatching thread; ignore that thread's mesh.
+  with (
+      config.default_device(cpu_device),
+      sharding_impls._internal_use_concrete_mesh(mesh_lib.empty_concrete_mesh),
+      mesh_lib.use_abstract_mesh(mesh_lib.empty_abstract_mesh),
+  ):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
     except BaseException:
@@ -164,12 +170,7 @@ def _callback_op_sharding(
           "callbacks do not support specifying sharding inside spmd"
           " computations"
       )
-    if config.use_shardy_partitioner.value:
-      op_sharding = _get_sdy_array_list_for_callbacks(avals_out)
-    else:
-      op_sharding = xc.OpSharding()
-      op_sharding.type = xc.OpSharding.Type.MANUAL
-    return op_sharding
+    return _get_sdy_array_list_for_callbacks(avals_out)
 
   if isinstance(axis_context, sharding_impls.ShardingContext):
     if sharding is not None:
@@ -188,7 +189,7 @@ def _callback_op_sharding(
             "Please file a bug at https://github.com/jax-ml/jax/issues")
       try:
         device_index = device_assignment.index(device)
-      except IndexError as e:
+      except ValueError as e:
         raise ValueError(
             "Sharding provided to pure_callback specifies a device"
             f" {device} that is not in the device assignment"
@@ -199,20 +200,13 @@ def _callback_op_sharding(
     # If we have fully automatic sharding during lowering, that means the JAX
     # program has bulk array semantics, so we run the callback with a MAXIMAL
     # sharding and hence execute it only once on the full logical value).
-    if config.use_shardy_partitioner.value:
-      # For shardy, we need to have the same number of shardy annotations as the
-      # number of result ops. If there are no result ops, we need 1 shardy
-      # annotation.
-      num_sdy_shardings = max(1, len(avals_out))
-      op_sharding = SdyArrayList((
-          SdyArray(mesh_shape=(), dim_shardings=(),
-                   logical_device_ids=(device_index,)),) * num_sdy_shardings)
-    else:
-      op_sharding = xc.OpSharding()
-      op_sharding.type = xc.OpSharding.Type.MAXIMAL
-      op_sharding.tile_assignment_dimensions = [1]
-      op_sharding.tile_assignment_devices = [device_index]
-    return op_sharding
+    # For shardy, we need to have the same number of shardy annotations as the
+    # number of result ops. If there are no result ops, we need 1 shardy
+    # annotation.
+    num_sdy_shardings = max(1, len(avals_out))
+    return SdyArrayList((
+        SdyArray(mesh_shape=(), dim_shardings=(),
+                 logical_device_ids=(device_index,)),) * num_sdy_shardings)
 
   # When there's no SPMD partitioning going on, don't annotate a sharding.
   return None
@@ -434,7 +428,12 @@ def io_callback_impl(
         " JAX_PLATFORMS environment variable."
     ) from e
   args = api.device_put(args, cpu_device)
-  with config.default_device(cpu_device):
+  # The callback may run on the dispatching thread; ignore that thread's mesh.
+  with (
+      config.default_device(cpu_device),
+      sharding_impls._internal_use_concrete_mesh(mesh_lib.empty_concrete_mesh),
+      mesh_lib.use_abstract_mesh(mesh_lib.empty_abstract_mesh),
+  ):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
     except BaseException:
@@ -602,7 +601,7 @@ def send_to_host(
     operand: Any,
     name: str | None = None,
     *,
-    sharding: SdyArrayList | xc.OpSharding | None = None,
+    sharding: SdyArrayList | None = None,
 ) -> ir.Value:
   channel_handle = hlo.ChannelHandle.get(channel, mlir.SEND_TO_HOST_TYPE)
   send_op = hlo.SendOp([operand], token, channel_handle,
@@ -616,17 +615,16 @@ def send_to_host(
       )
   )
   if sharding is not None:
-    if config.use_shardy_partitioner.value:
-      # `SendOp`'s return type is a StableHLO `TokenType`. However JAX passed
-      # in the maximal sharding of the array type. Since a token has no rank,
-      # we need to create an equivalent sharding with no dimensions. If there
-      # are multiple shardings, just grab the first one since all these
-      # shardings should be the same.
-      assert isinstance(sharding, SdyArrayList)
-      assert len(sharding.shardings) >= 1
-      sharding = SdyArrayList((SdyArray(
-          mesh_shape=(), dim_shardings=(),
-          logical_device_ids=sharding.shardings[0].logical_device_ids),))
+    # `SendOp`'s return type is a StableHLO `TokenType`. However JAX passed
+    # in the maximal sharding of the array type. Since a token has no rank,
+    # we need to create an equivalent sharding with no dimensions. If there
+    # are multiple shardings, just grab the first one since all these
+    # shardings should be the same.
+    assert isinstance(sharding, SdyArrayList)
+    assert len(sharding.shardings) >= 1
+    sharding = SdyArrayList((SdyArray(
+        mesh_shape=(), dim_shardings=(),
+        logical_device_ids=sharding.shardings[0].logical_device_ids),))
     mlir.set_sharding(ctx, send_op, sharding)
   return send_op.result
 
@@ -638,7 +636,7 @@ def receive_from_host(
     out_aval: core.ShapedArray,
     name: str | None = None,
     *,
-    sharding: SdyArrayList | xc.OpSharding | None = None,
+    sharding: SdyArrayList | None = None,
 ) -> tuple[ir.Value, ir.Value]:
   channel_handle = hlo.ChannelHandle.get(channel, mlir.RECV_FROM_HOST_TYPE)
   out_type = mlir.aval_to_ir_type(ctx, out_aval)
@@ -654,19 +652,18 @@ def receive_from_host(
       )
   )
   if sharding is not None:
-    if config.use_shardy_partitioner.value:
-      assert isinstance(sharding, SdyArrayList)
-      assert len(sharding.shardings) >= 1
-      # `RecvOp`'s last argument is a `TokenType`. Since Shardy requires the
-      # number of shardings to match the number of results, but JAX only sees
-      # the array result, we need to add an equivalent sharding for the token.
-      # Note that even if a function returns N results, we will end up with N
-      # `RecvOp`s, so we only need to get the first sharding. All shardings are
-      # the same anyways, operating on the same single device ID.
-      sharding = SdyArrayList((
-          sharding.shardings[0],
-          SdyArray(mesh_shape=(), dim_shardings=(),
-                   logical_device_ids=sharding.shardings[0].logical_device_ids)))
+    assert isinstance(sharding, SdyArrayList)
+    assert len(sharding.shardings) >= 1
+    # `RecvOp`'s last argument is a `TokenType`. Since Shardy requires the
+    # number of shardings to match the number of results, but JAX only sees
+    # the array result, we need to add an equivalent sharding for the token.
+    # Note that even if a function returns N results, we will end up with N
+    # `RecvOp`s, so we only need to get the first sharding. All shardings are
+    # the same anyways, operating on the same single device ID.
+    sharding = SdyArrayList((
+        sharding.shardings[0],
+        SdyArray(mesh_shape=(), dim_shardings=(),
+                 logical_device_ids=sharding.shardings[0].logical_device_ids)))
     mlir.set_sharding(ctx, recv_op, sharding)
   # Token should be at the end of the results
   result, token = recv_op.results
@@ -703,7 +700,7 @@ def _emit_tpu_python_callback(
     result_shapes: Sequence[xc.Shape],
     *,
     returns_token: bool,
-    sharding: SdyArrayList | xc.OpSharding | None = None,
+    sharding: SdyArrayList | None = None,
 ) -> tuple[Sequence[ir.Value], Any]:
   token = token or hlo.create_token()
   _wrapped_callback = callback
@@ -775,7 +772,7 @@ def emit_python_callback(
     has_side_effect: bool,
     returns_token: bool = True,
     partitioned: bool = False,
-    sharding: SdyArrayList | xc.OpSharding | None = None,
+    sharding: SdyArrayList | None = None,
 ) -> tuple[Sequence[mlir.IrValues], Any, Any]:
   """Emits MLIR that calls back to a provided Python function.
 
@@ -871,8 +868,7 @@ def emit_python_callback(
       return (token, *callback_without_token(*args))
     operands = [token, *operands]
     if (
-        config.use_shardy_partitioner.value
-        and sharding is not None
+        sharding is not None
         and len(ctx.avals_out) > 0
         and isinstance(sharding, SdyArrayList)
     ):

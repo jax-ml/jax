@@ -26,7 +26,7 @@ import numpy as np
 # If zstandard is installed, we use zstd compression, otherwise we use zlib.
 try:
   # compression.zstd should be present in Python 3.14+
-  from compression import zstd
+  from compression import zstd  # pyrefly: ignore[missing-import]
 except ImportError:
   zstd = None
 
@@ -144,7 +144,7 @@ class VerificationCache(CacheInterface):
     self.base_cache_hits: dict[str, int] = {}
 
   @property
-  def _path(self):  # pyrefly: ignore[bad-override]
+  def _path(self):
     return self._base_cache._path
 
   @_path.setter

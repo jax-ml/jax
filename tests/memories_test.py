@@ -1408,25 +1408,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(out, np_inp @ np_inp.T)
     self.assertArraysEqual(out2, np_inp @ np_inp.T)
 
-  def test_jit_compilation_cache_hit(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("Shardy doesn't support GSPMDSharding")
-    mesh, s, np_inp, inp = _create_inputs((8, 2), P("x", "y"))
-    inp2 = jax.device_put(
-        np_inp, GSPMDSharding(tuple(mesh.devices.flat),
-                              s._to_xla_hlo_sharding(inp.ndim),
-                              memory_kind="device")
-    )
-
-    f = jax.jit(lambda x: x @ x.T)
-
-    with (jtu.count_pjit_cpp_cache_miss() as cpp_count,
-          jtu.count_jit_and_pmap_lowerings() as lowering_count):
-      f(inp)
-      f(inp2)
-    self.assertEqual(cpp_count(), 2)
-    self.assertEqual(lowering_count(), 2)
-
   def test_jit_cpp_cache_output_hit(self):
     _, _, _, inp = _create_inputs((8, 2), P("x"), mem_kind="device")
 
@@ -2222,7 +2203,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     f(arr1, arr2, arr3)  # doesn't crash
 
     compiled_text = f.lower(arr1, arr2, arr3).compile().as_text()
-    self.assertRegex(compiled_text, r"all-gather.*all-gather.*dense")
+    self.assertRegex(compiled_text, r"all[-_]gather.*all-gather.*dense")
     self.assertRegex(
         compiled_text, r"call-start.*async_execution_thread=\"sparsecore\""
     )

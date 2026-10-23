@@ -45,6 +45,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -52,10 +53,12 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
@@ -113,7 +116,6 @@ limitations under the License.
 #include "xla/python/safe_static_init.h"
 #include "xla/python/strides.h"
 #include "xla/python/types.h"
-#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -165,14 +167,7 @@ ifrt::ArrayRef CreateIfRtArrayFromSingleDeviceShardedPyArrays(
   }
   ifrt::Device* device = sharding_device_list.value()->devices().front();
 
-#if JAX_IFRT_VERSION_NUMBER >= 64
   const ifrt::MemoryKind& canonical_dst_memory_kind = dst_memory_kind;
-#else
-  // TODO(hyeontaek): Canonicalize every `ifrt::MemoryKind` at creation time to
-  // skip canonicalization here once JAX begins to do it for JAX shardings.
-  const ifrt::MemoryKind canonical_dst_memory_kind =
-      ifrt::CanonicalizeMemoryKind(dst_memory_kind, device);
-#endif
   for (const auto& py_array : py_arrays) {
     if (py_array.num_shards() != 1) {
       throw nb::value_error(
@@ -505,7 +500,8 @@ struct BatchedCopyToDeviceWithShardingKey {
 }  // namespace
 
 struct PyHostValue {
-  using ConvertFn = std::function<absl::StatusOr<xla::nb_numpy_ndarray>()>;
+  using ConvertFn =
+      absl::AnyInvocable<absl::StatusOr<xla::nb_numpy_ndarray>() &&>;
 
   explicit PyHostValue(ConvertFn convert_fn)
       : convert_fn_(std::move(convert_fn)) {}
@@ -518,29 +514,34 @@ struct PyHostValue {
   // Converts the host buffer into a NumPy array on the calling Python thread
   // and caches the result.
   // REQUIRES: Python GIL is held.
-  absl::StatusOr<xla::nb_numpy_ndarray> AsNumpyArray() {
+  absl::StatusOr<xla::nb_numpy_ndarray> AsNumpyArray()
+      ABSL_LOCKS_EXCLUDED(mu_) {
     ConvertFn convert_fn;
     {
       ft_lock_guard lock(mu_);
       if (value_.has_value()) {
         return *value_;
       }
-      convert_fn = convert_fn_;
+      convert_fn = std::move(convert_fn_);
     }
-    absl::StatusOr<xla::nb_numpy_ndarray> result = convert_fn();
-    ConvertFn old_convert_fn;
-    {
+    if (convert_fn != nullptr) {
+      absl::StatusOr<xla::nb_numpy_ndarray> value = std::move(convert_fn)();
       ft_lock_guard lock(mu_);
-      if (!value_.has_value()) {
-        value_ = std::move(result);
-        old_convert_fn = std::move(convert_fn_);
-      }
+      value_ = std::move(value);
+      ready_.Notify();
       return *value_;
     }
+    {
+      nb::gil_scoped_release gil_release;
+      ready_.WaitForNotification();
+    }
+    ft_lock_guard lock(mu_);
+    return *value_;
   }
 
  private:
   ft_mutex mu_;
+  absl::Notification ready_;
   ConvertFn convert_fn_ ABSL_GUARDED_BY(mu_);
   std::optional<absl::StatusOr<xla::nb_numpy_ndarray>> value_
       ABSL_GUARDED_BY(mu_);
@@ -628,14 +629,7 @@ PyArray PyArray::MakeFromSingleDeviceArray(nb_class_ptr<PyClient> py_client,
       xla::IfrtDtypeToDtypeWithTokenCanonicalization(key.dtype).value();
   const ifrt::MemoryKind memory_kind = ifrt_array->sharding().memory_kind();
   nb::object py_memory_kind =
-#if JAX_IFRT_VERSION_NUMBER >= 64
       nb::str(memory_kind.value().data(), memory_kind.value().size());
-#else
-      (memory_kind.memory_kind().has_value())
-          ? nb::object(nb::str(memory_kind.memory_kind()->data(),
-                               memory_kind.memory_kind()->size()))
-          : nb::none();
-#endif
   nb::object sharding = MakeSingleDeviceSharding(
       py_client->GetPyDevice(
           ifrt_array->sharding().devices()->devices().front()),
@@ -1399,17 +1393,9 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
           ifrt_array_ptr->sharding().devices();
       const ifrt::DeviceListRef& dst_devices = dst_device_lists[i];
 
-#if JAX_IFRT_VERSION_NUMBER >= 64
       const ifrt::MemoryKind& src_memory_kind =
           ifrt_array_ptr->sharding().memory_kind();
       ifrt::MemoryKind dst_memory_kind = GetMemoryKind(dst_sharding);
-#else
-      ifrt::MemoryKind src_memory_kind =
-          ifrt::CanonicalizeMemoryKind(ifrt_array_ptr->sharding().memory_kind(),
-                                       src_devices->devices().front());
-      ifrt::MemoryKind dst_memory_kind = ifrt::CanonicalizeMemoryKind(
-          GetMemoryKind(dst_sharding), dst_devices->devices().front());
-#endif
 
       if (*src_devices == *dst_devices && src_memory_kind == dst_memory_kind &&
           array_cs == ifrt::ArrayCopySemantics::kReuseInput) {
@@ -1990,37 +1976,21 @@ bool IsZeroCopyableCpuBuffer(const xla::PjRtBuffer* buf) {
 // multi-dimensional strided copies.
 //
 // REQUIRES: Python GIL is held.
-absl::Status SetSlice(nanobind::handle dst_array, xla::nb_dtype dtype,
-                      const xla::ifrt::IndexDomain& index_domain,
-                      std::optional<absl::Span<const int64_t>> byte_strides,
-                      const void* src_data) {
+void SetSlice(nanobind::handle dst_array, xla::nb_dtype dtype,
+              const xla::ifrt::IndexDomain& index_domain,
+              std::optional<absl::Span<const int64_t>> byte_strides,
+              const void* src_data) {
   const absl::Span<const int64_t>& dims = index_domain.shape().dims();
   const int ndim = dims.size();
-  nanobind::tuple index_tuple =
-      nanobind::steal<nanobind::tuple>(PyTuple_New(ndim));
+  nanobind::tuple_builder index_tuple_builder(ndim);
   for (int d = 0; d < ndim; ++d) {
     const int64_t start = index_domain.origin().elements()[d];
     const int64_t stop = start + dims[d];
-    PyTuple_SET_ITEM(index_tuple.ptr(), d,
-                     nanobind::slice(start, stop).release().ptr());
+    index_tuple_builder.put(nanobind::slice(start, stop));
   }
+  nanobind::tuple index_tuple = index_tuple_builder.commit();
   xla::nb_numpy_ndarray shard_array(dtype, dims, byte_strides, src_data);
-  if (PyObject_SetItem(dst_array.ptr(), index_tuple.ptr(), shard_array.ptr()) <
-      0) {
-    PyObject *ptype, *pvalue, *ptraceback;
-    PyErr_Fetch(&ptype, &pvalue, &ptraceback);
-    std::string err_msg = "Failed to copy shard slice to host array";
-    if (pvalue != nullptr) {
-      nanobind::str err_str =
-          nanobind::steal<nanobind::str>(PyObject_Str(pvalue));
-      absl::StrAppend(&err_msg, ": ", err_str.c_str());
-    }
-    Py_XDECREF(ptype);
-    Py_XDECREF(pvalue);
-    Py_XDECREF(ptraceback);
-    return absl::InternalError(err_msg);
-  }
-  return absl::OkStatus();
+  dst_array[index_tuple] = shard_array;
 }
 
 // Copies a single dense slice of string cords into a sub-region of the
@@ -2226,7 +2196,7 @@ struct PyArray::CopyToHostState {
     // Buffer for contiguous numeric arrays.
     std::unique_ptr<char[]> contiguous_buffer;
     // Optional field, only used for arrays of type kString.
-    std::shared_ptr<std::vector<absl::Cord>> string_array_contents;
+    std::unique_ptr<std::vector<absl::Cord>> string_array_contents;
   };
 
   // The future that will contain the numpy array on the host once available.
@@ -2236,8 +2206,27 @@ struct PyArray::CopyToHostState {
   std::optional<CopyData> copy_data;
 };
 
+xla::PjRtBuffer* GetZeroCopyablePjRtBuffer(xla::ifrt::Array& arr) {
+  auto* arr_pjrt =
+      xla::ifrt::dyn_cast_or_null<xla::ifrt::PjRtCompatibleArray>(&arr);
+  if (arr_pjrt != nullptr && !arr_pjrt->pjrt_buffers().empty() &&
+      !arr_pjrt->pjrt_buffers().front()->IsTuple() &&
+      arr.sharding().IsFullyReplicated() &&
+      IsZeroCopyableCpuBuffer(arr_pjrt->pjrt_buffers().front().get())) {
+    return arr_pjrt->pjrt_buffers().front().get();
+  }
+  return nullptr;
+}
+
 absl::StatusOr<tsl::Future<>> PyArray::CopyToHostAsync() {
   PyUserContextScope user_context_scope;
+  xla::ifrt::ArrayRef ifrt_array = ifrt_array_ref();
+  if (ifrt_array == nullptr || ifrt_array->IsDeleted()) {
+    return xla::InvalidArgument("Array has been deleted.");
+  }
+  if (GetZeroCopyablePjRtBuffer(*ifrt_array) != nullptr) {
+    return ifrt_array->GetReadyFuture();
+  }
   xla::ifrt::Client* client = py_client()->ifrt_client();
   ABSL_ASSIGN_OR_RETURN(std::optional<CopyToHostState> state,
                         GetCopyToHostState(client));
@@ -2268,6 +2257,53 @@ PyArray::SingleDeviceArrayToNumpyArrayDidCopy() {
 
 absl::StatusOr<std::pair<nb::object, bool>> PyArray::ToNumpyArrayDidCopy() {
   PyUserContextScope user_context_scope;
+  xla::ifrt::ArrayRef ifrt_array = ifrt_array_ref();
+  if (ifrt_array == nullptr || ifrt_array->IsDeleted()) {
+    return xla::InvalidArgument("Array has been deleted.");
+  }
+  if (ifrt_array->dtype().kind() == ifrt::DType::kToken) {
+    return xla::InvalidArgument(
+        "Cannot convert a token-shape buffer to a numpy array.");
+  }
+  if (xla::PjRtBuffer* pjrt_buffer = GetZeroCopyablePjRtBuffer(*ifrt_array);
+      pjrt_buffer != nullptr) {
+    ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> dynamic_shape, dynamic_shape());
+    ABSL_ASSIGN_OR_RETURN(xla::Shape host_shape,
+                          GetHostShape(ifrt_array.get(), dynamic_shape));
+    ABSL_ASSIGN_OR_RETURN(xla::nb_dtype dtype,
+                          PrimitiveTypeToNbDtype(host_shape.element_type()));
+    struct Hold {
+      xla::ifrt::ArrayRef buffer;
+      std::unique_ptr<xla::PjRtBuffer::ExternalReference>
+          external_reference_hold;
+    };
+    auto hold = std::make_unique<Hold>();
+    {
+      nb::gil_scoped_release gil;
+      ABSL_ASSIGN_OR_RETURN(hold->external_reference_hold,
+                            pjrt_buffer->AcquireExternalReference());
+      auto fut = ifrt_array->GetReadyFuture();
+      BlockUntilReadyWithCancel(fut);
+      if (absl::Status status = fut.Await(); !status.ok()) {
+        return xla::ifrt::ExpandUserContexts(std::move(status));
+      }
+    }
+    ABSL_RETURN_IF_ERROR(BlockUntilResultStatusIsReady());
+    hold->buffer = std::move(ifrt_array);
+    void* data =
+        hold->external_reference_hold->OpaqueDeviceMemoryDataPointer();
+    nb::capsule hold_capsule(
+        hold.get(), [](void* h) noexcept { delete static_cast<Hold*>(h); });
+    // Release ownership only after `nb::capsule` succeeds so `hold` is not
+    // leaked if capsule allocation throws.
+    hold.release();
+    xla::nb_numpy_ndarray array(dtype, host_shape.dimensions(),
+                                ByteStridesForShape(host_shape), data,
+                                hold_capsule);
+    array.attr("flags").attr("writeable") = nb::bool_(false);
+    return std::make_pair(std::move(array), false);
+  }
+
   xla::ifrt::Client* client = py_client()->ifrt_client();
   ABSL_ASSIGN_OR_RETURN(std::optional<CopyToHostState> state,
                         GetCopyToHostState(client));
@@ -2276,10 +2312,8 @@ absl::StatusOr<std::pair<nb::object, bool>> PyArray::ToNumpyArrayDidCopy() {
   }
   tsl::Future<std::shared_ptr<PyHostValue>> result_future =
       state->result_future;
-  bool did_copy = false;
   if (state->copy_data.has_value()) {
     // No previous copy issued: issue one now.
-    did_copy = true;
     std::vector<CopyToHostState> states;
     states.push_back(*std::move(state));
     ABSL_RETURN_IF_ERROR(
@@ -2299,7 +2333,7 @@ absl::StatusOr<std::pair<nb::object, bool>> PyArray::ToNumpyArrayDidCopy() {
   }
   ABSL_RETURN_IF_ERROR(BlockUntilResultStatusIsReady());
   ABSL_ASSIGN_OR_RETURN(xla::nb_numpy_ndarray value, (*result)->AsNumpyArray());
-  return std::make_pair(std::move(value), did_copy);
+  return std::make_pair(std::move(value), true);
 }
 
 absl::StatusOr<std::optional<PyArray::CopyToHostState>>
@@ -2314,24 +2348,13 @@ PyArray::GetCopyToHostState(xla::ifrt::Client* client) {
   }
   auto* addressable_devices =
       ifrt_array->sharding().devices()->AddressableDeviceList();
-  if (addressable_devices->empty()) {  // No addressable devices.
+  if (addressable_devices->empty() ||
+      GetZeroCopyablePjRtBuffer(*ifrt_array) != nullptr) {
     return std::nullopt;
   }
   ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> dynamic_shape, dynamic_shape());
   ABSL_ASSIGN_OR_RETURN(xla::Shape host_shape,
                         GetHostShape(ifrt_array.get(), dynamic_shape));
-  xla::PjRtBuffer* zero_copyable_pjrt_buffer =
-      [](xla::ifrt::Array& arr) -> xla::PjRtBuffer* {
-    auto* arr_pjrt =
-        xla::ifrt::dyn_cast_or_null<xla::ifrt::PjRtCompatibleArray>(&arr);
-    if (arr_pjrt != nullptr && !arr_pjrt->pjrt_buffers().empty() &&
-        !arr_pjrt->pjrt_buffers().front()->IsTuple() &&
-        arr.sharding().IsFullyReplicated() &&
-        IsZeroCopyableCpuBuffer(arr_pjrt->pjrt_buffers().front().get())) {
-      return arr_pjrt->pjrt_buffers().front().get();
-    }
-    return nullptr;
-  }(*ifrt_array);
 
   Storage& storage = GetStorage();
   nanobind::object py_sharding;
@@ -2348,76 +2371,19 @@ PyArray::GetCopyToHostState(xla::ifrt::Client* client) {
       return CopyToHostState{.result_future = storage.host_value,
                              .copy_data = std::nullopt};
     }
-    // Note: we don't apply transfer guard for zero-copy arrays, as they are
-    // already on the host.
-    if (zero_copyable_pjrt_buffer == nullptr) {
-      auto transfer_guard_formatter = [ifrt_array] {
-        return absl::StrCat(
-            "shape=(", absl::StrJoin(ifrt_array->shape().dims(), ","),
-            "), dtype=", ifrt_array->dtype(), ", device=",
-            ifrt_array->sharding().devices()->devices().front()->DebugString());
-      };
-      ABSL_RETURN_IF_ERROR(
-          ApplyTransferGuardToDeviceToHost(transfer_guard_formatter));
-    }
+    auto transfer_guard_formatter = [ifrt_array] {
+      return absl::StrCat(
+          "shape=(", absl::StrJoin(ifrt_array->shape().dims(), ","),
+          "), dtype=", ifrt_array->dtype(), ", device=",
+          ifrt_array->sharding().devices()->devices().front()->DebugString());
+    };
+    ABSL_RETURN_IF_ERROR(
+        ApplyTransferGuardToDeviceToHost(transfer_guard_formatter));
 
     // Prepare the host value for the copy.
     std::tie(result_promise, result_future) =
         tsl::MakePromise<std::shared_ptr<PyHostValue>>();
     storage.host_value = result_future;
-  }
-
-  if (zero_copyable_pjrt_buffer != nullptr) {
-    // Fast-path: zero-copy transfer.
-    ifrt_array->GetReadyFuture().OnReady(
-        [pjrt_buffer = zero_copyable_pjrt_buffer,
-         promise = std::move(result_promise),
-         host_shape = std::move(host_shape),
-         ifrt_array = std::move(ifrt_array)](absl::Status status) mutable {
-          if (!status.ok()) {
-            promise.Set(std::move(status));
-            return;
-          }
-          auto external_ref = pjrt_buffer->AcquireExternalReference();
-          if (!external_ref.ok()) {
-            promise.Set(external_ref.status());
-            return;
-          }
-          struct Hold {
-            xla::ifrt::ArrayRef buffer;
-            std::unique_ptr<xla::PjRtBuffer::ExternalReference>
-                external_reference_hold;
-          };
-          auto hold = std::make_shared<Hold>();
-          hold->buffer = std::move(ifrt_array);
-          hold->external_reference_hold = *std::move(external_ref);
-          void* data =
-              hold->external_reference_hold->OpaqueDeviceMemoryDataPointer();
-          promise.Set(std::make_shared<PyHostValue>(
-              [hold = std::move(hold), host_shape = std::move(host_shape),
-               data]() -> absl::StatusOr<xla::nb_numpy_ndarray> {
-                try {
-                  ABSL_ASSIGN_OR_RETURN(
-                      xla::nb_dtype dtype,
-                      PrimitiveTypeToNbDtype(host_shape.element_type()));
-                  nb::capsule hold_capsule(
-                      new auto(hold), [](void* h) noexcept {
-                        delete static_cast<std::shared_ptr<Hold>*>(h);
-                      });
-                  auto array = xla::nb_numpy_ndarray(
-                      dtype, host_shape.dimensions(),
-                      ByteStridesForShape(host_shape), data, hold_capsule);
-                  array.attr("flags").attr("writeable") = nb::bool_(false);
-                  return array;
-                } catch (const std::exception& e) {
-                  return absl::InternalError(absl::StrCat(
-                      "Failed to create numpy array from zero-copy buffer: ",
-                      e.what()));
-                }
-              }));
-        });
-    return CopyToHostState{.result_future = std::move(result_future),
-                           .copy_data = std::nullopt};
   }
 
   auto state = [&]() -> absl::StatusOr<CopyToHostState> {
@@ -2469,9 +2435,9 @@ PyArray::GetCopyToHostState(xla::ifrt::Client* client) {
     // Allocate destination host buffer (if string or contiguous).
     char* dst_ptr = nullptr;
     std::unique_ptr<char[]> contiguous_buffer;
-    std::shared_ptr<std::vector<absl::Cord>> string_array_contents;
+    std::unique_ptr<std::vector<absl::Cord>> string_array_contents;
     if (ifrt_array->dtype().kind() == ifrt::DType::kString) {
-      string_array_contents = std::make_shared<std::vector<absl::Cord>>(
+      string_array_contents = std::make_unique<std::vector<absl::Cord>>(
           ifrt_array->shape().num_elements());
       dst_ptr = reinterpret_cast<char*>(string_array_contents->data());
     } else if (is_contiguous) {
@@ -2640,11 +2606,10 @@ absl::Status PyArray::BatchedCopyToHostAsyncHelper(
           array_state.copy_data->result_promise.Set(std::move(status));
           return;
         }
-        auto contiguous_buffer = std::make_shared<std::unique_ptr<char[]>>(
-            std::move(array_state.copy_data->contiguous_buffer));
         array_state.copy_data->result_promise.Set(std::make_shared<PyHostValue>(
             [host_shape = std::move(array_state.copy_data->host_shape),
-             contiguous_buffer = std::move(contiguous_buffer)]()
+             contiguous_buffer =
+                 std::move(array_state.copy_data->contiguous_buffer)]() mutable
                 -> absl::StatusOr<xla::nb_numpy_ndarray> {
               try {
                 std::optional<std::vector<int64_t>> strides =
@@ -2652,12 +2617,14 @@ absl::Status PyArray::BatchedCopyToHostAsyncHelper(
                 ABSL_ASSIGN_OR_RETURN(
                     xla::nb_dtype dtype,
                     PrimitiveTypeToNbDtype(host_shape.element_type()));
-                char* data = (*contiguous_buffer).get();
-                nb::capsule capsule(
-                    new auto(contiguous_buffer), [](void* ptr) noexcept {
-                      delete static_cast<
-                          std::shared_ptr<std::unique_ptr<char[]>>*>(ptr);
-                    });
+                char* data = contiguous_buffer.get();
+                nb::capsule capsule(data, [](void* ptr) noexcept {
+                  delete[] static_cast<char*>(ptr);
+                });
+                // Release ownership only after `nb::capsule` succeeds so
+                // `contiguous_buffer` is not leaked if capsule allocation
+                // throws.
+                contiguous_buffer.release();
                 xla::nb_numpy_ndarray result(dtype, host_shape.dimensions(),
                                              strides, data, capsule);
                 result.attr("flags").attr("writeable") = nanobind::bool_(false);
@@ -2678,15 +2645,12 @@ absl::Status PyArray::BatchedCopyToHostAsyncHelper(
           array_state.copy_data->result_promise.Set(std::move(status));
           return;
         }
-        auto data_slices =
-            std::make_shared<std::vector<CopyToHostState::DataSlice>>(
-                std::move(array_state.copy_data->data_slices));
         array_state.copy_data->result_promise.Set(std::make_shared<PyHostValue>(
             [host_shape = std::move(array_state.copy_data->host_shape),
              shard_byte_strides =
                  std::move(array_state.copy_data->shard_byte_strides),
-             data_slices = std::move(
-                 data_slices)]() -> absl::StatusOr<xla::nb_numpy_ndarray> {
+             data_slices = std::move(array_state.copy_data->data_slices)]()
+                -> absl::StatusOr<xla::nb_numpy_ndarray> {
               try {
                 std::optional<std::vector<int64_t>> strides =
                     ByteStridesOrDefaultForShapeInt64(host_shape);
@@ -2695,16 +2659,15 @@ absl::Status PyArray::BatchedCopyToHostAsyncHelper(
                     PrimitiveTypeToNbDtype(host_shape.element_type()));
                 xla::nb_numpy_ndarray result(dtype, host_shape.dimensions(),
                                              strides);
-                for (const auto& slice : *data_slices) {
+                for (const CopyToHostState::DataSlice& slice : data_slices) {
                   CHECK(slice.temp_buffer != nullptr);
                   std::optional<absl::Span<const int64_t>> slice_byte_strides;
                   if (shard_byte_strides.has_value()) {
                     slice_byte_strides =
                         absl::MakeConstSpan(*shard_byte_strides);
                   }
-                  ABSL_RETURN_IF_ERROR(
-                      SetSlice(result, dtype, slice.index_domain,
-                               slice_byte_strides, slice.temp_buffer.get()));
+                  SetSlice(result, dtype, slice.index_domain,
+                           slice_byte_strides, slice.temp_buffer.get());
                 }
                 result.attr("flags").attr("writeable") = nanobind::bool_(false);
                 return result;

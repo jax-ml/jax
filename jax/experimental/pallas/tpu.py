@@ -40,7 +40,7 @@ from jax._src.pallas.mosaic.interpret.interpret_pallas_call import set_tpu_inter
 from jax._src.pallas.mosaic.interpret.params import InterpretParams as InterpretParams
 from jax._src.pallas.mosaic.lowering import LoweringException as LoweringException
 from jax._src.pallas.mosaic.pipeline import BufferedRef as BufferedRef
-from jax._src.pallas.mosaic.pipeline import BufferedRefBase as BufferedRefBase
+from jax._src.pallas.mosaic.pipeline import BufferedRefBase as _deprecated_BufferedRefBase
 from jax._src.pallas.mosaic.pipeline import BufferType as BufferType
 from jax._src.pallas.mosaic.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as emit_pipeline_with_allocations
@@ -52,6 +52,7 @@ from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
 from jax._src.pallas.mosaic.primitives import conv as conv
 from jax._src.pallas.mosaic.primitives import get_barrier_semaphore as get_barrier_semaphore
+from jax._src.pallas.mosaic.primitives import has_memory_space as has_memory_space
 from jax._src.pallas.mosaic.primitives import load as load
 from jax._src.pallas.mosaic.primitives import make_async_copy as make_async_copy
 from jax._src.pallas.mosaic.primitives import make_async_remote_copy as make_async_remote_copy
@@ -100,6 +101,12 @@ SEMAPHORE = MemorySpace.SEMAPHORE
 
 
 _deprecations = {
+    # Added October 13, 2026
+    "BufferedRefBase": (
+        "pltpu.BufferedRefBase is deprecated. It is internal to the pipeline"
+        " implementation and should not be used.",
+        _deprecated_BufferedRefBase,
+    ),
     # Added June 30, 2026
     "create_tensorcore_mesh": (
         "pltpu.create_tensorcore_mesh is deprecated, use pltpu.TensorCoreMesh"
@@ -117,6 +124,7 @@ _deprecations = {
 
 if typing.TYPE_CHECKING:
   from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
+  BufferedRefBase = _deprecated_BufferedRefBase
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

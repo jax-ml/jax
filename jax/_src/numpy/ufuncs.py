@@ -19,6 +19,7 @@ Implements ufuncs for jax.numpy.
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 import math
 import operator
 from typing import Any
@@ -29,6 +30,7 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import dtypes
 from jax._src.api import Inline, jit
+from jax._src.custom_derivatives import custom_jvp
 from jax._src.hijax import HiPrim, linearize_from_jvp, vjp_from_jvp
 from jax._src.interpreters import ad, batching
 from jax._src.lax import lax
@@ -37,7 +39,7 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.numpy import array_constructors
 from jax._src.numpy import error as jnp_error
 from jax._src.numpy import reductions
-from jax._src.numpy.ufunc_api import ufunc
+from jax._src.numpy.ufunc_api import _accumulate_associative, ufunc
 from jax._src.numpy.util import (
    check_arraylike, ensure_arraylike, promote_args, promote_args_inexact,
    promote_args_numeric, promote_dtypes_inexact, promote_dtypes_numeric,
@@ -81,12 +83,16 @@ def unary_ufunc(func: Callable[[ArrayLike], Array]) -> ufunc:
 def binary_ufunc(identity: Any, reduce: Callable[..., Any] | None = None,
                  accumulate: Callable[..., Any] | None = None,
                  at: Callable[..., Any] | None = None,
-                 reduceat: Callable[..., Any] | None = None) -> Callable[[Callable[[ArrayLike, ArrayLike], Array]], ufunc]:
+                 reduceat: Callable[..., Any] | None = None,
+                 associative: bool = False) -> Callable[[Callable[[ArrayLike, ArrayLike], Array]], ufunc]:
   """An internal helper function for defining binary ufuncs."""
   def decorator(func: Callable[[ArrayLike, ArrayLike], Array]) -> ufunc:
     func_jit = jit(func, inline=Inline.JAX_EARLY)
+    accumulate_fn = accumulate
+    if accumulate_fn is None and associative:
+      accumulate_fn = partial(_accumulate_associative, func_jit)
     return ufunc(func_jit, name=func.__name__, nin=2, nout=1, call=func_jit,
-                 identity=identity, reduce=reduce, accumulate=accumulate, at=at, reduceat=reduceat)
+                 identity=identity, reduce=reduce, accumulate=accumulate_fn, at=at, reduceat=reduceat)
   return decorator
 
 
@@ -1325,7 +1331,7 @@ def multiply(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.mul(x, y) if x.dtype != bool else lax.bitwise_and(x, y)
 
 
-@binary_ufunc(identity=-1, reduce=reductions._reduce_bitwise_and)
+@binary_ufunc(identity=-1, reduce=reductions._reduce_bitwise_and, associative=True)
 def bitwise_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the bitwise AND operation elementwise.
 
@@ -1355,7 +1361,7 @@ def bitwise_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.bitwise_and(*promote_args("bitwise_and", x, y))
 
 
-@binary_ufunc(identity=0, reduce=reductions._reduce_bitwise_or)
+@binary_ufunc(identity=0, reduce=reductions._reduce_bitwise_or, associative=True)
 def bitwise_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the bitwise OR operation elementwise.
 
@@ -1385,7 +1391,7 @@ def bitwise_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.bitwise_or(*promote_args("bitwise_or", x, y))
 
 
-@binary_ufunc(identity=0, reduce=reductions._reduce_bitwise_xor)
+@binary_ufunc(identity=0, reduce=reductions._reduce_bitwise_xor, associative=True)
 def bitwise_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the bitwise XOR operation elementwise.
 
@@ -1671,7 +1677,7 @@ def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return lax.atan2(*promote_args_inexact("arctan2", x1, x2))
 
 
-@binary_ufunc(identity=None, reduce=reductions._reduce_min)
+@binary_ufunc(identity=None, reduce=reductions._reduce_min, associative=True)
 def minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise minimum of the input arrays.
 
@@ -1731,7 +1737,7 @@ def minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.min(*promote_args("minimum", x, y))
 
 
-@binary_ufunc(identity=None, reduce=reductions._reduce_max)
+@binary_ufunc(identity=None, reduce=reductions._reduce_max, associative=True)
 def maximum(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise maximum of the input arrays.
 
@@ -1912,7 +1918,7 @@ def spacing(x: ArrayLike, /) -> Array:
 
 
 # Logical ops
-@binary_ufunc(identity=True, reduce=reductions._reduce_logical_and)
+@binary_ufunc(identity=True, reduce=reductions._reduce_logical_and, associative=True)
 def logical_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the logical AND operation elementwise.
 
@@ -1933,7 +1939,7 @@ def logical_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.bitwise_and(*map(_to_bool, promote_args("logical_and", x, y)))
 
 
-@binary_ufunc(identity=False, reduce=reductions._reduce_logical_or)
+@binary_ufunc(identity=False, reduce=reductions._reduce_logical_or, associative=True)
 def logical_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the logical OR operation elementwise.
 
@@ -1954,7 +1960,7 @@ def logical_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.bitwise_or(*map(_to_bool, promote_args("logical_or", x, y)))
 
 
-@binary_ufunc(identity=False, reduce=reductions._reduce_logical_xor)
+@binary_ufunc(identity=False, reduce=reductions._reduce_logical_xor, associative=True)
 def logical_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the logical XOR operation elementwise.
 
@@ -3976,11 +3982,26 @@ def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     raise ValueError(
       "jnp.hypot is not well defined for complex-valued inputs. "
       "Please convert to real values first, such as by using abs(x)")
-  x1, x2 = lax.abs(x1), lax.abs(x2)
-  idx_inf = lax.bitwise_or(isposinf(x1), isposinf(x2))
-  x1, x2 = maximum(x1, x2), minimum(x1, x2)
-  x = _where(x1 == 0, x1, x1 * lax.sqrt(1 + lax.square(lax.div(x2, _where(x1 == 0, lax._ones(x1), x1)))))
-  return _where(idx_inf, _lax_const(x, np.inf), x)
+  x1, x2 = _broadcast_arrays(x1, x2)
+  return _hypot(x1, x2)[0]
+
+
+@custom_jvp
+def _hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
+  """Returns (r, x1 / r, x2 / r) where r = hypot(x1, x2)."""
+  return lax.hypot(x1, x2)
+
+
+@_hypot.defjvp
+def _hypot_jvp(primals, tangents):
+  # The JVP is written entirely in terms of _hypot's outputs, so derivatives of
+  # any order recurse through this rule and never differentiate the power-of-two
+  # scale in _hypot (which would produce overflowing scale^n factors).
+  x1, x2 = primals
+  dx1, dx2 = tangents
+  r, u1, u2 = _hypot(x1, x2)
+  dr = u1 * dx1 + u2 * dx2
+  return (r, u1, u2), (dr, (dx1 - u1 * dr) / r, (dx2 - u2 * dr) / r)
 
 
 @export

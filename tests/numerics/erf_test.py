@@ -14,11 +14,14 @@
 
 """Precision tests for error functions against reference implementations."""
 
+import math
+
 from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.scipy import special as jsp_special_impl
 import jax.numpy as jnp
 import jax.scipy as jsp
 
@@ -58,6 +61,7 @@ def _mpmath_erfcx(x):
   return mpmath.hyperu(0.5, 0.5, x * x) / mpmath.sqrt(mpmath.pi)
 
 
+@jax.jit
 def erfcx_grad(x):
   return jax.vmap(jax.grad(jsp.special.erfcx))(x)
 
@@ -124,9 +128,35 @@ class ErfTest(jtu.JaxTestCase):
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
     ]
     input_ftz = [
-        ("cpu", {f16: False}),
-        ("gpu", {bf16: False, f16: False, f32: False, f64: False}),
-        ("tpu", {f16: False}),
+        ("gpu", False),
+    ]
+    # Thresholds where |erf(x)| rounds to 1.0 in float32 (1 - 2^-24) and
+    # float64 (1 - 2^-53):
+    f32_sat = float(scipy.special.erfinv(1.0 - 2.0**-24))
+    f64_sat = float(scipy.special.erfinv(1.0 - 2.0**-53))
+    interesting_points = [
+        f32_sat,
+        -f32_sat,
+        f64_sat,
+        -f64_sat,
+        # Worst-case inputs across math libraries from Gladman et al.,
+        # "Accuracy of Mathematical Functions in Single, Double, Double
+        # Extended, and Quadruple Precision":
+        *(
+            float.fromhex(h)
+            for h in (
+                "-0x1.72f388p+0",
+                "-0x1.6e9b204d2167dp-539",
+                "-0x1.386615790c013p+0",
+                "0x1.11642f2eab9edp+0",
+                "-0x1.c57541b55c8ebp-16",
+                "-0x1.e057e7a0e494cp-2",
+                "-0x1.bf3c82e5f58dfp-8",
+                "0x1.0000187085e56p-8",
+                "0x1.340ff534d52bfp-2",
+                "-0x1.10c4c3d3b6cdbp+0",
+            )
+        ),
     ]
     util.check_unary_precision(
         self,
@@ -136,7 +166,44 @@ class ErfTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
+        interesting_points=interesting_points,
     )
+
+
+@jax.jit
+def _erfc_highest(x):
+  return lax.erfc(x, accuracy=lax.AccuracyMode.HIGHEST)
+
+
+_ERFC_INTERESTING_POINTS = [
+    # Negative thresholds where erfc(x) rounds to 2.0:
+    -float(scipy.special.erfinv(1.0 - 2.0**-25)),
+    -float(scipy.special.erfinv(1.0 - 2.0**-54)),
+    # Positive underflow thresholds where erfc(x) reaches normal tiny /
+    # min_subnormal, computed via mpmath.findroot(lambda x: mpmath.erfc(x) - target, x0):
+    9.194682,  # erfc(x) == 2^-126 (float32 tiny)
+    10.054602,  # erfc(x) == 2^-149 (float32 min_subnormal)
+    26.54325777920791,  # erfc(x) == 2^-1022 (float64 tiny)
+    27.226017025551105,  # erfc(x) == 2^-1074 (float64 min_subnormal)
+    # Worst-case inputs across math libraries from Gladman et al.,
+    # "Accuracy of Mathematical Functions in Single, Double, Double Extended,
+    # and Quadruple Precision":
+    *(
+        float.fromhex(h)
+        for h in (
+            "-0x1.c5bf891b4ef6ap-54",
+            "0x1.a8cf81fa2a28fp+4",
+            "0x1.3bce0a408603fp+0",
+            "0x1.5182d8799b84bp+0",
+            "0x1.527f4fb0d9331p+0",
+            "0x1.bba14dc3507ccp+1",
+            "0x1.f5c5a6822a341p+1",
+            "0x1.46cffdf330b13p+4",
+            "0x1.8659a03b35abcp-7",
+            "0x1.f1ed3a0316eabp-19",
+        )
+    ),
+]
 
 
 @jtu.thread_unsafe_test_class()
@@ -153,8 +220,107 @@ class ErfcTest(jtu.JaxTestCase):
         ("tpu_7x", {f16: 1.0, f32: 125.0}),
     ]
     util.check_unary_precision(
-        self, lax.erfc, scipy.special.erfc, _mpmath_erfc, dtype, bounds=bounds
+        self,
+        lax.erfc,
+        scipy.special.erfc,
+        _mpmath_erfc,
+        dtype,
+        bounds=bounds,
+        interesting_points=_ERFC_INTERESTING_POINTS,
     )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_erfc_highest_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 4.0, f64: 2.5}),
+        ("gpu", {f16: 1.0, f32: 5.0, f64: 3.0}),
+        (TPU_EUPV1, {f16: 1.0, f32: 5.5}),
+        (["tpu_v5p", "tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 5.0}),
+    ]
+    util.check_unary_precision(
+        self,
+        _erfc_highest,
+        scipy.special.erfc,
+        _mpmath_erfc,
+        dtype,
+        bounds=bounds,
+        interesting_points=_ERFC_INTERESTING_POINTS,
+    )
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_erfc_derivatives(self, dtype):
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    grad1_fn = jax.jit(jax.vmap(jax.grad(lax.erfc)))
+    grad2_fn = jax.jit(jax.vmap(jax.grad(jax.grad(lax.erfc))))
+    max_x = 9.0 if dtype == f32 else 25.0
+    x = jnp.linspace(-max_x, max_x, 256, dtype=dtype)
+    with jax.debug_nans(True):
+      d1 = np.asarray(grad1_fn(x))
+      d2 = np.asarray(grad2_fn(x))
+      _ = grad1_fn(jnp.array([-jnp.inf, 0.0, jnp.inf], dtype=dtype))
+      _ = grad2_fn(jnp.array([-jnp.inf, 0.0, jnp.inf], dtype=dtype))
+
+    def mp_d1(v):
+      return -2 * mpmath.exp(-v * v) / mpmath.sqrt(mpmath.pi)
+
+    def mp_d2(v):
+      return 4 * v * mpmath.exp(-v * v) / mpmath.sqrt(mpmath.pi)
+
+    x_np = np.asarray(x)
+    ref_d1 = np.array(
+        [util.eval_mpmath(mp_d1, v.item(), dtype=dtype) for v in x_np],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    ref_d2 = np.array(
+        [util.eval_mpmath(mp_d2, v.item(), dtype=dtype) for v in x_np],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    self.assertLessEqual(np.max(util.ulp_diff(d1, ref_d1, dtype)), 3.0)
+    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), 4.0)
+
+  @config.explicit_x64_dtypes("allow")
+  def test_explicit_x64_dtypes(self):
+    if jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    fns = [
+        lax.erfc,
+        _erfc_highest,
+        jsp.special.erfcx,
+        erfcx_grad,
+        jax.vmap(jax.grad(jax.grad(jsp.special.erfcx))),
+        jax.vmap(jax.grad(lax.erf)),
+    ]
+    pts = [-3.0, -1.5, -0.5, 0.0, 0.5, 1.5, 2.0, 5.0]
+    with jax.enable_x64(True):
+      x_ref = jnp.array(pts, dtype=jnp.float64)
+      expected = [jax.jit(fn)(x_ref) for fn in fns]
+    with jax.enable_x64(False):
+      x = jnp.array(pts, dtype=jnp.float64)
+      actual = [jax.jit(fn)(x) for fn in fns]
+    for exp_val, act_val in zip(expected, actual):
+      self.assertArraysEqual(act_val, exp_val)
+
+
+_ERFCX_INTERESTING_POINTS = [
+    # Negative overflow thresholds where erfcx(x) or |erfcx'(x)| == finfo.max,
+    # computed via mpmath.findroot:
+    -9.382414,  # float32 erfcx overflow threshold
+    -9.225755,  # float32 erfcx_grad overflow threshold
+    -26.62873571375149,  # float64 erfcx overflow threshold
+    -26.50644156603363,  # float64 erfcx_grad overflow threshold
+    # Piecewise polynomial and clamp thresholds in erf.py:
+    10.0,
+    12.0,
+    28.0,
+    # Underflow thresholds of unscaled erfc(x):
+    9.194682,  # erfc(x) == 2^-126 (float32 tiny)
+    26.54325777920791,  # erfc(x) == 2^-1022 (float64 tiny)
+    512.0,  # direct-to-asymptotic cutoff (2^9) in _erfcx_grad_reference
+]
 
 
 @jtu.thread_unsafe_test_class()
@@ -163,50 +329,20 @@ class ErfcxTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfcx_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 64.5, f64: 350.0}),
-        ("gpu", {f16: 1.0, f32: 65.0, f64: 350.0}),
-        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 214.0}),
-        ("tpu_v5p", {f16: 1.0, f32: 155.0}),
-        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 125.5}),
-    ]
-    # Ignore x = -9.382414: near the float32 overflow threshold, where the
-    # true value is finite (~3.40282e+38) but x^2 rounds up across
-    # log(fmax / 2), causing exp(x^2) * erfc(x) to overflow float32 to inf.
-    ignore_inputs = [
-        (["cpu", "gpu", "tpu"], {f32: [0xC1161E5E]}),
+        ("cpu", {f16: 1.0, f32: 3.5, f64: 3.0}),
+        ("gpu", {f16: 1.0, f32: 4.0, f64: 3.0}),
+        ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 4.0}),
+        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 4.5}),
     ]
     util.check_unary_precision(
         self,
-        jsp.special.erfcx,
+        jax.jit(jsp.special.erfcx),
         scipy.special.erfcx,
         _mpmath_erfcx,
         dtype,
         bounds=bounds,
-        ignore_inputs=ignore_inputs,
+        interesting_points=_ERFCX_INTERESTING_POINTS,
     )
-
-  @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_erfcx_probes(self, dtype):
-    # Probe regime thresholds and erfc(x) underflow gaps that sampling may miss.
-    if dtype == f64 and jtu.device_under_test() == "tpu":
-      self.skipTest("float64 on TPU is ef57 double-double")
-    x = jnp.concatenate([
-        jnp.linspace(7.9, 8.1, 32, dtype=dtype),  # f32 regime threshold
-        jnp.linspace(9.195, 9.419, 32, dtype=dtype),  # f32 erfc underflow gap
-        jnp.linspace(11.9, 12.1, 32, dtype=dtype),  # f64 regime threshold
-        jnp.linspace(26.543, 26.642, 32, dtype=dtype),  # f64 erfc underflow gap
-    ])
-    x_np = np.asarray(x)
-    for jax_fn, mp_fn, max_ulp in [
-        (jsp.special.erfcx, _mpmath_erfcx, 350.0),
-        (erfcx_grad, _mpmath_erfcx_grad, 8000.0),
-    ]:
-      actual = np.asarray(jax.jit(jax_fn)(x))
-      ref = np.array(
-          [util.eval_mpmath(mp_fn, v.item(), dtype=dtype) for v in x_np],
-          dtype=object if dtype == f64 else np.float64,
-      )
-      self.assertLessEqual(np.max(util.ulp_diff(actual, ref, dtype)), max_ulp)
 
 
 @jtu.thread_unsafe_test_class()
@@ -215,18 +351,12 @@ class ErfcxGradTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfcx_grad_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 452.5, f64: 500.0}),
-        ("gpu", {f16: 1.0, f32: 542.0, f64: 500.0}),
-        (TPU_EUPV1, {bf16: 1.0, f16: 1.5, f32: 7936.5}),
-        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 6672.5}),
-        ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 427.0}),
-        ("tpu_7x", {f16: 1.0, f32: 419.0}),
-    ]
-    # Ignore x = -9.225755: near the float32 overflow threshold, where the
-    # true value (-3.40284e+38) rounds to -inf in float32, but TPU_EUPV1
-    # evaluates to finite -3.40282e+38 (0xff7ffff0).
-    ignore_inputs = [
-        (TPU_EUPV1, {f32: [0xC1139CB1]}),
+        ("cpu", {f16: 1.0, f32: 4.5, f64: 2.5}),
+        ("gpu", {f16: 1.0, f32: 5.0, f64: 2.5}),
+        (TPU_EUPV1, {f16: 1.0, f32: 6.5}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 6.0}),
+        ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 5.0}),
+        ("tpu_7x", {f16: 1.0, f32: 5.0}),
     ]
     util.check_unary_precision(
         self,
@@ -235,8 +365,104 @@ class ErfcxGradTest(jtu.JaxTestCase):
         _mpmath_erfcx_grad,
         dtype,
         bounds=bounds,
-        ignore_inputs=ignore_inputs,
+        interesting_points=_ERFCX_INTERESTING_POINTS,
     )
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_erfcx_grad_higher_order(self, dtype):
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    grad2_fn = jax.jit(jax.vmap(jax.grad(jax.grad(jsp.special.erfcx))))
+    grad3_fn = jax.jit(
+        jax.vmap(jax.grad(jax.grad(jax.grad(jsp.special.erfcx))))
+    )
+    x = jnp.concatenate([
+        jnp.linspace(-3.0, 0.0, 32, dtype=dtype),
+        jnp.linspace(0.0, 1.0, 32, dtype=dtype),
+        jnp.linspace(1.0, 2.0, 32, dtype=dtype),
+        jnp.linspace(2.0, 4.0, 32, dtype=dtype),
+        jnp.linspace(4.0, 12.0, 32, dtype=dtype),
+        jnp.linspace(12.0, 50.0, 32, dtype=dtype),
+    ])
+    with jax.debug_nans(True):
+      d2 = np.asarray(grad2_fn(x))
+      d3 = np.asarray(grad3_fn(x))
+      _ = grad2_fn(jnp.array([-jnp.inf, 0.0, 1.0, jnp.inf], dtype=dtype))
+
+    def mp_d2(v):
+      y0 = _mpmath_erfcx(v)
+      y1 = _mpmath_erfcx_grad(v)
+      return 2 * y0 + 2 * v * y1
+
+    def mp_d3(v):
+      y1 = _mpmath_erfcx_grad(v)
+      return 4 * y1 + 2 * v * mp_d2(v)
+
+    x_np = np.asarray(x)
+    ref_d2 = np.array(
+        [util.eval_mpmath(mp_d2, v.item(), dtype=dtype) for v in x_np],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    ref_d3 = np.array(
+        [util.eval_mpmath(mp_d3, v.item(), dtype=dtype) for v in x_np],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), 35.0)
+    self.assertLessEqual(np.max(util.ulp_diff(d3, ref_d3, dtype)), 1500.0)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  @jtu.run_on_devices("cpu")
+  def test_erfcx_grad2_method_choice(self, dtype):
+    # `_erfcx_grad_jvp` computes erfcx'' for x >= 0 in one of two ways:
+    #   formula:  2 * erfcx(x) + 2 * x * erfcx'(x), used for x <= 2.25.
+    #   plain AD: AD through the polynomials in `erfcx_grad_impl`, used for
+    #             x > 2.25.
+    # Check that on every range, our result is at least as accurate as the
+    # better of the two, i.e. that 2.25 is a sensible switch point.
+    erfcx = jsp.special.erfcx
+    d1 = jax.grad(erfcx)
+    ours_fn = jax.jit(jax.vmap(jax.grad(d1)))
+    formula_fn = jax.jit(jax.vmap(lambda v: 2 * erfcx(v) + 2 * v * d1(v)))
+    # Stopping the gradient of `ans` is only valid for x >= 0, where
+    # `erfcx_grad_impl` does not use `ans`.
+    plain_ad_fn = jax.jit(jax.vmap(jax.grad(
+        lambda v: jsp_special_impl._erfcx_grad_impl(
+            v, lax.stop_gradient(erfcx(v))))))
+    edges = [0.0, 1.0, 2.0, 2.25, 3.0, 4.0, 8.0, 12.0, 50.0, 1e4]
+    x = np.concatenate([
+        np.linspace(lo, hi, 256, endpoint=False, dtype=dtype)
+        for lo, hi in zip(edges[:-1], edges[1:])
+    ])
+    # Exactly at the polynomial piece boundaries, the `clamp` and `max` calls
+    # in `erfcx_grad_impl` drop part of the gradient, so plain AD is badly
+    # wrong there. We leave those points out so the comparison measures the
+    # error between boundaries.
+    x = x[~np.isin(x, np.array([0.0, 1.0, 2.0, 4.0, 8.0, 12.0], dtype))]
+
+    def mp_d2(v):
+      return 2 * _mpmath_erfcx(v) + 2 * v * _mpmath_erfcx_grad(v)
+
+    with mpmath.workdps(60):
+      ref = np.array(
+          [util.eval_mpmath(mp_d2, v.item(), dtype=dtype) for v in x],
+          dtype=object if dtype == f64 else np.float64,
+      )
+    ours = util.ulp_diff(np.asarray(ours_fn(x)), ref, dtype)
+    formula = util.ulp_diff(np.asarray(formula_fn(x)), ref, dtype)
+    plain_ad = util.ulp_diff(np.asarray(plain_ad_fn(x)), ref, dtype)
+    for lo, hi in zip(edges[:-1], edges[1:]):
+      m = (x >= lo) & (x < hi)
+      best = min(np.max(formula[m]), np.max(plain_ad[m]))
+      self.assertLessEqual(
+          np.max(ours[m]), best,
+          msg=f"[{lo}, {hi}): ours={np.max(ours[m])}, "
+          f"formula={np.max(formula[m])}, plain_ad={np.max(plain_ad[m])}")
 
   @jtu.run_on_devices("cpu")
   def test_erfcx_grad_reference(self):
@@ -272,14 +498,71 @@ class ErfcxGradTest(jtu.JaxTestCase):
     self.assertTrue(np.isnan(_erfcx_grad_reference(np.array([np.nan]))[0]))
 
 
+def _mpmath_erfinv(x):
+  if not (-1 <= x <= 1):
+    return mpmath.nan
+  return mpmath.erfinv(x)
+
+
+@jax.jit
+def erfinv_grad(x):
+  return jax.vmap(jax.grad(lax.erf_inv))(x)
+
+
+def _erfinv_grad_reference(x: np.ndarray) -> np.ndarray:
+  out = np.full_like(x, np.nan, dtype=np.float64)
+  out[np.abs(x) == 1.0] = np.inf
+  interior = np.abs(x) < 1.0
+  if np.any(interior):
+    y = scipy.special.erfinv(x[interior])
+    out[interior] = 0.5 * np.sqrt(np.pi) * np.exp(np.square(y))
+  return out
+
+
+def _mpmath_erfinv_grad(x):
+  if mpmath.isnan(x) or x < -1 or x > 1:
+    return mpmath.nan
+  if x == -1 or x == 1:
+    return mpmath.inf
+  with mpmath.extraprec(20):
+    y = mpmath.erfinv(x)
+    return mpmath.sqrt(mpmath.pi) / 2 * mpmath.exp(y * y)
+
+
+_ERFINV_INTERESTING_POINTS = [
+    # Minimax polynomial piece boundaries where 1 - x^2 == exp(-w):
+    *(
+        sign * math.sqrt(-math.expm1(-w))
+        for w in (3.5, 4.5, 16.0)
+        for sign in (-1, 1)
+    ),
+    # Worst-case float64 points on CPU and GPU across central (w < 4.5) and
+    # tail (w >= 4.5) pieces near output power-of-two boundaries:
+    *(
+        sign * float.fromhex(h)
+        for h in (
+            "0x1.20dbf3de5abd3p-7",  # GPU max (-2.42 ULP) below y = 2^-7 on P1
+            "0x1.20dd14b80c993p-8",  # CPU/GPU max (-2.42 ULP) below y = 2^-8 on P1
+            "0x1.20c5645cbedf4p-5",  # CPU/GPU peak (-2.39 ULP) below y = 2^-5 on P1
+            "0x1.0a7ef5c0d4391p-1",  # GPU peak (+2.19 ULP) below y = 0.5 on P1
+            "0x1.fd9ae1404cd85p-1",  # GPU peak (+2.08 ULP) below y = 2 on P2
+            "0x1.fd25ed74aaa21p-1",  # CPU/GPU peak (+2.06 ULP) near w = 4.5^+ on P2
+            "0x1.fd477fea47e83p-1",  # CPU/GPU peak (-2.05 ULP) near w = 4.547 on P2
+            "0x1.fffffe1c8b959p-1",  # CPU/GPU peak (+1.64 ULP) below w = 16 switch
+        )
+        for sign in (-1, 1)
+    ),
+]
+
+
 @jtu.thread_unsafe_test_class()
 class ErfinvTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfinv_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 65.0, f64: 82.5}),
-        ("gpu", {f16: 1.0, f32: 65.0, f64: 83.5}),
+        ("cpu", {f16: 1.0, f32: 65.0, f64: 500000.0}),
+        ("gpu", {f16: 1.0, f32: 65.0, f64: 500000.0}),
         (TPU_EUPV1, {f16: 1.0, f32: 427.0}),
         (["tpu_v5p", "tpu_7x"], {f16: 1.0, f32: 65.5}),
         ("tpu_v6e", {f16: 1.0, f32: 65.0}),
@@ -288,17 +571,416 @@ class ErfinvTest(jtu.JaxTestCase):
         self,
         lax.erf_inv,
         _erfinv_reference,
-        mpmath.erfinv,
+        _mpmath_erfinv,
         dtype,
         bounds=bounds,
+        interesting_points=_ERFINV_INTERESTING_POINTS,
     )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_erfinv_accurate_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 2.0, f64: 2.5}),
+        ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
+        (TPU_EUPV1, {f16: 1.0, f32: 427.0}),
+        ("tpu_v5p", {f16: 1.0, f32: 5.5}),
+        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 2.5}),
+    ]
+    with jtu.global_config_context(jax_accurate_erf_inv=True):
+      util.check_unary_precision(
+          self,
+          lax.erf_inv,
+          _erfinv_reference,
+          _mpmath_erfinv,
+          dtype,
+          bounds=bounds,
+          interesting_points=_ERFINV_INTERESTING_POINTS,
+      )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_erfinv_grad_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {bf16: 6.5, f16: 9.5, f32: 29.0, f64: 68.0}),
+        ("gpu", {bf16: 6.5, f16: 9.5, f32: 27.0, f64: 68.0}),
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1595.5}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 67.0}),
+        (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 34.5}),
+    ]
+    with jtu.global_config_context(jax_accurate_erf_inv=True):
+      util.check_unary_precision(
+          self,
+          erfinv_grad,
+          _erfinv_grad_reference,
+          _mpmath_erfinv_grad,
+          dtype,
+          bounds=bounds,
+          interesting_points=_ERFINV_INTERESTING_POINTS,
+      )
+
+
+def _erfcinv_reference(y: np.ndarray) -> np.ndarray:
+  """Evaluates erfcinv with a domain guard to avoid slow C++ error handling."""
+  out = np.full_like(y, np.nan, dtype=np.float64)
+  in_domain = (y >= 0.0) & (y <= 2.0)
+  if np.any(in_domain):
+    out[in_domain] = scipy.special.erfcinv(y[in_domain])
+  return out
+
+
+def _mpmath_erfcinv(y):
+  if mpmath.isnan(y) or y < 0 or y > 2:
+    return mpmath.nan
+  if y == 0:
+    return mpmath.inf
+  if y == 2:
+    return -mpmath.inf
+  with mpmath.extraprec(20):
+    if 0.05 <= y <= 1.95:
+      return mpmath.erfinv(1 - y)
+    q = y if y < 1 else 2 - y
+    target_ln = mpmath.ln(q)
+    u = -mpmath.ln(mpmath.pi * q * q)
+    t0 = mpmath.sqrt((u - mpmath.ln(u)) / 2)
+    t = mpmath.findroot(lambda t: mpmath.ln(mpmath.erfc(t)) - target_ln, t0)
+    return t if y < 1 else -t
+
+
+def erfcinv_grad(y):
+  return jax.vmap(jax.grad(jsp.special.erfcinv))(y)
+
+
+def _erfcinv_grad_reference(y: np.ndarray) -> np.ndarray:
+  out = np.full_like(y, np.nan, dtype=np.float64)
+  out[(y == 0.0) | (y == 2.0)] = -np.inf
+  interior = (y > 0.0) & (y < 2.0)
+  if np.any(interior):
+    z = scipy.special.erfcinv(y[interior])
+    out[interior] = -0.5 * np.sqrt(np.pi) * np.exp(np.square(z))
+  return out
+
+
+def _mpmath_erfcinv_grad(y):
+  if mpmath.isnan(y) or y < 0 or y > 2:
+    return mpmath.nan
+  if y == 0 or y == 2:
+    return -mpmath.inf
+  with mpmath.extraprec(20):
+    z = _mpmath_erfcinv(y)
+    return -(mpmath.sqrt(mpmath.pi) / 2) * mpmath.exp(z * z)
+
+
+_ERFCINV_INTERESTING_POINTS = [
+    0.0,
+    1.0,
+    2.0,
+    # Minimax polynomial piece boundaries where y * (2 - y) == exp(-w):
+    *(
+        1.0 + sign * math.sqrt(-math.expm1(-w))
+        for w in (3.5, 4.5, 16.0, 18.0625, 37.0, 144.0)
+        for sign in (-1, 1)
+    ),
+    *(1.0 - x for x in _ERFINV_INTERESTING_POINTS),
+]
+
+
+@jtu.thread_unsafe_test_class()
+class ErfcInvTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_erfcinv_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {bf16: 1.0, f16: 1.0, f32: 2.5, f64: 2.5}),
+        ("gpu", {bf16: 1.0, f16: 1.0, f32: 3.0, f64: 2.5}),
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 427.0}),
+        ("tpu_v5p", {f16: 1.0, f32: 6.0}),
+        ("tpu_v6e", {bf16: 0.5, f16: 1.0, f32: 3.0}),
+        ("tpu_7x", {f16: 1.0, f32: 3.0}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    # At y = 1.0, erfcinv(1.0) returns +0.0 while scipy.special.erfcinv
+    # returns -0.0 from -erfinv(y - 1.0).
+    util.check_unary_precision(
+        self,
+        jsp.special.erfcinv,
+        _erfcinv_reference,
+        _mpmath_erfcinv,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        check_signed_zeros=False,
+        interesting_points=_ERFCINV_INTERESTING_POINTS,
+    )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_erfcinv_grad_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0, f32: (5.0, 6.0), f64: 4.0}),
+        ("gpu", {f16: 1.0, f32: 6.5, f64: 4.5}),
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 608.5}),
+        ("tpu_v5p", {f16: 1.0, f32: 9.0}),
+        ("tpu_v6e", {f16: 1.0, f32: 7.5}),
+        ("tpu_7x", {f16: 1.0, f32: 6.5}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    util.check_unary_precision(
+        self,
+        erfcinv_grad,
+        _erfcinv_grad_reference,
+        _mpmath_erfcinv_grad,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        interesting_points=_ERFCINV_INTERESTING_POINTS,
+    )
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_erfcinv_grad_higher_order(self, dtype):
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    grad2_fn = jax.jit(jax.vmap(jax.grad(jax.grad(jsp.special.erfcinv))))
+    grad3_fn = jax.jit(
+        jax.vmap(jax.grad(jax.grad(jax.grad(jsp.special.erfcinv))))
+    )
+    y = jnp.concatenate([
+        jnp.logspace(-6, -1, 32, dtype=dtype),
+        jnp.linspace(0.2, 1.8, 64, dtype=dtype),
+        2.0 - jnp.logspace(-6, -1, 32, dtype=dtype)[::-1],
+    ])
+    with jax.debug_nans(True):
+      d2 = np.asarray(grad2_fn(y))
+      d3 = np.asarray(grad3_fn(y))
+      edges = jnp.array([0.0, 1.0, 2.0], dtype=dtype)
+      edges_d2 = np.asarray(grad2_fn(edges))
+      edges_d3 = np.asarray(grad3_fn(edges))
+    self.assertEqual(edges_d2.tolist(), [np.inf, 0.0, -np.inf])
+    self.assertEqual(edges_d3[0], -np.inf)
+    self.assertEqual(edges_d3[2], -np.inf)
+
+    def mp_d2(v):
+      with mpmath.extraprec(20):
+        z = _mpmath_erfcinv(v)
+        return (mpmath.pi / 2) * z * mpmath.exp(2 * z * z)
+
+    def mp_d3(v):
+      with mpmath.extraprec(20):
+        z = _mpmath_erfcinv(v)
+        return (
+            -(mpmath.pi ** mpmath.mpf("1.5") / 4)
+            * (1 + 4 * z * z)
+            * mpmath.exp(3 * z * z)
+        )
+
+    y_np = np.asarray(y)
+    ref_d2 = np.array(
+        [util.eval_mpmath(mp_d2, v.item(), dtype=dtype) for v in y_np],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    ref_d3 = np.array(
+        [util.eval_mpmath(mp_d3, v.item(), dtype=dtype) for v in y_np],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    if util.get_hardware_variant() in TPU_EUPV1:
+      d2_bound, d3_bound = 1000.0, 2000.0
+    else:
+      d2_bound, d3_bound = 50.0, 100.0
+    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), d2_bound)
+    self.assertLessEqual(np.max(util.ulp_diff(d3, ref_d3, dtype)), d3_bound)
+
+
+def _ndtri_reference(p: np.ndarray) -> np.ndarray:
+  """Evaluates ndtri with a domain guard to avoid slow C++ error handling."""
+  out = np.full_like(p, np.nan, dtype=np.float64)
+  in_domain = (p >= 0.0) & (p <= 1.0)
+  if np.any(in_domain):
+    out[in_domain] = scipy.special.ndtri(p[in_domain])
+  return out
+
+
+def _mpmath_ndtri(p):
+  if mpmath.isnan(p) or p < 0 or p > 1:
+    return mpmath.nan
+  if p == 0:
+    return -mpmath.inf
+  if p == 1:
+    return mpmath.inf
+  with mpmath.extraprec(20):
+    if 0.05 <= p <= 0.95:
+      return mpmath.sqrt(2) * mpmath.erfinv(2 * p - 1)
+    q = p if p < 0.5 else 1 - p
+    target_ln = mpmath.ln(2 * q)
+    u = -mpmath.ln(2 * mpmath.pi * q * q)
+    t0 = mpmath.sqrt((u - mpmath.ln(u)) / 2)
+    t = mpmath.findroot(lambda t: mpmath.ln(mpmath.erfc(t)) - target_ln, t0)
+    res = mpmath.sqrt(2) * t
+    return -res if p < 0.5 else res
+
+
+@jax.jit
+def ndtri_grad(p):
+  return jax.vmap(jax.grad(jsp.special.ndtri))(p)
+
+
+def _ndtri_grad_reference(p: np.ndarray) -> np.ndarray:
+  out = np.full_like(p, np.nan, dtype=np.float64)
+  out[(p == 0.0) | (p == 1.0)] = np.inf
+  interior = (p > 0.0) & (p < 1.0)
+  if np.any(interior):
+    x = scipy.special.ndtri(p[interior])
+    out[interior] = np.sqrt(2.0 * np.pi) * np.exp(0.5 * np.square(x))
+  return out
+
+
+def _mpmath_ndtri_grad(p):
+  if mpmath.isnan(p) or p < 0 or p > 1:
+    return mpmath.nan
+  if p == 0 or p == 1:
+    return mpmath.inf
+  with mpmath.extraprec(20):
+    x = _mpmath_ndtri(p)
+    return mpmath.sqrt(2 * mpmath.pi) * mpmath.exp(x * x / 2)
+
+
+_NDTRI_INTERESTING_POINTS = [
+    # Minimax polynomial piece boundaries where 4 * p * (1 - p) == exp(-w):
+    *(
+        0.5 + sign * 0.5 * math.sqrt(-math.expm1(-w))
+        for w in (3.5, 4.5, 16.0, 18.0625, 37.0, 144.0)
+        for sign in (-1, 1)
+    ),
+]
+
+
+@jtu.thread_unsafe_test_class()
+class NdtriTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_ndtri_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f32: 2.5, f64: 2.0}),
+        ("gpu", {f32: 3.0, f64: 2.0}),
+        (TPU_EUPV1, {f32: 302.0}),
+        ("tpu_v5p", {f32: 5.0}),
+        (["tpu_v6e", "tpu_7x"], {f32: 3.0}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    util.check_unary_precision(
+        self,
+        jax.jit(jsp.special.ndtri),
+        _ndtri_reference,
+        _mpmath_ndtri,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        interesting_points=_NDTRI_INTERESTING_POINTS,
+    )
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_ndtri_grad_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f32: 5.5, f64: 5.0}),
+        ("gpu", {f32: 6.5, f64: 5.0}),
+        (TPU_EUPV1, {f32: 430.0}),
+        ("tpu_v5p", {f32: 8.0}),
+        ("tpu_v6e", {f32: 7.5}),
+        ("tpu_7x", {f32: 6.5}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    util.check_unary_precision(
+        self,
+        ndtri_grad,
+        _ndtri_grad_reference,
+        _mpmath_ndtri_grad,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        interesting_points=_NDTRI_INTERESTING_POINTS,
+    )
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_ndtri_grad_higher_order(self, dtype):
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    grad2_fn = jax.jit(jax.vmap(jax.grad(jax.grad(jsp.special.ndtri))))
+    grad3_fn = jax.jit(
+        jax.vmap(jax.grad(jax.grad(jax.grad(jsp.special.ndtri))))
+    )
+    p = jnp.concatenate([
+        jnp.logspace(-6, -1, 32, dtype=dtype),
+        jnp.linspace(0.1, 0.9, 64, dtype=dtype),
+        1.0 - jnp.logspace(-6, -1, 32, dtype=dtype)[::-1],
+    ])
+    with jax.debug_nans(True):
+      d2 = np.asarray(grad2_fn(p))
+      d3 = np.asarray(grad3_fn(p))
+      edges = jnp.array([0.0, 0.5, 1.0], dtype=dtype)
+      edges_d2 = np.asarray(grad2_fn(edges))
+      edges_d3 = np.asarray(grad3_fn(edges))
+    self.assertEqual(edges_d2.tolist(), [-np.inf, 0.0, np.inf])
+    self.assertEqual(edges_d3[0], np.inf)
+    self.assertEqual(edges_d3[2], np.inf)
+
+    def mp_d2(v):
+      with mpmath.extraprec(20):
+        x = _mpmath_ndtri(v)
+        return 2 * mpmath.pi * x * mpmath.exp(x * x)
+
+    def mp_d3(v):
+      with mpmath.extraprec(20):
+        x = _mpmath_ndtri(v)
+        return (
+            (2 * mpmath.pi) ** mpmath.mpf("1.5")
+            * (1 + 2 * x * x)
+            * mpmath.exp(mpmath.mpf("1.5") * x * x)
+        )
+
+    p_np = np.asarray(p)
+    ref_d2 = np.array(
+        [util.eval_mpmath(mp_d2, v.item(), dtype=dtype) for v in p_np],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    ref_d3 = np.array(
+        [util.eval_mpmath(mp_d3, v.item(), dtype=dtype) for v in p_np],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    if util.get_hardware_variant() in TPU_EUPV1:
+      d2_bound, d3_bound = 650.0, 2000.0
+    else:
+      d2_bound, d3_bound = 50.0, 100.0
+    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), d2_bound)
+    self.assertLessEqual(np.max(util.ulp_diff(d3, ref_d3, dtype)), d3_bound)
 
 
 util.register_benchmark(lax.erf)
 util.register_benchmark(lax.erfc)
+util.register_benchmark(_erfc_highest)
 util.register_benchmark(jsp.special.erfcx)
 util.register_benchmark(erfcx_grad)
 util.register_benchmark(lax.erf_inv)
+util.register_benchmark(erfinv_grad)
+util.register_benchmark(jsp.special.erfcinv)
+util.register_benchmark(erfcinv_grad)
+util.register_benchmark(jsp.special.ndtri, dtypes=(f32, f64))
+util.register_benchmark(ndtri_grad, dtypes=(f32, f64))
 
 
 if __name__ == "__main__":

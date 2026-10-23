@@ -29,9 +29,11 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
+from jax._src import ad_checkpoint
 from jax._src import core
 from jax._src import config
 from jax._src import dtypes
+from jax._src import hijax
 from jax import lax
 from jax import random
 from jax._src import test_util as jtu
@@ -44,7 +46,6 @@ from jax._src import dispatch
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lib import ifrt_version
 
 jax.config.parse_flags_with_absl()
 
@@ -1067,6 +1068,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.switch(1, [lambda _: dict(a=jnp.array([1.], jnp.float32)),
                      lambda _: dict(a=jnp.float32(1.))],
                  1.)
+
+  def testCondTypeErrorsAuxDataFromLeaves(self):
+    # Aux data computed from the leaves makes the branches' treedefs differ even
+    # though their structures are the same; output types must still be checked.
+    @jax.tree_util.register_pytree_node_class
+    class Box:
+      def __init__(self, x):
+        self.x = x
+      def tree_flatten(self):
+        return (self.x,), getattr(self.x, 'shape', None)
+      @classmethod
+      def tree_unflatten(cls, aux, children):
+        del aux
+        return cls(*children)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"(?s)cond branches must have equal output types but they differ.*"
+        r"so the shapes do not match"):
+      lax.cond(True, lambda _: Box(jnp.zeros(2)), lambda _: Box(jnp.zeros(3)),
+               1.)
 
   def testCondOneBranchConstant(self):
     def fun(x):
@@ -3507,11 +3529,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_scan_counter_where(self):
     # https://github.com/jax-ml/jax/issues/41027
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
-    if ifrt_version < 75:
-      self.skipTest('Requires ifrt_version >= 75')
-
     @jax.jit
     def gt_zero(x):
       def body(carry, _):
@@ -3524,6 +3541,85 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = gt_zero(jnp.float32(0))
     expected = np.array([0.0, 1.0, 2.0], dtype=np.float32)
     self.assertArraysEqual(ans, expected)
+
+  def test_cond_remat_dce_unused_branch_residuals(self):
+    policy = checkpoint_policies.save_only_these_names('saved')
+
+    def inner(x):
+      y = ad_checkpoint.checkpoint_name(jnp.sin(x), 'saved')
+      return jnp.cos(y)
+
+    @partial(jax.remat, policy=policy)
+    def f(pred, x):
+      return lax.cond(
+          pred,
+          inner,
+          lambda z: (inner(z), z)[1],
+          x,
+      )
+
+    grad_jaxpr = jax.make_jaxpr(jax.grad(f, argnums=1))(True, 1.0)
+    cond_eqns = [e for e in grad_jaxpr.eqns if e.primitive is lax.cond_p]
+    # Under remat3 the transposed cond is staged at top level too, and
+    # checkpoint_name stages a HiPrim rather than name_p.
+    self.assertLen(cond_eqns, 2 if config.remat3.value else 1)
+    name_prim = (hijax.call_hi_primitive_p if config.remat3.value
+                 else ad_checkpoint.name_p)
+    fwd_false_branch, fwd_true_branch = cond_eqns[0].params['branches']
+    false_prims = {e.primitive for e in fwd_false_branch.eqns}
+    true_prims = {e.primitive for e in fwd_true_branch.eqns}
+    self.assertNotIn(lax.sin_p, false_prims)
+    self.assertNotIn(name_prim, false_prims)
+    self.assertIn(lax.sin_p, true_prims)
+    self.assertIn(name_prim, true_prims)
+    self.assertAllClose(
+        jax.grad(f, argnums=1)(True, 1.0),
+        jax.grad(inner)(1.0),
+        check_dtypes=False,
+    )
+    self.assertAllClose(
+        jax.grad(f, argnums=1)(False, 1.0),
+        1.0,
+        check_dtypes=False,
+    )
+
+  def test_cond_remat_dce_speculative_branch_residuals(self):
+    # Both branches have 100% live user code, but single-pass
+    # partial_eval_jaxpr_custom speculatively instantiates `a` as a residual
+    # when staging `a * 2.0` before seeing that `b` is saved.
+    checkpoint_name = ad_checkpoint.checkpoint_name
+    policy = checkpoint_policies.save_only_these_names('saved')
+
+    def true_fn(z):
+      a = checkpoint_name(jnp.sin(z), 'saved')
+      return jnp.sin(a)
+
+    def false_fn(z):
+      a = checkpoint_name(jnp.sin(z), 'saved')
+      b = checkpoint_name(a * 2.0, 'saved')
+      return jnp.sin(b)
+
+    @partial(jax.checkpoint, policy=policy)
+    def f(pred, x):
+      return lax.cond(pred, true_fn, false_fn, x).sum()
+
+    x = jnp.ones(4, dtype=jnp.float32)
+    for pred in (True, False):
+      expected = jax.grad(
+          lambda p, z: lax.cond(p, true_fn, false_fn, z).sum(), argnums=1
+      )(pred, x)
+      self.assertAllClose(jax.grad(f, argnums=1)(pred, x), expected)
+
+    if config.remat3.value:
+      # TODO(mattjj): remat3 saves `a` for false_fn too, since the remat code
+      # recomputes `a * 2.0` from it. Only the VJP-level DCE, which runs after
+      # the branches' residuals are merged, can tell that `a` isn't needed.
+      self.skipTest("remat3 doesn't prune per-branch residuals before merging")
+    res = ad_checkpoint.saved_residuals(f, True, x)
+    cond_res = [aval for aval, src in res if 'cond' in src]
+    # Each branch only needs 1 f32[4] residual (`a` in true_fn, `b` in false_fn),
+    # which should merge into 1 shared residual rather than 2.
+    self.assertLen(cond_res, 1)
 
 
 if __name__ == '__main__':

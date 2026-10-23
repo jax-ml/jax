@@ -935,12 +935,9 @@ class CompatTest(bctu.CompatTestBase):
     # with custom calls.
     for data, custom_call_targets_override in data:
       with mesh:
-        if jax.config.jax_use_shardy_partitioner:
-          self.run_one_test(
-              func, self.load_testdata(data["shardy"]),
-              expect_current_custom_calls=custom_call_targets_override)
-        else:
-          self.run_one_test(func, self.load_testdata(data["gspmd"]))
+        self.run_one_test(
+            func, self.load_testdata(data["shardy"]),
+            expect_current_custom_calls=custom_call_targets_override)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_platform={platform}", platform=platform)
@@ -984,14 +981,10 @@ class CompatTest(bctu.CompatTestBase):
     # the expected custom call targets for old test data that was serialized
     # with custom calls.
     for data, custom_call_targets_override in data:
-      if jax.config.jax_use_shardy_partitioner:
-        self.run_one_test(
-            func, self.load_testdata(data["shardy"]),
-            expect_current_custom_calls=custom_call_targets_override,
-            prepare_inputs=prepare_inputs)
-      else:
-        self.run_one_test(func, self.load_testdata(data["gspmd"]),
-                          prepare_inputs=prepare_inputs)
+      self.run_one_test(
+          func, self.load_testdata(data["shardy"]),
+          expect_current_custom_calls=custom_call_targets_override,
+          prepare_inputs=prepare_inputs)
 
   def test_tpu_stablehlo_dynamic_reduce_window_unary(self):
     # stablehlo.dynamic_reduce_window is used temporarily on TPU for a

@@ -260,6 +260,7 @@ absl::StatusOr<mlir::OpPassManager> GetPassPipeline(
     mosaic::gpu::registerLLVMAttrInsertionPass();
     mosaic::gpu::registerResolveTrivialLocationsPass();
     mosaic::gpu::registerGpuSinkMemRefDescriptorsPass();
+    mosaic::gpu::registerLowerMosaicGPUBarriersPass();
     mlir::arith::registerArithExpandOpsPass();
     mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
   });
@@ -276,6 +277,7 @@ absl::StatusOr<mlir::OpPassManager> GetPassPipeline(
           R"(
         builtin.module(
           mosaic-gpu-resolve-trivial-locations,
+          mosaic-gpu-lower-barriers,
           arith-expand,
           canonicalize,
           mosaic-gpu-sink-memref-descriptors,
@@ -1200,15 +1202,10 @@ absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
     const se::GpuComputeCapability* cc,
     const xla::cpu::TargetMachineOptions* cpu_target_machine_options,
     ffi::Dictionary attrs) {
-  ASSIGN_OR_RETURN(bool use_custom_barrier,
-                   attrs.get<bool>("use_custom_barrier"));
   ASSIGN_OR_RETURN(std::string_view kernel_hash,
                    attrs.get<std::string_view>("kernel_hash"));
   ASSIGN_OR_RETURN(std::string_view module,
                    attrs.get<std::string_view>("module"));
-  if (use_custom_barrier) {
-    return absl::UnimplementedError("Custom barrier is not supported on GPUs.");
-  }
   if (kernel_hash.size() != sizeof(KernelHash)) {
     return absl::InvalidArgumentError(
         absl::StrFormat("Kernel hash size is %d bytes, expected %d bytes",
@@ -1268,6 +1265,16 @@ bool ModuleUsesCollectiveMetadata(const xla::ffi::Dictionary& attrs) {
 
 bool ModuleSkipsDeviceBarrier(const xla::ffi::Dictionary& attrs) {
   return attrs.get<bool>("skip_device_barrier").value_or(false);
+}
+
+// Returns the collective ID of the module, if present. The presence of the
+// collective ID means that the module uses the clique barrier semaphores.
+std::optional<int64_t> GetCollectiveId(const xla::ffi::Dictionary& attrs) {
+  absl::StatusOr<int64_t> collective_id = attrs.get<int64_t>("collective_id");
+  if (!collective_id.ok()) {
+    return std::nullopt;
+  }
+  return *collective_id;
 }
 
 size_t GetCollectiveMetadataSize(size_t num_buffers, size_t num_devices) {
@@ -1457,10 +1464,13 @@ absl::Status MosaicGpuPrepare(
                    GetCliqueKey(*collective_params, attributes));
   ASSIGN_OR_RETURN(std::vector<std::vector<xla::GlobalDeviceId>> device_groups,
                    GetCliqueDeviceGroups(*collective_params, attributes));
+  const bool use_barrier_semaphores = GetCollectiveId(attributes).has_value();
   xla::gpu::CollectiveCliqueRequests::CliqueRequirements requirements;
   requirements.barrier_reqs =
-      xla::gpu::CollectiveCliqueRequests::BarrierRequirements();
-  requirements.barrier_reqs->use_cross_device_barrier = true;
+      xla::gpu::CollectiveCliqueRequests::BarrierRequirements{
+          .use_cross_device_barrier = true,
+          .use_barrier_semaphores = use_barrier_semaphores,
+      };
   RETURN_IF_ERROR(
       clique_requests->RequestClique(clique_key, device_groups, requirements));
   ASSIGN_OR_RETURN(std::vector<bool> collective_parameters,
@@ -1475,8 +1485,10 @@ absl::Status MosaicGpuPrepare(
     }
   }
 
+  const size_t num_metadata_buffers =
+      buffers.size() + (use_barrier_semaphores ? 1 : 0);
   const size_t metadata_size =
-      GetCollectiveMetadataSize(buffers.size(), clique_key.num_devices());
+      GetCollectiveMetadataSize(num_metadata_buffers, clique_key.num_devices());
   if (device_state.metadata_handle.is_null()) {
     XLA_VLOG_DEVICE(5, device_ordinal)
         << "Allocating device memory for Mosaic GPU collective metadata";
@@ -1525,12 +1537,24 @@ absl::Status MosaicGpuInitialize(
   XLA_VLOG_DEVICE(5, device_ordinal) << "MosaicGpuInitialize start";
   ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
                    GetBuffers(inputs, results));
+  const std::optional<int64_t> collective_id = GetCollectiveId(attributes);
+  // The layout of the param_to_peers table is:
+  //   [buffer 0 peers][buffer 1 peers]...[buffer N-1 peers][semaphore peers]
+  // where each group has num_devices entries. The barrier semaphore group is
+  // present only if the module uses barrier semaphores and it is addressed by
+  // the kernel with the parameter index buffers.size().
+  // NOTE: This differs from direct kernel parameters where the semaphore
+  // pointer follows the two collective metadata pointers.
+  const size_t num_metadata_buffers =
+      buffers.size() + (collective_id.has_value() ? 1 : 0);
 
-  std::vector<void*> parameter_multimem_addresses(buffers.size(), nullptr);
+  std::vector<void*> parameter_multimem_addresses(num_metadata_buffers,
+                                                  nullptr);
   ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
                    GetCliqueKey(*collective_params, attributes));
 
-  std::vector<void*> param_to_peers(buffers.size() * clique_key.num_devices());
+  std::vector<void*> param_to_peers(num_metadata_buffers *
+                                    clique_key.num_devices());
   ASSIGN_OR_RETURN(std::vector<bool> collective_memory_parameters,
                    ParseCollectiveMemoryParameters(attributes, buffers.size()));
   bool is_multimem_used =
@@ -1634,6 +1658,19 @@ absl::Status MosaicGpuInitialize(
     }
   }
 
+  if (collective_id.has_value()) {
+    ASSIGN_OR_RETURN(xla::gpu::GpuCommunicator * comm,
+                     collective_cliques->GetComm(clique_key, rank));
+    // Barrier semaphore peers are stored right after the kernel buffer peers.
+    const size_t parameter_offset = buffers.size() * clique_key.num_devices();
+    for (int peer_rank = 0; peer_rank < clique_key.num_devices(); ++peer_rank) {
+      ASSIGN_OR_RETURN(
+          se::DeviceAddressBase peer_semaphore,
+          comm->GetCliqueSemaphore(xla::RankId(peer_rank), *collective_id));
+      param_to_peers[parameter_offset + peer_rank] = peer_semaphore.opaque();
+    }
+  }
+
   DeviceState& device_state =
       GetDeviceState(resources, collective_params->local_device_id.value());
 
@@ -1650,7 +1687,7 @@ absl::Status MosaicGpuInitialize(
       parameter_multimem_addresses.size() * sizeof(void*);
 
   const size_t metadata_size =
-      GetCollectiveMetadataSize(buffers.size(), clique_key.num_devices());
+      GetCollectiveMetadataSize(num_metadata_buffers, clique_key.num_devices());
   device_state.metadata_bytes.resize(metadata_size);
   std::memcpy(device_state.metadata_bytes.data(), &metadata,
               sizeof(CollectiveKernelMetadata));
@@ -1680,11 +1717,81 @@ absl::Status MosaicGpuInitialize(
   return absl::OkStatus();
 }
 
-absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
-                             ffi::RemainingArgs inputs,
-                             ffi::RemainingRets results,
-                             CustomCallResources* resources,
-                             xla::ffi::Dictionary attributes) {
+// Collects input/output buffer pointers (plus device and host collective
+// metadata pointers when applicable), invokes `kernel->host_func` to populate
+// the kernel launch specification, and resolves the communicator for a
+// pre-launch multi-GPU barrier when required (or returns nullptr if no barrier
+// is needed).
+absl::StatusOr<
+    std::pair<mosaic::gpu::MosaicKernelSpec, xla::gpu::GpuCommunicator*>>
+BuildKernelSpec(const xla::gpu::CollectiveParams* collective_params,
+                const xla::gpu::CollectiveCliques* collective_cliques,
+                ffi::RemainingArgs inputs, ffi::RemainingRets results,
+                CompiledKernel* kernel, DeviceState& device_state,
+                xla::ffi::Dictionary attributes, int device_ordinal) {
+  ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
+                   GetBuffers(inputs, results));
+  bool uses_collective_metadata = ModuleUsesCollectiveMetadata(attributes);
+  std::vector<void*> buffer_ptrs;
+  buffer_ptrs.reserve(buffers.size() + (uses_collective_metadata ? 3 : 0));
+  for (const ffi::AnyBuffer& buffer : buffers) {
+    buffer_ptrs.push_back(buffer.untyped_data());
+  }
+
+  xla::gpu::GpuCommunicator* comm = nullptr;
+  // Adding a CPU version of the collective metadata for TMA initialization.
+  if (uses_collective_metadata) {
+    TF_RET_CHECK(collective_params != nullptr)
+        << "InternalError: collective_params is null";
+    ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
+                     GetCliqueKey(*collective_params, attributes));
+    auto current_rank =
+        clique_key.rank(collective_params->global_device_id).value();
+
+    se::DeviceAddressBase metadata_address =
+        device_state.metadata_handle.cref();
+    XLA_VLOG_DEVICE(6, device_ordinal)
+        << "Using collective metadata address: " << metadata_address.opaque()
+        << " clique_key: " << clique_key;
+
+    // Appending both the device and the host-side collective metadata.
+    // The host-side metadata is needed for TMA initialization.
+    buffer_ptrs.push_back(metadata_address.opaque());
+    buffer_ptrs.push_back(device_state.metadata_bytes.data());
+
+    // The resulting layout of buffer_ptrs is:
+    //   [buffer 0]...[buffer N-1][device metadata][host metadata][semaphore]
+    // where the trailing local barrier semaphore pointer is appended only if
+    // the module uses barrier semaphores (i.e. collective_id is set). Keep in
+    // sync with LaunchContext.barrier_semaphore in launch_context.py.
+    if (std::optional<int64_t> collective_id = GetCollectiveId(attributes)) {
+      ASSIGN_OR_RETURN(xla::gpu::GpuCommunicator * semaphore_comm,
+                       collective_cliques->GetComm(clique_key, current_rank));
+      ASSIGN_OR_RETURN(
+          se::DeviceAddressBase semaphore_address,
+          semaphore_comm->GetCliqueSemaphore(current_rank, *collective_id));
+      buffer_ptrs.push_back(semaphore_address.opaque());
+    }
+
+    if (!ModuleSkipsDeviceBarrier(attributes)) {
+      ASSIGN_OR_RETURN(comm,
+                       collective_cliques->GetComm(clique_key, current_rank));
+    }
+  }
+
+  TF_RET_CHECK(kernel->host_func != nullptr)
+      << "InternalError: build_kernel_spec is null";
+  mosaic::gpu::MosaicKernelSpec cfg;
+  kernel->host_func(&cfg, buffer_ptrs.data());
+  return std::make_pair(std::move(cfg), comm);
+}
+
+absl::Status MosaicGpuRecord(
+    se::Stream* stream, const xla::gpu::CollectiveParams* collective_params,
+    const xla::gpu::CollectiveCliques* collective_cliques,
+    ffi::RecordContext record_ctx, ffi::RemainingArgs inputs,
+    ffi::RemainingRets results, CustomCallResources* resources,
+    xla::ffi::Dictionary attributes) {
   tsl::profiler::TraceMe trace("MosaicGpuRecord");
   CompiledKernel* kernel = resources->kernel;
   const int device_ordinal = stream->parent()->device_ordinal();
@@ -1697,29 +1804,11 @@ absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
         << record_ctx.action();
   };
 
-  // Fall back to stream capture for paths the record API can't express as a
-  // single graph node: namely multimem kernels, because they have barriers.
-  // Execute then runs under stream capture.
-  if (ModuleUsesCollectiveMetadata(attributes) || kernel->is_nvshmem_used ||
-      kernel->is_multimem_used) {
-    XLA_VLOG_DEVICE(5, device_ordinal)
-        << "MosaicGpuRecord falling back to stream capture for "
-        << kernel->kernel_name;
-    return record_ctx.RequestStreamCapture();
-  }
-
-  ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
-                   GetBuffers(inputs, results));
-  std::vector<void*> buffer_ptrs;
-  buffer_ptrs.reserve(buffers.size());
-  for (const ffi::AnyBuffer& buffer : buffers) {
-    buffer_ptrs.push_back(buffer.untyped_data());
-  }
-
-  TF_RET_CHECK(kernel->host_func != nullptr)
-      << "InternalError: build_kernel_spec is null";
-  mosaic::gpu::MosaicKernelSpec cfg;
-  kernel->host_func(&cfg, buffer_ptrs.data());
+  DeviceState& device_state = GetDeviceState(resources, device_ordinal);
+  ASSIGN_OR_RETURN(
+      (auto [cfg, comm]),
+      BuildKernelSpec(collective_params, collective_cliques, inputs, results,
+                      kernel, device_state, attributes, device_ordinal));
 
   // Translate from MosaicKernelSpec to ffi::KernelArg.
   llvm::SmallVector<ffi::KernelArg, 8> kernel_args;
@@ -1746,10 +1835,16 @@ absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
        static_cast<int32_t>(cfg.cluster.z)}};
 
   if (record_ctx.action() == ffi::RecordAction::kCreate) {
-    const DeviceState& device_state = GetDeviceState(resources, device_ordinal);
     TF_RET_CHECK(device_state.kernel_handle != nullptr)
         << "InternalError: kernel_handle is null; MosaicGpuPrepare must run "
            "before MosaicGpuRecord";
+    llvm::SmallVector<const XLA_FFI_Command*, 1> dependencies;
+    if (comm != nullptr) {
+      ASSIGN_OR_RETURN(
+          const XLA_FFI_Command* barrier_cmd,
+          comm->RecordMultiGpuBarrier(record_ctx, /*cmd=*/nullptr));
+      dependencies.push_back(barrier_cmd);
+    }
     XLA_VLOG_DEVICE(5, device_ordinal)
         << "MosaicGpuRecord creating launch for " << kernel->kernel_name
         << " uses_pdl: " << cfg.uses_pdl << " grid: " << cfg.grid.x << ", "
@@ -1761,12 +1856,22 @@ absl::Status MosaicGpuRecord(se::Stream* stream, ffi::RecordContext record_ctx,
         .CreateLaunch(kernel->kernel_name.c_str(),
                       device_state.kernel_handle->function(),
                       /*kernel_size=*/0, ffi::SourceFormat::kFunctionPtr, dims,
-                      cfg.smem_bytes, /*uses_pdl=*/cfg.uses_pdl, kernel_args)
+                      cfg.smem_bytes, /*uses_pdl=*/cfg.uses_pdl, kernel_args,
+                      dependencies)
         .status();
   }
   TF_RET_CHECK(record_ctx.action() == ffi::RecordAction::kUpdate)
       << "InternalError: unexpected record action: "
       << static_cast<int>(record_ctx.action());
+  if (comm != nullptr) {
+    TF_RET_CHECK(record_ctx.commands().size() == 2)
+        << "InternalError: expected 2 commands in record context, got "
+        << record_ctx.commands().size();
+    RETURN_IF_ERROR(
+        comm->RecordMultiGpuBarrier(record_ctx, record_ctx.commands()[0])
+            .status());
+    return record_ctx.UpdateLaunch(record_ctx.commands()[1], kernel_args);
+  }
   TF_RET_CHECK(record_ctx.commands().size() == 1)
       << "InternalError: expected 1 command in record context, got "
       << record_ctx.commands().size();
@@ -1778,57 +1883,25 @@ absl::Status MosaicGpuExecute(
     const xla::gpu::CollectiveCliques* collective_cliques,
     ffi::RemainingArgs inputs, ffi::RemainingRets results,
     CustomCallResources* resources, xla::ffi::Dictionary attributes) {
-  std::vector<void*> buffer_ptrs;
-  ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
-                   GetBuffers(inputs, results));
-  bool uses_collective_metadata = ModuleUsesCollectiveMetadata(attributes);
-  buffer_ptrs.reserve(buffers.size() + (uses_collective_metadata ? 1 : 0));
-  for (const xla::ffi::AnyBuffer& buffer : buffers) {
-    buffer_ptrs.push_back(buffer.untyped_data());
-  }
-
   CompiledKernel* kernel = resources->kernel;
-
   cudaStream_t cuda_stream =
       reinterpret_cast<cudaStream_t>(stream->platform_specific_handle().stream);
   DeviceState& device_state =
       GetDeviceState(resources, collective_params->local_device_id.value());
   int device_ordinal = collective_params->global_device_id.value();
-  // Adding a CPU version of the collective metadata for TMA initialization.
-  if (uses_collective_metadata) {
-    ASSIGN_OR_RETURN(xla::gpu::GpuCliqueKey clique_key,
-                     GetCliqueKey(*collective_params, attributes));
-    auto current_rank =
-        clique_key.rank(collective_params->global_device_id).value();
 
-    se::DeviceAddressBase metadata_address =
-        device_state.metadata_handle.cref();
-    XLA_VLOG_DEVICE(6, device_ordinal)
-        << "Executing collective with metadata address: "
-        << metadata_address.opaque() << " clique_key: " << clique_key;
+  ASSIGN_OR_RETURN(
+      (auto [cfg, comm]),
+      BuildKernelSpec(collective_params, collective_cliques, inputs, results,
+                      kernel, device_state, attributes, device_ordinal));
 
-    // Appending both the device and the host-side collective metadata.
-    // The host-side metadata is needed for TMA initialization.
-    buffer_ptrs.push_back(metadata_address.opaque());
-    buffer_ptrs.push_back(device_state.metadata_bytes.data());
-
-    bool skip_device_barrier = ModuleSkipsDeviceBarrier(attributes);
-    if (!skip_device_barrier) {
-      ASSIGN_OR_RETURN(xla::gpu::GpuCommunicator * comm,
-                       collective_cliques->GetComm(clique_key, current_rank));
-
-      XLA_VLOG_DEVICE(6, device_ordinal)
-          << "Starting multi-GPU barrier with key: " << clique_key;
-      xla::gpu::GpuCollectives::Executor executor(stream);
-      RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(executor));
-      XLA_VLOG_DEVICE(6, device_ordinal)
-          << "Finished multi-GPU barrier with key: " << clique_key;
-    }
+  if (comm != nullptr) {
+    XLA_VLOG_DEVICE(6, device_ordinal) << "Starting multi-GPU barrier";
+    xla::gpu::GpuCollectives::Executor executor(stream);
+    RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(executor));
+    XLA_VLOG_DEVICE(6, device_ordinal) << "Finished multi-GPU barrier";
   }
 
-  void** buffers_data = buffer_ptrs.data();
-  mosaic::gpu::MosaicKernelSpec cfg;
-  kernel->host_func(&cfg, buffers_data);
   XLA_VLOG_DEVICE(5, device_ordinal)
       << "MosaicGpuExecute launching kernel with name: " << kernel->kernel_name
       << " uses_pdl: " << cfg.uses_pdl << " grid: " << cfg.grid.x << ", "
@@ -1894,6 +1967,8 @@ XLA_FFI_DEFINE_HANDLER(
     kMosaicGpuRecord, MosaicGpuRecord,
     xla::ffi::Ffi::BindRecord()
         .Ctx<ffi::Stream>()
+        .Ctx<ffi::CollectiveParams>()
+        .Ctx<ffi::CollectiveCliques>()
         .Ctx<ffi::Extension<ffi::RecordExtension>>()
         .RemainingArgs()
         .RemainingRets()
@@ -1903,9 +1978,9 @@ XLA_FFI_DEFINE_HANDLER(
 //  We expect the following attributes:
 // - kernel_hash: a hash of the kernel.
 // - module: the serialized MLIR module.
-// - use_custom_barrier
 // - skip_device_barrier (optional)
 // - uses_xla_collective_metadata (optional)
+// - collective_id (optional, enables barrier semaphores)
 XLA_FFI_DEFINE_HANDLER(
     kMosaicGpuExecute, MosaicGpuExecute,
     ffi::Ffi::BindExecute()

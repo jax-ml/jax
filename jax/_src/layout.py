@@ -15,13 +15,15 @@
 from __future__ import annotations
 from contextlib import contextmanager
 import enum
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
+from jax._src import config as jax_config
 from jax._src.dtypes import iinfo, issubdtype
 from jax._src.sharding import Sharding
 from jax._src.util import tuple_insert
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 
 config_ext = _jax.config
@@ -41,12 +43,22 @@ class LayoutMode(enum.Enum):
   PALLAS_TPU = enum.auto()
   PALLAS_GPU = enum.auto()
 
-layout_tracing_mode = config_ext.Config[Any](
-    'layout_tracing_mode',
-    LayoutMode.AUTO,
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
+if TYPE_CHECKING or jaxlib_extension_version >= 509:
+  layout_tracing_mode = config_ext.Config[Any](
+      'layout_tracing_mode',
+      LayoutMode.AUTO,
+      include_in_jit_key=True,
+      include_in_trace_context=True,
+      include_in_jaxpr_eqn_ctx=True,
+  )
+else:
+  layout_tracing_mode = config_ext.Config[Any](
+      'layout_tracing_mode',
+      LayoutMode.AUTO,
+      include_in_jit_key=True,
+      include_in_trace_context=True,
+  )
+  jax_config._jaxpr_eqn_ctx_configs.append(layout_tracing_mode)
 
 def get_layout_mode():
   return layout_tracing_mode.value

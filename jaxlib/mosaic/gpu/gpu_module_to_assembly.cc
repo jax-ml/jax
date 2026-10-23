@@ -47,7 +47,7 @@ limitations under the License.
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Target/LLVM/ModuleToObject.h"
-#include "jaxlib/mosaic/pass_boilerplate.h"
+#include "xla/mosaic/pass_boilerplate.h"
 #include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
 
 namespace mosaic {

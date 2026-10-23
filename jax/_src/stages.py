@@ -39,12 +39,14 @@ from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from jax._src import config
 from jax._src import core
+from jax._src import literals
 from jax._src import sharding as sharding_lib
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src.core import typeof
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
@@ -84,6 +86,10 @@ class Executable:
   def create_cpp_call(self, params: CompiledCallParams) -> Any:
     """Optionally constructs a fast c++ dispatcher."""
     return None
+
+  def shard_const_args(self, const_args: Sequence[ArrayLike]) -> list[ArrayLike]:
+    raise NotImplementedError(
+        f"sharding const_args unsupported on {type(self)}")
 
   def input_shardings(self) -> Sequence[sharding_lib.Sharding]:
     """Flat sequence of input shardings.
@@ -458,6 +464,8 @@ class Traced(Stage):
   def __call__(self, *args, **kwargs):
     args_flat = tree_util.tree_leaves_checked(self.in_tree, (args, kwargs))
     out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=self.jaxpr)
+    out_flat = [type(x).__base__(x) if type(x) in literals.typed_scalar_types  # pyrefly: ignore[not-callable]
+                else x for x in out_flat]
     return tree_unflatten(self.out_tree, out_flat)
 
   def closure_convert(self):
@@ -503,6 +511,16 @@ class Traced(Stage):
     traced._params = dict(traced._params, name=self.fun_name)
     traced._fun_sourceinfo = self._fun_sourceinfo
     return consts, traced
+
+  def _batch(self, axis_data, in_axes) -> tuple[Traced, tuple[Any, ...]]:
+    """Returns this Traced batched along `axis_data`, with its flattened
+    arguments batched along `in_axes` (one int or None each), and the batch
+    axes of its flattened results."""
+    in_axes = (None,) * len(self._consts) + tuple(in_axes)
+    new_jaxpr, out_axes = batching.batch_jaxpr2(self.jaxpr, axis_data, in_axes)
+    new_params = dict(self._params, jaxpr=new_jaxpr)
+    return Traced(list(new_jaxpr.in_avals), new_params, self._in_tree,
+                  self.out_tree, self._consts, self._fun_sourceinfo), out_axes
 
   def physicalize(self, ctx) -> Traced:
     new_jaxpr = ctx.physicalize_closed_jaxpr(self.jaxpr)
@@ -952,7 +970,8 @@ class Compiled(Stage):
     if self._call is None:
       self._call = self._executable.create_cpp_call(self._params)
       if self._call is None:
-        params = self._params
+        params = self._params._replace(
+            const_args=list(self._executable.shard_const_args(self._params.const_args)))
         def cpp_call_fallback(*args, **kwargs):
           outs, _, _ = Compiled.call(params, *args, **kwargs)
           return outs

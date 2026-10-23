@@ -1077,10 +1077,11 @@ def _while_constraint_system(
   return cs.ConstraintSystem(), value_sites_for_variable
 
 
+@_add_constraint_system_derivation_rule(scf.IfOp)
 @_add_constraint_system_derivation_rule(scf.IndexSwitchOp)
-def _index_switch_constraint_system(
+def _branching_op_constraint_system(
     ctx: DerivationContext,
-    op: scf.IndexSwitchOp,
+    op: scf.IfOp | scf.IndexSwitchOp,
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
   value_sites_for_variable: ValueSitesForVariable = {
@@ -1114,11 +1115,13 @@ def _layout_cast_constraint_system(
         f"compatible with the operand shape {operand.shape} in {op}."
     )
   bitwidth = utils.bitwidth(op.x.type.element_type)
+  # TODO(bchetioui): remove `getattr` once minimum jaxlib version is 0.12.0.
+  strict = bool(getattr(op, "strict", False))
   return (
       cs.ConstraintSystem(
           assignments={result_var: out_layout},
           constraints=[
-              cs.Relayout(operand_var, result_var, bitwidth, strict=False),
+              cs.Relayout(operand_var, result_var, bitwidth, strict=strict),
           ],
       ),
       {operand_var: [operand], result_var: [result]},
@@ -2254,6 +2257,48 @@ def _async_load_store_constraint_system(
   return cs.ConstraintSystem(constraints=constraints), value_sites_for_variable
 
 
+# TODO(slebedev): Remove ``hasattr`` once the minimum jaxlib version is >0.12.0.
+if hasattr(mgpu, "AsyncLoadIm2colOp"):
+  @_add_constraint_system_derivation_rule(mgpu.AsyncLoadIm2colOp)
+  def _async_load_im2col_constraint_system(
+      ctx: DerivationContext,
+      op: mgpu.AsyncLoadIm2colOp,
+  ) -> ConstraintSystemDerivationRuleResult:
+    dst_ty = ir.MemRefType(op.destination.type)
+    dst_strides, _ = dst_ty.get_strides_and_offset()
+    if any(
+        s != cs_stride and d != 1
+        for s, cs_stride, d in zip(
+            dst_strides,
+            utils.get_contiguous_strides(dst_ty.shape),
+            dst_ty.shape,
+            strict=True,
+        )
+    ):
+      raise ValueError(
+          "async_load_im2col requires the destination SMEM memref to be"
+          f" contiguous, got strides {dst_strides} for shape {dst_ty.shape}."
+      )
+    operand = ValueSite(op, VariableType.OPERAND, 1)
+    var = ctx.producer_ref(operand)
+    num_channels = dst_ty.shape[-1]
+    row_bytes = num_channels * utils.bitwidth(dst_ty.element_type) // 8
+    swizzle = (
+        cast(cs.Swizzle, row_bytes) if row_bytes in (32, 64, 128) else None
+    )
+    tiling: lc.TileTransform | None = None
+    if dst_ty.shape[-2] % 8 == 0:
+      tiling = lc.TileTransform((8, num_channels))
+    # The destination must have a single tile along the channel dimension.
+    # im2col TMA writes a row-major box, so the tiling must not reorder rows,
+    # and a swizzle must span exactly one row.
+    allowed = tuple(
+        cs.SMEMTransforms(t, s) for t in (tiling, None) for s in (swizzle, None)
+    )
+    constraints: list[cs.Constraint] = [cs.OneOf(expr=var, allowed=allowed)]
+    return cs.ConstraintSystem(constraints=constraints), {var: [operand]}
+
+
 @_add_constraint_system_derivation_rule(mgpu.AsyncPrefetchOp)
 def _async_prefetch_constraint_system(
     ctx: DerivationContext,
@@ -2668,6 +2713,7 @@ def _check_unsatisfiable_divisibility_constraints(
 
 def try_raise_constraint_specific_error(op: ir.OpView, constraint: cs.Constraint):
   # TODO(bchetioui): handle other constraint types.
+  msg: str | None = None
   match constraint:
     case cs.IsTransferableSmemRegisters(
         source=cs.RegisterLayout(value=reg_layout),
@@ -2693,12 +2739,33 @@ def try_raise_constraint_specific_error(op: ir.OpView, constraint: cs.Constraint
           )
       opt_str = "optimized " if optimized else ""
       msg = (
-          f"Failed to infer a possible set of layouts: no {opt_str}"
-          "SMEM <-> registers transfer plan could be synthesized for "
-          f"register layout {layouts_lib.pprint_layout(reg_layout)} and "
+          f"no {opt_str}SMEM <-> registers transfer plan could be synthesized "
+          f"for register layout {layouts_lib.pprint_layout(reg_layout)} and "
           f"{ref_str}"
       )
-      raise _construct_value_error_with_op_stacktrace(msg, op)
+    case cs.Relayout(
+        source=cs.RegisterLayout(value=source_layout),
+        target=cs.RegisterLayout(value=target_layout),
+    ):
+      msg = (
+          "cannot relayout from register layout "
+          f"{layouts_lib.pprint_layout(source_layout)} to "
+          f"{layouts_lib.pprint_layout(target_layout)}"
+      )
+    case cs.Equals(
+        lhs=cs.RegisterLayout(value=lhs_layout),
+        rhs=cs.RegisterLayout(value=rhs_layout),
+    ):
+      msg = (
+          "expected register layouts "
+          f"{layouts_lib.pprint_layout(lhs_layout)} and "
+          f"{layouts_lib.pprint_layout(rhs_layout)} to be equal"
+      )
+
+  if msg is not None:
+    raise _construct_value_error_with_op_stacktrace(
+        f"Failed to infer a possible set of layouts: {msg}", op
+    )
 
 
 def diagnose_unsatisfiable_system(
@@ -2879,11 +2946,12 @@ def infer_layout(
         "system for debugging, use `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM=1`."
     )
 
-  # TODO(bchetioui): we need to also insert these constraints into the
-  # `op_for_constraint` map, but it's not yet quite clear which operation to
-  # associate them with. Since we don't use them yet for precise error
-  # reporting, leave this for later.
   constraints = derive_relayout_constraints(ctx.value_sites_for_variable)
+  for constraint in constraints:
+    assert isinstance(constraint.target, cs.Variable)
+    ctx.op_for_constraint.setdefault(
+        constraint, constraint.target.key.operation
+    )
   global_constraint_system &= cs.ConstraintSystem(constraints=constraints)
   assert not isinstance(global_constraint_system, cs.Unsatisfiable)
 
@@ -2902,7 +2970,7 @@ def infer_layout(
       global_constraint_system
   )
 
-  dump_options = mgpu.get_or_set_dump_options(module)  # pyrefly: ignore[missing-attribute]
+  dump_options = mgpu.get_or_set_dump_options(module)
   if dump_options.constraint_system:
     utils.dump_to_file_or_stdout(
         str(global_constraint_system),

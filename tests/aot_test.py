@@ -13,19 +13,22 @@
 # limitations under the License.
 
 import contextlib
+import io
 import re
 import unittest
 from absl.testing import absltest
 import jax
-from jax import lax
+from jax._src import compilation_cache
 from jax._src import config
 from jax._src import core
+from jax._src import monitoring
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.serialize_executable import (
     deserialize_and_load,
     serialize,
+    _JaxPjrtPickler,
 )
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
@@ -123,9 +126,81 @@ class JaxAotTest(jtu.JaxTestCase):
       raise unittest.SkipTest('PJRT Topology not supported')
 
     topo = xc.get_topology_for_devices(aot_topo.devices)
+    ref_topo = xc.get_topology_for_devices(jax.devices())
     self.assertEqual(
         topo.platform_version, aot_topo.devices[0].client.platform_version
     )
+    self.assertEqual(topo.platform_version, ref_topo.platform_version)
+    if jax.devices()[0].platform != "gpu":
+      self.assertEqual(
+          aot_topo.devices[0].client.platform_version,
+          jax.devices()[0].client.platform_version,
+      )
+    self.assertEqual(topo.fingerprint(), ref_topo.fingerprint())
+
+  @jtu.run_on_devices('tpu')
+  @jtu.thread_unsafe_test()
+  def test_topology_persistent_compilation_cache(self):
+    compilation_cache.reset_cache()
+    self.addCleanup(compilation_cache.reset_cache)
+    cache_dir = self.create_tempdir().full_path
+    with (
+        jtu.global_config_context(jax_logging_level='DEBUG'),
+        config.enable_compilation_cache(True),
+        config.raise_persistent_cache_errors(True),
+        config.persistent_cache_min_compile_time_secs(0),
+        config.persistent_cache_min_entry_size_bytes(0),
+        config.compilation_cache_check_contents(False),
+        config.compilation_cache_dir(cache_dir),
+    ):
+      events = []
+      monitoring.register_event_listener(events.append)
+      self.addCleanup(monitoring.unregister_event_listener, events.append)
+
+      @jax.jit
+      def fn(x):
+        return x * x + 1.0
+
+      tpu_topo = topologies.get_attached_topology()
+      n = max(1, len(tpu_topo.devices) // 2)
+      mesh_shape = (len(tpu_topo.devices) // n, n)
+
+      # AOT compile on the CPU device targeting a compile-only TPU topology.
+      aot_topo = topologies.get_topology_desc(
+          platform=jax.devices()[0].platform
+      )
+      aot_mesh = topologies.make_mesh(aot_topo, mesh_shape, ('x', 'y'))
+      aot_sharding = jax.sharding.NamedSharding(aot_mesh, P('x', 'y'))
+      x_shape = jax.ShapeDtypeStruct(
+          shape=(16, 16), dtype=jnp.float32, sharding=aot_sharding
+      )
+      with jax.default_device(jax.devices('cpu')[0]):
+        compiled = fn.lower(x_shape).compile()
+
+      # Verify the executable targets the compile-only TPU devices and was cached.
+      self.assertEqual(aot_topo.devices[0].platform, 'tpu')
+      self.assertEqual(
+          aot_topo.devices[0].client.runtime_type, 'compile_only_runtime'
+      )
+      self.assertEqual(
+          compiled.output_shardings.device_set, set(aot_topo.devices)
+      )
+      self.assertEqual(events.count('/jax/compilation_cache/cache_misses'), 1)
+      self.assertEqual(events.count('/jax/compilation_cache/cache_hits'), 0)
+
+      # Clear the in-memory JIT cache and run on the real attached TPU devices.
+      fn.clear_cache()
+      tpu_mesh = topologies.make_mesh(tpu_topo, mesh_shape, ('x', 'y'))
+      tpu_sharding = jax.sharding.NamedSharding(tpu_mesh, P('x', 'y'))
+      x_np = np.arange(256, dtype=np.float32).reshape(16, 16)
+      x = jax.device_put(x_np, tpu_sharding)
+      result = fn(x)
+
+      # Verify the TPU run hit the persistent cache and executed on the TPUs.
+      self.assertEqual(events.count('/jax/compilation_cache/cache_misses'), 1)
+      self.assertEqual(events.count('/jax/compilation_cache/cache_hits'), 1)
+      self.assertEqual(result.sharding.device_set, set(jax.devices('tpu')))
+      self.assertArraysEqual(result, x_np * x_np + 1.0)
 
   def test_lower_as_text_with_and_without_debug_info(self):
     def my_function(x):
@@ -242,7 +317,7 @@ class JaxAotTest(jtu.JaxTestCase):
 
       @jax.jit
       def f(x):
-        return lax.convert_element_type(const, np.float32) + x
+        return const, x
 
     inp = np.arange(16., dtype=np.float32)
     with config.enable_x64(True) if lower else contextlib.nullcontext():
@@ -273,8 +348,9 @@ class JaxAotTest(jtu.JaxTestCase):
       self.assertLen(compiled._params.const_args, 0)
       self.assertLen(compiled._executable.in_avals, 1)
 
-    self.assertArraysEqual(run(),
-                           lax.convert_element_type(const, inp.dtype) + inp)
+    out_const, out_inp = run()
+    self.assertArraysEqual(out_const, const)
+    self.assertArraysEqual(out_inp, inp)
     # Trigger cache hit
     self.assertCacheMisses(run, cpp=0, aot_call=0)
 
@@ -288,6 +364,28 @@ class JaxAotTest(jtu.JaxTestCase):
     f_lowered = f.lower(1)
     with self.assertRaisesRegex(ValueError, 'serialize with a closed-over'):
       serialized, in_tree, out_tree = serialize(f_lowered.compile())
+
+  def test_deserialize_version_1_legacy(self):
+    @jax.jit
+    def f(x, y):
+      return x * 2 + y
+
+    x = np.arange(4, dtype=np.int32)
+    y = np.arange(4, dtype=np.int32) * 3
+    compiled = f.lower(x, y).compile()
+    unloaded_executable = getattr(compiled._executable, '_unloaded_executable', None)
+    args_info_flat, in_tree = jax.tree_util.tree_flatten(compiled.args_info)
+    out_tree = compiled.out_tree
+
+    # Simulate legacy unversioned 3-tuple format (version 1)
+    with io.BytesIO() as file:
+      _JaxPjrtPickler(file).dump((unloaded_executable, args_info_flat,
+                                  compiled._no_kwargs))
+      legacy_serialized = file.getvalue()
+
+    with self.assertRaisesRegex(ValueError, "Unexpected serialized version"):
+      deserialize_and_load(legacy_serialized, in_tree, out_tree,
+                           execution_devices=jax.devices()[:1])
 
   @jtu.run_on_devices('gpu', 'tpu')
   def test_mismatched_backends_raises(self):
@@ -441,6 +539,31 @@ class JaxAotTest(jtu.JaxTestCase):
     version_bytes = py_exec.get_executable_version()
     self.assertIsInstance(version_bytes, bytes)
     self.assertNotEmpty(version_bytes)
+
+  @jtu.run_on_devices('tpu')
+  def test_tpu_aot_memory_analysis_temp_size(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41166
+    if not jtu.is_libtpu_at_least('0.0.51'):
+      self.skipTest('Requires libtpu >= 0.0.51')
+    topo = topologies.get_topology_desc(
+        platform='tpu',
+        topology_name='v6e:2x2',
+        chips_per_host_bounds=(2, 2, 1),
+        num_slices=1,
+    )
+    sharding = jax.sharding.NamedSharding(
+        jax.sharding.Mesh(topo.devices, ('x',)), P('x')
+    )
+    compiled = (
+        jax.jit(lambda a: jnp.tanh(a @ a.T).sum(), in_shardings=sharding)
+        .lower(jax.ShapeDtypeStruct((128, 128), jnp.float32, sharding=sharding))
+        .compile()
+    )
+    stats = compiled.memory_analysis()
+    self.assertIsNotNone(stats)
+    self.assertGreater(stats.temp_size_in_bytes, 0)
+    self.assertLessEqual(stats.temp_size_in_bytes, stats.total_allocation_bytes)
+    self.assertEqual(stats.temp_size_in_bytes % (16 * 1024), 0)
 
 
 if __name__ == '__main__':

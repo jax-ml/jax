@@ -278,6 +278,30 @@ class XlaBridgeTest(jtu.JaxTestCase):
     ):
       config.update("jax_num_cpu_devices", current_val + 2)
 
+  def test_proxy_backend_is_registered(self):
+    registration = xb._backend_factories["proxy"]
+    self.assertEqual(registration.priority, -1)
+    self.assertTrue(registration.fail_quietly)
+
+  def test_make_ifrt_proxy_client_requires_backend_target(self):
+    with mock.patch.object(xb.BACKEND_TARGET, "value", ""):
+      with self.assertRaisesRegex(RuntimeError, "JAX_BACKEND_TARGET"):
+        xb.make_ifrt_proxy_client()
+
+  def test_make_ifrt_proxy_client(self):
+    mock_client = mock.Mock()
+    with (
+        mock.patch.object(xb.BACKEND_TARGET, "value", "grpc://localhost:1234"),
+        mock.patch.object(
+            xb.ifrt_proxy, "get_client", return_value=mock_client
+        ) as mock_get_client,
+    ):
+      self.assertIs(xb.make_ifrt_proxy_client(), mock_client)
+    mock_get_client.assert_called_once()
+    (target, options), _ = mock_get_client.call_args
+    self.assertEqual(target, "grpc://localhost:1234")
+    self.assertIsInstance(options, xb.ifrt_proxy.ClientConnectionOptions)
+
 
 class GetBackendTest(jtu.JaxTestCase):
 
@@ -435,6 +459,44 @@ class GetBackendTest(jtu.JaxTestCase):
       "not all JAX functionality may be correctly supported!",
       logs.output
     )
+
+  def _register_proxy_factory(self):
+    xb.register_backend_factory("proxy", xb.make_ifrt_proxy_client,
+                                priority=-1)
+
+  def test_proxy_backend_not_default_without_backend_target(self):
+    self._register_proxy_factory()
+    with mock.patch.object(xb.BACKEND_TARGET, "value", ""):
+      backend = xb.get_backend()
+    self.assertEqual(backend.platform, "cpu")
+    self.assertNotIn("proxy", xb._backends)
+    self.assertIn("JAX_BACKEND_TARGET", xb._backend_errors["proxy"])
+
+  def test_proxy_backend_requested_without_backend_target(self):
+    self._register_proxy_factory()
+    with (
+        config.jax_platforms("proxy"),
+        mock.patch.object(xb.BACKEND_TARGET, "value", ""),
+    ):
+      with self.assertRaisesRegex(
+          RuntimeError,
+          "Unable to initialize backend 'proxy': .*JAX_BACKEND_TARGET"):
+        xb.get_backend()
+
+  def test_proxy_backend_requested(self):
+    self._register_proxy_factory()
+    proxy_backend = self._DummyBackend("tpu", device_count=8)
+    with (
+        config.jax_platforms("proxy"),
+        mock.patch.object(xb.BACKEND_TARGET, "value", "grpc://localhost:1234"),
+        mock.patch.object(
+            xb.ifrt_proxy, "get_client", return_value=proxy_backend
+        ) as mock_get_client,
+    ):
+      self.assertIs(xb.get_backend(), proxy_backend)
+      self.assertIs(xb.get_backend("proxy"), proxy_backend)
+    mock_get_client.assert_called_once()
+    self.assertEqual(mock_get_client.call_args.args[0], "grpc://localhost:1234")
 
 
 if __name__ == "__main__":

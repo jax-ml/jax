@@ -698,10 +698,11 @@ def ragged_all_to_all(
   written on their corresponding receivers. The sizes of received slices are
   indicated by ``recv_sizes``. See below for details.
 
-  The arrays ``input_offsets``, ``send_sizes``,``output_offsets``, and
+  The arrays ``input_offsets``, ``send_sizes``, ``output_offsets``, and
   ``recv_sizes`` must all be the same length, and that length must be divisible
-  by the size of the mapped axis ``axis_name``. Moreover, ``send_sizes`` and
-  ``recv_sizes`` must satisfy::
+  by the size of the mapped axis ``axis_name``, or by the group size when
+  ``axis_index_groups`` is given. Moreover, ``send_sizes`` and ``recv_sizes``
+  must satisfy::
 
     jnp.all(send_sizes == jax.lax.all_to_all(recv_sizes, axis_name, 0, 0, tiled=True))
 
@@ -764,6 +765,12 @@ def ragged_all_to_all(
     axis index 1:
       result = [2, 2, 4, 0]
 
+  Reverse-mode differentiation with respect to ``operand`` assumes that the sent
+  slices ``operand[input_offsets[i]:input_offsets[i]+send_sizes[i]]`` don't
+  overlap, i.e. that each row of ``operand`` is sent at most once. If slices
+  overlap, the gradient for a row sent more than once is the cotangent of only
+  one of its copies, rather than their sum.
+
   Args:
     operand: data array of shape (N, A, B, ...) representing concatenated
       (possibly padded) ragged data to be sent.
@@ -781,7 +788,8 @@ def ragged_all_to_all(
       an axis of size 4, [[0, 1], [2, 3]] would run ragged all to all over the
       first two and last two replicas). Groups must cover all axis indices
       exactly once, and all groups must be the same size. Otherwise, the
-      behavior is undefined.
+      behavior is undefined. With groups, the ``all_to_all`` expressions in
+      this docstring also take ``axis_index_groups``.
 
   Returns:
     Array of shape (M, A, B, ...) with the same value as the ``output`` except
@@ -794,9 +802,10 @@ def ragged_all_to_all(
     axis_name = (axis_name,)
 
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
-  return ragged_all_to_all_p.bind(operand, output, input_offsets, send_sizes,
-                                  output_offsets, recv_sizes,
-                                  axis_name=axis_name,
+  operand = insert_collective_pvary(axis_name, operand)
+  args = core.auto_insert_reshard(operand, output, input_offsets, send_sizes,
+                                  output_offsets, recv_sizes)
+  return ragged_all_to_all_p.bind(*args, axis_name=axis_name,
                                   axis_index_groups=axis_index_groups)
 
 
@@ -983,7 +992,6 @@ def _device_list_replica_groups_hlo(
 def _try_mesh_axes_replica_group(ctx, axis_names, axis_index_groups):
   axis_ctx = ctx.module_context.axis_context
   if (config.use_rgv3.value
-      and config.use_shardy_partitioner.value
       and axis_index_groups is None
       and isinstance(axis_ctx, SPMDAxisContext)
       and axis_ctx.mesh.size > 1):
@@ -1039,14 +1047,20 @@ def _pmin_pmax_abstract_eval(name, aval, *, axes, axis_index_groups):
         aval, axes=axes, axis_index_groups=axis_index_groups)
   return _psum_invariant_abstract_eval(name, aval, axes=axes)
 
-def _check_axis_names(axes, api_name):
+def _check_axis_names(axes, api_name, check_no_collectives=True):
   named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
   axis_env = core.get_axis_env()
+  forbidden_axes = config.no_collectives.value if check_no_collectives else ()
   for name in named_axes:
     if not axis_env.axis_exists(name):
       raise NameError(
           f"Found an unbound axis name: {name}. To fix this, please call"
           f" {api_name} under `jax.shard_map`.")
+    if name in forbidden_axes:
+      raise core.ForbiddenCollectiveError(
+          f"Collective across axis '{name}' is forbidden by `no_collectives`,"
+          f" but `{api_name}` acts on axis '{name}'."
+      )
 
 def _lower_reducer_into_block(ctx, prim, scalar_aval, block):
   with ir.InsertionPoint(block):
@@ -1658,8 +1672,6 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis,
 def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
                                    axis_name, split_axis, concat_axis,
                                    axis_index_groups, tiled):
-  if axis_index_groups is not None:
-    raise NotImplementedError("Please open a feature request!")
   x, = vals_in
   d, = dims_in
   axis_size, frame_name = axis_data.size, axis_data.name
@@ -1673,6 +1685,8 @@ def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
     return _all_to_all_batcher(
       vals_in, dims_in, axis_name=axis_name, split_axis=split_axis,
       concat_axis=concat_axis, axis_index_groups=axis_index_groups, tiled=tiled)
+  if axis_index_groups is not None:
+    raise NotImplementedError("Please open a feature request!")
 
   if d is None:
     # TODO(sharadmv,apaszke): Remove this broadcast that comes from
@@ -1800,7 +1814,7 @@ def _ragged_all_to_all_effectful_abstract_eval(
     operand, output, input_offsets, send_sizes, output_offsets, recv_sizes,
     axis_name, axis_index_groups
 ):
-  del operand, axis_index_groups
+  del axis_index_groups
   if not dtypes.issubdtype(input_offsets.dtype, np.integer):
     raise ValueError("ragged_all_to_all input_offsets must be integer type.")
   if not dtypes.issubdtype(send_sizes.dtype, np.integer):
@@ -1831,7 +1845,13 @@ def _ragged_all_to_all_effectful_abstract_eval(
     )
 
   _check_axis_names(axis_name, 'ragged_all_to_all')
-  out_aval = output.update(shape=output.shape, weak_type=False)
+  check_unreduced_args([operand, output], axis_name, 'ragged_all_to_all')
+  collective_vma_rule('ragged_all_to_all', axis_name, operand)
+  vma = core.standard_vma_rule('ragged_all_to_all', operand, output,
+                               input_offsets, send_sizes, output_offsets,
+                               recv_sizes)
+  out_aval = output.update(shape=output.shape, weak_type=False,
+                           manual_axis_type=output.mat.update(varying=vma))
   effects = {*map(core.NamedAxisEffect, axis_name)}
   return out_aval, effects
 
@@ -1855,18 +1875,25 @@ def _ragged_all_to_all_transpose(
   if type(t) is ad.Zero:
     operand_t = ad.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
     output_t = ad.Zero(output.aval) if ad.is_undefined_primal(output) else None
-  else:
-    zero = ad.zeros_like_aval(operand.aval)
-    output_offsets_ = all_to_all(output_offsets, axis_name, 0, 0, tiled=True)
-    input_offsets_ = all_to_all(input_offsets, axis_name, 0, 0, tiled=True)
+    return [operand_t, output_t] + [None] * 4
+  operand_t = output_t = None
+  output_offsets_ = all_to_all(output_offsets, axis_name, 0, 0, tiled=True,
+                               axis_index_groups=axis_index_groups)
+  if ad.is_undefined_primal(operand):
+    input_offsets_ = all_to_all(input_offsets, axis_name, 0, 0, tiled=True,
+                                axis_index_groups=axis_index_groups)
     operand_t = ragged_all_to_all_p.bind(
-        t, zero, output_offsets_, recv_sizes, input_offsets_, send_sizes,
-        axis_name=axis_name, axis_index_groups=axis_index_groups)
+        t, ad.zeros_like_aval(operand.aval), output_offsets_, recv_sizes,
+        input_offsets_, send_sizes, axis_name=axis_name,
+        axis_index_groups=axis_index_groups)
+  if ad.is_undefined_primal(output):
+    # Count the updates covering each row of t. Starts must be added, not set,
+    # because an empty update starts and ends on the same row, which may also be
+    # the start of another update.
     mask = control_flow.cumsum(
-        lax.full(t.shape[0], 0, dtype='int32').at[output_offsets_].set(1)
-        .at[output_offsets_ + recv_sizes].add(-1))
-    mask = lax.expand_dims(mask, (*range(1, t.ndim),))
-    mask = lax.broadcast_in_dim(mask, shape=t.shape, broadcast_dimensions=tuple(range(t.ndim)))
+        lax.full(t.shape[0], 0, dtype='int32').at[output_offsets_].add(1)
+        .at[output_offsets_ + recv_sizes].add(-1)) > 0
+    mask = lax.broadcast_in_dim(mask, shape=t.shape, broadcast_dimensions=(0,))
     output_t = lax.select(mask, lax._zeros(t), t)
   return [operand_t, output_t] + [None] * 4
 
@@ -1878,14 +1905,13 @@ def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
     return out, None
   if axis_data.name in axis_name:
     raise NotImplementedError("Please open a feature request!")
-  if axis_index_groups:
-    raise NotImplementedError("Please open a feature request!")
   size = axis_data.size
 
   def bdim_at_second(x, d):
+    if d is None:
+      return batching.broadcast(x, size, 1, None)
     assert x.ndim == 2
-    return (batching.broadcast(x, size, 1, None) if d is None else
-            x if d == 1 else x.T)
+    return x if d == 1 else x.T
   def merge(x): return x.reshape(-1, *x.shape[2:])
   def split(x): return x.reshape(size, -1, *x.shape[1:])
 
@@ -1895,8 +1921,11 @@ def _ragged_all_to_all_batched_collective(axis_data, vals_in, dims_in,
       map(bdim_at_second, vals_in[2:], dims_in[2:])
   input_offsets += lax.iota(input_offsets.dtype, size)[None, :] * N
   output_offsets += lax.iota(output_offsets.dtype, size)[None, :] * M
+  # Merging batch element b of slot i into slot i * size + b keeps the slot's
+  # destination, with or without axis_index_groups.
   vals_in = operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
-  result = split(ragged_all_to_all(*map(merge, vals_in), axis_name=axis_name))
+  result = split(ragged_all_to_all(*map(merge, vals_in), axis_name=axis_name,
+                                   axis_index_groups=axis_index_groups))
   return result, 0
 
 def _ragged_all_to_all_impl(*args, **kwargs):
@@ -1999,13 +2028,13 @@ def _all_gather_is_async(x, axis_name, *, axis_index_groups=None, axis=0,
     raise ValueError(
         "Got unexpected `to` value for `jax.lax.all_gather`. Allowed `to`"
         f" values are: {_allowed_ag_to}")
-  if to == 'varying':
+  if to == 'varying' or not config._check_vma.value:
     return _all_gather(x, axis_name, axis_index_groups=axis_index_groups,
                        axis=axis, tiled=tiled, is_async=is_async)
   elif to == 'invarying':
     if axis_index_groups is not None:
       raise NotImplementedError
-    return all_gather_invariant(x, axis_name, axis=axis, tiled=tiled)
+    return _all_gather_invariant(x, axis_name, axis=axis, tiled=tiled)
   else:
     assert to == 'reduced'
     if axis_index_groups is not None:
@@ -2187,23 +2216,7 @@ batching.fancy_primitive_batchers[all_gather_p] = partial(
     _all_gather_batched_collective, all_gather_p)
 
 
-def all_gather_invariant(x, axis_name, *, axis: int = 0, tiled: bool = False):
-  """Gather values of x across all replicas.
-
-  If ``x`` is a pytree then the result is equivalent to mapping this function to
-  each leaf in the tree.
-
-  all_gather_invariant differs from all_gather in the following ways:
-
-  * all_gather_invariant is Varying -> Invariant.
-    For example: `out: f32[8] = all_gather_invariant(inp: f32[4]{V: x}, 'x')`
-    where the size of mesh axis `x` is 2.
-    While all_gather is Varying -> Varying.
-
-  * all_gather_invariant transposes to dynamic_slice which is
-    Invariant -> Varying. While all_gather transposes to reduce_scatter
-    which is Varying -> Varying.
-  """
+def _all_gather_invariant(x, axis_name, *, axis, tiled):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if not axis_name:
@@ -2606,7 +2619,7 @@ def _axis_index_lowering(ctx, *, axis_name):
 def _axis_index_effectful_abstract_eval(*, axis_name):
   effect = {core.NamedAxisEffect(axis_name)}
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
-  _check_axis_names(axis_name, 'axis_index')
+  _check_axis_names(axis_name, 'axis_index', check_no_collectives=False)
   mesh = get_abstract_mesh()
   sharding = NamedSharding(mesh, P())
   vma = ((frozenset(axis_name) if mesh._any_axis_manual else frozenset())
@@ -2691,7 +2704,7 @@ core.pvary_p.def_impl(partial(_raise_valueerror, 'pvary'))
 mlir.register_lowering(core.pvary_p, lambda ctx, x, *, axes: [x])
 
 def _pvary_abstract_eval(aval, *, axes):
-  _check_axis_names(axes, 'pvary')
+  _check_axis_names(axes, 'pvary', check_no_collectives=False)
   check_unreduced_args([aval], axes, 'pvary')
   assert isinstance(axes, tuple)
   if set(axes).intersection(aval.mat.varying):
@@ -3035,7 +3048,7 @@ mlir.register_lowering(preduced_p, lambda ctx, x, *, axes: [x])
 
 def _preduced_abstract_eval(aval, *, axes):
   assert isinstance(axes, tuple)
-  _check_axis_names(axes, 'preduced')
+  _check_axis_names(axes, 'preduced', check_no_collectives=False)
   if aval.mat.varying.intersection(set(axes)):
     raise ValueError(
         "preduced is a Invariant->Reduced collective. This means that the"
@@ -3083,7 +3096,7 @@ mlir.register_lowering(vary_unreduced_cast_p, lambda ctx, x, *, axes: [x])
 
 def _vary_unreduced_cast_abstract_eval(aval, *, axes):
   assert isinstance(axes, tuple)
-  _check_axis_names(axes, 'vary_unreduced_cast')
+  _check_axis_names(axes, 'vary_unreduced_cast', check_no_collectives=False)
   check_unreduced_args([aval], axes, 'vary_unreduced_cast')
   if not aval.mat.varying:
     raise ValueError('vary_unreduced_cast only accepts inputs that are'
@@ -3126,7 +3139,7 @@ mlir.register_lowering(core.reduced_vary_cast_p, lambda ctx, x, *, axes: [x])
 
 def _reduced_vary_cast_abstract_eval(aval, *, axes):
   assert isinstance(axes, tuple)
-  _check_axis_names(axes, 'reduced_vary_cast')
+  _check_axis_names(axes, 'reduced_vary_cast', check_no_collectives=False)
   if not aval.mat.reduced:
     raise ValueError('reduced_vary_cast only accepts inputs that are'
                      f' reduced. Got {aval.str_short(True)}')

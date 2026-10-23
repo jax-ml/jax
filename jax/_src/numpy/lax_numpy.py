@@ -1060,10 +1060,10 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                      f"of {D} pairs or Nones; got {range=}")
 
   try:
-    bins_per_dimension = list(bins)  # pyrefly: ignore[bad-argument-type]
+    bins_per_dimension: Sequence[ArrayLike] = list(bins)  # pyrefly: ignore[bad-argument-type]
   except TypeError:
     # when bin_size is integer, the same bin is used for each dimension
-    bins_per_dimension: list[ArrayLike] = D * [bins]  # pyrefly: ignore[bad-assignment]
+    bins_per_dimension = D * [bins]  # pyrefly: ignore[bad-assignment]
   else:
     if len(bins_per_dimension) != D:
       raise ValueError("should be a bin for each dimension.")
@@ -2487,7 +2487,8 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
     destination: index or indices of the axes destinations
 
   Returns:
-    Copy of ``a`` with axes moved from ``source`` to ``destination``.
+    Copy of ``a`` with axes moved from ``source`` to ``destination``, or ``a``
+    itself if no axis moves.
 
   Notes:
     Unlike :func:`numpy.moveaxis`, :func:`jax.numpy.moveaxis` will return a copy rather
@@ -2523,8 +2524,13 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
     (4, 5, 3, 2)
   """
   arr = util.ensure_arraylike("moveaxis", a)
-  return _moveaxis(arr, _ensure_index_tuple(source),
-                   _ensure_index_tuple(destination))
+  source = tuple(_canonicalize_axis(i, np.ndim(arr))
+                 for i in _ensure_index_tuple(source))
+  destination = tuple(_canonicalize_axis(i, np.ndim(arr))
+                      for i in _ensure_index_tuple(destination))
+  if source == destination and len(set(source)) == len(source):
+    return arr  # nothing moves, so don't apply even an identity transpose
+  return _moveaxis(arr, source, destination)
 
 @api.jit(static_argnames=('source', 'destination'), inline=api.Inline.JAX_EARLY)
 def _moveaxis(a: Array, source: tuple[int, ...], destination: tuple[int, ...]) -> Array:
@@ -6161,15 +6167,12 @@ def i0(x: ArrayLike) -> Array:
 @partial(custom_jvp, nondiff_argnums=(0,))
 def _i1_maclaurin(k: int, x: Array) -> Array:
   # compute the kth derivative of i1 evaluated near zero using a two-term
-  # Maclaurin series.
-  if k % 2 == 0:
-    m = (k + 1) // 2
-    c = math.comb(k + 1, m) / (2 ** (k + 1))
-    return lax.mul(lax._const(x, c), x)
-  else:
-    m = k // 2
-    c = math.comb(k, m) / (2 ** k)
-    return lax.full_like(x, c)
+  # Maclaurin series, i.e. the terms a(k+j) x^j / j! for the two smallest j
+  # with a(k+j) = i1^(k+j)(0) nonzero.
+  a = lambda n: math.comb(n, n // 2) / 2 ** n / math.factorial(n - k)
+  j = 1 - k % 2
+  p = lax.add(lax._const(x, a(k + j)), lax.mul(lax._const(x, a(k + j + 2)), lax.mul(x, x)))
+  return lax.mul(p, x) if j else p
 
 @_i1_maclaurin.defjvp
 def _i1_maclaurin_jvp(k: int, primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:

@@ -88,13 +88,13 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
-#include "xla/python/version.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace jax {
 namespace {
@@ -489,22 +489,12 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     const std::vector<nb::object>& in_device_local_layouts,
     const nb::callable& shard_arg_fallback,
     std::vector<nb::object>& keep_alive_objects) {
-#if JAX_IFRT_VERSION_NUMBER >= 73
   std::optional<xla::ifrt::DeviceListRef> devices =
       executable.ifrt_loaded_executable()->devices();
   const absl::Span<xla::ifrt::Device* const> addressable_devices =
       devices.has_value() ? (*devices)->AddressableDeviceList()->devices()
                           : absl::Span<xla::ifrt::Device* const>();
-#else
-  const auto& addressable_devices =
-      executable.ifrt_loaded_executable()->addressable_devices();
-#endif
-#if JAX_IFRT_VERSION_NUMBER >= 74
   const int num_global_devices = devices.has_value() ? (*devices)->size() : 1;
-#else
-  const auto& num_global_devices =
-      executable.ifrt_loaded_executable()->num_devices();
-#endif
   int num_args = flat_dynamic_args.size();
 
   std::vector<xla::ifrt::ArrayRef> num_args_arrays;
@@ -523,16 +513,9 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
   options.squash_64bit_types = !enable_x64;
   options.allow_zero_copy = true;
   xla::ifrt::Device* data_device = nullptr;
-#if JAX_IFRT_VERSION_NUMBER >= 74
   if (num_global_devices == 1 && !addressable_devices.empty()) {
     data_device = addressable_devices[0];
   }
-#else
-  if (executable.ifrt_loaded_executable()->num_devices() == 1 &&
-      !addressable_devices.empty()) {
-    data_device = addressable_devices[0];
-  }
-#endif
   int dce_i = 0;
   for (int i = 0; i < num_args; ++i) {
     if (!kept_args[i]) {
@@ -680,6 +663,10 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // Calls the cache_miss_ function. This just calls the Python function; it may
   // return nullptr value if a Python exception is thrown.
   auto cache_miss = [&]() -> nb::tuple {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode("PjitFunction::Call::CacheMissPython",
+                                          {{"function", function_name_}});
+    });
     return nb::steal<nb::tuple>(
         PyObject_Vectorcall(cache_miss_.ptr(), args, nargs, kwnames));
   };
@@ -687,7 +674,15 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // Call the cache_miss() function, extracting the output data and ignoring
   // the fastpath data. If the cache miss returns a Python error, returns
   // nullptr and leaves the Python error set.
-  auto fallback_to_cache_miss = [&]() {
+  //
+  // `reason` records why the C++ fastpath was abandoned, so that a profile
+  // makes it obvious which check pushed the call back into Python. Each caller
+  // passes a distinct, stable literal.
+  auto fallback_to_cache_miss = [&](std::string_view reason) {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode(
+          "PjitFunction::Call::FallbackToPython", {{"reason", reason}});
+    });
     nb::tuple cache_miss_output = cache_miss();
     if (!cache_miss_output.ptr()) {
       return nb::object();
@@ -709,7 +704,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
       pytree_registry_.get(), call_signature.arg_signature, flat_dynamic_args);
   if (!status.ok()) {
     VLOG(2) << "ParseArguments failed: " << status;
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("parse_arguments_failed");
   }
 
   // Perform a few checks for the arguments. Currently we are only allowing
@@ -734,7 +729,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     if (!py_array.committed() && sharding_num_devices > 1) {
       VLOG(2) << "PyArray argument is not committed and number of global "
                  "devices is more than 1; fallback to python.";
-      return fallback_to_cache_miss();
+      return fallback_to_cache_miss("uncommitted_multi_device_array");
     }
   }
 
@@ -742,7 +737,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   status = ComputeCallSignature(flat_dynamic_args, enable_x64, call_signature);
   if (!status.ok()) {
     VLOG(2) << "ComputeCallSignature failed: " << status;
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("compute_call_signature_failed");
   }
 
   VLOG(2) << "CallSignature:\n" << call_signature.DebugString();
@@ -812,7 +807,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
 
   if (cache_entry->fall_back_to_python) {
     VLOG(2) << "cpp pjit fallback to python.";
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("cache_entry_fall_back_to_python");
   }
 
   absl::InlinedVector<PyArgSignature, 2> dynamic_arg_signatures;
@@ -845,7 +840,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
 
   if (!num_args_arrays.ok()) {
     VLOG(2) << "Failed to prepare IFRT inputs: " << num_args_arrays.status();
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("prepare_ifrt_inputs_failed");
   }
 
   xla::ifrt::ExecuteOptions execute_options =
@@ -901,11 +896,9 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // If there is a post-hook function, call it with the inputs and the outputs.
   std::optional<nb::object> post_hook = GetPostHook();
   if (post_hook) {
-    nb::tuple args_tuple =
-        nb::steal<nb::tuple>(PyTuple_New(num_positional_args));
+    nb::tuple_builder args_tuple(num_positional_args);
     for (size_t i = 0; i < num_positional_args; ++i) {
-      Py_INCREF(args[i]);
-      PyTuple_SET_ITEM(args_tuple.ptr(), i, args[i]);
+      args_tuple.put(nb::handle(args[i]));
     }
     nb::dict kwargs;
     if (kwnames) {
@@ -914,7 +907,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
             nb::borrow(args[num_positional_args + i]);
       }
     }
-    (*post_hook)(nb::handle(callable.ptr()), args_tuple, kwargs,
+    (*post_hook)(nb::handle(callable.ptr()), args_tuple.commit(), kwargs,
                  nb::handle(out.ptr()));
   }
 

@@ -57,7 +57,13 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
         https://github.com/scipy/scipy/blob/ef2dee592ba8fb900ff2308b9d1c79e4d6a0ad8b/scipy/special/cdflib/betaln.f
     """
     a, b = promote_args_inexact("betaln", a, b)
-    a, b = jnp.minimum(a, b), jnp.maximum(a, b)
-    small_b = lax.lgamma(a) + (lax.lgamma(b) - lax.lgamma(a + b))
-    large_b = lax.lgamma(a) + algdiv(a, b)
-    return jnp.where(b < 8, small_b, large_b)
+    # Use jnp.where instead of jnp.minimum/maximum to ensure correct gradients
+    # at the boundary where a == b. With jnp.where, the gradient flows through
+    # only one branch, avoiding the 0.5/0.5 gradient split that causes issues
+    # with higher-order derivatives.
+    new_a = jnp.where(a <= b, a, b)
+    new_b = jnp.where(a <= b, b, a)
+    lgamma_a = lax.lgamma(new_a)
+    small_b = lgamma_a + (lax.lgamma(new_b) - lax.lgamma(new_a + new_b))
+    large_b = lgamma_a + algdiv(new_a, new_b)
+    return jnp.where(new_b < 8, small_b, large_b)

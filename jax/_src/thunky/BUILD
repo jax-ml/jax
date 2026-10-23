@@ -14,24 +14,34 @@
 
 load(
     "//jaxlib:jax.bzl",
-    "jax_multiplatform_test",
     "py_deps",
+    "pytype_strict_library",
 )
-
-licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//visibility:private"],
+    default_visibility = [
+        "//jax:internal",
+    ],
 )
 
-jax_multiplatform_test(
-    name = "ragged_dot_test",
-    srcs = ["ragged_dot_test.py"],
-    enable_backends = ["gpu"],
+pytype_strict_library(
+    name = "thunky",
+    srcs = [
+        "__init__.py",
+        "thunky.py",
+    ],
     deps = [
-        "//jax/_src:lax_reference",
-        "//jax/_src/lax/pallas_lowerings/gpu:ragged_dot",
-        "//third_party/py/numpy",
-    ] + py_deps("absl/testing"),
+        "//jax",
+        "//jax/_src:api",
+        "//jax/_src:core",
+        "//jax/_src:dtypes",
+        "//jax/_src:flattree",
+        "//jax/_src:lax",
+        "//jax/_src:mlir",
+        "//jax/_src:partial_eval",
+        "//jax/_src:state_types",
+        "//jax/_src:tree_util",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )

@@ -22,6 +22,8 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import lax
+from jax.experimental.xla_metadata import fuse_limit
+from jax.experimental.xla_metadata import must_fuse_call
 from jax.experimental.xla_metadata import set_xla_metadata
 from jax.experimental.xla_metadata import xla_metadata_call
 from jax.experimental.xla_metadata import xla_metadata_call2
@@ -569,6 +571,91 @@ class XlaMetadataTest(jtu.JaxTestCase):
       return body(x).sum()
 
     jax.jit(jax.grad(f))(jnp.array([2.3, 4.5]))  # doesn't crash
+
+  def test_fuse_limit_annotation_works(self):
+    @jax.jit
+    def f(x):
+      y = jnp.sin(x)
+      a = jnp.square(x)
+      with fuse_limit():
+        z = a.sum()
+      return y, z
+
+    mlir_str = f.lower(3.0).as_text()
+    self.assertIn('FUSE_LIMIT = "true"', mlir_str)
+
+  def test_must_fuse_call_works(self):
+    @jax.jit
+    def f(x):
+      y = jnp.sin(x)
+      z = must_fuse_call("333")(lambda x: jnp.square(x).sum())(x)
+      return y, z
+
+    mlir_str = f.lower(3.0).as_text()
+    self.assertIn('MUST_FUSE = "333"', mlir_str)
+
+  def test_must_fuse_call_with_buffering_level_works(self):
+    @jax.jit
+    def f(x):
+      y = jnp.sin(x)
+      z = must_fuse_call("333", buffering_level=3)(
+          lambda x: jnp.square(x).sum()
+      )(x)
+      return y, z
+
+    mlir_str = f.lower(3.0).as_text()
+    self.assertIn('MUST_FUSE = "333"', mlir_str)
+    self.assertIn('buffering_level = "3"', mlir_str)
+
+  def test_must_fuse_call_with_window_bounds_works(self):
+    @jax.jit
+    def f(x):
+      y = jnp.sin(x)
+      z = must_fuse_call(
+          "333", kernel_window_bounds=[1, 2, 3], output_window_bounds=[4, 5, 6]
+      )(lambda x: jnp.square(x).sum())(x)
+      return y, z
+
+    mlir_str = f.lower(3.0).as_text()
+    self.assertIn('MUST_FUSE = "333"', mlir_str)
+    self.assertIn('kernel_window_bounds = "1,2,3"', mlir_str)
+    self.assertIn('output_window_bounds = "4,5,6"', mlir_str)
+
+  def test_must_fuse_call_with_scoped_vmem_limit_kib_works(self):
+    @jax.jit
+    def f(x):
+      y = jnp.sin(x)
+      z = must_fuse_call("333", scoped_vmem_limit_kib=8192)(
+          lambda x: jnp.square(x).sum()
+      )(x)
+      return y, z
+
+    mlir_str = f.lower(3.0).as_text()
+    self.assertIn('MUST_FUSE = "333"', mlir_str)
+    self.assertIn('scoped_vmem_limit_kib = "8192"', mlir_str)
+
+  def test_must_fuse_call_with_integer_config_works(self):
+    @jax.jit
+    def f(x):
+      y = jnp.sin(x)
+      z = must_fuse_call("333", integer_config=64)(
+          lambda x: jnp.square(x).sum()
+      )(x)
+      return y, z
+
+    mlir_str = f.lower(3.0).as_text()
+    self.assertIn('MUST_FUSE = "333"', mlir_str)
+    self.assertIn('integer = "64"', mlir_str)
+
+  def test_must_fuse_call_integer_config_mutually_exclusive_with_window_bounds(
+      self,
+  ):
+    with self.assertRaises(ValueError):
+      must_fuse_call("333", integer_config=64, buffering_level=3)
+    with self.assertRaises(ValueError):
+      must_fuse_call("333", integer_config=64, kernel_window_bounds=[1, 2, 3])
+    with self.assertRaises(ValueError):
+      must_fuse_call("333", integer_config=64, output_window_bounds=[4, 5, 6])
 
 
 if __name__ == "__main__":

@@ -45,6 +45,7 @@ from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.state import indexing
+from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import tcgen05
@@ -124,9 +125,13 @@ class CompilerParams:
     profile_dir: The directory to which profiling traces will be written to.
     profile_trace_scope: The scope at which traces are collected (WARP or
       WARPGROUP).
-    profile_bounds_check: If True, profiler events past profile_space are
+    profile_bounds_check: If True, profiler events exceeding ``profile_space`` are
       dropped (the trace is truncated) instead of corrupting SMEM, at the cost
-      of a slightly higher per-event profiling overhead.
+      of a slightly higher per-event profiling overhead. If False, profiler events
+      are written without bounds checking. To avoid possible SMEM errors during
+      profiling, it is advised to reduce the grid size or other related parameters
+      to collect fewer profiler events. Defaults to False, to avoid the overhead
+      related from bounds checking which may distort performance measurements.
     skip_device_barrier: If True, skips the cross-device barrier before kernel
       launch. Improper use of this flag can lead to race conditions. !!!Use with
       caution!!! Defaults to False.
@@ -136,6 +141,12 @@ class CompilerParams:
       AbstractMesh, as with a concrete Mesh in standard JIT compilation,
       multi-process execution is detected automatically from the mesh devices.
       Defaults to False.
+    collective_id: The ID of the collective kernel. Kernels with different
+      collective IDs will not share the same semaphores when using
+      plgpu.get_barrier_semaphore. If two kernels use a barrier semaphore, they
+      must have a different collective_id if they perform communication between
+      different sets of devices (e.g. if one kernel does neighbor comms on mesh
+      axis x, while another does neighbor comms on mesh axis y).
   """
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
@@ -149,8 +160,17 @@ class CompilerParams:
   lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Warpgroup
   skip_device_barrier: bool = False
   is_multi_process: bool = False
+  collective_id: int | None = None
 
   def __post_init__(self):
+    if self.collective_id is not None and not (
+        0 <= self.collective_id < mgpu.launch_context.MAX_COLLECTIVE_IDS
+    ):
+      raise ValueError(
+          "collective_id must be in [0,"
+          f" {mgpu.launch_context.MAX_COLLECTIVE_IDS}), got"
+          f" {self.collective_id}"
+      )
     if self.dimension_semantics is not None:
       object.__setattr__(
           self, "dimension_semantics", tuple(self.dimension_semantics)
@@ -242,6 +262,56 @@ class SemaphoreType(enum.Enum):
   def get_ref_aval(self) -> _Ref:
     return self(()).get_ref_aval()
 
+def _check_no_semaphore_outputs(out_type) -> None:
+  """Raises if any kernel output is a semaphore or a semaphore Ref.
+
+  Semaphores may only be created by ``alloc_semaphore`` outside of a kernel and
+  passed into it as operands.
+  """
+  for leaf in tree_util.tree_leaves(out_type):
+    if isinstance(leaf, SemaphoreType):
+      dtype = leaf.get_array_aval().dtype
+    else:
+      dtype = getattr(leaf, "dtype", None)
+
+    if dtype is not None and (
+        isinstance(dtype, pallas_core.AbstractSemaphoreTy)
+        or dtypes.issubdtype(dtype, pallas_core.semaphore_dtype)
+    ):
+      raise ValueError(
+          "Kernels cannot return semaphores. Allocate them as scratch if only"
+          " used inside this kernel, or via plgpu.alloc_semaphore before the"
+          " kernels that use them."
+      )
+
+
+def alloc_semaphore(shape: tuple[int, ...] = ()) -> jax.Ref:
+  """Returns a zero-initialized GMEM semaphore Ref.
+
+  This function can only be used outside of a kernel; for semaphores scoped to
+  a single kernel, use ``scratch_types`` instead. It is the only way to create
+  semaphores that outlive a single kernel invocation. It performs *no*
+  cross-device synchronization: the caller is responsible for the initial
+  sync, e.g. by running a kernel that is data dependent on the returned refs
+  with ``skip_device_barrier=False``.
+
+  Example::
+
+    sem = plgpu.alloc_semaphore((num_devices,))
+    # The first kernel consuming ``sem`` must not skip the device barrier, so
+    # that all devices observe the zero-initialized semaphores before use.
+    out = plgpu.kernel(body, out_type=out_type, grid=grid, grid_names=names)(
+        sem, x
+    )
+
+  Args:
+    shape: The shape of the semaphore array.
+  """
+
+  zeros = lax.convert_element_type(
+      jnp.zeros(tuple(shape), jnp.int32), pallas_core.Semaphore()
+  )
+  return jax_core.new_ref(zeros, memory_space=MemorySpace.GMEM)
 
 class PrimitiveSemantics(enum.Enum):
   """Thread semantics for a primitives at the Pallas user-level."""
@@ -345,9 +415,22 @@ def kernel(
       **mesh_kwargs,
   )
 
+  _check_no_semaphore_outputs(out_type)
+
   # TODO(slebedev): Use mesh-specific batching rules in ``mpmd_map`` instead.
   @custom_batching.custom_vmap
   def wrapper(*operands):
+    for op in tree_util.tree_leaves(operands):
+      if not isinstance(op, state.AbstractRef):
+        aval = jax_core.typeof(op)
+        if isinstance(aval, jax_core.ShapedArray) and (
+            dtypes.issubdtype(aval.dtype, pallas_core.semaphore_dtype)
+            or isinstance(aval.dtype, pallas_core.AbstractSemaphoreTy)
+        ):
+          raise ValueError(
+              "Cannot pass semaphores into kernels as arrays. Wrap them in"
+              f" jax.new_ref: {op}"
+          )
     thread_name = mesh.thread_name if mesh.thread_name is not None else ()
 
     def kernel_body(*refs):
@@ -1043,7 +1126,7 @@ class MulticastRef(state_types.Transform):
 
 def remote_ref(
     ref: _Ref,
-    device_id: jax.typing.ArrayLike,
+    device_id: pallas_primitives.DeviceId,
     device_id_type: pallas_primitives.DeviceIdType | None = None,
 ) -> pallas_core.TransformedRef:
   """Translate memref to a symmetric memref on a peer device."""
@@ -1055,6 +1138,7 @@ def remote_ref(
     )
   else:
     device_id_type = pallas_primitives.DeviceIdType.MESH
+  device_id = pallas_primitives.canonicalize_device_id(device_id)
   if not isinstance(ref, pallas_core.TransformedRef):
     if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
       raise TypeError("ref must be a reference")
@@ -1125,6 +1209,151 @@ def multicast_ref(
   return pallas_core.TransformedRef(
       ref.ref, (*ref.transforms, MulticastRef(collective_axes)),
   )
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class Im2ColTransform(state_types.Transform):
+  window_shape: tuple[int, ...] = jax.tree.static()
+  padding: tuple[tuple[int, int], ...] = jax.tree.static()
+
+  def __post_init__(self):
+    num_spatial = len(self.window_shape)
+    if num_spatial not in (1, 2, 3):
+      raise ValueError(
+          "im2col_ref requires 1, 2, or 3 spatial dimensions, got"
+          f" {num_spatial} ({self.window_shape})"
+      )
+    if len(self.padding) != num_spatial:
+      raise ValueError(
+          f"Expected {num_spatial} (pad_lo, pad_hi) pairs in padding, got"
+          f" {len(self.padding)}"
+      )
+    max_window_size = 1 << (16 // num_spatial)
+    max_bound = max_window_size // 2
+    for i, (k, (pad_lo, pad_hi)) in enumerate(
+        zip(self.window_shape, self.padding)
+    ):
+      # Filter offsets must fit the im2col TMA offset range.
+      if not 1 <= k <= max_window_size:
+        raise ValueError(
+            f"window_shape[{i}] must be in [1, {max_window_size}] with"
+            f" {num_spatial} spatial dims, got {k}"
+        )
+      # Window start bounds must fit the im2col TMA bounding box range.
+      if pad_lo < 0 or pad_hi < 0:
+        raise ValueError(
+            f"padding[{i}] must be non-negative, got ({pad_lo}, {pad_hi})"
+        )
+      if pad_lo > max_bound:
+        raise ValueError(
+            f"padding[{i}][0] must be at most {max_bound} with {num_spatial}"
+            f" spatial dims, got {pad_lo}"
+        )
+      min_pad_hi = max(0, k - 1 - max_bound)
+      max_pad_hi = k - 2 + max_bound
+      if not min_pad_hi <= pad_hi <= max_pad_hi:
+        raise ValueError(
+            f"padding[{i}][1] must be in [{min_pad_hi}, {max_pad_hi}] with"
+            f" window_shape[{i}]={k} and {num_spatial} spatial dims, got"
+            f" {pad_hi}"
+        )
+
+  @property
+  def window_start_bounds(self) -> tuple[tuple[int, int], ...]:
+    return tuple(
+        (-pad_lo, pad_hi - k + 1)
+        for k, (pad_lo, pad_hi) in zip(self.window_shape, self.padding)
+    )
+
+  def spatial_out_shape(self, gmem_shape: Sequence[int]) -> tuple[int, ...]:
+    spatial_in = gmem_shape[1:-1]
+    return tuple(
+        s + hi - lo
+        for s, (lo, hi) in zip(spatial_in, self.window_start_bounds, strict=True)
+    )
+
+  def transform_type(self, x):
+    match x:
+      case state_types.AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case jax_core.ShapedArray():
+        expected_ndim = len(self.window_shape) + 2
+        if x.ndim != expected_ndim:
+          raise ValueError(
+              f"im2col_ref with {len(self.window_shape)} spatial dims requires"
+              f" a rank-{expected_ndim} (N, *spatial, C) reference, got shape"
+              f" {x.shape}"
+          )
+        spatial_out = self.spatial_out_shape(x.shape)
+        for i, s_out in enumerate(spatial_out):
+          if s_out < 1:
+            raise ValueError(
+                f"im2col_ref spatial dim {i} has non-positive output size"
+                f" {s_out} for input size {x.shape[i + 1]}, window size"
+                f" {self.window_shape[i]}, and padding {self.padding[i]}"
+            )
+        num_windows = x.shape[0] * math.prod(spatial_out)
+        return x.update(shape=(num_windows, *self.window_shape, x.shape[-1]))
+      case _:
+        raise TypeError(f"Unsupported type: {x}")
+
+
+def im2col_ref(
+    ref: _Ref,
+    *,
+    window_shape: Sequence[int],
+    padding: Sequence[tuple[int, int]] | None = None,
+) -> pallas_core.TransformedRef:
+  """Returns an im2col view of a GMEM reference for TMA copies.
+
+  For ``ref`` of shape ``(N, *spatial_in, C)`` with 1, 2 or 3 spatial
+  dimensions, the view has shape
+  ``(N * math.prod(spatial_out), *window_shape, C)``, where
+  ``spatial_out[i] = spatial_in[i] + sum(padding[i]) - window_shape[i] + 1``
+  is the number of window positions along spatial dimension ``i``. Each row
+  ``view[r]`` is one window of the zero-padded input, ``padded``. With 2
+  spatial dimensions, for example::
+
+    n, h, w = np.unravel_index(r, (N, *spatial_out))
+    view[r, dh, dw, c] == padded[n, h + dh, w + dw, c]
+
+  The view can only be read by
+  :func:`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem`, and must be
+  indexed as ``view.at[rows, *window_offsets, channels]``, where:
+
+  * ``rows`` is a unit-stride slice selecting up to 1024 windows;
+  * ``window_offsets`` are scalars, one per spatial dimension, selecting the
+    pixel to load from each window;
+  * ``channels`` is a unit-stride slice selecting up to 256 channels of that
+    pixel.
+
+  The destination must be a 2D SMEM reference with one row per selected
+  window and one column per selected channel. If it is tiled, its tiles must
+  span all columns. Rows and channels past the end of the view read as zeros.
+
+  Args:
+    ref: A channels-last GMEM reference of shape ``(N, *spatial_in, C)``. Sliced
+      or otherwise transformed references and sub-byte dtypes are not supported.
+    window_shape: The window size along each spatial dimension.
+    padding: The ``(lo, hi)`` zero padding along each spatial dimension. Must be
+      non-negative. Defaults to no padding.
+  """
+  window_shape = tuple(int(k) for k in window_shape)
+  if padding is None:
+    padding = ((0, 0),) * len(window_shape)
+  else:
+    padding = tuple((int(lo), int(hi)) for lo, hi in padding)
+  ref, transforms = state_primitives.get_ref_and_transforms(
+      ref, None, "im2col_ref"
+  )
+  if transforms:
+    raise TypeError("im2col_ref must be applied to an untransformed reference")
+  res = pallas_core.TransformedRef(
+      ref, (Im2ColTransform(window_shape=window_shape, padding=padding),)
+  )
+  _ = res.type  # Eagerly validate the ref shape.
+  return res
 
 
 def transpose_ref(
@@ -1874,8 +2103,11 @@ class Layout(SomeLayout, enum.Enum):
   # TODO(b/435159109): Remove this once LLVM regression is addressed.
   _WGMMA_ACC_32BIT = enum.auto()  # Temporarily exposed to work around LLVM bugs
 
+  #: LHS operand layout for SM8x ``mma.sync``
   MMA_LHS = enum.auto()
+  #: RHS operand layout for SM8x ``mma.sync``
   MMA_RHS = enum.auto()
+  #: Accumulator's layout for SM8x ``mma.sync``
   MMA_ACC = enum.auto()
 
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:

@@ -28,6 +28,7 @@ from weakref import ReferenceType, WeakValueDictionary, finalize, ref
 import numpy as np
 
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
@@ -60,6 +61,7 @@ ConstId = int
 
 AttrKind = Any
 PyTree = Any
+HTLV = Any
 logger = logging.getLogger(__name__)
 
 TracebackScope = _jax.TracebackScope
@@ -162,7 +164,7 @@ class JaxprTrace(Trace):
     if const is None:
       return tracer
     else:
-      if core.is_literalable(const, True):
+      if core.is_literalable(const):
         return self.new_instantiated_literal(const)
       else:
         return self.new_instantiated_const(const)
@@ -252,7 +254,7 @@ class JaxprTrace(Trace):
     eqn = new_eqn_recipe(self, in_tracers, out_tracers, prim, params, effs,
                          source)
     if effects.partial_eval_kept_effects.filter_in(effs):
-      self.effect_handles.append(EffectHandle(in_tracers, eqn))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      self.effect_handles.append(EffectHandle(in_tracers, eqn))  # pyrefly#2385
     for t in out_tracers: t.recipe = eqn
     return out_tracers
 
@@ -660,7 +662,7 @@ def tracers_to_jaxpr(
   outvars = map(get_atom, out_tracers)
   jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
   is_high |= any(x.aval.is_high for x in it.chain(const_vars, invars, outvars))
-  jaxpr = Jaxpr(const_vars, invars,  # pyrefly: ignore[bad-argument-type]
+  jaxpr = Jaxpr(const_vars, invars,
                 outvars, eqns, jaxpr_effects, debug_info, is_high)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
@@ -1263,8 +1265,9 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: bool | Sequence[bool],
   if type(live_inputs) is bool:
     live_inputs = (live_inputs,) * len(jaxpr.invars)
 
-  return _dce_jaxpr(jaxpr, tuple(used_outputs), tuple(instantiate),
-                    tuple(live_inputs))
+  new_jaxpr, used_inputs = _dce_jaxpr(jaxpr, tuple(used_outputs),
+                                      tuple(instantiate), tuple(live_inputs))
+  return (jaxpr if new_jaxpr is None else new_jaxpr), used_inputs
 
 
 def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
@@ -1322,7 +1325,7 @@ def has_effects(eqn: JaxprEqn, live_ins: Sequence[bool] | None = None) -> bool:
 @weakref_lru_cache
 def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
                instantiate: tuple[bool, ...], live_inputs: tuple[bool, ...]
-               ) -> tuple[Jaxpr, list[bool]]:
+               ) -> tuple[Jaxpr | None, list[bool]]:
   env: dict[Var, bool] = {}
 
   def read(v: Var) -> bool:
@@ -1360,6 +1363,11 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
   outvars = [v for v, b in zip(jaxpr.outvars, used_outputs) if b]
   eqns = new_eqns[::-1]
   jaxpr_effects = make_jaxpr_effects(jaxpr.constvars, invars, outvars, eqns)
+  if (all(used_inputs) and all(used_outputs) and
+      len(eqns) == len(jaxpr.eqns) and
+      all(new_eqn is eqn for new_eqn, eqn in zip(eqns, jaxpr.eqns)) and
+      jaxpr_effects == jaxpr.effects):
+    return None, used_inputs
 
   dbg = core.DebugInfo(
       jaxpr.debug_info.traced_for, jaxpr.debug_info.func_src_info,
@@ -1375,7 +1383,6 @@ DCERule = Callable[[list[bool], list[bool], JaxprEqn],
                    tuple[list[bool], JaxprEqn | None]]
 
 
-@weakref_lru_cache
 def _cached_closed_call_dce(jaxpr_, used_outputs: tuple[bool, ...],
                             live_inputs: tuple[bool, ...] | bool = True,
                             ) -> tuple[Jaxpr, list[bool]]:
@@ -1391,6 +1398,8 @@ def dce_jaxpr_closed_call_rule(used_outputs: list[bool], live_ins: list[bool],
   jaxpr_ = eqn.params['call_jaxpr']
   closed_jaxpr, used_inputs = _cached_closed_call_dce(
       jaxpr_, tuple(used_outputs), tuple(live_ins))
+  if closed_jaxpr is jaxpr_ and all(used_inputs) and all(used_outputs):
+    return used_inputs, eqn
   new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
   effects = core.eqn_effects(closed_jaxpr, new_invars)
   new_params = dict(eqn.params, call_jaxpr=closed_jaxpr)
@@ -1776,7 +1785,7 @@ class DynamicJaxprTrace(core.Trace):
     id_c = id(c)
     assert type(c) not in (int, float, complex, np.generic, np.ndarray), (
         f"non-canonical constant of type {type(c).__name__}: {c!r}")
-    if core.is_literalable(c, self.frame.auto_dce):
+    if core.is_literalable(c):
       val = Literal(c, aval)
       return DynamicJaxprTracer(self, aval, val, source_info)
     else:
@@ -1923,6 +1932,8 @@ class DynamicJaxprTrace(core.Trace):
     tracers = map(to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun.with_unknown_names(), in_avals, lower=self.requires_low)
+    if config.mutable_array_checks.value:
+      api_util._check_no_aliased_closed_over_refs(fun.debug_info, consts, tracers)
     self.frame.is_high |= fun_jaxpr.is_high
     num_consts = len(consts)
     closed_fun_jaxpr = convert_constvars_jaxpr(fun_jaxpr)
@@ -1933,6 +1944,9 @@ class DynamicJaxprTrace(core.Trace):
       for store in fwd.stores: store and store.reset()
       fwd_ = _interleave_fun(fwd.with_unknown_names(), zeros)
       jaxpr, _, consts = trace_to_jaxpr_dynamic(fwd_, in_avals, lower=self.requires_low)
+      for c in consts:
+        if isinstance(c, DynamicJaxprTracer) and c._trace is self:
+          raise _custom_vjp_closure_error(fun.debug_info.func_name, c)
       return jaxpr, consts
 
     def out_trees_():
@@ -1974,6 +1988,16 @@ def _memoize(fn):
         out = cells[args] = fn(*args)
     return out
   return memoized
+
+def _custom_vjp_closure_error(name, tracer):
+  return core.escaped_tracer_error(tracer, (
+      f"The fwd rule of the custom_vjp function {name} (for a "
+      "custom_gradient function, the function itself) closes over this "
+      "value, which was traced along with the call to it, as by jax.jit or "
+      "jax.remat. But the fwd rule is traced later, when the staged call is "
+      "differentiated (as in grad(jit(f))), after that trace has ended. Pass "
+      "the value to the function as an argument instead, or differentiate "
+      "before staging, as in jit(grad(f))."))
 
 @lu.transformation_with_aux2
 def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
@@ -2034,8 +2058,12 @@ def diff_tracing_cache_keys(new_key, old_key) -> tuple[int, int, str]:
     A tuple of (severity, num_diffs, explanation) for the diff between the two
     keys. Severity is an int, where lower is better.
   """
-  new_ctx, (new_tree, new_dbg, *_), () = new_key
-  old_ctx, (old_tree, old_dbg, *_), () = old_key
+  new_ctx, new_pos, new_kw = new_key
+  old_ctx, old_pos, old_kw = old_key
+  new_tree = new_pos[0]
+  new_dbg = new_pos[1] if len(new_pos) > 1 else dict(new_kw).get('debug_info')
+  old_tree = old_pos[0]
+  old_dbg = old_pos[1] if len(old_pos) > 1 else dict(old_kw).get('debug_info')
   return (diff_tracing_ctx(new_ctx, old_ctx) or
           diff_trees(new_tree.tree, old_tree.tree) or
           diff_debug(new_dbg, old_dbg) or
@@ -2341,7 +2369,10 @@ def lower_jaxpr2(hi_jaxpr) -> Jaxpr:
 
 @weakref_lru_cache
 def lower_jaxpr(hi_jaxpr: Jaxpr, lo_avals) -> tuple[Jaxpr, ft.FlatTree]:
-  env: dict[Var, DynamicJaxprTracer | HTLV] = {}  # noqa # type:ignore
+  # TODO(yashkatariya): Remove this once we have XLA DCE opaque opt-barrier.
+  hi_jaxpr, _ = dce_jaxpr(hi_jaxpr, True, instantiate=True)
+
+  env: dict[Var, DynamicJaxprTracer | HTLV] = {}  # type:ignore
 
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(hi_jaxpr.debug_info.with_unknown_names(),

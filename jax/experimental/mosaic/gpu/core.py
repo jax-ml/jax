@@ -78,13 +78,7 @@ def artificial_shared_memory_limit(limit):
         _SMEM_SIZE_BOUND = old_limit
 
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
-FWD_COMPAT_IR_VERSION = 8
-
-# jaxlib 0.12.0 changes the Mosaic GPU C API (MosaicGpuLaunch takes kernel and
-# device_ordinal arguments).
-# TODO(sohaibiftikhar): Remove conditioning once the minimum jaxlib version is
-# >= 0.12.0.
-_ABI_V2 = lib.version >= (0, 12, 0)
+FWD_COMPAT_IR_VERSION = 9
 
 c = utils.c  # This is too common to fully qualify.
 
@@ -204,7 +198,7 @@ _RESULTS_MEMORY_SPACES_ATTR = "results_memory_spaces"
 # Must be kept in sync with xla::gpu::MemorySpaceColor::kCollective. Buffers
 # in this memory space are allocated as symmetric memory, which is a
 # prerequisite for peer-to-peer and multimem accesses.
-_COLLECTIVE_MEMORY_SPACE = 1
+_COLLECTIVE_MEMORY_SPACE = 7
 
 
 def _memory_spaces_attr_value(indices: Sequence[int]) -> str:
@@ -222,8 +216,8 @@ def _mosaic_gpu_lowering_rule(
     inout_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     cost_estimate: Any = None,
-    use_custom_barrier: bool = False,
     skip_device_barrier: bool = False,
+    collective_id: int | None = None,
 ):
   axis_context = ctx.module_context.axis_context
   replica_ids = []
@@ -301,16 +295,28 @@ def _mosaic_gpu_lowering_rule(
   backend_config: dict[str, ir.Attribute] = dict(
       kernel_hash=ir.StringAttr.get(kernel_id),
       module=ir.StringAttr.get(module_asm),
-      use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
       skip_device_barrier=ir.BoolAttr.get(skip_device_barrier),
       uses_xla_collective_metadata=ir.BoolAttr.get(
           launch_context.uses_collective_metadata(module)
       ),
   )
+  # TODO(patrios): Remove once the minimum jaxlib version is >= 0.12.1.
+  if lib.version < (0, 12, 1):
+    backend_config["use_custom_barrier"] = ir.BoolAttr.get(False)
   if cost_estimate is not None:
     backend_config["cost_estimate_json"] = ir.StringAttr.get(
         json.dumps(dataclasses.asdict(cost_estimate))
     )
+  if collective_id is not None:
+    if not (0 <= collective_id < launch_context.MAX_COLLECTIVE_IDS):
+      raise ValueError(
+          f"collective_id must be in [0, {launch_context.MAX_COLLECTIVE_IDS}),"
+          f" got {collective_id}"
+      )
+    # The presence of collective_id enables the barrier semaphores in the
+    # custom call.
+    i64 = ir.IntegerType.get_signless(64)
+    backend_config["collective_id"] = ir.IntegerAttr.get(i64, collective_id)
 
   frontend_attributes: dict[str, ir.Attribute] = {}
 
@@ -377,6 +383,7 @@ def _mosaic_gpu_lowering_rule(
       extra_attributes=extra_attributes,
   ).results
 
+
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 
 
@@ -391,10 +398,6 @@ class Union[T]:
 
   def __iter__(self):
     return iter(self.members)
-
-@dataclasses.dataclass(frozen=True)
-class TMABarrier:
-  num_barriers: int = 1
 
 @dataclasses.dataclass(frozen=True)
 class Barrier:
@@ -416,6 +419,24 @@ class ClusterBarrier:
   _: dataclasses.KW_ONLY
   orders_tensor_core: bool = False
   leader_tracked: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class CtaBarrier:
+  arrival_count: int
+  num_barriers: int = 1
+
+  def __post_init__(self):
+    if (self.arrival_count < 1) or (self.arrival_count % utils.WARP_SIZE != 0):
+      raise ValueError(
+          f"Arrival count must be a multiple of {utils.WARP_SIZE}, but got"
+          f" {self.arrival_count}"
+      )
+    if self.num_barriers < 1:
+      raise ValueError(
+          f"Num barriers must be at least 1, but got {self.num_barriers}"
+      )
+
 
 @dataclasses.dataclass(frozen=True)
 class TMEM:
@@ -517,6 +538,7 @@ def _construct_smem_reftree(
     ],  # Mutated by this function!
     lowering_semantics: LoweringSemantics,
     dynamic_smem_offset: int = 0,
+    cta_barrier_offset: int = 0,
 ) -> Callable[[], RefTree]:
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
@@ -554,25 +576,17 @@ def _construct_smem_reftree(
                 tmem_allocs,
                 lowering_semantics,
                 dynamic_smem_offset,
+                cta_barrier_offset,
             )
             for m in members
         ]
         # TODO(apaszke): This is quadratic, but it shouldn't matter for now...
         dynamic_smem_offset += _smem_tree_size(ref_ty)
+        cta_barrier_offset += _cta_barrier_tree_count(ref_ty)
 
         def ref(member_thunks=member_thunks):
           return Union([t() for t in member_thunks])
 
-      case TMABarrier(num_barriers):
-        init_fn: Callable[..., Any] = (
-            functools.partial(
-                utils.DialectBarrierRef.initialize,
-                orders_tensor_core=False,
-            )
-            if lowering_semantics == LoweringSemantics.Warpgroup
-            else utils.BarrierRef.initialize
-        )
-        ref = init_fn(barrier_memref(num_barriers), arrival_count=1)
       case Barrier(arrival_count, num_barriers, orders_tensor_core):
         init_fn = (
             functools.partial(
@@ -588,6 +602,13 @@ def _construct_smem_reftree(
             barrier_memref(num_barriers), arrival_count, collective_dims,
             cluster_shape, leader_tracked=ref_ty.leader_tracked
         )
+      case CtaBarrier(arrival_count, num_barriers):
+        ref = utils.CtaBarrierRef.initialize(
+            cta_barrier_offset,
+            arrival_count=arrival_count,
+            num_barriers=num_barriers,
+        )
+        cta_barrier_offset += num_barriers
       case TMEM(shape, dtype, layout=layout, collective=collective, packing=packing):
         addr_ref = _slice_smem(
             ir.MemRefType.get([], i32, memory_space=utils.smem()),
@@ -654,9 +675,8 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
       case Union(members):
         size += max(_smem_tree_size(s) for s in members)
       case (
-          TMABarrier(num_barriers)
+          Barrier(num_barriers=num_barriers)
           | ClusterBarrier(num_barriers=num_barriers)
-          | Barrier(num_barriers=num_barriers)
       ):
         if size % utils.MBARRIER_BYTES:
           raise NotImplementedError(
@@ -665,6 +685,8 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
               f" {utils.MBARRIER_BYTES} bytes."
           )
         size += num_barriers * utils.MBARRIER_BYTES
+      case CtaBarrier():
+        pass
       case TMEM(_):
         # TODO(justinfu): This can trigger misaligned barrier allocations
         # if TMEM is requested before barriers b/c it's not divisible by 8.
@@ -672,6 +694,20 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
       case _:
         size += _count_buffer_bytes(l)
   return size
+
+
+def _cta_barrier_tree_count(smem_buffers: ShapeTree) -> int:
+  leaves = jax.tree.leaves(smem_buffers, is_leaf=lambda x: isinstance(x, Union))
+  count = 0
+  for l in leaves:
+    match l:
+      case Union(members):
+        count += max(_cta_barrier_tree_count(s) for s in members)
+      case CtaBarrier(num_barriers=num_barriers):
+        count += num_barriers
+      case _:
+        pass
+  return count
 
 
 def _is_known_multihost_mesh(
@@ -703,23 +739,11 @@ def _is_known_multihost_mesh(
 
 
 def _cluster_arrive_relaxed_aligned():
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      "barrier.cluster.arrive.relaxed.aligned;",
-      "",
-      has_side_effects=True,
-  )
+  utils.inline_ptx("barrier.cluster.arrive.relaxed.aligned;", convergent=True)
 
 
 def _cluster_wait_aligned():
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      "barrier.cluster.wait.aligned;",
-      "",
-      has_side_effects=True,
-  )
+  utils.inline_ptx("barrier.cluster.wait.aligned;", convergent=True)
 
 
 # TODO(apaszke): Inline this
@@ -739,6 +763,7 @@ def _launch(
     num_params: int = 0,
     jax_mesh: mesh_lib.Mesh | None = None,
     is_multi_process: bool = False,
+    use_barrier_semaphore: bool = False,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
     raise ValueError(
@@ -840,14 +865,28 @@ def _launch(
         prof,
         num_peers=num_peers,
         num_params=num_params,
-        multihost_kernel=is_multi_process or _is_known_multihost_mesh(
-            jax_mesh
-        ),
+        use_barrier_semaphore=use_barrier_semaphore,
+        multihost_kernel=is_multi_process or _is_known_multihost_mesh(jax_mesh),
     )
     with ctx.named_region("Init"):
+      num_warpgroups = math.prod(block) // utils.WARPGROUP_SIZE
+      reserved_cta_barriers = 1 + num_warpgroups
+      total_cta_barriers = _cta_barrier_tree_count(smem_buffers)
+      if reserved_cta_barriers + total_cta_barriers > 16:
+        raise ValueError(
+            f"Too many CTA barriers requested: {total_cta_barriers} requested,"
+            f" but only {16 - reserved_cta_barriers} available"
+            f" ({num_warpgroups} warpgroup barriers and 1 CTA-wide barrier"
+            " reserved)."
+        )
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
       smem_ref_tree_thunk = _construct_smem_reftree(
-          cluster, dynamic_smem, smem_buffers, tmem_allocs, lowering_semantics
+          cluster,
+          dynamic_smem,
+          smem_buffers,
+          tmem_allocs,
+          lowering_semantics,
+          cta_barrier_offset=reserved_cta_barriers,
       )
       # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
@@ -936,6 +975,7 @@ def _lower_as_gpu_kernel(
     base_loc: ir.Location | None = None,
     uses_pdl: bool = False,
     is_multi_process: bool = False,
+    use_barrier_semaphore: bool = False,
 ):
   ptr_ty = llvm.PointerType.get()
   token_ty = gpu.AsyncTokenType.get()
@@ -1029,6 +1069,7 @@ def _lower_as_gpu_kernel(
           num_params,
           jax_mesh,
           is_multi_process=is_multi_process,
+          use_barrier_semaphore=use_barrier_semaphore,
       ) as (_launch_ctx, smem_refs):
         launch_ctx = _launch_ctx
         body(launch_ctx, *arg_refs, smem_refs)
@@ -1083,6 +1124,15 @@ def _declare_runtime_functions():
   init_tma_desc_type = ir.FunctionType.get(arg_tys, [])
   func.FuncOp(
       "mosaic_gpu_init_tma_desc", init_tma_desc_type, visibility="private"
+  )
+  im2col_arg_tys = [
+      ptr_ty, ptr_ty, i64, i64, ptr_ty, ptr_ty, i64, ptr_ty, ptr_ty, i64, i64, ptr_ty,
+  ]
+  init_tma_im2col_desc_type = ir.FunctionType.get(im2col_arg_tys, [])
+  func.FuncOp(
+      "mosaic_gpu_init_tma_im2col_desc",
+      init_tma_im2col_desc_type,
+      visibility="private",
   )
 
 
@@ -1342,9 +1392,6 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
       ctypes.POINTER(ctypes.c_void_p), # arg_ptrs
       ctypes.c_int, # device_ordinal
   ]
-  if not _ABI_V2:
-    # Drop kernel and device_ordinal for ABI v1.
-    launch_arg_types = launch_arg_types[1:-1]
   launch_c = ctypes.CFUNCTYPE(None, *launch_arg_types)(launch_ptr)
 
   def launch(arg_ptrs, device):
@@ -1358,8 +1405,6 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
         if device.index is not None
         else torch.cuda.current_device(),
     ]
-    if not _ABI_V2:
-      args = args[1:-1]
     launch_c(*args)
 
   return launch, functools.partial(unload_func, compiled)

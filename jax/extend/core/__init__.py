@@ -21,12 +21,12 @@ from jax._src.abstract_arrays import (
 
 from jax._src.core import (
   AbstractToken as AbstractToken,
-  ClosedJaxpr as ClosedJaxpr,
   DebugInfo as DebugInfo,
   DropVar as DropVar,
   Effect as Effect,
   Effects as Effects,
   InconclusiveDimensionOperation as InconclusiveDimensionOperation,
+  Jaxpr as ClosedJaxpr,  # noqa: F401
   Jaxpr as Jaxpr,
   JaxprEqn as JaxprEqn,
   JaxprTypeError as JaxprTypeError,

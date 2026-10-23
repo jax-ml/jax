@@ -242,6 +242,28 @@ class LaxTest(jtu.JaxTestCase):
         1.0 / (x * ln2),
     )
 
+  @jtu.sample_product(dtype=lax_test_util.float_dtypes)
+  @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
+  def testLogPow(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41261
+    if jaxlib_extension_version < 510:
+      self.skipTest("Requires jaxlib_extension_version >= 510")
+    if not jtu.is_libtpu_at_least("0.0.51"):
+      self.skipTest("Requires libtpu >= 0.0.51")
+    a = np.array([-1.0, -2.0, -2.0, -2.0, 2.0, -1.0], dtype=dtype)
+    b = np.array([0.5, 0.5, 3.0, 2.0, 0.5, 0.0], dtype=dtype)
+    args_maker = lambda: [a, b]
+    tol = {np.float32: 2e-4} if jtu.test_device_matches(["tpu"]) else None
+    self._CheckAgainstNumpy(
+        lambda x, y: np.log(np.power(x, y)),
+        lambda x, y: lax.log(lax.pow(x, y)),
+        args_maker,
+        tol=tol,
+    )
+    self._CompileAndCheck(
+        lambda x, y: lax.log(lax.pow(x, y)), args_maker, tol=tol
+    )
+
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
   @jtu.sample_product(
@@ -1995,12 +2017,7 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       lax.dynamic_slice_in_dim(x, jnp.array([2, 2]), 3)
 
-  @unittest.skipIf(
-      jaxlib_extension_version < 498, "Requires jaxlib_extension_version >= 498"
-  )
   def testNestedDynamicSliceOutOfBounds(self):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Test requires libtpu >= 0.0.50')
     # Regression test for https://github.com/jax-ml/jax/issues/40849
     buf = jnp.arange(10, dtype=np.int32)
 
@@ -4073,6 +4090,48 @@ class LaxTest(jtu.JaxTestCase):
     y = lax_internal.stage(x)
     self.assertTrue(dtypes.is_weakly_typed(y))
 
+  def test_polynomial_scan_no_prebroadcast(self):
+    # When lax.polynomial lowers via lax.scan (len(coeffs) > unroll),
+    # coefficients should only be broadcast to their joint coefficient shape
+    # before stacking, rather than pre-broadcast to the output shape outside the
+    # while loop.
+    def while_operand_shapes(lowered):
+      module = lowered.compiler_ir()
+      main = module.body.operations[0]
+      while_ops = [
+          op for op in main.body.blocks[0].operations
+          if op.operation.name == "stablehlo.while"
+      ]
+      self.assertLen(while_ops, 1)
+      return [tuple(v.type.shape) for v in while_ops[0].operands]
+
+    x = jnp.arange(100, dtype=jnp.float32)
+    coeffs = [1.0, 2.0, 3.0, 4.0]
+    fn_scan = jax.jit(lambda z: lax.polynomial(z, coeffs, unroll=1))
+    fn_unrolled = jax.jit(lambda z: lax.polynomial(z, coeffs, unroll=len(coeffs)))
+    self.assertAllClose(fn_scan(x), fn_unrolled(x))
+    # Operands are: stacked coeffs (4,), x (100,), loop index (), carry (100,).
+    self.assertCountEqual(
+        while_operand_shapes(fn_scan.lower(x)),
+        [(4,), (100,), (), (100,)],
+    )
+
+    # Mixed scalar and size-1 non-scalar coefficients with a (100, 5) input
+    # should stack to (4, 1, 5), not (4, 100, 5).
+    x2 = jnp.ones((100, 5), dtype=jnp.float32)
+    c_row = jnp.arange(5, dtype=jnp.float32)[None, :]
+    fn_scan2 = jax.jit(
+        lambda z, c: lax.polynomial(z, [1.0, c, 3.0, c], unroll=1)
+    )
+    fn_unrolled2 = jax.jit(
+        lambda z, c: lax.polynomial(z, [1.0, c, 3.0, c], unroll=4)
+    )
+    self.assertAllClose(fn_scan2(x2, c_row), fn_unrolled2(x2, c_row))
+    self.assertCountEqual(
+        while_operand_shapes(fn_scan2.lower(x2, c_row)),
+        [(4, 1, 5), (100, 5), (), (100, 5)],
+    )
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
@@ -4884,10 +4943,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
           regions_with_inaccuracies.remove(item)
 
     if name == 'absolute':
-      if is_cuda and dtype == np.complex128:
-        regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real')
-      else:
-        regions_with_inaccuracies.clear()
+      regions_with_inaccuracies.clear()
 
     elif name == 'sign':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4')
@@ -5309,12 +5365,11 @@ class CompositeTest(jtu.JaxTestCase):
     mlir_module = jax.jit(partial(my_consts, scale=scale)).lower(x).as_text()
     if config.use_simplified_jaxpr_constants.value:
       self.assertIn(
-          "@my.consts(%arg0: tensor<3xf32> {jax.const = true}, %arg1: tensor<3xf32>) -> tensor<3xf32>", mlir_module
+          "@main(%arg0: tensor<3xf32> {jax.const = true}, %arg1: tensor<3xf32>)", mlir_module
       )
-    else:
-      self.assertIn(
-          "@my.consts(%arg0: tensor<3xf32>, %arg1: tensor<3xf32>) -> tensor<3xf32>", mlir_module
-      )
+    self.assertIn(
+        "@my.consts(%arg0: tensor<3xf32>, %arg1: tensor<3xf32>) -> tensor<3xf32>", mlir_module
+    )
 
   def test_composite_with_tracer_consts(self):
     def fun(x, scale):
@@ -5354,10 +5409,7 @@ class CompositeTest(jtu.JaxTestCase):
 class RaggedTest(jtu.JaxTestCase):
 
   def check_wsc_in_lowered(self, text):
-    if config.use_shardy_partitioner.value:
-      self.assertIn('sdy.sharding_constraint', text)
-    else:
-      self.assertIn('@Sharding', text)
+    self.assertIn('sdy.sharding_constraint', text)
 
   def _test_ragged_dot(self, m, k, n, num_groups, dtype):
     """Tests ragged_dot.
