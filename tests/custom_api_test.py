@@ -5707,5 +5707,50 @@ class CustomJVP3Remat3Test(CustomJVP3Test):
   ...
 
 
+class LinearCallTest(jtu.JaxTestCase):
+
+  def test_jvp_in_residuals(self):
+    def f(r, x):
+      return x / r
+    def t(r, ct):
+      return ct / r
+    def divided(r, x):
+      return jax.custom_derivatives.linear_call(f, t, r, x)
+    r, x, dr, dx = 2., 3., .5, -1.
+    ans = jax.jvp(divided, (r, x), (dr, dx))
+    expected = jax.jvp(lambda r, x: x / r, (r, x), (dr, dx))
+    self.assertAllClose(ans, expected)
+    # In the residual alone.
+    ans = jax.jvp(lambda r: divided(r, x), (r,), (dr,))
+    expected = jax.jvp(lambda r: x / r, (r,), (dr,))
+    self.assertAllClose(ans, expected)
+
+  def test_jvp_of_grad(self):
+    def f(r, x):
+      return x / r
+    def t(r, ct):
+      return ct / r
+    def loss(r, x):
+      return jnp.sum(jax.custom_derivatives.linear_call(f, t, r, x) * r)
+    r, x = jnp.array([2., 4.]), jnp.array([3., 5.])
+    dr, dx = jnp.array([.5, .25]), jnp.array([-1., 2.])
+    grad = jax.grad(loss, argnums=(0, 1))
+    ans = jax.jvp(grad, (r, x), (dr, dx))
+    expected = jax.jvp(jax.grad(lambda r, x: jnp.sum(x / r * r), argnums=(0, 1)),
+                       (r, x), (dr, dx))
+    self.assertAllClose(ans, expected)
+
+  def test_jvp_in_closed_over_values(self):
+    def g(c, x):
+      def f(r, x):
+        return x * c
+      def t(r, ct):
+        return ct * c
+      return jax.custom_derivatives.linear_call(f, t, (), x)
+    ans = jax.jvp(g, (2., 3.), (.5, -1.))
+    expected = jax.jvp(lambda c, x: x * c, (2., 3.), (.5, -1.))
+    self.assertAllClose(ans, expected)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
