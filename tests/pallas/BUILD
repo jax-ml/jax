@@ -886,6 +886,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_splash_attention_kernel_sharded_test",
     srcs = ["tpu_splash_attention_kernel_sharded_test.py"],
+    enable_backends = [],
     enable_configs = [
         "tpu_v5e_x8",
         "tpu_v5p_x4",
