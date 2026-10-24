@@ -160,6 +160,107 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self.assertAllClose(result, expected, check_dtypes=False,
                         atol=1e-3, rtol=1e-3)
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating, mu=[1e7, 1e8, 1e9])
+  def testPoissonLogPmfCentralAccuracy(self, mu, dtype):
+    center = np.asarray(mu, dtype=dtype)
+    offsets = np.asarray([-5, -3, -1, 0, 1, 3, 5], dtype=dtype)
+    k = center + offsets * np.sqrt(center)
+    expected = osp_stats.poisson.logpmf(
+        np.asarray(k, dtype=np.float64), float(center))
+    eager = np.asarray(lsp_stats.poisson.logpmf(k, center))
+    compiled = np.asarray(jax.jit(lsp_stats.poisson.logpmf)(k, center))
+    self.assertAllClose(eager, expected, rtol=1e-6, atol=5e-5,
+                        check_dtypes=False)
+    self.assertAllClose(compiled, expected,
+                        rtol=1e-5 if dtype == np.float32 else 1e-7,
+                        atol=5e-4 if dtype == np.float32 else 5e-5,
+                        check_dtypes=False)
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testPoissonLogPmfLargeFarTail(self, dtype):
+    k = np.full(4, 1e9, dtype=dtype)
+    mu = k * np.asarray([0.2, 0.3, 0.4, 0.49], dtype=dtype)
+
+    def args_maker():
+      return [k, mu]
+
+    self._CheckAgainstNumpy(
+        osp_stats.poisson.logpmf, lsp_stats.poisson.logpmf, args_maker,
+        check_dtypes=False, rtol=1e-6, atol=128.0)
+    self._CompileAndCheck(lsp_stats.poisson.logpmf, args_maker,
+                          check_dtypes=False, rtol=1e-6, atol=128.0)
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testPoissonLogPmfTinyPositiveRate(self, dtype):
+    k = np.asarray([100.0, 1e4, 1e6], dtype=dtype)
+    mu = np.asarray(1e-8, dtype=dtype)
+
+    def args_maker():
+      return [k, mu]
+
+    self._CheckAgainstNumpy(
+        osp_stats.poisson.logpmf, lsp_stats.poisson.logpmf, args_maker,
+        check_dtypes=False, rtol=1e-6, atol=1e-5)
+    self._CompileAndCheck(lsp_stats.poisson.logpmf, args_maker,
+                          check_dtypes=False, rtol=1e-6, atol=1e-5)
+
+  def testPoissonLogPmfTinyRateDerivatives(self):
+    k = np.repeat(np.asarray([0.0, 1.0, 2.0], np.float32), 3)
+    mu = np.tile(np.asarray([0.0, 1e-12, 1e-8], np.float32), 3)
+    actual = np.asarray(lsp_stats.poisson.logpmf(k, mu))
+    expected = osp_stats.poisson.logpmf(k, mu)
+    self.assertAllClose(actual, expected, check_dtypes=False,
+                        rtol=2e-6, atol=2e-5)
+    self.assertAllClose(
+        jax.jit(lsp_stats.poisson.logpmf)(k, mu), expected,
+        check_dtypes=False, rtol=2e-6, atol=2e-5)
+
+    # A zero rate with positive count has log probability -inf and no
+    # finite derivative. All other vector entries have finite derivatives.
+    valid = (k == 0) | (mu > 0)
+    counts = jnp.asarray(k[valid])
+    rates = jnp.asarray(mu[valid])
+
+    def scalar_logpmf(rate, count):
+      return lsp_stats.poisson.logpmf(count, rate)
+
+    gradient = jax.vmap(jax.grad(scalar_logpmf))
+    hessian = jax.vmap(jax.grad(jax.grad(scalar_logpmf)))
+    grad_ref = np.where(k[valid] == 0, -1.0,
+                        k[valid] / np.where(k[valid] == 0, 1.0, mu[valid])
+                        - 1.0)
+    hess_ref = -k[valid] / np.where(k[valid] == 0, 1.0, mu[valid]) ** 2
+    for fun, reference in ((gradient, grad_ref), (hessian, hess_ref)):
+      for version in (fun, jax.jit(fun)):
+        result = np.asarray(version(rates, counts))
+        self.assertTrue(np.isfinite(result).all())
+        np.testing.assert_allclose(result, reference, rtol=3e-5)
+
+  def testPoissonLogPmfNegativeRate(self):
+    k = np.asarray([0.0, 1.0, 2.0], dtype=np.float32)
+    mu = np.asarray([-1.0, -1.0, -1.0], dtype=np.float32)
+
+    def args_maker():
+      return [k, mu]
+
+    self._CheckAgainstNumpy(
+        osp_stats.poisson.logpmf, lsp_stats.poisson.logpmf, args_maker,
+        check_dtypes=False)
+    self._CompileAndCheck(lsp_stats.poisson.logpmf, args_maker,
+                          check_dtypes=False)
+
+  def testPoissonLogPmfFloat32Maximum(self):
+    # SciPy's lgamma-based float64 formula cancels to zero for k=mu
+    # near 1e38, so an asymptotic Stirling reference is required.
+    mu = jnp.array([1e36, 1e37, 1e38], dtype=jnp.float32)
+    expected = -0.5 * (
+        np.log(2 * np.pi) + np.log(np.asarray(mu, dtype=np.float64)))
+    for actual in (lsp_stats.poisson.logpmf(mu, mu),
+                   jax.jit(lsp_stats.poisson.logpmf)(mu, mu)):
+      self.assertTrue(np.isfinite(np.asarray(actual)).all())
+      self.assertAllClose(actual, expected, check_dtypes=False,
+                          rtol=1e-6, atol=2e-5)
+
   @genNamedParametersNArgs(3)
   def testPoissonPmf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())

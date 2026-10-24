@@ -811,6 +811,14 @@ class DistributionsTest(RandomTestBase):
     self.assertAllClose(samples.mean(), lam, rtol=0.02, check_dtypes=False)
     self.assertAllClose(samples.var(), lam, rtol=0.03, check_dtypes=False)
 
+  def testPoissonLargeLambdaVariance(self):
+    lam = 1e8
+    samples = np.asarray(
+        random.poisson(self.make_key(0), lam, shape=(20000,), dtype=np.int32)
+    ).astype(np.float64)
+    self.assertAllClose(samples.mean(), lam, rtol=1e-4, check_dtypes=False)
+    self.assertAllClose(samples.var(), lam, rtol=0.05, check_dtypes=False)
+
   def testPoissonBatched(self):
     key = self.make_key(1)
     lam = jnp.concatenate([2 * jnp.ones(10000), 20 * jnp.ones(10000)])
