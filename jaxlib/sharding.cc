@@ -124,10 +124,11 @@ nb::object CheckAndCanonicalizeMemoryKind(
 
 // This list is to check for valid memory kinds when an AbstractMesh is passed
 // to NamedSharding.
-static const std::array<std::string_view, 3> valid_memory_kinds = {
+static const std::array<std::string_view, 4> valid_memory_kinds = {
     "device",
     "pinned_host",
     "unpinned_host",
+    "collective",
 };
 
 NamedSharding::NamedSharding(nb::object mesh, nb::object spec,

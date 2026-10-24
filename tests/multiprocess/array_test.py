@@ -1140,6 +1140,87 @@ class CrossHostTransferTest(jt_multiprocess.MultiProcessTest):
     else:
       self.assertEmpty(z.addressable_shards)
 
+  @jtu.skip_on_devices("cpu", "tpu", "rocm")
+  def test_device_put_collective_memory_kind(self):
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest(
+          "collective memory kind requires CUDA compute capability >= 9.0"
+      )
+    if "collective" not in [
+        m.kind for m in jax.local_devices()[0].addressable_memories()
+    ]:
+      self.skipTest("collective memory kind not supported on this device")
+
+    # Multi-process sharded array (exercises array._array_shard_arg when
+    # not x.is_fully_addressable and same_sharding/same_layout but different
+    # memory_kind)
+    devices = jax.devices()
+    mesh = jax.make_mesh(
+        (len(devices),),
+        ("x",),
+        devices=devices,
+        axis_types=(jax.sharding.AxisType.Explicit,),
+    )
+    s_dev = jax.sharding.NamedSharding(mesh, P("x"), memory_kind="device")
+    s_coll = jax.sharding.NamedSharding(mesh, P("x"), memory_kind="collective")
+    x_np = np.arange(16, dtype=np.float32)
+
+    arr_coll = jax.device_put(x_np, s_coll)
+    self.assertEqual(arr_coll.sharding.memory_kind, "collective")
+    for shard in arr_coll.addressable_shards:
+      self.assertEqual(shard.data.sharding.memory_kind, "collective")
+      np.testing.assert_array_equal(shard.data, x_np[shard.index])
+
+    arr_dev = jax.device_put(x_np, s_dev)
+    self.assertFalse(arr_dev.is_fully_addressable)
+    self.assertEqual(arr_dev.sharding.memory_kind, "device")
+
+  def test_device_put_collective_memory_not_all_participating_devices_error(
+      self,
+  ):
+    if jax.device_count() < 2:
+      self.skipTest("Test requires at least 2 devices")
+    n_local = jax.local_device_count()
+    abstract_mesh = jax.sharding.AbstractMesh((n_local,), ("x",))
+    s_abstract = jax.sharding.NamedSharding(
+        abstract_mesh, P("x"), memory_kind="collective"
+    )
+    with self.assertRaisesRegex(
+        ValueError,
+        "When using `memory_kind='collective'`, memory must be placed in all"
+        " participating devices",
+    ):
+      jax.device_put(np.ones((n_local * 2,), dtype=np.float32), s_abstract)
+
+    if "collective" in [
+        m.kind for m in jax.local_devices()[0].addressable_memories()
+    ]:
+      mesh_sub = jax.make_mesh(
+          (n_local,),
+          ("x",),
+          devices=jax.local_devices(process_index=0),
+          axis_types=(jax.sharding.AxisType.Explicit,),
+      )
+      s_sub = jax.sharding.NamedSharding(
+          mesh_sub, P("x"), memory_kind="collective"
+      )
+      with self.assertRaisesRegex(
+          ValueError,
+          "When using `memory_kind='collective'`, memory must be placed in all"
+          " participating devices",
+      ):
+        jax.device_put(np.ones((n_local * 2,), dtype=np.float32), s_sub)
+
+      s_single = jax.sharding.SingleDeviceSharding(
+          jax.devices()[0], memory_kind="collective"
+      )
+      with self.assertRaisesRegex(
+          ValueError,
+          "When using `memory_kind='collective'`, memory must be placed in all"
+          " participating devices",
+      ):
+        jax.device_put(np.ones((2,), dtype=np.float32), s_single)
+
 
 if __name__ == "__main__":
   jt_multiprocess.main()
