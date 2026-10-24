@@ -129,7 +129,7 @@ class K8sCluster(clusters.ClusterEnv):
     hostname = os.getenv('HOSTNAME')
     if hostname is None:
       raise RuntimeError("expected HOSTNAME env variable to be defined")
-    ip = socket.gethostbyname(hostname)
+    ip = socket.getaddrinfo(hostname, None)[0][4][0]
     with cls._handle_api_exception():
       [pod] = cls._core_api.list_namespaced_pod(
         namespace=cls._namespace(),
@@ -253,7 +253,7 @@ class K8sCluster(clusters.ClusterEnv):
             exceptions=socket.gaierror
           )
           def wait_for_host(hostname):
-            socket.gethostbyname(hostname)
+            socket.getaddrinfo(hostname, None)
 
           wait_for_host(coordinator_hostname)
 
