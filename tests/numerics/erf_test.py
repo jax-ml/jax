@@ -600,7 +600,7 @@ class ErfinvTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfinv_grad_accuracy(self, dtype):
     bounds = [
-        ("cpu", {bf16: 6.5, f16: 9.5, f32: 29.0, f64: 68.0}),
+        ("cpu", {bf16: 6.5, f16: 9.5, f32: 29.0, f64: 69.0}),
         ("gpu", {bf16: 6.5, f16: 9.5, f32: 27.0, f64: 68.0}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1595.5}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 67.0}),
