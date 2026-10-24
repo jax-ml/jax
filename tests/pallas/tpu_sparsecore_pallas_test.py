@@ -1378,7 +1378,7 @@ class VectorSubcoreTest(PallasSCTest):
         ),
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = plsc.bitcast(x_ref[...], o_ref.dtype)
+      o_ref[...] = pltpu.bitcast(x_ref[...], o_ref.dtype, dim=-1)
 
     x = jnp.arange(self.num_lanes, dtype=dtype)
     np.testing.assert_array_equal(kernel(x), x.view(new_dtype))
