@@ -103,6 +103,9 @@ def copy_file(
       shutil.copyfile(src_file_loc, dst_file)
     else:
       shutil.copy(src_file_loc, dst_file)
+    # Ensure the copied file is writable (important for RBE environments
+    # where source files may be read-only)
+    os.chmod(dst_file, 0o644)
 
 
 def platform_tag(cpu: str) -> str:
