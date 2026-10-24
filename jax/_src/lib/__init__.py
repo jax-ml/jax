@@ -109,6 +109,11 @@ from jaxlib._jax import pytree as pytree  # noqa: F401
 from jaxlib._jax import Device as Device  # noqa: F401
 from jaxlib import _profiler as _profiler  # noqa: F401
 from jaxlib import _profile_data as _profile_data  # noqa: F401
+try:
+  # TODO: remove this try-except once min jaxlib version >= 0.12.0
+  from jaxlib import _gpu_spec as _gpu_spec  # noqa: F401
+except ImportError:
+  pass
 
 from jaxlib._jax import ffi as ffi  # noqa: F401
 import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
