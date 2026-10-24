@@ -819,6 +819,30 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_special.betainc, args_maker, rtol=rtol)
 
   @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1Grads(self, dtype):
+    samples = [(0.5, 1.5, -50.0), (1.0, 2.0, -30.0), (2.0, 3.0, -90.0),
+               (2.0, 3.0, -150.0), (0.5, 1.5, -150.0), (2.5, 4.0, -500.0),
+               (2.0, 2.0, -20.0), (2.0, 2.0, -150.0), (3.0, 1.0, -20.0),
+               (3.0, 1.0, -150.0), (1.5, 2.5, 3.0)]
+    if dtype == np.float64:
+      samples += [(1.5, 2.5, 300.0), (4.0, 2.0, 600.0)]
+    a, b, x = (np.array(v, dtype=dtype) for v in zip(*samples))
+    jtu.check_grads(lsp_special.hyp1f1, (a, b, x), order=1,
+                    modes=["fwd", "rev"], atol=1e-3, rtol=1e-3, eps=1e-3)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1TerminatingSeries(self, dtype):
+    # The series of 1F1(a, b, x) for x >= 0, and that of Kummer's transform
+    # 1F1(b - a, b, -x) for x < 0, stop at the term that vanishes, including
+    # before b + k reaches 0 for a negative integer b.
+    samples = [(-1.0, -3.0, 5.0), (-2.0, -5.0, 10.0), (-2.0, 0.5, 8.0),
+               (2.0, 1.0, -50.0), (3.0, 1.0, -300.0)]
+    a, b, x = (np.array(v, dtype=dtype) for v in zip(*samples))
+    args_maker = lambda: (a, b, x)
+    self._CheckAgainstNumpy(osp_special.hyp1f1, lsp_special.hyp1f1, args_maker,
+                            rtol=1e-5)
+
+  @jtu.sample_product(dtype=float_dtypes)
   def testHyp2f1SpecialCases(self, dtype):
     eps = np.finfo(dtype).eps
 
