@@ -3623,6 +3623,7 @@ def _fold_and_get_constant_value(x):
 
 
 @register_lowering_rule(lax.stop_gradient_p)
+@register_lowering_rule(lax_internal.copy_p)
 def _stop_gradient_lowering_rule(_: LoweringRuleContext, x):
   return x
 
@@ -4275,6 +4276,13 @@ def _erf_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.erf(x)
+
+
+@register_lowering_rule(lax.erfc_p)
+def _erfc_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
+  return lower_fun(pallas_utils.erfc_lowering_helper)(ctx, x)
 
 
 @register_lowering_rule(

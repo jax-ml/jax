@@ -504,7 +504,9 @@ _ERFC64_G_0_1 = (
 )
 
 
-def erfc_impl(x: Array) -> Array:
+def erfc_impl(
+    x: Array, *, exp_accuracy: AccuracyMode | None = AccuracyMode.HIGHEST
+) -> Array:
   """Computes `erfc(x)` for `float32` and `float64` inputs.
 
   We split the domain at `|x| = 1`:
@@ -517,6 +519,8 @@ def erfc_impl(x: Array) -> Array:
     before calling `exp`. For `x <= -1`, the reflection identity
     `erfc(x) = 2 - erfc(|x|)` gives the result without cancellation since
     `erfc(|x|) <= 0.1573`.
+
+  `exp_accuracy=None` allows use by lowerings that do not support `accuracy`.
   """
   ax = abs(x)
   small = _erfc_small(clamp(_const(x, -1.0), x, _const(x, 1.0)))
@@ -530,7 +534,7 @@ def erfc_impl(x: Array) -> Array:
   s_hi, s_lo = _split_square(ax_exp)
   y = erfcx_large(ax)
   expm1_neg_lo = _expm1_lo(-s_lo)
-  large_pos = exp(-s_hi, accuracy=AccuracyMode.HIGHEST) * (
+  large_pos = exp(-s_hi, accuracy=exp_accuracy) * (
       y + y * expm1_neg_lo
   )
   large = select(x < 0.0, 2.0 - large_pos, large_pos)

@@ -354,6 +354,12 @@ def erf_inv_lowering_helper(x):
   raise NotImplementedError(f"erf_inv_lowering_helper not implemented for {x.dtype}")
 
 
+def erfc_lowering_helper(x):
+  if x.dtype not in (jnp.float32, jnp.float64):
+    return erfc_lowering_helper(x.astype(jnp.float32)).astype(x.dtype)
+  return special.erfc_impl(x, exp_accuracy=None)
+
+
 def sign_lowering_helper(x):
   if jnp.issubdtype(x.dtype, jnp.unsignedinteger):
     return (x != 0).astype(x.dtype)
