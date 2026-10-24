@@ -46,6 +46,7 @@ from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import special as lax_special
 from jax._src.lax import utils as lax_utils
+from jax._src.layout import Format
 from jax._src.lib import xla_client as xc
 from jax._src.numpy.array_constructors import array, asarray
 from jax._src.numpy import array_creation
@@ -5566,7 +5567,7 @@ def fromiter(*args, **kwargs):
 
 
 @export
-def from_dlpack(x: Any, /, *, device: xc.Device | Sharding | None = None,
+def from_dlpack(x: Any, /, *, device: xc.Device | Sharding | Format | None = None,
                 copy: bool | None = None) -> Array:
   """Construct a JAX array via DLPack.
 
@@ -5576,17 +5577,19 @@ def from_dlpack(x: Any, /, *, device: xc.Device | Sharding | None = None,
     x: An object that implements the DLPack_ protocol via the ``__dlpack__``
       and ``__dlpack_device__`` methods, or a legacy DLPack tensor on either
       CPU or GPU.
-    device: An optional :class:`~jax.Device` or :class:`~jax.sharding.Sharding`,
-      representing the single device onto which the returned array should be placed.
-      If given, then the result is committed to the device. If unspecified,
-      the resulting array will be unpacked onto the same device it originated from.
-      Setting ``device`` to a device different from the source of ``external_array``
-      will require a copy, meaning ``copy`` must be set to either ``True`` or ``None``.
+    device: An optional :class:`~jax.Device`, :class:`~jax.sharding.Sharding`
+      (spanning a single device), or ``Format``, representing the single device
+      (and optional device-local layout) onto which the returned array should
+      be placed. If given, then the result is committed to the device. If
+      unspecified, the resulting array will be unpacked onto the same device it
+      originated from. Setting ``device`` to a device or format requiring a
+      transfer from the source of ``x`` will require a copy, meaning ``copy``
+      must be set to either ``True`` or ``None``.
     copy: An optional boolean, controlling whether or not a copy is performed.
       If ``copy=True`` then a copy is always performed, even if unpacked onto the
       same device. If ``copy=False`` then the copy is never performed and will raise
       an error if necessary. When ``copy=None`` (default) then a copy may be performed
-      if needed for a device transfer.
+      if needed for a device or format transfer.
 
   Returns:
     A JAX array of the input buffer.
