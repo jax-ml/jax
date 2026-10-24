@@ -38,6 +38,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax.erf import erf_inv_core
 from jax._src.lax import lax
 from jax._src.lax import special as lax_special
 from jax._src.numpy import einsum as jnp_einsum
@@ -480,6 +481,7 @@ def uniform(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
             minval: RealArray = 0.,
             maxval: RealArray = 1.,
             *,
+            mode: str | None = None,
             out_sharding: NamedSharding | P | None = None) -> Array:
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
@@ -491,6 +493,9 @@ def uniform(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
       jax_enable_x64 is true, otherwise float32).
     minval: optional, a minimum (inclusive) value broadcast-compatible with shape for the range (default 0).
     maxval: optional, a maximum (exclusive) value broadcast-compatible with shape for the range (default 1).
+    mode: optional, "low", "high", or "highest" for how many bits of entropy to
+      convert into floating-point samples. Defaults to ``jax_random_uniform_mode``
+      config ("low").
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -507,16 +512,159 @@ def uniform(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   shape = core.canonicalize_shape(shape)
+  if mode is None:
+    mode = config.random_uniform_mode.value
+  if mode not in ("low", "high", "highest"):
+    raise ValueError(f"Must provide valid mode for uniform, got: {mode}")
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "uniform", shape)
 
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
   return maybe_auto_axes(_uniform, out_sharding,
-                         shape=shape, dtype=dtype)(key, minval, maxval)
+                         shape=shape, dtype=dtype, mode=mode)(key, minval, maxval)
 
-@jit(static_argnums=(3, 4))
-def _uniform(key: Key, minval, maxval, shape, dtype) -> Array:
+
+def _bits_to_uniform(
+    bits: Array | tuple[Array, Array], dtype: DType, mode: str = "low"
+) -> Array:
+  """Convert unsigned integer bit patterns into uniform samples in [0, 1)."""
+  finfo = dtypes.finfo(dtype)
+  nbits, nmant = finfo.bits, finfo.nmant
+  uint_dtype = UINT_DTYPES[nbits]
+  if mode == "low":
+    assert not isinstance(bits, tuple)
+    input_bits = dtypes.iinfo(bits.dtype).bits
+    # Put random bits into the mantissa of 1.0 to produce a float in [1, 2),
+    # then subtract 1.0 to map into [0, 1).
+    bits_u = lax.convert_element_type(bits, uint_dtype)
+    float_bits = lax.shift_right_logical(
+        bits_u, jnp.array(input_bits - nmant, uint_dtype))
+    float_bits = lax.bitwise_or(
+        float_bits,
+        # The double cast is because the TPU backend does not implement `view`
+        # on float64 values => do the `view` in NumPy first, but then ensure
+        # that we have a JAX array that won't be canonicalized further.
+        jnp.asarray(np.array(1.0, dtype).view(float_bits.dtype),
+                    dtype=float_bits.dtype))
+    return lax.bitcast_convert_type(float_bits, dtype) - jnp.array(1., dtype)
+  elif mode == "high":
+    assert not isinstance(bits, tuple)
+    input_bits = dtypes.iinfo(bits.dtype).bits
+    # Treat `bits` as the binary fraction `0.<bits>_2` in [0, 1):
+    # - `lz = clz(bits)` is the number of leading 0s before the first 1 bit,
+    #   which sets the float exponent (`0` leading zeros -> [0.5, 1),
+    #   `1` leading zero -> [0.25, 0.5), ..., biased exponent = -minexp - lz).
+    # - The `nmant` bits right after that first 1 bit fill the mantissa.
+    #   Truncating instead of rounding prevents values near 1 from rounding up
+    #   to 1.0.
+    if -finfo.minexp >= input_bits and input_bits == nbits:
+      # Exponent range is wide enough (float32, bfloat16, float64) that every
+      # nonzero integer is a normal float (no subnormals), so pack the exponent
+      # and mantissa bits directly.
+      lz = lax.clz(bits)
+      mantissa = lax.bitwise_and(
+          lax.shift_right_logical(
+              lax.shift_left(bits, lz),
+              np.array(nbits - 1 - nmant, dtype=uint_dtype),
+          ),
+          np.array((1 << nmant) - 1, dtype=uint_dtype),
+      )
+      exp = lax.shift_left(
+          np.array(-finfo.minexp, dtype=uint_dtype) - lz,
+          np.array(nmant, dtype=uint_dtype),
+      )
+      float_bits = jnp.where(
+          bits == 0,
+          np.array(0, dtype=uint_dtype),
+          lax.bitwise_or(exp, mantissa),
+      )
+      return lax.bitcast_convert_type(float_bits, dtype)
+    else:
+      # Narrow exponent types (float16, float8_*): 32 bits can land in the
+      # subnormal range. Clear bits after the first `1 + nmant` significant bits
+      # in uint32, scale by 2^-32 in float32, and cast to `dtype`.
+      u32 = lax.shift_left(
+          lax.convert_element_type(bits, np.uint32), np.uint32(32 - input_bits)
+      )
+      lz = lax.clz(u32)
+      sig_mask = np.uint32(~((1 << (31 - nmant)) - 1) & 0xFFFFFFFF)
+      u32_trunc = lax.shift_right_logical(
+          lax.bitwise_and(lax.shift_left(u32, lz), sig_mask), lz
+      )
+      floats_f32 = (
+          lax.convert_element_type(u32_trunc, np.float32) * np.float32(2.0 ** -32)
+      )
+      return lax.min(
+          lax.convert_element_type(floats_f32, dtype),
+          np.nextafter(np.array(1.0, dtype), np.array(0.0, dtype)),
+      )
+  elif mode == "highest":
+    assert isinstance(bits, tuple) and len(bits) == 2
+    hi, lo = bits
+    w_bits = dtypes.iinfo(hi.dtype).bits
+    w_uint = UINT_DTYPES[w_bits]
+    # Same binary-fraction logic as mode="high", but across two `W`-bit words
+    # `(hi, lo)` (2x32=64 bits for float32/bfloat16; 2x64=128 bits for float64):
+    if -finfo.minexp >= 2 * w_bits:
+      hi_zero = hi == 0
+      both_zero = hi_zero & (lo == 0)
+      lz_hi = lax.clz(hi)
+      lz_lo = lax.clz(lo)
+      lz = jnp.where(hi_zero, np.array(w_bits, dtype=w_uint) + lz_lo, lz_hi)
+      # Shift the first `1` bit to the top of `top_w`, pulling in high bits of
+      # `lo` to fill the bottom of `hi << lz_hi`. Use two shifts (`>> 1` then
+      # `>> (w_bits - 1 - lz_hi)`) because shifting by `w_bits` in one step when
+      # `lz_hi == 0` wraps modulo the word width.
+      hi_norm = lax.bitwise_or(
+          lax.shift_left(hi, lz_hi),
+          lax.shift_right_logical(
+              lax.shift_right_logical(lo, np.array(1, dtype=w_uint)),
+              np.array(w_bits - 1, dtype=w_uint) - lz_hi,
+          ),
+      )
+      top_w = jnp.where(hi_zero, lax.shift_left(lo, lz_lo), hi_norm)
+      mantissa = lax.convert_element_type(
+          lax.bitwise_and(
+              lax.shift_right_logical(
+                  top_w, np.array(w_bits - 1 - nmant, dtype=w_uint)
+              ),
+              np.array((1 << nmant) - 1, dtype=w_uint),
+          ),
+          uint_dtype,
+      )
+      exp = lax.shift_left(
+          np.array(-finfo.minexp, dtype=uint_dtype)
+          - lax.convert_element_type(lz, uint_dtype),
+          np.array(nmant, dtype=uint_dtype),
+      )
+      float_bits = jnp.where(
+          both_zero,
+          np.array(0, dtype=uint_dtype),
+          lax.bitwise_or(exp, mantissa),
+      )
+      return lax.bitcast_convert_type(float_bits, dtype)
+    else:
+      # Small-exponent types (float16, float8_*): 32 bits in `hi` exceeds the
+      # entire subnormal dynamic range (-minexp + nmant <= 24).
+      lz = lax.clz(hi)
+      sig_mask = np.uint32(~((1 << (31 - nmant)) - 1) & 0xFFFFFFFF)
+      u32_trunc = lax.shift_right_logical(
+          lax.bitwise_and(lax.shift_left(hi, lz), sig_mask), lz
+      )
+      floats_f32 = (
+          lax.convert_element_type(u32_trunc, np.float32) * np.float32(2.0 ** -32)
+      )
+      return lax.min(
+          lax.convert_element_type(floats_f32, dtype),
+          np.nextafter(np.array(1.0, dtype), np.array(0.0, dtype)),
+      )
+  else:
+    raise ValueError(f"Unsupported mode for _bits_to_uniform: {mode}")
+
+
+@jit(static_argnums=(3, 4, 5))
+def _uniform(key: Key, minval, maxval, shape, dtype, mode: str = "low") -> Array:
   _check_shape("uniform", shape)
   if not dtypes.issubdtype(dtype, np.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
@@ -534,28 +682,17 @@ def _uniform(key: Key, minval, maxval, shape, dtype) -> Array:
         f"uniform only accepts 8-, 16-, 32-, or 64-bit dtypesgot {dtype}."
     )
 
-  rng_bits = nbits
-  if nmant < 8:
-    rng_bits = 8
-  bits = _random_bits(key, rng_bits, shape)
-  uint_dtype = UINT_DTYPES[nbits]
-  if rng_bits != nbits:
-    bits = lax.convert_element_type(bits, uint_dtype)
-
-  # The strategy here is to randomize only the mantissa bits with an exponent of
-  # 1 (after applying the bias), then shift and scale to the desired range. The
-  # bit-level transformation we use relies on Numpy and XLA having bit-for-bit
-  # equivalent float representations, which might not be true on all platforms.
-  float_bits = lax.shift_right_logical(
-      bits, jnp.array(rng_bits - nmant, uint_dtype))
-  float_bits = lax.bitwise_or(
-      float_bits,
-      # The double cast is because the TPU backend does not implement `view` on
-      # float64 values => do the `view` in NumPy first, but then ensure that
-      # we have a JAX array that won't be canonicalized further.
-      jnp.asarray(np.array(1.0, dtype).view(float_bits.dtype),
-                  dtype=float_bits.dtype))
-  floats = lax.bitcast_convert_type(float_bits, dtype) - jnp.array(1., dtype)
+  if mode == "highest":
+    word_bits = 64 if nbits == 64 else 32
+    k1, k2 = _split(key)
+    bits: Array | tuple[Array, Array] = (
+        _random_bits(k1, word_bits, shape),
+        _random_bits(k2, word_bits, shape),
+    )
+  else:
+    rng_bits = 8 if (mode == "low" and nmant < 8) else nbits
+    bits = _random_bits(key, rng_bits, shape)
+  floats = _bits_to_uniform(bits, dtype, mode=mode)
   return lax.max(
       minval,
       lax.reshape(floats * (maxval - minval) + minval, shape))
@@ -920,6 +1057,7 @@ def normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
            shape: Shape = (),
            dtype: DTypeLikeFloat | None = None,
            *,
+           mode: str | None = None,
            out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample standard normal random values with given shape and float dtype.
 
@@ -936,6 +1074,9 @@ def normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
       shape. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    mode: optional, "low", "high", or "highest" for how many bits of entropy to
+      convert into floating-point samples. Defaults to ``jax_random_normal_mode``
+      config ("low").
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -950,34 +1091,185 @@ def normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   """
   key, _ = _check_prng_key("normal", key)
   shape = core.canonicalize_shape(shape)
+  if mode is None:
+    mode = config.random_normal_mode.value
+  if mode not in ("low", "high", "highest"):
+    raise ValueError(f"Must provide valid mode for normal, got: {mode}")
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "normal", shape)
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `normal` must be a float or complex dtype, "
                      f"got {dtype}")
-  return maybe_auto_axes(_normal, out_sharding, shape=shape, dtype=dtype)(key)
+  return maybe_auto_axes(
+      _normal, out_sharding, shape=shape, dtype=dtype, mode=mode
+  )(key)
 
-@jit(static_argnums=(1, 2))
-def _normal(key: Key, shape, dtype) -> Array:
+
+def _signed_midpoint_and_complement(
+    bits: Array | tuple[Array, Array], compute_dtype: DType, mode: str
+) -> tuple[Array, Array, Array]:
+  """Convert random integer bits into `(x, |x|, 1 - |x|)` for `x` uniform on `(-1, 1)`.
+
+  To sample from a normal distribution, we map a uniform random value `x` in
+  `(-1, 1)` through `sqrt(2) * erfinv(x)`. If `x` is converted to float first,
+  values close to `+/-1` (which map into the tails of the normal distribution)
+  round to `1.0` or lose precision when subtracting `1 - |x|` in floating point.
+
+  Instead, this helper computes both `|x|` (used near `0`) and `q = 1 - |x|`
+  (used near `|x| = 1`) directly from the integer bits before converting to
+  float.
+  """
+  w = dtypes.finfo(compute_dtype).bits
+  uint_dtype = UINT_DTYPES[w]
+  if mode == "high":
+    assert not isinstance(bits, tuple)
+    bits_u = lax.convert_element_type(bits, uint_dtype)
+    input_bits = dtypes.iinfo(bits.dtype).bits
+    if input_bits < w:
+      bits_u = lax.shift_left(
+          bits_u, np.array(w - input_bits, dtype=uint_dtype)
+      )
+    sign_bit = lax.bitwise_and(
+        bits_u, np.array(1 << (w - 1), dtype=uint_dtype)
+    )
+    # Shift left by 1 to drop `sign_bit`, leaving `2 * k` in bits `1 .. w-1`
+    # (where `k` is the `(w - 1)`-bit integer in `0 .. 2^(w-1) - 1`).
+    two_k = lax.shift_left(bits_u, np.array(1, dtype=uint_dtype))
+
+    # Map `k` to `(k + 0.5) / 2^(w-1) = (2 * k + 1) * 2^-w`:
+    # - at `k = 0`, `+x` and `-x` land at `+2^-w` and `-2^-w` instead of
+    #   mapping both `+0` and `-0` to `0.0`;
+    # - at `k = 2^(w-1) - 1`, `1 - |x| = 2^-w > 0`, avoiding `erfinv(1) = inf`.
+    abs_x_int = lax.bitwise_or(two_k, np.array(1, dtype=uint_dtype))
+
+    # Since `|x| = (2 * k + 1) * 2^-w`, `1 - |x| = ((2^w - 1) - 2 * k) * 2^-w`,
+    # whose numerator `(2^w - 1) - two_k` is the bitwise complement `~two_k`.
+    q_int = lax.bitwise_not(two_k)
+
+    # Converting an unsigned integer to float rounds it to the nearest float,
+    # and multiplying by `2^-w` shifts its exponent down by `w`, so `abs_x`
+    # and `q` round to the nearest floats to `|x|` and `1 - |x|`.
+    #
+    # `erf_inv_core` computes `1 - x^2` as `q * (1 + |x|)`:
+    # - Near `|x| = 1`, `abs_x` rounds up to `1.0`, giving `1 + |x| == 2.0`,
+    #   while `q` stays positive (`q_int >= 1`), avoiding `erfinv(1) = inf`.
+    # - Near `x = 0`, `q` rounds up to `1.0`, giving `q * (1 + |x|) == 1.0`,
+    #   while `erf_inv_core` scales its result by `x` so small values stay
+    #   distinct.
+    scale = np.array(2.0 ** -w, compute_dtype)
+    abs_x = lax.convert_element_type(abs_x_int, compute_dtype) * scale
+    q = lax.convert_element_type(q_int, compute_dtype) * scale
+  elif mode == "highest":
+    assert isinstance(bits, tuple) and len(bits) == 2
+    hi, lo = bits
+    sign_bit = lax.bitwise_and(hi, np.array(1 << (w - 1), dtype=uint_dtype))
+    # Same construction across two `w`-bit words `(hi, lo)`: shift left by 1
+    # into `(two_k_hi, two_k_lo)` to drop `sign_bit`.
+    two_k_hi = lax.bitwise_or(
+        lax.shift_left(hi, np.array(1, dtype=uint_dtype)),
+        lax.shift_right_logical(lo, np.array(w - 1, dtype=uint_dtype)),
+    )
+    two_k_lo = lax.shift_left(lo, np.array(1, dtype=uint_dtype))
+    abs_x_hi = two_k_hi
+    abs_x_lo = lax.bitwise_or(two_k_lo, np.array(1, dtype=uint_dtype))
+    q_hi = lax.bitwise_not(two_k_hi)
+    q_lo = lax.bitwise_not(two_k_lo)
+    # Scale the high and low words separately by `2^-w` and `2^(-2*w)` before
+    # adding in floating point so tail values down to `2^(-2*w)` do not round to
+    # zero when `q_hi == 0`.
+    scale_hi = np.array(2.0 ** -w, compute_dtype)
+    scale_lo = np.array(2.0 ** (-2 * w), compute_dtype)
+    abs_x = (
+        lax.convert_element_type(abs_x_hi, compute_dtype) * scale_hi
+        + lax.convert_element_type(abs_x_lo, compute_dtype) * scale_lo
+    )
+    q = (
+        lax.convert_element_type(q_hi, compute_dtype) * scale_hi
+        + lax.convert_element_type(q_lo, compute_dtype) * scale_lo
+    )
+  else:
+    raise ValueError(f"Unsupported mode: {mode}")
+  # Attach `sign_bit` to `abs_x` to form signed `x`.
+  x = lax.bitcast_convert_type(
+      lax.bitwise_or(lax.bitcast_convert_type(abs_x, uint_dtype), sign_bit),
+      compute_dtype,
+  )
+  return x, abs_x, q
+
+
+def _bits_to_normal(
+    bits: Array | tuple[Array, Array], dtype: DType, mode: str = "low"
+) -> Array:
+  """Convert random unsigned integer bits into standard normal samples.
+
+  If `x` is uniform on `(-1, 1)`, `sqrt(2) * erfinv(x)` is standard normal.
+  Public inverse functions (`lax.erf_inv` and `jax.scipy.special.ndtri`) take a
+  single floating-point input, so values near `x = +/-1` (in the tails of the
+  normal distribution) lose precision or round to `1.0`.
+
+  In `"high"` and `"highest"` modes, `_signed_midpoint_and_complement` produces
+  both `x` and `q = 1 - |x|` in integer arithmetic before casting to float, and
+  we pass both directly to `erf_inv_core(..., has_far_tail=True, is_ndtri=True)`,
+  which uses `x` near zero and `q` in the tails to evaluate `sqrt(2) * erfinv(x)`
+  without losing tail precision.
+  """
+  if mode == "low":
+    assert not isinstance(bits, tuple)
+    lo = lax.convert_element_type(
+        np.nextafter(np.array(-1.0, dtype), np.array(0.0, dtype), dtype=dtype),
+        dtype,
+    )
+    hi = lax.convert_element_type(np.array(1.0, dtype), dtype)
+    floats = _bits_to_uniform(bits, dtype, mode="low")
+    u = lax.max(lo, floats * (hi - lo) + lo)
+    return lax.mul(np.array(np.sqrt(2), dtype), lax_special.erf_inv(u))
+  elif mode in ("high", "highest"):
+    compute_dtype = (
+        dtype if dtype in (np.float32, np.float64) else np.dtype(np.float32)
+    )
+    x, _, q = _signed_midpoint_and_complement(bits, compute_dtype, mode)
+    z = erf_inv_core(x, q, has_far_tail=True, is_ndtri=True)
+    return lax.convert_element_type(z, dtype)
+  else:
+    raise ValueError(f"Unsupported mode for _bits_to_normal: {mode}")
+
+
+@jit(static_argnums=(1, 2, 3))
+def _normal(key: Key, shape, dtype, mode: str = "low") -> Array:
   if dtypes.issubdtype(dtype, np.complexfloating):
     sqrt2 = np.array(np.sqrt(2), dtype)
 
     key_re, key_im = _split(key)
     real_dtype = np.array(0, dtype).real.dtype
-    _re = _normal_real(key_re, shape, real_dtype).astype(dtype)
-    _im = _normal_real(key_im, shape, real_dtype).astype(dtype)
+    _re = _normal_real(key_re, shape, real_dtype, mode=mode).astype(dtype)
+    _im = _normal_real(key_im, shape, real_dtype, mode=mode).astype(dtype)
     return (_re + 1j * _im) / sqrt2
   else:
-    return _normal_real(key, shape, dtype)
+    return _normal_real(key, shape, dtype, mode=mode)
 
-@jit(static_argnums=(1, 2))
-def _normal_real(key: Key, shape, dtype) -> Array:
+
+@jit(static_argnums=(1, 2, 3))
+def _normal_real(key: Key, shape, dtype, mode: str = "low") -> Array:
   _check_shape("normal", shape)
-  lo = np.nextafter(np.array(-1., dtype), np.array(0., dtype), dtype=dtype)
-  hi = np.array(1., dtype)
-  u = uniform(key, shape, dtype, lo, hi)
-  return lax.mul(np.array(np.sqrt(2), dtype), lax_special.erf_inv(u))
+  if mode == "low":
+    lo = np.nextafter(np.array(-1.0, dtype), np.array(0.0, dtype), dtype=dtype)
+    hi = np.array(1.0, dtype)
+    u = uniform(key, shape, dtype, lo, hi, mode="low")
+    return lax.mul(np.array(np.sqrt(2), dtype), lax_special.erf_inv(u))
+  compute_dtype = (
+      dtype if dtype in (np.float32, np.float64) else np.dtype(np.float32)
+  )
+  word_bits = dtypes.finfo(compute_dtype).bits
+  if mode == "highest":
+    k1, k2 = _split(key)
+    bits: Array | tuple[Array, Array] = (
+        _random_bits(k1, word_bits, shape),
+        _random_bits(k2, word_bits, shape),
+    )
+  else:
+    bits = _random_bits(key, word_bits, shape)
+  return lax.reshape(_bits_to_normal(bits, dtype, mode=mode), shape)
 
 
 def multivariate_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
