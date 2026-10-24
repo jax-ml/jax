@@ -1030,7 +1030,7 @@ def dce(traced, policy):
           "the rematted computation's closure contains a mutable array "
           f"reference of type {v.aval.str_short()} that is not one of the "
           "rematted function's inputs, but such refs cannot be saved")
-  jaxpr, used = pe.dce_jaxpr(jaxpr, True)
+  jaxpr, used = pe.dce_jaxpr(jaxpr, True, live_inputs=False)
   keep = [u or i in {*in_fwd} for i, u in enumerate(used)]
   kept_idx = {i: p for p, i in enumerate(i for i, k in enumerate(keep) if k)}
   in_fwd = tuple(kept_idx[f] if f is not None else None for f in in_fwd)
@@ -1107,8 +1107,10 @@ class RematTraced(HiPrim):
     return primals_out, (primals_, Static(prevent_cse), rem), list(out_nzs)
 
   def vjp_bwd(self, primals_rem, outgrad, *arg_accums):
-    if all(isinstance(x, (ad_util.Zero, ad_util.SymbolicZero))
-           for x in tree_leaves(outgrad)):
+    if all(
+        isinstance(x, (ad_util.Zero, ad_util.SymbolicZero))
+        for x in tree_leaves(outgrad)
+    ) and not any(isinstance(x, ad.RefAccum) for x in tree_leaves(arg_accums)):
       return None
     primals, prevent_cse, rem = primals_rem
     prevent_cse = prevent_cse.val
