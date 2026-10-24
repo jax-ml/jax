@@ -3207,7 +3207,7 @@ def add_jaxvals_lowering(ctx, x, y):
       dtypes.issubdtype(a.dtype, dtypes.extended)):
     return lower_fun(lambda x, y: [a.dtype._rules.add(a.dtype, x, y)])(ctx, x, y)
   out = hlo.add(x, y)
-  return [lower_with_sharding_in_types(ctx, out, out_aval)]
+  return [lower_with_explicit_types(ctx, out, out_aval)]
 
 register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 

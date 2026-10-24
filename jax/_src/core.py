@@ -3545,7 +3545,8 @@ def cmp_shape_shd_mat_memsp(t1, t2):
   else:
     shd_eq = True
   return (shd_eq and definitely_equal_shape(t1.shape, t2.shape) and
-          t1.mat == t2.mat and t1.memory_space == t2.memory_space)
+          t1.mat == t2.mat and t1.memory_space == t2.memory_space and
+          t1.layout == t2.layout)
 
 def aval_mismatch_extra(a1: AbstractValue, a2: AbstractValue) -> str:
   assert not typematch(a1, a2)
@@ -3557,6 +3558,8 @@ def aval_mismatch_extra(a1: AbstractValue, a2: AbstractValue) -> str:
       mismatches.append('the shapes do not match')
     if a1.mat != a2.mat:
       mismatches.append('the manual axis types do not match')
+    if a1.layout != a2.layout:
+      mismatches.append('the layouts do not match')
     # TODO(yashkatariya,mattjj): add check for sharding-in-types mismatch
 
     if len(mismatches) == 0:

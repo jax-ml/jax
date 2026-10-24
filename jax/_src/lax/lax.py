@@ -3725,14 +3725,21 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   else:
     scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
   out = broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
-  return core.pvary(out, tuple(aval.mat.varying))
+  out = core.pvary(out, tuple(aval.mat.varying))
+  # TODO(yashkatariya): Add `out_layout` to `broadcast`.
+  if core.typeof(out).layout != aval.layout:
+    out = pjit.relayout(out, aval.layout)
+  return out
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
 def empty_like_shaped_array(aval):
   out = core.pvary(empty2(aval.dtype, memory_space=aval.memory_space),
                    tuple(aval.mat.varying))
   with use_abstract_mesh(aval.sharding.mesh):
-    return broadcast(out, aval.shape, out_sharding=aval.sharding)
+    out = broadcast(out, aval.shape, out_sharding=aval.sharding)
+  if core.typeof(out).layout != aval.layout:
+    out = pjit.relayout(out, aval.layout)
+  return out
 ad_util.aval_empty_likers[ShapedArray] = empty_like_shaped_array
 
 def iota(dtype: DTypeLike, size: int) -> Array:
@@ -8064,7 +8071,7 @@ def _stack_lower(ctx, *xs, axis):
     expanded_xs.append(expanded_x)
 
   out = _concatenate_tree(expanded_xs, axis)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 def _stack_batch_rule(batched_args, batch_dims, *, axis):
   bdim = batch_dims[0]
@@ -8089,11 +8096,26 @@ def _stack_ur_rule(*operands, **kwargs):
   out_reduced = _concatenate_reduced_rule(*operands, **kwargs)
   return out_unreduced, out_reduced, kind
 
+def _stack_layout_rule(out_aval, *operands, axis):
+  first_layout = operands[0].layout
+  for o in operands[1:]:
+    if o.layout != first_layout:
+      raise ValueError(
+          'layout of all inputs passed to `stack` must be the same. Got'
+          f' one operand with layout: {first_layout} and another operand with'
+          f' layout: {o.layout}')
+  out_m2m = (axis, *(d if d < axis else d + 1 for d in first_layout.major_to_minor))
+  assert sorted(out_m2m) == list(range(out_aval.ndim))
+  if first_layout.tiling and operands[0].ndim == 1:
+    return first_layout.update(major_to_minor=out_m2m, tiling=None)
+  return first_layout.update(major_to_minor=out_m2m)
+
 stack_p = standard_primitive(
     _stack_shape_rule, _stack_dtype_rule, 'stack',
     sharding_rule=_stack_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'stack'),
-    ur_rule=_stack_ur_rule)
+    ur_rule=_stack_ur_rule,
+    layout_rule=_stack_layout_rule)
 ad.deflinear2(stack_p, _stack_transpose_rule)
 mlir.register_lowering(stack_p, _stack_lower)
 
@@ -8136,6 +8158,24 @@ def _unstack_ur_rule(operand, *, axis):
   return ([out_u] * operand.shape[axis], [getr(operand)] * operand.shape[axis],
           [kind] * operand.shape[axis])
 
+def _unstack_layout_rule(out_avals, operand, *, axis):
+  if axis != operand.layout.major_to_minor[0]:
+    raise ValueError(
+        f'`unstack` requires `axis` ({axis}) to be the major-most dimension in'
+        f' operand layout {operand.layout} for shape {operand.shape}.')
+  if operand.layout.tiling:
+    tiles = operand.layout.tiling[0]
+    if axis in operand.layout.major_to_minor[-len(tiles):]:
+      raise ValueError(
+          f'`unstack` along axis {axis} cannot remove one of the'
+          f' {len(tiles)} tiled minor-most dimensions of operand with shape'
+          f' {operand.shape} and layout {operand.layout}.')
+  out_m2m = tuple(d if d < axis else d - 1
+                  for d in operand.layout.major_to_minor[1:])
+  assert sorted(out_m2m) == list(range(operand.ndim - 1))
+  out_layout = operand.layout.update(major_to_minor=out_m2m)
+  return [out_layout] * len(out_avals)
+
 def _unstack_transpose_rule(cotangents, operand, *, axis):
   if all(type(ct) is ad_util.Zero for ct in cotangents):
     return [ad_util.Zero(operand.aval)]
@@ -8161,7 +8201,7 @@ def _unstack_lower(ctx, x, *, axis):
                               start_indices=start_indices,
                               limit_indices=limit_indices, strides=strides)
     squeezed_out = mlir.reshape(ctx, slice_out, aval_out)
-    outs.append(mlir.lower_with_sharding_in_types(ctx, squeezed_out, aval_out))
+    outs.append(mlir.lower_with_explicit_types(ctx, squeezed_out, aval_out))
 
     start_indices[axis] = limit_indices[axis]
 
@@ -8189,7 +8229,7 @@ unstack_p.multiple_results = True
 unstack_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, unstack_p, _unstack_shape_rule,
             _unstack_dtype_rule, _unstack_weak_type_rule, _unstack_sharding_rule,
-            _unstack_vma_rule, _unstack_ur_rule, None))
+            _unstack_vma_rule, _unstack_ur_rule, _unstack_layout_rule))
 unstack_p.def_impl(partial(dispatch.apply_primitive, unstack_p))
 ad.deflinear2(unstack_p, _unstack_transpose_rule)
 mlir.register_lowering(unstack_p, _unstack_lower)
@@ -10293,6 +10333,9 @@ def rng_bit_generator(key, shape, dtype=np.uint32,
           out_sharding=out_sharding))
 
 
+def _iota_layout_rule(out_aval, *, dtype, shape, dimension, sharding):
+  return Layout(tuple(range(out_aval.ndim)))
+
 def _iota_abstract_eval(dtype, shape, dimension, sharding):
   # TODO(mattjj) Generalize shape_like checking to permit dynamic shapes
   _check_shapelike("iota", "shape", shape)
@@ -10306,7 +10349,11 @@ def _iota_abstract_eval(dtype, shape, dimension, sharding):
                      f"{dimension=} for {shape=}")
   if sharding is None:
     sharding = core.get_cur_mesh_sharding(spec=core.P(*[None] * len(shape)))
-  return ShapedArray(shape, dtype, sharding=sharding)
+  out_aval = ShapedArray(shape, dtype, sharding=sharding)
+  out_layout = lax_utils.call_layout_rule(
+      iota_p, _iota_layout_rule, (), (out_aval,),
+      dtype=dtype, shape=shape, dimension=dimension, sharding=sharding)
+  return out_aval.update(layout=out_layout)
 
 iota_p = Primitive('iota')
 iota_p.def_impl(partial(dispatch.apply_primitive, iota_p))
@@ -10330,7 +10377,7 @@ def _iota_lower(ctx, dtype, shape, dimension, sharding):
   del dtype
   aval_out, = ctx.avals_out
   out = mlir.iota(ctx, aval_out, dimension=dimension)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 mlir.register_lowering(iota_p, _iota_lower)
 
 ### util
@@ -10670,15 +10717,21 @@ def empty(shape, dtype, *, out_sharding=None):
 empty_p = core.Primitive('empty')
 empty_p.def_impl(partial(dispatch.apply_primitive, empty_p))
 
+def _empty_layout_rule(out_aval, *, shape, dtype, out_sharding):
+  return Layout(tuple(range(out_aval.ndim)))
+
 def _empty_abstract_eval(*, shape, dtype, out_sharding):
-  return core.ShapedArray(shape, dtype, sharding=out_sharding)
+  out_aval = core.ShapedArray(shape, dtype, sharding=out_sharding)
+  out_layout = lax_utils.call_layout_rule(
+      empty_p, _empty_layout_rule, (), (out_aval,),
+      shape=shape, dtype=dtype, out_sharding=out_sharding)
+  return out_aval.update(layout=out_layout)
 empty_p.def_abstract_eval(_empty_abstract_eval)
 
 def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding):
   if not core.is_constant_shape(shape):
     return _empty_lower(ctx, shape=shape, dtype=dtype, out_sharding=out_sharding)
-  dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
+  aval_out, = ctx.avals_out
   phys_aval = core.physical_aval(aval_out)
   custom_call_op = hlo.CustomCallOp(
       [mlir.ir.RankedTensorType.get(
@@ -10689,17 +10742,16 @@ def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding):
   )
   assert len(custom_call_op.results) == 1
   res = custom_call_op.results[0]
-  return [mlir.lower_with_sharding_in_types(ctx, res, phys_aval)]
+  return [mlir.lower_with_explicit_types(ctx, res, aval_out)]
 mlir.register_lowering(empty_p, _empty_custom_call_lower, 'tpu')
 mlir.register_lowering(empty_p, _empty_custom_call_lower, 'gpu')
 
 def _empty_lower(ctx, *, shape, dtype, out_sharding):
-  dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
+  aval_out, = ctx.avals_out
   phys_aval = core.physical_aval(aval_out)
   out = mlir.ir_constant(np.zeros((), phys_aval.dtype))
   out = mlir.broadcast_in_dim(ctx, out, phys_aval, broadcast_dimensions=[])
-  return [mlir.lower_with_sharding_in_types(ctx, out, phys_aval)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 mlir.register_lowering(empty_p, _empty_lower)
 
 # TODO(yashkatariya): Delete `empty2` and replace scan's usage with `empty` once
@@ -10709,14 +10761,22 @@ def empty2(dtype, *, memory_space):
 empty2_p = core.Primitive('empty2')
 dispatch.simple_impl(empty2_p)
 
+def _empty2_layout_rule(out_aval, *, dtype, memory_space):
+  return Layout(tuple(range(out_aval.ndim)))
+
 def _empty2_abstract_eval(*, dtype, memory_space):
-  return core.ShapedArray((), dtype, memory_space=memory_space)
+  out_aval = core.ShapedArray((), dtype, memory_space=memory_space)
+  out_layout = lax_utils.call_layout_rule(
+      empty2_p, _empty2_layout_rule, (), (out_aval,),
+      dtype=dtype, memory_space=memory_space)
+  return out_aval.update(layout=out_layout)
 empty2_p.def_abstract_eval(_empty2_abstract_eval)
 
 def _empty2_lower(ctx, *, dtype, memory_space):
-  dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-  phys_aval = core.physical_aval(core.ShapedArray((), dtype))
-  return [mlir.ir_constant(np.zeros(phys_aval.shape, phys_aval.dtype))]
+  aval_out, = ctx.avals_out
+  phys_aval = core.physical_aval(aval_out)
+  out = mlir.ir_constant(np.zeros(phys_aval.shape, phys_aval.dtype))
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 mlir.register_lowering(empty2_p, _empty2_lower)
 
 
