@@ -1904,6 +1904,56 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(idx, jax.lax.broadcasted_iota(np.int32, (4, 16, 128), 1))
     self.assertIn('LayoutConstraint', f.lower(arr).as_text())
 
+  def test_with_layout_constraint_assert(self):
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr = jax.device_put(
+        np.arange(16 * 128, dtype=np.float32).reshape(16, 128),
+        Format(Layout((1, 0)), s),
+    )
+    l = arr.format.layout
+    l_transposed = Layout(l.major_to_minor[::-1], l.tiling)
+
+    @jax.jit
+    @explicit_layout(in_layouts=l)
+    def f(x):
+      x = with_layout_constraint(x, l)
+      y = relayout(x, l_transposed)
+      x, y = with_layout_constraint((x, y), (l, l_transposed))
+      return y * 2
+
+    self.assertNotIn('layout_constraint', str(jax.make_jaxpr(f)(arr)))
+    out = f(arr)
+    self.assertArraysEqual(out, arr * 2)
+
+    f_id = jax.jit(
+        explicit_layout(lambda x: with_layout_constraint(x, l), in_layouts=l)
+    )
+    self.assertEqual(f_id.lower(arr).as_text().count('LayoutConstraint'), 1)
+
+    @jax.jit
+    @explicit_layout(in_layouts=l)
+    def g_wrong_m2m(x):
+      return with_layout_constraint(x, l_transposed)
+
+    with self.assertRaisesRegex(
+        AssertionError,
+        '`with_layout_constraint` acts as an assert when layouts exist in'
+        ' types.*Please use `relayout`',
+    ):
+      g_wrong_m2m(arr)
+
+    @jax.jit
+    @explicit_layout(in_layouts=l)
+    def g_none_tiling(x):
+      return with_layout_constraint(x, Layout(l.major_to_minor, tiling=None))
+
+    with self.assertRaisesRegex(
+        AssertionError,
+        '`with_layout_constraint` acts as an assert when layouts exist in'
+        ' types',
+    ):
+      g_none_tiling(arr)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

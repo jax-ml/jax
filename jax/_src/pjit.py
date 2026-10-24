@@ -2574,6 +2574,14 @@ def _explicit_axes(fun, *, axes, in_sharding):
 
 # -------------------- with_layout_constraint --------------------
 
+def assert_layouts_equal(x_aval, user_layout: Layout):
+  if x_aval.layout != user_layout:
+    raise AssertionError(
+        '`with_layout_constraint` acts as an assert when layouts exist in'
+        f' types. The array layout: {x_aval.layout} did not match the layout'
+        f' provided: {user_layout}. Please use `relayout` to change the layout'
+        ' of your input to the layout you want.')
+
 def with_layout_constraint(x, layouts):
   x_flat, tree = tree_flatten(x)
   x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
@@ -2586,8 +2594,13 @@ def with_layout_constraint(x, layouts):
   check_aval_layout_compatibility(
       layouts_flat, x_avals_flat, ("",) * len(layouts_flat),
       "with_layout_constraint arguments")
-  outs = [layout_constraint_p.bind(xf, layout=l)
-          for xf, l in zip(x_flat, layouts_flat)]
+  outs = []
+  for xf, x_aval, l in zip(x_flat, x_avals_flat, layouts_flat):
+    if not isinstance(x_aval.layout, AutoLayoutSingleton):
+      assert_layouts_equal(x_aval, l)
+      outs.append(xf)
+    else:
+      outs.append(layout_constraint_p.bind(xf, layout=l))
   return tree_unflatten(tree, outs)
 
 layout_constraint_p = core.Primitive('layout_constraint')
