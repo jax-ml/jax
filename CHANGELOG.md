@@ -29,6 +29,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     a no-op. JAX always lowers to Shardy, and the flag will be removed in a
     future release.
 
+* Breaking changes
+  * Fixed a numerical issue in the gradients produced by `jax.remat`. This may
+    cause ``f(x) != jax.value_and_grad(f)(x)[0]`` (due to numerical differences)
+    for more functions f than previously. See
+    https://github.com/google/jax/pull/22244 for more information.
+
 * Changes
   * On GPU and TPU, `accumulate` for {func}`jax.numpy.bitwise_and`,
     {func}`jax.numpy.bitwise_or`, {func}`jax.numpy.bitwise_xor`,
