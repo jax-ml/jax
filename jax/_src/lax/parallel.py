@@ -165,8 +165,11 @@ def _psum(x, axis_name, *, axis_index_groups, is_async):
   leaves = [lax.convert_element_type(l, np.int32)
             if dtypes.dtype(l) == np.bool_ else l for l in leaves]
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
-  # handle the constant case specially
-  if all(not isinstance(leaf, core.Tracer) for leaf in leaves):
+  # A single multiplier is only valid when every group has the same size.
+  if (all(not isinstance(leaf, core.Tracer) for leaf in leaves) and
+      (axis_index_groups is None or
+       all(len(group) == len(axis_index_groups[0])
+           for group in axis_index_groups))):
     named_axes, pos_axes = axes_partition = [], []
     for axis in axis_name:
       axes_partition[isinstance(axis, int)].append(axis)
@@ -233,7 +236,8 @@ def pmean(x, axis_name, *, axis_index_groups=None):
   """
   x = psum(x, axis_name=axis_name, axis_index_groups=axis_index_groups)
   n = _axis_size(axis_name, axis_index_groups)
-  return tree_util.tree_map(lambda v: v / n, x)
+  return tree_util.tree_map(
+      lambda v: v / lax.convert_element_type(n, dtypes.dtype(v)), x)
 
 def pmax(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
