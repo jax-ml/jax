@@ -1672,6 +1672,139 @@ class LayoutInTypesTest(jtu.JaxTestCase):
           NotImplementedError, 'Missing layout rule for'):
         f(arr)
 
+  def test_broadcast_in_dim_0d_and_1d_layout(self):
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    arr_0d = jax.device_put(np.float32(3.0), Format(Layout(()), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr_0d.format.layout)
+    def f_0d(x):
+      y = jax.lax.broadcast_in_dim(x, (16, 128), ())
+      self.assertEqual(y.aval.layout.major_to_minor, (0, 1))
+      z = jnp.broadcast_to(np.float32(5.0), (4, 16, 128))
+      self.assertEqual(z.aval.layout.major_to_minor, (0, 1, 2))
+      return y, z
+
+    out_y, out_z = f_0d(arr_0d)
+    self.assertEqual(out_y.format.layout.major_to_minor, (0, 1))
+    self.assertEqual(out_z.format.layout.major_to_minor, (0, 1, 2))
+    self.assertArraysEqual(out_y, np.full((16, 128), 3.0, dtype=np.float32))
+    self.assertArraysEqual(out_z, np.full((4, 16, 128), 5.0, dtype=np.float32))
+    self.assertIn('LayoutConstraint', f_0d.lower(arr_0d).as_text())
+
+    np_1d = np.arange(128, dtype=np.float32)
+    arr_1d = jax.device_put(np_1d, Format(Layout((0,)), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr_1d.format.layout)
+    def f_1d(x):
+      y0 = jax.lax.broadcast_in_dim(x, (16, 128), (1,))
+      self.assertEqual(y0.aval.layout.major_to_minor, (0, 1))
+      y1 = jax.lax.broadcast_in_dim(x, (128, 16), (0,))
+      self.assertEqual(y1.aval.layout.major_to_minor, (1, 0))
+      y2 = jax.lax.broadcast_in_dim(x, (4, 128, 8), (1,))
+      self.assertEqual(y2.aval.layout.major_to_minor, (0, 2, 1))
+      return y0, y1, y2
+
+    out0, out1, out2 = f_1d(arr_1d)
+    self.assertEqual(out0.format.layout.major_to_minor, (0, 1))
+    self.assertEqual(out1.format.layout.major_to_minor, (1, 0))
+    self.assertEqual(out2.format.layout.major_to_minor, (0, 2, 1))
+    self.assertArraysEqual(out0, np.broadcast_to(np_1d[None, :], (16, 128)))
+    self.assertArraysEqual(out1, np.broadcast_to(np_1d[:, None], (128, 16)))
+    self.assertArraysEqual(
+        out2, np.broadcast_to(np_1d[None, :, None], (4, 128, 8)))
+
+  def test_broadcast_in_dim_nd_layout(self):
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    np_2d = np.arange(128 * 16, dtype=np.float32).reshape(128, 16)
+    arr_2d = jax.device_put(np_2d, Format(Layout((1, 0)), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr_2d.format.layout)
+    def f_2d(x):
+      y = jax.lax.broadcast_in_dim(x, (4, 128, 8, 16), (1, 3))
+      self.assertEqual(y.aval.layout.major_to_minor, (0, 2, 3, 1))
+      self.assertEqual(y.aval.layout.tiling, arr_2d.format.layout.tiling)
+      return y
+
+    out = f_2d(arr_2d)
+    self.assertEqual(out.format.layout.major_to_minor, (0, 2, 3, 1))
+    self.assertEqual(out.format.layout.tiling, arr_2d.format.layout.tiling)
+    self.assertArraysEqual(
+        out, np.broadcast_to(np_2d[None, :, None, :], (4, 128, 8, 16)))
+    self.assertEqual(f_2d.lower(arr_2d).as_text().count('LayoutConstraint'), 2)
+
+    # Broadcasting a size-1 major dimension preserves layout and tiling.
+    np_3d = np.arange(16 * 128, dtype=np.float32).reshape(1, 16, 128)
+    arr_3d = jax.device_put(np_3d, Format(Layout((0, 1, 2)), s))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr_3d.format.layout)
+    def f_major_bcast(x):
+      y = jax.lax.broadcast_in_dim(x, (8, 16, 128), (0, 1, 2))
+      self.assertEqual(y.aval.layout, arr_3d.format.layout)
+      return y
+
+    out_3d = f_major_bcast(arr_3d)
+    self.assertEqual(out_3d.format.layout, arr_3d.format.layout)
+    self.assertArraysEqual(out_3d, np.broadcast_to(np_3d, (8, 16, 128)))
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_broadcast_in_dim_sharded_layout(self, mesh):
+    shape = (32, 256)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    s_in = NamedSharding(mesh, P(None, None))
+    s_out = NamedSharding(mesh, P(None, 'x', None))
+    arr = jax.device_put(np_inp, Format(Layout((0, 1)), s_in))
+
+    @jax.jit
+    @explicit_layout(in_layouts=arr.format.layout)
+    def f(x):
+      # Dim 1 shard shape changes 32 -> 16 (>= 8).
+      y = jax.lax.broadcast_in_dim(
+          x, (4, 32, 256), (1, 2), out_sharding=s_out)
+      self.assertEqual(y.aval.layout.major_to_minor, (0, 1, 2))
+      self.assertEqual(y.aval.layout.tiling, arr.format.layout.tiling)
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.format.layout.major_to_minor, (0, 1, 2))
+    self.assertArraysEqual(out, np.broadcast_to(np_inp, (4, 32, 256)))
+
+    if jtu.test_device_matches(['tpu']):
+      # Broadcasting a size-1 minor-most or 2nd-minor dim below tile size errors.
+      for in_shape in [(8, 1, 128), (8, 16, 1)]:
+        arr_bad = jax.device_put(
+            np.ones(in_shape, dtype=np.float32), Format(Layout((0, 1, 2)), s_in))
+
+        @jax.jit
+        @explicit_layout(in_layouts=arr_bad.format.layout)
+        def f_bad_minor(x):
+          return jax.lax.broadcast_in_dim(x, (8, 16, 128), (0, 1, 2))
+
+        with self.assertRaisesRegex(
+            ValueError,
+            '`broadcast_in_dim` cannot change the shard shape of a tiled minor'
+            ' dimension below its tile size'):
+          f_bad_minor(arr_bad)
+
+      # Resharding a 2nd-minor dim below tile size via out_sharding errors.
+      arr_small = jax.device_put(
+          np.ones((12, 128), dtype=np.float32), Format(Layout((0, 1)), s_in))
+
+      @jax.jit
+      @explicit_layout(in_layouts=arr_small.format.layout)
+      def f_bad_sharding(x):
+        return jax.lax.broadcast_in_dim(
+            x, (4, 12, 128), (1, 2), out_sharding=s_out)
+
+      with self.assertRaisesRegex(
+          ValueError,
+          '`broadcast_in_dim` cannot change the shard shape of a tiled minor'
+          ' dimension below its tile size'):
+        f_bad_sharding(arr_small)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

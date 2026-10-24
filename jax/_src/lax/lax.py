@@ -7661,12 +7661,43 @@ def _broadcast_in_dim_partial_eval(
       dict(shape=shape, broadcast_dimensions=broadcast_dimensions,
            sharding=sharding))
 
+def _broadcast_in_dim_layout_rule(out_aval, operand, *, shape,
+                                  broadcast_dimensions, sharding):
+  if operand.ndim == 0:
+    if out_aval.ndim == 0:
+      return operand.layout
+    return Layout(tuple(range(out_aval.ndim)))
+
+  bcast_set = set(broadcast_dimensions)
+  new_dims = [i for i in range(out_aval.ndim) if i not in bcast_set]
+  out_m2m = (*new_dims,
+             *(broadcast_dimensions[d] for d in operand.layout.major_to_minor))
+  assert sorted(out_m2m) == list(range(out_aval.ndim))
+
+  if operand.layout.tiling:
+    tiles = operand.layout.tiling[0]
+    for op_d, out_d, tile_size in zip(
+        operand.layout.major_to_minor[-len(tiles):], out_m2m[-len(tiles):], tiles):
+      in_size, out_size = operand.shape[op_d], out_aval.shape[out_d]
+      if in_size != out_size and (
+          in_size == 1 or out_size == 1 or
+          in_size < tile_size or out_size < tile_size):
+        raise ValueError(
+            '`broadcast_in_dim` cannot change the shard shape of a tiled minor'
+            f' dimension below its tile size (or from/to size 1). Dimension'
+            f' {op_d} has tile size {tile_size}, input shard shape'
+            f' {operand.shape}, and output shard shape {out_aval.shape} with'
+            f' layout {operand.layout}.')
+    if operand.ndim == 1 and out_aval.ndim >= 2:
+      return operand.layout.update(major_to_minor=out_m2m, tiling=None)
+  return operand.layout.update(major_to_minor=out_m2m)
+
 def _broadcast_in_dim_lower(ctx, x, shape, broadcast_dimensions,
                             sharding) -> Sequence[ir.Value]:
   aval_out, = ctx.avals_out
   out = mlir.broadcast_in_dim(ctx, x, aval_out,
                               broadcast_dimensions=broadcast_dimensions)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 def _broadcast_in_dim_pp_rule(eqn, context, settings):
   params = dict(eqn.params)
@@ -7681,7 +7712,8 @@ broadcast_in_dim_p = standard_primitive(
     sharding_rule=_broadcast_in_dim_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'broadcast_in_dim'),
     ur_rule=_broadcast_in_dim_ur_rule,
-    memory_space_rule=_broadcast_in_dim_memory_space_rule)
+    memory_space_rule=_broadcast_in_dim_memory_space_rule,
+    layout_rule=_broadcast_in_dim_layout_rule)
 broadcast_in_dim_p.def_impl(partial(dispatch.apply_primitive, broadcast_in_dim_p))
 ad.primitive_jvps[broadcast_in_dim_p] = _broadcast_in_dim_jvp_rule
 ad.primitive_transposes[broadcast_in_dim_p] = _broadcast_in_dim_transpose_rule
