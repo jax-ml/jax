@@ -5098,7 +5098,7 @@ def _semaphore_signal_parallel_abstract_eval(*avals, args_tree):
         "Must signal int32 values, but got"
         f" {[aval.dtype for aval in value_avals]}"
     )
-  effs = set()
+  effs: set[jax_core.Effect] = set()
   for device_id in device_id_avals:
     if device_id is not None:
       device_id_flat_avals = tree_util.tree_leaves(device_id)
@@ -5107,7 +5107,14 @@ def _semaphore_signal_parallel_abstract_eval(*avals, args_tree):
           raise ValueError(
              f"`device_id`s must be int32 values, but got {aval.dtype}"
           )
-      effs.add(pallas_core.comms_effect)
+      if isinstance(device_id, dict):
+        for k in device_id:
+          if not isinstance(k, tuple):
+            k = (k,)
+          for k_ in k:
+            effs.add(jax_core.NamedAxisEffect(k_))
+      else:
+        effs.add(pallas_core.comms_effect)
   return [], effs
 
 
@@ -5707,6 +5714,8 @@ def multimem_store(source: jax.Array, ref: _Ref, collective_axes: Hashable | tup
     ref: The GMEM reference to store the value to.
     collective_axes: The JAX mesh axes indicating the devices to store to.
   """
+  if not isinstance(collective_axes, tuple):
+    collective_axes = (collective_axes,)
   if isinstance(ref, pallas_core.TransformedRef):
     transforms_leaves, transforms_tree = jax.tree.flatten(
         ref.transforms
@@ -5724,7 +5733,9 @@ def multimem_store(source: jax.Array, ref: _Ref, collective_axes: Hashable | tup
 
 
 @multimem_store_p.def_effectful_abstract_eval
-def _multimem_store_abstract_eval(source, ref, *transforms_leaves, transforms_tree, **_):
+def _multimem_store_abstract_eval(
+    source, ref, *transforms_leaves, transforms_tree, collective_axes
+):
   _check_ref(ref, "ref", gpu_core.GMEM)
   shape, dtype = ref.shape, ref.dtype
   if transforms_tree is not None:
@@ -5737,7 +5748,10 @@ def _multimem_store_abstract_eval(source, ref, *transforms_leaves, transforms_tr
     raise ValueError(f"Value dtype {source.dtype} does not match ref dtype {dtype}")
   if source.shape != shape:
     raise ValueError(f"Value shape {source.shape} does not match ref shape {shape}")
-  return [], {pallas_core.comms_effect, state.WriteEffect(1)}
+  effs: set[jax_core.Effect] = {state.WriteEffect(1)}
+  for axis in collective_axes:
+    effs.add(jax_core.NamedAxisEffect(axis))
+  return [], effs
 
 
 @lowering.register_lowering_rule(multimem_store_p, mgpu.LoweringSemantics.Lane)
@@ -5792,15 +5806,20 @@ def _multimem_store_lowering_rule(
 multimem_load_reduce_p = jax_core.Primitive("multimem_load_reduce")
 
 @multimem_load_reduce_p.def_effectful_abstract_eval
-def _multimem_load_reduce_abstract_eval(ref, *avals_flat, tree, collective_axes, reduction_op):
-  del collective_axes, reduction_op
+def _multimem_load_reduce_abstract_eval(
+    ref, *avals_flat, tree, collective_axes, reduction_op
+):
+  del reduction_op
   _check_ref(ref, "ref", gpu_core.GMEM)
   out_ref = ref
   if tree is not None:
     transforms = jax.tree.unflatten(tree, avals_flat)
     out_ref = state.transform_type(transforms, ref)
   assert isinstance(out_ref, state_types.AbstractRef)
-  return out_ref.inner_aval, {pallas_core.comms_effect}
+  effs: set[jax_core.Effect] = {
+      jax_core.NamedAxisEffect(axis) for axis in collective_axes
+  }
+  return out_ref.inner_aval, effs
 
 @lowering.register_lowering_rule(multimem_load_reduce_p, mgpu.LoweringSemantics.Lane)
 def _multimem_load_reduce_lowering_rule(
@@ -5923,6 +5942,8 @@ def multimem_load_reduce(
       allowed values are add (all dtypes), min, max (all dtypes but f32), as
       well as and, or and xor (integer types only).
   """
+  if not isinstance(collective_axes, tuple):
+    collective_axes = (collective_axes,)
   ref, ref_transforms = state_primitives.get_ref_and_transforms(
       ref, None, "multimem_load_reduce"
   )
@@ -5973,12 +5994,14 @@ def semaphore_signal_multicast(
 def _semaphore_signal_multicast_abstract_eval(
     *avals, args_tree, collective_axes
 ):
-  del collective_axes  # Unused.
   sem_aval, transform_avals, _ = tree_util.tree_unflatten(args_tree, avals)
   pallas_primitives.check_sem_avals(
       sem_aval, transform_avals, "semaphore_signal_multicast"
   )
-  return (), {pallas_core.comms_effect}
+  effs: set[jax_core.Effect] = {
+      jax_core.NamedAxisEffect(axis) for axis in collective_axes
+  }
+  return (), effs
 
 
 @lowering.register_lowering_rule(
