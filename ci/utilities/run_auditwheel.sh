@@ -49,11 +49,13 @@ for wheel in $WHEELS; do
     # jax_cudaX_plugin...aarch64.whl is consistent with tag: manylinux_2_26_aarch64"
     elif echo "$OUTPUT" | grep -q "manylinux_2_26"; then
         printf "\n$wheel_name is manylinux_2_26 compliant.\n"
+    elif echo "$OUTPUT" | grep -q "manylinux_2_24"; then
+        printf "\n$wheel_name is manylinux_2_24 compliant.\n"
     elif echo "$OUTPUT" | grep -q "manylinux_2_17"; then
         printf "\n$wheel_name is manylinux2014 compliant.\n"
     else
         echo "$OUTPUT_FULL"
-        printf "\n$wheel_name is NOT  manylinux_2_28, manylinux_2_27, manylinux_2_26, or manylinux2014 compliant.\n"
+        printf "\n$wheel_name is NOT  manylinux_2_28, manylinux_2_27, manylinux_2_26, manylinux_2_24, or manylinux2014 compliant.\n"
         exit 1
     fi
 done
