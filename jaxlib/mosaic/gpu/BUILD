@@ -155,6 +155,7 @@ cc_library(
         "@llvm-project//mlir:VectorDialect",
         "@xla//xla/mosaic:pass_boilerplate",
         "@xla//xla/mosaic:serde",
+        "@xla//xla/python:version",
     ],
 )
 
