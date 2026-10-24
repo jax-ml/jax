@@ -1462,19 +1462,26 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     )(x)
     np.testing.assert_array_equal(y, x)
 
-  def test_output_dma_semaphore_ref(self):
-    if self.INTERPRET:
-      self.skipTest('TODO(sharadmv, justinfu): Add interpret support for DMA.')
+  @parameterized.parameters(((),), ((2,),), ((2, 2),))
+  def test_output_dma_semaphore_ref(self, sem_shape):
+    if len(sem_shape) > 1 and not jtu.is_libtpu_at_least('0.0.52'):
+      self.skipTest('Requires libtpu >= 0.0.52')
+
+    idx = (0,) * len(sem_shape)
 
     def kernel(x_hbm_ref, y_hbm_ref, sem_out):
       pltpu.make_async_copy(
-          x_hbm_ref.at[pl.ds(8), :], y_hbm_ref.at[:, pl.ds(128)], sem_out
+          x_hbm_ref.at[pl.ds(8), :],
+          y_hbm_ref.at[:, pl.ds(128)],
+          sem_out.at[idx] if sem_shape else sem_out,
       ).start()
 
     def kernel2(x_hbm_ref, y_hbm_ref, sem_in, y_hbm_out):
       del y_hbm_out
       pltpu.make_async_copy(
-          x_hbm_ref.at[pl.ds(8), :], y_hbm_ref.at[:, pl.ds(128)], sem_in
+          x_hbm_ref.at[pl.ds(8), :],
+          y_hbm_ref.at[:, pl.ds(128)],
+          sem_in.at[idx] if sem_shape else sem_in,
       ).wait()
 
     x = jnp.arange(8 * 128.0).reshape((8, 128))
@@ -1492,7 +1499,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
           ],
           out_shape=[
               jax.ShapeDtypeStruct((8, 128), jnp.float32),
-              pltpu.SemaphoreType.DMA,
+              pltpu.SemaphoreType.DMA(sem_shape),
           ],
       )(x)
 
