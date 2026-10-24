@@ -2254,10 +2254,23 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cpu")
   def testSchur(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
-
-    self._CheckAgainstNumpy(osp.linalg.schur, jsp.linalg.schur, args_maker)
-    self._CompileAndCheck(jsp.linalg.schur, args_maker)
+    eps = np.finfo(dtype).eps
+    # Schur factors are not unique, so check their defining properties.
+    for schur in [jsp.linalg.schur, jit(jsp.linalg.schur)]:
+      # Reuse each callable with fresh inputs to exercise compiled execution.
+      for _ in range(2):
+        a = rng(shape, dtype)
+        t, z = schur(a)
+        self.assertAllClose(a, z @ t @ z.conj().T, atol=600 * eps)
+        self.assertAllClose(
+            np.eye(*shape, dtype=dtype), z @ z.conj().T, atol=100 * eps
+        )
+        # Real Schur form may have 2x2 diagonal blocks, but they cannot overlap.
+        k = -1 if np.issubdtype(dtype, np.floating) else 0
+        self.assertArraysEqual(t, np.triu(t, k=k))
+        if k == -1:
+          subdiag = np.diag(t, k=-1)
+          self.assertTrue(np.all((subdiag[:-1] == 0) | (subdiag[1:] == 0)))
 
   @jtu.sample_product(
     shape=[(1, 1), (4, 4), (15, 15), (50, 50), (100, 100)],
