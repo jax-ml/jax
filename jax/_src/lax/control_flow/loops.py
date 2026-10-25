@@ -1074,23 +1074,39 @@ def _maybe_put(x):
 #     for xs).
 AccumClass = enum.Enum('AccumClass', ['No', 'Ref', 'Val'])
 
-def _scan_accum_class(x: Array | core.Ref | ad.GradAccum) -> AccumClass:
+def _scan_accum_class(
+    x: Array | core.Ref | ad.GradAccum,
+    is_ext: bool = False,
+    disallowed_roots: frozenset[int] = frozenset(),
+) -> AccumClass:
   if isinstance(x, ad.RefAccum):
+    if x.is_reshaped_view:
+      assert isinstance(x.aval, core.ShapedArray)
+      assert isinstance(x._root.aval, core.ShapedArray)
+      if (is_ext and
+          (not x.aval.shape or not x._root.aval.shape or
+           x.aval.shape[0] != x._root.aval.shape[0])):
+        return AccumClass.Val
+      if id(core.get_referent(x.inst()._root._raw_ref)) in disallowed_roots:
+        return AccumClass.Val
     return AccumClass.Ref
   elif isinstance(x, ad.GradAccum):
     return AccumClass.Val
   else:
     return AccumClass.No
 
-def _dedup_ref_accums(accums):
+def _dedup_ref_accums(accums, length: int | None = None):
   idx: dict[int, int] = {}
-  uniq, dups = [], []
+  uniq_refs, dups = [], []
   for x in accums:
-    if (i := idx.get(id(core.get_referent(x.inst().ref)))) is None:
-      i = idx[id(core.get_referent(x.ref))] = len(uniq)
-      uniq.append(x)
-    dups.append(i)
-  return uniq, tuple(dups)
+    raw_ref = x.inst()._root._raw_ref
+    key = id(core.get_referent(raw_ref))
+    if (i := idx.get(key)) is None:
+      i = idx[key] = len(uniq_refs)
+      uniq_refs.append(raw_ref)
+    aval = x.aval if length is None else core.mapped_leading_aval(length, x.aval)
+    dups.append((i, aval))
+  return uniq_refs, tuple(dups)
 
 @weakref_lru_cache
 def _rearrange_binders_for_transpose(
@@ -1135,9 +1151,23 @@ def _scan_transpose_fancy(cts, *args, reverse, length, ft_in, ft_out, jaxpr,
   #   * `eres` means the extensive inputs needing no cotangent;
   #   * `T b` means the extensive tangent outputs.
   consts, carry_dot, xs = _map(list, ft_in.update(args).unpack())
-  num_consts, num_carry = len(consts), len(carry_dot)
-  const_cls = tuple(_map(_scan_accum_class, consts))
-  xs_cls = tuple(_map(_scan_accum_class, xs))
+  num_carry = len(carry_dot)
+  xs_cls = tuple(_map(partial(_scan_accum_class, is_ext=True), xs))
+  xs_ref_roots = frozenset(
+      id(core.get_referent(x.inst()._root._raw_ref))
+      for x, k in zip(xs, xs_cls) if k is AccumClass.Ref)
+  const_cls = tuple(
+      _map(partial(_scan_accum_class, disallowed_roots=xs_ref_roots), consts))
+  const_ref_roots = frozenset(
+      id(core.get_referent(x.inst()._root._raw_ref))
+      for x, k in zip(consts, const_cls) if k is AccumClass.Ref)
+  if xs_ref_roots & const_ref_roots:
+    xs_cls = tuple(
+        AccumClass.Val
+        if (k is AccumClass.Ref and x.is_reshaped_view and
+            id(core.get_referent(x.inst()._root._raw_ref)) in const_ref_roots)
+        else k
+        for x, k in zip(xs, xs_cls))
   ires             = [x for x, k in zip(consts, const_cls) if k is AccumClass.No ]
   mut_consts_bar   = [x for x, k in zip(consts, const_cls) if k is AccumClass.Ref]
   immut_consts_dot = [x for x, k in zip(consts, const_cls) if k is AccumClass.Val]
@@ -1145,8 +1175,8 @@ def _scan_transpose_fancy(cts, *args, reverse, length, ft_in, ft_out, jaxpr,
   immut_xs_dot = [x for x, k in zip(xs, xs_cls) if k is AccumClass.Val]
   eres         = [x for x, k in zip(xs, xs_cls) if k is AccumClass.No ]
   mut_consts_bar, consts_dups = _dedup_ref_accums(mut_consts_bar)
-  mut_xs_bar, xs_dups = _dedup_ref_accums(mut_xs_bar)
-  referents = lambda accums: {id(core.get_referent(x.ref)) for x in accums}
+  mut_xs_bar, xs_dups = _dedup_ref_accums(mut_xs_bar, length=length)
+  referents = lambda refs: {id(core.get_referent(r)) for r in refs}
   if referents(mut_consts_bar) & referents(mut_xs_bar):
     raise NotImplementedError(
         "Differentiating a scan with respect to an array that is both a "
@@ -1164,20 +1194,20 @@ def _scan_transpose_fancy(cts, *args, reverse, length, ft_in, ft_out, jaxpr,
   # initialize values to be used to accumulate pure constant gradients
   ct_immut_consts = [ad_util.zeros_like_aval(x.aval) for x in immut_consts_dot]
 
-  # prepare transpose inputs, unboxing RefAccums while noting which are linear
+  # prepare transpose inputs (mut_consts_bar and mut_xs_bar are already raw Refs)
   trans_in, trans_tree = tree_flatten([ires, mut_consts_bar, ct_immut_consts,
                                        ct_carry, mut_xs_bar, ct_ys, eres])
-  lin_refs = tuple(isinstance(x, ad.RefAccum) for x in trans_in)
-  trans_in = [x.inst().ref if l else x for l, x in zip(lin_refs, trans_in)]
 
   # prepare transposed jaxpr
   accum_typeof = lambda x: (x.aval if isinstance(x, ad.GradAccum)
                             else typeof(x))
-  trans_avals, ext_avals = split_list(_map(accum_typeof, trans_in), [num_consts+num_carry])
+  num_int_and_carry = (len(ires) + len(mut_consts_bar) +
+                       len(ct_immut_consts) + len(ct_carry))
+  trans_avals, ext_avals = split_list(_map(accum_typeof, trans_in), [num_int_and_carry])
   trans_avals = trans_avals + [core.mapped_leading_aval(length, a) for a in ext_avals]
   xs_avals = tuple(core.mapped_leading_aval(length, accum_typeof(x)) for x in immut_xs_dot)
   jaxpr_trans, log_tree = _transpose_scan_jaxpr_fancy(
-      jaxpr, trans_tree, tuple(trans_avals), lin_refs, xs_avals, consts_dups,
+      jaxpr, trans_tree, tuple(trans_avals), xs_avals, consts_dups,
       xs_dups)
 
   # run it; per-iteration log entries come out as extra ys outputs, stacked
@@ -1208,16 +1238,16 @@ def _scan_transpose_fancy(cts, *args, reverse, length, ft_in, ft_out, jaxpr,
 # only the pure tangents' cotangents appear as outputs.
 @weakref_lru_cache
 def _transpose_scan_jaxpr_fancy(
-    jaxpr, trans_tree, trans_avals, lin_refs, immut_xs_avals, consts_dups,
+    jaxpr, trans_tree, trans_avals, immut_xs_avals, consts_dups,
     xs_dups) -> tuple[core.Jaxpr, PyTreeDef]:
   cell = lambda: None
   def transposed(*args):
-    args = [ad.RefAccum(typeof(x).inner_aval, x) if l else x
-            for l, x in zip(lin_refs, args)]
-    ires, mut_consts_bar, ct_immut_consts, ct_carry, mut_xs_bar, ct_ys, eres = \
+    ires, mut_consts_refs, ct_immut_consts, ct_carry, mut_xs_refs, ct_ys, eres = \
         tree_unflatten(trans_tree, args)
-    mut_consts_bar = [mut_consts_bar[i] for i in consts_dups]
-    mut_xs_bar = [mut_xs_bar[i] for i in xs_dups]
+    mut_consts_bar = [ad.RefAccum(aval, mut_consts_refs[i])
+                      for i, aval in consts_dups]
+    mut_xs_bar = [ad.RefAccum(aval, mut_xs_refs[i])
+                  for i, aval in xs_dups]
     immut_consts_dot = [ad.ValAccum(core.typeof(x), x) for x in ct_immut_consts]
     carry_dot = [ad.ValAccum(core.typeof(x)) for x in ct_carry]
     immut_xs_dot = [ad.ValAccum(a) for a in immut_xs_avals]
