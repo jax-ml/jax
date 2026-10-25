@@ -165,16 +165,17 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     center = np.asarray(mu, dtype=dtype)
     offsets = np.asarray([-5, -3, -1, 0, 1, 3, 5], dtype=dtype)
     k = center + offsets * np.sqrt(center)
-    expected = osp_stats.poisson.logpmf(
-        np.asarray(k, dtype=np.float64), float(center))
-    eager = np.asarray(lsp_stats.poisson.logpmf(k, center))
-    compiled = np.asarray(jax.jit(lsp_stats.poisson.logpmf)(k, center))
-    self.assertAllClose(eager, expected, rtol=1e-6, atol=5e-5,
-                        check_dtypes=False)
-    self.assertAllClose(compiled, expected,
-                        rtol=1e-5 if dtype == np.float32 else 1e-7,
-                        atol=5e-4 if dtype == np.float32 else 5e-5,
-                        check_dtypes=False)
+    def args_maker():
+      return [k, center]
+
+    self._CheckAgainstNumpy(
+        osp_stats.poisson.logpmf, lsp_stats.poisson.logpmf, args_maker,
+        check_dtypes=False, rtol=1e-6, atol=5e-5)
+    self._CompileAndCheck(
+        lsp_stats.poisson.logpmf, args_maker,
+        check_dtypes=False,
+        rtol=1e-5 if dtype == np.float32 else 1e-7,
+        atol=5e-4 if dtype == np.float32 else 5e-5)
 
   @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testPoissonLogPmfLargeFarTail(self, dtype):
