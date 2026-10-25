@@ -267,7 +267,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
     if config.no_tracing.value:
       raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
                          "`jit`, but 'no_tracing' is set")
-    p, args_flat = _infer_params(fun, jit_info, args, kwargs)
+    p, args_flat, _ = _infer_params(fun, jit_info, args, kwargs)
     (outs, out_flat, out_tree, args_flat, jaxpr,
      executable, pgle_profiler, const_args) = _run_python_pjit(
          p, args_flat, fun, args, kwargs)
@@ -315,10 +315,12 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
 @api_boundary
 def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
-  p, args_flat = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
+  p, args_flat, cache_key = _infer_params(
+      jit_func._fun, jit_func._jit_info, args, kwargs)
   arg_types = map(convert_to_metaty, args_flat)
   return stages.Traced(arg_types, p.params, p.in_tree, p.out_tree, p.consts,
-                       jit_func._jit_info.fun_sourceinfo)
+                       jit_func._jit_info.fun_sourceinfo,
+                       cache_key=cache_key)
 
 @api_boundary
 def jit_lower(jit_func, *args, **kwargs):
@@ -634,7 +636,7 @@ def get_ctx_mesh(use_resource_env):
 
 def _infer_params(
     fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
-  ) -> tuple[PjitParams, list[core.Value]]:
+  ) -> tuple[PjitParams, list[core.Value], tuple[Any, ...]]:
   ctx_mesh = get_ctx_mesh(ji.use_resource_env)
   dbg_fn = lambda: debug_info(
       'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
@@ -644,14 +646,15 @@ def _infer_params(
       args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
       ji.static_argnames, tree_util.tracing_registry)
   avals = _infer_input_type(fun, dbg_fn, dynargs)
-  entry = _infer_params_cached(fun, ji, arg_signature, avals, ctx_mesh)
+  cache_key = (ji, arg_signature, avals, ctx_mesh)
+  entry = _infer_params_cached(fun, *cache_key)
 
   if entry.pjit_params is not None:
-    return entry.pjit_params, entry.pjit_params.consts + dynargs
+    return entry.pjit_params, entry.pjit_params.consts + dynargs, cache_key
 
   p = _trace_for_jit(fun, ji, ctx_mesh, dbg_fn(), avals, args, kwargs)
   entry.pjit_params = p
-  return p, p.consts + dynargs
+  return p, p.consts + dynargs, cache_key
 
 
 def _infer_input_type(fun: Callable, dbg_fn: Callable[[], core.DebugInfo],

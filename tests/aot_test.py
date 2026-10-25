@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import contextlib
+import functools
 import io
 import re
 import unittest
@@ -32,6 +33,7 @@ from jax.experimental.serialize_executable import (
 )
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
+from jax._src.stages import Stage
 import numpy as np
 
 jax.config.parse_flags_with_absl()
@@ -562,6 +564,133 @@ class JaxAotTest(jtu.JaxTestCase):
     self.assertGreater(stats.temp_size_in_bytes, 0)
     self.assertLessEqual(stats.temp_size_in_bytes, stats.total_allocation_bytes)
     self.assertEqual(stats.temp_size_in_bytes % (16 * 1024), 0)
+
+
+class StageCacheKeyTest(jtu.JaxTestCase):
+  """Tests for Stage.cache_key on Traced, Lowered, and Compiled."""
+
+  def test_base_stage_not_implemented(self):
+    stage = Stage()
+    with self.assertRaises(NotImplementedError):
+      _ = stage.cache_key
+    with self.assertRaises(NotImplementedError):
+      _ = stage.version()
+
+    # Immutable property: no setter
+    with self.assertRaises(AttributeError):
+      stage.cache_key = ("custom_key",)
+
+  def test_traced_cache_key(self):
+    f = jax.jit(lambda x: x + x)
+    x1 = jnp.ones(4, dtype=jnp.float32)
+    traced1 = f.trace(x1)
+
+    # 1. Type
+    self.assertIsInstance(traced1.cache_key, tuple)
+
+    # 2. Key contains (jit_info, signature, in_avals, ctx_mesh)
+    self.assertEqual(len(traced1.cache_key), 4)
+    self.assertIsInstance(traced1.version(), tuple)
+    self.assertEqual(traced1.cache_key[0], f._jit_info)
+    self.assertEqual(traced1.cache_key[2], tuple(traced1.jaxpr.in_avals[traced1._num_consts:]))
+    self.assertEqual(traced1.cache_key[3], traced1._params.get("ctx_mesh"))
+
+    # 3. Stability on identical trace
+    traced2 = f.trace(x1)
+    self.assertEqual(traced1.cache_key, traced2.cache_key)
+
+    # 4. Sensitivity to shape and dtype
+    x_diff_shape = jnp.ones(8, dtype=jnp.float32)
+    traced_diff_shape = f.trace(x_diff_shape)
+    self.assertNotEqual(traced1.cache_key, traced_diff_shape.cache_key)
+
+    x_diff_dtype = jnp.ones(4, dtype=jnp.int32)
+    traced_diff_dtype = f.trace(x_diff_dtype)
+    self.assertNotEqual(traced1.cache_key, traced_diff_dtype.cache_key)
+
+    # 5. Read-only immutable
+    with self.assertRaises(AttributeError):
+      traced1.cache_key = ("user_override",)
+
+  def test_lowered_cache_key(self):
+    f = jax.jit(lambda x: x + x)
+    x1 = jnp.ones(4, dtype=jnp.float32)
+    lowered1 = f.lower(x1)
+
+    # 1. Type
+    self.assertIsInstance(lowered1.cache_key, tuple)
+
+    # 2. Matches _cached_lowering_to_hlo arguments length (19)
+    self.assertIsInstance(lowered1.version(), tuple)
+    self.assertEqual(len(lowered1.cache_key), 19)
+
+    # 3. Stability on identical lower
+    lowered2 = f.lower(x1)
+    self.assertEqual(lowered1.cache_key, lowered2.cache_key)
+
+    # 4. Sensitivity to function operation
+    f_diff_op = jax.jit(lambda x: x * x)
+    lowered_diff_op = f_diff_op.lower(x1)
+    self.assertNotEqual(lowered1.cache_key, lowered_diff_op.cache_key)
+
+    # 5. Sensitivity to input shape/dtype
+    lowered_diff_shape = f.lower(jnp.ones(8, dtype=jnp.float32))
+    self.assertNotEqual(lowered1.cache_key, lowered_diff_shape.cache_key)
+
+    # 6. Read-only immutable
+    with self.assertRaises(AttributeError):
+      lowered1.cache_key = ("lowered_override",)
+
+  def test_compiled_cache_key(self):
+    f = jax.jit(lambda x: x + x)
+    x1 = jnp.ones(4, dtype=jnp.float32)
+    compiled1 = f.lower(x1).compile()
+
+    # 1. Type
+    self.assertIsInstance(compiled1.cache_key, tuple)
+
+    # 2. Matches _cached_compilation arguments length (10)
+    self.assertIsInstance(compiled1.version(), tuple)
+    self.assertEqual(len(compiled1.cache_key), 10)
+    self.assertIsInstance(compiled1.cache_key[0], str)
+    self.assertNotEmpty(compiled1.cache_key[0])
+
+    # 3. Stability on identical compile
+    compiled2 = f.lower(x1).compile()
+    self.assertEqual(compiled1.cache_key, compiled2.cache_key)
+
+    # 4. Sensitivity to function operation
+    compiled_diff_op = jax.jit(lambda x: x * x).lower(x1).compile()
+    self.assertNotEqual(compiled1.cache_key, compiled_diff_op.cache_key)
+    self.assertNotEqual(compiled1.cache_key[0], compiled_diff_op.cache_key[0])
+
+    # 5. Read-only immutable
+    with self.assertRaises(AttributeError):
+      compiled1.cache_key = ("compiled_override",)
+
+  def test_named_sharding_cache_key(self):
+    devices = np.array(jax.devices()[:1])
+    mesh = jax.sharding.Mesh(devices, ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, P('x'))
+
+    @functools.partial(jax.jit, in_shardings=sharding, out_shardings=sharding)
+    def f(x):
+      return x * 2
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    traced = f.trace(x)
+    self.assertIsInstance(traced.cache_key, tuple)
+    self.assertIsNotNone(traced.cache_key[3])
+
+    lowered = f.lower(x)
+    self.assertIsInstance(lowered.cache_key, tuple)
+    self.assertIsNotNone(lowered.cache_key[6])
+    self.assertIsNotNone(lowered.cache_key[7])
+
+    compiled = lowered.compile()
+    self.assertIsInstance(compiled.cache_key, tuple)
+    self.assertIsInstance(compiled.cache_key[0], str)
+    self.assertNotEmpty(compiled.cache_key[0])
 
 
 if __name__ == '__main__':
