@@ -748,6 +748,27 @@ class MpmdTest(PallasSCTest):
     ):
       f(x)
 
+  def test_writing_to_non_ref_input_errors(self):
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+    y = jnp.zeros_like(x)
+
+    @pl.kernel(mesh=mesh)
+    def copy_kernel(src_ref, dst_ref):
+      pltpu.sync_copy(src_ref, dst_ref)
+
+    with self.assertRaisesRegex(ValueError, "cannot write to non-Ref input"):
+      copy_kernel(x, y)
+
+    out_state = pl.run_state(lambda y_ref: copy_kernel(x, y_ref))(y)
+    np.testing.assert_array_equal(out_state, x)
+
+    @pl.kernel(mesh=mesh, out_type=jax.ShapeDtypeStruct.like(x))
+    def out_kernel(src_ref, out_ref):
+      pltpu.sync_copy(src_ref, out_ref)
+
+    np.testing.assert_array_equal(out_kernel(x), x)
+
   @parameterized.parameters([TC, SCS, SCV])
   def test_closed_over_refs(self, core_type):
     mesh = from_core_type(core_type)
@@ -792,12 +813,13 @@ class MpmdTest(PallasSCTest):
     np.testing.assert_array_equal(x, f(x))
 
   def test_vmap(self):
-
-    @pl.kernel(mesh=from_core_type(SCV))
-    def kernel(x_hbm_ref):
-      pltpu.touch(x_hbm_ref)
-
     x = jnp.arange(self.sc_info.num_lanes, dtype=jnp.int32)
+
+    @pl.kernel(mesh=from_core_type(SCV), out_type=jax.ShapeDtypeStruct.like(x))
+    def kernel(x_hbm_ref, o_hbm_ref):
+      del x_hbm_ref
+      pltpu.touch(o_hbm_ref)
+
     _ = jax.vmap(kernel)(x[jnp.newaxis])
 
   def test_vmap_captured_scalar_error(self):

@@ -114,14 +114,19 @@ def _mpmd_map_abstract_eval(
       if pallas_core.kernel_local_effects.contains(eff):
         continue
       if isinstance(eff, effects.JaxprInputEffect):
-        # We emit an effect if we have a Ref input that has been written to in
-        # the kernel.
         assert not jaxpr.constvars
         index = jaxpr.invars.index(eff.input)
-        if index < len(in_avals) and isinstance(
-            in_avals[index], state.AbstractRef
-        ):
-          effs.add(eff.replace(index))
+        if index < len(in_avals):
+          if isinstance(in_avals[index], state.AbstractRef):
+            effs.add(eff.replace(index))
+          elif (isinstance(eff, (state.WriteEffect, state.AccumEffect))
+                and index not in input_output_aliases):
+            raise ValueError(
+                "The kernel function in mpmd_map "
+                f"{jaxpr.debug_info.func_src_info} cannot write to non-Ref "
+                f"input {index} ({in_avals[index].str_short()}). Pass a Ref "
+                "(e.g., via jax.new_ref or pl.run_state) or allocate the "
+                "buffer via out_type or scratch_types.")
         continue
       if not isinstance(eff, jax_core.NamedAxisEffect):
         effs.add(eff)
