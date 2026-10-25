@@ -26,6 +26,7 @@ import scipy.special as osp_special
 
 import jax
 import jax.numpy as jnp
+from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
@@ -67,6 +68,10 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     ),
     op_record(
         "betainc", 3, float_dtypes, jtu.rand_positive, False
+    ),
+    op_record(
+        "betaincinv", 3, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=0.2, high=0.9), False
     ),
     op_record(
         "boxcox", 2, float_dtypes, jtu.rand_positive, True
@@ -834,6 +839,241 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 5e-5
     self._CheckAgainstNumpy(osp_special.betainc, lsp_special.betainc, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.betainc, args_maker, rtol=rtol)
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testBetaIncInvAccuracy(self, dtype):
+    # Checks a grid that spans the tails of the distribution, for parameters
+    # for which lax.betainc is accurate.
+    finfo = jnp.finfo(dtype)
+    if dtype == np.float64:
+      a = np.logspace(-1.5, 2, 8)
+    else:
+      a = np.logspace(-1, 1, 8)
+    y = np.concatenate([
+        np.logspace(-20, -1, 8),
+        np.linspace(0.1, 0.9, 9)[1:-1],
+        1 - np.logspace(-1, np.log10(finfo.eps), 8),
+    ])
+    a, b, y = (v.astype(dtype).ravel() for v in np.meshgrid(a, a, y))
+    expected = osp_special.betaincinv(
+        a.astype(np.float64), b.astype(np.float64), y.astype(np.float64))
+    # Skip points whose result underflows in `dtype`.
+    keep = expected > 1e3 * float(finfo.tiny)
+    a, b, y = a[keep], b[keep], y[keep]
+    args_maker = lambda: [a, b, y]
+    if jtu.test_device_matches(["cpu"]):
+      rtol = {dtypes.bfloat16: 1e-2, np.float16: 1e-3, np.float32: 1e-4,
+              np.float64: 1e-11}
+    else:
+      rtol = {dtypes.bfloat16: 1e-2, np.float16: 1e-3, np.float32: 1e-2,
+              np.float64: 1e-9}
+    self._CheckAgainstNumpy(
+        lambda a, b, y: osp_special.betaincinv(
+            a.astype(np.float64), b.astype(np.float64), y.astype(np.float64)),
+        lsp_special.betaincinv, args_maker, check_dtypes=False, atol=0,
+        rtol=rtol)
+    self._CompileAndCheck(lsp_special.betaincinv, args_maker, rtol=rtol)
+
+  @jtu.sample_product(dtype=[np.float32, np.float64])
+  def testBetaIncInvRoundTrip(self, dtype):
+    if not config.enable_x64.value and dtype == np.float64:
+      self.skipTest("float64 requires jax_enable_x64.")
+    rng = jtu.rand_uniform(self.rng(), low=0.0, high=1.0)
+    # b >= 1 so that the density, which multiplies the rounding error of x in the
+    # error of betainc(a, b, x), is bounded as x approaches 1.
+    a = jtu.rand_uniform(self.rng(), low=0.3, high=8.0)((200,), dtype)
+    b = jtu.rand_uniform(self.rng(), low=1.0, high=8.0)((200,), dtype)
+    y = rng((200,), dtype)
+    x = lsp_special.betaincinv(a, b, y)
+    self.assertTrue(np.all((x >= 0) & (x <= 1)))
+    tol = {
+        np.float32: 1e-3 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-12,
+    }[dtype]
+    self.assertAllClose(lsp_special.betainc(a, b, x), y, atol=tol, rtol=tol)
+
+  def testBetaIncInvSpecialValues(self):
+    dtype = dtypes.default_float_dtype()
+    nan = np.nan
+    inf = np.inf
+    # (a, b, y, expected)
+    cases = [
+        (2.0, 3.0, 0.0, 0.0),
+        (2.0, 3.0, 1.0, 1.0),
+        (0.5, 0.5, 0.5, 0.5),
+        (1.0, 1.0, 0.3, 0.3),  # Uniform distribution.
+        (1.0, 2.0, 0.75, 0.5),  # 1 - sqrt(1 - y).
+        (2.0, 1.0, 0.25, 0.5),  # sqrt(y).
+        (2.0, 3.0, -0.1, nan),
+        (2.0, 3.0, 1.1, nan),
+        (2.0, 3.0, nan, nan),
+        (nan, 3.0, 0.5, nan),
+        (2.0, nan, 0.5, nan),
+        (0.0, 3.0, 0.5, nan),
+        (2.0, 0.0, 0.5, nan),
+        (-1.0, 3.0, 0.5, nan),
+        (2.0, -1.0, 0.5, nan),
+        (0.0, 3.0, 0.0, nan),
+        (2.0, 3.0, -inf, nan),
+        (2.0, 3.0, inf, nan),
+        # Infinite parameters, like scipy.
+        (inf, 1.0, 0.5, 1.0),
+        (1.0, inf, 0.5, 0.0),
+        (inf, 2.0, 0.5, nan),
+        (2.0, inf, 0.5, nan),
+        (inf, inf, 0.5, nan),
+        (inf, 2.0, 0.0, 0.0),
+        (inf, 2.0, 1.0, 1.0),
+        (2.0, inf, 0.0, 0.0),
+        (2.0, inf, 1.0, 1.0),
+    ]
+    a, b, y, expected = (np.array(v, dtype=dtype) for v in zip(*cases))
+    args_maker = lambda: [a, b, y]
+    rtol = 1e-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(
+        lambda a, b, y: expected, lsp_special.betaincinv, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.betaincinv, args_maker, rtol=rtol)
+
+  def testBetaIncInvUnderflow(self):
+    # The result is 0 if it is smaller than the smallest normal number.
+    dtype = dtypes.default_float_dtype()
+    fi = jnp.finfo(dtype)
+    a = np.array([0.01, 0.01, 1.0, 5.0, 1e4, 5.0], dtype=dtype)
+    b = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 2.0], dtype=dtype)
+    y = np.array([fi.tiny, 1e-10] + [fi.tiny] * 4, dtype=dtype)
+    x = lsp_special.betaincinv(a, b, y)
+    self.assertArraysEqual(x[:2], np.zeros(2, dtype=dtype))
+    # betainc(a, 1, x) = x^a, so x = y^(1 / a), and betainc(5, 2, x) =
+    # 6 x^5 - 5 x^6, so x ~= (y / 6)^(1 / 5). The roots are normal, but the tail
+    # that is evaluated underflows on one side of them: above the root of
+    # (1e4, 1), which is near 1, and below that of (5, 2), where the initial
+    # approximation is.
+    expected = y[2:] ** (1 / a[2:]) / np.array([1.0, 1.0, 1.0, 6.0 ** 0.2],
+                                               dtype=dtype)
+    self.assertAllClose(x[2:], expected, rtol=1e-4, atol=0)
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testBetaIncInvGrads(self, dtype):
+    a = np.array([0.5, 1.0, 1.7, 5.0, 12.0, 0.3, 2.0], dtype=dtype)
+    b = np.array([0.7, 1.0, 3.0, 2.0, 12.0, 4.0, 0.9], dtype=dtype)
+    y = np.array([0.6, 0.2, 0.5, 0.8, 0.9, 0.05, 0.3], dtype=dtype)
+    tol = {dtypes.bfloat16: 2e-1, np.float16: 1e-1, np.float32: 5e-2,
+           np.float64: 1e-5}
+    eps = {dtypes.bfloat16: 1e-1, np.float16: 1e-2, np.float32: 1e-3,
+           np.float64: 1e-6}[dtype]
+    f = lambda y: lsp_special.betaincinv(a, b, y)
+    jtu.check_grads(f, (y,), order=1, modes=["fwd", "rev"],
+                    atol=tol, rtol=tol, eps=eps)
+    if dtype == np.float64:
+      # Finite differences of lower precision JVPs are too noisy for order 2.
+      jtu.check_grads(f, (y,), order=2, modes=["fwd", "rev"],
+                      atol=tol, rtol=tol, eps=eps)
+    # Implicit function theorem: dx/dy = 1 / pdf(x).
+    x = lsp_special.betaincinv(a, b, y)
+    pdf = jax.vmap(jax.grad(lsp_special.betainc, argnums=2))(a, b, x)
+    dx_dy = jax.jvp(f, (y,), (np.ones_like(y),))[1]
+    self.assertAllClose(dx_dy, 1 / pdf, rtol=10 * tol[dtype], atol=0)
+
+  def testBetaIncInvGradsAtEndpoints(self):
+    # dx/dy = 1 / pdf(x), which is the limit at y = 0 and y = 1.
+    a = jnp.array([0.5, 1.0, 2.0, 0.5, 2.0, 2.0])
+    b = jnp.array([2.0, 3.0, 2.5, 2.0, 1.0, 0.5])
+    y = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
+    dy = jax.grad(lambda y: lsp_special.betaincinv(a, b, y).sum())(y)
+    # At x = 0: 0 for a < 1, 1 / b for a = 1, inf for a > 1. At x = 1: the same
+    # with a and b swapped, 0 for b < 1, 1 / a for b = 1, inf for b > 1.
+    expected = jnp.array([0.0, 1.0 / 3.0, np.inf, np.inf, 0.5, 0.0])
+    self.assertAllClose(dy, expected.astype(dy.dtype))
+
+  def testBetaIncInvNoGradsInAAndB(self):
+    a, b, y = jnp.array(2.0), jnp.array(3.0), jnp.array(0.4)
+    msg = "Betaincinv gradient with respect to a and b not supported."
+    with self.assertRaisesRegex(ValueError, msg):
+      jax.grad(lsp_special.betaincinv, argnums=0)(a, b, y)
+    with self.assertRaisesRegex(ValueError, msg):
+      jax.grad(lsp_special.betaincinv, argnums=1)(a, b, y)
+    with self.assertRaisesRegex(ValueError, msg):
+      jax.jvp(lsp_special.betaincinv, (a, b, y), (a, b, y))
+    # The gradient with respect to y alone works.
+    self.assertTrue(np.isfinite(jax.grad(lsp_special.betaincinv, argnums=2)(a, b, y)))
+
+  @parameterized.product(with_jit=[True, False])
+  def testBetaIncInvDebugNans(self, with_jit):
+    # Every branch of the initial approximation and of the refinement is
+    # evaluated for every element, so the branches that are not selected must
+    # not produce NaNs either. Without jit, debug_nans checks the result of
+    # every primitive, including those of the unselected branches.
+    finfo = jnp.finfo(dtypes.default_float_dtype())
+    # Small and large parameters, and parameters around 1, where the initial
+    # approximation changes, and the distributions that are skewed to either
+    # side.
+    p = [float(finfo.tiny), 1e-6, 0.05, 0.3, 0.5, 0.999, 1.0, 1.5, 5.0, 30.0,
+         150.0, 1e4, 1e30, float(finfo.max)]
+    # Both tails, the switch between them at 0.5, and the endpoints.
+    y = [0.0, float(finfo.tiny), 1e-30, 1e-5, 0.01, 0.15, 0.3, 0.5, 0.6, 0.9,
+         0.99, 1 - 1e-5, 1 - float(finfo.eps), 1.0]
+    a, b, y = (jnp.asarray(v.ravel(), dtype=finfo.dtype)
+               for v in np.meshgrid(p, p, y))
+    f = lsp_special.betaincinv
+    df = jax.grad(lambda a, b, y: f(a, b, y).sum(), argnums=2)
+    if with_jit:
+      f, df = jax.jit(f), jax.jit(df)
+    with jax.debug_nans(True), jax.disable_jit(not with_jit):
+      x = f(a, b, y)  # Doesn't crash
+      self.assertTrue(np.all((x >= 0) & (x <= 1)))
+      df(a, b, y)
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(nan\\)"):
+        f(2.0, 3.0, 1.5)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testBetaIncInvResultDoesNotDependOnBatch(self, dtype):
+    # Each element should stop iterating once it has converged, so the result
+    # for an element must not depend on the other elements in the batch.
+    n = 20
+    a = jtu.rand_uniform(self.rng(), low=0.3, high=10.)((n,), dtype)
+    b = jtu.rand_uniform(self.rng(), low=0.3, high=10.)((n,), dtype)
+    y = jtu.rand_uniform(self.rng(), low=0.001, high=0.999)((n,), dtype)
+    betaincinv = jax.jit(lsp_special.betaincinv)
+    expected = np.concatenate(
+        [betaincinv(a[i:i + 1], b[i:i + 1], y[i:i + 1]) for i in range(n)])
+    rtol = {dtypes.bfloat16: 1e-2, np.float16: 2e-3, np.float32: 1e-6,
+            np.float64: 1e-14}
+    self.assertAllClose(betaincinv(a, b, y), expected, rtol=rtol, atol=0)
+    self.assertAllClose(jax.vmap(betaincinv)(a, b, y), expected, rtol=rtol,
+                        atol=0)
+
+  def testBetaIncInvDtypes(self):
+    f = lsp_special.betaincinv
+    default = dtypes.default_float_dtype()
+    # Integers are promoted to the default float dtype.
+    self.assertEqual(f(2, 3, 1).dtype, default)
+    self.assertEqual(f(1, 1, 0).dtype, default)
+    for dtype in [jnp.bfloat16, jnp.float16, jnp.float32]:
+      x = jnp.array(0.5, dtype)
+      self.assertEqual(f(x, x, x).dtype, dtype)
+      self.assertEqual(f(2.0, x, x).dtype, dtype)  # Python scalars are weak.
+    with jax.numpy_dtype_promotion("standard"):
+      x16, x32 = jnp.array(0.5, jnp.float16), jnp.array(0.5, jnp.float32)
+      self.assertEqual(f(x16, x32, x16).dtype, jnp.float32)
+      if config.enable_x64.value:
+        x64 = jnp.array(0.5, jnp.float64)
+        self.assertEqual(f(x32, x64, x32).dtype, jnp.float64)
+    self.assertAllClose(f(jnp.array(2.0, jnp.bfloat16), jnp.array(3.0, jnp.bfloat16),
+                          jnp.array(0.5, jnp.bfloat16)),
+                        jnp.array(0.3857, jnp.bfloat16), rtol=1e-2)
+    with self.assertRaisesRegex(ValueError, "complex"):
+      f(jnp.array(2.0 + 1j), 3.0, 0.5)
+
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testBetaIncInvBroadcasting(self):
+    a = np.array([[0.5], [2.0]], dtype=np.float32)
+    b = np.array([1.0, 3.0, 5.0], dtype=np.float32)
+    y = np.float32(0.4)
+    x = lsp_special.betaincinv(a, b, y)
+    self.assertEqual(x.shape, (2, 3))
+    rtol = 1e-3 if jtu.test_device_matches(["tpu"]) else 1e-4
+    self.assertAllClose(x, osp_special.betaincinv(a, b, y), rtol=rtol,
+                        check_dtypes=False)
 
   @jtu.sample_product(dtype=float_dtypes)
   def testHyp2f1SpecialCases(self, dtype):

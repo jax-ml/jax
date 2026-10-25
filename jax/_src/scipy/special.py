@@ -478,6 +478,254 @@ def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   return lax.betainc(a, b, x)
 
 
+def betaincinv(a: ArrayLike, b: ArrayLike, y: ArrayLike) -> Array:
+  r"""The inverse of the regularized incomplete beta function in ``x``.
+
+  JAX implementation of :obj:`scipy.special.betaincinv`.
+
+  Returns :math:`x \in [0, 1]` such that :math:`\mathrm{betainc}(a, b, x) = y`.
+  Equivalently, ``betaincinv(a, b, y)`` is the quantile function of the beta
+  distribution with shape parameters ``a`` and ``b``.
+
+  Args:
+    a: arraylike, real-valued. Positive parameter *a* of the beta distribution.
+    b: arraylike, real-valued. Positive parameter *b* of the beta distribution.
+    y: arraylike, real-valued. Probability in the interval :math:`[0, 1]`.
+
+  Returns:
+    array containing values of the betaincinv function. Returns ``0`` for
+    ``y == 0`` and ``1`` for ``y == 1``, and ``nan`` for ``y`` outside
+    :math:`[0, 1]`, ``a <= 0``, ``b <= 0``, or ``a`` or ``b`` infinite with
+    ``0 < y < 1``.
+
+  Notes:
+    The result is accurate to about the accuracy of :func:`jax.scipy.special.betainc`,
+    which decreases for large ``a`` and ``b``. Results smaller than the smallest
+    positive normal number of the output dtype are returned as ``0``.
+
+    Gradients are only supported with respect to ``y``, as for
+    :func:`jax.scipy.special.betainc`, which does not support gradients with
+    respect to ``a`` and ``b``.
+
+  Examples:
+    >>> y = jnp.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    >>> with jnp.printoptions(precision=4):
+    ...   print(jax.scipy.special.betaincinv(2.0, 3.0, y))
+    [0.     0.243  0.3857 0.5437 1.    ]
+
+  See Also:
+    - :func:`jax.scipy.special.betainc`
+    - :func:`jax.scipy.special.betaln`
+  """
+  a, b, y = promote_args_inexact("betaincinv", a, b, y)
+  if dtypes.issubdtype(a.dtype, np.complexfloating):
+    raise ValueError("betaincinv does not support complex-valued inputs.")
+  a, b, y = jnp.broadcast_arrays(a, b, y)
+  if dtypes.finfo(a.dtype).bits < 32:
+    return _betaincinv(
+        a.astype(np.float32), b.astype(np.float32), y.astype(np.float32)
+    ).astype(a.dtype)
+  return _betaincinv(a, b, y)
+
+
+# The solver below follows the structure of `incbi` in Cephes (Stephen L.
+# Moshier, http://www.netlib.org/cephes/): the initial approximation of
+# Majumder and Bhattacharjee (AS 109, Applied Statistics 22, 411-414, 1973) for
+# a, b > 1, followed by Newton's method safeguarded by an interval that is
+# bisected whenever a step leaves it. It differs from `incbi` in iterating on
+# log(betainc) as a function of log(x) rather than on betainc as a function of
+# x, which makes the iteration converge in a few steps even when the result is
+# many orders of magnitude below 1, and in being vectorized: each element has
+# its own interval and stops iterating once it has converged.
+
+def _betaincinv_initial_guess(a: Array, b: Array, log_p: Array,
+                              lbeta: Array) -> tuple[Array, Array]:
+  # Returns an approximation of the solution x of betainc(a, b, x) = p for
+  # x < 1/2, and log(a B(a, b) p), the log of the x^a term of betainc.
+  p = lax.exp(log_p)
+  log_small = log_p + lax.log(a) + lbeta  # betainc(a, b, x) ~= x^a / (a B(a, b))
+  x_small = lax.exp(log_small / a)
+
+  # AS 109, for a, b > 1: x = a / (a + b exp(2 d)) with d chosen to match the
+  # normal quantile of p.
+  use_normal = (a > 1.0) & (b > 1.0)
+  a_n = jnp.where(use_normal, a, 2.0)
+  b_n = jnp.where(use_normal, b, 2.0)
+  # ndtri(0) and ndtri(1) are infinite, which would give NaNs below.
+  fi = dtypes.finfo(p.dtype)
+  p_n = jnp.where(use_normal, jnp.clip(p, fi.tiny, 1.0 - fi.epsneg), 0.5)
+  yp = -ndtri(p_n)
+  r = 1.0 / (2.0 * a_n - 1.0)
+  s = 1.0 / (2.0 * b_n - 1.0)
+  lgm = (yp * yp - 3.0) / 6.0
+  h = 2.0 / (r + s)
+  d = 2.0 * (yp * lax.sqrt(h + lgm) / h
+             - (s - r) * (lgm + 5.0 / 6.0 - 2.0 / (3.0 * h)))
+  x_normal = jnp.exp(-jnp.logaddexp(0.0, lax.log(b_n / a_n) + d))
+  return jnp.where(use_normal, x_normal, x_small), log_small
+
+
+_BETAINCINV_UPPER_TAIL_MIN_X = 1e-3
+
+
+@custom_derivatives.custom_jvp
+def _betaincinv(a: Array, b: Array, y: Array) -> Array:
+  return _betaincinv_impl(a, b, y)
+
+
+@jit
+def _betaincinv_impl(a: Array, b: Array, y: Array) -> Array:
+  dtype = a.dtype
+  finfo = dtypes.finfo(dtype)
+  tiny = float(finfo.tiny)
+  tol = 4.0 * float(finfo.eps)
+
+  is_nan = (jnp.isnan(a) | jnp.isnan(b) | jnp.isnan(y) | (a <= 0.0)
+            | (b <= 0.0) | (y < 0.0) | (y > 1.0))
+  is_zero = ~is_nan & (y == 0.0)
+  is_one = ~is_nan & (y == 1.0)
+  # Like scipy, which returns nan for 0 < y < 1 if a or b is infinite, except
+  # for the distributions that are a point mass at 1 (a = inf, b = 1) or 0.
+  is_inf_one = ~is_nan & (a == np.inf) & (b == 1.0)
+  is_inf_zero = ~is_nan & (a == 1.0) & (b == np.inf)
+  is_nan = is_nan | (~(is_zero | is_one | is_inf_one | is_inf_zero)
+                     & (jnp.isinf(a) | jnp.isinf(b)))
+  safe = ~(is_nan | is_zero | is_one | is_inf_one | is_inf_zero)
+  # Keep a + b finite, for which lax.betainc is nan, for huge a or b.
+  big = float(finfo.max) ** 0.75
+  a = jnp.where(safe, jnp.minimum(a, big), 1.0)
+  b = jnp.where(safe, jnp.minimum(b, big), 1.0)
+  y = jnp.where(safe, y, 0.5)
+
+  # Solve for the root in the half of [0, 1] that contains it, reflecting
+  # (betainc(a, b, x) = 1 - betainc(b, a, 1 - x)) if it is in the upper half.
+  # So the root xi is at most about 1/2. The lower and upper tail probabilities
+  # of xi are pl and pu = 1 - pl, and one of them is y itself. The iteration
+  # below works with whichever is smaller (when xi is not tiny), since 1 - y is
+  # exact only for y >= 1/2 and the other tail would lose all precision when y
+  # is within a few ulps of 1.
+  half = jnp.full_like(a, 0.5)
+  y_gt_half = y > 0.5
+  p_half = lax.betainc(jnp.where(y_gt_half, b, a), jnp.where(y_gt_half, a, b),
+                       half)
+  reflect = jnp.where(y_gt_half, (1.0 - y) < p_half, y > p_half)
+  a_r = jnp.where(reflect, b, a)
+  b_r = jnp.where(reflect, a, b)
+  log_y = lax.log(y)
+  log_1my = lax.log1p(-y)
+  log_pl = jnp.where(reflect, log_1my, log_y)
+  log_pu = jnp.where(reflect, log_y, log_1my)
+  lbeta = _betaln_impl(a, b)
+
+  x0, log_small = _betaincinv_initial_guess(a_r, b_r, log_pl, lbeta)
+  # The root is below the smallest normal number if betainc(a, b, tiny) > p.
+  is_underflow = safe & (log_small < a_r * math.log(tiny))
+  safe = safe & ~is_underflow
+  # xi in (lo, hi) throughout.
+  hi_0 = 0.75
+  x = jnp.clip(jnp.where(jnp.isfinite(x0), x0, 0.5), tiny, hi_0)
+  lo = jnp.full_like(x, tiny)
+  hi = jnp.full_like(x, hi_0)
+  log_pl = jnp.where(safe, log_pl, 0.0)
+  log_pu = jnp.where(safe, log_pu, 0.0)
+
+  def cond_fn(carry):
+    return (carry["i"] < 60) & jnp.any(~carry["done"])
+
+  def body_fn(carry):
+    x, lo, hi, done = carry["x"], carry["lo"], carry["hi"], carry["done"]
+    active = ~done
+    x_a = jnp.where(active, x, 0.5)
+    # If xi is tiny, 1 - xi is rounded, which loses relative precision in xi
+    # but not in the result if it is reflected, 1 - xi.
+    use_upper = (log_pu < log_pl) & ((x_a > _BETAINCINV_UPPER_TAIL_MIN_X) | reflect)
+    # Evaluate the tail by lax.betainc, at x = 0 where the element is done,
+    # which skips the iterations of its continued fraction.
+    f = lax.betainc(jnp.where(use_upper, b_r, a_r), jnp.where(use_upper, a_r, b_r),
+                    jnp.where(active, jnp.where(use_upper, 1.0 - x_a, x_a), 0.0))
+    log_x_pdf = a_r * lax.log(x_a) + (b_r - 1.0) * lax.log1p(-x_a) - lbeta
+    # Where the tail underflows, use its leading term, x pdf(x) / a for the
+    # lower tail (as x -> 0) and (1 - x) pdf(x) / b for the upper tail (as
+    # x -> 1), so that the residual still points to the root.
+    log_f_asymp = log_x_pdf - jnp.where(
+        use_upper, lax.log(b_r) + lax.log(x_a) - lax.log1p(-x_a), lax.log(a_r))
+    log_f = jnp.where(f >= tiny, lax.log(jnp.maximum(f, tiny)), log_f_asymp)
+    sign = jnp.where(use_upper, -1.0, 1.0)
+    # residual > 0 iff x is above the root.
+    residual = sign * (log_f - jnp.where(use_upper, log_pu, log_pl))
+    residual = jnp.where(active, residual, 0.0)
+    lo = jnp.where(active & (residual < 0.0), x, lo)
+    hi = jnp.where(active & (residual >= 0.0), x, hi)
+    # Newton step in log(x), with d/dlog(x) of log(tail) = +-x pdf(x) / tail.
+    d_residual = lax.exp(log_x_pdf - log_f)
+    step = residual / jnp.maximum(d_residual, tiny)
+    x_new = x * lax.exp(-step)
+    # Bisect (in log(x)) where Newton's method leaves the interval.
+    x_mid = lax.exp(0.5 * (lax.log(lo) + lax.log(hi)))
+    converged = ((jnp.abs(step) <= tol) | (jnp.abs(residual) <= tol)
+                 | (reflect & use_upper & (jnp.abs(x_new - x) <= finfo.eps)))
+    # A converged step may stay at x, which is now an end of (lo, hi), so
+    # accept it anywhere in [lo, hi], but not outside it: where the tail is
+    # flat in x, the residual is small everywhere and the step is meaningless.
+    # Stop once the interval can't be bisected any further.
+    converged = converged & (x_new >= lo) & (x_new <= hi)
+    in_interval = (x_new > lo) & (x_new < hi)
+    x_new = jnp.where(in_interval | converged, x_new, x_mid)
+    bracket_closed = (x_mid <= lo) | (x_mid >= hi)
+    x_new = jnp.where(active, x_new, x)
+    return {"x": x_new, "lo": lo, "hi": hi,
+            "done": done | converged | bracket_closed, "i": carry["i"] + 1}
+
+  carry = lax.while_loop(cond_fn, body_fn, {
+      "x": x, "lo": lo, "hi": hi, "done": ~safe, "i": jnp.zeros((), np.int32)})
+  x = carry["x"]
+  x = jnp.where(is_underflow, 0.0, x)
+  x = jnp.where(reflect, 1.0 - x, x)
+  x = jnp.where(is_inf_zero, 0.0, x)
+  x = jnp.where(is_inf_one, 1.0, x)
+  x = jnp.where(is_zero, 0.0, x)
+  x = jnp.where(is_one, 1.0, x)
+  # Like jnp.where(is_nan, np.nan, x), but without a NaN constant, so that
+  # with jit disabled, debug_nans only raises for inputs with a NaN result.
+  inf_if_nan = jnp.where(is_nan, np.inf, 0.0)
+  return jnp.where(is_nan, inf_if_nan - inf_if_nan, x)
+
+
+@partial(_betaincinv.defjvp, symbolic_zeros=True)
+def _betaincinv_jvp(primals, tangents):
+  (a, b, y), (a_dot, b_dot, y_dot) = primals, tangents
+  x = _betaincinv(a, b, y)
+  if (type(a_dot) is not custom_derivatives.SymbolicZero
+      or type(b_dot) is not custom_derivatives.SymbolicZero):
+    raise ValueError(
+        "Betaincinv gradient with respect to a and b not supported.")
+  if type(y_dot) is custom_derivatives.SymbolicZero:
+    return x, jnp.zeros_like(x)
+  return x, _betaincinv_grad_y(a, b, x) * y_dot
+
+
+@jit
+def _betaincinv_grad_y(a: Array, b: Array, x: Array) -> Array:
+  # Implicit differentiation of betainc(a, b, x) = y: dx/dy = 1 / pdf(x), where
+  # pdf(x) = x^(a - 1) (1 - x)^(b - 1) / B(a, b).
+  is_interior = (x > 0.0) & (x < 1.0)
+  x_i = jnp.where(is_interior, x, 0.5)
+  # Keep a + b finite, as in _betaincinv_impl.
+  big = float(dtypes.finfo(x.dtype).max) ** 0.75
+  a_c, b_c = jnp.minimum(a, big), jnp.minimum(b, big)
+  dx_dy = lax.exp(_betaln_impl(a_c, b_c) - xlogy(a_c - 1.0, x_i)
+                  - xlog1py(b_c - 1.0, -x_i))
+  # At x = 0 (y = 0), 1 / pdf is inf for a > 1, 1 / b for a = 1 and 0 for
+  # a < 1. At x = 1 (y = 1) it is the same with a and b swapped.
+  dx_dy = jnp.where(x == 0.0,
+                    jnp.where(a > 1.0, np.inf, jnp.where(a == 1.0, 1.0 / b, 0.0)),
+                    dx_dy)
+  dx_dy = jnp.where(x == 1.0,
+                    jnp.where(b > 1.0, np.inf, jnp.where(b == 1.0, 1.0 / a, 0.0)),
+                    dx_dy)
+  return jnp.where(jnp.isnan(x), x, dx_dy)
+
+
 def digamma(x: ArrayLike) -> Array:
   r"""The digamma function
 
