@@ -1507,7 +1507,7 @@ use_simplified_jaxpr_constants = bool_state(
 
 embedded_constants_max_bytes = int_state(
     name='jax_embedded_constants_max_bytes',
-    default=32,
+    default=1024,
     help=('Maximum size in bytes of a constant that is allowed to be '
           'embedded in the lowered HLO. Constants larger than this '
           'are hoisted as additional arguments to the executable. '

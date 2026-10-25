@@ -3811,7 +3811,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   def test_constant_random_keys_shard_map(self):
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
-    keys = jax.random.split(jax.random.key(0), 8).reshape(4, 2)
+    keys = jax.random.split(jax.random.key(0), 512).reshape(256, 2)
     assert keys.nbytes > config.embedded_constants_max_bytes.value,\
         "Key constants are hoisted as arguments"
 
