@@ -174,10 +174,22 @@ class AnnTest(jtu.JaxTestCase):
         Mesh(np.array(jax.devices()), ("d",)), P(None, "d")
     )
     approx_top_k = lax.approx_max_k if is_max_k else lax.approx_min_k
+    # TODO(b/513227167): Remove once Shardy supports @PartialReduce custom
+    # partitioning in CONVERT_GLOBAL_TO_LOCAL.
+    compiler_options = (
+        {
+            "xla_shardy_options": (
+                "partitioner_stage: PARTITIONER_STAGE_UNSPECIFIED"
+            )
+        }
+        if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu()
+        else None
+    )
     f = jax.jit(
         lambda a: approx_top_k(
             a, k, recall_target=recall, aggregate_to_topk=aggregate_to_topk
-        )
+        ),
+        compiler_options=compiler_options,
     )
     _, ann_args = f(jax.device_put(x, sharding))
     ann_recall = compute_recall(np.asarray(ann_args), np.asarray(gt_args))
