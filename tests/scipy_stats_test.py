@@ -187,11 +187,15 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       return [k, mu]
 
+    # A relative tolerance on log probabilities of order 1e9 admits
+    # hundreds of log units of error. Check the absolute log-PMF error.
+    # Float32 resolves values of this magnitude only in steps of ~64.
+    atol = 128.0 if dtype == np.float32 else 1e-4
     self._CheckAgainstNumpy(
         osp_stats.poisson.logpmf, lsp_stats.poisson.logpmf, args_maker,
-        check_dtypes=False, rtol=1e-6, atol=128.0)
+        check_dtypes=False, rtol=0.0, atol=atol)
     self._CompileAndCheck(lsp_stats.poisson.logpmf, args_maker,
-                          check_dtypes=False, rtol=1e-6, atol=128.0)
+                          check_dtypes=False, rtol=0.0, atol=atol)
 
   @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testPoissonLogPmfTinyPositiveRate(self, dtype):
