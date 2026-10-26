@@ -1237,7 +1237,8 @@ class MeshComputation(stages.Lowering):
     executable = UnloadedMeshExecutable.from_hlo(
         self._name, self._hlo, **self.compile_args,
         compiler_options_kvs=compiler_options_kvs,
-        device_list=compilation_device_list)
+        device_list=compilation_device_list,
+        num_const_args=len(self.const_args))
     if use_cache:
       self._executable = executable
     return executable
@@ -1707,6 +1708,7 @@ class UnloadedMeshExecutable:
                pgle_profiler: profiler.PGLEProfiler | None = None,
                intermediate_shardings: Sequence[JSharding] | None = None,
                context_mesh: Mesh | None = None,
+               num_const_args: int = 0,
   ) -> MeshExecutable:
     if device_list is None:
       raise RuntimeError(
@@ -1743,7 +1745,8 @@ class UnloadedMeshExecutable:
         xla_executable, out_shardings, device_list, global_out_avals,
         len(ordered_effects))
     out_shardings = maybe_recover_user_shardings(
-        in_shardings, out_shardings, global_in_avals, global_out_avals,
+        in_shardings[num_const_args:], out_shardings,
+        global_in_avals[num_const_args:], global_out_avals,
         intermediate_shardings, context_mesh)
 
     # xla_in_layouts are all either None or Layout. Even default

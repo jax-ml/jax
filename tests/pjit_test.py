@@ -3139,6 +3139,27 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertLen(out3.addressable_shards, 2)
     self.assertArraysEqual(out3, np.arange(512, dtype=np.float32) * 2)
 
+  @parameterized.parameters([False, True])
+  @jtu.with_mesh([('x', 2)])
+  def test_closed_over_constant_recovers_user_sharding_trailing_none(
+      self, simplified_constants):
+    with config.use_simplified_jaxpr_constants(simplified_constants):
+      mesh = jtu.create_mesh((2,), ('x',))
+      user_spec = P('x', None, None)
+      user_sharding = NamedSharding(mesh, user_spec)
+      x = jax.device_put(np.ones((2, 4, 8), dtype=np.float32), user_sharding)
+
+      rep_sharding = NamedSharding(mesh, P())
+      const = jax.device_put(np.arange(4, dtype=np.float32), rep_sharding)
+
+      @jax.jit
+      def f(val):
+        return val + const.sum()
+
+      out = f(x)
+      self.assertEqual(out.sharding, user_sharding)
+      self.assertEqual(out.sharding.spec, user_spec)
+
   def test_device_put_grad(self):
     if jax.device_count() < 8:
       self.skipTest("Requires >=8 devices.")
