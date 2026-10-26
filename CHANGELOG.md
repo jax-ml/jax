@@ -30,6 +30,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     future release.
 
 * Changes
+  * JAX now uses Bazel 9.3.1 to build from source.
   * On GPU and TPU, `accumulate` for {func}`jax.numpy.bitwise_and`,
     {func}`jax.numpy.bitwise_or`, {func}`jax.numpy.bitwise_xor`,
     {func}`jax.numpy.logical_and`, {func}`jax.numpy.logical_or`,
