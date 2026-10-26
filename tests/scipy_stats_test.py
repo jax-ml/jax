@@ -164,7 +164,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   def testPoissonLogPmfCentralAccuracy(self, dtype):
     mu_values = np.asarray([1e7, 1e8, 1e9], dtype=dtype)
     offsets = np.asarray([-5, -3, -1, 0, 1, 3, 5], dtype=dtype)
-    k = mu_values[:, None] + offsets[None, :] * np.sqrt(mu_values[:, None])
+    k = np.round(
+        mu_values[:, None] + offsets[None, :] * np.sqrt(mu_values[:, None]))
     mu = np.broadcast_to(mu_values[:, None], k.shape)
 
     def args_maker():
