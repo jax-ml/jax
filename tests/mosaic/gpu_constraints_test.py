@@ -598,6 +598,29 @@ class ConstraintSystemTest(parameterized.TestCase):
     self.assertFalse(smem_to_reg.holds())
 
   @parameterized.parameters(
+      (mgpu.WGMMA_LAYOUT, 32, (128, 1), True, True),
+      (mgpu.WGMMA_LAYOUT, 16, (128, 1), True, False),
+      (mgpu.WGMMA_LAYOUT, 16, (128, 1), False, True),
+      (mgpu.WGMMA_LAYOUT_UPCAST_2X, 16, (128, 1), True, True),
+      (mgpu.TMEM_NATIVE_LAYOUT, 32, (128, 1), True, False),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, 32, (128, 1), False, False),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, 32, (1, 128), True, True),
+      (mgpu.WGSplatFragLayout((128, 128)), 16, (128, 1), True, True),
+      (mgpu.WGStridedFragLayout((128, 128), vec_size=4), 16, (128, 1), True, True),
+  )
+  def test_gmem_is_transferable_holds(
+      self, layout, bitwidth, strides, optimized, holds
+  ):
+    constraint = cs.IsTransferableGmemRegisters(
+        cs.RegisterLayout(layout),
+        (128, 128),
+        strides,
+        bitwidth=bitwidth,
+        optimized=optimized,
+    )
+    self.assertEqual(constraint.holds(), holds)
+
+  @parameterized.parameters(
       (None, (), None),
       ((2, 3), (1, 0), (3, 2)),
       ((3,), (0,), (3,)),
