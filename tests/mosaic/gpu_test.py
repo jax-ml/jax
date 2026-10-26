@@ -6776,6 +6776,37 @@ class FragmentedArrayTest(TestCase):
       self.assertEqual(single_converts, 0)
     np.testing.assert_array_equal(z, np.maximum(x, y))
 
+  @parameterized.product(
+      op_name=("add", "min", "max"),
+      dtype=(jnp.int16, jnp.uint16),
+  )
+  @jtu.thread_unsafe_test()
+  def test_packed_int16_arith(self, op_name, dtype):
+    is_signed = utils.is_signed(dtype)
+    fa_op, np_op = {
+        "add": (operator.add, operator.add),
+        "min": (fa.FragmentedArray.min, np.minimum),
+        "max": (fa.FragmentedArray.max, np.maximum),
+    }[op_name]
+
+    def kernel(ctx, src, src2, dst, _):
+      del ctx
+      s1 = fa.FragmentedArray.load_strided(src, vec_size=2, is_signed=is_signed)
+      s2 = fa.FragmentedArray.load_strided(
+          src2, vec_size=2, is_signed=is_signed
+      )
+      fa_op(s1, s2).store_untiled(dst)
+
+    iinfo = jnp.iinfo(dtype)
+    x = self.prng.integers(iinfo.min, iinfo.max + 1, (2 * 128,), dtype=dtype)
+    y = self.prng.integers(iinfo.min, iinfo.max + 1, (2 * 128,), dtype=dtype)
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (x, y), x, ())
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      z = f(x, y).block_until_ready()
+    ptx_ty = "s16x2" if op_name == "add" or is_signed else "u16x2"
+    self.assertEqual(ptx().count(f"{op_name}.{ptx_ty} "), 1)
+    np.testing.assert_array_equal(z, np_op(x, y))
+
   def test_splat_layout(self):
     m, n = 64, 8
     def kernel(ctx, dst, _):
