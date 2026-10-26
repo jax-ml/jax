@@ -93,6 +93,7 @@ jax_py_test(
     deps = [
         "//jax/_src:test_util",
         "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
     ] + py_deps([
         "absl/testing",
         "numpy",

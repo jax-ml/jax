@@ -3363,6 +3363,14 @@ def dim_constant(ct: int):
 def dim_value_aval() -> AbstractValue:
   return ShapedArray((), dim_value_dtype(), weak_type=True, sharding=None)
 
+
+def dim_as_value(dim: DimSize):
+  """Converts a dimension size (static or symbolic) into an Array value."""
+  from jax._src.export import shape_poly  # pyrefly: ignore[missing-import]
+
+  return shape_poly.dim_as_value(dim)
+
+
 # ------------------- Call -------------------
 
 # eval_jaxpr_p is a call-like primitive parameterized by a jaxpr rather than a

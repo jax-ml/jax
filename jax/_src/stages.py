@@ -359,6 +359,10 @@ class Stage:
         i for i, x in enumerate(tree_util.tree_leaves(self.args_info))
         if x.donated)
 
+  def specialize(self, *args, **kwargs) -> Stage:
+    """Specializes a shape-polymorphic stage to concrete argument shapes."""
+    raise NotImplementedError(f"Specialization not supported for {type(self)}")
+
 
 def make_args_info(in_tree, in_avals, donate_argnums):
   donate_argnums = frozenset(donate_argnums)
@@ -426,6 +430,313 @@ def _closure_converted_fun(jaxpr, consts_tree, in_tree, out_tree):
     out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=jaxpr)
     return tree_unflatten(out_tree, out_flat)
   return fun
+
+
+def _eval_dim(d: Any, dim_values: dict[str, int]) -> int | Any:
+  if isinstance(d, int):
+    return d
+  if hasattr(d, "_evaluate"):
+    return int(d._evaluate(dim_values))
+  try:
+    return int(d)
+  except (TypeError, ValueError):
+    return d
+
+
+def _eval_shape(
+    shape: tuple[Any, ...], dim_values: dict[str, int]
+) -> tuple[int, ...]:
+  return tuple(_eval_dim(d, dim_values) for d in shape)
+
+
+def _specialize_aval(
+    aval: core.AbstractValue, dim_values: dict[str, int]
+) -> core.AbstractValue:
+  if isinstance(aval, core.ShapedArray):
+    new_shape = _eval_shape(aval.shape, dim_values)
+    return aval.update(shape=new_shape)
+  from jax._src.state import types as state_types  # pyrefly: ignore[missing-import]
+  if isinstance(aval, state_types.AbstractRef):
+    return aval.update(
+        inner_aval=_specialize_aval(aval.inner_aval, dim_values)
+    )
+  if isinstance(aval, state_types.AbstractLinVal):
+    return dataclasses.replace(
+        aval, inner_aval=_specialize_aval(aval.inner_aval, dim_values)
+    )
+  if isinstance(aval, state_types.TransformedRef) and isinstance(
+      aval.ref, core.AbstractValue
+  ):
+    return dataclasses.replace(
+        aval, ref=_specialize_aval(aval.ref, dim_values)
+    )
+  return aval
+
+
+def _specialize_jaxpr(
+    jaxpr: core.Jaxpr, dim_values: dict[str, int]
+) -> core.Jaxpr:
+  import numpy as np
+
+  var_map: dict[core.Var, core.Atom] = {}
+
+  def _subst_effects(effs):
+    if not effs:
+      return effs
+    out_effs = set()
+    for e in effs:
+      if isinstance(e, core.effects.JaxprInputEffect):
+        mapped = var_map.get(e.input, e.input)
+        if isinstance(mapped, core.Literal):
+          continue
+        e = e.replace(mapped)
+      out_effs.add(e)
+    return out_effs
+
+  new_constvars = []
+  for v in jaxpr.constvars:
+    new_v = core.Var(_specialize_aval(v.aval, dim_values))
+    var_map[v] = new_v
+    new_constvars.append(new_v)
+
+  new_invars = []
+  for v in jaxpr.invars:
+    new_v = core.Var(_specialize_aval(v.aval, dim_values))
+    var_map[v] = new_v
+    new_invars.append(new_v)
+
+  new_eqns = []
+  for eqn in jaxpr.eqns:
+    if eqn.primitive.name == "dim_as_value":
+      dim = eqn.params.get("dim")
+      val = _eval_dim(dim, dim_values)
+      out_aval = _specialize_aval(eqn.outvars[0].aval, dim_values)
+      out_dtype = (
+          out_aval.dtype
+          if isinstance(out_aval, core.ShapedArray)
+          else core.dim_value_dtype()
+      )
+      val_arr = np.asarray(val, dtype=out_dtype)
+      lit = core.Literal(val_arr, out_aval)
+      var_map[eqn.outvars[0]] = lit
+      continue
+
+    new_in_atoms = [
+        var_map.get(v, v) if isinstance(v, core.Var) else v for v in eqn.invars
+    ]
+    if (
+        eqn.primitive.name == "convert_element_type"
+        and not eqn.effects
+        and len(new_in_atoms) == 1
+        and isinstance(new_in_atoms[0], core.Literal)
+    ):
+      out_aval = _specialize_aval(eqn.outvars[0].aval, dim_values)
+      if isinstance(out_aval, core.ShapedArray):
+        val_arr = np.asarray(new_in_atoms[0].val, dtype=out_aval.dtype)
+        var_map[eqn.outvars[0]] = core.Literal(val_arr, out_aval)
+        continue
+
+    new_outvars = []
+    for v in eqn.outvars:
+      new_v = core.Var(_specialize_aval(v.aval, dim_values))
+      var_map[v] = new_v
+      new_outvars.append(new_v)
+
+    new_params = dict(eqn.params)
+    if (
+        eqn.primitive.name in ("get", "swap", "addupdate")
+        and "tree" in new_params
+    ):
+      from jax._src import indexing as jax_indexing  # pyrefly: ignore[missing-import]
+      from jax._src.state import indexing as state_indexing  # pyrefly: ignore[missing-import]
+      from jax._src.state import types as state_types  # pyrefly: ignore[missing-import]
+
+      idx_offset = 1 if eqn.primitive.name == "get" else 2
+      flat_idx = new_in_atoms[idx_offset:]
+      transforms = tree_util.tree_unflatten(new_params["tree"], flat_idx)
+
+      def _spec_transform(t):
+        if isinstance(t, state_indexing.NDIndexer):
+          new_indices = []
+          for idx in t.indices:
+            if isinstance(idx, jax_indexing.Slice):
+              new_indices.append(
+                  jax_indexing.Slice(
+                      _eval_dim(idx.start, dim_values),
+                      _eval_dim(idx.size, dim_values),
+                      _eval_dim(idx.stride, dim_values),
+                  )
+              )
+            else:
+              new_indices.append(_eval_dim(idx, dim_values))
+          return state_indexing.NDIndexer(
+              tuple(new_indices),
+              _eval_shape(t.shape, dim_values),
+              _eval_shape(t.int_indexer_shape, dim_values),
+          )
+        if isinstance(t, state_types.ReshapeTransform):
+          return dataclasses.replace(
+              t, shape=_eval_shape(t.shape, dim_values)
+          )
+        return t
+
+      new_transforms = tuple(_spec_transform(t) for t in transforms)
+      new_flat_idx, new_tree = tree_util.tree_flatten(new_transforms)
+      new_in_atoms = [*new_in_atoms[:idx_offset], *new_flat_idx]
+      new_params["tree"] = new_tree
+
+    for jaxpr_key in ("jaxpr", "call_jaxpr", "cond_jaxpr", "body_jaxpr"):
+      if jaxpr_key in new_params:
+        sub_j = new_params[jaxpr_key]
+        if isinstance(sub_j, core.Jaxpr):
+          new_params[jaxpr_key] = _specialize_jaxpr(sub_j, dim_values)
+        elif hasattr(sub_j, "jaxpr") and isinstance(sub_j.jaxpr, core.Jaxpr):
+          new_sub_j = _specialize_jaxpr(sub_j.jaxpr, dim_values)
+          new_params[jaxpr_key] = (
+              core.ClosedJaxpr(new_sub_j, sub_j.consts)
+              if hasattr(core, "ClosedJaxpr")
+              else new_sub_j
+          )
+
+    if "branches" in new_params and isinstance(
+        new_params["branches"], (list, tuple)
+    ):
+      new_branches = []
+      for b in new_params["branches"]:
+        if isinstance(b, core.Jaxpr):
+          new_branches.append(_specialize_jaxpr(b, dim_values))
+        elif hasattr(b, "jaxpr") and isinstance(b.jaxpr, core.Jaxpr):
+          new_sub_j = _specialize_jaxpr(b.jaxpr, dim_values)
+          new_branches.append(
+              core.ClosedJaxpr(new_sub_j, b.consts)
+              if hasattr(core, "ClosedJaxpr")
+              else new_sub_j
+          )
+        else:
+          new_branches.append(b)
+      new_params["branches"] = tuple(new_branches)
+
+    for k in (
+        "shape",
+        "new_sizes",
+        "dimensions",
+        "start_indices",
+        "limit_indices",
+        "strides",
+        "padding",
+        "window_strides",
+        "lhs_dilation",
+        "rhs_dilation",
+    ):
+      if k in new_params and isinstance(new_params[k], (list, tuple)):
+        new_params[k] = tuple(_eval_dim(d, dim_values) for d in new_params[k])
+
+    if eqn.primitive.name == "pallas_call":
+      if "grid_mapping" in new_params:
+        gm = new_params["grid_mapping"]
+        gm_kwargs = {}
+        if hasattr(gm, "grid") and gm.grid is not None:
+          gm_kwargs["grid"] = tuple(_eval_dim(d, dim_values) for d in gm.grid)
+        if hasattr(gm, "index_map_avals") and gm.index_map_avals is not None:
+          gm_kwargs["index_map_avals"] = tuple(
+              _specialize_aval(a, dim_values) for a in gm.index_map_avals
+          )
+        if hasattr(gm, "scratch_avals") and gm.scratch_avals is not None:
+          gm_kwargs["scratch_avals"] = tuple(
+              _specialize_aval(a, dim_values) for a in gm.scratch_avals
+          )
+        if hasattr(gm, "block_mappings") and gm.block_mappings is not None:
+          new_bms = []
+          for bm in gm.block_mappings:
+            new_bs = None
+            if hasattr(bm, "block_shape") and bm.block_shape is not None:
+              def _eval_block_dim(bd):
+                if hasattr(bd, "block_size"):
+                  return dataclasses.replace(
+                      bd, block_size=_eval_dim(bd.block_size, dim_values)
+                  )
+                return _eval_dim(bd, dim_values)
+              new_bs = tuple(_eval_block_dim(d) for d in bm.block_shape)
+
+            new_tba = None
+            if (
+                hasattr(bm, "transformed_block_aval")
+                and bm.transformed_block_aval is not None
+            ):
+              new_tba = _specialize_aval(bm.transformed_block_aval, dim_values)
+
+            new_aa = None
+            if hasattr(bm, "array_aval") and bm.array_aval is not None:
+              new_aa = _specialize_aval(bm.array_aval, dim_values)
+
+            new_im_jaxpr = None
+            if hasattr(bm, "index_map_jaxpr") and bm.index_map_jaxpr is not None:
+              new_im_jaxpr = _specialize_jaxpr(bm.index_map_jaxpr, dim_values)
+
+            kwargs = {}
+            if new_bs is not None:
+              kwargs["block_shape"] = new_bs
+            if new_tba is not None:
+              kwargs["transformed_block_aval"] = new_tba
+            if new_aa is not None:
+              kwargs["array_aval"] = new_aa
+            if new_im_jaxpr is not None:
+              kwargs["index_map_jaxpr"] = new_im_jaxpr
+
+            if kwargs and hasattr(bm, "replace"):
+              bm = bm.replace(**kwargs)
+            new_bms.append(bm)
+          gm_kwargs["block_mappings"] = tuple(new_bms)
+        if gm_kwargs and hasattr(gm, "replace"):
+          gm = gm.replace(**gm_kwargs)
+        new_params["grid_mapping"] = gm
+
+      if "out_avals" in new_params and new_params["out_avals"] is not None:
+        new_params["out_avals"] = tuple(
+            _specialize_aval(a, dim_values) for a in new_params["out_avals"]
+        )
+
+      if (
+          "cost_estimate" in new_params
+          and new_params["cost_estimate"] is not None
+      ):
+        ce = new_params["cost_estimate"]
+        if hasattr(ce, "flops"):
+          def _eval_opt(v):
+            return int(_eval_dim(v, dim_values)) if v is not None else None
+
+          new_params["cost_estimate"] = dataclasses.replace(
+              ce,
+              flops=_eval_opt(ce.flops),
+              transcendentals=_eval_opt(ce.transcendentals),
+              bytes_accessed=_eval_opt(ce.bytes_accessed),
+              remote_bytes_transferred=_eval_opt(ce.remote_bytes_transferred),
+          )
+    new_eqn = eqn.replace(
+        invars=new_in_atoms,
+        outvars=new_outvars,
+        params=new_params,
+        effects=_subst_effects(eqn.effects),
+    )
+    new_eqns.append(new_eqn)
+
+  new_out_atoms = [
+      var_map.get(v, v) if isinstance(v, core.Var) else v for v in jaxpr.outvars
+  ]
+
+  specialized_jaxpr = core.Jaxpr(
+      new_constvars,
+      new_invars,
+      new_out_atoms,
+      new_eqns,
+      effects=_subst_effects(jaxpr.effects),
+      debug_info=jaxpr.debug_info,
+      is_high=jaxpr.is_high,
+      consts=jaxpr.consts,
+  )
+  if config.enable_checks.value:
+    core.check_jaxpr(specialized_jaxpr)
+  return specialized_jaxpr
 
 
 class Traced(Stage):
@@ -582,13 +893,30 @@ class Traced(Stage):
     if _private_parameters is None:
       _private_parameters = mlir.LoweringParameters()
     try:
+      import contextlib
+      from jax._src.export import shape_poly  # pyrefly: ignore[missing-import]
+      has_sym = any(
+          hasattr(m.aval, 'shape')
+          and any(shape_poly.is_symbolic_dim(d) for d in m.aval.shape)
+          for m in lo._meta_tys_flat
+      )
+      if has_sym:
+        try:
+          from jax._src.pallas import core as pallas_core  # pyrefly: ignore[missing-import]
+          pallas_ctx = pallas_core.pallas_export_experimental(dynamic_shapes=True)
+        except Exception:
+          pallas_ctx = contextlib.nullcontext()
+      else:
+        pallas_ctx = contextlib.nullcontext()
+
       ctx_mesh = lo._params['ctx_mesh']
       if (lowering_platforms is None and isinstance(ctx_mesh, AbstractMesh)
           and (abd := ctx_mesh.abstract_device) is not None):
         lowering_platforms = (abd.platform,)
-      lowering = _resolve_and_lower(
-          lo._meta_tys_flat, **lo._params, lowering_platforms=lowering_platforms,
-          lowering_parameters=_private_parameters, pgle_profiler=None)
+      with pallas_ctx:
+        lowering = _resolve_and_lower(
+            lo._meta_tys_flat, **lo._params, lowering_platforms=lowering_platforms,
+            lowering_parameters=_private_parameters, pgle_profiler=None)
     except DeviceAssignmentMismatchError as e:
       fails, = e.args
       msg = _device_assignment_mismatch_error(
@@ -597,6 +925,84 @@ class Traced(Stage):
       raise ValueError(msg) from None
     return Lowered(lowering, lo.args_info, lo.out_tree,
                    in_types=lo._in_types, out_types=lo._out_types)
+
+  def specialize(self, *args, **kwargs) -> Traced:
+    """Specializes a shape-polymorphic Traced stage to concrete argument shapes.
+
+    Substitutes concrete dimension values into the underlying ClosedJaxpr,
+    evaluating all symbolic dimensions to concrete integers, replacing
+    `dim_as_value` equations with integer literals, and specializing
+    embedded Pallas/Mosaic custom calls and sub-jaxprs.
+
+    Returns a new `Traced` stage with 100% static shapes, ready for lowering
+    and compilation without dynamic-shape overhead.
+    """
+    from jax._src.export import shape_poly  # pyrefly: ignore[missing-import]
+    from jax._src.pjit import convert_to_metaty, create_meta_ty  # pyrefly: ignore[missing-import]
+
+    args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
+    if in_tree != self.in_tree:
+      raise ValueError(
+          f"Tree structure mismatch in specialize: expected {self.in_tree}, got"
+          f" {in_tree}"
+      )
+
+    concrete_avals = []
+    for a in args_flat:
+      if isinstance(a, core.AbstractValue):
+        concrete_avals.append(a)
+      elif hasattr(a, "shape") and hasattr(a, "dtype"):
+        sharding = getattr(a, "sharding", None)
+        try:
+          c_aval = core.ShapedArray(a.shape, a.dtype, sharding=sharding)
+        except Exception:
+          c_aval = core.ShapedArray(a.shape, a.dtype)
+        concrete_avals.append(c_aval)
+      else:
+        concrete_avals.append(typeof(a))
+
+    user_in_avals = self.jaxpr.in_avals[self._num_consts :]
+    has_sym = any(
+        hasattr(a, "shape")
+        and any(shape_poly.is_symbolic_dim(d) for d in a.shape)
+        for a in user_in_avals
+    )
+    if not has_sym:
+      return self
+
+    solution, constraints, synth_vars = shape_poly.solve_dim_vars(
+        tuple(user_in_avals), self.in_tree
+    )
+    env = {}
+    for synth_name, arg_idx, dim_idx in synth_vars:
+      actual_dim = concrete_avals[arg_idx].shape[dim_idx]
+      env[synth_name] = actual_dim
+    evaluator = shape_poly.ShapeEvaluator(env)
+    constraints.check_statically(evaluator)
+    dim_values = {v: int(evaluator.evaluate(solution[v])) for v in solution}
+
+    new_jaxpr = _specialize_jaxpr(self.jaxpr, dim_values)
+    new_params = dict(self._params, jaxpr=new_jaxpr)
+
+    new_meta_tys = list(self._meta_tys_flat[: self._num_consts])
+    for orig_mty, a, c_aval in zip(
+        self._meta_tys_flat[self._num_consts :], args_flat, concrete_avals
+    ):
+      in_sharding = getattr(a, "sharding", None)
+      if in_sharding is None:
+        in_sharding = orig_mty.sharding
+      new_meta_tys.append(
+          orig_mty.replace(aval=c_aval, sharding=in_sharding)
+      )
+
+    return Traced(
+        new_meta_tys,
+        new_params,
+        self._in_tree,
+        self.out_tree,
+        self._consts,
+        self._fun_sourceinfo,
+    )
 
 
 def lojax_pytree(hi_avals, tree):
@@ -690,6 +1096,38 @@ class Lowered(Stage):
     return Compiled(self._lowering.compile(**kw), self._lowering.const_args,
                     self.args_info, self.out_tree, self._no_kwargs,
                     self._in_types, self._out_types)
+
+  def specialize(self, *args, **kwargs) -> Lowered:
+    """Specializes a shape-polymorphic Lowered stage to concrete argument shapes.
+
+    Refines polymorphic StableHLO types in the module to static shapes using
+    concrete dimension values.
+    """
+    args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
+    if in_tree != self.in_tree:
+      raise ValueError(
+          f"Tree structure mismatch in specialize: expected {self.in_tree}, got"
+          f" {in_tree}"
+      )
+
+    from jax._src.interpreters import pxla  # pyrefly: ignore[missing-module-attribute,missing-import]
+
+    if isinstance(self._lowering, pxla.MeshComputation):
+      new_lowering = pxla.specialize_mesh_computation(
+          self._lowering, args_flat, in_tree
+      )
+      return Lowered(
+          new_lowering,
+          self.args_info,
+          self.out_tree,
+          self._no_kwargs,
+          in_types=self._in_types,
+          out_types=self._out_types,
+      )
+    raise NotImplementedError(
+        "Lowered.specialize not supported for lowering type"
+        f" {type(self._lowering)}"
+    )
 
   def as_text(self, dialect: str | None = None, *,
               debug_info: bool = False) -> str:

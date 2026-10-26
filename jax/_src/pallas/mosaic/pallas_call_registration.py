@@ -332,9 +332,17 @@ def _lower_to_custom_call(
       kernel_type=kernel_type,
   )
 
-  if cost_estimate is not None:
+  if cost_estimate is not None and all(
+      isinstance(v, int) or jax_core.is_constant_dim(v)
+      for v in dataclasses.asdict(cost_estimate).values()
+      if v is not None
+  ):
     mosaic_cost_estimate = cast(
-        tpu_custom_call.CostEstimate, dataclasses.asdict(cost_estimate)
+        tpu_custom_call.CostEstimate,
+        {
+            k: int(v) if v is not None else 0
+            for k, v in dataclasses.asdict(cost_estimate).items()
+        },
     )
   else:
     mosaic_cost_estimate = None

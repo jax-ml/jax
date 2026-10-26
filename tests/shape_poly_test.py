@@ -2116,7 +2116,6 @@ class ShapePolyTest(jtu.JaxTestCase):
                      arg_descriptors=[RandArg((3,), np.int32)],
                      polymorphic_shapes=["b"])
 
-
   def test_shape_as_array(self):
     def f_jax(x):
       # The entire x.shape is passed to jnp.array
@@ -2176,7 +2175,6 @@ class ShapePolyTest(jtu.JaxTestCase):
                        arg_descriptors=[x, y, z],
                        polymorphic_shapes=["b, ...", "c, ...", None])
 
-
   @jtu.parameterized_filterable(
       kwargs=[
           dict(slc=slc)
@@ -2200,6 +2198,57 @@ class ShapePolyTest(jtu.JaxTestCase):
     expected = np.copy(x)
     expected[slc] = 3.
     self.assertAllClose(exp.call(x), expected)
+
+  def test_traced_specialize_basic(self):
+    (s,) = export.symbolic_shape("s", constraints=["s >= 4"])
+
+    def f(x):
+      return x * 2.0 + 1.0
+
+    traced = jax.jit(f).trace(jax.ShapeDtypeStruct((s,), jnp.float32))
+
+    # Specialize to concrete shape (8,)
+    spec_traced = traced.specialize(jnp.ones(8, dtype=jnp.float32))
+    compiled = spec_traced.lower().compile()
+    res = compiled(jnp.ones(8, dtype=jnp.float32))
+    self.assertAllClose(res, np.ones(8, dtype=np.float32) * 3.0)
+
+    # Specialize to another concrete shape (16,)
+    spec_traced_16 = traced.specialize(jax.ShapeDtypeStruct((16,), jnp.float32))
+    compiled_16 = spec_traced_16.lower().compile()
+    res_16 = compiled_16(jnp.ones(16, dtype=jnp.float32))
+    self.assertAllClose(res_16, np.ones(16, dtype=np.float32) * 3.0)
+
+  def test_traced_specialize_dim_as_value(self):
+    (s,) = export.symbolic_shape("s", constraints=["s >= 2"])
+
+    def f(x):
+      n = core.dim_as_value(x.shape[0])
+      return x * 2.0 + n
+
+    traced = jax.jit(f).trace(jax.ShapeDtypeStruct((s,), jnp.float32))
+    spec_traced = traced.specialize(jnp.ones(10, dtype=jnp.float32))
+    compiled = spec_traced.lower().compile()
+    res = compiled(jnp.ones(10, dtype=jnp.float32))
+    self.assertAllClose(res, np.ones(10, dtype=np.float32) * 2.0 + 10.0)
+
+  def test_lowered_specialize_basic(self):
+    (s,) = export.symbolic_shape("s", constraints=["s >= 4"])
+
+    def f(x):
+      return x * 3.0
+
+    lowered = jax.jit(f).trace(jax.ShapeDtypeStruct((s,), jnp.float32)).lower()
+    spec_lowered = lowered.specialize(jnp.ones(12, dtype=jnp.float32))
+    compiled = spec_lowered.compile()
+    res = compiled(jnp.ones(12, dtype=jnp.float32))
+    self.assertAllClose(res, np.ones(12, dtype=np.float32) * 3.0)
+
+    # Multi-bucket specialization of the same Lowered object
+    spec_lowered_24 = lowered.specialize(jnp.ones(24, dtype=jnp.float32))
+    compiled_24 = spec_lowered_24.compile()
+    res_24 = compiled_24(jnp.ones(24, dtype=jnp.float32))
+    self.assertAllClose(res_24, np.ones(24, dtype=np.float32) * 3.0)
 
 
 # List containing either harnesses, or lists of harnesses
