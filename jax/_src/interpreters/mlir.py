@@ -2888,7 +2888,11 @@ def call_lowering(fn_name, call_jaxpr: core.Jaxpr, backend,
                   attributes: None | dict[str, Any] = None,
                   inline_jax_late: bool = False):
   assert isinstance(call_jaxpr, core.Jaxpr), type(call_jaxpr)
-  const_args_and_avals = core.jaxpr_const_args(call_jaxpr)
+  const_args_and_avals = (
+      core.jaxpr_const_args(call_jaxpr)
+      if mod_ctx.lowering_parameters.hoist_constants_as_args
+      else []
+  )
   const_args, const_avals = util.unzip2(const_args_and_avals)
   const_arg_values = [ir_constants(c, const_lowering=const_lowering, aval=aval)
                       for c, aval in const_args_and_avals]
