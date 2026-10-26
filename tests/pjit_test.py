@@ -3091,16 +3091,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       self.skipTest('Requires >=2 devices')
 
-    arr = jax.device_put(np.arange(16), make_single_device_sharding(
+    arr = jax.device_put(np.arange(512), make_single_device_sharding(
         jax.devices()[0]))
-    const = jax.device_put(np.arange(16), make_single_device_sharding(
+    const = jax.device_put(np.arange(512), make_single_device_sharding(
         jax.devices()[1]))
 
     @jax.jit
     def f(x):
       return x + const
 
-    out = f(np.arange(16))
+    out = f(np.arange(512))
     self.assertEqual(out.sharding, const.sharding)
 
     with self.assertRaisesRegex(
@@ -3113,31 +3113,31 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.skipTest('Requires use_simplified_jaxpr_constants=True')
 
     s = P('x')
-    const = np.arange(16, dtype=np.float32)
+    const = np.arange(512, dtype=np.float32)
 
     @partial(pjit, in_shardings=s, out_shardings=s)
     def f(x):
       return x + const
 
-    x = np.arange(16, dtype=np.float32)
+    x = np.arange(512, dtype=np.float32)
 
     # First call compiles, shards const_args, misses C++ cache (cpp=1)
     self.assertCacheMisses(lambda: f(x), cpp=1)
     out1 = f(x)
     self.assertLen(out1.addressable_shards, 2)
-    self.assertArraysEqual(out1, np.arange(16, dtype=np.float32) * 2)
+    self.assertArraysEqual(out1, np.arange(512, dtype=np.float32) * 2)
 
     # Second call hits C++ fastpath cache with pre-sharded const_args (cpp=0)
     self.assertCacheMisses(lambda: f(x), cpp=0, tracing=0, lowering=0)
     out2 = f(x)
     self.assertLen(out2.addressable_shards, 2)
-    self.assertArraysEqual(out2, np.arange(16, dtype=np.float32) * 2)
+    self.assertArraysEqual(out2, np.arange(512, dtype=np.float32) * 2)
 
     # AOT compile path
     compiled = f.lower(x).compile()
     out3 = compiled(x)
     self.assertLen(out3.addressable_shards, 2)
-    self.assertArraysEqual(out3, np.arange(16, dtype=np.float32) * 2)
+    self.assertArraysEqual(out3, np.arange(512, dtype=np.float32) * 2)
 
   def test_device_put_grad(self):
     if jax.device_count() < 8:

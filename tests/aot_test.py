@@ -220,7 +220,7 @@ class JaxAotTest(jtu.JaxTestCase):
     )
 
   def test_constants_in_lowering_in_aot(self):
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
 
@@ -238,7 +238,7 @@ class JaxAotTest(jtu.JaxTestCase):
       self.assertLen(lowered._lowering.const_args, 0)
 
   def test_with_constants(self):
-    const = jnp.arange(16.) + 42.  # A distinctive shape and value
+    const = jnp.arange(512.) + 42.  # A distinctive shape and value
 
     @jax.jit
     def f(x):
@@ -273,7 +273,7 @@ class JaxAotTest(jtu.JaxTestCase):
     self.assertIs(compiled._params.const_args[0], const2)
 
   def test_with_constants_and_dce(self):
-    const = jnp.arange(16.) + 42.  # A distinctive shape and value
+    const = jnp.arange(512.) + 42.  # A distinctive shape and value
 
     @jax.jit
     def f(x, y_dead):  # y is DCEed
@@ -313,7 +313,7 @@ class JaxAotTest(jtu.JaxTestCase):
     # execution can be run in 64-bit or 32-bit mode.
     with config.enable_x64(True):
       arange = np.arange if use_np else jnp.arange
-      const = arange(16, dtype=np.int64) + 42
+      const = arange(512, dtype=np.int64) + 42
 
       @jax.jit
       def f(x):

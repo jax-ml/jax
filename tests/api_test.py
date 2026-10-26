@@ -3389,7 +3389,7 @@ class APITest(jtu.JaxTestCase):
   def test_constants_not_in_lowering_jit(self):
     if not config.use_simplified_jaxpr_constants.value:
       self.skipTest("Works only with simplified Jaxpr consts")
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
 
@@ -3415,7 +3415,7 @@ class APITest(jtu.JaxTestCase):
   def test_constants_not_in_lowering_scan(self):
     if not config.use_simplified_jaxpr_constants.value:
       self.skipTest("Works only with simplified Jaxpr consts")
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
     def f():
@@ -3437,7 +3437,7 @@ class APITest(jtu.JaxTestCase):
   def test_constants_not_in_lowering_cond(self):
     if not config.use_simplified_jaxpr_constants.value:
       self.skipTest("Works only with simplified Jaxpr consts")
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
 
