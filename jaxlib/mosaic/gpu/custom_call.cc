@@ -98,6 +98,7 @@ limitations under the License.
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/GPU/Transforms/NVVM/Passes.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
@@ -251,6 +252,7 @@ absl::StatusOr<mlir::OpPassManager> GetPassPipeline(
     mlir::memref::registerMemRefPasses();
     mlir::registerConvertToLLVMPass();
     mlir::registerGPUPasses();
+    mlir::registerGPUNVVMPasses();
     mlir::registerGpuLaunchSinkIndexComputationsPass();
     mosaic::gpu::registerGpuModuleToAssemblyPass();
     mosaic::gpu::registerAssemblyToBinaryPass(compilation_provider, cc);

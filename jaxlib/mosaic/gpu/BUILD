@@ -356,6 +356,7 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncToLLVM",
         "@llvm-project//mlir:GPUDialect",
+        "@llvm-project//mlir:GPUNVVMTransforms",
         "@llvm-project//mlir:GPUToLLVMIRTranslation",
         "@llvm-project//mlir:GPUTransforms",
         "@llvm-project//mlir:IR",
