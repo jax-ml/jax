@@ -1356,13 +1356,6 @@ def im2col_ref(
   return res
 
 
-def transpose_ref(
-    ref: pallas_core.TransformedRef | Any,
-    permutation: tuple[int, ...],
-) -> pallas_core.TransformedRef:
-  return ref.transpose(permutation)
-
-
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class ExtractAliasedRef(state_types.Transform):

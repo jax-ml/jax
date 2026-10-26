@@ -38,7 +38,6 @@ from jax._src.pallas.mosaic_gpu.core import SwizzleTransform as SwizzleTransform
 from jax._src.pallas.mosaic_gpu.core import TilingTransform as TilingTransform
 from jax._src.pallas.mosaic_gpu.core import TMEMLayout as TMEMLayout
 from jax._src.pallas.mosaic_gpu.core import TraceScope as TraceScope
-from jax._src.pallas.mosaic_gpu.core import transpose_ref as _deprecated_transpose_ref
 from jax._src.pallas.mosaic_gpu.core import TryClusterCancelResult as TryClusterCancelResult
 from jax._src.pallas.mosaic_gpu.core import WarpMesh as WarpMesh
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as ACC  # noqa: F401
@@ -131,21 +130,21 @@ REGS = MemorySpace.REGS
 
 
 _deprecations = {
-    # Added August 17, 2026
+    # Finalized in JAX v0.12.1
+    # TODO(allanrenucci): remove for JAX v0.13.0.
     "transpose_ref": (
         (
-            "jax.experimental.pallas.mosaic_gpu.transpose_ref is deprecated."
-            " Use ref.transpose(...) directly instead."
+            "jax.experimental.pallas.mosaic_gpu.transpose_ref was deprecated in"
+            " JAX v0.11.2, and removed in JAX v0.12.1. Use ref.transpose(...)"
+            " directly instead."
         ),
-        _deprecated_transpose_ref,
+        None,
     ),
 }
 
 import typing
 
-if typing.TYPE_CHECKING:
-  transpose_ref = _deprecated_transpose_ref
-else:
+if not typing.TYPE_CHECKING:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
 
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

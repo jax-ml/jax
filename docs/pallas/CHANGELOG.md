@@ -13,6 +13,14 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+### Mosaic GPU
+
+* Removals
+
+  * Removed the previously deprecated
+    {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref`. Use
+    `ref.transpose(...)` or `ref.T` directly instead.
+
 ## Released with JAX 0.12.0 (October 19, 2026)
 
 * New features
