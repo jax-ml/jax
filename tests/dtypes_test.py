@@ -17,8 +17,10 @@ import dataclasses
 import enum
 import functools
 from functools import partial
+import inspect
 import itertools
 import operator
+import re
 import types
 
 from absl.testing import absltest
@@ -120,6 +122,14 @@ UINT_DTYPES = {
   64: np.uint64,
 }
 
+jnp_dtypes = frozenset(
+    t
+    for n, t in inspect.getmembers(jnp)
+    if re.fullmatch(
+        r'(u?int\d+|b?float\d+(_e\d+m\d+(b\d+)?f?n?u?z?)?|complex\d+)', n
+    )
+)
+
 def identity(x):
   """A named identity function for use in tests"""
   return x
@@ -130,6 +140,21 @@ TypedComplex = literals.TypedComplex
 TypedNdArray = literals.TypedNdArray
 
 class DtypesTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+      (f'{a.dtype.name}_{b.dtype.name}', a, b)
+      for a, b in itertools.product(
+          jnp_dtypes,
+          jnp_dtypes
+      )
+  )
+  def test_all_scalar_dtype_have_distinct_types(
+      self, a, b
+  ):
+    if a == b:
+      self.assertIsInstance(a, type(b))
+    else:
+      self.assertNotIsInstance(a, type(b))
 
   def test_canonicalize_type(self):
     expected = {
