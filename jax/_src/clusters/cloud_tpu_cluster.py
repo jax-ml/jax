@@ -67,13 +67,20 @@ def get_tpu_env_value_from_metadata(key) -> str | None:
         metadata_value = value.strip().strip("'")
   return metadata_value
 
+def _should_skip_mds_query() -> bool:
+  val = os.environ.get("TPU_SKIP_MDS_QUERY")
+  if val is None:
+    return False
+  return val.strip().lower() in ("1", "true", "yes", "t", "on")
+
 def get_tpu_env_value(key) -> str | None:
   # First try to get the value from the environment.
   value = os.environ.get(key, None)
-  if value is None:
+  if value is None and not _should_skip_mds_query():
     # If not found, try to get it from the metadata.
     value = get_tpu_env_value_from_metadata(key)
   return value
+
 
 class BaseTpuCluster(clusters.ClusterEnv):
 
@@ -183,7 +190,7 @@ class GceTpuCluster(BaseTpuCluster):
     if not running_in_cloud_tpu_vm:
       logger.debug("Did not detect cloud TPU VM")
       return False
-    if os.environ.get("TPU_SKIP_MDS_QUERY") is not None:
+    if _should_skip_mds_query():
       logger.debug("TPU_SKIP_MDS_QUERY is set to True, so it's probably not a GCE TPU cluster.")
       return False
     metadata_response, metadata_code = get_metadata('agent-worker-number')
@@ -222,18 +229,21 @@ class GkeTpuCluster(BaseTpuCluster):
 
   @classmethod
   def is_env_present(cls) -> bool:
-    if running_in_cloud_tpu_vm and cls._get_worker_host_names_env_var() is not None:
+    if not running_in_cloud_tpu_vm:
+      logger.debug("Did not detect cloud TPU VM")
+      return False
+    if _should_skip_mds_query():
+      logger.debug("TPU_SKIP_MDS_QUERY is set, skipping GkeTpuCluster.")
+      return False
+    if cls._get_worker_host_names_env_var() is not None:
       logger.debug("Gke Tpu Cluster detected for Jax Distributed System")
       return True
     else:
-      if not running_in_cloud_tpu_vm:
-        logger.debug("Did not detect cloud TPU VM")
-      else:
-        logger.debug(
-            'Did not detect TPU GKE cluster since none of '
-            'TPU_PROCESS_ADDRESSES_PATH, TPU_PROCESS_ADDRESSES, or '
-            'TPU_WORKER_HOSTNAMES is set.'
-        )
+      logger.debug(
+          'Did not detect TPU GKE cluster since none of '
+          'TPU_PROCESS_ADDRESSES_PATH, TPU_PROCESS_ADDRESSES, or '
+          'TPU_WORKER_HOSTNAMES is set.'
+      )
       return False
 
   @staticmethod
@@ -276,3 +286,27 @@ class GkeTpuCluster(BaseTpuCluster):
     """
     worker_hostnames_str = str(GkeTpuCluster._get_worker_host_names_env_var())
     return worker_hostnames_str.split(',')
+
+class K8sTpuCluster(GkeTpuCluster):
+
+  name: str = "k8stpu"
+
+  @classmethod
+  def is_env_present(cls) -> bool:
+    if not running_in_cloud_tpu_vm:
+      logger.debug("Did not detect cloud TPU VM")
+      return False
+    if not _should_skip_mds_query():
+      logger.debug("TPU_SKIP_MDS_QUERY is not set, skipping K8sTpuCluster.")
+      return False
+    if cls._get_worker_host_names_env_var() is not None:
+      logger.debug("K8s Tpu Cluster detected for Jax Distributed System")
+      return True
+    else:
+      logger.debug(
+          'Did not detect K8s TPU cluster since none of '
+          'TPU_PROCESS_ADDRESSES_PATH, TPU_PROCESS_ADDRESSES, or '
+          'TPU_WORKER_HOSTNAMES is set.'
+      )
+      return False
+
