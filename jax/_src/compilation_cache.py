@@ -466,7 +466,7 @@ def combine_executable_and_time(
             (big-endian int)
   """
   return (
-      int(compile_time).to_bytes(_TIME_BYTES, byteorder="big")
+      compile_time.to_bytes(_TIME_BYTES, byteorder="big")
       + serialized_executable
   )
 

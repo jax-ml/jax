@@ -332,7 +332,7 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
           vmem_capacity_bytes=16 * 1024 * 1024,  # 16 MiB per core
           cmem_capacity_bytes=0,
           smem_capacity_bytes=16 * 1024,  # 16 KiB per core
-          hbm_capacity_bytes=int(16_000_000_000 // tensor_cores_per_chip),
+          hbm_capacity_bytes=16_000_000_000 // tensor_cores_per_chip,
           mem_bw_bytes_per_second=int(7.16e11 // tensor_cores_per_chip),
           bf16_ops_per_second=int(4.6e13 // tensor_cores_per_chip),
           int8_ops_per_second=0,  # Not Available

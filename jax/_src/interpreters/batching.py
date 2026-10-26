@@ -705,7 +705,7 @@ def reducer_batcher(prim, axis_data, batched_args, batch_dims, axes,
   if all(d is None for d in batch_dims):
     return prim.bind(*batched_args, axes=axes, **params), None
   def out_axis(axes, axis):
-    return int(list(np.delete(np.arange(operand.ndim), axes)).index(axis))
+    return list(np.delete(np.arange(operand.ndim), axes)).index(axis)
   operand, = batched_args
   bdim, = batch_dims
   if isinstance(bdim, int):

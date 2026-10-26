@@ -410,8 +410,7 @@ def to_access(transforms, shape: Sequence[int]) -> Access:
 
   for transform in transforms:
     if isinstance(transform, state_types.TransposeTransform):
-      permutation = tuple(int(p) for p in transform.permutation)
-      visible = [visible[p] for p in permutation]
+      visible = [visible[p] for p in transform.permutation]
       continue
     dropped = []
     for position, index in enumerate(transform.indices):

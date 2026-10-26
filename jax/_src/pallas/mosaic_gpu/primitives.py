@@ -2605,7 +2605,7 @@ def _wgmma_accumulator_deref_lowering(
 ):
   if wait_n is not None:
     mgpu_utils.inline_ptx(
-        f"wgmma.wait_group.sync.aligned {int(wait_n)};", convergent=True
+        f"wgmma.wait_group.sync.aligned {wait_n};", convergent=True
     )
   return (
       acc.value
@@ -3165,8 +3165,8 @@ def _tcgen05_mma_lowering(
         acc,
         a_ref,
         b_ref,
-        a_swizzle=int(lhs_swizzle),
-        b_swizzle=int(rhs_swizzle),
+        a_swizzle=lhs_swizzle,
+        b_swizzle=rhs_swizzle,
         a_scale=a_scale_ref,
         b_scale=b_scale_ref,
         a_sparse_metadata=a_sparse_metadata_ref,

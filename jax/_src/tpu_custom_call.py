@@ -237,7 +237,7 @@ class CustomCallBackendConfig:
           "builtin.module(mosaic-serde{serialize=false},mosaic-serde{serialize=true"
           f" target-version={version}}})",
       )
-      pipeline.enable_verifier(bool(config.enable_checks.value))
+      pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module.operation)
       bytecode_buffer = io.BytesIO()
       module.operation.write_bytecode(bytecode_buffer, desired_version=0)
@@ -524,7 +524,7 @@ def _lower_mosaic_module_to_asm(
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true " + target_version + "})"
       )
-      pipeline.enable_verifier(bool(config.enable_checks.value))
+      pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module_op)
       if unzip_debug_locations and hasattr(
           tpu, "private_unzip_debug_locations"
@@ -1040,7 +1040,7 @@ def lowered_as_tpu_kernel(
           "builtin.module(mosaic-serde{serialize=true"
           f" target-version={current_ir_version}}})"
       )
-      pipeline.enable_verifier(bool(config.enable_checks.value))
+      pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module_op)
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects

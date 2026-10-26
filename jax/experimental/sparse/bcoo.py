@@ -62,7 +62,7 @@ CUSPARSE_INDEX_DTYPES = [np.int32]
 def _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo, batch_size=None):
   data, indices = batched_args
   data_bdim, indices_bdim = batch_dims
-  n_batch = indices.ndim - 2 + bool(indices_bdim is None)
+  n_batch = indices.ndim - 2 + (indices_bdim is None)
   if not all(b is None or 0 <= b < n_batch for b in batch_dims):
     raise NotImplementedError("batch_dims must be None or satisfy 0 < dim < n_batch. "
                               f"Got {batch_dims=} for {n_batch=}.")

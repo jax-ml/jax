@@ -66,7 +66,7 @@ def _get_grid_and_cluster_dims_and_num_threads(
     cluster_dims = ()
     grid_dims = _get_grid_bounds(grid_mapping)
   elif isinstance(mesh, mosaic_gpu_core.Mesh):
-    num_threads = int(mesh.num_threads or 1)
+    num_threads = mesh.num_threads or 1
     cluster_dims = tuple(mesh.cluster) if mesh.cluster is not None else ()
     grid_dims = tuple(mesh.grid)
   else:
