@@ -20,6 +20,24 @@ import os
 import shutil
 import subprocess
 
+_THUNK_OP_RE = re.compile(r"hlo_op=([^,#]+).*#")
+_XLA_DOMAIN_OP_RE = re.compile(r"^(?:XLA:|:)([^:#,\s]+)$")
+
+
+def extract_hlo_op_name(nvtx_range: str) -> str | None:
+  """Extracts the HLO instruction name from a TSL or XLA NVTX range string."""
+  m = _THUNK_OP_RE.search(nvtx_range)
+  if m is not None:
+    op_name = m.group(1)
+    return None if op_name == "command_buffer" else op_name
+  m = _XLA_DOMAIN_OP_RE.match(nvtx_range.strip())
+  if m is not None:
+    op_name = m.group(1)
+    if op_name != "command_buffer" and not op_name.startswith("XlaModule"):
+      return op_name
+  return None
+
+
 if __name__ == '__main__':
 
   print("Script to convert NVIDIA Nsys Profiles to the .pbtxt format. This format is readable by XLA's Profile Guided Latency Estimator. Usage: pgo_nsys_converter.py --profile_path <path the nsys profile> --pgle_output_path <path to output .pbtxt>")
@@ -53,7 +71,6 @@ if __name__ == '__main__':
   proc = subprocess.Popen(stats_command, stdout=sys.stdout, stderr=sys.stderr)
   proc.wait()
 
-  thunk_re = re.compile("hlo_op=(.*)#")
   cost_dictionary: dict[str, list] = {}
   with open(f"{args.pgle_output_path}", 'w', newline='') as protofile:
     with open(f"{pgle_folder}{pgle_filename}.pbtxt_{report_name}.csv", newline='') as csvfile:
@@ -61,12 +78,14 @@ if __name__ == '__main__':
       for row in reader:
         name = row['NVTX Range']
         time_ns = float(row['Avg (ns)'])
-        m = thunk_re.search(name)
-        if m is not None:
+        op_name = extract_hlo_op_name(name)
+        if op_name is not None:
           if args.post_process:
-            cost_dictionary.setdefault(m.group(1), []).append(time_ns/1000.0)
+            cost_dictionary.setdefault(op_name, []).append(time_ns / 1000.0)
           else:
-            protofile.write(f'costs {{ name: "{m.group(1)}" cost_us: {time_ns / 1000.0} }}\n')
+            protofile.write(
+                f'costs {{ name: "{op_name}" cost_us: {time_ns / 1000.0} }}\n'
+            )
     if args.post_process:
       for name, cost in cost_dictionary.items():
         protofile.write(f'costs {{ name: "{name}" cost_us: {max(cost)} }}\n')
