@@ -65,10 +65,10 @@ def fuse(
 ):
   """Fuses a function into a single fusible.
 
-  There should be a single call to a `fusible` inside the body of `f`. `fuse`
+  There should be a single call to a ``fusible`` inside the body of ``f``. ``fuse``
   returns a transformed function that will fuse the surrounding computation into
-  the fusible and invoke it. The fused function cannot take `jax.ref.Ref`s as
-  arguments (it must close over `Ref`s instead).
+  the fusible and invoke it. The fused function cannot take ``jax.ref.Ref`` objects as
+  arguments (it must close over ``Refs`` instead).
 
   Args:
     f: The function to fuse.
@@ -83,7 +83,7 @@ def fuse(
       which named arguments to treat as static (compile-time constant).
 
   Returns:
-    A fused version of `f`, or a decorator if `f` is `None`.
+    A fused version of ``f``, or a decorator if ``f`` is ``None``.
   """
 
   def decorator(f):
