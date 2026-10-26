@@ -2137,6 +2137,7 @@ def emit_pipeline_with_allocations(
     grid,
     in_specs=(),
     out_specs=(),
+    _explicit_indices: bool = False,
 ):
   """Creates pallas pipeline and top-level allocation preparation functions.
 
@@ -2145,6 +2146,8 @@ def emit_pipeline_with_allocations(
     grid: a pallas grid definition.
     in_specs: input pallas block specs
     out_specs: output pallas block specs
+    _explicit_indices: If True, the body receives a `PipelineStep` as its first
+      argument instead of querying `program_id` from a grid environment.
 
   Returns:
     (emit_pipeline, make_allocations) function pair, where
@@ -2161,7 +2164,9 @@ def emit_pipeline_with_allocations(
       body,
       grid=grid,
       in_specs=in_specs,
-      out_specs=out_specs)
+      out_specs=out_specs,
+      _explicit_indices=_explicit_indices,
+  )
   return pipeline, make_allocations
 
 
