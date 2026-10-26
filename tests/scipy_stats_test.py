@@ -160,20 +160,21 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self.assertAllClose(result, expected, check_dtypes=False,
                         atol=1e-3, rtol=1e-3)
 
-  @jtu.sample_product(dtype=jtu.dtypes.floating, mu=[1e7, 1e8, 1e9])
-  def testPoissonLogPmfCentralAccuracy(self, mu, dtype):
-    center = np.asarray(mu, dtype=dtype)
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testPoissonLogPmfCentralAccuracy(self, dtype):
+    mu_values = np.asarray([1e7, 1e8, 1e9], dtype=dtype)
     offsets = np.asarray([-5, -3, -1, 0, 1, 3, 5], dtype=dtype)
-    k = center + offsets * np.sqrt(center)
+    k = mu_values[:, None] + offsets[None, :] * np.sqrt(mu_values[:, None])
+    mu = np.broadcast_to(mu_values[:, None], k.shape)
+
     def args_maker():
-      return [k, center]
+      return [k, mu]
 
     self._CheckAgainstNumpy(
         osp_stats.poisson.logpmf, lsp_stats.poisson.logpmf, args_maker,
         check_dtypes=False, rtol=1e-6, atol=5e-5)
     self._CompileAndCheck(
-        lsp_stats.poisson.logpmf, args_maker,
-        check_dtypes=False,
+        lsp_stats.poisson.logpmf, args_maker, check_dtypes=False,
         rtol=1e-5 if dtype == np.float32 else 1e-7,
         atol=5e-4 if dtype == np.float32 else 5e-5)
 
