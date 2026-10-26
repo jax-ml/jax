@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import os
-from jax._src import clusters
+from jax._src.clusters import cluster
 
 _JOBID_PARAM = 'SLURM_JOB_ID'
 _NODE_LIST = 'SLURM_STEP_NODELIST'
@@ -24,7 +24,7 @@ _PROCESS_ID = 'SLURM_PROCID'
 _LOCAL_PROCESS_ID = 'SLURM_LOCALID'
 _NUM_NODES = 'SLURM_STEP_NUM_NODES'
 
-class SlurmCluster(clusters.ClusterEnv):
+class SlurmCluster(cluster.ClusterEnv):
 
   name: str = "slurm"
 
