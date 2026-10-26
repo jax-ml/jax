@@ -1954,6 +1954,57 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     ):
       g_none_tiling(arr)
 
+  def test_reshape_vjp_non_major_singleton_layout(self):
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    np_inp = np.arange(2 * 1 * 2 * 16 * 128, dtype=jnp.float32)
+    arr1 = jax.device_put(np_inp.reshape(2, 1, 2, 16, 128), s)
+
+    @jax.jit
+    def f1(x):
+      @explicit_layout(in_layouts=Layout.for_array(x))
+      def impl(x):
+        return x.reshape(4, 16, 128)
+
+      y, vjp_fn = jax.vjp(impl, x)
+      return y, vjp_fn(y)[0]
+
+    y1, x1_bar = f1(arr1)
+    self.assertEqual(y1.shape, (4, 16, 128))
+    self.assertArraysEqual(x1_bar, arr1)
+
+    # 2. Interior singleton created by split followed by reshape + grad.
+    np_inp2 = np.arange(4 * 3 * 16 * 128, dtype=jnp.float32).reshape(4, 3, 16, 128)
+    arr2 = jax.device_put(np_inp2, s)
+
+    def split_and_reshape(x):
+      return jax.lax.split(x, (1, 2), axis=1)[0].reshape(4, 16, 128)
+
+    f2 = explicit_layout(split_and_reshape, in_layouts=arr2.format.layout)
+
+
+    g2 = jax.jit(jax.grad(lambda x: f2(x).sum()))(arr2)
+    ref_g2 = jax.jit(jax.grad(lambda x: split_and_reshape(x).sum()))(arr2)
+    self.assertArraysAllClose(g2, ref_g2)
+
+  @jtu.with_explicit_mesh((2,), ('data',))
+  def test_reshape_vjp_sharded_singleton_layout(self, mesh):
+    np_inp = np.arange(4 * 2 * 4 * 16 * 128, dtype=jnp.float32)
+    arr = jax.device_put(np_inp.reshape(4, 2, 4, 16, 128), P(None, 'data'))
+
+    @jax.jit
+    def f(x):
+      @explicit_layout(in_layouts=Layout.for_array(x))
+      def impl(x):
+        x = jnp.transpose(x, (0, 2, 1, 3, 4))
+        return x.reshape(16, 2, 16, 128, out_sharding=P(None, 'data'))
+
+      y, vjp_fn = jax.vjp(impl, x)
+      return y, vjp_fn(y)[0]
+
+    y, x_bar = f(arr)
+    self.assertEqual(y.shape, (16, 2, 16, 128))
+    self.assertArraysEqual(x_bar, arr)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

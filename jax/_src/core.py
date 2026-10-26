@@ -60,7 +60,7 @@ import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding, get_replicated_axes
 from jax._src import named_sharding as ns
 from jax._src.sharding import Sharding
-from jax._src.layout import Format, AutoLayout, AutoLayoutSingleton
+from jax._src.layout import Format, Layout, AutoLayout, AutoLayoutSingleton
 from jax._src.lib import _jax
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
@@ -2489,7 +2489,8 @@ class ShapedArray(AbstractValue):
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
         self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
-        self.mat, self.memory_space, short_dtypes, mesh_axis_types)
+        self.mat, self.memory_space, short_dtypes, mesh_axis_types,
+        self.layout)
 
   def __repr__(self):
     wt_str = ", weak_type=True" if self.weak_type else ""
@@ -2587,17 +2588,32 @@ def _axis_types_dict(mesh):
     d[t].append(n)
   return {t: tuple(n) for t, n in d.items()}
 
+def _layout_str(layout) -> str:
+  if not isinstance(layout, Layout):
+    return ''
+  m2m = ','.join(str(d) for d in layout.major_to_minor)
+  out = f'L({m2m})'
+  if layout.tiling:
+    tiles = ','.join(f"({','.join(str(t) for t in tile)})"
+                     for tile in layout.tiling)
+    out += f'T({tiles})'
+  if layout.sub_byte_element_size_in_bits != 0:
+    out += f'E({layout.sub_byte_element_size_in_bits})'
+  return out
+
 def str_short_aval(shape, dtype, mesh, spec, mat, memory_space,
-                   short_dtypes=False, mesh_axis_types=False) -> str:
+                   short_dtypes=False, mesh_axis_types=False,
+                   layout=AutoLayout) -> str:
   dt_str = dtypes.short_dtype_name(dtype) if short_dtypes else dtype.name
   dt_str = dt_str.replace('void', 'float0')
   shapestr = _get_shape_sharding_str(shape, spec)
   mesh_axes = f'({_axis_types_dict(mesh)})' if mesh_axis_types else ''
   vma_ur = _vma_ur_str(mat, spec.unreduced, spec.reduced, spec.unreduced_kind,
                        mesh)
+  layout_s = _layout_str(layout)
   ms_str = ("" if memory_space == MemorySpace.Device else
             f"<{memory_space.name.lower()}>")
-  return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
+  return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{layout_s}{mesh_axes}'
 
 def _create_str(x, prefix):
   x_str = f"{','.join(i for i in x)}"
