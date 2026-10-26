@@ -2237,7 +2237,9 @@ def make_jaxpr(
 
   >>> import jax
   >>>
-  >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
+  >>> def f(x):
+  ...   y = jax.numpy.cos(x)
+  ...   return jax.numpy.sin(y)
   >>> print(f(3.0))
   -0.83602
   >>> jax.make_jaxpr(f)(3.0)
@@ -2252,6 +2254,20 @@ def make_jaxpr(
       f:f32[] = neg e
       g:f32[] = mul f c
     in (g,) }
+
+  To relate the operations in a jaxpr to the Python code that generated them,
+  call ``pretty_print(source_info=True)`` on the returned jaxpr. This adds
+  comments with the best-effort source location of each operation: the filename,
+  line and column numbers, and function name. The locations depend on where
+  ``f`` is defined and are abbreviated with ``...`` below. Setting ``width``
+  keeps the operations on separate lines:
+
+  >>> jaxpr = jax.make_jaxpr(f)(3.0)
+  >>> print(jaxpr.pretty_print(source_info=True, width=40))  # doctest: +ELLIPSIS
+  { lambda ; a:f32[]. let
+      b:f32[] = cos a     # ... (f)
+      c:f32[] = sin b     # ... (f)
+    in (c,) }
   """
   try:
     hash(fun)
