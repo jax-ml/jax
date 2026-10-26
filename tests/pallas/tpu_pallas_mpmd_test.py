@@ -798,7 +798,7 @@ class MpmdTest(PallasSCTest):
       pltpu.touch(x_hbm_ref)
 
     x = jnp.arange(self.sc_info.num_lanes, dtype=jnp.int32)
-    _ = jax.vmap(kernel)(x[jnp.newaxis])
+    _ = jax.vmap(lambda x: kernel(jax.new_ref(x)))(x[jnp.newaxis])
 
   def test_vmap_captured_scalar_error(self):
     def run_kernel(zero):

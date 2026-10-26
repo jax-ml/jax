@@ -383,6 +383,17 @@ class CoreMapTest(jtu.JaxTestCase):
     ):
       f(x)
 
+  def test_raises_on_write_to_array_input(self):
+    @pl.kernel(mesh=pltpu.TensorCoreMesh(axis_name="x"))
+    def kernel(x_ref, y_ref):
+      pltpu.sync_copy(x_ref, y_ref)
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    with self.assertRaisesRegex(
+        ValueError, "writes to input y_ref .* which was passed as an array"
+    ):
+      kernel(x, jnp.zeros_like(x))
+
   @parameterized.product(
       core_type=[*pltpu.CoreType], use_tc_tiling_on_sc=[True, False]
   )
