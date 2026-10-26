@@ -195,12 +195,17 @@ absl::StatusOr<ThunkSequence> LowerGpuExecutableProtoToThunkSequence(
     AssignThunkInfoRecursively(tp, make_thunk_info);
   }
 
-  return DeserializeThunkSequenceProto(
-      seq_proto, buffer_allocations,
-      /*hlo_module=*/nullptr,
-      gpu_compute_capability.IsRocm() ? "ROCM" : "CUDA",
-      gpu_compute_capability,
-      /*gpu_topology=*/std::nullopt);
+  const char* platform_name = "CUDA";
+  if (gpu_compute_capability.IsRocm()) {
+    platform_name = "ROCM";
+  } else if (gpu_compute_capability.IsOneAPI()) {
+    platform_name = "ONEAPI";
+  }
+
+  return DeserializeThunkSequenceProto(seq_proto, buffer_allocations,
+                                       /*hlo_module=*/nullptr, platform_name,
+                                       gpu_compute_capability,
+                                       /*gpu_topology=*/std::nullopt);
 }
 
 }  // namespace xla::gpu
