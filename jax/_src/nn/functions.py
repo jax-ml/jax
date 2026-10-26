@@ -1550,4 +1550,10 @@ def log1mexp(x: ArrayLike) -> Array:
       jnp.log1p(-jnp.exp(-x)),
   )
 
-log1mexp.defjvps(lambda g, ans, x: g / jnp.expm1(x))
+
+def _log1mexp_jvp(g: Array, ans: Array, x: Array) -> Array:
+  x_safe = jnp.where(x < 0, 1.0, x)
+  return g * jnp.where(x < 0, jnp.nan, -jnp.exp(-x_safe) / jnp.expm1(-x_safe))
+
+
+log1mexp.defjvps(_log1mexp_jvp)

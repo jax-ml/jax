@@ -961,10 +961,21 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(
         nn.log1mexp,
         (jnp.array([1e-2, 1e-1, 1e0, 1e1, 1e2]),),
-        order=1,
+        order=2,
         rtol=1e-2 if jtu.test_device_matches(["tpu"]) else 1e-3,
         atol=1e-3,
     )
+    zero = jnp.float32(0.0)
+    self.assertAllClose(
+        jax.grad(nn.log1mexp)(jnp.float32(100.0)), zero, atol=1e-43
+    )
+    self.assertAllClose(
+        jax.grad(jax.grad(nn.log1mexp))(jnp.float32(100.0)), zero, atol=1e-43
+    )
+    for x in [jnp.float32(110.0), jnp.float32(jnp.inf)]:
+      self.assertEqual(jax.grad(nn.log1mexp)(x), 0.0)
+      self.assertEqual(jax.grad(jax.grad(nn.log1mexp))(x), 0.0)
+    self.assertTrue(jnp.isnan(jax.grad(nn.log1mexp)(-1.0)))
 
   def testDotProductAttention_localWindowSizeWithoutMask(self):
     dtype = jnp.float32
