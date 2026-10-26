@@ -987,6 +987,85 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       write(o_ref, jnp.array(42.0, dtype=jnp.float32))
     np.testing.assert_array_equal(kernel(), 42.0)
 
+  def test_inline_mgpu_reads_array_input(self):
+    x = jnp.arange(8, dtype=jnp.int32) + 10
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct((), jnp.int32))
+    def kernel(x_ref, o_ref):
+      @plgpu.inline_mgpu(
+          arg_types=(plgpu.RefType(write=False),),
+          return_type=plgpu.ShapeDtypeStruct(
+              (), jnp.int32, layout=plgpu.Layout.WG_SPLAT
+          ),
+      )
+      def load_first(ctx, ref):
+        del ctx
+        val = memref_dialect.load(ref, [mgpu.c(0, ir.IndexType.get())])
+        return mgpu.FragmentedArray.splat(
+            val, shape=(), layout=mgpu.WGSplatFragLayout(), is_signed=True
+        )
+
+      @plgpu.inline_mgpu(
+          arg_types=(plgpu.RefType(read=False), plgpu.Layout.WG_SPLAT),
+      )
+      def store_scalar(ctx, ref, value):
+        del ctx
+        memref_dialect.store(value.registers.item(), ref, [])
+
+      store_scalar(o_ref, load_first(x_ref) + 1)
+
+    np.testing.assert_array_equal(kernel(x), 11)
+
+  @parameterized.parameters(
+      (plgpu.RefType(), {state_types.ReadEffect, state_types.WriteEffect}),
+      (
+          plgpu.RefType(read=True),
+          {state_types.ReadEffect, state_types.WriteEffect},
+      ),
+      (
+          plgpu.RefType(write=True),
+          {state_types.ReadEffect, state_types.WriteEffect},
+      ),
+      (
+          plgpu.RefType(read=True, write=True),
+          {state_types.ReadEffect, state_types.WriteEffect},
+      ),
+      (plgpu.RefType(write=False), {state_types.ReadEffect}),
+      (plgpu.RefType(read=True, write=False), {state_types.ReadEffect}),
+      (plgpu.RefType(read=False), {state_types.WriteEffect}),
+      (plgpu.RefType(read=False, write=True), {state_types.WriteEffect}),
+  )
+  def test_inline_mgpu_ref_type_effects(self, ref_ty, expected_effect_types):
+    x = jnp.arange(8, dtype=jnp.int32)
+
+    @self.kernel
+    def noop_kernel(x_ref):
+      @plgpu.inline_mgpu(arg_types=(ref_ty,))
+      def noop(ctx, ref):
+        del ctx, ref
+
+      noop(x_ref)
+
+    jaxpr = jax.make_jaxpr(noop_kernel)(jax.new_ref(x))
+    (invar,) = jaxpr.jaxpr.invars
+    self.assertEqual(
+        jaxpr.effects, {eff_cls(invar) for eff_cls in expected_effect_types}
+    )
+    if ref_ty.write:
+      with self.assertRaisesRegex(
+          ValueError,
+          r"writes to input refs\[0\] .* which was passed as an array",
+      ):
+        noop_kernel(x)
+    else:
+      noop_kernel(x)
+
+  def test_inline_mgpu_ref_type_rejects_no_effects(self):
+    with self.assertRaisesRegex(
+        ValueError, "At least one of `read` or `write` must be True"
+    ):
+      plgpu.RefType(read=False, write=False)
+
   def test_sync_copy(self):
     shape = (128, 128)
     transforms = self.default_transforms(dtype=jnp.float32)

@@ -21,7 +21,6 @@ import contextlib
 import dataclasses
 import enum
 import functools
-import itertools
 import math
 from typing import Any, Literal, assert_never, overload
 
@@ -3704,7 +3703,22 @@ inline_mgpu_p.multiple_results = True
 
 @dataclasses.dataclass(frozen=True)
 class RefType:
+  """Type specifier for :func:`inline_mgpu` reference arguments.
+
+  Attributes:
+    transforms: A tuple of memory transforms applied to the reference.
+    read: Whether the inline function reads from the reference.
+    write: Whether the inline function writes to the reference.
+  """
+
   transforms: tuple[state_types.Transform, ...] = ()
+  _: dataclasses.KW_ONLY
+  read: bool = True
+  write: bool = True
+
+  def __post_init__(self):
+    if not (self.read or self.write):
+      raise ValueError("At least one of `read` or `write` must be True.")
 
 
 def inline_mgpu(*, arg_types=(), return_type=None):
@@ -3718,7 +3732,7 @@ def inline_mgpu(*, arg_types=(), return_type=None):
       layout = plgpu.Layout.WG_STRIDED(x_ref.shape, vec_size=4)
 
       @plgpu.inline_mgpu(
-          arg_types=(plgpu.RefType(),),
+          arg_types=(plgpu.RefType(write=False),),
           return_type=plgpu.ShapeDtypeStruct(
               (128, 128), dtype, layout=layout
           ),
@@ -3800,20 +3814,23 @@ def _inline_mgpu_abstract_eval(
     pytree_ret_ty,
     mgpu_fn,
 ):
-  del flat_arg_types, pytree_ret_ty, pytree_ref_transforms, mgpu_fn  # Unused.
+  del pytree_ret_ty, pytree_ref_transforms, mgpu_fn  # Unused.
   aval_return = tuple(
       jax_core.ShapedArray(x.shape, x.dtype) for x in flat_ret_ty
   )
-  # TODO(cperivol): Let the user set the effects.
   flat_args = flat_args_and_transforms[:pytree_args.num_leaves]
+  ref_effects: list[jax_core.Effect] = []
+  for i, (r, t) in enumerate(zip(flat_args, flat_arg_types, strict=True)):
+    if isinstance(r, state.AbstractRef):
+      assert isinstance(t, RefType)
+      if t.read:
+        ref_effects.append(state.ReadEffect(i))
+      if t.write:
+        ref_effects.append(state.WriteEffect(i))
   return aval_return, {
       gpu_core._wgmma_pipeline_effect,
       gpu_core._memory_effect,
-      *itertools.chain.from_iterable(
-          (state.ReadEffect(i), state.WriteEffect(i))
-          for i, r in enumerate(flat_args)
-          if isinstance(r, state.AbstractRef)
-      ),
+      *ref_effects,
   }
 
 
