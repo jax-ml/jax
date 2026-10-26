@@ -635,6 +635,20 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
   def testExpiZero(self):
     self.assertEqual(lsp_special.expi(0.0), -np.inf)
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def testExpiInf(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/38519
+    args_maker = lambda: [np.array([-np.inf, 0.0, np.inf, np.nan], dtype=dtype)]
+    # Note: scipy < 1.16 returned NaN for expi(+inf).
+    scipy_op = lambda x: np.where(
+        np.isposinf(x), np.inf, osp_special.expi(x.astype(np.float64))
+    ).astype(x.dtype)
+    self._CheckAgainstNumpy(scipy_op, lsp_special.expi, args_maker)
+    self._CompileAndCheck(lsp_special.expi, args_maker)
+    with jax.debug_nans(True):
+      x = jnp.array([-np.inf, -1.0, 0.0, 1.0, np.inf], dtype=dtype)
+      self.assertAllClose(lsp_special.expi(x), scipy_op(np.asarray(x)))
+
   def testGammaIncBoundaryValues(self):
     dtype = dtypes.default_float_dtype()
     nan = float('nan')
