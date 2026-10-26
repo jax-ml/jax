@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import contextlib
+import functools
 import io
 import re
 import unittest
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 import jax
 from jax._src import compilation_cache
 from jax._src import config
@@ -386,6 +387,76 @@ class JaxAotTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Unexpected serialized version"):
       deserialize_and_load(legacy_serialized, in_tree, out_tree,
                            execution_devices=jax.devices()[:1])
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f'hoist_{hoist_constants}_use_np_{use_np}',
+           hoist_constants=hoist_constants, use_np=use_np)
+      for hoist_constants in (True, False)
+      for use_np in (True, False)
+  )
+  def test_serialize_with_constants(self, hoist_constants, use_np):
+    from jax._src.interpreters import mlir
+    arange = np.arange if use_np else jnp.arange
+    const = arange(32, dtype=np.float32) + 42.
+
+    @jax.jit
+    def f(x):
+      return const[0:16] + x
+
+    inp = arange(16, dtype=np.float32)
+    compiled = f.trace(inp).lower(_private_parameters=mlir.LoweringParameters(
+        hoist_constants_as_args=hoist_constants)).compile()
+    serialized, in_tree, out_tree = serialize(compiled)
+    reloaded = deserialize_and_load(
+        serialized, in_tree, out_tree, execution_devices=jax.devices()[:1]
+    )
+
+    if hoist_constants and config.use_simplified_jaxpr_constants.value:
+      self.assertLen(reloaded._params.const_args, 1)
+    else:
+      self.assertLen(reloaded._params.const_args, 0)
+
+    expected = const[0:16] + inp
+    out = reloaded(inp)
+    self.assertArraysEqual(out, expected)
+
+    # Test repeated invocation (cached execution path)
+    self.assertCacheMisses(lambda: reloaded(inp), cpp=0, aot_call=0)
+
+  def test_serialize_with_sharded_constants(self):
+    nr_devices = 2
+    if len(jax.devices()) < nr_devices:
+      self.skipTest(f"Need at least {nr_devices} devices")
+    devices = jax.devices()[:nr_devices]
+    mesh = jax.sharding.Mesh(devices, ("x",))
+    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+
+    const = jax.device_put(jnp.arange(16, dtype=np.float32) + 42., sharding)
+
+    @functools.partial(jax.jit, in_shardings=sharding, out_shardings=sharding)
+    def f(x):
+      return const + x
+
+    inp_np = np.arange(16, dtype=np.float32)
+    inp = jax.device_put(inp_np, sharding)
+
+    compiled = f.lower(inp).compile()
+    serialized, in_tree, out_tree = serialize(compiled)
+    reloaded = deserialize_and_load(
+        serialized, in_tree, out_tree, execution_devices=devices)
+
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertLen(reloaded._params.const_args, 1)
+    else:
+      self.assertLen(reloaded._params.const_args, 0)
+
+    expected = const + inp_np
+    out = reloaded(inp)
+    self.assertEqual(out.sharding, sharding)
+    self.assertArraysEqual(out, expected)
+
+    # Test repeated invocation (cached execution path)
+    self.assertCacheMisses(lambda: reloaded(inp), cpp=0, aot_call=0)
 
   @jtu.run_on_devices('gpu', 'tpu')
   def test_mismatched_backends_raises(self):
