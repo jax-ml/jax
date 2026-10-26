@@ -14,51 +14,37 @@
 
 """Float32 and float64 implementations of lgamma(x).
 
-Approach overview:
-- Positive arguments (x >= 0.5 in float32, x > 0 in float64) are evaluated
-  directly on the positive half-line:
-  1. Near x = 1 and x = 2: evaluated via factored minimax polynomials
-     (x - 1)(x - 2)P(d) that vanish identically at the roots x = 1 and x = 2.
-     Float32 splits [0.5, 4] across [0.5, 1.5] (d = x - 1.0) and (1.5, 4]
-     (d = x - 2.75), using 12-bit mantissa truncation (`& -0x1000`) in pure
-     float32 so the product retains precision under reflection. Float64 shifts
-     (0, 1) to x + 1, uses one polynomial on [1, 2.5) (d = x - 1.5), and shifts
-     [2.5, 8) up to x + m >= 8.
-  2. Larger x (x > 4 in float32, x >= 8 in float64): evaluated via the
-     asymptotic Stirling series
-     lgamma(x) = (x - 0.5)(ln(x) - 1) + (0.5 ln(2 pi) - 0.5) + (1/x) S(1/x^2),
-     using 12-bit splits in pure float32 (or (hi, lo) pairs in float64) on
-     (x - 0.5) and (ln(x) - 1) so the leading product p_hi = b_hi * (h_x - 1)
-     is exact.
-- Remaining arguments (x < 0.5 in float32, x <= 0 in float64)
-  reflect to y = 1 - x via two complementary paths:
-  1. Euler reflection: evaluates
-     lgamma(x) = -(ln|delta| + lgamma(1 - x) - ln(pi delta / sin(pi delta))),
+Overview:
+- Positive inputs (x >= 0.5 in float32, x > 0 in float64):
+  1. Small x: approximated by polynomials of the form (x - 1)(x - 2) * P(d),
+     which are zero at x = 1 and x = 2. Float32 uses two polynomials on
+     [0.5, 1.5] (d = x - 1.0) and (1.5, 4] (d = x - 2.75), splitting the factors
+     and leading terms into high and low parts so the result keeps extra
+     precision when used in Euler's reflection formula. Float64 shifts (0, 1) up
+     to x + 1, uses one polynomial on [1, 2.5) (d = x - 1.75), and shifts
+     [2.5, 7) up to x + m >= 7.
+  2. Larger x (x > 4 in float32, x >= 7 in float64): evaluated with Stirling's
+     series
+       lgamma(x) = (x - 0.5)(ln(x) - 1) + (0.5 ln(2 pi) - 0.5) + (1/x) S(1/x^2),
+     splitting (x - 0.5) and (ln(x) - 1) into high and low parts so their
+     leading product has no rounding error.
+- Remaining inputs (x < 0.5 in float32, x <= 0 in float64):
+  1. Euler's reflection formula:
+       lgamma(x) = -(ln|delta| + lgamma(1 - x) - ln(pi delta / sin(pi delta))),
      where n = round(x), delta = x - n in [-0.5, 0.5], and y = (1 - n) - delta.
-     In pure float32, a first-order Taylor correction psi(y) * y_lo compensates
-     for rounding in y.
-  2. Root windows near negative zeros: near zeros of lgamma(x) on (-10, -2) in
-     float32 or (-17, -2) in float64,
-     where Euler reflection suffers catastrophic cancellation, each root
-     x_root = -k + r (k in {2, ..., 9} in float32, {2, ..., 16} in float64,
-     side in {0, 1}) lies close to the
-     logarithmic pole at x = -k (delta = 0). A direct polynomial in delta - r
-     converges slowly because of that nearby pole; instead, we apply the
-     rational change of variable (a Cayley transform)
-     w = (delta - r) / (delta + r), which maps the root delta = r to w = 0 and
-     turns the pole term -ln(delta / r) = -ln((1 + w) / (1 - w)) = -2 * atanh(w)
-     into a rapidly converging odd power series. Each window is evaluated as
-     w * P(w) using a lookup table of ULP-weighted minimax polynomials
-     (14 x 16 degree-10 in float32; 25 x 30 degree-20 in float64).
+     Adding digamma(y) * y_lo corrects for rounding in y.
+  2. Near negative zeros (on (-10, -2) in float32 and (-17, -2) in float64),
+     the terms in Euler's reflection formula nearly cancel out. Each zero
+     x_root = -k + r sits about |r| ~ 1 / k! from the integer -k. Multiplying
+     delta - r by a power-of-two factor `scale` (or 5 on (-3, -2.5)) chosen so
+     |r * scale| is in [1, 2) gives u = (delta - r) * scale of order 1 without
+     dividing. We then evaluate u * P(u) from a table of polynomials (or
+     _BASIN_MIN + u^2 * Q(u) around the local minimum on (-3, -2) in float32).
 
-Two intermediate-precision modes are supported:
-- Pure float32 (`use_f64_for_f32=False`, used on GPU and TPU) uses float32
-  polynomials, 12-bit mantissa splits, `(hi, lo)` pairs, the `psi(y) * y_lo`
-  reflection correction, one residual refinement step on `w`, and `_NEG_TABLE`.
-- Float64 intermediates (`use_f64_for_f32=True`, used on CPU) use higher-degree
-  float64 minimax polynomials (~49-52 bits, enough to absorb up to 23.3 bits of
-  cancellation near negative roots in float32) so Euler's reflection formula is
-  accurate across all negative inputs without `_NEG_TABLE`.
+On CPU (`use_f64_for_f32=True`), float32 inputs are promoted to float64 and
+shifted up to z >= 8 for Stirling's series, using short Taylor series near
+x = 1 and x = 2 and Euler's reflection formula on x < 0.5 without a lookup
+table.
 """
 
 from __future__ import annotations
@@ -74,6 +60,7 @@ from jax._src.lax.double_word import (
     f2_mul_exact_high,
     f2_sum,
     fast_two_sum,
+    split_bits,
     split_half,
     two_prod,
     two_prod_big,
@@ -91,41 +78,30 @@ _LN2_HI = 0.693115234375
 _LN2_LO = 3.19461832987e-05
 # Constant term 0.5 * ln(2 * pi) - 0.5 in Stirling's expansion when the leading
 # product is written as (x - 0.5) * (ln(x) - 1) = (x - 0.5) * ln(x) - x + 0.5.
-_HALF_LN_2PI_MINUS_HALF = 0.4189385175704956
-_HALF_LN_2PI_MINUS_HALF_F64 = 0.41893853320467274
-_LN2_F64 = 0.6931471805599453
+_C_STIRLING_HI = 0.418938547372818
+_C_STIRLING_LO = -1.4168144879533884e-08
+_SQRT2_OVER_2_BITS_F64 = 0x3FE6A09E667F3BCD
+# Split of ln(2) with a 42-bit high part so k * _LN2_HI_F64 has no rounding
+# error for |k| <= 2048.
+_LN2_HI_F64 = 0.6931471805598903
+_LN2_LO_F64 = 5.497923018708371e-14
+# High/low float64 pair for 0.5 * ln(2 * pi) - 0.5.
+_C_STIRLING_HI_F64 = 0.4189385332046727
+_C_STIRLING_LO_F64 = 1.6728209650585413e-17
 
 
-# Degree-9 Sollya fpminimax polynomial for (ln(1 + f) - (f - 0.5 f^2)) / f^3 on
-# f = m - 1 in [sqrt(2)/2 - 1, sqrt(2) - 1], stored in ascending powers of f.
-# Generated with Sollya:
-#   prec = 300!;
-#   p = fpminimax(log1p(x), [|3, 4, 5, 6, 7, 8, 9, 10, 11, 12|], [|SG...|],
-#                 [sqrt(2)/2 - 1; sqrt(2) - 1], relative, floating,
-#                 x - 0.5 * x^2);
-#   for i from 3 to 12 do print(single(coeff(p, i)));
-_LOG_Q_HI = [
-    0.3333333134651184, -0.24999968707561493, 0.20000173151493073,
-    -0.1666935533285141, 0.1428280621767044, -0.12423781305551529,
-    0.11063456535339355, -0.10845641046762466, 0.10516089200973511,
-    -0.05804464966058731,
-]
-
-# Degree-16 float64 minimax polynomial for (ln(1 + f) - (f - 0.5 f^2)) / f^3 on
-# f = m - 1 in [sqrt(2)/2 - 1, sqrt(2) - 1] (~51.4-bit relative accuracy).
-_LOG_Q_F32_F64 = [
-    0.3333333333333261, -0.25000000000345535, 0.20000000000697915,
-    -0.16666666594619337, 0.1428571412724866, -0.12500005436363315,
-    0.11111125324064747, -0.09999801375585593, 0.09090283898105432,
-    -0.08337109600190651, 0.07707064490152053, -0.07108586385305052,
-    0.06478328342758392, -0.06310141921529044, 0.07058883671019928,
-    -0.06663032331509593, 0.030711639087442108,
+# Degree-7 polynomial for (ln(1 + f) - (f - 0.5 * f^2)) / f^3 on
+# f = m - 1 in [sqrt(2)/2 - 1, sqrt(2) - 1], in ascending powers of f.
+_LOG_Q = [
+    0.3333333134651184, -0.250008225440979, 0.20001226663589478,
+    -0.16623350977897644, 0.14201749861240387, -0.1316024214029312,
+    0.12761665880680084, -0.07634450495243073,
 ]
 
 
 @jit
 def _log_f32(x):
-  """Computes ln(x) as a compensated (log_hi, log_lo) pair."""
+  """Computes ln(x) as a `(log_hi, log_lo)` pair in float32."""
   bits = lax.bitcast_convert_type(x, np.int32)
   exp_off = lax.shift_right_arithmetic(
       bits - _SQRT2_OVER_2_BITS, lax.full_like(bits, 23)
@@ -134,504 +110,526 @@ def _log_f32(x):
   mant_bits = bits - lax.shift_left(exp_off, lax.full_like(bits, 23))
   m = lax.bitcast_convert_type(mant_bits, np.float32)
 
-  # TODO(phawkins): To reduce worst-case error near x in (0.7, 1.0) and x ~ -5,
-  # split f with _split12(f) and use 2Sum on (f, -0.5 * f_hi^2) and (h_d, q_hi).
   f = m - 1.0
   f2 = f * f
-  ln1pf = f - 0.5 * f2 + (f2 * f) * lax.polynomial(
-      f, _LOG_Q_HI, unroll=len(_LOG_Q_HI)
-  )
-  h_d = k * _LN2_HI
-  l_d = ln1pf + k * _LN2_LO
-  log_hi = h_d + l_d
-  log_lo = (h_d - log_hi) + l_d
+  th, tl = fast_two_sum(f, -0.5 * f2)
+  tl = tl + (f2 * f) * lax.polynomial(f, _LOG_Q, unroll=len(_LOG_Q))
+  log_hi, e_d = fast_two_sum(k * _LN2_HI, th)
+  log_lo = e_d + (tl + k * _LN2_LO)
   return log_hi, log_lo
 
 
-@jit
-def _log_f32_with_f64(x):
-  """Computes ln(x) in float64 using a float64 minimax polynomial."""
-  bits = lax.bitcast_convert_type(x, np.int32)
-  exp_off = lax.shift_right_arithmetic(
-      bits - _SQRT2_OVER_2_BITS, lax.full_like(bits, 23)
-  )
-  k = lax.convert_element_type(exp_off, np.float64)
-  mant_bits = bits - lax.shift_left(exp_off, lax.full_like(bits, 23))
-  m = lax.bitcast_convert_type(mant_bits, np.float32)
-
-  f_d = lax.convert_element_type(m - 1.0, np.float64)
-  q = lax.polynomial(f_d, _LOG_Q_F32_F64, unroll=len(_LOG_Q_F32_F64))
-  f2_d = f_d * f_d
-  poly_d = f_d - 0.5 * f2_d + (f2_d * f_d) * q
-  return k * _LN2_F64 + poly_d
-
-
-# Degree-12 Sollya fpminimax polynomials for lgamma(x) / ((x - 1)(x - 2)) in
-# ascending powers of d = x - center:
-# - _POS_HI_05_15: fitted on x in [0.5, 1.5] around center = 1.0.
-# - _POS_HI_15_4: fitted on x in [1.5, 4.0] around center = 2.75.
-# Generated with Sollya (using a shifted Stirling series for lgamma(1 + x)):
-#   prec = 300!;
-#   z = 1 + x + 20;
-#   lg1 = (z - 0.5)*log(z) - z + 0.5*log(2*pi)
-#       + (1/z)*(1/12 - (1/z^2)/360 + (1/z^4)/1260 - (1/z^6)/1680 + (1/z^8)/1188
-#       - 691*(1/z^10)/360360 + (1/z^12)/156 - 3617*(1/z^14)/122400
-#       + 43867*(1/z^16)/244188 - 174611*(1/z^18)/125400);
-#   for k from 0 to 19 do lg1 = lg1 - log(1 + x + k);
-#   p1 = fpminimax(lg1 / (x - 1), [|1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13|],
-#                  [|SG...|], [-0.5; 0.5], relative, floating);
-#   for i from 1 to 13 do print(single(coeff(p1, i)));
-#   lg2 = lg1(x + 1);
-#   q2 = remez(lg2 / ((x + 1) * x), 24, [-0.5; 2.0]);
-#   p2 = fpminimax(q2(x + 0.75), 12, [|SG...|], [-1.25; 1.25],
-#                  relative, floating);
-#   for i from 0 to 12 do print(single(coeff(p2, i)));
-_POS_HI_05_15 = [
-    0.5772156715393066, -0.24525131285190582, 0.15543334186077118,
-    -0.1151529923081398, 0.09227604418992996, -0.0771135687828064,
-    0.06608173251152039, -0.06148973107337952, 0.058332279324531555,
-    -0.03065679967403412, 0.016753701493144035, -0.08664266765117645,
-    0.09459882974624634,
+# Degree-11 polynomials for lgamma(x) / ((x - 1)(x - 2)) in ascending powers of
+# d = x - center. The constant term c_0 is stored as a (hi, lo) pair, and the
+# linear term c_1 is split into a 12-bit high part C1_HH plus a remainder stored
+# in Q1_REM[0]:
+# - _POS_05_15_*: for x in [0.5, 1.5] around center = 1.0.
+# - _POS_15_4_*: for x in [1.5, 4.0] around center = 2.75.
+_POS_05_15_C0_HI, _POS_05_15_C0_LO = 0.5772156715393066, -1.6366939803447167e-08
+_POS_05_15_C1_HH = -0.2452392578125
+_POS_05_15_Q1_REM = [
+    -1.2042846719850786e-05, 0.15543700754642487, -0.11515380442142487,
+    0.09211507439613342, -0.0770968347787857, 0.06875524669885635,
+    -0.06163526326417923, 0.038027770817279816, -0.030093315988779068,
+    0.08821531385183334, -0.08744385093450546,
 ]
 
-_POS_HI_15_4 = [
-    0.3620683252811432, -0.06572934240102768, 0.016030851751565933,
-    -0.004419584292918444, 0.0013036809395998716, -0.00040008797077462077,
-    0.00012487791536841542, -4.1899154894053936e-05, 1.5541731045232154e-05,
-    -3.445456741246744e-06, 2.1466885868903773e-07, -9.512536394140625e-07,
-    5.093689878776786e-07,
+_POS_15_4_C0_HI, _POS_15_4_C0_LO = 0.3620683252811432, -8.077157609420738e-09
+_POS_15_4_C1_HH = -0.065704345703125
+_POS_15_4_Q1_REM = [
+    -2.4997580112540163e-05, 0.01603109948337078, -0.004419579170644283,
+    0.0013021451886743307, -0.0004001049674116075, 0.0001287032209802419,
+    -4.187468221061863e-05, 1.1072624147345778e-05, -3.4609686281328322e-06,
+    2.6656666705093812e-06, -9.476669902142021e-07,
 ]
 
-# Sollya fpminimax coefficients in ascending powers of 1/x^2 for the Stirling
-# remainder S(1/x^2) = B_2/(1*2) + B_4/(3*4) x^-2 + ... on x >= 4.
-# Generated with Sollya:
-#   prec = 300!;
-#   s = 1/12 - x/360 + x^2/1260 - x^3/1680 + x^4/1188
-#       - 691*x^5/360360 + x^6/156 - 3617*x^7/122400 + 43867*x^8/244188;
-#   p = fpminimax(s, 4, [|SG...|], [0; 1/16], relative, floating);
-#   for i from 0 to 4 do print(single(coeff(p, i)));
+# Degree-2 polynomial in 1/x^2 for the Stirling series tail
+# S(1/x^2) = 1/12 - 1/(360 * x^2) + ... on x >= 4.
 _STIRLING_HI = [
-    0.0833333358168602, -0.0027783112600445747, 0.000824464950710535,
-    -0.0012502220924943686, 0.005375693552196026,
+    0.08333330601453781, -0.0027760176453739405, 0.0007350948872044683,
 ]
 
-# Sollya fpminimax coefficients in ascending powers of delta^2 for
-# -ln(pi * delta / sin(pi * delta)) / delta^2 on |delta| <= 0.5.
-# Generated with Sollya:
-#   prec = 300!;
-#   f = log(sin(pi * sqrt(x)) / (pi * sqrt(x))) / x;
-#   p = fpminimax(f, 6, [|SG...|], [1b-40; 0.25], relative, floating);
-#   for i from 0 to 6 do print(single(coeff(p, i)));
-_SINC_HI = [
-    -1.644934058189392, -0.5411619544029236, -0.3391309082508087,
-    -0.2502579689025879, -0.21078622341156006, -0.10131293535232544,
-    -0.3194314241409302,
+# Polynomial in delta^2 for ln(sin(pi * delta) / (pi * delta)) / delta^2 on
+# |delta| <= 0.5. The constant term -pi^2 / 6 is split into the 9-bit value
+# _SINC_C0_HH = -421/256 plus _SINC_REM[0], so (dh * dh) * _SINC_C0_HH has no
+# rounding error when dh has 6 mantissa bits.
+_SINC_C0_HH = -1.64453125
+_SINC_REM = [
+    -0.000402778823627159, -0.5411723256111145, -0.338631808757782,
+    -0.25888514518737793, -0.14380806684494019, -0.34033387899398804,
 ]
 
-# Degree-23 float64 Sollya fpminimax polynomials for lgamma(x) / ((x - 1)(x - 2))
-# in ascending powers of d = x - center, fitted for float32 lgamma reflection:
-# - _POS_05_15_F64: x in [0.5, 1.5] around center = 1.0 (~49.5-bit rel accuracy).
-# - _POS_15_4_F64: x in [1.5, 4.0] around center = 2.75 (~52.1-bit rel accuracy).
-_POS_05_15_F64 = [
-    0.5772156649015322, -0.2452513685225703, 0.1554342658647344,
-    -0.11514654256790671, 0.09223900831635617, -0.07731816804434827,
-    0.06673173918441967, -0.05877796840964052, 0.05255590945458782,
-    -0.04754229079873885, 0.04342012573655991, -0.039959068720920164,
-    0.03685996405243268, -0.03424304179664488, 0.033410878458216185,
-    -0.03193612275579251, 0.021414012659978037, -0.017813063448699765,
-    0.053308287436331876, -0.05757720110254376, -0.04170677971103274,
-    0.05084438630620622, 0.09857378154450186, -0.1022005082529236,
-]
-
-_POS_15_4_F64 = [
-    0.36206831764947583, -0.06572934792248143, 0.016030995033300615,
-    -0.004419488380429822, 0.0013029063335328588, -0.0004005636052229375,
-    0.0001266990626986635, -4.0898695804588575e-05, 1.3403831584135535e-05,
-    -4.4444160863060155e-6, 1.4873885491971618e-6, -5.014860559989504e-7,
-    1.6994335939762067e-7, -5.7915617286448015e-8, 2.0090005970320186e-8,
-    -6.9370808324906276e-9, 2.1333154316934285e-9, -7.153446240703879e-10,
-    4.207448247253875e-10, -1.5630927610098696e-10, -1.8647641985504433e-11,
-    9.089155242178041e-12, 1.459639735381569e-11, -5.396724340229409e-12,
-]
-
-# Degree-6 float64 minimax coefficients in ascending powers of 1/x^2 for the
-# Stirling remainder S(1/x^2) on x >= 4 (~47.7-bit absolute accuracy in S).
+# Degree-7 float64 polynomial in 1/z^2 for the Stirling series tail S(1/z^2)
+# on z >= 8.
 _STIRLING_F32_F64 = [
-    0.08333333333332908, -0.002777777770848688, 0.0007936489447267786,
-    -0.0005950513428842073, 0.0008325836509206451, -0.0016760106456934216,
-    0.0028786348131155308,
+    0.08333333333333337, -0.0027777777777657103, 0.0007936507847927581,
+    -0.0005952363828805681, 0.0008415863584863707, -0.001906033373818225,
+    0.0057034901036038445, -0.005481381600466104,
 ]
 
-# Degree-11 float64 minimax coefficients in ascending powers of delta^2 for
-# -ln(pi * delta / sin(pi * delta)) / delta^2 on |delta| <= 0.5 (~49.1-bit rel
-# accuracy).
+# Degree-8 float64 Taylor polynomials for lgamma(1 + t) / t and
+# lgamma(2 + t) / t on |t| <= 3/64.
+_TAYLOR_1_F32_F64 = [
+    -0.5772156649015329, 0.8224670334241132, -0.40068563438653143,
+    0.27058080842778454, -0.20738555102867398, 0.1695571769974082,
+    -0.1440498967688461, 0.12550966952474304, -0.11133426586956469,
+]
+_TAYLOR_2_F32_F64 = [
+    0.42278433509846713, 0.3224670334241132, -0.0673523010531981,
+    0.020580808427784546, -0.007385551028673986, 0.0028905103307415234,
+    -0.001192753911703261, 0.0005096695247430425, -0.00022315475845357939,
+]
+
+# Degree-11 float64 polynomial in delta^2 for
+# ln(sin(pi * delta) / (pi * delta)) / delta^2 on |delta| <= 0.5.
 _SINC_F32_F64 = [
-    -1.6449340668482237, -0.5411616168587046, -0.3391143534032649,
+    -1.6449340668482264, -0.5411616168587046, -0.3391143534032649,
     -0.25101938254889333, -0.20019726882272687, -0.16674427259742153,
     -0.142353419429977, -0.1296848567043034, -0.08295902231943517,
     -0.20914242809307546, 0.16492085267622705, -0.3875246085244428,
 ]
 
-# Negative-argument root lookup table of shape (14, 16) for zeros x_root = -k + r
-# of lgamma(x) near negative integers -k (k in {2, ..., 9}).
+# Interval (_BASIN_LO, _BASIN_HI) and minimum value _BASIN_MIN = lgamma(x_min)
+# around the local minimum x_min ~= -2.61072 on (-3, -2).
+_BASIN_LO, _BASIN_HI = -2.70703125, -2.5
+_BASIN_MIN = -0.11862999200820923
+
+# Lookup table of shape (18, 16) for approximating lgamma(x) near its zeros
+# x_root = -k + r alongside negative integers -k (k in {2, ..., 9}).
 #
-# From Gamma(-k + delta) = Gamma(delta) / prod_{i=1}^k (delta - i), one obtains
-# lgamma(-k + delta) = -ln|delta / r| + [f(delta) - f(r)] with f smooth. Under
-# the rational substitution w = (delta - r) / (delta + r) (equivalently
-# delta / r = (1 + w) / (1 - w)), the singular part is identically
-# -ln(delta / r) = -2 * atanh(w) = -2 * (w + w^3/3 + w^5/5 + ...),
-# which makes the window well-conditioned in w and explains why the even-indexed
-# coefficients converge to c_0 ~ -2, c_2 ~ -2/3, c_4 ~ -2/5, c_6 ~ -2/7.
+# Near x = -k, lgamma(-k + delta) behaves like -ln|delta / r| plus a smooth
+# remainder, where |r| ~ 1 / k! shrinks rapidly with k. Multiplying delta - r by
+# `scale` (chosen with the same sign as r so |r * scale| is in [1, 2)) gives a
+# rescaled offset u = (delta - r) * scale of order 1 without dividing, so
+# -ln|delta / r| = -ln(1 + u / |r * scale|) can be approximated by a fixed-degree
+# polynomial u * P(u) for every k.
 #
-# Column index is slot = 2 * (k - 2) + side, where side = 0 (r < 0, delta < 0)
-# or side = 1 (r > 0, delta > 0). Column 1 (k = 2, side = 1) is an inactive
-# sentinel slot (`w_bound = -1.0`) because lgamma(x) > 0 on (-2, -1).
-# Rows contain:
-#   row 0 (`r_hi`): float32 leading part of root offset r = x_root - (-k).
-#   row 1 (`r_lo`): residual float32(r - r_hi) so r_hi + r_lo captures r to ~48 bits.
-#   row 2 (`w_bound`): half-width threshold on the variable
-#                      w = (delta - r) / (delta + r) activating the root window.
-#   rows 3..13 (`c_0 .. c_10`): degree-10 polynomial coefficients in ascending
-#       powers of w, fitted via iteratively reweighted least squares (Lawson/Remez)
-#       to minimize output-ULP error |w * P(w) - lgamma(-k + delta)| / ulp(lgamma).
+# Column 2 * (k - 2) covers the zero below -k (r < 0, delta < 0), and column
+# 2 * (k - 2) + 1 covers the zero above -k (r > 0, delta > 0). Because
+# lgamma(x) > 0 on (-2, -1), column 1 (k = 2, delta > 0) has no zero; instead it
+# stores the local minimum x_min = -3 + 0.38927913 on (_BASIN_LO, _BASIN_HI),
+# where lgamma(x) = _BASIN_MIN + u^2 * Q(u).
+#
+# Rows:
+#   row 0 (`r_hi`): float32 high part of r = x_root - (-k) (or x_min - (-3) in
+#       column 1).
+#   row 1 (`neg_r_lo_sc`): float32(-(r - r_hi) * scale), added to
+#       (delta - r_hi) * scale to get u = (delta - r) * scale as (u, u_lo).
+#   row 2 (`scale`): scale factor (signed power of two, or 5.0 in column 3).
+#   row 3 (`u_center`), row 4 (`u_half`): center and half-width of the interval
+#       |u - u_center| <= u_half where this column is used.
+#   row 5 (`c_0_hi`), row 6 (`c_0_lo`): (hi, lo) float32 pair for the constant
+#       term c_0 of P(u) (or Q(u) in column 1).
+#   rows 7..17 (`c_1 .. c_11`): remaining degree-11 polynomial coefficients in
+#       ascending powers of u.
 _NEG_TABLE = np.array([
     [
-        -0.4570247530937195, 1.0, -0.14358088374137878, 0.2523173391819,
-        -0.03936183825135231, 0.04470571503043175, -0.008218168281018734,
-        0.008455359376966953, -0.0013852944830432534, 0.001392519916407764,
-        -0.00019833340775221586, 0.00019849211093969643,
-        -2.4800270693958737e-05, 2.480290459061507e-05,
-        -2.755714831437217e-06, 2.7557489374885336e-06,
+        -0.4570247530937195, 0.3892791271209717, -0.14358088374137878, 0.2523174285888672,
+        -0.03936183825135231, 0.04470571503043175, -0.008218168281018734, 0.008455359376966953,
+        -0.0013852944830432534, 0.001392519916407764, -0.00019833340775221586, 0.00019849211093969643,
+        -2.4800270693958737e-05, 2.480290459061507e-05, -2.755714831437217e-06, 2.7557489374885336e-06,
     ],
     [
-        1.4872918896458032e-08, 0.0, -4.608601056332873e-09,
-        1.4090687727730256e-08, -1.4891843314046582e-09,
-        1.1097014973593389e-10, -4.15751669202713e-11,
-        6.298560284445642e-11, 2.9888522212750956e-11,
-        2.7165145133345447e-12, 4.276554967357765e-13,
-        -1.5769613262786586e-12, 1.1601349492618845e-14,
-        -4.116331028206771e-13, 8.029728344369734e-15,
-        8.437904373695751e-14,
+        5.9491675585832127e-08, -3.547906857193084e-08, -3.686880845066298e-08, 3.765813971767784e-07,
+        -4.765390571037642e-08, -3.5510503426650075e-09, -5.321572960070853e-09, -8.062121636953634e-09,
+        3.0605470158207027e-08, -2.781805230611667e-09, 3.5017870825271302e-09, 1.2922014569483053e-08,
+        7.863690254517053e-10, 2.6953594911560685e-08, 4.606850900756854e-09, -4.458716773569904e-08,
     ],
     [
-        0.255, -1.0, 0.34, 0.37, 0.42, 0.42, 0.42, 0.42,
-        0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.42,
+        -4.0, 8.0, -8.0, 5.0,
+        -32.0, 32.0, -128.0, 128.0,
+        -1024.0, 1024.0, -8192.0, 8192.0,
+        -65536.0, 65536.0, -524288.0, 524288.0,
     ],
     [
-        -1.3853365182876587, 0.0, -2.2346599102020264, -0.9660475254058838,
-        -2.1090452671051025, -1.8530573844909668, -2.0276224613189697,
-        -1.9707038402557373, -2.0051767826080322, -1.9947720766067505,
-        -2.0007991790771484, -1.999199628829956, -2.0001060962677,
-        -1.9998937845230103, -2.0000123977661133, -1.9999876022338867,
+        -0.15932877361774445, 0.05764194577932358, 0.08905893564224243, -0.1125136986374855,
+        0.13573573529720306, 0.06965170055627823, 0.12568676471710205, 0.14650428295135498,
+        0.040686994791030884, 0.03328812122344971, 0.11742763221263885, 0.11752159148454666,
+        0.11746834218502045, 0.1174808144569397, 0.10442119836807251, 0.10442249476909637,
     ],
     [
-        2.6737210750579834, 0.0, -0.10455801337957382, 1.472333550453186,
-        -0.09949951618909836, 0.1592523604631424, -0.027202462777495384,
-        0.02974076010286808, -0.005164650734513998, 0.005240116734057665,
-        -0.0007990428712219, 0.0008006766438484192,
-        -0.00010617126827128232, 0.00010619792737998068,
-        -1.2454861462174449e-05, 1.2445724678400438e-05,
+        0.331330806016922, 0.829135000705719, 0.5033261179924011, 0.3158716857433319,
+        0.6167409420013428, 0.6234267354011536, 0.48645418882369995, 0.576084315776825,
+        0.38452547788619995, 0.38452547788619995, 0.7463630437850952, 0.7469602823257446,
+        0.7466217875480652, 0.7467010617256165, 0.6636950373649597, 0.6637032628059387,
     ],
     [
-        5.654962062835693, 0.0, -0.6329700946807861, 1.3282930850982666,
-        -0.7565763592720032, -0.49503886699676514, -0.6934509873390198,
-        -0.6364829540252686, -0.6718208193778992, -0.6614158749580383,
-        -0.667466938495636, -0.6658671498298645, -0.6667742729187012,
-        -0.6665619015693665, -0.6666803359985352, -0.6666555404663086,
+        -0.3789008557796478, 0.08475256711244583, -0.972735583782196, -0.38287004828453064,
+        -0.8372024893760681, -0.6476581692695618, -0.9637670516967773, -0.9104357957839966,
+        -0.7067740559577942, -0.6994584202766418, -0.6157262921333313, -0.6147421002388,
+        -0.6152997016906738, -0.6151690483093262, -0.6921472549438477, -0.6921300888061523,
     ],
     [
-        13.648747444152832, 0.0, 0.18435128033161163, 2.663341760635376,
-        -0.08025430887937546, 0.18398988246917725, -0.02635575272142887,
-        0.030618861317634583, -0.005139326676726341, 0.005263099446892738,
-        -0.0007983599789440632, 0.0008009925368241966,
-        -0.00010607429430820048, 0.00010612390178721398,
-        -1.0810486855916679e-05, 1.1192499187018257e-05,
+        -8.088338887546342e-09, 3.0228826108924522e-09, -2.629517048546859e-09, 1.1159768220636579e-08,
+        -2.9614779961661952e-08, 1.8307664717553962e-08, -2.4201131765266837e-08, -6.1257079408960635e-09,
+        3.2978766384417213e-09, -7.87305065585997e-09, -1.9248458826837123e-08, -1.1028030044712978e-08,
+        1.953765593754042e-09, 2.9598630213456545e-09, -6.884640413318266e-09, 6.486552184270522e-09,
     ],
     [
-        29.05604362487793, 0.0, -0.047576695680618286, 3.1682286262512207,
-        -0.47040924429893494, -0.2035086750984192, -0.42581096291542053,
-        -0.36883100867271423, -0.405023992061615, -0.39462560415267944,
-        -0.40070071816444397, -0.3991020619869232, -0.4000096917152405,
-        -0.3997977674007416, -0.3999229967594147, -0.39989691972732544,
+        0.3036450743675232, -0.008314274251461029, 0.40361469984054565, 0.38300758600234985,
+        0.31665563583374023, 0.24581515789031982, 0.4519508481025696, 0.42695537209510803,
+        0.24847832322120667, 0.24590644240379333, 0.189408078789711, 0.1891053169965744,
+        0.189276784658432, 0.1892365962266922, 0.23953098058700562, 0.23952503502368927,
     ],
     [
-        64.69268798828125, 0.0, 0.5535060167312622, 4.828585147857666,
-        -0.06051565706729889, 0.2127881944179535, -0.0257291067391634,
-        0.0318717323243618, -0.005158360581845045, 0.005333737935870886,
-        -0.0008044287096709013, 0.0008080150000751019,
-        -0.0001079421053873375, 0.00010787778592202812,
-        -3.5387503885431215e-05, 2.9538590752054006e-05,
+        -0.022051390260457993, 0.0031260584946721792, -0.21927523612976074, -0.16076107323169708,
+        -0.16679921746253967, -0.11384912580251694, -0.2863669991493225, -0.26293572783470154,
+        -0.11677572876214981, -0.11496737599372864, -0.07771792262792587, -0.07753165811300278,
+        -0.07763715088367462, -0.07761242240667343, -0.11052641272544861, -0.1105223000049591,
     ],
     [
-        144.2744140625, 0.0, 0.5029898881912231, 6.225178241729736,
-        -0.3385486900806427, -0.058972425758838654, -0.31383317708969116,
-        -0.25587204098701477, -0.2933040261268616, -0.28273552656173706,
-        -0.28885287046432495, -0.2872275114059448, -0.2881371080875397,
-        -0.2879173457622528, -0.28795185685157776, -0.2879430055618286,
+        0.034069448709487915, -0.0006115938303992152, 0.1437695175409317, 0.10020365566015244,
+        0.09931786358356476, 0.05968732014298439, 0.20417243242263794, 0.18220442533493042,
+        0.06174071878194809, 0.06046922504901886, 0.035874247550964355, 0.03575965389609337,
+        0.03582454100251198, 0.03580933064222336, 0.057373229414224625, 0.0573703832924366,
     ],
     [
-        354.1711730957031, 0.0, 0.874119758605957, 9.207906723022461,
-        -0.04211042821407318, 0.19476988911628723, -0.021956387907266617,
-        0.027959952130913734, -0.004527992568910122, 0.004708156455308199,
-        -0.0007103931275196373, 0.0007148765143938363,
-        -8.80396764841862e-05, 8.913140482036397e-05,
-        0.00013230105105321854, -9.354341455036774e-05,
+        -0.005664459429681301, 0.00019508387777023017, -0.10001526027917862, -0.06232548877596855,
+        -0.0630946010351181, -0.03337479010224342, -0.15530124306678772, -0.13474911451339722,
+        -0.03481920436024666, -0.03392516076564789, -0.017664317041635513, -0.017593814060091972,
+        -0.017633728682994843, -0.017624370753765106, -0.031769104301929474, -0.03176713362336159,
     ],
     [
-        972.521484375, 0.0, 0.8290212154388428, 15.62746810913086,
-        -0.2303585410118103, -0.011887536384165287, -0.2158958464860916,
-        -0.16832894086837769, -0.2014114260673523, -0.1927308589220047,
-        -0.19840183854103088, -0.19707120954990387, -0.1979275345802307,
-        -0.19777315855026245, -0.19833749532699585, -0.19823305308818817,
+        0.006060823332518339, -4.814308704226278e-05, 0.07264159619808197, 0.04140627756714821,
+        0.041801027953624725, 0.01946423202753067, 0.12307784706354141, 0.10388010740280151,
+        0.02045558951795101, 0.019826851785182953, 0.009074314497411251, 0.009030869230628014,
+        0.00905546173453331, 0.009049694985151291, 0.018352853134274483, 0.018351485952734947,
     ],
     [
-        2111.91357421875, 0.0, 2.9675049781799316, 24.958375930786133,
-        -0.012698682025074959, 0.4708675146102905, -0.03855019807815552,
-        0.05648542195558548, -0.008209493942558765, 0.008694824762642384,
-        -0.0012875236570835114, 0.0012958142906427383,
-        -0.00018785701831802726, 0.00018500936857890338,
-        -0.00034586386755108833, 0.0002531808859203011,
+        -0.0014674802077934146, 1.4522259334626142e-05, -0.05414929240942001, -0.028049077838659286,
+        -0.028297534212470055, -0.011698040179908276, -0.0998203381896019, -0.08141360431909561,
+        -0.01236222218722105, -0.011920804157853127, -0.0047876955941319466, -0.004760960582643747,
+        -0.004776091780513525, -0.004772542510181665, -0.010889245197176933, -0.010888298973441124,
     ],
     [
-        2133.65771484375, 0.0, 3.8766984939575195, 18.714889526367188,
-        -0.28982892632484436, 0.24794331192970276, -0.34019771218299866,
-        -0.23934946954250336, -0.30434995889663696, -0.286053866147995,
-        -0.2954479455947876, -0.2926260828971863, -0.2939679026603699,
-        -0.2935481369495392, -0.29285988211631775, -0.29295918345451355,
+        0.0012524601770564914, -3.955991360271582e-06, 0.040391478687524796, 0.019385607913136482,
+        0.019129019230604172, 0.006993971299380064, 0.08203091472387314, 0.06410042941570282,
+        0.007611149922013283, 0.0073030125349760056, 0.002504174830392003, 0.0024882012512534857,
+        0.002497240202501416, 0.0024951195809990168, 0.006404976826161146, 0.006404341198503971,
+    ],
+    [
+        -0.00038447920815087855, 1.159806856776413e-06, -0.031247643753886223, -0.014391499571502209,
+        -0.013998933136463165, -0.004125987179577351, -0.07254776358604431, -0.056765373796224594,
+        -0.004736089147627354, -0.00451267696917057, -0.0013456688029691577, -0.00133602658752352,
+        -0.0013414818095043302, -0.001340201823040843, -0.0038705654442310333, -0.0038701335433870554,
+    ],
+    [
+        0.0003150988486595452, -3.4455067066119227e-07, 0.029085591435432434, 0.009928914718329906,
+        0.012214251793920994, 0.0030908638145774603, 0.07091644406318665, 0.057515501976013184,
+        0.0031194700859487057, 0.0029423751402646303, 0.0009176156017929316, 0.000910310831386596,
+        0.0009144428768195212, 0.0009134731953963637, 0.002968098968267441, 0.002967730863019824,
+    ],
+    [
+        1.947129476320697e-06, 1.2183934927634255e-07, -0.025662211701273918, -0.00039150964585132897,
+        -0.008898217231035233, -0.0026070764288306236, -0.05637626722455025, -0.04427916184067726,
+        -0.002250844379886985, -0.002149523701518774, -0.0006105965003371239, -0.0006052380776964128,
+        -0.0006082686013542116, -0.0006075572455301881, -0.0022210015449672937, -0.0022206977009773254,
+    ],
+    [
+        0.00018473352247383446, -2.9646693988638617e-08, 0.011288844980299473, 0.017486728727817535,
+        0.003027826314792037, 0.0011142778676003218, 0.02157474309206009, 0.015372389927506447,
+        0.0011180674191564322, 0.0011126288445666432, 0.0001965321134775877, 0.00019464737852104008,
+        0.0001957131316885352, 0.00019546292605809867, 0.000803905597422272, 0.0008037853986024857,
     ],
 ], dtype=np.float32)
 
 
 def _lgamma_pos_small(x_small):
-  """Evaluates lgamma(x) on [0.5, 4] and returns (lg_small, res_hi, res_lo).
+  """Evaluates lgamma(x) on [0.5, 4] as a `(res_hi, res_lo)` pair.
 
-  On [0.5, 4], lgamma(x) is approximated as (x - 1)(x - 2) P(d). The factors
-  u = x - 1, v = x - 2, and P(d) are split into 12-bit high and low parts so
-  that the unsummed pair (res_hi, res_lo) retains extra precision for Euler
-  reflection.
+  Approximates lgamma(x) as (x - 1)(x - 2) * P(d), splitting (x - 1), (x - 2),
+  and P(d) into high and low parts so their product keeps extra precision for
+  Euler's reflection formula.
   """
-  in_15_4 = x_small > 1.5
-  u = x_small - 1.0
-  v = u - 1.0
-  d = u - lax.select(in_15_4, lax.full_like(u, 1.75), lax.full_like(u, 0.0))
-  coeffs_hi = [
-      lax.select(in_15_4, lax.full_like(x_small, c2), lax.full_like(x_small, c1))
-      for c1, c2 in zip(_POS_HI_05_15, _POS_HI_15_4)
-  ]
-  p = lax.polynomial(d, coeffs_hi, unroll=len(coeffs_hi))
-  u_hi, u_lo = split_half(u)
-  v_hi, v_lo = split_half(v)
-  uv_hi = u_hi * v_hi
-  uv_lo = u_lo * v + u_hi * v_lo
-  p_hi, p_lo = split_half(p)
-  res_hi = uv_hi * p_hi
-  res_lo = uv_lo * p + uv_hi * p_lo
-  return res_hi + res_lo, res_hi, res_lo
-
-
-def _lgamma_pos_small_with_f64(u):
-  """Evaluates lgamma(1 + u) on u in [-0.5, 3] in float64."""
-  in_15_4 = u > 0.5
-  u_d = lax.convert_element_type(u, np.float64)
-  d_d = u_d - lax.select(
-      in_15_4, lax.full_like(u_d, 1.75), lax.full_like(u_d, 0.0)
+  x_sm = lax.min(x_small, lax.full_like(x_small, 4.0))
+  in_15_4 = x_sm > 1.5
+  u = x_sm - 1.0
+  # On [0.5, 2], |-2| >= x_sm satisfies fast_two_sum's precondition; on
+  # (2, 4], -2 + x_sm is exact by Sterbenz's lemma so v_err == 0.
+  v, v_err = fast_two_sum(lax.full_like(x_sm, -2.0), x_sm)
+  d = x_sm - lax.select(
+      in_15_4, lax.full_like(x_sm, 2.75), lax.full_like(x_sm, 1.0)
   )
-  coeffs_f64 = [
-      lax.select(in_15_4, lax.full_like(d_d, c2), lax.full_like(d_d, c1))
-      for c1, c2 in zip(_POS_05_15_F64, _POS_15_4_F64)
+  c0_hi = lax.select(
+      in_15_4,
+      lax.full_like(x_sm, _POS_15_4_C0_HI),
+      lax.full_like(x_sm, _POS_05_15_C0_HI),
+  )
+  c0_lo = lax.select(
+      in_15_4,
+      lax.full_like(x_sm, _POS_15_4_C0_LO),
+      lax.full_like(x_sm, _POS_05_15_C0_LO),
+  )
+  c1_hh = lax.select(
+      in_15_4,
+      lax.full_like(x_sm, _POS_15_4_C1_HH),
+      lax.full_like(x_sm, _POS_05_15_C1_HH),
+  )
+  coeffs_q1 = [
+      lax.select(in_15_4, lax.full_like(x_sm, c2), lax.full_like(x_sm, c1))
+      for c1, c2 in zip(_POS_05_15_Q1_REM, _POS_15_4_Q1_REM)
   ]
-  p_d = lax.polynomial(d_d, coeffs_f64, unroll=len(coeffs_f64))
-  return (u_d * (u_d - 1.0)) * p_d
+  d_hi, d_lo = split_half(d)
+  p_sm, p_err = fast_two_sum(c0_hi, d_hi * c1_hh)
+  p_tail = (
+      c0_lo
+      + d_lo * c1_hh
+      + d * lax.polynomial(d, coeffs_q1, unroll=len(coeffs_q1))
+  )
+  p_sm, p_err = fast_two_sum(p_sm, p_err + p_tail)
+
+  u_hi, u_lo = split_bits(u, 8)
+  v_hi, v_lo = split_bits(v, 8)
+  uv_hi = u_hi * v_hi
+  uv_lo = u_lo * v + u_hi * (v_lo + v_err)
+  p_hi_sm, p_lo_sm = split_bits(p_sm, 8)
+  return fast_two_sum(
+      uv_hi * p_hi_sm, uv_lo * p_sm + uv_hi * (p_lo_sm + p_err)
+  )
 
 
 def _lgamma_pos_large(x_gt4):
-  """Evaluates the asymptotic Stirling series for x >= 4.
+  """Evaluates Stirling's series for x >= 4.
 
-  Returns (p_hi, s_pos, psi_large), where p_hi + s_pos approximates lgamma(x)
-  with an exact 12-bit leading product p_hi = b_hi * (h_x - 1), and
-  psi_large = ln(x) - 1/(2x) approximates the digamma function psi(x).
+  Returns `(p_hi, s_pos, psi_large)`, where `(p_hi, s_pos)` is a `(hi, lo)` pair
+  for `lgamma(x)` and `psi_large = ln(x) - 1/(2x)` approximates `digamma(x)`.
   """
   s, log_lo = _log_f32(x_gt4)
   h_x, s_lo = split_half(s)
   l_x = s_lo + log_lo
 
-  b = x_gt4 - 0.5
+  b, b_err = fast_two_sum(x_gt4, lax.full_like(x_gt4, -0.5))
   b_hi, b_lo = split_half(b)
   hx_m1 = h_x - 1.0
   p_hi = b_hi * hx_m1
-  p_lo = b_lo * hx_m1 + b * l_x
+  p_lo = (b_lo + b_err) * hx_m1 + b * l_x
   inv_x = lax.reciprocal(x_gt4)
   sp = lax.polynomial(inv_x * inv_x, _STIRLING_HI, unroll=len(_STIRLING_HI))
-  s_pos = p_lo + _HALF_LN_2PI_MINUS_HALF + inv_x * sp
+  p_hi, p_rem = fast_two_sum(p_hi, lax.full_like(x_gt4, _C_STIRLING_HI))
+  s_pos = p_rem + (p_lo + (_C_STIRLING_LO + inv_x * sp))
   return p_hi, s_pos, s - 0.5 * inv_x
-
-
-def _lgamma_pos_large_with_f64(x_f32, x_d):
-  """Evaluates the asymptotic Stirling series for x >= 4 in float64."""
-  inv_x_0 = lax.convert_element_type(lax.reciprocal(x_f32), np.float64)
-  inv_x_d = inv_x_0 * (2.0 - x_d * inv_x_0)
-  du = (x_d - lax.convert_element_type(x_f32, np.float64)) * inv_x_d
-  # Since du = (x_d - x_f32) / x_d = 1 - x_f32 / x_d,
-  # ln(x_d) = ln(x_f32) - ln(1 - du) = ln(x_f32) + du * (1 + 0.5 * du + ...).
-  ln_x = _log_f32_with_f64(x_f32) + du * (1.0 + 0.5 * du)
-  sp_d = lax.polynomial(
-      inv_x_d * inv_x_d, _STIRLING_F32_F64, unroll=len(_STIRLING_F32_F64)
-  )
-  main_d = (x_d - 0.5) * (ln_x - 1.0)
-  return main_d + _HALF_LN_2PI_MINUS_HALF_F64 + inv_x_d * sp_d
 
 
 def _lgamma_neg_reflection(delta, log_delta_hi, lg_pos_hi, lg_pos_lo, dy_corr):
   """Evaluates Euler's reflection formula -(ln|delta| + lgamma(1 - x) - ln(pi delta / sin(pi delta)))."""
   d2 = delta * delta
-  sinc_term = d2 * lax.polynomial(d2, _SINC_HI, unroll=len(_SINC_HI))
-  # TODO(phawkins): Using 2Sum on (log_delta_hi, lg_pos_hi) avoids cancellation
-  # loss when log_delta_hi + lg_pos_hi cancels outside root windows.
-  return -((log_delta_hi + lg_pos_hi) + (lg_pos_lo + (sinc_term + dy_corr)))
-
-
-def _lgamma_neg_root(x_neg_safe, n):
-  """Evaluates lgamma(x) near negative roots via rational root-window polynomials.
-
-  The offset delta_root = x - n_root is mapped to the rational variable
-  w = (delta_root - r) / (delta_root + r). Returns (in_root_win, w * P(w)).
-  """
-  # On (-3, -2), the two zeros of lgamma(x) lie at -2.748 and -2.457 (midpoint
-  # -2.602), whereas round(x) switches from -2 to -3 at -2.5 (inside the root
-  # window of the -2.457 zero). Override n_root to -2.0 on (-2.6, -2.0).
-  n_root = lax.select(
-      (x_neg_safe > -2.6) & (x_neg_safe < -2.0),
-      lax.full_like(x_neg_safe, -2.0),
-      n,
+  dh, dl = split_bits(delta, 6)
+  sinc_hi = (dh * dh) * _SINC_C0_HH
+  sinc_lo = dl * (delta + dh) * _SINC_C0_HH + d2 * lax.polynomial(
+      d2, _SINC_REM, unroll=len(_SINC_REM)
   )
-  delta_root = x_neg_safe - n_root
-  k = lax.convert_element_type(-n_root, np.int32)
-  in_k_range = (k >= 2) & (k <= 9)
-  side = lax.select(delta_root > 0.0, lax.full_like(k, 1), lax.full_like(k, 0))
-  idx = lax.select(in_k_range, 2 * (k - 2) + side, lax.full_like(k, 1))
+  neg_hi, neg_e1 = fast_two_sum(log_delta_hi, sinc_hi)
+  sum_hi, sum_err = two_sum(lg_pos_hi, neg_hi)
+  return -(sum_hi + (sum_err + neg_e1 + lg_pos_lo + (sinc_lo + dy_corr)))
+
+
+def _lgamma_neg_root(x_neg_safe, n, delta):
+  """Evaluates lgamma(x) near its zeros on (-10, -2) using `_NEG_TABLE`.
+
+  Returns `(in_root_win, rw)`, where `in_root_win` indicates whether `x` falls
+  in one of the table intervals and `rw` is the polynomial value there.
+  """
+  # On (-3, -2), the two zeros are at -2.748 (column 3, n = -3) and -2.457
+  # (column 0, n = -2), separated by the local minimum at -2.611 (column 1,
+  # n = -3). Because round-to-nearest-even switches from -2 to -3 at
+  # _BASIN_HI = -2.5, n = round(x) already gives -2 on [-2.5, -2) and -3 on
+  # (-3, -2.5), matching all three columns.
+  in_basin = (x_neg_safe > _BASIN_LO) & (x_neg_safe < _BASIN_HI)
+  n_i32 = lax.convert_element_type(n, np.int32)
+  in_k_range = (x_neg_safe < -2.0) & (n_i32 >= -9)
+  base_idx = lax.select(
+      delta > 0.0, lax.full_like(n_i32, -3), lax.full_like(n_i32, -4)
+  )
+  idx = lax.clamp(
+      lax.full_like(n_i32, 0),
+      lax.select(
+          in_basin, lax.full_like(n_i32, 1), base_idx - (n_i32 + n_i32)
+      ),
+      lax.full_like(n_i32, 15),
+  )
 
   idx_exp = lax.broadcast_in_dim(idx, (*idx.shape, 1), tuple(range(idx.ndim)))
   dnums = slicing.GatherDimensionNumbers(
       offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)
   )
-  cols = [
-      slicing.gather(row, idx_exp, dnums, slice_sizes=(1,))
-      for row in _NEG_TABLE
+
+  def _gather_row(i):
+    return slicing.gather(
+        lax._const(x_neg_safe, _NEG_TABLE[i]),
+        idx_exp,
+        dnums,
+        slice_sizes=(1,),
+    )
+
+  # Gather one 1D row at a time so GPU kernels do not keep all 18 table rows
+  # live per thread.
+  r_hi = _gather_row(0)
+  neg_r_lo_sc = _gather_row(1)
+  scale = _gather_row(2)
+  u_center = _gather_row(3)
+  u_half = _gather_row(4)
+  u, u_lo = fast_two_sum((delta - r_hi) * scale, neg_r_lo_sc)
+  in_root_win = in_k_range & (lax.abs(u - u_center) <= u_half)
+  u_safe = lax.select(in_root_win, u, lax.full_like(x_neg_safe, 0.0))
+  # Keep 6 mantissa bits of u in column 1 (so uh * uh fits in 12 bits) and 12
+  # bits elsewhere.
+  u_mask = lax.select(
+      in_basin,
+      lax.full_like(n_i32, -0x40000),
+      lax.full_like(n_i32, -0x1000),
+  )
+  uh = lax.bitcast_convert_type(
+      lax.bitcast_convert_type(u_safe, np.int32) & u_mask, np.float32
+  )
+  u_tail = (u_safe - uh) + u_lo
+  lead_hi = lax.select(in_basin, uh * uh, uh)
+  lead_lo = lax.select(in_basin, u_tail * (u_safe + uh), u_tail)
+  b_add_hi = lax.select(
+      in_basin,
+      lax.full_like(x_neg_safe, _BASIN_MIN),
+      lax.full_like(x_neg_safe, 0.0),
+  )
+  p_tail = _gather_row(17)
+  for i in range(16, 6, -1):
+    p_tail = p_tail * u_safe + _gather_row(i)
+  pw_hi, pw_lo = fast_two_sum(_gather_row(5), u_safe * p_tail)
+  c0_lo = _gather_row(6)
+  pw_hh, pw_hl = split_half(pw_hi)
+  rw_hi, rw_err = fast_two_sum(b_add_hi, lead_hi * pw_hh)
+  rw_lo = lead_hi * (pw_hl + (pw_lo + c0_lo)) + lead_lo * pw_hi
+  return in_root_win, rw_hi + (rw_err + rw_lo)
+
+
+def _lgamma_f32_with_f64(x, is_pos, x_neg_safe, delta, abs_delta):
+  """Evaluates float32 lgamma(x) in float64 via shifted Stirling and reflection."""
+  x_pos_d = lax.convert_element_type(
+      lax.min(x, lax.full_like(x, _MAX_FINITE_ARG)), np.float64
+  )
+  y_d = lax.select(
+      is_pos, x_pos_d, 1.0 - lax.convert_element_type(x_neg_safe, np.float64)
+  )
+
+  # Shift y_d in [0.5, 8) up to z_d = y_d + m >= 8 using
+  # lgamma(y_d) = lgamma(z_d) - ln(prod), where prod = y_d * ... * (y_d + m - 1).
+  need_shift = y_d < 8.0
+  m = lax.select(need_shift, lax.ceil(8.0 - y_d), lax.full_like(y_d, 0.0))
+  one = lax.full_like(y_d, 1.0)
+  factors = [lax.select(need_shift, y_d, one)] + [
+      lax.select(m > float(k), y_d + float(k), one) for k in range(1, 8)
   ]
-  r_hi, r_lo, w_bound = cols[0], cols[1], cols[2]
-  # TODO(phawkins): To reduce worst-case root-window error near w = w_bound
-  # (e.g. x ~ -6.00337), compensate (delta_root - r_hi) and the final product
-  # w * (c_0 + w * P_tail(w)) using 2Sum and _split12.
-  d0 = delta_root - r_hi
-  d = delta_root + r_hi
-  rcp = lax.reciprocal(d)
-  w = (d0 - r_lo) * rcp
-  w = w + ((d0 - w * d) - r_lo * (1.0 + w)) * rcp
-  in_root_win = lax.abs(w) <= w_bound
-  w_safe = lax.select(in_root_win, w, lax.full_like(x_neg_safe, 0.0))
-  return in_root_win, w_safe * lax.polynomial(
-      w_safe, cols[3:], unroll=len(cols) - 3
+  prod = ((factors[0] * factors[1]) * (factors[2] * factors[3])) * (
+      (factors[4] * factors[5]) * (factors[6] * factors[7])
+  )
+  z_d = y_d + m
+
+  ln_z = lax.log(z_d)
+  inv_z = lax.reciprocal(z_d)
+  sp = lax.polynomial(
+      inv_z * inv_z, _STIRLING_F32_F64, unroll=len(_STIRLING_F32_F64)
+  )
+  lg_z = (z_d - 0.5) * (ln_z - 1.0) + _C_STIRLING_HI_F64 + inv_z * sp
+
+  # Share one logarithm for ln(prod) on x >= 0.5 and ln(|delta| / prod) on
+  # x < 0.5, since lgamma(1 - x) + ln|delta| = lgamma(z_d) + ln(|delta| / prod).
+  abs_delta_safe = lax.select(
+      abs_delta == 0.0,
+      one,
+      lax.convert_element_type(abs_delta, np.float64),
+  )
+  log_arg = lax.select(is_pos, prod, abs_delta_safe / prod)
+  ln_arg = lax.log(log_arg)
+
+  # Near x = 1 and x = 2, lgamma(z_d) and ln(prod) cancel; use short Taylor
+  # series there so x = 1 and x = 2 return 0 and nearby inputs lose no bits.
+  near_2 = lax.abs(x_pos_d - 2.0) <= (3.0 / 64.0)
+  t = x_pos_d - lax.select(
+      near_2, lax.full_like(x_pos_d, 2.0), lax.full_like(x_pos_d, 1.0)
+  )
+  t_coeffs = [
+      lax.select(near_2, lax.full_like(x_pos_d, c2), lax.full_like(x_pos_d, c1))
+      for c1, c2 in zip(_TAYLOR_1_F32_F64, _TAYLOR_2_F32_F64)
+  ]
+  taylor_d = t * lax.polynomial(t, t_coeffs, unroll=len(t_coeffs))
+  lg_pos_d = lax.select(
+      lax.abs(t) <= (3.0 / 64.0),
+      taylor_d,
+      lg_z - ln_arg,
+  )
+
+  d_d = lax.convert_element_type(delta, np.float64)
+  d2_d = d_d * d_d
+  sinc_d = d2_d * lax.polynomial(
+      d2_d, _SINC_F32_F64, unroll=len(_SINC_F32_F64)
+  )
+  refl_d = -(lg_z + ln_arg + sinc_d)
+
+  return lax.convert_element_type(
+      lax.select(is_pos, lg_pos_d, refl_d), np.float32
   )
 
 
 def _lgamma_impl_f32(x, *, use_f64=False):
   """Computes float32 lgamma(x) across all normal and special inputs."""
   x = lax.convert_element_type(x, np.float32)
-  # Flush subnormals to zero (< finfo(float32).tiny) so non-FTZ backends
-  # behave consistently with FTZ backends without subnormal bit-normalization.
+  # Treat subnormals as zero so backends that flush subnormals and backends that
+  # preserve them return the same result (+inf).
   is_zero = lax.abs(x) < float(np.finfo(np.float32).tiny)
   is_pos = x >= 0.5
-  # Substitute 1.0 for 0.0 so inactive branches avoid 0/0 or log(0) NaNs.
-  x_safe = lax.select(is_zero, lax.full_like(x, 1.0), x)
 
-  # For x <= -2^23 (_ALL_INTEGERS_BELOW), every float32 is an exact integer
-  # pole. Clamp inputs with x >= 0.5 and large negative integers to -0.5 so
-  # round(x_neg_safe) cannot overflow and delta = x - n stays away from zero.
+  # Every float32 <= -2^23 (_ALL_INTEGERS_BELOW) is an integer. Clamp those and
+  # inputs >= 0.5 to -0.5 so round(x_neg_safe) cannot overflow.
   x_neg_safe = lax.select(
-      (~is_pos) & (x_safe > _ALL_INTEGERS_BELOW),
-      x_safe,
+      (~is_pos) & (x > _ALL_INTEGERS_BELOW),
+      x,
       lax.full_like(x, -0.5),
   )
-  # Decompose x < 0.5 as x = n + delta with n = round(x) and delta in [-0.5, 0.5]
-  # (exact by Sterbenz's lemma).
+  # Split x < 0.5 into integer n = round(x) and remainder delta = x - n in
+  # [-0.5, 0.5] (x - n has no rounding error).
   n = lax.round(x_neg_safe, lax.RoundingMethod.TO_NEAREST_EVEN)
   delta = x_neg_safe - n
   abs_delta = lax.abs(delta)
 
   if use_f64:
-    # Float64 minimax polynomials provide ~49-52 bits of precision, which is
-    # enough to absorb the worst-case 23.3 bits of cancellation near negative
-    # roots in float32 without 12-bit splits or the _NEG_TABLE lookup.
-    x_pos_bounded = lax.min(x_safe, lax.full_like(x, _MAX_FINITE_ARG))
-    u = lax.select(is_pos, x_pos_bounded - 1.0, -x_neg_safe)
-    x_bounded = lax.select(is_pos, x_pos_bounded, 1.0 - x_neg_safe)
-    x_bounded_d = lax.select(
-        is_pos,
-        lax.convert_element_type(x_pos_bounded, np.float64),
-        1.0 - lax.convert_element_type(x_neg_safe, np.float64),
-    )
-    lg_small_d = _lgamma_pos_small_with_f64(u)
-    lg_large_d = _lgamma_pos_large_with_f64(x_bounded, x_bounded_d)
-    lg_pos_d = lax.select(u <= 3.0, lg_small_d, lg_large_d)
-
-    log_delta_d = _log_f32_with_f64(abs_delta)
-    d_d = lax.convert_element_type(delta, np.float64)
-    d2_d = d_d * d_d
-    sinc_d = d2_d * lax.polynomial(
-        d2_d, _SINC_F32_F64, unroll=len(_SINC_F32_F64)
-    )
-    refl = lax.convert_element_type(
-        -(log_delta_d + lg_pos_d + sinc_d), np.float32
-    )
-    res = lax.select(
-        is_pos, lax.convert_element_type(lg_pos_d, np.float32), refl
-    )
-    # At x = -1.5639554e-09 (0xb0d6f2ca), the exact value sits 0.19 float64
-    # ULPs above a float32 midpoint, causing float64 -> float32 double rounding.
-    res = lax.select(
-        x == -1.5639554096225083e-09, lax.full_like(x, 20.27604866027832), res
-    )
+    res = _lgamma_f32_with_f64(x, is_pos, x_neg_safe, delta, abs_delta)
   else:
-    # Form the reflected argument y = 1 - x = (1 - n) - delta as a Fast2Sum pair
-    # (y, y_lo) because (1 - n) can be much larger than |delta|, losing low bits
-    # of delta in y.
-    y = (1.0 - n) - delta
-    y_lo = ((1.0 - n) - y) - delta
+    # Compute y = 1 - x = (1 - n) - delta and its rounding error y_lo, since
+    # subtracting delta from a much larger (1 - n) drops low bits of delta.
+    one_m_n = 1.0 - n
+    y = one_m_n - delta
+    y_lo = (one_m_n - y) - delta
 
     # Both x >= 0.5 (at x) and x < 0.5 (via reflection at y = 1 - x > 0.5)
-    # evaluate lgamma at an argument >= 0.5. Clamp to _MAX_FINITE_ARG to prevent
+    # evaluate lgamma at an argument >= 0.5. Clamp to _MAX_FINITE_ARG to avoid
     # inf - inf NaNs in Stirling's series.
-    arg_pos = lax.select(is_pos, x_safe, y)
+    arg_pos = lax.select(is_pos, x, y)
     x_bounded = lax.min(arg_pos, lax.full_like(x, _MAX_FINITE_ARG))
 
     # Compute ln|delta| for Euler's reflection formula on x < 0.5.
     log_hi, log_lo = _log_f32(abs_delta)
 
-    # Evaluate lgamma on [0.5, 4] and [4, inf), keeping both the summed result
-    # lg_pos (for x >= 0.5) and the unsummed (lg_pos_hi, lg_pos_lo) pair so
-    # Euler reflection can cancel leading terms before adding low-order
-    # corrections.
-    lg_small, lg_small_hi, lg_small_lo = _lgamma_pos_small(x_bounded)
+    # Evaluate lgamma on [0.5, 4] and [4, inf) as (hi, lo) pairs so Euler's
+    # reflection formula can add the high parts before adding the low parts.
+    lg_small_hi, lg_small_lo = _lgamma_pos_small(x_bounded)
     p_hi, s_pos, psi = _lgamma_pos_large(x_bounded)
     in_le_four = x_bounded <= 4.0
-    lg_pos = lax.select(in_le_four, lg_small, p_hi + s_pos)
     lg_pos_hi = lax.select(in_le_four, lg_small_hi, p_hi)
     lg_pos_lo = lax.select(in_le_four, lg_small_lo, s_pos)
+    lg_pos = lg_pos_hi + lg_pos_lo
 
-    # Combine Euler reflection (with first-order Taylor correction psi(y) * y_lo
-    # for rounding in y) and rational root-window polynomials near negative
-    # zeros on (-10, -2) where reflection suffers catastrophic cancellation.
+    # Use _NEG_TABLE near negative zeros on (-10, -2) where Euler's reflection
+    # formula cancels, and Euler's formula (with psi * y_lo to account for
+    # rounding in y) everywhere else.
     refl = _lgamma_neg_reflection(
         delta, log_hi, lg_pos_hi, lg_pos_lo + log_lo, psi * y_lo
     )
-    in_root_win, rw = _lgamma_neg_root(x_neg_safe, n)
+    in_root_win, rw = _lgamma_neg_root(x_neg_safe, n, delta)
     neg_res = lax.select(in_root_win, rw, refl)
     res = lax.select(is_pos, lg_pos, neg_res)
-  # Canonicalize -0.0 at x = 1.0, 2.0 to +0.0.
+  # Replace -0.0 at x = 1.0 and 2.0 with +0.0.
   res = lax.select(res == 0.0, lax.full_like(x, 0.0), res)
   # Return +inf at poles (x = +-0 and negative integers, which also matches
   # x = -inf) and on positive overflow (x > _MAX_FINITE_ARG); preserve NaNs.
-  is_neg_int = (~is_pos) & (x_safe == lax.floor(x_safe))
+  is_neg_int = (~is_pos) & (x == lax.floor(x))
   is_pole_or_inf = is_zero | is_neg_int | (x > _MAX_FINITE_ARG)
   res = lax.select(is_pole_or_inf, lax.full_like(x, np.inf), res)
   return lax.select(x != x, lax.full_like(x, np.nan), res)
@@ -645,13 +643,6 @@ def _lgamma_impl_f32(x, *, use_f64=False):
 # = 1.7976931348623157e308 <= DBL_MAX; the next float64 up overflows to +inf).
 _MAX_FINITE_ARG_F64 = 2.5599833278516383e305
 _ALL_INTEGERS_BELOW_F64 = -4503599627370496.0
-_SQRT2_OVER_2_BITS_F64 = 0x3FE6A09E667F3BCD
-# 42-bit + 53-bit split of ln(2) so k * _LN2_HI_F64 is exact for |k| <= 2048.
-_LN2_HI_F64 = 0.6931471805598903
-_LN2_LO_F64 = 5.497923018708371e-14
-# High/low float64 pair for (ln(2 * pi) - 1) / 2.
-_C_STIRLING_HI_F64 = 0.4189385332046727
-_C_STIRLING_LO_F64 = 1.6728209650585413e-17
 
 # Degree-20 Sollya fpminimax polynomial for (ln(1 + f) - (f - f^2/2 + f^3/3)) / f^4
 # on f = m - 1 in [sqrt(2)/2 - 1, sqrt(2) - 1], stored in ascending powers of f.
@@ -672,22 +663,22 @@ _LOG_Q_F64 = [
     -0.05835232191926365, 0.05131732430398771, -0.020844657565116175,
 ]
 
-# Degree-25 minimax polynomial for lgamma(x) / ((x - 1)(x - 2)) in ascending
-# powers of d = x - 1.5 on [1.0, 2.5].
+# Degree-25 polynomial for lgamma(x) / ((x - 1)(x - 2)) in ascending powers of
+# d = x - 1.75 on [1.0, 2.5], with a (hi, lo) split on the constant term.
+_POS_1_2_C0_LO_F64 = 1.459080004873635e-17
 _POS_1_2_F64 = [
-    0.4831289505409809, -0.14595989591430608, 0.06291140107456523,
-    -0.03130848750101384, 0.016797098631156464, -0.009425622448251035,
-    0.005446457845678879, -0.0032120740850929658, 0.001922916122193837,
-    -0.0011644143182151867, 0.0007115223504805953, -0.00043799690726877314,
-    0.00027127807787894024, -0.00016888251593045404, 0.00010560593801995817,
-    -6.63531280568692e-05, 4.1889018842861785e-05, -2.6381718111451702e-05,
-    1.63964215276399e-05, -1.0321522858455005e-05, 7.078038835494905e-06,
-    -5.126151988040559e-06, 3.239077383360151e-06, -1.4716755012110035e-06,
-    4.0571328898284337e-07, -5.0333679908980265e-08,
+    0.4501393121092563, -0.11948158662524275, 0.044520447198509394,
+    -0.01905395783024671, 0.008776370425279009, -0.004226194125966872,
+    0.002095533879199047, -0.0010605660739579296, 0.0005448970031937583,
+    -0.0002831906437563517, 0.00014851663460304423, -7.846154955361401e-05,
+    4.170628948416333e-05, -2.2282626664252453e-05, 1.1945800482551106e-05,
+    -6.432056080553514e-06, 3.516938080297205e-06, -1.91393390768375e-06,
+    9.415575972716519e-07, -5.001201006581048e-07, 4.357288953734357e-07,
+    -2.52829877822819e-07, -3.412184404355e-08, 2.8063702745014876e-08,
+    9.135129327120217e-08, -5.296021598657274e-08,
 ]
 
-# Minimax coefficients in ascending powers of 1/z^2 for the Stirling remainder
-# S(1/z^2) on z >= 8.
+# Polynomial in 1/z^2 for the Stirling series tail S(1/z^2) on z >= 7.
 _STIRLING_F64 = [
     0.08333333333333333, -0.002777777777777778, 0.0007936507936507791,
     -0.0005952380952234643, 0.0008417508341741269, -0.0019175246162359454,
@@ -695,7 +686,7 @@ _STIRLING_F64 = [
     -1.1579334089679656, 5.626868322268739,
 ]
 
-# Degree-15 Sollya fpminimax polynomial for ln(sinc(pi * delta)) / delta^2 on
+# Degree-15 polynomial for ln(sin(pi * delta) / (pi * delta)) / delta^2 on
 # delta in [-0.5, 0.5], in ascending powers of d2 = delta^2.
 # Generated with Sollya:
 #   prec = 300!;
@@ -718,44 +709,240 @@ _SINC_F64 = [
     -0.5052021896795194,
 ]
 
-# Negative-argument root lookup table of shape (25, 30) for zeros x_root = -k + r
-# of lgamma(x) near negative integers -k (k in {2, ..., 16}). For k >= 17,
-# |r| ~ 1/k! < ulp(-k), so no non-integer float64 lies near a root.
-# Rows contain:
-#   rows 0..2 (`r0, r1, r2`): 3-float non-overlapping split of r = x_root - (-k).
-#   row 3 (`w_bound`): half-width threshold on w = (delta - r) / (delta + r).
-#   rows 4..24 (`c_0 .. c_20`): degree-20 minimax polynomial coefficients in w.
+# Lookup table of shape (21, 30) for approximating float64 lgamma(x) near its
+# zeros x_root = -k + r alongside negative integers -k (k in {2, ..., 16}). For
+# k >= 17, |r| ~ 1 / k! is smaller than the float64 spacing at -k, so no
+# non-integer float64 gets close to a zero.
+# As in _NEG_TABLE, u = (delta_root - r) * scale rescales delta_root - r by a
+# signed power of two so |r * scale| is in [1, 2), and lgamma(-k + delta_root)
+# is evaluated as u * P(u) without dividing.
+# Rows:
+#   row 0 (`r0`): float64 high part of r = x_root - (-k).
+#   row 1 (`neg_r1_sc`): float64(-(r - r0) * scale), added to
+#       (delta_root - r0) * scale to get u as (u_h, u_l).
+#   row 2 (`scale`): signed power-of-two scale factor.
+#   row 3 (`u_bound`): max |u_h| where this column is used (-1.0 disables
+#       column 1, since lgamma(x) > 0 on (-2, -1)).
+#   rows 4..5 (`c_0_hi, c_0_lo`): (hi, lo) float64 pair for the constant term
+#       c_0 of P(u).
+#   rows 6..20 (`c_1 .. c_15`): remaining degree-15 polynomial coefficients in
+#       ascending powers of u.
 _NEG_TABLE_F64 = np.array([
-    [-0.45702473822080064, 1.0, -0.14358088834998006, 0.2523173532725874, -0.03936183974053688, 0.04470571514140207, -0.008218168322593521, 0.008455359439952277, -0.0013852944531550972, 0.0013925199191243706, -0.00019833340732475162, 0.0001984921093623021, -2.48002706819597e-05, 2.4802904179335845e-05, -2.7557148226503463e-06, 2.7557490225318057e-06, -2.755730136466002e-07, 2.7557337083353163e-07, -2.5052106852407546e-08, 2.5052109918476226e-08, -2.087675687777539e-09, 2.087675709796081e-09, -1.6059043830108875e-10, 1.6059043843534355e-10, -1.147074559737784e-11, 1.147074559808161e-11, -7.647163731803788e-13, 7.647163731835846e-13, -4.779477332386745e-14, 4.779477332388026e-14],
-    [1.843554041574456e-17, 0.0, 3.862806401714152e-18, -2.04688991691325e-17, 3.2731379225891636e-18, 8.223977942582053e-19, -5.582665915956405e-19, 8.231751957350036e-19, -2.6295731811446077e-20, -7.090441230646531e-20, 1.1820573401560963e-20, 6.263909978492175e-21, 1.0083974251164085e-21, 3.15397713595963e-22, -5.624459871432079e-23, -6.500300408654724e-23, -2.4472526783403563e-23, 1.4502658434955713e-23, 1.2924868620853802e-24, -6.807394864189793e-25, -4.849684877236172e-26, -8.658839215884982e-26, 7.046449983196074e-27, 6.465141936497467e-27, 4.194056116105366e-28, -7.830340218001236e-28, 4.886154187641447e-29, -3.8035184915187745e-29, -1.811833433216651e-30, -9.319923331229129e-31],
-    [-1.3622663121726005e-33, 0.0, 3.0899838057763426e-34, 2.4127314614779214e-34, -1.2946821126563304e-34, 4.579537115999924e-35, 1.4462448897470062e-35, -1.3866184681212228e-36, 3.565474316668236e-37, 5.348580824008999e-36, 6.395218422774651e-37, -1.8863056797360293e-37, 7.203753792282653e-38, 4.313766104588735e-39, 3.482629221993885e-39, 5.853754782999141e-39, 1.3906455698886483e-39, -5.362578714050634e-40, 8.03536423808754e-41, 1.9842318548433462e-41, 4.75154991965243e-43, -2.5911350779887772e-42, 3.753098085579908e-43, -4.0581912582368964e-43, 4.450809771991351e-44, -1.2604965694501327e-44, -2.020544021944698e-45, 5.92376186432879e-46, -1.7117855162619145e-46, 6.619263486738802e-47],
-    [0.06, -1.0, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08, 0.08],
-    [-1.3853365381572815, 0.0, -2.2346598245031606, -0.9660475441408101, -2.1090452304243645, -1.853057332921452, -2.0276223947689727, -1.9707038423622454, -2.005176677961308, -1.9947720577043362, -2.000799289737154, -1.9991995733979362, -2.0001061730738354, -1.9998938078459143, -2.0000124103276042, -1.9999875894216372, -2.0000012961586116, -1.9999987038387381, -2.0000001223876387, -1.9999998776123382, -2.0000000105469167, -1.999999989453083, -2.0000000008360077, -1.9999999991639925, -2.0000000000613536, -1.9999999999386464, -2.000000000004192, -1.9999999999958078, -2.000000000000268, -1.999999999999732],
-    [2.673724764253963, 0.0, -0.10455894447703194, 1.4723336980240769, -0.0994995491507347, 0.159251498482983, -0.027202407519091913, 0.029740663409124374, -0.005164640325456555, 0.005240105578631542, -0.0007990413896202449, 0.000800675346647562, -0.00010616917149802439, 0.0001061960572510789, -1.241027923521866e-05, 1.2410626733054182e-05, -1.2961581262117948e-06, 1.2961617471025452e-06, -1.2238763478124098e-07, 1.2238766584163939e-07, -1.054691669750544e-08, 1.0546916920663231e-08, -8.360075136127152e-10, 8.36007514975095e-10, -6.135350038852013e-11, 6.13535003956748e-11, -4.192195542547764e-12, 4.192195542580427e-12, -2.6798656807567477e-13, 2.6798656807580563e-13],
-    [5.655016965104241, 0.0, -0.6329766231481236, 1.3283223045398886, -0.7565748626623968, -0.49504265824017485, -0.6934489837338348, -0.6364814354630196, -0.6718192692091269, -0.6614143978247053, -0.6674654597085423, -0.6658657425755931, -0.6667728319358269, -0.6665604667062505, -0.6666790768975328, -0.6666542559915634, -0.6666679628243076, -0.6666653705044343, -0.6666667890542974, -0.6666665442789969, -0.6666666772135833, -0.6666666561197497, -0.6666666675026742, -0.6666666658306591, -0.6666666667280202, -0.6666666666053132, -0.6666666666708588, -0.6666666666624744, -0.6666666666669346, -0.6666666666663987],
-    [13.646672250576216, 0.0, 0.18452218707533613, 2.6632833807372487, -0.08025011512795627, 0.18409537828793723, -0.02636208392847831, 0.03062990526689935, -0.005140564580448945, 0.005264432118193118, -0.0007985446939068473, 0.0008011728353554061, -0.00010616136682231183, 0.00010620386358104198, -1.2410182497171244e-05, 1.2410723473499054e-05, -1.2961571557829664e-06, 1.296162717533886e-06, -1.2238762674041126e-07, 1.223876738824711e-07, -1.0546916641545272e-08, 1.0546916976623401e-08, -8.360075132809795e-10, 8.360075153068307e-10, -6.135350038682492e-11, 6.135350039737002e-11, -4.192195542540219e-12, 4.192195542587972e-12, -2.679865680756453e-13, 2.679865680758351e-13],
-    [29.035921057847425, 0.0, -0.046968881638725014, 3.164772642089249, -0.47050400560851524, -0.20329868423406788, -0.4259416685981684, -0.3689252701318118, -0.4051285264075521, -0.39472340456013233, -0.4007982963457003, -0.3991985784204936, -0.400106157464484, -0.3998937922332544, -0.40001241013412814, -0.3999875892281563, -0.40000129615667057, -0.39999870383679725, -0.4000001223876227, -0.3999998776123221, -0.40000001054691664, -0.399999989453083, -0.4000000008360075, -0.3999999991639925, -0.4000000000613535, -0.3999999999386465, -0.40000000000419217, -0.3999999999958078, -0.400000000000268, -0.399999999999732],
-    [64.98702199160488, 0.0, 0.5452512522098585, 4.829798317892424, -0.06064823805914922, 0.2094782353956854, -0.02552103154455747, 0.03151974930849315, -0.005116487991898609, 0.005288758839526189, -0.0007980479972427041, 0.0008016703235399936, -0.00010615356214542476, 0.00010621166990993501, -1.2410085759122588e-05, 1.2410820213942699e-05, -1.2961561853541372e-06, 1.296163687965226e-06, -1.2238761869958152e-07, 1.223876819233028e-07, -1.0546916585585104e-08, 1.054691703258357e-08, -8.360075129492439e-10, 8.360075156385664e-10, -6.13535003851297e-11, 6.135350039906524e-11, -4.192195542532674e-12, 4.192195542595517e-12, -2.6798656807561575e-13, 2.6798656807586465e-13],
-    [147.10470752566349, 0.0, 0.482784981277822, 6.371257047788926, -0.3363750555357443, -0.06325084244821723, -0.310814418916723, -0.2537492777858701, -0.2908187350159023, -0.280413363364575, -0.2865120853628063, -0.2849123666468161, -0.28582043537409224, -0.2856080701412117, -0.2857266957516758, -0.28570187484570153, -0.28571558186998586, -0.28571298955011254, -0.2857144081019004, -0.28571416332659977, -0.28571429626120226, -0.28571427516736864, -0.28571428655029324, -0.2857142848782782, -0.28571428577563923, -0.2857142856529322, -0.2857142857184779, -0.2857142857100935, -0.2857142857145537, -0.28571428571401775],
-    [342.3498359519069, 0.0, 1.0317968727617497, 9.353020268805944, -0.04051905821601453, 0.23569532703710577, -0.02467893396636483, 0.0324105501161364, -0.005092410304833189, 0.005313086002964257, -0.0007975512995206722, 0.0008021678113088109, -0.00010614575746733698, 0.00010621947623778417, -1.2409989021072685e-05, 1.2410916954385124e-05, -1.2961552149253068e-06, 1.2961646583965648e-06, -1.2238761065875178e-07, 1.223876899641345e-07, -1.0546916529624936e-08, 1.0546917088543739e-08, -8.360075126175083e-10, 8.360075159703021e-10, -6.135350038343448e-11, 6.135350040076045e-11, -4.1921955425251296e-12, 4.1921955426030615e-12, -2.6798656807558627e-13, 2.6798656807589414e-13],
-    [810.4476269133567, 0.0, 1.124180164833617, 13.17345819447863, -0.2524221937229917, 0.026991330169771878, -0.24647961640616886, -0.1893658019068389, -0.22730259319189677, -0.21689697239039135, -0.2230195251724517, -0.22141980566715133, -0.22232836407735004, -0.2221159988428209, -0.22223463216287426, -0.22220981125689762, -0.22222351837695192, -0.2222209260570786, -0.22222234460982887, -0.22222209983452823, -0.22222223276913872, -0.2222222116753051, -0.22222222305822972, -0.2222222213862147, -0.22222222228357572, -0.22222222216086873, -0.2222222222264144, -0.22222222221803004, -0.2222222222249022, -0.22222222222195423],
-    [1948.880680942719, 0.0, 1.7264860516868281, 19.533472364182522, -0.019679697116765905, 0.2630592670989325, -0.02383547414911425, 0.03330266303341061, -0.005068331264265538, 0.005337413868855946, -0.0007970546006336089, 0.0008026652987693448, -0.00010613795278802234, 0.00010622728256461577, -1.240989228302154e-05, 1.2411013694826337e-05, -1.296154244496476e-06, 1.2961656288279034e-06, -1.2238760261792209e-07, 1.2238769800496625e-07, -1.0546916473664773e-08, 1.0546917144503914e-08, -8.36007512285773e-10, 8.360075163020381e-10, -6.135350038173931e-11, 6.13535004024557e-11, -4.1921955425175864e-12, 4.192195542610608e-12, -2.679865680755569e-13, 2.6798656807592377e-13],
-    [4740.876941587141, 0.0, 2.008175676977363, 28.76274622599986, -0.19075182861387507, 0.09545713208858458, -0.20523131591357024, -0.14806885896918995, -0.18687447297491153, -0.17646860367159567, -0.18261498806890158, -0.1810152677757643, -0.18192431586862978, -0.1817119506324542, -0.18183059166209586, -0.18180577075611684, -0.18181947797194117, -0.18181688565206783, -0.1818183042057805, -0.18181805943047985, -0.18181819236509833, -0.1818181712712647, -0.1818181826541894, -0.18181818098217437, -0.18181818187953538, -0.18181818175682837, -0.18181818182237408, -0.18181818181398968, -0.18181818181844986, -0.1818181818179139],
-    [11642.86968078643, 0.0, 2.7597576098155248, 43.490377156725195, 0.0020636419116818083, 0.29190645355490197, -0.02299033418912612, 0.03419644442041672, -0.005044250615187363, 0.005361742697568448, -0.0007965579004741387, 0.000803162786028846, -0.00010613014810742363, 0.00010623508889042488, -1.2409795544965517e-05, 1.2411110435262711e-05, -1.2961532740672657e-06, 1.2961665992588622e-06, -1.2238759457705666e-07, 1.2238770604576224e-07, -1.054691641770153e-08, 1.0546917200461006e-08, -8.360075119537935e-10, 8.360075166335299e-10, -6.135350038002619e-11, 6.135350040413301e-11, -4.1921955425088194e-12, 4.1921955426169305e-12, -2.679865680754492e-13, 2.679865680758751e-13],
-    [28811.41764792298, 0.0, 3.311079776013495, 65.96748029985126, -0.14050754570086124, 0.1531534453976564, -0.17641318836889802, -0.11920208135256376, -0.15887836345388062, -0.1484722462917643, -0.15464246339600332, -0.15304274231650256, -0.1539522800918861, -0.1537399148540665, -0.1538585635932954, -0.15383374268731398, -0.15384744999890831, -0.153844857679035, -0.15384627623371003, -0.1538460314584094, -0.15384616439303586, -0.15384614329920224, -0.15384615468212698, -0.15384615301011195, -0.15384615390747297, -0.15384615378476596, -0.15384615385031167, -0.15384615384192726, -0.15384615384638745, -0.15384615384585149],
-    [71750.78894918696, 0.0, 4.342813222201444, 101.52723250549434, 0.02491877478161391, 0.32260406404535463, -0.022143195110220452, 0.035092251914588056, -0.005020168103153817, 0.005386072750155458, -0.0007960611990301447, 0.0008036602732913377, -0.00010612234343821778, 0.00010624289522796473, -1.2409698808390581e-05, 1.2411207177180517e-05, -1.296152303792886e-06, 1.2961675698446547e-06, -1.2238758655081105e-07, 1.223877141011781e-07, -1.054691636299817e-08, 1.0546917257677984e-08, -8.360075117216795e-10, 8.360075170648872e-10, -6.135350038564209e-11, 6.135350041313933e-11, -4.192195543000832e-12, 4.192195543124032e-12, -2.6798656810735396e-13, 2.679865681078389e-13],
-    [179642.50343034536, 0.0, 5.3079592907229936, 157.04841702665868, -0.09650047293718188, 0.20543848906293946, -0.15505210921818782, -0.0977923057252266, -0.13834145941458478, -0.12793509502963954, -0.13412914619381705, -0.13252942432916848, -0.1334394517871757, -0.13322708654768017, -0.13334574299651444, -0.13332092209052665, -0.1333346294978932, -0.13333203717801945, -0.1333334557336571, -0.13333321095835643, -0.1333333438929909, -0.13333332279915727, -0.13333333418208207, -0.13333333251006704, -0.13333333340742806, -0.13333333327197985, -0.13333333335026676, -0.13333333334188238, -0.13333333334634256, -0.13333333334580658],
-    [451808.7224217881, 0.0, 6.821895712621164, 245.02190082688918, 0.04911089169648033, 0.3555577714629333, -0.021293736069290744, 0.03599044340355407, -0.004996083315584032, 0.0054104041099184465, -0.0007955644706782671, 0.0008041577347428386, -0.00010611453536937644, 0.00010625069815985649, -1.2409601674290051e-05, 1.2411303521493267e-05, -1.2961512919969207e-06, 1.2961684989080596e-06, -1.2238757460392744e-07, 1.223877182359493e-07, -1.0546915970428405e-08, 1.0546916977028511e-08, -8.360074847083861e-10, 8.360074907150648e-10, -6.135349842582217e-11, 6.135349845670984e-11, -4.192195409197471e-12, 4.19219540933576e-12, -2.6798655955441195e-13, 2.679865595549559e-13],
-    [1140923.6661636205, 0.0, 8.446193644015102, 384.0373504048825, -0.055862709366734584, 0.25537303231293124, -0.13851509212732388, -0.0812065090220722, -0.12263109576437564, -0.11222448520279435, -0.11844237178812286, -0.11684264920342026, -0.11775316630782759, -0.11754080107510424, -0.11765946522882238, -0.11763464432381539, -0.11764835182640895, -0.11764575950663789, -0.11764717806318174, -0.11764693328789078, -0.11764706622252795, -0.11764704512869517, -0.11764705651161957, -0.11764705483960461, -0.11764705573696559, -0.11764705561425859, -0.11764705567980428, -0.11764705567141989, -0.11764705567588007, -0.1176470556753441],
-    [2896925.8032902596, 0.0, 10.76950549963546, 605.281149641511, 0.0748871845856548, 0.39122337487674935, -0.020441735844097857, 0.036891603302337164, -0.004972023612300115, 0.005434768088256848, -0.0007950721885372976, 0.0008046597147495142, -0.00010610732188005472, 0.00010625909678760836, -1.240957409209317e-05, 1.2411469431620209e-05, -1.296157544926683e-06, 1.2961766928374902e-06, -1.2238824862218985e-07, 1.223884083370349e-07, -1.0546974691853985e-08, 1.0546975810382552e-08, -8.360121434007222e-10, 8.360121500709207e-10, -6.135384034382469e-11, 6.135384037810304e-11, -4.1922187720661125e-12, 4.192218772219492e-12, -2.679880530288509e-13, 2.6798805302945386e-13],
-    [7366757.65228341, 0.0, 13.465058950148588, 957.453159643403, -0.016811116999590887, 0.3049643458090739, -0.12527827890102464, -0.06792041698856355, -0.11022365465823368, -0.09981673077994846, -0.1060584957716675, -0.10445876205209088, -0.1053697747445793, -0.10515740813585692, -0.10527608076731819, -0.10525125970167565, -0.10526496738875242, -0.10526237505220466, -0.10526379361889139, -0.1052635488420163, -0.10526368177752178, -0.10526366068355249, -0.10526367206655061, -0.10526367039452483, -0.10526367129189163, -0.10526367116918382, -0.10526367123472995, -0.1052636712263455, -0.10526367123080571, -0.10526367123026974],
-    [18161650.23186171, 0.0, 17.108808892164763, 1513.7613872853585, 0.102416032015214, 0.4297862909239346, -0.019575769801149744, 0.03777143077439166, -0.0049449405817236156, 0.005455737627519443, -0.0007940906015108819, 0.0008046646240201446, -0.00010603469864573113, 0.00010620196294150692, -1.2401895117768077e-05, 1.2403982419738896e-05, -1.2953646067492066e-06, 1.2953856802296025e-06, -1.223134597442909e-07, 1.2231363541345543e-07, -1.0540530293817517e-08, 1.0540531523375912e-08, -8.355013285018235e-10, 8.355013358301902e-10, -6.13163523275337e-11, 6.131635236517526e-11, -4.189657270485927e-12, 4.1896572706542756e-12, -2.6782430875482035e-13, 2.6782430875548184e-13],
-    [46247060.26014505, 0.0, 21.55491544484296, 2409.4605517627865, 0.021813061389277154, 0.355379040968014, -0.11433134763964477, -0.05696297483027051, -0.10011769701441664, -0.08971750642408946, -0.09597887738976531, -0.09438021555715892, -0.09529110607874244, -0.09507888186609423, -0.09519748261818653, -0.09517267819575512, -0.09518637678702269, -0.09518378618870854, -0.09518520380516736, -0.09518495919242198, -0.09518509203879848, -0.09518507095897327, -0.09518508233433884, -0.09518508066343419, -0.09518508156019927, -0.09518508143757376, -0.09518508150307593, -0.09518508149469711, -0.09518508149915432, -0.0951850814986187],
+    [
+        -0.45702473822080064, 1.0, -0.14358088834998006, 0.2523173532725874,
+        -0.03936183974053688, 0.04470571514140207, -0.008218168322593521, 0.008455359439952277,
+        -0.0013852944531550972, 0.0013925199191243706, -0.00019833340732475162, 0.0001984921093623021,
+        -2.48002706819597e-05, 2.4802904179335845e-05, -2.7557148226503463e-06, 2.7557490225318057e-06,
+        -2.755730136466002e-07, 2.7557337083353163e-07, -2.5052106852407546e-08, 2.5052109918476226e-08,
+        -2.087675687777539e-09, 2.087675709796081e-09, -1.6059043830108875e-10, 1.6059043843534355e-10,
+        -1.147074559737784e-11, 1.147074559808161e-11, -7.647163731803788e-13, 7.647163731835846e-13,
+        -4.779477332386745e-14, 4.779477332388026e-14,
+    ],
+    [
+        7.374216166297825e-17, 0.0, 3.0902451213713215e-17, 8.187559667653e-17,
+        1.0474041352285324e-16, -2.631672941626257e-17, -7.145812372424199e-17, -1.0536642505408046e-16,
+        -2.6926829374920783e-17, 7.260611820182048e-17, 9.683413730558741e-17, -5.1313950543807896e-17,
+        6.608633365242895e-17, -2.066990455822503e-17, -2.948836817073382e-17, 3.408029500652768e-17,
+        -1.026452169777367e-16, -6.082855828436849e-17, 8.673732504947454e-17, 4.568365361352113e-17,
+        -2.6036547429543917e-17, 4.648678906693535e-17, 6.052854446145378e-17, -5.553514636250946e-17,
+        5.764266834003625e-17, 1.0761937648918022e-16, 1.0744766688836333e-16, 8.364025615771848e-17,
+        -6.374822167728059e-17, 3.279156503253523e-17,
+    ],
+    [
+        -4.0, 1.0, -8.0, 4.0,
+        -32.0, 32.0, -128.0, 128.0,
+        -1024.0, 1024.0, -8192.0, 8192.0,
+        -65536.0, 65536.0, -524288.0, 524288.0,
+        -4194304.0, 4194304.0, -67108864.0, 67108864.0,
+        -536870912.0, 536870912.0, -8589934592.0, 8589934592.0,
+        -137438953472.0, 137438953472.0, -2199023255552.0, 2199023255552.0,
+        -35184372088832.0, 35184372088832.0,
+    ],
+    [
+        0.23399666596904994, -1.0, 0.2010132436899721, 0.1766221472908112,
+        0.2204263025470065, 0.2503520047918516, 0.18408697042609487, 0.189400051454931,
+        0.2482447660053934, 0.2495395695070872, 0.2843307727407639, 0.2845582879817963,
+        0.28442934439725936, 0.28445954745196694, 0.2528379372640983, 0.2528410751169022,
+        0.2022714738502482, 0.20227173602659887, 0.29421322554254503, 0.2942132615506126,
+        0.19614216133003703, 0.19614216339873214, 0.24140573819371866, 0.24140573839553567,
+        0.2758922723282533, 0.27589227234518027, 0.29428509049188106, 0.29428509049311474,
+        0.29428509049245843, 0.2942850904925373,
+    ],
+    [
+        -0.37890086200541434, 0.0, -0.9727355822664189, -0.4785875464028997,
+        -0.8372025276918935, -0.6476581514313658, -0.9637670669011984, -0.9104357938769033,
+        -0.7067740526614064, -0.6994584281519016, -0.6157263111707555, -0.6147421110556793,
+        -0.6152996995258233, -0.6151690451383635, -0.6921472615910105, -0.6921300820821211,
+        -0.8651744612462748, -0.8651722184402321, -0.5948067439395661, -0.5948065983455844,
+        -0.8922100161239319, -0.8922099973038025, -0.7249206310610562, -0.724920629848978,
+        -0.6343055516870568, -0.6343055516092231, -0.5946614546726241, -0.5946614546676383,
+        -0.5946614546702905, -0.5946614546699719,
+    ],
+    [
+        1.0178947128065389e-17, 0.0, 1.680883852146608e-17, -1.418360844233643e-17,
+        -2.1558708977211774e-17, 4.5832715730910957e-17, 1.529218842797825e-17, -4.322277107134316e-17,
+        -9.891571315019126e-18, -2.799691441429464e-17, -2.4746896893354217e-17, -4.0932999483366435e-17,
+        3.742043651768266e-17, -1.9687756504818555e-17, -9.262945610925148e-18, 2.6796720192843015e-17,
+        9.154176558192696e-18, -2.8869195168189655e-17, 3.0652073300510556e-17, 1.2452254603382799e-17,
+        4.290291251181273e-17, 2.2124159245472052e-17, 1.4738066094102168e-17, -1.2181137349759676e-17,
+        4.8000714377831255e-18, -2.8300021236766846e-18, -4.139729433508783e-17, 4.324292462191617e-17,
+        -4.3355558099326364e-17, 4.520118243237312e-17,
+    ],
+    [
+        0.3036450594771248, 0.0, 0.40361466206856184, 0.5984493422318542,
+        0.31665558880649136, 0.2458151197137592, 0.45195083204520764, 0.42695531951257715,
+        0.24847832708653828, 0.24590643848377478, 0.18940804651307155, 0.1891052896685478,
+        0.18927676385839376, 0.18923657232324684, 0.23953094320306095, 0.23952499790182796,
+        0.3742629390921931, 0.37426196888419583, 0.17689750966792545, 0.17689746636778964,
+        0.3980193522380564, 0.39801934384230253, 0.26275496044931484, 0.2627549600099846,
+        0.20117176643816817, 0.20117176641348297, 0.17681112283593947, 0.17681112283445702,
+        0.17681112283524564, 0.17681112283515088,
+    ],
+    [
+        -0.022051424110593448, 0.0, -0.21927536386167615, -0.31398648307567195,
+        -0.16679967714774294, -0.11384902086427871, -0.28636749670640116, -0.26293754475178677,
+        -0.11677572963843691, -0.11496737800337307, -0.07771794262567715, -0.0775316762242418,
+        -0.07763716897959962, -0.07761244176562901, -0.1105264384322145, -0.11052232345931529,
+        -0.21586835122916434, -0.21586751183107097, -0.07014655019853033, -0.07014652444332069,
+        -0.2367445672035108, -0.23674455971273517, -0.126984327775816, -0.12698432745733643,
+        -0.08506957886034, -0.08506957884468204, -0.0700951730051343, -0.07009517300425275,
+        -0.0700951730047217, -0.07009517300466535,
+    ],
+    [
+        0.0340694632180287, 0.0, 0.14377215386670306, 0.24463782309966886,
+        0.09932094116349979, 0.05968864623905906, 0.20417379720753878, 0.18220984454847963,
+        0.061740735817486556, 0.06046924098154247, 0.03587539917433143, 0.03576080168532009,
+        0.0358256931969031, 0.03581048016487808, 0.057375072748974236, 0.05737222461709699,
+        0.14007274757786212, 0.14007202135301022, 0.03129272892671442, 0.031292713607343904,
+        0.1584194047560059, 0.15841939807266092, 0.0690401692407227, 0.0690401690098503,
+        0.04047007961185387, 0.04047007960192195, 0.03126217315850645, 0.031262173157982215,
+        0.03126217315826109, 0.031262173158227574,
+    ],
+    [
+        -0.005664467350190596, 0.0, -0.10001201737739722, -0.1902013235342802,
+        -0.06308166436942, -0.03337834780337359, -0.1552762330761731, -0.13468516907993686,
+        -0.034819275964107436, -0.033925255837705615, -0.01766448223623683, -0.017593977920452485,
+        -0.0176338944847044, -0.017624534904450786, -0.03176940245437756, -0.031767431152162746,
+        -0.09694982830343693, -0.09694919999305635, -0.014890500049968346, -0.01489049093790457,
+        -0.11307470313855102, -0.11307469717560374, -0.040038914426010846, -0.04003891425864668,
+        -0.02053631693892629, -0.020536316932626416, -0.014872327492970093, -0.014872327492658355,
+        -0.014872327492824189, -0.01487232749280426,
+    ],
+    [
+        0.00606077688522543, 0.0, 0.07256722253371145, 0.15793603508219253,
+        0.0417346283318727, 0.019443328237140102, 0.1230095242729358, 0.10370423348165567,
+        0.02045485655062537, 0.01982624700666358, 0.009060117908724958, 0.009016741226982476,
+        0.009041295010522293, 0.00903553667500681, 0.018324140388302927, 0.01832277597380608,
+        0.0698987175918336, 0.06989817399444316, 0.007380807756946222, 0.0073808023370299,
+        0.08407198514844576, 0.08407197982824452, 0.02418752925040368, 0.024187529129077946,
+        0.010855249870939585, 0.010855249866943539, 0.007369999917743657, 0.007369999917558277,
+        0.007369999917656892, 0.007369999917645042,
+    ],
+    [
+        -0.0014672133223432022, 0.0, -0.054149468020208855, -0.13385698207177846,
+        -0.028400395864362576, -0.01164959398539593, -0.10023212804377371, -0.08213110307631302,
+        -0.012359690626757517, -0.011917697385837457, -0.004779706692516949, -0.004753019863297032,
+        -0.004768123575568943, -0.004764580849580038, -0.010871078566507483, -0.010870134202462039,
+        -0.0518353256860078, -0.05183485538003417, -0.0037629891399383122, -0.0037629859161359,
+        -0.06429417209068616, -0.06429416734394935, -0.015029176374199434, -0.015029176286247902,
+        -0.00590189598330461, -0.005901895980769897, -0.003756561349409417, -0.0037565613492991793,
+        -0.0037565613493578216, -0.0037565613493507747,
+    ],
+    [
+        0.0012547173591927149, 0.0, 0.04124937107251128, 0.11612545857643224,
+        0.0197290911733934, 0.00712534370206163, 0.08337387801610789, 0.0664008540130313,
+        0.007623836985183246, 0.0073130582736637174, 0.0025740885543675544, 0.0025576698967421773,
+        0.0025669606085471945, 0.0025647810017291116, 0.00658379800353157, 0.006583144372654936,
+        0.03924074957151759, 0.03924034267532737, 0.00195846978450516, 0.001958467866965978,
+        0.05019341604586345, 0.05019341181077736, 0.009533090021023346, 0.009533089957265468,
+        0.0032756547162530857, 0.0032756547146453024, 0.0019546469582949204, 0.001954646958229366,
+        0.0019546469582642383, 0.001954646958260048,
+    ],
+    [
+        -0.00038394207369683836, 0.0, -0.031921056932780696, -0.10225121580142306,
+        -0.013922864866249149, -0.004427307514127335, -0.07045176796092027, -0.05453540169284601,
+        -0.004777255233793373, -0.004558737195864994, -0.0014082655718547915, -0.0013981642605013,
+        -0.0014038792271255144, -0.0014025382598793262, -0.0040505985536201305, -0.004050146151019813,
+        -0.030177801643191917, -0.03017744960792805, -0.0010354750244334196, -0.001035473883869851,
+        -0.039807118453869535, -0.03980711467528841, -0.006142866102718104, -0.006142866056498764,
+        -0.001846900609870171, -0.0018469006088503465, -0.0010332014623692133, -0.001033201462330231,
+        -0.0010332014623509681, -0.0010332014623484762,
+    ],
+    [
+        0.0002827037666790877, 0.0, 0.025011121756144273, 0.09118778029711502,
+        0.009948227797604738, 0.002785281817866662, 0.060276687094183753, 0.0453501734995369,
+        0.003030950707622491, 0.002877303434983882, 0.000780083740673173, 0.000773869065342526,
+        0.0007773844995066927, 0.0007765594904118269, 0.002523233801816087, 0.0025229206765019926,
+        0.023498140156041746, 0.023497835584537052, 0.0005543167040867914, 0.0005543160256720171,
+        0.03196467651939325, 0.03196467314810558, 0.004007781065815049, 0.004007781032309698,
+        0.0010543493089439965, 0.0010543493082971161, 0.0005529645392780244, 0.0005529645392548431,
+        0.0005529645392671747, 0.0005529645392656928,
+    ],
+    [
+        -0.00010137263820203262, 0.0, -0.01979718406422197, -0.08214388683414571,
+        -0.0071808728531515586, -0.0017701619534985055, -0.05209802452141801, -0.0380972643826782,
+        -0.0019426461620299623, -0.001834599091817858, -0.0004365281874411595, -0.00043270426784061797,
+        -0.00043486695570866776, -0.00043435932381571165, -0.0015878526087952079, -0.0015876358579188122,
+        -0.018483907326711468, -0.018483643789488552, -0.00029977175207891065, -0.00029977134850721826,
+        -0.02592950874032909, -0.025929505732089176, -0.002641504358922473, -0.002641504334630981,
+        -0.0006080508684267848, -0.0006080508680164182, -0.00029896748175810457, -0.00029896748174431797,
+        -0.0002989674817516519, -0.0002989674817507706,
+    ],
+    [
+        6.738160060844462e-05, 0.0, 0.015799005532099734, 0.07460790339430504,
+        0.005225944843309662, 0.001134260815458071, 0.045399305142179644, 0.032267454000343046,
+        0.001255349356528517, 0.0011793772692269048, 0.00024628583099747987, 0.00024393321509772693,
+        0.0002452635490376543, 0.0002449512353572634, 0.0010074394397430431, 0.0010072894175567756,
+        0.014659195741480939, 0.014658967735307454, 0.00016344796409525076, 0.00016344772404727976,
+        0.021206760546355646, 0.021206757862364544, 0.0017553137027215729, 0.0017553136851121076,
+        0.0003535504361832134, 0.00035355043592291474, 0.0001629696354352194, 0.000162969635427021,
+        0.00016296963543138224, 0.00016296963543085816,
+    ],
+    [
+        -2.6949066859520235e-05, 0.0, -0.012630333377989179, -0.06788098566177579,
+        -0.0038098786289970806, -0.0007280674079966239, -0.03963107840115587, -0.027377534926473508,
+        -0.0008126325957015882, -0.0007594917598625781, -0.0001391955324683597, -0.00013775565476759503,
+        -0.00013856972108381867, -0.00013837857500347467, -0.0006403043392784948, -0.000640201043541705,
+        -0.01164622670186048, -0.011646030463671764, -8.927442440545879e-05, -8.927428236644031e-05,
+        -0.017374531820176557, -0.017374529437956077, -0.0011684681766298511, -0.0011684681639308248,
+        -0.0002059309276877475, -0.00020593092752349792, -8.899142661437218e-05, -8.899142660952227e-05,
+        -8.899142661210224e-05, -8.899142661179221e-05,
+    ],
+    [
+        1.6693404663508524e-05, 0.0, 0.010209497430021234, 0.06244787013623986,
+        0.002808419285553297, 0.00047253582365968804, 0.034980584464680615, 0.023487049924048826,
+        0.0005318980029468086, 0.000494535948673518, 7.954550680879264e-05, 7.865972395076437e-05,
+        7.916043361183697e-05, 7.904284457041913e-05, 0.0004114891878735963, 0.00041141769934314245,
+        0.00935545302871356, 0.00935528326396619, 4.930365199731899e-05, 4.930356751917769e-05,
+        0.014393167387193113, 0.014393165261943723, 0.000786472464007222, 0.0007864724548022657,
+        0.00012128197530675587, 0.00012128197520258083, 4.913535872517595e-05, 4.913535872229216e-05,
+        4.913535872382623e-05, 4.913535872364188e-05,
+    ],
+    [
+        -7.686451671931314e-06, 0.0, -0.009302039677366073, -0.06475462967432928,
+        -0.002333442083551095, -0.0003456862936860922, -0.03480186405707002, -0.022711555169645223,
+        -0.00039241604315347144, -0.00036295847403056315, -5.123777745608125e-05, -5.0626706315652266e-05,
+        -5.0972068655238225e-05, -5.089094806218819e-05, -0.00029806754117606176, -0.00029801205904232616,
+        -0.00847088291380835, -0.00847071822112345, -3.069130769179701e-05, -3.069125134829323e-05,
+        -0.01343952485288583, -0.013439522726702739, -0.0005966703096691551, -0.0005966703021868423,
+        -8.051099996047143e-05, -8.051099988637696e-05, -3.057907657646825e-05, -3.057907657454535e-05,
+        -3.057907657556826e-05, -3.057907657544534e-05,
+    ],
+    [
+        4.5249946299075846e-06, 0.0, 0.007598250657076195, 0.06019851917462657,
+        0.0017381758462046931, 0.00022672070696556822, 0.0310412753456066, 0.019689146081614758,
+        0.0002595534190394812, 0.0002388238082300469, 2.9588743163293713e-05, 2.9212487189475324e-05,
+        2.9425100816918287e-05, 2.937515231239919e-05, 0.00019356754716092978, 0.00019352911480167002,
+        0.006876289303275566, 0.006876146700422936, 1.712826218808773e-05, 1.712822864751636e-05,
+        0.011250531981362014, 0.011250530082827377, 0.0004058326082392421, 0.00040583260281077635,
+        4.791547357609965e-05, 4.791547352906314e-05, 1.7061460580993495e-05, 1.7061460579849096e-05,
+        1.7061460580457875e-05, 1.706146058038472e-05,
+    ],
 ], dtype=np.float64)
 
 
 # Degree-7 Sollya fpminimax polynomial for digamma(w) on [1.0, 5.0] (the only
-# part of w < 8.0 where y_lo != 0 in Euler reflection).
+# part of w < 7.0 where y_lo != 0 in Euler reflection).
 # Generated with Sollya:
 #   prec = 300!;
 #   z = x + 16;
@@ -787,11 +974,9 @@ def _log_f64(x, k_adj):
 
   f = m - 1.0
   # Evaluate ln(1 + f) = f - f^2/2 + f^3 * (1/3 + f * P(f)). Split f into
-  # 13-bit fh and 40-bit fl (c = (2^40 + 1) * f) so fh^2 (26 bits) and fh^3
-  # (39 bits) have no rounding error in float64.
-  cf = 1099511627777.0 * f
-  fh = cf - (cf - f)
-  fl = f - fh
+  # 13-bit fh and 40-bit fl so fh^2 (26 bits) and fh^3 (39 bits) have no
+  # rounding error in float64.
+  fh, fl = split_bits(f, 13)
   fh2 = fh * fh
   fh3 = fh2 * fh
   f_plus_fh = f + fh
@@ -808,9 +993,8 @@ def _log_f64(x, k_adj):
   ql = ql + 1.850371707708594e-17
   # Split qh into 13-bit q_hh and 40-bit q_hl so fh^3 * q_hh (39 + 13 = 52
   # bits) has no rounding error.
-  cq = 1099511627777.0 * qh
-  q_hh = cq - (cq - qh)
-  q_hl = (qh - q_hh) + ql
+  q_hh, q_hl = split_bits(qh, 13)
+  q_hl = q_hl + ql
   ph = fh3 * q_hh
   pl = fh3 * q_hl + f3_l * qh
   sh, sl = f2_add_ordered(th, tl, ph, pl)
@@ -822,7 +1006,7 @@ def _log_f64(x, k_adj):
 
 
 def _lgamma_stirling_f64(z):
-  """Evaluates Stirling's series for z >= 8 as `(res_h, res_l, digamma_z)`."""
+  """Evaluates Stirling's series for z >= 7 as `(res_h, res_l, digamma_z)`."""
   # Stirling's expansion:
   #   lgamma(z) = (z - 0.5) * (ln(z) - 1) + (ln(2*pi) - 1)/2 + (1/z) * S(1/z^2).
   lh, ll = _log_f64(z, lax.full_like(z, 0.0))
@@ -842,10 +1026,10 @@ def _lgamma_stirling_f64(z):
   inv_z = lax.reciprocal(z)
   inv_z2 = inv_z * inv_z
   sp = lax.polynomial(inv_z2, _STIRLING_F64, unroll=len(_STIRLING_F64))
-  # For z >= 8, (1/z) * S(1/z^2) <= 1/96 while |lgamma| >= 0.12 everywhere this
+  # For z >= 7, (1/z) * S(1/z^2) <= 1/84 while |lgamma| >= 0.12 everywhere this
   # path is used, so a single float64 product has <= 0.04 ULP rounding error.
   res_h, res_l = fast_two_sum(sh, sl + inv_z * sp)
-  # Approximate digamma(z) = d/dz lgamma(z) for first-order rounding corrections.
+  # Approximate digamma(z) = d/dz lgamma(z) to correct for rounding in z or y.
   psi = (
       lh
       - 0.5 * inv_z
@@ -857,46 +1041,41 @@ def _lgamma_stirling_f64(z):
 def _lgamma_shifted_f64(w):
   """Evaluates Stirling lgamma(z), shift product prod, and digamma(w) for w >= 1.
 
-  Stirling's series needs z >= 8 for full float64 accuracy. For w in [1, 8),
-  pick integer m = ceil(8 - w) in {1, ..., 7} so z = w + m >= 8, and use
+  Stirling's series needs z >= 7 for full float64 accuracy. For w in [1, 7),
+  pick integer m = ceil(7 - w) in {1, ..., 6} so z = w + m >= 7, and use
   lgamma(w) = lgamma(z) - ln(prod) with prod = w * (w + 1) * ... * (w + m - 1).
   Returns lgamma(z) and prod unlogged so the caller can merge logarithms.
   """
-  need0 = w < 8.0
+  need0 = w < 7.0
   zero = lax.full_like(w, 0.0)
-  m = lax.select(need0, lax.ceil(8.0 - w), zero)
-  # Split w in [1, 8] into 24-bit wh (c = (2^29 + 1) * w) and 29-bit wl.
-  # Because wh has steps of >= 2^-23 and wh + k <= 8, each factor wh + k fits
-  # in 26 bits, so pairs of high parts multiply with zero rounding error.
-  # Factors with k >= m are replaced by 1.
-  w_shift = lax.min(w, lax.full_like(w, 8.0))
-  c = 536870913.0 * w_shift
-  wh = c - (c - w_shift)
-  wl = w_shift - wh
+  m = lax.select(need0, lax.ceil(7.0 - w), zero)
+  # Split w in [1, 7] into 24-bit wh and 29-bit wl. Because wh has steps of
+  # >= 2^-23 and wh + k <= 7 for k < m, each active factor wh + k fits in 26
+  # bits, so pairs of high parts multiply with zero rounding error. Factors with
+  # k >= m are replaced by 1.
+  w_shift = lax.min(w, lax.full_like(w, 7.0))
+  wh, wl = split_bits(w_shift, 24)
   one = lax.full_like(w, 1.0)
   fh = [lax.select(m > 0.0, wh, one)]
   fl = [lax.select(m > 0.0, wl, zero)]
-  for k in range(1, 7):
+  for k in range(1, 6):
     need = m > float(k)
     fh.append(lax.select(need, wh + float(k), one))
     fl.append(lax.select(need, wl, zero))
   p01_h, p01_l = f2_mul_exact_high(fh[0], fl[0], fh[1], fl[1])
   p23_h, p23_l = f2_mul_exact_high(fh[2], fl[2], fh[3], fl[3])
   p45_h, p45_l = f2_mul_exact_high(fh[4], fl[4], fh[5], fl[5])
-  p45_hh, p45_hl = split_half(p45_h)
-  p456_h = p45_h * fh[6]
-  p456_l = ((p45_hh * fh[6] - p456_h) + p45_hl * fh[6]) + (
-      p45_h * fl[6] + p45_l * fh[6]
-  )
   p0123_h, p0123_l = two_prod(p01_h, p23_h)
   p0123_l = p0123_l + (p01_h * p23_l + p01_l * p23_h)
-  prod_h, prod_l = f2_mul(p0123_h, p0123_l, p456_h, p456_l)
+  prod_h, prod_l = f2_mul(p0123_h, p0123_l, p45_h, p45_l)
   # Adding m to w can round off up to 3 low bits of w (z_lo = w - (z - m));
   # add psi_z * z_lo to correct lgamma(z) for that rounding.
   z = w + m
   z_lo = w - (z - m)
   zh, zl, psi_z = _lgamma_stirling_f64(z)
   zl = zl + psi_z * z_lo
+  # _PSI_1_5_F64 is fitted on [1, 5]; for w in (5, 7) (x in (-6, -4)),
+  # y = (1 - n) - delta is exact so y_lo == 0 and psi_y * y_lo == 0.
   psi_y = lax.select(
       need0,
       lax.polynomial(w_shift, _PSI_1_5_F64, unroll=len(_PSI_1_5_F64)),
@@ -913,20 +1092,28 @@ def _lgamma_neg_root_f64(x_neg_safe, n):
   1 ULP of -k, so no non-integer float64 gets close to it.
   """
   # On (-3, -2), the two zeros are at -2.748 and -2.457, whereas round(x)
-  # switches from -2 to -3 at -2.5 (inside the -2.457 root window). Force
-  # n_root = -2 on (-2.6, -2.0).
+  # switches from -2 to -3 at -2.5 (inside the interval around -2.457). Use
+  # n_root = -2 across (-2.6, -2.0).
   n_root = lax.select(
       (x_neg_safe > -2.6) & (x_neg_safe < -2.0),
       lax.full_like(x_neg_safe, -2.0),
       n,
   )
   delta_root = x_neg_safe - n_root
-  k = lax.convert_element_type(-n_root, np.int64)
-  in_k_range = (k >= 2) & (k <= 16)
-  side = lax.select(delta_root > 0.0, lax.full_like(k, 1), lax.full_like(k, 0))
-  # Slot = 2 * (k - 2) + side. Slot 1 (k = 2, side = 1) is an inactive sentinel
-  # with w_bound = -1.0 because lgamma(x) > 0 on (-2, -1).
-  idx = lax.select(in_k_range, 2 * (k - 2) + side, lax.full_like(k, 1))
+  in_k_range = (x_neg_safe < -2.0) & (n_root >= -16.0)
+  n_i32 = lax.convert_element_type(
+      lax.max(n_root, lax.full_like(n_root, -17.0)), np.int32
+  )
+  base_idx = lax.select(
+      delta_root > 0.0, lax.full_like(n_i32, -3), lax.full_like(n_i32, -4)
+  )
+  # Column 2 * (k - 2) + side; column 1 has u_bound = -1.0 since lgamma > 0 on
+  # (-2, -1).
+  idx = lax.clamp(
+      lax.full_like(n_i32, 0),
+      base_idx - (n_i32 + n_i32),
+      lax.full_like(n_i32, 29),
+  )
 
   idx_exp = lax.broadcast_in_dim(idx, (*idx.shape, 1), tuple(range(idx.ndim)))
   dnums = slicing.GatherDimensionNumbers(
@@ -941,53 +1128,42 @@ def _lgamma_neg_root_f64(x_neg_safe, n):
         slice_sizes=(1,),
     )
 
-  # Gather one 1D row at a time so GPU kernels do not keep a 25-element float64
+  # Gather one 1D row at a time so GPU kernels do not keep a 21-element float64
   # slice live per thread.
   r0 = _gather_row(0)
-  r1 = _gather_row(1)
-  r2 = _gather_row(2)
-  w_bound = _gather_row(3)
-  # The root offset r = x_root - (-k) is split into three float64 parts
-  # r0 + r1 + r2 (~159 bits). Inside an active window, delta_root is close
-  # enough to r0 (within a factor of 2) that d0 = delta_root - r0 has no
-  # rounding error, and |d0| >= ulp(r0) >= 2 * |r1| whenever d0 != 0.
-  d0 = delta_root - r0
-  num_h, num_l = fast_two_sum(d0, -r1)
-  num_l = num_l - r2
-  den_h, den_l = two_sum(delta_root, r0)
-  den_l = den_l + r1
-  # Compute w = (delta_root - r) / (delta_root + r) as (w_h, w_l). This maps
-  # the zero delta_root = r to w = 0 and turns -ln|delta_root / r| into
-  # -2 * atanh(w), which converges fast as an odd polynomial in w.
-  rcp = lax.reciprocal(den_h)
-  w_h = num_h * rcp
-  wh_dh, wh_dl = two_prod(w_h, den_h)
-  rem_num = ((num_h - wh_dh) - wh_dl) + num_l - w_h * den_l
-  w_l = rem_num * rcp
-  in_root_win = lax.abs(w_h) <= w_bound
-  w_s = lax.select(in_root_win, w_h, lax.full_like(x_neg_safe, 0.0))
-  w_sl = lax.select(in_root_win, w_l, lax.full_like(x_neg_safe, 0.0))
-  p_tail = _gather_row(24)
-  for i in range(23, 4, -1):
-    p_tail = p_tail * w_s + _gather_row(i)
-  c0 = _gather_row(4)
-  pw_h, pw_l = fast_two_sum(c0, w_s * p_tail)
-  rw_h, rw_l = two_prod(w_s, pw_h)
-  return in_root_win, rw_h + (rw_l + (w_s * pw_l + w_sl * pw_h))
+  neg_r1_sc = _gather_row(1)
+  scale = _gather_row(2)
+  u_bound = _gather_row(3)
+  # When |u_h| <= u_bound, delta_root is within 17.5% of r0 and scale is a power
+  # of two, so (delta_root - r0) * scale has no rounding error; adding
+  # neg_r1_sc = -(r - r0) * scale gives u = (delta_root - r) * scale as
+  # (u_h, u_l).
+  u_h, u_l = fast_two_sum((delta_root - r0) * scale, neg_r1_sc)
+  in_root_win = in_k_range & (lax.abs(u_h) <= u_bound)
+  u_s = lax.select(in_root_win, u_h, lax.full_like(x_neg_safe, 0.0))
+  p_tail = _gather_row(20)
+  for i in range(19, 5, -1):
+    p_tail = p_tail * u_s + _gather_row(i)
+  pw_h, pw_l = fast_two_sum(_gather_row(4), u_s * p_tail)
+  pw_l = pw_l + _gather_row(5)
+  uh_s, ul_s = split_half(u_s)
+  ph_s, pl_s = split_half(pw_h)
+  rw = (uh_s * ph_s) + (uh_s * (pl_s + pw_l) + (ul_s + u_l) * pw_h)
+  return in_root_win, rw
 
 
 def _lgamma_impl_f64(x):
   """Computes float64 lgamma(x) across all normal and special inputs."""
   x = lax.convert_element_type(x, np.float64)
-  # Flush subnormals to zero (< finfo(float64).tiny) so non-FTZ backends
-  # behave consistently with FTZ backends without subnormal bit-normalization.
+  # Treat subnormals as zero so backends that flush subnormals and backends that
+  # preserve them return the same result (+inf).
   is_zero = lax.abs(x) < float(np.finfo(np.float64).tiny)
   is_pos = x > 0.0
   # Replace 0.0 with 1.0 so inactive branches do not divide by zero or log(0).
   x_safe = lax.select(is_zero, lax.full_like(x, 1.0), x)
 
-  # For x <= -2^52 (_ALL_INTEGERS_BELOW_F64), every float64 is an exact integer
-  # pole. Clamp inputs with x > 0 and large negative integers to -0.5 so
+  # For x <= -2^52 (_ALL_INTEGERS_BELOW_F64), every float64 is an integer.
+  # Clamp inputs with x > 0 and large negative integers to -0.5 so
   # round(x_neg_safe) cannot overflow and delta stays away from zero.
   x_neg_safe = lax.select(
       (~is_pos) & (x_safe > _ALL_INTEGERS_BELOW_F64),
@@ -1003,26 +1179,30 @@ def _lgamma_impl_f64(x):
   y = (1.0 - n) - delta
   y_lo = ((1.0 - n) - y) - delta
 
-  # Both positive x and negative reflection y = 1 - x evaluate lgamma on the
-  # positive half-line. Clamp to _MAX_FINITE_ARG_F64 to prevent inf - inf NaNs.
+  # Both positive x and negative reflection y = 1 - x evaluate lgamma at a
+  # positive argument. Clamp to _MAX_FINITE_ARG_F64 to avoid inf - inf NaNs.
   arg_pos = lax.select(is_pos, x_safe, y)
   x_bounded = lax.min(arg_pos, lax.full_like(x, _MAX_FINITE_ARG_F64))
 
   # Positive inputs on (0, 2.5):
-  # - On [1, 2.5), evaluate (x - 1)(x - 2) * P(x - 1.5) so the zeros at x = 1
+  # - On [1, 2.5), evaluate (x - 1)(x - 2) * P(x - 1.75) so the zeros at x = 1
   #   and x = 2 are exact.
   # - On (0, 1), shift to x + 1 in (1, 2) via lgamma(x) = lgamma(x + 1) - ln(x),
   #   using u = x so (x + 1 - 1)(x + 1 - 2) = x * (x - 1).
   in_small = is_pos & (x_bounded < 2.5)
-  x_small_in = lax.min(x_bounded, lax.full_like(x, 4.0))
+  x_small_in = lax.min(x_bounded, lax.full_like(x, 2.5))
   is_lt1 = x_small_in < 1.0
   u = lax.select(is_lt1, x_small_in, x_small_in - 1.0)
   v = u - 1.0
-  d = u - 0.5
-  p = lax.polynomial(d, _POS_1_2_F64, unroll=len(_POS_1_2_F64))
+  d = u - 0.75
+  ph_poly, pl_poly = fast_two_sum(
+      lax.full_like(x, _POS_1_2_F64[0]),
+      d * lax.polynomial(d, _POS_1_2_F64[1:], unroll=len(_POS_1_2_F64) - 1),
+  )
+  pl_poly = pl_poly + _POS_1_2_C0_LO_F64
   uv_h, uv_l = two_prod(u, v)
-  p_h, p_l = two_prod(uv_h, p)
-  p_h, p_l = fast_two_sum(p_h, p_l + uv_l * p)
+  p_h, p_l = two_prod(uv_h, ph_poly)
+  p_h, p_l = fast_two_sum(p_h, p_l + (uv_h * pl_poly + uv_l * ph_poly))
 
   # Positive inputs >= 2.5 and negative reflection y = 1 - x >= 1 both use
   # shifted Stirling on w_arg >= 1.
@@ -1035,7 +1215,7 @@ def _lgamma_impl_f64(x):
   # - x <= 0: Euler reflection needs lgamma(y) + ln|delta|
   #   = (lgamma(z) - ln(prod)) + ln|delta| = lgamma(z) + ln(|delta| / prod).
   # When |delta| < 1e-290 on x <= 0, scale |delta| by 2^54 before dividing by
-  # prod (which can be up to ~7!) so |delta| / prod cannot underflow to
+  # prod (which can be up to ~6!) so |delta| / prod cannot underflow to
   # subnormal, and pass k_adj = -54 to subtract 54 * ln(2) inside _log_f64.
   abs_delta_safe = lax.select(
       abs_delta == 0.0, lax.full_like(x, 1.0), abs_delta
@@ -1077,9 +1257,7 @@ def _lgamma_impl_f64(x):
   # Approximate ln(sin(pi*delta) / (pi*delta)) = delta^2 * S(delta^2). Split
   # delta into 13-bit dh and 40-bit dl so dh^2 (26 bits) * s_hh (26 bits) has
   # no rounding error.
-  cd = 1099511627777.0 * delta
-  dh = cd - (cd - delta)
-  dl = delta - dh
+  dh, dl = split_bits(delta, 13)
   dh2 = dh * dh
   d2_l = dl * (delta + dh)
   d2 = delta * delta
@@ -1091,17 +1269,17 @@ def _lgamma_impl_f64(x):
   s_hh, s_hl = split_half(sh_sinc)
   sinc_h = dh2 * s_hh
   sinc_l = dh2 * (s_hl + sl_sinc) + d2_l * sh_sinc
-  # Add digamma(y) * y_lo to compensate for rounding in y = (1 - n) - delta.
+  # Add digamma(y) * y_lo to account for rounding in y = (1 - n) - delta.
   dy_corr = psi_y * y_lo
   sum_h, sum_l = f2_add(zh, zl, log_h, log_l)
   refl = -f2_sum(sum_h, sum_l, sinc_h, sinc_l + dy_corr)
 
-  # Use root-window polynomials near negative zeros on (-17, -2).
+  # Use _NEG_TABLE_F64 near negative zeros on (-17, -2).
   in_root_win, rw = _lgamma_neg_root_f64(x_neg_safe, n)
   neg_res = lax.select(in_root_win, rw, refl)
 
   res = lax.select(is_pos, lg_pos, neg_res)
-  # Canonicalize -0.0 at x = 1.0, 2.0 to +0.0.
+  # Replace -0.0 at x = 1.0 and 2.0 with +0.0.
   res = lax.select(res == 0.0, lax.full_like(x, 0.0), res)
   # Return +inf at poles (x = +-0 and negative integers, which also covers
   # x = -inf) and on positive overflow (x > _MAX_FINITE_ARG_F64); keep NaNs.

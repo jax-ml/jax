@@ -175,16 +175,38 @@ def split26_f64(a):
   return ah, a - ah
 
 
+def split_bits(a, keep_bits: int):
+  """Splits normal `a` via bitmask truncation so `ah` keeps `keep_bits` significand bits.
+
+  For finite normal `a` (and zero), `ah + al == a` and `ah` has at most
+  `keep_bits` significand bits. Subnormal inputs retain fewer than `keep_bits`
+  significand bits in `ah` (down to `0.0` when all set bits fall in the masked
+  low bits).
+  """
+  if a.dtype == np.float64:
+    int_ty, nmant = np.int64, 52
+  elif a.dtype == np.float32:
+    int_ty, nmant = np.int32, 23
+  else:
+    raise ValueError(
+        f"split_bits requires float32 or float64 input, got {a.dtype}"
+    )
+  if not 1 <= keep_bits <= nmant + 1:
+    raise ValueError(
+        f"keep_bits must be in [1, {nmant + 1}] for {a.dtype}, got {keep_bits}"
+    )
+  mask = -(1 << (nmant + 1 - keep_bits))
+  ai = lax.bitcast_convert_type(a, int_ty)
+  ah = lax.bitcast_convert_type(ai & lax._const(ai, mask), a.dtype)
+  return ah, a - ah
+
+
 def split_half(a):
   """Splits float32 (12+12 bits) or float64 (26+27 bits) `a` into `ah + al == a`."""
   if a.dtype == np.float32:
     # Float32 has 24 significand bits (even), so masking the low 12 bits splits
     # into 12 + 12 bits where all four partial products fit in 24 bits.
-    ai = lax.bitcast_convert_type(a, np.int32)
-    ah = lax.bitcast_convert_type(
-        ai & lax.full_like(ai, -0x1000), np.float32
-    )
-    return ah, a - ah
+    return split_bits(a, 12)
   # Float64 has 53 significand bits (odd), so bitmask truncation gives 26 + 27
   # bits where `al * bl` (54 bits) would round. Multiplying by `2^27 + 1` and
   # subtracting `c - a` rounds `ah` to 26 bits so `|al| <= 2^-27 * |ah|` also
@@ -194,17 +216,7 @@ def split_half(a):
 
 def split_half_mask(a):
   """Splits `a` via bitmask truncation, safe up to `FLT_MAX` / `DBL_MAX`."""
-  if a.dtype == np.float32:
-    ai = lax.bitcast_convert_type(a, np.int32)
-    ah = lax.bitcast_convert_type(
-        ai & lax.full_like(ai, -0x1000), np.float32
-    )
-    return ah, a - ah
-  ai = lax.bitcast_convert_type(a, np.int64)
-  ah = lax.bitcast_convert_type(
-      ai & lax.full_like(ai, -0x08000000), np.float64
-  )
-  return ah, a - ah
+  return split_bits(a, 12 if a.dtype == np.float32 else 26)
 
 
 @jit
