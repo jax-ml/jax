@@ -628,6 +628,32 @@ class ProfilerTest(unittest.TestCase):
       # Sanity check that trace contains kernel_details
       self.assertTrue("kernel_details" in trace_content, "Expected 'kernel_details' in trace content")
 
+  def test_trace_and_step_trace_annotations(self):
+    self.assertFalse(jax.profiler.TraceAnnotation.is_enabled())
+    with jax.profiler.trace() as session:
+      self.assertTrue(jax.profiler.TraceAnnotation.is_enabled())
+      for step in range(2):
+        with jax.profiler.StepTraceAnnotation("train_step", step_num=step):
+          with jax.profiler.TraceAnnotation("inner_op", batch=4) as ann:
+            ann.set_metadata(extra=True)
+            jnp.ones(4).block_until_ready()
+
+    self.assertIsNotNone(session.profile_data)
+    event_names = [
+        event.name
+        for plane in session.profile_data.planes
+        for line in plane.lines
+        for event in line.events
+    ]
+    self.assertTrue(
+        any(name.startswith("train_step") for name in event_names),
+        f"Expected 'train_step' in {event_names}",
+    )
+    self.assertTrue(
+        any(name.startswith("inner_op") for name in event_names),
+        f"Expected 'inner_op' in {event_names}",
+    )
+
 
 if __name__ == "__main__":
   if hasattr(mp, "handle_test_main"):
