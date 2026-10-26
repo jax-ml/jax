@@ -59,7 +59,10 @@ def logpmf(k: ArrayLike, n: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Arra
   y_n_cond = jnp.logical_or(jnp.logical_and(lax.eq(y, zero), lax.eq(n, zero)),
                             lax.eq(log_linear_term, zero))
   log_probs = jnp.where(y_n_cond, 0., log_probs)
-  return jnp.where(lax.ge(k, loc) & lax.lt(k, loc + n + 1), log_probs, -np.inf)
+  return jnp.where(
+      lax.ge(k, loc) & lax.lt(k, loc + n + 1)
+      & lax.eq(lax.rem(y, _lax_const(y, 1)), zero),
+      log_probs, -np.inf)
 
 
 def pmf(k: ArrayLike, n: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:

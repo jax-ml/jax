@@ -51,7 +51,9 @@ def logpmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
   one = _lax_const(k, 1)
   x = lax.sub(k, loc)
   log_probs = xlog1py(lax.sub(x, one), -p) + lax.log(p)
-  return jnp.where(lax.le(x, zero), -np.inf, log_probs)
+  return jnp.where(
+      jnp.logical_or(lax.le(x, zero), lax.ne(lax.rem(x, one), zero)),
+      -np.inf, log_probs)
 
 
 def pmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
