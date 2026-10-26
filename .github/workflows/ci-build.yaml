@@ -17,9 +17,9 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'main' }}
 
 env:
-  UV_DEFAULT_INDEX: "https://pypi.org/simple"
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
   UV_MANAGED_PYTHON: true  # Make sure `uv` uses its own Python installations
-  PIP_INDEX_URL: "https://pypi.org/simple"
+  PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
   # Print cache hits/misses for setup-uv-python Python and packages,
   # as well as timing, in summaries. For packages, time taken has to be echo'ed
   # separately in the workflow step.

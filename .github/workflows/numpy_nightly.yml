@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 
 env:
-  UV_DEFAULT_INDEX: "https://pypi.org/simple"
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
 
 jobs:
   test-nightly-numpy:

@@ -59,7 +59,7 @@ concurrency:
 permissions: {}
 
 env:
-  UV_DEFAULT_INDEX: "https://pypi.org/simple"
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
 
 jobs:
   run-pytest-cpu:
