@@ -22,6 +22,12 @@ from jax.version import __version__ as __version__
 from jax.version import __version_info__ as __version_info__
 
 # Set Cloud TPU env vars if necessary before transitively loading C++ backend
+try:
+  from jax import _site_hooks  # pyrefly: ignore[missing-module-attribute]  # pytype: disable=import-error
+except ImportError:
+  _site_hooks = None
+if _site_hooks is not None:
+  _site_hooks.pre_init()
 from jax._src.cloud_tpu_init import cloud_tpu_init as _cloud_tpu_init
 try:
   _cloud_tpu_init()
@@ -256,6 +262,8 @@ else:
   del _deprecation_getattr
 del _typing
 
-# trailer
+if _site_hooks is not None:
+  _site_hooks.post_init()
+del _site_hooks
 del _deprecated_device_put_sharded
 del _deprecated_device_put_replicated
