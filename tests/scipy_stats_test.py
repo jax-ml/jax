@@ -213,6 +213,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  def testBernoulliLogPmfFractionalLoc(self):
+    lax_fun = lsp_stats.bernoulli.logpmf
+    scipy_fun = osp_stats.bernoulli.logpmf
+
+    def args_maker():
+      k = np.array([0.5, 1.0, 1.5, 2.0])
+      p, loc = 0.3, 0.5
+      return [k, p, loc]
+
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=1e-4
+    )
+    self._CompileAndCheck(lax_fun, args_maker)
+
   @genNamedParametersNArgs(2)
   def testBernoulliCdf(self, shapes, dtypes):
     rng_int = jtu.rand_int(self.rng(), -100, 100)
@@ -264,6 +278,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
+
+  def testGeomLogPmfFractionalLoc(self):
+    lax_fun = lsp_stats.geom.logpmf
+    scipy_fun = osp_stats.geom.logpmf
+
+    def args_maker():
+      k = np.array([1.5, 2.0, 2.5, 3.0])
+      p, loc = 0.3, 0.5
+      return [k, p, loc]
+
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=1e-4
+    )
+    self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(5)
   def testBetaLogPdf(self, shapes, dtypes):
@@ -784,6 +812,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=5e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
+
+  def testNBinomLogPmfFractionalLoc(self):
+    lax_fun = lsp_stats.nbinom.logpmf
+    scipy_fun = osp_stats.nbinom.logpmf
+
+    def args_maker():
+      k = np.array([0.5, 1.0, 1.5, 2.0])
+      n, p, loc = 5.0, 0.4, 0.5
+      return [k, n, p, loc]
+
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=5e-4
+    )
+    self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(3)
   def testLaplaceLogPdf(self, shapes, dtypes):
@@ -1549,6 +1591,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   def testBinomLogPmfZerokZeron(self):
     self.assertEqual(lsp_stats.binom.logpmf(0, 0, 0.8, 0),
                      osp_stats.binom.logpmf(0, 0, 0.8, 0))
+
+  def testBinomLogPmfFractionalLoc(self):
+    lax_fun = lsp_stats.binom.logpmf
+    scipy_fun = osp_stats.binom.logpmf
+
+    def args_maker():
+      k = np.array([0.5, 1.0, 1.5, 2.0])
+      n, p, loc = 4.0, 0.3, 0.5
+      return [k, n, p, loc]
+
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=5e-4
+    )
+    self._CompileAndCheck(lax_fun, args_maker)
 
   def testIssue972(self):
     self.assertAllClose(
