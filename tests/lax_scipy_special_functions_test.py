@@ -843,6 +843,60 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
                             rtol=1e-5)
 
   @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1ClosedForms(self, dtype):
+    # Special cases of 1F1 with elementary closed forms
+    # (https://dlmf.nist.gov/13.6), on both sides of the switch between the
+    # series and the asymptotic expansions at |x| = 100.
+    if dtype == np.float32:
+      x, big_x, rtol = [-80., -20., -1., -0.1, 0.1, 1., 20., 80.], 100.5, 5e-6
+    else:
+      x, big_x, rtol = [-600., -150., -20., -1., -0.1, 0.1, 1., 20., 150.,
+                        600.], 600., 1e-14
+    x = np.array(x, dtype)
+    hyp1f1 = lambda a, b, x: lsp_special.hyp1f1(dtype(a), dtype(b), x)
+    check = lambda actual, expected: self.assertAllClose(
+        actual, np.asarray(expected, dtype), rtol=rtol, atol=0)
+    for a in [-7.5, 0.5, 2.5, 9.5]:
+      check(hyp1f1(a, a, x), np.exp(x))
+    check(hyp1f1(1, 2, x), np.expm1(x) / x)
+    # The case of #21503: 1F1(1/2, 3/2, -y^2) = sqrt(pi) erf(y) / (2 y).
+    y = np.array([0.1, 1., 3., 7.5, 12., 20.], dtype)
+    check(hyp1f1(0.5, 1.5, -y * y),
+          np.sqrt(np.pi) * osp_special.erf(y) / (2 * y))
+    # The series terminates for a = -2: 1F1(-2, b, x) = 1 - 2 x / b
+    # + x^2 / (b (b + 1)), also where hyp1f1 uses the asymptotic expansions.
+    x = np.append(x, [-big_x, big_x]).astype(dtype)
+    for b in [-3.5, 2.5, 7.25]:
+      check(hyp1f1(-2, b, x), 1 - 2 * x / b + x * x / (b * (b + 1)))
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1GradsAgainstMpmath(self, dtype):
+    # (a, b, x, d/da 1F1, d/db 1F1), from
+    #   mpmath.mp.dps = 40
+    #   mpmath.diff(lambda t: mpmath.hyp1f1(t, b, x), a)
+    #   mpmath.diff(lambda t: mpmath.hyp1f1(a, t, x), b)
+    samples = [
+        (0.5, 1.5, -50.0, -0.56136985311096933, 0.075643819316075054),
+        (1.0, 2.0, -30.0, -0.13146286415905672, 0.032182429273597229),
+        (2.0, 3.0, -90.0, -0.0012480052556433738, 0.00036478912348737436),
+        (2.0, 3.0, -150.0, -0.00049550060984247927, 0.00013213608015378695),
+        (0.5, 1.5, -150.0, -0.40409517636093457, 0.044165396961705714),
+        (2.5, 4.0, -500.0, -7.4587616873189366e-6, 1.4673407719871799e-6),
+        (3.0, 1.0, -20.0, -0.00044442838710477488, 0.00044389248716294085),
+        (-1.5, 2.5, -40.0, -158.46776353583366, -32.356623128038252),
+        (1.5, 2.5, 3.0, 8.178980137068514, -5.4411643840477115),
+        (-2.5, 0.5, 10.0, 297.96944353539351, 706.47179415105752),
+    ]
+    if dtype == np.float64:
+      samples.append(
+          (1.5, 2.5, 300.0, 5.4933457150613866e128, -4.8501885515785815e128))
+    a, b, x, grad_a, grad_b = (np.array(v, dtype) for v in zip(*samples))
+    rtol = 2e-5 if dtype == np.float32 else 1e-13
+    for argnum, expected in [(0, grad_a), (1, grad_b)]:
+      grad = jax.vmap(jax.grad(lsp_special.hyp1f1, argnums=argnum))
+      self.assertAllClose(grad(a, b, x), expected, rtol=rtol, atol=0)
+
+  @jtu.sample_product(dtype=float_dtypes)
   def testHyp2f1SpecialCases(self, dtype):
     eps = np.finfo(dtype).eps
 

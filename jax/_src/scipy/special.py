@@ -4414,7 +4414,11 @@ def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
     raise ValueError("hyp1f1 does not support complex-valued inputs.")
 
   def positive(a, b, x):
-    return lax.cond(x < 100, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
+    # The series terminates if a is a non-positive integer, while the
+    # asymptotic expansion divides by gamma(a), which has a pole there.
+    terminates = (a <= 0) & (a == lax.floor(a))
+    return lax.cond((x < 100) | terminates, _hyp1f1_serie, _hyp1f1_asymptotic,
+                    a, b, x)
 
   result = lax.cond(x < 0, _hyp1f1_negative, positive, a, b, x)
   index = ((a == 0).astype(np.int32)
