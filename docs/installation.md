@@ -81,7 +81,7 @@ not being installed alongside `jax`, although `jax` may successfully install
 (install-nvidia-gpu)=
 ## NVIDIA GPU
 
-On CUDA 12, JAX supports NVIDIA GPUs that have SM version 5.2 (Maxwell) or newer.
+On CUDA 12, JAX supports NVIDIA GPUs that have SM version 6.0 (Pascal) or newer.
 Note that Kepler-series GPUs are no longer supported by JAX since
 NVIDIA has dropped support for Kepler GPUs in its software.
 On CUDA 13, JAX supports NVIDIA GPUs that have SM version 7.5 or newer. NVIDIA
