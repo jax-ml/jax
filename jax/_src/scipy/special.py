@@ -1527,7 +1527,7 @@ def _dawsn_impl(x: Array) -> Array:
   return sign * result
 
 
-@custom_derivatives.custom_jvp
+@jit
 def logit(x: ArrayLike) -> Array:
   r"""The logit function
 
@@ -1544,9 +1544,38 @@ def logit(x: ArrayLike) -> Array:
     array containing values of the logit function.
   """
   x, = promote_args_inexact("logit", x)
-  return lax.log(lax.div(x, lax.sub(_lax_const(x, 1), x)))
-logit.defjvps(
-    lambda g, ans, x: lax.div(g, lax.mul(x, lax.sub(_lax_const(x, 1), x))))
+  return _logit(x)
+
+
+@custom_derivatives.custom_jvp
+def _logit(x: Array) -> Array:
+  # Computing log(x / (1 - x)) directly loses precision in two places:
+  # - Near x = 0.5, x / (1 - x) is close to 1, so rounding the quotient to
+  #   floating-point before calling log throws away low bits (and just below
+  #   0.5, 1 - x rounds to 0.5, cutting the result in half).
+  # - Near x = 1, 1 - x rounds away low bits before the division.
+  #
+  # Use symmetry around 0.5 (logit(1 - x) = -logit(x)) to fold x onto
+  # p = min(x, 1 - x) in [0, 0.5], compute logit(p) <= 0, and flip the sign at
+  # the end when x >= 0.5.
+  lt_half = x < 0.5
+  p = jnp.where(lt_half, x, 1 - x)
+  d = jnp.where(lt_half, 0.5 - x, x - 0.5)
+
+  # Split into two regions that share a single log1p call:
+  # - Near 0.5 (0.25 <= x <= 0.75, so d <= 0.25): both d = |x - 0.5| and
+  #   p = min(x, 1 - x) subtract numbers within a factor of 2 of each other,
+  #   so both are exact without rounding error, and 1 - p = 0.5 + d = p + 2 * d.
+  #   Thus:
+  #     logit(p) = -log((1 - p) / p) = -log1p(2 * d / p).
+  # - Away from 0.5 (p < 0.25): write logit(p) = log(p) - log1p(-p).
+  #   Here |log(p)| > 1.38 while |log1p(-p)| < 0.29, so the two terms do not
+  #   cancel (and p <= 0 naturally gives -inf at 0 and NaN for < 0).
+  near_half = d <= 0.25
+  l1p = jnp.log1p(jnp.where(near_half, 2 * d / p, -p))
+  res = jnp.where(near_half, -l1p, jnp.log(p) - l1p)
+  return jnp.where(lt_half, res, -res)
+_logit.defjvps(lambda g, ans, x: g / (x * (1 - x)))
 
 
 def expit(x: ArrayLike) -> Array:
