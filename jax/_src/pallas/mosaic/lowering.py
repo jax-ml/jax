@@ -4427,7 +4427,15 @@ def _cmp_lowering_rule(primitive, ctx: LoweringRuleContext, x, y):
     return arith.cmpi(predicate, x, y)
 
   if jnp.issubdtype(dtype, jnp.floating):
-    pred = _cmpf_lowering_types[primitive]
+    # TensorCore lowering only accepts ordered predicates, whereas SparseCore
+    # requires UNE for IEEE unordered float inequality.
+    if (
+        primitive == lax.ne_p
+        and ctx.lowering_context.kernel_type != tpu_core.CoreType.TC
+    ):
+      pred = arith.CmpFPredicate.UNE
+    else:
+      pred = _cmpf_lowering_types[primitive]
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
     return arith.cmpf(predicate, x, y)
 
