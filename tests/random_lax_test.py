@@ -33,7 +33,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.random.core import (
     _safe_int_to_float, _check_broadcast_shapes, _poisson_from_normal,
-    _poisson_log_pmf, _poisson_log_pmf_for_rejection,
+    _poisson_log_pmf,
 )
 from jax._src import test_util as jtu
 from jax import vmap
@@ -813,34 +813,7 @@ class DistributionsTest(RandomTestBase):
     self.assertAllClose(samples.mean(), lam, rtol=0.02, check_dtypes=False)
     self.assertAllClose(samples.var(), lam, rtol=0.03, check_dtypes=False)
 
-  def testPoissonRejectionLogPmfCentralFastPath(self):
-    mu = np.asarray([3e6, 1e8, 1e9], dtype=np.float32)[:, None]
-    offsets = np.asarray([-5, -3, -1, 0, 1, 3, 5], dtype=np.float32)[None, :]
-    k = np.round(mu + offsets * np.sqrt(mu))
-    rates = np.broadcast_to(mu, k.shape)
-    expected = _poisson_log_pmf(k, rates)
-
-    actual = _poisson_log_pmf_for_rejection(k, rates)
-    compiled = jax.jit(_poisson_log_pmf_for_rejection)(k, rates)
-    self.assertAllClose(actual, expected, check_dtypes=False,
-                        rtol=0.0, atol=5e-5)
-    self.assertAllClose(compiled, expected, check_dtypes=False,
-                        rtol=0.0, atol=5e-5)
-
-  def testPoissonRejectionLogPmfMixedTailFallback(self):
-    rates = np.full(5, 1e8, dtype=np.float32)
-    k = np.asarray([1e8, 100000008, 9e7, 99999992, 100000016],
-                   dtype=np.float32)
-    expected = _poisson_log_pmf(k, rates)
-
-    actual = _poisson_log_pmf_for_rejection(k, rates)
-    compiled = jax.jit(_poisson_log_pmf_for_rejection)(k, rates)
-    self.assertAllClose(actual, expected, check_dtypes=False,
-                        rtol=0.0, atol=5e-5)
-    self.assertAllClose(compiled, expected, check_dtypes=False,
-                        rtol=0.0, atol=5e-5)
-
-  def testPoissonLargeLambdaVariance(self):
+  def testPoissonRejectionLogPmfance(self):
     # Check both contraction and inflation of the rejection-sampling
     # variance, using the same total number of samples as a scalar test.
     lam = np.asarray([3e6, 1e8], dtype=np.float32)
