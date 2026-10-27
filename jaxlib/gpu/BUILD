@@ -34,7 +34,6 @@ package(
 exports_files(srcs = [
     "blas_handle_pool.cc",
     "blas_handle_pool.h",
-    "ffi_wrapper.h",
     "gpu_kernel_helpers.cc",
     "gpu_kernel_helpers.h",
     "gpu_kernels.cc",

@@ -566,6 +566,7 @@ pytype_strict_library(
         "//jax/_src:api",
         "//jax/_src:core",
         "//jax/_src:custom_derivatives",
+        "//jax/_src:ffi",
         "//jax/_src:lax",
         "//jax/_src:typing",
     ] + py_deps("numpy"),
