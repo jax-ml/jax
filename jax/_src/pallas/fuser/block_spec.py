@@ -533,12 +533,38 @@ def _compare_index_transforms(
   # An index map may read the scalar prefetch; trace it on placeholders.
   def to_jaxpr(idx_map):
     def traced(idxs, scalar_prefetch):
+      # `None` marks a block index that is always 0 (see `_block_idxs_avals`).
+      idxs = tuple(
+          None if idx is None else tuple(0 if i is None else i for i in idx)
+          for idx in idxs
+      )
       with _sp_context(*scalar_prefetch):
         return idx_map(*idxs)
 
     return jax.make_jaxpr(traced)(block_idxs_avals, scalar_prefetch_avals)
 
   return fuser_utils.compare_jaxprs(to_jaxpr(idx_map1), to_jaxpr(idx_map2))
+
+
+def _block_idxs_avals(
+    block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
+    shape: tuple[int, ...],
+) -> tuple[core.ShapedArray | None, ...] | None:
+  """Abstract block indices of `block_spec`, with `None` for those always 0."""
+  if block_spec is pallas_core.no_block_spec:
+    return None
+  block_shape = pallas_core._canonicalize_block_shape(block_spec.block_shape)
+  idx_aval = core.ShapedArray((), jnp.int32)
+  if len(block_shape) != len(shape):
+    return (idx_aval,) * len(block_shape)
+  # A dimension covered by a single block can only have block index 0.
+  return tuple(
+      None
+      if isinstance(d, pallas_core.Blocked) and d.block_size >= n
+      or isinstance(d, pallas_core.Squeezed) and n == 1
+      else idx_aval
+      for d, n in zip(block_shape, shape, strict=True)
+  )
 
 
 def _block_transforms_equal(
@@ -596,6 +622,7 @@ def _pull_block_transform(
     scalar_prefetch_handler: Callable = _identity_scalar_prefetch_handler,
     grid_len: int | None = None,
     strict_mode: bool = True,
+    block_idxs_avals: tuple[Any, ...] | None = None,
 ) -> tuple[
     tuple[BlockIndexTransform | None, ...],
     tuple[
@@ -613,14 +640,16 @@ def _pull_block_transform(
       ) if sp
     )
 
-  block_idxs_avals = tuple(
-      None
-      if out_block_transform is None
-      else (
-          (core.ShapedArray((), jnp.int32),) * len(out_block_transform.block_shape)
-      )
-      for out_block_transform in out_block_transforms
-  )
+  if block_idxs_avals is None:
+    block_idxs_avals = tuple(
+        None
+        if out_block_transform is None
+        else (
+            (core.ShapedArray((), jnp.int32),)
+            * len(out_block_transform.block_shape)
+        )
+        for out_block_transform in out_block_transforms
+    )
 
   for outvar, bs in zip(jaxpr.outvars, out_block_transforms, strict=True):
     assert isinstance(outvar, core.Var)
@@ -763,6 +792,11 @@ def _pull_block_spec(
       scalar_prefetch_handler=scalar_prefetch_handler,
       grid_len=grid_len,
       strict_mode=strict_mode,
+      # Only here do block transforms take the output block indices directly.
+      block_idxs_avals=tuple(
+          _block_idxs_avals(bs, v.aval.shape)
+          for bs, v in zip(out_block_specs, jaxpr.outvars, strict=True)
+      ),
   )
 
   # apply accumulated block transforms to get final block specs

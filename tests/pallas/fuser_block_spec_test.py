@@ -2482,6 +2482,39 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       )
       del kernel_fn, value_block_specs, in_block_specs
 
+  @parameterized.named_parameters(
+      ('row_norm', lambda a: a / a.sum(-1, keepdims=True)),
+      ('row_center', lambda a: a - a.mean(-1, keepdims=True)),
+      (
+          'row_softmax',
+          lambda a: jnp.exp(a) / jnp.exp(a).sum(-1, keepdims=True),
+      ),
+  )
+  def test_dag_through_full_row_reduction_is_accepted(self, fn):
+    a = jax.random.normal(jax.random.key(0), (32, 128), dtype=jnp.float32)
+    block_spec = pl.BlockSpec((8, 128), lambda i: (i, 0))
+    kernel_fn, (a_spec,), _ = block_spec_lib.pull_block_spec(fn, block_spec)(a)
+    self.assertEqual(a_spec.index_map(2), (2, 0))
+    np.testing.assert_allclose(
+        kernel_fn((2,), (), a[16:24]), fn(a)[16:24], rtol=1e-5, atol=1e-5
+    )
+
+  def test_dag_through_full_row_reduction_with_scalar_prefetch_index_map(self):
+    a_type = jax.ShapeDtypeStruct((32, 128), jnp.float32)
+    block_spec = pl.BlockSpec((8, 128), lambda i, sp_ref: (sp_ref[i], 0))
+    _, (a_spec,), _ = block_spec_lib.pull_block_spec(
+        lambda a: a / a.sum(-1, keepdims=True), block_spec
+    )(a_type)
+    self.assertEqual(a_spec.index_map(1, np.array([3, 2])), (2, 0))
+
+  def test_dag_with_conflicting_column_blocks_is_rejected(self):
+    a_type = jax.ShapeDtypeStruct((8, 256), jnp.float32)
+    row_spec = pl.BlockSpec((8, 128), lambda i: (i, 0))
+    with self.assertRaisesRegex(ValueError, 'Fusion contains a DAG'):
+      block_spec_lib.pull_block_spec(
+          lambda a: a[:, :128] + a[:, 128:], row_spec
+      )(a_type)
+
   def test_dot_general_pull(self):
     lhs_type = jax.ShapeDtypeStruct((512, 256), jnp.float32)
     rhs_type = jax.ShapeDtypeStruct((256, 128), jnp.float32)
