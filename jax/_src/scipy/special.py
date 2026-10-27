@@ -4110,60 +4110,55 @@ def _hyp1f1_asymptotic(a, b, x):
 
 @jit
 @jnp_vectorize.vectorize
+def _hyp1f1_param_derivative(a, b, x, p):
+  """Computes the parameter-derivative series for 1F1 at parameter ``p``.
+
+  Evaluates ``sum_{k=1}^inf ((a)_k / (b)_k) (x^k / k!) H_k(p)`` where
+  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)``.
+  This equals ``d/da hyp1f1(a, b, x)`` for ``p = a`` and
+  ``-d/db hyp1f1(a, b, x)`` for ``p = b``. Factored into a single ``@jit``
+  helper to save trace and compile time across ``a`` and ``b``.
+  """
+  precision = dtypes.finfo(x.dtype).eps
+
+  def body(state):
+    serie, k, term, h = state
+    serie += term * h
+    term *= (a + k) / (b + k) * x / (k + 1)
+    h += 1 / (p + k)
+    k += 1
+
+    return serie, k, term, h
+
+  def cond(state):
+    serie, k, term, _ = state
+
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
+
+  term = a / b * x
+  h = 1 / p
+  serie = jnp.zeros((), dtype=dtypes.result_type(term, h))
+  init = serie, 1, term, h
+
+  return lax.while_loop(cond, body, init)[0]
+
+
 def _hyp1f1_a_derivative(a, b, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term, h = state
-    serie += term * h
-    term *= (a + k) / (b + k) * x / (k + 1)
-    h += 1 / (a + k)
-    k += 1
-
-    return serie, k, term, h
-
-  def cond(state):
-    serie, k, term, _ = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a / b * x, 1 / a
-
-  return lax.while_loop(cond, body, init)[0]
+  return _hyp1f1_param_derivative(a, b, x, a)
 
 
-@jit
-@jnp_vectorize.vectorize
 def _hyp1f1_b_derivative(a, b, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term, h = state
-    serie += term * h
-    term *= (a + k) / (b + k) * x / (k + 1)
-    h -= 1 / (b + k)
-    k += 1
-
-    return serie, k, term, h
-
-  def cond(state):
-    serie, k, term, _ = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a / b * x, -1 / b
-
-  return lax.while_loop(cond, body, init)[0]
+  return -_hyp1f1_param_derivative(a, b, x, b)
 
 
 @jit
@@ -4464,89 +4459,64 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
 
 @jit
 @jnp_vectorize.vectorize
+def _hyp2f1_param_derivative(a, b, c, x, p):
+  """Computes the parameter-derivative series for 2F1 at parameter ``p``.
+
+  Evaluates ``sum_{k=1}^inf ((a)_k (b)_k / (c)_k) (x^k / k!) H_k(p)`` where
+  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)``.
+  This equals ``d/dp hyp2f1(a, b, c, x)`` for ``p in {a, b}`` and
+  ``-d/dc hyp2f1(a, b, c, x)`` for ``p = c``. Factored into a single ``@jit``
+  helper to save trace and compile time across ``a``, ``b``, and ``c``.
+  """
+  precision = dtypes.finfo(x.dtype).eps
+
+  def body(state):
+    serie, k, term, h = state
+    serie += term * h
+    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
+    h += 1 / (p + k)
+    k += 1
+
+    return serie, k, term, h
+
+  def cond(state):
+    serie, k, term, _ = state
+
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
+
+  term = a * b / c * x
+  h = 1 / p
+  serie = jnp.zeros((), dtype=dtypes.result_type(term, h))
+  init = serie, 1, term, h
+
+  return lax.while_loop(cond, body, init)[0]
+
+
 def _hyp2f1_a_derivative(a, b, c, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/01/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term, h = state
-    serie += term * h
-    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
-    h += 1 / (a + k)
-    k += 1
-
-    return serie, k, term, h
-
-  def cond(state):
-    serie, k, term, _ = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a * b / c * x, 1 / a
-
-  return lax.while_loop(cond, body, init)[0]
+  return _hyp2f1_param_derivative(a, b, c, x, a)
 
 
-@jit
-@jnp_vectorize.vectorize
 def _hyp2f1_b_derivative(a, b, c, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/02/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term, h = state
-    serie += term * h
-    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
-    h += 1 / (b + k)
-    k += 1
-
-    return serie, k, term, h
-
-  def cond(state):
-    serie, k, term, _ = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a * b / c * x, 1 / b
-
-  return lax.while_loop(cond, body, init)[0]
+  return _hyp2f1_param_derivative(a, b, c, x, b)
 
 
-@jit
-@jnp_vectorize.vectorize
 def _hyp2f1_c_derivative(a, b, c, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/03/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term, h = state
-    serie += term * h
-    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
-    h -= 1 / (c + k)
-    k += 1
-
-    return serie, k, term, h
-
-  def cond(state):
-    serie, k, term, _ = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a * b / c * x, -1 / c
-
-  return lax.while_loop(cond, body, init)[0]
+  return -_hyp2f1_param_derivative(a, b, c, x, c)
 
 
 @jit
