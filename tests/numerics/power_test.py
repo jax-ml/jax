@@ -23,14 +23,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
-
-# Under pytest, tests run against an installed wheel that does not
-# include `jax.tests`, so skip before importing `jax.tests.numerics`.
-if jtu.is_running_under_pytest():
-  import pytest
-
-  pytest.skip("Only runs under Bazel", allow_module_level=True)
-
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
 import numpy as np
