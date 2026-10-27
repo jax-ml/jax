@@ -813,7 +813,7 @@ class DistributionsTest(RandomTestBase):
     self.assertAllClose(samples.mean(), lam, rtol=0.02, check_dtypes=False)
     self.assertAllClose(samples.var(), lam, rtol=0.03, check_dtypes=False)
 
-  def testPoissonRejectionLogPmfance(self):
+  def testPoissonLargeLambdaVariance(self):
     # Check both contraction and inflation of the rejection-sampling
     # variance, using the same total number of samples as a scalar test.
     lam = np.asarray([3e6, 1e8], dtype=np.float32)
