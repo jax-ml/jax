@@ -329,7 +329,7 @@ class PallasBaseTest(ptu.PallasTPUTest):
     np.testing.assert_allclose(x, y, **kwargs)
 
 
-@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
+@jtu.thread_unsafe_test_class()
 class SplashAttentionTest(PallasBaseTest):
   @parameterized.product(
       is_mqa=(False, True),
