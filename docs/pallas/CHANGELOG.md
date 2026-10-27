@@ -28,6 +28,17 @@ Remember to align the itemized text with the first line of an item within a list
     {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref`. Use
     `ref.transpose(...)` or `ref.T` directly instead.
 
+### TPU
+
+* New features
+
+  * Added {func}`jax.experimental.pallas.tpu.reinterpret_cast`, which
+    reinterprets the physical (tiled) storage of a VMEM reference as a
+    reference of a different shape and dtype without copying, and
+    {func}`jax.experimental.pallas.tpu.tiled_storage_size`, which computes the
+    size of that storage. Together, they allow a single VMEM buffer to hold
+    arrays of different shapes and dtypes.
+
 ## Released with JAX 0.12.0 (October 19, 2026)
 
 * New features

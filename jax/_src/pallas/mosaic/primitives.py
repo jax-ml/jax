@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Hashable, Mapping, Sequence
 import dataclasses
 import logging
+import operator
 from typing import Any
 
 import jax
@@ -1791,6 +1792,137 @@ def annotate(
       new_transforms.append(transform)
   return state_types.TransformedRef(
       ref.ref, (*new_transforms, tpu_core.AccessAssumptionTransform(assumption))
+  )
+
+
+def _static_int(x: Any) -> int | None:
+  if isinstance(x, jax_core.Tracer):
+    return None
+  try:
+    return operator.index(x)
+  except TypeError:
+    return None
+
+
+def _reinterpretable_bytes(ref: state_types.TransformedRef) -> int:
+  """Returns the size of the whole tiles of storage starting at ``ref``."""
+  base = state_types.TransformedRef(ref.ref, ())
+  if base.is_dynamic_size or ref.is_dynamic_size:
+    raise ValueError("pltpu.reinterpret_cast requires static shapes.")
+  tpu_core.check_tiled_dtype(base.dtype)
+  tile_rows, num_lanes = tpu_core.native_tile_shape(base.dtype)
+  shape = tuple(operator.index(d) for d in base.shape)
+  if len(shape) < 2 or shape[-1] != num_lanes:
+    raise ValueError(
+        f"Expected underlying buffer shape (..., rows, {num_lanes}), got"
+        f" {shape}."
+    )
+  if len(shape) > 2 or shape[0] % tile_rows:
+    raise NotImplementedError(
+        "pltpu.reinterpret_cast currently requires a 2D buffer whose rows are a"
+        f" multiple of {tile_rows}, got {shape}."
+    )
+  transforms = [
+      t
+      for t in ref.transforms
+      if not isinstance(t, tpu_core.AccessAssumptionTransform)
+  ]
+  rows = shape[0]
+  if not transforms:
+    return (rows // tile_rows) * tpu_core.native_tile_bytes()
+  if len(transforms) > 1 or isinstance(
+      transforms[0], tpu_core.ReinterpretCastTransform
+  ):
+    raise NotImplementedError(
+        "pltpu.reinterpret_cast currently supports at most a single slice."
+    )
+  indexer = transforms[0]
+  if not isinstance(indexer, indexing.NDIndexer) or indexer.is_dynamic_size:
+    raise ValueError(f"Unsupported reference transform: {indexer}.")
+  if indexer.int_indexer_shape or any(
+      isinstance(i, indexing.Slice) and i.stride != 1 for i in indexer.indices
+  ):
+    raise ValueError("Slices must have unit strides and scalar indices.")
+  row_slice, col_slice = indexer.indices
+  if not isinstance(row_slice, indexing.Slice) or not isinstance(
+      col_slice, indexing.Slice
+  ):
+    raise NotImplementedError(
+        "pltpu.reinterpret_cast currently only supports a 2D row slice."
+    )
+  if operator.index(col_slice.size) != num_lanes:
+    raise ValueError("pltpu.reinterpret_cast cannot slice the minor dimension.")
+  start, rows = _static_int(row_slice.start), operator.index(row_slice.size)
+  if (start is not None and start % tile_rows) or rows % tile_rows:
+    raise NotImplementedError(
+        f"Row slice offset and size must be multiples of {tile_rows}."
+    )
+  return (rows // tile_rows) * tpu_core.native_tile_bytes()
+
+
+def reinterpret_cast(
+    ref: Ref,
+    shape: Sequence[int],
+    dtype: DTypeLike | None = None,
+) -> state_types.TransformedRef:
+  """Reinterprets the physical VMEM storage of ``ref`` with a new shape/dtype.
+
+  Unlike ``ref.reshape`` and ``ref.bitcast``, which view logical row-major
+  elements, ``reinterpret_cast`` aliases the physical bytes of ``ref`` with the
+  native VMEM tiling of ``dtype`` (see
+  :func:`~jax.experimental.pallas.tpu.tiled_storage_size`) without copying.
+
+  Currently, ``ref`` must be a 2D VMEM buffer of shape ``(rows, 128)`` (or a
+  single row slice ``ref.at[pl.ds(start, size)]``) aligned to source tile rows,
+  the last two dimensions of ``shape`` must be multiples of the target native
+  tile shape, and interpret mode is not supported yet.
+
+  Args:
+    ref: The VMEM reference to reinterpret.
+    shape: Target shape (at least 2 dimensions).
+    dtype: Target 8-, 16- or 32-bit numeric dtype (defaults to ``ref.dtype``).
+  """
+  if not isinstance(ref, state_types.TransformedRef):
+    if not isinstance(jax_core.typeof(ref), state.AbstractRef):
+      raise TypeError(f"ref must be a reference, got {ref}")
+    ref = state_types.TransformedRef(ref, transforms=())
+  if ref.multiref:
+    raise TypeError(f"ref must be a single reference, got {ref}")
+  if (
+      isinstance(ref.memory_space, pl_core.CoreMemorySpace)
+      and ref.memory_space.mesh.core_type != tpu_core.CoreType.TC
+  ):
+    raise NotImplementedError(
+        "pltpu.reinterpret_cast is only supported on TensorCores."
+    )
+  memory_space = tpu_core.unwrap_core_memory_space(ref.memory_space)
+  if memory_space not in (
+      tpu_core.MemorySpace.VMEM,
+      pl_core.MemorySpace.DEFAULT,
+  ):
+    raise ValueError(
+        "pltpu.reinterpret_cast only supports VMEM references, but got"
+        f" {memory_space}."
+    )
+  shape = tpu_core.canonicalize_tiled_shape(shape)
+  dtype = ref.dtype if dtype is None else dtypes.dtype(dtype)
+  available_bytes = _reinterpretable_bytes(ref)
+  required_bytes = tpu_core.tiled_storage_size(shape, dtype)
+  if required_bytes > available_bytes:
+    raise ValueError(
+        f"pltpu.reinterpret_cast to {shape} ({dtype}) requires {required_bytes}"
+        f" bytes, but {ref.shape} ({ref.dtype}) provides {available_bytes}."
+    )
+  dst_tile_rows, num_lanes = tpu_core.native_tile_shape(dtype)
+  if shape[-2] % dst_tile_rows != 0 or shape[-1] % num_lanes != 0:
+    raise NotImplementedError(
+        "pltpu.reinterpret_cast currently requires the last two dimensions of"
+        f" shape to be multiples of ({dst_tile_rows}, {num_lanes}), got"
+        f" {shape}."
+    )
+  return state_types.TransformedRef(
+      ref.ref,
+      (*ref.transforms, tpu_core.ReinterpretCastTransform(shape, dtype)),
   )
 
 

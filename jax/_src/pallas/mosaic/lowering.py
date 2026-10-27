@@ -2243,6 +2243,61 @@ def _pad_memref(
   )
 
 
+def _reinterpret_cast_memref(
+    ref: ir.Value,
+    caster: tpu_core.ReinterpretCastTransform,
+    root_block_shape: tuple[int | pallas_core.Squeezed, ...] | None,
+    kernel_type: tpu_core.CoreType,
+) -> tuple[ir.Value, tuple[int, ...]]:
+  if kernel_type != tpu_core.CoreType.TC:
+    raise NotImplementedError(
+        "pltpu.reinterpret_cast is only supported on TensorCores."
+    )
+  ref_ty = ir.MemRefType(ref.type)
+  if ref_ty.memory_space != ir.Attribute.parse("#tpu.memory_space<vmem>"):
+    raise ValueError(
+        "pltpu.reinterpret_cast only supports VMEM references, but got a"
+        f" reference in {ref_ty.memory_space}."
+    )
+  # Check `root_block_shape` rather than the loop-updated `ref_block_shape`,
+  # since a preceding `_slice_memref` strips `Squeezed` markers even though the
+  # underlying VMEM allocation remains non-contiguous.
+  if root_block_shape is not None and any(
+      isinstance(d, pallas_core.Squeezed) for d in root_block_shape[-2:]
+  ):
+    raise NotImplementedError(
+        "Reinterpreting a ref with a squeezed dimension among its last two"
+        " dimensions is not supported."
+    )
+  shape = caster.shape
+  tile_rows, num_lanes = tpu_core.native_tile_shape(caster.dtype)
+  packing = 32 // dtypes.itemsize_bits(caster.dtype)
+  tiles = f"({tile_rows},{num_lanes})"
+  if packing > 1:
+    tiles += f"({packing},1)"
+  # Tiles are stored contiguously in row-major order.
+  tile_strides = pallas_utils.strides_from_shape(
+      tpu_core.native_tile_grid(shape, caster.dtype)
+  )
+  layout = ir.Attribute.parse(
+      f"#tpu.tiled<{tiles},[{','.join(map(str, tile_strides))}]>"
+  )
+  element_ty = _dtype_to_ir_type(caster.dtype)
+  out = tpu.reinterpret_cast(
+      ir.MemRefType.get(
+          shape, element_ty, layout=layout, memory_space=ref_ty.memory_space
+      ),
+      ref,
+  )
+  # Erase the layout, like for all other refs. Mosaic propagates the explicit
+  # layout of the cast to the users of the result.
+  out = tpu.erase_memref_layout(
+      ir.MemRefType.get(shape, element_ty, memory_space=ref_ty.memory_space),
+      out,
+  )
+  return out, shape
+
+
 def _memory_space_cast_memref(
     ref: ir.Value[ir.MemRefType],
     caster: state_types.MemorySpaceCastTransform,
@@ -2303,6 +2358,7 @@ def _transform_ref(
     ref_block_shape, _ = _get_ref_and_transforms(ref_block_shape)
   assert not isinstance(ref_ty, state.TransformedRef)
   assert not isinstance(ref_block_shape, state.TransformedRef)
+  root_block_shape = ref_block_shape
   assumption = None
   for transform in transforms:
     match transform:
@@ -2320,6 +2376,10 @@ def _transform_ref(
         )
       case pallas_core.PadTransform():
         ref, ref_block_shape = _pad_memref(ref, transform, ref_block_shape)
+      case tpu_core.ReinterpretCastTransform():
+        ref, ref_block_shape = _reinterpret_cast_memref(
+            ref, transform, root_block_shape, kernel_type
+        )
       case state_types.MemorySpaceCastTransform():
         ref, ref_block_shape = _memory_space_cast_memref(
             ref, transform, ref_block_shape, kernel_type

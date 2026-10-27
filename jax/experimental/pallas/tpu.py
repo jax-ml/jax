@@ -27,6 +27,7 @@ from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec as PrefetchScalar
 from jax._src.pallas.mosaic.core import SemaphoreType as SemaphoreType
 from jax._src.pallas.mosaic.core import SideEffectType as SideEffectType
 from jax._src.pallas.mosaic.core import TensorCoreMesh as TensorCoreMesh
+from jax._src.pallas.mosaic.core import tiled_storage_size as tiled_storage_size
 from jax._src.pallas.mosaic.helpers import core_barrier as core_barrier
 from jax._src.pallas.mosaic.helpers import join_bits as join_bits
 from jax._src.pallas.mosaic.helpers import pack_fp6 as pack_fp6
@@ -64,6 +65,7 @@ from jax._src.pallas.mosaic.primitives import matmul_push_rhs as matmul_push_rhs
 from jax._src.pallas.mosaic.primitives import pack_elementwise as pack_elementwise
 from jax._src.pallas.mosaic.primitives import prng_random_bits as prng_random_bits
 from jax._src.pallas.mosaic.primitives import prng_seed as prng_seed
+from jax._src.pallas.mosaic.primitives import reinterpret_cast as reinterpret_cast
 from jax._src.pallas.mosaic.primitives import roll as roll
 from jax._src.pallas.mosaic.primitives import stochastic_round as stochastic_round
 from jax._src.pallas.mosaic.primitives import store as store
