@@ -2168,6 +2168,77 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     )(expected)
     np.testing.assert_array_equal(f(x), expected)
 
+  @parameterized.named_parameters(
+      dict(
+          testcase_name='contiguous_32b',
+          shape=(8, 128),
+          src_slc=(slice(0, 1), slice(0, 8)),
+          dst_slc=(slice(1, 2), slice(0, 8)),
+      ),
+      dict(
+          testcase_name='strided_1d_32b',
+          shape=(8, 128),
+          src_slc=(slice(0, 4), slice(0, 8)),
+          dst_slc=(slice(4, 8), slice(0, 8)),
+      ),
+      dict(
+          testcase_name='strided_1d_96b',
+          shape=(8, 128),
+          src_slc=(slice(0, 4), slice(0, 24)),
+          dst_slc=(slice(4, 8), slice(0, 24)),
+      ),
+      dict(
+          testcase_name='strided_2d_64b',
+          shape=(4, 8, 128),
+          src_slc=(slice(0, 2), slice(0, 4), slice(0, 16)),
+          dst_slc=(slice(2, 4), slice(4, 8), slice(0, 16)),
+      ),
+      dict(
+          testcase_name='strided_4d_32b',
+          shape=(3, 3, 3, 8, 128),
+          src_slc=(
+              slice(0, 2),
+              slice(0, 2),
+              slice(0, 2),
+              slice(0, 4),
+              slice(0, 8),
+          ),
+          dst_slc=(
+              slice(1, 3),
+              slice(1, 3),
+              slice(1, 3),
+              slice(4, 8),
+              slice(0, 8),
+          ),
+      ),
+  )
+  def test_sub_512b_dma(self, shape, src_slc, dst_slc):
+    if not jtu.is_libtpu_at_least('0.0.52'):
+      self.skipTest('Requires libtpu >= 0.0.52')
+    if not (
+        jtu.is_device_tpu(version=5, variant='p')
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest('Sub-512B DMA requires TPU v5p or TPU v6+')
+
+    def kernel(x_hbm, o_hbm, vmem):
+      pltpu.sync_copy(x_hbm.at[src_slc], vmem.at[src_slc])
+      pltpu.sync_copy(vmem.at[src_slc], vmem.at[dst_slc])
+      pltpu.sync_copy(vmem.at[dst_slc], o_hbm.at[dst_slc])
+
+    fn = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        scratch_shapes=[pltpu.VMEM(shape, jnp.float32)],
+        input_output_aliases={0: 0},
+    )
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    expected = x.copy()
+    expected[dst_slc] = x[src_slc]
+    np.testing.assert_array_equal(fn(x), expected)
+
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
