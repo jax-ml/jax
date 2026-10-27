@@ -1371,7 +1371,7 @@ def get_scaled_dot_general_config(mode: Literal['nvfp4', 'mxfp8', 'mxfp4'],
     """
 
     if mode == 'nvfp4':
-        one = jnp.ones((1,), dtype=np.float32)
+        one = jnp.asarray(1.0, dtype=np.float32)
         return BlockScaleConfig(
             mode='nvfp4',
             block_size=16,
