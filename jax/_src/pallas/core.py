@@ -406,7 +406,31 @@ def current_grid_env() -> GridEnv | None:
 
 @dataclasses.dataclass(frozen=True)
 class Element:
-  """Use to index an array using an elementwise start index."""
+  """Indexes a dimension by element index rather than block index.
+
+  ``index_map`` returns the scalar start index ``i``, slicing
+  ``[i : i + block_size]``. Optional ``padding=(lo, hi)`` virtually pads the
+  dimension before slicing. Pad values read in the kernel are undefined.
+
+  .. code-block:: text
+
+    block_shape=(Element(2), Element(3)), index_map -> (1, 2)
+      array (4, 6):          ref (2, 3):
+        . . . . . .            a b c
+        . . a b c .     ->     d e f
+        . . d e f .
+        . . . . . .
+
+    block_shape=(Element(2, padding=(1, 2)), 4), index_map -> (0, 0)
+      padded (5, 4):         ref (2, 4):
+        ? ? ? ?  (lo=1)        ? ? ? ?   (?: undefined)
+        -------         ->     a b c d
+        a b c d
+        . . . .
+        -------
+        ? ? ? ?  (hi=2)
+        ? ? ? ?
+  """
   block_size: int
   padding: tuple[int, int] = (0, 0)
 
@@ -417,13 +441,40 @@ class Element:
 
 @dataclasses.dataclass(frozen=True)
 class Squeezed:
-  """Represents a one-sized block dimension that is squeezed out in the kernel."""
+  """Selects a single element along a dimension and squeezes the axis out.
+
+  ``index_map`` returns a scalar index ``i``, indexing ``[i]`` along this
+  dimension rather than slicing ``[i : i + 1]``.
+
+  .. code-block:: text
+
+    block_shape=(Squeezed(), 4), index_map -> (2, 0)
+      array (4, 4):          ref (4,):
+        . . . .
+        . . . .         ->     [a b c d]
+        a b c d
+        . . . .
+  """
 
 squeezed = Squeezed()
 
 @dataclasses.dataclass(frozen=True)
 class Blocked:
-  """The default BlockShape type."""
+  """Slices fixed-size blocks of ``block_size`` along a dimension.
+
+  ``index_map`` returns a scalar block index ``b``, slicing
+  ``[b * block_size : (b + 1) * block_size]``.
+
+  .. code-block:: text
+
+    block_shape=(Blocked(2), Blocked(3)), index_map -> (1, 0)
+      array (4, 6):          ref (2, 3):
+        . . . | . . .          a b c
+        . . . | . . .   ->     d e f
+        ------+------
+        a b c | . . .
+        d e f | . . .
+  """
   block_size: int
 
   def __str__(self):
@@ -431,11 +482,21 @@ class Blocked:
 
 @dataclasses.dataclass(frozen=True)
 class BoundedSlice:
-  """Allows to specify a bounded slice of a dimension.
+  """Slices a dynamic-length window up to ``block_size`` along a dimension.
 
-  Specifically, the index_map need to return a ``pl.Slice/pl.ds`` for this
-  dimension. The start and size may be dynamic, as long as the size <=
-  block_size.
+  ``index_map`` must return a ``pl.Slice`` / ``pl.ds`` whose ``start`` and
+  ``size`` may be dynamic, with ``size <= block_size``. The kernel ``Ref`` has
+  static size ``block_size``, with valid elements at ``[:size]`` and undefined
+  values past ``size``.
+
+  .. code-block:: text
+
+    block_shape=(BoundedSlice(3), 4), index_map -> (pl.ds(start=1, size=2), 0)
+      array (4, 4):          ref (3, 4):
+        . . . .                a b c d
+        a b c d         ->     e f g h
+        e f g h                ? ? ? ?   (?: undefined)
+        . . . .
   """
   block_size: int
 
@@ -445,9 +506,19 @@ class BoundedSlice:
 
 @dataclasses.dataclass(frozen=True)
 class Indirect:
-  """A dimension indexed by an array of indices.
+  """Indexes a dimension via gather (for inputs) or scatter (for outputs).
 
-  Implies a gather for inputs and a scatter for outputs.
+  ``index_map`` returns an ``Array`` or ``Ref`` of indices along this
+  dimension, yielding an axis of size ``block_size`` in the kernel ``Ref``.
+
+  .. code-block:: text
+
+    block_shape=(Indirect(2), 4), index_map -> ([3, 0], 0)
+      array (4, 4):          ref (2, 4):
+        e f g h  (row 0)       a b c d   <- row 3
+        . . . .         ->     e f g h   <- row 0
+        . . . .
+        a b c d  (row 3)
   """
   block_size: int
 
