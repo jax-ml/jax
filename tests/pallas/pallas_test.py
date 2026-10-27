@@ -2912,6 +2912,63 @@ class PallasHiJaxTest(ptu.PallasTest):
     self.assertArraysEqual(os.s, xs.s)
 
 
+class PadRefTest(jtu.JaxTestCase):
+
+  def test_pad_ref_basics(self):
+    ref = jax.new_ref(jnp.zeros((2, 6), dtype=jnp.float32))
+    padded = pl.pad_ref(ref, (4, 8))
+    self.assertIsInstance(padded, jax._src.state.types.TransformedRef)
+    self.assertEqual(padded.shape, (4, 8))
+    self.assertEqual(padded.dtype, jnp.float32)
+    self.assertLen(padded.transforms, 1)
+    self.assertIsInstance(
+        padded.transforms[0], jax._src.pallas.core.PadTransform
+    )
+    self.assertEqual(padded.transforms[0].shape, (4, 8))
+    self.assertEqual(
+        str(padded.transforms[0].pretty_print(jax._src.core.JaxprPpContext())),
+        "{pad([4, 8])}",
+    )
+
+    sliced_then_padded = pl.pad_ref(padded.at[1, 2:5], (8,))
+    self.assertEqual(sliced_then_padded.shape, (8,))
+    self.assertLen(sliced_then_padded.transforms, 3)
+
+    with self.assertRaisesRegex(ValueError, "does not match ref rank"):
+      _ = pl.pad_ref(ref, (4, 8, 1)).shape
+    with self.assertRaisesRegex(
+        ValueError, "cannot be smaller than original dim"
+    ):
+      _ = pl.pad_ref(ref, (1, 8)).shape
+    with self.assertRaisesRegex(TypeError, "ref must be a reference"):
+      _ = pl.pad_ref(jnp.zeros((2, 6)), (4, 8))
+
+  def test_pad_ref_interpret(self):
+    def kernel(x_ref, read_out_ref, write_out_ref):
+      padded_x = pl.pad_ref(x_ref, (4, 8))
+      read_out_ref[...] = padded_x[0:4, 0:8]
+      padded_out = pl.pad_ref(write_out_ref, (4, 8))
+      padded_out[0:4, 0:8] = padded_x[0:4, 0:8] + 1.0
+
+    x = jnp.arange(1, 13, dtype=jnp.float32).reshape((2, 6))
+    read_out, write_out = pl.pallas_call(
+        kernel,
+        out_shape=(
+            jax.ShapeDtypeStruct((4, 8), jnp.float32),
+            jax.ShapeDtypeStruct((2, 6), jnp.float32),
+        ),
+        interpret=True,
+    )(x)
+    self.assertArraysEqual(read_out[:2, :6], x)
+    self.assertArraysEqual(
+        read_out[2:, :], jnp.zeros((2, 8), dtype=jnp.float32)
+    )
+    self.assertArraysEqual(
+        read_out[:, 6:], jnp.zeros((4, 2), dtype=jnp.float32)
+    )
+    self.assertArraysEqual(write_out, x + 1.0)
+
+
 class PallasDeviceIdTest(jtu.JaxTestCase):
 
   def test_mixed_str_and_tuple_keys_in_device_id(self):

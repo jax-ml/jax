@@ -3021,6 +3021,82 @@ class PallasCallTest(ptu.PallasTPUTest):
       kernel(jnp.ones((8, 128), dtype=jnp.float32))
 
 
+class PallasPadRefTest(ptu.PallasTPUTest):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_libtpu_at_least('0.0.52'):
+      self.skipTest('Requires libtpu >= 0.0.52')
+
+  def test_pad_ref_block_arg(self):
+    def kernel(x_ref, out_ref):
+      padded_x = pl.pad_ref(x_ref, (8, 128))
+      padded_out = pl.pad_ref(out_ref, (8, 128))
+      padded_out[...] = padded_x[...] + 1
+
+    x = jnp.arange(5 * 100, dtype=jnp.float32).reshape((5, 100))
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x + 1)
+
+  def test_pad_ref_slice(self):
+    def kernel(x_ref, out_ref):
+      padded_x = pl.pad_ref(x_ref.at[pl.ds(1, 1)], (1, 16, 128))
+      padded_out = pl.pad_ref(out_ref.at[pl.ds(1, 1)], (1, 16, 128))
+      padded_out[...] = padded_x[...] + 1
+
+    x = jnp.arange(2 * 10 * 128, dtype=jnp.float32).reshape((2, 10, 128))
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )(x)
+    np.testing.assert_array_equal(out[1], x[1] + 1)
+
+  def test_pad_ref_reshape(self):
+    def kernel(x_ref, out_ref):
+      padded_x = pl.pad_ref(x_ref.reshape((4, 10, 128)), (4, 16, 128))
+      padded_out = pl.pad_ref(out_ref.reshape((4, 10, 128)), (4, 16, 128))
+      padded_out[...] = padded_x[...] + 1
+
+    x = jnp.arange(2 * 2 * 10 * 128, dtype=jnp.float32).reshape((2, 2, 10, 128))
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x + 1)
+
+  def test_pad_ref_bitcast(self):
+    def kernel(x_ref, out_ref):
+      padded_x = pl.pad_ref(x_ref.bitcast(jnp.bfloat16), (16, 128))
+      padded_out = pl.pad_ref(out_ref.bitcast(jnp.bfloat16), (16, 128))
+      padded_out[...] = padded_x[...] + jnp.bfloat16(1)
+
+    x = jnp.zeros((5, 128), dtype=jnp.int32)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )(x)
+    expected = jax.lax.bitcast_convert_type(
+        jnp.ones((5, 128, 2), dtype=jnp.bfloat16), jnp.int32
+    )
+    np.testing.assert_array_equal(out, expected)
+
+  def test_pad_ref_squeeze(self):
+    def kernel(x_ref, out_ref):
+      padded_x = pl.pad_ref(x_ref.at[1], (16, 128))
+      padded_out = pl.pad_ref(out_ref.at[1], (16, 128))
+      padded_out[...] = padded_x[...] + 1
+
+    x = jnp.arange(2 * 10 * 128, dtype=jnp.float32).reshape((2, 10, 128))
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )(x)
+    np.testing.assert_array_equal(out[1], x[1] + 1)
+
+
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPoisonTest(ptu.PallasTPUTest):
 
