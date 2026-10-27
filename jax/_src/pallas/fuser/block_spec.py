@@ -2459,7 +2459,9 @@ def _bitcast_convert_type_pull_rule(
 
 
 @register_eval_rule(prng.random_bits_p)
-def _random_bits_eval_rule(eval_ctx: KernelEvalContext, key, bit_width, shape):
+def _random_bits_eval_rule(
+    eval_ctx: KernelEvalContext, key, bit_width, shape, num_streams=1
+):
   del shape
   block_spec = eval_ctx.out_block_specs[0]
   indices = eval_ctx.get_out_block_indices()[0]
@@ -2468,7 +2470,9 @@ def _random_bits_eval_rule(eval_ctx: KernelEvalContext, key, bit_width, shape):
   # each block gets different random numbers.
   for idx in indices:
     key = jax.random.fold_in(key, idx)
-  return prng.random_bits(key, bit_width=bit_width, shape=block_shape)
+  return prng.random_bits(
+      key, bit_width=bit_width, shape=block_shape, num_streams=num_streams
+  )
 
 
 @register_pull_block_spec_rule(prng.random_bits_p)
