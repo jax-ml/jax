@@ -1311,6 +1311,14 @@ def check_nary_precision(
       chunk_inputs = make_chunk()
       if ignore_predicate is not None:
         mask = np.asarray(ignore_predicate(*chunk_inputs), dtype=bool)
+        if (frac_ignored := mask.mean()) > 0.5:
+          raise ValueError(
+              f"ignore_predicate ignores too many inputs: {frac_ignored:.2f}."
+              " tests/numerics is designed to validate functions across the"
+              " full input domain, and is inefficient when a large fraction of"
+              " inputs are ignored. Please reduce the ignored domain, or avoid"
+              " tests/numerics if this is not possible."
+          )
         idxs = np.flatnonzero(mask)
         if len(idxs) > 0:
           chunk_inputs = tuple(a.copy() for a in chunk_inputs)
