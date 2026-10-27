@@ -372,6 +372,16 @@ class CoreTest(jtu.JaxTestCase):
                             memory_space=jax.memory.Space.Device)
     self.assertEqual(aval.str_short(True), "f32[8]")
 
+  def test_eval_shape_keeps_host_memory_space(self):
+    mesh = jtu.create_mesh(
+        (1,), ('x',), axis_types=(jax.sharding.AxisType.Explicit,)
+    )
+    with jax.set_mesh(mesh):
+      out = jax.eval_shape(
+          lambda x: jax.device_put(x, jax.memory.Space.Host), jnp.ones(8)
+      )
+    self.assertEqual(jax.typeof(out).memory_space, jax.memory.Space.Host)
+
   def test_dropvar_avals(self):
     def f(x):
       def body(c, _):

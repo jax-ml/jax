@@ -4084,6 +4084,9 @@ def _sds_aval_mapping(x):
   aval = ShapedArray(x.shape, dtype, weak_type=x.weak_type,
                      memory_space=memory_space)
   aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type)
+  # Only a sharding with a memory kind may override the memory space.
+  if getattr(x.sharding, "memory_kind", None) is None:
+    aval = aval.update(memory_space=memory_space)
   if x.is_ref:
     from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     return AbstractRef(aval)
