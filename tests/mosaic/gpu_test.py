@@ -5737,17 +5737,26 @@ class FragmentedArrayTest(TestCase):
           jnp.float8_e4m3fn,
           jnp.float8_e5m2,
       ),
-      dst_dtype=(jnp.float8_e4m3fn, jnp.float8_e5m2),
+      dst_dtype=(jnp.float8_e4m3fn, jnp.float8_e5m2, jnp.float4_e2m1fn),
   )
-  def test_rounding_f8(self, src_dtype, dst_dtype):
+  def test_rounding_narrow_fp(self, src_dtype, dst_dtype):
     if src_dtype == dst_dtype:
       self.skipTest("Identical types, so nothing to test")
+    if (
+        dst_dtype == jnp.float4_e2m1fn
+        and not jtu.is_cuda_compute_capability_at_least("10.0")
+    ):
+      self.skipTest("f4e2m1fn not supported on pre-Blackwell GPUs")
     # bf16 -> f8e4m3fn/f8e5m2 support added in PTX ISA 9.1 on Blackwell+.
     # f8e4m3fn/f8e5m2 -> bf16 support added in PTX ISA 9.2 (CUDA 13.1) on
     # Blackwell+.
-    if src_dtype == jnp.bfloat16 and not (
-        jtu.is_cuda_compute_capability_at_least("10.0")
-        and jtu.is_cuda_version_at_least(13, 1)
+    if (
+        src_dtype == jnp.bfloat16
+        and dst_dtype in (jnp.float8_e4m3fn, jnp.float8_e5m2)
+        and not (
+            jtu.is_cuda_compute_capability_at_least("10.0")
+            and jtu.is_cuda_version_at_least(13, 1)
+        )
     ):
       self.skipTest(
           "bf16 -> f8 requires Blackwell+ and CUDA 13.1+ (PTX ISA 9.2+)"
@@ -5772,13 +5781,14 @@ class FragmentedArrayTest(TestCase):
 
     run(mgpu.Rounding.TO_NEAREST_EVEN)
 
-    # f32/f16/bf16 -> f8e4m3fn/f8e5m2 (.rz) support added in PTX ISA 9.4
-    # (CUDA 13.4) on sm_107f.
+    # f32/f16/bf16 -> f8e4m3fn/f8e5m2/f4e2m1fn (.rz) support added in PTX ISA
+    # 9.4 (CUDA 13.4) on sm_107f.
     if (
         jtu.is_cuda_compute_capability_equal("10.7")
         and jtu.is_cuda_version_at_least(13, 4)
     ):
-      rn_bits = jax.lax.bitcast_convert_type(expected_rn, jnp.uint8)
+      uint_dtype = jnp.uint4 if dst_dtype == jnp.float4_e2m1fn else jnp.uint8
+      rn_bits = jax.lax.bitcast_convert_type(expected_rn, uint_dtype)
       rounded_away = np.abs(expected_rn.astype(np.float32)) > np.abs(
           values.astype(np.float32)
       )
@@ -5790,7 +5800,7 @@ class FragmentedArrayTest(TestCase):
       with self.assertRaises(ValueError):
         run(mgpu.Rounding.TO_ZERO)
 
-    # f32/f16/bf16 -> f8e4m3fn/f8e5m2 (.rp) not supported.
+    # f32/f16/bf16 -> f8e4m3fn/f8e5m2/f4e2m1fn (.rp) not supported.
     with self.assertRaises(ValueError):
       run(mgpu.Rounding.TO_POSITIVE_INFINITY)
 

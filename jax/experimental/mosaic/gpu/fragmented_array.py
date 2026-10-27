@@ -3009,10 +3009,10 @@ class FragmentedArray:
             f" rounding mode{'' if len(allowed_roundings) == 1 else 's'} are"
             f" supported for {cur_dtype} -> {new_dtype}, but got {rounding}"
         )
-    def get_fp8_rounding(fp8_type: ir.Type) -> str:
-      assert fp8_type in f8_types
+    def get_narrow_fp_rounding(narrow_type: ir.Type) -> str:
+      assert narrow_type in f8_types or narrow_type == f4e2m1fn
       allowed_rounding: tuple[Rounding, ...]
-      if fp8_type == f8e8m0fnu:
+      if narrow_type == f8e8m0fnu:
         if rounding is None:
           return Rounding.TO_POSITIVE_INFINITY.ptx
         allowed_rounding = (Rounding.TO_ZERO, Rounding.TO_POSITIVE_INFINITY)
@@ -3020,8 +3020,8 @@ class FragmentedArray:
         if rounding is None:
           return Rounding.TO_NEAREST_EVEN.ptx
         allowed_rounding = (Rounding.TO_NEAREST_EVEN,)
-        # .rz rounding for cvt.{e4m3x2,e5m2x2}.{f32,f16x2,bf16x2} was added in
-        # PTX ISA 9.4 and is only supported on sm_107f.
+        # .rz rounding for cvt.{e4m3x2,e5m2x2,e2m1x2}.{f32,f16x2,bf16x2} was
+        # added in PTX ISA 9.4 and is only supported on sm_107f.
         if arch == utils.RUBIN and ptx_isa_version >= 94:
           allowed_rounding += (Rounding.TO_ZERO,)
       check_supported_rounding(allowed_rounding)
@@ -3030,7 +3030,7 @@ class FragmentedArray:
     # f8 <-> f32
     if cur_dtype == f32 and new_dtype in f8_types:
       name_8 = f8_ptx_names[new_dtype]
-      ptx_round = get_fp8_rounding(new_dtype)
+      ptx_round = get_narrow_fp_rounding(new_dtype)
       return pairwise_convert(f"cvt.{ptx_round}.satfinite.{name_8}x2.f32")
     # No f8 type supports direct conversion to f32, so we go via 16-bit floats.
     if cur_dtype in f8_types and new_dtype == f32:
@@ -3040,7 +3040,7 @@ class FragmentedArray:
     if new_dtype in f8_types and cur_dtype in supported_f8_f16[new_dtype]:
       name_16 = f16_ptx_names[cur_dtype]
       name_8 = f8_ptx_names[new_dtype]
-      ptx_round = get_fp8_rounding(new_dtype)
+      ptx_round = get_narrow_fp_rounding(new_dtype)
       return pairwise_convert(f"cvt.{ptx_round}.satfinite.{name_8}x2.{name_16}x2")
     if cur_dtype in f8_types and new_dtype in supported_f8_f16[cur_dtype]:
       name_8 = f8_ptx_names[cur_dtype]
@@ -3098,20 +3098,24 @@ class FragmentedArray:
     ):
       f8_type = new_dtype if cur_dtype == f4e2m1fn else cur_dtype
       if f16 in supported_f8_f16[f8_type]:
-        return self.astype(f16).astype(new_dtype)
+        return self.astype(f16).astype(new_dtype, rounding=rounding)
       if ptx_isa_version >= 92:
         assert bf16 in supported_f8_f16[f8_type]
-        return self.astype(bf16).astype(new_dtype)
-      return self.astype(f32).astype(new_dtype)
+        return self.astype(bf16).astype(new_dtype, rounding=rounding)
+      return self.astype(f32).astype(new_dtype, rounding=rounding)
     if cur_dtype == f4e2m1fn and new_dtype == f32:
       return self.astype(f16).astype(f32)
     if new_dtype == f4e2m1fn and cur_dtype in {bf16, f16}:
       if ptx_isa_version >= 91:
-        return pairwise_convert(f"cvt.rn.satfinite.e2m1x2.{f16_ptx_names[cur_dtype]}x2")
+        ptx_round = get_narrow_fp_rounding(new_dtype)
+        return pairwise_convert(
+            f"cvt.{ptx_round}.satfinite.e2m1x2.{f16_ptx_names[cur_dtype]}x2"
+        )
       else:
-        return self.astype(f32).astype(f4e2m1fn)
+        return self.astype(f32).astype(f4e2m1fn, rounding=rounding)
     if new_dtype == f4e2m1fn and cur_dtype == f32:
-      return pairwise_convert("cvt.rn.satfinite.e2m1x2.f32")
+      ptx_round = get_narrow_fp_rounding(new_dtype)
+      return pairwise_convert(f"cvt.{ptx_round}.satfinite.e2m1x2.f32")
     if new_dtype == f4e2m1fn or cur_dtype == f4e2m1fn:
       raise NotImplementedError(f"Unimplemented cast from {cur_dtype} to {new_dtype}")
 
