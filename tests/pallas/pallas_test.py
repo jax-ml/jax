@@ -2455,6 +2455,50 @@ class PallasCallAutodifferentiationTest(ptu.PallasTest):
     jtu.check_grads(pallas_impl, (x,), modes=["fwd"], order=2,
                     atol=grad_tol, rtol=grad_tol)
 
+  def test_jvp_with_integer_input(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8,), floatx),
+    )
+    def scale(x_ref, n_ref, o_ref):
+      o_ref[...] = jnp.sin(x_ref[...]) * n_ref[...].astype(floatx)
+
+    k1, k2 = random.split(random.key(0))
+    x = random.normal(k1, (8,))
+    t = random.normal(k2, (8,))
+    n = jnp.arange(8, dtype=intx)
+    out, out_tangent = jax.jvp(lambda x: scale(x, n), (x,), (t,))
+    out_ref, out_tangent_ref = jax.jvp(
+        lambda x: jnp.sin(x) * n.astype(floatx), (x,), (t,)
+    )
+    np.testing.assert_allclose(out, out_ref, atol=self.tol, rtol=self.tol)
+    np.testing.assert_allclose(
+        out_tangent, out_tangent_ref, atol=self.tol, rtol=self.tol
+    )
+
+  def test_jvp_with_integer_output(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(
+            jax.ShapeDtypeStruct((8,), floatx),
+            jax.ShapeDtypeStruct((8,), intx),
+        ),
+    )
+    def sin_and_sign(x_ref, y_ref, s_ref):
+      y_ref[...] = jnp.sin(x_ref[...])
+      s_ref[...] = (x_ref[...] > 0).astype(intx)
+
+    k1, k2 = random.split(random.key(0))
+    x = random.normal(k1, (8,))
+    t = random.normal(k2, (8,))
+    (y, s), (y_dot, s_dot) = jax.jvp(sin_and_sign, (x,), (t,))
+    np.testing.assert_allclose(y, jnp.sin(x), atol=self.tol, rtol=self.tol)
+    np.testing.assert_allclose(
+        y_dot, jnp.cos(x) * t, atol=self.tol, rtol=self.tol
+    )
+    np.testing.assert_array_equal(s, (x > 0).astype(intx))
+    self.assertEqual(s_dot.dtype, dtypes.float0)
+
   def test_custom_jvp_call(self):
     @functools.partial(jax.custom_jvp, nondiff_argnums=(1,))
     def softmax(x, axis=-1):

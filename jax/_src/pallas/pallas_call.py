@@ -26,12 +26,14 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
+from jax._src import dtypes
 from jax._src import effects
+from jax._src import flattree as ft
 from jax._src import numpy as jnp
 from jax._src import state
-from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import typing as jax_typing
+from jax._src import xla_metadata
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -47,7 +49,6 @@ from jax._src.shard_map import P, _as_manual_mesh, shard_map
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.traceback_util import api_boundary
-from jax._src import xla_metadata
 from jax._src.util import (
     safe_map,
     safe_zip,
@@ -267,9 +268,19 @@ def _pallas_call_jvp_rule(
     raise NotImplementedError("pallas_call with a mesh does not support JVP")
   nonzero_tangents = [not isinstance(t, ad_util.Zero) for t in tangents]
   tangents = [t for t in tangents if type(t) is not ad_util.Zero]
-  nonzero_tangents_with_outputs = nonzero_tangents + [True] * grid_mapping.num_outputs
+  # Outputs whose tangents are float0 (integers, for example) get no tangent
+  # output: their tangents are symbolic zeros.
+  nonzero_out_tangents = [
+      not (
+          isinstance(a, jax_core.ShapedArray)
+          and a.to_tangent_aval().dtype == dtypes.float0
+      )
+      for a in out_avals
+  ]
   closed_jaxpr = jaxpr
-  jvp_jaxpr_, _ = ad.jvp_jaxpr(closed_jaxpr, nonzero_tangents_with_outputs, [])
+  jvp_jaxpr_, _ = ad.jvp_jaxpr(
+      closed_jaxpr, nonzero_tangents + nonzero_out_tangents, []
+  )
   jvp_jaxpr, () = jvp_jaxpr_, jvp_jaxpr_.consts  # TODO consts
   # `pallas_call` takes in inputs and returns outputs but its jaxpr *does not*.
   # `pallas_call` takes in a stateful jaxpr, meaning the jaxpr accepts input
@@ -287,11 +298,12 @@ def _pallas_call_jvp_rule(
     print(f"\nThe jaxpr for the jvp of pallas_call {debug_info.func_src_info}:")
     print(jvp_jaxpr)
   in_bms, out_bms = split_list(grid_mapping.block_mappings, [len(primals)])
-  jvp_bms = (*in_bms, *in_bms, *out_bms, *out_bms)
+  tangent_in_bms = [bm for bm, nz in zip(in_bms, nonzero_tangents) if nz]
+  tangent_out_bms = [bm for bm, nz in zip(out_bms, nonzero_out_tangents) if nz]
   jvp_grid_mapping = grid_mapping.replace(
-      block_mappings=jvp_bms,
-      num_inputs=grid_mapping.num_inputs * 2,
-      num_outputs=grid_mapping.num_outputs * 2,
+      block_mappings=(*in_bms, *tangent_in_bms, *out_bms, *tangent_out_bms),
+      num_inputs=len(in_bms) + len(tangent_in_bms),
+      num_outputs=len(out_bms) + len(tangent_out_bms),
   )
   if cost_estimate is not None:
     jvp_cost_estimate = CostEstimate(
@@ -312,11 +324,23 @@ def _pallas_call_jvp_rule(
       input_output_aliases=(),
       compiler_params=compiler_params,
       cost_estimate=jvp_cost_estimate,
-      out_avals=(*out_avals, *out_avals),
+      out_avals=(
+          *out_avals,
+          *(
+              a.to_tangent_aval()
+              for a, nz in zip(out_avals, nonzero_out_tangents)
+              if nz
+          ),
+      ),
       metadata=metadata,
       name=name,
   )
-  out_primals, out_tangents = split_list(out_flat, [len(out_flat) // 2])
+  out_primals, nz_out_tangents = split_list(out_flat, [len(out_avals)])
+  nz_out_tangents_ = iter(nz_out_tangents)
+  out_tangents = [
+      next(nz_out_tangents_) if nz else ad_util.p2tz(p)
+      for p, nz in zip(out_primals, nonzero_out_tangents)
+  ]
   return out_primals, out_tangents
 
 
