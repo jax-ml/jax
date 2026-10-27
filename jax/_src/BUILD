@@ -269,6 +269,7 @@ pytype_strict_library(
         ":jaxpr_util",
         ":layout",
         ":literals",
+        ":lowering_cache",
         ":mesh",
         ":mlir",
         ":monitoring",
@@ -421,12 +422,28 @@ pytype_strict_library(
     srcs = ["compilation_cache.py"],
     visibility = ["//jax:internal"] + jax_visibility("compilation_cache"),
     deps = [
+        ":cache_interface",
         ":cache_key",
-        ":compilation_cache_interface",
         ":config",
         ":lru_cache",
         ":monitoring",
         ":path",
+        "//jax/_src/lib",
+    ] + py_deps("numpy") + py_deps("zstandard"),
+)
+
+pytype_strict_library(
+    name = "lowering_cache",
+    srcs = ["lowering_cache.py"],
+    visibility = ["//jax:internal"] + jax_visibility("compilation_cache"),
+    deps = [
+        ":cache_interface",
+        ":config",
+        ":core",
+        ":lru_cache",
+        ":stages",
+        ":xla_bridge",
+        "//jax:version",
         "//jax/_src/lib",
     ] + py_deps("numpy") + py_deps("zstandard"),
 )
@@ -442,9 +459,12 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "compilation_cache_interface",
-    srcs = ["compilation_cache_interface.py"],
-    deps = [":util"],
+    name = "cache_interface",
+    srcs = ["cache_interface.py"],
+    deps = [
+        ":config",
+        ":util",
+    ] + py_deps("zstandard"),
 )
 
 py_library_providing_imports_info(
@@ -500,7 +520,7 @@ pytype_strict_library(
     name = "lru_cache",
     srcs = ["lru_cache.py"],
     deps = [
-        ":compilation_cache_interface",
+        ":cache_interface",
         ":path",
     ] + py_deps("filelock"),
 )

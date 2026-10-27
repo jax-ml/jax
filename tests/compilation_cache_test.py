@@ -43,7 +43,7 @@ from jax._src import path as pathlib
 from jax._src import test_util as jtu
 from jax._src import test_warning_util
 from jax._src import xla_bridge
-from jax._src.compilation_cache_interface import CacheInterface
+from jax._src.cache_interface import CacheInterface
 from jax._src.lib import xla_client as xc
 from jax.sharding import PartitionSpec as P
 import numpy as np
