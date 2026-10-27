@@ -2558,6 +2558,36 @@ class ShapedArray(AbstractValue):
             if sh_names else
             P(unreduced=u_names, reduced=r_names, unreduced_kind=u_kind))
 
+  @property
+  def is_high(self) -> bool:
+    return config.hijax_unreduced.value and bool(self.sharding.spec.unreduced)
+
+  def lo_ty(self) -> list[AbstractValue]:
+    if not self.is_high:
+      return [self]
+    mesh = self.sharding.mesh
+    spec = self.sharding.spec
+    u_axes = order_wrt_mesh(mesh, spec.unreduced)
+    u_shape = tuple(mesh.shape[a] for a in u_axes)
+    lo_spec = P(*u_axes, *spec.partitions, reduced=spec.reduced)
+    return [self.update(shape=(*u_shape, *self.shape),
+                        sharding=self.sharding.update(spec=lo_spec))]
+
+  def lower_val(self, hi_val: Any, /) -> list[Any]:
+    if not self.is_high:
+      return [hi_val]
+    from jax._src.array import UnreducedArray  # pyrefly: ignore[missing-import]
+    assert isinstance(hi_val, UnreducedArray)
+    return [hi_val._lo_val]
+
+  def raise_val(self, *lo_vals) -> Any:
+    lo_val, = lo_vals
+    if not self.is_high:
+      return lo_val
+    from jax._src.array import UnreducedArray  # pyrefly: ignore[missing-import]
+    assert not isinstance(lo_val, UnreducedArray)
+    return UnreducedArray(self, lo_val)
+
   _bool    = concretization_function_error(bool)
   _int     = concretization_function_error(int, True)
   _float   = concretization_function_error(float, True)

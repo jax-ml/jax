@@ -6678,6 +6678,41 @@ dot_general_p = standard_primitive(
 )
 
 
+def _dot_general_is_high(*avals, out_sharding=None, **__):
+  return (config.hijax_unreduced.value and out_sharding is not None and
+          bool(out_sharding.spec.unreduced))
+dot_general_p.is_high = _dot_general_is_high  # type: ignore[method-assign]
+
+
+def _dot_general_to_lojax(lhs, rhs, *, dimension_numbers, precision,
+                          preferred_element_type, out_sharding):
+  assert out_sharding.spec.unreduced
+  from jax._src import shard_map  # pyrefly: ignore[missing-import]
+  lhs_aval, rhs_aval = core.typeof(lhs), core.typeof(rhs)
+  out_aval = dot_general_p.abstract_eval(
+      lhs_aval, rhs_aval, dimension_numbers=dimension_numbers,
+      precision=precision, preferred_element_type=preferred_element_type,
+      out_sharding=out_sharding)[0]
+  lo_lhs, = lhs_aval.lower_val(lhs)
+  lo_rhs, = rhs_aval.lower_val(rhs)
+
+  u_axes = core.order_wrt_mesh(
+      out_aval.sharding.mesh, out_aval.sharding.spec.unreduced)
+  out_specs = P(*u_axes, *(None,) * out_aval.ndim)
+
+  def _local_dot(l, r):
+    out = dot(
+        l, r, dimension_numbers=dimension_numbers, precision=precision,
+        preferred_element_type=preferred_element_type,
+        out_sharding=P(*out_sharding.spec.partitions))
+    return expand_dims(out, tuple(range(len(u_axes))))
+
+  lo_out = shard_map.shard_map(_local_dot, out_specs=out_specs,
+                               axis_names=frozenset(u_axes))(lo_lhs, lo_rhs)
+  return out_aval.raise_val(lo_out)
+dot_general_p.to_lojax = _dot_general_to_lojax  # type: ignore[method-assign]
+
+
 def _dot_general_remat(trace, lhs, rhs, **params):
   from jax._src.ad_checkpoint import primal_left_tangent_right
   dot = partial(dot_general_p.bind, **params)

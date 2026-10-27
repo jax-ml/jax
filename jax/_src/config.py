@@ -2515,3 +2515,11 @@ jax_accurate_erf_inv = bool_state(
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
+
+hijax_unreduced = bool_state(
+    name='hijax_unreduced',
+    default=False,
+    help='Lower unreduced shardings via HiJAX instead of MLIR/Shardy.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)

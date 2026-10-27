@@ -1026,7 +1026,7 @@ class BlockMapping:
         _convert_block_spec_to_block_mapping(
             bs,
             self.origin,
-            lo_array_aval,
+            lo_array_aval,  # type: ignore
             index_map_avals=index_map_avals,
             index_map_tree=index_map_tree,
             grid=grid,
