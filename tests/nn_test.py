@@ -796,6 +796,57 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertLen(res, 1)
     self.assertEqual(sum(a.size for a, _ in res), 4)
 
+  def testLogSumExpGrad(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    jtu.check_grads(nn.logsumexp, (x,), order=2, atol=5e-3)
+    jtu.check_grads(
+        partial(nn.logsumexp, keepdims=True), (x,), order=2, atol=5e-3
+    )
+
+    x2 = jnp.array([[5.5, 1.3], [-4.2, 0.9]])
+    jtu.check_grads(partial(nn.logsumexp, axis=0), (x2,), order=2, atol=5e-3)
+    jtu.check_grads(partial(nn.logsumexp, axis=1), (x2,), order=2, atol=5e-3)
+    jtu.check_grads(
+        partial(nn.logsumexp, axis=-1, keepdims=True), (x2,), order=2, atol=5e-3
+    )
+
+  def testLogSumExpWhereGrad(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    m = jnp.array([True, False, True, True])
+    jtu.check_grads(partial(nn.logsumexp, where=m), (x,), order=2, atol=5e-3)
+
+  def testLogSumExpGradResiduals(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    res = ad_checkpoint.saved_residuals(nn.logsumexp, x)
+    self.assertLen(res, 1)
+    res_sign = ad_checkpoint.saved_residuals(
+        partial(nn.logsumexp, return_sign=True), x
+    )
+    self.assertLen(res_sign, 1)
+
+  def testLogSumExpReturnSignGrad(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    jtu.check_grads(
+        lambda x_: nn.logsumexp(x_, return_sign=True)[0], (x,), order=2,
+        atol=5e-3
+    )
+    # Gradient of sign should always be everywhere zero
+    _, sign_dot = jax.jvp(
+        lambda x_: nn.logsumexp(x_, return_sign=True)[1], (x,),
+        (jnp.ones_like(x),)
+    )
+    self.assertAllClose(sign_dot, jnp.zeros_like(sign_dot))
+    sign_grad = jax.grad(
+        lambda x_: nn.logsumexp(x_, return_sign=True)[1].sum()
+    )(x)
+    self.assertAllClose(sign_grad, jnp.zeros_like(sign_grad))
+
+  def testLogSumExpFallbackGrad(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    b = jnp.array([0.5, 1.0, 2.0, 0.1])
+    jtu.check_grads(partial(nn.logsumexp, b=b), (x,), order=2, atol=5e-3)
+    jtu.check_grads(lambda b_: nn.logsumexp(x, b=b_), (b,), order=1, atol=5e-3)
+
   def testStandardizeWhereMask(self):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
     m = jnp.array([True, False, True, True])
