@@ -47,6 +47,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed {func}`jax.numpy.modf` returning `nan` as the fractional part for
     infinite inputs; it now returns a signed zero, matching NumPy
     ({jax-issue}`#41102`).
+  * Fixed {func}`jax.checkpoint` corrupting saved residuals of floating-point
+    types narrower than 16 bits that the forward pass also reads: for example,
+    `float8_e4m3fn` values of magnitude 256 to 448 became NaN and subnormals
+    became zero, in both the forward value and the gradient.
 
 ## JAX 0.12.0.1 (October 23, 2026)
 
