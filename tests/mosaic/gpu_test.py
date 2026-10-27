@@ -6922,6 +6922,36 @@ class FragmentedArrayTest(TestCase):
     )(inp)
     np.testing.assert_allclose(result, np.full((128, 32), 3.14, np.float32))
 
+  @parameterized.product(op_name=("add", "sub", "mul", "fma"))
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_packed_f32x2_arith(self, op_name):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("Packed f32x2 instructions require sm_100+")
+    op = {
+        "add": lambda a, b, _: a + b,
+        "sub": lambda a, b, _: a - b,
+        "mul": lambda a, b, _: a * b,
+        "fma": lambda a, b, acc: a * b + acc,
+    }[op_name]
+
+    def kernel(ctx, src, src2, src3, dst, _):
+      del ctx
+      s1 = fa.FragmentedArray.load_strided(src, vec_size=2)
+      s2 = fa.FragmentedArray.load_strided(src2, vec_size=2)
+      s3 = fa.FragmentedArray.load_strided(src3, vec_size=2)
+      op(s1, s2, s3).store_untiled(dst)
+
+    x, y, z = (
+        self.prng.uniform(-1, 1, (2 * 128,)).astype(jnp.float32)
+        for _ in range(3)
+    )
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (x, y, z), x, ())
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      out = f(x, y, z).block_until_ready()
+    instr = "fma.rn" if op_name == "fma" else op_name
+    self.assertEqual(ptx().count(f"{instr}.f32x2 "), 1)
+    np.testing.assert_allclose(out, op(x, y, z), rtol=1e-6, atol=1e-6)
+
   @parameterized.product(in_shape=((128, 128), (128, 64), (64, 128)))
   def test_strided_load_store(self, in_shape):
     def kernel(ctx, *args):
