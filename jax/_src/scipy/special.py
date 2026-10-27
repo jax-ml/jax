@@ -4119,19 +4119,20 @@ def _hyp1f1_a_derivative(a, b, x):
   precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
-    serie, k, term = state
-    serie += term * (digamma(a + k) - digamma(a))
+    serie, k, term, h = state
+    serie += term * h
     term *= (a + k) / (b + k) * x / (k + 1)
+    h += 1 / (a + k)
     k += 1
 
-    return serie, k, term
+    return serie, k, term, h
 
   def cond(state):
-    serie, k, term = state
+    serie, k, term, _ = state
 
     return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
-  init = 0, 1, a / b * x
+  init = 0, 1, a / b * x, 1 / a
 
   return lax.while_loop(cond, body, init)[0]
 
@@ -4147,19 +4148,20 @@ def _hyp1f1_b_derivative(a, b, x):
   precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
-    serie, k, term = state
-    serie += term * (digamma(b) - digamma(b + k))
+    serie, k, term, h = state
+    serie += term * h
     term *= (a + k) / (b + k) * x / (k + 1)
+    h -= 1 / (b + k)
     k += 1
 
-    return serie, k, term
+    return serie, k, term, h
 
   def cond(state):
-    serie, k, term = state
+    serie, k, term, _ = state
 
     return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
-  init = 0, 1, a / b * x
+  init = 0, 1, a / b * x, -1 / b
 
   return lax.while_loop(cond, body, init)[0]
 
