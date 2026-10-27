@@ -41,6 +41,7 @@ cc_library(
         "//jax:internal",
     ] + jax_visibility("jaxlib/cpu/lapack_kernels"),
     deps = [
+        ":thread_pool",
         "//jaxlib:ffi_helpers",
         "//jaxlib:tridiagonal_solve_perturbed",
         "@com_google_absl//absl/algorithm:container",
@@ -48,7 +49,6 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform",
         "@xla//xla/ffi/api:c_api",
@@ -116,6 +116,22 @@ cc_library(
         "@xla//xla/ffi/api:ffi",
     ],
     alwayslink = 1,
+)
+
+cc_library(
+    name = "thread_pool",
+    hdrs = ["thread_pool.h"],
+    # compatible with libtpu
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/synchronization",
+        "@eigen_archive//:eigen3",
+        "@xla//xla/backends/cpu/runtime:work_queue",
+        "@xla//xla/ffi/api:ffi",
+        "@xla//xla/tsl/concurrency:async_value",
+        "@xla//xla/tsl/lib/math:math_util",
+    ],
 )
 
 cc_library(

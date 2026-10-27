@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
+import concurrent.futures
 from functools import partial
 import itertools
-from collections.abc import Iterator
 import numpy as np
 import scipy
 import scipy.linalg
@@ -3086,6 +3087,30 @@ class LaxLinalgTest(jtu.JaxTestCase):
     x = jnp.zeros((1, 4))
     with self.assertRaisesRegex(ValueError, f"The input to linalg.{func.__name__} must have shape"):
       _ = func(x)
+
+  def test_concurrent_batched_lapack_does_not_deadlock(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41265:
+    # multiple independent batched LAPACK calls becoming ready simultaneously
+    # inside a loop on the CPU intra-op thread pool must not deadlock.
+    def body(_, xs):
+      p = sum(xs)
+      return tuple(jnp.linalg.cholesky(x + p) for x in xs[:-1]) + (
+          jnp.linalg.cholesky(p),
+      )
+
+    k = 8
+    xs = tuple(
+        jnp.broadcast_to(
+            jnp.eye(32, dtype=jnp.float32) * (i + 2.0), (256, 32, 32)
+        )
+        for i in range(k)
+    )
+    run = jax.jit(lambda xs: jax.lax.fori_loop(0, 50, body, xs))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+      futures = [executor.submit(run, xs) for _ in range(16)]
+      for f in futures:
+        for out in jax.block_until_ready(f.result()):
+          self.assertTrue(jnp.all(jnp.isfinite(out)))
 
 
 if __name__ == "__main__":

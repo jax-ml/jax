@@ -29,8 +29,8 @@ limitations under the License.
 #include "absl/base/dynamic_annotations.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/statusor.h"
-#include "absl/synchronization/blocking_counter.h"
 #include "absl/types/span.h"
+#include "jaxlib/cpu/thread_pool.h"
 #include "jaxlib/ffi_helpers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
@@ -112,25 +112,7 @@ static ffi::Error ParallelBatchMap(
     ffi::ThreadPool thread_pool, int64_t batch_count, int64_t chunk_size,
     absl::FunctionRef<void(int64_t, int64_t)> run_chunk) {
 #ifdef PLATFORM_GOOGLE
-  if (chunk_size >= batch_count) {
-    run_chunk(0, batch_count);
-    return ffi::Error::Success();
-  } else {
-    int64_t num_tasks = (batch_count + chunk_size - 1) / chunk_size;
-    absl::BlockingCounter counter(num_tasks);
-
-    for (int64_t i = 0; i < batch_count; i += chunk_size) {
-      int64_t current_chunk_size = std::min(chunk_size, batch_count - i);
-
-      thread_pool.Schedule([run_chunk, &counter, i, current_chunk_size]() {
-        run_chunk(i, current_chunk_size);
-        counter.DecrementCount();
-      });
-    }
-
-    counter.Wait();
-    return ffi::Error::Success();
-  }
+  return ParallelFor(thread_pool, batch_count, chunk_size, run_chunk);
 #else
   // Parallelizing LAPACK routines over a thread pool is disabled in open-source
   // builds because it can lead to performance regressions or crashes due to
