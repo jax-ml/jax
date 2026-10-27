@@ -104,7 +104,7 @@ def create_mx_configs_if_available(mode):
 class NNFunctionsTest(jtu.JaxTestCase):
 
   @parameterized.product(
-      mode=["mxfp8", "mxfp4"],
+      mode=["mxfp8", "mxfp4", "nvfp4"],
       contract=[160, 96],
       lhs_non_contract=[240, 100],
       dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
@@ -114,6 +114,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires GPU or CPU.")
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
+    if jtu.is_device_rocm() and mode == "nvfp4":
+      raise unittest.SkipTest("nvfp4 is not supported on ROCm")
     # Check if float8_e8m0fnu is available
     configs = create_mx_configs_if_available(mode)
     batch, rhs_non_contract = 4, 256
@@ -125,8 +127,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
                            preferred_element_type=dtype)
     out_ref = jnp.matmul(a.astype(jnp.float32),
                          jnp.transpose(b, (0, 2, 1)).astype(jnp.float32))
+    if mode == "nvfp4":
+      kwargs = {"rtol": 0.5, "atol": 0.5}
+    else:
+      kwargs = {"rtol": 1e-3, "atol": 1e-3}
     self.assertArraysAllClose(
-        out, out_ref.astype(dtype), rtol=1e-3, atol=1e-3
+        out, out_ref.astype(dtype), **kwargs
     )
 
   @parameterized.product(
