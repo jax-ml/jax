@@ -6081,6 +6081,31 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     )(x)
     np.testing.assert_array_equal(y, x + 1)
 
+  @parameterized.parameters(1, 2, 3, 5, 8)
+  def test_switch(self, num_branches):
+    def kernel(idx_ref, x_ref, o_ref):
+      branches = [lambda x, i=i: x + jnp.float32(i) for i in range(num_branches)]
+      o_ref[...] = lax.switch(idx_ref[0], branches, x_ref[...])
+
+    f = jax.jit(
+        self.pallas_call(
+            kernel,
+            in_specs=[
+                pl.BlockSpec(memory_space=pltpu.SMEM),
+                pl.BlockSpec(memory_space=pltpu.VMEM),
+            ],
+            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+            out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        )
+    )
+    x = jnp.zeros((8, 128), jnp.float32)
+    for index in range(-2, num_branches + 2):
+      out = f(jnp.array([index], jnp.int32), x)
+      expected = np.clip(index, 0, num_branches - 1)
+      np.testing.assert_array_equal(
+          out, np.full((8, 128), expected), err_msg=f'{index=}'
+      )
+
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
