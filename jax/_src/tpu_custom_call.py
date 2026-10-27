@@ -428,7 +428,12 @@ def _tpu_custom_call_lowering(
     out_avals: Any,
     input_output_aliases: tuple[tuple[int, int], ...],
     metadata: Any | None,
+    buffers_untouched: bool = False,
 ) -> ir.OpResultList:
+  if buffers_untouched and config.device_type != "sparsecore":
+    raise ValueError(
+        "buffers_untouched= is only supported for SparseCore kernels"
+    )
   result_types, _ = mlir.ir_tree_registry.flatten([mlir.aval_to_ir_types(ctx.module_context, aval) for aval in out_avals])
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
@@ -472,6 +477,15 @@ def _tpu_custom_call_lowering(
     config = config.downgrade_lowered_module_asm(ir_version)
   # TODO(b/536052236): Always use core_ids after 2026-11-06.
   use_core_ids = not ctx.is_forward_compat()
+  # Leave the layouts of buffers the kernel never touches to XLA, unless
+  # SparseCore tiling flattens them in row major order. Exported modules and
+  # older libtpu keep them row major, since older compilers reject others.
+  any_layout = (
+      buffers_untouched
+      and config.tiling is not Tiling.SPARSE_CORE
+      and not ctx.is_forward_compat()
+      and cloud_tpu_init.is_libtpu_at_least("0.0.52")
+  )
   call = mlir.custom_call(
       "tpu_custom_call",
       result_types=result_types,
@@ -480,8 +494,8 @@ def _tpu_custom_call_lowering(
       api_version=1,
       has_side_effect=has_side_effects != TpuSideEffectType.PURE,
       operand_output_aliases=dict(input_output_aliases),
-      operand_layouts=_avals_to_layouts(ctx.avals_in),
-      result_layouts=_avals_to_layouts(ctx.avals_out),
+      operand_layouts=None if any_layout else _avals_to_layouts(ctx.avals_in),
+      result_layouts=None if any_layout else _avals_to_layouts(ctx.avals_out),
       result_shapes=result_shapes,
       extra_attributes=extra_attributes,
   )
@@ -902,6 +916,7 @@ def lower_module_to_custom_call(
     needs_layout_passes: bool | None = None,
     tiling: Tiling | None = None,
     opt_level: OptLevel | None = None,
+    buffers_untouched: bool = False,
 ) -> Sequence[ir.Value]:
   if isinstance(has_side_effects, bool):
     has_side_effects = (
@@ -941,6 +956,7 @@ def lower_module_to_custom_call(
       out_avals=out_type,
       input_output_aliases=input_output_aliases,
       metadata=metadata,
+      buffers_untouched=buffers_untouched,
   )
 
 

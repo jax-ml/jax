@@ -295,6 +295,7 @@ def _lower_to_custom_call(
     name: str,
     jax_mesh,
     collective_id_tag: Hashable | None = None,
+    buffers_untouched: bool = False,
 ):
   input_output_aliases = tuple(
       (a[0] + num_dynamic_grid_bounds, a[1]) for a in input_output_aliases
@@ -387,6 +388,7 @@ def _lower_to_custom_call(
       needs_layout_passes=mosaic_params.needs_layout_passes,
       tiling=_resolve_tiling(mosaic_params, kernel_type),
       opt_level=mosaic_params.opt_level,
+      buffers_untouched=buffers_untouched,
   )
   _maybe_cast_to_bool = (
       lambda x, aval: x.astype(jax.numpy.bool_)
@@ -609,6 +611,31 @@ def _rewrite_jaxpr_for_lowering(
   return new_jaxpr
 
 
+def _buffers_untouched(jaxpr: jax_core.Jaxpr, num_scratch: int) -> bool:
+  """Returns whether the kernel never reads or writes its operands or outputs.
+
+  The read and write effects of ``pltpu.touch`` do not count: it only adds a
+  dependency on the ref. Such a kernel, like a lock that orders work around a
+  buffer, works with any layout of its buffers, as long as they live in HBM.
+  """
+  buffers = jaxpr.invars[: len(jaxpr.invars) - num_scratch]
+  if not buffers or any(
+      not isinstance(v.aval, state.AbstractRef)
+      or pallas_core.get_memory_space_aval(v.aval)
+      not in (tpu_core.MemorySpace.HBM, pallas_core.MemorySpace.ANY)
+      for v in buffers
+  ):
+    return False
+  touched = {
+      effect.input
+      for eqn in jaxpr.eqns
+      if eqn.primitive is not tpu_primitives.touch_p
+      for effect in eqn.effects
+      if isinstance(effect, state_types.RefEffect)
+  }
+  return touched.isdisjoint(buffers)
+
+
 def mpmd_map_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
@@ -787,6 +814,14 @@ def mpmd_map_tpu_lowering_rule(
       ]
   )
 
+  buffers_untouched = all(
+      mesh.core_type in (
+          tpu_core.CoreType.SC_SCALAR_SUBCORE,
+          tpu_core.CoreType.SC_VECTOR_SUBCORE,
+      )
+      and _buffers_untouched(jaxpr, num_scratch)
+      for mesh, jaxpr in zip(meshes, jaxprs, strict=True)
+  )
   return _lower_to_custom_call(
       ctx,
       *in_nodes,
@@ -802,6 +837,7 @@ def mpmd_map_tpu_lowering_rule(
       name=name,
       jax_mesh=jax_mesh,
       collective_id_tag=tag,
+      buffers_untouched=buffers_untouched,
   )
 
 

@@ -3105,6 +3105,56 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, flag_true), x)
     np.testing.assert_array_equal(kernel(x, flag_false), jnp.zeros_like(x))
 
+  def test_untouched_buffer_layout(self):
+    # A kernel that only orders work around a buffer, like an RDMA lock, never
+    # touches it. Under TC tiling its custom call leaves the buffer's layout to
+    # XLA; SparseCore tiling flattens buffers in row major order.
+    if jtu.is_device_tpu(8, "i"):
+      mesh = plsc.VectorSubcoreMesh(
+          core_axis_name="core",
+          subcore_axis_name="subcore",
+          num_cores=1,
+          num_subcores=1,
+      )
+    else:
+      mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
+
+    def lock(x):
+      ref = jax.new_ref(x, memory_space=pltpu.HBM)
+      self.kernel(mesh=mesh)(pltpu.touch)(ref)
+      return jax.freeze(ref)
+
+    def copy(x):
+      return self.kernel(mesh=mesh, out_type=x)(pltpu.sync_copy)(x)
+
+    def touch_and_read(x):
+      # Every buffer is touched, so only the copy's read of x_ref counts.
+      def body(x_ref):
+        pltpu.touch(x_ref)
+        y_ref = jax.empty_ref(
+            jax.ShapeDtypeStruct(x_ref.shape, x_ref.dtype),
+            memory_space=pltpu.HBM,
+        )
+        pltpu.sync_copy(x_ref, y_ref)
+
+      ref = jax.new_ref(x, memory_space=pltpu.HBM)
+      self.kernel(mesh=mesh)(body)(ref)
+      return jax.freeze(ref)
+
+    x = jnp.arange(8 * 16 * 128, dtype=jnp.float32).reshape(8, 16, 128)
+    lock_hlo = jax.jit(lock).lower(x).as_text()
+    if self.USE_TC_TILING and jtu.is_libtpu_at_least("0.0.52"):
+      self.assertNotIn("operand_layouts", lock_hlo)
+    else:
+      self.assertIn("operand_layouts", lock_hlo)
+    self.assertIn("operand_layouts", jax.jit(copy).lower(x).as_text())
+    # Only the effects of pltpu.touch are ignored, not other uses of the ref.
+    self.assertIn("operand_layouts", jax.jit(touch_and_read).lower(x).as_text())
+    # An exported module may meet an older compiler.
+    self.assertIn(
+        "operand_layouts", jax.export.export(jax.jit(lock))(x).mlir_module()
+    )
+
 
 class VectorSubcoreTestWithTCTiling(VectorSubcoreTest):
   USE_TC_TILING = True
