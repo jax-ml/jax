@@ -13,6 +13,15 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Changes
+
+  * Semaphores passed between kernels (for example the semaphore of an async
+    copy that one `pallas_call` starts and another waits on) can now appear in
+    differentiated functions. Like integers, they have `float0` tangents.
+    {func}`jax.checkpoint` may recompute the kernels that use them, so keep the
+    start and the wait of an async operation inside the same checkpointed
+    function.
+
 ### Mosaic GPU
 
 * New features

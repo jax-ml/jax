@@ -995,6 +995,39 @@ def make_stateful_async_slice(i: int):
   return copy_start, copy_done
 
 
+class PallasCallAsyncAutodiffTest(parameterized.TestCase):
+  """Gradients of functions that pass semaphores between kernels."""
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('DMAs only guaranteed to work on TPU v4+')
+
+  @staticmethod
+  def layer(w, async_copy):
+    # Integer data computed from `w`, like MoE routing counts: no tangent.
+    counts = (w > 0).astype(jnp.int32)
+    if async_copy:
+      copy_start, copy_done = make_async_copy()
+      counts, fut = copy_start(counts)
+    y = jnp.sin(w)  # Overlaps the copy.
+    if async_copy:
+      counts = copy_done(counts, fut)
+    return y * counts.astype(w.dtype)
+
+  def test_grad_of_remat(self):
+    # The backward pass recomputes the copy, start and wait together.
+    def loss(w, async_copy):
+      return jnp.sum(
+          jax.checkpoint(self.layer, static_argnums=1)(w, async_copy)
+      )
+
+    w = jax.random.normal(jax.random.key(0), (8, 128), dtype=jnp.float32)
+    grad = jax.jit(jax.grad(partial(loss, async_copy=True)))(w)
+    expected = jax.jit(jax.grad(partial(loss, async_copy=False)))(w)
+    np.testing.assert_array_equal(grad, expected)
+
+
 class PallasCallStatefulAsyncTest(parameterized.TestCase):
 
   def setUp(self):
