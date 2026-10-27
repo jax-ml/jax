@@ -843,6 +843,20 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
                             rtol=1e-5)
 
   @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1NegativeX(self, dtype):
+    # Negative x, evaluated through Kummer's transformation, on both sides of
+    # the switch from the series to the asymptotic expansion at x = -100.
+    # scipy.special.hyp1f1 agrees with mpmath to 1e-14 on these points.
+    samples = list(itertools.product(
+        [0.5, 2.5, 7.5], [1.5, 4.5, 9.2],
+        [-0.5, -5.0, -30.0, -99.5, -100.5, -300.0, -1e4]))
+    a, b, x = (np.array(v, dtype=dtype) for v in zip(*samples))
+    args_maker = lambda: (a, b, x)
+    rtol = 2e-5 if dtype == np.float32 else 1e-12
+    self._CheckAgainstNumpy(osp_special.hyp1f1, lsp_special.hyp1f1, args_maker,
+                            rtol=rtol)
+
+  @jtu.sample_product(dtype=float_dtypes)
   def testHyp1f1ClosedForms(self, dtype):
     # Special cases of 1F1 with elementary closed forms
     # (https://dlmf.nist.gov/13.6), on both sides of the switch between the
