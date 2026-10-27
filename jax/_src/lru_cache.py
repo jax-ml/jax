@@ -28,7 +28,7 @@ except ImportError:
   pass
 
 from jax._src import path as pathlib
-from jax._src.compilation_cache_interface import CacheInterface
+from jax._src.cache_interface import CacheInterface
 
 logger = logging.getLogger(__name__)
 

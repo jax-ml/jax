@@ -1699,6 +1699,17 @@ enable_compilation_cache = bool_state(
           'set_cache_dir().'),
 )
 
+enable_lowering_cache = bool_state(
+    name='jax_enable_lowering_cache',
+    default=True,
+    help=(
+        'If set to False, the lowering cache will be disabled regardless '
+        'of whether set_cache_dir() was called. If set to True, the '
+        'path could be set to a default value or via a call to '
+        'set_cache_dir().'
+    ),
+)
+
 compilation_cache_dir = optional_string_state(
     name='jax_compilation_cache_dir',
     default=None,
@@ -1706,6 +1717,17 @@ compilation_cache_dir = optional_string_state(
           'Precedence: '
           '1. A call to compilation_cache.set_cache_dir(). '
           '2. The value of this flag set in the command line or by default.'),
+)
+
+lowering_cache_dir = optional_string_state(
+    name='jax_lowering_cache_dir',
+    default=None,
+    help=(
+        'Path for the lowering cache. '
+        'Precedence: '
+        '1. A call to lowering_cache.set_cache_dir(). '
+        '2. The value of this flag set in the command line or by default.'
+    ),
 )
 
 compilation_cache_check_contents = bool_state(

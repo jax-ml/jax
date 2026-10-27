@@ -14,16 +14,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence, Iterable
+from collections.abc import Callable, Iterable, Sequence
 import contextlib
 from dataclasses import dataclass, replace
 from functools import partial
 import inspect
-import weakref
-from typing import NamedTuple, Any
+from typing import Any, NamedTuple
 import warnings
-
-import numpy as np
+import weakref
 
 from jax._src import api
 from jax._src import api_util
@@ -32,7 +30,9 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects as effects_lib
+from jax._src import flattree as ft
 from jax._src import linear_util as lu
+from jax._src import lowering_cache
 from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
 from jax._src import profiler
@@ -43,46 +43,80 @@ from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.core import typeof
 from jax._src.api_util import (
-    flatten_axes, donation_vector, check_callable, resolve_argnums, debug_info,
-    check_no_aliased_ref_args, _check_no_aliased_closed_over_refs,
-    flatten_axis_resources)
-from jax._src.interpreters import partial_eval as pe
-from jax._src.partition_spec import PartitionSpec, UnreducedKind
+    _check_no_aliased_closed_over_refs,
+    check_callable,
+    check_no_aliased_ref_args,
+    debug_info,
+    donation_vector,
+    flatten_axes,
+    flatten_axis_resources,
+    resolve_argnums,
+)
+from jax._src.core import typeof
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters import remat
+from jax._src.layout import (
+    AutoLayout,
+    AutoLayoutSingleton,
+    Format,
+    Layout,
+    LayoutMode,
+    get_layout_for_vmap,
+    use_layout_mode,
+)
+from jax._src.lib import _jax
+from jax._src.lib import jax_jit
+from jax._src.lib import jax_mlir_ext
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
-from jax._src.lib import _jax
-from jax._src.lib import xla_client as xc
-from jax._src.lib import jax_mlir_ext
 from jax._src.mesh import AbstractMesh
-from jax._src.sharding import Sharding, IndivisibleError
 from jax._src.named_sharding import remove_size_one_mesh_axis_from_spec
+from jax._src.partition_spec import PartitionSpec, UnreducedKind
+from jax._src.sharding import IndivisibleError, Sharding
 from jax._src.sharding_impls import (
-    NamedSharding, GSPMDSharding,
-    make_single_device_sharding, UNSPECIFIED, UnspecifiedValue,
-    prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
-    _internal_use_concrete_mesh)
-from jax._src.layout import (Format, Layout, AutoLayoutSingleton,
-                             get_layout_for_vmap, AutoLayout, use_layout_mode,
-                             LayoutMode)
+    GSPMDSharding,
+    NamedSharding,
+    UNSPECIFIED,
+    UnspecifiedValue,
+    _internal_use_concrete_mesh,
+    canonicalize_sharding,
+    make_single_device_sharding,
+    parse_flatten_op_sharding,
+    prepare_axis_resources,
+)
 from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
-from jax._src import flattree as ft
 from jax._src.tree_util import (
-    tree_flatten, tree_unflatten, tree_leaves, tree_structure, treedef_children,
-    PyTreeDef, none_leaf_registry as none_lr, tree_map)
+    PyTreeDef,
+    none_leaf_registry as none_lr,
+    tree_flatten,
+    tree_leaves,
+    tree_map,
+    tree_structure,
+    tree_unflatten,
+    treedef_children,
+)
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import (
-    HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
-    split_list, split_list_checked, weakref_lru_cache, merge_lists, subs_list,
-    fun_name)
-from jax._src.lib import jax_jit
+    HashableFunction,
+    distributed_debug_log,
+    fun_name,
+    merge_lists,
+    safe_map,
+    safe_zip,
+    split_list,
+    split_list_checked,
+    subs_list,
+    weakref_lru_cache,
+    wraps,
+)
+import numpy as np
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -258,6 +292,32 @@ def _get_cpp_global_cache(contains_explicit_attributes: bool):
     return _cpp_pjit_cache_fun_only
 
 
+def _compile_and_execute(
+    computation: pxla.MeshComputation, args: Sequence[Any]
+) -> tuple[list[Any], pxla.MeshExecutable, list[Any]]:
+  compiled = computation.compile()
+  sharded_const_args = compiled.shard_const_args(computation.const_args)
+
+  if config.distributed_debug.value:
+    fingerprint = None
+    if hasattr(compiled.runtime_executable(), 'fingerprint'):
+      fingerprint = compiled.runtime_executable().fingerprint
+    if fingerprint is not None:
+      fingerprint = fingerprint.hex()
+    ca = getattr(computation, 'compile_args', {})
+    distributed_debug_log(
+        ("Running pjit'd function", getattr(computation, '_name', '')),
+        ('in_shardings', ca.get('in_shardings')),
+        ('out_shardings', ca.get('out_shardings')),
+        ('in_layouts', ca.get('in_layouts')),
+        ('out_layouts', ca.get('out_layouts')),
+        ('abstract args', map(core.typeof, args)),
+        ('fingerprint', fingerprint),
+    )
+  out_flat = compiled.unsafe_call(*sharded_const_args, *args)
+  return out_flat, compiled, sharded_const_args
+
+
 def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
   @api_boundary
@@ -267,6 +327,26 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
     if config.no_tracing.value:
       raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
                          "`jit`, but 'no_tracing' is set")
+    if core.trace_state_clean() and lowering_cache.is_cache_enabled():
+      lowered, dynargs = _get_lowered(fun, jit_info, args, kwargs)
+      if lowering_cache.can_cache(lowered) and isinstance(
+          lowered._lowering, pxla.MeshComputation
+      ):
+        out_flat, compiled, sharded_consts = _compile_and_execute(
+            lowered._lowering, dynargs
+        )
+        outs = tree_unflatten(lowered.out_tree, out_flat)
+        fastpath = _get_fastpath_data(
+            compiled,
+            lowered.out_tree,
+            dynargs,
+            out_flat,
+            (),
+            [],
+            None,
+            sharded_consts,
+        )
+        return outs, fastpath, False
     p, args_flat = _infer_params(fun, jit_info, args, kwargs)
     (outs, out_flat, out_tree, args_flat, jaxpr,
      executable, pgle_profiler, const_args) = _run_python_pjit(
@@ -320,9 +400,11 @@ def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
   return stages.Traced(arg_types, p.params, p.in_tree, p.out_tree, p.consts,
                        jit_func._jit_info.fun_sourceinfo)
 
+
 @api_boundary
-def jit_lower(jit_func, *args, **kwargs):
-  return jit_trace(jit_func, *args, **kwargs).lower()
+def jit_lower(jit_func, *args, **kwargs) -> stages.Lowered:
+  return _get_lowered(jit_func._fun, jit_func._jit_info, args, kwargs)[0]
+
 
 @api_boundary
 def jit_eval_shape(jit_func, *args, **kwargs):
@@ -632,9 +714,14 @@ def get_ctx_mesh(use_resource_env):
         return abs_mesh
       return conc_mesh
 
-def _infer_params(
+
+def _parse_jit_inputs(
     fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
-  ) -> tuple[PjitParams, list[core.Value]]:
+) -> tuple[
+    tuple[Any, tuple[core.AbstractValue, ...], Any],
+    Callable[[], core.DebugInfo],
+    list[core.Value],
+]:
   ctx_mesh = get_ctx_mesh(ji.use_resource_env)
   dbg_fn = lambda: debug_info(
       'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
@@ -644,6 +731,19 @@ def _infer_params(
       args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
       ji.static_argnames, tree_util.tracing_registry)
   avals = _infer_input_type(fun, dbg_fn, dynargs)
+  return (arg_signature, avals, ctx_mesh), dbg_fn, dynargs
+
+
+def _infer_params(
+    fun: Callable,
+    ji: PjitInfo,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    parsed: tuple[Any, Any, list[core.Value]] | None = None,
+) -> tuple[PjitParams, list[core.Value]]:
+  (arg_signature, avals, ctx_mesh), dbg_fn, dynargs = (
+      parsed or _parse_jit_inputs(fun, ji, args, kwargs)
+  )
   entry = _infer_params_cached(fun, ji, arg_signature, avals, ctx_mesh)
 
   if entry.pjit_params is not None:
@@ -652,6 +752,39 @@ def _infer_params(
   p = _trace_for_jit(fun, ji, ctx_mesh, dbg_fn(), avals, args, kwargs)
   entry.pjit_params = p
   return p, p.consts + dynargs
+
+
+def _get_lowered(
+    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[stages.Lowered, list[core.Value]]:
+  (arg_signature, avals, ctx_mesh), _, dynargs = parsed = _parse_jit_inputs(
+      fun, ji, args, kwargs
+  )
+  cache_key = None
+  fun_name = getattr(
+      ji.fun_sourceinfo, 'function_name', getattr(fun, '__name__', 'lowered')
+  )
+  if lowering_cache.is_cache_enabled():
+    cache_key = lowering_cache.get_cache_key(
+        fun, ji, arg_signature, avals, ctx_mesh
+    )
+    cached_l = lowering_cache.get_lowered(cache_key, fun_name=fun_name)
+    if cached_l is not None:
+      return cached_l, dynargs
+  p, args_flat = _infer_params(
+      fun, ji, args, kwargs, (parsed[0], parsed[1], dynargs)
+  )
+  lowered = stages.Traced(
+      map(convert_to_metaty, args_flat),
+      p.params,
+      p.in_tree,
+      p.out_tree,
+      p.consts,
+      ji.fun_sourceinfo,
+  ).lower()
+  if cache_key is not None and lowering_cache.can_cache(lowered):
+    lowering_cache.put_lowered(cache_key, lowered, fun_name=fun_name)
+  return lowered, dynargs
 
 
 def _infer_input_type(fun: Callable, dbg_fn: Callable[[], core.DebugInfo],

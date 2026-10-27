@@ -19,30 +19,19 @@ import logging
 import threading
 from typing import Any
 import warnings
-import zlib
 
 import numpy as np
-
-# If zstandard is installed, we use zstd compression, otherwise we use zlib.
-try:
-  # compression.zstd should be present in Python 3.14+
-  from compression import zstd  # pyrefly: ignore[missing-import]
-except ImportError:
-  zstd = None
-
-if zstd is None:
-  # TODO(phawkins): remove this case when we drop support for Python 3.13.
-  try:
-    import zstandard  # pyrefly: ignore[missing-import]
-  except ImportError:
-    zstandard = None
-else:
-  zstandard = None
 
 from jax._src import cache_key
 from jax._src import config
 from jax._src import monitoring
-from jax._src.compilation_cache_interface import CacheInterface
+from jax._src.cache_interface import (
+    CacheInterface,
+    compress_bytes,
+    compression_algorithm,
+    decompress_bytes,
+    initialize_cache_once,
+)
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lru_cache import LRUCache
@@ -240,38 +229,27 @@ def _is_cache_enabled() -> bool:
 
 def _initialize_cache() -> None:
   # Attempt to initialize the cache at most once.
-  global _cache_initialized
+  global _cache, _cache_initialized
   with _cache_initialized_mutex:
     if _cache_initialized:
       return
 
-    path: str | None = config.compilation_cache_dir.value
-    # If the path is not set, the cache will not be built.
-    if not path:
-      return
+    def _set_default_min_size():
+      if config.persistent_cache_min_entry_size_bytes.value == 0:
+        config.config.update(
+            "jax_persistent_cache_min_entry_size_bytes",
+            default_min_cache_entry_size(),
+        )
+      assert _cache is None, "The cache has already been initialized!"
 
-    # Nothing to do if the cache is disabled.
-    if not _is_cache_enabled():
-      logger.debug("_initialize_cache: cache is disabled!")
-      return
-
-    _cache_initialized = True
-
-    # Set the minimum cache size entry only if the flag
-    # --jax_persistent_cache_min_entry_size_bytes has not been set.
-    if config.persistent_cache_min_entry_size_bytes.value == 0:
-      config.config.update("jax_persistent_cache_min_entry_size_bytes",
-                           default_min_cache_entry_size())
-
-    global _cache
-    assert _cache is None, "The cache has already been initialized!"
-
-    cache_and_path = get_file_cache(path)
-    if cache_and_path is None:
-      logger.debug("_initialize_cache: cache initialization failed!")
-    else:
-      _cache, path = cache_and_path
-      logger.debug("Initialized persistent compilation cache at %s", path)
+    _cache_initialized, _cache = initialize_cache_once(
+        cache_name="compilation",
+        path=config.compilation_cache_dir.value,
+        is_enabled=_is_cache_enabled(),
+        get_file_cache_fn=get_file_cache,
+        logger=logger,
+        on_before_create=_set_default_min_size,
+    )
 
 def is_persistent_cache_enabled() -> bool:
   return (config.compilation_cache_dir.value is not None
@@ -293,23 +271,8 @@ def _get_cache(backend) -> CacheInterface | None:
   return _cache
 
 
-def compress_executable(executable: bytes) -> bytes:
-  if zstd:
-    return zstd.compress(executable)
-  elif zstandard:
-    compressor = zstandard.ZstdCompressor()
-    return compressor.compress(executable)
-  else:
-    return zlib.compress(executable)
-
-def decompress_executable(executable: bytes) -> bytes:
-  if zstd:
-    return zstd.decompress(executable)
-  elif zstandard:
-    decompressor = zstandard.ZstdDecompressor()
-    return decompressor.decompress(executable)
-  else:
-    return zlib.decompress(executable)
+compress_executable = compress_bytes
+decompress_executable = decompress_bytes
 
 
 def is_executable_in_cache(backend, cache_key: str) -> bool:
@@ -420,7 +383,7 @@ def get_cache_key(
       devices,
       compile_options,
       backend,
-      "zstandard" if zstandard is not None else "zlib",
+      compression_algorithm(),
       ignore_custom_partitioning,
   )
 

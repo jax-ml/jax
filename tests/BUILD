@@ -1855,6 +1855,22 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "lowering_cache_test",
+    srcs = ["lowering_cache_test.py"],
+    deps = [
+        "//jax/_src:cache_interface",
+        "//jax/_src:config",
+        "//jax/_src:core",
+        "//jax/_src:lowering_cache",
+        "//jax/_src:path",
+        "//jax/_src:stages",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "cache_key_test",
     srcs = ["cache_key_test.py"],
     deps = [
@@ -2477,6 +2493,7 @@ exports_files(
         "compilation_cache_test.py",
         "custom_api_test.py",
         "layout_test.py",
+        "lowering_cache_test.py",
         "memories_test.py",
         "pjit_test.py",
         "pmap_test.py",
