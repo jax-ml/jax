@@ -467,7 +467,7 @@ def _canonicalize_block_dim(dim: BlockDim | int | None) -> BlockDim:
     case None:
       return squeezed
     case int():
-      return Blocked(int(dim))
+      return Blocked(dim)
     case Squeezed() | Blocked() | Element() | BoundedSlice() | Indirect():
       return dim
     case _:

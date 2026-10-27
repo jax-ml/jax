@@ -42,7 +42,7 @@ def _triage_segments(window: ArrayLike | str | tuple[Any, ...], nperseg: int | N
       256. If window is array_like, nperseg is set to the length of the window.
   """
   if isinstance(window, (str, tuple)):
-    nperseg_int = 256 if nperseg is None else int(nperseg)
+    nperseg_int = 256 if nperseg is None else nperseg
     if nperseg_int > input_length:
       warnings.warn(f'nperseg={nperseg_int} is greater than {input_length=},'
                     f' using nperseg={input_length}')
@@ -60,7 +60,7 @@ def _triage_segments(window: ArrayLike | str | tuple[Any, ...], nperseg: int | N
     win = jnp.array(win, dtype=dtype)
   else:
     win = jnp.asarray(window, dtype=dtype)
-    nperseg_int = win.size if nperseg is None else int(nperseg)
+    nperseg_int = win.size if nperseg is None else nperseg
     if win.ndim != 1:
       raise ValueError('window must be 1-D')
     if input_length < win.size:

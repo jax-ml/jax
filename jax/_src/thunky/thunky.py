@@ -268,7 +268,7 @@ def _transforms_to_slice_params(
       )
       curr_shape = tuple(int(d) for d in transformed_aval.shape)
     elif isinstance(t, ReshapeTransform):
-      curr_shape = tuple(int(d) for d in t.shape)
+      curr_shape = tuple(t.shape)
     else:
       raise TypeError(f"Unsupported Ref transform in thunky: {t}")
 
@@ -429,11 +429,11 @@ def ptx_kernel(
       *base_refs,
       slice_specs=slice_specs,
       written=tuple(written),
-      kernel_name=str(kernel_name),
-      ptx=str(ptx),
-      grid_dim=tuple(int(d) for d in grid_dim),
-      block_dim=tuple(int(d) for d in block_dim),
-      shmem_bytes=int(shmem_bytes),
+      kernel_name=kernel_name,
+      ptx=ptx,
+      grid_dim=tuple(grid_dim),
+      block_dim=tuple(block_dim),
+      shmem_bytes=shmem_bytes,
   )
 
 
@@ -483,7 +483,7 @@ def custom_call(
       slice_specs=slice_specs,
       num_operands=len(op_pairs),
       num_results=len(res_pairs),
-      target_name=str(target_name),
+      target_name=target_name,
       backend_config=config_tuple,
   )
 
@@ -856,7 +856,7 @@ def async_start(
   return async_start_p.bind(
       *body_consts,
       body_jaxpr=body_jaxpr,
-      stream_id=int(stream_id),
+      stream_id=stream_id,
       stream_kind=stream_kind,
   )
 
@@ -971,7 +971,7 @@ def all_reduce(
       dst_ref,
       src_spec=src_spec,
       dst_spec=dst_spec,
-      reduction_kind=str(reduction),
+      reduction_kind=reduction,
       replica_groups=groups,
   )
 
@@ -1068,7 +1068,7 @@ def reduce_scatter(
       dst_ref,
       src_spec=src_spec,
       dst_spec=dst_spec,
-      reduction_kind=str(reduction),
+      reduction_kind=reduction,
       replica_groups=groups,
   )
 
@@ -1113,7 +1113,7 @@ def all_to_all(
   """Executes an XLA:GPU AllToAllThunk across participating devices."""
   groups = _resolve_replica_groups(axis_name, axis_index_groups)
   num_ranks = len(groups[0]) if groups else 0
-  has_split = bool(has_split_dimension)
+  has_split = has_split_dimension
 
   if has_split:
     if isinstance(src, (tuple, list)):
@@ -1203,7 +1203,7 @@ def collective_permute(
   dst_ref, dst_spec = _unwrap_ref_and_spec(dst)
   groups = _resolve_replica_groups(axis_name, axis_index_groups)
   group_size = len(groups[0]) if groups else 0
-  pairs = tuple((int(s), int(t)) for s, t in source_target_pairs)
+  pairs = tuple((s, t) for s, t in source_target_pairs)
   srcs = [s % group_size for s, _ in pairs]
   dsts = [t % group_size for _, t in pairs]
   if len(srcs) != len(set(srcs)) or len(dsts) != len(set(dsts)):

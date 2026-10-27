@@ -2184,7 +2184,7 @@ class LaunchContext:
       )
 
     window_start_bounds = tuple(
-        (int(lo), int(hi)) for lo, hi in window_start_bounds
+        (lo, hi) for lo, hi in window_start_bounds
     )
 
     rank = gmem_ref_ty.rank
