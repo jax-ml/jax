@@ -3088,6 +3088,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, f"The input to linalg.{func.__name__} must have shape"):
       _ = func(x)
 
+  @jtu.run_on_devices("cpu")
   def test_concurrent_batched_lapack_does_not_deadlock(self):
     # Regression test for https://github.com/jax-ml/jax/issues/41265:
     # multiple independent batched LAPACK calls becoming ready simultaneously
