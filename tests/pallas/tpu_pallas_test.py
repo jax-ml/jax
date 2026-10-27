@@ -6966,7 +6966,7 @@ class ExplicitMXUTest(jtu.JaxTestCase):
 
 class BarrierSemaphoreTagTest(jtu.JaxTestCase):
 
-  def test_extract_tag_visits_shared_jaxprs_once(self):
+  def test_extract_tag_scans_each_jaxpr_once(self):
     def f(x):
       pltpu.get_barrier_semaphore('tag')
       return x
@@ -6974,15 +6974,21 @@ class BarrierSemaphoreTagTest(jtu.JaxTestCase):
     for _ in range(12):  # 2**12 calls of f through 12 distinct jaxprs.
       f = jax.jit(lambda x, f=f: f(f(x)))
     x = jax.ShapeDtypeStruct((8, 128), jnp.float32)
-    jaxpr = jax.make_jaxpr(f)(x).jaxpr
+    # Two kernels sharing the 12 inner jit jaxprs.
+    jaxpr1 = jax.make_jaxpr(lambda x: f(x) + 1)(x).jaxpr
+    jaxpr2 = jax.make_jaxpr(lambda x: f(x) * 2)(x).jaxpr
+    extract = pallas_call_registration._extract_single_barrier_semaphore_tag
+    jax.clear_caches()
     with mock.patch.object(
-        jax_core, 'jaxprs_in_params', wraps=jax_core.jaxprs_in_params
-    ) as jaxprs_in_params:
-      tag = pallas_call_registration._extract_single_barrier_semaphore_tag(
-          jaxpr
-      )
-    self.assertEqual(tag, 'tag')
-    self.assertLess(jaxprs_in_params.call_count, 100)
+        jax_core, 'subjaxprs', wraps=jax_core.subjaxprs
+    ) as subjaxprs:
+      self.assertEqual(extract(jaxpr1), 'tag')
+      self.assertEqual(subjaxprs.call_count, 13)
+      self.assertEqual(extract(jaxpr2), 'tag')
+      self.assertEqual(subjaxprs.call_count, 14)
+      jax.clear_caches()
+      self.assertEqual(extract(jaxpr2), 'tag')
+      self.assertEqual(subjaxprs.call_count, 27)
 
 
 @jtu.with_config(jax_pallas_auto_assign_collective_ids='yes')

@@ -26,10 +26,10 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import flattree as ft
 from jax._src import frozen_dict
-from jax._src import jaxpr_util
 from jax._src import sharding_impls
 from jax._src import state
 from jax._src import tpu_custom_call
+from jax._src import util
 from jax._src import xla_metadata
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -402,15 +402,25 @@ def _lower_to_custom_call(
   return mlir.lower_fun(_maybe_cast_outputs)(cast_ctx, *out_nodes)
 
 
-def _extract_single_barrier_semaphore_tag(
-    jaxpr: jax_core.Jaxpr,
-) -> Hashable | None:
+# Memoized per jaxpr because inner-jit jaxprs are shared within and across
+# kernels, and re-walking them at every reference dominates lowering time.
+@util.weakref_lru_cache(trace_context_in_key=False)
+def _barrier_semaphore_tags(jaxpr: jax_core.Jaxpr) -> frozenset[Hashable]:
   tags = {
       eqn.params["tag"]
-      for _, eqn in jaxpr_util.all_eqns(jaxpr, revisit_inner_jaxprs=False)
+      for eqn in jaxpr.eqns
       if eqn.primitive is tpu_primitives.get_barrier_semaphore_p
       and eqn.params.get("tag") is not None
   }
+  for subjaxpr in jax_core.subjaxprs(jaxpr):
+    tags |= _barrier_semaphore_tags(subjaxpr)
+  return frozenset(tags)
+
+
+def _extract_single_barrier_semaphore_tag(
+    jaxpr: jax_core.Jaxpr,
+) -> Hashable | None:
+  tags = set(_barrier_semaphore_tags(jaxpr))
   if len(tags) > 1:
     raise ValueError(
         "Cannot specify multiple distinct barrier semaphore tags within a"
