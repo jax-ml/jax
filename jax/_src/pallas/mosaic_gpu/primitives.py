@@ -116,6 +116,20 @@ def _print_layout_abstract_eval(aval_in, *_, **params):
   return (), {debugging.debug_effect}
 
 
+def _extract_ref_and_transforms[T](
+    ref: state_types.TransformedRef | T,
+) -> tuple[T, list[tree_util.Leaf], tree_util.PyTreeDef]:
+  """Extracts the underlying ref and flattened transforms from ``ref``.
+
+  If ``ref`` is not a ``TransformedRef`` (e.g. an untransformed ref, an array,
+  or ``None``), returns ``ref`` unchanged along with empty transform leaves and
+  the treedef of an empty tuple.
+  """
+  if isinstance(ref, pallas_core.TransformedRef):
+    return ref.ref, *tree_util.tree_flatten(ref.transforms)
+  return ref, [], tree_util.tree_structure(())
+
+
 @lowering.register_lowering_rule(print_layout_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(
     print_layout_p, mgpu.LoweringSemantics.Warpgroup
@@ -127,16 +141,13 @@ def _print_layout_lowering(
     fmt: str,
     transforms_tree
 ):
-  if transforms_tree is not None:
-    assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
-    transform_avals = transforms_tree.unflatten(ctx.avals_in[1:])
+  if isinstance(ctx.avals_in[0], state_types.AbstractRef):
     x, _, remaining_transforms = lowering._handle_transforms(  # pyrefly: ignore[bad-specialization]
-        ctx, ctx.avals_in[0], x, transform_avals,
+        ctx,
+        ctx.avals_in[0],
+        x,
+        transforms_tree.unflatten(ctx.avals_in[1:]),
         transforms_tree.unflatten(transforms_leaves),
-    )
-  elif isinstance(ctx.avals_in[0], state_types.AbstractRef):
-    x, _, remaining_transforms = lowering._handle_transforms(  # pyrefly: ignore[bad-specialization]
-        ctx, ctx.avals_in[0], x, (), ()
     )
   else:
     remaining_transforms = []
@@ -186,11 +197,7 @@ def print_layout(fmt: str, x: jax.typing.ArrayLike | _Ref) -> None:
     fmt: The format string to use for printing the layout.
     x: The array, SMEM, or TMEM reference to print the layout of.
   """
-  if isinstance(x, pallas_core.TransformedRef):
-    transforms_leaves, transforms_tree = jax.tree.flatten(x.transforms)
-    x = x.ref
-  else:
-    transforms_leaves, transforms_tree = [], None
+  x, transforms_leaves, transforms_tree = _extract_ref_and_transforms(x)
   print_layout_p.bind(
       x,
       *transforms_leaves,
@@ -2139,24 +2146,11 @@ def wgmma(acc: gpu_core.WGMMAAbstractAccumulatorRef, a, b) -> None:
         f"lhs={a.dtype}, rhs={b.dtype}"
     )
 
-  acc_transforms_leaves: list
-  if isinstance(acc, pallas_core.TransformedRef):
-    acc_transforms_leaves, acc_transforms_tree = jax.tree.flatten(acc.transforms)
-    acc = acc.ref
-  else:
-    acc_transforms_leaves, acc_transforms_tree = [], None
-
-  if isinstance(a, pallas_core.TransformedRef):
-    a_transforms_leaves, a_transforms_tree = jax.tree.flatten(a.transforms)
-    a = a.ref
-  else:
-    a_transforms_leaves, a_transforms_tree = [], None
-
-  if isinstance(b, pallas_core.TransformedRef):
-    b_transforms_leaves, b_transforms_tree = jax.tree.flatten(b.transforms)
-    b = b.ref
-  else:
-    b_transforms_leaves, b_transforms_tree = [], None
+  acc, acc_transforms_leaves, acc_transforms_tree = _extract_ref_and_transforms(
+      acc
+  )
+  a, a_transforms_leaves, a_transforms_tree = _extract_ref_and_transforms(a)
+  b, b_transforms_leaves, b_transforms_tree = _extract_ref_and_transforms(b)
 
   wgmma_ref_p.bind(
       acc,
@@ -2192,18 +2186,12 @@ def _wgmma_ref_pp_eqn(
 ):
   del settings
   acc, a, b, *leaves = eqn.invars
-  transform_treedefs = [
+  transforms_tree = tree_util.treedef_tuple((
       eqn.params["acc_transforms_tree"],
       eqn.params["a_transforms_tree"],
       eqn.params["b_transforms_tree"],
-  ]
-  transform_leaves = util.split_list(
-      leaves, [getattr(tree, "num_leaves", 0) for tree in transform_treedefs]
-  )
-  acc_transforms, a_transforms, b_transforms = (
-      () if treedef is None else treedef.unflatten(leaves)
-      for treedef, leaves in zip(transform_treedefs, transform_leaves)
-  )
+  ))
+  acc_transforms, a_transforms, b_transforms = transforms_tree.unflatten(leaves)
   return pp.concat([
       pp.text("wgmma_ref"),
       pp.text(" "),
@@ -2240,19 +2228,18 @@ def _wgmma_lowering(
     b_transforms_tree,
 ):
   lhs_swizzle: int | None = None
-  transform_treedefs = [
-      acc_transforms_tree, a_transforms_tree, b_transforms_tree
-  ]
-  transform_leaves = util.split_list(
-      transforms_leaves, [getattr(tree, "num_leaves", 0) for tree in transform_treedefs]
+  transforms_tree = tree_util.treedef_tuple(
+      (acc_transforms_tree, a_transforms_tree, b_transforms_tree)
   )
-  acc_transforms, a_transforms, b_transforms = (
-      None if treedef is None else treedef.unflatten(leaves)
-      for treedef, leaves in zip(transform_treedefs, transform_leaves)
+  acc_transforms, a_transforms, b_transforms = transforms_tree.unflatten(
+      transforms_leaves
+  )
+  _, a_transform_avals, b_transform_avals = transforms_tree.unflatten(
+      ctx.avals_in[3:]
   )
 
   acc_indices = None
-  if acc_transforms is not None:
+  if acc_transforms:
     if not all(isinstance(t, indexing.NDIndexer) for t in acc_transforms):
       raise ValueError("WGMMA accumulator only supports indexing transforms")
     acc_indexer = lowering.merge_indexers(acc_transforms)
@@ -2260,9 +2247,6 @@ def _wgmma_lowering(
       raise NotImplementedError("int_indexer_shape non-empty")
     acc_indices = lowering._ndindexer_indices(acc_indexer)
 
-  transform_avals_list = util.split_list(
-      ctx.avals_in[3:], [getattr(tree, "num_leaves", 0) for tree in transform_treedefs]
-  )
   a_aval = ctx.avals_in[1]
   if not isinstance(a, mgpu.FragmentedArray):
     if not isinstance(a_aval, state_types.AbstractRef):
@@ -2270,12 +2254,6 @@ def _wgmma_lowering(
       a_ref_aval = state.AbstractRef(a_aval)
     else:
       a_ref_aval = a_aval
-    if a_transforms is not None:
-      assert transform_treedefs[1] is not None
-      a_transform_avals = transform_treedefs[1].unflatten(transform_avals_list[1])
-    else:
-      a_transforms = ()
-      a_transform_avals = ()
     a, _, a_transforms = lowering._handle_transforms(
         ctx, a_ref_aval, a, a_transform_avals, a_transforms,
         handle_transposes=False, handle_reshapes=False)
@@ -2310,12 +2288,6 @@ def _wgmma_lowering(
     b_ref_aval = state_types.AbstractRef(b_aval)
   else:
     b_ref_aval = b_aval
-  if b_transforms is not None:
-    assert transform_treedefs[2] is not None
-    b_transform_avals = transform_treedefs[2].unflatten(transform_avals_list[2])
-  else:
-    b_transforms = ()
-    b_transform_avals = ()
   b, _, b_transforms = lowering._handle_transforms(
       ctx, b_ref_aval, b, b_transform_avals, b_transforms,
       handle_transposes=False)
@@ -2374,18 +2346,17 @@ def _wgmma_warpgroup_lowering(
     a_transforms_tree,
     b_transforms_tree,
 ):
-  transform_treedefs = [
-      acc_transforms_tree, a_transforms_tree, b_transforms_tree
-  ]
-  transform_leaves = util.split_list(
-      transforms_leaves, [getattr(tree, "num_leaves", 0) for tree in transform_treedefs]
+  transforms_tree = tree_util.treedef_tuple(
+      (acc_transforms_tree, a_transforms_tree, b_transforms_tree)
   )
-  acc_transforms, a_transforms, b_transforms = (
-      None if treedef is None else treedef.unflatten(leaves)
-      for treedef, leaves in zip(transform_treedefs, transform_leaves)
+  acc_transforms, a_transforms, b_transforms = transforms_tree.unflatten(
+      transforms_leaves
+  )
+  _, a_transform_avals, b_transform_avals = transforms_tree.unflatten(
+      ctx.avals_in[3:]
   )
 
-  if acc_transforms is not None:
+  if acc_transforms:
     if not all(isinstance(t, indexing.NDIndexer) for t in acc_transforms):
       raise ValueError("WGMMA accumulator only supports indexing transforms")
     acc_indexer = lowering.merge_indexers(acc_transforms)
@@ -2395,17 +2366,8 @@ def _wgmma_warpgroup_lowering(
   else:
     acc_indices = ()
 
-  transform_avals_list = util.split_list(
-      ctx.avals_in[3:], [getattr(tree, "num_leaves", 0) for tree in transform_treedefs]
-  )
-
   a_aval = ctx.avals_in[1]
   if isinstance(a_aval, state_types.AbstractRef):
-    if a_transforms is not None:
-      a_transform_avals = a_transforms_tree.unflatten(transform_avals_list[1])
-    else:
-      a_transforms = ()
-      a_transform_avals = ()
     a, _, a_transforms = lowering._handle_transforms(
         ctx, a_aval, a, a_transform_avals, a_transforms
     )
@@ -2416,11 +2378,6 @@ def _wgmma_warpgroup_lowering(
 
   b_aval = ctx.avals_in[2]
   if isinstance(b_aval, state_types.AbstractRef):
-    if b_transforms is not None:
-      b_transform_avals = b_transforms_tree.unflatten(transform_avals_list[2])
-    else:
-      b_transforms = ()
-      b_transform_avals = ()
     b, _, b_transforms = lowering._handle_transforms(
         ctx, b_aval, b, b_transform_avals, b_transforms
     )
@@ -2757,70 +2714,31 @@ def tcgen05_mma(acc: _Ref,
     raise ValueError(
         f"LHS and RHS have incompatible shapes. LHS: {a.shape}. RHS: {b.shape}.")
 
-  if isinstance(acc, pallas_core.TransformedRef):
-    acc_transforms_leaves, acc_transforms_tree = jax.tree.flatten(
-        acc.transforms)
-    acc = acc.ref
-  else:
-    acc_transforms_leaves, acc_transforms_tree = [], None
-
-  if isinstance(a, pallas_core.TransformedRef):
-    a_transforms_leaves, a_transforms_tree = jax.tree.flatten(a.transforms)
-    a = a.ref
-  else:
-    a_transforms_leaves, a_transforms_tree = [], None
-
-  if isinstance(b, pallas_core.TransformedRef):
-    b_transforms_leaves, b_transforms_tree = jax.tree.flatten(b.transforms)
-    b = b.ref
-  else:
-    b_transforms_leaves, b_transforms_tree = [], None
-
   if (is_scaled := a_scale is not None) != (b_scale is not None):
     raise ValueError("a_scale and b_scale must both be present or absent.")
-  scales = []
-  if isinstance(a_scale, pallas_core.TransformedRef):
-    a_scale_transforms_leaves, a_scale_transforms_tree = jax.tree.flatten(
-        a_scale.transforms
-    )
-    scales.append(a_scale.ref)
-  else:
-    a_scale_transforms_leaves, a_scale_transforms_tree = [], None
-    scales.append(a_scale)
-  if isinstance(b_scale, pallas_core.TransformedRef):
-    b_scale_transforms_leaves, b_scale_transforms_tree = jax.tree.flatten(
-        b_scale.transforms
-    )
-    scales.append(b_scale.ref)
-  else:
-    b_scale_transforms_leaves, b_scale_transforms_tree = [], None
-    scales.append(b_scale)
-  if not is_scaled:
-    scales = []
+  acc, acc_transforms_leaves, acc_transforms_tree = _extract_ref_and_transforms(
+      acc
+  )
+  a, a_transforms_leaves, a_transforms_tree = _extract_ref_and_transforms(a)
+  b, b_transforms_leaves, b_transforms_tree = _extract_ref_and_transforms(b)
+  barrier, barrier_transforms_leaves, barrier_transforms_tree = (
+      _extract_ref_and_transforms(barrier)
+  )
+  a_scale, a_scale_transforms_leaves, a_scale_transforms_tree = (
+      _extract_ref_and_transforms(a_scale)
+  )
+  b_scale, b_scale_transforms_leaves, b_scale_transforms_tree = (
+      _extract_ref_and_transforms(b_scale)
+  )
+  (
+      a_sparse_metadata,
+      a_sparse_metadata_transforms_leaves,
+      a_sparse_metadata_transforms_tree,
+  ) = _extract_ref_and_transforms(a_sparse_metadata)
 
-  if isinstance(a_sparse_metadata, pallas_core.TransformedRef):
-    a_sparse_metadata_transforms_leaves, a_sparse_metadata_transforms_tree = jax.tree.flatten(
-        a_sparse_metadata.transforms
-    )
-    sparse_metadata = [a_sparse_metadata.ref]
-  else:
-    a_sparse_metadata_transforms_leaves, a_sparse_metadata_transforms_tree = [], None
-    sparse_metadata = [a_sparse_metadata] if is_sparse else []
-
-  if isinstance(barrier, pallas_core.TransformedRef):
-    barrier_transforms_leaves, barrier_transforms_tree = jax.tree.flatten(
-        barrier.transforms
-    )
-    barrier = barrier.ref
-  else:
-    barrier_transforms_leaves, barrier_transforms_tree = [], None
-
-  if barrier is not None:
-    barrier_ref = [barrier]
-    arrive = True
-  else:
-    barrier_ref = []
-    arrive = False
+  barrier_ref = [barrier] if (arrive := barrier is not None) else []
+  scales = [a_scale, b_scale] if is_scaled else []
+  sparse_metadata = [a_sparse_metadata] if is_sparse else []
 
   tcgen05_mma_p.bind(acc, a, b, accumulate, *barrier_ref, *scales, *sparse_metadata,
                      *acc_transforms_leaves, *a_transforms_leaves,
@@ -2944,7 +2862,7 @@ def _tcgen05_mma_lowering(
   else:
     a_sparse_metadata_ref = a_sparse_metadata_ref_aval = None
 
-  transforms_trees = (
+  transforms_tree = tree_util.treedef_tuple((
       acc_transforms_tree,
       a_transforms_tree,
       b_transforms_tree,
@@ -2952,37 +2870,26 @@ def _tcgen05_mma_lowering(
       a_scale_transforms_tree,
       b_scale_transforms_tree,
       a_sparse_metadata_transforms_tree,
-  )
-  ns = [getattr(tree, "num_leaves", 0) for tree in transforms_trees]
-  transforms_leaves_lists = util.split_list_checked(leaves, ns)
-  transforms_avals_lists = util.split_list_checked(avals, ns)
-
+  ))
   (
-      acc_transforms_leaves,
-      a_transforms_leaves,
-      b_transforms_leaves,
-      barrier_transforms_leaves,
-      a_scale_transforms_leaves,
-      b_scale_transforms_leaves,
-      a_sparse_metadata_transforms_leaves,
-  ) = transforms_leaves_lists
-
+      acc_transforms,
+      a_transforms,
+      b_transforms,
+      barrier_transforms,
+      a_scale_transforms,
+      b_scale_transforms,
+      a_sparse_metadata_transforms,
+  ) = transforms_tree.unflatten(leaves)
   (
-      acc_transforms_leaves_avals,
-      a_transforms_leaves_avals,
-      b_transforms_leaves_avals,
-      barrier_transforms_leaves_avals,
-      a_scale_transforms_leaves_avals,
-      b_scale_transforms_leaves_avals,
-      a_sparse_metadata_transforms_leaves_avals,
-  ) = transforms_avals_lists
+      acc_transform_avals,
+      a_transform_avals,
+      b_transform_avals,
+      _,
+      a_scale_transform_avals,
+      b_scale_transform_avals,
+      a_sparse_metadata_transform_avals,
+  ) = transforms_tree.unflatten(avals)
 
-  if acc_transforms_tree is not None:
-    acc_transforms = acc_transforms_tree.unflatten(acc_transforms_leaves)
-    acc_transform_avals = acc_transforms_tree.unflatten(acc_transforms_leaves_avals)
-  else:
-    acc_transforms = ()
-    acc_transform_avals = ()
   acc, _, acc_transforms = lowering._handle_transforms(
       ctx, acc_aval, acc, acc_transform_avals, acc_transforms
   )
@@ -2991,12 +2898,6 @@ def _tcgen05_mma_lowering(
         f"Unsupported transforms for ACC: {acc_transforms}."
     )
 
-  if a_transforms_tree is not None:
-    a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
-    a_transform_avals = a_transforms_tree.unflatten(a_transforms_leaves_avals)
-  else:
-    a_transforms = ()
-    a_transform_avals = ()
   a_out_ty = state_types.transform_type(a_transforms, a_aval)
   assert isinstance(a_out_ty, state_types.AbstractRef)
   a_dtype = a_out_ty.dtype
@@ -3034,12 +2935,6 @@ def _tcgen05_mma_lowering(
       raise ValueError("MMA lhs tiling does not fit swizzle. "
                       f"{lhs_tiling=} expected={(8, swizzle_elems)}")
 
-  if b_transforms_tree is not None:
-    b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
-    b_transform_avals = b_transforms_tree.unflatten(b_transforms_leaves_avals)
-  else:
-    b_transforms = ()
-    b_transform_avals = ()
   b_out_ty = state_types.transform_type(b_transforms, b_aval)
   assert isinstance(b_out_ty, state_types.AbstractRef)
   b_dtype = b_out_ty.dtype
@@ -3069,10 +2964,7 @@ def _tcgen05_mma_lowering(
         f" {rhs_tiling=} expected={(8, swizzle_elems)}"
     )
 
-  if barrier_transforms_tree is not None and barrier_ref is not None:
-    barrier_transforms = barrier_transforms_tree.unflatten(
-        barrier_transforms_leaves
-    )
+  if barrier_transforms and barrier_ref is not None:
     base_index = _get_barrier_base_index(barrier_ref_aval, barrier_transforms)
     if base_index is not None:
       barrier_ref = barrier_ref[base_index]
@@ -3095,16 +2987,6 @@ def _tcgen05_mma_lowering(
 
   if a_scale_ref is not None:
     assert isinstance(a_scale_ref_aval, state.AbstractRef)
-    if a_scale_transforms_tree is not None:
-      a_scale_transforms = a_scale_transforms_tree.unflatten(
-          a_scale_transforms_leaves
-      )
-      a_scale_transform_avals = a_scale_transforms_tree.unflatten(
-          a_scale_transforms_leaves_avals
-      )
-    else:
-      a_scale_transforms = ()
-      a_scale_transform_avals = ()
     a_scale_ref, _, a_scale_transforms = lowering._handle_transforms(
         ctx, a_scale_ref_aval, a_scale_ref, a_scale_transform_avals,
         a_scale_transforms
@@ -3115,16 +2997,6 @@ def _tcgen05_mma_lowering(
       )
   if b_scale_ref is not None:
     assert isinstance(b_scale_ref_aval, state.AbstractRef)
-    if b_scale_transforms_tree is not None:
-      b_scale_transforms = b_scale_transforms_tree.unflatten(
-          b_scale_transforms_leaves
-      )
-      b_scale_transform_avals = b_scale_transforms_tree.unflatten(
-          b_scale_transforms_leaves_avals
-      )
-    else:
-      b_scale_transforms = ()
-      b_scale_transform_avals = ()
     b_scale_ref, _, b_scale_transforms = lowering._handle_transforms(
         ctx, b_scale_ref_aval, b_scale_ref, b_scale_transform_avals,
         b_scale_transforms
@@ -3132,18 +3004,6 @@ def _tcgen05_mma_lowering(
     if b_scale_transforms:
       raise NotImplementedError(f"Unsupported transforms: {b_scale_transforms}")
   if a_sparse_metadata_ref is not None:
-    if a_sparse_metadata_transforms_tree is not None:
-      a_sparse_metadata_transforms = a_sparse_metadata_transforms_tree.unflatten(
-          a_sparse_metadata_transforms_leaves
-      )
-      a_sparse_metadata_transform_avals = (
-          a_sparse_metadata_transforms_tree.unflatten(
-              a_sparse_metadata_transforms_leaves_avals
-          )
-      )
-    else:
-      a_sparse_metadata_transforms = ()
-      a_sparse_metadata_transform_avals = ()
     assert isinstance(a_sparse_metadata_ref_aval, state_types.AbstractRef)
     a_sparse_metadata_ref, _, a_sparse_metadata_transforms = (
         lowering._handle_transforms(
@@ -3237,7 +3097,7 @@ def _tcgen05_mma_lowering_wg(
   else:
     a_sparse_metadata_ref = a_sparse_metadata_ref_aval = None
 
-  transforms_trees = (
+  transforms_tree = tree_util.treedef_tuple((
       acc_transforms_tree,
       a_transforms_tree,
       b_transforms_tree,
@@ -3245,40 +3105,29 @@ def _tcgen05_mma_lowering_wg(
       a_scale_transforms_tree,
       b_scale_transforms_tree,
       a_sparse_metadata_transforms_tree,
-  )
-  ns = [getattr(tree, "num_leaves", 0) for tree in transforms_trees]
-  transforms_leaves_lists = util.split_list_checked(leaves, ns)
-  transforms_avals_lists = util.split_list_checked(avals, ns)
-
+  ))
   (
-      acc_transforms_leaves,
-      a_transforms_leaves,
-      b_transforms_leaves,
-      barrier_transforms_leaves,
-      a_scale_transforms_leaves,
-      b_scale_transforms_leaves,
-      a_sparse_metadata_transforms_leaves,
-  ) = transforms_leaves_lists
-
+      acc_transforms,
+      a_transforms,
+      b_transforms,
+      barrier_transforms,
+      a_scale_transforms,
+      b_scale_transforms,
+      a_sparse_metadata_transforms,
+  ) = transforms_tree.unflatten(leaves)
   (
-      acc_transforms_leaves_avals,
-      a_transforms_leaves_avals,
-      b_transforms_leaves_avals,
+      acc_transform_avals,
+      a_transform_avals,
+      b_transform_avals,
       _,
-      a_scale_transforms_leaves_avals,
-      b_scale_transforms_leaves_avals,
-      a_sparse_metadata_transforms_leaves_avals,
-  ) = transforms_avals_lists
+      a_scale_transform_avals,
+      b_scale_transform_avals,
+      a_sparse_metadata_transform_avals,
+  ) = transforms_tree.unflatten(avals)
 
-  def handle_transforms_and_get_ref(tree, leaves, leaves_avals, ref, ref_aval):
+  def handle_transforms_and_get_ref(transforms, transform_avals, ref, ref_aval):
     if ref is None:
       return None
-    if tree is None:
-      transforms = ()
-      transform_avals = ()
-    else:
-      transforms = tree.unflatten(leaves)
-      transform_avals = tree.unflatten(leaves_avals)
     ref, _, transforms = lowering._handle_transforms(
         ctx, ref_aval, ref, transform_avals, transforms
     )
@@ -3289,57 +3138,48 @@ def _tcgen05_mma_lowering_wg(
     return ref
 
   acc_ref = handle_transforms_and_get_ref(
-      acc_transforms_tree,
-      acc_transforms_leaves,
-      acc_transforms_leaves_avals,
+      acc_transforms,
+      acc_transform_avals,
       acc_ref,
       acc_aval,
   )
 
   a_ref = handle_transforms_and_get_ref(
-      a_transforms_tree,
-      a_transforms_leaves,
-      a_transforms_leaves_avals,
+      a_transforms,
+      a_transform_avals,
       a_ref,
       a_aval,
   )
 
   b_ref = handle_transforms_and_get_ref(
-      b_transforms_tree,
-      b_transforms_leaves,
-      b_transforms_leaves_avals,
+      b_transforms,
+      b_transform_avals,
       b_ref,
       b_aval,
   )
 
   a_sparse_metadata_ref = handle_transforms_and_get_ref(
-      a_sparse_metadata_transforms_tree,
-      a_sparse_metadata_transforms_leaves,
-      a_sparse_metadata_transforms_leaves_avals,
+      a_sparse_metadata_transforms,
+      a_sparse_metadata_transform_avals,
       a_sparse_metadata_ref,
       a_sparse_metadata_ref_aval,
   )
 
-  if barrier_transforms_tree is not None and barrier_ref is not None:
-    barrier_transforms = barrier_transforms_tree.unflatten(
-        barrier_transforms_leaves
-    )
+  if barrier_transforms and barrier_ref is not None:
     base_index = _get_barrier_base_index(barrier_ref_aval, barrier_transforms)
     if base_index is not None:
       barrier_ref = barrier_ref[base_index]
 
   a_scale_ref = handle_transforms_and_get_ref(
-      a_scale_transforms_tree,
-      a_scale_transforms_leaves,
-      a_scale_transforms_leaves_avals,
+      a_scale_transforms,
+      a_scale_transform_avals,
       a_scale_ref,
       a_scale_ref_aval,
   )
 
   b_scale_ref = handle_transforms_and_get_ref(
-      b_scale_transforms_tree,
-      b_scale_transforms_leaves,
-      b_scale_transforms_leaves_avals,
+      b_scale_transforms,
+      b_scale_transform_avals,
       b_scale_ref,
       b_scale_ref_aval,
   )
@@ -3400,13 +3240,9 @@ def tcgen05_commit_arrive(
     - :func:`jax.experimental.pallas.mosaic_gpu.tcgen05_mma`
     - :func:`jax.experimental.pallas.mosaic_gpu.async_copy_smem_to_tmem`
   """
-  if isinstance(barrier, pallas_core.TransformedRef):
-    barrier_transforms_leaves, barrier_transforms_tree = jax.tree.flatten(
-        barrier.transforms
-    )
-    barrier = barrier.ref
-  else:
-    barrier_transforms_leaves, barrier_transforms_tree = [], None
+  barrier, barrier_transforms_leaves, barrier_transforms_tree = (
+      _extract_ref_and_transforms(barrier)
+  )
 
   tcgen05_commit_arrive_p.bind(
       barrier,
@@ -3460,11 +3296,10 @@ def _tcgen05_commit_arrive_lowering(
 
   barrier_ref_aval = ctx.avals_in[0]
   assert isinstance(barrier_ref_aval, state_types.AbstractRef)
-  if barrier_transforms_tree is not None:
-    barrier_transforms = barrier_transforms_tree.unflatten(flat_args)
-    base_index = _get_barrier_base_index(barrier_ref_aval, barrier_transforms)
-    if base_index is not None:
-      barrier_ref = barrier_ref[base_index]
+  barrier_transforms = barrier_transforms_tree.unflatten(flat_args)
+  base_index = _get_barrier_base_index(barrier_ref_aval, barrier_transforms)
+  if base_index is not None:
+    barrier_ref = barrier_ref[base_index]
 
   if collective := collective_axis is not None:
     is_leader_block = _collective_mma_predicate(ctx, collective_axis)
@@ -5200,17 +5035,13 @@ def try_cluster_cancel_lowering(
 
   result_aval = ctx.avals_in[0]
   assert isinstance(result_aval, state_types.AbstractRef)
-  if result_transforms_tree is not None:
-    res_transforms_leaves, barrier_transforms_leaves = util.split_list(
-      transforms_leaves, [result_transforms_tree.num_leaves])
-    res_transforms = result_transforms_tree.unflatten(res_transforms_leaves)
-    res_transform_avals = result_transforms_tree.unflatten(
-        ctx.avals_in[2 : 2 + result_transforms_tree.num_leaves]
-    )
-  else:
-    barrier_transforms_leaves = transforms_leaves
-    res_transforms = ()
-    res_transform_avals = ()
+  transforms_tree = tree_util.treedef_tuple(
+      (result_transforms_tree, barrier_transforms_tree)
+  )
+  res_transforms, barrier_transforms = transforms_tree.unflatten(
+      transforms_leaves
+  )
+  res_transform_avals, _ = transforms_tree.unflatten(ctx.avals_in[2:])
   result_ref, _, res_transforms = lowering._handle_transforms(
       ctx, result_aval, result_ref, res_transform_avals, res_transforms)
   if res_transforms:
@@ -5218,13 +5049,9 @@ def try_cluster_cancel_lowering(
         f"Unimplemented transforms for result ref: {res_transforms}"
     )
 
-  if barrier_transforms_tree is not None:
-    base_index = _get_barrier_base_index(
-        ctx.avals_in[1],
-        barrier_transforms_tree.unflatten(barrier_transforms_leaves),
-    )
-    if base_index is not None:
-      barrier = barrier[base_index]
+  base_index = _get_barrier_base_index(ctx.avals_in[1], barrier_transforms)
+  if base_index is not None:
+    barrier = barrier[base_index]
 
   result_ty = ir.MemRefType(result_ref.type)
   bits = math.prod(result_ty.shape) * mgpu.bitwidth(result_ty.element_type)
@@ -5300,21 +5127,12 @@ def try_cluster_cancel(
   if not isinstance(collective_axes, tuple):
     collective_axes = (collective_axes,)
 
-  if isinstance(result_ref, pallas_core.TransformedRef):
-    result_transforms_leaves, result_transforms_tree = jax.tree.flatten(
-        result_ref.transforms
-    )
-    result_ref = result_ref.ref
-  else:
-    result_transforms_leaves, result_transforms_tree = [], None
-
-  if isinstance(barrier, pallas_core.TransformedRef):
-    barrier_transforms_leaves, barrier_transforms_tree = jax.tree.flatten(
-        barrier.transforms
-    )
-    barrier = barrier.ref
-  else:
-    barrier_transforms_leaves, barrier_transforms_tree = [], None
+  result_ref, result_transforms_leaves, result_transforms_tree = (
+      _extract_ref_and_transforms(result_ref)
+  )
+  barrier, barrier_transforms_leaves, barrier_transforms_tree = (
+      _extract_ref_and_transforms(barrier)
+  )
 
   try_cluster_cancel_p.bind(
       result_ref,
@@ -5352,12 +5170,8 @@ def query_cluster_cancel_lowering(ctx: lowering.LoweringRuleContext,
                                   transforms_tree):
   result_aval = ctx.avals_in[0]
   assert isinstance(result_aval, state_types.AbstractRef)
-  if transforms_tree is not None:
-    res_transforms = transforms_tree.unflatten(transforms_leaves)
-    transform_avals = transforms_tree.unflatten(ctx.avals_in[1:])
-  else:
-    res_transforms = ()
-    transform_avals = ()
+  res_transforms = transforms_tree.unflatten(transforms_leaves)
+  transform_avals = transforms_tree.unflatten(ctx.avals_in[1:])
   result_ref, _, res_transforms = lowering._handle_transforms(
       ctx, result_aval, result_ref, transform_avals, res_transforms)
   if res_transforms:
@@ -5412,13 +5226,9 @@ def query_cluster_cancel(
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.try_cluster_cancel`
   """
-  if isinstance(result_ref, pallas_core.TransformedRef):
-    result_transforms_leaves, result_transforms_tree = jax.tree.flatten(
-        result_ref.transforms
-    )
-    result_ref = result_ref.ref
-  else:
-    result_transforms_leaves, result_transforms_tree = [], None
+  result_ref, result_transforms_leaves, result_transforms_tree = (
+      _extract_ref_and_transforms(result_ref)
+  )
   result = query_cluster_cancel_p.bind(
       result_ref,
       *result_transforms_leaves,
@@ -5724,13 +5534,7 @@ def multimem_store(source: jax.Array, ref: _Ref, collective_axes: Hashable | tup
     ref: The GMEM reference to store the value to.
     collective_axes: The JAX mesh axes indicating the devices to store to.
   """
-  if isinstance(ref, pallas_core.TransformedRef):
-    transforms_leaves, transforms_tree = jax.tree.flatten(
-        ref.transforms
-    )
-    ref = ref.ref
-  else:
-    transforms_leaves, transforms_tree = [], None
+  ref, transforms_leaves, transforms_tree = _extract_ref_and_transforms(ref)
   multimem_store_p.bind(
       source,
       ref,
@@ -5743,17 +5547,17 @@ def multimem_store(source: jax.Array, ref: _Ref, collective_axes: Hashable | tup
 @multimem_store_p.def_effectful_abstract_eval
 def _multimem_store_abstract_eval(source, ref, *transforms_leaves, transforms_tree, **_):
   _check_ref(ref, "ref", gpu_core.GMEM)
-  shape, dtype = ref.shape, ref.dtype
-  if transforms_tree is not None:
-    transforms = jax.tree.unflatten(transforms_tree, transforms_leaves)
-    ty = state.transform_type(transforms, ref)
-    assert isinstance(ty, state.AbstractRef)
-    shape = ty.shape
-    dtype = ty.dtype
-  if source.dtype != dtype:
-    raise ValueError(f"Value dtype {source.dtype} does not match ref dtype {dtype}")
-  if source.shape != shape:
-    raise ValueError(f"Value shape {source.shape} does not match ref shape {shape}")
+  transforms = jax.tree.unflatten(transforms_tree, transforms_leaves)
+  ty = state.transform_type(transforms, ref)
+  assert isinstance(ty, state.AbstractRef)
+  if source.dtype != ty.dtype:
+    raise ValueError(
+        f"Value dtype {source.dtype} does not match ref dtype {ty.dtype}"
+    )
+  if source.shape != ty.shape:
+    raise ValueError(
+        f"Value shape {source.shape} does not match ref shape {ty.shape}"
+    )
   return [], {pallas_core.comms_effect, state.WriteEffect(1)}
 
 
@@ -5772,18 +5576,17 @@ def _multimem_store_lowering_rule(
         f" ({mesh_info.axis_names}) axes are supported, but got"
         f" {collective_axes}"
     )
-  if transforms_tree is not None:
-    transforms = tree_util.tree_unflatten(transforms_tree, transforms_leaves)
-    local_ref_aval = ctx.avals_in[1]
-    assert isinstance(local_ref_aval, state_types.AbstractRef)
-    transform_avals = transforms_tree.unflatten(ctx.avals_in[2:])
-    local_ref, _, transforms = lowering._handle_transforms(
-        ctx, local_ref_aval, local_ref, transform_avals, transforms, allow_peer_refs=False
+  transforms = tree_util.tree_unflatten(transforms_tree, transforms_leaves)
+  local_ref_aval = ctx.avals_in[1]
+  assert isinstance(local_ref_aval, state_types.AbstractRef)
+  transform_avals = transforms_tree.unflatten(ctx.avals_in[2:])
+  local_ref, _, transforms = lowering._handle_transforms(
+      ctx, local_ref_aval, local_ref, transform_avals, transforms, allow_peer_refs=False
+  )
+  if transforms:
+    raise NotImplementedError(
+        f"Unhandled transforms for multimem_store: {transforms}"
     )
-    if transforms:
-      raise NotImplementedError(
-          f"Unhandled transforms for multimem_store: {transforms}"
-      )
   multi_ref = ctx.launch_ctx.to_remote_multicast(local_ref)
   scalar = not ctx.avals_in[0].shape
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
