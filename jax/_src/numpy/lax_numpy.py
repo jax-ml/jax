@@ -6156,7 +6156,7 @@ def i0(x: ArrayLike) -> Array:
   Examples:
     >>> x = jnp.array([-2, -1, 0, 1, 2])
     >>> jnp.i0(x)
-    Array([2.2795851, 1.266066 , 1.0000001, 1.266066 , 2.2795851], dtype=float32)
+    Array([2.2795854, 1.2660658, 1.       , 1.2660658, 2.2795854], dtype=float32)
   """
   x, = util.promote_args_inexact("i0", x)
   if not issubdtype(x.dtype, np.floating):
