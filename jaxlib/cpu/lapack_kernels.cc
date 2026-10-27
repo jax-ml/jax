@@ -428,7 +428,7 @@ ffi::Error PivotingQrFactorization<dtype, IntType>::Kernel(
         auto* local_tau_data = tau_data + i * tau_step;
 
         auto work_data = AllocateScratchMemory<dtype>(work_size);
-        std::unique_ptr<ffi::NativeType<ffi::ToReal(dtype)>[]> rwork_data;
+        AlignedUniquePtr<ffi::NativeType<ffi::ToReal(dtype)>> rwork_data;
         if constexpr (is_complex_dtype) {
           rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(2 * x_cols);
         }
@@ -888,7 +888,7 @@ static ffi::Error SvdKernel(
         auto work_data = AllocateScratchMemory<dtype>(work_size);
         auto iwork_data =
             AllocateScratchMemory<LapackIntDtypeFor<IntType>>(iwork_size);
-        std::unique_ptr<ffi::NativeType<ffi::ToReal(dtype)>[]> rwork;
+        AlignedUniquePtr<ffi::NativeType<ffi::ToReal(dtype)>> rwork;
         if constexpr (ffi::IsComplexType<dtype>()) {
           rwork = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);
         }
@@ -1040,7 +1040,7 @@ static ffi::Error SvdQRKernel(
         auto* local_info_data = info_data + i;
 
         auto work_data = AllocateScratchMemory<dtype>(work_size);
-        std::unique_ptr<ffi::NativeType<ffi::ToReal(dtype)>[]> rwork;
+        AlignedUniquePtr<ffi::NativeType<ffi::ToReal(dtype)>> rwork;
         if constexpr (ffi::IsComplexType<dtype>()) {
           const auto rwork_size = svd::GetRealWorkspaceSizeQR(x_rows, x_cols);
           rwork = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);

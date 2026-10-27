@@ -276,7 +276,7 @@ class PivotingQrFactorizationHost {
     auto work = AllocateScratchMemory<DataType>(lwork);
 
     constexpr bool is_complex_dtype = ffi::IsComplexType<DataType>();
-    std::unique_ptr<RealType[]> rwork;
+    AlignedUniquePtr<RealType> rwork;
     if constexpr (is_complex_dtype) {
       rwork = AllocateScratchMemory<ffi::ToReal(DataType)>(2 * n);
     }
