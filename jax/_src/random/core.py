@@ -1138,21 +1138,27 @@ def _truncated_normal(key: Key, lower, upper, shape, dtype) -> Array:
   else:
     _check_shape("truncated_normal", shape, np.shape(lower), np.shape(upper))
 
-  sqrt2 = np.array(np.sqrt(2), dtype)
+  # Sub-16-bit floats are sampled in float32 and rounded once: erf has no lowering
+  # for them on GPU, and a uniform draw on an 8-bit grid would be badly quantized.
+  compute_dtype = np.dtype('float32') if dtypes.finfo(dtype).bits < 16 else dtype
+  sqrt2 = np.array(np.sqrt(2), compute_dtype)
   lower = lax.convert_element_type(lower, dtype)
   upper = lax.convert_element_type(upper, dtype)
-  a = lax_special.erf(lower / sqrt2)
-  b = lax_special.erf(upper / sqrt2)
+  a = lax_special.erf(lax.convert_element_type(lower, compute_dtype) / sqrt2)
+  b = lax_special.erf(lax.convert_element_type(upper, compute_dtype) / sqrt2)
   if not dtypes.issubdtype(dtype, np.floating):
     raise TypeError("truncated_normal only accepts floating point dtypes.")
-  u = uniform(key, shape, dtype, minval=a, maxval=b)
-  out = sqrt2 * lax_special.erf_inv(u)
+  u = uniform(key, shape, compute_dtype, minval=a, maxval=b)
+  out = lax.convert_element_type(sqrt2 * lax_special.erf_inv(u), dtype)
   # Clamp the value to the open interval (lower, upper) to make sure that
   # rounding (or if we chose `a` for `u`) doesn't push us outside of the range.
+  # Step toward the largest finite value, not inf: float8_e4m3fn and similar
+  # formats have no infinity, and nextafter toward NaN returns NaN.
+  finite_max = np.array(dtypes.finfo(dtype).max, dtype=dtype)
   return jnp.clip(
       out,
-      lax.nextafter(lax.stop_gradient(lower), np.array(np.inf, dtype=dtype)),
-      lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
+      lax.nextafter(lax.stop_gradient(lower), finite_max),
+      lax.nextafter(lax.stop_gradient(upper), -finite_max))
 
 
 def bernoulli(key: Key | ArrayLike,  # TODO(jakevdp): make this Key

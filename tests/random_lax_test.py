@@ -403,6 +403,20 @@ class DistributionsTest(RandomTestBase):
     self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.truncnorm(-0.3, 0.3).cdf)
 
   @jtu.sample_product(
+      dtype=jtu.dtypes.supported([dtypes.float8_e4m3fn, dtypes.float8_e5m2]),
+      use_jit=[False, True],
+  )
+  def testTruncatedNormalFloat8(self, dtype, use_jit):
+    key = self.make_key(0)
+    rand = random.truncated_normal if not use_jit else jax.jit(
+        random.truncated_normal, static_argnames=['shape', 'dtype'])
+    samples = rand(key, lower=-2., upper=2., shape=(10000,), dtype=dtype)
+    self.assertEqual(samples.dtype, dtype)
+    samples = np.asarray(samples, np.float32)
+    self.assertTrue(np.all(samples > -2.) and np.all(samples < 2.))
+    self.assertGreater(len(np.unique(samples)), 10)
+
+  @jtu.sample_product(
     [dict(shape=shape, replace=replace, axis=axis,
           input_range_or_shape=input_range_or_shape)
       for shape in [(), (5,), (4, 5)]
