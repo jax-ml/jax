@@ -90,15 +90,14 @@ inline xla::ffi::Error ParallelFor(
     return xla::ffi::Error::Success();
   }
   chunk_size = std::max<int64_t>(1, chunk_size);
-  if (chunk_size >= count) {
+  if (chunk_size >= count || thread_pool.num_threads() <= 1) {
     fn(0, count);
     return xla::ffi::Error::Success();
   }
   const size_t num_chunks =
       static_cast<size_t>(tsl::MathUtil::CeilOfRatio(count, chunk_size));
   const size_t num_workers = std::min<size_t>(
-      num_chunks,
-      static_cast<size_t>(std::max<int64_t>(1, thread_pool.num_threads())));
+      num_chunks, static_cast<size_t>(thread_pool.num_threads()));
   auto pool = std::make_shared<FfiThreadPoolAdapter>(thread_pool);
   tsl::BlockUntilReady(xla::cpu::Worker::Parallelize(
       pool.get(), num_workers, num_chunks,

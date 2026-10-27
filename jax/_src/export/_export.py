@@ -1086,6 +1086,7 @@ def _check_lowering(lowering) -> None:
         "\n".join(not_implemented_msgs))
 
 _CPU_FFI_KERNELS = [
+    "cpu_digamma_ffi", "cpu_lgamma_ffi",
     "lapack_spotrf_ffi", "lapack_dpotrf_ffi", "lapack_cpotrf_ffi", "lapack_zpotrf_ffi",
     "lapack_sgeqrf_ffi", "lapack_dgeqrf_ffi", "lapack_cgeqrf_ffi", "lapack_zgeqrf_ffi",
     "lapack_sorgqr_ffi", "lapack_dorgqr_ffi", "lapack_cungqr_ffi", "lapack_zungqr_ffi",

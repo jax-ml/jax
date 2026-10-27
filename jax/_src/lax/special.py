@@ -23,6 +23,11 @@ from functools import partial, reduce as _reduce
 
 from jax._src import config
 from jax._src import core
+from jax._src.custom_partitioning_sharding_rule import (
+    sdy_sharding_rule_to_mlir,
+    str_to_sdy_sharding_rule,
+)
+from jax._src import ffi
 from jax._src.lax.erf import erf_inv_core, erfc_impl, exp_neg_sq
 from jax._src.lax.lax import (AccuracyMode, Tolerance, add, bitwise_and,
                               bitwise_not, bitwise_or, broadcast_in_dim,
@@ -39,8 +44,14 @@ from jax._src.lax.lgamma import lgamma_impl
 from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
+from jax._src.lib import cpu_math
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.typing import Array, ArrayLike
+
+if cpu_math is not None:
+  for _name, _value in cpu_math.registrations().items():
+    ffi.register_ffi_target(_name, _value, platform='cpu', api_version=1)
+    ffi.register_ffi_target_as_batch_partitionable(_name)
 
 # TODO(mattjj): this function sucks, delete it
 def _up_and_broadcast(doit):
@@ -768,6 +779,7 @@ ad.defjvp(regularized_incomplete_beta_p,
   betainc_grad_not_implemented,
   betainc_gradx)
 
+
 def _lgamma_lowering(ctx, x, *, use_f64_for_f32=False):
   aval = ctx.avals_in[0]
   def _impl(v):
@@ -783,18 +795,53 @@ def _lgamma_lowering(ctx, x, *, use_f64_for_f32=False):
   return mlir.lower_fun(_impl, multiple_results=False)(ctx, x)
 
 
+def _unary_math_ffi_lowering(target_name: str, fallback_lowering):
+  def rule(ctx, x):
+    if ctx.is_forward_compat():
+      return fallback_lowering(ctx, x)
+    x_aval, = ctx.avals_in
+    num_batch_dims = len(x_aval.shape)
+    frontend_attrs = mlir.ir_attribute({'num_batch_dims': str(num_batch_dims)})
+    extra_attributes = {'mhlo.frontend_attributes': frontend_attrs}
+    # For polymorphic shapes, ffi_lowering appends shape operands
+    # (indices_of_shape_operands) that StablehloCanonicalizeDynamism later
+    # drops without updating sdy.sharding_rule, so no single operand mapping
+    # count can pass verification both before and after shape refinement.
+    if core.is_constant_shape(x_aval.shape):
+      in_types = list(mlir.aval_to_ir_types(ctx.module_context, x_aval))
+      out_types = list(mlir.aval_to_ir_types(ctx.module_context, ctx.avals_out[0]))
+      extra_attributes['sdy.sharding_rule'] = sdy_sharding_rule_to_mlir(
+          str_to_sdy_sharding_rule('... -> ...'),
+          in_types,
+          out_types,
+      )
+    return ffi.ffi_lowering(
+        target_name, extra_attributes=extra_attributes
+    )(ctx, x)
+  return rule
+
+
+_cpu_lgamma_lowering = partial(_lgamma_lowering, use_f64_for_f32=True)
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
-# Only CPU uses XLA_LATE; XLA:GPU does not inline XLA_LATE calls (turning each
-# op inside into a separate kernel), and XLA:TPU's late CallInliner hits
-# tile-layout mismatches inside fused loops.
 mlir.register_lowering(lgamma_p, _lgamma_lowering, inline=False)
-mlir.register_lowering(
-    lgamma_p,
-    partial(_lgamma_lowering, use_f64_for_f32=True),
-    platform='cpu',
-    inline=core.Inline.XLA_LATE,
-)
+# TODO(phawkins): Make this unconditional after jax 0.12.1 is released.
+if cpu_math is not None:
+  mlir.register_lowering(
+      lgamma_p,
+      _unary_math_ffi_lowering('cpu_lgamma_ffi', _cpu_lgamma_lowering),
+      platform='cpu',
+  )
+else:
+  # Only CPU uses XLA_LATE; XLA:GPU does not inline XLA_LATE calls (turning each
+  # op inside into a separate kernel), and XLA:TPU's late CallInliner hits
+  # tile-layout mismatches inside fused loops.
+  mlir.register_lowering(
+      lgamma_p,
+      _cpu_lgamma_lowering,
+      platform='cpu',
+      inline=core.Inline.XLA_LATE,
+  )
 
 def _digamma_lowering(
     ctx, x, *, use_f64_for_f32=False, use_optimization_barrier=False
@@ -818,15 +865,24 @@ def _digamma_lowering(
   return mlir.lower_fun(_impl, multiple_results=False)(ctx, x)
 
 
+_cpu_digamma_lowering = partial(_digamma_lowering, use_f64_for_f32=True)
 digamma_p = standard_unop(_float, 'digamma')
 ad.defjvp(digamma_p, lambda g, x: mul(g, polygamma(_const(x, 1), x)))
 mlir.register_lowering(digamma_p, _digamma_lowering, inline=False)
-mlir.register_lowering(
-    digamma_p,
-    partial(_digamma_lowering, use_f64_for_f32=True),
-    platform='cpu',
-    inline=core.Inline.XLA_LATE,
-)
+# TODO(phawkins): Make this unconditional after jax 0.12.1 is released.
+if cpu_math is not None:
+  mlir.register_lowering(
+      digamma_p,
+      _unary_math_ffi_lowering('cpu_digamma_ffi', _cpu_digamma_lowering),
+      platform='cpu',
+  )
+else:
+  mlir.register_lowering(
+      digamma_p,
+      _cpu_digamma_lowering,
+      platform='cpu',
+      inline=core.Inline.XLA_LATE,
+  )
 mlir.register_lowering(
     digamma_p,
     partial(_digamma_lowering, use_optimization_barrier=True),

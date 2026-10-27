@@ -112,6 +112,11 @@ from jaxlib import _profile_data as _profile_data  # noqa: F401
 
 from jaxlib._jax import ffi as ffi  # noqa: F401
 import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
+cpu_math: ModuleType | None
+try:
+  import jaxlib.cpu._math as cpu_math  # noqa: F401
+except ImportError:
+  cpu_math = None
 
 import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
 import jaxlib._pretty_printer as _pretty_printer  # noqa: F401

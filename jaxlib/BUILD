@@ -70,6 +70,7 @@ pytype_strict_library(
         ":weakref_lru_cache",
         ":xla_client",
         "//jaxlib/cpu:_lapack",
+        "//jaxlib/cpu:_math",
         "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir",
         "//jaxlib/mlir:arithmetic_dialect",
@@ -124,6 +125,7 @@ pytype_library(
     deps = [
         ":_jax",
         "//jaxlib/cpu:_lapack",
+        "//jaxlib/cpu:_math",
         "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:stablehlo_dialect",
@@ -236,6 +238,24 @@ cc_library(
     deps = [
         "@eigen_archive//:eigen3",
     ],
+)
+
+cc_library(
+    name = "log_coeffs",
+    hdrs = ["log_coeffs.h"],
+    # compatible with libtpu
+)
+
+cc_library(
+    name = "lgamma_coeffs",
+    hdrs = ["lgamma_coeffs.h"],
+    # compatible with libtpu
+)
+
+cc_library(
+    name = "digamma_coeffs",
+    hdrs = ["digamma_coeffs.h"],
+    # compatible with libtpu
 )
 
 cc_library(
