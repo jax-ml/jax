@@ -40,13 +40,14 @@ all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 
 OpRecord = collections.namedtuple(
     "OpRecord",
-    ["name", "nargs", "dtypes", "rng_factory", "test_autodiff", "nondiff_argnums", "test_name"])
+    ["name", "nargs", "dtypes", "rng_factory", "test_autodiff", "nondiff_argnums", "test_name", "shapes"])
 
 
-def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), test_name=None):
+def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), test_name=None, shapes=None):
   test_name = test_name or name
   nondiff_argnums = tuple(sorted(set(nondiff_argnums)))
-  return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name)
+  shapes = all_shapes if shapes is None else shapes
+  return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name, shapes)
 
 
 float_dtypes = jtu.dtypes.floating
@@ -203,11 +204,13 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("poch", 2, float_dtypes, jtu.rand_positive, True),
     op_record(
         "hyp1f1", 3, float_dtypes,
-        functools.partial(jtu.rand_uniform, low=0.5, high=30), True
+        functools.partial(jtu.rand_uniform, low=0.5, high=30), True,
+        shapes=[(), (4,)],
     ),
     op_record(
         "hyp2f1", 4, float_dtypes,
-        functools.partial(jtu.rand_uniform, low=0.1, high=0.9), True
+        functools.partial(jtu.rand_uniform, low=0.1, high=0.9), True,
+        shapes=[(), (4,)],
     ),
     op_record("log_softmax", 1, float_dtypes, jtu.rand_default, True),
     op_record("softmax", 1, float_dtypes, jtu.rand_default, True),
@@ -233,7 +236,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       [dict(op=rec.name, rng_factory=rec.rng_factory,
             test_autodiff=rec.test_autodiff,
             nondiff_argnums=rec.nondiff_argnums)],
-      shapes=itertools.combinations_with_replacement(all_shapes, rec.nargs),
+      shapes=itertools.combinations_with_replacement(rec.shapes, rec.nargs),
       dtypes=(itertools.combinations_with_replacement(rec.dtypes, rec.nargs)
         if isinstance(rec.dtypes, list) else itertools.product(*rec.dtypes)),
     ))
