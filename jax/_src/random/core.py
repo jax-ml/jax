@@ -2009,49 +2009,6 @@ def _poisson_log_pmf(k, lam):
   return jnp.where(lam < 0.0, jnp.nan, result)
 
 
-def _poisson_log_pmf_central(k, lam):
-  """Evaluate only the central branch of the stable Poisson log-PMF."""
-  safe_k = jnp.maximum(k, 1)
-  t = (safe_k - lam) / safe_k
-  series = ((((((t / 8 + 1 / 7) * t + 1 / 6) * t + 1 / 5)
-              * t + 1 / 4) * t + 1 / 3) * t + 1 / 2)
-  central_deviance = -safe_k * (t * t) * series
-  stirling_k_sq = safe_k * safe_k
-  asymptotic_stirling_tail = (
-      1.0 / 12
-      - (1.0 / 360 - 1.0 / 1260 / stirling_k_sq) / stirling_k_sq
-  ) / safe_k
-  log_normalizer = (
-      0.5 * (lax.log(safe_k) + math.log(2 * math.pi))
-      + asymptotic_stirling_tail
-  )
-  return central_deviance - log_normalizer
-
-
-def _poisson_log_pmf_for_rejection(k, lam):
-  """Use the central PMF branch only when the whole BTRS batch is safe.
-
-  The general helper must evaluate far-tail-safe alternatives for public
-  log-PMF inputs. In the rejection loop, high-rate proposals are usually
-  central. Keep the full stable helper as the fallback for any batch with a
-  low rate, small count, or out-of-central-domain proposal.
-  """
-  safe_k = jnp.maximum(k, 1)
-  relative_delta = (safe_k - lam) / safe_k
-  central = (
-      (lam >= 1e6)
-      & (jnp.abs(relative_delta) <= 0.01)
-      & (safe_k > 10)
-      & (lam > 0)
-  )
-  return lax.cond(
-      jnp.all(central),
-      lambda _: _poisson_log_pmf_central(k, lam),
-      lambda _: _poisson_log_pmf(k, lam),
-      operand=None,
-  )
-
-
 @jit(static_argnums=(2, 3, 4))
 def _poisson_rejection(key: Key, lam, shape, dtype, max_iters) -> Array:
   # Transformed rejection due to Hormann.
@@ -2072,7 +2029,7 @@ def _poisson_rejection(key: Key, lam, shape, dtype, max_iters) -> Array:
 
     k = lax.floor((2 * a / u_shifted + b) * u + lam + 0.43)
     s = lax.log(v * inv_alpha / (a / (u_shifted * u_shifted) + b))
-    t = _poisson_log_pmf_for_rejection(k, lam)
+    t = _poisson_log_pmf(k, lam)
 
     accept1 = (u_shifted >= 0.07) & (v <= v_r)
     reject = (k < 0) | ((u_shifted < 0.013) & (v > u_shifted))
