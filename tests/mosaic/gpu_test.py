@@ -6787,6 +6787,61 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_array_equal(z, np.maximum(x, y))
 
   @parameterized.product(
+      op_name=("add", "sub", "min", "max", "neg"),
+      dtype=(jnp.int8, jnp.uint8),
+      vec_size=(2, 4, 8),
+  )
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_packed_int8_arith(self, op_name, dtype, vec_size):
+    is_signed = utils.is_signed(dtype)
+    sign = "s" if is_signed else "u"
+    fa_op, np_op = {
+        "add": (operator.add, operator.add),
+        "sub": (operator.sub, operator.sub),
+        "min": (fa.FragmentedArray.min, np.minimum),
+        "max": (fa.FragmentedArray.max, np.maximum),
+        "neg": (lambda a, _: -a, lambda a, _: -a),
+    }[op_name]
+
+    def kernel(ctx, src, src2, dst, _):
+      s1 = fa.FragmentedArray.load_strided(
+          src, vec_size=vec_size, is_signed=is_signed
+      )
+      s2 = fa.FragmentedArray.load_strided(
+          src2, vec_size=vec_size, is_signed=is_signed
+      )
+      fa_op(s1, s2).store_untiled(dst)
+
+    elems_per_thread = 8
+    packed_size = 4
+    iinfo = jnp.iinfo(dtype)
+    shape = (elems_per_thread * 128,)
+    x = self.prng.integers(iinfo.min, iinfo.max + 1, shape, dtype=dtype)
+    y = self.prng.integers(iinfo.min, iinfo.max + 1, shape, dtype=dtype)
+    if not jtu.is_cuda_compute_capability_equal("10.7"):
+      with self.assertRaisesRegex(
+          NotImplementedError,
+          "Packed 8-bit integer ALU instructions require sm_107f",
+      ):
+        mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (x, y), x, ())
+      return
+    if vec_size % packed_size:
+      with self.assertRaisesRegex(
+          NotImplementedError,
+          f"Instruction .* is not supported for vector<{vec_size}x",
+      ):
+        mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (x, y), x, ())
+      return
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (x, y), x, ())
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      z = f(x, y).block_until_ready()
+    op_sign = "s" if op_name == "neg" else sign
+    self.assertEqual(
+        ptx().count(f"{op_name}.{op_sign}8x4 "), elems_per_thread // packed_size
+    )
+    np.testing.assert_array_equal(z, np_op(x, y))
+
+  @parameterized.product(
       op_name=("add", "min", "max"),
       dtype=(jnp.int16, jnp.uint16),
   )

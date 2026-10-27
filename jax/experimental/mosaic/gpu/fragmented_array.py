@@ -1677,6 +1677,7 @@ class FragmentedArray:
               *other[:i],
               *other[i + 1 :],
               output_is_signed=output_is_signed,
+              restrict_bitwidth=restrict_bitwidth,
               distributes_over=distributes_over,
           )
         else:
@@ -1687,6 +1688,7 @@ class FragmentedArray:
             op,
             *other,
             output_is_signed=output_is_signed,
+            restrict_bitwidth=restrict_bitwidth,
             distributes_over=distributes_over,
         )
 
@@ -1740,6 +1742,18 @@ class FragmentedArray:
       # -(a + b) = (-a) + (-b)
       return self._pointwise(arith.negf, distributes_over=("add",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
+      if utils.bitwidth(self.mlir_dtype) == 8:
+        if (arch := utils.get_arch()) != utils.RUBIN:
+          raise NotImplementedError(
+              "Packed 8-bit integer ALU instructions require sm_107f, got"
+              f" sm_{arch.major}{arch.minor}"
+          )
+        # PTX 9.4 only defines neg.s8x4 (valid for signed and unsigned two's-complement).
+        return self._pointwise(
+            self._lift_fast_packed_instr("neg.s8x4"),
+            restrict_bitwidth=False,
+            distributes_over=("add",),
+        )
       return 0 - self
     else:
       return NotImplemented
@@ -1748,7 +1762,23 @@ class FragmentedArray:
     if isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(addf, other, distributes_over=("add",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
-      return self._pointwise(arith.addi, other, distributes_over=("add",))
+      is_8bit = utils.bitwidth(self.mlir_dtype) == 8
+      if is_8bit:
+        if (arch := utils.get_arch()) != utils.RUBIN:
+          raise NotImplementedError(
+              "Packed 8-bit integer ALU instructions require sm_107f, got"
+              f" sm_{arch.major}{arch.minor}"
+          )
+        sign = "s" if self.is_signed else "u"
+        addi = self._lift_fast_packed_instr(f"add.{sign}8x4")
+      else:
+        addi = arith.addi
+      return self._pointwise(
+          addi,
+          other,
+          restrict_bitwidth=not is_8bit,
+          distributes_over=("add",),
+      )
     else:
       return NotImplemented
 
@@ -1771,7 +1801,23 @@ class FragmentedArray:
     if isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(subf, other, distributes_over=("add",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
-      return self._pointwise(arith.subi, other, distributes_over=("add",))
+      is_8bit = utils.bitwidth(self.mlir_dtype) == 8
+      if is_8bit:
+        if (arch := utils.get_arch()) != utils.RUBIN:
+          raise NotImplementedError(
+              "Packed 8-bit integer ALU instructions require sm_107f, got"
+              f" sm_{arch.major}{arch.minor}"
+          )
+        sign = "s" if self.is_signed else "u"
+        subi = self._lift_fast_packed_instr(f"sub.{sign}8x4")
+      else:
+        subi = arith.subi
+      return self._pointwise(
+          subi,
+          other,
+          restrict_bitwidth=not is_8bit,
+          distributes_over=("add",),
+      )
     else:
       return NotImplemented
 
@@ -1781,8 +1827,22 @@ class FragmentedArray:
           lambda s, o: subf(o, s), other, distributes_over=("add",)
       )
     elif isinstance(self.mlir_dtype, ir.IntegerType):
+      is_8bit = utils.bitwidth(self.mlir_dtype) == 8
+      if is_8bit:
+        if (arch := utils.get_arch()) != utils.RUBIN:
+          raise NotImplementedError(
+              "Packed 8-bit integer ALU instructions require sm_107f, got"
+              f" sm_{arch.major}{arch.minor}"
+          )
+        sign = "s" if self.is_signed else "u"
+        subi = self._lift_fast_packed_instr(f"sub.{sign}8x4")
+      else:
+        subi = arith.subi
       return self._pointwise(
-          lambda s, o: arith.subi(o, s), other, distributes_over=("add",)
+          lambda s, o: subi(o, s),
+          other,
+          restrict_bitwidth=not is_8bit,
+          distributes_over=("add",),
       )
     else:
       return NotImplemented
@@ -2022,13 +2082,22 @@ class FragmentedArray:
       return self._pointwise(maximumf, other, distributes_over=("max",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       width = utils.bitwidth(self.mlir_dtype)
-      if width == 16:
-        sign = "s" if self.is_signed else "u"
+      sign = "s" if self.is_signed else "u"
+      if width == 8:
+        if (arch := utils.get_arch()) != utils.RUBIN:
+          raise NotImplementedError(
+              "Packed 8-bit integer ALU instructions require sm_107f, got"
+              f" sm_{arch.major}{arch.minor}"
+          )
+        instr = self._lift_fast_packed_instr(f"max.{sign}8x4")
+      elif width == 16:
         instr = self._lift_fast_packed_instr(f"max.{sign}16x2", f"max.{sign}16")
-        return self._pointwise(instr, other, distributes_over=("max",))
+      else:
+        instr = arith.maxsi if self.is_signed else arith.maxui
       return self._pointwise(
-          arith.maxsi if self.is_signed else arith.maxui,
+          instr,
           other,
+          restrict_bitwidth=width != 8,
           distributes_over=("max",),
       )
     else:
@@ -2046,13 +2115,22 @@ class FragmentedArray:
       return self._pointwise(minimumf, other, distributes_over=("min",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       width = utils.bitwidth(self.mlir_dtype)
-      if width == 16:
-        sign = "s" if self.is_signed else "u"
+      sign = "s" if self.is_signed else "u"
+      if width == 8:
+        if (arch := utils.get_arch()) != utils.RUBIN:
+          raise NotImplementedError(
+              "Packed 8-bit integer ALU instructions require sm_107f, got"
+              f" sm_{arch.major}{arch.minor}"
+          )
+        instr = self._lift_fast_packed_instr(f"min.{sign}8x4")
+      elif width == 16:
         instr = self._lift_fast_packed_instr(f"min.{sign}16x2", f"min.{sign}16")
-        return self._pointwise(instr, other, distributes_over=("min",))
+      else:
+        instr = arith.minsi if self.is_signed else arith.minui
       return self._pointwise(
-          arith.minsi if self.is_signed else arith.minui,
+          instr,
           other,
+          restrict_bitwidth=width != 8,
           distributes_over=("min",),
       )
     else:
@@ -2259,8 +2337,8 @@ class FragmentedArray:
 
   @staticmethod
   def _lift_fast_packed_instr(
-      packed_instr: str, single_instr: str,
-  ) -> Callable[[ir.Value, ir.Value], ir.Value]:
+      packed_instr: str, single_instr: str | None = None,
+  ) -> Callable[..., ir.Value]:
     def fast_instr(*args):
       arg_ty = original_arg_ty = args[0].type
       assert all(a.type == arg_ty for a in args)
@@ -2269,7 +2347,9 @@ class FragmentedArray:
       arg_ty = ir.VectorType(args[0].type)
       [vec_len] = arg_ty.shape
       vec_bitwidth = vec_len * utils.bitwidth(arg_ty.element_type)
-      if vec_len == 1 or vec_bitwidth == 32:
+      if (vec_len == 1 and single_instr is not None) or (
+          vec_bitwidth == 32 and vec_len != 1
+      ):
         assert vec_bitwidth.bit_count() == 1
         if vec_bitwidth == 32:
           cstr = "r"
@@ -2288,8 +2368,7 @@ class FragmentedArray:
         )
         assert isinstance(result_int, ir.Value)
         return utils.bitcast(result_int, original_arg_ty)
-      else:
-        assert vec_bitwidth > 32
+      elif vec_bitwidth > 32:
         slice_len = 32 // utils.bitwidth(arg_ty.element_type)
         offset = 0
         slices = []
@@ -2299,6 +2378,11 @@ class FragmentedArray:
           slices.append(fast_instr(*args_slice))
           offset = slice_end
         return utils.vector_concat(slices)
+      else:
+        raise NotImplementedError(
+            f"Instruction {packed_instr} is not supported for {arg_ty}"
+            f" ({vec_bitwidth}-bit vector)"
+        )
     return fast_instr
 
   def bitcast(
