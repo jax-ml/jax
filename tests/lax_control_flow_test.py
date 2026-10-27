@@ -2965,6 +2965,23 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       self.assertNotIn("stablehlo.sine", stablehlo)
       self.assertIn("stablehlo.cosine", stablehlo)
 
+  def test_platform_dependent_lowers_to_its_branch_without_a_conditional(self):
+    # A lowering whose platforms keep one branch lowers that branch alone: no
+    # conditional computes its index at run time, in the function, its
+    # gradient (AD's cotangent conditional) or its batching, where XLA keeps a
+    # conditional around a branch that holds collectives.
+    def f(x):
+      return lax.platform_dependent(x, cpu=jnp.sin, default=jnp.cos)
+
+    x = np.arange(3, dtype=np.float32)
+    for g, arg in ((f, x), (jax.grad(lambda x: f(x).sum()), x),
+                   (jax.vmap(f), x), (jax.grad(lambda y: f(y)), 1.)):
+      stablehlo = jax.jit(g).lower(arg).as_text()
+      self.assertNotIn("stablehlo.case", stablehlo)
+    self.assertAllClose(
+      jax.grad(lambda x: f(x).sum())(x),
+      np.cos(x) if jtu.device_under_test() == "cpu" else -np.sin(x))
+
   def test_platform_dependent_with_non_existent_custom_call(self):
     if not jtu.test_device_matches(["cpu"]):
       self.skipTest("Only for CPU")

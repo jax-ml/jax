@@ -1114,6 +1114,21 @@ def _cond_to_lojax(pred, *hi_args, branches, **kwds):
 
 cond_p.to_lojax = _cond_to_lojax
 
+def _platform_branch_lowering(ctx, jaxpr, args):
+  """`jaxpr`, a platform_dependent conditional's one kept branch, lowered in
+  place of the conditional."""
+  ordered_effects = list(effects.ordered_effects.filter_in(jaxpr.effects))
+  tokens_in = ctx.tokens_in.subset(ordered_effects)
+  consts = mlir.ir_consts(jaxpr.consts, [v.aval for v in jaxpr.constvars])
+  out_vals, tokens_out = mlir.jaxpr_subcomp(
+      ctx.module_context, jaxpr, ctx.name_stack.extend('platform'), tokens_in,
+      consts, *args, dim_var_values=ctx.dim_var_values,
+      const_lowering=ctx.const_lowering, outer_traceback=ctx.traceback)
+  ctx.set_tokens_out(tokens_out)
+  return [mlir.lower_with_sharding_in_types(ctx, o, aval)
+          for o, aval in zip(out_vals, ctx.avals_out)]
+
+
 def _cond_lowering(ctx, index, *args, branches, **params):
   if (branches_platforms := params.get("branches_platforms", None)) is not None:
     branches_kept: list[core.Jaxpr] = []
@@ -1130,6 +1145,11 @@ def _cond_lowering(ctx, index, *args, branches, **params):
           break
       else:
         assert False, p
+
+    if len(branches_kept) == 1:
+      # Inline the sole surviving branch: its index cannot affect execution on
+      # the selected platforms.
+      return _platform_branch_lowering(ctx, branches_kept[0], args)
 
     # Compute the new index into branches_keep
     i32_type = ir.RankedTensorType.get([], mlir.dtype_to_ir_type(dtypes.dtype(np.int32)))
