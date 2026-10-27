@@ -336,6 +336,119 @@ out = scatter(gathered, indices)
 np.testing.assert_array_equal(out, x)
 ```
 
+## Moving data between HBM and vector subcore VMEM
+Pallas supports two ways of transferring data between HBM and vector subcore
+VMEM, each with different tradeoffs and restrictions:
+### 1. Remote DMA directly to/from vector subcore VMEM
+You can target a specific vector subcore's VMEM by passing `core` and `subcore`
+IDs in the `device_id` argument of `pltpu.async_remote_copy` or
+`pltpu.make_async_remote_copy`. This works with any valid VMEM shape and across
+SparseCore generations (though on generations without `pltpu.VMEM_SHARED`, only
+cross-chip transfers are supported). However, performance may vary: on
+architectures with interleaved subcore VMEM, the compiler must lower the
+transfer to a strided DMA at the subcore VMEM stripe granularity instead of a
+contiguous DMA.
+An example of a vector subcore initiated all-to-primary transfer:
+```python
+mesh = plsc.VectorSubcoreMesh(
+    core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+)
+m = 8
+shape = (mesh.num_subcores * m, 128)
+x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(shape)
+
+@pl.kernel(
+    out_type=x,
+    mesh=mesh,
+    scratch_types=(
+        pltpu.VMEM(shape, x.dtype),
+        pltpu.SemaphoreType.DMA(()),
+        pltpu.SemaphoreType.DMA(()),
+    ),
+)
+def kernel(x_ref, o_ref, scratch_vmem, send_sem, recv_sem):
+  subcore_id = jax.lax.axis_index("subcore")
+  sl = pl.ds(subcore_id * m, m)
+  # Primary subcore copies own slice and awaits transfers from other subcores.
+  @pl.when(subcore_id == 0)
+  def _():
+    pltpu.sync_copy(x_ref.at[sl, :], scratch_vmem.at[sl, :])
+    @pl.loop(1, mesh.num_subcores)
+    def _(s):
+      pltpu.make_async_remote_copy(
+          x_ref.at[pl.ds(s * m, m), :],
+          scratch_vmem.at[pl.ds(s * m, m), :],
+          send_sem,
+          recv_sem,
+          device_id={"core": 0, "subcore": 0},
+      ).wait_recv()
+    pltpu.sync_copy(scratch_vmem, o_ref)
+
+  # Non-primary subcores initiate transfers to primary.
+  @pl.when(subcore_id != 0)
+  def _():
+    pltpu.async_remote_copy(
+        x_ref.at[sl, :],
+        scratch_vmem.at[sl, :],
+        send_sem,
+        recv_sem,
+        device_id={"core": 0, "subcore": 0},
+    ).wait_send()
+
+np.testing.assert_array_equal(kernel(x), x)
+```
+### 2. Slicing subcore VMEM from shared VMEM
+On SparseCores that support `pltpu.VMEM_SHARED`, you can DMA a buffer from HBM
+to `pltpu.VMEM_SHARED` and then call
+[`plsc.slice_subcore_vmem_from_shared`](https://github.com/jax-ml/jax/blob/0905c464dd4cb1be55718ea8a711f41c9a885477/jax/_src/pallas/mosaic/sc_primitives.py#L1419)
+to get a zero-copy subcore VMEM reference to the slice belonging to the local
+subcore. This approach is performant, but it has restrictions:
+*   It is supported only on SparseCores that have `pltpu.VMEM_SHARED`.
+*   Because `VMEM_SHARED` is physically striped across all vector subcores, the
+    minormost dimension of the `VMEM_SHARED` ref must have size
+    `num_subcores * stripe_size`. The resulting VMEM ref has leading dimensions
+    the same as the `VMEM_SHARED` ref and a minormost dimension of size
+    `stripe_size`. See the
+    [OpenXLA docstring](https://github.com/openxla/xla/blob/249822ef5682bc9217799e2327be944d213fd7a7/xla/mosaic/dialect/tpu/tpu_ops.td#L1377)
+    for additional details and examples of valid shapes.
+An example of a DMA to `VMEM_SHARED` then per-subcore compute on each VMEM
+slice:
+```python
+sc_info = plsc.get_sparse_core_info()
+num_subcores = sc_info.num_subcores
+bytes_per_word = 4
+stripe_size = (
+    sc_info.dma_granule_size_bytes // bytes_per_word
+)  # Words per stripe (with 2D tiling)
+shared_shape = (8, num_subcores * stripe_size)
+x = jnp.arange(np.prod(shared_shape), dtype=jnp.int32).reshape(shared_shape)
+mesh = plsc.VectorSubcoreMesh(
+    core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+)
+
+@pl.kernel(
+    out_type=x,
+    mesh=mesh,
+    scratch_types=(pltpu.VMEM_SHARED(shared_shape, x.dtype),),
+)
+def kernel(x_ref, o_ref, shared_scratch_ref):
+  subcore_id = jax.lax.axis_index("subcore")
+  # Primary subcore copies HBM -> VMEM_SHARED.
+  @pl.when(subcore_id == 0)
+  def _():
+    pltpu.sync_copy(x_ref, shared_scratch_ref)
+  plsc.subcore_barrier()
+  # Zero-copy view of this subcore's (8, stripe_size) slice in local VMEM:
+  vmem_slice_ref = plsc.slice_subcore_vmem_from_shared(shared_scratch_ref)
+  vmem_slice_ref[...] = vmem_slice_ref[...] + 10
+  plsc.subcore_barrier()
+  @pl.when(subcore_id == 0)
+  def _():
+    pltpu.sync_copy(shared_scratch_ref, o_ref)
+
+np.testing.assert_array_equal(kernel(x), x + 10)
+```
+
 ## Benchmark against TensorCore
 
 Sparsecores are particularly good at gather and scatter operations. We can
