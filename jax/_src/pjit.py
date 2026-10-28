@@ -1457,7 +1457,8 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 # TODO(phawkins): this is marked uncacheable because it has its own cache and
 # because the cache breaks jaxpr metadata like source locations. We should fix
 # the metadata problem and consolidate the caches.
-mlir.register_lowering(jit_p, _pjit_lowering, cacheable=False)
+mlir.register_lowering(
+    jit_p, _pjit_lowering, cacheable=False, shard_map_passthrough=True)
 
 def const_args_shardings(
     const_args: Sequence[Array | np.ndarray],

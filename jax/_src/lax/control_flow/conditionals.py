@@ -1204,7 +1204,7 @@ def _cond_lowering(ctx, index, *args, branches, **params):
   ctx.set_tokens_out(mlir.TokenSet(dict(zip(ordered_effects, tokens))))
   return outputs
 
-mlir.register_lowering(cond_p, _cond_lowering)
+mlir.register_lowering(cond_p, _cond_lowering, shard_map_passthrough=True)
 
 @register_discharge_rule(cond_p)
 def _cond_state_discharge_rule(ctx, index, *args,

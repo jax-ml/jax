@@ -63,11 +63,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_op(np_inp, axis=axis))
 
-    grad = jax.jit(jax.grad(lambda x: jnp.sum(f(x))))(arr)
-    self.assertEqual(grad.sharding, arr.sharding)
-    self.assertAllClose(
-        grad, jax.grad(lambda x: jnp.sum(jnp_op(x, axis=axis)))(np_inp))
-
   @parameterized.product(
       op=(
           (lax.reduce_sum, np.sum),
@@ -109,20 +104,19 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return y
 
     uses_shmap = (is_rs and (lax_op is lax.reduce_sum)) or bool(out_spec.reduced)
+    if not uses_shmap:
+      with self.assertRaises(NotImplementedError):
+        f.lower(arr)
+      return
+
     lowered_text = f.lower(arr).as_text()
-    self.assertEqual('sdy.manual_computation' in lowered_text, uses_shmap)
-    if uses_shmap:
-      self.assertEqual('reduce_scatter' in lowered_text, is_rs)
-      self.assertEqual('all_reduce' in lowered_text, has_ar)
+    self.assertIn('sdy.manual_computation', lowered_text)
+    self.assertEqual('reduce_scatter' in lowered_text, is_rs)
+    self.assertEqual('all_reduce' in lowered_text, has_ar)
 
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_op(np_inp, axis=axes))
-
-    if lax_op is lax.reduce_sum and not out_spec.reduced:
-      grad = jax.jit(jax.grad(lambda x: jnp.sum(f(x))))(arr)
-      self.assertEqual(grad.sharding, arr.sharding)
-      self.assertArraysEqual(grad, np.ones_like(np_inp))
 
   @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh(
@@ -145,7 +139,122 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     g = jax.jit(jax.sharding.auto_axes(
         lambda y: jnp.sum(y, axis=0), axes='e', out_sharding=P(None, None)))
-    self.assertArraysEqual(g(arr), np.sum(np_x, axis=0))
+    with self.assertRaises(NotImplementedError):
+      g.lower(arr)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_missing_rule_raises_not_implemented(self, mesh):
+    arr = jax.device_put(np.ones((4, 8), dtype=np.float32), P('x', 'y'))
+
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda x: jnp.expand_dims(x, 0)).lower(arr)
+
+    with self.assertRaises(NotImplementedError):
+      f_bad = jax.jit(
+          lambda x: lax.reduce_sum(x, axes=(0,), out_sharding=P(None)))
+      f_bad.lower(arr)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('m', 'e'))
+  def test_manual_collectives_under_partial_shard_map(self, mesh):
+    np_x = np.arange(16, dtype=np.float32).reshape(2, 8)
+    arr = jax.device_put(np_x, P('m', 'e'))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(None), axis_names={'m'})
+    def f(x):
+      y = lax.psum(x, 'm')
+      z = lax.pmax(y, 'm')
+      return lax.reduce_sum(z, axes=(0,))
+
+    self.assertAllClose(f(arr), np.sum(np_x, axis=0))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(), axis_names={'m'})
+    def f_idx_psum():
+      return lax.psum(lax.axis_index('m'), 'm')
+
+    self.assertArraysEqual(f_idx_psum(), np.int32(1))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(None, None), axis_names={'m'})
+    def f_ag_unsharded_dim(x):
+      return lax.all_gather(x, 'm', axis=0, tiled=True, to='invarying')
+
+    self.assertAllClose(f_ag_unsharded_dim(arr), np_x)
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(None, None), axis_names={'m'})
+    def f_ag_sharded_dim(x):
+      return lax.all_gather(x, 'm', axis=1, tiled=True, to='invarying')
+
+    with self.assertRaises(NotImplementedError):
+      f_ag_sharded_dim.lower(arr)
+
+  @parameterized.product(
+      op=(
+          (jnp.sin, np.sin),
+          (jnp.exp, np.exp),
+          (jnp.negative, np.negative),
+          (jnp.round, np.round),
+          (lax.lgamma, None),
+      ),
+      in_spec=(P('x', 'y'), P(('x', 'y'), None), P(None, None)),
+  )
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unop(self, op, in_spec, mesh):
+    jnp_op, np_op = op
+    np_inp = np.arange(1, 33, dtype=np.float32).reshape(4, 8) / 8.0
+    arr = jax.device_put(np_inp, in_spec)
+
+    def f(x):
+      self.assertEqual(jax.typeof(x).sharding.spec, in_spec)
+      y = jnp_op(x)
+      self.assertEqual(jax.typeof(y).sharding.spec, in_spec)
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, in_spec))
+    expected = jnp_op(np_inp) if np_op is None else np_op(np_inp)
+    self.assertAllClose(out, expected)
+
+    f_jit = jax.jit(f)
+    with config.shard_map_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f_jit.lower(arr).as_text())
+    self.assertIn('sdy.manual_computation', f_jit.lower(arr).as_text())
+
+    out = f_jit(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, in_spec))
+    self.assertAllClose(out, expected)
+
+    if jnp_op is jnp.negative:
+      grad, = jax.jit(lambda x, ct: jax.vjp(f, x)[1](ct))(arr, arr)
+      self.assertEqual(grad.sharding, arr.sharding)
+      self.assertAllClose(grad, -np_inp)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh(
+      (2, 2, 2), ('m', 'e', 'a'),
+      axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Auto))
+  def test_unop_mixed_axes(self, mesh):
+    np_inp = np.arange(1, 65, dtype=np.float32).reshape(4, 4, 4) / 16.0
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('m', 'e', 'a')))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('m'), axis_names={'m'})
+    def f(a):
+      self.assertEqual(jax.typeof(a).sharding.spec, P(None, 'e', None))
+      self.assertEqual(a.aval.mat.varying, {'m'})
+      y = jnp.tanh(jnp.sin(a))
+      self.assertEqual(jax.typeof(y).sharding.spec, P(None, 'e', None))
+      self.assertEqual(y.aval.mat.varying, {'m'})
+      return jnp.sum(y, axis=1)
+
+    out = f(arr)
+    self.assertEqual(out.sharding.spec, P('m', 'a'))
+    self.assertAllClose(out, np.sum(np.tanh(np.sin(np_inp)), axis=1))
 
 
 if __name__ == '__main__':
