@@ -111,8 +111,6 @@ class PallasSCTest(jtu.JaxTestCase):
 class MpmdAsyncTest(jtu.JaxTestCase):
   sc_mpmd_compiler_options = dict(
       xla_mosaic_unsafe_allow_multicore_remote_dma=True,
-      xla_msa_enable=False,
-      xla_tpu_vmem_scavenging_mode="NONE",
   )
 
   def setUp(self):
