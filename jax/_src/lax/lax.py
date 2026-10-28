@@ -5799,22 +5799,46 @@ def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
         operand.sharding.spec.partitions, out_s.spec.partitions)
   return out_s
 
-def _convert_element_type_ur_rule(operand, *, new_dtype, weak_type, sharding):
+def _convert_element_type_unreduced_rule(operand, sharding):
+  op_u, op_kind = getu(operand, None)
+  if sharding is not None:
+    if not isinstance(sharding, NamedSharding):
+      return op_u, op_kind
+    if (sharding.mesh.explicit_axes and
+        sharding.mesh.are_all_axes_explicit_or_manual):
+      assert not operand.mat.unreduced
+      if operand.sharding.spec.unreduced:
+        if operand.sharding.spec.unreduced != sharding.spec.unreduced:
+          raise ValueError(
+              'sharding passed to convert_element_type must be unreduced over'
+              f' the same mesh axes as operand. Got sharding: {sharding.spec}'
+              f' and operand type: {operand.str_short(True)}')
+        if operand.sharding.spec.unreduced_kind != sharding.spec.unreduced_kind:
+          raise ValueError(
+              'sharding passed to convert_element_type must have the same'
+              f' unreduced_kind as operand. Got sharding: {sharding.spec}'
+              f' and operand type: {operand.str_short(True)}')
+      elif (sharding.spec.unreduced and
+            sharding.spec.unreduced_kind is not UnreducedKind.sum):
+        raise ValueError(
+            '`sharding` passed to `convert_element_type` can only contain'
+            f' unreduced of kind `sum` when operand is not unreduced.'
+            f' Got sharding={sharding}')
+      return sharding.spec.unreduced, sharding.spec.unreduced_kind
+  return op_u, op_kind
+
+def _convert_element_type_reduced_rule(operand, sharding):
   if (sharding is not None and isinstance(sharding, NamedSharding) and
-      sharding.spec.unreduced):
-    kind = sharding.spec.unreduced_kind
-    if kind is not None and kind is not UnreducedKind.sum:
-      raise ValueError(
-          '`sharding` passed to `convert_element_type` can only contain'
-          f' unreduced of kind `sum`. Got sharding={sharding}')
-    unreduced = sharding.spec.unreduced
-  else:
-    unreduced, _ = getu(operand)
-  reduced = (sharding.spec.reduced
-             if sharding is not None and isinstance(sharding, NamedSharding)
-             and sharding.spec.reduced else getr(operand))
-  kind = UnreducedKind.sum if unreduced else None
-  return unreduced, reduced, kind
+      sharding.mesh.explicit_axes and
+      sharding.mesh.are_all_axes_explicit_or_manual):
+    assert not operand.mat.reduced
+    return sharding.spec.reduced
+  return getr(operand)
+
+def _convert_element_type_ur_rule(operand, *, new_dtype, weak_type, sharding):
+  out_unreduced, kind = _convert_element_type_unreduced_rule(operand, sharding)
+  out_reduced = _convert_element_type_reduced_rule(operand, sharding)
+  return out_unreduced, out_reduced, kind
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
                                      sharding):
