@@ -7839,6 +7839,120 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
         result, jnp.matmul(x, y, precision="high"), rtol=1e-3
     )
 
+  @parameterized.parameters((False,), (True,))
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_tcgen05_commit_arrive_commit_a_read_only(self, collective):
+    # TODO(bchetioui): remove this check once minimum jaxlib version is >= 0.12.1.
+    if self.is_wg_semantics() and not hasattr(
+        mgpu.dialect.TcGen05CommitArriveOp, "commit_a_read_only"
+    ):
+      self.skipTest("Test requires jaxlib >= 0.12.1")
+    in_dtype = jnp.float16
+    out_dtype = jnp.float32
+    num_ctas = 2 if collective else 1
+    block_tile = 128
+    mn = block_tile * num_ctas
+    k = 64
+    num_steps = 4
+    collective_axis = "x" if collective else None
+    transforms = self.default_transforms(swizzle=128, dtype=in_dtype)
+
+    def kernel(
+        lhs_gmem,
+        rhs_gmem,
+        out_gmem,
+        lhs_smem,
+        rhs_smem,
+        tma_barrier,
+        a_read_barrier,
+        mma_barrier,
+        cluster_barrier,
+        acc_tmem,
+    ):
+      block_id = lax.axis_index("x") if collective else 0
+      block_slice = pl.ds(block_id * block_tile, block_tile)
+      plgpu.copy_gmem_to_smem(
+          rhs_gmem.at[:, block_slice], rhs_smem, tma_barrier
+      )
+      plgpu.barrier_wait(tma_barrier)
+
+      for step in range(num_steps):
+        plgpu.copy_gmem_to_smem(
+            lhs_gmem.at[step, block_slice], lhs_smem, tma_barrier
+        )
+        plgpu.barrier_wait(tma_barrier)
+        if collective:
+          plgpu.barrier_arrive(cluster_barrier)
+          plgpu.barrier_wait(cluster_barrier)
+        plgpu.tcgen05_mma(
+            acc_tmem,
+            lhs_smem,
+            rhs_smem,
+            accumulate=(step > 0),
+            collective_axis=collective_axis,
+        )
+        plgpu.tcgen05_commit_arrive(
+            a_read_barrier,
+            collective_axis=collective_axis,
+            commit_a_read_only=True,
+        )
+        plgpu.barrier_wait(a_read_barrier)
+
+      plgpu.tcgen05_commit_arrive(mma_barrier, collective_axis=collective_axis)
+      plgpu.barrier_wait(mma_barrier)
+      plgpu.store(
+          out_gmem.at[block_slice, :],
+          plgpu.async_load_tmem(acc_tmem),
+          optimized=False,
+      )
+
+    f = self.kernel(
+        kernel,
+        out_type=jax.ShapeDtypeStruct((mn, mn), out_dtype),
+        scratch_types=[
+            plgpu.SMEM((block_tile, k), in_dtype, transforms=transforms),
+            plgpu.SMEM((k, block_tile), in_dtype, transforms=transforms),
+            plgpu.Barrier(),
+            plgpu.Barrier(orders_tensor_core=True),
+            plgpu.Barrier(orders_tensor_core=True),
+            plgpu.ClusterBarrier(collective_axes=("x",)) if collective else (),
+            plgpu.TMEM((block_tile, mn), out_dtype, collective=collective),
+        ],
+        cluster=(num_ctas,),
+        cluster_names=("x",),
+    )
+    x = jax.random.uniform(
+        jax.random.key(0), shape=(num_steps, mn, k), dtype=in_dtype, minval=-1
+    )
+    y = jax.random.uniform(
+        jax.random.key(1), shape=(k, mn), dtype=in_dtype, minval=-1
+    )
+    if not (
+        jtu.is_cuda_compute_capability_at_least("10.7")
+        and not jtu.is_cuda_compute_capability_at_least("11.0")
+    ):
+      with self.assertRaisesRegex(
+          NotImplementedError,
+          "SMEM-read-only commit for operand A requires sm_107f",
+      ):
+        jax.jit(f).lower(x, y)
+      return
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      z = jax.block_until_ready(f(x, y))
+    mc = ".multicast::cluster" if collective else ""
+    expected_ptx = (
+        f"tcgen05.commit.cta_group::{num_ctas}.mbarrier::arrive::one"
+        f".shared::cluster.sync_restrict::shared::read::mma::a{mc}.b64"
+    )
+    self.assertEqual(ptx().count(expected_ptx), num_steps)
+    ref = jnp.einsum(
+        "smk,kn->mn",
+        x.astype(np.float32),
+        y.astype(np.float32),
+        precision="highest",
+    )
+    np.testing.assert_allclose(z, ref, atol=1e-4, rtol=1e-5)
+
   def test_async_copy_smem_to_tmem_warp_semantics(self):
     shape, dtype = (128, 64), jnp.int32
     transforms = self.default_transforms(dtype=dtype)

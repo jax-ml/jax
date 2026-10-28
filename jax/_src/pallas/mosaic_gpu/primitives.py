@@ -3218,6 +3218,7 @@ def tcgen05_commit_arrive(
     collective_axis: str | None = None,
     *,
     predicate: bool | jax.Array | None = None,
+    commit_a_read_only: bool = False,
 ) -> None:
   """Tracks completion of all preceding ``tcgen05_mma`` and ``async_copy_smem_to_tmem`` calls.
 
@@ -3229,6 +3230,9 @@ def tcgen05_commit_arrive(
       have a size of exactly 2, and must be on the minormost cluster axis.
     predicate: A boolean indicating whether the commit arrive should be
       performed. If ``None``, the commit arrive is always performed.
+    commit_a_read_only: If ``True``, the barrier tracks only the completion of
+      SMEM reads of the ``a`` operand of preceding ``tcgen05_mma`` calls rather
+      than full operation completion (requires ``sm_107f``).
 
   See also:
     - :func:`jax.experimental.pallas.mosaic_gpu.tcgen05_mma`
@@ -3245,6 +3249,7 @@ def tcgen05_commit_arrive(
       barrier_transforms_tree=barrier_transforms_tree,
       collective_axis=collective_axis,
       has_user_predicate=predicate is not None,
+      commit_a_read_only=commit_a_read_only,
   )
 
 
@@ -3255,8 +3260,10 @@ def _tcgen05_commit_arrive_abstract_eval(
     barrier_transforms_tree,
     collective_axis,
     has_user_predicate: bool = False,
+    commit_a_read_only: bool = False,
 ):
-  del args, barrier_transforms_tree, collective_axis, has_user_predicate
+  del args, barrier_transforms_tree, collective_axis
+  del has_user_predicate, commit_a_read_only
   orders_tensor_core = getattr(
       barrier.inner_aval.dtype, "orders_tensor_core", False)
   if not orders_tensor_core:
@@ -3281,6 +3288,7 @@ def _tcgen05_commit_arrive_lowering(
     barrier_transforms_tree,
     collective_axis,
     has_user_predicate: bool = False,
+    commit_a_read_only: bool = False,
 ):
   if has_user_predicate:
     *flat_args, user_predicate = flat_args
@@ -3302,16 +3310,28 @@ def _tcgen05_commit_arrive_lowering(
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     assert isinstance(barrier_ref, mgpu.DialectBarrierRef)
     memref = barrier_ref.as_barrier_memref()
+    # TODO(bchetioui): remove `hasattr` check once minimum jaxlib version is >= 0.12.1.
+    if commit_a_read_only and not hasattr(
+        mgpu.dialect.TcGen05CommitArriveOp, "commit_a_read_only"
+    ):
+      raise NotImplementedError("commit_a_read_only requires jaxlib >= 0.12.1.")
+    extra_kwargs: dict[str, Any] = (
+        {"commit_a_read_only": True} if commit_a_read_only else {}
+    )
     # TODO(cjfj): remove when minimum jaxlib version is 0.12.
     if hasattr(mgpu.dialect.TcGen05CommitArriveOp, "predicate"):
       mgpu.dialect.tcgen05_commit_arrive(
-          memref, collective=collective, predicate=predicate
+          memref, collective=collective, predicate=predicate, **extra_kwargs
       )
     elif predicate is None:
-      mgpu.dialect.tcgen05_commit_arrive(memref, collective=collective)
+      mgpu.dialect.tcgen05_commit_arrive(
+          memref, collective=collective, **extra_kwargs
+      )
     else:
       with mgpu.when(predicate):
-        mgpu.dialect.tcgen05_commit_arrive(memref, collective=collective)
+        mgpu.dialect.tcgen05_commit_arrive(
+            memref, collective=collective, **extra_kwargs
+        )
   else:
     assert isinstance(barrier_ref, mgpu.BarrierRef)
     single_lane = ctx.module_ctx.single_lane_predicate
@@ -3320,6 +3340,7 @@ def _tcgen05_commit_arrive_lowering(
         collective=collective,
         ctx=ctx.launch_ctx,
         predicate=_andi_maybe_none(predicate, single_lane),
+        commit_a_read_only=commit_a_read_only,
     )
   return []
 
