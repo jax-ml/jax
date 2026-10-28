@@ -2898,10 +2898,7 @@ def _tcgen05_mma_lowering(
         f"Unsupported transforms for ACC: {acc_transforms}."
     )
 
-  a_out_ty = state_types.transform_type(a_transforms, a_aval)
-  assert isinstance(a_out_ty, state_types.AbstractRef)
-  a_dtype = a_out_ty.dtype
-  a_ref, _, a_transforms = lowering._handle_transforms(
+  a_ref, a_aval, a_transforms = lowering._handle_transforms(
       ctx,
       a_aval,
       a_ref,
@@ -2930,15 +2927,12 @@ def _tcgen05_mma_lowering(
       )
   if not isinstance(a_ref, tcgen05.TMEMRef):
     assert lhs_swizzle is not None
-    swizzle_elems = 8 * lhs_swizzle // dtypes.itemsize_bits(a_dtype)
+    swizzle_elems = 8 * lhs_swizzle // dtypes.itemsize_bits(a_aval.dtype)
     if lhs_tiling != (8, swizzle_elems):
       raise ValueError("MMA lhs tiling does not fit swizzle. "
                       f"{lhs_tiling=} expected={(8, swizzle_elems)}")
 
-  b_out_ty = state_types.transform_type(b_transforms, b_aval)
-  assert isinstance(b_out_ty, state_types.AbstractRef)
-  b_dtype = b_out_ty.dtype
-  b_ref, _, b_transforms = lowering._handle_transforms(
+  b_ref, b_aval, b_transforms = lowering._handle_transforms(
       ctx, b_aval, b_ref, b_transform_avals, b_transforms, handle_transposes=False,
       handle_reshapes=True)
   match b_transforms:
@@ -2957,7 +2951,7 @@ def _tcgen05_mma_lowering(
       raise NotImplementedError(
           f"Unsupported transforms for RHS: {b_transforms}."
       )
-  swizzle_elems = 8 * rhs_swizzle // dtypes.itemsize_bits(b_dtype)
+  swizzle_elems = 8 * rhs_swizzle // dtypes.itemsize_bits(b_aval.dtype)
   if rhs_tiling != (8, swizzle_elems):
     raise ValueError(
         "MMA rhs tiling does not fit swizzle"
