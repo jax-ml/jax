@@ -938,6 +938,95 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                 eps)
 
   @jtu.sample_product(
+    [dict(init_val=init_val, op=op, shape=shape, dims=dims, strides=strides,
+          padding=padding, base_dilation=base_dilation,
+          window_dilation=window_dilation)
+      # Custom computations take the generic reduce_window path rather than
+      # the reduce_window_{sum,max,min} primitives.
+      for init_val, op in [
+          (0, lambda x, y: x + y),
+          (1, lambda x, y: x * y),
+      ]
+      for shape, dims, strides, padding, base_dilation, window_dilation in (
+        itertools.chain(
+          itertools.product(
+            [(4, 6)],
+            [(2, 1), (1, 2)],
+            [(1, 1), (2, 1), (1, 2)],
+            ["VALID", "SAME", [(0, 3), (1, 2)]],
+            [(1, 1), (2, 3)],
+            [(1, 1), (1, 2)]),
+          itertools.product(
+            [(3, 2, 4, 6)],
+            [(1, 1, 2, 1), (2, 1, 2, 1)],
+            [(1, 2, 2, 1), (1, 1, 1, 1)],
+            ["VALID", "SAME", [(0, 1), (1, 0), (2, 3), (0, 2)]],
+            [(1, 1, 1, 1), (2, 1, 3, 2)],
+            [(1, 1, 1, 1), (1, 2, 2, 1)])))
+    ],
+    dtype=grad_float_dtypes,
+  )
+  @jtu.skip_on_devices('cuda') # jax.lax.mul has an XLA bug on CUDA GPU b/339071103
+  @jtu.skip_on_devices('tpu') # b/39342488
+  def testReduceWindowGeneralGrad(
+      self, op, init_val, dtype, shape, dims, strides, padding, base_dilation,
+      window_dilation):
+    # Values in [-1, 1] keep windowed products small, so the numerical
+    # derivatives that check_grads compares against stay accurate.
+    rng = jtu.rand_uniform(self.rng(), low=-1, high=1)
+    tol = {np.float32: 6e-2, np.float64: 1e-4}
+    init_val = np.asarray(init_val, dtype=dtype)
+
+    def fun(operand):
+      return lax.reduce_window(operand, init_val, op, dims, strides, padding,
+                               base_dilation, window_dilation)
+
+    operand = rng(shape, dtype)
+    check_grads(fun, (operand,), 2, ["fwd", "rev"], tol, tol)
+
+  @jtu.sample_product(dtype=grad_float_dtypes)
+  @jtu.skip_on_devices('cuda') # jax.lax.mul has an XLA bug on CUDA GPU b/339071103
+  @jtu.skip_on_devices('tpu') # b/39342488
+  def testReduceWindowPairGrad(self, dtype):
+    rng = jtu.rand_default(self.rng(), scale=1)
+    tol = {np.float32: 1e-2, np.float64: 1e-4}
+    operands = (rng((4, 6), dtype), rng((4, 6), dtype))
+    init_vals = (np.array(0, dtype), np.array(1, dtype))
+    def op(xs, ys):
+      return (xs[0] + ys[0], xs[1] * ys[1])
+    reduce_window = lambda xs, ys: lax.reduce_window(
+        (xs, ys), init_vals, op, (2, 2), (1, 2), "SAME")
+    check_grads(reduce_window, operands, 2, ["fwd", "rev"], tol, tol)
+
+  def testReduceWindowGradWithConstantOperand(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/32548: an operand
+    # with a symbolic zero tangent (here, the constant indices of a windowed
+    # argmax) must not break the JVP or the gradient.
+    x = jnp.array([3., 1., 4., 1.5, 5., 9.], np.float32)
+    indices = jnp.arange(6, dtype=np.int32)
+
+    def argmax_reducer(a, b):
+      (a_val, a_idx), (b_val, b_idx) = a, b
+      pick_a = a_val >= b_val
+      return (lax.select(pick_a, a_val, b_val),
+              lax.select(pick_a, a_idx, b_idx))
+
+    def windowed_max(x):
+      values, idx = lax.reduce_window(
+          (x, indices), (np.float32(-np.inf), np.int32(-1)), argmax_reducer,
+          (2,), (1,), "VALID")
+      return values, idx
+
+    values, idx = windowed_max(x)
+    self.assertArraysEqual(values, np.array([3., 4., 4., 5., 9.], np.float32))
+    self.assertArraysEqual(idx, np.array([0, 2, 2, 4, 5], np.int32))
+    _, values_dot = jax.jvp(lambda x: windowed_max(x)[0], (x,),
+                            (jnp.ones_like(x),))
+    self.assertArraysEqual(values_dot, np.ones(5, np.float32))
+    grad = jax.grad(lambda x: windowed_max(x)[0].sum())(x)
+    self.assertArraysEqual(grad, np.array([1., 0., 2., 0., 1., 1.], np.float32))
+
+  @jtu.sample_product(
     [dict(op=op, dtype=dtype)
       for op, types in [
           (lax.cumsum, [np.float32, np.float64]),
