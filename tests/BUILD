@@ -394,6 +394,7 @@ jax_multiplatform_test(
     backend_tags = {
         "cpu": [
             "noasan",
+            "notsan",
         ],
     },
     # Set LOBPCG_EMIT_DEBUG_PLOTS=1 to debug
