@@ -156,7 +156,7 @@ jax_multiplatform_test(
     name = "log_test",
     srcs = ["log_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 4,
+    shard_count = 5,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
@@ -164,6 +164,7 @@ jax_multiplatform_test(
         "absl/testing",
         "mpmath",
         "numpy",
+        "scipy",
     ]),
 )
 

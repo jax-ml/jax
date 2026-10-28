@@ -346,15 +346,15 @@ def _check_branch_outputs(
     paths, _ = unzip2(leaves_and_paths)
     component = lambda p: f' at path {keystr(p)}' if p else ''
 
-  if out_avals1.tree != out_avals2.tree:
+  # Trees that differ only in aux data (e.g. computed from the leaves) have the
+  # same structure, so don't raise here and still compare the types below.
+  if out_avals1.tree != out_avals2.tree and (errs := list(
+      equality_errors_pytreedef(out_avals1.tree, out_avals2.tree))):
     diffs = [f'{name1} output{component(p)} is a {thing1} but '
              f'{name2} output{component(p)} is a {thing2}, so {expl}'
-             for p, thing1, thing2, expl
-             in equality_errors_pytreedef(out_avals1.tree, out_avals2.tree)]
+             for p, thing1, thing2, expl in errs]
 
-    if len(diffs) == 0:
-      return  # the trees may have different aux data, but structures are same
-    elif len(diffs) == 1:
+    if len(diffs) == 1:
       differences = f'{diffs[0]}.\n'
     else:
       differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
@@ -383,16 +383,17 @@ def _check_branch_outputs(
                      + f'\n  * {diffs[-1]}.\n')
 
     # TODO(rdyro): extend this to also cover reduced and unreduced.
-    pvary_applications = [
-        f"applying `jax.lax.pcast(..., "
-        f"{tuple(a1.mat.varying - a2.mat.varying)}, to='varying')` to the"
-        f" output of {n}{component(p)}"
-        for p, aval1, aval2 in zip(paths, out_avals1, out_avals2)
-        for n, a1, a2 in [(name1, aval2, aval1), (name2, aval1, aval2)]
-        if not core.typematch(a1, a2) and
-        isinstance(a1, core.ShapedArray) and isinstance(a2, core.ShapedArray)
-        and a1.mat.varying != a2.mat.varying
-        and a2.mat.varying - a1.mat.varying]
+    pvary_applications = []
+    for p, out1, out2 in zip(paths, out_avals1, out_avals2):
+      if not (isinstance(out1, core.ShapedArray) and
+              isinstance(out2, core.ShapedArray)):
+        continue
+      union = out1.mat.varying | out2.mat.varying
+      for name, out in [(name1, out1), (name2, out2)]:
+        if missing := union - out.mat.varying:
+          pvary_applications.append(
+              f"applying `jax.lax.pcast(..., {tuple(missing)}, "
+              f"to='varying')` to the output of {name}{component(p)}")
 
     if not pvary_applications:
       pvary_msg = ''
@@ -1113,6 +1114,21 @@ def _cond_to_lojax(pred, *hi_args, branches, **kwds):
 
 cond_p.to_lojax = _cond_to_lojax
 
+def _platform_branch_lowering(ctx, jaxpr, args):
+  """`jaxpr`, a platform_dependent conditional's one kept branch, lowered in
+  place of the conditional."""
+  ordered_effects = list(effects.ordered_effects.filter_in(jaxpr.effects))
+  tokens_in = ctx.tokens_in.subset(ordered_effects)
+  consts = mlir.ir_consts(jaxpr.consts, [v.aval for v in jaxpr.constvars])
+  out_vals, tokens_out = mlir.jaxpr_subcomp(
+      ctx.module_context, jaxpr, ctx.name_stack.extend('platform'), tokens_in,
+      consts, *args, dim_var_values=ctx.dim_var_values,
+      const_lowering=ctx.const_lowering, outer_traceback=ctx.traceback)
+  ctx.set_tokens_out(tokens_out)
+  return [mlir.lower_with_sharding_in_types(ctx, o, aval)
+          for o, aval in zip(out_vals, ctx.avals_out)]
+
+
 def _cond_lowering(ctx, index, *args, branches, **params):
   if (branches_platforms := params.get("branches_platforms", None)) is not None:
     branches_kept: list[core.Jaxpr] = []
@@ -1129,6 +1145,11 @@ def _cond_lowering(ctx, index, *args, branches, **params):
           break
       else:
         assert False, p
+
+    if len(branches_kept) == 1:
+      # Inline the sole surviving branch: its index cannot affect execution on
+      # the selected platforms.
+      return _platform_branch_lowering(ctx, branches_kept[0], args)
 
     # Compute the new index into branches_keep
     i32_type = ir.RankedTensorType.get([], mlir.dtype_to_ir_type(dtypes.dtype(np.int32)))

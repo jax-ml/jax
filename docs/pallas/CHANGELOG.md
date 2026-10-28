@@ -13,6 +13,21 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+### Mosaic GPU
+
+* New features
+
+  * {class}`jax.experimental.pallas.mosaic_gpu.RefType` now accepts keyword-only
+    `read` and `write` boolean flags (both defaulting to `True`) to declare
+    which memory effects {func}`jax.experimental.pallas.mosaic_gpu.inline_mgpu`
+    has on each reference argument.
+
+* Removals
+
+  * Removed the previously deprecated
+    {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref`. Use
+    `ref.transpose(...)` or `ref.T` directly instead.
+
 ## Released with JAX 0.12.0 (October 19, 2026)
 
 * New features

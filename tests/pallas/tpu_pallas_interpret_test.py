@@ -1738,6 +1738,7 @@ class InterpretTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       ('in_bounds_int', (5,), (10,), False),
       ('out_of_bounds_int', (10,), (10,), True),
+      ('negative_int', (-1,), (10,), True),
       ('in_bounds_slice_no_step', (slice(0, 10),), (10,), False),
       ('out_of_bounds_slice_no_step', (slice(0, 11),), (10,), True),
       ('in_bounds_slice_with_step', (slice(0, 10, 2),), (10,), False),
@@ -1751,6 +1752,9 @@ class InterpretTest(jtu.JaxTestCase):
     self.assertEqual(
         interpret_utils.is_range_out_of_bounds_for_shape(rnge, shape), expected
     )
+
+  def test_clip_range_to_shape_negative_int(self):
+    self.assertIsNone(interpret_utils.clip_range_to_shape((-1,), (10,)))
 
   @parameterized.named_parameters(
       ('interpret_params', pltpu.InterpretParams()),

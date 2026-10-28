@@ -90,6 +90,7 @@ import jax
 import numpy as np
 from jax._src import core
 from jax._src import dispatch
+from jax._src import ffi
 from jax.interpreters import mlir
 from jax._src.custom_derivatives import custom_vjp
 from jax._src.typing import Array, Shape
@@ -456,14 +457,35 @@ def rnn_abstract_eval(x_aval, h_0_aval, c_0_aval, w_aval, seq_lengths_aval,
   return output_aval, h_0_aval, c_0_aval, reserve_space_aval
 
 
+def _rnn_fwd_gpu_lowering(
+    platform, legacy_lowering, ctx, input, h_0, c_0, weights, seq_lengths, *,
+    input_size: int, hidden_size: int, num_layers: int, dropout: float,
+    bidirectional: bool, cudnn_allow_tf32: bool):
+  if jax._src.lib.jaxlib_extension_version < 513:
+    return legacy_lowering(
+        ctx, input, h_0, c_0, weights, seq_lengths, input_size=input_size,
+        hidden_size=hidden_size, num_layers=num_layers, dropout=dropout,
+        bidirectional=bidirectional, cudnn_allow_tf32=cudnn_allow_tf32)
+  return ffi.ffi_lowering(f"{platform}dnn_rnn_ffi_v2")(
+      ctx, input, h_0, c_0, weights, seq_lengths, dropout=np.float32(dropout),
+      bidirectional=bool(bidirectional),
+      cudnn_allow_tf32=bool(cudnn_allow_tf32))
+
+
 rnn_fwd_p = core.Primitive('rnn_fwd')
 rnn_fwd_p.multiple_results = True
 rnn_fwd_p.def_impl(partial(dispatch.apply_primitive, rnn_fwd_p))
 rnn_fwd_p.def_abstract_eval(rnn_abstract_eval)
 if gpu_rnn:
-  mlir.register_lowering(rnn_fwd_p, gpu_rnn.cudnn_rnn_lowering, platform='cuda')
+  mlir.register_lowering(
+      rnn_fwd_p,
+      partial(_rnn_fwd_gpu_lowering, 'cu', gpu_rnn.cudnn_rnn_lowering),
+      platform='cuda')
   if hasattr(gpu_rnn, "miopen_rnn_lowering"):
-    mlir.register_lowering(rnn_fwd_p, gpu_rnn.miopen_rnn_lowering, platform='rocm')
+    mlir.register_lowering(
+        rnn_fwd_p,
+        partial(_rnn_fwd_gpu_lowering, 'hip', gpu_rnn.miopen_rnn_lowering),
+        platform='rocm')
 
 
 def lstm_bwd(input_size: int, hidden_size: int, num_layers: int, dropout: float,
@@ -500,15 +522,42 @@ def rnn_bwd_abstract_eval(dy_aval, dhn_aval, dcn_aval, x_aval, h0_aval, c0_aval,
   return x_aval, h0_aval, c0_aval, w_aval
 
 
+def _rnn_bwd_gpu_lowering(
+    platform, legacy_lowering, ctx, dy, dhn, dcn, x, h0, c0, w, y,
+    reserve_space, seq_lengths, *, input_size: int, hidden_size: int,
+    num_layers: int, dropout: bool, bidirectional: bool,
+    cudnn_allow_tf32: bool):
+  if jax._src.lib.jaxlib_extension_version < 513:
+    return legacy_lowering(
+        ctx, dy, dhn, dcn, x, h0, c0, w, y, reserve_space, seq_lengths,
+        input_size=input_size, hidden_size=hidden_size, num_layers=num_layers,
+        dropout=dropout, bidirectional=bidirectional,
+        cudnn_allow_tf32=cudnn_allow_tf32)
+  zeroed_dw = mlir.ir_constant(np.zeros(ctx.avals_out[3].shape, dtype=np.float32))
+  ctx = ctx.replace(
+      avals_in=(*ctx.avals_in[:9], ctx.avals_out[3], ctx.avals_in[9]))
+  return ffi.ffi_lowering(
+      f"{platform}dnn_rnn_bwd_ffi_v2",
+      operand_output_aliases={9: 3},
+  )(
+      ctx, dy, dhn, dcn, x, h0, c0, w, y, reserve_space, zeroed_dw,
+      seq_lengths, dropout=np.float32(dropout), bidirectional=bool(bidirectional),
+      cudnn_allow_tf32=bool(cudnn_allow_tf32))
+
+
 rnn_bwd_p = core.Primitive('rnn_bwd')
 rnn_bwd_p.multiple_results = True
 rnn_bwd_p.def_impl(partial(dispatch.apply_primitive, rnn_bwd_p))
 rnn_bwd_p.def_abstract_eval(rnn_bwd_abstract_eval)
 if gpu_rnn:
   mlir.register_lowering(
-      rnn_bwd_p, gpu_rnn.cudnn_rnn_bwd_lowering, platform='cuda')
+      rnn_bwd_p,
+      partial(_rnn_bwd_gpu_lowering, 'cu', gpu_rnn.cudnn_rnn_bwd_lowering),
+      platform='cuda')
   if hasattr(gpu_rnn, "miopen_rnn_bwd_lowering"):
     mlir.register_lowering(
-        rnn_bwd_p, gpu_rnn.miopen_rnn_bwd_lowering, platform='rocm')
+        rnn_bwd_p,
+        partial(_rnn_bwd_gpu_lowering, 'hip', gpu_rnn.miopen_rnn_bwd_lowering),
+        platform='rocm')
 
 lstm.defvjp(lstm_fwd, lstm_bwd)

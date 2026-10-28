@@ -1665,7 +1665,7 @@ def numpy_version():
 
 def parameterized_filterable(*,
     kwargs: Sequence[dict[str, Any]],
-    testcase_name: Callable[[dict[str, Any]], str] | None = None,
+    testcase_name: Callable[[dict[str, Any]], Any] | None = None,
     one_containing: str | None = None,
 ):
   """Decorator for named parameterized tests, with filtering support.

@@ -24,14 +24,6 @@ from jax._src import test_util as jtu
 from jax._src.scipy import special as jsp_special_impl
 import jax.numpy as jnp
 import jax.scipy as jsp
-
-# Under pytest, tests run against an installed wheel that does not
-# include `jax.tests`, so skip before importing `jax.tests.numerics`.
-if jtu.is_running_under_pytest():
-  import pytest
-
-  pytest.skip("Only runs under Bazel", allow_module_level=True)
-
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
 import numpy as np
@@ -134,7 +126,30 @@ class ErfTest(jtu.JaxTestCase):
     # float64 (1 - 2^-53):
     f32_sat = float(scipy.special.erfinv(1.0 - 2.0**-24))
     f64_sat = float(scipy.special.erfinv(1.0 - 2.0**-53))
-    interesting_points = [f32_sat, -f32_sat, f64_sat, -f64_sat]
+    interesting_points = [
+        f32_sat,
+        -f32_sat,
+        f64_sat,
+        -f64_sat,
+        # Worst-case inputs across math libraries from Gladman et al.,
+        # "Accuracy of Mathematical Functions in Single, Double, Double
+        # Extended, and Quadruple Precision":
+        *(
+            float.fromhex(h)
+            for h in (
+                "-0x1.72f388p+0",
+                "-0x1.6e9b204d2167dp-539",
+                "-0x1.386615790c013p+0",
+                "0x1.11642f2eab9edp+0",
+                "-0x1.c57541b55c8ebp-16",
+                "-0x1.e057e7a0e494cp-2",
+                "-0x1.bf3c82e5f58dfp-8",
+                "0x1.0000187085e56p-8",
+                "0x1.340ff534d52bfp-2",
+                "-0x1.10c4c3d3b6cdbp+0",
+            )
+        ),
+    ]
     util.check_unary_precision(
         self,
         lax.erf,
@@ -162,6 +177,24 @@ _ERFC_INTERESTING_POINTS = [
     10.054602,  # erfc(x) == 2^-149 (float32 min_subnormal)
     26.54325777920791,  # erfc(x) == 2^-1022 (float64 tiny)
     27.226017025551105,  # erfc(x) == 2^-1074 (float64 min_subnormal)
+    # Worst-case inputs across math libraries from Gladman et al.,
+    # "Accuracy of Mathematical Functions in Single, Double, Double Extended,
+    # and Quadruple Precision":
+    *(
+        float.fromhex(h)
+        for h in (
+            "-0x1.c5bf891b4ef6ap-54",
+            "0x1.a8cf81fa2a28fp+4",
+            "0x1.3bce0a408603fp+0",
+            "0x1.5182d8799b84bp+0",
+            "0x1.527f4fb0d9331p+0",
+            "0x1.bba14dc3507ccp+1",
+            "0x1.f5c5a6822a341p+1",
+            "0x1.46cffdf330b13p+4",
+            "0x1.8659a03b35abcp-7",
+            "0x1.f1ed3a0316eabp-19",
+        )
+    ),
 ]
 
 

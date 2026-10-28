@@ -12,6 +12,7 @@ bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
 bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
 bazel_dep(name = "grpc", version = "1.83.0", repo_name = "com_github_grpc_grpc")
+bazel_dep(name = "highway", version = "1.4.0")
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "protobuf", version = "35.1", repo_name = "com_google_protobuf")
 bazel_dep(name = "pybind11_bazel", version = "3.0.0")
@@ -33,9 +34,9 @@ archive_override(
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
-    integrity = "sha256-V9AnQtp2tawyLBga+pltbA2gv+onomp1CODK74vQl9c=",
-    strip_prefix = "xla-4354388139f007b1b06d35dc8bfbac3aab3df562",
-    urls = ["https://github.com/openxla/xla/archive/4354388139f007b1b06d35dc8bfbac3aab3df562.tar.gz"],
+    integrity = "sha256-WPQm/g/B85zwHWOjEBumT6Z9AXRUHrkFgM2p+IKaJtI=",
+    strip_prefix = "xla-d5229a92b1d15d30ba87f68c42e44cae0e77f54c",
+    urls = ["https://github.com/openxla/xla/archive/d5229a92b1d15d30ba87f68c42e44cae0e77f54c.tar.gz"],
 )
 
 # flatbuffers transitively depends on aspect_rules_esbuild 0.21.0, which is incompatible with Bazel 9.

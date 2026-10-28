@@ -17,14 +17,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from functools import partial
 import operator
 import numpy as np
 from typing import Any, Literal, overload, SupportsIndex
 import warnings
 
 from jax._src import api
-from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import deprecations
@@ -46,7 +44,7 @@ from jax._src.numpy.reductions import Axis
 from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
                                      canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
-from jax._src.ops.special import logsumexp as _logsumexp
+from jax._src.ops.special import logsumexp as _logsumexp, softmax as _softmax
 
 
 # activations
@@ -578,75 +576,7 @@ def log_softmax(x: ArrayLike,
   return result
 
 
-# TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-# @api.jit(static_argnames=("axis",))
-def softmax(x: ArrayLike,
-            axis: Axis = -1,
-            where: ArrayLike | None = None) -> Array:
-  r"""Softmax function.
-
-  Computes the function which rescales elements to the range :math:`[0, 1]`
-  such that the elements along :code:`axis` sum to :math:`1`.
-
-  .. math ::
-    \mathrm{softmax}(x) = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
-
-  Args:
-    x : input array
-    axis: the axis or axes along which the softmax should be computed. The
-      softmax output summed across these dimensions should sum to :math:`1`.
-      Either an integer, tuple of integers, or ``None`` (all axes).
-    where: Elements to include in the :code:`softmax`. The output for any
-      masked-out element is zero.
-
-  Returns:
-    An array.
-
-  Note:
-    If any input values are ``+inf``, the result will be all ``NaN``: this reflects the
-    fact that ``inf / inf`` is not well-defined in the context of floating-point math.
-
-  See also:
-    :func:`log_softmax`
-  """
-  if config.softmax_custom_jvp.value:
-    return _softmax(x, axis, where)
-  else:
-    return _softmax_deprecated(x, axis, where)
-
-# TODO(mattjj): replace softmax with _softmax when deprecation flag is removed
-@partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
-def _softmax(
-    x: ArrayLike,
-    axis: Axis = -1,
-    where: ArrayLike | None = None,
-    initial: ArrayLike = -np.inf) -> Array:
-  x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
-  x_safe = x if where is None else jnp.where(where, x, initial)
-  unnormalized = jnp.exp(x_safe - x_max)
-  result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
-  if where is not None:
-    result = jnp.where(where, result, 0)
-  return result
-
-@_softmax.defjvp
-def _softmax_jvp(axis, primals, tangents):
-  (x, where, initial), (x_dot, _, _) = primals, tangents
-  y = _softmax(x, axis, where, initial)
-  return y, y * (x_dot - (y * x_dot).sum(axis, where=where, keepdims=True))
-
-def _softmax_deprecated(
-    x: ArrayLike,
-    axis: Axis = -1,
-    where: ArrayLike | None = None,
-    initial: ArrayLike = -np.inf) -> Array:
-  x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
-  x_safe = x if where is None else jnp.where(where, x, initial)
-  unnormalized = jnp.exp(x_safe - lax.stop_gradient(x_max))
-  result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
-  if where is not None:
-    result = jnp.where(where, result, 0)
-  return result
+softmax = _softmax
 
 
 @api.jit(static_argnames=("axis", "algorithm"))
@@ -1550,4 +1480,10 @@ def log1mexp(x: ArrayLike) -> Array:
       jnp.log1p(-jnp.exp(-x)),
   )
 
-log1mexp.defjvps(lambda g, ans, x: g / jnp.expm1(x))
+
+def _log1mexp_jvp(g: Array, ans: Array, x: Array) -> Array:
+  x_safe = jnp.where(x < 0, 1.0, x)
+  return g * jnp.where(x < 0, jnp.nan, -jnp.exp(-x_safe) / jnp.expm1(-x_safe))
+
+
+log1mexp.defjvps(_log1mexp_jvp)

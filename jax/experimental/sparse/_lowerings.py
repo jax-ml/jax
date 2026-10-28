@@ -26,6 +26,7 @@ from jax._src import ffi
 from jax._src.interpreters import mlir
 from jax._src.lib import cpu_sparse
 from jax._src.lib import gpu_sparse
+from jax._src.lib import jaxlib_extension_version
 import numpy as np
 
 if hasattr(gpu_sparse, "registrations"):
@@ -79,6 +80,9 @@ def _coo_spmv_abstract_eval(data, row, col, x, *, transpose, shape):
 
 def _coo_spmv_gpu_lowering(ctx, data, row, col, x, *, transpose, shape,
                            target_name_prefix):
+  if jaxlib_extension_version >= 513:
+    return ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_matvec_ffi_v2")(
+        ctx, data, row, col, x, transpose=transpose)
   rows, cols = shape
   data_aval, row_aval, _, x_aval = ctx.avals_in
   nnz, = data_aval.shape
@@ -129,6 +133,9 @@ def _coo_spmm_abstract_eval(data, row, col, x, *, transpose, shape):
 
 def _coo_spmm_gpu_lowering(ctx, data, row, col, x, *, transpose, shape,
                            target_name_prefix):
+  if jaxlib_extension_version >= 513:
+    return ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_matmat_ffi_v2")(
+        ctx, data, row, col, x, transpose=transpose)
   data_aval, row_aval, _, x_aval = ctx.avals_in
   nnz, = data_aval.shape
   _, Ccols = x_aval.shape
@@ -199,6 +206,9 @@ def _csr_spmv_abstract_eval(data, indices, indptr, x, *, transpose, shape):
 
 def _csr_spmv_gpu_lowering(ctx, data, indices, indptr, x, *, transpose, shape,
                            target_name_prefix):
+  if jaxlib_extension_version >= 513:
+    return ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_matvec_ffi_v2")(
+        ctx, data, indices, indptr, x, transpose=transpose)
   rows, cols = shape
   data_aval, indices_aval, _, x_aval = ctx.avals_in
   nnz, = data_aval.shape
@@ -248,6 +258,9 @@ def _csr_spmm_abstract_eval(data, indices, indptr, x, *, transpose, shape):
 
 def _csr_spmm_gpu_lowering(ctx, data, indices, indptr, x, *, transpose, shape,
                            target_name_prefix):
+  if jaxlib_extension_version >= 513:
+    return ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_matmat_ffi_v2")(
+        ctx, data, indices, indptr, x, transpose=transpose)
   rows, cols = shape
   data_aval, indices_aval, _, x_aval = ctx.avals_in
   nnz, = data_aval.shape
@@ -291,6 +304,9 @@ mlir.register_lowering(
 )
 
 def coo_todense_gpu_lowering(ctx, data, row, col, *, shape, target_name_prefix):
+  if jaxlib_extension_version >= 513:
+    return ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_todense_ffi_v2")(
+        ctx, data, row, col)[0]
   data_aval, row_aval, _ = ctx.avals_in
   nnz, = data_aval.shape
   rows, cols = shape
@@ -302,6 +318,9 @@ def coo_todense_gpu_lowering(ctx, data, row, col, *, shape, target_name_prefix):
   return rule(sub_ctx, data, row, col, opaque=opaque)[0]
 
 def coo_fromdense_gpu_lowering(ctx, mat, *, nnz, index_dtype, target_name_prefix):
+  if jaxlib_extension_version >= 513:
+    return ffi.ffi_lowering(f"{target_name_prefix}sparse_coo_fromdense_ffi_v2")(
+        ctx, mat)
   mat_aval, = ctx.avals_in
   rows, cols = mat_aval.shape
   buffer_size, opaque = _get_module(target_name_prefix).build_coo_fromdense_descriptor(
@@ -312,6 +331,9 @@ def coo_fromdense_gpu_lowering(ctx, mat, *, nnz, index_dtype, target_name_prefix
   return rule(sub_ctx, mat, opaque=opaque)[:3]
 
 def csr_todense_gpu_lowering(ctx, data, indices, indptr, *, shape, target_name_prefix):
+  if jaxlib_extension_version >= 513:
+    return ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_todense_ffi_v2")(
+        ctx, data, indices, indptr)[0]
   data_aval, indices_aval, _, = ctx.avals_in
   nnz, = data_aval.shape
   rows, cols = shape
@@ -323,6 +345,9 @@ def csr_todense_gpu_lowering(ctx, data, indices, indptr, *, shape, target_name_p
   return rule(sub_ctx, data, indices, indptr, opaque=opaque)[0]
 
 def csr_fromdense_gpu_lowering(ctx, mat, *, nnz, index_dtype, target_name_prefix):
+  if jaxlib_extension_version >= 513:
+    return ffi.ffi_lowering(f"{target_name_prefix}sparse_csr_fromdense_ffi_v2")(
+        ctx, mat)
   mat_aval, = ctx.avals_in
   rows, cols = mat_aval.shape
   buffer_size, opaque = _get_module(target_name_prefix).build_csr_fromdense_descriptor(

@@ -16,7 +16,9 @@ limitations under the License.
 // This file is not used by JAX itself, but exists to assist with running
 // JAX-generated HLO code from outside of JAX.
 
+#include "jaxlib/cpu/digamma_kernels.h"
 #include "jaxlib/cpu/lapack_kernels.h"
+#include "jaxlib/cpu/lgamma_kernels.h"
 #include "jaxlib/cpu/sparse_kernels.h"
 #include "jaxlib/cpu/tridiagonal_solve_kernels.h"
 #include "xla/ffi/api/c_api.h"
@@ -88,6 +90,9 @@ JAX_CPU_REGISTER_HANDLER(lapack_zgtsv_ffi);
 JAX_CPU_REGISTER_HANDLER(tridiagonal_solve_perturbed_ffi);
 
 JAX_CPU_REGISTER_HANDLER(cpu_csr_sparse_dense_ffi);
+
+JAX_CPU_REGISTER_HANDLER(cpu_lgamma_ffi);
+JAX_CPU_REGISTER_HANDLER(cpu_digamma_ffi);
 
 #undef JAX_CPU_REGISTER_HANDLER
 

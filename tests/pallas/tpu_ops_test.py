@@ -1593,8 +1593,6 @@ class OpsTest(ptu.PallasTPUTest):
   def test_load_transpose_with_sliced_leading_dim(self) -> None:
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Requires TPUv5+")
-    if not jtu.is_libtpu_at_least("0.0.51"):
-      self.skipTest("Requires libtpu >= 0.0.51")
 
     def kernel(in_ref, out_ref):
       out_ref[...] = jnp.swapaxes(in_ref[:, 1:3], 2, 3)
@@ -1669,6 +1667,14 @@ class ConvTest(ptu.PallasTPUTest):
           lhs_dilation=(3, 7),
           window_reversal=(True, True),
       ),
+      dict(
+          testcase_name="_sliding_window_reversal",
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+          window_reversal=(True, False),
+      ),
   )
   def test_pltpu_conv_2d(
       self,
@@ -1693,7 +1699,8 @@ class ConvTest(ptu.PallasTPUTest):
           dimension_numbers=("NHWC", "HWIO", "NHWC"),
       )
 
-    ref_kernel = jnp.flip(kernel, axis=(0, 1)) if window_reversal else kernel
+    reversed_axes = tuple(i for i, r in enumerate(window_reversal or ()) if r)
+    ref_kernel = jnp.flip(kernel, axis=reversed_axes)
     expected = lax.conv_general_dilated(
         x,
         ref_kernel,
@@ -1943,6 +1950,18 @@ class ConvTest(ptu.PallasTPUTest):
           dimension_numbers=("NHWC", "IHWO", "NHWC"),
           lhs_shape=(1, 8, 8, 128),
           rhs_shape=(128, 3, 3, 128),
+      ),
+      dict(
+          testcase_name="_nchw_hwio_nchw",
+          dimension_numbers=("NCHW", "HWIO", "NCHW"),
+          lhs_shape=(1, 128, 8, 8),
+          rhs_shape=(3, 3, 128, 128),
+      ),
+      dict(
+          testcase_name="_nhwc_hwio_hwnc",
+          dimension_numbers=("NHWC", "HWIO", "HWNC"),
+          lhs_shape=(2, 8, 8, 128),
+          rhs_shape=(3, 3, 128, 128),
       ),
   )
   def test_conv_dimension_numbers(
@@ -2194,8 +2213,6 @@ class ConvTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(jnp.uint32, jnp.int32)
   def test_mulhi(self, dtype):
-    if not jtu.is_libtpu_at_least("0.0.51"):
-      self.skipTest("Requires libtpu >= 0.0.51")
     shape = (8, 128)
     rng = np.random.default_rng(42)
     if dtype == jnp.uint32:

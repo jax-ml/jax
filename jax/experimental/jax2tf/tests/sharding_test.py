@@ -361,16 +361,11 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     # If we use a pjit then we see two constraints, otherwise only 1
     count_inner_sharding = (2 if nested_jit else 1) if constraint == "P" else 0
     count_inner_replicated = (2 if nested_jit else 1) if constraint != "P" else 0
-    count_input_reshard = (
-        2 if (constraint == "P" and jax.config.jax_use_shardy_partitioner) else 0
-    )
     self.check_sharding(
         f_tf, [x],
         checks=[
             # The input argument
             (r"f32\[10,20\].*custom_call_target.*\"Sharding.*sharding.*replicated", 1),
-            (r"f32\[10,20\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]",
-             count_input_reshard),
             # The y argument
             (r"f32\[10,40\].*custom_call_target.*\"Sharding.*sharding.*devices=\[2,1\]",
              count_inner_sharding),
@@ -380,7 +375,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             (r"f32\[10,80\].*custom_call_target.*\"Sharding.*sharding.*replicated", 1),
             # No other annotations
             (r"custom_call_target.*\"Sharding",
-             2 + count_input_reshard + count_inner_sharding + count_inner_replicated)
+             2 + count_inner_sharding + count_inner_replicated)
         ])
 
   @jtu.parameterized_filterable(

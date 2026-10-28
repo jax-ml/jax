@@ -40,16 +40,23 @@ zip, unsafe_zip = safe_zip, zip
 def _get_spec_set(partitions) -> set:
   axes = set()
   for p in partitions:
+    if p is None:
+      continue
     if isinstance(p, tuple):
       axes.update(p)
-    elif p is not None and p is not P.UNCONSTRAINED:
+    else:
       axes.add(p)
   return axes
 
 
-def _axis_dims(partitions, axis) -> list[int]:
-  return [i for i, p in enumerate(partitions)
-          if (axis in p if isinstance(p, tuple) else p == axis)]
+def _axis_pos(partitions, axis) -> tuple[int, tuple] | None:
+  for i, p in enumerate(partitions):
+    if p is None:
+      continue
+    p = p if isinstance(p, tuple) else (p,)
+    if axis in p:
+      return i, p[:p.index(axis)]
+  return None
 
 
 def _check_no_collectives_dim_change(prim_name: str, in_parts, out_parts):
@@ -60,10 +67,11 @@ def _check_no_collectives_dim_change(prim_name: str, in_parts, out_parts):
   out_axes = _get_spec_set(out_parts)
   for r in forbidden_axes:
     if (r in in_axes and r in out_axes and
-        _axis_dims(in_parts, r) != _axis_dims(out_parts, r)):
+        _axis_pos(in_parts, r) != _axis_pos(out_parts, r)):
       raise core.ForbiddenCollectiveError(
           f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
-          f" `{prim_name}` changes the sharded dimension of axis '{r}'.")
+          f" `{prim_name}` changes the sharded dimension or sub-axis position"
+          f" of axis '{r}'.")
 
 
 def _check_no_collectives(prim, out_s_list, avals):
@@ -82,25 +90,26 @@ def _check_no_collectives(prim, out_s_list, avals):
 
   in_part = set().union(*(_get_spec_set(s.partitions) for s in in_specs))
   in_unreduced = set().union(*(s.unreduced for s in in_specs))
-  out_part = set().union(*(_get_spec_set(s.partitions) for s in out_specs))
-  out_unreduced = set().union(*(s.unreduced for s in out_specs))
 
-  for r in forbidden_axes:
-    if (in_mesh._name_to_type.get(r) != mesh_lib.AxisType.Explicit or
-        out_mesh._name_to_type.get(r) != mesh_lib.AxisType.Explicit):
-      continue
-    if r in in_unreduced and r not in out_unreduced:
-      raise core.ForbiddenCollectiveError(
-          f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
-          f" `{prim.name}` consumes unreduced axis '{r}' without keeping it"
-          " unreduced in the output."
-      )
-    if r in in_part and r not in out_part and r not in out_unreduced:
-      raise core.ForbiddenCollectiveError(
-          f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
-          f" `{prim.name}` loses sharding axis '{r}' in the output without"
-          " marking it unreduced."
-      )
+  for out_s in out_specs:
+    out_part = _get_spec_set(out_s.partitions)
+    out_unreduced = out_s.unreduced
+    for r in forbidden_axes:
+      if (in_mesh._name_to_type.get(r) != mesh_lib.AxisType.Explicit or
+          out_mesh._name_to_type.get(r) != mesh_lib.AxisType.Explicit):
+        continue
+      if r in in_unreduced and r not in out_unreduced:
+        raise core.ForbiddenCollectiveError(
+            f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
+            f" `{prim.name}` consumes unreduced axis '{r}' without keeping it"
+            " unreduced in the output."
+        )
+      if r in in_part and r not in out_part and r not in out_unreduced:
+        raise core.ForbiddenCollectiveError(
+            f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
+            f" `{prim.name}` loses sharding axis '{r}' in the output without"
+            " marking it unreduced."
+        )
 
 
 def input_dtype(x, *_, out_dtype=None, **__):
@@ -215,6 +224,19 @@ def _shard_aval(aval):
     shard_shape = aval.sharding.shard_shape(aval.shape)
   return aval.update(shape=shard_shape, sharding=None,
                      manual_axis_type=core.empty_mat)
+
+def check_minor_dims_tile_size(prim_name: str, in_aval, out_aval):
+  if not in_aval.layout.tiling:
+    return
+  tiles = in_aval.layout.tiling[0]
+  for d, tile_size in zip(in_aval.layout.major_to_minor[-len(tiles):], tiles):
+    in_size, out_size = in_aval.shape[d], out_aval.shape[d]
+    if in_size != out_size and (in_size < tile_size or out_size < tile_size):
+      raise ValueError(
+          f'`{prim_name}` cannot change the shard shape of a tiled minor'
+          f' dimension below its tile size. Dimension {d} has tile size'
+          f' {tile_size}, input shard shape {in_aval.shape}, and output shard'
+          f' shape {out_aval.shape} with layout {in_aval.layout}.')
 
 def call_layout_rule(prim, layout_rule, in_avals, out_avals, **kwargs):
   cur_layout_mode = get_layout_mode()

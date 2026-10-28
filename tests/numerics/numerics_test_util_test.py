@@ -22,14 +22,6 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
-
-# Under pytest, tests run against an installed wheel that does not
-# include `jax.tests`, so skip before importing `jax.tests.numerics`.
-if jtu.is_running_under_pytest():
-  import pytest
-
-  pytest.skip("Only runs under Bazel", allow_module_level=True)
-
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
 import numpy as np
@@ -489,7 +481,7 @@ class UlpDiffTest(jtu.JaxTestCase):
     # Test that an intentionally inaccurate input region is ignored via callable mask.
     @jax.jit
     def faulty_add(x, y):
-      return jnp.where(x > 0.0, x + y + 10.0, x + y)
+      return jnp.where(x > 1.0, x + y + 10.0, x + y)
 
     # Without ignore_inputs, it fails.
     with self.assertRaises(AssertionError):
@@ -514,10 +506,30 @@ class UlpDiffTest(jtu.JaxTestCase):
         nargs=2,
         bounds=0.5,
         ignore_inputs=[
-            (["cpu", "gpu", "tpu"], {jnp.float32: lambda x, y: x > 0.0})
+            (["cpu", "gpu", "tpu"], {jnp.float32: lambda x, y: x > 1.0})
         ],
         max_samples=1000,
     )
+
+  def test_check_nary_precision_ignore_inputs_too_many_error(self):
+    # An ignore_inputs predicate that discards over 50% of samples raises an
+    # error.
+    with self.assertRaisesRegex(
+        ValueError, "ignore_predicate ignores too many inputs"
+    ):
+      util.check_nary_precision(
+          self,
+          jnp.add,
+          np.add,
+          lambda x, y: x + y,
+          jnp.float32,
+          nargs=2,
+          bounds=0.5,
+          ignore_inputs=[
+              (["cpu", "gpu", "tpu"], {jnp.float32: lambda x, y: x > -1.0})
+          ],
+          max_samples=1000,
+      )
 
   def test_check_precision_omitted_mpmath_fn(self):
 

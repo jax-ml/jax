@@ -439,8 +439,14 @@ class _DeferredShardArg:
   copy_semantics: ArrayCopySemantics
 
   def result_handler(self, shard_arg_result):
+    if self.aval.is_high:
+      lo_aval, = self.aval.lo_ty()
+      out = pxla.global_aval_to_result_handler(
+          lo_aval, self.s, self.committed)(shard_arg_result)
+      return self.aval.raise_val(out)
     return pxla.global_aval_to_result_handler(
         self.aval, self.s, self.committed)(shard_arg_result)
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _DeferredCrossHostTransferArg:
@@ -487,17 +493,34 @@ def _device_put_sharding_impl(
         and copy == ArrayCopySemantics.REUSE_INPUT):
       return x
 
-    if isinstance(s, NamedSharding) and s.spec.unreduced:
-      if s.spec.unreduced_kind != UnreducedKind.sum:
-        raise NotImplementedError
-      norm = lambda p: p._normalized_spec_for_aval(x.ndim)
-      if (xb.process_count() == 1 and x_is_jax_array and
-          isinstance(x_sharding, NamedSharding) and
-          norm(x_sharding.spec) == norm(s.spec) and
-          x_sharding.mesh.size == s.mesh.size):
-        return _DeferredShardArg(x, s, aval, True, copy)
-      # TODO(mattjj,yashkatariya): handle donation
-      return api.jit(_device_put_reshard, out_shardings=s)(x)
+    if config.hijax_unreduced.value:
+      if (isinstance(x, array.UnreducedArray) or
+          (isinstance(s, NamedSharding) and s.spec.unreduced)):
+        if (isinstance(s, NamedSharding) and s.spec.unreduced and
+            s.spec.unreduced_kind != UnreducedKind.sum):
+          raise NotImplementedError
+        norm = lambda p: p._normalized_spec_for_aval(x.ndim)
+        if (xb.process_count() == 1 and isinstance(x, array.UnreducedArray) and
+            isinstance(s, NamedSharding) and
+            norm(x.sharding.spec) == norm(s.spec) and
+            x.sharding.mesh.shape_tuple == s.mesh.shape_tuple):
+          lo_aval, = aval.lo_ty()
+          lo_s = s.update(spec=lo_aval.sharding.spec)  # type:ignore
+          return _DeferredShardArg(x._lo_val, lo_s, aval, True, copy)
+        # TODO(mattjj,yashkatariya): handle donation
+        return pjit.reshard(x, s)
+    else:
+      if isinstance(s, NamedSharding) and s.spec.unreduced:
+        if s.spec.unreduced_kind != UnreducedKind.sum:
+          raise NotImplementedError
+        norm = lambda p: p._normalized_spec_for_aval(x.ndim)
+        if (xb.process_count() == 1 and x_is_jax_array and
+            isinstance(x_sharding, NamedSharding) and
+            norm(x_sharding.spec) == norm(s.spec) and
+            x_sharding.mesh.size == s.mesh.size):
+          return _DeferredShardArg(x, s, aval, True, copy)
+        # TODO(mattjj,yashkatariya): handle donation
+        return api.jit(_device_put_reshard, out_shardings=s)(x)
 
     if (not s_is_fully_addressable and
         x_is_jax_array and not x_is_fully_addressable and
@@ -721,6 +744,26 @@ def update_dp_aval(aval, d):
 def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
   return [update_dp_aval(x, d) for x, d in zip(xs, devices)]
 device_put_p.def_abstract_eval(_device_put_abstract_eval)
+
+def _device_put_is_high(*avals, devices, **__):
+  return (any(a.is_high for a in avals) or
+          (config.hijax_unreduced.value and
+           any(isinstance(d, NamedSharding) and bool(d.spec.unreduced)
+               for d in devices)))
+device_put_p.is_high = _device_put_is_high  # type: ignore[method-assign]
+
+def _device_put_to_lojax(*hi_xs, devices, srcs, copy_semantics):
+  outs = []
+  for hi_x, d, src, cp in zip(hi_xs, devices, srcs, copy_semantics):
+    if (core.typeof(hi_x).is_high and
+        isinstance(d, NamedSharding) and d.spec.unreduced):
+      outs.append(pjit.reshard(hi_x, d))
+    else:
+      lo_y, = device_put_p.bind(hi_x, devices=(d,), srcs=(src,),
+                                copy_semantics=(cp,))
+      outs.append(lo_y)
+  return outs
+device_put_p.to_lojax = _device_put_to_lojax  # type: ignore[method-assign]
 
 def _device_put_transpose(cts, *args, devices, srcs, copy_semantics):
   results: list[Any | None] = [None] * len(cts)

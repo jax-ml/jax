@@ -27,6 +27,7 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import ifrt_version
 from jax._src.lib import xla_client as xc
+from jax._src.layout import Layout
 from jax._src.mesh import AbstractMesh, AxisType, Mesh
 from jax._src.random import threefry2x32
 from jax._src.sharding import IndivisibleError, common_devices_indices_map
@@ -1637,6 +1638,38 @@ class ShardingTest(jtu.JaxTestCase):
     mt = core.ManualAxisType(varying={'x'})
     with self.assertRaises(AttributeError):
       mt.varying = {'y'}
+
+  def test_aval_str_short_layout(self):
+    aval = core.ShapedArray((8, 4), jnp.float32)
+    self.assertEqual(aval.str_short(True), "f32[8,4]")
+
+    aval = core.ShapedArray((8, 4), jnp.float32, layout=Layout((1, 0)))
+    self.assertEqual(aval.str_short(True), "f32[8,4]L(1,0)")
+
+    aval = core.ShapedArray((8, 4), jnp.float32, layout=Layout((1, 0), ()))
+    self.assertEqual(aval.str_short(True), "f32[8,4]L(1,0)")
+
+    aval = core.ShapedArray(
+        (8, 4, 16), jnp.float32, layout=Layout((1, 0, 2), ((8, 128),)))
+    self.assertEqual(aval.str_short(True), "f32[8,4,16]L(1,0,2)T((8,128))")
+
+    mesh = jax.sharding.AbstractMesh(
+        (2, 2), ('x', 'y'),
+        axis_types=(jax.sharding.AxisType.Manual,
+                    jax.sharding.AxisType.Explicit))
+    s = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec(None, 'y', None))
+    aval = core.ShapedArray(
+        (8, 4, 16), jnp.float32, sharding=s,
+        manual_axis_type=core.ManualAxisType(varying=frozenset({'x'})),
+        layout=Layout((1, 0, 2), ((8, 128), (2, 1)),
+                      sub_byte_element_size_in_bits=4))
+    self.assertEqual(
+        aval.str_short(True),
+        "f32[8,4@y,16]{V:x}L(1,0,2)T((8,128),(2,1))E(4)")
+    self.assertEqual(
+        repr(aval),
+        "ShapedArray(float32[8,4@y,16]{V:x}L(1,0,2)T((8,128),(2,1))E(4))")
 
   def test_modify_spec_auto_unreduced(self):
     mesh = AbstractMesh(

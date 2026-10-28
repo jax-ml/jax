@@ -2737,6 +2737,62 @@ class ShardMapTest(jtu.JaxTestCase):
     shard_map(jax.lax.erf,
               mesh=mesh, in_specs=P('i'), out_specs=P('i'))(x)  # don't crash
 
+  @parameterized.product(unroll=[1, 3], varying_coeffs=[False, True])
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_polynomial_mixed_vma(self, unroll, varying_coeffs, mesh):
+    x = jax.device_put(np.linspace(-0.5, 0.5, 8), P('x'))
+    c = jax.device_put(
+        np.linspace(0.5, 1.5, 8 if varying_coeffs else 4),
+        P('y') if varying_coeffs else P())
+    out_spec = P(('x', 'y')) if varying_coeffs else P('x')
+
+    @shard_map(in_specs=(P('x'), P('y') if varying_coeffs else P()),
+               out_specs=out_spec)
+    def f(x, c):
+      return lax.polynomial(x, [c, 1.0, c], unroll=unroll)
+
+    x_ref = np.asarray(x).reshape(2, 4)
+    c_ref = np.asarray(c).reshape(-1, 4)
+    expected = (c_ref[None, :, :] + x_ref[:, None, :]
+                + c_ref[None, :, :] * x_ref[:, None, :] ** 2).ravel()
+    for fun in (f, jax.jit(f)):
+      self.assertAllClose(fun(x, c), expected)
+
+    dx, dc = jax.jit(jax.grad(lambda x, c: f(x, c).sum(), (0, 1)))(x, c)
+    expected_dx = (c_ref.shape[0] + 2 * x_ref * c_ref.sum(axis=0)).ravel()
+    expected_dc = np.tile((1 + x_ref ** 2).sum(axis=0), c_ref.shape[0])
+    self.assertAllClose(dx, expected_dx)
+    self.assertAllClose(dc, expected_dc)
+    with config.auto_pcast(False):
+      with self.assertRaisesRegex(
+          ValueError, 'requires varying manual axes to match'):
+        jax.jit(f)(x, c)
+
+  @parameterized.named_parameters(('erf', lax.erf), ('erfc', lax.erfc))
+  @jtu.with_explicit_mesh((2,), 'i')
+  def test_erf_derivatives_vma(self, op, mesh):
+    # Regression test for https://github.com/jax-ml/jax/issues/41853.
+    x = jax.device_put(np.linspace(-3.0, 3.0, 8), P('i'))
+    grad = jax.grad(lambda x: op(x).sum())
+    grad2 = jax.grad(lambda x: grad(x).sum())
+
+    @jax.jit
+    @shard_map(in_specs=P('i'), out_specs=(P('i'), P('i')))
+    def f(x):
+      return grad(x), grad2(x)
+
+    compiled = f.lower(x).compile()
+    dx, d2x = compiled(x)
+    expected = 2 / np.sqrt(np.pi) * np.exp(-np.asarray(x) ** 2)
+    if op is lax.erfc:
+      expected = -expected
+    self.assertAllClose(dx, expected)
+    self.assertAllClose(d2x, -2 * np.asarray(x) * expected)
+    hlo = compiled.as_text()
+    for collective in ('all-reduce', 'all-gather', 'all-to-all',
+                       'collective-permute'):
+      self.assertNotIn(collective, hlo)
+
   def test_error_for_variable_num_args(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
 
@@ -3755,7 +3811,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   def test_constant_random_keys_shard_map(self):
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
-    keys = jax.random.split(jax.random.key(0), 8).reshape(4, 2)
+    keys = jax.random.split(jax.random.key(0), 512).reshape(256, 2)
     assert keys.nbytes > config.embedded_constants_max_bytes.value,\
         "Key constants are hoisted as arguments"
 
@@ -4237,6 +4293,19 @@ class ShardMapTest(jtu.JaxTestCase):
         TypeError,
         r"applying `jax.lax.pcast\(..., \('y',\).*to the output of true_fun"):
       shard_map(f, mesh=mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
+
+  def test_cond_pvary_errors_subset(self):
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'))
+
+    def f(x, y):
+      return jax.lax.cond(True, lambda x, y: x, lambda x, y: y, x, y)
+    x = jnp.arange(4.)
+    with self.assertRaisesRegex(
+        TypeError,
+        r"This might be fixed by applying `jax.lax.pcast\(..., \('y',\), "
+        r"to='varying'\)` to the output of true_fun\."):
+      shard_map(f, mesh=mesh, in_specs=(P('x'), P(('x', 'y'))),
+                out_specs=P(('x', 'y')))(x, x)
 
   def test_scan_pvary_errors(self):
     mesh = jtu.create_mesh((1, 1), ('i', 'j'))
@@ -6168,6 +6237,25 @@ class ShardMapTest(jtu.JaxTestCase):
     out = f(arr1)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x', 'y'})))
     self.assertArraysEqual(jax.reshard(out, P()), jax.lax.reduce_sum(arr, [0, 1]))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_zeros_like_eval_shape_partial_manual_abstract_mesh(self, mesh):
+    x = jax.ShapeDtypeStruct((2, 4), jnp.float32, sharding=jax.P('x', 'y'))
+    pred = jax.ShapeDtypeStruct((), jnp.bool_, sharding=jax.P())
+
+    @jax.jit
+    @jax.shard_map(out_specs=jax.P('x', None), axis_names={'x'})
+    def f(x, pred):
+      def true_fn():
+        return x + 1.0
+
+      def false_fn():
+        return jnp.zeros_like(jax.eval_shape(true_fn))
+
+      return jax.lax.cond(pred, true_fn, false_fn)
+
+    traced = f.trace(x, pred)
+    self.assertEqual(traced.out_info.sharding.spec, P('x', 'y'))
 
 
 class FunSpec(NamedTuple):

@@ -132,11 +132,7 @@ def _get_barrier_allocation_key_from_inval(
   assert keys.shape[-1:] == gpu_callbacks.HostAllocationKey.shape_and_dtype().shape
   rank = keys.ndim - 1
 
-  transforms = (
-      ()
-      if transforms_treedef is None
-      else jax.tree.unflatten(transforms_treedef, transforms_leaves)
-  )
+  transforms = jax.tree.unflatten(transforms_treedef, transforms_leaves)
   index = []
   for transform in transforms:
     if not isinstance(transform, indexing.NDIndexer):
@@ -1104,12 +1100,11 @@ class JaxprInterpreter:
   ):
     assert eqn.primitive is gpu_primitives.wgmma_ref_p
     acc, a, b, *leaves = get_invals()
-    empty_treedef = jax.tree.structure([])
     acc_transforms, a_transforms, b_transforms = jax.tree.unflatten(
         jax.tree_util.treedef_tuple((
-            eqn.params["acc_transforms_tree"] or empty_treedef,
-            eqn.params["a_transforms_tree"] or empty_treedef,
-            eqn.params["b_transforms_tree"] or empty_treedef,
+            eqn.params["acc_transforms_tree"],
+            eqn.params["a_transforms_tree"],
+            eqn.params["b_transforms_tree"],
         )),
         leaves,
     )
@@ -1163,12 +1158,11 @@ class JaxprInterpreter:
     if eqn.params["sparse"]:
       a_sparse_metadata, *invals = invals
 
-    empty_treedef = jax.tree.structure([])
     (acc_transforms, a_transforms, b_transforms, barrier_transforms,
      a_scale_transforms, b_scale_transforms, a_sparse_metadata_transforms
      ) = jax.tree.unflatten(
         jax.tree_util.treedef_tuple(
-            (eqn.params[name] or empty_treedef for name in (
+            (eqn.params[name] for name in (
                 "acc_transforms_tree",
                 "a_transforms_tree",
                 "b_transforms_tree",
@@ -1413,12 +1407,7 @@ class JaxprInterpreter:
 
     assert eqn.primitive is gpu_primitives.try_cluster_cancel_p
     _, barrier, *transforms_leaves = get_invals()
-    result_transforms_tree = eqn.params["result_transforms_tree"]
-    num_result_leaves = (
-        result_transforms_tree.num_leaves
-        if result_transforms_tree is not None
-        else 0
-    )
+    num_result_leaves = eqn.params["result_transforms_tree"].num_leaves
     barrier_transforms_leaves = transforms_leaves[num_result_leaves:]
     # The only effect that matters is the arrival, which the matching
     # `barrier_wait` is blocked on.

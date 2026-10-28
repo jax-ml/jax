@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 import jax
 from jax._src import api_util
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import flattree as ft
 from jax._src import hijax
@@ -28,6 +29,15 @@ from jax._src.lax.control_flow.loops import eval_jaxpr_p
 from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.traceback_util import api_boundary
+
+
+disable_nested_fuse = config.State[bool](
+    "pallas_fuser_disable_nested_fuse",
+    False,
+    "Prevents nested fuse calls from fusing.",
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
 
 
 class Fusible(hijax.HiPrim):
@@ -142,30 +152,30 @@ def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
 
 @partial(api_boundary, repro_api_name="fuser.fusible")
 def fusible(f=None, *, output_fusion_prefix: Any = True):
-  """Decorator that marks a kernel wrapper function as a fusible for `fuse`.
+  """Decorator that marks a kernel wrapper function as a fusible for ``fuse``.
 
-  The decorated function `f` is invoked as `f(*in_fusions, output_fusions,
-  **kwargs)`, where each positional argument in `in_fusions` preserves the
-  PyTree structure of the corresponding input in `*args` with array leaves
-  wrapped in `Fusion` objects, and `output_fusions` is a PyTree matching the
-  structure of `output_fusion_prefix` whose leaves are `Fusion` objects or
-  `None` when no output fusion is present. Keyword arguments are bound to `f`
-  as static values. When called outside `fuse`, each input array leaf is
-  wrapped in a trivial `Fusion` that returns it and all `output_fusions`
-  leaves are `None`.
+  The decorated function ``f`` is invoked as ``f(*in_fusions, output_fusions,
+  **kwargs)``, where each positional argument in ``in_fusions`` preserves the
+  PyTree structure of the corresponding input in ``*args`` with array leaves
+  wrapped in ``Fusion`` objects, and ``output_fusions`` is a PyTree matching the
+  structure of ``output_fusion_prefix`` whose leaves are ``Fusion`` objects or
+  ``None`` when no output fusion is present. Keyword arguments are bound to ``f``
+  as static values. When called outside ``fuse``, each input array leaf is
+  wrapped in a trivial ``Fusion`` that returns it and all ``output_fusions``
+  leaves are ``None``.
 
   Args:
-    f: The fusible kernel function to decorate. If `None`, returns a
+    f: The fusible kernel function to decorate. If ``None``, returns a
       decorator.
     output_fusion_prefix: A PyTree prefix mask whose PyTree structure specifies
-      how the outputs of `f` are grouped into separate output fusions (with the
-      default `True`, all outputs are grouped into a single `Fusion | None`).
+      how the outputs of ``f`` are grouped into separate output fusions (with the
+      default ``True``, all outputs are grouped into a single ``Fusion | None``).
       Multiple output fusion groups are not supported when the output fusion
-      writes to `Ref`s.
+      writes to ``Refs``.
 
   Returns:
-    A wrapped function that binds a `Fusible` primitive when called, or a
-    decorator if `f` is `None`.
+    A wrapped function that binds a ``Fusible`` primitive when called, or a
+    decorator if ``f`` is ``None``.
   """
 
   def decorator(f):
@@ -184,9 +194,13 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
       debug_info = api_util.debug_info("fusible", wrapped, args, {})
       args_avals = tree_util.tree_map(jax_core.typeof, args)
       in_avals_ft = ft.flatten_args(*args_avals)
-      jaxpr, out_avals_ft = pe.trace_to_jaxpr(
-          wrapped, in_avals_ft, debug_info
-      )
+      # Trace with nested fusion enabled, like the retrace in `fuse_jaxpr`, so
+      # both traces share the jit trace cache. An enclosing `fuse` disables
+      # nested fusion only to find this fusible, which already exists.
+      with disable_nested_fuse(False):
+        jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+            wrapped, in_avals_ft, debug_info
+        )
       jaxpr, consts = pe.separate_consts(jaxpr)
       prim = Fusible(
           jaxpr=jaxpr,

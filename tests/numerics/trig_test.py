@@ -21,14 +21,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
-
-# Under pytest, tests run against an installed wheel that does not
-# include `jax.tests`, so skip before importing `jax.tests.numerics`.
-if jtu.is_running_under_pytest():
-  import pytest
-
-  pytest.skip("Only runs under Bazel", allow_module_level=True)
-
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
 import numpy as np
@@ -83,6 +75,25 @@ class SinTest(jtu.JaxTestCase):
     check_signed_zeros = [
         ("cpu", {bf16: False}),
     ]
+    # Worst-case inputs across math libraries from Gladman et al., "Accuracy of
+    # Mathematical Functions in Single, Double, Double Extended, and Quadruple
+    # Precision".
+    interesting_points = [
+        float.fromhex(h)
+        for h in (
+            "0x1p-149",
+            "-0x1.f8b791cafcdefp+4",
+            "-0x1.0e16eb809a35dp+944",
+            "0x1.9eb7148f354d6p+21",
+            "-0x1.842d8ec8f752fp+21",
+            "0x1.4d84db080b9fdp+21",
+            "-0x1.07e4c92b5349dp+4",
+            "0x1.1031fb019618p-8",
+            "-0x1.11b624b546894p+9",
+            "-0x1.1c49ad613ff3bp+19",
+            "-0x1.f05ed802c1cc7p+5",
+        )
+    ]
     util.check_unary_precision(
         self,
         jnp.sin,
@@ -92,6 +103,7 @@ class SinTest(jtu.JaxTestCase):
         bounds=bounds,
         input_ftz=input_ftz,
         check_signed_zeros=check_signed_zeros,
+        interesting_points=interesting_points,
     )
 
 
@@ -102,12 +114,34 @@ class CosTest(jtu.JaxTestCase):
   def test_cos_accuracy(self, dtype):
     bounds = [
         ("cpu", {f16: 1.0}),
-        ("gpu", {f16: 1.0, f32: 2.0, f64: 1.5}),
+        ("gpu", {f16: 1.0, f32: 2.0, f64: 2.0}),
         ([*TPU_EUPV1, "tpu_v5p", "tpu_v6e"], {f16: 1.0, f32: 3.5}),
         ("tpu_7x", {f16: 1.0, f32: 3.0}),
     ]
+    # Worst-case inputs across math libraries from Gladman et al.
+    interesting_points = [
+        float.fromhex(h)
+        for h in (
+            "-0x1.7120161c92674p+0",
+            "-0x1.d19ebc5567dcdp+311",
+            "0x1.9eb7148f354d6p+20",
+            "-0x1.4ae182c1ab422p+21",
+            "-0x1.34e729fd08086p+21",
+            "0x1.2f29eb4e99fa2p+7",
+            "0x1.16e534ee3658p-4",
+            "-0x1.9200634d4471fp-1",
+            "0x1.25133ca3904dfp+20",
+            "0x1.2a33ae1a620b1p+1",
+        )
+    ]
     util.check_unary_precision(
-        self, jnp.cos, np.cos, mpmath.cos, dtype, bounds=bounds
+        self,
+        jnp.cos,
+        np.cos,
+        mpmath.cos,
+        dtype,
+        bounds=bounds,
+        interesting_points=interesting_points,
     )
 
 
@@ -126,6 +160,22 @@ class TanTest(jtu.JaxTestCase):
     input_ftz = [
         ("gpu", False),
     ]
+    # Worst-case inputs across math libraries from Gladman et al.
+    interesting_points = [
+        float.fromhex(h)
+        for h in (
+            "0x1.000002p-14",
+            "-0x1.317cd745dd37cp+9",
+            "0x1.49adfd996a81dp+18",
+            "0x1.93c05c9ed3cbcp+18",
+            "0x1.3f9605aaeb51bp+21",
+            "-0x1.a81d98fc58537p+6",
+            "-0x1.13a5ccd87c9bbp+1008",
+            "-0x1.4d7c8b8320237p+11",
+            "0x1.da7a85a88bbecp+11",
+            "0x1.5a7ee2ab3840cp+14",
+        )
+    ]
     util.check_unary_precision(
         self,
         jnp.tan,
@@ -134,6 +184,7 @@ class TanTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         input_ftz=input_ftz,
+        interesting_points=interesting_points,
     )
 
 
@@ -206,22 +257,38 @@ class AcosTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_acos_accuracy(self, dtype):
-    has_512_lowering = jaxlib_extension_version >= 512 and (
-        jtu.device_under_test() != "tpu" or jtu.is_libtpu_at_least("0.0.51")
-    )
-    if has_512_lowering:
+    if jaxlib_extension_version >= 512:
       bounds = [
           ("cpu", {f16: 1.0, f32: 1.0, f64: 1.5}),
-          ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
+          ("gpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
           ("tpu", {f16: 1.0, f32: 1.0}),
       ]
     else:
       bounds = [
           ("cpu", {bf16: 1.5, f16: 1.5, f32: 1.5, f64: 1.5}),
-          ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
+          ("gpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
           ([*TPU_EUPV1, "tpu_v5p", "tpu_7x"], {f16: 1.0, f32: 5.0}),
           ("tpu_v6e", {f16: 1.0, f32: 4.0}),
       ]
+    interesting_points = [
+        *_ACOS_ASIN_INTERESTING_POINTS,
+        # Worst-case inputs across math libraries from Gladman et al.:
+        *(
+            float.fromhex(h)
+            for h in (
+                "0x1.dffffb3488a4p-1",
+                "0x1.6c05eb219ec46p-1",
+                "0x1.35b03e336a82bp-1",
+                "-0x1.0068b067c6feep-1",
+                "-0x1.8d313198a2e03p-53",
+                "-0x1.cb3b399d747f3p-55",
+                "-0x1.01f97a9d82a5dp-1",
+                "0x1.251869c3f7881p-1",
+                "0x1.266637a3d2bbcp-1",
+                "-0x1.3702dc3201849p-1",
+            )
+        ),
+    ]
     util.check_unary_precision(
         self,
         jnp.acos,
@@ -229,7 +296,7 @@ class AcosTest(jtu.JaxTestCase):
         mpmath.acos,
         dtype,
         bounds=bounds,
-        interesting_points=_ACOS_ASIN_INTERESTING_POINTS,
+        interesting_points=interesting_points,
     )
 
 
@@ -238,10 +305,7 @@ class AsinTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_asin_accuracy(self, dtype):
-    has_512_lowering = jaxlib_extension_version >= 512 and (
-        jtu.device_under_test() != "tpu" or jtu.is_libtpu_at_least("0.0.51")
-    )
-    if has_512_lowering:
+    if jaxlib_extension_version >= 512:
       bounds = [
           ("cpu", {f32: 1.0, f64: 1.5}),
           ("gpu", {f16: 1.0, f32: 1.5, f64: 2.5}),
@@ -254,6 +318,25 @@ class AsinTest(jtu.JaxTestCase):
           ([*TPU_EUPV1, "tpu_v5p"], {bf16: 0.5, f32: 5.0}),
           (["tpu_v6e", "tpu_7x"], {bf16: 0.5, f32: 4.5}),
       ]
+    interesting_points = [
+        *_ACOS_ASIN_INTERESTING_POINTS,
+        # Worst-case inputs across math libraries from Gladman et al.:
+        *(
+            float.fromhex(h)
+            for h in (
+                "-0x1.0000045b2c904p-3",
+                "0x1.6c042a6378102p-1",
+                "-0x1.00d44cccfa99p-1",
+                "-0x1.004d1c5a9400bp-1",
+                "0x1.eaeca101513d2p-2",
+                "-0x1.7137449123ef6p-26",
+                "0x1.003d8c089658bp-1",
+                "0x1.0479b37d95e5cp-1",
+                "-0x1.2ef2481799c7cp-1",
+                "0x1.df2c6032adcd8p-2",
+            )
+        ),
+    ]
     util.check_unary_precision(
         self,
         jnp.asin,
@@ -261,7 +344,7 @@ class AsinTest(jtu.JaxTestCase):
         mpmath.asin,
         dtype,
         bounds=bounds,
-        interesting_points=_ACOS_ASIN_INTERESTING_POINTS,
+        interesting_points=interesting_points,
     )
 
 
@@ -289,6 +372,21 @@ class AtanTest(jtu.JaxTestCase):
                 math.sqrt(2.0) + 1.0,
             )
             for sign in (-1, 1)
+        ),
+        # Worst-case inputs across math libraries from Gladman et al.:
+        *(
+            float.fromhex(h)
+            for h in (
+                "0x1.f9004c4fef9eap-4",
+                "-0x1.ffff8020d3d1dp-7",
+                "-0x1.60370d15396b7p-1",
+                "0x1.62ff6a1682c25p-1",
+                "0x1.01e0be37af68fp+1",
+                "-0x1.085b3fdb46cbp+0",
+                "0x1.032b4811f3dc5p+0",
+                "0x1.52184b1b9bd9bp+0",
+                "0x1.00bb805435ccfp+0",
+            )
         ),
     ]
     util.check_unary_precision(
@@ -329,7 +427,7 @@ class Atan2Test(jtu.JaxTestCase):
   def test_atan2_accuracy(self, dtype):
     bounds = [
         ("cpu", {bf16: 1.0, f16: 1.0}),
-        ("gpu", {bf16: 1.0, f16: 1.0, f32: 3.0, f64: 1.5}),
+        ("gpu", {bf16: 1.0, f16: 1.0, f32: 3.0, f64: 2.0}),
         ("tpu", {bf16: 1.0, f16: 1.0, f32: 3.5}),
     ]
     input_ftz = [
@@ -346,6 +444,31 @@ class Atan2Test(jtu.JaxTestCase):
             {f64: lambda y, x: (np.abs(y) > 0.0) & (np.abs(y) < tiny_f64)},
         ),
     ]
+    # Worst-case (y, x) inputs across math libraries from Gladman et al.
+    interesting_points = [
+        (float.fromhex(y), float.fromhex(x))
+        for y, x in (
+            ("0x1.960176p-63", "0x1.f88dp+80"),
+            ("-0x1.58a7ecp-118", "0x1.58a7bep-123"),
+            ("0x1.fffe24p+59", "0x1.000adcp+73"),
+            ("-0x1.f9cf48p+49", "0x1.f60598p+51"),
+            ("0x1.a10104p+123", "0x1.99f182p+125"),
+            ("-0x1.ce62cep-116", "0x1.cbf9bp-113"),
+            ("-0x1.9be82ap-101", "0x1.92cfb2p-101"),
+            ("-0x1.eda3fep-120", "0x1.e3bfa8p-118"),
+            ("-0x1.00f6f2p+44", "0x1.ffe934p+46"),
+            ("0x1.ed6060626eecfp-429", "0x1.f42ebb62994dcp-426"),
+            ("0x1.b77ade79a36d5p-326", "0x1.ff6a37b72b52bp-319"),
+            ("-0x1.ec2003fe89e36p-433", "0x1.ec173ed5fd8f5p-427"),
+            ("-0x1.358bb5eb25bdcp+813", "0x1.2f86b82481a0ap+815"),
+            ("-0x1.6a539153430d8p-416", "0x1.d2b5b9dc716d8p-415"),
+            ("-0x1.bdb2c358b0b81p-93", "0x1.c717a5969be93p-86"),
+            ("0x1.fffffffffffffp-627", "0x1.0000000000000p+448"),
+            ("0x1.d5de7a294d493p-935", "0x1.d030d7b608be1p-935"),
+            ("0x1.2632db402a593p+52", "0x1.255022bb76d28p+52"),
+            ("0x1.401ec07d65549p+888", "0x1.3c3976605bb0cp+888"),
+        )
+    ]
     util.check_nary_precision(
         self,
         jnp.atan2,
@@ -356,6 +479,7 @@ class Atan2Test(jtu.JaxTestCase):
         bounds=bounds,
         input_ftz=input_ftz,
         ignore_inputs=ignore_inputs,
+        interesting_points=interesting_points,
     )
 
 

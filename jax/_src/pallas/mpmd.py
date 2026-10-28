@@ -118,10 +118,21 @@ def _mpmd_map_abstract_eval(
         # the kernel.
         assert not jaxpr.constvars
         index = jaxpr.invars.index(eff.input)
-        if index < len(in_avals) and isinstance(
-            in_avals[index], state.AbstractRef
-        ):
+        if index >= len(in_avals):
+          continue
+        if isinstance(in_avals[index], state.AbstractRef):
           effs.add(eff.replace(index))
+        elif (
+            isinstance(eff, (state.WriteEffect, state.AccumEffect))
+            and index not in input_output_aliases
+        ):
+          arg_name = jaxpr.debug_info.safe_arg_names(len(jaxpr.invars))[index]
+          raise ValueError(
+              f"The kernel {jaxpr.debug_info.func_src_info} writes to input"
+              f" {arg_name} of type {in_avals[index]}, which was passed as an"
+              " array. Pass a Ref (e.g. `jax.new_ref(x)`) to update it in"
+              " place, or return it as an output via `out_type`."
+          )
         continue
       if not isinstance(eff, jax_core.NamedAxisEffect):
         effs.add(eff)

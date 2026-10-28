@@ -3389,7 +3389,7 @@ class APITest(jtu.JaxTestCase):
   def test_constants_not_in_lowering_jit(self):
     if not config.use_simplified_jaxpr_constants.value:
       self.skipTest("Works only with simplified Jaxpr consts")
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
 
@@ -3415,7 +3415,7 @@ class APITest(jtu.JaxTestCase):
   def test_constants_not_in_lowering_scan(self):
     if not config.use_simplified_jaxpr_constants.value:
       self.skipTest("Works only with simplified Jaxpr consts")
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
     def f():
@@ -3437,7 +3437,7 @@ class APITest(jtu.JaxTestCase):
   def test_constants_not_in_lowering_cond(self):
     if not config.use_simplified_jaxpr_constants.value:
       self.skipTest("Works only with simplified Jaxpr consts")
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
 
@@ -4457,7 +4457,7 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(fun([jnp.float32(10.)], jnp.float32(3.)),
                         jnp.float32(90.))
     consts2, traced2 = traced.with_consts_as_arg()
-    self.assertAllClose(traced2(consts2, jnp.float32(3.)), jnp.float32(18.))
+    self.assertAllClose(traced2(consts2, jnp.float32(3.)), [jnp.float32(18.)])
 
   def test_traced_with_consts_as_arg_cache_hit(self):
     f = lambda y: y ** 2 * jnp.float32(2.)
@@ -4839,10 +4839,13 @@ class APITest(jtu.JaxTestCase):
     # For xla_early and xla_late, we expect it not to be inlined by Jax.
     # For xla_early, we expect XLA to inline it early.
     self.assertNotIn("call(", get_hlo(jax.Inline.XLA_EARLY))
-    # For xla_late, we expect XLA to preserve the call on CPU/GPU, but it
-    # will be inlined/flattened on TPU during TPU compilation.
+    # For xla_late, we expect XLA to preserve the call on CPU, but it
+    # will be inlined/flattened on TPU and GPU.
     if jtu.device_under_test() == "tpu":
       self.assertNotIn("call(", get_hlo(jax.Inline.XLA_LATE))
+    elif jtu.device_under_test() == "gpu":
+      # Relax assertion during transition as XLA:GPU moves to inlining xla_late.
+      pass
     else:
       self.assertIn("call(", get_hlo(jax.Inline.XLA_LATE))
 
@@ -4879,6 +4882,9 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('inlineable = "xla_late"', mlir_text)
     if jtu.device_under_test() == "tpu":
       self.assertNotIn("call(", hlo_text)
+    elif jtu.device_under_test() == "gpu":
+      # Relax assertion during transition as XLA:GPU moves to inlining xla_late.
+      pass
     else:
       self.assertIn("call(", hlo_text)
 

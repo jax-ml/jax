@@ -125,9 +125,13 @@ class CompilerParams:
     profile_dir: The directory to which profiling traces will be written to.
     profile_trace_scope: The scope at which traces are collected (WARP or
       WARPGROUP).
-    profile_bounds_check: If True, profiler events past profile_space are
+    profile_bounds_check: If True, profiler events exceeding ``profile_space`` are
       dropped (the trace is truncated) instead of corrupting SMEM, at the cost
-      of a slightly higher per-event profiling overhead.
+      of a slightly higher per-event profiling overhead. If False, profiler events
+      are written without bounds checking. To avoid possible SMEM errors during
+      profiling, it is advised to reduce the grid size or other related parameters
+      to collect fewer profiler events. Defaults to False, to avoid the overhead
+      related from bounds checking which may distort performance measurements.
     skip_device_barrier: If True, skips the cross-device barrier before kernel
       launch. Improper use of this flag can lead to race conditions. !!!Use with
       caution!!! Defaults to False.
@@ -1335,11 +1339,11 @@ def im2col_ref(
     padding: The ``(lo, hi)`` zero padding along each spatial dimension. Must be
       non-negative. Defaults to no padding.
   """
-  window_shape = tuple(int(k) for k in window_shape)
+  window_shape = tuple(window_shape)
   if padding is None:
     padding = ((0, 0),) * len(window_shape)
   else:
-    padding = tuple((int(lo), int(hi)) for lo, hi in padding)
+    padding = tuple((lo, hi) for lo, hi in padding)
   ref, transforms = state_primitives.get_ref_and_transforms(
       ref, None, "im2col_ref"
   )
@@ -1350,16 +1354,6 @@ def im2col_ref(
   )
   _ = res.type  # Eagerly validate the ref shape.
   return res
-
-
-def transpose_ref(
-    ref: pallas_core.TransformedRef | Any,
-    permutation: tuple[int, ...],
-) -> pallas_core.TransformedRef:
-  assert hasattr(ref, "memory_space")
-  if ref.memory_space == MemorySpace.TMEM:
-    raise ValueError("Can't transpose a TMEM reference.")
-  return ref.transpose(permutation)
 
 
 @tree_util.register_dataclass

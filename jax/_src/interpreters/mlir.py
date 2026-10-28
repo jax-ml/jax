@@ -2888,7 +2888,11 @@ def call_lowering(fn_name, call_jaxpr: core.Jaxpr, backend,
                   attributes: None | dict[str, Any] = None,
                   inline_jax_late: bool = False):
   assert isinstance(call_jaxpr, core.Jaxpr), type(call_jaxpr)
-  const_args_and_avals = core.jaxpr_const_args(call_jaxpr)
+  const_args_and_avals = (
+      core.jaxpr_const_args(call_jaxpr)
+      if mod_ctx.lowering_parameters.hoist_constants_as_args
+      else []
+  )
   const_args, const_avals = util.unzip2(const_args_and_avals)
   const_arg_values = [ir_constants(c, const_lowering=const_lowering, aval=aval)
                       for c, aval in const_args_and_avals]
@@ -3207,7 +3211,7 @@ def add_jaxvals_lowering(ctx, x, y):
       dtypes.issubdtype(a.dtype, dtypes.extended)):
     return lower_fun(lambda x, y: [a.dtype._rules.add(a.dtype, x, y)])(ctx, x, y)
   out = hlo.add(x, y)
-  return [lower_with_sharding_in_types(ctx, out, out_aval)]
+  return [lower_with_explicit_types(ctx, out, out_aval)]
 
 register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 

@@ -1485,6 +1485,106 @@ TODO
 
 TODO
 
+### Profiling
+
+While developing a Mosaic GPU kernel, we may want to profile it to understand better what happens on the hardware. Mosaic GPU includes a built-in profiler for this purpose. Take the following example:
+
+```python
+import os
+from jax import lax
+import jax.experimental.pallas as pl
+import jax.experimental.pallas.mosaic_gpu as plgpu
+import jax
+import jax.numpy as jnp
+
+
+m, n = 1024, 1024
+tile_m, tile_n = 64, 64
+m_iters = m // tile_m
+n_iters = n // tile_n
+dtype = jnp.float32
+
+
+@plgpu.kernel(
+    out_type=jax.ShapeDtypeStruct((m, n), dtype),
+    grid=(m_iters, n_iters),
+    grid_names=("m", "n"),
+    scratch_types=dict(
+        a_smem=plgpu.SMEM((tile_m, tile_n), dtype),
+        b_smem=plgpu.SMEM((tile_m, tile_n), dtype),
+        out_smem=plgpu.SMEM((tile_m, tile_n), dtype),
+        load_barrier=plgpu.Barrier(num_arrivals=2),
+    ),
+    compiler_params=plgpu.CompilerParams(
+        profile_space=50,
+        profile_dir="./addition_kernel_profile",
+    )
+)
+def addition_kernel(
+    a_gmem,
+    b_gmem,
+    out_gmem,
+    a_smem,
+    b_smem,
+    out_smem,
+    load_barrier,
+):
+  mi = lax.axis_index("m")
+  ni = lax.axis_index("n")
+  m_slice = pl.ds(mi * tile_m, tile_m)
+  n_slice = pl.ds(ni * tile_n, tile_n)
+
+  # Annotate this block so it appears as a labeled scope in the profiling trace.
+  with jax.named_scope("Copy GMEM to SMEM"):
+    plgpu.copy_gmem_to_smem(
+        a_gmem.at[m_slice, n_slice], a_smem, load_barrier, oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS
+    )
+    plgpu.copy_gmem_to_smem(
+        b_gmem.at[m_slice, n_slice], b_smem, load_barrier, oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS
+    )
+
+  with jax.named_scope("Wait for copy"):
+    plgpu.barrier_wait(load_barrier)
+
+  with jax.named_scope("Computation"):
+    out_smem[...] = a_smem[...] + b_smem[...]
+
+  with jax.named_scope("Copy SMEM to GMEM"):
+    plgpu.commit_smem()
+    plgpu.copy_smem_to_gmem(out_smem, out_gmem.at[m_slice, n_slice])
+    plgpu.wait_smem_to_gmem(0)  # Wait for all copies to finish.
+
+os.makedirs("./addition_kernel_profile", exist_ok=True)
+k1, k2, = jax.random.split(jax.random.key(42), 2)
+a = jax.random.normal(k1, (m, n), dtype)
+b = jax.random.normal(k2, (m, n), dtype)
+c = addition_kernel(a, b)
+```
+
+Running this example will produce a trace stored as a JSON file in the addition_kernel_profile folder. We can visualize the trace using [https://ui.perfetto.dev](https://ui.perfetto.dev).
+
+
+<center><img alt="Profiling trace in Perfetto" src="../../_static/pallas/gpu/perfetto-profiling.png" style="width: 90%; min-width: 450px;"></center>
+
+Each "Process" in the trace corresponds to a SM, and each "Thread" by default corresponds to a warpgroup.
+
+
+Let's consider in detail the profiling parameters:
+- ``profile_space`` defines the number of profiling events to collect. Each profiling event costs us 16 bytes of SMEM, and each time we enter inside a ``named_scope`` counts as a profiling event.
+
+- ``profile_bounds_check`` controls the behaviour of the profiler when we attempt to store profiling events beyond the available ``profile_space``. If True, the trace is truncated (at the cost of higher profiling overhead); if False, it is undefined behavior. This flag defaults to False, in order to be as faithful to reality as possible.
+
+
+- ``profile_trace_scope`` defines the scope of collected traces: warp or warpgroup. If scope is ``plgpu.TraceScope.WARP`` the trace file will show the blocks executed on SMs and the warps running the block. This is helpful to investigate kernels with warp specialization. ``plgpu.TraceScope.WARP`` generates 4× more profiling events than ``plgpu.TraceScope.WARPGROUP`` and  exhausts ``profile_space`` much faster. Default value is ``plgpu.TraceScope.WARPGROUP``.
+
+- ``profile_dir`` defines the output folder which should exist where the trace file is written.
+
+
+When profiling, be aware of a few caveats to avoid misleading traces. Profiling does not come for free: placing ``jax.named_scope`` in your code can alter instruction scheduling and cause the compiler to miss optimizations. For example, placing named scopes around compute operations can disrupt pipelining and cause register spilling.
+
+As a best practice, place ``jax.named_scope`` around barrier waits instead, as this highlights when the kernel is idle without interfering with compute optimizations.
+
+
 ## Debugging
 
 Mosaic GPU exposes a number of environment variables to diagnose issues with the

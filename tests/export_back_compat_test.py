@@ -28,13 +28,17 @@ import numpy as np
 import jax
 from jax import lax
 from jax._src.export import _export
-from jax._src.lib import gpu_solver
+from jax._src.lib import cpu_math, cuda_math, gpu_solver
 
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
 from jax._src.internal_test_util.export_back_compat_test_data import annotate_data_placement
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_digamma
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_lgamma
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_cholesky_solver_potrf
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_digamma
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_lgamma
 from jax._src.internal_test_util.export_back_compat_test_data import rocm_cholesky_solver_potrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
@@ -122,6 +126,8 @@ class CompatTest(bctu.CompatTestBase):
     """Tests that the back compat tests cover all the targets declared stable."""
     targets_to_cover = set(_export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
     cpu_ffi_testdatas = [
+        cpu_digamma.data_2026_10_26,
+        cpu_lgamma.data_2026_10_26,
         cpu_cholesky_lapack_potrf.data_2024_05_31,
         cpu_qr_lapack_geqrf.data_2025_04_02,
         cpu_eig_lapack_geev.data_2024_08_19,
@@ -137,6 +143,8 @@ class CompatTest(bctu.CompatTestBase):
     # stable
     covering_testdatas = [
         *cpu_ffi_testdatas,
+        cuda_digamma.data_2026_10_26,
+        cuda_lgamma.data_2026_10_26,
         cuda_cholesky_solver_potrf.data_2025_10_15,
         rocm_cholesky_solver_potrf.data_2026_02_05,
         cuda_threefry2x32.data_2024_07_30,
@@ -187,6 +195,7 @@ class CompatTest(bctu.CompatTestBase):
       "AllocateBuffer",  # tested in pallas/export_back_compat_pallas_test.py
       "__gpu$xla.gpu.triton",  # tested in pallas/export_back_compat_pallas_test.py
       # The following require ROCm to test
+      "hip_digamma_ffi", "hip_lgamma_ffi",
       "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi", "hipsolver_syevd_ffi",
       "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
       "hipsolver_gesdd_ffi",  # covered by rocm_svd_hipsolver_gesvd (gesdd f32)
@@ -903,6 +912,54 @@ class CompatTest(bctu.CompatTestBase):
         return jax.random.uniform(x, (2, 4), dtype=np.float32)
       data = self.load_testdata(rocm_threefry2x32.data_2026_02_05)
       self.run_one_test(func, data)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64"))
+  def test_cpu_lgamma(self, dtype_name):
+    if cpu_math is None:
+      self.skipTest("Test requires jaxlib with cpu._math")
+    if not config.enable_x64.value and dtype_name == "f64":
+      self.skipTest("Test disabled for x32 mode")
+    data = self.load_testdata(cpu_lgamma.data_2026_10_26[dtype_name])
+    with config.export_ignore_forward_compatibility(True):
+      self.run_one_test(lax.lgamma, data)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64"))
+  def test_cpu_digamma(self, dtype_name):
+    if cpu_math is None:
+      self.skipTest("Test requires jaxlib with cpu._math")
+    if not config.enable_x64.value and dtype_name == "f64":
+      self.skipTest("Test disabled for x32 mode")
+    data = self.load_testdata(cpu_digamma.data_2026_10_26[dtype_name])
+    with config.export_ignore_forward_compatibility(True):
+      self.run_one_test(lax.digamma, data)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64"))
+  def test_gpu_lgamma(self, dtype_name):
+    if cuda_math is None:
+      self.skipTest("Test requires cuda plugin with _math")
+    if not config.enable_x64.value and dtype_name == "f64":
+      self.skipTest("Test disabled for x32 mode")
+    data = self.load_testdata(cuda_lgamma.data_2026_10_26[dtype_name])
+    with config.export_ignore_forward_compatibility(True):
+      self.run_one_test(lax.lgamma, data)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64"))
+  def test_gpu_digamma(self, dtype_name):
+    if cuda_math is None:
+      self.skipTest("Test requires cuda plugin with _math")
+    if not config.enable_x64.value and dtype_name == "f64":
+      self.skipTest("Test disabled for x32 mode")
+    data = self.load_testdata(cuda_digamma.data_2026_10_26[dtype_name])
+    with config.export_ignore_forward_compatibility(True):
+      self.run_one_test(lax.digamma, data)
 
   @jtu.ignore_warning(category=DeprecationWarning,
                       message='`with mesh:` context manager')

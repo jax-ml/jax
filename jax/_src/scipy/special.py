@@ -46,6 +46,7 @@ from jax._src.numpy import lax_numpy
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import promote_args_complex, promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
+from jax._src.scipy.gamma import gamma_real
 from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
 from jax._src.nn.functions import softmax as nn_softmax
@@ -257,7 +258,7 @@ def loggamma(x: ArrayLike) -> Array:
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     return _complex_loggamma_scipy(x)
   res = lax.lgamma(x)
-  return jnp.where(x > 0, res, jnp.nan)
+  return jnp.where(x >= 0, res, jnp.nan)
 
 
 def gamma(x: ArrayLike) -> Array:
@@ -314,152 +315,8 @@ def gamma(x: ArrayLike) -> Array:
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     return _complex_gamma(x)
   if x.dtype == np.float64:
-    return _gamma_lanczos(x)
-  return _gamma_lanczos(x.astype(np.float32)).astype(x.dtype)
-
-
-# Lanczos rational approximations for float64 and float32:
-#   Gamma(y) ~= (P_N(y) / D_N(y)) * (y + g - 0.5)**(y - 0.5) * exp(-(y + g - 0.5))
-# where D_N(y) = prod_{k=0}^{N-2} (y + k).
-# Using Gamma(y) * D_N(y) = Gamma(y + N - 1), the numerator P_N(y) approximates
-#   F(y) = exp(lgamma(y + N - 1) - (y - 0.5) * log(y + g - 0.5) + (y + g - 0.5)).
-# All coefficients of P_N(y) are positive, so rounding the minimax polynomial
-# coefficients from Sollya's remez() directly to float64 / float32 preserves
-# minimax relative error (< 0.22 ULP in float64, < 0.28 ULP in float32).
-#
-# Sollya script to generate _LANCZOS12_NUM and _LANCZOS6_NUM:
-#   prec = 300!;
-#   procedure lgamma_shifted(u) {
-#     var z, invz, invz2, s, res, k;
-#     z = u + 30; invz = 1 / z; invz2 = invz * invz;
-#     s = 1/12 + invz2*(-1/360 + invz2*(1/1260 + invz2*(-1/1680 + invz2*(1/1188
-#         + invz2*(-691/360360 + invz2*(1/156 + invz2*(-3617/122400
-#         + invz2*(43867/244188 + invz2*(-174611/125400
-#         + invz2*(854513/138600))))))))));
-#     res = (z - 0.5)*log(z) - z + 0.5*log(2*pi) + invz*s;
-#     for k from 0 to 29 do res = res - log(u + k);
-#     return res;
-#   };
-#   /* Float64: N = 12 coeffs (deg 11), g = 6.0 on [0, 184] (rel err 2^-54.19) */
-#   f64 = exp(lgamma_shifted(x + 11) - (x - 0.5)*log(x + 5.5) + (x + 5.5));
-#   p64 = remez(1, 11, [0; 184], 1/f64);
-#   for i from 0 to 11 do print(double(coeff(p64, i)));
-#   /* Float32: N = 6 coeffs (deg 5), g = 3.5 on [0, 42] (rel err 2^-24.87) */
-#   f32 = exp(lgamma_shifted(x + 5) - (x - 0.5)*log(x + 3.0) + (x + 3.0));
-#   p32 = remez(1, 5, [0; 42], 1/f32);
-#   for i from 0 to 5 do print(single(coeff(p32, i)));
-_LANCZOS12_G = 6.0
-_LANCZOS12_NUM = (
-    2082399391.0024135,
-    3619030196.719154,
-    2848040052.9751177,
-    1339440875.3065681,
-    418217772.7248842,
-    91010017.55765133,
-    14082227.338645685,
-    1549029.521250908,
-    118682.98430782286,
-    6030.793140387624,
-    182.87942120328674,
-    2.5066282746310007,
-)
-_LANCZOS12_DEN = (
-    0., 3628800., 10628640., 12753576., 8409500., 3416930.,
-    902055., 157773., 18150., 1320., 55., 1.,
-)
-_LANCZOS6_G = 3.5
-_LANCZOS6_NUM = (
-    834.9400634765625,
-    1314.33935546875,
-    825.3876953125,
-    258.400299072265625,
-    40.314937591552734375,
-    2.5066282749176025390625,
-)
-_LANCZOS6_DEN = (0., 24., 50., 35., 10., 1.)
-
-# dtype -> (g, numerator, denominator, sqrt(eps),
-#           [0!, ..., (max_int - 1)!], overflow threshold, underflow threshold)
-_LANCZOS = {
-    np.dtype(np.float64): (
-        _LANCZOS12_G, _LANCZOS12_NUM, _LANCZOS12_DEN, 1.4901161193847656e-08,
-        np.array([math.factorial(i) for i in range(171)], np.float64),
-        172, -190,
-    ),
-    np.dtype(np.float32): (
-        _LANCZOS6_G, _LANCZOS6_NUM, _LANCZOS6_DEN, 2.44140625e-04,
-        np.array([math.factorial(i) for i in range(35)], np.float32),
-        36, -42,
-    ),
-}
-
-
-@custom_derivatives.custom_jvp
-def _gamma_lanczos(x: Array) -> Array:
-  return _gamma_lanczos_impl(x)
-
-
-@jit
-def _gamma_lanczos_impl(x: Array) -> Array:
-  # Direct evaluation instead of exp(lgamma(x)): the rounding error of lgamma
-  # becomes a relative error of |lgamma(x)| ulp in exp, ~1e3 ulp near x = 170.
-  g, num_coeffs, den_coeffs, sqrt_eps, factorials, overflow, underflow = (
-      _LANCZOS[x.dtype])
-  max_int = len(factorials)
-  k = len(num_coeffs)
-  is_int = x == lax.floor(x)
-  is_nan = jnp.isnan(x) | ((x < 0) & is_int)
-  is_small = lax.abs(x) < sqrt_eps
-  x_safe = jnp.where(is_nan | is_small, 1.0, jnp.clip(x, underflow, overflow))
-  y = lax.abs(x_safe)
-  # Horner in y for small y and in 1/y for large y.
-  small = y <= 10
-  w = jnp.where(small, y, 1 / y)
-  num = den = jnp.zeros_like(y)
-  for i in range(k):
-    num = num * w + jnp.where(small, num_coeffs[k - 1 - i], num_coeffs[i])
-    den = den * w + jnp.where(small, den_coeffs[k - 1 - i], den_coeffs[i])
-  # t = y + g - 1/2 is rounded; the result's sensitivity to t is
-  # ((y - 1/2) / t - 1), so correct with the exact rounding error of the sum.
-  c = g - 0.5
-  t = y + c
-  b = t - y
-  t_err = (y - (t - b)) + (c - b)
-  a = y - 0.5
-  lanczos = num / den * (1 + t_err * (a / t - 1))
-  # Gamma(y) = lanczos * t**a / exp(t), with t**a split to avoid overflow.
-  p = t ** (a / 2)
-  e = lax.exp(t, accuracy=AccuracyMode.HIGHEST)
-  pos = lanczos * (p / e) * p
-  # Reflection with y = -x, which is exact:
-  # Gamma(x) = -pi / (x * sin(pi * x) * Gamma(y)).
-  x_neg = jnp.where(is_int, -0.5, x_safe)
-  n = jnp.round(x_neg)
-  sinpi = lax.sin(np.pi * (x_neg - n)) * (1 - 2 * (n % 2))
-  neg = ((-np.pi / (x_neg * sinpi * lanczos)) * e / p) / p
-  table = jnp.asarray(factorials)[
-      jnp.clip(x_safe, 1, max_int).astype(np.int32) - 1
-  ]
-  x_finite = jnp.where(jnp.isfinite(x), x, 0.0)
-  res = jnp.select(
-      [is_small,  # Gamma(x) = 1/x - euler + O(x)
-       is_int & (x <= max_int),
-       x > overflow,
-       x < underflow],
-      [1 / jnp.where(is_nan, 1.0, x) - np.euler_gamma,
-       table,
-       np.inf,
-       jnp.where(lax.floor(x_finite) % 2 == 0, 0.0, -0.0)],
-      jnp.where(x > 0, pos, neg))
-  inf_if_nan = jnp.where(is_nan, np.inf, 0.0)
-  return jnp.where(is_nan, inf_if_nan - inf_if_nan, res)
-
-
-@_gamma_lanczos.defjvp
-def _gamma_lanczos_jvp(primals, tangents):
-  (x,), (x_dot,) = primals, tangents
-  g = _gamma_lanczos(x)
-  return g, x_dot * g * lax.digamma(x)
+    return gamma_real(x)
+  return gamma_real(x.astype(np.float32)).astype(x.dtype)
 
 
 def betaln(a: ArrayLike, b: ArrayLike) -> Array:
@@ -515,7 +372,8 @@ def factorial(n: ArrayLike, exact: bool = False) -> Array:
   if exact:
     raise NotImplementedError("factorial with exact=True")
   n, = promote_args_inexact("factorial", n)
-  return jnp.where(n < 0, 0, lax.exp(lax.lgamma(n + 1)))
+  is_neg = n < 0
+  return jnp.where(is_neg, 0, gamma(jnp.where(is_neg, 0, n) + 1))
 
 
 def comb(N: ArrayLike, k: ArrayLike, *, repetition: bool = False) -> Array:
@@ -1669,7 +1527,7 @@ def _dawsn_impl(x: Array) -> Array:
   return sign * result
 
 
-@custom_derivatives.custom_jvp
+@jit
 def logit(x: ArrayLike) -> Array:
   r"""The logit function
 
@@ -1686,9 +1544,38 @@ def logit(x: ArrayLike) -> Array:
     array containing values of the logit function.
   """
   x, = promote_args_inexact("logit", x)
-  return lax.log(lax.div(x, lax.sub(_lax_const(x, 1), x)))
-logit.defjvps(
-    lambda g, ans, x: lax.div(g, lax.mul(x, lax.sub(_lax_const(x, 1), x))))
+  return _logit(x)
+
+
+@custom_derivatives.custom_jvp
+def _logit(x: Array) -> Array:
+  # Computing log(x / (1 - x)) directly loses precision in two places:
+  # - Near x = 0.5, x / (1 - x) is close to 1, so rounding the quotient to
+  #   floating-point before calling log throws away low bits (and just below
+  #   0.5, 1 - x rounds to 0.5, cutting the result in half).
+  # - Near x = 1, 1 - x rounds away low bits before the division.
+  #
+  # Use symmetry around 0.5 (logit(1 - x) = -logit(x)) to fold x onto
+  # p = min(x, 1 - x) in [0, 0.5], compute logit(p) <= 0, and flip the sign at
+  # the end when x >= 0.5.
+  lt_half = x < 0.5
+  p = jnp.where(lt_half, x, 1 - x)
+  d = jnp.where(lt_half, 0.5 - x, x - 0.5)
+
+  # Split into two regions that share a single log1p call:
+  # - Near 0.5 (0.25 <= x <= 0.75, so d <= 0.25): both d = |x - 0.5| and
+  #   p = min(x, 1 - x) subtract numbers within a factor of 2 of each other,
+  #   so both are exact without rounding error, and 1 - p = 0.5 + d = p + 2 * d.
+  #   Thus:
+  #     logit(p) = -log((1 - p) / p) = -log1p(2 * d / p).
+  # - Away from 0.5 (p < 0.25): write logit(p) = log(p) - log1p(-p).
+  #   Here |log(p)| > 1.38 while |log1p(-p)| < 0.29, so the two terms do not
+  #   cancel (and p <= 0 naturally gives -inf at 0 and NaN for < 0).
+  near_half = d <= 0.25
+  l1p = jnp.log1p(jnp.where(near_half, 2 * d / p, -p))
+  res = jnp.where(near_half, -l1p, jnp.log(p) - l1p)
+  return jnp.where(lt_half, res, -res)
+_logit.defjvps(lambda g, ans, x: g / (x * (1 - x)))
 
 
 def expit(x: ArrayLike) -> Array:
@@ -3154,7 +3041,6 @@ def lpmn_values(m: int, n: int, z: Array, is_normalized: bool) -> Array:
   return _gen_associated_legendre(l_max, z, is_normalized)
 
 
-
 @jit(static_argnums=(4,))
 def _sph_harm(n: Array,
               m: Array,
@@ -3241,6 +3127,10 @@ def sph_harm_y(n: Array,
 
 def _expint1(x: Array) -> Array:
   # 0 < x <= 2
+  # jnp.piecewise evaluates every branch, so bound x to a safe domain.
+  x = jnp.where(
+      (x < _lax_const(x, 0.0)) | jnp.isinf(x), _lax_const(x, 1.0), x
+  )
   A = np.array([
     -5.350447357812542947283e0,
     2.185049168816613393830e2,
@@ -3264,7 +3154,9 @@ def _expint1(x: Array) -> Array:
 
 def _eval_expint_k(A: ArrayLike, B: ArrayLike, x: Array) -> Array:
   # helper function for all subsequent intervals
+  # jnp.piecewise evaluates every branch, so bound x to a safe domain.
   one = _lax_const(x, 1.0)
+  x = jnp.where((x <= _lax_const(x, 0.0)) | jnp.isinf(x), one, x)
   w = one / x
   f = jnp.polyval(A, w) / jnp.polyval(B, w)
   f = w * f + one
@@ -3429,18 +3321,30 @@ def _expint7(x):
 def _expi_pos(x: Array) -> Array:
   # x >= 0
   _c = _lax_const
-  conds = [(_c(x, 0) <= x) & (x <= _c(x, 2))] + [
-    (_c(x, 2 ** i) < x) & (x <= _c(x, 2 ** (i + 1))) for i in range(1, 6)
-  ]
+  conds = (
+      [(_c(x, 0) <= x) & (x <= _c(x, 2))]
+      + [(_c(x, 2**i) < x) & (x <= _c(x, 2 ** (i + 1))) for i in range(1, 6)]
+      + [jnp.isposinf(x)]
+  )
   return jnp.piecewise(
-    x,
-    conds,
-    [_expint1, _expint2, _expint3, _expint4, _expint5, _expint6, _expint7],
+      x,
+      conds,
+      [
+          _expint1,
+          _expint2,
+          _expint3,
+          _expint4,
+          _expint5,
+          _expint6,
+          np.inf,
+          _expint7,
+      ],
   )
 
 def _expi_neg(x: Array) -> Array:
   # x < 0
-  return -exp1(-x)
+  # jnp.piecewise evaluates every branch, so bound x to a safe domain.
+  return -exp1(jnp.where(x >= _lax_const(x, 0.0), _lax_const(x, 1.0), -x))
 
 @custom_derivatives.custom_jvp
 @jit
@@ -4573,9 +4477,10 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
   psi_1 = _lax_const(x, -np.euler_gamma)
 
   # Accumulate the finite sum in 15.3.11/15.3.12 along with the integer
-  # Pochhammer shifts (a + d2)_m * (b + d2)_m and m! = Gamma(e + 1) in log-space.
+  # Pochhammer shifts (a + d2)_m * (b + d2)_m, m! = Gamma(e + 1) in log-space,
+  # and the harmonic shift sum_{t=0}^{m-1} 1 / (e - t) for digamma(1 + e).
   def for_body(i, state):
-    t, p, y1, log_poch_ab, sgn_poch_ab, log_fact_e = state
+    t, p, y1, log_poch_ab, sgn_poch_ab, log_fact_e, harm_e = state
     y1 = y1 + p
     at = a + d2 + t
     bt = b + d2 + t
@@ -4584,16 +4489,18 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
     sgn_poch_ab = jnp.where(
         ab_t == 0, zero, jnp.where(ab_t < 0, -sgn_poch_ab, sgn_poch_ab)
     )
-    log_fact_e = log_fact_e + jnp.log(e - t)
+    et = e - t
+    log_fact_e = log_fact_e + jnp.log(et)
+    harm_e = harm_e + 1.0 / et
     r = 1.0 - e + t
     t_next = t + 1.0
     keep_going = i + 1 < ard
     denom = jnp.where(keep_going, r * t_next, one)
     p = jnp.where(keep_going, p * s * ab_t / denom, p)
-    return t_next, p, y1, log_poch_ab, sgn_poch_ab, log_fact_e
+    return t_next, p, y1, log_poch_ab, sgn_poch_ab, log_fact_e, harm_e
 
-  _, _, y1, log_poch_ab, sgn_poch_ab, log_fact_e = lax.fori_loop(
-      0, ard, for_body, (zero, one, zero, zero, one, zero)
+  _, _, y1, log_poch_ab, sgn_poch_ab, log_fact_e, harm_e = lax.fori_loop(
+      0, ard, for_body, (zero, one, zero, zero, one, zero, zero)
   )
 
   def _digamma_and_next(z):
@@ -4605,9 +4512,10 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
         jnp.where(need_shift, psi_eval, psi_eval + inv_z),
     )
 
+  de = e - jnp.abs(rd)
   psi_a1, psi_a1_next = _digamma_and_next(a + d1)
   psi_b1, psi_b1_next = _digamma_and_next(b + d1)
-  psi_1pe = digamma(1.0 + e)
+  psi_1pe = psi_1 + _lax_const(x, (np.pi ** 2) / 6) * de + harm_e
   y = psi_1 + psi_1pe - psi_a1 - psi_b1 - ax
   p = (a + d1) * (b + d1) * s / (e + 1.0)
 
@@ -4644,7 +4552,7 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
   )
   _, _, _, y, _, _, _, _ = lax.while_loop(cond, body, init)
 
-  log_ge1 = log_fact_e + psi_1 * (e - jnp.abs(rd))
+  log_ge1 = log_fact_e + psi_1 * de
   log_poch_corr = (psi_a1 + psi_b1) * (d - rd)
 
   log_y_scale = (
@@ -4671,89 +4579,64 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
 
 @jit
 @jnp_vectorize.vectorize
+def _hyp2f1_param_derivative(a, b, c, x, p):
+  """Computes the parameter-derivative series for 2F1 at parameter ``p``.
+
+  Evaluates ``sum_{k=1}^inf ((a)_k (b)_k / (c)_k) (x^k / k!) H_k(p)`` where
+  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)``.
+  This equals ``d/dp hyp2f1(a, b, c, x)`` for ``p in {a, b}`` and
+  ``-d/dc hyp2f1(a, b, c, x)`` for ``p = c``. Factored into a single ``@jit``
+  helper to save trace and compile time across ``a``, ``b``, and ``c``.
+  """
+  precision = dtypes.finfo(x.dtype).eps
+
+  def body(state):
+    serie, k, term, h = state
+    serie += term * h
+    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
+    h += 1 / (p + k)
+    k += 1
+
+    return serie, k, term, h
+
+  def cond(state):
+    serie, k, term, _ = state
+
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
+
+  term = a * b / c * x
+  h = 1 / p
+  serie = jnp.zeros((), dtype=dtypes.result_type(term, h))
+  init = serie, 1, term, h
+
+  return lax.while_loop(cond, body, init)[0]
+
+
 def _hyp2f1_a_derivative(a, b, c, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/01/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term, h = state
-    serie += term * h
-    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
-    h += 1 / (a + k)
-    k += 1
-
-    return serie, k, term, h
-
-  def cond(state):
-    serie, k, term, _ = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a * b / c * x, 1 / a
-
-  return lax.while_loop(cond, body, init)[0]
+  return _hyp2f1_param_derivative(a, b, c, x, a)
 
 
-@jit
-@jnp_vectorize.vectorize
 def _hyp2f1_b_derivative(a, b, c, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/02/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term, h = state
-    serie += term * h
-    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
-    h += 1 / (b + k)
-    k += 1
-
-    return serie, k, term, h
-
-  def cond(state):
-    serie, k, term, _ = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a * b / c * x, 1 / b
-
-  return lax.while_loop(cond, body, init)[0]
+  return _hyp2f1_param_derivative(a, b, c, x, b)
 
 
-@jit
-@jnp_vectorize.vectorize
 def _hyp2f1_c_derivative(a, b, c, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/03/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term, h = state
-    serie += term * h
-    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
-    h -= 1 / (c + k)
-    k += 1
-
-    return serie, k, term, h
-
-  def cond(state):
-    serie, k, term, _ = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a * b / c * x, -1 / c
-
-  return lax.while_loop(cond, body, init)[0]
+  return -_hyp2f1_param_derivative(a, b, c, x, c)
 
 
 @jit

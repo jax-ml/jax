@@ -48,6 +48,7 @@ def logpmf(k: ArrayLike, n: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Arra
     :func:`jax.scipy.stats.nbinom.pmf`
   """
   k, n, p, loc = promote_args_inexact("nbinom.logpmf", k, n, p, loc)
+  zero = _lax_const(k, 0)
   one = _lax_const(k, 1)
   y = lax.sub(k, loc)
   comb_term = lax.sub(
@@ -55,7 +56,9 @@ def logpmf(k: ArrayLike, n: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Arra
   )
   log_linear_term = lax.add(xlogy(n, p), xlogy(y, lax.sub(one, p)))
   log_probs = lax.add(comb_term, log_linear_term)
-  return jnp.where(lax.lt(k, loc), -np.inf, log_probs)
+  return jnp.where(
+      jnp.logical_or(lax.lt(k, loc), lax.ne(lax.rem(y, one), zero)),
+      -np.inf, log_probs)
 
 
 def pmf(k: ArrayLike, n: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:

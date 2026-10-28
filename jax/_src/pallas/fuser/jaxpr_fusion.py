@@ -15,12 +15,10 @@
 """Fuses a function."""
 
 from collections.abc import Iterable, Sequence
-import contextlib
 import functools
 
 import jax
 from jax._src import api_util
-from jax._src import config
 from jax._src import core as jax_core
 from jax._src import flattree as ft
 from jax._src import hijax
@@ -30,27 +28,10 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas.fuser import fuser_utils
 from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
+from jax._src.pallas.fuser.fusible import disable_nested_fuse
 from jax._src.pallas.fuser.fusible import Fusible
 from jax._src.state import types as state_types
 from jax._src.traceback_util import api_boundary
-
-
-_disable_nested_fuse = config.config_ext.Config[bool](
-    "pallas_fuser_disable_nested_fuse",
-    False,
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-
-
-@contextlib.contextmanager
-def disable_nested_fuse(value: bool = True):
-  # A way to prevent nested fuse calls from fusing.
-  old_value = _disable_nested_fuse.swap_local(value)
-  try:
-    yield
-  finally:
-    _disable_nested_fuse.set_local(old_value)
 
 
 @functools.partial(api_boundary, repro_api_name="fuser.fuse")
@@ -65,10 +46,10 @@ def fuse(
 ):
   """Fuses a function into a single fusible.
 
-  There should be a single call to a `fusible` inside the body of `f`. `fuse`
+  There should be a single call to a ``fusible`` inside the body of ``f``. ``fuse``
   returns a transformed function that will fuse the surrounding computation into
-  the fusible and invoke it. The fused function cannot take `jax.ref.Ref`s as
-  arguments (it must close over `Ref`s instead).
+  the fusible and invoke it. The fused function cannot take ``jax.ref.Ref`` objects as
+  arguments (it must close over ``Refs`` instead).
 
   Args:
     f: The function to fuse.
@@ -83,7 +64,7 @@ def fuse(
       which named arguments to treat as static (compile-time constant).
 
   Returns:
-    A fused version of `f`, or a decorator if `f` is `None`.
+    A fused version of ``f``, or a decorator if ``f`` is ``None``.
   """
 
   def decorator(f):
@@ -139,7 +120,7 @@ def fuse(
 
     @functools.wraps(f)
     def outer_wrapper(*args, **kwargs):
-      if _disable_nested_fuse.value:
+      if disable_nested_fuse.value:
         return f(*args, **kwargs)
       return wrapper(*args, **kwargs)
 

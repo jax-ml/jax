@@ -657,11 +657,12 @@ def defvectorized(prim):
   fancy_primitive_batchers[prim] = partial(vectorized_batcher, prim)
 
 def vectorized_batcher(prim, axis_data, batched_args, batch_dims, **params):
-  assert not prim.multiple_results
   if all(d is None for d in batch_dims):
-    return prim.bind(*batched_args, **params), None
+    o = prim.bind(*batched_args, **params)
+    return (o, [None] * len(o)) if prim.multiple_results else (o, None)
   assert all(batch_dims[0] == bd for bd in batch_dims[1:]), batch_dims
-  return prim.bind(*batched_args, **params), batch_dims[0]
+  o = prim.bind(*batched_args, **params)
+  return (o, [batch_dims[0]] * len(o)) if prim.multiple_results else (o, batch_dims[0])
 
 def defbroadcasting(prim):
   fancy_primitive_batchers[prim] = partial(broadcast_batcher, prim)
@@ -705,7 +706,7 @@ def reducer_batcher(prim, axis_data, batched_args, batch_dims, axes,
   if all(d is None for d in batch_dims):
     return prim.bind(*batched_args, axes=axes, **params), None
   def out_axis(axes, axis):
-    return int(list(np.delete(np.arange(operand.ndim), axes)).index(axis))
+    return list(np.delete(np.arange(operand.ndim), axes)).index(axis)
   operand, = batched_args
   bdim, = batch_dims
   if isinstance(bdim, int):

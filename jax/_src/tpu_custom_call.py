@@ -27,6 +27,7 @@ import logging
 from typing import Any, TypedDict
 
 from jax._src import api
+from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -70,11 +71,14 @@ ir_version_override: Callable[[], int | None] | None = None
 #    return None
 #
 # We should also add a TODO to remove the conditional one month later.
+# TODO(slebedev): Bump to 19 after 2026-11-21.
 _FWD_COMPAT_VERSION = 15
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
   if ctx.is_forward_compat() or backend is None:
     return _FWD_COMPAT_VERSION
+  if not cloud_tpu_init.is_libtpu_at_least("0.0.52"):
+    return 18
   if ir_version_override is not None:
     return ir_version_override()
   return None
@@ -110,6 +114,7 @@ class MemorySpace(enum.Enum):
   SC_VECTOR_SEMAPHORE_MEM = enum.auto()
   SC_SCALAR_SMEM = enum.auto()
   SC_VECTOR_SMEM = enum.auto()
+  SC_VECTOR_VMEM = enum.auto()
 
   @property
   def color(self) -> int:
@@ -131,6 +136,8 @@ class MemorySpace(enum.Enum):
       return 11
     elif self == MemorySpace.SC_VECTOR_SMEM:
       return 12
+    elif self == MemorySpace.SC_VECTOR_VMEM:
+      return 15
     else:
       raise ValueError("invalid memory space: " + str(self))
 
@@ -230,7 +237,7 @@ class CustomCallBackendConfig:
           "builtin.module(mosaic-serde{serialize=false},mosaic-serde{serialize=true"
           f" target-version={version}}})",
       )
-      pipeline.enable_verifier(bool(config.enable_checks.value))
+      pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module.operation)
       bytecode_buffer = io.BytesIO()
       module.operation.write_bytecode(bytecode_buffer, desired_version=0)
@@ -517,7 +524,7 @@ def _lower_mosaic_module_to_asm(
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true " + target_version + "})"
       )
-      pipeline.enable_verifier(bool(config.enable_checks.value))
+      pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module_op)
       if unzip_debug_locations and hasattr(
           tpu, "private_unzip_debug_locations"
@@ -1027,13 +1034,13 @@ def lowered_as_tpu_kernel(
     # We hardcode a specific version both here and below, since this path is
     # only used by some internal tests that don't need serialization, but we do
     # need a concrete version on the module.
-    current_ir_version = 18
+    current_ir_version = 19
     try:
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true"
           f" target-version={current_ir_version}}})"
       )
-      pipeline.enable_verifier(bool(config.enable_checks.value))
+      pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module_op)
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects

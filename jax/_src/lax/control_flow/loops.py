@@ -3174,23 +3174,23 @@ def _cumred_gpu_lowering(
 
 def cumsum(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative sum along `axis`."""
-  return cumsum_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cumsum_p.bind(operand, axis=axis, reverse=reverse)
 
 def cumprod(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative product along `axis`."""
-  return cumprod_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cumprod_p.bind(operand, axis=axis, reverse=reverse)
 
 def cummax(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative maximum along `axis`."""
-  return cummax_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cummax_p.bind(operand, axis=axis, reverse=reverse)
 
 def cummin(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative minimum along `axis`."""
-  return cummin_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cummin_p.bind(operand, axis=axis, reverse=reverse)
 
 def cumlogsumexp(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative logsumexp along `axis`."""
-  return cumlogsumexp_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cumlogsumexp_p.bind(operand, axis=axis, reverse=reverse)
 
 def _cumred_shape_rule(x, *, axis: int, reverse: bool):
   if axis < 0:

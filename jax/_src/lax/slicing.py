@@ -423,8 +423,8 @@ def gather(operand: ArrayLike, start_indices: ArrayLike,
   return gather_p.bind(
       operand, start_indices, dimension_numbers=dimension_numbers,
       slice_sizes=core.canonicalize_shape(slice_sizes),
-      unique_indices=bool(unique_indices),
-      indices_are_sorted=bool(indices_are_sorted),
+      unique_indices=unique_indices,
+      indices_are_sorted=indices_are_sorted,
       mode=parsed_mode,
       fill_value=fill_value)
 
@@ -1000,7 +1000,6 @@ def slice_in_dim(operand: Array | np.ndarray, start_index: int | None,
   if limit_index_int < 0:
     limit_index_int = limit_index_int + len_axis
 
-  axis = int(axis)
   start_indices[axis] = start_index_int
   limit_indices[axis] = limit_index_int
   strides[axis] = core._canonicalize_dimension(stride)
@@ -1055,7 +1054,7 @@ def index_in_dim(operand: Array | np.ndarray, index: int, axis: int = 0,
     - :func:`jax.lax.slice_in_dim`
     - :func:`jax.lax.dynamic_index_in_dim`
   """
-  index, axis = core._canonicalize_dimension(index), int(axis)
+  index = core._canonicalize_dimension(index)
   axis_size = operand.shape[axis]
   wrapped_index = index + axis_size if index < 0 else index
   if not 0 <= wrapped_index < axis_size:
@@ -1124,7 +1123,6 @@ def dynamic_slice_in_dim(operand: Array | np.ndarray,
   """
   start_indices: list[ArrayLike] = [lax._const(start_index, 0)] * operand.ndim
   slice_sizes = list(operand.shape)
-  axis = int(axis)
   allow_negative = [False] * operand.ndim
   allow_negative[axis] = allow_negative_indices
   start_indices[axis] = start_index
@@ -1255,7 +1253,6 @@ def dynamic_update_slice_in_dim(operand: Array | np.ndarray,
     - :func:`jax.lax.dynamic_update_index_in_dim`
     - :func:`jax.lax.dynamic_slice_in_dim`
   """
-  axis = int(axis)
   start_indices: list[ArrayLike] = [lax._const(start_index, 0)] * lax._ndim(operand)
   start_indices[axis] = start_index
   allow_negative = [False] * operand.ndim
@@ -1328,7 +1325,6 @@ def dynamic_update_index_in_dim(operand: Array | np.ndarray,
     - :func:`jax.lax.dynamic_update_index_in_dim`
     - :func:`jax.lax.dynamic_index_in_dim`
   """
-  axis = int(axis)
   if lax._ndim(update) != lax._ndim(operand):
     assert lax._ndim(update) + 1 == lax._ndim(operand)
     update = lax.expand_dims(update, (axis,))
@@ -1471,10 +1467,16 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
+def _slice_layout_rule(out_aval, operand, *, start_indices, limit_indices,
+                       strides):
+  lax_utils.check_minor_dims_tile_size('slice', operand, out_aval)
+  return operand.layout
+
 slice_p = standard_primitive(_slice_shape_rule, input_dtype, 'slice',
                              sharding_rule=_slice_sharding_rule,
                              vma_rule=partial(core.standard_vma_rule, 'slice'),
-                             ur_rule=_slice_ur_rule)
+                             ur_rule=_slice_ur_rule,
+                             layout_rule=_slice_layout_rule)
 ad.primitive_jvps[slice_p] = _slice_jvp_rule
 ad.fancy_transposes[slice_p] = _slice_transpose_fancy
 batching.primitive_batchers[slice_p] = _slice_batching_rule
@@ -1499,7 +1501,7 @@ def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   aval_out, = ctx.avals_out
   out = mlir.slice_op(ctx, x, aval_out, start_indices=start_indices,
                       limit_indices=limit_indices, strides=strides)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(slice_p, _slice_lower)
 
@@ -1616,12 +1618,17 @@ def _dynamic_slice_typecheck_rule(_, x, *start_indices, slice_sizes):
       x.aval, *(d.aval for d in start_indices), slice_sizes=slice_sizes)
   return [out_aval], effects
 
+def _dynamic_slice_layout_rule(out_aval, operand, *start_indices, slice_sizes):
+  lax_utils.check_minor_dims_tile_size('dynamic_slice', operand, out_aval)
+  return operand.layout
+
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
     weak_type_rule=_argnum_weak_type(0),
     sharding_rule=_dynamic_slice_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'dynamic_slice'),
-    ur_rule=_dynamic_slice_ur_rule)
+    ur_rule=_dynamic_slice_ur_rule,
+    layout_rule=_dynamic_slice_layout_rule)
 ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp
 ad.fancy_transposes[dynamic_slice_p] = _dynamic_slice_transpose_fancy
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
@@ -1632,7 +1639,7 @@ def _dynamic_slice_lower(ctx, x, *start_indices, slice_sizes):
   x_aval, *_ = ctx.avals_in
   aval_out, = ctx.avals_out
   out = mlir.dynamic_slice(ctx, aval_out, x, start_indices=start_indices)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
 
@@ -1762,11 +1769,21 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
     out_axes=0)(operand, index, update), 0
 
 
+def _dynamic_update_slice_layout_rule(out_aval, operand, update, *start_indices):
+  if operand.layout != update.layout:
+    raise ValueError(
+        'layout of all inputs passed to `dynamic_update_slice` must be the'
+        f' same. Got operand with layout: {operand.layout} and update with'
+        f' layout: {update.layout}')
+  lax_utils.check_minor_dims_tile_size('dynamic_update_slice', update, out_aval)
+  return operand.layout
+
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
     'dynamic_update_slice', sharding_rule=_dynamic_update_slice_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'dynamic_update_slice'),
-    ur_rule=_dynamic_update_slice_ur_rule)
+    ur_rule=_dynamic_update_slice_ur_rule,
+    layout_rule=_dynamic_update_slice_layout_rule)
 ad.primitive_jvps[dynamic_update_slice_p] = _dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
@@ -1777,7 +1794,7 @@ def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
   out = mlir.dynamic_update_slice(ctx, aval_out, x, update,
                                   start_indices=start_indices)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
+  return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(dynamic_update_slice_p, _dynamic_update_slice_lower)
 

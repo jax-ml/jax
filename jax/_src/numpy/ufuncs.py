@@ -19,6 +19,7 @@ Implements ufuncs for jax.numpy.
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 import math
 import operator
 from typing import Any
@@ -38,7 +39,7 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.numpy import array_constructors
 from jax._src.numpy import error as jnp_error
 from jax._src.numpy import reductions
-from jax._src.numpy.ufunc_api import ufunc
+from jax._src.numpy.ufunc_api import _accumulate_associative, ufunc
 from jax._src.numpy.util import (
    check_arraylike, ensure_arraylike, promote_args, promote_args_inexact,
    promote_args_numeric, promote_dtypes_inexact, promote_dtypes_numeric,
@@ -82,12 +83,16 @@ def unary_ufunc(func: Callable[[ArrayLike], Array]) -> ufunc:
 def binary_ufunc(identity: Any, reduce: Callable[..., Any] | None = None,
                  accumulate: Callable[..., Any] | None = None,
                  at: Callable[..., Any] | None = None,
-                 reduceat: Callable[..., Any] | None = None) -> Callable[[Callable[[ArrayLike, ArrayLike], Array]], ufunc]:
+                 reduceat: Callable[..., Any] | None = None,
+                 associative: bool = False) -> Callable[[Callable[[ArrayLike, ArrayLike], Array]], ufunc]:
   """An internal helper function for defining binary ufuncs."""
   def decorator(func: Callable[[ArrayLike, ArrayLike], Array]) -> ufunc:
     func_jit = jit(func, inline=Inline.JAX_EARLY)
+    accumulate_fn = accumulate
+    if accumulate_fn is None and associative:
+      accumulate_fn = partial(_accumulate_associative, func_jit)
     return ufunc(func_jit, name=func.__name__, nin=2, nout=1, call=func_jit,
-                 identity=identity, reduce=reduce, accumulate=accumulate, at=at, reduceat=reduceat)
+                 identity=identity, reduce=reduce, accumulate=accumulate_fn, at=at, reduceat=reduceat)
   return decorator
 
 
@@ -1326,7 +1331,7 @@ def multiply(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.mul(x, y) if x.dtype != bool else lax.bitwise_and(x, y)
 
 
-@binary_ufunc(identity=-1, reduce=reductions._reduce_bitwise_and)
+@binary_ufunc(identity=-1, reduce=reductions._reduce_bitwise_and, associative=True)
 def bitwise_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the bitwise AND operation elementwise.
 
@@ -1356,7 +1361,7 @@ def bitwise_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.bitwise_and(*promote_args("bitwise_and", x, y))
 
 
-@binary_ufunc(identity=0, reduce=reductions._reduce_bitwise_or)
+@binary_ufunc(identity=0, reduce=reductions._reduce_bitwise_or, associative=True)
 def bitwise_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the bitwise OR operation elementwise.
 
@@ -1386,7 +1391,7 @@ def bitwise_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.bitwise_or(*promote_args("bitwise_or", x, y))
 
 
-@binary_ufunc(identity=0, reduce=reductions._reduce_bitwise_xor)
+@binary_ufunc(identity=0, reduce=reductions._reduce_bitwise_xor, associative=True)
 def bitwise_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the bitwise XOR operation elementwise.
 
@@ -1672,7 +1677,7 @@ def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return lax.atan2(*promote_args_inexact("arctan2", x1, x2))
 
 
-@binary_ufunc(identity=None, reduce=reductions._reduce_min)
+@binary_ufunc(identity=None, reduce=reductions._reduce_min, associative=True)
 def minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise minimum of the input arrays.
 
@@ -1732,7 +1737,7 @@ def minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.min(*promote_args("minimum", x, y))
 
 
-@binary_ufunc(identity=None, reduce=reductions._reduce_max)
+@binary_ufunc(identity=None, reduce=reductions._reduce_max, associative=True)
 def maximum(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise maximum of the input arrays.
 
@@ -1913,7 +1918,7 @@ def spacing(x: ArrayLike, /) -> Array:
 
 
 # Logical ops
-@binary_ufunc(identity=True, reduce=reductions._reduce_logical_and)
+@binary_ufunc(identity=True, reduce=reductions._reduce_logical_and, associative=True)
 def logical_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the logical AND operation elementwise.
 
@@ -1934,7 +1939,7 @@ def logical_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.bitwise_and(*map(_to_bool, promote_args("logical_and", x, y)))
 
 
-@binary_ufunc(identity=False, reduce=reductions._reduce_logical_or)
+@binary_ufunc(identity=False, reduce=reductions._reduce_logical_or, associative=True)
 def logical_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the logical OR operation elementwise.
 
@@ -1955,7 +1960,7 @@ def logical_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.bitwise_or(*map(_to_bool, promote_args("logical_or", x, y)))
 
 
-@binary_ufunc(identity=False, reduce=reductions._reduce_logical_xor)
+@binary_ufunc(identity=False, reduce=reductions._reduce_logical_xor, associative=True)
 def logical_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the logical XOR operation elementwise.
 
@@ -3669,7 +3674,9 @@ def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.modf is not supported.")
   whole = _where(lax.ge(x, lax._zero(x)), floor(x), ceil(x))
-  return x - whole, whole
+  # inf - inf is nan, but NumPy returns a signed zero as the fractional part.
+  frac = _where(isinf(x), copysign(lax._zero(x), x), x - whole)
+  return frac, whole
 
 
 @export

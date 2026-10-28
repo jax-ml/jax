@@ -1235,6 +1235,8 @@ class FragmentedArray:
       total_bits = layout.vec_size * bitwidth
       if total_bits % 8 != 0:
         raise NotImplementedError("Vector length should be a multiple of byte size")
+      total_bytes = total_bits // 8
+      alignment = total_bytes & (~total_bytes + 1)
       int_ty = ir.IntegerType.get_signless(bitwidth)
       int_vec_ty = ir.VectorType.get((layout.vec_size,), int_ty)
       for _get, update, transfer_ref, idx in cls.transfer_strided(ref, layout.vec_size):
@@ -1244,7 +1246,7 @@ class FragmentedArray:
         vec_flat_idx = arith.divui(elem_flat_idx, arith.constant(index, layout.vec_size))
         vec_flat_idx = arith.index_cast(i64, vec_flat_idx)
         ptr = utils.getelementptr(base_ptr, [vec_flat_idx], int_vec_ty)
-        loaded_val = llvm.load(int_vec_ty, ptr)
+        loaded_val = llvm.load(int_vec_ty, ptr, alignment=alignment)
         if not isinstance(ref_ty.element_type, ir.IntegerType):
           loaded_val = vector.bitcast(vec_ty, loaded_val)
         update(registers, loaded_val)
@@ -1677,6 +1679,7 @@ class FragmentedArray:
               *other[:i],
               *other[i + 1 :],
               output_is_signed=output_is_signed,
+              restrict_bitwidth=restrict_bitwidth,
               distributes_over=distributes_over,
           )
         else:
@@ -1687,6 +1690,7 @@ class FragmentedArray:
             op,
             *other,
             output_is_signed=output_is_signed,
+            restrict_bitwidth=restrict_bitwidth,
             distributes_over=distributes_over,
         )
 
@@ -1740,6 +1744,18 @@ class FragmentedArray:
       # -(a + b) = (-a) + (-b)
       return self._pointwise(arith.negf, distributes_over=("add",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
+      if utils.bitwidth(self.mlir_dtype) == 8:
+        if (arch := utils.get_arch()) != utils.RUBIN:
+          raise NotImplementedError(
+              "Packed 8-bit integer ALU instructions require sm_107f, got"
+              f" sm_{arch.major}{arch.minor}"
+          )
+        # PTX 9.4 only defines neg.s8x4 (valid for signed and unsigned two's-complement).
+        return self._pointwise(
+            self._lift_fast_packed_instr("neg.s8x4"),
+            restrict_bitwidth=False,
+            distributes_over=("add",),
+        )
       return 0 - self
     else:
       return NotImplemented
@@ -1748,7 +1764,23 @@ class FragmentedArray:
     if isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(addf, other, distributes_over=("add",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
-      return self._pointwise(arith.addi, other, distributes_over=("add",))
+      is_8bit = utils.bitwidth(self.mlir_dtype) == 8
+      if is_8bit:
+        if (arch := utils.get_arch()) != utils.RUBIN:
+          raise NotImplementedError(
+              "Packed 8-bit integer ALU instructions require sm_107f, got"
+              f" sm_{arch.major}{arch.minor}"
+          )
+        sign = "s" if self.is_signed else "u"
+        addi = self._lift_fast_packed_instr(f"add.{sign}8x4")
+      else:
+        addi = arith.addi
+      return self._pointwise(
+          addi,
+          other,
+          restrict_bitwidth=not is_8bit,
+          distributes_over=("add",),
+      )
     else:
       return NotImplemented
 
@@ -1771,7 +1803,23 @@ class FragmentedArray:
     if isinstance(self.mlir_dtype, ir.FloatType):
       return self._pointwise(subf, other, distributes_over=("add",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
-      return self._pointwise(arith.subi, other, distributes_over=("add",))
+      is_8bit = utils.bitwidth(self.mlir_dtype) == 8
+      if is_8bit:
+        if (arch := utils.get_arch()) != utils.RUBIN:
+          raise NotImplementedError(
+              "Packed 8-bit integer ALU instructions require sm_107f, got"
+              f" sm_{arch.major}{arch.minor}"
+          )
+        sign = "s" if self.is_signed else "u"
+        subi = self._lift_fast_packed_instr(f"sub.{sign}8x4")
+      else:
+        subi = arith.subi
+      return self._pointwise(
+          subi,
+          other,
+          restrict_bitwidth=not is_8bit,
+          distributes_over=("add",),
+      )
     else:
       return NotImplemented
 
@@ -1781,8 +1829,22 @@ class FragmentedArray:
           lambda s, o: subf(o, s), other, distributes_over=("add",)
       )
     elif isinstance(self.mlir_dtype, ir.IntegerType):
+      is_8bit = utils.bitwidth(self.mlir_dtype) == 8
+      if is_8bit:
+        if (arch := utils.get_arch()) != utils.RUBIN:
+          raise NotImplementedError(
+              "Packed 8-bit integer ALU instructions require sm_107f, got"
+              f" sm_{arch.major}{arch.minor}"
+          )
+        sign = "s" if self.is_signed else "u"
+        subi = self._lift_fast_packed_instr(f"sub.{sign}8x4")
+      else:
+        subi = arith.subi
       return self._pointwise(
-          lambda s, o: arith.subi(o, s), other, distributes_over=("add",)
+          lambda s, o: subi(o, s),
+          other,
+          restrict_bitwidth=not is_8bit,
+          distributes_over=("add",),
       )
     else:
       return NotImplemented
@@ -2022,13 +2084,22 @@ class FragmentedArray:
       return self._pointwise(maximumf, other, distributes_over=("max",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       width = utils.bitwidth(self.mlir_dtype)
-      if width == 16:
-        sign = "s" if self.is_signed else "u"
+      sign = "s" if self.is_signed else "u"
+      if width == 8:
+        if (arch := utils.get_arch()) != utils.RUBIN:
+          raise NotImplementedError(
+              "Packed 8-bit integer ALU instructions require sm_107f, got"
+              f" sm_{arch.major}{arch.minor}"
+          )
+        instr = self._lift_fast_packed_instr(f"max.{sign}8x4")
+      elif width == 16:
         instr = self._lift_fast_packed_instr(f"max.{sign}16x2", f"max.{sign}16")
-        return self._pointwise(instr, other, distributes_over=("max",))
+      else:
+        instr = arith.maxsi if self.is_signed else arith.maxui
       return self._pointwise(
-          arith.maxsi if self.is_signed else arith.maxui,
+          instr,
           other,
+          restrict_bitwidth=width != 8,
           distributes_over=("max",),
       )
     else:
@@ -2046,13 +2117,22 @@ class FragmentedArray:
       return self._pointwise(minimumf, other, distributes_over=("min",))
     elif isinstance(self.mlir_dtype, ir.IntegerType):
       width = utils.bitwidth(self.mlir_dtype)
-      if width == 16:
-        sign = "s" if self.is_signed else "u"
+      sign = "s" if self.is_signed else "u"
+      if width == 8:
+        if (arch := utils.get_arch()) != utils.RUBIN:
+          raise NotImplementedError(
+              "Packed 8-bit integer ALU instructions require sm_107f, got"
+              f" sm_{arch.major}{arch.minor}"
+          )
+        instr = self._lift_fast_packed_instr(f"min.{sign}8x4")
+      elif width == 16:
         instr = self._lift_fast_packed_instr(f"min.{sign}16x2", f"min.{sign}16")
-        return self._pointwise(instr, other, distributes_over=("min",))
+      else:
+        instr = arith.minsi if self.is_signed else arith.minui
       return self._pointwise(
-          arith.minsi if self.is_signed else arith.minui,
+          instr,
           other,
+          restrict_bitwidth=width != 8,
           distributes_over=("min",),
       )
     else:
@@ -2259,8 +2339,8 @@ class FragmentedArray:
 
   @staticmethod
   def _lift_fast_packed_instr(
-      packed_instr: str, single_instr: str,
-  ) -> Callable[[ir.Value, ir.Value], ir.Value]:
+      packed_instr: str, single_instr: str | None = None,
+  ) -> Callable[..., ir.Value]:
     def fast_instr(*args):
       arg_ty = original_arg_ty = args[0].type
       assert all(a.type == arg_ty for a in args)
@@ -2269,7 +2349,9 @@ class FragmentedArray:
       arg_ty = ir.VectorType(args[0].type)
       [vec_len] = arg_ty.shape
       vec_bitwidth = vec_len * utils.bitwidth(arg_ty.element_type)
-      if vec_len == 1 or vec_bitwidth == 32:
+      if (vec_len == 1 and single_instr is not None) or (
+          vec_bitwidth == 32 and vec_len != 1
+      ):
         assert vec_bitwidth.bit_count() == 1
         if vec_bitwidth == 32:
           cstr = "r"
@@ -2288,8 +2370,7 @@ class FragmentedArray:
         )
         assert isinstance(result_int, ir.Value)
         return utils.bitcast(result_int, original_arg_ty)
-      else:
-        assert vec_bitwidth > 32
+      elif vec_bitwidth > 32:
         slice_len = 32 // utils.bitwidth(arg_ty.element_type)
         offset = 0
         slices = []
@@ -2299,6 +2380,11 @@ class FragmentedArray:
           slices.append(fast_instr(*args_slice))
           offset = slice_end
         return utils.vector_concat(slices)
+      else:
+        raise NotImplementedError(
+            f"Instruction {packed_instr} is not supported for {arg_ty}"
+            f" ({vec_bitwidth}-bit vector)"
+        )
     return fast_instr
 
   def bitcast(
@@ -2598,7 +2684,7 @@ class FragmentedArray:
           assert 0 <= part < 4
 
           # `cvt` with `.s2f6x2` instruction type introduced in PTX ISA v9.1
-          if utils.get_arch().major >= 10 and ptx_isa_version >= 91:
+          if utils.get_arch() >= utils.BLACKWELL and ptx_isa_version >= 91:
             int_reg = llvm.inline_asm(
                 i32,
                 [reg],
@@ -2979,10 +3065,11 @@ class FragmentedArray:
 
     # Here we handle all conversions involving f8 types.
     # TODO(apaszke): Figure out proper satfinite control.
+    arch = utils.get_arch()
     supported_f8_f16: dict[ir.Type, tuple[ir.Type, ...]] = {
         f8e4m3fn: (f16,), f8e5m2: (f16,), f8e8m0fnu: (bf16,)
     }
-    if ptx_isa_version >= 92:
+    if ptx_isa_version >= 92 and arch >= utils.BLACKWELL:
       # Technically those downcasts are already supported in 91, but the casts
       # only become symmetric in 92 so that's what we use as the cutoff.
       supported_f8_f16[f8e4m3fn] += (bf16,)
@@ -2993,7 +3080,7 @@ class FragmentedArray:
     f16_ptx_names: dict[ir.Type, str] = {f16: "f16", bf16: "bf16"}
     f8_types = f8_ptx_names.keys()
     f16_types = f16_ptx_names.keys()
-    if f8e8m0fnu in {cur_dtype, new_dtype} and utils.get_arch().major < 10:
+    if f8e8m0fnu in {cur_dtype, new_dtype} and arch < utils.BLACKWELL:
       raise ValueError(
           "f8e8m0fnu type only supported on Blackwell and newer GPUs"
       )
@@ -3008,10 +3095,10 @@ class FragmentedArray:
             f" rounding mode{'' if len(allowed_roundings) == 1 else 's'} are"
             f" supported for {cur_dtype} -> {new_dtype}, but got {rounding}"
         )
-    def get_fp8_rounding(fp8_type: ir.Type) -> str:
-      assert fp8_type in f8_types
+    def get_narrow_fp_rounding(narrow_type: ir.Type) -> str:
+      assert narrow_type in f8_types or narrow_type == f4e2m1fn
       allowed_rounding: tuple[Rounding, ...]
-      if fp8_type == f8e8m0fnu:
+      if narrow_type == f8e8m0fnu:
         if rounding is None:
           return Rounding.TO_POSITIVE_INFINITY.ptx
         allowed_rounding = (Rounding.TO_ZERO, Rounding.TO_POSITIVE_INFINITY)
@@ -3019,13 +3106,17 @@ class FragmentedArray:
         if rounding is None:
           return Rounding.TO_NEAREST_EVEN.ptx
         allowed_rounding = (Rounding.TO_NEAREST_EVEN,)
+        # .rz rounding for cvt.{e4m3x2,e5m2x2,e2m1x2}.{f32,f16x2,bf16x2} was
+        # added in PTX ISA 9.4 and is only supported on sm_107f.
+        if arch == utils.RUBIN and ptx_isa_version >= 94:
+          allowed_rounding += (Rounding.TO_ZERO,)
       check_supported_rounding(allowed_rounding)
       return rounding.ptx
 
     # f8 <-> f32
     if cur_dtype == f32 and new_dtype in f8_types:
       name_8 = f8_ptx_names[new_dtype]
-      ptx_round = get_fp8_rounding(new_dtype)
+      ptx_round = get_narrow_fp_rounding(new_dtype)
       return pairwise_convert(f"cvt.{ptx_round}.satfinite.{name_8}x2.f32")
     # No f8 type supports direct conversion to f32, so we go via 16-bit floats.
     if cur_dtype in f8_types and new_dtype == f32:
@@ -3035,7 +3126,7 @@ class FragmentedArray:
     if new_dtype in f8_types and cur_dtype in supported_f8_f16[new_dtype]:
       name_16 = f16_ptx_names[cur_dtype]
       name_8 = f8_ptx_names[new_dtype]
-      ptx_round = get_fp8_rounding(new_dtype)
+      ptx_round = get_narrow_fp_rounding(new_dtype)
       return pairwise_convert(f"cvt.{ptx_round}.satfinite.{name_8}x2.{name_16}x2")
     if cur_dtype in f8_types and new_dtype in supported_f8_f16[cur_dtype]:
       name_8 = f8_ptx_names[cur_dtype]
@@ -3050,7 +3141,11 @@ class FragmentedArray:
       supported_16 = supported_f8_f16[cur_dtype if cur_dtype in f8_types else new_dtype]
       ok_new_dtype = " or ".join(map(str, supported_16))
       ptx_hint = ""
-      if ptx_isa_version < 92 and f8e8m0fnu not in {cur_dtype, new_dtype}:
+      if (
+          ptx_isa_version < 92
+          and arch >= utils.BLACKWELL
+          and f8e8m0fnu not in {cur_dtype, new_dtype}
+      ):
         ptx_hint = (
             " This conversion would be supported if a newer CUDA (ptxas)"
             " version was available."
@@ -3070,13 +3165,13 @@ class FragmentedArray:
           None
       )
       if common_f16 is not None:
-        return self.astype(common_f16).astype(new_dtype)
+        return self.astype(common_f16).astype(new_dtype, rounding=rounding)
       raise NotImplementedError(
           f"Conversion from {cur_dtype} to {new_dtype} must go through f32,"
           " which is expensive. Cast to f32 explicitly if you really want it."
       )
     # f4e2m1fn casts
-    if f4e2m1fn in {cur_dtype, new_dtype} and utils.get_arch().major < 10:
+    if f4e2m1fn in {cur_dtype, new_dtype} and utils.get_arch() < utils.BLACKWELL:
       raise ValueError(
           "f4e2m1fn casts only supported on Blackwell and newer GPUs"
       )
@@ -3089,20 +3184,24 @@ class FragmentedArray:
     ):
       f8_type = new_dtype if cur_dtype == f4e2m1fn else cur_dtype
       if f16 in supported_f8_f16[f8_type]:
-        return self.astype(f16).astype(new_dtype)
+        return self.astype(f16).astype(new_dtype, rounding=rounding)
       if ptx_isa_version >= 92:
         assert bf16 in supported_f8_f16[f8_type]
-        return self.astype(bf16).astype(new_dtype)
-      return self.astype(f32).astype(new_dtype)
+        return self.astype(bf16).astype(new_dtype, rounding=rounding)
+      return self.astype(f32).astype(new_dtype, rounding=rounding)
     if cur_dtype == f4e2m1fn and new_dtype == f32:
       return self.astype(f16).astype(f32)
     if new_dtype == f4e2m1fn and cur_dtype in {bf16, f16}:
       if ptx_isa_version >= 91:
-        return pairwise_convert(f"cvt.rn.satfinite.e2m1x2.{f16_ptx_names[cur_dtype]}x2")
+        ptx_round = get_narrow_fp_rounding(new_dtype)
+        return pairwise_convert(
+            f"cvt.{ptx_round}.satfinite.e2m1x2.{f16_ptx_names[cur_dtype]}x2"
+        )
       else:
-        return self.astype(f32).astype(f4e2m1fn)
+        return self.astype(f32).astype(f4e2m1fn, rounding=rounding)
     if new_dtype == f4e2m1fn and cur_dtype == f32:
-      return pairwise_convert("cvt.rn.satfinite.e2m1x2.f32")
+      ptx_round = get_narrow_fp_rounding(new_dtype)
+      return pairwise_convert(f"cvt.{ptx_round}.satfinite.e2m1x2.f32")
     if new_dtype == f4e2m1fn or cur_dtype == f4e2m1fn:
       raise NotImplementedError(f"Unimplemented cast from {cur_dtype} to {new_dtype}")
 
@@ -4048,6 +4147,8 @@ class FragmentedArray:
         total_bits = vec_size * bitwidth
         if total_bits % 8 != 0:
           raise NotImplementedError("Vector length should be a multiple of byte size")
+        total_bytes = total_bits // 8
+        alignment = total_bytes & (~total_bytes + 1)
         # pyrefly: ignore[bad-argument-type]
         for get, _update, transfer_ref, idx in self.transfer_strided(ref, vec_size):
           if isinstance(transfer_ref, utils.MultimemRef):
@@ -4085,7 +4186,7 @@ class FragmentedArray:
             stored_val = get(self.registers)
             if not isinstance(self.mlir_dtype, ir.IntegerType):
               stored_val = vector.bitcast(int_vec_ty, stored_val)
-            llvm.store(stored_val, ptr)
+            llvm.store(stored_val, ptr, alignment=alignment)
       case TiledLayout():
         ref_shape = ir.MemRefType(ref.type).shape
         ref = utils.memref_reshape(ref, (*(1 for _ in ref_shape), *ref_shape))
@@ -4432,7 +4533,7 @@ class FragmentedArray:
         utils.multimem_store(ptr, get(self.registers))
     else:
       try:
-        if utils.get_arch().major < 9:
+        if utils.get_arch() < utils.HOPPER:
           raise TxMatrixIneligible("TxMatrix not supported on pre-Hopper GPUs")
         stores = self.transfer_tiled(
             ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank, use_txmatrix=True,
@@ -4458,17 +4559,19 @@ class FragmentedArray:
       stores = self.transfer_tiled(
           ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
       )
+      element_bitwidth = utils.bitwidth(self.mlir_dtype)
+      transfer_bytes = (layout.vector_length * element_bitwidth) // 8
+      alignment = transfer_bytes & (~transfer_bytes + 1)
       for get, _update, _idx, ptr in stores:
         reg = get(self.registers)
         reg_ty = ir.VectorType(reg.type)
-        element_bitwidth = utils.bitwidth(reg_ty.element_type)
         if (
             isinstance(reg_ty.element_type, ir.FloatType)
             and element_bitwidth <= 8
         ):
           narrow_int = ir.IntegerType.get_signless(element_bitwidth)
           reg = vector.bitcast(ir.VectorType.get(reg_ty.shape, narrow_int), reg)
-        llvm.store(reg, ptr)
+        llvm.store(reg, ptr, alignment=alignment)
 
   @classmethod
   def load_tiled(
@@ -4560,6 +4663,10 @@ class FragmentedArray:
     loads = cls.transfer_tiled(
         ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
     )
+    if _load_fun is llvm.load:
+      transfer_bytes = (layout.vector_length * bitwidth) // 8
+      alignment = transfer_bytes & (~transfer_bytes + 1)
+      _load_fun = functools.partial(llvm.load, alignment=alignment)
     for _get, update, _idx, ptr in loads:
       loaded_reg = _load_fun(transfer_ty, ptr)
       if is_narrow_float and _narrow_float_as_int:
@@ -4720,7 +4827,7 @@ class FragmentedArray:
       # formed by pair_tile_dim and major_lane_dim, while the other is formed by
       # minor_lane_dim and vector_dim.
       if is_col_txmatrix_mem_layout and utils.bitwidth(dtype) == 8:
-        if utils.get_arch().major < 10:
+        if utils.get_arch() < utils.BLACKWELL:
           raise TxMatrixIneligible(
               "Transposed 8-bit loads and stores are not supported on"
               " pre-Blackwell architectures"
@@ -4803,6 +4910,11 @@ class FragmentedArray:
 
     if swizzle not in {16, 32, 64, 128}:
       raise ValueError("Only swizzled transfers supported")
+    if swizzle > 16 and 16 % transfer_bytes != 0:
+      raise UnsupportedTransferError(
+          f"Swizzled transfers require transfer_bytes ({transfer_bytes}) to"
+          " divide 16"
+      )
     # We will be computing the offsets in units of vectors, not elements,
     # to better support sub-byte types.
     swizzle_tile_transfers = 16 // transfer_bytes

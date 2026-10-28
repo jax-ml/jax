@@ -749,7 +749,7 @@ def _ppermute_roofline(
   ici_bytes = shard_size * max(ici_contention.values(), default=0)
   return roofline.RooflineResult(
     ici_bytes={axis: int(ici_bytes) for axis in axis_name},
-    ici_latency={axis: int(ici_latency) for axis in axis_name},
+    ici_latency={axis: ici_latency for axis in axis_name},
   )
 
 

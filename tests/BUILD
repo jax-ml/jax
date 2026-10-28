@@ -613,6 +613,9 @@ jax_multiplatform_test(
     backend_deps = {
         "cpu": py_deps(["torch"]),
     },
+    backend_tags = {
+        "cpu": ["notsan"],
+    },
     shard_count = {
         "cpu": 10,
         "gpu": 10,
@@ -688,6 +691,12 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_control_flow_test",
     srcs = ["lax_control_flow_test.py"],
+    backend_tags = {
+        "cpu": [
+            "noasan",  # Test times out.
+            "notsan",  # Test times out.
+        ],
+    },
     shard_count = {
         "cpu": 15,
         "gpu": 15,
@@ -765,6 +774,12 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_numpy_operators_test",
     srcs = ["lax_numpy_operators_test.py"],
+    backend_tags = {
+        "cpu": [
+            "noasan",  # Test times out.
+            "notsan",  # Test times out.
+        ],
+    },
     shard_count = {
         "cpu": 30,
         "gpu": 30,
@@ -779,6 +794,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_numpy_reducers_test",
     srcs = ["lax_numpy_reducers_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Test times out.
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 20,
@@ -915,7 +933,7 @@ jax_multiplatform_test(
         ],
     },
     shard_count = {
-        "cpu": 30,
+        "cpu": 50,
         "gpu": 50,
         "tpu": 20,
     },
@@ -956,7 +974,11 @@ jax_multiplatform_test(
     name = "lax_test",
     srcs = ["lax_test.py"],
     backend_tags = {
-        "cpu": ["not_run:arm"],  # Numerical issues, including https://github.com/jax-ml/jax/issues/24787
+        "cpu": [
+            "noasan",  # Times out.
+            "not_run:arm",  # Numerical issues, including https://github.com/jax-ml/jax/issues/24787
+            "notsan",  # Times out.
+        ],
         "gpu": ["noasan"],  # Times out.
         "tpu": ["noasan"],  # Times out.
     },
@@ -1532,6 +1554,10 @@ jax_multiplatform_test(
         "cpu": ["nomsan"],  # Times out
         "tpu": ["nomsan"],  # Times out
     },
+    # Use fewer cases to prevent timeouts.
+    backend_variant_args = {
+        "cpu": ["--jax_num_generated_cases=40"],
+    },
     shard_count = {
         "cpu": 50,
         "gpu": 50,
@@ -2000,6 +2026,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "mutable_array_test",
     srcs = ["mutable_array_test.py"],
+    backend_tags = {
+        "cpu": ["noasan"],  # Test times out.
+    },
     shard_count = {
         "cpu": select({
             "//tests/config:is_tsan": 20,

@@ -199,13 +199,13 @@ def _load_lowering_rule(
     )
   if not all(s == 1 for s in strides):
     raise NotImplementedError(
-        "Get only supports slices with stride 1, got {strides}"
+        f"Get only supports slices with stride 1, got {strides}"
     )
 
   if (out_aval.ndim == 0) != (ref_memory_space is MemorySpace.SMEM):
     message = "Get only supports loading scalars from SMEM."
     if ref_memory_space is MemorySpace.SMEM:
-      message += " Trying to load an array of shape {out_aval.shape}."
+      message += f" Trying to load an array of shape {out_aval.shape}."
     elif ref_memory_space is MemorySpace.VMEM:
       message += (
           " To load a scalar from VMEM, load an array first and then extract a"
@@ -319,13 +319,13 @@ def _store_lowering_rule(
     )
   if not all(s == 1 for s in strides):
     raise NotImplementedError(
-        "Swap only supports slices with stride 1, got {strides}"
+        f"Swap only supports slices with stride 1, got {strides}"
     )
 
   if (out_aval.ndim == 0) != (ref_memory_space is MemorySpace.SMEM):
     message = "Swap only supports scalars in SMEM."
     if ref_memory_space is MemorySpace.SMEM:
-      message += " Trying to swap an array of shape {out_aval.shape}."
+      message += f" Trying to swap an array of shape {out_aval.shape}."
     else:
       message += f" Trying to swap a scalar in {ref_memory_space!r}."
     raise NotImplementedError(message)
@@ -627,10 +627,7 @@ def _is_push_stream(
   if not is_local:
     return False
   if core_type == tpu_core.CoreType.SC_VECTOR_SUBCORE:
-    return (src == MemorySpace.VMEM and dst != MemorySpace.VMEM) or (
-        src == MemorySpace.VMEM_SHARED and dst == MemorySpace.SMEM)
-  if core_type == tpu_core.CoreType.SC_SCALAR_SUBCORE:
-    return src == MemorySpace.VMEM_SHARED and dst == MemorySpace.SMEM
+    return src == MemorySpace.VMEM and dst != MemorySpace.VMEM
   return False
 
 
@@ -644,7 +641,9 @@ def _dma_start_lowering_rule(
     device_id_type: pallas_primitives.DeviceIdType,
     priority: int,
     add: bool,
+    _unsafe_no_write_effect: bool = False,
 ):
+  del _unsafe_no_write_effect
   src_ref, dst_ref, sem, src_sem, device_id = _dma_unflatten(
       tree, args
   )
@@ -688,8 +687,8 @@ def _dma_start_lowering_rule(
     if is_push and sem is not None:
       warnings.warn(
           "Destination semaphore is ignored for push streams (VMEM to HBM, "
-          "VMEM_SHARED or SMEM, or VMEM_SHARED to SMEM) on SparseCore; pass "
-          "`sem=None` to `async_copy` to suppress this warning.",
+          "VMEM_SHARED or SMEM) on SparseCore; pass `sem=None` to "
+          "`async_copy` to suppress this warning.",
           sc_core.SparseCorePushStreamWarning,
       )
     if is_local and not is_push and src_sem is not None:
@@ -697,9 +696,9 @@ def _dma_start_lowering_rule(
       # would have no effect, we reject it instead of silently ignoring it.
       raise ValueError(
           "Source semaphore (`src_sem`) on a local copy is only supported for "
-          "push streams (VMEM to HBM, VMEM_SHARED or SMEM, or VMEM_SHARED to "
-          "SMEM) on SparseCore; pass `src_sem=None` and use `wait()`, which "
-          "already guarantees completion of this transfer."
+          "push streams (VMEM to HBM, VMEM_SHARED or SMEM) on SparseCore; pass "
+          "`src_sem=None` and use `wait()`, which already guarantees "
+          "completion of this transfer."
       )
 
     def _dma_start(src_ref, dst_ref, sem, src_sem):
@@ -763,7 +762,9 @@ def _dma_wait_lowering_rule(
     tree,
     device_id_type: pallas_primitives.DeviceIdType,
     is_wait_send: bool = False,
+    _unsafe_no_write_effect: bool = False,
 ):
+  del _unsafe_no_write_effect
   src_ref, dst_ref, sem, src_sem, device_id = _dma_unflatten(tree, args)
   src_aval, dst_aval, sem_aval, src_sem_aval, device_id_aval = _dma_unflatten(
       tree, ctx.avals_in
@@ -803,9 +804,8 @@ def _dma_wait_lowering_rule(
     ):
       raise ValueError(
           "`wait_read()` on a local copy is only supported for push streams "
-          "(VMEM to HBM, VMEM_SHARED or SMEM, or VMEM_SHARED to SMEM) on "
-          "SparseCore; use `wait()` to await this transfer and guarantee "
-          "both read and write completion."
+          "(VMEM to HBM, VMEM_SHARED or SMEM) on SparseCore; use `wait()` to "
+          "await this transfer and guarantee both read and write completion."
       )
 
     def _dma_wait(src_ref, dst_ref, sem, src_sem):
@@ -1022,10 +1022,22 @@ def _sort_lowering_rule(
       [sc_info.num_lanes], ir.IntegerType.get_signless(1))
   mask = arith.constant(mask_type, ir.DenseElementsAttr.get_splat(
       mask_type, ir.BoolAttr.get(True)))
+  key_dtype = ctx.avals_in[0].dtype
+  if key_dtype not in (jnp.float32, jnp.int32, jnp.uint32):
+    raise NotImplementedError(f"Unsupported key dtype for sort: {key_dtype}")
+  sign_bit_vec = None
+  if key_dtype == jnp.int32:
+    i32 = ir.IntegerType.get_signless(32)
+    sign_bit_vec = vector.broadcast(
+        keys.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000))
+    )
+    keys = arith.xori(keys, sign_bit_vec)
   if not values:
     _, sorted_keys, _ = tpu.sort(
         mask_type, keys.type, keys.type, keys, keys, mask=mask
     )
+    if sign_bit_vec is not None:
+      sorted_keys = arith.xori(sorted_keys, sign_bit_vec)
     return (sorted_keys,)
   results: list[ir.Value] = []
   for value in values:
@@ -1033,6 +1045,8 @@ def _sort_lowering_rule(
         mask_type, keys.type, value.type, keys, value, mask=mask
     )
     if not results:
+      if sign_bit_vec is not None:
+        sorted_keys = arith.xori(sorted_keys, sign_bit_vec)
       results.append(sorted_keys)
     results.append(sorted_value)
   return tuple(results)

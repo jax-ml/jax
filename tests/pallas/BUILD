@@ -464,9 +464,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_test",
     srcs = ["tpu_pallas_test.py"],
-    backend_tags = {
-        "cpu": ["notsan"],  # Times out.
-    },
     backend_variant_args = {
         "tpu": if_oss(
             [],
@@ -486,6 +483,7 @@ jax_multiplatform_test(
     shard_count = 8,
     tags = [
         "noasan",
+        "notsan",  # Times out.
     ],
     deps = [
         "//jax/_src/pallas:pallas_test_util",
@@ -510,12 +508,9 @@ jax_multiplatform_test(
         "tpu_v5e",
         "tpu_v5p",
     ],
-    env = if_oss(
-        {
-            "TPU_STDERR_LOG_LEVEL": "0",
-        },
-        google_value = {},
-    ),
+    env = {
+        "TPU_STDERR_LOG_LEVEL": "0",
+    },
     shard_count = 8,
     deps = [
         "//jax/_src/pallas:pallas_test_util",
@@ -888,6 +883,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_splash_attention_kernel_sharded_test",
     srcs = ["tpu_splash_attention_kernel_sharded_test.py"],
+    enable_backends = [],
     enable_configs = [
         "tpu_v5e_x8",
         "tpu_v5p_x4",

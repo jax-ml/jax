@@ -112,7 +112,7 @@ def _mma_single_tile(
   assert a.mlir_dtype == b.mlir_dtype
   is_integer = isinstance(a.mlir_dtype, ir.IntegerType)
   is_f64 = a.mlir_dtype == f64
-  if is_f64 and utils.get_arch().major < 9:
+  if is_f64 and utils.get_arch() < utils.HOPPER:
     # TODO(bchetioui): Support sm_80 via the `m8n8k4` MMA shape.
     raise NotImplementedError("f64 MMA is only supported on Hopper+ hardware.")
   k_tile = 8 if is_f64 else 256 // utils.bitwidth(a.mlir_dtype)

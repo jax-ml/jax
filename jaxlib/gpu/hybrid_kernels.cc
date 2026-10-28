@@ -22,6 +22,7 @@ limitations under the License.
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <new>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -51,17 +52,28 @@ namespace ffi = ::xla::ffi;
 // from a device buffer.
 template <typename T>
 class HostBuffer {
+  static_assert(std::is_trivially_destructible_v<T>,
+                "HostBuffer requires trivially destructible element types");
+
+  struct Deleter {
+    void operator()(T* ptr) const {
+      ::operator delete(ptr, std::align_val_t(alignof(T)));
+    }
+  };
+
  public:
-  HostBuffer(std::size_t size) : size_(size) {
-    data_ = std::unique_ptr<T[]>(new T[size]);
+  explicit HostBuffer(std::size_t size) : size_(size) {
+    data_.reset(static_cast<T*>(
+        ::operator new(size * sizeof(T), std::align_val_t(alignof(T)))));
+    std::uninitialized_default_construct_n(data_.get(), size);
   }
 
-  absl::Status CopyFromDevice(gpuStream_t stream, const T* buffer) {
+  absl::Status CopyFromDevice(gpuStream_t stream, const void* buffer) {
     return JAX_AS_STATUS(gpuMemcpyAsync(data_.get(), buffer, size_ * sizeof(T),
                                         gpuMemcpyDeviceToHost, stream));
   }
 
-  absl::Status CopyToDevice(gpuStream_t stream, T* buffer) {
+  absl::Status CopyToDevice(gpuStream_t stream, void* buffer) {
     return JAX_AS_STATUS(gpuMemcpyAsync(buffer, data_.get(), size_ * sizeof(T),
                                         gpuMemcpyHostToDevice, stream));
   }
@@ -69,8 +81,8 @@ class HostBuffer {
   T* get() const { return data_.get(); }
 
  private:
-  std::unique_ptr<T[]> data_;
-  size_t size_;
+  std::unique_ptr<T, Deleter> data_;
+  std::size_t size_;
 };
 
 // Forwarded from MAGMA for use as an input parameter.
@@ -89,18 +101,22 @@ struct MagmaGeev {
 };
 template <>
 struct MagmaGeev<ffi::F32> {
+  using Type = float;
   static constexpr char name[] = "magma_sgeev";
 };
 template <>
 struct MagmaGeev<ffi::F64> {
+  using Type = double;
   static constexpr char name[] = "magma_dgeev";
 };
 template <>
 struct MagmaGeev<ffi::C64> {
+  using Type = gpuComplex;
   static constexpr char name[] = "magma_cgeev";
 };
 template <>
 struct MagmaGeev<ffi::C128> {
+  using Type = gpuDoubleComplex;
   static constexpr char name[] = "magma_zgeev";
 };
 template <ffi::DataType DataType>
@@ -260,7 +276,7 @@ class PivotingQrFactorizationHost {
     auto work = AllocateScratchMemory<DataType>(lwork);
 
     constexpr bool is_complex_dtype = ffi::IsComplexType<DataType>();
-    std::unique_ptr<RealType[]> rwork;
+    AlignedUniquePtr<RealType> rwork;
     if constexpr (is_complex_dtype) {
       rwork = AllocateScratchMemory<ffi::ToReal(DataType)>(2 * n);
     }
@@ -771,9 +787,10 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(kEigReal, EigRealDispatch,
 template <ffi::DataType DataType, typename IntType>
 class EigCompHost {
   using Real = ffi::NativeType<ffi::ToReal(DataType)>;
-  using Complex = ffi::NativeType<DataType>;
 
  public:
+  using Complex = ffi::NativeType<DataType>;
+
   explicit EigCompHost() = default;
   EigCompHost(EigCompHost&&) = default;
 
@@ -803,7 +820,11 @@ class EigCompHost {
 template <ffi::DataType DataType>
 class EigCompMagma {
   using Real = ffi::NativeType<ffi::ToReal(DataType)>;
-  using Complex = ffi::NativeType<DataType>;
+
+ public:
+  using Complex = typename MagmaGeev<DataType>::Type;
+
+ private:
   using Fn = int32_t(magma_vec_t, magma_vec_t, int32_t, Complex*, int32_t,
                      Complex*, Complex*, int32_t, Complex*, int32_t, Complex*,
                      int32_t, Real*, int32_t*);
@@ -825,10 +846,10 @@ class EigCompMagma {
     fn_ = reinterpret_cast<Fn*>(*maybe_ptr);
 
     int32_t query_info;
-    Complex query_host;
+    Complex query_host{};
     fn_(jobvl_, jobvr_, n_, nullptr, lda_, nullptr, nullptr, ldvl_, nullptr,
         ldvr_, &query_host, -1, nullptr, &query_info);
-    return static_cast<int32_t>(query_host.real());
+    return static_cast<int32_t>(reinterpret_cast<const Real*>(&query_host)[0]);
   }
 
   void compute(Complex* x, Complex* w, Complex* vl, Complex* vr, Complex* work,
@@ -850,11 +871,11 @@ ffi::Error EigComp(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
                    ffi::Result<ffi::AnyBuffer> vl,
                    ffi::Result<ffi::AnyBuffer> vr,
                    ffi::Result<ffi::Buffer<ffi::S32>> info) {
-  using Complex = ffi::NativeType<DataType>;
+  using Real = ffi::NativeType<ffi::ToReal(DataType)>;
+  using Complex = typename Impl::Complex;
 
   auto x_host = HostBuffer<Complex>(x.element_count());
-  FFI_RETURN_IF_ERROR_STATUS(
-      x_host.CopyFromDevice(stream, x.typed_data<Complex>()));
+  FFI_RETURN_IF_ERROR_STATUS(x_host.CopyFromDevice(stream, x.untyped_data()));
 
   auto w_host = HostBuffer<Complex>(batch * cols);
   auto vl_host = HostBuffer<Complex>(batch * cols * cols);
@@ -863,16 +884,16 @@ ffi::Error EigComp(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
 
   FFI_ASSIGN_OR_RETURN(IntType n, MaybeCastNoOverflow<IntType>(cols));
   FFI_ASSIGN_OR_RETURN(IntType lwork, impl.lwork(n, left, right));
-  auto work_host = AllocateScratchMemory<DataType>(lwork);
+  auto work_host = HostBuffer<Complex>(lwork);
   auto rwork_host =
       AllocateScratchMemory<ffi::ToReal(DataType)>(2 * cols * cols);
 
   FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
 
-  const auto is_finite = [](auto* data, int64_t size) {
-    return absl::c_all_of(absl::MakeSpan(data, size), [](const auto& z) {
-      return std::isfinite(z.real()) && std::isfinite(z.imag());
-    });
+  const auto is_finite = [](const Complex* data, int64_t size) {
+    return absl::c_all_of(
+        absl::MakeSpan(reinterpret_cast<const Real*>(data), 2 * size),
+        [](Real value) { return std::isfinite(value); });
   };
 
   for (int64_t i = 0; i < batch; ++i) {
@@ -886,15 +907,14 @@ ffi::Error EigComp(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
     }
   }
 
-  FFI_RETURN_IF_ERROR_STATUS(
-      w_host.CopyToDevice(stream, w->typed_data<Complex>()));
+  FFI_RETURN_IF_ERROR_STATUS(w_host.CopyToDevice(stream, w->untyped_data()));
   if (left) {
     FFI_RETURN_IF_ERROR_STATUS(
-        vl_host.CopyToDevice(stream, vl->typed_data<Complex>()));
+        vl_host.CopyToDevice(stream, vl->untyped_data()));
   }
   if (right) {
     FFI_RETURN_IF_ERROR_STATUS(
-        vr_host.CopyToDevice(stream, vr->typed_data<Complex>()));
+        vr_host.CopyToDevice(stream, vr->untyped_data()));
   }
   auto info_host_out = HostBuffer<int32_t>(batch);
   for (int64_t i = 0; i < batch; ++i) {

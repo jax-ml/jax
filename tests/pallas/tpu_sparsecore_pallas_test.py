@@ -257,6 +257,14 @@ class NamedLocationsTest(PallasSCTest):
     jax.jit(kernel).lower(jax.ShapeDtypeStruct((8, 128), dtype)).compile()
 
 
+def _sc_log_recorder_options() -> dict[str, str]:
+  # On new libtpu the log recorder is enabled automatically when a kernel emits
+  # log ops, so the flag is only needed for backwards compatibility.
+  if jtu.is_libtpu_at_least("0.0.52"):
+    return {}
+  return {"xla_tpu_enable_sc_log_recorder": "true"}
+
+
 @jtu.skip_under_pytest(
     "Requires pytest -s (no capture) to pass, which is not enabled in CI"
 )
@@ -292,9 +300,7 @@ class DebugPrintTest(PallasSCTest):
 
     compiled_kernel = jax.jit(
         kernel,
-        compiler_options={
-            "xla_tpu_enable_sc_log_recorder": "true",
-        },
+        compiler_options=_sc_log_recorder_options(),
     )
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
@@ -350,9 +356,9 @@ class DebugPrintTest(PallasSCTest):
     compiled_kernel = jax.jit(
         kernel,
         compiler_options={
-            "xla_tpu_enable_sc_log_recorder": "true",
             # TODO(slebedev): This should not be necessary.
             "xla_sc_force_aligned_buffers": "false",
+            **_sc_log_recorder_options(),
         },
     )
     with jtu.capture_stderr() as get_output:
@@ -406,9 +412,7 @@ class DebugPrintTest(PallasSCTest):
 
     compiled_kernel = jax.jit(
         kernel,
-        compiler_options={
-            "xla_tpu_enable_sc_log_recorder": "true",
-        },
+        compiler_options=_sc_log_recorder_options(),
     )
 
     with jtu.capture_stderr() as get_output:
@@ -426,9 +430,7 @@ class DebugPrintTest(PallasSCTest):
 
     @functools.partial(
         jax.jit,
-        compiler_options={
-            "xla_tpu_enable_sc_log_recorder": "true",
-        },
+        compiler_options=_sc_log_recorder_options(),
     )
     @self.vector_subcore_kernel(
         out_shape=x,
@@ -1376,7 +1378,7 @@ class VectorSubcoreTest(PallasSCTest):
         ),
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = plsc.bitcast(x_ref[...], o_ref.dtype)
+      o_ref[...] = pltpu.bitcast(x_ref[...], o_ref.dtype, dim=-1)
 
     x = jnp.arange(self.num_lanes, dtype=dtype)
     np.testing.assert_array_equal(kernel(x), x.view(new_dtype))
@@ -2890,7 +2892,7 @@ class VectorSubcoreTest(PallasSCTest):
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
-    keys = np.arange(vec_dim, dtype=dtype)
+    keys = np.arange(-vec_dim // 2, vec_dim // 2, dtype=dtype)
     np.random.shuffle(keys)
 
     @self.vector_subcore_kernel(out_shape=(keys, keys))
@@ -2900,18 +2902,22 @@ class VectorSubcoreTest(PallasSCTest):
 
     sorted_desc, reversed_keys = kernel(keys)
     np.testing.assert_array_equal(
-        sorted_desc, jnp.arange(vec_dim, dtype=dtype)[::-1])
+        sorted_desc, jnp.arange(-vec_dim // 2, vec_dim // 2, dtype=dtype)[::-1]
+    )
     np.testing.assert_array_equal(reversed_keys, keys[::-1])
 
   @parameterized.product(
-      keys_dtype=[np.int32, np.float32],
+      keys_dtype=[np.int32, np.uint32, np.float32],
       values_dtypes=[(), (np.int32,), (np.float32, np.int32)],
   )
   def test_sort(self, keys_dtype, values_dtypes):
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("sort is not supported on TPU v8i.")
     vec_dim = self.sc_info.num_lanes
-    keys = np.arange(vec_dim, dtype=keys_dtype)
+    if np.issubdtype(keys_dtype, np.unsignedinteger):
+      keys = np.arange(vec_dim, dtype=keys_dtype)
+    else:
+      keys = np.arange(-vec_dim // 2, vec_dim // 2, dtype=keys_dtype)
     np.random.shuffle(keys)
     values = [np.arange(vec_dim, dtype=dtype) for dtype in values_dtypes]
     _ = [np.random.shuffle(v) for v in values]

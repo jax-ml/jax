@@ -40,7 +40,7 @@ def sgn(x): return 1 if x >= 0 else -1
 def bounds_decision(e: DimSize,
                     prec: BoundsPrecision) -> tuple[float, float]:
   if not isinstance(e, _DimExpr):
-    return (int(e), int(e))
+    return (e, e)
   decision = _DecisionByElimination.build(e.scope)
   return decision.bounds(e, prec, add_implicit_constraints=True)
 

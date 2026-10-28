@@ -249,11 +249,8 @@ class PinnedBufferTest(jtu.JaxTestCase):
       f(x)
 
   def test_basic_vmem(self):
-    self.skipTest(
-        "TODO(b/507446729): test_basic_vmem has regressed and "
-        "does not test the intended behavior."
-    )
-
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Only supported on TPU v5+")
     @jax.jit
     def f(x):
       x_pinned = pin(x, to='vmem')
@@ -266,14 +263,17 @@ class PinnedBufferTest(jtu.JaxTestCase):
       return unpin(x_pinned)
 
     x = jnp.arange(3.)
+    self.assertAllClose(
+        jax.jit(lambda x: unpin(pin(x, to="vmem")))(x), x, check_dtypes=False
+    )
     y = f(x)
     self.assertAllClose(y, x, check_dtypes=False)
 
-    hlo = f.lower(x).compile().as_text()
-    self.assertRegex(
-        hlo,
-        r'output_memory_space_colors.*color.*1'
-    )
+    lowered_hlo = f.lower(x).as_text("hlo")
+    self.assertRegex(lowered_hlo, r"input_memory_space_colors.*color.*1")
+    self.assertRegex(lowered_hlo, r"output_memory_space_colors.*color.*1")
+    compiled_hlo = f.lower(x).compile().as_text()
+    self.assertRegex(compiled_hlo, r'S\(1\)\}.*custom_call_target="Pin"')
 
 
 class CoreMapTest(jtu.JaxTestCase):
@@ -384,6 +384,17 @@ class CoreMapTest(jtu.JaxTestCase):
         Exception, "You can only close over scalars and Refs"
     ):
       f(x)
+
+  def test_raises_on_write_to_array_input(self):
+    @pl.kernel(mesh=pltpu.TensorCoreMesh(axis_name="x"))
+    def kernel(x_ref, y_ref):
+      pltpu.sync_copy(x_ref, y_ref)
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    with self.assertRaisesRegex(
+        ValueError, "writes to input y_ref .* which was passed as an array"
+    ):
+      kernel(x, jnp.zeros_like(x))
 
   @parameterized.product(
       core_type=[*pltpu.CoreType], use_tc_tiling_on_sc=[True, False]

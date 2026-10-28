@@ -23,14 +23,6 @@ from jax._src import config
 from jax._src.lib import jaxlib_extension_version
 from jax._src import test_util as jtu
 import jax.numpy as jnp
-
-# Under pytest, tests run against an installed wheel that does not
-# include `jax.tests`, so skip before importing `jax.tests.numerics`.
-if jtu.is_running_under_pytest():
-  import pytest
-
-  pytest.skip("Only runs under Bazel", allow_module_level=True)
-
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
 import numpy as np
@@ -58,6 +50,23 @@ def _tanh_interesting_points(dtype):
           sign * 0.5 * k * math.log(2.0)
           for k in (p + 1, p + 2)
           for sign in (-1, 1)
+      ),
+      # Worst-case inputs across math libraries from Gladman et al.,
+      # "Accuracy of Mathematical Functions in Single, Double, Double Extended,
+      # and Quadruple Precision":
+      *(
+          float.fromhex(h)
+          for h in (
+              "0x1.d12ed0af1a27fp-27",
+              "0x1.002629fd74484p+0",
+              "-0x1.fde5bd2769a01p-1",
+              "-0x1.e134557098e37p-3",
+              "0x1.00cf9f273d84p+1",
+              "0x1.fefc7206bc932p-1",
+              "-0x1.c416448380debp-3",
+              "-0x1.19398a9a24319p-1",
+              "0x1.004a396a065e3p-4",
+          )
       ),
   ]
 
@@ -99,11 +108,9 @@ class SinhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_sinh_accuracy(self, dtype):
-    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.51"):
-      self.skipTest("Requires libtpu >= 0.0.51")
     if jaxlib_extension_version >= 507:
       bounds = [
-          ("cpu", {f16: 1.0, f32: 1.0, f64: 1.5}),
+          ("cpu", {f16: 1.0, f32: 1.0, f64: 2.0}),
           ("gpu", {f32: 3.0, f64: 2.5}),
           ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 1.0}),
           (["tpu_v6e", "tpu_7x"], {f32: 1.0}),
@@ -131,6 +138,25 @@ class SinhTest(jtu.JaxTestCase):
     input_ftz = [
         ("gpu", False),
     ]
+    interesting_points = [
+        *_sinh_cosh_interesting_points(dtype),
+        # Worst-case inputs across math libraries from Gladman et al.:
+        *(
+            float.fromhex(h)
+            for h in (
+                "0x1.2b705c15abeb9p+5",
+                "-0x1.adc135eb544c1p-2",
+                "0x1.1feb2a79f307p+3",
+                "-0x1.633cae1335f26p+9",
+                "-0x1.63324af2fb5b7p-1",
+                "0x1.d7131e11fc6b3p-2",
+                "0x1.1fd8c752e39f5p+3",
+                "0x1.9fa32b1149d35p-2",
+                "0x1.bde0cd0efdef8p+0",
+                "0x1.ffa5d2e7b5p-5",
+            )
+        ),
+    ]
     util.check_unary_precision(
         self,
         jnp.sinh,
@@ -141,7 +167,7 @@ class SinhTest(jtu.JaxTestCase):
         input_ftz=input_ftz,
         ignore_inputs=ignore_inputs,
         check_signed_zeros=check_signed_zeros,
-        interesting_points=_sinh_cosh_interesting_points(dtype),
+        interesting_points=interesting_points,
     )
 
 
@@ -150,8 +176,6 @@ class CoshTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_cosh_accuracy(self, dtype):
-    if jtu.device_under_test() == "tpu" and not jtu.is_libtpu_at_least("0.0.51"):
-      self.skipTest("Requires libtpu >= 0.0.51")
     if jaxlib_extension_version >= 511:
       bounds = [
           ("cpu", {f16: 1.0, f32: 1.0, f64: 2.0}),
@@ -174,6 +198,26 @@ class CoshTest(jtu.JaxTestCase):
       ignore_inputs = [
           (["cpu", "tpu"], {f32: [0x42B2D4FC, 0xC2B2D4FC]}),
       ]
+    interesting_points = [
+        *_sinh_cosh_interesting_points(dtype),
+        # Worst-case inputs across math libraries from Gladman et al.:
+        *(
+            float.fromhex(h)
+            for h in (
+                "0x1p-26",
+                "-0x1.5a364e6b98134p+9",
+                "0x1.ff76fb3f476d5p+0",
+                "0x1.633cc2ae1c934p+9",
+                "-0x1.6310ab92794a8p+9",
+                "-0x1.502bf5ad80729p+0",
+                "-0x1.62dabd4848dc4p-2",
+                "0x1.ed991002dc978p+0",
+                "-0x1.628af341989dap+9",
+                "0x1.e7ffe229fe99ep+1",
+                "-0x1.e7f9c78a5c332p+1",
+            )
+        ),
+    ]
     util.check_unary_precision(
         self,
         jnp.cosh,
@@ -182,7 +226,7 @@ class CoshTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         ignore_inputs=ignore_inputs,
-        interesting_points=_sinh_cosh_interesting_points(dtype),
+        interesting_points=interesting_points,
     )
 
 
@@ -287,11 +331,30 @@ class AcoshTest(jtu.JaxTestCase):
   def test_acosh_accuracy(self, dtype):
     bounds = [
         ("cpu", {bf16: 2.0, f16: 2.0, f32: 4.5, f64: 3.5}),
-        ("gpu", {f16: 1.0, f32: 2.5, f64: 2.5}),
+        ("gpu", {f16: 1.0, f32: 2.5, f64: 3.0}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4031.0}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 61.0}),
         ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 4.5}),
         ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 5.0}),
+    ]
+    interesting_points = [
+        math.cosh(1.0),
+        # Worst-case inputs across math libraries from Gladman et al.:
+        *(
+            float.fromhex(h)
+            for h in (
+                "0x1.c29124ea23a1cp+950",
+                "0x1.01825ca7da7e5p+0",
+                "0x1.209fae707a0edp+0",
+                "0x1.0001ff6afc4bap+0",
+                "-0x1.34e729fd08086p+21",
+                "0x1.00007fb3703ddp+0",
+                "0x1.0007fd4307b75p+0",
+                "0x1.071334daf83adp+0",
+                "0x1.1d7bc19163966p+0",
+                "0x1.0aaade11e199ap+0",
+            )
+        ),
     ]
     util.check_unary_precision(
         self,
@@ -300,7 +363,7 @@ class AcoshTest(jtu.JaxTestCase):
         mpmath.acosh,
         dtype,
         bounds=bounds,
-        interesting_points=[math.cosh(1.0)],
+        interesting_points=interesting_points,
     )
 
 
@@ -343,6 +406,26 @@ class AsinhTest(jtu.JaxTestCase):
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 62.5}),
         (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 3.5}),
     ]
+    interesting_points = [
+        -math.sinh(1.0),
+        math.sinh(1.0),
+        # Worst-case inputs across math libraries from Gladman et al.:
+        *(
+            float.fromhex(h)
+            for h in (
+                "-0x1.7137449123ef7p-26",
+                "-0x1.000276d9cf31ap-4",
+                "0x1.005ae8d126f7ep+0",
+                "-0x1.02657ff36d5f3p-2",
+                "-0x1.0240f2bdb3f25p-2",
+                "-0x1.fdefd03df4cd7p-3",
+                "-0x1.00212bb59c31ep-4",
+                "-0x1.000eeed78380ap+0",
+                "-0x1.8190e51c77d16p-1",
+                "0x1.2aab2f0a9d9dp-2",
+            )
+        ),
+    ]
     util.check_unary_precision(
         self,
         jnp.asinh,
@@ -350,7 +433,7 @@ class AsinhTest(jtu.JaxTestCase):
         mpmath.asinh,
         dtype,
         bounds=bounds,
-        interesting_points=[-math.sinh(1.0), math.sinh(1.0)],
+        interesting_points=interesting_points,
     )
 
 
@@ -389,6 +472,26 @@ class AtanhTest(jtu.JaxTestCase):
         ("tpu_v5p", {f16: 1.0, f32: 43.0}),
         (["tpu_v6e", "tpu_7x"], {f32: 3.5}),
     ]
+    interesting_points = [
+        -math.tanh(1.0),
+        math.tanh(1.0),
+        # Worst-case inputs across math libraries from Gladman et al.:
+        *(
+            float.fromhex(h)
+            for h in (
+                "0x1.a6a58d55e307bp-26",
+                "-0x1.e2cfb2667f17ep-9",
+                "-0x1.d8fb311a52173p-2",
+                "-0x1.f97fabc0650c4p-4",
+                "-0x1.f8a404597baf4p-4",
+                "0x1.ffd834a270fp-10",
+                "-0x1.ffbe8dd88527fp-9",
+                "-0x1.e7c1f36602014p-4",
+                "-0x1.f586714622a66p-3",
+                "-0x1.2493fecd07e5p-3",
+            )
+        ),
+    ]
     util.check_unary_precision(
         self,
         jnp.atanh,
@@ -396,7 +499,7 @@ class AtanhTest(jtu.JaxTestCase):
         mpmath.atanh,
         dtype,
         bounds=bounds,
-        interesting_points=[-math.tanh(1.0), math.tanh(1.0)],
+        interesting_points=interesting_points,
     )
 
 

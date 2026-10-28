@@ -2939,6 +2939,40 @@ class HijaxTest(jtu.JaxTestCase):
     f(x, y)
     jax.jit(jax.grad(f))(x, y)
 
+  def test_remat_hitype_in_and_out(self):
+    x = jnp.array([1.0, 2.0, 3.0, 4.0])
+    y = jnp.array([5.0, 6.0])
+    c = make_tup(jnp.full(4, 2.0), jnp.full(2, 3.0))
+
+    @jax.remat
+    def passthrough(tup):
+      return tup
+
+    pt = jax.jit(passthrough)(make_tup(x, y))
+    self.assertAllClose(get_tuple_element(pt, 0), x)
+    self.assertAllClose(get_tuple_element(pt, 1), y)
+
+    @partial(jax.remat, prevent_cse=(True, False))
+    def step(tup, scale):
+      x_ = get_tuple_element(tup, 0) * get_tuple_element(c, 0) * scale
+      y_ = get_tuple_element(tup, 1) + get_tuple_element(c, 1)
+      return make_tup(x_, y_)
+
+    def loss(x, y, scale):
+      out = step(make_tup(x, y), scale)
+      x_ = get_tuple_element(out, 0)
+      y_ = get_tuple_element(out, 1)
+      return jnp.sum(x_ + jnp.concatenate((y_, y_)))
+
+    out_tup = jax.jit(step)(make_tup(x, y), 2.0)
+    self.assertAllClose(get_tuple_element(out_tup, 0), x * 4.0)
+    self.assertAllClose(get_tuple_element(out_tup, 1), y + 3.0)
+
+    dx, dy, dscale = jax.jit(jax.grad(loss, argnums=(0, 1, 2)))(x, y, 2.0)
+    self.assertAllClose(dx, jnp.full(4, 4.0))
+    self.assertAllClose(dy, jnp.full(2, 2.0))
+    self.assertAllClose(dscale, jnp.sum(x * 2.0))
+
   @jtu.with_explicit_mesh((2,), 'x')
   def test_shmap_grad_hitype(self, mesh):
     class Mul(HiPrim):

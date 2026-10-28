@@ -412,6 +412,11 @@ def _traced_out_info(self):
 # function and argument types, so that those Traceds get the same `fun`, and
 # thus tracing cache hits when `fun` is traced (e.g. in `with_consts_as_arg`).
 @util.weakref_lru_cache
+def _flat_closure_converted_fun(jaxpr):
+  jaxpr = jaxpr.replace(consts=None)
+  return lambda consts, *args: core.eval_jaxpr_p.bind(*consts, *args, call_jaxpr=jaxpr)
+
+@util.weakref_lru_cache
 def _closure_converted_fun(jaxpr, consts_tree, in_tree, out_tree):
   jaxpr = jaxpr.replace(consts=None)
   in_tree = tree_util.treedef_tuple_tracing_registry(
@@ -489,19 +494,17 @@ class Traced(Stage):
     return self._closure_converted
 
   def with_consts_as_arg(self) -> tuple[list[Any], Traced]:
-    """Returns consts and an equivalent Traced taking them as one leading argument.
+    """Returns consts and an equivalent flat Traced taking them as one leading argument.
 
-    Built on ``closure_convert``: the converted function is re-traced with the
-    consts environment as a single leading argument, so that the tracing
-    machinery reconstructs all per-argument bookkeeping consistently. The
-    non-const argument types are taken from this Traced. The retrace stages a
-    single call eqn, not a re-trace of the original function.
+    The returned Traced takes ``(consts, *args_flat)`` and returns a flat list,
+    where ``args_flat`` are this Traced's flattened arguments, so that argument
+    and result pytrees are never rebuilt around types. Its trace stages a single
+    call eqn, not a re-trace of the original function.
     """
     from jax._src.api import jit  # type: ignore
-    consts, fun = self.closure_convert()
+    consts = [*self.jaxpr.consts, *self._consts]
     arg_avals = self.jaxpr.in_avals[len(self._consts):]
-    args, kwargs = tree_unflatten(self.in_tree, arg_avals)
-    traced = jit(fun).trace(consts, *args, **kwargs)
+    traced = jit(_flat_closure_converted_fun(self.jaxpr)).trace(consts, *arg_avals)
     jaxpr = traced.jaxpr
     if (not jaxpr.consts and len(jaxpr.eqns) == 1 and
         (eqn := jaxpr.eqns[0]).primitive is core.eval_jaxpr_p and

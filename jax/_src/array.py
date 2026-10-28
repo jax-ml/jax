@@ -1144,6 +1144,122 @@ def _get_aval_array(self):
 core.pytype_aval_mappings[ArrayImpl] = _get_aval_array
 
 
+class UnreducedShard(Shard):
+  def __init__(self, lo_shard: Shard, sharding: Sharding, global_shape: Shape):
+    super().__init__(lo_shard.device, sharding, global_shape)
+    self._lo_shard = lo_shard
+
+  @property
+  def replica_id(self) -> int:
+    return self._lo_shard.replica_id
+
+  @functools.cached_property
+  def data(self):
+    if (d := self._lo_shard.data) is None:
+      return None
+    k = len(self._sharding.spec.unreduced)  # type: ignore
+    assert d.shape[:k] == (1,) * k, (d.shape, k)
+    with (_internal_use_concrete_mesh(empty_concrete_mesh),
+          use_abstract_mesh(empty_abstract_mesh)):
+      return d.reshape(d.shape[k:])
+
+
+class UnreducedArray(basearray.Array):
+  __array_priority__ = 1000
+  __slots__ = ['_hi_aval', '_lo_val']
+  __hash__ = None
+
+  def __init__(self, hi_aval: core.ShapedArray, lo_val: Any):
+    self._hi_aval = hi_aval
+    self._lo_val = lo_val
+
+  def _is_traced_array(self) -> bool:
+    return True
+
+  aval = property(lambda self: self._hi_aval)
+  shape = property(lambda self: self._hi_aval.shape)
+  dtype = property(lambda self: self._hi_aval.dtype)
+  ndim = property(lambda self: self._hi_aval.ndim)
+  size = property(lambda self: self._hi_aval.size)
+  weak_type = property(lambda self: self._hi_aval.weak_type)
+  _committed = property(lambda self: self._lo_val._committed)
+  committed = property(lambda self: self._lo_val.committed)
+  device = property(lambda self: self._lo_val.device)
+  is_fully_addressable = property(lambda self: self._lo_val.is_fully_addressable)
+  is_fully_replicated = property(lambda self: self.sharding.is_fully_replicated)
+
+  def devices(self):
+    return self._lo_val.devices()
+
+  def delete(self):
+    self._lo_val.delete()
+
+  def is_deleted(self):
+    return self._lo_val.is_deleted()
+
+  @property
+  def sharding(self):
+    spec = self._hi_aval.sharding.spec
+    lo_s = self._lo_val.sharding
+    assert isinstance(lo_s, NamedSharding), lo_s
+    spec = spec.update(partitions=lo_s.spec.partitions[len(spec.unreduced):])
+    return lo_s.update(spec=spec)
+
+  @property
+  def format(self):
+    lo_f = getattr(self._lo_val, 'format', None)
+    return Format(lo_f.layout, self.sharding) if lo_f is not None else None
+
+  @property
+  def addressable_shards(self):
+    s = self.sharding
+    return [UnreducedShard(sh, s, self.shape)
+            for sh in self._lo_val.addressable_shards]
+
+  @property
+  def global_shards(self):
+    s = self.sharding
+    return [UnreducedShard(sh, s, self.shape)
+            for sh in self._lo_val.global_shards]
+
+  def addressable_data(self, index: int):
+    return self.addressable_shards[index].data
+
+  def block_until_ready(self):
+    self._lo_val.block_until_ready()
+    return self
+
+  def copy_to_host_async(self):
+    self._lo_val.copy_to_host_async()
+
+  @property
+  def _value(self) -> np.ndarray:
+    raise RuntimeError(
+        "Fetching value for `jax.Array` that is unreduced is not allowed.")
+
+  def __array__(self, dtype=None, context=None, copy=None):
+    del context, copy
+    return np.asarray(self._value, dtype=dtype)
+
+  def __len__(self):
+    if self.ndim == 0:
+      raise TypeError("len() of unsized object")
+    return self.shape[0]
+
+  def __iter__(self):
+    if self.ndim == 0:
+      raise TypeError("iteration over a 0-d array")
+    return (self[i] for i in range(self.shape[0]))
+
+  def __repr__(self):
+    wt = ', weak_type=True' if self.aval.weak_type else ''
+    return f"Array(shape={self.shape}, dtype={self.dtype.name}{wt}, sharding={self.sharding})"
+
+
+core.pytype_aval_mappings[UnreducedArray] = lambda x: x._hi_aval
+dtypes.register_canonicalize_value_handler(UnreducedArray, lambda x: x)
+
+
 def _array_mlir_constant_handler(val, aval):
   try:
     return mlir.ir_constant(val._value)

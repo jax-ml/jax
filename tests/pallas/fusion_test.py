@@ -24,6 +24,7 @@ from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
 from jax._src.pallas.fuser import fusible_dtype
+from jax._src.pallas.fuser.fusible import disable_nested_fuse
 from jax.experimental.pallas import fuser
 import jax.numpy as jnp
 import numpy as np
@@ -130,6 +131,57 @@ class FusionTest(jtu.JaxTestCase):
     x = jnp.ones((4, 4), dtype=jnp.float32)
     np.testing.assert_allclose(cached_inner(x), x + 1.0)
     np.testing.assert_allclose(outer_cached(x), (x + 1.0) * 2.0)
+
+  def test_fuse_traces_jit_inside_fusible_once(self):
+    num_traces = 0
+
+    @jax.jit
+    def scale(x):
+      nonlocal num_traces
+      num_traces += 1
+      return x * 3.0
+
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      x = scale(x_fn())
+      if y_fn is None:
+        return x
+      return y_fn(x)
+
+    @fuser.fuse
+    def g(x):
+      return f(x) + 1.0
+
+    x = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    jaxpr = jax.make_jaxpr(g)(x)
+    # `fuse` traces the kernel wrapper twice: once to find the fusible and once
+    # to build the fused kernel. Both must share the jit trace cache.
+    self.assertEqual(num_traces, 1)
+    self.assertEqual([eqn.primitive.name for eqn in jaxpr.eqns], ['jit', 'add'])
+    np.testing.assert_allclose(
+        g(jnp.ones((8, 128), jnp.float32)), jnp.full((8, 128), 4.0)
+    )
+
+  def test_nested_fuse_disabled_only_while_finding_fusible(self):
+    seen = []
+
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      seen.append(('f', disable_nested_fuse.value))
+      x = x_fn()
+      if y_fn is None:
+        return x
+      return y_fn(x)
+
+    def body(x):
+      seen.append(('body', disable_nested_fuse.value))
+      return f(x) * 2.0
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    np.testing.assert_allclose(fuser.fuse(body)(x), x * 2.0)
+    # The body is traced with nested fusion disabled, while both traces of the
+    # kernel wrapper run with it enabled.
+    self.assertEqual(seen, [('body', True), ('f', False), ('f', False)])
 
   def test_separate_output_fusions_trivial(self):
 

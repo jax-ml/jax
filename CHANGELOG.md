@@ -17,6 +17,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added `jax.lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3` and
+    `F8E4M3FN_F8E4M3FN_F32_X4` dot algorithm presets (requiring `jaxlib` >= 514)
+    for emulating `bfloat16` precision matmuls on `bfloat16` or `float32` inputs
+    using 3 or 4 `float8_e4m3fn` dot products accumulated in `float32`.
   * {func}`jax.dlpack.from_dlpack` now accepts `Format` in its `device` argument
     to specify device-local layouts (such as linear layout `tiling=((1,),)` for
     `kDLTPUHost` buffers) and supports `copy=None` fallback for `kDLTPUHost`.
@@ -28,6 +32,32 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The `jax_use_shardy_partitioner` configuration flag is deprecated and is now
     a no-op. JAX always lowers to Shardy, and the flag will be removed in a
     future release.
+
+* Changes
+  * JAX now uses Bazel 9.3.1 to build from source.
+  * On GPU and TPU, `accumulate` for {func}`jax.numpy.bitwise_and`,
+    {func}`jax.numpy.bitwise_or`, {func}`jax.numpy.bitwise_xor`,
+    {func}`jax.numpy.logical_and`, {func}`jax.numpy.logical_or`,
+    {func}`jax.numpy.logical_xor`, {func}`jax.numpy.maximum` and
+    {func}`jax.numpy.minimum` now uses a parallel prefix scan for integer and
+    boolean outputs, which is much faster for long axes ({jax-issue}`#28097`).
+
+* Bug fixes
+  * {func}`jax.scipy.linalg.polar` with `method="qdwh"` now honors
+    `max_iterations` and accepts `eps`, as documented; previously
+    `max_iterations` was silently ignored and any `eps` raised a `ValueError`.
+    Both arguments are now static, so passing a traced value for either raises
+    an error.
+  * Fixed {func}`jax.numpy.modf` returning `nan` as the fractional part for
+    infinite inputs; it now returns a signed zero, matching NumPy
+    ({jax-issue}`#41102`).
+
+## JAX 0.12.0.1 (October 23, 2026)
+
+* Bug fixes
+  * Built C++-generated intrinsic LLVM IR on Windows with `clang-cl` instead of
+    emitting empty bitcode, enabling vectorized CPU intrinsics on Windows
+    (https://github.com/openxla/xla/commit/3af77b5776fbc41a65d54876cc837bdc57540005).
 
 ## JAX 0.12.0 (October 19, 2026)
 

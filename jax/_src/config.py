@@ -1507,7 +1507,7 @@ use_simplified_jaxpr_constants = bool_state(
 
 embedded_constants_max_bytes = int_state(
     name='jax_embedded_constants_max_bytes',
-    default=32,
+    default=1024,
     help=('Maximum size in bytes of a constant that is allowed to be '
           'embedded in the lowered HLO. Constants larger than this '
           'are hoisted as additional arguments to the executable. '
@@ -1919,8 +1919,9 @@ default_matmul_precision = optional_enum_state(
         'ANY_F8_ANY_F8_F32', 'ANY_F8_ANY_F8_F32_FAST_ACCUM', 'ANY_F8_ANY_F8_ANY',
         'ANY_F8_ANY_F8_ANY_FAST_ACCUM', 'F16_F16_F16', 'F16_F16_F32',
         'BF16_BF16_BF16', 'BF16_BF16_F32', 'BF16_BF16_F32_X3',
-        'BF16_BF16_F32_X6', 'BF16_BF16_F32_X9', 'TF32_TF32_F32',
-        'TF32_TF32_F32_X3', 'F32_F32_F32', 'F64_F64_F64',
+        'BF16_BF16_F32_X6', 'BF16_BF16_F32_X9', 'F8E4M3FN_F8E4M3FN_F32_X3',
+        'F8E4M3FN_F8E4M3FN_F32_X4', 'TF32_TF32_F32', 'TF32_TF32_F32_X3',
+        'F32_F32_F32', 'F64_F64_F64',
     ],
     default=None,
     help=('Control the default matmul and conv precision for 32bit inputs.\n\n'
@@ -2512,6 +2513,14 @@ jax_accurate_erf_inv = bool_state(
         'Temporary flag enabling more accurate erf_inv lowering near'
         ' ``|x| = 1``.'
     ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+hijax_unreduced = bool_state(
+    name='hijax_unreduced',
+    default=False,
+    help='Lower unreduced shardings via HiJAX instead of MLIR/Shardy.',
     include_in_jit_key=True,
     include_in_trace_context=True,
 )

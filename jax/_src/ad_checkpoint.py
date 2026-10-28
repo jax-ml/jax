@@ -855,13 +855,17 @@ def _remat_is_high(*_, jaxpr, **__) -> bool:
 remat_p.is_high = _remat_is_high
 
 
-def _remat_to_lojax(*hi_args, jaxpr, **kwds):
+def _remat_to_lojax(*hi_args, jaxpr, prevent_cse, **kwds):
   closed_lo_jaxpr = pe.lower_jaxpr2(jaxpr)
-  lo_args = [lo_val for aval, x in zip(jaxpr.in_avals, hi_args)
-             for lo_val in aval.lower_val(x)]
+  lo_args_lol = [aval.lower_val(x) for aval, x in zip(jaxpr.in_avals, hi_args)]
   lo_jaxpr = pe.convert_constvars_jaxpr(closed_lo_jaxpr)
-  lo_args = (*closed_lo_jaxpr.consts, *lo_args)
-  return remat_p.bind(*lo_args, jaxpr=lo_jaxpr, **kwds)
+  if isinstance(prevent_cse, tuple):
+    prevent_cse = (
+        (False,) * len(closed_lo_jaxpr.consts) +
+        tuple(p for p, xs in zip(prevent_cse, lo_args_lol) for _ in xs))
+  lo_args = (*closed_lo_jaxpr.consts, *(x for xs in lo_args_lol for x in xs))
+  lo_outs = remat_p.bind(*lo_args, jaxpr=lo_jaxpr, prevent_cse=prevent_cse, **kwds)
+  return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
 remat_p.to_lojax = _remat_to_lojax
 
 

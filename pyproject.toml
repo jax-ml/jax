@@ -45,7 +45,7 @@ doctest_optionflags = [
     "NUMBER",
     "NORMALIZE_WHITESPACE"
 ]
-addopts = "--doctest-glob='*.rst' --ignore='examples/ffi' --import-mode=importlib"
+addopts = "--doctest-glob='*.rst' --ignore='examples/ffi' --ignore='tests/numerics' --import-mode=importlib"
 
 [tool.pyrefly]
 python-version = "3.13"

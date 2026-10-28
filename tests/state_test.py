@@ -2142,6 +2142,23 @@ class PinnedBuffersTest(jtu.JaxTestCase):
       y = f(x)
       self.assertAllClose(y, x)
 
+  @parameterized.parameters(("vmem", "1"), ("hbm", "0"))
+  def test_pin_memory_space_colors(self, to, expected_color):
+    @jax.jit
+    def f(x):
+      return unpin(pin(x, to=to))
+
+    x = jnp.arange(3.0)
+    txt = f.lower(x).as_text("hlo")
+    self.assertRegex(
+        txt,
+        rf"input_memory_space_colors.*operand_index.*0.*color.*{expected_color}",
+    )
+    self.assertRegex(
+        txt,
+        rf"output_memory_space_colors.*color.*{expected_color}",
+    )
+
   def test_new_ref_pinned(self):
     @jax.jit
     def f(x):
@@ -2206,6 +2223,32 @@ class PinnedBuffersTest(jtu.JaxTestCase):
   def test_new_ref_pinned_eager_error(self):
     with self.assertRaises(NotImplementedError):
       jax.new_ref(jnp.arange(3.), pin=True)
+
+  def test_new_ref_pinned_get_swap_addupdate(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41846
+    def f(x):
+      ref = jax.new_ref(x, pin=True)
+      ref[...] = ref[...] + 1.0
+      ref[0] = ref[0] + 2.0
+      ref_addupdate(ref, (), jnp.full_like(x, 3.0))
+      return jax.ref.freeze(ref)
+
+    x = jnp.arange(6.0, dtype=jnp.float32).reshape(2, 3)
+    expected = (x + 1.0).at[0].add(2.0) + 3.0
+    jaxpr = jax.make_jaxpr(f)(x)
+    discharged = discharge_state(jaxpr)
+    prims = [e.primitive.name for e in discharged.eqns]
+    self.assertEqual(prims.count("pin"), 6)
+    self.assertEqual(prims.count("unpin"), 6)
+
+    jitted_f = jax.jit(f)
+    txt = jitted_f.lower(x).as_text("hlo")
+    self.assertEqual(txt.count('custom_call_target="Pin"'), 5)
+    self.assertEqual(txt.count('custom_call_target="Unpin"'), 5)
+
+    if jtu.test_device_matches(["gpu", "tpu"]):
+      y = jitted_f(x)
+      self.assertAllClose(y, expected)
 
   def test_discharged_aval_non_ref_preserves_memory_space(self):
     aval = core.ShapedArray((3,), jnp.float32, memory_space=core.MemorySpace.Host)

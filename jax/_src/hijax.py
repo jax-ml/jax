@@ -29,6 +29,7 @@ from jax._src import effects
 from jax._src.api_util import (
     resolve_kwargs, infer_argnums_and_argnames, debug_info, is_hashable,
     dyn_args_fun, WrapHashably)
+from jax._src import flattree as ft
 from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
 from jax._src import stages
@@ -50,8 +51,8 @@ from jax._src.util import (
     fun_name, unzip2)
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
-    broadcast_prefix, register_static, register_pytree_node,
-    tree_flatten_with_path, keystr, tracing_registry)
+    broadcast_flattened_prefix_with_treedef, register_static, register_pytree_node,
+    keystr, tracing_registry)
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -783,6 +784,12 @@ vjp_from_jvp = _VJPFromJVP(_vjp_fwd_from_jvp, _transpose_jvp)
 vjp_from_lin = _VJPFromLin(_vjp_fwd_from_lin, _transpose_linearized)
 
 
+# Residuals cross the HiPrim boundary flat, never in user pytree nodes.
+def _flatten_out_res(out, res):
+  res_flat, res_tree = tracing_registry.flatten(res)
+  return tracing_registry.flatten(out)[0], (res_flat, Static(res_tree))
+
+
 class CustomVJPTraced(HiPrim):
   """Applications take ``(consts, fwd_consts, *args)``.
 
@@ -798,8 +805,8 @@ class CustomVJPTraced(HiPrim):
   ``(consts, *args)``; ``drop_fwd_consts`` maps the application signature
   onto it.
 
-  The rules take arguments structured like the application's, with ``Static``
-  leaves for nondiff arguments and internal symbolic zeros:
+  The rules take arguments structured like the application's, with flat leaves
+  for the user's non-static arguments and internal symbolic zeros:
   ``fwd(nzs_in, *args)`` returns primal outputs and residuals, and
   ``bwd(res, out_ct)`` returns cotangents for ``args[2:]`` and a dict of logs
   (or None). ``custom_vjp3`` builds them from the user's rules with
@@ -852,8 +859,7 @@ class CustomVJPTraced(HiPrim):
     return params
 
   def expand(self, *args):
-    args = self.drop_fwd_consts(*args)
-    return self.traced(*[x for x in args if not isinstance(x, Static)])
+    return self.traced(*self.drop_fwd_consts(*args))
 
   def physicalize_self(self, ctx):
     phys = lambda f: update_wrapper(lambda *args: ctx.physicalize(f)(*args), f)
@@ -915,8 +921,7 @@ class CustomVJPTraced(HiPrim):
     traced, out_dims_flat = self.traced._batch(
         axis_data, _tuptree_axes(self.drop_fwd_consts(*dims), primal_in_tree))
     out_dims = api.mirror_tree_map(lambda x: x, self.out_tree, out_dims_flat)
-    ct_dims = tree_map(lambda d: batching.sum_axis if d is None else d, dims[2:],
-                       is_leaf=lambda x: x is None)
+    ct_dims = tuple(batching.sum_axis if d is None else d for d in dims[2:])
     take_first = self.generic_batching and None in out_dims_flat
 
     def vmap_fwd(f, in_dims, *args):
@@ -992,42 +997,39 @@ class CustomVJPTraced(HiPrim):
                              disallow_ref_accums=self.disallow_ref_accums)
     return out, res, lambda res, consts, fc, *rest: helper(consts, (fc, res), *rest)
 
-def _custom_vjp_fwd(traced, fwd, symbolic_zeros):
+def _custom_vjp_fwd(traced, fwd, symbolic_zeros, args_ft):
   """A user's custom_vjp fwd rule, called like ``CustomVJPTraced.fwd``."""
-  out_tree = tracing_registry.flatten(traced.out_avals)[1]
+  out_tree = traced.out_tree
   def rule(nzs_in, *args):
     args = tree_map(lambda x: core.stage_p.bind(x) if not isinstance(x, core.Array) and type(x) in core.literalable_types else x, args)
+    args_ = args[2:]
     if symbolic_zeros:
-      args_flat, args_tree = tree_flatten(args)
-      args = tree_unflatten(
-          args_tree, map(CustomVJPPrimal, args_flat,
-                         api.tuptree_flags(nzs_in, args_tree, 'nzs_in', 'fwd nzs_in')))
-    args_ = tuple(x.val if isinstance(x, Static) else x for x in args)
-    out, res = fwd(*args_[2:])
+      args_ = map(CustomVJPPrimal, args_, nzs_in[2:])
+    out, res = fwd(*args_ft.update(args_).unflatten())
     if config.mutable_array_checks.value:
       _check_for_returned_refs(fwd, (out, res), "fwd", tree_leaves(args),
                                out_tree.num_leaves)
-    if ((tree := tracing_registry.flatten(out)[1]) != out_tree):
+    path_leaves, tree = tracing_registry.flatten_with_path(out)
+    if tree != out_tree:
       raise TypeError(_vjp_primal_fwd_tree_mismatch_err(fwd, traced, tree, out_tree))
-    path_avals, treedef = tree_flatten_with_path(traced.out_avals)
-    for (p, a), x in zip(path_avals, treedef.flatten_up_to(out)):
+    for (p, x), a in zip(path_leaves, traced.jaxpr.out_avals):
       _vjp_fwd_aval_mismatch_err(p, a, x)
-    return out, res
+    return _flatten_out_res(out, res)
   rule.__name__ = fun_name(fwd)
   return rule
 
-def _bwd_out_ct(out_ct, symbolic_zeros):
-  leaf = lambda x: isinstance(x, ad_util.Zero)
-  if symbolic_zeros:
-    return tree_map(ad_util.replace_internal_symbolic_zeros, out_ct, is_leaf=leaf)
-  return tree_map(ad_util.instantiate, out_ct, is_leaf=leaf)
+def _bwd_out_ct(out_tree, out_ct, symbolic_zeros):
+  inst = ad_util.replace_internal_symbolic_zeros if symbolic_zeros else ad_util.instantiate
+  return tree_unflatten(out_tree, map(inst, out_ct))
 
-def _custom_vjp_bwd_accums(bwd, in_avals, symbolic_zeros):
+def _custom_vjp_bwd_accums(traced, bwd, args_ft, symbolic_zeros):
   """A user's defvjp_with_accums bwd rule, called like ``CustomVJPTraced.vjp_bwd``."""
-  static_args = tuple(x.val for x in in_avals[2:] if isinstance(x, Static))
+  static_args = tuple(x.val for x in args_ft.unpack() if isinstance(x, ft.FTStatic))
   def rule(res, out_ct, *arg_accums):
-    logs = bwd(*static_args, res, _bwd_out_ct(out_ct, symbolic_zeros),
-               *[a for a in arg_accums if not isinstance(a, Static)])
+    logs = bwd(*static_args, tree_unflatten(res[1].val, res[0]),
+               _bwd_out_ct(traced.out_tree, out_ct, symbolic_zeros),
+               *[a.unflatten() for a in args_ft.update(arg_accums).unpack()
+                 if not isinstance(a, ft.FTStatic)])
     if logs is not None and type(logs) is not dict:
       raise TypeError(
           f"Custom VJP bwd rule {bwd} was registered with defvjp_with_accums, "
@@ -1037,22 +1039,23 @@ def _custom_vjp_bwd_accums(bwd, in_avals, symbolic_zeros):
   rule.__name__ = fun_name(bwd)
   return rule
 
-def _custom_vjp_bwd(traced, bwd, in_avals, symbolic_zeros, with_logs,
+def _custom_vjp_bwd(traced, bwd, in_avals, paths_ft, symbolic_zeros, with_logs,
                     bwd_accums=None):
   """A user's custom_vjp bwd rule, called like ``CustomVJPTraced.bwd``."""
-  in_avals = in_avals[2:]
-  in_avals_flat, in_tree = tracing_registry.flatten(in_avals)
+  in_avals_flat = in_avals[2:]
   if bwd_accums is not None:
     def accums_rule(res, out_ct):
       accums = [ad.ValAccum(_ref_inner_aval(a).to_ct_aval()) for a in in_avals_flat]
-      logs = bwd_accums(res, out_ct, *tree_unflatten(in_tree, accums))
-      return tree_unflatten(in_tree, [a.freeze() for a in accums]), logs
+      logs = bwd_accums(res, out_ct, *accums)
+      return tuple(a.freeze() for a in accums), logs
     accums_rule.__name__ = fun_name(bwd)
     return accums_rule
-  static_args = tuple(x.val for x in in_avals if isinstance(x, Static))
-  in_avals_ = tuple(x for x in in_avals if not isinstance(x, Static))
+  static_args = tuple(x.val for x in paths_ft.unpack() if isinstance(x, ft.FTStatic))
+  dyn_tree = ft.pack(tuple(x for x in paths_ft.unpack()
+                           if not isinstance(x, ft.FTStatic))).tree
   def rule(res, out_ct):
-    in_cts = bwd(*static_args, res, _bwd_out_ct(out_ct, symbolic_zeros))
+    in_cts = bwd(*static_args, tree_unflatten(res[1].val, res[0]),
+                 _bwd_out_ct(traced.out_tree, out_ct, symbolic_zeros))
     logs = None
     if with_logs:
       if not (isinstance(in_cts, (list, tuple)) and len(in_cts) == 2):
@@ -1072,14 +1075,18 @@ def _custom_vjp_bwd(traced, bwd, in_avals, symbolic_zeros, with_logs,
     if not isinstance(in_cts, tuple):
       raise TypeError(f"Custom VJP bwd rule {bwd} must produce a tuple "
                       f"but got {type(in_cts)}.")
-    if len(in_cts) != len(in_avals_):
+    if len(in_cts) != len(dyn_tree.children()):
       raise ValueError(f"Custom VJP bwd rule {bwd} must produce a tuple "
                        "of length equal to the primal args tuple, but got "
                        f"length {len(in_cts)}")
-    in_cts = broadcast_prefix(in_cts, in_avals_, is_leaf=lambda x: x is None)
-    in_cts = tree_unflatten(in_tree, map(_replace_none, in_avals_flat, in_cts))
-    path_avals, treedef = tree_flatten_with_path(in_avals)
-    for (p, a), ct in zip(path_avals, treedef.flatten_up_to(in_cts)):
+    cts_flat, cts_tree = tracing_registry.flatten(in_cts, lambda x: x is None)
+    try:
+      in_cts = broadcast_flattened_prefix_with_treedef(cts_flat, cts_tree, dyn_tree)
+    except ValueError as e:
+      raise ValueError(f"Custom VJP bwd rule {bwd} output structure {cts_tree} "
+                       f"isn't a prefix of the args' {dyn_tree}") from e
+    in_cts = tuple(map(_replace_none, in_avals_flat, in_cts))
+    for p, a, ct in zip(paths_ft, in_avals_flat, in_cts):
       _vjp_bwd_aval_mismatch_err(traced._fun_sourceinfo, p, a, ct)
     if symbolic_zeros:
       in_cts = tree_map(ad_util.replace_rule_output_symbolic_zeros, in_cts)
@@ -1214,29 +1221,33 @@ class custom_vjp3:
           " the check outside the custom_vjp decorator, or in the fwd/bwd"
           " rules."
       )
-    args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
-    consts, traced = traced.with_consts_as_arg()
+    args_ft, _ = ft.flatten_static_argnums_argnames(args, {}, self.static_argnums, ()).unpack()
+    # args_ft with the key paths of its leaves, for the rules and error messages
+    paths_ft = args_ft.update(p for p, _ in tracing_registry.flatten_with_path(
+        tuple(None if i in self.static_argnums else x for i, x in enumerate(args)))[0])
+    consts, flat_traced = traced.with_consts_as_arg()
     fwd, bwd, with_logs = self.fwd, self.bwd, self.with_logs
     if fwd is None:
       assert self.remat_rules is not None  # checked above
       fwd, bwd, with_logs = _vjp_from_remat_rules(*self.remat_rules)
-    in_avals = tree_map(typeof, (consts, (), *args))
+    in_avals = tree_map(typeof, (consts, (), *args_ft))
     remat_rules = None
     if self.remat_rules is not None:
       rfwd, rrem, rbwd, rlogs = self.remat_rules
-      unwrap = lambda args: [x.val if isinstance(x, Static) else x for x in args[2:]]
+      unwrap = lambda args: paths_ft.update(args[2:]).unflatten()
       remat_rules = (
-          update_wrapper(lambda *args: tuple(rfwd(*unwrap(args))), rfwd),
-          update_wrapper(lambda res, *args: tuple(rrem(res, *unwrap(args))), rrem),
-          _custom_vjp_bwd(traced, rbwd, in_avals, False, rlogs))
-    bwd_accums = (_custom_vjp_bwd_accums(bwd, in_avals, self.symz)
+          update_wrapper(lambda *args: _flatten_out_res(*rfwd(*unwrap(args))), rfwd),
+          update_wrapper(lambda res, *args: _flatten_out_res(
+              *rrem(tree_unflatten(res[1].val, res[0]), *unwrap(args))), rrem),
+          _custom_vjp_bwd(traced, rbwd, in_avals, paths_ft, False, rlogs))
+    bwd_accums = (_custom_vjp_bwd_accums(traced, bwd, paths_ft, self.symz)
                   if self.with_accums else None)
     prim = CustomVJPTraced(
-        traced, _custom_vjp_fwd(traced, fwd, self.symz),
-        _custom_vjp_bwd(traced, bwd, in_avals, self.symz, with_logs, bwd_accums),
+        flat_traced, _custom_vjp_fwd(traced, fwd, self.symz, paths_ft),
+        _custom_vjp_bwd(traced, bwd, in_avals, paths_ft, self.symz, with_logs, bwd_accums),
         in_avals, self.symz, self.opt_remat, with_logs, remat_rules, bwd_accums,
         generic_batching=self.generic_batching)
-    return prim(consts, (), *args)
+    return tree_unflatten(traced.out_tree, prim(consts, (), *args_ft))
 
 def _vjp_from_remat_rules(remat_fwd, rem, bwd, with_logs):
   # Not under jax.remat, run rem right after fwd on the forward pass, saving what
@@ -1315,7 +1326,6 @@ class CustomJVPTraced(HiPrim):
                 jvp=fun_name(self.jvp_rule), symbolic_zeros=self.symbolic_zeros)
 
   def expand(self, *args):
-    args = [x for x in args if not isinstance(x, Static)]
     return self.traced(*args)
 
   def physicalize(self, ctx, *args):
@@ -1366,22 +1376,19 @@ class CustomJVPTraced(HiPrim):
   def check(self, *_):
     check_custom_effects(self.traced.jaxpr.effects, 'custom_jvp')
 
-def _custom_jvp_rule(traced, jvp_fun, symbolic_zeros, static_argnums):
+def _custom_jvp_rule(traced, jvp_fun, symbolic_zeros, static_argnums, args_ft):
   """A user's custom_jvp rule, called like ``CustomJVPTraced.jvp_rule``."""
-  out_avals_flat, out_tree = tracing_registry.flatten(traced.out_avals)
+  out_avals_flat, out_tree = traced.jaxpr.out_avals, traced.out_tree
   primal_name, jvp_name = traced.fun_name, getattr(jvp_fun, '__name__', str(jvp_fun))
+  inst = (ad_util.replace_internal_symbolic_zeros if symbolic_zeros
+          else ad_util.instantiate)
   def rule(primals, tangents):
-    primals, tangents = primals[1:], tangents[1:]
-    unwrap = lambda x: x.val if isinstance(x, Static) else x
-    static_args = tuple(unwrap(x) for i, x in enumerate(primals) if i in static_argnums)
-    primals_ = tuple(x for i, x in enumerate(primals) if i not in static_argnums)
-    tangents_ = tuple(t for i, t in enumerate(tangents) if i not in static_argnums)
-    zero = lambda x: isinstance(x, ad_util.Zero)
-    if symbolic_zeros:
-      tangents_ = tree_map(ad_util.replace_internal_symbolic_zeros, tangents_,
-                           is_leaf=zero)
-    else:
-      tangents_ = tree_map(ad_util.instantiate, tangents_, is_leaf=zero)
+    primals = args_ft.update(primals[1:]).unpack()
+    tangents = args_ft.update(tangents[1:]).unpack()
+    static_args = tuple(x.unflatten() for i, x in enumerate(primals) if i in static_argnums)
+    primals_ = tuple(x.unflatten() for i, x in enumerate(primals) if i not in static_argnums)
+    tangents_ = tuple(t.map(inst).unflatten() for i, t in enumerate(tangents)
+                      if i not in static_argnums)
     pair_out = jvp_fun(*static_args, primals_, tangents_)
     if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
       raise TypeError(
@@ -1403,7 +1410,7 @@ def _custom_jvp_rule(traced, jvp_fun, symbolic_zeros, static_argnums):
     _jvp_check_tangent_avals(out_tree, out, out_tangent)
     out_tangent = tree_map(ad_util.replace_rule_output_symbolic_zeros,
                            out_tangent, is_leaf=zero_)
-    return out, out_tangent
+    return out_tree.flatten_up_to(out), out_tree.flatten_up_to(out_tangent)
   rule.__name__ = fun_name(jvp_fun)
   return rule
 
@@ -1532,12 +1539,13 @@ class custom_jvp3:
       f = dyn_args_fun(self.f, static_argnums,
                        tuple(map(WrapHashably, static_args)), len(args))
       traced = api.jit(f).trace(*dyn_args)
-    args = tuple(Static(x) if i in static_argnums else x for i, x in enumerate(args))
-    consts, traced = traced.with_consts_as_arg()
-    in_avals = tree_map(typeof, (consts, *args))
-    jvp_rule = _custom_jvp_rule(traced, self.jvp_fun, self.symz, self.static_argnums)
-    prim = CustomJVPTraced(traced, jvp_rule, in_avals, self.symz)
-    return prim(consts, *args)
+    args_ft, _ = ft.flatten_static_argnums_argnames(args, {}, static_argnums, ()).unpack()
+    consts, flat_traced = traced.with_consts_as_arg()
+    in_avals = tree_map(typeof, (consts, *args_ft))
+    jvp_rule = _custom_jvp_rule(traced, self.jvp_fun, self.symz, self.static_argnums,
+                                args_ft.void())
+    prim = CustomJVPTraced(flat_traced, jvp_rule, in_avals, self.symz)
+    return tree_unflatten(traced.out_tree, prim(consts, *args_ft))
 
 
 class MappingSpec: pass

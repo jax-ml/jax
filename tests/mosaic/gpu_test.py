@@ -2469,10 +2469,11 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     # When swizzle is small, we need to take many steps to make it large enough
     # to make the scale count a multiple of 4.
     k_steps = 4 if swizzle == 32 else 2
-    if block_size == 16 and in_jax_dtype != jnp.float4_e2m1fn:
-      self.skipTest("Only float4_e2m1fn input is supported for block size 16.")
-    if scale_jax_dtype == jnp.float8_e4m3fn and block_size != 16:
-      self.skipTest("e4m3fn scale only supports block size 16.")
+    if in_jax_dtype != jnp.float4_e2m1fn:
+      if block_size == 16:
+        self.skipTest("Only float4_e2m1fn input is supported for block size 16.")
+      if scale_jax_dtype != jnp.float8_e8m0fnu:
+        self.skipTest("Only float8_e8m0fnu scale is supported for float8 inputs.")
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
 
@@ -2567,6 +2568,16 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       )
     a_gpu_scales, b_gpu_scales = map(format_scales, (a_scales, b_scales))
     args = (x, y, a_gpu_scales, b_gpu_scales)
+    if (
+        scale_jax_dtype == jnp.float8_e4m3fn
+        and block_size == 32
+        and not jtu.is_cuda_compute_capability_equal("10.7")
+    ):
+      with self.assertRaisesRegex(ValueError, "Scale block size mismatch"):
+        mgpu.as_gpu_kernel(
+            kernel, (1, 1, 1), (128, 1, 1), args, out_shape, scratch_shape
+        )
+      return
     z = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), args, out_shape, scratch_shape
     )(*args)
@@ -2758,8 +2769,12 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   def test_mma_block_scaled_collective(
       self, m, n, scale_jax_dtype, block_size, lhs_in_tmem
   ):
-    if scale_jax_dtype == jnp.float8_e4m3fn and block_size != 16:
-      self.skipTest("e4m3fn scale only supports block size 16.")
+    if (
+        scale_jax_dtype == jnp.float8_e4m3fn
+        and block_size != 16
+        and not jtu.is_cuda_compute_capability_equal("10.7")
+    ):
+      self.skipTest("e4m3fn scale with block size != 16 requires sm107a.")
     in_jax_dtype = jnp.float4_e2m1fn
     out_jax_dtype = jnp.float32
     scale_block = block_size
@@ -3429,8 +3444,12 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   def test_mma_block_scaled_sparse_f4(
       self, m, n, in_jax_dtype, scale_jax_dtype, base_block_size, swizzle
   ):
-    if scale_jax_dtype == jnp.float8_e4m3fn and base_block_size != 16:
-      self.skipTest("e4m3fn scale only supports block size 16.")
+    if (
+        scale_jax_dtype == jnp.float8_e4m3fn
+        and base_block_size != 16
+        and not jtu.is_cuda_compute_capability_equal("10.7")
+    ):
+      self.skipTest("e4m3fn scale with block size != 16 requires sm107a.")
     out_jax_dtype = jnp.float32
     sparse_meta_dtype = jnp.uint2
     block_size = base_block_size * 2
@@ -3755,6 +3774,125 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       mgpu.as_gpu_kernel(
           kernel, (1, 2, 1), (128, 1, 1), (), out_shape, mgpu.Barrier(1), cluster=(1, 2, 1)
       )
+
+  @parameterized.parameters((False,), (True,))
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_commit_arrive_commit_a_read_only(self, collective):
+    in_dtype = jnp.float16
+    out_dtype = jnp.float32
+    num_ctas = 2 if collective else 1
+    block_tile = 128
+    mn = block_tile * num_ctas
+    k = 64
+    swizzle = 128
+    tiling = (8, k)
+    num_steps = 4
+    cluster = (num_ctas, 1, 1)
+    index = ir.IndexType.get()
+
+    def kernel(ctx, lhs, rhs, out, scratch):
+      (
+          lhs_smem,
+          rhs_smem,
+          tma_barrier,
+          a_read_barrier,
+          mma_barrier,
+          cluster_barrier,
+          acc,
+      ) = scratch
+      block_id = gpu.cluster_block_id(gpu.Dimension.x)
+      block_slice = ds(arith.muli(block_id, c(block_tile, index)), block_tile)
+      ctx.async_copy(
+          src_ref=rhs,
+          dst_ref=rhs_smem,
+          gmem_slice=(slice(None), block_slice),
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(tiling),
+          barrier=tma_barrier,
+      )
+      tma_barrier.wait()
+
+      mma_pred = single_thread_predicate()
+      if collective:
+        is_first_block = arith.cmpi(arith.CmpIPredicate.eq, block_id, c(0, index))
+        mma_pred = arith.andi(is_first_block, mma_pred)
+
+      for step in range(num_steps):
+        ctx.async_copy(
+            src_ref=lhs,
+            dst_ref=lhs_smem,
+            gmem_slice=(step, block_slice),
+            swizzle=swizzle,
+            gmem_transform=mgpu.TileTransform(tiling),
+            barrier=tma_barrier,
+        )
+        tma_barrier.wait()
+        if collective:
+          cluster_barrier.arrive()
+          cluster_barrier.wait()
+        with when(mma_pred):
+          tcgen05.mma(
+              acc,
+              lhs_smem,
+              rhs_smem,
+              a_swizzle=swizzle,
+              b_swizzle=swizzle,
+              accumulate=(step > 0),
+              collective=collective,
+          )
+          tcgen05.commit_arrive(
+              a_read_barrier,
+              collective=collective,
+              ctx=ctx,
+              commit_a_read_only=True,
+          )
+        a_read_barrier.wait(orders_tensor_core=True)
+
+      tcgen05.commit_arrive(
+          mma_barrier, collective=collective, ctx=ctx, predicate=mma_pred
+      )
+      mma_barrier.wait(orders_tensor_core=True)
+      acc.load().store_untiled(memref_slice(out, block_slice), optimized=False)
+
+    x = self.prng.uniform(-1, 1, (num_steps, mn, k)).astype(in_dtype)
+    y = self.prng.uniform(-1, 1, (k, mn)).astype(in_dtype)
+    out_shape = jax.ShapeDtypeStruct((mn, mn), out_dtype)
+    scratch_shape = [
+        jax.ShapeDtypeStruct(tile_shape((block_tile, k), tiling), in_dtype),
+        jax.ShapeDtypeStruct(tile_shape((k, block_tile), tiling), in_dtype),
+        mgpu.Barrier(1),
+        mgpu.Barrier(1, orders_tensor_core=True),
+        mgpu.Barrier(1, orders_tensor_core=True),
+        mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)) if collective else (),
+        mgpu.TMEM((block_tile, mn), out_dtype, collective=collective),
+    ]
+    if not (
+        jtu.is_cuda_compute_capability_at_least("10.7")
+        and not jtu.is_cuda_compute_capability_at_least("11.0")
+    ):
+      with self.assertRaisesRegex(
+          NotImplementedError,
+          "SMEM-read-only commit for operand A requires sm_107f",
+      ):
+        mgpu.as_gpu_kernel(
+            kernel, cluster, (128, 1, 1), (x, y), out_shape, scratch_shape, cluster=cluster
+        )
+      return
+    f = mgpu.as_gpu_kernel(
+        kernel, cluster, (128, 1, 1), (x, y), out_shape, scratch_shape, cluster=cluster
+    )
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      z = f(x, y).block_until_ready()
+    mc = ".multicast::cluster" if collective else ""
+    expected_ptx = (
+        f"tcgen05.commit.cta_group::{num_ctas}.mbarrier::arrive::one"
+        f".shared::cluster.sync_restrict::shared::read::mma::a{mc}.b64"
+    )
+    self.assertEqual(ptx().count(expected_ptx), num_steps)
+    ref = jnp.einsum(
+        "smk,kn->mn", x.astype(np.float32), y.astype(np.float32), precision="highest"
+    )
+    np.testing.assert_allclose(z, ref, atol=1e-4, rtol=1e-5)
 
   @parameterized.product(
       in_jax_dtype=(jnp.float16,),
@@ -5205,8 +5343,11 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       x = np.arange(np.prod(shape), dtype=np.int32).reshape(shape)
       _ = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, x)(x)
 
+    # Unit dimensions are dropped before checking GMEM strides, so we need at
+    # least two non-unit dimensions to have a non-minor stride that is not a
+    # multiple of 16 bytes.
     with self.assertRaisesRegex(ValueError, "all GMEM strides except the last"):
-      run_kernel([1] * 6)
+      run_kernel([1, 1, 1, 1, 2, 2])
 
     with self.assertRaisesRegex(
         ValueError, "last dimension to be divisible by 128"
@@ -5709,6 +5850,81 @@ class FragmentedArrayTest(TestCase):
           functools.partial(kernel, mgpu.Rounding.TO_NEAREST_EVEN),
           (1, 1, 1), (128, 1, 1), values, prev_pow2, ()
       )(values)
+
+  @parameterized.product(
+      src_dtype=(
+          jnp.float32,
+          jnp.float16,
+          jnp.bfloat16,
+          jnp.float8_e4m3fn,
+          jnp.float8_e5m2,
+      ),
+      dst_dtype=(jnp.float8_e4m3fn, jnp.float8_e5m2, jnp.float4_e2m1fn),
+  )
+  def test_rounding_narrow_fp(self, src_dtype, dst_dtype):
+    if src_dtype == dst_dtype:
+      self.skipTest("Identical types, so nothing to test")
+    if (
+        dst_dtype == jnp.float4_e2m1fn
+        and not jtu.is_cuda_compute_capability_at_least("10.0")
+    ):
+      self.skipTest("f4e2m1fn not supported on pre-Blackwell GPUs")
+    # bf16 -> f8e4m3fn/f8e5m2 support added in PTX ISA 9.1 on Blackwell+.
+    # f8e4m3fn/f8e5m2 -> bf16 support added in PTX ISA 9.2 (CUDA 13.1) on
+    # Blackwell+.
+    if (
+        src_dtype == jnp.bfloat16
+        and dst_dtype in (jnp.float8_e4m3fn, jnp.float8_e5m2)
+        and not (
+            jtu.is_cuda_compute_capability_at_least("10.0")
+            and jtu.is_cuda_version_at_least(13, 1)
+        )
+    ):
+      self.skipTest(
+          "bf16 -> f8 requires Blackwell+ and CUDA 13.1+ (PTX ISA 9.2+)"
+      )
+
+    values = self.prng.uniform(-5.0, 5.0, size=(128, 256)).astype(src_dtype)
+    expected_rn = values.astype(dst_dtype)
+
+    def run(rounding, expected=expected_rn):
+      def kernel(ctx, inp, out, smem):
+        del ctx, smem
+        t = mgpu.FragmentedArray.load_untiled(
+            inp, layout=fa.tmem_native_layout(2), optimized=False
+        )
+        t = t.astype(utils.dtype_to_ir_type(dst_dtype), rounding=rounding)
+        t.store_untiled(out, optimized=False)
+
+      res = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), values, expected, ()
+      )(values)
+      np.testing.assert_array_equal(res, expected)
+
+    run(mgpu.Rounding.TO_NEAREST_EVEN)
+
+    # f32/f16/bf16 -> f8e4m3fn/f8e5m2/f4e2m1fn (.rz) support added in PTX ISA
+    # 9.4 (CUDA 13.4) on sm_107f.
+    if (
+        jtu.is_cuda_compute_capability_equal("10.7")
+        and jtu.is_cuda_version_at_least(13, 4)
+    ):
+      uint_dtype = jnp.uint4 if dst_dtype == jnp.float4_e2m1fn else jnp.uint8
+      rn_bits = jax.lax.bitcast_convert_type(expected_rn, uint_dtype)
+      rounded_away = np.abs(expected_rn.astype(np.float32)) > np.abs(
+          values.astype(np.float32)
+      )
+      expected_rz = jax.lax.bitcast_convert_type(
+          jnp.where(rounded_away, rn_bits - 1, rn_bits), dst_dtype
+      )
+      run(mgpu.Rounding.TO_ZERO, expected_rz)
+    else:
+      with self.assertRaises(ValueError):
+        run(mgpu.Rounding.TO_ZERO)
+
+    # f32/f16/bf16 -> f8e4m3fn/f8e5m2/f4e2m1fn (.rp) not supported.
+    with self.assertRaises(ValueError):
+      run(mgpu.Rounding.TO_POSITIVE_INFINITY)
 
   def test_foreach_wgmma_row_array(self):
     def kernel(ctx, out, smem):
@@ -6692,6 +6908,92 @@ class FragmentedArrayTest(TestCase):
       self.assertEqual(single_converts, 0)
     np.testing.assert_array_equal(z, np.maximum(x, y))
 
+  @parameterized.product(
+      op_name=("add", "sub", "min", "max", "neg"),
+      dtype=(jnp.int8, jnp.uint8),
+      vec_size=(2, 4, 8),
+  )
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_packed_int8_arith(self, op_name, dtype, vec_size):
+    is_signed = utils.is_signed(dtype)
+    sign = "s" if is_signed else "u"
+    fa_op, np_op = {
+        "add": (operator.add, operator.add),
+        "sub": (operator.sub, operator.sub),
+        "min": (fa.FragmentedArray.min, np.minimum),
+        "max": (fa.FragmentedArray.max, np.maximum),
+        "neg": (lambda a, _: -a, lambda a, _: -a),
+    }[op_name]
+
+    def kernel(ctx, src, src2, dst, _):
+      s1 = fa.FragmentedArray.load_strided(
+          src, vec_size=vec_size, is_signed=is_signed
+      )
+      s2 = fa.FragmentedArray.load_strided(
+          src2, vec_size=vec_size, is_signed=is_signed
+      )
+      fa_op(s1, s2).store_untiled(dst)
+
+    elems_per_thread = 8
+    packed_size = 4
+    iinfo = jnp.iinfo(dtype)
+    shape = (elems_per_thread * 128,)
+    x = self.prng.integers(iinfo.min, iinfo.max + 1, shape, dtype=dtype)
+    y = self.prng.integers(iinfo.min, iinfo.max + 1, shape, dtype=dtype)
+    if not jtu.is_cuda_compute_capability_equal("10.7"):
+      with self.assertRaisesRegex(
+          NotImplementedError,
+          "Packed 8-bit integer ALU instructions require sm_107f",
+      ):
+        mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (x, y), x, ())
+      return
+    if vec_size % packed_size:
+      with self.assertRaisesRegex(
+          NotImplementedError,
+          f"Instruction .* is not supported for vector<{vec_size}x",
+      ):
+        mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (x, y), x, ())
+      return
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (x, y), x, ())
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      z = f(x, y).block_until_ready()
+    op_sign = "s" if op_name == "neg" else sign
+    self.assertEqual(
+        ptx().count(f"{op_name}.{op_sign}8x4 "), elems_per_thread // packed_size
+    )
+    np.testing.assert_array_equal(z, np_op(x, y))
+
+  @parameterized.product(
+      op_name=("add", "min", "max"),
+      dtype=(jnp.int16, jnp.uint16),
+  )
+  @jtu.thread_unsafe_test()
+  def test_packed_int16_arith(self, op_name, dtype):
+    is_signed = utils.is_signed(dtype)
+    fa_op, np_op = {
+        "add": (operator.add, operator.add),
+        "min": (fa.FragmentedArray.min, np.minimum),
+        "max": (fa.FragmentedArray.max, np.maximum),
+    }[op_name]
+
+    def kernel(ctx, src, src2, dst, _):
+      del ctx
+      s1 = fa.FragmentedArray.load_strided(src, vec_size=2, is_signed=is_signed)
+      s2 = fa.FragmentedArray.load_strided(
+          src2, vec_size=2, is_signed=is_signed
+      )
+      fa_op(s1, s2).store_untiled(dst)
+
+    iinfo = jnp.iinfo(dtype)
+    x = self.prng.integers(iinfo.min, iinfo.max + 1, (2 * 128,), dtype=dtype)
+    y = self.prng.integers(iinfo.min, iinfo.max + 1, (2 * 128,), dtype=dtype)
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (x, y), x, ())
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      z = f(x, y).block_until_ready()
+    ptx_ty = "s16x2" if op_name == "add" or is_signed else "u16x2"
+    self.assertEqual(ptx().count(f"{op_name}.{ptx_ty} "), 1)
+    np.testing.assert_array_equal(z, np_op(x, y))
+
   def test_splat_layout(self):
     m, n = 64, 8
     def kernel(ctx, dst, _):
@@ -6742,16 +7044,57 @@ class FragmentedArrayTest(TestCase):
     )(inp)
     np.testing.assert_allclose(result, np.full((128, 32), 3.14, np.float32))
 
-  @parameterized.product(in_shape=((128, 128), (128, 64), (64, 128)))
-  def test_strided_load_store(self, in_shape):
+  @parameterized.product(op_name=("add", "sub", "mul", "fma"))
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_packed_f32x2_arith(self, op_name):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("Packed f32x2 instructions require sm_100+")
+    op = {
+        "add": lambda a, b, _: a + b,
+        "sub": lambda a, b, _: a - b,
+        "mul": lambda a, b, _: a * b,
+        "fma": lambda a, b, acc: a * b + acc,
+    }[op_name]
+
+    def kernel(ctx, src, src2, src3, dst, _):
+      del ctx
+      s1 = fa.FragmentedArray.load_strided(src, vec_size=2)
+      s2 = fa.FragmentedArray.load_strided(src2, vec_size=2)
+      s3 = fa.FragmentedArray.load_strided(src3, vec_size=2)
+      op(s1, s2, s3).store_untiled(dst)
+
+    x, y, z = (
+        self.prng.uniform(-1, 1, (2 * 128,)).astype(jnp.float32)
+        for _ in range(3)
+    )
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (x, y, z), x, ())
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      out = f(x, y, z).block_until_ready()
+    instr = "fma.rn" if op_name == "fma" else op_name
+    self.assertEqual(ptx().count(f"{instr}.f32x2 "), 1)
+    np.testing.assert_allclose(out, op(x, y, z), rtol=1e-6, atol=1e-6)
+
+  @parameterized.product(
+      in_shape=((128, 128), (128, 64), (64, 128), (12, 128)),
+      dtype=(jnp.float16, jnp.int4),
+  )
+  def test_strided_load_store(self, in_shape, dtype):
     def kernel(ctx, *args):
       gmem_input, gmem_output, (smem_input, smem_output) = args
       copy(gmem_input, smem_input)
-      t = mgpu.FragmentedArray.load_strided(smem_input)
+      t = mgpu.FragmentedArray.load_strided(
+          smem_input, is_signed=utils.is_signed(dtype)
+      )
       t.store_untiled(smem_output)
+      gpu.barrier()
       copy(smem_output, gmem_output)
 
-    inp = out = self.prng.uniform(-1, 1, in_shape).astype(jnp.float16)
+    if jnp.issubdtype(dtype, jnp.integer):
+      iinfo = jnp.iinfo(dtype)
+      inp = out = self.prng.integers(iinfo.min, iinfo.max + 1, in_shape).astype(dtype)
+    else:
+      inp = out = self.prng.uniform(-1, 1, in_shape).astype(dtype)
+
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (inp,), out, [inp, out],
     )(inp)

@@ -15,13 +15,11 @@
 """Polynomial approximations for `erfc`, `erfcx`, `erfinv`, and `erfcinv`."""
 
 import math
-from jax._src import cloud_tpu_init
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax.lax import (
     AccuracyMode, _const, asarray, bitcast_convert_type, clamp,
     convert_element_type, exp, full_like, log, max as lax_max, min as lax_min,
-    neg, optimization_barrier, polynomial, reciprocal, select, select_n,
-    shift_left, sqrt, square,
+    neg, polynomial, reciprocal, select, select_n, shift_left, sqrt, square,
 )
 from jax._src.typing import Array
 import numpy as np
@@ -414,9 +412,6 @@ def _erfcx_from_grad_large(ax: Array, grad_large: Array) -> Array:
   """
   if ax.dtype == np.float32:
     rem = _INV_SQRT_PI_F32_LO + 0.5 * grad_large
-    # TODO(phawkins): Remove once minimum libtpu version is at least 0.0.51.
-    if not cloud_tpu_init.is_libtpu_at_least("0.0.51"):
-      rem = optimization_barrier(rem)
     num = _INV_SQRT_PI_F32_HI + rem
     scale = select(ax > 2.0**64, full_like(ax, 2.0**-64), full_like(ax, 1.0))
     return (num * scale) / (ax * scale)
@@ -1069,7 +1064,6 @@ def erf_inv_core(
     *,
     has_far_tail: bool = True,
     is_ndtri: bool = False,
-    use_optimization_barrier: bool = True,
 ) -> Array:
   """Evaluates `erfinv(x)` (or `sqrt(2) * erfinv(x)` when `is_ndtri=True`).
 
@@ -1139,13 +1133,7 @@ def erf_inv_core(
   poly = polynomial(t, coeffs, unroll=unroll)
   # Add the two small parts (`k_h * z_l` and `poly`) before adding them to the
   # exact main term `k_h * z_h`.
-  # TODO(phawkins): Remove `use_optimization_barrier` once minimum libtpu
-  # version is at least 0.0.51.
   rem = k_h * z_l + poly
-  if use_optimization_barrier and not cloud_tpu_init.is_libtpu_at_least(
-      "0.0.51"
-  ):
-    rem = optimization_barrier(rem)
   tail_mag = k_h * z_h + rem
   sign_x = select(x < 0.0, full_like(x, -1.0), full_like(x, 1.0))
   return select(conds[0], x * poly, sign_x * tail_mag)

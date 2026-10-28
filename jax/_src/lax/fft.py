@@ -125,7 +125,10 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
     dtype = x.dtype
   if x.mat.unreduced or x.mat.reduced:
     raise NotImplementedError
-  return x.update(shape=shape, dtype=dtype)
+  out_aval = x.update(shape=shape, dtype=dtype)
+  out_layout = lax.lax_utils.call_layout_rule(
+      fft_p, None, [x], [out_aval], fft_type=fft_type, fft_lengths=fft_lengths)
+  return out_aval.update(layout=out_layout)
 
 def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
   if not is_constant_shape(fft_lengths):

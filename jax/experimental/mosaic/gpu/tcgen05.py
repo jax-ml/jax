@@ -119,7 +119,7 @@ def _mxf4_sparsity_version() -> int:
   """
   arch = utils.get_arch()
   assert arch.major in {10, 11}, arch
-  return int(arch.major == 10 and arch.minor >= 7)
+  return int(arch == utils.RUBIN)
 
 
 def sparse_group_elems(element_type: ir.Type) -> int:
@@ -472,24 +472,27 @@ def mma(
             f" {scale_block}"
         )
     elif isinstance(a_element_type, ir.Float4E2M1FNType):
-      if isinstance(scale_element_type, ir.Float8E4M3FNType):
-        if base_scale_block != 16:
-          expected = 32 if is_sparse else 16
-          raise ValueError(
-              f"Scale block size mismatch: expected {expected}, got"
-              f" {scale_block}"
-          )
-      elif isinstance(scale_element_type, ir.Float8E8M0FNUType):
-        if base_scale_block not in (16, 32):
-          expected = "32 or 64" if is_sparse else "16 or 32"
-          raise ValueError(
-              f"Scale block size mismatch: expected {expected}, got"
-              f" {scale_block}"
-          )
-      else:
+      if not isinstance(
+          scale_element_type, (ir.Float8E8M0FNUType, ir.Float8E4M3FNType)
+      ):
         raise ValueError(
             "Scale element type mismatch: expected f8e8m0fnu or f8e4m3fn, got"
             f" {scale_element_type}"
+        )
+      arch = utils.get_arch()
+      if isinstance(scale_element_type, ir.Float8E4M3FNType) and not (
+          arch.major == 10 and arch.minor >= 7
+      ):
+        allowed_base_blocks = (16,)
+      else:
+        allowed_base_blocks = (16, 32)
+      if base_scale_block not in allowed_base_blocks:
+        expected = " or ".join(
+            str(b * (2 if is_sparse else 1)) for b in allowed_base_blocks
+        )
+        raise ValueError(
+            f"Scale block size mismatch: expected {expected}, got"
+            f" {scale_block}"
         )
     else:
       raise NotImplementedError(
@@ -740,8 +743,10 @@ def _do_mma(
       )
       base_scale_block = scale_block // (2 if is_sparse else 1)
       assert base_scale_block in (16, 32)
+      assert isinstance(
+          scale_element_type, (ir.Float8E8M0FNUType, ir.Float8E4M3FNType)
+      )
       if base_scale_block == 32:
-        assert isinstance(scale_element_type, ir.Float8E8M0FNUType)
         kind = "mxf4nvf4.block_scale.scale_vec::2X"
         scale_steps = 2
       else:
@@ -873,7 +878,15 @@ def commit_arrive(
     ctx: LaunchContext | None = None,
     *,
     predicate: ir.Value | None = None,
+    commit_a_read_only: bool = False,
 ) -> None:
+  if commit_a_read_only:
+    arch = utils.get_arch()
+    if arch.major != utils.RUBIN.major or arch.minor < utils.RUBIN.minor:
+      raise NotImplementedError(
+          "SMEM-read-only commit for operand A requires sm_107f, got"
+          f" sm_{arch.major}{arch.minor}"
+      )
   if isinstance(barrier, utils.BarrierRef):
     barrier = barrier.get_ptr()
   elif barrier.type != llvm.PointerType.get(address_space=3):
@@ -885,6 +898,7 @@ def commit_arrive(
     predicate_ctx = contextlib.nullcontext()
   else:
     predicate_ctx = utils.when(predicate)
+  mod = ".smem.a.read" if commit_a_read_only else ""
   if collective:
     if ctx is None:
       raise ValueError("ctx must be provided for collective barriers")
@@ -911,12 +925,12 @@ def commit_arrive(
     # messes up in that case, producing incorrect code.
     with predicate_ctx:
       llvm.call_intrinsic(
-          None, "llvm.nvvm.tcgen05.commit.mc.cg2", [barrier, mask], [], []
+          None, f"llvm.nvvm.tcgen05.commit{mod}.mc.cg2", [barrier, mask], [], []
       )
   else:
     with predicate_ctx:
       llvm.call_intrinsic(
-          None, "llvm.nvvm.tcgen05.commit.cg1", [barrier], [], []
+          None, f"llvm.nvvm.tcgen05.commit{mod}.cg1", [barrier], [], []
       )
 
 

@@ -1782,6 +1782,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
   @jtu.with_explicit_mesh((4, 2), ("x", "y"))
   def test_compute_on_reduced_fwd_unreduced_bwd(self, mesh):
+    if jtu.is_device_tpu_at_least(7) and not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Fails on TPU v7+ with libtpu < 0.0.52")
     w = jax.device_put(np.arange(8.0), P("y", reduced={'x'}))
     x = jax.device_put(np.ones(8), P(reduced={'x', 'y'}))
 
@@ -1819,6 +1821,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   @jtu.run_on_devices('tpu')
   @jtu.with_explicit_mesh((2, 4), ("dcn", "ici"))
   def test_compute_on_unreduced_single_dcn_all_reduce(self, mesh):
+    if jtu.is_device_tpu_at_least(7) and not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Fails on TPU v7+ with libtpu < 0.0.52")
     def collect_dcn(weight):
       return jax.shard_map(
           lambda x: jax.lax.pcast(x, "dcn", to="reduced"),
@@ -1905,9 +1909,9 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     def f_sc(operand):
       return jax.lax.sort(operand)
 
-    inputs = (np.linspace(0, 1, 524288).reshape(524288),)
+    inputs = (np.random.randint(524288, size=524288, dtype=np.int32),)
 
-    self.assertAllClose(f_tc(*inputs), f_sc(*inputs))
+    self.assertArraysEqual(f_tc(*inputs), f_sc(*inputs))
 
     compiled_f_sc = jax.jit(f_sc).lower(*inputs).compile()
     compiled_text = compiled_f_sc.as_text()

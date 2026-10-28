@@ -40,13 +40,14 @@ all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 
 OpRecord = collections.namedtuple(
     "OpRecord",
-    ["name", "nargs", "dtypes", "rng_factory", "test_autodiff", "nondiff_argnums", "test_name"])
+    ["name", "nargs", "dtypes", "rng_factory", "test_autodiff", "nondiff_argnums", "test_name", "shapes"])
 
 
-def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), test_name=None):
+def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), test_name=None, shapes=None):
   test_name = test_name or name
   nondiff_argnums = tuple(sorted(set(nondiff_argnums)))
-  return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name)
+  shapes = all_shapes if shapes is None else shapes
+  return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name, shapes)
 
 
 float_dtypes = jtu.dtypes.floating
@@ -203,11 +204,13 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("poch", 2, float_dtypes, jtu.rand_positive, True),
     op_record(
         "hyp1f1", 3, float_dtypes,
-        functools.partial(jtu.rand_uniform, low=0.5, high=30), True
+        functools.partial(jtu.rand_uniform, low=0.5, high=30), True,
+        shapes=[(), (4,)],
     ),
     op_record(
         "hyp2f1", 4, float_dtypes,
-        functools.partial(jtu.rand_uniform, low=0.1, high=0.9), True
+        functools.partial(jtu.rand_uniform, low=0.1, high=0.9), True,
+        shapes=[(), (4,)],
     ),
     op_record("log_softmax", 1, float_dtypes, jtu.rand_default, True),
     op_record("softmax", 1, float_dtypes, jtu.rand_default, True),
@@ -233,7 +236,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       [dict(op=rec.name, rng_factory=rec.rng_factory,
             test_autodiff=rec.test_autodiff,
             nondiff_argnums=rec.nondiff_argnums)],
-      shapes=itertools.combinations_with_replacement(all_shapes, rec.nargs),
+      shapes=itertools.combinations_with_replacement(rec.shapes, rec.nargs),
       dtypes=(itertools.combinations_with_replacement(rec.dtypes, rec.nargs)
         if isinstance(rec.dtypes, list) else itertools.product(*rec.dtypes)),
     ))
@@ -441,12 +444,12 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
   @parameterized.parameters([True, False])
   def testGammaDebugNans(self, with_jit):
     finfo = jnp.finfo(dtypes.default_float_dtype())
-    # Cover all branches of _gamma_lanczos_impl: |x| < sqrt(eps) (including
-    # +/-0.0), negative non-integers (reflection), positive integers <= max_int
-    # (factorial table) and > max_int, x > overflow (including where both p and
-    # e overflow), x < underflow, and +inf.
+    # Cover all branches of gamma_real: small |x| (including +/-0.0 and
+    # subnormals), negative non-integers (reflection), positive integers,
+    # x > overflow, x < underflow, and +inf.
     x = jnp.asarray(
-        [-1000.5, -100.5, -50.5, -5.5, -0.5, -float(finfo.tiny), -0.0, 0.0,
+        [-1000.5, -100.5, -50.5, -5.5, -0.5, -float(finfo.tiny),
+         -0.5 * float(finfo.tiny), -0.0, 0.0, 0.5 * float(finfo.tiny),
          float(finfo.tiny), 1e-5, 0.5, 1.0, 2.0, 10.0, 15.5, 35.0, 50.0, 100.0,
          220.0, 1000.0, float(finfo.max), np.inf],
         dtype=finfo.dtype)
@@ -634,6 +637,20 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
 
   def testExpiZero(self):
     self.assertEqual(lsp_special.expi(0.0), -np.inf)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testExpiInf(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/38519
+    args_maker = lambda: [np.array([-np.inf, 0.0, np.inf, np.nan], dtype=dtype)]
+    # Note: scipy < 1.16 returned NaN for expi(+inf).
+    scipy_op = lambda x: np.where(
+        np.isposinf(x), np.inf, osp_special.expi(x.astype(np.float64))
+    ).astype(x.dtype)
+    self._CheckAgainstNumpy(scipy_op, lsp_special.expi, args_maker)
+    self._CompileAndCheck(lsp_special.expi, args_maker)
+    with jax.debug_nans(True):
+      x = jnp.array([-np.inf, -1.0, 0.0, 1.0, np.inf], dtype=dtype)
+      self.assertAllClose(lsp_special.expi(x), scipy_op(np.asarray(x)))
 
   def testGammaIncBoundaryValues(self):
     dtype = dtypes.default_float_dtype()
@@ -1018,6 +1035,22 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(lsp_special.gamma(z), osp_special.gamma(z),
                         atol=1e-5, rtol=rtol)
 
+  def testFactorialExact(self):
+    n32 = jnp.arange(35, dtype=jnp.float32)
+    ref32 = np.array([math.factorial(i) for i in range(35)], dtype=np.float32)
+    self.assertArraysEqual(lsp_special.factorial(n32), ref32)
+    if np.float64 in float_dtypes and not jtu.test_device_matches(["tpu"]):
+      n64 = jnp.arange(171, dtype=np.float64)
+      ref64 = np.array([math.factorial(i) for i in range(171)], dtype=np.float64)
+      self.assertArraysEqual(lsp_special.factorial(n64), ref64)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testFactorialNegativeGrad(self, dtype):
+    x = jnp.array([-0.5, -1.0, -1.5, -2.0, -5.0, -200.5, -jnp.inf], dtype=dtype)
+    grad_fn = jax.vmap(jax.grad(lsp_special.factorial))
+    self.assertArraysEqual(lsp_special.factorial(x), jnp.zeros_like(x))
+    self.assertArraysEqual(grad_fn(x), jnp.zeros_like(x))
+
   @parameterized.parameters(range(1, 5))
   def test_i0_gradients(self, order):
     # Regression test for https://github.com/jax-ml/jax/issues/40627 & 40628
@@ -1078,6 +1111,55 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(
         jnp.stack(derivs_small), expected_small, atol=1e-6, rtol=1e-5)
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_i0_i1_large_inputs(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/39770 & 39772
+    if dtype == np.float32:
+      x = np.array([-91.0, -90.0, -89.0, 89.0, 90.0, 91.0], dtype=dtype)
+      x_overflow = np.array([-95.0, 95.0], dtype=dtype)
+    else:
+      x = np.array(
+          [-713.0, -712.0, -711.0, -710.0, 710.0, 711.0, 712.0, 713.0],
+          dtype=dtype,
+      )
+      x_overflow = np.array([-720.0, 720.0], dtype=dtype)
+    half_exp = np.exp(np.abs(x) / dtype(2.0))
+    expected_i0 = (
+        (half_exp * osp_special.i0e(x).astype(dtype)) * half_exp
+    ).astype(dtype)
+    expected_i1 = (
+        (half_exp * osp_special.i1e(x).astype(dtype)) * half_exp
+    ).astype(dtype)
+    rtol = {np.float32: 1e-5, np.float64: 1e-12}
+    self.assertAllClose(jnp.i0(x), expected_i0, rtol=rtol)
+    self.assertAllClose(lsp_special.i0(x), expected_i0, rtol=rtol)
+    self.assertAllClose(lsp_special.i1(x), expected_i1, rtol=rtol)
+    self.assertAllClose(jax.vmap(jax.grad(jnp.i0))(x), expected_i1, rtol=rtol)
+    self.assertAllClose(
+        jax.vmap(jax.grad(lsp_special.i1))(x),
+        expected_i0 - expected_i1 / x,
+        rtol=rtol,
+    )
+    self.assertAllClose(
+        jax.vmap(jax.grad(jax.grad(jnp.i0)))(x),
+        expected_i0 - expected_i1 / x,
+        rtol=rtol,
+    )
+    self.assertAllClose(
+        jax.vmap(jax.grad(jax.grad(lsp_special.i1)))(x),
+        expected_i1 - expected_i0 / x + 2 * expected_i1 / (x * x),
+        rtol=rtol,
+    )
+    self._CompileAndCheck(jnp.i0, lambda: [x], rtol=rtol)
+    self._CompileAndCheck(lsp_special.i0, lambda: [x], rtol=rtol)
+    self._CompileAndCheck(lsp_special.i1, lambda: [x], rtol=rtol)
+    self.assertArraysEqual(
+        jnp.i0(x_overflow), np.array([np.inf, np.inf], dtype=dtype)
+    )
+    self.assertArraysEqual(
+        lsp_special.i1(x_overflow), np.array([-np.inf, np.inf], dtype=dtype)
+    )
+
   def testBetalnHessianAtZero(self):
     # Regression test for https://github.com/jax-ml/jax/issues/34353
     def f(log_a, log_b):
@@ -1108,6 +1190,20 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     res_inf = np.asarray(lsp_special.gammaln(special_inf))
     self.assertTrue(np.all(np.isposinf(res_inf)), f"Expected +inf, got {res_inf}")
     self.assertTrue(np.isnan(float(lsp_special.gammaln(np.float32(np.nan)))))
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_digamma_special_values(self, dtype):
+    large_neg_int = -1e16 if dtype == np.float64 else -1e7
+    special_in = np.array(
+        [0.0, -0.0, np.inf, -np.inf, -1.0, -2.0, -10.0, large_neg_int, np.nan],
+        dtype=dtype,
+    )
+    expected = np.array(
+        [-np.inf, np.inf, np.inf, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+        dtype=dtype,
+    )
+    actual = np.asarray(lsp_special.digamma(special_in))
+    np.testing.assert_equal(actual, expected)
 
   def test_gammaln_grad(self):
     x_grad = np.array([0.25, 0.75, 1.5, 3.5, 12.0, -0.5, -1.5, -2.5], dtype=np.float32)
@@ -1361,6 +1457,19 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertLessEqual(
         max_root_ulp, 2.0,
         f"Max ULP {max_root_ulp} at negative root x={worst_root_x} exceeds 2.0")
+
+  @jtu.sample_product(
+      dtype=[np.float32, np.float64],
+  )
+  def testLoggammaZero(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/38240
+    x = np.array([0.0, -0.0], dtype=dtype)
+    self._CheckAgainstNumpy(
+        osp_special.loggamma,
+        jax.scipy.special.loggamma,
+        args_maker=lambda: (x,),
+        check_dtypes=False,
+    )
 
 
 if __name__ == "__main__":
