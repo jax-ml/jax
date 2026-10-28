@@ -161,6 +161,39 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                         atol=1e-3, rtol=1e-3)
 
   @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testPoissonLogPmfHighPrecisionLargeRate(self, dtype):
+    # These references were computed at 100 decimal digits after rounding
+    # inputs to the target dtype. SciPy's ordinary double-precision formula
+    # loses several millilog units here through cancellation at mu ~= 1e12.
+    if dtype == np.float32:
+      mu = np.asarray(1e12, dtype=dtype)
+      k = np.asarray([
+          999996981248.0, 999999012864.0, 999999995904.0,
+          1000000978944.0, 1000003010560.0,
+      ], dtype=dtype)
+      expected = np.asarray([
+          -19.278527565852926, -15.217632578709662, -14.73444908912103,
+          -15.217633245090314, -19.27852144795942,
+      ])
+      atol = 2e-5
+    else:
+      mu = np.asarray(1e12, dtype=dtype)
+      k = np.asarray([
+          999997000000.0, 999999000000.0, 1000000000000.0,
+          1000001000000.0, 1000003000000.0,
+      ], dtype=dtype)
+      expected = np.asarray([
+          -19.23445209117353, -15.23444875783553, -14.73444909116903,
+          -15.234449424502197, -19.23444609117353,
+      ])
+      atol = 1e-8
+
+    for fun in (lsp_stats.poisson.logpmf,
+                jax.jit(lsp_stats.poisson.logpmf)):
+      self.assertAllClose(fun(k, mu), expected, check_dtypes=False,
+                          rtol=0.0, atol=atol)
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testPoissonLogPmfCentralAccuracy(self, dtype):
     mu_values = np.asarray([1e7, 1e8, 1e9], dtype=dtype)
     offsets = np.asarray([-5, -3, -1, 0, 1, 3, 5], dtype=dtype)
