@@ -69,8 +69,16 @@ common:linux --copt=-Wno-stringop-truncation
 common:linux --copt=-Wno-array-parameter
 common:linux --copt=-Wno-deprecated-register
 common:linux --copt=-Wno-register
+common:linux --repo_env=LLVM_VERSION=22
+common:linux --repo_env=SYSROOT_DIST=linux_glibc_2_27
+common:linux --@rules_ml_toolchain//common:stdlib=libc++
+common:linux --@rules_ml_toolchain//common:static_libcxx=true
+common:linux --cxxopt=-std=c++20
+common:linux --host_cxxopt=-std=c++20
 
 common:macos --config=posix
+common:macos --cxxopt=-std=c++17
+common:macos --host_cxxopt=-std=c++17
 common:macos --apple_platform_type=macos
 
 # Bazel 7.0.0 no longer supports dynamic symbol lookup on macOS. To resolve
@@ -151,8 +159,6 @@ common:nonccl --define=no_nccl_support=true
 
 common:posix --copt=-fvisibility=hidden
 common:posix --copt=-Wno-sign-compare
-common:posix --cxxopt=-std=c++17
-common:posix --host_cxxopt=-std=c++17
 
 common:avx_posix --copt=-march=haswell
 common:avx_posix --host_copt=-march=haswell
@@ -193,7 +199,7 @@ common:cuda_v12 --repo_env=HERMETIC_NCCL_VERSION="2.30.7"
 # "compute" means we emit both cubin and PTX, which is larger but also forward compatible to future GPU generations.
 common:cuda_v12 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,sm_90,sm_100,sm_101,compute_120"
 
-common:cuda_v13 --repo_env=HERMETIC_CUDA_VERSION="13.0.0"
+common:cuda_v13 --repo_env=HERMETIC_CUDA_VERSION="13.4.1"
 common:cuda_v13 --repo_env=HERMETIC_CUDNN_VERSION="9.12.0"
 common:cuda_v13 --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.20"
 common:cuda_v13 --repo_env=HERMETIC_NCCL_VERSION="2.30.7"
@@ -278,10 +284,13 @@ common:tsan_shared --copt=-shared-libsan
 common:tsan_shared --linkopt=-shared-libsan
 
 # Build with oneAPI support
+common:oneapi --@rules_ml_toolchain//common:stdlib=libstdc++
 common:oneapi --@rules_ml_toolchain//common:enable_sycl=True
 common:oneapi --repo_env=TF_NEED_SYCL=1
 common:oneapi --define=tensorflow_mkldnn_contraction_kernel=0
 common:oneapi --repo_env=ENABLE_INTEL_XPU_TRITON=1
+common:oneapi --cxxopt=-std=c++17
+common:oneapi --host_cxxopt=-std=c++17
 
 # oneAPI Hermetic setup
 common:oneapi --repo_env=SYCL_BUILD_HERMETIC=1
@@ -327,17 +336,21 @@ common:ci_linux_x86_64_clang_local --repo_env=TF_SYSROOT="/dt9"
 # Clang path needs to be set for remote toolchain to be configured correctly.
 common:ci_linux_x86_64_clang_local --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
-common:ci_linux_x86_64_cuda_common --config=build_cuda_with_nvcc
-common:ci_linux_x86_64_cuda_common --config=ci_linux_x86_64
-
 # The toolchain in `--config=cuda` needs to be read before the toolchain in
 # `--config=ci_linux_x86_64`. Otherwise, we run into issues with manylinux
 # compliance.
-common:ci_linux_x86_64_cuda12 --config=cuda12 --config=ci_linux_x86_64_cuda_common
+common:ci_linux_x86_64_cuda12 --config=cuda12
+common:ci_linux_x86_64_cuda12 --config=ci_linux_x86_64
+# Use Clang for CUDA 12 builds since CUDA 12 nvcc does not support libc++.
+common:ci_linux_x86_64_cuda12 --config=build_cuda_with_clang
+
 # Alias for backward compatibility.
 common:ci_linux_x86_64_cuda --config=ci_linux_x86_64_cuda12
 
-common:ci_linux_x86_64_cuda13 --config=cuda13 --config=ci_linux_x86_64_cuda_common
+common:ci_linux_x86_64_cuda13 --config=cuda13
+common:ci_linux_x86_64_cuda13 --config=ci_linux_x86_64
+# Use NVCC for CUDA 13 builds since CUDA 13.4 nvcc supports libc++.
+common:ci_linux_x86_64_cuda12 --config=build_cuda_with_nvcc
 
 # Linux Aarch64 CI configs
 common:ci_linux_aarch64_base --config=clang --verbose_failures=true
@@ -510,24 +523,20 @@ common:rbe_windows_amd64 --bes_instance_name="ml-oss-rbe-general"
 
 # #############################################################################
 # Cross-compile config options below. Native RBE support does not exist for
-# Linux Aarch64 and Mac x86. So, we use a cross-compile toolchain to build
-# targets for Linux Aarch64 and Mac x86 on the Linux x86 RBE pool.
+# Linux Aarch64. So, we use a cross-compile toolchain to build targets for
+# Linux Aarch64 on the Linux x86 RBE pool.
 # #############################################################################
 # Set execution platform to Linux x86
 # Note: Lot of the "host_" flags such as "host_cpu" and "host_crosstool_top"
 # flags seem to be actually used to specify the execution platform details. It
 # seems it is this way because these flags are old and predate the distinction
 # between host and execution platform.
-common:cross_compile_base --config=clang_local
-common:cross_compile_base --host_cpu=k8
-common:cross_compile_base --host_crosstool_top=@xla//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
-common:cross_compile_base --extra_execution_platforms=@xla//tools/toolchains/cross_compile/config:linux_x86_64
-common:cross_compile_base --extra_toolchains=@xla//tools/toolchains/cross_compile/cc:linux_x86_toolchain
 
 # Set the target CPU to Aarch64
-common:cross_compile_linux_aarch64 --platforms=@xla//tools/toolchains/cross_compile/config:linux_aarch64
+common:cross_compile_linux_aarch64 --host_cpu=k8
 common:cross_compile_linux_aarch64 --cpu=aarch64
-common:cross_compile_linux_aarch64 --extra_execution_platforms=@xla//tools/toolchains/cross_compile/config:linux_x86_64
+common:cross_compile_linux_aarch64 --platforms=//jax/tools/toolchains:linux_aarch64
+common:cross_compile_linux_aarch64 --extra_execution_platforms=//jax/tools/toolchains:rbe_linux_x86_64
 common:cross_compile_linux_aarch64 --define=ynn_enable_arm64_neonfp8=false
 
 common:rbe_cross_compile_base --config=rbe
@@ -539,29 +548,6 @@ common:rbe_cross_compile_linux_aarch64 --config=rbe_cross_compile_base
 
 # Avoids a timeout in linalg_test on ARM.
 common:rbe_cross_compile_linux_aarch64 --test_env=OMP_NUM_THREADS=8
-
-# Mac x86
-common:cross_compile_darwin_x86_64 --config=cross_compile_base
-common:cross_compile_darwin_x86_64 --config=nonccl
-# Target Catalina (10.15) as the minimum supported OS
-common:cross_compile_darwin_x86_64 --action_env  MACOSX_DEPLOYMENT_TARGET=10.15
-
-# Set the target CPU to Darwin x86
-common:cross_compile_darwin_x86_64 --platforms=@xla//tools/toolchains/cross_compile/config:darwin_x86_64
-common:cross_compile_darwin_x86_64 --cpu=darwin
-common:cross_compile_darwin_x86_64 --crosstool_top=@xla//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
-# When RBE cross-compiling for macOS, we need to explicitly register the
-# toolchain. Otherwise, oddly, RBE complains that a "docker container must be
-# specified".
-common:cross_compile_darwin_x86_64 --extra_toolchains=@xla//tools/toolchains/cross_compile/config:macos-x86-cross-compile-cc-toolchain
-# Map --platforms=darwin_x86_64 to --cpu=darwin and vice-versa to make selects()
-# and transistions that use these flags work. The flag --platform_mappings needs
-# to be set to a file that exists relative to the package path roots.
-common:cross_compile_darwin_x86_64 --platform_mappings=platform_mappings
-
-# RBE cross-compile configs for Darwin x86
-common:rbe_cross_compile_darwin_x86_64 --config=cross_compile_darwin_x86_64
-common:rbe_cross_compile_darwin_x86_64 --config=rbe_cross_compile_base
 
 #############################################################################
 # Some configs to make getting some forms of debug builds. In general, the
