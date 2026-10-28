@@ -1330,6 +1330,90 @@ def _squeeze_block_spec(
   )]
 
 
+@register_eval_rule(lax.pad_p)
+def _pad_eval_rule(
+    ctx: KernelEvalContext,
+    x: jax.Array,
+    padding_value: jax.Array,
+    padding_config: Sequence[tuple[int, int, int]],
+):
+  x_aval, padding_value_aval = ctx.avals_in
+  assert padding_value_aval.shape == ()
+  x_shape = x_aval.shape
+  if any(low != 0 for (low, _, _) in padding_config):
+    raise NotImplementedError('Left padding is not supported.')
+  if any(interior != 0 for (_, _, interior) in padding_config):
+    raise NotImplementedError('Interior padding is not supported.')
+
+  out_block_spec = ctx.out_block_specs[0]
+  assert out_block_spec.block_shape is not None
+  block_shape = out_block_spec.block_shape
+  out_block_indices = ctx.get_out_block_indices()[0]
+
+  # Mask out OOB values from the block and replace them with padding value.
+  mask = None
+  for dim, (block_size, full_size, indexer, (_, high, _)) in enumerate(
+      zip(block_shape, x_shape, out_block_indices, padding_config, strict=True)
+  ):
+    if high == 0:
+      continue
+    ref_axis = _ref_block_axis(block_shape, dim)
+    iota = jax.lax.broadcasted_iota(jnp.int32, x.shape, ref_axis)
+    match block_size:
+      case None | pallas_core.Squeezed():
+        block_indices = indexer
+      case pallas_core.Element():
+        block_indices = indexer + iota
+      case int() | pallas_core.Blocked():
+        block_size = pallas_core.get_block_size(block_size)
+        block_indices = indexer * block_size + iota
+      case pallas_core.BoundedSlice():
+        block_indices = indexer.start + iota
+      case _:
+        raise ValueError(f'Unsupported block size {block_size}')
+    mask = (block_indices < full_size) if mask is None else (mask & in_bounds)
+
+  if mask is None:
+    return x
+  return jnp.where(mask, x, padding_value)
+
+
+@register_pull_block_spec_rule(lax.pad_p)
+def _pad_pull_rule(
+    ctx: PullRuleContext,
+    block_transform: BlockIndexTransform,
+    padding_config: Sequence[tuple[int, int, int]],
+):
+  x_aval, padding_value_aval = ctx.avals_in
+  assert padding_value_aval.shape == ()
+  x_shape = x_aval.shape
+  if any(low != 0 for (low, _, _) in padding_config):
+    raise NotImplementedError('Left padding is not supported.')
+  if any(interior != 0 for (_, _, interior) in padding_config):
+    raise NotImplementedError('Interior padding is not supported.')
+
+  # Should return the same indices as the original, but clamp fully-OOB blocks
+  # to lie in bounds
+  def new_block_index_transform(*idxs):
+    idx = block_transform.block_index_transform(*idxs)
+    assert len(idx) == len(block_transform.block_shape)
+    idx = tuple(
+        _upper_bounded_indexer(block_size, full_size, i)
+        for block_size, full_size, i in zip(
+            block_transform.block_shape,
+            x_shape,
+            idx,
+            strict=True,
+        )
+    )
+    return idx
+
+  x_block_transform = block_transform.replace(
+      block_index_transform=new_block_index_transform,
+  )
+  return [x_block_transform, None]
+
+
 @register_eval_rule(lax.slice_p)
 def _slice_eval_rule(ctx, x, **params):
   del params
@@ -1429,6 +1513,29 @@ def _offset_indexer(
       return indexing.ds(indexer.start + slice_start, indexer.size)
     case _:
       raise ValueError(f'Unsupported block size {bs}')
+
+
+def _upper_bounded_indexer(
+    bs: pallas_core.BlockDim | int | None,
+    full_size: int,
+    indexer,
+):
+  """Upper-bounds indexer to avoid indexing OOB data."""
+  match bs:
+    case None | pallas_core.Squeezed() | pallas_core.Element():
+      return jnp.minimum(indexer, full_size - 1)
+    case int() | pallas_core.Blocked():
+      block_size = pallas_core.get_block_size(bs)
+      max_valid_idx = (full_size - 1) // block_size
+      # indexer is a block index so we need to offset it by the block offset.
+      return jnp.minimum(indexer, max_valid_idx)
+    case pallas_core.BoundedSlice():
+      slice_start = jnp.minimum(indexer.start, full_size - 1)
+      slice_size = jnp.minimum(indexer.size, jnp.maximum(0, full_size - slice_start))
+      return indexing.ds(slice_start, slice_size)
+    case _:
+      raise ValueError(f'Unsupported block size {bs}')
+
 
 
 @register_pull_block_spec_rule(lax.slice_p)
