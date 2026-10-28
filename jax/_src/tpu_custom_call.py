@@ -61,7 +61,7 @@ ir_version_override: Callable[[], int | None] | None = None
 
 
 # Controls the IR serialization version. Upon incrementing the
-# default version in jaxlib/mosaic/dialect/tpu/transforms/serde.cc we must
+# default version in xla/mosaic/dialect/tpu/transforms/serde.cc we must
 # continue to use the old serialization version when in forward compatibility
 # mode: for 1 month when exporting, or when using old cloud TPU.
 #
