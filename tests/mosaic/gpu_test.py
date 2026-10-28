@@ -5224,8 +5224,11 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       x = np.arange(np.prod(shape), dtype=np.int32).reshape(shape)
       _ = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, x)(x)
 
+    # Unit dimensions are dropped before checking GMEM strides, so we need at
+    # least two non-unit dimensions to have a non-minor stride that is not a
+    # multiple of 16 bytes.
     with self.assertRaisesRegex(ValueError, "all GMEM strides except the last"):
-      run_kernel([1] * 6)
+      run_kernel([1, 1, 1, 1, 2, 2])
 
     with self.assertRaisesRegex(
         ValueError, "last dimension to be divisible by 128"
