@@ -508,12 +508,9 @@ jax_multiplatform_test(
         "tpu_v5e",
         "tpu_v5p",
     ],
-    env = if_oss(
-        {
-            "TPU_STDERR_LOG_LEVEL": "0",
-        },
-        google_value = {},
-    ),
+    env = {
+        "TPU_STDERR_LOG_LEVEL": "0",
+    },
     shard_count = 8,
     deps = [
         "//jax/_src/pallas:pallas_test_util",
