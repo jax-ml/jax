@@ -356,6 +356,110 @@ rocm_nanobind_extension(
 )
 
 cc_library(
+    name = "hip_device_attributes",
+    srcs = ["//jaxlib/gpu:device_attributes.cc"],
+    hdrs = ["//jaxlib/gpu:device_attributes.h"],
+    deps = [
+        ":hip_vendor",
+        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
+
+cc_library(
+    name = "hip_lgamma_kernels",
+    srcs = ["//jaxlib/gpu:lgamma_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:lgamma_kernels.h"],
+    deps = [
+        ":hip_device_attributes",
+        ":hip_gpu_kernel_helpers",
+        ":hip_lgamma_kernels_impl",
+        ":hip_vendor",
+        "//jaxlib:ffi_helpers",
+        "@com_google_absl//absl/status",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+rocm_library(
+    name = "hip_lgamma_kernels_impl",
+    srcs = ["//jaxlib/gpu:lgamma_kernels.cu.cc"],
+    hdrs = [
+        "//jaxlib/gpu:double_word.cu.h",
+        "//jaxlib/gpu:lgamma_kernels.h",
+        "//jaxlib/gpu:log.cu.h",
+    ],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jaxlib:lgamma_coeffs",
+        "//jaxlib:log_coeffs",
+        "@com_google_absl//absl/status",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+cc_library(
+    name = "hip_digamma_kernels",
+    srcs = ["//jaxlib/gpu:digamma_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:digamma_kernels.h"],
+    deps = [
+        ":hip_device_attributes",
+        ":hip_digamma_kernels_impl",
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jaxlib:ffi_helpers",
+        "@com_google_absl//absl/status",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+rocm_library(
+    name = "hip_digamma_kernels_impl",
+    srcs = ["//jaxlib/gpu:digamma_kernels.cu.cc"],
+    hdrs = [
+        "//jaxlib/gpu:digamma_kernels.h",
+        "//jaxlib/gpu:double_word.cu.h",
+        "//jaxlib/gpu:log.cu.h",
+    ],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jaxlib:digamma_coeffs",
+        "//jaxlib:log_coeffs",
+        "@com_google_absl//absl/status",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+rocm_nanobind_extension(
+    name = "_math",
+    srcs = ["//jaxlib/gpu:math.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    enable_stub_generation = False,
+    features = ["-use_header_modules"],
+    module_name = "_math",
+    deps = [
+        ":hip_digamma_kernels",
+        ":hip_lgamma_kernels",
+        ":hip_vendor",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@nanobind",
+    ],
+)
+
+cc_library(
     name = "hip_hybrid_kernels",
     srcs = ["//jaxlib/gpu:hybrid_kernels.cc"],
     hdrs = ["//jaxlib/gpu:hybrid_kernels.h"],
@@ -489,6 +593,7 @@ py_library(
     deps = [
         ":_hybrid",
         ":_linalg",
+        ":_math",
         ":_prng",
         ":_rnn",
         ":_solver",

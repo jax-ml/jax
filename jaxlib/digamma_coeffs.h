@@ -45,6 +45,12 @@ limitations under the License.
 #ifndef JAXLIB_DIGAMMA_COEFFS_H_
 #define JAXLIB_DIGAMMA_COEFFS_H_
 
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#define JAXLIB_GPU_DEVICE __device__
+#else
+#define JAXLIB_GPU_DEVICE inline
+#endif
+
 namespace jax {
 namespace math_coeffs {
 
@@ -55,32 +61,37 @@ namespace math_coeffs {
 // Smallest positive normal float (`2^-126` in `float32`, `2^-1022` in
 // `float64`). Inputs with `|x| < kDigammaTiny*` (zeros and subnormals) return
 // `-copysign(inf, x)` so CPU and GPU agree regardless of subnormal flushing.
-inline constexpr float kDigammaTinyF32 = 1.1754943508222875e-38f;  // 2^-126
+JAXLIB_GPU_DEVICE constexpr float kDigammaTinyF32 =
+    1.1754943508222875e-38f;  // 2^-126
 // Every `float32 <= -2^23` has spacing `>= 1` and is therefore an exact
 // negative integer pole where `digamma(x)` is `NaN`.
-inline constexpr float kDigammaAllIntBelowF32 = -8388608.0f;  // -2^23
+JAXLIB_GPU_DEVICE constexpr float kDigammaAllIntBelowF32 =
+    -8388608.0f;  // -2^23
 // Threshold above which the asymptotic Bernoulli series is evaluated directly
 // (inputs in `[0.5, 4.5)` are shifted up by `+4`).
-inline constexpr float kDigammaZMinF32 = 4.5f;
+JAXLIB_GPU_DEVICE constexpr float kDigammaZMinF32 = 4.5f;
 // Above `1e18f`, `1 / (2z)` is >65 bits below `ln(z)` in `float32`, so `1 / z`
 // is set to `0` to avoid subnormal `1 / z` near `FLT_MAX`.
-inline constexpr float kDigammaZBigF32 = 1e18f;
+JAXLIB_GPU_DEVICE constexpr float kDigammaZBigF32 = 1e18f;
 // Power-of-two factor `2^24` used to rescale `delta` (`2^-126 <= |delta| <=
 // 0.5`) before computing `-1 / delta`, avoiding overflow near `+-2^-126`.
-inline constexpr float kDigammaRecipScaleF32 = 16777216.0f;  // 2^24
+JAXLIB_GPU_DEVICE constexpr float kDigammaRecipScaleF32 = 16777216.0f;  // 2^24
 
-inline constexpr double kDigammaTinyF64 = 2.2250738585072014e-308;  // 2^-1022
+JAXLIB_GPU_DEVICE constexpr double kDigammaTinyF64 =
+    2.2250738585072014e-308;  // 2^-1022
 // Every `float64 <= -2^52` is an exact negative integer pole (`NaN`).
-inline constexpr double kDigammaAllIntBelowF64 = -4503599627370496.0;  // -2^52
+JAXLIB_GPU_DEVICE constexpr double kDigammaAllIntBelowF64 =
+    -4503599627370496.0;  // -2^52
 // Threshold above which the `float64` asymptotic series is evaluated directly
 // (inputs in `[0.5, 12.5)` use up to three `+4` shifts).
-inline constexpr double kDigammaZMinF64 = 12.5;
+JAXLIB_GPU_DEVICE constexpr double kDigammaZMinF64 = 12.5;
 // Above `1e80`, `1 / (2z)` is >270 bits below `ln(z)` in `float64`, so `1 / z`
 // is set to `0` to avoid intermediate overflow in `TwoProd` near `DBL_MAX`.
-inline constexpr double kDigammaZBigF64 = 1e80;
+JAXLIB_GPU_DEVICE constexpr double kDigammaZBigF64 = 1e80;
 // Power-of-two factor `2^54` used to rescale `delta` before `-1 / delta` so
 // intermediate products cannot overflow near `+-2^-1022`.
-inline constexpr double kDigammaRecipScaleF64 = 18014398509481984.0;  // 2^54
+JAXLIB_GPU_DEVICE constexpr double kDigammaRecipScaleF64 =
+    18014398509481984.0;  // 2^54
 
 // ---------------------------------------------------------------------------
 // `DigammaF32` (`float32` double-word `(hi, lo)` kernel)
@@ -93,31 +104,32 @@ inline constexpr double kDigammaRecipScaleF64 = 18014398509481984.0;  // 2^54
 // + shift path. `kDigammaPsi1Hi16F32` has 16 significand bits and `t` has at
 // most 8 nonzero significand bits on `|t| < 2e-5f`, so `t *
 // kDigammaPsi1Hi16F32` (`8 + 16 = 24` bits) has no rounding error.
-inline constexpr float kDigammaRposHiF32 = 1.4616321325302124f;
-inline constexpr float kDigammaRposTolF32 = 2e-5f;
-inline constexpr float kDigammaPsi1Hi16F32 = 0.9676666259765625f;
-inline constexpr float kDigammaPsi1Lo16F32 = 5.619471266982146e-06f;
-inline constexpr float kDigammaPsiOffsetF32 = -1.203605215494008e-08f;
-inline constexpr float kDigammaHalfPsi2F32 = -0.44276317954063416f;
+JAXLIB_GPU_DEVICE constexpr float kDigammaRposHiF32 = 1.4616321325302124f;
+JAXLIB_GPU_DEVICE constexpr float kDigammaRposTolF32 = 2e-5f;
+JAXLIB_GPU_DEVICE constexpr float kDigammaPsi1Hi16F32 = 0.9676666259765625f;
+JAXLIB_GPU_DEVICE constexpr float kDigammaPsi1Lo16F32 = 5.619471266982146e-06f;
+JAXLIB_GPU_DEVICE constexpr float kDigammaPsiOffsetF32 =
+    -1.203605215494008e-08f;
+JAXLIB_GPU_DEVICE constexpr float kDigammaHalfPsi2F32 = -0.44276317954063416f;
 
 // `float32` asymptotic Bernoulli tail `-(psi(z) - ln(z) + 1/(2z)) * z^2`
 // (`= 1/12 - 1/(120 z^2) + 1/(252 z^4) - ...`) in `u = 1 / z^2` on `z >= 4.5`
 // (`u in [0, 1/20.25]`), fitted with `cheb_poly` + `split_desc`
 // (`_STIR_POLY_F32` in `jax/_src/lax/digamma.py`): 4 descending `(hi, lo)`
 // terms + 4 ascending `float32` terms (~51-bit accuracy).
-inline constexpr float kDigammaStirLoDegHiF32[4] = {
+JAXLIB_GPU_DEVICE constexpr float kDigammaStirLoDegHiF32[4] = {
     -0.004166500177234411f,
     0.0039682528004050255f,
     -0.008333333767950535f,
     0.0833333358168602f,
 };
-inline constexpr float kDigammaStirLoDegLoF32[4] = {
+JAXLIB_GPU_DEVICE constexpr float kDigammaStirLoDegLoF32[4] = {
     1.80291295781565e-10f,
     1.6523876711360685e-10f,
     4.369439809970288e-10f,
     -2.483527827834564e-09f,
 };
-inline constexpr float kDigammaStirHiDegF32[4] = {
+JAXLIB_GPU_DEVICE constexpr float kDigammaStirHiDegF32[4] = {
     0.0075619034469127655f,
     -0.02044805884361267f,
     0.06567689776420593f,
@@ -130,19 +142,19 @@ inline constexpr float kDigammaStirHiDegF32[4] = {
 // `d = 0, +-1, +-2` (`_COT_POLY_F32` in `jax/_src/lax/digamma.py`), fitted with
 // `cheb_poly` + `split_desc`: 4 descending `(hi, lo)` terms + 4 ascending
 // `float32` terms (~53-bit accuracy).
-inline constexpr float kDigammaCotLoDegHiF32[4] = {
+JAXLIB_GPU_DEVICE constexpr float kDigammaCotLoDegHiF32[4] = {
     0.00034221241367049515f,
     0.003436123952269554f,
     0.03964646905660629f,
     0.7898681163787842f,
 };
-inline constexpr float kDigammaCotLoDegLoF32[4] = {
+JAXLIB_GPU_DEVICE constexpr float kDigammaCotLoDegLoF32[4] = {
     -1.4072926851627088e-11f,
     1.6512574294025306e-11f,
     -1.6343285613729108e-09f,
     1.7317669076533093e-08f,
 };
-inline constexpr float kDigammaCotHiDegF32[4] = {
+JAXLIB_GPU_DEVICE constexpr float kDigammaCotHiDegF32[4] = {
     3.602519791456871e-05f,
     3.892349468515022e-06f,
     4.2365297758806264e-07f,
@@ -155,12 +167,12 @@ inline constexpr float kDigammaCotHiDegF32[4] = {
 // `pi * cot(pi * d)` near a negative zero of `psi` exceeds ~24.8 bits (up to
 // 29.2 canceled bits). Shared by `DigammaF32` and `DigammaF32WithF64`
 // (`_OVERRIDES_F32` in `jax/_src/lax/digamma.py`).
-inline constexpr float kDigammaOverridesInF32[3] = {
+JAXLIB_GPU_DEVICE constexpr float kDigammaOverridesInF32[3] = {
     -2.6107208728790283f,  // 0xc027160d
     -66.79590606689453f,   // 0xc2859781
     -95.80821990966797f,   // 0xc2bf9dcf
 };
-inline constexpr float kDigammaOverridesOutF32[3] = {
+JAXLIB_GPU_DEVICE constexpr float kDigammaOverridesOutF32[3] = {
     -4.811107601199183e-08f,
     -6.681547759512796e-09f,
     5.399198954592066e-08f,
@@ -174,7 +186,7 @@ inline constexpr float kDigammaOverridesOutF32[3] = {
 // z^2` in `u = 1 / z^2` on `[1e-35, 1/20.25]` (`z >= 4.5`), fitted with
 // `cheb_poly`
 // (`_STIR_CPU_F64` in `jax/_src/lax/digamma.py`).
-inline constexpr double kDigammaStirF32F64[11] = {
+JAXLIB_GPU_DEVICE constexpr double kDigammaStirF32F64[11] = {
     0.08333333333333333,   -0.008333333333331052, 0.00396825396638545,
     -0.004166666064322241, 0.007575656825057211,  -0.021082807398581014,
     0.08270110356222089,   -0.4165436317406144,   2.2764606013219155,
@@ -184,7 +196,7 @@ inline constexpr double kDigammaStirF32F64[11] = {
 // First 12 ascending `float64` coefficients of `kDigammaCot*F64` for the smooth
 // reflection remainder `R(w)` on `w = d^2 in [0, 0.25]` (~54-bit accuracy,
 // `_COT_CPU_F64` in `jax/_src/lax/digamma.py`).
-inline constexpr double kDigammaCotF32F64[12] = {
+JAXLIB_GPU_DEVICE constexpr double kDigammaCotF32F64[12] = {
     0.7898681336964529,     0.039646467422276385,   0.0034361239688982794,
     0.00034221239588867877, 3.6025255636170674e-05, 3.8918566160965975e-06,
     4.259576174096584e-07,  4.694069230374593e-08,  5.19199874964571e-09,
@@ -200,29 +212,29 @@ inline constexpr double kDigammaCotF32F64[12] = {
 // zero `r_+ ~= 1.46163214496836234126` of `psi(x)`) for `|t| < 1e-4`, with
 // `(hi, lo)` pairs for `psi(r0)` and `psi'(r0)` (`_RPOS_HI_F64` and
 // `_PSI0_F64.._PSI4_F64` in `jax/_src/lax/digamma.py`).
-inline constexpr double kDigammaRposHiF64 = 1.4616321449683622;
-inline constexpr double kDigammaRposTolF64 = 1e-4;
-inline constexpr double kDigammaPsi0HiF64 = -9.241265521729427e-17;
-inline constexpr double kDigammaPsi0LoF64 = -2.5907356508198256e-33;
-inline constexpr double kDigammaPsi1HiF64 = 0.9676722454476212;
-inline constexpr double kDigammaPsi1LoF64 = 5.0688981776619267e-17;
-inline constexpr double kDigammaPsi2F64 = -0.4427631689835922;
-inline constexpr double kDigammaPsi3F64 = 0.2584997609556511;
-inline constexpr double kDigammaPsi4F64 = -0.16394270544240658;
+JAXLIB_GPU_DEVICE constexpr double kDigammaRposHiF64 = 1.4616321449683622;
+JAXLIB_GPU_DEVICE constexpr double kDigammaRposTolF64 = 1e-4;
+JAXLIB_GPU_DEVICE constexpr double kDigammaPsi0HiF64 = -9.241265521729427e-17;
+JAXLIB_GPU_DEVICE constexpr double kDigammaPsi0LoF64 = -2.5907356508198256e-33;
+JAXLIB_GPU_DEVICE constexpr double kDigammaPsi1HiF64 = 0.9676722454476212;
+JAXLIB_GPU_DEVICE constexpr double kDigammaPsi1LoF64 = 5.0688981776619267e-17;
+JAXLIB_GPU_DEVICE constexpr double kDigammaPsi2F64 = -0.4427631689835922;
+JAXLIB_GPU_DEVICE constexpr double kDigammaPsi3F64 = 0.2584997609556511;
+JAXLIB_GPU_DEVICE constexpr double kDigammaPsi4F64 = -0.16394270544240658;
 
 // `float64` asymptotic Bernoulli tail `-(psi(z) - ln(z) + 1/(2z)) * z^2` in
 // `u = 1 / z^2` on `z >= 12.5` (`u in [0, 1/156.25]`), fitted with `cheb_poly`
 // + `split_desc` (`_STIR_POLY_F64` in `jax/_src/lax/digamma.py`): 6 descending
 // `(hi, lo)` terms + 9 ascending `float64` terms (~113-bit accuracy).
-inline constexpr double kDigammaStirLoDegHiF64[6] = {
+JAXLIB_GPU_DEVICE constexpr double kDigammaStirLoDegHiF64[6] = {
     -0.02109279609279136, 0.0075757575757575725, -0.004166666666666667,
     0.003968253968253968, -0.008333333333333333, 0.08333333333333333,
 };
-inline constexpr double kDigammaStirLoDegLoF64[6] = {
+JAXLIB_GPU_DEVICE constexpr double kDigammaStirLoDegLoF64[6] = {
     6.6846026287507115e-19, 1.7779357872760644e-20,  -5.648576985608088e-20,
     2.2028205636971673e-19, -1.1564823170698995e-19, 4.625929269271485e-18,
 };
-inline constexpr double kDigammaStirHiDegF64[9] = {
+JAXLIB_GPU_DEVICE constexpr double kDigammaStirHiDegF64[9] = {
     0.08333333332881014, -0.44325980095164014, 3.053952947844877,
     -26.455747897251968, 281.34693751040305,   -3587.5352658291686,
     52314.90878434773,   -755855.2580681203,   7355272.314586399,
@@ -233,19 +245,19 @@ inline constexpr double kDigammaStirHiDegF64[9] = {
 // on `[0, 0.25]`, fitted with `cheb_poly` + `split_desc` (`_COT_POLY_F64` in
 // `jax/_src/lax/digamma.py`): 10 descending `(hi, lo)` terms + 6 ascending
 // `float64` terms (~112-bit accuracy).
-inline constexpr double kDigammaCotLoDegHiF64[10] = {
+JAXLIB_GPU_DEVICE constexpr double kDigammaCotLoDegHiF64[10] = {
     5.754349334325642e-10,  5.19199874964571e-09,   4.694069230374593e-08,
     4.259576174096584e-07,  3.8918566160965975e-06, 3.6025255636170674e-05,
     0.00034221239588867877, 0.0034361239688982794,  0.039646467422276385,
     0.7898681336964529,
 };
-inline constexpr double kDigammaCotLoDegLoF64[10] = {
+JAXLIB_GPU_DEVICE constexpr double kDigammaCotLoDegLoF64[10] = {
     4.4934487685539166e-26,  5.9592513086368146e-27,  1.6102102731493155e-24,
     -1.2003802057223964e-23, -1.798675399939698e-22,  4.7500665878142945e-22,
     -1.1175797492901849e-20, -1.5592281451156182e-20, -2.174273797593867e-18,
     -5.020885545454614e-17,
 };
-inline constexpr double kDigammaCotHiDegF64[6] = {
+JAXLIB_GPU_DEVICE constexpr double kDigammaCotHiDegF64[6] = {
     6.384724984320336e-11, 7.088565158962753e-12, 7.872169220727059e-13,
     8.759464478499956e-14, 9.459278579589876e-15, 1.3512023505691749e-15,
 };
@@ -258,7 +270,7 @@ inline constexpr double kDigammaCotHiDegF64[6] = {
 // `(-k - 1, -k)` on `(-2^24, 0)` and, on `(-2^52, -2^24)`, solving
 // `psi(1 + N - d) = pi * cot(pi * d)` for integer `N` at every representable
 // fractional offset `d` (`_OVERRIDES_F64` in `jax/_src/lax/digamma.py`).
-inline constexpr double kDigammaOverridesInF64[10] = {
+JAXLIB_GPU_DEVICE constexpr double kDigammaOverridesInF64[10] = {
     -0.5040830082644554,  // 0xbfe02172b05ee260
     -1.5734984731623904,  // 0xbff92d0cbc289d4a
     -5.6671624415568855,  // 0xc016ab2ca18e6ce3
@@ -270,7 +282,7 @@ inline constexpr double kDigammaOverridesInF64[10] = {
     -216428973.94835505,  // 0xc1a9cce35be58ecb
     -71243556817555.97,   // 0xc2d032ebb962a4fe
 };
-inline constexpr double kDigammaOverridesOutF64[10] = {
+JAXLIB_GPU_DEVICE constexpr double kDigammaOverridesOutF64[10] = {
     7.289763902976895e-17,  1.5649788481838454e-16, 4.1867794464524804e-17,
     6.305749002764493e-16,  -3.819390762310924e-16, 1.3170578140239663e-16,
     -1.089898921099485e-15, 5.82590269634041e-16,   3.682396316799126e-15,
@@ -279,5 +291,7 @@ inline constexpr double kDigammaOverridesOutF64[10] = {
 
 }  // namespace math_coeffs
 }  // namespace jax
+
+#undef JAXLIB_GPU_DEVICE
 
 #endif  // JAXLIB_DIGAMMA_COEFFS_H_

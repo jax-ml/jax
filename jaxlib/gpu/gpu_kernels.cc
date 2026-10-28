@@ -16,6 +16,8 @@ limitations under the License.
 // This file is not used by JAX itself, but exists to assist with running
 // JAX-generated HLO code from outside of JAX.
 
+#include "jaxlib/gpu/digamma_kernels.h"
+#include "jaxlib/gpu/lgamma_kernels.h"
 #include "jaxlib/gpu/linalg_kernels.h"
 #include "jaxlib/gpu/prng_kernels.h"
 #include "jaxlib/gpu/rnn_kernels.h"
@@ -60,6 +62,9 @@ XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_gesvdp_ffi", "CUDA",
 
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_cholesky_update_ffi", "CUDA",
                          CholeskyUpdateFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_digamma_ffi", "CUDA",
+                         DigammaFfi);
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_lgamma_ffi", "CUDA", LgammaFfi);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_lu_pivots_to_permutation",
                          "CUDA", LuPivotsToPermutation);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_tridiagonal_solve_perturbed",

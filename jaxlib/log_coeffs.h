@@ -25,6 +25,12 @@ limitations under the License.
 
 #include <cstdint>
 
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#define JAXLIB_GPU_DEVICE __device__
+#else
+#define JAXLIB_GPU_DEVICE inline
+#endif
+
 namespace jax {
 namespace math_coeffs {
 
@@ -33,21 +39,22 @@ namespace math_coeffs {
 // fraction width chooses the integer exponent `k` so the reduced significand
 // `m = x * 2^-k` lands in `[sqrt(2)/2, sqrt(2))` around `1.0`, keeping `m - 1`
 // small (`|m - 1| <= 0.4142`).
-inline constexpr int32_t kSqrt2Over2BitsF32 = 0x3F3504F3;
-inline constexpr int64_t kSqrt2Over2BitsF64 = 0x3FE6A09E667F3BCDLL;
+JAXLIB_GPU_DEVICE constexpr int32_t kSqrt2Over2BitsF32 = 0x3F3504F3;
+JAXLIB_GPU_DEVICE constexpr int64_t kSqrt2Over2BitsF64 = 0x3FE6A09E667F3BCDLL;
 
 // Bitmask clearing the low 27 fraction bits of an IEEE `float64` (keeping the
 // sign, exponent, and top 26 significand bits). Used by `TwoProdBig` on targets
 // without fused multiply-add so splitting large inputs up to `DBL_MAX` cannot
 // overflow.
-inline constexpr int64_t kKeep26MantissaMaskF64 = -134217728LL;  // -(1LL << 27)
+JAXLIB_GPU_DEVICE constexpr int64_t kKeep26MantissaMaskF64 =
+    -134217728LL;  // -(1LL << 27)
 
 // Bias `3 * 2^51` (`0x4338000000000000`) for converting between signed 52-bit
 // integers `k in [-2^51, 2^51)` and `double` in two vector instructions on SIMD
 // targets without native `int64 <-> double` conversion: adding `3 * 2^51`
 // places `k` in the low 52 fraction bits of `[2^52, 2^53)`.
-inline constexpr int64_t kInt52MagicBits = 0x4338000000000000LL;
-inline constexpr double kInt52MagicDouble = 6755399441055744.0;
+JAXLIB_GPU_DEVICE constexpr int64_t kInt52MagicBits = 0x4338000000000000LL;
+JAXLIB_GPU_DEVICE constexpr double kInt52MagicDouble = 6755399441055744.0;
 
 // ---------------------------------------------------------------------------
 // `float32` `(hi, lo)` `ln(x)` (`_log_f32` in `jax/_src/lax/lgamma.py`)
@@ -56,13 +63,13 @@ inline constexpr double kInt52MagicDouble = 6755399441055744.0;
 // Split of `ln(2) = kLn2HiF32 + kLn2LoF32` where `kLn2HiF32 = 2839 / 4096` has
 // 12 significand bits, so `k * kLn2HiF32` has no rounding error in `float32`
 // for all exponent offsets `|k| <= 256`.
-inline constexpr float kLn2HiF32 = 0.693115234375f;
-inline constexpr float kLn2LoF32 = 3.19461832987e-05f;
+JAXLIB_GPU_DEVICE constexpr float kLn2HiF32 = 0.693115234375f;
+JAXLIB_GPU_DEVICE constexpr float kLn2LoF32 = 3.19461832987e-05f;
 
 // Minimax degree-7 polynomial for `(ln(1 + f) - (f - 0.5 * f^2)) / f^3` on
 // `f = m - 1 in [sqrt(2)/2 - 1, sqrt(2) - 1]`, stored in ascending powers of
 // `f` (`_LOG_Q` in `jax/_src/lax/lgamma.py`).
-inline constexpr float kLogQF32[8] = {
+JAXLIB_GPU_DEVICE constexpr float kLogQF32[8] = {
     0.3333333134651184f,   -0.250008225440979f,   0.20001226663589478f,
     -0.16623350977897644f, 0.14201749861240387f,  -0.1316024214029312f,
     0.12761665880680084f,  -0.07634450495243073f,
@@ -75,8 +82,8 @@ inline constexpr float kLogQF32[8] = {
 // Split of `ln(2) = kLn2HiF64 + kLn2LoF64` with a 42-bit high part so
 // `k * kLn2HiF64` has no rounding error in `float64` for `|k| <= 2048`
 // (`_LN2_HI_F64` and `_LN2_LO_F64` in `jax/_src/lax/lgamma.py`).
-inline constexpr double kLn2HiF64 = 0.6931471805598903;
-inline constexpr double kLn2LoF64 = 5.497923018708371e-14;
+JAXLIB_GPU_DEVICE constexpr double kLn2HiF64 = 0.6931471805598903;
+JAXLIB_GPU_DEVICE constexpr double kLn2LoF64 = 5.497923018708371e-14;
 
 // Degree-20 minimax polynomial for `(ln(1 + f) - (f - f^2/2 + f^3/3)) / f^4`
 // on `f = m - 1 in [sqrt(2)/2 - 1, sqrt(2) - 1]`, stored in ascending powers
@@ -89,7 +96,7 @@ inline constexpr double kLn2LoF64 = 5.497923018708371e-14;
 //       [|D...|], [sqrt(2)/2 - 1; sqrt(2) - 1], relative, floating,
 //       x - 0.5 * x^2 + (1/3) * x^3);
 //   for i from 4 to 24 do print(double(coeff(p, i)));
-inline constexpr double kLogQF64[21] = {
+JAXLIB_GPU_DEVICE constexpr double kLogQF64[21] = {
     -0.25000000000000044,  0.20000000000000684,  -0.1666666666665117,
     0.14285714285524623,   -0.1250000000185486,  0.11111111132038475,
     -0.09999999896240677,  0.09090907860216561,  -0.08333336179500314,
@@ -109,12 +116,12 @@ inline constexpr double kLogQF64[21] = {
 // bits) and 41 significand bits in `float64` (since `|k| <= 2048`, `12 + 41 =
 // 53` bits), so `k * hi` and `k * mid` multiply with no rounding error across
 // all normal and subnormal exponent offsets.
-inline constexpr float kLn2SplitF32[3] = {
+JAXLIB_GPU_DEVICE constexpr float kLn2SplitF32[3] = {
     0.693145751953125f,
     1.4285906217992306e-06f,
     1.619850954759361e-11f,
 };
-inline constexpr double kLn2SplitF64[3] = {
+JAXLIB_GPU_DEVICE constexpr double kLn2SplitF64[3] = {
     0.6931471805598903,
     5.49792301870721e-14,
     1.1612227229362532e-26,
@@ -128,25 +135,25 @@ inline constexpr double kLn2SplitF64[3] = {
 // `s = (m * r_i - 1) / (m * r_i + 1)` to `w = s^2 <= 0.00380` (~8x smaller than
 // unreduced `w <= 0.02944`) so `ln(m * r_i) = 2*s + s*w*P(w)` needs far fewer
 // `(hi, lo)` terms.
-inline constexpr float kNegLnr4HiF32[4] = {
+JAXLIB_GPU_DEVICE constexpr float kNegLnr4HiF32[4] = {
     -0.2231435477733612f,
     -0.0606246218085289f,
     0.06453852355480194f,
     0.28768208622932434f,
 };
-inline constexpr float kNegLnr4LoF32[4] = {
+JAXLIB_GPU_DEVICE constexpr float kNegLnr4LoF32[4] = {
     -3.540848503291727e-09f,
     -7.905942393804377e-12f,
     -2.417230859919073e-09f,
     -1.3777543550475002e-08f,
 };
-inline constexpr double kNegLnr4HiF64[4] = {
+JAXLIB_GPU_DEVICE constexpr double kNegLnr4HiF64[4] = {
     -0.22314355131420976,
     -0.06062462181643484,
     0.06453852113757118,
     0.2876820724517809,
 };
-inline constexpr double kNegLnr4LoF64[4] = {
+JAXLIB_GPU_DEVICE constexpr double kNegLnr4LoF64[4] = {
     9.091270597324799e-18,
     -2.6424025938726934e-18,
     -6.470486661692933e-18,
@@ -163,29 +170,32 @@ inline constexpr double kNegLnr4LoF64[4] = {
 // error below `(hi, lo)` precision):
 // - `float32`: 1 `(hi, lo)` term + 4 `float32` terms (~54-bit accuracy).
 // - `float64`: 5 `(hi, lo)` terms + 5 `float64` terms (~108-bit accuracy).
-inline constexpr float kLogPolyLoDegHiF32[1] = {0.6666666865348816f};
-inline constexpr float kLogPolyLoDegLoF32[1] = {-1.9868215517249155e-08f};
-inline constexpr float kLogPolyHiDegF32[4] = {
+JAXLIB_GPU_DEVICE constexpr float kLogPolyLoDegHiF32[1] = {0.6666666865348816f};
+JAXLIB_GPU_DEVICE constexpr float kLogPolyLoDegLoF32[1] = {
+    -1.9868215517249155e-08f};
+JAXLIB_GPU_DEVICE constexpr float kLogPolyHiDegF32[4] = {
     0.4000000059604645f,
     0.2857142984867096f,
     0.22221730649471283f,
     0.1832914650440216f,
 };
 
-inline constexpr double kLogPolyLoDegHiF64[5] = {
+JAXLIB_GPU_DEVICE constexpr double kLogPolyLoDegHiF64[5] = {
     0.18181818181818155, 0.2222222222222222, 0.2857142857142857, 0.4,
     0.6666666666666666,
 };
-inline constexpr double kLogPolyLoDegLoF64[5] = {
+JAXLIB_GPU_DEVICE constexpr double kLogPolyLoDegLoF64[5] = {
     -1.0849770252736922e-17, 1.2501947479184836e-17, 1.5860279463478475e-17,
     -2.2204460486792272e-17, 3.700743415417178e-17,
 };
-inline constexpr double kLogPolyHiDegF64[5] = {
+JAXLIB_GPU_DEVICE constexpr double kLogPolyHiDegF64[5] = {
     0.15384615384643138, 0.13333333316787233, 0.1176471198512322,
     0.10524956497710565, 0.09691143935120411,
 };
 
 }  // namespace math_coeffs
 }  // namespace jax
+
+#undef JAXLIB_GPU_DEVICE
 
 #endif  // JAXLIB_LOG_COEFFS_H_

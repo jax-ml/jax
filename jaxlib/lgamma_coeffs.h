@@ -25,6 +25,12 @@ limitations under the License.
 
 #include <cstdint>
 
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#define JAXLIB_GPU_DEVICE __device__
+#else
+#define JAXLIB_GPU_DEVICE inline
+#endif
+
 namespace jax {
 namespace math_coeffs {
 
@@ -36,28 +42,32 @@ namespace math_coeffs {
 // `float64`). Inputs with `|x| < kLgammaTiny*` (zeros and subnormals) return
 // `+inf` so backends that flush subnormals and backends that preserve them
 // agree.
-inline constexpr float kLgammaTinyF32 = 1.1754943508222875e-38f;  // 2^-126
+JAXLIB_GPU_DEVICE constexpr float kLgammaTinyF32 =
+    1.1754943508222875e-38f;  // 2^-126
 // Largest `float32` whose `lgamma` is finite (`lgamma(4.085003e36) =
 // 3.4028234e38`; the next `float32` up overflows to `+inf`).
-inline constexpr float kLgammaMaxFiniteArgF32 = 4.085003e36f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaMaxFiniteArgF32 = 4.085003e36f;
 // Every `float32 <= -2^23` has spacing `>= 1` and is therefore an exact
 // negative integer pole (`+inf`).
-inline constexpr float kLgammaAllIntegersBelowF32 = -8388608.0f;  // -2^23
+JAXLIB_GPU_DEVICE constexpr float kLgammaAllIntegersBelowF32 =
+    -8388608.0f;  // -2^23
 
-inline constexpr double kLgammaTinyF64 = 2.2250738585072014e-308;  // 2^-1022
+JAXLIB_GPU_DEVICE constexpr double kLgammaTinyF64 =
+    2.2250738585072014e-308;  // 2^-1022
 // Largest `float64` whose `lgamma` is finite (`lgamma(2.5599833278516383e305)
 // = 1.7976931348623157e308 <= DBL_MAX`; the next `float64` up overflows to
 // `+inf`).
-inline constexpr double kLgammaMaxFiniteArgF64 = 2.5599833278516383e305;
+JAXLIB_GPU_DEVICE constexpr double kLgammaMaxFiniteArgF64 =
+    2.5599833278516383e305;
 // Every `float64 <= -2^52` is an exact negative integer pole (`+inf`).
-inline constexpr double kLgammaAllIntegersBelowF64 =
+JAXLIB_GPU_DEVICE constexpr double kLgammaAllIntegersBelowF64 =
     -4503599627370496.0;  // -2^52
 
 // Bitmask keeping the top 24 significand bits of an IEEE `float64` (clearing
 // the low 29 fraction bits). On `w in [1, 7]`, `wh` has steps of `>= 2^-23`, so
 // `wh + k <= 7` for `k in {1, ..., 5}` fits in 26 significand bits and pairs of
 // high parts multiply with zero rounding error (`26 + 26 = 52 <= 53`).
-inline constexpr int64_t kLgammaKeep24MantissaMaskF64 =
+JAXLIB_GPU_DEVICE constexpr int64_t kLgammaKeep24MantissaMaskF64 =
     -536870912LL;  // -(1LL << 29)
 
 // ---------------------------------------------------------------------------
@@ -68,8 +78,9 @@ inline constexpr int64_t kLgammaKeep24MantissaMaskF64 =
 // leading product is written as `(x - 0.5) * (ln(x) - 1) = (x - 0.5) * ln(x) -
 // x + 0.5`, stored as a `(hi, lo)` `float32` pair (`_C_STIRLING_HI` and
 // `_C_STIRLING_LO` in `jax/_src/lax/lgamma.py`).
-inline constexpr float kLgammaCStirlingHiF32 = 0.418938547372818f;
-inline constexpr float kLgammaCStirlingLoF32 = -1.4168144879533884e-08f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaCStirlingHiF32 = 0.418938547372818f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaCStirlingLoF32 =
+    -1.4168144879533884e-08f;
 
 // Minimax degree-11 polynomials for `lgamma(x) / ((x - 1)(x - 2))` in ascending
 // powers of `d = x - center` (`_POS_05_15_*` and `_POS_15_4_*` in
@@ -80,20 +91,22 @@ inline constexpr float kLgammaCStirlingLoF32 = -1.4168144879533884e-08f;
 // - `kLgammaPos05_15*`: for `x in [0.5, 1.5]` around `center = 1.0`
 //   (`c_0 = gamma ~= 0.5772156649`).
 // - `kLgammaPos15_4*`: for `x in (1.5, 4.0]` around `center = 2.75`.
-inline constexpr float kLgammaPos05_15C0HiF32 = 0.5772156715393066f;
-inline constexpr float kLgammaPos05_15C0LoF32 = -1.6366939803447167e-08f;
-inline constexpr float kLgammaPos05_15C1HhF32 = -0.2452392578125f;
-inline constexpr float kLgammaPos05_15Q1RemF32[11] = {
+JAXLIB_GPU_DEVICE constexpr float kLgammaPos05_15C0HiF32 = 0.5772156715393066f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaPos05_15C0LoF32 =
+    -1.6366939803447167e-08f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaPos05_15C1HhF32 = -0.2452392578125f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaPos05_15Q1RemF32[11] = {
     -1.2042846719850786e-05f, 0.15543700754642487f,  -0.11515380442142487f,
     0.09211507439613342f,     -0.0770968347787857f,  0.06875524669885635f,
     -0.06163526326417923f,    0.038027770817279816f, -0.030093315988779068f,
     0.08821531385183334f,     -0.08744385093450546f,
 };
 
-inline constexpr float kLgammaPos15_4C0HiF32 = 0.3620683252811432f;
-inline constexpr float kLgammaPos15_4C0LoF32 = -8.077157609420738e-09f;
-inline constexpr float kLgammaPos15_4C1HhF32 = -0.065704345703125f;
-inline constexpr float kLgammaPos15_4Q1RemF32[11] = {
+JAXLIB_GPU_DEVICE constexpr float kLgammaPos15_4C0HiF32 = 0.3620683252811432f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaPos15_4C0LoF32 =
+    -8.077157609420738e-09f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaPos15_4C1HhF32 = -0.065704345703125f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaPos15_4Q1RemF32[11] = {
     -2.4997580112540163e-05f, 0.01603109948337078f,    -0.004419579170644283f,
     0.0013021451886743307f,   -0.0004001049674116075f, 0.0001287032209802419f,
     -4.187468221061863e-05f,  1.1072624147345778e-05f, -3.4609686281328322e-06f,
@@ -103,7 +116,7 @@ inline constexpr float kLgammaPos15_4Q1RemF32[11] = {
 // Minimax degree-2 polynomial in `1 / x^2` for Stirling's series tail
 // `S(1 / x^2) = 1/12 - 1/(360 * x^2) + ...` on `x >= 4` (`_STIRLING_HI` in
 // `jax/_src/lax/lgamma.py`).
-inline constexpr float kLgammaStirlingF32[3] = {
+JAXLIB_GPU_DEVICE constexpr float kLgammaStirlingF32[3] = {
     0.08333330601453781f,
     -0.0027760176453739405f,
     0.0007350948872044683f,
@@ -115,8 +128,8 @@ inline constexpr float kLgammaStirlingF32[3] = {
 // 9-bit value `kLgammaSincC0HhF32 = -421 / 256` plus `kLgammaSincRemF32[0]`, so
 // `(dh * dh) * kLgammaSincC0HhF32` has no rounding error when `dh` keeps 6
 // significand bits (`12 + 9 = 21 <= 24`).
-inline constexpr float kLgammaSincC0HhF32 = -1.64453125f;
-inline constexpr float kLgammaSincRemF32[6] = {
+JAXLIB_GPU_DEVICE constexpr float kLgammaSincC0HhF32 = -1.64453125f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaSincRemF32[6] = {
     -0.000402778823627159f, -0.5411723256111145f,  -0.338631808757782f,
     -0.25888514518737793f,  -0.14380806684494019f, -0.34033387899398804f,
 };
@@ -125,9 +138,9 @@ inline constexpr float kLgammaSincRemF32[6] = {
 // `kLgammaBasinMinF32 = lgamma(x_min)` around the local minimum
 // `x_min ~= -2.61072` of `lgamma(x)` on `(-3, -2)` (`_BASIN_LO`, `_BASIN_HI`,
 // and `_BASIN_MIN` in `jax/_src/lax/lgamma.py`).
-inline constexpr float kLgammaBasinLoF32 = -2.70703125f;
-inline constexpr float kLgammaBasinHiF32 = -2.5f;
-inline constexpr float kLgammaBasinMinF32 = -0.11862999200820923f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaBasinLoF32 = -2.70703125f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaBasinHiF32 = -2.5f;
+JAXLIB_GPU_DEVICE constexpr float kLgammaBasinMinF32 = -0.11862999200820923f;
 
 // Lookup table of shape `[18][16]` (`_NEG_TABLE` in `jax/_src/lax/lgamma.py`)
 // for approximating `lgamma(x)` near its zeros `x_root = -k + r` alongside
@@ -161,7 +174,7 @@ inline constexpr float kLgammaBasinMinF32 = -0.11862999200820923f;
 //       constant term `c_0` of `P(u)` (or `Q(u)` in column 1).
 //   rows 7..17 (`c_1 .. c_11`): remaining degree-11 minimax polynomial
 //       coefficients in ascending powers of `u`.
-inline constexpr float kLgammaNegTableF32[18][16] = {
+JAXLIB_GPU_DEVICE constexpr float kLgammaNegTableF32[18][16] = {
     {
         -0.4570247530937195f,
         0.3892791271209717f,
@@ -495,13 +508,14 @@ inline constexpr float kLgammaNegTableF32[18][16] = {
 // `(hi, lo)` `float64` pair for `0.5 * ln(2 * pi) - 0.5` (`_C_STIRLING_HI_F64`
 // and `_C_STIRLING_LO_F64` in `jax/_src/lax/lgamma.py`), shared by
 // `LgammaF32WithF64` and `LgammaF64`.
-inline constexpr double kLgammaCStirlingHiF64 = 0.4189385332046727;
-inline constexpr double kLgammaCStirlingLoF64 = 1.6728209650585413e-17;
+JAXLIB_GPU_DEVICE constexpr double kLgammaCStirlingHiF64 = 0.4189385332046727;
+JAXLIB_GPU_DEVICE constexpr double kLgammaCStirlingLoF64 =
+    1.6728209650585413e-17;
 
 // Minimax degree-7 `float64` polynomial in `1 / z^2` for Stirling's series tail
 // `S(1 / z^2) = 1/12 - 1/(360 z^2) + ...` on `z >= 8`, stored in ascending
 // powers of `1 / z^2` (`_STIRLING_F32_F64` in `jax/_src/lax/lgamma.py`).
-inline constexpr double kLgammaStirlingF32F64[8] = {
+JAXLIB_GPU_DEVICE constexpr double kLgammaStirlingF32F64[8] = {
     0.08333333333333337,    -0.0027777777777657103, 0.0007936507847927581,
     -0.0005952363828805681, 0.0008415863584863707,  -0.001906033373818225,
     0.0057034901036038445,  -0.005481381600466104,
@@ -513,13 +527,13 @@ inline constexpr double kLgammaStirlingF32F64[8] = {
 // where `lgamma(1 + t) / t = -gamma + sum_{k=2}^9 (-1)^k (zeta(k) / k) t^(k-1)`
 // and `lgamma(2 + t) / t = (1 - gamma) + sum_{k=2}^9 (-1)^k ((zeta(k) - 1) / k)
 // t^(k-1)`.
-inline constexpr double kLgammaTaylor1F32F64[9] = {
+JAXLIB_GPU_DEVICE constexpr double kLgammaTaylor1F32F64[9] = {
     -0.5772156649015329, 0.8224670334241132,   -0.40068563438653143,
     0.27058080842778454, -0.20738555102867398, 0.1695571769974082,
     -0.1440498967688461, 0.12550966952474304,  -0.11133426586956469,
 };
 
-inline constexpr double kLgammaTaylor2F32F64[9] = {
+JAXLIB_GPU_DEVICE constexpr double kLgammaTaylor2F32F64[9] = {
     0.42278433509846713,   0.3224670334241132,    -0.0673523010531981,
     0.020580808427784546,  -0.007385551028673986, 0.0028905103307415234,
     -0.001192753911703261, 0.0005096695247430425, -0.00022315475845357939,
@@ -528,7 +542,7 @@ inline constexpr double kLgammaTaylor2F32F64[9] = {
 // Minimax degree-11 `float64` polynomial in `delta^2` for
 // `ln(sin(pi * delta) / (pi * delta)) / delta^2` on `|delta| <= 0.5`, stored in
 // ascending powers of `delta^2` (`_SINC_F32_F64` in `jax/_src/lax/lgamma.py`).
-inline constexpr double kLgammaSincF32F64[12] = {
+JAXLIB_GPU_DEVICE constexpr double kLgammaSincF32F64[12] = {
     -1.6449340668482264,  -0.5411616168587046,  -0.3391143534032649,
     -0.25101938254889333, -0.20019726882272687, -0.16674427259742153,
     -0.142353419429977,   -0.1296848567043034,  -0.08295902231943517,
@@ -543,9 +557,9 @@ inline constexpr double kLgammaSincF32F64[12] = {
 // powers of `d = x - 1.75` on `[1.0, 2.5]`, with a `(hi, lo)` split on the
 // constant term `c_0 = lgamma(1.75) / ((0.75)(-0.25))` (`_POS_1_2_F64` and
 // `_POS_1_2_C0_LO_F64` in `jax/_src/lax/lgamma.py`).
-inline constexpr double kLgammaPos12C0HiF64 = 0.4501393121092563;
-inline constexpr double kLgammaPos12C0LoF64 = 1.459080004873635e-17;
-inline constexpr double kLgammaPos12TailF64[25] = {
+JAXLIB_GPU_DEVICE constexpr double kLgammaPos12C0HiF64 = 0.4501393121092563;
+JAXLIB_GPU_DEVICE constexpr double kLgammaPos12C0LoF64 = 1.459080004873635e-17;
+JAXLIB_GPU_DEVICE constexpr double kLgammaPos12TailF64[25] = {
     -0.11948158662524275,    0.044520447198509394,   -0.01905395783024671,
     0.008776370425279009,    -0.004226194125966872,  0.002095533879199047,
     -0.0010605660739579296,  0.0005448970031937583,  -0.0002831906437563517,
@@ -560,7 +574,7 @@ inline constexpr double kLgammaPos12TailF64[25] = {
 // Minimax degree-10 polynomial in `1 / z^2` for Stirling's series tail
 // `S(1 / z^2) = 1/12 - 1/(360 z^2) + ...` on `z >= 7`, stored in ascending
 // powers of `1 / z^2` (`_STIRLING_F64` in `jax/_src/lax/lgamma.py`).
-inline constexpr double kLgammaStirlingF64[11] = {
+JAXLIB_GPU_DEVICE constexpr double kLgammaStirlingF64[11] = {
     0.08333333333333333,    -0.002777777777777778, 0.0007936507936507791,
     -0.0005952380952234643, 0.0008417508341741269, -0.0019175246162359454,
     0.006409817242328721,   -0.029496160785839165, 0.17520548011608733,
@@ -583,9 +597,9 @@ inline constexpr double kLgammaStirlingF64[11] = {
 //   print(c0_lo);
 //   print(c0);
 //   for i from 1 to 15 do print(double(coeff(p, i)));
-inline constexpr double kLgammaSincC0HiF64 = -1.6449340668482264;
-inline constexpr double kLgammaSincC0LoF64 = -3.040672350398476e-17;
-inline constexpr double kLgammaSincTailF64[15] = {
+JAXLIB_GPU_DEVICE constexpr double kLgammaSincC0HiF64 = -1.6449340668482264;
+JAXLIB_GPU_DEVICE constexpr double kLgammaSincC0LoF64 = -3.040672350398476e-17;
+JAXLIB_GPU_DEVICE constexpr double kLgammaSincTailF64[15] = {
     -0.5411616168555692,  -0.33911435399478207, -0.2510193390542899,
     -0.20019891468257156, -0.16670769570769814, -0.1428654870357636,
     -0.1250096373515999,  -0.11100708179151114, -0.1010207396483517,
@@ -606,7 +620,7 @@ inline constexpr double kLgammaSincTailF64[15] = {
 //   for k from 0 to 15 do psi = psi - 1/(x + k);
 //   p = fpminimax(psi, 7, [|D...|], [1; 5], absolute, floating);
 //   for i from 0 to 7 do print(double(coeff(p, i)));
-inline constexpr double kLgammaPsi15F64[8] = {
+JAXLIB_GPU_DEVICE constexpr double kLgammaPsi15F64[8] = {
     -4.248544747468387,    7.169558627936287,     -5.511031392409067,
     2.6991260255235368,    -0.8222847600014095,   0.1511139130995527,
     -0.015317621228517228, 0.0006569884397460105,
@@ -635,7 +649,7 @@ inline constexpr double kLgammaPsi15F64[8] = {
 //       term `c_0` of `P(u)`.
 //   rows 6..20 (`c_1 .. c_15`): remaining degree-15 minimax polynomial
 //       coefficients in ascending powers of `u`.
-alignas(64) inline constexpr double kLgammaNegTableF64[21][30] = {
+alignas(64) JAXLIB_GPU_DEVICE constexpr double kLgammaNegTableF64[21][30] = {
     {
         -0.45702473822080064,    1.0,
         -0.14358088834998006,    0.2523173532725874,
@@ -1012,5 +1026,7 @@ alignas(64) inline constexpr double kLgammaNegTableF64[21][30] = {
 
 }  // namespace math_coeffs
 }  // namespace jax
+
+#undef JAXLIB_GPU_DEVICE
 
 #endif  // JAXLIB_LGAMMA_COEFFS_H_

@@ -393,6 +393,114 @@ nanobind_extension(
 )
 
 cc_library(
+    name = "cuda_device_attributes",
+    srcs = ["//jaxlib/gpu:device_attributes.cc"],
+    hdrs = ["//jaxlib/gpu:device_attributes.h"],
+    deps = [
+        ":cuda_vendor",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@xla//xla/tsl/cuda",
+    ],
+)
+
+cc_library(
+    name = "cuda_lgamma_kernels",
+    srcs = ["//jaxlib/gpu:lgamma_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:lgamma_kernels.h"],
+    deps = [
+        ":cuda_device_attributes",
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_lgamma_kernels_impl",
+        ":cuda_vendor",
+        "//jaxlib:ffi_helpers",
+        "@com_google_absl//absl/status",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+cuda_library(
+    name = "cuda_lgamma_kernels_impl",
+    srcs = ["//jaxlib/gpu:lgamma_kernels.cu.cc"],
+    hdrs = [
+        "//jaxlib/gpu:double_word.cu.h",
+        "//jaxlib/gpu:lgamma_kernels.h",
+        "//jaxlib/gpu:log.cu.h",
+    ],
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_vendor",
+        "//jaxlib:lgamma_coeffs",
+        "//jaxlib:log_coeffs",
+        "@com_google_absl//absl/status",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+cc_library(
+    name = "cuda_digamma_kernels",
+    srcs = ["//jaxlib/gpu:digamma_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:digamma_kernels.h"],
+    deps = [
+        ":cuda_device_attributes",
+        ":cuda_digamma_kernels_impl",
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_vendor",
+        "//jaxlib:ffi_helpers",
+        "@com_google_absl//absl/status",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+cuda_library(
+    name = "cuda_digamma_kernels_impl",
+    srcs = ["//jaxlib/gpu:digamma_kernels.cu.cc"],
+    hdrs = [
+        "//jaxlib/gpu:digamma_kernels.h",
+        "//jaxlib/gpu:double_word.cu.h",
+        "//jaxlib/gpu:log.cu.h",
+    ],
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_vendor",
+        "//jaxlib:digamma_coeffs",
+        "//jaxlib:log_coeffs",
+        "@com_google_absl//absl/status",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+nanobind_extension(
+    name = "_math",
+    srcs = ["//jaxlib/gpu:math.cc"],
+    additional_stubgen_deps = [
+        "@xla//xla/tsl/cuda:cuda",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_math",
+    deps = [
+        ":cuda_digamma_kernels",
+        ":cuda_lgamma_kernels",
+        ":cuda_vendor",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@nanobind",
+        "@xla//xla/tsl/cuda",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
+)
+
+cc_library(
     name = "cuda_hybrid_kernels",
     srcs = ["//jaxlib/gpu:hybrid_kernels.cc"],
     hdrs = ["//jaxlib/gpu:hybrid_kernels.h"],
@@ -445,6 +553,8 @@ cc_library(
     srcs = ["//jaxlib/gpu:gpu_kernels.cc"],
     visibility = ["//visibility:public"],
     deps = [
+        ":cuda_digamma_kernels",
+        ":cuda_lgamma_kernels",
         ":cuda_linalg_kernels",
         ":cuda_prng_kernels",
         ":cuda_vendor",
@@ -617,6 +727,7 @@ py_library(
     deps = [
         ":_hybrid",
         ":_linalg",
+        ":_math",
         ":_prng",
         ":_rnn",
         ":_solver",

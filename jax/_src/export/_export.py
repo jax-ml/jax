@@ -1101,6 +1101,9 @@ _CPU_FFI_KERNELS = [
     "lapack_sgtsv_ffi", "lapack_dgtsv_ffi", "lapack_cgtsv_ffi", "lapack_zgtsv_ffi",
 ]
 _GPU_FFI_KERNELS = [
+    # lgamma and digamma on GPU
+    "cu_digamma_ffi", "cu_lgamma_ffi",
+    "hip_digamma_ffi", "hip_lgamma_ffi",
     # lu on GPU
     "cu_lu_pivots_to_permutation", "cusolver_getrf_ffi",
     "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",

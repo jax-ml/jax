@@ -45,7 +45,7 @@ from jax._src.lax.lgamma import lgamma_impl
 from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
-from jax._src.lib import cpu_math
+from jax._src.lib import cpu_math, cuda_math, hip_math
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.typing import Array, ArrayLike
 
@@ -53,6 +53,11 @@ if cpu_math is not None:
   for _name, _value in cpu_math.registrations().items():
     ffi.register_ffi_target(_name, _value, platform='cpu', api_version=1)
     ffi.register_ffi_target_as_batch_partitionable(_name)
+for _platform, _plugin_math in (('CUDA', cuda_math), ('ROCM', hip_math)):
+  if _plugin_math is not None:
+    for _name, _value in _plugin_math.registrations().items():
+      ffi.register_ffi_target(_name, _value, platform=_platform, api_version=1)
+      ffi.register_ffi_target_as_batch_partitionable(_name)
 
 # TODO(mattjj): this function sucks, delete it
 def _up_and_broadcast(doit):
@@ -740,6 +745,18 @@ else:
       platform='cpu',
       inline=core.Inline.XLA_LATE,
   )
+if cuda_math is not None:
+  mlir.register_lowering(
+      lgamma_p,
+      _unary_math_ffi_lowering('cu_lgamma_ffi', _lgamma_lowering),
+      platform='cuda',
+  )
+if hip_math is not None:
+  mlir.register_lowering(
+      lgamma_p,
+      _unary_math_ffi_lowering('hip_lgamma_ffi', _lgamma_lowering),
+      platform='rocm',
+  )
 
 def _digamma_lowering(
     ctx, x, *, use_f64_for_f32=False, use_optimization_barrier=False
@@ -780,6 +797,18 @@ else:
       _cpu_digamma_lowering,
       platform='cpu',
       inline=core.Inline.XLA_LATE,
+  )
+if cuda_math is not None:
+  mlir.register_lowering(
+      digamma_p,
+      _unary_math_ffi_lowering('cu_digamma_ffi', _digamma_lowering),
+      platform='cuda',
+  )
+if hip_math is not None:
+  mlir.register_lowering(
+      digamma_p,
+      _unary_math_ffi_lowering('hip_digamma_ffi', _digamma_lowering),
+      platform='rocm',
   )
 mlir.register_lowering(
     digamma_p,
