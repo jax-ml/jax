@@ -1128,8 +1128,8 @@ def pallas_call(
   In contrast to :func:`jax.experimental.pallas.kernel`, this entry point
   assumes that the kernel will be executed over a ``grid``.
 
-  See `Pallas Quickstart
-  <https://docs.jax.dev/en/latest/pallas/quickstart.html>`_.
+  See the `Pallas documentation
+  <https://docs.jax.dev/en/latest/pallas/index.html>`_.
 
   Args:
     kernel: the kernel function, that receives a Ref for each input and output.

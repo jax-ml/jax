@@ -150,7 +150,6 @@ max-complexity = 18
 "docs/autodidax.py" = ["F811"]
 "docs/pallas/tpu/matmul.ipynb" = ["F811"]
 "docs/pallas/tpu/distributed.ipynb" = ["F811"]
-"docs/pallas/quickstart.ipynb" = ["F811"]
 "docs/notebooks/autodiff_cookbook.ipynb" = ["F811", "F821"]
 "docs/notebooks/autodiff_remat.ipynb" = ["F811", "F821"]
 "docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb" = ["F811"]
