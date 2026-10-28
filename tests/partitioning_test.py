@@ -200,6 +200,70 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with self.assertRaises(NotImplementedError):
       f_ag_sharded_dim.lower(arr)
 
+  @parameterized.product(
+      op=(
+          (jnp.sin, np.sin),
+          (jnp.exp, np.exp),
+          (jnp.negative, np.negative),
+          (jnp.round, np.round),
+          (lax.lgamma, None),
+      ),
+      in_spec=(P('x', 'y'), P(('x', 'y'), None), P(None, None)),
+  )
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_unop(self, op, in_spec, mesh):
+    jnp_op, np_op = op
+    np_inp = np.arange(1, 33, dtype=np.float32).reshape(4, 8) / 8.0
+    arr = jax.device_put(np_inp, in_spec)
+
+    def f(x):
+      self.assertEqual(jax.typeof(x).sharding.spec, in_spec)
+      y = jnp_op(x)
+      self.assertEqual(jax.typeof(y).sharding.spec, in_spec)
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, in_spec))
+    expected = jnp_op(np_inp) if np_op is None else np_op(np_inp)
+    self.assertAllClose(out, expected)
+
+    f_jit = jax.jit(f)
+    with config.shard_map_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f_jit.lower(arr).as_text())
+    self.assertIn('sdy.manual_computation', f_jit.lower(arr).as_text())
+
+    out = f_jit(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, in_spec))
+    self.assertAllClose(out, expected)
+
+    if jnp_op is jnp.negative:
+      grad, = jax.jit(lambda x, ct: jax.vjp(f, x)[1](ct))(arr, arr)
+      self.assertEqual(grad.sharding, arr.sharding)
+      self.assertAllClose(grad, -np_inp)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh(
+      (2, 2, 2), ('m', 'e', 'a'),
+      axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Auto))
+  def test_unop_mixed_axes(self, mesh):
+    np_inp = np.arange(1, 65, dtype=np.float32).reshape(4, 4, 4) / 16.0
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('m', 'e', 'a')))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('m'), axis_names={'m'})
+    def f(a):
+      self.assertEqual(jax.typeof(a).sharding.spec, P(None, 'e', None))
+      self.assertEqual(a.aval.mat.varying, {'m'})
+      y = jnp.tanh(jnp.sin(a))
+      self.assertEqual(jax.typeof(y).sharding.spec, P(None, 'e', None))
+      self.assertEqual(y.aval.mat.varying, {'m'})
+      return jnp.sum(y, axis=1)
+
+    out = f(arr)
+    self.assertEqual(out.sharding.spec, P('m', 'a'))
+    self.assertAllClose(out, np.sum(np.tanh(np.sin(np_inp)), axis=1))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
