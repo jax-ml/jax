@@ -878,7 +878,15 @@ def commit_arrive(
     ctx: LaunchContext | None = None,
     *,
     predicate: ir.Value | None = None,
+    commit_a_read_only: bool = False,
 ) -> None:
+  if commit_a_read_only:
+    arch = utils.get_arch()
+    if arch.major != utils.RUBIN.major or arch.minor < utils.RUBIN.minor:
+      raise NotImplementedError(
+          "SMEM-read-only commit for operand A requires sm_107f, got"
+          f" sm_{arch.major}{arch.minor}"
+      )
   if isinstance(barrier, utils.BarrierRef):
     barrier = barrier.get_ptr()
   elif barrier.type != llvm.PointerType.get(address_space=3):
@@ -890,6 +898,7 @@ def commit_arrive(
     predicate_ctx = contextlib.nullcontext()
   else:
     predicate_ctx = utils.when(predicate)
+  mod = ".smem.a.read" if commit_a_read_only else ""
   if collective:
     if ctx is None:
       raise ValueError("ctx must be provided for collective barriers")
@@ -916,12 +925,12 @@ def commit_arrive(
     # messes up in that case, producing incorrect code.
     with predicate_ctx:
       llvm.call_intrinsic(
-          None, "llvm.nvvm.tcgen05.commit.mc.cg2", [barrier, mask], [], []
+          None, f"llvm.nvvm.tcgen05.commit{mod}.mc.cg2", [barrier, mask], [], []
       )
   else:
     with predicate_ctx:
       llvm.call_intrinsic(
-          None, "llvm.nvvm.tcgen05.commit.cg1", [barrier], [], []
+          None, f"llvm.nvvm.tcgen05.commit{mod}.cg1", [barrier], [], []
       )
 
 
