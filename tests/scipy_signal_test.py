@@ -71,6 +71,31 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
 
   @jtu.sample_product(
+    mode=['full', 'same', 'valid'],
+    op=['convolve', 'correlate'],
+  )
+  def testConvolutionsMixedSizes(self, mode, op):
+    shapes = [
+      ((8, 2), (3, 5)),
+      ((3, 5), (8, 2)),
+      ((4, 2, 7), (2, 5, 3)),
+    ]
+    jax_fun = getattr(jsp_signal, op)
+    scipy_fun = getattr(osp_signal, op)
+
+    for xshape, yshape in shapes:
+      x, y = jnp.ones(xshape), jnp.ones(yshape)
+      for method in ['auto', 'direct']:
+        fun = partial(jax_fun, mode=mode, method=method)
+        if mode == 'valid':
+          with self.assertRaisesRegex(ValueError, 'smaller than the other'):
+            fun(x, y)
+          continue
+        expected = scipy_fun(np.asarray(x), np.asarray(y), mode=mode)
+        self.assertAllClose(fun(x, y), expected, atol=1e-5)
+        self.assertAllClose(jax.jit(fun)(x, y), expected, atol=1e-5)
+
+  @jtu.sample_product(
     [dict(xshape=xshape, yshape=yshape)
      for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
      for xshape in shapeset
