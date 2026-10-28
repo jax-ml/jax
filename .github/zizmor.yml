@@ -6,3 +6,9 @@ rules:
   dangerous-triggers:
     ignore:
       - "upload_metadata.yml"
+  self-repository:
+    # Disable because actionlint does not yet support GitHub's `$/...` syntax
+    # (https://github.com/rhysd/actionlint/issues/711), and several workflows
+    # check out specific refs (`inputs.git_commit`) or subdirectories (`./jax/`)
+    # and invoke workspace-relative actions from that checkout.
+    disable: true
