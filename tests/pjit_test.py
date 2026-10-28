@@ -8182,8 +8182,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     traced = f.trace(x, y, a, b)
     lowered_text = traced.lower().as_text()
-    self.assertIn('unreduced={"y"}', lowered_text)
-    self.assertEqual(lowered_text.count('unreduced={"y"}'), 3)
+    if config.hijax_unreduced.value:
+      self.assertEqual(str(traced.jaxpr).count('{U:y}'), 3)
+      self.assertNotIn('unreduced', lowered_text)
+    else:
+      self.assertIn('unreduced={"y"}', lowered_text)
+      self.assertEqual(lowered_text.count('unreduced={"y"}'), 3)
 
     f_bar = jax.jit(jax.grad(lambda x, y, a, b: f(x, y, a, b).sum(),
                             argnums=(0, 1, 2, 3)))
@@ -8324,8 +8328,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(out.aval.sharding.spec, P('y', unreduced={'x'}))
       return out
 
-    lowered_text = f.lower(arr1, arr2, arr3).as_text()
-    self.assertEqual(lowered_text.count('unreduced={"x"}'), 3)
+    traced = f.trace(arr1, arr2, arr3)
+    lowered_text = traced.lower().as_text()
+    if config.hijax_unreduced.value:
+      self.assertEqual(str(traced.jaxpr).count('{U:x}'), 1)
+      self.assertNotIn('unreduced', lowered_text)
+    else:
+      self.assertEqual(lowered_text.count('unreduced={"x"}'), 3)
 
     out = f(arr1, arr2, arr3)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('y', unreduced={'x'})))
@@ -9470,8 +9479,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(out.aval.sharding.spec.unreduced, {'x'})
       return out
 
-    lowered_text = f.lower(x).as_text()
-    self.assertEqual(lowered_text.count('unreduced={"x"}'), 3)
+    traced = f.trace(x)
+    lowered_text = traced.lower().as_text()
+    if config.hijax_unreduced.value:
+      self.assertEqual(str(traced.jaxpr).count('{U:x}'), 1)
+      self.assertNotIn('unreduced', lowered_text)
+    else:
+      self.assertEqual(lowered_text.count('unreduced={"x"}'), 3)
 
     out = f(x)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
