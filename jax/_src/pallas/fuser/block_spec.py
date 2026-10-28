@@ -3066,13 +3066,44 @@ def push_pull_block_spec(
         return_out_type=True,
         **block_spec_kwargs,
     )(values, *args, **kwargs)
-    kernel_fn, (values_block_specs, *_), kwarg_block_specs = pull_block_spec(
+    (
+        kernel_fn,
+        (values_block_specs, *pulled_arg_block_specs),
+        kwarg_block_specs,
+    ) = pull_block_spec(
         f,
         out_block_specs,
         scalar_prefetch_handler=scalar_prefetch_handler,
         grid_len=grid_len,
         strict_mode=False,
     )(values, *args, **kwargs)
+    # A push-pull mismatch indicates an unsound output fusion.
+    # For example, if a kernel outputs x and y of shape (64, 128) with
+    # incompatible block shapes (64, 64) and (64, 128), fusing
+    # `jnp.concatenate([x, y], axis=0)` pushes to (128, 64) (from x) and
+    # pulls back (64, 64) for both, mismatching y's (64, 128).
+    # `push_block_spec` proposes `out_block_specs`, and `pull_block_spec`
+    # derives the input specs (and `kernel_fn`) needed for each output block.
+    # Unlike `values` (sliced via `values_block_specs`), kernel outputs have
+    # fixed `*block_specs, **block_spec_kwargs`, so each used output must pull
+    # back with the same `block_shape`, `memory_space`, and `pipeline_mode` as
+    # its pushed spec (`strict_mode=False` skips `index_map`, as pull wraps a
+    # new function).
+    jaxpr, *_ = fuser_utils.make_jaxpr(f, values, *args, **kwargs)
+    _, _, used_invars = pe.dce_jaxpr_consts(jaxpr, [True] * len(jaxpr.outvars))
+    for (path, bs), pulled_bs, used in zip(
+        tree_util.tree_flatten_with_path(block_specs)[0]
+        + tree_util.tree_flatten_with_path(block_spec_kwargs)[0],
+        tree_util.tree_leaves((pulled_arg_block_specs, kwarg_block_specs)),
+        used_invars[len(tree_util.tree_leaves(values)):],
+        strict=True,
+    ):
+      if used and not _block_specs_equal(bs, pulled_bs, strict_mode=False):
+        raise ValueError(
+            'Inconsistent block specs in push_pull_block_spec: the fusion uses'
+            f' kernel output at path {tree_util.keystr(path)} with {pulled_bs},'
+            f' but the kernel writes it with {bs}.'
+        )
     return (
         kernel_fn,
         values_block_specs,
