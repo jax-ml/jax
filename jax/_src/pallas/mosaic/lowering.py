@@ -1277,12 +1277,24 @@ def lower_jaxpr_into_pipelined_module(
               "Separate input/output buffer counts are only supported by"
               f" emit_pipeline. Got {buffer_count}."
           )
-        if buffer_count < 1 or buffer_count > 2:
+        if buffer_count < 1 or buffer_count > 3:
           raise LoweringException(
-              "Only single (1) and double (2) buffering are supported. Got"
-              f" {buffer_count}."
+              "Only single (1), double (2) and triple (3) buffering are"
+              f" supported. Got {buffer_count}."
           )
-        pipeline_mode_str = "synchronous" if buffer_count == 1 else "double_buffered"
+        if buffer_count == 3 and (
+            lowering_context.is_forward_compat()
+            or not is_libtpu_at_least("0.0.52")
+        ):
+          raise NotImplementedError(
+              "Triple buffering requires libtpu >= 0.0.52 and is not supported"
+              " in forward compatibility mode."
+          )
+        pipeline_mode_str = {
+            1: "synchronous",
+            2: "double_buffered",
+            3: "triple_buffered",
+        }[buffer_count]
         block_params["pipeline_mode"] = ir.Attribute.parse(
             f"#tpu.pipeline_mode<{pipeline_mode_str}>"
         )
@@ -1292,7 +1304,7 @@ def lower_jaxpr_into_pipelined_module(
               and buffer_count > 1
           ):
             raise LoweringException(
-                "RevisitMode.ANY is not supported with double buffering."
+                "RevisitMode.ANY is only supported with single buffering."
             )
           block_params["revisit_mode"] = ir.Attribute.parse(
               f"#tpu.revisit_mode<{pipeline_mode.revisit.value}>"
