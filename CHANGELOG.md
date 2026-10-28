@@ -17,6 +17,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added `jax.lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3` and
+    `F8E4M3FN_F8E4M3FN_F32_X4` dot algorithm presets (requiring `jaxlib` >= 514)
+    for emulating `bfloat16` precision matmuls on `bfloat16` or `float32` inputs
+    using 3 or 4 `float8_e4m3fn` dot products accumulated in `float32`.
   * {func}`jax.dlpack.from_dlpack` now accepts `Format` in its `device` argument
     to specify device-local layouts (such as linear layout `tiling=((1,),)` for
     `kDLTPUHost` buffers) and supports `copy=None` fallback for `kDLTPUHost`.
