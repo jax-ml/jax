@@ -5725,6 +5725,20 @@ def _compare_lower_hlo_opaque(direction: str, ctx, avals_in, aval_out, x, y):
         f"HLO comparison {direction} for extended dtype {avals_in[0].dtype}")
 
 
+def _stablehlo_has_weakorder(ctx: mlir.LoweringRuleContext) -> bool:
+  """Whether the target of this lowering supports comparison_type=WEAKORDER."""
+  backend = ctx.module_context.get_backend(optional=True)
+  if backend is not None:
+    runtime_type = getattr(backend, 'runtime_type', '') or ''
+    if runtime_type.startswith('proxy/'):
+      return False
+  return (
+      not ctx.is_forward_compat()
+      and jaxlib_extension_version >= 514
+      and cloud_tpu_init.is_libtpu_at_least('0.0.52')
+  )
+
+
 def _compare_lower_hlo(direction: str, total_order: bool, ctx, x, y):
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
   x_dtype = avals_in[0].dtype
@@ -5734,7 +5748,29 @@ def _compare_lower_hlo(direction: str, total_order: bool, ctx, x, y):
     assert not total_order
     return _compare_lower_hlo_opaque(direction, ctx, avals_in, aval_out, x, y)
   if dtypes.issubdtype(x_dtype, np.inexact):
-    compare_type = "TOTALORDER" if total_order else "FLOAT"
+    if total_order:
+      if _stablehlo_has_weakorder(ctx):
+        compare_type = 'WEAKORDER'
+      else:
+        bcast_aval = aval_out.update(dtype=x_dtype)
+        x, y = mlir.lower_fun(
+            lambda x, y: (
+                _canonicalize_float_for_sort(x),
+                _canonicalize_float_for_sort(y),
+            ),
+            multiple_results=True,
+        )(
+            ctx.replace(
+                primitive=None,
+                avals_in=[bcast_aval, bcast_aval],
+                avals_out=[bcast_aval, bcast_aval],
+            ),
+            x,
+            y,
+        )
+        compare_type = 'TOTALORDER'
+    else:
+      compare_type = 'FLOAT'
   elif dtypes.issubdtype(x_dtype, np.signedinteger):
     compare_type = "SIGNED"
   else:
@@ -9870,11 +9906,8 @@ def _operands_to_keys(*operands, num_keys=1):
   for x, y in zip(operands[:2*num_keys:2], operands[1:2*num_keys:2]):
     assert x.dtype == y.dtype, (x.dtype, y.dtype)
     if dtypes.issubdtype(x.dtype, np.complexfloating):
-      x_keys.extend([_canonicalize_float_for_sort(real(x)), _canonicalize_float_for_sort(imag(x))])
-      y_keys.extend([_canonicalize_float_for_sort(real(y)), _canonicalize_float_for_sort(imag(y))])
-    elif dtypes.issubdtype(x.dtype, np.floating):
-      x_keys.append(_canonicalize_float_for_sort(x))
-      y_keys.append(_canonicalize_float_for_sort(y))
+      x_keys.extend([real(x), imag(x)])
+      y_keys.extend([real(y), imag(y)])
     else:
       x_keys.append(x)
       y_keys.append(y)
