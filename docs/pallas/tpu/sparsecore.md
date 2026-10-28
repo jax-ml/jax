@@ -173,6 +173,70 @@ x = jax.random.randint(jax.random.key(0), x_shape, 0, 64, jnp.int32)
 np.testing.assert_array_equal(cumsum(x), jnp.cumsum(x, axis=1))
 ```
 
+## DMA semaphores on SparseCore
+
+On SparseCore, local copies between certain memory space pairs (including
+scatters and gathers) run as *streams* and differ slightly from the typical
+`pltpu.async_copy` semantics ({ref}`pallas_tpu_copy_semaphores`): on a
+**push stream**, the hardware individually tracks only the source read, while on
+a **pull stream**, it individually tracks only the destination write:
+
+*   **Push streams** (on the **vector subcore**, `plsc.VectorSubcoreMesh`):
+    *   `pltpu.VMEM` to `pltpu.HBM`
+    *   `pltpu.VMEM` to `pltpu.VMEM_SHARED`
+    *   `pltpu.VMEM` to `pltpu.SMEM`
+*   **Pull streams** (on the **vector subcore**, `plsc.VectorSubcoreMesh`):
+    *   `pltpu.HBM` to `pltpu.VMEM`
+    *   `pltpu.VMEM_SHARED` to `pltpu.VMEM`
+    *   `pltpu.SMEM` to `pltpu.VMEM`
+    *   `pltpu.VMEM_SHARED` to `pltpu.SMEM`
+
+Other copies on SparseCore (such as non-stream DMAs like in `cumsum` above, and
+remote copies) follow the standard `pltpu.async_copy` semantics and always
+require a semaphore (`sem=None` is not supported).
+
+### Push streams
+
+Tracking destination writes with an individual semaphore (`sem`) is **not
+supported** on push streams: the semaphore only tracks when the source buffer
+has been read, not when the destination write has completed. A `sem` is ignored
+when specified; pass `sem=None` instead.
+
+Calling `.wait()` or `.wait_write()` is the only way to wait for destination
+write completion on a push stream, and it **blocks until all in-flight
+push-stream writes to that destination memory space have completed**
+(implemented as a memory fence), not just the individual copy:
+
+```python
+# Pass sem=None; .wait() / .wait_write() blocks until all in-flight push-stream
+# writes to o_ref's memory space have completed.
+pltpu.async_copy(vmem_ref, o_ref, sem=None).wait()
+```
+
+Source read completion (so the source buffer is safe to overwrite) *can* be
+tracked per copy by passing `src_sem` and calling `.wait_read()`, which avoids
+blocking on all in-flight destination writes until you need the destination data
+(calling `.wait()` when `src_sem` is set runs `.wait_read()` followed by
+`.wait_write()`):
+
+```python
+copy = pltpu.async_copy(vmem_ref, o_ref, sem=None, src_sem=src_sem)
+copy.wait_read()   # Blocks only until vmem_ref has been read.
+copy.wait_write()  # Blocks until all push-stream writes to o_ref's space complete.
+```
+
+Passing `src_sem=None` on a push stream tracks source reads in bulk, so
+`.wait_read()` performs a bulk wait until all in-flight push streams without
+`src_sem` have finished reading their sources.
+
+### Pull streams
+
+Pull streams track destination writes with `sem` as usual (`src_sem` and
+`.wait_read()` are not supported, as `.wait()` or `.wait_write()` already
+guarantees both read and write completion). Passing `sem=None` tracks pull
+streams in bulk, so `.wait()` or `.wait_write()` performs a bulk wait until all
+in-flight pull streams without `sem` have completed.
+
 ## Pipelining in SparseCore kernels
 
 You can `pltpu.emit_pipeline` to write pipelined SparseCore kernels. The
