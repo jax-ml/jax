@@ -19,6 +19,7 @@ import contextlib
 from dataclasses import dataclass, replace
 from functools import partial
 import inspect
+import math
 import weakref
 from typing import NamedTuple, Any
 import warnings
@@ -90,6 +91,7 @@ zip, unsafe_zip = safe_zip, zip
 traceback_util.register_exclusion(__file__)
 
 PjitSharding = GSPMDSharding | UnspecifiedValue
+P = PartitionSpec
 
 
 class PjitInfo(NamedTuple):
@@ -2303,11 +2305,120 @@ def reshard(xs, out_shardings):
 
 reshard_p = core.Primitive('reshard')
 reshard_p.skip_canonicalization = True
-reshard_p.is_high = lambda aval, **_: aval.is_high
+
+def _reshard_is_high(aval, *, dst_sharding, **__):
+  return (aval.is_high or
+          (config.hijax_unreduced.value and isinstance(dst_sharding, NamedSharding)
+           and bool(dst_sharding.spec.unreduced)))
+reshard_p.is_high = _reshard_is_high
+
+
+def _part_axes(p) -> tuple[Any, ...]:
+  if p is None:
+    return ()
+  return p if isinstance(p, tuple) else (p,)
+
+
+def _peeled_axes(src_p, dst_p, added_u) -> tuple[Any, ...]:
+  src_p, dst_p = _part_axes(src_p), _part_axes(dst_p)
+  tail = src_p[len(dst_p):]
+  # Non-empty when `src_p == (*dst_p, *tail)` with `tail <= added_u`, e.g.
+  # P('x') -> P(unreduced={'x'}) or P(('y', 'x')) -> P('y', unreduced={'x'}).
+  return (tail if src_p[:len(dst_p)] == dst_p and set(tail) <= added_u
+          else ())
+
+
+def _lower_shaped_reshard(lo_val, in_aval: core.ShapedArray,
+                          out_aval: core.ShapedArray, concrete_mesh):
+  from jax._src import shard_map  # type: ignore
+  from jax._src.lax import lax, parallel as lax_parallel, slicing as lax_slicing  # type: ignore
+
+  assert in_aval.is_high or out_aval.is_high
+
+  src_s, dst_s = in_aval.sharding, out_aval.sharding
+  removed_u = src_s.spec.unreduced - dst_s.spec.unreduced
+  added_u = dst_s.spec.unreduced - src_s.spec.unreduced
+  assert removed_u or added_u
+  # Can't do this: src_u = ("x",) and dst_u = ("y",)
+  if removed_u and added_u:
+    raise NotImplementedError(
+        'Cannot both reduce and introduce unreduced axes in one reshard: '
+        f'{src_s.spec} -> {dst_s.spec}')
+
+  assert not dst_s.mesh.empty
+  if not src_s.mesh.empty:
+    assert src_s.mesh.shape_tuple == dst_s.mesh.shape_tuple
+  mesh = dst_s.mesh
+
+  src_u = core.order_wrt_mesh(src_s.mesh, src_s.spec.unreduced)
+  dst_u = core.order_wrt_mesh(mesh, dst_s.spec.unreduced)
+
+  if removed_u:
+    if dst_u:
+      assert src_s.spec.unreduced_kind == dst_s.spec.unreduced_kind
+    else:
+      assert dst_s.spec.unreduced_kind is None
+    reduce_fn = {
+        UnreducedKind.sum: lax.reduce_sum,
+        UnreducedKind.max: lax.reduce_max,
+        UnreducedKind.min: lax.reduce_min,
+    }[src_s.spec.unreduced_kind]
+    red_axes = tuple(i for i, a in enumerate(src_u) if a in removed_u)
+    rem_s = dst_s.update(spec=P(*dst_u, *dst_s.spec.partitions))
+    lo_out = reduce_fn(lo_val, axes=red_axes, out_sharding=rem_s)
+    return out_aval.raise_val(lo_out)
+
+  new_u_pos, new_u = util.unzip2((i, a) for i, a in enumerate(dst_u)
+                                 if a in added_u)
+  src_parts, dst_parts = src_s.spec.partitions, dst_s.spec.partitions
+
+  # Keep src partitions intact so that we don't reshard them and instead
+  # just 0-pad them inside shard_map. But when src -> dst dim partition changes
+  # (without going to unreduced), we need to use dst and reshard it first.
+  peeled = [_peeled_axes(s, d, added_u) for s, d in zip(src_parts, dst_parts)]
+  src_parts = [s if p else d for s, d, p in zip(src_parts, dst_parts, peeled)]
+
+  pre_s = NamedSharding(mesh, PartitionSpec(*src_u, *src_parts))
+  if typeof(lo_val).sharding != pre_s:
+    lo_val = reshard_p.bind(lo_val, dst_sharding=pre_s,
+                            concrete_mesh=concrete_mesh)
+
+  sharded_u = frozenset(a for t in peeled for a in t)
+  rep_u = tuple(a for a in new_u if a not in sharded_u)
+  u_per_dim = [()] * len(src_u) + peeled
+  manual_axes = (frozenset(dst_u) |
+                 frozenset(a for p in dst_parts for a in _part_axes(p)))
+
+  def _to_unreduced(v):
+    if sharded_u:
+      # Sharded -> unreduced, e.g. P('x') -> P(unreduced={'x'}):
+      # dev 0: [a, b] -> [a, b, 0, 0], dev 1: [c, d] -> [0, 0, c, d].
+      out_shape = tuple(s * math.prod(mesh.shape[a] for a in u_d)
+                        for s, u_d in zip(v.shape, u_per_dim))
+      starts = [lax_parallel.axis_index(u_d) * s if u_d else np.int32(0)
+                for s, u_d in zip(v.shape, u_per_dim)]
+      v = lax_slicing.dynamic_update_slice(lax.full_like(v, 0, shape=out_shape),
+                                           v, starts)
+    if rep_u:
+      # Replicated -> unreduced, e.g. P() -> P(unreduced={'x'}):
+      # dev 0 keeps [a, b], non-zero replicas along `rep_u` get [0, 0].
+      v = lax.select(lax_parallel.axis_index(rep_u) == 0, v, lax.full_like(v, 0))
+    return lax.expand_dims(v, new_u_pos)
+
+  lo_out = shard_map.shard_map(
+      _to_unreduced, mesh=mesh, out_specs=PartitionSpec(*dst_u, *dst_parts),
+      axis_names=manual_axes)(lo_val)
+  return out_aval.raise_val(lo_out)
+
 
 def _reshard_to_lojax(hi_val, *, dst_sharding, concrete_mesh):
   in_aval = core.typeof(hi_val)
   out_aval = core.reshard_aval(in_aval, dst_sharding)
+  if (isinstance(in_aval, core.ShapedArray) and
+      isinstance(out_aval, core.ShapedArray) and
+      in_aval.sharding.spec.unreduced != out_aval.sharding.spec.unreduced):
+    lo_val, = in_aval.lower_val(hi_val)
+    return _lower_shaped_reshard(lo_val, in_aval, out_aval, concrete_mesh)
   lo_vals = in_aval.lower_val(hi_val)
   lo_out_avals = out_aval.lo_ty()
   lo_outs = [reshard_p.bind(lo_val, dst_sharding=lo_out_aval.sharding,  # type: ignore
