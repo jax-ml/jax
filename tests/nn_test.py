@@ -771,6 +771,27 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     self.assertAllClose(jax.grad(f)(x, mask), jnp.zeros_like(x))
 
+  @parameterized.parameters([False, True])
+  def testSoftmaxWhereGradMaskedNan(self, custom_jvp):
+    x = jnp.array([36., 10000.])
+    mask = x < 1000
+
+    # Masked entropy/KL pattern: p == 0 at ~mask causes p * log(p) to evaluate
+    # 0 * (-inf) = NaN at ~mask, passing a NaN cotangent into softmax.
+    def entropy(x, mask):
+      p = nn.softmax(x, where=mask)
+      logp = nn.log_softmax(x, where=mask)
+      return jnp.sum(p * logp, where=mask)
+
+    with jax.softmax_custom_jvp(custom_jvp):
+      self.assertAllClose(jax.grad(entropy)(x, mask), jnp.zeros_like(x))
+      _, y_dot = jax.jvp(
+          lambda x: nn.softmax(x, where=mask),
+          (x,),
+          (jnp.where(mask, 1.0, jnp.nan),),
+      )
+      self.assertAllClose(y_dot, jnp.zeros_like(x))
+
   def testSoftmaxGrad(self):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
     jtu.check_grads(nn.softmax, (x,), order=2, atol=5e-3)

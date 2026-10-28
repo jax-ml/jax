@@ -88,7 +88,12 @@ def _softmax(
 def _softmax_jvp(axis, primals, tangents):
   (x, where), (x_dot, _) = primals, tangents
   y = _softmax(x, axis, where)
-  return y, y * (x_dot - (y * x_dot).sum(axis, where=where, keepdims=True))
+  if where is not None:
+    x_dot = jnp.where(where, x_dot, 0)
+  y_dot = y * (x_dot - (y * x_dot).sum(axis, where=where, keepdims=True))
+  if where is not None:
+    y_dot = jnp.where(where, y_dot, 0)
+  return y, y_dot
 
 def _softmax_deprecated(
     x: ArrayLike,
