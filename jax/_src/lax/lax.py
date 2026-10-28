@@ -4763,6 +4763,7 @@ def _neg_ur_rule(aval, **kwargs):
 neg_p = unop(_identity, _num, 'neg', ur_rule=_neg_ur_rule)
 ad.deflinear2(neg_p, lambda t, operand: [neg(t)])
 mlir.register_lowering(neg_p, partial(_nary_lower_hlo, hlo.negate))
+lax_utils.register_unreduced_lojax(neg_p)
 
 sign_p = standard_unop(_num, 'sign')
 
@@ -5571,6 +5572,7 @@ add_p: Primitive = naryop(input_dtype, [_num, _num], 'add',
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.add))
+lax_utils.register_unreduced_lojax(add_p)
 
 def _sub_jvp(primals, tangents):
   x, y = primals
@@ -5603,6 +5605,7 @@ sub_p = standard_naryop([_num, _num], 'sub',
 ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
 mlir.register_lowering(sub_p, partial(_nary_lower_hlo, hlo.subtract))
+lax_utils.register_unreduced_lojax(sub_p)
 
 def _mul_ur_rule(x, y, *, out_dtype=None):
   del out_dtype  # unused
@@ -5654,6 +5657,7 @@ def _mul_transpose_right(ct, x, y, *, out_dtype):
 ad.defbilinear(mul_p, _mul_transpose_left, _mul_transpose_right)
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 core.pp_eqn_rules[mul_p] = _binary_with_out_dtype_pp_rule
+lax_utils.register_unreduced_lojax(mul_p)
 mulhi_p = naryop(input_dtype, [{np.integer}, {np.integer}], 'mulhi')
 dispatch.simple_impl(mulhi_p)
 ad.defjvp_zero(mulhi_p)
@@ -5692,6 +5696,7 @@ ad.defjvp(div_p,
           lambda g, x, y: mul(mul(neg(g), x), integer_pow(y, -2)))
 ad.primitive_transposes[div_p] = _div_transpose_rule
 mlir.register_lowering(div_p, partial(_nary_lower_hlo, hlo.divide))
+lax_utils.register_unreduced_lojax(div_p)
 
 rem_p = standard_naryop([_int | _float, _int | _float], 'rem')
 ad.defjvp(
@@ -5708,6 +5713,7 @@ ad.defjvp(max_p,
           lambda g, x, y: mul(g, _balanced_cmp(x, y)),
           lambda g, x, y: mul(g, _balanced_cmp(y, x)))
 mlir.register_lowering(max_p, partial(_nary_lower_hlo, mlir.max_hlo))
+lax_utils.register_unreduced_lojax(max_p)
 
 min_p: core.Primitive = standard_naryop(
     [_any, _any], 'min', ur_rule=partial(_add_ur_rule, 'min', UnreducedKind.min))
@@ -5715,6 +5721,7 @@ ad.defjvp(min_p,
           lambda g, x, y: mul(g, _balanced_cmp(y, x)),
           lambda g, x, y: mul(g, _balanced_cmp(x, y)))
 mlir.register_lowering(min_p, partial(_nary_lower_hlo, mlir.min_hlo))
+lax_utils.register_unreduced_lojax(min_p)
 
 shift_left_p = standard_naryop([_int, _int], 'shift_left')
 ad.defjvp_zero(shift_left_p)
@@ -6056,6 +6063,7 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
+lax_utils.register_unreduced_lojax(convert_element_type_p, 'sharding')
 
 
 stage_p.def_abstract_eval(
@@ -7872,6 +7880,7 @@ pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
 mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
 core.pp_eqn_rules[broadcast_in_dim_p] = _broadcast_in_dim_pp_rule
+lax_utils.register_unreduced_lojax(broadcast_in_dim_p, 'sharding')
 
 
 def _tile_lower(ctx, x, reps) -> Sequence[ir.Value]:
@@ -8132,6 +8141,7 @@ concatenate_p = standard_primitive(
 ad.deflinear2(concatenate_p, _concatenate_transpose_rule)
 ad.primitive_transposes[concatenate_p] = _concatenate_transpose_rule
 batching.primitive_batchers[concatenate_p] = _concatenate_batch_rule
+lax_utils.register_unreduced_lojax(concatenate_p)
 
 def _concatenate_tree(xs, dimension: int):
   # concatenate can be slow to compile for wide concatenations, so form a
@@ -8259,6 +8269,7 @@ stack_p = standard_primitive(
     layout_rule=_stack_layout_rule)
 ad.deflinear2(stack_p, _stack_transpose_rule)
 mlir.register_lowering(stack_p, _stack_lower)
+lax_utils.register_unreduced_lojax(stack_p)
 
 
 def _unstack_shape_rule(operand, *, axis):
@@ -8374,6 +8385,7 @@ unstack_p.def_abstract_eval(
 unstack_p.def_impl(partial(dispatch.apply_primitive, unstack_p))
 ad.deflinear2(unstack_p, _unstack_transpose_rule)
 mlir.register_lowering(unstack_p, _unstack_lower)
+lax_utils.register_unreduced_lojax(unstack_p)
 
 batching.primitive_batchers[stack_p] = _stack_batch_rule
 batching.primitive_batchers[unstack_p] = _unstack_batch_rule
@@ -8462,6 +8474,7 @@ split_p.def_impl(partial(dispatch.apply_primitive, split_p))
 ad.deflinear2(split_p, _split_transpose_rule)
 batching.primitive_batchers[split_p] = _split_batch_rule
 mlir.register_lowering(split_p, _split_lower)
+lax_utils.register_unreduced_lojax(split_p)
 
 def _pad_dtype_rule(operand, padding_value, *, padding_config):
   if operand.dtype != padding_value.dtype:
@@ -8556,6 +8569,7 @@ def _pad_lower(ctx, x, padding_value, *, padding_config):
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(pad_p, _pad_lower)
+lax_utils.register_unreduced_lojax(pad_p)
 
 
 # The squeeze primitive exists for the benefit of masking and other
@@ -8630,6 +8644,7 @@ def _squeeze_lower(ctx, operand, *, dimensions):
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(squeeze_p, _squeeze_lower)
+lax_utils.register_unreduced_lojax(squeeze_p)
 
 
 def shape_as_value(shape: core.Shape):
@@ -9052,6 +9067,7 @@ batching.fancy_primitive_batchers[reshape_p] = _reshape_batch_rule
 mlir.register_lowering(reshape_p, _reshape_lower)
 core.custom_typechecks[reshape_p] = _reshape_typecheck_rule
 pe.custom_staging_rules[reshape_p] = _reshape_staging_rule
+lax_utils.register_unreduced_lojax(reshape_p, 'sharding')
 
 
 def _rev_shape_rule(operand, *, dimensions):
@@ -9138,6 +9154,7 @@ ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
 mlir.register_lowering(transpose_p, _transpose_lower)
+lax_utils.register_unreduced_lojax(transpose_p)
 
 
 def _select_shape_rule(which, *cases):
@@ -9359,6 +9376,7 @@ ad.primitive_jvps[select_n_p] = _select_jvp
 ad.primitive_transposes[select_n_p] = _select_transpose_rule
 batching.fancy_primitive_batchers[select_n_p] = _select_batch_rule
 mlir.register_lowering(select_n_p, _select_hlo_lowering)
+lax_utils.register_unreduced_lojax(select_n_p)
 
 
 def _reduce_shape_rule(*avals, computation, jaxpr, dimensions):
@@ -9855,6 +9873,7 @@ def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
+lax_utils.register_unreduced_lojax(reduce_precision_p)
 
 
 _UINT_DTYPES = {

@@ -120,6 +120,73 @@ def input_dtype(x, *_, out_dtype=None, **__):
 def _argnum_weak_type(*argnums):
   return lambda *args, **_: all(args[i].weak_type for i in argnums)
 
+def unreduced_is_high(sharding_param: str | None = None):
+  def _is_high(*avals, **params):
+    if any(a.is_high for a in avals):
+      return True
+    if sharding_param is not None and config.hijax_unreduced.value:
+      s = params.get(sharding_param)
+      return isinstance(s, NamedSharding) and bool(s.spec.unreduced)
+    return False
+  return _is_high
+
+
+def register_unreduced_lojax(prim: core.Primitive,
+                             sharding_param: str | None = None):
+  def _to_lojax(*hi_args, **params):
+    from jax._src import pjit, shard_map  # pyrefly: ignore[missing-import]
+    from jax._src.lax import lax  # pyrefly: ignore[missing-import]
+
+    in_avals = [core.typeof(x) for x in hi_args]
+    out_avals, _ = prim.abstract_eval(*in_avals, **params)
+    if not any(a.is_high for a in in_avals):
+      assert sharding_param is not None and params[sharding_param].spec.unreduced
+      mid = prim.bind(*hi_args, **(params | {sharding_param: None}))
+      return pjit.reshard(mid, params[sharding_param])
+
+    out_avals = out_avals if prim.multiple_results else [out_avals]
+    out_u_set = out_avals[0].sharding.spec.unreduced
+    assert out_u_set
+    assert all(a.sharding.spec.unreduced == out_u_set for a in out_avals)
+
+    mesh = out_avals[0].sharding.mesh
+    u_axes = core.order_wrt_mesh(mesh, out_u_set)
+    u_dims = tuple(range(len(u_axes)))
+    lo_args = [lo_x for x, a in zip(hi_args, in_avals)
+               for lo_x in a.lower_val(x)]
+    out_specs = [P(*u_axes, *(None,) * a.ndim) for a in out_avals]
+    if not prim.multiple_results:
+      out_specs, = out_specs
+
+    def _local_fn(*local_args):
+      squeezed = [lax.squeeze(v, u_dims) if a.is_high else v
+                  for v, a in zip(local_args, in_avals)]
+      with config.auto_pcast(True):
+        squeezed = core.auto_insert_reshard(*squeezed)
+      lo_params = params
+      if (sharding_param is not None and
+          isinstance(s := params.get(sharding_param), NamedSharding)):
+        lo_s = NamedSharding(
+            mesh_lib.get_abstract_mesh(),
+            s.spec.update(unreduced=frozenset(), unreduced_kind=None))
+        lo_params = params | {sharding_param: lo_s}
+      outs = prim.bind(*squeezed, **lo_params)
+      if prim.multiple_results:
+        return [lax.expand_dims(o, u_dims) for o in outs]
+      return lax.expand_dims(outs, u_dims)
+
+    lo_outs = shard_map.shard_map(_local_fn, mesh=mesh, out_specs=out_specs,
+                                  axis_names=frozenset(u_axes))(*lo_args)
+    if prim.multiple_results:
+      return [a.raise_val(o) for a, o in zip(out_avals, lo_outs)]
+    else:
+      out_aval, = out_avals
+      return out_aval.raise_val(lo_outs)
+
+  prim.is_high = unreduced_is_high(sharding_param)  # type: ignore
+  prim.to_lojax = _to_lojax  # type: ignore
+
+
 def standard_primitive(shape_rule, dtype_rule, name,
                        weak_type_rule=None, sharding_rule=None, vma_rule=None,
                        ur_rule=None, memory_space_rule=None, layout_rule=None):

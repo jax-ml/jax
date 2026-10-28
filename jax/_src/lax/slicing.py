@@ -1480,6 +1480,7 @@ slice_p = standard_primitive(_slice_shape_rule, input_dtype, 'slice',
 ad.primitive_jvps[slice_p] = _slice_jvp_rule
 ad.fancy_transposes[slice_p] = _slice_transpose_fancy
 batching.primitive_batchers[slice_p] = _slice_batching_rule
+lax_utils.register_unreduced_lojax(slice_p)
 
 # Override the standard impl to defer to dynamic_slice whenever possible.
 # This lets us reuse the same program for many applications of slicing for as
@@ -1789,6 +1790,7 @@ ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
 batching.primitive_batchers[dynamic_update_slice_p] = \
     _dynamic_update_slice_batching_rule
+lax_utils.register_unreduced_lojax(dynamic_update_slice_p)
 
 def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
@@ -3047,6 +3049,7 @@ scatter_add_p = standard_primitive(
 ad.primitive_jvps[scatter_add_p] = partial(_scatter_addsub_jvp, scatter_add_p)
 ad.primitive_transposes[scatter_add_p] = partial(_scatter_addsub_transpose_rule, scatter_add_p)
 batching.fancy_primitive_batchers[scatter_add_p] = partial(_scatter_batching_rule, scatter_add_p)
+lax_utils.register_unreduced_lojax(scatter_add_p)
 
 scatter_sub_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-sub',
