@@ -928,6 +928,52 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       self.assertAllClose(grad(a, b, x), expected, rtol=rtol, atol=0)
 
   @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1LargeX(self, dtype):
+    # Near |x| = 100 the asymptotic expansions diverge after their smallest
+    # term, and the gamma, exp and power factors of the last three cases
+    # overflow float32 separately. (a, b, x, 1F1) from mpmath with
+    # mpmath.mp.dps = 50, and 1 + a x / b for the terminating series.
+    samples = [
+        (-7.5, 9.2, 100.5, 2.3483347490698663e+19),
+        (12.3, 0.5, -100.5, 1.4191019963017759e-16),
+        (9.3, -6.5, -100.5, -5.6259050450558891e-9),
+        (-1.0, -3.0, -5.0, -2 / 3),
+        (-15.0, 0.5, -95.0, 1.8327268434621263e+19),
+        (0.5, 10.5, 105.0, 1.6470480474090628e+31),
+        (8.0, 36.0, -150.0, 9.5406915859562062e-7),
+    ]
+    a, b, x, expected = (np.array(v, dtype) for v in zip(*samples))
+    rtol = 5e-5 if dtype == np.float32 else 2e-12
+    self.assertAllClose(lsp_special.hyp1f1(a, b, x), expected, rtol=rtol,
+                        atol=0)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1GradsEdgeCases(self, dtype):
+    # (a, b, x, d/da 1F1, d/db 1F1) from mpmath.diff with mpmath.mp.dps = 50:
+    # near |x| = 100, and for small a and large negative x, where
+    # digamma(b) - digamma(b - a) cancels.
+    samples = [
+        (-7.5, 9.2, 100.5, 5.1943563828579935e+19, -5.4842400819908537e+19),
+        (12.3, 0.5, -100.5, -8.6629016315352362e-16, -4.3470305405153919e-17),
+        (1e-5, 2.0, -1e5, -11.088927731636219, 6.4485456814279164e-6),
+        (1e-6, 2.0, -1e6, -13.392548503843743, 6.4492463154799553e-7),
+        (1.5, -1.0, 0.0, 0.0, 0.0),
+    ]
+    a, b, x, grad_a, grad_b = (np.array(v, dtype) for v in zip(*samples))
+    rtol = 5e-5 if dtype == np.float32 else 2e-11
+    for argnum, expected in [(0, grad_a), (1, grad_b)]:
+      grad = jax.vmap(jax.grad(lsp_special.hyp1f1, argnums=argnum))
+      self.assertAllClose(grad(a, b, x), expected, rtol=rtol, atol=0)
+    # For a = -n, 1F1 is a polynomial in x: 1 + a x / b for a = -1, and
+    # 1 - 2 x / b + x^2 / (b (b + 1)) for a = -2. Their derivatives with
+    # respect to b, also where b is a negative integer or x >= 100.
+    a, b, x = (np.array(v, dtype) for v in [(-1.0, -2.0), (-3.0, 2.5),
+                                             (5.0, 150.0)])
+    expected = np.array([5 / 9, -1715.265306122449], dtype)
+    grad = jax.vmap(jax.grad(lsp_special.hyp1f1, argnums=1))
+    self.assertAllClose(grad(a, b, x), expected, rtol=rtol, atol=0)
+
+  @jtu.sample_product(dtype=float_dtypes)
   def testHyp2f1SpecialCases(self, dtype):
     eps = np.finfo(dtype).eps
 
