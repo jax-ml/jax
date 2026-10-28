@@ -9610,6 +9610,37 @@ def _reduce_sum_dtype_rule(operand, *, axes, **_):
                      "allowed when jax_allow_f16_reductions=False.")
   return dt
 
+def _reduce_op_to_lojax(prim, hi_operand, *, axes, out_sharding):
+  from jax._src import shard_map  # pyrefly: ignore[missing-import]
+
+  in_aval = core.typeof(hi_operand)
+  out_aval, _ = prim.abstract_eval(in_aval, axes=axes, out_sharding=out_sharding)
+  out_u_set = out_aval.sharding.spec.unreduced
+  assert out_u_set
+
+  mesh = out_aval.sharding.mesh
+  in_u = core.order_wrt_mesh(mesh, in_aval.sharding.spec.unreduced)
+  out_u = core.order_wrt_mesh(mesh, out_u_set)
+  lo_in, = in_aval.lower_val(hi_operand)
+
+  dropped_u_dims = tuple(i for i, a in enumerate(in_u) if a not in out_u_set)
+  num_kept_u_ndim = len(in_u) - len(dropped_u_dims)
+  new_u_pos = tuple(i for i, a in enumerate(out_u) if a not in in_u)
+  lo_axes = (*dropped_u_dims, *(len(in_u) + d for d in axes))
+  out_specs = P(*out_u, *(None,) * out_aval.ndim)
+
+  def _local_reduce(v):
+    lo_s = (NamedSharding(get_abstract_mesh(),
+                          P(*(None,) * num_kept_u_ndim, *out_sharding.spec.partitions))
+            if out_sharding is not None else None)
+    v = prim.bind(v, axes=lo_axes, out_sharding=lo_s)
+    return expand_dims(v, new_u_pos) if new_u_pos else v
+
+  lo_out = shard_map.shard_map(_local_reduce, mesh=mesh, out_specs=out_specs,
+                               axis_names=out_u_set)(lo_in)
+  return out_aval.raise_val(lo_out)
+
+
 reduce_sum_p = standard_primitive(
   _reduce_op_shape_rule, _reduce_sum_dtype_rule,
   'reduce_sum', sharding_rule=_reduce_op_sharding_rule_with_out_sharding,
@@ -9617,6 +9648,8 @@ reduce_sum_p = standard_primitive(
   ur_rule=_reduce_sum_ur_rule)
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
+reduce_sum_p.is_high = lax_utils.unreduced_is_high('out_sharding')  # type: ignore
+reduce_sum_p.to_lojax = partial(_reduce_op_to_lojax, reduce_sum_p)  # type: ignore
 
 def _reduce_prod_jvp_rule(primals, tangents, *, axes):
   reducer = lambda x, y: [mul(x, y)]
@@ -9660,6 +9693,8 @@ reduce_max_p = standard_primitive(
     ur_rule=_reduce_max_ur_rule)
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_max_p)
+reduce_max_p.is_high = lax_utils.unreduced_is_high('out_sharding')  # type: ignore
+reduce_max_p.to_lojax = partial(_reduce_op_to_lojax, reduce_max_p)  # type: ignore
 
 
 def _reduce_min_ur_rule(operand, *, axes, out_sharding):
@@ -9675,6 +9710,8 @@ reduce_min_p = standard_primitive(
     ur_rule=_reduce_min_ur_rule)
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_min_p)
+reduce_min_p.is_high = lax_utils.unreduced_is_high('out_sharding')  # type: ignore
+reduce_min_p.to_lojax = partial(_reduce_op_to_lojax, reduce_min_p)  # type: ignore
 
 def _argminmax_shape_rule(operand, *, axes, index_dtype):
   axis, = axes
@@ -10423,6 +10460,13 @@ def _copy_lowering(ctx, x):
 mlir.register_lowering(copy_p, _copy_lowering)
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
 batching.defvectorized(copy_p)
+copy_p.is_high = lambda x: x.is_high  # type: ignore
+
+def _copy_to_lojax(hi_x):
+  aval = core.typeof(hi_x)
+  lo_x, = aval.lower_val(hi_x)
+  return aval.raise_val(copy_p.bind(lo_x))
+copy_p.to_lojax = _copy_to_lojax  # type: ignore
 
 
 class NoDCEEffect(effects.Effect):
