@@ -10925,27 +10925,44 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_identity_jit_out_unreduced(self, mesh):
+    expected_spec = (P(None, unreduced={'x'}) if config.hijax_unreduced.value
+                     else P(unreduced={'x'}))
+
     def check_rep_to_unreduced(out):
-      self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
+      self.assertEqual(out.sharding, NamedSharding(mesh, expected_spec))
       for s, es in zip(out.addressable_shards, [np.arange(4), np.zeros((4,))]):
         self.assertArraysEqual(s.data, es, check_dtypes=False)
 
     rep_inp = jnp.arange(4)
-    f = jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))
-    out = f(rep_inp)
-    check_rep_to_unreduced(out)
+    if config.hijax_unreduced.value:
+      with self.assertRaisesRegex(
+          ValueError,
+          r'Changing `unreduced` via `jax\.jit\(\.\.\., out_shardings=\.\.\.\)`'
+          r' is not supported'):
+        jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(rep_inp)
+    else:
+      f = jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))
+      out = f(rep_inp)
+      check_rep_to_unreduced(out)
     out2 = jax.device_put(rep_inp, P(unreduced={'x'}))
     check_rep_to_unreduced(out2)
 
     def check_shd_to_unreduced(out):
-      self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
+      self.assertEqual(out.sharding, NamedSharding(mesh, expected_spec))
       for s, es in zip(out.addressable_shards,
                       [np.array([0, 1, 0, 0]), np.array([0, 0, 2, 3])]):
         self.assertArraysEqual(s.data, es, check_dtypes=False)
 
     shd_inp = jax.device_put(np.arange(4), P('x'))
-    out = jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(shd_inp)
-    check_shd_to_unreduced(out)
+    if config.hijax_unreduced.value:
+      with self.assertRaisesRegex(
+          ValueError,
+          r'Changing `unreduced` via `jax\.jit\(\.\.\., out_shardings=\.\.\.\)`'
+          r' is not supported'):
+        jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(shd_inp)
+    else:
+      out = jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(shd_inp)
+      check_shd_to_unreduced(out)
     out2 = jax.device_put(shd_inp, P(unreduced={'x'}))
     check_shd_to_unreduced(out2)
 
@@ -11537,8 +11554,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     x = jnp.dot(arr1, arr2, out_sharding=NamedSharding(mesh, P(unreduced={'x'})))
 
-    cpu_mesh = Mesh(jax.devices('cpu')[:2], 'x', (AxisType.Explicit,))
+    cpu_devs = (jax.devices('cpu')[2:4]
+                if jtu.test_device_matches(['cpu']) and jax.device_count('cpu') >= 4
+                else jax.devices('cpu')[:2])
+    cpu_mesh = Mesh(cpu_devs, 'x', (AxisType.Explicit,))
     out = jax.device_put(x, NamedSharding(cpu_mesh, P(unreduced={'x'})))
+    self.assertEqual([s.device for s in out.addressable_shards], list(cpu_devs))
     for s1, s2 in zip(x.addressable_shards, out.addressable_shards):
       self.assertArraysEqual(s1.data, s2.data)
     self.assertArraysEqual(reshard(x, NamedSharding(mesh, P())),

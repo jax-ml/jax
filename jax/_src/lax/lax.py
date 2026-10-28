@@ -6707,8 +6707,9 @@ def _dot_general_to_lojax(lhs, rhs, *, dimension_numbers, precision,
         out_sharding=P(*out_sharding.spec.partitions))
     return expand_dims(out, tuple(range(len(u_axes))))
 
-  lo_out = shard_map.shard_map(_local_dot, out_specs=out_specs,
-                               axis_names=frozenset(u_axes))(lo_lhs, lo_rhs)
+  lo_out = shard_map.shard_map(
+      _local_dot, out_specs=out_specs, mesh=out_aval.sharding.mesh,
+      axis_names=frozenset(u_axes))(lo_lhs, lo_rhs)
   return out_aval.raise_val(lo_out)
 dot_general_p.to_lojax = _dot_general_to_lojax  # type: ignore[method-assign]
 

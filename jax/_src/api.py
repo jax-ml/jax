@@ -2433,7 +2433,7 @@ def device_put(
 
     dst_avals = []
     for x_aval, d in zip(x_avals, device_flat):
-      if x_aval.is_high:
+      if x_aval.is_high and not isinstance(x_aval, core.ShapedArray):
         raise NotImplementedError(
             "jax.device_put does not yet support values of hijax type "
             f"{x_aval}. Instead, shard the value's components (e.g. before "

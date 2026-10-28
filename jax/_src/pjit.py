@@ -839,13 +839,21 @@ def pjit_check_aval_sharding(
     if isinstance(s, UnspecifiedValue):
       continue
     name_str = f' with pytree key path {name}' if name else ''
-    if aval.is_high:
+    if aval.is_high and not isinstance(aval, core.ShapedArray):
       raise NotImplementedError(
           f'One of {what_aval}{name_str} has non-array (hijax) type {aval} '
           f'with a specified sharding {s}, which is not supported; only '
           'unspecified shardings are allowed for non-array types. If this '
           'would be useful to you, please open an issue at '
           'https://github.com/jax-ml/jax/issues.')
+    if (config.hijax_unreduced.value and what_aval == 'pjit outputs' and
+        isinstance(aval, core.ShapedArray) and isinstance(s, NamedSharding) and
+        aval.sharding.spec.unreduced != s.spec.unreduced):
+      raise ValueError(
+          'Changing `unreduced` via `jax.jit(..., out_shardings=...)` is not'
+          f' supported (got output aval sharding {aval.sharding.spec} and'
+          f' out_sharding {s.spec}). Use `jax.reshard` inside `jax.jit`'
+          ' instead.')
     shape = aval.shape
     try:
       s.check_compatible_aval(shape)
@@ -911,12 +919,23 @@ def _lojax_expand_params(
   in_lol = in_avals.unpack()
   out_lol = out_avals.unpack()
 
-  def expand(lol, stuff):
-    return tuple(x for l, x in zip(lol, stuff) for _ in l)
+  def _lower_sharding(s):
+    if (config.hijax_unreduced.value and isinstance(s, NamedSharding) and
+        s.spec.unreduced):
+      u_axes = core.order_wrt_mesh(s.mesh, s.spec.unreduced)
+      lo_spec = s.spec.update(
+          partitions=(*u_axes, *s.spec.partitions),
+          unreduced=frozenset(), unreduced_kind=None)
+      return s.update(spec=lo_spec)
+    return s
+
+  def expand(lol, stuff, lower_s=False):
+    return tuple(_lower_sharding(x) if lower_s else x
+                 for l, x in zip(lol, stuff) for _ in l)
   donated_invars = expand(in_lol , donated_invars)
-  in_shardings   = expand(in_lol , in_shardings  )
+  in_shardings   = expand(in_lol , in_shardings  , lower_s=True)
   in_layouts     = expand(in_lol , in_layouts    )
-  out_shardings  = expand(out_lol, out_shardings )
+  out_shardings  = expand(out_lol, out_shardings , lower_s=True)
   out_layouts    = expand(out_lol, out_layouts   )
 
   new_params = dict(params, donated_invars=donated_invars,
