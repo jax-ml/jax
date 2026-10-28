@@ -2076,21 +2076,43 @@ def _emit_pipeline(
             (brefs, initial_indices),
         )
     else:
-      @when(num_steps > 0)
-      def _():
+      # Trivially windowed refs are copied whole, inputs before the loop and
+      # outputs after it. The copies run asynchronously on one DMA semaphore:
+      # the input copies overlap with the step 0 prefetches, which step 0 needs
+      # as well, and the output copies with the waits for the last output
+      # blocks.
+      def copies_trivial_input(bref):
+        return (
+            bref.is_trivial_windowing
+            and bref.window_ref is not None
+            and bref.prefetched_count < 1
+        )
+
+      def copies_trivial_output(bref):
+        return bref.is_trivial_windowing and bref.window_ref is not None
+
+      def run_pipeline(trivial_sem):
+        trivial_copies = []
+
+        def start_trivial_copy(src, dst):
+          copy = tpu_primitives.make_async_copy(src, dst, trivial_sem)
+          copy.start()
+          trivial_copies.append(copy)
+
+        def wait_trivial_copies():
+          for copy in trivial_copies:
+            copy.wait()
+          trivial_copies.clear()
+
         # pipeline prologue
         initial_indices = (jnp.int32(0),) * len(grid)
         scheduler = make_scheduler(0, initial_indices)
         brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
-        def _sync_copy_in(bref, ref):
-          if (
-              bref.is_trivial_windowing
-              and bref.window_ref is not None
-              and bref.prefetched_count < 1
-          ):
-            sync_copy(ref, bref, initial_indices)
+        def _start_copy_in(bref, ref):
+          if copies_trivial_input(bref):
+            jax.tree.map(start_trivial_copy, ref, bref.current_ref)
 
-        map_inputs(_sync_copy_in, brefs, refs)
+        map_inputs(_start_copy_in, brefs, refs)
         with scheduler.grid_env():
           # We issue num_stages-1 prefetch copies per buffer.
           # We iterate over steps in the outer loop because we want to
@@ -2099,6 +2121,9 @@ def _emit_pipeline(
             brefs = map_brefs(functools.partial(
                 scheduler.initialize_step, step=step),
                 brefs, refs)
+            if step == 0:
+              # Later prefetches do not compete with the trivial copies.
+              wait_trivial_copies()
 
         # pipeline loop
         with config.mutable_array_checks(False):
@@ -2112,21 +2137,34 @@ def _emit_pipeline(
         # pipeline epilogue
         final_indices = _prev_index(next_indices, grid)
         scheduler = make_scheduler(num_steps - 1, final_indices)
+        def _start_copy_out(bref, ref):
+          if copies_trivial_output(bref):
+            jax.tree.map(start_trivial_copy, bref.current_ref, ref)
+
+        map_outputs(_start_copy_out, brefs, refs)
         with scheduler.grid_env():
           for lag in range(scheduler.num_stages - 2, -1, -1):
             brefs = map_brefs(functools.partial(
                 scheduler.finalize_step, lag=lag),
                 brefs, refs)
-
-        def _sync_copy_out(bref, ref):
-          if bref.is_trivial_windowing and bref.window_ref is not None:
-            sync_copy(bref, ref, initial_indices)
-
-        map_outputs(_sync_copy_out, brefs, refs)
+        wait_trivial_copies()
 
         if output_wait_read_only:  # Only the source reads were awaited so far.
           fence = lambda bref, ref: bref.wait_out_write(ref, final_indices)
           map_outputs(fence, brefs, refs)
+
+      has_trivial_copies = any(
+          (bref.is_input and copies_trivial_input(bref))
+          or (bref.is_output and copies_trivial_output(bref))
+          for bref in alloc_brefs
+      )
+
+      @when(num_steps > 0)
+      def _():
+        if has_trivial_copies:
+          primitives.run_scoped(run_pipeline, SemaphoreType.DMA(()))
+        else:
+          run_pipeline(None)
 
   return pipeline
 

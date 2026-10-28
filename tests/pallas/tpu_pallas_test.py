@@ -6439,6 +6439,88 @@ class MosaicLoweringForLoopTest(jtu.JaxTestCase):
     jax.jit(f).trace(x).lower(lowering_platforms=('tpu',))
 
 
+class EmitPipelineTrivialCopiesLoweringTest(jtu.JaxTestCase):
+
+  @jtu.thread_unsafe_test()
+  def test_trivial_copies_overlap_with_block_copies(self):
+    # The rows of each copy tell the DMAs apart: blocks of x and o, the
+    # trivially windowed input w and output s.
+    block, w_rows, s_rows = 8, 16, 24
+
+    def body(x_ref, w_ref, o_ref, s_ref):
+      o_ref[...] = x_ref[...] * w_ref[:block, :]
+      s_ref[...] += jnp.full(s_ref.shape, 1.0, s_ref.dtype)
+
+    def kernel(x_hbm, w_hbm, o_hbm, s_hbm):
+      pltpu.emit_pipeline(
+          body,
+          grid=(4,),
+          in_specs=[
+              pl.BlockSpec(
+                  (block, 128),
+                  lambda i: (i, 0),
+                  pipeline_mode=pl.Buffered(buffer_count=3),
+              ),
+              pl.BlockSpec((w_rows, 128), lambda i: (0, 0)),
+          ],
+          out_specs=[
+              pl.BlockSpec((block, 128), lambda i: (i, 0)),
+              pl.BlockSpec((s_rows, 128), lambda i: (0, 0)),
+          ],
+      )(x_hbm, w_hbm, o_hbm, s_hbm)
+
+    any_spec = pl.BlockSpec(memory_space=pl.ANY)
+    f = pl.pallas_call(
+        kernel,
+        in_specs=[any_spec, any_spec],
+        out_specs=[any_spec, any_spec],
+        out_shape=[
+            jax.ShapeDtypeStruct((4 * block, 128), jnp.float32),
+            jax.ShapeDtypeStruct((s_rows, 128), jnp.float32),
+        ],
+        debug=True,
+    )
+    tpu7x = jax.sharding.AbstractDevice(
+        device_kind='TPU7x', num_cores=1, platform='tpu'
+    )
+    with (
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=tpu7x)
+        ),
+        jtu.capture_stdout() as get_output,
+    ):
+      pl.lower_as_mlir(
+          f,
+          jax.ShapeDtypeStruct((4 * block, 128), jnp.float32),
+          jax.ShapeDtypeStruct((w_rows, 128), jnp.float32),
+          platforms=['tpu'],
+      )
+    module = get_output().split('The Mosaic module for pallas_call')[-1]
+    ops = [
+        (m.group(1), int(m.group(2)))
+        for m in re.finditer(
+            r'tpu\.(enqueue_dma|wait_dma)2?\b.*?memref<(\d+)x128xf32', module
+        )
+    ]
+    # The copy of w overlaps the step 0 prefetch of x and ends before the step
+    # 1 prefetch; the copy of s overlaps the wait for the last block of o.
+    self.assertEqual(
+        ops[:4],
+        [
+            ('enqueue_dma', w_rows),
+            ('enqueue_dma', block),
+            ('wait_dma', w_rows),
+            ('enqueue_dma', block),
+        ],
+    )
+    self.assertEqual(
+        ops[-3:],
+        [('enqueue_dma', s_rows), ('wait_dma', block), ('wait_dma', s_rows)],
+    )
+    self.assertEqual(ops.count(('enqueue_dma', w_rows)), 1)
+    self.assertEqual(ops.count(('enqueue_dma', s_rows)), 1)
+
+
 class PallasKernelMetadataTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(

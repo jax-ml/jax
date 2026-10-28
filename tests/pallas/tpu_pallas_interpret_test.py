@@ -1822,6 +1822,57 @@ class InterpretTest(jtu.JaxTestCase):
           expected[i * 8 : (i + 1) * 8, :] = i
         np.testing.assert_array_equal(out, expected)
 
+  def test_emit_pipeline_trivial_copies(self):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (),
+        (),
+        abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
+    )
+
+    def pipeline_body(x_ref, w_ref, o_ref, s_ref):
+      @pl.when(pl.program_id(0) == 0)
+      def _():
+        s_ref[...] = jnp.zeros_like(s_ref)
+
+      o_ref[...] = x_ref[...] * w_ref[...]
+      s_ref[...] += x_ref[...]
+
+    # w and s are windowed trivially: copied whole before and after the loop,
+    # asynchronously alongside the first and last block copies.
+    @pl.kernel(
+        out_type=(
+            jax.ShapeDtypeStruct((4 * 8, 128), jnp.float32),
+            jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        ),
+        mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+        interpret=pltpu.InterpretParams(detect_races=True),
+    )
+    def kernel(x_hbm_ref, w_hbm_ref, o_hbm_ref, s_hbm_ref):
+      pltpu.emit_pipeline(
+          pipeline_body,
+          grid=(4,),
+          in_specs=[
+              pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              pl.BlockSpec((8, 128), lambda i: (0, 0)),
+          ],
+          out_specs=[
+              pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              pl.BlockSpec((8, 128), lambda i: (0, 0)),
+          ],
+      )(x_hbm_ref, w_hbm_ref, o_hbm_ref, s_hbm_ref)
+
+    x = jax.random.normal(jax.random.key(0), (4 * 8, 128), jnp.float32)
+    w = jax.random.normal(jax.random.key(1), (8, 128), jnp.float32)
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      out, s = map(np.asarray, jax.block_until_ready(kernel(x, w)))
+    self.assertFalse(mosaic_interpret.races.races_found)
+    x, w = np.asarray(x), np.asarray(w)
+    expected_s = np.zeros_like(w)
+    for i in range(4):
+      expected_s = expected_s + x[i * 8 : (i + 1) * 8]
+    np.testing.assert_array_equal(out, x * np.tile(w, (4, 1)))
+    np.testing.assert_array_equal(s, expected_s)
+
   @parameterized.named_parameters(
       ('interpret_params', pltpu.InterpretParams()),
       ('interpret_true', True),
