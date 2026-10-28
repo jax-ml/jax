@@ -1235,6 +1235,8 @@ class FragmentedArray:
       total_bits = layout.vec_size * bitwidth
       if total_bits % 8 != 0:
         raise NotImplementedError("Vector length should be a multiple of byte size")
+      total_bytes = total_bits // 8
+      alignment = total_bytes & (~total_bytes + 1)
       int_ty = ir.IntegerType.get_signless(bitwidth)
       int_vec_ty = ir.VectorType.get((layout.vec_size,), int_ty)
       for _get, update, transfer_ref, idx in cls.transfer_strided(ref, layout.vec_size):
@@ -1244,7 +1246,7 @@ class FragmentedArray:
         vec_flat_idx = arith.divui(elem_flat_idx, arith.constant(index, layout.vec_size))
         vec_flat_idx = arith.index_cast(i64, vec_flat_idx)
         ptr = utils.getelementptr(base_ptr, [vec_flat_idx], int_vec_ty)
-        loaded_val = llvm.load(int_vec_ty, ptr)
+        loaded_val = llvm.load(int_vec_ty, ptr, alignment=alignment)
         if not isinstance(ref_ty.element_type, ir.IntegerType):
           loaded_val = vector.bitcast(vec_ty, loaded_val)
         update(registers, loaded_val)
@@ -4145,6 +4147,8 @@ class FragmentedArray:
         total_bits = vec_size * bitwidth
         if total_bits % 8 != 0:
           raise NotImplementedError("Vector length should be a multiple of byte size")
+        total_bytes = total_bits // 8
+        alignment = total_bytes & (~total_bytes + 1)
         # pyrefly: ignore[bad-argument-type]
         for get, _update, transfer_ref, idx in self.transfer_strided(ref, vec_size):
           if isinstance(transfer_ref, utils.MultimemRef):
@@ -4182,7 +4186,7 @@ class FragmentedArray:
             stored_val = get(self.registers)
             if not isinstance(self.mlir_dtype, ir.IntegerType):
               stored_val = vector.bitcast(int_vec_ty, stored_val)
-            llvm.store(stored_val, ptr)
+            llvm.store(stored_val, ptr, alignment=alignment)
       case TiledLayout():
         ref_shape = ir.MemRefType(ref.type).shape
         ref = utils.memref_reshape(ref, (*(1 for _ in ref_shape), *ref_shape))
@@ -4555,17 +4559,19 @@ class FragmentedArray:
       stores = self.transfer_tiled(
           ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
       )
+      element_bitwidth = utils.bitwidth(self.mlir_dtype)
+      transfer_bytes = (layout.vector_length * element_bitwidth) // 8
+      alignment = transfer_bytes & (~transfer_bytes + 1)
       for get, _update, _idx, ptr in stores:
         reg = get(self.registers)
         reg_ty = ir.VectorType(reg.type)
-        element_bitwidth = utils.bitwidth(reg_ty.element_type)
         if (
             isinstance(reg_ty.element_type, ir.FloatType)
             and element_bitwidth <= 8
         ):
           narrow_int = ir.IntegerType.get_signless(element_bitwidth)
           reg = vector.bitcast(ir.VectorType.get(reg_ty.shape, narrow_int), reg)
-        llvm.store(reg, ptr)
+        llvm.store(reg, ptr, alignment=alignment)
 
   @classmethod
   def load_tiled(
@@ -4657,6 +4663,10 @@ class FragmentedArray:
     loads = cls.transfer_tiled(
         ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
     )
+    if _load_fun is llvm.load:
+      transfer_bytes = (layout.vector_length * bitwidth) // 8
+      alignment = transfer_bytes & (~transfer_bytes + 1)
+      _load_fun = functools.partial(llvm.load, alignment=alignment)
     for _get, update, _idx, ptr in loads:
       loaded_reg = _load_fun(transfer_ty, ptr)
       if is_narrow_float and _narrow_float_as_int:
@@ -4900,6 +4910,11 @@ class FragmentedArray:
 
     if swizzle not in {16, 32, 64, 128}:
       raise ValueError("Only swizzled transfers supported")
+    if swizzle > 16 and 16 % transfer_bytes != 0:
+      raise UnsupportedTransferError(
+          f"Swizzled transfers require transfer_bytes ({transfer_bytes}) to"
+          " divide 16"
+      )
     # We will be computing the offsets in units of vectors, not elements,
     # to better support sub-byte types.
     swizzle_tile_transfers = 16 // transfer_bytes
