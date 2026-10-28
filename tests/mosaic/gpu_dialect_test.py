@@ -1157,6 +1157,26 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  @parameterized.parameters(
+      ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType
+  )
+  def test_tcgen05_mma_scales_element_type_ok(self, scale_dtype):
+    smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
+    f8 = scale_dtype.get()
+    with ir.InsertionPoint(self.module.body):
+      acc, a, b, accumulate, a_scale, b_scale = undefs(
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
+          ir.MemRefType.get([128, 128], ir.F16Type.get(), memory_space=smem),
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
+          ir.IntegerType.get_signless(1),
+          ir.MemRefType.get([128, 4], f8, memory_space=tmem),
+          ir.MemRefType.get([160, 4], f8, memory_space=tmem),
+      )
+      mgpu.dialect.tcgen05_mma(
+          acc, a, b, accumulate, a_scale=a_scale, b_scale=b_scale
+      )
+    self.assertTrue(self.module.operation.verify())
+
   def test_tcgen05_mma_a_sparse_metadata_mem_space_is_tmem(self):
     smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
     i2 = ir.IntegerType.get_signless(2)
@@ -2094,7 +2114,8 @@ ir.MLIRError,
       mgpu.dialect.async_store_scales_smem_to_tmem(smem, tmem)
     with self.assertRaisesRegex(
         ir.MLIRError,
-        r"operand #0 must be 4D memref of f8E8M0FNU type or f8E4M3FN type values",
+        r"operand #0 must be 4D memref of f8E8M0FNU type or f8E4M3FN type or"
+        r" f8E5M3FNU type values",
     ):
       self.module.operation.verify()
 
@@ -2163,7 +2184,9 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
-  @parameterized.parameters(ir.Float8E8M0FNUType, ir.Float8E4M3FNType)
+  @parameterized.parameters(
+      ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType
+  )
   def test_async_store_scales_smem_to_tmem_op_ok(self, valid_dtype):
     f8 = valid_dtype.get()
     with ir.InsertionPoint(self.module.body):

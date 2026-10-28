@@ -1589,6 +1589,8 @@ class _LazyDtypes:
       _dtypes.float8_e8m0fnu,
       _dtypes.float4_e2m1fn,
     ]
+    if _dtypes.float8_e5m3fnu is not None:
+      float_dtypes.append(_dtypes.float8_e5m3fnu)
     return self.supported(float_dtypes)
 
   @cached_property

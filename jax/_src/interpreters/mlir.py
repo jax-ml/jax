@@ -159,6 +159,9 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(dtypes.float6_e3m2fn): ir.Float6E3M2FNType.get,
 }
 
+if dtypes.float8_e5m3fnu is not None:
+  _dtype_to_ir_type[np.dtype(dtypes.float8_e5m3fnu)] = ir.Float8E5M3FNUType.get
+
 if dtypes.int1 is not None:
   assert dtypes.uint1 is not None
   _dtype_to_ir_type[np.dtype(dtypes.int1)] = partial(
