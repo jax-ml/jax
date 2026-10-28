@@ -900,14 +900,17 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma",
   let hasVerifier = 1;
 }
 
-def MosaicGPU_MMASupportedABType : AnyTypeOf<[F64, TF32, F16, BF16, F8E4M3FN, F8E5M2, I8, I<4>, I1],
+def MosaicGPU_MMASupportedABType : AnyTypeOf<[F64, TF32, F16, BF16, F4E2M1FN, F8E4M3FN, F8E5M2, I8, I<4>, I1],
     "A type supported by the `a` and `b` operands of the synchronous `mma` op">;
+
+def MosaicGPU_MMASupportedABScaleType : AnyTypeOf<[F8E4M3FN, F8E8M0FNU],
+    "A type supported by the `a_scale` and `b_scale` operands of the synchronous `mma` op">;
 
 def MosaicGPU_MMASupportedAccumulatorType : AnyTypeOf<[F64, F32, F16, I32],
     "A type supported by the accumulator of the synchronous `mma` op">;
 
 def MosaicGPU_MMAOp : Op<MosaicGPU_Dialect, "mma",
-    [DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+    [DeclareOpInterfaceMethods<InferTypeOpInterface>, AttrSizedOperandSegments]> {
   let summary = "Multiply two matrices using `mma.sync.aligned`.";
   let description = [{
     Computes `a @ b + accumulator` synchronously using Ampere MMA instructions.
@@ -917,7 +920,9 @@ def MosaicGPU_MMAOp : Op<MosaicGPU_Dialect, "mma",
   let arguments = (ins
     VectorOfRankAndType<[2], [MosaicGPU_MMASupportedAccumulatorType]>:$accumulator,
     VectorOfRankAndType<[2], [MosaicGPU_MMASupportedABType]>:$a,
-    VectorOfRankAndType<[2], [MosaicGPU_MMASupportedABType]>:$b
+    VectorOfRankAndType<[2], [MosaicGPU_MMASupportedABType]>:$b,
+    Optional<VectorOfRankAndType<[2], [MosaicGPU_MMASupportedABScaleType]>>:$a_scale,
+    Optional<VectorOfRankAndType<[2], [MosaicGPU_MMASupportedABScaleType]>>:$b_scale
   );
   let results = (outs VectorOfRankAndType<[2], [MosaicGPU_MMASupportedAccumulatorType]>);
 
@@ -925,11 +930,18 @@ def MosaicGPU_MMAOp : Op<MosaicGPU_Dialect, "mma",
     `accumulator` `(` $accumulator `:` type($accumulator) `)`
     `a` `(` $a `:` type($a) `)`
     `b` `(` $b `:` type($b) `)`
+    (`a_scale` `(` $a_scale^ `:` type($a_scale) `)`)?
+    (`b_scale` `(` $b_scale^ `:` type($b_scale) `)`)?
     attr-dict
     `->` type(results)
   }];
 
   let hasVerifier = 1;
+}
+
+// TODO: Remove when the minimum jaxlib version is 0.12.1
+def MMAOpABScalesSupported : Op<MosaicGPU_Dialect, "mma_op_ab_scales_supported"> {
+  let summary = "Dummy op that will be removed. DO NOT USE.";
 }
 
 def MosaicGPU_TmemAttr : MosaicGPU_Attr<"Tmem", "tmem"> {
