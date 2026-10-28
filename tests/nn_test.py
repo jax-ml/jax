@@ -758,8 +758,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     # custom_jvp rule for it (since otherwise it doesn't pass the numerical
     # checks below).
     if fn is nn.softmax and config.softmax_custom_jvp.value:
-      g_fun = lambda x: jnp.take(fn(x, where=m, initial=-jnp.inf),
-                                jnp.array([0, 2, 3]))
+      g_fun = lambda x: jnp.take(fn(x, where=m), jnp.array([0, 2, 3]))
       jtu.check_grads(g_fun, (x,), order=2)
 
   @parameterized.parameters([nn.softmax, nn.log_softmax])
