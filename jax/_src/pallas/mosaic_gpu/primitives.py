@@ -2434,16 +2434,26 @@ def _wgmma_effectful_abstract_eval(acc, lhs_ref, *args, **kwargs):
   }
 
 
-def mma(acc: jax.Array, a: jax.Array, b: jax.Array, /) -> jax.Array:
+def mma(
+    acc: jax.Array,
+    a: jax.Array,
+    b: jax.Array,
+    *,
+    a_scale: jax.Array | None = None,
+    b_scale: jax.Array | None = None,
+) -> jax.Array:
   """Computes ``acc + a @ b`` synchronously using Ampere MMA instructions."""
-  return mma_p.bind(acc, a, b)
+  if (is_scaled := a_scale is not None) != (b_scale is not None):
+    raise ValueError("a_scale and b_scale must both be present or absent.")
+  scales = [a_scale, b_scale] if is_scaled else []
+  return mma_p.bind(acc, a, b, *scales, scaled=bool(scales))
 
 
 mma_p = jax_core.Primitive("mma")
 
 
 @mma_p.def_abstract_eval
-def _mma_abstract_eval(acc, a, b):
+def _mma_abstract_eval(acc, a, b, *scales, scaled):
   m, n = acc.shape
   m2, k = a.shape
   k2, n2 = b.shape
@@ -2469,10 +2479,63 @@ def _mma_abstract_eval(acc, a, b):
   else:
     raise NotImplementedError(f"Unsupported operand type: {a.dtype}")
 
+  scale_block: int | None = None
+  if scaled:
+    a_scale, b_scale = scales
+    if mgpu.utils.get_arch() < mgpu.utils.Arch(12, 0):
+      # According to Nvidia docs:
+      # Support for .kind, .block_scale, .scale_vec_size
+      # qualifier requires sm_120a and
+      # are supported on sm_120f or higher
+      raise ValueError("Block-scaled MMA is not implemented for arch < 12.0")
+
+    m3, sfk = a_scale.shape
+    sfk2, n3 = b_scale.shape
+    if m != m3 or n != n3 or sfk != sfk2:
+      raise ValueError(
+          f"Incompatible shapes for matrix multiplication: lhs={a.shape},"
+          f" rhs={b.shape}, lhs_scale={a_scale.shape},"
+          f" rhs_scale={b_scale.shape}"
+      )
+    if k % sfk != 0:
+      raise ValueError(
+          f"K={k} is not divisible by A scale second dimension"
+          f" {sfk}"
+      )
+    scale_block = k // sfk
+    scale_element_type = a_scale.dtype
+    if b_scale.dtype != scale_element_type:
+      raise ValueError(
+          f"B scale dtype mismatch: expected {scale_element_type} (same as A),"
+          f" got {b_scale.dtype}"
+      )
+    a_element_type = a.dtype
+    if a_element_type in (jnp.float4_e2m1fn,):
+      if scale_element_type not in (jnp.float8_e8m0fnu, jnp.float8_e4m3fn):
+        raise ValueError(
+            "Scale element type mismatch: expected f8e8m0fnu or f8e4m3fn, got"
+            f" {scale_element_type}"
+        )
+      allowed_base_blocks = (16, 32)
+      if scale_block not in allowed_base_blocks:
+        expected = " or ".join(str(b) for b in allowed_base_blocks)
+        raise ValueError(
+            f"Scale block size mismatch: expected {expected}, got"
+            f" {scale_block}"
+        )
+    else:
+      raise NotImplementedError(
+          f"Unsupported element type for block scaling: {a_element_type}"
+      )
+
   _check_layout_mode()
   if get_layout_mode() == LayoutMode.PALLAS_GPU:
     out_layout = lax_utils.call_layout_rule(
-        mma_p, in_avals=(acc, a, b), out_avals=acc, layout_rule=None
+        mma_p,
+        in_avals=(acc, a, b, *scales),
+        out_avals=acc,
+        layout_rule=None,
+        scaled=scaled,
     )
     if out_layout != acc.layout:
       raise ValueError(
@@ -2483,16 +2546,25 @@ def _mma_abstract_eval(acc, a, b):
 
 
 @lowering.register_lowering_rule(mma_p, mgpu.LoweringSemantics.Lane)
-def _mma_lowering(ctx: lowering.LoweringRuleContext, acc, a, b):
+def _mma_lowering(ctx: lowering.LoweringRuleContext, acc, a, b, *scales, scaled):
   del ctx  # Unused.
-  return mgpu.mma(acc, a, b)
+  a_scale, b_scale = scales if scaled else (None, None)
+  return mgpu.mma(acc, a, b, a_scale=a_scale, b_scale=b_scale)
 
 
 @lowering.register_lowering_rule(mma_p, mgpu.LoweringSemantics.Warpgroup)
-def _mma_warpgroup_lowering(ctx: lowering.LoweringRuleContext, acc, a, b):
+def _mma_warpgroup_lowering(ctx: lowering.LoweringRuleContext, acc, a, b, *scales, scaled):
   del ctx  # Unused.
-  return mgpu.dialect.mma(acc, a, b)
+  a_scale, b_scale = scales if scaled else (None, None)
+  mma_op_ab_scales_supported = hasattr(mgpu.dialect, "mma_op_ab_scales_supported")
+  if scaled and not mma_op_ab_scales_supported:
+    raise NotImplementedError(
+        "Scales are not supported with Warpgroup lowering in jaxlib < 0.12.1"
+    )
+  if mma_op_ab_scales_supported:
+    return mgpu.dialect.mma(acc, a, b, a_scale=a_scale, b_scale=b_scale)  # pyrefly: ignore[unexpected-keyword]
 
+  return mgpu.dialect.mma(acc, a, b)
 
 wgmma_wait_p = jax_core.Primitive("wgmma_wait")
 wgmma_wait_p.multiple_results = True

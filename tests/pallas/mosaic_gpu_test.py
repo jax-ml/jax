@@ -5144,6 +5144,72 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       atol = rtol = 1e-12 if dtype == jnp.float64 else 1e-2
       np.testing.assert_allclose(res, ref, atol=atol, rtol=rtol)
 
+  @parameterized.product(
+      ab_type=[jnp.float4_e2m1fn, ],
+      scale_dtype=[jnp.float8_e4m3fn, jnp.float8_e8m0fnu],
+      block_size=[16, ],  # TODO: add support for blocksize=32
+  )
+  def test_scaled_mma(self, ab_type, scale_dtype, block_size):
+    a_dtype = b_dtype = ab_type
+    acc_dtype = jnp.float32
+    out_dtype = jnp.float16
+    m = n = k = 128
+
+    if scale_dtype == jnp.float8_e4m3fn and block_size != 16:
+      self.skipTest("float8_e4m3fn supports only block size 16.")
+
+    a = jax.random.uniform(
+        jax.random.key(1), shape=(m, k), dtype=jnp.float32
+    ).astype(a_dtype)
+    b = jax.random.uniform(
+        jax.random.key(2), shape=(n, k), dtype=jnp.float32
+    ).astype(b_dtype)
+    ksx, ksy = jax.random.split(jax.random.key(1234), 2)
+
+    scale_min, scale_max = (122, 132) if scale_dtype == jnp.float8_e8m0fnu else (0, 10)
+    a_scale = jax.lax.bitcast_convert_type(
+        jax.random.randint(
+            ksx, (m, k // block_size), scale_min, scale_max, dtype=jnp.uint8
+        ),
+        scale_dtype,
+    )
+    b_scale = jax.lax.bitcast_convert_type(
+        jax.random.randint(
+            ksy, (n, k // block_size), scale_min, scale_max, dtype=jnp.uint8
+        ),
+        scale_dtype,
+    )
+
+    @functools.partial(
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((m, n), out_dtype),
+    )
+    def kernel(a_ref, b_ref, a_scale_ref, b_scale_ref, o_ref):
+      acc = plgpu.layout_cast(
+          jnp.zeros((m, n), acc_dtype), plgpu.Layout.MMA_ACC(out_dtype)
+      )
+      a = plgpu.load(a_ref, layout=plgpu.Layout.MMA_LHS(a_dtype), optimized=False)
+      b = plgpu.load(b_ref.T, layout=plgpu.Layout.MMA_RHS(b_dtype), optimized=False)
+
+      a_scale_layout = plgpu.Layout.MMA_LHS_SCALES(scale_dtype, block_size=block_size)
+      a_scale = plgpu.load(a_scale_ref, layout=a_scale_layout, optimized=False)
+      b_scale_layout = plgpu.Layout.MMA_RHS_SCALES(scale_dtype, block_size=block_size)
+      b_scale = plgpu.load(b_scale_ref.T, layout=b_scale_layout, optimized=False)
+
+      out = plgpu.mma(acc, a, b, a_scale=a_scale, b_scale=b_scale)
+      plgpu.store(o_ref, out.astype(out_dtype), optimized=False)
+
+    res = kernel(a, b, a_scale, b_scale)
+    ref = jax.nn.scaled_matmul(
+        a[None, ...],
+        b[None, ...],
+        a_scale[None, ...],
+        b_scale[None, ...],
+        preferred_element_type=out_dtype,
+    )[0]
+    atol = rtol = 1e-3
+    np.testing.assert_allclose(res, ref, atol=atol, rtol=rtol)
+
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_griddepcontrol_warp_mesh(self):
     @jax.jit

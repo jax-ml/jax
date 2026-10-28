@@ -1727,7 +1727,7 @@ def _mgpu_mma_op_lowering_rule(
     ctx: LoweringContext, mma_op: mgpu.MMAOp
 ) -> Sequence[ir.Value]:
   del ctx
-  acc_layout, a_layout, b_layout = inference_utils.in_layouts(mma_op)
+  acc_layout, a_layout, b_layout, *scales_layout = inference_utils.in_layouts(mma_op)
   [out_layout] = inference_utils.out_layouts(mma_op)
 
   a_element_type = mma_op.a.type.element_type
@@ -1744,7 +1744,14 @@ def _mgpu_mma_op_lowering_rule(
   a = _fragmented_array_from_ir(mma_op.a, a_layout, is_signed=is_signed)
   b = _fragmented_array_from_ir(mma_op.b, b_layout, is_signed=is_signed)
 
-  new_acc = do_mma(acc, a, b)
+  if scales_layout:
+    a_scale_layout, b_scale_layout = scales_layout
+    assert mma_op.a_scale is not None and mma_op.b_scale is not None  # pyrefly: ignore[missing-attribute]
+    a_scale = _fragmented_array_from_ir(mma_op.a_scale, a_scale_layout)  # pyrefly: ignore[bad-argument-type]
+    b_scale = _fragmented_array_from_ir(mma_op.b_scale, b_scale_layout)  # pyrefly: ignore[bad-argument-type]
+  else:
+    a_scale = b_scale = None
+  new_acc = do_mma(acc, a, b, a_scale=a_scale, b_scale=b_scale)
   return [fragmented_array_to_ir(new_acc, mma_op.result.type)]
 
 
