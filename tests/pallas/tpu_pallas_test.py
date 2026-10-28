@@ -98,10 +98,20 @@ def trace_to_jaxpr(f: Callable, *args: Any):
 class TPUPipelineModeTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(
-      (pl.Buffered(2), pl.Buffered(2)),
-      (pl.Buffered(2), pl.Buffered(1)),
-      (pl.Buffered(1), pl.Buffered(1)))
-  def test_two_input_vadd(self, x_pmode : pl.Buffered, y_pmode : pl.Buffered):
+      (pl.Buffered(2), pl.Buffered(2), None),
+      (pl.Buffered(2), pl.Buffered(1), None),
+      (pl.Buffered(1), pl.Buffered(1), None),
+      (pl.Buffered(3), pl.Buffered(1), pl.Buffered(3)),
+  )
+  def test_two_input_vadd(
+      self,
+      x_pmode: pl.Buffered,
+      y_pmode: pl.Buffered,
+      o_pmode: pl.Buffered | None,
+  ):
+    if x_pmode.buffer_count == 3 and not jtu.is_libtpu_at_least('0.0.52'):
+      self.skipTest('Triple buffering requires libtpu >= 0.0.52')
+
     def body(x_ref, y_ref, o_ref):
       x = x_ref[:]
       y = y_ref[:]
@@ -117,7 +127,8 @@ class TPUPipelineModeTest(ptu.PallasTPUTest):
         pl.BlockSpec((block_size,), lambda i: i, pipeline_mode=pmode)
         for pmode in [x_pmode, y_pmode]
     ]
-    out_specs = pl.BlockSpec((block_size,), lambda i: i)
+    out_specs = pl.BlockSpec((block_size,), lambda i: i, pipeline_mode=o_pmode)
+    o_buffer_count = 2 if o_pmode is None else o_pmode.buffer_count
 
     @jax.jit
     def vadd(x, y):
@@ -142,7 +153,11 @@ class TPUPipelineModeTest(ptu.PallasTPUTest):
     pattern = (
         r'"used_scoped_memory_configs":\[\{"memory_space":"1",.*?"size":"(\d+)"'
     )
-    expected_vmem_usage = block_size * 4 * (2 + x_pmode.buffer_count + y_pmode.buffer_count)
+    expected_vmem_usage = (
+        block_size
+        * 4
+        * (o_buffer_count + x_pmode.buffer_count + y_pmode.buffer_count)
+    )
     vmem_usage = int(re.search(pattern, compiled).group(1))
     self.assertEqual(vmem_usage, expected_vmem_usage)
     z = vadd(x, y)
@@ -186,6 +201,32 @@ class TPUPipelineModeRevisitTest(ptu.PallasTPUTest):
     z = reduction(x)
     expected = x.reshape(3, block_shape[0], -1).sum(axis=0)
     np.testing.assert_allclose(z, expected)
+
+  def test_revisit_any_rejects_triple_buffering(self):
+    if not jtu.is_libtpu_at_least('0.0.52'):
+      self.skipTest('Triple buffering requires libtpu >= 0.0.52')
+
+    def body(x_ref, o_ref):
+      o_ref[...] += x_ref[...]
+
+    # The output block must be smaller than the output: Pallas makes a whole
+    # array VMEM block single buffered, whatever its pipeline mode.
+    reduction = self.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct((8, 256), jnp.float32),
+        in_specs=[pl.BlockSpec((8, 128), lambda i, j: (i, j))],
+        out_specs=pl.BlockSpec(
+            (8, 128),
+            lambda i, j: (0, j),
+            pipeline_mode=pl.Buffered(3, revisit=pl.RevisitMode.ANY),
+        ),
+        grid=(2, 2),
+    )
+    with self.assertRaisesRegex(
+        mosaic_lowering.LoweringException,
+        'RevisitMode.ANY is only supported with single buffering',
+    ):
+      jax.jit(reduction).lower(jax.ShapeDtypeStruct((16, 256), jnp.float32))
 
 
 class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
