@@ -885,9 +885,9 @@ class PadTransform(state_types.Transform):
 
 
 def pad_ref(
-    ref: state.AbstractRef | TransformedRef,
+    ref: jax_core.Ref | state.AbstractRef | TransformedRef,
     shape: tuple[int, ...],
-) -> TransformedRef:
+) -> Any:
   """Translate memref to a padded memref for out-of-bounds reads."""
   if not isinstance(ref, TransformedRef):
     if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
