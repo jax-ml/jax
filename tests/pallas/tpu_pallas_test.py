@@ -6439,6 +6439,106 @@ class MosaicLoweringForLoopTest(jtu.JaxTestCase):
     jax.jit(f).trace(x).lower(lowering_platforms=('tpu',))
 
 
+@jtu.thread_unsafe_test_class()  # Patches the Mosaic custom-call lowering.
+class MosaicDmaKnobsLoweringTest(jtu.JaxTestCase):
+  """Lowering-level checks for DMA ``priority`` and power-of-two slot indexing.
+
+  These only need the Mosaic lowering, so they run on any backend by targeting
+  an abstract TPU device.
+  """
+
+  _BLOCK = (32, 128)
+
+  def _mosaic_module(self, f, *args, device_kind='TPU v6 lite'):
+    device = jax.sharding.AbstractDevice(
+        device_kind=device_kind, num_cores=1, platform='tpu'
+    )
+    mesh = jax.sharding.AbstractMesh((), (), abstract_device=device)
+    captured = []
+    original = pallas_call_registration._lower_to_custom_call
+
+    def wrapper(ctx, *in_nodes, mosaic_module, **kwargs):
+      captured.append(mosaic_module.operation.get_asm(enable_debug_info=False))
+      return original(ctx, *in_nodes, mosaic_module=mosaic_module, **kwargs)
+
+    with mock.patch.object(
+        pallas_call_registration, '_lower_to_custom_call', wrapper
+    ):
+      with jax.sharding.use_abstract_mesh(mesh):
+        jax.jit(f).trace(*args).lower(lowering_platforms=('tpu',))
+    self.assertLen(captured, 1)
+    return captured[0]
+
+  @parameterized.parameters(0, 1)
+  def test_make_async_copy_priority(self, priority):
+    x = jax.ShapeDtypeStruct(self._BLOCK, jnp.float32)
+
+    def kernel(x_hbm_ref, o_hbm_ref, scratch_ref, sem_in, sem_out):
+      copy_in = pltpu.make_async_copy(
+          x_hbm_ref, scratch_ref, sem_in, priority=priority
+      )
+      copy_in.start()
+      copy_in.wait()
+      pltpu.async_copy(
+          scratch_ref, o_hbm_ref, sem_out, priority=priority
+      ).wait()
+
+    f = pl.pallas_call(
+        kernel,
+        out_shape=x,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        scratch_shapes=[
+            pltpu.VMEM(self._BLOCK, jnp.float32),
+            pltpu.SemaphoreType.DMA,
+            pltpu.SemaphoreType.DMA,
+        ],
+    )
+    module = self._mosaic_module(f, x)
+    self.assertEqual(module.count('tpu.enqueue_dma'), 2)
+    self.assertEqual(
+        module.count('priority = 1 : i32'), 2 if priority == 1 else 0
+    )
+
+  @parameterized.parameters(2, 3, 4)
+  def test_emit_pipeline_slot_rem_and_priority(self, buffer_count):
+    rows = self._BLOCK[0] * 4
+    x = jax.ShapeDtypeStruct((rows, self._BLOCK[1]), jnp.float32)
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      def body(x_ref, o_ref):
+        o_ref[...] = x_ref[...] * 2.0
+
+      pltpu.emit_pipeline(
+          body,
+          grid=(rows // self._BLOCK[0],),
+          in_specs=[
+              pl.BlockSpec(
+                  self._BLOCK,
+                  lambda i: (i, 0),
+                  pipeline_mode=pl.Buffered(buffer_count),
+              )
+          ],
+          out_specs=[pl.BlockSpec(self._BLOCK, lambda i: (i, 0))],
+          priority=1,
+      )(x_hbm_ref, o_hbm_ref)
+
+    f = pl.pallas_call(
+        kernel,
+        out_shape=x,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    module = self._mosaic_module(f, x)
+    self.assertIn('priority = 1 : i32', module)
+    if buffer_count & (buffer_count - 1) == 0:
+      # Power-of-two slot counts use a bitwise and instead of a remainder.
+      self.assertIn('arith.andi', module)
+      self.assertNotIn('arith.remui', module)
+    else:
+      self.assertIn('arith.remui', module)
+
+
 class PallasKernelMetadataTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(
