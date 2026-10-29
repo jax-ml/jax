@@ -3739,13 +3739,15 @@ def _reduce_index_helper(
   )
   result = tpu.reduce_index(native_out_type, x, axis, reduction_kind)
 
-  if out_aval.dtype != native_dtype:
+  if dtypes.itemsize_bits(out_aval.dtype) > dtypes.itemsize_bits(native_dtype):
     out_type = ctx.aval_to_ir_type(
         jax_core.ShapedArray(out_shape, out_aval.dtype)
     )
     # To make sure jnp.argmax/argmin always return int32, we need to convert
     # the int16 output of tpu.reduce_index to int32 when the input is bf16.
-    result = arith.extsi(out_type, result)
+    # The reduced dimension can have up to 2^16 elements, so the int16
+    # indices must be zero-extended.
+    result = arith.extui(out_type, result)
 
   if is_1d:
     return vector.extract(result, [], [0])
