@@ -1271,15 +1271,13 @@ def _mask_all_reduce_lowering_rule(
     ctx: sc_lowering.LoweringRuleContext, x, *, reduce, kind: str
 ):
   [out_aval] = ctx.avals_out
-  return tpu.all_reduce(
-      ir.VectorType.get(
-          out_aval.shape,
-          ir.IntegerType.get_signless(32),
-      ),
-      x,
-      0,
-      ir.Attribute.parse(f"#tpu.reduction_kind<{kind}>"),
-  )
+  i32 = ir.IntegerType.get_signless(32)
+  out_type = ir.VectorType.get(out_aval.shape, i32)
+  kind_attr = ir.Attribute.parse(f"#tpu.reduction_kind<{kind}>")
+  if kind == "find_first_set" and ctx.lowering_context.needs_layout_passes:
+    res = tpu.reduce_index(ir.VectorType.get((1,), i32), x, 0, kind_attr)
+    return vector.broadcast(out_type, res)
+  return tpu.all_reduce(out_type, x, 0, kind_attr)
 
 
 all_reduce_population_count_p = jax_core.Primitive(
