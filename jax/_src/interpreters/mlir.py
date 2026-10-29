@@ -556,6 +556,90 @@ def source_info_to_location(
     loc = ir.Location.name(f"{primitive.name}:", childLoc=loc)
   return loc
 
+
+class EqnLocations:
+  """Memoizes the name stacks and MLIR locations of the equations of a jaxpr.
+
+  Large jaxprs have many equations but few distinct locations: equations traced
+  in the same scope share a name stack object, and unrolled loops repeat
+  tracebacks.
+
+  Args:
+    ctx: provides the traceback caches.
+    name_stack: the name stack of the jaxpr, which prefixes the name stack of
+      each equation.
+    outer_traceback: if not None, follows the traceback of each equation.
+  """
+
+  __slots__ = (
+      "_ctx",
+      "_name_stack",
+      "_outer_traceback",
+      "_locations",
+      "_source_name_stack",
+      "_eqn_name_stack",
+      "_eqn_name_stack_key",
+  )
+
+  def __init__(
+      self,
+      ctx: HasTracebackCaches,
+      name_stack: source_info_util.NameStack,
+      outer_traceback: xc.Traceback | None = None,
+  ):
+    self._ctx = ctx
+    self._name_stack = name_stack
+    self._outer_traceback = outer_traceback
+    self._locations: dict[tuple[Any, ...], ir.Location] = {}
+    self._source_name_stack: source_info_util.NameStack | None = None
+    self._eqn_name_stack = name_stack
+    self._eqn_name_stack_key = (str(name_stack), bool(name_stack.stack))
+
+  def name_stack(
+      self, source_info: source_info_util.SourceInfo
+  ) -> source_info_util.NameStack:
+    """Returns the name stack of an equation, prefixed by that of the jaxpr.
+
+    Consecutive equations with the same source name stack get the same object.
+    """
+    if source_info.name_stack is not self._source_name_stack:
+      self._source_name_stack = source_info.name_stack
+      name_stack = self._name_stack + source_info.name_stack
+      self._eqn_name_stack = name_stack
+      # Locations depend on the name stack only through how it is rendered.
+      self._eqn_name_stack_key = (str(name_stack), bool(name_stack.stack))
+    return self._eqn_name_stack
+
+  def traceback(
+      self, source_info: source_info_util.SourceInfo
+  ) -> xc.Traceback | None:
+    """Returns the traceback of an equation, followed by the outer traceback."""
+    if self._outer_traceback is None:
+      return source_info.traceback
+    return (source_info.traceback or xc.Traceback()) + self._outer_traceback
+
+  def location(
+      self,
+      primitive: core.Primitive | None,
+      source_info: source_info_util.SourceInfo,
+  ) -> ir.Location:
+    """Returns the `source_info_to_location` of an equation."""
+    if source_info.name_stack is not self._source_name_stack:
+      self.name_stack(source_info)
+    # Equal tracebacks have the same frames, so they give equal locations.
+    key = (primitive, self._eqn_name_stack_key, source_info.traceback)
+    loc = self._locations.get(key)
+    if loc is None:
+      loc = source_info_to_location(
+          self._ctx,
+          primitive,
+          self._eqn_name_stack,
+          self.traceback(source_info),
+      )
+      self._locations[key] = loc
+    return loc
+
+
 upstream_dialects = ir.DialectRegistry()
 jax_mlir_ext.register_dialects(upstream_dialects)
 
@@ -1747,7 +1831,6 @@ def _get_res_shardings(result_shardings, out_avals, num_tokens):
   return [*token_shardings, *result_shardings]
 
 
-
 def lower_jaxpr_to_fun(
     ctx: ModuleContext,
     name: str,
@@ -2287,7 +2370,7 @@ def jaxpr_subcomp(
     (ctx.shape_poly_state.dim_vars, dim_var_values)
   foreach(write, jaxpr.constvars, consts_for_constvars)
   foreach(write, jaxpr.invars, args)
-  outer_traceback = outer_traceback or xc.Traceback()
+  locations = EqnLocations(ctx, name_stack, outer_traceback or xc.Traceback())
   should_log_constants = (config.use_simplified_jaxpr_constants.value and
                           config.captured_constants_warn_bytes.value >= 0)
   if should_log_constants:
@@ -2296,9 +2379,6 @@ def jaxpr_subcomp(
       log_closed_over_constant(c, var.aval, jaxpr._debug_info, eqn)
   for eqn in jaxpr.eqns:
     in_nodes = tuple(map(read, eqn.invars))
-
-    eqn_name_stack = name_stack + eqn.source_info.name_stack
-    traceback = (eqn.source_info.traceback or xc.Traceback()) + outer_traceback
 
     can_cache_lowering = (eqn.primitive not in _uncacheable_primitives)
     avals_in = tuple(v.aval for v in eqn.invars)
@@ -2313,8 +2393,7 @@ def jaxpr_subcomp(
           platforms=tuple(ctx.platforms),
       )
       cache_entry = ctx.lowering_cache.get(cache_key, None)
-      loc = source_info_to_location(ctx, None, eqn_name_stack, traceback)
-      with loc:
+      with locations.location(None, eqn.source_info):
         if cache_entry is None:
           assert cache_key is not None
           cache_entry = _cached_lowering_miss(
@@ -2326,7 +2405,9 @@ def jaxpr_subcomp(
         )
     else:
       # If we cannot cache the lowering, lower inline.
-      loc = source_info_to_location(ctx, eqn.primitive, eqn_name_stack, traceback)
+      eqn_name_stack = locations.name_stack(eqn.source_info)
+      traceback = locations.traceback(eqn.source_info)
+      loc = locations.location(eqn.primitive, eqn.source_info)
       with (source_info_util.user_context(eqn.source_info.traceback), loc,
             eqn.ctx.manager):
         axis_size_env = None
