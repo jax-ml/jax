@@ -273,7 +273,8 @@ def _pallas_call_jvp_rule(
                           a.to_tangent_aval().dtype == dtypes.float0)
                      for a in out_avals]
   _, tangents = partition_list(nz_tangents_in, tangents)
-  jvp_jaxpr_, _ = ad.jvp_jaxpr(jaxpr, nz_tangents_in + nz_tangents_out, [])
+  with grid_mapping.trace_env():
+    jvp_jaxpr_, _ = ad.jvp_jaxpr(jaxpr, nz_tangents_in + nz_tangents_out, [])
   jvp_jaxpr, () = jvp_jaxpr_, jvp_jaxpr_.consts  # TODO consts
   # `pallas_call` takes in inputs and returns outputs but its jaxpr *does not*.
   # `pallas_call` takes in a stateful jaxpr, meaning the jaxpr accepts input

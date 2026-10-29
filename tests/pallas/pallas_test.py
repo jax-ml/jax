@@ -2522,6 +2522,30 @@ class PallasCallAutodifferentiationTest(ptu.PallasTest):
 
     np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
 
+  def test_jvp_program_id(self):
+    @functools.partial(
+        self.pallas_call,
+        grid=(4,),
+        in_specs=[pl.BlockSpec((8,), lambda i: (i,))],
+        out_specs=pl.BlockSpec((8,), lambda i: (i,)),
+        out_shape=jax.ShapeDtypeStruct((32,), floatx),
+    )
+    def pallas_impl(x_ref, o_ref):
+      scale = (pl.program_id(0) + 1).astype(floatx)
+      o_ref[...] = jnp.sin(x_ref[...]) * scale
+
+    k1, k2 = random.split(random.key(0))
+    x = random.normal(k1, (32,))
+    t = random.normal(k2, (32,))
+    scale = jnp.repeat(jnp.arange(1, 5, dtype=floatx), 8)
+    out_primal, out_tangent = jax.jvp(pallas_impl, (x,), (t,))
+    np.testing.assert_allclose(out_primal, jnp.sin(x) * scale, atol=self.tol,
+                               rtol=self.tol)
+    np.testing.assert_allclose(out_tangent, jnp.cos(x) * t * scale,
+                               atol=self.tol, rtol=self.tol)
+    jtu.check_grads(pallas_impl, (x,), modes=["fwd"], order=2,
+                    atol=self.grad_tol, rtol=self.grad_tol)
+
   # TODO(sharadmv): enable this when we update Triton
   # def test_jvp_matmul(self):
   #   k1, k2 = random.split(random.key(0))
