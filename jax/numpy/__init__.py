@@ -252,6 +252,13 @@ try:
 except ImportError:
   pass
 
+try:
+  from jax._src.numpy.scalar_types import (
+      float8_e5m3fnu as float8_e5m3fnu,
+  )
+except ImportError:
+  pass
+
 from jax._src.numpy.sorting import (
     argpartition as argpartition,
     argsort as argsort,

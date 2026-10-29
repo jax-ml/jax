@@ -1171,6 +1171,7 @@ class JaxExportTest(jtu.JaxTestCase):
         "float8_e4m3b11fnuz",
         "float8_e4m3fnuz",
         "float8_e5m2fnuz",
+        "float8_e5m3fnu",
         "float6_e2m3fn",
         "float6_e3m2fn",
         "int1",
