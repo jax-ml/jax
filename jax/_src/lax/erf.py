@@ -19,8 +19,9 @@ from jax._src.api import jit
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax.lax import (
     AccuracyMode, _const, asarray, bitcast_convert_type, clamp,
-    convert_element_type, exp, full_like, log, max as lax_max, min as lax_min,
-    neg, polynomial, reciprocal, select, select_n, shift_left, sqrt, square,
+    convert_element_type, exp, full_like, log, log1p, max as lax_max,
+    min as lax_min, neg, polynomial, reciprocal, select, select_n, shift_left,
+    sqrt, square,
 )
 from jax._src.typing import Array
 import numpy as np
@@ -446,16 +447,8 @@ def _erfcx_from_grad_large(ax: Array, grad_large: Array) -> Array:
   return num / ax
 
 
-def erfcx_grad_large(ax: Array) -> Array:
-  """Computes the derivative `erfcx'(ax)` for `ax >= 1`.
-
-  We write `erfcx'(ax) = -(1 / ax^2) * G(ax)` where `G(ax) = -ax^2 * erfcx'(ax)`
-  is positive and bounded in `[0.2731, 0.5642)` on `[1, inf)`. We evaluate
-  `G(ax)` using piecewise Sollya minimax polynomials in `u = 1 / ax` on the
-  near-field intervals (`[1, 2)` and `[2, 8)` in `float32`; `[1, 2)`, `[2, 4)`,
-  and `[4, 12)` in `float64`) and in `t = u^2 = 1 / ax^2` on the asymptotic tail
-  (`[8, inf)` in `float32`; `[12, inf)` in `float64`).
-  """
+def _erfcx_g_large(ax: Array) -> tuple[Array, Array]:
+  """Returns `(t, g)` where `t = 1 / ax^2` and `g = -ax^2 * erfcx'(ax)` for `ax >= 1`."""
   u = reciprocal(ax)
   t = square(u)
   if ax.dtype == np.float32:
@@ -475,6 +468,20 @@ def erfcx_grad_large(ax: Array) -> Array:
     )
   else:
     raise TypeError(f"Unsupported dtype: {ax.dtype}")
+  return t, g
+
+
+def erfcx_grad_large(ax: Array) -> Array:
+  """Computes the derivative `erfcx'(ax)` for `ax >= 1`.
+
+  We write `erfcx'(ax) = -(1 / ax^2) * G(ax)` where `G(ax) = -ax^2 * erfcx'(ax)`
+  is positive and bounded in `[0.2731, 0.5642)` on `[1, inf)`. We evaluate
+  `G(ax)` using piecewise Sollya minimax polynomials in `u = 1 / ax` on the
+  near-field intervals (`[1, 2)` and `[2, 8)` in `float32`; `[1, 2)`, `[2, 4)`,
+  and `[4, 12)` in `float64`) and in `t = u^2 = 1 / ax^2` on the asymptotic tail
+  (`[8, inf)` in `float32`; `[12, inf)` in `float64`).
+  """
+  t, g = _erfcx_g_large(ax)
   return -t * g
 
 
@@ -620,6 +627,135 @@ def _ndtr_jvp(primals, tangents):
 @jit
 def ndtr(x: Array) -> Array:
   return _ndtr(x)
+
+
+@custom_jvp
+def _log_ndtr(x: Array) -> Array:
+  """Computes `log(ndtr(x))`.
+
+  Evaluating `log(ndtr(x))` directly fails in both tails:
+  - For `x > 0`, `ndtr(x)` approaches `1`, so rounding `ndtr(x)` to a single
+    float before `log` loses precision (and rounds to `1`, giving `log(1) = 0`,
+    for larger `x`).
+  - For large negative `x`, `ndtr(x)` underflows into subnormals (below `-12.95`
+    in `float32`, `-37.52` in `float64`) and then to `0` (`log(0) = -inf`, below
+    `-14.12` in `float32`, `-38.47` in `float64`), even though `log(ndtr(x))`
+    stays finite down to `x ~= -2.61e19` (`-1.90e154`).
+
+  `_log_ndtr` therefore uses three cases:
+  - `x > 0`: `log1p(-ndtr(-x))`, using `ndtr(x) = 1 - ndtr(-x)`.
+  - `-sqrt(2) <= x <= 0`: `log(ndtr(x))` directly (`ndtr(x)` is in
+    `[0.078, 0.5]`, so neither issue occurs).
+  - `x < -sqrt(2)`: takes the log of
+    `ndtr(x) = exp(-0.5 * x^2) * 0.5 * erfcx_large(|x| / sqrt(2))` directly:
+      `log_ndtr(x) = -0.5 * x^2 + log(0.5 * erfcx_large(|x| / sqrt(2)))`
+    Evaluating `-0.5 * x^2` as `-2 * (0.5 * |x|)^2` avoids `x^2` overflowing
+    early when `|x|` is between `sqrt(fmax)` and `sqrt(2 * fmax)`. (Unlike
+    `_ndtr`, `-0.5 * x^2` is added rather than exponentiated, and both terms
+    have the same sign, so `_split_square` is not needed here.)
+  """
+  sqrt2 = math.sqrt(2.0)
+  inv_sqrt2 = math.sqrt(0.5)
+  ax = abs(x)
+
+  # Both x > 0 (which needs ndtr(-x)) and -sqrt(2) <= x <= 0 (which needs
+  # ndtr(x)) evaluate ndtr at -|x|.
+  ndtr_neg_ax = _ndtr(-ax)
+
+  tail = -2.0 * square(0.5 * ax) + log(
+      0.5 * erfcx_large(ax * inv_sqrt2),
+      accuracy=AccuracyMode.HIGHEST,
+  )
+
+  return select(
+      x > 0.0,
+      log1p(-ndtr_neg_ax, accuracy=AccuracyMode.HIGHEST),
+      select(
+          x >= -sqrt2,
+          log(ndtr_neg_ax, accuracy=AccuracyMode.HIGHEST),
+          tail,
+      ),
+  )
+
+
+@custom_jvp
+def _log_ndtr_grad_and_shift(x: Array) -> tuple[Array, Array]:
+  """Returns `(r, q)` where `r = d/dx log(ndtr(x))` and `q = x + r`.
+
+  By the chain rule, `r(x) = ndtr'(x) / ndtr(x)`, where
+  `ndtr'(x) = exp(-0.5 * x^2) / sqrt(2 * pi)`:
+  - For `x >= -sqrt(2)`, `ndtr(x) >= 0.078`, so dividing
+    `exp_neg_half_sq(x) / (_ndtr(x) * sqrt(2 * pi))` directly is accurate.
+  - For large negative `x`, both `ndtr'(x)` and `ndtr(x)` underflow to `0`
+    (`0 / 0 = NaN`), even though their ratio grows like `|x|`. Substituting
+    `ndtr(x) = exp(-0.5 * x^2) * 0.5 * erfcx(u)` (with `u = |x| / sqrt(2)`)
+    cancels `exp(-0.5 * x^2)` analytically to give
+    `r(x) = sqrt(2 / pi) / erfcx(u)`. Since
+    `u * erfcx(u) = 1 / sqrt(pi) + 0.5 * erfcx'(u)` and
+    `erfcx'(u) = -(1 / u^2) * G(u)`, writing `u * erfcx(u) = (1 - delta) / sqrt(pi)`
+    with `delta = 0.5 * sqrt(pi) * (1 / u^2) * G(u)` gives
+      `r(x) = |x| / (1 - delta)`,
+    keeping the denominator in `[0.75, 1]` instead of dividing by `erfcx(u)`
+    (which underflows near `-fmax`).
+
+  Differentiating `r(x) = ndtr'(x) / ndtr(x)` (using `ndtr''(x) = -x * ndtr'(x)`)
+  gives `r'(x) = -r(x) * (x + r(x))`. For large negative `x`,
+  `r(x) ~= |x| + 1 / |x|`, so adding `x + r(x)` directly would cancel `-|x|`
+  against `|x|`. Computing `q(x) = x + r(x)` algebraically on `x < -sqrt(2)` as
+    `-|x| + |x| / (1 - delta) = sqrt(pi) * G(u) / (|x| * (1 - delta))`
+  avoids that cancellation, and wrapping `(r, q)` in `@custom_jvp` gives a
+  closed recurrence (`r' = -r * q`, `q' = 1 - r * q`) that never differentiates
+  through the polynomials in `_ndtr` or `_erfcx_g_large`.
+  """
+  sqrt2 = math.sqrt(2.0)
+  inv_sqrt2 = math.sqrt(0.5)
+  max_ax = 16.0 if x.dtype == np.float32 else 40.0
+
+  r_pos = exp_neg_half_sq(x) / (_ndtr(x) * math.sqrt(2.0 * math.pi))
+  # For `x >= max_ax`, `r_pos` underflows to 0; zeroing `q_pos` avoids
+  # `0 * inf = NaN` in `-r * q` at `x = +inf`.
+  q_pos = select(x < max_ax, x + r_pos, full_like(x, 0.0))
+
+  ax = -x
+  t, g = _erfcx_g_large(ax * inv_sqrt2)
+  denom = 1.0 - (0.5 * math.sqrt(math.pi)) * t * g
+  r_neg = ax / denom
+  if x.dtype == np.float32:
+    # Avoid TPU v3-v5p float32 division subnormal flush when `ax * denom > 2^111`
+    # (see `_erfcx_from_grad_large`).
+    scale = select(ax > 2.0**64, full_like(ax, 2.0**-64), full_like(ax, 1.0))
+    q_neg = (math.sqrt(math.pi) * g * scale) / ((ax * scale) * denom)
+  else:
+    q_neg = (math.sqrt(math.pi) * g) / (ax * denom)
+
+  is_pos = x >= -sqrt2
+  return select(is_pos, r_pos, r_neg), select(is_pos, q_pos, q_neg)
+
+
+@_log_ndtr_grad_and_shift.defjvp
+def _log_ndtr_grad_and_shift_jvp(primals, tangents):
+  (x,), (x_dot,) = primals, tangents
+  x = asarray(x)
+  r, q = _log_ndtr_grad_and_shift(x)
+  rq = r * q
+  return (r, q), (-rq * x_dot, (1.0 - rq) * x_dot)
+
+
+@_log_ndtr.defjvp
+def _log_ndtr_jvp(primals, tangents):
+  (x,), (x_dot,) = primals, tangents
+  x = asarray(x)
+  r, _ = _log_ndtr_grad_and_shift(x)
+  return _log_ndtr(x), r * x_dot
+
+
+@jit
+def log_ndtr(x: Array) -> Array:
+  if x.dtype not in (np.float32, np.float64):
+    return convert_element_type(
+        _log_ndtr(convert_element_type(x, np.float32)), x.dtype
+    )
+  return _log_ndtr(x)
 
 
 def erfcx_impl(x: Array) -> Array:
