@@ -517,7 +517,15 @@ def interpret_pallas_call(
         compiler_params=compiler_params,
         interpret_params=interpret_params,
     )
-    token, _ = jaxpr_interpreter.interpret(jaxpr, token, *kernel_buffer_keys)
+    token, _ = jaxpr_interpreter.interpret(
+        jaxpr,
+        token,
+        *kernel_buffer_keys,
+        # Grids with multiple blocks per cluster need synchronization
+        # post-allocation and pre-deallocation. We can't do this
+        # unconditionally, since it deadlocks large grids.
+        wait_for_cluster=tuple(cluster_dims) == (2,),
+    )
 
     token = callback.io_callback(
         functools.partial(gpu_callbacks.kernel_thread_finished),

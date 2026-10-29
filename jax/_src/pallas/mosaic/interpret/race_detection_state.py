@@ -96,7 +96,12 @@ class RaceDetectionState[ThreadKey]:
       buffer_key,
       rnge,
       source_info=None,
+      record_clock: vc.NpVectorClock | None = None,
   ):
+    """Checks a read at `clock`, and records it at `record_clock` (or `clock`).
+    """
+    if record_clock is None:
+      record_clock = clock
     if source_info is not None:
       user_frame = source_info_util.summarize(source_info)
     else:
@@ -106,7 +111,7 @@ class RaceDetectionState[ThreadKey]:
       writes = self.writes[buffer_key]
       num_writes = len(writes)
       self.reads[buffer_key].append(
-          (thread, clock, rnge, user_frame)
+          (thread, record_clock, rnge, user_frame)
       )
 
     for i in range(num_writes):
@@ -141,7 +146,12 @@ class RaceDetectionState[ThreadKey]:
       buffer_key,
       rnge,
       source_info=None,
+      record_clock: vc.NpVectorClock | None = None,
   ):
+    """Checks a write at `clock`, and records it at `record_clock` (or `clock`).
+    """
+    if record_clock is None:
+      record_clock = clock
     if source_info is not None:
       user_frame = source_info_util.summarize(source_info)
     else:
@@ -152,7 +162,7 @@ class RaceDetectionState[ThreadKey]:
       reads = self.reads[buffer_key]
       num_writes = len(writes)
       num_reads = len(reads)
-      self.writes[buffer_key].append((thread, clock, rnge, user_frame))
+      self.writes[buffer_key].append((thread, record_clock, rnge, user_frame))
 
     # TODO(jburnim): For performance, we should also probably remove any
     # conflicting reads and writes that happened-before the current write.
