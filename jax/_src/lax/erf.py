@@ -1222,3 +1222,46 @@ def erf_inv_core(
   tail_mag = k_h * z_h + rem
   sign_x = select(x < 0.0, full_like(x, -1.0), full_like(x, 1.0))
   return select(conds[0], x * poly, sign_x * tail_mag)
+
+
+@custom_jvp
+def erf_inv_jvp_scale(x: Array, z: Array) -> Array:
+  """Evaluates `d/dx erfinv(x) = (sqrt(pi) / 2) * exp(z^2)` where `z = erfinv(x)`.
+
+  - For `|z| <= 1`, `(sqrt(pi) / 2) * exp(z^2)` has condition number `<= 2`
+    with respect to `z`.
+  - For `|z| > 1`, evaluating `exp(z^2)` directly amplifies any rounding error
+    in `z` by `2 * z^2` ULPs. Using `1 - |x| = erfc(|z|) = exp(-z^2) * erfcx(|z|)`
+    gives `(sqrt(pi) / 2) * erfcx(|z|) / (1 - |x|)`, where `1 - |x|` is exact by
+    Sterbenz's lemma (`|x| > erf(1) > 0.5`) and `erfcx(|z|)` has condition
+    number `< 1` with respect to `z`.
+  """
+  q = 1.0 - abs(x)
+  u = abs(z)
+  is_tail = u > 1.0
+
+  zeros = full_like(x, 0.0)
+  ones = full_like(x, 1.0)
+  half_sqrt_pi = 0.5 * math.sqrt(math.pi)
+
+  z_central = select(is_tail, zeros, z)
+  central = half_sqrt_pi * exp(square(z_central))
+
+  is_finite_tail = is_tail & (q > 0.0)
+  u_tail = select(is_finite_tail, u, ones)
+  q_safe = select(is_finite_tail, q, ones)
+  tail = select(
+      q == 0.0,
+      full_like(x, np.inf),
+      (half_sqrt_pi * erfcx_large(u_tail)) / q_safe,
+  )
+  return select(q < 0.0, full_like(x, np.nan), select(is_tail, tail, central))
+
+
+@erf_inv_jvp_scale.defjvp
+def _erf_inv_jvp_scale_jvp(primals, tangents):
+  # `z` is the cached primal `erfinv(x)`, not an independent input, so the total
+  # derivative with respect to `x` is d/dx ((sqrt(pi) / 2) * exp(z^2)) = 2 * z * g^2.
+  (x, z), (x_dot, _) = primals, tangents
+  g = erf_inv_jvp_scale(x, z)
+  return g, x_dot * ((2.0 * z * g) * g)
