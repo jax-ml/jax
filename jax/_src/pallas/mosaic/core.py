@@ -28,6 +28,7 @@ import jax
 from jax._src import core as jax_core
 from jax._src import pretty_printer as pp
 from jax._src import state
+from jax._src import tpu_info
 from jax._src import tree_util
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
@@ -212,7 +213,6 @@ class CompilerParams:
 
 
 def check_accumulator_ref(shape: tuple[int, ...], dtype: jax.typing.DTypeLike, mxu_id: int):
-  from jax._src.pallas.mosaic import tpu_info  # pyrefly: ignore[missing-module-attribute]
   if len(shape) < 2:
     raise ValueError(f"Acc ref must be at least 2D, got shape {shape}")
 
@@ -409,12 +409,7 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
 
 
 def _get_default_num_cores() -> int:
-  abstract_device = jax.sharding.get_abstract_mesh().abstract_device
-  if abstract_device is None:
-    device = jax.devices()[0]
-  else:
-    device = abstract_device
-  return device.num_cores
+  return tpu_info.get_tpu_info().num_cores
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
