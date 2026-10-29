@@ -36,6 +36,12 @@ def inlined_func_call(
 def arith_constant(value: int | float | bool, type: ir.Type, /) -> ir.Value:
   """Creates an arith.constant operation."""
 
+def vector_broadcast(type: ir.Type, source: ir.Value, /) -> ir.Value:
+  """Creates a vector.broadcast operation."""
+
+def arith_binary_op(name: str, lhs: ir.Value, rhs: ir.Value, /) -> ir.Value:
+  """Creates a binary arith operation, such as arith.addf, whose result type is the type of its operands."""
+
 class TracebackToLocationCache:
   def __init__(
       self,
