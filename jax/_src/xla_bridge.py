@@ -38,6 +38,7 @@ import warnings
 from jax._src import config
 from jax._src import distributed
 from jax._src import hardware_utils
+from jax._src import pathways_profiler
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
@@ -941,6 +942,9 @@ def _init_backend(platform: str) -> xla_client.Client:
   # CPU-only devices.
   if backend.device_count() == 0 and len(backend._get_all_devices()) == 0:
     raise RuntimeError(f"Backend '{platform}' provides no devices.")
+  # `register` is undefined if jaxlib can't trace Pathways backends.
+  if platform == "proxy" and hasattr(pathways_profiler, "register"):
+    pathways_profiler.register(backend)
   util.distributed_debug_log(("Initialized backend", backend.platform),
                              ("process_index", backend.process_index()),
                              ("device_count", backend.device_count()),

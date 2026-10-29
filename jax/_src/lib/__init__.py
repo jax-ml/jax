@@ -125,6 +125,7 @@ import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
 import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
 
 import jaxlib._ifrt_proxy as ifrt_proxy  # noqa: F401
+import jaxlib._pathways as _pathways  # noqa: F401
 
 from jaxlib import _hlo as hlo  # noqa: F401
 
