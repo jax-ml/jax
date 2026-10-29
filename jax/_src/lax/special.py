@@ -638,7 +638,13 @@ def igammac_impl(a, x, *, dtype):
                                dtype, IgammaMode.VALUE, None)
 
   # Use Temme expansion for large a near x, continued fraction otherwise
-  use_temme = bitwise_and(gt(a, _const(a, 100)), bitwise_not(use_igamma))
+  # Temme is accurate only in a window around x ~= a (small t); outside it
+  # the asymptotic expansion diverges, so fall back to the continued fraction.
+  t = (x - a) / sqrt(select(gt(a, _const(a, 0)), a, full_like(a, 1)))
+  use_temme = bitwise_and(
+      bitwise_and(gt(a, _const(a, 200)), bitwise_not(use_igamma)),
+      le(abs(t), _const(a, 4.5)),
+  )
   use_cf = bitwise_and(bitwise_not(use_igamma), bitwise_not(use_temme))
   igammac_cf_call = select(
       use_temme,
