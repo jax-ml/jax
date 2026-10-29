@@ -38,6 +38,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax.erf import ndtr
 from jax._src.lax import lax
 from jax._src.lax import special as lax_special
 from jax._src.numpy import einsum as jnp_einsum
@@ -2114,7 +2115,7 @@ def _poisson_from_normal(z, lam):
   """Map a standard normal variate to an approximate Poisson(lam) variate."""
   valid = (lam > 0) & jnp.isfinite(lam)
   lam_safe = jnp.where(valid, lam, 1.0)
-  small = _poisson_cdf_inversion(lax_special.ndtr(z), lam_safe)
+  small = _poisson_cdf_inversion(ndtr(z), lam_safe)
   large = _poisson_peizer_pratt(z, lam_safe)
   out = jnp.where(lam_safe < _POISSON_SPLIT, small, large)
   return jnp.where(lam == 0, 0.0, jnp.where(valid, out, -1.0))

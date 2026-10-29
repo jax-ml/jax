@@ -37,9 +37,9 @@ from jax._src.lax.erf import (
     erfcx_grad_large,
     erfcx_impl as _erfcx_impl,
     erfcx_large,
+    ndtr as _ndtr,
 )
 from jax._src.lax.lax import AccuracyMode, _const as _lax_const
-from jax._src.lax.special import ndtr as _ndtr
 from jax._src.lax.special import random_gamma_grad
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import lax_numpy

@@ -15,6 +15,7 @@
 """Polynomial approximations for `erfc`, `erfcx`, `erfinv`, and `erfcinv`."""
 
 import math
+from jax._src.api import jit
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax.lax import (
     AccuracyMode, _const, asarray, bitcast_convert_type, clamp,
@@ -103,6 +104,32 @@ def _exp_neg_sq_jvp(primals, tangents):
   max_ax = 11.0 if x.dtype == np.float32 else 28.0
   safe_x = select(abs(x) < _const(x, max_ax), x, full_like(x, 0.0))
   return ans, -_const(x, 2.0) * safe_x * ans * x_dot
+
+
+@custom_jvp
+def exp_neg_half_sq(x: Array) -> Array:
+  """Evaluates `exp(-x^2 / 2)` accurately in the tails for `float32` and `float64`."""
+  if x.dtype not in (np.float32, np.float64):
+    return exp(-0.5 * square(x))
+  # Beyond max_ax (16 in float32, 40 in float64), exp(-x^2 / 2) underflows to 0
+  # even in subnormals; clamping avoids overflow in _split_square for huge |x|.
+  max_ax = 16.0 if x.dtype == np.float32 else 40.0
+  ax_exp = lax_min(abs(x), _const(x, max_ax))
+  s_hi, s_lo = _split_square(ax_exp)
+  e = exp(-0.5 * s_hi, accuracy=AccuracyMode.HIGHEST)
+  return e + e * _expm1_lo(-0.5 * s_lo)
+
+
+@exp_neg_half_sq.defjvp
+def _exp_neg_half_sq_jvp(primals, tangents):
+  (x,), (x_dot,) = primals, tangents
+  x = asarray(x)
+  ans = exp_neg_half_sq(x)
+  # For `|x| >= max_ax`, `ans` underflows to 0. Replacing `x` with 0 there
+  # avoids `inf * 0 = NaN` at `x = +-inf` without changing any finite result.
+  max_ax = 16.0 if x.dtype == np.float32 else 40.0
+  safe_x = select(abs(x) < max_ax, x, full_like(x, 0.0))
+  return ans, -safe_x * ans * x_dot
 
 
 # Sollya `fpminimax` polynomial coefficients for `R(1 - w) - 1 = erf(x) / x - 1`
@@ -535,6 +562,64 @@ def erfc_impl(x: Array) -> Array:
   )
   large = select(x < 0.0, 2.0 - large_pos, large_pos)
   return select(ax < 1.0, small, large)
+
+
+@custom_jvp
+def _ndtr(x: Array) -> Array:
+  """Computes the standard normal CDF `ndtr(x) = 0.5 * erfc(-x / sqrt(2))`.
+
+  Calling `0.5 * erfc_impl(-x / sqrt(2))` directly would lose hundreds of ULPs
+  for large negative `x`: `erfc_impl(u)` evaluates a factor of `exp(-u^2)`, and
+  rounding `u = -x / sqrt(2)` to a single float before squaring introduces
+  `~x^2` ULPs of error in `exp(-u^2)`.
+
+  To avoid that rounding error, `_ndtr` inlines `0.5 * erfc_impl(-x / sqrt(2))`
+  so it can compute `u^2 = 0.5 * x^2` directly from `x`. `erfc_impl(u)`
+  approximates `erfc(u)` in three pieces:
+  - `_erfc_small(u)` for `|u| < 1`,
+  - `exp(-u^2) * erfcx_large(u)` for `u >= 1`, and
+  - `2 - exp(-u^2) * erfcx_large(|u|)` for `u <= -1`.
+
+  Substituting `u = -x / sqrt(2)` into `0.5 * erfc(u)` gives:
+  - `0.5 * _erfc_small(-x / sqrt(2))` for `|x| < sqrt(2)`,
+  - `tail` for `x <= -sqrt(2)`, and
+  - `1 - tail` for `x >= sqrt(2)`,
+  where `tail = exp(-0.5 * x^2) * 0.5 * erfcx_large(|x| / sqrt(2))`. To evaluate
+  `exp(-0.5 * x^2)` accurately, `_ndtr` splits `x^2 = s_hi + s_lo` into an
+  exact sum of two floats via `_split_square(|x|)` and multiplies both parts by
+  `-0.5`.
+  """
+  if x.dtype not in (np.float32, np.float64):
+    return convert_element_type(
+        _ndtr(convert_element_type(x, np.float32)), x.dtype
+    )
+  inv_sqrt2 = math.sqrt(0.5)
+  ax = abs(x)
+  u = -x * inv_sqrt2
+  small = 0.5 * _erfc_small(clamp(_const(x, -1.0), u, _const(x, 1.0)))
+
+  max_ax = 16.0 if x.dtype == np.float32 else 40.0
+  ax_exp = lax_min(ax, _const(ax, max_ax))
+  s_hi, s_lo = _split_square(ax_exp)
+  y = 0.5 * erfcx_large(ax * inv_sqrt2)
+  expm1_neg_lo = _expm1_lo(-0.5 * s_lo)
+  tail = exp(-0.5 * s_hi, accuracy=AccuracyMode.HIGHEST) * (
+      y + y * expm1_neg_lo
+  )
+  large = select(x < 0.0, tail, 1.0 - tail)
+  return select(ax < math.sqrt(2.0), small, large)
+
+
+@_ndtr.defjvp
+def _ndtr_jvp(primals, tangents):
+  (x,), (x_dot,) = primals, tangents
+  x = asarray(x)
+  return _ndtr(x), (1.0 / math.sqrt(2.0 * math.pi)) * exp_neg_half_sq(x) * x_dot
+
+
+@jit
+def ndtr(x: Array) -> Array:
+  return _ndtr(x)
 
 
 def erfcx_impl(x: Array) -> Array:
