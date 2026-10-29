@@ -3399,7 +3399,8 @@ scatter_p.to_lojax = _scatter_to_lojax
 
 def _scatter_lower_opaque(ctx, operand, indices, updates, *,
                           update_jaxpr, update_consts, dimension_numbers,
-                          unique_indices, indices_are_sorted, mode):
+                          unique_indices, indices_are_sorted, mode,
+                          reducer=None):
   aval_x, aval_indices, aval_updates = ctx.avals_in
   aval_y, = ctx.avals_out
   elt_shape = core.physical_element_aval(aval_x.dtype).shape
@@ -3410,7 +3411,7 @@ def _scatter_lower_opaque(ctx, operand, indices, updates, *,
   scatter_lower = partial(
       _scatter_lower, update_jaxpr=update_jaxpr, update_consts=update_consts,
       dimension_numbers=dimension_numbers, unique_indices=unique_indices,
-      indices_are_sorted=indices_are_sorted, mode=mode)
+      indices_are_sorted=indices_are_sorted, mode=mode, reducer=reducer)
   res, = mlir.delegate_lowering(
       ctx, scatter_lower, operand, indices, updates,
       avals_in=[core.physical_aval(aval_x), aval_indices,
@@ -3421,21 +3422,19 @@ def _scatter_lower_opaque(ctx, operand, indices, updates, *,
 
 def _scatter_lower(ctx: mlir.LoweringRuleContext, operand, indices, updates, *,
                    update_jaxpr: core.Jaxpr, update_consts, dimension_numbers,
-                   indices_are_sorted, unique_indices, mode):
+                   indices_are_sorted, unique_indices, mode, reducer=None):
   avals_in = lax_utils.ensure_shaped(*ctx.avals_in)
   aval_out, = lax_utils.ensure_shaped(*ctx.avals_out)
-  if update_jaxpr is None:
+  if reducer is None and update_jaxpr is None:
     assert not update_consts
-    operand_dtype = avals_in[0].dtype
-    update_jaxpr, update_consts = lax._reduction_jaxpr(
-        _scatter_reduction_computation, core.ShapedArray((), operand_dtype))
+    reducer = _scatter_reduction_computation
 
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     return [_scatter_lower_opaque(
         ctx, operand, indices, updates,
         update_jaxpr=update_jaxpr, update_consts=update_consts,
         dimension_numbers=dimension_numbers, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode)]
+        indices_are_sorted=indices_are_sorted, mode=mode, reducer=reducer)]
 
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
@@ -3460,25 +3459,29 @@ def _scatter_lower(ctx: mlir.LoweringRuleContext, operand, indices, updates, *,
   scalar_type = mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray((), aval_out.dtype))
   update = op.update_computation.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(update):
-    name_stack = source_info_util.new_name_stack()
-    if update_jaxpr.effects:
-      raise NotImplementedError('Cannot lower effectful `scatter`.')
-    out_nodes, _ = mlir.jaxpr_subcomp(
-        ctx.module_context, update_jaxpr, name_stack, mlir.TokenSet(),
-        update_consts, update.arguments[0], update.arguments[1],
-        dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
-        outer_traceback=ctx.traceback)
-    flat_out_nodes, _ = mlir.ir_tree_registry.flatten(out_nodes)
-    hlo.return_(flat_out_nodes)
+    if reducer is not None:
+      hlo.return_([reducer(update.arguments[0], update.arguments[1])])
+    else:
+      assert update_jaxpr is not None
+      name_stack = source_info_util.new_name_stack()
+      if update_jaxpr.effects:
+        raise NotImplementedError('Cannot lower effectful `scatter`.')
+      out_nodes, _ = mlir.jaxpr_subcomp(
+          ctx.module_context, update_jaxpr, name_stack, mlir.TokenSet(),
+          update_consts, update.arguments[0], update.arguments[1],
+          dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
+          outer_traceback=ctx.traceback)
+      flat_out_nodes, _ = mlir.ir_tree_registry.flatten(out_nodes)
+      hlo.return_(flat_out_nodes)
   return [mlir.lower_with_sharding_in_types(ctx, r, aval)
           for r, aval in safe_zip(op.results, ctx.avals_out)]
 
 mlir.register_lowering(scatter_p, _scatter_lower)
-mlir.register_lowering(scatter_add_p, _scatter_lower)
-mlir.register_lowering(scatter_sub_p, _scatter_lower)
-mlir.register_lowering(scatter_mul_p, _scatter_lower)
-mlir.register_lowering(scatter_min_p, _scatter_lower)
-mlir.register_lowering(scatter_max_p, _scatter_lower)
+mlir.register_lowering(scatter_add_p, partial(_scatter_lower, reducer=hlo.add))
+mlir.register_lowering(scatter_sub_p, partial(_scatter_lower, reducer=hlo.subtract))
+mlir.register_lowering(scatter_mul_p, partial(_scatter_lower, reducer=hlo.multiply))
+mlir.register_lowering(scatter_min_p, partial(_scatter_lower, reducer=mlir.min_hlo))
+mlir.register_lowering(scatter_max_p, partial(_scatter_lower, reducer=mlir.max_hlo))
 
 
 def _real_dtype(dtype): return np.finfo(dtype).dtype
@@ -3495,7 +3498,8 @@ def _scatter_addsub_lower_gpu(
                           update_consts=update_consts,
                           dimension_numbers=dimension_numbers,
                           indices_are_sorted=indices_are_sorted,
-                          unique_indices=unique_indices, mode=mode)
+                          unique_indices=unique_indices, mode=mode,
+                          reducer=reduce_op)
 
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
@@ -3527,7 +3531,7 @@ def _scatter_addsub_lower_gpu(
     scalar_type = mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray((), real_dtype))
     reducer = scatter.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer):
-      hlo.return_([reduce_op(*reducer.arguments).result])
+      hlo.return_([reduce_op(*reducer.arguments)])
     return mlir.lower_with_sharding_in_types(ctx, scatter.result, aval_out)
 
   real = _scatter(hlo.real(operand), hlo.real(updates))
@@ -3537,12 +3541,12 @@ def _scatter_addsub_lower_gpu(
 
 mlir.register_lowering(
     scatter_add_p,
-    partial(_scatter_addsub_lower_gpu, reduce_op=hlo.AddOp),
+    partial(_scatter_addsub_lower_gpu, reduce_op=hlo.add),
     platform="gpu",
 )
 mlir.register_lowering(
     scatter_sub_p,
-    partial(_scatter_addsub_lower_gpu, reduce_op=hlo.SubtractOp),
+    partial(_scatter_addsub_lower_gpu, reduce_op=hlo.subtract),
     platform="gpu",
 )
 
