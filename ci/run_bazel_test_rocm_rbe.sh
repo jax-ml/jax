@@ -79,7 +79,7 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --config=rocm_clang_hermetic \
     --config=rocm_rbe \
     --config=rocm_rbe_dynamic \
-    --repo_env=DATE=$(date) \
+    --action_env=DATE=$(date) \
     $OVERRIDE_XLA_REPO \
     --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
     --test_output=errors \
