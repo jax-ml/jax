@@ -34,6 +34,7 @@ from typing import Any, Protocol, cast
 import jax
 from jax import lax
 from jax._src import ad_util
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import hijax
@@ -727,7 +728,19 @@ def _pull_block_transform(
             len(jaxpr.invars), jaxpr.debug_info.func_name)
         # Load from SMEM
         args = [_load_scalar_prefetch(a) for a in args]
-        return core.eval_jaxpr(jaxpr, [], *args)
+        # When pulling through ops outside a `shard_map` (see
+        # `shard_map_fusion.fuse_shard_map_jaxpr`), this jaxpr was traced under
+        # the outer (Explicit) mesh but is evaluated inside the `shard_map`
+        # body, where values carry the Manual mesh. Re-bind its eqns under the
+        # current mesh and skip the invar typecheck, which would otherwise
+        # reject the mesh mismatch.
+        cur_ctx = core.current_jaxpr_eqn_context()
+        if any(eqn.ctx is not cur_ctx for eqn in jaxpr.eqns):
+          jaxpr = jaxpr.replace(
+              eqns=[eqn.replace(ctx=cur_ctx) for eqn in jaxpr.eqns]
+          )
+        with config.enable_checks(False):
+          return core.eval_jaxpr(jaxpr, [], *args)
 
       scalar_prefetch_fn = functools.partial(
           _scalar_prefetch_fn, scalar_prefetch_jaxpr
@@ -905,6 +918,23 @@ def make_kernel_function(
             out_block_specs=out_block_specs,
             out_usages=out_usages,
         )
+        # Eval rules may bind primitives directly, skipping the `pvary`s that
+        # `lax` functions insert, so `pvary` all operands to the same manual
+        # axes, as `check_vma` requires inside a `shard_map`.
+        if config._check_vma.value and len(in_vals) > 1:
+          vma = frozenset().union(*(
+              a.mat.varying
+              for v in in_vals
+              if isinstance(a := core.typeof(v), core.ShapedArray)
+          ))
+          if vma:
+            in_vals = [
+                core.pvary(v, tuple(vma - a.mat.varying))
+                if isinstance(a := core.typeof(v), core.ShapedArray)
+                and (vma - a.mat.varying)
+                else v
+                for v in in_vals
+            ]
         outs = eval_rule(eval_ctx, *in_vals, **eqn.params)
         if not eqn.primitive.multiple_results:
           outs = [outs]
