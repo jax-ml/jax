@@ -1374,11 +1374,11 @@ llvm::LogicalResult MultimemLoadReduceOp::verify() {
   return mlir::success();
 }
 
-llvm::LogicalResult ScanOp::verify() {
+llvm::LogicalResult CumulativeReductionOp::verify() {
   mlir::VectorType src_type = getSource().getType();
   int64_t dimension = getDimension();
   if (dimension < 0 || dimension >= src_type.getRank()) {
-    return emitOpError() << "The scanned dimension must be in [0, "
+    return emitOpError() << "The reduction dimension must be in [0, "
                          << src_type.getRank() << ") but got " << dimension;
   }
   return llvm::success();

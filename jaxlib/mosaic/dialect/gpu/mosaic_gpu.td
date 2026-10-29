@@ -656,53 +656,40 @@ def MosaicGPU_VectorStoreOp : Op<MosaicGPU_Dialect, "vector_store",
   let hasVerifier = 1;
 }
 
-def MosaicGPU_ScanKind : I32EnumAttr<"ScanKind",
+def MosaicGPU_CumulativeReductionKind : I32EnumAttr<"CumulativeReductionKind",
     "Combining operation for a cumulative reduction.",
     [
       I32EnumAttrCase<"Add", 0, "add">,
       I32EnumAttrCase<"Mul", 1, "mul">,
-      I32EnumAttrCase<"Max", 2, "max">,
-      I32EnumAttrCase<"Min", 3, "min">,
-      I32EnumAttrCase<"LogAddExp", 4, "logaddexp">
+      I32EnumAttrCase<"MaxSI", 2, "maxsi">,
+      I32EnumAttrCase<"MaxUI", 3, "maxui">,
+      I32EnumAttrCase<"MaximumF", 4, "maximumf">,
+      I32EnumAttrCase<"MinSI", 5, "minsi">,
+      I32EnumAttrCase<"MinUI", 6, "minui">,
+      I32EnumAttrCase<"MinimumF", 7, "minimumf">,
+      I32EnumAttrCase<"LogAddExp", 8, "logaddexp">
     ]>{
   let cppNamespace = "::mosaic_gpu";
 }
 
-def MosaicGPU_ScanOp : Op<MosaicGPU_Dialect, "scan",
-      [MemoryEffects<[MemWrite]>, SameOperandsAndResultType]> {
+def MosaicGPU_CumulativeReductionOp : Op<MosaicGPU_Dialect, "cumulative_reduction",
+      [Pure, SameOperandsAndResultType]> {
   let summary = "Computes an inclusive cumulative reduction along a dimension.";
   let description = [{
-    Scans `source` along `dimension`, combining elements with `kind`. The result
-    has the same shape, element type and layout as `source`.
+    Cumulatively reduces `source` along `dimension`, combining elements with
+    `kind`. The result has the same shape, element type and layout as `source`.
+    For integer min/max, `kind` selects signed or unsigned comparison.
 
-    Unlike `vector.scan`, there is no initial value operand and no accumulator
-    result. `vector.scan` requires an accumulator shaped like the operand with
-    the scanned dimension dropped; for a 1-D operand that would be rank 0, and
-    layouts are not defined for rank-0 values. Dropping the accumulator is what
-    lets this op scan a 1-D operand.
-
-    `kind` also admits combining operations that `vector::CombiningKind` cannot
-    name, such as `logaddexp`. `is_signed` disambiguates `max` and `min` on
-    integer element types and is ignored for floating point ones.
-
-    If `reverse` is true the scan runs from the highest index along `dimension`
-    to the lowest, so element i accumulates elements i..n-1 instead of 0..i.
-    This is the form the transpose of a cumulative sum takes, and therefore what
-    a hand-written backward pass needs.
-
-    Scanning a dimension that is partitioned across warps requires SMEM scratch.
-    `offset` is the byte offset of that scratch within the kernel's SMEM
-    allocation, and `scratch_size` is its size in bytes.
+    If `reverse` is true, the reduction runs from the highest index along
+    `dimension` to the lowest, so element i accumulates elements i..n-1 instead
+    of 0..i.
   }];
 
   let arguments = (ins
     AnyFixedVectorOfNonZeroRank:$source,
-    MosaicGPU_ScanKind:$kind,
+    MosaicGPU_CumulativeReductionKind:$kind,
     I64Attr:$dimension,
-    DefaultValuedAttr<BoolAttr, "false">:$reverse,
-    DefaultValuedAttr<BoolAttr, "true">:$is_signed,
-    I32Attr:$offset,
-    I32Attr:$scratch_size
+    DefaultValuedAttr<BoolAttr, "false">:$reverse
   );
 
   let results = (outs AnyFixedVectorOfNonZeroRank:$result);
