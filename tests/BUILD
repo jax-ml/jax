@@ -1003,7 +1003,10 @@ jax_multiplatform_test(
     name = "lax_autodiff_test",
     srcs = ["lax_autodiff_test.py"],
     backend_tags = {
-        "cpu": ["notsan"],  # Times out.
+        "cpu": [
+            "noasan",  # Times out.
+            "notsan",  # Times out.
+        ],
     },
     shard_count = {
         "cpu": 20,
@@ -1381,6 +1384,9 @@ jax_multiplatform_test(
     name = "qdwh_test",
     srcs = ["qdwh_test.py"],
     backend_tags = {
+        "cpu": [
+            "noasan",  # Times out
+        ],
         "gpu": [
             "noasan",  # Times out
         ],
@@ -2243,6 +2249,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_harnesses_multi_platform_test",
     srcs = ["export_harnesses_multi_platform_test.py"],
+    backend_tags = {
+        "cpu": [
+            "notsan",  # Times out
+        ],
+    },
     disable_configs = [
         "gpu_h100",  # Scarce resources.
     ],
