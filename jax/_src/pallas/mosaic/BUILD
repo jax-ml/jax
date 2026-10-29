@@ -30,8 +30,10 @@ pytype_strict_library(
         "core.py",
     ],
     deps = [
+        ":tpu_info",
         "//jax",
         "//jax/_src:core",
+        "//jax/_src:dtypes",
         "//jax/_src:flattree",
         "//jax/_src:frozen_dict",
         "//jax/_src:lax",

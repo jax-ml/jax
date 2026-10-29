@@ -35,6 +35,7 @@ Functions
    bitcast
    einshape
    reciprocal
+   reinterpret_cast
    roll
    stochastic_round
 
@@ -124,6 +125,7 @@ Miscellaneous
    has_memory_space
    is_tpu_device
    run_on_first_core
+   tiled_storage_size
    touch
    trace_value
    with_memory_space_constraint

@@ -22,16 +22,19 @@ import contextlib
 import dataclasses
 import enum
 import math
+import operator
 from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
+from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import types as state_types
 from jax._src.tpu_custom_call import OptLevel
 import jax.numpy as jnp
@@ -585,3 +588,103 @@ class AccessAssumptionTransform(state_types.Transform):
   def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
     del context
     return pp.text(f"{{annotate({self.assumption})}}")
+
+
+def check_tiled_dtype(dtype: dtypes.DType) -> None:
+  """Raises if ``dtype`` cannot be stored with the native VMEM tiling."""
+  if (
+      jnp.issubdtype(dtype, dtypes.extended)
+      or jnp.issubdtype(dtype, jnp.bool_)
+      or dtypes.itemsize_bits(dtype) not in (8, 16, 32)
+  ):
+    raise ValueError(
+        f"Expected a numeric dtype of 8, 16 or 32 bits, but got {dtype}."
+    )
+
+
+def canonicalize_tiled_shape(shape: Sequence[int]) -> tuple[int, ...]:
+  """Returns ``shape`` as a tuple of ints, checking that it can be tiled."""
+  shape = tuple(operator.index(d) for d in shape)
+  if len(shape) < 2 or any(d <= 0 for d in shape):
+    raise ValueError(
+        "Expected a shape with at least 2 dimensions, all of them positive,"
+        f" but got {shape}."
+    )
+  return shape
+
+
+def native_tile_bytes() -> int:
+  """Returns the size in bytes of a native VMEM tile (one vreg)."""
+  return math.prod(tpu_info.Tiling.COMPACT.shape) * 4
+
+
+def native_tile_shape(dtype: dtypes.DType) -> tuple[int, int]:
+  """Returns the shape of a native VMEM tile (one vreg) of ``dtype``."""
+  num_sublanes, num_lanes = tpu_info.Tiling.COMPACT.shape
+  return num_sublanes * (32 // dtypes.itemsize_bits(dtype)), num_lanes
+
+
+def native_tile_grid(
+    shape: tuple[int, ...], dtype: dtypes.DType
+) -> tuple[int, ...]:
+  """Returns the grid of native VMEM tiles that stores an array."""
+  tile_rows, num_lanes = native_tile_shape(dtype)
+  return (
+      *shape[:-2],
+      util.ceil_of_ratio(shape[-2], tile_rows),
+      util.ceil_of_ratio(shape[-1], num_lanes),
+  )
+
+
+def tiled_storage_size(
+    shape: Sequence[int], dtype: jax.typing.DTypeLike
+) -> int:
+  """Returns the byte size of an array stored with the native VMEM tiling.
+
+  The native tiling splits the last two dimensions into 4 KiB vector-register
+  tiles of ``(num_sublanes * 32 // bitwidth, num_lanes)`` elements, padding
+  edge tiles when dimensions are not multiples of the tile shape.
+
+  Args:
+    shape: Array shape with at least 2 dimensions.
+    dtype: Numeric dtype of 8, 16 or 32 bits.
+  """
+  shape = canonicalize_tiled_shape(shape)
+  dtype = dtypes.dtype(dtype)
+  check_tiled_dtype(dtype)
+  return math.prod(native_tile_grid(shape, dtype)) * native_tile_bytes()
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class ReinterpretCastTransform(state_types.Transform):
+  """A TPU-specific ref transform that reinterprets the storage of a VMEM ref."""
+
+  shape: tuple[int, ...] = jax.tree.static()
+  dtype: dtypes.DType = jax.tree.static()
+
+  def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
+    match x:
+      case state.AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case jax_core.ShapedArray():
+        if not all(p is None for p in x.sharding.spec):
+          raise NotImplementedError("Cannot reinterpret a sharded array.")
+        return x.update(shape=self.shape, dtype=self.dtype)
+      case _:
+        raise TypeError(f"Cannot reinterpret {x}")
+
+  def transform_array(self, x: Any) -> Any:
+    del x
+    raise NotImplementedError(
+        "pltpu.reinterpret_cast is not supported in interpret mode."
+    )
+
+  def undo(self, x: Any) -> state_types.Transform:
+    del x
+    raise NotImplementedError(type(self))
+
+  def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
+    del context
+    aval = jax_core.ShapedArray(self.shape, self.dtype)
+    return pp.text(f"{{reinterpret_cast({aval.str_short(short_dtypes=True)})}}")

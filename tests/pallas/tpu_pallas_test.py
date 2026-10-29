@@ -7832,5 +7832,241 @@ class TPUPallasCacheKeyTest(ptu.PallasTPUTest):
       self.assertLess(len(debug_bytes), len(locs_str))
 
 
+def _to_tiled_words(x: np.ndarray) -> np.ndarray:
+  """Returns the 32-bit words that store ``x`` with the native VMEM tiling."""
+  num_sublanes, num_lanes = tpu_info.Tiling.COMPACT.shape
+  *leading, rows, cols = x.shape
+  packing = 4 // x.dtype.itemsize
+  rt, ct = pl.cdiv(rows, num_sublanes * packing), pl.cdiv(cols, num_lanes)
+  pad = [(0, 0)] * len(leading) + [
+      (0, rt * num_sublanes * packing - rows),
+      (0, ct * num_lanes - cols),
+  ]
+  x = np.pad(x, pad).reshape(*leading, rt, num_sublanes, packing, ct, num_lanes)
+  n = len(leading)
+  x = x.transpose(*range(n), n, n + 3, n + 1, n + 4, n + 2)
+  return np.ascontiguousarray(x).view(np.uint32).reshape(-1)
+
+
+def _from_tiled_words(words: np.ndarray, shape, dtype) -> np.ndarray:
+  """Inverse of ``_to_tiled_words``."""
+  num_sublanes, num_lanes = tpu_info.Tiling.COMPACT.shape
+  *leading, rows, cols = shape
+  dtype = np.dtype(dtype)
+  packing = 4 // dtype.itemsize
+  rt, ct = pl.cdiv(rows, num_sublanes * packing), pl.cdiv(cols, num_lanes)
+  num_words = math.prod([*leading, rt, ct, num_sublanes, num_lanes])
+  x = np.ascontiguousarray(words[:num_words]).view(dtype)
+  x = x.reshape(*leading, rt, ct, num_sublanes, num_lanes, packing)
+  n = len(leading)
+  x = x.transpose(*range(n), n, n + 2, n + 4, n + 1, n + 3)
+  x = x.reshape(*leading, rt * num_sublanes * packing, ct * num_lanes)
+  return x[..., :rows, :cols]
+
+
+def _reinterpret(x, shape, dtype) -> np.ndarray:
+  return _from_tiled_words(_to_tiled_words(np.asarray(x)), shape, dtype)
+
+
+def _bits(x) -> np.ndarray:
+  x = np.asarray(x)
+  return x.view({1: np.uint8, 2: np.uint16, 4: np.uint32}[x.dtype.itemsize])
+
+
+class ReinterpretCastTest(ptu.PallasTPUTest):
+
+  def setUp(self):
+    super().setUp()
+    if not self.INTERPRET and not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Only tested on TPU v5+.')
+    if tpu_info.Tiling.COMPACT.shape != (8, 128):
+      self.skipTest('Test expectations assume 8 sublanes and 128 lanes.')
+
+  def test_tiled_storage_size(self):
+    for shape, dtype, num_tiles in (
+        ((8, 128), jnp.float32, 1),
+        ((16, 128), jnp.bfloat16, 1),
+        ((8, 128), jnp.bfloat16, 1),
+        ((64, 128), jnp.uint8, 2),
+        ((12, 200), jnp.float32, 4),
+        ((2, 3, 16, 256), jnp.bfloat16, 12),
+    ):
+      self.assertEqual(pltpu.tiled_storage_size(shape, dtype), num_tiles * 4096)
+    with self.assertRaisesRegex(ValueError, 'at least 2 dimensions'):
+      pltpu.tiled_storage_size((1024,), jnp.float32)
+    for dtype in (jnp.bool_, jnp.int4):
+      with self.assertRaisesRegex(ValueError, 'numeric dtype of 8, 16 or 32'):
+        pltpu.tiled_storage_size((8, 128), dtype)
+
+  def test_reinterpret_physical_storage(self):
+    def kernel(x_ref, y_ref, z_ref, pool_ref):
+      pltpu.reinterpret_cast(pool_ref, (16, 128), jnp.float32)[...] = x_ref[...]
+      y_ref[...] = pltpu.reinterpret_cast(pool_ref, (16, 256), jnp.bfloat16)[
+          ...
+      ]
+      z_ref[...] = pltpu.reinterpret_cast(pool_ref, (2, 8, 128), jnp.float32)[
+          ...
+      ]
+
+    x = jax.random.normal(jax.random.key(0), (16, 128), jnp.float32)
+    f = self.pallas_call(
+        kernel,
+        out_shape=(
+            jax.ShapeDtypeStruct((16, 256), jnp.bfloat16),
+            jax.ShapeDtypeStruct((2, 8, 128), jnp.float32),
+        ),
+        scratch_shapes=[pltpu.VMEM((64, 128), jnp.uint8)],
+    )
+    self.assertIn('reinterpret_cast(bf16[16,256])', str(jax.make_jaxpr(f)(x)))
+    y, z = f(x)
+    np.testing.assert_array_equal(
+        _bits(y), _bits(_reinterpret(x, (16, 256), jnp.bfloat16))
+    )
+    np.testing.assert_array_equal(z, x.reshape(2, 8, 128))
+    np.testing.assert_array_equal(
+        _bits(y[:, 128:]), _bits(state_utils.bitcast(x[8:], jnp.bfloat16))
+    )
+
+  def test_reinterpret_slices(self):
+    num_banks = 4
+    bank_rows = pltpu.tiled_storage_size((8, 128), jnp.float32) // 128
+
+    def kernel(x_ref, y_ref, z_ref, pool_ref):
+      @pl.loop(0, num_banks)
+      def _(i):
+        start = pl.multiple_of(i * bank_rows, bank_rows)
+        bank_ref = pool_ref.at[pl.ds(start, bank_rows)]
+        pltpu.reinterpret_cast(bank_ref, (8, 128), jnp.float32)[...] = x_ref[i]
+
+      y_ref[...] = pltpu.reinterpret_cast(
+          pool_ref, (num_banks * 8, 128), jnp.float32
+      )[...]
+      z_ref[...] = pltpu.reinterpret_cast(
+          pool_ref.at[2 * bank_rows : 3 * bank_rows], (16, 128), jnp.bfloat16
+      )[...]
+
+    x = jax.random.normal(jax.random.key(0), (num_banks, 8, 128), jnp.float32)
+    y, z = self.pallas_call(
+        kernel,
+        out_shape=(
+            jax.ShapeDtypeStruct((num_banks * 8, 128), jnp.float32),
+            jax.ShapeDtypeStruct((16, 128), jnp.bfloat16),
+        ),
+        scratch_shapes=[pltpu.VMEM((num_banks * bank_rows, 128), jnp.uint8)],
+    )(x)
+    np.testing.assert_array_equal(y, x.reshape(num_banks * 8, 128))
+    np.testing.assert_array_equal(
+        _bits(z), _bits(_reinterpret(x[2], (16, 128), jnp.bfloat16))
+    )
+
+  def test_dma_to_and_from_reinterpreted_refs(self):
+    def kernel(x_hbm_ref, y_hbm_ref, pool_ref):
+      pltpu.sync_copy(
+          x_hbm_ref, pltpu.reinterpret_cast(pool_ref, (16, 256), jnp.bfloat16)
+      )
+      pltpu.sync_copy(
+          pltpu.reinterpret_cast(pool_ref, (8, 256), jnp.float32), y_hbm_ref
+      )
+
+    x = jax.random.normal(jax.random.key(0), (16, 256), jnp.bfloat16)
+    y = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        out_shape=jax.ShapeDtypeStruct((8, 256), jnp.float32),
+        scratch_shapes=[pltpu.VMEM((64, 128), jnp.uint8)],
+    )(x)
+    np.testing.assert_array_equal(
+        _bits(y), _bits(_reinterpret(x, (8, 256), jnp.float32))
+    )
+
+  def test_errors(self):
+    rc = pltpu.reinterpret_cast
+    for pool_shape, pool_dtype, fn in (
+        ((32, 128), jnp.uint8, lambda r: rc(r, (16, 128), jnp.float32)),
+        ((32, 256), jnp.uint8, lambda r: rc(r, (8, 128), jnp.float32)),
+        ((64, 128), jnp.uint8, lambda r: rc(r.at[:, :64], (32, 128))),
+        ((64, 128), jnp.uint8, lambda r: rc(r, (4096,), jnp.uint8)),
+        ((64, 128), jnp.uint8, lambda r: rc(r, (8, 128), jnp.bool_)),
+        ((64, 128), jnp.bool_, lambda r: rc(r, (8, 128), jnp.float32)),
+    ):
+
+      def err_kernel(o_ref, pool_ref, fn=fn):
+        del o_ref
+        fn(pool_ref)
+
+      f = self.pallas_call(
+          err_kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_shapes=[pltpu.VMEM(pool_shape, pool_dtype)],
+      )
+      with self.assertRaises(ValueError):
+        jax.make_jaxpr(f)()
+
+    def hbm_kernel(x_hbm_ref, o_ref):
+      del o_ref
+      pltpu.reinterpret_cast(x_hbm_ref, (8, 128), jnp.float32)
+
+    f_hbm = self.pallas_call(
+        hbm_kernel,
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    with self.assertRaisesRegex(ValueError, 'only supports VMEM references'):
+      jax.make_jaxpr(f_hbm)(jnp.zeros((32, 128), jnp.uint8))
+
+    if not self.INTERPRET:
+
+      def squeezed_kernel(x_ref, o_ref):
+        o_ref[...] = pltpu.reinterpret_cast(
+            x_ref.at[:8], (8, 128), jnp.float32
+        )[...]
+
+      f_sq = jax.jit(
+          self.pallas_call(
+              squeezed_kernel,
+              in_specs=[pl.BlockSpec((16, None, 128), lambda: (0, 0, 0))],
+              out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          )
+      )
+      with self.assertRaisesRegex(NotImplementedError, 'squeezed dimension'):
+        f_sq.lower(jnp.zeros((16, 1, 128), jnp.float32))
+
+  def test_not_implemented(self):
+    rc = pltpu.reinterpret_cast
+    for pool_shape, fn in (
+        ((64, 128), lambda r: rc(r, (12, 128), jnp.float32)),
+        ((2, 32, 128), lambda r: rc(r, (8, 128), jnp.float32)),
+        ((64, 128), lambda r: rc(r.at[4:36], (8, 128), jnp.float32)),
+        ((64, 128), lambda r: rc(r.at[:64].at[:32], (8, 128), jnp.float32)),
+    ):
+
+      def not_impl_kernel(o_ref, pool_ref, fn=fn):
+        del o_ref
+        fn(pool_ref)
+
+      f = self.pallas_call(
+          not_impl_kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_shapes=[pltpu.VMEM(pool_shape, jnp.uint8)],
+      )
+      with self.assertRaises(NotImplementedError):
+        jax.make_jaxpr(f)()
+
+    def interpret_kernel(x_ref, y_ref, pool_ref):
+      pltpu.reinterpret_cast(pool_ref, (8, 128), jnp.float32)[...] = x_ref[...]
+      y_ref[...] = x_ref[...]
+
+    x = jnp.zeros((8, 128), jnp.float32)
+    f_interpret = pl.pallas_call(
+        interpret_kernel,
+        out_shape=jax.ShapeDtypeStruct.like(x),
+        scratch_shapes=[pltpu.VMEM((32, 128), jnp.uint8)],
+        interpret=True,
+    )
+    with self.assertRaisesRegex(NotImplementedError, 'interpret mode'):
+      f_interpret(x)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
