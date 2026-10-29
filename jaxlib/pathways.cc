@@ -17,11 +17,16 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/base/const_init.h"
+#include "absl/base/no_destructor.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -31,22 +36,29 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_user_context.h"
+#include "jaxlib/python_ref_manager.h"
 #include "jaxlib/to_ifrt_sharding.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
+#include "xla/python/ifrt/client.h"
+#include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
+#include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/plugin_program.h"
 #include "xla/python/ifrt/remap_plan.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
@@ -60,6 +72,10 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "tsl/profiler/lib/profiler_factory.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace jax {
 
@@ -500,6 +516,129 @@ jax::nb_class_ptr<jax::PyClient> CreateCpuClient(
       xla::ValueOrThrow(xla::ifrt::PjRtClient::Create(create_options)));
 }
 
+// Returns the request that traces the Pathways backend during a profiler
+// session with the given options, or nullopt to not trace it.
+using ProfileRequestBuilder = std::function<std::optional<std::string>(
+    const tensorflow::ProfileOptions&)>;
+
+// Traces the Pathways backend during a profiler session by executing a request
+// as an `xla::ifrt::PluginProgram`: the first execution starts the trace and
+// the second one stops it. The traced Pathways hosts write their traces into
+// the profile directory of the session themselves.
+class PathwaysProfiler : public tsl::profiler::ProfilerInterface {
+ public:
+  PathwaysProfiler(std::shared_ptr<xla::ifrt::Client> client,
+                   ProfileRequestBuilder build_request,
+                   tensorflow::ProfileOptions options)
+      : client_(std::move(client)),
+        build_request_(std::move(build_request)),
+        options_(std::move(options)) {}
+
+  absl::Status Start() override {
+    std::optional<std::string> request = build_request_(options_);
+    if (!request.has_value()) {
+      return absl::OkStatus();
+    }
+    absl::Status status = StartTrace(*std::move(request));
+    if (!status.ok()) {
+      executable_ = nullptr;
+      // tsl::profiler ignores the status unless `raise_error_on_start_failure`.
+      LOG(WARNING) << "Failed to start tracing the Pathways backend: "
+                   << status;
+    }
+    return status;
+  }
+
+  absl::Status Stop() override {
+    if (executable_ == nullptr) {
+      return absl::OkStatus();
+    }
+    absl::Status status = Execute();
+    executable_ = nullptr;
+    if (!status.ok()) {
+      // tsl::profiler ignores the status.
+      LOG(WARNING) << "Failed to stop tracing the Pathways backend: " << status;
+    }
+    return status;
+  }
+
+  absl::Status CollectData(tensorflow::profiler::XSpace* space) override {
+    return absl::OkStatus();
+  }
+
+ private:
+  absl::Status StartTrace(std::string request) {
+    auto program = std::make_unique<xla::ifrt::PluginProgram>();
+    program->data = std::move(request);
+    ABSL_ASSIGN_OR_RETURN(
+        executable_,
+        client_->GetDefaultCompiler()
+            ->CompileAndLoad(
+                std::move(program),
+                std::make_unique<xla::ifrt::PluginCompileOptions>())
+            .Await());
+    return Execute();
+  }
+
+  absl::Status Execute() {
+    xla::ifrt::ExecuteOptions options;
+    options.fill_status = true;
+    ABSL_ASSIGN_OR_RETURN(
+        xla::ifrt::LoadedExecutable::ExecuteResult result,
+        executable_->Execute(/*args=*/{}, options, /*devices=*/std::nullopt));
+    return result.status.Await();
+  }
+
+  const std::shared_ptr<xla::ifrt::Client> client_;
+  const ProfileRequestBuilder build_request_;
+  const tensorflow::ProfileOptions options_;
+  xla::ifrt::LoadedExecutableRef executable_;
+};
+
+struct RegisteredProxyClient {
+  std::weak_ptr<xla::ifrt::Client> client;
+  ProfileRequestBuilder build_request;
+};
+
+ABSL_CONST_INIT absl::Mutex registered_client_mu(absl::kConstInit);
+
+RegisteredProxyClient& GetRegisteredProxyClient()
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(registered_client_mu) {
+  static absl::NoDestructor<RegisteredProxyClient> registered_client;
+  return *registered_client;
+}
+
+// Runs while tsl::profiler holds the lock of its profiler factory registry, so
+// it must not call into Python or wait for the Pathways backend.
+std::unique_ptr<tsl::profiler::ProfilerInterface> CreatePathwaysProfiler(
+    const tensorflow::ProfileOptions& options) {
+  absl::MutexLock lock(registered_client_mu);
+  const RegisteredProxyClient& registered = GetRegisteredProxyClient();
+  std::shared_ptr<xla::ifrt::Client> client = registered.client.lock();
+  if (client == nullptr) {
+    return nullptr;
+  }
+  return std::make_unique<PathwaysProfiler>(std::move(client),
+                                            registered.build_request, options);
+}
+
+// Makes every profiler session in this process also trace the Pathways backend
+// of `client`, with the requests that `build_request` returns, while `client`
+// is alive. Replaces the previously registered client, if any.
+void RegisterPathwaysProfiler(std::shared_ptr<xla::ifrt::Client> client,
+                              ProfileRequestBuilder build_request) {
+  {
+    absl::MutexLock lock(registered_client_mu);
+    GetRegisteredProxyClient() = {client, std::move(build_request)};
+  }
+  // tsl::profiler does not support unregistering profiler factories, so
+  // register a single one that traces the most recently registered client.
+  [[maybe_unused]] static const bool registered = [] {
+    tsl::profiler::RegisterProfilerFactory(&CreatePathwaysProfiler);
+    return true;
+  }();
+}
+
 }  // namespace
 
 NB_MODULE(_pathways, m) {
@@ -528,6 +667,46 @@ NB_MODULE(_pathways, m) {
           ") -> Client")
         // clang-format on
         );
+  m.def(
+      "register_profiler",
+      [](const PyClient& client, nb::callable build_request) {
+        // Profiler sessions copy and call the builder on threads that may not
+        // hold the GIL, so it must not own Python references: it holds a
+        // handle to `build_request`, which is kept alive by a reference that
+        // `GlobalPyRefManager` releases under the GIL.
+        auto build = [fn = nb::handle(build_request),
+                      keep_alive =
+                          GlobalPyRefManager()->ManageReference(build_request)](
+                         const tensorflow::ProfileOptions& options)
+            -> std::optional<std::string> {
+          if (!Py_IsInitialized()) {
+            return std::nullopt;
+          }
+          nb::gil_scoped_acquire gil;
+          try {
+            // Passing a temporary makes Python own a copy of the options.
+            nb::object request = fn(tensorflow::ProfileOptions(options));
+            if (request.is_none()) {
+              return std::nullopt;
+            }
+            return nb::cast<std::string>(request);
+          } catch (const std::exception& e) {
+            LOG(WARNING) << "Not tracing the Pathways backend: " << e.what();
+            return std::nullopt;
+          }
+        };
+        RegisterPathwaysProfiler(client.shared_ptr_ifrt_client(),
+                                 std::move(build));
+      },
+      nb::arg("client"), nb::arg("build_request"),
+      // clang-format off
+      nb::sig(
+        "def register_profiler("
+        "client: Client, "
+        "build_request: collections.abc.Callable[[typing.Any], str | None]"
+        ") -> None"),
+      // clang-format on
+      "Makes profiler sessions also trace the Pathways backend of `client`.");
 }
 
 }  // namespace jax

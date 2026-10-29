@@ -1362,6 +1362,16 @@ jax_multiplatform_test(
     ] + py_deps("absl/testing"),
 )
 
+jax_py_test(
+    name = "pathways_profiler_test",
+    srcs = ["pathways_profiler_test.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:pathways_profiler",
+        "//jax/_src:test_util",
+    ] + py_deps("absl/testing"),
+)
+
 jax_multiplatform_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],

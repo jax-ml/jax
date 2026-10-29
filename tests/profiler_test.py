@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import concurrent.futures
+import copy
 from functools import partial
 import glob
 import gzip
@@ -31,6 +32,7 @@ import jax
 from jax import jit
 from jax._src import profiler
 import jax._src.test_util as jtu
+from jax._src.lib import ifrt_version
 import jax.numpy as jnp
 import jax.profiler
 
@@ -262,6 +264,64 @@ class ProfilerTest(unittest.TestCase):
       if jtu.test_device_matches(["tpu"]):
         self.assertFalse(b"/device:TPU" in proto, "Expected '/device:TPU' to not be in profile proto")
       self.assertTrue(b"pxla.py" in proto, "Expected 'pxla.py' in profile proto")
+
+  @unittest.skipIf(ifrt_version < 82, "Requires newer jaxlib")
+  def testProfileOptionsCanBeCopied(self):
+    options = jax.profiler.ProfileOptions()
+    options.session_id = "original"
+    options.advanced_configuration = {"tpu_trace_mode": "TRACE_ONLY_HOST"}
+
+    for copied in (copy.copy(options), copy.deepcopy(options)):
+      copied.session_id = "copy"
+
+      self.assertEqual(options.session_id, "original")
+      self.assertEqual(
+          copied.advanced_configuration, {"tpu_trace_mode": "TRACE_ONLY_HOST"}
+      )
+
+  @unittest.skipIf(ifrt_version < 82, "Requires newer jaxlib")
+  def testSessionOptionsFillInLogDirAndSessionId(self):
+    options = jax.profiler.ProfileOptions()
+    options.python_tracer_level = 0
+
+    session_options = profiler._session_profile_options(options, "/log/dir")
+    session_options_without_log_dir = profiler._session_profile_options(
+        None, None
+    )
+
+    self.assertEqual(session_options.repository_path, "/log/dir")
+    self.assertRegex(session_options.session_id, r"^\d{4}(_\d{2}){5}$")
+    self.assertEqual(session_options.python_tracer_level, 0)
+    # The options of the caller are not modified.
+    self.assertEqual(options.repository_path, "")
+    self.assertEqual(options.session_id, "")
+    self.assertEqual(session_options_without_log_dir.repository_path, "")
+    self.assertRegex(
+        session_options_without_log_dir.session_id, r"^\d{4}(_\d{2}){5}$"
+    )
+
+  @unittest.skipIf(ifrt_version < 82, "Requires newer jaxlib")
+  def testSessionOptionsKeepExplicitLogDirAndSessionId(self):
+    options = jax.profiler.ProfileOptions()
+    options.repository_path = "/explicit/dir"
+    options.session_id = "explicit_session"
+
+    session_options = profiler._session_profile_options(options, "/log/dir")
+
+    self.assertEqual(session_options.repository_path, "/explicit/dir")
+    self.assertEqual(session_options.session_id, "explicit_session")
+
+  def testProgrammaticProfilingWritesToSessionIdDirectory(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      options = jax.profiler.ProfileOptions()
+      options.session_id = "my_session"
+      with jax.profiler.trace(tmpdir, profiler_options=options):
+        jnp.ones(3).block_until_ready()
+
+      self.assertEqual(
+          os.listdir(os.path.join(tmpdir, "plugins", "profile")),
+          ["my_session"],
+      )
 
   def testProfilerGetFDOProfile(self):
     # Tests stop_and_get_fod_profile could run.

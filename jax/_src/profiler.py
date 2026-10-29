@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+import copy
+import datetime
 from functools import wraps
 import gzip
 import http.server
@@ -34,6 +36,7 @@ traceback_util.register_exclusion(__file__)
 from jax._src import xla_bridge
 from jax._src.lib import _profiler
 from jax._src.lib import _profile_data
+from jax._src.lib import ifrt_version
 from jax import version as jax_version_module
 from jax._src.lib import version as version_lib
 
@@ -145,6 +148,29 @@ def clear_metadata() -> None:
     return _profiler.clear_metadata()
 
 
+def _session_profile_options(
+    profiler_options: ProfileOptions | None, log_dir: str | None
+) -> ProfileOptions:
+  """Returns the options for a new profiler session.
+
+  Profilers that write profile data outside of this process (e.g. tracers of
+  remote hosts) need to know the directory that the profile is written to, and
+  the ID of the session, when the session starts. This fills in both if they
+  are unset, without modifying ``profiler_options``.
+  """
+  if profiler_options is None:
+    options = ProfileOptions()
+  elif ifrt_version >= 82:
+    options = copy.copy(profiler_options)
+  else:
+    return profiler_options
+  if log_dir is not None and not options.repository_path:
+    options.repository_path = log_dir
+  if not options.session_id:
+    options.session_id = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+  return options
+
+
 class ProfileSession:
   """Represents a JAX profiling session.
 
@@ -188,9 +214,7 @@ class ProfileSession:
       # fail and no TPU operations will be included in the profile.
       xla_bridge.get_backend()
 
-      options = self.profiler_options
-      if options is None:
-        options = ProfileOptions()
+      options = _session_profile_options(self.profiler_options, self.log_dir)
       set_metadata("jax_version", jax_version_module.__version__)
       jaxlib_version_str = ".".join(map(str, version_lib))
       set_metadata("jaxlib_version", jaxlib_version_str)
