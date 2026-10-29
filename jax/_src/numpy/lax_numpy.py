@@ -2895,16 +2895,6 @@ def select(
   idx = argmax(conditions.astype(bool), axis=0)
   return lax.select_n(*broadcast_arrays(idx, *choicelist))
 
-def is_replicated_or_unreduced(sharding: NamedSharding) -> bool:
-  if sharding.spec.partitions:
-    return False
-  if sharding.spec.reduced:
-    return False
-  if (sharding.spec.unreduced and
-      sharding.spec.unreduced != set(sharding.mesh.axis_names)):
-    return False
-  return True
-
 @export
 def bincount(x: ArrayLike, weights: ArrayLike | None = None,
              minlength: int = 0, *, length: int | None = None,
@@ -3005,10 +2995,10 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
           f" typeof(x)={core.typeof(x).str_short(True, True)} and"
           f" typeof(weights)={core.typeof(weights).str_short(True, True)}")
   sharding = canonicalize_sharding(out_sharding, 'jnp.bincount')
-  if sharding is not None and not is_replicated_or_unreduced(sharding):
+  if sharding is not None and sharding.spec != P():
     raise core.ShardingTypeError(
-        "out_sharding passed to `jnp.bincount` can only be fully replicated"
-        " or fully unreduced along all mesh axes")
+        "out_sharding passed to `jnp.bincount` can only be fully replicated."
+        f" Got {sharding.spec}")
   return array_creation.zeros(length, _dtype(weights)).at[clip(x, 0)].add(
       weights, mode='drop', out_sharding=sharding)
 

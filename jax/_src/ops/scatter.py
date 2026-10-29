@@ -211,8 +211,10 @@ def _segment_update(name: str,
     raise ValueError("num_segments must be non-negative.")
 
   if bucket_size is None:
+    init_s = out_sharding if scatter_op is slicing.scatter_add else None
     out = jnp.full((num_segments,) + data.shape[1:],
-                   _get_identity(scatter_op, dtype), dtype=dtype)
+                   _get_identity(scatter_op, dtype), dtype=dtype,
+                   out_sharding=init_s)
     return _scatter_update(
       out, segment_ids, data, scatter_op, indices_are_sorted,
       unique_indices, normalize_indices=False, mode=mode,

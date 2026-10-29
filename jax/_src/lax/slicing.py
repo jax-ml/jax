@@ -2864,11 +2864,37 @@ def _scatter_sharding_rule(
   return NamedSharding(out_mesh, out_spec)
 
 
-def _scatter_unreduced_rule(operand, indices, updates, **kwargs):
+def _scatter_unreduced_rule(operand, indices, updates, *, dimension_numbers,
+                            out_sharding, **kwargs):
   if core.getu(indices)[0]:
     raise core.ShardingTypeError(
         "scatter indices cannot be unreduced. Got indices sharding"
         f" {indices.str_short(mesh_axis_types=True)}.")
+  if out_sharding is not None:
+    out_u, out_k = out_sharding.spec.unreduced, out_sharding.spec.unreduced_kind
+    if core.getu(operand)[0] != out_u or core.getu(updates)[0]:
+      raise core.ShardingTypeError(
+          "When out_sharding is specified on scatter_add, operand must be"
+          " unreduced along the same axes as out_sharding and updates cannot be"
+          f" unreduced. Got {operand=}, {updates=}, {out_sharding=}")
+    if not out_u:
+      return frozenset(), None
+    if out_k is not UnreducedKind.sum:
+      raise core.ShardingTypeError(
+          "scatter_add requires `out_sharding`'s unreduced_kind to be"
+          f" {UnreducedKind.sum} but got {out_sharding.spec}")
+    ind_q_spec, upd_q_spec = _scatter_unbatched_query_specs(
+        indices, updates, dimension_numbers)
+    if ind_q_spec != upd_q_spec:
+      raise core.ShardingTypeError(
+          "scatter_add indices and updates unbatched query dims should be"
+          " sharded identically when out_sharding mentions unreduced axes."
+          f" Got {ind_q_spec=}, {upd_q_spec=}")
+    if not out_u.issubset(lax_utils._get_spec_set(ind_q_spec)):
+      raise core.ShardingTypeError(
+          "out_sharding's unreduced axes should be a subset of the scatter"
+          f" query specs. Got unreduced={out_u}, query_spec={ind_q_spec}")
+    return out_u, UnreducedKind.sum
   if core.getu(operand)[0] != core.getu(updates)[0]:
     raise core.ShardingTypeError(
         "scatter operand and updates must be unreduced along the same axes."
@@ -2880,12 +2906,16 @@ def _scatter_unreduced_rule(operand, indices, updates, **kwargs):
   return out_u, UnreducedKind.sum if out_u else None
 
 
-def _scatter_ur_rule(operand, indices, updates, **kwargs):
+def _scatter_ur_rule(operand, indices, updates, *, out_sharding, **kwargs):
   if core.getr(operand) or core.getr(indices) or core.getr(updates):
     raise NotImplementedError(
         "reduced rule for scatter is not implemented. Please file an issue at"
         " https://github.com/jax-ml/jax/issues")
-  out_u, kind = _scatter_unreduced_rule(operand, indices, updates, **kwargs)
+  if out_sharding is not None and out_sharding.spec.reduced:
+    raise ValueError(
+        f"out_sharding passed to scatter_add cannot be reduced. Got {out_sharding=}")
+  out_u, kind = _scatter_unreduced_rule(
+      operand, indices, updates, out_sharding=out_sharding, **kwargs)
   return out_u, frozenset(), kind
 
 def _clamp_scatter_indices(operand, indices, updates, *, dnums):
@@ -3100,6 +3130,7 @@ def _scatter_batching_rule(scatter_op, axis_data, batched_args, batch_dims, *,
       mode=mode, update_jaxpr=update_jaxpr, update_consts=update_consts,
       out_sharding=out_sharding), 0
 
+
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
     weak_type_rule=_argnum_weak_type(0), sharding_rule=_scatter_sharding_rule,
@@ -3109,7 +3140,7 @@ scatter_add_p = standard_primitive(
 ad.primitive_jvps[scatter_add_p] = partial(_scatter_addsub_jvp, scatter_add_p)
 ad.primitive_transposes[scatter_add_p] = partial(_scatter_addsub_transpose_rule, scatter_add_p)
 batching.fancy_primitive_batchers[scatter_add_p] = partial(_scatter_batching_rule, scatter_add_p)
-lax_utils.register_unreduced_lojax(scatter_add_p)
+lax_utils.register_unreduced_lojax(scatter_add_p, 'out_sharding')
 
 scatter_sub_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-sub',

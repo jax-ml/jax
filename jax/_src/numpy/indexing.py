@@ -1513,12 +1513,15 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
     collapsed_slice_dims = tuple(sorted(collapsed_slice_dims)),
     start_index_map = tuple(start_index_map)
   )
-  try:
-    slice_sharding = canonicalize_sharding(
-        x_sharding.update(spec=x_sharding.spec.update(partitions=slice_spec)),
-        "index_to_gather")
-  except DuplicateSpecError:
+  if x_sharding.spec.unreduced:
     slice_sharding = None
+  else:
+    try:
+      slice_sharding = canonicalize_sharding(
+          x_sharding.update(spec=x_sharding.spec.update(partitions=slice_spec)),
+          "index_to_gather")
+    except (DuplicateSpecError, ValueError):
+      slice_sharding = None
   return _GatherIndexer(
     slice_shape=slice_shape,
     newaxis_dims=tuple(newaxis_dims),

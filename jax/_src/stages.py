@@ -551,6 +551,7 @@ class Traced(Stage):
       return self._lojax
 
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
+    from jax._src.named_sharding import NamedSharding  # pyrefly: ignore[missing-import]
     from jax._src.pjit import _lojax_expand_params  # pyrefly: ignore[missing-import]
     hi_jaxpr = self.jaxpr
     in_avals = ft.flatten(([a.lo_ty() for a in hi_jaxpr.in_avals], {}))
@@ -564,7 +565,16 @@ class Traced(Stage):
       out_tree = lojax_pytree(hi_jaxpr.out_avals, self.out_tree)
     else:
       out_tree = self.out_tree
-    lo_meta_tys = [mty.replace(aval=lo_ty)
+
+    def _lower_mty(mty, lo_ty):
+      if not mty.aval.is_high:
+        return mty
+      s = (mty.sharding.update(spec=lo_ty.sharding.spec)
+           if isinstance(mty.sharding, NamedSharding) else mty.sharding)
+      f = Format(mty.format.layout, s) if mty.format is not None else None
+      return mty.replace(aval=lo_ty, sharding=s, format=f)
+
+    lo_meta_tys = [_lower_mty(mty, lo_ty)
                    for mty in self._meta_tys_flat
                    for lo_ty in mty.aval.lo_ty()]
     self._lojax = LoJax(
