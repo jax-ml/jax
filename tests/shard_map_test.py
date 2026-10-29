@@ -5907,6 +5907,47 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(f(), jnp.array([1., 0., 0., 1.]), check_dtypes=False)
 
   @jtu.with_explicit_mesh((2,), 'x')
+  def test_mutable_array_internal_read_at_varying_index_error(self, mesh):
+    @jax.jit
+    @shard_map(in_specs=(), out_specs=P('x'))
+    def f():
+      r = core.new_ref(jnp.arange(4.))
+      return r[jax.lax.axis_index('x')][None]
+
+    with self.assertRaisesRegex(
+        ValueError, "requires the index's varying manual axes to be a subset"):
+      jax.make_jaxpr(f)()
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mutable_array_internal_read_at_varying_index_pcast(self, mesh):
+    # The workaround suggested by the error above, which is differentiable.
+    @jax.jit
+    @shard_map(in_specs=P(), out_specs=P('x'))
+    def g(x):
+      r = core.new_ref(x)
+      i = jax.lax.axis_index('x')
+      return jax.lax.pcast(r[...], 'x', to='varying')[i][None]
+
+    w = jnp.array([1., 2.])  # weight each device's read differently
+    y, x_bar = jax.value_and_grad(lambda x: (g(x) * w).sum())(jnp.arange(4.))
+    self.assertAllClose(y, 2.)
+    self.assertAllClose(x_bar, jnp.array([1., 2., 0., 0.]))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mutable_array_arg_read_at_varying_index(self, mesh):
+    @jax.jit
+    def f():
+      r = core.new_ref(jnp.arange(4., out_sharding=P('x')))
+
+      @shard_map(in_specs=P('x'), out_specs=P('x'))
+      def g(r):
+        return r[jax.lax.axis_index('x')][None]
+
+      return g(r)
+
+    self.assertAllClose(f(), jnp.array([0., 3.]), check_dtypes=False)
+
+  @jtu.with_explicit_mesh((2,), 'x')
   def test_full_like_pvary_existing(self, mesh):
     @jax.shard_map(out_specs=P("x"))
     def f():
