@@ -50,6 +50,7 @@ from jax._src.scipy.special import (
   i0e as i0e,
   i1 as i1,
   i1e as i1e,
+  jn as jn,
   kl_div as kl_div,
   log_ndtr as log_ndtr,
   log_softmax as log_softmax,
