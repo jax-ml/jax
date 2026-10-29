@@ -264,7 +264,7 @@ def _eval_jaxpr_discharge_state(
         aval = outvar.aval.inner_aval
         if not isinstance(aval, core.ShapedArray):
           raise NotImplementedError  # TODO(sergei)
-        ans = lax.empty(aval.shape, aval.dtype)
+        ans = lax.empty(aval.shape, aval.dtype, out_sharding=aval.sharding)
         if eqn.params['pin']:
           # TODO(mattjj,yashkatariya): switch to create_linear once the
           # CreateBuffer custom call is implemented in the runtime

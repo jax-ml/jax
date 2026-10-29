@@ -2555,6 +2555,13 @@ class RefTransformTest(jtu.JaxTestCase):
     ref.at[1:3][...] += 10
     self.assertArraysEqual(ref[...], jnp.array([0, 11, 12, 3], dtype=jnp.int32))
 
+  @jtu.with_explicit_mesh((1,), ('x',))
+  def test_empty_ref_explicit_sharding(self, mesh):
+    del mesh
+    ty = jax.ShapeDtypeStruct((4,), jnp.float32, sharding=P('x'))
+    out = jax.jit(lambda: jax.freeze(jax.empty_ref(ty)))()
+    self.assertEqual(out.sharding.spec, P('x'))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
