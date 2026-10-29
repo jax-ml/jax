@@ -1680,6 +1680,45 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         atol=1e-5,
     )
 
+  @jtu.sample_product(dtype=jtu.dtypes.all_floating)
+  def testFresnelHigherOrderDerivatives(self, dtype):
+    # S'(x) = sin(pi * x^2 / 2), C'(x) = cos(pi * x^2 / 2)
+    # S''(x) = pi * x * cos(pi * x^2 / 2), C''(x) = -pi * x * sin(pi * x^2 / 2)
+    # S'''(x) = pi * cos(pi * x^2 / 2) - pi^2 * x^2 * sin(pi * x^2 / 2)
+    # C'''(x) = -pi * sin(pi * x^2 / 2) - pi^2 * x^2 * cos(pi * x^2 / 2)
+    # Include x = 0 (where |x| previously zeroed S'''(0)), odd integers
+    # x = +-1, +-3 (where r = (x^2 / 2) % 2 == 0.5 previously zeroed C'' and
+    # C'''), and the Cephes branch threshold x^2 = 2.5625 (x = +-1.60078106).
+    pts = np.array(
+        [-3.0, -2.0, -1.60078106, -np.sqrt(2.0), -1.0, -0.5, 0.0, 0.5, 1.0,
+         np.sqrt(2.0), 1.60078106, np.sqrt(3.0), 2.0, 3.0],
+        dtype=dtype,
+    )
+    s_fn = lambda x: lsp_special.fresnel(x)[0]
+    c_fn = lambda x: lsp_special.fresnel(x)[1]
+    d1_s = jax.vmap(jax.grad(s_fn))(pts)
+    d2_s = jax.vmap(jax.grad(jax.grad(s_fn)))(pts)
+    d3_s = jax.vmap(jax.grad(jax.grad(jax.grad(s_fn))))(pts)
+    d1_c = jax.vmap(jax.grad(c_fn))(pts)
+    d2_c = jax.vmap(jax.grad(jax.grad(c_fn)))(pts)
+    d3_c = jax.vmap(jax.grad(jax.grad(jax.grad(c_fn))))(pts)
+
+    x64 = pts.astype(np.float64)
+    u = np.sin(0.5 * np.pi * x64 * x64)
+    v = np.cos(0.5 * np.pi * x64 * x64)
+    rtol = 1e-12 if dtype == np.float64 else (5e-2 if dtype in (np.float16, jnp.bfloat16) else 2e-3)
+    atol = 1e-12 if dtype == np.float64 else (1e-1 if dtype in (np.float16, jnp.bfloat16) else 5e-3)
+    self.assertAllClose(d1_s, u.astype(dtype), rtol=rtol, atol=atol)
+    self.assertAllClose(d1_c, v.astype(dtype), rtol=rtol, atol=atol)
+    self.assertAllClose(d2_s, (np.pi * x64 * v).astype(dtype), rtol=rtol, atol=atol)
+    self.assertAllClose(d2_c, (-np.pi * x64 * u).astype(dtype), rtol=rtol, atol=atol)
+    self.assertAllClose(
+        d3_s, (np.pi * v - (np.pi * x64) ** 2 * u).astype(dtype), rtol=rtol, atol=atol
+    )
+    self.assertAllClose(
+        d3_c, (-np.pi * u - (np.pi * x64) ** 2 * v).astype(dtype), rtol=rtol, atol=atol
+    )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
