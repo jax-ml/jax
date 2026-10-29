@@ -1900,13 +1900,15 @@ def mem_space_to_kind(mem_space: Any) -> str:
 
 @cache(max_size=4096,
        trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
-def update_aval_with_sharding(aval, sharding, mat=None):
+def update_aval_with_sharding(aval, sharding, mat=None, memory_space=None):
   if isinstance(sharding, NamedSharding):
     s = NamedSharding(sharding.mesh.abstract_mesh,
                       sharding.spec._normalized_spec_for_aval(aval.ndim))
+    mem_space = (mem_kind_to_space(sharding.memory_kind)
+                 if memory_space is None else memory_space)
     return aval.update(
         sharding=s, manual_axis_type=(aval.mat if mat is None else mat),
-        memory_space=mem_kind_to_space(sharding.memory_kind))
+        memory_space=mem_space)
   return aval if mat is None else aval.update(manual_axis_type=mat)
 
 
@@ -4083,7 +4085,8 @@ def _sds_aval_mapping(x):
   memory_space = getattr(x, "_memory_space", None) or MemorySpace.Device
   aval = ShapedArray(x.shape, dtype, weak_type=x.weak_type,
                      memory_space=memory_space)
-  aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type)
+  aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type,
+                                   memory_space=memory_space)
   if x.is_ref:
     from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     return AbstractRef(aval)

@@ -10928,6 +10928,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     for s, es in zip(out.addressable_shards, [x, [[0, 0], [0, 0]]]):
       self.assertArraysEqual(s.data, es)
 
+  @jtu.with_explicit_mesh((1,), 'x')
+  def test_eval_shape_keeps_host_memory_space(self, mesh):
+    out = jax.eval_shape(
+        lambda x: jax.device_put(x, jax.memory.Space.Host), jnp.ones(8))
+    self.assertEqual(jax.typeof(out).memory_space, jax.memory.Space.Host)
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_cet_unreduced_restrictions(self, mesh):
     arr = jax.device_put(np.arange(16, dtype=np.float32).reshape(4, 2, 2),
