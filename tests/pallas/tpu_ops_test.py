@@ -153,13 +153,16 @@ class OpsTest(ptu.PallasTPUTest):
     expected = jax.lax.bitcast_convert_type(x, to_dtype)
     self.assertAllClose(out, expected)
 
-  def test_stop_gradient(self):
+  @parameterized.named_parameters(
+      ("stop_gradient", lax.stop_gradient), ("copy", jnp.copy)
+  )
+  def test_identity(self, op):
     def kernel(x_ref, y_ref):
-      y_ref[...] = jax.lax.stop_gradient(x_ref[...] + 1)
+      y_ref[...] = op(x_ref[...] + 1)
 
     x = jnp.arange(1024, dtype=jnp.float32)
-    y = pl.pallas_call(kernel, out_shape=x)(x)
-    self.assertAllClose(y, x + 1)
+    y = self.pallas_call(kernel, out_shape=x)(x)
+    self.assertArraysEqual(y, x + 1)
 
   def test_interleave_vectors(self):
 
@@ -1188,6 +1191,37 @@ class OpsTest(ptu.PallasTPUTest):
       out_ref[...] = jax.scipy.special.erf(x_ref[...])
 
     _ = jax.jit(kernel).lower(x)
+
+  @parameterized.parameters(jnp.float32, jnp.bfloat16)
+  def test_erfc(self, dtype):
+    special = jnp.array([
+        jnp.nan, jnp.inf, -jnp.inf, 0., -0., 1., -1., 2., 8.,
+        1e-45, -1e-45, jnp.finfo(dtype).tiny, -jnp.finfo(dtype).tiny,
+        jnp.finfo(dtype).max, -jnp.finfo(dtype).max,
+    ], dtype=dtype)
+    x = jnp.concatenate([
+        jnp.linspace(-12, 12, 32 * 128 - special.size, dtype=dtype), special
+    ]).reshape(32, 128)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.erfc(x_ref[...])
+
+    y = self.pallas_call(kernel, out_shape=jax.ShapeDtypeStruct.like(x))(x)
+    # A tiny atol, so that the tail where erfc(x) < 1e-6 is compared too.
+    self.assertAllClose(
+        y, lax.erfc(x), atol=np.finfo(np.float32).tiny,
+        rtol=1e-4 if dtype == jnp.float32 else 1e-2,
+    )
+
+  @parameterized.parameters(jnp.float32, jnp.bfloat16)
+  def test_gelu_exact(self, dtype):
+    x = jnp.linspace(-8, 8, 32 * 128).reshape(32, 128).astype(dtype)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jax.nn.gelu(x_ref[...], approximate=False)
+
+    y = self.pallas_call(kernel, out_shape=jax.ShapeDtypeStruct.like(x))(x)
+    self.assertAllClose(y, jax.nn.gelu(x, approximate=False))
 
   @parameterized.parameters(jnp.uint4, jnp.uint8, jnp.uint16, jnp.uint32)
   def test_unsigned_dtype_dot_raises(self, dtype):
