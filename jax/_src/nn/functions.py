@@ -165,34 +165,6 @@ def sparse_plus(x: ArrayLike) -> Array:
   x = numpy_util.ensure_arraylike("sparse_plus", x)
   return jnp.where(x <= -1.0, 0.0, jnp.where(x >= 1.0, x, (x + 1.0)**2/4))
 
-@custom_derivatives.custom_jvp
-def _soft_sign_and_scale(x: Array) -> tuple[Array, Array]:
-  """Returns (x / (|x| + 1), 1 / (|x| + 1)) for real x."""
-  denom = jnp.abs(x) + 1
-  # Handle x = +-inf explicitly so +-inf / inf does not produce NaN.
-  y = jnp.where(jnp.isinf(x), jnp.sign(x), x / denom)
-  return y, jnp.reciprocal(denom)
-
-
-@_soft_sign_and_scale.defjvp
-def _soft_sign_and_scale_jvp(primals, tangents):
-  # Differentiating y = x / (|x| + 1) via the quotient rule evaluates
-  #   1 / (|x| + 1) - |x| / (|x| + 1)^2,
-  # which cancels two ~1 / |x| terms to get 1 / (|x| + 1)^2: it loses half the
-  # precision by |x| ~ 1 / sqrt(eps) and collapses to 0 once |x| + 1 == |x|.
-  # Reconstructing 1 / (|x| + 1) as 1 - |y| has the same 1 - 1 cancellation.
-  #
-  # Returning d = 1 / (|x| + 1) alongside y gives a subtraction-free closed JVP:
-  #   dy = ((|x| + 1) - x * sign(x)) / (|x| + 1)^2 * dx = d^2 * dx
-  #   dd = -sign(x) / (|x| + 1)^2 * dx                  = -sign(x) * dy
-  # Since sign'(x) = 0, higher-order derivatives recurse through this rule
-  # (y'' = -2 * sign(x) * d^3, y''' = 6 * d^4, ...) without cancellation.
-  (x,), (x_dot,) = primals, tangents
-  y, d = _soft_sign_and_scale(x)
-  y_dot = lax.square(d) * x_dot
-  return (y, d), (y_dot, -jnp.sign(x) * y_dot)
-
-
 @api.jit
 def soft_sign(x: ArrayLike) -> Array:
   r"""Soft-sign activation function.
@@ -202,17 +174,11 @@ def soft_sign(x: ArrayLike) -> Array:
   .. math::
     \mathrm{soft\_sign}(x) = \frac{x}{|x| + 1}
 
-  For real inputs, :math:`\mathrm{soft\_sign}(\pm\infty) = \pm 1`.
-
   Args:
     x : input array
   """
-  x_arr, = numpy_util.promote_args_inexact("soft_sign", x)
-  if dtypes.issubdtype(x_arr.dtype, np.complexfloating):
-    # For complex z, d(|z|) != (z / |z|) * dz in tangential directions, so
-    # d(z / (|z| + 1)) does not simplify to dz / (|z| + 1)^2.
-    return x_arr / (jnp.abs(x_arr) + 1)
-  return _soft_sign_and_scale(x_arr)[0]
+  x_arr = numpy_util.ensure_arraylike("soft_sign", x)
+  return x_arr / (jnp.abs(x_arr) + 1)
 
 @api.jit(inline=api.Inline.JAX_EARLY)
 def sigmoid(x: ArrayLike) -> Array:

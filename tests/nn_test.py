@@ -632,61 +632,6 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
 
-  @jtu.sample_product(dtype=jtu.dtypes.floating)
-  def testSoftSignValueAndGrad(self, dtype):
-    finfo = jnp.finfo(dtype)
-    infs = jnp.array([-jnp.inf, jnp.inf], dtype=dtype)
-    self.assertArraysEqual(
-        nn.soft_sign(infs), jnp.array([-1.0, 1.0], dtype=dtype)
-    )
-
-    d1_fn = jax.jit(jax.vmap(jax.grad(nn.soft_sign)))
-    d2_fn = jax.jit(jax.vmap(jax.grad(jax.grad(nn.soft_sign))))
-    d3_fn = jax.jit(jax.vmap(jax.grad(jax.grad(jax.grad(nn.soft_sign)))))
-    self.assertArraysEqual(d1_fn(infs), jnp.zeros_like(infs))
-    self.assertArraysEqual(d2_fn(infs), jnp.zeros_like(infs))
-    self.assertArraysEqual(d3_fn(infs), jnp.zeros_like(infs))
-    self.assertEqual(jax.grad(nn.soft_sign)(dtype(0.0)), dtype(1.0))
-
-    # Include |x| >= 1 / eps where |x| + 1 == |x| in working precision (where
-    # the quotient-rule JVP 1/(|x|+1) - |x|/(|x|+1)^2 cancels to 0) and
-    # |x| ~ 1 / sqrt(eps) where the quotient rule loses half the precision.
-    x_mid = 2.0 ** (finfo.nmant // 2 + 1)
-    x_tail = 2.0 ** (finfo.nmant + 1)
-    xs_f64 = np.array(
-        [-x_tail, -x_mid, -2.0, -0.5, 0.5, 2.0, x_mid, x_tail],
-        dtype=np.float64,
-    )
-    xs = jnp.array(xs_f64, dtype=dtype)
-    # For x_tail in float64, 1 / (|x| + 1)^k == 1 / |x|^k to > 53 bits.
-    inv = 1.0 / (np.abs(xs_f64) + 1.0)
-    is_tpu = jtu.test_device_matches(["tpu"])
-    tol = 2e-4 if is_tpu else 16 * float(finfo.eps)
-    self.assertAllClose(
-        np.asarray(d1_fn(xs), np.float64), inv**2, atol=0, rtol=tol
-    )
-    self.assertAllClose(
-        np.asarray(d2_fn(xs), np.float64),
-        -2.0 * np.sign(xs_f64) * inv**3,
-        atol=0,
-        rtol=tol,
-    )
-    self.assertAllClose(
-        np.asarray(d3_fn(xs), np.float64), 6.0 * inv**4, atol=0, rtol=tol
-    )
-
-    z_dtype = np.complex64 if dtype == np.float32 else np.complex128
-    if z_dtype in jtu.dtypes.complex:
-      z = jnp.array(1.5 - 2.0j, dtype=z_dtype)
-      check_grads(
-          nn.soft_sign,
-          (z,),
-          order=2,
-          modes=["fwd", "rev"],
-          rtol=1e-2 if (dtype == np.float32 or is_tpu) else None,
-          atol=1e-2 if (dtype == np.float32 or is_tpu) else None,
-      )
-
   def testSparseplusValue(self):
     val = nn.sparse_plus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
