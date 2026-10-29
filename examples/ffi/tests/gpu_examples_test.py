@@ -15,6 +15,7 @@
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
+import jax.numpy as jnp
 
 jax.config.parse_flags_with_absl()
 
@@ -35,6 +36,27 @@ class GpuExamplesTest(jtu.JaxTestCase):
   def test_basic(self):
     self.assertEqual(self.read_state(), 42)
     self.assertEqual(jax.jit(self.read_state)(), 42)
+
+  def test_record_handler_registration(self):
+    if jtu.jaxlib_version() < (0, 12, 1):
+      self.skipTest("Requires jaxlib 0.12.1 or newer")
+    from jax_ffi_example import _gpu_examples
+
+    handlers = _gpu_examples.handler()
+    handlers["record"] = _gpu_examples.record_handler()
+    jax.ffi.register_ffi_target(
+        "gpu_examples_record", handlers, platform="CUDA", traits=1)
+    call = jax.jit(
+        jax.ffi.ffi_call(
+            "gpu_examples_record", jax.ShapeDtypeStruct((), jnp.int32)),
+        compiler_options={
+            "xla_gpu_enable_command_buffer": "CUSTOM_CALL",
+            "xla_gpu_graph_min_graph_size": 1,
+        })
+    with self.assertRaisesRegex(RuntimeError, "FFI record handler invoked"):
+      # The first call may warm up the executable before graph recording.
+      call().block_until_ready()
+      call().block_until_ready()
 
 
 if __name__ == "__main__":

@@ -58,6 +58,7 @@ def register_ffi_target(
     fn: a ``PyCapsule`` object containing the function pointer, or a ``dict``
       where the keys are FFI stage names (e.g. `"execute"`) and the values are
       ``PyCapsule`` objects containing a pointer to the handler for that stage.
+      GPU ``"record"`` handlers require a plugin built with support for that stage.
     platform: the target platform.
     api_version: the XLA custom call API version to use. Supported versions are:
       1 (default) for the typed FFI or 0 for the earlier "custom call" API.

@@ -17,6 +17,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * {func}`jax.ffi.register_ffi_target` now forwards GPU `"record"` handlers to
+    supporting plugins.
   * Added `jax.lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3` and
     `F8E4M3FN_F8E4M3FN_F32_X4` dot algorithm presets (requiring `jaxlib` >= 514)
     for emulating `bfloat16` precision matmuls on `bfloat16` or `float32` inputs
