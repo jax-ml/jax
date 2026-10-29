@@ -434,19 +434,20 @@ def _flash_attention_kernel_single_batch(
             causal_mask if mask is None else jnp.logical_and(mask, causal_mask)
         )
 
-      s = s if mask is None else s + jnp.where(mask, 0.0, mask_value)
+      s = s if mask is None else jnp.where(mask, s, mask_value)
 
       m_curr = jnp.max(s, axis=1)[:, None]  # Row max, shape [block_q, 1].
       m_next = jnp.maximum(m_prev, m_curr)  # Shape [block_q, 128].
+      m_next_safe = jnp.where(m_next <= mask_value, 0.0, m_next)
 
       block_k_repeats, rem = divmod(block_k, MIN_BLOCK_SIZE)
       if rem:
         raise NotImplementedError(
             f"{block_k=} should be a multiple of {MIN_BLOCK_SIZE}"
         )
-      p = jnp.exp(s - jnp.tile(m_next, (1, block_k_repeats)))
+      p = jnp.exp(s - jnp.tile(m_next_safe, (1, block_k_repeats)))
 
-      alpha = jnp.exp(m_prev - m_next)  # Shape [block_q, 128].
+      alpha = jnp.exp(m_prev - m_next_safe)  # Shape [block_q, 128].
 
       l_corr = alpha * l_prev
 
@@ -539,12 +540,13 @@ def _flash_attention_kernel_single_batch_single_step(
     col_ids = jax.lax.broadcasted_iota(jnp.int32, mask_shape, 1)
     causal_mask = col_ids <= row_ids
     mask = causal_mask if mask is None else jnp.logical_and(mask, causal_mask)
-  s = s if mask is None else s + jnp.where(mask, 0.0, mask_value)
+  s = s if mask is None else jnp.where(mask, s, mask_value)
 
   m = jnp.max(s, axis=1)[:, None]
-  p = jnp.exp(s - m)
+  m_safe = jnp.where(m <= mask_value, 0.0, m)
+  p = jnp.exp(s - m_safe)
   l = jnp.sum(p, axis=1)[:, None]
-  p /= l
+  p *= jnp.where(l == 0.0, 0.0, 1.0 / l)
 
   if m_ref is not None:
     m_ref[batch_idx] = lax.broadcast_in_dim(m, m_ref.shape[2:], range(2))
@@ -888,14 +890,16 @@ def _flash_attention_dkv_kernel(
       capped_logits = (
           capped_logits
           if mask is None
-          else capped_logits + jnp.where(mask, 0.0, mask_value)
+          else jnp.where(mask, capped_logits, mask_value)
       )
 
+      m_safe = jnp.where(m <= mask_value, 0.0, m)
       p = jnp.exp(
-          capped_logits - jnp.tile(m, (1, block_k // MIN_BLOCK_SIZE))
+          capped_logits - jnp.tile(m_safe, (1, block_k // MIN_BLOCK_SIZE))
       )
+      l_inv_safe = jnp.where(l == 0.0, 0.0, 1.0 / l)
       p = p * jnp.tile(
-          1 / l, (1, block_k // MIN_BLOCK_SIZE)
+          l_inv_safe, (1, block_k // MIN_BLOCK_SIZE)
       )  # [block_q_major, block_k_major]
       dv = lax.dot(p.T.astype(do.dtype), do, preferred_element_type=jnp.float32)
       dv_scratch_ref[pl.ds(start_k, block_k), :] += dv.astype(
@@ -1221,14 +1225,16 @@ def _flash_attention_dq_kernel(
     capped_logits = (
         capped_logits
         if mask is None
-        else capped_logits + jnp.where(mask, 0.0, mask_value)
+        else jnp.where(mask, capped_logits, mask_value)
     )
 
+    m_safe = jnp.where(m <= mask_value, 0.0, m)
     p = jnp.exp(
-        capped_logits - jnp.tile(m, (1, block_k // MIN_BLOCK_SIZE))
+        capped_logits - jnp.tile(m_safe, (1, block_k // MIN_BLOCK_SIZE))
     )
+    l_inv_safe = jnp.where(l == 0.0, 0.0, 1.0 / l)
     p = p * jnp.tile(
-        1 / l, (1, block_k // MIN_BLOCK_SIZE)
+        l_inv_safe, (1, block_k // MIN_BLOCK_SIZE)
     )  # [block_q_major, block_k]
 
     # di: [block_q_major, 128]
