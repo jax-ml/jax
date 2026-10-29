@@ -7136,6 +7136,114 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       jax.jit(f).trace(x).lower(lowering_platforms=('tpu',))
 
 
+def _start_async_copy(x):
+  """Starts a DMA of `x`; returns the copy in flight as JAX values."""
+
+  def kernel(x_ref, x_alias_ref, o_ref, sem_ref):
+    del x_alias_ref
+    pltpu.make_async_copy(x_ref, o_ref, sem_ref).start()
+
+  any_spec = pl.BlockSpec(memory_space=pl.ANY)
+  return pl.pallas_call(
+      kernel,
+      out_shape=(
+          jax.ShapeDtypeStruct.like(x),  # `x`, kept alive until the wait.
+          jax.ShapeDtypeStruct.like(x),
+          pltpu.SemaphoreType.DMA,
+      ),
+      in_specs=[any_spec],
+      out_specs=(
+          any_spec,
+          any_spec,
+          pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+      ),
+      input_output_aliases={0: 0},
+      name='async_copy_start',
+  )(x)
+
+
+def _wait_async_copy(x, o, sem):
+  """Waits for a copy started by `_start_async_copy`."""
+
+  def kernel(x_ref, o_ref, sem_ref, o_alias_ref):
+    del o_alias_ref
+    pltpu.make_async_copy(x_ref, o_ref, sem_ref).wait()
+
+  any_spec = pl.BlockSpec(memory_space=pl.ANY)
+  return pl.pallas_call(
+      kernel,
+      out_shape=jax.ShapeDtypeStruct.like(o),
+      in_specs=[
+          any_spec,
+          any_spec,
+          pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+      ],
+      out_specs=any_spec,
+      input_output_aliases={1: 0},
+      name='async_copy_wait',
+  )(x, o, sem)
+
+
+def _routing_counts(w):
+  # Integer data derived from `w`, like MoE routing counts: it has no tangent.
+  return (w > 0).astype(jnp.int32)
+
+
+def _loss_with_async_copy(w):
+  pending = _start_async_copy(_routing_counts(w))
+  y = jnp.sin(w)  # Overlaps the copy.
+  counts = _wait_async_copy(*pending)
+  return jnp.sum(y * counts.astype(w.dtype))
+
+
+def _pallas_call_names(f, *args) -> list[str]:
+  """Names of the pallas_calls in the jaxpr of `f`, sub-jaxprs included."""
+
+  def names(jaxpr):
+    for eqn in jaxpr.eqns:
+      if eqn.primitive.name == 'pallas_call':
+        yield eqn.params['name']
+      else:
+        for sub in jax_core.jaxprs_in_params(eqn.params):
+          yield from names(sub)
+
+  return list(names(jax.make_jaxpr(f)(*args).jaxpr))
+
+
+class PallasCallSemaphoreAutodiffTest(jtu.JaxTestCase):
+  """Differentiates functions that pass semaphores between pallas_calls.
+
+  Tracing only: interpret mode cannot pass a semaphore between kernels, so the
+  numerics are checked on TPU in tpu_pallas_async_test.py.
+  """
+
+  w = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+  copy = ['async_copy_start', 'async_copy_wait']
+
+  def test_grad(self):
+    # The copy runs once: its counts are a residual of the backward pass.
+    self.assertEqual(
+        _pallas_call_names(jax.grad(_loss_with_async_copy), self.w), self.copy
+    )
+
+  def test_jvp(self):
+    self.assertEqual(
+        _pallas_call_names(
+            lambda w: jax.jvp(_loss_with_async_copy, (w,), (w,)), self.w
+        ),
+        self.copy,
+    )
+
+  def test_grad_of_remat(self):
+    # Remat recomputes the start and the wait together in the backward pass.
+    self.assertEqual(
+        _pallas_call_names(
+            jax.grad(jax.checkpoint(_loss_with_async_copy)), self.w
+        ),
+        self.copy * 2,
+    )
+
+
 class BarrierSemaphoreTagTest(jtu.JaxTestCase):
 
   def test_extract_tag_scans_each_jaxpr_once(self):

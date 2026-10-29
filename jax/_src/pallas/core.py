@@ -101,6 +101,14 @@ class AbstractSemaphoreTyRules:
   def physical_element_aval(_) -> jax_core.ShapedArray:
     return jax_core.ShapedArray((), jnp.int32)
 
+  # Semaphores are not differentiable. As for integers, their tangents are
+  # float0, so semaphores passed between kernels can appear in differentiated
+  # functions.
+  @staticmethod
+  def tangent_dtype(_):
+    return dtypes.float0
+
+
 # TODO(sharadmv): implement dtype rules for AbstractSemaphoreTy
 class AbstractSemaphoreTy(dtypes.ExtendedDType):
   name: str
