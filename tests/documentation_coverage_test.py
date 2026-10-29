@@ -96,6 +96,7 @@ MODULES_TO_SKIP = [
   "jax.interpreters",  # internal tools, not documented.
   "jax.jaxlib", # internal tools, not documented.
   "jax.lib",  # deprecated in JAX v0.8.0
+  "jax.pallas",  # TODO(ivyzheng): currently documented as jax.experimental.pallas.
   "jax.tools",  # internal tools, not documented.
   "jax.version",  # no public APIs.
 ]
