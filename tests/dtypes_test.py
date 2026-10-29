@@ -1333,6 +1333,23 @@ class TestPromotionTables(jtu.JaxTestCase):
         self.assertEqual(dtypes.result_type(output_dtype) == result_dtype,
                          dtypes.safe_to_cast(input_dtype, output_dtype))
 
+  @parameterized.product(
+      dtype=intn_dtypes,
+      rng_factory=[
+          jtu.rand_default,
+          jtu.rand_nonzero,
+          jtu.rand_positive,
+          jtu.rand_not_small,
+          jtu.rand_some_equal,
+      ],
+  )
+  def testRandDtypeNarrowIntegers(self, dtype, rng_factory):
+    rng = rng_factory(self.rng())
+    with jtu.test_warning_util.raise_on_warnings():
+      x = rng((64,), dtype)
+    self.assertEqual(x.dtype, dtype)
+    self.assertEqual(x.shape, (64,))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

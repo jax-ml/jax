@@ -777,14 +777,19 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
     to rand but scaled, converted to the appropriate dtype, and post-processed.
   """
   if _dtypes.issubdtype(dtype, np.unsignedinteger):
-    r = lambda: np.asarray(scale * abs(rand(*_dims_of_shape(shape)))).astype(dtype)
+    r = lambda: np.asarray(scale * abs(rand(*_dims_of_shape(shape))), dtype=np.uint64).astype(dtype)
+  elif _dtypes.issubdtype(dtype, np.integer):
+    r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape)), dtype=np.int64).astype(dtype)
   else:
     r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape))).astype(dtype)
   if _dtypes.issubdtype(dtype, np.complexfloating):
     vals = r() + 1.0j * r()
   else:
     vals = r()
-  return _cast_to_shape(np.asarray(post(vals), dtype), shape, dtype)
+  vals = post(vals)
+  if _dtypes.issubdtype(dtype, np.integer) and _dtypes.issubdtype(np.asarray(vals).dtype, np.floating):
+    vals = np.asarray(vals, dtype=np.int64)
+  return _cast_to_shape(np.asarray(vals, dtype), shape, dtype)
 
 
 def rand_fullrange(rng, standardize_nans=False):
