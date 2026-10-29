@@ -2711,6 +2711,121 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(out1, x + 1)
     np.testing.assert_array_equal(out2, x * 2)
 
+  @parameterized.parameters(128, pl.Blocked(128))
+  def test_pad_pull_blocked(self, block_size):
+    x = jnp.arange(300 * 200, dtype=jnp.float32).reshape((300, 200))
+    pad_val = -5.0
+
+    def f(x):
+      return jnp.pad(x, ((0, 212), (0, 56)), constant_values=pad_val)
+
+    expected = f(x)
+    block_spec = pl.BlockSpec((block_size, 128), lambda i, j: (i, j))
+    kernel_fn, (x_block_spec,), _ = block_spec_lib.pull_block_spec(
+        f,
+        block_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(x)
+    self.assertEqual(x_block_spec.block_shape, (block_size, 128))
+    # max valid block index along dim 0 is (300 - 1) // 128 = 2;
+    # along dim 1 is (200 - 1) // 128 = 1.
+    self.assertEqual(x_block_spec.index_map(0, 0), (0, 0))
+    self.assertEqual(x_block_spec.index_map(2, 1), (2, 1))
+    self.assertEqual(x_block_spec.index_map(3, 1), (2, 1))
+
+    # Pad x to allow extracting the last valid 128x128 hardware block at (bi, bj)
+    x_hw = jnp.pad(x, ((0, 84), (0, 56)), constant_values=999.0)
+    for i in range(4):
+      for j in range(2):
+        bi, bj = x_block_spec.index_map(i, j)
+        x_block = x_hw[bi * 128 : (bi + 1) * 128, bj * 128 : (bj + 1) * 128]
+        out_block = kernel_fn((i, j), (), x_block)
+        np.testing.assert_array_equal(
+            out_block,
+            expected[i * 128 : (i + 1) * 128, j * 128 : (j + 1) * 128],
+        )
+
+  @parameterized.parameters(None, pl.Squeezed())
+  def test_pad_pull_squeezed_and_element(self, squeezed_dim):
+    x = jnp.arange(3 * 200, dtype=jnp.float32).reshape((3, 200))
+    pad_val = -1.0
+
+    def f(x):
+      return jnp.pad(x, ((0, 2), (0, 56)), constant_values=pad_val)
+
+    expected = f(x)
+    block_spec = pl.BlockSpec(
+        (squeezed_dim, pl.Element(128)), lambda i, j: (i, j * 128)
+    )
+    kernel_fn, (x_block_spec,), _ = block_spec_lib.pull_block_spec(
+        f,
+        block_spec,
+        grid_len=2,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(x)
+    self.assertEqual(x_block_spec.index_map(1, 0), (1, 0))
+    self.assertEqual(x_block_spec.index_map(4, 1), (2, 128))
+
+    x_hw = jnp.pad(x, ((0, 0), (0, 56)), constant_values=999.0)
+    for i in range(5):
+      for j in range(2):
+        bi, bj = x_block_spec.index_map(i, j)
+        x_block = x_hw[bi, bj : bj + 128]
+        out_block = kernel_fn((i, j), (), x_block)
+        np.testing.assert_array_equal(
+            out_block, expected[i, j * 128 : (j + 1) * 128]
+        )
+
+  def test_pad_pull_bounded_slice(self):
+    x = jnp.arange(200, dtype=jnp.float32)
+    pad_val = -3.0
+
+    def f(x):
+      return jnp.pad(x, ((0, 56),), constant_values=pad_val)
+
+    expected = f(x)
+    block_spec = pl.BlockSpec(
+        (pl.BoundedSlice(128),), lambda i: (pl.ds(i * 128, 128),)
+    )
+    kernel_fn, (x_block_spec,), _ = block_spec_lib.pull_block_spec(
+        f,
+        block_spec,
+        grid_len=1,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(x)
+    s0 = x_block_spec.index_map(0)[0]
+    self.assertEqual((int(s0.start), int(s0.size)), (0, 128))
+    s1 = x_block_spec.index_map(1)[0]
+    self.assertEqual((int(s1.start), int(s1.size)), (128, 72))
+
+    x_hw = jnp.pad(x, ((0, 56),), constant_values=999.0)
+    for i in range(2):
+      s = x_block_spec.index_map(i)[0]
+      x_block = jax.lax.dynamic_slice(x_hw, (s.start,), (128,))
+      out_block = kernel_fn((i,), (), x_block)
+      np.testing.assert_array_equal(
+          out_block, expected[i * 128 : (i + 1) * 128]
+      )
+
+  def test_pad_pull_unsupported(self):
+    x = jax.ShapeDtypeStruct((128, 128), jnp.float32)
+    block_spec = pl.BlockSpec((64, 64), lambda i, j: (i, j))
+    with self.assertRaisesRegex(
+        NotImplementedError, 'Left padding is not supported'
+    ):
+      block_spec_lib.pull_block_spec(
+          lambda x: jnp.pad(x, ((4, 0), (0, 0))), block_spec, grid_len=2
+      )(x)
+    with self.assertRaisesRegex(
+        NotImplementedError, 'Interior padding is not supported'
+    ):
+      block_spec_lib.pull_block_spec(
+          lambda x: lax.pad(x, 0.0, ((0, 0, 1), (0, 0, 0))),
+          block_spec,
+          grid_len=2,
+      )(x)
+
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):
 
