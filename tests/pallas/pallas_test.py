@@ -1287,6 +1287,39 @@ class ApiErrorTest(ptu.PallasTest):
         "Index map function .* for args\\[0\\] must not capture constants:"):
       f(a)
 
+  def test_pallas_call_index_map_out_of_bounds(self):
+    x = jnp.zeros((512, 128), dtype=jnp.float32)
+    f = self.pallas_call(
+        lambda x_ref, o_ref: None,
+        out_shape=jax.ShapeDtypeStruct((256, 128), jnp.float32),
+        grid=(1,),
+        in_specs=[pl.BlockSpec((256, 128), lambda i: (256, 0))],
+        out_specs=pl.BlockSpec((256, 128), lambda i: (0, 0)),
+    )
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Index map function .* for args\[0\] returned out-of-bounds index "
+        r"256 for dimension 0 with block dimension Blocked\(256\) and array "
+        r"shape \(512, 128\): index must be in \[0, 2\)\.",
+    ):
+      f(x)
+
+    y = jnp.zeros((16, 1024), dtype=jnp.int32)
+    g = self.pallas_call(
+        lambda x_ref, o_ref: None,
+        out_shape=jax.ShapeDtypeStruct((16, 1024), jnp.int32),
+        grid=(2,),
+        in_specs=[pl.BlockSpec((8, 1024), lambda r: (r, 1))],
+        out_specs=pl.BlockSpec((8, 1024), lambda r: (r, 0)),
+    )
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Index map function .* for args\[0\] returned out-of-bounds index "
+        r"1 for dimension 1 with block dimension Blocked\(1024\) and array "
+        r"shape \(16, 1024\): index must be in \[0, 1\)\.",
+    ):
+      g(y)
+
   def test_pallas_call_out_specs_mismatch_shape(self):
     a = np.arange(256, dtype=np.int32)
     f = self.pallas_call(lambda x_ref, o1_ref: None,

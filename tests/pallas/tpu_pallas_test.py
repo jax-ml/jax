@@ -2372,6 +2372,69 @@ class PallasCallTest(ptu.PallasTPUTest):
         r'scf\.if %(?P=cmp)',
     )
 
+  @parameterized.named_parameters(
+      # Rows [0, 16) on a (2, 2) grid, then the trailing row 16.
+      ('blocked_8_at_block_2', (2, 2), (2,), (8, 128), lambda j: (2, j)),
+      (
+          'element_8_at_row_16',
+          (2, 2),
+          (2,),
+          (pl.Element(8), pl.Element(128)),
+          lambda j: (16, 128 * j),
+      ),
+      # Rows [0, 8) on a (1, 2) grid, then rows [8, 17) in one 16-row window.
+      (
+          'element_16_at_row_8',
+          (1, 2),
+          (2,),
+          (pl.Element(16), pl.Element(128)),
+          lambda j: (8, 128 * j),
+      ),
+      # Columns [0, 128) on a (3, 1) grid, then the trailing column 128.
+      (
+          'element_128_at_col_128',
+          (3, 1),
+          (3,),
+          (pl.Element(8), pl.Element(128)),
+          lambda i: (8 * i, 128),
+      ),
+  )
+  def test_peeled_tail_in_tile_padding_literal_index(
+      self, body_grid, tail_grid, tail_block_shape, tail_index_map
+  ):
+    # A (17, 129) f32 array is stored as (24, 256) in (8, 128) tiles. A peeled
+    # tail window at a constant offset may run past the array end as long as
+    # it stays within those tiles. Element windows must be tile aligned, so
+    # each one reads whole tiles, just like the Blocked window.
+    x = np.arange(17 * 129, dtype=np.float32).reshape(17, 129)
+
+    def add_one_kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    body_spec = pl.BlockSpec((8, 128), lambda i, j: (i, j))
+    y = self.pallas_call(
+        add_one_kernel,
+        grid=body_grid,
+        in_specs=[body_spec],
+        out_specs=body_spec,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )(x)
+
+    def tail_kernel(x_ref, y_ref, o_ref):
+      del y_ref  # Aliased with o_ref.
+      add_one_kernel(x_ref, o_ref)
+
+    tail_spec = pl.BlockSpec(tail_block_shape, tail_index_map)
+    y = self.pallas_call(
+        tail_kernel,
+        grid=tail_grid,
+        in_specs=[tail_spec, pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=tail_spec,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        input_output_aliases={1: 0},
+    )(x, y)
+    np.testing.assert_array_equal(y, x + 1.0)
+
   def test_memory_space_like(self):
     x = jax.ShapeDtypeStruct((2, 3), jnp.float32)
     ref = pltpu.VMEM.like(x)
@@ -6245,6 +6308,50 @@ class EmitPipelineTest(ptu.PallasTPUTest):
       x = jnp.arange(4 * 8 * 128, dtype=jnp.float32).reshape(4 * 8, 128)
       out = kernel(x)
       np.testing.assert_array_equal(out, x + 1)
+
+  @parameterized.product(
+      use_primitive=(False, True),
+      case=(
+          # Rows [0, 16) on a (2, 2) grid, then the trailing row 16.
+          ((2, 2), (2,), (pl.Element(8), 128), lambda j: (16, j)),
+          # The 16-row window also runs past the (24, 256) tiles.
+          ((2, 2), (2,), (pl.Element(16), 128), lambda j: (16, j)),
+          # Rows [0, 8) on a (1, 2) grid, then rows [8, 17) in one window.
+          ((1, 2), (2,), (pl.Element(16), 128), lambda j: (8, j)),
+          # Columns [0, 128) on a (3, 1) grid, then the trailing column 128.
+          ((3, 1), (3,), (8, pl.Element(128)), lambda i: (i, 128)),
+      ),
+  )
+  def test_emit_pipeline_peeled_tail_literal_index(self, use_primitive, case):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
+    # emit_pipeline shrinks the copy of an Element window that runs past the
+    # array end to the remaining tiles, and it does not support Element
+    # padding. A (17, 129) f32 array is stored as (24, 256) in (8, 128) tiles.
+    body_grid, tail_grid, tail_block_shape, tail_index_map = case
+    x = np.arange(17 * 129, dtype=np.float32).reshape(17, 129)
+
+    def add_one(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      body_spec = pl.BlockSpec((8, 128), lambda i, j: (i, j))
+      pltpu.emit_pipeline(
+          add_one, grid=body_grid, in_specs=[body_spec], out_specs=body_spec
+      )(x_hbm_ref, o_hbm_ref)
+      tail_spec = pl.BlockSpec(tail_block_shape, tail_index_map)
+      pltpu.emit_pipeline(
+          add_one, grid=tail_grid, in_specs=[tail_spec], out_specs=tail_spec
+      )(x_hbm_ref, o_hbm_ref)
+
+    with config.use_emit_pipeline_primitive(use_primitive):
+      y = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+      )(x)
+    np.testing.assert_array_equal(y, x + 1.0)
 
 
 class PallasHloNamesTest(ptu.PallasTPUTest):

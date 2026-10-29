@@ -481,6 +481,30 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       res = exp.call(x, y)
       self.assertAllClose(res, x + y)
 
+  def test_lower_as_mlir_floordiv(self):
+    def kernel(x_ref, y_ref):
+      n = x_ref.shape[0] // 2
+      assert n == y_ref.shape[0]
+      y_ref[:] = x_ref[:n] + 1.0
+
+    x_concrete = jnp.arange(16 * 128, dtype=jnp.float32).reshape(16, 128)
+    res_eager = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        interpret=jtu.test_device_matches(["cpu"]),
+    )(x_concrete)
+    self.assertAllClose(res_eager, x_concrete[:8] + 1.0)
+
+    (m,) = jax.export.symbolic_shape("m")
+    x_shape = jax.ShapeDtypeStruct((m, 128), jnp.float32)
+    y_shape = jax.ShapeDtypeStruct((m // 2, 128), jnp.float32)
+    f = pl.pallas_call(kernel, out_shape=y_shape)
+
+    exported_module = pl.lower_as_mlir(
+        jax.jit(f), x_shape, dynamic_shapes=True, platforms=["tpu"]
+    )
+    self.assertIn("(m, 128)", str(exported_module))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

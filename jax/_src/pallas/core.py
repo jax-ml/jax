@@ -757,8 +757,11 @@ class BlockSpec:
           f"{len(block_shape)} values to match {block_shape=}. "
           f"Currently returning {len(unflat_avals)} values:"
       )
-    # Verify types match
-    for i, (idx_aval, bd) in enumerate(zip(unflat_avals, block_shape)):
+    unflat_outvars = out_avals.tree.unflatten(closed_jaxpr.jaxpr.outvars)
+    # Verify types and static bounds match
+    for i, (idx_aval, idx_var, bd, dim_size) in enumerate(
+        zip(unflat_avals, unflat_outvars, block_shape, array_aval.shape)
+    ):
       match bd:
         case BoundedSlice():
           if not isinstance(idx_aval, indexing.Slice):
@@ -777,6 +780,40 @@ class BlockSpec:
                 f" {type(idx_aval)} at position {i} with block dimension"
                 f" {bd} when it should be a scalar"
             )
+          if isinstance(idx_var, jax_core.Literal) and dtypes.issubdtype(
+              idx_aval.dtype, jnp.integer
+          ):
+            match bd:
+              case Blocked(block_size):
+                if not (
+                    jax_core.is_constant_dim(dim_size)
+                    and jax_core.is_constant_dim(block_size)
+                ):
+                  continue
+                limit = (
+                    (dim_size + block_size - 1) // block_size
+                    if block_size > 0
+                    else 0
+                )
+              case Element(_, (pad_lo, pad_hi)):
+                if not (
+                    jax_core.is_constant_dim(dim_size)
+                    and jax_core.is_constant_dim(pad_lo)
+                    and jax_core.is_constant_dim(pad_hi)
+                ):
+                  continue
+                limit = dim_size + pad_lo + pad_hi
+              case Squeezed() | int():
+                if not jax_core.is_constant_dim(dim_size):
+                  continue
+                limit = dim_size
+            if limit > 0 and not (0 <= idx_var.val < limit):
+              raise ValueError(
+                  f"Index map function {debug_info.func_src_info} for {origin}"
+                  f" returned out-of-bounds index {int(idx_var.val)} for"
+                  f" dimension {i} with block dimension {bd} and array shape"
+                  f" {array_aval.shape}: index must be in [0, {limit})."
+              )
     for i, ov in enumerate(out_avals):
       if ov.shape or ov.dtype not in [jnp.int32, jnp.int64]:
         raise ValueError(
