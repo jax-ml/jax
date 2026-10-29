@@ -27,11 +27,16 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.scipy.special.gammaincinv` and
     {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
     incomplete gamma functions, with gradients with respect to both arguments.
+  * Added {func}`jax.scipy.special.jn`, an accurate implementation of bessel
+    functions of the first kind of integer order.
 
 * Deprecations
   * The `jax_use_shardy_partitioner` configuration flag is deprecated and is now
     a no-op. JAX always lowers to Shardy, and the flag will be removed in a
     future release.
+  * The `jax.scipy.special.bessel_jn` function is deprecated; use the new
+    `jax.scipy.special.jn` instead, which is more accurate and provides
+    direct evaluation of only the nth bessel function.
 
 * Changes
   * JAX now uses Bazel 9.3.1 to build from source.

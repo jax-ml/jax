@@ -2658,6 +2658,11 @@ def _bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
 def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
   """Bessel function of the first kind of integer order and real argument.
 
+  .. note::
+
+     This function is deprecated as of JAX v0.12.1; use the replacement
+     :func:`jax.scipy.special.jn` instead, but note its different API.
+
   Reference:
   Shanjie Zhang and Jian-Ming Jin. Computation of special functions.
   Wiley-Interscience, 1996.

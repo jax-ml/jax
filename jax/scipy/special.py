@@ -17,7 +17,7 @@
 
 from jax._src.scipy.special import (
   bernoulli as bernoulli,
-  bessel_jn as bessel_jn,
+  bessel_jn as _deprecated_bessel_jn,
   beta as beta,
   betainc as betainc,
   betaln as betaln,
@@ -81,6 +81,12 @@ from jax._src.third_party.scipy.special import (
 )
 
 _deprecations = {
+    # Added for JAX v0.12.1; Remove in JAX v0.14.0.
+    "bessel_jn": (
+        "jax.scipy.special.bessel_jn is deprecated; use jax.scipy.special.jn instead,"
+        "and note that unlike bessel_jn(), jn() returns results for a single n.",
+        _deprecated_bessel_jn
+    ),
     # Added Jan 3 2024
     "lpmn": (
         "jax.scipy.special.lpmn is deprecated; no replacement is planned.",
@@ -94,6 +100,7 @@ _deprecations = {
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
+  bessel_jn = _deprecated_bessel_jn
   lpmn = _deprecated_lpmn
   lpmn_values = _deprecated_lpmn_values
 else:
