@@ -2455,6 +2455,52 @@ class PallasCallAutodifferentiationTest(ptu.PallasTest):
     jtu.check_grads(pallas_impl, (x,), modes=["fwd"], order=2,
                     atol=grad_tol, rtol=grad_tol)
 
+  def test_jvp_symbolic_zero_input_tangents(self):
+    # y and n get symbolic zero tangents, and they come before x with different
+    # shapes, so x's tangent must be paired with x's block mapping.
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4, 8), floatx),
+    )
+    def pallas_impl(y_ref, n_ref, x_ref, o_ref):
+      o_ref[...] = jnp.sin(x_ref[...]) * y_ref[...] * n_ref[...].astype(floatx)
+
+    k1, k2, k3 = random.split(random.key(0), 3)
+    x = random.normal(k1, (4, 8))
+    t = random.normal(k2, (4, 8))
+    y = random.normal(k3, (1, 8))
+    n = jnp.arange(8, dtype=intx).reshape(1, 8)
+    f = lambda x: pallas_impl(y, n, x)
+    f_ref = lambda x: jnp.sin(x) * y * n.astype(floatx)
+    out_primal, out_tangent = jax.jvp(f, (x,), (t,))
+    out_primal_ref, out_tangent_ref = jax.jvp(f_ref, (x,), (t,))
+    np.testing.assert_allclose(out_primal, out_primal_ref, atol=self.tol,
+                               rtol=self.tol)
+    np.testing.assert_allclose(out_tangent, out_tangent_ref, atol=self.tol,
+                               rtol=self.tol)
+    jtu.check_grads(f, (x,), modes=["fwd"], order=2,
+                    atol=self.grad_tol, rtol=self.grad_tol)
+
+  def test_jvp_integer_output(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((8,), intx),
+                   jax.ShapeDtypeStruct((8,), floatx)),
+    )
+    def pallas_impl(x_ref, s_ref, o_ref):
+      s_ref[...] = (x_ref[...] > 0).astype(intx)
+      o_ref[...] = jnp.sin(x_ref[...])
+
+    k1, k2 = random.split(random.key(0))
+    x = random.normal(k1, (8,))
+    t = random.normal(k2, (8,))
+    (s, out_primal), (s_dot, out_tangent) = jax.jvp(pallas_impl, (x,), (t,))
+    np.testing.assert_array_equal(s, (x > 0).astype(intx))
+    self.assertEqual(s_dot.dtype, dtypes.float0)
+    np.testing.assert_allclose(out_primal, jnp.sin(x), atol=self.tol,
+                               rtol=self.tol)
+    np.testing.assert_allclose(out_tangent, jnp.cos(x) * t, atol=self.tol,
+                               rtol=self.tol)
+
   def test_custom_jvp_call(self):
     @functools.partial(jax.custom_jvp, nondiff_argnums=(1,))
     def softmax(x, axis=-1):
