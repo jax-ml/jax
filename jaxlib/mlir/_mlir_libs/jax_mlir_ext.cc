@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
 #include "mlir-c/Dialect/Arith.h"  // IWYU pragma: keep
@@ -47,8 +48,10 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Shape/IR/Shape.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -145,8 +148,9 @@ std::pair<mlir::Block*, mlir::Operation*> GetInsertionPoint() {
   return {block, ref_op};
 }
 
-// Optimized version of arith.constant.
-nb::object ArithConstant(nb::object value, const PyType& type) {
+// Returns a builder at the current Python insertion point and location, and
+// the location.
+std::pair<mlir::ImplicitLocOpBuilder, PyLocation*> GetBuilder() {
   // The usual pattern for insertion points and locations is to use optional
   // arguments that have default type casters that do the same as the following.
   // Unfortunately they are slow, so we do the same directly.
@@ -156,13 +160,23 @@ nb::object ArithConstant(nb::object value, const PyType& type) {
   if (location == nullptr) {
     throw nb::value_error("No default location found.");
   }
-  mlir::Location loc = unwrap(location->get());
 
+  mlir::ImplicitLocOpBuilder builder(unwrap(location->get()), block,
+                                     block->end());
+  if (ref_op) {
+    builder.setInsertionPoint(ref_op);
+  }
+  return {builder, location};
+}
+
+// Optimized version of arith.constant.
+nb::object ArithConstant(nb::object value, const PyType& type) {
+  auto [builder, location] = GetBuilder();
   mlir::Type mlir_type = unwrap(type.get());
 
   mlir::TypedAttr attr;
   if (nb::isinstance<nb::bool_>(value)) {
-    attr = mlir::BoolAttr::get(loc.getContext(), nb::cast<bool>(value));
+    attr = builder.getBoolAttr(nb::cast<bool>(value));
   } else if (nb::isinstance<nb::int_>(value)) {
     attr = mlir::IntegerAttr::get(mlir_type, nb::cast<int64_t>(value));
   } else if (nb::isinstance<nb::float_>(value)) {
@@ -174,13 +188,55 @@ nb::object ArithConstant(nb::object value, const PyType& type) {
             .c_str());
   }
 
-  mlir::ImplicitLocOpBuilder builder(loc, block, block->end());
-  if (ref_op) {
-    builder.setInsertionPoint(ref_op);
-  }
   auto op = builder.create<mlir::arith::ConstantOp>(mlir_type, attr);
 
   return WrapMlirValue(location->getContext(), op.getOperation()->getResult(0));
+}
+
+// Optimized version of vector.broadcast.
+nb::object VectorBroadcast(const PyType& type, PyValue& source) {
+  auto [builder, location] = GetBuilder();
+  auto op = builder.create<mlir::vector::BroadcastOp>(unwrap(type.get()),
+                                                      unwrap(source.get()));
+  return WrapMlirValue(location->getContext(), op->getResult(0));
+}
+
+using BinaryOpBuilder = mlir::Value (*)(mlir::ImplicitLocOpBuilder&,
+                                        mlir::Value, mlir::Value);
+
+// Builds an op whose result type is the type of its operands.
+template <typename Op>
+mlir::Value BuildBinaryOp(mlir::ImplicitLocOpBuilder& builder, mlir::Value lhs,
+                          mlir::Value rhs) {
+  return builder.create<Op>(lhs, rhs)->getResult(0);
+}
+
+template <typename... Ops>
+llvm::StringMap<BinaryOpBuilder> MakeBinaryOpBuilders() {
+  return {{Ops::getOperationName(), &BuildBinaryOp<Ops>}...};
+}
+
+// Optimized versions of the binary arith ops that Pallas lowers elementwise
+// operations to, selected by op name.
+nb::object ArithBinaryOp(std::string_view name, PyValue& lhs, PyValue& rhs) {
+  namespace arith = ::mlir::arith;
+  static const auto* const builders = new llvm::StringMap<BinaryOpBuilder>(
+      MakeBinaryOpBuilders<
+          arith::AddFOp, arith::AddIOp, arith::AndIOp, arith::DivFOp,
+          arith::DivSIOp, arith::DivUIOp, arith::MaximumFOp, arith::MaxSIOp,
+          arith::MaxUIOp, arith::MinimumFOp, arith::MinSIOp, arith::MinUIOp,
+          arith::MulFOp, arith::MulIOp, arith::OrIOp, arith::RemFOp,
+          arith::RemSIOp, arith::RemUIOp, arith::ShLIOp, arith::ShRSIOp,
+          arith::ShRUIOp, arith::SubFOp, arith::SubIOp, arith::XOrIOp>());
+  auto it = builders->find(name);
+  if (it == builders->end()) {
+    throw nb::value_error(
+        absl::StrCat("Unsupported binary arith op: ", name).c_str());
+  }
+  auto [builder, location] = GetBuilder();
+  mlir::Value result =
+      it->second(builder, unwrap(lhs.get()), unwrap(rhs.get()));
+  return WrapMlirValue(location->getContext(), result);
 }
 
 }  // namespace
@@ -373,6 +429,19 @@ NB_MODULE(_jax_mlir_ext, m) {
         nb::sig("def arith_constant(value: int | float | bool, type: "
                 "mlir.ir.Type, /) -> mlir.ir.Value"),
         "Creates an arith.constant operation.");
+
+  m.def("vector_broadcast", &VectorBroadcast, nb::arg("type"),
+        nb::arg("source"),
+        nb::sig("def vector_broadcast(type: mlir.ir.Type, source: "
+                "mlir.ir.Value, /) -> mlir.ir.Value"),
+        "Creates a vector.broadcast operation.");
+
+  m.def("arith_binary_op", &ArithBinaryOp, nb::arg("name"), nb::arg("lhs"),
+        nb::arg("rhs"),
+        nb::sig("def arith_binary_op(name: str, lhs: mlir.ir.Value, rhs: "
+                "mlir.ir.Value, /) -> mlir.ir.Value"),
+        "Creates a binary arith operation, such as arith.addf, whose result "
+        "type is the type of its operands.");
 
   nb::class_<jax::TracebackToLocationCache>(m, "TracebackToLocationCache")
       .def(
