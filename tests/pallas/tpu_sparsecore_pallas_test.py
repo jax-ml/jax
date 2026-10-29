@@ -3105,6 +3105,81 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(kernel(x, flag_true), x)
     np.testing.assert_array_equal(kernel(x, flag_false), jnp.zeros_like(x))
 
+  def test_untouched_buffer_layout(self):
+    # A kernel that only orders work around a buffer, like an RDMA lock, never
+    # uses it. Under TC tiling its custom call tells XLA that the buffers may
+    # take any layout; SparseCore tiling flattens buffers in row major order.
+    if jtu.is_device_tpu(8, "i"):
+      mesh = plsc.VectorSubcoreMesh(
+          core_axis_name="core",
+          subcore_axis_name="subcore",
+          num_cores=1,
+          num_subcores=1,
+      )
+    else:
+      mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
+
+    def lock(*xs):
+      refs = [jax.new_ref(x, memory_space=pltpu.HBM) for x in xs]
+      self.kernel(mesh=mesh)(pltpu.touch)(refs)
+      return [jax.freeze(r) for r in refs]
+
+    def lock_and_read_second(x, y):
+      # Only y is used besides touch.
+      def body(x_ref, y_ref):
+        pltpu.touch(x_ref)
+        pltpu.touch(y_ref)
+        z_ref = jax.empty_ref(
+            jax.ShapeDtypeStruct(y_ref.shape, y_ref.dtype),
+            memory_space=pltpu.HBM,
+        )
+        pltpu.sync_copy(y_ref, z_ref)
+
+      refs = [jax.new_ref(a, memory_space=pltpu.HBM) for a in (x, y)]
+      self.kernel(mesh=mesh)(body)(*refs)
+      return [jax.freeze(r) for r in refs]
+
+    device_mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ("x",))
+
+    @jax.shard_map(
+        mesh=device_mesh, in_specs=jax.P(), out_specs=jax.P(), check_vma=False
+    )
+    def lock_and_signal(*xs):
+      # Peers may write the buffers once a communicating kernel runs.
+      def body(*refs):
+        *refs, sem = refs
+        jax.tree.map(pltpu.touch, refs)
+        pl.semaphore_signal(sem, device_id={"x": 0})
+        pl.semaphore_wait(sem)
+
+      refs = [jax.new_ref(x, memory_space=pltpu.HBM) for x in xs]
+      self.kernel(mesh=mesh, scratch_types=(pltpu.SemaphoreType.REGULAR(()),))(
+          body
+      )(*refs)
+      return [jax.freeze(r) for r in refs]
+
+    def tc_lock(*xs):
+      refs = [jax.new_ref(x, memory_space=pltpu.HBM) for x in xs]
+      pl.kernel(
+          pltpu.touch, mesh=pltpu.TensorCoreMesh(axis_name="t", num_cores=1)
+      )(refs)
+      return [jax.freeze(r) for r in refs]
+
+    x = jnp.arange(8 * 16 * 128, dtype=jnp.float32).reshape(8, 16, 128)
+
+    def hinted(f):
+      text = jax.jit(f).lower(x, x).as_text()
+      # The layouts stay for compilers that ignore the hint.
+      self.assertIn("operand_layouts", text)
+      return "xla_tpu_untouched_buffers" in text
+
+    self.assertEqual(hinted(lock), self.USE_TC_TILING)
+    # HLO constrains all layouts or none, so one used buffer keeps them all.
+    self.assertFalse(hinted(lock_and_read_second))
+    self.assertFalse(hinted(lock_and_signal))
+    # The TensorCore emitter verifies the tiling of every buffer.
+    self.assertFalse(hinted(tc_lock))
+    np.testing.assert_array_equal(jax.jit(lock)(x, x), [x, x])
 
 class VectorSubcoreTestWithTCTiling(VectorSubcoreTest):
   USE_TC_TILING = True
