@@ -50,6 +50,7 @@ from jax._src import tpu_info
 from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, ShapedArray, abstract_token,
                            canonicalize_shape)
+from jax._src.custom_derivatives import custom_jvp
 from jax._src.errors import UnexpectedTracerError
 from jax._src.hashable_array import HashableArray
 from jax._src.interpreters import ad
@@ -5051,9 +5052,37 @@ ad.defjvp(atan_p, lambda g, x: div(g, add(_const(x, 1), square(x))))
 mlir.register_lowering(atan_p, partial(_nary_lower_hlo, chlo.atan))
 
 atan2_p = standard_naryop([_float | _complex, _float | _complex], 'atan2')
-ad.defjvp(atan2_p,
-          lambda g, x, y: mul(g, div(y, add(square(x), square(y)))),
-          lambda g, x, y: mul(g, div(neg(x), add(square(x), square(y)))))
+
+
+def _atan2_jvp(primals, tangents):
+  # lax.atan2(x, y) computes theta = atan(x / y), which has derivative:
+  #   dtheta = d(x / y) / (1 + (x / y)^2) = (y * dx - x * dy) / (x^2 + y^2).
+  # For real inputs, x^2 + y^2 can overflow or underflow. Using
+  # (r, u1, u2) = hypot(x, y) = (sqrt(x^2 + y^2), x / r, y / r) factors out r:
+  #   dtheta = ((y / r) * dx - (x / r) * dy) / r = (u2 * dx - u1 * dy) / r,
+  # avoiding x^2 + y^2 overflow/underflow and keeping higher-order derivatives
+  # closed through _hypot_jvp (where dtheta is the same polar angle rate with
+  # (x1, x2) = (y, x)).
+  x, y = primals
+  dx, dy = tangents
+  out = atan2(x, y)
+  if _iscomplex(x):
+    # TODO(phawkins): Avoid overflow/underflow in x^2 + y^2 for complex inputs
+    # too (real hypot uses abs, which does not apply to complex atan2).
+    d = add(square(x), square(y))
+    tx = dx if type(dx) is ad_util.Zero else mul(dx, div(y, d))
+    ty = dy if type(dy) is ad_util.Zero else mul(dy, neg(div(x, d)))
+    t = ad.add_tangents(tx, ty)
+    return out, ad_util.p2tz(out) if type(t) is ad_util.Zero else t
+  r, u1, u2 = hypot(x, y)
+  num = ad.add_tangents(
+      dx if type(dx) is ad_util.Zero else mul(u2, dx),
+      dy if type(dy) is ad_util.Zero else neg(mul(u1, dy)),
+  )
+  return out, ad_util.p2tz(out) if type(num) is ad_util.Zero else div(num, r)
+
+
+ad.primitive_jvps[atan2_p] = _atan2_jvp
 mlir.register_lowering(atan2_p, partial(_nary_lower_hlo, hlo.atan2))
 
 sinh_p = standard_unop(_float | _complex, 'sinh')
@@ -5182,6 +5211,7 @@ def _conj_transpose_rule(t, x, *, input_dtype):
 ad.primitive_jvps[conj_p] = partial(ad.linear_jvp, conj_p)
 ad.primitive_transposes[conj_p] = _conj_transpose_rule
 
+@custom_jvp
 def hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
   """Returns (r, x1 / r, x2 / r) where r = hypot(x1, x2)."""
   # Rescale by a power of two so that (x1 * scale)^2 + (x2 * scale)^2 cannot
@@ -5198,10 +5228,13 @@ def hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
   # from overflowing or underflowing in all regimes.
   k = (finfo.nmant - finfo.minexp + 1) // 2
   e_hi = (finfo.maxexp - 1) // 2
-  hi = m >= _const(x1, 2.0**e_hi)
-  lo = m <= _const(x1, 2.0 ** (e_hi - k))
+  # Use m (which has the broadcast shape of x1 and x2) for constants and
+  # full_like, since callers like _atan2_jvp may pass broadcast-compatible
+  # inputs of different shapes and select requires matching shapes.
+  hi = m >= _const(m, 2.0**e_hi)
+  lo = m <= _const(m, 2.0 ** (e_hi - k))
   s_down, s_up, one = (
-      full_like(x1, 2.0**-k), full_like(x1, 2.0**k), full_like(x1, 1.0)
+      full_like(m, 2.0**-k), full_like(m, 2.0**k), full_like(m, 1.0)
   )
   inv_scale = select(hi, s_up, select(lo, s_down, one))
   scale = select(hi, s_down, select(lo, s_up, one))
@@ -5209,12 +5242,36 @@ def hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
   r_scaled = sqrt(square(y1) + square(y2))
   r = r_scaled * inv_scale
   if dtypes.supports_inf(x1.dtype):
-    inf = full_like(x1, np.inf)
+    inf = full_like(m, np.inf)
     r = select((a1 == inf) | (a2 == inf), inf, r)
   # The unit vector (x1 / r, x2 / r) is computed from the scaled values, so it
   # stays accurate when r is near the top of the floating-point range (where
   # 1 / r is subnormal and flushed on TPU) or overflows to inf.
   return r, y1 / r_scaled, y2 / r_scaled
+
+
+@hypot.defjvp
+def _hypot_jvp(primals, tangents):
+  # Write (x1, x2) in polar coordinates as (r cos theta, r sin theta), where
+  # u1 = cos theta and u2 = sin theta satisfy u1^2 + u2^2 = 1.
+  # Differentiating u1 and u2 gives:
+  #   du1 = -sin theta * dtheta = -u2 * dtheta
+  #   du2 =  cos theta * dtheta =  u1 * dtheta
+  # Differentiating x1 = r * u1 and x2 = r * u2 by the product rule gives:
+  #   dx1 = u1 * dr + r * du1 = u1 * dr - u2 * r * dtheta
+  #   dx2 = u2 * dr + r * du2 = u2 * dr + u1 * r * dtheta
+  # Taking linear combinations cancels the +-u1 * u2 cross terms:
+  #   u1 * dx1 + u2 * dx2 = (u1^2 + u2^2) * dr         = dr
+  #   u1 * dx2 - u2 * dx1 = (u1^2 + u2^2) * r * dtheta = r * dtheta
+  # Expressing (dr, du1, du2) in terms of (r, u1, u2) and dtheta avoids
+  # 1 - u_i^2 cancellation when one operand dominates and keeps higher-order
+  # derivatives closed without differentiating hypot's power-of-two rescaling.
+  x1, x2 = primals
+  dx1, dx2 = tangents
+  r, u1, u2 = hypot(x1, x2)
+  dr = add(mul(u1, dx1), mul(u2, dx2))
+  dtheta = div(sub(mul(u1, dx2), mul(u2, dx1)), r)
+  return (r, u1, u2), (dr, neg(mul(u2, dtheta)), mul(u1, dtheta))
 
 
 def _abs_lowering(ctx, x):
