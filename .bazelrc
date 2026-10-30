@@ -285,6 +285,7 @@ common:tsan_shared --linkopt=-shared-libsan
 
 # Build with oneAPI support
 common:oneapi --@rules_ml_toolchain//common:stdlib=libstdc++
+common:oneapi --@rules_ml_toolchain//common:static_libcxx=False
 common:oneapi --@rules_ml_toolchain//common:enable_sycl=True
 common:oneapi --repo_env=TF_NEED_SYCL=1
 common:oneapi --define=tensorflow_mkldnn_contraction_kernel=0
@@ -350,7 +351,7 @@ common:ci_linux_x86_64_cuda --config=ci_linux_x86_64_cuda12
 common:ci_linux_x86_64_cuda13 --config=cuda13
 common:ci_linux_x86_64_cuda13 --config=ci_linux_x86_64
 # Use NVCC for CUDA 13 builds since CUDA 13.4 nvcc supports libc++.
-common:ci_linux_x86_64_cuda12 --config=build_cuda_with_nvcc
+common:ci_linux_x86_64_cuda13 --config=build_cuda_with_nvcc
 
 # Linux Aarch64 CI configs
 common:ci_linux_aarch64_base --config=clang --verbose_failures=true

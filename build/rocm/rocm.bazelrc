@@ -27,6 +27,7 @@ common:rocm_clang_local --action_env=CLANG_COMPILER_PATH="/usr/lib/llvm-18/bin/c
 # ROCm with hermetic toolchain from rules_ml_toolchain
 common:rocm_clang_hermetic --config=rocm
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:stdlib=libstdc++
+common:rocm_clang_hermetic --@rules_ml_toolchain//common:static_libcxx=False
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_rocm=True
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_cuda=False
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_sycl=False
