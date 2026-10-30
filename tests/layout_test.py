@@ -840,7 +840,6 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(out.format.layout.major_to_minor, (1, 0))
     self.assertNotIn('all-reduce(', f.lower(arr1, arr2).compile().as_text())
 
-  @config.hijax_unreduced(True)
   @jtu.with_explicit_mesh((2,), 'x')
   def test_unreduced_relayout(self, mesh):
     arr1 = jax.device_put(

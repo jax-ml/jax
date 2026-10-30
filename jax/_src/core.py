@@ -2562,8 +2562,7 @@ class ShapedArray(AbstractValue):
 
   @property
   def is_high(self) -> bool:
-    return bool(config.hijax_unreduced.value and
-                (self.sharding.spec.unreduced or self.mat.unreduced))
+    return bool(self.sharding.spec.unreduced or self.mat.unreduced)
 
   def lo_ty(self) -> list[AbstractValue]:
     if not self.is_high:
@@ -2583,8 +2582,11 @@ class ShapedArray(AbstractValue):
     if mat.unreduced:
       mat = ManualAxisType(varying=mat.varying | mat.unreduced,
                            reduced=mat.reduced)
-    return [self.update(shape=shape, sharding=sharding, manual_axis_type=mat,
-                        layout=layout)]
+    out = self.update(shape=shape, sharding=sharding, manual_axis_type=mat,
+                      layout=layout)
+    assert not out.sharding.spec.unreduced and not out.mat.unreduced
+    assert out.sharding.spec.unreduced_kind is None
+    return [out]
 
   def lower_val(self, hi_val: Any, /) -> list[Any]:
     if not self.is_high:

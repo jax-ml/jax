@@ -846,7 +846,7 @@ def pjit_check_aval_sharding(
           'unspecified shardings are allowed for non-array types. If this '
           'would be useful to you, please open an issue at '
           'https://github.com/jax-ml/jax/issues.')
-    if (config.hijax_unreduced.value and what_aval == 'pjit outputs' and
+    if (what_aval == 'pjit outputs' and
         isinstance(aval, core.ShapedArray) and isinstance(s, NamedSharding) and
         aval.sharding.spec.unreduced != s.spec.unreduced):
       raise ValueError(
@@ -920,8 +920,7 @@ def _lojax_expand_params(
   out_lol = out_avals.unpack()
 
   def _lower_sharding(s):
-    if (config.hijax_unreduced.value and isinstance(s, NamedSharding) and
-        s.spec.unreduced):
+    if isinstance(s, NamedSharding) and s.spec.unreduced:
       u_axes = core.order_wrt_mesh(s.mesh, s.spec.unreduced)
       lo_spec = s.spec.update(
           partitions=(*u_axes, *s.spec.partitions),
@@ -2335,7 +2334,7 @@ reshard_p.skip_canonicalization = True
 
 def _reshard_is_high(aval, *, dst_sharding, **__):
   return (aval.is_high or
-          (config.hijax_unreduced.value and isinstance(dst_sharding, NamedSharding)
+          (isinstance(dst_sharding, NamedSharding)
            and bool(dst_sharding.spec.unreduced)))
 reshard_p.is_high = _reshard_is_high
 

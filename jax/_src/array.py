@@ -307,7 +307,10 @@ class ArrayImpl(basearray.Array):
 
   @property
   def sharding(self):
-    return self._sharding
+    s = self._sharding
+    if isinstance(s, NamedSharding):
+      assert not s.spec.unreduced
+    return s
 
   @property
   def device(self):
@@ -365,10 +368,8 @@ class ArrayImpl(basearray.Array):
     return self._value.tolist()
 
   def __format__(self, format_spec):
-    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
-      return repr(self)
-    elif (self.is_fully_addressable or self.is_fully_replicated and
-          self.sharding.has_addressable_devices):
+    if (self.is_fully_addressable or self.is_fully_replicated and
+        self.sharding.has_addressable_devices):
       # Simulates behavior of https://github.com/numpy/numpy/pull/9883
       return format(self._value if self.ndim else self._value[()], format_spec)
     else:
@@ -397,9 +398,7 @@ class ArrayImpl(basearray.Array):
     else:
       dtype_str = f'dtype={self.dtype.name}'
 
-    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
-      return f"Array(shape={self.shape}, {dtype_str}, sharding={self.sharding})"
-    elif self.is_fully_addressable or self.is_fully_replicated:
+    if self.is_fully_addressable or self.is_fully_replicated:
       line_width = np.get_printoptions()["linewidth"]
       if self.size == 0:
         s = f"[], shape={self.shape}"
@@ -417,10 +416,8 @@ class ArrayImpl(basearray.Array):
       return f"{prefix}shape={self.shape}, {dtype_str})"
 
   def __str__(self):
-    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
-      return repr(self)
-    elif (self.is_fully_addressable or self.is_fully_replicated and
-          self.sharding.has_addressable_devices) and self.nbytes < 1 << 20:
+    if (self.is_fully_addressable or self.is_fully_replicated and
+        self.sharding.has_addressable_devices) and self.nbytes < 1 << 20:
       return str(self._value)  # doesn't print Array(...)
     else:
       return repr(self)

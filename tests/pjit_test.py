@@ -8182,12 +8182,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     traced = f.trace(x, y, a, b)
     lowered_text = traced.lower().as_text()
-    if config.hijax_unreduced.value:
-      self.assertEqual(str(traced.jaxpr).count('{U:y}'), 3)
-      self.assertNotIn('unreduced', lowered_text)
-    else:
-      self.assertIn('unreduced={"y"}', lowered_text)
-      self.assertEqual(lowered_text.count('unreduced={"y"}'), 3)
+    self.assertEqual(str(traced.jaxpr).count('{U:y}'), 3)
+    self.assertNotIn('unreduced', lowered_text)
 
     f_bar = jax.jit(jax.grad(lambda x, y, a, b: f(x, y, a, b).sum(),
                             argnums=(0, 1, 2, 3)))
@@ -8330,11 +8326,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     traced = f.trace(arr1, arr2, arr3)
     lowered_text = traced.lower().as_text()
-    if config.hijax_unreduced.value:
-      self.assertEqual(str(traced.jaxpr).count('{U:x}'), 1)
-      self.assertNotIn('unreduced', lowered_text)
-    else:
-      self.assertEqual(lowered_text.count('unreduced={"x"}'), 3)
+    self.assertEqual(str(traced.jaxpr).count('{U:x}'), 1)
+    self.assertNotIn('unreduced', lowered_text)
 
     out = f(arr1, arr2, arr3)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('y', unreduced={'x'})))
@@ -9481,11 +9474,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     traced = f.trace(x)
     lowered_text = traced.lower().as_text()
-    if config.hijax_unreduced.value:
-      self.assertEqual(str(traced.jaxpr).count('{U:x}'), 1)
-      self.assertNotIn('unreduced', lowered_text)
-    else:
-      self.assertEqual(lowered_text.count('unreduced={"x"}'), 3)
+    self.assertEqual(str(traced.jaxpr).count('{U:x}'), 1)
+    self.assertNotIn('unreduced', lowered_text)
 
     out = f(x)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
@@ -9644,7 +9634,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     compiled_text = step.lower(stacked_ws, xs).compile().as_text()
     self.assertEqual(compiled_text.count('all-reduce('), 1)
 
-  @config.hijax_unreduced(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_scan_unreduced_multi_axes(self, mesh):
     np_a = np.arange(3 * 2 * 4, dtype=np.float32).reshape(3, 2, 4)
@@ -11015,46 +11004,30 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_identity_jit_out_unreduced(self, mesh):
-    expected_spec = (P(None, unreduced={'x'}) if config.hijax_unreduced.value
-                     else P(unreduced={'x'}))
-
-    def check_rep_to_unreduced(out):
-      self.assertEqual(out.sharding, NamedSharding(mesh, expected_spec))
-      for s, es in zip(out.addressable_shards, [np.arange(4), np.zeros((4,))]):
-        self.assertArraysEqual(s.data, es, check_dtypes=False)
+    expected_spec = P(None, unreduced={'x'})
 
     rep_inp = jnp.arange(4)
-    if config.hijax_unreduced.value:
-      with self.assertRaisesRegex(
-          ValueError,
-          r'Changing `unreduced` via `jax\.jit\(\.\.\., out_shardings=\.\.\.\)`'
-          r' is not supported'):
-        jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(rep_inp)
-    else:
-      f = jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))
-      out = f(rep_inp)
-      check_rep_to_unreduced(out)
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Changing `unreduced` via `jax\.jit\(\.\.\., out_shardings=\.\.\.\)`'
+        r' is not supported'):
+      jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(rep_inp)
     out2 = jax.device_put(rep_inp, P(unreduced={'x'}))
-    check_rep_to_unreduced(out2)
-
-    def check_shd_to_unreduced(out):
-      self.assertEqual(out.sharding, NamedSharding(mesh, expected_spec))
-      for s, es in zip(out.addressable_shards,
-                      [np.array([0, 1, 0, 0]), np.array([0, 0, 2, 3])]):
-        self.assertArraysEqual(s.data, es, check_dtypes=False)
+    self.assertEqual(out2.sharding, NamedSharding(mesh, expected_spec))
+    for s, es in zip(out2.addressable_shards, [np.arange(4), np.zeros((4,))]):
+      self.assertArraysEqual(s.data, es, check_dtypes=False)
 
     shd_inp = jax.device_put(np.arange(4), P('x'))
-    if config.hijax_unreduced.value:
-      with self.assertRaisesRegex(
-          ValueError,
-          r'Changing `unreduced` via `jax\.jit\(\.\.\., out_shardings=\.\.\.\)`'
-          r' is not supported'):
-        jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(shd_inp)
-    else:
-      out = jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(shd_inp)
-      check_shd_to_unreduced(out)
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Changing `unreduced` via `jax\.jit\(\.\.\., out_shardings=\.\.\.\)`'
+        r' is not supported'):
+      jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(shd_inp)
     out2 = jax.device_put(shd_inp, P(unreduced={'x'}))
-    check_shd_to_unreduced(out2)
+    self.assertEqual(out2.sharding, NamedSharding(mesh, expected_spec))
+    for s, es in zip(out2.addressable_shards,
+                     [np.array([0, 1, 0, 0]), np.array([0, 0, 2, 3])]):
+      self.assertArraysEqual(s.data, es, check_dtypes=False)
 
   def test_abstract_mesh_context_trace(self):
     abstract_mesh = jax.sharding.AbstractMesh((2,), ('x',), (AxisType.Explicit,))
@@ -11410,17 +11383,16 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertNotIn('all-gather(', hlo)
     self.assertIn('all-reduce(', hlo)
 
-    if config.hijax_unreduced.value:
-      out = f(a, b, P(unreduced={'x'}))
-      self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
-      expected_shards = [np.array([1, 0, 0, 0]),
-                         np.array([0, 5, 0, 0]),
-                         np.array([0, 4, 5, 0]),
-                         np.array([0, 0, 6, 7])]
-      for s, ex_data in zip(out.addressable_shards, expected_shards):
-        self.assertArraysEqual(s.data, ex_data, check_dtypes=False)
-      self.assertArraysEqual(reshard(out, P()), np.array([1, 9, 11, 7]),
-                             check_dtypes=False)
+    out = f(a, b, P(unreduced={'x'}))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    expected_shards = [np.array([1, 0, 0, 0]),
+                       np.array([0, 5, 0, 0]),
+                       np.array([0, 4, 5, 0]),
+                       np.array([0, 0, 6, 7])]
+    for s, ex_data in zip(out.addressable_shards, expected_shards):
+      self.assertArraysEqual(s.data, ex_data, check_dtypes=False)
+    self.assertArraysEqual(reshard(out, P()), np.array([1, 9, 11, 7]),
+                           check_dtypes=False)
 
   @jtu.with_explicit_mesh((4,), ("x",))
   def test_segment_max(self, mesh):
@@ -11493,7 +11465,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       with self.assertRaises(core.ForbiddenCollectiveError):
         jax.jit(f_add)(x, upd)
 
-  @config.hijax_unreduced(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_scatter_add_hijax_unreduced(self, mesh):
     x_np = np.arange(16, dtype=np.float32).reshape(4, 4) + 3.0
@@ -11542,7 +11513,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                       P(None, None, unreduced={'y'})),
               idx, jax.device_put(upd_np, P('x', None)))
 
-  @config.hijax_unreduced(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_optimization_barrier_hijax_unreduced(self, mesh):
     a_np = np.arange(8, dtype=np.float32).reshape(2, 4)

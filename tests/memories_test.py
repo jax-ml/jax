@@ -1780,7 +1780,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     lowered_text = f.lower(inp).as_text()
     self.assertIn("_xla_compute_type", lowered_text)
 
-  @config.hijax_unreduced(True)
   @jtu.with_explicit_mesh((4, 2), ("x", "y"))
   def test_compute_on_reduced_fwd_unreduced_bwd(self, mesh):
     if jtu.is_device_tpu_at_least(7) and not jtu.is_libtpu_at_least("0.0.52"):

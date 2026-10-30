@@ -804,9 +804,8 @@ def _emit_lo_shmap_eqn(trace, lo_jaxpr, consts, lo_args, lo_in_specs,
 
 def _shard_map_is_high(*_, jaxpr, in_specs, out_specs, **__):
   return (jaxpr.is_high or
-          (config.hijax_unreduced.value and
-           any(isinstance(s, PartitionSpec) and s.unreduced
-               for s in (*in_specs, *out_specs))))
+          any(isinstance(s, PartitionSpec) and s.unreduced
+              for s in (*in_specs, *out_specs)))
 shard_map_p.is_high = _shard_map_is_high
 
 

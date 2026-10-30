@@ -2905,14 +2905,6 @@ def _unreduced_reduce_scatter_batcher(
       "Please file an issue at https://github.com/jax-ml/jax/issues")
 batching.fancy_primitive_batchers[unreduced_reduce_scatter_p] = _unreduced_reduce_scatter_batcher
 
-def _unreduced_reduce_scatter_lowering(
-    prim, ctx, x, *, axis_name, scatter_dimension, axis_size, tiled):
-  return _reduce_scatter_lowering(
-      prim, ctx, x, axis_name=axis_name, scatter_dimension=scatter_dimension,
-      axis_size=axis_size, tiled=tiled, axis_index_groups=None)
-mlir.register_lowering(unreduced_reduce_scatter_p,
-                       partial(_unreduced_reduce_scatter_lowering, lax.add_p))
-
 ############################## unreduced_psum ###########################
 
 # Unreduced -> Invariant collective
@@ -2960,11 +2952,6 @@ def _unreduced_psum_abstract_eval(aval, *, axes):
       'unreduced_psum', UnreducedKind.sum, aval, axes=axes)
 unreduced_psum_p.def_effectful_abstract_eval(_unreduced_psum_abstract_eval)
 
-def _unreduced_psum_lowering(ctx, arg, *, axes):
-  return _all_reduce_lowering(lax.add_p, lax.reduce_sum, ctx, arg,
-                             axes=axes, axis_index_groups=None)
-mlir.register_lowering(unreduced_psum_p, _unreduced_psum_lowering)
-
 def _unreduced_psum_batcher(axis_data, vals_in, dims_in, axes):
   raise NotImplementedError
 batching.fancy_primitive_batchers[unreduced_psum_p] = _unreduced_psum_batcher
@@ -2992,11 +2979,6 @@ def _unreduced_pmax_abstract_eval(aval, *, axes):
       'unreduced_pmax', UnreducedKind.max, aval, axes=axes)
 unreduced_pmax_p.def_effectful_abstract_eval(_unreduced_pmax_abstract_eval)
 
-def _unreduced_pmax_lowering(ctx, arg, *, axes):
-  return _all_reduce_lowering(lax.max_p, lax.reduce_max, ctx, arg, axes=axes,
-                             axis_index_groups=None)
-mlir.register_lowering(unreduced_pmax_p, _unreduced_pmax_lowering)
-
 def _unreduced_pmax_batcher(axis_data, vals_in, dims_in, axes):
   raise NotImplementedError
 batching.fancy_primitive_batchers[unreduced_pmax_p] = _unreduced_pmax_batcher
@@ -3018,11 +3000,6 @@ def _unreduced_pmin_abstract_eval(aval, *, axes):
   return _unreduced_psum_pmax_pmin_abstract_eval(
       'unreduced_pmin', UnreducedKind.min, aval, axes=axes)
 unreduced_pmin_p.def_effectful_abstract_eval(_unreduced_pmin_abstract_eval)
-
-def _unreduced_pmin_lowering(ctx, arg, *, axes):
-  return _all_reduce_lowering(lax.min_p, lax.reduce_min, ctx, arg, axes=axes,
-                             axis_index_groups=None)
-mlir.register_lowering(unreduced_pmin_p, _unreduced_pmin_lowering)
 
 def _unreduced_pmin_batcher(axis_data, vals_in, dims_in, axes):
   raise NotImplementedError
@@ -3093,7 +3070,6 @@ def vary_unreduced_cast(x, axis_name):
 
 vary_unreduced_cast_p = core.Primitive('vary_unreduced_cast')
 vary_unreduced_cast_p.def_impl(partial(_raise_valueerror, 'vary_unreduced_cast'))
-mlir.register_lowering(vary_unreduced_cast_p, lambda ctx, x, *, axes: [x])
 
 def _vary_unreduced_cast_abstract_eval(aval, *, axes):
   assert isinstance(axes, tuple)
@@ -3204,7 +3180,7 @@ def _vary_unreduced_cast_to_lojax(hi_val, **params):
   lo_val, = in_aval.lower_val(hi_val)
   # Don't rebind vary_unreduced_cast_p since this is a HiJAX primitive only.
   return out_aval.raise_val(lo_val)
-vary_unreduced_cast_p.is_high = lambda *_, **__: config.hijax_unreduced.value
+vary_unreduced_cast_p.is_high = lambda *_, **__: True
 vary_unreduced_cast_p.to_lojax = _vary_unreduced_cast_to_lojax
 
 
@@ -3216,7 +3192,7 @@ def _unreduced_all_reduce_to_lojax(hi_prim, lo_fn, hi_val, *, axes):
 
 for _hi_p, _lo_fn in ((unreduced_psum_p, psum), (unreduced_pmax_p, pmax),
                       (unreduced_pmin_p, pmin)):
-  _hi_p.is_high = lambda *_, **__: config.hijax_unreduced.value
+  _hi_p.is_high = lambda *_, **__: True
   _hi_p.to_lojax = partial(_unreduced_all_reduce_to_lojax, _hi_p, _lo_fn)
 
 
@@ -3228,8 +3204,7 @@ def _unreduced_reduce_scatter_to_lojax(hi_val, **params):
   lo_out = psum_scatter(
       lo_val, params['axis_name'], scatter_dimension=lo_dim, tiled=params['tiled'])
   return out_aval.raise_val(lo_out)
-unreduced_reduce_scatter_p.is_high = (
-    lambda *_, **__: config.hijax_unreduced.value)
+unreduced_reduce_scatter_p.is_high = lambda *_, **__: True
 unreduced_reduce_scatter_p.to_lojax = _unreduced_reduce_scatter_to_lojax
 
 ################################## pcast #############################

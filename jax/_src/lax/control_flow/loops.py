@@ -62,7 +62,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.mesh import get_abstract_mesh, use_abstract_mesh
-from jax._src.pjit import PartitionSpec as P, auto_axes, reshard
+from jax._src.pjit import PartitionSpec as P, auto_axes
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.state import AbstractRef, discharge as state_discharge
 from jax._src.traceback_util import api_boundary
@@ -693,17 +693,7 @@ def _scan_impl(*args, reverse, length, ft_in, ft_out, jaxpr,
   if remainder:
     carry, ys_rem = inner(remainder, carry, xs_rem)
     ys = _map(_concat, ys, ys_rem) if not reverse else _map(_concat, ys_rem, ys)
-  # If any carry leaf is unreduced, we need to add a reshard to
-  # typeof(carry).sharding which inserts a sharding_constraint so that shardy
-  # knows not to AR at the boundary of while. This is a no-op at the trace level
-  # but during lowering time, it inserts an extra sharding constraint.
-  carry = tree_map(_constrain_unreduced, carry)
-  ys = tree_map(_constrain_unreduced, ys)
   return [*carry, *ys]
-
-def _constrain_unreduced(val):
-  val_s = core.typeof(val).sharding
-  return reshard(val, val_s) if val_s.spec.unreduced else val
 
 def _split_leading(sz, x):
   return (slicing.slice_in_dim(x, 0, sz),

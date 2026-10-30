@@ -108,11 +108,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       self.assertEqual(jax.typeof(y).sharding.spec, out_spec)
       return y
 
-    uses_shmap = is_rs and (lax_op is lax.reduce_sum)
+    uses_shmap = (is_rs and (lax_op is lax.reduce_sum)) or bool(out_spec.reduced)
     lowered_text = f.lower(arr).as_text()
     self.assertEqual('sdy.manual_computation' in lowered_text, uses_shmap)
     if uses_shmap:
-      self.assertIn('reduce_scatter', lowered_text)
+      self.assertEqual('reduce_scatter' in lowered_text, is_rs)
       self.assertEqual('all_reduce' in lowered_text, has_ar)
 
     out = f(arr)

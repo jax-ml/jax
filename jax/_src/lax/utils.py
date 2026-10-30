@@ -124,7 +124,7 @@ def unreduced_is_high(sharding_param: str | None = None):
   def _is_high(*avals, **params):
     if any(a.is_high for a in avals):
       return True
-    if sharding_param is not None and config.hijax_unreduced.value:
+    if sharding_param is not None:
       s = params.get(sharding_param)
       return isinstance(s, NamedSharding) and bool(s.spec.unreduced)
     return False

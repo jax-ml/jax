@@ -331,8 +331,6 @@ class SdyArray:
   dim_shardings: tuple[SdyDim, ...]
   logical_device_ids: tuple[int, ...] | None = None
   replicated_axes: frozenset[str] = frozenset()
-  unreduced_axes: frozenset[str] = frozenset()
-  reduction_op: Any = None
 
   replace = dataclasses.replace
 
@@ -352,13 +350,11 @@ class SdyArray:
           ldi)
 
     replicated_axes = _get_axes(self.replicated_axes, self.mesh_shape)
-    unreduced_axes = _get_axes(self.unreduced_axes, self.mesh_shape)
     attr = sdy.TensorShardingAttr.get(
         mesh_attr,
         [dim_sharding.build() for dim_sharding in self.dim_shardings],
         replicated_axes=[sdy.AxisRefAttr.get(axis) for axis in replicated_axes],
-        unreduced_axes=[sdy.AxisRefAttr.get(axis) for axis in unreduced_axes],
-        reduction_op=self.reduction_op)  # type: ignore
+        unreduced_axes=[])
     attr_cache[self] = attr
     return attr
 
@@ -369,11 +365,7 @@ class SdyArray:
                       if self.logical_device_ids is not None else '')
     rar = (f', replicated_axes={self.replicated_axes}'
            if self.replicated_axes else '')
-    ur = (f', unreduced_axes={self.unreduced_axes}'
-          if self.unreduced_axes else '')
-    red_op = (f', reduction_op={self.reduction_op}'
-              if self.reduction_op is not None else '')
-    return f"SdyArray([{dim_sharding_repr}]{device_id_repr}{rar}{ur}{red_op})"
+    return f"SdyArray([{dim_sharding_repr}]{device_id_repr}{rar})"
 
 
 def remove_size_one_mesh_axis_from_spec(spec, mesh) -> PartitionSpec:
@@ -488,6 +480,7 @@ uk_map = {UnreducedKind.sum: sdy.ReductionOp.SUM,
 @cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_sdy_sharding(self, num_dimensions: int,
                                    modify_wrt_axis_types: bool) -> SdyArray:
+  assert not self.spec.unreduced
   dim_shardings = [SdyDim(axes=(), is_open=False)] * num_dimensions
   for i, dim_spec in enumerate(self.spec.partitions):
     if dim_spec is PartitionSpec.UNCONSTRAINED:
@@ -506,13 +499,10 @@ def named_sharding_to_sdy_sharding(self, num_dimensions: int,
         r for r in self.replicated_axes
         if self.mesh._name_to_type[r] == mesh_lib.AxisType.Explicit)
 
-  reduction_op = uk_map.get(self.spec.unreduced_kind, None)
   return SdyArray(mesh_shape=self.mesh.shape_tuple,
                   dim_shardings=tuple(dim_shardings),
                   logical_device_ids=self._logical_device_ids,
-                  replicated_axes=explicit_replicated_axes,
-                  unreduced_axes=self.spec.unreduced,
-                  reduction_op=reduction_op)
+                  replicated_axes=explicit_replicated_axes)
 
 
 def array_mapping_to_axis_resources(array_mapping: ArrayMapping):

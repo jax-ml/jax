@@ -1740,26 +1740,15 @@ class TokenSet:
     })
 
 
-def _aval_unreduced_sharding(aval):
-  if isinstance(aval, core.ShapedArray) and aval.sharding.spec.unreduced:
-    return aval.sharding
-  return None
-
-def _get_arg_shardings(arg_shardings, in_avals, num_dim_vars, num_tokens):
-  prefix_shardings = [None] * (num_dim_vars + num_tokens)
+def _get_arg_shardings(arg_shardings, num_dim_vars, num_tokens):
   if arg_shardings is None:
-    arg_shardings = [_aval_unreduced_sharding(a) for a in in_avals]
-    if all(s is None for s in arg_shardings):
-      return None
-  return [*prefix_shardings, *arg_shardings]
+    return None
+  return [*([None] * (num_dim_vars + num_tokens)), *arg_shardings]
 
-def _get_res_shardings(result_shardings, out_avals, num_tokens):
-  token_shardings = [None] * num_tokens
+def _get_res_shardings(result_shardings, num_tokens):
   if result_shardings is None:
-    result_shardings = [_aval_unreduced_sharding(o) for o in out_avals]
-    if all(s is None for s in result_shardings):
-      return None
-  return [*token_shardings, *result_shardings]
+    return None
+  return [*([None] * num_tokens), *result_shardings]
 
 
 
@@ -1871,8 +1860,8 @@ def lower_jaxpr_to_fun(
                             else a + num_tokens
                             for a in input_output_aliases]
 
-  arg_shardings = _get_arg_shardings(arg_shardings, in_avals, num_dim_vars, num_tokens)
-  result_shardings = _get_res_shardings(result_shardings, out_avals, num_tokens)
+  arg_shardings = _get_arg_shardings(arg_shardings, num_dim_vars, num_tokens)
+  result_shardings = _get_res_shardings(result_shardings, num_tokens)
 
   if replicated_args is not None:
     prefix_replicated_args = [False] * (num_dim_vars + num_tokens)
@@ -1985,11 +1974,9 @@ def lower_jaxpr_to_fun(
         if replicated:
           attrs["mhlo.is_same_data_across_replicas"] = ir.BoolAttr.get(True)
 
-    if ir_arg_shardings is not None:
-      for attrs, ir_s, arg_s in zip(arg_attrs, ir_arg_shardings, arg_shardings):  # pyrefly: ignore[bad-argument-type]
-        if (ir_s is not None and
-            (use_sharding_annotations or
-            (isinstance(arg_s, NamedSharding) and arg_s.spec.unreduced))):
+    if ir_arg_shardings is not None and use_sharding_annotations:
+      for attrs, ir_s in zip(arg_attrs, ir_arg_shardings):
+        if ir_s is not None:
           attrs["sdy.sharding"] = get_sharding_attr(ctx, ir_s)
 
     if ir_arg_memory_kinds is not None:
@@ -2057,13 +2044,11 @@ def lower_jaxpr_to_fun(
       for attrs, name_ in zip(named_result_attrs, result_names):
         attrs['jax.result_info'] = ir.StringAttr.get(name_)
 
-  if ir_result_shardings is not None:
-    for attrs, ir_s, res_s, cu in zip(
-        result_attrs, ir_result_shardings, result_shardings,  # pyrefly: ignore[bad-argument-type]
+  if ir_result_shardings is not None and use_sharding_annotations:
+    for attrs, ir_s, cu in zip(
+        result_attrs, ir_result_shardings,
         sharding_contains_unconstrained):  # type: ignore
-      if (ir_s is not None and not cu and
-          (use_sharding_annotations or
-          (isinstance(res_s, NamedSharding) and res_s.spec.unreduced))):
+      if ir_s is not None and not cu:
         attrs["sdy.sharding"] = get_sharding_attr(ctx, ir_s)
 
   if ir_result_memory_kinds is not None:
@@ -2129,12 +2114,6 @@ def lower_jaxpr_to_fun(
         axis_size_env=None, dim_var_values=dim_var_values,
         const_lowering=const_lowering)
 
-    flat_args = [
-        lower_with_sharding_in_types(entry_lowering_ctx, o, aval)
-        if isinstance(aval, core.ShapedArray) and aval.sharding.spec.unreduced
-        else o for o, aval in zip(flat_args, input_avals)
-    ]
-
     if not use_sharding_annotations and ir_arg_shardings is not None:
       flat_args = [
           a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
@@ -2193,12 +2172,6 @@ def lower_jaxpr_to_fun(
           for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,
                                  result_shardings)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       ]
-
-    flat_outputs = [
-        lower_with_sharding_in_types(entry_lowering_ctx, o, aval)
-        if isinstance(aval, core.ShapedArray) and aval.sharding.spec.unreduced
-        else o for o, aval in zip(flat_outputs, output_avals)
-    ]
 
     func_dialect.return_(flat_outputs)
 
@@ -2596,12 +2569,6 @@ def _maybe_lower_with_shard_map(
   if not mesh.explicit_axes:
     return None
 
-  if any(isinstance(a, core.ShapedArray) and
-         (a.sharding.spec.unreduced or a.sharding.spec.reduced)
-         for a in (*ctx.avals_in, out_aval)):
-    # TODO(rdyro): Delete this once unreduced in hijax lands.
-    return None
-
   if (collectives := rule(*ctx.avals_in, out_aval, **params)) is None:
     return None
   assert isinstance(collectives, PartitioningRule)
@@ -2766,9 +2733,8 @@ def lower_per_platform(ctx: LoweringRuleContext,
     rule, = kept_rules
     output = type_cast(Sequence[IrValues], rule(ctx, *rule_args, **rule_kwargs))
     flat_output, _ = ir_tree_registry.flatten(output)
-    for o, a in zip(flat_output, ctx.avals_out):
+    for o in flat_output:
       if not isinstance(o, ir.BlockArgument):
-        check_unreduced_constraint(o, a, description)
         wrap_compute_type_in_place(ctx, o)
         wrap_xla_metadata_in_place(ctx, o)
     return flat_output
@@ -2810,9 +2776,8 @@ def lower_per_platform(ctx: LoweringRuleContext,
       except TypeError as e:
         raise ValueError("Output of translation rule must be iterable: "
                         f"{description}, got output {output}") from e
-      for o, a in zip(out_nodes, ctx.avals_out):
+      for o in out_nodes:
         if not isinstance(o, ir.BlockArgument):
-          check_unreduced_constraint(o, a, description)
           wrap_compute_type_in_place(ctx, o)
           wrap_xla_metadata_in_place(ctx, o)
       if inner_ctx.tokens_out is not None:
@@ -3063,26 +3028,6 @@ def wrap_xla_metadata_in_place(ctx: LoweringRuleContext,
   _update_frontend_attributes(op, ctx_attributes)
 
 
-def check_unreduced_constraint(op: ir.Value | ir.Operation, aval, name) -> None:
-  if not isinstance(aval, core.ShapedArray):
-    return
-  if not aval.sharding.spec.unreduced:
-    return
-  if isinstance(op, ir.Value):
-    op = op.owner.operation if isinstance(op.owner, ir.OpView) else op.owner  # type: ignore
-  assert isinstance(op, ir.Operation)
-  if op.name == "mpmd.named_computation":
-    return
-  assert op.name == "sdy.sharding_constraint", (
-      f"Expected last op to be sdy.sharding_constraint, but got: {op.name} and "
-      f"output type={aval.str_short(True)} for primitive {name}")
-  sharding = sdy.TensorShardingAttr(op.attributes["sharding"])
-  assert sharding.unreduced_axes, (
-      "Expected sdy.sharding_constraint to have unreduced_axes populated, but"
-      f" got: {sharding} and output type={aval.str_short(True)} for primitive"
-      f" {name}")
-
-
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
                      broadcast_dimensions) -> ir.Value:
   # broadcast_dimension[i] is the axis of the result where the axis i of
@@ -3127,15 +3072,11 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
     out_aval = core.ShapedArray(
         out_shape, op_aval.dtype, sharding=out_sharding)  # pyrefly: ignore[missing-attribute]
     if core.definitely_equal_shape(op_aval_shape, out_shape):
-      if op_aval_sharding.spec.unreduced or op_aval_sharding.spec.reduced:
-        out.append(op)
-      elif op_aval_sharding == out_sharding:
+      if op_aval_sharding.spec.reduced or op_aval_sharding == out_sharding:
         out.append(op)
       else:
         out.append(lower_with_explicit_types(ctx, op, out_aval))
     else:
-      if op_aval_sharding.spec.unreduced:
-        raise NotImplementedError()
       assert len(op_aval_shape) <= len(out_shape), (op_aval_shape, out_shape)
       broadcast_dimensions = list(range(len(out_shape) - len(op_aval_shape), len(out_shape)))
       b_out = broadcast_in_dim(

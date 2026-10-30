@@ -3126,7 +3126,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysAllClose(ex_out1, out1, rtol=2e-4)
     self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
 
-  @config.hijax_unreduced(True)
   @jtu.with_explicit_mesh((2,), 'x')
   def test_shmap_unreduced_scan_extensive(self, mesh):
     np_xs = np.arange(3 * 2 * 4, dtype=np.float32).reshape(3, 2, 4)

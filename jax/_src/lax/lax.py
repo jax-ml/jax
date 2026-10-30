@@ -6833,8 +6833,7 @@ dot_general_p = standard_primitive(
 
 
 def _dot_general_is_high(*avals, out_sharding=None, **__):
-  return (config.hijax_unreduced.value and out_sharding is not None and
-          bool(out_sharding.spec.unreduced))
+  return out_sharding is not None and bool(out_sharding.spec.unreduced)
 dot_general_p.is_high = _dot_general_is_high  # type: ignore[method-assign]
 
 
