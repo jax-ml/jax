@@ -534,9 +534,10 @@ def ragged_paged_attention_kernel(
                                      row_ids - sliding_window >= col_ids)
       if soft_cap is not None:
         qk = soft_cap * jnp.tanh(qk / soft_cap)
-      qk += jnp.where(causal_mask, mask_value, 0.0)
+      qk = jnp.where(causal_mask, mask_value, qk)
       m_curr = jnp.max(qk, axis=1, keepdims=True)
-      s_curr = jnp.exp(qk - m_curr)
+      m_curr_safe = jnp.where(m_curr <= mask_value, 0.0, m_curr)
+      s_curr = jnp.exp(qk - m_curr_safe)
       qkv = jnp.dot(s_curr, v, preferred_element_type=jnp.float32)
       lm_store_shape = head_m_ref.shape
       m_curr = jnp.broadcast_to(m_curr, lm_store_shape)
@@ -549,8 +550,9 @@ def ragged_paged_attention_kernel(
       masked_store(
           head_m_ref, m_next, store_start, store_end, num_q_heads_per_kv_head
       )
-      alpha = jnp.exp(m_prev - m_next)
-      beta = jnp.exp(m_curr - m_next)
+      m_next_safe = jnp.where(m_next <= mask_value, 0.0, m_next)
+      alpha = jnp.exp(m_prev - m_next_safe)
+      beta = jnp.exp(m_curr - m_next_safe)
       l_alpha = alpha * l_prev
       l_next = l_alpha + beta * l_curr
       l_next_safe = jnp.where(l_next == 0.0, 1.0, l_next)
