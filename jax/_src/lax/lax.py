@@ -4506,6 +4506,13 @@ def unop_ur_rule(name, aval, **kwargs):
 def unop_layout_rule(out_aval, aval, **kwargs):
   return aval.layout
 
+def _unop_collective_rule(in_aval, out_aval, **params):
+  if ((not in_aval.sharding.mesh.empty and
+       in_aval.sharding.mesh != out_aval.sharding.mesh) or
+      in_aval.sharding.spec != out_aval.sharding.spec):
+    return None
+  return mlir.PartitioningRule()
+
 def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True,
          ur_rule=None):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name,
@@ -4517,6 +4524,7 @@ def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True,
       ur_rule=partial(unop_ur_rule, name) if ur_rule is None else ur_rule,
       layout_rule=unop_layout_rule)
   batching.defvectorized(prim)
+  mlir.shard_map_collective_rules[prim] = _unop_collective_rule
   return prim
 
 standard_unop = partial(unop, _identity)
@@ -6093,6 +6101,7 @@ def _convert_element_type_batching_rule(
                                       weak_type=weak_type, sharding=sharding)
     return out, None
 batching.fancy_primitive_batchers[convert_element_type_p] = _convert_element_type_batching_rule
+mlir.shard_map_collective_rules[convert_element_type_p] = _unop_collective_rule
 
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule

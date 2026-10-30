@@ -54,7 +54,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.lib.mlir.dialects import sdy
-from jax._src.mesh import AxisType
+from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import NamedSharding, SdyArray, SdyArrayList
@@ -1064,13 +1064,18 @@ _lowerings: dict[core.Primitive, LoweringRuleEntry] = {}
 _platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRuleEntry]]
 _platform_specific_lowerings = collections.defaultdict(dict)
 shard_map_collective_rules: dict[core.Primitive, Callable] = {}
+shard_map_passthrough_primitives: set[core.Primitive] = {
+    core.call_p,
+    core.closed_call_p,
+}
 
 def register_lowering(prim: core.Primitive, rule: LoweringRule,
                       platform: str | None = None,
                       inline: bool | core.Inline = True,
                       cacheable: bool = True,
                       *,
-                      shard_map_collective_rule: Callable | None = None) -> None:
+                      shard_map_collective_rule: Callable | None = None,
+                      shard_map_passthrough: bool = False) -> None:
   """Registers a lowering rule for a primitive.
 
   Args:
@@ -1089,9 +1094,11 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
       temporary flag that will be removed after primitives that have problems
       with caching are fixed.
     shard_map_collective_rule: Optional rule returning ``PartitioningRule`` (or
-      ``None`` to fall back to default lowering) to lower explicit-mesh
-      collectives via ``shard_map`` when ``jax_shard_map_partitioning`` is
-      enabled.
+      ``None`` if unsupported, raising ``NotImplementedError``) to lower
+      explicit-mesh collectives via ``shard_map`` when
+      ``jax_shard_map_partitioning`` is enabled.
+    shard_map_passthrough: If ``True``, allow this higher-order container
+      primitive to lower directly so its sub-jaxprs are partitioned instead.
   """
   assert not isinstance(rule, LoweringRuleEntry)
   if isinstance(inline, bool):
@@ -1105,6 +1112,8 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     inline_mode = inline
   if not cacheable:
     _uncacheable_primitives.add(prim)
+  if shard_map_passthrough:
+    shard_map_passthrough_primitives.add(prim)
   if shard_map_collective_rule is not None:
     # TODO(rdyro): Support platform-specific shard_map_collective_rules.
     shard_map_collective_rules[prim] = shard_map_collective_rule
@@ -2555,28 +2564,32 @@ def _maybe_lower_with_shard_map(
     _prim: core.Primitive, ctx: LoweringRuleContext, *args, **params):
   from jax._src import shard_map  # pyrefly: ignore[missing-module-attribute]
   if (not config.shard_map_partitioning.value or
-      (rule := shard_map_collective_rules.get(_prim)) is None):
+      _prim in shard_map_passthrough_primitives):
     return None
 
-  if _prim.multiple_results:
-    # TODO(rdyro): Support multi-output primitives.
-    raise NotImplementedError(
-        f'shard_map_partitioning does not support multi-output primitive {_prim}'
-    )
-  out_aval, = ctx.avals_out
-  assert isinstance(out_aval, core.ShapedArray)
-  mesh = out_aval.sharding.mesh
+  mesh = get_abstract_mesh()
   if not mesh.explicit_axes:
     return None
 
+  if (rule := shard_map_collective_rules.get(_prim)) is None:
+    raise NotImplementedError
+
+  if _prim.multiple_results:
+    # TODO(rdyro): Support multi-output primitives.
+    raise NotImplementedError
+  assert ctx.avals_out is not None
+  out_aval, = ctx.avals_out
+  assert isinstance(out_aval, core.ShapedArray)
+
   if (collectives := rule(*ctx.avals_in, out_aval, **params)) is None:
-    return None
+    raise NotImplementedError
   assert isinstance(collectives, PartitioningRule)
 
   # TODO(rdyro): Move this into PartitioningRule's per-shard params mapping.
-  if (out_sharding := params.get('out_sharding')) is not None:
-    assert out_sharding.mesh.explicit_axes == mesh.explicit_axes
-    params = params | {'out_sharding': None}
+  for k in ('out_sharding', 'sharding'):
+    if (out_s := params.get(k)) is not None:
+      assert out_s.mesh.explicit_axes == mesh.explicit_axes
+      params = params | {k: None}
 
   def lower_fn(*operands):
     @partial(shard_map.shard_map, mesh=mesh, out_specs=out_aval.sharding.spec,

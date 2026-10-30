@@ -1208,7 +1208,8 @@ def _shard_map_lowering(
   outs = manual_computation_op.results[num_tokens:]
   return [mlir.lower_with_sharding_in_types(ctx, o, a)
           for o, a in zip(outs, ctx.avals_out)]
-mlir.register_lowering(shard_map_p, _shard_map_lowering)
+mlir.register_lowering(
+    shard_map_p, _shard_map_lowering, shard_map_passthrough=True)
 
 def _make_scoped_manual_sharding(ctx, mesh, spec):
   axis_ctx = ctx.module_context.axis_context
