@@ -166,7 +166,9 @@ def _psum(x, axis_name, *, axis_index_groups, is_async):
             if dtypes.dtype(l) == np.bool_ else l for l in leaves]
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   # handle the constant case specially
-  if all(not isinstance(leaf, core.Tracer) for leaf in leaves):
+  if (all(not isinstance(leaf, core.Tracer) for leaf in leaves) and
+      (axis_index_groups is None or
+       all(len(g) == len(axis_index_groups[0]) for g in axis_index_groups))):
     named_axes, pos_axes = axes_partition = [], []
     for axis in axis_name:
       axes_partition[isinstance(axis, int)].append(axis)
@@ -1037,6 +1039,7 @@ def _allreduce_effectful_abstract_eval(aval, *, axes, axis_index_groups):
   check_unreduced_args([aval], axes, 'psum')
   out_aval = ShapedArray(
       lax._reduce_op_shape_rule(aval, axes=pos_axes), aval.dtype,
+      weak_type=aval.weak_type,
       sharding=lax._reduce_op_sharding_rule(aval, axes=pos_axes))
   return out_aval, {core.NamedAxisEffect(axis) for axis in named_axes}
 
