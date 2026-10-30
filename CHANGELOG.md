@@ -31,6 +31,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     functions of the first kind of integer order.
 
 * Deprecations
+  * `jax.sharding.SingleDeviceSharding` is deprecated; use
+    `jax.sharding.make_single_device_sharding` or
+    `jax.sharding.is_single_device_sharding` instead.
   * The `jax_use_shardy_partitioner` configuration flag is deprecated and is now
     a no-op. JAX always lowers to Shardy, and the flag will be removed in a
     future release.

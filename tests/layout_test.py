@@ -1341,7 +1341,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
   )
   def test_reshape_layout(self, src_shape, dst_shape, src_m2m, dst_m2m, fun):
     np_inp = np.arange(math.prod(src_shape), dtype=np.float32).reshape(src_shape)
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     arr = jax.device_put(np_inp, Format(Layout(src_m2m), s))
 
     @jax.jit
@@ -1427,7 +1427,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
   def test_reshape_split_merge_one_axis_layout(
       self, src_shape, dst_shape, src_m2m, dst_m2m, error_msg):
     np_inp = np.arange(math.prod(src_shape), dtype=np.float32).reshape(src_shape)
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     arr = jax.device_put(np_inp, Format(Layout(src_m2m), s))
     should_error = (error_msg is not None and
                     (dst_m2m is None or jtu.test_device_matches(['tpu'])))
@@ -1537,7 +1537,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
   def test_noop_unop_layouts(self, op_fn):
     shape = (16, 8, 256)
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     arr = jax.device_put(np_inp, Format(Layout((1, 0, 2)), s))
 
     @jax.jit
@@ -1555,7 +1555,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
   def test_split_layout(self):
     shape = (8, 8, 16)
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     arr = jax.device_put(np_inp, Format(Layout((1, 0, 2)), s))
 
     @jax.jit
@@ -1592,7 +1592,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     x_shape = (8, 8, 16)
     np_x = np.arange(math.prod(x_shape), dtype=np.float32).reshape(x_shape)
     np_y = np.ones(y_shape, dtype=np.float32)
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     arr_x = jax.device_put(np_x, Format(Layout((1, 0, 2)), s))
     arr_y = jax.device_put(np_y, Format(Layout((1, 0, 2)), s))
     arr_y_bad = jax.device_put(np_y, Format(Layout((0, 1, 2)), s))
@@ -1622,7 +1622,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
   def test_minor_dim_tile_size_error(self):
     shape = (16, 128)
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     arr = jax.device_put(np_inp, Format(Layout((0, 1)), s))
 
     for op_fn in [
@@ -1682,7 +1682,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
   def test_missing_custom_abstract_eval_layout_rules(self):
     shape = (8, 128)
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     arr = jax.device_put(np_inp, Format(Layout((0, 1)), s))
 
     for op_fn in [
@@ -1713,7 +1713,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
   def test_broadcast_in_dim_layout(
       self, in_shape, in_m2m, out_shape, bcast_dims, expected_m2m):
     np_inp = np.arange(math.prod(in_shape), dtype=np.float32).reshape(in_shape)
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     arr = jax.device_put(np_inp, Format(Layout(in_m2m), s))
 
     @jax.jit
@@ -1825,7 +1825,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertIn('LayoutConstraint', f.lower(arr).as_text())
 
   def test_stack_layout_mismatch_error(self):
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     m1 = jax.device_put(np.ones((16, 128), np.float32), Format(Layout((0, 1)), s))
     m2 = jax.device_put(np.ones((16, 128), np.float32), Format(Layout((1, 0)), s))
 
@@ -1854,7 +1854,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
       self, shape, m2m, axis, tpu_only, error_regex):
     if tpu_only and not jtu.test_device_matches(['tpu']):
       self.skipTest('TPU tiling error test')
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     arr = jax.device_put(np.ones(shape, np.float32), Format(Layout(m2m), s))
 
     @jax.jit
@@ -1866,7 +1866,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
       f(arr)
 
   def test_stack_jvp_and_grad_layout(self):
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     np_x = np.arange(128 * 16, dtype=np.float32).reshape(128, 16) * 0.01
     np_y = np_x + 0.05
     arr_x = jax.device_put(np_x, Format(Layout((1, 0)), s))
@@ -1897,7 +1897,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertArraysAllClose(gy, ref_gy)
 
   def test_unstack_grad_with_unused_output_layout(self):
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     np_3d = np.arange(3 * 128 * 16, dtype=np.float32).reshape(3, 128, 16) * 0.01
     arr_3d = jax.device_put(np_3d, Format(Layout((0, 2, 1)), s))
     w = jax.device_put(np.ones((128, 16), dtype=np.float32), s)
@@ -1915,7 +1915,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertArraysAllClose(g, ref_g)
 
   def test_iota_and_empty_layout(self):
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     arr = jax.device_put(np.ones((16, 128), np.float32), Format(Layout((1, 0)), s))
 
     @jax.jit
@@ -1934,7 +1934,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
     self.assertIn('LayoutConstraint', f.lower(arr).as_text())
 
   def test_with_layout_constraint_assert(self):
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     arr = jax.device_put(
         np.arange(16 * 128, dtype=np.float32).reshape(16, 128),
         Format(Layout((1, 0)), s),
@@ -1984,7 +1984,7 @@ class LayoutInTypesTest(jtu.JaxTestCase):
       g_none_tiling(arr)
 
   def test_reshape_vjp_non_major_singleton_layout(self):
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s = make_single_device_sharding(jax.devices()[0])
     np_inp = np.arange(2 * 1 * 2 * 16 * 128, dtype=jnp.float32)
     arr1 = jax.device_put(np_inp.reshape(2, 1, 2, 16, 128), s)
 
