@@ -4051,6 +4051,54 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     (x_bar,) = jax.jit(vjp_fn)(jnp.ones(4))
     self.assertAllClose(x_bar, jnp.cos(jnp.ones(4)))
 
+  def test_remat_ref_read_modify_write(self):
+    r0, x0 = jnp.float32(1.2), jnp.float32(0.7)
+
+    @jax.remat
+    def step(ref, x):
+      ref[...] = jnp.sin(ref[...] * x)
+
+    r = jax.new_ref(r0)
+    _, vjp_fn = jax.vjp(step, r, x0)
+    self.assertAllClose(r[...], jnp.sin(r0 * x0))
+    r_grad, x_grad = jax.new_ref(jnp.float32(1.)), jax.new_ref(jnp.float32(0.))
+    vjp_fn.with_refs(r_grad, x_grad)(None)
+    self.assertAllClose((r_grad[...], x_grad[...]),
+                        (x0 * jnp.cos(r0 * x0), r0 * jnp.cos(r0 * x0)))
+
+    def f(val, x):
+      ref = jax.new_ref(val)
+      step(ref, x)
+      return jax.freeze(ref)
+
+    for fn in [jax.value_and_grad(f, argnums=(0, 1)),
+               jax.jit(jax.value_and_grad(f, argnums=(0, 1)))]:
+      val, (grad_r, grad_x) = fn(r0, x0)
+      self.assertAllClose((val, grad_r, grad_x),
+                          (jnp.sin(r0 * x0), x0 * jnp.cos(r0 * x0),
+                           r0 * jnp.cos(r0 * x0)))
+
+  def test_remat_ref_read_then_overwrite_outside(self):
+    r0 = jnp.float32(1.2)
+    read_sin = jax.remat(lambda ref: jnp.sin(ref[...]))
+
+    r = jax.new_ref(r0)
+    y, vjp_fn = jax.vjp(read_sin, r)
+    r[...] = jnp.float32(0.)
+    r_grad = jax.new_ref(jnp.float32(0.))
+    vjp_fn.with_refs(r_grad)(jnp.float32(1.))
+    self.assertAllClose((y, r_grad[...]), (jnp.sin(r0), jnp.cos(r0)))
+
+    def outer(val):
+      ref = jax.new_ref(val)
+      out = read_sin(ref)
+      ref[...] = jnp.zeros_like(val)
+      return out + jax.freeze(ref)
+
+    for fn in [jax.value_and_grad(outer), jax.jit(jax.value_and_grad(outer))]:
+      val, grad = fn(r0)
+      self.assertAllClose((val, grad), (jnp.sin(r0), jnp.cos(r0)))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
