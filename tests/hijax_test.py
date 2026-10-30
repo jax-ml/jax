@@ -4002,6 +4002,19 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     self.assertAllClose(g_node.x, jnp.sum(ys, axis=0))
     self.assertAllClose(g_ys, jnp.broadcast_to(node.x, ys.shape))
 
+  def test_remat_ref_write_not_replayed_in_bwd(self):
+    @jax.remat
+    def block(ref, x):
+      ref[...] = jnp.sin(x)
+      return x * 2.
+
+    r = jax.new_ref(jnp.float32(0.))
+    _, vjp_fn = jax.vjp(block, r, jnp.float32(0.7))
+    r[...] = jnp.float32(3.)
+    r_grad = jax.new_ref(jnp.float32(0.))
+    _, x_grad = vjp_fn.with_refs(r_grad, jax.ad.GradValue())(jnp.float32(1.))
+    self.assertAllClose((r[...], x_grad), (jnp.float32(3.), jnp.float32(2.)))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

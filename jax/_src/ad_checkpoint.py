@@ -1034,7 +1034,7 @@ def dce(traced, policy):
           "the rematted computation's closure contains a mutable array "
           f"reference of type {v.aval.str_short()} that is not one of the "
           "rematted function's inputs, but such refs cannot be saved")
-  jaxpr, used = pe.dce_jaxpr(jaxpr, True)
+  jaxpr, used = pe.dce_jaxpr(jaxpr, True, live_inputs=False)
   keep = [u or i in {*in_fwd} for i, u in enumerate(used)]
   kept_idx = {i: p for p, i in enumerate(i for i, k in enumerate(keep) if k)}
   in_fwd = tuple(kept_idx[f] if f is not None else None for f in in_fwd)
