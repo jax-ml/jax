@@ -147,6 +147,7 @@ class CompatTest(bctu.CompatTestBase):
         cuda_lgamma.data_2026_10_26,
         cuda_cholesky_solver_potrf.data_2025_10_15,
         rocm_cholesky_solver_potrf.data_2026_02_05,
+        rocm_cholesky_solver_potrf.data_2026_06_10,
         cuda_threefry2x32.data_2024_07_30,
         rocm_threefry2x32.data_2026_02_05,
         cuda_lu_pivots_to_permutation.data_2025_04_01,
@@ -250,7 +251,7 @@ class CompatTest(bctu.CompatTestBase):
 
     # Select test data based on platform
     if jtu.test_device_matches(["rocm"]):
-      info = rocm_cholesky_solver_potrf.data_2026_02_05[dtype_name]
+      info = rocm_cholesky_solver_potrf.data_2026_06_10[dtype_name]
     elif jtu.test_device_matches(["cuda"]):
       info = cuda_cholesky_solver_potrf.data_2025_10_15[dtype_name]
     else:

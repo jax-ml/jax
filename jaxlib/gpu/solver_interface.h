@@ -256,6 +256,7 @@ JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Gesdd);
 // (handle, ptr, size) before Gesdd; call with (handle, nullptr, 0) to clear.
 // The kernel computes workspace size via formula (see solver_kernels_ffi.cc).
 absl::Status SetWorkspace(gpusolverDnHandle_t handle, void* ptr, size_t size);
+
 #endif  // JAX_GPU_HIP
 
 #ifdef JAX_GPU_CUDA

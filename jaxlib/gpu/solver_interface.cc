@@ -15,9 +15,14 @@ limitations under the License.
 
 #include "jaxlib/gpu/solver_interface.h"
 
+#include <map>
+#include <vector>
+
+#include "absl/base/const_init.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 
