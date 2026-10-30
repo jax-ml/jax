@@ -1270,16 +1270,24 @@ def _mask_all_reduce_abstract_eval(x, *, reduce):
 def _mask_all_reduce_lowering_rule(
     ctx: sc_lowering.LoweringRuleContext, x, *, reduce, kind: str
 ):
+  del reduce  # Unused.
   [out_aval] = ctx.avals_out
-  return tpu.all_reduce(
-      ir.VectorType.get(
-          out_aval.shape,
-          ir.IntegerType.get_signless(32),
-      ),
-      x,
-      0,
-      ir.Attribute.parse(f"#tpu.reduction_kind<{kind}>"),
-  )
+  i32 = ir.IntegerType.get_signless(32)
+  out_type = ir.VectorType.get(out_aval.shape, i32)
+  kind_attr = ir.Attribute.parse(f"#tpu.reduction_kind<{kind}>")
+  if ctx.lowering_context.needs_layout_passes:
+    reduced_type = ir.VectorType.get((1,), i32)
+    match kind:
+      case "find_first_set":
+        reduced = tpu.reduce_index(reduced_type, x, 0, kind_attr)
+      case "sum":
+        reduced = tpu.reduce(
+            reduced_type, x, ir.DenseI64ArrayAttr.get([0]), kind_attr
+        )
+      case _:
+        raise ValueError(f"Unsupported mask reduction kind: {kind}")
+    return vector.broadcast(out_type, reduced)
+  return tpu.all_reduce(out_type, x, 0, kind_attr)
 
 
 all_reduce_population_count_p = jax_core.Primitive(
