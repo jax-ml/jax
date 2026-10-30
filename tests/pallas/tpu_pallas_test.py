@@ -3091,6 +3091,39 @@ class PallasCallTest(ptu.PallasTPUTest):
     with self.assertRaisesRegex(ValueError, error_regex):
       kernel(jnp.ones((8, 128), dtype=jnp.float32))
 
+  def test_axis_index_grid_names_cache_isolation(self):
+    def named_kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...] + lax.axis_index('x').astype(x_ref.dtype)
+
+    spec_2d = pl.BlockSpec((8, 128), lambda i, j: (i, j))
+    f_xy = self.pallas_call(
+        named_kernel,
+        out_shape=jax.ShapeDtypeStruct((16, 256), jnp.int32),
+        in_specs=[spec_2d],
+        out_specs=spec_2d,
+        grid=(('x', 2), ('y', 2)),
+    )
+    f_yx = self.pallas_call(
+        named_kernel,
+        out_shape=jax.ShapeDtypeStruct((16, 256), jnp.int32),
+        in_specs=[spec_2d],
+        out_specs=spec_2d,
+        grid=(('y', 2), ('x', 2)),
+    )
+
+    x = jnp.zeros((16, 256), dtype=jnp.int32)
+    out_xy, out_yx = jax.jit(lambda x: (f_xy(x), f_yx(x)))(x)
+    expected_xy = np.broadcast_to(
+        np.repeat(np.array([[0], [1]], dtype=np.int32), 8, axis=0),
+        (16, 256),
+    )
+    expected_yx = np.broadcast_to(
+        np.repeat(np.array([[0, 1]], dtype=np.int32), 128, axis=1),
+        (16, 256),
+    )
+    np.testing.assert_array_equal(out_xy, expected_xy)
+    np.testing.assert_array_equal(out_yx, expected_yx)
+
 
 class PallasPadRefTest(ptu.PallasTPUTest):
 
