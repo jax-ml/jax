@@ -3797,8 +3797,10 @@ def _top_k_impl(operand, *, k: int, axis: int = -1, carried_idx=None):
 
   vals_stacked = jnp.stack(vals, axis=axis)
   idxs_stacked = jnp.stack(idxs, axis=axis)
-  if idxs_stacked.dtype != jnp.int32:
-    idxs_stacked = idxs_stacked.astype(jnp.int32)
+  if dtypes.itemsize_bits(idxs_stacked.dtype) < 32:
+    # The reduced dimension can have up to 2^16 elements, so 16-bit indices
+    # must be zero-extended.
+    idxs_stacked = idxs_stacked.astype(jnp.uint16).astype(jnp.int32)
 
   return vals_stacked, idxs_stacked
 
