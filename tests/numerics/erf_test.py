@@ -224,10 +224,10 @@ class ErfcTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfc_highest_accuracy(self, dtype):
     bounds = [
-        ("cpu", {f16: 1.0, f32: 4.0, f64: 2.5}),
-        ("gpu", {f16: 1.0, f32: 5.0, f64: 3.0}),
-        (TPU_EUPV1, {f16: 1.0, f32: 5.5}),
-        (["tpu_v5p", "tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 5.0}),
+        ("cpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
+        ("gpu", {f16: 1.0, f32: 1.5, f64: 2.0}),
+        (TPU_EUPV1, {f16: 1.0, f32: 1.5}),
+        (["tpu_v5p", "tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
     ]
     util.check_unary_precision(
         self,

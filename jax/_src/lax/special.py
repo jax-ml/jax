@@ -858,9 +858,9 @@ ad.defjvp(
     ),
 )
 def _erfc_lowering(ctx, x, *, accuracy=None):
-  if (
-      accuracy is AccuracyMode.HIGHEST
-      and ctx.avals_in[0].dtype in (np.float32, np.float64)
+  dtype = ctx.avals_in[0].dtype
+  if dtype == dtypes.bfloat16 or (
+      accuracy is AccuracyMode.HIGHEST and dtype in (np.float32, np.float64)
   ):
     return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
   return _nary_lower_hlo(chlo.erfc, ctx, x)
