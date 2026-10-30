@@ -7993,7 +7993,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.jit
     @jax.vmap
     def f2(x, i, j):
-      x_j = x.at[j].get(out_sharding=jax.typeof(x).sharding)
+      x_j = x.at[j].get(out_sharding=P())
       return x.at[i].set(x_j, out_sharding=jax.typeof(x).sharding)
     f2(x,i,j)  # doesn't crash
 
@@ -11542,6 +11542,65 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                       P(None, None, unreduced={'y'})),
               idx, jax.device_put(upd_np, P('x', None)))
 
+  @config.hijax_unreduced(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_optimization_barrier_hijax_unreduced(self, mesh):
+    a_np = np.arange(8, dtype=np.float32).reshape(2, 4)
+    b_np = np.arange(16, dtype=np.float32).reshape(4, 4)
+    c_np = np.arange(16, dtype=np.float32).reshape(4, 4)
+
+    a = jax.device_put(a_np, P(None, 'x'))
+    b = jax.device_put(b_np, P('x', 'y'))
+    b_xy = jax.device_put(b_np, P(None, ('x', 'y')))
+    c_xy = jax.device_put(c_np, P(('x', 'y'), None))
+
+    @jax.jit
+    def f_mixed(a, b, b_xy, c_xy):
+      u_x = jnp.einsum('ij,jk->ik', a, b, out_sharding=P(None, 'y', unreduced={'x'}))
+      u_xy = jnp.einsum('ij,jk->ik', b_xy, c_xy, out_sharding=P(None, None, unreduced={'x', 'y'}))
+      return jax.lax.optimization_barrier((a, u_x, u_xy))
+
+    out_a, out_ux, out_uxy = f_mixed(a, b, b_xy, c_xy)
+    self.assertEqual(out_a.sharding, NamedSharding(mesh, P(None, 'x')))
+    self.assertEqual(out_ux.sharding,
+                     NamedSharding(mesh, P(None, 'y', unreduced={'x'})))
+    self.assertEqual(out_uxy.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x', 'y'})))
+    self.assertArraysAllClose(out_a, a_np)
+    self.assertArraysAllClose(reshard(out_ux, P(None, 'y')), a_np @ b_np)
+    self.assertArraysAllClose(reshard(out_uxy, P(None, None)), b_np @ c_np)
+
+    self.assertNotIn('all-reduce(',
+                     f_mixed.lower(a, b, b_xy, c_xy).compile().as_text())
+
+    # Reverse-mode AD transpose through optimization_barrier (reduced -> unreduced).
+    w_r = reshard(jax.device_put(b_np, P(None, 'y')), P(None, 'y', reduced={'x'}))
+    x_sh = jax.device_put(b_np, P('x', None))
+
+    @jax.jit
+    def f_grad(w, x):
+      def loss(w):
+        w = jax.lax.optimization_barrier(w)
+        return jnp.sum(jnp.einsum('ij,jk->ik', x, w, out_sharding=P('x', 'y')))
+      dw = jax.grad(loss)(w)
+      return jax.lax.optimization_barrier(dw)
+
+    dw = f_grad(w_r, x_sh)
+    self.assertEqual(dw.sharding, NamedSharding(mesh, P(None, 'y', unreduced={'x'})))
+    self.assertArraysAllClose(reshard(dw, P(None, 'y')), b_np.T @ np.ones_like(b_np))
+
+    # Inside manual shard_map with mat.unreduced.
+    @jax.jit
+    def f_shmap(a, b):
+      u_x = jnp.einsum('ij,jk->ik', a, b, out_sharding=P(None, 'y', unreduced={'x'}))
+      return shard_map(lambda u: jax.lax.optimization_barrier(u),
+                       out_specs=P(None, 'y', unreduced={'x'}))(u_x)
+
+    out_shmap = f_shmap(a, b)
+    self.assertEqual(out_shmap.sharding,
+                     NamedSharding(mesh, P(None, 'y', unreduced={'x'})))
+    self.assertArraysAllClose(reshard(out_shmap, P(None, 'y')), a_np @ b_np)
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_cond_fori_reduced_fwd(self, mesh):
     k = jax.device_put(np.arange(8.0), P('x'))
@@ -13016,6 +13075,64 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with jax.sharding.no_collectives({'r'}):
       with self.assertRaises(core.ForbiddenCollectiveError):
         f(x, y)
+
+  @parameterized.parameters(((1,),), ((2,),))
+  def test_take_slice_out_sharding(self, mesh_shape):
+    mesh = jtu.create_mesh(mesh_shape, ('x',), axis_types=(AxisType.Explicit,))
+    b, = mesh_shape
+    with jax.set_mesh(mesh):
+      x = jnp.zeros((b, 4), dtype=jnp.int32, out_sharding=P('x', None))
+      i = jnp.arange(b, out_sharding=P('x'))
+
+      def f(x, i):
+        j_static = x.at[:, 0].get(out_sharding=P('x'))
+        j_dynamic = x.at[:, jnp.int32(0)].get(out_sharding=P('x'))
+        out = x.at[i, j_dynamic].add(-1, out_sharding=P('x', None))
+        return j_static, j_dynamic, out
+
+      expected = np.zeros((b, 4), dtype=np.int32)
+      expected[:, 0] = -1
+
+      j_static, j_dynamic, out = f(x, i)
+      self.assertEqual(j_static.sharding, NamedSharding(mesh, P('x')))
+      self.assertEqual(j_dynamic.sharding, NamedSharding(mesh, P('x')))
+      self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+      self.assertArraysEqual(out, expected)
+
+      j_static, j_dynamic, out = jax.jit(f)(x, i)
+      self.assertEqual(j_static.sharding, NamedSharding(mesh, P('x')))
+      self.assertEqual(j_dynamic.sharding, NamedSharding(mesh, P('x')))
+      self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+      self.assertArraysEqual(out, expected)
+
+  @parameterized.parameters(((1,),), ((2,),))
+  def test_take_slice_out_sharding_reshard(self, mesh_shape):
+    mesh = jtu.create_mesh(mesh_shape, ('x',), axis_types=(AxisType.Explicit,))
+    b, = mesh_shape
+    x_np = np.arange(b * 4, dtype=np.int32).reshape(b, 4)
+    with jax.set_mesh(mesh):
+      x_rep = jax.device_put(x_np, P(None, None))
+      x_sharded = jax.device_put(x_np, P('x', None))
+
+      self.assertEqual(x_sharded[:, 0].sharding, NamedSharding(mesh, P('x')))
+
+      def to_sharded(x):
+        return (x.at[:, 0].get(out_sharding=P('x')),
+                x.at[:, jnp.int32(0)].get(out_sharding=P('x')))
+
+      def to_rep(x):
+        return (x.at[:, 0].get(out_sharding=P(None)),
+                x.at[:, jnp.int32(0)].get(out_sharding=P(None)))
+
+      for f in [to_sharded, jax.jit(to_sharded)]:
+        s_out, d_out = f(x_rep)
+        self.assertEqual(s_out.sharding, NamedSharding(mesh, P('x')))
+        self.assertEqual(d_out.sharding, NamedSharding(mesh, P('x')))
+
+      for g in [to_rep, jax.jit(to_rep)]:
+        s_out, d_out = g(x_sharded)
+        self.assertEqual(s_out.sharding, NamedSharding(mesh, P(None)))
+        self.assertEqual(d_out.sharding, NamedSharding(mesh, P(None)))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

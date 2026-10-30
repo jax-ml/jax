@@ -2579,16 +2579,16 @@ def _get_override_lowering_rule(
   return None
 
 def _maybe_lower_with_shard_map(
-    prim: core.Primitive, ctx: LoweringRuleContext, *args, **params):
+    _prim: core.Primitive, ctx: LoweringRuleContext, *args, **params):
   from jax._src import shard_map  # pyrefly: ignore[missing-module-attribute]
   if (not config.shard_map_partitioning.value or
-      (rule := shard_map_collective_rules.get(prim)) is None):
+      (rule := shard_map_collective_rules.get(_prim)) is None):
     return None
 
-  if prim.multiple_results:
+  if _prim.multiple_results:
     # TODO(rdyro): Support multi-output primitives.
     raise NotImplementedError(
-        f'shard_map_partitioning does not support multi-output primitive {prim}'
+        f'shard_map_partitioning does not support multi-output primitive {_prim}'
     )
   out_aval, = ctx.avals_out
   assert isinstance(out_aval, core.ShapedArray)
@@ -2619,7 +2619,7 @@ def _maybe_lower_with_shard_map(
         xs = collectives.in_collective(*xs)
       # TODO(rdyro): This assumes `params` are shard-invariant; some primitives
       # might want to define a per-shard params mapping.
-      ans = prim.bind(*xs, **params)
+      ans = _prim.bind(*xs, **params)
       if collectives.out_collective is not None:
         ans = collectives.out_collective(ans)
       return ans
@@ -2628,16 +2628,10 @@ def _maybe_lower_with_shard_map(
   return lower_fun(lower_fn, multiple_results=False)(ctx, *args)
 
 def _uncached_lowering(
-    primitive: core.Primitive,
-    eqn_ctx: core.JaxprEqnContext,
-    effects: effects_lib.Effects,
-    platform_rules: dict[str, LoweringRule],
-    default_rule: LoweringRule | None,
-    ctx: LoweringRuleContext,
-    *args,
-    **params,
-):
-
+    primitive: core.Primitive, eqn_ctx: core.JaxprEqnContext,
+    effects: effects_lib.Effects, platform_rules: dict[str, LoweringRule],
+    default_rule: LoweringRule | None, ctx: LoweringRuleContext,
+    *args, **params):
   assert not isinstance(default_rule, LoweringRuleEntry)
   assert not any(isinstance(r, LoweringRuleEntry) for r in platform_rules.values())
   ans = _maybe_lower_with_shard_map(primitive, ctx, *args, **params)

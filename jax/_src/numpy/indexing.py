@@ -44,7 +44,7 @@ from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.named_sharding import DuplicateSpecError
 from jax._src.partition_spec import PartitionSpec
-from jax._src.pjit import auto_axes
+from jax._src.pjit import auto_axes, reshard
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.tree_util import tree_flatten, tree_unflatten, register_pytree_node_class
 from jax._src.typing import Array, ArrayLike, Index, StaticScalar
@@ -1138,19 +1138,24 @@ def rewriting_take(
   if config.check_static_indices.value and (mode is None or slicing.GatherScatterMode.from_any(mode) == slicing.GatherScatterMode.PROMISE_IN_BOUNDS):
     indexer.validate_static_indices(normalize_indices=normalize_indices)
 
+  if out_sharding is not None:
+    out_sharding = canonicalize_sharding(out_sharding, 'take')
+
   if strategy == IndexingStrategy.STATIC_SLICE:
     static_slice_indexer = indexer.to_static_slice(
       arr_is_sharded=indexer.is_sharded(arr),
       normalize_indices=normalize_indices,
       mode=mode)
-    return _static_slice(arr, static_slice_indexer)
+    out = _static_slice(arr, static_slice_indexer)
+    return reshard(out, out_sharding) if out_sharding is not None else out
 
   if strategy == IndexingStrategy.DYNAMIC_SLICE:
     dynamic_slice_indexer = indexer.to_dynamic_slice(
       arr_is_sharded=indexer.is_sharded(arr),
       normalize_indices=normalize_indices,
       mode=mode)
-    return _dynamic_slice(arr, dynamic_slice_indexer)
+    out = _dynamic_slice(arr, dynamic_slice_indexer)
+    return reshard(out, out_sharding) if out_sharding is not None else out
 
   if strategy == IndexingStrategy.AUTO:
     # Attempt static slice first
@@ -1162,7 +1167,8 @@ def rewriting_take(
     except (TypeError, ValueError, IndexError):
       pass
     else:
-      return _static_slice(arr, static_slice_indexer)
+      out = _static_slice(arr, static_slice_indexer)
+      return reshard(out, out_sharding) if out_sharding is not None else out
 
     # Attempt dynamic slice next
     try:
@@ -1173,7 +1179,8 @@ def rewriting_take(
     except (TypeError, ValueError, IndexError):
       pass
     else:
-      return _dynamic_slice(arr, dynamic_slice_indexer)
+      out = _dynamic_slice(arr, dynamic_slice_indexer)
+      return reshard(out, out_sharding) if out_sharding is not None else out
 
   # In remaining cases, compute via gather.
   indexer = indexer.expand_bool_indices()
@@ -1183,7 +1190,6 @@ def rewriting_take(
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=mode, fill_value=fill_value, normalize_indices=normalize_indices)
   if out_sharding is not None:
-    out_sharding = canonicalize_sharding(out_sharding, 'take')
     return auto_axes(internal_gather, out_sharding=out_sharding,
                      axes=out_sharding.mesh.explicit_axes,
                      )(arr, dynamic_idx)

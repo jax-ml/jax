@@ -11216,6 +11216,20 @@ def _opt_barrier_fancy_transpose(cts, *accums):
   assert next(cts_out, None) is None
 ad.fancy_transposes[optimization_barrier_p] = _opt_barrier_fancy_transpose
 
+optimization_barrier_p.is_high = lambda *avals: any(a.is_high for a in avals)  # type: ignore
+
+def _optimization_barrier_to_lojax(*hi_args):
+  in_avals = [core.typeof(x) for x in hi_args]
+  out_avals, _ = optimization_barrier_p.abstract_eval(*in_avals)
+  lo_args = [lo_x for x, a in zip(hi_args, in_avals)
+             for lo_x in a.lower_val(x)]
+  lo_outs = iter(optimization_barrier_p.bind(*lo_args))
+  hi_outs = [a.raise_val(*itertools.islice(lo_outs, len(a.lo_ty())))
+             for a in out_avals]
+  assert next(lo_outs, None) is None
+  return hi_outs
+optimization_barrier_p.to_lojax = _optimization_barrier_to_lojax  # type: ignore
+
 
 def _array_reduce_precision_handler(t, x):
   assert isinstance(t, core.ShapedArray)
