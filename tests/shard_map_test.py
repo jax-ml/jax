@@ -6356,6 +6356,19 @@ class ShardMapTest(jtu.JaxTestCase):
     traced = f.trace(x, pred)
     self.assertEqual(traced.out_info.sharding.spec, P('x', 'y'))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_all_gather_reduced_requires_all_axes_varying(self, mesh):
+    x = jax.device_put(jnp.arange(16.).reshape(8, 2), P('x'))
+
+    @jax.jit
+    @jax.shard_map(in_specs=P('x'), out_specs=P(reduced={'x', 'y'}))
+    def f(a):
+      return jax.lax.all_gather(a, ('x', 'y'), tiled=True, to='reduced')
+
+    with self.assertRaisesRegex(
+        ValueError, 'all_gather_reduced is a Varying -> Reduced collective'):
+      f(x)
+
 
 class FunSpec(NamedTuple):
   name: str
