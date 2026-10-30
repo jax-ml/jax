@@ -401,6 +401,18 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "gpu_memory_flags_test_fixed_fraction",
+    srcs = ["gpu_memory_flags_test.py"],
+    enable_backends = ["gpu"],
+    env = {
+        "XLA_CLIENT_MEM_FRACTION": "0.75",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "1",
+    },
+    main = "gpu_memory_flags_test.py",
+    deps = py_deps("absl/testing"),
+)
+
+jax_multiplatform_test(
     name = "lobpcg_test",
     srcs = ["lobpcg_test.py"],
     backend_tags = {
