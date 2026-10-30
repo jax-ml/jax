@@ -9750,6 +9750,31 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     jax.jit(jax.grad(f))(1., 2.)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_auto_axes_reduced_input_unreduced_bwd(self, mesh):
+    np_x = np.ones((4, 2), dtype=np.float32)
+    x = jax.device_put(np_x, P(None, None, reduced={'x'}))
+
+    @auto_axes(out_sharding=P())
+    def f(x):
+      return (x * 2).sum()
+
+    out = jax.jit(jax.grad(f))(x)
+    self.assertEqual(
+        out.sharding, NamedSharding(mesh, P(None, None, unreduced={'x'}))
+    )
+    x_replicated = jax.device_put(np_x, P(None, None))
+    expected = jax.jit(jax.grad(f))(x_replicated)
+    self.assertArraysEqual(reshard(out, P()), expected)
+
+    x_sharded = jax.device_put(np_x, P('x', None, reduced={'y'}))
+    out_sharded = jax.jit(jax.grad(f))(x_sharded)
+    self.assertEqual(
+        out_sharded.sharding,
+        NamedSharding(mesh, P('x', None, unreduced={'y'})),
+    )
+    self.assertArraysEqual(reshard(out_sharded, P()), expected)
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_reduced_sin_fwd_mul_bwd(self, mesh):
 
