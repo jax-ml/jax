@@ -714,6 +714,22 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.spacing, jnp.spacing, args_maker, check_dtypes=True, tol=0)
     self._CompileAndCheck(jnp.spacing, args_maker, tol=0)
 
+  @jtu.sample_product(dtype=[t for t in float_dtypes if t != dtypes.bfloat16])
+  def test_spacing_negative_zero(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41861
+    x = np.array([-0.0, 0.0], dtype=dtype)
+    args_maker = lambda: [x]
+    self._CheckAgainstNumpy(
+        np.spacing, jnp.spacing, args_maker, check_dtypes=True, tol=0)
+    self._CompileAndCheck(jnp.spacing, args_maker, tol=0)
+
+  def test_spacing_negative_zero_bfloat16(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41861
+    x = jnp.array([-0.0, 0.0], dtype=jnp.bfloat16)
+    out = jnp.spacing(x)
+    self.assertArraysEqual(out[0], out[1])
+    self.assertFalse(jnp.signbit(out[0]))
+
   @jtu.sample_product(dtype=float_dtypes)
   @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero*")
   @jtu.ignore_warning(category=RuntimeWarning, message="invalid value*")
