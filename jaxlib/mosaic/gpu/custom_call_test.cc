@@ -35,11 +35,13 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/synchronization/mutex.h"
+#include "jaxlib/mosaic/gpu/target.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
+#include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/env.h"
 
@@ -643,5 +645,11 @@ TEST_P(CollectiveCommandBufferTest,
 
 INSTANTIATE_TEST_SUITE_P(CollectiveCommandBufferTests,
                          CollectiveCommandBufferTest, ::testing::Bool());
+
+TEST_F(CustomCallTest, AssemblyToBinaryCompilationProviderDisablesNvJitLink) {
+  ASSERT_OK_AND_ASSIGN(stream_executor::cuda::CompilationProvider * provider,
+                       mosaic::gpu::GetAssemblyToBinaryCompilationProvider());
+  EXPECT_THAT(provider->name(), Not(HasSubstr("NvJitLinkCompilationProvider")));
+}
 
 }  // namespace
