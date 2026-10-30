@@ -2222,11 +2222,7 @@ def _all_gather_invariant(x, axis_name, *, axis, tiled):
   if not axis_name:
     return x
   axis_size = _axis_size(axis_name, None)
-  axes_ = frozenset(axis_name)
   def bind(leaf):
-    in_vma = core.typeof(leaf).mat.varying
-    if config.auto_pcast.value and (vary_names := axes_ - in_vma):
-      leaf = pvary(leaf, tuple(vary_names))
     return all_gather_invariant_p.bind(
         leaf,
         all_gather_dimension=canonicalize_axis(axis, np.ndim(leaf) if tiled else
@@ -2246,7 +2242,8 @@ def _all_gather_invariant_effectful_abstract_eval(
     new_shape[all_gather_dimension] *= axis_size
   else:
     new_shape.insert(all_gather_dimension, axis_size)
-  out_vma = frozenset(v for v in x_aval.mat.varying if v not in axis_name)
+  in_vma = collective_vma_rule('all_gather_invariant', axis_name, x_aval)
+  out_vma = in_vma - frozenset(axis_name)
   return (x_aval.update(shape=new_shape,
                         manual_axis_type=x_aval.mat.update(varying=out_vma)),
           {*map(core.NamedAxisEffect, axis_name)})
@@ -2278,6 +2275,10 @@ def _all_gather_invariant_transpose_rule(
   slice_size, rem = divmod(cts.shape[all_gather_dimension], axis_size)
   assert not rem
   idx = axis_index(axis_name) * slice_size
+  # Explicitly cast invariant -> varying rather than relying on auto_pcast,
+  # like _psum_invariant_transpose_rule, _gather_transpose_fancy and
+  # _dynamic_slice_transpose_fancy.
+  cts = core.pvary(cts, axis_name)
   out = slicing.dynamic_slice_in_dim(
       cts, idx, slice_size=slice_size, axis=all_gather_dimension)
   return (out,) if tiled else (lax.squeeze(out, [all_gather_dimension]),)

@@ -134,6 +134,21 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, (8,))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
+  @jtu.with_explicit_mesh((4,), 'x')
+  def test_all_gather_invariant_grad_no_auto_pcast(self, mesh):
+    arr = jax.device_put(jnp.arange(8.), P('x'))
+
+    @jax.jit
+    @shard_map(in_specs=P('x'), out_specs=P())
+    def f(a):
+      return jax.lax.all_gather(a, 'x', to='invarying')
+
+    # The transpose must cast cts to vary over 'x' itself; with auto_pcast off,
+    # dynamic_slice won't do it for float operands.
+    with config.auto_pcast(False):
+      out = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertAllClose(out, jnp.ones_like(arr))
+
   @parameterized.parameters(['invarying', 'reduced'])
   def test_all_gather_no_check_vma_grad(self, to):
     mesh = jtu.create_mesh((4,), 'x')
@@ -151,6 +166,18 @@ class ShardMapTest(jtu.JaxTestCase):
     arr_bar, = f_vjp(ct)
     self.assertAllClose(arr_bar, ct)
     jtu.check_grads(f, (arr,), order=2)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_all_gather_invariant_operand_not_varying_over_axis(self, mesh):
+    @jax.jit
+    @shard_map(in_specs=P(), out_specs=P())
+    def f(a):
+      return jax.lax.all_gather(a, 'x', to='invarying')
+
+    with self.assertRaisesRegex(
+        ValueError, 'Collective all_gather_invariant must be applied to a '
+        'device-varying'):
+      f(jnp.arange(2.))
 
   def test_all_gather_invariant_complex(self):
     mesh, a, _ = create_inputs(P('z', ('x', 'y')), P(None, None),
