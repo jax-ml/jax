@@ -3041,6 +3041,15 @@ _POLY_SHAPE_TEST_HARNESSES = [
           ((2, 3, 4, 5), "b1, b2, m, n", ["m <= n", "m <= 32", "n <= 32"]),
       ]
     ],
+    # Without size bounds, CUDA/ROCm select gesvd during export.
+    # OneAPI uses gesvd by default regardless of size bounds.
+    PolyHarness(
+        "svd", "symbolic_matrix",
+        lambda x: lax.linalg.svd(
+            x, full_matrices=True, compute_uv=False),
+        arg_descriptors=[RandArg((2, 3, 4, 5), np.float32)],
+        polymorphic_shapes=["b1, b2, m, n"],
+        symbolic_constraints=["m <= n"]),
     [ # Ragged dot
       # Mode 1: Ragged non-contracting.
       # lhs=[m,k], rhs=[g,k,n], group_sizes=[g] -> [m,n]
