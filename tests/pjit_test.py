@@ -10929,10 +10929,21 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertArraysEqual(s.data, es)
 
   @jtu.with_explicit_mesh((1,), 'x')
-  def test_eval_shape_keeps_host_memory_space(self, mesh):
+  def test_eval_shape_keeps_host_memory_space_output(self, mesh):
     out = jax.eval_shape(
         lambda x: jax.device_put(x, jax.memory.Space.Host), jnp.ones(8))
     self.assertEqual(jax.typeof(out).memory_space, jax.memory.Space.Host)
+
+  def test_eval_shape_traced_memory_space_on_input(self):
+    mesh = jax.make_mesh((1,), ('x',))
+    sharding = NamedSharding(mesh, P(), memory_kind='pinned_host')
+    sds = jax.ShapeDtypeStruct((8,), jnp.float32, sharding=sharding)
+
+    def f(x):
+      self.assertEqual(x.aval.memory_space, jax.memory.Space.Host)
+      return x
+
+    jax.eval_shape(f, sds)  # doesn't crash
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_cet_unreduced_restrictions(self, mesh):

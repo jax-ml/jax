@@ -396,6 +396,13 @@ def _traced_out_info(self):
   out = []
   for a, out_s, out_l in zip(self.jaxpr.out_avals, out_shardings, out_layouts):
     if isinstance(a, core.ShapedArray):
+      if out_s is None:
+        s = (a.sharding if a.sharding.mesh.are_all_axes_explicit_or_manual else
+             None)
+        mem_space = a.memory_space
+      else:
+        s = out_s
+        mem_space = None
       s = ((a.sharding if a.sharding.mesh.are_all_axes_explicit_or_manual
             else out_s) if out_s is None else out_s)
       out.append(
@@ -403,7 +410,7 @@ def _traced_out_info(self):
               a.shape, a.dtype, sharding=Format(out_l, s),
               weak_type=a.weak_type,
               manual_axis_type=(a.mat if config._check_vma.value else None),
-              _memory_space=a.memory_space))
+              _memory_space=mem_space))
     else:
       out.append(a)
   return tree_util.tree_unflatten(self.out_tree, out)

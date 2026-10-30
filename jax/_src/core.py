@@ -4088,7 +4088,11 @@ class ShapeDtypeStruct:
 def _sds_aval_mapping(x):
   dtype = dtypes.check_and_canonicalize_user_dtype(
       x.dtype, "ShapeDtypeStruct", allow_non_jax_dtypes=True)
-  memory_space = getattr(x, "_memory_space", None) or MemorySpace.Device
+  memory_space = getattr(x, "_memory_space", None)
+  if memory_space is None:
+    memory_space = (mem_kind_to_space(x.sharding.memory_kind)
+                    if isinstance(x.sharding, NamedSharding) else
+                    MemorySpace.Device)
   aval = ShapedArray(x.shape, dtype, weak_type=x.weak_type,
                      memory_space=memory_space)
   aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type,
