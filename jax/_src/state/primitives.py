@@ -788,7 +788,11 @@ def _state_remat(prim, trace, ref, *args, **params):
     # Run only in the fwd computation; any read value reaching the remnant
     # computation is saved as a residual rather than re-read.
     return out, out, lambda out, *_: out
-  return out, (), lambda _, ref_, *args_: prim.bind(ref_, *args_, **params)
+  if prim is addupdate_p:
+    return out, (), lambda _, ref_, *args_: prim.bind(ref_, *args_, **params)
+  from jax._src.ad_checkpoint import primal_left_tangent_right
+  return out, out, lambda out, ref_, *args_: primal_left_tangent_right(
+      out, prim.bind(ref_, *args_, **params))
 
 remat.rules[get_p] = partial(_state_remat, get_p)
 remat.rules[swap_p] = partial(_state_remat, swap_p)
