@@ -7004,6 +7004,7 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
     # it's probably sufficient to just check the presets here.
     if platform == "cpu" and precision not in {
         DotAlgorithmPreset.DEFAULT, DotAlgorithmPreset.F16_F16_F16,
+        DotAlgorithmPreset.F16_F16_F32,
         DotAlgorithmPreset.F32_F32_F32, DotAlgorithmPreset.F64_F64_F64,
         DotAlgorithmPreset.BF16_BF16_F32, DotAlgorithmPreset.BF16_BF16_F32_X3,
         DotAlgorithmPreset.BF16_BF16_F32_X6,
@@ -7021,6 +7022,8 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
 
     lhs_dtype, rhs_dtype, accumulation_dtype = get_algorithm_compute_types(
         precision, lhs_dtype, rhs_dtype, aval_out.dtype)
+    if platform == "cpu":
+      accumulation_dtype = precision.accumulation_type
     lhs = maybe_convert_dtype(lhs, lhs_aval, lhs_dtype)
     rhs = maybe_convert_dtype(rhs, rhs_aval, rhs_dtype)
     if accumulation_dtype is not None:

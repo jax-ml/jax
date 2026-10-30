@@ -1284,8 +1284,10 @@ class LaxTest(jtu.JaxTestCase):
   def testDotAlgorithm(self, algorithm, dtype):
     if jtu.test_device_matches(["cpu"]):
       if algorithm not in {
+          "F16_F16_F32",
           lax.DotAlgorithmPreset.DEFAULT,
           lax.DotAlgorithmPreset.F16_F16_F16,
+          lax.DotAlgorithmPreset.F16_F16_F32,
           lax.DotAlgorithmPreset.F32_F32_F32,
           lax.DotAlgorithmPreset.F64_F64_F64,
           lax.DotAlgorithmPreset.BF16_BF16_F32,
@@ -1482,11 +1484,12 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "The dot algorithm"):
       lax.dot(lhs, rhs, precision="ANY_F8_ANY_F8_F32")
 
-  def testDotAlgorithmCasting(self):
+  @jtu.sample_product(precision=["F32_F32_F32", "F16_F16_F32"])
+  def testDotAlgorithmCasting(self, precision):
     if jtu.test_device_matches(["tpu"]):
-      raise SkipTest("F32_F32_F32 is not supported on TPU.")
+      raise SkipTest(f"{precision} is not supported on TPU.")
     def fun(lhs, rhs):
-      return lax.dot(lhs, rhs, precision="F32_F32_F32")
+      return lax.dot(lhs, rhs, precision=precision)
     lhs_shape = (3, 4)
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
