@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 420" width="100%" height="100%">
+  <style>
+    .bg { fill: #f8f9fa; stroke: #dadce0; stroke-width: 3; rx: 16; }
+    .chip-box { fill: #ffffff; stroke: #dadce0; stroke-width: 3; rx: 12; }
+    .tc-box { fill: #e6f4ea; stroke: #1e8e3e; stroke-width: 2; rx: 8; }
+    .text-title { font-family: sans-serif; font-size: 24px; font-weight: bold; fill: #5f6368; text-anchor: middle; }
+    .text-chip { font-family: sans-serif; font-size: 14px; font-weight: bold; fill: #5f6368; text-anchor: middle; }
+    .text-tc { font-family: sans-serif; font-size: 16px; font-weight: bold; fill: #0d652d; text-anchor: middle; }
+    .text-axis { font-family: monospace; font-size: 20px; font-weight: bold; fill: #1a73e8; text-anchor: start; }
+    .text-axis-y { font-family: monospace; font-size: 20px; font-weight: bold; fill: #9334e6; text-anchor: start; }
+    .arrow { stroke: #5f6368; stroke-width: 2; fill: none; marker-start: url(#arrowhead-start); marker-end: url(#arrowhead); }
+    .arrow-axis { stroke: #1a73e8; stroke-width: 3; fill: none; marker-end: url(#arrowhead-blue); }
+    .arrow-axis-y { stroke: #9334e6; stroke-width: 3; fill: none; marker-end: url(#arrowhead-purple); }
+  </style>
+
+  <defs>
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5f6368" />
+    </marker>
+    <marker id="arrowhead-start" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 10 0 L 0 5 L 10 10 z" fill="#5f6368" />
+    </marker>
+
+    <marker id="arrowhead-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1a73e8" />
+    </marker>
+
+    <marker id="arrowhead-purple" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9334e6" />
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" x="20" y="20" width="960" height="380" />
+  <text x="500" y="55" class="text-title">SPMD Communication over 2D JAX Mesh (x, y)</text>
+
+  <!-- Axis Indicator -->
+  <g transform="translate(100, 135)">
+    <path class="arrow-axis" d="M 0 0 L 160 0" />
+    <text x="175" y="6" class="text-axis">Mesh Axis: "x"</text>
+
+    <path class="arrow-axis-y" d="M 0 0 L 40 -40" />
+    <text x="55" y="-45" class="text-axis-y">Mesh Axis: "y" (No Comms)</text>
+  </g>
+  <g transform="translate(60, 40)" opacity="0.4">
+    <!-- Chip x=0, y=2 -->
+    <rect class="chip-box" x="50" y="140" width="180" height="130" />
+    <text x="140" y="165" class="text-chip">TPU Chip (x=0, y=2)</text>
+    
+    <rect class="tc-box" x="65" y="180" width="150" height="75" />
+    <text x="140" y="223" class="text-tc">TensorCore</text>
+
+    <!-- Chip x=1, y=2 -->
+    <rect class="chip-box" x="270" y="140" width="180" height="130" />
+    <text x="360" y="165" class="text-chip">TPU Chip (x=1, y=2)</text>
+    
+    <rect class="tc-box" x="285" y="180" width="150" height="75" />
+    <text x="360" y="223" class="text-tc">TensorCore</text>
+
+    <!-- Chip x=2, y=2 -->
+    <rect class="chip-box" x="490" y="140" width="180" height="130" />
+    <text x="580" y="165" class="text-chip">TPU Chip (x=2, y=2)</text>
+    
+    <rect class="tc-box" x="505" y="180" width="150" height="75" />
+    <text x="580" y="223" class="text-tc">TensorCore</text>
+
+    <!-- Chip x=3, y=2 -->
+    <rect class="chip-box" x="710" y="140" width="180" height="130" />
+    <text x="800" y="165" class="text-chip">TPU Chip (x=3, y=2)</text>
+    
+    <rect class="tc-box" x="725" y="180" width="150" height="75" />
+    <text x="800" y="223" class="text-tc">TensorCore</text>
+
+    <!-- Arrows -->
+    <path class="arrow" d="M 230 217 L 270 217" />
+    <path class="arrow" d="M 450 217 L 490 217" />
+    <path class="arrow" d="M 670 217 L 710 217" />
+  </g>
+  <g transform="translate(30, 70)" opacity="0.7">
+    <!-- Chip x=0, y=1 -->
+    <rect class="chip-box" x="50" y="140" width="180" height="130" />
+    <text x="140" y="165" class="text-chip">TPU Chip (x=0, y=1)</text>
+    
+    <rect class="tc-box" x="65" y="180" width="150" height="75" />
+    <text x="140" y="223" class="text-tc">TensorCore</text>
+
+    <!-- Chip x=1, y=1 -->
+    <rect class="chip-box" x="270" y="140" width="180" height="130" />
+    <text x="360" y="165" class="text-chip">TPU Chip (x=1, y=1)</text>
+    
+    <rect class="tc-box" x="285" y="180" width="150" height="75" />
+    <text x="360" y="223" class="text-tc">TensorCore</text>
+
+    <!-- Chip x=2, y=1 -->
+    <rect class="chip-box" x="490" y="140" width="180" height="130" />
+    <text x="580" y="165" class="text-chip">TPU Chip (x=2, y=1)</text>
+    
+    <rect class="tc-box" x="505" y="180" width="150" height="75" />
+    <text x="580" y="223" class="text-tc">TensorCore</text>
+
+    <!-- Chip x=3, y=1 -->
+    <rect class="chip-box" x="710" y="140" width="180" height="130" />
+    <text x="800" y="165" class="text-chip">TPU Chip (x=3, y=1)</text>
+    
+    <rect class="tc-box" x="725" y="180" width="150" height="75" />
+    <text x="800" y="223" class="text-tc">TensorCore</text>
+
+    <!-- Arrows -->
+    <path class="arrow" d="M 230 217 L 270 217" />
+    <path class="arrow" d="M 450 217 L 490 217" />
+    <path class="arrow" d="M 670 217 L 710 217" />
+  </g>
+  <g transform="translate(0, 100)" opacity="1.0">
+    <!-- Chip x=0, y=0 -->
+    <rect class="chip-box" x="50" y="140" width="180" height="130" />
+    <text x="140" y="165" class="text-chip">TPU Chip (x=0, y=0)</text>
+    
+    <rect class="tc-box" x="65" y="180" width="150" height="75" />
+    <text x="140" y="223" class="text-tc">TensorCore</text>
+
+    <!-- Chip x=1, y=0 -->
+    <rect class="chip-box" x="270" y="140" width="180" height="130" />
+    <text x="360" y="165" class="text-chip">TPU Chip (x=1, y=0)</text>
+    
+    <rect class="tc-box" x="285" y="180" width="150" height="75" />
+    <text x="360" y="223" class="text-tc">TensorCore</text>
+
+    <!-- Chip x=2, y=0 -->
+    <rect class="chip-box" x="490" y="140" width="180" height="130" />
+    <text x="580" y="165" class="text-chip">TPU Chip (x=2, y=0)</text>
+    
+    <rect class="tc-box" x="505" y="180" width="150" height="75" />
+    <text x="580" y="223" class="text-tc">TensorCore</text>
+
+    <!-- Chip x=3, y=0 -->
+    <rect class="chip-box" x="710" y="140" width="180" height="130" />
+    <text x="800" y="165" class="text-chip">TPU Chip (x=3, y=0)</text>
+    
+    <rect class="tc-box" x="725" y="180" width="150" height="75" />
+    <text x="800" y="223" class="text-tc">TensorCore</text>
+
+    <!-- Arrows -->
+    <path class="arrow" d="M 230 217 L 270 217" />
+    <path class="arrow" d="M 450 217 L 490 217" />
+    <path class="arrow" d="M 670 217 L 710 217" />
+  </g>
+</svg>

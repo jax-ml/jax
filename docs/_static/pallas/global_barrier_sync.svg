@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600" width="100%" height="100%">
+  <style>
+    .device-line { stroke: #dadce0; stroke-width: 2; stroke-dasharray: 4,4; }
+    .barrier-line { stroke: #d93025; stroke-width: 3; }
+    .text-title { font-family: sans-serif; font-size: 18px; font-weight: bold; fill: #5f6368; text-anchor: middle; }
+    .text-label { font-family: sans-serif; font-size: 14px; fill: #5f6368; text-anchor: middle; }
+    .op-box { rx: 4; stroke-width: 1; }
+    .op-other { fill: #e8f0fe; stroke: #1a73e8; } /* Light blue */
+    .op-kernel { fill: #e6f4ea; stroke: #1e8e3e; } /* Light green */
+    .op-barrier { fill: #fce8e6; stroke: #d93025; } /* Light red for barrier state */
+    
+    @media (prefers-color-scheme: dark) {
+      .device-line { stroke: #5f6368; }
+      .text-title { fill: #e8eaed; }
+      .text-label { fill: #e8eaed; }
+      .op-other { fill: #185abc; stroke: #8ab4f8; }
+      .op-kernel { fill: #137333; stroke: #81c995; }
+      .op-barrier { fill: #c5221f; stroke: #f28b82; }
+      #arrowhead-time path { fill: #e8eaed; }
+    }
+  </style>
+
+  <defs>
+    <marker id="arrowhead-time" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5f6368" />
+    </marker>
+  </defs>
+
+  <text x="450" y="30" class="text-title">Global Barrier: All Devices Must Wait</text>
+
+  <!-- Time Axis -->
+  <line x1="40" y1="70" x2="40" y2="550" stroke="#5f6368" stroke-width="2" marker-end="url(#arrowhead-time)" />
+  <text x="30" y="65" class="text-label" text-anchor="end">Time</text>
+
+  <!-- Device Columns -->
+  <text x="100" y="60" class="text-label">Device 1</text>
+  <line class="device-line" x1="100" y1="70" x2="100" y2="550" />
+
+  <text x="250" y="60" class="text-label">Device 2</text>
+  <line class="device-line" x1="250" y1="70" x2="250" y2="550" />
+
+  <text x="400" y="60" class="text-label">Device 3</text>
+  <line class="device-line" x1="400" y1="70" x2="400" y2="550" />
+
+  <text x="550" y="60" class="text-label">Device 4</text>
+  <line class="device-line" x1="550" y1="70" x2="550" y2="550" />
+
+  <text x="700" y="60" class="text-label">Device 5</text>
+  <line class="device-line" x1="700" y1="70" x2="700" y2="550" />
+
+  <!-- Other Ops -->
+  <rect class="op-box op-other" x="70" y="80" width="60" height="270" />
+  <text x="100" y="220" class="text-label" font-size="12">Other Op</text>
+
+  <rect class="op-box op-other" x="220" y="80" width="60" height="70" />
+  <text x="250" y="120" class="text-label" font-size="12">Other Op</text>
+
+  <rect class="op-box op-other" x="370" y="80" width="60" height="20" />
+  <text x="400" y="95" class="text-label" font-size="10">Other Op</text>
+
+  <rect class="op-box op-other" x="520" y="80" width="60" height="120" />
+  <text x="550" y="145" class="text-label" font-size="12">Other Op</text>
+
+  <rect class="op-box op-other" x="670" y="80" width="60" height="300" />
+  <text x="700" y="235" class="text-label" font-size="12">Other Op</text>
+
+  <!-- Barrier Entries (All devices wait for Device 5 at y=380) -->
+  
+  <!-- Dev 3 enters barrier at y=100 -->
+  <rect class="op-box op-barrier" x="370" y="100" width="60" height="280" />
+  <text x="400" y="240" class="text-label" font-size="12" fill="#d93025">Barrier</text>
+
+  <!-- Dev 2 enters barrier at y=150 -->
+  <rect class="op-box op-barrier" x="220" y="150" width="60" height="230" />
+  <text x="250" y="265" class="text-label" font-size="12" fill="#d93025">Barrier</text>
+
+  <!-- Dev 4 enters barrier at y=200 -->
+  <rect class="op-box op-barrier" x="520" y="200" width="60" height="180" />
+  <text x="550" y="290" class="text-label" font-size="12" fill="#d93025">Barrier</text>
+
+  <!-- Dev 1 enters barrier at y=350 -->
+  <rect class="op-box op-barrier" x="70" y="350" width="60" height="30" />
+  <text x="100" y="370" class="text-label" font-size="10" fill="#d93025">Barrier</text>
+
+  <!-- Dev 5 enters barrier at y=380 -->
+  <rect class="op-box op-barrier" x="670" y="380" width="60" height="20" />
+  <text x="700" y="395" class="text-label" font-size="10" fill="#d93025">Barrier</text>
+
+  <!-- Global Barrier Line -->
+  <line class="barrier-line" x1="60" y1="380" x2="740" y2="380" />
+  <text x="450" y="370" class="text-label" fill="#d93025">Global Barrier (Wait for All)</text>
+
+  <!-- Kernel Bodies (All start at y=380) -->
+  <rect class="op-box op-kernel" x="70" y="380" width="60" height="100" />
+  <text x="100" y="435" class="text-label" font-size="12">Kernel Body</text>
+
+  <rect class="op-box op-kernel" x="220" y="380" width="60" height="100" />
+  <text x="250" y="435" class="text-label" font-size="12">Kernel Body</text>
+
+  <rect class="op-box op-kernel" x="370" y="380" width="60" height="100" />
+  <text x="400" y="435" class="text-label" font-size="12">Kernel Body</text>
+
+  <rect class="op-box op-kernel" x="520" y="380" width="60" height="100" />
+  <text x="550" y="435" class="text-label" font-size="12">Kernel Body</text>
+
+  <rect class="op-box op-kernel" x="670" y="380" width="60" height="100" />
+  <text x="700" y="435" class="text-label" font-size="12">Kernel Body</text>
+
+</svg>

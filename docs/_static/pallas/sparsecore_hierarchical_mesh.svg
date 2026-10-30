@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 500" width="100%" height="100%">
+  <style>
+    .bg { fill: #f8f9fa; stroke: #dadce0; stroke-width: 3; rx: 16; }
+    .sc-box { fill: #fce8e6; stroke: #d93025; stroke-width: 3; rx: 12; }
+    .scalar-box { fill: #f3e8fd; stroke: #9334e6; stroke-width: 2; rx: 8; }
+    .vs-box { fill: #e6f4ea; stroke: #1e8e3e; stroke-width: 2; rx: 8; }
+
+    .text-title { font-family: sans-serif; font-size: 24px; font-weight: bold; fill: #5f6368; text-anchor: middle; }
+    .text-sc { font-family: sans-serif; font-size: 20px; font-weight: bold; fill: #a50e0e; text-anchor: middle; }
+    .text-scalar { font-family: sans-serif; font-size: 16px; font-weight: bold; fill: #681da8; text-anchor: middle; }
+    .text-vs { font-family: sans-serif; font-size: 16px; font-weight: bold; fill: #0d652d; text-anchor: middle; }
+    .text-ellipsis { font-family: sans-serif; font-size: 24px; font-weight: bold; fill: #5f6368; text-anchor: middle; letter-spacing: 4px; }
+
+    .text-axis-core { font-family: monospace; font-size: 18px; font-weight: bold; fill: #d93025; text-anchor: middle; }
+    .text-axis-subcore { font-family: monospace; font-size: 18px; font-weight: bold; fill: #1e8e3e; text-anchor: middle; }
+
+    .arrow-subcore { stroke: #1e8e3e; stroke-width: 4; fill: none; marker-start: url(#arrowhead-green-start); marker-end: url(#arrowhead-green); }
+    .arrow-core { stroke: #d93025; stroke-width: 4; fill: none; marker-start: url(#arrowhead-red-start); marker-end: url(#arrowhead-red); }
+
+    .text-label-core { font-family: sans-serif; font-size: 16px; fill: #d93025; text-anchor: middle; font-weight: bold; }
+    .text-label-subcore { font-family: sans-serif; font-size: 16px; fill: #1e8e3e; text-anchor: middle; font-weight: bold; }
+  </style>
+
+  <defs>
+    <marker id="arrowhead-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1e8e3e" />
+    </marker>
+    <marker id="arrowhead-green-start" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 10 0 L 0 5 L 10 10 z" fill="#1e8e3e" />
+    </marker>
+
+    <marker id="arrowhead-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#d93025" />
+    </marker>
+    <marker id="arrowhead-red-start" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 10 0 L 0 5 L 10 10 z" fill="#d93025" />
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" x="20" y="20" width="960" height="460" />
+  <text x="500" y="60" class="text-title">Hierarchical SPMD Mesh on SparseCores</text>
+
+
+  <path class="arrow-core" d="M 270 105 L 730 105" />
+  <rect x="440" y="90" width="120" height="30" fill="#f8f9fa" />
+  <text x="500" y="110" class="text-label-core">"core" axis</text>
+
+  <!-- SparseCore 0 -->
+  <rect class="sc-box" x="120" y="120" width="300" height="340" />
+  <text x="270" y="145" class="text-sc">SparseCore 0</text>
+  
+  <!-- Scalar Subcore -->
+  <rect class="scalar-box" x="170" y="170" width="230" height="40" />
+  <text x="285" y="195" class="text-scalar">Scalar Subcore</text>
+
+  <rect class="vs-box" x="170" y="230" width="230" height="40" />
+  <text x="285" y="255" class="text-vs">Vector Subcore 0</text>
+
+  <text x="285" y="330" class="text-ellipsis" transform="rotate(90 285 330)">...</text>
+
+  <rect class="vs-box" x="170" y="390" width="230" height="40" />
+  <text x="285" y="415" class="text-vs">Vector Subcore 15</text>
+
+  <path class="arrow-subcore" d="M 150 250 L 150 410" />
+  <text x="135" y="330" class="text-label-subcore" transform="rotate(-90 135 330)">"subcore" axis</text>
+
+  <!-- SparseCore 1 -->
+  <rect class="sc-box" x="580" y="120" width="300" height="340" />
+  <text x="730" y="145" class="text-sc">SparseCore 1</text>
+  
+  <!-- Scalar Subcore -->
+  <rect class="scalar-box" x="630" y="170" width="230" height="40" />
+  <text x="745" y="195" class="text-scalar">Scalar Subcore</text>
+
+  <rect class="vs-box" x="630" y="230" width="230" height="40" />
+  <text x="745" y="255" class="text-vs">Vector Subcore 0</text>
+
+  <text x="745" y="330" class="text-ellipsis" transform="rotate(90 745 330)">...</text>
+
+  <rect class="vs-box" x="630" y="390" width="230" height="40" />
+  <text x="745" y="415" class="text-vs">Vector Subcore 15</text>
+
+  <path class="arrow-subcore" d="M 610 250 L 610 410" />
+  <text x="595" y="330" class="text-label-subcore" transform="rotate(-90 595 330)">"subcore" axis</text>
+</svg>
