@@ -155,8 +155,8 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
     m, k, n = 512, 512, 512
     bm, bk, bn = 128, 128, 128
 
-    def matmul_kernel(acc_ref, x_ref, y_ref, o_ref):
-      @pl.when(pl.program_id(2) == 0)
+    def matmul_kernel(acc_ref, step, x_ref, y_ref, o_ref):
+      @pl.when(step.index[2] == 0)
       def _():
         acc_ref[...] = jnp.zeros_like(acc_ref)
 
@@ -164,7 +164,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
           x_ref[...], y_ref[...], preferred_element_type=jnp.float32
       )
 
-      @pl.when(pl.program_id(2) == pl.num_programs(2) - 1)
+      @pl.when(step.index[2] == k // bk - 1)
       def _():
         o_ref[...] = acc_ref[...].astype(o_ref.dtype)
 
@@ -182,6 +182,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
                   pl.BlockSpec((bk, bn), lambda i, j, k: (k, j)),
               ],
               out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
+              _explicit_indices=True,
           )(x_ref, y_ref, o_ref)
 
         pl.pallas_call(

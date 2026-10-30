@@ -1767,7 +1767,8 @@ class InterpretTest(jtu.JaxTestCase):
     )
     with config.use_emit_pipeline_primitive(True):
       with jax.sharding.use_abstract_mesh(abstract_mesh):
-        def pipeline_body(x_ref, o_ref):
+        def pipeline_body(step, x_ref, o_ref):
+          del step  # Unused.
           o_ref[...] = x_ref[...] + 1.0
 
         @pl.kernel(
@@ -1781,6 +1782,7 @@ class InterpretTest(jtu.JaxTestCase):
               grid=(4,),
               in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
               out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              _explicit_indices=True,
           )(x_hbm_ref, o_hbm_ref)
 
         x = jnp.arange(4 * 8 * 128, dtype=jnp.float32).reshape(4 * 8, 128)
@@ -1798,8 +1800,8 @@ class InterpretTest(jtu.JaxTestCase):
     )
     with config.use_emit_pipeline_primitive(True):
       with jax.sharding.use_abstract_mesh(abstract_mesh):
-        def pipeline_body(x_ref, o_ref):
-          i = pl.program_id(0)
+        def pipeline_body(step, x_ref, o_ref):
+          i = step.index[0]
           o_ref[...] = x_ref[...] + i
 
         @pl.kernel(
@@ -1813,6 +1815,7 @@ class InterpretTest(jtu.JaxTestCase):
               grid=(4,),
               in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
               out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              _explicit_indices=True,
           )(x_hbm_ref, o_hbm_ref)
 
         x = jnp.zeros((4 * 8, 128), dtype=jnp.int32)
@@ -1833,7 +1836,8 @@ class InterpretTest(jtu.JaxTestCase):
     )
     with config.use_emit_pipeline_primitive(True):
       with jax.sharding.use_abstract_mesh(abstract_mesh):
-        def pipeline_body(x_ref, o_ref):
+        def pipeline_body(step, x_ref, o_ref):
+          del step  # Unused.
           o_ref[...] = x_ref[...] + 1.0
 
         @pl.kernel(
@@ -1847,6 +1851,7 @@ class InterpretTest(jtu.JaxTestCase):
               grid=(4,),
               in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
               out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              _explicit_indices=True,
           )(x_hbm_ref, o_hbm_ref)
 
         x = jnp.arange(1 * 4 * 8 * 128, dtype=jnp.float32).reshape(1, 4 * 8, 128)
@@ -1866,7 +1871,8 @@ class InterpretTest(jtu.JaxTestCase):
     )
     with config.use_emit_pipeline_primitive(use_primitive):
       with jax.sharding.use_abstract_mesh(abstract_mesh):
-        def pipeline_body(x_ref, o_ref):
+        def pipeline_body(step, x_ref, o_ref):
+          del step  # Unused.
           o_ref[...] = x_ref[...] + 1.0
 
         @pl.kernel(
@@ -1883,6 +1889,7 @@ class InterpretTest(jtu.JaxTestCase):
               core_axis_name='core',
               dimension_semantics=(pltpu.PARALLEL,),
               no_pipelining=no_pipelining,
+              _explicit_indices=True,
           )(x_hbm_ref, o_hbm_ref)
 
         x = jnp.arange(4 * 8 * 128, dtype=jnp.float32).reshape(4 * 8, 128)
@@ -1993,6 +2000,7 @@ class InterpretTest(jtu.JaxTestCase):
             grid=(n_ref[0],),
             in_specs=(pl.BlockSpec((8, 128), lambda i: (i, 0)),),
             out_specs=(pl.BlockSpec((8, 128), lambda i: (i, 0)),),
+            _explicit_indices=False,
         )(x_hbm, o_hbm)
 
       n = jnp.array([2], dtype=jnp.int32)
@@ -2035,6 +2043,7 @@ class InterpretTest(jtu.JaxTestCase):
               out_specs=(pl.BlockSpec((8, 128), lambda i: (i, 0)),),
               core_axis_name='core',
               dimension_semantics=(pltpu.PARALLEL,),
+              _explicit_indices=False,
           )(x_hbm, o_hbm)
 
         x_mega = jnp.ones((32, 128), dtype=jnp.float32)
@@ -2079,6 +2088,7 @@ class InterpretTest(jtu.JaxTestCase):
                   ),
                   core_axis_name='core',
                   dimension_semantics=(pltpu.PARALLEL,),
+                  _explicit_indices=False,
               )
           )(x_hbm, o_hbm)
 
@@ -2109,6 +2119,7 @@ class InterpretTest(jtu.JaxTestCase):
                   pl.BlockSpec((8, 128), lambda i: (pl.program_id(0), 0)),
               ),
               out_specs=(pl.BlockSpec((8, 128), lambda i: (i, 0)),),
+              _explicit_indices=False,
           )(x_hbm, o_hbm)
 
         with self.assertRaisesRegex(

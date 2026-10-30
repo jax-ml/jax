@@ -6185,7 +6185,8 @@ class EmitPipelineTest(ptu.PallasTPUTest):
     tile_major *= 32 // jnp.iinfo(dtype).bits
 
     def kernel(x_ref, y_ref, o_ref):
-      def body(x_vmem, y_vmem, o_vmem):
+      def body(step, x_vmem, y_vmem, o_vmem):
+        del step  # Unused.
         o_vmem[...] = (x_vmem[...].astype(jnp.int32) + y_vmem[...].astype(jnp.int32)).astype(dtype)
 
       pltpu.emit_pipeline(
@@ -6196,6 +6197,7 @@ class EmitPipelineTest(ptu.PallasTPUTest):
               pl.BlockSpec((tile_major, 128), lambda i, j: (i, j)),
           ),
           out_specs=pl.BlockSpec((tile_major, 128), lambda i, j: (i, j)),
+          _explicit_indices=True,
       )(x_ref, y_ref, o_ref)
 
     x = jax.random.randint(jax.random.key(1234), (128, 256,), -40, 40, dtype=dtype)
@@ -6219,7 +6221,8 @@ class EmitPipelineTest(ptu.PallasTPUTest):
     if not self.INTERPRET and not jtu.is_device_tpu_at_least(4):
       self.skipTest('Only works on TPU v4+')
     with config.use_emit_pipeline_primitive(use_primitive):
-      def pipeline_body(x_ref, o_ref):
+      def pipeline_body(step, x_ref, o_ref):
+        del step  # Unused.
         o_ref[...] = x_ref[...] + 1.0
 
       @pl.kernel(
@@ -6236,6 +6239,7 @@ class EmitPipelineTest(ptu.PallasTPUTest):
             core_axis_name='core',
             dimension_semantics=(pltpu.PARALLEL,),
             no_pipelining=no_pipelining,
+            _explicit_indices=True,
         )(x_hbm_ref, o_hbm_ref)
 
       x = jnp.arange(4 * 8 * 128, dtype=jnp.float32).reshape(4 * 8, 128)
@@ -6845,7 +6849,7 @@ class ExplicitMXUTest(jtu.JaxTestCase):
           ] * 2
           for mxu_id in range(mxu_count)
       ]
-      def memory_body(x_vmem, y_vmem, o_vmem):
+      def memory_body(step, x_vmem, y_vmem, o_vmem):
         compute_mn_grid = (
             mem_block_m // (mxu_count * compute_block_m),
             mem_block_n // compute_block_n,
@@ -6877,7 +6881,7 @@ class ExplicitMXUTest(jtu.JaxTestCase):
               mxu_index=mxu,
           )
         # Zero the accumulator on the first step.
-        accumulate = pl.program_id(2) > 0
+        accumulate = step.index[2] > 0
 
         def compute_body(i, mn_indices, push=True):
           pop_mi, pop_ni = mn_indices
@@ -6952,6 +6956,7 @@ class ExplicitMXUTest(jtu.JaxTestCase):
               pl.BlockSpec((mem_block_k, mem_block_n), lambda i, j, l: (l, j)),
           ),
           out_specs=pl.BlockSpec((mem_block_m, mem_block_n), lambda i, j, l: (i, j)),
+          _explicit_indices=True,
       )(x_ref, y_ref, o_ref)
 
     matmul = pl.pallas_call(

@@ -885,7 +885,8 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           left_copy.start()
 
       # --- Body ---
-      def inner_kernel(input_ref, accum_in_ref, accum_out_ref):
+      def inner_kernel(step, input_ref, accum_in_ref, accum_out_ref):
+        del step  # Unused.
         accum_out_ref[...] = accum_in_ref[...] + input_ref[...]
 
       @pl.when(~last_iteration)
@@ -897,6 +898,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
             in_specs=[inner_block_spec, inner_block_spec],
             out_specs=inner_block_spec,
             grid=inner_grid,
+            _explicit_indices=True,
           )(
             x_ref.at[left_copy_device, left_copy_slice],
             hbm_scratch.at[working_slot, left_copy_slice],
@@ -910,6 +912,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
             in_specs=[inner_block_spec, inner_block_spec],
             out_specs=inner_block_spec,
             grid=inner_grid,
+            _explicit_indices=True,
           )(
             x_ref.at[right_copy_device, right_copy_slice],
             hbm_scratch.at[working_slot, right_copy_slice],

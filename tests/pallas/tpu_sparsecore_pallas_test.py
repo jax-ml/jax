@@ -28,6 +28,7 @@ import jax
 from jax import lax
 from jax._src import hypothesis_test_util as htu
 from jax._src import test_util as jtu
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import tpu_info
@@ -146,9 +147,11 @@ class PallasSCTest(jtu.JaxTestCase):
           args_hbm = args
           scratch_args = ()
 
+        pipeline_grid = (1,) if grid is None else grid
+
         @functools.partial(
             pltpu.emit_pipeline,
-            grid=(1,) if grid is None else grid,
+            grid=pipeline_grid,
             in_specs=[pl.BlockSpec()] * (
                 len(args_hbm) - len(jax.tree.leaves(out_shape))
             )
@@ -157,9 +160,13 @@ class PallasSCTest(jtu.JaxTestCase):
             out_specs=jax.tree.map(lambda _: pl.BlockSpec(), out_shape)
             if out_specs is None
             else out_specs,
+            _explicit_indices=True,
         )
-        def pipeline(*args):
-          fn(*args, *scratch_args, **kwargs)
+        def pipeline(step, *args):
+          with pallas_core.grid_env(
+              list(map(pallas_core.GridAxis, step.index, pipeline_grid))
+          ):
+            fn(*args, *scratch_args, **kwargs)
 
         pipeline(*args_hbm)
 
@@ -3355,8 +3362,10 @@ class PipelineTest(PallasSCTest):
           out_specs=pl.BlockSpec(
               (pl.Squeezed(), self.num_lanes), lambda i: (i, 0)
           ),
+          _explicit_indices=True,
       )
-      def pipeline(x_ref, o_ref):
+      def pipeline(step, x_ref, o_ref):
+        del step  # Unused.
         o_ref[...] = x_ref[...] + 1
 
       pipeline(x_hbm_ref, o_hbm_ref)
@@ -3393,7 +3402,8 @@ class PipelineTest(PallasSCTest):
           mesh=sc_mesh,
       )
       def kernel(x_hbm, i_hbm, o_hbm):
-        def body(i_vmem, o_vmem):
+        def body(step, i_vmem, o_vmem):
+          del step  # Unused.
           pltpu.sync_copy(x_hbm.at[i_vmem.at[0]], o_vmem)  # The gather op
 
         pltpu.emit_pipeline(
@@ -3403,6 +3413,7 @@ class PipelineTest(PallasSCTest):
             out_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
             core_axis_name="subcore",
             dimension_semantics=(pltpu.PARALLEL,),
+            _explicit_indices=True,
         )(i_hbm, o_hbm)
 
       return kernel(x, indices)
@@ -3459,8 +3470,10 @@ class PipelineTest(PallasSCTest):
               lambda i: (i, 0, 0),
           ),
           tiling=pltpu.Tiling.SPARSE_CORE,
+          _explicit_indices=True,
       )
-      def pipeline(x_ref, o_ref):
+      def pipeline(step, x_ref, o_ref):
+        del step  # Unused.
 
         @pl.loop(0, self.num_lanes)
         def _(j):
@@ -3492,8 +3505,10 @@ class PipelineTest(PallasSCTest):
           in_specs=spec,
           out_specs=spec,
           tiling=pltpu.Tiling.SPARSE_CORE,
+          _explicit_indices=True,
       )
-      def pipeline(x_ref, o_ref):
+      def pipeline(step, x_ref, o_ref):
+        del step  # Unused.
         o_ref[...] = x_ref[...] + 1
 
       pipeline(x_hbm_ref, o_hbm_ref)
@@ -3520,8 +3535,10 @@ class PipelineTest(PallasSCTest):
           in_specs=[spec],
           out_specs=[spec],
           tiling=pltpu.Tiling.SPARSE_CORE,
+          _explicit_indices=True,
       )
-      def pipeline(x_ref, o_ref):
+      def pipeline(step, x_ref, o_ref):
+        del step  # Unused.
         @pl.loop(0, 8)
         def _(i):
           @pl.loop(0, 128, step=self.num_lanes)
