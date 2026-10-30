@@ -676,8 +676,13 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
       self.skipTest("cuDNN 9.10.x does not support SDPA FP8")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Requires at least Hopper arch")
-    if jtu.is_cuda_compute_capability_equal("12.0"):
-      self.skipTest("cuDNN does not support FP8 with compute capability 12.0")
+    if (
+        jtu.is_cuda_compute_capability_equal("12.0")
+        or jtu.is_cuda_compute_capability_equal("12.1")
+    ):
+      self.skipTest(
+          "cuDNN FP8 SDPA is unsupported on compute capability 12.0 or 12.1"
+      )
 
   @jtu.sample_product(
       batch_size=[2, 4],
