@@ -2307,10 +2307,8 @@ class FragmentedArray:
       assert all(a.type == arg_ty for a in args)
       if arg_ty == f32:
         if isinstance(instr, str):
-          args_ptx = ", ".join(f"${i}" for i in range(len(args) + 1))
-          return llvm.inline_asm(
-              f32, args, f"{instr} {args_ptx};", "=f" + ",f" * len(args)
-          )
+          ptx = f"{instr} {", ".join(f"${i}" for i in range(len(args) + 1))};"
+          return utils.inline_ptx(ptx, *args, result_types=f32)
         else:
           return instr(*args)
       elif isinstance(arg_ty, ir.VectorType):
@@ -2352,23 +2350,13 @@ class FragmentedArray:
       if (vec_len == 1 and single_instr is not None) or (
           vec_bitwidth == 32 and vec_len != 1
       ):
-        assert vec_bitwidth.bit_count() == 1
-        if vec_bitwidth == 32:
-          cstr = "r"
-        elif vec_bitwidth == 16:
-          cstr = "h"
-        else:
+        if vec_bitwidth not in (16, 32):
           raise NotImplementedError(vec_bitwidth)
         int_ty = ir.IntegerType.get_signless(vec_bitwidth)
-        args_ptx = ", ".join(f"${i}" for i in range(len(args) + 1))
+        instr = single_instr if vec_len == 1 else packed_instr
+        ptx = f"{instr} {", ".join(f"${i}" for i in range(len(args) + 1))};"
         args_int = [utils.bitcast(a, int_ty) for a in args]
-        result_int = llvm.inline_asm(
-            int_ty,
-            args_int,
-            f"{single_instr if vec_len == 1 else packed_instr} {args_ptx};",
-            f"={cstr}" + f",{cstr}" * len(args)
-        )
-        assert isinstance(result_int, ir.Value)
+        result_int = utils.inline_ptx(ptx, *args_int, result_types=int_ty)
         return utils.bitcast(result_int, original_arg_ty)
       elif vec_bitwidth > 32:
         slice_len = 32 // utils.bitwidth(arg_ty.element_type)
@@ -2620,18 +2608,16 @@ class FragmentedArray:
           sign = arith.shrui(sign, c(16, i32))
 
         prmt_sign_pattern = arith.ori(sign, c(0x32103210, i32))
-        return llvm.inline_asm(
-            i32,
-            [lut_idx, prmt_sign_pattern],
-            f"""
-            {{
+        ptx = f"""
+        {{
             .reg .b32 pos_f8s, neg_f8s;
             prmt.b32 pos_f8s, {lut[0]}, {lut[1]}, $1;
             prmt.b32 neg_f8s, {lut[2]}, {lut[3]}, $1;
             prmt.b32 $0, pos_f8s, neg_f8s, $2;
-            }}
-            """,
-            "=r,r,r",
+        }}
+        """
+        return utils.inline_ptx(
+            ptx, lut_idx, prmt_sign_pattern, result_types=i32
         )
       new_registers = np.empty_like(self.registers)
 
@@ -2682,14 +2668,12 @@ class FragmentedArray:
 
         def upcast_i4_to_bf16(reg: ir.Value, part: int):
           assert 0 <= part < 4
+          bf16x2 = ir.VectorType.get((2,), bf16)
 
           # `cvt` with `.s2f6x2` instruction type introduced in PTX ISA v9.1
           if utils.get_arch() >= utils.BLACKWELL and ptx_isa_version >= 91:
-            int_reg = llvm.inline_asm(
-                i32,
-                [reg],
-                f"""
-                {{
+            ptx = f"""
+            {{
                 .reg .b32 evens, odds, lo, hi;
                 .reg .b16 part<4>;
                 .reg .b16 scale;
@@ -2702,10 +2686,9 @@ class FragmentedArray:
                 mov.b32 {{part2, part3}}, hi;
                 mov.b16 scale, 0x8181;
                 cvt.rn.scaled::n2::ue8m0.bf16x2.s2f6x2 $0, part{part}, scale;
-                }}
-                """,
-                "=r,r",
-            )
+            }}
+            """
+            return utils.inline_ptx(ptx, reg, result_types=bf16x2)
           else:
             # The algorithm here is largely the same as CUTLASS's
             # NumericArrayConverter specialization for int4 -> bf16 casts.
@@ -2720,22 +2703,18 @@ class FragmentedArray:
             # positive int4s will end up larger than negative int4s, with a bias of
             # 8. Use use the sub to subtract the base (our initial exponent) and the
             # bias coming from flipping the sign bit which is 136 (0x4308 as bits).
-            int_reg = llvm.inline_asm(
-                i32,
-                [reg, arith.shrui(reg, c(4, i32))],
-                f"""
-                {{
+            ptx = f"""
+            {{
                 .reg .b32 s<4>;
                 prmt.b32 s1, $1, $2, 0xF{part + 4}F{part};
                 lop3.b32 s2, s1, 0x000F000F, 0x43084308, (0xf0 & 0xcc) ^ 0xaa;
                 mov.b32 s3, 0x43084308;
                 sub.bf16x2 $0, s2, s3;
-                }}
-                """,
-                "=r,r,r",
+            }}
+            """
+            return utils.inline_ptx(
+                ptx, reg, arith.shrui(reg, c(4, i32)), result_types=bf16x2
             )
-          assert isinstance(int_reg, ir.Value)
-          return utils.bitcast(int_reg, ir.VectorType.get((2,), bf16))
 
         [group_size] = ir.VectorType(reg.type).shape
         assert group_size % vector_len == 0
@@ -2788,11 +2767,8 @@ class FragmentedArray:
           # Note: (0xf0 & 0xaa) | (0xcc & ~0xaa) = 0xe4. lop3 acts as a blend.
           # Below xN means the value of nibble N, sN means that all 4 bits are
           # equal to the sign bit of nibble N, and 00 means an all 0 nibble.
-          out_struct = llvm.inline_asm(
-              llvm.StructType.get_literal([i32, i32]),
-              [reg],
-              f"""
-              {{
+          ptx = f"""
+          {{
               .reg .b32 high_even;  // $2 is high_odd
               .reg .b32 low_odd;    // $2 is low_even
               .reg .b32 sign_even, sign_odd;
@@ -2805,16 +2781,11 @@ class FragmentedArray:
               lop3.b32 i8_even, sign_even, $2, 0xf0f0f0f0, 0xe4;     // s6x6s4x4s2x2s0x0
               prmt.b32 $0, i8_even, i8_odd, 0x{low_prmt};            // s3x3s2x2s1x2s0x0
               prmt.b32 $1, i8_even, i8_odd, 0x{high_prmt};           // s7x7s6x5s4x4s3x3
-              }}
-              """,
-              "=r,=r,r",
-          )
-          assert isinstance(out_struct, ir.Value)
-          i8_vec = ir.VectorType.get((4,), i8)
-          return utils.vector_concat([
-              utils.bitcast(llvm.extractvalue(i32, out_struct, (i,)), i8_vec)
-              for i in range(2)
-          ])
+          }}
+          """
+          i8x4 = ir.VectorType.get((4,), i8)
+          out_regs = utils.inline_ptx(ptx, reg, result_types=(i8x4, i8x4))
+          return utils.vector_concat(out_regs)
         [group_size] = ir.VectorType(reg.type).shape
         assert group_size % vector_len == 0
         assert group_size * 4 <= 32
@@ -2856,20 +2827,17 @@ class FragmentedArray:
         # lsb of the exponent (msb of the second byte) is zero, which allows us
         # to losslesly pack the msb there. When 1, it doubles the value of s2,
         # making the result negative.
-        return llvm.inline_asm(
-            i32,
-            [reg],
-            f"""
-            {{
+        ptx = f"""
+        {{
             .reg .b32 s<3>;
             prmt.b32 s0, $1, 0x43, {0x4342 if high else 0x4140};
             and.b32 s1, s0, 0xff7fff7f;
             and.b32 s2, s0, 0xff80ff80;
             sub.bf16x2 $0, s1, s2;
-            }}
-            """,
-            "=r,r",
-        )
+        }}
+        """
+        return utils.inline_ptx(ptx, reg, result_types=i32)
+
       empty_vec_32 = llvm.mlir_undef(ir.VectorType.get((vector_len // 2,), i32))
       pad_vec_16 = llvm.mlir_undef(ir.VectorType.get((1,), i16))
       for idx, reg in np.ndenumerate(self.registers):
@@ -2914,15 +2882,8 @@ class FragmentedArray:
         src_vec_bitwidth = src_bitwidth * convert_vec_len
         tgt_vec_bitwidth = tgt_bitwidth * convert_vec_len
 
-        def get_ptx_constraint(bitwidth):
-          if bitwidth <= 16:
-            return "h", 1
-          return "r", bitwidth // 32
-        src_ptx_constraint, src_regs = get_ptx_constraint(src_vec_bitwidth)
-        tgt_ptx_constraint, tgt_regs = get_ptx_constraint(tgt_vec_bitwidth)
-        ptx_constraints = ["=" + tgt_ptx_constraint] * tgt_regs
-        ptx_constraints += [src_ptx_constraint] * src_regs
-        ptx_constraints = ",".join(ptx_constraints)
+        src_regs = 1 if src_vec_bitwidth <= 16 else src_vec_bitwidth // 32
+        tgt_regs = 1 if tgt_vec_bitwidth <= 16 else tgt_vec_bitwidth // 32
 
         ptx_lines = ["{"]
         src_packing = 32 // src_bitwidth
@@ -2982,15 +2943,10 @@ class FragmentedArray:
 
         tgt_packing = 32 // tgt_bitwidth
         if tgt_vec_bitwidth > 32:
-          ptx_result_ty = llvm.StructType.get_literal(
-            [i32] * (convert_vec_len // tgt_packing)
-          )
+          ptx_result_types = [i32] * (convert_vec_len // tgt_packing)
           def process_ptx_result(ptx_result):
             vec_32 = ir.VectorType.get((tgt_packing,), tgt_int_ty)
-            elements = [
-                utils.bitcast(llvm.extractvalue(i32, ptx_result, [i]), vec_32)
-                for i in range(convert_vec_len // tgt_packing)
-            ]
+            elements = [utils.bitcast(el, vec_32) for el in ptx_result]
             return utils.vector_concat(elements)
           assert tgt_packing >= 2
           ptx_targets_per_out = tgt_packing // 2
@@ -3004,7 +2960,7 @@ class FragmentedArray:
               mov_src = f"{{ {', '.join(out_targets) } }}"
             ptx_lines.append(f"mov.b32 ${out_vec_idx}, {mov_src};")
         elif tgt_vec_bitwidth >= 16:
-          ptx_result_ty = ir.IntegerType.get_signless(tgt_vec_bitwidth)
+          ptx_result_types = ir.IntegerType.get_signless(tgt_vec_bitwidth)
           def process_ptx_result(ptx_result):
             return utils.bitcast(
               ptx_result, ir.VectorType.get((convert_vec_len,), tgt_int_ty)
@@ -3015,7 +2971,7 @@ class FragmentedArray:
             mov_src = f"{{ {', '.join(ptx_targets) } }}"
           ptx_lines.append(f"mov.b{tgt_vec_bitwidth} $0, {mov_src};")
         elif tgt_vec_bitwidth == 8:  # NVPTX inline_asm has no support for 8-bit registers...
-          ptx_result_ty = i16
+          ptx_result_types = i16
           def process_ptx_result(ptx_result):
             ptx_result = arith.trunci(i8, ptx_result)
             return utils.bitcast(
@@ -3028,8 +2984,8 @@ class FragmentedArray:
 
         ptx_lines.append("}")
         ptx = "\t" + "\n\t".join(ptx_lines)
-        ptx_result = llvm.inline_asm(
-            ptx_result_ty, get_ptx_operands(vec), ptx, ptx_constraints
+        ptx_result = utils.inline_ptx(
+            ptx, *get_ptx_operands(vec), result_types=ptx_result_types
         )
         result = process_ptx_result(ptx_result)
         assert result.type == ir.VectorType.get((convert_vec_len,), tgt_int_ty)
@@ -4337,22 +4293,15 @@ class FragmentedArray:
         reg = vector.bitcast(ir.VectorType.get(reg_ty.shape, narrow_int), reg)
       reg_bitwidth = utils.bitwidth(reg_ty)
       if reg_bitwidth == 32:
-        ptx_constraint = "r"
         ptx_type = "b32"
         reg = utils.bitcast(reg, i32)
       elif reg_bitwidth == 64:
-        ptx_constraint = "l"
         ptx_type = "b64"
         reg = utils.bitcast(reg, i64)
       else:
         raise NotImplementedError(f"Unsupported register bitwidth: {reg_bitwidth}")
-      llvm.inline_asm(
-          ir.Type.parse("!llvm.void"),
-          [cluster_ptr, reg, cluster_barrier_ptr],
-          f"st.async.cluster.shared::cluster.mbarrier::complete_tx::bytes.{ptx_type} [$0], $1, [$2];",
-          f"l,{ptx_constraint},l",
-          has_side_effects=True,
-      )
+      ptx = f"st.async.cluster.shared::cluster.mbarrier::complete_tx::bytes.{ptx_type} [$0], $1, [$2];"
+      utils.inline_ptx(ptx, cluster_ptr, reg, cluster_barrier_ptr)
 
   def _store_register_atomic(
       self,
@@ -4371,18 +4320,15 @@ class FragmentedArray:
       red = "red.async"
       scope = "cluster.shared::cluster.mbarrier::complete_tx::bytes"
       space = ""
-      ptr_constraint = "l"
     elif multimem:
       assert not is_smem
       red = "multimem.red"
       scope = "sys"
       space = ".global"
-      ptr_constraint = "l"
     else:
       red = "red"
       scope = "cta" if is_smem else "gpu"
       space = ".shared::cta" if is_smem else ".global"
-      ptr_constraint = "r" if is_smem else "l"
       if not is_smem and base_ptr.type.address_space != 1:
         if base_ptr.type.address_space != 0:
           raise ValueError(
@@ -4454,43 +4400,26 @@ class FragmentedArray:
           vec2xi16 = ir.VectorType.get((2,), i16)
           [reg] = regs_slice
           pair = llvm.bitcast(vec2xi16, reg)
-          llvm.inline_asm(
-              ir.Type.parse("!llvm.void"),
-              [
-                  ptr,
-                  llvm.extractelement(pair, arith.constant(i32, 0)),
-                  llvm.extractelement(pair, arith.constant(i32, 1)),
-              ],
+          utils.inline_ptx(
               f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.v2.{element_type} [$0], {{$1, $2}};",
-              f"{ptr_constraint},h,h",
-              has_side_effects=True,
+              ptr,
+              llvm.extractelement(pair, arith.constant(i32, 0)),
+              llvm.extractelement(pair, arith.constant(i32, 1)),
           )
         else:
           operands = "{" + ", ".join(f"${i + 1}" for i in range(width)) + "}"
-          llvm.inline_asm(
-              ir.Type.parse("!llvm.void"),
-              [ptr, *regs_slice],
-              f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.v{width}.{element_type}x2 [$0], {operands};",
-              f"{ptr_constraint}" + ",r" * width,
-              has_side_effects=True,
-          )
+          ptx = f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.v{width}.{element_type}x2 [$0], {operands};"
+          utils.inline_ptx(ptx, ptr, *regs_slice)
       else:
         ptx_t = f"{element_type}x2" if element_bitwidth == 16 else ptx_type
         [reg] = regs_slice
         operands = [ptr, reg]
         barrier_op = ""
-        constraints = f"{ptr_constraint},r"
         if cluster_barrier_ptr is not None:
           operands.append(cluster_barrier_ptr)
           barrier_op = ", [$2]"
-          constraints += ",l"
-        llvm.inline_asm(
-            ir.Type.parse("!llvm.void"),
-            operands,
-            f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.{ptx_t} [$0], $1{barrier_op};",
-            constraints,
-            has_side_effects=True,
-        )
+        ptx = f"{red}{space}.relaxed.{scope}.{atomic}{noftz}.{ptx_t} [$0], $1{barrier_op};"
+        utils.inline_ptx(ptx, *operands)
 
   def store_tiled(
       self,
