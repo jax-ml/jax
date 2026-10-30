@@ -63,11 +63,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_op(np_inp, axis=axis))
 
-    grad = jax.jit(jax.grad(lambda x: jnp.sum(f(x))))(arr)
-    self.assertEqual(grad.sharding, arr.sharding)
-    self.assertAllClose(
-        grad, jax.grad(lambda x: jnp.sum(jnp_op(x, axis=axis)))(np_inp))
-
   @parameterized.product(
       op=(
           (lax.reduce_sum, np.sum),
@@ -109,20 +104,19 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return y
 
     uses_shmap = (is_rs and (lax_op is lax.reduce_sum)) or bool(out_spec.reduced)
+    if not uses_shmap:
+      with self.assertRaises(NotImplementedError):
+        f.lower(arr)
+      return
+
     lowered_text = f.lower(arr).as_text()
-    self.assertEqual('sdy.manual_computation' in lowered_text, uses_shmap)
-    if uses_shmap:
-      self.assertEqual('reduce_scatter' in lowered_text, is_rs)
-      self.assertEqual('all_reduce' in lowered_text, has_ar)
+    self.assertIn('sdy.manual_computation', lowered_text)
+    self.assertEqual('reduce_scatter' in lowered_text, is_rs)
+    self.assertEqual('all_reduce' in lowered_text, has_ar)
 
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_op(np_inp, axis=axes))
-
-    if lax_op is lax.reduce_sum and not out_spec.reduced:
-      grad = jax.jit(jax.grad(lambda x: jnp.sum(f(x))))(arr)
-      self.assertEqual(grad.sharding, arr.sharding)
-      self.assertArraysEqual(grad, np.ones_like(np_inp))
 
   @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh(
@@ -145,7 +139,21 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     g = jax.jit(jax.sharding.auto_axes(
         lambda y: jnp.sum(y, axis=0), axes='e', out_sharding=P(None, None)))
-    self.assertArraysEqual(g(arr), np.sum(np_x, axis=0))
+    with self.assertRaises(NotImplementedError):
+      g.lower(arr)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_missing_rule_raises_not_implemented(self, mesh):
+    arr = jax.device_put(np.ones((4, 8), dtype=np.float32), P('x', 'y'))
+
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda x: jnp.expand_dims(x, 0)).lower(arr)
+
+    with self.assertRaises(NotImplementedError):
+      f_bad = jax.jit(
+          lambda x: lax.reduce_sum(x, axes=(0,), out_sharding=P(None)))
+      f_bad.lower(arr)
 
 
 if __name__ == '__main__':

@@ -1604,8 +1604,9 @@ ad.primitive_jvps[scan_p] = _scan_jvp
 ad.fancy_transposes[scan_p] = _scan_transpose_fancy
 ad.primitive_linearizations[scan_p] = _scan_linearize
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
-mlir.register_lowering(scan_p,
-                       mlir.lower_fun(_scan_impl, multiple_results=True))
+mlir.register_lowering(
+    scan_p, mlir.lower_fun(_scan_impl, multiple_results=True),
+    shard_map_passthrough=True)
 batching.fancy_primitive_batchers[scan_p] = _scan_batching_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
@@ -2605,7 +2606,7 @@ ad.primitive_transposes[while_p] = _while_transpose_error
 batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 core.custom_typechecks[while_p] = _while_typecheck
-mlir.register_lowering(while_p, _while_lowering)
+mlir.register_lowering(while_p, _while_lowering, shard_map_passthrough=True)
 state_discharge.register_discharge_rule(while_p)(_while_discharge_rule)
 pe.dce_rules[while_p] = _while_dce_rule
 
