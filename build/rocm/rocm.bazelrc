@@ -74,6 +74,8 @@ build:rocm_rbe_base --jobs=50
 build:rocm_rbe_base --remote_timeout=3600
 build:rocm_rbe_base --strategy=TestRunner=remote,local
 build:rocm_rbe_base --test_sharding_strategy=disabled
+# The ROCm wheel tools write to staged copies of read-only remote inputs.
+build:rocm_rbe_base --strategy=BuildJaxWheel=local
 
 # EngFlow (actinolite) RBE backend.
 build:rocm_rbe --config=rocm_rbe_base
