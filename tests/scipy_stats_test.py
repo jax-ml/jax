@@ -827,6 +827,61 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     )
     self._CompileAndCheck(lax_fun, args_maker)
 
+  def testNBinomLogPmfFloat32Precision(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42145
+    # 1. Large n, small k (avoid gammaln(k + n) - gammaln(n) cancellation)
+    k = jnp.array([0.0, 1.0, 2.0, 5.0, 100.0], dtype=jnp.float32)
+    n = jnp.float32(1e6)
+    p = jnp.float32(0.99999)
+    expected = osp_stats.nbinom.logpmf(
+        np.asarray(k, dtype=np.float64), float(n), float(p)
+    )
+    self.assertAllClose(
+        lsp_stats.nbinom.logpmf(k, n, p),
+        expected,
+        check_dtypes=False,
+        atol=1e-3,
+        rtol=1e-4,
+    )
+
+    # 2. Large k, small n, small p (avoid gammaln(k + n) - gammaln(k + 1)
+    # cancellation and 1 - p rounding in xlogy(k, 1 - p))
+    k = jnp.array([1e5, 1e6, 5e6], dtype=jnp.float32)
+    n = jnp.float32(5.0)
+    p = jnp.float32(1e-6)
+    expected = osp_stats.nbinom.logpmf(
+        np.asarray(k, dtype=np.float64), float(n), float(p)
+    )
+    self.assertAllClose(
+        lsp_stats.nbinom.logpmf(k, n, p),
+        expected,
+        check_dtypes=False,
+        atol=1e-4,
+        rtol=1e-4,
+    )
+
+    # 3. Very small p where float32(1 - p) loses precision
+    k = jnp.float32(1e7)
+    n = jnp.float32(1.0)
+    p = jnp.float32(1e-7)
+    expected = osp_stats.nbinom.logpmf(float(k), float(n), float(p))
+    self.assertAllClose(
+        lsp_stats.nbinom.logpmf(k, n, p),
+        expected,
+        check_dtypes=False,
+        atol=1e-5,
+        rtol=1e-5,
+    )
+
+    # 4. Gradients w.r.t. (n, p) at k = 0 are finite (no NaN from betaln(n, 0)
+    # or log(0) in the unselected jnp.where branch).
+    grad_fn = jax.grad(lsp_stats.nbinom.logpmf, argnums=(1, 2))
+    dn, dp = grad_fn(jnp.float32(0.0), jnp.float32(5.0), jnp.float32(0.4))
+    self.assertAllClose(dn, jnp.log(jnp.float32(0.4)), atol=1e-6, rtol=1e-6)
+    self.assertAllClose(
+        dp, jnp.float32(5.0) / jnp.float32(0.4), atol=1e-6, rtol=1e-6
+    )
+
   @genNamedParametersNArgs(3)
   def testLaplaceLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
