@@ -527,6 +527,34 @@ class MemRefTest(TestCase):
     )
     self.assertIn("mosaic_gpu.uses_pdl", str(module))
 
+  @parameterized.parameters(
+      (jnp.float16, 1, 16),
+      (jnp.bfloat16, 1, 16),
+      (jnp.int16, 1, 16),
+      (jnp.int8, 2, 16),
+      (jnp.float16, 2, 32),
+      (jnp.bfloat16, 2, 32),
+      (jnp.int16, 2, 32),
+      (jnp.int8, 4, 32),
+      (jnp.float32, 1, 32),
+      (jnp.int32, 1, 32),
+  )
+  def test_inline_ptx_vector_operands(self, dtype, vec_size, ptx_bits):
+    def kernel(ctx, inp, out, _):
+      del ctx
+      zero = c(0, ir.IndexType.get())
+      vec_ty = ir.VectorType.get((vec_size,), utils.dtype_to_ir_type(dtype))
+      v = vector.load(vec_ty, inp, [zero])
+      v = utils.inline_ptx(
+          f"mov.b{ptx_bits} $0, $1;", v, result_types=vec_ty
+      )
+      with mgpu.single_thread():
+        vector.store(v, out, [zero])
+
+    x = jnp.arange(1, vec_size + 1, dtype=dtype)
+    res = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, ())(x)
+    np.testing.assert_array_equal(res, x)
+
   @parameterized.parameters(gpu.Dimension.x, gpu.Dimension.y)
   def test_cluster_ref_read(self, dim):
     index = ir.IndexType.get()

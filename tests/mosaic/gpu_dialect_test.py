@@ -220,6 +220,61 @@ class DialectTest(MosaicGpuTest):
     self.assertIsInstance(partitioned, mgpu.dialect.CopyPartitionedAttr)
     self.assertEqual(partitioned.axis, 1)
 
+  @parameterized.parameters(
+      (1, ir.F16Type.get, 16, "h"),
+      (1, ir.BF16Type.get, 16, "h"),
+      (1, lambda: ir.IntegerType.get_signless(16), 16, "h"),
+      (2, lambda: ir.IntegerType.get_signless(8), 16, "h"),
+      (2, ir.F16Type.get, 32, "r"),
+      (2, ir.BF16Type.get, 32, "r"),
+      (2, lambda: ir.IntegerType.get_signless(16), 32, "r"),
+      (4, lambda: ir.IntegerType.get_signless(8), 32, "r"),
+      (1, ir.F32Type.get, 32, "r"),
+      (1, lambda: ir.IntegerType.get_signless(32), 32, "r"),
+  )
+  def test_inline_ptx_vector_operands_and_results(
+      self, length, get_elem_ty, ptx_bits, expected_constraint
+  ):
+    with self.kernel():
+      vec_ty = ir.VectorType.get((length,), get_elem_ty())
+      (arg,) = undefs(vec_ty)
+      res = mgpu_utils.inline_ptx(
+          f"mov.b{ptx_bits} $0, $1;", arg, result_types=vec_ty
+      )
+      self.assertEqual(res.type, vec_ty)
+    self.assertTrue(self.module.operation.verify())
+    [asm_op] = self.find_ops(llvm.InlineAsmOp)
+    self.assertEqual(
+        asm_op.constraints.value,
+        f"={expected_constraint},{expected_constraint}",
+    )
+
+  @parameterized.parameters(
+      lambda: ir.VectorType.get((2,), ir.F32Type.get()),
+      lambda: ir.VectorType.get((2,), ir.IntegerType.get_signless(32)),
+      lambda: ir.VectorType.get((4,), ir.F16Type.get()),
+      lambda: ir.VectorType.get((1,), ir.F64Type.get()),
+      lambda: ir.VectorType.get((1,), ir.IntegerType.get_signless(8)),
+      lambda: ir.VectorType.get((3,), ir.IntegerType.get_signless(16)),
+      lambda: ir.VectorType.get((4,), ir.IntegerType.get_signless(4)),
+      lambda: ir.VectorType.get((8,), ir.IntegerType.get_signless(4)),
+      lambda: ir.VectorType.get((2,), ir.IntegerType.get_signed(16)),
+      lambda: ir.VectorType.get((2,), ir.IntegerType.get_unsigned(16)),
+      lambda: ir.VectorType.get((2,), ir.Float8E4M3FNType.get()),
+      lambda: ir.VectorType.get((4,), ir.Float8E4M3FNType.get()),
+      lambda: ir.VectorType.get((8,), ir.Float4E2M1FNType.get()),
+      lambda: ir.VectorType.get((1, 2), ir.F16Type.get()),
+      lambda: ir.VectorType.get((2,), ir.F16Type.get(), scalable=[True]),
+  )
+  def test_inline_ptx_unsupported_vector_types(self, get_vec_ty):
+    with self.kernel():
+      vec_ty = get_vec_ty()
+      (arg,) = undefs(vec_ty)
+      with self.assertRaises(NotImplementedError):
+        mgpu_utils.inline_ptx("nop;", arg)
+      with self.assertRaises(NotImplementedError):
+        mgpu_utils.inline_ptx("nop;", result_types=vec_ty)
+
   def test_initialize_barrier_op_arrival_count_must_be_strictly_positive(self):
     with ir.InsertionPoint(self.module.body):
       mgpu.dialect.initialize_barrier(
