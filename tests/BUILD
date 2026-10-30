@@ -486,6 +486,20 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "partitioning_test",
+    srcs = ["partitioning_test.py"],
+    enable_configs = [
+        "tpu_v3_x4",
+        "gpu_h100x2_full",
+    ],
+    tags = ["multiaccelerator"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "pjit_test",
     srcs = ["pjit_test.py"],
     backend_tags = {
