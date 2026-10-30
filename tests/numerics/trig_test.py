@@ -522,6 +522,24 @@ class Atan2Test(jtu.JaxTestCase):
       hess = np.array([[float(h) for h in row] for row in hess_fn(y, x)])
       self.assertAllClose(hess, expected_hess, atol=0, rtol=tol)
 
+    # Single-axis infinities: both partial derivatives and Hessian vanish;
+    # (±inf, ±inf) has no well-defined derivative and produces NaN.
+    for s_inf in (np.inf, -np.inf):
+      for fin in (0.0, -0.0, 3.0, -3.0):
+        v_inf = jnp.array(s_inf, dtype=dtype)
+        v_fin = jnp.array(fin, dtype=dtype)
+        for y, x in ((v_fin, v_inf), (v_inf, v_fin)):
+          gy, gx = grad_fn(y, x)
+          self.assertEqual(float(gy), 0.0)
+          self.assertEqual(float(gx), 0.0)
+          hess = np.array([[float(h) for h in row] for row in hess_fn(y, x)])
+          np.testing.assert_array_equal(hess, np.zeros((2, 2)))
+    for sy in (np.inf, -np.inf):
+      for sx in (np.inf, -np.inf):
+        gy, gx = grad_fn(jnp.array(sy, dtype=dtype), jnp.array(sx, dtype=dtype))
+        self.assertTrue(np.isnan(float(gy)))
+        self.assertTrue(np.isnan(float(gx)))
+
 
 @jtu.thread_unsafe_test_class()
 class Deg2radTest(jtu.JaxTestCase):

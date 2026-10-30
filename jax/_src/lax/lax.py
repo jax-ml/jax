@@ -5241,13 +5241,26 @@ def hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
   y1, y2 = x1 * scale, x2 * scale
   r_scaled = sqrt(square(y1) + square(y2))
   r = r_scaled * inv_scale
-  if dtypes.supports_inf(x1.dtype):
-    inf = full_like(m, np.inf)
-    r = select((a1 == inf) | (a2 == inf), inf, r)
   # The unit vector (x1 / r, x2 / r) is computed from the scaled values, so it
   # stays accurate when r is near the top of the floating-point range (where
   # 1 / r is subnormal and flushed on TPU) or overflows to inf.
-  return r, y1 / r_scaled, y2 / r_scaled
+  u1, u2 = y1 / r_scaled, y2 / r_scaled
+  if dtypes.supports_inf(x1.dtype):
+    inf = full_like(m, np.inf)
+    inf1, inf2 = a1 == inf, a2 == inf
+    # IEEE 754 defines hypot(±inf, y) = hypot(x, ±inf) = +inf even when the
+    # other argument is NaN, whereas y1^2 + y2^2 evaluates to NaN in that case.
+    r = select(inf1 | inf2, inf, r)
+    # If one input is ±inf and the other is finite, r_scaled is inf, so
+    # dividing y_i by r_scaled evaluates inf / inf = NaN along the infinite
+    # axis even though x_i / r approaches ±1 (while the finite axis already
+    # gives finite / inf = ±0). Replace that NaN with sign(y_i) so derivatives
+    # of hypot, abs, and atan2 give ±1 and 0 instead of NaN. Checking
+    # `a_j < inf` leaves u1 and u2 as NaN when the other input is ±inf or NaN,
+    # where the direction (x1 / r, x2 / r) is undefined.
+    u1 = select(inf1 & (a2 < inf), sign(y1), u1)
+    u2 = select(inf2 & (a1 < inf), sign(y2), u2)
+  return r, u1, u2
 
 
 @hypot.defjvp
@@ -5286,15 +5299,28 @@ abs_p = unop(_complex_basetype, _signedint | _float | _complex, 'abs',
              supports_narrow_ints=False)
 mlir.register_lowering(abs_p, _abs_lowering)
 
-def _abs_jvp_rule(g, ans, x):
+def _abs_jvp(primals, tangents):
+  (x,) = primals
+  (g,) = tangents
   if _iscomplex(x):
-    return _maybe_real(mul(g, div(_maybe_conj(x),
-           _replace_zero(convert_element_type(ans, _dtype(x))))))
+    # For complex x = a + bj, |x| = hypot(a, b) and d|x| = (a/r)*da + (b/r)*db.
+    # Compute both |x| and its derivative from a single hypot(a, b) call rather
+    # than dividing x by |x|: when a and b are large finite numbers whose
+    # magnitude r overflows to inf, x / r collapses to 0 whereas hypot's
+    # rescaled (u1, u2) = (a/r, b/r) stays finite and accurate; when one part is
+    # ±inf and the other is finite, hypot gives ±1 and 0 instead of
+    # inf / inf = NaN; and second and higher derivatives go through _hypot_jvp
+    # without overflowing r^2 or losing accuracy when one part dominates.
+    r, u1, u2 = hypot(real(x), imag(x))
+    # At 0 + 0j, hypot gives u1 = u2 = 0 / 0 = NaN; zero them out to keep JAX's
+    # convention that the derivative of complex abs at zero is zero.
+    z = r == _zero(r)
+    u1 = select(z, _zeros(u1), u1)
+    u2 = select(z, _zeros(u2), u2)
+    return r, add(mul(u1, real(g)), mul(u2, imag(g)))
   else:
-    return select(ge(x, _zero(x)), g, neg(g))
-ad.defjvp2(abs_p, _abs_jvp_rule)
-_maybe_conj = lambda x: conj(x) if _iscomplex(x) else x
-_maybe_real = lambda x: real(x) if _iscomplex(x) else x
+    return abs(x), select(ge(x, _zero(x)), g, neg(g))
+ad.primitive_jvps[abs_p] = _abs_jvp
 
 sqrt_p = standard_unop(_float | _complex, 'sqrt')
 ad.defjvp2(sqrt_p, lambda g, ans, x, **kwargs: mul(g, div(_const(x, 0.5), ans)))

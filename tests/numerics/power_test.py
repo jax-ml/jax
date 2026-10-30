@@ -30,7 +30,9 @@ import numpy as np
 config.parse_flags_with_absl()
 
 bf16, f16, f32, f64 = jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64
+c64, c128 = jnp.complex64, jnp.complex128
 DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
+COMPLEX_DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [c64, c128]]
 TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
 
 
@@ -435,6 +437,53 @@ class HypotTest(jtu.JaxTestCase):
         self.assertTrue(np.isnan(float(tangent)))
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_hypot_grad_at_inf(self, dtype):
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    grad_fn = jax.jit(jax.grad(jnp.hypot, argnums=(0, 1)))
+    hess_fn = jax.jit(jax.hessian(jnp.hypot, argnums=(0, 1)))
+    third_fn = jax.jit(jax.grad(jax.grad(jax.grad(jnp.hypot))))
+
+    for sx in (np.inf, -np.inf):
+      expected_sign = math.copysign(1.0, sx)
+      for fin in (0.0, -0.0, 3.0, -3.0):
+        x = jnp.array(sx, dtype=dtype)
+        y = jnp.array(fin, dtype=dtype)
+
+        gx, gy = grad_fn(x, y)
+        self.assertEqual(float(gx), expected_sign)
+        self.assertEqual(float(gy), 0.0)
+        hess = np.array([[float(h) for h in row] for row in hess_fn(x, y)])
+        np.testing.assert_array_equal(hess, np.zeros((2, 2)))
+        self.assertEqual(float(third_fn(x, y)), 0.0)
+
+        gx, gy = grad_fn(y, x)
+        self.assertEqual(float(gx), 0.0)
+        self.assertEqual(float(gy), expected_sign)
+        hess = np.array([[float(h) for h in row] for row in hess_fn(y, x)])
+        np.testing.assert_array_equal(hess, np.zeros((2, 2)))
+        self.assertEqual(float(third_fn(y, x)), 0.0)
+
+    # At (±inf, ±inf) and (±inf, NaN), r is +inf per IEEE 754, while the
+    # gradient has no well-defined limit and must be NaN.
+    for a, b in (
+        (np.inf, np.inf),
+        (np.inf, -np.inf),
+        (-np.inf, np.inf),
+        (-np.inf, -np.inf),
+        (np.inf, np.nan),
+        (-np.inf, np.nan),
+        (np.nan, np.inf),
+        (np.nan, -np.inf),
+    ):
+      x = jnp.array(a, dtype=dtype)
+      y = jnp.array(b, dtype=dtype)
+      self.assertEqual(float(jnp.hypot(x, y)), np.inf)
+      gx, gy = grad_fn(x, y)
+      self.assertTrue(np.isnan(float(gx)))
+      self.assertTrue(np.isnan(float(gy)))
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_hypot_jit_constants(self, dtype):
     # Regression test: when one or both operands of jnp.hypot are compile-time
     # constants inside jit, XLA's algebraic simplifier must not reassociate
@@ -470,6 +519,204 @@ class HypotTest(jtu.JaxTestCase):
       self.assertAllClose(
           float(res_zero_const), 4.0 * s, atol=0, rtol=tol
       )
+
+
+@jtu.thread_unsafe_test_class()
+class ComplexAbsTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*COMPLEX_DTYPE_PARAMS)
+  def test_complex_abs_grad(self, dtype):
+    if dtype == c128 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    real_dtype = jnp.finfo(dtype).dtype
+    finfo = jnp.finfo(real_dtype)
+    small = float(finfo.tiny) * 4.0
+    large = float(finfo.max) / 8.0
+    big = float(finfo.max)
+    # Test normal, axis-aligned, near-axis (where trig/atan2 loses precision),
+    # underflow-prone, and overflow-prone regimes, including inputs whose
+    # magnitude overflows to inf even though the gradient is finite.
+    cases = [
+        (3.0, 4.0),
+        (-3.0, 4.0),
+        (3.0, -4.0),
+        (-3.0, -4.0),
+        (5.0, 0.0),
+        (-5.0, 0.0),
+        (0.0, 5.0),
+        (0.0, -5.0),
+        (1e-4, 10.0),
+        (-10.0, 1e-4),
+        (float(finfo.eps) / 4.0, 1.0),
+        (-1.0, float(finfo.eps) / 4.0),
+        (3.0 * small, 4.0 * small),
+        (-3.0 * small, 4.0 * small),
+        (3.0 * large, 4.0 * large),
+        (3.0 * large, -4.0 * large),
+        (0.6 * big, 0.8 * big),
+        (big, big),
+        (-big, big),
+        (big, 1.0),
+    ]
+    xr = jnp.array([c[0] for c in cases], dtype=real_dtype)
+    xi = jnp.array([c[1] for c in cases], dtype=real_dtype)
+    zs = lax.complex(xr, xi)
+
+    xr64, xi64 = np.asarray(xr, np.float64), np.asarray(xi, np.float64)
+    m64 = np.maximum(np.abs(xr64), np.abs(xi64))
+    a, b = xr64 / m64, xi64 / m64
+    h = np.hypot(a, b)
+    # JAX's Wirtinger convention for real-valued f(x + i y) gives df/dx - i df/dy.
+    expected_re, expected_im = a / h, -b / h
+
+    g = jax.jit(jax.vmap(jax.grad(jnp.abs)))(zs)
+    tol = 4 * float(finfo.eps)
+    # Allow finfo.tiny absolute tolerance for subnormal outputs (like 1 / big)
+    # that flush to zero on FTZ backends such as CPU and TPU.
+    atol = float(finfo.tiny)
+    self.assertAllClose(
+        np.asarray(jnp.real(g), np.float64), expected_re, atol=atol, rtol=tol
+    )
+    self.assertAllClose(
+        np.asarray(jnp.imag(g), np.float64), expected_im, atol=atol, rtol=tol
+    )
+
+    _, tangents = jax.jit(
+        jax.vmap(lambda z, dz: jax.jvp(jnp.abs, (z,), (dz,)))
+    )(zs, lax.complex(jnp.ones_like(xr), 2.0 * jnp.ones_like(xi)))
+    expected_jvp = (a + 2.0 * b) / h
+    self.assertAllClose(
+        np.asarray(tangents, np.float64), expected_jvp, atol=atol, rtol=tol
+    )
+
+  @parameterized.named_parameters(*COMPLEX_DTYPE_PARAMS)
+  def test_complex_abs_higher_order_grad(self, dtype):
+    if dtype == c128 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    real_dtype = jnp.finfo(dtype).dtype
+    finfo = jnp.finfo(real_dtype)
+    k = (finfo.nmant - finfo.minexp + 1) // 2
+    e_hi = (finfo.maxexp - 1) // 2
+    s_lo = 2.0 ** (e_hi - k - 2)
+    s_hi = 2.0**e_hi
+
+    def abs_xy(x, y):
+      return jnp.abs(lax.complex(x, y))
+
+    hessian_fn = jax.jit(jax.hessian(abs_xy, argnums=(0, 1)))
+    third_fn = jax.jit(jax.grad(jax.grad(jax.grad(abs_xy))))
+    tol = 8 * float(finfo.eps)
+    for s in (1.0, s_lo, s_hi):
+      x = jnp.array(3.0 * s, dtype=real_dtype)
+      y = jnp.array(4.0 * s, dtype=real_dtype)
+      r = 5.0 * s
+      expected_hessian = np.array([[0.64, -0.48], [-0.48, 0.36]]) / r
+      hessian = np.array(
+          [[float(h) for h in row] for row in hessian_fn(x, y)]
+      )
+      self.assertAllClose(hessian, expected_hessian, atol=0, rtol=tol)
+      if s != s_hi:
+        expected_third = -3.0 * 0.6 * 0.64 / (r * r)
+        self.assertAllClose(
+            float(third_fn(x, y)), expected_third, atol=0, rtol=tol
+        )
+
+    # Strongly imbalanced components where r == |x| in working precision.
+    x_imbal_val = 2.0 ** (finfo.nmant // 2 + 2)
+    x_imbal = jnp.array(x_imbal_val, dtype=real_dtype)
+    y_imbal = jnp.array(1.0, dtype=real_dtype)
+    r_imbal = math.hypot(x_imbal_val, 1.0)
+    u1_imbal, u2_imbal = x_imbal_val / r_imbal, 1.0 / r_imbal
+    expected_imbal_hessian = (
+        np.array([
+            [u2_imbal**2, -u1_imbal * u2_imbal],
+            [-u1_imbal * u2_imbal, u1_imbal**2],
+        ])
+        / r_imbal
+    )
+    imbal_hessian = np.array(
+        [[float(h) for h in row] for row in hessian_fn(x_imbal, y_imbal)]
+    )
+    self.assertAllClose(imbal_hessian, expected_imbal_hessian, atol=0, rtol=tol)
+    expected_imbal_third = (
+        -3.0 * u1_imbal * (u2_imbal**2) / (r_imbal * r_imbal)
+    )
+    self.assertAllClose(
+        float(third_fn(x_imbal, y_imbal)),
+        expected_imbal_third,
+        atol=0,
+        rtol=tol,
+    )
+
+  @parameterized.named_parameters(*COMPLEX_DTYPE_PARAMS)
+  def test_complex_abs_grad_special_values(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/25681
+    if dtype == c128 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    real_dtype = jnp.finfo(dtype).dtype
+
+    def abs_xy(x, y):
+      return jnp.abs(lax.complex(x, y))
+
+    grad_fn = jax.jit(jax.grad(jnp.abs))
+    hess_fn = jax.jit(jax.hessian(abs_xy, argnums=(0, 1)))
+
+    # At complex zero (all signed-zero combinations), grad(abs)(0j) == 0j.
+    for sx in (0.0, -0.0):
+      for sy in (0.0, -0.0):
+        z = lax.complex(
+            jnp.array(sx, dtype=real_dtype), jnp.array(sy, dtype=real_dtype)
+        )
+        g = grad_fn(z)
+        self.assertEqual(float(jnp.real(g)), 0.0)
+        self.assertEqual(float(jnp.imag(g)), 0.0)
+        primal, tangent = jax.jvp(jnp.abs, (z,), (jnp.ones_like(z),))
+        self.assertEqual(float(primal), 0.0)
+        self.assertEqual(float(tangent), 0.0)
+
+    # Single-axis infinities (±inf + yj and x ± inf*j with finite x, y).
+    for s_inf in (np.inf, -np.inf):
+      sign_inf = math.copysign(1.0, s_inf)
+      for fin in (0.0, -0.0, 3.0, -3.0):
+        x_inf = jnp.array(s_inf, dtype=real_dtype)
+        y_fin = jnp.array(fin, dtype=real_dtype)
+
+        z = lax.complex(x_inf, y_fin)
+        g = grad_fn(z)
+        self.assertEqual(float(jnp.real(g)), sign_inf)
+        self.assertEqual(float(jnp.imag(g)), 0.0)
+        hess = np.array(
+            [[float(h) for h in row] for row in hess_fn(x_inf, y_fin)]
+        )
+        np.testing.assert_array_equal(hess, np.zeros((2, 2)))
+
+        z = lax.complex(y_fin, x_inf)
+        g = grad_fn(z)
+        self.assertEqual(float(jnp.real(g)), 0.0)
+        self.assertEqual(float(jnp.imag(g)), -sign_inf)
+        hess = np.array(
+            [[float(h) for h in row] for row in hess_fn(y_fin, x_inf)]
+        )
+        np.testing.assert_array_equal(hess, np.zeros((2, 2)))
+
+    # (±inf, ±inf) and (±inf, NaN): primal is +inf, gradient is NaN + NaNj.
+    for a, b in (
+        (np.inf, np.inf),
+        (np.inf, -np.inf),
+        (-np.inf, np.inf),
+        (-np.inf, -np.inf),
+        (np.inf, np.nan),
+        (-np.inf, np.nan),
+        (np.nan, np.inf),
+        (np.nan, -np.inf),
+    ):
+      z = lax.complex(
+          jnp.array(a, dtype=real_dtype), jnp.array(b, dtype=real_dtype)
+      )
+      self.assertEqual(float(jnp.abs(z)), np.inf)
+      g = grad_fn(z)
+      self.assertTrue(np.isnan(float(jnp.real(g))))
+      self.assertTrue(np.isnan(float(jnp.imag(g))))
 
 
 util.register_benchmark(jnp.sqrt)
