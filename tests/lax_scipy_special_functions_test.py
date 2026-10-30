@@ -836,6 +836,144 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_special.betainc, args_maker, rtol=rtol)
 
   @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1Grads(self, dtype):
+    samples = [(0.5, 1.5, -50.0), (1.0, 2.0, -30.0), (2.0, 3.0, -90.0),
+               (2.0, 3.0, -150.0), (0.5, 1.5, -150.0), (2.5, 4.0, -500.0),
+               (2.0, 2.0, -20.0), (2.0, 2.0, -150.0), (3.0, 1.0, -20.0),
+               (3.0, 1.0, -150.0), (1.5, 2.5, 3.0)]
+    if dtype == np.float64:
+      samples += [(1.5, 2.5, 300.0), (4.0, 2.0, 600.0)]
+    a, b, x = (np.array(v, dtype=dtype) for v in zip(*samples))
+    jtu.check_grads(lsp_special.hyp1f1, (a, b, x), order=1,
+                    modes=["fwd", "rev"], atol=1e-3, rtol=1e-3, eps=1e-3)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1TerminatingSeries(self, dtype):
+    # The series of 1F1(a, b, x) for x >= 0, and that of Kummer's transform
+    # 1F1(b - a, b, -x) for x < 0, stop at the term that vanishes, including
+    # before b + k reaches 0 for a negative integer b.
+    samples = [(-1.0, -3.0, 5.0), (-2.0, -5.0, 10.0), (-2.0, 0.5, 8.0),
+               (2.0, 1.0, -50.0), (3.0, 1.0, -300.0)]
+    a, b, x = (np.array(v, dtype=dtype) for v in zip(*samples))
+    args_maker = lambda: (a, b, x)
+    self._CheckAgainstNumpy(osp_special.hyp1f1, lsp_special.hyp1f1, args_maker,
+                            rtol=1e-5)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1NegativeX(self, dtype):
+    # Negative x, evaluated through Kummer's transformation, on both sides of
+    # the switch from the series to the asymptotic expansion at x = -100.
+    # scipy.special.hyp1f1 agrees with mpmath to 1e-14 on these points.
+    samples = list(itertools.product(
+        [0.5, 2.5, 7.5], [1.5, 4.5, 9.2],
+        [-0.5, -5.0, -30.0, -99.5, -100.5, -300.0, -1e4]))
+    a, b, x = (np.array(v, dtype=dtype) for v in zip(*samples))
+    args_maker = lambda: (a, b, x)
+    rtol = 2e-5 if dtype == np.float32 else 1e-12
+    self._CheckAgainstNumpy(osp_special.hyp1f1, lsp_special.hyp1f1, args_maker,
+                            rtol=rtol)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1ClosedForms(self, dtype):
+    # Special cases of 1F1 with elementary closed forms
+    # (https://dlmf.nist.gov/13.6), on both sides of the switch between the
+    # series and the asymptotic expansions at |x| = 100.
+    if dtype == np.float32:
+      x, big_x, rtol = [-80., -20., -1., -0.1, 0.1, 1., 20., 80.], 100.5, 5e-6
+    else:
+      x, big_x, rtol = [-600., -150., -20., -1., -0.1, 0.1, 1., 20., 150.,
+                        600.], 600., 1e-14
+    x = np.array(x, dtype)
+    hyp1f1 = lambda a, b, x: lsp_special.hyp1f1(dtype(a), dtype(b), x)
+    check = lambda actual, expected: self.assertAllClose(
+        actual, np.asarray(expected, dtype), rtol=rtol, atol=0)
+    for a in [-7.5, 0.5, 2.5, 9.5]:
+      check(hyp1f1(a, a, x), np.exp(x))
+    check(hyp1f1(1, 2, x), np.expm1(x) / x)
+    # The case of #21503: 1F1(1/2, 3/2, -y^2) = sqrt(pi) erf(y) / (2 y).
+    y = np.array([0.1, 1., 3., 7.5, 12., 20.], dtype)
+    check(hyp1f1(0.5, 1.5, -y * y),
+          np.sqrt(np.pi) * osp_special.erf(y) / (2 * y))
+    # The series terminates for a = -2: 1F1(-2, b, x) = 1 - 2 x / b
+    # + x^2 / (b (b + 1)), also where hyp1f1 uses the asymptotic expansions.
+    x = np.append(x, [-big_x, big_x]).astype(dtype)
+    for b in [-3.5, 2.5, 7.25]:
+      check(hyp1f1(-2, b, x), 1 - 2 * x / b + x * x / (b * (b + 1)))
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1GradsAgainstMpmath(self, dtype):
+    # (a, b, x, d/da 1F1, d/db 1F1), from
+    #   mpmath.mp.dps = 40
+    #   mpmath.diff(lambda t: mpmath.hyp1f1(t, b, x), a)
+    #   mpmath.diff(lambda t: mpmath.hyp1f1(a, t, x), b)
+    samples = [
+        (0.5, 1.5, -50.0, -0.56136985311096933, 0.075643819316075054),
+        (1.0, 2.0, -30.0, -0.13146286415905672, 0.032182429273597229),
+        (2.0, 3.0, -90.0, -0.0012480052556433738, 0.00036478912348737436),
+        (2.0, 3.0, -150.0, -0.00049550060984247927, 0.00013213608015378695),
+        (0.5, 1.5, -150.0, -0.40409517636093457, 0.044165396961705714),
+        (2.5, 4.0, -500.0, -7.4587616873189366e-6, 1.4673407719871799e-6),
+        (3.0, 1.0, -20.0, -0.00044442838710477488, 0.00044389248716294085),
+        (-1.5, 2.5, -40.0, -158.46776353583366, -32.356623128038252),
+        (1.5, 2.5, 3.0, 8.178980137068514, -5.4411643840477115),
+        (-2.5, 0.5, 10.0, 297.96944353539351, 706.47179415105752),
+    ]
+    if dtype == np.float64:
+      samples.append(
+          (1.5, 2.5, 300.0, 5.4933457150613866e128, -4.8501885515785815e128))
+    a, b, x, grad_a, grad_b = (np.array(v, dtype) for v in zip(*samples))
+    rtol = 2e-5 if dtype == np.float32 else 1e-13
+    for argnum, expected in [(0, grad_a), (1, grad_b)]:
+      grad = jax.vmap(jax.grad(lsp_special.hyp1f1, argnums=argnum))
+      self.assertAllClose(grad(a, b, x), expected, rtol=rtol, atol=0)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1LargeX(self, dtype):
+    # Near |x| = 100 the asymptotic expansions diverge after their smallest
+    # term, and the gamma, exp and power factors of the last three cases
+    # overflow float32 separately. (a, b, x, 1F1) from mpmath with
+    # mpmath.mp.dps = 50, and 1 + a x / b for the terminating series.
+    samples = [
+        (-7.5, 9.2, 100.5, 2.3483347490698663e+19),
+        (12.3, 0.5, -100.5, 1.4191019963017759e-16),
+        (9.3, -6.5, -100.5, -5.6259050450558891e-9),
+        (-1.0, -3.0, -5.0, -2 / 3),
+        (-15.0, 0.5, -95.0, 1.8327268434621263e+19),
+        (0.5, 10.5, 105.0, 1.6470480474090628e+31),
+        (8.0, 36.0, -150.0, 9.5406915859562062e-7),
+    ]
+    a, b, x, expected = (np.array(v, dtype) for v in zip(*samples))
+    rtol = 5e-5 if dtype == np.float32 else 2e-12
+    self.assertAllClose(lsp_special.hyp1f1(a, b, x), expected, rtol=rtol,
+                        atol=0)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp1f1GradsEdgeCases(self, dtype):
+    # (a, b, x, d/da 1F1, d/db 1F1) from mpmath.diff with mpmath.mp.dps = 50:
+    # near |x| = 100, and for small a and large negative x, where
+    # digamma(b) - digamma(b - a) cancels.
+    samples = [
+        (-7.5, 9.2, 100.5, 5.1943563828579935e+19, -5.4842400819908537e+19),
+        (12.3, 0.5, -100.5, -8.6629016315352362e-16, -4.3470305405153919e-17),
+        (1e-5, 2.0, -1e5, -11.088927731636219, 6.4485456814279164e-6),
+        (1e-6, 2.0, -1e6, -13.392548503843743, 6.4492463154799553e-7),
+        (1.5, -1.0, 0.0, 0.0, 0.0),
+    ]
+    a, b, x, grad_a, grad_b = (np.array(v, dtype) for v in zip(*samples))
+    rtol = 5e-5 if dtype == np.float32 else 2e-11
+    for argnum, expected in [(0, grad_a), (1, grad_b)]:
+      grad = jax.vmap(jax.grad(lsp_special.hyp1f1, argnums=argnum))
+      self.assertAllClose(grad(a, b, x), expected, rtol=rtol, atol=0)
+    # For a = -n, 1F1 is a polynomial in x: 1 + a x / b for a = -1, and
+    # 1 - 2 x / b + x^2 / (b (b + 1)) for a = -2. Their derivatives with
+    # respect to b, also where b is a negative integer or x >= 100.
+    a, b, x = (np.array(v, dtype) for v in [(-1.0, -2.0), (-3.0, 2.5),
+                                             (5.0, 150.0)])
+    expected = np.array([5 / 9, -1715.265306122449], dtype)
+    grad = jax.vmap(jax.grad(lsp_special.hyp1f1, argnums=1))
+    self.assertAllClose(grad(a, b, x), expected, rtol=rtol, atol=0)
+
+  @jtu.sample_product(dtype=float_dtypes)
   def testHyp2f1SpecialCases(self, dtype):
     eps = np.finfo(dtype).eps
 

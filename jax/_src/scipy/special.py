@@ -3933,7 +3933,7 @@ poch.defjvps(
 )
 
 
-def _hyp1f1_serie(a, b, x):
+def _hyp1f1_serie(a, b, x, scale=1):
   """
   Compute the 1F1 hypergeometric function using the taylor expansion
   See Eq. 3.2 and associated method (a) from PEARSON, OLVER & PORTER 2014
@@ -3953,92 +3953,340 @@ def _hyp1f1_serie(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
+    # The terms may be negligible at first and grow until k ~ |x| - min(b, 0),
+    # e.g. when a is close to zero or to a negative integer, unless the series
+    # terminates. Multiplying by precision instead of dividing by the sum keeps
+    # this false when scale underflows to 0.
+    return (k < 250) & ((lax.abs(term) > precision * lax.abs(serie)) |
+                        ((term != 0) & (k <= lax.abs(x) - jnp.minimum(b, 0))))
 
-  init = 1, 1, a / b * x
+  init = scale, 1, scale * (a / b * x)
 
   return lax.while_loop(cond, body, init)[0]
+
+
+def _hyp1f1_asymptotic_serie(p, q, z):
+  """
+  Compute the series sum_k (p)_k (q)_k / (k! z^k) of the asymptotic expansions
+  of 1F1 for large |x|, with z = |x|
+  See Eq. 3.8 and simplification for real inputs from PEARSON, OLVER & PORTER 2014
+  https://doi.org/10.48550/arXiv.1407.7786
+  """
+
+  precision = dtypes.finfo(z.dtype).eps
+  # The terms decrease after k_min until k ~ z, and then grow factorially
+  k_min = jnp.maximum(lax.abs(p), lax.abs(q))
+
+  def body(state):
+    serie, k, term, _ = state
+    next_term = term * (p + k) * (q + k) / (k + 1) / z
+
+    return serie + term, k + 1, next_term, term
+
+  def cond(state):
+    serie, k, term, last = state
+
+    # The series diverges, so it is truncated at its smallest term
+    return ((k < 250) & (lax.abs(term) > precision * lax.abs(serie)) &
+            ((k <= k_min) | (lax.abs(term) <= lax.abs(last))))
+
+  term = p * q / z
+  one = jnp.ones_like(term)
+  init = one, 1, term, one
+
+  return lax.while_loop(cond, body, init)[0]
+
+
+def _hyp1f1_asymptotic_serie_derivatives(p, q, z):
+  """
+  Compute the series of _hyp1f1_asymptotic_serie and its derivatives with
+  respect to p and q, by differentiating the recurrence between its terms
+  """
+
+  precision = dtypes.finfo(z.dtype).eps
+  k_min = jnp.maximum(lax.abs(p), lax.abs(q))
+
+  def body(state):
+    serie, serie_p, serie_q, k, term, term_p, term_q, _ = state
+    ratio = (p + k) * (q + k) / (k + 1) / z
+    next_p = term_p * ratio + term * (q + k) / (k + 1) / z
+    next_q = term_q * ratio + term * (p + k) / (k + 1) / z
+    size = lax.abs(term) + lax.abs(term_p) + lax.abs(term_q)
+
+    return (serie + term, serie_p + term_p, serie_q + term_q, k + 1,
+            term * ratio, next_p, next_q, size)
+
+  def cond(state):
+    serie, serie_p, serie_q, k, term, term_p, term_q, last = state
+    size = lax.abs(term) + lax.abs(term_p) + lax.abs(term_q)
+    converging = ((lax.abs(term) > precision * lax.abs(serie)) |
+                  (lax.abs(term_p) > precision * lax.abs(serie_p)) |
+                  (lax.abs(term_q) > precision * lax.abs(serie_q)))
+
+    # Truncated where the terms of the three series together are smallest.
+    # The derivatives do not vanish where the series terminates.
+    return (k < 250) & converging & ((k <= k_min) | (size <= last))
+
+  term = p * q / z
+  zero = jnp.zeros_like(term)
+  init = 1 + zero, zero, zero, 1, term, q / z, p / z, 1 + zero
+  serie, serie_p, serie_q = lax.while_loop(cond, body, init)[:3]
+
+  return serie, serie_p, serie_q
+
+
+def _hyp1f1_exp(x, log_rest):
+  """
+  Compute exp(x + log_rest) for large x, as exp(x) exp(log_rest) while exp(x) is
+  finite, so that x is not rounded, and otherwise as exp(x - s) exp(s + log_rest),
+  which does not overflow unless the result does
+  """
+
+  log_max = _lax_const(x, math.log(dtypes.finfo(x.dtype).max) - 1)
+  s = jnp.maximum(x - log_max, 0)
+
+  return lax.exp(x - s) * lax.exp(s + log_rest)
 
 
 def _hyp1f1_asymptotic(a, b, x):
   """
   Compute the 1F1 hypergeometric function using asymptotic expansion
+  Gamma(b) / Gamma(a) exp(x) x^(a - b) sum_k (b - a)_k (1 - a)_k / (k! x^k),
+  with the gamma functions and the power combined in log space
   See Eq. 3.8 and simplification for real inputs from PEARSON, OLVER & PORTER 2014
   https://doi.org/10.48550/arXiv.1407.7786
   """
 
+  serie = _hyp1f1_asymptotic_serie(b - a, 1 - a, x)
+  log_rest = gammaln(b) - gammaln(a) + (a - b) * lax.log(x)
+
+  return gammasgn(b) * gammasgn(a) * _hyp1f1_exp(x, log_rest) * serie
+
+
+def _hyp1f1_negative(a, b, x):
+  """
+  Compute the 1F1 hypergeometric function for x < 0 using Kummer's
+  transformation 1F1(a, b, x) = exp(x) 1F1(b - a, b, -x)
+  https://dlmf.nist.gov/13.2.E39
+  """
+
+  def serie(a, b, x):
+    # exp(x) is applied in two halves, so that the series does not overflow
+    scale = lax.exp(x / 2)
+    return scale * _hyp1f1_serie(b - a, b, -x, scale)
+
+  def asymptotic(a, b, x):
+    # exp(x) cancels with the exp(-x) of the expansion of 1F1(b - a, b, -x),
+    # which leaves Gamma(b) / Gamma(b - a) (-x)^(-a) times the series
+    serie = _hyp1f1_asymptotic_serie(a, 1 + a - b, -x)
+    log_prefactor = gammaln(b) - gammaln(b - a) - a * lax.log(-x)
+    return gammasgn(b) * gammasgn(b - a) * lax.exp(log_prefactor) * serie
+
+  # The series of 1F1(b - a, b, -x) terminates if b - a is a non-positive
+  # integer, while the asymptotic expansion vanishes.
+  terminates = (b - a <= 0) & (b - a == lax.floor(b - a))
+
+  return lax.cond((x > -100) | terminates, serie, asymptotic, a, b, x)
+
+
+def _hyp1f1_serie_derivatives(a, b, x, scale=1):
+  """
+  Compute the derivatives of the taylor expansion of 1F1 with respect to a and
+  b, by differentiating the recurrence between its terms
+  """
+
   precision = dtypes.finfo(x.dtype).eps
 
   def body(state):
-    serie, k, term = state
-    serie += term
-    term *= (b - a + k) * (1 - a + k) / (k + 1) / x
+    serie_a, serie_b, k, term, term_a, term_b = state
+    ratio = (a + k) / (b + k) * x / (k + 1)
+    # Once the terms vanish, possibly before b + k reaches 0 for a negative
+    # integer b, so do their derivatives with respect to b, but not those with
+    # respect to a.
+    vanishes = term == 0
+    term_a = term_a * ratio + jnp.where(vanishes, 0, term / (b + k) * x / (k + 1))
+    term_b = jnp.where(vanishes, 0, (term_b - term / (b + k)) * ratio)
+    term = jnp.where(vanishes, 0, term * ratio)
     k += 1
 
-    return serie, k, term
+    return serie_a + term_a, serie_b + term_b, k, term, term_a, term_b
 
   def cond(state):
-    serie, k, term = state
+    serie_a, serie_b, k, term, term_a, term_b = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
+    return (k < 250) & ((lax.abs(term_a) > precision * lax.abs(serie_a)) |
+                        (lax.abs(term_b) > precision * lax.abs(serie_b)) |
+                        (((term != 0) | (term_a != 0)) &
+                         (k <= lax.abs(x) - jnp.minimum(b, 0))))
 
-  init = 1, 1, (b - a) * (1 - a) / x
-  serie = lax.while_loop(cond, body, init)[0]
+  term_a = scale * x / b
+  term_b = -term_a * (a / b)
+  init = term_a, term_b, 1, scale * (a / b * x), term_a, term_b
 
-  return gamma(b) / gamma(a) * lax.exp(x) * x ** (a - b) * serie
+  return lax.while_loop(cond, body, init)[:2]
+
+
+def _hyp1f1_kummer_serie_derivatives(a, b, x, scale):
+  """
+  Compute the derivatives of the taylor expansion of 1F1(b - a, b, -x) with
+  respect to a and b, for x < 0. Differentiating the recurrence between its
+  terms for a fixed a, rather than adding the derivatives with respect to its
+  two parameters, avoids their cancellation when a is small.
+  """
+
+  precision = dtypes.finfo(x.dtype).eps
+  z = -x
+
+  def body(state):
+    serie_a, serie_b, k, term, term_a, term_b = state
+    ratio = (b - a + k) / (b + k) * z / (k + 1)
+    step = term / (b + k) * z / (k + 1)
+    term_a = term_a * ratio - step
+    term_b = term_b * ratio + step * a / (b + k)
+    term *= ratio
+    k += 1
+
+    return serie_a + term_a, serie_b + term_b, k, term, term_a, term_b
+
+  def cond(state):
+    serie_a, serie_b, k, term, term_a, term_b = state
+
+    return (k < 250) & ((lax.abs(term_a) > precision * lax.abs(serie_a)) |
+                        (lax.abs(term_b) > precision * lax.abs(serie_b)) |
+                        (((term != 0) | (term_a != 0)) &
+                         (k <= z - jnp.minimum(b, 0))))
+
+  term_a = -scale * z / b
+  term_b = -term_a * (a / b)
+  init = term_a, term_b, 1, scale * ((b - a) / b * z), term_a, term_b
+
+  return lax.while_loop(cond, body, init)[:2]
+
+
+def _gamma_pole_sign(z):
+  """
+  Compute (-1)^n for z = -n, the sign of the derivative (-1)^n n! of 1 / Gamma(z)
+  at its zeros
+  """
+
+  return jnp.where(lax.rem(z, _lax_const(z, 2)) == 0, _lax_const(z, 1),
+                   _lax_const(z, -1))
+
+
+def _hyp1f1_asymptotic_derivatives(a, b, x):
+  """
+  Compute the derivatives of 1F1 with respect to a and b for large positive x,
+  from the asymptotic expansion of _hyp1f1_asymptotic. If a is a non-positive
+  integer, 1 / Gamma(a) vanishes and the derivative with respect to b is that
+  of the polynomial 1F1(a, b, x), which the expansion does not include.
+  """
+
+  serie, serie_p, serie_q = _hyp1f1_asymptotic_serie_derivatives(
+      b - a, 1 - a, x)
+  serie_a = -serie_p - serie_q
+  serie_b = serie_p
+  log_x = lax.log(x)
+  log_rest = gammaln(b) + (a - b) * log_x
+
+  pole = (a <= 0) & (a == lax.floor(a))
+  safe_a = jnp.where(pole, _lax_const(a, 0.5), a)
+  scale = gammasgn(b) * gammasgn(safe_a) * _hyp1f1_exp(
+      x, log_rest - gammaln(safe_a))
+  derivative_a = scale * ((log_x - digamma(safe_a)) * serie + serie_a)
+  derivative_b = scale * ((digamma(b) - log_x) * serie + serie_b)
+
+  # At a = -n, d/da 1 / Gamma(a) = (-1)^n n!
+  pole_derivative_a = gammasgn(b) * _gamma_pole_sign(a) * _hyp1f1_exp(
+      x, log_rest + gammaln(1 - a)) * serie
+
+  return (jnp.where(pole, pole_derivative_a, derivative_a),
+          jnp.where(pole, _lax_const(b, 0), derivative_b))
+
+
+def _digamma_difference(b, a):
+  """
+  Compute digamma(b) - digamma(b - a), from its Taylor series in a if a is small
+  compared to b, where the difference cancels
+  """
+
+  eps = dtypes.finfo(b.dtype).eps
+  small = (b > 0) & (lax.abs(a) < eps ** (1 / 3) * b)
+  safe_a = jnp.where(small, a, _lax_const(a, 0))
+  safe_b = jnp.where(small, b, _lax_const(b, 1))
+  # The terms decrease like (a / b)^n, so the remainder is below eps
+  serie = safe_a * (polygamma(1, safe_b) - safe_a / 2 * (
+      polygamma(2, safe_b) - safe_a / 3 * polygamma(3, safe_b)))
+
+  return jnp.where(small, serie, digamma(b) - digamma(b - a))
+
+
+def _hyp1f1_negative_asymptotic_derivatives(a, b, x):
+  """
+  Compute the derivatives of 1F1 with respect to a and b for large negative x,
+  from the asymptotic expansion of _hyp1f1_negative,
+  Gamma(b) / Gamma(b - a) (-x)^(-a) sum_k (a)_k (1 + a - b)_k / (k! (-x)^k).
+  Differentiating it with respect to a and b directly, rather than through
+  Kummer's transformation, avoids the cancellation of log(-x) in d/db.
+  """
+
+  z = -x
+  serie, serie_p, serie_q = _hyp1f1_asymptotic_serie_derivatives(
+      a, 1 + a - b, z)
+  serie_a = serie_p + serie_q
+  serie_b = -serie_q
+  log_z = lax.log(z)
+  log_prefactor = gammaln(b) - a * log_z
+
+  c = b - a
+  pole = (c <= 0) & (c == lax.floor(c))
+  safe_c = jnp.where(pole, _lax_const(c, 0.5), c)
+  scale = gammasgn(b) * gammasgn(safe_c) * lax.exp(
+      log_prefactor - gammaln(safe_c))
+  derivative_a = scale * ((digamma(safe_c) - log_z) * serie + serie_a)
+  derivative_b = scale * (_digamma_difference(b, a) * serie + serie_b)
+
+  # At b - a = -n, d/dc 1 / Gamma(c) = (-1)^n n!
+  pole_derivative = gammasgn(b) * _gamma_pole_sign(c) * lax.exp(
+      log_prefactor + gammaln(1 - c)) * serie
+
+  return (jnp.where(pole, -pole_derivative, derivative_a),
+          jnp.where(pole, pole_derivative, derivative_b))
 
 
 @jit
 @jnp_vectorize.vectorize
-def _hyp1f1_param_derivative(a, b, x, p):
-  """Computes the parameter-derivative series for 1F1 at parameter ``p``.
-
-  Evaluates ``sum_{k=1}^inf ((a)_k / (b)_k) (x^k / k!) H_k(p)`` where
-  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)``.
-  This equals ``d/da hyp1f1(a, b, x)`` for ``p = a`` and
-  ``-d/db hyp1f1(a, b, x)`` for ``p = b``. Factored into a single ``@jit``
-  helper to save trace and compile time across ``a`` and ``b``.
+def _hyp1f1_derivatives(a, b, x):
   """
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term, h = state
-    serie += term * h
-    term *= (a + k) / (b + k) * x / (k + 1)
-    h += 1 / (p + k)
-    k += 1
-
-    return serie, k, term, h
-
-  def cond(state):
-    serie, k, term, _ = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  term = a / b * x
-  h = 1 / p
-  serie = jnp.zeros((), dtype=dtypes.result_type(term, h))
-  init = serie, 1, term, h
-
-  return lax.while_loop(cond, body, init)[0]
-
-
-def _hyp1f1_a_derivative(a, b, x):
-  """
-  Define it as a series using:
-  https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
+  Compute the derivatives of 1F1 with respect to a and b, following the same
+  branches as hyp1f1. For x < 0, they are the derivatives of Kummer's
+  transformation exp(x) 1F1(b - a, b, -x) for a fixed x.
   """
 
-  return _hyp1f1_param_derivative(a, b, x, a)
+  def positive(a, b, x):
+    return lax.cond(x < 100, _hyp1f1_serie_derivatives,
+                    _hyp1f1_asymptotic_derivatives, a, b, x)
 
+  def negative(a, b, x):
+    def serie(a, b, x):
+      scale = lax.exp(x / 2)
+      derivative_a, derivative_b = _hyp1f1_kummer_serie_derivatives(
+          a, b, x, scale)
+      return scale * derivative_a, scale * derivative_b
 
-def _hyp1f1_b_derivative(a, b, x):
-  """
-  Define it as a series using:
-  https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
-  """
+    return lax.cond(x > -100, serie, _hyp1f1_negative_asymptotic_derivatives,
+                    a, b, x)
 
-  return -_hyp1f1_param_derivative(a, b, x, b)
+  derivative_a, derivative_b = lax.cond(x < 0, negative, positive, a, b, x)
+
+  # If a is a non-positive integer, 1F1(a, b, x) is a polynomial for any x, and
+  # its derivative with respect to b is that of the terminating series.
+  terminates = (a <= 0) & (a == lax.floor(a))
+  polynomial_derivative_b = lambda a, b, x: _hyp1f1_serie_derivatives(a, b, x)[1]
+  derivative_b = lax.cond(terminates & ((x < 0) | (x >= 100)),
+                          polynomial_derivative_b,
+                          lambda a, b, x: derivative_b, a, b, x)
+
+  return derivative_a, derivative_b
 
 
 @jit
@@ -4065,7 +4313,10 @@ def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
 
   where :math:`(\cdot)_k` is the Pochhammer symbol (refer to :func:`~jax.scipy.special.poch`).
 
-  The JAX version only accepts positive and real inputs. Values of ``a``, ``b``,
+  The JAX version only accepts real inputs. Negative values of ``x`` are
+  evaluated through Kummer's transformation
+  :math:`{}_1F_1(a; b; x) = e^x {}_1F_1(b - a; b; -x)`, unless ``a`` is a
+  non-positive integer and the series terminates. Values of ``a``, ``b``,
   and ``x``, leading to high values of 1F1 may lead to erroneous results;
   consider enabling double precision in this case. The convention for
   ``a = b = 0`` is ``1``, unlike in scipy's implementation.
@@ -4086,8 +4337,21 @@ def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise ValueError("hyp1f1 does not support complex-valued inputs.")
 
-  result = lax.cond(lax.abs(x) < 100, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
-  index = (a == 0) * 1 + ((a == b) & (a != 0)) * 2 + ((b == 0) & (a != 0)) * 3
+  def positive(a, b, x):
+    return lax.cond(x < 100, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
+
+  def nonterminating(a, b, x):
+    return lax.cond(x < 0, _hyp1f1_negative, positive, a, b, x)
+
+  # If a is a non-positive integer, the series terminates for any x, while the
+  # asymptotic expansion for x >= 100 divides by gamma(a), which has a pole
+  # there, and Kummer's transformation for x < 0 does not hold if b is also a
+  # negative integer.
+  terminates = (a <= 0) & (a == lax.floor(a))
+  result = lax.cond(terminates, _hyp1f1_serie, nonterminating, a, b, x)
+  index = ((a == 0).astype(np.int32)
+           + ((a == b) & (a != 0)).astype(np.int32) * 2
+           + ((b == 0) & (a != 0)).astype(np.int32) * 3)
 
   return lax.select_n(index,
                       result,
@@ -4097,8 +4361,8 @@ def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
 
 
 hyp1f1.defjvps(
-  lambda a_dot, primal_out, a, b, x: _hyp1f1_a_derivative(a, b, x) * a_dot,
-  lambda b_dot, primal_out, a, b, x: _hyp1f1_b_derivative(a, b, x) * b_dot,
+  lambda a_dot, primal_out, a, b, x: _hyp1f1_derivatives(a, b, x)[0] * a_dot,
+  lambda b_dot, primal_out, a, b, x: _hyp1f1_derivatives(a, b, x)[1] * b_dot,
   lambda x_dot, primal_out, a, b, x: _hyp1f1_x_derivative(a, b, x) * x_dot
 )
 
