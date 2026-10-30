@@ -199,11 +199,12 @@ absl::Status PyRegisterCustomCallTarget(const std::string& fn_name,
         return reinterpret_cast<XLA_FFI_Handler*>(capsule.data());
       };
 
-      XLA_FFI_Handler_Bundle bundle;
+      XLA_FFI_Handler_Bundle bundle = {};
       ABSL_ASSIGN_OR_RETURN(bundle.instantiate, handler("instantiate"));
       ABSL_ASSIGN_OR_RETURN(bundle.prepare, handler("prepare"));
       ABSL_ASSIGN_OR_RETURN(bundle.initialize, handler("initialize"));
       ABSL_ASSIGN_OR_RETURN(bundle.execute, handler("execute"));
+      ABSL_ASSIGN_OR_RETURN(bundle.record, handler("record"));
 
       return ffi::TakeStatus(ffi::Ffi::RegisterStaticHandler(
           xla::ffi::GetXlaFfiApi(), fn_name, platform, bundle, traits));
@@ -534,6 +535,7 @@ void RegisterFfiApis(nb::module_& m) {
           export_handler("prepare", registration.bundle.prepare);
           export_handler("initialize", registration.bundle.initialize);
           export_handler("execute", registration.bundle.execute);
+          export_handler("record", registration.bundle.record);
           targets[nb::str(name.data(), name.size())] = std::move(bundle);
         }
         return targets;
