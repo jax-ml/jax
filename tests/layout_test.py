@@ -840,6 +840,36 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(out.format.layout.major_to_minor, (1, 0))
     self.assertNotIn('all-reduce(', f.lower(arr1, arr2).compile().as_text())
 
+  @config.hijax_unreduced(True)
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_unreduced_relayout(self, mesh):
+    arr1 = jax.device_put(
+        np.arange(128 * 256, dtype=np.float32).reshape(128, 256), P(None, 'x'))
+    arr2 = jax.device_put(
+        np.arange(128 * 256, dtype=np.float32).reshape(256, 128), P('x', None))
+    l0 = (Layout((0, 1), ((8, 128),)) if jtu.test_device_matches(['tpu'])
+          else Layout((0, 1)))
+    l1 = (Layout((1, 0), ((8, 128),)) if jtu.test_device_matches(['tpu'])
+          else Layout((1, 0)))
+
+    @jax.jit
+    @explicit_layout(in_layouts=l0)
+    def g(z):
+      self.assertEqual(z.aval.layout, l0)
+      z = relayout(z, l1)
+      self.assertEqual(z.aval.layout, l1)
+      z = z + z
+      self.assertEqual(z.aval.layout, l1)
+      return z
+
+    u = jnp.dot(arr1, arr2, out_sharding=P(unreduced={'x'}))
+    out = g(u)
+    self.assertArraysAllClose(jax.reshard(out, P()),
+                              jnp.dot(arr1, arr2, out_sharding=P()) * 2)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+    self.assertEqual(out.format.layout.major_to_minor, (1, 0))
+
   def test_host_auto_layout(self):
     if jtu.test_device_matches(['cpu', 'gpu']):
       self.skipTest('This test does not work on CPU or GPU backends.')

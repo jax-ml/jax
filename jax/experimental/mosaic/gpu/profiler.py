@@ -238,7 +238,7 @@ class ProfilerSpec:
 
   def smem_i32_elements(self, block: tuple[int, ...]):
     num_traces = self._num_traces((), block)
-    return int(num_traces * self.entries_per_warpgroup)
+    return num_traces * self.entries_per_warpgroup
 
   def smem_bytes(self, block: tuple[int, ...]):
     bytes_per_entry = 4

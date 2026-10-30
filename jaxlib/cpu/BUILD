@@ -108,8 +108,10 @@ cc_library(
     # compatible with libtpu
     visibility = ["//visibility:public"],
     deps = [
+        ":digamma_kernels",
         ":lapack_kernels",
         ":lapack_kernels_using_lapack",
+        ":lgamma_kernels",
         ":sparse_kernels",
         ":tridiagonal_solve_kernels",
         "@xla//xla/ffi/api:c_api",
@@ -131,6 +133,70 @@ cc_library(
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/tsl/concurrency:async_value",
         "@xla//xla/tsl/lib/math:math_util",
+    ],
+)
+
+cc_library(
+    name = "lgamma_kernels",
+    srcs = ["lgamma_kernels.cc"],
+    hdrs = ["lgamma_kernels.h"],
+    # compatible with libtpu
+    # Highway's `foreach_target.h` re-includes `lgamma_kernels.cc` and the
+    # toggle-guarded helper headers once per SIMD target (`HWY_AVX3`, `HWY_AVX2`,
+    # etc.), so they cannot be compiled as standalone header modules.
+    textual_hdrs = [
+        "double_word.h",
+        "lgamma_kernels.cc",
+        "log.h",
+    ],
+    deps = [
+        ":thread_pool",
+        "//jaxlib:lgamma_coeffs",
+        "//jaxlib:log_coeffs",
+        "@highway//:hwy",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+cc_library(
+    name = "digamma_kernels",
+    srcs = ["digamma_kernels.cc"],
+    hdrs = ["digamma_kernels.h"],
+    # compatible with libtpu
+    # See comment on `lgamma_kernels` above.
+    textual_hdrs = [
+        "digamma_kernels.cc",
+        "double_word.h",
+        "log.h",
+    ],
+    deps = [
+        ":thread_pool",
+        "//jaxlib:digamma_coeffs",
+        "//jaxlib:log_coeffs",
+        "@highway//:hwy",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+nanobind_extension(
+    name = "_math",
+    srcs = ["math.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    enable_stub_generation = False,
+    features = ["-use_header_modules"],
+    module_name = "_math",
+    pytype_srcs = [
+        "_math/__init__.pyi",
+    ],
+    deps = [
+        ":digamma_kernels",
+        ":lgamma_kernels",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@nanobind",
+        "@xla//xla/ffi/api:ffi",
     ],
 )
 

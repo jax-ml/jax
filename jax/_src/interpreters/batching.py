@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import contextlib
 import dataclasses
 from functools import partial
 from typing import Any
@@ -316,15 +317,18 @@ class BatchTrace(Trace):
 ### API for batching callables with vmappable inputs and outputs
 
 def batch(fun: lu.WrappedFun, axis_data,
-          in_dims, out_dim_dests, sum_match=False) -> lu.WrappedFun:
+          in_dims, out_dim_dests, sum_match=False,
+          transform_stack: bool = True) -> lu.WrappedFun:
   # we split up _batch_inner and _batch_outer for the leak checker
   f = _batch_inner(fun, axis_data, out_dim_dests, sum_match)
-  return _batch_outer(f, axis_data, in_dims)
+  return _batch_outer(f, axis_data, in_dims, transform_stack)
 
 @lu.transformation2
-def _batch_outer(f, axis_data, in_dims, *in_vals):
+def _batch_outer(f, axis_data, in_dims, transform_stack, *in_vals):
   tag = TraceTag()
-  with source_info_util.transform_name_stack('vmap'):
+  ctx = (source_info_util.transform_name_stack('vmap') if transform_stack
+         else contextlib.nullcontext())
+  with ctx:
     outs, out_dim_srcs, trace = f(tag, in_dims, *in_vals)
   with core.ensure_no_leaks(trace): del trace
   return outs, out_dim_srcs
@@ -657,11 +661,12 @@ def defvectorized(prim):
   fancy_primitive_batchers[prim] = partial(vectorized_batcher, prim)
 
 def vectorized_batcher(prim, axis_data, batched_args, batch_dims, **params):
-  assert not prim.multiple_results
   if all(d is None for d in batch_dims):
-    return prim.bind(*batched_args, **params), None
+    o = prim.bind(*batched_args, **params)
+    return (o, [None] * len(o)) if prim.multiple_results else (o, None)
   assert all(batch_dims[0] == bd for bd in batch_dims[1:]), batch_dims
-  return prim.bind(*batched_args, **params), batch_dims[0]
+  o = prim.bind(*batched_args, **params)
+  return (o, [batch_dims[0]] * len(o)) if prim.multiple_results else (o, batch_dims[0])
 
 def defbroadcasting(prim):
   fancy_primitive_batchers[prim] = partial(broadcast_batcher, prim)
@@ -705,7 +710,7 @@ def reducer_batcher(prim, axis_data, batched_args, batch_dims, axes,
   if all(d is None for d in batch_dims):
     return prim.bind(*batched_args, axes=axes, **params), None
   def out_axis(axes, axis):
-    return int(list(np.delete(np.arange(operand.ndim), axes)).index(axis))
+    return list(np.delete(np.arange(operand.ndim), axes)).index(axis)
   operand, = batched_args
   bdim, = batch_dims
   if isinstance(bdim, int):

@@ -100,7 +100,7 @@ def get(
       (
           "jax_lib version",
           lambda hash_obj: hash_obj.update(
-              bytes(jaxlib_version_str.encode("utf-8"))
+              jaxlib_version_str.encode("utf-8")
           ),
       ),
       (

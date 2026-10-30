@@ -9,16 +9,21 @@ from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
 
-@api.jit
-def sincospisquaredhalf(
-  x: Array,
-) -> tuple[Array, Array]:
-  """
-  Accurate evaluation of sin(pi * x**2 / 2) and cos(pi * x**2 / 2).
+@custom_derivatives.custom_jvp
+def _sincospisquaredhalf(x: Array) -> tuple[Array, Array]:
+  """Accurate evaluation of `(sin(pi * x**2 / 2), cos(pi * x**2 / 2))`.
 
   As based on the sinpi and cospi functions from SciPy, see:
   - https://github.com/scipy/scipy/blob/v1.14.0/scipy/special/special/cephes/trig.h
+
+  Wrapping `(u, v)` in `@custom_jvp` gives the closed recurrence
+  `u' = pi * x * v`, `v' = -pi * x * u`, so higher-order derivatives keep the
+  mod-2 range reduction and never differentiate through `abs`, `fmod`, or the
+  `r == 0.5` branch.
   """
+  orig_dtype = x.dtype
+  if dtypes.finfo(orig_dtype).bits < 32:
+    x = x.astype(np.float32)
   x = jnp.abs(x)
   # define s = x % 2, y = x - s, then
   # r = (x * x / 2) % 2
@@ -44,11 +49,27 @@ def sincospisquaredhalf(
     0.0,
     jnp.where(r < 1.0, -jnp.sin(np.pi * (r - 0.5)), jnp.sin(np.pi * (r - 1.5))),
   )
-
+  if orig_dtype != x.dtype:
+    sinpi = sinpi.astype(orig_dtype)
+    cospi = cospi.astype(orig_dtype)
   return sinpi, cospi
 
 
-@custom_derivatives.custom_jvp
+@_sincospisquaredhalf.defjvp
+def _sincospisquaredhalf_jvp(primals, tangents):
+  (x,), (x_dot,) = primals, tangents
+  sinpi, cospi = _sincospisquaredhalf(x)
+  scale = (np.pi * x) * x_dot
+  return (sinpi, cospi), (cospi * scale, -sinpi * scale)
+
+
+@api.jit
+def sincospisquaredhalf(
+  x: Array,
+) -> tuple[Array, Array]:
+  return _sincospisquaredhalf(x)
+
+
 def fresnel(x: ArrayLike) -> tuple[Array, Array]:
   r"""The Fresnel integrals.
 
@@ -91,15 +112,22 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
   """
 
   xxa, = promote_args_inexact("fresnel", x)
+  if dtypes.issubdtype(xxa.dtype, np.complexfloating):
+    raise NotImplementedError(
+        'Support for complex-valued inputs is not implemented yet.')
+  if xxa.dtype not in (np.float32, np.float64, np.float16, dtypes.bfloat16):
+    raise NotImplementedError(
+        f'Support for {xxa.dtype} dtype is not implemented yet.')
+  return _fresnel(xxa)
+
+
+@custom_derivatives.custom_jvp
+def _fresnel(xxa: Array) -> tuple[Array, Array]:
   original_dtype = xxa.dtype
 
   # This part is mostly a direct translation of SciPy's C++ code,
   # and the original Cephes implementation for single precision.
-
-  if dtypes.issubdtype(xxa.dtype, np.complexfloating):
-    raise NotImplementedError(
-        'Support for complex-valued inputs is not implemented yet.')
-  elif xxa.dtype in (np.float32, np.float16, dtypes.bfloat16):
+  if xxa.dtype in (np.float32, np.float16, dtypes.bfloat16):
     # Single-precision Cephes coefficients
 
     # For half-precision, series expansions have either
@@ -320,12 +348,12 @@ def fresnel(x: ArrayLike) -> tuple[Array, Array]:
 
   return s, c
 
+@_fresnel.defjvp
 def _fresnel_jvp(primals, tangents):
   x, = primals
   x_dot, = tangents
-  result = fresnel(x)
-  sinpi, cospi = sincospisquaredhalf(x)
+  result = _fresnel(x)
+  sinpi, cospi = _sincospisquaredhalf(x)
   dSdx = sinpi * x_dot
   dCdx = cospi * x_dot
   return result, (dSdx, dCdx)
-fresnel.defjvp(_fresnel_jvp)

@@ -31,7 +31,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.layout import Layout
-from jax._src.lib import lapack
+from jax._src.lib import ifrt_version, lapack
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lax import linalg as lax_linalg_internal
 from jax._src.shard_map import shard_map
@@ -393,6 +393,24 @@ class BatchPartitioningTest(jtu.JaxTestCase):
     f(x)  # eager mode doesn't crash
     f_jit(x)  # neither does JIT
     self.assertNotIn("all-gather", f_jit.lower(x).compile().as_text())
+
+  @jtu.run_on_devices("gpu", "cpu")
+  def test_batch_partitioning_multidim(self):
+    if ifrt_version < 81:
+      self.skipTest("Requires ifrt_version >= 81")
+    if jax.device_count() < 4:
+      self.skipTest("Requires at least 4 devices")
+    mesh = jtu.create_mesh((2, 2), ("i", "j"))
+    x_host = self.rng().randn(4, 4, 4, 5).astype(np.float32)
+    expected = batch_partitionable_ffi_call(x_host)
+
+    for spec in (P("i", "j"), P("i", None)):
+      sharding = jax.NamedSharding(mesh, spec)
+      x = jax.device_put(x_host, sharding)
+      f_jit = jax.jit(batch_partitionable_ffi_call, out_shardings=sharding)
+      actual = f_jit(x)
+      self.assertAllClose(actual, expected, atol=1e-5)
+      self.assertNotIn("all-gather", f_jit.lower(x).compile().as_text())
 
 
 def batch_partitionable_ffi_call(x):

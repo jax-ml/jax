@@ -37,15 +37,17 @@ from jax._src.lax.erf import (
     erfcx_grad_large,
     erfcx_impl as _erfcx_impl,
     erfcx_large,
+    log_ndtr as _log_ndtr,
+    ndtr as _ndtr,
 )
 from jax._src.lax.lax import AccuracyMode, _const as _lax_const
-from jax._src.lax.special import ndtr as _ndtr
 from jax._src.lax.special import random_gamma_grad
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import promote_args_complex, promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
+from jax._src.scipy.bessel import jn as jn
 from jax._src.scipy.gamma import gamma_real
 from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
@@ -1527,7 +1529,7 @@ def _dawsn_impl(x: Array) -> Array:
   return sign * result
 
 
-@custom_derivatives.custom_jvp
+@jit
 def logit(x: ArrayLike) -> Array:
   r"""The logit function
 
@@ -1544,9 +1546,38 @@ def logit(x: ArrayLike) -> Array:
     array containing values of the logit function.
   """
   x, = promote_args_inexact("logit", x)
-  return lax.log(lax.div(x, lax.sub(_lax_const(x, 1), x)))
-logit.defjvps(
-    lambda g, ans, x: lax.div(g, lax.mul(x, lax.sub(_lax_const(x, 1), x))))
+  return _logit(x)
+
+
+@custom_derivatives.custom_jvp
+def _logit(x: Array) -> Array:
+  # Computing log(x / (1 - x)) directly loses precision in two places:
+  # - Near x = 0.5, x / (1 - x) is close to 1, so rounding the quotient to
+  #   floating-point before calling log throws away low bits (and just below
+  #   0.5, 1 - x rounds to 0.5, cutting the result in half).
+  # - Near x = 1, 1 - x rounds away low bits before the division.
+  #
+  # Use symmetry around 0.5 (logit(1 - x) = -logit(x)) to fold x onto
+  # p = min(x, 1 - x) in [0, 0.5], compute logit(p) <= 0, and flip the sign at
+  # the end when x >= 0.5.
+  lt_half = x < 0.5
+  p = jnp.where(lt_half, x, 1 - x)
+  d = jnp.where(lt_half, 0.5 - x, x - 0.5)
+
+  # Split into two regions that share a single log1p call:
+  # - Near 0.5 (0.25 <= x <= 0.75, so d <= 0.25): both d = |x - 0.5| and
+  #   p = min(x, 1 - x) subtract numbers within a factor of 2 of each other,
+  #   so both are exact without rounding error, and 1 - p = 0.5 + d = p + 2 * d.
+  #   Thus:
+  #     logit(p) = -log((1 - p) / p) = -log1p(2 * d / p).
+  # - Away from 0.5 (p < 0.25): write logit(p) = log(p) - log1p(-p).
+  #   Here |log(p)| > 1.38 while |log1p(-p)| < 0.29, so the two terms do not
+  #   cancel (and p <= 0 naturally gives -inf at 0 and NaN for < 0).
+  near_half = d <= 0.25
+  l1p = jnp.log1p(jnp.where(near_half, 2 * d / p, -p))
+  res = jnp.where(near_half, -l1p, jnp.log(p) - l1p)
+  return jnp.where(lt_half, res, -res)
+_logit.defjvps(lambda g, ans, x: g / (x * (1 - x)))
 
 
 def expit(x: ArrayLike) -> Array:
@@ -2175,15 +2206,6 @@ def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
 # >
 # >
 
-# log_ndtr uses different functions over the ranges
-# (-infty, lower](lower, 0](0, infty)
-# Lower bound values were chosen by examining where the support of ndtr
-# appears to be zero, relative to scipy's (which is always 64bit). They were
-# then made more conservative just to be safe. (Conservative means use the
-# expansion more than we probably need to.)
-_LOGNDTR_FLOAT64_LOWER = np.array(-20, np.float64)
-_LOGNDTR_FLOAT32_LOWER = np.array(-10, np.float32)
-
 
 def ndtr(x: ArrayLike) -> Array:
   r"""Normal distribution function.
@@ -2326,7 +2348,6 @@ def _ndtri_grad_jvp(primals, tangents):
   return g, p_dot * ((x * g) * g)
 
 
-@partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
 def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   r"""Log Normal distribution function.
 
@@ -2334,54 +2355,17 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
 
   For details of the Normal distribution function see `ndtr`.
 
-  This function calculates :math:`\log(\mathrm{ndtr}(x))` by either calling
-  :math:`\log(\mathrm{ndtr}(x))` or using an asymptotic series. Specifically:
-
-  - For `x > 0`, use `log1p(-ndtr(-x))` based on
-    :math:`\mathrm{ndtr}(x) = 1 - \mathrm{ndtr}(-x)` to avoid loss of precision
-    when :math:`\mathrm{ndtr}(x)` is close to 1.
-  - For `lower_segment < x <= 0`, use the existing `ndtr` technique
-    and take a log.
-  - For `x <= lower_segment`, we use the series approximation of `erf` to compute
-    the log CDF directly.
-
-  The `lower_segment` is set based on the precision of the input:
-
-  .. math::
-    \mathit{lower\_segment} =
-      \ \begin{cases}
-        -20 &  x.\mathrm{dtype}=\mathit{float64} \\
-        -10 &  x.\mathrm{dtype}=\mathit{float32} \\
-        \end{cases}
-
-
-  When `x < lower_segment`, the `ndtr` asymptotic series approximation is:
-
-  .. math::
-    \begin{align}
-     \mathrm{ndtr}(x) =&\  \mathit{scale} * (1 + \mathit{sum}) + R_N \\
-     \mathit{scale}   =&\  \frac{e^{-0.5 x^2}}{-x \sqrt{2 \pi}} \\
-     \mathit{sum}     =&\  \sum_{n=1}^N {-1}^n (2n-1)!! / (x^2)^n \\
-     R_N     =&\  O(e^{-0.5 x^2} (2N+1)!! / |x|^{2N+3})
-    \end{align}
-
-  where :math:`(2n-1)!! = (2n-1) (2n-3) (2n-5) ...  (3) (1)` is a
-  `double-factorial
-  <https://en.wikipedia.org/wiki/Double_factorial>`_ operator.
-
-
   Args:
     x: an array of type `float32`, `float64`.
-    series_order: Positive Python integer. Maximum depth to
-      evaluate the asymptotic expansion. This is the `N` above.
+    series_order: Deprecated; ignored. Kept for backwards compatibility.
 
   Returns:
     an array with `dtype=x.dtype`.
 
   Raises:
     TypeError: if `x.dtype` is not handled.
-    TypeError: if `series_order` is a not Python `integer.`
-    ValueError:  if `series_order` is not in `[0, 30]`.
+    TypeError: if `series_order` is not a Python `integer`.
+    ValueError: if `series_order` is not in `[0, 30]`.
   """
   if not isinstance(series_order, int):
     raise TypeError("series_order must be a Python integer.")
@@ -2392,90 +2376,10 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
 
   x_arr = jnp.asarray(x)
   dtype = lax.dtype(x_arr)
-
-  if dtype == np.float64:
-    lower_segment: np.ndarray = _LOGNDTR_FLOAT64_LOWER
-  elif dtype == np.float32:
-    lower_segment = _LOGNDTR_FLOAT32_LOWER
-  else:
+  if dtype not in (np.float32, np.float64):
     raise TypeError(f"x.dtype={np.dtype(dtype)} is not supported.")
 
-  # The basic idea here was ported from:
-  #   https://root.cern.ch/doc/v608/SpecFuncCephesInv_8cxx_source.html
-  # We copy the main idea, with a few changes
-  # * For x > 0, and X ~ Normal(0, 1),
-  #     Log[P[X < x]] = Log[1 - P[X < -x]] = log1p(-ndtr(-x)),
-  #     which avoids cancellation when P[X < x] is close to 1 and extends the
-  #     range of validity of this function.
-  # * We use one fixed series_order for all of 'x', rather than adaptive.
-  # * Our docstring properly reflects that this is an asymptotic series, not a
-  #   Taylor series. We also provided a correct bound on the remainder.
-  # * We need to use the max/min in the _log_ndtr_lower arg to avoid nan when
-  #   x=0. This happens even though the branch is unchosen because when x=0
-  #   the gradient of a select involves the calculation 1*dy+0*(-inf)=nan
-  #   regardless of whether dy is finite. Note that the minimum is a NOP if
-  #   the branch is chosen.
-  x_arr_gt_zero = lax.gt(x_arr, _lax_const(x_arr, 0))
-  ndtr_arg = jnp.where(x_arr_gt_zero, -x_arr,
-                       lax.max(x_arr, lower_segment))
-  # We combine both ndtr calls to minimize program size
-  ndtr_res = _ndtr(ndtr_arg)
-  return jnp.where(
-      x_arr_gt_zero,
-      lax.log1p(lax.neg(ndtr_res)),
-      jnp.where(
-          lax.gt(x_arr, lower_segment),
-          lax.log(ndtr_res),
-          _log_ndtr_lower(lax.min(x_arr, lower_segment), series_order),
-      ),
-  )
-
-def _log_ndtr_jvp(series_order, primals, tangents):
-  (x,), (t,) = primals, tangents
-  ans = log_ndtr(x, series_order=series_order)
-  t_out = lax.mul(t, lax.exp(lax.sub(_norm_logpdf(x), ans)))
-  return ans, t_out
-log_ndtr.defjvp(_log_ndtr_jvp)
-
-def _log_ndtr_lower(x, series_order):
-  """Asymptotic expansion version of `Log[cdf(x)]`, appropriate for `x<<-1`."""
-  dtype = lax.dtype(x).type
-  x_2 = lax.square(x)
-  # Log of the term multiplying (1 + sum)
-  log_scale = -dtype(0.5) * x_2 - lax.log(-x) - dtype(0.5 * np.log(2. * np.pi))
-  return log_scale + lax.log(_log_ndtr_asymptotic_series(x, series_order))
-
-
-def _log_ndtr_asymptotic_series(x, series_order):
-  """Calculates the asymptotic series used in log_ndtr."""
-  dtype = lax.dtype(x).type
-  if series_order <= 0:
-    return np.array(1, dtype)
-  x_2 = lax.square(x)
-  even_sum = jnp.zeros_like(x)
-  odd_sum = jnp.zeros_like(x)
-  x_2n = x_2  # Start with x^{2*1} = x^{2*n} with n = 1.
-  for n in range(1, series_order + 1):
-    y = np.array(_double_factorial(2 * n - 1), dtype) / x_2n
-    if n % 2:
-      odd_sum += y
-    else:
-      even_sum += y
-    x_2n *= x_2
-  return dtype(1.) + even_sum - odd_sum
-
-
-def _double_factorial(n: int) -> np.integer:
-  """The double factorial function for small Python integer `n`."""
-  return np.prod(np.arange(n, 1, -2))
-
-
-_norm_logpdf_constant = np.log(np.sqrt(2 * np.pi))
-
-def _norm_logpdf(x):
-  neg_half = _lax_const(x, -0.5)
-  log_normalizer = _lax_const(x, _norm_logpdf_constant)
-  return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
+  return _log_ndtr(x_arr)
 
 
 def i0e(x: ArrayLike) -> Array:
@@ -2627,6 +2531,11 @@ def _bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
 @jit(static_argnames=["v", "n_iter"])
 def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
   """Bessel function of the first kind of integer order and real argument.
+
+  .. note::
+
+     This function is deprecated as of JAX v0.12.1; use the replacement
+     :func:`jax.scipy.special.jn` instead, but note its different API.
 
   Reference:
   Shanjie Zhang and Jian-Ming Jin. Computation of special functions.
@@ -4081,58 +3990,55 @@ def _hyp1f1_asymptotic(a, b, x):
 
 @jit
 @jnp_vectorize.vectorize
+def _hyp1f1_param_derivative(a, b, x, p):
+  """Computes the parameter-derivative series for 1F1 at parameter ``p``.
+
+  Evaluates ``sum_{k=1}^inf ((a)_k / (b)_k) (x^k / k!) H_k(p)`` where
+  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)``.
+  This equals ``d/da hyp1f1(a, b, x)`` for ``p = a`` and
+  ``-d/db hyp1f1(a, b, x)`` for ``p = b``. Factored into a single ``@jit``
+  helper to save trace and compile time across ``a`` and ``b``.
+  """
+  precision = dtypes.finfo(x.dtype).eps
+
+  def body(state):
+    serie, k, term, h = state
+    serie += term * h
+    term *= (a + k) / (b + k) * x / (k + 1)
+    h += 1 / (p + k)
+    k += 1
+
+    return serie, k, term, h
+
+  def cond(state):
+    serie, k, term, _ = state
+
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
+
+  term = a / b * x
+  h = 1 / p
+  serie = jnp.zeros((), dtype=dtypes.result_type(term, h))
+  init = serie, 1, term, h
+
+  return lax.while_loop(cond, body, init)[0]
+
+
 def _hyp1f1_a_derivative(a, b, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term = state
-    serie += term * (digamma(a + k) - digamma(a))
-    term *= (a + k) / (b + k) * x / (k + 1)
-    k += 1
-
-    return serie, k, term
-
-  def cond(state):
-    serie, k, term = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a / b * x
-
-  return lax.while_loop(cond, body, init)[0]
+  return _hyp1f1_param_derivative(a, b, x, a)
 
 
-@jit
-@jnp_vectorize.vectorize
 def _hyp1f1_b_derivative(a, b, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term = state
-    serie += term * (digamma(b) - digamma(b + k))
-    term *= (a + k) / (b + k) * x / (k + 1)
-    k += 1
-
-    return serie, k, term
-
-  def cond(state):
-    serie, k, term = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a / b * x
-
-  return lax.while_loop(cond, body, init)[0]
+  return -_hyp1f1_param_derivative(a, b, x, b)
 
 
 @jit
@@ -4433,89 +4339,64 @@ def _hyp2f1_digamma_transform(a, b, c, x, log_gamma_ratio, sgn_gamma_ratio):
 
 @jit
 @jnp_vectorize.vectorize
+def _hyp2f1_param_derivative(a, b, c, x, p):
+  """Computes the parameter-derivative series for 2F1 at parameter ``p``.
+
+  Evaluates ``sum_{k=1}^inf ((a)_k (b)_k / (c)_k) (x^k / k!) H_k(p)`` where
+  ``H_k(p) = sum_{j=0}^{k-1} 1 / (p + j) = digamma(p + k) - digamma(p)``.
+  This equals ``d/dp hyp2f1(a, b, c, x)`` for ``p in {a, b}`` and
+  ``-d/dc hyp2f1(a, b, c, x)`` for ``p = c``. Factored into a single ``@jit``
+  helper to save trace and compile time across ``a``, ``b``, and ``c``.
+  """
+  precision = dtypes.finfo(x.dtype).eps
+
+  def body(state):
+    serie, k, term, h = state
+    serie += term * h
+    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
+    h += 1 / (p + k)
+    k += 1
+
+    return serie, k, term, h
+
+  def cond(state):
+    serie, k, term, _ = state
+
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
+
+  term = a * b / c * x
+  h = 1 / p
+  serie = jnp.zeros((), dtype=dtypes.result_type(term, h))
+  init = serie, 1, term, h
+
+  return lax.while_loop(cond, body, init)[0]
+
+
 def _hyp2f1_a_derivative(a, b, c, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/01/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term, h = state
-    serie += term * h
-    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
-    h += 1 / (a + k)
-    k += 1
-
-    return serie, k, term, h
-
-  def cond(state):
-    serie, k, term, _ = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a * b / c * x, 1 / a
-
-  return lax.while_loop(cond, body, init)[0]
+  return _hyp2f1_param_derivative(a, b, c, x, a)
 
 
-@jit
-@jnp_vectorize.vectorize
 def _hyp2f1_b_derivative(a, b, c, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/02/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term, h = state
-    serie += term * h
-    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
-    h += 1 / (b + k)
-    k += 1
-
-    return serie, k, term, h
-
-  def cond(state):
-    serie, k, term, _ = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a * b / c * x, 1 / b
-
-  return lax.while_loop(cond, body, init)[0]
+  return _hyp2f1_param_derivative(a, b, c, x, b)
 
 
-@jit
-@jnp_vectorize.vectorize
 def _hyp2f1_c_derivative(a, b, c, x):
   """
   Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/03/
   """
 
-  precision = dtypes.finfo(x.dtype).eps
-
-  def body(state):
-    serie, k, term, h = state
-    serie += term * h
-    term *= (a + k) * (b + k) / (c + k) / (k + 1) * x
-    h -= 1 / (c + k)
-    k += 1
-
-    return serie, k, term, h
-
-  def cond(state):
-    serie, k, term, _ = state
-
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
-
-  init = 0, 1, a * b / c * x, -1 / c
-
-  return lax.while_loop(cond, body, init)[0]
+  return -_hyp2f1_param_derivative(a, b, c, x, c)
 
 
 @jit

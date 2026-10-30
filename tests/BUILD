@@ -160,6 +160,18 @@ jax_multiplatform_test(
     ]),
 )
 
+jax_py_test(
+    name = "avals_test",
+    srcs = ["avals_test.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:test_util",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
 jax_multiplatform_test(
     name = "batching_test",
     srcs = ["batching_test.py"],
@@ -394,6 +406,7 @@ jax_multiplatform_test(
     backend_tags = {
         "cpu": [
             "noasan",
+            "notsan",
         ],
     },
     # Set LOBPCG_EMIT_DEBUG_PLOTS=1 to debug
@@ -467,6 +480,20 @@ jax_multiplatform_test(
     deps = [
         "//jax/experimental:custom_partitioning",
     ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "partitioning_test",
+    srcs = ["partitioning_test.py"],
+    enable_configs = [
+        "tpu_v3_x4",
+        "gpu_h100x2_full",
+    ],
+    tags = ["multiaccelerator"],
+    deps = py_deps([
         "absl/testing",
         "numpy",
     ]),
@@ -812,6 +839,7 @@ jax_multiplatform_test(
     name = "lax_numpy_indexing_test",
     srcs = ["lax_numpy_indexing_test.py"],
     backend_tags = {
+        "cpu": ["noasan"],  # Times out.
         "tpu": ["noasan"],  # Times out.
     },
     shard_count = {
@@ -1001,7 +1029,10 @@ jax_multiplatform_test(
     name = "lax_autodiff_test",
     srcs = ["lax_autodiff_test.py"],
     backend_tags = {
-        "cpu": ["notsan"],  # Times out.
+        "cpu": [
+            "noasan",  # Times out.
+            "notsan",  # Times out.
+        ],
     },
     shard_count = {
         "cpu": 20,
@@ -1379,6 +1410,9 @@ jax_multiplatform_test(
     name = "qdwh_test",
     srcs = ["qdwh_test.py"],
     backend_tags = {
+        "cpu": [
+            "noasan",  # Times out
+        ],
         "gpu": [
             "noasan",  # Times out
         ],
@@ -2241,6 +2275,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_harnesses_multi_platform_test",
     srcs = ["export_harnesses_multi_platform_test.py"],
+    backend_tags = {
+        "cpu": [
+            "notsan",  # Times out
+        ],
+    },
     disable_configs = [
         "gpu_h100",  # Scarce resources.
     ],

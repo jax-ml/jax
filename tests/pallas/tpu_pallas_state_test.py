@@ -249,6 +249,8 @@ class PinnedBufferTest(jtu.JaxTestCase):
       f(x)
 
   def test_basic_vmem(self):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Only supported on TPU v5+")
     @jax.jit
     def f(x):
       x_pinned = pin(x, to='vmem')

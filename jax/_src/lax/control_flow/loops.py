@@ -1627,14 +1627,34 @@ def _scan_is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.is_high
 scan_p.is_high = _scan_is_high
 
+def _lower_scan_ext(x):
+  # f32[L, 8]{U:x} --lojax--> f32[2@x, L, 8] -> f32[L, 2@x, 8]
+  a = typeof(x)
+  lo_xs = a.lower_val(x)
+  if isinstance(a, core.ShapedArray) and a.is_high:
+    k = len(a.sharding.spec.unreduced)
+    lo_x, = lo_xs
+    return [lax.transpose(lo_x, (k, *range(k), *range(k + 1, lo_x.ndim)))]
+  return lo_xs
+
+def _raise_scan_ext(length, body_a, y):
+  # f32[L, 2@x, 8] -> f32[2@x, L, 8] --raise--> f32[L, 8]{U:x}
+  if isinstance(body_a, core.ShapedArray) and body_a.is_high:
+    a = core.unmapped_leading_aval(length, body_a)
+    k = len(a.sharding.spec.unreduced)  # type: ignore
+    lo_y, = y
+    lo_y = lax.transpose(lo_y, (*range(1, k + 1), 0, *range(k + 1, lo_y.ndim)))
+    return a.raise_val(lo_y)
+  return body_a.raise_val2(y)
+
 def _scan_to_lojax(*hi_args, jaxpr, ft_in, ft_out, **params):
   num_consts, num_carry, _ = _map(len, ft_in.unpack())
 
   const, carry, ext = split_list(hi_args, [num_consts, num_carry])
-  const_avals, carry_avals, ext_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
+  const_avals, carry_avals, _ = split_list(jaxpr.in_avals, [num_consts, num_carry])
   const_lol = [a.lower_val(x) for a, x in zip(const_avals, const)]
   carry_lol = [a.lower_val(x) for a, x in zip(carry_avals, carry)]
-  ext_lol   = [a.lower_val(x) for a, x in zip(ext_avals, ext)]
+  ext_lol = [_lower_scan_ext(x) for x in ext]
   num_lo_carry = sum(len(xs) for xs in carry_lol)
   lo_args_lol = [*const_lol, *carry_lol, *ext_lol]
   rrtype = lambda x: core.mapped_leading_aval(params['length'], typeof(x))
@@ -1654,7 +1674,12 @@ def _scan_to_lojax(*hi_args, jaxpr, ft_in, ft_out, **params):
       **params)
 
   lo_outs = out_avals.update(all_outs)
-  return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
+  carry_out_avals, ext_out_avals = split_list(jaxpr.out_avals, [num_carry])
+  carry_lo_outs, ext_lo_outs = split_list(lo_outs.unpack(), [num_carry])
+  carry_hi_outs = [a.raise_val2(y) for a, y in zip(carry_out_avals, carry_lo_outs)]
+  ext_hi_outs = [_raise_scan_ext(params['length'], a, y)
+                 for a, y in zip(ext_out_avals, ext_lo_outs)]
+  return carry_hi_outs + ext_hi_outs
 scan_p.to_lojax = _scan_to_lojax
 
 ### while_loop
@@ -3174,23 +3199,23 @@ def _cumred_gpu_lowering(
 
 def cumsum(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative sum along `axis`."""
-  return cumsum_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cumsum_p.bind(operand, axis=axis, reverse=reverse)
 
 def cumprod(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative product along `axis`."""
-  return cumprod_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cumprod_p.bind(operand, axis=axis, reverse=reverse)
 
 def cummax(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative maximum along `axis`."""
-  return cummax_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cummax_p.bind(operand, axis=axis, reverse=reverse)
 
 def cummin(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative minimum along `axis`."""
-  return cummin_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cummin_p.bind(operand, axis=axis, reverse=reverse)
 
 def cumlogsumexp(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative logsumexp along `axis`."""
-  return cumlogsumexp_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cumlogsumexp_p.bind(operand, axis=axis, reverse=reverse)
 
 def _cumred_shape_rule(x, *, axis: int, reverse: bool):
   if axis < 0:

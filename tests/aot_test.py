@@ -132,11 +132,10 @@ class JaxAotTest(jtu.JaxTestCase):
         topo.platform_version, aot_topo.devices[0].client.platform_version
     )
     self.assertEqual(topo.platform_version, ref_topo.platform_version)
-    if jax.devices()[0].platform != "gpu":
-      self.assertEqual(
-          aot_topo.devices[0].client.platform_version,
-          jax.devices()[0].client.platform_version,
-      )
+    self.assertEqual(
+        aot_topo.devices[0].client.platform_version,
+        jax.devices()[0].client.platform_version,
+    )
     self.assertEqual(topo.fingerprint(), ref_topo.fingerprint())
 
   @jtu.run_on_devices('tpu')
@@ -397,13 +396,13 @@ class JaxAotTest(jtu.JaxTestCase):
   def test_serialize_with_constants(self, hoist_constants, use_np):
     from jax._src.interpreters import mlir
     arange = np.arange if use_np else jnp.arange
-    const = arange(32, dtype=np.float32) + 42.
+    const = arange(1024, dtype=np.float32) + 42.
 
     @jax.jit
     def f(x):
-      return const[0:16] + x
+      return const[0:512] + x
 
-    inp = arange(16, dtype=np.float32)
+    inp = arange(512, dtype=np.float32)
     compiled = f.trace(inp).lower(_private_parameters=mlir.LoweringParameters(
         hoist_constants_as_args=hoist_constants)).compile()
     serialized, in_tree, out_tree = serialize(compiled)
@@ -416,7 +415,7 @@ class JaxAotTest(jtu.JaxTestCase):
     else:
       self.assertLen(reloaded._params.const_args, 0)
 
-    expected = const[0:16] + inp
+    expected = const[0:512] + inp
     out = reloaded(inp)
     self.assertArraysEqual(out, expected)
 
@@ -431,13 +430,13 @@ class JaxAotTest(jtu.JaxTestCase):
     mesh = jax.sharding.Mesh(devices, ("x",))
     sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
 
-    const = jax.device_put(jnp.arange(16, dtype=np.float32) + 42., sharding)
+    const = jax.device_put(jnp.arange(512, dtype=np.float32) + 42., sharding)
 
     @functools.partial(jax.jit, in_shardings=sharding, out_shardings=sharding)
     def f(x):
       return const + x
 
-    inp_np = np.arange(16, dtype=np.float32)
+    inp_np = np.arange(512, dtype=np.float32)
     inp = jax.device_put(inp_np, sharding)
 
     compiled = f.lower(inp).compile()

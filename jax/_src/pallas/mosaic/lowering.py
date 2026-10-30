@@ -1382,7 +1382,7 @@ def lower_jaxpr_into_pipelined_module(
             keep_unused=True,
         )
         stablehlo = export(
-            jitted_eval, platforms=[str(jax.devices()[0].platform)]
+            jitted_eval, platforms=[jax.devices()[0].platform]
         )(
             (dim_expr,), tuple(args_dimvars), *(env[v] for v in args_dimvars)
         ).mlir_module()
@@ -2212,6 +2212,37 @@ def _reshape_memref(
   )
 
 
+def _pad_memref(
+    ref: ir.Value,
+    padder: pallas_core.PadTransform,
+    ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
+) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
+  if not is_libtpu_at_least("0.0.52"):
+    raise NotImplementedError("pad_ref requires libtpu >= 0.0.52")
+  ref_ty = ir.MemRefType(ref.type)
+  padded_iter = iter(padder.shape)
+  new_shape: list[int] = []
+  new_block_shape: list[int | pallas_core.Squeezed] = []
+  for ir_dim, s in zip(ref_ty.shape, ref_block_shape):
+    if isinstance(s, pallas_core.Squeezed):
+      new_shape.append(ir_dim)
+      new_block_shape.append(s)
+    else:
+      d = next(padded_iter)
+      new_shape.append(d)
+      new_block_shape.append(d)
+  assert next(padded_iter, None) is None
+  target_ref_ty = ir.MemRefType.get(
+      new_shape,
+      ref_ty.element_type,
+      memory_space=ref_ty.memory_space,
+  )
+  return (
+      tpu.memref_pad(target_ref_ty, ref),  # pyrefly: ignore[missing-attribute]
+      tuple(new_block_shape),
+  )
+
+
 def _memory_space_cast_memref(
     ref: ir.Value[ir.MemRefType],
     caster: state_types.MemorySpaceCastTransform,
@@ -2287,6 +2318,8 @@ def _transform_ref(
         ref, ref_block_shape = _reshape_memref(
             ref, transform, ref_ty, ref_block_shape
         )
+      case pallas_core.PadTransform():
+        ref, ref_block_shape = _pad_memref(ref, transform, ref_block_shape)
       case state_types.MemorySpaceCastTransform():
         ref, ref_block_shape = _memory_space_cast_memref(
             ref, transform, ref_block_shape, kernel_type
@@ -3706,13 +3739,15 @@ def _reduce_index_helper(
   )
   result = tpu.reduce_index(native_out_type, x, axis, reduction_kind)
 
-  if out_aval.dtype != native_dtype:
+  if dtypes.itemsize_bits(out_aval.dtype) > dtypes.itemsize_bits(native_dtype):
     out_type = ctx.aval_to_ir_type(
         jax_core.ShapedArray(out_shape, out_aval.dtype)
     )
     # To make sure jnp.argmax/argmin always return int32, we need to convert
     # the int16 output of tpu.reduce_index to int32 when the input is bf16.
-    result = arith.extsi(out_type, result)
+    # The reduced dimension can have up to 2^16 elements, so the int16
+    # indices must be zero-extended.
+    result = arith.extui(out_type, result)
 
   if is_1d:
     return vector.extract(result, [], [0])
@@ -4873,31 +4908,41 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
         ctx.lowering_context.replace(block_shapes=ctx.block_shapes[1:]), branches[constant_index], *args
     )
   out_types = map(ctx.aval_to_ir_type, ctx.avals_out)
-  pred = arith.cmpi(
-      arith.CmpIPredicate.ne, index, ir_constant(0, index.type)
-  )
-  if_op = scf.IfOp(pred, out_types, has_else=True)
   lowering_context = ctx.lowering_context.replace(
       block_shapes=ctx.block_shapes[1:],
   )
-  with ir.InsertionPoint(if_op.then_block):
-    # TODO(b/300272065): Use `scf.IndexSwitchOp` instead of a cascade of
-    # if/else.
-    if len(branches) > 2:
-      out = _cond_lowering_rule(
-          ctx,
-          arith.subi(index, ir_constant(1, index.type)),
-          *args,
-          branches=branches[1:],
+
+  # Lower to a balanced binary tree of if/else, so that every branch is reached
+  # after O(log N) comparisons instead of O(N) for a linear cascade.
+  # `scf.IndexSwitchOp` is not an option, since it has no TPU lowering
+  # (b/502722198). The index is assumed to be in bounds (`lax.switch` clamps
+  # it).
+  def lower_range(lo: int, hi: int) -> Sequence[ir.Value]:
+    if hi - lo == 1:
+      return jaxpr_subcomp(lowering_context, branches[lo], *args)
+    mid = (lo + hi) // 2
+    if hi - lo == 2:
+      # Equivalent to `index >= mid` here. For two branches (e.g. `lax.cond`)
+      # this emits `index != 0`, which folds away the `extui` of a boolean
+      # predicate.
+      pred = arith.cmpi(
+          arith.CmpIPredicate.ne, index, ir_constant(lo, index.type)
       )
+      then_range, else_range = (mid, hi), (lo, mid)
     else:
-      out = jaxpr_subcomp(lowering_context, branches[1], *args)
-    scf.yield_(out)
-  assert if_op.else_block is not None
-  with ir.InsertionPoint(if_op.else_block):
-    out = jaxpr_subcomp(lowering_context, branches[0], *args)
-    scf.yield_(out)
-  return if_op.results
+      pred = arith.cmpi(
+          arith.CmpIPredicate.slt, index, ir_constant(mid, index.type)
+      )
+      then_range, else_range = (lo, mid), (mid, hi)
+    if_op = scf.IfOp(pred, out_types, has_else=True)
+    with ir.InsertionPoint(if_op.then_block):
+      scf.yield_(lower_range(*then_range))
+    assert if_op.else_block is not None
+    with ir.InsertionPoint(if_op.else_block):
+      scf.yield_(lower_range(*else_range))
+    return if_op.results
+
+  return lower_range(0, len(branches))
 
 
 @register_lowering_rule(pjit.jit_p, kernel_types=[*tpu_core.CoreType])
@@ -5986,17 +6031,21 @@ def random_seed_lowering(ctx: LoweringRuleContext, seeds, *, impl):
 
 
 @register_lowering_rule(prng.random_bits_p)
-def random_bits_lowering(ctx: LoweringRuleContext, keys, *, bit_width, shape):
+def random_bits_lowering(ctx: LoweringRuleContext, keys, *, bit_width, shape,
+                         num_streams=1):
   assert bit_width == 32, "Only 32-bit PRNG supported."
   aval, = ctx.avals_in
   assert isinstance(aval.dtype, prng.KeyTy)
   impl = aval.dtype._impl
-  _proxy_fn = impl.random_bits
-  if not pl_random.is_pallas_impl(impl):
-    def new_lowering(key, bit_width, shape):
+  if pl_random.is_pallas_impl(impl):
+    if num_streams != 1:
+      raise NotImplementedError("Pallas PRNG only supports num_streams=1.")
+    def _proxy_fn(key, bit_width, shape):
+      return (impl.random_bits(key, bit_width, shape),)
+  else:
+    def _proxy_fn(key, bit_width, shape):
       key = jax.random.key_data(key).astype(jnp.uint32)
-      return impl.random_bits(key, bit_width, shape)
-    _proxy_fn = new_lowering
+      return prng._call_impl_random_bits(impl, key, bit_width, shape, num_streams)
   bits_lowering = lower_fun(_proxy_fn)
   return bits_lowering(ctx, keys, bit_width=bit_width, shape=shape)
 

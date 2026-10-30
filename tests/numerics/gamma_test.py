@@ -26,14 +26,6 @@ from jax._src.lax.digamma import digamma_impl
 from jax._src.lax.double_word import split_bits
 import jax.numpy as jnp
 import jax.scipy as jsp
-
-# Under pytest, tests run against an installed wheel that does not
-# include `jax.tests`, so skip before importing `jax.tests.numerics`.
-if jtu.is_running_under_pytest():
-  import pytest
-
-  pytest.skip("Only runs under Bazel", allow_module_level=True)
-
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
 import numpy as np

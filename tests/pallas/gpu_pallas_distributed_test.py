@@ -759,6 +759,7 @@ class PallasCallRemoteDMATest(TestCase):
         [desc_bytes * mesh.size],
     )
 
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_remote_dma_dynamic_other_device_id(self):
     # Regression test for device_collective_metadata being DCE'd under
     # WG lowering.
@@ -774,35 +775,38 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     @self.kernel(
-      out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-      scratch_types=[
-          plgpu.SMEM((8, 128), jnp.float32),
-      ],
+        out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        scratch_types=[
+            plgpu.SMEM((8, 128), jnp.float32),
+        ],
     )
-    def kernel(x_ref, other_dev_id_ref, y_ref, x_smem):
-      x_smem[...] = x_ref[...]
+    def kernel(other_dev_id_ref, y_ref, x_smem):
+      x_smem[...] = jnp.ones_like(x_smem)
+      plgpu.commit_smem()
       other_dev_id = {"x": other_dev_id_ref[0]}
       remote_y_ref = plgpu.remote_ref(y_ref, other_dev_id)
       plgpu.copy_smem_to_gmem(x_smem, remote_y_ref)
       plgpu.wait_smem_to_gmem(0)
 
-    x = jnp.arange(2 * 8 * 128, dtype=jnp.float32).reshape((2 * 8, 128))
     other_dev_ids = jnp.array([1, 0], dtype=jnp.int32)
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ["x"])
-    y = jax.jit(
-        jax.shard_map(
-            kernel,
-            mesh=mesh,
-            in_specs=(P("x"), P("x")),
-            out_specs=P("x"),
-            check_vma=False,
-        )
-    )(x, other_dev_ids)
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as ptx:
+      jax.jit(
+          jax.shard_map(
+              kernel,
+              mesh=mesh,
+              in_specs=P("x"),
+              out_specs=P("x"),
+              check_vma=False,
+          )
+      ).lower(other_dev_ids).compile()
 
-    self.assert_arrays_equal_per_shard(
-        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
-    )
+    # The kernel has 2 GMEM buffer arguments (`other_dev_id_ref` and `y_ref`,
+    # mapped to `_param_0` and `_param_1`). `device_collective_metadata` is
+    # outlined as the 3rd kernel parameter (`_param_2`) only if its host-side
+    # definition survives DCE.
+    self.assertIn("kernel_mosaic_gpu_kernel_param_2", ptx())
 
   # Test verifies an execution of HLO with several slightly different mosaic
   # custom calls. The difference is needed to validate correct initialization

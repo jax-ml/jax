@@ -42,6 +42,7 @@ from jax._src.numpy import error as jnp_error
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
+from jax._src.named_sharding import DuplicateSpecError
 from jax._src.partition_spec import PartitionSpec
 from jax._src.pjit import auto_axes
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
@@ -1512,9 +1513,15 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
     collapsed_slice_dims = tuple(sorted(collapsed_slice_dims)),
     start_index_map = tuple(start_index_map)
   )
-  slice_sharding = canonicalize_sharding(
-      x_sharding.update(spec=x_sharding.spec.update(partitions=slice_spec)),
-      "index_to_gather")
+  if x_sharding.spec.unreduced:
+    slice_sharding = None
+  else:
+    try:
+      slice_sharding = canonicalize_sharding(
+          x_sharding.update(spec=x_sharding.spec.update(partitions=slice_spec)),
+          "index_to_gather")
+    except (DuplicateSpecError, ValueError):
+      slice_sharding = None
   return _GatherIndexer(
     slice_shape=slice_shape,
     newaxis_dims=tuple(newaxis_dims),

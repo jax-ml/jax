@@ -23,12 +23,18 @@ from functools import partial, reduce as _reduce
 
 from jax._src import config
 from jax._src import core
+from jax._src.custom_partitioning_sharding_rule import (
+    sdy_sharding_rule_to_mlir,
+    str_to_sdy_sharding_rule,
+)
+from jax._src import ffi
+from jax._src.lax.bessel import bessel_i0e_impl, bessel_i1e_impl
 from jax._src.lax.erf import erf_inv_core, erfc_impl, exp_neg_sq
 from jax._src.lax.lax import (AccuracyMode, Tolerance, add, bitwise_and,
                               bitwise_not, bitwise_or, broadcast_in_dim,
                               broadcast_shapes, convert_element_type, div, eq,
                               exp, full_like, ge, gt, le, log, log1p, lt, mul,
-                              ne, neg, reciprocal, reduce, select, sign, sqrt,
+                              ne, neg, reciprocal, reduce, select, sign,
                               square, standard_naryop, standard_unop, sub,
                               _const, _dtype, _float, _nary_lower_hlo, _ones,
                               _isnan, _unary_with_accuracy_pp_rule)
@@ -39,8 +45,19 @@ from jax._src.lax.lgamma import lgamma_impl
 from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
+from jax._src.lib import cpu_math, cuda_math, hip_math
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.typing import Array, ArrayLike
+
+if cpu_math is not None:
+  for _name, _value in cpu_math.registrations().items():
+    ffi.register_ffi_target(_name, _value, platform='cpu', api_version=1)
+    ffi.register_ffi_target_as_batch_partitionable(_name)
+for _platform, _plugin_math in (('CUDA', cuda_math), ('ROCM', hip_math)):
+  if _plugin_math is not None:
+    for _name, _value in _plugin_math.registrations().items():
+      ffi.register_ffi_target(_name, _value, platform=_platform, api_version=1)
+      ffi.register_ffi_target_as_batch_partitionable(_name)
 
 # TODO(mattjj): this function sucks, delete it
 def _up_and_broadcast(doit):
@@ -165,23 +182,6 @@ def erf_inv(x: ArrayLike) -> Array:
     For accuracy bounds, see :ref:`numerical-accuracy`.
   """
   return erf_inv_p.bind(x)
-
-def ndtr(x: Array) -> Array:
-  r"""Elementwise cumulative distribution function of the standard normal.
-
-  Implements the core logic of :func:`jax.scipy.special.ndtr`, placed here so
-  that lower-level modules can use it without importing ``jax.scipy``.
-  """
-  dtype = _dtype(x).type
-  half_sqrt_2 = dtype(0.5) * np.sqrt(2., dtype=dtype)
-  w = x * half_sqrt_2
-  z = abs(w)
-  y = select(lt(z, half_sqrt_2),
-             dtype(1.) + erf(w),
-             select(gt(w, dtype(0.)),
-                    dtype(2.) - erfc(z),
-                    erfc(z)))
-  return dtype(0.5) * y
 
 def betainc_gradx(g, a, b, x):
   lbeta = lgamma(a) + lgamma(b) - lgamma(a + b)
@@ -654,109 +654,6 @@ def random_gamma_grad_impl(a, x, *, dtype):
   return output
 
 
-def evaluate_chebyshev_polynomial(x, coefficients):
-  b0 = full_like(x,0)
-  b1 = full_like(x,0)
-  b2 = full_like(x,0)
-  for c in coefficients:
-    b2 = b1
-    b1 = b0
-    b0 = x * b1 - b2 + full_like(x, c)
-  return 0.5 * (b0 - b2)
-
-def _i0e_impl32(x: Array) -> Array:
-  """
-  Computes an approximation to the modified Bessel function of the first kind,
-  zeroth order. The following implementation follows Cephes' F32 and F64
-  implementation of i0e.
-  """
-  i0e_coeffs_a = np.array(
-    [-1.30002500998624804212E-8, 6.04699502254191894932E-8,
-     -2.67079385394061173391E-7, 1.11738753912010371815E-6,
-     -4.41673835845875056359E-6, 1.64484480707288970893E-5,
-     -5.75419501008210370398E-5, 1.88502885095841655729E-4,
-     -5.76375574538582365885E-4, 1.63947561694133579842E-3,
-     -4.32430999505057594430E-3, 1.05464603945949983183E-2,
-     -2.37374148058994688156E-2, 4.93052842396707084878E-2,
-     -9.49010970480476444210E-2, 1.71620901522208775349E-1,
-     -3.04682672343198398683E-1, 6.76795274409476084995E-1]
-  )
-  i0e_coeffs_b = np.array(
-    [3.39623202570838634515E-9, 2.26666899049817806459E-8,
-     2.04891858946906374183E-7, 2.89137052083475648297E-6,
-     6.88975834691682398426E-5, 3.36911647825569408990E-3,
-     8.04490411014108831608E-1]
-  )
-
-  x = abs(x)
-  half = full_like(x, 0.5)
-  two = full_like(x, 2.0)
-  thirty_two = full_like(x, 32.0)
-
-  result_le_8 = evaluate_chebyshev_polynomial(half * x - two, i0e_coeffs_a)
-  result_gt_8 = div(evaluate_chebyshev_polynomial(thirty_two / x - two,
-                                                  i0e_coeffs_b), sqrt(x))
-
-  return select(x <= 8.0, result_le_8, result_gt_8)
-
-def _i0e_impl64(x: Array) -> Array:
-  i0e_coeffs_a = np.array(
-     [-4.41534164647933937950E-18, 3.33079451882223809783E-17,
-      -2.43127984654795469359E-16, 1.71539128555513303061E-15,
-      -1.16853328779934516808E-14, 7.67618549860493561688E-14,
-      -4.85644678311192946090E-13, 2.95505266312963983461E-12,
-      -1.72682629144155570723E-11, 9.67580903537323691224E-11,
-      -5.18979560163526290666E-10, 2.65982372468238665035E-9,
-      -1.30002500998624804212E-8,  6.04699502254191894932E-8,
-      -2.67079385394061173391E-7,  1.11738753912010371815E-6,
-      -4.41673835845875056359E-6,  1.64484480707288970893E-5,
-      -5.75419501008210370398E-5,  1.88502885095841655729E-4,
-      -5.76375574538582365885E-4,  1.63947561694133579842E-3,
-      -4.32430999505057594430E-3,  1.05464603945949983183E-2,
-      -2.37374148058994688156E-2,  4.93052842396707084878E-2,
-      -9.49010970480476444210E-2,  1.71620901522208775349E-1,
-      -3.04682672343198398683E-1,  6.76795274409476084995E-1]
-  )
-  i0e_coeffs_b = np.array(
-     [-7.23318048787475395456E-18, -4.83050448594418207126E-18,
-      4.46562142029675999901E-17,  3.46122286769746109310E-17,
-      -2.82762398051658348494E-16, -3.42548561967721913462E-16,
-      1.77256013305652638360E-15,  3.81168066935262242075E-15,
-      -9.55484669882830764870E-15, -4.15056934728722208663E-14,
-      1.54008621752140982691E-14,  3.85277838274214270114E-13,
-      7.18012445138366623367E-13,  -1.79417853150680611778E-12,
-      -1.32158118404477131188E-11, -3.14991652796324136454E-11,
-      1.18891471078464383424E-11,  4.94060238822496958910E-10,
-      3.39623202570838634515E-9,   2.26666899049817806459E-8,
-      2.04891858946906374183E-7,   2.89137052083475648297E-6,
-      6.88975834691682398426E-5,   3.36911647825569408990E-3,
-      8.04490411014108831608E-1]
-  )
-
-  x = abs(x)
-  half = full_like(x, 0.5)
-  two = full_like(x, 2.0)
-  thirty_two = full_like(x, 32.0)
-
-  result_le_8 = evaluate_chebyshev_polynomial(half * x - two, i0e_coeffs_a)
-  result_gt_8 = div(evaluate_chebyshev_polynomial(thirty_two / x - two,
-                                                  i0e_coeffs_b), sqrt(x))
-
-  return select(x <= 8.0, result_le_8, result_gt_8)
-
-def bessel_i0e_impl(x: Array) -> Array:
-  if x.dtype == np.float64:
-    return _i0e_impl64(x)
-  elif x.dtype == np.float32:
-    return _i0e_impl32(x)
-  else:
-    # Have to upcast f16 because the magic Cephes coefficients don't have enough
-    # precision for it.
-    x_dtype = x.dtype
-    x = x.astype(np.float32)
-    return convert_element_type(_i0e_impl32(x), x_dtype)
-
-
 regularized_incomplete_beta_p = standard_naryop(
     [_float, _float, _float], 'regularized_incomplete_beta')
 mlir.register_lowering(regularized_incomplete_beta_p,
@@ -767,6 +664,7 @@ ad.defjvp(regularized_incomplete_beta_p,
   betainc_grad_not_implemented,
   betainc_grad_not_implemented,
   betainc_gradx)
+
 
 def _lgamma_lowering(ctx, x, *, use_f64_for_f32=False):
   aval = ctx.avals_in[0]
@@ -783,18 +681,65 @@ def _lgamma_lowering(ctx, x, *, use_f64_for_f32=False):
   return mlir.lower_fun(_impl, multiple_results=False)(ctx, x)
 
 
+def _unary_math_ffi_lowering(target_name: str, fallback_lowering):
+  def rule(ctx, x):
+    if ctx.is_forward_compat():
+      return fallback_lowering(ctx, x)
+    x_aval, = ctx.avals_in
+    num_batch_dims = len(x_aval.shape)
+    frontend_attrs = mlir.ir_attribute({'num_batch_dims': str(num_batch_dims)})
+    extra_attributes = {'mhlo.frontend_attributes': frontend_attrs}
+    # For polymorphic shapes, ffi_lowering appends shape operands
+    # (indices_of_shape_operands) that StablehloCanonicalizeDynamism later
+    # drops without updating sdy.sharding_rule, so no single operand mapping
+    # count can pass verification both before and after shape refinement.
+    if core.is_constant_shape(x_aval.shape):
+      in_types = list(mlir.aval_to_ir_types(ctx.module_context, x_aval))
+      out_types = list(mlir.aval_to_ir_types(ctx.module_context, ctx.avals_out[0]))
+      extra_attributes['sdy.sharding_rule'] = sdy_sharding_rule_to_mlir(
+          str_to_sdy_sharding_rule('... -> ...'),
+          in_types,
+          out_types,
+      )
+    return ffi.ffi_lowering(
+        target_name, extra_attributes=extra_attributes
+    )(ctx, x)
+  return rule
+
+
+_cpu_lgamma_lowering = partial(_lgamma_lowering, use_f64_for_f32=True)
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
-# Only CPU uses XLA_LATE; XLA:GPU does not inline XLA_LATE calls (turning each
-# op inside into a separate kernel), and XLA:TPU's late CallInliner hits
-# tile-layout mismatches inside fused loops.
 mlir.register_lowering(lgamma_p, _lgamma_lowering, inline=False)
-mlir.register_lowering(
-    lgamma_p,
-    partial(_lgamma_lowering, use_f64_for_f32=True),
-    platform='cpu',
-    inline=core.Inline.XLA_LATE,
-)
+# TODO(phawkins): Make this unconditional after jax 0.12.1 is released.
+if cpu_math is not None:
+  mlir.register_lowering(
+      lgamma_p,
+      _unary_math_ffi_lowering('cpu_lgamma_ffi', _cpu_lgamma_lowering),
+      platform='cpu',
+  )
+else:
+  # Only CPU uses XLA_LATE; XLA:GPU does not inline XLA_LATE calls (turning each
+  # op inside into a separate kernel), and XLA:TPU's late CallInliner hits
+  # tile-layout mismatches inside fused loops.
+  mlir.register_lowering(
+      lgamma_p,
+      _cpu_lgamma_lowering,
+      platform='cpu',
+      inline=core.Inline.XLA_LATE,
+  )
+if cuda_math is not None:
+  mlir.register_lowering(
+      lgamma_p,
+      _unary_math_ffi_lowering('cu_lgamma_ffi', _lgamma_lowering),
+      platform='cuda',
+  )
+if hip_math is not None:
+  mlir.register_lowering(
+      lgamma_p,
+      _unary_math_ffi_lowering('hip_lgamma_ffi', _lgamma_lowering),
+      platform='rocm',
+  )
 
 def _digamma_lowering(
     ctx, x, *, use_f64_for_f32=False, use_optimization_barrier=False
@@ -818,15 +763,36 @@ def _digamma_lowering(
   return mlir.lower_fun(_impl, multiple_results=False)(ctx, x)
 
 
+_cpu_digamma_lowering = partial(_digamma_lowering, use_f64_for_f32=True)
 digamma_p = standard_unop(_float, 'digamma')
 ad.defjvp(digamma_p, lambda g, x: mul(g, polygamma(_const(x, 1), x)))
 mlir.register_lowering(digamma_p, _digamma_lowering, inline=False)
-mlir.register_lowering(
-    digamma_p,
-    partial(_digamma_lowering, use_f64_for_f32=True),
-    platform='cpu',
-    inline=core.Inline.XLA_LATE,
-)
+# TODO(phawkins): Make this unconditional after jax 0.12.1 is released.
+if cpu_math is not None:
+  mlir.register_lowering(
+      digamma_p,
+      _unary_math_ffi_lowering('cpu_digamma_ffi', _cpu_digamma_lowering),
+      platform='cpu',
+  )
+else:
+  mlir.register_lowering(
+      digamma_p,
+      _cpu_digamma_lowering,
+      platform='cpu',
+      inline=core.Inline.XLA_LATE,
+  )
+if cuda_math is not None:
+  mlir.register_lowering(
+      digamma_p,
+      _unary_math_ffi_lowering('cu_digamma_ffi', _digamma_lowering),
+      platform='cuda',
+  )
+if hip_math is not None:
+  mlir.register_lowering(
+      digamma_p,
+      _unary_math_ffi_lowering('hip_digamma_ffi', _digamma_lowering),
+      platform='rocm',
+  )
 mlir.register_lowering(
     digamma_p,
     partial(_digamma_lowering, use_optimization_barrier=True),
@@ -867,7 +833,8 @@ ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
 
 bessel_i1e_p = standard_unop(_float, 'bessel_i1e')
 mlir.register_lowering(bessel_i1e_p,
-                        partial(_nary_lower_hlo, chlo.bessel_i1e))
+                       mlir.lower_fun(bessel_i1e_impl,
+                                      multiple_results=False))
 
 def _bessel_i1e_jvp(g, y, x):
   eps = dtypes.finfo(_dtype(x)).eps

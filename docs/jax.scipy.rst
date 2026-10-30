@@ -199,6 +199,7 @@ jax.scipy.special
    i0e
    i1
    i1e
+   jn
    kl_div
    log_ndtr
    log_softmax

@@ -773,10 +773,52 @@ def _export_lowered(
                                          module_kept_var_idx,
                                          len(args_avals_flat))
 
+  has_unreduced = (
+      lowered._in_types is not None and lowered._out_types is not None and
+      any(a.is_high for a in itertools.chain(lowered._in_types[1],
+                                             lowered._out_types[1])))  # type: ignore
+  if has_unreduced:
+    in_tree, hi_in_avals_all = lowered._in_types  # type: ignore[misc]
+    hi_in_avals = hi_in_avals_all[len(hi_in_avals_all) - in_tree.num_leaves:]
+    out_tree, hi_out_avals = lowered._out_types  # type: ignore[misc]
+
+    exp_in_avals = []
+    for lo_a, hi_a in zip(args_avals_flat, hi_in_avals):
+      if hi_a.is_high:
+        if not isinstance(hi_a, core.ShapedArray):
+          raise NotImplementedError
+        exp_in_avals.append(hi_a)
+      else:
+        exp_in_avals.append(lo_a)
+
+    exp_out_avals = []
+    for lo_a, hi_a in zip(out_avals_flat, hi_out_avals):  # type: ignore
+      if hi_a.is_high:
+        if not isinstance(hi_a, core.ShapedArray):
+          raise NotImplementedError
+        exp_out_avals.append(hi_a)
+      else:
+        exp_out_avals.append(lo_a)
+
+    raw_in_shardings: Sequence[LoweringSharding] = tuple(
+        s.update(spec=hi_a.sharding.spec)  # type: ignore
+        if hi_a.is_high and isinstance(s, sharding_impls.NamedSharding) else s
+        for s, hi_a in zip(all_in_shardings, hi_in_avals))
+    raw_out_shardings: Sequence[LoweringSharding] = tuple(
+        (s.update(spec=hi_a.sharding.spec)
+         if isinstance(s, sharding_impls.NamedSharding) else hi_a.sharding)
+        if hi_a.is_high else s
+        for s, hi_a in zip(lowering.compile_args["out_shardings"], hi_out_avals))  # type: ignore
+  else:
+    in_tree = lowered.in_tree
+    out_tree = lowered.out_tree
+    exp_in_avals = tuple(args_avals_flat)
+    exp_out_avals = tuple(out_avals_flat)
+    raw_in_shardings = all_in_shardings
+    raw_out_shardings = lowering.compile_args["out_shardings"]
+
   cur_mesh = None
-  for s in itertools.chain(
-      all_in_shardings, lowering.compile_args["out_shardings"]
-  ):
+  for s in itertools.chain(raw_in_shardings, raw_out_shardings):
     if isinstance(s, sharding_impls.NamedSharding):
       cur_mesh = s.mesh
       break
@@ -784,12 +826,12 @@ def _export_lowered(
     cur_mesh = cur_mesh.abstract_mesh
 
   in_named_shardings = tuple(
-    to_named_sharding_with_abstract_mesh(s, aval, cur_mesh)
-    for s, aval in zip(all_in_shardings, args_avals_flat))
+    to_named_sharding_with_abstract_mesh(s, aval, cur_mesh)  # type: ignore
+    for s, aval in zip(raw_in_shardings, exp_in_avals))
 
   out_named_shardings = tuple(
     to_named_sharding_with_abstract_mesh(s, aval, cur_mesh)
-    for s, aval in zip(lowering.compile_args["out_shardings"], out_avals_flat))
+    for s, aval in zip(raw_out_shardings, exp_out_avals))
 
   def _get_exported_vjp(exp_primal: Exported) -> Exported:
     # Turn the primal jaxpr into a function, in preparation for exporting
@@ -812,10 +854,10 @@ def _export_lowered(
 
   return Exported(
       fun_name=fun_name,
-      in_tree=lowered.in_tree,
-      out_tree=lowered.out_tree,
-      in_avals=tuple(args_avals_flat),
-      out_avals=tuple(out_avals_flat),
+      in_tree=in_tree,
+      out_tree=out_tree,  # type: ignore
+      in_avals=exp_in_avals,  # type: ignore
+      out_avals=exp_out_avals,  # type: ignore
       _in_named_shardings=in_named_shardings,
       _out_named_shardings=out_named_shardings,
       in_shardings_hlo=(None,) * len(in_named_shardings),
@@ -1086,6 +1128,7 @@ def _check_lowering(lowering) -> None:
         "\n".join(not_implemented_msgs))
 
 _CPU_FFI_KERNELS = [
+    "cpu_digamma_ffi", "cpu_lgamma_ffi",
     "lapack_spotrf_ffi", "lapack_dpotrf_ffi", "lapack_cpotrf_ffi", "lapack_zpotrf_ffi",
     "lapack_sgeqrf_ffi", "lapack_dgeqrf_ffi", "lapack_cgeqrf_ffi", "lapack_zgeqrf_ffi",
     "lapack_sorgqr_ffi", "lapack_dorgqr_ffi", "lapack_cungqr_ffi", "lapack_zungqr_ffi",
@@ -1100,6 +1143,9 @@ _CPU_FFI_KERNELS = [
     "lapack_sgtsv_ffi", "lapack_dgtsv_ffi", "lapack_cgtsv_ffi", "lapack_zgtsv_ffi",
 ]
 _GPU_FFI_KERNELS = [
+    # lgamma and digamma on GPU
+    "cu_digamma_ffi", "cu_lgamma_ffi",
+    "hip_digamma_ffi", "hip_lgamma_ffi",
     # lu on GPU
     "cu_lu_pivots_to_permutation", "cusolver_getrf_ffi",
     "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
@@ -1426,6 +1472,42 @@ call_exported_p.def_effectful_abstract_eval(_call_exported_abstract_eval)
 def _call_exported_impl(*args, exported: Exported):
   return dispatch.apply_primitive(call_exported_p, *args, exported=exported)
 call_exported_p.def_impl(_call_exported_impl)
+
+
+def _call_exported_is_high(*in_avals: core.AbstractValue,
+                           exported: Exported) -> bool:
+  return any(a.is_high for a in itertools.chain(exported.in_avals, exported.out_avals))
+call_exported_p.is_high = _call_exported_is_high  # type: ignore[method-assign]
+
+
+def _call_exported_to_lojax(*hi_args, exported: Exported):
+  hi_in_avals = tuple(core.typeof(x) for x in hi_args)
+  hi_out_avals, _ = _call_exported_abstract_eval(*hi_in_avals, exported=exported)
+  lo_args = [lo_x for a, x in zip(hi_in_avals, hi_args)
+             for lo_x in a.lower_val(x)]
+
+  def _lower_aval_and_sharding(aval: core.ShapedArray,
+                               s: NamedSharding | None):
+    if not aval.is_high:
+      return aval, s
+    lo_aval, = aval.lo_ty()
+    return lo_aval, None if s is None else s.update(spec=lo_aval.sharding.spec)  # type: ignore
+
+  lo_in_avals, lo_in_shardings = util.unzip2(
+      _lower_aval_and_sharding(a, s)
+      for a, s in zip(exported.in_avals, exported._in_named_shardings))
+  lo_out_avals, lo_out_shardings = util.unzip2(
+      _lower_aval_and_sharding(a, s)
+      for a, s in zip(exported.out_avals, exported._out_named_shardings))
+  lo_exported = dataclasses.replace(
+      exported,
+      in_avals=tuple(lo_in_avals),
+      out_avals=tuple(lo_out_avals),
+      _in_named_shardings=tuple(lo_in_shardings),
+      _out_named_shardings=tuple(lo_out_shardings))
+  lo_outs = call_exported_p.bind(*lo_args, exported=lo_exported)
+  return [a.raise_val(y) for a, y in zip(hi_out_avals, lo_outs)]
+call_exported_p.to_lojax = _call_exported_to_lojax  # type: ignore[method-assign]
 
 
 def has_sdy_meshes_in_frontend_attributes(submodule: ir.Module) -> bool:

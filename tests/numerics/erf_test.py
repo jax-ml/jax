@@ -24,14 +24,6 @@ from jax._src import test_util as jtu
 from jax._src.scipy import special as jsp_special_impl
 import jax.numpy as jnp
 import jax.scipy as jsp
-
-# Under pytest, tests run against an installed wheel that does not
-# include `jax.tests`, so skip before importing `jax.tests.numerics`.
-if jtu.is_running_under_pytest():
-  import pytest
-
-  pytest.skip("Only runs under Bazel", allow_module_level=True)
-
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
 import numpy as np
@@ -258,11 +250,11 @@ class ErfcTest(jtu.JaxTestCase):
     grad2_fn = jax.jit(jax.vmap(jax.grad(jax.grad(lax.erfc))))
     max_x = 9.0 if dtype == f32 else 25.0
     x = jnp.linspace(-max_x, max_x, 256, dtype=dtype)
-    with jax.debug_nans(True):
-      d1 = np.asarray(grad1_fn(x))
-      d2 = np.asarray(grad2_fn(x))
-      _ = grad1_fn(jnp.array([-jnp.inf, 0.0, jnp.inf], dtype=dtype))
-      _ = grad2_fn(jnp.array([-jnp.inf, 0.0, jnp.inf], dtype=dtype))
+    d1 = np.asarray(grad1_fn(x))
+    d2 = np.asarray(grad2_fn(x))
+    inf_x = jnp.array([-jnp.inf, jnp.inf], dtype=dtype)
+    self.assertArraysEqual(grad1_fn(inf_x), jnp.zeros_like(inf_x))
+    self.assertArraysEqual(grad2_fn(inf_x), jnp.zeros_like(inf_x))
 
     def mp_d1(v):
       return -2 * mpmath.exp(-v * v) / mpmath.sqrt(mpmath.pi)
@@ -293,6 +285,12 @@ class ErfcTest(jtu.JaxTestCase):
         erfcx_grad,
         jax.vmap(jax.grad(jax.grad(jsp.special.erfcx))),
         jax.vmap(jax.grad(lax.erf)),
+        jsp.special.ndtr,
+        jax.vmap(jax.grad(jsp.special.ndtr)),
+        jax.vmap(jax.grad(jax.grad(jsp.special.ndtr))),
+        jsp.special.log_ndtr,
+        jax.vmap(jax.grad(jsp.special.log_ndtr)),
+        jax.vmap(jax.grad(jax.grad(jsp.special.log_ndtr))),
     ]
     pts = [-3.0, -1.5, -0.5, 0.0, 0.5, 1.5, 2.0, 5.0]
     with jax.enable_x64(True):
@@ -970,6 +968,298 @@ class NdtriTest(jtu.JaxTestCase):
     self.assertLessEqual(np.max(util.ulp_diff(d3, ref_d3, dtype)), d3_bound)
 
 
+def _mpmath_ndtr(x):
+  with mpmath.extraprec(20):
+    return 0.5 * _mpmath_erfc(-x / mpmath.sqrt(2))
+
+
+def _mpmath_log_ndtr(x):
+  # Factor erfc(|x| / sqrt(2)) = exp(-0.5 * x^2) * erfcx(|x| / sqrt(2)) via
+  # `_mpmath_erfcx` (which uses `hyperu` for u >= 1) so `mpmath.erfc` is never
+  # called on large arguments.
+  if mpmath.isnan(x):
+    return mpmath.nan
+  if x == -mpmath.inf:
+    return -mpmath.inf
+  if x == mpmath.inf:
+    return mpmath.mpf(0)
+  with mpmath.extraprec(40):
+    u = abs(x) / mpmath.sqrt(2)
+    if x > 0:
+      return mpmath.log1p(-0.5 * mpmath.exp(-0.5 * x * x) * _mpmath_erfcx(u))
+    return -0.5 * x * x + mpmath.log(0.5 * _mpmath_erfcx(u))
+
+
+_NDTR_UNDERFLOW_THRESHOLDS = [
+    # Underflow thresholds where ndtr(x) reaches tiny / min_subnormal, computed
+    # via mpmath.findroot(lambda x: 0.5 * mpmath.erfc(-x / sqrt(2)) - target, x0):
+    -12.949952701187204,  # ndtr(x) == 2^-126 (float32 tiny)
+    -14.121426613350499,  # ndtr(x) == 2^-149 (float32 min_subnormal)
+    -37.5193793471445,  # ndtr(x) == 2^-1022 (float64 tiny)
+    -38.467405617144344,  # ndtr(x) == 2^-1074 (float64 min_subnormal)
+]
+
+_NDTR_INTERESTING_POINTS = [
+    # Branch thresholds at |x| == 1 and |x| == sqrt(2):
+    -math.sqrt(2.0),
+    -1.0,
+    1.0,
+    math.sqrt(2.0),
+    # Saturation thresholds where ndtr(x) rounds to 1.0 in float32 and float64:
+    -float(scipy.special.ndtri(2.0**-25)),
+    -float(scipy.special.ndtri(2.0**-54)),
+    *_NDTR_UNDERFLOW_THRESHOLDS,
+]
+
+_F32_SQRT_MAX = math.sqrt(float(np.finfo(np.float32).max))
+_F64_SQRT_MAX = math.sqrt(float(np.finfo(np.float64).max))
+
+_LOG_NDTR_INTERESTING_POINTS = [
+    *_NDTR_INTERESTING_POINTS,
+    # Asymptotic expansion switch thresholds in jsp.special.log_ndtr:
+    -10.0,
+    -20.0,
+    # Positive thresholds where log_ndtr(x) ~= -ndtr(-x) underflows to -0.0:
+    *(-x for x in _NDTR_UNDERFLOW_THRESHOLDS),
+    # Premature x^2 overflow thresholds (-sqrt(fmax)) and true underflow/overflow
+    # thresholds where -0.5 * x^2 == -finfo.max (-sqrt(2) * sqrt(fmax)):
+    -_F32_SQRT_MAX,
+    -math.sqrt(2.0) * _F32_SQRT_MAX,  # -2.6087634873193423e19 (float32)
+    -_F64_SQRT_MAX,
+    -math.sqrt(2.0) * _F64_SQRT_MAX,  # -1.8961503816218352e154 (float64)
+]
+
+
+@jtu.thread_unsafe_test_class()
+class NdtrTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_ndtr_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f32: 4.5, f64: 3.0}),
+        ("gpu", {f32: 5.5, f64: 3.0}),
+        ([*TPU_EUPV1, "tpu_v5p"], {f32: 6.0}),
+        (["tpu_v6e", "tpu_7x"], {f32: 5.5}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    util.check_unary_precision(
+        self,
+        jax.jit(jsp.special.ndtr),
+        scipy.special.ndtr,
+        _mpmath_ndtr,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        interesting_points=_NDTR_INTERESTING_POINTS,
+    )
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_ndtr_derivatives(self, dtype):
+    """Checks 1st and 2nd derivatives of `ndtr` against `mpmath`.
+
+    `ndtr'(x) = exp(-x^2 / 2) / sqrt(2 * pi)` and
+    `ndtr''(x) = -x * exp(-x^2 / 2) / sqrt(2 * pi)`, exercising `_ndtr_jvp` and
+    `_exp_neg_half_sq_jvp` respectively.
+    """
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    grad1_fn = jax.jit(jax.vmap(jax.grad(jsp.special.ndtr)))
+    grad2_fn = jax.jit(jax.vmap(jax.grad(jax.grad(jsp.special.ndtr))))
+
+    # Stay inside the normal-float range of `exp(-x^2 / 2)` (which enters
+    # subnormals around |x| = 13.2 in float32 and |x| = 37.6 in float64) so ULP
+    # error is not dominated by subnormal rounding or TPU flush-to-zero.
+    max_x = 13.0 if dtype == f32 else 37.0
+    x = jnp.linspace(-max_x, max_x, 256, dtype=dtype)
+    d1 = np.asarray(grad1_fn(x))
+    d2 = np.asarray(grad2_fn(x))
+
+    # Past the `max_ax` clamp in `exp_neg_half_sq` (|x| = 16 in float32, 40 in
+    # float64), `exp(-x^2 / 2)` underflows to 0; check that both derivatives
+    # return 0 in the far tails and at `+-inf` rather than `NaN`, and that `NaN`
+    # inputs still propagate `NaN`.
+    tail_x = 20.0 if dtype == f32 else 50.0
+    tails = jnp.array([-jnp.inf, -tail_x, tail_x, jnp.inf], dtype=dtype)
+    self.assertArraysEqual(grad1_fn(tails), jnp.zeros_like(tails))
+    self.assertArraysEqual(grad2_fn(tails), jnp.zeros_like(tails))
+    nan_x = jnp.array([jnp.nan], dtype=dtype)
+    self.assertTrue(np.all(np.isnan(grad1_fn(nan_x))))
+    self.assertTrue(np.all(np.isnan(grad2_fn(nan_x))))
+
+    def mp_d1(v):
+      return mpmath.exp(-0.5 * v * v) / mpmath.sqrt(2 * mpmath.pi)
+
+    def mp_d2(v):
+      return -v * mpmath.exp(-0.5 * v * v) / mpmath.sqrt(2 * mpmath.pi)
+
+    # For float64, `eval_mpmath` returns high-precision `mpmath.mpf` objects so
+    # `ulp_diff` can measure error without rounding the reference to float64.
+    x_np = np.asarray(x)
+    ref_d1 = np.array(
+        [util.eval_mpmath(mp_d1, v.item(), dtype=dtype) for v in x_np],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    ref_d2 = np.array(
+        [util.eval_mpmath(mp_d2, v.item(), dtype=dtype) for v in x_np],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    self.assertLessEqual(np.max(util.ulp_diff(d1, ref_d1, dtype)), 3.0)
+    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), 4.0)
+
+
+@jtu.thread_unsafe_test_class()
+class LogNdtrTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_log_ndtr_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f32: 4.5, f64: 3.5}),
+        ("gpu", {f32: 6.0, f64: 3.0}),
+        ([*TPU_EUPV1, "tpu_v5p"], {f32: 6.0}),
+        (["tpu_v6e", "tpu_7x"], {f32: 5.5}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    util.check_unary_precision(
+        self,
+        jax.jit(jsp.special.log_ndtr),
+        scipy.special.log_ndtr,
+        _mpmath_log_ndtr,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        interesting_points=_LOG_NDTR_INTERESTING_POINTS,
+    )
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_log_ndtr_derivatives(self, dtype):
+    """Checks 1st, 2nd, and 3rd derivatives of `log_ndtr` against `mpmath`.
+
+    `log_ndtr'(x) = r(x) = ndtr'(x) / ndtr(x)` (~ `-x` as `x -> -inf`, `0` as
+    `x -> +inf`), `log_ndtr''(x) = -r(x) * q(x)` where `q(x) = x + r(x)` (~ `-1`
+    as `x -> -inf`, `0` as `x -> +inf`), and
+    `log_ndtr'''(x) = r(x) * (q(x)^2 + r(x) * q(x) - 1)`.
+    """
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    grad1_fn = jax.jit(jax.vmap(jax.grad(jsp.special.log_ndtr)))
+    grad2_fn = jax.jit(jax.vmap(jax.grad(jax.grad(jsp.special.log_ndtr))))
+    grad3_fn = jax.jit(
+        jax.vmap(jax.grad(jax.grad(jax.grad(jsp.special.log_ndtr))))
+    )
+
+    # Include exact branch / polynomial piece cutoffs (`-sqrt(2)` and
+    # `-k * sqrt(2)` for `k in {2, 4, 8, 12}`) to check continuity and ensure
+    # tie points do not drop gradient factors.
+    cutoffs = jnp.array(
+        [-k * math.sqrt(2.0) for k in (1, 2, 4, 8, 12)], dtype=dtype
+    )
+
+    # On the positive side, stop at 13 (float32) / 37 (float64) so `exp(-x^2/2)`
+    # stays in the normal-float range (avoiding TPU subnormal flush-to-zero).
+    # On the negative side, test `d1` to `-1e38` / `-1e307` and `d2` to `-5e37`
+    # / `-1e307` (where `q ~ 1 / |x|` also stays above the normal threshold).
+    pos_max = 13.0 if dtype == f32 else 37.0
+    neg_far_d1 = 1e38 if dtype == f32 else 1e307
+    neg_far_d2 = 5e37 if dtype == f32 else 1e307
+    x_d1 = jnp.concatenate([
+        jnp.asarray(-np.geomspace(10.0, neg_far_d1, 128), dtype=dtype),
+        jnp.linspace(-pos_max, pos_max, 256, dtype=dtype),
+        cutoffs,
+    ])
+    x_d2 = jnp.concatenate([
+        jnp.asarray(-np.geomspace(10.0, neg_far_d2, 128), dtype=dtype),
+        jnp.linspace(-pos_max, pos_max, 256, dtype=dtype),
+        cutoffs,
+    ])
+    # In `d3 = r * q^2 - r * (1 - r * q)`, `1 - r * q ~ 1 / x^2` and the outer
+    # subtraction cancel by `~ x^4 / 2` (`128x` at `x = -4`, ~350 ULP); check
+    # `[-4, pos_max]` (including `-sqrt(2)` and `-2 * sqrt(2)`) to verify the
+    # closed JVP recurrence is smooth across cutoffs.
+    x_d3 = jnp.concatenate([
+        jnp.linspace(-4.0, pos_max, 256, dtype=dtype),
+        cutoffs[:2],
+    ])
+    d1 = np.asarray(grad1_fn(x_d1))
+    d2 = np.asarray(grad2_fn(x_d2))
+    d3 = np.asarray(grad3_fn(x_d3))
+
+    # Boundary and special values: `log_ndtr'(-inf) = +inf`, positive far-tail
+    # and `+inf` derivatives underflow to 0, and `NaN` propagates `NaN`.
+    self.assertArraysEqual(
+        grad1_fn(jnp.array([-jnp.inf], dtype=dtype)),
+        jnp.array([jnp.inf], dtype=dtype),
+    )
+    pos_tails = jnp.array([20.0 if dtype == f32 else 50.0, jnp.inf], dtype=dtype)
+    self.assertArraysEqual(grad1_fn(pos_tails), jnp.zeros_like(pos_tails))
+    self.assertArraysEqual(grad2_fn(pos_tails), jnp.zeros_like(pos_tails))
+    self.assertArraysEqual(grad3_fn(pos_tails), jnp.zeros_like(pos_tails))
+    nan_x = jnp.array([jnp.nan], dtype=dtype)
+    self.assertTrue(np.all(np.isnan(grad1_fn(nan_x))))
+    self.assertTrue(np.all(np.isnan(grad2_fn(nan_x))))
+    self.assertTrue(np.all(np.isnan(grad3_fn(nan_x))))
+
+    def mp_rq(v):
+      if v < -1.0:
+        u = -v / mpmath.sqrt(2)
+        r = mpmath.sqrt(2 / mpmath.pi) / _mpmath_erfcx(u)
+        delta = -(mpmath.sqrt(mpmath.pi) / 2) * _mpmath_erfcx_grad(u)
+        q = (-v * delta) / (1 - delta)
+        return r, q
+      r = (
+          mpmath.exp(-0.5 * v * v) / mpmath.sqrt(2 * mpmath.pi)
+      ) / _mpmath_ndtr(v)
+      return r, v + r
+
+    def mp_d1(v):
+      with mpmath.extraprec(100):
+        r, _ = mp_rq(v)
+        return r
+
+    def mp_d2(v):
+      with mpmath.extraprec(100):
+        r, q = mp_rq(v)
+        return -r * q
+
+    def mp_d3(v):
+      with mpmath.extraprec(100):
+        r, q = mp_rq(v)
+        return r * (q * q + r * q - 1)
+
+    ref_d1 = np.array(
+        [util.eval_mpmath(mp_d1, v.item(), dtype=dtype) for v in np.asarray(x_d1)],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    ref_d2 = np.array(
+        [util.eval_mpmath(mp_d2, v.item(), dtype=dtype) for v in np.asarray(x_d2)],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    ref_d3 = np.array(
+        [util.eval_mpmath(mp_d3, v.item(), dtype=dtype) for v in np.asarray(x_d3)],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    self.assertLessEqual(np.max(util.ulp_diff(d1, ref_d1, dtype)), 5.0)
+    # Near `x = -sqrt(2)`, `x + r(x) ~= 0.45` cancels ~2 bits of `r(x) ~= 1.87`,
+    # magnifying `r`'s ~2.4 ULP error by `1 + r / (x + r) ~= 5.1x` (~12.2 ULP).
+    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), 15.0)
+    self.assertLessEqual(np.max(util.ulp_diff(d3, ref_d3, dtype)), 500.0)
+
+
 util.register_benchmark(lax.erf)
 util.register_benchmark(lax.erfc)
 util.register_benchmark(_erfc_highest)
@@ -981,6 +1271,8 @@ util.register_benchmark(jsp.special.erfcinv)
 util.register_benchmark(erfcinv_grad)
 util.register_benchmark(jsp.special.ndtri, dtypes=(f32, f64))
 util.register_benchmark(ndtri_grad, dtypes=(f32, f64))
+util.register_benchmark(jsp.special.ndtr, dtypes=(f32, f64))
+util.register_benchmark(jsp.special.log_ndtr, dtypes=(f32, f64))
 
 
 if __name__ == "__main__":

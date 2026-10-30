@@ -533,12 +533,38 @@ def _compare_index_transforms(
   # An index map may read the scalar prefetch; trace it on placeholders.
   def to_jaxpr(idx_map):
     def traced(idxs, scalar_prefetch):
+      # `None` marks a block index that is always 0 (see `_block_idxs_avals`).
+      idxs = tuple(
+          None if idx is None else tuple(0 if i is None else i for i in idx)
+          for idx in idxs
+      )
       with _sp_context(*scalar_prefetch):
         return idx_map(*idxs)
 
     return jax.make_jaxpr(traced)(block_idxs_avals, scalar_prefetch_avals)
 
   return fuser_utils.compare_jaxprs(to_jaxpr(idx_map1), to_jaxpr(idx_map2))
+
+
+def _block_idxs_avals(
+    block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
+    shape: tuple[int, ...],
+) -> tuple[core.ShapedArray | None, ...] | None:
+  """Abstract block indices of `block_spec`, with `None` for those always 0."""
+  if block_spec is pallas_core.no_block_spec:
+    return None
+  block_shape = pallas_core._canonicalize_block_shape(block_spec.block_shape)
+  idx_aval = core.ShapedArray((), jnp.int32)
+  if len(block_shape) != len(shape):
+    return (idx_aval,) * len(block_shape)
+  # A dimension covered by a single block can only have block index 0.
+  return tuple(
+      None
+      if isinstance(d, pallas_core.Blocked) and d.block_size >= n
+      or isinstance(d, pallas_core.Squeezed) and n == 1
+      else idx_aval
+      for d, n in zip(block_shape, shape, strict=True)
+  )
 
 
 def _block_transforms_equal(
@@ -596,6 +622,7 @@ def _pull_block_transform(
     scalar_prefetch_handler: Callable = _identity_scalar_prefetch_handler,
     grid_len: int | None = None,
     strict_mode: bool = True,
+    block_idxs_avals: tuple[Any, ...] | None = None,
 ) -> tuple[
     tuple[BlockIndexTransform | None, ...],
     tuple[
@@ -613,14 +640,16 @@ def _pull_block_transform(
       ) if sp
     )
 
-  block_idxs_avals = tuple(
-      None
-      if out_block_transform is None
-      else (
-          (core.ShapedArray((), jnp.int32),) * len(out_block_transform.block_shape)
-      )
-      for out_block_transform in out_block_transforms
-  )
+  if block_idxs_avals is None:
+    block_idxs_avals = tuple(
+        None
+        if out_block_transform is None
+        else (
+            (core.ShapedArray((), jnp.int32),)
+            * len(out_block_transform.block_shape)
+        )
+        for out_block_transform in out_block_transforms
+    )
 
   for outvar, bs in zip(jaxpr.outvars, out_block_transforms, strict=True):
     assert isinstance(outvar, core.Var)
@@ -763,6 +792,11 @@ def _pull_block_spec(
       scalar_prefetch_handler=scalar_prefetch_handler,
       grid_len=grid_len,
       strict_mode=strict_mode,
+      # Only here do block transforms take the output block indices directly.
+      block_idxs_avals=tuple(
+          _block_idxs_avals(bs, v.aval.shape)
+          for bs, v in zip(out_block_specs, jaxpr.outvars, strict=True)
+      ),
   )
 
   # apply accumulated block transforms to get final block specs
@@ -2425,7 +2459,9 @@ def _bitcast_convert_type_pull_rule(
 
 
 @register_eval_rule(prng.random_bits_p)
-def _random_bits_eval_rule(eval_ctx: KernelEvalContext, key, bit_width, shape):
+def _random_bits_eval_rule(
+    eval_ctx: KernelEvalContext, key, bit_width, shape, num_streams=1
+):
   del shape
   block_spec = eval_ctx.out_block_specs[0]
   indices = eval_ctx.get_out_block_indices()[0]
@@ -2434,7 +2470,9 @@ def _random_bits_eval_rule(eval_ctx: KernelEvalContext, key, bit_width, shape):
   # each block gets different random numbers.
   for idx in indices:
     key = jax.random.fold_in(key, idx)
-  return prng.random_bits(key, bit_width=bit_width, shape=block_shape)
+  return prng.random_bits(
+      key, bit_width=bit_width, shape=block_shape, num_streams=num_streams
+  )
 
 
 @register_pull_block_spec_rule(prng.random_bits_p)
@@ -3028,13 +3066,44 @@ def push_pull_block_spec(
         return_out_type=True,
         **block_spec_kwargs,
     )(values, *args, **kwargs)
-    kernel_fn, (values_block_specs, *_), kwarg_block_specs = pull_block_spec(
+    (
+        kernel_fn,
+        (values_block_specs, *pulled_arg_block_specs),
+        kwarg_block_specs,
+    ) = pull_block_spec(
         f,
         out_block_specs,
         scalar_prefetch_handler=scalar_prefetch_handler,
         grid_len=grid_len,
         strict_mode=False,
     )(values, *args, **kwargs)
+    # A push-pull mismatch indicates an unsound output fusion.
+    # For example, if a kernel outputs x and y of shape (64, 128) with
+    # incompatible block shapes (64, 64) and (64, 128), fusing
+    # `jnp.concatenate([x, y], axis=0)` pushes to (128, 64) (from x) and
+    # pulls back (64, 64) for both, mismatching y's (64, 128).
+    # `push_block_spec` proposes `out_block_specs`, and `pull_block_spec`
+    # derives the input specs (and `kernel_fn`) needed for each output block.
+    # Unlike `values` (sliced via `values_block_specs`), kernel outputs have
+    # fixed `*block_specs, **block_spec_kwargs`, so each used output must pull
+    # back with the same `block_shape`, `memory_space`, and `pipeline_mode` as
+    # its pushed spec (`strict_mode=False` skips `index_map`, as pull wraps a
+    # new function).
+    jaxpr, *_ = fuser_utils.make_jaxpr(f, values, *args, **kwargs)
+    _, _, used_invars = pe.dce_jaxpr_consts(jaxpr, [True] * len(jaxpr.outvars))
+    for (path, bs), pulled_bs, used in zip(
+        tree_util.tree_flatten_with_path(block_specs)[0]
+        + tree_util.tree_flatten_with_path(block_spec_kwargs)[0],
+        tree_util.tree_leaves((pulled_arg_block_specs, kwarg_block_specs)),
+        used_invars[len(tree_util.tree_leaves(values)):],
+        strict=True,
+    ):
+      if used and not _block_specs_equal(bs, pulled_bs, strict_mode=False):
+        raise ValueError(
+            'Inconsistent block specs in push_pull_block_spec: the fusion uses'
+            f' kernel output at path {tree_util.keystr(path)} with {pulled_bs},'
+            f' but the kernel writes it with {bs}.'
+        )
     return (
         kernel_fn,
         values_block_specs,

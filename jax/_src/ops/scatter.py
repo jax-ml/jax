@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from functools import partial
 from typing import Any
 import warnings
 
@@ -34,7 +33,7 @@ from jax._src.lax import slicing
 from jax._src.numpy import indexing
 from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
-from jax._src.pjit import auto_axes
+from jax._src.pjit import reshard
 from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
                                      canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, Index
@@ -78,16 +77,11 @@ def _scatter_update(x: ArrayLike, idx: Index | tuple[Index, ...],
   indexer = indexing.NDIndexer.from_raw_indices(idx, x.shape).expand_bool_indices()
   dynamic_idx, treedef = tree_util.tree_flatten(indexer)
   dynamic_idx = tuple(dynamic_idx)
-  internal_scatter = partial(
-      _scatter_impl, scatter_op=scatter_op, treedef=treedef,
-      indices_are_sorted=indices_are_sorted,
-      unique_indices=unique_indices, mode=mode,
-      normalize_indices=normalize_indices)
-  if out_sharding is not None:
-    return auto_axes(internal_scatter, out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes
-                     )(x, y, dynamic_idx)
-  return internal_scatter(x, y, dynamic_idx)
+  return _scatter_impl(
+      x, y, dynamic_idx, scatter_op=scatter_op, treedef=treedef,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+      mode=mode, normalize_indices=normalize_indices,
+      out_sharding=out_sharding)
 
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
@@ -96,7 +90,9 @@ def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
                   scatter_op: Callable[..., Array],
                   treedef: tree_util.PyTreeDef,
                   indices_are_sorted: bool, unique_indices: bool,
-                  mode: slicing.GatherScatterMode | str | None, normalize_indices: bool):
+                  mode: slicing.GatherScatterMode | str | None,
+                  normalize_indices: bool,
+                  out_sharding: NamedSharding | None = None):
   dtype = lax.dtype(x)
   weak_type = dtypes.is_weakly_typed(x)
 
@@ -116,20 +112,40 @@ def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
   # Avoid calling scatter if the slice shape is empty, both as a fast path and
   # to handle cases like zeros(0)[array([], int32)].
   if core.is_empty_shape(indexer.slice_shape):
-    return x
+    return reshard(x, out_sharding) if out_sharding is not None else x
 
   x, y = promote_dtypes(x, y)
 
   # Broadcast `y` to the slice output shape.
-  y = jnp.broadcast_to(y, tuple(indexer.slice_shape),
-                       out_sharding=indexer.slice_sharding)
+  slice_shape = tuple(indexer.slice_shape)
+  y_sharding = indexer.slice_sharding
+  if out_sharding is not None and y_sharding is not None:
+    # `slice_sharding` only reflects `x` and `idx`. If `y` is already sharded
+    # differently on an axis, `broadcast_to` would raise instead of resharding,
+    # so pass `out_sharding=None` to keep `y`'s sharding for `scatter_op`.
+    y_aval = core.typeof(y)
+    nlead = len(slice_shape) - len(y_aval.shape)
+    if nlead >= 0:
+      spec_tail = y_sharding.spec._normalized_spec_for_aval(
+          len(slice_shape)).partitions[nlead:]
+      if not all(ys in (None, os)
+                 for ys, os in zip(y_aval.sharding.spec.partitions, spec_tail)):
+        y_sharding = None
+  y = jnp.broadcast_to(y, slice_shape, out_sharding=y_sharding)
   # Collapse any `None`/`np.newaxis` dimensions.
   y = jnp.squeeze(y, axis=indexer.newaxis_dims)
   if indexer.reversed_y_dims:
     y = lax.rev(y, indexer.reversed_y_dims)
 
+  scatter_out_sharding = out_sharding
   if indexer.scalar_bool_dims:
     x = lax.expand_dims(x, indexer.scalar_bool_dims)
+    if scatter_out_sharding is not None:
+      parts = list(scatter_out_sharding.spec.partitions)
+      for d in sorted(indexer.scalar_bool_dims):
+        parts.insert(d, None)
+      scatter_out_sharding = scatter_out_sharding.update(
+          spec=scatter_out_sharding.spec.update(partitions=tuple(parts)))
 
   # Transpose the gather dimensions into scatter dimensions (cf.
   # lax._gather_transpose_rule)
@@ -144,7 +160,7 @@ def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
     x, indexer.gather_indices, y, dnums,
     indices_are_sorted=indexer.indices_are_sorted or indices_are_sorted,
     unique_indices=indexer.unique_indices or unique_indices,
-    mode=mode)
+    mode=mode, out_sharding=scatter_out_sharding)
   if indexer.scalar_bool_dims:
     out = lax.squeeze(out, indexer.scalar_bool_dims)
   return lax._convert_element_type(out, dtype, weak_type)
@@ -195,8 +211,10 @@ def _segment_update(name: str,
     raise ValueError("num_segments must be non-negative.")
 
   if bucket_size is None:
+    init_s = out_sharding if scatter_op is slicing.scatter_add else None
     out = jnp.full((num_segments,) + data.shape[1:],
-                   _get_identity(scatter_op, dtype), dtype=dtype)
+                   _get_identity(scatter_op, dtype), dtype=dtype,
+                   out_sharding=init_s)
     return _scatter_update(
       out, segment_ids, data, scatter_op, indices_are_sorted,
       unique_indices, normalize_indices=False, mode=mode,

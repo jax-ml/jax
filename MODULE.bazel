@@ -12,6 +12,7 @@ bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
 bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
 bazel_dep(name = "grpc", version = "1.83.0", repo_name = "com_github_grpc_grpc")
+bazel_dep(name = "highway", version = "1.4.0")
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "protobuf", version = "35.1", repo_name = "com_google_protobuf")
 bazel_dep(name = "pybind11_bazel", version = "3.0.0")
@@ -24,18 +25,18 @@ bazel_dep(name = "zlib", version = "1.3.2")
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-9+4rpwQMv77PxA+AGMWpwcjioakWHi4nJ7UQ0iPHrJo=",
-    strip_prefix = "rules_ml_toolchain-3a4df0c8e9e51687ac4c62c793a00a27286e5e83",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/3a4df0c8e9e51687ac4c62c793a00a27286e5e83.tar.gz"],
+    integrity = "sha256-CjvmmS4ypydvrh9Ql0I+d8rZ8o8yrqTZgfgmDZQQtLU=",
+    strip_prefix = "rules_ml_toolchain-b9d2776f526614c03a9a5942af0718e84021a679",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/b9d2776f526614c03a9a5942af0718e84021a679.tar.gz"],
 )
 
 # TODO: use a released version when available
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
-    integrity = "sha256-o3mvqs7px5afcH4RJkb73KvidRSmi1Pm8o85To/IoaQ=",
-    strip_prefix = "xla-b877c5f50a17ccce9b9cc11a6c2f4d6269b58d4a",
-    urls = ["https://github.com/openxla/xla/archive/b877c5f50a17ccce9b9cc11a6c2f4d6269b58d4a.tar.gz"],
+    integrity = "sha256-Q2T1kZsUKxntBPPXkxpg5f04819l2CUh93O7fjHpbxs=",
+    strip_prefix = "xla-aef971c1f405bf1ddc51c469cf70e00a9ad6f584",
+    urls = ["https://github.com/openxla/xla/archive/aef971c1f405bf1ddc51c469cf70e00a9ad6f584.tar.gz"],
 )
 
 # flatbuffers transitively depends on aspect_rules_esbuild 0.21.0, which is incompatible with Bazel 9.

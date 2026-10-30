@@ -392,8 +392,7 @@ def _create_device_mesh_for_nd_torus(
       [len(physical_mesh.shape), len(mesh_shape)], dtype=np.int64
   )
   for i, x in enumerate(assignment):
-    for y in x:
-      physical_mesh_axis = int(y)
+    for physical_mesh_axis in x:
       assignment_array[physical_mesh_axis, i] = physical_mesh.shape[
           physical_mesh_axis
       ]
@@ -802,7 +801,7 @@ def _transpose_trick(
       *_TRANSPOSE_TRICKS[topology][mesh_shape_no_trivial_dims]
   )
 
-def _canonicalize_axis_sizes(axis_sizes: Sequence[int]
+def _canonicalize_axis_sizes(axis_sizes: Sequence[Any]
                              ) -> tuple[int, ...] | None:
   new_sizes = []
   for s in axis_sizes:

@@ -1339,11 +1339,11 @@ def im2col_ref(
     padding: The ``(lo, hi)`` zero padding along each spatial dimension. Must be
       non-negative. Defaults to no padding.
   """
-  window_shape = tuple(int(k) for k in window_shape)
+  window_shape = tuple(window_shape)
   if padding is None:
     padding = ((0, 0),) * len(window_shape)
   else:
-    padding = tuple((int(lo), int(hi)) for lo, hi in padding)
+    padding = tuple((lo, hi) for lo, hi in padding)
   ref, transforms = state_primitives.get_ref_and_transforms(
       ref, None, "im2col_ref"
   )

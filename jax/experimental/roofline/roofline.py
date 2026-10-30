@@ -76,7 +76,7 @@ class RooflineShape:
 
   @property
   def bytes(self) -> int:
-    return int(self.size * self.dtype.itemsize)
+    return self.size * self.dtype.itemsize
 
   @classmethod
   def total_bytes(cls, avals: Sequence[core.AbstractValue]) -> int:

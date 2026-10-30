@@ -23,14 +23,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
-
-# Under pytest, tests run against an installed wheel that does not
-# include `jax.tests`, so skip before importing `jax.tests.numerics`.
-if jtu.is_running_under_pytest():
-  import pytest
-
-  pytest.skip("Only runs under Bazel", allow_module_level=True)
-
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
 import numpy as np
@@ -389,6 +381,38 @@ class HypotTest(jtu.JaxTestCase):
         self.assertAllClose(
             float(third_fn(x, y)), expected_third, atol=0, rtol=tol
         )
+
+    # Strongly imbalanced operands where r == |x| in working precision (u1 == 1):
+    # writing du1 = (dx1 - u1 * dr) / r cancels 1 - 1 to 0, collapsing
+    # d^2 r / dx^2 = u2^2 / r and d^3 r / dx^3 = -3 u1 u2^2 / r^2 to 0.
+    x_imbal_val = 2.0 ** (finfo.nmant // 2 + 2)
+    x_imbal = jnp.array(x_imbal_val, dtype=dtype)
+    y_imbal = jnp.array(1.0, dtype=dtype)
+    r_imbal = math.hypot(x_imbal_val, 1.0)
+    u1_imbal, u2_imbal = x_imbal_val / r_imbal, 1.0 / r_imbal
+    expected_imbal_hessian = (
+        np.array([
+            [u2_imbal**2, -u1_imbal * u2_imbal],
+            [-u1_imbal * u2_imbal, u1_imbal**2],
+        ])
+        / r_imbal
+    )
+    imbal_hessian = np.array(
+        [[float(h) for h in row] for row in hessian_fn(x_imbal, y_imbal)]
+    )
+    self.assertAllClose(imbal_hessian, expected_imbal_hessian, atol=0, rtol=tol)
+    # For float16, x_imbal = 2^7 gives |d^3 r / dx^3| = 3 * 2^-28 < 2^-24,
+    # below float16's smallest subnormal.
+    if dtype != f16:
+      expected_imbal_third = (
+          -3.0 * u1_imbal * (u2_imbal**2) / (r_imbal * r_imbal)
+      )
+      self.assertAllClose(
+          float(third_fn(x_imbal, y_imbal)),
+          expected_imbal_third,
+          atol=0,
+          rtol=tol,
+      )
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_hypot_grad_at_zero(self, dtype):

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -99,6 +100,17 @@ xla::ifrt::MemoryKind GetMemoryKind(nb::handle sharding) {
 // Converts a JAX Sharding into `xla::ifrt::HloSharding`.
 absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtHloSharding(
     nb::handle sharding, const xla::ifrt::Shape& shape) {
+  const int64_t num_dimensions = shape.dims().size();
+  const NamedSharding* named_sharding = nullptr;
+  if (sharding.type().is(NamedSharding::type())) {
+    named_sharding = nb::inst_ptr<const NamedSharding>(sharding);
+    if (std::optional<xla::ifrt::ShardingRef> cached =
+            named_sharding->LookupIfrtHloSharding(num_dimensions);
+        cached.has_value()) {
+      return *std::move(cached);
+    }
+  }
+
   using CacheT = xla::LRUCache<std::pair<int, xla::HloSharding>,
                                xla::ifrt::ShardingSpecRef>;
 
@@ -110,8 +122,7 @@ absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtHloSharding(
                         GetIfrtDeviceList(sharding));
   xla::ifrt::MemoryKind memory_kind = GetMemoryKind(sharding.ptr());
 
-  xla::HloSharding hlo_sharding =
-      GetXlaHloSharding(sharding, shape.dims().size());
+  xla::HloSharding hlo_sharding = GetXlaHloSharding(sharding, num_dimensions);
   xla::ifrt::ShardingSpecRef sharding_spec;
   {
     absl::MutexLock l(mu);
@@ -123,8 +134,15 @@ absl::StatusOr<xla::ifrt::ShardingRef> GetIfrtHloSharding(
         });
   }
 
-  return sharding_spec->ToSharding(std::move(device_list),
-                                   std::move(memory_kind));
+  ABSL_ASSIGN_OR_RETURN(
+      xla::ifrt::ShardingRef ifrt_sharding,
+      sharding_spec->ToSharding(std::move(device_list),
+                                std::move(memory_kind)));
+  if (named_sharding != nullptr) {
+    return named_sharding->CacheIfrtHloSharding(num_dimensions,
+                                                std::move(ifrt_sharding));
+  }
+  return ifrt_sharding;
 }
 
 // Converts a JAX Sharding into `xla::ifrt::ConcreteEvenSharding`.

@@ -23,17 +23,11 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import ifrt_version
 import jax.numpy as jnp
-
-# Under pytest, tests run against an installed wheel that does not
-# include `jax.tests`, so skip before importing `jax.tests.numerics`.
-if jtu.is_running_under_pytest():
-  import pytest
-
-  pytest.skip("Only runs under Bazel", allow_module_level=True)
-
+import jax.scipy as jsp
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
 import numpy as np
+import scipy.special
 
 config.parse_flags_with_absl()
 
@@ -275,11 +269,59 @@ class Log1pTest(jtu.JaxTestCase):
     )
 
 
+def _mpmath_logit(x):
+  if not (0 <= x <= 1):
+    return mpmath.nan
+  if x == 0:
+    return -mpmath.inf
+  if x == 1:
+    return mpmath.inf
+  with mpmath.extraprec(40):
+    return mpmath.log(x / (1 - x))
+
+
+@jtu.thread_unsafe_test_class()
+class LogitTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_logit_accuracy(self, dtype):
+    bounds = [
+        (["cpu", "gpu"], {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 1.5}),
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4032.5}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 64.0}),
+        ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 4.0}),
+        ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 4.5}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    interesting_points = [
+        0.25,
+        1.0 / 3.0,
+        0.5,
+        2.0 / 3.0,
+        0.75,
+        1.0 / (1.0 + math.e),
+        math.e / (1.0 + math.e),
+    ]
+    util.check_unary_precision(
+        self,
+        jax.jit(jsp.special.logit),
+        scipy.special.logit,
+        _mpmath_logit,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        interesting_points=interesting_points,
+    )
+
+
 util.register_benchmark(jnp.log)
 util.register_benchmark(jnp.log2)
 util.register_benchmark(_log2_highest)
 util.register_benchmark(jnp.log10)
 util.register_benchmark(jnp.log1p)
+util.register_benchmark(jsp.special.logit)
 
 
 if __name__ == "__main__":

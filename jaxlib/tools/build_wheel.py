@@ -232,6 +232,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
       dst_dir=jaxlib_dir / "cpu",
       src_files=[
           f"{source_file_prefix}jaxlib/cpu/_lapack.{pyext}",
+          f"{source_file_prefix}jaxlib/cpu/_math.{pyext}",
           f"{source_file_prefix}jaxlib/cpu/_sparse.{pyext}",
       ],
   )

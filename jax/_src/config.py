@@ -1919,8 +1919,9 @@ default_matmul_precision = optional_enum_state(
         'ANY_F8_ANY_F8_F32', 'ANY_F8_ANY_F8_F32_FAST_ACCUM', 'ANY_F8_ANY_F8_ANY',
         'ANY_F8_ANY_F8_ANY_FAST_ACCUM', 'F16_F16_F16', 'F16_F16_F32',
         'BF16_BF16_BF16', 'BF16_BF16_F32', 'BF16_BF16_F32_X3',
-        'BF16_BF16_F32_X6', 'BF16_BF16_F32_X9', 'TF32_TF32_F32',
-        'TF32_TF32_F32_X3', 'F32_F32_F32', 'F64_F64_F64',
+        'BF16_BF16_F32_X6', 'BF16_BF16_F32_X9', 'F8E4M3FN_F8E4M3FN_F32_X3',
+        'F8E4M3FN_F8E4M3FN_F32_X4', 'TF32_TF32_F32', 'TF32_TF32_F32_X3',
+        'F32_F32_F32', 'F64_F64_F64',
     ],
     default=None,
     help=('Control the default matmul and conv precision for 32bit inputs.\n\n'
@@ -2514,4 +2515,21 @@ jax_accurate_erf_inv = bool_state(
     ),
     include_in_jit_key=True,
     include_in_trace_context=True,
+)
+
+hijax_unreduced = bool_state(
+    name='hijax_unreduced',
+    default=False,
+    help='Lower unreduced shardings via HiJAX instead of MLIR/Shardy.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+shard_map_partitioning = bool_state(
+    name='jax_shard_map_partitioning',
+    default=False,
+    help='Lower explicit-mesh collectives via shard_map instead of Shardy.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True,
 )

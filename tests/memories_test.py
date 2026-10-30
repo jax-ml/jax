@@ -1780,6 +1780,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     lowered_text = f.lower(inp).as_text()
     self.assertIn("_xla_compute_type", lowered_text)
 
+  @config.hijax_unreduced(True)
   @jtu.with_explicit_mesh((4, 2), ("x", "y"))
   def test_compute_on_reduced_fwd_unreduced_bwd(self, mesh):
     if jtu.is_device_tpu_at_least(7) and not jtu.is_libtpu_at_least("0.0.52"):
@@ -1797,8 +1798,10 @@ class ComputeOffload(jtu.BufferDonationTestCase):
       out = w * x
       return jnp.sum(jax.reshard(out, P()))
 
-    lowered_text = jax.jit(jax.grad(loss)).lower(w, x).as_text()
-    self.assertIn("unreduced", lowered_text)
+    traced = jax.jit(jax.grad(loss)).trace(w, x)
+    self.assertIn("{U:x}", str(traced.jaxpr))
+    lowered_text = traced.lower().as_text()
+    self.assertNotIn("unreduced", lowered_text)
 
     dw = jax.jit(jax.grad(loss))(w, x)
     self.assertEqual(dw.sharding, NamedSharding(mesh, P("y", unreduced={'x'})))

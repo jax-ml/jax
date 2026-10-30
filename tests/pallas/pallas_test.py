@@ -2455,6 +2455,52 @@ class PallasCallAutodifferentiationTest(ptu.PallasTest):
     jtu.check_grads(pallas_impl, (x,), modes=["fwd"], order=2,
                     atol=grad_tol, rtol=grad_tol)
 
+  def test_jvp_symbolic_zero_input_tangents(self):
+    # y and n get symbolic zero tangents, and they come before x with different
+    # shapes, so x's tangent must be paired with x's block mapping.
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4, 8), floatx),
+    )
+    def pallas_impl(y_ref, n_ref, x_ref, o_ref):
+      o_ref[...] = jnp.sin(x_ref[...]) * y_ref[...] * n_ref[...].astype(floatx)
+
+    k1, k2, k3 = random.split(random.key(0), 3)
+    x = random.normal(k1, (4, 8))
+    t = random.normal(k2, (4, 8))
+    y = random.normal(k3, (1, 8))
+    n = jnp.arange(8, dtype=intx).reshape(1, 8)
+    f = lambda x: pallas_impl(y, n, x)
+    f_ref = lambda x: jnp.sin(x) * y * n.astype(floatx)
+    out_primal, out_tangent = jax.jvp(f, (x,), (t,))
+    out_primal_ref, out_tangent_ref = jax.jvp(f_ref, (x,), (t,))
+    np.testing.assert_allclose(out_primal, out_primal_ref, atol=self.tol,
+                               rtol=self.tol)
+    np.testing.assert_allclose(out_tangent, out_tangent_ref, atol=self.tol,
+                               rtol=self.tol)
+    jtu.check_grads(f, (x,), modes=["fwd"], order=2,
+                    atol=self.grad_tol, rtol=self.grad_tol)
+
+  def test_jvp_integer_output(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((8,), intx),
+                   jax.ShapeDtypeStruct((8,), floatx)),
+    )
+    def pallas_impl(x_ref, s_ref, o_ref):
+      s_ref[...] = (x_ref[...] > 0).astype(intx)
+      o_ref[...] = jnp.sin(x_ref[...])
+
+    k1, k2 = random.split(random.key(0))
+    x = random.normal(k1, (8,))
+    t = random.normal(k2, (8,))
+    (s, out_primal), (s_dot, out_tangent) = jax.jvp(pallas_impl, (x,), (t,))
+    np.testing.assert_array_equal(s, (x > 0).astype(intx))
+    self.assertEqual(s_dot.dtype, dtypes.float0)
+    np.testing.assert_allclose(out_primal, jnp.sin(x), atol=self.tol,
+                               rtol=self.tol)
+    np.testing.assert_allclose(out_tangent, jnp.cos(x) * t, atol=self.tol,
+                               rtol=self.tol)
+
   def test_custom_jvp_call(self):
     @functools.partial(jax.custom_jvp, nondiff_argnums=(1,))
     def softmax(x, axis=-1):
@@ -2475,6 +2521,30 @@ class PallasCallAutodifferentiationTest(ptu.PallasTest):
       y_ref[:] = softmax(x_ref[:])
 
     np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
+
+  def test_jvp_program_id(self):
+    @functools.partial(
+        self.pallas_call,
+        grid=(4,),
+        in_specs=[pl.BlockSpec((8,), lambda i: (i,))],
+        out_specs=pl.BlockSpec((8,), lambda i: (i,)),
+        out_shape=jax.ShapeDtypeStruct((32,), floatx),
+    )
+    def pallas_impl(x_ref, o_ref):
+      scale = (pl.program_id(0) + 1).astype(floatx)
+      o_ref[...] = jnp.sin(x_ref[...]) * scale
+
+    k1, k2 = random.split(random.key(0))
+    x = random.normal(k1, (32,))
+    t = random.normal(k2, (32,))
+    scale = jnp.repeat(jnp.arange(1, 5, dtype=floatx), 8)
+    out_primal, out_tangent = jax.jvp(pallas_impl, (x,), (t,))
+    np.testing.assert_allclose(out_primal, jnp.sin(x) * scale, atol=self.tol,
+                               rtol=self.tol)
+    np.testing.assert_allclose(out_tangent, jnp.cos(x) * t * scale,
+                               atol=self.tol, rtol=self.tol)
+    jtu.check_grads(pallas_impl, (x,), modes=["fwd"], order=2,
+                    atol=self.grad_tol, rtol=self.grad_tol)
 
   # TODO(sharadmv): enable this when we update Triton
   # def test_jvp_matmul(self):
@@ -2910,6 +2980,63 @@ class PallasHiJaxTest(ptu.PallasTest):
     os = f(xs)
     self.assertArraysEqual(os.x, xs.x)
     self.assertArraysEqual(os.s, xs.s)
+
+
+class PadRefTest(jtu.JaxTestCase):
+
+  def test_pad_ref_basics(self):
+    ref = jax.new_ref(jnp.zeros((2, 6), dtype=jnp.float32))
+    padded = pl.pad_ref(ref, (4, 8))
+    self.assertIsInstance(padded, jax._src.state.types.TransformedRef)
+    self.assertEqual(padded.shape, (4, 8))
+    self.assertEqual(padded.dtype, jnp.float32)
+    self.assertLen(padded.transforms, 1)
+    self.assertIsInstance(
+        padded.transforms[0], jax._src.pallas.core.PadTransform
+    )
+    self.assertEqual(padded.transforms[0].shape, (4, 8))
+    self.assertEqual(
+        str(padded.transforms[0].pretty_print(jax._src.core.JaxprPpContext())),
+        "{pad([4, 8])}",
+    )
+
+    sliced_then_padded = pl.pad_ref(padded.at[1, 2:5], (8,))
+    self.assertEqual(sliced_then_padded.shape, (8,))
+    self.assertLen(sliced_then_padded.transforms, 3)
+
+    with self.assertRaisesRegex(ValueError, "does not match ref rank"):
+      _ = pl.pad_ref(ref, (4, 8, 1)).shape
+    with self.assertRaisesRegex(
+        ValueError, "cannot be smaller than original dim"
+    ):
+      _ = pl.pad_ref(ref, (1, 8)).shape
+    with self.assertRaisesRegex(TypeError, "ref must be a reference"):
+      _ = pl.pad_ref(jnp.zeros((2, 6)), (4, 8))
+
+  def test_pad_ref_interpret(self):
+    def kernel(x_ref, read_out_ref, write_out_ref):
+      padded_x = pl.pad_ref(x_ref, (4, 8))
+      read_out_ref[...] = padded_x[0:4, 0:8]
+      padded_out = pl.pad_ref(write_out_ref, (4, 8))
+      padded_out[0:4, 0:8] = padded_x[0:4, 0:8] + 1.0
+
+    x = jnp.arange(1, 13, dtype=jnp.float32).reshape((2, 6))
+    read_out, write_out = pl.pallas_call(
+        kernel,
+        out_shape=(
+            jax.ShapeDtypeStruct((4, 8), jnp.float32),
+            jax.ShapeDtypeStruct((2, 6), jnp.float32),
+        ),
+        interpret=True,
+    )(x)
+    self.assertArraysEqual(read_out[:2, :6], x)
+    self.assertArraysEqual(
+        read_out[2:, :], jnp.zeros((2, 8), dtype=jnp.float32)
+    )
+    self.assertArraysEqual(
+        read_out[:, 6:], jnp.zeros((4, 2), dtype=jnp.float32)
+    )
+    self.assertArraysEqual(write_out, x + 1.0)
 
 
 class PallasDeviceIdTest(jtu.JaxTestCase):

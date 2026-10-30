@@ -1,4 +1,4 @@
-/* Copyright 2024 The JAX Authors.
+/* Copyright 2026 The JAX Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,9 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_MOSAIC_PASS_BOILERPLATE_H_
-#define JAXLIB_MOSAIC_PASS_BOILERPLATE_H_
+#ifndef JAXLIB_CPU_LGAMMA_KERNELS_H_
+#define JAXLIB_CPU_LGAMMA_KERNELS_H_
 
-#include "xla/mosaic/pass_boilerplate.h"
+#include "xla/ffi/api/ffi.h"
 
-#endif  // JAXLIB_MOSAIC_PASS_BOILERPLATE_H_
+namespace jax {
+
+XLA_FFI_DECLARE_HANDLER_SYMBOL(cpu_lgamma_ffi);
+
+}  // namespace jax
+
+#endif  // JAXLIB_CPU_LGAMMA_KERNELS_H_

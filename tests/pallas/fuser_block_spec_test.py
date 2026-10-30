@@ -2482,6 +2482,39 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       )
       del kernel_fn, value_block_specs, in_block_specs
 
+  @parameterized.named_parameters(
+      ('row_norm', lambda a: a / a.sum(-1, keepdims=True)),
+      ('row_center', lambda a: a - a.mean(-1, keepdims=True)),
+      (
+          'row_softmax',
+          lambda a: jnp.exp(a) / jnp.exp(a).sum(-1, keepdims=True),
+      ),
+  )
+  def test_dag_through_full_row_reduction_is_accepted(self, fn):
+    a = jax.random.normal(jax.random.key(0), (32, 128), dtype=jnp.float32)
+    block_spec = pl.BlockSpec((8, 128), lambda i: (i, 0))
+    kernel_fn, (a_spec,), _ = block_spec_lib.pull_block_spec(fn, block_spec)(a)
+    self.assertEqual(a_spec.index_map(2), (2, 0))
+    np.testing.assert_allclose(
+        kernel_fn((2,), (), a[16:24]), fn(a)[16:24], rtol=1e-5, atol=1e-5
+    )
+
+  def test_dag_through_full_row_reduction_with_scalar_prefetch_index_map(self):
+    a_type = jax.ShapeDtypeStruct((32, 128), jnp.float32)
+    block_spec = pl.BlockSpec((8, 128), lambda i, sp_ref: (sp_ref[i], 0))
+    _, (a_spec,), _ = block_spec_lib.pull_block_spec(
+        lambda a: a / a.sum(-1, keepdims=True), block_spec
+    )(a_type)
+    self.assertEqual(a_spec.index_map(1, np.array([3, 2])), (2, 0))
+
+  def test_dag_with_conflicting_column_blocks_is_rejected(self):
+    a_type = jax.ShapeDtypeStruct((8, 256), jnp.float32)
+    row_spec = pl.BlockSpec((8, 128), lambda i: (i, 0))
+    with self.assertRaisesRegex(ValueError, 'Fusion contains a DAG'):
+      block_spec_lib.pull_block_spec(
+          lambda a: a[:, :128] + a[:, 128:], row_spec
+      )(a_type)
+
   def test_dot_general_pull(self):
     lhs_type = jax.ShapeDtypeStruct((512, 256), jnp.float32)
     rhs_type = jax.ShapeDtypeStruct((256, 128), jnp.float32)
@@ -3315,6 +3348,65 @@ class PushBlockSpecTest(parameterized.TestCase):
     )
     self.assertEqual(out_spec.block_shape, (128, 128))
     self.assertEqual(out_spec.index_map(0, 1), (0, 1))
+
+  @parameterized.named_parameters(
+      ('read_arg', lambda v, x, y: jnp.sum(x + y, axis=0) + v),
+      ('unused_arg', lambda v, x, y: jnp.sum(x, axis=0) + v),
+      ('shape_only_arg', lambda v, x, y: jnp.sum(x + jnp.zeros_like(y), 0) + v),
+  )
+  def test_push_pull_accepts_matching_block_specs(self, f):
+    v, x = jnp.ones((4,)), jnp.arange(4.0).reshape(1, 4)
+    x_bs = pl.BlockSpec((1, 4), lambda i: (0, i))
+    kernel_fn, *_ = block_spec_lib.push_pull_block_spec(
+        f, x_bs, x_bs, grid_len=1
+    )(v, x, x)
+    np.testing.assert_array_equal(kernel_fn((0,), (), v, x, x), f(v, x, x))
+
+  @parameterized.named_parameters(
+      # Push keeps the squeezed dim of `x`, but pull rebuilds it as Blocked(1).
+      dict(
+          testcase_name='reduce_sum',
+          f=lambda v, x: jnp.sum(x, 0) + v,
+          v_shape=(4,),
+          x_shape=(1, 4),
+          block_shape=(None, 4),
+      ),
+      dict(
+          testcase_name='broadcast',
+          f=lambda v, x: jnp.broadcast_to(x, (2, 4)),
+          v_shape=(),
+          x_shape=(1, 4),
+          block_shape=(None, 4),
+      ),
+      # Push forwards the block spec of `x`, but pull gives it no_block_spec.
+      dict(
+          testcase_name='dus',
+          f=lambda v, x: lax.dynamic_update_slice(x, v, (0, 0)),
+          v_shape=(2, 2),
+          x_shape=(4, 4),
+          block_shape=(2, 2),
+      ),
+  )
+  def test_push_pull_rejects_mismatched_block_specs(
+      self, f, v_shape, x_shape, block_shape
+  ):
+    x_bs = pl.BlockSpec(block_shape, lambda i, j: (i, j))
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Inconsistent block specs in push_pull_block_spec:.*uses kernel'
+        r' output at path \[0\] with',
+    ):
+      block_spec_lib.push_pull_block_spec(f, x_bs, grid_len=2)(
+          jnp.zeros(v_shape), jnp.zeros(x_shape)
+      )
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Inconsistent block specs in push_pull_block_spec:.*uses kernel'
+        r" output at path \['x'\] with",
+    ):
+      block_spec_lib.push_pull_block_spec(
+          lambda v, *, x: f(v, x), x=x_bs, grid_len=2
+      )(jnp.zeros(v_shape), x=jnp.zeros(x_shape))
 
 
 if __name__ == '__main__':

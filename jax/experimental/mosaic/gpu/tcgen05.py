@@ -170,6 +170,8 @@ def _create_scaled_instr_descriptor(
     scale_encoding = 1
   elif scale_type == ir.Float8E4M3FNType.get():
     scale_encoding = 0
+  elif scale_type == ir.Float8E5M3FNUType.get():
+    scale_encoding = 2
   else:
     raise NotImplementedError(f"Unsupported scale type: {scale_type}")
   desc |= scale_encoding << 23  # Scale matrix type
@@ -473,13 +475,21 @@ def mma(
         )
     elif isinstance(a_element_type, ir.Float4E2M1FNType):
       if not isinstance(
-          scale_element_type, (ir.Float8E8M0FNUType, ir.Float8E4M3FNType)
+          scale_element_type,
+          (ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType),
       ):
         raise ValueError(
-            "Scale element type mismatch: expected f8e8m0fnu or f8e4m3fn, got"
-            f" {scale_element_type}"
+            "Scale element type mismatch: expected f8e8m0fnu, f8e4m3fn, or"
+            f" f8e5m3fnu, got {scale_element_type}"
         )
       arch = utils.get_arch()
+      if isinstance(scale_element_type, ir.Float8E5M3FNUType) and not (
+          arch.major == 10 and arch.minor >= 7
+      ):
+        raise ValueError(
+            "E5M3FNU scale factors are only supported on sm_107f, got"
+            f" sm_{arch.major}{arch.minor}."
+        )
       if isinstance(scale_element_type, ir.Float8E4M3FNType) and not (
           arch.major == 10 and arch.minor >= 7
       ):
@@ -744,7 +754,8 @@ def _do_mma(
       base_scale_block = scale_block // (2 if is_sparse else 1)
       assert base_scale_block in (16, 32)
       assert isinstance(
-          scale_element_type, (ir.Float8E8M0FNUType, ir.Float8E4M3FNType)
+          scale_element_type,
+          (ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType),
       )
       if base_scale_block == 32:
         kind = "mxf4nvf4.block_scale.scale_vec::2X"
@@ -878,7 +889,15 @@ def commit_arrive(
     ctx: LaunchContext | None = None,
     *,
     predicate: ir.Value | None = None,
+    commit_a_read_only: bool = False,
 ) -> None:
+  if commit_a_read_only:
+    arch = utils.get_arch()
+    if arch.major != utils.RUBIN.major or arch.minor < utils.RUBIN.minor:
+      raise NotImplementedError(
+          "SMEM-read-only commit for operand A requires sm_107f, got"
+          f" sm_{arch.major}{arch.minor}"
+      )
   if isinstance(barrier, utils.BarrierRef):
     barrier = barrier.get_ptr()
   elif barrier.type != llvm.PointerType.get(address_space=3):
@@ -890,6 +909,7 @@ def commit_arrive(
     predicate_ctx = contextlib.nullcontext()
   else:
     predicate_ctx = utils.when(predicate)
+  mod = ".smem.a.read" if commit_a_read_only else ""
   if collective:
     if ctx is None:
       raise ValueError("ctx must be provided for collective barriers")
@@ -916,12 +936,12 @@ def commit_arrive(
     # messes up in that case, producing incorrect code.
     with predicate_ctx:
       llvm.call_intrinsic(
-          None, "llvm.nvvm.tcgen05.commit.mc.cg2", [barrier, mask], [], []
+          None, f"llvm.nvvm.tcgen05.commit{mod}.mc.cg2", [barrier, mask], [], []
       )
   else:
     with predicate_ctx:
       llvm.call_intrinsic(
-          None, "llvm.nvvm.tcgen05.commit.cg1", [barrier], [], []
+          None, f"llvm.nvvm.tcgen05.commit{mod}.cg1", [barrier], [], []
       )
 
 
@@ -1930,8 +1950,15 @@ def async_copy_scales_smem_to_tmem(
   smem_ty = ir.MemRefType(smem_ref.type)
   if (dtype := smem_ty.element_type) != tmem_ref.dtype:
     raise ValueError(f"Incompatible dtypes: SMEM has {dtype}, TMEM has {tmem_ref.dtype}")
-  if dtype not in {ir.Float8E8M0FNUType.get(), ir.Float8E4M3FNType.get()}:
-    raise ValueError(f"Unsupported dtype: {dtype}, only f8e8m0fnu and f8e4m3fn are supported")
+  if dtype not in {
+      ir.Float8E8M0FNUType.get(),
+      ir.Float8E4M3FNType.get(),
+      ir.Float8E5M3FNUType.get(),
+  }:
+    raise ValueError(
+        f"Unsupported dtype: {dtype}, only f8e8m0fnu, f8e4m3fn, and f8e5m3fnu"
+        " are supported"
+    )
   if tmem_ref.shape[0] % TMEM_ROWS:
     raise ValueError(f"TMEM reference must have a multiple of {TMEM_ROWS} rows, but got {tmem_ref.shape[0]}")
   if tmem_ref.shape[1] % 4:

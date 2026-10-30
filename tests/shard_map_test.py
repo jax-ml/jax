@@ -134,6 +134,21 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, (8,))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
+  @jtu.with_explicit_mesh((4,), 'x')
+  def test_all_gather_invariant_grad_no_auto_pcast(self, mesh):
+    arr = jax.device_put(jnp.arange(8.), P('x'))
+
+    @jax.jit
+    @shard_map(in_specs=P('x'), out_specs=P())
+    def f(a):
+      return jax.lax.all_gather(a, 'x', to='invarying')
+
+    # The transpose must cast cts to vary over 'x' itself; with auto_pcast off,
+    # dynamic_slice won't do it for float operands.
+    with config.auto_pcast(False):
+      out = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertAllClose(out, jnp.ones_like(arr))
+
   @parameterized.parameters(['invarying', 'reduced'])
   def test_all_gather_no_check_vma_grad(self, to):
     mesh = jtu.create_mesh((4,), 'x')
@@ -151,6 +166,18 @@ class ShardMapTest(jtu.JaxTestCase):
     arr_bar, = f_vjp(ct)
     self.assertAllClose(arr_bar, ct)
     jtu.check_grads(f, (arr,), order=2)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_all_gather_invariant_operand_not_varying_over_axis(self, mesh):
+    @jax.jit
+    @shard_map(in_specs=P(), out_specs=P())
+    def f(a):
+      return jax.lax.all_gather(a, 'x', to='invarying')
+
+    with self.assertRaisesRegex(
+        ValueError, 'Collective all_gather_invariant must be applied to a '
+        'device-varying'):
+      f(jnp.arange(2.))
 
   def test_all_gather_invariant_complex(self):
     mesh, a, _ = create_inputs(P('z', ('x', 'y')), P(None, None),
@@ -3099,6 +3126,38 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysAllClose(ex_out1, out1, rtol=2e-4)
     self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
 
+  @config.hijax_unreduced(True)
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_shmap_unreduced_scan_extensive(self, mesh):
+    np_xs = np.arange(3 * 2 * 4, dtype=np.float32).reshape(3, 2, 4)
+    np_w = np.arange(4 * 2, dtype=np.float32).reshape(4, 2)
+    xs = jax.device_put(np_xs, P(None, None, 'x'))
+    w = jax.device_put(np_w, P('x', None))
+
+    @jax.jit
+    def f(xs, w):
+      u_xs = jnp.einsum('lbi,ij->lbj', xs, w, out_sharding=P(unreduced={'x'}))
+      u_init = jnp.einsum('bi,ij->bj', xs[0], w, out_sharding=P(unreduced={'x'}))
+
+      @shard_map(in_specs=(P(unreduced={'x'}), P(unreduced={'x'})),
+                 out_specs=(P(unreduced={'x'}), P(unreduced={'x'})))
+      def shmap_scan(init, seq):
+        def body(c, x):
+          self.assertEqual(c.aval.mat.unreduced, {'x'})
+          self.assertEqual(x.aval.mat.unreduced, {'x'})
+          c_next = c + x
+          return c_next, c_next + x
+        return jax.lax.scan(body, init, seq)
+
+      c_out, ys_out = shmap_scan(u_init, u_xs)
+      return jax.reshard(c_out, P()), jax.reshard(ys_out, P())
+
+    c_out, ys_out = f(xs, w)
+    xs_ref = np.einsum('lbi,ij->lbj', np_xs, np_w)
+    init_ref = np_xs[0] @ np_w
+    self.assertArraysAllClose(c_out, init_ref + np.sum(xs_ref, axis=0))
+    self.assertArraysAllClose(ys_out, init_ref + np.cumsum(xs_ref, axis=0) + xs_ref)
+
   @jtu.with_explicit_mesh((2,), 'x')
   def test_preduced_fwd_unreduced_psum_bwd(self, mesh):
     np_inp1 = np.arange(8.).reshape(2, 4)
@@ -5905,6 +5964,47 @@ class ShardMapTest(jtu.JaxTestCase):
       return r[...]
 
     self.assertAllClose(f(), jnp.array([1., 0., 0., 1.]), check_dtypes=False)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mutable_array_internal_read_at_varying_index_error(self, mesh):
+    @jax.jit
+    @shard_map(in_specs=(), out_specs=P('x'))
+    def f():
+      r = core.new_ref(jnp.arange(4.))
+      return r[jax.lax.axis_index('x')][None]
+
+    with self.assertRaisesRegex(
+        ValueError, "requires the index's varying manual axes to be a subset"):
+      jax.make_jaxpr(f)()
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mutable_array_internal_read_at_varying_index_pcast(self, mesh):
+    # The workaround suggested by the error above, which is differentiable.
+    @jax.jit
+    @shard_map(in_specs=P(), out_specs=P('x'))
+    def g(x):
+      r = core.new_ref(x)
+      i = jax.lax.axis_index('x')
+      return jax.lax.pcast(r[...], 'x', to='varying')[i][None]
+
+    w = jnp.array([1., 2.])  # weight each device's read differently
+    y, x_bar = jax.value_and_grad(lambda x: (g(x) * w).sum())(jnp.arange(4.))
+    self.assertAllClose(y, 2.)
+    self.assertAllClose(x_bar, jnp.array([1., 2., 0., 0.]))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_mutable_array_arg_read_at_varying_index(self, mesh):
+    @jax.jit
+    def f():
+      r = core.new_ref(jnp.arange(4., out_sharding=P('x')))
+
+      @shard_map(in_specs=P('x'), out_specs=P('x'))
+      def g(r):
+        return r[jax.lax.axis_index('x')][None]
+
+      return g(r)
+
+    self.assertAllClose(f(), jnp.array([0., 3.]), check_dtypes=False)
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_full_like_pvary_existing(self, mesh):

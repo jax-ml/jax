@@ -30,7 +30,6 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import dtypes
 from jax._src.api import Inline, jit
-from jax._src.custom_derivatives import custom_jvp
 from jax._src.hijax import HiPrim, linearize_from_jvp, vjp_from_jvp
 from jax._src.interpreters import ad, batching
 from jax._src.lax import lax
@@ -3674,7 +3673,9 @@ def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.modf is not supported.")
   whole = _where(lax.ge(x, lax._zero(x)), floor(x), ceil(x))
-  return x - whole, whole
+  # inf - inf is nan, but NumPy returns a signed zero as the fractional part.
+  frac = _where(isinf(x), copysign(lax._zero(x), x), x - whole)
+  return frac, whole
 
 
 @export
@@ -3983,25 +3984,7 @@ def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
       "jnp.hypot is not well defined for complex-valued inputs. "
       "Please convert to real values first, such as by using abs(x)")
   x1, x2 = _broadcast_arrays(x1, x2)
-  return _hypot(x1, x2)[0]
-
-
-@custom_jvp
-def _hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
-  """Returns (r, x1 / r, x2 / r) where r = hypot(x1, x2)."""
-  return lax.hypot(x1, x2)
-
-
-@_hypot.defjvp
-def _hypot_jvp(primals, tangents):
-  # The JVP is written entirely in terms of _hypot's outputs, so derivatives of
-  # any order recurse through this rule and never differentiate the power-of-two
-  # scale in _hypot (which would produce overflowing scale^n factors).
-  x1, x2 = primals
-  dx1, dx2 = tangents
-  r, u1, u2 = _hypot(x1, x2)
-  dr = u1 * dx1 + u2 * dx2
-  return (r, u1, u2), (dr, (dx1 - u1 * dr) / r, (dx2 - u2 * dr) / r)
+  return lax.hypot(x1, x2)[0]
 
 
 @export

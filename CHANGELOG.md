@@ -17,6 +17,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added `jax.lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3` and
+    `F8E4M3FN_F8E4M3FN_F32_X4` dot algorithm presets (requiring `jaxlib` >= 514)
+    for emulating `bfloat16` precision matmuls on `bfloat16` or `float32` inputs
+    using 3 or 4 `float8_e4m3fn` dot products accumulated in `float32`.
   * {func}`jax.dlpack.from_dlpack` now accepts `Format` in its `device` argument
     to specify device-local layouts (such as linear layout `tiling=((1,),)` for
     `kDLTPUHost` buffers) and supports `copy=None` fallback for `kDLTPUHost`.
@@ -29,11 +33,16 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.distributed.initialize`. ``detected_cluster`` reports which
     cluster no-argument ``initialize`` would auto-detect, without starting
     the coordination service.
+  * Added {func}`jax.scipy.special.jn`, an accurate implementation of bessel
+    functions of the first kind of integer order.
 
 * Deprecations
   * The `jax_use_shardy_partitioner` configuration flag is deprecated and is now
     a no-op. JAX always lowers to Shardy, and the flag will be removed in a
     future release.
+  * The `jax.scipy.special.bessel_jn` function is deprecated; use the new
+    `jax.scipy.special.jn` instead, which is more accurate and provides
+    direct evaluation of only the nth bessel function.
 
 * Changes
   * JAX now uses Bazel 9.3.1 to build from source.
@@ -50,6 +59,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `max_iterations` was silently ignored and any `eps` raised a `ValueError`.
     Both arguments are now static, so passing a traced value for either raises
     an error.
+  * Fixed {func}`jax.numpy.modf` returning `nan` as the fractional part for
+    infinite inputs; it now returns a signed zero, matching NumPy
+    ({jax-issue}`#41102`).
 
 ## JAX 0.12.0.1 (October 23, 2026)
 

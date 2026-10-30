@@ -17,18 +17,11 @@
 import math
 
 from absl.testing import parameterized
+import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
-
-# Under pytest, tests run against an installed wheel that does not
-# include `jax.tests`, so skip before importing `jax.tests.numerics`.
-if jtu.is_running_under_pytest():
-  import pytest
-
-  pytest.skip("Only runs under Bazel", allow_module_level=True)
-
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
 import numpy as np
@@ -489,6 +482,45 @@ class Atan2Test(jtu.JaxTestCase):
         ignore_inputs=ignore_inputs,
         interesting_points=interesting_points,
     )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_atan2_grad_and_hessian(self, dtype):
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    finfo = jnp.finfo(dtype)
+    e_hi = (finfo.maxexp - 1) // 2
+    # Scales where x^2 + y^2 overflows or underflows even though 1 / r is well
+    # within the normal range.
+    s_grad_hi = 2.0 ** (e_hi + 2)
+    s_grad_lo = 2.0**finfo.minexp
+    grad_fn = jax.jit(jax.grad(jnp.atan2, argnums=(0, 1)))
+    tol = 8 * float(finfo.eps)
+    for s in (1.0, s_grad_lo, s_grad_hi):
+      y = jnp.array(3.0 * s, dtype=dtype)
+      x = jnp.array(4.0 * s, dtype=dtype)
+      gy, gx = grad_fn(y, x)
+      # d/dy atan2(y, x) = x / r^2 = 0.8 / (5 * s) = 0.16 / s
+      # d/dx atan2(y, x) = -y / r^2 = -0.6 / (5 * s) = -0.12 / s
+      self.assertAllClose(float(gy), 0.16 / s, atol=0, rtol=tol)
+      self.assertAllClose(float(gx), -0.12 / s, atol=0, rtol=tol)
+
+    # Scales where (x^2 + y^2)^2 overflows or underflows in the 2nd derivative
+    # even though 1 / r^2 is well within the normal range.
+    s_hess_hi = 2.0 ** ((e_hi - 2) // 2 + 2)
+    s_hess_lo = 2.0 ** (-(e_hi + 2))
+    hess_fn = jax.jit(jax.hessian(jnp.atan2, argnums=(0, 1)))
+    for s in (1.0, s_hess_lo, s_hess_hi):
+      y = jnp.array(3.0 * s, dtype=dtype)
+      x = jnp.array(4.0 * s, dtype=dtype)
+      r = 5.0 * s
+      # u1 = y / r = 0.6, u2 = x / r = 0.8:
+      # d^2/dy^2 = -2 u1 u2 / r^2, d^2/dydx = (u1^2 - u2^2) / r^2,
+      # d^2/dx^2 = 2 u1 u2 / r^2.
+      expected_hess = (
+          np.array([[-0.96, -0.28], [-0.28, 0.96]]) / (r * r)
+      )
+      hess = np.array([[float(h) for h in row] for row in hess_fn(y, x)])
+      self.assertAllClose(hess, expected_hess, atol=0, rtol=tol)
 
 
 @jtu.thread_unsafe_test_class()

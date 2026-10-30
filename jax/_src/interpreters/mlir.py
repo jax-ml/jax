@@ -159,6 +159,9 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(dtypes.float6_e3m2fn): ir.Float6E3M2FNType.get,
 }
 
+if dtypes.float8_e5m3fnu is not None:
+  _dtype_to_ir_type[np.dtype(dtypes.float8_e5m3fnu)] = ir.Float8E5M3FNUType.get
+
 if dtypes.int1 is not None:
   assert dtypes.uint1 is not None
   _dtype_to_ir_type[np.dtype(dtypes.int1)] = partial(
@@ -1052,14 +1055,22 @@ class LoweringRuleEntry:
   rule: LoweringRule
   inline: core.Inline
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class PartitioningRule:
+  in_collective: Callable | None = None
+  out_collective: Callable | None = None
+
 _lowerings: dict[core.Primitive, LoweringRuleEntry] = {}
 _platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRuleEntry]]
 _platform_specific_lowerings = collections.defaultdict(dict)
+shard_map_collective_rules: dict[core.Primitive, Callable] = {}
 
 def register_lowering(prim: core.Primitive, rule: LoweringRule,
                       platform: str | None = None,
                       inline: bool | core.Inline = True,
-                      cacheable: bool = True) -> None:
+                      cacheable: bool = True,
+                      *,
+                      shard_map_collective_rule: Callable | None = None) -> None:
   """Registers a lowering rule for a primitive.
 
   Args:
@@ -1077,6 +1088,10 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     uncacheable: Whether this primitive's lowering can be cached. This is a
       temporary flag that will be removed after primitives that have problems
       with caching are fixed.
+    shard_map_collective_rule: Optional rule returning ``PartitioningRule`` (or
+      ``None`` to fall back to default lowering) to lower explicit-mesh
+      collectives via ``shard_map`` when ``jax_shard_map_partitioning`` is
+      enabled.
   """
   assert not isinstance(rule, LoweringRuleEntry)
   if isinstance(inline, bool):
@@ -1090,6 +1105,9 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     inline_mode = inline
   if not cacheable:
     _uncacheable_primitives.add(prim)
+  if shard_map_collective_rule is not None:
+    # TODO(rdyro): Support platform-specific shard_map_collective_rules.
+    shard_map_collective_rules[prim] = shard_map_collective_rule
   if platform is None:
     _lowerings[prim] = LoweringRuleEntry(rule, inline_mode)
   else:
@@ -2560,6 +2578,55 @@ def _get_override_lowering_rule(
       return rule
   return None
 
+def _maybe_lower_with_shard_map(
+    prim: core.Primitive, ctx: LoweringRuleContext, *args, **params):
+  from jax._src import shard_map  # pyrefly: ignore[missing-module-attribute]
+  if (not config.shard_map_partitioning.value or
+      (rule := shard_map_collective_rules.get(prim)) is None):
+    return None
+
+  if prim.multiple_results:
+    # TODO(rdyro): Support multi-output primitives.
+    raise NotImplementedError(
+        f'shard_map_partitioning does not support multi-output primitive {prim}'
+    )
+  out_aval, = ctx.avals_out
+  assert isinstance(out_aval, core.ShapedArray)
+  mesh = out_aval.sharding.mesh
+  if not mesh.explicit_axes:
+    return None
+
+  if any(isinstance(a, core.ShapedArray) and
+         (a.sharding.spec.unreduced or a.sharding.spec.reduced)
+         for a in (*ctx.avals_in, out_aval)):
+    # TODO(rdyro): Delete this once unreduced in hijax lands.
+    return None
+
+  if (collectives := rule(*ctx.avals_in, out_aval, **params)) is None:
+    return None
+  assert isinstance(collectives, PartitioningRule)
+
+  # TODO(rdyro): Move this into PartitioningRule's per-shard params mapping.
+  if (out_sharding := params.get('out_sharding')) is not None:
+    assert out_sharding.mesh.explicit_axes == mesh.explicit_axes
+    params = params | {'out_sharding': None}
+
+  def lower_fn(*operands):
+    @partial(shard_map.shard_map, mesh=mesh, out_specs=out_aval.sharding.spec,
+             axis_names=set(mesh.explicit_axes))
+    def body(*xs):
+      if collectives.in_collective is not None:
+        xs = collectives.in_collective(*xs)
+      # TODO(rdyro): This assumes `params` are shard-invariant; some primitives
+      # might want to define a per-shard params mapping.
+      ans = prim.bind(*xs, **params)
+      if collectives.out_collective is not None:
+        ans = collectives.out_collective(ans)
+      return ans
+    return body(*operands)
+
+  return lower_fun(lower_fn, multiple_results=False)(ctx, *args)
+
 def _uncached_lowering(
     primitive: core.Primitive,
     eqn_ctx: core.JaxprEqnContext,
@@ -2573,8 +2640,10 @@ def _uncached_lowering(
 
   assert not isinstance(default_rule, LoweringRuleEntry)
   assert not any(isinstance(r, LoweringRuleEntry) for r in platform_rules.values())
-  ans = lower_per_platform(ctx, str(primitive), platform_rules, default_rule,
-                           effects, *args, **params)
+  ans = _maybe_lower_with_shard_map(primitive, ctx, *args, **params)
+  if ans is None:
+    ans = lower_per_platform(ctx, str(primitive), platform_rules, default_rule,
+                             effects, *args, **params)
   try:
     rets = tuple(ans)
   except TypeError as e:

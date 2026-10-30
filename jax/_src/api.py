@@ -1136,6 +1136,21 @@ def vmap[F: Callable](
 
   See the :py:func:`jax.pmap` docstring for more examples involving collectives.
   """
+  return _vmap(fun, in_axes=in_axes, out_axes=out_axes, axis_name=axis_name,
+               axis_size=axis_size, spmd_axis_name=spmd_axis_name,
+               sum_match=sum_match)
+
+
+def _vmap[F: Callable](
+    fun: F,
+    in_axes: int | None | Sequence[Any] = 0,
+    out_axes: Any = 0,
+    axis_name: AxisName | None = None,
+    axis_size: int | None = None,
+    spmd_axis_name: AxisName | tuple[AxisName, ...] | None = None,
+    sum_match: bool = False,
+    transform_stack: bool = True,
+    ) -> F:
   check_callable(fun)
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
             "but with additional array axes over which {fun} is mapped.")
@@ -1225,7 +1240,7 @@ def vmap[F: Callable](
       out_flat, inferred_out_axes = batching.batch(
           flat_fun, axis_data, in_axes_flat,
           lambda: _flatten_axes("vmap out_axes", out_tree(), out_axes),
-          sum_match=sum_match
+          sum_match=sum_match, transform_stack=transform_stack
       ).call_wrapped(*args_flat)
     except batching.SpecMatchError as e:
       out_axes_flat = _flatten_axes("vmap out_axes", out_tree(), out_axes)
@@ -2433,7 +2448,7 @@ def device_put(
 
     dst_avals = []
     for x_aval, d in zip(x_avals, device_flat):
-      if x_aval.is_high:
+      if x_aval.is_high and not isinstance(x_aval, core.ShapedArray):
         raise NotImplementedError(
             "jax.device_put does not yet support values of hijax type "
             f"{x_aval}. Instead, shard the value's components (e.g. before "

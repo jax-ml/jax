@@ -168,6 +168,7 @@ py_library_providing_imports_info(
         "//jax/_src:ad_util",
         "//jax/_src:api",
         "//jax/_src:api_util",
+        "//jax/_src:avals",
         "//jax/_src:basearray",
         "//jax/_src:batching",
         "//jax/_src:blocked_sampler",

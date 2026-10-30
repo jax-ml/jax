@@ -265,6 +265,15 @@ def _attention_reference_custom_fwd(
   return o, (mask, q, k, v, segment_ids, sinks, o, logsumexp)
 
 
+@partial(
+    jax.jit,
+    static_argnames=[
+        "mask_value",
+        "save_residuals",
+        "custom_type",
+        "attn_logits_soft_cap",
+    ],
+)
 def _attention_reference_custom_bwd(
     mask_value: float,
     save_residuals: bool,
@@ -623,7 +632,10 @@ def _apply_mask_and_soft_cap(
       mask = mask_ref[k_slice, :]
 
     masks.append(
-        jnp.bitwise_or(mask, jnp.broadcast_to(should_not_mask, mask.shape))
+        jnp.bitwise_or(
+            mask.astype(jnp.bool_),
+            jnp.broadcast_to(should_not_mask, mask.shape),
+        )
     )
   if mask_function is not None:
     assert q_sequence_ref is not None
@@ -930,13 +942,12 @@ def _splash_attention_forward(
     num_kv_heads = k.shape[0]
 
   partial_mask_blocks = fwd_mask_info.partial_mask_blocks
-  if (
-      partial_mask_blocks is not None
-      and jnp.dtype(partial_mask_blocks.dtype) != np.bool_
-  ):
+  if partial_mask_blocks is not None and jnp.dtype(
+      partial_mask_blocks.dtype
+  ) not in (np.bool_, np.int8, np.int32):
     raise ValueError(
-        "partial_mask_blocks must be of type np.bool_ but got"
-        f" {partial_mask_blocks.dtype}"
+        "partial_mask_blocks must be of type np.bool_, np.int8, or np.int32"
+        f" but got {partial_mask_blocks.dtype}"
     )
 
   if len(k.shape) != expected_kv_rank:
@@ -2571,6 +2582,18 @@ def _make_splash_attention(
       else mask_info_lib.process_mask_dkv
   )
 
+  def _to_jax_mask_info(
+      mask_info: mask_info_lib.MaskInfo,
+  ) -> mask_info_lib.MaskInfo:
+    if (
+        mask_info.partial_mask_blocks is not None
+        and isinstance(mask_info.partial_mask_blocks, np.ndarray)
+    ):
+      mask_info = mask_info._replace(
+          partial_mask_blocks=mask_info.partial_mask_blocks.astype(np.int8)
+      )
+    return tree_util.tree_map(jnp.array, mask_info)
+
   fwd_mask_info, mask_function_fwd = process_mask_fn(
       mask,  # pyrefly: ignore[bad-argument-type]
       (block_sizes.block_q, block_sizes.block_kv),
@@ -2578,7 +2601,7 @@ def _make_splash_attention(
       head_shards=head_shards,
       q_seq_shards=q_seq_shards,
   )
-  fwd_mask_info = tree_util.tree_map(jnp.array, fwd_mask_info)
+  fwd_mask_info = _to_jax_mask_info(fwd_mask_info)
 
   dq_mask_info = None
   dkv_mask_info = None
@@ -2595,7 +2618,7 @@ def _make_splash_attention(
           q_seq_shards=q_seq_shards,
       )
       assert (mask_function_fwd is None) == (mask_function_dq is None)
-      dq_mask_info = tree_util.tree_map(jnp.array, dq_mask_info)
+      dq_mask_info = _to_jax_mask_info(dq_mask_info)
     bq_dkv, bkv_dkv = block_sizes.block_q_dkv, block_sizes.block_kv_dkv
     dkv_mask_info, mask_function_dkv = process_mask_dvk_fn(
         mask,  # pyrefly: ignore[bad-argument-type]
@@ -2607,7 +2630,7 @@ def _make_splash_attention(
     )
     assert (mask_function_fwd is None) == (mask_function_dkv is None)
 
-    dkv_mask_info = tree_util.tree_map(jnp.array, dkv_mask_info)
+    dkv_mask_info = _to_jax_mask_info(dkv_mask_info)
 
   return SplashAttentionKernel(
       fwd_mask_info,

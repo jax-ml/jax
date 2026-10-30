@@ -1,4 +1,4 @@
-/* Copyright 2025 The JAX Authors.
+/* Copyright 2026 The JAX Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,9 +13,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_STRINGIFY_UTIL_H_
-#define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_STRINGIFY_UTIL_H_
+#include "nanobind/nanobind.h"
+#include "jaxlib/cpu/digamma_kernels.h"
+#include "jaxlib/cpu/lgamma_kernels.h"
+#include "jaxlib/kernel_nanobind_helpers.h"
 
-#include "xla/mosaic/dialect/tpu/stringify_util.h"
+namespace jax {
+namespace {
 
-#endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_STRINGIFY_UTIL_H_
+namespace nb = nanobind;
+
+nb::dict Registrations() {
+  nb::dict dict;
+  dict["cpu_lgamma_ffi"] = EncapsulateFunction(cpu_lgamma_ffi);
+  dict["cpu_digamma_ffi"] = EncapsulateFunction(cpu_digamma_ffi);
+  return dict;
+}
+
+NB_MODULE(_math, m) { m.def("registrations", &Registrations); }
+
+}  // namespace
+}  // namespace jax

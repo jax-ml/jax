@@ -335,7 +335,7 @@ def _debug_scalar_ty_format(arg):
         ir.IntegerType.get_signless(32),
         arith.bitcast(ir.IntegerType.get_signless(8), arg),
     )
-  if isinstance(arg.type, (ir.BF16Type, ir.F16Type)):
+  if isinstance(arg.type, (ir.BF16Type, ir.F16Type, ir.Float8E5M3FNUType)):
     arg = arith.extf(ir.F32Type.get(), arg)
     return "%f", arg
   raise NotImplementedError(f"Can't print the type {arg.type}")
@@ -720,6 +720,8 @@ def bitwidth_impl(ty: ir.Type):
     return 128
   if isinstance(ty, dialect.P2B6Type):
     return 8
+  if isinstance(ty, llvm.PointerType):
+    return 64
   if isinstance(ty, ir.VectorType):
     vty = ir.VectorType(ty)
     return math.prod(vty.shape) * bitwidth(vty.element_type)
@@ -2138,6 +2140,28 @@ def is_signed(dtype: jax.typing.DTypeLike) -> bool | None:
 def getelementptr(
     ptr: ir.Value, indices: Sequence[ir.Value | int], dtype: ir.Type
 ) -> ir.Value:
+  if (bw := bitwidth_impl(dtype)).bit_count() != 1:
+    if not isinstance(dtype, ir.VectorType):
+      raise ValueError(
+          f"Only power of 2 bitwidths are supported for non-vector types, got:"
+          f" {dtype} with bitwidth {bw}"
+      )
+    if bw % 8 != 0:
+      raise ValueError(f"Vector bitwidth must be a multiple of 8, got {bw}")
+    if len(indices) != 1:
+      raise ValueError(
+          "Expected a single index when indexing by a vector with"
+          f" non-power-of-2 bitwidth, got {len(indices)}"
+      )
+    vec_len = math.prod(dtype.shape)
+    new_vec_len = vec_len & (~vec_len + 1)
+    assert vec_len % new_vec_len == 0
+    scale = vec_len // new_vec_len
+    (idx,) = indices
+    indices = [
+        idx * scale if isinstance(idx, int) else arith.muli(idx, c(scale, idx.type))
+    ]
+    dtype = ir.VectorType.get((new_vec_len,), dtype.element_type)
   static_indices = [i if isinstance(i, int) else DYNAMIC32 for i in indices]
   dyn_indices = [i for i in indices if not isinstance(i, int)]
   return llvm.getelementptr(

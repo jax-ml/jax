@@ -196,6 +196,7 @@ from jax._src.array import (
 from jax import custom_derivatives as custom_derivatives
 from jax import custom_batching as custom_batching
 from jax import api_util as api_util
+from jax import avals as avals
 from jax import distributed as distributed
 from jax import debug as debug
 from jax import dlpack as dlpack

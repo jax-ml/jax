@@ -316,6 +316,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
          [0, 1, 2, 3, 6], [0.01, 1.1, 11.4, 30.0, 100.6], [5, 20, 50, 80, 200]
      )],
   )
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.scipy.special.bessel_jn is deprecated")
   def testBesselJn(self, order, z, n_iter):
     def lax_fun(z):
       return lsp_special.bessel_jn(z, v=order, n_iter=n_iter)
@@ -333,6 +334,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     shape=[(2,), (3,), (4,), (3, 5), (2, 2, 3)],
     dtype=float_dtypes,
   )
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.scipy.special.bessel_jn is deprecated")
   def testBesselJnRandomPositiveZ(self, order, shape, dtype):
     rng = jtu.rand_default(self.rng(), scale=1)
     points = jnp.abs(rng(shape, dtype))

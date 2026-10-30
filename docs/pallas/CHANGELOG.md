@@ -13,6 +13,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* New features
+  * The Pallas API is now available as `jax.pallas`. Existing imports from
+    `jax.experimental.pallas` remain valid.
+
 ### Mosaic GPU
 
 * New features

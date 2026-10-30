@@ -1,4 +1,4 @@
-/* Copyright 2025 The JAX Authors.
+/* Copyright 2026 The JAX Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,9 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_SERDE_H_
-#define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_SERDE_H_
+#ifndef JAXLIB_CPU_DIGAMMA_KERNELS_H_
+#define JAXLIB_CPU_DIGAMMA_KERNELS_H_
 
-#include "xla/mosaic/serde.h"
+#include "xla/ffi/api/ffi.h"
 
-#endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_SERDE_H_
+namespace jax {
+
+XLA_FFI_DECLARE_HANDLER_SYMBOL(cpu_digamma_ffi);
+
+}  // namespace jax
+
+#endif  // JAXLIB_CPU_DIGAMMA_KERNELS_H_
