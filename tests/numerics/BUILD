@@ -125,7 +125,7 @@ jax_multiplatform_test(
     name = "gamma_test",
     srcs = ["gamma_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 5,
+    shard_count = 6,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",

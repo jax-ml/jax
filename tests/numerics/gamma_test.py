@@ -675,11 +675,263 @@ class GammaTest(jtu.JaxTestCase):
       self.assertArraysEqual(act_val, exp_val)
 
 
+def _log_abs_sinpi_ref(d: np.ndarray) -> np.ndarray:
+  d_safe = np.where(d == 0, 0.5, d)
+  abs_d = np.abs(d_safe)
+  pi_d2 = (np.pi * d_safe) ** 2
+  small = np.log(np.pi) + np.log(abs_d) - pi_d2 * (1.0 / 6.0 + pi_d2 / 180.0)
+  general = np.log(np.abs(np.sin(np.pi * d_safe)))
+  return np.where(abs_d < 1e-4, small, general)
+
+
+def _betaln_reference(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+  """Evaluates float64 reference betaln, avoiding Cephes negative-domain bugs."""
+  p = np.minimum(a, b)
+  q = np.maximum(a, b)
+  is_nan = np.isnan(a) | np.isnan(b) | ((p == np.inf) & (q == np.inf))
+  finite_pq = np.isfinite(a) & np.isfinite(b)
+  a_f = np.where(finite_pq, a, 1.0)
+  b_f = np.where(finite_pq, b, 1.0)
+  p_f = np.minimum(a_f, b_f)
+  q_f = np.maximum(a_f, b_f)
+  s_f = a_f + b_f
+
+  # Positive quadrant: Cephes lbeta is accurate on positive inputs.
+  res_pos = scipy.special.betaln(
+      np.where(p_f > 0, p_f, 1.0), np.where(q_f > 0, q_f, 1.0)
+  )
+
+  # For p_f <= 0, Cephes lbeta has NaN-ordering, int32-overflow, 1-p-q rounding,
+  # and rgamma(a+b) overflow bugs near -171; use Euler reflection to positive
+  # scipy.special.betaln instead.
+  na = np.rint(a_f)
+  nb = np.rint(b_f)
+  da = a_f - na
+  db = b_f - nb
+  r_d = np.rint(da + db)
+  half_r_d = 0.5 * r_d
+  ds = np.where(
+      (np.abs(da) >= 0.25) & (np.abs(db) >= 0.25),
+      (da - half_r_d) + (db - half_r_d),
+      np.where(
+          np.abs(da) >= np.abs(db),
+          ((da - half_r_d) + db) - half_r_d,
+          ((db - half_r_d) + da) - half_r_d,
+      ),
+  )
+  dp = np.where(a_f <= b_f, da, db)
+  dq = np.where(a_f <= b_f, db, da)
+
+  p_is_int = dp == 0
+  q_is_int = dq == 0
+  s_is_int = (da == -db) | ((np.abs(da) == 0.5) & (da == db))
+  int_pole_cancels = p_is_int & q_is_int & (q_f > 0) & (s_f <= 0)
+
+  log_sin_a = _log_abs_sinpi_ref(da)
+  log_sin_b = _log_abs_sinpi_ref(db)
+  log_sin_p = np.where(a_f <= b_f, log_sin_a, log_sin_b)
+  log_sin_s = _log_abs_sinpi_ref(ds)
+
+  u_lt = np.where((p_f <= 0) & (q_f > 0) & (s_f < 0.5), 1.0 - s_f, 1.0)
+  v_lt = np.where((p_f <= 0) & (q_f > 0) & (s_f < 0.5), q_f, 1.0)
+  res_qpos_s_lt = scipy.special.betaln(u_lt, v_lt) + np.where(
+      int_pole_cancels, 0.0, log_sin_s - log_sin_p
+  )
+
+  u_ge = np.where((p_f <= 0) & (q_f > 0) & (s_f >= 0.5), 1.0 - p_f, 1.0)
+  v_ge = np.where((p_f <= 0) & (q_f > 0) & (s_f >= 0.5), s_f, 1.0)
+  res_qpos_s_ge = (
+      -scipy.special.betaln(u_ge, v_ge)
+      - np.log(np.where(q_f > 0, q_f, 1.0))
+      + np.log(np.pi)
+      - log_sin_p
+  )
+
+  u_neg = np.where(q_f < 0, 1.0 - a_f, 1.0)
+  v_neg = np.where(q_f < 0, 1.0 - b_f, 1.0)
+  res_qneg = (
+      -scipy.special.betaln(u_neg, v_neg)
+      - np.log(np.where(q_f < 0, 1.0 - s_f, 1.0))
+      + np.log(np.pi)
+      + log_sin_s
+      - (log_sin_a + log_sin_b)
+  )
+
+  res_neg = np.where(
+      q_f > 0, np.where(s_f < 0.5, res_qpos_s_lt, res_qpos_s_ge), res_qneg
+  )
+  is_pos_inf_pole = (
+      (p_f == 0)
+      | (q_f == 0)
+      | (p_is_int & ~int_pole_cancels)
+      | ((q_f < 0) & q_is_int)
+  )
+  is_neg_inf_pole = ~is_pos_inf_pole & ~int_pole_cancels & (s_f <= 0) & s_is_int
+  res_neg = np.where(
+      is_pos_inf_pole, np.inf, np.where(is_neg_inf_pole, -np.inf, res_neg)
+  )
+
+  res_finite = np.where(p_f > 0, res_pos, res_neg)
+  res_inf = np.where(
+      p == -np.inf, np.inf, np.where(p > 0, -np.inf, np.inf)
+  )
+  return np.where(is_nan, np.nan, np.where(finite_pq, res_finite, res_inf))
+
+
+def _mpmath_lgamma_real(x):
+  if x > 0:
+    return mpmath.loggamma(x)
+  d = x - mpmath.nint(x)
+  return (
+      mpmath.log(mpmath.pi)
+      - mpmath.log(abs(mpmath.sinpi(d)))
+      - mpmath.loggamma(1 - x)
+  )
+
+
+def _mpmath_betaln(a, b):
+  if (
+      mpmath.isnan(a)
+      or mpmath.isnan(b)
+      or (a == mpmath.inf and b == mpmath.inf)
+  ):
+    return mpmath.nan
+  p, q = (a, b) if a <= b else (b, a)
+  if p == -mpmath.inf:
+    return mpmath.inf
+  if q == mpmath.inf:
+    return -mpmath.inf if p > 0 else mpmath.inf
+  if p == 0 or q == 0:
+    return mpmath.inf
+  with mpmath.workprec(250):
+    p_is_neg_int = (p < 0) and mpmath.isint(p)
+    q_is_int = mpmath.isint(q)
+    _, exp_p = mpmath.frexp(abs(p))
+    _, exp_q = mpmath.frexp(abs(q))
+    if p_is_neg_int:
+      if q > 0 and q_is_int and p + q <= 0:
+        if abs(exp_p - exp_q) > 150:
+          return +(
+              mpmath.loggamma(q)
+              - q * mpmath.log(-p)
+              + q * (q - 1) / (-2 * p)
+          )
+        p, q = 1 - (p + q), q
+        _, exp_p = mpmath.frexp(abs(p))
+        _, exp_q = mpmath.frexp(abs(q))
+      else:
+        return mpmath.inf
+    elif q < 0 and q_is_int:
+      return mpmath.inf
+    if abs(exp_p - exp_q) > 150:
+      x, y = (p, q) if abs(p) < abs(q) else (q, p)
+      return +(_mpmath_lgamma_real(x) - x * mpmath.digamma(y))
+    s = p + q
+    if s <= 0 and mpmath.isint(s):
+      return -mpmath.inf
+    return +(
+        _mpmath_lgamma_real(p)
+        + _mpmath_lgamma_real(q)
+        - _mpmath_lgamma_real(s)
+    )
+
+
+_BETALN_INTERESTING_POINTS = [
+    *(float(-k) for k in range(11)),
+    -100.0,
+    -1000.0,
+    0.5,
+    1.5,
+    7.5,
+    8.0,
+    8.5,
+    16.0,
+    128.0,
+    ((math.sqrt(5.0) - 1.0) / 2.0, 2.0),
+    (8.0, 128.0),
+    (128.0, 8.0),
+    (1.0, 16.0),
+    (16.0, 1.0),
+    (-10.0, 5.0),
+    (5.0, -10.0),
+    (-10.0, 10.0),
+    (-10.0, 11.0),
+    (-15.0, 10.0),
+    (10.5, -12.5),
+    (-1.25, -0.75),
+    (-2.5, 1.25),
+    (1.25, -2.5),
+    (-2.5, 0.75),
+    (-10.5, 20.0),
+    (-2.5, -1.25),
+]
+
+
+def _betaln_ignored(a, b):
+  """Excludes inputs near the ill-conditioned betaln(a, b) = 0 contour."""
+  with np.errstate(all="ignore"):
+    y = _betaln_reference(a.astype(np.float64), b.astype(np.float64))
+  # Outside a neighborhood of (1, 1) (where betaln(a, b) near (1, 1) is
+  # evaluated without cancellation), betaln(a, b) = 0 forms 1D curves along
+  # which |B(a, b)| = 1 and working-precision evaluation of lgamma(a) +
+  # lgamma(b) - lgamma(a + b) or its reflection equivalents loses
+  # O(eps / |betaln(a, b)|) relative accuracy.
+  near_one = (np.abs(a - 1.0) < 0.125) & (np.abs(b - 1.0) < 0.125)
+  return np.isfinite(y) & (np.abs(y) < 0.25) & ~near_one
+
+
+@jtu.thread_unsafe_test_class()
+class BetalnTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_betaln_accuracy(self, dtype):
+    bounds = [
+        (["cpu", "gpu", "tpu"], {bf16: 1.0, f16: 1.0, f32: 25.0, f64: 5.0}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    util.check_nary_precision(
+        self,
+        jsp.special.betaln,
+        _betaln_reference,
+        _mpmath_betaln,
+        dtype,
+        nargs=2,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        ignore_inputs=_betaln_ignored,
+        interesting_points=_BETALN_INTERESTING_POINTS,
+    )
+
+  @config.explicit_x64_dtypes("allow")
+  def test_explicit_x64_dtypes(self):
+    if jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    fns = [
+        jsp.special.betaln,
+        jax.vmap(jax.grad(jsp.special.betaln, argnums=(0, 1))),
+    ]
+    a_pts = [-2.5, -1.25, 0.5, 1.5, 8.5, 128.0]
+    b_pts = [1.25, -0.75, 0.5, 2.5, 16.0, 256.0]
+    with jax.enable_x64(True):
+      a_ref = jnp.array(a_pts, dtype=jnp.float64)
+      b_ref = jnp.array(b_pts, dtype=jnp.float64)
+      expected = [jax.jit(fn)(a_ref, b_ref) for fn in fns]
+    with jax.enable_x64(False):
+      a = jnp.array(a_pts, dtype=jnp.float64)
+      b = jnp.array(b_pts, dtype=jnp.float64)
+      actual = [jax.jit(fn)(a, b) for fn in fns]
+    for exp_val, act_val in zip(expected, actual):
+      jtu.check_eq(act_val, exp_val)
+
+
 util.register_benchmark(lax.digamma)
 util.register_benchmark(lax.lgamma)
 util.register_benchmark(jsp.special.gammaincinv, nargs=2)
 util.register_benchmark(jsp.special.gammainccinv, nargs=2)
 util.register_benchmark(jsp.special.gamma, name="gamma")
+util.register_benchmark(jsp.special.betaln, nargs=2)
 
 
 if __name__ == "__main__":

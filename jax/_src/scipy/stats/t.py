@@ -14,7 +14,7 @@
 
 
 from jax._src import lax
-from jax._src.lax.lax import _const as _lax_const
+from jax._src.lax.lax import AccuracyMode, _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.scipy.special import betaln
 from jax._src.typing import Array, ArrayLike
@@ -51,11 +51,22 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
   scaled_x = lax.div(lax.sub(x, loc), scale)
   df_over_two = lax.div(df, two)
   df_plus_one_over_two = lax.add(df_over_two, _lax_const(x, 0.5))
-  normalize_term_tmp = lax.add(lax.div(lax.log(df), two), lax.log(scale))
+  normalize_term_tmp = lax.add(
+      lax.div(lax.log(df, accuracy=AccuracyMode.HIGHEST), two),
+      lax.log(scale, accuracy=AccuracyMode.HIGHEST),
+  )
   normalize_term = lax.add(betaln(df_over_two, _lax_const(x, 0.5)),
                            normalize_term_tmp)
   quadratic = lax.div(lax.mul(scaled_x, scaled_x), df)
-  return lax.neg(lax.add(normalize_term, lax.mul(df_plus_one_over_two, lax.log1p(quadratic))))
+  return lax.neg(
+      lax.add(
+          normalize_term,
+          lax.mul(
+              df_plus_one_over_two,
+              lax.log1p(quadratic, accuracy=AccuracyMode.HIGHEST),
+          ),
+      )
+  )
 
 
 def pdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:

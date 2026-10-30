@@ -48,8 +48,8 @@ from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import promote_args_complex, promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
 from jax._src.scipy.bessel import jn as jn
+from jax._src.scipy.betaln import _betaln
 from jax._src.scipy.gamma import gamma_real
-from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
 from jax._src.nn.functions import softmax as nn_softmax
 from jax._src.nn.functions import log_softmax as nn_log_softmax
@@ -343,7 +343,9 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     :func:`jax.scipy.special.beta`
   """
   a, b = promote_args_inexact("betaln", a, b)
-  return _betaln_impl(a, b)
+  if dtypes.issubdtype(a.dtype, np.complexfloating):
+    raise ValueError("betaln does not support complex-valued inputs.")
+  return _betaln(a, b)
 
 
 def factorial(n: ArrayLike, exact: bool = False) -> Array:

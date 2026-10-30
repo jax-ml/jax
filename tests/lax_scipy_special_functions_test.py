@@ -1719,6 +1719,219 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         d3_c, (-np.pi * u - (np.pi * x64) ** 2 * v).astype(dtype), rtol=rtol, atol=atol
     )
 
+  @jtu.sample_product(
+      dtype=float_dtypes,
+  )
+  def testBetalnCornerCases(self, dtype):
+    # Regression tests for https://github.com/jax-ml/jax/issues/39106 and
+    # https://github.com/jax-ml/jax/issues/38243 (infinities, zeros, negative
+    # integers, negative non-integers, and extreme positive/negative arguments).
+    vals = np.array(
+        [
+            -np.inf,
+            -10.5,
+            -10.0,
+            -2.5,
+            -2.0,
+            -1.5,
+            -1.0,
+            -0.5,
+            -0.0,
+            0.0,
+            0.5,
+            1.0,
+            1.5,
+            2.0,
+            2.5,
+            5.0,
+            10.0,
+            10.5,
+            np.inf,
+        ],
+        dtype=dtype,
+    )
+    rtol = 1e-5 if dtype == np.float32 else 1e-12
+    atol = 1e-5 if dtype == np.float32 else 1e-12
+    grid_actual = lsp_special.betaln(vals[:, None], vals[None, :])
+    grid_expected = osp_special.betaln(
+        vals[:, None].astype(np.float64), vals[None, :].astype(np.float64)
+    ).astype(dtype)
+    self.assertAllClose(grid_actual, grid_expected, rtol=rtol, atol=atol)
+
+    nan_val = np.array(np.nan, dtype=dtype)
+    self.assertTrue(np.all(np.isnan(lsp_special.betaln(nan_val, vals))))
+    self.assertTrue(np.all(np.isnan(lsp_special.betaln(vals, nan_val))))
+    self.assertTrue(np.isnan(lsp_special.betaln(nan_val, nan_val)))
+
+    tiny = float(np.finfo(dtype).tiny)
+    pairs = [
+        # Negative integers where poles cancel vs do not cancel
+        (-10.0, 5.0),
+        (5.0, -10.0),
+        (-10.0, 10.0),
+        (-10.0, 11.0),
+        (-15.0, 10.0),
+        # Non-integer negative inputs whose sum is a non-positive integer
+        (10.5, -12.5),
+        (-1.25, -0.75),
+        # Negative non-integer inputs across reflection regimes
+        (-2.5, 1.25),
+        (1.25, -2.5),
+        (-2.5, 0.75),
+        (-10.5, 20.0),
+        (-100.25, 10.0),
+        (-100.25, 1e-30),
+        (1e-30, -100.25),
+        (-1e-30, 100.25),
+        (-2.5, -1.25),
+        (-1.25, -2.5),
+        (-10.5, -20.25),
+        (-0.5, -0.25),
+        # Extreme small and large positive inputs
+        (tiny, tiny),
+        (tiny, 1.0),
+        (tiny, 100.0),
+        (1e-30, 1e-30),
+        (1e-30, 0.25),
+        (1e-30, 1.0),
+        (1e-30, 100.0),
+        (1e-20, 1e20),
+        (1.0, 1e10),
+        (1e10, 1.0),
+        (1.0, 1e30),
+        (10.0, 1e30),
+        (1e30, 1e30),
+    ]
+    # Smallest positive and negative normal floats across all q and reflection regimes.
+    for signed_tiny in [tiny, -tiny]:
+      for other in [0.4, 0.6, 1.0, 10.0, -100.25, 100.25]:
+        pairs.append((signed_tiny, other))
+        pairs.append((other, signed_tiny))
+    min_sub = np.nextafter(dtype(0.0), dtype(1.0))
+    for sub_pair in [
+        (min_sub, -2.0 * float(min_sub)),
+        (-2.0 * float(min_sub), min_sub),
+        (min_sub, min_sub),
+        (min_sub, 1.0),
+    ]:
+      res_sub = np.asarray(
+          lsp_special.betaln(dtype(sub_pair[0]), dtype(sub_pair[1]))
+      )
+      self.assertFalse(np.isnan(res_sub))
+    if dtype == np.float64:
+      pairs.extend([
+          (-100.3, 1e-200),
+          (1e-200, -100.3),
+          (-1e-200, 100.3),
+          (1e-200, 1e-200),
+          (1e-200, 1.0),
+          (1e-200, 100.0),
+          (1.0, 1e300),
+          (1e300, 1.0),
+          (1e300, 1e300),
+      ])
+    a = np.array([p[0] for p in pairs], dtype=dtype)
+    b = np.array([p[1] for p in pairs], dtype=dtype)
+    expected = osp_special.betaln(a.astype(np.float64), b.astype(np.float64)).astype(dtype)
+    actual = lsp_special.betaln(a, b)
+    self.assertAllClose(actual, expected, rtol=rtol, atol=atol)
+
+    # Non-integer inputs whose floating-point sum a + b rounds to a non-positive
+    # integer must remain finite rather than falsely triggering a -inf pole.
+    b_near_half = np.nextafter(dtype(0.5), dtype(1.0))
+    eps_half = float(b_near_half) - 0.5
+    expected_near_pole = dtype(
+        osp_special.betaln(11.0, 0.5) + math.log(math.pi * eps_half)
+    )
+    self.assertAllClose(
+        lsp_special.betaln(dtype(-10.5), b_near_half),
+        expected_near_pole,
+        rtol=rtol,
+        atol=atol,
+    )
+    if dtype == np.float32:
+      a_big_neg = np.float32(-5000000.5)
+      b_big_neg = np.float32(-4000000.25)
+      self.assertAllClose(
+          lsp_special.betaln(a_big_neg, b_big_neg),
+          np.float32(osp_special.betaln(float(a_big_neg), float(b_big_neg))),
+          rtol=rtol,
+          atol=atol,
+      )
+
+    # Narrow float dtypes (float16, bfloat16) and complex error handling.
+    if dtype == np.float32:
+      for narrow_dtype in [np.float16, dtypes.bfloat16]:
+        narrow_vals = np.array(
+            [-np.inf, -2.5, -2.0, -0.5, 0.0, 0.5, 1.0, 2.5, 10.0, np.inf],
+            dtype=narrow_dtype,
+        )
+        narrow_actual = lsp_special.betaln(narrow_vals[:, None], narrow_vals[None, :])
+        narrow_expected = osp_special.betaln(
+            narrow_vals[:, None].astype(np.float64),
+            narrow_vals[None, :].astype(np.float64),
+        ).astype(narrow_dtype)
+        self.assertAllClose(narrow_actual, narrow_expected, rtol=1e-2, atol=1e-2)
+      with self.assertRaisesRegex(ValueError, "complex"):
+        lsp_special.betaln(np.complex64(1.0 + 1.0j), np.complex64(2.0))
+
+  @jtu.sample_product(
+      dtype=float_dtypes,
+  )
+  def testBetalnGrads(self, dtype):
+    a = np.array(
+        [0.2, 0.2, 0.5, 2.5, 2.5, 12.0, 15.0, 10.0, -2.25, -2.25, -2.25, -2.25],
+        dtype=dtype,
+    )
+    b = np.array(
+        [0.2, 0.3, 2.5, 2.5, 12.0, 15.0, 15.0, 200.0, 1.5, 5.0, -1.5, -2.25],
+        dtype=dtype,
+    )
+    tol = 1e-2 if dtype == np.float32 else 1e-5
+    jtu.check_grads(
+        lsp_special.betaln,
+        (a, b),
+        order=1,
+        modes=["fwd", "rev"],
+        atol=tol,
+        rtol=tol,
+    )
+    jtu.check_grads(
+        lsp_special.betaln,
+        (a, b),
+        order=2,
+        modes=["fwd"],
+        atol=tol,
+        rtol=tol,
+    )
+
+    # Gradients for large finite inputs exceeding sqrt(MAX_FLOAT) and near MAX_FLOAT,
+    # where naive x / y differentiation overflows the denominator's square, and
+    # at tiny normal and subnormal inputs where unselected branches must not
+    # leak NaNs.
+    min_sub = np.nextafter(dtype(0.0), dtype(1.0))
+    tiny_norm = dtype(1e-30) if dtype == np.float32 else dtype(1e-200)
+    a_grad = np.array(
+        [1e30, 2e38, tiny_norm, min_sub, min_sub]
+        if dtype == np.float32
+        else [1e200, 1e308, tiny_norm, min_sub, min_sub],
+        dtype=dtype,
+    )
+    b_grad = np.array(
+        [1e30, 2e38, 1.0, 1.0, 10.0]
+        if dtype == np.float32
+        else [1e200, 1e308, 1.0, 1.0, 10.0],
+        dtype=dtype,
+    )
+    ga, gb = jax.grad(
+        lambda x, y: lsp_special.betaln(x, y).sum(), argnums=(0, 1)
+    )(a_grad, b_grad)
+    expected_grad = np.full((2,), -math.log(2.0), dtype=dtype)
+    self.assertAllClose(ga[:2], expected_grad, rtol=1e-5, atol=1e-5)
+    self.assertAllClose(gb[:2], expected_grad, rtol=1e-5, atol=1e-5)
+    self.assertFalse(np.any(np.isnan(ga[2:])))
+    self.assertFalse(np.any(np.isnan(gb[2:])))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
