@@ -1963,7 +1963,7 @@ class RngShardingTest(jtu.JaxTestCase):
     # sharding mismatch
     mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ("x",))
     s1 = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
-    s2 = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    s2 = make_single_device_sharding(jax.devices()[0])
     x1 = jax.device_put(jnp.array([1, 2, 3]), s1)
     x2 = jax.device_put(jnp.array([1, 2, 3]), s2)
     with self.assertRaisesRegex(RuntimeError, "different sharding"):

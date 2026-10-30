@@ -189,6 +189,15 @@ def make_single_device_sharding(device, *, memory_kind=None):
   return SingleDeviceSharding(device, memory_kind=memory_kind)
 
 
+def is_single_device_sharding(sharding: jsharding.Sharding) -> bool:
+  """
+  Only to replace explicit checks for SingleDeviceSharding to avoid
+  deprecation warnings. Will return False once make_single_device_sharding
+  returns NamedSharding.
+  """
+  return isinstance(sharding, SingleDeviceSharding)
+
+
 def _unpickle_gspmd_sharding(devices, op_sharding, memory_kind):
   return GSPMDSharding(devices, op_sharding, memory_kind=memory_kind)
 

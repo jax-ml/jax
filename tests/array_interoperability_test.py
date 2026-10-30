@@ -256,7 +256,7 @@ class DLPackTest(jtu.JaxTestCase):
     if device.platform not in ["gpu", "tpu"]:
       raise unittest.SkipTest("Test requires GPU or TPU")
     try:
-      sharding = jax.sharding.SingleDeviceSharding(
+      sharding = jax.sharding.make_single_device_sharding(
           device, memory_kind="pinned_host"
       )
     except ValueError:
@@ -428,10 +428,10 @@ class DLPackTest(jtu.JaxTestCase):
     # Fill data *after* import to verify zero-copy
     np_array[:] = np.arange(1024, dtype=np.uint32)
 
-    host_sharding = jax.sharding.SingleDeviceSharding(
+    host_sharding = jax.sharding.make_single_device_sharding(
         device, memory_kind="pinned_host"
     )
-    device_sharding = jax.sharding.SingleDeviceSharding(
+    device_sharding = jax.sharding.make_single_device_sharding(
         device, memory_kind="device"
     )
 
@@ -548,7 +548,7 @@ class DLPackTest(jtu.JaxTestCase):
     from jax._src.layout import Format, Layout
 
     device = jax.devices("cpu")[0]
-    sharding = jax.sharding.SingleDeviceSharding(device)
+    sharding = jax.sharding.make_single_device_sharding(device)
     mesh = jax.sharding.Mesh([device], ("x",))
     named_sharding = jax.sharding.NamedSharding(mesh, P())
 
