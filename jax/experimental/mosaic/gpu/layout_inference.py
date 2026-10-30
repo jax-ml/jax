@@ -616,6 +616,10 @@ def find_assignments_for(
 @dataclasses.dataclass()
 class DerivationContext:
   """Holds context information used for deriving an constraint system."""
+  # The architecture to infer layouts for, as a `(major, minor)` compute
+  # capability tuple. Allows derivation rules to make arch-dependent decisions.
+  arch: tuple[int, int] = (9, 0)
+
   # A map of `ValueSite` to the variable that it is associated with.
   variable_for_value_site: dict[ValueSite, cs.Variable] = dataclasses.field(
       default_factory=dict, init=False
@@ -2887,7 +2891,7 @@ def infer_layout(
   """
   global_constraint_system: cs.ConstraintSystem | cs.Unsatisfiable
   global_constraint_system = cs.ConstraintSystem()
-  ctx = DerivationContext()
+  ctx = DerivationContext(arch=arch)
 
   def gather_constraints(op: Any):
     # Terminator ops are handled directly by the op whose region they belong to.
