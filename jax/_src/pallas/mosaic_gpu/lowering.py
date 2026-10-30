@@ -105,7 +105,7 @@ class ResourceEstimatorContext:
     )
 
 
-AnyBarrier = mgpu.Barrier | mgpu.ClusterBarrier
+AnyBarrier = mgpu.Barrier | mgpu.ClusterBarrier | mgpu.CtaBarrier
 
 
 def _get_barrier(
@@ -132,6 +132,28 @@ def _get_cluster_barrier(
       orders_tensor_core=aval.dtype.orders_tensor_core,
       leader_tracked=aval.dtype.leader_tracked,
   )
+
+
+def _get_cta_barrier(aval: ShapedAbstractValue) -> mgpu.CtaBarrier:
+  assert isinstance(aval.dtype, gpu_core.CtaBarrierType)
+  return mgpu.CtaBarrier(
+      arrival_count=aval.dtype.num_arrivals * WARPGROUP_SIZE,
+      num_barriers=math.prod(aval.shape),
+  )
+
+
+def _aval_to_barrier(
+    aval: ShapedAbstractValue, ctx: ResourceEstimatorContext
+) -> AnyBarrier | None:
+  match aval.dtype:
+    case gpu_core.BarrierType():
+      return _get_barrier(aval, ctx.arrival_multiplier)
+    case gpu_core.ClusterBarrierType():
+      return _get_cluster_barrier(aval, ctx.axis_names)
+    case gpu_core.CtaBarrierType():
+      return _get_cta_barrier(aval)
+    case _:
+      return None
 
 
 @dataclasses.dataclass(kw_only=True, frozen=True)
@@ -358,12 +380,7 @@ def _run_scoped_resource_estimator(
   rs = Resources()
   for v in jaxpr.invars:
     aval = cast(ShapedAbstractValue, v.aval)
-    if isinstance(aval.dtype, gpu_core.BarrierType):
-      barrier = _get_barrier(aval, ctx.arrival_multiplier)
-      rs += Resources(barrier_counts=collections.Counter([barrier]))
-      continue
-    if isinstance(aval.dtype, gpu_core.ClusterBarrierType):
-      barrier = _get_cluster_barrier(aval, ctx.axis_names)
+    if (barrier := _aval_to_barrier(aval, ctx)) is not None:
       rs += Resources(barrier_counts=collections.Counter([barrier]))
       continue
     assert isinstance(aval, state_types.AbstractRef)
@@ -434,7 +451,10 @@ class _AxisNames:
 
 
 AnyBarrierRef = (
-    mgpu.BarrierRef | mgpu.DialectBarrierRef | mgpu.CollectiveBarrierRef
+    mgpu.BarrierRef
+    | mgpu.DialectBarrierRef
+    | mgpu.CollectiveBarrierRef
+    | mgpu.CtaBarrierRef
 )
 
 
@@ -494,11 +514,7 @@ class ModuleContext:
         raise ValueError(f"Unknown semantics: {self.primitive_semantics}")
 
   @contextlib.contextmanager
-  def reserve_barrier(
-      self, barrier: mgpu.Barrier | mgpu.ClusterBarrier
-  ) -> Generator[
-      mgpu.BarrierRef | mgpu.DialectBarrierRef | mgpu.CollectiveBarrierRef,
-  ]:
+  def reserve_barrier(self, barrier: AnyBarrier) -> Generator[AnyBarrierRef]:
     """Reserves a barrier.
 
     Raises:
@@ -3520,14 +3536,7 @@ def _run_scoped_lowering_rule(
             " run_scoped if you intend all threads to share the same"
             f" allocation (currently collective_axes={collective_axes})."
         )
-      if isinstance(aval.dtype, gpu_core.BarrierType):
-        barrier = _get_barrier(aval, ctx.estimator_ctx.arrival_multiplier)
-        barrier_ctx = ctx.module_ctx.reserve_barrier(barrier)
-        input_refs.append(alloc_stack.enter_context(barrier_ctx))
-        should_discharge.append(False)
-        continue
-      if isinstance(aval.dtype, gpu_core.ClusterBarrierType):
-        barrier = _get_cluster_barrier(aval, ctx.module_ctx.axis_names)
+      if (barrier := _aval_to_barrier(aval, ctx.estimator_ctx)) is not None:
         barrier_ctx = ctx.module_ctx.reserve_barrier(barrier)
         input_refs.append(alloc_stack.enter_context(barrier_ctx))
         should_discharge.append(False)
