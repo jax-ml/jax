@@ -3173,6 +3173,64 @@ def _reduced_vary_cast_batcher(vals_in, dims_in, *, axes):
   raise NotImplementedError
 batching.primitive_batchers[core.reduced_vary_cast_p] = _reduced_vary_cast_batcher
 
+def _noop_to_lojax(prim, hi_val, **params):
+  in_aval = core.typeof(hi_val)
+  out_aval, _ = prim.abstract_eval(in_aval, **params)
+  lo_val, = in_aval.lower_val(hi_val)
+  return out_aval.raise_val(prim.bind(lo_val, **params))
+
+for _p in (preduced_p, psum_invariant_p, pmax_p, pmin_p, core.pvary_p,
+           core.reduced_vary_cast_p):
+  _p.is_high = lambda aval, **_: aval.is_high
+  _p.to_lojax = partial(_noop_to_lojax, _p)
+
+
+def _all_gather_reduced_to_lojax(hi_val, **params):
+  in_aval = core.typeof(hi_val)
+  out_aval, _ = all_gather_reduced_p.abstract_eval(in_aval, **params)
+  lo_val, = in_aval.lower_val(hi_val)
+  lo_dim = params['all_gather_dimension'] + len(in_aval.sharding.spec.unreduced)
+  lo_out = all_gather_reduced(
+      lo_val, params['axis_name'], axis=lo_dim, tiled=params['tiled'])
+  return out_aval.raise_val(lo_out)
+all_gather_reduced_p.is_high = lambda aval, **_: aval.is_high
+all_gather_reduced_p.to_lojax = _all_gather_reduced_to_lojax
+
+
+def _vary_unreduced_cast_to_lojax(hi_val, **params):
+  in_aval = core.typeof(hi_val)
+  out_aval, _ = vary_unreduced_cast_p.abstract_eval(in_aval, **params)
+  lo_val, = in_aval.lower_val(hi_val)
+  # Don't rebind vary_unreduced_cast_p since this is a HiJAX primitive only.
+  return out_aval.raise_val(lo_val)
+vary_unreduced_cast_p.is_high = lambda *_, **__: config.hijax_unreduced.value
+vary_unreduced_cast_p.to_lojax = _vary_unreduced_cast_to_lojax
+
+
+def _unreduced_all_reduce_to_lojax(hi_prim, lo_fn, hi_val, *, axes):
+  in_aval = core.typeof(hi_val)
+  out_aval, _ = hi_prim.abstract_eval(in_aval, axes=axes)
+  lo_val, = in_aval.lower_val(hi_val)
+  return out_aval.raise_val(lo_fn(lo_val, axes))
+
+for _hi_p, _lo_fn in ((unreduced_psum_p, psum), (unreduced_pmax_p, pmax),
+                      (unreduced_pmin_p, pmin)):
+  _hi_p.is_high = lambda *_, **__: config.hijax_unreduced.value
+  _hi_p.to_lojax = partial(_unreduced_all_reduce_to_lojax, _hi_p, _lo_fn)
+
+
+def _unreduced_reduce_scatter_to_lojax(hi_val, **params):
+  in_aval = core.typeof(hi_val)
+  out_aval, _ = unreduced_reduce_scatter_p.abstract_eval(in_aval, **params)
+  lo_val, = in_aval.lower_val(hi_val)
+  lo_dim = params['scatter_dimension'] + len(in_aval.sharding.spec.unreduced)
+  lo_out = psum_scatter(
+      lo_val, params['axis_name'], scatter_dimension=lo_dim, tiled=params['tiled'])
+  return out_aval.raise_val(lo_out)
+unreduced_reduce_scatter_p.is_high = (
+    lambda *_, **__: config.hijax_unreduced.value)
+unreduced_reduce_scatter_p.to_lojax = _unreduced_reduce_scatter_to_lojax
+
 ################################## pcast #############################
 
 def _get_from(aval, axes: tuple[AxisName, ...], name) -> str:

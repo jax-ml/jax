@@ -146,42 +146,44 @@ def register_unreduced_lojax(prim: core.Primitive,
 
     out_avals = out_avals if prim.multiple_results else [out_avals]
     out_u_set = out_avals[0].sharding.spec.unreduced
-    assert out_u_set
     assert all(a.sharding.spec.unreduced == out_u_set for a in out_avals)
-
-    mesh = out_avals[0].sharding.mesh
-    u_axes = core.order_wrt_mesh(mesh, out_u_set)
-    u_dims = tuple(range(len(u_axes)))
     lo_args = [lo_x for x, a in zip(hi_args, in_avals)
                for lo_x in a.lower_val(x)]
-    out_specs = [P(*u_axes, *(None,) * a.ndim) for a in out_avals]
-    if not prim.multiple_results:
-      out_specs, = out_specs
-
-    def _local_fn(*local_args):
-      squeezed = [lax.squeeze(v, u_dims) if a.is_high else v
-                  for v, a in zip(local_args, in_avals)]
+    if not out_u_set:
+      assert any(a.mat.unreduced for a in in_avals)
       with config.auto_pcast(True):
-        squeezed = core.auto_insert_reshard(*squeezed)
-      lo_params = params
-      if (sharding_param is not None and
-          isinstance(s := params.get(sharding_param), NamedSharding)):
-        lo_s = NamedSharding(
-            mesh_lib.get_abstract_mesh(),
-            s.spec.update(unreduced=frozenset(), unreduced_kind=None))
-        lo_params = params | {sharding_param: lo_s}
-      outs = prim.bind(*squeezed, **lo_params)
-      if prim.multiple_results:
-        return [lax.expand_dims(o, u_dims) for o in outs]
-      return lax.expand_dims(outs, u_dims)
+        lo_args = core.auto_insert_reshard(*lo_args)
+      lo_outs = prim.bind(*lo_args, **params)
+    else:
+      mesh = out_avals[0].sharding.mesh
+      u_axes = core.order_wrt_mesh(mesh, out_u_set)
+      u_dims = tuple(range(len(u_axes)))
+      out_specs = [P(*u_axes, *(None,) * a.ndim) for a in out_avals]
+      if not prim.multiple_results:
+        out_specs, = out_specs
 
-    lo_outs = shard_map.shard_map(_local_fn, mesh=mesh, out_specs=out_specs,
-                                  axis_names=frozenset(u_axes))(*lo_args)
+      def _local_fn(*local_args):
+        squeezed = [lax.squeeze(v, u_dims) if a.is_high else v
+                    for v, a in zip(local_args, in_avals)]
+        with config.auto_pcast(True):
+          squeezed = core.auto_insert_reshard(*squeezed)
+        lo_params = params
+        if (sharding_param is not None and
+            isinstance(s := params.get(sharding_param), NamedSharding)):
+          lo_s = NamedSharding(
+              mesh_lib.get_abstract_mesh(),
+              s.spec.update(unreduced=frozenset(), unreduced_kind=None))
+          lo_params = params | {sharding_param: lo_s}
+        outs = prim.bind(*squeezed, **lo_params)
+        if prim.multiple_results:
+          return [lax.expand_dims(o, u_dims) for o in outs]
+        return lax.expand_dims(outs, u_dims)
+      lo_outs = shard_map.shard_map(_local_fn, mesh=mesh, out_specs=out_specs,
+                                    axis_names=frozenset(u_axes))(*lo_args)
     if prim.multiple_results:
       return [a.raise_val(o) for a, o in zip(out_avals, lo_outs)]
-    else:
-      out_aval, = out_avals
-      return out_aval.raise_val(lo_outs)
+    out_aval, = out_avals
+    return out_aval.raise_val(lo_outs)
 
   prim.is_high = unreduced_is_high(sharding_param)  # type: ignore
   prim.to_lojax = _to_lojax  # type: ignore

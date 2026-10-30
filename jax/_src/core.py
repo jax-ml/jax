@@ -2562,18 +2562,24 @@ class ShapedArray(AbstractValue):
 
   @property
   def is_high(self) -> bool:
-    return config.hijax_unreduced.value and bool(self.sharding.spec.unreduced)
+    return bool(config.hijax_unreduced.value and
+                (self.sharding.spec.unreduced or self.mat.unreduced))
 
   def lo_ty(self) -> list[AbstractValue]:
     if not self.is_high:
       return [self]
-    mesh = self.sharding.mesh
-    spec = self.sharding.spec
-    u_axes = order_wrt_mesh(mesh, spec.unreduced)
-    u_shape = tuple(mesh.shape[a] for a in u_axes)
-    lo_spec = P(*u_axes, *spec.partitions, reduced=spec.reduced)
-    return [self.update(shape=(*u_shape, *self.shape),
-                        sharding=self.sharding.update(spec=lo_spec))]
+    shape, sharding, mat = self.shape, self.sharding, self.mat
+    if sharding.spec.unreduced:
+      mesh, spec = sharding.mesh, sharding.spec
+      u_axes = order_wrt_mesh(mesh, spec.unreduced)
+      u_shape = tuple(mesh.shape[a] for a in u_axes)
+      shape = (*u_shape, *shape)
+      lo_spec = P(*u_axes, *spec.partitions, reduced=spec.reduced)
+      sharding = self.sharding.update(spec=lo_spec)
+    if mat.unreduced:
+      mat = ManualAxisType(varying=mat.varying | mat.unreduced,
+                           reduced=mat.reduced)
+    return [self.update(shape=shape, sharding=sharding, manual_axis_type=mat)]
 
   def lower_val(self, hi_val: Any, /) -> list[Any]:
     if not self.is_high:

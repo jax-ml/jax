@@ -3099,6 +3099,38 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysAllClose(ex_out1, out1, rtol=2e-4)
     self.assertArraysAllClose(ex_out2, out2, rtol=2e-4)
 
+  @config.hijax_unreduced(True)
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_shmap_unreduced_scan_extensive(self, mesh):
+    np_xs = np.arange(3 * 2 * 4, dtype=np.float32).reshape(3, 2, 4)
+    np_w = np.arange(4 * 2, dtype=np.float32).reshape(4, 2)
+    xs = jax.device_put(np_xs, P(None, None, 'x'))
+    w = jax.device_put(np_w, P('x', None))
+
+    @jax.jit
+    def f(xs, w):
+      u_xs = jnp.einsum('lbi,ij->lbj', xs, w, out_sharding=P(unreduced={'x'}))
+      u_init = jnp.einsum('bi,ij->bj', xs[0], w, out_sharding=P(unreduced={'x'}))
+
+      @shard_map(in_specs=(P(unreduced={'x'}), P(unreduced={'x'})),
+                 out_specs=(P(unreduced={'x'}), P(unreduced={'x'})))
+      def shmap_scan(init, seq):
+        def body(c, x):
+          self.assertEqual(c.aval.mat.unreduced, {'x'})
+          self.assertEqual(x.aval.mat.unreduced, {'x'})
+          c_next = c + x
+          return c_next, c_next + x
+        return jax.lax.scan(body, init, seq)
+
+      c_out, ys_out = shmap_scan(u_init, u_xs)
+      return jax.reshard(c_out, P()), jax.reshard(ys_out, P())
+
+    c_out, ys_out = f(xs, w)
+    xs_ref = np.einsum('lbi,ij->lbj', np_xs, np_w)
+    init_ref = np_xs[0] @ np_w
+    self.assertArraysAllClose(c_out, init_ref + np.sum(xs_ref, axis=0))
+    self.assertArraysAllClose(ys_out, init_ref + np.cumsum(xs_ref, axis=0) + xs_ref)
+
   @jtu.with_explicit_mesh((2,), 'x')
   def test_preduced_fwd_unreduced_psum_bwd(self, mesh):
     np_inp1 = np.arange(8.).reshape(2, 4)

@@ -9640,13 +9640,16 @@ def _reduce_op_to_lojax(prim, hi_operand, *, axes, out_sharding):
 
   in_aval = core.typeof(hi_operand)
   out_aval, _ = prim.abstract_eval(in_aval, axes=axes, out_sharding=out_sharding)
+  lo_in, = in_aval.lower_val(hi_operand)
   out_u_set = out_aval.sharding.spec.unreduced
-  assert out_u_set
+  if not out_u_set:
+    assert in_aval.mat.unreduced
+    return out_aval.raise_val(
+        prim.bind(lo_in, axes=axes, out_sharding=out_sharding))
 
   mesh = out_aval.sharding.mesh
   in_u = core.order_wrt_mesh(mesh, in_aval.sharding.spec.unreduced)
   out_u = core.order_wrt_mesh(mesh, out_u_set)
-  lo_in, = in_aval.lower_val(hi_operand)
 
   dropped_u_dims = tuple(i for i, a in enumerate(in_u) if a not in out_u_set)
   num_kept_u_ndim = len(in_u) - len(dropped_u_dims)
