@@ -28,6 +28,7 @@ import jax
 from jax import lax
 from jax._src import hypothesis_test_util as htu
 from jax._src import test_util as jtu
+from jax._src.lib import ifrt_version
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
@@ -1597,17 +1598,36 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(counts, expected_counts)
     np.testing.assert_array_equal(mask, expected_mask)
 
-  def test_population_count(self):
+  def _skip_if_no_layout_pass_mask_all_reduce(self, reduce_fn):
+    match reduce_fn:
+      case plsc.all_reduce_ffs:
+        # tpu.reduce_index with find_first_set requires ifrt_version 84.
+        min_ifrt = 84
+      case plsc.all_reduce_population_count:
+        # tpu.reduce of i1 masks into i32 sums requires ifrt_version 85.
+        min_ifrt = 85
+      case _:
+        raise ValueError(f"Unsupported mask reduction: {reduce_fn}")
+    if ifrt_version < min_ifrt or not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest(f"Requires ifrt_version >= {min_ifrt} and libtpu >= 0.0.52")
+
+  @parameterized.product(needs_layout_passes=[False, True])
+  def test_population_count(self, needs_layout_passes):
+    if needs_layout_passes:
+      self._skip_if_no_layout_pass_mask_all_reduce(
+          plsc.all_reduce_population_count
+      )
     key = jax.random.key(42)
     x = jax.random.randint(key, [self.num_lanes], 0, 100)
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=needs_layout_passes
+        ),
     )
     def kernel(x_ref, o_ref):
       mask = x_ref[...] < 50
-      # TODO: b/434208146 - Test with reduce!=1 when we support v6e packed masks
       o_ref[...] = plsc.all_reduce_population_count(mask)
 
     np.testing.assert_array_equal(
@@ -1746,8 +1766,13 @@ class VectorSubcoreTest(PallasSCTest):
     ):
       _ = kernel()
 
-  @parameterized.parameters("mixed", "all_zero", "all_one")
-  def test_ffs(self, case):
+  @parameterized.product(
+      case=["mixed", "all_zero", "all_one"],
+      needs_layout_passes=[False, True],
+  )
+  def test_ffs(self, case, needs_layout_passes):
+    if needs_layout_passes:
+      self._skip_if_no_layout_pass_mask_all_reduce(plsc.all_reduce_ffs)
     nl = self.num_lanes
     if case == "mixed":
       data = [0, 0, 1] + [0] * (nl - 3)
@@ -1764,14 +1789,123 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=needs_layout_passes
+        ),
     )
     def kernel(x_ref, o_ref):
       mask = x_ref[...] == 1
-      # TODO: b/434208146 - Test with reduce!=1 when we support v6e packed masks
       o_ref[...] = plsc.all_reduce_ffs(mask)
 
     np.testing.assert_array_equal(kernel(x), np.broadcast_to(expected, x.shape))
+
+  @parameterized.product(
+      reduce_fn=[plsc.all_reduce_population_count, plsc.all_reduce_ffs],
+      num_vregs_remainder_reduce=[
+          (2, 0, 1),
+          (3, 0, 1),
+          (0, 5, 1),
+          (2, 3, 1),
+          (3, 3, 1),
+          (2, 0, 2),
+          (3, 0, 3),
+          (2, 2, 2),
+          (3, 3, 3),
+      ],
+  )
+  def test_mask_all_reduce_multi_vreg(
+      self, reduce_fn, num_vregs_remainder_reduce
+  ):
+    self._skip_if_no_layout_pass_mask_all_reduce(reduce_fn)
+    num_vregs, remainder, reduce = num_vregs_remainder_reduce
+    size = num_vregs * self.num_lanes + remainder
+    out_size = size // reduce
+    in_block_size = math.ceil(size / self.num_lanes) * self.num_lanes
+    out_block_size = math.ceil(out_size / self.num_lanes) * self.num_lanes
+    rows = size + 1
+    r = np.arange(rows, dtype=np.int32)[:, None]
+    # Row i has its first set bit at i and size - i set bits within [:size].
+    # Padding columns past size are set and must be ignored. E.g. for
+    # num_lanes=8, size=5 (in_block_size=8, rows=6):
+    #                          ffs  popcount
+    #   [[1 1 1 1 1 | 1 1 1]   0    5
+    #    [0 1 1 1 1 | 1 1 1]   1    4
+    #    [0 0 1 1 1 | 1 1 1]   2    3
+    #    [0 0 0 1 1 | 1 1 1]   3    2
+    #    [0 0 0 0 1 | 1 1 1]   4    1
+    #    [0 0 0 0 0 | 1 1 1]]  5    0
+    data = (np.arange(in_block_size) >= r).astype(np.int32)
+    expected = np.broadcast_to(
+        size - r if reduce_fn is plsc.all_reduce_population_count else r,
+        (rows, out_size),
+    )
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct((rows, out_block_size), jnp.int32),
+        grid=(rows,),
+        in_specs=[pl.BlockSpec((None, in_block_size), lambda i: (i, 0))],
+        out_specs=pl.BlockSpec((None, out_block_size), lambda i: (i, 0)),
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[:out_size] = reduce_fn(x_ref[:size] > 0, reduce=reduce)
+
+    np.testing.assert_array_equal(kernel(data)[:, :out_size], expected)
+
+  @parameterized.product(
+      reduce_fn=[plsc.all_reduce_population_count, plsc.all_reduce_ffs],
+      leading_shape_dim_reduce=[
+          ((4,), -1, 1),
+          ((4,), -1, 2),
+          ((4,), 0, 2),
+          ((2, 3), 0, 1),
+          ((2, 3), -3, 2),
+          ((2, 3), -2, 3),
+          ((2, 3), 2, 2),
+      ],
+  )
+  def test_mask_all_reduce_dim(self, reduce_fn, leading_shape_dim_reduce):
+    self._skip_if_no_layout_pass_mask_all_reduce(reduce_fn)
+    leading_shape, dim, reduce = leading_shape_dim_reduce
+    minor_size = 2 * self.num_lanes + 2
+    shape = (*leading_shape, minor_size)
+    out_shape = list(shape)
+    out_shape[dim] //= reduce
+    reduce_dim_size = shape[dim]
+    normalized_dim = dim % len(shape)
+    non_reduced_shape = shape[:normalized_dim] + shape[normalized_dim + 1 :]
+    # Each row is one 1D slice along `dim` (all other indices fixed); `dim` is
+    # moved to the minor position here and moved back below.
+    num_rows = math.prod(non_reduced_shape)
+    # Row r is set from first_idx[r] onwards (all-false if first_idx[r] >=
+    # reduce_dim_size). The first rows cover all-false, first vreg, later vreg
+    # and last element; the rest sweep [0, reduce_dim_size].
+    offsets = [reduce_dim_size, 0, self.num_lanes + 1, reduce_dim_size - 1]
+    first_idx = np.arange(num_rows) % (reduce_dim_size + 1)
+    num_offsets = min(num_rows, len(offsets))
+    first_idx[:num_offsets] = offsets[:num_offsets]
+    rows = np.arange(reduce_dim_size) >= first_idx[:, None]
+    mask = np.moveaxis(
+        rows.reshape(*non_reduced_shape, reduce_dim_size), -1, dim
+    )
+    x = jnp.asarray(mask, dtype=jnp.int32)
+    if reduce_fn is plsc.all_reduce_population_count:
+      expected = np.count_nonzero(mask, axis=dim, keepdims=True)
+    else:
+      expected = np.where(
+          np.any(mask, axis=dim, keepdims=True),
+          np.argmax(mask, axis=dim, keepdims=True),
+          reduce_dim_size,
+      )
+    expected = np.broadcast_to(expected.astype(np.int32), out_shape)
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32)
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = reduce_fn(x_ref[...] > 0, reduce=reduce, dim=dim)
+
+    np.testing.assert_array_equal(kernel(x), expected)
 
   def test_fetch_and_add(self):
     self.skip_if_tc_tiling("Needs a rewrite to support TC tiling")
