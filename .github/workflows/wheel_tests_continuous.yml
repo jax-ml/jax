@@ -508,7 +508,7 @@ jobs:
           artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
           python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-10.0:latest" },
+            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0"},
           ]
           exclude:
             - artifact: "jax-rocm-pjrt"
@@ -524,7 +524,6 @@ jobs:
       python: ${{ matrix.python }}
       rocm-version: ${{ matrix.rocm.wheel-version }}
       rocm-release-version: ${{ matrix.rocm.release-version }}
-      manylinux-image: ${{ matrix.rocm.manylinux-image }}
       clone_main_xla: 0
       halt-for-connection: 'no'
       upload_artifacts_to_s3: true
