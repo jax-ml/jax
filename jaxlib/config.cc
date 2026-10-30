@@ -18,6 +18,7 @@ limitations under the License.
 #include <Python.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -68,6 +69,10 @@ class ThreadLocalConfigState {
     return key >= entries_.size() ? nb::object() : entries_[key];
   }
 
+  int num_trace_context_overrides() const {
+    return num_trace_context_overrides_;
+  }
+
   void Set(int key, nb::object value);
 
  private:
@@ -81,6 +86,8 @@ class ThreadLocalConfigState {
   // No locking is needed because a GC thread cannot run concurrently with other
   // Python threads; even under free-threading Python uses a stop-the-world GC.
   std::vector<nb::object> entries_;
+  std::vector<uint8_t> is_in_trace_context_;
+  int num_trace_context_overrides_ = 0;
 };
 
 // This class represents all of the global configuration state.
@@ -93,6 +100,10 @@ class GlobalConfigState {
 
   nb::object Get(int key) const;
   void Set(int key, nb::object value);
+  nb::tuple GetTraceContext();
+  nb::tuple BuildLocalTraceContext(
+      ThreadLocalConfigState& thread_local_state) const;
+  void PopulateIsInTraceContext(int key, std::vector<uint8_t>& out) const;
 
   // Adds or removes a thread-local state from the set of thread-local states.
   void AddThreadLocalState(ThreadLocalConfigState* state) {
@@ -142,6 +153,9 @@ class GlobalConfigState {
   std::vector<std::string> names_;
   mutable ft_mutex entries_mu_;
   std::vector<nb::object> entries_ ABSL_GUARDED_BY(entries_mu_);
+  std::vector<uint8_t> is_in_trace_context_ ABSL_GUARDED_BY(entries_mu_);
+  nb::tuple cached_trace_context_ ABSL_GUARDED_BY(entries_mu_);
+  uint64_t trace_context_version_ ABSL_GUARDED_BY(entries_mu_) = 0;
   std::vector<int> include_in_jit_key_;
   std::vector<int> include_in_trace_context_;
   std::vector<int> include_in_jaxpr_eqn_ctx_;
@@ -163,8 +177,18 @@ ThreadLocalConfigState::~ThreadLocalConfigState() {
 
 void ThreadLocalConfigState::Set(int key, nb::object value) {
   DCHECK_GE(key, 0);
-  if (key >= entries_.size()) {
-    entries_.resize(key + 1);
+  if (key >= is_in_trace_context_.size()) {
+    GlobalConfigState::Instance().PopulateIsInTraceContext(
+        key, is_in_trace_context_);
+    if (entries_.size() < is_in_trace_context_.size()) {
+      entries_.resize(is_in_trace_context_.size());
+    }
+  }
+  bool was_set = entries_[key].is_valid();
+  bool is_set = value.is_valid();
+  if (was_set != is_set && is_in_trace_context_[key]) {
+    num_trace_context_overrides_ += is_set ? 1 : -1;
+    DCHECK_GE(num_trace_context_overrides_, 0);
   }
   std::swap(entries_[key], value);
 }
@@ -179,12 +203,78 @@ nb::object GlobalConfigState::Get(int key) const {
 void GlobalConfigState::Set(int key, nb::object value) {
   DCHECK_GE(key, 0);
   nb::object old_value;
+  nb::tuple old_cached;
   {
     ft_lock_guard lock(entries_mu_);
     DCHECK_LT(key, entries_.size());
     old_value = std::move(entries_[key]);
     entries_[key] = std::move(value);
+    if (is_in_trace_context_[key]) {
+      ++trace_context_version_;
+      old_cached = std::move(cached_trace_context_);
+    }
   }
+}
+
+void GlobalConfigState::PopulateIsInTraceContext(
+    int key, std::vector<uint8_t>& out) const {
+  ft_lock_guard lock(entries_mu_);
+  DCHECK_LT(key, is_in_trace_context_.size());
+  out.assign(is_in_trace_context_.begin(), is_in_trace_context_.end());
+}
+
+nb::tuple GlobalConfigState::GetTraceContext() {
+  uint64_t version;
+  std::vector<nb::object> values;
+  {
+    ft_lock_guard lock(entries_mu_);
+    if (cached_trace_context_.is_valid()) {
+      return cached_trace_context_;
+    }
+    version = trace_context_version_;
+    values.reserve(include_in_trace_context_.size());
+    for (int key : include_in_trace_context_) {
+      values.push_back(entries_[key]);
+    }
+  }
+  nb::tuple_builder builder(values.size());
+  for (nb::object& v : values) {
+    builder.put(v.is_valid() ? std::move(v) : nb::none());
+  }
+  nb::tuple result = builder.commit();
+  nb::tuple cached;
+  {
+    ft_lock_guard lock(entries_mu_);
+    if (trace_context_version_ == version) {
+      if (!cached_trace_context_.is_valid()) {
+        cached_trace_context_ = result;
+      }
+      cached = cached_trace_context_;
+    }
+  }
+  return cached.is_valid() ? std::move(cached) : std::move(result);
+}
+
+nb::tuple GlobalConfigState::BuildLocalTraceContext(
+    ThreadLocalConfigState& thread_local_state) const {
+  std::vector<nb::object> values;
+  {
+    ft_lock_guard lock(entries_mu_);
+    values.reserve(include_in_trace_context_.size());
+    for (int key : include_in_trace_context_) {
+      nb::object local = thread_local_state.Get(key);
+      if (local.is_valid()) {
+        values.push_back(std::move(local));
+      } else {
+        values.push_back(entries_[key]);
+      }
+    }
+  }
+  nb::tuple_builder builder(values.size());
+  for (nb::object& v : values) {
+    builder.put(v.is_valid() ? std::move(v) : nb::none());
+  }
+  return builder.commit();
 }
 
 int GlobalConfigState::tp_traverse(int key, PyObject* self, visitproc visit,
@@ -199,6 +289,17 @@ int GlobalConfigState::tp_traverse(int key, PyObject* self, visitproc visit,
     PyObject* value = entries_[key].ptr();
     Py_VISIT(value);
   }
+  if (cached_trace_context_.is_valid()) {
+    for (int k : include_in_trace_context_) {
+      if (k < entries_.size() && entries_[k].is_valid()) {
+        if (k == key) {
+          PyObject* cached = cached_trace_context_.ptr();
+          Py_VISIT(cached);
+        }
+        break;
+      }
+    }
+  }
   absl::MutexLock lock(mu_);
   for (const auto* state : thread_local_states_) {
     if (key < state->entries_.size()) {
@@ -211,22 +312,35 @@ int GlobalConfigState::tp_traverse(int key, PyObject* self, visitproc visit,
 
 int GlobalConfigState::tp_clear(int key, PyObject* self) {
   nb::object old_value;
+  nb::tuple old_cached;
+  bool in_trace_context = false;
   {
     ft_lock_guard lock(entries_mu_);
     if (key < entries_.size()) {
       old_value = std::move(entries_[key]);
+      in_trace_context = is_in_trace_context_[key] != 0;
+      if (in_trace_context) {
+        ++trace_context_version_;
+        old_cached = std::move(cached_trace_context_);
+      }
     }
   }
   // We destroy the python objects outside of the lock out of an abundance of
   // caution.
   std::vector<nb::object> to_destroy;
-  absl::MutexLock lock(mu_);
-  to_destroy.reserve(thread_local_states_.size());
-  for (auto* state : thread_local_states_) {
-    if (key < state->entries_.size()) {
-      nb::object tmp;
-      std::swap(state->entries_[key], tmp);
-      to_destroy.push_back(std::move(tmp));
+  {
+    absl::MutexLock lock(mu_);
+    to_destroy.reserve(thread_local_states_.size());
+    for (auto* state : thread_local_states_) {
+      if (key < state->entries_.size() && state->entries_[key].is_valid()) {
+        nb::object tmp;
+        std::swap(state->entries_[key], tmp);
+        if (in_trace_context) {
+          --state->num_trace_context_overrides_;
+          DCHECK_GE(state->num_trace_context_overrides_, 0);
+        }
+        to_destroy.push_back(std::move(tmp));
+      }
     }
   }
   return 0;
@@ -235,18 +349,24 @@ int GlobalConfigState::tp_clear(int key, PyObject* self) {
 Config::Config(std::string name, nb::object value, bool include_in_jit_key,
                bool include_in_trace_context, bool include_in_jaxpr_eqn_ctx) {
   auto& instance = GlobalConfigState::Instance();
-  ft_lock_guard lock(instance.entries_mu_);
-  key_ = instance.entries_.size();
-  instance.names_.push_back(std::move(name));
-  instance.entries_.push_back(std::move(value));
-  if (include_in_jit_key) {
-    instance.include_in_jit_key_.push_back(key_);
-  }
-  if (include_in_trace_context) {
-    instance.include_in_trace_context_.push_back(key_);
-  }
-  if (include_in_jaxpr_eqn_ctx) {
-    instance.include_in_jaxpr_eqn_ctx_.push_back(key_);
+  nb::tuple old_cached;
+  {
+    ft_lock_guard lock(instance.entries_mu_);
+    key_ = instance.entries_.size();
+    instance.names_.push_back(std::move(name));
+    instance.entries_.push_back(std::move(value));
+    instance.is_in_trace_context_.push_back(include_in_trace_context ? 1 : 0);
+    if (include_in_jit_key) {
+      instance.include_in_jit_key_.push_back(key_);
+    }
+    if (include_in_trace_context) {
+      instance.include_in_trace_context_.push_back(key_);
+      ++instance.trace_context_version_;
+      old_cached = std::move(instance.cached_trace_context_);
+    }
+    if (include_in_jaxpr_eqn_ctx) {
+      instance.include_in_jaxpr_eqn_ctx_.push_back(key_);
+    }
   }
 }
 
@@ -359,16 +479,10 @@ std::vector<std::string> JitConfigNames() {
 nanobind::tuple TraceContext() {
   auto& instance = GlobalConfigState::Instance();
   auto& thread_local_instance = ThreadLocalConfigState::Instance();
-  nb::tuple_builder result(instance.include_in_trace_context().size());
-  for (int i : instance.include_in_trace_context()) {
-    nb::object local = thread_local_instance.Get(i);
-    if (local.is_valid()) {
-      result.put(std::move(local));
-    } else {
-      result.put(instance.Get(i));
-    }
+  if (thread_local_instance.num_trace_context_overrides() == 0) {
+    return instance.GetTraceContext();
   }
-  return result.commit();
+  return instance.BuildLocalTraceContext(thread_local_instance);
 }
 
 nanobind::tuple TraceContextNames() {
