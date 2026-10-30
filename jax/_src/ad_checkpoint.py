@@ -1111,8 +1111,9 @@ class RematTraced(HiPrim):
     return primals_out, (primals_, Static(prevent_cse), rem), list(out_nzs)
 
   def vjp_bwd(self, primals_rem, outgrad, *arg_accums):
-    if all(isinstance(x, (ad_util.Zero, ad_util.SymbolicZero))
-           for x in tree_leaves(outgrad)):
+    if (all(isinstance(x, (ad_util.Zero, ad_util.SymbolicZero))
+            for x in tree_leaves(outgrad)) and
+        not any(isinstance(x, ad.RefAccum) for x in tree_leaves(arg_accums))):
       return None
     primals, prevent_cse, rem = primals_rem
     prevent_cse = prevent_cse.val
