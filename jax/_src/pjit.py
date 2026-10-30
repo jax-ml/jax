@@ -929,14 +929,22 @@ def _lojax_expand_params(
       return s.update(spec=lo_spec)
     return s
 
-  def expand(lol, stuff, lower_s=False):
-    return tuple(_lower_sharding(x) if lower_s else x
-                 for l, x in zip(lol, stuff) for _ in l)
+  def _lower_layout(lay, lo_aval):
+    if (isinstance(lay, Layout) and isinstance(lo_aval, core.ShapedArray) and
+        (k := lo_aval.ndim - len(lay.major_to_minor))):
+      return lay.update(
+          major_to_minor=(*range(k), *(m + k for m in lay.major_to_minor)))
+    return lay
+
+  def expand(lol, stuff, lower_s=False, lower_l=False):
+    return tuple(_lower_sharding(x) if lower_s else
+                 _lower_layout(x, a) if lower_l else x
+                 for l, x in zip(lol, stuff) for a in l)
   donated_invars = expand(in_lol , donated_invars)
   in_shardings   = expand(in_lol , in_shardings  , lower_s=True)
-  in_layouts     = expand(in_lol , in_layouts    )
+  in_layouts     = expand(in_lol , in_layouts    , lower_l=True)
   out_shardings  = expand(out_lol, out_shardings , lower_s=True)
-  out_layouts    = expand(out_lol, out_layouts   )
+  out_layouts    = expand(out_lol, out_layouts   , lower_l=True)
 
   new_params = dict(params, donated_invars=donated_invars,
                     in_shardings=in_shardings, in_layouts=in_layouts,
@@ -2733,10 +2741,25 @@ def with_layout_constraint(x, layouts):
       outs.append(layout_constraint_p.bind(xf, layout=l))
   return tree_unflatten(tree, outs)
 
+def _lower_layout_for_unreduced(layout, aval):
+  if isinstance(layout, Layout) and (k := len(aval.sharding.spec.unreduced)):
+    return layout.update(
+        major_to_minor=(*range(k), *(m + k for m in layout.major_to_minor)))
+  return layout
+
 layout_constraint_p = core.Primitive('layout_constraint')
 layout_constraint_p.def_abstract_eval(lambda x, **_: x)
 ad.deflinear2(layout_constraint_p,
               lambda ct, _, **params: (layout_constraint_p.bind(ct, **params),))
+layout_constraint_p.is_high = lambda aval, **_: aval.is_high  # type: ignore
+
+def _layout_constraint_to_lojax(x, *, layout):
+  aval = core.typeof(x)
+  lo_val, = aval.lower_val(x)
+  lo_layout = _lower_layout_for_unreduced(layout, aval)
+  lo_out = layout_constraint_p.bind(lo_val, layout=lo_layout)
+  return aval.raise_val(lo_out)
+layout_constraint_p.to_lojax = _layout_constraint_to_lojax  # type: ignore
 
 def _layout_constraint_impl(x, *, layout):
   if not isinstance(x, xc.ArrayImpl):
@@ -2825,6 +2848,16 @@ def _relayout_abstract_eval(aval, *, dst_layout):
   assert isinstance(aval, core.ShapedArray)
   return aval.update(layout=dst_layout)
 relayout_p.def_abstract_eval(_relayout_abstract_eval)
+relayout_p.is_high = lambda aval, **_: aval.is_high  # type: ignore
+
+def _relayout_to_lojax(x, *, dst_layout):
+  in_aval = core.typeof(x)
+  out_aval = _relayout_abstract_eval(in_aval, dst_layout=dst_layout)
+  lo_val, = in_aval.lower_val(x)
+  lo_layout = _lower_layout_for_unreduced(dst_layout, in_aval)
+  lo_out = relayout_p.bind(lo_val, dst_layout=lo_layout)
+  return out_aval.raise_val(lo_out)
+relayout_p.to_lojax = _relayout_to_lojax  # type: ignore
 
 def _relayout_impl(x, *, dst_layout):
   raise NotImplementedError

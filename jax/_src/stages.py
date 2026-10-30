@@ -378,9 +378,16 @@ class CompiledCallParams(NamedTuple):
   out_types: tuple[tree_util.PyTreeDef, list[core.AbstractValue]] | None
 
   @property
+  def _in_is_high(self):
+    return bool(self.in_types and any(a.is_high for a in self.in_types[1]))
+
+  @property
+  def _out_is_high(self):
+    return bool(self.out_types and any(a.is_high for a in self.out_types[1]))
+
+  @property
   def is_high(self):
-    return self.in_types and self.out_types and any(
-        a.is_high for a in it.chain(self.in_types[1], self.out_types[1]))
+    return self._in_is_high or self._out_is_high
 
 
 def _traced_args_info(self):
@@ -578,7 +585,14 @@ class Traced(Stage):
         return mty
       s = (mty.sharding.update(spec=lo_ty.sharding.spec)
            if isinstance(mty.sharding, NamedSharding) else mty.sharding)
-      f = Format(mty.format.layout, s) if mty.format is not None else None
+      if mty.format is not None:
+        l = mty.format.layout
+        if isinstance(l, Layout) and (k := len(mty.aval.sharding.spec.unreduced)):
+          l = l.update(
+              major_to_minor=(*range(k), *(m + k for m in l.major_to_minor)))
+        f = Format(l, s)
+      else:
+        f = None
       return mty.replace(aval=lo_ty, sharding=s, format=f)
 
     lo_meta_tys = [_lower_mty(mty, lo_ty)
@@ -940,7 +954,7 @@ class Compiled(Stage):
           "function was compiled by a transformation that does not support "
           f"keyword arguments, but called with keyword arguments: {kws}")
 
-    if params.is_high:
+    if params._in_is_high:
       hi_args_flat, hi_tree = tree_util.tracing_registry.flatten((args, kwargs))
       args_flat = [typeof(x).lower_val(x) for x in hi_args_flat]
       args_flat, in_tree = tree_util.tracing_registry.flatten(
@@ -976,7 +990,7 @@ class Compiled(Stage):
               f"Tracer type {type(arg)}.")
     lo_outs = params.executable.call(*params.const_args, *args_flat)
 
-    if params.is_high:
+    if params._out_is_high:
       out_hi_tree, out_hi_types = params.out_types
       out_flat = raise_lo_outs(out_hi_types, lo_outs)
       outs = tree_util.tree_unflatten(out_hi_tree, out_flat)

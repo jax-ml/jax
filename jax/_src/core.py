@@ -2568,7 +2568,7 @@ class ShapedArray(AbstractValue):
   def lo_ty(self) -> list[AbstractValue]:
     if not self.is_high:
       return [self]
-    shape, sharding, mat = self.shape, self.sharding, self.mat
+    shape, sharding, mat, layout = self.shape, self.sharding, self.mat, self.layout
     if sharding.spec.unreduced:
       mesh, spec = sharding.mesh, sharding.spec
       u_axes = order_wrt_mesh(mesh, spec.unreduced)
@@ -2576,10 +2576,15 @@ class ShapedArray(AbstractValue):
       shape = (*u_shape, *shape)
       lo_spec = P(*u_axes, *spec.partitions, reduced=spec.reduced)
       sharding = self.sharding.update(spec=lo_spec)
+      if isinstance(layout, Layout):
+        k = len(u_axes)
+        layout = layout.update(
+            major_to_minor=(*range(k), *(m + k for m in layout.major_to_minor)))
     if mat.unreduced:
       mat = ManualAxisType(varying=mat.varying | mat.unreduced,
                            reduced=mat.reduced)
-    return [self.update(shape=shape, sharding=sharding, manual_axis_type=mat)]
+    return [self.update(shape=shape, sharding=sharding, manual_axis_type=mat,
+                        layout=layout)]
 
   def lower_val(self, hi_val: Any, /) -> list[Any]:
     if not self.is_high:

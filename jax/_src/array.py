@@ -1208,7 +1208,13 @@ class UnreducedArray(basearray.Array):
   @property
   def format(self):
     lo_f = getattr(self._lo_val, 'format', None)
-    return Format(lo_f.layout, self.sharding) if lo_f is not None else None
+    if lo_f is None:
+      return None
+    lo_l = lo_f.layout
+    if isinstance(lo_l, Layout) and (k := len(self._hi_aval.sharding.spec.unreduced)):
+      lo_l = lo_l.update(
+          major_to_minor=tuple(m - k for m in lo_l.major_to_minor if m >= k))
+    return Format(lo_l, self.sharding)
 
   @property
   def addressable_shards(self):
