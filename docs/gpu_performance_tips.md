@@ -113,6 +113,12 @@ You can control amount of reruns used to collect profile data by changing `JAX_P
 Increasing this parameter would lead to better profile information, but it will also increase the
 amount of non-optimized training steps.
 
+In a multi-process job, each profiled run is preceded by a barrier across all the devices of the
+computation, enqueued after the profiler has started. Starting the profiler takes a different amount
+of time in each process; without the barrier, the first collective of the run would absorb that skew
+and the waiting time would be recorded as part of its cost. Set `JAX_PGLE_BARRIER=false` to disable
+the barrier.
+
 Decreasing the `JAX_PGLE_AGGREGATION_PERCENTILE` parameter might help in case when performance between steps is too noisy to filter out a non-relevant measures.
 
 **Attention:** Auto PGLE doesn't work for pre-compiled modules. Since JAX need to recompile the module during execution the auto PGLE will not work neither for AoT nor for the following case:
