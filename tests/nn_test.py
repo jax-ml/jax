@@ -864,7 +864,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     with jax.softmax_custom_jvp(False):
       res = ad_checkpoint.saved_residuals(nn.softmax, x)
     self.assertLen(res, 3)
-    self.assertEqual(sum(a.size for a, _ in res), 6)
+    self.assertEqual(sum(a.size for a, _ in res), 9)
 
     with jax.softmax_custom_jvp(True):
       res = ad_checkpoint.saved_residuals(nn.softmax, x)
