@@ -51,6 +51,7 @@ from jax._src.lax import ann
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
+from jax._src.lib import ifrt_version
 from jax._src.lib import jax_mlir_ext
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
@@ -3729,10 +3730,16 @@ def _reduce_index_helper(
         x,
     )
     axis += 1
-    out_shape = (1, *out_aval.shape)
+    in_shape = (1, *x_aval.shape)
   else:
-    out_shape = out_aval.shape
+    in_shape = x_aval.shape
 
+  keep_dims = ifrt_version >= 81
+  out_shape = (
+      *in_shape[:axis],
+      *((1,) if keep_dims else ()),
+      *in_shape[axis + 1 :],
+  )
   native_dtype = jnp.int16 if x_aval.dtype == jnp.bfloat16 else jnp.int32
   native_out_type = ctx.aval_to_ir_type(
       jax_core.ShapedArray(out_shape, native_dtype)
@@ -3750,7 +3757,9 @@ def _reduce_index_helper(
     result = arith.extui(out_type, result)
 
   if is_1d:
-    return vector.extract(result, [], [0])
+    return vector.extract(result, [], [0] * len(out_shape))
+  if keep_dims:
+    return tpu.reshape(ctx.aval_to_ir_type(out_aval), result)
   return result
 
 @register_lowering_rule(lax.argmax_p, ensure_mlir_values=False)
