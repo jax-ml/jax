@@ -160,6 +160,18 @@ jax_multiplatform_test(
     ]),
 )
 
+jax_py_test(
+    name = "avals_test",
+    srcs = ["avals_test.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:test_util",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
 jax_multiplatform_test(
     name = "batching_test",
     srcs = ["batching_test.py"],

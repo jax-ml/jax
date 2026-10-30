@@ -229,6 +229,20 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "avals",
+    srcs = ["avals.py"],
+    deps = [
+        ":core",
+        ":dtypes",
+        ":mesh",
+        ":named_sharding",
+        ":partition_spec",
+        ":typing",
+        ":util",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
     name = "ad_util",
     srcs = ["ad_util.py"],
     deps = [

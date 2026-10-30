@@ -78,6 +78,7 @@ UNDOCUMENTED_APIS = {
 MODULES_TO_SKIP = [
   "jax.ad",
   "jax.api_util",  # internal tools, not documented.
+  "jax.avals",
   "jax.cloud_tpu_init",  # deprecated in JAX v0.8.1
   "jax.collect_profile",  # fails when xprof is not available.
   "jax.core",  # internal tools, not documented.
