@@ -34,6 +34,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
@@ -74,8 +75,10 @@ limitations under the License.
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/lru_cache.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
+#include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/index.h"
 #include "xla/python/ifrt/index_domain.h"
@@ -482,9 +485,9 @@ void CallShardArgFallback(nb::handle arg, nb::handle sharding,
 // to shard_args() in pxla.py but for only a few supported cases.
 absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     const PyLoadedExecutable& executable,
-    absl::Span<nb::object const> flat_dynamic_args,
-    absl::Span<PyArgSignature const> flat_dynamic_arg_signatures,
-    bool enable_x64, const std::vector<bool>& kept_args,
+    absl::Span<nb::object const> const_args,
+    absl::Span<nb::object const> flat_dynamic_args, bool enable_x64,
+    const std::vector<bool>& kept_args,
     const std::vector<nb::object>& in_shardings,
     const std::vector<nb::object>& in_device_local_layouts,
     const nb::callable& shard_arg_fallback,
@@ -495,10 +498,12 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       devices.has_value() ? (*devices)->AddressableDeviceList()->devices()
                           : absl::Span<xla::ifrt::Device* const>();
   const int num_global_devices = devices.has_value() ? (*devices)->size() : 1;
-  int num_args = flat_dynamic_args.size();
+  const int num_const_args = const_args.size();
+  const int num_args = num_const_args + flat_dynamic_args.size();
+  const int num_kept_args = in_shardings.size();
 
   std::vector<xla::ifrt::ArrayRef> num_args_arrays;
-  num_args_arrays.reserve(num_args);
+  num_args_arrays.reserve(num_kept_args);
 
   struct CopyGroup {
     std::vector<int> indices;
@@ -516,21 +521,24 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
   if (num_global_devices == 1 && !addressable_devices.empty()) {
     data_device = addressable_devices[0];
   }
+  PyObject* py_array_type = PyArray::type().ptr();
   int dce_i = 0;
-  for (int i = 0; i < num_args; ++i) {
+  for (int i = 0; i < num_args && dce_i < num_kept_args; ++i) {
     if (!kept_args[i]) {
       continue;
     }
     int dce_index = dce_i;
     ++dce_i;
 
-    const nb::object& arg = flat_dynamic_args[i];
+    const nb::object& arg = i < num_const_args
+                                ? const_args[i]
+                                : flat_dynamic_args[i - num_const_args];
     const nb::object& in_device_local_layout =
         in_device_local_layouts[dce_index];
 
     auto transfer_guard_formatter = [] { return std::string(""); };
 
-    if (arg.type().ptr() != PyArray::type().ptr()) {
+    if (arg.type().ptr() != py_array_type) {
       if (data_device != nullptr && in_device_local_layout.is_none()) {
         ABSL_RETURN_IF_ERROR(
             ApplyTransferGuardToHostToDevice(transfer_guard_formatter));
@@ -549,30 +557,31 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       }
     }
 
-    PyArray py_array = nb::borrow<PyArray>(arg);
-    const auto& sharding = py_array.sharding();
-    int sharding_num_devices =
-        nb::cast<const Sharding*>(sharding)->num_devices();
+    PyArray py_array = PyArray::borrow(arg.ptr());
+    xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
+    if (ABSL_PREDICT_FALSE(ifrt_array == nullptr || ifrt_array->IsDeleted())) {
+      return xla::InvalidArgument("Array has been deleted.");
+    }
+    const auto& ifrt_sharding = ifrt_array->sharding();
+    int sharding_num_devices = ifrt_sharding.devices()->size();
 
     // Currently only committed PyArray inputs or uncommitted PyArray on a
-    // single device inputs are allowed. This is checked previously in the entry
-    // point of PjitFunction::Call().
+    // single device inputs are allowed. This is checked previously in
+    // PjitFunction::ComputeCallSignature().
     DCHECK(py_array.committed() ||
            (!py_array.committed() && sharding_num_devices == 1));
 
     if (!in_device_local_layout.is_none()) {
-      xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
       ABSL_ASSIGN_OR_RETURN(auto arr_layout, ifrt_array->pjrt_layout());
       if (arr_layout == nullptr) {
-        ABSL_ASSIGN_OR_RETURN(
-            xla::ifrt::Shape shard_shape,
-            ifrt_array->sharding().GetShardShape(ifrt_array->shape()));
+        ABSL_ASSIGN_OR_RETURN(xla::ifrt::Shape shard_shape,
+                              ifrt_sharding.GetShardShape(ifrt_array->shape()));
         ABSL_ASSIGN_OR_RETURN(
             arr_layout,
             executable.ifrt_loaded_executable()->client()->GetDefaultPjRtLayout(
                 ifrt_array->dtype(), shard_shape.dims(),
-                ifrt_array->sharding().devices()->devices().front(),
-                ifrt_array->sharding().memory_kind()));
+                ifrt_sharding.devices()->devices().front(),
+                ifrt_sharding.memory_kind()));
       }
       xla::Layout in_xc_layout = nb::cast<xla::Layout>(
           in_device_local_layout.attr("_to_xla_layout")(py_array.dtype()));
@@ -591,26 +600,17 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       continue;
     }
 
-    xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
-    // PyArray inputs should have already been checked in
-    // `PyArgSignatureOfValue()` called by
-    // `PjitFunction::ComputeCallSignature()`.
-    DCHECK(ifrt_array != nullptr) << "PyArray has been unexpectedly deleted.";
-
-    const auto& ifrt_sharding = ifrt_array->sharding();
     if (sharding_num_devices == 1 && !addressable_devices.empty() &&
         ifrt_sharding.devices()->devices().front() != addressable_devices[0]) {
       auto& copy_group = copy_groups[std::make_tuple(
           ifrt_sharding.devices()->devices().front(),
           ifrt_sharding.memory_kind(), GetMemoryKind(in_shardings[dce_index]))];
       copy_group.indices.push_back(num_args_arrays.size());
-      copy_group.arrays.push_back(ifrt_array);
+      copy_group.arrays.push_back(std::move(ifrt_array));
       num_args_arrays.push_back({});
     } else {
-      num_args_arrays.push_back(ifrt_array);
+      num_args_arrays.push_back(std::move(ifrt_array));
     }
-
-    keep_alive_objects.push_back(arg);
   }
 
   if (!copy_groups.empty() && !addressable_devices.empty()) {
@@ -699,6 +699,10 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   CallSignature call_signature;
   std::vector<nb::object> keep_alive_objects;
   absl::InlinedVector<nb::object, 2> flat_dynamic_args;
+  if (static_argnums_.empty() && static_argnames_.empty() &&
+      num_positional_args + num_keyword_args > 2) {
+    flat_dynamic_args.reserve(num_positional_args + num_keyword_args);
+  }
   auto status = ParseArguments(
       positional_args, keyword_args, kwnames, static_argnums_, static_argnames_,
       pytree_registry_.get(), call_signature.arg_signature, flat_dynamic_args);
@@ -707,37 +711,13 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     return fallback_to_cache_miss("parse_arguments_failed");
   }
 
-  // Perform a few checks for the arguments. Currently we are only allowing
-  // committed PyArray inputs. For other cases, e.g. Tracers or ShapedArray, it
-  // will fallback to python. For jit, numpy arrays and scalars are also
-  // allowed, which we will check later.
-  for (const auto& arg : flat_dynamic_args) {
-    if (arg.type().ptr() != PyArray::type().ptr()) {
-      continue;
-    }
-
-    PyArray py_array = nb::borrow<PyArray>(arg);
-
-    // Only allow committed PyArray in cpp pjit for now as the logic on handling
-    // sharding for uncommitted PyArray is complicated and still under
-    // development.
-    //
-    // TODO(chky): Consider support uncommitted PyArray in cpp when the python
-    // side stabilizes.
-    int sharding_num_devices =
-        nb::cast<const Sharding*>(py_array.sharding())->num_devices();
-    if (!py_array.committed() && sharding_num_devices > 1) {
-      VLOG(2) << "PyArray argument is not committed and number of global "
-                 "devices is more than 1; fallback to python.";
-      return fallback_to_cache_miss("uncommitted_multi_device_array");
-    }
-  }
-
   bool enable_x64 = GetEnableX64();
   status = ComputeCallSignature(flat_dynamic_args, enable_x64, call_signature);
   if (!status.ok()) {
     VLOG(2) << "ComputeCallSignature failed: " << status;
-    return fallback_to_cache_miss("compute_call_signature_failed");
+    return fallback_to_cache_miss(absl::IsFailedPrecondition(status)
+                                      ? "uncommitted_multi_device_array"
+                                      : "compute_call_signature_failed");
   }
 
   VLOG(2) << "CallSignature:\n" << call_signature.DebugString();
@@ -810,30 +790,20 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     return fallback_to_cache_miss("cache_entry_fall_back_to_python");
   }
 
-  absl::InlinedVector<PyArgSignature, 2> dynamic_arg_signatures;
-  dynamic_arg_signatures.reserve(cache_entry->const_args.size() +
-                                 flat_dynamic_args.size());
   if (!cache_entry->const_args.empty()) {
-    flat_dynamic_args.reserve(cache_entry->const_args.size() +
-                              flat_dynamic_args.size());
-    flat_dynamic_args.insert(flat_dynamic_args.begin(),
-                             cache_entry->const_args.begin(),
-                             cache_entry->const_args.end());
-
+    PyObject* py_array_type = PyArray::type().ptr();
     for (nb::handle const_arg : cache_entry->const_args) {
-      ABSL_ASSIGN_OR_RETURN(auto const_arg_signature,
-                            PyArgSignatureOfValue(const_arg, enable_x64));
-      dynamic_arg_signatures.push_back(std::move(const_arg_signature));
+      if (const_arg.type().ptr() == py_array_type &&
+          PyArray::borrow(const_arg.ptr()).IsDeleted()) {
+        return xla::InvalidArgument("Array has been deleted.");
+      }
     }
-  }
-  for (const auto& arg : call_signature.dynamic_arg_signatures) {
-    dynamic_arg_signatures.push_back(std::move(arg));
   }
 
   PyUserContextScope user_context_scope;
   // A vector of [num_inputs].
   auto num_args_arrays = PrepareIfrtInputs(
-      *cache_entry->executable, flat_dynamic_args, dynamic_arg_signatures,
+      *cache_entry->executable, cache_entry->const_args, flat_dynamic_args,
       enable_x64, cache_entry->kept_var_bitvec, cache_entry->in_shardings,
       cache_entry->in_device_local_layouts, shard_arg_fallback_,
       keep_alive_objects);
@@ -856,9 +826,9 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
 
   // Check if the thread guard is active and should prevent execution.
   // Skipped for portable executables.
-  if (cache_entry->executable->ifrt_executable()->devices().has_value()) {
-    ABSL_RETURN_IF_ERROR(CheckThreadGuard(
-        *cache_entry->executable->ifrt_executable()->devices()));
+  if (auto devices = cache_entry->executable->ifrt_executable()->devices();
+      devices.has_value()) {
+    ABSL_RETURN_IF_ERROR(CheckThreadGuard(*devices));
   }
 
   // A vector of [num_outputs].
@@ -874,24 +844,35 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
 
   // Convert the ifrt::Array objects to PyArray.
   int num_outputs = output_arrays.size();
-  absl::InlinedVector<nb::object, 4> outputs;
-  outputs.reserve(num_outputs);
-  for (int i = 0; i < num_outputs; ++i) {
-    // Creating the PyArray result. In addition to the IFRT arrays, the metadata
-    // like `aval` and `sharding` are retrieved from the cache for this
-    // function, which are produced by the python path in `cache_miss`.
-    PyArray py_array(cache_entry->out_avals[i], cache_entry->out_weak_types[i],
-                     cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
-                     cache_entry->out_shardings[i],
-                     cache_entry->executable->client(),
-                     std::move(output_arrays[i]),
-                     /*committed=*/cache_entry->out_committed.at(i));
+  nb::object out;
+  if (num_outputs == 1 && cache_entry->out_pytree_def.num_leaves() == 1 &&
+      cache_entry->out_pytree_def.num_nodes() == 1) {
+    out =
+        PyArray(cache_entry->out_avals[0], cache_entry->out_weak_types[0],
+                cache_entry->out_dtypes[0], cache_entry->out_shapes[0],
+                cache_entry->out_shardings[0],
+                cache_entry->executable->client(), std::move(output_arrays[0]),
+                /*committed=*/cache_entry->out_committed.at(0));
+  } else {
+    absl::InlinedVector<nb::object, 4> outputs;
+    outputs.reserve(num_outputs);
+    for (int i = 0; i < num_outputs; ++i) {
+      // Creating the PyArray result. In addition to the IFRT arrays, the
+      // metadata like `aval` and `sharding` are retrieved from the cache for
+      // this function, which are produced by the python path in `cache_miss`.
+      PyArray py_array(
+          cache_entry->out_avals[i], cache_entry->out_weak_types[i],
+          cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
+          cache_entry->out_shardings[i], cache_entry->executable->client(),
+          std::move(output_arrays[i]),
+          /*committed=*/cache_entry->out_committed.at(i));
 
-    outputs.push_back(std::move(py_array));
+      outputs.push_back(std::move(py_array));
+    }
+
+    out = nb::steal<nb::object>(
+        cache_entry->out_pytree_def.Unflatten(outputs).release().ptr());
   }
-
-  nb::object out = nb::steal<nb::object>(
-      cache_entry->out_pytree_def.Unflatten(outputs).release().ptr());
 
   // If there is a post-hook function, call it with the inputs and the outputs.
   std::optional<nb::object> post_hook = GetPostHook();
@@ -926,29 +907,93 @@ absl::Status PjitFunction::ComputeCallSignature(
   dynamic_arg_shardings.reserve(flat_dynamic_args.size());
   auto& dynamic_arg_layouts = signature.dynamic_arg_layouts;
   dynamic_arg_layouts.reserve(flat_dynamic_args.size());
+  signature.committed_args.reserve(flat_dynamic_args.size());
+
+  PyObject* py_array_type = PyArray::type().ptr();
+  xla::ifrt::DType prev_ifrt_dtype(xla::ifrt::DType::kInvalid);
+  auto prev_primitive_type = xla::PRIMITIVE_TYPE_INVALID;
+  const xla::ifrt::Device* prev_device = nullptr;
+  xla::ifrt::DType prev_layout_dtype(xla::ifrt::DType::kInvalid);
+  xla::ifrt::MemoryKind prev_memory_kind;
+  absl::Span<const int64_t> prev_shape;
+  decltype(signature.dynamic_arg_layouts)::value_type prev_default_layout;
 
   for (nb::handle arg : flat_dynamic_args) {
-    ABSL_ASSIGN_OR_RETURN(auto arg_signature,
-                          PyArgSignatureOfValue(arg, enable_x64));
-    signature.dynamic_arg_signatures.push_back(std::move(arg_signature));
-
-    // It should be already checked previously in the entry point of
-    // PjitFunction::Call().
-    if (arg.type().ptr() == PyArray::type().ptr()) {
-      auto py_array = nb::borrow<PyArray>(arg);
-      signature.dynamic_arg_shardings.push_back(py_array.sharding());
-      auto layout = py_array.layout();
+    if (arg.type().ptr() == py_array_type) {
+      PyArray py_array = PyArray::borrow(arg.ptr());
+      xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
+      if (ABSL_PREDICT_FALSE(ifrt_array == nullptr ||
+                             ifrt_array->IsDeleted())) {
+        return xla::InvalidArgument("Array has been deleted.");
+      }
+      bool committed = py_array.committed();
+      const xla::ifrt::Sharding& ifrt_sharding = ifrt_array->sharding();
+      absl::Span<xla::ifrt::Device* const> sharding_devices =
+          ifrt_sharding.devices()->devices();
+      // Only allow committed PyArray in cpp pjit for now as the logic on
+      // handling sharding for uncommitted PyArray is complicated and still
+      // under development.
+      //
+      // TODO(chky): Consider support uncommitted PyArray in cpp when the python
+      // side stabilizes.
+      if (ABSL_PREDICT_FALSE(!committed && sharding_devices.size() > 1)) {
+        return absl::FailedPreconditionError(
+            "PyArray argument is not committed and number of global devices "
+            "is more than 1.");
+      }
+      xla::ifrt::DType ifrt_dtype = ifrt_array->dtype();
+      if (ifrt_dtype != prev_ifrt_dtype) {
+        ABSL_ASSIGN_OR_RETURN(prev_primitive_type,
+                              xla::ifrt::ToPrimitiveType(ifrt_dtype));
+        prev_ifrt_dtype = ifrt_dtype;
+      }
+      absl::Span<const int64_t> shape = py_array.shape();
+      dynamic_arg_signatures.emplace_back(prev_primitive_type, shape,
+                                          py_array.weak_type());
+      dynamic_arg_shardings.push_back(py_array.sharding());
+      auto layout = ifrt_array->pjrt_layout();
+      if (layout.ok() && *layout == nullptr) {
+        xla::ifrt::MemoryKind memory_kind = ifrt_sharding.memory_kind();
+        if (ifrt_sharding.IsFullyReplicated() && !sharding_devices.empty()) {
+          xla::ifrt::Device* device = sharding_devices.front();
+          if (prev_default_layout != nullptr && device == prev_device &&
+              ifrt_dtype == prev_layout_dtype &&
+              memory_kind == prev_memory_kind && shape == prev_shape) {
+            layout = prev_default_layout;
+          } else {
+            layout = ifrt_array->client()->GetDefaultPjRtLayout(
+                ifrt_dtype, shape, device, memory_kind);
+            if (layout.ok()) {
+              prev_default_layout = *layout;
+              prev_device = device;
+              prev_layout_dtype = ifrt_dtype;
+              prev_memory_kind = memory_kind;
+              prev_shape = shape;
+            }
+          }
+        } else {
+          auto shard_shape = ifrt_sharding.GetShardShape(ifrt_array->shape());
+          layout = shard_shape.ok()
+                       ? ifrt_array->client()->GetDefaultPjRtLayout(
+                             ifrt_dtype, shard_shape->dims(),
+                             sharding_devices.front(), memory_kind)
+                       : shard_shape.status();
+        }
+      }
       if (layout.ok()) {
-        signature.dynamic_arg_layouts.push_back(*std::move(layout));
+        dynamic_arg_layouts.push_back(*std::move(layout));
       } else if (absl::IsUnimplemented(layout.status())) {
-        signature.dynamic_arg_layouts.push_back(nullptr);
+        dynamic_arg_layouts.push_back(nullptr);
       } else {
         return layout.status();
       }
-      signature.committed_args.push_back(py_array.committed());
+      signature.committed_args.push_back(committed);
     } else {
-      signature.dynamic_arg_shardings.push_back(nb::none());
-      signature.dynamic_arg_layouts.push_back(nullptr);
+      ABSL_ASSIGN_OR_RETURN(auto arg_signature,
+                            PyArgSignatureOfValue(arg, enable_x64));
+      dynamic_arg_signatures.push_back(std::move(arg_signature));
+      dynamic_arg_shardings.push_back(nb::none());
+      dynamic_arg_layouts.push_back(nullptr);
       signature.committed_args.push_back(false);
     }
   }
