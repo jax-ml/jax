@@ -50,6 +50,15 @@ XLA_FFI_DEFINE_HANDLER(kStateExecute, StateExecute,
                            .Ctx<ffi::State<State>>()
                            .Ret<ffi::BufferR0<ffi::S32>>());
 
+#if XLA_FFI_API_MINOR >= 4
+static ffi::Error StateRecord(ffi::ResultBufferR0<ffi::S32>) {
+  return ffi::Error::Internal("FFI record handler invoked");
+}
+
+XLA_FFI_DEFINE_HANDLER(kStateRecord, StateRecord,
+                       ffi::Ffi::BindRecord().Ret<ffi::BufferR0<ffi::S32>>());
+#endif
+
 NB_MODULE(_gpu_examples, m) {
   m.def("type_id",
         []() { return nb::capsule(reinterpret_cast<void*>(&State::id)); });
@@ -72,4 +81,8 @@ NB_MODULE(_gpu_examples, m) {
     d["execute"] = nb::capsule(reinterpret_cast<void*>(kStateExecute));
     return d;
   });
+#if XLA_FFI_API_MINOR >= 4
+  m.def("record_handler",
+        []() { return nb::capsule(reinterpret_cast<void*>(kStateRecord)); });
+#endif
 }
