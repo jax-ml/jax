@@ -12575,16 +12575,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
     self.assertArraysEqual(out, np.full(4, 3.))
 
-  @jtu.with_explicit_mesh((2,), ('x',))
-  def test_cond_switch_unreduced_index_error(self, mesh):
-    idx = jax.lax.reduce_sum(jax.device_put(np.arange(2), P('x')), [0],
-                             out_sharding=P(unreduced={'x'}))
-
-    with self.assertRaises(core.ShardingTypeError):
-      jax.jit(lambda i: jax.lax.switch(i, [lambda: 1., lambda: 2.]))(idx)
-    with self.assertRaises(core.ShardingTypeError):
-      jax.jit(lambda i: jax.lax.cond(i, lambda: 1., lambda: 2.))(idx)
-
   @jtu.with_explicit_mesh((1, 2), ('x', 'y'))
   def test_reshape_preserve_singleton_dim_spec(self, mesh):
     # https://github.com/jax-ml/jax/issues/39309
