@@ -1470,7 +1470,7 @@ def _slice_transpose_fancy(out_ct, operand, *, start_indices, limit_indices, str
                  np.add(1, np.multiply(np.subtract(out_ct.shape, 1), strides))))
       pads = zip(start_indices, np.subtract(operand_aval.shape, real_limits),
                  np.subtract(strides, 1))
-    operand.accum(lax.pad(out_ct, lax._const(out_ct, 0), pads))
+    operand.accum(lax.pad(out_ct, lax._zero(out_ct), pads))
 
 
 def _slice_batching_rule(batched_args, batch_dims, *, start_indices,

@@ -5873,6 +5873,90 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out2.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
 
   @jtu.with_explicit_mesh((2,), 'x')
+  def test_pad_unreduced_constant_error(self, mesh):
+    arr = jax.device_put(jnp.arange(4.), P(unreduced={'x'}))
+
+    @jax.shard_map(out_specs=P(unreduced={'x'}))
+    def f(x):
+      return jnp.pad(x, 1, constant_values=1.)
+
+    with self.assertRaises(core.ShardingTypeError):
+      f(arr)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_concat_where_unreduced_constant_error(self, mesh):
+    arr = jax.device_put(jnp.arange(4.), P(unreduced={'x'}))
+
+    @jax.shard_map(out_specs=P(unreduced={'x'}))
+    def f(x):
+      return jnp.concatenate([x, jnp.ones(4)])
+
+    with self.assertRaises(core.ShardingTypeError):
+      f(arr)
+
+    @jax.shard_map(out_specs=P(unreduced={'x'}))
+    def g(x):
+      return jnp.where(True, 1., x)
+
+    with self.assertRaises(core.ShardingTypeError):
+      g(arr)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_slice_split_reduced_grad(self, mesh):
+    arr = jax.device_put(jnp.arange(4.), P(reduced={'x'}))
+
+    @jax.shard_map(out_specs=P(reduced={'x'}))
+    def f(x):
+      return x[1:3]
+
+    g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertArraysEqual(jax.reshard(g, P()), np.array([0., 1., 1., 0.]))
+
+    @jax.shard_map(out_specs=P(reduced={'x'}))
+    def h(x):
+      return jax.lax.split(x, (2, 2))[0]
+
+    g = jax.jit(jax.grad(lambda x: h(x).sum()))(arr)
+    self.assertArraysEqual(jax.reshard(g, P()), np.array([1., 1., 0., 0.]))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_full_like_unreduced(self, mesh):
+    arr = jax.device_put(jnp.arange(4.), P(unreduced={'x'}))
+
+    @jax.shard_map(out_specs=P(unreduced={'x'}))
+    def f(x):
+      out = jnp.full_like(x, 3.)
+      self.assertEqual(jax.typeof(out).mat.unreduced, frozenset({'x'}))
+      return out
+
+    self.assertArraysEqual(jax.reshard(f(arr), P()), np.full(4, 3.))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_full_like_unreduced_partial_fill(self, mesh):
+    arr = jax.device_put(jnp.arange(4.), P(unreduced={'x', 'y'}))
+    c = jax.device_put(jnp.array(3.), P(unreduced={'x'}))
+
+    @jax.shard_map(out_specs=P(unreduced={'x', 'y'}))
+    def f(x, c):
+      out = jnp.full_like(x, c)  # only 'y' is newly unreduced
+      self.assertEqual(jax.typeof(out).mat.unreduced, frozenset({'x', 'y'}))
+      return out
+
+    self.assertArraysEqual(jax.reshard(f(arr, c), P()), np.full(4, 3.))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_full_like_reduced(self, mesh):
+    arr = jax.device_put(jnp.arange(4.), P(reduced={'x'}))
+
+    @jax.shard_map(out_specs=P(reduced={'x'}))
+    def f(x):
+      out = jnp.full_like(x, 3.)
+      self.assertEqual(jax.typeof(out).mat.reduced, frozenset({'x'}))
+      return out
+
+    self.assertArraysEqual(f(arr), np.full(4, 3.))
+
+  @jtu.with_explicit_mesh((2,), 'x')
   def test_residual_reduced_preserved_via_nospec(self, mesh):
     arr = jax.device_put(jnp.arange(8.), P(reduced={'x'}))
 

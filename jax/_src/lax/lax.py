@@ -3745,7 +3745,9 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     weak_type = False
     fill_dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full")
   fill_value = _convert_element_type(fill_value, fill_dtype, weak_type)
-  if (sharding is not None and
+  has_unreduced = (isinstance(sharding, NamedSharding) and
+                   bool(sharding.spec.unreduced))
+  if (sharding is not None and not has_unreduced and
       isinstance(fill_value, array.ArrayImpl) and sharding._is_concrete):
     broadcast_shape = sharding.shard_shape(shape)
     shard = broadcast(fill_value, broadcast_shape)
@@ -3753,7 +3755,7 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     return array.make_array_from_callback(
         shape, sharding, lambda _: shard, dtype=fill_dtype)
 
-  if sharding is not None and not sharding._is_concrete:
+  if sharding is not None and (not sharding._is_concrete or has_unreduced):
     return broadcast(fill_value, shape, out_sharding=sharding)
   else:
     return broadcast(fill_value, shape)
@@ -3768,6 +3770,17 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
     scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
   out = broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
   out = core.pvary(out, tuple(aval.mat.varying))
+  if aval.mat.reduced:
+    from jax._src.lax import parallel as lax_parallel  # type: ignore
+    out = lax_parallel.preduced(out, tuple(aval.mat.reduced))
+  if aval.mat.unreduced:
+    from jax._src.lax import parallel as lax_parallel  # type: ignore
+    if aval.mat.unreduced_kind is not UnreducedKind.sum:
+      raise ValueError(
+          'zeros_like_shaped_array only supports UnreducedKind.sum, got'
+          f' {aval.mat.unreduced_kind} on {aval}')
+    u_axes = tuple(aval.mat.unreduced)
+    out = lax_parallel.vary_unreduced_cast(core.pvary(out, u_axes), u_axes)
   # TODO(yashkatariya): Add `out_layout` to `broadcast`.
   if core.typeof(out).layout != aval.layout:
     out = pjit.relayout(out, aval.layout)
@@ -4034,7 +4047,19 @@ def _full_like_insert_pvary(val, x):
     return core.pvary(val, all_varying)
   else:
     val, _ = core.auto_insert_reshard(val, x)
-    return val
+    if not (isinstance(x, core.Tracer) and isinstance(x.aval, ShapedArray)):
+      return val
+    return _insert_reduced_unreduced(val, x.aval.mat)
+
+def _insert_reduced_unreduced(val, x_mat):
+  from jax._src.lax import parallel as lax_parallel  # type: ignore
+  if r := tuple(x_mat.reduced - typeof(val).mat.reduced):
+    val = lax_parallel.preduced(val, r)
+  if u := tuple(x_mat.unreduced - typeof(val).mat.unreduced):
+    # Keep the value on one device and 0 on the rest so the sum over `u` is it.
+    val = select(lax_parallel.axis_index(u) == 0, val, full_like(val, 0))
+    val = lax_parallel.vary_unreduced_cast(val, u)
+  return val
 
 def empty_like(x: ArrayLike | DuckTypedArray, *,
                dtype: DTypeLike | None = None,
@@ -8124,23 +8149,21 @@ def _concatenate_sharding_rule(*operands, **kwargs):
   return non_empty_s[0]
 
 def _concatenate_reduced_rule(*operands, **kwargs):
-  reduced_specs = {r for o in operands if (r := getr(o))}
-  if len(reduced_specs) > 1:
+  out_reduced = getr(operands[0])
+  if any(getr(o) != out_reduced for o in operands[1:]):
     raise core.ShardingTypeError(
         'All operands should be reduced along the same mesh axes. Got reduced'
-        f' specs: {reduced_specs}')
-  reduced_s, = reduced_specs if reduced_specs else (frozenset(),)
-  return reduced_s
+        f' specs: {[getr(o) for o in operands]}')
+  return out_reduced
 
 def _concatenate_unreduced_rule(*operands, **kwargs):
-  unreduced_specs = {uk for o in operands if (uk := getu(o, None))[0]}
-  if len(unreduced_specs) > 1:
+  out_unreduced, kind = getu(operands[0], None)
+  if any(getu(o, None) != (out_unreduced, kind) for o in operands[1:]):
     raise core.ShardingTypeError(
         'All operands should be unreduced along the same mesh axes and have the'
-        f' same unreduced_kind. Got unreduced specs: {unreduced_specs}')
-  (unreduced_s, kind), = (unreduced_specs if unreduced_specs else
-                          ((frozenset(), None),))
-  return unreduced_s, kind
+        f' same unreduced_kind. Got unreduced specs:'
+        f' {[getu(o, None) for o in operands]}')
+  return out_unreduced, kind
 
 def _concatenate_ur_rule(*operands, **kwargs):
   out_unreduced, kind = _concatenate_unreduced_rule(*operands, **kwargs)
@@ -8565,9 +8588,23 @@ def _pad_sharding_rule(operand, padding_value, *, padding_config):
       out_shape, operand, 'padding')
 
 def _pad_ur_rule(operand, padding_value, *, padding_config):
-  out_unreduced, _ = core.getu(operand)
-  kind = UnreducedKind.sum if out_unreduced else None
-  return out_unreduced, core.getr(operand), kind
+  op_u, op_k = core.getu(operand, None)
+  pv_u, pv_k = core.getu(padding_value, None)
+  if op_u != pv_u or (op_u and op_k is not pv_k):
+    raise core.ShardingTypeError(
+        'pad operand and padding_value must be unreduced along the same mesh'
+        f' axes and have the same unreduced_kind. Got operand={operand} and'
+        f' padding_value={padding_value}')
+  if op_u and op_k is not UnreducedKind.sum:
+    raise core.ShardingTypeError(
+        f'pad only supports UnreducedKind.sum, got {op_k} on operand={operand}')
+  op_r, pv_r = core.getr(operand), core.getr(padding_value)
+  if op_r != pv_r:
+    raise core.ShardingTypeError(
+        'pad operand and padding_value must be reduced along the same mesh'
+        f' axes. Got operand={operand} and padding_value={padding_value}')
+  kind = UnreducedKind.sum if op_u else None
+  return op_u, op_r, kind
 
 def _pad_transpose(t, operand, padding_value, *, padding_config):
   if type(t) is ad_util.Zero:
@@ -8580,12 +8617,17 @@ def _pad_transpose(t, operand, padding_value, *, padding_config):
     def t_op():
       unpad_config = safe_zip(np.negative(lo), np.negative(hi),
                               np.zeros_like(interior))
-      unpadded = pad(t, np.array(0., t.dtype), unpad_config)
+      unpadded = pad(t, _zero(t), unpad_config)
       return slicing.slice(unpadded, list(np.zeros_like(lo)), unpadded.shape,
                            list(np.add(interior, 1)))
 
-    t_operand = t_op() if ad.is_undefined_primal(operand) else None
-    t_padv = sub(total(t), total(t_operand)) if ad.is_undefined_primal(padding_value) else None
+    t_operand = t_padv = None
+    if ad.is_undefined_primal(operand) or ad.is_undefined_primal(padding_value):
+      unpadded_op = t_op()
+      if ad.is_undefined_primal(operand):
+        t_operand = unpadded_op
+      if ad.is_undefined_primal(padding_value):
+        t_padv = sub(total(t), total(unpadded_op))
   return [t_operand, t_padv]
 
 def _pad_batch_rule(batched_args, batch_dims, *, padding_config):
@@ -9244,14 +9286,21 @@ def _select_sharding_rule(which, *cases):
   return first_s
 
 def _select_ur_rule(which, *cases):
-  non_empty_cs = [c for c in cases if not c.sharding.mesh.empty]
-  if not non_empty_cs:
-    return frozenset(), frozenset(), None
-  # which and all cases have the same sharding check is already done in select
-  # sharding rule.
-  out_unreduced, _ = core.getu(non_empty_cs[0])
-  kind = UnreducedKind.sum if out_unreduced else None
-  return out_unreduced, core.getr(non_empty_cs[0]), kind
+  if core.getu(which, None)[0]:
+    raise core.ShardingTypeError(
+        f'select `which` cannot have unreduced axes. Got which={which}')
+  out_unreduced, kind = core.getu(cases[0], None)
+  if any(core.getu(c, None) != (out_unreduced, kind) for c in cases[1:]):
+    raise core.ShardingTypeError(
+        'All select cases should be unreduced along the same mesh axes and'
+        ' have the same unreduced_kind. Got unreduced specs:'
+        f' {[core.getu(c, None) for c in cases]}')
+  out_reduced = core.getr(cases[0])
+  if any(core.getr(c) != out_reduced for c in cases[1:]):
+    raise core.ShardingTypeError(
+        'All select cases should be reduced along the same mesh axes. Got'
+        f' reduced specs: {[core.getr(c) for c in cases]}')
+  return out_unreduced, out_reduced, kind
 
 def _select_dtype_rule(which, *cases):
   check_same_dtypes("select", *cases)
@@ -10896,10 +10945,9 @@ def _const(example, val):
 _zeros: Callable = partial(full_like, fill_value=0)
 
 def _zero(x):
-  x_aval = core.typeof(x)
-  out = full_like(x, shape=(), fill_value=0,
-                  sharding=x_aval.sharding.update(spec=P()))
-  return out
+  s = core.typeof(x).sharding
+  return full_like(x, shape=(), fill_value=0,
+                   sharding=s.update(spec=s.spec.update(partitions=())))
 
 _ones: Callable = partial(full_like, fill_value=1)
 

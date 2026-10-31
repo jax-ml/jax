@@ -12489,6 +12489,92 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     for o, r in zip(manual_fn(u), ref_outs):
       self.assertArraysEqual(o, r)
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_pad_unreduced(self, mesh):
+    np_inp = np.arange(8.).reshape(2, 4)
+    arr = jax.device_put(np_inp, P('x'))
+    u = jax.lax.reduce_sum(arr, [0], out_sharding=P(unreduced={'x'}))
+    c = jax.reshard(jnp.array(1., dtype=u.dtype), P(unreduced={'x'}))
+
+    out = jax.jit(lambda x, c: jnp.pad(x, 1, constant_values=c))(u, c)
+    self.assertEqual(out.sharding, u.sharding)
+    self.assertArraysEqual(reshard(out, P()),
+                           np.pad(np_inp.sum(0), 1, constant_values=1.))
+
+    with self.assertRaises(core.ShardingTypeError):
+      jnp.pad(u, 1, constant_values=1.)
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_pad_slice_reduced_grad(self, mesh):
+    np_inp = np.arange(4.)
+    arr = jax.device_put(np_inp, P(reduced={'x'}))
+
+    out = jax.jit(lambda x: jnp.pad(x, 1))(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+    self.assertArraysEqual(out, np.pad(np_inp, 1))
+
+    g = jax.jit(jax.grad(lambda x: jnp.pad(x, 1).sum()))(arr)
+    self.assertEqual(g.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    self.assertArraysEqual(reshard(g, P()), np.ones(4))
+
+    g = jax.jit(jax.grad(lambda x: x[1:3].sum()))(arr)
+    self.assertEqual(g.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    self.assertArraysEqual(reshard(g, P()), np.array([0., 1., 1., 0.]))
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_concatenate_unreduced_with_constant_error(self, mesh):
+    np_inp = np.arange(8.).reshape(2, 4)
+    arr = jax.device_put(np_inp, P('x'))
+    u = jax.lax.reduce_sum(arr, [0], out_sharding=P(unreduced={'x'}))
+
+    out = jax.jit(lambda x: jnp.concatenate([x, x]))(u)
+    self.assertArraysEqual(reshard(out, P()), np.tile(np_inp.sum(0), 2))
+
+    with self.assertRaises(core.ShardingTypeError):
+      jax.jit(lambda x: jnp.concatenate([x, jnp.array([1.])]))(u)
+    with self.assertRaises(core.ShardingTypeError):
+      jax.jit(lambda x: jnp.stack([x, jnp.ones(4)]))(u)
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_where_unreduced_with_constant_error(self, mesh):
+    np_inp = np.arange(8.).reshape(2, 4)
+    arr = jax.device_put(np_inp, P('x'))
+    u1 = jax.lax.reduce_sum(arr, [0], out_sharding=P(unreduced={'x'}))
+    u2 = jax.lax.reduce_sum(arr * 2, [0], out_sharding=P(unreduced={'x'}))
+    pred = np.array([True, False, True, False])
+
+    out = jax.jit(lambda x, y: jnp.where(pred, x, y))(u1, u2)
+    self.assertArraysEqual(reshard(out, P()),
+                           np.where(pred, np_inp.sum(0), 2 * np_inp.sum(0)))
+
+    with self.assertRaises(core.ShardingTypeError):
+      jax.jit(lambda x: jnp.where(True, jnp.ones(4), x))(u1)
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_full_like_unreduced(self, mesh):
+    arr = jax.device_put(np.arange(8.).reshape(2, 4), P('x'))
+    u = jax.lax.reduce_sum(arr, [0], out_sharding=P(unreduced={'x'}))
+
+    out = jnp.zeros_like(u)
+    self.assertEqual(out.sharding, u.sharding)
+    self.assertArraysEqual(reshard(out, P()), np.zeros(4))
+
+    out = jnp.ones_like(u)
+    self.assertEqual(out.sharding, u.sharding)
+    self.assertArraysEqual(reshard(out, P()), np.ones(4))
+
+    out = jax.jit(lambda x: jnp.full_like(x, 3.))(u)
+    self.assertEqual(out.sharding, u.sharding)
+    self.assertArraysEqual(reshard(out, P()), np.full(4, 3.))
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_full_like_reduced(self, mesh):
+    arr = jax.device_put(np.arange(4.), P(reduced={'x'}))
+
+    out = jax.jit(lambda x: jnp.full_like(x, 3.))(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+    self.assertArraysEqual(out, np.full(4, 3.))
+
   @jtu.with_explicit_mesh((1, 2), ('x', 'y'))
   def test_reshape_preserve_singleton_dim_spec(self, mesh):
     # https://github.com/jax-ml/jax/issues/39309
