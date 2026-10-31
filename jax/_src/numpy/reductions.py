@@ -2822,7 +2822,13 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     target_w_aligned = target_w if keepdims else lax.expand_dims(target_w, (axis + q_ndim,))
     cw_f = lax.expand_dims(cum_weights, tuple(range(q_ndim)))
     is_less = lax.lt(cw_f, target_w_aligned)
+    is_less = lax.bitwise_or(
+        is_less,
+        lax.bitwise_and(
+            lax.eq(cw_f, lax._const(cw_f, 0)),
+            lax.eq(target_w_aligned, lax._const(target_w_aligned, 0))))
     idx = sum(lax.convert_element_type(is_less, dtypes.default_int_dtype()), axis=axis + q_ndim, keepdims=keepdims)
+    idx = _where(lax.eq(tw_f, lax._const(tw_f, 0)), 0, idx)
     if squash_nans:
       valid_counts = sum(lax.bitwise_not(nan_data), axis=axis, dtype=q.dtype, keepdims=keepdims)
     else:
