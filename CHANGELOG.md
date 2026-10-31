@@ -27,6 +27,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.scipy.special.gammaincinv` and
     {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
     incomplete gamma functions, with gradients with respect to both arguments.
+  * Added {func}`jax.distributed.client` and
+    {func}`jax.distributed.detected_cluster`. ``client`` returns the
+    coordination client used as the key-value store and barrier after
+    {func}`jax.distributed.initialize`. ``detected_cluster`` reports which
+    cluster no-argument ``initialize`` would auto-detect, without starting
+    the coordination service.
   * Added {func}`jax.scipy.special.jn`, an accurate implementation of bessel
     functions of the first kind of integer order.
 
