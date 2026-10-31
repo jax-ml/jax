@@ -9931,9 +9931,7 @@ def _reduce_collective_rule(all_reduce_fn, scatter_fn, in_aval, out_aval, axes):
     # TODO(rdyro): Drop `scatter_fn is None` once p{min,max}_scatter land.
     if (scatter_fn is None or out_t[:len(kept_t)] != kept_t or
         not set(scatter_axes) <= reduced_axes_set):
-      # Fall back to default lowering, as `shard_map`'s `out_specs` already
-      # expects the scattered shape/VMA.
-      return None
+      raise NotImplementedError
     scatters.append((dim, scatter_axes))
     scattered_axes.update(scatter_axes)
 

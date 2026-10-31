@@ -1063,7 +1063,8 @@ class PartitioningRule:
 _lowerings: dict[core.Primitive, LoweringRuleEntry] = {}
 _platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRuleEntry]]
 _platform_specific_lowerings = collections.defaultdict(dict)
-shard_map_collective_rules: dict[core.Primitive, Callable] = {}
+shard_map_collective_rules: dict[
+    core.Primitive, Callable[..., PartitioningRule]] = {}
 shard_map_passthrough_primitives: set[core.Primitive] = {
     core.call_p,
     core.closed_call_p,
@@ -1094,9 +1095,9 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
       temporary flag that will be removed after primitives that have problems
       with caching are fixed.
     shard_map_collective_rule: Optional rule returning ``PartitioningRule`` (or
-      ``None`` if unsupported, raising ``NotImplementedError``) to lower
-      explicit-mesh collectives via ``shard_map`` when
-      ``jax_shard_map_partitioning`` is enabled.
+      raising ``NotImplementedError`` if unsupported) to lower explicit-mesh
+      collectives via ``shard_map`` when ``jax_shard_map_partitioning`` is
+      enabled.
     shard_map_passthrough: If ``True``, allow this higher-order container
       primitive to lower directly so its sub-jaxprs are partitioned instead.
   """
@@ -2581,8 +2582,7 @@ def _maybe_lower_with_shard_map(
   out_aval, = ctx.avals_out
   assert isinstance(out_aval, core.ShapedArray)
 
-  if (collectives := rule(*ctx.avals_in, out_aval, **params)) is None:
-    raise NotImplementedError
+  collectives = rule(*ctx.avals_in, out_aval, **params)
   assert isinstance(collectives, PartitioningRule)
 
   # TODO(rdyro): Move this into PartitioningRule's per-shard params mapping.

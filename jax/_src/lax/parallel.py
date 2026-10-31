@@ -1182,20 +1182,20 @@ def _is_dim_sharded(aval, dim: int, tiled: bool) -> bool:
 def _all_gather_collective_rule(
     in_aval, out_aval, *, all_gather_dimension, tiled, **params):
   if _is_dim_sharded(in_aval, all_gather_dimension, tiled):
-    return None
+    raise NotImplementedError
   return mlir.PartitioningRule()
 
 def _reduce_scatter_collective_rule(
     in_aval, out_aval, *, scatter_dimension, tiled, **params):
   if _is_dim_sharded(in_aval, scatter_dimension, tiled):
-    return None
+    raise NotImplementedError
   return mlir.PartitioningRule()
 
 def _all_to_all_collective_rule(
     in_aval, out_aval, *, split_axis, concat_axis, tiled, **params):
   if (_is_dim_sharded(in_aval, split_axis, tiled) or
       _is_dim_sharded(in_aval, concat_axis, tiled)):
-    return None
+    raise NotImplementedError
   return mlir.PartitioningRule()
 
 psum_p = core.Primitive('psum')
