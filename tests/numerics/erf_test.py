@@ -598,11 +598,13 @@ class ErfinvTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfinv_grad_accuracy(self, dtype):
     bounds = [
-        ("cpu", {bf16: 6.5, f16: 9.5, f32: 29.0, f64: 68.0}),
-        ("gpu", {bf16: 6.5, f16: 9.5, f32: 27.0, f64: 68.0}),
-        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 1595.5}),
-        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 67.0}),
-        (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 34.5}),
+        ("cpu", {bf16: 1.5, f16: 1.5, f32: 6.0, f64: 4.5}),
+        ("gpu", {bf16: (0.5, 1.5), f16: (0.5, 1.5), f32: 6.5, f64: 4.5}),
+        # On TPU_EUPV1, erf_inv has 427 ULP error (from unrefined vlog2),
+        # amplified up to 2x by exp(z^2) in |z| <= 1 plus unrefined EUP exp/rcp.
+        (TPU_EUPV1, {bf16: (0.5, 1.5), f16: (0.5, 1.5), f32: 610.0}),
+        ("tpu_v5p", {bf16: (0.5, 1.5), f16: (0.5, 1.5), f32: 9.0}),
+        (["tpu_v6e", "tpu_7x"], {bf16: (0.5, 1.5), f16: (0.5, 1.5), f32: 7.5}),
     ]
     with jtu.global_config_context(jax_accurate_erf_inv=True):
       util.check_unary_precision(
@@ -614,6 +616,105 @@ class ErfinvTest(jtu.JaxTestCase):
           bounds=bounds,
           interesting_points=_ERFINV_INTERESTING_POINTS,
       )
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_float32", "dtype": f32},
+      {"testcase_name": "_float64", "dtype": f64},
+  )
+  def test_erfinv_grad_higher_order(self, dtype):
+    if dtype == f64 and not config.enable_x64.value:
+      self.skipTest("requires x64")
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    grad2_fn = jax.jit(jax.vmap(jax.grad(jax.grad(lax.erf_inv))))
+    grad3_fn = jax.jit(jax.vmap(jax.grad(jax.grad(jax.grad(lax.erf_inv)))))
+    finfo = jnp.finfo(dtype)
+    min_exp = -7 if dtype == f32 else -15
+    tail_offsets = jnp.logspace(min_exp, -1, 32, dtype=dtype)
+    # Include points right up to +-1 - eps where exp(z^2) amplifies 1 ULP in z
+    # by 2 * z^2 ULPs.
+    near_one = jnp.array(
+        [1.0 - float(finfo.eps), 1.0 - 2.0 * float(finfo.eps)], dtype=dtype
+    )
+    x = jnp.concatenate([
+        -near_one,
+        -1.0 + tail_offsets,
+        jnp.linspace(-0.8, 0.8, 64, dtype=dtype),
+        1.0 - tail_offsets[::-1],
+        near_one[::-1],
+    ])
+    with jtu.global_config_context(jax_accurate_erf_inv=True):
+      d2 = np.asarray(grad2_fn(x))
+      d3 = np.asarray(grad3_fn(x))
+      edges = jnp.array([-1.0, 0.0, 1.0], dtype=dtype)
+      edges_d2 = np.asarray(grad2_fn(edges))
+      edges_d3 = np.asarray(grad3_fn(edges))
+
+      # Also verify non-vmapped array inputs and scalar primals.
+      sum_grad1 = jax.jit(jax.grad(lambda v: jnp.sum(lax.erf_inv(v))))
+      sum_grad2 = jax.jit(jax.grad(lambda v: jnp.sum(sum_grad1(v))))
+      sum_grad3 = jax.jit(jax.grad(lambda v: jnp.sum(sum_grad2(v))))
+      arr_d2 = np.asarray(sum_grad2(x))
+      arr_d3 = np.asarray(sum_grad3(x))
+
+      y0, dy1 = jax.jvp(lax.erf_inv, (dtype(0.5),), (dtype(1.0),))
+      (_, dy1_2), (_, dy2) = jax.jvp(
+          lambda t: jax.jvp(lax.erf_inv, (t,), (dtype(1.0),)),
+          (dtype(0.5),),
+          (dtype(1.0),),
+      )
+      py_y0, py_dy1 = jax.jvp(lax.erf_inv, (0.5,), (1.0,))
+    rtol = 1e-6 if dtype == f32 else 1e-14
+    self.assertEqual(edges_d2.tolist(), [-np.inf, 0.0, np.inf])
+    self.assertEqual(edges_d3[0], np.inf)
+    self.assertAllClose(edges_d3[1], dtype((math.pi**1.5) / 4.0), rtol=rtol)
+    self.assertEqual(edges_d3[2], np.inf)
+    self.assertAllClose(arr_d2, d2, rtol=rtol)
+    self.assertAllClose(arr_d3, d3, rtol=rtol)
+    z05 = float(scipy.special.erfinv(0.5))
+    d1_05 = 0.5 * math.sqrt(math.pi) * math.exp(z05 * z05)
+    d2_05 = 2.0 * z05 * d1_05 * d1_05
+    self.assertAllClose(y0, dtype(z05), rtol=rtol)
+    self.assertAllClose(dy1, dtype(d1_05), rtol=rtol)
+    self.assertAllClose(dy1_2, dtype(d1_05), rtol=rtol)
+    self.assertAllClose(dy2, dtype(d2_05), rtol=rtol)
+    py_rtol = (
+        1e-14
+        if (config.enable_x64.value and jtu.device_under_test() != "tpu")
+        else 1e-6
+    )
+    self.assertAllClose(py_y0, z05, rtol=py_rtol)
+    self.assertAllClose(py_dy1, d1_05, rtol=py_rtol)
+
+    def mp_d2(v):
+      with mpmath.extraprec(40):
+        z = mpmath.erfinv(v)
+        return (mpmath.pi / 2) * z * mpmath.exp(2 * z * z)
+
+    def mp_d3(v):
+      with mpmath.extraprec(40):
+        z = mpmath.erfinv(v)
+        return (
+            (mpmath.pi ** mpmath.mpf("1.5") / 4)
+            * (1 + 4 * z * z)
+            * mpmath.exp(3 * z * z)
+        )
+
+    x_np = np.asarray(x)
+    ref_d2 = np.array(
+        [util.eval_mpmath(mp_d2, v.item(), dtype=dtype) for v in x_np],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    ref_d3 = np.array(
+        [util.eval_mpmath(mp_d3, v.item(), dtype=dtype) for v in x_np],
+        dtype=object if dtype == f64 else np.float64,
+    )
+    if util.get_hardware_variant() in TPU_EUPV1:
+      d2_bound, d3_bound = 1500.0, 2500.0
+    else:
+      d2_bound, d3_bound = 20.0, 35.0
+    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), d2_bound)
+    self.assertLessEqual(np.max(util.ulp_diff(d3, ref_d3, dtype)), d3_bound)
 
 
 def _erfcinv_reference(y: np.ndarray) -> np.ndarray:
