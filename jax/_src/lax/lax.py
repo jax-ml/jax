@@ -3671,6 +3671,7 @@ def sort_key_val(keys: Array, values: ArrayLike, dimension: int = -1,
                  is_stable: bool = True) -> tuple[Array, Array]:
   """Sorts ``keys`` along ``dimension`` and applies the same permutation to ``values``."""
   dimension = canonicalize_axis(dimension, len(keys.shape))
+  keys, values = core.auto_insert_reshard(keys, values)
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable, num_keys=1)
   return k, v
 
@@ -10108,6 +10109,12 @@ def _sort_abstract_eval(*avals, dimension, is_stable, num_keys):
   if any(arg.shape != avals[0].shape for arg in avals[1:]):
     shapes = " ".join(str(a.shape) for a in avals)
     raise TypeError(f"Arguments to sort must have equal shapes, got: {shapes}")
+  # All operands vary over the same axes, so an operand reduced over an axis
+  # means no key varies over it and every device sorts it the same way.
+  core.standard_vma_rule('sort', *avals)
+  if any(a.mat.unreduced for a in avals):
+    raise core.ShardingTypeError(
+        f'sort cannot accept unreduced inputs. Got {[a.str_short() for a in avals]}')
   out_shardings = lax_utils.call_sharding_rule(
       sort_p, _sort_sharding_rule, None, len(avals), *avals,
       dimension=dimension, is_stable=is_stable, num_keys=num_keys)
@@ -10183,8 +10190,9 @@ def _sort_jvp(primals, tangents, *, dimension, is_stable, num_keys):
   index_dtype = lax_utils.int_dtype_for_shape(shape, signed=False)
   sorted_primals_and_idx = sort_p.bind(
       *primals,
-      broadcasted_iota(index_dtype, shape, dimension,
-                       out_sharding=core.typeof(primals[0]).sharding),
+      core.pvary(broadcasted_iota(index_dtype, shape, dimension,
+                                  out_sharding=core.typeof(primals[0]).sharding),
+                 tuple(core.typeof(primals[0]).mat.varying)),
       dimension=dimension, is_stable=is_stable, num_keys=num_keys)
   batch_dims = tuple(np.delete(np.arange(len(shape), dtype=np.int64),
                                dimension))

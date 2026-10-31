@@ -2304,9 +2304,8 @@ def _gather_transpose_fancy(out_ct, operand, indices, *, dimension_numbers,
   else:
     # use out_ct's dtype, not operand_aval's: cotangents can flow in a
     # different (e.g. higher-precision) dtype than the primal
-    zeros = lax.full(op_shape, 0, typeof(out_ct).dtype,
-                     sharding=operand_aval.sharding)
-    zeros = core.pvary(zeros, tuple(operand_aval.mat.varying))
+    zeros = lax.zeros_like_shaped_array(operand_aval.update(
+        dtype=typeof(out_ct).dtype, weak_type=False))  # type: ignore
     operand.accum(scatter_add(zeros, indices, out_ct, scatter_dnums,
                               unique_indices=unique_indices,
                               indices_are_sorted=indices_are_sorted,

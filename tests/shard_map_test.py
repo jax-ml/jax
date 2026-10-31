@@ -6001,6 +6001,50 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysEqual(g(), np.array([0, 1], dtype=np.int32))
 
   @jtu.with_explicit_mesh((2,), 'x')
+  def test_sort_reduced_grad(self, mesh):
+    w = jax.device_put(np.array([3., 1., 2.]), P(reduced={'x'}))
+    c = jax.device_put(np.array([0., 1., 2.]), P(reduced={'x'}))
+
+    @jax.shard_map(out_specs=P(reduced={'x'}))
+    def sort(w):
+      return jnp.sort(w)  # [1., 2., 3.] = w[[1, 2, 0]]
+
+    self.assertArraysEqual(sort(w), np.array([1., 2., 3.]))
+
+    g = jax.jit(jax.grad(lambda w: (sort(w) * c).sum()))(w)
+    self.assertEqual(g.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    self.assertArraysEqual(jax.reshard(g, P()), np.array([2., 0., 1.]))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_op_without_ur_rule_rejects_reduced_unreduced(self, mesh):
+    w = jax.device_put(np.arange(4.), P(reduced={'x'}))
+    u = jax.device_put(np.arange(4.), P(unreduced={'x'}))
+
+    with self.assertRaises(NotImplementedError):
+      jax.shard_map(jnp.flip, out_specs=P(reduced={'x'}))(w)
+    with self.assertRaises(NotImplementedError):
+      jax.shard_map(jnp.flip, out_specs=P(unreduced={'x'}))(u)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_sort_key_val_reduced(self, mesh):
+    k = jax.device_put(np.array([[1., 0.], [0., 1.]]), P('x'))
+    w = jax.device_put(np.array([10., 20.]), P(reduced={'x'}))
+
+    # Varying key: each device sorts `w` in a different order.
+    @jax.shard_map(out_specs=P('x'))
+    def f(k, w):
+      return jax.lax.sort_key_val(k[0], w)[1][None]
+
+    self.assertArraysEqual(f(k, w), np.array([[20., 10.], [10., 20.]]))
+
+    # Reduced key: every device sorts the same way, so the output stays reduced.
+    @jax.shard_map(out_specs=P(reduced={'x'}))
+    def g(w):
+      return jax.lax.sort_key_val(-w, w)[1]
+
+    self.assertArraysEqual(g(w), np.array([20., 10.]))
+
+  @jtu.with_explicit_mesh((2,), 'x')
   def test_full_like_reduced(self, mesh):
     arr = jax.device_put(jnp.arange(4.), P(reduced={'x'}))
 
