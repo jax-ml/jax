@@ -54,6 +54,12 @@ def logpmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   zero = _lax_const(k, 0)
   x = lax.sub(k, loc)
   log_probs = _poisson_log_pmf(x, mu)
+  # At every finite nonnegative rate, an infinite count has zero mass.
+  # Handle this at the public API boundary; the shared rejection-sampler
+  # log-PMF need not pay for an additional hot-loop special case.
+  log_probs = jnp.where(
+      jnp.isposinf(x) & jnp.isfinite(mu) & (mu >= 0),
+      -np.inf, log_probs)
   return jnp.where(jnp.logical_or(lax.lt(x, zero),
                                   lax.ne(jnp.round(x), x)), -np.inf, log_probs)
 

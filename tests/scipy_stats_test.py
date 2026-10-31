@@ -160,6 +160,17 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self.assertAllClose(result, expected, check_dtypes=False,
                         atol=1e-3, rtol=1e-3)
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating, use_jit=[False, True])
+  def testPoissonLogPmfPositiveInfiniteCount(self, dtype, use_jit):
+    # An infinite count has zero probability under every finite valid rate.
+    # The stable deviance formula otherwise evaluates inf - inf and returns NaN.
+    k = np.full(5, np.inf, dtype=dtype)
+    mu = np.asarray([0., 1e-8, 0.5, 10., 1e7], dtype=dtype)
+    loc = np.asarray([0., 1., 0., -5., 10.], dtype=dtype)
+    fun = jax.jit(lsp_stats.poisson.logpmf) if use_jit else lsp_stats.poisson.logpmf
+    actual = np.asarray(fun(k, mu, loc))
+    np.testing.assert_array_equal(actual, np.full_like(k, -np.inf))
+
   @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testPoissonLogPmfHighPrecisionLargeRate(self, dtype):
     # These references were computed at 100 decimal digits after rounding
