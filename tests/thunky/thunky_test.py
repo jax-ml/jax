@@ -107,8 +107,8 @@ class ThunkyJaxTest(jtu.JaxTestCase):
 
   def test_basic_primitives_and_scratch(self):
     """Traces and lowers a thunky Jaxpr program using primitive wrappers."""
-    if jtu.test_device_matches(["rocm"]):
-      self.skipTest("thunky.ptx_kernel takes PTX, which ROCm cannot load.")
+    if jtu.test_device_matches(["rocm", "oneapi"]):
+      self.skipTest("thunky.ptx_kernel takes PTX, which ROCm and oneAPI cannot load.")
 
     @thunky.jit(scratch_shapes=jax.ShapeDtypeStruct((4,), jnp.float32))
     def prog(in_buf, out_buf, tmp):
@@ -935,8 +935,8 @@ class ThunkyJaxTest(jtu.JaxTestCase):
 
   def test_calling_thunky_from_jax_jit(self):
     """Verifies calling a thunky program from @jax.jit folds thunks directly into XLA's ThunkSequence."""
-    if jtu.test_device_matches(["rocm"]):
-      self.skipTest("thunky.ptx_kernel takes PTX, which ROCm cannot load.")
+    if jtu.test_device_matches(["rocm", "oneapi"]):
+      self.skipTest("thunky.ptx_kernel takes PTX, which ROCm and oneAPI cannot load.")
 
     @thunky.jit(scratch_shapes=jax.ShapeDtypeStruct((4,), jnp.float32))
     def thunky_add_one(in_buf, out_buf, scratch):
@@ -1265,13 +1265,18 @@ class ThunkyJaxTest(jtu.JaxTestCase):
 
     @thunky.jit(scratch_shapes=jax.ShapeDtypeStruct((), jnp.int32))
     def cholesky_in_place(a_ref, info_ref):
+      if jtu.test_device_matches(["oneapi"]):
+        target_name = "oneapisolver_potrf_ffi"
+      elif jtu.test_device_matches(["rocm"]):
+        target_name = "hipsolver_potrf_ffi"
+      else:
+        target_name = "cusolver_potrf_ffi"
+
       # Because a_ref is symmetric in memory and cuSOLVER expects column-major,
       # lower=False computes the column-major upper triangle, which is the
       # row-major lower triangle L such that A = L @ L.T.
       thunky.custom_call(
-          "hipsolver_potrf_ffi"
-          if jtu.test_device_matches(["rocm"])
-          else "cusolver_potrf_ffi",
+          target_name,
           operands=[a_ref],
           results=[a_ref, info_ref],
           backend_config={"lower": False},
