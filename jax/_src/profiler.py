@@ -16,7 +16,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from functools import wraps
+import ctypes
+from functools import lru_cache, wraps
 import gzip
 import http.server
 import json
@@ -121,6 +122,61 @@ def register_subprocess(pid: int, port: int) -> Callable[[], None]:
   return _profiler.register_subprocess(pid, port)
 
 
+_EXTERNAL_GPU_PROFILER_ENV_VARS = (
+    "NSYS_PROFILING_SESSION_ID",
+    "NSYS_NVTX_PROFILER_REGISTER_ONLY",
+    "NV_COMPUTE_PROFILER_LOCAL_CONNECTION_ID",
+    "NV_COMPUTE_PROFILER_LOCAL_CONNECTION_OVERRIDE",
+    "NCU_PROFILE_SESSION",
+    "CUDA_INJECTION64_PATH",
+    "NVTX_INJECTION64_PATH",
+)
+
+
+def _is_external_gpu_profiler_attached() -> bool:
+  return any(os.environ.get(var) for var in _EXTERNAL_GPU_PROFILER_ENV_VARS)
+
+
+@lru_cache(maxsize=1)
+def _load_cuda_profiler_lib() -> ctypes.CDLL | None:
+  for lib_name in ("libcuda.so.1", "libcudart.so"):
+    try:
+      return ctypes.CDLL(lib_name)
+    except OSError:
+      continue
+  return None
+
+
+def _cuda_profiler_start() -> bool:
+  if not _is_external_gpu_profiler_attached():
+    return False
+  lib = _load_cuda_profiler_lib()
+  if lib is None:
+    return False
+  if hasattr(lib, "cuProfilerStart"):
+    lib.cuProfilerStart()
+    return True
+  if hasattr(lib, "cudaProfilerStart"):
+    lib.cudaProfilerStart()
+    return True
+  return False
+
+
+def _cuda_profiler_stop() -> bool:
+  if not _is_external_gpu_profiler_attached():
+    return False
+  lib = _load_cuda_profiler_lib()
+  if lib is None:
+    return False
+  if hasattr(lib, "cuProfilerStop"):
+    lib.cuProfilerStop()
+    return True
+  if hasattr(lib, "cudaProfilerStop"):
+    lib.cudaProfilerStop()
+    return True
+  return False
+
+
 class _ProfileState:
   def __init__(self):
     self.session: ProfileSession | None = None
@@ -202,6 +258,7 @@ class ProfileSession:
           pass
 
       self._raw_session = _profiler.ProfilerSession(options)
+      _cuda_profiler_start()
       self._is_running = True
       self._profile_data = None
       _profile_state.session = self
@@ -213,6 +270,7 @@ class ProfileSession:
       if not self._is_running or self._raw_session is None:
         raise RuntimeError("No profile started")
 
+      _cuda_profiler_stop()
       self._profile_data = self._raw_session.stop_and_get_profile_data()
       self._is_running = False
       self._raw_session = None
@@ -265,7 +323,7 @@ class ProfileSession:
 
 
 def start_trace(
-    log_dir: os.PathLike | str,
+    log_dir: os.PathLike | str | None,
     create_perfetto_link: bool = False,
     create_perfetto_trace: bool = False,
     profiler_options: ProfileOptions | None = None,
@@ -283,8 +341,8 @@ def start_trace(
   :func:`start_trace` is called while another trace is running.
 
   Args:
-    log_dir: The directory to save the profiler trace to (usually the Xprof log
-      directory).
+    log_dir: Optional directory to save the profiler trace to (usually the Xprof
+      log directory). If None, the trace is kept in memory only.
     create_perfetto_link: A boolean which, if true, creates and prints link to
       the Perfetto trace viewer UI (https://ui.perfetto.dev). The program will
       block until the link is opened and Perfetto loads the trace.
