@@ -353,6 +353,16 @@ class HostAllocationKey(HostAllocationRequest):
     yield self.buffer_id
 
 
+def is_leader(x: Thread | HostAllocationKey) -> bool:
+  """Whether thread or allocation `x` is in the leader CTA (block 0)."""
+  return x.block_id == 0
+
+
+def get_peer_cta[T: (Warpgroup, Warp, HostAllocationKey)](x: T) -> T:
+  """Thread or allocation `x`, but in the other CTA of the cluster."""
+  return dataclasses.replace(x, block_id=1 - x.block_id)
+
+
 class AsyncTask[T](Protocol):
   """Async task to be run on some non-main thread (e.g. TMA or TensorCore)
 
@@ -449,6 +459,29 @@ class GpuClockBundle(vector_clock.VectorClockProto):
     self.async_smem_clock.update(self.generic_clock)
 
 
+@dataclasses.dataclass
+class PendingCollectiveCopy:
+  """A collective copy whose halves are not both done yet."""
+
+  key: tuple[HostAllocationKey, Thread, int]
+  # vector clock position
+  position: int
+  # vector clock value
+  epoch: int
+  # (src, src window, dst in the leader CTA, dst window), should be the same for
+  # both halves.
+  signature: tuple[
+      HostAllocationKey,
+      interpret_utils.Access,
+      HostAllocationKey,
+      interpret_utils.Access,
+  ]
+  halves_done: int = 0
+  # The leader's thread and clock when it issued its half.
+  leader_thread: Thread | None = None
+  leader_clock: GpuClockBundle | None = None
+
+
 class GPUSharedMemory(
     memory.GenericSharedMemory[HostAllocationKey, Thread, GpuClockBundle]
 ):
@@ -502,6 +535,15 @@ class GPUSharedMemory(
   pending_tmem_loads: dict[Thread, VectorClock]
 
   reallocation_checker: BarrierReallocationChecker
+
+  # Keyed by (leader barrier, issuing thread in the leader CTA, issue index).
+  pending_collective_copies: dict[
+      tuple[HostAllocationKey, Thread, int], PendingCollectiveCopy
+  ]
+  # Collective copies issued by each thread on each leader barrier so far.
+  collective_copy_issue_counts: collections.Counter[
+      tuple[Thread, HostAllocationKey]
+  ]
 
   def __init__(
       self,
@@ -581,6 +623,10 @@ class GPUSharedMemory(
 
     self.num_blocks_per_cluster = num_blocks_per_cluster
     self.num_pallas_threads_per_block = num_threads_per_block
+    # See `cluster_rendezvous`.
+    self.cluster_rendezvous_barrier = threading.Barrier(
+        num_blocks_per_cluster * num_threads_per_block
+    )
     self.reset_per_cluster_state()
 
   def buffer_shape_and_dtype(self, key: MemKey) -> memory.ShapeAndDtype:
@@ -668,10 +714,30 @@ class GPUSharedMemory(
       self.pending_tmem_stores = {}
       self.pending_tmem_loads = {}
       self.reallocation_checker = BarrierReallocationChecker()
+      self.pending_collective_copies = {}
+      self.collective_copy_issue_counts = collections.Counter()
+
+  def assert_no_pending_collective_copies(self):
+    """Raises if some CTA issued a collective copy its peers never issued."""
+    with self.lock:
+      if self.pending_collective_copies:
+        raise ValueError(
+            "Collective copies not issued by every CTA:"
+            f" {[c.signature for c in self.pending_collective_copies.values()]}"
+        )
+
+  def cluster_rendezvous(self):
+    """Waits for every thread of the cluster, without ordering any accesses."""
+    try:
+      self.cluster_rendezvous_barrier.wait()
+    except threading.BrokenBarrierError:
+      self.check_failed()
+      raise
 
   def _abort_waiters(self):
     # Called by `set_failed` while `self.lock` is held. Acquiring a barrier's
     # `cv` lock while holding `self.lock` is allowed (see `Barrier.__init__`).
+    self.cluster_rendezvous_barrier.abort()
     for alloc in self.mem.values():
       if isinstance(alloc, (Barrier, ClusterBarrier)):
         alloc.abort()
@@ -679,8 +745,8 @@ class GPUSharedMemory(
   def thread_to_vc_position(self, thread: ThreadKey) -> int:
     return self.all_concurrent_threads[thread]
 
-  def get_next_tma_thread_id(self) -> int:
-    with self.lock:
+  def get_next_tma_thread_id(self, take_lock: bool = True) -> int:
+    with self.lock if take_lock else contextlib.nullcontext():
       # TODO(nrink): Consider adding an option for selecting TMA thread IDs
       # randomly (similar to how 'virtual' device IDs are selected randomly for
       # DMAs in TPU kernel interpret mode).
@@ -792,6 +858,65 @@ class GPUSharedMemory(
           " `Barrier`."
       )
     return barrier
+
+  def begin_collective_copy_half(
+      self,
+      *,
+      thread: ThreadKey,
+      leader_barrier_key: MemKey,
+      signature: tuple,
+      clock: VectorClock | None,
+  ) -> PendingCollectiveCopy:
+    """Registers `thread`'s half of a collective copy and returns the copy.
+
+    The halves of a copy are issued by the same thread position in each CTA,
+    on the same leader barrier.
+    """
+    with self.lock:
+      count_key = (thread, leader_barrier_key)
+      index = self.collective_copy_issue_counts[count_key]
+      self.collective_copy_issue_counts[count_key] += 1
+      copy_key = (
+          leader_barrier_key,
+          thread if is_leader(thread) else get_peer_cta(thread),
+          index,
+      )
+      copy = self.pending_collective_copies.get(copy_key)
+      if copy is None:
+        tma_thread_id = self.get_next_tma_thread_id(take_lock=False)
+        epoch = 1
+        if clock is not None:
+          epoch += int(
+              max(
+                  clock.generic_clock.clock[tma_thread_id],
+                  clock.async_smem_clock.clock[tma_thread_id],
+              )
+          )
+        copy = PendingCollectiveCopy(
+            key=copy_key,
+            position=tma_thread_id,
+            epoch=epoch,
+            signature=signature,
+        )
+        self.pending_collective_copies[copy_key] = copy
+      elif signature != copy.signature:
+        raise ValueError(
+            "Every CTA must issue the same collective copy, but got"
+            f" {copy.signature} and {signature}."
+        )
+      if is_leader(thread):
+        copy.leader_thread = thread
+        copy.leader_clock = clock
+      return copy
+
+  def finish_collective_copy_half(self, copy: PendingCollectiveCopy) -> bool:
+    """Marks one half of `copy` as done. Returns whether both are done."""
+    with self.lock:
+      copy.halves_done += 1
+      if copy.halves_done < 2:
+        return False
+      del self.pending_collective_copies[copy.key]
+      return True
 
   def deallocate_barrier(
       self,
@@ -1002,6 +1127,8 @@ class GPUSharedMemory(
       self, thread: ThreadKey, n: int, wait_read_only: bool
   ):
     """Ensures no more than n SMEM to GMEM copies are outstanding."""
+    # TODO(paulbib): Count bulk async-groups (see `commit_group`), not copies.
+    # Counting copies can treat in-flight copies as done, hiding races.
     with self.lock:
       self.incr_clock(thread, take_lock=False)
       while len(self.pending_smem_to_gmem_read_clocks[thread]) > n:

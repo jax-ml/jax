@@ -1415,6 +1415,40 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
     )
 
 
+class LeaderTrackedCopyHalfTask(AsyncCopyTask):
+  """One CTA's half of a leader-tracked copy."""
+
+  # TODO(paulbib):support more than just the default of `OOBFillMode.ZEROS`.
+  out_of_bounds_source_fill = 0
+
+  def __init__(self, *args, clock, record_clock, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.clock = clock
+    self.record_clock = record_clock
+
+  def pre_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+    if shared_memory.detect_races:
+      get_races().check_read(
+          self.thread,
+          self.clock.generic_clock,
+          self.src_allocation_key,
+          self.src_access,
+          source_info=self.source_info,
+          record_clock=self.record_clock.generic_clock,
+      )
+
+  def post_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+    if shared_memory.detect_races:
+      get_races().check_write(
+          self.thread,
+          self.clock.async_smem_clock,
+          self.dst_allocation_key,
+          self.dst_access,
+          source_info=self.source_info,
+          record_clock=self.record_clock.async_smem_clock,
+      )
+
+
 class AsyncCopySmemToGmemTask(AsyncCopyTask):
   """An async task representing a SMEM -> GMEM TMA memory copy."""
 
@@ -1673,6 +1707,8 @@ def copy_gmem_to_smem(
     dst_allocation_key_as_array: jax.Array,
     dst_transforms: tuple[Any, ...],
     barrier_allocation_key_as_array: jax.Array,
+    predicate: jax.Array | None = None,
+    partition_axis: int | None = None,
     source_info: source_info_util.SourceInfo | None = None,
 ):
   src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
@@ -1682,12 +1718,78 @@ def copy_gmem_to_smem(
   barrier_allocation_key = HostAllocationKey.from_array(
       barrier_allocation_key_as_array
   )
+  issue = predicate is None or bool(predicate)
 
   clock = None
 
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
     clock = shared_memory.incr_clock(thread)
+
+  if partition_axis is not None:
+    # CopyPartition.PARTITIONED: two CTAs both issue a copy with the same
+    # src/dst, CTA `i` loads half `i` into its own SMEM.
+    src_access = shared_memory.access(src_allocation_key, src_transforms)
+    dst_access = shared_memory.access(dst_allocation_key, dst_transforms)
+    is_leader = memory.is_leader(thread)
+    leader_barrier_key, leader_dst_key = (
+        key if is_leader else memory.get_peer_cta(key)
+        for key in (barrier_allocation_key, dst_allocation_key)
+    )
+    copy = shared_memory.begin_collective_copy_half(
+        thread=thread,
+        leader_barrier_key=leader_barrier_key,
+        signature=(src_allocation_key, src_access, leader_dst_key, dst_access),
+        clock=clock,
+    )
+    # Observing the completion makes the leader's operations visible, but not
+    # the follower.
+    check_clock = record_clock = event = None
+    if shared_memory.detect_races:
+      event = memory.GpuClockBundle(shared_memory.vector_clock_size)
+      event.generic_clock.clock[copy.position] = copy.epoch
+      event.async_smem_clock.clock[copy.position] = copy.epoch
+      check_clock = clock.copy()
+      check_clock.update(event)
+      record_clock = check_clock if is_leader else event
+    if issue:
+      # Half `thread.block_id` of the window along `partition_axis`.
+      axes = [i for i, r in enumerate(src_access.range) if isinstance(r, slice)]
+      if src_access.permutation is not None:
+        axes = [axes[p] for p in src_access.permutation]
+      whole = src_access.range[axes[partition_axis]]
+      size = (whole.stop - whole.start) // 2
+      start = whole.start + size * thread.block_id
+      half_range = list(src_access.range)
+      half_range[axes[partition_axis]] = slice(start, start + size, whole.step)
+      LeaderTrackedCopyHalfTask(
+          mesh_location,
+          thread,
+          src_allocation_key,
+          interpret_utils.Access(tuple(half_range), src_access.permutation),
+          dst_allocation_key,
+          dst_access,
+          source_info,
+          clock=check_clock,
+          record_clock=record_clock,
+      )(copy.position)  # On the copy's TMA thread.
+    if shared_memory.finish_collective_copy_half(copy):
+      arrival_clock = None
+      if shared_memory.detect_races:
+        arrival_clock = copy.leader_clock.copy()
+        arrival_clock.update(event)
+      shared_memory.get_barrier(leader_barrier_key).arrive(
+          copy.leader_thread,
+          arrival_clock,
+          memory.GPULoggingInfo(mesh_location, thread, source_info),
+      )
+    return token
+
+  if not issue:
+    shared_memory.get_barrier(barrier_allocation_key).arrive(
+        thread, clock, memory.GPULoggingInfo(mesh_location, thread, source_info)
+    )
+    return token
 
   transfer = AsyncCopyGmemToSmemTask(
       mesh_location=mesh_location,
@@ -1765,27 +1867,28 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
     assert self.a_scale_key is None
     assert self.b_scale_key is None
     assert self.a_sparse_metadata_key is None
-    assert self.collective_axis is None, "collective_axis not supported yet"
 
     shared_memory = _get_shared_memory()
 
     logging_info = memory.GPULoggingInfo(
         self.mesh_location, self.thread, self.source_info
     )
-    a, _, _ = shared_memory.get_buffer_content(
-        self.a_key,
-        self.a_access,
-        self.thread,
-        logging_info=logging_info,
-    )
-    b, _, _ = shared_memory.get_buffer_content(
-        self.b_key,
-        self.b_access,
-        self.thread,
-        logging_info=logging_info,
-    )
-    assert a is not None
-    assert b is not None
+    # Collective: [ACC_0; ACC_1] (+)= [A_0; A_1] @ [B_0 | B_1], X_i in CTA i.
+    collective = self.collective_axis is not None
+    a_keys, b_keys, acc_keys = [self.a_key], [self.b_key], [self.acc_key]
+    if collective:
+      a_keys.append(memory.get_peer_cta(self.a_key))
+      b_keys.append(memory.get_peer_cta(self.b_key))
+      acc_keys.append(memory.get_peer_cta(self.acc_key))
+    def read(key, access):
+      val, _, _ = shared_memory.get_buffer_content(
+          key, access, self.thread, logging_info=logging_info
+      )
+      assert val is not None
+      return val
+
+    a_parts = [read(key, self.a_access) for key in a_keys]
+    b = np.concatenate([read(key, self.b_access) for key in b_keys], axis=1)
 
     clock = None
     if shared_memory.detect_races:
@@ -1804,73 +1907,74 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
           else clock.generic_clock
       )
 
-      get_races().check_read(
-          self.thread,
-          a_clock,
-          self.a_key,
-          self.a_access,
-          source_info=self.source_info,
-      )
-      get_races().check_read(
-          self.thread,
-          clock.async_smem_clock,
-          self.b_key,
-          self.b_access,
-          source_info=self.source_info,
-      )
+      for a_key in a_keys:
+        get_races().check_read(
+            self.thread,
+            a_clock,
+            a_key,
+            self.a_access,
+            source_info=self.source_info,
+        )
+      for b_key in b_keys:
+        get_races().check_read(
+            self.thread,
+            clock.async_smem_clock,
+            b_key,
+            self.b_access,
+            source_info=self.source_info,
+        )
 
     acc_range = self.acc_access
     acc_dtype = shared_memory.buffer_shape_and_dtype(self.acc_key).dtype
 
-    if self.accumulate:
-      acc, _, _ = shared_memory.get_buffer_content(
-          self.acc_key,
+    for a, acc_key in zip(a_parts, acc_keys, strict=True):
+      if self.accumulate:
+        acc, _, _ = shared_memory.get_buffer_content(
+            acc_key,
+            acc_range,
+            None,
+            logging_info=logging_info,
+        )
+        assert acc is not None
+        res = acc + np.matmul(a, b, dtype=acc_dtype)
+      else:
+        res = np.matmul(a, b, dtype=acc_dtype)
+
+      shared_memory.store_buffer_content(
+          acc_key,
           acc_range,
-          None,
+          res,
+          self.thread,
+          increment_clock=False,
           logging_info=logging_info,
       )
-      assert acc is not None
-      res = acc + np.matmul(a, b, dtype=acc_dtype)
-    else:
-      res = np.matmul(a, b, dtype=acc_dtype)
 
-    shared_memory.store_buffer_content(
-        self.acc_key,
-        acc_range,
-        res,
-        self.thread,
-        increment_clock=False,
-        logging_info=logging_info,
-    )
-
-    if shared_memory.detect_races:
-      assert clock is not None
-      # TODO(paulbib): for race-checking, we don't technically need to check
-      # the accumulator read, since the subsequent write will catch the race.
-      # However, we should still add a `check_read` here since it also is
-      # import for checking RefUnion invariants.
-      get_races().check_write(
-          self.thread,
-          clock.generic_clock,
-          self.acc_key,
-          acc_range,
-          source_info=self.source_info,
-      )
+      if shared_memory.detect_races:
+        assert clock is not None
+        # TODO(paulbib): for race-checking, we don't technically need to check
+        # the accumulator read, since the subsequent write will catch the race.
+        # However, we should still add a `check_read` here since it also is
+        # import for checking RefUnion invariants.
+        get_races().check_write(
+            self.thread,
+            clock.generic_clock,
+            acc_key,
+            acc_range,
+            source_info=self.source_info,
+        )
 
     if self.barrier_key:
-      barrier = shared_memory.get_barrier(self.barrier_key)
-      if not isinstance(barrier, memory.Barrier):
-        raise ValueError("tcgen05_mma only allows arriving on a Barrier")
-      if not barrier.orders_tensor_core:
-        raise ValueError(
-            "tcgen05_mma only allows arriving on a Barrier that orders tensor"
-            " core"
-        )
-      barrier.arrive(
-          thread=self.thread,
-          clock=clock,
-          logging_info=logging_info,
-      )
+      barrier_keys = [self.barrier_key]
+      if collective:
+        barrier_keys.append(memory.get_peer_cta(self.barrier_key))
+      for key in barrier_keys:
+        barrier = shared_memory.get_barrier(key)
+        if not barrier.orders_tensor_core:
+          raise ValueError(
+              "tcgen05_mma only allows arriving on a Barrier that orders tensor"
+              " core"
+          )
+        barrier.arrive(self.thread, clock, logging_info)
 
     return clock.copy() if clock is not None else None
 
@@ -1898,6 +2002,9 @@ def tcgen05_mma(
     collective_axis: str | None = None,
     source_info: source_info_util.SourceInfo | None = None,
 ):
+  # Pallas silently masks out follower matmuls at runtime.
+  if collective_axis is not None and not memory.is_leader(thread):
+    raise ValueError("A collective tcgen05_mma was issued by the follower CTA.")
 
   acc_allocation_key = HostAllocationKey.from_array(acc_allocation_key_as_array)
   a_allocation_key = HostAllocationKey.from_array(a_allocation_key_as_array)
@@ -2090,8 +2197,10 @@ def tcgen05_commit_arrive(
     collective_axis: str | None = None,
     source_info: source_info_util.SourceInfo | None = None,
 ):
-  # TODO(paulbib): Support collective_axis.
-  del collective_axis
+  if collective_axis is not None and not memory.is_leader(thread):
+    raise ValueError(
+        "A collective tcgen05_commit_arrive was issued by the follower CTA."
+    )
   barrier_key = HostAllocationKey.from_array(barrier_key_as_array)
 
   shared_memory = _get_shared_memory()
@@ -2100,17 +2209,6 @@ def tcgen05_commit_arrive(
 
   def f(tma_thread_id: int):
     shared_memory = _get_shared_memory()
-    barrier = shared_memory.get_barrier(barrier_key)
-    if not isinstance(barrier, memory.Barrier):
-      raise ValueError(
-          "tcgen05_commit_arrive only allows arriving on a Barrier"
-      )
-    if not barrier.orders_tensor_core:
-      raise ValueError(
-          "tcgen05_commit_arrive only allows arriving on a Barrier that orders"
-          " tensor core"
-      )
-
     clock = None
     if shared_memory.detect_races:
       clock = shared_memory.get_clock(thread)
@@ -2119,11 +2217,18 @@ def tcgen05_commit_arrive(
       if completions_clock is not None:
         clock.update(completions_clock)
 
-    barrier.arrive(
-        thread,
-        clock,
-        memory.GPULoggingInfo(mesh_location, thread, source_info),
-    )
+    logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
+    barrier_keys = [barrier_key]
+    if collective_axis is not None:
+      barrier_keys.append(memory.get_peer_cta(barrier_key))
+    for key in barrier_keys:
+      barrier = shared_memory.get_barrier(key)
+      if not barrier.orders_tensor_core:
+        raise ValueError(
+            "tcgen05_commit_arrive only allows arriving on a Barrier that"
+            " orders tensor core"
+        )
+      barrier.arrive(thread, clock, logging_info)
 
   _get_shared_memory().execute_async_task(f)
   return token
@@ -2285,6 +2390,19 @@ def kernel_thread_finished(
 
 
 @fail_on_exception
+def _cluster_rendezvous(token: jax.Array) -> jax.Array:
+  _get_shared_memory().cluster_rendezvous()
+  return token
+
+
+def call_cluster_rendezvous(token: jax.Array) -> jax.Array:
+  """See `GPUSharedMemory.cluster_rendezvous`."""
+  return callback.io_callback(
+      _cluster_rendezvous, TOKEN_SHAPE_DTYPE, token
+  )
+
+
+@fail_on_exception
 def cluster_finished(
     *,
     token: jax.Array,
@@ -2296,5 +2414,6 @@ def cluster_finished(
   if needed
   """
   shared_memory = _get_shared_memory()
+  shared_memory.assert_no_pending_collective_copies()
   shared_memory.reset_per_cluster_state()
   return token

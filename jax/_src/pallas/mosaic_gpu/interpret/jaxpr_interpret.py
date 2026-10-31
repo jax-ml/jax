@@ -503,7 +503,11 @@ class JaxprInterpreter:
     return token, outs
 
   def _interpret_run_scoped_p(
-      self, eqn, token, get_invals: Callable[[], Sequence[Any]]
+      self,
+      eqn,
+      token,
+      get_invals: Callable[[], Sequence[Any]],
+      wait_for_cluster: bool = False,
   ):
     assert eqn.primitive is primitives.run_scoped_p
 
@@ -706,8 +710,14 @@ class JaxprInterpreter:
 
       allocs.append(alloc)
 
+    if wait_for_cluster:
+      token = gpu_callbacks.call_cluster_rendezvous(token)
+
     token, out = self.interpret(
         eqn.params["jaxpr"], token, *get_invals(), *allocs)
+
+    if wait_for_cluster:
+      token = gpu_callbacks.call_cluster_rendezvous(token)
 
     for a, v in safe_zip(allocs, invars):
       token = _deallocate_for_aval(token, a, v.aval)
@@ -1012,6 +1022,21 @@ class JaxprInterpreter:
       raise NotImplementedError(
           "Interpret mode does not support copy_gmem_to_smem without a barrier."
       )
+    if eqn.params["has_user_predicate"]:
+      *invals, predicate = invals
+    else:
+      predicate = None
+    partition_axis = None
+    if eqn.params["collective_axes"]:
+      leader_tracked = eqn.params["leader_tracked"]
+      partitioned = gpu_primitives.CopyPartition.PARTITIONED
+      if not isinstance(leader_tracked, partitioned):
+        raise NotImplementedError(
+            "GPU interpret mode only supports collective copy_gmem_to_smem with"
+            f" leader_tracked=CopyPartition.PARTITIONED, not {leader_tracked}."
+        )
+      self._check_cta_pair()
+      partition_axis = leader_tracked.axis
 
     (
         (src, dst, barrier),
@@ -1042,6 +1067,7 @@ class JaxprInterpreter:
 
     return callback.io_callback(
         functools.partial(gpu_callbacks.copy_gmem_to_smem,
+                          partition_axis=partition_axis,
                           source_info=eqn.source_info),
         gpu_callbacks.TOKEN_SHAPE_DTYPE,
         token=token,
@@ -1052,7 +1078,16 @@ class JaxprInterpreter:
         dst_allocation_key_as_array=dst,
         dst_transforms=dst_transforms,
         barrier_allocation_key_as_array=barrier_allocation_key_as_array,
+        predicate=predicate,
     ), []
+
+  def _check_cta_pair(self):
+    """Raises unless collective operations are supported in this cluster."""
+    if tuple(self.cluster_dims) != (2,):
+      raise NotImplementedError(
+          "GPU interpret mode only supports collective operations in clusters"
+          f" of shape (2,), but the cluster has shape {self.cluster_dims}."
+      )
 
   def _interpret_copy_smem_to_gmem_p(
       self,
@@ -1149,6 +1184,8 @@ class JaxprInterpreter:
 
   def _interpret_tcgen05_mma_p(self, eqn, token: jax.Array, invals):
     assert eqn.primitive is gpu_primitives.tcgen05_mma_p
+    if eqn.params["collective_axis"] is not None:
+      self._check_cta_pair()
     acc, a, b, accumulate, *invals = invals
     barrier, a_scale, b_scale, a_sparse_metadata = None, None, None, None
     if eqn.params["arrive"]:
@@ -1334,6 +1371,8 @@ class JaxprInterpreter:
     else:
       predicate = None
 
+    if collective_axis is not None:
+      self._check_cta_pair()
     barrier_key = _get_barrier_allocation_key_from_inval(
         barrier,
         barrier_transforms_tree,
@@ -1404,6 +1443,9 @@ class JaxprInterpreter:
     # so blocks are enumerated by the outer loop in interpret_pallas_call.
     # TODO(paulbib): we're missing the ability to catch races by not letting
     # this succeed sometimes.
+    # TODO(paulbib): Let blocks claim several tiles, to catch bugs such as the
+    # never-awaited follower copy of the `acc_consumed` cluster barrier in
+    # tokamax's 2-CTA ragged_dot, which only fails on its second completion.
 
     assert eqn.primitive is gpu_primitives.try_cluster_cancel_p
     _, barrier, *transforms_leaves = get_invals()
@@ -1436,7 +1478,7 @@ class JaxprInterpreter:
         jnp.bool_(False),
     ]
 
-  def interpret(self, jaxpr, token, *args):
+  def interpret(self, jaxpr, token, *args, wait_for_cluster: bool = False):
     sentinel_for_floating_point_values = (
         _SENTINEL if self.interpret_params.skip_floating_point_ops else None
     )
@@ -1475,7 +1517,7 @@ class JaxprInterpreter:
             raise NotImplementedError("swap_p is not supported on GPU yet")
           case primitives.run_scoped_p:
             token, out = self._interpret_run_scoped_p(
-                eqn, token, deferred_invals)
+                eqn, token, deferred_invals, wait_for_cluster)
           case state_discharge.run_state_p:
             token, out = self._interpret_run_state_p(
                 eqn, token, deferred_invals)
