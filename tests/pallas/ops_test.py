@@ -35,6 +35,7 @@ from jax._src import state
 from jax._src import test_util as jtu
 from jax._src import flattree as ft
 from jax._src import hypothesis_test_util as htu
+from jax._src.lib import jaxlib_extension_version
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas import primitives as pallas_primitives
 from jax.experimental import pallas as pl
@@ -1112,6 +1113,62 @@ class OpsTest(PallasBaseTest):
       out = kernel(x)
       expected = lax.erf_inv(x)
     np.testing.assert_array_equal(out, expected)
+
+  @parameterized.product(
+      op=(lax.fma, lax.fmuladd),
+      dtype=(jnp.float32, jnp.float16, jnp.bfloat16),
+  )
+  def test_fma_and_fmuladd(self, op, dtype):
+    self.skip_if_mosaic_gpu()
+    if jtu.test_device_matches(["tpu"]):
+      if op is lax.fma:
+        self.skipTest("lax.fma is not supported on TPU")
+      if not self.INTERPRET and dtype == jnp.float16:
+        self.skipTest("float16 (8, 128) is not supported on all TPU generations")
+    if op is lax.fma and jaxlib_extension_version < 515:
+      self.skipTest("lax.fma requires jaxlib_extension_version >= 515")
+    if jtu.test_device_matches(["cpu"]) and op is lax.fma and dtype != jnp.float32:
+      self.skipTest("CPU backend only supports float32/float64 lax.fma")
+    if not self.INTERPRET and jtu.is_device_rocm() and op is lax.fma and dtype == jnp.bfloat16:
+      self.skipTest("ROCm Triton lacks bfloat16 fma support")
+
+    eps = float(jnp.finfo(dtype).eps)
+    a = jnp.full((8, 128), 1.0 + eps, dtype=dtype)
+    b = jnp.full((8, 128), 1.0 - eps, dtype=dtype)
+    c = jnp.full((8, 128), -1.0, dtype=dtype)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
+    )
+    def kernel(a_ref, b_ref, c_ref, o_ref):
+      o_ref[...] = op(a_ref[...], b_ref[...], c_ref[...])
+
+    out = kernel(a, b, c)
+    if op is lax.fma:
+      expected = jnp.full((8, 128), -(eps * eps), dtype=dtype)
+      self.assertArraysEqual(out, expected)
+    else:
+      self.assertAllClose(out, jnp.full((8, 128), -(eps * eps), dtype=dtype), atol=eps)
+
+  @parameterized.parameters(lax.fma, lax.fmuladd)
+  @jtu.run_on_devices("cuda")
+  def test_fma_rejects_fp8_in_triton(self, op):
+    self.skip_if_mosaic_gpu()
+    if self.INTERPRET:
+      self.skipTest("Triton lowering test")
+
+    x = jnp.ones((8, 128), dtype=jnp.float8_e4m3fn)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float8_e4m3fn),
+    )
+    def kernel(a_ref, b_ref, c_ref, o_ref):
+      o_ref[...] = op(a_ref[...], b_ref[...], c_ref[...])
+
+    with self.assertRaises(jax.errors.JaxRuntimeError):
+      kernel(x, x, x)
 
   IS_FINITE_TEST_VALUES = [
       -0.2, jnp.inf, -jnp.inf, jnp.nan, 0.0, 1.0, -1.0, 0.5,

@@ -1327,6 +1327,93 @@ def mulhi(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @export
+def fma(a: ArrayLike, b: ArrayLike, c: ArrayLike) -> Array:
+  r"""Elementwise fused multiply-add: :math:`a \times b + c`.
+
+  Computes ``a * b + c`` with a single IEEE-754 rounding
+  (``fusedMultiplyAdd(a, b, c)``), as if the intermediate product ``a * b`` and
+  sum ``(a * b) + c`` were computed with unbounded range and precision and
+  rounded once to the output dtype. This function lowers directly to the
+  `stablehlo.fma`_ operation.
+
+  Note that upcasting the inputs to a wider floating-point dtype, computing
+  ``fma`` or ``a * b + c`` in that dtype, and rounding back to the target dtype
+  is not equivalent to ``fma`` because of double rounding (and intermediate
+  overflow or underflow when the wider type has the same exponent range, such
+  as ``bfloat16`` and ``float32``). On targets without a native fused
+  multiply-add instruction for the input dtype, ``fma`` is either emulated in
+  software to guarantee single-rounded semantics (as on TPU for ``float32``,
+  ``bfloat16``, and ``float16``, which may be significantly slower than
+  :func:`jax.lax.fmuladd`) or rejected as unimplemented during compilation
+  (such as ``float16`` and ``bfloat16`` on CPU, ``bfloat16`` on pre-Ampere CUDA
+  GPUs, or sub-16-bit floating-point types).
+
+  Args:
+    a, b, c: Input arrays. Must have matching floating-point dtypes. Any
+      non-scalar inputs must have the same number of dimensions and be
+      broadcast compatible.
+
+  Returns:
+    An array of the same dtype and broadcasted shape as the inputs containing
+    the single-rounded fused multiply-add result.
+
+  See also:
+    - :func:`jax.lax.fmuladd`: Elementwise multiply-add where fusion is
+      optional.
+    - :func:`jax.lax.mul`: Elementwise multiplication.
+    - :func:`jax.lax.add`: Elementwise addition.
+
+  .. _stablehlo.fma: https://openxla.org/stablehlo/spec#fma
+  """
+  a, b, c = core.auto_insert_reshard(a, b, c)
+  return fma_p.bind(a, b, c)
+
+
+@export
+def fmuladd(a: ArrayLike, b: ArrayLike, c: ArrayLike) -> Array:
+  r"""Elementwise multiply-add: :math:`a \times b + c`.
+
+  For each element, computes ``a * b + c`` either as a single-rounded IEEE-754
+  fused multiply-add (:func:`jax.lax.fma`) or as a two-rounded multiply
+  followed by an add (``lax.add(lax.mul(a, b), c)``) in the input dtype. For
+  floating-point dtypes narrower than ``float32`` (such as ``float16``,
+  ``bfloat16``, or 8-bit and 4-bit floating-point types), the implementation
+  may alternatively upcast ``a``, ``b``, and ``c`` to ``float32``, evaluate
+  either ``fma`` or ``add(mul(a, b), c)`` in ``float32``, and round the result
+  back to the input dtype.
+
+  The choice is implementation-defined and typically uses a hardware FMA
+  instruction when one is available for the target dtype and device, or in
+  ``float32`` for narrower floating-point dtypes. On TPU, ``fmuladd`` lowers to
+  ``lax.add(lax.mul(a, b), c)``. On CUDA and ROCm GPUs, it lowers to
+  `stablehlo.fma`_ for ``float16``, ``float32``, and ``float64``, and upcasts
+  other narrow floating-point dtypes to ``float32`` `stablehlo.fma`_. On CPU
+  and other platforms, it lowers to `stablehlo.fma`_ for ``float32`` and
+  ``float64``, and upcasts narrower floating-point dtypes to ``float32``
+  `stablehlo.fma`_.
+
+  Args:
+    a, b, c: Input arrays. Must have matching floating-point dtypes. Any
+      non-scalar inputs must have the same number of dimensions and be
+      broadcast compatible.
+
+  Returns:
+    An array of the same dtype and broadcasted shape as the inputs containing
+    the multiply-add result.
+
+  See also:
+    - :func:`jax.lax.fma`: Elementwise fused multiply-add with single IEEE-754
+      rounding.
+    - :func:`jax.lax.mul`: Elementwise multiplication.
+    - :func:`jax.lax.add`: Elementwise addition.
+
+  .. _stablehlo.fma: https://openxla.org/stablehlo/spec#fma
+  """
+  a, b, c = core.auto_insert_reshard(a, b, c)
+  return fmuladd_p.bind(a, b, c)
+
+
+@export
 def div(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise division: :math:`x \over y`.
 
@@ -4163,7 +4250,8 @@ def polynomial(
 
   The coefficients ``coeffs = (a_0, a_1, ..., a_N)`` are ordered from lowest
   degree (:math:`a_0`, the constant term) to highest degree (:math:`a_N`, the
-  coefficient of :math:`x^N`).
+  coefficient of :math:`x^N`). For floating-point inputs, each Horner step is
+  evaluated using :func:`jax.lax.fmuladd`.
 
   Derivatives with respect to ``x`` are computed as lower-degree
   polynomials (:math:`\sum_{k=1}^{N} k a_k x^{k-1}`), making first- and
@@ -5441,10 +5529,16 @@ ad.primitive_transposes[polynomial_p] = _polynomial_transpose
 
 def polynomial_lower(x, *coeffs, unroll=None):
   unroll_threshold = 8 if unroll is None else unroll
+  use_fmuladd = dtypes.issubdtype(typeof(x).dtype, np.floating)
+  step = (
+      (lambda acc, c: fmuladd(acc, x, c))
+      if use_fmuladd
+      else (lambda acc, c: add(mul(acc, x), c))
+  )
   if len(coeffs) <= unroll_threshold:
     acc = coeffs[-1]
     for c in reversed(coeffs[:-1]):
-      acc = add(mul(acc, x), c)
+      acc = step(acc, c)
     return acc
   from jax._src.lax import control_flow  # pytype: disable=import-error
   out_shape = broadcasting_shape_rule('polynomial', *(typeof(a) for a in (x, *coeffs)))
@@ -5453,7 +5547,7 @@ def polynomial_lower(x, *coeffs, unroll=None):
   coeff_sharding = broadcasting_sharding_rule('polynomial', *(typeof(c) for c in coeffs))
   b_coeffs = [_maybe_broadcast(coeff_shape, c, coeff_sharding) for c in reversed(coeffs)]
   y, _ = control_flow.scan(
-      lambda acc, c: (add(mul(acc, x), c), None),
+      lambda acc, c: (step(acc, c), None),
       full_like(x, 0, shape=out_shape, sharding=out_sharding),
       stack(b_coeffs, axis=0),
       unroll=unroll_threshold,
@@ -5747,6 +5841,109 @@ mulhi_p = naryop(input_dtype, [{np.integer}, {np.integer}], 'mulhi')
 dispatch.simple_impl(mulhi_p)
 ad.defjvp_zero(mulhi_p)
 mlir.register_lowering(mulhi_p, partial(_nary_lower_hlo, chlo.mulhi))
+
+
+def _fma_jvp(prim, primals, tangents):
+  a, b, c = primals
+  adot, bdot, cdot = tangents
+  primal_out = prim.bind(a, b, c)
+  op = fma if prim is fma_p else fmuladd
+  acc = cdot
+  if type(bdot) is not ad_util.Zero:
+    acc = mul(a, bdot) if type(acc) is ad_util.Zero else op(a, bdot, acc)
+  if type(adot) is not ad_util.Zero:
+    acc = mul(adot, b) if type(acc) is ad_util.Zero else op(adot, b, acc)
+  if type(acc) is ad_util.Zero:
+    return primal_out, ad_util.p2tz(primal_out)
+  return primal_out, _maybe_broadcast(
+      primal_out.shape, acc, typeof(primal_out).sharding)
+
+
+def _fma_transpose(ct, a, b, c):
+  assert not (ad.is_undefined_primal(a) and ad.is_undefined_primal(b))
+  if type(ct) is ad_util.Zero:
+    return [
+        ad_util.Zero(x.aval) if ad.is_undefined_primal(x) else None
+        for x in (a, b, c)
+    ]
+  ct_a = _unbroadcast(a.aval, mul(ct, b)) if ad.is_undefined_primal(a) else None
+  ct_b = _unbroadcast(b.aval, mul(a, ct)) if ad.is_undefined_primal(b) else None
+  ct_c = _unbroadcast(c.aval, ct) if ad.is_undefined_primal(c) else None
+  return [ct_a, ct_b, ct_c]
+
+
+def _fma_lower(ctx, a, b, c):
+  if jaxlib_extension_version < 515:
+    raise NotImplementedError(
+        'lax.fma requires jaxlib_extension_version >= 515.'
+    )
+  return _nary_lower_hlo(hlo.fma, ctx, a, b, c)
+
+
+fma_p = standard_naryop([_float, _float, _float], 'fma')
+ad.primitive_jvps[fma_p] = partial(_fma_jvp, fma_p)
+ad.primitive_transposes[fma_p] = _fma_transpose
+mlir.register_lowering(fma_p, _fma_lower)
+
+
+def _muladd_hlo(x, y, z):
+  return hlo.add(hlo.multiply(x, y), z)
+
+
+def _fmuladd_lower(ctx, a, b, c, *, native_dtypes):
+  if jaxlib_extension_version < 515 or ctx.is_forward_compat():
+    return _nary_lower_hlo(_muladd_hlo, ctx, a, b, c)
+  aval_out, = ctx.avals_out
+  if aval_out.dtype in native_dtypes:
+    return _nary_lower_hlo(hlo.fma, ctx, a, b, c)
+  f32_type = mlir.aval_to_ir_type(
+      ctx.module_context, aval_out.update(dtype=np.dtype(np.float32))
+  )
+  out_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
+  return _nary_lower_hlo(
+      lambda x, y, z: hlo.convert(
+          out_type,
+          hlo.fma(
+              hlo.convert(f32_type, x),
+              hlo.convert(f32_type, y),
+              hlo.convert(f32_type, z),
+          ),
+      ),
+      ctx,
+      a,
+      b,
+      c,
+  )
+
+
+fmuladd_p = standard_naryop([_float, _float, _float], 'fmuladd')
+ad.primitive_jvps[fmuladd_p] = partial(_fma_jvp, fmuladd_p)
+ad.primitive_transposes[fmuladd_p] = _fma_transpose
+mlir.register_lowering(
+    fmuladd_p,
+    partial(
+        _fmuladd_lower,
+        native_dtypes=(np.dtype(np.float32), np.dtype(np.float64)),
+    ),
+)
+for _gpu_platform in ('cuda', 'rocm'):
+  mlir.register_lowering(
+      fmuladd_p,
+      partial(
+          _fmuladd_lower,
+          native_dtypes=(
+              np.dtype(np.float16),
+              np.dtype(np.float32),
+              np.dtype(np.float64),
+          ),
+      ),
+      platform=_gpu_platform,
+  )
+mlir.register_lowering(
+    fmuladd_p,
+    partial(_nary_lower_hlo, _muladd_hlo),
+    platform='tpu',
+)
 
 
 def _div_transpose_rule(cotangent, x, y):

@@ -89,6 +89,27 @@ def _reduce_custom_max(x, y):
   return jnp.maximum(x, y)
 
 
+def _backend_supports_fma(dtype) -> bool:
+  if jaxlib_extension_version < 515 or not jtu.is_libtpu_at_least("0.0.52"):
+    return False
+  dtype = np.dtype(dtype)
+  if dtype in (np.dtype(np.float32), np.dtype(np.float64)):
+    return True
+  if dtype == np.dtype(np.float16):
+    return (
+        jtu.test_device_matches(["tpu"])
+        or jtu.is_device_rocm()
+        or jtu.is_cuda_compute_capability_at_least("5.3")
+    )
+  if dtype == np.dtype(dtypes.bfloat16):
+    return (
+        jtu.test_device_matches(["tpu"])
+        or jtu.is_cuda_compute_capability_at_least("8.0")
+        or (jtu.is_device_rocm() and bool(jtu.device_kind_match("gfx1250")))
+    )
+  return False
+
+
 class LaxTest(jtu.JaxTestCase):
   """Numerical tests for LAX operations."""
 
@@ -101,6 +122,8 @@ class LaxTest(jtu.JaxTestCase):
           dtype=rec.dtypes)
       for rec in lax_test_util.lax_ops()))
   def testOp(self, op_name, rng_factory, shapes, dtype):
+    if op_name == "fma" and not _backend_supports_fma(dtype):
+      raise SkipTest(f"fma not supported for {dtype} on this backend")
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
     op = getattr(lax, op_name)
@@ -116,6 +139,8 @@ class LaxTest(jtu.JaxTestCase):
       for rec in lax_test_util.lax_ops()))
   @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
   def testOpAgainstNumpy(self, op_name, rng_factory, shapes, dtype, tol):
+    if op_name == "fma" and not _backend_supports_fma(dtype):
+      raise SkipTest(f"fma not supported for {dtype} on this backend")
     if (not config.enable_x64.value and op_name == "nextafter"
         and dtype == np.float64):
       raise SkipTest("64-bit mode disabled")
@@ -261,6 +286,125 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(
         lambda x, y: lax.log(lax.pow(x, y)), args_maker, tol=tol
     )
+
+  @parameterized.named_parameters(
+      ("f32", jnp.float32, 1.0 + 2**-20, 1.0 - 2**-20, -1.0, -(2**-40), 0.0),
+      ("f64", jnp.float64, 1.0 + 2**-30, 1.0 - 2**-30, -1.0, -(2**-60), 0.0),
+      # 1.5 * (1 + 2^-7) - 2^-24 is strictly below the bf16 midpoint.
+      ("bf16_midpoint", jnp.bfloat16, 1.5, 1.0 + 2**-7, -(2**-24),
+       1.5 + 2**-7, 1.5 + 2**-6),
+      # (1 - 2^-14) * 2^-126 rounds to 2^-126 in bf16, or 0 under f32 FTZ.
+      ("bf16_underflow", jnp.bfloat16, 129.0 * 2**-70, 127.0 * 2**-70, 0.0,
+       2**-126, 0.0),
+      # 1.5 * (1 + 2^-10) - 2^-24 is strictly below the f16 midpoint.
+      ("f16_midpoint", jnp.float16, 1.5, 1.0 + 2**-10, -(2**-24),
+       1.5 + 2**-10, 1.5 + 2**-9),
+      # Native f16 (fused or unfused) gives 1 + 2^-10; f32 upcast gives 1 + 2^-9.
+      ("f16_upcast", jnp.float16, 9.0 / 8.0, 1823.0 / 2048.0, 2**-14 - 2**-24,
+       1.0 + 2**-10, 1.0 + 2**-9),
+      ("f8_e4m3fn", jnp.float8_e4m3fn, 1.5, 2.0, 0.5, 3.5, 3.5),
+      ("f8_e5m2", jnp.float8_e5m2, 1.5, 2.0, 0.5, 3.5, 3.5),
+  )
+  def testFmaSingleRounding(self, dtype, a, b, c, expected, alt):
+    if dtype == jnp.float64 and not config.enable_x64.value:
+      raise SkipTest("64-bit mode disabled")
+    if dtype == jnp.float64:
+      self.assertEqual(lax_reference._float64_fma_scalar(a, b, c), expected)
+    a, b, c, expected, alt = (
+        jnp.asarray(v, dtype=dtype) for v in (a, b, c, expected, alt)
+    )
+    self.assertEqual(lax_reference.fma(a, b, c), np.asarray(expected))
+    if _backend_supports_fma(dtype):
+      self.assertEqual(lax.fma(a, b, c), expected)
+      self.assertEqual(jax.jit(lax.fma)(a, b, c), expected)
+    self.assertIn(lax.fmuladd(a, b, c), (expected, alt))
+    self.assertIn(jax.jit(lax.fmuladd)(a, b, c), (expected, alt))
+
+  @parameterized.parameters([lax.fma, lax.fmuladd])
+  def testFmaJvpMixedShapes(self, op):
+    if op is lax.fma and not _backend_supports_fma(jnp.float32):
+      raise SkipTest("fma not supported on this backend")
+    a = jnp.float32(2.0)
+    b = jnp.float32(3.0)
+    c = jnp.ones((3, 4), dtype=jnp.float32)
+    da = jnp.float32(0.5)
+    db = jnp.float32(0.25)
+
+    p_out, t_out = jax.jvp(lambda x, y: op(x, y, c), (a, b), (da, db))
+    self.assertEqual(p_out.shape, (3, 4))
+    self.assertEqual(t_out.shape, (3, 4))
+    self.assertAllClose(t_out, jnp.full((3, 4), da * b + a * db))
+
+    p_out_a, t_out_a = jax.jvp(lambda x: op(x, b, c), (a,), (da,))
+    self.assertEqual(p_out_a.shape, (3, 4))
+    self.assertEqual(t_out_a.shape, (3, 4))
+    self.assertAllClose(t_out_a, jnp.full((3, 4), da * b))
+
+    a_arr = jnp.ones((3, 4), dtype=jnp.float32)
+    c_scalar = jnp.float32(1.0)
+    dc = jnp.float32(0.75)
+    p_out_c, t_out_c = jax.jvp(
+        lambda z: op(a_arr, b, z), (c_scalar,), (dc,))
+    self.assertEqual(p_out_c.shape, (3, 4))
+    self.assertEqual(t_out_c.shape, (3, 4))
+    self.assertAllClose(t_out_c, jnp.full((3, 4), dc))
+
+  @parameterized.parameters([lax.fma, lax.fmuladd])
+  def testFmaLinearTranspose(self, op):
+    a = jnp.arange(3, dtype=jnp.float32).reshape(3, 1)
+    b = jnp.arange(4, dtype=jnp.float32).reshape(1, 4)
+    c = jnp.float32(2.0)
+    ct = jnp.arange(12, dtype=jnp.float32).reshape(3, 4)
+
+    t_ac = jax.linear_transpose(lambda x, z: op(x, b, z), a, c)
+    da, dc = t_ac(ct)
+    self.assertEqual(da.shape, (3, 1))
+    self.assertEqual(dc.shape, ())
+    self.assertAllClose(da, jnp.sum(ct * b, axis=1, keepdims=True))
+    self.assertAllClose(dc, jnp.sum(ct))
+
+    t_bc = jax.linear_transpose(lambda y, z: op(a, y, z), b, c)
+    db, dc2 = t_bc(ct)
+    self.assertEqual(db.shape, (1, 4))
+    self.assertEqual(dc2.shape, ())
+    self.assertAllClose(db, jnp.sum(a * ct, axis=0, keepdims=True))
+    self.assertAllClose(dc2, jnp.sum(ct))
+
+  def testFmuladdPlatformLowering(self):
+    if jaxlib_extension_version < 515:
+      self.skipTest("Requires jaxlib_extension_version >= 515")
+    f = jax.jit(lax.fmuladd)
+    a32 = jnp.ones((2, 3), dtype=jnp.float32)
+    for platform in ("cpu", "cuda", "rocm"):
+      hlo_text = f.trace(a32, a32, a32).lower(lowering_platforms=(platform,)).as_text()
+      self.assertIn("stablehlo.fma", hlo_text)
+      self.assertNotIn("stablehlo.convert", hlo_text)
+    tpu_hlo = f.trace(a32, a32, a32).lower(lowering_platforms=("tpu",)).as_text()
+    self.assertIn("stablehlo.multiply", tpu_hlo)
+    self.assertIn("stablehlo.add", tpu_hlo)
+    self.assertNotIn("stablehlo.fma", tpu_hlo)
+
+    exported = export.export(f, platforms=("cpu", "cuda", "tpu"))(a32, a32, a32)
+    self.assertNotIn("stablehlo.fma", exported.mlir_module())
+
+    a16 = jnp.ones((2, 3), dtype=jnp.float16)
+    cpu_f16_hlo = f.trace(a16, a16, a16).lower(lowering_platforms=("cpu",)).as_text()
+    self.assertIn("stablehlo.convert", cpu_f16_hlo)
+    self.assertIn("stablehlo.fma", cpu_f16_hlo)
+    for platform in ("cuda", "rocm"):
+      gpu_f16_hlo = f.trace(a16, a16, a16).lower(lowering_platforms=(platform,)).as_text()
+      self.assertIn("stablehlo.fma", gpu_f16_hlo)
+      self.assertNotIn("stablehlo.convert", gpu_f16_hlo)
+
+    abf16 = jnp.ones((2, 3), dtype=jnp.bfloat16)
+    for platform in ("cpu", "cuda", "rocm"):
+      bf16_hlo = f.trace(abf16, abf16, abf16).lower(lowering_platforms=(platform,)).as_text()
+      self.assertIn("stablehlo.convert", bf16_hlo)
+      self.assertIn("stablehlo.fma", bf16_hlo)
+    tpu_bf16_hlo = f.trace(abf16, abf16, abf16).lower(lowering_platforms=("tpu",)).as_text()
+    self.assertIn("stablehlo.multiply", tpu_bf16_hlo)
+    self.assertIn("stablehlo.add", tpu_bf16_hlo)
+    self.assertNotIn("stablehlo.fma", tpu_bf16_hlo)
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
@@ -4312,6 +4456,53 @@ class LaxTest(jtu.JaxTestCase):
     self.assertCountEqual(
         while_operand_shapes(fn_scan2.lower(x2, c_row)),
         [(4, 1, 5), (100, 5), (), (100, 5)],
+    )
+
+  def test_polynomial_uses_fmuladd(self):
+    x = jnp.float32(1.0 + 2**-20)
+    c0 = jnp.float32(-1.0)
+    c1 = jnp.float32(1.0 - 2**-20)
+    expected_fused = jnp.float32(-(2**-40))
+
+    unrolled_fn = jax.jit(lambda z: lax.polynomial(z, [c0, c1, 0.0], unroll=4))
+    scan_fn = jax.jit(lambda z: lax.polynomial(z, [c0, c1, 0.0, 0.0], unroll=1))
+    polyval_fn = jax.jit(lambda p, z: jnp.polyval(p, z))
+
+    for fn in (unrolled_fn, scan_fn):
+      cpu_hlo = fn.trace(x).lower(lowering_platforms=("cpu",)).as_text()
+      if jaxlib_extension_version >= 515:
+        self.assertIn("stablehlo.fma", cpu_hlo)
+      tpu_hlo = fn.trace(x).lower(lowering_platforms=("tpu",)).as_text()
+      self.assertNotIn("stablehlo.fma", tpu_hlo)
+
+    if jaxlib_extension_version >= 515:
+      polyval_cpu_hlo = (
+          polyval_fn.trace(jnp.array([c1, c0]), x)
+          .lower(lowering_platforms=("cpu",))
+          .as_text()
+      )
+      self.assertIn("stablehlo.fma", polyval_cpu_hlo)
+
+    exported_poly = export.export(unrolled_fn, platforms=("cpu",))(x)
+    self.assertNotIn("stablehlo.fma", exported_poly.mlir_module())
+
+    if jtu.test_device_matches(["cpu", "gpu"]) and _backend_supports_fma(jnp.float32):
+      self.assertEqual(lax.polynomial(x, [c0, c1]), expected_fused)
+      self.assertEqual(scan_fn(x), expected_fused)
+      self.assertEqual(polyval_fn(jnp.array([c1, c0]), x), expected_fused)
+    else:
+      self.assertIn(
+          lax.polynomial(x, [c0, c1]), (expected_fused, jnp.float32(0.0))
+      )
+
+    # Integer and complex polynomials continue to lower via mul + add.
+    xi = jnp.int32(3)
+    self.assertEqual(lax.polynomial(xi, [1, 5, 2]), jnp.int32(34))
+    self.assertEqual(jnp.polyval(jnp.array([2, 5, 1], dtype=jnp.int32), xi), jnp.int32(34))
+    xc = jnp.complex64(1.0 + 2.0j)
+    cc = [jnp.complex64(1.0), jnp.complex64(2.0 - 1.0j), jnp.complex64(0.5j)]
+    self.assertAllClose(
+        lax.polynomial(xc, cc), cc[0] + xc * (cc[1] + xc * cc[2])
     )
 
 

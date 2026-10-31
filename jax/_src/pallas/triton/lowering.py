@@ -1495,6 +1495,41 @@ register_lowering(lax.erf_inv_p)(
 )
 
 
+def _use_triton_fma(ctx: LoweringRuleContext, dtype: np.dtype) -> bool:
+  if dtype in (
+      np.dtype(np.float16),
+      np.dtype(np.float32),
+      np.dtype(np.float64),
+  ):
+    return True
+  if dtype == np.dtype(jnp.bfloat16) and ctx.context.platform == "cuda":
+    cc = ctx.context.compute_capability
+    return cc is None or cc >= 80
+  return False
+
+
+@register_lowering(lax.fma_p)
+def _fma_lowering_rule(ctx: LoweringRuleContext, a, b, c):
+  [out_aval] = ctx.avals_out
+  a_aval, b_aval, c_aval = ctx.avals_in
+  a = _bcast_to(_ensure_ir_value(a, a_aval), out_aval.shape)
+  b = _bcast_to(_ensure_ir_value(b, b_aval), out_aval.shape)
+  c = _bcast_to(_ensure_ir_value(c, c_aval), out_aval.shape)
+  return math_dialect.fma(a, b, c)
+
+
+@register_lowering(lax.fmuladd_p)
+def _fmuladd_lowering_rule(ctx: LoweringRuleContext, a, b, c):
+  [out_aval] = ctx.avals_out
+  if _use_triton_fma(ctx, out_aval.dtype):
+    return _fma_lowering_rule(ctx, a, b, c)
+  a_aval, b_aval, c_aval = ctx.avals_in
+  a = _bcast_to(_ensure_ir_value(a, a_aval), out_aval.shape)
+  b = _bcast_to(_ensure_ir_value(b, b_aval), out_aval.shape)
+  c = _bcast_to(_ensure_ir_value(c, c_aval), out_aval.shape)
+  return _add(_mul(a, b), c)
+
+
 register_lowering(lax.polynomial_p)(
     lower_fun(lax_internal.polynomial_lower, multiple_results=False)
 )

@@ -15,11 +15,13 @@
 from functools import reduce, partial
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import numpy as np
 import unittest
 
 import jax
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 import jax.scipy.special
 from jax import random
@@ -490,6 +492,25 @@ class JetTest(jtu.JaxTestCase):
           atol=1e-3,
           rtol=1e-3,
       )
+
+  @parameterized.named_parameters(("fma", lax.fma), ("fmuladd", lax.fmuladd))
+  def test_fma_and_fmuladd(self, op):
+    if op is lax.fma and (
+        jaxlib_extension_version < 515
+        or not jtu.is_libtpu_at_least("0.0.52")
+    ):
+      self.skipTest(
+          "fma requires jaxlib_extension_version >= 515 and libtpu >= 0.0.52"
+      )
+    rng = jtu.rand_default(self.rng())
+    order = 4
+    for shapes in [((2, 3), (2, 3), (2, 3)), ((2, 1), (1, 3), ())]:
+      primals = tuple(rng(s, np.float32) for s in shapes)
+      series_in = tuple(
+          [rng(s, np.float32) for _ in range(order)]
+          for s in shapes
+      )
+      self.check_jet(op, primals, series_in, atol=1e-3, rtol=1e-3)
 
 
 if __name__ == '__main__':

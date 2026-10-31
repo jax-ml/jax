@@ -16,6 +16,7 @@
 import builtins
 import collections
 import itertools
+import math
 
 import numpy as np
 import opt_einsum
@@ -24,6 +25,7 @@ import scipy.special
 from jax._src import dtypes
 from jax._src import util
 
+_abs = builtins.abs
 _slice = builtins.slice
 _max = builtins.max
 _min = builtins.min
@@ -132,6 +134,107 @@ def mulhi(x, y):
     widen_dtype = np.dtype(f'{"i" if is_signed else "u"}{widen_bits // 8}')
   prod = x.astype(widen_dtype) * y.astype(widen_dtype)
   return (prod >> bits).astype(dtype)
+
+
+def _float64_fma_scalar(x: float, y: float, z: float) -> float:
+  x, y, z = float(x), float(y), float(z)
+  if math.isnan(x) or math.isnan(y) or math.isnan(z):
+    return math.nan
+  if math.isinf(x) or math.isinf(y):
+    if x == 0.0 or y == 0.0:
+      return math.nan
+    return (x * y) + z
+  if math.isinf(z):
+    return z
+  if x == 0.0 or y == 0.0:
+    return (x * y) + z
+  if z == 0.0:
+    return x * y
+  mx, ex = math.frexp(x)
+  my, ey = math.frexp(y)
+  mz, ez = math.frexp(z)
+  ix = int(math.ldexp(mx, 53))
+  iy = int(math.ldexp(my, 53))
+  iz = int(math.ldexp(mz, 53))
+  ep = ex + ey - 106
+  ec = ez - 53
+  e0 = _min(ep, ec)
+  total = ((ix * iy) << (ep - e0)) + (iz << (ec - e0))
+  if total == 0:
+    return 0.0
+  sign = -1.0 if total < 0 else 1.0
+  m = _abs(total)
+  e_top = e0 + m.bit_length() - 1
+  q = _max(-1074, e_top - 52)
+  if e0 >= q:
+    q_int = m << (e0 - q)
+  else:
+    shift = q - e0
+    q_int = m >> shift
+    rem = m & ((1 << shift) - 1)
+    half = 1 << (shift - 1)
+    if rem > half or (rem == half and (q_int & 1)):
+      q_int += 1
+  if q + q_int.bit_length() - 1 > 1023:
+    return math.copysign(math.inf, sign)
+  return math.copysign(math.ldexp(q_int, q), sign)
+
+
+_float64_fma = np.vectorize(
+    getattr(math, 'fma', _float64_fma_scalar), otypes=[np.float64]
+)
+
+
+def fma(a, b, c):
+  dtype = dtypes.result_type(a, b, c)
+  if dtype == np.float64:
+    return _float64_fma(a, b, c).astype(np.float64)
+  # For types narrower than float64 (float32, float16, bfloat16, float8_*),
+  # the exact product a * b has at most 48 significand bits and fits exactly in
+  # float64 (53 bits). Compute (a * b) + c in float64 with Knuth's 2Sum and
+  # Round-To-Odd so the subsequent narrowing to dtype never double-rounds.
+  da = np.asarray(a, dtype=np.float64)
+  db = np.asarray(b, dtype=np.float64)
+  dc = np.asarray(c, dtype=np.float64)
+  with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+    p = np.multiply(da, db)
+    s = np.add(p, dc)
+    v = s - p
+    err = (p - (s - v)) + (dc - v)
+  s_arr = np.asarray(s, dtype=np.float64)
+  nudge_64 = (
+      np.isfinite(s_arr) & (err != 0) & ((s_arr.view(np.uint64) & 1) == 0)
+  )
+  s_rto = np.where(
+      nudge_64,
+      np.nextafter(s_arr, np.where(err > 0, np.inf, -np.inf)),
+      s_arr,
+  )
+  with np.errstate(over='ignore'):
+    f = s_rto.astype(np.float32)
+  if dtype == np.float32:
+    return f
+  # ml_dtypes narrow floats (such as bfloat16) cast float64 -> float32 -> dtype,
+  # so apply Round-To-Odd in float32 before narrowing to dtype.
+  fd = f.astype(np.float64)
+  nudge_32 = (
+      np.isfinite(s_rto)
+      & np.isfinite(f)
+      & (fd != s_rto)
+      & ((f.view(np.uint32) & 1) == 0)
+  )
+  f_rto = np.where(
+      nudge_32,
+      np.nextafter(
+          f, np.where(s_rto > fd, np.float32(np.inf), np.float32(-np.inf))
+      ),
+      f,
+  )
+  with np.errstate(over='ignore'):
+    return f_rto.astype(dtype)
+
+
+fmuladd = fma
 
 
 def div(lhs, rhs):
