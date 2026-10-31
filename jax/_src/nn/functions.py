@@ -921,11 +921,9 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
   padded_logits = padded_logits.astype(np.float32)
   probs = softmax(padded_logits, axis=-1).astype(key.dtype)
 
-  encoded = jnp_einsum.einsum('BNTS,BSNH->BTNH', probs, value)
   if combined_mask is not None:
-    # Fully masked queries must not depend on excluded values.
-    valid_rows = jnp.transpose(jnp.any(combined_mask, axis=-1), (0, 2, 1))
-    encoded = jnp.where(valid_rows[..., None], encoded, 0)
+    probs = jnp.where(combined_mask, probs, 0)
+  encoded = jnp_einsum.einsum('BNTS,BSNH->BTNH', probs, value)
   if q_seqlen is not None:
     mask = _get_padding_mask_encoded(encoded.shape[1], q_seqlen)
     encoded *= mask.astype(encoded.dtype)
