@@ -1510,6 +1510,45 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertIn('out_specs', e.params)
     self.assertEqual(e.params['out_specs'][0], P(('x', 'y')))
 
+  @jtu.with_explicit_mesh((2, 2), ('data', 'track'))
+  def test_nested_shard_map_no_remaining_axes_error(self, mesh):
+    x = jax.device_put(np.ones((2, 4, 3)), P("track", "data"))
+
+    def inner(x):
+      return jax.shard_map(lambda y: y * 2, in_specs=P(), out_specs=P())(x)
+
+    def body(x):
+      f = jax.shard_map(inner, in_specs=P("data"), out_specs=P("data"),
+                        axis_names={"data"})
+      return f(x)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "shard_map requires at least one mesh axis name to go manual over"):
+      jax.jit(jax.vmap(body))(x)
+
+  @jtu.with_explicit_mesh((2, 2, 2), ('track', 'x', 'y'))
+  def test_nested_partial_manual_shard_map_under_vmap_explicit(self, mesh):
+    x = jax.device_put(jnp.arange(32, dtype=np.float32).reshape(2, 4, 4),
+                       P('track', 'x', 'y'))
+
+    @jax.jit
+    @jax.vmap
+    def f(x):
+      @shard_map(out_specs=P('x', None), axis_names={'x'})
+      def outer(x):
+        @shard_map(out_specs=P(None, 'y'))
+        def inner(x):
+          return x * 2.0 + 1.0
+        return inner(x)
+      return outer(x)
+
+    compiled_text = f.lower(x).compile().as_text()
+    self.assertNotIn('all-gather', compiled_text)
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('track', 'x', 'y')))
+    self.assertArraysEqual(out, x * 2.0 + 1.0)
+
   def test_nested_vmap_with_capture_spmd_axis_name(self):
     self.skipTest('https://github.com/jax-ml/jax/issues/23476')
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))

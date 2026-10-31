@@ -407,6 +407,10 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
         f"mesh.axis_names={mesh_axis_names_wo_vmap}")
 
   axis_names = axis_names - set(mesh.manual_axes)
+  if not axis_names:
+    raise ValueError(
+        "shard_map requires at least one mesh axis name to go manual over, "
+        f"but all mesh axes are already manual. Got {mesh=}")
 
   if (in_specs is Infer and
       not all(mesh._name_to_type[a] == AxisType.Explicit for a in axis_names)):
@@ -1633,8 +1637,11 @@ def _shard_map_batch(
     new_axis_data = trace.axis_data
 
   def fun_batched(*args):
-    ans_aux, out_dims = batching.batch_subtrace_2(
-        fun, trace.tag, new_axis_data, tuple(in_dims), args)
+    # TODO(yashkatariya): Remove add_explicit_mesh_axis_names when vmap
+    # mesh ctx is correctly set.
+    with core.add_explicit_mesh_axis_names(explicit_mesh_axis):
+      ans_aux, out_dims = batching.batch_subtrace_2(
+          fun, trace.tag, new_axis_data, tuple(in_dims), args)
     ans, out_specs = ans_aux.unpack_aux()
     new_out_specs = _batch_out_specs(spmd_axis_name, explicit_mesh_axis,
                                      out_dims, out_specs)
