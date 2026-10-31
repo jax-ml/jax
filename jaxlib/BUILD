@@ -1651,7 +1651,10 @@ cc_library(
         "@xla//xla/tsl/platform:env",
         "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:statusor",
-    ],
+    ] + if_oss(
+        [],
+        ["@xla//xla/hlo/ir:hlo_print_options"],
+    ),
 )
 
 pytype_strict_library(
