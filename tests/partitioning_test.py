@@ -155,6 +155,51 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           lambda x: lax.reduce_sum(x, axes=(0,), out_sharding=P(None)))
       f_bad.lower(arr)
 
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('m', 'e'))
+  def test_manual_collectives_under_partial_shard_map(self, mesh):
+    np_x = np.arange(16, dtype=np.float32).reshape(2, 8)
+    arr = jax.device_put(np_x, P('m', 'e'))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(None), axis_names={'m'})
+    def f(x):
+      y = lax.psum(x, 'm')
+      z = lax.pmax(y, 'm')
+      return lax.reduce_sum(z, axes=(0,))
+
+    self.assertAllClose(f(arr), np.sum(np_x, axis=0))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(), axis_names={'m'})
+    def f_idx_psum():
+      return lax.psum(lax.axis_index('m'), 'm')
+
+    self.assertArraysEqual(f_idx_psum(), np.int32(1))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(None, None), axis_names={'m'})
+    def f_ag_unsharded_dim(x):
+      return lax.all_gather(x, 'm', axis=0, tiled=True, to='invarying')
+
+    self.assertAllClose(f_ag_unsharded_dim(arr), np_x)
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(None, None), axis_names={'m'})
+    def f_ag_const():
+      c = lax.pcast(np.ones((1, 4), dtype=np.float32), 'm', to='varying')
+      return lax.all_gather(c, 'm', axis=1, tiled=True, to='invarying')
+
+    self.assertAllClose(f_ag_const(), np.ones((1, 8), dtype=np.float32))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(None, None), axis_names={'m'})
+    def f_ag_sharded_dim(x):
+      return lax.all_gather(x, 'm', axis=1, tiled=True, to='invarying')
+
+    with self.assertRaises(NotImplementedError):
+      f_ag_sharded_dim.lower(arr)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

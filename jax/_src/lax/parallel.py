@@ -1170,11 +1170,40 @@ def _psum_transpose_rule(cts, arg, *, axes, axis_index_groups):
   return (psum_p.bind(cts, axes=tuple(named_axes),
                       axis_index_groups=axis_index_groups),)
 
+_local_manual_collective_rule = lambda *avals, **params: mlir.PartitioningRule()
+
+def _is_dim_sharded(aval, dim: int, tiled: bool) -> bool:
+  # Splitting/gathering a dim sharded on explicit axes (or inserting/removing a
+  # dim with tiled=False before sharded dims) needs extra explicit collectives.
+  parts = aval.sharding.spec.partitions
+  return (any(s is not None for s in parts[dim:]) if not tiled
+          else parts[dim] is not None)
+
+def _all_gather_collective_rule(
+    in_aval, out_aval, *, all_gather_dimension, tiled, **params):
+  if _is_dim_sharded(in_aval, all_gather_dimension, tiled):
+    return None
+  return mlir.PartitioningRule()
+
+def _reduce_scatter_collective_rule(
+    in_aval, out_aval, *, scatter_dimension, tiled, **params):
+  if _is_dim_sharded(in_aval, scatter_dimension, tiled):
+    return None
+  return mlir.PartitioningRule()
+
+def _all_to_all_collective_rule(
+    in_aval, out_aval, *, split_axis, concat_axis, tiled, **params):
+  if (_is_dim_sharded(in_aval, split_axis, tiled) or
+      _is_dim_sharded(in_aval, concat_axis, tiled)):
+    return None
+  return mlir.PartitioningRule()
+
 psum_p = core.Primitive('psum')
 psum_p.def_impl(partial(_allreduce_impl, psum_p, lax.reduce_sum))
 psum_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
-    psum_p, partial(_all_reduce_lowering, lax.add_p, lax.reduce_sum))
+    psum_p, partial(_all_reduce_lowering, lax.add_p, lax.reduce_sum),
+    shard_map_collective_rule=_local_manual_collective_rule)
 ad.deflinear2(psum_p, _psum_transpose_rule)
 batching.fancy_primitive_batchers[psum_p] = \
   partial(_batched_reduction_collective, psum_p, lambda v, axis_size: axis_size * v)
@@ -1184,7 +1213,8 @@ pmax_p = core.Primitive('pmax')
 pmax_p.def_impl(partial(_allreduce_impl, pmax_p, lax.reduce_max))
 pmax_p.def_effectful_abstract_eval(partial(_pmin_pmax_abstract_eval, 'pmax'))
 mlir.register_lowering(
-    pmax_p, partial(_all_reduce_lowering, lax.max_p, lax.reduce_max))
+    pmax_p, partial(_all_reduce_lowering, lax.max_p, lax.reduce_max),
+    shard_map_collective_rule=_local_manual_collective_rule)
 batching.fancy_primitive_batchers[pmax_p] = \
   partial(_batched_reduction_collective, pmax_p, lambda v, axis_size: v)
 
@@ -1193,7 +1223,8 @@ pmin_p = core.Primitive('pmin')
 pmin_p.def_impl(partial(_allreduce_impl, pmin_p, lax.reduce_min))
 pmin_p.def_effectful_abstract_eval(partial(_pmin_pmax_abstract_eval, 'pmin'))
 mlir.register_lowering(
-    pmin_p, partial(_all_reduce_lowering, lax.min_p, lax.reduce_min))
+    pmin_p, partial(_all_reduce_lowering, lax.min_p, lax.reduce_min),
+    shard_map_collective_rule=_local_manual_collective_rule)
 batching.fancy_primitive_batchers[pmin_p] = \
   partial(_batched_reduction_collective, pmin_p, lambda v, axis_size: v)
 
@@ -1280,7 +1311,9 @@ def _raise_to_shaped_abstract_eval(x, *, axis_name, **params):
 ppermute_p = core.Primitive('ppermute')
 ppermute_p.def_abstract_eval(_raise_to_shaped_abstract_eval)
 ad.deflinear2(ppermute_p, _ppermute_transpose_rule)
-mlir.register_lowering(ppermute_p, _ppermute_lowering)
+mlir.register_lowering(
+    ppermute_p, _ppermute_lowering,
+    shard_map_collective_rule=_local_manual_collective_rule)
 batching.fancy_primitive_batchers[ppermute_p] = _ppermute_batcher
 
 
@@ -1777,7 +1810,9 @@ def _all_to_all_impl(*args, **kwargs):
 all_to_all_p = core.Primitive('all_to_all')
 all_to_all_p.def_impl(_all_to_all_impl)
 all_to_all_p.def_effectful_abstract_eval(_all_to_all_effectful_abstract_eval)
-mlir.register_lowering(all_to_all_p, _all_to_all_lowering)
+mlir.register_lowering(
+    all_to_all_p, _all_to_all_lowering,
+    shard_map_collective_rule=_all_to_all_collective_rule)
 ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
 batching.fancy_primitive_batchers[all_to_all_p] = _all_to_all_batched_collective
 
@@ -2209,7 +2244,9 @@ def _all_gather_batched_collective(prim, axis_data, vals_in, dims_in,
 all_gather_p = core.Primitive('all_gather')
 all_gather_p.def_effectful_abstract_eval(_all_gather_effectful_abstract_eval)
 all_gather_p.def_impl(_all_gather_impl)
-mlir.register_lowering(all_gather_p, _all_gather_lowering)
+mlir.register_lowering(
+    all_gather_p, _all_gather_lowering,
+    shard_map_collective_rule=_all_gather_collective_rule)
 for p in ("cuda", "rocm", "tpu"):
   mlir.register_lowering(all_gather_p,
                          partial(_all_gather_lowering, platform=p),
@@ -2267,7 +2304,9 @@ def _all_gather_invariant_lowering(
       axis_index_groups=None, axis_size=axis_size, tiled=tiled,
       platform=platform)
 
-mlir.register_lowering(all_gather_invariant_p, _all_gather_invariant_lowering)
+mlir.register_lowering(
+    all_gather_invariant_p, _all_gather_invariant_lowering,
+    shard_map_collective_rule=_all_gather_collective_rule)
 for p in ("cuda", "rocm", "tpu"):
   mlir.register_lowering(all_gather_invariant_p,
                          partial(_all_gather_invariant_lowering, platform=p),
@@ -2441,8 +2480,9 @@ reduce_scatter_p.def_effectful_abstract_eval(
 ad.deflinear2(reduce_scatter_p, _reduce_scatter_transpose_rule)
 batching.fancy_primitive_batchers[reduce_scatter_p] = _reduce_scatter_collective
 
-mlir.register_lowering(reduce_scatter_p,
-                       partial(_reduce_scatter_lowering, lax.add_p))
+mlir.register_lowering(
+    reduce_scatter_p, partial(_reduce_scatter_lowering, lax.add_p),
+    shard_map_collective_rule=_reduce_scatter_collective_rule)
 
 def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
                  tiled=False):
@@ -2640,7 +2680,9 @@ def _axis_index_batcher(axis_data, vals_in, dims_in, *, axis_name):
 
 axis_index_p = core.Primitive('axis_index')
 axis_index_p.def_impl(partial(dispatch.apply_primitive, axis_index_p))
-mlir.register_lowering(axis_index_p, _axis_index_lowering)
+mlir.register_lowering(
+    axis_index_p, _axis_index_lowering,
+    shard_map_collective_rule=_local_manual_collective_rule)
 axis_index_p.def_effectful_abstract_eval(_axis_index_effectful_abstract_eval)
 batching.fancy_primitive_batchers[axis_index_p] = _axis_index_batcher
 
@@ -2686,7 +2728,9 @@ psum_invariant_p.def_effectful_abstract_eval(
 def _psum_invariant_lowering_rule(ctx, arg, *, axes):
   return _all_reduce_lowering(lax.add_p, lax.reduce_sum, ctx, arg, axes=axes,
                               axis_index_groups=None)
-mlir.register_lowering(psum_invariant_p, _psum_invariant_lowering_rule)
+mlir.register_lowering(
+    psum_invariant_p, _psum_invariant_lowering_rule,
+    shard_map_collective_rule=_local_manual_collective_rule)
 
 def _psum_invariant_batching_rule(axis_data, vals_in, dims_in, axes):
   return _batched_reduction_collective(
@@ -2705,7 +2749,9 @@ def _raise_valueerror(name, arg, *, axes):
   raise ValueError(f'{name} should be called under jax.shard_map.')
 
 core.pvary_p.def_impl(partial(_raise_valueerror, 'pvary'))
-mlir.register_lowering(core.pvary_p, lambda ctx, x, *, axes: [x])
+mlir.register_lowering(
+    core.pvary_p, lambda ctx, x, *, axes: [x],
+    shard_map_collective_rule=_local_manual_collective_rule)
 
 def _pvary_abstract_eval(aval, *, axes):
   _check_axis_names(axes, 'pvary', check_no_collectives=False)
@@ -2800,7 +2846,9 @@ def _all_gather_reduced_lowering(
       axis_index_groups=None, axis_size=axis_size, tiled=tiled,
       platform=platform, is_async=is_async)
 
-mlir.register_lowering(all_gather_reduced_p, _all_gather_reduced_lowering)
+mlir.register_lowering(
+    all_gather_reduced_p, _all_gather_reduced_lowering,
+    shard_map_collective_rule=_all_gather_collective_rule)
 for p in ("cuda", "rocm", "tpu"):
   mlir.register_lowering(all_gather_reduced_p,
                          partial(_all_gather_reduced_lowering, platform=p),
@@ -3009,7 +3057,9 @@ def preduced(x, axis_name):
 
 preduced_p = core.Primitive('preduced')
 preduced_p.def_impl(partial(_raise_valueerror, 'preduced'))
-mlir.register_lowering(preduced_p, lambda ctx, x, *, axes: [x])
+mlir.register_lowering(
+    preduced_p, lambda ctx, x, *, axes: [x],
+    shard_map_collective_rule=_local_manual_collective_rule)
 
 def _preduced_abstract_eval(aval, *, axes):
   assert isinstance(axes, tuple)
@@ -3094,7 +3144,9 @@ batching.primitive_batchers[vary_unreduced_cast_p] = _vary_unreduced_cast_batche
 # Traceable defined in core.py to avoid circular imports
 core.reduced_vary_cast_p.def_impl(
     partial(_raise_valueerror, 'reduced_vary_cast'))
-mlir.register_lowering(core.reduced_vary_cast_p, lambda ctx, x, *, axes: [x])
+mlir.register_lowering(
+    core.reduced_vary_cast_p, lambda ctx, x, *, axes: [x],
+    shard_map_collective_rule=_local_manual_collective_rule)
 
 def _reduced_vary_cast_abstract_eval(aval, *, axes):
   assert isinstance(axes, tuple)
