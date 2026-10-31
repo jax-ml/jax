@@ -35,6 +35,14 @@ py_library(
     ],
 )
 
+py_test(
+    name = "pgo_nsys_converter_test",
+    srcs = ["pgo_nsys_converter_test.py"],
+    deps = [
+        ":pgo_nsys_converter",
+    ] + py_deps("absl/testing"),
+)
+
 py_library(
     name = "jax_to_ir",
     srcs = [
