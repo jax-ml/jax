@@ -11231,10 +11231,34 @@ def _optimization_barrier_to_lojax(*hi_args):
 optimization_barrier_p.to_lojax = _optimization_barrier_to_lojax  # type: ignore
 
 
+def _remat_residual_pin(dtype: DTypeLike
+                        ) -> tuple[core.Primitive, dict[str, int]]:
+  """Returns the primitive and params with which remat pins a residual.
+
+  To avoid precision mismatches between the forward and backward passes due to
+  XLA excess precision, remat makes the forward pass read the same rounded value
+  that it saves as a residual (see https://github.com/jax-ml/jax/pull/22244).
+  For floats of 16 or more bits, it does so with ``reduce_precision`` to the
+  dtype's own exponent and mantissa widths, the identity on values of the dtype.
+
+  That isn't the case for narrower floats: XLA computes ``reduce_precision`` in
+  a wider type, as an IEEE-style format with infinities and without subnormals.
+  For example, float8_e4m3fn's widths (4, 3) turn its finite values 256..448
+  into inf (and so into NaN when converted back) and its subnormals into zeros.
+  For these dtypes, remat uses an ``optimization_barrier`` instead, which makes
+  the forward pass read the materialized residual.
+  """
+  finfo = dtypes.finfo(dtype)
+  if finfo.bits < 16:
+    return optimization_barrier_p, {}
+  return reduce_precision_p, dict(exponent_bits=finfo.nexp,
+                                  mantissa_bits=finfo.nmant)
+
 def _array_reduce_precision_handler(t, x):
   assert isinstance(t, core.ShapedArray)
   if dtypes.issubdtype(t.dtype, np.inexact):
-    finfo = dtypes.finfo(t.dtype)
-    return reduce_precision(x, exponent_bits=finfo.nexp, mantissa_bits=finfo.nmant)
+    prim, params = _remat_residual_pin(t.dtype)
+    out = prim.bind(x, **params)
+    return out[0] if prim.multiple_results else out
   return x
 remat.reduce_precision_handlers[core.ShapedArray] = _array_reduce_precision_handler
