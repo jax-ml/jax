@@ -27,6 +27,7 @@ from jax._src import dtypes
 from jax._src import lax as lax_internal
 from jax._src import numpy as jnp
 from jax._src import tree_util
+from jax._src.config import numpy_rank_promotion
 from jax._src.custom_derivatives import custom_vjp
 from jax._src.custom_partitioning import custom_partitioning
 from jax._src.interpreters import batching
@@ -675,7 +676,8 @@ def quantize(x, config):
 
     SCALE_MAX = dtypes.finfo(config.scale_type).max.astype(x.dtype)
 
-    x /= config.global_scale
+    with numpy_rank_promotion("allow"):
+      x /= config.global_scale
     scales_q = jnp.clip(get_scales_per_block(x), 0, SCALE_MAX)
     scales_q = lax.optimization_barrier(scales_q.astype(config.scale_type))
     scaled_x = x / scales_q.astype(np.float32)
