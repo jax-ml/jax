@@ -30,6 +30,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.scipy.special.jn`, an accurate implementation of bessel
     functions of the first kind of integer order.
 
+* Breaking changes - mod
+  * The `jax_use_simplified_jaxpr_constants` configuration flag is now `True`
+    by default. This changes the handling of closed-over constants in Jaxpr.
+    See [here](https://docs.jax.dev/en/latest/internals/constants.html) for
+    more details, including how to recognize and migrate your code.
+    The flag will be removed in a future release.
+
 * Deprecations
   * The `jax_use_shardy_partitioner` configuration flag is deprecated and is now
     a no-op. JAX always lowers to Shardy, and the flag will be removed in a
