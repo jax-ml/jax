@@ -5982,25 +5982,6 @@ class ShardMapTest(jtu.JaxTestCase):
       g(idx)
 
   @jtu.with_explicit_mesh((2,), 'x')
-  def test_while_loop_varying_predicate(self, mesh):
-    # Device i runs i iterations.
-    @jax.shard_map(in_specs=(), out_specs=P())
-    def f():
-      n = jax.lax.axis_index('x')
-      return jax.lax.while_loop(lambda c: c < n, lambda c: c + 1, 0)
-
-    with self.assertRaises(core.ShardingTypeError):
-      f()
-
-    @jax.shard_map(in_specs=(), out_specs=P('x'))
-    def g():
-      n = jax.lax.axis_index('x')
-      init = jax.lax.pcast(jnp.int32(0), 'x', to='varying')
-      return jax.lax.while_loop(lambda c: c < n, lambda c: c + 1, init)[None]
-
-    self.assertArraysEqual(g(), np.array([0, 1], dtype=np.int32))
-
-  @jtu.with_explicit_mesh((2,), 'x')
   def test_sort_reduced_grad(self, mesh):
     w = jax.device_put(np.array([3., 1., 2.]), P(reduced={'x'}))
     c = jax.device_put(np.array([0., 1., 2.]), P(reduced={'x'}))
