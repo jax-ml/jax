@@ -19,6 +19,8 @@ import math
 import os
 import shutil
 import tempfile
+import time
+from unittest import mock
 import warnings
 
 from absl.testing import absltest, parameterized
@@ -30,6 +32,8 @@ from jax._src import monitoring
 from jax._src import pjit
 from jax._src import profiler
 from jax._src import test_util as jtu
+from jax._src.interpreters import pxla
+from jax.experimental import multihost_utils
 from jax.experimental import profiler as exp_profiler
 from jax.experimental.serialize_executable import (
     deserialize_and_load,
@@ -40,6 +44,12 @@ from jax.sharding import NamedSharding, PartitionSpec
 import numpy as np
 
 jax.config.parse_flags_with_absl()
+
+
+def _pgle_profilers():
+  return [pgle_profiler
+          for profilers in pjit._pgle_profiler_dict.values()
+          for pgle_profiler in profilers.values()]
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
@@ -157,12 +167,19 @@ class PgleTest(jtu.JaxTestCase):
 
       with config.pgle_profiling_runs(2), config.enable_pgle(True):
         # Run 1: Module should be compiled without FDO. Two modules are expected
-        # One is the function f, the other one is multi slice module
+        # One is the function f, the other one is multi slice module. Runs 1
+        # and 2 are warm-ups that are not profiled.
+        for _ in range(2):
+          with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
+            self.assertArraysEqual(f(x), expected)
+          self.assertEqual(cache_miss_count(), 2)
+
+        # Run 3: First PGLE run.
         with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
 
-        # Run 2: Second PGLE run. Profile should be empty.
+        # Run 4: Second PGLE run. Profile should be empty.
         with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
@@ -174,7 +191,7 @@ class PgleTest(jtu.JaxTestCase):
         self.assertEqual(
             os.path.getsize(os.path.join(dump_dir, fdo_profiles_before_pgle[0])), 0)
 
-        # Run 3: The module should be recompiled with FDO profiles
+        # Run 5: The module should be recompiled with FDO profiles
         with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
@@ -189,7 +206,7 @@ class PgleTest(jtu.JaxTestCase):
                 os.path.getsize(os.path.join(dump_dir, fdo_profile)), 0
             )
 
-        # Run 4: Fast-path should be used after PGLE is done
+        # Run 6: Fast-path should be used after PGLE is done
         with jtu.count_pjit_cpp_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
         self.assertLess(cache_miss_count(), 2)
@@ -263,13 +280,15 @@ class PgleTest(jtu.JaxTestCase):
         non_pgle_profiled_files = os.listdir(cache_dir)
         self.assertNotEmpty(non_pgle_profiled_files)
 
-        # Run 2: Compilation should not be called
-        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
-          f(x)
-        self.assertEqual(cache_miss_count(), 0)
+        # Run 2 is a warm-up and runs 3 and 4 are profiled: compilation should
+        # not be called
+        for _ in range(3):
+          with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+            f(x)
+          self.assertEqual(cache_miss_count(), 0)
 
         fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
-        # Run 3: Module should be compiled with FDO and stored to persistent cache
+        # Run 5: Module should be compiled with FDO and stored to persistent cache
         with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
           f(x)
         self.assertGreater(cache_miss_count(), 0)
@@ -288,7 +307,7 @@ class PgleTest(jtu.JaxTestCase):
               os.path.getsize(os.path.join(dump_dir, fdo_profile)), 0
           )
 
-        for pgle_profiler in pjit._pgle_profiler_dict.values():
+        for pgle_profiler in _pgle_profilers():
           self.assertTrue(pgle_profiler.is_enabled())
           self.assertTrue(pgle_profiler.is_fdo_consumed())
 
@@ -309,7 +328,7 @@ class PgleTest(jtu.JaxTestCase):
         api.clear_caches()
         pjit._pgle_profiler_dict.clear()
 
-        # Run 4: Persistent compilation cache should be hit PGLE profiler should
+        # Run 6: Persistent compilation cache should be hit PGLE profiler should
         # be disabled
         cache_hit = 0
         def check_if_cache_hit(event):
@@ -322,6 +341,152 @@ class PgleTest(jtu.JaxTestCase):
         monitoring.unregister_event_listener(check_if_cache_hit)
 
         self.assertGreater(cache_hit, 0)
+
+  def testPgleBarrierRunsAfterProfilerStart(self):
+    # The barrier absorbs the skew between the processes' profiler starts, so
+    # it must be enqueued after the profiler has started, not before.
+    runner = profiler.PGLEProfiler(retries=1, percentile=90)
+    barrier_calls = []
+
+    def barrier():
+      barrier_calls.append(runner.is_running())
+
+    runner.barrier = barrier
+    x = jnp.arange(16, dtype=np.float32)
+    with profiler.PGLEProfiler.trace(runner):
+      jax.block_until_ready(x * 2)
+    self.assertEqual(barrier_calls, [True])
+    self.assertFalse(runner.is_running())
+    self.assertEqual(runner.called_times, 1)
+
+  def testPgleBarrierCompiledBeforeProfilerStart(self):
+    # Like the profiled module, the barrier is compiled before the profiler
+    # starts, not in the first profiled run.
+    mesh = jtu.create_mesh((2,), ('x',))
+
+    @partial(
+        jax.jit,
+        in_shardings=NamedSharding(mesh, PartitionSpec('x')),
+        out_shardings=NamedSharding(mesh, PartitionSpec('x')),
+    )
+    def f(x):
+      return x * 2
+
+    x = jax.device_put(np.arange(16, dtype=np.float32),
+                       NamedSharding(mesh, PartitionSpec('x')))
+    api.clear_caches()
+    pjit._pgle_profiler_dict.clear()
+    # The profilers left behind would fail later tests' checks on all of them.
+    self.addCleanup(pjit._pgle_profiler_dict.clear)
+    self.addCleanup(api.clear_caches)
+    device_barrier_fn = pxla._device_barrier_fn
+    device_barrier_fn.cache_clear()  # So the barrier compiles here.
+    # Whether a PGLE profiler was running at each compile of the barrier.
+    profiling = []
+
+    def barrier_fn(*args):
+      profiling.append(any(runner.is_running()
+                           for runner in _pgle_profilers()))
+      return device_barrier_fn(*args)
+
+    with (mock.patch.object(pxla, '_device_barrier_fn', barrier_fn),
+          config.pgle_profiling_runs(1), config.enable_pgle(True),
+          config.pgle_barrier(True)):
+      jax.block_until_ready(f(x))  # Compiled, then profiled.
+    self.assertEqual(device_barrier_fn.cache_info().misses, 1)
+    # Compiled once, when `f` was, before the profiled run.
+    self.assertEqual(profiling, [False])
+
+  def testPgleProfilerPerDeviceList(self):
+    # One function, compiled for two lists of devices with the same shape, has
+    # one jaxpr, but each executable is profiled on its own devices, and is
+    # preceded by a barrier over them.
+    if len(jax.devices()) < 4:
+      self.skipTest('Requires 4 devices')
+    devices = jax.devices()
+    xs = [jax.device_put(np.arange(16, dtype=np.float32),
+                         NamedSharding(jax.sharding.Mesh(
+                             np.array(devices[i:i + 2]), ('x',)),
+                                       PartitionSpec('x')))
+          for i in (0, 2)]
+    f = jax.jit(lambda x: x * 2)
+    api.clear_caches()
+    pjit._pgle_profiler_dict.clear()
+    # The profilers left behind would fail later tests' checks on all of them.
+    self.addCleanup(pjit._pgle_profiler_dict.clear)
+    self.addCleanup(api.clear_caches)
+    with (config.pgle_profiling_runs(1), config.pgle_warmup_runs(1),
+          config.enable_pgle(True), config.pgle_barrier(True)):
+      for x in xs:
+        for _ in range(2):  # A warm-up run and a profiled run.
+          jax.block_until_ready(f(x))
+    (profilers,) = pjit._pgle_profiler_dict.values()
+    self.assertEqual(
+        [tuple(d.id for d in device_list) for device_list in profilers],
+        [(devices[0].id, devices[1].id), (devices[2].id, devices[3].id)])
+    for pgle_profiler in profilers.values():
+      self.assertEqual(pgle_profiler.called_times, 1)
+      self.assertIsNotNone(pgle_profiler.barrier)
+
+  def testPgleWarmupRunsAreNotProfiled(self):
+    runner = profiler.PGLEProfiler(retries=1, percentile=90, warmup_runs=2)
+    # Whether the profiler was running at each run of the barrier.
+    barrier_calls = []
+    runner.barrier = lambda: barrier_calls.append(runner.is_running())
+    x = jnp.arange(16, dtype=np.float32)
+    # The warm-up runs do not start the profiler, but run the barrier, so that
+    # its first execution is not profiled either.
+    for i in range(2):
+      with profiler.PGLEProfiler.trace(runner):
+        jax.block_until_ready(x * 2)
+      self.assertEqual(runner.called_times, 0)
+      self.assertEqual(barrier_calls, [False] * (i + 1))
+      self.assertIsNone(runner.consume_fdo_profile())
+    # The run after them is profiled.
+    with profiler.PGLEProfiler.trace(runner):
+      jax.block_until_ready(x * 2)
+    self.assertEqual(runner.called_times, 1)
+    self.assertEqual(barrier_calls, [False, False, True])
+    self.assertIsNotNone(runner.consume_fdo_profile())
+
+  def testDeviceBarrier(self):
+    devices = tuple(jax.devices())
+    compiled, x = pxla._device_barrier_fn(devices)
+    self.assertEqual(compiled(x).block_until_ready(), 0)
+    # Compiled once per set of devices and delay.
+    self.assertIs(compiled, pxla._device_barrier_fn(devices)[0])
+
+  def testDeviceBarrierIgnoresContextMesh(self):
+    # The barrier is reached from the dispatch of an arbitrary computation,
+    # which may run under a mesh set with `jax.set_mesh` (as in MaxText) that
+    # differs from the barrier's own mesh.
+    mesh = jtu.create_mesh((len(jax.devices()),), ('x',))
+    pxla._device_barrier_fn.cache_clear()  # So the barrier compiles here.
+    with jax.set_mesh(mesh):
+      compiled, x = pxla._device_barrier_fn(tuple(jax.devices()))
+      self.assertEqual(compiled(x).block_until_ready(), 0)
+
+  @jtu.run_on_devices('cuda')
+  def testWaitAndSyncDevicesAsyncSleeps(self):
+    delay_ms = 200
+
+    def f(x):
+      return x * 2
+
+    x_np = np.arange(16, dtype=np.float32)
+    x = jnp.asarray(x_np)
+    expected = f(x_np)
+    # Warm up, so that compilation does not count towards the lower bound.
+    multihost_utils.wait_and_sync_devices_async(delay_ms=delay_ms)
+    jax.block_until_ready(f(x))
+    start = time.perf_counter()
+    multihost_utils.wait_and_sync_devices_async(delay_ms=delay_ms)
+    # The work enqueued after the barrier waits for the sleep.
+    self.assertArraysEqual(jax.block_until_ready(f(x)), expected)
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    # Only a lower bound: the sleep is approximate and usually longer than
+    # requested.
+    self.assertGreater(elapsed_ms, delay_ms / 2)
 
   def testPassingFDOProfile(self):
     mesh = jtu.create_mesh((2,), ('x',))
@@ -410,7 +575,13 @@ class PgleTest(jtu.JaxTestCase):
         non_pgle_f_files = set(os.listdir(cache_dir))
         self.assertNotEmpty(non_pgle_f_files)
 
-        # Run 2: Module should be re-compiled with PGLE, miss the cache again
+        # Run 2 is a warm-up and run 3 is profiled
+        for _ in range(2):
+          with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+            f(x)
+          self.assertEqual(cache_miss_count(), 0)
+
+        # Run 4: Module should be re-compiled with PGLE, miss the cache again
         with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
           f(x)
         self.assertGreater(cache_miss_count(), 0)
@@ -419,12 +590,12 @@ class PgleTest(jtu.JaxTestCase):
         pgle_and_non_pgle_f_files = set(os.listdir(cache_dir))
         self.assertNotEqual(non_pgle_f_files, pgle_and_non_pgle_f_files)
 
-        # Remove non-PGLE version of `f` from the cache so a hit in run 3 is
+        # Remove non-PGLE version of `f` from the cache so a hit in run 6 is
         # definitely the PGLE version
         for non_pgle_file in non_pgle_f_files:
           os.remove(os.path.join(cache_dir, non_pgle_file))
 
-        # Run 3: put a non-PGLE version of `g` in the cache
+        # Run 5: put a non-PGLE version of `g` in the cache
         with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
           g(x)
         self.assertGreater(cache_miss_count(), 0)
@@ -438,7 +609,7 @@ class PgleTest(jtu.JaxTestCase):
             config.persistent_cache_min_entry_size_bytes(0),
             config.persistent_cache_min_compile_time_secs(0),
             config.compilation_cache_expect_pgle(True)):
-        # Run 4 (simulating run 1 in a new process) should pick up the PGLE-optimised
+        # Run 6 (simulating run 1 in a new process) should pick up the PGLE-optimised
         # cache entry, even though PGLE is not enabled
         cache_hit = 0
         def check_if_cache_hit(event):
@@ -451,7 +622,7 @@ class PgleTest(jtu.JaxTestCase):
         monitoring.unregister_event_listener(check_if_cache_hit)
         self.assertGreater(cache_hit, 0)
 
-        # Run 5: `g` was only executed once and did not get re-compiled with PGLE, so
+        # Run 7: `g` was only executed once and did not get re-compiled with PGLE, so
         # executing it with compilation_cache_expect_pgle will raise a warning and a
         # cache *hit*, because the non-PGLE version will be loaded
         with warnings.catch_warnings(record=True) as w:
@@ -469,7 +640,7 @@ class PgleTest(jtu.JaxTestCase):
             str(w[0].message)
           )
 
-        # Run 6: `h` was not executed during step 1, which populated the cache, so
+        # Run 8: `h` was not executed during step 1, which populated the cache, so
         # executing it now and triggering a cache write will emit a warning
         with warnings.catch_warnings(record=True) as w:
           warnings.simplefilter("always")
@@ -520,12 +691,15 @@ class PgleTest(jtu.JaxTestCase):
 
       get_new_files.seen_files = set()
 
-      # Run 1
+      # Run 1: warm-up, compiled for profiling
       self.assertArraysEqual(jax.block_until_ready(f(x)), expected)
       self.assertNotIn(
           'xla_gpu_enable_command_buffer: 1', get_new_files()
       )  # b/376647494 workaround
-      # Run 2
+      # Run 2: warm-up; run 3: profiled, not recompiled
+      self.assertArraysEqual(jax.block_until_ready(f(x)), expected)
+      self.assertArraysEqual(jax.block_until_ready(f(x)), expected)
+      # Run 4: recompiled with the profile
       self.assertArraysEqual(jax.block_until_ready(f(x)), expected)
       self.assertIn(
           'xla_gpu_enable_command_buffer', get_new_files()

@@ -368,6 +368,30 @@ cuda_library(
     ],
 )
 
+cc_library(
+    name = "cuda_sleep_kernel",
+    srcs = ["//jaxlib/gpu:sleep_kernel.cc"],
+    hdrs = ["//jaxlib/gpu:sleep_kernel.h"],
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_sleep_kernel_impl",
+        ":cuda_vendor",
+        "//jaxlib:ffi_helpers",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+cuda_library(
+    name = "cuda_sleep_kernel_impl",
+    srcs = ["//jaxlib/gpu:sleep_kernel.cu.cc"],
+    hdrs = ["//jaxlib/gpu:sleep_kernel.h"],
+    deps = [
+        ":cuda_vendor",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
 nanobind_extension(
     name = "_prng",
     srcs = ["//jaxlib/gpu:prng.cc"],
@@ -787,6 +811,7 @@ nanobind_extension(
     ],
     module_name = "cuda_plugin_extension",
     deps = [
+        ":cuda_sleep_kernel",
         ":py_client_gpu",
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/gpu:gpu_plugin_extension",
