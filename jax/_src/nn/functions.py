@@ -848,7 +848,7 @@ def _get_padding_mask_encoded(T, q_seqlen):
 def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
                  local_window_size):
   if mask is None and not is_causal and q_seqlen is None and kv_seqlen is None and local_window_size is None:
-    return logits
+    return logits, None
 
   combined_mask = jnp.ones_like(logits, dtype=bool)
   if mask is not None:
@@ -871,7 +871,7 @@ def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
 
   large_negative_number = _get_large_negative(logits.dtype)
   padded_logits = jnp.where(combined_mask, logits, large_negative_number)
-  return padded_logits
+  return padded_logits, combined_mask
 
 def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
                                 scale, q_seqlen, kv_seqlen, local_window_size,
@@ -914,7 +914,7 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
   if bias is not None:
     logits = (logits + bias).astype(logits.dtype)
 
-  padded_logits = _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
+  padded_logits, combined_mask = _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
                                local_window_size)
 
   # Softmax and it is always carried out in fp32.
@@ -922,6 +922,10 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
   probs = softmax(padded_logits, axis=-1).astype(key.dtype)
 
   encoded = jnp_einsum.einsum('BNTS,BSNH->BTNH', probs, value)
+  if combined_mask is not None:
+    # Fully masked queries must not depend on excluded values.
+    valid_rows = jnp.transpose(jnp.any(combined_mask, axis=-1), (0, 2, 1))
+    encoded = jnp.where(valid_rows[..., None], encoded, 0)
   if q_seqlen is not None:
     mask = _get_padding_mask_encoded(encoded.shape[1], q_seqlen)
     encoded *= mask.astype(encoded.dtype)

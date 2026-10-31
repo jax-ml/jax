@@ -441,6 +441,61 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(dV_ref, dV_ans, rtol=.01, atol=.01)
     self.assertAllClose(dbias_ref, dbias_ans, rtol=.02, atol=.02)
 
+  @parameterized.product(
+      mode=["custom", "zero_kv", "combined"],
+      return_residual=[False, True],
+  )
+  def testDotProductAttentionFullyMasked(self, mode, return_residual):
+    # GQA: two query heads sharing one KV head.
+    q = jnp.array([[[[1., 0.], [1., 0.]],
+                    [[0., 1.], [0., 1.]]]])
+    k = jnp.array([[[[1., 0.]], [[0., 1.]]]])
+    v = jnp.array([[[[3., 5.]], [[7., 11.]]]])
+
+    if mode == "custom":
+      kwargs = {"mask": jnp.array(
+          [[[[False, False], [True, False]]]])}
+      empty_query = 0
+      expected = [[0., 0.], [3., 5.]]
+    elif mode == "zero_kv":
+      kwargs = {"key_value_seq_lengths":
+                jnp.array([0], jnp.int32)}
+      empty_query = 0
+      expected = [[0., 0.], [0., 0.]]
+    else:
+      kwargs = {
+          "key_value_seq_lengths": jnp.array([1], jnp.int32),
+          "local_window_size": (0, 0),
+      }
+      empty_query = 1
+      expected = [[3., 5.], [0., 0.]]
+
+    def attention(keys, values):
+      return nn.dot_product_attention(
+          q, keys, values, implementation="xla",
+          return_residual=return_residual, **kwargs)
+
+    expected = jnp.broadcast_to(
+        jnp.array(expected)[None, :, None, :], (1, 2, 2, 2))
+
+    for call in (attention, jax.jit(attention)):
+      result = call(k, v)
+      output = result[0] if return_residual else result
+      self.assertAllClose(output, expected, atol=1e-6)
+      if return_residual:
+        self.assertTrue(jnp.all(jnp.isfinite(result[1])))
+
+    def loss(keys, values):
+      result = attention(keys, values)
+      output = result[0] if return_residual else result
+      return output[0, empty_query].sum()
+
+    gradients = jax.grad(loss, argnums=(0, 1))
+    for grad_fn in (gradients, jax.jit(gradients)):
+      dk, dv = grad_fn(k, v)
+      self.assertAllClose(dk, jnp.zeros_like(k), atol=1e-6)
+      self.assertAllClose(dv, jnp.zeros_like(v), atol=1e-6)
+
   def testDotProductAttentionFloat64MaskDebugInfs(self):
     # Regression test for https://github.com/jax-ml/jax/issues/37422
     with jax.enable_x64():
