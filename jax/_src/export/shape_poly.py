@@ -181,12 +181,22 @@ class _DimFactor:
     The comparison is done lexicographically (syntactic), to be used for sorting.
     The result is not related to the semantic value.
     """
-    if c := cmp_comparable(self._size, other._size): return c
-    if self.var is not None:
-      return cmp_comparable(self.var, other.var)
-    if c := cmp_comparable(self.operation, other.operation): return c
-    return cmp_sequence(self.operands, other.operands,
-                        lambda s_o, o_o: s_o._syntactic_cmp(o_o))
+    if self is other:
+      return 0
+    if self._size != other._size:
+      return -1 if self._size < other._size else 1
+    if (s_var := self.var) is not None and (o_var := other.var) is not None:
+      return -1 if s_var < o_var else (1 if s_var > o_var else 0)
+    if (
+        (s_op := self.operation) is not None
+        and (o_op := other.operation) is not None
+        and s_op != o_op
+    ):
+      return -1 if s_op < o_op else 1
+    for s_o, o_o in zip(self.operands, other.operands):
+      if s_o is not o_o and (c := s_o._syntactic_cmp(o_o)):
+        return c
+    return cmp_comparable(len(self.operands), len(other.operands))
 
   def __eq__(self, other: Any):
     """Lexicographic comparison."""
@@ -328,14 +338,18 @@ class _DimTerm:
     The comparison is done lexicographically (syntactic), to be used for sorting.
     The result is not related to the semantic value.
     """
-    if c := cmp_comparable(self._size, other._size): return c
-    def cmp_factor(s_f: tuple[_DimFactor, int], o_f: tuple[_DimFactor, int]) -> int:
-      if c := s_f[0]._syntactic_cmp(o_f[0]): return c
+    if self is other:
+      return 0
+    if self._size != other._size:
+      return -1 if self._size < other._size else 1
+    for (s_f, s_e), (o_f, o_e) in zip(self._factors, other._factors):
+      if s_f is not o_f and (c := s_f._syntactic_cmp(o_f)):
+        return c
       # Consider the terms with exponents to be expanded as multiplications.
       # Then a higher exponent for a "large" factor should lead to a "larger" term.
-      return cmp_comparable(s_f[1], o_f[1])
-
-    return cmp_sequence(self._factors, other._factors, cmp_factor)
+      if s_e != o_e:
+        return -1 if s_e < o_e else 1
+    return cmp_comparable(len(self._factors), len(other._factors))
 
   def __lt__(self, other: _DimTerm):
     """Lexicographic comparison"""
@@ -364,6 +378,10 @@ class _DimTerm:
     """
     Returns the product with another term. Example: (n^2*m) * n == n^3 * m.
     """
+    if not self._factors:
+      return other
+    if not other._factors:
+      return self
     return _DimTerm(_DimExpr._linear_combination_sorted_pairs(self._factors, 0, 1,
                                                               other._factors, 0, 1))
 
@@ -419,8 +437,10 @@ class _DimExpr:
     self._scope = scope
     self._hash = None
     # _size speeds up _syntactic_cmp, which is used a lot for hashing.
-    self._size = sum((1 + abs(m_count) * m._size)
-                     for m, m_count in self._sorted_terms)
+    size = 0
+    for m, m_count in self._sorted_terms:
+      size += 1 + abs(m_count) * m._size
+    self._size = size
 
   @property
   def scope(self):
@@ -521,15 +541,16 @@ class _DimExpr:
 
     Does not attempt to normalize the keys (terms) inside `terms`.
     """
-    for t, t_k in terms:
-      assert t_k != 0
-      if updates := _DimExpr._normalize_term(t, t_k, scope):
-        coeffs = dict(terms)
-        for t1, t1_k in updates:
-          _DimExpr._add_coeff(coeffs, t1, t1_k)
-        terms = _DimExpr._coeff_to_sorted_terms(coeffs)
-        # TODO: check the case when we need to apply multiple normalizations
-        break
+    if scope._normalization_rules:
+      for t, t_k in terms:
+        assert t_k != 0
+        if updates := _DimExpr._normalize_term(t, t_k, scope):
+          coeffs = dict(terms)
+          for t1, t1_k in updates:
+            _DimExpr._add_coeff(coeffs, t1, t1_k)
+          terms = _DimExpr._coeff_to_sorted_terms(coeffs)
+          # TODO: check the case when we need to apply multiple normalizations
+          break
 
     if not terms: return 0
     if terms[0][0].is_constant: return terms[0][1]
@@ -745,7 +766,7 @@ class _DimExpr:
     for mon1, coeff1 in self._sorted_terms:
       for mon2, coeff2 in other._sorted_terms:
         mon = mon1.mul(mon2)
-        _DimExpr._add_coeff(coeffs, mon, coeff1 * coeff2)
+        coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
     return _DimExpr._normalize_sorted_terms(_DimExpr._coeff_to_sorted_terms(coeffs),
                                             self.scope)
 
@@ -776,10 +797,25 @@ class _DimExpr:
       raise NotImplementedError("__rpow__ modulo not implemented")
     return self.__jax_array__().__rpow__(other)
 
+  def _divmod_op(self, divisor, op_name: str, idx: int):
+    mon, count = self._leading_term
+    if not mon.is_constant:
+      if isinstance(divisor, _DimExpr):
+        dterm, dcount = divisor._leading_term
+        if dcount != 0 and (
+            count % dcount != 0 or mon._size < dterm._size or
+            (mon._size == dterm._size and mon != dterm)):
+          return _DimExpr._from_operation(
+              op_name, self, divisor, scope=self.scope)
+      elif (d_int := op.index(divisor)) != 0 and count % d_int != 0:
+        return _DimExpr._from_operation(
+            op_name, self, divisor, scope=self.scope)
+    return self._divmod(divisor)[idx]
+
   def __floordiv__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__floordiv__(divisor)
-    return self._divmod(divisor)[0]
+    return self._divmod_op(divisor, _DimFactor.FLOORDIV, 0)
 
   def __rfloordiv__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
@@ -797,7 +833,7 @@ class _DimExpr:
   def __mod__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__mod__(divisor)
-    return self._divmod(divisor)[1]
+    return self._divmod_op(divisor, _DimFactor.MOD, 1)
 
   def __rmod__(self, dividend):
     if isinstance(dividend, core.Tracer) or not _convertible_to_poly(dividend):

@@ -41,7 +41,38 @@ def bounds_decision(e: DimSize,
                     prec: BoundsPrecision) -> tuple[float, float]:
   if not isinstance(e, _DimExpr):
     return (e, e)
-  decision = _DecisionByElimination.build(e.scope)
+  scope = e.scope
+  if (not scope._explicit_constraints or not scope._initialized or
+      scope._decision_initial_state is not None):
+    if (res := scope._bounds_cache.get(e)) is not None:
+      lb, ub, prev_prec = res
+      if prev_prec.value >= prec.value or prec._bounds_are_sufficient(lb, ub):
+        return (lb, ub)
+  # Fast path for linear combinations of dimension variables (each >= 1) in
+  # scopes without explicit constraints. Since _sorted_terms puts the largest
+  # _size first, leading _size <= 2 implies only degree-1 variables (_size == 2)
+  # and constants (_size == 0).
+  if (not scope._explicit_constraints and not scope._normalization_rules and
+      e._sorted_terms[0][0]._size <= 2):
+    lb_int = 0
+    ub_int = 0
+    has_pos_var = False
+    has_neg_var = False
+    for t, k in e._sorted_terms:
+      if t.is_constant:
+        lb_int += k
+        ub_int += k
+      elif k > 0:
+        lb_int += k
+        has_pos_var = True
+      else:
+        ub_int += k
+        has_neg_var = True
+    lb = -np.inf if has_neg_var else lb_int
+    ub = np.inf if has_pos_var else ub_int
+    scope._bounds_cache[e] = (lb, ub, BoundsPrecision.BEST)
+    return (lb, ub)
+  decision = _DecisionByElimination.build(scope)
   return decision.bounds(e, prec, add_implicit_constraints=True)
 
 shape_poly._bounds_decision = bounds_decision
@@ -84,16 +115,23 @@ class _DecisionByElimination:
     # constraints are processed, and this way we give the user a way to control
     # the result (albeit, for now, without a good feedback loop to understand
     # how the order matters for inequalities).
-    for constr in self.scope._explicit_constraints:
-      if not core.is_constant_dim(constr.diff):
-        self.add_implicit_constraints_expr(constr.diff)  # pyrefly: ignore[bad-argument-type]
+    if not self.scope._explicit_constraints:
+      return self
+    try:
+      for constr in self.scope._explicit_constraints:
+        if not core.is_constant_dim(constr.diff):
+          self.add_implicit_constraints_expr(
+              constr.diff  # pyrefly: ignore[bad-argument-type]
+          )
 
-      self.combine_and_add_constraint(constr.cmp, constr.diff, 0,
-                                      constr.debug_str)
+        self.combine_and_add_constraint(constr.cmp, constr.diff, 0,
+                                        constr.debug_str)
 
-
-      # Clear the cache, since we have added constraints.
+        # Clear the cache, since we have added constraints.
+        self.scope._bounds_cache.clear()
+    except Exception:
       self.scope._bounds_cache.clear()
+      raise
     return self
 
   @staticmethod
@@ -162,9 +200,9 @@ class _DecisionByElimination:
         ub = min(ub, t_val)
       else:  # GEQ
         if t_k > 0:
-          lb = max(lb, int(np.ceil(- n / t_k)))
+          lb = max(lb, - (n // t_k))
         else:
-          ub = min(ub, int(np.floor(- n / t_k)))
+          ub = min(ub, (- n) // t_k)
       if lb > ub:
         raise ValueError(f"Unsatisfiable constraint: {debug_str}")
 
@@ -212,17 +250,20 @@ class _DecisionByElimination:
         acc.append((Comparator.GEQ, _DimExpr(((t, -1),), scope) + int(t_ub),
                     abs(t_k), sgn(t_k)))
 
-    prev_constraint: set[tuple[Comparator, int, _DimExpr]]
-    for prev_constraint in ([self._expr_constraints.get(t, set())] if only_smaller_than_t
-                            else self._expr_constraints.values()):
+    if only_smaller_than_t:
+      for c_eq, tc_k, c in self._expr_constraints.get(t, ()):
+        acc.append((c_eq, c, abs(t_k), - tc_k * sgn(t_k)))
+      return acc
+
+    for prev_constraint in self._expr_constraints.values():
       for c_eq, _, c in prev_constraint:
-        # TODO: optimize this dict()
-        tc_k = dict(c._sorted_terms).get(t)
-        if tc_k is not None:
-          # c =[c_eq] 0 AND t*tc_k appears in c.
-          c_s = abs(t_k)
-          c_t = - tc_k * sgn(t_k)
-          acc.append((c_eq, c, c_s, c_t))
+        for term, tc_k in c._sorted_terms:
+          if term._size < t._size:
+            break
+          if term == t:
+            # c =[c_eq] 0 AND t*tc_k appears in c.
+            acc.append((c_eq, c, abs(t_k), - tc_k * sgn(t_k)))
+            break
     return acc
 
   def combine_constraint_with_existing(self,
@@ -301,30 +342,45 @@ class _DecisionByElimination:
     lb = -np.inf
     ub = np.inf
 
-    for (c_eq, c, c_s, t_s) in self.combine_term_with_existing(t, t_k,
-                                                               only_smaller_than_t=True,
-                                                               scope=scope):
+    if (tb := self._term_bounds.get(t)) is not None:
+      t_lb, t_ub = tb
+      if t_lb > -np.inf or t_ub < np.inf:
+        r_lb, r_ub = (
+            (0, 0) if i + 1 >= len(e) else
+            self._bounds_for_sorted_terms(scope, e, i + 1, BoundsPrecision.BEST)
+        )
+        a, b = (t_lb, t_ub) if t_k > 0 else (t_ub, t_lb)
+        if -np.inf < a < np.inf and -np.inf < r_lb < np.inf:
+          lb = int(a) * t_k + int(r_lb)
+        if -np.inf < b < np.inf and -np.inf < r_ub < np.inf:
+          ub = int(b) * t_k + int(r_ub)
+        if prec._bounds_are_sufficient(lb, ub):
+          return (lb, ub)
+
+    c_s = abs(t_k)
+    for c_eq, tc_k, c in self._expr_constraints.get(t, ()):
+      t_s = -tc_k if t_k >= 0 else tc_k
       # `c =[eq] 0` AND `t*t_k*t_s + c*c_s` contains only terms smaller than t
       # AND c_s > 0.
       # `rest = e[i:]*t_s + c*c_s` AND `rest_ub >= rest >= rest_lb`
       # `rest` contains only terms smaller than `t`.
-      rest = _DimExpr._linear_combination_sorted_pairs(e, i, t_s,
-                                                       c._sorted_terms, 0, c_s)
+      rest = _DimExpr._linear_combination_sorted_pairs(e, i + 1, t_s,
+                                                       c._sorted_terms, 1, c_s)
       rest_lb, rest_ub = self._bounds_for_sorted_terms(scope, rest, 0,
                                                        BoundsPrecision.BEST)
       if rest_ub < np.inf:
         # We have: e[i:]*t_s = rest - c*c_s <= rest_ub
         if t_s > 0:
-          ub = min(ub, int(np.floor(rest_ub / t_s)))
+          ub = min(ub, int(rest_ub) // t_s)
         else:
-          lb = max(lb, int(np.ceil(rest_ub / t_s)))
+          lb = max(lb, -((-int(rest_ub)) // t_s))
 
       if rest_lb > - np.inf and c_eq == Comparator.EQ:
         # We have: e[i:]*t_s = rest - c*c_s = rest >= rest_lb
         if t_s > 0:
-          lb = max(lb, int(np.ceil(rest_lb / t_s)))
+          lb = max(lb, -((-int(rest_lb)) // t_s))
         else:
-          ub = min(ub, int(np.floor(rest_lb / t_s)))
+          ub = min(ub, int(rest_lb) // t_s)
 
       if prec._bounds_are_sufficient(lb, ub): return (lb, ub)
 
