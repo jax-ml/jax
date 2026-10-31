@@ -457,7 +457,6 @@ SpecErrorType = enum.Enum('SpecErrorType', ['input', 'out'])
 
 def _check_unreduced(error_type, mesh, manual_axes, specs):
   manual_mesh = _as_manual_mesh(mesh, manual_axes)
-  del mesh
   from jax._src.hijax import HiPspec
   prefix = 'in' if error_type == SpecErrorType.input else 'out'
   specs_flat, _ = tree_flatten(specs)
@@ -466,11 +465,21 @@ def _check_unreduced(error_type, mesh, manual_axes, specs):
       continue  # TODO(mattjj,yashkatariya): add user validation method
     if not s.unreduced and not s.reduced:
       continue
+    if any(mesh._name_to_type[u] == AxisType.Auto for u in s.unreduced):
+      raise ValueError(
+          'Unreduced axes can only refer to mesh axes that is of type'
+          f' `Explicit`. Got unreduced axes: {s.unreduced} and'
+          f' mesh: {mesh}')
     if not all(manual_mesh._name_to_type[u] == AxisType.Manual for u in s.unreduced):
       raise ValueError(
           f"unreduced in {prefix}_specs {s} can only be used when the mesh"
           " passed to shard_map contains axis names of type `Manual`."
           f" Got mesh {manual_mesh}")
+    if any(mesh._name_to_type[u] == AxisType.Auto for u in s.reduced):
+      raise ValueError(
+          'Reduced axes can only refer to mesh axes that is of type'
+          f' `Explicit`. Got reduced axes: {s.reduced} and'
+          f' mesh: {mesh}')
     if not all(manual_mesh._name_to_type[u] == AxisType.Manual for u in s.reduced):
       raise ValueError(
           f"reduced in {prefix}_specs {s} can only be used when the mesh"
@@ -928,7 +937,6 @@ def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
   manual_u_kind = aval.sharding.spec.unreduced_kind if manual_u else None
   manual_r = frozenset(r for r in aval.sharding.spec.reduced if r in manual_axes)
   if spec.unreduced != manual_u:
-    print(spec.unreduced, manual_u)
     raise ValueError(
         f"in_specs containing unreduced {spec} passed to shard_map should be"
         " equal to the unreduced present on the in_aval"

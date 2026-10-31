@@ -3319,12 +3319,6 @@ class ShardMapTest(jtu.JaxTestCase):
     # fixes the above error
     shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P())  # doesn't crash
 
-  def test_shmap_auto_unreduced_error(self):
-    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
-    with self.assertRaisesRegex(ValueError, 'in_specs containing unreduced'):
-      shard_map(lambda x: x, mesh=mesh, in_specs=P(unreduced={'x'}),
-                out_specs=P())(np.arange(8))
-
   def test_partial_auto(self):
     mesh = jtu.create_mesh((2, 2), ('i', 'j'))
 
@@ -6368,6 +6362,26 @@ class ShardMapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, 'all_gather_reduced is a Varying -> Reduced collective'):
       f(x)
+
+  @jtu.with_explicit_mesh((1,), ('x',), axis_types=(AxisType.Auto,))
+  def test_auto_reduced_unreduced_error(self, mesh):
+    @shard_map(in_specs=P(reduced={'x'}), out_specs=P(reduced={'x'}))
+    def f(x):
+      return x
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Reduced axes can only refer to mesh axes that is of type `Explicit`"):
+      f(np.arange(4))
+
+    @shard_map(in_specs=P(), out_specs=P(unreduced={'x'}))
+    def g(x):
+      return x
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Unreduced axes can only refer to mesh axes that is of type `Explicit`"):
+      g(np.arange(4))
 
 
 class FunSpec(NamedTuple):
