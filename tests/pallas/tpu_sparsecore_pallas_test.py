@@ -18,6 +18,8 @@ from collections.abc import Mapping, Sequence
 import functools
 import itertools
 import math
+import operator
+import re
 from unittest import mock
 
 from absl.testing import absltest
@@ -32,6 +34,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import tpu_info
+from jax.experimental import mosaic
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
@@ -475,6 +478,30 @@ class VectorSubcoreTest(PallasSCTest):
       o_ref[...] = op(x, 1)
 
     np.testing.assert_array_equal(kernel(x), op(x, 1))
+
+  @parameterized.product(dtype=[jnp.float32, jnp.bfloat16])
+  def test_float_ne_and_isnan(self, dtype):
+    base = np.array(
+        [np.nan, -np.nan, np.inf, -np.inf, 0.0, -0.0, 1.5, -2.5],
+        dtype=np.float32,
+    )
+    x = jnp.asarray(np.resize(base, self.num_lanes), dtype=dtype)
+    y = jnp.asarray(np.resize(base[::-1], self.num_lanes), dtype=dtype)
+    out_shape = (
+        jax.ShapeDtypeStruct((self.num_lanes,), jnp.int32),
+        jax.ShapeDtypeStruct((self.num_lanes,), jnp.int32),
+    )
+
+    @self.vector_subcore_kernel(out_shape=out_shape)
+    def kernel(x_ref, y_ref, ne_ref, isnan_ref):
+      xv = x_ref[...]
+      yv = y_ref[...]
+      ne_ref[...] = jnp.where(xv != yv, 1, 0)
+      isnan_ref[...] = jnp.where(jnp.isnan(xv), 1, 0)
+
+    ne_out, isnan_out = kernel(x, y)
+    np.testing.assert_array_equal(ne_out, jnp.where(x != y, 1, 0))
+    np.testing.assert_array_equal(isnan_out, jnp.where(jnp.isnan(x), 1, 0))
 
   def test_add_one_block_specs(self):
     num_steps = 4
@@ -3186,6 +3213,48 @@ class ScalarSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), jnp.cumsum(x))
 
+  def test_float_ne_and_isnan(self):
+    pad = self.num_lanes - 4
+    x = jnp.pad(
+        jnp.array([jnp.nan, 0.0, 1.5, jnp.nan], dtype=jnp.float32), (0, pad)
+    )
+    y = jnp.pad(
+        jnp.array([1.5, -0.0, 1.5, jnp.nan], dtype=jnp.float32), (0, pad)
+    )
+    out_type = (
+        jax.ShapeDtypeStruct((self.num_lanes,), jnp.int32),
+        jax.ShapeDtypeStruct((self.num_lanes,), jnp.int32),
+    )
+
+    @self.kernel(
+        out_type=out_type,
+        mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
+        scratch_types=dict(
+            x_smem=pltpu.SMEM((self.num_lanes,), jnp.float32),
+            y_smem=pltpu.SMEM((self.num_lanes,), jnp.float32),
+            ne_smem=pltpu.SMEM((self.num_lanes,), jnp.int32),
+            nan_smem=pltpu.SMEM((self.num_lanes,), jnp.int32),
+            sem=pltpu.SemaphoreType.DMA,
+        ),
+    )
+    def kernel(
+        x_hbm, y_hbm, ne_hbm, nan_hbm, *, x_smem, y_smem, ne_smem, nan_smem, sem
+    ):
+      pltpu.async_copy(x_hbm, x_smem, sem).wait()
+      pltpu.async_copy(y_hbm, y_smem, sem).wait()
+
+      @pl.loop(0, self.num_lanes)
+      def _(i):
+        ne_smem[i] = jnp.where(x_smem[i] != y_smem[i], 1, 0)
+        nan_smem[i] = jnp.where(jnp.isnan(x_smem[i]), 1, 0)
+
+      pltpu.async_copy(ne_smem, ne_hbm, sem).wait()
+      pltpu.async_copy(nan_smem, nan_hbm, sem).wait()
+
+    ne_out, nan_out = kernel(x, y)
+    np.testing.assert_array_equal(ne_out, jnp.where(x != y, 1, 0))
+    np.testing.assert_array_equal(nan_out, jnp.where(jnp.isnan(x), 1, 0))
+
   @parameterized.product(
       first_parallel=[False, True], second_parallel=[False, True]
   )
@@ -3825,6 +3894,81 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
 
 class PallasSparsecoreAsyncTestWithTCTiling(PallasSparsecoreAsyncTest):
   USE_TC_TILING = True
+
+
+class PallasTpuSparseCoreCmpfLoweringTest(jtu.JaxTestCase):
+  """Checks the Mosaic `arith.cmpf` predicates without needing a SparseCore."""
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.test_device_matches(["tpu", "cpu"]):
+      self.skipTest("Test only works on TPU or CPU.")
+    self.enter_context(
+        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
+    )
+
+  def lower_cmpf_predicates(self, core_type, op):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (), abstract_device=jax.sharding.AbstractDevice("TPU v6e", 1, "tpu")
+    )
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      if core_type == TC:
+        mesh = pltpu.TensorCoreMesh(axis_name="x", num_cores=1)
+        shape, memory_space = (8, 128), pltpu.VMEM
+      else:
+        num_lanes = plsc.get_sparse_core_info().num_lanes
+        shape = (num_lanes,)
+        if core_type == SCV:
+          mesh = plsc.VectorSubcoreMesh(
+              core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+          )
+          memory_space = pltpu.VMEM
+        else:
+          mesh = plsc.ScalarSubcoreMesh(axis_name="x", num_cores=1)
+          memory_space = pltpu.SMEM
+      idx = 0 if core_type == SCS else ...
+
+      @functools.partial(
+          pl.kernel,
+          out_type=jax.ShapeDtypeStruct(shape, jnp.int32),
+          mesh=mesh,
+          scratch_types=[
+              memory_space(shape, jnp.float32),
+              memory_space(shape, jnp.float32),
+              memory_space(shape, jnp.int32),
+          ],
+      )
+      def kernel(x_hbm, y_hbm, o_hbm, x_ref, y_ref, o_ref):
+        pltpu.sync_copy(x_hbm, x_ref)
+        pltpu.sync_copy(y_hbm, y_ref)
+        o_ref[idx] = jnp.where(op(x_ref[idx], y_ref[idx]), 1, 0)
+        pltpu.sync_copy(o_ref, o_hbm)
+
+      x = jax.ShapeDtypeStruct(shape, jnp.float32)
+      with mock.patch.object(
+          mosaic,
+          "lower_module_to_custom_call",
+          wraps=mosaic.lower_module_to_custom_call,
+      ) as mock_lower:
+        jax.jit(kernel).trace(x, x).lower(lowering_platforms=("tpu",))
+    mock_lower.assert_called_once()
+    return re.findall(
+        r"arith\.cmpf (\w+)", str(mock_lower.call_args.kwargs["module"])
+    )
+
+  @parameterized.parameters(
+      (TC, operator.ne, "one"),
+      (TC, operator.eq, "oeq"),
+      (SCV, operator.ne, "une"),
+      (SCV, operator.eq, "oeq"),
+      (SCV, operator.lt, "olt"),
+      (SCS, operator.ne, "une"),
+      (SCS, operator.eq, "oeq"),
+  )
+  def test_cmpf_predicate(self, core_type, op, expected_predicate):
+    self.assertEqual(
+        self.lower_cmpf_predicates(core_type, op), [expected_predicate]
+    )
 
 
 class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
