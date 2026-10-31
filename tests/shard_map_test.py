@@ -5945,6 +5945,62 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysEqual(jax.reshard(f(arr, c), P()), np.full(4, 3.))
 
   @jtu.with_explicit_mesh((2,), 'x')
+  def test_grad_reduced_unreduced_loss(self, mesh):
+    w = jax.device_put(np.array([3., 5.]), P(reduced={'x'}))
+
+    @jax.shard_map(out_specs=P(unreduced={'x'}))
+    def f(w):
+      return jax.grad(lambda w: w[0] * w[1])(w)  # reduced loss
+
+    self.assertArraysEqual(jax.reshard(f(w), P()), np.array([5., 3.]))
+
+    u = jax.device_put(np.arange(4.), P(unreduced={'x'}))
+
+    @jax.shard_map(out_specs=P(reduced={'x'}))
+    def g(u):
+      return jax.grad(lambda u: u.sum())(u)  # unreduced loss
+
+    self.assertArraysEqual(g(u), np.ones(4))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_cond_switch_unreduced_index_error(self, mesh):
+    idx = jax.lax.reduce_sum(jax.device_put(np.arange(2), P('x')), [0],
+                             out_sharding=P(unreduced={'x'}))
+
+    @jax.shard_map(out_specs=P())
+    def f(i):
+      return jax.lax.switch(i, [lambda: 1., lambda: 2.])
+
+    with self.assertRaises(core.ShardingTypeError):
+      f(idx)
+
+    @jax.shard_map(out_specs=P())
+    def g(i):
+      return jax.lax.cond(i, lambda: 1., lambda: 2.)
+
+    with self.assertRaises(core.ShardingTypeError):
+      g(idx)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_while_loop_varying_predicate(self, mesh):
+    # Device i runs i iterations.
+    @jax.shard_map(in_specs=(), out_specs=P())
+    def f():
+      n = jax.lax.axis_index('x')
+      return jax.lax.while_loop(lambda c: c < n, lambda c: c + 1, 0)
+
+    with self.assertRaises(core.ShardingTypeError):
+      f()
+
+    @jax.shard_map(in_specs=(), out_specs=P('x'))
+    def g():
+      n = jax.lax.axis_index('x')
+      init = jax.lax.pcast(jnp.int32(0), 'x', to='varying')
+      return jax.lax.while_loop(lambda c: c < n, lambda c: c + 1, init)[None]
+
+    self.assertArraysEqual(g(), np.array([0, 1], dtype=np.int32))
+
+  @jtu.with_explicit_mesh((2,), 'x')
   def test_full_like_reduced(self, mesh):
     arr = jax.device_put(jnp.arange(4.), P(reduced={'x'}))
 

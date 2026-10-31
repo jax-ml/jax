@@ -1917,6 +1917,17 @@ def _while_loop_abstract_eval(*avals, cond_jaxpr, body_jaxpr, body_nconsts,
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
+  # If the predicate varies, devices can run different numbers of iterations,
+  # so every carry must vary too.
+  pred_aval, = cond_jaxpr.out_avals
+  for aval in body_jaxpr.out_avals:
+    if (isinstance(aval, core.ShapedArray) and
+        (missing := pred_aval.mat.varying - aval.mat.varying)):
+      raise core.ShardingTypeError(
+          f'while_loop predicate varies over manual axes {set(missing)} but the'
+          f' carry {aval.str_short()} does not. Apply'
+          f' `jax.lax.pcast(init_val, {tuple(missing)}, to="varying")` to the'
+          ' carry before the loop.')
   return body_jaxpr.out_avals, joined_effects
 
 

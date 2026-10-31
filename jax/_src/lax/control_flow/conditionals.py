@@ -118,6 +118,7 @@ def switch(index, branches: Sequence[Callable], *operands: Any,
   if index_dtype.kind not in 'iu':
     raise TypeError(
         f"Index type must be an integer, got {index} as {index_dtype}")
+  _check_index_not_unreduced('switch', index)
 
   branches = tuple(branches)
 
@@ -258,6 +259,7 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   except TypeError as err:
     msg = ("Pred type must be either boolean or number, got {}.")
     raise TypeError(msg.format(pred)) from err
+  _check_index_not_unreduced('cond', pred)
 
   if pred_dtype.kind != 'b':
     if pred_dtype.kind in 'iuf':
@@ -428,6 +430,14 @@ def _join_cond_effects(branches: Sequence[core.Jaxpr]) -> effects.Effects:
         eff = eff.replace(eff.input + 1)
       joined_effects.add(eff)
   return joined_effects
+
+def _check_index_not_unreduced(api_name, index):
+  # Each device would pick a branch from its partial sum, not the logical value.
+  idx_aval = core.typeof(index)
+  if core.getu(idx_aval, None)[0]:
+    raise core.ShardingTypeError(
+        f'{api_name} index/predicate cannot be unreduced. Got'
+        f' {idx_aval.str_short()}')
 
 def _cond_abstract_eval(*avals: core.AbstractValue,
                         branches: Sequence[core.Jaxpr], **_):
