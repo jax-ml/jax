@@ -2297,7 +2297,10 @@ def _check_mat(varying, unreduced, reduced, unreduced_kind):
     raise ValueError(
         "varying and reduced cannot have common mesh axes. Got"
         f" varying={varying} and reduced={reduced}")
-  assert not (varying & unreduced & reduced)
+  if unreduced & reduced:
+    raise ValueError(
+        "`unreduced` and `reduced` argument to ManualAxisType cannot overlap. "
+        f"Got unreduced: {unreduced} and reduced: {reduced}")
 
   if unreduced_kind is not None and not isinstance(unreduced_kind, UnreducedKind):
     raise TypeError(
