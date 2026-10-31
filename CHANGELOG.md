@@ -17,6 +17,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added {func}`jax.scipy.stats.truncnorm.ppf` and
+    {func}`jax.scipy.stats.truncnorm.isf` with custom forward- and reverse-mode
+    derivatives, and improved the accuracy of {mod}`jax.scipy.stats.truncnorm`
+    functions and their derivatives on narrow intervals, in the tails, and in
+    `bfloat16`/`float16`.
 * Breaking changes
   * JAX now requires ml_dtypes version 0.7.0 or newer.
 * Deprecations
@@ -33,6 +38,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     (logged at `WARNING` when `jax_log_compiles` is enabled). Previously this
     raised a `ValueError`.
 * Bug fixes
+  * Fixed {mod}`jax.scipy.stats.truncnorm` functions not returning `nan` when
+    `scale <= 0` (matching SciPy) or `logpdf` and `pdf` returning `nan` when
+    `scale**2` underflows, and fixed second-order differentiation of
+    {func}`jax.scipy.special.erfcx` on non-scalar arrays.
 
 ## JAX 0.12.1 (November 18, 2026)
 
