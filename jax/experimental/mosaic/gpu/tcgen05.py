@@ -142,6 +142,7 @@ def _create_scaled_instr_descriptor(
     transpose_b: bool,
     scale_type: ir.Type,
     sparse: bool = False,
+    use_k96: bool = False,
 ) -> ir.Value:
   # Use .kind::mxf4 and .kind::mxf4nvf4 encoding for 4-bit types
   is_fp4 = utils.bitwidth(a_type) == 4 and utils.bitwidth(b_type) == 4
@@ -179,11 +180,15 @@ def _create_scaled_instr_descriptor(
   if m % 128 or m > 256:
     raise ValueError(f"M must be a multiple of 16 and <= 256, got: {m}")
   desc |= (m >> 7) << 27  # M >> 7, bits 27-28
+  assert 0 <= a_scale_idx < 4
   desc |= a_scale_idx << 29  # A scale factor data ID, bits 29-30
   # Bit 31 is the lowest bit of the encoded K dimension for .kind::mxf4,
   # .kind::mxf4nvf4, and .kind::mxf8f6f4. Zero means Dense K=64 / Sparse
   # K=128 for .kind::mxf4 and .kind::mxf4nvf4 and Dense K=32 / Sparse K=64
-  # for .kind::mxf8f6f4.
+  # for .kind::mxf8f6f4. One means Dense K=96 for .kind::mxf4 and
+  # .kind::mxf4nvf4 on sm_103a.
+  assert not (use_k96 and (not is_fp4 or sparse))
+  desc |= use_k96 << 31
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
@@ -383,6 +388,15 @@ def mma(
 
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups that are a multiple of swizzle.
+  use_k96 = (
+      is_scaled
+      and not is_sparse
+      and not isinstance(a, TMEMRef)
+      and isinstance(a_element_type, ir.Float4E2M1FNType)
+      and a_swizzle == 128
+      and b_swizzle == 128
+      and utils.get_arch() == utils.Arch(10, 3)
+  )
   m_group_elems = m  # We have already verified M is supported above.
   k_group_elems = 8 * max(a_swizzle * (1 + is_sparse), b_swizzle) // utils.bitwidth(a_element_type)
   if is_sparse and k_group_elems < 64:
@@ -436,6 +450,10 @@ def mma(
     raise ValueError(f"M must be a multiple of {m_group_elems}, got: {m}")
   if k % k_group_elems:
     raise ValueError(f"K must be a multiple of {k_group_elems}, got: {k}")
+  if use_k96:
+    # Process all K tiles in a single group so K=96 (48B) instructions can step
+    # across 128B swizzle atom boundaries with period lcm(48, 128) = 384B.
+    k_group_elems = k
   if n % n_group_elems:
     raise ValueError(f"N must be a multiple of {n_group_elems}, got: {n}")
   m_groups = m // m_group_elems
@@ -554,9 +572,10 @@ def mma(
       )
 
   # Step 3. Compute the operand descriptors.
+  mma_bytewidth_k = 48 if use_k96 else 32
   if not isinstance(a, TMEMRef):
-    # Both dense and sparse matmul consume A with a K bytewidth of 32, only
-    # the group size is halved when it's sparse.
+    # Both dense and sparse matmul consume A with a K bytewidth of 32 (or 48
+    # for SM103 K=96), only the group size is halved when it's sparse.
     (
         (a_desc_base, a_k_instr_strides),
         (a_m_group_stride, a_k_group_stride),
@@ -566,7 +585,7 @@ def mma(
         swizzle=a_swizzle,
         group_size=(m_group_elems, k_group_elems // (1 + is_sparse)),
         logical_k_major=False,
-        mma_bytewidth_k=32,
+        mma_bytewidth_k=mma_bytewidth_k,
         split_const=True,
     )
   else:
@@ -582,7 +601,7 @@ def mma(
       swizzle=b_swizzle,
       group_size=(k_group_elems, n_group_elems),
       logical_k_major=True,
-      mma_bytewidth_k=64 if is_sparse else 32,
+      mma_bytewidth_k=64 if is_sparse else mma_bytewidth_k,
       split_const=True,
   )
 
@@ -688,6 +707,7 @@ def mma(
         b_element_type=mma_b_element_type,
         scale_element_type=scale_element_type,
         scale_block=scale_block,
+        use_k96=use_k96,
     )
 
 
@@ -714,31 +734,29 @@ def _do_mma(
     d_type: ir.Type,
     accumulate: ir.Value,
     collective: bool,
+    use_k96: bool = False,
 ) -> None:
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
-  a_k_idx_tiling, a_k_strides = a_k_strides or (None, None)  # pyrefly: ignore[bad-assignment]
-  b_k_idx_tiling, b_k_strides = b_k_strides  # pyrefly: ignore[bad-assignment]
+  a_k_idx_tiling, a_k_byte_strides = a_k_strides or (None, None)
+  b_k_idx_tiling, b_k_byte_strides = b_k_strides
   assert all(
-      s % 16 == 0   # pyrefly: ignore[unsupported-operation]
-      for s in itertools.chain(a_k_strides or (), b_k_strides)
+      s % 16 == 0
+      for s in itertools.chain(a_k_byte_strides or (), b_k_byte_strides)
   )
   assert (a_scale_addr is None) == (b_scale_addr is None)
   is_scaled = a_scale_addr is not None
   is_sparse = a_sparse_addr is not None
   elem_bitwidth = utils.bitwidth(a_element_type)
-  # TODO: support larger K values on newer hardware
-  instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
+  base_instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
   packing = 8 * 4 // elem_bitwidth
 
-  scale_steps = None
   kind = None
   if is_scaled:
     assert scale_block is not None
     if isinstance(a_element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
       assert isinstance(scale_element_type, ir.Float8E8M0FNUType)
       kind = "mxf8f6f4.block_scale.scale_vec::1X"
-      scale_steps = 4
       create_scaled_instr_descriptor = functools.partial(
           create_scaled_f8f6f4_instr_descriptor,
           scale_type=scale_element_type,
@@ -757,12 +775,11 @@ def _do_mma(
           scale_element_type,
           (ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType),
       )
-      if base_scale_block == 32:
-        kind = "mxf4nvf4.block_scale.scale_vec::2X"
-        scale_steps = 2
+      if use_k96:
+        scale_vec = f"block{base_scale_block}"
       else:
-        kind = "mxf4nvf4.block_scale.scale_vec::4X"
-        scale_steps = 1
+        scale_vec = "scale_vec::2X" if base_scale_block == 32 else "scale_vec::4X"
+      kind = f"mxf4nvf4.block_scale.{scale_vec}"
     else:
       raise NotImplementedError(
           f"Unsupported element type for block scaling: {a_element_type}"
@@ -785,7 +802,7 @@ def _do_mma(
       )
     extra_ptx = ""
 
-    def create_scaled_instr_descriptor(*args):
+    def create_scaled_instr_descriptor(*args, **kwargs):
       raise NotImplementedError
 
   num_cta = 2 if collective else 1
@@ -799,7 +816,24 @@ def _do_mma(
   sp_selector = None
   sparse_addr: tuple[Any, ...] = ()
   scales_addrs: tuple[Any, ...] = ()
-  def _get_offset(idx: int, idx_tiling: tuple[int, ...], strides: tuple[int, ...]):
+  def _get_offset(
+      idx: int,
+      idx_tiling: tuple[int, ...],
+      strides: tuple[int, ...],
+      k_elem_offset: int,
+      instr_k: int,
+  ) -> int:
+    if use_k96:
+      assert not idx_tiling
+      (k_tile_stride,) = strides
+      swizzle = 128
+      k_byte_off = k_elem_offset * elem_bitwidth // 8
+      instr_byte_k = instr_k * elem_bitwidth // 8
+      cur_chunk, in_chunk_off = divmod(k_byte_off, swizzle)
+      next_chunk = (k_byte_off + instr_byte_k - 1) // swizzle
+      cur_off = cur_chunk * k_tile_stride + in_chunk_off
+      next_off = next_chunk * k_tile_stride
+      return (cur_off >> 4) | ((next_off >> 4) << 16)
     assert len(idx_tiling) + 1 == len(strides)
     idxs = []
     for t in idx_tiling:
@@ -808,7 +842,18 @@ def _do_mma(
     idxs.append(idx)
     offset = sum(i * s for i, s in zip(idxs, strides, strict=True))
     return offset >> 4
-  for k_step in range(k // instr_k):
+
+  assert k % base_instr_k == 0
+  if use_k96:
+    # Every 3 K=64 steps (192 elems) fuse into 2 K=96 steps; any remaining 1 or
+    # 2 K=64 steps go at the end so they stay within the last 128B swizzle atom.
+    q, b = divmod(k // base_instr_k, 3)
+    instr_ks = [96] * (2 * q) + [base_instr_k] * b
+  else:
+    instr_ks = [base_instr_k] * (k // base_instr_k)
+
+  k_elem_offset = 0
+  for k_step, instr_k in enumerate(instr_ks):
     if is_sparse:
       assert a_sparse_addr is not None
       # Sparse metadata is organised as 32-row columns of 32-bit cells in TMEM; 4 bits
@@ -823,13 +868,14 @@ def _do_mma(
       sp_selector = meta_col % 2
       sparse_addr = (arith.addi(a_sparse_addr, utils.c(meta_col // 2 * 2, i32)),)
     if is_scaled:
-      assert scale_steps is not None
-      scale_vec_width = 4 // scale_steps
-      scale_id = (k_step % scale_steps) * scale_vec_width
+      assert scale_block is not None
       assert sp_selector in {None, 0}  # Scaled instr descriptor has no selector
+      scale_offset = k_elem_offset // scale_block
+      scale_id = scale_offset % 4
+      scale_col_step = scale_offset // 4
       i_desc = create_scaled_instr_descriptor(
           m * num_cta, n * num_cta, a_element_type, b_element_type,
-          scale_id, scale_id, a_transpose, b_transpose
+          scale_id, scale_id, a_transpose, b_transpose, use_k96=(instr_k == 96),
       )
       assert (m == 64 and collective) or m == 128
       assert n % (8 * num_cta) == 0
@@ -838,8 +884,8 @@ def _do_mma(
       assert a_scale_m_stride is not None
       assert b_scale_n_stride is not None
       # A scales are sharded, B scales are replicated across CTAs.
-      a_scale_addr_offset = arith.constant(i32, k_step // scale_steps * a_scale_m_stride)
-      b_scale_addr_offset = arith.constant(i32, k_step // scale_steps * b_scale_n_stride)
+      a_scale_addr_offset = arith.constant(i32, scale_col_step * a_scale_m_stride)
+      b_scale_addr_offset = arith.constant(i32, scale_col_step * b_scale_n_stride)
       scales_addrs = (
           arith.addi(a_scale_addr, a_scale_addr_offset),
           arith.addi(b_scale_addr, b_scale_addr_offset),
@@ -860,11 +906,16 @@ def _do_mma(
       a_enc_addr_base = a_desc_or_addr
     else:
       assert not isinstance(a_desc_or_addr, ir.Value)
-      assert a_k_idx_tiling is not None and a_k_strides is not None
+      assert a_k_idx_tiling is not None and a_k_byte_strides is not None
       a_enc_addr_base, a_offset = a_desc_or_addr
-      a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)  # pyrefly: ignore[bad-argument-type]
+      a_offset += _get_offset(
+          k_step, a_k_idx_tiling, a_k_byte_strides, k_elem_offset, instr_k
+      )
     b_enc_addr_base, b_offset = b_desc
-    b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)  # pyrefly: ignore[bad-argument-type]
+    b_offset += _get_offset(
+        k_step, b_k_idx_tiling, b_k_byte_strides, k_elem_offset, instr_k
+    )
+    k_elem_offset += instr_k
     a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
     b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
     utils.inline_ptx(

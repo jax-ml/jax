@@ -40,6 +40,9 @@ class Dim(enum.Enum):
   MN = enum.auto()
 
 
+_LBO_BYTE_ADDR_MODE_BIT = 1 << 52
+
+
 def create_descriptor(
     ref: ir.Value,
     swizzle: int,
@@ -83,6 +86,7 @@ def create_descriptor(
   IGNORED = 0
   MMA_ATOM_ROWS = 8
   mma_width_k = 8 * mma_bytewidth_k // element_bitwidth
+  const_init = 0
   desc_k_tiling: tuple[int, ...] = ()
   desc_k_strides: tuple[int, ...]
   # As far as I can tell (which does not seem to fully align with the way MMA is
@@ -160,7 +164,14 @@ def create_descriptor(
       fastest_dim = Dim.K
       leading_byte_offset = IGNORED  # TC assumes K to be contiguous here.
       stride_byte_offset = to_byte_stride(mn_tile_stride)
-      if k_tiling == k_group_size:
+      if mma_bytewidth_k == 48:
+        assert swizzle == mgpu_dialect.SwizzlingMode.k128ByteSwizzle
+        # Bit 52 selects leading dimension stride mode = 1 (byte address mode)
+        # on SM103, where LBO (bits 16-29) holds the encoded SMEM base address
+        # of the next 128B swizzle atom for K=96 boundary crossings.
+        const_init = _LBO_BYTE_ADDR_MODE_BIT
+        desc_k_strides = (to_byte_stride(k_tile_stride),)
+      elif k_tiling == k_group_size:
         desc_k_strides = (mma_bytewidth_k,)  # K is contiguous.
       elif k_group_size % k_tiling == 0:
         desc_k_tiling = (k_tiling // mma_width_k,)
@@ -185,6 +196,7 @@ def create_descriptor(
       leading_byte_offset=leading_byte_offset,
       stride_byte_offset=stride_byte_offset,
       swizzle=swizzle,
+      const_init=const_init,
       split_const=split_const,
   )
 
@@ -246,6 +258,10 @@ def encode_descriptor(
   else:
     raise NotImplementedError(swizzle)
   encoded_base_addr = llvm.lshr(llvm.and_(ptr_val, c(0x3FFFF)), c(4))
+  if const_init & _LBO_BYTE_ADDR_MODE_BIT:
+    encoded_base_addr = llvm.or_(
+        encoded_base_addr, arith.shli(encoded_base_addr, c(16))
+    )
   # We ignore the offset
   desc_const = (
       const_init
