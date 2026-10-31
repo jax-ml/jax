@@ -1286,6 +1286,47 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     jnp_fun = partial(jnp.linalg.lstsq, numpy_resid=True)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
+  @jtu.sample_product(
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+      for lhs_shape, rhs_shape in [
+          ((6, 4), (6,)),
+          ((4, 4), (4, 2)),
+          ((4, 6), (4,)),
+      ]
+    ],
+    dtype=float_types + complex_types,
+  )
+  def testLstsqGrad(self, lhs_shape, rhs_shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    jnp_fun = lambda a, b: jnp.linalg.lstsq(a, b)[0]
+    args = [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+    jtu.check_grads(jnp_fun, args, 1, atol=1e-2, rtol=1e-2)
+
+  @jtu.sample_product(
+    case=["orthonormal", "one_hot", "spd"],
+    dtype=float_types,
+  )
+  def testLstsqGradRepeatedSingularValues(self, case, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/10805
+    rng = self.rng()
+    if case == "orthonormal":
+      a = 2 * np.linalg.qr(rng.randn(6, 3))[0]
+    elif case == "one_hot":
+      a = np.kron(np.eye(3), np.ones((2, 1)))
+    else:
+      q = np.linalg.qr(rng.randn(4, 4))[0]
+      a = q @ np.diag([1., 1., 2., 3.]) @ q.T
+    a = a.astype(dtype)
+    b = rng.randn(a.shape[0]).astype(dtype)
+    jnp_fun = lambda a, b: jnp.linalg.lstsq(a, b)[0]
+    jtu.check_grads(jnp_fun, (a, b), 1, atol=1e-2, rtol=1e-2)
+    # The derivative of pinv is already stable for repeated singular values.
+    pinv_fun = lambda a, b: jnp.matmul(jnp.linalg.pinv(a), b,
+                                       precision=lax.Precision.HIGHEST)
+    tol = {np.float32: 1e-4, np.float64: 1e-10}
+    self.assertAllClose(jax.jacrev(jnp_fun)(a, b), jax.jacrev(pinv_fun)(a, b),
+                        atol=tol, rtol=tol)
+
   # Regression test for incorrect type for eigenvalues of a complex matrix.
   def testIssue669(self):
     def test(x):
