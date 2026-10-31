@@ -171,8 +171,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     actual = np.asarray(fun(k, mu, loc))
     np.testing.assert_array_equal(actual, np.full_like(k, -np.inf))
 
-  @jtu.sample_product(dtype=jtu.dtypes.floating)
-  def testPoissonLogPmfHighPrecisionLargeRate(self, dtype):
+  @jtu.sample_product(dtype=jtu.dtypes.floating, use_jit=[False, True])
+  def testPoissonLogPmfHighPrecisionLargeRate(self, dtype, use_jit):
     # These references were computed at 100 decimal digits after rounding
     # inputs to the target dtype. SciPy's ordinary double-precision formula
     # loses several millilog units here through cancellation at mu ~= 1e12.
@@ -199,21 +199,19 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       ])
       atol = 1e-8
 
-    for fun in (lsp_stats.poisson.logpmf,
-                jax.jit(lsp_stats.poisson.logpmf)):
-      self.assertAllClose(fun(k, mu), expected, check_dtypes=False,
-                          rtol=0.0, atol=atol)
+    fun = jax.jit(lsp_stats.poisson.logpmf) if use_jit else lsp_stats.poisson.logpmf
+    self.assertAllClose(fun(k, mu), expected, check_dtypes=False,
+                        rtol=0.0, atol=atol)
 
-  @jtu.sample_product(dtype=jtu.dtypes.floating)
-  def testPoissonLogPmfCentralAccuracy(self, dtype):
-    mu_values = np.asarray([1e7, 1e8, 1e9], dtype=dtype)
+  @jtu.sample_product(dtype=jtu.dtypes.floating, mu=[1e7, 1e8, 1e9])
+  def testPoissonLogPmfCentralAccuracy(self, dtype, mu):
+    mu = np.asarray(mu, dtype=dtype)
     offsets = np.asarray([-5, -3, -1, 0, 1, 3, 5], dtype=dtype)
-    k = np.round(
-        mu_values[:, None] + offsets[None, :] * np.sqrt(mu_values[:, None]))
-    mu = np.broadcast_to(mu_values[:, None], k.shape)
+    k = np.round(mu + offsets * np.sqrt(mu))
+    rates = np.broadcast_to(mu, k.shape)
 
     def args_maker():
-      return [k, mu]
+      return [k, rates]
 
     self._CheckAgainstNumpy(
         osp_stats.poisson.logpmf, lsp_stats.poisson.logpmf, args_maker,
@@ -300,17 +298,18 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_stats.poisson.logpmf, args_maker,
                           check_dtypes=False)
 
-  def testPoissonLogPmfFloat32Maximum(self):
+  @jtu.sample_product(use_jit=[False, True])
+  def testPoissonLogPmfFloat32Maximum(self, use_jit):
     # SciPy's lgamma-based float64 formula cancels to zero for k=mu
     # near 1e38, so an asymptotic Stirling reference is required.
     mu = jnp.array([1e36, 1e37, 1e38], dtype=jnp.float32)
     expected = -0.5 * (
         np.log(2 * np.pi) + np.log(np.asarray(mu, dtype=np.float64)))
-    for actual in (lsp_stats.poisson.logpmf(mu, mu),
-                   jax.jit(lsp_stats.poisson.logpmf)(mu, mu)):
-      self.assertTrue(np.isfinite(np.asarray(actual)).all())
-      self.assertAllClose(actual, expected, check_dtypes=False,
-                          rtol=1e-6, atol=2e-5)
+    fun = jax.jit(lsp_stats.poisson.logpmf) if use_jit else lsp_stats.poisson.logpmf
+    actual = fun(mu, mu)
+    self.assertTrue(np.isfinite(np.asarray(actual)).all())
+    self.assertAllClose(actual, expected, check_dtypes=False,
+                        rtol=1e-6, atol=2e-5)
 
   @genNamedParametersNArgs(3)
   def testPoissonPmf(self, shapes, dtypes):
