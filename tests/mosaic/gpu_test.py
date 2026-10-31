@@ -7967,9 +7967,16 @@ class LayoutTest(TestCase):
     # column tiles, so we only need half the registers.
     if bytewidth(mlir_dtype) < 2:
       expected_regs //= 2
+
+    # Ignore false-predicate instructions when counting address registers.
+    sass_text = "\n".join(
+        line for line in sass().splitlines()
+        if not re.search(r"@!PT\b", line)
+    )
+
     for instr in ("STS", "LDS"):
       with self.subTest(instr + " count"):
-        addrs = re.findall(instr + r".* \[(.*)\]", sass())
+        addrs = re.findall(instr + r".* \[(.*)\]", sass_text)
         def get_reg(addr):
           if (pos := addr.find("+")) != -1:
             return addr[:pos]
