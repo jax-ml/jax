@@ -98,6 +98,38 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
   @jtu.sample_product(
+    shapes=[((8, 2), (3, 5)), ((2, 8), (5, 3)), ((4, 2, 6), (2, 5, 3))],
+    mode=['full', 'same'],
+    op=['convolve', 'correlate'],
+    method=['auto', 'direct', 'fft'],
+    dtype=[np.float32, np.complex64],
+  )
+  def testConvolutionsMixedSizes(self, shapes, dtype, mode, op, method):
+    xshape, yshape = shapes
+    jsp_op = getattr(jsp_signal, op)
+    osp_op = getattr(osp_signal, op)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
+    osp_fun = partial(osp_op, mode=mode, method=method)
+    jsp_fun = partial(jsp_op, mode=mode, method=method, precision=lax.Precision.HIGHEST)
+    tol = {np.float32: 1e-4, np.complex64: 1e-4}
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+    shapes=[((8, 2), (3, 5)), ((2, 8), (5, 3))],
+    op=['convolve', 'correlate'],
+    method=['auto', 'direct'],
+  )
+  def testConvolutionsMixedSizesValidError(self, shapes, op, method):
+    xshape, yshape = shapes
+    jsp_op = getattr(jsp_signal, op)
+    rng = jtu.rand_default(self.rng())
+    in1, in2 = rng(xshape, np.float32), rng(yshape, np.float32)
+    with self.assertRaises(ValueError):
+      jsp_op(in1, in2, mode='valid', method=method)
+
+  @jtu.sample_product(
     [dict(xshape=xshape, yshape=yshape)
      for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
      for xshape in shapeset
