@@ -10966,12 +10966,10 @@ def _one(x):
   return out
 
 def _one_vjp(x):
-  ct_aval = core.typeof(x).to_ct_aval()
-  ct_s = ct_aval.sharding
-  out = full((), _convert_element_type(1, ct_aval.dtype, ct_aval.weak_type),
-             sharding=ct_s.update(spec=ct_s.spec.update(partitions=())))
-  out = core.pvary(out, tuple(ct_aval.mat.varying))
-  return _insert_reduced_unreduced(out, ct_aval.mat)
+  x_aval = core.typeof(x)
+  ct_s = core.primal_sharding_to_cotangent_sharding(x_aval.sharding)
+  ct_s = ct_s.update(spec=ct_s.spec.update(partitions=()))
+  return full_like(x, shape=(), fill_value=1, sharding=ct_s)
 
 _twos: Callable = partial(full_like, fill_value=2)
 _two: Callable = partial(full_like, shape=(), fill_value=2)

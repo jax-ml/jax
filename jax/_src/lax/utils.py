@@ -223,8 +223,7 @@ def call_ur_rule(prim, ur_rule, out_s, num_out, *avals, **kwargs):
   if ur_rule is not None:
     return ur_rule(*avals, **kwargs)
 
-  if any(a.sharding.spec.unreduced or a.sharding.spec.reduced or
-         a.mat.unreduced or a.mat.reduced for a in avals):
+  if any(a.sharding.spec.unreduced or a.sharding.spec.reduced for a in avals):
     raise NotImplementedError(
         f'unreduced/reduced rule for {prim.name} is not implemented. Please'
         ' file an issue at https://github.com/jax-ml/jax/issues')
@@ -364,10 +363,6 @@ def manual_rule(prim, vma_rule, ur_rule, multi_out, *avals, **kwargs):
         prim, ur_rule, out_s, num_out, *avals, **kwargs)
   else:
     # TODO(yashkatariya): Handle partial manual unreduced/reduced.
-    if any(a.mat.unreduced or a.mat.reduced for a in avals):
-      raise NotImplementedError(
-          f'{prim.name}: unreduced/reduced on manual axes is only supported when'
-          ' all mesh axes are manual.')
     out_unreduced, out_reduced, u_kind = (
         (frozenset(), frozenset(), None) if num_out is None else
         ([frozenset()] * num_out, [frozenset()] * num_out, [None] * num_out))
