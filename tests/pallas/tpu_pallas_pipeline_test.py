@@ -43,6 +43,45 @@ htu.setup_hypothesis(max_examples=200)
 jax.config.parse_flags_with_absl()
 
 
+def _empty_first_bounded_slice_index_map(i):
+  start = jnp.where(i == 2, 8, 0)
+  size = jnp.where(i == 0, 0, 8)
+  return (pl.ds(start, size), 0, 0)
+
+
+def _add_three_step_body(step, x_ref, o_ref):
+  del step
+  o_ref[...] = x_ref[...] + 3.0
+
+
+def _bounded_slice_single_buffer_lookahead_entry(x_ref, y_ref):
+  block_shape = (pl.BoundedSlice(8), 8, 128)
+  in_block_spec = pl.BlockSpec(
+      block_shape,
+      _empty_first_bounded_slice_index_map,
+      pipeline_mode=pl.Buffered(buffer_count=1, use_lookahead=True),
+  )
+  out_block_spec = pl.BlockSpec(
+      block_shape,
+      _empty_first_bounded_slice_index_map,
+  )
+  pltpu.emit_pipeline(
+      _add_three_step_body,
+      grid=(3,),
+      in_specs=(in_block_spec,),
+      out_specs=out_block_spec,
+      _explicit_indices=True,
+  )(x_ref, y_ref)
+
+
+def _run_bounded_slice_single_buffer_lookahead_kernel(x):
+  kernel_fn = pl.kernel(
+      mesh=pltpu.TensorCoreMesh(axis_name='core'),
+      out_type=x,
+  )(_bounded_slice_single_buffer_lookahead_entry)
+  return jax.jit(kernel_fn)(x)
+
+
 @jax.named_scope('compute')
 def basic_matmul_kernel(
     step,
@@ -1468,7 +1507,7 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     np.testing.assert_allclose(result, x @ y, atol=5e-5)
 
   @parameterized.product(
-      in_buffer_count=[2, 4],
+      in_buffer_count=[1, 2, 4],
       out_buffer_count=[2],
       in_block_indices=[
           [2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
@@ -2261,6 +2300,17 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
         ' dimension.|when it should be pl.Slice'
     ):
       f.trace(jax.ShapeDtypeStruct(shape, jnp.int32))
+
+  def test_block_spec_bounded_slice_single_buffer_lookahead_empty_first(self):
+    if not jtu.is_device_tpu():
+      self.skipTest('Only works on TPU.')
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
+
+    shape = (16, 8, 128)
+    x = jnp.arange(1, np.prod(shape) + 1, dtype=jnp.float32).reshape(shape)
+    out = _run_bounded_slice_single_buffer_lookahead_kernel(x)
+    np.testing.assert_allclose(out, x + 3.0)
 
   def test_block_spec_bounded_slice_static(self):
     if not jtu.is_device_tpu():
