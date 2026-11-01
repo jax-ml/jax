@@ -41,6 +41,74 @@ jax.config.parse_flags_with_absl()
 jax.config.update('jax_threefry_partitionable', True)
 
 
+def _equal_two_step_index_map(i):
+  return (i, 0)
+
+
+def _empty_first_bounded_slice_index_map(i):
+  start = jnp.where(i == 2, jnp.int32(8), jnp.int32(0))
+  size = jnp.where(i == 0, jnp.int32(0), jnp.int32(8))
+  return (pl.ds(start, size), 0, 0)
+
+
+def _add_three_step_body(step, x_ref, o_ref):
+  del step
+  o_ref[...] = x_ref[...] + 3.0
+
+
+def _equal_single_buffer_lookahead_entry(x_hbm_ref, o_hbm_ref):
+  in_spec = pl.BlockSpec(
+      (8, 128),
+      _equal_two_step_index_map,
+      pipeline_mode=pl.Buffered(buffer_count=1, use_lookahead=True),
+  )
+  out_spec = pl.BlockSpec((8, 128), _equal_two_step_index_map)
+  pltpu.emit_pipeline(
+      _add_three_step_body,
+      grid=(2,),
+      in_specs=(in_spec,),
+      out_specs=out_spec,
+      _explicit_indices=True,
+  )(x_hbm_ref, o_hbm_ref)
+
+
+def _run_equal_single_buffer_lookahead_interpret(x, interpret):
+  return pl.pallas_call(
+      _equal_single_buffer_lookahead_entry,
+      in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+      out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+      out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      interpret=interpret,
+  )(x)
+
+
+def _bounded_single_buffer_lookahead_entry(x_hbm_ref, o_hbm_ref):
+  block_shape = (pl.BoundedSlice(8), 8, 128)
+  in_spec = pl.BlockSpec(
+      block_shape,
+      _empty_first_bounded_slice_index_map,
+      pipeline_mode=pl.Buffered(buffer_count=1, use_lookahead=True),
+  )
+  out_spec = pl.BlockSpec(block_shape, _empty_first_bounded_slice_index_map)
+  pltpu.emit_pipeline(
+      _add_three_step_body,
+      grid=(3,),
+      in_specs=(in_spec,),
+      out_specs=out_spec,
+      _explicit_indices=True,
+  )(x_hbm_ref, o_hbm_ref)
+
+
+def _run_bounded_single_buffer_lookahead_interpret(x, interpret):
+  return pl.pallas_call(
+      _bounded_single_buffer_lookahead_entry,
+      in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+      out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+      out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      interpret=interpret,
+  )(x)
+
+
 class CountStoreCallbacksContext:
   """Wraps the I/O callback `store` into a callback that counts the number of calls to `store`."""
 
@@ -2134,6 +2202,41 @@ class InterpretTest(jtu.JaxTestCase):
               out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
               interpret=interpret,
           )(x)
+
+  @parameterized.parameters(False, True)
+  def test_single_buffer_lookahead_bounded_slice_race_free(self, use_prim):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (),
+        (),
+        abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
+    )
+    with (
+        config.enable_x64(False),
+        config.use_emit_pipeline_primitive(use_prim),
+        jax.sharding.use_abstract_mesh(abstract_mesh),
+    ):
+      interpret = pltpu.InterpretParams(
+          detect_races=True, dma_execution_mode='eager'
+      )
+      equal_shape = (16, 128)
+      x_equal = jnp.arange(
+          1, np.prod(equal_shape) + 1, dtype=jnp.float32
+      ).reshape(equal_shape)
+      out_equal = _run_equal_single_buffer_lookahead_interpret(
+          x_equal, interpret
+      )
+      self.assertFalse(mosaic_interpret.races.races_found)
+      np.testing.assert_allclose(out_equal, x_equal + 3.0)
+
+      bounded_shape = (16, 8, 128)
+      x_bounded = jnp.arange(
+          1, np.prod(bounded_shape) + 1, dtype=jnp.float32
+      ).reshape(bounded_shape)
+      out_bounded = _run_bounded_single_buffer_lookahead_interpret(
+          x_bounded, interpret
+      )
+      self.assertFalse(mosaic_interpret.races.races_found)
+      np.testing.assert_allclose(out_bounded, x_bounded + 3.0)
 
 
 if __name__ == '__main__':

@@ -749,7 +749,10 @@ class BufferedRef(BufferedRefBase):
           _buffer_type=buffer_type,
           _in_buffer_count=in_buffer_count,
           _out_buffer_count=out_buffer_count,
-          _grid_rank=grid_rank if use_lookahead else None,
+          # A single input buffer has no spare slot to prefetch future blocks.
+          _grid_rank=(
+              grid_rank if use_lookahead and in_buffer_count > 1 else None
+          ),
           window_ref=window_ref,
           copy_in_slot=None,
           wait_in_slot=None,
