@@ -1610,6 +1610,146 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     self.assertAllClose(jax.hessian(real_view)(zeros),
                         np.zeros((2, 2, 2), real_dtype))
 
+  def testDivDerivativesOpCountAndBroadcast(self):
+    x = jnp.array([[1.5], [-3.0], [4.5]], dtype=jnp.float32)
+    y = jnp.array([[2.0, -1.5, 3.0, -2.5]], dtype=jnp.float32)
+    dx = jnp.array([[0.5], [-0.25], [1.0]], dtype=jnp.float32)
+    dy = jnp.array([[-0.5, 0.75, -0.25, 1.0]], dtype=jnp.float32)
+
+    jaxpr_both = jax.make_jaxpr(
+        lambda a, b, da, db: jax.jvp(lax.div, (a, b), (da, db))
+    )(x, y, dx, dy)
+    self.assertEqual(
+        [e.primitive for e in jaxpr_both.eqns].count(lax.div_p), 2
+    )
+    self.assertNotIn(lax.integer_pow_p, [e.primitive for e in jaxpr_both.eqns])
+
+    jaxpr_rhs = jax.make_jaxpr(
+        lambda a, b, db: jax.jvp(lambda v: lax.div(a, v), (b,), (db,))
+    )(x, y, dy)
+    self.assertEqual(
+        [e.outvars[0].aval.shape for e in jaxpr_rhs.eqns if e.primitive is lax.div_p],
+        [(3, 4), y.shape],
+    )
+    self.assertNotIn(lax.integer_pow_p, [e.primitive for e in jaxpr_rhs.eqns])
+
+    grad_fn = jax.grad(lambda a, b: lax.div(a, b).sum(), argnums=(0, 1))
+    jaxpr_grad = jax.make_jaxpr(grad_fn)(x, y)
+    self.assertEqual([e.primitive for e in jaxpr_grad.eqns].count(lax.div_p), 2)
+
+    grad_rhs_fn = jax.grad(lambda a, b: lax.div(a, b).sum(), argnums=1)
+    jaxpr_grad_rhs = jax.make_jaxpr(grad_rhs_fn)(x, y)
+    self.assertEqual(
+        [e.outvars[0].aval.shape for e in jaxpr_grad_rhs.eqns if e.primitive is lax.div_p],
+        [(3, 4), y.shape],
+    )
+
+    check_grads(lax.div, (x, y), order=2, modes=["fwd", "rev"],
+                atol=1e-3, rtol=1e-3, eps=1e-2)
+    xc = x.astype(jnp.complex64) * (1.0 - 0.5j)
+    yc = y.astype(jnp.complex64) * (0.5 + 1.0j)
+    check_grads(lax.div, (xc, yc), order=2, modes=["fwd", "rev"],
+                atol=1e-3, rtol=1e-3, eps=1e-2)
+
+  def testDivDerivativesOverflowAndUnderflow(self):
+    # 1. Large |y| > sqrt(maxfloat): y^2 would overflow.
+    cases = [
+        (jnp.float16, 300.0),
+        (jnp.bfloat16, 1e20),
+        (jnp.float32, 1e20),
+    ]
+    for dtype, val in cases:
+      x = y = jnp.asarray(val, dtype=dtype)
+      inv_y = np.asarray(1.0 / float(val), dtype=dtype)
+      rtol = 2e-2 if dtype in (jnp.float16, jnp.bfloat16) else 1e-5
+
+      _, ty = jax.jvp(lax.div, (x, y), (jnp.zeros_like(x), jnp.ones_like(y)))
+      self.assertAllClose(ty, -inv_y, rtol=rtol, atol=0.0)
+
+      _, txy = jax.jvp(
+          lax.div, (x, y), (jnp.asarray(2.0, dtype=dtype), jnp.ones_like(y))
+      )
+      self.assertAllClose(txy, inv_y, rtol=rtol, atol=0.0)
+
+      gx, gy = jax.grad(lax.div, argnums=(0, 1))(x, y)
+      self.assertAllClose(gx, inv_y, rtol=rtol, atol=0.0)
+      self.assertAllClose(gy, -inv_y, rtol=rtol, atol=0.0)
+
+    # 2. Second derivative where y^3 would overflow in float16 (50^3 > 65504).
+    x16 = jnp.float16(1000.0)
+    y16 = jnp.float16(50.0)
+    d2_rev = jax.grad(jax.grad(lambda b: lax.div(x16, b)))(y16)
+    d2_fwd = jax.jvp(
+        lambda b: jax.jvp(lambda u: lax.div(x16, u), (b,), (jnp.float16(1.0),))[1],
+        (y16,),
+        (jnp.float16(1.0),),
+    )[1]
+    self.assertAllClose(d2_rev, np.float16(0.016), rtol=1e-2, atol=0.0)
+    self.assertAllClose(d2_fwd, np.float16(0.016), rtol=1e-2, atol=0.0)
+
+    # Regression test for https://github.com/jax-ml/jax/issues/37909:
+    # 2 * s0^-3 overflows float16 even though s0^-3 and the Hessian are finite.
+    def f_37909(x):
+      s0 = (x / jnp.atan2(x, x)) / 2.0
+      return jnp.float16(1.0) / s0
+
+    x_37909 = jnp.float16(-0.12)
+    expected_h = np.float16(-3.0 * math.pi / float(x_37909) ** 3)
+    self.assertAllClose(jax.hessian(f_37909)(x_37909), expected_h, rtol=1e-2)
+    self.assertAllClose(
+        jax.grad(jax.grad(f_37909))(x_37909), expected_h, rtol=1e-2
+    )
+    self.assertAllClose(
+        jax.jit(jax.hessian(f_37909))(x_37909), expected_h, rtol=1e-2
+    )
+
+    # 3. Complex large denominator where y^2 overflows.
+    zc = jnp.complex64(1e20 + 1e20j)
+    expected_tc = np.complex64(-1.0 / complex(1e20, 1e20))
+    _, tc = jax.jvp(lax.div, (zc, zc), (jnp.complex64(0.0), jnp.complex64(1.0)))
+    self.assertAllClose(tc, expected_tc, rtol=1e-5, atol=0.0)
+
+    # 4. Tiny |y| < sqrt(minnormal): y^2 underflows to 0, so y^-2 is inf.
+    tiny = jnp.float32(1e-25)
+    _, t_tiny = jax.jvp(lax.div, (tiny, tiny), (jnp.float32(0.0), tiny))
+    self.assertAllClose(t_tiny, jnp.float32(-1.0), rtol=1e-5, atol=0.0)
+    _, vjp_fn = jax.vjp(lax.div, tiny, tiny)
+    gx_tiny, gy_tiny = vjp_fn(tiny)
+    self.assertAllClose(gx_tiny, jnp.float32(1.0), rtol=1e-5, atol=0.0)
+    self.assertAllClose(gy_tiny, jnp.float32(-1.0), rtol=1e-5, atol=0.0)
+
+    # Zero numerator with tiny denominator must not produce 0 * inf = NaN.
+    z0 = jnp.float32(0.0)
+    _, t_zero = jax.jvp(lax.div, (z0, tiny), (z0, jnp.float32(1.0)))
+    self.assertEqual(t_zero, jnp.float32(0.0))
+    gx0, gy0 = jax.grad(lax.div, argnums=(0, 1))(z0, tiny)
+    self.assertAllClose(gx0, jnp.float32(1e25), rtol=1e-5, atol=0.0)
+    self.assertEqual(gy0, jnp.float32(0.0))
+
+    # 5. Infinite denominator.
+    y_inf = jnp.float32(jnp.inf)
+    _, t_inf = jax.jvp(
+        lax.div, (jnp.float32(1.0), y_inf), (jnp.float32(1.0), jnp.float32(1.0))
+    )
+    self.assertEqual(t_inf, jnp.float32(0.0))
+    gx_inf, gy_inf = jax.grad(lax.div, argnums=(0, 1))(jnp.float32(1.0), y_inf)
+    self.assertEqual(gx_inf, jnp.float32(0.0))
+    self.assertEqual(gy_inf, jnp.float32(0.0))
+
+  @jtu.skip_on_devices("tpu")
+  def testDivDerivativesOverflowAndUnderflowFloat64(self):
+    with jax.enable_x64():
+      x = y = jnp.float64(1e200)
+      _, ty = jax.jvp(lax.div, (x, y), (jnp.float64(0.0), jnp.float64(1.0)))
+      self.assertAllClose(ty, jnp.float64(-1e-200), rtol=1e-12, atol=0.0)
+      gx, gy = jax.grad(lax.div, argnums=(0, 1))(x, y)
+      self.assertAllClose(gx, jnp.float64(1e-200), rtol=1e-12, atol=0.0)
+      self.assertAllClose(gy, jnp.float64(-1e-200), rtol=1e-12, atol=0.0)
+
+      tiny = jnp.float64(1e-200)
+      _, gy0 = jax.grad(lax.div, argnums=(0, 1))(jnp.float64(0.0), tiny)
+      self.assertEqual(gy0, jnp.float64(0.0))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

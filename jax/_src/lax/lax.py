@@ -5801,10 +5801,24 @@ def _div_ur_rule(x, y):
   kind = UnreducedKind.sum if out_unreduced else None
   return out_unreduced, out_reduced, kind
 
+def _div_jvp(primals, tangents):
+  # Writing d(x / y) = (dx - q * dy) / y with q = x / y shares a single tangent
+  # division across dx and dy (in both JVP and VJP) and avoids squaring y, which
+  # would overflow for |y| > sqrt(maxfloat) or underflow for |y| < sqrt(min).
+  x, y = primals
+  xdot, ydot = tangents
+  q = div(x, y)
+  if type(xdot) is type(ydot) is ad_util.Zero:
+    return q, ad_util.p2tz(q)
+  if type(ydot) is ad_util.Zero:
+    return q, div(xdot, y)
+  if type(xdot) is ad_util.Zero:
+    # Divide at y.shape before broadcasting with q (and after reducing in VJP).
+    return q, mul(q, neg(div(ydot, y)))
+  return q, div(sub(xdot, mul(q, ydot)), y)
+
 div_p = standard_naryop([_num, _num], 'div', ur_rule=_div_ur_rule)
-ad.defjvp(div_p,
-          lambda g, x, y: div(g, y),
-          lambda g, x, y: mul(mul(neg(g), x), integer_pow(y, -2)))
+ad.primitive_jvps[div_p] = _div_jvp
 ad.primitive_transposes[div_p] = _div_transpose_rule
 mlir.register_lowering(div_p, partial(_nary_lower_hlo, hlo.divide))
 lax_utils.register_unreduced_lojax(div_p)
