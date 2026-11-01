@@ -603,6 +603,7 @@ class BufferedRef(BufferedRefBase):
   # New style prefetch with folded emit_pipeline await. New is False here.
   await_prefetch: bool = jax.tree.static(default=False)
   output_wait_read_only: bool = jax.tree.static(default=False)
+  priority: int = jax.tree.static(default=0)
 
   @property
   def spec(self):
@@ -657,6 +658,7 @@ class BufferedRef(BufferedRefBase):
       tiling: Tiling | None = None,
       is_trivial_windowing: bool = False,
       prefetched_count: int = 0,
+      priority: int = 0,
   ) -> BufferedRef:
     """Create a BufferedRef.
 
@@ -671,6 +673,7 @@ class BufferedRef(BufferedRefBase):
       source_memory_space: The memory space of the backing source Ref.
       tiling: The tiling to assume for the buffers.
       prefetched_count: number of buffers that have been prefetched.
+      priority: DMA priority for async copies issued by this BufferedRef.
 
     Returns:
       Initialized BufferedRef
@@ -712,6 +715,7 @@ class BufferedRef(BufferedRefBase):
           tiling=None,
           is_trivial_windowing=is_trivial_windowing,
           has_allocated_buffer=False,
+          priority=priority,
       )
     else:
       if use_lookahead and grid_rank is None:
@@ -770,6 +774,7 @@ class BufferedRef(BufferedRefBase):
           is_trivial_windowing=is_trivial_windowing,
           has_allocated_buffer=True,
           prefetched_count=prefetched_count,
+          priority=priority,
       )
 
   @classmethod
@@ -856,10 +861,18 @@ class BufferedRef(BufferedRefBase):
     assert self.copy_in_slot is not None
     return self.copy_in_slot
 
+  def _slot_rem(self, cumulative_slot):
+    n = self.buffer_count
+    if n == 1:
+      return jnp.uint32(0)
+    if n & (n - 1) == 0:
+      return lax.bitwise_and(cumulative_slot, jnp.uint32(n - 1))
+    return lax.rem(cumulative_slot, jnp.uint32(n))
+
   @property
   def current_copy_in_slot(self):
     """Index in multiple buffer corresponding to the current slot."""
-    return lax.rem(self.cumulative_copy_in, jnp.uint32(self.buffer_count))
+    return self._slot_rem(self.cumulative_copy_in)
 
   @property
   def cumulative_copy_out(self):
@@ -870,7 +883,7 @@ class BufferedRef(BufferedRefBase):
   @property
   def current_copy_out_slot(self):
     """Index in multiple buffer corresponding to the current copy slot."""
-    return lax.rem(self.cumulative_copy_out, jnp.uint32(self.buffer_count))
+    return self._slot_rem(self.cumulative_copy_out)
 
   @property
   def cumulative_wait_in(self):
@@ -881,7 +894,7 @@ class BufferedRef(BufferedRefBase):
   @property
   def current_wait_in_slot(self):
     """Index in multiple buffer corresponding to the current wait slot."""
-    return lax.rem(self.cumulative_wait_in, jnp.uint32(self.buffer_count))
+    return self._slot_rem(self.cumulative_wait_in)
 
   @property
   def cumulative_wait_out(self):
@@ -892,7 +905,7 @@ class BufferedRef(BufferedRefBase):
   @property
   def current_wait_out_slot(self):
     """Index in multiple buffer corresponding to the current wait slot."""
-    return lax.rem(self.cumulative_wait_out, jnp.uint32(self.buffer_count))
+    return self._slot_rem(self.cumulative_wait_out)
 
   @property
   def next_fetch_indices(self):
@@ -1037,7 +1050,7 @@ class BufferedRef(BufferedRefBase):
         src_ref,
         self._window_ref_at(slot, dst_slice),
         self.sem_recvs.at[slot],
-    ).start()
+    ).start(priority=self.priority)
 
   def _copy_out_at(self, slot, dst_ref, grid_indices):
     """Describes the copy of the HBM dma slice out of ``slot``."""
@@ -1046,8 +1059,18 @@ class BufferedRef(BufferedRefBase):
     src_ref = self._window_ref_at(slot, self._to_window_slice(dst_slice))
     dst_ref, sem = dst_ref.at[dst_slice], self.sem_sends.at[slot]
     if self.output_wait_read_only:  # The semaphore tracks the source read.
-      return tpu_primitives.make_async_copy(src_ref, dst_ref, src_sem=sem)
-    return tpu_primitives.make_async_copy(src_ref, dst_ref, sem)
+      return tpu_primitives.make_async_copy(
+          src_ref,
+          dst_ref,
+          src_sem=sem,
+          priority=self.priority,
+      )
+    return tpu_primitives.make_async_copy(
+        src_ref,
+        dst_ref,
+        sem,
+        priority=self.priority,
+    )
 
   def _wait_out_copy(self, copy):
     if self.output_wait_read_only:
@@ -1060,7 +1083,7 @@ class BufferedRef(BufferedRefBase):
     assert self.is_output
     if not self.is_buffered: return
     copy = self._copy_out_at(self.current_copy_out_slot, dst_ref, grid_indices)
-    copy.start()
+    copy.start(priority=self.priority)
     if self.out_buffer_count == 1:  # Single-buffered outputs are synchronous.
       self._wait_out_copy(copy)
 
@@ -1607,6 +1630,7 @@ def _make_pipeline_allocations(
     out_specs=(),
     tiling: Tiling | None = None,
     grid=(),
+    priority: int = 0,
 ):
   """Create BufferedRefs for the pipeline.
 
@@ -1618,6 +1642,8 @@ def _make_pipeline_allocations(
     in_specs: input pallas block specs
     out_specs: output pallas block specs
     grid: grid to use for the pipeline.
+    priority: DMA priority for the pipeline copies (a `pipeline_mode` may
+      override it per spec).
 
   Returns:
     A list of BufferedRefs, one corresponding to each ref specified in the
@@ -1634,10 +1660,12 @@ def _make_pipeline_allocations(
     buffer_count = 2
     use_lookahead = False
     prefetched_count = 0
+    in_priority = priority
     if has_buffering := in_spec.pipeline_mode is not None:
       buffer_count = in_spec.pipeline_mode.buffer_count
       use_lookahead = in_spec.pipeline_mode.use_lookahead
       prefetched_count = in_spec.pipeline_mode.prefetched_count
+      in_priority = getattr(in_spec.pipeline_mode, "priority", in_priority)
     if use_lookahead and grid is None:
       raise ValueError("Grid must be specified when using lookahead.")
     is_trivial = _spec_has_trivial_windowing(in_spec, grid, in_aval.shape)
@@ -1656,13 +1684,16 @@ def _make_pipeline_allocations(
         tiling=tiling,
         is_trivial_windowing=is_trivial,
         prefetched_count=prefetched_count,
+        priority=in_priority,
     )
   in_brefs = jax.tree.map(make_input_bref, in_specs, in_refs)
   def make_output_bref(out_spec, out_ref):
     out_aval = _ref_to_value_aval(out_ref)
     buffer_count = 2
+    out_priority = priority
     if has_buffering := out_spec.pipeline_mode is not None:
       buffer_count = out_spec.pipeline_mode.buffer_count
+      out_priority = getattr(out_spec.pipeline_mode, "priority", out_priority)
       if out_spec.pipeline_mode.use_lookahead:
         raise ValueError("Output buffering does not support lookahead.")
       if out_spec.pipeline_mode.revisit is not None:
@@ -1687,6 +1718,7 @@ def _make_pipeline_allocations(
         source_memory_space=sms,
         tiling=tiling,
         is_trivial_windowing=is_trivial,
+        priority=out_priority,
     )
   out_brefs = jax.tree.map(make_output_bref, out_specs, out_refs)
   return (*in_brefs, *out_brefs)
@@ -1875,6 +1907,7 @@ def _emit_pipeline(
     num_cores: int | None = None,
     core_id: jax.Array | int | None = None,
     _explicit_indices: bool = False,
+    priority: int = 0,
 ):
   """Creates a function to emit a manual pallas pipeline.
 
@@ -1901,6 +1934,7 @@ def _emit_pipeline(
     core_id: If set, the core ID of the current core for partitioning the grid.
     _explicit_indices: If True, the body will receive the iteration indices as
       its first argument. This parameter is meant for internal use only.
+    priority: DMA priority queue index for the pipeline copies.
   """
 
   if any(not isinstance(d, (int, jax.Array)) for d in grid):
@@ -1945,6 +1979,7 @@ def _emit_pipeline(
               out_specs=out_specs,
               grid=grid,
               tiling=tiling,
+              priority=priority,
           )
       )
     if isinstance(allocations, list):
@@ -1971,6 +2006,7 @@ def _emit_pipeline(
                 out_specs=out_specs,
                 grid=grid,
                 tiling=tiling,
+                priority=priority,
             ),
         )
     elif len(allocations) == len(in_specs) + len(out_specs):
@@ -2138,6 +2174,7 @@ def emit_pipeline_with_allocations(
     in_specs=(),
     out_specs=(),
     _explicit_indices: bool = False,
+    priority: int = 0,
 ):
   """Creates pallas pipeline and top-level allocation preparation functions.
 
@@ -2148,6 +2185,7 @@ def emit_pipeline_with_allocations(
     out_specs: output pallas block specs
     _explicit_indices: If True, the body receives a `PipelineStep` as its first
       argument instead of querying `program_id` from a grid environment.
+    priority: DMA priority queue index for pipeline copies.
 
   Returns:
     (emit_pipeline, make_allocations) function pair, where
@@ -2156,16 +2194,20 @@ def emit_pipeline_with_allocations(
         pipeline that can be created at the top-level of a pallas call to be
         reused across multiple invocations of the inner pipeline.
   """
-  make_allocations = functools.partial(_make_pipeline_allocations,
-                    in_specs=in_specs,
-                    out_specs=out_specs,
-                    grid=grid)
+  make_allocations = functools.partial(
+      _make_pipeline_allocations,
+      in_specs=in_specs,
+      out_specs=out_specs,
+      grid=grid,
+      priority=priority,
+  )
   pipeline = emit_pipeline(
       body,
       grid=grid,
       in_specs=in_specs,
       out_specs=out_specs,
       _explicit_indices=_explicit_indices,
+      priority=priority,
   )
   return pipeline, make_allocations
 
@@ -2223,6 +2265,7 @@ def emit_pipeline(
     no_pipelining: bool = False,
     output_wait_read_only: bool = False,
     _explicit_indices: bool = False,
+    priority: int = 0,
 ):
   in_specs = _normalize_specs(in_specs)
   out_specs = _normalize_specs(out_specs)
@@ -2294,6 +2337,7 @@ def emit_pipeline(
           _explicit_indices=_explicit_indices,
           num_cores=num_cores,
           core_id=core_id,
+          priority=priority,
       )(
           *in_refs,
           *out_refs,
@@ -2458,6 +2502,7 @@ def emit_pipeline(
         output_wait_read_only=output_wait_read_only,
         _explicit_indices=_explicit_indices,
         num_cores=num_cores,
+        priority=priority,
     )
 
   return wrapped

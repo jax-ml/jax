@@ -457,6 +457,33 @@ class DebugPrintTest(PallasSCTest):
 
     self.assertEqual(get_output().count("Executing subcore"), num_subcores)
 
+  def test_scalar_subcore_dma_priority_rejected(self):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
+    nl = self.num_lanes
+    x = jnp.arange(8 * nl, dtype=jnp.int32).reshape(-1, nl)
+
+    @self.kernel(
+        out_type=x,
+        mesh=plsc.ScalarSubcoreMesh(
+            axis_name="x", num_cores=self.sc_info.num_cores
+        ),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref):
+      @functools.partial(
+          pl.run_scoped,
+          tmp_ref=pltpu.VMEM_SHARED(x.shape, x.dtype),
+          sem=pltpu.SemaphoreType.DMA,
+      )
+      def _(tmp_ref, sem):
+        pltpu.async_copy(x_hbm_ref, tmp_ref, sem, priority=1).wait()
+        pltpu.async_copy(tmp_ref, o_hbm_ref, sem).wait()
+
+    # SparseCore has a single DMA thread and rejects priorities; Pallas reports
+    # it up front instead.
+    with self.assertRaisesRegex(NotImplementedError, "priority"):
+      jax.jit(kernel).lower(x)
+
 
 class VectorSubcoreTest(PallasSCTest):
 
