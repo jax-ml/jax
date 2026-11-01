@@ -29,6 +29,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     incomplete gamma functions, with gradients with respect to both arguments.
   * Added {func}`jax.scipy.special.jn`, an accurate implementation of bessel
     functions of the first kind of integer order.
+  * Added {func}`jax.scipy.special.betaincinv`, the inverse of the regularized
+    incomplete beta function in its last argument, with gradients with respect
+    to that argument only, like {func}`jax.scipy.special.betainc`.
 
 * Deprecations
   * The `jax_use_shardy_partitioner` configuration flag is deprecated and is now
