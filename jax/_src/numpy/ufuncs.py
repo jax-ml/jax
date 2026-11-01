@@ -1912,8 +1912,17 @@ def spacing(x: ArrayLike, /) -> Array:
   if arr.dtype == 'float16':
     return lax.nextafter(arr, inf) - arr
   else:
-    result = lax.nextafter(arr, copysign(inf, arr)) - arr
-    return _where(result == 0, copysign(smallest_subnormal, arr), result)
+    bit_width = np.dtype(arr.dtype).itemsize * 8
+    int_dt = _INT_DTYPES.get(bit_width)
+    if int_dt is not None:
+      bits = lax.bitcast_convert_type(arr, int_dt)
+      int_min = np.iinfo(int_dt).min
+      is_neg_zero = lax.eq(bits, lax._const(bits, int_min))
+      arr_clean = _where(is_neg_zero, _lax_const(arr, 0.0), arr)
+    else:
+      arr_clean = arr
+    result = lax.nextafter(arr, copysign(inf, arr_clean)) - arr
+    return _where(result == 0, copysign(smallest_subnormal, arr_clean), result)
 
 
 # Logical ops
