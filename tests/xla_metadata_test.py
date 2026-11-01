@@ -24,6 +24,7 @@ from jax._src import test_util as jtu
 from jax._src.lax import lax
 from jax.experimental.xla_metadata import fuse_limit
 from jax.experimental.xla_metadata import must_fuse_call
+from jax.experimental.xla_metadata import scheduling_group
 from jax.experimental.xla_metadata import set_xla_metadata
 from jax.experimental.xla_metadata import xla_metadata_call
 from jax.experimental.xla_metadata import xla_metadata_call2
@@ -601,6 +602,85 @@ class XlaMetadataTest(jtu.JaxTestCase):
 
     mlir_str = f.lower(3.0).as_text()
     self.assertIn('FUSE_LIMIT = "true"', mlir_str)
+
+  def test_scheduling_group_works(self):
+    @jax.jit
+    def f(x, w):
+      with scheduling_group(7):
+        y = jnp.sin(x)
+      z = jnp.cos(y)
+      with scheduling_group(7):
+        return z @ w
+
+    jaxpr = f.trace(jnp.ones((4, 4)), jnp.ones((4, 4))).jaxpr
+    tagged = [
+        eq.primitive.name
+        for eq in jaxpr.eqns
+        if eq.ctx.xla_metadata
+        and eq.ctx.xla_metadata.get("_scheduling_group_id") == "7"
+    ]
+    self.assertIn("sin", tagged)
+    self.assertIn("dot_general", tagged)
+    self.assertNotIn("cos", tagged)
+
+    hlo_text = (
+        f.lower(jnp.ones((4, 4)), jnp.ones((4, 4)))
+        .compiler_ir("hlo")
+        .as_hlo_text()
+    )
+    self._assert_metadata_appears_once_per_op(
+        hlo_text, ["sine", "dot"], {"_scheduling_group_id": "7"}
+    )
+    self.assertNotIn("_scheduling_group_deep_pipeline", hlo_text)
+
+  def test_scheduling_group_deep_pipeline(self):
+    @jax.jit
+    def f(x, w):
+      with scheduling_group(3, deep_pipeline=True):
+        y = jnp.sin(x)
+      z = jnp.cos(y)
+      with scheduling_group(3, deep_pipeline=True):
+        return z @ w
+
+    hlo_text = (
+        f.lower(jnp.ones((4, 4)), jnp.ones((4, 4)))
+        .compiler_ir("hlo")
+        .as_hlo_text()
+    )
+    self._assert_metadata_appears_once_per_op(
+        hlo_text,
+        ["sine", "dot"],
+        {
+            "_scheduling_group_id": "3",
+            "_scheduling_group_deep_pipeline": "true",
+        },
+    )
+    for line in hlo_text.splitlines():
+      if "cosine(" in line:
+        self.assertNotIn("_scheduling_group", line)
+
+  def test_scheduling_group_nested_does_not_leak_deep_pipeline(self):
+    @jax.jit
+    def f(x):
+      with scheduling_group(1, deep_pipeline=True):
+        y = jnp.sin(x)
+        with scheduling_group(2):
+          return jnp.cos(y)
+
+    hlo_text = f.lower(3.0).compiler_ir("hlo").as_hlo_text()
+    for line in hlo_text.splitlines():
+      if " sine(" in line:
+        self.assertIn('_scheduling_group_id="1"', line)
+        self.assertIn('_scheduling_group_deep_pipeline="true"', line)
+      if " cosine(" in line:
+        self.assertIn('_scheduling_group_id="2"', line)
+        self.assertNotIn("_scheduling_group_deep_pipeline", line)
+
+  @parameterized.parameters(-1, "7", 1.5, True, None)
+  def test_scheduling_group_invalid_id(self, group_id):
+    with self.assertRaises(ValueError):
+      with scheduling_group(group_id):
+        pass
 
   def test_must_fuse_call_works(self):
     @jax.jit
