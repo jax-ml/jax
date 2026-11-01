@@ -73,7 +73,7 @@ Therefore, each output block $z_{ij}$ is the sum of several smaller block matrix
 :id: PACqDMtQrMOL
 
 def matmul_small(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-  m, k, n = x.shape[0], x.shape[1], y.shape[0]
+  m, k, n = x.shape[0], x.shape[1], y.shape[1]
   assert m <= 256
   assert k <= 256
   assert n <= 256
