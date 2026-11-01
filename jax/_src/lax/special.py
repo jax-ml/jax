@@ -558,7 +558,7 @@ def _igammac_continued_fraction(ax, x, a, enabled, dtype, mode, dlogax_da):
   vals = while_loop(cond_fn, body_fn, init_vals)
   ans = vals[1]
   if mode == IgammaMode.VALUE:
-    return ans *  ax
+    return ans * ax
   assert dlogax_da is not None
   dans_da = vals[14]
 
@@ -568,6 +568,43 @@ def _igammac_continued_fraction(ax, x, a, enabled, dtype, mode, dlogax_da):
     return neg(add(dans_da, mul(ans, dlogax_da)) * x)
   else:
     raise ValueError(f"Invalid mode: {mode}")
+
+def _igammac_temme(ax, x, a, enabled, dtype, mode):
+  """Uniform asymptotic expansion (Temme) for Q(a, x) when a is large.
+
+  Reference: N. M. Temme, "The asymptotic expansion of the incomplete gamma
+  functions", SIAM J. Math. Anal. 10 (1979), 757-766.
+  """
+  sqrt_a = sqrt(a)
+  t = (x - a) / sqrt_a
+
+  # erfc(t / sqrt(2))
+  erfc_term = erfc(t / sqrt(_const(t, 2)))
+
+  # exp(-t²/2)
+  exp_term = exp(-t * t / _const(t, 2))
+
+  # Series: Σ c_k(t) / a^k
+  t2 = t * t
+  t4 = t2 * t2
+  t6 = t4 * t2
+
+  c0 = full_like(t, 1)
+  c1 = (t2 - _const(t, 1)) / _const(t, 3)
+  c2 = (t4 - _const(t, 6) * t2 + _const(t, 3)) / _const(t, 45)
+  c3 = (t6 - _const(t, 21) * t4 + _const(t, 63) * t2 - _const(t, 15)) / _const(t, 945)
+
+  series = c0 + c1 / a + c2 / (a * a) + c3 / (a * a * a)
+
+  # Q(a, x) ≈ 0.5 * erfc(t / sqrt(2)) - (1/(3*sqrt(2*pi*a))) * exp(-t²/2) * series
+  result = _const(t, 0.5) * erfc_term - \
+           (1 / (3 * sqrt(_const(t, 2 * np.pi) * a))) * exp_term * series
+
+  if mode == IgammaMode.VALUE:
+    return result
+
+  # For derivatives, fall back to continued fraction (Temme derivative is complex)
+  return _igammac_continued_fraction(ax, x, a, enabled, dtype, mode, None)
 
 def igammac_impl(a, x, *, dtype):
   is_nan = bitwise_or(_isnan(a), _isnan(x))
@@ -598,9 +635,22 @@ def igammac_impl(a, x, *, dtype):
 
   igamma_call = _igamma_series(ax, x, a, bitwise_and(enabled, use_igamma),
                                dtype, IgammaMode.VALUE, None)
-  igammac_cf_call = _igammac_continued_fraction(ax, x, a,
-    bitwise_and(enabled, bitwise_not(use_igamma)), dtype, IgammaMode.VALUE,
-    None)
+
+  # Use Temme expansion for large a near x, continued fraction otherwise
+  # Temme is accurate only in a window around x ~= a (small t); outside it
+  # the asymptotic expansion diverges, so fall back to the continued fraction.
+  t = (x - a) / sqrt(select(gt(a, _const(a, 0)), a, full_like(a, 1)))
+  use_temme = bitwise_and(
+      bitwise_and(gt(a, _const(a, 200)), bitwise_not(use_igamma)),
+      le(abs(t), _const(a, 4.5)),
+  )
+  use_cf = bitwise_and(bitwise_not(use_igamma), bitwise_not(use_temme))
+  igammac_cf_call = select(
+      use_temme,
+      _igammac_temme(ax, x, a, bitwise_and(enabled, use_temme), dtype, IgammaMode.VALUE),
+      _igammac_continued_fraction(ax, x, a,
+          bitwise_and(enabled, use_cf), dtype, IgammaMode.VALUE, None)
+  )
 
   output = select(use_igamma, _const(a, 1) - igamma_call, igammac_cf_call)
   output = select(a_is_infinity, full_like(a, 1), output)
