@@ -1946,31 +1946,14 @@ def _poisson_knuth(key: Key, lam, shape, dtype, max_iters) -> Array:
 def _poisson_log_pmf(k, lam):
   """Stable Poisson log-PMF shared by rejection sampling and scipy.stats."""
   # For large lam, evaluating -lam + k * log(lam) - lgamma(k + 1)
-  # directly loses all useful digits in float32.  Rewrite the same quantity
-  # around k ~= lam and use the Stirling correction already used by BTRS.
+  # directly loses all useful digits in float32. Rewrite around k ~= lam.
   safe_k = jnp.maximum(k, 1)
   delta = safe_k - lam
   relative_delta = delta / safe_k
-  # log1p(-t) + t is O(t**2): separately computing
-  # k * log1p(-t) + (k - lam) loses digits near the mean in float32.
-  # For |t| <= 0.01 use -k * sum(t**n / n, n=2..8); the absolute
-  # series remainder is bounded by k * |t|**9 / (9 * (1 - |t|)).
-  # Mask the polynomial argument to prevent overflow in unselected tails.
   small_delta = jnp.abs(relative_delta) <= 0.01
-  t = jnp.where(small_delta, relative_delta, 0.0)
-  series = ((((((t / 8 + 1 / 7) * t + 1 / 6) * t + 1 / 5)
-              * t + 1 / 4) * t + 1 / 3) * t + 1 / 2)
-  central_deviance = -safe_k * (t * t) * series
-  # For the far-tail path, log1p(-relative_delta) can hit log(0)
-  # even though the result is discarded. Autodiff through an inactive
-  # singular branch can produce NaN gradients for tiny positive rates.
-  use_far_tail = lam / safe_k < 0.5
-  regular_relative_delta = jnp.where(
-      use_far_tail, 0.0, relative_delta)
-  regular_deviance = safe_k * lax.log1p(-regular_relative_delta) + delta
-  deviance = jnp.where(small_delta, central_deviance, regular_deviance)
-  # Keep the large-k correction local to Poisson rather than changing the
-  # shared BTRS helper, which is also used by binomial sampling.
+
+  # The central deviance is log1p(-t) + t, where t = (k - lam) / k.
+  # Summing its series avoids cancellation when k is close to lam.
   stirling_k_sq = safe_k * safe_k
   asymptotic_stirling_tail = (
       1.0 / 12
@@ -1981,31 +1964,55 @@ def _poisson_log_pmf(k, lam):
       _stirling_approx_tail(safe_k - 1.0),
       asymptotic_stirling_tail,
   )
-  # Log each factor separately: 2*pi*k can overflow float32 for
-  # finite k close to the dtype maximum, while log(k) stays finite.
   log_normalizer = (
       0.5 * (lax.log(safe_k) + math.log(2 * math.pi))
       + stirling_tail
   )
-  near_mean_log_pmf = deviance - log_normalizer
-  # In the far tail, log1p(-relative_delta) can round to log(0), but
-  # computing k*log(lam) - lgamma(k+1) loses O(k) digits in float32.
-  # Express the deviance using log(lam/k) instead; use separate logs only
-  # when lam/k underflows. This also serves the public poisson.logpmf API.
-  # k=0 is handled exactly. Mask the inactive log-rate branch so its
-  # derivative remains -1 at lam=0.
-  safe_rate_for_log = jnp.where(k == 0, 1.0, lam)
-  rate_ratio = safe_rate_for_log / safe_k
-  positive_ratio = rate_ratio > 0.0
-  safe_ratio = jnp.where(positive_ratio, rate_ratio, 1.0)
-  log_ratio = jnp.where(
-      positive_ratio, lax.log(safe_ratio),
-      lax.log(safe_rate_for_log) - lax.log(safe_k))
-  far_tail_log_pmf = safe_k * log_ratio + delta - log_normalizer
-  log_pmf = jnp.where(use_far_tail, far_tail_log_pmf, near_mean_log_pmf)
-  result = jnp.where(k == 0, -lam, log_pmf)
-  # An invalid negative rate must not produce a positive log-probability
-  # at k=0; follow the public SciPy distribution's domain semantics.
+
+  def central_path(_):
+    t = relative_delta
+    series = ((((((t / 8 + 1 / 7) * t + 1 / 6) * t + 1 / 5)
+                * t + 1 / 4) * t + 1 / 3) * t + 1 / 2)
+    deviance = -safe_k * (t * t) * series
+    return jnp.where(k == 0, -lam, deviance - log_normalizer)
+
+  def general_path(_):
+    # Mask the central polynomial and log1p arguments before evaluating them:
+    # an inactive singular branch can otherwise produce NaN autodiff results.
+    t = jnp.where(small_delta, relative_delta, 0.0)
+    series = ((((((t / 8 + 1 / 7) * t + 1 / 6) * t + 1 / 5)
+                * t + 1 / 4) * t + 1 / 3) * t + 1 / 2)
+    central_deviance = -safe_k * (t * t) * series
+
+    use_far_tail = lam / safe_k < 0.5
+    regular_relative_delta = jnp.where(
+        use_far_tail, 0.0, relative_delta)
+    regular_deviance = (
+        safe_k * lax.log1p(-regular_relative_delta) + delta
+    )
+    deviance = jnp.where(small_delta, central_deviance, regular_deviance)
+    near_mean_log_pmf = deviance - log_normalizer
+
+    # Use log(lam / k) in the far tail. Separate logs preserve the result
+    # when the ratio underflows; mask k=0 so its derivative remains -1.
+    safe_rate_for_log = jnp.where(k == 0, 1.0, lam)
+    rate_ratio = safe_rate_for_log / safe_k
+    positive_ratio = rate_ratio > 0.0
+    safe_ratio = jnp.where(positive_ratio, rate_ratio, 1.0)
+    log_ratio = jnp.where(
+        positive_ratio, lax.log(safe_ratio),
+        lax.log(safe_rate_for_log) - lax.log(safe_k),
+    )
+    far_tail_log_pmf = safe_k * log_ratio + delta - log_normalizer
+    log_pmf = jnp.where(use_far_tail, far_tail_log_pmf, near_mean_log_pmf)
+    return jnp.where(k == 0, -lam, log_pmf)
+
+  # In the rejection sampler, large-rate candidates are almost always central.
+  # A scalar conditional avoids evaluating both logarithmic tail paths when
+  # every element in the vector is in that well-conditioned region.
+  result = lax.cond(
+      jnp.all(small_delta), central_path, general_path, operand=None
+  )
   return jnp.where(lam < 0.0, jnp.nan, result)
 
 

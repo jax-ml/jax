@@ -33,7 +33,6 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.random.core import (
     _safe_int_to_float, _check_broadcast_shapes, _poisson_from_normal,
-    _poisson_log_pmf,
 )
 from jax._src import test_util as jtu
 from jax import vmap
