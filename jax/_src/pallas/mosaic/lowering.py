@@ -4079,8 +4079,11 @@ def _neg_lowering_rule(ctx: LoweringRuleContext, x):
 def _sign_lowering_rule(ctx: LoweringRuleContext, x):
   (x_aval,) = ctx.avals_in
   dtype = x_aval.dtype
-  tpu_gen = tpu_info.get_tpu_info().generation
-  tpu_has_native_bf16 = tpu_gen >= 4
+  # Only query the TPU generation for bf16, so that other dtypes can be lowered
+  # without a TPU device (e.g. jax.export with platforms=["tpu"] on CPU).
+  tpu_has_native_bf16 = (
+      dtype == jnp.bfloat16 and tpu_info.get_tpu_info().generation >= 4
+  )
 
   def _lower_fun(x):
     if jnp.issubdtype(x.dtype, jnp.floating):
