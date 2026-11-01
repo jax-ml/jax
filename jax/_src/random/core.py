@@ -1982,12 +1982,84 @@ def _poisson_knuth(key: Key, lam, shape, dtype, max_iters) -> Array:
   return (k - 1).astype(dtype)
 
 
+def _poisson_log_pmf(k, lam):
+  """Stable Poisson log-PMF shared by rejection sampling and scipy.stats."""
+  # For large lam, evaluating -lam + k * log(lam) - lgamma(k + 1)
+  # directly loses all useful digits in float32. Rewrite around k ~= lam.
+  safe_k = jnp.maximum(k, 1)
+  delta = safe_k - lam
+  relative_delta = delta / safe_k
+  small_delta = jnp.abs(relative_delta) <= 0.01
+
+  # The central deviance is log1p(-t) + t, where t = (k - lam) / k.
+  # Summing its series avoids cancellation when k is close to lam.
+  stirling_k_sq = safe_k * safe_k
+  asymptotic_stirling_tail = (
+      1.0 / 12
+      - (1.0 / 360 - 1.0 / 1260 / stirling_k_sq) / stirling_k_sq
+  ) / safe_k
+  stirling_tail = jnp.where(
+      safe_k <= 10.0,
+      _stirling_approx_tail(safe_k - 1.0),
+      asymptotic_stirling_tail,
+  )
+  log_normalizer = (
+      0.5 * (lax.log(safe_k) + math.log(2 * math.pi))
+      + stirling_tail
+  )
+
+  def central_path(_):
+    t = relative_delta
+    series = ((((((t / 8 + 1 / 7) * t + 1 / 6) * t + 1 / 5)
+                * t + 1 / 4) * t + 1 / 3) * t + 1 / 2)
+    deviance = -safe_k * (t * t) * series
+    return jnp.where(k == 0, -lam, deviance - log_normalizer)
+
+  def general_path(_):
+    # Mask the central polynomial and log1p arguments before evaluating them:
+    # an inactive singular branch can otherwise produce NaN autodiff results.
+    t = jnp.where(small_delta, relative_delta, 0.0)
+    series = ((((((t / 8 + 1 / 7) * t + 1 / 6) * t + 1 / 5)
+                * t + 1 / 4) * t + 1 / 3) * t + 1 / 2)
+    central_deviance = -safe_k * (t * t) * series
+
+    use_far_tail = lam / safe_k < 0.5
+    regular_relative_delta = jnp.where(
+        use_far_tail, 0.0, relative_delta)
+    regular_deviance = (
+        safe_k * lax.log1p(-regular_relative_delta) + delta
+    )
+    deviance = jnp.where(small_delta, central_deviance, regular_deviance)
+    near_mean_log_pmf = deviance - log_normalizer
+
+    # Use log(lam / k) in the far tail. Separate logs preserve the result
+    # when the ratio underflows; mask k=0 so its derivative remains -1.
+    safe_rate_for_log = jnp.where(k == 0, 1.0, lam)
+    rate_ratio = safe_rate_for_log / safe_k
+    positive_ratio = rate_ratio > 0.0
+    safe_ratio = jnp.where(positive_ratio, rate_ratio, 1.0)
+    log_ratio = jnp.where(
+        positive_ratio, lax.log(safe_ratio),
+        lax.log(safe_rate_for_log) - lax.log(safe_k),
+    )
+    far_tail_log_pmf = safe_k * log_ratio + delta - log_normalizer
+    log_pmf = jnp.where(use_far_tail, far_tail_log_pmf, near_mean_log_pmf)
+    return jnp.where(k == 0, -lam, log_pmf)
+
+  # In the rejection sampler, large-rate candidates are almost always central.
+  # A scalar conditional avoids evaluating both logarithmic tail paths when
+  # every element in the vector is in that well-conditioned region.
+  result = lax.cond(
+      jnp.all(small_delta), central_path, general_path, operand=None
+  )
+  return jnp.where(lam < 0.0, jnp.nan, result)
+
+
 @jit(static_argnums=(2, 3, 4))
 def _poisson_rejection(key: Key, lam, shape, dtype, max_iters) -> Array:
   # Transformed rejection due to Hormann.
   # Reference:
   # http://citeseer.ist.psu.edu/viewdoc/citations;jsessionid=1BEB35946CC807879F55D42512E5490C?doi=10.1.1.48.3054.
-  log_lam = lax.log(lam)
   b = 0.931 + 2.53 * lax.sqrt(lam)
   a = -0.059 + 0.02483 * b
   inv_alpha = 1.1239 + 1.1328 / (b - 3.4)
@@ -2003,7 +2075,7 @@ def _poisson_rejection(key: Key, lam, shape, dtype, max_iters) -> Array:
 
     k = lax.floor((2 * a / u_shifted + b) * u + lam + 0.43)
     s = lax.log(v * inv_alpha / (a / (u_shifted * u_shifted) + b))
-    t = -lam + k * log_lam - lax_special.lgamma(k + 1)
+    t = _poisson_log_pmf(k, lam)
 
     accept1 = (u_shifted >= 0.07) & (v <= v_r)
     reject = (k < 0) | ((u_shifted < 0.013) & (v > u_shifted))
