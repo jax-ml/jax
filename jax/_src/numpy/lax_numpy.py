@@ -782,10 +782,18 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
     Array([-10.,  -6.,  -2.,   2.,   6.,  10.], dtype=float32)
   """
   del weights  # unused, because string bins is not supported.
-  if isinstance(bins, str):
-    raise NotImplementedError("string values for `bins` not implemented.")
+  
   util.check_arraylike("histogram_bin_edges", a, bins)
   arr = asarray(a)
+
+  if isinstance(bins, str):
+    if bins == 'sqrt':
+      bins = int(np.ceil(np.sqrt(arr.size)))
+    elif bins == 'sturges':
+      bins = int(np.ceil(np.log2(max(arr.size, 1)))) + 1
+    else:
+      raise NotImplementedError(f"string value '{bins}' for `bins` not implemented.")
+      
   dtype = dtypes.to_inexact_dtype(arr.dtype)
   if np.ndim(bins) == 1:
     return asarray(bins, dtype=dtype)
