@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import partial, lru_cache
 import zlib
 
@@ -163,6 +164,39 @@ def sync_global_devices(name: str):
   """Creates a barrier across all hosts/devices."""
   h = np.uint32(zlib.crc32(name.encode()))
   assert_equal(h, f"sync_global_devices name mismatch ('{name}')")
+
+
+def wait_and_sync_devices_async(
+    *, delay_ms: int = 0,
+    devices: Sequence[xla_client.Device] | None = None) -> None:
+  """Enqueues a device-side delay and barrier across processes, without explicitly waiting.
+
+  Each of ``devices`` first sleeps for around ``delay_ms`` milliseconds and
+  then joins a barrier across all of them. Work queued from the same host
+  thread as this function is called from will only begin after the barrier
+  exits. Unlike :func:`sync_global_devices`, this does not eagerly block the
+  host: it returns as soon as the delay and the barrier are enqueued, so the
+  host can attempt to enqueue more work while the devices sleep. This can be
+  called in all processes after starting the profiler in one or more of them.
+
+  Overlapping the device-side delay with host-side queueing of subsequent work
+  is best-effort only. In particular it does not work with the `platform`
+  memory allocator, and it is unlikely to overlap if the subsequent work needs
+  JIT compilation or is being launched for the first time.
+
+  Args:
+    delay_ms: approximately how long, in milliseconds, each device sleeps before
+      the barrier. Only implemented on CUDA, and only an approximate value.
+    devices: the devices to synchronize, in all processes; all devices of the
+      default backend by default. Every process must call this with the same
+      devices.
+  """
+  if delay_ms < 0:
+    raise ValueError(f"delay_ms must be non-negative, got {delay_ms}")
+  if devices is None:
+    devices = xla_bridge.devices()
+  compiled, x = pxla._device_barrier_fn(tuple(devices), delay_ms)
+  compiled(x)
 
 
 def assert_equal(in_tree, fail_message: str = ''):

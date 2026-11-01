@@ -128,13 +128,6 @@ jax_multiprocess_test(
     backend_tags = {
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
-    enable_backends = if_oss(
-        [
-            "cpu",
-            "tpu",
-        ],
-        None,
-    ),  # b/453057226
     main = "multihost_utils_test.py",
     deps = [
         "//jax/_src:test_multiprocess",
