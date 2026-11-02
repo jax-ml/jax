@@ -66,9 +66,6 @@ _UINT_DTYPES = {
 def _constant_like(x, const):
   return array_constructors.array(const, dtype=dtypes.dtype(x))
 
-def _replace_inf(x: ArrayLike) -> Array:
-  return lax.select(isposinf(real(x)), lax._zeros(x), x)
-
 def _to_bool(x: Array) -> Array:
   return x if x.dtype == bool else lax.ne(x, _lax_const(x, 0))
 

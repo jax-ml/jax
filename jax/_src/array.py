@@ -131,19 +131,6 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
 
 
 @cache(max_size=4096, trace_context_in_key=False)
-def _cached_index_calc(s, shape):
-  map_ = s.addressable_devices_indices_map(shape)
-  seen_h_indices = set()
-  l = []
-  for array_index, index in enumerate(map_.values()):
-    h_index = hashed_index(index)
-    if h_index not in seen_h_indices:
-      seen_h_indices.add(h_index)
-      l.append((array_index, index))
-  return l
-
-
-@cache(max_size=4096, trace_context_in_key=False)
 def _process_has_full_value_in_mcjax(s, shape):
   if s.is_fully_replicated and s.has_addressable_devices:
     return True
