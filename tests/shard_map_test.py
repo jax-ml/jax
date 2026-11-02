@@ -6025,6 +6025,45 @@ class ShardMapTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(g(w), np.array([20., 10.]))
 
+  @parameterized.named_parameters(
+      ('top_k', lambda w: jax.lax.top_k(w, 1), [20.], [0., 1.]),
+      ('approx_max_k', lambda w: jax.lax.approx_max_k(w, 1), [20.], [0., 1.]),
+      ('approx_min_k', lambda w: jax.lax.approx_min_k(w, 1), [10.], [1., 0.]),
+  )
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_top_k_reduced_grad(self, top_k, expected_vals, expected_grad, mesh):
+    w = jax.device_put(np.array([10., 20.]), P(reduced={'x'}))
+
+    @jax.shard_map(out_specs=P(reduced={'x'}))
+    def f(w):
+      vals, idxs = top_k(w)
+      self.assertEqual(jax.typeof(vals).mat.reduced, frozenset({'x'}))
+      self.assertEqual(jax.typeof(idxs).mat.reduced, frozenset())
+      return vals
+
+    self.assertArraysEqual(f(w), np.array(expected_vals))
+
+    g = jax.jit(jax.grad(lambda w: f(w).sum()))(w)
+    self.assertEqual(g.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    self.assertArraysEqual(jax.reshard(g, P()), np.array(expected_grad))
+
+  @parameterized.named_parameters(
+      ('top_k', lambda u: jax.lax.top_k(u, 1)),
+      ('approx_max_k', lambda u: jax.lax.approx_max_k(u, 1)),
+      ('approx_min_k', lambda u: jax.lax.approx_min_k(u, 1)),
+  )
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_top_k_unreduced_error(self, top_k, mesh):
+    u = jax.device_put(np.arange(4.), P(unreduced={'x'}))
+
+    @jax.shard_map(out_specs=P(unreduced={'x'}))
+    def f(u):
+      return top_k(u)[0]
+
+    with self.assertRaisesRegex(core.ShardingTypeError,
+                                'cannot accept unreduced inputs'):
+      f(u)
+
   @jtu.with_explicit_mesh((2,), 'x')
   def test_full_like_reduced(self, mesh):
     arr = jax.device_put(jnp.arange(4.), P(reduced={'x'}))

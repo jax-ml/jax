@@ -10281,16 +10281,7 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
 mlir.register_lowering(sort_p, _sort_lower)
 
 
-def _top_k_sharding_rule(operand, *, k, axis, is_stable):
-  if operand.sharding.spec[axis] is not None:
-    raise core.ShardingTypeError(
-        'The input should be unsharded over the axis along which to compute the'
-        f' top_k values. Got input type={operand} and axis={axis}')
-  return (operand.sharding, operand.sharding)
-
-def _top_k_abstract_eval(operand, *, k, axis, is_stable):
-  if dtypes.issubdtype(operand.dtype, np.complexfloating):
-    raise ValueError("top_k is not compatible with complex inputs.")
+def _top_k_shape_rule(operand, *, k, axis, is_stable):
   if k < 0:
     raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
   if len(operand.shape) == 0:
@@ -10314,14 +10305,32 @@ def _top_k_abstract_eval(operand, *, k, axis, is_stable):
           f' dimensions larger than the maximum int32 ({int32_max}). Got'
           f' {operand.shape=}')
   shape[axis] = k
-  s0, s1 = lax_utils.call_sharding_rule(
-      top_k_p, _top_k_sharding_rule, None, 2, operand, k=k, axis=axis,
-      is_stable=is_stable)
-  out_avals = [operand.update(shape=shape, sharding=s0),
-               operand.update(shape=shape, dtype=np.dtype(np.int32), sharding=s1)]
-  out_layouts = lax_utils.call_layout_rule(
-      top_k_p, None, [operand], out_avals, k=k, axis=axis, is_stable=is_stable)
-  return tuple(o.update(layout=l) for o, l in zip(out_avals, out_layouts))
+  return (tuple(shape), tuple(shape))
+
+def _top_k_dtype_rule(operand, *, k, axis, is_stable):
+  if dtypes.issubdtype(operand.dtype, np.complexfloating):
+    raise ValueError("top_k is not compatible with complex inputs.")
+  return (operand.dtype, np.dtype(np.int32))
+
+def _top_k_weak_type_rule(operand, *, k, axis, is_stable):
+  return (operand.weak_type, False)
+
+def _top_k_sharding_rule(operand, *, k, axis, is_stable):
+  if operand.sharding.spec.partitions[axis] is not None:
+    raise core.ShardingTypeError(
+        'The input should be unsharded over the axis along which to compute the'
+        f' top_k values. Got input type={operand} and axis={axis}')
+  return (operand.sharding, operand.sharding)
+
+def _top_k_vma_rule(operand, *, k, axis, is_stable):
+  return [core.standard_vma_rule('top_k', operand)] * 2
+
+def _top_k_ur_rule(operand, *, k, axis, is_stable):
+  if getu(operand, kind=None)[0]:
+    raise core.ShardingTypeError(
+        'top_k cannot accept unreduced inputs. Got'
+        f' {operand.str_short(mesh_axis_types=True)}')
+  return [frozenset()] * 2, [getr(operand), frozenset()], [None] * 2
 
 def _top_k_jvp(primals, tangents, *, k, axis, is_stable):
   operand, = primals
@@ -10356,7 +10365,10 @@ def _top_k_batch_rule(batched_args, batch_dims, *, k, axis, is_stable):
 top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
 top_k_p.def_impl(partial(dispatch.apply_primitive, top_k_p))
-top_k_p.def_abstract_eval(_top_k_abstract_eval)
+top_k_p.def_abstract_eval(
+    partial(standard_multi_result_abstract_eval, top_k_p, _top_k_shape_rule,
+            _top_k_dtype_rule, _top_k_weak_type_rule, _top_k_sharding_rule,
+            _top_k_vma_rule, _top_k_ur_rule, None))
 
 def _top_k_lower(ctx, operand, k, axis, is_stable):
   # Move axis to last dimension:
