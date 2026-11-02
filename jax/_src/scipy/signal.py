@@ -170,7 +170,7 @@ def _convolve_nd(in1: Array, in2: Array, mode: ModeString, *, precision: Precisi
 
   no_swap = all(s1 >= s2 for s1, s2 in zip(in1.shape, in2.shape))
   swap = all(s1 <= s2 for s1, s2 in zip(in1.shape, in2.shape))
-  if not (no_swap or swap):
+  if mode == 'valid' and not (no_swap or swap):
     raise ValueError("One input must be smaller than the other in every dimension.")
 
   shape_o = in2.shape
