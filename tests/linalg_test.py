@@ -1272,10 +1272,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun_numpy_resid, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol)
 
-    # Disabled because grad is flaky for low-rank inputs.
-    # TODO:
-    # jtu.check_grads(lambda *args: jnp_fun(*args)[0], args_maker(), order=2, atol=1e-2, rtol=1e-2)
-
   @jtu.sample_product(
       shape=[(2, 1), (2, 2), (1, 2)]
   )
@@ -1298,12 +1294,16 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   def testLstsqGrad(self, lhs_shape, rhs_shape, dtype):
     rng = jtu.rand_default(self.rng())
-    jnp_fun = lambda a, b: jnp.linalg.lstsq(a, b)[0]
+    def jnp_fun(a, b):
+      x, _, _, s = jnp.linalg.lstsq(a, b)
+      return x, s
     args = [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
-    jtu.check_grads(jnp_fun, args, 1, atol=1e-2, rtol=1e-2)
+    # A smaller step than the default, as in testSVDGrad, since the singular
+    # values curve more than x and float32 central differences miss by ~5%.
+    jtu.check_grads(jnp_fun, args, 1, atol=1e-2, rtol=1e-2, eps=1.0 / 512)
 
   @jtu.sample_product(
-    case=["orthonormal", "one_hot", "spd"],
+    case=["orthonormal", "one_hot", "spd", "underdetermined", "rank_deficient"],
     dtype=float_types,
   )
   def testLstsqGradRepeatedSingularValues(self, case, dtype):
@@ -1313,13 +1313,23 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       a = 2 * np.linalg.qr(rng.randn(6, 3))[0]
     elif case == "one_hot":
       a = np.kron(np.eye(3), np.ones((2, 1)))
-    else:
+    elif case == "spd":
       q = np.linalg.qr(rng.randn(4, 4))[0]
       a = q @ np.diag([1., 1., 2., 3.]) @ q.T
+    elif case == "underdetermined":
+      # With m < n, the (I - pinv(a) @ a) term of the JVP is nonzero.
+      a = 2 * np.linalg.qr(rng.randn(6, 3))[0].T
+    else:
+      # The zero singular value is cut off by rcond.
+      q = np.linalg.qr(rng.randn(4, 4))[0]
+      a = q @ np.diag([0., 1., 1., 2.]) @ q.T
     a = a.astype(dtype)
     b = rng.randn(a.shape[0]).astype(dtype)
     jnp_fun = lambda a, b: jnp.linalg.lstsq(a, b)[0]
-    jtu.check_grads(jnp_fun, (a, b), 1, atol=1e-2, rtol=1e-2)
+    if case != "rank_deficient":
+      # Finite differences would step off the rank-deficient matrix, where the
+      # derivative is not continuous.
+      jtu.check_grads(jnp_fun, (a, b), 1, atol=1e-2, rtol=1e-2)
     # The derivative of pinv is already stable for repeated singular values.
     pinv_fun = lambda a, b: jnp.matmul(jnp.linalg.pinv(a), b,
                                        precision=lax.Precision.HIGHEST)
