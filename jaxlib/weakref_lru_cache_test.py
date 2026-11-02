@@ -197,6 +197,39 @@ class WeakrefLRUCacheTest(absltest.TestCase):
       for _ in range(100):
         cache(wrkey, CrashingKey())
 
+  def testFailingEqKey(self):
+    class BadEqKey:
+
+      def __eq__(self, other):
+        raise RuntimeError("eq failed")
+
+      def __hash__(self):
+        return 42
+
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x, y: y, 2048
+    )
+
+    k1 = BadEqKey()
+    k2 = BadEqKey()
+    cache(k1, 1)
+    with self.assertRaisesRegex(
+        ValueError, r"(?s)should be comparable using __eq__.*eq failed"
+    ):
+      cache(k2, 1)
+
+    class WRKey:
+      pass
+
+    wrkey = WRKey()
+    s1 = BadEqKey()
+    s2 = BadEqKey()
+    cache(wrkey, s1)
+    with self.assertRaisesRegex(
+        ValueError, r"(?s)should be comparable using __eq__.*eq failed"
+    ):
+      cache(wrkey, s2)
+
   def testPrintingStats(self):
     class WRKey:
       pass

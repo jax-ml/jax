@@ -17,6 +17,7 @@ import re
 
 from absl.testing import absltest
 import jax
+from jax import export
 from jax import lax
 from jax._src import source_info_util
 from jax._src import test_util as jtu
@@ -293,6 +294,41 @@ class SourceInfoTest(jtu.JaxTestCase):
         loc.child_loc.callee.name_str,
         "SourceInfoTest.test_function_body_location_in_mlir",
     )
+
+  def test_export_excludes_exporter_traceback_in_mlir(self):
+    @jax.jit
+    def inner(x):
+      return lax.add(x, 1)
+
+    @jax.jit
+    def exported_fn(x):
+      return inner(x)
+
+    def export_from_site_a():
+      return export.export(exported_fn)(0)
+
+    def export_from_site_b():
+      def nested_helper():
+        return export.export(exported_fn)(0)
+
+      return nested_helper()
+
+    exp_a = export_from_site_a()
+    exp_b = export_from_site_b()
+
+    self.assertEqual(exp_a.mlir_module(), exp_b.mlir_module())
+    self.assertIn('.exported_fn"', exp_a.mlir_module())
+    self.assertNotIn("export_from_site_a", exp_a.mlir_module())
+    self.assertNotIn("export_from_site_b", exp_b.mlir_module())
+    self.assertNotIn("nested_helper", exp_a.mlir_module())
+
+    @jax.jit
+    def caller(x):
+      return exp_a.call(x)
+
+    lowered_caller = caller.lower(0).as_text(debug_info=True)
+    self.assertIn('.caller"', lowered_caller)
+    self.assertNotIn("export_from_site_a", lowered_caller)
 
 
 if __name__ == "__main__":

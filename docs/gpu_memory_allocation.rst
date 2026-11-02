@@ -96,7 +96,7 @@ Features here are experimental and must be tried with caution.
 
 ``TF_GPU_ALLOCATOR=cuda_malloc_async``
   This replace XLA's own BFC memory allocator with `cudaMallocAsync
-  <https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY__POOLS.html>`_.
+  <https://docs.nvidia.com/cuda/cuda-runtime-api/cuda_runtime_api/group__CUDART__MEMORY__POOLS.html>`_.
   This will remove the big fixed pre-allocation and use a memory pool that grows.
   The expected benefit is no need to set `XLA_PYTHON_CLIENT_MEM_FRACTION`.
 

@@ -22,21 +22,19 @@ from typing import Any
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
-import numpy as np
-
 import jax
 from jax import lax
 from jax import numpy as jnp
 from jax import ops
-
 from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.lax import lax as lax_internal
-from jax._src.numpy import indexing
 from jax._src.indexing import Slice
+from jax._src.lax import lax as lax_internal
+from jax._src.lib import jaxlib_extension_version
+from jax._src.numpy import indexing
+import numpy as np
 
 config.parse_flags_with_absl()
 
@@ -558,6 +556,40 @@ class IndexingStrategyTest(jtu.JaxTestCase):
     arr = jnp.zeros(shape)
     with self.assertRaisesRegex(err, msg):
       indexing.rewriting_take(arr, idx, strategy=indexing.IndexingStrategy.STATIC_SLICE)
+
+  @parameterized.parameters(
+    ("auto", lax.slice_p),
+    ("static_slice", lax.slice_p),
+    ("dynamic_slice", lax.dynamic_slice_p),
+    ("gather", lax.gather_p),
+  )
+  def test_at_get_strategy(self, strategy, expected_primitive):
+    arr = jnp.arange(10)
+    jaxpr = jax.make_jaxpr(lambda x: x.at[2:5].get(strategy=strategy))(arr)
+    self.assertIn(expected_primitive, [eqn.primitive for eqn in jaxpr.eqns])
+    res = arr.at[2:5].get(strategy=strategy)
+    np.testing.assert_array_equal(res, np.arange(2, 5))
+
+  @parameterized.parameters(
+    ("auto", lax.dynamic_slice_p),
+    ("dynamic_slice", lax.dynamic_slice_p),
+    ("gather", lax.gather_p),
+  )
+  def test_at_get_dynamic_slice(self, strategy, expected_primitive):
+    arr = jnp.arange(10)
+    jaxpr = jax.make_jaxpr(lambda x, i: x.at[jax.ds(i, 3)].get(strategy=strategy))(arr, 2)
+    self.assertIn(expected_primitive, [eqn.primitive for eqn in jaxpr.eqns])
+    res = arr.at[jax.ds(2, 3)].get(strategy=strategy)
+    np.testing.assert_array_equal(res, np.arange(2, 5))
+
+  def test_invalid_strategy(self):
+    arr = jnp.arange(10)
+    with self.assertRaisesRegex(ValueError, "Unknown indexing strategy: 'invalid'"):
+      arr.at[2:5].get(strategy="invalid")
+    with self.assertRaisesRegex(ValueError, "Indexing strategy IndexingStrategy.SCATTER is not supported for take"):
+      arr.at[2:5].get(strategy="scatter")
+    with self.assertRaisesRegex(TypeError, "static_slice: indices must be static scalars"):
+      jax.make_jaxpr(lambda x, i: x.at[jax.ds(i, 3)].get(strategy="static_slice"))(arr, 2)
 
 
 class IndexingTest(jtu.JaxTestCase):
@@ -1839,7 +1871,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     self.assertAllClose(val, np.array(0., np.float32))
     self.assertAllClose(grad, np.array([0., 0.], np.float32))
 
-
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(reducer=reducer, op=op, identity=identity)],
@@ -1878,7 +1909,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     if num_segments is not None:
       self._CompileAndCheck(jnp_fun, args_maker)
-
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
@@ -1982,6 +2012,18 @@ class IndexedUpdateTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(jax.jacrev(f)(x, i), expected)
     self.assertArraysEqual(jax.jacrev(jax.vmap(f, (None, 0)))(x, i), expected)
+
+  def testFullSliceSetFollowedByReverse(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41497
+    if jaxlib_extension_version < 510:
+      self.skipTest("Requires jaxlib_extension_version >= 510")
+    x = jnp.arange(4)
+    f1 = jax.jit(lambda x: jnp.zeros_like(x).at[:].set(x)[::-1])
+    self.assertArraysEqual(f1(x), x[::-1])
+
+    f2 = jax.jit(lambda x: x.at[:].set(0)[::-1])
+    self.assertArraysEqual(f2(x), jnp.zeros_like(x))
+
 
 @jtu.with_config(jax_check_static_indices=True)
 class ValidateIndicesTest(jtu.JaxTestCase):

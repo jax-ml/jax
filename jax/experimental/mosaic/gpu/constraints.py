@@ -653,27 +653,6 @@ class IsTransferableTmemRegisters(IsTransferable):
     return f"IsTransferableTmemRegisters({self.source} ⟶ {self.target})"
 
 
-class OptimizedTransferKind(enum.Enum):
-  """A classification of the type of SMEM <-> Registers transfer.
-
-  Specifically, this refers to whether the transfer should be optimized to
-  avoid bank conflicts, if optimization is not requested, or if optimization
-  should be done, but downgrading is acceptable.
-  """
-  # Denotes a conflict-free transfer.
-  OPTIMIZED = enum.auto()
-  # Denotes an unoptimized transfer.
-  UNOPTIMIZED = enum.auto()
-  # Denotes a transfer that we are willing to downgrade to UNOPTIMIZED in
-  # certain circumstances. This mode is necessary to accurately model the
-  # Pallas behavior for SMEM stores with certain combinations of layouts and
-  # transforms.
-  #
-  # TODO(bchetioui): implement symmetric default behaviours for load/store in
-  # Pallas, and remove/harden this mode.
-  DOWNGRADABLE = enum.auto()
-
-
 @dataclasses.dataclass(frozen=True)
 class IsTransferableSmemRegisters(IsTransferable):
   """States that `source` layout must be transferable across memory spaces to `target` layout.
@@ -683,7 +662,7 @@ class IsTransferableSmemRegisters(IsTransferable):
   """
   strides: tuple[int, ...]
   bitwidth: int
-  optimized: OptimizedTransferKind
+  optimized: bool
 
   def _is_supported_smem_transfer(
       self,
@@ -698,18 +677,11 @@ class IsTransferableSmemRegisters(IsTransferable):
     tiling = tiling_transform.tiling if tiling_transform is not None else ()
     tiling_rank = len(tiling)
 
-    is_untiled = tiling_rank == 0
     # If `tiling_rank` is 0, then we tile by the shape. This is the logic that
     # is implemented in `load_untiled` and `store_untiled`.
-    if is_untiled:
+    if tiling_rank == 0:
       tiling = self.shape
       tiling_rank = len(tiling)
-
-    optimized = self.optimized != OptimizedTransferKind.UNOPTIMIZED
-    if is_untiled and self.optimized == OptimizedTransferKind.DOWNGRADABLE:
-      # Model the Pallas behavior of downgrading to unoptimized transfers in
-      # this case.
-      optimized = False
 
     int_ty = ir.IntegerType.get_signless(self.bitwidth)
     layout = ir.StridedLayoutAttr.get(0, lowering.tile_strides(self.strides, tiling))
@@ -730,7 +702,7 @@ class IsTransferableSmemRegisters(IsTransferable):
                     swizzle or 16,
                     reg_layout,
                     self.shape,
-                    optimized=optimized,
+                    optimized=self.optimized,
                     ref_tiling_rank=tiling_rank,
                     use_txmatrix=use_txmatrix,
                 )
@@ -937,6 +909,9 @@ class OneOf(_BaseConstraint):
     allowed = tuple(dict.fromkeys(self.allowed))
     if len(allowed) == 1:
       return Equals(self.expr, allowed[0]).canonicalize()
+    # Short-circuit to avoid reconstructing the constraint.
+    if len(allowed) == len(self.allowed):
+      return self
     return OneOf(self.expr, allowed)
 
   def __str__(self):
@@ -972,6 +947,9 @@ def reduce_constraint(
       rhs_red = reduce_expression(rhs, assignments)
       if isinstance(rhs_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if lhs_red is lhs and rhs_red is rhs:
+        return constraint.canonicalize()
       return Equals(lhs_red, rhs_red).canonicalize()
     case Relayout(source=source, target=target) as relayout:
       source_red = reduce_expression(source, assignments)
@@ -980,6 +958,9 @@ def reduce_constraint(
           target_red, Unsatisfiable
       ):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if source_red is source and target_red is target:
+        return relayout.canonicalize()
       reduced = dataclasses.replace(
           relayout, source=source_red, target=target_red
       )
@@ -988,22 +969,34 @@ def reduce_constraint(
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if expr_red is expr:
+        return constraint
       return NotOfType(expr_red, ty)
     case IsTransferable(source=source, target=target) as transfer:
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
       if isinstance(source_red, Unsatisfiable) or isinstance(target_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if source_red is source and target_red is target:
+        return transfer
       return dataclasses.replace(transfer, source=source_red, target=target_red)
     case Divides(expr=expr, tiling_multiple=tiling_multiple):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if expr_red is expr:
+        return constraint
       return Divides(expr_red, tiling_multiple)
     case MinorDimDivisibleBy(expr=expr, divisor=divisor):
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if expr_red is expr:
+        return constraint
       return MinorDimDivisibleBy(expr_red, divisor)
     case IsSupportedBroadcast(src=src, dst=dst, dims=dims):
       src_red = reduce_expression(src, assignments)
@@ -1012,6 +1005,9 @@ def reduce_constraint(
           dst_red, Unsatisfiable
       ):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if src_red is src and dst_red is dst:
+        return constraint
       return IsSupportedBroadcast(src_red, dst_red, dims)
     case AlwaysTrue():
       return constraint
@@ -1019,6 +1015,9 @@ def reduce_constraint(
       expr_red = reduce_expression(expr, assignments)
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
+      # Short-circuit to avoid reconstructing the constraint.
+      if expr_red is expr:
+        return oneof.canonicalize()
       return OneOf(expr_red, oneof.allowed).canonicalize()
     case _ as never:
       assert_never(never)
@@ -1093,8 +1092,13 @@ class ConstraintSystem:
   ) -> ConstraintSystem | Unsatisfiable:
     if isinstance(other, Unsatisfiable):
       return Unsatisfiable()
-    for variable, assignment in self.assignments.items():
-      if variable in other.assignments and assignment != other.assignments[variable]:
+    smaller, larger = (
+        (self.assignments, other.assignments)
+        if len(self.assignments) <= len(other.assignments)
+        else (other.assignments, self.assignments)
+    )
+    for variable, assignment in smaller.items():
+      if variable in larger and assignment != larger[variable]:
         return Unsatisfiable()
     return ConstraintSystem(
         assignments=self.assignments | other.assignments,
@@ -1472,7 +1476,7 @@ def _reduce_system_once(
     - None: if the constraint system is not known unsatisfiable, but hasn't been
       reduced.
   """
-  assignments = constraint_system.assignments
+  assignments = dict(constraint_system.assignments)
   constraints: list[Constraint] = []
   changed = False
 
@@ -1497,9 +1501,9 @@ def _reduce_system_once(
           return Unsatisfiable()
         changed = True
       case new_constraint:
-        match new_constraint.holds():  # pyrefly: ignore[missing-attribute]
+        match new_constraint.holds():
           case None:
-            constraints.append(new_constraint)  # pyrefly: ignore[bad-argument-type]
+            constraints.append(new_constraint)
             changed |= new_constraint != constraint
           case False:
             return Unsatisfiable()
@@ -1517,7 +1521,7 @@ def _reduce_system_once(
 
   if changed:
     return ConstraintSystem(
-        assignments=assignments | constraint_system.assignments,
+        assignments=assignments,
         constraints=constraints,
     )
   return None
@@ -1541,6 +1545,6 @@ def reduce(
       case ConstraintSystem() as new_system:
         constraint_system = new_system
       case _ as never:
-        assert_never(never)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2858
+        assert_never(never)  # pyrefly#2858
 
   return constraint_system

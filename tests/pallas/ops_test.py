@@ -29,6 +29,7 @@ import jax
 from jax import api_util
 from jax import lax
 from jax import random
+from jax._src import config
 from jax._src import dtypes
 from jax._src import state
 from jax._src import test_util as jtu
@@ -633,7 +634,7 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_allclose(result[0, 0], reduction_op(x), atol=1e-5)
 
   # TODO(sharadmv): test rank < 2, size < 2
-  @hp.given(select_n_strategy(max_cases=2, min_rank=2, max_rank=4,
+  @hp.given(select_n_strategy(max_cases=5, min_rank=2, max_rank=4,
                               min_size_exp=1))
   @hp.settings(
       suppress_health_check=[
@@ -642,8 +643,7 @@ class OpsTest(PallasBaseTest):
       ]
   )
   def test_select_n(self, args):
-    if jtu.test_device_matches(["gpu"]):
-      self.skipTest("TODO: error on GPU, lowering bug for select_n")
+    self.skip_if_mosaic_gpu()
     pred, *cases = args
     scalar_pred = not pred.shape
 
@@ -667,6 +667,29 @@ class OpsTest(PallasBaseTest):
     if out.dtype == jnp.bfloat16:
       out, out_ref = out.astype(jnp.float32), out_ref.astype(jnp.float32)
     np.testing.assert_allclose(out, out_ref)
+
+  @parameterized.product(
+      n_cases=(3, 4, 5),
+      pred_dtype=(jnp.int32, jnp.uint32),
+  )
+  def test_select_n_multi_case(self, n_cases, pred_dtype):
+    self.skip_if_mosaic_gpu()
+    shape = (8, 128)
+    pred = jnp.arange(math.prod(shape), dtype=pred_dtype).reshape(shape) % n_cases
+    cases = [
+        jnp.full(shape, (i + 1) * 10.0, dtype=floatx) for i in range(n_cases)
+    ]
+
+    def kernel(pred_ref, *refs):
+      *case_refs, o_ref = refs
+      vals = [case_ref[...] for case_ref in case_refs]
+      o_ref[...] = lax.select_n(pred_ref[...], *vals)
+
+    out_ref = lax.select_n(pred, *cases)
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(out_ref.shape, out_ref.dtype),
+    )(pred, *cases)
+    np.testing.assert_array_equal(out, out_ref)
 
   @parameterized.named_parameters(
       (name, name, func, strategy)
@@ -1070,22 +1093,24 @@ class OpsTest(PallasBaseTest):
         jnp.ones(shape, dtype=dtype),
     )
 
-  @parameterized.parameters(
-      -3.2, -1.0, -0.999517, -0.4, 0., 0.72, 0.999517, 1.0, 2.4,
+  @parameterized.product(
+      value=(-3.2, -1.0, -0.999517, -0.4, 0., 0.72, 0.999517, 1.0, 2.4),
+      accurate=(False, True),
   )
-  def test_erf_inv(self, value):
+  def test_erf_inv(self, value, accurate):
     self.skip_if_mosaic_gpu()
 
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((8, 128), floatx),
-    )
-    def kernel(x_ref, o_ref):
-      o_ref[...] = lax.erf_inv(x_ref[...])
+    with config.jax_accurate_erf_inv(accurate):
+      @functools.partial(
+          self.pallas_call,
+          out_shape=jax.ShapeDtypeStruct((8, 128), floatx),
+      )
+      def kernel(x_ref, o_ref):
+        o_ref[...] = lax.erf_inv(x_ref[...])
 
-    x = jnp.full((8, 128), value, dtype=floatx)
-    out = kernel(x)
-    expected = lax.erf_inv(x)
+      x = jnp.full((8, 128), value, dtype=floatx)
+      out = kernel(x)
+      expected = lax.erf_inv(x)
     np.testing.assert_array_equal(out, expected)
 
   IS_FINITE_TEST_VALUES = [
@@ -2552,8 +2577,6 @@ class OpsTest(PallasBaseTest):
     self.skip_if_mosaic_gpu()
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Not supported on this hardware")
-    if not jtu.is_libtpu_at_least("0.0.49"):
-      self.skipTest("Requires libtpu 0.0.49 or later")
 
     lhs_shape, rhs_shape, dim_nums = shapes_and_dim_nums
     lhs_key, rhs_key = random.split(random.key(0))

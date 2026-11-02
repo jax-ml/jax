@@ -1,0 +1,31 @@
+# Copyright 2025 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Public API for fuser."""
+
+from jax._src.pallas.fuser.block_spec import BlockIndexTransform as BlockIndexTransform
+from jax._src.pallas.fuser.block_spec import get_fusion_values as get_fusion_values
+from jax._src.pallas.fuser.block_spec import get_stateful_input_fusion_values as get_stateful_input_fusion_values
+from jax._src.pallas.fuser.block_spec import get_stateful_output_fusion_values as get_stateful_output_fusion_values
+from jax._src.pallas.fuser.block_spec import make_scalar_prefetch_handler as make_scalar_prefetch_handler
+from jax._src.pallas.fuser.block_spec import pull_block_spec as pull_block_spec
+from jax._src.pallas.fuser.block_spec import push_block_spec as push_block_spec
+from jax._src.pallas.fuser.block_spec import push_pull_block_spec as push_pull_block_spec
+from jax._src.pallas.fuser.custom_evaluate import evaluate as evaluate
+from jax._src.pallas.fuser.custom_fusion_lib import custom_fusion as custom_fusion
+from jax._src.pallas.fuser.fuser_utils import block_spec_with_prefetch as block_spec_with_prefetch
+from jax._src.pallas.fuser.fuser_utils import filter_no_block_specs as filter_no_block_specs
+from jax._src.pallas.fuser.fusible import fusible as fusible
+from jax._src.pallas.fuser.fusion import Fusion as Fusion
+from jax._src.pallas.fuser.jaxpr_fusion import fuse as fuse

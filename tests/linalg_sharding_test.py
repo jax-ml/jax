@@ -64,11 +64,6 @@ class LinalgShardingTest(jtu.JaxTestCase):
       if fun_and_shapes not in CPU_AND_GPU_FUN_AND_SHAPES:
         self.skipTest(
             f"Partitioning {fun_and_shapes[0].__name__} not supported on GPU.")
-      if (fun_and_shapes[0] in (lax.linalg.cholesky, lax.linalg.triangular_solve)
-          and not config.use_shardy_partitioner.value):
-        self.skipTest(
-            f"Partitioning {fun_and_shapes[0].__name__} only supported on GPU "
-            "when shardy is enabled.")
       if fun_and_shapes[0] == lax.linalg.tridiagonal_solve:
         self.skipTest(
             f"Partitioning {fun_and_shapes[0].__name__} on GPU, requires a "
@@ -79,12 +74,6 @@ class LinalgShardingTest(jtu.JaxTestCase):
     fun, shapes = fun_and_shapes
     if fun in (lax.linalg.schur, lax.linalg.hessenberg, lax.linalg.tridiagonal):
       self.skipTest(f"{fun.__name__} does not support differentation")
-    if jtu.test_device_matches(["gpu"]) and fun in (
-        lax.linalg.eig, lax.linalg.lu, lax.linalg.qr
-    ) and not config.use_shardy_partitioner.value:
-      self.skipTest(
-          f"JVP of {fun.__name__} uses triangular solve on GPU, which doesn't "
-          "support batch partitioning unless shardy is enabled.")
 
     if fun == lax.linalg.eig:
       fun = functools.partial(

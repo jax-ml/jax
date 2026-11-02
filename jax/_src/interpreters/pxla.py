@@ -55,7 +55,7 @@ from jax._src.lib.mlir import ir
 from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
                            get_concrete_mesh)
 from jax._src.partition_spec import PartitionSpec
-from jax._src.sharding import ( IndivisibleError,Sharding as JSharding,
+from jax._src.sharding import ( IndivisibleError, Sharding as JSharding,
                                common_is_equivalent_to)
 from jax._src.sharding_impls import (
     ArrayMapping, GSPMDSharding,
@@ -504,35 +504,6 @@ def mesh_global_to_local(mesh, axes: ArrayMapping, aval):
                         tile_aval_nd(mesh.shape, axes, aval))
 
 
-def manual_proto(
-    aval: core.ShapedArray,
-    manual_axes_set: frozenset[sharding_impls.MeshAxisName], mesh: Mesh):
-  """Create an OpSharding proto that declares all mesh axes from `axes` as manual
-  and all others as replicated.
-  """
-  named_mesh_shape = mesh.shape
-  mesh_shape = list(named_mesh_shape.values())
-  axis_order = {axis: i for i, axis in enumerate(mesh.axis_names)}
-
-  manual_axes = sorted(manual_axes_set, key=str)
-  replicated_axes = [axis for axis in mesh.axis_names
-                     if axis not in manual_axes_set]
-
-  tad_perm = ([axis_order[a] for a in replicated_axes] +
-              [axis_order[a] for a in manual_axes])
-  tad_shape = [1] * aval.ndim
-  tad_shape.append(math.prod([named_mesh_shape[a] for a in replicated_axes]))
-  tad_shape.append(math.prod([named_mesh_shape[a] for a in manual_axes]))
-
-  proto = xc.OpSharding()
-  proto.type = xc.OpSharding.Type.OTHER
-  proto.tile_assignment_dimensions = tad_shape
-  proto.iota_reshape_dims = mesh_shape
-  proto.iota_transpose_perm = tad_perm
-  proto.last_tile_dims = [xc.OpSharding.Type.REPLICATED, xc.OpSharding.Type.MANUAL]
-  return proto
-
-
 ShardingInfo = tuple[
     JSharding | UnspecifiedValue,
     stages.MismatchType,
@@ -849,6 +820,8 @@ def get_out_layouts_via_propagation(closed_jaxpr: core.Jaxpr
       out_eqn_layouts = [eqn.params['layout']]
     elif eqn.primitive is pjit.layout_constraint_p:
       out_eqn_layouts = [eqn.params['layout']]
+    elif eqn.primitive is pjit.relayout_p:
+      out_eqn_layouts = [o.aval.layout for o in eqn.outvars]  # type: ignore
     else:
       out_eqn_layouts = [None] * len(eqn.outvars)
     safe_map(write, eqn.outvars, out_eqn_layouts)
@@ -891,17 +864,24 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
 def hoist_constants_as_args(
     closed_jaxpr: core.Jaxpr, global_in_avals, in_shardings, in_layouts,
     donated_invars, kept_var_idx: set[int], inout_aliases, mut,
-    all_args_info: AllArgsInfo):
+    all_args_info: AllArgsInfo,
+    *,
+    out_shardings: Sequence[MaybeSharding] = ()):
   const_args, const_arg_avals = unzip2(
       core.jaxpr_const_args(closed_jaxpr)
   )
   num_const_args = len(const_args)
   if num_const_args:
     global_in_avals = list(const_arg_avals) + global_in_avals
-    ca_shardings = pjit.const_args_shardings(const_args)
+    device_or_backend_set = (
+        check_device_backend_on_shardings(in_shardings) or
+        check_device_backend_on_shardings(out_shardings))
+    ca_shardings = pjit.const_args_shardings(
+        const_args,
+        device_or_backend_set=device_or_backend_set)
     in_shardings = (*ca_shardings, *in_shardings)
     ca_layouts = pjit.const_args_layouts(const_args, const_arg_avals,
-                                          ca_shardings)
+                                         ca_shardings)
     in_layouts = (*ca_layouts, *in_layouts)
 
     donated_invars = (False,) * num_const_args + donated_invars
@@ -1010,7 +990,8 @@ def lower_sharding_computation(
     (const_args, global_in_avals, in_shardings, in_layouts, donated_invars,
      kept_var_idx, inout_aliases, mut, all_args_info) = hoist_constants_as_args(
          closed_jaxpr, global_in_avals, in_shardings, in_layouts,
-         donated_invars, kept_var_idx, inout_aliases, mut, all_args_info)
+         donated_invars, kept_var_idx, inout_aliases, mut, all_args_info,
+         out_shardings=out_shardings)
   else:
     const_args = []
 
@@ -1022,7 +1003,6 @@ def lower_sharding_computation(
       len(out_shardings), len(out_layouts), len(global_out_avals))
 
   context_mesh = _get_context_mesh(context_mesh)
-
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
   unique_intermediate_shardings = util.stable_unique(
@@ -1257,7 +1237,8 @@ class MeshComputation(stages.Lowering):
     executable = UnloadedMeshExecutable.from_hlo(
         self._name, self._hlo, **self.compile_args,
         compiler_options_kvs=compiler_options_kvs,
-        device_list=compilation_device_list)
+        device_list=compilation_device_list,
+        num_const_args=len(self.const_args))
     if use_cache:
       self._executable = executable
     return executable
@@ -1727,6 +1708,7 @@ class UnloadedMeshExecutable:
                pgle_profiler: profiler.PGLEProfiler | None = None,
                intermediate_shardings: Sequence[JSharding] | None = None,
                context_mesh: Mesh | None = None,
+               num_const_args: int = 0,
   ) -> MeshExecutable:
     if device_list is None:
       raise RuntimeError(
@@ -1763,7 +1745,8 @@ class UnloadedMeshExecutable:
         xla_executable, out_shardings, device_list, global_out_avals,
         len(ordered_effects))
     out_shardings = maybe_recover_user_shardings(
-        in_shardings, out_shardings, global_in_avals, global_out_avals,
+        in_shardings[num_const_args:], out_shardings,
+        global_in_avals[num_const_args:], global_out_avals,
         intermediate_shardings, context_mesh)
 
     # xla_in_layouts are all either None or Layout. Even default
@@ -1989,15 +1972,26 @@ class MeshExecutable(stages.Executable):
         JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
 
   def shard_const_args(self, const_args: Sequence[ArrayLike]):
+    if not const_args:
+      return []
     num_const_args = len(const_args)
     xla_const_layouts = self._xla_in_layouts[:num_const_args]
     in_const_shardings = self._in_shardings[:num_const_args]
     const_avals = [core.typeof(c) for c in const_args]
     dispatch_layouts = get_dispatch_layouts(
         xla_const_layouts, in_const_shardings, const_avals)
-    return shard_args(in_const_shardings, dispatch_layouts,
-                      [xc.ArrayCopySemantics.REUSE_INPUT] * num_const_args,
-                      const_args)
+    with config.transfer_guard_host_to_device("allow"):
+      sharded = shard_args(in_const_shardings, dispatch_layouts,
+                           [xc.ArrayCopySemantics.REUSE_INPUT] * num_const_args,
+                           const_args)
+    results = []
+    for c, a, s in safe_zip(const_args, const_avals, sharded):
+      if dtypes.issubdtype(a.dtype, dtypes.extended):
+        _, tree = tree_util.dispatch_registry.flatten(c)
+        results.append(tree.unflatten([s]))
+      else:
+        results.append(s)
+    return results
 
 def cc_shard_arg(x, sharding, layout):
   return shard_args([sharding], [layout], [xc.ArrayCopySemantics.REUSE_INPUT],

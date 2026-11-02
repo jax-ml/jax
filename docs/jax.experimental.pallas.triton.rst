@@ -10,6 +10,8 @@ Classes
    :toctree: _autosummary
 
    CompilerParams
+   GpuInfo
+   GpuVersion
 
 Functions
 ---------
@@ -27,7 +29,18 @@ Functions
    atomic_xor
    approx_tanh
    debug_barrier
+   dot
    elementwise_inline_asm
    load
    max_contiguous
    store
+
+Miscellaneous
+-------------
+
+.. autosummary::
+   :toctree: _autosummary
+
+   get_gpu_info
+   get_gpu_info_from_version
+   is_gpu_device

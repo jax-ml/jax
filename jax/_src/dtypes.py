@@ -99,6 +99,7 @@ float8_e4m3fn: type[np.generic] = ml_dtypes.float8_e4m3fn
 float8_e4m3fnuz: type[np.generic] = ml_dtypes.float8_e4m3fnuz
 float8_e5m2: type[np.generic] = ml_dtypes.float8_e5m2
 float8_e5m2fnuz: type[np.generic] = ml_dtypes.float8_e5m2fnuz
+float8_e5m3fnu: type[np.generic] | None = None
 
 _float8_e3m4_dtype: np.dtype = np.dtype(float8_e3m4)
 _float8_e4m3_dtype: np.dtype = np.dtype(float8_e4m3)
@@ -108,6 +109,10 @@ _float8_e4m3fn_dtype: np.dtype = np.dtype(float8_e4m3fn)
 _float8_e4m3fnuz_dtype: np.dtype = np.dtype(float8_e4m3fnuz)
 _float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
 _float8_e5m2fnuz_dtype: np.dtype = np.dtype(float8_e5m2fnuz)
+_float8_e5m3fnu_dtype: np.dtype | None = None
+if hasattr(ml_dtypes, 'float8_e5m3fnu'):
+  float8_e5m3fnu = ml_dtypes.float8_e5m3fnu
+  _float8_e5m3fnu_dtype = np.dtype(float8_e5m3fnu)
 
 # fp6 support
 float6_e2m3fn: type[np.generic] = ml_dtypes.float6_e2m3fn
@@ -124,7 +129,7 @@ _float4_e2m1fn_dtype: np.dtype = np.dtype(float4_e2m1fn)
 def supports_inf(dtype: DTypeLike) -> bool:
   """Return true if the dtype supports infinity, else return False."""
   typ = np.dtype(dtype).type
-  if typ in {float8_e4m3b11fnuz, float8_e4m3fn, float8_e4m3fnuz, float8_e5m2fnuz}:
+  if typ in {float8_e4m3b11fnuz, float8_e4m3fn, float8_e4m3fnuz, float8_e5m2fnuz, float8_e5m3fnu}:
     return False
   return issubdtype(dtype, np.inexact)
 
@@ -144,6 +149,7 @@ _custom_float_scalar_types = [
     float8_e4m3fnuz,
     float8_e5m2,
     float8_e5m2fnuz,
+    *([float8_e5m3fnu] if float8_e5m3fnu is not None else []),
     bfloat16,
 ]
 _custom_float_dtypes = [
@@ -158,6 +164,7 @@ _custom_float_dtypes = [
     _float8_e4m3fnuz_dtype,
     _float8_e5m2_dtype,
     _float8_e5m2fnuz_dtype,
+    *([_float8_e5m3fnu_dtype] if _float8_e5m3fnu_dtype is not None else []),
     _bfloat16_dtype,
 ]
 _float8_dtypes = [
@@ -169,6 +176,7 @@ _float8_dtypes = [
     _float8_e4m3fnuz_dtype,
     _float8_e5m2_dtype,
     _float8_e5m2fnuz_dtype,
+    *([_float8_e5m3fnu_dtype] if _float8_e5m3fnu_dtype is not None else []),
 ]
 
 _float6_dtypes: list[np.dtype] = [
@@ -552,7 +560,7 @@ def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
     return b_sctype in {a_sctype, np.unsignedinteger, np.integer, np.number, np.generic}
 
   # Otherwise, fall back to numpy.issubdtype
-  return bool(np.issubdtype(a_sctype, b_sctype))
+  return np.issubdtype(a_sctype, b_sctype)
 
 can_cast = np.can_cast
 

@@ -50,16 +50,21 @@ def matmul_kernel(
     o_ref,
     acc_ref,
     *,
+    pids: tuple[jax.Array, ...] | None = None,
+    num_k: int | jax.Array | None = None,
     x_fn: Any,
     y_fn: Any,
     z_fn: Any,
     out_dtype: jnp.dtype,
 ):
-  @pl.when(pl.program_id(2) == 0)
+  if pids is None:
+    pids = pl.program_id(0), pl.program_id(1), pl.program_id(2)
+  if num_k is None:
+    num_k = pl.num_programs(2)
+  @pl.when(pids[2] == 0)
   def _():
     acc_ref[...] = jnp.zeros_like(acc_ref)
 
-  pids = pl.program_id(0), pl.program_id(1), pl.program_id(2)
   scalar_prefetch = (x_scalar_prefetch, y_scalar_prefetch, z_scalar_prefetch)
 
   x_values = jax.tree.map(lambda ref: ref.get(), x_value_refs)
@@ -68,7 +73,7 @@ def matmul_kernel(
   y = y_fn(pids, scalar_prefetch, y_values)
   acc_ref[...] += jnp.dot(x, y, preferred_element_type=jnp.float32)
 
-  @pl.when(pl.program_id(2) == pl.num_programs(2) - 1)
+  @pl.when(pids[2] == num_k - 1)
   def _():
     acc = acc_ref[...].astype(out_dtype)
     z_values = jax.tree.map(lambda ref: ref.get(), z_value_refs)
@@ -214,19 +219,23 @@ def _fusible_matmul(
             z_out_block_spec, scalar_prefetch_smem_refs
         )
         pltpu.emit_pipeline(
-            functools.partial(
-                    matmul_kernel,
-                    *scalar_prefetch_smem_refs,
-                    acc_ref=acc_ref,
-                    x_fn=x_fn,
-                    y_fn=y_fn,
-                    z_fn=z_fn,
-                    out_dtype=out_dtype),
+            lambda step, *args: matmul_kernel(
+                *scalar_prefetch_smem_refs,
+                *args,
+                acc_ref=acc_ref,
+                pids=step.index,
+                num_k=grid[2],
+                x_fn=x_fn,
+                y_fn=y_fn,
+                z_fn=z_fn,
+                out_dtype=out_dtype,
+            ),
             grid=grid,
             in_specs=in_specs_,
             out_specs=[z_out_block_spec_],
             core_axis_name='core',
             dimension_semantics=dimension_semantics,
+            _explicit_indices=True,
         )(x_values_refs, y_values_refs, z_values_refs, out_ref)
       pl.run_scoped(_f,
                     pltpu.VMEM((bm, bn), jnp.float32),
@@ -247,19 +256,23 @@ def _fusible_matmul(
           z_out_block_spec, scalar_prefetch_smem_refs
       )
       pltpu.emit_pipeline(
-          functools.partial(
-                  matmul_kernel,
-                  *scalar_prefetch_smem_refs,
-                  acc_ref=acc_vmem_ref,
-                  x_fn=x_fn,
-                  y_fn=y_fn,
-                  z_fn=z_fn,
-                  out_dtype=out_dtype),
+          lambda step, *args: matmul_kernel(
+              *scalar_prefetch_smem_refs,
+              *args,
+              acc_ref=acc_vmem_ref,
+              pids=step.index,
+              num_k=grid[2],
+              x_fn=x_fn,
+              y_fn=y_fn,
+              z_fn=z_fn,
+              out_dtype=out_dtype,
+          ),
           grid=grid,
           in_specs=in_specs_,
           out_specs=(z_out_block_spec_,),
           core_axis_name='core',
-          dimension_semantics=dimension_semantics
+          dimension_semantics=dimension_semantics,
+          _explicit_indices=True,
       )(x_values_refs, y_values_refs, z_values_refs, out_ref)
 
     return pl.kernel(

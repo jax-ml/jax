@@ -73,7 +73,6 @@ limitations under the License.
 #include "xla/python/ifrt/user_context_status_util.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
-#include "xla/python/version.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
@@ -307,17 +306,14 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
               ifrt::ArrayCopySemantics::kReuseInput,
               ifrt::SingleDeviceShardSemantics::kAddressableShards);
       ABSL_CHECK_OK(disassembled_arrays.status());
-      nb::list bufs =
-          nb::steal<nb::list>(PyList_New(disassembled_arrays->size()));
-      int i = 0;
+      nb::list_builder bufs(disassembled_arrays->size());
       for (auto& disassembled_array : *disassembled_arrays) {
         nb::object array = PyArray::MakeFromSingleDeviceArray(
             client_, std::move(disassembled_array), false, true,
             result_status_.IsValid() ? result_status_ : xla::Future<>());
-        PyList_SET_ITEM(bufs.ptr(), i, array.release().ptr());
-        ++i;
+        bufs.put(std::move(array));
       }
-      outputs.push_back(std::get<nb::object>(handler)(std::move(bufs)));
+      outputs.push_back(std::get<nb::object>(handler)(bufs.commit()));
     }
   }
   return outputs;
@@ -416,9 +412,16 @@ PyLoadedExecutable::~PyLoadedExecutable() {
 
 std::vector<nb_class_ptr<PyDevice>> PyLoadedExecutable::AddressableDevices()
     const {
+  std::optional<ifrt::DeviceListRef> device_list =
+      ifrt_loaded_executable_->devices();
+  if (!device_list.has_value()) {
+    return {};
+  }
+  absl::Span<ifrt::Device* const> addressable_devices =
+      (*device_list)->AddressableDeviceList()->devices();
   std::vector<nb_class_ptr<PyDevice>> devices;
-  devices.reserve(ifrt_loaded_executable_->addressable_devices().size());
-  for (ifrt::Device* device : ifrt_loaded_executable_->addressable_devices()) {
+  devices.reserve(addressable_devices.size());
+  for (ifrt::Device* device : addressable_devices) {
     devices.push_back(client_->GetPyDevice(device));
   }
   return devices;
@@ -432,8 +435,10 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
     absl::Span<const PyArray> args,
     std::optional<std::vector<xla::Future<>>>& returned_futures) {
   std::vector<ifrt::ArrayRef> output_arrays;
-  std::unique_ptr<tsl::Future<>> returned_future;
-  int num_computations = ifrt_loaded_executable->addressable_devices().size();
+  std::optional<ifrt::DeviceListRef> devices =
+      ifrt_loaded_executable->devices();
+  int num_computations =
+      devices.has_value() ? (*devices)->AddressableDeviceList()->size() : 0;
   xla::Future<> result_status;
   {
     nb::gil_scoped_release gil_release;

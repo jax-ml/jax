@@ -228,7 +228,7 @@ def find_swizzle(minor_dim_bits: int, what: str = ""):
 
   Swizzling is usually necessary when dealing with 2D data in SMEM, especially
   if the reference is used as an MMA operand. The returned swizzle is usually
-  applied as ``plgpu`` transform:
+  applied as ``plgpu`` transform::
 
     transforms = (
         plgpu.TilingTransform((8, 8 * swizzle // elem_bits)),

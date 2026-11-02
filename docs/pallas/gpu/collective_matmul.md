@@ -158,7 +158,7 @@ def all_gather_lhs_matmul(...):
     wg_idx = lax.axis_index("wg")
     dev_id = lax.axis_index(axis_name)
     # This device sends to dev_id - 1, forming a ring.
-    send_dev_id = lax.rem(dev_id + axis_size - 1, axis_size)
+    send_dev_id = {axis_name: lax.rem(dev_id + axis_size - 1, axis_size)}
     send_scratch_ref = plgpu.remote_ref(scratch_ref, send_dev_id)
 
     def device_step(lhs_source_ref, device_offset):

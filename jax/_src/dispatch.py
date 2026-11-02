@@ -19,6 +19,7 @@ import atexit
 from collections.abc import Sequence
 import dataclasses
 from functools import partial
+import itertools
 import logging
 import threading
 import time
@@ -132,24 +133,39 @@ class RuntimeTokenSet(threading.local):
   ) -> core.Token:
     tok = self.current_tokens.get(eff, np.zeros(0, np.bool_))
 
+    def _shard_new_token(tok):
+      # We only use replicated sharding for the first time when the token for
+      # the order effect hasn't been created.
+      s = GSPMDSharding.get_replicated(devices)
+      sharded_tok = core.Token(
+          pxla.shard_args(
+              [s], [None], [xc.ArrayCopySemantics.REUSE_INPUT], [tok]
+          )[0]
+      )
+      self.current_tokens[eff] = sharded_tok
+      return sharded_tok
+
     if isinstance(tok, core.Token):
       # The order of devices may change, so we need to reshard if necessary.
       # TODO(yueshengys): This might still be buggy in a multi-process SPMD
       # scenario. Revise the logic later. A distributed shutdown barrier inside
       # the XLA program may be needed.
-      return api.device_put(
-          tok, NamedSharding(Mesh(devices, 'x'), PartitionSpec('x')))
+      try:
+        return api.device_put(
+            tok, NamedSharding(Mesh(devices, 'x'), PartitionSpec('x')))
+      except _jax.JaxRuntimeError:
+        # This exception here indicates that, in attempting to reshard the
+        # token from the previous computation, we ran `tok.block_until_ready()`
+        # (in `_token_shard_arg`), which raised an exception.  Thus, the
+        # previous computation failed -- for example, by raising an exception
+        # in a callback.
+        #
+        # Because the previous computation has completed, it is safe to create
+        # a new token.
+        _shard_new_token(np.zeros(0, np.bool_))
+        raise
 
-    # We only use replicated sharding for the first time when the token for the
-    # order effect hasn't been created.
-    s = GSPMDSharding.get_replicated(devices)
-    sharded_tok = core.Token(
-        pxla.shard_args(
-            [s], [None], [xc.ArrayCopySemantics.REUSE_INPUT], [tok]
-        )[0]
-    )
-    self.current_tokens[eff] = sharded_tok
-    return sharded_tok
+    return _shard_new_token(tok)
 
   def set_token_result(self, eff: core.Effect, token: core.Token):
     self.current_tokens[eff] = token
@@ -165,11 +181,27 @@ class RuntimeTokenSet(threading.local):
     self.output_runtime_tokens = {}
 
   def block_until_ready(self):
-    for token in self.current_tokens.values():
-      token.block_until_ready()
-    for token in self.output_runtime_tokens.values():
-      token.block_until_ready()
+    exceptions = []
+    seen = []
+    for eff, token in itertools.chain(self.current_tokens.items(),
+                                      self.output_runtime_tokens.items()):
+      try:
+        token.block_until_ready()
+      except _jax.JaxRuntimeError as e:
+        key = (type(e), e.args)
+        if not key in seen:
+          seen.append(key)
+          exceptions.append(e)
+
     self.clear()
+
+    if exceptions:
+      if len(exceptions) == 1:
+        raise exceptions[0]
+      raise ExceptionGroup(
+          'One or more previous effectful computations failed.',
+          tuple(exceptions)
+      )
 
 runtime_tokens: RuntimeTokenSet = RuntimeTokenSet()
 
@@ -407,8 +439,14 @@ class _DeferredShardArg:
   copy_semantics: ArrayCopySemantics
 
   def result_handler(self, shard_arg_result):
+    if self.aval.is_high:
+      lo_aval, = self.aval.lo_ty()
+      out = pxla.global_aval_to_result_handler(
+          lo_aval, self.s, self.committed)(shard_arg_result)
+      return self.aval.raise_val(out)
     return pxla.global_aval_to_result_handler(
         self.aval, self.s, self.committed)(shard_arg_result)
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _DeferredCrossHostTransferArg:
@@ -455,17 +493,21 @@ def _device_put_sharding_impl(
         and copy == ArrayCopySemantics.REUSE_INPUT):
       return x
 
-    if isinstance(s, NamedSharding) and s.spec.unreduced:
-      if s.spec.unreduced_kind != UnreducedKind.sum:
+    if (isinstance(x, array.UnreducedArray) or
+        (isinstance(s, NamedSharding) and s.spec.unreduced)):
+      if (isinstance(s, NamedSharding) and s.spec.unreduced and
+          s.spec.unreduced_kind != UnreducedKind.sum):
         raise NotImplementedError
       norm = lambda p: p._normalized_spec_for_aval(x.ndim)
-      if (xb.process_count() == 1 and x_is_jax_array and
-          isinstance(x_sharding, NamedSharding) and
-          norm(x_sharding.spec) == norm(s.spec) and
-          x_sharding.mesh.size == s.mesh.size):
-        return _DeferredShardArg(x, s, aval, True, copy)
+      if (xb.process_count() == 1 and isinstance(x, array.UnreducedArray) and
+          isinstance(s, NamedSharding) and
+          norm(x.sharding.spec) == norm(s.spec) and
+          x.sharding.mesh.shape_tuple == s.mesh.shape_tuple):
+        lo_aval, = aval.lo_ty()
+        lo_s = s.update(spec=lo_aval.sharding.spec)  # type:ignore
+        return _DeferredShardArg(x._lo_val, lo_s, aval, True, copy)
       # TODO(mattjj,yashkatariya): handle donation
-      return api.jit(_device_put_reshard, out_shardings=s)(x)
+      return pjit.reshard(x, s)
 
     if (not s_is_fully_addressable and
         x_is_jax_array and not x_is_fully_addressable and
@@ -690,6 +732,25 @@ def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
   return [update_dp_aval(x, d) for x, d in zip(xs, devices)]
 device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
+def _device_put_is_high(*avals, devices, **__):
+  return (any(a.is_high for a in avals) or
+          any(isinstance(d, NamedSharding) and bool(d.spec.unreduced)
+              for d in devices))
+device_put_p.is_high = _device_put_is_high  # type: ignore[method-assign]
+
+def _device_put_to_lojax(*hi_xs, devices, srcs, copy_semantics):
+  outs = []
+  for hi_x, d, src, cp in zip(hi_xs, devices, srcs, copy_semantics):
+    if (core.typeof(hi_x).is_high and
+        isinstance(d, NamedSharding) and d.spec.unreduced):
+      outs.append(pjit.reshard(hi_x, d))
+    else:
+      lo_y, = device_put_p.bind(hi_x, devices=(d,), srcs=(src,),
+                                copy_semantics=(cp,))
+      outs.append(lo_y)
+  return outs
+device_put_p.to_lojax = _device_put_to_lojax  # type: ignore[method-assign]
+
 def _device_put_transpose(cts, *args, devices, srcs, copy_semantics):
   results: list[Any | None] = [None] * len(cts)
   dp_cts = []
@@ -743,14 +804,9 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
     if ((isinstance(device, Sharding) and device.memory_kind is not None) or
         isinstance(device, core.MemorySpace)):
       if isinstance(device, Sharding):
-        if config.use_shardy_partitioner.value:
-          x = mlir.wrap_with_sharding_op(
-              ctx, x, out_aval,
-              device._to_sdy_sharding(aval.ndim))
-        else:
-          x = mlir.wrap_with_sharding_op(
-              ctx, x, out_aval,
-              device._to_xla_hlo_sharding(aval.ndim).to_proto())
+        x = mlir.wrap_with_sharding_op(
+            ctx, x, out_aval,
+            device._to_sdy_sharding(aval.ndim))
       mem_kind = (core.mem_space_to_kind(device)
                   if isinstance(device, core.MemorySpace) else device.memory_kind)
       assert mem_kind is not None

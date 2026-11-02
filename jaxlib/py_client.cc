@@ -770,7 +770,7 @@ absl::StatusOr<nb::object> PyClient::CreateHloOutputCallback(
           absl::Span<std::shared_ptr<const xla::Literal> const> literals) {
         nb::gil_scoped_acquire acquire;
         nb::callable callable = nb::borrow<nb::callable>(callable_ref);
-        nb::list py_list = nb::steal<nb::list>(PyList_New(literals.size()));
+        nb::list_builder py_list(literals.size());
         for (size_t i = 0; i < literals.size(); ++i) {
           if (literals[i] != nullptr) {
             absl::StatusOr<nb::object> nbobj = xla::LiteralToPython(
@@ -779,12 +779,12 @@ absl::StatusOr<nb::object> PyClient::CreateHloOutputCallback(
               LOG(ERROR) << "LiteralToPython failed: " << nbobj.status();
               return;
             }
-            py_list[i] = std::move(*nbobj);
+            py_list.put(std::move(*nbobj));
           } else {
-            py_list[i] = nb::none();
+            py_list.put(nb::none());
           }
         }
-        callable(replica_id, partition_id, py_list);
+        callable(replica_id, partition_id, py_list.commit());
       };
   tsl::RCReference<ifrt::PjRtHloOutputLoadedHostCallback> loaded_host_callback =
       tsl::MakeRef<ifrt::PjRtHloOutputLoadedHostCallback>(ifrt_client(),

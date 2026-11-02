@@ -277,6 +277,36 @@ class TransferGuardTest(jtu.JaxTestCase):
 
     self.assertEmpty(errors)
 
+  def test_jit_call_with_constants(self):
+    const = np.arange(256, dtype=np.int32)
+    @jax.jit
+    def f():
+      return const
+
+    with jax.transfer_guard("disallow"):
+      f()
+
+  def test_cached_jit_call_with_constants(self):
+    const = np.arange(256, dtype=np.int32)
+    @jax.jit
+    def f():
+      return const
+
+    self.assertCacheMisses(lambda: f(), cpp=1)
+    self.assertCacheMisses(lambda: f(), cpp=0)
+    with jax.transfer_guard("disallow"):
+      f()
+
+  def test_aot_call_with_constants(self):
+    const = np.arange(256, dtype=np.int32)
+    @jax.jit
+    def f():
+      return const
+
+    compiled = f.lower().compile()
+    with jax.transfer_guard("disallow"):
+      compiled()
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

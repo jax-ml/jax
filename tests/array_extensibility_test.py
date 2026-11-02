@@ -159,6 +159,7 @@ SKIPPED_APIS = [
  'float8_e4m3fnuz',
  'float8_e5m2',
  'float8_e5m2fnuz',
+ 'float8_e5m3fnu',
  'float8_e8m0fnu',
  'floating',
  'from_dlpack',

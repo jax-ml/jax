@@ -105,36 +105,30 @@ ffi::Error XlaBufferCallback(ffi::Context ctx, int32_t device_ordinal,
   nb::gil_scoped_acquire gil;
   auto callback = nb::borrow<nb::callable>(
       static_cast<PyObject*>(callbacks->callbacks[index]));
-  auto nb_args =
-      nb::steal<nb::tuple>(PyTuple_New(1 + args.size() + rets.size()));
+  nb::tuple_builder nb_args(1 + args.size() + rets.size());
 
   PyFfiContext py_ctx(ctx.api(), ctx.ctx(), XLA_FFI_ExecutionStage_EXECUTE);
-  PyTuple_SET_ITEM(nb_args.ptr(), 0, nb::cast(py_ctx).release().ptr());
+  nb_args.put(std::move(py_ctx));
 
-  size_t offset = 1;
-  for (size_t i = 0; i < args.size(); ++i, ++offset) {
+  for (size_t i = 0; i < args.size(); ++i) {
     auto arg = args.get<ffi::AnyBuffer>(i);
     if (arg.has_error()) {
       return arg.error();
     }
-    PyFfiAnyBuffer py_buffer(DeviceType, device_ordinal, arg.value());
-    PyTuple_SET_ITEM(nb_args.ptr(), offset,
-                     nb::cast(py_buffer).release().ptr());
+    nb_args.put(PyFfiAnyBuffer(DeviceType, device_ordinal, arg.value()));
   }
 
-  for (size_t i = 0; i < rets.size(); ++i, ++offset) {
+  for (size_t i = 0; i < rets.size(); ++i) {
     auto ret = rets.get<ffi::AnyBuffer>(i);
     if (ret.has_error()) {
       return ret.error();
     }
-    PyFfiAnyBuffer py_buffer(DeviceType, device_ordinal, ret.value());
-    PyTuple_SET_ITEM(nb_args.ptr(), offset,
-                     nb::cast(py_buffer).release().ptr());
+    nb_args.put(PyFfiAnyBuffer(DeviceType, device_ordinal, ret.value()));
   }
 
   xla::HostCallbackScope cleanup;
   try {
-    callback(*nb::borrow<nb::args>(nb_args));
+    callback(*nb::borrow<nb::args>(nb_args.commit()));
   } catch (nb::python_error& e) {
     return ffi::Error::Internal(
         absl::StrFormat("Error when calling buffer callback: %s", e.what()));

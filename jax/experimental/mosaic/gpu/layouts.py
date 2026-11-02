@@ -14,6 +14,7 @@
 
 """Layout utilities."""
 
+import functools
 from typing import assert_never
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu
@@ -87,6 +88,7 @@ def _to_tiled_layout_attr(
   )
 
 
+@functools.lru_cache
 def _from_tiled_layout_attr(
     attr: mgpu.TiledLayoutAttr,
 ) -> fa.TiledLayout:
@@ -137,6 +139,24 @@ def from_layout_attr(attr: ir.Attribute) -> fa.FragmentedLayout:
     raise NotImplementedError(
         f"Unsupported layout for conversion from MLIR attribute: {attr}"
     )
+
+
+def pprint_layout(layout: fa.FragmentedLayout) -> str:
+  match layout:
+    case fa.WGMMA_LAYOUT:
+      return "WGMMA"
+    case fa.WGMMA_ROW_LAYOUT:
+      return "WGMMA_ROW"
+    case fa.WGMMA_TRANSPOSED_LAYOUT:
+      return "WGMMA_TRANSPOSED"
+    case fa.TCGEN05_LAYOUT:
+      return "TCGEN05"
+    case fa.TCGEN05_TRANSPOSED_LAYOUT:
+      return "TCGEN05_TRANSPOSED"
+    case fa.TMEM_NATIVE_LAYOUT:
+      return "TCGEN05_TMEM_NATIVE"
+    case _:
+      return str(layout)
 
 
 def splat_is_compatible_with_tiled(

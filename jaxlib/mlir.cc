@@ -144,7 +144,7 @@ absl::StatusOr<nb::bytes> PyMhloToStablehlo(std::string_view mlir_module) {
   if (VLOG_IS_ON(3)) EnablePrintBeforeAndAfter(pm);
   pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
   if (!mlir::succeeded(pm.run(*module))) {
-    return tsl::errors::InvalidArgument("MHLO => StableHLO failed");
+    return absl::InvalidArgumentError("MHLO => StableHLO failed");
   }
   // Use bytecode, passing unregistered dialects with properties causes issues
   // when using textual assembly.
@@ -202,7 +202,7 @@ absl::StatusOr<nb::object> PyDeserializePortableArtifact(
     module = mlir::stablehlo::deserializePortableArtifact(bytecode, context);
   }
   if (!module)
-    return tsl::errors::InvalidArgument("Failed to deserialize StableHLO");
+    return absl::InvalidArgumentError("Failed to deserialize StableHLO");
   return PyModule::forModule(wrap(module.release())).releaseObject();
 }
 

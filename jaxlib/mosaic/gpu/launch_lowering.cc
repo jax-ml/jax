@@ -42,6 +42,7 @@ limitations under the License.
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -61,7 +62,7 @@ limitations under the License.
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "jaxlib/mosaic/pass_boilerplate.h"
+#include "xla/mosaic/pass_boilerplate.h"
 
 namespace mosaic {
 namespace gpu {
@@ -90,13 +91,23 @@ mlir::Value packKernelArgs(mlir::OpBuilder& builder,
       c1);
 
   for (auto [i, operand] : llvm::enumerate(launch.getKernelOperands())) {
-    mlir::Value storage_ptr = mlir::LLVM::GEPOp::create(
-        builder, launch.getLoc(), ptr_ty, kernel_args_struct_ty,
-        kernel_args_struct,
-        mlir::ArrayRef<mlir::LLVM::GEPArg>{mlir::LLVM::GEPArg(0),
-                                           mlir::LLVM::GEPArg(i)});
-    mlir::LLVM::StoreOp::create(builder, launch.getLoc(), operand, storage_ptr);
-    mlir::LLVM::GEPArg arr_gep_arg(i);
+    mlir::Value storage_ptr;
+    if (auto load_op = operand.getDefiningOp<mlir::LLVM::LoadOp>();
+        load_op &&
+        load_op.getAddr().getDefiningOp<mlir::LLVM::AllocaOp>() &&
+        llvm::none_of(load_op.getAddr().getUsers(),
+                      llvm::IsaPred<mlir::LLVM::LifetimeStartOp,
+                                    mlir::LLVM::LifetimeEndOp>)) {
+      storage_ptr = load_op.getAddr();
+    } else {
+      storage_ptr = mlir::LLVM::GEPOp::create(
+          builder, launch.getLoc(), ptr_ty, kernel_args_struct_ty,
+          kernel_args_struct,
+          mlir::ArrayRef<mlir::LLVM::GEPArg>{mlir::LLVM::GEPArg(0),
+                                             mlir::LLVM::GEPArg(i)});
+      mlir::LLVM::StoreOp::create(builder, launch.getLoc(), operand,
+                                  storage_ptr);
+    }
     mlir::Value array_slot_ptr = mlir::LLVM::GEPOp::create(
         builder, launch.getLoc(), ptr_ty, builder.getI64Type(),
         kernel_args_array, mlir::LLVM::GEPArg(i));
@@ -141,9 +152,8 @@ void emitRuntimeDecls(mlir::ModuleOp module) {
   auto i32 = mlir::IntegerType::get(module.getContext(), 32);
   auto decl_builder = mlir::OpBuilder::atBlockBegin(module.getBody());
 
-  mlir::func::FuncOp::create(
-      decl_builder, module.getLoc(),
-      decl_builder.getStringAttr("mosaic_gpu_build_kernel_spec"),
+  auto decl = mlir::func::FuncOp::create(
+      decl_builder, module.getLoc(), "mosaic_gpu_build_kernel_spec",
       mlir::FunctionType::get(module.getContext(),
                               {
                                   ptr_ty,         // MosaicKernelSpec*
@@ -156,9 +166,8 @@ void emitRuntimeDecls(mlir::ModuleOp module) {
                                   ptr_ty,         // arg_ptrs
                                   ptr_ty          // arg_bytes
                               },
-                              {}),
-      decl_builder.getStringAttr("private"), /*arg_attr=*/nullptr,
-      /*res_attrs=*/nullptr);
+                              {}));
+  decl.setPrivate();
 }
 
 int32_t getClusterSize(mlir::gpu::LaunchFuncOp launch) {

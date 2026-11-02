@@ -23,7 +23,7 @@ import enum
 import functools
 import math
 import threading
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TYPE_CHECKING
 import warnings
 
 import numpy as np
@@ -31,8 +31,9 @@ import numpy as np
 from jax._src import config as jax_config
 from jax._src import xla_bridge as xb
 from jax._src.util import (safe_zip, cache, tuple_delete, weak_value_interner,
-                           immutable)
+                           immutable, set_module)
 from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 
 zip, unsafe_zip = safe_zip, zip
@@ -211,6 +212,10 @@ class BaseMesh:
   @functools.cached_property
   def _name_to_type(self):
     return dict(safe_zip(self.axis_names, self.axis_types))
+
+  @functools.cached_property
+  def axes(self) -> tuple[MeshAxis, ...]:
+    return tuple(MeshAxis(n) for n in self.axis_names)
 
 
 class _HashableDeviceArray:
@@ -600,12 +605,22 @@ def _raise_value_error(name):
 empty_abstract_mesh = AbstractMesh((), ())
 empty_concrete_mesh = Mesh(np.empty((), dtype=object), ())
 
-abstract_mesh_context_manager = config_ext.Config[Any](
-    'abstract_mesh_context_manager',
-    empty_abstract_mesh,
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
+if TYPE_CHECKING or jaxlib_extension_version >= 509:
+  abstract_mesh_context_manager = config_ext.Config[Any](
+      'abstract_mesh_context_manager',
+      empty_abstract_mesh,
+      include_in_jit_key=True,
+      include_in_trace_context=True,
+      include_in_jaxpr_eqn_ctx=True,
+  )
+else:
+  abstract_mesh_context_manager = config_ext.Config[Any](
+      'abstract_mesh_context_manager',
+      empty_abstract_mesh,
+      include_in_jit_key=True,
+      include_in_trace_context=True,
+  )
+  jax_config._jaxpr_eqn_ctx_configs.append(abstract_mesh_context_manager)
 
 device_context = config_ext.Config[Any](
     'device_context', empty_concrete_mesh, include_in_jit_key=True
@@ -666,3 +681,21 @@ def get_abstract_mesh() -> AbstractMesh:
 
 def get_concrete_mesh() -> Mesh:
   return device_context.value
+
+
+@set_module('jax.avals')
+@dataclasses.dataclass(frozen=True, slots=True)
+class MeshAxis:
+  name: MeshAxisName
+  def __rmatmul__(self, size: Any) -> ShardedMeshAxis:
+    return ShardedMeshAxis(size, (self.name,))
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ShardedMeshAxis:
+  size: Any
+  names: tuple[MeshAxisName, ...]
+  def __matmul__(self, other: Any) -> ShardedMeshAxis:
+    if not isinstance(other, MeshAxis):
+      return NotImplemented
+    return ShardedMeshAxis(self.size, (*self.names, other.name))

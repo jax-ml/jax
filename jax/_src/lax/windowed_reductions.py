@@ -29,6 +29,7 @@ from jax._src.core import ShapedArray, jaxpr_as_fun
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import convolution
 from jax._src.lax import lax
 from jax._src.lax import slicing
@@ -371,15 +372,23 @@ def _reduce_window_abstract_eval_rule(
   out_shape = _common_reduce_window_shape_rule(
       operand_avals[0], window_dimensions, window_strides, padding,
       base_dilation, window_dilation)
-  out_sharding = reduce_window_sharding_rule(
-      operand_avals[0], window_dimensions, window_strides, padding,
-      base_dilation, window_dilation)
+  out_sharding = lax.lax_utils.call_sharding_rule(
+      reduce_window_p, reduce_window_sharding_rule, None, None,
+      operand_avals[0], window_dimensions=window_dimensions,
+      window_strides=window_strides, padding=padding,
+      base_dilation=base_dilation, window_dilation=window_dilation)
   vma = core.standard_vma_rule('reduce_window', *operand_avals)
-  if any(core.getu(a) or core.getr(a) for a in operand_avals):
+  if any(core.getu(a)[0] or core.getr(a) for a in operand_avals):
     raise NotImplementedError
-  return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding,
+  out_avals = [ShapedArray(out_shape, op.dtype, sharding=out_sharding,
                            manual_axis_type=op.mat.update(varying=vma))
-               for op in operand_avals)
+               for op in operand_avals]
+  out_layouts = lax.lax_utils.call_layout_rule(
+      reduce_window_p, None, avals, out_avals,
+      jaxpr=jaxpr, consts=consts, window_dimensions=window_dimensions,
+      window_strides=window_strides, padding=padding,
+      base_dilation=base_dilation, window_dilation=window_dilation)
+  return tuple(o.update(layout=l) for o, l in zip(out_avals, out_layouts))
 
 
 def _generic_reduce_window_batch_rule(
@@ -469,6 +478,12 @@ reduce_window_p.multiple_results = True
 reduce_window_p.def_impl(partial(dispatch.apply_primitive, reduce_window_p))
 reduce_window_p.def_abstract_eval(_reduce_window_abstract_eval_rule)
 batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
+
+def _reduce_window_to_lojax(*args, jaxpr, consts, **params):
+  lo_jaxpr = pe.lower_jaxpr2(jaxpr)
+  return reduce_window_p.bind(*args, jaxpr=lo_jaxpr,
+                              consts=tuple(lo_jaxpr.consts), **params)
+reduce_window_p.to_lojax = _reduce_window_to_lojax
 
 
 def _generic_reduce_window_lower(

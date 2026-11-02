@@ -559,7 +559,7 @@ class _DimExpr:
     """Extract the constant from a symbolic expression.
     Returns None if the expression is not a single constant."""
     if not isinstance(e, _DimExpr):
-      return int(e)
+      return e
     m, m_c = e._leading_term
     return m_c if m.is_constant else None
 
@@ -880,7 +880,7 @@ class _DimExpr:
           dterm, dcount = divisor._leading_term
           qterm = mon.divide(dterm)
         else:
-          qterm, dcount = mon, int(divisor)
+          qterm, dcount = mon, divisor
         qcount, rcount = divmod(count, dcount)
         if rcount != 0:
           raise InconclusiveDimensionOperation("")
@@ -895,7 +895,7 @@ class _DimExpr:
           raise InconclusiveDimensionOperation("")
         remainder = 0
       else:
-        q, r = divmod(dividend, int(divisor))
+        q, r = divmod(dividend, divisor)
         quotient += q
         remainder = r
 
@@ -1185,7 +1185,7 @@ def _geq_decision(e1: DimSize, e2: DimSize, cmp_str: Callable[[], str]) -> bool:
   elif isinstance(e2, _DimExpr):
     scope = e2.scope
   else:
-    return int(e1) >= int(e2)
+    return e1 >= e2
   lb, ub = _bounds_decision(e1 - e2, BoundsPrecision.FOR_GEQ0_OR_LT0)
   if lb >= 0:
     return True

@@ -172,15 +172,9 @@ def _initialize_shared_memory(
   num_blocks_per_cluster_as_int = int(num_blocks_per_cluster)
   del num_gpus, num_threads_per_block, num_blocks_per_cluster
 
-  num_total_concurrent_threads = (
-      num_gpus_as_int
-      * num_threads_per_block_as_int
-      * num_blocks_per_cluster_as_int
-  )
-
   with _shared_memory_init_lock:
     if _shared_memory is None:
-      _races = GPURaceDetectionState(num_cores=num_total_concurrent_threads)
+      _races = GPURaceDetectionState(on_race=interpret_params.on_race)
       _shared_memory = memory.GPUSharedMemory(
           num_devices=num_gpus_as_int,
           num_threads_per_block=num_threads_per_block_as_int,
@@ -849,6 +843,7 @@ def _allocate_barriers(
 
     shared_memory.allocate_barrier(
         key,
+        thread,
         ref_count=ref_count_as_int,
         num_arrivals=num_arrivals_as_int,
         orders_tensor_core=orders_tensor_core_as_bool,
@@ -929,6 +924,7 @@ def _deallocate_barrier(
     barrier_allocation_key = HostAllocationKey.from_array(key)
     deallocate_fn(
         barrier_allocation_key,
+        thread,
         logging_info=memory.GPULoggingInfo(mesh_location, thread, source_info),
     )
   return token
@@ -1167,6 +1163,7 @@ def _allocate_cluster_barriers(
 
     shared_memory.allocate_cluster_barrier(
         key,
+        thread,
         axes_dims=axes_dims,
         is_axis_collective=is_axis_collective,
         ref_count=ref_count_as_int,
@@ -1514,27 +1511,34 @@ def wgmma(
     a_transforms: tuple[Any, ...],
     b_allocation_key_as_array: jax.Array,
     b_transforms: tuple[Any, ...],
+    a_is_value: bool = False,
     source_info: source_info_util.SourceInfo | None = None,
 ):
+  """WGMMA (Hopper only). If `a_is_value`, the A operand is the registers'
+  contents themselves rather than a ref's allocation key."""
   # TODO(jburnim): Vector clocks.
   # TODO(jburnim): Async wgmma.
 
   acc_allocation_key = HostAllocationKey.from_array(acc_allocation_key_as_array)
-  a_allocation_key = HostAllocationKey.from_array(a_allocation_key_as_array)
   b_allocation_key = HostAllocationKey.from_array(b_allocation_key_as_array)
-  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
   b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
   acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
 
   shared_memory = _get_shared_memory()
 
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
-  a, _, _ = shared_memory.get_buffer_content(
-      a_allocation_key,
-      shared_memory.access(a_allocation_key, a_transforms),
-      thread,
-      logging_info=logging_info,
-  )
+  # This is necessary because the input can be a value or a ref.
+  if a_is_value:
+    a = np.asarray(a_allocation_key_as_array)
+  else:
+    a_allocation_key = HostAllocationKey.from_array(a_allocation_key_as_array)
+    a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
+    a, _, _ = shared_memory.get_buffer_content(
+        a_allocation_key,
+        shared_memory.access(a_allocation_key, a_transforms),
+        thread,
+        logging_info=logging_info,
+    )
   b, _, _ = shared_memory.get_buffer_content(
       b_allocation_key,
       shared_memory.access(b_allocation_key, b_transforms),

@@ -24,7 +24,7 @@ limitations under the License.
 #include "mlir-c/Support.h"
 #include "mlir/Bindings/Python/IRCore.h"
 #include "nanobind/nanobind.h"
-#include "jaxlib/mosaic/dialect/tpu/integrations/c/tpu_dialect.h"
+#include "xla/mosaic/dialect/tpu/integrations/c/tpu_dialect.h"
 
 namespace nb = nanobind;
 

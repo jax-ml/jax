@@ -33,6 +33,7 @@ from jax import random
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import test_harnesses
+from jax._src.interpreters import mlir
 import numpy as np
 
 
@@ -161,7 +162,12 @@ class PrimitiveTest(jtu.JaxTestCase):
           lambda x: jax.device_put(x, device), args
       )
       logging.info("Running harness natively on %s", device)
-      native_res = jax.jit(fn)(*device_args)
+      native_res = jax.jit(fn).trace(*device_args).lower(
+          _private_parameters=mlir.LoweringParameters(
+              for_export=True,
+              export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value,
+          )
+      ).compile()(*device_args)
       logging.info("Running exported harness on %s", device)
       exported_res = exp.call(*device_args)
       if tol is not None:

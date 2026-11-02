@@ -361,11 +361,11 @@ def format_table_output(data: EvaluationResult) -> str:
     col_widths = [len(h) for h in headers]
     for row in rows:
       for i, val in enumerate(row):
-        col_widths[i] = max(col_widths[i], len(str(val)))
+        col_widths[i] = max(col_widths[i], len(val))
     header_line = " | ".join(f"{h:<{w}}" for h, w in zip(headers, col_widths))
     sep_line = "-+-".join("-" * w for w in col_widths)
     row_lines = [
-        " | ".join(f"{str(val):<{w}}" for val, w in zip(row, col_widths))
+        " | ".join(f"{val:<{w}}" for val, w in zip(row, col_widths))
         for row in rows
     ]
     table_str = "\n".join([header_line, sep_line] + row_lines)

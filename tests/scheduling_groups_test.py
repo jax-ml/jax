@@ -17,6 +17,7 @@ from absl.testing import absltest
 import jax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
+from jax._src.lax import eval_jaxpr
 
 from jax.experimental.scheduling_groups import scheduling_group
 from jax.experimental.xla_metadata import xla_metadata_call
@@ -173,6 +174,43 @@ class SchedulingGroupsTest(jtu.JaxTestCase):
       return z.sum()
 
     f(inp)  # doesn't crash
+
+  @jtu.run_on_devices('cpu')
+  def test_xla_metadata_call_deduplication_consts_and_detached(self):
+    inp = jnp.arange(8.0)
+    const = jnp.ones(8)
+
+    @xla_metadata_call(inlineable='false')
+    def g(x):
+      return x * 2 + const
+
+    def f(x):
+      return g(g(x)).sum()
+
+    lowered = jax.jit(f).lower(inp)
+    self.assertEqual(
+        lowered.as_text().count('func.func private @xla_metadata_call'), 1
+    )
+    self.assertAllClose(lowered.compile()(inp), f(inp))
+
+    p_detached = eval_jaxpr.create_call_primitive(
+        'test_detached_cache', inline_jax_late=True
+    )
+    p_attached = eval_jaxpr.create_call_primitive(
+        'test_detached_cache', inline_jax_late=False
+    )
+    call_jaxpr = jax.make_jaxpr(lambda x: x * 2 + const)(inp)
+
+    def h(x):
+      (y,) = p_detached.bind(x, call_jaxpr=call_jaxpr)
+      (z,) = p_attached.bind(y, call_jaxpr=call_jaxpr)
+      return p_attached.bind(z, call_jaxpr=call_jaxpr)[0]
+
+    lowered_h = jax.jit(h).lower(inp)
+    self.assertEqual(
+        lowered_h.as_text().count('func.func private @test_detached_cache'), 1
+    )
+    self.assertAllClose(lowered_h.compile()(inp), g(g(g(inp))))
 
 
 if __name__ == '__main__':

@@ -15,42 +15,23 @@
 """Fuses a function."""
 
 from collections.abc import Iterable, Sequence
-import contextlib
 import functools
-from typing import Any
 
 import jax
 from jax._src import api_util
-from jax._src import config
 from jax._src import core as jax_core
 from jax._src import flattree as ft
 from jax._src import hijax
+from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas.fuser import fuser_utils
 from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
+from jax._src.pallas.fuser.fusible import disable_nested_fuse
 from jax._src.pallas.fuser.fusible import Fusible
 from jax._src.state import types as state_types
 from jax._src.traceback_util import api_boundary
-
-
-_disable_nested_fuse = config.config_ext.Config[bool](
-    "pallas_fuser_disable_nested_fuse",
-    False,
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-
-
-@contextlib.contextmanager
-def disable_nested_fuse(value: bool = True):
-  # A way to prevent nested fuse calls from fusing.
-  old_value = _disable_nested_fuse.swap_local(value)
-  try:
-    yield
-  finally:
-    _disable_nested_fuse.set_local(old_value)
 
 
 @functools.partial(api_boundary, repro_api_name="fuser.fuse")
@@ -65,6 +46,11 @@ def fuse(
 ):
   """Fuses a function into a single fusible.
 
+  There should be a single call to a ``fusible`` inside the body of ``f``. ``fuse``
+  returns a transformed function that will fuse the surrounding computation into
+  the fusible and invoke it. The fused function cannot take ``jax.ref.Ref`` objects as
+  arguments (it must close over ``Refs`` instead).
+
   Args:
     f: The function to fuse.
     resolve_fusion_dtypes: (experimental) whether or not to resolve fusion
@@ -77,9 +63,8 @@ def fuse(
     static_argnames: An optional string or collection of strings specifying
       which named arguments to treat as static (compile-time constant).
 
-  There should be a single call to a `fusible` inside the body of `f`. `fuse`
-  returns a transformed function that will fuse the surrounding computation into
-  the fusible and invoke it.
+  Returns:
+    A fused version of ``f``, or a decorator if ``f`` is ``None``.
   """
 
   def decorator(f):
@@ -125,20 +110,17 @@ def fuse(
         print("Jaxpr before fusion:")
         print(jaxpr)
       out_tree = out_avals_ft.tree
-      out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args,
-                            strict_mode=strict_mode)
-      return tree_util.tree_unflatten(out_tree, out_flat)
-
-    if resolve_fusion_dtypes:
-      wrapper = fusible_dtype.physicalize(
-          wrapper,
-          static_argnums=static_argnums_,
-          static_argnames=static_argnames_,
+      fuse_fn = functools.partial(
+          fuse_jaxpr, jaxpr, out_tree, consts, strict_mode=strict_mode
       )
+      if resolve_fusion_dtypes and fusible_dtype.has_fusion_dtypes(jaxpr):
+        fuse_fn = fusible_dtype.physicalize(fuse_fn)
+      out_flat = fuse_fn(*flat_args)
+      return tree_util.tree_unflatten(out_tree, out_flat)
 
     @functools.wraps(f)
     def outer_wrapper(*args, **kwargs):
-      if _disable_nested_fuse.value:
+      if disable_nested_fuse.value:
         return f(*args, **kwargs)
       return wrapper(*args, **kwargs)
 
@@ -147,9 +129,6 @@ def fuse(
   if f is not None:
     return decorator(f)
   return decorator
-
-
-_fusible: dict[jax_core.Primitive, Any] = {}
 
 
 def _construct_fusion_jaxpr(
@@ -212,7 +191,7 @@ def _find_downstream(
       ensure_out_inst=False,
       saveable=lambda *_, **__: False,
   )
-  # NOTE: out_used[:len(jaxpr.outvars)] reports whether or not the the original
+  # NOTE: out_used[:len(jaxpr.outvars)] reports whether or not the original
   # outputs depend on the inputs for which `in_used` is True.
   # out_used[len(jaxpr.outvars):] reports whether or not the new outputs
   # (updates for discharged Refs) depend on thse inputs.
@@ -357,14 +336,26 @@ def fuse_jaxpr(
     strict_mode: bool = True,
 ):
   # Collect input fusions
-  for i, eqn in enumerate(jaxpr.eqns):
-    if eqn.primitive is hijax.call_hi_primitive_p and isinstance(
-        eqn.params.get("_prim"), Fusible
-    ):
-      fusion_eqn_index = i
-      break
-  else:
-    raise ValueError("No fusible eqn found")
+  fusion_eqn_indices = [
+      i
+      for i, eqn in enumerate(jaxpr.eqns)
+      if eqn.primitive is hijax.call_hi_primitive_p
+      and isinstance(eqn.params.get("_prim"), Fusible)
+  ]
+  match fusion_eqn_indices:
+    case []:
+      raise ValueError("No fusible found")
+    case [fusion_eqn_index]:
+      pass
+    case _:
+      call_sites = "\n  ".join(
+          source_info_util.summarize(jaxpr.eqns[i].source_info)
+          for i in fusion_eqn_indices
+      )
+      raise ValueError(
+          "Only a single fusible is allowed in a fused function, but found"
+          f" {len(fusion_eqn_indices)} at:\n  {call_sites}"
+      )
   fusion_eqn = jaxpr.eqns[fusion_eqn_index]
   fusible: Fusible = fusion_eqn.params["_prim"]
 

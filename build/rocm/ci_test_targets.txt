@@ -15,3 +15,6 @@
 
 # Flaky on the CI workers.
 -//tests:export_harnesses_multi_platform_test_gpu
+
+# Times out on the CI workers since #41867.
+-//tests:lax_scipy_special_functions_test_gpu

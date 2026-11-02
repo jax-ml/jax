@@ -70,6 +70,7 @@ pytype_strict_library(
         ":weakref_lru_cache",
         ":xla_client",
         "//jaxlib/cpu:_lapack",
+        "//jaxlib/cpu:_math",
         "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir",
         "//jaxlib/mlir:arithmetic_dialect",
@@ -96,6 +97,7 @@ pytype_strict_library(
         "//jaxlib/mosaic",
         "//jaxlib/mosaic/python:gpu_dialect",
         "//jaxlib/mosaic/python:tpu_dialect",
+        "//jaxlib/thunky/python:thunky_dialect",
         "//jaxlib/triton",
         "@xla//xla/python:_hlo",
         "@xla//xla/python:_profile_data",
@@ -123,6 +125,7 @@ pytype_library(
     deps = [
         ":_jax",
         "//jaxlib/cpu:_lapack",
+        "//jaxlib/cpu:_math",
         "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:stablehlo_dialect",
@@ -184,6 +187,7 @@ pywrap_library(
         "//jaxlib/mlir/_mlir_libs:_sdy",
         "//jaxlib/mlir/_mlir_libs:_sdyMpmd",
         "//jaxlib/mlir/_mlir_libs:_stablehlo",
+        "//jaxlib/mlir/_mlir_libs:_thunky_ext",
         "//jaxlib/mlir/_mlir_libs:_tpu_ext",
         "//jaxlib/mlir/_mlir_libs:_triton_ext",
         "@xla//xla/python:_hlo",
@@ -237,6 +241,24 @@ cc_library(
 )
 
 cc_library(
+    name = "log_coeffs",
+    hdrs = ["log_coeffs.h"],
+    # compatible with libtpu
+)
+
+cc_library(
+    name = "lgamma_coeffs",
+    hdrs = ["lgamma_coeffs.h"],
+    # compatible with libtpu
+)
+
+cc_library(
+    name = "digamma_coeffs",
+    hdrs = ["digamma_coeffs.h"],
+    # compatible with libtpu
+)
+
+cc_library(
     name = "kernel_nanobind_helpers",
     hdrs = ["kernel_nanobind_helpers.h"],
     copts = [
@@ -245,26 +267,10 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":kernel_helpers",
         "@com_google_absl//absl/base",
         "@nanobind",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/tsl/python/lib/core:numpy",
-    ],
-)
-
-cc_library(
-    name = "kernel_helpers",
-    hdrs = ["kernel_helpers.h"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -720,6 +726,7 @@ cc_library(
         "@xla//xla/pjrt:pjrt_common",
         "@xla//xla/pjrt:pjrt_compiler",
         "@xla//xla/python:dlpack_types",
+        "@xla//xla/python:nb_numpy",
         "@xla//xla/python:types",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:rtti",
@@ -1005,6 +1012,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@nanobind",
         "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/profiler/lib:traceme_encode",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla:shape_util",
         "@xla//xla:util",

@@ -304,6 +304,7 @@ def wgmma_m64(
         reg_constraints,
         asm_dialect=0,
         has_side_effects=True,
+        convergent=True,
     )
     assert isinstance(acc_struct, ir.Value)
     acc_regs = [

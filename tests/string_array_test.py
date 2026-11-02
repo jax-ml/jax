@@ -28,7 +28,7 @@ jtu.request_cpu_devices(2)
 
 class StringArrayTest(jtu.JaxTestCase):
 
-  def make_test_string_array(self, device=None):
+  def make_test_string_array(self, device=None, strings=("abcd", "efgh")):
     """Makes and returns a simple 2x1 string array on the first CPU device."""
     if device is None:
       cpu_devices = jax.devices("cpu")
@@ -38,9 +38,7 @@ class StringArrayTest(jtu.JaxTestCase):
         )
       device = cpu_devices[0]
 
-    numpy_string_array = np.array(
-        ["abcd", "efgh"], dtype=np.dtypes.StringDType()
-    )
+    numpy_string_array = np.array(strings, dtype=np.dtypes.StringDType())
     jax_string_array = jax.device_put(numpy_string_array, device=device)
     jax_string_array.block_until_ready()
     return jax_string_array
@@ -243,7 +241,9 @@ class StringArrayTest(jtu.JaxTestCase):
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
       for _ in range(10):
-        arr = self.make_test_string_array()
+        arr = self.make_test_string_array(
+            strings=["abcd" * 2048, "efgh" * 2048]
+        )
         futures = [executor.submit(worker, arr) for _ in range(8)]
         for f in futures:
           f.result()

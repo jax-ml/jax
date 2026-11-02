@@ -1,0 +1,731 @@
+# Copyright 2026 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Precision tests for power, root, and reciprocal functions."""
+
+import math
+
+from absl.testing import parameterized
+import jax
+from jax import lax
+from jax._src import config
+from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
+import jax.numpy as jnp
+from jax.tests.numerics import numerics_test_util as util
+import mpmath
+import numpy as np
+
+config.parse_flags_with_absl()
+
+bf16, f16, f32, f64 = jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64
+c64, c128 = jnp.complex64, jnp.complex128
+DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
+COMPLEX_DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [c64, c128]]
+TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
+
+
+@jtu.thread_unsafe_test_class()
+class SqrtTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_sqrt_accuracy(self, dtype):
+    bounds = [
+        ("gpu", {f32: 1.0}),
+        ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 3.0}),
+        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 2.0}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    # Worst-case input across math libraries from Gladman et al., "Accuracy of
+    # Mathematical Functions in Single, Double, Double Extended, and Quadruple
+    # Precision".
+    interesting_points = [float.fromhex("0x1.fffffffffffffp-1")]
+    util.check_unary_precision(
+        self,
+        jnp.sqrt,
+        np.sqrt,
+        mpmath.sqrt,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        interesting_points=interesting_points,
+    )
+
+
+def _mpmath_rsqrt(x):
+  if x < 0:
+    return mpmath.nan
+  if x == 0:
+    return -mpmath.inf if np.signbit(float(x)) else mpmath.inf
+  return 1 / mpmath.sqrt(x)
+
+
+@jtu.thread_unsafe_test_class()
+class RsqrtTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_rsqrt_accuracy(self, dtype):
+    if jaxlib_extension_version >= 506:
+      # x86_64 (AVX + FMA) is within 1.0 ULP; non-AVX CPUs (e.g. ARM) fall back
+      # to float32 1.0 / sqrt(x) and are within 1.5 ULP.
+      cpu_bounds = ("cpu", {f32: (1.0, 1.5), f64: 1.5})
+    else:
+      # The max ULP for float32 is either 1.0 and 2.0 depend on CPU vendor (AMD
+      # vs Intel). The (min, max) tuple allows tightness checks to pass on both.
+      cpu_bounds = ("cpu", {f32: (1.0, 2.0), f64: 1.5})
+    bounds = [
+        cpu_bounds,
+        ("gpu", {f32: 2.0, f64: 1.5}),
+        ([*TPU_EUPV1, "tpu_v5p"], {f32: 2.5}),
+        ("tpu_v6e", {f32: 1.5}),
+        ("tpu_7x", {f32: 1.0}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    # Worst-case inputs across math libraries from Gladman et al.
+    interesting_points = [
+        float.fromhex(h)
+        for h in (
+            "0x1.fff002p-27",
+            "0x1.000080005p-620",
+            "0x1.00018f5913816p-458",
+            "0x1.f81ab000eb7d9p+479",
+            "0x1.0000000000002p+484",
+        )
+    ]
+    util.check_unary_precision(
+        self,
+        lax.rsqrt,
+        lambda x: np.reciprocal(np.sqrt(x)),
+        _mpmath_rsqrt,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        interesting_points=interesting_points,
+    )
+
+
+@jtu.thread_unsafe_test_class()
+class CbrtTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_cbrt_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0}),
+        ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
+        ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 4.5}),
+        (["tpu_v6e", "tpu_7x"], {f32: 1.5}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    # Worst-case inputs across math libraries from Gladman et al.
+    interesting_points = [
+        float.fromhex(h)
+        for h in (
+            "0x1.7a337e1ba1ec2p-257",
+            "-0x1.f7af4893d1d51p-616",
+            "-0x1.0c8125f4f1c39p+998",
+            "-0x1.00ddafe7d9deep-885",
+            "-0x1.13a5ccd87c9bbp+1008",
+            "0x1.fed1fe9f1122dp+11",
+            "0x1.a202bfc89ddffp-1",
+            "-0x1.55cd285f321f6p-64",
+            "0x1.fffad1cec59fep-332",
+            "-0x1.588a24f7a97d3p+535",
+            "-0x1.1683e6953f0ep+235",
+        )
+    ]
+    util.check_unary_precision(
+        self,
+        jnp.cbrt,
+        np.cbrt,
+        lambda x: -mpmath.cbrt(-x) if x < 0 else mpmath.cbrt(x),
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        interesting_points=interesting_points,
+    )
+
+
+@jtu.thread_unsafe_test_class()
+class SquareTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_square_accuracy(self, dtype):
+    bounds = []
+    util.check_unary_precision(
+        self, jnp.square, np.square, lambda x: x * x, dtype, bounds=bounds
+    )
+
+
+def _mpmath_reciprocal(x):
+  if x == 0:
+    return -mpmath.inf if np.signbit(float(x)) else mpmath.inf
+  return 1 / x
+
+
+@jtu.thread_unsafe_test_class()
+class ReciprocalTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_reciprocal_accuracy(self, dtype):
+    bounds = [
+        ("gpu", {f32: 1.0}),
+        (TPU_EUPV1, {bf16: 1.0, f32: 198.0}),
+        ("tpu_v5p", {bf16: 1.0, f32: 40.0}),
+        (["tpu_v6e", "tpu_7x"], {f32: 1.5}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    util.check_unary_precision(
+        self,
+        jnp.reciprocal,
+        np.reciprocal,
+        _mpmath_reciprocal,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+    )
+
+
+@jtu.thread_unsafe_test_class()
+class HypotTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_hypot_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {bf16: 1.5, f16: 1.5, f32: 1.5, f64: 1.5}),
+        ("gpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 1.5}),
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 3.5}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 3.5}),
+        ("tpu_v6e", {f16: 1.0, f32: 2.5}),
+        ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 2.5}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+
+    # _hypot_ref is evaluated in float64 for bf16/f16/f32 (f64 uses mpmath),
+    # where x*x and y*y are exact (<= 48 mantissa bits) and cannot overflow or
+    # underflow float64, allowing SIMD sqrt(x*x + y*y) instead of scalar libm.
+    def _hypot_ref(x, y):
+      res = np.hypot(x, y) if dtype == f64 else np.sqrt(x * x + y * y)
+      return np.where(np.isinf(x) | np.isinf(y), np.inf, res)
+
+    def _mpmath_hypot(x, y):
+      if np.isinf(float(x)) or np.isinf(float(y)):
+        return mpmath.inf
+      return mpmath.hypot(x, y)
+
+    finfo = jnp.finfo(dtype)
+    k = (finfo.nmant - finfo.minexp + 1) // 2
+    e_hi = (finfo.maxexp - 1) // 2
+    # Rescaling thresholds in jnp.hypot where max(|x|, |y|) triggers scaled-up
+    # (s_lo) or scaled-down (s_hi) evaluation to avoid intermediate underflow
+    # or overflow, plus sqrt(max_float) and max_float / sqrt(2).
+    s_lo = 2.0 ** (e_hi - k)
+    s_hi = 2.0**e_hi
+    max_val = float(finfo.max)
+    interesting_points = [
+        *(
+            sign * v
+            for v in (
+                s_lo,
+                s_hi,
+                math.sqrt(max_val),
+                max_val / math.sqrt(2.0),
+                3.0,
+                4.0,
+                3.0 * s_lo / 4.0,
+                3.0 * s_hi / 4.0,
+            )
+            for sign in (-1, 1)
+        ),
+        # Worst-case (x, y) inputs across math libraries from Gladman et al.:
+        *(
+            (float.fromhex(x), float.fromhex(y))
+            for x, y in (
+                ("-0x1.003222p-20", "-0x1.6a2d58p-32"),
+                ("-0x1.0554acp+44", "-0x1.6dc9e6p+32"),
+                ("-0x1.6b05c4p-127", "0x1.6b3146p-126"),
+                ("0x1.26b188p-127", "-0x1.a4f2fp-128"),
+                ("0x1.65e2cp+124", "0x1.ac1p+112"),
+                ("0x1.007594p+1", "-0x1.003512p+1"),
+                ("0x1.b881fep+7", "0x1.7f482ep+15"),
+                ("0x0.603e52daf0bfdp-1022", "-0x0.a622d0a9a433bp-1022"),
+                ("0x0.19deaac345ffap-1022", "0x0.92c8727c389b6p-1022"),
+                ("-0x1.a9a537a197f59p+427", "0x1.254f84c458eb4p+428"),
+                ("0x1.6a0a41410b1abp-1004", "-0x0.a24afe71b539fp-1022"),
+                ("0x1.00014d4b1c6b9p-1015", "-0x1.000105ba9bf4p-1015"),
+                ("0x1.a308e1455f447p+0", "0x1.9d931a83ef879p+0"),
+                ("-0x1.6a5a0ce661358p+890", "-0x1.0151c108425b1p+890"),
+                ("-0x1.41fcfeeb2e246p+420", "-0x1.8d4d41eacdeccp+420"),
+                ("0x1.afa7134ad6d8p-403", "0x1.6a0ff6e086067p-384"),
+            )
+        ),
+    ]
+    util.check_nary_precision(
+        self,
+        jnp.hypot,
+        _hypot_ref,
+        _mpmath_hypot,
+        dtype,
+        nargs=2,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        interesting_points=interesting_points,
+    )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_hypot_grad(self, dtype):
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    finfo = jnp.finfo(dtype)
+    small = float(finfo.tiny) * 4.0
+    large = float(finfo.max) / 8.0
+    big = float(finfo.max)
+    # Test normal, axis-aligned, underflow-prone, and overflow-prone regimes,
+    # including the top binades where 1 / r is subnormal and where r overflows
+    # to inf even though the gradient is finite.
+    cases = [
+        (3.0, 4.0),
+        (-3.0, 4.0),
+        (3.0, -4.0),
+        (-3.0, -4.0),
+        (5.0, 0.0),
+        (-5.0, 0.0),
+        (0.0, 5.0),
+        (0.0, -5.0),
+        (3.0 * small, 4.0 * small),
+        (-3.0 * small, 4.0 * small),
+        (3.0 * large, 4.0 * large),
+        (3.0 * large, -4.0 * large),
+        (0.6 * big, 0.8 * big),
+        (big, big),
+        (-big, big),
+        (big, 1.0),
+    ]
+    if dtype == f16:
+      subnormal = float(finfo.smallest_subnormal)
+      cases.extend([
+          (3.0 * subnormal, 4.0 * subnormal),
+          (-3.0 * subnormal, 4.0 * subnormal),
+      ])
+    xs = jnp.array([c[0] for c in cases], dtype=dtype)
+    ys = jnp.array([c[1] for c in cases], dtype=dtype)
+
+    # Reference unit vector (x / r, y / r) in float64, normalized by
+    # max(|x|, |y|) first so it does not overflow for float64 inputs.
+    x64, y64 = np.asarray(xs, np.float64), np.asarray(ys, np.float64)
+    m64 = np.maximum(np.abs(x64), np.abs(y64))
+    a, b = x64 / m64, y64 / m64
+    h = np.hypot(a, b)
+    expected_gx, expected_gy = a / h, b / h
+
+    grad_fn = jax.jit(jax.vmap(jax.grad(jnp.hypot, argnums=(0, 1))))
+    gx, gy = grad_fn(xs, ys)
+    tol = 4 * float(finfo.eps)
+    self.assertAllClose(
+        np.asarray(gx, np.float64), expected_gx, atol=tol, rtol=tol
+    )
+    self.assertAllClose(
+        np.asarray(gy, np.float64), expected_gy, atol=tol, rtol=tol
+    )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_hypot_higher_order_grad(self, dtype):
+    # Second- and third-order derivatives must stay accurate in the regimes
+    # where _hypot rescales its inputs by 2**(+-k); differentiating through the
+    # scale would produce overflowing or underflowing scale**n factors.
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    finfo = jnp.finfo(dtype)
+    k = (finfo.nmant - finfo.minexp + 1) // 2
+    e_hi = (finfo.maxexp - 1) // 2
+    # (3 * s, 4 * s) with s chosen so max(|x|, |y|) = 4 * s lands in
+    # the scaled-up (lo) and scaled-down (hi) regimes in _hypot.
+    s_lo = 2.0 ** (e_hi - k - 2)
+    s_hi = 2.0**e_hi
+
+    hessian_fn = jax.jit(jax.hessian(jnp.hypot, argnums=(0, 1)))
+    third_fn = jax.jit(jax.grad(jax.grad(jax.grad(jnp.hypot))))
+    tol = 8 * float(finfo.eps)
+    for s in (1.0, s_lo, s_hi):
+      x = jnp.array(3.0 * s, dtype=dtype)
+      y = jnp.array(4.0 * s, dtype=dtype)
+      r = 5.0 * s
+      # d^2 r / dx_i dx_j = (delta_ij - u_i u_j) / r with u = (0.6, 0.8).
+      expected_hessian = np.array([[0.64, -0.48], [-0.48, 0.36]]) / r
+      hessian = np.array(
+          [[float(h) for h in row] for row in hessian_fn(x, y)]
+      )
+      self.assertAllClose(hessian, expected_hessian, atol=0, rtol=tol)
+      # The third derivative ~ 1 / r**2 is subnormal at s_hi, so skip it there.
+      if s != s_hi:
+        # d^3 r / dx^3 = -3 x y^2 / r^5 = -3 u_1 u_2^2 / r^2.
+        expected_third = -3.0 * 0.6 * 0.64 / (r * r)
+        self.assertAllClose(
+            float(third_fn(x, y)), expected_third, atol=0, rtol=tol
+        )
+
+    # Strongly imbalanced operands where r == |x| in working precision (u1 == 1):
+    # writing du1 = (dx1 - u1 * dr) / r cancels 1 - 1 to 0, collapsing
+    # d^2 r / dx^2 = u2^2 / r and d^3 r / dx^3 = -3 u1 u2^2 / r^2 to 0.
+    x_imbal_val = 2.0 ** (finfo.nmant // 2 + 2)
+    x_imbal = jnp.array(x_imbal_val, dtype=dtype)
+    y_imbal = jnp.array(1.0, dtype=dtype)
+    r_imbal = math.hypot(x_imbal_val, 1.0)
+    u1_imbal, u2_imbal = x_imbal_val / r_imbal, 1.0 / r_imbal
+    expected_imbal_hessian = (
+        np.array([
+            [u2_imbal**2, -u1_imbal * u2_imbal],
+            [-u1_imbal * u2_imbal, u1_imbal**2],
+        ])
+        / r_imbal
+    )
+    imbal_hessian = np.array(
+        [[float(h) for h in row] for row in hessian_fn(x_imbal, y_imbal)]
+    )
+    self.assertAllClose(imbal_hessian, expected_imbal_hessian, atol=0, rtol=tol)
+    # For float16, x_imbal = 2^7 gives |d^3 r / dx^3| = 3 * 2^-28 < 2^-24,
+    # below float16's smallest subnormal.
+    if dtype != f16:
+      expected_imbal_third = (
+          -3.0 * u1_imbal * (u2_imbal**2) / (r_imbal * r_imbal)
+      )
+      self.assertAllClose(
+          float(third_fn(x_imbal, y_imbal)),
+          expected_imbal_third,
+          atol=0,
+          rtol=tol,
+      )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_hypot_grad_at_zero(self, dtype):
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    grad_fn = jax.jit(jax.grad(jnp.hypot, argnums=(0, 1)))
+    for sx in (0.0, -0.0):
+      for sy in (0.0, -0.0):
+        x = jnp.array(sx, dtype=dtype)
+        y = jnp.array(sy, dtype=dtype)
+        gx, gy = grad_fn(x, y)
+        self.assertTrue(np.isnan(float(gx)))
+        self.assertTrue(np.isnan(float(gy)))
+        primal, tangent = jax.jvp(
+            jnp.hypot,
+            (x, y),
+            (jnp.ones_like(x), jnp.ones_like(y)),
+        )
+        self.assertEqual(float(primal), 0.0)
+        self.assertTrue(np.isnan(float(tangent)))
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_hypot_grad_at_inf(self, dtype):
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    grad_fn = jax.jit(jax.grad(jnp.hypot, argnums=(0, 1)))
+    hess_fn = jax.jit(jax.hessian(jnp.hypot, argnums=(0, 1)))
+    third_fn = jax.jit(jax.grad(jax.grad(jax.grad(jnp.hypot))))
+
+    for sx in (np.inf, -np.inf):
+      expected_sign = math.copysign(1.0, sx)
+      for fin in (0.0, -0.0, 3.0, -3.0):
+        x = jnp.array(sx, dtype=dtype)
+        y = jnp.array(fin, dtype=dtype)
+
+        gx, gy = grad_fn(x, y)
+        self.assertEqual(float(gx), expected_sign)
+        self.assertEqual(float(gy), 0.0)
+        hess = np.array([[float(h) for h in row] for row in hess_fn(x, y)])
+        np.testing.assert_array_equal(hess, np.zeros((2, 2)))
+        self.assertEqual(float(third_fn(x, y)), 0.0)
+
+        gx, gy = grad_fn(y, x)
+        self.assertEqual(float(gx), 0.0)
+        self.assertEqual(float(gy), expected_sign)
+        hess = np.array([[float(h) for h in row] for row in hess_fn(y, x)])
+        np.testing.assert_array_equal(hess, np.zeros((2, 2)))
+        self.assertEqual(float(third_fn(y, x)), 0.0)
+
+    # At (±inf, ±inf) and (±inf, NaN), r is +inf per IEEE 754, while the
+    # gradient has no well-defined limit and must be NaN.
+    for a, b in (
+        (np.inf, np.inf),
+        (np.inf, -np.inf),
+        (-np.inf, np.inf),
+        (-np.inf, -np.inf),
+        (np.inf, np.nan),
+        (-np.inf, np.nan),
+        (np.nan, np.inf),
+        (np.nan, -np.inf),
+    ):
+      x = jnp.array(a, dtype=dtype)
+      y = jnp.array(b, dtype=dtype)
+      self.assertEqual(float(jnp.hypot(x, y)), np.inf)
+      gx, gy = grad_fn(x, y)
+      self.assertTrue(np.isnan(float(gx)))
+      self.assertTrue(np.isnan(float(gy)))
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_hypot_jit_constants(self, dtype):
+    # Regression test: when one or both operands of jnp.hypot are compile-time
+    # constants inside jit, XLA's algebraic simplifier must not reassociate
+    # (x * scale)^2 into (scale * scale) * (x * x), which overflows scale^2 to
+    # inf in the lo branch (producing inf * 0 = NaN for x = 0) or overflows/
+    # underflows x^2 before scaling.
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    finfo = jnp.finfo(dtype)
+    k = (finfo.nmant - finfo.minexp + 1) // 2
+    e_hi = (finfo.maxexp - 1) // 2
+    s_lo = 2.0 ** (e_hi - k - 2)
+    s_hi = 2.0**e_hi
+    tol = 4 * float(finfo.eps)
+
+    for s in (0.0, 1.0, s_lo, s_hi):
+      c1 = jnp.array(3.0 * s, dtype=dtype)
+      c2 = jnp.array(4.0 * s, dtype=dtype)
+      expected = 5.0 * s
+
+      res_both_const = jax.jit(lambda c1=c1, c2=c2: jnp.hypot(c1, c2))()
+      self.assertAllClose(float(res_both_const), expected, atol=0, rtol=tol)
+
+      res_lhs_const = jax.jit(lambda y, c1=c1: jnp.hypot(c1, y))(c2)
+      self.assertAllClose(float(res_lhs_const), expected, atol=0, rtol=tol)
+
+      res_rhs_const = jax.jit(lambda x, c2=c2: jnp.hypot(x, c2))(c1)
+      self.assertAllClose(float(res_rhs_const), expected, atol=0, rtol=tol)
+
+      res_zero_const = jax.jit(
+          lambda x: jnp.hypot(jnp.zeros_like(x), x)
+      )(c2)
+      self.assertAllClose(
+          float(res_zero_const), 4.0 * s, atol=0, rtol=tol
+      )
+
+
+@jtu.thread_unsafe_test_class()
+class ComplexAbsTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*COMPLEX_DTYPE_PARAMS)
+  def test_complex_abs_grad(self, dtype):
+    if dtype == c128 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    real_dtype = jnp.finfo(dtype).dtype
+    finfo = jnp.finfo(real_dtype)
+    small = float(finfo.tiny) * 4.0
+    large = float(finfo.max) / 8.0
+    big = float(finfo.max)
+    # Test normal, axis-aligned, near-axis (where trig/atan2 loses precision),
+    # underflow-prone, and overflow-prone regimes, including inputs whose
+    # magnitude overflows to inf even though the gradient is finite.
+    cases = [
+        (3.0, 4.0),
+        (-3.0, 4.0),
+        (3.0, -4.0),
+        (-3.0, -4.0),
+        (5.0, 0.0),
+        (-5.0, 0.0),
+        (0.0, 5.0),
+        (0.0, -5.0),
+        (1e-4, 10.0),
+        (-10.0, 1e-4),
+        (float(finfo.eps) / 4.0, 1.0),
+        (-1.0, float(finfo.eps) / 4.0),
+        (3.0 * small, 4.0 * small),
+        (-3.0 * small, 4.0 * small),
+        (3.0 * large, 4.0 * large),
+        (3.0 * large, -4.0 * large),
+        (0.6 * big, 0.8 * big),
+        (big, big),
+        (-big, big),
+        (big, 1.0),
+    ]
+    xr = jnp.array([c[0] for c in cases], dtype=real_dtype)
+    xi = jnp.array([c[1] for c in cases], dtype=real_dtype)
+    zs = lax.complex(xr, xi)
+
+    xr64, xi64 = np.asarray(xr, np.float64), np.asarray(xi, np.float64)
+    m64 = np.maximum(np.abs(xr64), np.abs(xi64))
+    a, b = xr64 / m64, xi64 / m64
+    h = np.hypot(a, b)
+    # JAX's Wirtinger convention for real-valued f(x + i y) gives df/dx - i df/dy.
+    expected_re, expected_im = a / h, -b / h
+
+    g = jax.jit(jax.vmap(jax.grad(jnp.abs)))(zs)
+    tol = 4 * float(finfo.eps)
+    # Allow finfo.tiny absolute tolerance for subnormal outputs (like 1 / big)
+    # that flush to zero on FTZ backends such as CPU and TPU.
+    atol = float(finfo.tiny)
+    self.assertAllClose(
+        np.asarray(jnp.real(g), np.float64), expected_re, atol=atol, rtol=tol
+    )
+    self.assertAllClose(
+        np.asarray(jnp.imag(g), np.float64), expected_im, atol=atol, rtol=tol
+    )
+
+    _, tangents = jax.jit(
+        jax.vmap(lambda z, dz: jax.jvp(jnp.abs, (z,), (dz,)))
+    )(zs, lax.complex(jnp.ones_like(xr), 2.0 * jnp.ones_like(xi)))
+    expected_jvp = (a + 2.0 * b) / h
+    self.assertAllClose(
+        np.asarray(tangents, np.float64), expected_jvp, atol=atol, rtol=tol
+    )
+
+  @parameterized.named_parameters(*COMPLEX_DTYPE_PARAMS)
+  def test_complex_abs_higher_order_grad(self, dtype):
+    if dtype == c128 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    real_dtype = jnp.finfo(dtype).dtype
+    finfo = jnp.finfo(real_dtype)
+    k = (finfo.nmant - finfo.minexp + 1) // 2
+    e_hi = (finfo.maxexp - 1) // 2
+    s_lo = 2.0 ** (e_hi - k - 2)
+    s_hi = 2.0**e_hi
+
+    def abs_xy(x, y):
+      return jnp.abs(lax.complex(x, y))
+
+    hessian_fn = jax.jit(jax.hessian(abs_xy, argnums=(0, 1)))
+    third_fn = jax.jit(jax.grad(jax.grad(jax.grad(abs_xy))))
+    tol = 8 * float(finfo.eps)
+    for s in (1.0, s_lo, s_hi):
+      x = jnp.array(3.0 * s, dtype=real_dtype)
+      y = jnp.array(4.0 * s, dtype=real_dtype)
+      r = 5.0 * s
+      expected_hessian = np.array([[0.64, -0.48], [-0.48, 0.36]]) / r
+      hessian = np.array(
+          [[float(h) for h in row] for row in hessian_fn(x, y)]
+      )
+      self.assertAllClose(hessian, expected_hessian, atol=0, rtol=tol)
+      if s != s_hi:
+        expected_third = -3.0 * 0.6 * 0.64 / (r * r)
+        self.assertAllClose(
+            float(third_fn(x, y)), expected_third, atol=0, rtol=tol
+        )
+
+    # Strongly imbalanced components where r == |x| in working precision.
+    x_imbal_val = 2.0 ** (finfo.nmant // 2 + 2)
+    x_imbal = jnp.array(x_imbal_val, dtype=real_dtype)
+    y_imbal = jnp.array(1.0, dtype=real_dtype)
+    r_imbal = math.hypot(x_imbal_val, 1.0)
+    u1_imbal, u2_imbal = x_imbal_val / r_imbal, 1.0 / r_imbal
+    expected_imbal_hessian = (
+        np.array([
+            [u2_imbal**2, -u1_imbal * u2_imbal],
+            [-u1_imbal * u2_imbal, u1_imbal**2],
+        ])
+        / r_imbal
+    )
+    imbal_hessian = np.array(
+        [[float(h) for h in row] for row in hessian_fn(x_imbal, y_imbal)]
+    )
+    self.assertAllClose(imbal_hessian, expected_imbal_hessian, atol=0, rtol=tol)
+    expected_imbal_third = (
+        -3.0 * u1_imbal * (u2_imbal**2) / (r_imbal * r_imbal)
+    )
+    self.assertAllClose(
+        float(third_fn(x_imbal, y_imbal)),
+        expected_imbal_third,
+        atol=0,
+        rtol=tol,
+    )
+
+  @parameterized.named_parameters(*COMPLEX_DTYPE_PARAMS)
+  def test_complex_abs_grad_special_values(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/25681
+    if dtype == c128 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    real_dtype = jnp.finfo(dtype).dtype
+
+    def abs_xy(x, y):
+      return jnp.abs(lax.complex(x, y))
+
+    grad_fn = jax.jit(jax.grad(jnp.abs))
+    hess_fn = jax.jit(jax.hessian(abs_xy, argnums=(0, 1)))
+
+    # At complex zero (all signed-zero combinations), grad(abs)(0j) == 0j.
+    for sx in (0.0, -0.0):
+      for sy in (0.0, -0.0):
+        z = lax.complex(
+            jnp.array(sx, dtype=real_dtype), jnp.array(sy, dtype=real_dtype)
+        )
+        g = grad_fn(z)
+        self.assertEqual(float(jnp.real(g)), 0.0)
+        self.assertEqual(float(jnp.imag(g)), 0.0)
+        primal, tangent = jax.jvp(jnp.abs, (z,), (jnp.ones_like(z),))
+        self.assertEqual(float(primal), 0.0)
+        self.assertEqual(float(tangent), 0.0)
+
+    # Single-axis infinities (±inf + yj and x ± inf*j with finite x, y).
+    for s_inf in (np.inf, -np.inf):
+      sign_inf = math.copysign(1.0, s_inf)
+      for fin in (0.0, -0.0, 3.0, -3.0):
+        x_inf = jnp.array(s_inf, dtype=real_dtype)
+        y_fin = jnp.array(fin, dtype=real_dtype)
+
+        z = lax.complex(x_inf, y_fin)
+        g = grad_fn(z)
+        self.assertEqual(float(jnp.real(g)), sign_inf)
+        self.assertEqual(float(jnp.imag(g)), 0.0)
+        hess = np.array(
+            [[float(h) for h in row] for row in hess_fn(x_inf, y_fin)]
+        )
+        np.testing.assert_array_equal(hess, np.zeros((2, 2)))
+
+        z = lax.complex(y_fin, x_inf)
+        g = grad_fn(z)
+        self.assertEqual(float(jnp.real(g)), 0.0)
+        self.assertEqual(float(jnp.imag(g)), -sign_inf)
+        hess = np.array(
+            [[float(h) for h in row] for row in hess_fn(y_fin, x_inf)]
+        )
+        np.testing.assert_array_equal(hess, np.zeros((2, 2)))
+
+    # (±inf, ±inf) and (±inf, NaN): primal is +inf, gradient is NaN + NaNj.
+    for a, b in (
+        (np.inf, np.inf),
+        (np.inf, -np.inf),
+        (-np.inf, np.inf),
+        (-np.inf, -np.inf),
+        (np.inf, np.nan),
+        (-np.inf, np.nan),
+        (np.nan, np.inf),
+        (np.nan, -np.inf),
+    ):
+      z = lax.complex(
+          jnp.array(a, dtype=real_dtype), jnp.array(b, dtype=real_dtype)
+      )
+      self.assertEqual(float(jnp.abs(z)), np.inf)
+      g = grad_fn(z)
+      self.assertTrue(np.isnan(float(jnp.real(g))))
+      self.assertTrue(np.isnan(float(jnp.imag(g))))
+
+
+util.register_benchmark(jnp.sqrt)
+util.register_benchmark(lax.rsqrt)
+util.register_benchmark(jnp.cbrt)
+util.register_benchmark(jnp.square)
+util.register_benchmark(jnp.reciprocal)
+util.register_benchmark(jnp.hypot, nargs=2)
+
+
+if __name__ == "__main__":
+  util.main()

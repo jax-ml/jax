@@ -16,12 +16,10 @@ limitations under the License.
 #ifndef JAXLIB_KERNEL_NANOBIND_HELPERS_H_
 #define JAXLIB_KERNEL_NANOBIND_HELPERS_H_
 
-#include <string>
 #include <type_traits>
 
 #include "absl/base/casts.h"
 #include "nanobind/nanobind.h"
-#include "jaxlib/kernel_helpers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/tsl/python/lib/core/numpy.h"  // NOLINT
 
@@ -39,20 +37,6 @@ class dtype : public nanobind::object {
   /// For example, floating point types are 'f' and integral types are 'i'.
   char kind() const { return nanobind::cast<char>(attr("kind")); }
 };
-
-// Descriptor objects are opaque host-side objects used to pass data from JAX
-// to the custom kernel launched by XLA. Currently simply treat host-side
-// structures as byte-strings; this is not portable across architectures. If
-// portability is needed, we could switch to using a representation such as
-// protocol buffers or flatbuffers.
-
-// Packs a descriptor object into a nanobind::bytes structure.
-// UnpackDescriptor() is available in kernel_helpers.h.
-template <typename T>
-nanobind::bytes PackDescriptor(const T& descriptor) {
-  std::string s = PackDescriptorAsString(descriptor);
-  return nanobind::bytes(s.data(), s.size());
-}
 
 template <typename T>
 nanobind::capsule EncapsulateFunction(T* fn) {

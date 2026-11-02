@@ -350,8 +350,6 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   def testWelchWithDefaultStepArgsAgainstNumpy(
       self, *, shape, dtype, nperseg, noverlap, use_nperseg, use_noverlap,
       use_window, timeaxis):
-    if tuple(shape) == (2, 3, 389, 5) and nperseg == 17 and noverlap == 13:
-      raise unittest.SkipTest("Test fails for these inputs")
     kwargs = {'axis': timeaxis}
 
     if use_nperseg:
@@ -365,7 +363,8 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     def osp_fun(x):
       freqs, Pxx = osp_signal.welch(x, **kwargs)
       return freqs.astype(_real_dtype(dtype)), Pxx.astype(_real_dtype(dtype))
-    jsp_fun = partial(jsp_signal.welch, **kwargs)
+    jsp_fun = jtu.ignore_warning(message="nperseg")(
+        partial(jsp_signal.welch, **kwargs))
     tol = {
         np.float32: 1e-5, np.float64: 1e-12,
         np.complex64: 1e-5, np.complex128: 1e-12

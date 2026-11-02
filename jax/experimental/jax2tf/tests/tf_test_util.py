@@ -32,6 +32,7 @@ from jax.experimental import jax2tf
 from jax import export
 from jax._src import config
 from jax._src import xla_bridge
+from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
 import numpy as np
 import tensorflow as tf
@@ -220,7 +221,13 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     """
     # Run JAX. Should not fail, we assume that the harness has been filtered
     # already by JAX unimplemented primitives.
-    result_jax = func_jax(*args)  # JAX
+    func_jit = func_jax if hasattr(func_jax, "trace") else jax.jit(func_jax)
+    result_jax = func_jit.trace(*args).lower(
+        _private_parameters=mlir.LoweringParameters(
+            for_export=True,
+            export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value,
+        )
+    ).compile()(*args)  # JAX
     result_tf = None
 
     func_tf = jax2tf.convert(func_jax)
@@ -306,7 +313,12 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
         logging.info("[%s] Logging HLO for exception in mode %s: %s",
                      self._testMethodName, mode, e)
-        jax_lowered = jax.jit(func_jax).lower(*args)
+        jax_lowered = func_jit.trace(*args).lower(
+            _private_parameters=mlir.LoweringParameters(
+                for_export=True,
+                export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value,
+            )
+        )
         # We log the HLO dialect for easier comparison with TF
         logging.info("[%s] JAX NON_OPT HLO\n%s",
                      self._testMethodName,

@@ -3055,6 +3055,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         lambda dtype, device: jnp.linspace(5, 6, 7, dtype=dtype, device=device),
         lambda dtype, device: jnp.linspace(5, 6, 7, retstep=True, dtype=dtype, device=device),
         lambda dtype, device: jnp.array([1, 2, 3, 4, 5], dtype=dtype, device=device),
+        lambda dtype, device: jnp.logspace(-3, 3, dtype=dtype, device=device),
+        lambda dtype, device: jnp.geomspace(1e-3, 1e3, dtype=dtype, device=device),
       ],
       dtype=default_dtypes,
   )
@@ -3073,6 +3075,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         lambda dtype, device: jnp.linspace(5, 6, 7, dtype=dtype, device=device),
         lambda dtype, device: jnp.linspace(5, 6, 7, retstep=True, dtype=dtype, device=device),
         lambda dtype, device: jnp.array([1, 2, 3, 4, 5], dtype=dtype, device=device),
+        lambda dtype, device: jnp.logspace(-3, 3, dtype=dtype, device=device),
+        lambda dtype, device: jnp.geomspace(1e-3, 1e3, dtype=dtype, device=device),
       ],
       dtype=default_dtypes,
   )
@@ -4482,6 +4486,43 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
+      for shape in [(20, 7), (25, 4, 5), (18, 3, 2, 4)]
+      for axis in (-1, *range(len(shape) - 1))
+    ],
+    dtype=all_dtypes,
+    batch_size=[1, 5, 16],
+  )
+  def testLexsortManyKeys(self, dtype, shape, axis, batch_size):
+    # With more keys than batch_size, lexsort sorts the keys in batches. Keys
+    # passed as one array and as a tuple of arrays take different code paths,
+    # so check both. Values in {0, 1} make every key matter.
+    args_maker = lambda: [self.rng().randint(0, 2, shape).astype(dtype)]
+    np_op = jtu.with_jax_dtype_defaults(lambda x: np.lexsort(x, axis=axis))
+    array_op = lambda x: jnp.lexsort(x, axis=axis, batch_size=batch_size)
+    tuple_op = lambda x: jnp.lexsort(tuple(x), axis=axis, batch_size=batch_size)
+    for jnp_op in [array_op, tuple_op]:
+      self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+      self._CompileAndCheck(jnp_op, args_maker)
+
+  @jtu.sample_product(axis=[0, 1, -1], batch_size=[1, 3, 16])
+  def testLexsortManyKeysMixedDtypes(self, axis, batch_size):
+    # Keys of different dtypes can only be passed as a tuple; they are batched
+    # without being stacked into a single array.
+    dtypes = [np.int32, np.float32, np.bool_]
+    def args_maker():
+      return [tuple(self.rng().randint(0, 2, (6, 7)).astype(dtypes[i % 3])
+                    for i in range(23))]
+    jnp_op = lambda x: jnp.lexsort(x, axis=axis, batch_size=batch_size)
+    np_op = jtu.with_jax_dtype_defaults(lambda x: np.lexsort(x, axis=axis))
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+
+  @jtu.sample_product(input_type=[jnp.asarray, tuple])
+  def testLexsortBatchSizeError(self, input_type):
+    with self.assertRaisesRegex(ValueError, "batch_size must be positive"):
+      jnp.lexsort(input_type(jnp.zeros((3, 4))), batch_size=0)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
       for shape in nonzerodim_shapes
       for axis in (NO_VALUE, None, *range(-len(shape), len(shape)))
     ],
@@ -4766,6 +4807,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_op = partial(np.rollaxis, axis=axis, start=start)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
+
+  def testMoveaxis(self):
+    x = jnp.arange(24.).reshape(2, 3, 4)
+    for source, destination in [(0, 2), (-1, 0), ((0, 1), (2, 0))]:
+      self.assertArraysEqual(jnp.moveaxis(x, source, destination),
+                             np.moveaxis(np.asarray(x), source, destination))
+    # if no axis moves, the input comes back, rather than a copy from an
+    # identity transpose outside of jit
+    for source, destination in [(0, 0), (-1, 2), ((0, 1), (0, -2))]:
+      self.assertIs(jnp.moveaxis(x, source, destination), x)
+    self.assertIsInstance(jnp.moveaxis(np.asarray(x), 0, 0), jax.Array)
+    with self.assertRaises((TypeError, ValueError)):
+      jnp.moveaxis(x, (0, 0), (0, 0))  # repeated axes
 
   @jtu.sample_product(
     dtype=int_dtypes + unsigned_dtypes + bool_dtypes,
@@ -7082,8 +7136,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'load': ['mmap_mode', 'allow_pickle', 'fix_imports', 'encoding', 'max_header_size'],
       'nanpercentile': ['interpolation'],
       'nanquantile': ['interpolation'],
-      'nanstd': ['correction'],
-      'nanvar': ['correction'],
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'partition': ['kind', 'order'],

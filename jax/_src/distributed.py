@@ -158,6 +158,7 @@ class State:
       logger.info('JAX distributed initialized with visible devices: %s', visible_devices)
       config.update("jax_cuda_visible_devices", visible_devices)
       config.update("jax_rocm_visible_devices", visible_devices)
+      config.update("jax_oneapi_visible_devices", visible_devices)
 
     self.process_id = process_id
 

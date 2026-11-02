@@ -37,6 +37,10 @@ When enabled, using the same key twice will result in a :class:`~jax.errors.KeyR
    ...
   KeyReuseError: Previously-consumed key passed to jit-compiled function at index 0
 
+Only typed PRNG keys created with :func:`jax.random.key` are checked; legacy raw
+``uint32`` keys created with :func:`jax.random.PRNGKey` are not tracked, and reusing
+them will not raise an error. Use :func:`jax.random.key` to benefit from key reuse checking.
+
 The key reuse checker is currently experimental, but in the future we will likely
 enable it by default.
 """

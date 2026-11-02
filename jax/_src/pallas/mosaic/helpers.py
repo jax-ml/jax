@@ -84,7 +84,9 @@ def core_barrier(sem, *, core_axis_name: str):
         # Don't signal ourself
         @pl_helpers.when(core_id != i)
         def _():
-          pl_primitives.semaphore_signal(sem, 1, core_index=i)
+          pl_primitives.semaphore_signal(
+              sem, 1, device_id={core_axis_name: jnp.int32(i)}
+          )
 
       for i in range(num_cores):
         signal_core(i)

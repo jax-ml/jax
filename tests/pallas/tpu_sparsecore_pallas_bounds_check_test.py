@@ -26,6 +26,7 @@ import jax.numpy as jnp
 config.parse_flags_with_absl()
 
 
+@jtu.skip_under_pytest("Tests can only be run with Bazel.")
 class BoundsCheckTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -33,6 +34,9 @@ class BoundsCheckTest(jtu.JaxTestCase):
       self.skipTest("SparseCore only supported on TPU v5p+")
 
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(category=plsc.SparseCorePushStreamWarning)
+    )
 
   def test_trigger_bounds_checker(self):
     size = plsc.get_sparse_core_info().num_lanes

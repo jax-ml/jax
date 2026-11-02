@@ -22,6 +22,8 @@ features.
   TraceAnnotation
   StepTraceAnnotation
   register_subprocess
+  export_profile_data
+  ProfileSession
 
 
 Device memory profiling

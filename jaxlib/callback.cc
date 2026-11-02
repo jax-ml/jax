@@ -66,23 +66,23 @@ absl::Status CpuCallback::PrepareAndCall(void** result, void** arg_ptrs) {
   absl::Span<void* const> outputs(result, results_.size());
 
   nb::gil_scoped_acquire gil;
-  nb::tuple args = nb::steal<nb::tuple>(PyTuple_New(inputs.size()));
+  nb::tuple_builder args(inputs.size());
   for (size_t i = 0; i < inputs.size(); ++i) {
     if (args_[i].type == xla::TOKEN) {
-      PyTuple_SET_ITEM(args.ptr(), i, nb::none().release().ptr());
+      args.put(nb::none());
     } else {
       xla::nb_numpy_ndarray array =
           xla::nb_numpy_ndarray(args_[i].dtype, args_[i].dims, args_[i].strides,
                                 const_cast<void*>(inputs[i]));
       array.attr("flags").attr("writeable") = nb::bool_(false);
-      PyTuple_SET_ITEM(args.ptr(), i, array.release().ptr());
+      args.put(std::move(array));
     }
   }
 
   absl::StatusOr<nb::tuple> maybe_result_tuple;
   {
     xla::HostCallbackScope scope;
-    maybe_result_tuple = Call(std::move(args));
+    maybe_result_tuple = Call(args.commit());
   }
   ABSL_ASSIGN_OR_RETURN(auto result_tuple, maybe_result_tuple);
 

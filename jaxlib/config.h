@@ -30,7 +30,7 @@ namespace jax {
 class Config {
  public:
   Config(std::string name, nanobind::object value, bool include_in_jit_key,
-         bool include_in_trace_context);
+         bool include_in_trace_context, bool include_in_jaxpr_eqn_ctx);
 
   // Returns the name of the config.
   const std::string& Name();
@@ -78,6 +78,15 @@ nanobind::tuple TraceContext();
 
 // The config names corresponding to TraceContext(), for debugging.
 nanobind::tuple TraceContextNames();
+
+nanobind::tuple JaxprEqnCtxVals();
+
+// The config names corresponding to JaxprEqnCtxVals(), for debugging.
+nanobind::tuple JaxprEqnCtxNames();
+
+nanobind::tuple SwapLocalJaxprEqnCtx(nanobind::tuple values);
+
+void SetLocalJaxprEqnCtx(nanobind::tuple values);
 
 void BuildConfigSubmodule(nanobind::module_& m);
 

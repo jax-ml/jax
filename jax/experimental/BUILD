@@ -22,6 +22,7 @@ load(
     "mosaic_internal_users",
     "pallas_fuser_users",
     "pallas_sc_internal_users",
+    "pallas_tpu_ops_users",
     "pallas_triton_internal_users",
     "py_deps",
     "py_library_providing_imports_info",
@@ -76,6 +77,12 @@ package_group(
     name = "pallas_sc_users",
     includes = ["//jax:internal"],
     packages = pallas_sc_internal_users,
+)
+
+package_group(
+    name = "pallas_tpu_ops_users",
+    includes = ["//jax:internal"],
+    packages = pallas_tpu_ops_users,
 )
 
 package_group(
@@ -161,8 +168,7 @@ pytype_strict_library(
     srcs = ["overlap.py"],
     visibility = ["//visibility:public"],
     deps = [
-        "//jax/_src:api",
-        "//jax/_src:ffi",
+        "//jax/_src:program_order",
     ],
 )
 
@@ -358,15 +364,11 @@ pytype_strict_library(
     ),
     visibility = ["//visibility:public"],
     deps = [
-        "//jax",
-        "//jax/_src:core",
         "//jax/_src:deprecations",
-        "//jax/_src:lax",
         "//jax/_src:source_info_util",
-        "//jax/_src:state_types",
         "//jax/_src/pallas",
-        "//jax/_src/pallas/mosaic:sc_core",
-        "//jax/_src/pallas/mosaic:sc_primitives",
+        "//jax/pallas",
+        "//jax/pallas:tpu_sc",
     ] + py_deps("numpy"),
 )
 
@@ -378,13 +380,7 @@ pytype_strict_library(
     ],
     deps = [
         ":pallas",  # build_cleaner: keep
-        "//jax/_src/pallas/fuser:block_spec",
-        "//jax/_src/pallas/fuser:custom_evaluate",
-        "//jax/_src/pallas/fuser:custom_fusion",
-        "//jax/_src/pallas/fuser:fuser_utils",
-        "//jax/_src/pallas/fuser:fusible",
-        "//jax/_src/pallas/fuser:fusion",
-        "//jax/_src/pallas/fuser:jaxpr_fusion",
+        "//jax/pallas:fuser",
     ],
 )
 
@@ -424,17 +420,8 @@ pytype_strict_library(
         ":mosaic_gpu_users",
     ],
     deps = [
-        ":mosaic_gpu",
-        "//jax/_src:lax",
-        "//jax/_src/pallas/mosaic_gpu:core",
-        "//jax/_src/pallas/mosaic_gpu:helpers",
-        "//jax/_src/pallas/mosaic_gpu:layout_rules",
-        "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
-        "//jax/_src/pallas/mosaic_gpu:pipeline",
-        "//jax/_src/pallas/mosaic_gpu:primitives",
-        "//jax/_src/pallas/mosaic_gpu:torch",
-        "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
-        "//jax/_src/pallas/mosaic_gpu/interpret:params",
+        "//jax/_src:deprecations",
+        "//jax/pallas:mosaic_gpu",
     ],
 )
 
@@ -444,20 +431,10 @@ pytype_strict_library(
     visibility = ["//visibility:public"],
     deps = [
         ":pallas",  # build_cleaner: keep
-        "//jax/_src:core",
         "//jax/_src:deprecations",
-        "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
-        "//jax/_src/pallas/mosaic:helpers",
-        "//jax/_src/pallas/mosaic:lowering",
-        "//jax/_src/pallas/mosaic:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic:pipeline",
-        "//jax/_src/pallas/mosaic:prefetch",
-        "//jax/_src/pallas/mosaic:primitives",
-        "//jax/_src/pallas/mosaic:random",
-        "//jax/_src/pallas/mosaic:tpu_info",
-        "//jax/_src/pallas/mosaic/interpret:interpret_pallas_call",
-        "//jax/_src/pallas/mosaic/interpret:params",
+        "//jax/pallas:tpu",
     ],
 )
 
@@ -469,15 +446,16 @@ pytype_strict_library(
     ],
     deps = [
         ":pallas",  # build_cleaner: keep
-        "//jax/_src/pallas/mosaic:sc_core",
-        "//jax/_src/pallas/mosaic:sc_primitives",
+        "//jax/pallas:tpu_sc",
     ],
 )
 
 pytype_strict_library(
     name = "pallas_tpu_ops",
     srcs = glob(["pallas/ops/tpu/**/*.py"]),
-    visibility = ["//visibility:public"],
+    visibility = [
+        ":pallas_tpu_ops_users",
+    ],
     deps = [
         ":pallas",
         ":pallas_tpu",
@@ -558,6 +536,7 @@ pytype_strict_library(
         "//jax/_src:api",
         "//jax/_src:core",
         "//jax/_src:custom_derivatives",
+        "//jax/_src:ffi",
         "//jax/_src:lax",
         "//jax/_src:typing",
     ] + py_deps("numpy"),
@@ -570,7 +549,7 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src/lib",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -651,6 +630,7 @@ pytype_strict_library(
         "//jax/_src:dtypes",
         "//jax/_src:ffi",
         "//jax/_src:flattree",
+        "//jax/_src:hijax",
         "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:numpy",
@@ -687,6 +667,7 @@ pytype_strict_library(
     deps = [
         ":mesh_utils",
         "//jax",
+        "//jax/_src:internal_mesh_utils",
         "//jax/_src:xla_bridge",
         "//jax/_src/lib",
     ],
@@ -713,6 +694,17 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src:xla_metadata",
+    ],
+)
+
+pytype_strict_library(
+    name = "thunky",
+    srcs = ["thunky.py"],
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("thunky"),
+    deps = [
+        "//jax/_src/thunky",
     ],
 )
 
@@ -748,6 +740,7 @@ filegroup(
         "pjit.py",
         "scheduling_groups.py",
         "shard_map.py",
+        "topologies.py",
         "xla_metadata.py",
     ],
     visibility = ["//jax:internal"],

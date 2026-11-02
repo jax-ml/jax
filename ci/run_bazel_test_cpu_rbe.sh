@@ -109,7 +109,7 @@ echo "::endgroup::" >&2
 echo "::group::Bazel CPU RBE tests" >&2
 INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)
 
-bazel "${bazel_startup_options[@]}" $JAXCI_BAZEL_CPU_RBE_MODE \
+bazel ${bazel_startup_options[@]+"${bazel_startup_options[@]}"} $JAXCI_BAZEL_CPU_RBE_MODE \
     --invocation_id="$INVOCATION_ID" \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --build_runfile_links=false \

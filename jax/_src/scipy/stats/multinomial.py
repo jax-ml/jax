@@ -17,7 +17,7 @@ import numpy as np
 from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
-from jax._src.numpy.util import promote_args_inexact, promote_args_numeric
+from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact, promote_dtypes_numeric
 from jax._src.scipy.special import gammaln, xlogy
 from jax._src.typing import Array, ArrayLike
 
@@ -46,14 +46,16 @@ def logpmf(x: ArrayLike, n: ArrayLike, p: ArrayLike) -> Array:
   See Also:
     :func:`jax.scipy.stats.multinomial.pmf`
   """
-  p, = promote_args_inexact("multinomial.logpmf", p)
-  x, n = promote_args_numeric("multinomial.logpmf", x, n)
+  check_arraylike("multinomial.logpmf", x, n, p)
+  p, = promote_dtypes_inexact(p)
+  x, n = promote_dtypes_numeric(x, n)
   if not dtypes.issubdtype(x.dtype, np.integer):
     raise ValueError(f"x and n must be of integer type; got x.dtype={x.dtype}, n.dtype={n.dtype}")
+  in_support = jnp.equal(jnp.sum(x, axis=-1, dtype=x.dtype), n)
   x = x.astype(p.dtype)
   n = n.astype(p.dtype)
   logprobs = gammaln(n + 1) + jnp.sum(xlogy(x, p) - gammaln(x + 1), axis=-1)
-  return jnp.where(jnp.equal(jnp.sum(x), n), logprobs, -np.inf)
+  return jnp.where(in_support, logprobs, -np.inf)
 
 
 def pmf(x: ArrayLike, n: ArrayLike, p: ArrayLike) -> Array:

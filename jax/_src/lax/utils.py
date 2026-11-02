@@ -21,6 +21,7 @@ from functools import partial
 import numpy as np
 from typing import cast
 
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -29,11 +30,86 @@ from jax._src import state
 from jax._src.named_sharding import DuplicateSpecError, NamedSharding
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.layout import (AutoLayoutSingleton, AutoLayout, get_layout_mode,
-                             LayoutMode, use_layout_mode)
+                             LayoutMode)
 from jax._src.util import safe_zip
 from jax._src.typing import DimSize, DType, Shape
 
 zip, unsafe_zip = safe_zip, zip
+
+
+def _get_spec_set(partitions) -> set:
+  axes = set()
+  for p in partitions:
+    if p is None:
+      continue
+    if isinstance(p, tuple):
+      axes.update(p)
+    else:
+      axes.add(p)
+  return axes
+
+
+def _axis_pos(partitions, axis) -> tuple[int, tuple] | None:
+  for i, p in enumerate(partitions):
+    if p is None:
+      continue
+    p = p if isinstance(p, tuple) else (p,)
+    if axis in p:
+      return i, p[:p.index(axis)]
+  return None
+
+
+def _check_no_collectives_dim_change(prim_name: str, in_parts, out_parts):
+  forbidden_axes = config.no_collectives.value
+  if not forbidden_axes:
+    return
+  in_axes = _get_spec_set(in_parts)
+  out_axes = _get_spec_set(out_parts)
+  for r in forbidden_axes:
+    if (r in in_axes and r in out_axes and
+        _axis_pos(in_parts, r) != _axis_pos(out_parts, r)):
+      raise core.ForbiddenCollectiveError(
+          f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
+          f" `{prim_name}` changes the sharded dimension or sub-axis position"
+          f" of axis '{r}'.")
+
+
+def _check_no_collectives(prim, out_s_list, avals):
+  forbidden_axes = config.no_collectives.value
+  if not forbidden_axes or not avals:
+    return
+  avals = [a for a in avals if isinstance(a, core.ShapedArray)]
+  if not avals or not out_s_list:
+    return
+
+  in_mesh = _get_abstract_mesh_from_avals(avals)
+  out_mesh = out_s_list[0].mesh
+
+  in_specs = [a.sharding.spec for a in avals]
+  out_specs = [s.spec for s in out_s_list]
+
+  in_part = set().union(*(_get_spec_set(s.partitions) for s in in_specs))
+  in_unreduced = set().union(*(s.unreduced for s in in_specs))
+
+  for out_s in out_specs:
+    out_part = _get_spec_set(out_s.partitions)
+    out_unreduced = out_s.unreduced
+    for r in forbidden_axes:
+      if (in_mesh._name_to_type.get(r) != mesh_lib.AxisType.Explicit or
+          out_mesh._name_to_type.get(r) != mesh_lib.AxisType.Explicit):
+        continue
+      if r in in_unreduced and r not in out_unreduced:
+        raise core.ForbiddenCollectiveError(
+            f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
+            f" `{prim.name}` consumes unreduced axis '{r}' without keeping it"
+            " unreduced in the output."
+        )
+      if r in in_part and r not in out_part and r not in out_unreduced:
+        raise core.ForbiddenCollectiveError(
+            f"Collective across axis '{r}' is forbidden by `no_collectives`, but"
+            f" `{prim.name}` loses sharding axis '{r}' in the output without"
+            " marking it unreduced."
+        )
 
 
 def input_dtype(x, *_, out_dtype=None, **__):
@@ -43,6 +119,75 @@ def input_dtype(x, *_, out_dtype=None, **__):
 
 def _argnum_weak_type(*argnums):
   return lambda *args, **_: all(args[i].weak_type for i in argnums)
+
+def unreduced_is_high(sharding_param: str | None = None):
+  def _is_high(*avals, **params):
+    if any(a.is_high for a in avals):
+      return True
+    if sharding_param is not None:
+      s = params.get(sharding_param)
+      return isinstance(s, NamedSharding) and bool(s.spec.unreduced)
+    return False
+  return _is_high
+
+
+def register_unreduced_lojax(prim: core.Primitive,
+                             sharding_param: str | None = None):
+  def _to_lojax(*hi_args, **params):
+    from jax._src import pjit, shard_map  # pyrefly: ignore[missing-import]
+    from jax._src.lax import lax  # pyrefly: ignore[missing-import]
+
+    in_avals = [core.typeof(x) for x in hi_args]
+    out_avals, _ = prim.abstract_eval(*in_avals, **params)
+    if not any(a.is_high for a in in_avals):
+      assert sharding_param is not None and params[sharding_param].spec.unreduced
+      mid = prim.bind(*hi_args, **(params | {sharding_param: None}))
+      return pjit.reshard(mid, params[sharding_param])
+
+    out_avals = out_avals if prim.multiple_results else [out_avals]
+    out_u_set = out_avals[0].sharding.spec.unreduced
+    assert all(a.sharding.spec.unreduced == out_u_set for a in out_avals)
+    lo_args = [lo_x for x, a in zip(hi_args, in_avals)
+               for lo_x in a.lower_val(x)]
+    if not out_u_set:
+      assert any(a.mat.unreduced for a in in_avals)
+      with config.auto_pcast(True):
+        lo_args = core.auto_insert_reshard(*lo_args)
+      lo_outs = prim.bind(*lo_args, **params)
+    else:
+      mesh = out_avals[0].sharding.mesh
+      u_axes = core.order_wrt_mesh(mesh, out_u_set)
+      u_dims = tuple(range(len(u_axes)))
+      out_specs = [P(*u_axes, *(None,) * a.ndim) for a in out_avals]
+      if not prim.multiple_results:
+        out_specs, = out_specs
+
+      def _local_fn(*local_args):
+        squeezed = [lax.squeeze(v, u_dims) if a.is_high else v
+                    for v, a in zip(local_args, in_avals)]
+        with config.auto_pcast(True):
+          squeezed = core.auto_insert_reshard(*squeezed)
+        lo_params = params
+        if (sharding_param is not None and
+            isinstance(s := params.get(sharding_param), NamedSharding)):
+          lo_s = NamedSharding(
+              mesh_lib.get_abstract_mesh(),
+              s.spec.update(unreduced=frozenset(), unreduced_kind=None))
+          lo_params = params | {sharding_param: lo_s}
+        outs = prim.bind(*squeezed, **lo_params)
+        if prim.multiple_results:
+          return [lax.expand_dims(o, u_dims) for o in outs]
+        return lax.expand_dims(outs, u_dims)
+      lo_outs = shard_map.shard_map(_local_fn, mesh=mesh, out_specs=out_specs,
+                                    axis_names=frozenset(u_axes))(*lo_args)
+    if prim.multiple_results:
+      return [a.raise_val(o) for a, o in zip(out_avals, lo_outs)]
+    out_aval, = out_avals
+    return out_aval.raise_val(lo_outs)
+
+  prim.is_high = unreduced_is_high(sharding_param)  # type: ignore
+  prim.to_lojax = _to_lojax  # type: ignore
+
 
 def standard_primitive(shape_rule, dtype_rule, name,
                        weak_type_rule=None, sharding_rule=None, vma_rule=None,
@@ -78,7 +223,8 @@ def call_ur_rule(prim, ur_rule, out_s, num_out, *avals, **kwargs):
   if ur_rule is not None:
     return ur_rule(*avals, **kwargs)
 
-  if any(a.sharding.spec.unreduced or a.sharding.spec.reduced for a in avals):
+  if any(a.sharding.spec.unreduced or a.sharding.spec.reduced or
+         a.mat.unreduced or a.mat.reduced for a in avals):
     raise NotImplementedError(
         f'unreduced/reduced rule for {prim.name} is not implemented. Please'
         ' file an issue at https://github.com/jax-ml/jax/issues')
@@ -110,8 +256,10 @@ def call_sharding_rule(prim, sh_rule, ur_rule, num_out, *avals, **kwargs):
       prim, ur_rule, out_s, num_out, *avals, **kwargs)
   up = lambda sh, u, r, k: sh.update(spec=sh.spec.update(unreduced=u, reduced=r,
                                                          unreduced_kind=k))
-  return (up(out_s, unreduced, reduced, u_kind) if num_out is None else
-          [up(s, u, r, k) for s, u, r, k in zip(out_s, unreduced, reduced, u_kind)])
+  res = (up(out_s, unreduced, reduced, u_kind) if num_out is None else
+         [up(s, u, r, k) for s, u, r, k in zip(out_s, unreduced, reduced, u_kind)])
+  _check_no_collectives(prim, [res] if num_out is None else res, avals)
+  return res
 
 def call_shape_dtype_sharding_rule(
     prim, shape_rule, dtype_rule, sharding_rule, ur_rule, multi_out, *avals,
@@ -137,6 +285,29 @@ def call_shape_dtype_sharding_rule(
 
 mosaic_tpu_layout_rule = None
 
+def _shard_aval(aval):
+  mesh = aval.sharding.mesh
+  if mesh.are_all_axes_manual or mesh.empty:
+    shard_shape = aval.shape
+  else:
+    assert mesh.are_all_axes_explicit
+    shard_shape = aval.sharding.shard_shape(aval.shape)
+  return aval.update(shape=shard_shape, sharding=None,
+                     manual_axis_type=core.empty_mat)
+
+def check_minor_dims_tile_size(prim_name: str, in_aval, out_aval):
+  if not in_aval.layout.tiling:
+    return
+  tiles = in_aval.layout.tiling[0]
+  for d, tile_size in zip(in_aval.layout.major_to_minor[-len(tiles):], tiles):
+    in_size, out_size = in_aval.shape[d], out_aval.shape[d]
+    if in_size != out_size and (in_size < tile_size or out_size < tile_size):
+      raise ValueError(
+          f'`{prim_name}` cannot change the shard shape of a tiled minor'
+          f' dimension below its tile size. Dimension {d} has tile size'
+          f' {tile_size}, input shard shape {in_aval.shape}, and output shard'
+          f' shape {out_aval.shape} with layout {in_aval.layout}.')
+
 def call_layout_rule(prim, layout_rule, in_avals, out_avals, **kwargs):
   cur_layout_mode = get_layout_mode()
   if cur_layout_mode is LayoutMode.AUTO:
@@ -149,11 +320,18 @@ def call_layout_rule(prim, layout_rule, in_avals, out_avals, **kwargs):
     return mgpu_layout_rule(prim, in_avals, out_avals, **kwargs)
 
   assert cur_layout_mode is LayoutMode.JAX
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  if not cur_mesh.empty and not cur_mesh.are_all_axes_explicit_or_manual:
+    raise ValueError('Layout in Types can only be used in Explicit mode or '
+                     'Manual mode.')
   if layout_rule is None:
     raise NotImplementedError(
         f'Missing layout rule for {prim}. Please file an issue at'
         ' https://github.com/jax-ml/jax/issues')
-  return layout_rule(prim, in_avals, out_avals, **kwargs)
+  in_avals = [_shard_aval(a) for a in in_avals]
+  out_avals = [_shard_aval(a) for a in out_avals]
+  return layout_rule(out_avals if prim.multiple_results else out_avals[0],
+                     *in_avals, **kwargs)
 
 
 def _default_memory_space_rule(prim, *avals, **kwargs):
@@ -186,6 +364,10 @@ def manual_rule(prim, vma_rule, ur_rule, multi_out, *avals, **kwargs):
         prim, ur_rule, out_s, num_out, *avals, **kwargs)
   else:
     # TODO(yashkatariya): Handle partial manual unreduced/reduced.
+    if any(a.mat.unreduced or a.mat.reduced for a in avals):
+      raise NotImplementedError(
+          f'{prim.name}: unreduced/reduced on manual axes is only supported when'
+          ' all mesh axes are manual.')
     out_unreduced, out_reduced, u_kind = (
         (frozenset(), frozenset(), None) if num_out is None else
         ([frozenset()] * num_out, [frozenset()] * num_out, [None] * num_out))
@@ -219,14 +401,9 @@ def standard_abstract_eval(
     out_mem_space = (_default_memory_space_rule(prim, *avals, **kwargs)
                      if memory_space_rule is None else
                      memory_space_rule(*avals, **kwargs))
-    # Enter temporarily into AUTO layout mode to bypass check in ShapedArray
-    # constructor since this aval is a temporary state until we run
-    # `call_layout_rule`. Another option is to create a `InferringLayout`
-    # singleton which is only used here.
-    with use_layout_mode(LayoutMode.AUTO):
-      out_aval = core.ShapedArray(
-          out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
-          manual_axis_type=out_mat, memory_space=out_mem_space)
+    out_aval = core.ShapedArray(
+        out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
+        manual_axis_type=out_mat, memory_space=out_mem_space)
     out_layout = call_layout_rule(
         prim, layout_rule, in_avals=avals, out_avals=[out_aval], **kwargs)
     out_aval = out_aval.update(layout=out_layout)
@@ -251,12 +428,11 @@ def standard_multi_result_abstract_eval(
     out_mem_spaces = multi_mem_space_rule(prim, len(out_shapes), *avals, **kwargs)
     if isinstance(weak_types, bool):
       weak_types = (weak_types,) * len(out_shapes)
-    with use_layout_mode(LayoutMode.AUTO):
-      out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh,
-                                    manual_axis_type=mat, memory_space=ms)
-                  for s, d, weak_type, sh, mat, ms in zip(
-                      out_shapes, out_dtypes, weak_types, out_shardings,
-                      out_mats, out_mem_spaces)]
+    out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh,
+                                  manual_axis_type=mat, memory_space=ms)
+                 for s, d, weak_type, sh, mat, ms in zip(
+                     out_shapes, out_dtypes, weak_types, out_shardings,
+                     out_mats, out_mem_spaces)]
     out_layouts = call_layout_rule(
         prim, layout_rule, in_avals=avals, out_avals=out_avals, **kwargs)
     out_avals = [o.update(layout=l) for o, l in zip(out_avals, out_layouts)]

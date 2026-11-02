@@ -1714,6 +1714,22 @@ class APITest(jtu.JaxTestCase):
       y, residuals = fwd(x, W)
       cot_x, cot_W = bwd(residuals, cot_out)  # no recompilation
 
+  @jtu.sample_product(has_aux=[False, True], jitted=[False, True])
+  def test_fwd_and_bwd_kwargs(self, has_aux, jitted):
+    def f(x, *, scale=1.0, bias):
+      value = scale * jnp.sum(x) + bias
+      return (value, (scale, bias)) if has_aux else value
+
+    x = jnp.arange(1.0, 4.0)
+    kwargs = dict(scale=0.5, bias=2.0)
+    fwd, bwd = api.fwd_and_bwd(f, argnums=0, has_aux=has_aux, jitted=jitted)
+    value, residuals, *aux = fwd(x, **kwargs)
+    grads = bwd(residuals, jnp.ones(()))
+    expected_out, expected_grads = api.value_and_grad(
+        f, has_aux=has_aux)(x, **kwargs)
+    self.assertAllClose((value, *aux) if has_aux else value, expected_out)
+    self.assertAllClose(grads, expected_grads)
+
   @parameterized.named_parameters(
       {"testcase_name": f"_{transform.__name__}", "transform": transform}
       for transform in [grad, jacfwd, jacrev])
@@ -2647,6 +2663,45 @@ class APITest(jtu.JaxTestCase):
     expected = [3., 0.]
     self.assertEqual(actual, expected)
 
+  def test_linear_transpose_symbolic_zeros(self):
+    f32 = core.ShapedArray((), np.dtype('float32'))
+    zero = ad_internal.Zero(f32)
+    f = lambda x, y, z: (2. * x, 3. * x, zero)
+    one = np.float32(1.)
+
+    transpose = api._linear_transpose(f, f32, f32, zero, instantiate=False)
+    x_bar, y_bar, z_bar = transpose((one, zero, one))
+    self.assertAllClose(x_bar, 2 * one)
+    self.assertIsInstance(y_bar, ad_internal.Zero)
+    self.assertIsInstance(z_bar, ad_internal.Zero)
+    x_bar, y_bar, z_bar = transpose((zero, zero, zero))
+    self.assertIsInstance(x_bar, ad_internal.Zero)
+    self.assertIsInstance(y_bar, ad_internal.Zero)
+    self.assertIsInstance(z_bar, ad_internal.Zero)
+
+    x_bar, y_bar, z_bar = api.linear_transpose(f, f32, f32, zero)(
+        (one, zero, one))
+    self.assertAllClose(x_bar, 2 * one)
+    self.assertAllClose(y_bar, 0 * one)
+    self.assertIsInstance(z_bar, ad_internal.Zero)
+
+  def test_linear_transpose_custom_pytree_output(self):
+    @jax.tree_util.register_pytree_node_class
+    class CheckingNode:
+      def __init__(self, x):
+        self.x = jnp.asarray(x)
+
+      def tree_flatten(self):
+        return (self.x,), None
+
+      @classmethod
+      def tree_unflatten(cls, _, children):
+        return cls(*children)
+
+    transpose = api.linear_transpose(lambda x: CheckingNode(2. * x), 1.)
+    x_bar, = transpose(CheckingNode(3.))
+    self.assertAllClose(x_bar, 6., check_dtypes=False)
+
   @parameterized.product(jit=[False, True], dtype=[np.float32, np.complex64,
                                                 np.int32])
   def test_linear_transpose_float0(self, jit, dtype):
@@ -3334,7 +3389,7 @@ class APITest(jtu.JaxTestCase):
   def test_constants_not_in_lowering_jit(self):
     if not config.use_simplified_jaxpr_constants.value:
       self.skipTest("Works only with simplified Jaxpr consts")
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
 
@@ -3360,7 +3415,7 @@ class APITest(jtu.JaxTestCase):
   def test_constants_not_in_lowering_scan(self):
     if not config.use_simplified_jaxpr_constants.value:
       self.skipTest("Works only with simplified Jaxpr consts")
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
     def f():
@@ -3382,7 +3437,7 @@ class APITest(jtu.JaxTestCase):
   def test_constants_not_in_lowering_cond(self):
     if not config.use_simplified_jaxpr_constants.value:
       self.skipTest("Works only with simplified Jaxpr consts")
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
 
@@ -4402,7 +4457,7 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(fun([jnp.float32(10.)], jnp.float32(3.)),
                         jnp.float32(90.))
     consts2, traced2 = traced.with_consts_as_arg()
-    self.assertAllClose(traced2(consts2, jnp.float32(3.)), jnp.float32(18.))
+    self.assertAllClose(traced2(consts2, jnp.float32(3.)), [jnp.float32(18.)])
 
   def test_traced_with_consts_as_arg_cache_hit(self):
     f = lambda y: y ** 2 * jnp.float32(2.)
@@ -4784,12 +4839,73 @@ class APITest(jtu.JaxTestCase):
     # For xla_early and xla_late, we expect it not to be inlined by Jax.
     # For xla_early, we expect XLA to inline it early.
     self.assertNotIn("call(", get_hlo(jax.Inline.XLA_EARLY))
-    # For xla_late, we expect XLA to preserve the call on CPU/GPU, but it
-    # will be inlined/flattened on TPU during TPU compilation.
-    if jtu.device_under_test() == "tpu":
+    # For xla_late, we expect XLA to preserve the call on CPU, but it
+    # will be inlined/flattened on TPU and GPU.
+    if jtu.device_under_test() == 'tpu' or (
+        jtu.device_under_test() == 'gpu' and lib.jaxlib_extension_version >= 513
+    ):
       self.assertNotIn("call(", get_hlo(jax.Inline.XLA_LATE))
     else:
       self.assertIn("call(", get_hlo(jax.Inline.XLA_LATE))
+
+  def test_register_lowering_inline_mode(self):
+    prim = jax._src.core.Primitive("inline_mode_test")
+    prim.def_abstract_eval(lambda x: x)
+
+    def lowering(ctx, x):
+      return mlir.lower_fun(lambda v: v * 2, multiple_results=False)(ctx, x)
+
+    with self.assertRaisesRegex(ValueError, "JAX_EARLY is not supported"):
+      mlir.register_lowering(prim, lowering, inline=jax.Inline.JAX_EARLY)
+
+    def lower_and_compile(inline_mode):
+      mlir.register_lowering(prim, lowering, inline=inline_mode)
+      lowered = api.jit(lambda x: prim.bind(x) + 1.0).lower(1.0)
+      return lowered.as_text(), lowered.compile().as_text()
+
+    mlir_text, hlo_text = lower_and_compile(True)
+    self.assertNotIn("func.func private @inline_mode_test", mlir_text)
+    self.assertNotIn("call(", hlo_text)
+
+    mlir_text, _ = lower_and_compile(False)
+    self.assertIn("func.func private @inline_mode_test", mlir_text)
+    self.assertNotIn("inlineable", mlir_text)
+
+    mlir_text, hlo_text = lower_and_compile(jax.Inline.XLA_EARLY)
+    self.assertIn("func.func private @inline_mode_test", mlir_text)
+    self.assertIn('inlineable = "xla_early"', mlir_text)
+    self.assertNotIn("call(", hlo_text)
+
+    mlir_text, hlo_text = lower_and_compile(jax.Inline.XLA_LATE)
+    self.assertIn("func.func private @inline_mode_test", mlir_text)
+    self.assertIn('inlineable = "xla_late"', mlir_text)
+    if jtu.device_under_test() == 'tpu' or (
+        jtu.device_under_test() == 'gpu' and lib.jaxlib_extension_version >= 512
+    ):
+      self.assertNotIn("call(", hlo_text)
+    else:
+      self.assertIn("call(", hlo_text)
+
+    # A platform-specific rule's inline setting overrides the default rule's.
+    mlir.register_lowering(prim, lowering, inline=jax.Inline.XLA_EARLY)
+    mlir.register_lowering(
+        prim, lowering, platform=jtu.device_under_test(), inline=True
+    )
+    mlir_text = api.jit(lambda x: prim.bind(x) + 1.0).lower(1.0).as_text()
+    self.assertNotIn("func.func private @inline_mode_test", mlir_text)
+
+    # Conflicting inline modes across multi-platform export fall back to AUTO.
+    mlir.register_lowering(
+        prim, lowering, platform="cpu", inline=jax.Inline.XLA_EARLY
+    )
+    mlir.register_lowering(
+        prim, lowering, platform="cuda", inline=jax.Inline.XLA_LATE
+    )
+    exported_mlir = jax.export.export(
+        api.jit(lambda x: prim.bind(x) + 1.0), platforms=("cpu", "cuda")
+    )(1.0).mlir_module()
+    self.assertIn("func.func private @inline_mode_test", exported_mlir)
+    self.assertNotIn("inlineable", exported_mlir)
 
   # Repro for https://github.com/jax-ml/jax/issues/7229.
   def test_compute_with_large_transfer(self):
@@ -5417,6 +5533,27 @@ class APITest(jtu.JaxTestCase):
         run_state_reference(body)((jnp.ones(7), jnp.ones(7)))
     self.assertTrue(any("different input types" in msg for msg in cm.output))
 
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_explain_cache_misses_kwarg_debug_info(self):
+    # https://github.com/jax-ml/jax/issues/41455
+    from jax._src import flattree as ft
+
+    def f(x):
+      return jnp.sin(x)
+
+    x1 = jnp.ones(3, 'float32')
+    x2 = jnp.ones(7, 'float32')
+    dbg1 = api_util.debug_info("test", f, (x1,), {})
+    dbg2 = api_util.debug_info("test", f, (x2,), {})
+    pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x1)), debug_info=dbg1,
+                      requires_low=True)
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x2)), debug_info=dbg2,
+                          requires_low=True)
+    self.assertTrue(any("at x, now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
   @unittest.skip('TODO(mattjj): re-enable after updating cache miss explainer')
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_shape_explain_closest(self):
@@ -5938,7 +6075,7 @@ class APITest(jtu.JaxTestCase):
     # otherwise the jnp.array(...) calls will induce constant duplication.
     c = np.ones(3).astype(np.float32)
 
-    def find_constants(jaxpr: core.ClosedJaxpr):
+    def find_constants(jaxpr: core.Jaxpr):
       for j in it.chain([jaxpr], core.subjaxprs(jaxpr)):
         for eq in j.eqns:
           for inv in eq.invars:
@@ -5957,10 +6094,7 @@ class APITest(jtu.JaxTestCase):
     def f():
       return jnp.array(c), jnp.sum(c), c, jnp.array(c), jnp.sum(c), c
 
-    if config.use_simplified_jaxpr_constants.value:
-      consts = uniq(find_constants(f()))
-    else:
-      consts = f().consts
+    consts = f().consts
 
     self.assertLen(consts, 1)
 
@@ -6076,7 +6210,8 @@ class APITest(jtu.JaxTestCase):
     # Using jax.make_jaxpr or jax.jit forces JAX to build call_jaxpr and run
     # custom_derivatives_allowed_effects type-checking.
     jaxpr = jax.make_jaxpr(f_jvp)(x)
-    self.assertIn("custom_jvp_call", str(jaxpr))
+    needle = 'CustomJVPTraced' if config.custom_jvp3.value else 'custom_jvp_call'
+    self.assertIn(needle, str(jaxpr))
 
     # Test execution under jit
     primal_out, tangent_out = jax.jit(
@@ -7372,10 +7507,7 @@ class RematTest(jtu.JaxTestCase):
     res = saved_residuals(f, (2., 3.), y=4.)
     self.assertLen(res, 6)
     self.assertEqual(res[0][0].shape, (1,))
-    if config.use_simplified_jaxpr_constants.value:
-      self.assertEqual(res[0][1], "from a literal")
-    else:
-      self.assertEqual(res[0][1], "from a constant")
+    self.assertEqual(res[0][1], "from a constant")
     self.assertEqual(res[1][0].shape, ())
     self.assertEqual(res[1][1], "from the argument x[0]")
     self.assertEqual(res[2][0].shape, ())
@@ -7395,32 +7527,18 @@ class RematTest(jtu.JaxTestCase):
 
     res = saved_residuals(f, (2., 3.), y=4.)
     self.assertLen(res, 6)
-    if config.use_simplified_jaxpr_constants.value:
-      self.assertEqual(res[0][1], "from the argument x[0]")
-      self.assertEqual(res[0][0].shape, ())
-      self.assertEqual(res[1][1], "from the argument x[1]")
-      self.assertEqual(res[1][0].shape, ())
-      self.assertEqual(res[2][1], "from the argument y")
-      self.assertEqual(res[2][0].shape, ())
-      self.assertStartsWith(res[3][1], "output of jitted function 'f'")
-      self.assertEqual(res[3][0].shape, ())
-      self.assertStartsWith(res[4][1], "output of jitted function 'f'")
-      self.assertEqual(res[4][0].shape, ())
-      self.assertStartsWith(res[5][1], "output of jitted function 'f'")
-      self.assertEqual(res[5][0].shape, (1,))
-    else:
-      self.assertEqual(res[0][1], "from a constant")
-      self.assertEqual(res[0][0].shape, (1,))
-      self.assertEqual(res[1][1], "from the argument x[0]")
-      self.assertEqual(res[1][0].shape, ())
-      self.assertEqual(res[2][1], "from the argument x[1]")
-      self.assertEqual(res[2][0].shape, ())
-      self.assertEqual(res[3][1], "from the argument y")
-      self.assertEqual(res[4][0].shape, ())
-      self.assertStartsWith(res[4][1], "output of jitted function 'f'")
-      self.assertEqual(res[4][0].shape, ())
-      self.assertStartsWith(res[5][1], "output of jitted function 'f'")
-      self.assertEqual(res[5][0].shape, ())
+    self.assertEqual(res[0][1], "from a constant")
+    self.assertEqual(res[0][0].shape, (1,))
+    self.assertEqual(res[1][1], "from the argument x[0]")
+    self.assertEqual(res[1][0].shape, ())
+    self.assertEqual(res[2][1], "from the argument x[1]")
+    self.assertEqual(res[2][0].shape, ())
+    self.assertEqual(res[3][1], "from the argument y")
+    self.assertEqual(res[4][0].shape, ())
+    self.assertStartsWith(res[4][1], "output of jitted function 'f'")
+    self.assertEqual(res[4][0].shape, ())
+    self.assertStartsWith(res[5][1], "output of jitted function 'f'")
+    self.assertEqual(res[5][0].shape, ())
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -7444,6 +7562,22 @@ class RematTest(jtu.JaxTestCase):
       return c * x
 
     _ = jax.grad(f)(3.)  # doesn't crash
+
+  @parameterized.named_parameters(("remat", False), ("remat3", True))
+  def test_dce_keeps_effectful_remat_with_no_used_outputs(self, remat3):
+    x_ref = jax.new_ref(jnp.zeros(3, jnp.float32))
+    def f():
+      def body():
+        x_ref[...] = jnp.ones(3, jnp.float32)
+      jax.checkpoint(body)()
+
+    with config.remat3(remat3):
+      jaxpr = jax.make_jaxpr(f)()
+      dced, _ = pe.dce_jaxpr(jaxpr, [])
+      self.assertLen(dced.eqns, 1)
+
+      jax.jit(f)()
+    self.assertAllClose(x_ref[...], jnp.ones(3, jnp.float32))
 
   def test_linearize_caching(self):
     # https://github.com/jax-ml/jax/issues/9661
@@ -7606,6 +7740,19 @@ class RematTest(jtu.JaxTestCase):
                                                  jnp.ones((2, 4, 4))))
     self.assertEqual(jaxpr_text.count('MemorySpace.Host'), 1)
     self.assertEqual(jaxpr_text.count('MemorySpace.Device'), 1)
+
+  def test_remat_dce_unused_output(self):
+    @jax.remat
+    def f(x):
+      return jnp.sin(x), jnp.exp(x)
+
+    jaxpr = jax.jit(lambda x: f(x)[0]).trace(0.5).jaxpr
+    jaxpr_dce, _ = pe.dce_jaxpr(jaxpr.jaxpr, [True])
+    self.assertIn(' sin ', str(jaxpr_dce))
+    self.assertNotIn(' exp ', str(jaxpr_dce))
+
+    ans = api.grad(lambda x: f(x)[0])(0.5)
+    self.assertAllClose(ans, np.cos(0.5), check_dtypes=False)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -8258,6 +8405,32 @@ class RematTest(jtu.JaxTestCase):
     txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()
     self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
 
+  def test_remat_partial_cse_prevention_rule_consts(self):
+    # rules closing over an array give the jvp, transposed and batched jaxprs
+    # consts, which need prevent_cse entries too
+    c = jnp.arange(3.)
+
+    @jax.custom_jvp
+    def f(x):
+      return x * c
+    f.defjvp(lambda primals, tangents: (f(*primals), tangents[0] * c))
+
+    @jax.custom_vjp
+    def g(x):
+      return x * c
+    g.defvjp(lambda x: (g(x), None), lambda _, ct: (ct * c,))
+
+    @jax.custom_batching.custom_vmap
+    def h(x):
+      return x * 2.
+    h.def_vmap(lambda axis_size, in_batched, x: (x * 2. + c, True))
+
+    remat = partial(jax.remat, prevent_cse=(False,))
+    x = jnp.ones(3)
+    self.assertAllClose(jax.jvp(remat(f), (x,), (x,))[1], c)
+    self.assertAllClose(jax.grad(lambda x: remat(g)(x).sum())(x), c)
+    self.assertAllClose(jax.vmap(remat(h))(x), 2. + c)
+
   def test_remat_grad_accum_refs(self):
     @jax.remat
     def f(param: jax.Array) -> jax.Array:
@@ -8905,10 +9078,7 @@ class JaxprTest(jtu.JaxTestCase):
       return (x, 1., np.zeros(1, dtype=jnp.float32))
 
     dtype = "f64" if config.enable_x64.value else "f32"
-    if config.use_simplified_jaxpr_constants.value:
-      expected = f"{{ lambda ; a:f32[]. let  in (a, 1.0:{dtype}[], [...]:f32[1]) }}"
-    else:
-      expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
+    expected = f"{{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0:{dtype}[], a) }}"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
@@ -8917,7 +9087,7 @@ class JaxprTest(jtu.JaxTestCase):
     def fun(x):
       return (x, np.zeros(3, dtype=jnp.float32))
 
-    expected = "{ lambda ; a:f32[]. let  in (a, [...]:f32[3]) }"
+    expected = "{ lambda a:f32[3]; b:f32[]. let  in (b, a) }"
     jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
@@ -9299,6 +9469,487 @@ class DCETest(jtu.JaxTestCase):
     # use only one output, so we can prune eqns but not inputs
     self.assert_dce_result(jaxpr, [True, False], [True, True], 5)
 
+  def test_dce_jaxpr_while_cond_dependency(self):
+    def f(c0, c1, c2):
+      def cond(c):
+        c0, c1, c2 = c
+        return c1 < 5
+
+      def body(c):
+        c0, c1, c2 = c
+        new_c0 = c0 + 1
+        new_c1 = c1 + c2
+        new_c2 = c2 + 1
+        return (new_c0, new_c1, new_c2)
+
+      return lax.while_loop(cond, body, (c0, c1, c2))
+
+    c0 = jnp.int32(0)
+    c1 = jnp.int32(0)
+    c2 = jnp.int32(1)
+    jaxpr = api.make_jaxpr(f)(c0, c1, c2).jaxpr
+
+    self.assert_dce_result(
+        jaxpr,
+        used_outputs=[True, False, False],
+        expected_used_inputs=[True, True, True],
+        expected_num_eqns=5,
+        check_diff=False)
+
+  def test_dce_jaxpr_while(self):
+    def f(c):
+      i, x, y = c
+      def cond(c):
+        i, _, _ = c  # i is used anyway
+        return i < 5
+      def body(c):
+        i, x, y = c
+        return i + 1, x * 2, y + i
+      return lax.while_loop(cond, body, (i, x, y))
+
+    i = jnp.int32(0)
+    x = jnp.int32(1)
+    y = jnp.int32(2)
+    jaxpr = api.make_jaxpr(f)((i, x, y)).jaxpr
+
+    # Use x: y should be pruned.
+    self.assert_dce_result(
+        jaxpr,
+        used_outputs=[False, True, False],
+        expected_used_inputs=[True, True, False],
+        expected_num_eqns=4,
+        check_diff=False)
+
+    # Use i and x: y should be pruned.
+    self.assert_dce_result(
+        jaxpr,
+        used_outputs=[True, True, False],
+        expected_used_inputs=[True, True, False],
+        expected_num_eqns=4,
+        check_diff=False)
+
+    # Use i and y: x should be pruned.
+    self.assert_dce_result(
+        jaxpr,
+        used_outputs=[True, False, True],
+        expected_used_inputs=[True, False, True],
+        expected_num_eqns=4,
+        check_diff=False)
+
+    # Use i: x and y should be pruned
+    self.assert_dce_result(
+        jaxpr,
+        used_outputs=[True, False, False],
+        expected_used_inputs=[True, False, False],
+        expected_num_eqns=3,
+        check_diff=False)
+
+  def _while_live_carry(self, used_outputs, cond_reads, body_deps):
+    # Reference model for which carry elements while_loop DCE should keep: those
+    # used as outputs or read by the cond, closed under body dependencies, where
+    # body_deps[j] lists the carry elements read to compute carry element j.
+    if not any(used_outputs):
+      return [False] * len(used_outputs)
+    live = {j for j, used in enumerate(used_outputs) if used} | set(cond_reads)
+    while (new_live := live.union(*(body_deps[j] for j in live))) != live:
+      live = new_live
+    return [j in live for j in range(len(used_outputs))]
+
+  @parameterized.named_parameters(
+      (f"_cond_reads_{m:03b}", [i for i in range(3) if m >> i & 1])
+      for m in range(8))
+  def test_dce_jaxpr_while_exhaustive(self, cond_reads):
+    # With a 3-element carry, try every body dependency structure (each carry
+    # output reads some subset of the carry inputs) and every used_outputs.
+    n = 3
+    subsets = [[i for i in range(n) if m >> i & 1] for m in range(2 ** n)]
+    for body_deps in it.product(subsets, repeat=n):
+      def f(*init):
+        def cond(c):
+          return sum((c[i] for i in cond_reads), jnp.int32(0)) < 0
+        def body(c):
+          return tuple(sum((c[i] for i in deps), jnp.int32(j + 1))
+                       for j, deps in enumerate(body_deps))
+        return lax.while_loop(cond, body, init)
+      jaxpr = api.make_jaxpr(f)(*[jnp.int32(0)] * n).jaxpr
+
+      for used_outputs in it.product([False, True], repeat=n):
+        msg = f"{body_deps=} {used_outputs=}"
+        live = self._while_live_carry(used_outputs, cond_reads, body_deps)
+        jaxpr_dce, used_inputs = pe.dce_jaxpr(jaxpr, list(used_outputs))
+        self.assertEqual(used_inputs, live, msg)
+        if not any(live):
+          self.assertEmpty(jaxpr_dce.eqns, msg)
+          continue
+        eqn, = jaxpr_dce.eqns
+        self.assertLen(eqn.outvars, sum(live), msg)
+        # The body has one add per dependency of each live carry element.
+        num_adds = sum(len(deps) for deps, l in zip(body_deps, live) if l)
+        self.assertLen(eqn.params['body_jaxpr'].eqns, num_adds, msg)
+
+  @jtu.sample_product(
+      num_carry=[1, 2, 4, 6],
+      num_consts=[0, 1, 3],
+      seed=range(4),
+  )
+  def test_dce_jaxpr_while_random(self, num_carry, num_consts, seed):
+    # Random dependency structures, now including cond and body consts, and
+    # checking that the pruned loop computes the same values. To ensure
+    # termination, carry element ctr is a counter that bounds the trip count,
+    # but the cond reads other elements too so that they affect the trip count.
+    rng = np.random.RandomState(seed)
+    rand_subset = lambda n: [i for i in range(n) if rng.rand() < 0.4]
+    ctr = rng.randint(num_carry)
+    cond_reads = sorted({ctr, *rand_subset(num_carry)})
+    cond_const_reads = rand_subset(num_consts)
+    body_deps = [[ctr] if j == ctr else rand_subset(num_carry)
+                 for j in range(num_carry)]
+    body_const_deps = [[] if j == ctr else rand_subset(num_consts)
+                       for j in range(num_carry)]
+
+    def f(cond_consts, body_consts, init):
+      def cond(c):
+        s = sum((c[i] for i in cond_reads if i != ctr), jnp.int32(0))
+        s = sum((cond_consts[i] for i in cond_const_reads), s)
+        return c[ctr] < 10 - s % 3
+      def body(c):
+        return [c[ctr] + 1 if j == ctr else
+                sum([*(c[i] for i in body_deps[j]),
+                     *(body_consts[i] for i in body_const_deps[j])],
+                    jnp.int32(j + 1)) % 7
+                for j in range(num_carry)]
+      return lax.while_loop(cond, body, init)
+
+    args = [[jnp.int32(x) for x in rng.randint(7, size=n)]
+            for n in [num_consts, num_consts, num_carry]]
+    flat_args = [*args[0], *args[1], *args[2]]
+    jaxpr = api.make_jaxpr(f)(*args).jaxpr
+    full_outs = core.eval_jaxpr(jaxpr, [], *flat_args)
+
+    for used_outputs in it.product([False, True], repeat=num_carry):
+      msg = f"{cond_reads=} {body_deps=} {used_outputs=}"
+      live = self._while_live_carry(used_outputs, cond_reads, body_deps)
+      used_cond_consts = [any(live) and i in cond_const_reads
+                          for i in range(num_consts)]
+      used_body_consts = [any(l and i in deps
+                              for deps, l in zip(body_const_deps, live))
+                          for i in range(num_consts)]
+      jaxpr_dce, used_inputs = pe.dce_jaxpr(jaxpr, list(used_outputs))
+      self.assertEqual(used_inputs,
+                       [*used_cond_consts, *used_body_consts, *live], msg)
+      if any(live):
+        eqn, = jaxpr_dce.eqns
+        self.assertLen(eqn.outvars, sum(live), msg)
+        self.assertEqual(eqn.params['cond_nconsts'], sum(used_cond_consts), msg)
+        self.assertEqual(eqn.params['body_nconsts'], sum(used_body_consts), msg)
+      outs = core.eval_jaxpr(
+          jaxpr_dce, [], *[x for x, u in zip(flat_args, used_inputs) if u])
+      self.assertAllClose(
+          outs, [y for y, u in zip(full_outs, used_outputs) if u], err_msg=msg)
+
+  @parameterized.product(where=['cond', 'body'],
+                         effect=['write', 'accum', 'read'])
+  def test_dce_jaxpr_while_effects(self, where, effect):
+    # Writes to a Ref keep the loop alive even when no loop outputs are used,
+    # and keep alive the carry elements they read (and those elements'
+    # dependencies). Reads alone don't keep the loop alive.
+    def emit(ref, x):
+      if effect == 'write':
+        ref[...] = x
+      elif effect == 'accum':
+        jax.ref.addupdate(ref, ..., x)
+      else:
+        _ = ref[...]
+
+    def f(i, x, y, z):
+      ref = jax.new_ref(jnp.int32(0))
+      def cond(c):
+        i, x, _, _ = c
+        if where == 'cond': emit(ref, x)
+        return i < 3
+      def body(c):
+        i, x, y, z = c
+        if where == 'body': emit(ref, x)
+        return i + 1, x + y, y * 2, z + 1
+      return *lax.while_loop(cond, body, (i, x, y, z)), ref[...]
+
+    args = [jnp.int32(0), jnp.int32(1), jnp.int32(2), jnp.int32(3)]
+    jaxpr = api.make_jaxpr(f)(*args).jaxpr
+    eqn, = [e for e in jaxpr.eqns if e.primitive is lax.while_p]
+    num_carry = len(eqn.outvars)
+
+    # Each case is (used_outputs, expected_used_inputs, num_carry_pruned), where
+    # num_carry_pruned is None if the whole loop is pruned. If the Ref isn't
+    # read after the loop, writes to it are dead too.
+    if effect == 'read':
+      cases = [([False] * 4 + [True], [False] * 4, None),
+               ([False] * 3 + [True] * 2, [True, False, False, True], 2)]
+    else:
+      cases = [([False] * 4 + [True], [True] * 3 + [False], 1),
+               ([False] * 3 + [True] * 2, [True] * 4, 0)]
+    cases.append(([False] * 5, [False] * 4, None))
+    for used_outputs, expected_used_inputs, num_carry_pruned in cases:
+      self.assert_dce_result(jaxpr, used_outputs, expected_used_inputs,
+                             check_diff=False)
+      jaxpr_dce, _ = pe.dce_jaxpr(jaxpr, used_outputs)
+      eqns = [e for e in jaxpr_dce.eqns if e.primitive is lax.while_p]
+      if num_carry_pruned is None:
+        self.assertEmpty(eqns)
+      else:
+        eqn, = eqns
+        self.assertLen(eqn.outvars, num_carry - num_carry_pruned)
+
+  def test_dce_jaxpr_while_ref_effect(self):
+    # A loop whose only observable result is a Ref update is kept.
+    def f(x, y):
+      ref = jax.new_ref(jnp.int32(0))
+      def body(c):
+        i, x, y = c
+        ref[...] += x
+        return i + 1, x * 2, y + 1
+      lax.while_loop(lambda c: c[0] < 3, body, (jnp.int32(0), x, y))
+      return ref[...]
+
+    jaxpr = api.make_jaxpr(f)(jnp.int32(1), jnp.int32(2)).jaxpr
+    self.assert_dce_result(jaxpr, [True], [True, False], check_diff=False)
+    jaxpr_dce, _ = pe.dce_jaxpr(jaxpr, [True])
+    eqn, = [e for e in jaxpr_dce.eqns if e.primitive is lax.while_p]
+    self.assertLen(eqn.outvars, 2)  # y is pruned
+
+  def test_dce_jaxpr_while_effects_only_fixpoint(self):
+    # No loop outputs are used and the cond reads no carry elements, but a Ref
+    # write in the body reads x0, which reads x1, which reads x2. Discovering
+    # that takes the most fixpoint iterations. (Since the cond reads nothing
+    # the body changes, the loop can only run with a trip count of zero.)
+    def f(x0, x1, x2, go):
+      ref = jax.new_ref(jnp.int32(0))
+      def body(c):
+        x0, x1, x2 = c
+        ref[...] = x0
+        return x1 + 1, x2 + 1, x2 * 2
+      lax.while_loop(lambda _: go, body, (x0, x1, x2))
+      return ref[...]
+
+    args = jnp.int32(1), jnp.int32(2), jnp.int32(3), jnp.bool_(False)
+    jaxpr = api.make_jaxpr(f)(*args).jaxpr
+    jaxpr_dce, used_inputs = pe.dce_jaxpr(jaxpr, [True])
+    self.assertEqual(used_inputs, [True, True, True, True])
+    eqn, = [e for e in jaxpr_dce.eqns if e.primitive is lax.while_p]
+    self.assertLen(eqn.outvars, 3)
+    self.assertAllClose(core.eval_jaxpr(jaxpr_dce, [], *args),
+                        core.eval_jaxpr(jaxpr, [], *args))
+
+  @parameterized.parameters([True, False])
+  def test_dce_jaxpr_while_dead_ref_write(self, use_carry_out):
+    def f(x):
+      r = jax.new_ref(x)
+      def body(c):
+        i, y = c
+        r[...] = y  # never read
+        return i + 1, y * 2.
+      _, y = lax.while_loop(lambda c: c[0] < 3, body, (jnp.int32(0), x))
+      return y if use_carry_out else x
+
+    jaxpr = api.make_jaxpr(f)(jnp.float32(1.)).jaxpr
+    jaxpr_dce, _ = pe.dce_jaxpr(jaxpr, [True])
+    if use_carry_out:
+      eqn, = jaxpr_dce.eqns
+      self.assertEqual([e.primitive.name for e in eqn.params['body_jaxpr'].eqns],
+                       ['add', 'mul'])
+      self.assertAllClose(core.eval_jaxpr(jaxpr_dce, [], jnp.float32(1.)),
+                          [f(jnp.float32(1.))])
+    else:
+      self.assertEmpty(jaxpr_dce.eqns)
+
+  def test_dce_jaxpr_while_keeps_ref_write_read_by_cond(self):
+    # The Ref is both a cond const and a body const, and it's never read after
+    # the loop, but the body's write to it is read by the cond.
+    def f(n):
+      r = jax.new_ref(jnp.int32(0))
+      def body(i):
+        r[...] = i + 1
+        return i + 1
+      # The bound on i just keeps the loop from running forever.
+      return lax.while_loop(lambda i: (r[...] < n) & (i < 10), body,
+                            jnp.int32(0))
+
+    jaxpr = api.make_jaxpr(f)(jnp.int32(3)).jaxpr
+    jaxpr_dce, _ = pe.dce_jaxpr(jaxpr, [True])
+    eqn, = [e for e in jaxpr_dce.eqns if e.primitive is lax.while_p]
+    body_prims = [e.primitive.name for e in eqn.params['body_jaxpr'].eqns]
+    self.assertIn('swap', body_prims)
+
+  def test_dce_jaxpr_while_keeps_ref_write_read_by_next_iteration(self):
+    def f(x):
+      r = jax.new_ref(jnp.float32(0.))
+      def body(c):
+        i, y = c
+        z = r[...]
+        r[...] = y + 1.  # read by the next iteration
+        return i + 1, y + z
+      _, y = lax.while_loop(lambda c: c[0] < 3, body, (jnp.int32(0), x))
+      return y
+
+    x = jnp.float32(1.)
+    jaxpr = api.make_jaxpr(f)(x).jaxpr
+    jaxpr_dce, _ = pe.dce_jaxpr(jaxpr, [True])
+    self.assertAllClose(core.eval_jaxpr(jaxpr_dce, [], x), [f(x)])
+
+  def test_dce_jaxpr_while_ref_liveness_fixpoint(self):
+    # Only r1 is read after the loop, but it's written from r2, which is written
+    # from r3, and so on, so discovering that they're all live takes several
+    # iterations of the fixpoint.
+    def f(x):
+      r1, r2, r3, r4 = [jax.new_ref(x) for _ in range(4)]
+      def body(c):
+        i, y = c
+        r1[...] = r2[...]
+        r2[...] = r3[...]
+        r3[...] = r4[...]
+        r4[...] = y
+        return i + 1, y + 1.
+      lax.while_loop(lambda c: c[0] < 5, body, (jnp.int32(0), x))
+      return r1[...]
+
+    x = jnp.float32(1.)
+    jaxpr = api.make_jaxpr(f)(x).jaxpr
+    jaxpr_dce, _ = pe.dce_jaxpr(jaxpr, [True])
+    eqn, = [e for e in jaxpr_dce.eqns if e.primitive is lax.while_p]
+    body_prims = [e.primitive.name for e in eqn.params['body_jaxpr'].eqns]
+    self.assertEqual(body_prims.count('swap'), 4)
+    self.assertAllClose(core.eval_jaxpr(jaxpr_dce, [], x), [f(x)])
+
+  def test_dce_jaxpr_while_shared_const(self):
+    # The same outer variable is both a cond const and a body const.
+    def f(n, x, y):
+      def body(c):
+        i, x, y = c
+        return i + 1, x * 2, y + n
+      return lax.while_loop(lambda c: c[0] < n, body, (jnp.int32(0), x, y))
+
+    jaxpr = api.make_jaxpr(f)(jnp.int32(3), jnp.int32(1), jnp.int32(2)).jaxpr
+    n, *_ = jaxpr.invars
+    self.assertEqual(jaxpr.eqns[0].invars[:2], [n, n])
+
+    for used_outputs, expected_used_inputs, cond_nconsts, body_nconsts in [
+        ([False, True, False], [True, True, False], 1, 0),
+        ([False, False, True], [True, False, True], 1, 1),
+    ]:
+      self.assert_dce_result(jaxpr, used_outputs, expected_used_inputs,
+                             check_diff=False)
+      jaxpr_dce, _ = pe.dce_jaxpr(jaxpr, used_outputs)
+      eqn, = jaxpr_dce.eqns
+      self.assertEqual(eqn.params['cond_nconsts'], cond_nconsts)
+      self.assertEqual(eqn.params['body_nconsts'], body_nconsts)
+
+  def test_dce_jaxpr_while_attached_consts(self):
+    # The cond and body jaxprs may have attached consts, which stay attached.
+    c = jnp.arange(3, dtype='float32')
+    def cond(carry):
+      return carry[0] < 3
+    def body(carry):
+      i, x, y = carry
+      return i + 1, x + 1., y * c
+    init = jnp.int32(0), jnp.ones(3, 'float32'), jnp.ones(3, 'float32')
+    cond_jaxpr = api.make_jaxpr(cond)(init)
+    body_jaxpr = api.make_jaxpr(body)(init)
+    self.assertLen(body_jaxpr.consts, 1)
+
+    def f(*init):
+      return lax.while_p.bind(*init, cond_jaxpr=cond_jaxpr, cond_nconsts=0,
+                              body_jaxpr=body_jaxpr, body_nconsts=0)
+    jaxpr = api.make_jaxpr(f)(*init).jaxpr
+    self.assert_dce_result(jaxpr, [False, True, False], [True, True, False],
+                           expected_num_eqns=1 + 1 + 2, check_diff=False)
+    self.assert_dce_result(jaxpr, [False, False, True], [True, False, True],
+                           expected_num_eqns=1 + 1 + 2, check_diff=False)
+
+  @parameterized.parameters(2, 5, 10)
+  def test_dce_jaxpr_while_chain_fixpoint(self, n):
+    # Carry element j reads element j + 1, so using the first one requires all
+    # of them, which takes n iterations of the fixpoint to discover.
+    def f(i, *xs):
+      def body(c):
+        i, *xs = c
+        return i + 1, *[x + y for x, y in zip(xs[:-1], xs[1:])], xs[-1] * 2
+      return lax.while_loop(lambda c: c[0] < 3, body, (i, *xs))
+
+    args = [jnp.int32(0), *[jnp.float32(k) for k in range(n)]]
+    jaxpr = api.make_jaxpr(f)(*args).jaxpr
+    # One outer while eqn, one lt in the cond, and the body eqns.
+    self.assert_dce_result(
+        jaxpr, [False, True, *[False] * (n - 1)], [True] * (n + 1),
+        expected_num_eqns=1 + 1 + (n + 1), check_diff=False)
+    self.assert_dce_result(
+        jaxpr, [*[False] * n, True], [True, *[False] * (n - 1), True],
+        expected_num_eqns=1 + 1 + 2, check_diff=False)
+
+  def test_dce_jaxpr_while_nested(self):
+    def f(i, x, y):
+      def inner_body(c):
+        j, x, y = c
+        return j + 1, x * 2, y + x
+      def body(c):
+        i, x, y = c
+        _, x, y = lax.while_loop(lambda c: c[0] < 2, inner_body,
+                                 (jnp.int32(0), x, y))
+        return i + 1, x, y
+      return lax.while_loop(lambda c: c[0] < 3, body, (i, x, y))
+
+    args = jnp.int32(0), jnp.float32(1.), jnp.float32(2.)
+    jaxpr = api.make_jaxpr(f)(*args).jaxpr
+    self.assert_dce_result(jaxpr, [False, False, True], [True, True, True],
+                           check_diff=False)
+    self.assert_dce_result(jaxpr, [False, True, False], [True, True, False],
+                           check_diff=False)
+    jaxpr_dce, _ = pe.dce_jaxpr(jaxpr, [False, True, False])
+    outer_eqn, = jaxpr_dce.eqns
+    inner_eqn, = [e for e in outer_eqn.params['body_jaxpr'].eqns
+                  if e.primitive is lax.while_p]
+    self.assertLen(outer_eqn.outvars, 2)
+    self.assertLen(inner_eqn.outvars, 2)
+
+  def test_dce_jaxpr_while_jvp(self):
+    def f(x):
+      def body(c):
+        i, x = c
+        return i + 1, jnp.sin(x)
+      return lax.while_loop(lambda c: c[0] < 3, body, (jnp.int32(0), x))[1]
+
+    jaxpr = api.make_jaxpr(lambda x, t: api.jvp(f, (x,), (t,)))(
+        jnp.float32(1.), jnp.float32(1.)).jaxpr
+    self.assert_dce_result(jaxpr, [True, True], [True, True], check_diff=False)
+    self.assert_dce_result(jaxpr, [False, True], [True, True], check_diff=False)
+    # If only the primal output is used, the tangent carry is pruned.
+    self.assert_dce_result(jaxpr, [True, False], [True, False],
+                           expected_num_eqns=1 + 1 + 2, check_diff=False)
+
+  def test_dce_jaxpr_while_vmap_batched_predicate(self):
+    def f(n, x, y):
+      def body(c):
+        i, x, y = c
+        return i + 1, x * 2., y + 1.
+      return lax.while_loop(lambda c: c[0] < n, body, (jnp.int32(0), x, y))
+
+    ns = jnp.arange(3, dtype='int32')
+    xs = jnp.arange(3, dtype='float32')
+    jaxpr = api.make_jaxpr(jax.vmap(f))(ns, xs, xs).jaxpr
+    self.assert_dce_result(jaxpr, [False, True, False], [True, True, False],
+                           check_diff=False)
+    self.assert_dce_result(jaxpr, [False, False, True], [True, False, True],
+                           check_diff=False)
+
+  def test_dce_while_jit_prunes_args(self):
+    def f(i, x, y):
+      _, x, _ = lax.while_loop(lambda c: c[0] < 3,
+                               lambda c: (c[0] + 1, c[1] * 2, c[2] + 1),
+                               (i, x, y))
+      return x
+    args = jnp.int32(0), jnp.int32(1), jnp.int32(2)
+    compiled = jit(f).lower(*args).compile()
+    self.assertEqual(compiled._executable._kept_var_idx, {0, 1})
+    self.assertEqual(compiled(*args), f(*args))
+
 
 class BufferDonationTest(jtu.BufferDonationTestCase):
 
@@ -9650,9 +10301,9 @@ class InputSavedVJPTest(jtu.JaxTestCase):
 
     d = {'hi': jnp.ones((4, 5)), 'bye': jnp.ones((3, 4))}
     _, f_vjp = api.vjp(f, d, saveable_args=((True, False),))
-    bye_res, hi_res = f_vjp.args_res[0]  # tuple-tree, dict flatten order
-    self.assertAllClose(bye_res, d['bye'])
-    self.assertIsInstance(hi_res, api.NotSaveable)
+    res = f_vjp.args_res[0]  # mirrors the dict argument
+    self.assertAllClose(res['bye'], d['bye'])
+    self.assertIsInstance(res['hi'], api.NotSaveable)
     with self.assertRaisesRegex(
         ValueError,
         re.compile(r"not-saveable.*args\[0\]\['hi'\]", re.DOTALL)):
@@ -9703,10 +10354,28 @@ class InputSavedVJPTest(jtu.JaxTestCase):
       api.vjp(f, x, w, saveable_args=(True,))
     with self.assertRaisesRegex(ValueError, "leaf"):
       api.vjp(f, x, w, saveable_args=(True, (True, True)))
-    with self.assertRaisesRegex(ValueError, "tuple-tree of bools"):
+    with self.assertRaisesRegex(ValueError, "tree of bools"):
       api.vjp(f, x, w, saveable_args=(1, True))
-    with self.assertRaisesRegex(ValueError, "tuple-tree of bools"):
-      api.vjp(f, x, w, saveable_args=[True, True])  # tuples only, not lists
+    with self.assertRaisesRegex(ValueError, "keys"):
+      api.vjp(lambda d: d['x'] @ d['w'], dict(x=x, w=w),
+              saveable_args=(dict(x=True, W=False),))
+
+  def test_saveable_args_isomorphic_trees(self):
+    # containers are matched by their number of children (and dict keys), so
+    # any isomorphic tree works, not just a tuple-tree or a pytree prefix
+    Pair = collections.namedtuple('Pair', ['x', 'w'])
+    f = lambda d, p: (d['x'] @ d['w']) @ (p.x @ p.w)
+    x, w = jnp.ones((3, 3)), 2. * jnp.ones((3, 3))
+    args = (dict(x=x, w=w), Pair(3. * x, 4. * w))
+    for saveable_args in [((False, True), (False, True)),  # dict order: w, x
+                          [dict(w=False, x=True), [False, True]],
+                          (dict(w=False, x=True), Pair(False, True))]:
+      _, f_vjp = api.vjp(f, *args, saveable_args=saveable_args)
+      d_res, p_res = f_vjp.args_res
+      self.assertIsInstance(d_res, dict)  # built-in containers are mirrored
+      self.assertIsInstance(d_res['w'], api.NotSaveable)
+      self.assertIs(type(p_res), tuple)  # other pytree nodes become tuples
+      self.assertIsInstance(p_res[0], api.NotSaveable)
 
 
 class TracebackTest(jtu.JaxTestCase):
@@ -9791,8 +10460,8 @@ class TracebackTest(jtu.JaxTestCase):
 
   def test_custom_vjp_traceback(self):
     # TODO(dougalm): improve this
-    expected_depth_f = 3 if config.custom_vjp3.value else 9
-    expected_depth_f_fwd = 18 if config.custom_vjp3.value else 16
+    expected_depth_f = 4 if config.custom_vjp3.value else 9
+    expected_depth_f_fwd = 19 if config.custom_vjp3.value else 16
     expected_depth_f_rev = 12
     init_depth = self.cur_depth()
 

@@ -866,7 +866,7 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
     >>> jnp.allclose(normed_sum, 1.0)
     Array(True, dtype=bool)
   """
-  out_sharding = canonicalize_sharding(out_sharding, 'jnp.histogram')
+  sharding = canonicalize_sharding(out_sharding, 'jnp.histogram')
   if weights is None:
     a, _ = util.ensure_arraylike("histogram", a, bins)
     a, = util.promote_dtypes_inexact(a)
@@ -877,10 +877,10 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
       raise ValueError("weights should have the same shape as a.")
     a, weights = util.promote_dtypes_inexact(a, weights)
 
-  if out_sharding is not None:
+  if sharding is not None:
     return auto_axes(partial(_histogram, bins=bins, density=density),
-                     out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes
+                     out_sharding=sharding,
+                     axes=sharding.mesh.explicit_axes
                      )(a, range, weights)
   else:
     return _histogram(a, range, weights, bins, density)
@@ -1060,10 +1060,10 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                      f"of {D} pairs or Nones; got {range=}")
 
   try:
-    bins_per_dimension = list(bins)  # pyrefly: ignore[bad-argument-type]
+    bins_per_dimension: Sequence[ArrayLike] = list(bins)  # pyrefly: ignore[bad-argument-type]
   except TypeError:
     # when bin_size is integer, the same bin is used for each dimension
-    bins_per_dimension: list[ArrayLike] = D * [bins]  # pyrefly: ignore[bad-assignment]
+    bins_per_dimension = D * [bins]  # pyrefly: ignore[bad-assignment]
   else:
     if len(bins_per_dimension) != D:
       raise ValueError("should be a bin for each dimension.")
@@ -2487,7 +2487,8 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
     destination: index or indices of the axes destinations
 
   Returns:
-    Copy of ``a`` with axes moved from ``source`` to ``destination``.
+    Copy of ``a`` with axes moved from ``source`` to ``destination``, or ``a``
+    itself if no axis moves.
 
   Notes:
     Unlike :func:`numpy.moveaxis`, :func:`jax.numpy.moveaxis` will return a copy rather
@@ -2523,8 +2524,13 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
     (4, 5, 3, 2)
   """
   arr = util.ensure_arraylike("moveaxis", a)
-  return _moveaxis(arr, _ensure_index_tuple(source),
-                   _ensure_index_tuple(destination))
+  source = tuple(_canonicalize_axis(i, np.ndim(arr))
+                 for i in _ensure_index_tuple(source))
+  destination = tuple(_canonicalize_axis(i, np.ndim(arr))
+                      for i in _ensure_index_tuple(destination))
+  if source == destination and len(set(source)) == len(source):
+    return arr  # nothing moves, so don't apply even an identity transpose
+  return _moveaxis(arr, source, destination)
 
 @api.jit(static_argnames=('source', 'destination'), inline=api.Inline.JAX_EARLY)
 def _moveaxis(a: Array, source: tuple[int, ...], destination: tuple[int, ...]) -> Array:
@@ -2889,16 +2895,6 @@ def select(
   idx = argmax(conditions.astype(bool), axis=0)
   return lax.select_n(*broadcast_arrays(idx, *choicelist))
 
-def is_replicated_or_unreduced(sharding: NamedSharding) -> bool:
-  if sharding.spec.partitions:
-    return False
-  if sharding.spec.reduced:
-    return False
-  if (sharding.spec.unreduced and
-      sharding.spec.unreduced != set(sharding.mesh.axis_names)):
-    return False
-  return True
-
 @export
 def bincount(x: ArrayLike, weights: ArrayLike | None = None,
              minlength: int = 0, *, length: int | None = None,
@@ -2981,7 +2977,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
         asarray, x,
         "The error occurred because of argument 'x' of jnp.bincount. "
         "To avoid this error, pass a static `length` argument.")
-    length = max(minlength, x_arr.size and int(max(0, x_arr.max())) + 1)
+    length = max(minlength, x_arr.size and max(0, int(x_arr.max())) + 1)
   else:
     length = core.concrete_dim_or_error(
         length,
@@ -2998,13 +2994,13 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
           "type of weights must match type of x. Got"
           f" typeof(x)={core.typeof(x).str_short(True, True)} and"
           f" typeof(weights)={core.typeof(weights).str_short(True, True)}")
-  out_sharding = canonicalize_sharding(out_sharding, 'jnp.bincount')
-  if out_sharding is not None and not is_replicated_or_unreduced(out_sharding):
+  sharding = canonicalize_sharding(out_sharding, 'jnp.bincount')
+  if sharding is not None and sharding.spec != P():
     raise core.ShardingTypeError(
-        "out_sharding passed to `jnp.bincount` can only be fully replicated"
-        " or fully unreduced along all mesh axes")
+        "out_sharding passed to `jnp.bincount` can only be fully replicated."
+        f" Got {sharding.spec}")
   return array_creation.zeros(length, _dtype(weights)).at[clip(x, 0)].add(
-      weights, mode='drop', out_sharding=out_sharding)
+      weights, mode='drop', out_sharding=sharding)
 
 
 @overload
@@ -4217,7 +4213,7 @@ def _pad(array: ArrayLike, pad_width: PadValueLike[int], mode: str,
   elif mode in stat_funcs:
     if stat_length is not None:
       stat_length = _broadcast_to_pairs(stat_length, nd, "stat_length")
-    return _pad_stats(array, pad_width, stat_length, stat_funcs[str(mode)])
+    return _pad_stats(array, pad_width, stat_length, stat_funcs[mode])
 
   elif mode == "empty":
     return _pad_empty(array, pad_width)
@@ -5093,17 +5089,17 @@ def block(arrays: ArrayLike | list[Any]) -> Array:
 
 
 @overload
-def atleast_1d() -> list[Array]:
+def atleast_1d() -> tuple[()]:
   ...
 @overload
 def atleast_1d(x: ArrayLike, /) -> Array:
   ...
 @overload
-def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
+def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]:
   ...
 @export
 @api.jit
-def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
+def atleast_1d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
   """Convert inputs to arrays with at least 1 dimension.
 
   JAX implementation of :func:`numpy.atleast_1d`.
@@ -5138,27 +5134,27 @@ def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
     case a list of results is returned:
 
     >>> jnp.atleast_1d(x, y)
-    [Array([1.], dtype=float32), Array([0, 1, 2, 3], dtype=int32)]
+    (Array([1.], dtype=float32), Array([0, 1, 2, 3], dtype=int32))
   """
   util.check_arraylike("atleast_1d", *arys)
   if len(arys) == 1:
     return array(arys[0], copy=False, ndmin=1)
   else:
-    return [array(arr, copy=False, ndmin=1) for arr in arys]
+    return tuple(array(arr, copy=False, ndmin=1) for arr in arys)
 
 
 @overload
-def atleast_2d() -> list[Array]:
+def atleast_2d() -> tuple[()]:
   ...
 @overload
 def atleast_2d(x: ArrayLike, /) -> Array:
   ...
 @overload
-def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
+def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]:
   ...
 @export
 @api.jit
-def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
+def atleast_2d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
   """Convert inputs to arrays with at least 2 dimensions.
 
   JAX implementation of :func:`numpy.atleast_2d`.
@@ -5201,27 +5197,27 @@ def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
     case a list of results is returned:
 
     >>> jnp.atleast_2d(x, y)
-    [Array([[1.]], dtype=float32), Array([[0, 1, 2, 3]], dtype=int32)]
+    (Array([[1.]], dtype=float32), Array([[0, 1, 2, 3]], dtype=int32))
   """
   util.check_arraylike("atleast_2d", *arys)
   if len(arys) == 1:
     return array(arys[0], copy=False, ndmin=2)
   else:
-    return [array(arr, copy=False, ndmin=2) for arr in arys]
+    return tuple(array(arr, copy=False, ndmin=2) for arr in arys)
 
 
 @overload
-def atleast_3d() -> list[Array]:
+def atleast_3d() -> tuple[()]:
   ...
 @overload
 def atleast_3d(x: ArrayLike, /) -> Array:
   ...
 @overload
-def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
+def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]:
   ...
 @export
 @api.jit
-def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
+def atleast_3d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
   """Convert inputs to arrays with at least 3 dimensions.
 
   JAX implementation of :func:`numpy.atleast_3d`.
@@ -5283,7 +5279,7 @@ def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
       arr = lax.expand_dims(arr, dimensions=(2,))
     return arr
   else:
-    return [atleast_3d(arr) for arr in arys]
+    return tuple(atleast_3d(arr) for arr in arys)
 
 
 @export
@@ -6150,7 +6146,7 @@ def i0(x: ArrayLike) -> Array:
   Examples:
     >>> x = jnp.array([-2, -1, 0, 1, 2])
     >>> jnp.i0(x)
-    Array([2.2795851, 1.266066 , 1.0000001, 1.266066 , 2.2795851], dtype=float32)
+    Array([2.2795854, 1.2660658, 1.       , 1.2660658, 2.2795854], dtype=float32)
   """
   x, = util.promote_args_inexact("i0", x)
   if not issubdtype(x.dtype, np.floating):
@@ -6161,15 +6157,12 @@ def i0(x: ArrayLike) -> Array:
 @partial(custom_jvp, nondiff_argnums=(0,))
 def _i1_maclaurin(k: int, x: Array) -> Array:
   # compute the kth derivative of i1 evaluated near zero using a two-term
-  # Maclaurin series.
-  if k % 2 == 0:
-    m = (k + 1) // 2
-    c = math.comb(k + 1, m) / (2 ** (k + 1))
-    return lax.mul(lax._const(x, c), x)
-  else:
-    m = k // 2
-    c = math.comb(k, m) / (2 ** k)
-    return lax.full_like(x, c)
+  # Maclaurin series, i.e. the terms a(k+j) x^j / j! for the two smallest j
+  # with a(k+j) = i1^(k+j)(0) nonzero.
+  a = lambda n: math.comb(n, n // 2) / 2 ** n / math.factorial(n - k)
+  j = 1 - k % 2
+  p = lax.add(lax._const(x, a(k + j)), lax.mul(lax._const(x, a(k + j + 2)), lax.mul(x, x)))
+  return lax.mul(p, x) if j else p
 
 @_i1_maclaurin.defjvp
 def _i1_maclaurin_jvp(k: int, primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
@@ -6177,32 +6170,48 @@ def _i1_maclaurin_jvp(k: int, primals: tuple[Array], tangents: tuple[Array]) -> 
   return _i1_maclaurin(k, x), lax.mul(_i1_maclaurin(k + 1, x), t)
 
 
-@custom_jvp
-def i1_impl(x: Array) -> Array:
-  return lax.mul(lax.exp(lax.abs(x)), lax_special.bessel_i1e(x))
+def _exp_mul_bessel_ie(abs_x: Array, ie: Array) -> Array:
+  # For |x| <= max_log, evaluate ie * exp(|x|) directly so low-precision dtypes
+  # (e.g. bfloat16) do not accumulate extra rounding error from squaring
+  # exp(|x|/2). For |x| > max_log, exp(|x|) overflows, so split the exponent
+  # as (exp(|x|/2) * ie) * exp(|x|/2) while still issuing a single lax.exp op.
+  max_log = lax._const(abs_x, math.floor(math.log(dtypes.finfo(abs_x.dtype).max)))
+  use_half = lax.gt(abs_x, max_log)
+  e = lax.exp(where(use_half, lax.mul(abs_x, lax._const(abs_x, 0.5)), abs_x))
+  return lax.mul(where(use_half, lax.mul(e, ie), ie), e)
+
+
+def _i1(x: Array) -> Array:
+  return _exp_mul_bessel_ie(lax.abs(x), lax_special.bessel_i1e(x))
+i1_impl = custom_jvp(_i1)
 
 @i1_impl.defjvp
 def i1_impl_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
-  # A closed-form JVP using Bessel recurrence (e.g. i1'(x) = i0(x) - i1(x)/x)
-  # is not viable due to the 0/0 singularity at x = 0. Meanwhile, autodiff
-  # through exp(abs(x)) * bessel_i1e(x) fails for higher-order derivatives
-  # near 0 due to (1) the cusp in abs(x) and (2) catastrophic cancellation when
-  # evaluating (i0e(x) - i1e(x)/x) / x^2 in floating-point arithmetic.
-  # We therefore use a recursive two-term Maclaurin series approximation for
-  # |x| <= sqrt(eps), where the series truncation error is strictly below
-  # machine precision.
-  primal_out, tangent_out = api.jvp(i1_impl.fun, primals, tangents)
+  # A closed-form JVP using Bessel recurrence (i1'(x) = i0(x) - i1(x)/x) has a
+  # 0/0 singularity at x = 0 and suffers from catastrophic cancellation near 0
+  # for higher-order derivatives when evaluating (i0(x) - i1(x)/x) / x^2 in
+  # floating-point arithmetic. We therefore use a recursive two-term Maclaurin
+  # series approximation for |x| <= sqrt(eps), where the series truncation
+  # error is strictly below machine precision, and the closed-form Bessel
+  # recurrence for |x| > sqrt(eps).
   x, = primals
   t, = tangents
+  primal_out = i1_impl(x)
   cutoff = math.sqrt(dtypes.finfo(x.dtype).eps)
   use_series = lax.le(lax.abs(x), lax._const(x, cutoff))
-  return primal_out, where(use_series, lax.mul(_i1_maclaurin(1, x), t), tangent_out)
+  safe_x = where(use_series, lax._const(x, 1.0), x)
+  deriv = where(
+      use_series,
+      _i1_maclaurin(1, x),
+      lax.sub(i0_impl(safe_x), lax.div(primal_out, safe_x)),
+  )
+  return primal_out, lax.mul(deriv, t)
 
 
 @custom_jvp
 def i0_impl(x: Array) -> Array:
   abs_x = lax.abs(x)
-  return lax.mul(lax.exp(abs_x), lax_special.bessel_i0e(abs_x))
+  return _exp_mul_bessel_ie(abs_x, lax_special.bessel_i0e(abs_x))
 
 @i0_impl.defjvp
 def i0_impl_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:

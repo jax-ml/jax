@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import functools
 import itertools
@@ -118,7 +119,7 @@ def _mxf4_sparsity_version() -> int:
   """
   arch = utils.get_arch()
   assert arch.major in {10, 11}, arch
-  return int(arch.major == 10 and arch.minor >= 7)
+  return int(arch == utils.RUBIN)
 
 
 def sparse_group_elems(element_type: ir.Type) -> int:
@@ -169,6 +170,8 @@ def _create_scaled_instr_descriptor(
     scale_encoding = 1
   elif scale_type == ir.Float8E4M3FNType.get():
     scale_encoding = 0
+  elif scale_type == ir.Float8E5M3FNUType.get():
+    scale_encoding = 2
   else:
     raise NotImplementedError(f"Unsupported scale type: {scale_type}")
   desc |= scale_encoding << 23  # Scale matrix type
@@ -395,7 +398,7 @@ def mma(
           f" {a_scale.shape[1]}"
       )
     scale_block = k // a_scale.shape[1]
-    k_group_elems = max(k_group_elems, 4 * scale_block)
+    k_group_elems = max(k_group_elems, 4 * scale_block)  # pyrefly: ignore[unsupported-operation]
   required_multiple = 16 if collective else 8
   mode_name = "2 CTA" if collective else "1 CTA"
   if d.dtype == s32:
@@ -471,24 +474,35 @@ def mma(
             f" {scale_block}"
         )
     elif isinstance(a_element_type, ir.Float4E2M1FNType):
-      if isinstance(scale_element_type, ir.Float8E4M3FNType):
-        if base_scale_block != 16:
-          expected = 32 if is_sparse else 16
-          raise ValueError(
-              f"Scale block size mismatch: expected {expected}, got"
-              f" {scale_block}"
-          )
-      elif isinstance(scale_element_type, ir.Float8E8M0FNUType):
-        if base_scale_block not in (16, 32):
-          expected = "32 or 64" if is_sparse else "16 or 32"
-          raise ValueError(
-              f"Scale block size mismatch: expected {expected}, got"
-              f" {scale_block}"
-          )
-      else:
+      if not isinstance(
+          scale_element_type,
+          (ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType),
+      ):
         raise ValueError(
-            "Scale element type mismatch: expected f8e8m0fnu or f8e4m3fn, got"
-            f" {scale_element_type}"
+            "Scale element type mismatch: expected f8e8m0fnu, f8e4m3fn, or"
+            f" f8e5m3fnu, got {scale_element_type}"
+        )
+      arch = utils.get_arch()
+      if isinstance(scale_element_type, ir.Float8E5M3FNUType) and not (
+          arch.major == 10 and arch.minor >= 7
+      ):
+        raise ValueError(
+            "E5M3FNU scale factors are only supported on sm_107f, got"
+            f" sm_{arch.major}{arch.minor}."
+        )
+      if isinstance(scale_element_type, ir.Float8E4M3FNType) and not (
+          arch.major == 10 and arch.minor >= 7
+      ):
+        allowed_base_blocks = (16,)
+      else:
+        allowed_base_blocks = (16, 32)
+      if base_scale_block not in allowed_base_blocks:
+        expected = " or ".join(
+            str(b * (2 if is_sparse else 1)) for b in allowed_base_blocks
+        )
+        raise ValueError(
+            f"Scale block size mismatch: expected {expected}, got"
+            f" {scale_block}"
         )
     else:
       raise NotImplementedError(
@@ -739,8 +753,11 @@ def _do_mma(
       )
       base_scale_block = scale_block // (2 if is_sparse else 1)
       assert base_scale_block in (16, 32)
+      assert isinstance(
+          scale_element_type,
+          (ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType),
+      )
       if base_scale_block == 32:
-        assert isinstance(scale_element_type, ir.Float8E8M0FNUType)
         kind = "mxf4nvf4.block_scale.scale_vec::2X"
         scale_steps = 2
       else:
@@ -751,7 +768,6 @@ def _do_mma(
           f"Unsupported element type for block scaling: {a_element_type}"
       )
     extra_ptx = "[$5], [$6], "
-    extra_constraints = ",r,r"
   else:
     if isinstance(a_element_type, (ir.F16Type, ir.BF16Type)):
       kind = "f16"
@@ -767,7 +783,7 @@ def _do_mma(
       raise NotImplementedError(
           f"Unsupported input element type: {a_element_type}"
       )
-    extra_constraints = extra_ptx = ""
+    extra_ptx = ""
 
     def create_scaled_instr_descriptor(*args):
       raise NotImplementedError
@@ -780,7 +796,6 @@ def _do_mma(
   if is_sparse:
     sparse_meta_idx = 5 + (2 if is_scaled else 0)
     sparse_meta_ptx = f"[${sparse_meta_idx}], "
-    extra_constraints += ",r"
   sp_selector = None
   sparse_addr: tuple[Any, ...] = ()
   scales_addrs: tuple[Any, ...] = ()
@@ -852,9 +867,7 @@ def _do_mma(
     b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)  # pyrefly: ignore[bad-argument-type]
     a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
     b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [d_addr, a_enc_addr_base, b_enc_addr_base, i_desc, accumulate, *scales_addrs, *sparse_addr],
+    utils.inline_ptx(
         f"""{{
             .reg .b32 a_desc_low, a_desc_high, b_desc_low, b_desc_high;
             .reg {".b32" if a_in_tmem else ".b64"} a_desc;
@@ -865,8 +878,7 @@ def _do_mma(
             {"mov.b32 a_desc, a_desc_low;" if a_in_tmem else f"mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"}
             tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
         }}""",
-        "r,r,r,r,b" + extra_constraints,
-        has_side_effects=True,
+        d_addr, a_enc_addr_base, b_enc_addr_base, i_desc, accumulate, *scales_addrs, *sparse_addr,
     )
     accumulate = arith.constant(i1, 1)
 
@@ -875,7 +887,17 @@ def commit_arrive(
     barrier: utils.BarrierRef | ir.Value,
     collective: bool = False,
     ctx: LaunchContext | None = None,
+    *,
+    predicate: ir.Value | None = None,
+    commit_a_read_only: bool = False,
 ) -> None:
+  if commit_a_read_only:
+    arch = utils.get_arch()
+    if arch.major != utils.RUBIN.major or arch.minor < utils.RUBIN.minor:
+      raise NotImplementedError(
+          "SMEM-read-only commit for operand A requires sm_107f, got"
+          f" sm_{arch.major}{arch.minor}"
+      )
   if isinstance(barrier, utils.BarrierRef):
     barrier = barrier.get_ptr()
   elif barrier.type != llvm.PointerType.get(address_space=3):
@@ -883,6 +905,11 @@ def commit_arrive(
         "barrier must be a Mosaic barrier or a SMEM pointer, got:"
         f" {barrier.type}"
     )
+  if predicate is None:
+    predicate_ctx = contextlib.nullcontext()
+  else:
+    predicate_ctx = utils.when(predicate)
+  mod = ".smem.a.read" if commit_a_read_only else ""
   if collective:
     if ctx is None:
       raise ValueError("ctx must be provided for collective barriers")
@@ -907,21 +934,15 @@ def commit_arrive(
     #
     # While it seems like this shouldn't change anything, it appears that ptxas
     # messes up in that case, producing incorrect code.
-    llvm.call_intrinsic(
-        None,
-        "llvm.nvvm.tcgen05.commit.mc.cg2",
-        [barrier, mask],
-        [],
-        [],
-    )
+    with predicate_ctx:
+      llvm.call_intrinsic(
+          None, f"llvm.nvvm.tcgen05.commit{mod}.mc.cg2", [barrier, mask], [], []
+      )
   else:
-    llvm.call_intrinsic(
-        None,
-        "llvm.nvvm.tcgen05.commit.cg1",
-        [barrier],
-        [],
-        [],
-    )
+    with predicate_ctx:
+      llvm.call_intrinsic(
+          None, f"llvm.nvvm.tcgen05.commit{mod}.cg1", [barrier], [], []
+      )
 
 
 def tmem_alloc_exact_ncols(ncols: int, exact: bool) -> int:
@@ -965,7 +986,7 @@ def tmem_alloc(
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
   ptx = f"tcgen05.alloc.cta_group::{cta_group}.sync.aligned.shared::cta.b32 [$0], $1;"
-  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32))
+  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32), convergent=True)
   return ncols
 
 
@@ -976,13 +997,13 @@ def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exac
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
   ptx = f"tcgen05.dealloc.cta_group::{cta_group}.sync.aligned.b32 $0, $1;"
-  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32))
+  utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32), convergent=True)
 
 
 def tmem_relinquish_alloc_permit(collective: bool) -> None:
   cta_group = "2" if collective else "1"
   ptx = f"tcgen05.relinquish_alloc_permit.cta_group::{cta_group}.sync.aligned;"
-  utils.inline_ptx(ptx)
+  utils.inline_ptx(ptx, convergent=True)
 
 
 def _tmem_access_helper(shape, num) -> tuple[int, str]:
@@ -1040,27 +1061,18 @@ def _tmem_load(
     num_out_regs += 1
   else:
     suffix = ".b32"
-  if num_out_regs == 1:
-    asm_out_ty = i32
-  else:
-    asm_out_ty = llvm.StructType.get_literal([i32] * num_out_regs)
 
   red_mod = red_reg_arg = ""
   if reduce is not None:
     red_mod = ".red"
     red_reg_arg = f", ${num_out_regs - 1}"
-  regs = llvm.inline_asm(
-      asm_out_ty,
-      [tmem_addr],
+  return utils.inline_ptx(
       f"tcgen05.ld{red_mod}.sync.aligned.{shape}.x{num}{suffix} {regs_vector}{red_reg_arg}, [${num_out_regs}];",
-      "=r," * num_out_regs + "r",
+      tmem_addr,
+      result_types=[i32] * num_out_regs,
       has_side_effects=True,
+      convergent=True,
   )
-  assert isinstance(regs, ir.Value)
-  if num_out_regs == 1:
-    return [regs]
-  else:
-    return [llvm.extractvalue(i32, regs, [i]) for i in range(num_out_regs)]
 
 
 def _tmem_store(tmem_addr, shape, num, regs, unpack: bool) -> None:
@@ -1072,6 +1084,7 @@ def _tmem_store(tmem_addr, shape, num, regs, unpack: bool) -> None:
       f"tcgen05.st.sync.aligned.{shape}.x{num}{pack_mod}.b32 [${num_out_regs}], {regs_vector};",
       "r," * num_out_regs + "r",
       has_side_effects=True,
+      convergent=True,
   )
 
 
@@ -1868,12 +1881,12 @@ def _load_32xcols_native(
 
 
 def commit_tmem() -> None:
-  utils.inline_ptx("tcgen05.wait::st.sync.aligned;")
+  utils.inline_ptx("tcgen05.wait::st.sync.aligned;", convergent=True)
   utils.warpgroup_barrier()
 
 
 def wait_load_tmem() -> None:
-  utils.inline_ptx("tcgen05.wait::ld.sync.aligned;")
+  utils.inline_ptx("tcgen05.wait::ld.sync.aligned;", convergent=True)
   utils.warpgroup_barrier()
 
 
@@ -1937,8 +1950,15 @@ def async_copy_scales_smem_to_tmem(
   smem_ty = ir.MemRefType(smem_ref.type)
   if (dtype := smem_ty.element_type) != tmem_ref.dtype:
     raise ValueError(f"Incompatible dtypes: SMEM has {dtype}, TMEM has {tmem_ref.dtype}")
-  if dtype not in {ir.Float8E8M0FNUType.get(), ir.Float8E4M3FNType.get()}:
-    raise ValueError(f"Unsupported dtype: {dtype}, only f8e8m0fnu and f8e4m3fn are supported")
+  if dtype not in {
+      ir.Float8E8M0FNUType.get(),
+      ir.Float8E4M3FNType.get(),
+      ir.Float8E5M3FNUType.get(),
+  }:
+    raise ValueError(
+        f"Unsupported dtype: {dtype}, only f8e8m0fnu, f8e4m3fn, and f8e5m3fnu"
+        " are supported"
+    )
   if tmem_ref.shape[0] % TMEM_ROWS:
     raise ValueError(f"TMEM reference must have a multiple of {TMEM_ROWS} rows, but got {tmem_ref.shape[0]}")
   if tmem_ref.shape[1] % 4:

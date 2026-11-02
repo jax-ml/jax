@@ -14,5 +14,6 @@ TPU specific documentation.
    distributed
    core_map
    sparsecore
+   fuser
    prng
    hardware

@@ -108,6 +108,12 @@ def cholesky(x: Array, *, symmetrize_input: bool = True) -> Array:
     shape ``[..., n, n]``. If Cholesky decomposition fails, returns a matrix
     full of NaNs. The behavior on failure may change in the future.
   """
+  x = lax.asarray(x)
+  if x.ndim < 2 or x.shape[-1] != x.shape[-2]:
+    raise ValueError(
+        f"The input to linalg.cholesky must have shape [..., n, n], got shape {x.shape}"
+    )
+
   if symmetrize_input:
     x = symmetrize(x)
   return _tril(cholesky_p.bind(x))
@@ -285,6 +291,11 @@ def eigh(
     If ``subset_by_index`` is ``None`` then ``d`` is equal to ``n``. Otherwise
     ``d`` is equal to ``subset_by_index[1] - subset_by_index[0]``.
   """
+  x = lax.asarray(x)
+  if x.ndim < 2 or x.shape[-1] != x.shape[-2]:
+    raise ValueError(
+        f"The input to linalg.eigh must have shape [..., n, n], got shape {x.shape}"
+    )
   if symmetrize_input:
     x = symmetrize(x)
   v, w = eigh_p.bind(
@@ -992,6 +1003,9 @@ cholesky_update_p = standard_linalg_primitive(
 mlir.register_lowering(
     cholesky_update_p, partial(_cholesky_update_gpu_lowering_rule, "cu"),
     platform="cuda")
+mlir.register_lowering(
+    cholesky_update_p, partial(_cholesky_update_gpu_lowering_rule, "oneapi"),
+    platform="oneapi")
 mlir.register_lowering(
     cholesky_update_p,
     mlir.lower_fun(_cholesky_update_jax_fn, multiple_results=False))
@@ -1959,7 +1973,7 @@ mlir.register_lowering(
     mlir.lower_fun(_generic_lu_pivots_to_permutation, multiple_results=False))
 register_cpu_gpu_lowering(
     lu_pivots_to_permutation_p, _lu_pivots_to_permutation_gpu_lowering,
-    ("cuda", "rocm"))
+    ("cuda", "rocm", "oneapi"))
 
 
 # QR decomposition
@@ -2357,6 +2371,15 @@ def _svd_jvp_rule(
     # TODO: implement full matrices case, documented here: https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
     raise NotImplementedError(
       "Singular value decomposition JVP not implemented for full matrices")
+
+  if compute_uv and not (
+      subset_by_index is None
+      or subset_by_index == (0, core.min_dim(A.shape[-2], A.shape[-1]))
+  ):
+    raise NotImplementedError(
+        "Singular value decomposition JVP not implemented for "
+        "subset_by_index with compute_uv=True"
+    )
 
   Ut, V = _H(U), _H(Vt)
   s_dim = s[..., None, :]
@@ -2943,7 +2966,8 @@ def _tridiagonal_solve_gpu_lowering(ctx, dl, d, du, b, *, target_name_prefix,
     return rule(ctx, dl, d, du, b)
 
   # The cusolver implementation requires m >= 3.
-  if m <= 2:
+  # OneAPI uses the JAX decomposition for non-perturbed solves.
+  if m <= 2 or target_name_prefix == "oneapi":
     return mlir.lower_fun(_tridiagonal_solve_jax, multiple_results=False)(
         ctx, dl, d, du, b, perturb_singular=perturb_singular)
   target_name = f"{target_name_prefix}sparse_gtsv2_ffi"
@@ -3075,6 +3099,10 @@ mlir.register_lowering(
     tridiagonal_solve_p,
     partial(_tridiagonal_solve_gpu_lowering, target_name_prefix='hip'),
     platform='rocm')
+mlir.register_lowering(
+    tridiagonal_solve_p,
+  partial(_tridiagonal_solve_gpu_lowering, target_name_prefix='oneapi'),
+    platform='oneapi')
 mlir.register_lowering(tridiagonal_solve_p, mlir.lower_fun(
     _tridiagonal_solve_jax, multiple_results=False))
 
@@ -3251,10 +3279,11 @@ def _linalg_ffi_lowering(target_name, avals_in=None, avals_out=None,
     num_batch_dims = max_num_dims - num_non_batch_dims
     frontend_attrs = mlir.ir_attribute({"num_batch_dims": str(num_batch_dims)})
     if batch_partitionable_:
-      extra_attributes = {"mhlo.frontend_attributes": frontend_attrs}
-      if config.use_shardy_partitioner.value:
-        extra_attributes["sdy.sharding_rule"] = _build_sdy_sharding_rule(
-            ctx.module_context, num_batch_dims, avals_in_, avals_out_)
+      extra_attributes = {
+          "mhlo.frontend_attributes": frontend_attrs,
+          "sdy.sharding_rule": _build_sdy_sharding_rule(
+              ctx.module_context, num_batch_dims, avals_in_, avals_out_),
+      }
     else:
       extra_attributes = None
     rule = ffi.ffi_lowering(target_name, operand_layouts=operand_layouts,

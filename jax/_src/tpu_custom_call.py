@@ -61,7 +61,7 @@ ir_version_override: Callable[[], int | None] | None = None
 
 
 # Controls the IR serialization version. Upon incrementing the
-# default version in jaxlib/mosaic/dialect/tpu/transforms/serde.cc we must
+# default version in xla/mosaic/dialect/tpu/transforms/serde.cc we must
 # continue to use the old serialization version when in forward compatibility
 # mode: for 1 month when exporting, or when using old cloud TPU.
 #
@@ -71,11 +71,14 @@ ir_version_override: Callable[[], int | None] | None = None
 #    return None
 #
 # We should also add a TODO to remove the conditional one month later.
+# TODO(slebedev): Bump to 19 after 2026-11-21.
 _FWD_COMPAT_VERSION = 15
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
   if ctx.is_forward_compat() or backend is None:
     return _FWD_COMPAT_VERSION
+  if not cloud_tpu_init.is_libtpu_at_least("0.0.52"):
+    return 18
   if ir_version_override is not None:
     return ir_version_override()
   return None
@@ -111,6 +114,7 @@ class MemorySpace(enum.Enum):
   SC_VECTOR_SEMAPHORE_MEM = enum.auto()
   SC_SCALAR_SMEM = enum.auto()
   SC_VECTOR_SMEM = enum.auto()
+  SC_VECTOR_VMEM = enum.auto()
 
   @property
   def color(self) -> int:
@@ -132,6 +136,8 @@ class MemorySpace(enum.Enum):
       return 11
     elif self == MemorySpace.SC_VECTOR_SMEM:
       return 12
+    elif self == MemorySpace.SC_VECTOR_VMEM:
+      return 15
     else:
       raise ValueError("invalid memory space: " + str(self))
 
@@ -231,7 +237,7 @@ class CustomCallBackendConfig:
           "builtin.module(mosaic-serde{serialize=false},mosaic-serde{serialize=true"
           f" target-version={version}}})",
       )
-      pipeline.enable_verifier(bool(config.enable_checks.value))
+      pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module.operation)
       bytecode_buffer = io.BytesIO()
       module.operation.write_bytecode(bytecode_buffer, desired_version=0)
@@ -242,7 +248,7 @@ class CustomCallBackendConfig:
         lowered_module_asm_version=version,
     )
 
-  def to_json(self) -> bytes:
+  def to_json(self, use_core_ids: bool = False) -> bytes:
     """Serializes the backend config into JSON."""
     # We format the JSON ourselves, because json.dumps seems to be overly slow.
     config = io.BytesIO()
@@ -346,6 +352,8 @@ class CustomCallBackendConfig:
     if self.device_type == "sparsecore":
       config.write(b', "sparse_core_config": ')
       sparse_core_config: dict[str, Any] = {}
+      if use_core_ids and self.active_core_count == 1:
+        sparse_core_config["core_ids"] = ["0"]
       tiling = self.tiling if self.tiling is not None else Tiling.COMPACT
       sparse_core_config["tiling"] = tiling.value
       if self.opt_level is not None:
@@ -386,7 +394,11 @@ class CustomCallBackendConfig:
         if i + 1 != len(self.flags):
           config.write(b",")
       config.write(b"]")
-    if self.device_type == "sparsecore" and self.active_core_count == 1:
+    if (
+        not use_core_ids
+        and self.device_type == "sparsecore"
+        and self.active_core_count == 1
+    ):
       config.write(b', "megachip_parallelism_config": {"cores": ["0"]}')
     config.write(b"}")
     return config.getvalue()
@@ -458,11 +470,13 @@ def _tpu_custom_call_lowering(
       ir_version != config.lowered_module_asm_version
   ):
     config = config.downgrade_lowered_module_asm(ir_version)
+  # TODO(b/536052236): Always use core_ids after 2026-11-06.
+  use_core_ids = not ctx.is_forward_compat()
   call = mlir.custom_call(
       "tpu_custom_call",
       result_types=result_types,
       operands=in_nodes,
-      backend_config=config.to_json(),
+      backend_config=config.to_json(use_core_ids=use_core_ids),
       api_version=1,
       has_side_effect=has_side_effects != TpuSideEffectType.PURE,
       operand_output_aliases=dict(input_output_aliases),
@@ -510,7 +524,7 @@ def _lower_mosaic_module_to_asm(
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true " + target_version + "})"
       )
-      pipeline.enable_verifier(bool(config.enable_checks.value))
+      pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module_op)
       if unzip_debug_locations and hasattr(
           tpu, "private_unzip_debug_locations"
@@ -677,7 +691,6 @@ def _lower_to_custom_call_config(
   unzip_debug_locations = (
       config.jax_mosaic_unzip_debug_locations.value
       and (ctx is None or not ctx.is_forward_compat())
-      and cloud_tpu_init.is_libtpu_at_least("0.0.50")
   )
   (
       lowered_module_asm,
@@ -1021,13 +1034,13 @@ def lowered_as_tpu_kernel(
     # We hardcode a specific version both here and below, since this path is
     # only used by some internal tests that don't need serialization, but we do
     # need a concrete version on the module.
-    current_ir_version = 17
+    current_ir_version = 19
     try:
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true"
           f" target-version={current_ir_version}}})"
       )
-      pipeline.enable_verifier(bool(config.enable_checks.value))
+      pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module_op)
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects

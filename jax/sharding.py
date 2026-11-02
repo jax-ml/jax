@@ -36,6 +36,7 @@ from jax._src.mesh import (
     use_abstract_mesh as use_abstract_mesh,
 )
 from jax._src.core import ManualAxisType as ManualAxisType
+from jax._src.config import no_collectives as no_collectives
 from jax._src.pjit import (
     reshard as reshard,
     auto_axes as auto_axes,
