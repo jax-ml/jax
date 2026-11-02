@@ -111,6 +111,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   echo "::group::Bazel TPU single-accelerator tests (full)" >&2
   INVOCATION_ID_SINGLE=$(python3 ci/utilities/generate_invocation_id.py)
+  echo "INVOCATION_ID_SINGLE=$INVOCATION_ID_SINGLE" >> "$GITHUB_ENV"
 
   bazel "${BAZEL_STARTUP_ARGS[@]}" test \
     --invocation_id="$INVOCATION_ID_SINGLE" \
@@ -154,6 +155,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   echo "::group::Bazel TPU multi-accelerator tests (full)" >&2
   INVOCATION_ID_MULTI=$(python3 ci/utilities/generate_invocation_id.py)
+  echo "INVOCATION_ID_MULTI=$INVOCATION_ID_MULTI" >> "$GITHUB_ENV"
 
   bazel "${BAZEL_STARTUP_ARGS[@]}" test \
     --invocation_id="$INVOCATION_ID_MULTI" \
@@ -231,6 +233,7 @@ else
 
   echo "::group::Bazel TPU single-accelerator tests" >&2
   INVOCATION_ID_SINGLE=$(python3 ci/utilities/generate_invocation_id.py)
+  echo "INVOCATION_ID_SINGLE=$INVOCATION_ID_SINGLE" >> "$GITHUB_ENV"
 
   bazel "${BAZEL_STARTUP_ARGS[@]}" test \
     --invocation_id="$INVOCATION_ID_SINGLE" \
@@ -290,6 +293,7 @@ else
 
   echo "::group::Bazel TPU multi-accelerator tests" >&2
   INVOCATION_ID_MULTI=$(python3 ci/utilities/generate_invocation_id.py)
+  echo "INVOCATION_ID_MULTI=$INVOCATION_ID_MULTI" >> "$GITHUB_ENV"
 
   bazel "${BAZEL_STARTUP_ARGS[@]}" test \
     --invocation_id="$INVOCATION_ID_MULTI" \
