@@ -461,21 +461,6 @@ class TensorCoreMesh(pallas_core.Mesh):
     yield
 
 
-def create_tensorcore_mesh(
-    axis_name: str,
-    devices: Sequence[jax.Device] | None = None,
-    num_cores: int | None = None,
-) -> TensorCoreMesh:
-  if devices is not None and num_cores is not None:
-    raise ValueError("cannot specify both devices and num_cores")
-  if num_cores is None:
-    if devices is None:
-      num_cores = _get_default_num_cores()
-    else:
-      num_cores = devices[0].num_cores
-  return TensorCoreMesh(axis_name=axis_name, num_cores=num_cores)
-
-
 def _convert_semaphore_type_to_aval(
     out_shape: SemaphoreType,
 ) -> jax_core.AbstractValue:
