@@ -34,15 +34,11 @@ on:
       rocm-version:
         description: "Which ROCm version to build for?"
         type: string
-        default: "7"
+        default: "10"
       rocm-release-version:
-        description: "Full ROCm release version (e.g., 7.2.0) for container image and S3 paths"
+        description: "TheRock release to install (e.g., 10.0.0 or therock-latest); also used in S3 paths"
         type: string
-        default: "7.2.0"
-      manylinux-image:
-        description: "Override the manylinux container image (e.g., ghcr.io/rocm/jax-manylinux_2_28-therock-latest:latest)"
-        type: string
-        default: ""
+        default: "10.0.0"
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: choice
@@ -86,15 +82,11 @@ on:
       rocm-version:
         description: "Which ROCm version to build for?"
         type: string
-        default: "7"
+        default: "10"
       rocm-release-version:
-        description: "Full ROCm release version (e.g., 7.2.0) for container image and S3 paths"
+        description: "TheRock release to install (e.g., 10.0.0 or therock-latest); also used in S3 paths"
         type: string
-        default: "7.2.0"
-      manylinux-image:
-        description: "Override the manylinux container image (e.g., ghcr.io/rocm/jax-manylinux_2_28-therock-latest:latest)"
-        type: string
-        default: ""
+        default: "10.0.0"
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: string
@@ -143,7 +135,9 @@ jobs:
     outputs:
       s3_upload_uri: ${{ steps.store-s3-upload-uri.outputs.s3_upload_uri }}
     container:
-      image: "${{ inputs.manylinux-image || format('ghcr.io/rocm/jax-manylinux_2_28-rocm-{0}:latest', inputs.rocm-release-version) }}"  # zizmor: ignore[unpinned-images]
+      # Ubuntu 24.04: the hermetic clang needs a newer glibc than manylinux_2_28.
+      # The wheels' manylinux floor comes from the hermetic sysroot, not this image.
+      image: ghcr.io/rocm/jax-build-ubu24.rocmless@sha256:fe966c6f77ad7dcd279bad02833d4cd70f72a9cd87640912ae37b20b3de7edea
       volumes:
         - /data:/data
       options: >-
@@ -172,6 +166,25 @@ jobs:
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Install TheRock (ROCm via pip)
+        env:
+          ROCM_RELEASE_VERSION: ${{ inputs.rocm-release-version }}
+        run: |
+          set -euo pipefail
+          # Same index, pin and device packages as the jax-manylinux_2_28-therock-*
+          # images (ROCm/rocm-jax build-base-docker.yml).
+          case "${ROCM_RELEASE_VERSION}" in
+            therock-latest) index=https://nightly.repo.amd.com/rocm/whl-next/; pin="" ;;
+            7.14*) index=https://repo.amd.com/rocm/whl-multi-arch/; pin="${ROCM_RELEASE_VERSION}" ;;
+            [0-9]*) index=https://stable.repo.amd.com/rocm/whl-next/; pin="${ROCM_RELEASE_VERSION}" ;;
+            *) echo "::error::rocm-release-version '${ROCM_RELEASE_VERSION}' has no TheRock pip release"; exit 1 ;;
+          esac
+          # The runner's in-cluster mirror, when set, carries only the whl-next indexes.
+          if [[ "${index}" == *whl-next* ]]; then index="${ROCM_PIP_INDEX_URL:-${index}}"; fi
+          python3 -m pip install --break-system-packages --pre --index-url "${index}" \
+            "rocm[libraries,devel,device-gfx942,device-gfx950]${pin:+==}${pin}"
+          rocm-sdk init
+          rocm-sdk path --root
       - name: Build ${{ inputs.artifact }}
         timeout-minutes: 120
         run: ./ci/build_rocm_artifacts.sh "$INPUTS_ARTIFACT"
