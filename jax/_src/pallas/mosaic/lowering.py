@@ -424,6 +424,9 @@ class PallasLoweringCacheKey:
   fuse_transposed_lhs_in_matmul: bool = False
   grid_sizes: tuple[int, ...] = ()
   vmapped_dims: tuple[int, ...] = ()
+  grid_names: tuple[Hashable, ...] | None = None
+  core_axis_names: tuple[Hashable, ...] = ()
+  jax_mesh_context: pallas_utils.MeshInfo | None = None
   dynamic_shape_env: frozenset[tuple[shape_poly._DimExpr, Any]] | None = None
 
 
@@ -1852,6 +1855,9 @@ def jaxpr_subcomp(
               fuse_transposed_lhs_in_matmul=ctx.fuse_transposed_lhs_in_matmul,
               grid_sizes=ctx.grid_sizes,
               vmapped_dims=ctx.vmapped_dims,
+              grid_names=ctx.grid_names,
+              core_axis_names=ctx.core_axis_names,
+              jax_mesh_context=ctx.jax_mesh_context,
               dynamic_shape_env=(
                   ctx.dynamic_shape_env.snapshot()
                   if ctx.dynamic_shape_env is not None
