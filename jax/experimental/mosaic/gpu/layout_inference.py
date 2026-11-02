@@ -616,6 +616,10 @@ def find_assignments_for(
 @dataclasses.dataclass()
 class DerivationContext:
   """Holds context information used for deriving an constraint system."""
+  # The architecture to infer layouts for, as a `(major, minor)` compute
+  # capability tuple. Allows derivation rules to make arch-dependent decisions.
+  arch: tuple[int, int] = (9, 0)
+
   # A map of `ValueSite` to the variable that it is associated with.
   variable_for_value_site: dict[ValueSite, cs.Variable] = dataclasses.field(
       default_factory=dict, init=False
@@ -1705,17 +1709,37 @@ def _tcgen05_mma_constraint_system(
     scale_index = list(op.operands).index(scale_operand)
     scale = ValueSite(op, VariableType.OPERAND, scale_index)
     scale_var = ctx.producer_ref(scale)
-    if op.collective and scale_operand == op.b_scale and M == 64:
-      layout = tcgen05.b_scales_m64_collective_layout()
-    else:
-      layout = tcgen05.scales_layout()
-    layout = cs.TMEMLayout(layout)
-    assignments[scale_var] = layout
-    if not cs.is_valid_assignment(scale_var, layout):
-      raise ValueError(
-          f"Cannot assign {layout} to {scale_operand=} with"
-          f" shape {scale.shape}."
+    major, minor = ctx.arch
+    if scale_operand == op.a_scale and major == 10 and minor >= 7:
+      # On sm_107f, A scales support both the 32-lane `scales_layout()` and the
+      # 128-lane `scales_128_lane_layout()`. Both lower correctly, so we let the
+      # rest of the system (e.g. a `tmem_layout_cast`) decide. On other
+      # architectures, only `scales_layout()` is supported.
+      candidate_layouts = (
+          cs.TMEMLayout(tcgen05.scales_layout()),
+          cs.TMEMLayout(tcgen05.scales_128_lane_layout()),
       )
+      valid_layouts = tuple(
+          l for l in candidate_layouts if cs.is_valid_assignment(scale_var, l)
+      )
+      if not valid_layouts:
+        raise ValueError(
+            f"Cannot assign any of {candidate_layouts} to {scale_operand=}"
+            f" with shape {scale.shape}."
+        )
+      constraints.append(cs.OneOf(scale_var, valid_layouts))
+    else:
+      if op.collective and scale_operand == op.b_scale and M == 64:
+        layout = tcgen05.b_scales_m64_collective_layout()
+      else:
+        layout = tcgen05.scales_layout()
+      layout = cs.TMEMLayout(layout)
+      assignments[scale_var] = layout
+      if not cs.is_valid_assignment(scale_var, layout):
+        raise ValueError(
+            f"Cannot assign {layout} to {scale_operand=} with"
+            f" shape {scale.shape}."
+        )
     operands_for_variable[scale_var] = [scale]
 
   if scaled:
@@ -2887,7 +2911,7 @@ def infer_layout(
   """
   global_constraint_system: cs.ConstraintSystem | cs.Unsatisfiable
   global_constraint_system = cs.ConstraintSystem()
-  ctx = DerivationContext()
+  ctx = DerivationContext(arch=arch)
 
   def gather_constraints(op: Any):
     # Terminator ops are handled directly by the op whose region they belong to.

@@ -1356,6 +1356,10 @@ class LayoutInferenceTest(parameterized.TestCase):
       in_out_layouts=(
           (tcgen05.tmem_default_layout(packing=1), fa.TCGEN05_LAYOUT),
           (tcgen05.scales_layout(), tcgen05.scales_layout().as_tiled_layout()),
+          (
+              tcgen05.tmem_default_layout(packing=4),
+              tcgen05.tmem_default_layout(packing=4).as_tiled_layout(),
+          ),
       ),
       columns=(24, 128),
   )
@@ -2103,8 +2107,14 @@ class LayoutInferenceTest(parameterized.TestCase):
       a_layout = tcgen05._infer_tmem_layout((m, k), collective=False, packing=2)
       self.checkInTmemLayouts(mma, [acc_layout, a_layout, tcgen05.sparse_meta_layout()])
 
-  @parameterized.parameters(False, True)
-  def test_infer_tmem_layout_for_tcgen05_mma_with_scales(self, a_in_smem):
+  @parameterized.product(
+      a_in_smem=(False, True),
+      a_scale_128_lane=(False, True),
+      arch=((10, 0), (10, 7)),
+  )
+  def test_infer_tmem_layout_for_tcgen05_mma_with_scales(
+      self, a_in_smem, a_scale_128_lane, arch
+  ):
     m = n = k = 128
     smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
     with ir.InsertionPoint(self.module.body):
@@ -2117,20 +2127,43 @@ class LayoutInferenceTest(parameterized.TestCase):
       b_ty = ir.MemRefType.get((k, n), f16, memory_space=smem)
       scale_a_ty = ir.MemRefType.get((m, 4), f8e8, memory_space=tmem)
       scale_b_ty = ir.MemRefType.get((n, 4), f8e8, memory_space=tmem)
-      acc, a, b, scale_a, scale_b = undefs(acc_ty, a_ty, b_ty, scale_a_ty, scale_b_ty)
+      acc, a, b, scale_a, scale_b = undefs(
+          acc_ty, a_ty, b_ty, scale_a_ty, scale_b_ty
+      )
+      if a_scale_128_lane:
+        # The 128-lane layout is only allowed on sm_107f and has to be
+        # requested explicitly.
+        scale_a = mgpu.dialect.tmem_layout_cast(
+            scale_a, layouts.to_layout_attr(tcgen05.scales_128_lane_layout())
+        )
+        [scale_a_reg] = undefs(ir.VectorType.get((m, 4), f8e8))
+        store_op = mgpu.dialect.async_store_tmem(scale_a_reg, scale_a)
       accumulate = mgpu.utils.c(1, ir.IntegerType.get_signless(1))
       mma = mgpu.dialect.TcGen05MMAOp(
           acc, a, b, accumulate, a_scale=scale_a, b_scale=scale_b
       )
 
-    mgpu.infer_layout(self.module)
+    if a_scale_128_lane and arch != (10, 7):
+      with self.assertRaises(ValueError):
+        mgpu.infer_layout(self.module, arch=arch)
+      return
+
+    mgpu.infer_layout(self.module, arch=arch)
 
     acc_layout = tcgen05._infer_tmem_layout((m, n), collective=False, packing=1)
+    a_scale_layout = (
+        tcgen05.scales_128_lane_layout()
+        if a_scale_128_lane
+        else tcgen05.scales_layout()
+    )
+    if a_scale_128_lane:
+      self.checkInLayouts(store_op, [a_scale_layout.as_tiled_layout()])
+      self.checkInTmemLayouts(store_op, [a_scale_layout])
     if a_in_smem:
-      self.checkInTmemLayouts(mma, [acc_layout, tcgen05.scales_layout(), tcgen05.scales_layout()])
+      self.checkInTmemLayouts(mma, [acc_layout, a_scale_layout, tcgen05.scales_layout()])
     else:
       a_layout = tcgen05._infer_tmem_layout((m, k), collective=False, packing=2)
-      self.checkInTmemLayouts(mma, [acc_layout, a_layout, tcgen05.scales_layout(), tcgen05.scales_layout()])
+      self.checkInTmemLayouts(mma, [acc_layout, a_layout, a_scale_layout, tcgen05.scales_layout()])
 
   @parameterized.parameters(64, 128)
   def test_infer_tmem_layout_for_tcgen05_collective_scaled_mma(self, m):

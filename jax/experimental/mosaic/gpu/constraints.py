@@ -612,6 +612,11 @@ class IsTransferableTmemRegisters(IsTransferable):
     if (
         reg_layout == fa.TCGEN05_LAYOUT
         and tmem_layout == tcgen05.tmem_default_layout(packing)
+        # `TCGEN05_LAYOUT` gives each thread 2 consecutive columns, but
+        # `tcgen05.ld/st` move whole 32-bit TMEM cells, which hold 4 (8-bit) or
+        # 8 (4-bit) columns when packing > 2. Splitting a cell across threads
+        # is not implemented, so such transfers use `as_tiled_layout()` below.
+        and packing <= 2
     ):
       return True
     if (
