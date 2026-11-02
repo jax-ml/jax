@@ -519,6 +519,11 @@ class NNFunctionsTest(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/pull/42168
     if dtype == jnp.float16 and jtu.test_device_matches(["tpu"]):
       raise unittest.SkipTest("F16_F16_F32 is not supported on TPU.")
+    if jtu.is_device_cuda():
+      if dtype == jnp.bfloat16 and not jtu.is_cuda_compute_capability_at_least("8.0"):
+        raise unittest.SkipTest("BF16_BF16_F32 requires CUDA compute capability >= 8.0.")
+      if dtype == jnp.float16 and not jtu.is_cuda_compute_capability_at_least("7.0"):
+        raise unittest.SkipTest("F16_F16_F32 requires CUDA compute capability >= 7.0.")
     B, S, T, N, H = 2, 64, 64, 4, 32
     keys = random.split(random.PRNGKey(0), 3)
     Q = random.normal(keys[0], (B, T, N, H), dtype)
