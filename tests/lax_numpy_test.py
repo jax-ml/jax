@@ -351,6 +351,33 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testNonzeroEmptyArray(self):
+    empty = jnp.zeros((0,), dtype=jnp.int32)
+    self.assertArraysEqual(
+        jnp.nonzero(empty, size=3, fill_value=99)[0],
+        jnp.array([99, 99, 99], dtype=jnp.int32),
+    )
+    self.assertArraysEqual(
+        jnp.flatnonzero(empty, size=3, fill_value=99),
+        jnp.array([99, 99, 99], dtype=jnp.int32),
+    )
+    self.assertArraysEqual(
+        jnp.argwhere(empty, size=3, fill_value=99).ravel(),
+        jnp.array([99, 99, 99], dtype=jnp.int32),
+    )
+    self.assertArraysEqual(
+        jnp.nonzero(empty, size=3)[0],
+        jnp.zeros(3, dtype=jnp.int32),
+    )
+    self.assertArraysEqual(
+        jnp.nonzero(empty, size=0, fill_value=99)[0],
+        jnp.zeros(0, dtype=jnp.int32),
+    )
+    empty_2d = jnp.zeros((0, 4), dtype=jnp.int32)
+    res_2d = jnp.nonzero(empty_2d, size=3, fill_value=(98, 99))
+    self.assertArraysEqual(res_2d[0], jnp.array([98, 98, 98], dtype=jnp.int32))
+    self.assertArraysEqual(res_2d[1], jnp.array([99, 99, 99], dtype=jnp.int32))
+
   @jtu.sample_product(shape=nonzerodim_shapes, dtype=all_dtypes)
   def testNonzero(self, shape, dtype):
     rng = jtu.rand_some_zero(self.rng())

@@ -618,13 +618,21 @@ def _nonzero_impl(a: ArrayLike, *fill_value: ArrayLike, size: int, axes: tuple[i
             "nonzero", a_aval, *(core.typeof(fv) for fv in fill_value)
         )
     )
-    return tuple(
-        core.pvary(
-            jnp.empty((*batch_shape, size), dtype=out_dtype, out_sharding=out_sharding),
-            vma,
-        )
-        for _ in axes
-    )
+    if fill_value:
+      entries = (
+          jnp.broadcast_to(
+              lax.expand_dims(fv, [np.ndim(fv)]),
+              (*batch_shape, size),
+              out_sharding=out_sharding,
+          )
+          for fv in fill_value
+      )
+    else:
+      entries = (
+          jnp.zeros((*batch_shape, size), dtype=out_dtype, out_sharding=out_sharding)
+          for _ in axes
+      )
+    return tuple(core.pvary(entry, vma) for entry in entries)
 
   transposed_a = jnp.transpose(a, (*batch_axes, *axes))
   sub_shape = transposed_a.shape[len(batch_axes):]
