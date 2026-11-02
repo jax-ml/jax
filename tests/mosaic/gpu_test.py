@@ -2462,7 +2462,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       scale_jax_dtype=(
           jnp.float8_e8m0fnu,
           jnp.float8_e4m3fn,
-          *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
+          jnp.float8_e5m3fnu,
+          # *([jnp.float8_e5m3fnu] if dtypes.float8_e5m3fnu is not None else []),
       ),
       block_size=(16, 32),
       m=(128,),  # TODO(apaszke): 256
