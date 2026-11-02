@@ -740,7 +740,7 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=jtu.dtypes.all,
-    shape=[(), (10), (2, 3)],
+    shape=[(), (0,), (10,), (2, 3), (2, 0, 3)],
   )
   @jtu.run_on_devices("cpu")
   def test_buffer_protocol(self, dtype, shape):
@@ -756,9 +756,15 @@ class JaxArrayTest(jtu.JaxTestCase):
         memoryview(y)
       return
 
-    x_bytes = memoryview(x).tobytes()
-    y_bytes = memoryview(y).tobytes()
-    self.assertEqual(x_bytes, y_bytes)
+    x_view = memoryview(x)
+    y_view = memoryview(y)
+    self.assertEqual(x_view.shape, y_view.shape)
+    self.assertEqual(x_view.itemsize, y_view.itemsize)
+    self.assertEqual(x_view.nbytes, y_view.nbytes)
+    self.assertTrue(y_view.readonly)
+    if x.size:
+      self.assertEqual(x_view.strides, y_view.strides)
+    self.assertEqual(x_view.tobytes(), y_view.tobytes())
 
   @jtu.run_on_devices("cpu")
   def test_buffer_protocol_donation(self):
@@ -787,6 +793,8 @@ class JaxArrayTest(jtu.JaxTestCase):
     # return an error instead, but that would be a behavior change for existing
     # users.
     y.delete()
+    self.assertEqual(y_view.shape, x.shape)
+    self.assertEqual(y_view.strides, x.strides)
     y_bytes = y_view.tobytes()
     self.assertEqual(x_bytes, y_bytes)
 
