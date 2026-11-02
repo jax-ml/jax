@@ -1327,8 +1327,13 @@ class JaxprInterpreter:
       collective_axis,
       barrier_transforms_tree,
       has_user_predicate: bool = False,
+      commit_a_read_only: bool = False,
   ):
     assert eqn.primitive is gpu_primitives.tcgen05_commit_arrive_p
+    if commit_a_read_only:
+      raise NotImplementedError(
+          "Interpret mode does not support commit_a_read_only."
+      )
     if has_user_predicate:
       *flat_args, predicate = flat_args
     else:

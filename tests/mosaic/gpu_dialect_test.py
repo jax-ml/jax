@@ -260,6 +260,9 @@ class DialectTest(MosaicGpuTest):
       )
       mgpu.dialect.tcgen05_commit_arrive(barrier)
       mgpu.dialect.tcgen05_commit_arrive(barrier, predicate=pred)
+      # TODO(bchetioui): remove `hasattr` check once minimum jaxlib version is >= 0.12.1.
+      if hasattr(mgpu.dialect.TcGen05CommitArriveOp, "commit_a_read_only"):
+        mgpu.dialect.tcgen05_commit_arrive(barrier, commit_a_read_only=True)
     self.assertTrue(self.module.operation.verify())
 
   def test_async_load_op_source_and_dest_must_have_same_element_type(self):

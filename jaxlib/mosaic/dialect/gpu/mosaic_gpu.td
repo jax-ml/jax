@@ -1302,12 +1302,16 @@ def MosaicGPU_TcGen05CommitArriveOp : Op<MosaicGPU_Dialect, "tcgen05_commit_arri
 
     if `collective` is `true`, allow signaling on the `barrier` object of
     multiple CTAs within the cluster.
+
+    If `commit_a_read_only` is `true`, the `barrier` tracks only the completion of
+    SMEM reads of operand A of preceding `tcgen05_mma` operations.
   }];
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
     DefaultValuedAttr<BoolAttr, "false">:$collective,
-    PtxPredicate:$predicate
+    PtxPredicate:$predicate,
+    DefaultValuedAttr<BoolAttr, "false">:$commit_a_read_only
   );
 }
 
