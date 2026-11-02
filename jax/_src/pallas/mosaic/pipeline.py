@@ -689,6 +689,14 @@ class BufferedRef(BufferedRefBase):
       raise ValueError(
           f"Unsupported buffer memory space: {buffer_memory_space}"
       )
+    in_buffer_count, out_buffer_count = _normalize_buffer_count(
+        buffer_count, buffer_type
+    )
+    if use_lookahead and in_buffer_count < 2:
+      raise ValueError(
+          "use_lookahead=True requires input buffer_count >= 2, got"
+          f" buffer_count={buffer_count!r} for {buffer_type}."
+      )
     if _window_aliases_source(spec.memory_space, source_memory_space):
       if buffer_memory_space is HBM:
         if source_memory_space not in (ANY, HBM):
@@ -719,9 +727,6 @@ class BufferedRef(BufferedRefBase):
             "grid_rank must be specified when use_lookahead is True."
         )
 
-      in_buffer_count, out_buffer_count = _normalize_buffer_count(
-          buffer_count, buffer_type
-      )
       total_buffer_count = _total_buffer_count(
           in_buffer_count, out_buffer_count, buffer_type
       )

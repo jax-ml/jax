@@ -1692,6 +1692,22 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, 'must be a static int'):
       pltpu.BufferedRef.input(spec, jnp.float32, buffer_count=(2, 2))
 
+  @parameterized.parameters(None, pltpu.HBM)
+  def test_lookahead_requires_multiple_input_buffers(self, mem_space):
+    msg = 'use_lookahead=True requires input buffer_count >= 2'
+    spec = pl.BlockSpec((128, 128), lambda i, j: (i, j), memory_space=mem_space)
+    for count in (1, (1, 2)):
+      with self.assertRaisesRegex(ValueError, msg):
+        pl.Buffered(buffer_count=count, use_lookahead=True)
+    for make_ref, count in (
+        (pltpu.BufferedRef.input, 1),
+        (pltpu.BufferedRef.input_output, 1),
+        (pltpu.BufferedRef.input_output, (1, 2)),
+        (pltpu.BufferedRef.output, 2),
+    ):
+      with self.assertRaisesRegex(ValueError, msg):
+        make_ref(spec, jnp.float32, count, grid_rank=2, use_lookahead=True)
+
   def test_single_buffered_output(self):
     def body(step, o_ref):
       @pl.when(step.index[1] == 0)

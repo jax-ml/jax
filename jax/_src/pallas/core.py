@@ -244,6 +244,16 @@ class Buffered:
   revisit: RevisitMode | None = None
   prefetched_count: int = 0
 
+  def __post_init__(self):
+    if self.use_lookahead:
+      bc = self.buffer_count
+      in_count = bc[0] if isinstance(bc, tuple) and len(bc) == 2 else bc
+      if isinstance(in_count, int) and in_count < 2:
+        raise ValueError(
+            "use_lookahead=True requires input buffer_count >= 2, got"
+            f" buffer_count={bc!r}."
+        )
+
 
 @dataclasses.dataclass(frozen=True)
 class MemoryRef:
