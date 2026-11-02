@@ -805,6 +805,7 @@ jax_multiplatform_test(
             "noasan",  # Test times out.
             "notsan",  # Test times out.
         ],
+        "gpu": ["noasan"],  # Test times out.
     },
     shard_count = {
         "cpu": 30,
@@ -1486,6 +1487,7 @@ jax_multiplatform_test(
     name = "scipy_fft_test",
     srcs = ["scipy_fft_test.py"],
     backend_tags = {
+        "cpu": ["noasan"],  # Times out on CPU with asan.
         "tpu": [
             "noasan",
             "notsan",
