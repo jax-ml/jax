@@ -4532,6 +4532,8 @@ def unop_ur_rule(name, aval, **kwargs):
 def unop_layout_rule(out_aval, aval, **kwargs):
   return aval.layout
 
+_unop_collective_rule = lambda *avals, **params: mlir.PartitioningRule()
+
 def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True,
          ur_rule=None):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name,
@@ -4543,6 +4545,7 @@ def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True,
       ur_rule=partial(unop_ur_rule, name) if ur_rule is None else ur_rule,
       layout_rule=unop_layout_rule)
   batching.defvectorized(prim)
+  mlir.shard_map_collective_rules[prim] = _unop_collective_rule
   return prim
 
 standard_unop = partial(unop, _identity)
@@ -6137,7 +6140,15 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
   out = mlir.convert_hlo(ctx, operand, aval_in, aval_out)
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
+def _convert_element_type_collective_rule(in_aval, out_aval, **params):
+  # TODO(rdyro): Support `convert_element_type` with a resharding `sharding`.
+  if in_aval.sharding != out_aval.sharding:
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
+mlir.register_lowering(
+    convert_element_type_p, _convert_element_type_lower,
+    shard_map_collective_rule=_convert_element_type_collective_rule)
 lax_utils.register_unreduced_lojax(convert_element_type_p, 'sharding')
 
 
