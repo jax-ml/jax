@@ -93,6 +93,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "erf_test",
     srcs = ["erf_test.py"],
+    backend_tags = {
+        "tpu": ["notsan"],
+    },
     disable_configs = DISABLED_CONFIGS,
     shard_count = 9,
     tags = ["cpu:4"],
