@@ -168,6 +168,7 @@ jax.scipy.special
    bernoulli
    beta
    betainc
+   betaincinv
    betaln
    boxcox
    boxcox1p
