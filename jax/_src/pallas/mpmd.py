@@ -148,10 +148,12 @@ def _mpmd_map_abstract_eval(
   #                    f"got {get_abstract_mesh().axis_types}")
 
   # NOTE(mattjj,yashkatariya): this doesn't catch auto-mode non-manual axes
-  if not (all(p is None for a in in_avals if isinstance(a, jax_core.ShapedArray)
-              for p in a.sharding.spec) and
-          all(p is None for a in out_avals if isinstance(a, jax_core.ShapedArray)
-              for p in a.sharding.spec)):
+  if not (all(not a.sharding.spec.unreduced and not a.sharding.spec.reduced and
+              all(p is None for p in a.sharding.spec)
+              for a in in_avals if isinstance(a, jax_core.ShapedArray)) and
+          all(not a.sharding.spec.unreduced and not a.sharding.spec.reduced and
+              all(p is None for p in a.sharding.spec)
+              for a in out_avals if isinstance(a, jax_core.ShapedArray))):
     raise ValueError(
         "mpmd_map requires all mesh axes to be Manual, got"
         f" {get_abstract_mesh().axis_types}"
@@ -652,9 +654,11 @@ def _mpmd_map_batching_rule(
 batching.fancy_primitive_batchers[mpmd_map_p] = _mpmd_map_batching_rule
 
 
-def _mpmd_map_is_high(*args, jaxprs, **params):
-  del args, params
-  return any(jaxpr.is_high for jaxpr in jaxprs)
+def _mpmd_map_is_high(*avals, jaxprs, out_avals, **params):
+  del params
+  return (any(jaxpr.is_high for jaxpr in jaxprs) or
+          any(a.is_high for a in avals) or
+          any(a.is_high for a in out_avals))
 
 
 mpmd_map_p.is_high = _mpmd_map_is_high

@@ -2981,6 +2981,34 @@ class PallasHiJaxTest(ptu.PallasTest):
     self.assertArraysEqual(os.x, xs.x)
     self.assertArraysEqual(os.s, xs.s)
 
+  @jtu.with_explicit_mesh((2,), "x")
+  def test_pallas_call_shard_map_unreduced(self, mesh):
+    x = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(8, 2), jax.P(None, "x")
+    )
+    y = jax.device_put(
+        np.arange(256, dtype=np.float32).reshape(2, 128), jax.P("x", None)
+    )
+    acc = jnp.einsum("ab,bc->ac", x, y, out_sharding=jax.P(unreduced={"x"}))
+
+    def add_one_kernel(in_ref, out_ref):
+      out_ref[...] = in_ref[...] + 1.0
+
+    @jax.jit
+    @jax.shard_map(mesh=mesh, out_specs=jax.P(unreduced={"x"}))
+    def f(acc):
+      return self.pallas_call(
+          add_one_kernel,
+          out_shape=jax.ShapeDtypeStruct(
+              acc.shape, acc.dtype, manual_axis_type=jax.typeof(acc).mat
+          ),
+          input_output_aliases={0: 0},
+      )(acc)
+
+    out = f(acc)
+    self.assertEqual(out.sharding.spec, jax.P(unreduced={"x"}))
+    self.assertArraysEqual(jax.reshard(out, jax.P()), x @ y + 2.0)
+
 
 class PadRefTest(jtu.JaxTestCase):
 

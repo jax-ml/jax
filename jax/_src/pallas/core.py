@@ -1024,6 +1024,20 @@ class BlockMapping:
     if not block_aval.inner_aval.is_high:
       return [self]
     assert self.array_aval.is_high
+    if isinstance(block_aval.inner_aval, jax_core.ShapedArray):
+      assert isinstance(self.array_aval, jax_core.ShapedArray)
+      assert not self.array_aval.sharding.spec.unreduced
+      assert self.array_aval.mat.unreduced
+      lo_inner_aval, = block_aval.inner_aval.lo_ty()
+      lo_array_aval, = self.array_aval.lo_ty()
+      return [
+          self.replace(
+              transformed_block_aval=block_aval.update(
+                  inner_aval=lo_inner_aval
+              ),
+              array_aval=lo_array_aval,
+          )
+      ]
     lo_array_avals = self.array_aval.lo_ty()
     block_spec = self.to_block_spec()
     if not hasattr(block_aval.inner_aval, "lower_block_spec"):

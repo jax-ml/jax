@@ -130,10 +130,12 @@ def _pallas_call_abstract_eval(
   #                    f"got {get_abstract_mesh().axis_types}")
 
   # NOTE(mattjj,yashkatariya): this doesn't catch auto-mode non-manual axes
-  if not (all(p is None for a in avals if isinstance(a, jax_core.ShapedArray)
-              for p in a.sharding.spec) and
-          all(p is None for a in out_avals if isinstance(a, jax_core.ShapedArray)
-              for p in a.sharding.spec)):
+  if not (all(not a.sharding.spec.unreduced and not a.sharding.spec.reduced and
+              all(p is None for p in a.sharding.spec)
+              for a in avals if isinstance(a, jax_core.ShapedArray)) and
+          all(not a.sharding.spec.unreduced and not a.sharding.spec.reduced and
+              all(p is None for p in a.sharding.spec)
+              for a in out_avals if isinstance(a, jax_core.ShapedArray))):
     raise ValueError("pallas_call requires all mesh axes to be Manual, "
                      f"got {get_abstract_mesh().axis_types}")
   return out_avals, effs
@@ -141,9 +143,11 @@ def _pallas_call_abstract_eval(
 
 pallas_call_p.def_effectful_abstract_eval(_pallas_call_abstract_eval)
 
-def _pallas_call_is_high(*_, jaxpr, **params):
+def _pallas_call_is_high(*avals, jaxpr, out_avals, **params):
   del params
-  return jaxpr.is_high
+  return (jaxpr.is_high or
+          any(a.is_high for a in avals) or
+          any(a.is_high for a in out_avals))
 pallas_call_p.is_high = _pallas_call_is_high
 
 
