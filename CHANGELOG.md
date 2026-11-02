@@ -27,8 +27,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.scipy.special.gammaincinv` and
     {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
     incomplete gamma functions, with gradients with respect to both arguments.
-  * Added {func}`jax.scipy.special.jn`, an accurate implementation of bessel
-    functions of the first kind of integer order.
+  * Added {func}`jax.scipy.special.jn` and {func}`jax.scipy.special.yn`,
+    providing accurate evaluation of integer-order Bessel functions of the first
+    and second kind.
 
 * Deprecations
   * The `jax_use_shardy_partitioner` configuration flag is deprecated and is now

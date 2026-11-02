@@ -222,6 +222,7 @@ jax.scipy.special
    wofz
    xlog1py
    xlogy
+   yn
    zeta
 
 

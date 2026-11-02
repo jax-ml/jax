@@ -32,6 +32,127 @@ from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
 
+def _scale_by_w_half_pow_n_over_fact(
+    n: int, w_safe: Array, val: Array
+) -> Array:
+  """Computes val * (w_safe / 2)^n / n! for integer n >= 0 without overflow."""
+  if n == 0:
+    return val
+  if n == 1:
+    return w_safe * (0.5 * val)
+  # Evaluating (w / 2)^n and n! separately overflows float range for large n.
+  # Instead, factor n! = 2^k_exp / c_n (with c_n in (1, 2]) and absorb the
+  # powers of 1/2 into each factor of w before exponentiating. Power-of-2
+  # scalings only shift the floating-point exponent, so they introduce no
+  # rounding error.
+  fact = math.factorial(n)
+  k_exp = fact.bit_length()
+  c_n = float(fractions.Fraction(1 << k_exp, fact))
+  q, rem = divmod(k_exp, n)
+  w1 = w_safe * float(0.5 ** (q + 1))
+  scaled_val = val * c_n
+  if rem == 0:
+    n1 = n // 2
+    n2 = n - n1
+    return ((w1**n1) * scaled_val) * (w1**n2)
+  w2 = 0.5 * w1
+  return ((w1 ** (n - rem)) * scaled_val) * (w2**rem)
+
+
+def _scale_exp2(
+    val: Array, total_exp: Array, er: Array | None = None
+) -> Array:
+  """Multiplies val by (er if provided) * 2**total_exp without overflow."""
+  # Split the exponent in half so that large shifts (e.g. when undoing loop
+  # rescaling on tiny values) don't overflow a single 2**total_exp factor.
+  e1 = jnp.floor(0.5 * total_exp)
+  e2 = total_exp - e1
+  s1, s2 = exp2(e1), exp2(e2)
+  if not dtypes.issubdtype(val.dtype, np.complexfloating):
+    res = val if er is None else val * er
+    return (res * s1) * s2
+  re = lax.real(val) if er is None else lax.real(val) * er
+  im = lax.imag(val) if er is None else lax.imag(val) * er
+  # Guard exact zeros so that 0.0 * inf stays 0.0 instead of turning into NaN.
+  re = jnp.where(re == 0.0, 0.0, (re * s1) * s2)
+  im = jnp.where(im == 0.0, 0.0, (im * s1) * s2)
+  return lax.complex(re, im)
+
+
+def _scale_exp_y_and_exp2(
+    val: Array, y: Array, scale_exp: Array, sign_y: float
+) -> Array:
+  """Multiplies complex val by exp(sign_y * y) * 2**scale_exp without overflow."""
+  real_dtype = y.dtype
+  # Rewrite y = k_y * ln(2) + r_y with |r_y| <= ln(2)/2 so exp(sign_y * y)
+  # splits into a bounded factor exp(sign_y * r_y) and a power of 2 that merges
+  # directly into scale_exp. Subtracting ln(2) in high + low parts keeps r_y
+  # accurate when y is large.
+  k_y = jnp.floor(y * (1.0 / math.log(2.0)) + 0.5)
+  if real_dtype == np.float64:
+    ln2_hi = 0.6931471803691238
+    ln2_lo = 1.9082149292705877e-10
+  else:
+    ln2_hi = 0.693115234375
+    ln2_lo = 3.19461849453e-5
+  r_y = (y - k_y * ln2_hi) - k_y * ln2_lo
+  er = jnp.exp(sign_y * r_y)
+  total_exp = scale_exp.astype(real_dtype) + sign_y * k_y
+  return _scale_exp2(val, total_exp, er=er)
+
+
+def _miller_norm(w_safe: Array, sum_even: Array, sum_odd: Array) -> Array:
+  """Recovers the scale factor that normalizes backward-recurrence values."""
+  # For real w, sum_even * cos(w) + sum_odd * sin(w) equals 1 / norm by
+  # standard trigonometric identities for J_k(w).
+  if not dtypes.issubdtype(w_safe.dtype, np.complexfloating):
+    return 1.0 / (sum_even * jnp.cos(w_safe) + sum_odd * jnp.sin(w_safe))
+  # For complex w, cos(w) and sin(w) both grow like exp(Im(w)) / 2, which would
+  # cancel against exp(-Im(w)) in the sum if combined naively. Using the single
+  # exponential exp(-i * w) = sum_even - i * sum_odd avoids that cancellation,
+  # and dividing via conj(s) / |s| avoids overflowing |s|^2.
+  x = lax.real(w_safe)
+  y = lax.imag(w_safe)
+  i_c = lax.complex(jnp.zeros_like(x), jnp.ones_like(x))
+  s_norm = sum_even - i_c * sum_odd
+  e_minus_iw = jnp.exp(y) * lax.complex(jnp.cos(x), -jnp.sin(x))
+  abs_s = jnp.abs(s_norm)
+  inv_abs_s = 1.0 / jnp.where(abs_s == 0.0, 1.0, abs_s)
+  conj_unit = jnp.conj(s_norm) * inv_abs_s
+  return (e_minus_iw * inv_abs_s) * conj_unit
+
+
+def _forward_recur_rescaled(
+    n: int, inv_w: Array, f0: Array, f1: Array
+) -> tuple[Array, Array]:
+  """Steps f_{k+1} = (2k / w) * f_k - f_{k-1} up to order n without overflow."""
+  real_dtype = jnp.real(inv_w).dtype
+  scale_thresh = 2.0 ** (500 if real_dtype == np.float64 else 60)
+  scale_step = 2.0 ** (-500 if real_dtype == np.float64 else -60)
+  scale_bits = np.int32(500 if real_dtype == np.float64 else 60)
+
+  # When k > |w|, values can grow rapidly with k. Whenever a step approaches
+  # overflow, divide the running pair by 2**scale_bits and record the exponent
+  # shift in scale_exp so the caller can restore the true magnitude at the end.
+  def fwd_body(k, state):
+    f_km1, f_k, scale_exp = state
+    kf = k.astype(real_dtype)
+    f_kp1 = (2.0 * kf * inv_w) * f_k - f_km1
+    big = jnp.abs(f_kp1) > scale_thresh
+    f_kp1 = jnp.where(big, f_kp1 * scale_step, f_kp1)
+    f_k = jnp.where(big, f_k * scale_step, f_k)
+    scale_exp = jnp.where(big, scale_exp + scale_bits, scale_exp)
+    return f_k, f_kp1, scale_exp
+
+  _, f_n, scale_exp = lax.fori_loop(
+      1,
+      n,
+      fwd_body,
+      (f0, f1, jnp.zeros_like(jnp.real(inv_w), dtype=np.int32)),
+  )
+  return f_n, scale_exp
+
+
 def _jn_series(n: int, w: Array, max_iter: int, r_max: float) -> Array:
   """Ascending power series for J_n(w) for integer n >= 0 and Re(w), Im(w) >= 0."""
   real_dtype = jnp.real(w).dtype
@@ -47,34 +168,7 @@ def _jn_series(n: int, w: Array, max_iter: int, r_max: float) -> Array:
 
   one = jnp.ones_like(w_safe)
   _, total = lax.fori_loop(1, max_iter + 1, body, (one, one))
-
-  if n == 0:
-    res = total
-  elif n == 1:
-    res = w_safe * (0.5 * total)
-  else:
-    # Factor (w / 2)^n / n! = (2^-q * w)^(n - rem) * (2^-(q+1) * w)^rem * C_n
-    # where 2^k_exp / n! = C_n in [0.707, 1.414] is precomputed in Python and
-    # the power-of-2 scalings of w are exact in IEEE floating-point.
-    if n <= 1000:
-      fact = math.factorial(n)
-      k_exp = round(math.lgamma(n + 1) / math.log(2.0))
-      c_n = float(fractions.Fraction(1 << k_exp, fact))
-    else:
-      lg2 = math.lgamma(n + 1) / math.log(2.0)
-      k_exp = round(lg2)
-      c_n = math.pow(2.0, k_exp - lg2)
-    q, rem = divmod(k_exp + n, n)
-    w1 = w_safe * float(2.0 ** (-q))
-    scaled_total = total * c_n
-    if rem == 0:
-      n1 = n // 2
-      n2 = n - n1
-      res = ((w1**n1) * scaled_total) * (w1**n2)
-    else:
-      w2 = w_safe * float(2.0 ** (-(q + 1)))
-      res = ((w1 ** (n - rem)) * scaled_total) * (w2**rem)
-
+  res = _scale_by_w_half_pow_n_over_fact(n, w_safe, total)
   zero = jnp.zeros_like(w)
   return jnp.where(w == 0, one if n == 0 else zero, res)
 
@@ -234,7 +328,6 @@ def _jn_miller(
 ) -> Array:
   """Computes J_n(w) for r_min < |w| < rl via Miller's backward recurrence."""
   real_dtype = jnp.real(w).dtype
-  is_complex = dtypes.issubdtype(w.dtype, np.complexfloating)
   r = jnp.abs(w)
   w_default = 0.5 * (r_min + rl)
   w_safe = jnp.where(
@@ -243,9 +336,9 @@ def _jn_miller(
       jnp.full_like(w, w_default),
   )
 
-  scle = 1e-100 if real_dtype == np.float64 else 1e-30
-  scale_limit = 1e100 if real_dtype == np.float64 else 1e20
-  scale_down = 1e-100 if real_dtype == np.float64 else 1e-20
+  scle = 2.0 ** (-500 if real_dtype == np.float64 else -60)
+  scale_limit = 2.0 ** (500 if real_dtype == np.float64 else 60)
+  scale_down = 2.0 ** (-500 if real_dtype == np.float64 else -60)
 
   p_next = jnp.zeros_like(w_safe)
   p_curr = jnp.full_like(w_safe, scle)
@@ -285,21 +378,7 @@ def _jn_miller(
   if n == 0:
     p_n = p_0
   sum_even = sum_even + p_0
-
-  if not is_complex:
-    denom = sum_even * jnp.cos(w_safe) + sum_odd * jnp.sin(w_safe)
-    return p_n / denom
-  else:
-    x = lax.real(w_safe)
-    y = lax.imag(w_safe)
-    i_c = lax.complex(jnp.zeros_like(x), jnp.ones_like(x))
-    s_norm = sum_even - i_c * sum_odd
-    e_minus_iw = jnp.exp(y) * lax.complex(jnp.cos(x), -jnp.sin(x))
-    abs_s = jnp.abs(s_norm)
-    inv_abs_s = 1.0 / jnp.where(abs_s == 0.0, 1.0, abs_s)
-    conj_unit = jnp.conj(s_norm) * inv_abs_s
-    norm = (e_minus_iw * inv_abs_s) * conj_unit
-    return p_n * norm
+  return p_n * _miller_norm(w_safe, sum_even, sum_odd)
 
 
 def _jn_recur_from_asym(
@@ -310,6 +389,7 @@ def _jn_recur_from_asym(
     r_max: float,
     asym_pairs: int,
     cf_pad: int,
+    j0_j1: tuple[Array, Array] | None = None,
 ) -> Array:
   """Computes J_n(w) for n >= 2 and r_min <= |w| < r_max via (J_0, J_1) + recurrence."""
   real_dtype = jnp.real(w).dtype
@@ -323,7 +403,10 @@ def _jn_recur_from_asym(
   )
   r_safe = jnp.abs(w_safe)
 
-  j0, j1 = _jn_asymptotic_j0_j1(w_safe, asym_pairs)
+  if j0_j1 is None:
+    j0, j1 = _jn_asymptotic_j0_j1(w_safe, asym_pairs)
+  else:
+    j0, j1 = j0_j1
 
   inv_w = 1.0 / w_safe
 
@@ -418,39 +501,14 @@ def _jn_recur_from_asym(
   base_val = jnp.where(use_m, j_m, j_m_minus_1 * r_m)
 
   unscaled_res = jnp.where(need_cf, base_val * prod, j_m)
-  total_exp = jnp.where(need_cf, scale_exp, np.int32(0)).astype(real_dtype)
+  total_exp = jnp.where(need_cf, scale_exp, np.int32(0))
 
   if not is_complex:
-    max_e = 1022.0 if real_dtype == np.float64 else 126.0
-    e1 = jnp.clip(total_exp, -max_e, max_e)
-    rem1 = total_exp - e1
-    e2 = jnp.clip(rem1, -max_e, max_e)
-    e3 = jnp.clip(rem1 - e2, -max_e, max_e)
-    return ((unscaled_res * exp2(e1)) * exp2(e2)) * exp2(e3)
+    return _scale_exp2(unscaled_res, total_exp.astype(real_dtype))
   else:
-    # Undo the e^{-y} scaling of (j0, j1) together with 2^{scale_exp} by
-    # splitting y = k_y * ln(2) + r_y so large +y and negative scale_exp cancel
-    # without intermediate overflow.
-    y = lax.imag(w_safe)
-    k_y = jnp.floor(y * (1.0 / math.log(2.0)) + 0.5)
-    if real_dtype == np.float64:
-      ln2_hi = 0.6931471803691238
-      ln2_lo = 1.9082149292705877e-10
-    else:
-      ln2_hi = 0.693115234375
-      ln2_lo = 3.19461849453e-5
-    r_y = (y - k_y * ln2_hi) - k_y * ln2_lo
-    er = jnp.exp(r_y)
-    total_exp = total_exp + k_y
-    max_e = 1022.0 if real_dtype == np.float64 else 126.0
-    e1 = jnp.clip(total_exp, -max_e, max_e)
-    rem1 = total_exp - e1
-    e2 = jnp.clip(rem1, -max_e, max_e)
-    e3 = jnp.clip(rem1 - e2, -max_e, max_e)
-    s1, s2, s3 = exp2(e1), exp2(e2), exp2(e3)
-    re = (((lax.real(unscaled_res) * er) * s1) * s2) * s3
-    im = (((lax.imag(unscaled_res) * er) * s1) * s2) * s3
-    return lax.complex(re, im)
+    return _scale_exp_y_and_exp2(
+        unscaled_res, lax.imag(w_safe), total_exp, 1.0
+    )
 
 
 def _jn_first_quadrant(n: int, w: Array) -> Array:
@@ -622,6 +680,7 @@ def jn(n: int, z: ArrayLike) -> Array:
 
   See Also:
     - :func:`jax.scipy.special.bessel_jn`
+    - :func:`jax.scipy.special.yn`
     - :func:`jax.scipy.special.i0`
     - :func:`jax.scipy.special.i1`
   """
@@ -636,3 +695,707 @@ def jn(n: int, z: ArrayLike) -> Array:
     z = z.astype(np.float32)
     return _jn(n, z).astype(orig_dtype)
   return _jn(n, z)
+
+
+def _yn_series(
+    n: int, w: Array, max_iter: int, r_max: float
+) -> tuple[Array, Array]:
+  """Power series around w = 0 for (Y_n(w), J_n(w)) in the first quadrant.
+
+  The second tuple element J_n(w) is populated for complex w and zeros for real w.
+  """
+  real_dtype = jnp.real(w).dtype
+  is_complex = dtypes.issubdtype(w.dtype, np.complexfloating)
+  r = jnp.abs(w)
+  w_safe = jnp.where(
+      jnp.isfinite(w) & (r > 0.0) & (r <= r_max), w, jnp.ones_like(w)
+  )
+  z2_neg = -0.25 * (w_safe * w_safe)
+
+  # Near w = 0, Y_n(w) splits into a smooth series (multiplying J_n(w) by
+  # log(w/2) plus harmonic weights 1 + 1/2 + ... + 1/k) and, for n >= 1, a
+  # finite sum of negative powers (w/2)^(2k - n) that diverges as w -> 0.
+  # The loop below computes both the J_n series (sum_t) and the weighted series
+  # (sum_ht) in one pass.
+  h_n = math.fsum(1.0 / j for j in range(1, n + 1))
+
+  def reg_body(k, state):
+    term, sum_t, sum_ht, h_diff = state
+    kf = k.astype(real_dtype)
+    term = term * (z2_neg / (kf * (n + kf)))
+    h_diff = h_diff + 0.5 * (1.0 / kf + 1.0 / (n + kf))
+    sum_t = sum_t + term
+    sum_ht = sum_ht + h_diff * term
+    return term, sum_t, sum_ht, h_diff
+
+  one_w = jnp.ones_like(w_safe)
+  zero_w = jnp.zeros_like(w_safe)
+  zero_r = jnp.zeros_like(jnp.real(w_safe))
+  _, sum_t, sum_ht, _ = lax.fori_loop(
+      1, max_iter + 1, reg_body, (one_w, one_w, zero_w, zero_r)
+  )
+
+  log_w_over_2 = jnp.log(w_safe) - math.log(2.0)
+  reg_bracket = (log_w_over_2 + (np.euler_gamma - 0.5 * h_n)) * sum_t - sum_ht
+
+  reg_part = _scale_by_w_half_pow_n_over_fact(
+      n, w_safe, (2.0 / math.pi) * reg_bracket
+  )
+  j_part = (
+      _scale_by_w_half_pow_n_over_fact(n, w_safe, sum_t)
+      if is_complex
+      else zero_w
+  )
+
+  if n == 0:
+    res = reg_part
+  else:
+    # Finite sum of negative powers: -((n - 1)! / pi) * (w / 2)^(-n) * sum_u.
+    # For large n, early terms dominate while the final terms are below machine
+    # precision for |w| <= r_max, so we cap the loop at s1_iters steps.
+    z2_pos = -z2_neg
+    s1_iters = min(n - 1, max(30 if real_dtype == np.float64 else 24, max_iter))
+
+    def s1_body(k, state):
+      u, sum_u = state
+      kf = k.astype(real_dtype)
+      u = u * (z2_pos / (kf * (n - kf)))
+      sum_u = sum_u + u
+      return u, sum_u
+
+    _, sum_u = lax.fori_loop(1, s1_iters + 1, s1_body, (one_w, one_w))
+
+    # Factor (n - 1)! = d_n * pi * 2^m_exp and distribute the 2^m_exp across
+    # the n factors of 2 / w so that neither (n - 1)! nor (2 / w)^n overflows
+    # prematurely when n is large.
+    fact_m1 = math.factorial(n - 1)
+    m_exp = fact_m1.bit_length()
+    d_n = float(fractions.Fraction(fact_m1, 1 << m_exp)) / math.pi
+    q_u, rem_u = divmod(m_exp, n)
+    if is_complex:
+      # Separate unit direction conj(w)/|w| from magnitude 1/|w| and scale the
+      # real and imaginary parts separately. This way, when |w| is tiny and
+      # (2 / |w|)^n overflows to +inf, an exact zero component stays 0.0
+      # instead of producing 0.0 * inf = NaN.
+      abs_w = jnp.abs(w_safe)
+      unit_conj = jnp.conj(w_safe) / abs_w
+      unit_conj_n = unit_conj if n == 1 else unit_conj**n
+      phase_u = (unit_conj_n * sum_u) * (-d_n)
+      u1_r = float(2.0 ** (q_u + 1)) / abs_w
+      if n == 1:
+        r1 = u1_r
+        r2 = 1.0
+      elif rem_u == 0:
+        n1 = n // 2
+        n2 = n - n1
+        r1 = u1_r**n1
+        r2 = u1_r**n2
+      else:
+        u2_r = 2.0 * u1_r
+        r1 = u1_r ** (n - rem_u)
+        r2 = u2_r**rem_u
+      re_p = lax.real(phase_u)
+      im_p = lax.imag(phase_u)
+      re = jnp.where(re_p == 0.0, 0.0, (re_p * r1) * r2)
+      im = jnp.where(im_p == 0.0, 0.0, (im_p * r1) * r2)
+      s1 = lax.complex(re, im)
+    else:
+      u1 = float(2.0 ** (q_u + 1)) / w_safe
+      scaled_u = -sum_u * d_n
+      if n == 1:
+        s1 = u1 * scaled_u
+      elif rem_u == 0:
+        n1 = n // 2
+        n2 = n - n1
+        s1 = ((u1**n1) * scaled_u) * (u1**n2)
+      else:
+        u2 = 2.0 * u1
+        s1 = ((u1 ** (n - rem_u)) * scaled_u) * (u2**rem_u)
+    res = s1 + reg_part
+
+  neg_inf = (
+      lax.complex(
+          jnp.full_like(jnp.real(w), -np.inf), jnp.zeros_like(jnp.imag(w))
+      )
+      if is_complex
+      else jnp.full_like(w, -np.inf)
+  )
+  y_res = jnp.where(w == 0, neg_inf, res)
+  j_res = (
+      jnp.where(w == 0, one_w if n == 0 else zero_w, j_part)
+      if is_complex
+      else zero_w
+  )
+  return y_res, j_res
+
+
+def _hankel_yj_unscaled_complex(
+    n: int,
+    x: Array,
+    p: Array,
+    q: Array,
+    c_chi: Array,
+    s_chi: Array,
+    half_amp: Array,
+    exp_neg2y: Array,
+) -> tuple[Array, Array]:
+  """Computes exp(-y) * (Y_n(w), J_n(w)) from large-|w| series terms (P, Q)."""
+  i_c = lax.complex(jnp.zeros_like(c_chi), jnp.ones_like(c_chi))
+  e_minus = lax.complex(c_chi, -s_chi)
+  e_plus = lax.complex(c_chi, s_chi)
+  # Split J_n and Y_n into the two complex-exponential waves exp(-i*chi) and
+  # exp(+i*chi), with exp(y) factored out so large Im(w) = y cannot overflow
+  # intermediate products. The second wave is smaller by a factor of exp(-2*y).
+  h2 = half_amp * e_minus * (p - i_c * q)
+  h1 = half_amp * e_plus * (p + i_c * q)
+  # On the positive imaginary axis (x == 0), h2 and h1 are purely real or
+  # purely imaginary depending on whether n is even or odd; zero out rounding
+  # noise in the vanishing component before combining them.
+  if (n & 1) == 0:
+    h2 = jnp.where(
+        x == 0.0, lax.complex(lax.real(h2), jnp.zeros_like(x)), h2
+    )
+    h1 = jnp.where(
+        x == 0.0, lax.complex(jnp.zeros_like(x), lax.imag(h1)), h1
+    )
+  else:
+    h2 = jnp.where(
+        x == 0.0, lax.complex(jnp.zeros_like(x), lax.imag(h2)), h2
+    )
+    h1 = jnp.where(
+        x == 0.0, lax.complex(lax.real(h1), jnp.zeros_like(x)), h1
+    )
+  i_h2 = lax.complex(-lax.imag(h2), lax.real(h2))
+  i_h1 = lax.complex(-lax.imag(h1), lax.real(h1))
+  # Right on the positive imaginary axis (x == 0), the large-|w| series for h2
+  # gives exp(-y) * J_n(i*y) directly without its tiny exp(-2*y) tail, so h1
+  # supplies the full decaying part of Y_n(i*y) (doubling its weight) and is
+  # omitted from J_n(i*y).
+  y_h1_scale = jnp.where(x == 0.0, 2.0 * exp_neg2y, exp_neg2y)
+  j_h1_scale = jnp.where(x == 0.0, 0.0, exp_neg2y)
+  y_unscaled = i_h2 - y_h1_scale * i_h1
+  j_unscaled = h2 + j_h1_scale * h1
+  return y_unscaled, j_unscaled
+
+
+def _yn_asymptotic(
+    n: int, w: Array, max_pairs: int, r_min: float
+) -> tuple[Array, Array]:
+  """Large-|w| expansion for (Y_n(w), J_n(w)) in powers of 1 / w.
+
+  The second tuple element J_n(w) is populated for complex w and zeros for real w.
+  """
+  real_dtype = jnp.real(w).dtype
+  is_complex = dtypes.issubdtype(w.dtype, np.complexfloating)
+  w_safe = jnp.where(
+      jnp.isfinite(w) & (jnp.abs(w) >= r_min), w, jnp.full_like(w, r_min)
+  )
+  # For large |w|, Y_n(w) behaves like sqrt(2 / (pi * w)) times a phase-shifted
+  # sinusoid modulated by slowly varying series (p, q) in powers of 1 / w.
+  p, q = _hankel_pq(n, w_safe, max_pairs)
+  x = jnp.real(w_safe)
+  c_chi, s_chi = _hankel_sincos_chi_real(n, jnp.maximum(x, 0.0))
+
+  if not is_complex:
+    amp = math.sqrt(2.0 / math.pi) / jnp.sqrt(x)
+    return amp * (p * s_chi + q * c_chi), jnp.zeros_like(w_safe)
+  else:
+    y = jnp.imag(w_safe)
+    half_amp = (1.0 / math.sqrt(2.0 * math.pi)) / jnp.sqrt(w_safe)
+    exp_neg2y = jnp.exp(-2.0 * y)
+    y_unscaled, j_unscaled = _hankel_yj_unscaled_complex(
+        n, x, p, q, c_chi, s_chi, half_amp, exp_neg2y
+    )
+    # Restore the factored-out exp(y) in two half-steps exp(y/2) * exp(y/2) so
+    # that y near log(fmax) does not overflow exp(y) when the 1/sqrt(|w|)
+    # factor keeps the final product within float range.
+    max_log = 700.0 if real_dtype == np.float64 else 85.0
+    ey_half = jnp.exp(jnp.clip(0.5 * y, 0.0, max_log))
+    y_re = (lax.real(y_unscaled) * ey_half) * ey_half
+    y_im = (lax.imag(y_unscaled) * ey_half) * ey_half
+    j_re = (lax.real(j_unscaled) * ey_half) * ey_half
+    j_im = (lax.imag(j_unscaled) * ey_half) * ey_half
+    return lax.complex(y_re, y_im), lax.complex(j_re, j_im)
+
+
+def _yn_miller(
+    n: int, w: Array, m_steps: int, r_min: float, rl: float
+) -> tuple[Array, Array]:
+  """Computes (Y_n(w), J_n(w)) for moderate |w| via downward recurrence.
+
+  The second tuple element J_n(w) is populated for complex w and zeros for real w.
+  """
+  real_dtype = jnp.real(w).dtype
+  is_complex = dtypes.issubdtype(w.dtype, np.complexfloating)
+  r = jnp.abs(w)
+  w_default = 0.5 * (r_min + rl)
+  w_safe = jnp.where(
+      jnp.isfinite(w) & (r >= r_min) & (r <= rl),
+      w,
+      jnp.full_like(w, w_default),
+  )
+  inv_w = 1.0 / w_safe
+
+  scle = 2.0 ** (-500 if real_dtype == np.float64 else -60)
+  scale_limit = 2.0 ** (500 if real_dtype == np.float64 else 60)
+  scale_down = 2.0 ** (-500 if real_dtype == np.float64 else -60)
+
+  # Step p_{k-1} = (2k / w) * p_k - p_{k+1} downward from k = m_steps with a
+  # tiny seed. Downward steps rapidly lock onto the true ratios J_k(w) / J_0(w)
+  # up to a single shared scale factor. In the same pass we accumulate:
+  #   - sum_even, sum_odd: alternating sums of even/odd p_k used to find the
+  #     shared scale factor (norm) at the end;
+  #   - y0_sum, y1_sum: weighted sums of even/odd p_k that give the series part
+  #     of Y_0(w) and Y_1(w) once multiplied by norm.
+  p_next = jnp.zeros_like(w_safe)
+  p_curr = jnp.full_like(w_safe, scle)
+  p_n = jnp.zeros_like(w_safe)
+  sum_even = jnp.zeros_like(w_safe)
+  sum_odd = jnp.zeros_like(w_safe)
+  y0_sum = jnp.zeros_like(w_safe)
+  y1_sum = jnp.zeros_like(w_safe)
+
+  def body(i, state):
+    p_curr, p_next, p_n, sum_even, sum_odd, y0_sum, y1_sum = state
+    k_int = m_steps - i
+    kf = k_int.astype(real_dtype)
+    if is_complex and n >= 2:
+      p_n = jnp.where(k_int == n, p_curr, p_n)
+    term = 2.0 * p_curr
+    rem4 = k_int & 3
+    sum_even = jnp.where(
+        rem4 == 0,
+        sum_even + term,
+        jnp.where(rem4 == 2, sum_even - term, sum_even),
+    )
+    sum_odd = jnp.where(
+        rem4 == 1,
+        sum_odd + term,
+        jnp.where(rem4 == 3, sum_odd - term, sum_odd),
+    )
+    y0_term = p_curr / kf
+    y0_sum = jnp.where(
+        rem4 == 2,
+        y0_sum + y0_term,
+        jnp.where(rem4 == 0, y0_sum - y0_term, y0_sum),
+    )
+    if n >= 1:
+      kf_odd_denom = jnp.where(k_int >= 3, kf * kf - 1.0, 1.0)
+      y1_term = jnp.where(
+          k_int >= 3, p_curr * (kf / kf_odd_denom), jnp.zeros_like(p_curr)
+      )
+      y1_sum = jnp.where(
+          rem4 == 3,
+          y1_sum + y1_term,
+          jnp.where(rem4 == 1, y1_sum - y1_term, y1_sum),
+      )
+
+    p_prev = (2.0 * kf * inv_w) * p_curr - p_next
+    # If p_prev grows near overflow, rescale every running quantity by the same
+    # power of 2; because everything is linear in the seed, ratios are unchanged.
+    big = jnp.abs(p_prev) > scale_limit
+    p_prev = jnp.where(big, p_prev * scale_down, p_prev)
+    p_curr = jnp.where(big, p_curr * scale_down, p_curr)
+    if is_complex and n >= 2:
+      p_n = jnp.where(big, p_n * scale_down, p_n)
+    sum_even = jnp.where(big, sum_even * scale_down, sum_even)
+    sum_odd = jnp.where(big, sum_odd * scale_down, sum_odd)
+    y0_sum = jnp.where(big, y0_sum * scale_down, y0_sum)
+    y1_sum = jnp.where(big, y1_sum * scale_down, y1_sum)
+    return p_prev, p_curr, p_n, sum_even, sum_odd, y0_sum, y1_sum
+
+  init = (p_curr, p_next, p_n, sum_even, sum_odd, y0_sum, y1_sum)
+  p_0, p_1, p_n, sum_even, sum_odd, y0_sum, y1_sum = lax.fori_loop(
+      0, m_steps, body, init
+  )
+  sum_even = sum_even + p_0
+  norm = _miller_norm(w_safe, sum_even, sum_odd)
+
+  # Assemble Y_0(w) and Y_1(w) from J_0, J_1 and the normalized series sums.
+  j0 = p_0 * norm
+  y0_s = y0_sum * norm
+  log_w_over_2 = jnp.log(w_safe) - math.log(2.0)
+  y0 = (2.0 / math.pi) * ((log_w_over_2 + np.euler_gamma) * j0 + 4.0 * y0_s)
+  zero_w = jnp.zeros_like(w_safe)
+  if n == 0:
+    return y0, j0 if is_complex else zero_w
+
+  j1 = p_1 * norm
+  y1_s = y1_sum * norm
+  y1 = (2.0 / math.pi) * (
+      -j0 * inv_w + (log_w_over_2 + (np.euler_gamma - 1.0)) * j1 + 4.0 * y1_s
+  )
+  if n == 1:
+    return y1, j1 if is_complex else zero_w
+
+  # Step upward from (Y_0, Y_1) to Y_n using the 3-term recurrence.
+  j_n = p_n * norm if is_complex else zero_w
+  if n <= 8:
+    y_km1, y_k = y0, y1
+    for k in range(1, n):
+      y_km1, y_k = y_k, (2.0 * k * inv_w) * y_k - y_km1
+    return y_k, j_n
+
+  y_n, scale_exp = _forward_recur_rescaled(n, inv_w, y0, y1)
+  return _scale_exp2(y_n, scale_exp.astype(real_dtype)), j_n
+
+
+def _yn_recur_from_asym(
+    n: int,
+    w: Array,
+    active_mask: Array,
+    r_min: float,
+    r_max: float,
+    asym_pairs: int,
+    cf_pad: int,
+) -> tuple[Array, Array]:
+  """Computes (Y_n(w), J_n(w)) for n >= 2 by stepping from orders (0, 1) to n.
+
+  The second tuple element J_n(w) is populated for complex w and zeros for real w.
+  """
+  real_dtype = jnp.real(w).dtype
+  is_complex = dtypes.issubdtype(w.dtype, np.complexfloating)
+  r_raw = jnp.abs(w)
+  valid = active_mask & jnp.isfinite(w) & (r_raw >= r_min) & (r_raw <= r_max)
+  w_safe = jnp.where(
+      valid,
+      w,
+      jnp.full_like(w, r_min + 1.0),
+  )
+  inv_w = 1.0 / w_safe
+
+  if not is_complex:
+    # For real w, Y_k(w) grows in magnitude once k > w, so stepping upward from
+    # (Y_0, Y_1) does not suffer cancellation; track power-of-2 rescales when
+    # n > r_min so intermediate orders cannot overflow.
+    p0, q0 = _hankel_pq(0, w_safe, asym_pairs)
+    p1, q1 = _hankel_pq(1, w_safe, asym_pairs)
+    c0, s0 = _hankel_sincos_chi_real(0, jnp.maximum(w_safe, 0.0))
+    c1, s1 = s0, -c0
+    amp = math.sqrt(2.0 / math.pi) / jnp.sqrt(w_safe)
+    y0 = amp * (p0 * s0 + q0 * c0)
+    y1 = amp * (p1 * s1 + q1 * c1)
+
+    if n <= int(r_min):
+      if n <= 8:
+        y_km1, y_k = y0, y1
+        for k in range(1, n):
+          y_km1, y_k = y_k, (2.0 * k * inv_w) * y_k - y_km1
+        return y_k, jnp.zeros_like(y_k)
+      _, y_n = lax.fori_loop(
+          1,
+          n,
+          lambda k, s: (s[1], (2.0 * k.astype(real_dtype) * inv_w) * s[1] - s[0]),
+          (y0, y1),
+      )
+      return y_n, jnp.zeros_like(y_n)
+
+    y_n, scale_exp = _forward_recur_rescaled(n, inv_w, y0, y1)
+    y_res = _scale_exp2(y_n, scale_exp.astype(real_dtype))
+    return y_res, jnp.zeros_like(y_res)
+  else:
+    # For complex w with Im(w) > 0, stepping Y_k upward directly loses digits
+    # when k < |w| because Y_k contains a component of size exp(+Im(w)) that
+    # later shrinks at order n. Instead, write Y_n(w) = i * (J_n(w) - H_n^(1))
+    # where H_k^(1) = J_k + i * Y_k has size ~ exp(-Im(w)) and grows cleanly
+    # upward for every w in the first quadrant, while J_n(w) is found via
+    # downward ratios in _jn_recur_from_asym reusing the same (0, 1) terms.
+    p0, q0 = _hankel_pq(0, w_safe, asym_pairs)
+    p1, q1 = _hankel_pq(1, w_safe, asym_pairs)
+    x = lax.real(w_safe)
+    y = lax.imag(w_safe)
+    c0, s0 = _hankel_sincos_chi_real(0, jnp.maximum(x, 0.0))
+    c1, s1 = s0, -c0
+    half_amp = (1.0 / math.sqrt(2.0 * math.pi)) / jnp.sqrt(w_safe)
+    exp_neg2y = jnp.exp(-2.0 * y)
+    j0e = _hankel_unscaled_complex(p0, q0, c0, s0, half_amp, exp_neg2y)
+    j1e = _hankel_unscaled_complex(p1, q1, c1, s1, half_amp, exp_neg2y)
+    j_n = _jn_recur_from_asym(
+        n,
+        w,
+        active_mask,
+        r_min,
+        r_max,
+        asym_pairs,
+        cf_pad,
+        j0_j1=(j0e, j1e),
+    )
+
+    i_c = lax.complex(jnp.zeros_like(x), jnp.ones_like(x))
+    amp_w = 2.0 * half_amp
+    # Compute exp(+y) * H_k^(1)(w) for k = 0, 1 so exp(-y) does not underflow
+    # before stepping upward to order n.
+    h0e = amp_w * lax.complex(c0, s0) * (p0 + i_c * q0)
+    h1e = amp_w * lax.complex(c1, s1) * (p1 + i_c * q1)
+
+    h_ne, scale_exp = _forward_recur_rescaled(n, inv_w, h0e, h1e)
+    h_n = _scale_exp_y_and_exp2(h_ne, y, scale_exp, -1.0)
+    h_re = lax.real(h_n)
+    h_im = lax.imag(h_n)
+    # Along the positive imaginary axis (x == 0), J_n(i*y) and H_n^(1)(i*y) each
+    # have one component that is identically zero; clear rounding noise before
+    # subtracting so it cannot corrupt the exponentially smaller component.
+    if (n & 1) == 0:
+      j_re = lax.real(j_n)
+      j_im = jnp.where(x == 0.0, 0.0, lax.imag(j_n))
+      h_re = jnp.where(x == 0.0, 0.0, h_re)
+    else:
+      j_re = jnp.where(x == 0.0, 0.0, lax.real(j_n))
+      j_im = lax.imag(j_n)
+      h_im = jnp.where(x == 0.0, 0.0, h_im)
+    # Combine Y_n = i * (J_n - H_n^(1)):
+    #   Re(Y_n) = Im(H_n^(1)) - Im(J_n),  Im(Y_n) = Re(J_n) - Re(H_n^(1)).
+    return lax.complex(h_im - j_im, j_re - h_re), lax.complex(j_re, j_im)
+
+
+def _yn_first_quadrant(n: int, w: Array) -> tuple[Array, Array]:
+  """Evaluates (Y_n(w), J_n(w)) for static integer n >= 0 and w in the first quadrant.
+
+  The second tuple element J_n(w) is populated for complex w and zeros for real w.
+  """
+  # Split the first quadrant (Re(w) >= 0, Im(w) >= 0) by |w| into regimes where
+  # each approximation is accurate without cancellation or overflow:
+  #   - small |w|: power series around 0 (_yn_series)
+  #   - moderate |w|: downward recurrence (_yn_miller)
+  #   - intermediate |w| (when n >= 2 and rl < r_asy): order-(0, 1) large-|w|
+  #     expansion stepped up to order n (_yn_recur_from_asym)
+  #   - large |w| >= r_asy: direct 1/w expansion (_yn_asymptotic)
+  # Each helper sanitizes out-of-range lanes so all branches can be evaluated
+  # unconditionally and blended with jnp.where under jit/vmap.
+  real_dtype = jnp.real(w).dtype
+  is_complex = dtypes.issubdtype(w.dtype, np.complexfloating)
+  r = jnp.abs(w)
+
+  if real_dtype == np.float64:
+    rl = 24.0
+    series_iters = 20
+    ext_series_iters = 45
+    asym_pairs = 10
+    base_miller_steps = 64
+    cf_pad = 40
+  else:
+    rl = 10.0
+    series_iters = 12
+    ext_series_iters = 24
+    asym_pairs = 6
+    base_miller_steps = 28
+    cf_pad = 20
+
+  if n <= 1:
+    in_series = r <= 2.0
+    in_miller = (r > 2.0) & (r < rl)
+    res_ser, j_ser = _yn_series(n, w, series_iters, 2.0)
+    res_mil, j_mil = _yn_miller(n, w, base_miller_steps, 2.0, rl)
+    res_asy, j_asy = _yn_asymptotic(n, w, asym_pairs, rl)
+    y_res = jnp.where(
+        in_series, res_ser, jnp.where(in_miller, res_mil, res_asy)
+    )
+    j_res = (
+        jnp.where(in_series, j_ser, jnp.where(in_miller, j_mil, j_asy))
+        if is_complex
+        else jnp.zeros_like(w)
+    )
+    return y_res, j_res
+
+  # For n >= 2, the 1/w series needs |w| > r_asy ~ rl + n^2 / 2 before its
+  # terms shrink rapidly, while the power series around 0 stays accurate up to
+  # r_ser without alternating-sign cancellation.
+  r_ser = max(2.0, math.sqrt(2.0 * (n + 1)))
+  r_asy = max(r_ser, rl + 0.5 * n * n)
+
+  if is_complex and r_ser < rl:
+    # For complex w with |w| < rl, stepping Y_k upward from (Y_0, Y_1) loses
+    # precision when Im(w) is large or |w| is not well above n. Default to a
+    # longer power series across |w| < rl, and use _yn_miller only inside the
+    # wedge near the real axis where upward stepping from (Y_0, Y_1) is benign.
+    res_ser, j_ser = _yn_series(n, w, ext_series_iters, rl)
+    res_asy, j_asy = _yn_asymptotic(n, w, asym_pairs, r_asy)
+    res = jnp.where(r < rl, res_ser, res_asy)
+    j_res = jnp.where(r < rl, j_ser, j_asy)
+    r_mil_min = max(r_ser, 0.9 * n)
+    if r_mil_min < rl:
+      in_miller = (
+          (r > r_mil_min)
+          & (r > 0.9 * n + 0.6 * lax.imag(w))
+          & (r < rl)
+          & (lax.imag(w) <= 0.8 * lax.real(w))
+      )
+      miller_steps = max(n + cf_pad, base_miller_steps)
+      res_mil, j_mil = _yn_miller(n, w, miller_steps, r_mil_min, rl)
+      res = jnp.where(in_miller, res_mil, res)
+      j_res = jnp.where(in_miller, j_mil, j_res)
+  else:
+    in_series = r <= r_ser
+    res_ser, j_ser = _yn_series(n, w, series_iters, r_ser)
+    res_asy, j_asy = _yn_asymptotic(n, w, asym_pairs, r_asy)
+    res = jnp.where(in_series, res_ser, res_asy)
+    j_res = jnp.where(in_series, j_ser, j_asy) if is_complex else jnp.zeros_like(w)
+
+    if r_ser < rl:
+      in_miller = (r > r_ser) & (r < rl)
+      res_mil, _ = _yn_miller(n, w, base_miller_steps, r_ser, rl)
+      res = jnp.where(in_miller, res_mil, res)
+
+  # In complex128, _yn_recur_from_asym already reaches full float64 precision
+  # by |w| = 17, which avoids any remaining cancellation in the power series
+  # near |w| = rl = 24.
+  rec_floor = 17.0 if (is_complex and real_dtype == np.float64) else rl
+  r_rec_min = max(rec_floor, r_ser)
+  if r_rec_min < r_asy:
+    in_recur = (r >= r_rec_min) & (r < r_asy)
+    res_rec, j_rec = _yn_recur_from_asym(
+        n, w, in_recur, r_rec_min, r_asy, asym_pairs, cf_pad
+    )
+    res = jnp.where(in_recur, res_rec, res)
+    if is_complex:
+      j_res = jnp.where(in_recur, j_rec, j_res)
+
+  return res, j_res
+
+
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
+@partial(jit, static_argnums=(0,))
+def _yn(n: int, z: Array) -> Array:
+  with config.numpy_dtype_promotion("standard"):
+    return _yn_impl(n, z)
+
+
+def _yn_impl(n: int, z: Array) -> Array:
+  is_complex = dtypes.issubdtype(z.dtype, np.complexfloating)
+  n_abs = abs(n)
+  is_odd = (n_abs & 1) == 1
+  # Negative integer orders satisfy Y_{-k}(z) = (-1)^k * Y_k(z), so only odd
+  # negative orders flip sign relative to |n|.
+  neg_n = n < 0 and is_odd
+
+  if not is_complex:
+    w = jnp.where(z > 0.0, z, 1.0)
+    res, _ = _yn_first_quadrant(n_abs, w)
+    if neg_n:
+      res = -res
+
+    # Boundary values for real inputs (for z < 0, Y_n(z) is complex-valued so
+    # real-dtype inputs return NaN, matching scipy.special.yn).
+    res = jnp.where(z == np.inf, 0.0, res)
+    res = jnp.where(z == 0.0, np.inf if neg_n else -np.inf, res)
+    res = jnp.where((z < 0.0) | jnp.isnan(z), np.nan, res)
+    return res
+  else:
+    x = lax.real(z)
+    y = lax.imag(z)
+    w = lax.complex(jnp.abs(x), jnp.abs(y))
+    res, j_w = _yn_first_quadrant(n_abs, w)
+
+    # Map from the first quadrant w = |x| + i*|y| back to arbitrary z = x + i*y
+    # using reflection identities across the imaginary and real axes:
+    # 1. Reflect across the imaginary axis when x < 0:
+    #    Y_{|n|}(-|x| + i*|y|) = (-1)^n * (conj(Y_{|n|}(w)) + 2i*conj(J_{|n|}(w))).
+    #    Because Y_n has a log(z) term, crossing into Re(z) < 0 adds 2i * J_n.
+    #    When |y| is huge and both Y_n(w) and J_n(w) overflow, their sum would
+    #    produce inf - inf = NaN; use Y_n(w) + 2i * J_n(w) -> -Y_n(w) instead.
+    two_i_conj_j = lax.complex(2.0 * lax.imag(j_w), 2.0 * lax.real(j_w))
+    j_inf = jnp.isinf(lax.real(two_i_conj_j)) | jnp.isinf(
+        lax.imag(two_i_conj_j)
+    )
+    comb = jnp.where(j_inf, -jnp.conj(res), jnp.conj(res) + two_i_conj_j)
+    res_neg_x = -comb if is_odd else comb
+    res = jnp.where(x < 0.0, res_neg_x, res)
+    # 2. Reflect across the real axis when y < 0 (using signbit so y = -0.0
+    #    selects the lower side of the branch cut along the negative real axis):
+    #    Y_{|n|}(x - i*|y|) = conj(Y_{|n|}(x + i*|y|)).
+    res = jnp.where(jnp.signbit(y), jnp.conj(res), res)
+    # 3. Flip sign for odd negative orders Y_{-|n|}(z) = (-1)^n * Y_{|n|}(z).
+    if neg_n:
+      res = -res
+    # 4. On the positive real axis (x > 0, y == 0), Y_n(x) is purely real.
+    res = jnp.where(
+        (y == 0.0) & (x > 0.0),
+        lax.complex(lax.real(res), jnp.zeros_like(y)),
+        res,
+    )
+
+    # Boundary values for z = 0, |Re(z)| = inf (oscillatory decay -> 0), and
+    # |Im(z)| = inf (exponential growth with undefined phase -> NaN).
+    nan_c = lax.complex(jnp.full_like(x, np.nan), jnp.full_like(y, np.nan))
+    zero_c = jnp.zeros_like(z)
+    z_zero_c = lax.complex(
+        jnp.full_like(x, np.inf if neg_n else -np.inf), jnp.zeros_like(y)
+    )
+    res = jnp.where(z == 0, z_zero_c, res)
+    res = jnp.where(jnp.isinf(x), zero_c, res)
+    res = jnp.where(jnp.isnan(x) | jnp.isnan(y) | jnp.isinf(y), nan_c, res)
+    return res
+
+
+@_yn.defjvp
+def _yn_jvp(
+    n: int, primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
+  (z,) = primals
+  (z_dot,) = tangents
+  y = _yn(n, z)
+  if n == 0:
+    dy_dz = -_yn(1, z)
+  else:
+    # Differentiate via Y_n'(z) = -Y_{n+1}(z) + (n/z) * Y_n(z) (for n > 0) or
+    # Y_{n-1}(z) - (n/z) * Y_n(z) (for n < 0). Reusing y = Y_n(z) needs only one
+    # extra yn call per derivative order instead of two (so k-th derivatives
+    # cost 2^k evaluations rather than 3^k), and puts the leading z^(-|n|-1)
+    # divergence as z -> 0 in a single term (dom) so it cannot cancel. When
+    # either term overflows near z = 0, keep dom alone to avoid inf - inf = NaN.
+    dom = -_yn(n + 1, z) if n > 0 else _yn(n - 1, z)
+    z_safe = jnp.where(z == 0, jnp.ones_like(z), z)
+    term = (float(abs(n)) / z_safe) * y
+    is_zero = z == 0
+    if dtypes.issubdtype(z.dtype, np.complexfloating):
+      use_dom = is_zero | ~jnp.isfinite(dom) | ~jnp.isfinite(term)
+      dy_dz = jnp.where(use_dom, dom, dom + term)
+    else:
+      inf_or_zero = is_zero | jnp.isinf(dom) | jnp.isinf(term)
+      dy_dz = jnp.where(inf_or_zero, dom, dom + term)
+  return y, dy_dz * z_dot
+
+
+def yn(n: int, z: ArrayLike) -> Array:
+  r"""Bessel function of the second kind of integer order `n`.
+
+  JAX implementation of :obj:`scipy.special.yn`.
+
+  .. math::
+
+     Y_n(z) = -\frac{1}{\pi} \sum_{k=0}^{n-1} \frac{(n - k - 1)!}{k!}
+     \left(\frac{z}{2}\right)^{2k - n} + \frac{2}{\pi} \ln\left(\frac{z}{2}\right) J_n(z)
+     - \frac{1}{\pi} \sum_{k=0}^{\infty} \frac{\psi(k + 1) + \psi(n + k + 1)}{k!\,(n + k)!}
+     \left(-\frac{z^2}{4}\right)^k \left(\frac{z}{2}\right)^n
+
+  for integer order :math:`n \ge 0` (with :math:`Y_{-n}(z) = (-1)^n Y_n(z)`).
+
+  Args:
+    n: The integer order of the Bessel function (must be a static integer).
+    z: The argument(s) at which to evaluate :math:`Y_n(z)`. Real and complex
+      inputs are supported.
+
+  Returns:
+    An array containing the evaluated Bessel function values.
+
+  Notes:
+    Unlike :obj:`scipy.special.yn`, ``jax.scipy.special.yn`` requires ``n`` to
+    be a concrete integer order (so ``n`` cannot be traced or batched with
+    :func:`jax.vmap`), and supports complex inputs directly (matching
+    :obj:`scipy.special.yv` on the complex plane).
+
+  See Also:
+    - :func:`jax.scipy.special.jn`
+    - :func:`jax.scipy.special.bessel_jn`
+  """
+  n = core.concrete_or_error(
+      operator.index,
+      n,
+      "The 'n' argument of jax.scipy.special.yn must be a static integer.",
+  )
+  (z,) = promote_args_inexact("yn", z)
+  orig_dtype = z.dtype
+  if orig_dtype in (dtypes.bfloat16, np.float16):
+    z = z.astype(np.float32)
+    return _yn(n, z).astype(orig_dtype)
+  return _yn(n, z)

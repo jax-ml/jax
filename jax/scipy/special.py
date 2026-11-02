@@ -73,6 +73,7 @@ from jax._src.scipy.special import (
   wofz as wofz,
   xlog1py as xlog1py,
   xlogy as xlogy,
+  yn as yn,
   zeta as zeta,
 )
 
