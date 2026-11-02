@@ -51,7 +51,6 @@ wheel_sources(
         "//jax/experimental:ode",
         "//jax/experimental:pallas_experimental_gpu_ops",
         "//jax/experimental:pallas_fuser",
-        "//jax/experimental:pallas_gpu_ops",
         "//jax/experimental:pallas_mosaic_gpu",
         "//jax/experimental:pallas_tpu_ops",
         "//jax/experimental:pallas_triton",

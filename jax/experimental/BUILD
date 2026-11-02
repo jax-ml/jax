@@ -385,17 +385,6 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "pallas_gpu_ops",
-    srcs = ["//jax/experimental/pallas/ops/gpu:triton_ops"],
-    deps = [
-        ":pallas",
-        ":pallas_triton",
-        "//jax",
-        "//jax/_src:lax",
-    ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
     name = "pallas_experimental_gpu_ops",
     srcs = ["//jax/experimental/pallas/ops/gpu:mgpu_ops"],
     visibility = [

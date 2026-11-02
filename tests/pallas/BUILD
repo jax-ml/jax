@@ -73,7 +73,6 @@ jax_multiplatform_test(
         "//jax/_src/pallas:pallas_test_util",
         "//jax/_src/pallas/mosaic_gpu:pallas_call",
         "//jax/experimental:pallas",
-        "//jax/experimental:pallas_gpu_ops",
         "//jax/experimental:pallas_mosaic_gpu",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
@@ -286,7 +285,6 @@ jax_multiplatform_test(
     shard_count = 4,
     deps = [
         "//jax/experimental:pallas",
-        "//jax/experimental:pallas_gpu_ops",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
         "//jax/experimental:pallas_triton",
@@ -914,84 +912,6 @@ jax_py_test(
         "absl/testing",
         "numpy",
         "hypothesis",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "gpu_attention_test",
-    srcs = [
-        "gpu_attention_test.py",
-    ],
-    enable_backends = [],
-    enable_configs = [
-        "gpu_a100_x32",
-        "gpu_h100_x32",
-        "gpu_b200",
-    ],
-    shard_count = 1,
-    tags = [
-        "noasan",  # Times out.
-    ],
-    deps = [
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_gpu_ops",
-        "//jax/experimental:pallas_triton",  # build_cleaner: keep
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "gpu_ops_test",
-    srcs = [
-        "gpu_ops_test.py",
-    ],
-    enable_backends = ["cpu"],
-    enable_configs = [
-        "gpu_a100_x32",
-        "gpu_h100_x32",
-        "gpu_b200",
-    ],
-    shard_count = 20,
-    tags = [
-        "noasan",  # Times out.
-        "nomsan",  # Times out.
-        "notsan",  # Times out.
-    ],
-    deps = [
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_gpu_ops",
-        "//jax/experimental:pallas_triton",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "gpu_paged_attention_test",
-    srcs = [
-        "gpu_paged_attention_test.py",
-    ],
-    enable_backends = ["cpu"],
-    enable_configs = [
-        "gpu_a100_x32",
-        "gpu_h100_x32",
-        "gpu_b200",
-    ],
-    shard_count = 12,
-    tags = [
-        "noasan",  # Times out.
-        "notsan",  # Times out.
-    ],
-    deps = [
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_gpu_ops",
-        "//jax/experimental:pallas_triton",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
     ]),
 )
 

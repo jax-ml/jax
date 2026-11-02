@@ -17,6 +17,10 @@ Remember to align the itemized text with the first line of an item within a list
   * The Pallas API is now available as `jax.pallas`. Existing imports from
     `jax.experimental.pallas` remain valid.
 
+* Removals
+  * Removed the previously deprecated Pallas Triton ops in
+    {mod}`jax.experimental.pallas.ops.gpu`.
+
 ### Mosaic GPU
 
 * New features
