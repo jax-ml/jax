@@ -35,10 +35,6 @@ DISABLED_CONFIGS = [
     "gpu_a100",
     "gpu_a100_x32",
     "gpu_h100_x32",
-    "gpu_p100",
-    "gpu_p100_x32",
-    "gpu_v100",
-    "gpu_v100_x32",
     "tpu_v4_compilation_cache",
 ]
 

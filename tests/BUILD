@@ -1294,10 +1294,7 @@ jax_multiplatform_test(
             "noasan",  # Times out under asan.
         ],
     },
-    enable_configs = [
-        "gpu_v100",
-        "tpu_v3_x4",
-    ],
+    enable_configs = ["tpu_v3_x4"],
     minimal_shard_count = {
         "tpu": 8,
     },
