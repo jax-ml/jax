@@ -335,6 +335,55 @@ def global_avals_to_results_handler(
   return ResultsHandler(handlers, shardings, global_out_avals)
 
 
+@util.cache(max_size=None, trace_context_in_key=False)
+def _device_barrier_fn(devices: tuple[xc.Device, ...]):
+  """Compiles a barrier across `devices`, and returns it and its input.
+
+  The barrier is a reduction over all the devices, so no device finishes it
+  before every device has reached it.
+  """
+  # pylint: disable=g-import-not-at-top
+  from jax._src import shard_map
+  from jax._src.lax import parallel
+  # pylint: enable=g-import-not-at-top
+  mesh = Mesh(np.array(devices, dtype=object), ('devices',))
+  in_sharding = NamedSharding(mesh, PartitionSpec('devices'))
+
+  def barrier(x):
+    return parallel.psum(x.sum(), 'devices')
+
+  # The barrier has its own mesh, even if the caller set a different one.
+  with sharding_impls.set_mesh(None):
+    fn = api.jit(shard_map.shard_map(
+        barrier, mesh=mesh, in_specs=PartitionSpec('devices'),
+        out_specs=PartitionSpec()))
+    local = [d for d in devices if d.process_index == xb.process_index()]
+    x = array.make_array_from_single_device_arrays(
+        (len(devices),), in_sharding,
+        [api.device_put(np.zeros((1,), np.int32), d) for d in local])
+    compiled = fn.lower(x).compile()
+  return compiled, x
+
+
+def pgle_barrier(device_list: xc.DeviceList) -> Callable[[], Any] | None:
+  """The barrier to precede each run on `device_list` profiled for PGLE.
+
+  The barrier is enqueued once the profiler has started, so that the skew
+  between the processes' profiler starts is absorbed by it rather than by the
+  first collective of the profiled run. It is a separate module whose costs are
+  keyed by its own fingerprint in the profile, so they do not affect the
+  profiled module. Work enqueued after it on any of the devices starts once all
+  of them have reached it.
+
+  Returns None if the jax_pgle_barrier option is off or there is only one
+  device.
+  """
+  if not config.pgle_barrier.value or len(device_list) < 2:
+    return None
+  compiled, x = _device_barrier_fn(tuple(device_list))
+  return partial(compiled, x)
+
+
 class ExecuteReplicated:
   """The logic to shard inputs, execute a replicated model, returning outputs."""
   __slots__ = ['xla_executable', 'name', 'backend', 'in_handler', 'out_handler',
@@ -968,7 +1017,6 @@ def lower_sharding_computation(
     compiler_options_kvs: tuple[tuple[str, Any], ...],
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
-    pgle_profiler: profiler.PGLEProfiler | None,
 ) -> MeshComputation:
   all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr._debug_info)
 
@@ -1160,7 +1208,6 @@ def lower_sharding_computation(
       out_layouts=out_layouts,
       shape_poly_state=shape_poly_state,
       all_args_info=all_args_info,
-      pgle_profiler=pgle_profiler,
       intermediate_shardings=unique_intermediate_shardings,
       context_mesh=context_mesh)
 

@@ -1683,6 +1683,16 @@ pgle_profiling_runs = int_state(
     include_in_trace_context=True,
 )
 
+pgle_barrier = bool_state(
+    name='jax_pgle_barrier',
+    default=True,
+    help=(
+        'If True, each run that is profiled for PGLE is preceded by a barrier '
+        'across all the devices/processes of the computation, that absorbs '
+        'skew induced by profiler startup time.'
+    ),
+)
+
 pgle_aggregation_percentile = int_state(
     name='jax_pgle_aggregation_percentile',
     default=90,

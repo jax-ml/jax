@@ -19,6 +19,7 @@ import math
 import os
 import shutil
 import tempfile
+from unittest import mock
 import warnings
 
 from absl.testing import absltest, parameterized
@@ -30,6 +31,7 @@ from jax._src import monitoring
 from jax._src import pjit
 from jax._src import profiler
 from jax._src import test_util as jtu
+from jax._src.interpreters import pxla
 from jax.experimental import profiler as exp_profiler
 from jax.experimental.serialize_executable import (
     deserialize_and_load,
@@ -40,6 +42,12 @@ from jax.sharding import NamedSharding, PartitionSpec
 import numpy as np
 
 jax.config.parse_flags_with_absl()
+
+
+def _pgle_profilers():
+  return [pgle_profiler
+          for profilers in pjit._pgle_profiler_dict.values()
+          for pgle_profiler in profilers.values()]
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
@@ -288,7 +296,7 @@ class PgleTest(jtu.JaxTestCase):
               os.path.getsize(os.path.join(dump_dir, fdo_profile)), 0
           )
 
-        for pgle_profiler in pjit._pgle_profiler_dict.values():
+        for pgle_profiler in _pgle_profilers():
           self.assertTrue(pgle_profiler.is_enabled())
           self.assertTrue(pgle_profiler.is_fdo_consumed())
 
@@ -322,6 +330,108 @@ class PgleTest(jtu.JaxTestCase):
         monitoring.unregister_event_listener(check_if_cache_hit)
 
         self.assertGreater(cache_hit, 0)
+
+  def testPgleBarrierRunsAfterProfilerStart(self):
+    # The barrier absorbs the skew between the processes' profiler starts, so
+    # it must be enqueued after the profiler has started, not before.
+    runner = profiler.PGLEProfiler(retries=1, percentile=90)
+    barrier_calls = []
+
+    def barrier():
+      barrier_calls.append(runner.is_running())
+
+    runner.barrier = barrier
+    x = jnp.arange(16, dtype=np.float32)
+    with profiler.PGLEProfiler.trace(runner):
+      jax.block_until_ready(x * 2)
+    self.assertEqual(barrier_calls, [True])
+    self.assertFalse(runner.is_running())
+    self.assertEqual(runner.called_times, 1)
+
+  def testPgleBarrierCompiledBeforeProfilerStart(self):
+    # Like the profiled module, the barrier is compiled before the profiler
+    # starts, not in the first profiled run.
+    mesh = jtu.create_mesh((2,), ('x',))
+
+    @partial(
+        jax.jit,
+        in_shardings=NamedSharding(mesh, PartitionSpec('x')),
+        out_shardings=NamedSharding(mesh, PartitionSpec('x')),
+    )
+    def f(x):
+      return x * 2
+
+    x = jax.device_put(np.arange(16, dtype=np.float32),
+                       NamedSharding(mesh, PartitionSpec('x')))
+    api.clear_caches()
+    pjit._pgle_profiler_dict.clear()
+    # The profilers left behind would fail later tests' checks on all of them.
+    self.addCleanup(pjit._pgle_profiler_dict.clear)
+    self.addCleanup(api.clear_caches)
+    device_barrier_fn = pxla._device_barrier_fn
+    device_barrier_fn.cache_clear()  # So the barrier compiles here.
+    # Whether a PGLE profiler was running at each compile of the barrier.
+    profiling = []
+
+    def barrier_fn(devices):
+      profiling.append(any(runner.is_running()
+                           for runner in _pgle_profilers()))
+      return device_barrier_fn(devices)
+
+    with (mock.patch.object(pxla, '_device_barrier_fn', barrier_fn),
+          config.pgle_profiling_runs(1), config.enable_pgle(True),
+          config.pgle_barrier(True)):
+      jax.block_until_ready(f(x))  # Compiled, then profiled.
+    self.assertEqual(device_barrier_fn.cache_info().misses, 1)
+    # Compiled once, when `f` was, before the profiled run.
+    self.assertEqual(profiling, [False])
+
+  def testPgleProfilerPerDeviceList(self):
+    # One function, compiled for two lists of devices with the same shape, has
+    # one jaxpr, but each executable is profiled on its own devices, and is
+    # preceded by a barrier over them.
+    if len(jax.devices()) < 4:
+      self.skipTest('Requires 4 devices')
+    devices = jax.devices()
+    xs = [jax.device_put(np.arange(16, dtype=np.float32),
+                         NamedSharding(jax.sharding.Mesh(
+                             np.array(devices[i:i + 2]), ('x',)),
+                                       PartitionSpec('x')))
+          for i in (0, 2)]
+    f = jax.jit(lambda x: x * 2)
+    api.clear_caches()
+    pjit._pgle_profiler_dict.clear()
+    # The profilers left behind would fail later tests' checks on all of them.
+    self.addCleanup(pjit._pgle_profiler_dict.clear)
+    self.addCleanup(api.clear_caches)
+    with (config.pgle_profiling_runs(1), config.enable_pgle(True),
+          config.pgle_barrier(True)):
+      for x in xs:
+        jax.block_until_ready(f(x))
+    (profilers,) = pjit._pgle_profiler_dict.values()
+    self.assertEqual(
+        [tuple(d.id for d in device_list) for device_list in profilers],
+        [(devices[0].id, devices[1].id), (devices[2].id, devices[3].id)])
+    for pgle_profiler in profilers.values():
+      self.assertEqual(pgle_profiler.called_times, 1)
+      self.assertIsNotNone(pgle_profiler.barrier)
+
+  def testDeviceBarrier(self):
+    devices = tuple(jax.devices())
+    compiled, x = pxla._device_barrier_fn(devices)
+    self.assertEqual(compiled(x).block_until_ready(), 0)
+    # Compiled once per set of devices.
+    self.assertIs(compiled, pxla._device_barrier_fn(devices)[0])
+
+  def testDeviceBarrierIgnoresContextMesh(self):
+    # The barrier is reached from the dispatch of an arbitrary computation,
+    # which may run under a mesh set with `jax.set_mesh` (as in MaxText) that
+    # differs from the barrier's own mesh.
+    mesh = jtu.create_mesh((len(jax.devices()),), ('x',))
+    pxla._device_barrier_fn.cache_clear()  # So the barrier compiles here.
+    with jax.set_mesh(mesh):
+      compiled, x = pxla._device_barrier_fn(tuple(jax.devices()))
+      self.assertEqual(compiled(x).block_until_ready(), 0)
 
   def testPassingFDOProfile(self):
     mesh = jtu.create_mesh((2,), ('x',))

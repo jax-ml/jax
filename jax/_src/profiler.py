@@ -34,6 +34,7 @@ traceback_util.register_exclusion(__file__)
 from jax._src import xla_bridge
 from jax._src.lib import _profiler
 from jax._src.lib import _profile_data
+from jax._src.lib import jaxlib_extension_version
 from jax import version as jax_version_module
 from jax._src.lib import version as version_lib
 
@@ -632,6 +633,10 @@ class PGLEProfiler:
     self.called_times: int = 0
     self.fdo_profiles: list[Any] = []
     self.current_session: _profiler.ProfilerSession | None = None
+    # Called once the profiler has started and before each profiled run is
+    # enqueued, e.g. to enqueue work that synchronizes the devices (see the
+    # jax_pgle_barrier option).
+    self.barrier: Callable[[], Any] | None = None
 
   def consume_fdo_profile(self) -> bytes | None:
     if self.collected_fdo is not None:
@@ -660,6 +665,7 @@ class PGLEProfiler:
   @classmethod
   @contextmanager
   def trace(cls, runner: PGLEProfiler | None):
+    """Profiles the enclosed run for PGLE, if `runner` still needs profiles."""
     if (runner is None or runner.is_running()
         or not runner.is_enabled() or runner.is_fdo_consumed()):
       yield
@@ -670,11 +676,18 @@ class PGLEProfiler:
       runner.current_session = _profiler.ProfilerSession(options)
 
       try:
+        if runner.barrier is not None:
+          runner.barrier()
         yield
       finally:
         xspace = runner.current_session.stop()
+        kwargs = {}
+        if jaxlib_extension_version >= 514:
+          # If supported by jaxlib, insist that XLA prefixes the cost of
+          # each instruction with the fingerprint of its module.
+          kwargs["require_fingerprints"] = True
         runner.fdo_profiles.append(
-            _profiler.get_fdo_profile(xspace)
+            _profiler.get_fdo_profile(xspace, **kwargs)
         )
         runner.current_session = None
 
