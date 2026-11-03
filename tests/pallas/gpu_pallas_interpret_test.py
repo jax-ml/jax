@@ -2959,6 +2959,26 @@ class InterpretTest(jtu.JaxTestCase):
     output = kernel(a)
     self.assertArraysEqual(output, a)
 
+  def test_async_store_load_3d_tmem(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((2, 128, 64), jnp.int32),
+        scratch_types=dict(
+            tmem_ref=plgpu.TMEM((2, 128, 64), jnp.int32),
+        ),
+        interpret=InterpretParams(),
+    )
+    def kernel(in_ref, out_ref, tmem_ref):
+      plgpu.async_store_tmem(tmem_ref.at[0], in_ref[0])
+      plgpu.async_store_tmem(tmem_ref.at[1], in_ref[1])
+      plgpu.commit_tmem()
+      out_ref[0] = plgpu.async_load_tmem(tmem_ref.at[0])
+      out_ref[1] = plgpu.async_load_tmem(tmem_ref.at[1])
+
+    a = jnp.arange(2 * 128 * 64, dtype=jnp.int32).reshape((2, 128, 64))
+    output = kernel(a)
+    self.assertArraysEqual(output, a)
+
   @jtu.parameterized.product(grid=[(4,), (2, 3)])
   def test_dynamic_scheduling_loop(self, grid):
     # `dynamic_scheduling_loop` lets a block claim a not-yet-launched block's

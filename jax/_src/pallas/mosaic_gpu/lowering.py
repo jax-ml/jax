@@ -109,7 +109,7 @@ AnyBarrier = mgpu.Barrier | mgpu.ClusterBarrier
 
 
 def _get_barrier(
-    aval: ShapedAbstractValue, arrival_multiplier: int
+    aval: state_types.AbstractRef, arrival_multiplier: int
 ) -> mgpu.Barrier:
   assert isinstance(aval.dtype, gpu_core.BarrierType)
   num_arrivals = aval.dtype.num_arrivals
@@ -120,7 +120,7 @@ def _get_barrier(
 
 
 def _get_cluster_barrier(
-    aval: ShapedAbstractValue, axis_names: _AxisNames
+    aval: state_types.AbstractRef, axis_names: _AxisNames
 ) -> mgpu.ClusterBarrier:
   assert isinstance(aval.dtype, gpu_core.ClusterBarrierType)
   num_arrivals = aval.dtype.num_arrivals
@@ -357,7 +357,8 @@ def _run_scoped_resource_estimator(
   del consts  # Unused.
   rs = Resources()
   for v in jaxpr.invars:
-    aval = cast(ShapedAbstractValue, v.aval)
+    aval = v.aval
+    assert isinstance(aval, state_types.AbstractRef)
     if isinstance(aval.dtype, gpu_core.BarrierType):
       barrier = _get_barrier(aval, ctx.arrival_multiplier)
       rs += Resources(barrier_counts=collections.Counter([barrier]))
@@ -366,7 +367,6 @@ def _run_scoped_resource_estimator(
       barrier = _get_cluster_barrier(aval, ctx.axis_names)
       rs += Resources(barrier_counts=collections.Counter([barrier]))
       continue
-    assert isinstance(aval, state_types.AbstractRef)
     if aval.memory_space == gpu_core.TMEM:
       if len(aval.shape) != 2:
         raise ValueError(f"TMEM allocations must be 2D. Got {aval.shape}")
@@ -436,6 +436,10 @@ class _AxisNames:
 AnyBarrierRef = (
     mgpu.BarrierRef | mgpu.DialectBarrierRef | mgpu.CollectiveBarrierRef
 )
+ScratchTransforms = (
+    Sequence[state_types.Transform]
+    | dict[gpu_core.ExtractAliasedRef, Sequence[state_types.Transform]]
+)
 
 
 @dataclasses.dataclass
@@ -466,6 +470,9 @@ class ModuleContext:
   reduction_scratch_bytes: int
   warp_axis_name: jax_core.AxisName | None = None
   outer_traceback: xc.Traceback | None = None
+  scratch_transforms: dict[ir.Value, ScratchTransforms] = (
+      dataclasses.field(default_factory=dict)
+  )
   _smem_allocation_counter: int = dataclasses.field(default=0, init=False)
   _tmem_allocation_counter: int = dataclasses.field(default=0, init=False)
 
@@ -570,7 +577,9 @@ class ModuleContext:
 
   @contextlib.contextmanager
   def scratch_view(
-      self, struct: jax.ShapeDtypeStruct
+      self,
+      struct: jax.ShapeDtypeStruct,
+      transforms: ScratchTransforms = (),
   ) -> Generator[ir.Value]:
     """Creates a view into the runtime scratch buffer for the given struct.
 
@@ -580,6 +589,7 @@ class ModuleContext:
 
     Args:
       struct: The shape and dtype of the view to create.
+      transforms: Optional transforms for the SMEM allocation.
 
     Returns:
       A memref view into the runtime scratch buffer.
@@ -620,7 +630,9 @@ class ModuleContext:
     assert off % gpu_core.SMEM_ALIGNMENT == 0
 
     self.smem_used_bytes = off
+    self.scratch_transforms[view] = transforms
     yield view
+    del self.scratch_transforms[view]
     self.smem_used_bytes = initial_used_bytes
 
 
@@ -1529,35 +1541,6 @@ def _bubble_up_transform[T: state_types.Transform](
   )
 
 
-def _reinterpret_cast(ref: ir.Value, new_ref_aval: state_types.AbstractRef) -> ir.Value:
-  ref_ty = ir.MemRefType(ref.type)
-  strides, offset = ref_ty.get_strides_and_offset()
-  # A sanity check. It doesn't do much to check that an offset is dynamic, but
-  # if we ever get here through an unexpected path that slices with a non-zero
-  # static offset, we'll at least catch it.
-  assert offset == 0  or offset == ir.ShapedType.get_dynamic_stride_or_offset()
-  expected_strides = mgpu_utils.get_contiguous_strides(ref_ty.shape)
-  if expected_strides != strides:
-    raise NotImplementedError(
-        f"Expected contiguous strides {expected_strides} when applying "
-        f"reinterpret_cast to {ref_ty} but got {strides}"
-    )
-  if offset == 0:
-    layout = None
-  else:
-    layout = ir.StridedLayoutAttr.get(
-        offset, mgpu_utils.get_contiguous_strides(new_ref_aval.shape)
-    )
-  new_ty = ir.MemRefType.get(
-      new_ref_aval.shape, mgpu_utils.dtype_to_ir_type(new_ref_aval.dtype),
-      memory_space=ref_ty.memory_space,
-      layout=layout
-  )
-  if new_ty == ref_ty:
-    return ref
-  return mgpu.dialect.reinterpret_cast(new_ty, ref)
-
-
 def _bubble_up_transforms_for_lowering(
     ctx: LoweringRuleContext,
     aval: jax_core.AbstractValue,
@@ -1652,6 +1635,15 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
     allow_peer_refs=False,
     allow_multicast_refs=False,
 ) -> tuple[T, state_types.AbstractRef, Sequence[state_types.Transform]]:
+  scratch_transforms = (
+      ctx.module_ctx.scratch_transforms[ref]
+      if isinstance(ref, ir.Value) and mgpu_utils.is_smem_ref(ref)
+      else ()
+  )
+  if isinstance(scratch_transforms, dict):
+    assert isinstance(transforms[0], gpu_core.ExtractAliasedRef)
+    scratch_transforms = scratch_transforms[transforms[0]]
+
   # Before we handle other transforms, we resolve any possible leading
   # aliasing transform.
   ref, ref_aval, transform_avals, transforms = _extract_aliased_ref(  # pyrefly: ignore[bad-assignment]
@@ -1662,41 +1654,38 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
       ctx.module_ctx.lowering_semantics,
   )
 
-  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-    # We only bubble up transforms here to verify that all the specified
-    # transforms can be commuted correctly with the BlockSpec transforms.
-    _bubble_up_transforms_for_lowering(
-        ctx,
-        ref_aval,
-        transforms,
-        transform_avals,
-        handle_transposes=False,
-        handle_reshapes=handle_reshapes,
-    )
-
-    spec_transforms = []
-    num_block_spec_transforms = 0
-    for t in transforms:
-      if isinstance(t, (gpu_core.UntilingTransform, gpu_core.UnswizzleRef)):
-        spec_transforms = [t.undo(ref_aval)] + spec_transforms
-        ref_aval = cast(state_types.AbstractRef, t.transform_type(ref_aval))
-        num_block_spec_transforms += 1
-      else:
-        break
+  if scratch_transforms:
     assert isinstance(ref, ir.Value)
-    if spec_transforms:
+    physical_ref_aval = cast(
+        state_types.AbstractRef,
+        state_types.transform_type(scratch_transforms, ref_aval),
+    )
+    untransforms = tuple(
+        pallas_core.undo_transforms(ref_aval, scratch_transforms)
+    )
+    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+      # We only bubble up transforms here to verify that all the specified
+      # transforms can be commuted correctly with the BlockSpec transforms.
+      _bubble_up_transforms_for_lowering(
+          ctx,
+          physical_ref_aval,
+          (*untransforms, *transforms),
+          (*untransforms, *transform_avals),
+          handle_transposes=False,
+          handle_reshapes=handle_reshapes,
+      )
       transforms_attr = ir.ArrayAttr.get([
-          gpu_core.to_transform_attr(t) for t in spec_transforms
+          gpu_core.to_transform_attr(t) for t in scratch_transforms
       ])
       ref = cast(
           T,
-          mgpu.dialect.with_transforms(_reinterpret_cast(ref, ref_aval), transforms_attr)
+          mgpu.dialect.with_transforms(ref, transforms_attr),
       )
-      transforms = transforms[num_block_spec_transforms:]
-      transform_avals = transform_avals[num_block_spec_transforms:]
-      if any(isinstance(t, (gpu_core.UntilingTransform, gpu_core.UnswizzleRef)) for t in transforms):
-        raise ValueError("Unexpected untiling or unswizzle transform found in "
-                         f"remaining transforms: {transforms}.")
+    else:
+      ref = cast(T, mgpu.memref_reshape(ref, physical_ref_aval.shape))
+      ref_aval = physical_ref_aval
+      transforms = (*untransforms, *transforms)
+      transform_avals = (*untransforms, *transform_avals)
 
   (
       bubbled_up_transforms,
@@ -3446,6 +3435,7 @@ def _run_scoped_lowering_rule(
     *consts,
     jaxpr: jax_core.Jaxpr,
     collective_axes,
+    ref_transforms,
     **_,
 ):
   if pallas_core.poison_buffers_enabled():
@@ -3465,8 +3455,9 @@ def _run_scoped_lowering_rule(
   if is_multithreaded and is_thread_collective:
     gpu_dialect.barrier()
   with contextlib.ExitStack() as alloc_stack:
-    for v in jaxpr.invars:
-      aval = cast(ShapedAbstractValue, v.aval)
+    for v, transform in zip(jaxpr.invars, ref_transforms):
+      aval = v.aval
+      assert isinstance(aval, state_types.AbstractRef)
       if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
         if collective_axes:
           raise ValueError(
@@ -3533,17 +3524,31 @@ def _run_scoped_lowering_rule(
         should_discharge.append(False)
         continue
 
-      if not isinstance(aval, state_types.AbstractRef):
-        raise ValueError(f"Can't convert to ref: {aval}")
       if aval.memory_space == gpu_core.SMEM:
+        if isinstance(aval, gpu_core.AbstractRefUnion):
+          # Despite its name, `flatten_ref_union` preserves each ref group's
+          # PyTree structure (for `AbstractRefUnion._iter`).
+          extracted_refs = jax.tree.leaves(
+              gpu_core.flatten_ref_union(aval),
+              is_leaf=lambda x: isinstance(x, pallas_core.TransformedRef),
+          )
+          union_transforms = {}
+          for r, t in zip(extracted_refs, transform):
+            (extract,) = r.transforms
+            assert isinstance(extract, gpu_core.ExtractAliasedRef)
+            union_transforms[extract] = t
+          transform = union_transforms
         input_ref = alloc_stack.enter_context(
             ctx.module_ctx.scratch_view(
-                jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype)
+                jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
+                transforms=transform,
             )
         )
         input_refs.append(input_ref)
         should_discharge.append(False)
       elif aval.memory_space == gpu_core.TMEM:
+        # Transforms on TMEM refs are already reflected in the collapsed 2D
+        # invar aval and applied at each use site in `jaxpr`.
         input_ref = alloc_stack.enter_context(
             ctx.module_ctx.alloc_tmem(
                 jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),

@@ -648,11 +648,11 @@ def run_scoped(
   )
   # Note that only a subset of all transforms can be found here, and they are
   # never expected to contain any arrays.
-  ref_transforms = tuple(
+  aval_transforms = tuple(
       t.transforms if isinstance(t, state_types.TransformedRef) else ()
       for t in ref_avals.vals
   )
-  f_with_transforms = wrap_with_transforms(f, ref_transforms)
+  f_with_transforms = wrap_with_transforms(f, aval_transforms)
   # Turn the function into a jaxpr. The body of run_scoped may have
   # effects (IO) on constvars (i.e. variables inherited from the
   # parent scope). Jax can't reason about effects to references that
@@ -663,10 +663,19 @@ def run_scoped(
         f_with_transforms,
         avals,
         api_util.debug_info("pallas run_scoped", f, types, kw_types))
+  ref_transforms = []
+  for at, s in zip(aval_transforms, flat_types.vals):
+    ut = (
+        s.get_unapplied_transforms()
+        if hasattr(s, "get_unapplied_transforms")
+        else ()
+    )
+    assert not (at and ut)
+    ref_transforms.append(at or ut)
   out = run_scoped_p.bind(*jaxpr.consts,
                           jaxpr=jaxpr,
                           collective_axes=collective_axes,
-                          ref_transforms=ref_transforms)
+                          ref_transforms=tuple(ref_transforms))
   return tree_util.tree_unflatten(out_avals.tree, out)
 
 
@@ -693,8 +702,7 @@ def _run_scoped_discharge_rule(
     *args_flat,
     jaxpr,
     collective_axes,
-    ref_transforms,
-    **_,
+    **params,
 ):
   if collective_axes:
     raise NotImplementedError(
@@ -721,7 +729,7 @@ def _run_scoped_discharge_rule(
   # are not discharged.
   out = run_scoped_p.bind(
       *args_flat, jaxpr=discharged_body, collective_axes=collective_axes,
-      ref_transforms=ref_transforms,
+      **params,
   )
   # Order of outputs:
   # (1) return values, (2) closed refs, (3) scoped refs.

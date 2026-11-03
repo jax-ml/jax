@@ -17,7 +17,7 @@ import dataclasses
 import functools
 import inspect
 import math
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import jax
 from jax import lax
@@ -507,10 +507,15 @@ class JaxprInterpreter:
   ):
     assert eqn.primitive is primitives.run_scoped_p
 
-    def _allocate_for_aval(token,
-                           aval,
-                           transforms: tuple[state_types.Transform, ...],
-                           is_thread_block_axis_collective: bool):
+    def _allocate_for_aval(
+        token,
+        aval,
+        transforms: (
+            tuple[state_types.Transform, ...]
+            | tuple[tuple[state_types.Transform, ...], ...]
+        ),
+        is_thread_block_axis_collective: bool,
+    ):
       _raise_if_unsupported_memory_space(aval.memory_space)
       ref_count = _get_num_threads_sharing_collective_allocation(
           self.thread_cluster_shape,
@@ -547,7 +552,10 @@ class JaxprInterpreter:
       match aval:
         # Must precede the `AbstractRef` case below, which this subclasses.
         case mosaic_gpu_core.AbstractRefUnion():
-          if transforms:
+          if (
+              aval.memory_space == mosaic_gpu_core.MemorySpace.TMEM
+              and transforms
+          ):
             raise NotImplementedError(
                 f"Unsupported transforms on a `RefUnion`: {transforms}"
             )
@@ -555,16 +563,19 @@ class JaxprInterpreter:
         case state_types.AbstractRef(
             inner_aval=inner, memory_space=memory_space, kind=_
         ):
-          if transforms:
-            # The invar/aval's shape in the jaxpr may be the tiled shape, after
-            # tiling and/or swizzling transforms have been applied.  The
-            # elements of `transforms` -- to undo the swizzling and/or tiling --
-            # are applied any time the variable is used in the jaxpr.
-            #
-            # We want to allocate a buffer with the logical shape, instead of
-            # the tiled shape, so we undo the swizzing and/or tiling here to get
-            # the logical shape.
-            inner = apply_layout_transforms(transforms, inner)
+          if (
+              memory_space == mosaic_gpu_core.MemorySpace.TMEM
+              and transforms
+          ):
+            # The invar/aval's shape in the jaxpr may be the physical shape
+            # (e.g. collapsed 2D shape for TMEM). The elements of `transforms`
+            # are applied any time the variable is used in the jaxpr; we apply
+            # them here to allocate a buffer with the logical shape. (SMEM
+            # invars already have their logical shape.)
+            assert not any(isinstance(t, tuple) for t in transforms)
+            inner = apply_layout_transforms(
+                cast(tuple[state_types.Transform, ...], transforms), inner
+            )
           match inner:
             case jax_core.ShapedArray(shape=shape, dtype=dtype):
               if isinstance(dtype, mosaic_gpu_core.BarrierType):
