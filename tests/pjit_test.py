@@ -11494,13 +11494,89 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         self.assertIn('all-reduce(', hlo)
 
     f_add = lambda a, u: a.at[idx].add(u, out_sharding=P(None, 'y'))
-    dx = jax.jit(jax.grad(lambda a: f_add(a, upd).sum()))(x)
+    dx, du = jax.jit(jax.grad(lambda a, u: f_add(a, u).sum(), argnums=(0, 1)))(
+        x, upd)
     self.assertEqual(dx.sharding, x.sharding)
+    self.assertEqual(du.sharding, upd.sharding)
     self.assertArraysAllClose(dx, np.ones_like(x_np))
 
     with config.no_collectives({'x'}):
       with self.assertRaises(core.ForbiddenCollectiveError):
         jax.jit(f_add)(x, upd)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_gather_out_sharding(self, mesh):
+    x_np = np.arange(32, dtype=np.float32).reshape(8, 4)
+    idx_np = np.array([1, 3, 0, 9], dtype=np.int32)
+    x = jax.device_put(x_np, P(None, 'y'))
+    idx = jax.device_put(idx_np, P('x'))
+
+    @jax.jit
+    def f(a, i):
+      return a.at[i, None].get(
+          mode='fill', fill_value=-1, out_sharding=P('x', None, 'y'))
+
+    out = f(x, idx)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None, 'y')))
+    expected = np.where((idx_np < 8)[:, None], x_np[idx_np % 8], -1)[:, None]
+    self.assertArraysEqual(out, expected)
+    jaxpr_str = str(f.trace(x, idx).jaxpr)
+    self.assertNotIn('shard_map', jaxpr_str)
+    self.assertNotIn('reshard', jaxpr_str)
+
+    def loss(a):
+      return f(a, idx).sum()
+
+    dx = jax.jit(jax.grad(loss))(x)
+    self.assertEqual(dx.sharding, x.sharding)
+
+    @jax.jit
+    def f_reshard_batch(a, i):
+      return a.at[i, None].get(
+          mode='fill', fill_value=-1, out_sharding=P('y', None, 'x'))
+
+    out_re = f_reshard_batch(x, idx)
+    self.assertEqual(out_re.sharding, NamedSharding(mesh, P('y', None, 'x')))
+    self.assertArraysEqual(out_re, expected)
+
+    @jax.jit
+    def f_full_slice(a):
+      return a.at[:, None].get(
+          mode='fill', fill_value=-1, out_sharding=P('x', None, 'y'))
+
+    out_full = f_full_slice(x)
+    self.assertEqual(out_full.sharding, NamedSharding(mesh, P('x', None, 'y')))
+    self.assertArraysEqual(out_full, x_np[:, None])
+
+    @jax.jit
+    def f_short_spec(a, i):
+      return a.at[i, None].get(mode='clip', out_sharding=P('x'))
+
+    out_short = f_short_spec(x, idx)
+    self.assertEqual(out_short.sharding, NamedSharding(mesh, P('x', None, None)))
+    self.assertArraysEqual(out_short, x_np[np.clip(idx_np, 0, 7)][:, None])
+
+    @jax.jit
+    def f_bad_newaxis(a, i):
+      return a.at[i, None].get(out_sharding=P(None, 'x', 'y'))
+
+    with config.no_collectives({'x'}):
+      with self.assertRaisesRegex(ValueError, 'Cannot shard newaxis'):
+        f_bad_newaxis(x, idx)
+
+    @jax.jit
+    def f_bad_unreduced(a, i):
+      return a.at[i].get(out_sharding=P(None, 'y', unreduced={'x'}))
+
+    with self.assertRaisesRegex(ValueError, 'cannot be unreduced'):
+      f_bad_unreduced(x, idx)
+
+    @jax.jit
+    def f_bad_reduced(a, i):
+      return a.at[i].get(out_sharding=P(None, 'y', reduced={'x'}))
+
+    with self.assertRaisesRegex(ValueError, 'reduced axes must be a subset'):
+      f_bad_reduced(x, idx)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_scatter_add_hijax_unreduced(self, mesh):

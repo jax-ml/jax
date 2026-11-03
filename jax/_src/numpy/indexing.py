@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-from functools import partial
 import operator
 import string
 from typing import Any, NamedTuple
@@ -44,7 +43,7 @@ from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.named_sharding import DuplicateSpecError
 from jax._src.partition_spec import PartitionSpec
-from jax._src.pjit import auto_axes, reshard
+from jax._src.pjit import reshard
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.tree_util import tree_flatten, tree_unflatten, register_pytree_node_class
 from jax._src.typing import Array, ArrayLike, Index, StaticScalar
@@ -1185,15 +1184,11 @@ def rewriting_take(
   # In remaining cases, compute via gather.
   indexer = indexer.expand_bool_indices()
   dynamic_idx, treedef = tree_flatten(indexer)
-  internal_gather = partial(
-      _gather, treedef=treedef,
-      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode, fill_value=fill_value, normalize_indices=normalize_indices)
-  if out_sharding is not None:
-    return auto_axes(internal_gather, out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes,
-                     )(arr, dynamic_idx)
-  return internal_gather(arr, dynamic_idx)
+  return _gather(arr, dynamic_idx, treedef=treedef,
+                 indices_are_sorted=indices_are_sorted,
+                 unique_indices=unique_indices, mode=mode,
+                 fill_value=fill_value, normalize_indices=normalize_indices,
+                 out_sharding=out_sharding)
 
 
 def _static_slice(arr: Array, indexer: _StaticSliceIndexer) -> Array:
@@ -1243,7 +1238,8 @@ def _dynamic_slice(arr: Array, indexer: _DynamicSliceIndexer) -> Array:
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @api.jit(static_argnums=(1, 2))
 def _gather(arr, dynamic_idx, *, treedef, indices_are_sorted,
-            unique_indices, mode, fill_value, normalize_indices):
+            unique_indices, mode, fill_value, normalize_indices,
+            out_sharding):
   parsed_idx = tree_unflatten(treedef, dynamic_idx)
   indexer = parsed_idx.to_gather(core.typeof(arr).sharding,
                                  normalize_indices=normalize_indices)
@@ -1265,7 +1261,20 @@ def _gather(arr, dynamic_idx, *, treedef, indices_are_sorted,
   # handle cases like zeros(0)[array([], int32)].
   if core.is_empty_shape(indexer.slice_shape):
     return lax.full_like(y, 0, shape=indexer.slice_shape,
-                         sharding=indexer.slice_sharding)
+                         sharding=out_sharding or indexer.slice_sharding)
+
+  # `out_sharding` describes the final output; drop the newaxis dims that are
+  # only added after the gather.
+  gather_s = out_sharding
+  if out_sharding is not None and indexer.newaxis_dims:
+    out_sharding.check_compatible_aval(indexer.slice_shape)
+    parts = out_sharding.spec.partitions
+    if any(i < len(parts) and parts[i] is not None for i in indexer.newaxis_dims):
+      raise ValueError(
+          f"Cannot shard newaxis dimensions {indexer.newaxis_dims} in"
+          f" out_sharding={out_sharding}")
+    gather_s = out_sharding.update(spec=out_sharding.spec.update(
+        partitions=tuple(p for i, p in enumerate(parts) if i not in indexer.newaxis_dims)))
 
   # We avoid generating a gather when indexer.gather_indices.size is empty.
   if not core.is_empty_shape(indexer.gather_indices.shape):
@@ -1273,7 +1282,9 @@ def _gather(arr, dynamic_idx, *, treedef, indices_are_sorted,
         y, indexer.gather_indices, indexer.dnums, indexer.gather_slice_shape,
         unique_indices=unique_indices or indexer.unique_indices,
         indices_are_sorted=indices_are_sorted or indexer.indices_are_sorted,
-        mode=mode, fill_value=fill_value)
+        mode=mode, fill_value=fill_value, out_sharding=gather_s)
+  elif gather_s is not None:
+    y = reshard(y, gather_s)
 
   # Reverses axes with negative strides.
   if indexer.reversed_y_dims:

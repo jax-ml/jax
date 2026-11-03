@@ -5997,6 +5997,29 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysEqual(jax.reshard(g, P()), np.array([2., 0., 1.]))
 
   @jtu.with_explicit_mesh((2,), 'x')
+  def test_scatter_add_unreduced_grad(self, mesh):
+    x = jax.device_put(np.arange(4.), P(unreduced={'x'}))
+    u = jax.device_put(np.array([10., 20.]), P(unreduced={'x'}))
+
+    @jax.shard_map(out_specs=P(unreduced={'x'}))
+    def f(x, u):
+      out = x.at[jnp.array([1, 3])].add(u)
+      self.assertEqual(jax.typeof(out).mat.unreduced, frozenset({'x'}))
+      return out
+
+    self.assertArraysEqual(
+        jax.reshard(f(x, u), P()), np.array([0., 11., 2., 23.]))
+
+    def loss(x, u):
+      return f(x, u).sum()
+
+    gx, gu = jax.jit(jax.grad(loss, argnums=(0, 1)))(x, u)
+    self.assertEqual(gx.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+    self.assertEqual(gu.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+    self.assertArraysEqual(gx, np.ones(4))
+    self.assertArraysEqual(gu, np.ones(2))
+
+  @jtu.with_explicit_mesh((2,), 'x')
   def test_op_without_ur_rule_rejects_reduced_unreduced(self, mesh):
     w = jax.device_put(np.arange(4.), P(reduced={'x'}))
     u = jax.device_put(np.arange(4.), P(unreduced={'x'}))

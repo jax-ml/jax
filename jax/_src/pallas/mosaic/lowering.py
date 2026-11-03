@@ -3511,6 +3511,7 @@ def _gather_lowering_rule(
     indices_are_sorted,
     mode,
     fill_value,
+    out_sharding,
 ):
   in_aval = ctx.avals_in[0]
   indices_aval = ctx.avals_in[1]
