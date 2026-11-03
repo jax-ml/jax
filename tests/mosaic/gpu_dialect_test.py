@@ -3290,6 +3290,82 @@ class DialectLoweringTest(MosaicGpuTest):
       with self.assertRaisesRegex(ValueError, "when the tiling is square"):
         mgpu.wgmma(acc, a, b, swizzle=64)
 
+  @parameterized.product(
+      k_and_num_instrs=(
+          # (K, number of K=96 instructions, number of K=64 instructions)
+          (256, 2, 1),
+          (512, 4, 2),
+          (768, 8, 0),
+          (1024, 10, 1),
+      ),
+      collective=(False, True),
+      scale_block_and_type=(
+          (16, ir.Float8E4M3FNType.get),
+          (32, ir.Float8E8M0FNUType.get),
+      ),
+  )
+  def test_tcgen05_mma_sm103_k96_decomposition(
+      self, k_and_num_instrs, collective, scale_block_and_type
+  ):
+    k, num_k96, num_k64 = k_and_num_instrs
+    scale_block, scale_ty_fn = scale_block_and_type
+    m = n = 128
+    n_collective = n * (2 if collective else 1)
+    i32 = ir.IntegerType.get_signless(32)
+    self.module.operation.attributes["mosaic_gpu.arch_major"] = (
+        ir.IntegerAttr.get(i32, 10)
+    )
+    self.module.operation.attributes["mosaic_gpu.arch_minor"] = (
+        ir.IntegerAttr.get(i32, 3)
+    )
+    with self.kernel():
+      f4 = ir.Float4E2M1FNType.get()
+      scale_ty = scale_ty_fn()
+      smem = mgpu_utils.smem()
+
+      def tiled_ref(shape):
+        tiled_shape = mgpu_utils.tile_shape(shape, (8, 256))
+        (ref,) = undefs(ir.MemRefType.get(tiled_shape, f4, memory_space=smem))
+        return ref
+
+      tmem_addr = arith.constant(i32, 0)
+      tcgen05.mma(
+          tcgen05.TMEMRef(
+              tmem_addr,
+              (m, n_collective),
+              ir.F32Type.get(),
+              tcgen05.tmem_default_layout(packing=1),
+          ),
+          tiled_ref((m, k)),
+          mgpu_utils.memref_transpose(tiled_ref((n, k)), (1, 0, 3, 2)),
+          a_swizzle=128,
+          b_swizzle=128,
+          a_scale=tcgen05.TMEMRef(
+              tmem_addr,
+              (m, k // scale_block),
+              scale_ty,
+              tcgen05.scales_layout(),
+          ),
+          b_scale=tcgen05.TMEMRef(
+              tmem_addr,
+              (n_collective, k // scale_block),
+              scale_ty,
+              tcgen05.scales_layout(),
+          ),
+          collective=collective,
+      )
+    self.assertTrue(self.module.operation.verify())
+
+    # Bit 31 of the instruction descriptor selects K=96 (instead of K=64).
+    instr_ks = []
+    for op in self.find_ops(llvm.InlineAsmOp):
+      if "tcgen05.mma" in op.asm_string.value:
+        idesc = op.operands[3].owner.literal_value & 0xFFFFFFFF
+        instr_ks.append(96 if (idesc >> 31) & 1 else 64)
+    # Every 3 K=64 steps are fused into 2 K=96 steps, and any remaining K=64
+    # steps are issued last.
+    self.assertEqual(instr_ks, [96] * num_k96 + [64] * num_k64)
+
 
 if hp is not None:
   @hps.composite

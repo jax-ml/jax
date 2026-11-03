@@ -66,12 +66,8 @@ class SmemDescriptor:
   _k_tiling_stride: int
   _element_bitwidth: int
 
-  def encoded_offset(self, mn_idx: int, k_idx: int) -> int:
-    """Returns the 64-bit constant to add to `addr_base` for `(mn_idx, k_idx)`.
-
-    Packs the static descriptor metadata (LBO, SBO, swizzle) in bits [16:63]
-    with the 16-byte encoded slice byte offset in bits [0:13].
-    """
+  def _slice_addr_offset(self, mn_idx: int, k_idx: int) -> int:
+    """Returns the 16-byte encoded byte offset of slice `(mn_idx, k_idx)`."""
     mn_tile, mn_rem = divmod(mn_idx, self._mn_tiling)
     if mn_rem:
       raise ValueError(
@@ -104,7 +100,24 @@ class SmemDescriptor:
           f"Slice ({mn_idx}, {k_idx}) offset ({bit_offset} bits) must be"
           " byte-aligned"
       )
-    return self._desc_const | encode_addr(bit_offset // 8)
+    return encode_addr(bit_offset // 8)
+
+  def encoded_offset(self, mn_idx: int, k_idx: int, k_size: int = 1) -> int:
+    """Returns the 64-bit constant to add to `addr_base` for `(mn_idx, k_idx)`.
+
+    Packs the static descriptor metadata (LBO, SBO, swizzle) in bits [16:63]
+    with the 16-byte encoded slice byte offset in bits [0:13]. When a K-fastest
+    slice of `k_size` elements crosses a K swizzle tile boundary (e.g. SM103
+    `K=96` MMA), also encodes the next tile's offset in LBO bits [16:29] and
+    sets LBO byte-address mode (bit 52).
+    """
+    offset = self._desc_const | self._slice_addr_offset(mn_idx, k_idx)
+    next_tile_k = (k_idx // self._k_tiling + 1) * self._k_tiling
+    if self.fastest_dim == Dim.K and k_idx + k_size > next_tile_k:
+      if k_idx + k_size > next_tile_k + self._k_tiling:
+        raise ValueError("MMA slice cannot span more than 2 K swizzle tiles")
+      offset |= (self._slice_addr_offset(mn_idx, next_tile_k) << 16) | (1 << 52)
+    return offset
 
   def slice_i64(self, mn_idx: int = 0, k_idx: int = 0) -> ir.Value:
     """Materializes the `i64` SMEM descriptor for slice `(mn_idx, k_idx)`."""
@@ -239,7 +252,7 @@ def create_descriptor(
       stride_byte_offset=stride_byte_offset,
       swizzle=swizzle,
   )
-  assert (desc_const & 0xFFFF) == 0
+  assert (desc_const & (0xFFFFFFFF if fastest_dim == Dim.K else 0xFFFF)) == 0
 
   return SmemDescriptor(
       addr_base=addr_base,
