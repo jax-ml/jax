@@ -60,7 +60,6 @@ jax_multiplatform_test(
         "tpu",
     ],
     enable_configs = [
-        "gpu_a100",
         "gpu_h100",
         "gpu_b200",
     ],
@@ -76,7 +75,6 @@ jax_multiplatform_test(
         "//jax/experimental:pallas_mosaic_gpu",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
-        "//jax/experimental:pallas_triton",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -123,17 +121,15 @@ jax_multiplatform_test(
     srcs = [
         "ops_test.py",
     ],
+    enable_backends = [
+        "cpu",
+        "tpu",
+    ],
     enable_configs = [
-        "gpu_a100",
-        "gpu_a100_x32",
-        "gpu_h100",
-        "gpu_h100_x32",
-        "gpu_b200",
         "tpu_v6e",
     ],
     shard_count = {
         "cpu": 16,
-        "gpu": 32,
         "tpu": 16,
     },
     tags = [
@@ -147,7 +143,6 @@ jax_multiplatform_test(
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
-        "//jax/experimental:pallas_triton",  # build_cleaner: keep
     ] + py_deps([
         "absl/testing:flagsaver",
         "absl/testing",
@@ -198,9 +193,6 @@ jax_multiplatform_test(
     srcs = [
         "ops_test.py",
     ],
-    args = [
-        "--jax_pallas_use_mosaic_gpu=true",
-    ],
     disable_configs = [
         "gpu_a100",
         "gpu_a100_x32",
@@ -227,7 +219,6 @@ jax_multiplatform_test(
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax/experimental:pallas_tpu",
-        "//jax/experimental:pallas_triton",  # build_cleaner: keep
     ] + py_deps([
         "absl/testing:flagsaver",
         "absl/testing",
@@ -267,17 +258,12 @@ jax_multiplatform_test(
         "pallas_vmap_test.py",
     ],
     enable_backends = ["cpu"],
-    enable_configs = [
-        "gpu_a100_x32",
-        "gpu_h100_x32",
-        "gpu_b200",
-    ],
     shard_count = 4,
     deps = [
+        "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
-        "//jax/experimental:pallas_triton",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -348,7 +334,6 @@ jax_multiplatform_test(
     srcs = ["export_back_compat_pallas_test.py"],
     enable_backends = ["cpu"],
     enable_configs = [
-        "gpu_a100_x32",
         "gpu_h100_x32",
         "gpu_b200",
     ],
@@ -360,26 +345,21 @@ jax_multiplatform_test(
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax/experimental:pallas_tpu_ops",  # build_cleaner: keep
-        "//jax/experimental:pallas_triton",  # build_cleaner: keep
     ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
     name = "pallas_shape_poly_test",
     srcs = ["pallas_shape_poly_test.py"],
-    disable_configs = [
-        "gpu_h100",
-    ],
-    enable_configs = [
-        "gpu_a100_x32",
+    enable_backends = [
+        "cpu",
+        "tpu",
     ],
     tags = [],
     deps = [
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas",
-        "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax/experimental:pallas_tpu",  # build_cleaner: keep
-        "//jax/experimental:pallas_triton",  # build_cleaner: keep
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -588,7 +568,6 @@ jax_multiplatform_test(
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
-        "//jax/experimental:pallas_triton",  # build_cleaner: keep
     ] + py_deps([
         "absl/testing",
         "hypothesis",
@@ -900,25 +879,6 @@ jax_py_test(
         "absl/testing",
         "numpy",
         "hypothesis",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "triton_pallas_test",
-    srcs = [
-        "triton_pallas_test.py",
-    ],
-    enable_backends = ["cpu"],
-    enable_configs = [
-        "gpu_h100_x32",
-        "gpu_b200",
-    ],
-    shard_count = 1,
-    deps = [
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_triton",
-    ] + py_deps([
-        "absl/testing",
     ]),
 )
 

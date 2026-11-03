@@ -16,15 +16,12 @@ from collections.abc import Callable, Sequence
 import functools
 import itertools
 import math
-import re
-import subprocess
 import sys
 from typing import Any
 import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
-from absl import flags
 import jax
 from jax import api_util
 from jax import lax
@@ -56,12 +53,6 @@ import hypothesis as hp
 import hypothesis.extra.numpy as hnp
 import hypothesis.strategies as hps
 
-_USE_MOSAIC_GPU = flags.DEFINE_bool(
-    "jax_pallas_use_mosaic_gpu",
-    False,
-    "If true, use the Mosaic GPU backend for Pallas.",
-)
-
 # There are many inherited redefinitions of _
 # ruff: noqa: F811
 
@@ -78,38 +69,6 @@ def trace_to_jaxpr(f: Callable, *args: Any):
       ft.flatten_args(*args),
       api_util.debug_info("ops_test", f, (0,) * len(args), {}),
   )
-
-
-def is_power_of_two(n: int) -> bool:
-  return (n > 0) and (n & (n - 1) == 0)
-
-
-def get_rocm_shared_memory_limit() -> int:
-  """Get the shared memory (LDS) limit in bytes for ROCm devices.
-
-  Queries rocminfo to get the GROUP segment size dynamically.
-  Returns 64KB as default if rocminfo fails (MI100/MI200/MI300 all have 64KB LDS).
-  """
-  try:
-    result = subprocess.run(
-        ['rocminfo'], capture_output=True, text=True, timeout=10
-    )
-    if result.returncode != 0:
-      return 64 * 1024  # Default if rocminfo fails
-    lines = result.stdout.split('\n')
-    for i, line in enumerate(lines):
-      if 'Segment:' in line and 'GROUP' in line:
-        if i + 1 < len(lines):
-          size_line = lines[i + 1]
-          # Match "Size: <number>(<hex>) KB" with case-insensitive KB check
-          match = re.search(r'Size:\s+(\d+)\s*\([^)]+\)\s*KB', size_line, re.IGNORECASE)
-          if match:
-            size_kb = int(match.group(1))
-            return size_kb * 1024  # Convert KB to bytes
-  except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-    pass
-  # Default for AMD GPUs (MI100/MI200/MI300 all have 64KB LDS)
-  return 64 * 1024
 
 
 def smem_on_tpu():
@@ -315,15 +274,6 @@ UNARY_FUNCTIONS = [
 
 class PallasBaseTest(ptu.PallasTest):
 
-  def setUp(self):
-    super().setUp()
-    if (
-        _USE_MOSAIC_GPU.value
-        and jtu.test_device_matches(["cuda"])
-        and not jtu.is_cuda_compute_capability_at_least("9.0")
-    ):
-      self.skipTest("This test only works on a GPU with capability >= sm90")
-
   @classmethod
   def pallas_call(
       cls,
@@ -334,7 +284,7 @@ class PallasBaseTest(ptu.PallasTest):
       out_specs=pl.no_block_spec,
       **kwargs,
   ):
-    if not (jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value):
+    if not jtu.test_device_matches(["gpu"]):
       return pl.pallas_call(
           fn,
           out_shape=out_shape,
@@ -373,7 +323,7 @@ class PallasBaseTest(ptu.PallasTest):
     )
 
   def skip_if_mosaic_gpu(self):
-    if jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value:
+    if jtu.test_device_matches(["gpu"]):
       if jtu.test_device_matches(["rocm"]):
         self.skipTest("Mosaic GPU is not supported on ROCm.")
       self.skipTest("TODO: Mosaic GPU does not support this yet")
@@ -729,7 +679,7 @@ class OpsTest(PallasBaseTest):
       y_ref[...] = func(x_ref[...])
     x_shape_dtype = data.draw(shape_dtype_strategy)
 
-    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"])
     if sut_is_mosaic_gpu:
       hp.assume(math.prod(x_shape_dtype.shape) % 128 == 0)
       hp.assume(x_shape_dtype.shape[-1] >= 16)
@@ -751,7 +701,7 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["cpu"]) and jtu.SKIP_SLOW_TESTS.value:
       self.skipTest("Test is slow on CPU.")
 
-    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"])
     if to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
       if not jtu.test_device_matches(["tpu"]):
         self.skipTest("Not supported on this hardware")
@@ -813,7 +763,7 @@ class OpsTest(PallasBaseTest):
   # miss bugs that would be hidden due to exhaustive enumeration being in order.
   @parameterized.product(from_dtype=_DTYPES_SUB_32BIT, to_dtype=_DTYPES, randomize=(False, True))
   def test_cast_from_sub_32bit(self, from_dtype, to_dtype, randomize):
-    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and _USE_MOSAIC_GPU.value
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"])
 
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
@@ -1005,10 +955,6 @@ class OpsTest(PallasBaseTest):
       self.skipTest("No TPU module available.")
     axis = 0
     num_arrays = 16
-    if jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
-      # Triton only supports concatenation along the last dimension.
-      num_arrays = 2
-      axis = -1
     def kernel(out):
       result = []
       for i in range(num_arrays):
@@ -1129,8 +1075,6 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["cuda"]):
       # The original test worked only on fp32@TPU, have no way to test CUDA
       self.skipTest("Not tested on CUDA, todo for the respective team")
-    if jtu.is_device_rocm() and jtu.parse_version(jax.__version__) == (0, 8, 0):
-      self.skipTest("is_finite not in Triton lowering for jax 0.8.0")
 
     size = len(self.IS_FINITE_TEST_VALUES)
 
@@ -1206,8 +1150,6 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["cuda"]):
       # The original test worked only on fp32@TPU, have no way to test CUDA
       self.skipTest("Not tested on CUDA, todo for the respective team")
-    if jtu.is_device_rocm() and jtu.parse_version(jax.__version__) == (0, 8, 0):
-      self.skipTest("is_finite not in Triton lowering for jax 0.8.0")
 
     size = len(self.IS_FINITE_TEST_VALUES)
 
@@ -2332,41 +2274,6 @@ class OpsTest(PallasBaseTest):
       if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4):
         self.skipTest("bfloat16 matmul is supported on TPUv4+")
 
-    if jtu.test_device_matches(["gpu"]):
-      if dtype == jnp.bfloat16:
-        self.skipTest("bfloat16 type are not supported on GPU")
-      # Check shared memory limit: Triton loads lhs + rhs into shared memory
-      if jtu.is_device_rocm():
-        dtype_size = jnp.dtype(dtype).itemsize
-        if (math.prod(lhs_shape) + math.prod(rhs_shape)) * dtype_size > get_rocm_shared_memory_limit():
-          self.skipTest("Shared memory size limit exceeded")
-      elif math.prod(lhs_shape) + math.prod(rhs_shape) + math.prod(out_shape) > (256 * 256) * 2:
-        self.skipTest("Shared memory size limit exceeded")
-      if (jax.local_devices()[0].shared_memory_per_block_optin == 99 * 1024 and
-          dtype == jnp.float32 and
-          lhs_and_rhs_shape in [
-            ((128, 16), (128, 256)),
-            ((16, 128), (128, 256)),
-            ((16, 256), (256, 128)),
-            ((256, 16), (256, 128)),
-          ]):
-        self.skipTest("Shared memory size limit exceeded")
-      if min(*lhs_shape, *rhs_shape) < 16:
-        self.skipTest("All dimensions of lhs and rhs must be >= 16")
-      if any(not is_power_of_two(x) for x in lhs_shape + rhs_shape):
-        self.skipTest("All dimensions of lhs and rhs must be power of two")
-      if (
-          jtu.is_cuda_compute_capability_equal("8.9")
-          and lhs_and_rhs_shape == ((128, 128), (128, 128))
-          and dtype == jnp.float32
-          and not trans_x
-          and trans_y
-      ):
-        self.skipTest(
-            "Triton produces incorrect numerical output for transposed RHS"
-            " on L4 GPU"
-        )
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
@@ -3020,15 +2927,6 @@ class OpsTest(PallasBaseTest):
       self, x_dim_size, y_dim_size, z_dim_size, dtype
   ):
     if jtu.test_device_matches(["gpu"]):
-      if any(
-          not is_power_of_two(x) for x in [x_dim_size, y_dim_size, z_dim_size]
-      ):
-        self.skipTest(
-            "the Pallas Triton lowering currently requires that all operations"
-            " have array arguments and results whose size is a power of 2."
-            f" Encountered an array of shape ({x_dim_size}, {y_dim_size},"
-            f" {z_dim_size})"
-        )
       if x_dim_size * y_dim_size * z_dim_size * 4 > 32768:
         self.skipTest(
             "Mosaic GPU kernel exceeds available shared memory"
@@ -3133,8 +3031,6 @@ class OpsTest(PallasBaseTest):
       )
       output_ref[...] = output
 
-    if jtu.test_device_matches(["rocm"]) and _USE_MOSAIC_GPU.value:
-      self.skipTest("Mosaic GPU is not supported on ROCm.")
     deq_call = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct(data.shape, dtype),
@@ -3149,11 +3045,8 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(result, expected)
 
   def test_delay(self):
-    if jtu.test_device_matches(["gpu"]):
-      if not _USE_MOSAIC_GPU.value:
-        self.skipTest("Delay is only implemented on the MGPU backend for GPUs.")
-      elif jtu.test_device_matches(["rocm"]):
-        self.skipTest("Mosaic GPU is not supported on ROCm.")
+    if jtu.test_device_matches(["rocm"]):
+      self.skipTest("Mosaic GPU is not supported on ROCm.")
     if self.INTERPRET:
       self.skipTest("Not implemented in interpret mode.")
     # This is mostly to test that the kernel compiles. It's difficult to
