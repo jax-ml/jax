@@ -58,7 +58,14 @@ def register_ffi_target(
     fn: a ``PyCapsule`` object containing the function pointer, or a ``dict``
       where the keys are FFI stage names (e.g. `"execute"`) and the values are
       ``PyCapsule`` objects containing a pointer to the handler for that stage.
-      GPU ``"record"`` handlers require a plugin built with support for that stage.
+      On GPU, an optional ``"record"`` handler describes device operations to add
+      to or update in a command buffer. This allows a custom call to record
+      commands directly instead of capturing launches from its ``"execute"``
+      handler. The recorded operations can then be replayed
+      without calling the host handler again. An ``"execute"`` handler is still
+      required for execution outside command buffers. RECORD requires a GPU
+      plugin built with support for that stage; see :ref:`ffi-gpu-record` for
+      the recording contract.
     platform: the target platform.
     api_version: the XLA custom call API version to use. Supported versions are:
       1 (default) for the typed FFI or 0 for the earlier "custom call" API.
