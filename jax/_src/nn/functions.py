@@ -1124,7 +1124,7 @@ def dot_product_attention(
       to [3, 4, 5, c, 7, 8]. If a single int is given, it will be interpreted as
       a symmetric window (window_size, window_size).
     return_residual: Whether to return the logsumexp tensor of shape BTN
-      or BNT to users. See section 3.1.1 in the FlashAttention-2 paper:
+      or TN to users. See section 3.1.1 in the FlashAttention-2 paper:
       https://arxiv.org/pdf/2307.08691 to find the definition of logsumexp.
     implementation: A string to control which implementation backend to use.
       Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults
