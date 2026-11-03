@@ -2394,27 +2394,28 @@ def _reduce_scatter_lowering(
 
 
 def _reduce_scatter_effectful_abstract_eval(
-    x_aval, *, axis_name, scatter_dimension, axis_index_groups, axis_size, tiled
+    name, x_aval, *, axis_name, scatter_dimension, axis_index_groups,
+    axis_size, tiled
 ):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
-  _check_axis_names(axis_name, 'reduce_scatter')
-  check_unreduced_args([x_aval], axis_name, 'reduce_scatter')
+  _check_axis_names(axis_name, name)
+  check_unreduced_args([x_aval], axis_name, name)
   new_shape = list(x_aval.shape)
   scatter_dim_input_size = x_aval.shape[scatter_dimension]
   if tiled:
     if scatter_dim_input_size % axis_size != 0:
-      raise ValueError(f"tiled reduce_scatter operand scatter dimension size "
+      raise ValueError(f"tiled {name} operand scatter dimension size "
                        f"{scatter_dim_input_size} must be divisible by "
                        f"shard_count {axis_size}")
     new_shape[scatter_dimension] = scatter_dim_input_size // axis_size
   else:
     if scatter_dim_input_size != axis_size:
-      raise ValueError(f"reduce_scatter operand scatter dimension size "
+      raise ValueError(f"{name} operand scatter dimension size "
                        f"{scatter_dim_input_size} must match shard count "
                        f"{axis_size}")
     del new_shape[scatter_dimension]
-  vma = collective_vma_rule('reduce_scatter', axis_name, x_aval)
+  vma = collective_vma_rule(name, axis_name, x_aval)
   return (x_aval.update(shape=new_shape,
                         manual_axis_type=x_aval.mat.update(varying=vma)),
           {*map(core.NamedAxisEffect, axis_name)})
@@ -2427,14 +2428,14 @@ def _reduce_scatter_transpose_rule(cts, x, *, axis_name, scatter_dimension,
                      axis=scatter_dimension, tiled=tiled),)
 
 
-def _reduce_scatter_batcher(vals_in, dims_in, *, scatter_dimension, axis_name,
-                            axis_index_groups, axis_size, tiled):
+def _reduce_scatter_batcher(prim, vals_in, dims_in, *, scatter_dimension,
+                            axis_name, axis_index_groups, axis_size, tiled):
   (x,), (d,) = vals_in, dims_in
   if d <= scatter_dimension:
     scatter_dimension += 1
   elif not tiled:  # Tiled all-scatter doesn't change the rank
     d += 1
-  result = reduce_scatter_p.bind(
+  result = prim.bind(
       x,
       scatter_dimension=scatter_dimension,
       axis_name=axis_name,
@@ -2443,7 +2444,7 @@ def _reduce_scatter_batcher(vals_in, dims_in, *, scatter_dimension, axis_name,
       tiled=tiled)
   return result, d
 
-def _reduce_scatter_collective(axis_data, vals_in, dims_in,
+def _reduce_scatter_collective(prim, pos_reducer, axis_data, vals_in, dims_in,
                                scatter_dimension, axis_name,
                                axis_index_groups, axis_size, tiled):
   frame_size, frame_name = axis_data.size, axis_data.name
@@ -2451,7 +2452,7 @@ def _reduce_scatter_collective(axis_data, vals_in, dims_in,
     axis_name = (axis_name,)
   (x,), (d,) = vals_in, dims_in
   if d is None and frame_name not in axis_name:
-    out = reduce_scatter_p.bind(
+    out = prim.bind(
         x, scatter_dimension=scatter_dimension, axis_name=axis_name,
         axis_index_groups=axis_index_groups, axis_size=axis_size,
         tiled=tiled)
@@ -2459,7 +2460,7 @@ def _reduce_scatter_collective(axis_data, vals_in, dims_in,
 
   if frame_name not in axis_name:
     return _reduce_scatter_batcher(
-        vals_in, dims_in, scatter_dimension=scatter_dimension,
+        prim, vals_in, dims_in, scatter_dimension=scatter_dimension,
         axis_name=axis_name, axis_index_groups=axis_index_groups,
         axis_size=axis_size, tiled=tiled)
   if axis_index_groups is not None:
@@ -2469,9 +2470,11 @@ def _reduce_scatter_collective(axis_data, vals_in, dims_in,
     raise NotImplementedError("Please open a feature request!")
   assert axis_name == (frame_name,), "batcher called with wrong axis name"
   if d is None:
-    y, dy = x * axis_size, scatter_dimension
+    assert prim is reduce_scatter_p
+    y = x * axis_size
   else:
-    y, dy = lax.reduce(x, 0., lax.add, (d,)), scatter_dimension
+    y = pos_reducer(x, (d,))
+  dy = scatter_dimension
   if tiled:
     y = _splitaxis(dy, axis_size, y)
   return y, dy
@@ -2479,10 +2482,11 @@ def _reduce_scatter_collective(axis_data, vals_in, dims_in,
 
 reduce_scatter_p = core.Primitive("reduce_scatter")
 reduce_scatter_p.def_effectful_abstract_eval(
-    _reduce_scatter_effectful_abstract_eval
+    partial(_reduce_scatter_effectful_abstract_eval, "reduce_scatter")
 )
 ad.deflinear2(reduce_scatter_p, _reduce_scatter_transpose_rule)
-batching.fancy_primitive_batchers[reduce_scatter_p] = _reduce_scatter_collective
+batching.fancy_primitive_batchers[reduce_scatter_p] = partial(
+    _reduce_scatter_collective, reduce_scatter_p, lax.reduce_sum)
 
 mlir.register_lowering(
     reduce_scatter_p, partial(_reduce_scatter_lowering, lax.add_p),
@@ -2585,13 +2589,14 @@ def _psum_scatter_is_async(x, axis_name, *, scatter_dimension=0,
       return unreduced_psum_scatter(
           leaf, axes, scatter_dimension=scatter_dimension, tiled=tiled)
     else:
-      return _psum_scatter(leaf, axes, scatter_dimension=scatter_dimension,
-                           axis_index_groups=axis_index_groups, tiled=tiled,
-                           is_async=is_async)
+      prim = reduce_scatter_start_p if is_async else reduce_scatter_p
+      return _bind_reduce_scatter(
+          prim, leaf, axes, scatter_dimension=scatter_dimension,
+          axis_index_groups=axis_index_groups, tiled=tiled)
   return tree_util.tree_map(bind, x)
 
-def _psum_scatter(x, axis_name, *, scatter_dimension, axis_index_groups, tiled,
-                  is_async):
+def _bind_reduce_scatter(prim, x, axis_name, *, scatter_dimension,
+                         axis_index_groups, tiled):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if not axis_name:
@@ -2600,14 +2605,47 @@ def _psum_scatter(x, axis_name, *, scatter_dimension, axis_index_groups, tiled,
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(leaf):
     leaf = insert_collective_pvary(axis_name, leaf)
-    prim = reduce_scatter_start_p if is_async else reduce_scatter_p
-    if is_async and not tiled:
+    if prim is reduce_scatter_start_p and not tiled:
       raise NotImplementedError
     return prim.bind(
         leaf, axis_name=axis_name,
         scatter_dimension=canonicalize_axis(scatter_dimension, np.ndim(leaf)),
         axis_index_groups=axis_index_groups, axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
+
+
+def pmax_scatter(x, axis_name, *, scatter_dimension=0, tiled=False):
+  axes = _maybe_skip_one_sized_axes(
+      (axis_name,) if not isinstance(axis_name, tuple) else axis_name)
+  return _bind_reduce_scatter(
+      pmax_scatter_p, x, axes, scatter_dimension=scatter_dimension,
+      axis_index_groups=None, tiled=tiled)
+
+pmax_scatter_p = core.Primitive("pmax_scatter")
+pmax_scatter_p.def_effectful_abstract_eval(
+    partial(_reduce_scatter_effectful_abstract_eval, "pmax_scatter"))
+batching.fancy_primitive_batchers[pmax_scatter_p] = partial(
+    _reduce_scatter_collective, pmax_scatter_p, lax.reduce_max)
+mlir.register_lowering(
+    pmax_scatter_p, partial(_reduce_scatter_lowering, lax.max_p),
+    shard_map_collective_rule=_reduce_scatter_collective_rule)
+
+
+def pmin_scatter(x, axis_name, *, scatter_dimension=0, tiled=False):
+  axes = _maybe_skip_one_sized_axes(
+      (axis_name,) if not isinstance(axis_name, tuple) else axis_name)
+  return _bind_reduce_scatter(
+      pmin_scatter_p, x, axes, scatter_dimension=scatter_dimension,
+      axis_index_groups=None, tiled=tiled)
+
+pmin_scatter_p = core.Primitive("pmin_scatter")
+pmin_scatter_p.def_effectful_abstract_eval(
+    partial(_reduce_scatter_effectful_abstract_eval, "pmin_scatter"))
+batching.fancy_primitive_batchers[pmin_scatter_p] = partial(
+    _reduce_scatter_collective, pmin_scatter_p, lax.reduce_min)
+mlir.register_lowering(
+    pmin_scatter_p, partial(_reduce_scatter_lowering, lax.min_p),
+    shard_map_collective_rule=_reduce_scatter_collective_rule)
 
 
 def _build_axis_index_lowering_hlo(ctx, axis_name, axis_ctx):

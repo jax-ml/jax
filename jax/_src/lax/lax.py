@@ -10040,8 +10040,7 @@ def _reduce_collective_rule(
     # TODO(rdyro): Support general `out_sharding` reshards on kept dims.
     kept_t, out_t = to_tuple(kept_s), to_tuple(out_s)
     scatter_axes = out_t[len(kept_t):]
-    # TODO(rdyro): Drop `scatter_fn is None` once p{min,max}_scatter land.
-    if (scatter_fn is None or out_t[:len(kept_t)] != kept_t or
+    if (out_t[:len(kept_t)] != kept_t or
         not set(scatter_axes).issubset(set(reduced_axes))):
       raise NotImplementedError
     scatters.append((dim, scatter_axes))
@@ -10067,12 +10066,12 @@ def _reduce_sum_collective_rule(in_avals, out_avals, *, axes, out_sharding):
 def _reduce_min_collective_rule(in_avals, out_avals, *, axes, out_sharding):
   from jax._src.lax import parallel
   return _reduce_collective_rule(
-      parallel.pmin, None, in_avals, out_avals, axes)
+      parallel.pmin, parallel.pmin_scatter, in_avals, out_avals, axes)
 
 def _reduce_max_collective_rule(in_avals, out_avals, *, axes, out_sharding):
   from jax._src.lax import parallel
   return _reduce_collective_rule(
-      parallel.pmax, None, in_avals, out_avals, axes)
+      parallel.pmax, parallel.pmax_scatter, in_avals, out_avals, axes)
 
 mlir.register_lowering(
     reduce_sum_p, partial(_unary_reduce_lower, hlo.AddOp, _get_sum_identity),

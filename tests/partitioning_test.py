@@ -20,6 +20,7 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lax import parallel
 import jax.numpy as jnp
 from jax.sharding import AxisType, NamedSharding, PartitionSpec as P
 import numpy as np
@@ -105,7 +106,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       self.assertEqual(jax.typeof(y).sharding.spec, out_spec)
       return y
 
-    uses_shmap = (is_rs and (lax_op is lax.reduce_sum)) or bool(out_spec.reduced)
+    uses_shmap = is_rs or bool(out_spec.reduced)
     if not uses_shmap:
       with self.assertRaises(NotImplementedError):
         f.lower(arr)
@@ -304,6 +305,35 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     out = f(arr_x)
     self.assertEqual(out.sharding.spec, P('m', 'a'))
     self.assertArraysEqual(out, np.sum((np_x + np_x) * 2.0, axis=1))
+
+  @parameterized.product(
+      op=(
+          (parallel.pmax_scatter, np.max),
+          (parallel.pmin_scatter, np.min),
+      ),
+      tiled=(False, True),
+  )
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_pmin_pmax_scatter_primitives(self, op, tiled, mesh):
+    scatter_op, np_op = op
+    shape = (2, 4) if tiled else (2, 2)
+    np_inp = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    arr = jax.device_put(np_inp, P('x', None))
+
+    @jax.shard_map(out_specs=P('x'))
+    def f(x):
+      y = jnp.squeeze(x, axis=0)
+      out = scatter_op(y, 'x', scatter_dimension=0, tiled=tiled)
+      return out if tiled else out[None]
+
+    expected = np_op(np_inp, axis=0)
+    self.assertArraysEqual(f(arr), expected)
+    self.assertArraysEqual(jax.jit(f)(arr), expected)
+    batched = jax.device_put(
+        np.stack([np_inp, np_inp + 10]), P(None, 'x', None))
+    self.assertArraysEqual(
+        jax.vmap(f)(batched), np.stack([expected, expected + 10]))
 
 
 if __name__ == '__main__':
