@@ -19,7 +19,7 @@ import os
 import re
 import socket
 import time
-from jax._src import clusters
+from jax._src.clusters import cluster
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ def get_tpu_env_value(key) -> str | None:
     value = get_tpu_env_value_from_metadata(key)
   return value
 
-class BaseTpuCluster(clusters.ClusterEnv):
+class BaseTpuCluster(cluster.ClusterEnv):
 
   name: str = "tpu"
 
