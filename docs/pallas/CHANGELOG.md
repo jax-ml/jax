@@ -228,6 +228,9 @@ To keep using Triton, switch to the official Triton bindings and `jax_triton`.
   * {func}`jax.experimental.pallas.kernel` now only aliases closed over or
     passed in refs if the kernel writes to them. If you need aliasing without
     an explicit write, use {func}`jax.experimental.pallas.tpu.touch`.
+  * {func}`jax.experimental.pallas.empty_ref_like` now also accepts a `Ref`
+    (e.g. a kernel argument), returning an empty Ref with the same shape,
+    dtype, and memory space.
 
 ### Triton
 
