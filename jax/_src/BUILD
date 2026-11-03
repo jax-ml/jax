@@ -1447,6 +1447,7 @@ py_library_providing_imports_info(
         ":hijax",
         ":indexing",
         ":lax",
+        ":layout",
         ":mesh",
         ":sharding",
         ":sharding_impls",
