@@ -1356,6 +1356,10 @@ class LayoutInferenceTest(parameterized.TestCase):
       in_out_layouts=(
           (tcgen05.tmem_default_layout(packing=1), fa.TCGEN05_LAYOUT),
           (tcgen05.scales_layout(), tcgen05.scales_layout().as_tiled_layout()),
+          (
+              tcgen05.tmem_default_layout(packing=4),
+              tcgen05.tmem_default_layout(packing=4).as_tiled_layout(),
+          ),
       ),
       columns=(24, 128),
   )
