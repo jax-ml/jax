@@ -2889,6 +2889,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
+    name=['blackman', 'bartlett', 'hamming', 'hanning'],
+    size=[1, 2, 3, 4, 5, 10, 16, 17],
+  )
+  def testWindowFunctionSymmetry(self, name, size):
+    w = getattr(jnp, name)(size)
+    self.assertArraysEqual(w, w[::-1])
+    if size % 2 == 1:
+      self.assertArraysEqual(w[size // 2], jnp.array(1, dtype=w.dtype))
+    if name in ('blackman', 'hanning') and size >= 2:
+      self.assertArraysEqual(w[0], jnp.array(0, dtype=w.dtype))
+      self.assertArraysEqual(w[-1], jnp.array(0, dtype=w.dtype))
+
+  @jtu.sample_product(
     [dict(shape=shape, fill_value_shape=fill_value_shape)
       for shape in array_shapes + [3, np.array(7, dtype=np.int32)]
       for fill_value_shape in _compatible_shapes(shape)],

@@ -523,6 +523,12 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     lax_fun = getattr(lsp_stats.cauchy, fun)
     self.assertAllClose(lax_fun(q), scipy_fun(q), check_dtypes=False, atol=0)
 
+  @jtu.sample_product(fun=["ppf", "isf"], dtype=jtu.dtypes.floating)
+  def testCauchyQuantileGrad(self, fun, dtype):
+    lax_fun = getattr(lsp_stats.cauchy, fun)
+    expected = dtype(np.pi if fun == "ppf" else -np.pi)
+    self.assertAllClose(jax.grad(lax_fun)(dtype(0.5)), expected)
+
   @jtu.sample_product(
     shapes=[
       [x_shape, alpha_shape]

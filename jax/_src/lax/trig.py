@@ -134,14 +134,10 @@ _TANPI_64 = (
 
 def _xor_signbit(y: Array, x: Array) -> Array:
   """Flips the sign bit of `y` wherever `x` has its sign bit set."""
-  if y.dtype == np.float64:
-    uint_dtype = np.uint64
-    sign_mask = np.uint64(1 << 63)
-  else:
-    uint_dtype = np.uint32
-    sign_mask = np.uint32(1 << 31)
+  uint_dtype = np.uint64 if y.dtype == np.float64 else np.uint32
   y_u = bitcast_convert_type(y, uint_dtype)
   x_u = bitcast_convert_type(x, uint_dtype)
+  sign_mask = full_like(x_u, 1 << (63 if y.dtype == np.float64 else 31))
   return bitcast_convert_type(y_u ^ (x_u & sign_mask), y.dtype)
 
 

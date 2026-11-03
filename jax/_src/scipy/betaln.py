@@ -491,7 +491,7 @@ def _log_abs_sinpi_reduced(d: Array) -> tuple[Array, Array]:
   # For tiny |d|, sin(pi * d) = pi * d * (1 - (pi * d)^2 / 6 + ...), avoiding
   # subnormal underflow of pi * d near the float underflow threshold.
   pi_d2 = lax.square(np.pi * d_safe)
-  abs_sin = jnp.abs(jnp.sin(np.pi * d_safe))
+  abs_sin = jnp.abs(lax.sinpi(d_safe))
   log_val = lax.log(
       jnp.where(abs_d < 1e-4, abs_d, abs_sin),
       accuracy=AccuracyMode.HIGHEST,

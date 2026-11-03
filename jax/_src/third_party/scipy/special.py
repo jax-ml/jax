@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from jax._src import api
+from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src import custom_derivatives, dtypes
 from jax._src.numpy.util import promote_args_inexact
@@ -33,22 +34,10 @@ def _sincospisquaredhalf(x: Array) -> tuple[Array, Array]:
   #   = [0 + (s*(y+s/2))%2]%2
   #   = [s*(x-s/2)]%2
   s = jnp.fmod(x, 2.0)
-  r = jnp.fmod(s * (x - s / 2), 2.0)
+  r = s * (x - s / 2)
 
-  sinpi = jnp.where(
-    r < 0.5,
-    jnp.sin(np.pi * r),
-    jnp.where(
-      r > 1.5,
-      jnp.sin(np.pi * (r - 2.0)),
-      -jnp.sin(np.pi * (r - 1.0)),
-    ),
-  )
-  cospi = jnp.where(
-    r == 0.5,
-    0.0,
-    jnp.where(r < 1.0, -jnp.sin(np.pi * (r - 0.5)), jnp.sin(np.pi * (r - 1.5))),
-  )
+  sinpi = lax.sinpi(r)
+  cospi = lax.cospi(r)
   if orig_dtype != x.dtype:
     sinpi = sinpi.astype(orig_dtype)
     cospi = cospi.astype(orig_dtype)
