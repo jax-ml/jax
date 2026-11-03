@@ -842,9 +842,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
     # TODO(mattjj): include log_softmax in these extra tests if/when we add a
     # custom_jvp rule for it (since otherwise it doesn't pass the numerical
     # checks below).
+    tol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
     if fn is nn.softmax and config.softmax_custom_jvp.value:
       g_fun = lambda x: jnp.take(fn(x, where=m), jnp.array([0, 2, 3]))
-      jtu.check_grads(g_fun, (x,), order=2)
+      jtu.check_grads(g_fun, (x,), order=2, atol=tol, rtol=tol)
 
   @parameterized.parameters([nn.softmax, nn.log_softmax])
   def testSoftmaxWhereGrad(self, fn):

@@ -1555,7 +1555,7 @@ _check_vma = bool_state(
 
 softmax_custom_jvp = bool_state(
     name='jax_softmax_custom_jvp',
-    default=False,
+    default=True,
     upgrade=True,
     help=('Use a new custom_jvp rule for jax.nn.softmax. The new rule should '
           'improve memory usage and stability. Set True to use new '
