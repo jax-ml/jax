@@ -34,6 +34,7 @@ from typing import Any, Protocol, cast
 import jax
 from jax import lax
 from jax._src import ad_util
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import hijax
@@ -905,6 +906,23 @@ def make_kernel_function(
             out_block_specs=out_block_specs,
             out_usages=out_usages,
         )
+        # Eval rules may bind primitives directly, skipping the `pvary`s that
+        # `lax` functions insert, so `pvary` all operands to the same manual
+        # axes, as `check_vma` requires inside a `shard_map`.
+        if config._check_vma.value and len(in_vals) > 1:
+          vma = frozenset().union(*(
+              a.mat.varying
+              for v in in_vals
+              if isinstance(a := core.typeof(v), core.ShapedArray)
+          ))
+          if vma:
+            in_vals = [
+                core.pvary(v, tuple(vma - a.mat.varying))
+                if isinstance(a := core.typeof(v), core.ShapedArray)
+                and (vma - a.mat.varying)
+                else v
+                for v in in_vals
+            ]
         outs = eval_rule(eval_ctx, *in_vals, **eqn.params)
         if not eqn.primitive.multiple_results:
           outs = [outs]
@@ -1255,6 +1273,8 @@ def _unblocked_pull_rule(ctx: PullRuleContext, *_, **__):
 
 
 def _unblocked_eval_rule(ctx: KernelEvalContext, *args, **params):
+  if ctx.prim is core.pvary_p:
+    return _pvary_eval_rule(ctx, *args, **params)
   return ctx.prim.bind(*args, **ctx.prim.get_bind_params(params))
 
 
@@ -2436,6 +2456,24 @@ def _convert_element_type_pull_rule(
   return [block_transform]
 
 
+@register_eval_rule(core.pvary_p)
+def _pvary_eval_rule(eval_ctx: KernelEvalContext, x, *, axes, **params):
+  del eval_ctx, params
+  if not config._check_vma.value:
+    return x
+  if isinstance(a := core.typeof(x), core.ShapedArray):
+    axes = tuple(ax for ax in axes if ax not in a.mat.varying)
+  return core.pvary(x, axes) if axes else x
+
+
+@register_pull_block_spec_rule(core.pvary_p)
+def _pvary_pull_rule(
+    ctx: PullRuleContext, block_transform: BlockIndexTransform, **params
+):
+  del ctx, params
+  return [block_transform]
+
+
 @register_eval_rule(lax.bitcast_convert_type_p)
 def _bitcast_convert_type_eval_rule(eval_ctx: KernelEvalContext, x, new_dtype):
   del eval_ctx
@@ -2855,6 +2893,72 @@ def _call_jaxpr_eval_rule(
 
 
 @register_eval_rule(custom_derivatives.custom_jvp_call_p)
+def _custom_jvp_eval_rule(
+    ctx: KernelEvalContext,
+    *args,
+    call_jaxpr: core.Jaxpr,
+    jvp_jaxpr_fun: Any,
+    num_consts: int = 0,
+    symbolic_zeros: bool = False,
+):
+  del symbolic_zeros
+  if call_jaxpr.consts or num_consts:
+    raise NotImplementedError(f'{ctx.prim.name} with consts not supported yet')
+
+  @jax.custom_jvp
+  def fn(*primals):
+    return _call_jaxpr_eval_rule(ctx, *primals, jaxpr=call_jaxpr)
+
+  @fn.defjvp
+  def fn_jvp(primals, tangents):
+    mesh = next(
+        (
+            v.aval.sharding.mesh
+            for v in call_jaxpr.invars
+            if isinstance(v.aval, core.ShapedArray)
+            and not v.aval.sharding.mesh.empty
+        ),
+        None,
+    )
+    ctx_mgr = (
+        jax.sharding.use_abstract_mesh(mesh)
+        if mesh is not None
+        else contextlib.nullcontext()
+    )
+    call_vma = bool(mesh and mesh.manual_axes and config._check_vma.value)
+    with ctx_mgr, config._check_vma(call_vma):
+      jvp_jaxpr, jvp_consts, out_zeros = jvp_jaxpr_fun.call_wrapped(
+          *(False for _ in primals)
+      )
+    if jvp_jaxpr.consts or jvp_consts:
+      raise NotImplementedError(
+          f'{ctx.prim.name} jvp with consts not supported yet'
+      )
+    jvp_ctx = dataclasses.replace(
+        ctx,
+        out_block_specs=(
+            *ctx.out_block_specs,
+            *(bs for bs, z in zip(ctx.out_block_specs, out_zeros) if not z),
+        ),
+        out_usages=(
+            *ctx.out_usages,
+            *(u for u, z in zip(ctx.out_usages, out_zeros) if not z),
+        ),
+    )
+    n_out = len(call_jaxpr.outvars)
+    outs = _call_jaxpr_eval_rule(jvp_ctx, *primals, *tangents, jaxpr=jvp_jaxpr)
+    out_primals, nz_tangents = outs[:n_out], iter(outs[n_out:])
+    out_tangents = tuple(
+        ad_util.zeros_like_aval(core.typeof(p).to_tangent_aval())
+        if z
+        else next(nz_tangents)
+        for p, z in zip(out_primals, out_zeros)
+    )
+    return out_primals, out_tangents
+
+  return fn(*args)
+
+
 @register_eval_rule(custom_derivatives.custom_vjp_call_p)
 def _custom_derivative_eval_rule(
     ctx: KernelEvalContext,
@@ -3005,7 +3109,13 @@ def push_block_spec(
       out_type = tree_util.tree_unflatten(
           out_tree,
           [
-              jax.ShapeDtypeStruct(v.aval.shape, v.aval.dtype)
+              jax.ShapeDtypeStruct(
+                  v.aval.shape,
+                  v.aval.dtype,
+                  manual_axis_type=(
+                      v.aval.mat if config._check_vma.value else None
+                  ),
+              )
               for v in jaxpr.outvars
           ],
       )
@@ -3358,6 +3468,14 @@ def _convert_element_type_push_rule(
     sharding: jax.sharding.Sharding,
 ):
   del ctx, new_dtype, weak_type, sharding
+  return block_spec
+
+
+@register_push_block_spec_rule(core.pvary_p)
+def _pvary_push_rule(
+    ctx: PushRuleContext, block_spec: pallas_core.BlockSpec, **params
+):
+  del ctx, params
   return block_spec
 
 

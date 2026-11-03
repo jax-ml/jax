@@ -331,20 +331,29 @@ def _construct_output_fusions(
   )
 
 
+def _is_fusible_eqn(eqn: jax_core.JaxprEqn) -> bool:
+  return eqn.primitive is hijax.call_hi_primitive_p and isinstance(
+      eqn.params.get("_prim"), Fusible
+  )
+
+
 def fuse_jaxpr(
     jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args,
     strict_mode: bool = True,
 ):
   # Collect input fusions
   fusion_eqn_indices = [
-      i
-      for i, eqn in enumerate(jaxpr.eqns)
-      if eqn.primitive is hijax.call_hi_primitive_p
-      and isinstance(eqn.params.get("_prim"), Fusible)
+      i for i, eqn in enumerate(jaxpr.eqns) if _is_fusible_eqn(eqn)
   ]
   match fusion_eqn_indices:
     case []:
-      raise ValueError("No fusible found")
+      # The fusible may be inside a `shard_map`. Imported here because
+      # `shard_map_fusion` depends on this module.
+      from jax._src.pallas.fuser import shard_map_fusion
+
+      return shard_map_fusion.fuse_shard_map_jaxpr(
+          jaxpr, consts, args, strict_mode=strict_mode
+      )
     case [fusion_eqn_index]:
       pass
     case _:

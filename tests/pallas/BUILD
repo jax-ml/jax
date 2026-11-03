@@ -1251,6 +1251,35 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "fuser_shard_map_test",
+    srcs = [
+        "fuser_shard_map_test.py",
+    ],
+    disable_configs = [
+        "cpu",
+    ],
+    enable_backends = ["cpu"],
+    enable_configs = [
+        "tpu_7x_x4",
+        "tpu_v5e_x8",
+        "tpu_v5p_x4",
+    ],
+    tags = [
+        "multiaccelerator",
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_fuser",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "fuser_utils_test",
     srcs = [
         "fuser_utils_test.py",
