@@ -1268,12 +1268,14 @@ def _pcollectives_lowering_common(ctx, *, axis_name, perm, op_name):
 
 
 def _ppermute_lowering(ctx, x, *, axis_name, perm, is_async=False):
+  out_aval, = ctx.avals_out
   full_perm, other_args = _pcollectives_lowering_common(
       ctx, axis_name=axis_name, perm=perm, op_name="ppermute"
   )
   if not is_async:
-    return hlo.CollectivePermuteOp(
+    out, = hlo.CollectivePermuteOp(
         x, mlir.dense_int_elements(full_perm), **other_args).results
+    return [mlir.lower_with_sharding_in_types(ctx, out, out_aval)]
   else:
     return _emit_async_start_custom_call(
         "collective-permute-start", ctx, x,
@@ -1665,7 +1667,8 @@ def _all_to_all_lowering(
   )
 
   if not is_async:
-    return hlo.AllToAllOp(
+    out_aval, = ctx.avals_out
+    out, = hlo.AllToAllOp(
         [x],
         split_dimension=mlir.i64_attr(split_axis),
         concat_dimension=mlir.i64_attr(concat_axis),
@@ -1673,6 +1676,7 @@ def _all_to_all_lowering(
         replica_groups=replica_groups_attr,
         **other_args,
     ).results
+    return [mlir.lower_with_sharding_in_types(ctx, out, out_aval)]
   else:
     config = {
         "split_dimension": split_axis,
@@ -2388,10 +2392,11 @@ def _reduce_scatter_lowering(
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
     _lower_reducer_into_block(ctx, prim, scalar_aval, reducer_block)
     if tiled:
-      return op.results
+      out = op.result
     else:
       out_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
-      return [hlo.reshape(out_type, op.result)]
+      out = hlo.reshape(out_type, op.result)
+    return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
   else:
     assert tiled
     replica_groups = _replica_groups(

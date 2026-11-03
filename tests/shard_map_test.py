@@ -5703,6 +5703,61 @@ class ShardMapTest(jtu.JaxTestCase):
                                 check_vma=False))(arr)
     self.assertArraysEqual(out, np.zeros_like(arr, dtype=np.int32))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_partial_manual_explicit_collectives_sharding_constraint(self, mesh):
+    np_inp = np.arange(32, dtype=np.float32).reshape(4, 8)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('x'), axis_names={'x'})
+    def f_ppermute(x):
+      return lax.ppermute(x, 'x', [(0, 1), (1, 0)])
+
+    ppermute_ir = f_ppermute.lower(arr).as_text()
+    after_ppermute = (
+        ppermute_ir.split('stablehlo.collective_permute')[1]
+        .split('sdy.return')[0]
+    )
+    self.assertIn('sdy.sharding_constraint', after_ppermute)
+    self.assertIn('<@mesh, [{}, {"y"}]>', after_ppermute)
+    out_ppermute = f_ppermute(arr)
+    self.assertEqual(out_ppermute.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertArraysEqual(out_ppermute, np.roll(np_inp, 2, axis=0))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('x'), axis_names={'x'})
+    def f_all_to_all(x):
+      return lax.all_to_all(x, 'x', 0, 0, tiled=True)
+
+    a2a_ir = f_all_to_all.lower(arr).as_text()
+    after_a2a = (
+        a2a_ir.split('stablehlo.all_to_all')[1].split('sdy.return')[0]
+    )
+    self.assertIn('sdy.sharding_constraint', after_a2a)
+    self.assertIn('<@mesh, [{}, {"y"}]>', after_a2a)
+    out_a2a = f_all_to_all(arr)
+    self.assertEqual(out_a2a.sharding, NamedSharding(mesh, P('x', 'y')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_partial_manual_explicit_psum_scatter_sharding_constraint(self, mesh):
+    np_inp = np.arange(32, dtype=np.float32).reshape(4, 8)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('x'), axis_names={'x'})
+    def f_psum_scatter_tiled(x):
+      return lax.psum_scatter(x, 'x', scatter_dimension=0, tiled=True)
+
+    rs_tiled_ir = f_psum_scatter_tiled.lower(arr).as_text()
+    after_rs_tiled = (
+        rs_tiled_ir.split('stablehlo.reduce_scatter')[1].split('sdy.return')[0]
+    )
+    self.assertIn('sdy.sharding_constraint', after_rs_tiled)
+    self.assertIn('<@mesh, [{}, {"y"}]>', after_rs_tiled)
+    out_tiled = f_psum_scatter_tiled(arr)
+    self.assertEqual(out_tiled.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertArraysEqual(out_tiled, np_inp[:2] + np_inp[2:])
+
   @parameterized.parameters(True, False)
   @jtu.with_explicit_mesh((2,), 'x')
   def test_replicated_unreduced_bitcast_check_vma_false(self, grad, mesh):
