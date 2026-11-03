@@ -2983,12 +2983,10 @@ class PallasHiJaxTest(ptu.PallasTest):
 
   @jtu.with_explicit_mesh((2,), "x")
   def test_pallas_call_shard_map_unreduced(self, mesh):
-    x = jax.device_put(
-        np.arange(16, dtype=np.float32).reshape(8, 2), jax.P(None, "x")
-    )
-    y = jax.device_put(
-        np.arange(256, dtype=np.float32).reshape(2, 128), jax.P("x", None)
-    )
+    x_np = np.arange(16, dtype=np.float32).reshape(8, 2)
+    y_np = np.arange(256, dtype=np.float32).reshape(2, 128)
+    x = jax.device_put(x_np, jax.P(None, "x"))
+    y = jax.device_put(y_np, jax.P("x", None))
     acc = jnp.einsum("ab,bc->ac", x, y, out_sharding=jax.P(unreduced={"x"}))
 
     def add_one_kernel(in_ref, out_ref):
@@ -3006,8 +3004,8 @@ class PallasHiJaxTest(ptu.PallasTest):
       )(acc)
 
     out = f(acc)
-    self.assertEqual(out.sharding.spec, jax.P(unreduced={"x"}))
-    self.assertArraysEqual(jax.reshard(out, jax.P()), x @ y + 2.0)
+    self.assertEqual(out.sharding.spec, jax.P(None, None, unreduced={"x"}))
+    self.assertArraysEqual(jax.reshard(out, jax.P()), x_np @ y_np + 2.0)
 
 
 class PadRefTest(jtu.JaxTestCase):
