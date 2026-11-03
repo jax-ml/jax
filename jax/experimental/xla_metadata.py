@@ -17,7 +17,7 @@
 These context managers, decorators, and function wrappers allow annotating JAX
 operations with XLA metadata to attach arbitrary attributes or explicitly
 control XLA's fusion decisions (e.g., forcing operations to be fused together
-or setting fusion boundaries).
+or setting fusion boundaries) and scheduling decisions.
 """
 
 from __future__ import annotations
@@ -75,6 +75,72 @@ def fuse_limit():
   """
 
   with set_xla_metadata(FUSE_LIMIT=True):
+    yield
+
+
+# Frontend attributes of XLA scheduling groups.
+_SCHEDULING_GROUP_ID_ATTR = "_scheduling_group_id"
+_SCHEDULING_GROUP_DEEP_PIPELINE_ATTR = "_scheduling_group_deep_pipeline"
+
+
+@contextlib.contextmanager
+def scheduling_group(group_id: int, *, deep_pipeline: bool = False):
+  """Context manager to put operations in an XLA scheduling group.
+
+  Operations created within this context are annotated with
+  ``_scheduling_group_id=group_id`` XLA metadata. The latency hiding scheduler
+  schedules the operations of a group together, so that the asynchronous
+  operations of the group (e.g. collectives) overlap with its computations.
+  Operations that share the same ``group_id`` belong to the same group, even if
+  they are created in different ``with`` blocks (for example, in different
+  functions).
+
+  With ``deep_pipeline=True``, the group is also in deep pipelining mode: a
+  collective and the computation that consumes its result can be merged by the
+  compiler into a single deep-pipelined operation, where the computation starts
+  on each chunk of data as soon as it arrives. Unlike regular scheduling groups,
+  such a group may contain operations that depend on each other. The roles of
+  the operations (which one produces data and which one consumes it) are
+  inferred from the data flow. On TPU, this currently pipelines a SparseCore
+  ``ragged_all_to_all`` with the TensorCore ``ragged_dot`` (or ``dot_general``)
+  consuming its result, without enabling SparseCore-TensorCore pipelining
+  globally. Operations the compiler cannot pipeline are compiled as usual.
+
+  Example:
+
+    .. code-block:: python
+
+      from jax.experimental.xla_metadata import scheduling_group
+
+      with scheduling_group(7, deep_pipeline=True):
+        x = jax.lax.ragged_all_to_all(x, out, *offsets_and_sizes, axis_name=ax)
+      ...
+      with scheduling_group(7, deep_pipeline=True):
+        y = jax.lax.ragged_dot(x, w, group_sizes)
+
+  Args:
+    group_id: The non-negative integer identifier of the scheduling group.
+    deep_pipeline: Whether the group is in deep pipelining mode. The mode
+      applies to the whole group as soon as one of its operations sets it.
+
+  Raises:
+    ValueError: If ``group_id`` is not a non-negative integer.
+  """
+  if (
+      isinstance(group_id, bool)
+      or not isinstance(group_id, int)
+      or group_id < 0
+  ):
+    raise ValueError(
+        f"group_id must be a non-negative integer, got {group_id!r}."
+    )
+  metadata = {
+      _SCHEDULING_GROUP_ID_ATTR: str(group_id),
+      # `None` clears a mode set by an enclosing `scheduling_group`, so that it
+      # does not leak into this group.
+      _SCHEDULING_GROUP_DEEP_PIPELINE_ATTR: True if deep_pipeline else None,
+  }
+  with set_xla_metadata(**metadata):
     yield
 
 
