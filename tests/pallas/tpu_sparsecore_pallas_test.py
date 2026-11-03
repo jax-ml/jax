@@ -3776,7 +3776,7 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
     o = jax.block_until_ready(foo(x))
     np.testing.assert_array_equal(o, x)
 
-  def test_memory_space_annotations_aliased_input_core_map(self):
+  def test_memory_space_annotations_aliased_input_kernel(self):
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
     @jax.jit

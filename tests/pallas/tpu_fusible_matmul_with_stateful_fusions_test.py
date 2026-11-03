@@ -82,7 +82,6 @@ def matmul_kernel(
 
 class KernelImpl(enum.Enum):
   PALLAS_CALL = enum.auto()
-  CORE_MAP = enum.auto()
   KERNEL = enum.auto()
 
 
@@ -238,64 +237,6 @@ def _fusible_matmul(
                    if o not in z_output_input_aliases)
     return out
 
-  elif impl == KernelImpl.CORE_MAP:
-    z_out_leaves, z_out_tree = jax.tree.flatten(z_out_type)
-    out = z_out_tree.unflatten(
-        z_values[z_output_input_aliases[i]] if i in z_output_input_aliases
-        else jnp.empty_like(v)
-        for i, v in enumerate(z_out_leaves))
-
-    def ref(x):
-      if isinstance(x, jax.ref.Ref):
-        return x
-      return jax.new_ref(x)
-
-    (x_values_refs, y_values_refs, z_values_refs, scalar_prefetch_refs, out_ref
-     ) = jax.tree.map(ref, (x_values, y_values, z_values, scalar_prefetch, out))
-
-    @pl.core_map(pltpu.TensorCoreMesh(axis_name='core'),
-                  interpret=interpret, debug=debug)
-    def _():
-      def _f(acc_ref, scalar_prefetch_smem_refs):
-        pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
-
-        in_specs = (x_value_block_specs, y_value_block_specs,
-                    z_value_block_specs)
-        in_specs = fuser.block_spec_with_prefetch(
-            in_specs, scalar_prefetch_smem_refs)
-        z_out_block_spec_ = fuser.block_spec_with_prefetch(
-            z_out_block_spec, scalar_prefetch_smem_refs)
-
-        pltpu.emit_pipeline(
-            lambda step, *args: matmul_kernel(
-                *scalar_prefetch_smem_refs,
-                *args,
-                acc_ref=acc_ref,
-                pids=step.index,
-                num_k=grid[2],
-                x_fn=x_fn,
-                y_fn=y_fn,
-                z_fn=z_fn,
-                out_dtype=out_dtype,
-            ),
-            grid=grid,
-            in_specs=in_specs,
-            out_specs=[z_out_block_spec_],
-            core_axis_name='core',
-            dimension_semantics=dimension_semantics,
-            _explicit_indices=True,
-        )(x_values_refs, y_values_refs, z_values_refs, out_ref)
-      pl.run_scoped(_f,
-                    pltpu.VMEM((bm, bn), jnp.float32),
-                    jax.tree.map(pltpu.SMEM.like, scalar_prefetch))
-
-    out = tuple(r.get() for o, r in enumerate(jax.tree.leaves(out_ref))
-                if o not in z_output_input_aliases)
-    if z_output_input_aliases:
-      return out
-    else:
-      return z_out_tree.unflatten(out)
-
   elif impl == KernelImpl.KERNEL:
     z_out_leaves, z_out_tree = jax.tree.flatten(z_out_type)
     out = z_out_tree.unflatten(
@@ -375,7 +316,7 @@ def fusible_matmul(
     bn: int = 128,
     debug: bool = False,
     interpret: bool = False,
-    impl: KernelImpl = KernelImpl.CORE_MAP,
+    impl: KernelImpl = KernelImpl.KERNEL,
 ) -> jax.Array:
   return fuser.fusible(
       functools.partial(
@@ -396,12 +337,6 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Only works with TPU v4+')
     super().setUp()
-    self.enter_context(
-        jtu.ignore_warning(
-            category=DeprecationWarning,
-            message='jax.experimental.pallas.core_map is deprecated',
-        )
-    )
 
   @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_bias_and_read_only_refs(self, dtype, impl):

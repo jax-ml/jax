@@ -10204,7 +10204,7 @@ class WarpSpecializedPipelineWGTest(
   ...
 
 
-class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
+class KernelTest(PallasTest, jtu.CudaArchSpecificTest):
 
   def test_multiple_wg(self):
 
@@ -10447,8 +10447,8 @@ class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
     )
 
 
-class CoreMapWGTest(
-    CoreMapTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+class KernelWGTest(
+    KernelTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
   ...
 

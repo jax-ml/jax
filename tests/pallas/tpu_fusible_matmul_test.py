@@ -83,7 +83,6 @@ def matmul_kernel(
 
 class KernelImpl(enum.Enum):
   PALLAS_CALL = enum.auto()
-  CORE_MAP = enum.auto()
   KERNEL = enum.auto()
 
 
@@ -198,51 +197,6 @@ def _fusible_matmul(
         debug=debug,
     )(*scalar_prefetch, x_values, y_values, z_values,)[0]
 
-  elif impl == KernelImpl.CORE_MAP:
-    out = jax.tree.map(jnp.empty_like, z_out_type)
-
-    (x_values_refs, y_values_refs, z_values_refs, scalar_prefetch_refs, out_ref
-     ) = jax.tree.map(
-         jax.new_ref, (x_values, y_values, z_values, scalar_prefetch, out))
-
-    @pl.core_map(pltpu.TensorCoreMesh(axis_name='core'),
-                  interpret=interpret, debug=debug)
-    def _():
-      def _f(acc_ref, scalar_prefetch_smem_refs):
-        pltpu.sync_copy(scalar_prefetch_refs, scalar_prefetch_smem_refs)
-
-        in_specs_ = fuser.block_spec_with_prefetch(
-            (x_value_block_specs, y_value_block_specs, z_value_block_specs),
-            scalar_prefetch_smem_refs,
-        )
-        z_out_block_spec_ = fuser.block_spec_with_prefetch(
-            z_out_block_spec, scalar_prefetch_smem_refs
-        )
-        pltpu.emit_pipeline(
-            lambda step, *args: matmul_kernel(
-                *scalar_prefetch_smem_refs,
-                *args,
-                acc_ref=acc_ref,
-                pids=step.index,
-                num_k=grid[2],
-                x_fn=x_fn,
-                y_fn=y_fn,
-                z_fn=z_fn,
-                out_dtype=out_dtype,
-            ),
-            grid=grid,
-            in_specs=in_specs_,
-            out_specs=[z_out_block_spec_],
-            core_axis_name='core',
-            dimension_semantics=dimension_semantics,
-            _explicit_indices=True,
-        )(x_values_refs, y_values_refs, z_values_refs, out_ref)
-      pl.run_scoped(_f,
-                    pltpu.VMEM((bm, bn), jnp.float32),
-                    jax.tree.map(pltpu.SMEM.like, scalar_prefetch))
-
-    return jax.tree.map(lambda ref: ref.get(), out_ref)
-
   elif impl == KernelImpl.KERNEL:
     def body(x_values_refs, y_values_refs, z_values_refs, scalar_prefetch_refs,
              out_ref, acc_vmem_ref, scalar_prefetch_smem_refs):
@@ -300,7 +254,7 @@ def fusible_matmul(
     bn: int = 128,
     debug: bool = False,
     interpret: bool = False,
-    impl: KernelImpl = KernelImpl.CORE_MAP,
+    impl: KernelImpl = KernelImpl.KERNEL,
 ) -> jax.Array:
   return fuser.fusible(
       functools.partial(
@@ -321,12 +275,6 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Only works with TPU v4+')
     super().setUp()
-    self.enter_context(
-        jtu.ignore_warning(
-            category=DeprecationWarning,
-            message='jax.experimental.pallas.core_map is deprecated',
-        )
-    )
 
   @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul(self, dtype, impl):
@@ -1185,15 +1133,13 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     fused_matmul = jax.jit(fuser.fuse(chained_matmul))
     fused_out = fused_matmul(x, y, w)
 
-    if impl is not KernelImpl.CORE_MAP:
-      # Core_map has unsupported state discharge for some reason.
-      unfused_matmul = jax.jit(chained_matmul)
-      unfused_out = unfused_matmul(x, y, w)
-      if pltpu.get_tpu_info().generation >= 6:
-        # 256 MXU changes some tols.
-        np.testing.assert_allclose(fused_out, unfused_out, atol=0.4)
-      else:
-        np.testing.assert_array_equal(fused_out, unfused_out)
+    unfused_matmul = jax.jit(chained_matmul)
+    unfused_out = unfused_matmul(x, y, w)
+    if pltpu.get_tpu_info().generation >= 6:
+      # 256 MXU changes some tols.
+      np.testing.assert_allclose(fused_out, unfused_out, atol=0.4)
+    else:
+      np.testing.assert_array_equal(fused_out, unfused_out)
     np.testing.assert_allclose(
         fused_out,
         chained_matmul_ref(x, y, w),
@@ -1220,15 +1166,13 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     fused_matmul = jax.jit(fuser.fuse(chained_matmul))
     fused_out = fused_matmul(x, y, w)
 
-    if impl is not KernelImpl.CORE_MAP:
-      # Core_map has unsupported state discharge for some reason.
-      unfused_matmul = jax.jit(chained_matmul)
-      unfused_out = unfused_matmul(x, y, w)
-      if pltpu.get_tpu_info().generation >= 6:
-        # 256 MXU changes some tols.
-        np.testing.assert_allclose(fused_out, unfused_out, atol=0.4)
-      else:
-        np.testing.assert_array_equal(fused_out, unfused_out)
+    unfused_matmul = jax.jit(chained_matmul)
+    unfused_out = unfused_matmul(x, y, w)
+    if pltpu.get_tpu_info().generation >= 6:
+      # 256 MXU changes some tols.
+      np.testing.assert_allclose(fused_out, unfused_out, atol=0.4)
+    else:
+      np.testing.assert_array_equal(fused_out, unfused_out)
     np.testing.assert_allclose(
         fused_out,
         chained_matmul_ref(x, y, w),
@@ -1357,12 +1301,6 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Only works with TPU v4+')
     super().setUp()
-    self.enter_context(
-        jtu.ignore_warning(
-            category=DeprecationWarning,
-            message='jax.experimental.pallas.core_map is deprecated',
-        )
-    )
 
   @parameterized.parameters(KernelImpl)
   def test_matmul_bf16_out(self, impl):

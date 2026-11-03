@@ -46,12 +46,6 @@ class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.enter_context(
-        jtu.ignore_warning(
-            category=DeprecationWarning,
-            message='jax.experimental.pallas.core_map is deprecated',
-        )
-    )
     try:
       # If an exception was thrown by a jitted computation during the
       # previous test, we observe/consume exception here to avoid propagating
@@ -111,39 +105,6 @@ class InterpretTest(jtu.JaxTestCase):
       )()
 
     np.testing.assert_equal(kernel(), np.array([42], dtype=jnp.int32))
-
-  @jtu.parameterized.parameters(range(1, 17))
-  def test_interpret_core_map(self, num_threads: int):
-    @pl.run_state
-    def kernel(o_ref):
-      mesh = plgpu.Mesh(num_threads=num_threads, thread_name='x')
-
-      @pl.core_map(
-          mesh,
-          interpret=InterpretParams(detect_races=True),
-      )
-      def _():
-        thread_idx = jax.lax.axis_index('x')
-        o_ref[thread_idx] = thread_idx
-
-    y = kernel(jnp.zeros((num_threads,), jnp.int32))
-    np.testing.assert_equal(y, np.arange(num_threads, dtype=jnp.int32))
-
-  def test_interpret_core_map_with_race(self):
-    @pl.run_state
-    def kernel(o_ref):
-      mesh = plgpu.Mesh(num_threads=2, thread_name='x')
-
-      @pl.core_map(
-          mesh,
-          interpret=InterpretParams(detect_races=True),
-      )
-      def _():
-        thread_idx = jax.lax.axis_index('x')
-        o_ref[...] = thread_idx
-
-    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
-      kernel(jnp.zeros((), jnp.int32)).block_until_ready()
 
   @jtu.parameterized.parameters(range(1, 17))
   def test_interpret_kernel(self, num_threads):

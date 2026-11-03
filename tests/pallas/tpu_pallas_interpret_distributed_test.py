@@ -47,12 +47,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     self.enter_context(
         jtu.ignore_warning(
             category=DeprecationWarning,
-            message='jax.experimental.pallas.core_map is deprecated',
-        )
-    )
-    self.enter_context(
-        jtu.ignore_warning(
-            category=DeprecationWarning,
             message='jax.experimental.pallas.DeviceIdType is deprecated',
         )
     )
@@ -1209,7 +1203,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       run(input_arr).block_until_ready()
 
   @parameterized.parameters(1, 2, 4)
-  def test_shard_map_of_core_map(self, num_cores):
+  def test_shard_map_of_mpmd_map(self, num_cores):
     num_devices = jax.device_count()
     partition = P('x', None)
     mesh = jtu.create_mesh((num_devices,), ('x',))
@@ -1217,41 +1211,41 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     core_mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=num_cores)
     interpret = pltpu.InterpretParams(detect_races=True)
 
+    slc_size = 16 // core_mesh.shape['core']
+
     @jax.jit
     def f(x):
-      y = jnp.zeros_like(x)
-      def inner(refs):
-        x_ref, y_ref = refs
-        @pl.core_map(core_mesh, interpret=interpret)
-        def _():
-          num_cores = jax.lax.axis_size('core')
-          slc_size = 16 // num_cores
-          def alloc(x_vmem_ref, y_vmem_ref, dma_sem, sem):
-            # Barrier so we deadlock unless the core_map is actually parallel.
-            for i in range(num_cores):
-              pl.semaphore_signal(sem, 1, core_index=i)
-            pl.semaphore_wait(sem, num_cores)
-
-            core_index = jax.lax.axis_index('core')
-            slc = pl.ds(core_index * slc_size, slc_size)
-            pltpu.async_copy(
-                x_ref.at[slc],
-                x_vmem_ref,
-                dma_sem,
-            ).wait()
-            y = (x_vmem_ref[...] + num_cores * jax.lax.axis_index('x')
-                 + core_index + 1)
-            y_vmem_ref[...] = y
-            pltpu.async_copy(y_vmem_ref, y_ref.at[slc], dma_sem).wait()
-          pl.run_scoped(
-              alloc,
-              pltpu.VMEM((slc_size, 128), x_ref.dtype),
-              pltpu.VMEM((slc_size, 128), y_ref.dtype),
+      @pl.kernel(
+          out_type=x,
+          mesh=core_mesh,
+          scratch_types=[
+              pltpu.VMEM((slc_size, 128), x.dtype),
+              pltpu.VMEM((slc_size, 128), x.dtype),
               pltpu.SemaphoreType.DMA,
               pltpu.SemaphoreType.REGULAR,
-          )
-      _, y = pl.run_state(inner)((x, y))
-      return y
+          ],
+          interpret=interpret,
+      )
+      def kernel(x_ref, y_ref, x_vmem_ref, y_vmem_ref, dma_sem, sem):
+        num_cores = jax.lax.axis_size('core')
+        slc_size = 16 // num_cores
+        # Barrier so we deadlock unless the core_map is actually parallel.
+        for i in range(num_cores):
+          pl.semaphore_signal(sem, 1, core_index=i)
+        pl.semaphore_wait(sem, num_cores)
+
+        core_index = jax.lax.axis_index('core')
+        slc = pl.ds(core_index * slc_size, slc_size)
+        pltpu.async_copy(
+            x_ref.at[slc],
+            x_vmem_ref,
+            dma_sem,
+        ).wait()
+        y = (x_vmem_ref[...] + num_cores * jax.lax.axis_index('x')
+             + core_index + 1)
+        y_vmem_ref[...] = y
+        pltpu.async_copy(y_vmem_ref, y_ref.at[slc], dma_sem).wait()
+      return kernel(x)
 
     x = jnp.arange(num_devices * 16 * 128, dtype=jnp.int32).reshape((-1, 128))
     y = jax.jit(

@@ -277,16 +277,10 @@ class PinnedBufferTest(jtu.JaxTestCase):
     self.assertRegex(compiled_hlo, r'S\(1\)\}.*custom_call_target="Pin"')
 
 
-class CoreMapTest(jtu.JaxTestCase):
+class KernelTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.enter_context(
-        jtu.ignore_warning(
-            category=DeprecationWarning,
-            message="jax.experimental.pallas.core_map is deprecated",
-        )
-    )
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Only supported on TPU v4+")
 
