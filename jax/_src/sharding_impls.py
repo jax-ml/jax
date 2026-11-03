@@ -38,7 +38,8 @@ from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
-    SdyArray, SdyDim, UnspecifiedValue, flatten_spec, NamedSharding,
+    SdyArray, SdyDim, UnspecifiedValue, flatten_spec, flatten_spec_no_none,
+    NamedSharding,
     _check_unique_resources, UNSPECIFIED,
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, get_array_mapping,
     array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding)

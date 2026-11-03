@@ -282,6 +282,9 @@ def flatten_spec(spec):
       out.append(s)
   return out
 
+def flatten_spec_no_none(spec):
+  return tuple(s for s in flatten_spec(spec) if s is not None)
+
 def get_array_mapping(axis_resources):
   if isinstance(axis_resources, UnspecifiedValue):
     return axis_resources

@@ -45,7 +45,7 @@ from jax._src.lax.utils import (_argnum_weak_type, input_dtype,
                                 standard_primitive)
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.named_sharding import NamedSharding
+from jax._src.named_sharding import NamedSharding, flatten_spec_no_none
 from jax._src.partition_spec import PartitionSpec as P, UnreducedKind
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.typing import Array, ArrayLike, Shape
@@ -2846,7 +2846,7 @@ def _scatter_sharding_rule(
     if (forbidden_axes := config.no_collectives.value):
       ind_q_spec, upd_q_spec = _scatter_unbatched_query_specs(
           indices, updates, dimension_numbers)
-      query_axes = lax_utils._get_spec_set(ind_q_spec + upd_q_spec)
+      query_axes = set(flatten_spec_no_none(ind_q_spec + upd_q_spec))
       for r in forbidden_axes:
         if r in query_axes and r not in out_sharding.spec.unreduced:
           raise core.ForbiddenCollectiveError(
@@ -2897,7 +2897,7 @@ def _scatter_unreduced_rule(operand, indices, updates, *, dimension_numbers,
           "scatter_add indices and updates unbatched query dims should be"
           " sharded identically when out_sharding mentions unreduced axes."
           f" Got {ind_q_spec=}, {upd_q_spec=}")
-    if not out_u.issubset(lax_utils._get_spec_set(ind_q_spec)):
+    if not out_u.issubset(flatten_spec_no_none(ind_q_spec)):
       raise core.ShardingTypeError(
           "out_sharding's unreduced axes should be a subset of the scatter"
           f" query specs. Got unreduced={out_u}, query_spec={ind_q_spec}")

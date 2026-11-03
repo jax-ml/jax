@@ -74,7 +74,7 @@ from jax._src.sharding import Sharding
 from jax._src.state.types import AbstractRef, WriteEffect
 from jax._src.partition_spec import PartitionSpec as P, UnreducedKind
 from jax._src.sharding_impls import (NamedSharding, canonicalize_sharding,
-                                     flatten_spec)
+                                     flatten_spec, flatten_spec_no_none)
 from jax._src.typing import (Array, ArrayLike, DimSize, DuckTypedArray, DType,
                              DTypeLike, Shape)
 from jax._src.util import (cache, canonicalize_axis, safe_map, safe_zip,
@@ -4642,7 +4642,7 @@ def broadcasting_sharding_rule(name, *avals, **kwargs):
 
 def replicated_axes(aval, mesh):
   spec = aval.sharding.spec
-  flat_spec = frozenset(s for s in flatten_spec(spec) if s is not None)
+  flat_spec = frozenset(flatten_spec_no_none(spec))
   return frozenset(mesh.axis_names) - (
       flat_spec | spec.unreduced | spec.reduced | aval.mat.varying |
       aval.mat.unreduced | aval.mat.reduced)
@@ -6481,8 +6481,8 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
       rhs_out_parts = _dot_general_sharding_computation(
           lhs.sharding.spec, rhs.sharding.spec, dimension_numbers,
           use_rhs_batch=True)
-      contract_axes = lax_utils._get_spec_set(
-          lhs_contracting_spec + rhs_contracting_spec)
+      contract_axes = set(flatten_spec_no_none(
+          lhs_contracting_spec + rhs_contracting_spec))
       for r in forbidden_axes:
         if r in contract_axes and r not in out_sharding.spec.unreduced:
           raise core.ForbiddenCollectiveError(
@@ -6550,7 +6550,7 @@ def _dot_general_unreduced_rule(lhs, rhs, dimension_numbers, out_sharding):
           'lhs and rhs contracting dims should be sharded identically when'
           ' out_sharding provided to dot_general mentions unreduced_axes.'
           f' Got {lhs_contracting_spec=}, {rhs_contracting_spec=}')
-    flat_spec = [s for s in flatten_spec(lhs_contracting_spec) if s is not None]
+    flat_spec = flatten_spec_no_none(lhs_contracting_spec)
     if out_sharding.spec.unreduced != frozenset(flat_spec):
       raise core.ShardingTypeError(
           "out_sharding's unreduced axes should be equal to the contracting"
@@ -9667,9 +9667,9 @@ def _reduce_op_sharding_rule_with_out_sharding(operand, *, axes, out_sharding):
   if out_sharding is not None:
     assert isinstance(out_sharding, NamedSharding)
     if (forbidden_axes := config.no_collectives.value):
-      reduced_axes = lax_utils._get_spec_set(
+      reduced_axes = set(flatten_spec_no_none(
           s for i, s in enumerate(operand.sharding.spec.partitions) if i in axes
-      )
+      ))
       for r in forbidden_axes:
         if r in reduced_axes and r not in out_sharding.spec.unreduced:
           raise core.ForbiddenCollectiveError(
@@ -9973,8 +9973,7 @@ def _reduce_collective_rule(all_reduce_fn, scatter_fn, in_aval, out_aval, axes):
   in_parts = in_aval.sharding.spec.partitions
   out_parts = out_aval.sharding.spec.partitions
   kept_parts = tuple(s for i, s in enumerate(in_parts) if i not in axes)
-  reduced_axes_set = lax_utils._get_spec_set(in_parts[i] for i in axes)
-  reduced_axes = core.order_wrt_mesh(out_aval.sharding.mesh, reduced_axes_set)
+  reduced_axes = flatten_spec_no_none(in_parts[i] for i in axes)
 
   to_tuple = lambda s: () if s is None else s if isinstance(s, tuple) else (s,)
 
@@ -9991,7 +9990,7 @@ def _reduce_collective_rule(all_reduce_fn, scatter_fn, in_aval, out_aval, axes):
     scatter_axes = out_t[len(kept_t):]
     # TODO(rdyro): Drop `scatter_fn is None` once p{min,max}_scatter land.
     if (scatter_fn is None or out_t[:len(kept_t)] != kept_t or
-        not set(scatter_axes) <= reduced_axes_set):
+        not set(scatter_axes).issubset(set(reduced_axes))):
       raise NotImplementedError
     scatters.append((dim, scatter_axes))
     scattered_axes.update(scatter_axes)

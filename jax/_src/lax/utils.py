@@ -27,7 +27,8 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import mesh as mesh_lib
 from jax._src import state
-from jax._src.named_sharding import DuplicateSpecError, NamedSharding
+from jax._src.named_sharding import (DuplicateSpecError, NamedSharding,
+                                     flatten_spec_no_none)
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.layout import (AutoLayoutSingleton, AutoLayout, get_layout_mode,
                              LayoutMode)
@@ -35,18 +36,6 @@ from jax._src.util import safe_zip
 from jax._src.typing import DimSize, DType, Shape
 
 zip, unsafe_zip = safe_zip, zip
-
-
-def _get_spec_set(partitions) -> set:
-  axes = set()
-  for p in partitions:
-    if p is None:
-      continue
-    if isinstance(p, tuple):
-      axes.update(p)
-    else:
-      axes.add(p)
-  return axes
 
 
 def _axis_pos(partitions, axis) -> tuple[int, tuple] | None:
@@ -63,8 +52,8 @@ def _check_no_collectives_dim_change(prim_name: str, in_parts, out_parts):
   forbidden_axes = config.no_collectives.value
   if not forbidden_axes:
     return
-  in_axes = _get_spec_set(in_parts)
-  out_axes = _get_spec_set(out_parts)
+  in_axes = set(flatten_spec_no_none(in_parts))
+  out_axes = set(flatten_spec_no_none(out_parts))
   for r in forbidden_axes:
     if (r in in_axes and r in out_axes and
         _axis_pos(in_parts, r) != _axis_pos(out_parts, r)):
@@ -88,11 +77,11 @@ def _check_no_collectives(prim, out_s_list, avals):
   in_specs = [a.sharding.spec for a in avals]
   out_specs = [s.spec for s in out_s_list]
 
-  in_part = set().union(*(_get_spec_set(s.partitions) for s in in_specs))
+  in_part = {a for s in in_specs for a in flatten_spec_no_none(s)}
   in_unreduced = set().union(*(s.unreduced for s in in_specs))
 
   for out_s in out_specs:
-    out_part = _get_spec_set(out_s.partitions)
+    out_part = set(flatten_spec_no_none(out_s))
     out_unreduced = out_s.unreduced
     for r in forbidden_axes:
       if (in_mesh._name_to_type.get(r) != mesh_lib.AxisType.Explicit or
