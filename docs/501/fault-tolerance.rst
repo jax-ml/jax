@@ -507,7 +507,8 @@ recovering processes.
    if a process's step is not equal to process 0's step, then it is recovering.
 2. Then, we call the ``send`` and ``recv`` functions we defined above to
    transfer the current step and model weights from process 0 to the recovering
-   processes.
+   processes. After receiving the step counter, we convert its local value to a
+   Python integer.
 
 Here is the full example:
 
