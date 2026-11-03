@@ -2074,6 +2074,32 @@ class MpmdHijaxTest(jtu.JaxTestCase):
     self.assertArraysEqual(ot.x0, xt.x0)
     self.assertArraysEqual(ot.x1, xt.x1)
 
+  @parameterized.parameters(True, False)
+  @jtu.with_explicit_mesh((2,), "x")
+  def test_mpmd_map_shard_map_unreduced(self, check_vma, mesh):
+    x_np = np.arange(8 * 128, dtype=np.float32).reshape(8, 128)
+    acc = jax.device_put(x_np, jax.P(unreduced={"x"}))
+
+    @jax.jit
+    @jax.shard_map(mesh=mesh, out_specs=jax.P(unreduced={"x"}))
+    def f(acc):
+      with config._check_vma(check_vma):
+        @pl.kernel(
+            out_type=jax.typeof(acc),
+            mesh=pltpu.TensorCoreMesh(axis_name="tc_core", num_cores=1),
+            scratch_types=(pltpu.VMEM(acc.shape, acc.dtype),),
+        )
+        def add_one_kernel(in_ref, out_ref, vmem_ref):
+          pltpu.sync_copy(in_ref, vmem_ref)
+          vmem_ref[...] = vmem_ref[...] + 1.0
+          pltpu.sync_copy(vmem_ref, out_ref)
+
+        return add_one_kernel(acc)
+
+    out = f(acc)
+    self.assertEqual(out.sharding.spec, jax.P(None, None, unreduced={"x"}))
+    self.assertArraysEqual(jax.reshard(out, jax.P()), x_np + 2.0)
+
 
 # TODO(rdyro): A temporary workaround to avoid flakiness.
 @jtu.thread_unsafe_test_class()

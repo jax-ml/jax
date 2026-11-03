@@ -1173,7 +1173,12 @@ def _mpmd_map(
         (kernel_arg_avals, kernel_kwarg_avals),
         is_leaf=lambda x: isinstance(x, state.TransformedRef),
     )
-    in_avals_ft = ft.flatten(unflat_kernel_avals)
+    # Strip manual_axis_type unconditionally (wrappers like plgpu.kernel set
+    # _check_vma=False) so mat.unreduced doesn't mark kernel Refs high and
+    # trigger a to_lojax rewrite on the kernel (only custom HiTypes should).
+    in_avals_ft = ft.flatten(unflat_kernel_avals).map(
+        lambda a: a.update_manual_axis_type(jax_core.empty_mat)
+    )
     flat_kernel_avals = list(in_avals_ft.vals)
 
     jaxprs: list[jax_core.Jaxpr] = []
