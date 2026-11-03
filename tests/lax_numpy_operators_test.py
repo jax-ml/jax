@@ -777,6 +777,28 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self.assertArraysEqual(jnp.isneginf(arr), expected_neginf,
                            err_msg=f"isneginf check failed for {dtype}")
 
+  @jtu.sample_product(complex_dtype=complex_dtypes)
+  @jax.numpy_dtype_promotion("standard")
+  def testMixedRealComplexInfAndSignedZero(self, complex_dtype):
+    real_dtype = dtypes.to_floating_dtype(complex_dtype)
+    c, inf = complex, np.inf
+    z = jnp.array([c(inf, 1.0), c(1.0, inf), c(2.0, 0.0), c(2.0, -0.0)],
+                  dtype=complex_dtype)
+    r = jnp.array([0.5, 0.5, -2.0, 1.0], dtype=real_dtype)
+
+    def check(actual, expected):
+      expected = np.array(expected, dtype=complex_dtype)
+      self.assertArraysEqual(actual, expected)
+      self.assertArraysEqual(np.signbit(actual.imag), np.signbit(expected.imag))
+
+    check(r * z, [c(inf, 0.5), c(0.5, inf), c(-4.0, -0.0), c(2.0, -0.0)])
+    check(z * r, [c(inf, 0.5), c(0.5, inf), c(-4.0, -0.0), c(2.0, -0.0)])
+    check(r + z, [c(inf, 1.0), c(1.5, inf), c(0.0, 0.0), c(3.0, -0.0)])
+    check(z + r, [c(inf, 1.0), c(1.5, inf), c(0.0, 0.0), c(3.0, -0.0)])
+    check(r - z, [c(-inf, -1.0), c(-0.5, -inf), c(-4.0, -0.0), c(-1.0, 0.0)])
+    check(z - r, [c(inf, 1.0), c(0.5, inf), c(4.0, 0.0), c(1.0, -0.0)])
+    check(z / r, [c(inf, 2.0), c(2.0, inf), c(-1.0, -0.0), c(2.0, -0.0)])
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

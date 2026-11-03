@@ -1278,10 +1278,15 @@ def add(x: ArrayLike, y: ArrayLike, /) -> Array:
     >>> x + 10
     Array([10, 11, 12, 13], dtype=int32)
   """
-  x, y = promote_args("add", x, y)
+  x, y = promote_args("add", x, y, allow_mixed_real_complex=True)
   if x.dtype == bool:
     return lax.bitwise_or(x, y)
-  out = lax.add(x, y)
+  if x.dtype == y.dtype:
+    out = lax.add(x, y)
+  elif dtypes.issubdtype(x.dtype, np.complexfloating):
+    out = lax.complex(lax.add(lax.real(x), y), lax.imag(x))
+  else:
+    out = lax.complex(lax.add(x, lax.real(y)), lax.imag(y))
   jnp_error._set_error_if_nan(out)
   return out
 
@@ -1323,8 +1328,14 @@ def multiply(x: ArrayLike, y: ArrayLike, /) -> Array:
     >>> x * 10
     Array([ 0, 10, 20, 30], dtype=int32)
   """
-  x, y = promote_args("multiply", x, y)
-  return lax.mul(x, y) if x.dtype != bool else lax.bitwise_and(x, y)
+  x, y = promote_args("multiply", x, y, allow_mixed_real_complex=True)
+  if x.dtype == bool:
+    return lax.bitwise_and(x, y)
+  if x.dtype == y.dtype:
+    return lax.mul(x, y)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return lax.complex(lax.mul(lax.real(x), y), lax.mul(lax.imag(x), y))
+  return lax.complex(lax.mul(x, lax.real(y)), lax.mul(x, lax.imag(y)))
 
 
 @binary_ufunc(identity=-1, reduce=reductions._reduce_bitwise_and, associative=True)
@@ -1612,7 +1623,13 @@ def subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
     >>> x - 10
     Array([-10,  -9,  -8,  -7], dtype=int32)
   """
-  out = lax.sub(*promote_args("subtract", x, y))
+  x, y = promote_args("subtract", x, y, allow_mixed_real_complex=True)
+  if x.dtype == y.dtype:
+    out = lax.sub(x, y)
+  elif dtypes.issubdtype(x.dtype, np.complexfloating):
+    out = lax.complex(lax.sub(lax.real(x), y), lax.imag(x))
+  else:
+    out = lax.complex(lax.sub(x, lax.real(y)), lax.neg(lax.imag(y)))
   jnp_error._set_error_if_nan(out)
   return out
 
@@ -2519,9 +2536,14 @@ def true_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   See Also:
     :func:`jax.numpy.floor_divide` for integer division
   """
-  x1, x2 = promote_args_inexact("true_divide", x1, x2)
+  x1, x2 = promote_args_inexact(
+      "true_divide", x1, x2, allow_mixed_real_complex=True)
   jnp_error._set_error_if_divide_by_zero(x2)
-  out = lax.div(x1, x2)
+  if x1.dtype != x2.dtype and dtypes.issubdtype(x1.dtype, np.complexfloating):
+    out = lax.complex(lax.div(lax.real(x1), x2), lax.div(lax.imag(x1), x2))
+  else:
+    x1 = lax._convert_element_type(x1, x2.dtype, dtypes.is_weakly_typed(x1))
+    out = lax.div(x1, x2)
   jnp_error._set_error_if_nan(out)
   return out
 

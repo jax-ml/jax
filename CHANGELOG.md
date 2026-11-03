@@ -45,6 +45,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     direct evaluation of only the nth bessel function.
 
 * Changes
+  * Mixed real and complex {func}`jax.numpy.add`, {func}`jax.numpy.subtract`,
+    {func}`jax.numpy.multiply`, and {func}`jax.numpy.true_divide`
+    (`complex / real`) no longer convert the real input to complex before
+    operating. This avoids unnecessary operations on zeros and fixes edge cases
+    with infinities and signed zeros (for example, `0.5 * (inf + 1j)` now
+    returns `inf + 0.5j` instead of `inf + nan*j`).
   * JAX now uses Bazel 9.3.1 to build from source.
   * On GPU and TPU, `accumulate` for {func}`jax.numpy.bitwise_and`,
     {func}`jax.numpy.bitwise_or`, {func}`jax.numpy.bitwise_xor`,

@@ -734,6 +734,22 @@ def _div_sparse(spenv, *spvalues):
 
 sparse_rules_bcoo[lax.div_p] = _div_sparse
 
+def _complex_sparse(spenv, *spvalues):
+  def to_complex(spval, imag: bool):
+    buf = spenv.data(spval)
+    zero = lax.full_like(buf, 0)
+    out = lax.complex(zero, buf) if imag else lax.complex(buf, zero)
+    if spval.is_sparse():
+      return spenv.sparse(spval.shape, out, indices_ref=spval.indices_ref,
+                          indices_sorted=spval.indices_sorted,
+                          unique_indices=spval.unique_indices)
+    return spenv.dense(out)
+
+  X, Y = spvalues
+  return _add_sparse(spenv, to_complex(X, False), to_complex(Y, True))
+
+sparse_rules_bcoo[lax.complex_p] = _complex_sparse
+
 def _reduce_sum_sparse(spenv, *spvalues, axes, out_sharding):
   X, = spvalues
   X_promoted = spvalues_to_arrays(spenv, X)
