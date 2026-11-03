@@ -744,6 +744,7 @@ jax_multiplatform_test(
     ],
     enable_backends = ["cpu"],
     tags = [
+        "noasan",  # Times out.
         "nomsan",
         "notsan",
     ],
