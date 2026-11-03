@@ -404,7 +404,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
       ("x*x", lambda x: x * x, "add"),
       ("sin(x)", jnp.sin, "cosine"),
       ("tanh(x)", jnp.tanh, "multiply"),
-      ("1/x", lambda x: 1 / x, "negate"),
+      ("1/x", lambda x: 1 / x, "divide"),
       ("sinc(x)", jnp.sinc, "call"),
   )
   def test_value_grad_tagging(self, name, fn, expected_tagged_op):
