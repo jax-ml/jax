@@ -967,8 +967,8 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [AttrSizedOper
     MemRefRankOf<[MosaicGPU_TcGen05MMASupportedABType], [2]>:$b,
     I1:$accumulate,
     // TODO: allanrenucci - F8E4M3FNU (ue4m3) does not exist in MLIR. We use F8E4M3FN (e4m3) instead.
-    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$a_scale,
-    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$b_scale,
+    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN, F8E5M3FNU], [2]>>:$a_scale,
+    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN, F8E5M3FNU], [2]>>:$b_scale,
     Optional<MemRefRankOf<[I<2>], [2]>>:$a_sparse_metadata,
     DefaultValuedAttr<BoolAttr, "false">:$collective
   );
@@ -1252,7 +1252,7 @@ def MosaicGPU_AsyncStoreScalesSmemToTmemOp : Op<MosaicGPU_Dialect, "async_store_
     in SMEM to the `destination` MemRef in TMEM.
 
     The `source` and `destination` MemRefs must have the same element type
-    (F8E8M0FNU or F8E4M3FN).
+    (F8E8M0FNU, F8E4M3FN, or F8E5M3FNU).
 
     Given a destination shape [M, N], the source shape must be
     [M/128, N/4, 32, 16], and M % 128 == 0 and N % 4 == 0.
@@ -1263,8 +1263,8 @@ def MosaicGPU_AsyncStoreScalesSmemToTmemOp : Op<MosaicGPU_Dialect, "async_store_
   }];
 
   let arguments = (ins
-    MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [4]>:$source,
-    MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>:$destination,
+    MemRefRankOf<[F8E8M0FNU, F8E4M3FN, F8E5M3FNU], [4]>:$source,
+    MemRefRankOf<[F8E8M0FNU, F8E4M3FN, F8E5M3FNU], [2]>:$destination,
     DefaultValuedAttr<BoolAttr, "false">:$collective
   );
 
