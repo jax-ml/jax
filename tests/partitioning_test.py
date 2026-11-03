@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -93,7 +95,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
   def test_reduce_scatter(self, op, case, mesh):
     lax_op, np_op = op
     shape, in_spec, axes, out_spec, is_rs, has_ar = case
-    np_inp = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     arr = jax.device_put(np_inp, in_spec)
     out_s = None if out_spec.reduced else out_spec
 
@@ -260,6 +262,48 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     out = f(arr)
     self.assertEqual(out.sharding.spec, P('m', 'a'))
     self.assertArraysEqual(out, expected)
+
+  @parameterized.parameters(
+      ((4, 8), P('x', 'y'), (4, 8), P('x', 'y'), P('x', 'y'), False),
+      ((4, 8), P('x', None), (4, 8), P(None, 'y'), P('x', 'y'), True),
+      ((16, 4), P(None, None), (16, 4), P(('y', 'x'), None),
+       P(('y', 'x'), None), True),
+      ((4, 8), P('x', 'y'), (1, 8), P(None, None), P('x', 'y'), True),
+      ((), P(), (4, 8), P('x', 'y'), P('x', 'y'), False),
+  )
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_binop(
+      self, x_shape, x_spec, y_shape, y_spec, out_spec, has_slice, mesh):
+    np_x = np.arange(math.prod(x_shape), dtype=np.float32).reshape(x_shape)
+    np_y = np.arange(math.prod(y_shape), dtype=np.float32).reshape(y_shape)
+    arr_x, arr_y = jax.device_put(np_x, x_spec), jax.device_put(np_y, y_spec)
+
+    f = jax.jit(jnp.subtract)
+    lowered = f.lower(arr_x, arr_y).as_text()
+    self.assertIn('sdy.manual_computation', lowered)
+    self.assertEqual('stablehlo.dynamic_slice' in lowered, has_slice)
+
+    out = f(arr_x, arr_y)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+    self.assertArraysEqual(out, np_x - np_y)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh(
+      (2, 2, 2), ('m', 'e', 'a'),
+      axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Auto))
+  def test_binop_mixed_axes(self, mesh):
+    np_x = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
+    arr_x = jax.device_put(np_x, NamedSharding(mesh, P('m', 'e', 'a')))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('m'), axis_names={'m'})
+    def f(x):
+      return jnp.sum((x + x) * 2.0, axis=1)
+
+    out = f(arr_x)
+    self.assertEqual(out.sharding.spec, P('m', 'a'))
+    self.assertArraysEqual(out, np.sum((np_x + np_x) * 2.0, axis=1))
 
 
 if __name__ == '__main__':

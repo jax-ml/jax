@@ -2582,7 +2582,7 @@ def _maybe_lower_with_shard_map(
   out_aval, = ctx.avals_out
   assert isinstance(out_aval, core.ShapedArray)
 
-  collectives = rule(*ctx.avals_in, out_aval, **params)
+  collectives = rule(ctx.avals_in, ctx.avals_out, **params)
   assert isinstance(collectives, PartitioningRule)
 
   # TODO(rdyro): Move this into PartitioningRule's per-shard params mapping.

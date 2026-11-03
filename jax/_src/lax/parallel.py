@@ -1170,7 +1170,8 @@ def _psum_transpose_rule(cts, arg, *, axes, axis_index_groups):
   return (psum_p.bind(cts, axes=tuple(named_axes),
                       axis_index_groups=axis_index_groups),)
 
-_local_manual_collective_rule = lambda *avals, **params: mlir.PartitioningRule()
+_local_manual_collective_rule = (
+    lambda in_avals, out_avals, **params: mlir.PartitioningRule())
 
 def _is_dim_sharded(aval, dim: int, tiled: bool) -> bool:
   # Splitting/gathering a dim sharded on explicit axes (or inserting/removing a
@@ -1180,19 +1181,22 @@ def _is_dim_sharded(aval, dim: int, tiled: bool) -> bool:
           else parts[dim] is not None)
 
 def _all_gather_collective_rule(
-    in_aval, out_aval, *, all_gather_dimension, tiled, **params):
+    in_avals, out_avals, *, all_gather_dimension, tiled, **params):
+  in_aval, = in_avals
   if _is_dim_sharded(in_aval, all_gather_dimension, tiled):
     raise NotImplementedError
   return mlir.PartitioningRule()
 
 def _reduce_scatter_collective_rule(
-    in_aval, out_aval, *, scatter_dimension, tiled, **params):
+    in_avals, out_avals, *, scatter_dimension, tiled, **params):
+  in_aval, = in_avals
   if _is_dim_sharded(in_aval, scatter_dimension, tiled):
     raise NotImplementedError
   return mlir.PartitioningRule()
 
 def _all_to_all_collective_rule(
-    in_aval, out_aval, *, split_axis, concat_axis, tiled, **params):
+    in_avals, out_avals, *, split_axis, concat_axis, tiled, **params):
+  in_aval, = in_avals
   if (_is_dim_sharded(in_aval, split_axis, tiled) or
       _is_dim_sharded(in_aval, concat_axis, tiled)):
     raise NotImplementedError

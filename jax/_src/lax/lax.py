@@ -4532,7 +4532,8 @@ def unop_ur_rule(name, aval, **kwargs):
 def unop_layout_rule(out_aval, aval, **kwargs):
   return aval.layout
 
-_unop_collective_rule = lambda *avals, **params: mlir.PartitioningRule()
+_unop_collective_rule = (
+    lambda in_avals, out_avals, **params: mlir.PartitioningRule())
 
 def unop(result_dtype, accepted_dtypes, name, supports_narrow_ints=True,
          ur_rule=None):
@@ -4695,6 +4696,53 @@ def broadcasting_layout_rule(name, out_aval, *avals, **kwargs):
   return prev_aval.layout
 
 
+def _naryop_collective_rule(in_avals, out_avals, **params):
+  from jax._src.lax import parallel
+  out_aval, = out_avals
+  out_spec = out_aval.sharding.spec
+  if all(a.sharding.spec == out_spec for a in in_avals):
+    return mlir.PartitioningRule()
+
+  mesh = get_abstract_mesh()
+  out_parts = tuple(
+      i for i in flatten_spec(out_spec.partitions) if i is not None)
+
+  def _slice_to_shard(x_shard, outer_in_aval):
+    if outer_in_aval.sharding.spec == out_spec:
+      return x_shard
+    # Broadcasted scalars and size-1 dims aren't sliced, so pvary them to match.
+    if not outer_in_aval.ndim:
+      return core.pvary(x_shard, out_parts)
+
+    starts, sizes, pvary_axes, needs_slice = [], [], [], False
+    for d, s, out_s in safe_zip(
+        x_shard.shape, outer_in_aval.sharding.spec.partitions,
+        out_spec.partitions):
+      if s == out_s:
+        starts.append(np.int32(0))
+        sizes.append(d)
+      else:
+        out_axes_d = out_s if isinstance(out_s, tuple) else (out_s,)
+        if d == 1:
+          starts.append(np.int32(0))
+          sizes.append(d)
+          pvary_axes.extend(out_axes_d)
+        else:
+          local_d = d // math.prod(mesh.shape[a] for a in out_axes_d)
+          shard_idx = parallel.axis_index(out_s)
+          starts.append(shard_idx * local_d)
+          sizes.append(local_d)
+          needs_slice = True
+    if needs_slice:
+      x_shard = slicing.dynamic_slice(
+          x_shard, starts, sizes, allow_negative_indices=False)
+    return core.pvary(x_shard, tuple(pvary_axes))
+
+  return mlir.PartitioningRule(
+      in_collective=lambda *xs: tuple(
+          _slice_to_shard(x, a) for x, a in safe_zip(xs, in_avals)))
+
+
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
            require_same_dtypes=True, ur_rule=None):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name,
@@ -4709,6 +4757,7 @@ def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
       ur_rule=partial(nary_ur_rule, name) if ur_rule is None else ur_rule,
       layout_rule=layout_rule)
   batching.defbroadcasting(prim)
+  mlir.shard_map_collective_rules[prim] = _naryop_collective_rule
   return prim
 standard_naryop = partial(naryop, input_dtype)
 
@@ -6140,8 +6189,9 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
   out = mlir.convert_hlo(ctx, operand, aval_in, aval_out)
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-def _convert_element_type_collective_rule(in_aval, out_aval, **params):
+def _convert_element_type_collective_rule(in_avals, out_avals, **params):
   # TODO(rdyro): Support `convert_element_type` with a resharding `sharding`.
+  (in_aval,), (out_aval,) = in_avals, out_avals
   if in_aval.sharding != out_aval.sharding:
     raise NotImplementedError
   return mlir.PartitioningRule()
@@ -9969,7 +10019,9 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes, **kwargs):
     hlo.return_([reducer(*reducer_region.arguments)])
   return [mlir.lower_with_sharding_in_types(ctx, op.result, aval_out)]
 
-def _reduce_collective_rule(all_reduce_fn, scatter_fn, in_aval, out_aval, axes):
+def _reduce_collective_rule(
+    all_reduce_fn, scatter_fn, in_avals, out_avals, axes):
+  (in_aval,), (out_aval,) = in_avals, out_avals
   in_parts = in_aval.sharding.spec.partitions
   out_parts = out_aval.sharding.spec.partitions
   kept_parts = tuple(s for i, s in enumerate(in_parts) if i not in axes)
@@ -10008,20 +10060,20 @@ def _reduce_collective_rule(all_reduce_fn, scatter_fn, in_aval, out_aval, axes):
     return y
   return mlir.PartitioningRule(out_collective=out_collective)
 
-def _reduce_sum_collective_rule(in_aval, out_aval, *, axes, out_sharding):
+def _reduce_sum_collective_rule(in_avals, out_avals, *, axes, out_sharding):
   from jax._src.lax import parallel
   return _reduce_collective_rule(
-      parallel.psum, parallel.psum_scatter, in_aval, out_aval, axes)
+      parallel.psum, parallel.psum_scatter, in_avals, out_avals, axes)
 
-def _reduce_min_collective_rule(in_aval, out_aval, *, axes, out_sharding):
+def _reduce_min_collective_rule(in_avals, out_avals, *, axes, out_sharding):
   from jax._src.lax import parallel
   return _reduce_collective_rule(
-      parallel.pmin, None, in_aval, out_aval, axes)
+      parallel.pmin, None, in_avals, out_avals, axes)
 
-def _reduce_max_collective_rule(in_aval, out_aval, *, axes, out_sharding):
+def _reduce_max_collective_rule(in_avals, out_avals, *, axes, out_sharding):
   from jax._src.lax import parallel
   return _reduce_collective_rule(
-      parallel.pmax, None, in_aval, out_aval, axes)
+      parallel.pmax, None, in_avals, out_avals, axes)
 
 mlir.register_lowering(
     reduce_sum_p, partial(_unary_reduce_lower, hlo.AddOp, _get_sum_identity),
