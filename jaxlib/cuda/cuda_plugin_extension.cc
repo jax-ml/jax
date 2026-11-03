@@ -22,6 +22,7 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "jaxlib/gpu/gpu_plugin_extension.h"
 #include "jaxlib/gpu/py_client_gpu.h"
+#include "jaxlib/gpu/sleep_kernel.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/pjrt/status_casters.h"
 
@@ -71,6 +72,7 @@ nb::dict FfiHandlers() {
       EncapsulateFfiHandler(cuda::kXlaBufferPythonGpuCallbackCmdBuffer);
   dict["dce_sink"] =
       EncapsulateFfiHandler(cuda::dce_sink_gpu_ffi);
+  dict["cu_sleep_ffi"] = EncapsulateFfiHandler(cuda::SleepFfi);
   return dict;
 }
 

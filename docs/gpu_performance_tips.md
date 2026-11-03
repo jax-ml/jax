@@ -101,7 +101,10 @@ Or in the JAX this can be set as the following:
 import jax
 from jax._src import config
 
-with config.enable_pgle(True), config.pgle_profiling_runs(1):
+with config.enable_pgle(True), config.pgle_profiling_runs(1), config.pgle_warmup_runs(2):
+  # Two warm-up runs, not profiled.
+  train_step()
+  train_step()
   # Run with the profiler collecting performance information.
   train_step()
   # Automatically re-compile with PGLE profile results
@@ -112,6 +115,27 @@ with config.enable_pgle(True), config.pgle_profiling_runs(1):
 You can control amount of reruns used to collect profile data by changing `JAX_PGLE_PROFILING_RUNS`.
 Increasing this parameter would lead to better profile information, but it will also increase the
 amount of non-optimized training steps.
+
+The first `JAX_PGLE_WARMUP_RUNS` runs of each module (default 2) are warm-ups that are not profiled,
+so that one-time costs of the first executions do not distort the profile: for example, XLA runs
+some operations outside command buffers on their first execution and only records them into
+command buffers on the second. The module is re-compiled on run
+`JAX_PGLE_WARMUP_RUNS + JAX_PGLE_PROFILING_RUNS + 1`.
+
+In a multi-process job, each profiled run is preceded by a barrier across all the devices of the
+computation, enqueued after the profiler has started. Starting the profiler takes a different amount
+of time in each process; without the barrier, the first collective of the run would absorb that skew
+and the waiting time would be recorded as part of its cost. Set `JAX_PGLE_BARRIER=false` to disable
+the barrier.
+By default there is a device-side delay of around 25 milliseconds (`JAX_PGLE_DELAY_MS`) inserted
+before the barrier to imitate steady state operation and avoid jitter due to submitting work onto an
+empty device.
+The same barrier is available to programs that start the profiler themselves, for example to collect
+a trace of a few training steps in a multi-process job: call
+`jax.experimental.multihost_utils.wait_and_sync_devices_async(delay_ms=25)` in every process right after
+`jax.profiler.start_trace()` and before enqueueing the steps to be traced.
+This delay is best-effort only, in particular the `platform` allocator may force synchronisation in
+between the barrier + profiled computation.
 
 Decreasing the `JAX_PGLE_AGGREGATION_PERCENTILE` parameter might help in case when performance between steps is too noisy to filter out a non-relevant measures.
 

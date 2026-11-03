@@ -15,11 +15,14 @@
 """Multihost tests for pjit."""
 
 import math
+import os
+import time
 import unittest
 
 from absl.testing import parameterized
 import jax
 from jax import numpy as jnp
+from jax._src import distributed
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
 from jax.experimental import multihost_utils
@@ -170,6 +173,46 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
         multihost_utils.sync_global_devices('test message')
       else:
         multihost_utils.sync_global_devices('test message2')
+
+  # On CPU, calling the barrier blocks the host until every process reaches it,
+  # so the processes that call it first never reach the host-side barrier.
+  @jtu.skip_on_devices('cpu')
+  def test_wait_and_sync_devices_async(self):
+    if os.environ.get('XLA_PYTHON_CLIENT_ALLOCATOR') == 'platform':
+      # The platform allocator synchronises when freeing the barrier's
+      # temporary buffers, which blocks the host and breaks this test.
+      self.skipTest('Calling the barrier blocks with the platform allocator.')
+    with self.assertRaisesRegex(ValueError, 'delay_ms must be non-negative'):
+      multihost_utils.wait_and_sync_devices_async(delay_ms=-1)
+    client = distributed.global_state.client
+    timeout_in_ms = 60_000
+
+    def f(x):
+      return x * 2
+
+    x_np = np.arange(16, dtype=np.float32)
+    x = jax.device_put(x_np, jax.local_devices()[0])
+    expected = f(x_np)
+    # Warm up (compiles the barrier and `f`).
+    multihost_utils.wait_and_sync_devices_async()
+    jax.block_until_ready(f(x))
+    # How long the barrier and `f` take when all processes reach it together.
+    start = time.perf_counter()
+    multihost_utils.wait_and_sync_devices_async()
+    jax.block_until_ready(f(x))
+    sync_s = time.perf_counter() - start
+    if jax.process_index() == 0:
+      # Wait until the other processes have checked that their work is blocked.
+      client.wait_at_barrier('wait_and_sync_devices_async', timeout_in_ms)
+    multihost_utils.wait_and_sync_devices_async()
+    y = f(x)
+    if jax.process_index() != 0:
+      # The barrier did not block the host, but the work enqueued after it
+      # cannot run until process 0 reaches the barrier, however long we wait.
+      time.sleep(2 * sync_s)
+      self.assertFalse(y.is_ready())
+      client.wait_at_barrier('wait_and_sync_devices_async', timeout_in_ms)
+    np.testing.assert_array_equal(jax.block_until_ready(y), expected)
 
   @jtu.ignore_warning(category=DeprecationWarning,
                       message='`with mesh:` context manager')
@@ -519,4 +562,8 @@ class MultiHostUtilsTest(jt_multiprocess.MultiProcessTest):
 
 
 if __name__ == '__main__':
+  # test_wait_and_sync_devices_async doesn't work with the platform allocator,
+  # so we override it if this file is run directly.
+  os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.01'
+  os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'default'
   jt_multiprocess.main()
