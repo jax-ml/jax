@@ -199,6 +199,83 @@ class PyTreeTest(parameterized.TestCase):
     self.assertEqual(c_tree2.unflatten(c_leafs), c)
     self.assertEqual(str(c_tree2), str(c_tree))
 
+    # JSON-deserialized metadata arrives as a list rather than a tuple.
+    c_tree_from_list = pytree.PyTreeDef.from_node_data_and_children(
+        registry, (Custom, ["a"]), c_tree.children()
+    )
+    self.assertEqual(c_tree_from_list, c_tree)
+    self.assertEqual(c_tree_from_list.node_data(), (Custom, ("a",)))
+    self.assertEqual(c_tree_from_list.unflatten(c_leafs), c)
+    self.assertEqual(str(c_tree_from_list), str(c_tree))
+
+    with self.assertRaisesRegex(ValueError, "Dataclass meta_fields arity"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          registry, (Custom, ["a", "extra"]), c_tree.children()
+      )
+    with self.assertRaisesRegex(ValueError, "Dataclass data_fields arity"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          registry, (Custom, ["a"]), []
+      )
+
+  def testRegisteredNamedTupleAndEnableNamedTuple(self):
+    RegisteredNT = collections.namedtuple("RegisteredNT", ["x", "meta"])
+    local_reg = pytree.PyTreeRegistry(enable_namedtuple=False)
+    self.assertFalse(local_reg.is_node(ExampleType))
+    nt_example = ExampleType(1, 2)
+    self.assertIsNone(local_reg.flatten_one_level(nt_example))
+    leaves_disabled, td_disabled = local_reg.flatten(nt_example)
+    self.assertEqual(leaves_disabled, [nt_example])
+    self.assertEqual(
+        pytree.PyTreeDef.from_node_data_and_children(
+            local_reg, td_disabled.node_data(), td_disabled.children()
+        ),
+        td_disabled,
+    )
+    with self.assertRaisesRegex(ValueError, "Could not find type"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          local_reg, (ExampleType, None), []
+      )
+
+    for reg in (registry, local_reg):
+      reg.register_node(
+          RegisteredNT,
+          lambda o: ([o.x], o.meta),
+          lambda meta, children: RegisteredNT(children[0], meta),
+      )
+      self.assertTrue(reg.is_node(RegisteredNT))
+      nt = RegisteredNT(42, "tag")
+      leaves, td = reg.flatten(nt)
+      self.assertEqual(leaves, [42])
+      restored = pytree.PyTreeDef.from_node_data_and_children(
+          reg, td.node_data(), td.children()
+      )
+      self.assertEqual(restored, td)
+      self.assertEqual(restored.unflatten(leaves), nt)
+
+  def testFromNodeDataValidation(self):
+    class Unregistered:
+      pass
+
+    leaf_td = registry.flatten(0)[1]
+    with self.assertRaisesRegex(ValueError, "Could not find type"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          registry, (Unregistered, None), []
+      )
+    with self.assertRaisesRegex(ValueError, "Leaf PyTreeDef cannot have"):
+      pytree.PyTreeDef.from_node_data_and_children(registry, None, [leaf_td])
+    with self.assertRaisesRegex(ValueError, "None PyTreeDef cannot have"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          registry, (type(None), None), [leaf_td]
+      )
+    with self.assertRaisesRegex(ValueError, "Dict keys and values"):
+      pytree.PyTreeDef.from_node_data_and_children(
+          registry, (dict, ["a", "b"]), [leaf_td]
+      )
+    dict_td = pytree.PyTreeDef.from_node_data_and_children(
+        registry, (dict, ("a", "b")), [leaf_td, leaf_td]
+    )
+    self.assertEqual(dict_td.unflatten([1, 2]), {"a": 1, "b": 2})
+
   def testTpTraverse(self):
     self.assertContainsSubset(
         [

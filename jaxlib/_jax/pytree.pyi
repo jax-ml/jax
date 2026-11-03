@@ -111,7 +111,6 @@ class PyTreeDef:
 
   @staticmethod
   def from_node_data_and_children(
-      self,
       registry: PyTreeRegistry,
       node_data: tuple[type, Any] | None,
       children: Iterable[PyTreeDef],

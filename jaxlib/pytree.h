@@ -111,6 +111,8 @@ class PyTreeRegistry {
   // exists.
   const Registration* Lookup(nanobind::handle type) const;
 
+  bool enable_namedtuple() const { return enable_namedtuple_; }
+
   PyTreeKind KindOfObject(nanobind::handle obj,
                           PyTreeRegistry::Registration const** custom) const;
 

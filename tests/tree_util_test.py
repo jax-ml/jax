@@ -17,6 +17,7 @@ import collections
 from collections.abc import Hashable
 import dataclasses
 import functools
+import json
 import pickle
 import re
 import sys
@@ -27,6 +28,7 @@ import jax
 from jax import flatten_util
 from jax import tree_util
 from jax._src import flattree as ft
+from jax._src.lib import jaxlib_extension_version
 from jax._src import test_util as jtu
 from jax._src.tree_util import (
     prefix_errors, broadcast_flattened_prefix_with_treedef,
@@ -1081,6 +1083,75 @@ class TreeTest(jtu.JaxTestCase):
   def testNamedTupleRegisteredWithoutKeysIsntTreatedAsLeaf(self):
     leaves, _ = tree_util.tree_flatten_with_path(ATuple2(1, 'hi'))
     self.assertLen(leaves, 1)
+
+  def testFromNodeDataAndChildren(self):
+    if jaxlib_extension_version < 514:
+      self.skipTest("Requires jaxlib_extension_version >= 514")
+
+    leaf_td = tree_util.tree_structure(0)
+
+    # 1. @register_dataclass with list aux_data (e.g. from json.loads).
+    @tree_util.register_dataclass
+    @dataclasses.dataclass
+    class DataNode:
+      x: int
+      y: int
+      tag: str = jax.tree.static()
+
+    dc = DataNode(x=10, y=20, tag="meta")
+    children, aux = tree_util.flatten_one_level(dc)
+    json_aux = json.loads(json.dumps(aux))
+    self.assertIsInstance(json_aux, list)
+    dc_td = tree_util.PyTreeDef.from_node_data_and_children(
+        tree_util.default_registry,
+        (DataNode, json_aux),
+        [leaf_td] * len(children),
+    )
+    self.assertEqual(dc_td, tree_util.tree_structure(dc))
+    self.assertEqual(dc_td.unflatten(children), dc)
+
+    # 2. NamedTuple subclass explicitly registered via register_pytree_node.
+    nt_custom = ATuple2(1, "hi")
+    nt_children, nt_aux = tree_util.flatten_one_level(nt_custom)
+    nt_custom_td = tree_util.PyTreeDef.from_node_data_and_children(
+        tree_util.default_registry,
+        (ATuple2, nt_aux),
+        [leaf_td] * len(nt_children),
+    )
+    self.assertEqual(nt_custom_td, tree_util.tree_structure(nt_custom))
+    self.assertEqual(nt_custom_td.unflatten(nt_children), nt_custom)
+
+    # 3. Plain unregistered NamedTuple (aux_data=None).
+    nt_plain = ATuple(3, 4)
+    nt_plain_td = tree_util.PyTreeDef.from_node_data_and_children(
+        tree_util.default_registry,
+        (ATuple, None),
+        [leaf_td, leaf_td],
+    )
+    self.assertEqual(nt_plain_td, tree_util.tree_structure(nt_plain))
+    self.assertEqual(nt_plain_td.unflatten([3, 4]), nt_plain)
+
+    # 4. @register_static.
+    @tree_util.register_static
+    @dataclasses.dataclass(frozen=True)
+    class StaticCfg:
+      name: str
+
+    cfg = StaticCfg("v1")
+    cfg_td = tree_util.PyTreeDef.from_node_data_and_children(
+        tree_util.default_registry, (StaticCfg, cfg), ()
+    )
+    self.assertEqual(cfg_td, tree_util.tree_structure(cfg))
+    self.assertEqual(cfg_td.unflatten(()), cfg)
+
+    # 5. Unregistered class raises ValueError.
+    class Unregistered:
+      pass
+
+    with self.assertRaisesRegex(ValueError, "Could not find type"):
+      tree_util.PyTreeDef.from_node_data_and_children(
+          tree_util.default_registry, (Unregistered, None), ()
+      )
 
   def testBadFlattenNonTuple(self):
     t = BadFlattenNonTuple(3, 4)
