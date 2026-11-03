@@ -636,6 +636,28 @@ jet_rules[lax.cos_p] = _get_ind(partial(_sinusoidal_rule, -1, (lax.sin, lax.cos)
 jet_rules[lax.sinh_p] = _get_ind(partial(_sinusoidal_rule, 1, (lax.sinh, lax.cosh)), 0)
 jet_rules[lax.cosh_p] = _get_ind(partial(_sinusoidal_rule, 1, (lax.sinh, lax.cosh)), 1)
 
+def _sinpi_cospi_rule(ind, primals_in, series_in, **_):
+  series, = series_in
+  scaled_series = [np.pi * s for s in series]
+  return _sinusoidal_rule(-1, (lax.sinpi, lax.cospi), primals_in, (scaled_series,))[ind]
+
+jet_rules[lax.sinpi_p] = partial(_sinpi_cospi_rule, 0)
+jet_rules[lax.cospi_p] = partial(_sinpi_cospi_rule, 1)
+
+def _tanpi_taylor(primals_in, series_in, **_):
+  x, = primals_in
+  series, = series_in
+  u = [x] + [np.pi * s for s in series]
+  v: list[Any] = [lax.tanpi(x)] + [None] * len(series)
+  e: list[Any] = [1.0 + v[0] * v[0]] + [None] * len(series)
+  for k in range(1, len(v)):
+    v[k] = sum(j * e[k - j] * u[j] for j in range(1, k + 1)) / k
+    e[k] = sum(v[j] * v[k - j] for j in range(0, k + 1))
+  primal_out, *series_out = v
+  return primal_out, series_out
+
+jet_rules[lax.tanpi_p] = _tanpi_taylor
+
 def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   x, y = primals_in
   x_terms, y_terms = series_in

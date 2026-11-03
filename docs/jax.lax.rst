@@ -72,6 +72,7 @@ Operators
     conv_with_general_padding
     cos
     cosh
+    cospi
     cumlogsumexp
     cummax
     cummin
@@ -171,6 +172,7 @@ Operators
     sign
     sin
     sinh
+    sinpi
     slice
     slice_in_dim
     sort
@@ -184,6 +186,7 @@ Operators
     sub
     tan
     tanh
+    tanpi
     tile
     top_k
     transpose

@@ -30,6 +30,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.scipy.special.jn` and {func}`jax.scipy.special.yn`,
     providing accurate evaluation of integer-order Bessel functions of the first
     and second kind.
+  * Added {func}`jax.lax.sinpi`, {func}`jax.lax.cospi`, and
+    {func}`jax.lax.tanpi`, which compute `sin(pi * x)`, `cos(pi * x)`, and
+    `tan(pi * x)` more accurately than multiplying by `pi` first. They return
+    exact values at integers and half-integers and stay accurate for large
+    inputs.
 
 * Deprecations
   * The `jax_use_shardy_partitioner` configuration flag is deprecated and is now

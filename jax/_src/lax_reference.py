@@ -71,6 +71,51 @@ asinh = np.arcsinh
 acosh = np.arccosh
 atanh = np.arctanh
 
+
+def _pi_trig_reduce(x):
+  t = np.fmod(x.astype(np.float64), 2.0)
+  k = np.rint(2.0 * t)
+  r = np.where(k == 0.0, t, t - 0.5 * k)
+  q = np.where(np.isfinite(k), k, 0.0).astype(np.int64) & 3
+  return t, r, q
+
+
+def sinpi(x):
+  x = np.asarray(x)
+  with np.errstate(all='ignore'):
+    t, r, q = _pi_trig_reduce(x)
+    theta = np.pi * r
+    res = np.where((q & 1) != 0, np.cos(theta), np.sin(theta))
+    res = np.where((q & 2) != 0, -res, res)
+    res = np.where(np.abs(t) == 1.0, np.copysign(0.0, t), res)
+    return res.astype(x.dtype)
+
+
+def cospi(x):
+  x = np.asarray(x)
+  with np.errstate(all='ignore'):
+    t, r, q = _pi_trig_reduce(x)
+    theta = np.pi * r
+    res = np.where((q & 1) != 0, np.sin(theta), np.cos(theta))
+    res = np.where((q == 1) | (q == 2), -res, res)
+    res = np.where((np.abs(t) == 0.5) | (np.abs(t) == 1.5), 0.0, res)
+    return res.astype(x.dtype)
+
+
+def tanpi(x):
+  x = np.asarray(x)
+  with np.errstate(all='ignore'):
+    t, r, q = _pi_trig_reduce(x)
+    at = np.abs(t)
+    tan_r = np.tan(np.pi * r)
+    res = np.where((q & 1) != 0, -1.0 / tan_r, tan_r)
+    res = np.where(at == 1.0, np.copysign(0.0, -t), res)
+    res = np.where(at == 0.5, np.copysign(np.inf, t), res)
+    res = np.where(at == 1.5, np.copysign(np.inf, -t), res)
+    res = np.where((at == 0.25) | (at == 1.25), np.copysign(1.0, t), res)
+    res = np.where((at == 0.75) | (at == 1.75), np.copysign(1.0, -t), res)
+    return res.astype(x.dtype)
+
 def logistic(x): return (1 / (1 + np.exp(-x))).astype(x.dtype)
 def betainc(a, b, x): return scipy.special.betainc(a, b, x).astype(x.dtype)
 def lgamma(x): return scipy.special.gammaln(x).astype(x.dtype)

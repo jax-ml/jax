@@ -234,9 +234,11 @@ def lax_ops():
       op_record(
           "sin", 1, float_dtypes + complex_dtypes, test_util.rand_default
       ),
+      op_record("sinpi", 1, float_dtypes, test_util.rand_default),
       op_record(
           "cos", 1, float_dtypes + complex_dtypes, test_util.rand_default
       ),
+      op_record("cospi", 1, float_dtypes, test_util.rand_default),
       op_record("atan2", 2, float_dtypes, test_util.rand_default),
       op_record("sqrt", 1, float_dtypes, test_util.rand_positive),
       op_record("sqrt", 1, complex_dtypes, test_util.rand_default),
@@ -258,6 +260,13 @@ def lax_ops():
           float_dtypes + complex_dtypes,
           test_util.rand_default,
           {np.float32: 3e-5, np.complex64: 3e-5},
+      ),
+      op_record(
+          "tanpi",
+          1,
+          float_dtypes,
+          test_util.rand_default,
+          {np.float32: 3e-5},
       ),
       op_record(
           "asin",

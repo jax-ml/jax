@@ -601,10 +601,10 @@ def check_nans(prim, ctx: CheckifyContext, error, enabled_errors, out):
 nan_primitives = [lax.acos_p, lax.acosh_p, lax.add_p, lax.asin_p, lax.asinh_p,
                   lax.atan2_p, lax.atan_p, lax.atanh_p, lax.bessel_i0e_p,
                   lax.bessel_i1e_p, lax.cbrt_p, lax.conv_general_dilated_p,
-                  lax.cos_p, lax.cosh_p, lax.cumlogsumexp_p, lax.cummax_p,
-                  lax.cummin_p, lax.cumprod_p, lax.cumsum_p, lax.digamma_p,
-                  lax.dot_general_p, lax.erf_inv_p, lax.erf_p, lax.erfc_p,
-                  lax.exp_p, lax.exp2_p, lax.expm1_p, lax.fft_p,
+                  lax.cos_p, lax.cosh_p, lax.cospi_p, lax.cumlogsumexp_p,
+                  lax.cummax_p, lax.cummin_p, lax.cumprod_p, lax.cumsum_p,
+                  lax.digamma_p, lax.dot_general_p, lax.erf_inv_p, lax.erf_p,
+                  lax.erfc_p, lax.exp_p, lax.exp2_p, lax.expm1_p, lax.fft_p,
                   lax.igamma_grad_a_p, lax.igamma_p, lax.igammac_p,
                   lax.integer_pow_p, lax.lgamma_p, lax.linear_solve_p,
                   lax.log1p_p, lax.log2_p, lax.log_p, lax.logistic_p,
@@ -613,7 +613,8 @@ nan_primitives = [lax.acos_p, lax.acosh_p, lax.add_p, lax.asin_p, lax.asinh_p,
                   lax.reduce_sum_p, lax.reduce_window_p,
                   lax.reduce_window_sum_p, lax.regularized_incomplete_beta_p,
                   lax.rem_p, lax.rng_uniform_p, lax.rsqrt_p, lax.sin_p,
-                  lax.sinh_p, lax.sqrt_p, lax.sub_p, lax.tan_p, lax.tanh_p]
+                  lax.sinh_p, lax.sinpi_p, lax.sqrt_p, lax.sub_p, lax.tan_p,
+                  lax.tanh_p, lax.tanpi_p]
 
 for _prim in nan_primitives:
   error_checks[_prim] = functools.partial(nan_error_check, _prim)

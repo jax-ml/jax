@@ -218,6 +218,12 @@ from jax._src.lax.ann import (
   approx_top_k_p as approx_top_k_p
 )
 
+from jax._src.lax.trig import (
+  cospi_p as cospi_p,
+  sinpi_p as sinpi_p,
+  tanpi_p as tanpi_p,
+)
+
 from jax._src.lax.linalg import (
   cholesky_p as cholesky_p,
   eig_p as eig_p,

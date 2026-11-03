@@ -245,6 +245,14 @@ from jax._src.lax.special import (
   zeta as zeta,
   zeta_p as zeta_p,
 )
+from jax._src.lax.trig import (
+  cospi as cospi,
+  cospi_p as cospi_p,
+  sinpi as sinpi,
+  sinpi_p as sinpi_p,
+  tanpi as tanpi,
+  tanpi_p as tanpi_p,
+)
 from jax._src.lax.slicing import (
   GatherDimensionNumbers as GatherDimensionNumbers,
   GatherScatterMode as GatherScatterMode,

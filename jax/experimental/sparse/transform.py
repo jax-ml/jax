@@ -101,10 +101,12 @@ _zero_preserving_unary_primitives = [
   lax.sign_p,
   lax.sin_p,
   lax.sinh_p,
+  lax.sinpi_p,
   lax.sqrt_p,
   lax.square_p,
   lax.tan_p,
   lax.tanh_p,
+  lax.tanpi_p,
   lax.convert_element_type_p,
 ]
 
@@ -114,6 +116,7 @@ _densifying_primitives : list[core.Primitive] = [
   lax.bessel_i0e_p,
   lax.cos_p,
   lax.cosh_p,
+  lax.cospi_p,
   lax.eq_p,
   lax.exp_p,
   lax.exp2_p,

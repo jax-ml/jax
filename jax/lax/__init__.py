@@ -414,6 +414,14 @@ from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
 from jax._src.lax.scaled_dot import scaled_dot as scaled_dot
+from jax._src.lax.trig import (
+  cospi as cospi,
+  cospi_p as cospi_p,
+  sinpi as sinpi,
+  sinpi_p as sinpi_p,
+  tanpi as tanpi,
+  tanpi_p as tanpi_p,
+)
 
 _deprecations = {
     # Added Oct 1, 2026

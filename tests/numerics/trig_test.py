@@ -18,6 +18,7 @@ import math
 
 from absl.testing import parameterized
 import jax
+from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import jaxlib_extension_version
@@ -54,6 +55,91 @@ def _sinc_ref(x: np.ndarray) -> np.ndarray:
   return np.where(
       x == 0, 1.0, np.where((r == 0) | np.isinf(x), 0.0, val)
   ).astype(np.float64)
+
+
+def _sinpi_ref(x: np.ndarray) -> np.ndarray:
+  t = np.fmod(x.astype(np.float64), 2.0)
+  return np.where(
+      np.abs(t) == 1.0, np.copysign(0.0, t), np.sin(np.pi * t)
+  ).astype(np.float64)
+
+
+def _cospi_ref(x: np.ndarray) -> np.ndarray:
+  t = np.abs(np.fmod(x.astype(np.float64), 2.0))
+  return np.where((t == 0.5) | (t == 1.5), 0.0, np.cos(np.pi * t)).astype(
+      np.float64
+  )
+
+
+def _tanpi_ref(x: np.ndarray) -> np.ndarray:
+  t = np.fmod(x.astype(np.float64), 2.0)
+  at = np.abs(t)
+  res = np.tan(np.pi * t)
+  res = np.where(at == 1.0, np.copysign(0.0, -t), res)
+  res = np.where(at == 0.5, np.copysign(np.inf, t), res)
+  res = np.where(at == 1.5, np.copysign(np.inf, -t), res)
+  return res.astype(np.float64)
+
+
+def _mpmath_sinpi(x):
+  fx = float(x)
+  if math.isnan(fx) or math.isinf(fx):
+    return mpmath.nan
+  return mpmath.sinpi(x)
+
+
+def _mpmath_cospi(x):
+  fx = float(x)
+  if math.isnan(fx) or math.isinf(fx):
+    return mpmath.nan
+  return mpmath.cospi(x)
+
+
+def _mpmath_tanpi(x):
+  fx = float(x)
+  if math.isnan(fx) or math.isinf(fx):
+    return mpmath.nan
+  c, s = mpmath.cospi_sinpi(x)
+  if c == 0:
+    return mpmath.inf if s > 0 else -mpmath.inf
+  return s / c
+
+
+_PI_TRIG_INTERESTING_POINTS = [
+    *(
+        sign * v
+        for v in (
+            0.125,
+            0.25,
+            0.375,
+            0.5,
+            0.75,
+            1.0,
+            1.25,
+            1.5,
+            1.75,
+            2.0,
+            2.5,
+            3.0,
+            3.5,
+            10.0,
+            100.5,
+            float(2**22 + 0.5),
+            float(2**22 + 1.5),
+            float(2**23),
+            float(2**23 + 1),
+            float(2**24 - 1),
+            float(2**24),
+            float(2**51 + 0.5),
+            float(2**51 + 1.5),
+            float(2**52),
+            float(2**52 + 1),
+            float(2**53 - 1),
+            float(2**53),
+        )
+        for sign in (-1, 1)
+    ),
+]
 
 
 @jtu.thread_unsafe_test_class()
@@ -589,9 +675,91 @@ class Rad2degTest(jtu.JaxTestCase):
     )
 
 
+@jtu.thread_unsafe_test_class()
+class SinpiTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_sinpi_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f32: 1.0, f64: 1.0}),
+        ("gpu", {f32: 2.0, f64: 1.5}),
+        ("tpu", {f32: 1.5}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    check_signed_zeros = [
+        ("cpu", {bf16: False}),
+    ]
+    util.check_unary_precision(
+        self,
+        lax.sinpi,
+        _sinpi_ref,
+        _mpmath_sinpi,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        check_signed_zeros=check_signed_zeros,
+        interesting_points=_PI_TRIG_INTERESTING_POINTS,
+    )
+
+
+@jtu.thread_unsafe_test_class()
+class CospiTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_cospi_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f32: 1.0, f64: 1.0}),
+        ("gpu", {f32: 2.0, f64: 1.5}),
+        ("tpu", {f32: 1.5}),
+    ]
+    util.check_unary_precision(
+        self,
+        lax.cospi,
+        _cospi_ref,
+        _mpmath_cospi,
+        dtype,
+        bounds=bounds,
+        interesting_points=_PI_TRIG_INTERESTING_POINTS,
+    )
+
+
+@jtu.thread_unsafe_test_class()
+class TanpiTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_tanpi_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 2.0, f64: 1.5}),
+        ("gpu", {f16: 1.0, f32: 3.0, f64: 2.0}),
+        ("tpu", {f16: 1.0, f32: 3.0}),
+    ]
+    input_ftz = [
+        ("gpu", False),
+    ]
+    check_signed_zeros = [
+        ("cpu", {bf16: False}),
+    ]
+    util.check_unary_precision(
+        self,
+        lax.tanpi,
+        _tanpi_ref,
+        _mpmath_tanpi,
+        dtype,
+        bounds=bounds,
+        input_ftz=input_ftz,
+        check_signed_zeros=check_signed_zeros,
+        interesting_points=_PI_TRIG_INTERESTING_POINTS,
+    )
+
+
 util.register_benchmark(jnp.sin)
 util.register_benchmark(jnp.cos)
 util.register_benchmark(jnp.tan)
+util.register_benchmark(lax.sinpi)
+util.register_benchmark(lax.cospi)
+util.register_benchmark(lax.tanpi)
 util.register_benchmark(jnp.sinc)
 util.register_benchmark(jnp.acos)
 util.register_benchmark(jnp.asin)

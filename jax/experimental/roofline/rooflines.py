@@ -39,6 +39,7 @@ from jax._src.lax import (
   parallel as lax_parallel,
   slicing,
   special,
+  trig,
   windowed_reductions,
 )
 from jax.experimental import roofline
@@ -64,6 +65,7 @@ for prim in it.chain(
   shard_map.__dict__.values(),
   slicing.__dict__.values(),
   special.__dict__.values(),
+  trig.__dict__.values(),
   windowed_reductions.__dict__.values(),
 ):
   if isinstance(prim, core.Primitive):
@@ -122,6 +124,9 @@ roofline.register_roofline(special.erf_inv_p)(_unary_p_roofline)
 roofline.register_roofline(special.erf_p)(_unary_p_roofline)
 roofline.register_roofline(special.erfc_p)(_unary_p_roofline)
 roofline.register_roofline(special.lgamma_p)(_unary_p_roofline)
+roofline.register_roofline(trig.cospi_p)(_unary_p_roofline)
+roofline.register_roofline(trig.sinpi_p)(_unary_p_roofline)
+roofline.register_roofline(trig.tanpi_p)(_unary_p_roofline)
 
 roofline.register_standard_roofline(core.pvary_p)
 
