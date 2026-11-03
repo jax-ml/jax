@@ -485,9 +485,8 @@ representations depending on the target backend.
 On GPUs, we lower Pallas to Mosaic GPU (formerly Triton[^1]), and on TPUs, we
 lower Pallas to Mosaic.
 
-[^1]: The Pallas-to-Triton lowering path is now officially deprecated. It is
-discussed here only for historical reasons, pending further documentation
-updates.
+[^1]: The Pallas-to-Triton lowering path has been removed. It is discussed here
+only for historical reasons.
 
 #### Lowering Pallas to Triton for GPU
 

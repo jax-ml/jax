@@ -32,10 +32,6 @@ Let's dive into some examples.
 > Note: when using the Mosaic GPU backend, only Hopper and newer GPUs are
 > supported.
 
-> Note: there also exists a Triton backend on GPU, but it is maintained only on
-> a best-effort basis, and is not recommended for use. The Triton backend
-> supports GPUs down to Ampere.
-
 +++
 
 ## Hello world in Pallas

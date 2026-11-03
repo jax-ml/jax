@@ -12,7 +12,6 @@ Backends
     Pallas TPU (TensorCore) <jax.experimental.pallas.tpu>
     Pallas TPU (SparseCore) <jax.experimental.pallas.tpu_sc>
     Pallas MGPU <jax.experimental.pallas.mosaic_gpu>
-    Triton <jax.experimental.pallas.triton>
 
 Libraries
 ---------
