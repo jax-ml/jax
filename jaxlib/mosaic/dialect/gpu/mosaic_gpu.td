@@ -777,26 +777,6 @@ def MosaicGPU_VectorConcatOp : Op<MosaicGPU_Dialect, "vector_concat",
   }];
 }
 
-def MosaicGPU_ReinterpretCastOp : Op<MosaicGPU_Dialect, "reinterpret_cast",
-    [Pure]> {
-  let summary = "Reinterprets a memref without changing the underlying data.";
-  let description = [{
-    Casts a memref to a new memref type with a potentially different shape but
-    the same total number of elements and the same element type. This is a
-    pure reinterpretation of the shape and layout; no data is moved or copied.
-
-    Unlike `memref.reinterpret_cast`, this op does not take explicit offsets,
-    sizes, or strides. The result type fully determines the reinterpretation.
-  }];
-
-  let arguments = (ins AnyMemRef:$source);
-  let results = (outs AnyMemRef:$result);
-
-  let hasFolder = 1;
-  let hasCanonicalizer = 1;
-  let hasVerifier = 1;
-}
-
 def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", [Pure]> {
   let summary = "Constructs a SMEM ref starting at the specified offset";
   let description = [{
@@ -1043,7 +1023,6 @@ def MosaicGPU_WarpMapOp : Op<MosaicGPU_Dialect, "warp_map",
   let arguments = (ins Variadic<AnyType>:$operands);
   let regions = (region SizedRegion<1>:$region);
 
-  let hasCanonicalizer = 1;
   let hasVerifier = 1;
 }
 
