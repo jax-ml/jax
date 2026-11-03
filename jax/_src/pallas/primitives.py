@@ -489,59 +489,6 @@ def store(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None) -> None:
            _function_name="store")
 
 
-def _handle_small(dtype: jax_typing.DTypeLike):
-  """Ugly workaround to support types that don't allow automatic promotion."""
-  if dtype == jnp.int4:
-    return jnp.int8
-  if dtype == jnp.float8_e4m3b11fnuz:
-    return jnp.bfloat16
-  return dtype
-
-
-def dot(a, b, trans_a: bool = False, trans_b: bool = False,
-        allow_tf32: bool | None = None, precision=None):
-  """Computes the dot product of two arrays.
-
-  The inputs can optionally be transposed before computing the
-  product. Depending on the hardware, this can be cheaper than
-  computing the transpose beforehand.
-
-  Args:
-    a: The left-hand size of the dot product, of shape ``(..., N)``.
-    b: The right-hand size of the dot product, of shape ``(...N, M)``.
-    trans_a: Whether to transpose ``a`` before the product.
-    trans_b: Whether to transpose ``b`` before the product.
-    allow_tf32: Whether to use tf32 precision.
-      Mutually exclusive with ``precision``.
-    precision: Specifies the precision of the dot product.
-
-  See Also:
-    :func:`jax.numpy.dot`
-  """
-  if (a.ndim != 2) or (b.ndim != 2):
-    raise ValueError("`a` and `b` must be 2D arrays.")
-  lhs_contract_dim = 0 if trans_a else 1
-  rhs_contract_dim = 0 if not trans_b else 1
-  if allow_tf32 is not None:
-    if precision is not None:
-      raise ValueError("Only one of allow_tf32 and precision can be specified")
-    precision = lax.Precision.HIGH if allow_tf32 else lax.Precision.HIGHEST
-
-  dtype = jnp.promote_types(_handle_small(a.dtype), _handle_small(b.dtype))
-  if jnp.issubdtype(dtype, jnp.integer):
-    out_dtype = jnp.int32
-  elif dtype == jnp.float64:
-    out_dtype = jnp.float64
-  else:
-    out_dtype = jnp.float32
-  return lax.dot_general(
-      a,
-      b,
-      dimension_numbers=(((lhs_contract_dim,), (rhs_contract_dim,)), ((), ())),
-      precision=precision,
-      preferred_element_type=out_dtype,
-  )
-
 reciprocal_p = jax_core.Primitive("reciprocal")
 
 
@@ -597,12 +544,10 @@ def debug_print(fmt: str, *args: jax_typing.ArrayLike):
     fmt: A format string to be included in the output. The restrictions on the
       format string depend on the backend:
 
-      * On GPU, when using Triton, ``fmt`` must not contain any placeholders
-        (``{...}``), since it is always printed before any of the values.
-      * On GPU, when using the experimental Mosaic GPU backend, ``fmt`` must
-        contain a placeholder for each value to be printed. Format specs and
-        conversions are not supported. If a single value is provided, the value
-        may be an array. Otherwise, all values must be scalars.
+      * On GPU, ``fmt`` must contain a placeholder for each value to be printed.
+        Format specs and conversions are not supported. If a single value is
+        provided, the value may be an array. Otherwise, all values must be
+        scalars.
       * On TPU, if all inputs are scalars: If ``fmt`` contains placeholders,
         all values must be 32-bit integers or floats. If there are no
         placeholders, the values are printed after the format string.

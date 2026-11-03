@@ -933,24 +933,17 @@ def _pallas_call_lowering(
   def gpu_lowering(
       ctx: mlir.LoweringRuleContext,
       *in_nodes: ir.Value | Sequence[ir.Value],
-      compiler_params: pallas_core.CompilerParams | None,
       **params,
   ):
-    """Shared GPU lowering implementation for CUDA and ROCm."""
-    try:
-      from jax._src.pallas.triton import pallas_call_registration  # pyrefly: ignore[missing-import]
-    except ImportError:
-      raise _unsupported_lowering_error("gpu") from None
-    else:
-      del pallas_call_registration
-
-    if compiler_params is None:
-      from jax._src.pallas.triton import core as triton_core  # pyrefly: ignore[missing-import]
-      compiler_params = triton_core.CompilerParams()
-
-    rule = pallas_core.get_lowering_rule(type(compiler_params), "gpu")
-    assert rule is not None
-    return rule(ctx, *in_nodes, compiler_params=compiler_params, **params)
+    compiler_params = params.get("compiler_params")
+    if compiler_params is not None:
+      rule = pallas_core.get_lowering_rule(type(compiler_params), "gpu")
+      if rule is not None:
+        return rule(ctx, *in_nodes, **params)
+    raise ValueError(
+        "Only interpret mode is supported on GPU backend. Use"
+        " jax.pallas.mosaic_gpu.kernel instead."
+    )
 
   return mlir.lower_per_platform(
       ctx,
@@ -1183,10 +1176,8 @@ def pallas_call(
       {kernel_name} at {file}:{line}`. If missing, then we use `{kernel_name} at
       {file}:{line}`.
     compiler_params: Optional compiler parameters. The value should be a
-      backend-specific dataclass
-      (:class:`jax.experimental.pallas.tpu.CompilerParams`,
-      :class:`jax.experimental.pallas.triton.CompilerParams`,
-      :class:`jax.experimental.pallas.mosaic_gpu.CompilerParams`).
+      backend-specific dataclass (for example,
+      :class:`jax.experimental.pallas.tpu.CompilerParams`).
     metadata: Optional dictionary of information about the kernel that will be
       serialized as JSON in the HLO. Can be used for debugging and analysis.
 

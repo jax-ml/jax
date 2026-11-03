@@ -261,7 +261,7 @@ class NDIndexer(state_types.Transform):
 
       # Here we use the `broadcast_to` primitive instead of composing lax
       # primitives together because it is easier to lower in targets like
-      # Triton/Mosaic.
+      # Mosaic.
       #
       # The local import avoids a circular dependency between primitives
       # and this module.

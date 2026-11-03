@@ -401,15 +401,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/_mlirDialectsLLVM.{pyext}",
           f"{source_file_prefix}jaxlib/_mlirDialectsNVGPU.{pyext}",
           f"{source_file_prefix}jaxlib/_mlirGPUPasses.{pyext}",
-      ]
-      + (
-          []
-          if build_utils.is_windows()
-          else [
-              f"{source_file_prefix}jaxlib/_triton_ext.{pyext}",
-              f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_triton_ext.pyi",
-          ]
-      ),
+      ],
   )
   copy_files(
       dst_dir=mlir_libs_dir / "_mlir",
@@ -419,27 +411,6 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlir/passmanager.pyi",
           f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlir/rewrite.pyi",
       ]
-  )
-
-  triton_dir = jaxlib_dir / "triton"
-  copy_files(
-      dst_dir=triton_dir,
-      src_files=[
-          f"{source_file_prefix}jaxlib/triton/__init__.py",
-          f"{source_file_prefix}jaxlib/triton/dialect.py",
-      ],
-  )
-  patch_copy_mlir_import(
-      f"{source_file_prefix}jaxlib/triton/_triton_enum_gen.py",
-      dst_dir=triton_dir,
-      runfiles=r,
-      wheel_sources_map=wheel_sources_map,
-  )
-  patch_copy_mlir_import(
-      f"{source_file_prefix}jaxlib/triton/_triton_ops_gen.py",
-      dst_dir=triton_dir,
-      runfiles=r,
-      wheel_sources_map=wheel_sources_map,
   )
 
   if wheel_sources:

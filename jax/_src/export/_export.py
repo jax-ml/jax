@@ -1173,8 +1173,6 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "annotate_device_placement",
     "cu_threefry2x32_ffi",
     "hip_threefry2x32_ffi",
-    # Triton IR does not guarantee stability.
-    # "__gpu$xla.gpu.triton",
     # eigh on TPU
     "Eigh",
     # qr and svd on TPU

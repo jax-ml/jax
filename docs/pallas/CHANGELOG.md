@@ -26,9 +26,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### Triton
 
-* Removals
-  * Removed the previously deprecated Pallas Triton ops in
-    {mod}`jax.experimental.pallas.ops.gpu`.
+The previously deprecated {mod}`jax.experimental.pallas.triton` and
+{mod}`jax.experimental.pallas.ops.gpu` modules have been removed. To keep using
+Pallas on GPU, please migrate to {mod}`jax.experimental.pallas.mosaic_gpu`.
+To keep using Triton, switch to the official Triton bindings and `jax_triton`.
 
 ### Mosaic GPU
 

@@ -29,7 +29,6 @@ py_library_providing_imports_info(
         "mlir/__init__.py",
         "mlir/dialects/__init__.py",
         "mosaic_gpu.py",
-        "triton.py",
     ],
     lib_rule = pytype_strict_library,
     visibility = ["//jax:internal"] + jax_visibility("lib"),

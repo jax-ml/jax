@@ -53,7 +53,6 @@ wheel_sources(
         "//jax/experimental:pallas_fuser",
         "//jax/experimental:pallas_mosaic_gpu",
         "//jax/experimental:pallas_tpu_ops",
-        "//jax/experimental:pallas_triton",
         "//jax/experimental:pjit",
         "//jax/experimental:profiler",
         "//jax/experimental:random",
