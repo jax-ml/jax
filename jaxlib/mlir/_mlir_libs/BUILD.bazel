@@ -337,6 +337,7 @@ nanobind_pywrap_extension(
         "@llvm-project//mlir:ShapeDialect",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
+        "@llvm-project//mlir:VectorDialect",
         "@nanobind",
         "@rules_python//python/cc:current_py_cc_headers",
         "@shardy//shardy/dialect/sdy/ir:dialect",
