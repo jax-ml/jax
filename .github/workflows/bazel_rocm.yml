@@ -125,8 +125,6 @@ jobs:
     runs-on: ${{ inputs.runner }}
     container:
       image: ghcr.io/rocm/jax-base-ubu24.${{ inputs.rocm-tag }}:latest  # zizmor: ignore[unpinned-images]
-      volumes:
-        - /data:/data
       options: >-
         --device=/dev/kfd
         --device=/dev/dri
