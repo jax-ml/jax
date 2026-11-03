@@ -50,7 +50,7 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src import xla_bridge as xb
 from jax._src.typing import Array
 from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
-                           unzip2)
+                           tuple_delete, tuple_insert, unzip2)
 from jax._src.lib.mlir.dialects import func as func_dialect
 import numpy as np
 
@@ -2120,7 +2120,8 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     new_shape.insert(all_gather_dimension, 1)
     broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
     x = hlo.broadcast_in_dim(
-        mlir.aval_to_ir_type(ctx.module_context, x_aval.update(shape=new_shape)), x,
+        mlir.aval_to_ir_type(ctx.module_context,
+                             core.ShapedArray(new_shape, x_aval.dtype)), x,
         mlir.dense_int_array(broadcast_dimensions))
   replica_groups_attr = _try_mesh_axes_replica_group(
       ctx, axis_name, axis_index_groups
@@ -2138,10 +2139,12 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
 
   out_type = mlir.aval_to_ir_type(ctx.module_context, out_aval)
   if not is_async:
-    return hlo.AllGatherOp([out_type], [x],
+    out, = hlo.AllGatherOp([out_type], [x],
                            all_gather_dim=mlir.i64_attr(all_gather_dimension),
                            replica_groups=replica_groups_attr,
                            **other_args).results
+    # For partial manual shard_map
+    return [mlir.lower_with_sharding_in_types(ctx, out, out_aval)]
   else:
     replica_groups = _replica_groups(
         ctx.module_context.axis_context, axis_name, axis_index_groups
@@ -2173,12 +2176,16 @@ def _all_gather_effectful_abstract_eval(
   _check_axis_names(axis_name, 'all_gather')
   check_unreduced_args([x_aval], axis_name, 'all_gather')
   new_shape = list(x_aval.shape)
+  sharding = x_aval.sharding
   if tiled:
     new_shape[all_gather_dimension] *= axis_size
   else:
     new_shape.insert(all_gather_dimension, axis_size)
+    sharding = sharding.update(spec=sharding.spec.update(
+        partitions=tuple_insert(sharding.spec.partitions, all_gather_dimension,
+                                None)))
   out_vma = collective_vma_rule('all_gather', axis_name, x_aval)
-  return (x_aval.update(shape=new_shape,
+  return (x_aval.update(shape=new_shape, sharding=sharding,
                         manual_axis_type=x_aval.mat.update(varying=out_vma)),
           {*map(core.NamedAxisEffect, axis_name)})
 
@@ -2281,6 +2288,11 @@ def _all_gather_invariant_effectful_abstract_eval(
 ):
   _check_axis_names(axis_name, 'all_gather_invariant')
   check_unreduced_args([x_aval], axis_name, 'all_gather_invariant')
+  if not tiled and _is_dim_sharded(x_aval, all_gather_dimension, tiled):
+    raise core.ShardingTypeError(
+        f"all_gather_invariant with tiled=False does not support operands "
+        f"sharded on Explicit mesh axes. Got {x_aval.str_short()}. Please "
+        "use tiled=True.")
   new_shape = list(x_aval.shape)
   if tiled:
     new_shape[all_gather_dimension] *= axis_size
@@ -2344,7 +2356,8 @@ def _reduce_scatter_lowering(
     tiled, is_async=False):
   x_aval, = ctx.avals_in
   aval_out, = ctx.avals_out
-  scalar_aval = x_aval.update(shape=())
+  scalar_aval = x_aval.update(
+      shape=(), sharding=x_aval.sharding.update(spec=P()))
   replica_groups = _try_mesh_axes_replica_group(
       ctx, axis_name, axis_index_groups
   )
@@ -2402,6 +2415,7 @@ def _reduce_scatter_effectful_abstract_eval(
   _check_axis_names(axis_name, name)
   check_unreduced_args([x_aval], axis_name, name)
   new_shape = list(x_aval.shape)
+  sharding = x_aval.sharding
   scatter_dim_input_size = x_aval.shape[scatter_dimension]
   if tiled:
     if scatter_dim_input_size % axis_size != 0:
@@ -2414,9 +2428,16 @@ def _reduce_scatter_effectful_abstract_eval(
       raise ValueError(f"{name} operand scatter dimension size "
                        f"{scatter_dim_input_size} must match shard count "
                        f"{axis_size}")
+    if sharding.spec[scatter_dimension] is not None:
+      raise core.ShardingTypeError(
+          f"{name} with tiled=False cannot remove scatter dimension "
+          f"{scatter_dimension} of {x_aval.str_short()} because it is sharded "
+          "on Explicit mesh axes. Please use tiled=True.")
     del new_shape[scatter_dimension]
+    sharding = sharding.update(spec=sharding.spec.update(
+        partitions=tuple_delete(sharding.spec.partitions, scatter_dimension)))
   vma = collective_vma_rule(name, axis_name, x_aval)
-  return (x_aval.update(shape=new_shape,
+  return (x_aval.update(shape=new_shape, sharding=sharding,
                         manual_axis_type=x_aval.mat.update(varying=vma)),
           {*map(core.NamedAxisEffect, axis_name)})
 
@@ -2856,6 +2877,11 @@ def _all_gather_reduced_effectful_abstract_eval(
         'all_gather_reduced is a Varying -> Reduced collective. This means '
         f'that the {axis_name=} passed to `all_gather_reduced` must be present '
         f'in jax.typeof(x).mat.varying={x_aval.mat.varying}')
+  if not tiled and _is_dim_sharded(x_aval, all_gather_dimension, tiled):
+    raise core.ShardingTypeError(
+        f"all_gather_reduced with tiled=False does not support operands "
+        f"sharded on Explicit mesh axes. Got {x_aval.str_short()}. Please "
+        "use tiled=True.")
 
   new_shape = list(x_aval.shape)
   if tiled:

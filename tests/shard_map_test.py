@@ -5520,6 +5520,111 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P(('x', 'y'), None)))
     self.assertArraysEqual(out, arr * 2)
 
+  @parameterized.named_parameters(('axis0', 0), ('axis1', 1))
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_all_gather_untiled_partial_explicit(self, axis, mesh):
+    np_inp = np.arange(16.).reshape(2, 8)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('x'), axis_names={'x'})
+    def f(x):
+      self.assertEqual(x.aval.sharding.spec, P(None, 'y'))
+      y = lax.all_gather(x, 'x', axis=axis, tiled=False)
+      # The new dim is inserted at `axis`; 'y' must stay on the data dim.
+      self.assertEqual(y.aval.sharding.spec, P(None, None, 'y'))
+      return y
+
+    out = f(arr)
+    expected = np.stack(np.split(np_inp, 2, axis=0), axis=axis)
+    # Every 'x' shard holds the same gathered value.
+    self.assertArraysEqual(out, np.concatenate([expected, expected]))
+
+  @parameterized.named_parameters(('invarying', 'invarying'),
+                                  ('reduced', 'reduced'))
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_all_gather_untiled_partial_explicit_error(self, to, mesh):
+    arr = jax.device_put(np.arange(16.).reshape(2, 8), P('x', 'y'))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(), axis_names={'x'})
+    def f(x):
+      return lax.all_gather(x, 'x', tiled=False, to=to)
+
+    with self.assertRaisesRegex(core.ShardingTypeError,
+                                'tiled=False does not support'):
+      f(arr)
+
+  @parameterized.named_parameters(
+      # Scatter dim 1 is sharded on 'y'; the spec is unchanged.
+      ('tiled', True, 1, P(None, 'y')),
+      # Scatter dim 0 (size == axis size) is removed along with its spec entry.
+      ('untiled', False, 0, P('y')),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_psum_scatter_partial_explicit(self, tiled, scatter_dimension,
+                                         out_spec, mesh):
+    np_inp = np.arange(32.).reshape(4, 8)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('x'), axis_names={'x'})
+    def f(x):
+      self.assertEqual(x.aval.sharding.spec, P(None, 'y'))
+      y = lax.psum_scatter(x, 'x', scatter_dimension=scatter_dimension,
+                           tiled=tiled)
+      self.assertEqual(y.aval.sharding.spec, out_spec)
+      return y
+
+    out = f(arr)
+    s = np_inp[:2] + np_inp[2:]
+    expected = (np.concatenate(np.split(s, 2, axis=scatter_dimension))
+                if tiled else s.reshape(-1))
+    self.assertArraysEqual(out, expected)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_psum_scatter_untiled_sharded_dim_partial_explicit_error(self, mesh):
+    # Dim 1 has size == axis size of 'x' but is sharded on explicit axis 'y'.
+    arr = jax.device_put(np.arange(8.).reshape(4, 2), P('x', 'y'))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('x'), axis_names={'x'})
+    def f(x):
+      return lax.psum_scatter(x, 'x', scatter_dimension=1, tiled=False)
+
+    with self.assertRaisesRegex(core.ShardingTypeError,
+                                'cannot remove scatter dimension 1'):
+      f(arr)
+
+  @parameterized.named_parameters(
+      ('all_gather_tiled',
+       lambda x: lax.all_gather(x, 'x', axis=0, tiled=True)),
+      ('all_gather_untiled',
+       lambda x: lax.all_gather(x, 'x', axis=0, tiled=False)),
+      ('psum_scatter_tiled',
+       lambda x: lax.psum_scatter(x, 'x', scatter_dimension=1, tiled=True)),
+      ('psum_scatter_untiled',
+       lambda x: lax.psum_scatter(x, 'x', scatter_dimension=0, tiled=False)),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_collective_grad_partial_explicit(self, collective, mesh):
+    np_inp = np.arange(32.).reshape(4, 8)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @jax.shard_map(in_specs=P('x'), out_specs=P('x'), axis_names={'x'})
+    def f(x):
+      return collective(x)
+
+    def g(x):
+      return (f(x) ** 2).sum()
+
+    out = jax.jit(jax.grad(g))(arr)
+    self.assertEqual(out.sharding, arr.sharding)
+    # Reference: same computation with the explicit 'y' axis left unsharded.
+    expected = jax.jit(jax.grad(g))(jax.device_put(np_inp, P('x')))
+    self.assertAllClose(out, expected)
+
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_zero_cotangent_sharding(self, mesh):
     @jax.custom_vjp
