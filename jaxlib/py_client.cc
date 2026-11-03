@@ -19,6 +19,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <string>
@@ -784,7 +785,14 @@ absl::StatusOr<nb::object> PyClient::CreateHloOutputCallback(
             py_list.put(nb::none());
           }
         }
-        callable(replica_id, partition_id, py_list.commit());
+        try {
+          callable(replica_id, partition_id, py_list.commit());
+        } catch (const nb::python_error& e) {
+          LOG(ERROR) << "Exception raised in HloOutputCallback: " << e.what();
+          PyErr_Print();
+        } catch (const std::exception& e) {
+          LOG(ERROR) << "C++ exception in HloOutputCallback: " << e.what();
+        }
       };
   tsl::RCReference<ifrt::PjRtHloOutputLoadedHostCallback> loaded_host_callback =
       tsl::MakeRef<ifrt::PjRtHloOutputLoadedHostCallback>(ifrt_client(),
