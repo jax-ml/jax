@@ -652,6 +652,7 @@ If you have code that relies on `vmap_method`, the recommended migration is to w
 
 +++
 
+(jax-401-ffi-advanced)=
 ## Advanced topics
 
 This tutorial covers most of the basic steps that are required to get up and running with JAX's FFI, but advanced use cases may require more features.
@@ -660,3 +661,5 @@ We will leave these topics to future tutorials, but here are some possibly usefu
 * **Supporting multiple dtypes**: In this tutorial's example, we restricted to only support `float32` inputs and outputs, but many use cases require supporting multiple different input types. One option to handle this is to register different FFI targets for all supported input types and then use Python to select the appropriate target for {func}`jax.ffi.ffi_call` depending on the input types. But this approach could quickly get unwieldy, depending on the combinatorics of the supported cases. So it is also possible to define the C++ handler to accept `ffi::AnyBuffer` instead of `ffi::Buffer<Dtype>`. Then, the input buffer will include an `element_type()` method which can be used to define the appropriate dtype dispatching logic in the backend.
 
 * **Stateful foreign functions**: It is also possible to use the FFI to wrap functions with associated state. There is a [low-level example included in the XLA test suite](https://github.com/openxla/xla/blob/737a7da3c5405583dc95773ac0bb11b1349fc9ea/xla/service/gpu/custom_call_test.cc#L794-L845), and a future tutorial will include more details.
+
+* **GPU command-buffer recording**: An optional `"record"` handler can add or update device operations directly in an XLA command buffer. XLA's [recording handler example](https://github.com/openxla/xla/blob/c6c791abdd42590d9a0ba968b506cb325a5d8390/xla/backends/gpu/runtime/custom_call_thunk_test.cc#L923-L944) and [corresponding test](https://github.com/openxla/xla/blob/c6c791abdd42590d9a0ba968b506cb325a5d8390/xla/backends/gpu/runtime/custom_call_thunk_test.cc#L1058-L1116) demonstrate recording a kernel launch, executing it in a CUDA graph, and updating its buffer arguments before executing again.
