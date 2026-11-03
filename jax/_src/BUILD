@@ -875,6 +875,16 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "gpu_info",
+    srcs = ["gpu_info.py"],
+    deps = [
+        ":api",
+        ":mesh",
+        ":util",
+    ],
+)
+
+pytype_strict_library(
     name = "hardware_utils",
     srcs = ["hardware_utils.py"],
 )

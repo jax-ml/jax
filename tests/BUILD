@@ -2567,3 +2567,18 @@ jax_py_test(
         "absl/testing",
     ]),
 )
+
+jax_multiplatform_test(
+    name = "gpu_info_test",
+    srcs = ["gpu_info_test.py"],
+    enable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    shard_count = 1,
+    deps = [
+        "//jax/_src:gpu_info",
+    ] + py_deps([
+        "absl/testing",
+    ]),
+)

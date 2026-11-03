@@ -466,9 +466,9 @@ pytype_strict_library(
     ],
     deps = [
         "//jax/_src:deprecations",
+        "//jax/_src:gpu_info",
         "//jax/_src/pallas",
         "//jax/_src/pallas/triton:core",
-        "//jax/_src/pallas/triton:gpu_info",
         "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/triton:primitives",
     ],

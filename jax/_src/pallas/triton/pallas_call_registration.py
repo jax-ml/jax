@@ -25,9 +25,9 @@ from jax._src import deprecations
 from jax._src import frozen_dict
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
+from jax._src import gpu_info as gpu_info_lib
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.triton import core as triton_core
-from jax._src.pallas.triton import gpu_info as gpu_info_lib
 from jax._src.pallas.triton import lowering
 
 

@@ -69,6 +69,7 @@ wheel_sources(
         "//jax/experimental:transfer",
         "//jax/experimental:xla_metadata",
         "//jax/experimental",
+        "//jax/_src:gpu_info",
         "//jax/_src:lax_reference",
         "//jax/_src:internal_export_back_compat_test_util",
         "//jax/_src:internal_export_back_compat_test_data",
