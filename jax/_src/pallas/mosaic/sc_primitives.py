@@ -1251,35 +1251,54 @@ def unpack(
   )
 
 
-def _mask_all_reduce_abstract_eval(x, *, reduce):
+def _mask_all_reduce_abstract_eval(x, *, reduce, dim):
   if x.dtype != jnp.bool:
     raise TypeError(f"Mask all-reduce only supports bool arrays, got {x.dtype}")
   if reduce < 1:
     raise ValueError(f"reduce must be >=1, got {reduce}")
-  match x.shape:
-    case (minor_dim,):
-      if minor_dim % reduce != 0:
-        raise ValueError(
-            f"{reduce=} must divide the dimension size {minor_dim}"
-        )
-      return jax_core.ShapedArray((minor_dim // reduce,), jnp.int32)
-    case _:
-      raise ValueError("Mask all-reduce only supports 1D arrays")
+  if not x.shape:
+    raise ValueError("Mask all-reduce does not support scalars")
+  if not -x.ndim <= dim < x.ndim:
+    raise ValueError(f"{dim=} is out of range for an array of rank {x.ndim}")
+  dim_size = x.shape[dim]
+  if dim_size % reduce != 0:
+    raise ValueError(f"{reduce=} must divide the dimension size {dim_size}")
+  out_shape = list(x.shape)
+  out_shape[dim] = dim_size // reduce
+  return jax_core.ShapedArray(tuple(out_shape), jnp.int32)
 
 
 def _mask_all_reduce_lowering_rule(
-    ctx: sc_lowering.LoweringRuleContext, x, *, reduce, kind: str
+    ctx: sc_lowering.LoweringRuleContext, x, *, reduce, dim, kind: str
 ):
+  del reduce  # Unused.
+  [x_aval] = ctx.avals_in
   [out_aval] = ctx.avals_out
-  return tpu.all_reduce(
-      ir.VectorType.get(
-          out_aval.shape,
-          ir.IntegerType.get_signless(32),
-      ),
-      x,
-      0,
-      ir.Attribute.parse(f"#tpu.reduction_kind<{kind}>"),
-  )
+  if dim < 0:
+    dim += x_aval.ndim
+  i32 = ir.IntegerType.get_signless(32)
+  out_type = ir.VectorType.get(out_aval.shape, i32)
+  kind_attr = ir.Attribute.parse(f"#tpu.reduction_kind<{kind}>")
+  if ctx.lowering_context.needs_layout_passes:
+    reduced_shape = list(x_aval.shape)
+    reduced_shape[dim] = 1
+    reduced_type = ir.VectorType.get(reduced_shape, i32)
+    match kind:
+      case "find_first_set":
+        reduced = tpu.reduce_index(reduced_type, x, dim, kind_attr)
+      case "sum":
+        reduced = tpu.reduce(
+            reduced_type, x, ir.DenseI64ArrayAttr.get([dim]), kind_attr
+        )
+      case _:
+        raise ValueError(f"Unsupported mask reduction kind: {kind}")
+    return vector.broadcast(out_type, reduced)
+  if x_aval.ndim != 1:
+    raise NotImplementedError(
+        "Mask all-reduce of arrays with rank other than 1 requires"
+        " needs_layout_passes=True"
+    )
+  return tpu.all_reduce(out_type, x, dim, kind_attr)
 
 
 all_reduce_population_count_p = jax_core.Primitive(
@@ -1291,17 +1310,23 @@ sc_lowering.register_lowering_rule(all_reduce_population_count_p)(
 )
 
 
-def all_reduce_population_count(x: jax.Array, *, reduce: int = 1) -> jax.Array:
-  """Computes the number of nonzero elements in the array.
+def all_reduce_population_count(
+    x: jax.Array, *, reduce: int = 1, dim: int = -1
+) -> jax.Array:
+  """Computes the number of true elements along a dimension of the array.
 
   Args:
-    x: A 1D array of bools.
-    reduce: The factor to reduce the output shape by.
+    x: An array of bools.
+    reduce: The factor to reduce the size of ``dim`` in the output by.
+    dim: The dimension to reduce. Negative values count from the end. Defaults
+      to the last dimension.
 
   Returns:
-    An array with each element containing the number of true elements in ``x``.
+    An int32 array with the shape of ``x``, except that the size of ``dim`` is
+    divided by ``reduce``. Each element contains the number of true elements of
+    ``x`` along ``dim``, at the same position in the other dimensions.
   """
-  return all_reduce_population_count_p.bind(x, reduce=reduce)
+  return all_reduce_population_count_p.bind(x, reduce=reduce, dim=dim)
 
 
 all_reduce_ffs_p = jax_core.Primitive("all_reduce_ffs")
@@ -1311,18 +1336,24 @@ sc_lowering.register_lowering_rule(all_reduce_ffs_p)(
 )
 
 
-def all_reduce_ffs(x: jax.Array, *, reduce: int = 1) -> jax.Array:
-  """Computes the index of the first true element in the array.
+def all_reduce_ffs(
+    x: jax.Array, *, reduce: int = 1, dim: int = -1
+) -> jax.Array:
+  """Computes the index of the first true element along a dimension.
 
   Args:
-    x: A 1D array of bools.
-    reduce: The factor to reduce the output shape by.
+    x: An array of bools.
+    reduce: The factor to reduce the size of ``dim`` in the output by.
+    dim: The dimension to reduce. Negative values count from the end. Defaults
+      to the last dimension.
 
   Returns:
-    An array with each element containing the index of the first true element in
-    ``x`` or ``x.size`` if there are no true elements.
+    An int32 array with the shape of ``x``, except that the size of ``dim`` is
+    divided by ``reduce``. Each element contains the index of the first true
+    element of ``x`` along ``dim``, at the same position in the other
+    dimensions, or ``x.shape[dim]`` if there are no true elements.
   """
-  return all_reduce_ffs_p.bind(x, reduce=reduce)
+  return all_reduce_ffs_p.bind(x, reduce=reduce, dim=dim)
 
 
 fetch_and_add_p = jax_core.Primitive("sc_fetch_and_add")
