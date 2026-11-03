@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 350" width="100%" height="100%">
+  <style>
+    .bg { fill: #f8f9fa; stroke: #dadce0; stroke-width: 3; rx: 16; }
+    .chip-box { fill: #ffffff; stroke: #dadce0; stroke-width: 3; rx: 12; }
+    .tc-box { fill: #e6f4ea; stroke: #1e8e3e; stroke-width: 2; rx: 8; }
+    .text-title { font-family: sans-serif; font-size: 24px; font-weight: bold; fill: #5f6368; text-anchor: middle; }
+    .text-chip { font-family: sans-serif; font-size: 16px; font-weight: bold; fill: #5f6368; text-anchor: middle; }
+    .text-tc { font-family: sans-serif; font-size: 16px; font-weight: bold; fill: #0d652d; text-anchor: middle; }
+    .text-axis { font-family: monospace; font-size: 20px; font-weight: bold; fill: #1a73e8; text-anchor: middle; }
+    .arrow { stroke: #5f6368; stroke-width: 2; fill: none; marker-start: url(#arrowhead-start); marker-end: url(#arrowhead); }
+    .arrow-axis { stroke: #1a73e8; stroke-width: 3; fill: none; marker-start: url(#arrowhead-blue-start); marker-end: url(#arrowhead-blue); }
+    .text-label { font-family: sans-serif; font-size: 14px; fill: #5f6368; text-anchor: middle; }
+  </style>
+
+  <defs>
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5f6368" />
+    </marker>
+    <marker id="arrowhead-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1a73e8" />
+    </marker>
+  
+    <marker id="arrowhead-start" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 10 0 L 0 5 L 10 10 z" fill="#5f6368" />
+    </marker>
+    <marker id="arrowhead-blue-start" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 10 0 L 0 5 L 10 10 z" fill="#1a73e8" />
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" x="20" y="20" width="960" height="310" />
+  <text x="500" y="55" class="text-title">SPMD Communication over JAX Mesh</text>
+
+  <!-- Axis Indicator -->
+  <path class="arrow-axis" d="M 410 100 L 590 100" />
+  <text x="500" y="85" class="text-axis">Mesh Axis: "x"</text>
+
+  <!-- Chip 0 -->
+  <rect class="chip-box" x="50" y="120" width="180" height="130" />
+  <text x="140" y="145" class="text-chip">TPU Chip 0</text>
+  
+  <!-- TensorCore -->
+  <rect class="tc-box" x="65" y="160" width="150" height="75" />
+  <text x="140" y="203" class="text-tc">TensorCore</text>
+
+  <!-- Chip 1 -->
+  <rect class="chip-box" x="270" y="120" width="180" height="130" />
+  <text x="360" y="145" class="text-chip">TPU Chip 1</text>
+  
+  <!-- TensorCore -->
+  <rect class="tc-box" x="285" y="160" width="150" height="75" />
+  <text x="360" y="203" class="text-tc">TensorCore</text>
+
+  <!-- Chip 2 -->
+  <rect class="chip-box" x="490" y="120" width="180" height="130" />
+  <text x="580" y="145" class="text-chip">TPU Chip 2</text>
+  
+  <!-- TensorCore -->
+  <rect class="tc-box" x="505" y="160" width="150" height="75" />
+  <text x="580" y="203" class="text-tc">TensorCore</text>
+
+  <!-- Chip 3 -->
+  <rect class="chip-box" x="710" y="120" width="180" height="130" />
+  <text x="800" y="145" class="text-chip">TPU Chip 3</text>
+  
+  <!-- TensorCore -->
+  <rect class="tc-box" x="725" y="160" width="150" height="75" />
+  <text x="800" y="203" class="text-tc">TensorCore</text>
+  <!-- Arrows -->
+  <!-- 0 -> 1 -->
+  <path class="arrow" d="M 230 197 L 270 197" />
+
+  <!-- 1 -> 2 -->
+  <path class="arrow" d="M 450 197 L 490 197" />
+
+  <!-- 2 -> 3 -->
+  <path class="arrow" d="M 670 197 L 710 197" />
+
+  <!-- Wrap around 3 -> 0 -->
+  <path class="arrow" d="M 800 255 L 800 285 Q 800 305 780 305 L 160 305 Q 140 305 140 285 L 140 255" />
+  <text x="470" y="295" class="text-label">Ring Communication (Axis "x")</text>
+
+</svg>

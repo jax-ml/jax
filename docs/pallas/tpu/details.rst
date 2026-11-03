@@ -20,7 +20,7 @@ software emulation, and can slow down the computation.
   a kernel is accepted by the compiler, it *must* return the expected results.
 
   If you see unexpected outputs, please compare them against a kernel run with
-  ``interpret=True`` passed in to ``pallas_call``. If the results diverge,
+  ``interpret=True`` passed in to ``@pl.kernel``. If the results diverge,
   please file a `bug report <https://github.com/jax-ml/jax/issues/new/choose>`_.
 
 What is a TPU?
@@ -79,12 +79,12 @@ of the output.
     dimensions of the overall array.
 
 One interesting aspect of Pallas TPU kernels is the way they handle memory spaces:
-While the inputs to ``pallas_call`` will often reside in HBM (the main TPU
-memory), the references passed in to the kernel body will point to buffers in
-lower levels of memory hierarchy (VMEM or SMEM). This enables the kernel body
-to write and read them at very high speeds, while all the communication with
-HBM (which has very high latency) is handled by the compiler and overlapped
-with compute.
+Inputs and outputs of ``@pl.kernel`` reside in ``pltpu.HBM`` (the main TPU
+memory) by default, whereas when using ``pltpu.emit_pipeline``, the references
+passed in to the pipeline body point to buffers in lower levels of the memory
+hierarchy (``pltpu.VMEM``). This enables the kernel body to write and read them
+at very high speeds, while all the communication with HBM (which has very high
+latency) is handled by the compiler and overlapped with compute.
 
 What's more, compared to GPUs, TPUs are actually highly sequential machines.
 Ergo, the grid is generally not processed in parallel, but sequentially,
@@ -164,23 +164,36 @@ Multicore TPU configurations
 In newer TPU generations, the two cores on a chip are often abstracted as a
 single device. To take advantage of multiple cores, Pallas has to break the
 sequential grid execution guarantees, and will need to parallelize one of the
-grid axes over cores. This is an opt-in procedure. To allow that,
-``pallas_call`` requires an extra parameter named ``dimension_semantics``:
+grid axes over cores. To opt in, run ``@pl.kernel`` over
+``mesh=pltpu.TensorCoreMesh(axis_name='core')`` and pass ``core_axis_name`` and
+``dimension_semantics`` to ``pltpu.emit_pipeline`` (or partition manually via
+``jax.lax.axis_index('core')``):
 
 .. code:: python
 
-  pallas_call(
-      ...,
-      compiler_params=pltpu.CompilerParams(
-          dimension_semantics=["parallel", "parallel", "arbitrary"]
-      ),
-    )
+  @pl.kernel(
+      out_type=jax.ShapeDtypeStruct.like(x),
+      mesh=pltpu.TensorCoreMesh(axis_name='core'),
+  )
+  def multicore_kernel(x_hbm, o_hbm):
+    pltpu.emit_pipeline(
+        body,
+        grid=(m_blocks, n_blocks, k_blocks),
+        in_specs=[...],
+        out_specs=...,
+        core_axis_name='core',
+        dimension_semantics=(
+            pltpu.PARALLEL,
+            pltpu.PARALLEL,
+            pltpu.ARBITRARY,
+        ),
+    )(x_hbm, o_hbm)
 
-That parameter is a list, with as many entries as many axes there are in the
-grid. Only ``parallel`` dimensions can be partitioned over cores. As a rule of
-thumb, the dimensions are parallel, unless the output window does not vary.
-As such, ``dimension_semantics`` is always a number of ``parallel`` axes
-followed by a number of ``arbitrary`` axes.
+``dimension_semantics`` is a tuple, with as many entries as many axes there are in the
+grid. Only ``PARALLEL`` dimensions can be partitioned over cores. As a rule of
+thumb, the dimensions are ``PARALLEL``, unless the output window does not vary.
+As such, ``dimension_semantics`` is always a number of ``PARALLEL`` axes
+followed by a number of ``ARBITRARY`` axes.
 
 While partitioning a kernel over a 2-core TPU device often leads to a 2x
 speedup, it can be in fact significantly smaller. This is especially true if
@@ -208,14 +221,32 @@ of alignment requirements!).
 
 The scalar memory is also very useful when implementing kernels that do not
 access the tiles of inputs in a regular pattern, such as when writing
-block-sparse kernels. In Pallas, this can be achieved by replacing the
-``grid`` argument to ``pallas_call`` with a ``grid_spec`` of
-``PrefetchScalarGridSpec`` with a non-zero ``num_scalar_prefetch`` argument.
-If ``num_scalar_prefetch`` is ``n``, then the first ``n`` arguments to
-``pallas_call`` will be placed in SMEM. No ``BlockSpec``\s should be specified
-for those arguments. But, the ``BlockSpec``\s for all subsequent arguments will
-receive not only the grid indices, but also the SMEM references to the leading
-operands.
+block-sparse kernels. In Pallas, allocate an ``SMEM`` buffer via
+``scratch_types`` on ``@pl.kernel``, copy metadata from ``HBM`` into ``SMEM``
+using ``pltpu.sync_copy``, and read from the ``SMEM`` ``Ref`` inside
+``BlockSpec`` ``index_map`` closures passed to ``pltpu.emit_pipeline``:
+
+.. code:: python
+
+  @pl.kernel(
+      out_type=jax.ShapeDtypeStruct((num_blocks * 8, 128), x.dtype),
+      mesh=pltpu.TensorCoreMesh(axis_name='core'),
+      scratch_types=dict(
+          indices_smem=pltpu.SMEM((num_blocks,), jnp.int32),
+      ),
+  )
+  def gather_blocks_kernel(indices_hbm, x_hbm, o_hbm, indices_smem):
+    pltpu.sync_copy(indices_hbm, indices_smem)
+
+    def copy_body(x_vmem, o_vmem):
+      o_vmem[...] = x_vmem[...]
+
+    pltpu.emit_pipeline(
+        copy_body,
+        grid=(num_blocks,),
+        in_specs=[pl.BlockSpec((8, 128), lambda i: (indices_smem[i], 0))],
+        out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+    )(x_hbm, o_hbm)
 
 See :ref:`pallas_scalar_prefetch_guide` for examples on using this
 feature.
