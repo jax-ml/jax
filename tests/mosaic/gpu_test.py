@@ -5806,6 +5806,11 @@ class FragmentedArrayTest(TestCase):
     )
     if dtypes.float8_e5m3fnu in {jax_dtype_from, jax_dtype_to} and not is_sm107f:
       self.skipTest("f8e5m3fnu only supported on sm_107f")
+
+    # In this test we sample numerics from narrower type assuming they are
+    # representable without rounding in the other type.
+    # That holds for f32/bf16 <-> f8e8m0fnu, as f8e8m0fnu is a power-of-two
+    # representable in f32/bf16, but not for f8e8m0fnu <-> other f8 types.
     if from_bitwidth == to_bitwidth == 8 and jnp.float8_e8m0fnu in {
         jax_dtype_from,
         jax_dtype_to,
