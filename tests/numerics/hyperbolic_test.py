@@ -307,7 +307,7 @@ class TanhGradTest(jtu.JaxTestCase):
     # cancellation for large |x| and premature underflow/overflow when 2 * |x|
     # exceeds the normal exponent range.
     bounds = [
-        ("cpu", {bf16: 3.5, f16: 4.5, f32: 6.0, f64: 6.0}),
+        ("cpu", {bf16: 3.5, f16: (4.0, 4.5), f32: 6.0, f64: 6.0}),
         ("gpu", {bf16: 3.5, f16: 4.5, f32: 8.5, f64: 5.0}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 7.5}),
         ("tpu_v5p", {bf16: 0.5, f16: 1.0, f32: 7.5}),

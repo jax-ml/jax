@@ -334,7 +334,7 @@ class LogisticGradTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_logistic_grad_highest_accuracy(self, dtype):
     bounds = [
-        ("cpu", {bf16: 3.5, f16: 4.5, f32: 6.0, f64: 6.0}),
+        ("cpu", {bf16: 3.5, f16: (4.0, 4.5), f32: 6.0, f64: 6.0}),
         ("gpu", {bf16: 3.5, f16: 4.5, f32: 8.5, f64: 4.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 7.5}),
         ("tpu_v5p", {bf16: 0.5, f16: 1.0, f32: 7.5}),
