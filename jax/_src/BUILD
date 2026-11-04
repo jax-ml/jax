@@ -136,6 +136,7 @@ pytype_strict_library(
             ":typing",
             ":util",
             ":xla_bridge",
+            "//jax/_src/lib",
         ],
         if_not_building = [],
     ) + py_deps("numpy"),

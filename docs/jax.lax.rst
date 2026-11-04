@@ -99,6 +99,8 @@ Operators
     expm1
     fft
     floor
+    fma
+    fmuladd
     full
     full_like
     gather

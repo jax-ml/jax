@@ -434,6 +434,10 @@ def pjrt_c_api_version_at_least(major_version: int, minor_version: int) -> bool:
   return pjrt_c_api_versions >= (major_version, minor_version)
 
 def stablehlo_version_at_least(required_version: str) -> bool:
+  if (getattr(xla_bridge.get_backend(), "runtime_type", "") or "").startswith(
+      "proxy/"
+  ):
+    return False
   plugin_version = xla_bridge.backend_stablehlo_version()
   if plugin_version is None:
     return True

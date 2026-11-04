@@ -1037,9 +1037,10 @@ class LoweringRuleContext:
 
     force_forward_compat = False
     if self.module_context.backend is not None:
+      runtime_type = getattr(self.module_context.backend, 'runtime_type', '') or ''
       force_forward_compat = (
-          self.module_context.backend.runtime_type
-          in xb.FORCE_FORWARD_COMPAT_LOWERING_RUNTIMES
+          runtime_type in xb.FORCE_FORWARD_COMPAT_LOWERING_RUNTIMES
+          or runtime_type.startswith('proxy/')
       )
 
     return (
