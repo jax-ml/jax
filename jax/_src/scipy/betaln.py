@@ -208,6 +208,7 @@ def _betaln_pos(
     dv_override: Array | None = None,
     uv_override: Array | None = None,
     absorb_log_uv_m1: Array | bool = False,
+    absorb_log_v: Array | bool = False,
 ) -> Array:
   """Computes betaln(u, v) for strictly positive finite u, v > 0."""
   valid = (u > 0) & (v > 0) & jnp.isfinite(u) & jnp.isfinite(v)
@@ -243,7 +244,10 @@ def _betaln_pos(
       else jnp.where(valid & (v < 8.0), dv_override, 0.0)
   )
   dp_uv = jnp.where(u <= v, du, dv)
-  d_sum = jnp.where(both_near_1, du + dv, 0.0)
+  du_shifted = jnp.where(u_lt_8 < 0.5, u_lt_8, du)
+  dv_shifted = jnp.where(v_lt_8 < 0.5, v_lt_8, dv)
+  du_dv_shifted_sum = du_shifted + dv_shifted
+  d_sum = jnp.where(both_near_1, du_dv_shifted_sum, 0.0)
   q_plus_dp = jnp.where(p_near_1, jnp.where(q < 8.0, q, 1.0) + dp_uv, 1.0)
   uv_base = (
       u_lt_8 + v_lt_8
@@ -278,21 +282,31 @@ def _betaln_pos(
   )
   use_near1_shift = p_near_1 & ~absorb_log_uv_m1
 
-  # For |du|, |dv| < 1e-3, lgamma(1 + du) + lgamma(1 + dv) - lgamma(1 + du + dv)
-  # cancels its linear Euler-Mascheroni terms -gamma * (du + dv) identically,
-  # leaving the series sum_{k>=2} (-1)^k zeta(k)/k * (du^k + dv^k - (du + dv)^k).
-  very_near_1 = both_near_1 & (jnp.abs(du) < 1e-3) & (jnp.abs(dv) < 1e-3)
+  # For tiny |du_shifted|, |dv_shifted|,
+  # lgamma(1 + du_shifted) + lgamma(1 + dv_shifted) - lgamma(1 + du_shifted + dv_shifted)
+  # cancels its linear Euler-Mascheroni terms -gamma * (du_shifted + dv_shifted)
+  # identically, leaving sum_{k>=2} (-1)^k zeta(k)/k * (du^k + dv^k - (du + dv)^k).
+  d_shifted_sum = jnp.where(
+      (q < 8.0) & ~absorb_log_uv_m1, du_dv_shifted_sum, 0.0
+  )
+  very_near_1_thresh = _lax_const(u, 1e-3 if u.dtype == np.float64 else 2.5e-4)
+  very_near_1 = (
+      (q < 8.0)
+      & ~absorb_log_uv_m1
+      & (jnp.abs(du_shifted) < very_near_1_thresh)
+      & (jnp.abs(dv_shifted) < very_near_1_thresh)
+  )
   pi2_over_6 = _lax_const(u, math.pi * math.pi / 6.0)
   zeta3 = _lax_const(u, 1.2020569031595942)
-  du_tiny = jnp.where(very_near_1, du, 0.0)
-  dv_tiny = jnp.where(very_near_1, dv, 0.0)
+  du_tiny = jnp.where(very_near_1, du_shifted, 0.0)
+  dv_tiny = jnp.where(very_near_1, dv_shifted, 0.0)
   du_dv = du_tiny * dv_tiny
   if u.dtype == np.float64:
     half_zeta4 = _lax_const(u, math.pi**4 / 180.0)
     zeta5 = _lax_const(u, 1.0369277551433699)
     zeta6 = _lax_const(u, math.pi**6 / 945.0)
-    s_d2 = lax.square(d_sum)
-    pos_terms = du_dv * (d_sum * (zeta3 + zeta5 * (s_d2 - du_dv)))
+    s_d2 = lax.square(d_shifted_sum)
+    pos_terms = du_dv * (d_shifted_sum * (zeta3 + zeta5 * (s_d2 - du_dv)))
     neg_terms = du_dv * (
         pi2_over_6
         + half_zeta4 * (2.0 * s_d2 - du_dv)
@@ -300,7 +314,7 @@ def _betaln_pos(
         * (s_d2 * (s_d2 - 1.5 * du_dv) + (1.0 / 3.0) * lax.square(du_dv))
     )
   else:
-    pos_terms = du_dv * (d_sum * zeta3)
+    pos_terms = du_dv * (d_shifted_sum * zeta3)
     neg_terms = du_dv * pi2_over_6
   lg_comb = jnp.where(
       very_near_1,
@@ -356,22 +370,24 @@ def _betaln_pos(
       ),
       accuracy=AccuracyMode.HIGHEST,
   )
+  need_v_log_shift = need_uv_log_shift & (v_lt_8 < 0.5) & ~absorb_log_v
   log2_val = lax.log(
       jnp.where(
           p >= 8.0,
           jnp.where(h_hi < 0.0625, h_asym, v_sym),
-          jnp.where(need_uv_log_shift & (v_lt_8 < 0.5), v_lt_8, 1.0),
+          jnp.where(need_v_log_shift, v_lt_8, 1.0),
       ),
       accuracy=AccuracyMode.HIGHEST,
   )
   log_u_shift = jnp.where(u_lt_8 < 0.5, log1_val, 0.0)
-  log_v_shift = jnp.where(v_lt_8 < 0.5, log2_val, 0.0)
+  log_v_shift = jnp.where(need_v_log_shift, log2_val, 0.0)
 
   # Regime 3: p < 8 <= q.
   # Decompose p = m_p * 2^e_p and q = m_q * 2^e_q with m_p, m_q in [0.75, 1.5)
   # and split p_mid = p_hi + p_lo so k_hi = e_p + p_hi * e_q cancels e_p against
   # p * e_q exactly before multiplying by log(2) when p < 0.5.
   use_p_shift = in_mid & (p < 0.5) & ~absorb_in_mid
+  use_p_exp_shift = use_p_shift & ~absorb_log_v
   p_pos_mid = jnp.where(use_p_shift, p, 1.0)
   q_mid = jnp.where(in_mid, q_large, 8.0)
   p_small_thresh = _lax_const(u, 0.03125 if u.dtype == np.float64 else 0.0625)
@@ -412,7 +428,7 @@ def _betaln_pos(
     ln2_hi = _lax_const(u, 0.693145751953125)
     ln2_lo = _lax_const(u, 1.428606765330187e-06)
   p_lo = p_mid - p_hi
-  k_hi = jnp.where(use_p_shift, e_p, 0.0) + p_hi * e_q
+  k_hi = jnp.where(use_p_exp_shift, e_p, 0.0) + p_hi * e_q
   k_lo = p_lo * e_q
 
   l1p1_val = lax.log1p(
@@ -421,7 +437,7 @@ def _betaln_pos(
           jnp.where(use_near1_shift, near1_arg, 0.0),
           jnp.where(
               p < 8.0,
-              jnp.where(use_p_shift, m_p - 1.0, 0.0),
+              jnp.where(use_p_exp_shift, m_p - 1.0, 0.0),
               v_sym_s / u_sym_s,
           ),
       ),
@@ -436,7 +452,7 @@ def _betaln_pos(
       accuracy=AccuracyMode.HIGHEST,
   )
   log_near1_shift = jnp.where(use_near1_shift, l1p1_val, 0.0)
-  log_mp = jnp.where(use_p_shift, l1p1_val, 0.0)
+  log_mp = jnp.where(use_p_exp_shift, l1p1_val, 0.0)
   log_mq = l1p2_val
 
   # Regime 1 (q < 0.5) & Regime 2 (0.5 <= q < 8):
@@ -484,24 +500,23 @@ def _betaln_pos(
   return jnp.where(q < 8.0, res_q_lt_8, res_q_ge_8)
 
 
-def _log_abs_sinpi_reduced(d: Array) -> tuple[Array, Array]:
-  """Computes (log(|sin(pi * d)|), |sin(pi * d)|) for reduced d in [-0.5, 0.5]."""
+def _log_abs_sinpi_reduced(d: Array) -> tuple[Array, Array, Array]:
+  """Computes (log(|sin(pi * d)|), |sin(pi * d)|, sin_corr) for reduced d in [-0.5, 0.5]."""
   d_safe = jnp.where(d == 0, 0.5, d)
   abs_d = jnp.abs(d_safe)
   # For tiny |d|, sin(pi * d) = pi * d * (1 - (pi * d)^2 / 6 + ...), avoiding
   # subnormal underflow of pi * d near the float underflow threshold.
-  pi_d2 = lax.square(np.pi * d_safe)
+  # Use d (not d_safe) for sin_corr so subnormal ds that flushes to 0 yields
+  # sin_corr == 0 instead of evaluating at 0.5.
+  pi_d2 = lax.square(np.pi * d)
+  sin_corr = pi_d2 * (1.0 / 6.0 + pi_d2 / 180.0)
   abs_sin = jnp.abs(lax.sinpi(d_safe))
   log_val = lax.log(
       jnp.where(abs_d < 1e-4, abs_d, abs_sin),
       accuracy=AccuracyMode.HIGHEST,
   )
-  small = (
-      _lax_const(d, math.log(math.pi))
-      + log_val
-      - pi_d2 * (1.0 / 6.0 + pi_d2 / 180.0)
-  )
-  return jnp.where(abs_d < 1e-4, small, log_val), abs_sin
+  small = _lax_const(d, math.log(math.pi)) + log_val - sin_corr
+  return jnp.where(abs_d < 1e-4, small, log_val), abs_sin, sin_corr
 
 
 @jit
@@ -586,9 +601,11 @@ def _betaln(a: Array, b: Array) -> Array:
   int_pole_cancels = p_is_int & q_is_int & (q_f > 0) & (s_f <= 0)
 
   log_pi = _lax_const(a_f, math.log(math.pi))
-  log_sin_p, abs_sin_p = _log_abs_sinpi_reduced(jnp.where(p_f < 0, dp, 0.5))
-  log_sin_q, _ = _log_abs_sinpi_reduced(jnp.where(q_f < 0, dq, 0.5))
-  log_sin_s, abs_sin_s = _log_abs_sinpi_reduced(
+  log_sin_p, abs_sin_p, dp_sin_corr = _log_abs_sinpi_reduced(
+      jnp.where(p_f < 0, dp, 0.5)
+  )
+  log_sin_q, _, _ = _log_abs_sinpi_reduced(jnp.where(q_f < 0, dq, 0.5))
+  log_sin_s, abs_sin_s, ds_sin_corr = _log_abs_sinpi_reduced(
       jnp.where((p_f < 0) & ((q_f < 0) | (s_f < 0.5)), ds, 0.5)
   )
 
@@ -597,16 +614,30 @@ def _betaln(a: Array, b: Array) -> Array:
   # so log(pi) and the common exponent cancel before taking the logarithm.
   # When both |dp| >= 1e-4 and |ds| >= 1e-4, take a single logarithm of
   # |sin(pi * ds)| / |sin(pi * dp)| to avoid subtracting two logarithms.
+  # When q_f < 0.5 and |sin(pi * ds)| < |sin(pi * dp)|, also fold 1 / q_f into
+  # the ratio before taking the logarithm so -log(q_f) in _betaln_pos does not
+  # cancel against log(|sin(pi * ds) / sin(pi * dp)|).
   min_den = _lax_const(a_f, 1e-100 if a_f.dtype == np.float64 else 1e-15)
+  min_absorb_q = _lax_const(
+      a_f, 2.0**-106 if a_f.dtype == np.float64 else 2.0**-48
+  )
   abs_ds_s = jnp.abs(ds_scaled)
   abs_dp_s = jnp.abs(dp_scaled)
   use_ratio_sp = mixed_s_lt_half & ~int_pole_cancels
   both_d_tiny = (
       use_ratio_sp
-      & (d_max < 1e-4)
+      & (jnp.abs(dp) < 1e-4)
+      & (jnp.abs(ds) < 1e-4)
       & (r_d == 0)
       & (abs_dp_s >= min_den)
       & (abs_ds_s >= min_den)
+  )
+  ds_only_tiny = (
+      use_ratio_sp
+      & ~both_d_tiny
+      & (jnp.abs(dp) >= 1e-4)
+      & (jnp.abs(ds) < 1e-4)
+      & (jnp.abs(ds) >= min_den)
   )
   both_d_normal = (
       use_ratio_sp
@@ -614,16 +645,28 @@ def _betaln(a: Array, b: Array) -> Array:
       & (jnp.abs(dp) >= 1e-4)
       & (jnp.abs(ds) >= 1e-4)
   )
-  ratio_sp = jnp.where(
+  ratio_sp_num = jnp.where(
       both_d_tiny,
-      jnp.where(both_d_tiny, abs_ds_s, 1.0)
-      / jnp.where(both_d_tiny, abs_dp_s, 1.0),
+      abs_ds_s,
       jnp.where(
-          both_d_normal,
-          jnp.where(both_d_normal, abs_sin_s, 1.0)
-          / jnp.where(both_d_normal, abs_sin_p, 1.0),
-          1.0,
+          ds_only_tiny,
+          np.pi * jnp.abs(ds),
+          jnp.where(both_d_normal, abs_sin_s, 1.0),
       ),
+  )
+  ratio_sp_den = jnp.where(
+      both_d_tiny,
+      abs_dp_s,
+      jnp.where(ds_only_tiny | both_d_normal, abs_sin_p, 1.0),
+  )
+  absorb_log_v = (
+      (both_d_tiny | ds_only_tiny | both_d_normal)
+      & (q_f < 0.5)
+      & (q_f >= min_absorb_q)
+      & (ratio_sp_num < ratio_sp_den)
+  )
+  ratio_sp = ratio_sp_num / jnp.where(
+      absorb_log_v, ratio_sp_den * q_f, ratio_sp_den
   )
 
   # Route all sign/reflection regimes into a single _betaln_pos(u, v) call:
@@ -694,6 +737,7 @@ def _betaln(a: Array, b: Array) -> Array:
       dv_override=dv_override,
       uv_override=uv_override,
       absorb_log_uv_m1=absorb_log_uv_m1,
+      absorb_log_v=absorb_log_v,
   )
 
   p_uv = jnp.where(u <= v, u, v)
@@ -706,10 +750,15 @@ def _betaln(a: Array, b: Array) -> Array:
   shared_log_arg = jnp.where(need_log_uv_m1, uv_m1_rem, ratio_sp)
   shared_log_val = lax.log(shared_log_arg, accuracy=AccuracyMode.HIGHEST)
   log_uv_m1_rem = jnp.where(need_log_uv_m1, shared_log_val, 0.0)
-  log_sin_ratio_sp = jnp.where(
+  sin_ratio_corr = jnp.where(
       both_d_tiny,
-      shared_log_val - (np.pi * np.pi / 6.0) * (lax.square(ds) - lax.square(dp)),
-      jnp.where(both_d_normal, shared_log_val, log_sin_s - log_sin_p),
+      ds_sin_corr - dp_sin_corr,
+      jnp.where(ds_only_tiny, ds_sin_corr, 0.0),
+  )
+  log_sin_ratio_sp = jnp.where(
+      both_d_tiny | ds_only_tiny | both_d_normal,
+      shared_log_val - sin_ratio_corr,
+      log_sin_s - log_sin_p,
   )
 
   res_neg_qpos_s_lt_half = base_pos + jnp.where(
