@@ -109,7 +109,7 @@ jax_multiplatform_test(
     name = "exp_test",
     srcs = ["exp_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 4,
+    shard_count = 5,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",

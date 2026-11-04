@@ -1494,6 +1494,61 @@ def check_unary_precision(
   )
 
 
+def check_precision_at_points(
+    test_case,
+    jax_fn: Callable,
+    mpmath_fn: Callable,
+    *args: jax.Array,
+    max_ulp: float,
+    input_ftz: bool | None = None,
+    output_ftz: bool | None = None,
+):
+  """Asserts `jax_fn(*args)` is within `max_ulp` of `mpmath_fn(*args)` elementwise.
+
+  Args:
+    test_case: The `jtu.JaxTestCase` instance running the test.
+    jax_fn: The JAX function under test, vectorized to accept array inputs.
+    mpmath_fn: The scalar `mpmath` reference function.
+    *args: Array inputs to `jax_fn`, all of the same shape and floating-point
+      dtype. `mpmath_fn` is evaluated elementwise over the zipped flattened
+      elements of these arrays.
+    max_ulp: The maximum allowed real ULP distance between the computed JAX
+      output and the `mpmath` reference.
+    input_ftz: Whether to flush subnormal inputs to zero before evaluating
+      `mpmath_fn`. Defaults to False for float16 and True for other dtypes.
+    output_ftz: Whether to flush subnormal outputs to zero when computing ULP
+      distances. Defaults to False for float16 and True for other dtypes.
+  """
+  res = np.asarray(jax_fn(*args))
+  dtype = res.dtype.type
+  is_f64 = dtype == np.float64
+  in_dtype = args[0].dtype.type if args else dtype
+  np_args = [np.asarray(a).ravel() for a in args]
+  with mpmath.extraprec(80):
+    ref = np.array(
+        [
+            eval_mpmath(
+                mpmath_fn,
+                *(v.item() for v in vals),
+                dtype=in_dtype,
+                input_ftz=input_ftz,
+            )
+            for vals in zip(*np_args)
+        ],
+        dtype=object if is_f64 else np.float64,
+    ).reshape(res.shape)
+  ulps = ulp_diff(res, ref, dtype, ftz=output_ftz)
+  max_diff = float(np.max(ulps))
+  if max_diff > max_ulp or np.isnan(max_diff):
+    idx = int(np.nanargmax(ulps) if not np.all(np.isnan(ulps)) else 0)
+    pt = tuple(a[idx].item() for a in np_args)
+    pt_str = pt[0] if len(pt) == 1 else pt
+    test_case.fail(
+        f"ULP error {max_diff} exceeds bound {max_ulp} at input {pt_str}: "
+        f"computed {res.ravel()[idx]}, reference {ref.ravel()[idx]}"
+    )
+
+
 def register_benchmark(
     jax_fn: Callable,
     *,

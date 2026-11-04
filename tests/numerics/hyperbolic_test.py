@@ -303,15 +303,16 @@ class TanhGradTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_tanh_grad_highest_accuracy(self, dtype):
     # With accuracy=AccuracyMode.HIGHEST, grad(tanh)(x) is evaluated as
-    # 4 * logistic(2 * x) * logistic(-2 * x). On CPU/TPU in FTZ mode (bf16/f32),
-    # the intermediate logistic(-2 * |x|) flushes to 0.0 before multiplying by 4
-    # once 2 * |x| >= -ln(tiny) (|x| >= 43.67), while the true derivative is
-    # still normal. In float16 on CPU/GPU, exp(2 * |x|) overflows for
-    # |x| >= 5.55 while the true derivative is subnormal (~1020.5 ULPs).
+    # (2 * exp(-|x|) / (1 + exp(-2 * |x|)))^2, avoiding both 1 - tanh(x)^2
+    # cancellation for large |x| and premature underflow/overflow when 2 * |x|
+    # exceeds the normal exponent range.
     bounds = [
-        ("cpu", {bf16: 154.0, f16: 1020.5, f32: 12020967.5, f64: 3.0}),
-        ("gpu", {bf16: 3.5, f16: 1020.5, f32: 4.5, f64: 3.0}),
-        ("tpu", {bf16: 154.0, f16: 1.0, f32: 12020967.5}),
+        ("cpu", {bf16: 3.5, f16: 4.5, f32: 6.0, f64: 6.0}),
+        ("gpu", {bf16: 3.5, f16: 4.5, f32: 8.5, f64: 5.0}),
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 7.5}),
+        ("tpu_v5p", {bf16: 0.5, f16: 1.0, f32: 7.5}),
+        ("tpu_v6e", {bf16: 0.5, f16: 1.0, f32: 8.0}),
+        ("tpu_7x", {bf16: 63.0, f16: 1.0, f32: 8.0}),
     ]
     util.check_unary_precision(
         self,
@@ -322,6 +323,55 @@ class TanhGradTest(jtu.JaxTestCase):
         bounds=bounds,
         interesting_points=_tanh_interesting_points(dtype),
     )
+
+  @parameterized.named_parameters(("_float32", f32), ("_float64", f64))
+  def test_tanh_higher_order_highest_accuracy(self, dtype):
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    f = lambda x: lax.tanh(x, accuracy=lax.AccuracyMode.HIGHEST)
+    d2_fn = jax.jit(jax.vmap(jax.grad(jax.grad(f))))
+    d3_fn = jax.jit(jax.vmap(jax.grad(jax.grad(jax.grad(f)))))
+
+    # Include tiny non-zero x (where logistic(-2x) - logistic(2x) previously
+    # cancelled 0.5 - 0.5 to 0.0) and large |x| where tanh(x) saturates to +-1.
+    x_tiny = 1e-8 if dtype == f32 else 1e-17
+    x_tail = 15.0 if dtype == f32 else 30.0
+    xs = jnp.array(
+        [-x_tail, -2.0, -x_tiny, 0.0, x_tiny, 2.0, x_tail], dtype=dtype
+    )
+
+    def mp_d2(v):
+      t = mpmath.tanh(v)
+      s = 1 / mpmath.cosh(v) ** 2
+      return -2 * t * s
+
+    def mp_d3(v):
+      t = mpmath.tanh(v)
+      s = 1 / mpmath.cosh(v) ** 2
+      return -2 * s * (s - 2 * t * t)
+
+    util.check_precision_at_points(self, d2_fn, mp_d2, xs, max_ulp=8.0)
+    util.check_precision_at_points(self, d3_fn, mp_d3, xs, max_ulp=16.0)
+    infs = jnp.array([-jnp.inf, jnp.inf], dtype=dtype)
+    self.assertArraysEqual(d2_fn(infs), jnp.zeros_like(infs))
+    self.assertArraysEqual(d3_fn(infs), jnp.zeros_like(infs))
+
+  @parameterized.named_parameters(
+      ("_complex64", jnp.complex64), ("_complex128", jnp.complex128)
+  )
+  def test_tanh_complex_grad_highest_accuracy(self, dtype):
+    if dtype == jnp.complex128 and jtu.device_under_test() == "tpu":
+      self.skipTest("complex128/float64 on TPU is ef57 double-double")
+    f = lambda x: lax.tanh(x, accuracy=lax.AccuracyMode.HIGHEST)
+    xs = jnp.array(
+        [-2.0 + 0.5j, -0.1 - 0.3j, 0.1 + 0.3j, 2.0 - 0.5j], dtype=dtype
+    )
+    jtu.check_grads(f, (xs,), order=2, modes=["fwd", "rev"])
+    # Also verify large |Re(x)| doesn't produce NaNs from overflow.
+    x_tail = 15.0 if dtype == jnp.complex64 else 30.0
+    xs_tail = jnp.array([-x_tail + 1j, x_tail + 1j], dtype=dtype)
+    _, jvps = jax.jvp(f, (xs_tail,), (jnp.ones_like(xs_tail),))
+    self.assertAllClose(jvps, jnp.zeros_like(jvps), atol=1e-10)
 
 
 @jtu.thread_unsafe_test_class()

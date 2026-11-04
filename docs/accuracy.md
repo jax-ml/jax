@@ -89,6 +89,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.log2` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.log2` (`highest`) | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.logistic` | 2.5 | 2.5 | 1.0 | 1.0 | 0.5 | 63.0 |
+| {func}`~jax.lax.logistic` (`highest`) | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 63.0 |
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.sin` | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
@@ -145,6 +146,7 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.lax.log2` | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.log2` (`highest`) | 0.5 | 0.5 | 0.5 | 0.5 | 1.0 | 1.0 |
 | {func}`~jax.lax.logistic` | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.logistic` (`highest`) | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.sin` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
@@ -203,6 +205,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.log2` | 0.5 | 1.0 | 5159.0 | 56.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.log2` (`highest`) | 0.5 | 1.0 | 3.0 | 3.0 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.logistic` | 2.5 | 4.0 | 243.0 | 124.0 | 65.5 | 64.0 | |
+| {func}`~jax.lax.logistic` (`highest`) | 2.5 | 4.0 | 4.0 | 3.5 | 4.0 | 4.0 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.reciprocal` | 0.5 | 1.0 | 198.0 | 40.0 | 1.5 | 1.5 | |
 | {func}`~jax.lax.rsqrt` | 1.0 | 2.0 | 2.5 | 2.5 | 1.5 | 1.0 | |
 | {func}`~jax.lax.sin` | 0.5 | 1.5 | 3.5 | 3.5 | 3.5 | 3.5 | |
@@ -264,6 +267,7 @@ these are empirical bounds.
 | {func}`~jax.lax.log1p` | 2.0 | 1.5 |
 | {func}`~jax.lax.log2` | 0.5 | 1.5 |
 | {func}`~jax.lax.logistic` | 3.5 | 4.5 |
+| {func}`~jax.lax.logistic` (`highest`) | 2.5 | 2.5 |
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 1.5 | 1.5 |
 | {func}`~jax.lax.sin` | 0.5 | 2.5 |

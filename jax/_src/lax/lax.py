@@ -5077,15 +5077,39 @@ ad.defjvp(log1p_p, lambda g, x, **kwargs: div(g, add(x, _one(x))))
 mlir.register_lowering(log1p_p, partial(_nary_lower_hlo, hlo.log_plus_one))
 core.pp_eqn_rules[log1p_p] = _unary_with_accuracy_pp_rule
 
+@custom_jvp
+def _tanh_sech2(x: Array) -> tuple[Array, Array]:
+  """Returns `(tanh(x), sech^2(x))` with a closed JVP.
+
+  Evaluating `sech^2(x)` as `(2 * exp(-|x|) / (1 + exp(-2 * |x|)))^2` avoids
+  losing accuracy in `1 - tanh(x)^2` for large `|x|` and avoids premature
+  overflow or underflow when `2 * |x|` is out of range. Using a custom JVP
+  with `t' = s` and `s' = -2 * t * s` avoids subtracting nearly equal terms
+  in higher derivatives near `x = 0` and for large `|x|`.
+  """
+  x = asarray(x)
+  t = tanh(x, accuracy=AccuracyMode.HIGHEST)
+  if _iscomplex(x):
+    neg_x = select(ge(real(x), _const(real(x), 0)), neg(x), x)
+  else:
+    neg_x = neg(abs(x))
+  e = exp(neg_x, accuracy=AccuracyMode.HIGHEST)
+  sech = div(mul(_const(x, 2), e), add(_const(x, 1), square(e)))
+  return t, square(sech)
+
+
+@_tanh_sech2.defjvp
+def _tanh_sech2_jvp(primals, tangents):
+  (x,), (x_dot,) = primals, tangents
+  t, s = _tanh_sech2(x)
+  s_dot = mul(s, x_dot)
+  return (t, s), (s_dot, mul(mul(_const(t, -2), t), s_dot))
+
+
 tanh_p = standard_unop(_float | _complex, 'tanh')
 ad.defjvp2(
     tanh_p,
-    lambda g, ans, x, accuracy: mul(g,
-        mul(_const(x, 4),
-            mul(logistic(mul(_const(x, 2), x), accuracy=accuracy),
-                logistic(mul(_const(x, -2), x), accuracy=accuracy)),
-        ),
-    )
+    lambda g, ans, x, accuracy: mul(g, _tanh_sech2(x)[1])
     if accuracy is AccuracyMode.HIGHEST
     else mul(g, one_minus_square(ans)),
 )
@@ -5095,15 +5119,25 @@ core.pp_eqn_rules[tanh_p] = _unary_with_accuracy_pp_rule
 logistic_p = standard_unop(_float | _complex, 'logistic')
 ad.defjvp2(
     logistic_p,
-    lambda g, ans, x, accuracy: mul(g, mul(ans, logistic(neg(x))))
+    lambda g, ans, x, accuracy: mul(
+        g, mul(_const(x, 0.25), _tanh_sech2(mul(_const(x, 0.5), x))[1])
+    )
     if accuracy is AccuracyMode.HIGHEST
     else mul(g, mul(ans, sub(_one(ans), ans))),
 )
 core.pp_eqn_rules[logistic_p] = _unary_with_accuracy_pp_rule
 
 def logistic_impl(x, accuracy):
-  del accuracy
   one = _const(x, 1)
+  if accuracy is AccuracyMode.HIGHEST and dtypes.issubdtype(x.dtype, np.floating):
+    # For x < 0, 1 / (1 + exp(-x)) loses accuracy when adding 1 to exp(-x)
+    # and overflows exp(-x) to inf (yielding 0) well before logistic(x)
+    # underflows. Computing e = exp(-|x|) keeps the exponent non-positive so
+    # exp never overflows, and selects 1 / (1 + e) for x >= 0 and e / (1 + e)
+    # for x < 0.
+    e = exp(neg(abs(x)), accuracy=accuracy)
+    one_plus_e = add(one, e)
+    return select(ge(x, _const(x, 0)), div(one, one_plus_e), div(e, one_plus_e))
   return div(one, add(one, exp(neg(x))))
 mlir.register_lowering(logistic_p,
                        mlir.lower_fun(logistic_impl, multiple_results=False))
