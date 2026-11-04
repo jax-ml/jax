@@ -1570,7 +1570,7 @@ jax_multiplatform_test(
     },
     shard_count = {
         "cpu": 20,
-        "gpu": 20,
+        "gpu": 30,
         "tpu": 30,
     },
     deps = py_deps([
