@@ -208,6 +208,9 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
   options['allocator'] = allocator
   if memory_fraction:
     options['memory_fraction'] = float(memory_fraction)
+  else:
+    # Keep the initial reservation at 75%, but let the spatial BFC pool grow.
+    options['memory_fraction_policy'] = '0.75+'
   if preallocate:
     options['preallocate'] = preallocate not in ('false', 'False', '0')
   if collective_memory_size:

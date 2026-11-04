@@ -30,6 +30,77 @@ config.parse_flags_with_absl()
 mock = absltest.mock
 
 
+class GpuPluginOptionsTest(absltest.TestCase):
+
+  def test_default_memory_fraction_policy(self):
+    for env in (
+        {},
+        {"XLA_CLIENT_MEM_FRACTION": "", "XLA_PYTHON_CLIENT_MEM_FRACTION": ""},
+    ):
+      with self.subTest(env=env), mock.patch.dict(os.environ, env, clear=True):
+        options = xc.generate_pjrt_gpu_plugin_options()
+        self.assertEqual(options["memory_fraction_policy"], "0.75+")
+        self.assertNotIn("memory_fraction", options)
+
+  def test_explicit_memory_fraction(self):
+    for name in ("XLA_CLIENT_MEM_FRACTION", "XLA_PYTHON_CLIENT_MEM_FRACTION"):
+      for fraction in ("0.5", "0.75", "0.9"):
+        with self.subTest(name=name, fraction=fraction):
+          with mock.patch.dict(os.environ, {name: fraction}, clear=True):
+            options = xc.generate_pjrt_gpu_plugin_options()
+          self.assertEqual(options["memory_fraction"], float(fraction))
+          self.assertNotIn("memory_fraction_policy", options)
+
+  def test_deprecated_fraction_with_empty_current_fraction(self):
+    env = {
+        "XLA_CLIENT_MEM_FRACTION": "",
+        "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.5",
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+      options = xc.generate_pjrt_gpu_plugin_options()
+    self.assertEqual(options["memory_fraction"], 0.5)
+    self.assertNotIn("memory_fraction_policy", options)
+
+  def test_conflicting_memory_fractions(self):
+    env = {
+        "XLA_CLIENT_MEM_FRACTION": "0.75",
+        "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.75",
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+      with self.assertRaisesRegex(ValueError, "specified together"):
+        xc.generate_pjrt_gpu_plugin_options()
+
+  def test_explicit_preallocation(self):
+    for value, expected in (
+        ("false", False), ("False", False), ("0", False), ("true", True)
+    ):
+      with self.subTest(value=value):
+        with mock.patch.dict(
+            os.environ, {"XLA_PYTHON_CLIENT_PREALLOCATE": value}, clear=True):
+          options = xc.generate_pjrt_gpu_plugin_options()
+        self.assertEqual(options["memory_fraction_policy"], "0.75+")
+        self.assertEqual(options["preallocate"], expected)
+
+  def test_explicit_allocator(self):
+    for allocator in (
+        "default", "bfc", "platform", "cuda_async", "vmm", "address"
+    ):
+      with self.subTest(allocator=allocator):
+        with mock.patch.dict(
+            os.environ, {"XLA_PYTHON_CLIENT_ALLOCATOR": allocator}, clear=True):
+          options = xc.generate_pjrt_gpu_plugin_options()
+        self.assertEqual(options["allocator"], allocator)
+        self.assertEqual(options["memory_fraction_policy"], "0.75+")
+
+  def test_explicit_xla_flags_are_preserved(self):
+    flags = "--xla_gpu_memory_fraction_policy=0.5"
+    with mock.patch.dict(os.environ, {"XLA_FLAGS": flags}, clear=True):
+      options = xc.generate_pjrt_gpu_plugin_options()
+      self.assertEqual(os.environ["XLA_FLAGS"], flags)
+    # XLA resolves its explicit flag ahead of the client policy.
+    self.assertEqual(options["memory_fraction_policy"], "0.75+")
+
+
 class XlaBridgeTest(jtu.JaxTestCase):
 
   def test_set_device_assignment_no_partition(self):

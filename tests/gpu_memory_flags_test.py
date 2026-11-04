@@ -44,7 +44,16 @@ class GpuMemoryAllocationTest(absltest.TestCase):
 
     mem_stats = device.memory_stats()
     if preallocate:
-      self.assertEqual(mem_stats["pool_bytes"], mem_stats["bytes_limit"])
+      memory_fraction = os.environ.get("XLA_CLIENT_MEM_FRACTION") or os.environ.get(
+          "XLA_PYTHON_CLIENT_MEM_FRACTION")
+      if memory_fraction:
+        self.assertEqual(mem_stats["pool_bytes"], mem_stats["bytes_limit"])
+      else:
+        # The initial reservation is rounded up from 75%, while bytes_limit
+        # includes the capacity available for subsequent growth.
+        self.assertGreaterEqual(
+            mem_stats["pool_bytes"], 0.75 * mem_stats["bytes_limit"])
+        self.assertLess(mem_stats["pool_bytes"], mem_stats["bytes_limit"])
     else:
       self.assertLessEqual(
           mem_stats["pool_bytes"], mem_stats["bytes_limit"] // 2
