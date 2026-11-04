@@ -656,6 +656,47 @@ def MosaicGPU_VectorStoreOp : Op<MosaicGPU_Dialect, "vector_store",
   let hasVerifier = 1;
 }
 
+def MosaicGPU_CumulativeReductionKind : I32EnumAttr<"CumulativeReductionKind",
+    "Combining operation for a cumulative reduction.",
+    [
+      I32EnumAttrCase<"Add", 0, "add">,
+      I32EnumAttrCase<"Mul", 1, "mul">,
+      I32EnumAttrCase<"MaxSI", 2, "maxsi">,
+      I32EnumAttrCase<"MaxUI", 3, "maxui">,
+      I32EnumAttrCase<"MaximumF", 4, "maximumf">,
+      I32EnumAttrCase<"MinSI", 5, "minsi">,
+      I32EnumAttrCase<"MinUI", 6, "minui">,
+      I32EnumAttrCase<"MinimumF", 7, "minimumf">,
+      I32EnumAttrCase<"LogAddExp", 8, "logaddexp">
+    ]>{
+  let cppNamespace = "::mosaic_gpu";
+}
+
+def MosaicGPU_CumulativeReductionOp : Op<MosaicGPU_Dialect, "cumulative_reduction",
+      [Pure, SameOperandsAndResultType]> {
+  let summary = "Computes an inclusive cumulative reduction along a dimension.";
+  let description = [{
+    Cumulatively reduces `source` along `dimension`, combining elements with
+    `kind`. The result has the same shape, element type and layout as `source`.
+    For integer min/max, `kind` selects signed or unsigned comparison.
+
+    If `reverse` is true, the reduction runs from the highest index along
+    `dimension` to the lowest, so element i accumulates elements i..n-1 instead
+    of 0..i.
+  }];
+
+  let arguments = (ins
+    AnyFixedVectorOfNonZeroRank:$source,
+    MosaicGPU_CumulativeReductionKind:$kind,
+    I64Attr:$dimension,
+    DefaultValuedAttr<BoolAttr, "false">:$reverse
+  );
+
+  let results = (outs AnyFixedVectorOfNonZeroRank:$result);
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_AsyncStoreSmemOp : Op<MosaicGPU_Dialect, "async_store_smem",
       [MemoryEffects<[MemWrite]>]> {
   let summary = "Issues an async store of a vector from registers to SMEM of a block in a cluster";
