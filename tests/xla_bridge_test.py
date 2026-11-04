@@ -23,6 +23,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import _profiler
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 
 config.parse_flags_with_absl()
@@ -31,6 +32,11 @@ mock = absltest.mock
 
 
 class GpuPluginOptionsTest(absltest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if jaxlib_extension_version < 516:
+      self.skipTest("Requires jaxlib_extension_version >= 516")
 
   def test_default_memory_fraction_policy(self):
     for env in (

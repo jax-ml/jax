@@ -19,6 +19,7 @@ from absl.testing import absltest
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 
 config.parse_flags_with_absl()
 
@@ -46,7 +47,7 @@ class GpuMemoryAllocationTest(absltest.TestCase):
     if preallocate:
       memory_fraction = os.environ.get("XLA_CLIENT_MEM_FRACTION") or os.environ.get(
           "XLA_PYTHON_CLIENT_MEM_FRACTION")
-      if memory_fraction:
+      if memory_fraction or jaxlib_extension_version < 516:
         self.assertEqual(mem_stats["pool_bytes"], mem_stats["bytes_limit"])
       else:
         # The initial reservation is rounded up from 75%, while bytes_limit
