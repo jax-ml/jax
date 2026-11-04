@@ -529,6 +529,21 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     expected = dtype(np.pi if fun == "ppf" else -np.pi)
     self.assertAllClose(jax.grad(lax_fun)(dtype(0.5)), expected)
 
+  @jtu.sample_product(fun=["cdf", "logcdf", "sf", "logsf"], dtype=jtu.dtypes.floating)
+  def testCauchyCdfEdgeCases(self, fun, dtype):
+    tail = 10 / np.finfo(dtype).eps
+    x = np.array([-np.inf, -tail, -1.0, 0.0, 1.0, tail, np.inf, np.nan], dtype)
+    scipy_fun = getattr(osp_stats.cauchy, fun)
+    lax_fun = getattr(lsp_stats.cauchy, fun)
+    rtol = {np.float32: 3e-4} if jtu.test_device_matches(["tpu"]) else None
+    self.assertAllClose(
+      lax_fun(x), scipy_fun(x.astype(np.float64)), check_dtypes=False, rtol=rtol, atol=0
+    )
+    self.assertTrue(np.isnan(lax_fun(dtype(0.5), scale=dtype(-1.0))))
+    self.assertAllClose(
+      jax.grad(lsp_stats.cauchy.logcdf)(dtype(0.0)), dtype(2 / np.pi)
+    )
+
   @jtu.sample_product(
     shapes=[
       [x_shape, alpha_shape]

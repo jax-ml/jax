@@ -186,7 +186,7 @@ jax_multiplatform_test(
     name = "trig_test",
     srcs = ["trig_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 13,
+    shard_count = 18,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",

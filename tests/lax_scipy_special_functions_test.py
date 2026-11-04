@@ -2349,6 +2349,26 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertFalse(np.any(np.isnan(ga[2:])))
     self.assertFalse(np.any(np.isnan(gb[2:])))
 
+  @jtu.sample_product(dtype=float_dtypes)
+  @jax.numpy_dtype_promotion("standard")
+  def test_owens_t_h_zero(self, dtype):
+    a = np.array([-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0], dtype=dtype)
+    actual = lsp_special.owens_t(dtype(0.0), a)
+    self.assertAllClose(
+        actual,
+        osp_special.owens_t(0.0, a.astype(np.float64)),
+        check_dtypes=False,
+        rtol=2 * np.finfo(dtype).eps,
+        atol=0,
+    )
+    self.assertAllClose(
+        actual[1::2],
+        np.array([-0.125, 0.0, 0.125]),
+        check_dtypes=False,
+        rtol=0,
+        atol=0,
+    )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

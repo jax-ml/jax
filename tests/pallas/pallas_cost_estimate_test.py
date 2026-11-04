@@ -177,6 +177,21 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
     self.assertEqual(cost.transcendentals, 10)
     self.assertEqual(cost.bytes_accessed, 4 * 30)
 
+  def test_pi_trig_transcendentals(self):
+    def fn(x):
+      return (
+          lax.sinpi(x)
+          + lax.cospi(x)
+          + lax.tanpi(x)
+          + lax.asinpi(x)
+          + lax.acospi(x)
+          + lax.atanpi(x)
+      )
+
+    cost = cost_estimate.estimate_cost(fn, jnp.ones(10, dtype=jnp.float32))
+    self.assertEqual(cost.flops, 50)
+    self.assertEqual(cost.transcendentals, 60)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

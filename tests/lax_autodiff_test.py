@@ -184,6 +184,16 @@ LAX_GRAD_OPS = [
     grad_test_spec(lax.tanpi, nargs=1, order=2,
                    rng_factory=partial(jtu.rand_uniform, low=-0.4, high=0.4),
                    dtypes=grad_float_dtypes, tol=2e-3),
+    grad_test_spec(lax.asinpi, nargs=1, order=2,
+                   rng_factory=partial(jtu.rand_uniform, low=-1.3, high=1.3),
+                   dtypes=grad_float_dtypes, tol=1e-3),
+    grad_test_spec(lax.acospi, nargs=1, order=2,
+                   rng_factory=partial(jtu.rand_uniform, low=-1.3, high=1.3),
+                   dtypes=grad_float_dtypes, tol=2e-2),
+    grad_test_spec(lax.atanpi, nargs=1, order=2, rng_factory=jtu.rand_small,
+                   dtypes=grad_float_dtypes),
+    grad_test_spec(lax.atan2pi, nargs=2, order=2, rng_factory=jtu.rand_default,
+                   dtypes=grad_float_dtypes),
 ]
 
 GradSpecialValuesTestSpec = collections.namedtuple(
@@ -206,6 +216,9 @@ LAX_GRAD_SPECIAL_VALUE_TESTS = [
     grad_special_values_test_spec(lax.sinpi, [0., 1., 0.5, 0.25]),
     grad_special_values_test_spec(lax.cospi, [0., 1., 0.5, 0.25]),
     grad_special_values_test_spec(lax.tanpi, [0., 0.25]),
+    grad_special_values_test_spec(lax.asinpi, [0.]),
+    grad_special_values_test_spec(lax.acospi, [0.]),
+    grad_special_values_test_spec(lax.atanpi, [0., 1000.]),
 ]
 
 
@@ -1493,6 +1506,12 @@ class LaxAutodiffTest(jtu.JaxTestCase):
            d1=lambda x: lax.rsqrt((1 - x) * (1 + x)), d2=lambda t: t),
       dict(testcase_name="acos", fn=lax.acos, x=0.9999,
            d1=lambda x: -lax.rsqrt((1 - x) * (1 + x)), d2=lambda t: -t),
+      dict(testcase_name="asinpi", fn=lax.asinpi, x=0.9999,
+           d1=lambda x: lax.rsqrt((1 - x) * (1 + x)) / np.pi,
+           d2=lambda t: t / np.pi),
+      dict(testcase_name="acospi", fn=lax.acospi, x=0.9999,
+           d1=lambda x: -lax.rsqrt((1 - x) * (1 + x)) / np.pi,
+           d2=lambda t: -t / np.pi),
       dict(testcase_name="acosh", fn=lax.acosh, x=1.0001,
            d1=lambda x: lax.rsqrt((x - 1) * (x + 1)), d2=None),
   )

@@ -118,6 +118,52 @@ def tanpi(x):
     res = np.where((at == 0.75) | (at == 1.75), np.copysign(1.0, -t), res)
     return res.astype(x.dtype)
 
+
+def asinpi(x):
+  x = np.asarray(x)
+  with np.errstate(all='ignore'):
+    x64 = x.astype(np.float64)
+    res = np.arcsin(x64) / np.pi
+    res = np.where(np.abs(x64) == 1.0, np.copysign(0.5, x64), res)
+    return res.astype(x.dtype)
+
+
+def acospi(x):
+  x = np.asarray(x)
+  with np.errstate(all='ignore'):
+    x64 = x.astype(np.float64)
+    res = np.arccos(x64) / np.pi
+    res = np.where(x64 == 1.0, 0.0, np.where(x64 == -1.0, 1.0, res))
+    return res.astype(x.dtype)
+
+
+def atanpi(x):
+  x = np.asarray(x)
+  with np.errstate(all='ignore'):
+    x64 = x.astype(np.float64)
+    res = np.arctan(x64) / np.pi
+    res = np.where(np.isinf(x64), np.copysign(0.5, x64), res)
+    return res.astype(x.dtype)
+
+
+def atan2pi(x, y):
+  x, y = np.asarray(x), np.asarray(y)
+  with np.errstate(all='ignore'):
+    x64, y64 = x.astype(np.float64), y.astype(np.float64)
+    res = np.arctan2(x64, y64) / np.pi
+    neg_y = np.signbit(y64)
+    both_inf = np.isinf(x64) & np.isinf(y64)
+    only_x_inf = np.isinf(x64) & np.isfinite(y64)
+    only_y_inf = np.isfinite(x64) & np.isinf(y64)
+    res = np.where(
+        both_inf, np.copysign(np.where(neg_y, 0.75, 0.25), x64), res
+    )
+    res = np.where(only_x_inf, np.copysign(0.5, x64), res)
+    res = np.where(
+        only_y_inf, np.copysign(np.where(neg_y, 1.0, 0.0), x64), res
+    )
+    return res.astype(x.dtype)
+
 def logistic(x): return (1 / (1 + np.exp(-x))).astype(x.dtype)
 def betainc(a, b, x): return scipy.special.betainc(a, b, x).astype(x.dtype)
 def lgamma(x): return scipy.special.gammaln(x).astype(x.dtype)

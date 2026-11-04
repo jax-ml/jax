@@ -250,6 +250,14 @@ from jax._src.lax.special import (
   zeta_p as zeta_p,
 )
 from jax._src.lax.trig import (
+  acospi as acospi,
+  acospi_p as acospi_p,
+  asinpi as asinpi,
+  asinpi_p as asinpi_p,
+  atan2pi as atan2pi,
+  atan2pi_p as atan2pi_p,
+  atanpi as atanpi,
+  atanpi_p as atanpi_p,
   cospi as cospi,
   cospi_p as cospi_p,
   sinpi as sinpi,

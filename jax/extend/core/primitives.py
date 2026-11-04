@@ -221,6 +221,10 @@ from jax._src.lax.ann import (
 )
 
 from jax._src.lax.trig import (
+  acospi_p as acospi_p,
+  asinpi_p as asinpi_p,
+  atan2pi_p as atan2pi_p,
+  atanpi_p as atanpi_p,
   cospi_p as cospi_p,
   sinpi_p as sinpi_p,
   tanpi_p as tanpi_p,

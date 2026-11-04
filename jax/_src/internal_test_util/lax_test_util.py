@@ -241,6 +241,7 @@ def lax_ops():
       ),
       op_record("cospi", 1, float_dtypes, test_util.rand_default),
       op_record("atan2", 2, float_dtypes, test_util.rand_default),
+      op_record("atan2pi", 2, float_dtypes, test_util.rand_default),
       op_record("sqrt", 1, float_dtypes, test_util.rand_positive),
       op_record("sqrt", 1, complex_dtypes, test_util.rand_default),
       op_record("rsqrt", 1, float_dtypes, test_util.rand_positive),
@@ -277,7 +278,10 @@ def lax_ops():
           {np.complex128: 5e-12},
       ),
       op_record("acos", 1, float_dtypes + complex_dtypes, test_util.rand_small),
+      op_record("acospi", 1, float_dtypes, test_util.rand_small),
       op_record("atan", 1, float_dtypes + complex_dtypes, test_util.rand_small),
+      op_record("atanpi", 1, float_dtypes, test_util.rand_small),
+      op_record("asinpi", 1, float_dtypes, test_util.rand_small),
       op_record(
           "asinh",
           1,

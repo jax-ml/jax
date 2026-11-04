@@ -21,6 +21,7 @@ import typing
 import numpy as np
 
 from jax._src import config
+from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy import vectorize as jnp_vectorize
@@ -224,12 +225,13 @@ class Slerp(typing.NamedTuple):
     >>> slerp = Slerp.init(key_times, key_rotations)
     >>> times = [0, 0.5, 1, 1.5, 2]
     >>> interp_rots = slerp(times)
-    >>> interp_rots.as_euler('zxy')
-    Array([[ 1.5707963e+00,  0.0000000e+00,  0.0000000e+00],
-           [ 8.5309029e-01,  3.8711953e-01,  1.7768645e-01],
-           [-2.3841858e-07,  7.8539824e-01,  0.0000000e+00],
-           [-5.6668043e-02,  3.9213133e-01, -2.8347540e-01],
-           [ 0.0000000e+00, -2.3841858e-07, -5.2359891e-01]], dtype=float32)
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(interp_rots.as_euler('zxy'))
+    [[ 1.57  0.    0.  ]
+     [ 0.85  0.39  0.18]
+     [-0.    0.79 -0.  ]
+     [-0.06  0.39 -0.28]
+     [ 0.    0.   -0.52]]
   """
 
   times: Array
@@ -310,7 +312,7 @@ def _as_mrp(quat: Array) -> Array:
   return sign * quat[:3] / denominator
 
 
-@functools.partial(jnp_vectorize.vectorize, signature='(m),()->(n)')
+@functools.partial(jnp_vectorize.vectorize, excluded=(1,), signature='(m)->(n)')
 def _as_rotvec(quat: Array, degrees: bool) -> Array:
   quat = jnp.where(quat[3] < 0, -quat, quat)  # w > 0 to ensure 0 <= angle <= pi
   angle = 2. * jnp.arctan2(_vector_norm(quat[:3]), quat[3])
@@ -318,7 +320,8 @@ def _as_rotvec(quat: Array, degrees: bool) -> Array:
   small_scale = 2 + angle2 / 12 + 7 * angle2 * angle2 / 2880
   large_scale = angle / jnp.sin(angle / 2)
   scale = jnp.where(angle <= 1e-3, small_scale, large_scale)
-  scale = jnp.where(degrees, jnp.rad2deg(scale), scale)
+  if degrees:
+    scale = jnp.rad2deg(scale)
   return scale * jnp.array(quat[:3])
 
 
@@ -330,7 +333,7 @@ def _compose_quat(p: Array, q: Array) -> Array:
                     p[3]*q[2] + q[3]*p[2] + cross[2],
                     p[3]*q[3] - p[0]*q[0] - p[1]*q[1] - p[2]*q[2]])
 
-@functools.partial(jnp_vectorize.vectorize, signature='(m),(l),(),()->(n)')
+@functools.partial(jnp_vectorize.vectorize, excluded=(3,), signature='(m),(l),()->(n)')
 def _compute_euler_from_quat(quat: Array, axes: Array, extrinsic: bool, degrees: bool) -> Array:
   angle_first = jnp.where(extrinsic, 0, 2)
   angle_third = jnp.where(extrinsic, 2, 0)
@@ -347,18 +350,18 @@ def _compute_euler_from_quat(quat: Array, axes: Array, extrinsic: bool, degrees:
   c = jnp.where(symmetric, quat[j], quat[j] + quat[3])
   d = jnp.where(symmetric, quat[k] * sign, quat[k] * sign - quat[i])
   angles = jnp.zeros(3, dtype=quat.dtype)
-  angles = angles.at[1].set(2 * jnp.arctan2(jnp.hypot(c, d), jnp.hypot(a, b)))
-  case = jnp.where(jnp.abs(angles[1] - np.pi) <= eps, 2, 0)
+  angles = angles.at[1].set(2 * lax.atan2pi(jnp.hypot(c, d), jnp.hypot(a, b)))
+  case = jnp.where(jnp.abs(angles[1] - 1.0) <= eps, 2, 0)
   case = jnp.where(jnp.abs(angles[1]) <= eps, 1, case)
-  half_sum = jnp.arctan2(b, a)
-  half_diff = jnp.arctan2(d, c)
+  half_sum = lax.atan2pi(b, a)
+  half_diff = lax.atan2pi(d, c)
   angles = angles.at[0].set(jnp.where(case == 1, 2 * half_sum, 2 * half_diff * jnp.where(extrinsic, -1, 1)))  # any degenerate case
   angles = angles.at[angle_first].set(jnp.where(case == 0, half_sum - half_diff, angles[angle_first]))
   angles = angles.at[angle_third].set(jnp.where(case == 0, half_sum + half_diff, angles[angle_third]))
   angles = angles.at[angle_third].set(jnp.where(symmetric, angles[angle_third], angles[angle_third] * sign))
-  angles = angles.at[1].set(jnp.where(symmetric, angles[1], angles[1] - np.pi / 2))
-  angles = (angles + np.pi) % (2 * np.pi) - np.pi
-  return jnp.where(degrees, jnp.rad2deg(angles), angles)
+  angles = angles.at[1].set(jnp.where(symmetric, angles[1], angles[1] - 0.5))
+  angles = angles - 2.0 * jnp.round(0.5 * angles)
+  return angles * 180.0 if degrees else angles * np.pi
 
 
 def _elementary_basis_index(axis: str) -> int:
@@ -371,19 +374,19 @@ def _elementary_basis_index(axis: str) -> int:
   raise ValueError(f"Expected axis to be from ['x', 'y', 'z'], got {axis}")
 
 
-@functools.partial(jnp_vectorize.vectorize, signature=('(m),(m),(),()->(n)'))
+@functools.partial(jnp_vectorize.vectorize, excluded=(3,), signature='(m),(m),()->(n)')
 def _elementary_quat_compose(angles: Array, axes: Array, intrinsic: bool, degrees: bool) -> Array:
-  angles = jnp.where(degrees, jnp.deg2rad(angles), angles)
-  result = _make_elementary_quat(axes[0], angles[0])
+  result = _make_elementary_quat(axes[0], angles[0], degrees)
   for idx in range(1, len(axes)):
-    quat = _make_elementary_quat(axes[idx], angles[idx])
+    quat = _make_elementary_quat(axes[idx], angles[idx], degrees)
     result = jnp.where(intrinsic, _compose_quat(result, quat), _compose_quat(quat, result))
   return result
 
 
-@functools.partial(jnp_vectorize.vectorize, signature=('(m),()->(n)'))
+@functools.partial(jnp_vectorize.vectorize, excluded=(1,), signature='(m)->(n)')
 def _from_rotvec(rotvec: Array, degrees: bool) -> Array:
-  rotvec = jnp.where(degrees, jnp.deg2rad(rotvec), rotvec)
+  if degrees:
+    rotvec = jnp.deg2rad(rotvec)
   angle = _vector_norm(rotvec)
   angle2 = angle * angle
   small_scale = scale = 0.5 - angle2 / 48 + angle2 * angle2 / 3840
@@ -430,11 +433,17 @@ def _magnitude(quat: Array) -> Array:
   return 2. * jnp.arctan2(_vector_norm(quat[:3]), jnp.abs(quat[3]))
 
 
-@functools.partial(jnp_vectorize.vectorize, signature='(),()->(n)')
-def _make_elementary_quat(axis: int, angle: Array) -> Array:
-  quat = jnp.zeros(4, dtype=angle.dtype)
-  quat = quat.at[3].set(jnp.cos(angle / 2.))
-  quat = quat.at[axis].set(jnp.sin(angle / 2.))
+@functools.partial(jnp_vectorize.vectorize, excluded=(2,), signature='(),()->(n)')
+def _make_elementary_quat(axis: int, angle: Array, degrees: bool) -> Array:
+  if degrees:
+    c = lax.cospi(angle / 360)
+    s = lax.sinpi(angle / 360)
+  else:
+    c = jnp.cos(angle / 2)
+    s = jnp.sin(angle / 2)
+  quat = jnp.zeros(4, dtype=c.dtype)
+  quat = quat.at[3].set(c)
+  quat = quat.at[axis].set(s)
   return quat
 
 

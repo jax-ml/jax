@@ -18,7 +18,6 @@ import numpy as np
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.ufuncs import arctan
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
@@ -121,9 +120,16 @@ def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     - :func:`jax.scipy.stats.cauchy.ppf`
   """
   x, loc, scale = promote_args_inexact("cauchy.cdf", x, loc, scale)
-  pi = _lax_const(x, np.pi)
-  scaled_x = lax.div(lax.sub(x, loc), scale)
-  return lax.add(_lax_const(x, 0.5), lax.mul(lax.div(_lax_const(x, 1.), pi), arctan(scaled_x)))
+  valid_scale = scale > 0
+  safe_scale = jnp.where(valid_scale, scale, _lax_const(x, 1.0))
+  # 0.5 + atan((x - loc) / scale) / pi = atan2pi(scale, loc - x) for scale > 0,
+  # which evaluates the polynomial once and avoids cancellation in the left tail
+  # as well as overflow or underflow of (x - loc) / scale.
+  return jnp.where(
+      valid_scale,
+      lax.atan2pi(safe_scale, lax.sub(loc, x)),
+      _lax_const(x, np.nan),
+  )
 
 
 def logcdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -157,7 +163,17 @@ def logcdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     - :func:`jax.scipy.stats.cauchy.isf`
     - :func:`jax.scipy.stats.cauchy.ppf`
   """
-  return lax.log(cdf(x, loc, scale))
+  x, loc, scale = promote_args_inexact("cauchy.logcdf", x, loc, scale)
+  valid_scale = scale > 0
+  safe_scale = jnp.where(valid_scale, scale, _lax_const(x, 1.0))
+  d = lax.sub(x, loc)
+  # p = atan2pi(scale, |d|) is in [0, 0.5], equal to cdf(x) for d <= 0 and
+  # 1 - cdf(x) for d > 0. Use jnp.where rather than abs(d) so the derivative at
+  # d = +0.0 has the sign matching the d <= 0 branch.
+  p = lax.atan2pi(safe_scale, jnp.where(d <= 0, lax.neg(d), d))
+  safe_p = jnp.where(d <= 0, p, _lax_const(x, 1.0))
+  res = jnp.where(d <= 0, lax.log(safe_p), lax.log1p(lax.neg(p)))
+  return jnp.where(valid_scale, res, _lax_const(x, np.nan))
 
 
 def sf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
