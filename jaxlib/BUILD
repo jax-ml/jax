@@ -745,6 +745,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":kernel_nanobind_helpers",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
