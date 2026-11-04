@@ -31,7 +31,10 @@ from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.numpy.ufuncs import arctan, isposinf, isneginf, sinc
 from jax._src.api import jit, jvp, vmap
+from jax._src.lax.double_word import two_sum
 from jax._src.lax.erf import (
+    _erfcx_from_grad_large,
+    _split_square,
     erf_inv_core,
     erfcx_grad_impl as _erfcx_grad_impl,
     erfcx_grad_large,
@@ -39,6 +42,7 @@ from jax._src.lax.erf import (
     erfcx_large,
     log_ndtr as _log_ndtr,
     ndtr as _ndtr,
+    ndtri_exp_core,
 )
 from jax._src.lax.lax import AccuracyMode, _const as _lax_const
 from jax._src.lax.special import random_gamma_grad
@@ -2348,6 +2352,186 @@ def _ndtri_grad_jvp(primals, tangents):
   (p, x), (p_dot, _) = primals, tangents
   g = _ndtri_grad(p, x)
   return g, p_dot * ((x * g) * g)
+
+
+def ndtri_exp(y: ArrayLike) -> Array:
+  r"""The inverse of :func:`~jax.scipy.special.log_ndtr`.
+
+  JAX implementation of :obj:`scipy.special.ndtri_exp`.
+
+  Computes :math:`\Phi^{-1}(\exp(y))` for :math:`y \le 0` without underflow in
+  the left tail (:math:`y \ll 0`) or catastrophic cancellation near
+  :math:`y = -\ln 2` and :math:`y = 0`.
+
+  Args:
+    y: arraylike, real-valued. Log-probability in :math:`(-\infty, 0]`.
+
+  Returns:
+    array containing values of ``ndtri(exp(y))``. Returns ``-inf`` for
+    ``y == -inf``, ``inf`` for ``y == 0``, and ``nan`` for ``y > 0``.
+
+  Notes:
+    ``ndtri_exp`` does not support complex-valued inputs.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
+  Examples:
+    >>> y = jnp.array([-100.0, -1.0, -1e-6, 0.0])
+    >>> with jnp.printoptions(precision=4):
+    ...   print(jax.scipy.special.ndtri_exp(y))
+    [-13.8885  -0.3375   4.7534      inf]
+
+  See also:
+    - :func:`jax.scipy.special.log_ndtr`
+    - :func:`jax.scipy.special.ndtri`
+    - :func:`jax.scipy.special.ndtr`
+  """
+  (y,) = promote_args_inexact("ndtri_exp", y)
+  if dtypes.issubdtype(y.dtype, np.complexfloating):
+    raise ValueError("ndtri_exp does not support complex-valued inputs.")
+  if dtypes.finfo(y.dtype).bits < 32:
+    return _ndtri_exp(y.astype(np.float32)).astype(y.dtype)
+  return _ndtri_exp(y)
+
+
+_NDTRI_EXP_SAFE_Y = -0.5
+_NDTRI_EXP_GRAD_CUTOFF = math.sqrt(2.0)
+
+
+@custom_derivatives.custom_jvp
+@jit
+def _ndtri_exp(y: Array) -> Array:
+  """Evaluates `ndtri_exp(y)` with domain and infinity handling."""
+  out_of_bounds = (y > 0.0) | jnp.isnan(y)
+  is_neg_inf = ~jnp.isfinite(y) & (y < 0.0)
+  y_safe = jnp.where(
+      out_of_bounds | (y == 0.0) | is_neg_inf, _NDTRI_EXP_SAFE_Y, y
+  )
+  x = ndtri_exp_core(y_safe)
+  edge = jnp.where(y == 0.0, jnp.inf, jnp.where(is_neg_inf, -jnp.inf, x))
+  return jnp.where(out_of_bounds, jnp.nan, edge)
+
+
+@_ndtri_exp.defjvp
+def _ndtri_exp_jvp(primals, tangents):
+  (y,), (y_dot,) = primals, tangents
+  x = _ndtri_exp(y)
+  g, _ = _ndtri_exp_grad_and_shift(y, x)
+  return x, y_dot * g
+
+
+@custom_derivatives.custom_jvp
+def _ndtri_exp_grad_and_shift(y: Array, x: Array) -> tuple[Array, Array]:
+  """Returns `(g, h)` where `g = d/dy ndtri_exp(y)` and `h = 1 + x * g`.
+
+  Implicitly differentiating `ndtr(x) = exp(y)` (using `ndtr'(x) =
+  exp(-x^2/2) / sqrt(2*pi)`) gives the base derivative
+    `g(y) = exp(y) / ndtr'(x) = sqrt(2*pi) * exp(y) * exp(x^2/2)`.
+
+  - For `|x| <= sqrt(2)`: `x^2 / 2 <= 1`, so `exp(y + x^2/2)` neither overflows
+    nor amplifies 1-ULP errors in `x` by `O(x^2)`. Sum `y + x^2/2` as a
+    `(hi, lo)` float pair (avoiding cancellation near `y + x^2/2 = 0`) and
+    exponentiate.
+  - For `|x| > sqrt(2)`: evaluating `exp(x^2/2)` from `x` alone would amplify
+    any 1-ULP rounding error in `x` by `~x^2` ULPs (and overflow for large
+    `|x|`), while adding `y + x^2/2` cancels `-x^2/2` against `+x^2/2` in the
+    left tail. Instead, cancel `exp(x^2/2)` analytically in each tail using
+    `ndtr(-|x|) = 0.5 * exp(-x^2/2) * erfcx(|x| / sqrt(2))` (where `erfcx`
+    varies slowly with `x` instead of growing exponentially):
+    * Left tail (`x < -sqrt(2)`): substituting
+      `exp(y) = ndtr(x) = 0.5 * exp(-x^2/2) * erfcx(-x/sqrt(2))` into
+      `sqrt(2*pi) * exp(y) * exp(x^2/2)` cancels `exp(-x^2/2)` against
+      `exp(x^2/2)`, leaving `g(y) = sqrt(pi/2) * erfcx(-x/sqrt(2))`, which
+      stays finite and accurate down to `y = -fmax`.
+    * Right tail (`x > sqrt(2)`): here `exp(y)` is near `1`, and the small tail
+      probability is `1 - exp(y) = ndtr(-x) = 0.5 * exp(-x^2/2) *
+      erfcx(x/sqrt(2))`. Rewriting `exp(y) * exp(x^2/2)` as
+      `(exp(y) / (1 - exp(y))) * ((1 - exp(y)) * exp(x^2/2))` cancels
+      `exp(x^2/2)` analytically in the second factor and leaves
+      `exp(y) / (1 - exp(y)) = 1 / (exp(-y) - 1) = 1 / expm1(-y)` in the first,
+      giving `g(y) = sqrt(pi/2) * erfcx(x/sqrt(2)) / expm1(-y)`.
+
+  For `h(y) = 1 + x * g(y)` (used for higher-order derivatives in
+  `_ndtri_exp_grad_and_shift_jvp`):
+  - On `x < -sqrt(2)` (`u = -x / sqrt(2) > 1`), `1 + x * g(y)` cancels as
+    `O(1/x^2)`. Using `erfcx'(u) = 2*u*erfcx(u) - 2/sqrt(pi)` rewrites
+    `1 + x * g(y) = 1 - sqrt(pi)*u*erfcx(u) = -0.5 * sqrt(pi) * erfcx'(u)`,
+    reusing `grad_large = erfcx_grad_large(u)` already computed for `g(y)`.
+  - On `x >= -sqrt(2)`, `x * g(y) > -0.76`, so `1 + x * g(y) > 0.24` has no
+    cancellation.
+  """
+  y_arr = jnp.asarray(y, dtype=x.dtype)
+  out_of_bounds = (y_arr > 0.0) | jnp.isnan(y_arr)
+  is_neg_inf = ~jnp.isfinite(y_arr) & (y_arr < 0.0)
+  is_neg = x < -_NDTRI_EXP_GRAD_CUTOFF
+  is_pos = x > _NDTRI_EXP_GRAD_CUTOFF
+
+  # Shared `erfcx` evaluation on `u_tail = |x| / sqrt(2) >= 1` for both tails;
+  # `grad_large = erfcx'(u_tail)` also gives `h` in the left tail directly.
+  is_finite_tail = (is_neg | is_pos) & jnp.isfinite(x)
+  u_raw = jnp.where(is_finite_tail, lax.abs(x) * math.sqrt(0.5), 1.0)
+  u_tail = lax.max(u_raw, _lax_const(u_raw, 1.0))
+  grad_large = erfcx_grad_large(u_tail)
+  tail_num = math.sqrt(0.5 * math.pi) * _erfcx_from_grad_large(
+      u_tail, grad_large
+  )
+  g_neg = jnp.where(is_neg_inf, 0.0, tail_num)
+  h_neg = jnp.where(is_neg_inf, 0.0, (-0.5 * math.sqrt(math.pi)) * grad_large)
+
+  # Central region (`|x| <= sqrt(2)`): `(hi, lo)` float pair for `y + x^2 / 2`.
+  is_mid = ~(is_neg | is_pos) & jnp.isfinite(x)
+  x_mid = jnp.where(is_mid, x, 0.0)
+  y_mid = jnp.where(is_mid, y_arr, _NDTRI_EXP_SAFE_Y)
+  x2_hi, x2_lo = _split_square(x_mid)
+  arg_hi, arg_err = two_sum(y_mid, 0.5 * x2_hi)
+  arg_lo = arg_err + 0.5 * x2_lo
+  exp_hi = lax.exp(arg_hi, accuracy=AccuracyMode.HIGHEST)
+  exp_corr = arg_lo * (1.0 + 0.5 * arg_lo)
+  g_mid = math.sqrt(2.0 * math.pi) * (exp_hi + exp_hi * exp_corr)
+
+  # Right tail (`x > sqrt(2)`): for `-y < eps/4`, `expm1(-y)` equals `-y` to
+  # machine precision. Scaling both numerator and denominator by `2^bits` lifts
+  # subnormal `-y` into the normal float range so dividing by `denom` avoids
+  # reciprocal overflow or subnormal flush.
+  finfo = np.finfo(x.dtype)
+  tiny_cut = 0.25 * float(finfo.eps)
+  tiny_scale = math.ldexp(1.0, finfo.bits)
+  is_finite_pos = is_pos & (y_arr < 0.0) & jnp.isfinite(x)
+  neg_y = jnp.where(is_finite_pos, -y_arr, 1.0)
+  is_tiny = is_finite_pos & (neg_y < tiny_cut)
+  scale = jnp.where(is_tiny, _lax_const(x, tiny_scale), _lax_const(x, 1.0))
+  expm1_val = lax.expm1(neg_y, accuracy=AccuracyMode.HIGHEST)
+  denom = jnp.where(is_tiny, neg_y * scale, expm1_val)
+  g_pos = jnp.where(y_arr == 0.0, np.inf, (tail_num * scale) / denom)
+
+  g = jnp.where(is_neg, g_neg, jnp.where(is_pos, g_pos, g_mid))
+  # Mask out the `is_neg` branch with `0.0` before multiplying so `y = -inf`
+  # (`x = -inf`, `g = 0`) cannot produce `(-inf) * 0 = NaN` in `h_pos`.
+  x_nonneg = jnp.where(is_neg, 0.0, x)
+  g_nonneg = jnp.where(is_neg, 0.0, g)
+  h_pos = 1.0 + x_nonneg * g_nonneg
+  h = jnp.where(is_neg, h_neg, h_pos)
+  return jnp.where(out_of_bounds, jnp.nan, g), jnp.where(
+      out_of_bounds, jnp.nan, h
+  )
+
+
+@_ndtri_exp_grad_and_shift.defjvp
+def _ndtri_exp_grad_and_shift_jvp(primals, tangents):
+  """JVP for `_ndtri_exp_grad_and_shift` via a closed polynomial system.
+
+  `x = _ndtri_exp(y)` is a function of `y` cached from the primal pass rather
+  than an independent input, so its incoming tangent is ignored in
+  `(y_dot, _) = tangents` and total derivatives with respect to `y` satisfy:
+  - Differentiating `g(y) = sqrt(2*pi) * exp(y + x(y)^2 / 2)` with `dx/dy = g`
+    gives `g'(y) = g * (1 + x * g) = g * h`.
+  - Differentiating `h(y) = 1 + x(y) * g(y)` gives
+    `h'(y) = x'(y) * g + x * g'(y) = g^2 + x * g * h = g^2 + h * (h - 1)`.
+  """
+  (y, x), (y_dot, _) = primals, tangents
+  g, h = _ndtri_exp_grad_and_shift(y, x)
+  return (g, h), (y_dot * (g * h), y_dot * (g * g + h * (h - 1.0)))
 
 
 def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:

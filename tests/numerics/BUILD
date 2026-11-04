@@ -93,7 +93,7 @@ jax_multiplatform_test(
         "tpu": ["notsan"],
     },
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 9,
+    shard_count = 10,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",

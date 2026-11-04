@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Polynomial approximations for `erfc`, `erfcx`, `erfinv`, and `erfcinv`."""
+"""Polynomial approximations for erf-related functions and their inverses."""
 
 import math
 from jax._src import dtypes
@@ -20,11 +20,11 @@ from jax._src.api import jit
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax.double_word import (
     LN2_SPLIT_F32, LN2_SPLIT_F64, fast_two_sum, split_bits, split_half_mask,
-    two_sum,
+    two_prod, two_sum,
 )
 from jax._src.lax.lax import (
     AccuracyMode, RoundingMethod, _const, asarray, bitcast_convert_type, clamp,
-    convert_element_type, exp, full_like, log, log1p, max as lax_max,
+    convert_element_type, exp, expm1, full_like, log, log1p, max as lax_max,
     min as lax_min, neg, polynomial, reciprocal, round as lax_round, select,
     select_n, shift_left, sqrt, square,
 )
@@ -1492,6 +1492,14 @@ _ERFINV64_P = (
 )
 _NDTRI64_P = (_NDTRI64_P1, _NDTRI64_P2, _NDTRI64_P3, _NDTRI64_P4, _NDTRI64_P5)
 
+_ERFINV32_W_CUTS = (3.5, 18.0625)
+_ERFINV32_SHIFTS = (3.0, 7.0)
+_NDTRI32_K_H = float.fromhex("0x1.6a0000p0")
+
+_ERFINV64_W_CUTS = (4.5, 16.0, 37.0, 144.0)
+_ERFINV64_SHIFTS = (3.0, 5.0, 9.0, 19.5)
+_NDTRI64_K_H = float.fromhex("0x1.6a09e68000000p0")
+
 
 def _piece_index(conds: tuple[Array, ...]) -> Array:
   if len(conds) == 1:
@@ -1506,25 +1514,6 @@ def _select_piece(w: Array, idx: Array, vals: tuple[float, ...]) -> Array:
   return select_n(idx, *(full_like(w, v) for v in vals))
 
 
-def _half_mantissa(x: Array) -> Array:
-  """Zeros the bottom half of the fraction bits of `x`.
-
-  Because each value uses at most half the available precision (12 of 24 bits
-  in float32, 26 of 53 bits in float64), multiplying two such numbers fits in a
-  standard float with zero rounding error, without needing hardware FMA.
-  """
-  if x.dtype == np.float32:
-    x_u = bitcast_convert_type(x, np.uint32)
-    return bitcast_convert_type(x_u & np.uint32(0xFFFFF000), np.float32)
-  elif x.dtype == np.float64:
-    x_u = bitcast_convert_type(x, np.uint64)
-    return bitcast_convert_type(
-        x_u & shift_left(_const(x_u, 0x1FFFFFFFFF), _const(x_u, 27)), np.float64
-    )
-  else:
-    raise TypeError(f"Unsupported dtype for _half_mantissa: {x.dtype}")
-
-
 def erf_inv_core(
     x: Array,
     q: Array,
@@ -1537,7 +1526,8 @@ def erf_inv_core(
   Takes both `x in (-1, 1)` and `q = 1 - |x| in (0, 1]` so that
   `1 - x^2 = q * (1 + |x|)` can be computed without cancellation near `|x| = 1`:
   - `erfinv(x)` passes `x = x` and `q = 1 - |x|` (`has_far_tail=False`).
-  - `erfcinv(y)` passes `x = 1 - y` and `q = min(y, 2 - y)` (`has_far_tail=True`).
+  - `erfcinv(y)` passes `x = 1 - y` and `q = min(y, 2 - y)`
+    (`has_far_tail=True`).
   - `ndtri(p)` passes `x = 2 * (p - 0.5)` and `q = 2 * min(p, 1 - p)`
     (`has_far_tail=True`, `is_ndtri=True`).
 
@@ -1548,28 +1538,25 @@ def erf_inv_core(
   w = -log(q * (1.0 + ax))
   if x.dtype == np.float32:
     ps = _NDTRI32_P if is_ndtri else _ERFINV32_P
-    conds = (w < 3.5, w < 18.0625) if has_far_tail else (w < 3.5,)
-    shifts = (3.0, 7.0) if has_far_tail else (3.0,)
-    c1 = 1.75
-    unroll = 9
+    n_cuts = len(_ERFINV32_W_CUTS) if has_far_tail else 1
+    w_cuts = _ERFINV32_W_CUTS[:n_cuts]
+    shifts = _ERFINV32_SHIFTS[:n_cuts]
     # Near |x| = 1 (large w), erfinv(x) grows like sqrt(w) and ndtri(p) grows
-    # like sqrt(2) * sqrt(w). For ndtri, truncate sqrt(2) to half its fraction
+    # like sqrt(2) * sqrt(w). For ndtri, round sqrt(2) to half its fraction
     # bits so multiplying `k_h * z_h` below has zero rounding error.
-    k_h = float.fromhex("0x1.6a0000p0") if is_ndtri else 1.0
+    k_h = _NDTRI32_K_H if is_ndtri else 1.0
   elif x.dtype == np.float64:
     ps = _NDTRI64_P if is_ndtri else _ERFINV64_P
-    conds = (
-        (w < 4.5, w < 16.0, w < 37.0, w < 144.0)
-        if has_far_tail
-        else (w < 4.5, w < 16.0)
-    )
-    shifts = (3.0, 5.0, 9.0, 19.5) if has_far_tail else (3.0, 5.0)
-    c1 = 2.25
-    unroll = 20
-    k_h = float.fromhex("0x1.6a09e68000000p0") if is_ndtri else 1.0
+    n_cuts = len(_ERFINV64_W_CUTS) if has_far_tail else 2
+    w_cuts = _ERFINV64_W_CUTS[:n_cuts]
+    shifts = _ERFINV64_SHIFTS[:n_cuts]
+    k_h = _NDTRI64_K_H if is_ndtri else 1.0
   else:
     raise TypeError(f"Unsupported dtype for erf_inv_core: {x.dtype}")
 
+  conds = tuple(w < c for c in w_cuts)
+  c1 = 0.5 * w_cuts[0]
+  unroll = len(ps[0])
   ps = ps[: len(conds) + 1]
   idx = _piece_index(conds)
 
@@ -1581,13 +1568,14 @@ def erf_inv_core(
   #   error in `z` inside `t = z - shift` barely affects `poly`.
   # - To compute `k_h * sqrt(w)` in extra precision without needing FMA or wider
   #   floats, split `sqrt(w)` into `z_h + z_l`:
-  #   * `z_h` zeros the low fraction bits of `z`, so `z_h * z_h` is exact.
+  #   * `z_h, _ = split_half_mask(z)` zeros the low half of `z`'s fraction bits,
+  #     so `z_h * z_h` and `k_h * z_h` are exact.
   #   * Since `w - z_h^2 = (sqrt(w) - z_h) * (sqrt(w) + z_h)`, we can compute
   #     `sqrt(w) - z_h = (w - z_h^2) / (sqrt(w) + z_h)`. Because `z_h * z_h` is
   #     close to `w_safe`, the subtraction `w_safe - z_h * z_h` is exact.
   w_safe = select(conds[0], full_like(w, 1.0), w)
   z = sqrt(w_safe)
-  z_h = _half_mantissa(z)
+  z_h, _ = split_half_mask(z)
   z_l = (w_safe - z_h * z_h) / (z + z_h)
   shift = (
       full_like(w, shifts[0])
@@ -1647,3 +1635,401 @@ def _erf_inv_jvp_scale_jvp(primals, tangents):
   (x, z), (x_dot, _) = primals, tangents
   g = erf_inv_jvp_scale(x, z)
   return g, x_dot * ((2.0 * z * g) * g)
+
+
+# Polynomial coefficients for ndtri_exp(y) near the median y = -log(2),
+# where the function crosses zero. Let t = sqrt(pi/2) * (y + log(2)); on
+# [_NDTRI_EXP_MEDIAN_LO, _NDTRI_EXP_MEDIAN_HI], ndtri_exp(y) ~= t + t^2 * P(t)
+# has relative error at most 0.025 ULPs (float32) / 0.01 ULPs (float64).
+# Coefficients generated by Sollya fpminimax (script below).
+#
+# Sollya script:
+#   prec = 300!;
+#   display = hexadecimal!;
+#   c = round(sqrt(pi / 2), 280, RN);
+#   s2 = round(sqrt(2), 280, RN);
+#   ln2 = round(log(2), 280, RN);
+#   procedure solve_z(t_val) {
+#     var z, k, q_val, f_val, df_val;
+#     q_val = 2 * evaluate(exp(x), round(-ln2 + t_val / c, 280, RN));
+#     z = t_val;
+#     for k from 1 to 9 do {
+#       f_val = evaluate(erfc(x), round(-z / s2, 280, RN)) - q_val;
+#       df_val = evaluate(exp(-x * x / 2), z) / c;
+#       z = round(z - f_val / df_val, 280, RN);
+#     };
+#     return z;
+#   };
+#   t_lo = round(c * (-92 / 100 + ln2), 280, RN);
+#   t_hi = round(c * (-48 / 100 + ln2), 280, RN);
+#   nodes = [||];
+#   vals = [||];
+#   for i from 0 to 47 do {
+#     theta = round(pi * (2 * i + 1) / 96, 280, RN);
+#     t_i = round(0.5 * (t_lo + t_hi)
+#                 + 0.5 * (t_hi - t_lo) * evaluate(cos(x), theta), 280, RN);
+#     z_i = solve_z(t_i);
+#     nodes = t_i .: nodes;
+#     vals = round((z_i - t_i) / (t_i * t_i), 280, RN) .: vals;
+#   };
+#   g = interpolate(nodes, vals, 1b-220, [t_lo; t_hi]);
+#   p32 = fpminimax(g, 8, [|SG...|], [t_lo; t_hi], relative, floating);
+#   p64 = fpminimax(g, 19, [|D...|], [t_lo; t_hi], relative, floating);
+#   for i from 0 to 8 do print(coeff(p32, i));
+#   for i from 0 to 19 do print(coeff(p64, i));
+_NDTRI_EXP_MEDIAN_LO = -0.92
+_NDTRI_EXP_MEDIAN_HI = -0.48
+
+_NDTRI_EXP32_MEDIAN = (
+    float.fromhex("0x1.988454p-2"),
+    float.fromhex("0x1.1750f2p-2"),
+    float.fromhex("0x1.c3dbc8p-3"),
+    float.fromhex("0x1.8e187ep-3"),
+    float.fromhex("0x1.716b48p-3"),
+    float.fromhex("0x1.5eab06p-3"),
+    float.fromhex("0x1.593b6cp-3"),
+    float.fromhex("0x1.a5c942p-3"),
+    float.fromhex("0x1.a932cp-3"),
+)
+
+_NDTRI_EXP64_MEDIAN = (
+    float.fromhex("0x1.9884533d4365p-2"),
+    float.fromhex("0x1.175102498982ep-2"),
+    float.fromhex("0x1.c3dca46cd7a41p-3"),
+    float.fromhex("0x1.8e0209d202216p-3"),
+    float.fromhex("0x1.71419cbaddbbp-3"),
+    float.fromhex("0x1.62cc54262ba58p-3"),
+    float.fromhex("0x1.5da08eb813145p-3"),
+    float.fromhex("0x1.5f2b1027bf2f6p-3"),
+    float.fromhex("0x1.6604b4472a2fp-3"),
+    float.fromhex("0x1.7167d2fb9d13fp-3"),
+    float.fromhex("0x1.80efe392a31f9p-3"),
+    float.fromhex("0x1.94665dc20275fp-3"),
+    float.fromhex("0x1.ab7f145ffb46dp-3"),
+    float.fromhex("0x1.c77db086bf382p-3"),
+    float.fromhex("0x1.ed964c26ae3a6p-3"),
+    float.fromhex("0x1.060c76e938cf3p-2"),
+    float.fromhex("0x1.f0c00fed9f6bbp-3"),
+    float.fromhex("0x1.239e8f5d5b09ap-2"),
+    float.fromhex("0x1.07fd9e2758f4fp-1"),
+    float.fromhex("0x1.fc10e4194114bp-2"),
+)
+
+
+# Full-width (hi, lo) float splits of ln(2), 0.5*ln(2*pi), and sqrt(pi/2).
+# Unlike LN2_SPLIT_F{32,64} (which shorten the high word so k * ln2_hi is
+# exact for the integer k in exp range reduction), the median-region
+# subtraction d_hi = y + ln2_hi needs full-precision ln2_hi.
+_LN2_F32 = (
+    float.fromhex("0x1.62e43p-1"),
+    float.fromhex("-0x1.05c61p-29"),
+)
+_LN2_F64 = (
+    float.fromhex("0x1.62e42fefa39efp-1"),
+    float.fromhex("0x1.abc9e3b39803fp-56"),
+)
+_HALF_LN2PI_F32 = (
+    float.fromhex("0x1.d67f1cp-1"),
+    float.fromhex("0x1.0c97d6p-26"),
+)
+_HALF_LN2PI_F64 = (
+    float.fromhex("0x1.d67f1c864beb5p-1"),
+    float.fromhex("-0x1.65b5a1b7ff5dfp-55"),
+)
+_SQRT_HALF_PI_F32 = (
+    float.fromhex("0x1.40d932p0"),
+    float.fromhex("-0x1.3b1f4ep-33"),
+)
+_SQRT_HALF_PI_F64 = (
+    float.fromhex("0x1.40d931ff62706p0"),
+    float.fromhex("-0x1.a6a0d6f814637p-54"),
+)
+
+# Asymptotic series coefficients for the far-left-tail root solve in
+# `ndtri_exp_core`. For `u = x^2 / 2` and `u0 = -y - 0.5*log(2*pi)`, solving
+# `log_ndtr(-sqrt(2*u)) = y` is equivalent to finding the root of
+#   `f(u) = -log_ndtr(-sqrt(2*u)) - 0.5*log(2*pi) - u0`
+#         `= u + 0.5*log(2*u) - R(1/u) - u0 = 0`,
+# where `R(1/u)` is the asymptotic series of `log(sqrt(pi*u) * erfcx(sqrt(u)))`
+# (`_NDTRI_EXP_ASYMP`). Differentiating gives
+# `1 / f'(u) = sqrt(pi*u) * erfcx(sqrt(u))`, whose asymptotic series
+# `sum_{m>=0} (-1)^m (2m - 1)!! / (2*u)^m` (`_NDTRI_EXP_INV_DF`) lets the
+# Newton step multiply by `1 / f'(u)` instead of dividing.
+_NDTRI_EXP_INV_DF = (1.0, -1 / 2, 3 / 4, -15 / 8, 105 / 16)
+_NDTRI_EXP_ASYMP = (
+    -1 / 2,
+    5 / 8,
+    -37 / 24,
+    353 / 64,
+    -4081 / 160,
+    55205 / 384,
+    -854197 / 896,
+)
+
+
+def ndtri_exp_core(y: Array) -> Array:
+  """Computes `ndtri(exp(y))` for finite `y < 0` in `float32` or `float64`.
+
+  Evaluating `ndtri(exp(y))` directly fails in three regions:
+  - Near `y = -log(2)`, `2 * exp(y) - 1` cancels catastrophically.
+  - Near `y = 0`, `exp(y)` approaches `1`, so rounding `exp(y)` to a single
+    float loses precision (and rounds to `1`, giving `+inf`, for `y > -eps/2`).
+  - For large negative `y`, `exp(y)` underflows into subnormals and then to `0`
+    (`ndtri(0) = -inf`), even though `ndtri(exp(y))` stays finite across all
+    finite `y < 0`.
+
+  `ndtri_exp_core` therefore uses three regimes, sharing a single `exp`,
+  `expm1`, `log`, and `sqrt` call:
+  1. Near the median (`_NDTRI_EXP_MEDIAN_LO <= y <= _NDTRI_EXP_MEDIAN_HI`):
+     `y + ln2_hi` has no rounding error (because `-y` and `ln2_hi` are within a
+     factor of 2), so we evaluate a polynomial in `t = sqrt(pi/2) * (y +
+     log(2))`.
+  2. Moderate tails (`y in [-max_w_y, _NDTRI_EXP_MEDIAN_LO)` or
+     `(_NDTRI_EXP_MEDIAN_HI, 0)`): computes `x = 2 * exp(y) - 1` and
+     `w = -log(4 * exp(y) * (1 - exp(y)))` without subtracting nearly equal
+     numbers via `exp` and `expm1`, reusing `_NDTRI{32,64}_P` from
+     `erf_inv_core`.
+  3. Far left tail (`y < -max_w_y`): inverts the asymptotic expansion of
+     `log_ndtr` for `u = 0.5 * x^2` using `(hi, lo)` pairs of floats for extra
+     precision.
+  """
+  if y.dtype == np.float32:
+    ln2_hi, ln2_lo = _LN2_F32
+    half_ln2pi_hi, half_ln2pi_lo = _HALF_LN2PI_F32
+    c_hi, c_lo = _SQRT_HALF_PI_F32
+    median_cs = _NDTRI_EXP32_MEDIAN
+    ps = _NDTRI32_P
+    w_cuts = _ERFINV32_W_CUTS
+    shifts = _ERFINV32_SHIFTS
+    k_h = _NDTRI32_K_H
+    # Term counts for the far-tail series R(1/u), 1/f'(u), log1p(delta)/delta,
+    # and 1/(1+delta); each omitted tail is below 0.05 ULPs of u0 (and below
+    # 0.01 ULP of the final output x).
+    n_asymp, n_inv_df, n_log1p, n_rcp = 4, 4, 3, 4
+  elif y.dtype == np.float64:
+    ln2_hi, ln2_lo = _LN2_F64
+    half_ln2pi_hi, half_ln2pi_lo = _HALF_LN2PI_F64
+    c_hi, c_lo = _SQRT_HALF_PI_F64
+    median_cs = _NDTRI_EXP64_MEDIAN
+    ps = _NDTRI64_P
+    w_cuts = _ERFINV64_W_CUTS
+    shifts = _ERFINV64_SHIFTS
+    k_h = _NDTRI64_K_H
+    n_asymp, n_inv_df, n_log1p, n_rcp = 7, 5, 6, 7
+  else:
+    raise TypeError(f"Unsupported dtype for ndtri_exp_core: {y.dtype}")
+
+  finfo = np.finfo(y.dtype)
+  max_w_y = -math.log(2.0 * float(finfo.tiny))
+  tiny_cut = -0.25 * float(finfo.eps)
+  shift_ln2 = float(finfo.bits)
+  asymp_cap = math.ldexp(1.0, finfo.maxexp // 2)
+  scale_exp = math.ldexp(4.0, finfo.bits)
+  asymp_cs = _NDTRI_EXP_ASYMP[:n_asymp]
+  inv_df_cs = _NDTRI_EXP_INV_DF[:n_inv_df]
+  log1p_cs = [(-1.0) ** (k - 1) / k for k in range(1, n_log1p + 1)]
+  rcp1p_cs = [(-1.0) ** k for k in range(n_rcp)]
+  c1 = 0.5 * w_cuts[0]
+  unroll = len(ps[0])
+  zero = full_like(y, 0.0)
+  one = full_like(y, 1.0)
+
+  # 1. Near the median: because `-y` and `ln2_hi` are within a factor of 2 on
+  # `[_NDTRI_EXP_MEDIAN_LO, _NDTRI_EXP_MEDIAN_HI]`, `d_hi = y_med + ln2_hi` has
+  # no floating-point rounding error. Evaluate `t = sqrt(pi/2) * (d_hi +
+  # ln2_lo)` as a `(t_hi, t_lo)` float pair, then `t + t^2 * P(t)`.
+  y_med = clamp(
+      _const(y, _NDTRI_EXP_MEDIAN_LO), y, _const(y, _NDTRI_EXP_MEDIAN_HI)
+  )
+  d_hi = y_med + ln2_hi
+  t_hi, t_err = two_prod(d_hi, full_like(d_hi, c_hi))
+  t_lo = (t_err + d_hi * c_lo) + ln2_lo * c_hi
+  t_med = t_hi + t_lo
+  p_med = polynomial(t_med, median_cs, unroll=len(median_cs))
+  near_median = t_hi + (t_lo + square(t_med) * p_med)
+
+  # 2. Moderate tails: `_NDTRI{32,64}_P` from `erf_inv_core` expects the
+  # transformed coordinates `x = 2*p - 1` and `w = -log(4*p*(1 - p)) =
+  # -log(1 - x^2)` for `p = exp(y)`.
+  #
+  # Compute `x = 2*exp(y) - 1` as a `(x_hi, x_lo)` float pair across three
+  # sub-intervals so we neither lose low bits when adding a small tail to `±1`
+  # nor cancel nearly equal numbers near `p = 1/2` (`y = -ln2`):
+  # - Left (`y <= -2*ln2`, `p <= 1/4`): write `x = -1 + 2*exp(y)`. Here
+  #   `|2*exp(y)| <= 0.5`, which is strictly smaller than `|-1|`. Because
+  #   `fast_two_sum(a, b)` requires `|a| >= |b|`, this ordering lets us add `-1`
+  #   and `2*p_left` with `fast_two_sum` below and capture the exact rounding
+  #   error in `x_left_lo` instead of losing low bits of `2*exp(y)` against
+  #   `-1`.
+  # - Middle (`-2*ln2 < y < -ln2/2`, `1/4 < p < 1/sqrt(2)`): near `y = -ln2`,
+  #   `-1 + 2*exp(y)` would subtract nearly equal numbers. Instead, absorb
+  #   `2 = exp(ln2)` into the exponent so `x = exp(y + ln2) - 1` passes an
+  #   argument near `0` to `expm1`. Splitting `ln2 = ln2_hi + ln2_lo`, let
+  #   `A = y_mod + ln2_hi` and `B = ln2_lo`:
+  #   * `-y_mod` and `ln2_hi` are within a factor of 2 here, so
+  #     `A = y_mod + ln2_hi` has zero rounding error.
+  #   * Since `|B| = |ln2_lo|` is tiny (< 2^-28), a first-order Taylor expansion
+  #     around `A` gives `exp(A + B) - 1 ~= expm1(A) + exp(A) * B`. Writing
+  #     `expm1_val = expm1(A)` and `exp(A) = 1 + expm1_val` gives
+  #     `x_mid_hi = expm1_val` and `x_mid_lo = (1 + expm1_val) * ln2_lo`.
+  # - Right (`y >= -ln2/2`, `p >= 1/sqrt(2)`): near `y = 0`, `exp(y)` rounds
+  #   toward `1` and loses precision, so rewrite `2*exp(y) - 1 = 1 + 2*expm1(y)`
+  #   instead. On `[-ln2/2, 0)`, `|2*expm1(y)| <= 2 - sqrt(2) ~= 0.59 < |1|`,
+  #   satisfying `|a| >= |b|` so `fast_two_sum(1, 2*expm1_val)` captures the
+  #   exact rounding error in `x_right_lo`.
+  two_ln2 = 2.0 * ln2_hi
+  half_ln2 = 0.5 * ln2_hi
+  ln_3_4 = math.log(0.75)
+
+  y_mod = lax_max(y, _const(y, -max_w_y))
+  y_left = lax_min(y_mod, _const(y, -two_ln2))
+  p_left = exp(y_left, accuracy=AccuracyMode.HIGHEST)
+
+  # Share one `expm1` call between the middle (`y_mod + ln2_hi`) and right
+  # (`y_mod`) branches.
+  is_mid_x = (y_mod > -two_ln2) & (y_mod < -half_ln2)
+  y_right_x = lax_max(y_mod, _const(y, -half_ln2))
+  expm1_arg = select(is_mid_x, y_mod + ln2_hi, y_right_x)
+  expm1_val = expm1(expm1_arg, accuracy=AccuracyMode.HIGHEST)
+
+  x_left_hi, x_left_lo = fast_two_sum(_const(y, -1.0), 2.0 * p_left)
+  x_right_hi, x_right_lo = fast_two_sum(_const(y, 1.0), 2.0 * expm1_val)
+  x_mid_hi = expm1_val
+  x_mid_lo = (1.0 + expm1_val) * ln2_lo
+  is_left = y_mod <= -two_ln2
+  x_hi = select(is_left, x_left_hi, select(is_mid_x, x_mid_hi, x_right_hi))
+  x_lo = select(is_left, x_left_lo, select(is_mid_x, x_mid_lo, x_right_lo))
+
+  # Far-tail target `u0 = -y - 0.5*log(2*pi)` as a `(u0_hi, u0_lo)` float pair
+  # (needed ahead of section 3 so `u0_hi` can share the `log` call below; capped
+  # at `asymp_cap` because huge `-y` uses `-2*sqrt(-y/2)` directly).
+  is_asymp = y < -max_w_y
+  abs_y = select(is_asymp, -y, full_like(y, max_w_y))
+  abs_y_cap = lax_min(abs_y, _const(y, asymp_cap))
+  u0_hi, u0_err = two_sum(abs_y_cap, _const(abs_y_cap, -half_ln2pi_hi))
+  u0_lo = u0_err - half_ln2pi_lo
+
+  # Evaluate a single `shared_log` serving both the far-tail `log(u0_hi)` and
+  # the moderate-tail `w = -log(4*p*(1 - p))`. In the left and right tails,
+  # factor `p = exp(y)` out of `-log(4*p*(1 - p))` so `-log(p) = -y` is added
+  # directly in log space without round-tripping through `exp` and `log`:
+  # - Left (`y <= -2*ln2`, `p <= 1/4`): `w = -y - 2*ln2 - log(1 - p)`, passing
+  #   `one_minus_p_hi` (`>= 3/4`) to `shared_log`.
+  # - Central (`-2*ln2 < y < log(3/4)`, `|x| < 1/2`): `w = -log(1 - x^2)`,
+  #   passing `one_minus_x2` (`>= 3/4`) to `shared_log`.
+  # - Right (`y >= log(3/4)`, `p >= 3/4`): `w = -y - log(-4*expm1(y))`, passing
+  #   `right_arg = -4*expm1_val` to `shared_log`. When `y > tiny_cut`
+  #   (`-y < eps/4`), `-expm1(y)` equals `-y` to machine precision; multiplying
+  #   `-y_right` by `scale_exp = 4 * 2^bits` lifts subnormal `-y` into normal
+  #   range first.
+  is_right = y_mod >= ln_3_4
+  y_right = lax_max(y_mod, _const(y, ln_3_4))
+  is_tiny = y_right > tiny_cut
+  right_arg = select(is_tiny, (-y_right) * scale_exp, -4.0 * expm1_val)
+  one_minus_p_hi, one_minus_p_lo = fast_two_sum(_const(y, 1.0), -p_left)
+  x2_hi, x2_lo = _split_square(x_hi)
+  one_minus_x2 = (1.0 - x2_hi) - (x2_lo + 2.0 * x_hi * x_lo)
+  mid_or_right_arg = select(is_right, right_arg, one_minus_x2)
+  log_arg = select(is_left, one_minus_p_hi, mid_or_right_arg)
+  shared_log = log(
+      select(is_asymp, u0_hi, log_arg), accuracy=AccuracyMode.HIGHEST
+  )
+
+  # Left `w = -y - 2*ln2 - log(1 - p)`: `shared_log` evaluated
+  # `log(one_minus_p_hi)`, and since `1 - p = one_minus_p_hi + one_minus_p_lo`,
+  # restore `one_minus_p_lo` via `log(one_minus_p_hi + one_minus_p_lo) ~=
+  # shared_log + one_minus_p_lo / (1 - p)` with `1 / (1 - p) ~= 1 + p`
+  # (`|one_minus_p_lo * p^2| <= 0.03 * eps` on `p <= 0.25`). For `p < eps/2`,
+  # `one_minus_p_hi` rounds to `1.0` (`shared_log = 0`) and
+  # `one_minus_p_lo = -p` holds all of `-p`, so use the second-order Taylor step
+  # `log1p_tiny = log1p(-p) ~= one_minus_p_lo * (1 - 0.5 * one_minus_p_lo)`.
+  log1p_tiny = one_minus_p_lo * (1.0 - 0.5 * one_minus_p_lo)
+  log_1mp_norm = shared_log + one_minus_p_lo * (1.0 + p_left)
+  log_1mp = select(one_minus_p_hi == 1.0, log1p_tiny, log_1mp_norm)
+  y_shift_hi, y_shift_err = two_sum(-y_left, _const(y, -two_ln2))
+  w_left_hi, w_left_err = two_sum(y_shift_hi, -log_1mp)
+  w_left_lo = w_left_err + (y_shift_err - 2.0 * ln2_lo)
+
+  # Right `w = -y - log(-4*expm1(y))`: when `is_tiny` (`-y < eps/4`),
+  # `scale_exp` scaled the `log` argument by `2^finfo.bits` (`2^32` or `2^64`).
+  # Because `shift_ln2 = finfo.bits` (`32` or `64`) is a power of two,
+  # `shift_ln2 * ln2_hi` and `shift_ln2 * ln2_lo` are exact, and `-y_right` is
+  # `< 0.02` ULP of `w > 22` so it can be dropped when `is_tiny` is true.
+  right_shift_hi = select(is_tiny, full_like(y, shift_ln2 * ln2_hi), -y_right)
+  right_shift_lo = select(is_tiny, full_like(y, shift_ln2 * ln2_lo), zero)
+  w_right_hi, w_right_err = two_sum(-shared_log, right_shift_hi)
+  w_right_lo = w_right_err + right_shift_lo
+
+  w_hi = select(is_left, w_left_hi, select(is_right, w_right_hi, -shared_log))
+  w_lo = select(is_left, w_left_lo, select(is_right, w_right_lo, zero))
+  w = w_hi + w_lo
+
+  # 3. Far left tail (`y < -max_w_y`): substituting
+  # `ndtr(x) = 0.5 * exp(-x^2/2) * erfcx(-x/sqrt(2))` into `log(ndtr(x)) = y`
+  # with `u = x^2 / 2` and `u0 = -y - 0.5*log(2*pi)` gives the root equation
+  #   `f(u) = u + 0.5*log(2*u) - R(1/u) - u0 = 0`,
+  # where `R(1/u) = log(sqrt(pi*u) * erfcx(sqrt(u)))` and differentiating gives
+  # `1 / f'(u) = sqrt(pi*u) * erfcx(sqrt(u))`. Since `shared_log = log(u0_hi)`,
+  # `log(2*u0_hi) = shared_log + ln2 = log_2u0_hi + log_2u0_lo`. Two fixed-point
+  # steps (`d0 = -0.5*log_2u0_hi`, `d1 = -0.5*(log_2u0_hi + d0/u0) + c_1/u0`)
+  # give `u1 = u0_hi + d1`, refined by one Newton step
+  # `u = u1 - f(u1) * (1/f'(u1))`.
+  log_2u0_hi, log_2u0_err = two_sum(shared_log, _const(y, ln2_hi))
+  log_2u0_lo = log_2u0_err + ln2_lo
+  inv_u0 = 1.0 / u0_hi
+  d0 = -0.5 * log_2u0_hi
+  d1 = d0 + (-0.5 * d0 + asymp_cs[0]) * inv_u0
+  u1 = u0_hi + d1
+  # Write `u1 = u0_hi * (1 + delta)` with `delta = (u1 - u0_hi) / u0_hi` so we
+  # can evaluate `log(2*u1) = log(2*u0_hi) + log1p(delta)` (`log1p_delta`) and
+  # `1/u1 = (1/u0_hi) / (1 + delta)` (`inv_u1`) via short Taylor series in
+  # `delta` instead of a second `log` or division in the Newton step.
+  delta = (u1 - u0_hi) * inv_u0
+  log1p_delta = delta * polynomial(delta, log1p_cs, unroll=n_log1p)
+  inv_u1 = inv_u0 * polynomial(delta, rcp1p_cs, unroll=n_rcp)
+  r_u1 = inv_u1 * polynomial(inv_u1, asymp_cs, unroll=n_asymp)
+  d2_lo = -0.5 * (log_2u0_lo + log1p_delta) + r_u1
+  # Decompose `f(u1) = (u1 - u0) + 0.5*log(2*u1) - R(1/u1)` using
+  # `-d0 = 0.5*log_2u0_hi` and `-d2_lo = 0.5*(log_2u0_lo + log1p_delta) - R`.
+  # Grouping `((u1 - u0_hi) - d0)` first avoids cancellation error: `u1` is
+  # close to `u0_hi` and `u1 - u0_hi` is close to `d0` (both pairs are within a
+  # few percent), so both subtractions are exact with zero rounding error.
+  f_u1 = ((u1 - u0_hi) - d0) - (u0_lo + d2_lo)
+  newton_step = -f_u1 * polynomial(inv_u1, inv_df_cs, unroll=n_inv_df)
+  u_hi, u_lo = two_sum(u1, newton_step)
+
+  # Share one `sqrt` and fraction-bit split `z = z_h + z_l` across the moderate
+  # (`w`) and far (`2*u`) tails (see `erf_inv_core`). Above `asymp_cap`
+  # (`2^(maxexp // 2)`), the `log(2*u)` term is smaller than float roundoff, so
+  # `x = -sqrt(-2*y) = -2 * sqrt(-y / 2)`; evaluating `sqrt(-y / 2)` (with
+  # `k_tail = 2` below) avoids overflowing `-2*y` near `-fmax`.
+  conds = tuple(w < c for c in w_cuts)
+  w_mod_hi = select(conds[0], one, w_hi)
+  w_mod_lo = select(conds[0], zero, w_lo)
+  is_huge = abs_y > asymp_cap
+  rad_hi = select(is_asymp, select(is_huge, 0.5 * abs_y, 2.0 * u_hi), w_mod_hi)
+  rad_lo = select(is_asymp, select(is_huge, zero, 2.0 * u_lo), w_mod_lo)
+  z = sqrt(rad_hi + rad_lo)
+  z_h, _ = split_half_mask(z)
+  z_l = ((rad_hi - z_h * z_h) + rad_lo) / (z + z_h)
+
+  idx = _piece_index(conds)
+  shift = _select_piece(w, idx, (0.0, *shifts))
+  t = select(conds[0], (w_hi - c1) + w_lo, select(is_asymp, zero, z - shift))
+  coeffs = [_select_piece(w, idx, cs) for cs in zip(*ps)]
+  poly = polynomial(t, coeffs, unroll=unroll)
+  # Tail magnitude `k_tail * z + rem_tail`: `k_h * sqrt(w) + poly` in the
+  # moderate tail, `sqrt(2*u)` in the far tail, or `2 * sqrt(-y/2)` above
+  # `asymp_cap`.
+  k_asymp = select(is_huge, full_like(y, 2.0), one)
+  k_tail = select(is_asymp, k_asymp, full_like(y, k_h))
+  rem_tail = select(is_asymp, zero, poly)
+  tail_mag = k_tail * z_h + (k_tail * z_l + rem_tail)
+  sign_x = select(y < -ln2_hi, full_like(y, -1.0), one)
+  # Note that we multiply `x_hi` and `x_lo` by `poly` separately: `x_hi + x_lo`
+  # rounds `x_lo` away when `(x_hi, x_lo)` comes from `fast_two_sum`, whereas
+  # `x_lo * poly` can still shift `x_hi * poly` by 1 ULP.
+  central = (x_hi * poly) + (x_lo * poly)  # Do not re-associate.
+  outer = select(is_asymp | ~conds[0], sign_x * tail_mag, central)
+  is_median = (y >= _NDTRI_EXP_MEDIAN_LO) & (y <= _NDTRI_EXP_MEDIAN_HI)
+  return select(is_median, near_median, outer)

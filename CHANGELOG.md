@@ -42,6 +42,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `tan(pi * x)` more accurately than multiplying by `pi` first. They return
     exact values at integers and half-integers and stay accurate for large
     inputs.
+  * Added {func}`jax.scipy.special.ndtri_exp`, the inverse of
+    {func}`jax.scipy.special.log_ndtr`, with custom forward- and reverse-mode
+    derivatives.
 
 * Breaking changes
   * The `jax_use_simplified_jaxpr_constants` configuration flag is now `True`

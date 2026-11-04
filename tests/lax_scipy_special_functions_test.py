@@ -173,6 +173,13 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         functools.partial(jtu.rand_uniform, low=0.0, high=1.0), True,
     ),
     op_record(
+        "ndtri_exp",
+        1,
+        float_dtypes,
+        functools.partial(jtu.rand_uniform, low=-10.0, high=-0.05),
+        True,
+    ),
+    op_record(
         "ndtr", 1, float_dtypes, jtu.rand_default, True
     ),
     # TODO(phawkins): gradient of entr yields NaNs.
