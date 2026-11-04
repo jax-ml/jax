@@ -41,7 +41,38 @@ def bounds_decision(e: DimSize,
                     prec: BoundsPrecision) -> tuple[float, float]:
   if not isinstance(e, _DimExpr):
     return (e, e)
-  decision = _DecisionByElimination.build(e.scope)
+  scope = e.scope
+  if (not scope._explicit_constraints or
+      scope._decision_initial_state is not None):
+    if (res := scope._bounds_cache.get(e)) is not None:
+      lb, ub, prev_prec = res
+      if prec._bounds_are_sufficient(lb, ub) or prev_prec.value >= prec.value:
+        return (lb, ub)
+  # Fast path for linear combinations of dimension variables (each >= 1) in
+  # unconstrained scopes. Since _sorted_terms puts the largest _size first, a
+  # degree-1 variable leading term (_size == 2) implies all remaining terms are
+  # also degree-1 variables (_size == 2) or constants (_size == 0).
+  if (not scope._explicit_constraints and not scope._normalization_rules and
+      e._leading_term[0].to_var() is not None):
+    lb_int = 0
+    ub_int = 0
+    has_pos_var = False
+    has_neg_var = False
+    for t, k in e._sorted_terms:
+      if t.is_constant:
+        lb_int += k
+        ub_int += k
+      elif k > 0:
+        lb_int += k
+        has_pos_var = True
+      else:
+        ub_int += k
+        has_neg_var = True
+    lb = -np.inf if has_neg_var else lb_int
+    ub = np.inf if has_pos_var else ub_int
+    scope._bounds_cache[e] = (lb, ub, BoundsPrecision.BEST)
+    return (lb, ub)
+  decision = _DecisionByElimination.build(scope)
   return decision.bounds(e, prec, add_implicit_constraints=True)
 
 shape_poly._bounds_decision = bounds_decision
