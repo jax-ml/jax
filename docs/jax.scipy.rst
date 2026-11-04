@@ -213,7 +213,7 @@ jax.scipy.special
    ndtr
    ndtri
    ndtri_exp
-owens_t
+   owens_t
    poch
    polygamma
    rel_entr
