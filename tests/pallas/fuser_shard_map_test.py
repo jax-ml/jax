@@ -552,14 +552,24 @@ class ShardMapFusionBlockContainmentTest(jtu.JaxTestCase):
         )
 
   @parameterized.named_parameters(
-      ("prologue", lambda shmap, x: shmap(x.sum(axis=1))),
-      ("epilogue", lambda shmap, x: shmap(x).sum(axis=1)),
+      ("prologue", lambda shmap, x: shmap(x.sum(axis=1)), False),
+      ("epilogue", lambda shmap, x: shmap(x).sum(axis=1), False),
       (
           "epilogue_keepdims",
           lambda shmap, x: shmap(x).sum(axis=1, keepdims=True),
+          True,
       ),
   )
-  def test_shard_map_reduction_over_unsharded_axis(self, apply_fn):
+  def test_shard_map_reduction_over_unsharded_axis(self, apply_fn, keepdims):
+    if (
+        not keepdims
+        and jtu.test_device_matches(["tpu"])
+        and not jtu.is_device_tpu_at_least(5)
+    ):
+      self.skipTest(
+          "Requires TPUv5+ for minor-axis reduction with keepdims=False"
+      )
+
     def fn(x):
       return apply_fn(
           lambda y: jax.shard_map(
