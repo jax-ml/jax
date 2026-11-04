@@ -82,6 +82,13 @@ class Comparator(Enum):
   EQ = 1
   GEQ = 2
 
+
+# TODO: Move all the _DimFactor string constants here and use this enum
+# instead.
+class _DivModOp(Enum):
+  FLOORDIV = 1
+  MOD = 2
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class _SymbolicConstraint:
   # Either e1 == e2 if cmp == Comparator.EQ else e1 >= e2
@@ -181,12 +188,21 @@ class _DimFactor:
     The comparison is done lexicographically (syntactic), to be used for sorting.
     The result is not related to the semantic value.
     """
-    if c := cmp_comparable(self._size, other._size): return c
-    if self.var is not None:
-      return cmp_comparable(self.var, other.var)
-    if c := cmp_comparable(self.operation, other.operation): return c
-    return cmp_sequence(self.operands, other.operands,
-                        lambda s_o, o_o: s_o._syntactic_cmp(o_o))
+    if self is other:
+      return 0
+    if self._size != other._size:
+      return -1 if self._size < other._size else 1
+    if (s_var := self.var) is not None:
+      assert (o_var := other.var) is not None
+      return -1 if s_var < o_var else (1 if s_var > o_var else 0)
+    if (s_op := self.operation) != (o_op := other.operation):
+      assert s_op is not None and o_op is not None
+      return -1 if s_op < o_op else 1
+    for s_o, o_o in zip(self.operands, other.operands):
+      if s_o is not o_o and (c := s_o._syntactic_cmp(o_o)):
+        return c
+    s_len, o_len = len(self.operands), len(other.operands)
+    return -1 if s_len < o_len else (1 if s_len > o_len else 0)
 
   def __eq__(self, other: Any):
     """Lexicographic comparison."""
@@ -328,14 +344,19 @@ class _DimTerm:
     The comparison is done lexicographically (syntactic), to be used for sorting.
     The result is not related to the semantic value.
     """
-    if c := cmp_comparable(self._size, other._size): return c
-    def cmp_factor(s_f: tuple[_DimFactor, int], o_f: tuple[_DimFactor, int]) -> int:
-      if c := s_f[0]._syntactic_cmp(o_f[0]): return c
+    if self is other:
+      return 0
+    if self._size != other._size:
+      return -1 if self._size < other._size else 1
+    for (s_f, s_e), (o_f, o_e) in zip(self._factors, other._factors):
+      if s_f is not o_f and (c := s_f._syntactic_cmp(o_f)):
+        return c
       # Consider the terms with exponents to be expanded as multiplications.
       # Then a higher exponent for a "large" factor should lead to a "larger" term.
-      return cmp_comparable(s_f[1], o_f[1])
-
-    return cmp_sequence(self._factors, other._factors, cmp_factor)
+      if s_e != o_e:
+        return -1 if s_e < o_e else 1
+    s_len, o_len = len(self._factors), len(other._factors)
+    return -1 if s_len < o_len else (1 if s_len > o_len else 0)
 
   def __lt__(self, other: _DimTerm):
     """Lexicographic comparison"""
@@ -364,6 +385,10 @@ class _DimTerm:
     """
     Returns the product with another term. Example: (n^2*m) * n == n^3 * m.
     """
+    if not self._factors:
+      return other
+    if not other._factors:
+      return self
     return _DimTerm(_DimExpr._linear_combination_sorted_pairs(self._factors, 0, 1,
                                                               other._factors, 0, 1))
 
@@ -521,15 +546,16 @@ class _DimExpr:
 
     Does not attempt to normalize the keys (terms) inside `terms`.
     """
-    for t, t_k in terms:
-      assert t_k != 0
-      if updates := _DimExpr._normalize_term(t, t_k, scope):
-        coeffs = dict(terms)
-        for t1, t1_k in updates:
-          _DimExpr._add_coeff(coeffs, t1, t1_k)
-        terms = _DimExpr._coeff_to_sorted_terms(coeffs)
-        # TODO: check the case when we need to apply multiple normalizations
-        break
+    if scope._normalization_rules:
+      for t, t_k in terms:
+        assert t_k != 0
+        if updates := _DimExpr._normalize_term(t, t_k, scope):
+          coeffs = dict(terms)
+          for t1, t1_k in updates:
+            _DimExpr._add_coeff(coeffs, t1, t1_k)
+          terms = _DimExpr._coeff_to_sorted_terms(coeffs)
+          # TODO: check the case when we need to apply multiple normalizations
+          break
 
     if not terms: return 0
     if terms[0][0].is_constant: return terms[0][1]
@@ -631,13 +657,19 @@ class _DimExpr:
     The comparison is done lexicographically (syntactic), to be used for sorting.
     The result is not related to the semantic value.
     """
+    if self is other:
+      return 0
+    if self._size != other._size:
+      return -1 if self._size < other._size else 1
     s_terms = self._sorted_terms
     o_terms = other._sorted_terms
-    if c := cmp_comparable(self._size, other._size): return c
-    def cmp_factor(s_f: tuple[_DimTerm, int], o_f: tuple[_DimTerm, int]) -> int:
-      if c := s_f[0]._syntactic_cmp(o_f[0]): return c
-      return cmp_comparable(s_f[1], o_f[1])
-    return cmp_sequence(s_terms, o_terms, cmp_factor)
+    for (s_t, s_c), (o_t, o_c) in zip(s_terms, o_terms):
+      if s_t is not o_t and (c := s_t._syntactic_cmp(o_t)):
+        return c
+      if s_c != o_c:
+        return -1 if s_c < o_c else 1
+    s_len, o_len = len(s_terms), len(o_terms)
+    return -1 if s_len < o_len else (1 if s_len > o_len else 0)
 
   def _eq(self, other: _DimExpr) -> bool:
     # Equality is used very frequently because expressions are cached. We could
@@ -776,10 +808,29 @@ class _DimExpr:
       raise NotImplementedError("__rpow__ modulo not implemented")
     return self.__jax_array__().__rpow__(other)
 
+  def _divmod_op(self, divisor: DimSize, mode: _DivModOp) -> DimSize:
+    op_name = (
+        _DimFactor.FLOORDIV if mode == _DivModOp.FLOORDIV else _DimFactor.MOD
+    )
+    mon, count = self._leading_term
+    if not mon.is_constant:
+      if isinstance(divisor, _DimExpr):
+        dterm, dcount = divisor._leading_term
+        if dcount != 0 and (
+            count % dcount != 0 or mon._size < dterm._size or
+            (mon._size == dterm._size and mon != dterm)):
+          return _DimExpr._from_operation(
+              op_name, self, divisor, scope=self.scope)
+      elif (d_int := op.index(divisor)) != 0 and count % d_int != 0:
+        return _DimExpr._from_operation(
+            op_name, self, divisor, scope=self.scope)
+    q, r = self._divmod(divisor)
+    return q if mode == _DivModOp.FLOORDIV else r
+
   def __floordiv__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__floordiv__(divisor)
-    return self._divmod(divisor)[0]
+    return self._divmod_op(divisor, _DivModOp.FLOORDIV)
 
   def __rfloordiv__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
@@ -797,7 +848,7 @@ class _DimExpr:
   def __mod__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__mod__(divisor)
-    return self._divmod(divisor)[1]
+    return self._divmod_op(divisor, _DivModOp.MOD)
 
   def __rmod__(self, dividend):
     if isinstance(dividend, core.Tracer) or not _convertible_to_poly(dividend):
@@ -959,21 +1010,6 @@ class _DimExpr:
     return _DimExpr(
         copy.deepcopy(self._sorted_terms, memo),
         copy.deepcopy(self._scope, memo))
-
-
-def cmp_comparable(i1, i2) -> int:
-  if i1 < i2: return -1
-  if i1 > i2: return 1
-  return 0
-
-def cmp_sequence(s1, s2, elem_cmp) -> int:
-  """Compares two sequences using `elem_cmp`."""
-  l2 = len(s2)
-  for i, e1 in enumerate(s1):
-    if i >= l2: return 1
-    if c := elem_cmp(e1, s2[i]): return c
-  if len(s1) < l2: return -1
-  return 0
 
 
 DimSize: TypeAlias = _DimExpr | int
