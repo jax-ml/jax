@@ -23,6 +23,7 @@ load(
     "pallas_fuser_users",
     "pallas_sc_internal_users",
     "pallas_tpu_ops_users",
+    "pallas_triton_internal_users",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_strict_library",
@@ -64,6 +65,12 @@ package_group(
     name = "pallas_fuser_users",
     includes = ["//jax:internal"],
     packages = pallas_fuser_users,
+)
+
+package_group(
+    name = "pallas_triton_users",
+    includes = ["//jax:internal"],
+    packages = pallas_triton_internal_users,
 )
 
 package_group(
@@ -352,6 +359,7 @@ pytype_strict_library(
             "pallas/ops/tpu/**/*.py",
             "pallas/tpu.py",
             "pallas/fuser.py",
+            "pallas/triton.py",
         ],
     ),
     visibility = ["//visibility:public"],
@@ -446,6 +454,24 @@ pytype_strict_library(
         "//jax/_src:shard_map",
         "//jax/_src:util",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "pallas_triton",
+    srcs = [
+        "pallas/triton.py",
+    ],
+    visibility = [
+        ":pallas_triton_users",
+    ],
+    deps = [
+        "//jax/_src:deprecations",
+        "//jax/_src:gpu_info",
+        "//jax/_src/pallas",
+        "//jax/_src/pallas/triton:core",
+        "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
+        "//jax/_src/pallas/triton:primitives",
+    ],
 )
 
 pytype_strict_library(

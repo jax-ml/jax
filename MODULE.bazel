@@ -83,6 +83,7 @@ use_repo(
     "riegeli",
     "shardy",
     "stablehlo",
+    "triton",
 )
 
 rocm = use_extension("@xla//third_party/extensions:rocm_configure.bzl", "rocm_configure_ext")
