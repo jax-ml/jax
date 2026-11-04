@@ -326,9 +326,12 @@ def einsum(
   operand_arrays = list(util.ensure_arraylike_tuple("einsum", operands))
 
   if num_contractions > 1 and out_sharding is not None:
-    # TODO(yashkatariya): If the out_sharding is unreduced, figure out a way to
-    # run the dot_general unreduced_rule on these einsums because right now we
-    # drop into Auto mode skipping the checks happening in the rule.
+    if out_sharding.spec.unreduced or out_sharding.spec.reduced:
+      raise ValueError(
+          '`out_sharding` with `unreduced` or `reduced` is not supported for'
+          ' `einsum` with more than 2 operands (multiple contractions). Please'
+          ' decompose it into 2-operand `einsum`s. Got'
+          f' out_sharding={out_sharding}')
     return auto_axes(
         jit_einsum,
         axes=out_sharding.mesh.explicit_axes,
