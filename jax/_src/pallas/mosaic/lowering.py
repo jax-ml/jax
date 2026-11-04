@@ -422,6 +422,7 @@ class PallasLoweringCacheKey:
   block_shapes: tuple[tuple[int | pallas_core.Squeezed, ...] | None, ...]
   grid_arity: int
   forward_compatible: bool = False
+  needs_layout_passes: bool = False
   fuse_transposed_lhs_in_matmul: bool = False
   grid_sizes: tuple[int, ...] = ()
   vmapped_dims: tuple[int, ...] = ()
@@ -1853,6 +1854,7 @@ def jaxpr_subcomp(
               block_shapes=block_shapes,
               grid_arity=grid_arity,
               forward_compatible=ctx.forward_compatible,
+              needs_layout_passes=ctx.needs_layout_passes,
               fuse_transposed_lhs_in_matmul=ctx.fuse_transposed_lhs_in_matmul,
               grid_sizes=ctx.grid_sizes,
               vmapped_dims=ctx.vmapped_dims,

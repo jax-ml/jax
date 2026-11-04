@@ -3986,5 +3986,59 @@ class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
         run_mpmd.lower(x).compile()
 
 
+class LoweringCacheTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.test_device_matches(["tpu", "cpu"]):
+      self.skipTest("Test only works on TPU or CPU.")
+    tpu7x = jax.sharding.AbstractDevice(
+        device_kind="TPU7x", num_cores=1, platform="tpu"
+    )
+    self.enter_context(
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=tpu7x)
+        )
+    )
+
+  def test_needs_layout_passes_in_lowering_cache_key(self):
+    num_lanes = plsc.get_sparse_core_info().num_lanes
+    scv_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=1,
+        num_subcores=1,
+    )
+    scratch = (
+        pltpu.VMEM((num_lanes,), jnp.float32),
+        pltpu.VMEM((2 * num_lanes,), jnp.bfloat16),
+    )
+
+    def kernel(a_vmem, o_vmem):
+      o_vmem[...] = plsc.pack(
+          a_vmem[...], a_vmem[...], format=plsc.PackFormat.INTERLEAVED
+      )
+
+    k_false = pl.kernel(
+        kernel,
+        mesh=scv_mesh,
+        scratch_types=scratch,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+    )
+    k_true = pl.kernel(
+        kernel,
+        mesh=scv_mesh,
+        scratch_types=scratch,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "plsc.pack is not supported with needs_layout_passes=True",
+    ):
+      jax.jit(lambda: (k_false(), k_true())).trace().lower(
+          lowering_platforms=("tpu",)
+      )
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
