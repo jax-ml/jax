@@ -1050,8 +1050,10 @@ def multivariate_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
     method: optional, a method to compute the factor of ``cov``.
-      Must be one of 'svd', 'eigh', and 'cholesky'. Default 'cholesky'. For
-      singular covariance matrices, use 'svd' or 'eigh'.
+      Must be one of ``'svd'``, ``'eigh'``, and ``'cholesky'``. Default
+      ``'cholesky'``. For singular or ill-conditioned covariance matrices, use
+      ``'svd'`` or ``'eigh'``, or add a small diagonal jitter to ``cov``; see
+      the note below.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -1065,6 +1067,69 @@ def multivariate_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     A random array with the specified dtype and shape given by
     ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
+
+  .. note::
+
+     :func:`multivariate_normal` works by factoring :math:`\Sigma = F F^T` and
+     transforming standard normal draws :math:`z \sim \mathcal{N}(0, I)` via
+     :math:`\mu + F z`. The default ``method='cholesky'`` is the fastest
+     decomposition, but can fail and return ``NaN`` values if ``cov`` is
+     singular or ill-conditioned enough that floating-point rounding makes some
+     eigenvalues non-positive (for example, large smooth Gaussian process kernel
+     matrices, especially in ``float32``).
+
+     Whenever ``cov`` is already available in factored form
+     :math:`\Sigma = F F^T`—where :math:`F` has shape ``(n, k)`` (such as a
+     Cholesky factor, a low-rank factor with ``k < n``, or scaled features)—it
+     is better to skip :func:`multivariate_normal` and transform standard normal
+     draws directly: draw ``z = jax.random.normal(key, (*batch_shape, k))`` and
+     compute ``mean + z @ F.T`` (or ``mean + F @ z`` for a single sample). This
+     costs :math:`O(n k)` per sample without an :math:`O(n^3)` matrix
+     factorization, avoids squaring the condition number by forming
+     ``F @ F.T``, and works even when ``k < n`` makes :math:`F F^T` singular.
+
+     When only a dense ``cov`` matrix is available and it may be singular or
+     ill-conditioned, either add a small diagonal jitter scaled to ``cov`` (e.g.
+     ``cov + eps * jnp.eye(n)``) or pass ``method='eigh'`` or ``method='svd'``
+     (note that eigendecomposition and SVD are substantially slower than
+     Cholesky, particularly on TPU).
+
+  Examples:
+    Draw a single sample from a 2D multivariate normal distribution:
+
+    >>> import jax
+    >>> import jax.numpy as jnp
+    >>> key = jax.random.key(0)
+    >>> mean = jnp.array([1.0, 2.0])
+    >>> cov = jnp.array([[2.0, 1.0],
+    ...                  [1.0, 2.0]])
+    >>> jax.random.multivariate_normal(key, mean, cov)
+    Array([3.2947626, 5.6278143], dtype=float32)
+
+    Draw a batch of 4 samples by passing ``shape``:
+
+    >>> jax.random.multivariate_normal(key, mean, cov, shape=(4,))
+    Array([[3.2947626 , 5.6278143 ],
+           [0.38680488, 1.5971162 ],
+           [1.2490301 , 0.93395376],
+           [0.29954183, 2.2552586 ]], dtype=float32)
+
+    If the covariance is already known in factored form ``cov = F @ F.T`` (for
+    example, a ``3 x 2`` low-rank factor ``F`` whose ``3 x 3`` covariance
+    ``F @ F.T`` has rank 2 and is therefore singular), sample directly from
+    ``F`` rather than forming ``cov``:
+
+    >>> F = jnp.array([[1.0, 0.0],
+    ...                [1.0, 1.0],
+    ...                [0.0, 1.0]])
+    >>> mean = jnp.array([1.0, 2.0, 3.0])
+    >>> z = jax.random.normal(key, (F.shape[-1],))
+    >>> mean + F @ z  # single sample from N(mean, F @ F.T)
+    Array([2.622642 , 5.647907 , 5.0252647], dtype=float32)
+    >>> z_batch = jax.random.normal(key, (10_000, F.shape[-1]))
+    >>> samples = mean + z_batch @ F.T  # batch of samples from N(mean, F @ F.T)
+    >>> jnp.allclose(jnp.cov(samples, rowvar=False), F @ F.T, atol=0.1)
+    Array(True, dtype=bool)
   """
   key, _ = _check_prng_key("multivariate_normal", key)
   mean, cov = promote_dtypes_inexact(mean, cov)
@@ -1107,7 +1172,7 @@ def _multivariate_normal(key: Key, mean, cov, shape, dtype, method) -> Array:
     factor = u * jnp.sqrt(s[..., None, :])
   elif method == 'eigh':
     (w, v) = jnp_linalg.eigh(cov)
-    factor = v * jnp.sqrt(w[..., None, :])
+    factor = v * jnp.sqrt(jnp.maximum(w[..., None, :], 0))
   else: # 'cholesky'
     factor = jnp_linalg.cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)

@@ -1182,6 +1182,16 @@ class DistributionsTest(RandomTestBase):
     else:
       self.assertFalse(np.any(np.isnan(result)))
 
+  @jtu.sample_product(method=['eigh', 'svd'], dtype=jtu.dtypes.floating)
+  def testMultivariateNormalSingularRank1(self, method, dtype):
+    u = jnp.array([1.0, 2.0, 3.0], dtype=dtype)
+    samples = random.multivariate_normal(
+        self.make_key(0), jnp.zeros(3, dtype=dtype), jnp.outer(u, u),
+        shape=(10,), method=method)
+    self.assertFalse(np.any(np.isnan(samples)))
+    tol = 2e-2 if dtype == np.float32 else 1e-5
+    self.assertAllClose(samples, samples[:, :1] * u[None, :], atol=tol, rtol=tol)
+
   def testIssue222(self):
     x = random.randint(self.make_key(10003), (), 0, 0)
     assert x == 0
