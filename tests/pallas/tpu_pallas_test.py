@@ -7176,6 +7176,7 @@ class ExplicitMXUTest(jtu.JaxTestCase):
 
 class BarrierSemaphoreTagTest(jtu.JaxTestCase):
 
+  @jtu.thread_unsafe_test()  # monkey-patching jax_core.subjaxprs isn't thread-safe
   def test_extract_tag_scans_each_jaxpr_once(self):
     def f(x):
       pltpu.get_barrier_semaphore('tag')
