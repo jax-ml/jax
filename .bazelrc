@@ -240,6 +240,10 @@ common:hermetic_cuda_umd --@cuda_driver//:include_cuda_umd_libs=true
 
 # common CUDA and other C++ targets with Clang
 common:build_cuda_with_clang --@local_config_cuda//:cuda_compiler=clang
+# rules_ml_toolchain's split @cuda_nvcc redist omits version.json, causing
+# Clang 22's upper-bounded CUDA version check for sm_101 (Thor) on CUDA 12.9
+# to see an empty version and fail.
+common:build_cuda_with_clang --copt=--no-cuda-version-check
 
 # common CUDA with NVCC and other C++ targets with Clang
 common:build_cuda_with_nvcc --action_env=TF_NVCC_CLANG="1"
@@ -365,17 +369,18 @@ common:ci_linux_aarch64_base --test_env=OMP_NUM_THREADS=8
 common:ci_linux_aarch64 --config=ci_linux_aarch64_base
 
 common:ci_linux_aarch64_cuda_common --config=ci_linux_aarch64_base
-common:ci_linux_aarch64_cuda_common --config=build_cuda_with_nvcc
 
-# Aarch64 builds use CLANG_CUDA_COMPILER_PATH, which allows Clang to compile C++
-# targets and NVCC to compile CUDA targets.
-common:ci_linux_aarch64_cuda12 --config=ci_linux_aarch64_cuda_common
 common:ci_linux_aarch64_cuda12 --config=cuda12
+common:ci_linux_aarch64_cuda12 --config=ci_linux_aarch64_cuda_common
+# Use Clang for CUDA 12 builds since CUDA 12 nvcc does not support libc++.
+common:ci_linux_aarch64_cuda12 --config=build_cuda_with_clang
 # Alias for backward compatibility.
 common:ci_linux_aarch64_cuda --config=ci_linux_aarch64_cuda12
 
-common:ci_linux_aarch64_cuda13 --config=ci_linux_aarch64_cuda_common
 common:ci_linux_aarch64_cuda13 --config=cuda13
+common:ci_linux_aarch64_cuda13 --config=ci_linux_aarch64_cuda_common
+# Use NVCC for CUDA 13 builds since CUDA 13.4 nvcc supports libc++.
+common:ci_linux_aarch64_cuda13 --config=build_cuda_with_nvcc
 
 # Deprecated CI config with non-hermetic toolchains.
 common:ci_linux_aarch64_clang_local --config=clang_local
@@ -383,6 +388,7 @@ common:ci_linux_aarch64_clang_local --config=ci_linux_aarch64_base
 
 common:ci_linux_aarch64_cuda_common_clang_local --config=cuda_clang_local
 common:ci_linux_aarch64_cuda_common_clang_local --config=ci_linux_aarch64_cuda_common
+common:ci_linux_aarch64_cuda_common_clang_local --config=build_cuda_with_nvcc
 common:ci_linux_aarch64_cuda_common_clang_local --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
 common:ci_linux_aarch64_cuda12_clang_local --config=ci_linux_aarch64_cuda_common_clang_local
