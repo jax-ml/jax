@@ -902,6 +902,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_numpy_ufuncs_test",
     srcs = ["lax_numpy_ufuncs_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Test times out.
+    },
     shard_count = {
         "cpu": 5,
         "gpu": 4,
