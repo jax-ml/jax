@@ -62,6 +62,9 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/ir/compilation/atom_program_compiler.h"
+#include "xla/python/ifrt/ir/compilation/basic_atom_program_compiler.h"
+#include "xla/python/ifrt/ir/compilation/compiler.h"
 #include "xla/python/ifrt/ir/conversions/mpmd/lower_to_ifrt.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
 #include "xla/python/ifrt/ir/program_memory_tracer.h"
@@ -151,6 +154,31 @@ absl::StatusOr<xla::ifrt::DeviceListRef> MakeDeviceListFromPyDevices(
   return py_client->ifrt_client()->MakeDeviceList(unwrapped_devices);
 }
 
+// Compiles and loads an IFRT IR program with `client`'s default compiler,
+// except on PJRT-backed IFRT clients, whose compiler only takes HLO programs.
+// There XLA's IFRT IR compiler compiles each atom program through the client,
+// and the IFRT IR interpreter runs the program.
+absl::StatusOr<xla::ifrt::LoadedExecutableRef> CompileAndLoadIfrtIrProgram(
+    xla::ifrt::Client* client,
+    std::unique_ptr<xla::ifrt::IfrtIRProgram> program,
+    std::unique_ptr<xla::ifrt::CompileOptions> options) {
+  if (client->runtime_type() != "pjrt_ifrt") {
+    return client->GetDefaultCompiler()
+        ->CompileAndLoad(std::move(program), std::move(options))
+        .Await();
+  }
+  xla::ifrt::IfrtIrProgramCompiler compiler(
+      client,
+      [client](const xla::ifrt::IfrtIRCompileOptions& compile_options)
+          -> absl::StatusOr<std::unique_ptr<xla::ifrt::AtomProgramCompiler>> {
+        return xla::ifrt::BasicAtomProgramCompiler::Create(
+            client, compile_options.device_assignments,
+            compile_options.strict_memory_reservation);
+      });
+  return compiler.CompileAndLoad(std::move(program), std::move(options))
+      .Await();
+}
+
 // Calls `Compiler::CompileAndLoad()` and returns
 // `PyMpmdLoadedExecutable` for the compiled MPMD program.
 //
@@ -218,11 +246,10 @@ CompileMpmdWithLoadedHostCallbacks(
     nb::gil_scoped_release gil_release;
     ABSL_ASSIGN_OR_RETURN(
         loaded_executable,
-        client->GetDefaultCompiler()
-            ->CompileAndLoad(std::make_unique<xla::ifrt::IfrtIRProgram>(
-                                 unwrap(c_module.get())),
-                             std::move(ifrt_compile_options))
-            .Await());
+        CompileAndLoadIfrtIrProgram(
+            client,
+            std::make_unique<xla::ifrt::IfrtIRProgram>(unwrap(c_module.get())),
+            std::move(ifrt_compile_options)));
   }
   if (!xla::ifrt::isa<xla::ifrt::MpmdLoadedExecutable>(
           loaded_executable.get())) {
@@ -320,7 +347,7 @@ CompileMpmdWithCallableHostCallbacks(
 NB_MODULE(_sdy_mpmd, m) {
   nb::module_::import_(
       "jaxlib._hlo");
-  nb::module_::import_("jax.jaxlib._jax");
+  nb::module_::import_("jaxlib._jax");
 
   nb::enum_<PartitioningPhase>(m, "PartitioningPhase", nb::is_flag())
       .value("NONE", PartitioningPhase::kNone)
