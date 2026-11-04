@@ -485,8 +485,6 @@ class IndexerOpsTest(PallasBaseTest):
 
   @parameterized.product(case=_INDEXING_TEST_CASES)
   def test_can_load_with_ref_at(self, case):
-    if self.INTERPRET:
-      self.skipTest("TODO: fails in interpret mode.")
     in_shape, indexers, out_shape = case
     dtype = jnp.float32
     def body(x_ref, y_ref):
@@ -508,8 +506,6 @@ class IndexerOpsTest(PallasBaseTest):
 
   @parameterized.product(case=_INDEXING_TEST_CASES)
   def test_can_store_with_ref_at(self, case):
-    if self.INTERPRET:
-      self.skipTest("TODO: fails in interpret mode.")
     in_shape, indexers, val_shape = case
     dtype = jnp.float32
     def body(x_ref, y_ref):
@@ -547,8 +543,6 @@ class IndexerOpsTest(PallasBaseTest):
   def test_strided_load_and_store(
       self, slice_type, ref_shape, indices, strides
   ):
-    if self.INTERPRET:
-      self.skipTest("TODO: fails in interpret mode.")
     ref_shape = (*ref_shape, 128)
     indices = (*indices, 0)
     strides = (*strides, 1)
@@ -588,8 +582,6 @@ class IndexerOpsTest(PallasBaseTest):
 
   @hp.given(hps.data())
   def test_load_and_broadcast_with_stride_0(self, data):
-    if self.INTERPRET:
-      self.skipTest("TODO: fails in interpret mode.")
     dtype = jnp.float32
     rank = data.draw(hps.integers(min_value=2, max_value=4))
     shape = data.draw(hps.tuples(
