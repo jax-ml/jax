@@ -334,6 +334,9 @@ StrongLRUCache::StrongLRUCache(std::optional<nb::callable> cache_context_fn,
 /*static*/ nb_class_ptr<StrongLRUCache> StrongLRUCache::Create(
     std::optional<nb::callable> cache_context_fn, nb::callable fn,
     int64_t maxsize, std::optional<nb::callable> explain, int64_t num_shards) {
+  if (num_shards <= 0) {
+    throw std::invalid_argument("num_shards must be positive");
+  }
   return make_nb_class<StrongLRUCache>(std::move(cache_context_fn),
                                        std::move(fn), maxsize,
                                        std::move(explain), num_shards);
@@ -743,6 +746,9 @@ void RegisterStrongLruCache(nb::module_& m) {
             auto explain =
                 nb::cast<std::optional<nb::callable>>(pickle["explain"]);
             int64_t num_shards = nb::cast<int64_t>(pickle["num_shards"]);
+            if (num_shards <= 0) {
+              throw std::invalid_argument("num_shards must be positive");
+            }
 
             new (cache)
                 StrongLRUCache(std::move(cache_context_fn), std::move(fn),
