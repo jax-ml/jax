@@ -6439,7 +6439,7 @@ def _convert_element_type_collective_rule(in_avals, out_avals, **params):
   (in_aval,), (out_aval,) = in_avals, out_avals
   if in_aval.sharding != out_aval.sharding:
     raise NotImplementedError
-  return mlir.PartitioningRule()
+  return mlir.PartitioningRule(per_shard_params={'sharding': None})
 
 mlir.register_lowering(
     convert_element_type_p, _convert_element_type_lower,
@@ -10269,7 +10269,8 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes, **kwargs):
   return [mlir.lower_with_sharding_in_types(ctx, op.result, aval_out)]
 
 def _reduce_collective_rule(
-    all_reduce_fn, scatter_fn, in_avals, out_avals, axes):
+    all_reduce_fn, scatter_fn, in_avals, out_avals, axes,
+    per_shard_params=None):
   (in_aval,), (out_aval,) = in_avals, out_avals
   in_parts = in_aval.sharding.spec.partitions
   out_parts = out_aval.sharding.spec.partitions
@@ -10297,7 +10298,7 @@ def _reduce_collective_rule(
 
   all_reduce_axes = tuple(a for a in reduced_axes if a not in scattered_axes)
   if not all_reduce_axes and not scatters:
-    return mlir.PartitioningRule()
+    return mlir.PartitioningRule(per_shard_params=per_shard_params)
 
   def out_collective(y):
     for dim, scatter_axes in scatters:
@@ -10305,12 +10306,14 @@ def _reduce_collective_rule(
     if all_reduce_axes:
       y = all_reduce_fn(y, all_reduce_axes)
     return y
-  return mlir.PartitioningRule(out_collective=out_collective)
+  return mlir.PartitioningRule(
+      out_collective=out_collective, per_shard_params=per_shard_params)
 
 def _reduce_sum_collective_rule(in_avals, out_avals, *, axes, out_sharding):
   from jax._src.lax import parallel
   return _reduce_collective_rule(
-      parallel.psum, parallel.psum_scatter, in_avals, out_avals, axes)
+      parallel.psum, parallel.psum_scatter, in_avals, out_avals, axes,
+      per_shard_params={'out_sharding': None})
 
 def _reduce_prod_collective_rule(in_avals, out_avals, *, axes):
   in_aval, = in_avals
@@ -10345,12 +10348,14 @@ def _reduce_xor_collective_rule(in_avals, out_avals, *, axes):
 def _reduce_min_collective_rule(in_avals, out_avals, *, axes, out_sharding):
   from jax._src.lax import parallel
   return _reduce_collective_rule(
-      parallel.pmin, parallel.pmin_scatter, in_avals, out_avals, axes)
+      parallel.pmin, parallel.pmin_scatter, in_avals, out_avals, axes,
+      per_shard_params={'out_sharding': None})
 
 def _reduce_max_collective_rule(in_avals, out_avals, *, axes, out_sharding):
   from jax._src.lax import parallel
   return _reduce_collective_rule(
-      parallel.pmax, parallel.pmax_scatter, in_avals, out_avals, axes)
+      parallel.pmax, parallel.pmax_scatter, in_avals, out_avals, axes,
+      per_shard_params={'out_sharding': None})
 
 mlir.register_lowering(
     reduce_sum_p, partial(_unary_reduce_lower, hlo.AddOp, _get_sum_identity),

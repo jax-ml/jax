@@ -377,6 +377,18 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda x: lax.reduce_prod(x, axes=(0,))).lower(c_arr)
 
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_per_shard_params(self, mesh):
+    x = jax.device_put(np.arange(8, dtype=np.int32).reshape(4, 2), P('x', None))
+    y = jax.jit(lambda a: lax.convert_element_type_p.bind(
+        a, new_dtype=np.dtype(np.float32), weak_type=False,
+        sharding=NamedSharding(mesh, P('x', None))))(x)
+    self.assertArraysEqual(y, x.astype(np.float32))
+    s = jax.jit(lambda a: lax.reduce_sum(
+        a, axes=(1,), out_sharding=NamedSharding(mesh, P('x'))))(y)
+    self.assertArraysEqual(s, np.sum(x.astype(np.float32), axis=1))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

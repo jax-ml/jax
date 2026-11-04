@@ -1060,6 +1060,7 @@ class LoweringRuleEntry:
 class PartitioningRule:
   in_collective: Callable | None = None
   out_collective: Callable | None = None
+  per_shard_params: dict[str, Any] | None = None
 
 _lowerings: dict[core.Primitive, LoweringRuleEntry] = {}
 _platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRuleEntry]]
@@ -2583,30 +2584,24 @@ def _maybe_lower_with_shard_map(
   out_aval, = ctx.avals_out
   assert isinstance(out_aval, core.ShapedArray)
 
-  collectives = rule(ctx.avals_in, ctx.avals_out, **params)
-  assert isinstance(collectives, PartitioningRule)
+  partitioning_rule = rule(ctx.avals_in, ctx.avals_out, **params)
+  assert isinstance(partitioning_rule, PartitioningRule)
+  if partitioning_rule.per_shard_params:
+    params = params | partitioning_rule.per_shard_params
 
-  # TODO(rdyro): Move this into PartitioningRule's per-shard params mapping.
-  for k in ('out_sharding', 'sharding'):
-    if (out_s := params.get(k)) is not None:
-      assert out_s.mesh.explicit_axes == mesh.explicit_axes
-      params = params | {k: None}
-
-  def lower_fn(*operands):
+  def fn(*operands):
     @partial(shard_map.shard_map, mesh=mesh, out_specs=out_aval.sharding.spec,
              axis_names=set(mesh.explicit_axes))
     def body(*xs):
-      if collectives.in_collective is not None:
-        xs = collectives.in_collective(*xs)
-      # TODO(rdyro): This assumes `params` are shard-invariant; some primitives
-      # might want to define a per-shard params mapping.
+      if partitioning_rule.in_collective is not None:
+        xs = partitioning_rule.in_collective(*xs)
       ans = _prim.bind(*xs, **params)
-      if collectives.out_collective is not None:
-        ans = collectives.out_collective(ans)
+      if partitioning_rule.out_collective is not None:
+        ans = partitioning_rule.out_collective(ans)
       return ans
     return body(*operands)
 
-  return lower_fun(lower_fn, multiple_results=False)(ctx, *args)
+  return lower_fun(fn, multiple_results=False)(ctx, *args)
 
 def _uncached_lowering(
     primitive: core.Primitive, eqn_ctx: core.JaxprEqnContext,
