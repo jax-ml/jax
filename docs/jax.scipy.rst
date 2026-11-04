@@ -88,6 +88,7 @@ jax.scipy.linalg
    rsf2csf
    schur
    solve
+   solve_banded
    solve_sylvester
    solve_triangular
    sqrtm
@@ -211,7 +212,6 @@ jax.scipy.special
    multigammaln
    ndtr
    ndtri
-   ndtri_exp
    owens_t
    poch
    polygamma
