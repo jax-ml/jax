@@ -1273,6 +1273,7 @@ jax_multiplatform_test(
     deps = [
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_fuser",
+        "//jax/experimental:pallas_tpu",
     ] + py_deps([
         "absl/testing",
         "numpy",

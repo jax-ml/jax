@@ -141,6 +141,7 @@ pytype_strict_library(
         "//jax/_src:api_util",
         "//jax/_src:config",
         "//jax/_src:core",
+        "//jax/_src:export",
         "//jax/_src:flattree",
         "//jax/_src:hijax",
         "//jax/_src:lax",

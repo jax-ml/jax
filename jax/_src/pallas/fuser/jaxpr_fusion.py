@@ -22,6 +22,7 @@ from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import flattree as ft
 from jax._src import hijax
+from jax._src import shard_map
 from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
@@ -337,34 +338,47 @@ def _is_fusible_eqn(eqn: jax_core.JaxprEqn) -> bool:
   )
 
 
+def _fusible_eqns(jaxpr: jax_core.Jaxpr) -> list[jax_core.JaxprEqn]:
+  return [
+      found
+      for eqn in jaxpr.eqns
+      for found in (
+          _fusible_eqns(eqn.params["jaxpr"])
+          if eqn.primitive is shard_map.shard_map_p
+          else ([eqn] if _is_fusible_eqn(eqn) else ())
+      )
+  ]
+
+
 def fuse_jaxpr(
     jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args,
     strict_mode: bool = True,
 ):
-  # Collect input fusions
-  fusion_eqn_indices = [
-      i for i, eqn in enumerate(jaxpr.eqns) if _is_fusible_eqn(eqn)
-  ]
-  match fusion_eqn_indices:
+  match _fusible_eqns(jaxpr):
     case []:
-      # The fusible may be inside a `shard_map`. Imported here because
-      # `shard_map_fusion` depends on this module.
-      from jax._src.pallas.fuser import shard_map_fusion
-
-      return shard_map_fusion.fuse_shard_map_jaxpr(
-          jaxpr, consts, args, strict_mode=strict_mode
-      )
-    case [fusion_eqn_index]:
+      raise ValueError("No fusible found")
+    case [_]:
       pass
-    case _:
+    case eqns:
       call_sites = "\n  ".join(
-          source_info_util.summarize(jaxpr.eqns[i].source_info)
-          for i in fusion_eqn_indices
+          source_info_util.summarize(eqn.source_info) for eqn in eqns
       )
       raise ValueError(
           "Only a single fusible is allowed in a fused function, but found"
-          f" {len(fusion_eqn_indices)} at:\n  {call_sites}"
+          f" {len(eqns)} at:\n  {call_sites}"
       )
+
+  fusion_eqn_index = next(
+      (i for i, eqn in enumerate(jaxpr.eqns) if _is_fusible_eqn(eqn)), None
+  )
+  if fusion_eqn_index is None:
+    # The fusible is inside a `shard_map`. Imported here because
+    # `shard_map_fusion` depends on this module.
+    from jax._src.pallas.fuser import shard_map_fusion
+
+    return shard_map_fusion.fuse_shard_map_jaxpr(
+        jaxpr, consts, args, strict_mode=strict_mode
+    )
   fusion_eqn = jaxpr.eqns[fusion_eqn_index]
   fusible: Fusible = fusion_eqn.params["_prim"]
 

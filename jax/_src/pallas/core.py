@@ -616,6 +616,16 @@ def _get_ref_block_shape(block_shape: tuple[BlockDim, ...]) -> tuple[int, ...]:
   )
 
 
+def _get_start_index(i, b: BlockDim):
+  match b:
+    case Squeezed() | Element():
+      return i
+    case Blocked(block_size):
+      return block_size * i
+    case _:
+      raise ValueError(f"Unsupported block dim type: {type(b)}")
+
+
 class _IndexMapFunc:
   """Helper class that checks for index_map equality."""
 
@@ -983,14 +993,6 @@ class BlockMapping:
     # updated values since we only care about the return values.
     block_indices, _ = split_list(block_indices_and_rest,
                                   [len(self.block_shape)])
-    def _get_start_index(i, b):
-      match b:
-        case Squeezed() | Element():
-          return i
-        case Blocked(block_size):
-          return block_size * i
-        case _:
-          raise ValueError(f"Unsupported block dim type: {type(b)}")
     return tuple(
         _get_start_index(i, b) for i, b in zip(block_indices, self.block_shape)
     )
