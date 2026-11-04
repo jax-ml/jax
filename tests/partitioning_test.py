@@ -22,7 +22,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import parallel
 import jax.numpy as jnp
-from jax.sharding import AxisType, NamedSharding, PartitionSpec as P
+from jax.sharding import NamedSharding, PartitionSpec as P
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -126,33 +126,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_op(np_inp, axis=axes))
     self.assertArraysEqual(out, expected)
-
-  @config.shard_map_partitioning(True)
-  @jtu.with_explicit_mesh(
-      (2, 2, 2), ('m', 'e', 'a'),
-      axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Auto))
-  def test_mixed_manual_explicit_auto(self, mesh):
-    np_x = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
-    arr = jax.device_put(np_x, NamedSharding(mesh, P('m', 'e', 'a')))
-
-    @jax.jit
-    @jax.shard_map(out_specs=P('m', None), axis_names={'m'})
-    def f(x):
-      return lax.reduce_max(x, axes=(1,))
-
-    with config.shard_map_partitioning(False):
-      expected = f(arr)
-    hlo_txt = f.lower(arr).compile().as_text()
-    self.assertIn("replica_groups=mesh['m'=2,'e'=2,'a'=2] {'e'}", hlo_txt)
-    out = f(arr)
-    self.assertEqual(out.sharding.spec, P('m', 'a'))
-    self.assertArraysEqual(out, np.max(np_x, axis=1))
-    self.assertArraysEqual(out, expected)
-
-    g = jax.jit(jax.sharding.auto_axes(
-        lambda y: jnp.sum(y, axis=0), axes='e', out_sharding=P(None, None)))
-    with self.assertRaises(NotImplementedError):
-      g.lower(arr)
 
   @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
@@ -276,30 +249,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       self.assertArraysEqual(grad, -np_inp)
       self.assertArraysEqual(grad, expected_grad)
 
-  @config.shard_map_partitioning(True)
-  @jtu.with_explicit_mesh(
-      (2, 2, 2), ('m', 'e', 'a'),
-      axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Auto))
-  def test_unop_mixed_axes(self, mesh):
-    np_inp = np.arange(1, 65, dtype=np.float32).reshape(4, 4, 4) / 16.0
-    arr = jax.device_put(np_inp, NamedSharding(mesh, P('m', 'e', 'a')))
-
-    @jax.jit
-    @jax.shard_map(out_specs=P('m'), axis_names={'m'})
-    def f(a):
-      self.assertEqual(jax.typeof(a).sharding.spec, P(None, 'e', None))
-      self.assertEqual(a.aval.mat.varying, {'m'})
-      y = jnp.tanh(jnp.sin(a))
-      self.assertEqual(jax.typeof(y).sharding.spec, P(None, 'e', None))
-      self.assertEqual(y.aval.mat.varying, {'m'})
-      return jnp.sum(y, axis=1)
-
-    with config.shard_map_partitioning(False):
-      expected = f(arr)
-    out = f(arr)
-    self.assertEqual(out.sharding.spec, P('m', 'a'))
-    self.assertArraysEqual(out, expected)
-
   @parameterized.parameters(
       ((4, 8), P('x', 'y'), (4, 8), P('x', 'y'), P('x', 'y'), False),
       ((4, 8), P('x', None), (4, 8), P(None, 'y'), P('x', 'y'), True),
@@ -327,26 +276,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     out = f(arr_x, arr_y)
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_x - np_y)
-    self.assertArraysEqual(out, expected)
-
-  @config.shard_map_partitioning(True)
-  @jtu.with_explicit_mesh(
-      (2, 2, 2), ('m', 'e', 'a'),
-      axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Auto))
-  def test_binop_mixed_axes(self, mesh):
-    np_x = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
-    arr_x = jax.device_put(np_x, NamedSharding(mesh, P('m', 'e', 'a')))
-
-    @jax.jit
-    @jax.shard_map(out_specs=P('m'), axis_names={'m'})
-    def f(x):
-      return jnp.sum((x + x) * 2.0, axis=1)
-
-    with config.shard_map_partitioning(False):
-      expected = f(arr_x)
-    out = f(arr_x)
-    self.assertEqual(out.sharding.spec, P('m', 'a'))
-    self.assertArraysEqual(out, np.sum((np_x + np_x) * 2.0, axis=1))
     self.assertArraysEqual(out, expected)
 
   @parameterized.product(

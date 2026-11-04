@@ -2591,8 +2591,9 @@ def _maybe_lower_with_shard_map(
 
   def fn(*operands):
     @partial(shard_map.shard_map, mesh=mesh, out_specs=out_aval.sharding.spec,
-             axis_names=set(mesh.explicit_axes))
+             axis_names=set(mesh.explicit_axes), check_vma=False)
     def body(*xs):
+      assert get_abstract_mesh().are_all_axes_manual
       if partitioning_rule.in_collective is not None:
         xs = partitioning_rule.in_collective(*xs)
       ans = _prim.bind(*xs, **params)
