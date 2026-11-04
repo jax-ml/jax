@@ -43,6 +43,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     exact values at integers and half-integers and stay accurate for large
     inputs.
 
+* Breaking changes
+  * The `jax_use_simplified_jaxpr_constants` configuration flag is now `True`
+    by default. This changes the handling of closed-over constants in Jaxpr.
+    See [here](https://docs.jax.dev/en/latest/internals/constants.html) for
+    more details, including how to recognize a breakage and migrate your code.
+    The flag will be removed in a future release.
+
 * Deprecations
   * `jax.sharding.SingleDeviceSharding` is deprecated; use
     `jax.sharding.make_single_device_sharding` or
