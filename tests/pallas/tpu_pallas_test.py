@@ -67,6 +67,8 @@ P = jax.sharding.PartitionSpec
 
 partial = functools.partial
 
+_count_pjit_lowerings = jtu.count_events('pallas_mosaic_pjit_lowering')
+
 
 def only_passes_in_interpret(
     unless_generation: int | None = None, *args, **kwargs
@@ -3123,6 +3125,31 @@ class PallasCallTest(ptu.PallasTPUTest):
     )
     np.testing.assert_array_equal(out_xy, expected_xy)
     np.testing.assert_array_equal(out_yx, expected_yx)
+
+  def test_cached_jit_helper_with_grid_indices(self):
+    @jax.jit
+    def add_grid_indices(x):
+      return x + pl.program_id(1), 10 * lax.axis_index('x')
+
+    def kernel(x_ref, y_ref):
+      a, b = add_grid_indices(x_ref[...])
+      c, d = add_grid_indices(a + b)
+      y_ref[...] = c + d
+
+    spec = pl.BlockSpec((8, 128), lambda i, j: (i, j))
+    x = jnp.arange(16 * 256, dtype=jnp.int32).reshape(16, 256)
+    with _count_pjit_lowerings() as count:
+      out = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((16, 256), jnp.int32),
+          in_specs=[spec],
+          out_specs=spec,
+          grid=(('x', 2), ('y', 2)),
+      )(x)
+    self.assertEqual(count(), 1)
+    i_idx = np.arange(16, dtype=np.int32)[:, None] // 8
+    j_idx = np.arange(256, dtype=np.int32)[None, :] // 128
+    np.testing.assert_array_equal(out, x + 2 * (j_idx + 10 * i_idx))
 
 
 class PallasPadRefTest(ptu.PallasTPUTest):
@@ -6504,6 +6531,102 @@ class PallasKernelMetadataTest(ptu.PallasTPUTest):
         json.dumps(metadata, sort_keys=True, indent=0, separators=(',', ':')),
         hlo,
     )
+
+
+class MosaicLoweringCacheTest(jtu.JaxTestCase):
+
+  def test_pjit_lowering_cache_hit(self):
+    @jax.jit
+    def helper(x):
+      return x + pl.program_id(0), -x
+
+    def kernel(x_ref, y_ref):
+      a, b = helper(x_ref[...])
+      c, d = helper(a + b)
+      y_ref[...] = c + d
+
+    x = jax.ShapeDtypeStruct((8, 128), jnp.int32)
+    f1 = pl.pallas_call(kernel, out_shape=x, grid=(2,))
+    f2 = pl.pallas_call(kernel, out_shape=x, grid=(2,))
+    with _count_pjit_lowerings() as count:
+      jax.jit(lambda x: f1(x) + f2(x)).trace(x).lower(
+          lowering_platforms=('tpu',)
+      )
+    self.assertEqual(count(), 1)
+
+  def test_pjit_vmem_empty_ref_cached(self):
+    @jax.jit
+    def helper(x):
+      buf = jax.empty_ref(jax.typeof(x), memory_space=pltpu.VMEM)
+      buf[...] = x + 1
+      return buf[...]
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = helper(helper(x_ref[...]))
+
+    x = jax.ShapeDtypeStruct((8, 128), jnp.int32)
+    f = pl.pallas_call(kernel, out_shape=x, grid=(2,), debug=True)
+    with jtu.capture_stdout() as get_output, _count_pjit_lowerings() as count:
+      jax.jit(f).trace(x).lower(lowering_platforms=('tpu',))
+    self.assertEqual(count(), 1)
+    self.assertEqual(get_output().count('memref.alloca'), 2)
+
+  @parameterized.named_parameters(
+      ('nested_cacheable_jit', lambda x: jax.jit(lax.neg)(x), 2),
+      (
+          'nested_uncacheable_jit',
+          lambda x: jax.jit(
+              lambda y: lax.fori_loop(0, 2, lambda _, s: s + 1, y)
+          )(x),
+          4,
+      ),
+  )
+  def test_pjit_helper_cacheability(self, body_fn, expected_lowerings):
+    helper = jax.jit(body_fn)
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = helper(helper(x_ref[...]))
+
+    x = jax.ShapeDtypeStruct((8, 128), jnp.int32)
+    f = pl.pallas_call(kernel, out_shape=x, grid=(2,))
+    with _count_pjit_lowerings() as count:
+      jax.jit(f).trace(x).lower(lowering_platforms=('tpu',))
+    self.assertEqual(count(), expected_lowerings)
+
+  def test_pjit_acc_empty_ref_allocates_per_call(self):
+    @jax.jit
+    def alloc_acc(x):
+      acc = jax.empty_ref(jax.typeof(x), memory_space=pltpu.ACC(0))
+      pltpu.matmul_acc_lhs(acc, x)
+      return pltpu.matmul_pop(acc)
+
+    tpu7x = jax.sharding.AbstractDevice(
+        device_kind='TPU7x', num_cores=1, platform='tpu'
+    )
+    with jax.sharding.use_abstract_mesh(
+        jax.sharding.AbstractMesh((), (), abstract_device=tpu7x)
+    ):
+      info = tpu_info.get_tpu_info()
+      x = jax.ShapeDtypeStruct(
+          (info.num_accumulators * info.num_sublanes, info.mxu_column_size),
+          jnp.float32,
+      )
+
+      def single_call_kernel(x_ref, y_ref):
+        y_ref[...] = alloc_acc(x_ref[...])
+
+      def double_call_kernel(x_ref, y_ref):
+        @pl.run_scoped
+        def _():
+          y_ref[...] = alloc_acc(alloc_acc(x_ref[...]))
+
+      jax.jit(pl.pallas_call(single_call_kernel, out_shape=x)).trace(x).lower(
+          lowering_platforms=('tpu',)
+      )
+      with self.assertRaisesRegex(ValueError, 'Accumulator space overflow'):
+        jax.jit(pl.pallas_call(double_call_kernel, out_shape=x)).trace(x).lower(
+            lowering_platforms=('tpu',)
+        )
 
 
 class ExplicitMXUTest(jtu.JaxTestCase):

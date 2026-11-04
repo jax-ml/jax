@@ -41,6 +41,7 @@ from jax._src import source_info_util
 from jax._src import state
 from jax._src import traceback_util
 from jax._src import tree_util
+from jax._src import util
 from jax._src import xla_bridge
 from jax._src.cloud_tpu_init import is_libtpu_at_least
 from jax._src.export import shape_poly
@@ -684,14 +685,14 @@ lowering_rules: dict[tpu_core.CoreType, dict[jax_core.Primitive, Callable]]
 lowering_rules = {kernel_type: {} for kernel_type in tpu_core.CoreType}
 skip_mlir_conversions = set()
 
-# TODO(phawkins): currently we are excluding higher-order primitives because
-# we have not yet taught them to propagate the implicit grid arguments.
+# TODO(phawkins): currently we are excluding higher-order primitives other
+# than jit_p because we have not yet taught them to propagate the implicit
+# grid arguments.
 _uncacheable_primitives: set[jax_core.Primitive] = {
     lax.while_p,
     lax.scan_p,
     lax.cond_p,
     primitives.run_scoped_p,
-    pjit.jit_p,
     custom_derivatives.custom_jvp_call_p,
     custom_derivatives.custom_vjp_call_p,
     primitives.num_programs_p,
@@ -704,7 +705,30 @@ _primitives_needing_grid: set[jax_core.Primitive] = {
     tpu_primitives.dma_wait_p,
     primitives.program_id_p,
     lax.axis_index_p,
+    pjit.jit_p,
 }
+
+
+def _is_acc_aval(aval: Any) -> bool:
+  return isinstance(aval, state.AbstractRef) and isinstance(
+      aval.memory_space, tpu_core.AccMemorySpace
+  )
+
+
+def _is_cacheable_eqn(eqn: jax_core.JaxprEqn) -> bool:
+  if eqn.primitive is pjit.jit_p:
+    return _is_cacheable_jaxpr(eqn.params["jaxpr"])
+  return eqn.primitive not in _uncacheable_primitives and not any(
+      _is_acc_aval(v.aval) for v in eqn.outvars
+  )
+
+
+@util.weakref_lru_cache(trace_context_in_key=False)
+def _is_cacheable_jaxpr(jaxpr: jax_core.Jaxpr) -> bool:
+  """Returns whether a pjit sub-jaxpr can be lowered into a cached FuncOp."""
+  return not jaxpr.constvars and all(
+      _is_cacheable_eqn(eqn) for eqn in jaxpr.eqns
+  )
 
 
 def register_lowering_rule(
@@ -1830,15 +1854,10 @@ def jaxpr_subcomp(
         cache_key = None
         rule_context = None
 
-        def is_acc_aval(aval):
-          return (
-              isinstance(aval, state.AbstractRef) and
-              isinstance(aval.memory_space, tpu_core.AccMemorySpace)
-          )
         # TODO(phawkins): allow KeyScalarBundle/AccRef here as well as ir.Value.
-        can_cache = (eqn.primitive not in _uncacheable_primitives and
-                     all(isinstance(x, ir.Value) for x in invals) and
-                     not any(is_acc_aval(o) for o in avals_out))
+        can_cache = _is_cacheable_eqn(eqn) and all(
+            isinstance(x, ir.Value) for x in invals
+        )
         if can_cache:
           grid_arity = (
               len(ctx.user_grid_indices)
@@ -4967,6 +4986,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
 
 @register_lowering_rule(pjit.jit_p, kernel_types=[*tpu_core.CoreType])
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
+  util.test_event("pallas_mosaic_pjit_lowering")
   lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
   return jaxpr_subcomp(lowering_context, jaxpr, *args)
 
