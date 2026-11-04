@@ -29,13 +29,13 @@ from jax._src.custom_partitioning_sharding_rule import (
 )
 from jax._src import ffi
 from jax._src.lax.bessel import bessel_i0e_impl, bessel_i1e_impl
-from jax._src.lax.erf import erf_inv_core, erfc_impl, exp_neg_sq
+from jax._src.lax.erf import erf_inv_core, erf_inv_jvp_scale, erfc_impl, exp_neg_sq
 from jax._src.lax.lax import (AccuracyMode, Tolerance, add, bitwise_and,
                               bitwise_not, bitwise_or, broadcast_in_dim,
                               broadcast_shapes, convert_element_type, div, eq,
                               exp, full_like, ge, gt, le, log, log1p, lt, mul,
                               ne, neg, reciprocal, reduce, select, sign,
-                              square, standard_naryop, standard_unop, sub,
+                              standard_naryop, standard_unop, sub,
                               _const, _dtype, _float, _nary_lower_hlo, _ones,
                               _isnan, _unary_with_accuracy_pp_rule)
 from jax._src.lax.control_flow.loops import while_loop
@@ -868,8 +868,18 @@ mlir.register_lowering(erfc_p, _erfc_lowering)
 core.pp_eqn_rules[erfc_p] = _unary_with_accuracy_pp_rule
 
 erf_inv_p = standard_unop(_float, 'erf_inv')
-ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
-                                            mul(g, exp(square(ans)))))
+
+
+def _erf_inv_jvp_rule(g: Array, ans: Array, x: Array) -> Array:
+  dtype = _dtype(x)
+  if dtype not in (np.float32, np.float64):
+    x32 = convert_element_type(x, np.float32)
+    z32 = convert_element_type(ans, np.float32)
+    return g * convert_element_type(erf_inv_jvp_scale(x32, z32), dtype)
+  return g * erf_inv_jvp_scale(x, ans)
+
+
+ad.defjvp2(erf_inv_p, _erf_inv_jvp_rule)
 
 def erf_inv_impl(x: Array) -> Array:
   if x.dtype not in (np.float32, np.float64):
