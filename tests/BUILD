@@ -360,7 +360,7 @@ jax_multiplatform_test(
     shard_count = {
         "tpu": 5,
         "cpu": 5,
-        "gpu": 5,
+        "gpu": 10,
     },
     deps = py_deps([
         "absl/testing",
