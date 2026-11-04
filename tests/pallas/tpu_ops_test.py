@@ -25,6 +25,7 @@ from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -1646,6 +1647,38 @@ class OpsTest(ptu.PallasTPUTest):
         out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
     )(inputs)
     np.testing.assert_array_equal(result, np.swapaxes(inputs[:, 1:3], 2, 3))
+
+  def test_request_p_state(self):
+    if self.INTERPRET:
+      self.skipTest("Not implemented in interpret mode.")
+    # TODO(b/581748519): Remove once the minimum jaxlib version includes
+    # tpu.request_p_state.
+    if not hasattr(tpu, "RequestPStateOp"):
+      self.skipTest("Test requires a jaxlib with tpu.request_p_state.")
+    with self.assertRaisesRegex(TypeError, "p_state must be an int"):
+      pltpu.request_p_state(jnp.int32(3))  # pytype: disable=wrong-arg-types
+
+    def negative_kernel(x_ref, y_ref):
+      pltpu.request_p_state(-1)
+      y_ref[...] = x_ref[...]
+
+    x = jnp.zeros((8, 128), jnp.float32)
+    with self.assertRaisesRegex(ValueError, "p_state must be non-negative"):
+      self.pallas_call(negative_kernel, out_shape=x)(x)
+
+    def kernel(x_ref, y_ref):
+      pltpu.request_p_state(3)
+      y_ref[...] = x_ref[...]
+
+    if not jtu.is_device_tpu_at_least(7):
+      with self.assertRaisesRegex(
+          NotImplementedError, r"request_p_state is only supported on TPU7x\+"
+      ):
+        self.pallas_call(kernel, out_shape=x)(x)
+      return
+
+    result = self.pallas_call(kernel, out_shape=x)(x)
+    np.testing.assert_array_equal(result, x)
 
 
 class ConvTest(ptu.PallasTPUTest):

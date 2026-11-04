@@ -989,6 +989,46 @@ def prng_seed(*seeds: int | jax.Array) -> None:
   """
   prng_seed_p.bind(*seeds)
 
+
+request_p_state_p = jax_core.Primitive("request_p_state")
+request_p_state_p.multiple_results = True
+
+
+class RequestPStateEffect(effects.Effect):
+  pass
+
+
+request_p_state_effect = RequestPStateEffect()
+effects.control_flow_allowed_effects.add_type(RequestPStateEffect)
+pl_core.kernel_local_effects.add_type(RequestPStateEffect)
+
+
+@request_p_state_p.def_effectful_abstract_eval
+def _request_p_state_abstract_eval(*, p_state: int):
+  if p_state < 0:
+    raise ValueError(f"p_state must be non-negative, got {p_state}")
+  return [], {request_p_state_effect}
+
+
+# TODO(b/581416218): Link to the documentation once it is available.
+def request_p_state(p_state: int) -> None:
+  """Requests a TensorCore P-state transition.
+
+  The P-state controls the TensorCore frequency; other subsystems may adjust
+  their frequencies to match the TensorCore. The transition is not immediate
+  and is best-effort: the hardware or firmware may ignore or clamp the request
+  due to rate-limiting, power, or thermal constraints.
+
+  Supported on TPU7x+.
+
+  Args:
+    p_state: The target P-state index. Must be non-negative.
+  """
+  if not isinstance(p_state, int):
+    raise TypeError(f"p_state must be an int, got {type(p_state)}")
+  request_p_state_p.bind(p_state=p_state)
+
+
 prng_random_bits_p = jax_core.Primitive(
     'prng_random_bits')
 

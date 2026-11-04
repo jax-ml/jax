@@ -19,6 +19,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### TPU
 
+* New features
+
+  * Added {func}`jax.pallas.tpu.request_p_state` to request a TensorCore
+    P-state transition on TPU7x+ targets.
+
 * Removals
 
   * Removed the previously deprecated {class}`jax.experimental.pallas.tpu.create_tensorcore_mesh`. Use
