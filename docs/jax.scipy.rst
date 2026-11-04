@@ -212,7 +212,8 @@ jax.scipy.special
    multigammaln
    ndtr
    ndtri
-   owens_t
+   ndtri_exp
+owens_t
    poch
    polygamma
    rel_entr
