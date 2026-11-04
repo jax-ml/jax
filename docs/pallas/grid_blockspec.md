@@ -2,7 +2,7 @@
 
 # Grids and BlockSpecs
 
-<!--* freshness: { reviewed: '2024-06-01' } *-->
+<!--* freshness: { reviewed: '2026-10-22' } *-->
 
 (pallas_grid)=
 ## `grid`, a.k.a. kernels in a loop
@@ -44,7 +44,12 @@ For example, for invocation `(1, 2)`, `program_id(axis=0)` returns `1` and
 You can also use {func}`jax.experimental.pallas.num_programs` to get the
 grid size for a given axis.
 
-See {ref}`grids_by_example` for a simple kernel that uses this API.
+<center>
+
+![A visualization of a 2D grid](../_static/pallas/grid.png)
+
+A 2D grid
+</center>
 
 (pallas_blockspec)=
 
@@ -56,8 +61,12 @@ Specifically, we need to provide a mapping between *the iteration of the loop*
 to *which block of our inputs and outputs to be operated on*.
 This is provided via {class}`jax.experimental.pallas.BlockSpec` objects.
 
-Before we get into the details of `BlockSpec`s, you may want
-to revisit {ref}`pallas_block_specs_by_example` in Pallas Quickstart.
+<center>
+
+![A visualization of a BlockSpec](../_static/pallas/BlockSpec.png)
+
+A visualization of a `BlockSpec`
+</center>
 
 `BlockSpec`s are provided to `pallas_call` via the
 `in_specs` and `out_specs`, one for each input and output respectively.
