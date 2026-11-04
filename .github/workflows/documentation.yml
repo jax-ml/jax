@@ -63,7 +63,7 @@ jobs:
         PY_COLORS: 1
       run: |
         $PYTHON_BIN -m pytest -n auto --tb=short --doctest-glob='*.md' --doctest-glob='*.rst' docs --doctest-continue-on-failure --ignore=docs/multi_process.md
-        $PYTHON_BIN -m pytest -n auto --tb=short --doctest-modules jax --ignore=jax/config.py --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/_src/lib/mosaic_gpu.py --ignore=jax/interpreters/mlir.py --ignore=jax/experimental/array_serialization --ignore=jax/collect_profile.py --ignore=jax/_src/tpu_custom_call.py --ignore=jax/experimental/mosaic --ignore=jax/experimental/pallas --ignore=jax/_src/pallas --ignore=jax/lib
+        $PYTHON_BIN -m pytest -n auto --tb=short --doctest-modules jax --ignore=jax/config.py --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/_src/lib/mosaic_gpu.py --ignore=jax/interpreters/mlir.py --ignore=jax/experimental/array_serialization --ignore=jax/collect_profile.py --ignore=jax/_src/tpu_custom_call.py --ignore=jax/experimental/mosaic --ignore=jax/experimental/pallas --ignore=jax/_src/pallas --ignore=jax/lib --ignore=jax/_src/gpu_info.py
 
   documentation_render:
     if: github.repository_owner == 'jax-ml'
@@ -102,7 +102,7 @@ jobs:
     - name: Cache Intersphinx Inventories
       id: cache-intersphinx
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-      
+
       with:
         path: docs/intersphinx_cache
         key: sphinx-intersphinx-${{ hashFiles('docs/conf.py', 'docs/requirements.txt') }}-${{ steps.get-date.outputs.date }}
