@@ -448,6 +448,7 @@ static absl::StatusOr<nb_class_ptr<PyExecutable>> CompileWithTopology(
   options.allow_in_place_mlir_modification = true;
   ifrt::ExecutableRef ifrt_executable;
   {
+    nb::gil_scoped_release gil_release;
     auto xla_options =
         std::make_unique<ifrt::XlaCompileOptions>(options, std::move(devices));
     ABSL_ASSIGN_OR_RETURN(
