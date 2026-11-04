@@ -1620,7 +1620,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("cpu")  # TODO(frostig): Test fails on CPU sometimes
   def testLuSolve(self, lhs_shape, rhs_shape, dtype, trans):
     rng = jtu.rand_default(self.rng())
-    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv), rhs, trans=trans)
+    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv.copy()), rhs, trans=trans)
     jsp_fun = lambda lu, piv, rhs: jsp.linalg.lu_solve((lu, piv), rhs, trans=trans)
 
     def args_maker():
@@ -1651,7 +1651,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     if scipy_version < (1, 16, 0):
       self.skipTest("scipy.linalg.lu_solve batch broadcasting requires scipy >= 1.16")
     rng = jtu.rand_default(self.rng())
-    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv), rhs, trans=trans)
+    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv.copy()), rhs, trans=trans)
     jsp_fun = lambda lu, piv, rhs: jsp.linalg.lu_solve((lu, piv), rhs, trans=trans)
     lu_factor_vec = np.vectorize(osp.linalg.lu_factor,
                                   signature="(n,n)->(n,n),(n)")
