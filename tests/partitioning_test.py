@@ -335,6 +335,48 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertArraysEqual(
         jax.vmap(f)(batched), np.stack([expected, expected + 10]))
 
+  @parameterized.parameters(
+      (lax.reduce_prod, np.prod, np.float32, P('x', None), (1,), P('x'), False),
+      (lax.reduce_and, np.all, np.bool_, P('x', 'y'), (0,), P('y'), True),
+      (lax.reduce_or, np.any, np.bool_, P('x', 'y'), (0,), P('y'), True),
+      (lax.reduce_xor, np.bitwise_xor.reduce, np.int32, P('x', None), (1,),
+       P('x'), False),
+  )
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reduce_prod_and_bitwise(
+      self, lax_op, np_op, dtype, in_spec, axes, out_spec, has_ar, mesh):
+    if dtype == np.bool_:
+      np_inp = np.array([[0, 1, 0, 1], [0, 1, 1, 0],
+                         [0, 1, 0, 1], [0, 1, 0, 0]], dtype=np.bool_)
+    elif dtype == np.int32:
+      np_inp = np.array([[1, 2, 3, 2], [2, 1, 2, 3],
+                         [3, 2, 1, 2], [2, 3, 2, 1]], dtype=np.int32)
+    else:
+      np_inp = ((np.arange(16, dtype=np.float32) % 3) + 1).reshape(4, 4)
+    arr = jax.device_put(np_inp, in_spec)
+
+    @jax.jit
+    def f(x):
+      y = lax_op(x, axes=axes)
+      self.assertEqual(jax.typeof(y).sharding.spec, out_spec)
+      return y
+
+    lowered = f.lower(arr).as_text()
+    self.assertIn('sdy.manual_computation', lowered)
+    self.assertEqual('all_reduce' in lowered, has_ar)
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+    self.assertArraysEqual(out, np_op(np_inp, axis=axes).astype(dtype))
+
+    int_arr = jax.device_put(np.ones((4, 4), dtype=np.int32), P('x', 'y'))
+    for op in (lax.reduce_prod, lax.reduce_and, lax.reduce_or, lax.reduce_xor):
+      with self.assertRaises(NotImplementedError):
+        jax.jit(lambda x, op=op: op(x, axes=(0,))).lower(int_arr)
+    c_arr = jax.device_put(np.ones((4,), dtype=np.complex64), P('x'))
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda x: lax.reduce_prod(x, axes=(0,))).lower(c_arr)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

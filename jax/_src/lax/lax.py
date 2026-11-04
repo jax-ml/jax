@@ -10285,7 +10285,7 @@ def _reduce_collective_rule(
     # TODO(rdyro): Support general `out_sharding` reshards on kept dims.
     kept_t, out_t = to_tuple(kept_s), to_tuple(out_s)
     scatter_axes = out_t[len(kept_t):]
-    if (out_t[:len(kept_t)] != kept_t or
+    if (scatter_fn is None or out_t[:len(kept_t)] != kept_t or
         not set(scatter_axes).issubset(set(reduced_axes))):
       raise NotImplementedError
     scatters.append((dim, scatter_axes))
@@ -10308,6 +10308,36 @@ def _reduce_sum_collective_rule(in_avals, out_avals, *, axes, out_sharding):
   return _reduce_collective_rule(
       parallel.psum, parallel.psum_scatter, in_avals, out_avals, axes)
 
+def _reduce_prod_collective_rule(in_avals, out_avals, *, axes):
+  in_aval, = in_avals
+  if flatten_spec_no_none(in_aval.sharding.spec.partitions[i] for i in axes):
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
+def _reduce_or_collective_rule(in_avals, out_avals, *, axes):
+  from jax._src.lax import parallel
+  # Integer reduce_or is bitwise, so pmax only applies to bool.
+  in_aval, = in_avals
+  if in_aval.dtype != np.bool_:
+    raise NotImplementedError
+  return _reduce_collective_rule(
+      parallel.pmax, None, in_avals, out_avals, axes)
+
+def _reduce_and_collective_rule(in_avals, out_avals, *, axes):
+  from jax._src.lax import parallel
+  # Integer reduce_and is bitwise, so pmin only applies to bool.
+  in_aval, = in_avals
+  if in_aval.dtype != np.bool_:
+    raise NotImplementedError
+  return _reduce_collective_rule(
+      parallel.pmin, None, in_avals, out_avals, axes)
+
+def _reduce_xor_collective_rule(in_avals, out_avals, *, axes):
+  in_aval, = in_avals
+  if flatten_spec_no_none(in_aval.sharding.spec.partitions[i] for i in axes):
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
 def _reduce_min_collective_rule(in_avals, out_avals, *, axes, out_sharding):
   from jax._src.lax import parallel
   return _reduce_collective_rule(
@@ -10321,14 +10351,21 @@ def _reduce_max_collective_rule(in_avals, out_avals, *, axes, out_sharding):
 mlir.register_lowering(
     reduce_sum_p, partial(_unary_reduce_lower, hlo.AddOp, _get_sum_identity),
     shard_map_collective_rule=_reduce_sum_collective_rule)
-mlir.register_lowering(reduce_prod_p, partial(_unary_reduce_lower, hlo.MulOp,
-                                              _get_prod_identity))
-mlir.register_lowering(reduce_or_p, partial(_unary_reduce_lower, hlo.OrOp,
-                                            _get_bitwise_or_identity))
-mlir.register_lowering(reduce_and_p, partial(_unary_reduce_lower, hlo.AndOp,
-                                             _get_bitwise_and_identity))
-mlir.register_lowering(reduce_xor_p, partial(_unary_reduce_lower, hlo.XorOp,
-                                             _get_bitwise_or_identity))
+mlir.register_lowering(
+    reduce_prod_p, partial(_unary_reduce_lower, hlo.MulOp, _get_prod_identity),
+    shard_map_collective_rule=_reduce_prod_collective_rule)
+mlir.register_lowering(
+    reduce_or_p,
+    partial(_unary_reduce_lower, hlo.OrOp, _get_bitwise_or_identity),
+    shard_map_collective_rule=_reduce_or_collective_rule)
+mlir.register_lowering(
+    reduce_and_p,
+    partial(_unary_reduce_lower, hlo.AndOp, _get_bitwise_and_identity),
+    shard_map_collective_rule=_reduce_and_collective_rule)
+mlir.register_lowering(
+    reduce_xor_p,
+    partial(_unary_reduce_lower, hlo.XorOp, _get_bitwise_or_identity),
+    shard_map_collective_rule=_reduce_xor_collective_rule)
 mlir.register_lowering(
     reduce_min_p, partial(_unary_reduce_lower, mlir.min_hlo, _get_min_identity),
     shard_map_collective_rule=_reduce_min_collective_rule)
