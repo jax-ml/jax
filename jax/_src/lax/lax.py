@@ -8445,7 +8445,7 @@ def _concatenate_shape_rule(*operands, **kwargs):
   ex_shape = operands[0].shape
   return ex_shape[:dimension] + (concat_size,) + ex_shape[dimension+1:]
 
-def _concatenate_sharding_rule(*operands, **kwargs):
+def _concatenate_sharding_rule(*operands, dimension):
   non_empty_s = [o.sharding for o in operands if not o.sharding.mesh.empty]
   if not non_empty_s:
     return core.get_cur_mesh_sharding()
@@ -8453,6 +8453,10 @@ def _concatenate_sharding_rule(*operands, **kwargs):
     ss = ", ".join(str(o.sharding) for o in operands)
     raise core.ShardingTypeError(
         f"All operands should have the same sharding. Got shardings {ss}")
+  if non_empty_s[0].spec.partitions[dimension] is not None:
+    raise core.ShardingTypeError(
+        f"concatenate operands cannot be sharded on the concat dimension "
+        f"{dimension}. Got operand types={[o.str_short(True) for o in operands]}")
   return non_empty_s[0]
 
 def _concatenate_reduced_rule(*operands, **kwargs):
@@ -8825,11 +8829,11 @@ def _split_lower(ctx, x, *, sizes, axis):
   return outs
 
 def _split_sharding_rule(operand, *, sizes, axis):
-  # TODO(yashkatariya): Once JAX supports uneven sharding at the top level,
-  # change this logic to `return operand.sharding` directly.
-  out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
-  return [slicing._get_sharding_for_varying_out_shape(out_sh, operand, 'split')
-          for out_sh in out_shapes]
+  if operand.sharding.spec.partitions[axis] is not None:
+    raise core.ShardingTypeError(
+        f"split operand cannot be sharded on the split axis {axis}. "
+        f"Got operand type={operand.str_short(True)}")
+  return [operand.sharding] * len(sizes)
 
 def _split_ur_rule(operand, *, sizes, axis):
   out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
