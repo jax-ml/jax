@@ -89,7 +89,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.log2` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.log2` (`highest`) | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.logistic` | 2.5 | 2.5 | 1.0 | 1.0 | 0.5 | 63.0 |
-| {func}`~jax.lax.logistic` (`highest`) | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 63.0 |
+| {func}`~jax.lax.logistic` (`highest`) | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 0.5 |
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.sin` | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
