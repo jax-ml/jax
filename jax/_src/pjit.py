@@ -292,7 +292,10 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
       in_layouts_leaves=jit_info.in_layouts_leaves,
       out_layouts_treedef=jit_info.out_layouts_treedef,
       out_layouts_leaves=jit_info.out_layouts_leaves,
-      compiler_options_kvs=jit_info.compiler_options_kvs)
+      compiler_options_kvs=jit_info.compiler_options_kvs,
+      static_argnums=jit_info.static_argnums,
+      static_argnames=jit_info.static_argnames,
+      keep_unused=jit_info.keep_unused)
 
   cpp_cache = (cache
                if ((cache := config.jax_jit_cpp_cache_obj.value) is not None
