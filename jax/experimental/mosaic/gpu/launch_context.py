@@ -428,6 +428,85 @@ class DropUnitDimsTransform(MemRefTransform):
     raise NotImplementedError  # Unused
 
 
+@dataclasses.dataclass(frozen=True)
+class SubBytePackingTransform(MemRefTransform):
+  """Packs sub-byte elements along the minor-most dimension into bytes for TMA."""
+
+  bitwidth: int
+
+  @property
+  def packing(self) -> int:
+    return 8 // self.bitwidth
+
+  def __post_init__(self):
+    if self.bitwidth not in (1, 2, 4):
+      raise ValueError(f"`bitwidth` must be 2 or 4, got {self.bitwidth}")
+
+  def apply(self, ref: ir.Value) -> ir.Value:
+    ref_ty = ir.MemRefType(ref.type)
+    strides, _ = ref_ty.get_strides_and_offset()
+    new_strides = self.transform_strides(strides)
+    new_shape = self.transform_shape(ref_ty.shape)
+    new_layout = ir.StridedLayoutAttr.get(0, new_strides)
+    i8 = ir.IntegerType.get_signless(8)
+    new_ref_ty = ir.MemRefType.get(
+        new_shape, i8, new_layout, ref_ty.memory_space
+    )
+    new_ref = utils.ptr_as_memref(utils.memref_ptr(ref), new_ref_ty)
+    if ref_ty.memory_space is None:  # GMEM
+      i32 = ir.IntegerType.get_signless(32)
+      arg_idx = LaunchContext._find_kernel_argument_index(ref)
+      new_ref.owner.attributes[KERNEL_ARG_ID_ATTR] = ir.IntegerAttr.get(
+          i32, arg_idx
+      )
+    return new_ref
+
+  def transform_gmem_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    return self.transform_shape(shape)
+
+  def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
+    if not idx:
+      raise ValueError("Empty index unexpected for SubBytePackingTransform.")
+    index = ir.IndexType.get()
+    if not utils.is_known_divisible(idx[-1], self.packing):
+      raise ValueError(
+          f"Sub-byte async copies for {self.bitwidth}-bit types require the"
+          " minor-most slice base index to be statically known to be divisible"
+          f" by {self.packing}."
+      )
+    return (*idx[:-1], arith.divui(idx[-1], c(self.packing, index)))
+
+  def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    if not shape:
+      raise ValueError("Empty shape unexpected for SubBytePackingTransform.")
+    if shape[-1] % self.packing != 0:
+      raise ValueError(
+          f"Sub-byte async copies for {self.bitwidth}-bit types require the"
+          " minor-most dimension size to be divisible by"
+          f" {self.packing}, got {shape[-1]}."
+      )
+    return (*shape[:-1], shape[-1] // self.packing)
+
+  def transform_strides(self, strides: Sequence[int]) -> tuple[int, ...]:
+    if not strides:
+      raise ValueError("Empty strides unexpected for SubBytePackingTransform.")
+    if strides[-1] != 1:
+      raise ValueError(
+          "Sub-byte async copies require the last stride to be contiguous (=1)."
+          f"Minor-most stride is {strides[-1]}."
+      )
+    if any(s % self.packing != 0 for s in strides[:-1]):
+      raise ValueError(
+          f"Sub-byte async copies for {self.bitwidth}-bit types require all"
+          " strides except the last one to be divisible by"
+          f" {self.packing}, got {strides}."
+      )
+    return (*(s // self.packing for s in strides[:-1]), strides[-1])
+
+  def batch(self, leading_rank: int) -> MemRefTransform:
+    return self
+
+
 OnDeviceProfiler = profiler.OnDeviceProfiler
 
 MOSAIC_GPU_SMEM_ALLOC_ATTR = "mosaic_gpu_smem_alloc"
@@ -660,11 +739,7 @@ def _tma_dma_type(
   """Returns the TMA DMA type for the given element type and signedness."""
   if isinstance(element_type, ir.IntegerType):
     bitwidth = utils.bitwidth_impl(element_type)
-    if bitwidth == 2:
-      tma_dtype = 8
-    elif bitwidth == 4:
-      tma_dtype = 0
-    elif bitwidth == 8:
+    if bitwidth in (2, 4, 8):
       tma_dtype = 1
     elif bitwidth == 16:
       tma_dtype = 2
@@ -681,7 +756,15 @@ def _tma_dma_type(
   elif isinstance(element_type, ir.BF16Type):
     tma_dtype = 7
   # We treat narrow floats as integers
-  elif isinstance(element_type, ir.Float8E5M2Type):
+  elif isinstance(
+      element_type,
+      (
+          ir.Float8E5M2Type,
+          ir.Float8E4M3FNType,
+          ir.Float8E8M0FNUType,
+          ir.Float4E2M1FNType,
+      ),
+  ):
     tma_dtype = 1
   elif isinstance(element_type, ir.Float8E4M3FNType):
     tma_dtype = 1
@@ -1169,6 +1252,27 @@ class LaunchContext:
     squeezed_dims = tuple(
         i for i, squeezed in enumerate(is_squeezed) if squeezed
     )
+    untransformed_element_bitwidth = utils.bitwidth(
+        untransformed_gmem_ref_ty.element_type
+    )
+    # TODO(olechwierowicz): We cover only TMA path, non-TMA one has a separate
+    # support for this, but we should aim for unifying shared concepts across
+    # these two paths.
+    if (
+        untransformed_element_bitwidth < 8
+        and implementation == AsyncCopyImplementation.TMA
+    ):
+      # Although CUDA has a way to encode 4-bit dtypes (e.g.,
+      # CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN8B), there is none for 2-bit types.
+      # So, we use a TMA descriptor whose minor-most stride is 1 **byte** for
+      # **all** sub-byte data types. Because indices are in units of elements
+      # upon codegen, we use a `SubBytePackingTransform` to divide the
+      # minor-most index by `packing` so that the coordinate passed to TMA is in
+      # units of bytes.
+      gmem_transform = (
+          *gmem_transform,
+          SubBytePackingTransform(untransformed_element_bitwidth),
+      )
     # Indexing is really slicing + squeezing, and user transforms are meant to
     # apply after that. However, we actually have to apply the indexing last
     # (it's fused into the TMA) and so we need to commute it with all the user
@@ -1482,8 +1586,23 @@ class LaunchContext:
         implementation,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
-
     untransformed_gmem_ref_ty = ir.MemRefType(untransformed_gmem_ref.type)
+    untransformed_element_bitwidth = utils.bitwidth(
+        untransformed_gmem_ref_ty.element_type
+    )
+    if (
+        untransformed_element_bitwidth < 8
+        and implementation == AsyncCopyImplementation.TMA
+    ):
+      # `_prepare_async_copy` appended `SubBytePackingTransform` to
+      # `gmem_transform`, so `slice_shape` and `dyn_base_indices` are now in
+      # byte units along the minor-most dimension. Reinterpret `smem_ref` as i8
+      # with packed shape and strides as well so that SMEM and GMEM
+      # shapes/indices stay in byte units in `_prepare_tma` and `async_copy`.
+      smem_ref = SubBytePackingTransform(untransformed_element_bitwidth).apply(
+          smem_ref
+      )
+
     smem_ref_ty = ir.MemRefType(smem_ref.type)
     # We moved all squeezed dims to the front in _prepare_async_copy.
     assert all(d == 1 for d in slice_shape[:len(squeezed_dims)])
@@ -1690,6 +1809,7 @@ class LaunchContext:
     )
     assert smem_ref is not None  # For type checkers.
     smem_ref_ty = ir.MemRefType(smem_ref.type)
+    element_bitwidth = utils.bitwidth(smem_ref_ty.element_type)
     smem_strides, _ = smem_ref_ty.get_strides_and_offset()
     if any(
         s != cs and d != 1  # Strides don't matter for dims of size 1.
@@ -1771,7 +1891,13 @@ class LaunchContext:
       slice_gather_strides: tuple[int, ...] = (1, 0)  # Each row gets a new index, column has no effect.
       for t in gmem_transform:
         gmem_strides = t.transform_strides(gmem_strides)
-        slice_gather_strides = t.transform_strides(slice_gather_strides)
+        # `slice_gather_strides` tracks row strides along the gathered dimension
+        # (starting at 1 for rows and 0 for columns), not memory strides in
+        # elements. `SubBytePackingTransform` only packs the minor-most (column)
+        # dimension into bytes and would fail trying to divide the unit row
+        # stride by the packing factor.
+        if not isinstance(t, SubBytePackingTransform):
+          slice_gather_strides = t.transform_strides(slice_gather_strides)
       is_gather_dim = [bool(s) for s in slice_gather_strides]
 
       if slice_shape[-1] > 256:
@@ -1780,8 +1906,13 @@ class LaunchContext:
             " Consider adding a TilingTransform with the minormost dimension <="
             " 256."
         )
+      tma_transforms = tuple(
+          t for t in gmem_transform if isinstance(t, SubBytePackingTransform)
+      )
+      for t in tma_transforms:
+        _, gmem_cols = t.transform_gmem_shape(untransformed_gmem_ref_ty.shape)
       tma_desc = self._get_tma_desc(
-          untransformed_gmem_ref, (), gmem_peer_id, (1, slice_shape[-1]), swizzle, reduction_op,
+          untransformed_gmem_ref, tma_transforms, gmem_peer_id, (1, slice_shape[-1]), swizzle, reduction_op,
       )
 
       assert gather_indices.layout.vector_length == ROWS_PER_INSTR
@@ -1951,7 +2082,7 @@ class LaunchContext:
         to_i32 = lambda x: arith.index_cast(ir.IntegerType.get_signless(32), x)
 
         # Clamp the out-of-bounds accesses to be within the bounds of the GMEM ref shape.
-        total_elements = c(math.prod(untransformed_gmem_ref_ty.shape), index)
+        total_elements = c(math.prod(ref_ty.shape), index)
         linear_offset_elems = memref.extract_strided_metadata(ref_slice)[1]  # pyrefly: ignore[bad-index]
 
         # Equivalent to: max(0, total - offset)
@@ -2481,12 +2612,16 @@ class LaunchContext:
           "nvshmemx_mc_ptr", nvshmemx_mc_ptr_type, sym_visibility="private"
       )
 
-  def _find_kernel_argument_index(self, ref: ir.Value):
+  @staticmethod
+  def _find_kernel_argument_index(ref: ir.Value):
     """Finds the index of the kernel argument used to derive the given reference."""
     if not isinstance(ref.type, ir.MemRefType):
       raise ValueError(f"Expected a memref, got {ref.type}")
 
-    op = ref.owner
+    cur = ref
+    while isinstance(cur, ir.BlockArgument):
+      cur = cur.owner.owner.operands[cur.arg_number]
+    op = cur.owner
     while KERNEL_ARG_ID_ATTR not in getattr(op, "attributes", {}):
       if not isinstance(op, ir.OpView):
         raise ValueError(
@@ -2502,11 +2637,15 @@ class LaunchContext:
             f"Can't find the kernel argument. {op} doesn't have a single memref"
             " operand."
         )
-      op = memref_operands[0].owner
+      cur = memref_operands[0]
+      while isinstance(cur, ir.BlockArgument):
+        cur = cur.owner.owner.operands[cur.arg_number]
+      op = cur.owner
 
     attr = op.attributes[KERNEL_ARG_ID_ATTR]  # pyrefly: ignore[missing-attribute]
     # Save the result so that we can find it out faster next time.
-    ref.owner.attributes[KERNEL_ARG_ID_ATTR] = attr  # pyrefly: ignore[missing-attribute]
+    if isinstance(ref.owner, ir.OpView):
+      ref.owner.attributes[KERNEL_ARG_ID_ATTR] = attr
     return attr.value
 
   def _get_collective_metadata(self, on_host: bool):
