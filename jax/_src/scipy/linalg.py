@@ -1326,6 +1326,158 @@ def solve(a: ArrayLike, b: ArrayLike, lower: bool = False,
     raise ValueError(f"Expected assume_a to be one of {valid_assume_a}; got {assume_a!r}")
   return _solve(a, b, assume_a, lower)
 
+@partial(jit, static_argnums=(0, 1))
+def _solve_banded(l: int, u: int, ab: Array, b: Array) -> Array:
+  # Solve a banded system given in LAPACK band storage: ab has shape
+  # (l + u + 1, n) with ab[u + i - j, j] == A[i, j], and b has shape
+  # (n, nrhs). This is the LAPACK ?gbtrf/?gbtrs algorithm (Gaussian
+  # elimination with partial pivoting) carried out on an extended band
+  # storage of shape (2l + u + 1, n + l + u), where the extra l rows hold
+  # the fill-in created by row interchanges and the extra columns are
+  # zero padding for the trailing edge. Each elimination step only
+  # touches a static (l + 1) x (l + u + 1) window of the storage, so the
+  # factorization costs O(n * l * (l + u)) rather than O(n^3).
+  n = ab.shape[1]
+  w = l + u  # upper bandwidth of U after fill-in
+  ab_ext = jnp.zeros((2 * l + u + 1, n + w), dtype=ab.dtype)
+  ab_ext = ab_ext.at[l:, :n].set(ab)
+
+  rows_grid = l + u + jnp.arange(l + 1)[:, None] - jnp.arange(w + 1)[None, :]
+  valid_rows = jnp.arange(l + 1)
+
+  def factor_step(ab_ext, j):
+    cols_grid = j + jnp.arange(w + 1)[None, :]
+    window = ab_ext[rows_grid, cols_grid]
+    valid = (j + valid_rows) < n
+    window = jnp.where(valid[:, None], window, 0)
+    magnitudes = jnp.where(valid, jnp.abs(window[:, 0]), -1)
+    pivot = jnp.argmax(magnitudes)
+    order = jnp.arange(l + 1).at[0].set(pivot).at[pivot].set(0)
+    window = window[order]
+    # Note: unlike dense LU, the multipliers stored in earlier columns
+    # are not swapped along with the rows. They stay at the positions
+    # where they were created, and the forward substitution below
+    # replays the interchanges and eliminations in the original order,
+    # as in LAPACK ?gbtrs.
+    multipliers = jnp.where(valid[1:], window[1:, 0] / window[0, 0], 0)
+    window = window.at[1:, 0].set(multipliers)
+    window = window.at[1:, 1:].set(
+        window[1:, 1:] - multipliers[:, None] * window[0, 1:][None, :])
+    return ab_ext.at[rows_grid, cols_grid].set(window), pivot
+
+  ab_ext, pivots = lax.scan(factor_step, ab_ext, jnp.arange(n))
+
+  # Forward substitution as in LAPACK ?gbtrs: the interchanges and the
+  # multiplier updates interleave, so at each step j we first swap rows
+  # j and j + pivots[j] of y and then apply column j of the unit lower
+  # factor, whose entries sit at ab_ext[l + u + s, j] for s in 1..l.
+  s_idx = jnp.arange(1, l + 1)
+
+  def forward_step(y, j):
+    pivot = pivots[j]
+    y = y.at[j].set(y[j + pivot]).at[j + pivot].set(y[j])
+    rows = j + s_idx
+    multipliers = jnp.where(rows < n, ab_ext[l + u + s_idx, j], 0)
+    return y.at[rows].add(-multipliers[:, None] * y[j][None, :]), None
+
+  y, _ = lax.scan(forward_step, b, jnp.arange(n))
+
+  # Back substitution with the upper triangular factor, which has
+  # bandwidth w after fill-in: U[i, i + t] is at ab_ext[l + u - t, i + t].
+  t_idx = jnp.arange(w + 1)
+
+  def backward_step(x, i):
+    cols = i + t_idx
+    u_vals = jnp.where(cols < n, ab_ext[l + u - t_idx,
+                                        jnp.minimum(cols, n + w - 1)], 0)
+    correction = jnp.sum(u_vals[1:, None] * x[jnp.minimum(cols[1:], n - 1)],
+                         axis=0)
+    return x.at[i].set((y[i] - correction) / ab_ext[l + u, i]), None
+
+  x, _ = lax.scan(backward_step, jnp.zeros_like(y), jnp.arange(n),
+                  reverse=True)
+  return x
+
+
+def solve_banded(banded: tuple[int, int], ab: ArrayLike, b: ArrayLike,
+                 overwrite_ab: bool = False, overwrite_b: bool = False,
+                 check_finite: bool = True) -> Array:
+  """Solve a banded linear system of equations.
+
+  JAX implementation of :func:`scipy.linalg.solve_banded`.
+
+  This solves a (batched) linear system ``A @ x = b`` for ``x``, where
+  ``A`` is a banded matrix given in LAPACK band storage form: with
+  ``(l, u) = banded``, ``ab`` has shape ``(..., l + u + 1, n)`` and
+  ``ab[..., u + i - j, j] == A[..., i, j]`` for ``-u <= i - j <= l``.
+
+  The factorization is Gaussian elimination with partial pivoting
+  performed directly on the band storage, so its cost is
+  ``O(n * l * (l + u))`` rather than the ``O(n^3)`` of a dense solve.
+  Because no LAPACK banded kernel is bound in jaxlib, the same pure JAX
+  implementation runs on every backend.
+
+  If ``A`` is singular, this will return ``nan`` or ``inf`` values.
+
+  Args:
+    banded: a tuple ``(l, u)`` giving the number of subdiagonals and
+      superdiagonals of ``A``.
+    ab: array of shape ``(..., l + u + 1, n)`` in band storage form.
+    b: array of shape ``(..., n)`` or ``(..., n, k)``.
+    overwrite_ab: unused by JAX
+    overwrite_b: unused by JAX
+    check_finite: unused by JAX
+
+  Returns:
+    An array of the same shape as ``b`` containing the solution to the
+    linear system if ``A`` is non-singular.
+
+  See also:
+    - :func:`jax.scipy.linalg.solve`: Solve a dense linear system.
+    - :func:`jax.scipy.linalg.lu_solve`: Solve via LU factorization.
+    - :func:`jax.lax.linalg.tridiagonal_solve`: Solve a tridiagonal
+      system.
+
+  Examples:
+    A 3x3 tridiagonal system, so ``l = u = 1`` and the band storage
+    holds the superdiagonal, diagonal and subdiagonal as its rows:
+
+    >>> ab = jnp.array([[0., 1., 1.],
+    ...                 [3., 3., 3.],
+    ...                 [1., 1., 0.]])
+    >>> b = jnp.array([4., 5., 4.])
+    >>> jax.scipy.linalg.solve_banded((1, 1), ab, b)
+    Array([1., 1., 1.], dtype=float32)
+  """
+  del overwrite_ab, overwrite_b, check_finite  # unused
+  check_arraylike("solve_banded", ab, b)
+  l, u = banded
+  if ab.ndim < 2 or ab.shape[-2] != l + u + 1:
+    raise ValueError(
+        f"solve_banded: ab must have shape (..., l + u + 1, n) with "
+        f"l + u + 1 == {l + u + 1}; got shape {ab.shape}")
+  ab, b = promote_dtypes_inexact(jnp.asarray(ab), jnp.asarray(b))
+  if ab.ndim - b.ndim == 1:
+    b_dim = b.shape[-1]
+  elif ab.ndim == b.ndim:
+    b_dim = b.shape[-2]
+  else:
+    raise ValueError(
+        f"solve_banded: b must have rank {ab.ndim - 1} or {ab.ndim} to "
+        f"match ab with shape {ab.shape}; got b with shape {b.shape}")
+  if b_dim != ab.shape[-1]:
+    raise ValueError(
+        f"solve_banded: b must have leading dimension {ab.shape[-1]} "
+        f"to match ab with shape {ab.shape}; got b with shape {b.shape}")
+  if b.ndim == ab.ndim - 1:
+    signature = "(m,n),(n)->(n)"
+    core = lambda ab, b: _solve_banded(l, u, ab, b[:, None])[:, 0]
+  else:
+    signature = "(m,n),(n,k)->(n,k)"
+    core = partial(_solve_banded, l, u)
+  return jnp_vectorize.vectorize(core, signature=signature)(ab, b)
+
+
 @jit(static_argnames=('trans', 'lower', 'unit_diagonal'))
 def _solve_triangular(a: ArrayLike, b: ArrayLike, trans: int | str,
                       lower: bool, unit_diagonal: bool) -> Array:
