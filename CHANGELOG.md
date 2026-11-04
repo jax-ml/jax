@@ -35,6 +35,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `tan(pi * x)` more accurately than multiplying by `pi` first. They return
     exact values at integers and half-integers and stay accurate for large
     inputs.
+  * Added {func}`jax.execution_options` to pass runtime-defined custom options
+    to each execution of jitted and AOT-compiled functions without retracing or
+    recompiling. Nested contexts merge their options, with inner values taking
+    precedence.
 
 * Deprecations
   * `jax.sharding.SingleDeviceSharding` is deprecated; use
