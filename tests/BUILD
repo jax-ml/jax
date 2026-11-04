@@ -1015,6 +1015,7 @@ jax_multiplatform_test(
     backend_tags = {
         "cpu": [
             "noasan",  # Times out.
+            "nomsan",  # Times out.
             "not_run:arm",  # Numerical issues, including https://github.com/jax-ml/jax/issues/24787
             "notsan",  # Times out.
         ],
