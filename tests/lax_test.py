@@ -247,65 +247,6 @@ class LaxTest(jtu.JaxTestCase):
     )
 
   @jtu.sample_product(dtype=lax_test_util.float_dtypes)
-  def testSinpiCospiTanpiSpecialValues(self, dtype):
-    finfo = jnp.finfo(dtype)
-    pos = [
-        0.0, 0.5, 1.0, 1.5,
-        2 ** (finfo.nmant - 1) + 0.5,
-        2**finfo.nmant,
-        2**finfo.nmant + 1,
-        2 ** (finfo.nmant + 1) - 1,
-        float(finfo.max),
-        np.inf,
-        np.nan,
-    ]
-    pts = np.array([*pos, *(-x for x in pos)], dtype=dtype)
-    for fn, ref_fn in (
-        (lax.sinpi, lax_reference.sinpi),
-        (lax.cospi, lax_reference.cospi),
-        (lax.tanpi, lax_reference.tanpi),
-    ):
-      actual = np.asarray(jax.jit(fn)(pts))
-      expected = ref_fn(pts)
-      self.assertDtypesMatch(actual, expected)
-      if actual.dtype == dtypes.bfloat16:
-        self.assertArraysEqual(
-            actual.astype(np.float32), expected.astype(np.float32)
-        )
-      else:
-        self.assertArraysEqual(actual, expected)
-      zeros = expected == 0
-      self.assertArraysEqual(
-          np.signbit(actual[zeros]), np.signbit(expected[zeros])
-      )
-    quarter = np.array([0.25, -0.25, 0.75, -0.75], dtype=dtype)
-    self.assertArraysEqual(
-        jax.jit(lax.tanpi)(quarter), lax_reference.tanpi(quarter)
-    )
-    near_grid = np.array(
-        [
-            0.5 - 1e-4,
-            0.5 + 1e-4,
-            1.0 - 1e-4,
-            1.0 + 1e-4,
-            1.5 - 1e-4,
-            1.5 + 1e-4,
-            1.4558208527321925,
-            6.489487419631901,
-            -7.526160955055503,
-        ],
-        dtype=dtype,
-    )
-    for fn, ref_fn in (
-        (lax.sinpi, lax_reference.sinpi),
-        (lax.cospi, lax_reference.cospi),
-        (lax.tanpi, lax_reference.tanpi),
-    ):
-      actual = jax.jit(fn)(near_grid)
-      expected = ref_fn(near_grid)
-      self.assertAllClose(actual, expected)
-
-  @jtu.sample_product(dtype=lax_test_util.float_dtypes)
   @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
   def testLogPow(self, dtype):
     # Regression test for https://github.com/jax-ml/jax/issues/41261

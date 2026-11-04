@@ -29,7 +29,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
-from jax._src.numpy.ufuncs import arctan, isposinf, isneginf, sinc
+from jax._src.numpy.ufuncs import isposinf, isneginf, sinc
 from jax._src.api import jit, jvp, vmap
 from jax._src.lax.double_word import two_sum
 from jax._src.lax.erf import (
@@ -4721,12 +4721,12 @@ def _owens_t_impl(h, a):
 
   result = _owens_t_quadrature(modified_h, modified_a)
 
-  # Exact values for h=0 and a=1
-  result = jnp.where(modified_h == 0., arctan(modified_a) / (2 * np.pi), result)
+  # Exact values for a=1 and h=0
   result = jnp.where(
       modified_a == 1.,
       0.125 * lax.erfc(-modified_h / root_2) * lax.erfc(modified_h / root_2),
       result)
+  result = jnp.where(modified_h == 0., 0.5 * lax.atanpi(modified_a), result)
 
   # Reciprocal correction for |a| > 1
   normh = lax.erfc(h_normed)

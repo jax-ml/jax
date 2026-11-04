@@ -658,6 +658,50 @@ def _tanpi_taylor(primals_in, series_in, **_):
 
 jet_rules[lax.tanpi_p] = _tanpi_taylor
 
+def_deriv(
+    lax.asinpi_p,
+    lambda x: lax.mul(
+        lax_internal._const(x, 1.0 / np.pi), lax.rsqrt(lax.one_minus_square(x))
+    ),
+)
+def_deriv(
+    lax.acospi_p,
+    lambda x: lax.mul(
+        lax_internal._const(x, -1.0 / np.pi), lax.rsqrt(lax.one_minus_square(x))
+    ),
+)
+def_deriv(
+    lax.atanpi_p,
+    lambda x: lax.div(lax_internal._const(x, 1.0 / np.pi), 1 + lax.square(x)),
+)
+
+
+def _atan2pi_taylor(primals_in, series_in):
+  x, y = primals_in
+  x_series, y_series = series_in
+  primal_out = lax.atan2pi(x, y)
+  if not x_series:
+    return primal_out, []
+  k_max = len(x_series)
+  dx_series = [(j + 1) * x_series[j] for j in range(k_max)]
+  dy_series = [(j + 1) * y_series[j] for j in range(k_max)]
+  num0, nums = jet2(
+      lambda x, y, dx, dy: lax.sub(lax.mul(y, dx), lax.mul(x, dy)),
+      (x, y, dx_series[0], dy_series[0]),
+      (x_series[:-1], y_series[:-1], dx_series[1:], dy_series[1:]),
+  )
+  den0, dens = jet2(
+      lambda x, y: lax.mul(np.pi, lax.add(lax.square(x), lax.square(y))),
+      (x, y),
+      (x_series[:-1], y_series[:-1]),
+  )
+  q0, qs = jet2(lax.div, (num0, den0), (nums, dens))
+  series_out = [q / (j + 1) for j, q in enumerate([q0] + qs)]
+  return primal_out, series_out
+
+
+jet_rules[lax.atan2pi_p] = _atan2pi_taylor
+
 def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   x, y = primals_in
   x_terms, y_terms = series_in

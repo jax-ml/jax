@@ -45,6 +45,7 @@ from jax._src.lax import convolution as lax_conv
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import special as lax_special
+from jax._src.lax import trig as lax_trig
 from jax._src.lax import utils as lax_utils
 from jax._src.layout import Format
 from jax._src.lib import xla_client as xc
@@ -1567,8 +1568,9 @@ def angle(z: ArrayLike, deg: bool = False) -> Array:
     dtype = dtypes.default_float_dtype()
     re = lax.convert_element_type(re, dtype)
     im = lax.convert_element_type(im, dtype)
-  result = lax.atan2(im, re)
-  return ufuncs.degrees(result) if deg else result
+  if deg:
+    return lax.mul(lax._const(re, 180), lax_trig.atan2pi(im, re))
+  return lax.atan2(im, re)
 
 
 @export

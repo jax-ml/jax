@@ -93,8 +93,10 @@ _zero_preserving_unary_primitives = [
   lax.abs_p,
   lax.asin_p,
   lax.asinh_p,
+  lax.asinpi_p,
   lax.atan_p,
   lax.atanh_p,
+  lax.atanpi_p,
   lax.bessel_i1e_p,
   lax.expm1_p,
   lax.log1p_p,
@@ -113,6 +115,7 @@ _zero_preserving_unary_primitives = [
 _densifying_primitives : list[core.Primitive] = [
   lax.acos_p,
   lax.acosh_p,
+  lax.acospi_p,
   lax.bessel_i0e_p,
   lax.cos_p,
   lax.cosh_p,

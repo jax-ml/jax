@@ -6674,6 +6674,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     values_bf16 = np.power(10.0, exponents_bf16).astype(jnp.bfloat16)
     self.assertArraysEqual(jnp.log10(values_bf16), exponents_bf16.astype(jnp.bfloat16))
 
+  @jtu.sample_product(dtype=jtu.dtypes.complex)
+  def testAngleDegreesExact(self, dtype):
+    z = jnp.array([1, 1 + 1j, 1j, -1 + 1j, -1, -1 - 1j, -1j, 1 - 1j], dtype=dtype)
+    expected = jnp.array(
+        [0, 45, 90, 135, 180, -135, -90, -45], dtype=jnp.finfo(dtype).dtype
+    )
+    self.assertArraysEqual(jnp.angle(z, deg=True), expected)
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
