@@ -482,9 +482,9 @@ void CallShardArgFallback(nb::handle arg, nb::handle sharding,
 // to shard_args() in pxla.py but for only a few supported cases.
 absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     const PyLoadedExecutable& executable,
-    absl::Span<nb::object const> flat_dynamic_args,
-    absl::Span<PyArgSignature const> flat_dynamic_arg_signatures,
-    bool enable_x64, const std::vector<bool>& kept_args,
+    absl::Span<nb::object const> const_args,
+    absl::Span<nb::object const> flat_dynamic_args, bool enable_x64,
+    const std::vector<bool>& kept_args,
     const std::vector<nb::object>& in_shardings,
     const std::vector<nb::object>& in_device_local_layouts,
     const nb::callable& shard_arg_fallback,
@@ -495,10 +495,12 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       devices.has_value() ? (*devices)->AddressableDeviceList()->devices()
                           : absl::Span<xla::ifrt::Device* const>();
   const int num_global_devices = devices.has_value() ? (*devices)->size() : 1;
-  int num_args = flat_dynamic_args.size();
+  const int num_const_args = const_args.size();
+  const int num_args = num_const_args + flat_dynamic_args.size();
+  const int num_kept_args = in_shardings.size();
 
   std::vector<xla::ifrt::ArrayRef> num_args_arrays;
-  num_args_arrays.reserve(num_args);
+  num_args_arrays.reserve(num_kept_args);
 
   struct CopyGroup {
     std::vector<int> indices;
@@ -517,14 +519,16 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     data_device = addressable_devices[0];
   }
   int dce_i = 0;
-  for (int i = 0; i < num_args; ++i) {
+  for (int i = 0; i < num_args && dce_i < num_kept_args; ++i) {
     if (!kept_args[i]) {
       continue;
     }
     int dce_index = dce_i;
     ++dce_i;
 
-    const nb::object& arg = flat_dynamic_args[i];
+    const nb::object& arg = i < num_const_args
+                                ? const_args[i]
+                                : flat_dynamic_args[i - num_const_args];
     const nb::object& in_device_local_layout =
         in_device_local_layouts[dce_index];
 
@@ -810,30 +814,17 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     return fallback_to_cache_miss("cache_entry_fall_back_to_python");
   }
 
-  absl::InlinedVector<PyArgSignature, 2> dynamic_arg_signatures;
-  dynamic_arg_signatures.reserve(cache_entry->const_args.size() +
-                                 flat_dynamic_args.size());
-  if (!cache_entry->const_args.empty()) {
-    flat_dynamic_args.reserve(cache_entry->const_args.size() +
-                              flat_dynamic_args.size());
-    flat_dynamic_args.insert(flat_dynamic_args.begin(),
-                             cache_entry->const_args.begin(),
-                             cache_entry->const_args.end());
-
-    for (nb::handle const_arg : cache_entry->const_args) {
-      ABSL_ASSIGN_OR_RETURN(auto const_arg_signature,
-                            PyArgSignatureOfValue(const_arg, enable_x64));
-      dynamic_arg_signatures.push_back(std::move(const_arg_signature));
+  for (nb::handle const_arg : cache_entry->const_args) {
+    if (const_arg.type().ptr() == PyArray::type().ptr() &&
+        nb::borrow<PyArray>(const_arg).IsDeleted()) {
+      return xla::InvalidArgument("Array has been deleted.");
     }
-  }
-  for (const auto& arg : call_signature.dynamic_arg_signatures) {
-    dynamic_arg_signatures.push_back(std::move(arg));
   }
 
   PyUserContextScope user_context_scope;
   // A vector of [num_inputs].
   auto num_args_arrays = PrepareIfrtInputs(
-      *cache_entry->executable, flat_dynamic_args, dynamic_arg_signatures,
+      *cache_entry->executable, cache_entry->const_args, flat_dynamic_args,
       enable_x64, cache_entry->kept_var_bitvec, cache_entry->in_shardings,
       cache_entry->in_device_local_layouts, shard_arg_fallback_,
       keep_alive_objects);
