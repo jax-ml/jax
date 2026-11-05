@@ -7354,6 +7354,18 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
 
     lhs_dtype, rhs_dtype, accumulation_dtype = get_algorithm_compute_types(
         precision, lhs_dtype, rhs_dtype, aval_out.dtype)
+    for operand_aval, target_dtype in ((lhs_aval, lhs_dtype), (rhs_aval, rhs_dtype)):
+      if (target_dtype is not None
+          and dtypes.issubdtype(operand_aval.dtype, np.complexfloating)
+          and not dtypes.issubdtype(target_dtype, np.complexfloating)):
+        # Casting a complex operand to a real storage type would silently drop its
+        # imaginary part (https://github.com/jax-ml/jax/issues/42329).
+        raise ValueError(
+            f"dot_general with precision '{precision}' does not support complex "
+            f"operands: the algorithm's input type is {np.dtype(target_dtype)}, and "
+            f"casting the {operand_aval.dtype} operand to it would discard its "
+            "imaginary part. Apply the algorithm to the real and imaginary parts "
+            "separately, or use a lax.Precision value instead.")
     if platform == "cpu":
       accumulation_dtype = precision.accumulation_type
     lhs = maybe_convert_dtype(lhs, lhs_aval, lhs_dtype)
