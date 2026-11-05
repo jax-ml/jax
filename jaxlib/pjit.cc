@@ -1039,6 +1039,7 @@ void PjitFunction::ClearPythonReferences() {
 struct PjitFunctionObject {
   PyObject_HEAD;
   vectorcallfunc vectorcall;
+  bool fun_initialized;
   PjitFunction fun;
 
   // Doubly-linked list of PjitFunctionObjects, protected by
@@ -1100,7 +1101,8 @@ PjitFunctionStore pjit_function_store;
 PyObject* PjitFunction_Type = nullptr;
 
 bool PjitFunction::IsPjitFunction(nb::handle handle) {
-  return handle.type().ptr() == PjitFunction_Type;
+  return handle.type().ptr() == PjitFunction_Type &&
+         reinterpret_cast<PjitFunctionObject*>(handle.ptr())->fun_initialized;
 }
 
 PjitFunction* PjitFunction::AsPjitFunctionUnchecked(nb::handle handle) {
@@ -1119,6 +1121,10 @@ extern "C" {
 PyObject* PjitFunction_tp_vectorcall(PyObject* callable, PyObject* const* args,
                                      size_t nargs, PyObject* kwnames) {
   PjitFunctionObject* o = reinterpret_cast<PjitFunctionObject*>(callable);
+  if (!o->fun_initialized) {
+    PyErr_SetString(PyExc_TypeError, "Uninitialized PjitFunction");
+    return nullptr;
+  }
   tsl::profiler::TraceMe traceme([&] {
     return absl::StrCat("PjitFunction(", o->fun.function_name(), ")");
   });
@@ -1151,6 +1157,8 @@ PyObject* PjitFunction_tp_new(PyTypeObject* subtype, PyObject* args,
       reinterpret_cast<PjitFunctionObject*>(subtype->tp_alloc(subtype, 0));
   if (!self) return nullptr;
 
+  self->fun_initialized = false;
+  self->next = self->prev = nullptr;
   self->vectorcall = PjitFunction_tp_vectorcall;
   return reinterpret_cast<PyObject*>(self);
 }
@@ -1159,14 +1167,19 @@ void PjitFunction_tp_dealloc(PyObject* self) {
   PyObject_GC_UnTrack(self);
   PyTypeObject* tp = Py_TYPE(self);
   PjitFunctionObject* o = reinterpret_cast<PjitFunctionObject*>(self);
-  pjit_function_store.Remove(o);
+  if (o->fun_initialized) {
+    pjit_function_store.Remove(o);
+  }
   PyObject_ClearWeakRefs(self);
 #if PY_VERSION_HEX < 0x030D0000
   _PyObject_ClearManagedDict(self);
 #else
   PyObject_ClearManagedDict(self);
 #endif
-  o->fun.~PjitFunction();
+  if (o->fun_initialized) {
+    o->fun.~PjitFunction();
+    o->fun_initialized = false;
+  }
   tp->tp_free(self);
   Py_DECREF(tp);
 }
@@ -1180,6 +1193,9 @@ int PjitFunction_tp_traverse(PyObject* self, visitproc visit, void* arg) {
 #else
   PyObject_VisitManagedDict(self, visit, arg);
 #endif
+  if (!o->fun_initialized) {
+    return 0;
+  }
   Py_VISIT(o->fun.cache_miss().ptr());
   Py_VISIT(o->fun.shard_arg_fallback().ptr());
   Py_VISIT(o->fun.global_cache_key().ptr());
@@ -1197,7 +1213,9 @@ int PjitFunction_tp_clear(PyObject* self) {
 #else
   PyObject_ClearManagedDict(self);
 #endif
-  o->fun.ClearPythonReferences();
+  if (o->fun_initialized) {
+    o->fun.ClearPythonReferences();
+  }
   return 0;
 }
 
@@ -1249,10 +1267,16 @@ void InitializePjitFunction(
       std::move(static_argnums), std::move(static_argnames),
       std::move(global_cache_key), std::move(pytree_registry),
       std::move(shard_arg_fallback), std::move(cache));
-  // Handled separately because it is not exception safe to call this
-  // in the constructor because it leaves the object improperly constructed.
-  fn_obj->fun.InitExecutables();
+  try {
+    // Handled separately because it is not exception safe to call this
+    // in the constructor because it leaves the object improperly constructed.
+    fn_obj->fun.InitExecutables();
+  } catch (...) {
+    fn_obj->fun.~PjitFunction();
+    throw;
+  }
 
+  fn_obj->fun_initialized = true;
   // Only add the executable to the store after executables_ has been
   // initialized. We want only fully constructed executables in the store.
   pjit_function_store.Insert(fn_obj);
@@ -1648,6 +1672,14 @@ void BuildPjitSubmodule(nb::module_& m) {
       nb::is_method());
   cfun.attr("__setstate__") = nb::cpp_function(
       [](nb::object& self, const nb::dict& pickle) {
+        if (self.type().ptr() != PjitFunction_Type) {
+          throw nb::type_error("Expected a PjitFunction");
+        }
+        PjitFunctionObject* fn_obj =
+            reinterpret_cast<PjitFunctionObject*>(self.ptr());
+        if (fn_obj->fun_initialized) {
+          throw xla::XlaRuntimeError("PjitFunction is already initialized");
+        }
         int version = nb::cast<int>(pickle["version"]);
         if (version != kPjitFunctionPickleVersion) {
           throw std::invalid_argument(absl::StrFormat(
@@ -1675,12 +1707,12 @@ void BuildPjitSubmodule(nb::module_& m) {
             nb::cast<nb::callable>(pickle["shard_arg_fallback"]);
         nb_class_ptr<PjitFunctionCache> cache =
             nb::cast<nb_class_ptr<PjitFunctionCache>>(pickle["cache"]);
-        InitializePjitFunction(
-            reinterpret_cast<PjitFunctionObject*>(self.ptr()),
-            std::move(function_name), std::move(fun), std::move(cache_miss),
-            std::move(static_argnums), std::move(static_argnames),
-            std::move(global_cache_key), std::move(pytree_registry),
-            std::move(shard_arg_fallback), std::move(cache));
+        InitializePjitFunction(fn_obj, std::move(function_name), std::move(fun),
+                               std::move(cache_miss), std::move(static_argnums),
+                               std::move(static_argnames),
+                               std::move(global_cache_key),
+                               std::move(pytree_registry),
+                               std::move(shard_arg_fallback), std::move(cache));
       },
       nb::is_method());
   cfun.attr("__signature__") = xla::nb_property_readonly(
