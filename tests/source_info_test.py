@@ -16,9 +16,11 @@ import inspect
 import re
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax import export
 from jax import lax
+from jax._src import config
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 from jax._src.lib.mlir import ir
@@ -93,7 +95,155 @@ def find_operation(root, selector: str):
   return ops[0]
 
 
+def find_eqn(jaxpr, primitive_name):
+  """Find the unique equation for a primitive in a flat jaxpr."""
+  eqn, = [e for e in jaxpr.eqns if e.primitive.name == primitive_name]
+  return eqn
+
+
+def user_function_name(eqn):
+  """Return the innermost user function recorded for an equation."""
+  return source_info_util.user_frame(eqn.source_info.traceback).function_name
+
+
+# Qualified names of the functions defined in make_custom_vjp_pullback.
+FORWARD = 'make_custom_vjp_pullback.<locals>.forward'
+BWD = 'make_custom_vjp_pullback.<locals>.bwd'
+BACKWARD_COS = 'make_custom_vjp_pullback.<locals>.backward_cos'
+
+
+def make_custom_vjp_pullback(kind):
+  """Builds a pullback through a custom_vjp whose bwd rule creates cos/mul/add.
+
+  The bwd rule runs inside jax.named_scope('user_backward').
+  """
+  @jax.custom_vjp
+  def f(x):
+    # Return a second output that forward() ignores, exercising zero-cotangent
+    # materialization before the user's backward rule.
+    return lax.sin(x), x
+
+  def fwd(x):
+    return (lax.sin(x), x), x
+
+  def backward_cos(x):
+    return lax.cos(x)
+
+  def bwd(x, ct):
+    with jax.named_scope('user_backward'):
+      grad = lax.add(lax.mul(ct[0], backward_cos(x)), ct[1])
+    return (grad,)
+
+  def bwd_logs(x, ct):
+    return bwd(x, ct), {'ct': ct[0]}
+
+  def bwd_accums(x, ct, acc):
+    acc.accum(bwd(x, ct)[0])
+
+  if kind == 'regular':
+    f.defvjp(fwd, bwd)
+  elif kind == 'logs':
+    f.defvjp_with_logs(fwd, bwd_logs)
+  else:
+    f.defvjp_with_accums(fwd, bwd_accums)
+
+  def forward(x):
+    # The unused output makes AD supply a symbolic zero to the bwd wrapper.
+    return f(x)[0]
+
+  def pullback(x, ct):
+    return jax.vjp(forward, x)[1](ct)[0]
+
+  return pullback
+
+
 class SourceInfoTest(jtu.JaxTestCase):
+
+  @parameterized.product(kind=('regular', 'logs', 'accums'), vjp3=(False, True))
+  def test_custom_vjp_backward_source_locations(self, kind, vjp3):
+    self.enterContext(config.custom_vjp3(vjp3))
+    pullback = make_custom_vjp_pullback(kind)
+
+    x = jax.ShapeDtypeStruct((4,), 'float32')
+    jaxpr = jax.make_jaxpr(pullback)(x, x)
+
+    # Ops created by the bwd rule point at the rule, inside its named scope.
+    cos = find_eqn(jaxpr, 'cos')
+    mul = find_eqn(jaxpr, 'mul')
+    self.assertEqual(user_function_name(cos), BACKWARD_COS)
+    self.assertEqual(user_function_name(mul), BWD)
+    self.assertIn('user_backward', str(cos.source_info.name_stack))
+    self.assertIn('user_backward', str(mul.source_info.name_stack))
+
+    # The zero cotangent for the output that forward() ignores is materialized
+    # by JAX, not by the bwd rule, so it keeps pointing at forward().
+    zero_sources = {user_function_name(e) for e in jaxpr.eqns
+                    if e.primitive.name == 'broadcast_in_dim'}
+    self.assertEqual(zero_sources, {FORWARD})
+
+    # The locations survive lowering to StableHLO.
+    with config.include_full_tracebacks_in_locations(True):
+      module = jax.jit(pullback).lower(x, x).compiler_ir()
+    cosine = find_operation(
+        module, 'func.func[sym_name="main"] stablehlo.cosine')
+    multiply = find_operation(
+        module, 'func.func[sym_name="main"] stablehlo.multiply')
+    self.assertIn(BACKWARD_COS, str(cosine.location))
+    self.assertIn(BWD, str(multiply.location))
+
+  def test_custom_vjp_backward_optimized_hlo_source(self):
+    pullback = make_custom_vjp_pullback('regular')
+
+    x = jax.ShapeDtypeStruct((4,), 'float32')
+    with config.include_full_tracebacks_in_locations(True):
+      compiled = jax.jit(pullback).lower(x, x).compile()
+    # as_text() handles missing HLO APIs and UNIMPLEMENTED backend responses.
+    hlo = compiled.as_text()
+    if hlo is None:
+      self.skipTest('Backend does not support optimized HLO inspection')
+
+    # The bwd rule's functions appear in the source metadata, and forward() does
+    # not: nothing the bwd rule creates may point back at the forward call site.
+    self.assertIn(f'"{BACKWARD_COS}"', hlo)
+    self.assertIn(f'"{BWD}"', hlo)
+    self.assertNotIn(f'"{FORWARD}"', hlo)
+
+  def test_reset_traceback_restores_context_on_exception(self):
+    # Nested resets must preserve scope names and restore the original source
+    # context even when the code inside the reset raises an exception.
+    self.enterContext(source_info_util.reset_name_stack())
+    original = source_info_util.current()
+    with source_info_util.user_context(original.traceback):
+      with source_info_util.extend_name_stack('outer'):
+        before = source_info_util.current()
+        self.assertEqual(str(before.name_stack), 'outer')
+        with self.assertRaisesRegex(ValueError, 'test error'):
+          with source_info_util.reset_traceback():
+            self.assertEqual(source_info_util.current_name_stack(),
+                             before.name_stack)
+            self.assertIsNot(
+                source_info_util.current().traceback, before.traceback)
+            with source_info_util.reset_traceback():
+              self.assertEqual(source_info_util.current_name_stack(),
+                               before.name_stack)
+            raise ValueError('test error')
+        self.assertIs(source_info_util.current().traceback, before.traceback)
+        self.assertEqual(source_info_util.current_name_stack(),
+                         before.name_stack)
+
+  def test_generated_backward_operations_keep_forward_source(self):
+    # Fixing custom backward locations must preserve forward-source attribution
+    # for backward operations generated automatically by JAX.
+    def f(x):
+      return lax.sin(x)
+
+    def pullback(x, ct):
+      return jax.vjp(f, x)[1](ct)[0]
+
+    jaxpr = jax.make_jaxpr(pullback)(1., 1.)
+    self.assertEndsWith(
+        user_function_name(find_eqn(jaxpr, 'mul')),
+        'test_generated_backward_operations_keep_forward_source.<locals>.f')
 
   def test_inline_jit_location_uses_callee_location(self):
 
