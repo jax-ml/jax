@@ -70,7 +70,7 @@ from jax._src.util import (
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.mesh import get_abstract_mesh
-from jax._src.pjit import auto_axes
+from jax._src.pjit import reshard
 from jax._src.tree_util import tree_flatten, tree_map
 
 export = set_module('jax.numpy')
@@ -889,24 +889,61 @@ def histogram(a: ArrayLike, bins: str | ArrayLike = 10,
       raise ValueError("weights should have the same shape as a.")
     a, weights = util.promote_dtypes_inexact(a, weights)
 
-  if sharding is not None:
-    return auto_axes(partial(_histogram, bins=bins, density=density),
-                     out_sharding=sharding,
-                     axes=sharding.mesh.explicit_axes
-                     )(a, range, weights)
-  else:
-    return _histogram(a, range, weights, bins, density)
+  return _histogram(a, range, weights, bins, density, out_sharding=sharding)
 
 
-def _histogram(a, range, weights, bins, density):
+def _histogram(a, range, weights, bins, density, out_sharding=None):
+  rep_s = None if out_sharding is None else NamedSharding(out_sharding.mesh, P())
+  if (
+      out_sharding is not None
+      and range is None
+      and np.ndim(bins) != 1
+      and np.size(a) != 0
+      and np.ndim(a) > 0
+  ):
+    axes = tuple(builtins.range(np.ndim(a)))
+    range = (
+        lax.reduce_min(a, axes, out_sharding=rep_s),
+        lax.reduce_max(a, axes, out_sharding=rep_s),
+    )
   bin_edges = histogram_bin_edges(a, bins, range, weights)
+  if out_sharding is not None:
+    if core.typeof(bin_edges).sharding.spec != P():
+      bin_edges = reshard(bin_edges, rep_s)
+    if core.typeof(weights).sharding.spec != core.typeof(a).sharding.spec:
+      weights = reshard(
+          weights,
+          rep_s if core.typeof(a).sharding.mesh.empty else core.typeof(a).sharding,
+      )
   bin_idx = searchsorted(bin_edges, a, side='right')
   bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
-  counts = array_creation.zeros(len(bin_edges), weights.dtype
-                                ).at[bin_idx].add(weights)[1:]
+  scatter_s = (
+      None
+      if out_sharding is None
+      else (
+          rep_s
+          if density
+          else out_sharding.update(
+              spec=P(
+                  unreduced=out_sharding.spec.unreduced,
+                  unreduced_kind=out_sharding.spec.unreduced_kind,
+              )
+          )
+      )
+  )
+  counts = (
+      array_creation.zeros(len(bin_edges), weights.dtype, out_sharding=scatter_s)
+      .at[bin_idx]
+      .add(weights, out_sharding=scatter_s)[1:]
+  )
   if density:
-    bin_widths = diff(bin_edges)
-    counts = counts / bin_widths / counts.sum()
+    counts = counts / diff(bin_edges) / counts.sum()
+  if out_sharding is not None:
+    if core.typeof(counts).sharding != out_sharding:
+      counts = reshard(counts, out_sharding)
+    edges_s = rep_s if out_sharding.spec.unreduced else out_sharding
+    if core.typeof(bin_edges).sharding != edges_s:
+      bin_edges = reshard(bin_edges, edges_s)
   return counts, bin_edges
 
 
@@ -6452,54 +6489,65 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
     util.check_arraylike("repeat", a, repeats)
   a = asarray(a)
 
-  if axis is None:
-    a = a.ravel()
-    axis = 0
-
-  if out_sharding is not None:
-    return _auto_repeat(_repeat, a, repeats, axis, total_repeat_length,
-                        out_sharding)
-  ctx_mesh = get_abstract_mesh()
-  if ctx_mesh._any_axis_explicit:
-    aval = core.typeof(a)
-    if axis is None or aval.sharding.spec[axis] is not None:
-      raise ValueError(
-          "Please pass sharding to `jnp.repeat` via `out_sharding` parameter.")
-    assert axis is not None and aval.sharding.spec[axis] is None
-    out_sharding = (NamedSharding(ctx_mesh, P())
-                    if aval.sharding.mesh.empty else aval.sharding)
-    return _auto_repeat(_repeat, a, repeats, axis, total_repeat_length,
-                        out_sharding)
+  out_sharding = canonicalize_sharding(out_sharding, 'repeat')
   try:
+    if axis is None:
+      a = ravel(
+          a,
+          out_sharding=(
+              NamedSharding(out_sharding.mesh, P())
+              if out_sharding is not None
+              else None
+          ),
+      )
+      axis = 0
+
+    if out_sharding is not None:
+      return _repeat(repeats, a, axis=axis,
+                     total_repeat_length=total_repeat_length,
+                     out_sharding=out_sharding)
+    aval = core.typeof(a)
+    ctx_mesh = get_abstract_mesh()
+    mesh = ctx_mesh if aval.sharding.mesh.empty else aval.sharding.mesh
+    if mesh._any_axis_explicit:
+      if aval.ndim > 0:
+        axis_idx = _canonicalize_axis(
+            core.concrete_or_error(
+                operator.index, axis, "'axis' argument of jnp.repeat()"
+            ),
+            aval.ndim,
+        )
+        if aval.sharding.spec.partitions[axis_idx] is not None:
+          raise ValueError(
+              "Please pass sharding to `jnp.repeat` via `out_sharding`"
+              " parameter."
+          )
+      out_sharding = (
+          canonicalize_sharding(P(), 'repeat')
+          if aval.sharding.mesh.empty
+          else aval.sharding
+      )
     return _repeat(repeats, a, axis=axis,
-                   total_repeat_length=total_repeat_length)
+                   total_repeat_length=total_repeat_length,
+                   out_sharding=out_sharding)
   except core.ShardingTypeError:
     raise ValueError(
         "Please pass sharding to `jnp.repeat` via `out_sharding` parameter.")
 
-def _auto_repeat(fun, a, repeats, axis, total_repeat_length, out_sharding):
-  out_sharding = canonicalize_sharding(out_sharding, 'repeat')
-  if total_repeat_length is None:
-    return auto_axes(partial(fun, repeats, axis=axis,
-                             total_repeat_length=total_repeat_length),
-                     out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes
-                     )(a)
-  else:
-    return auto_axes(
-        partial(fun, axis=axis, total_repeat_length=total_repeat_length),
-        out_sharding=out_sharding,
-        axes=out_sharding.mesh.explicit_axes
-        )(repeats, a)
 
 def _repeat(repeats, arr, *, axis: int,
-            total_repeat_length: int | None = None) -> Array:
+            total_repeat_length: int | None = None,
+            out_sharding: NamedSharding | None = None) -> Array:
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.repeat()")
 
   if core.is_symbolic_dim(repeats):
     if total_repeat_length is not None:
       raise ValueError("jnp.repeat with a non-constant `repeats` is supported only "
                        f"when `total_repeat_length` is None. ({repeats=} {total_repeat_length=})")
+
+  rep_s = (
+      NamedSharding(out_sharding.mesh, P()) if out_sharding is not None else None
+  )
 
   # If total_repeat_length is not given, use a default.
   if total_repeat_length is None:
@@ -6519,21 +6567,23 @@ def _repeat(repeats, arr, *, axis: int,
         arr, aux_shape, [i for i in range(len(aux_shape)) if i != aux_axis])
       result_shape: list[DimSize] = list(input_shape)
       result_shape[axis] *= repeats
-      return arr.reshape(result_shape)
+      return reshape(arr, result_shape, out_sharding=out_sharding)
 
     repeats = np.ravel(repeats)
     if arr.ndim != 0:
       repeats = np.broadcast_to(repeats, [arr.shape[axis]])
     total_repeat_length = int(np.sum(repeats))
   else:
-    repeats = ravel(repeats)
+    repeats = ravel(repeats, out_sharding=rep_s)
     if arr.ndim != 0:
       repeats = broadcast_to(repeats, [arr.shape[axis]])
 
   # Special case when a is a scalar.
   if arr.ndim == 0:
     if np.shape(repeats) == (1,):
-      return array_creation.full([total_repeat_length], arr)
+      return array_creation.full(
+          [total_repeat_length], arr, out_sharding=out_sharding
+      )
     else:
       raise ValueError('`repeat` with a scalar parameter `a` is only '
       'implemented for scalar values of the parameter `repeats`.')
@@ -6542,11 +6592,17 @@ def _repeat(repeats, arr, *, axis: int,
   if total_repeat_length == 0:
     result_shape = list(arr.shape)
     result_shape[axis] = 0
-    return reshape(array([], dtype=arr.dtype), result_shape)
+    return reshape(
+        array([], dtype=arr.dtype), result_shape, out_sharding=out_sharding
+    )
 
   # If repeats is on a zero sized axis, then return the array.
   if arr.shape[axis] == 0:
-    return arr
+    return (
+        reshard(arr, out_sharding)
+        if out_sharding is not None and core.typeof(arr).sharding != out_sharding
+        else arr
+    )
 
   # This implementation of repeat avoid having to instantiate a large.
   # intermediate tensor.
@@ -6556,11 +6612,13 @@ def _repeat(repeats, arr, *, axis: int,
   # Cumsum to get indices of new number in repeated tensor, e.g. [0, 1, 3, 3]
   scatter_indices = reductions.cumsum(exclusive_repeats)
   # Scatter these onto a zero buffer, e.g. [1,1,0,2,0,0,0,0]
-  block_split_indicators = array_creation.zeros([total_repeat_length], dtype='int32')
+  block_split_indicators = array_creation.zeros(
+      [total_repeat_length], dtype='int32', out_sharding=rep_s
+  )
   block_split_indicators = block_split_indicators.at[scatter_indices].add(1)
   # Cumsum again to get scatter indices for repeat, e.g. [0,1,1,3,3,3,3,3]
   gather_indices = reductions.cumsum(block_split_indicators) - 1
-  return indexing.take(arr, gather_indices, axis=axis)
+  return indexing.take(arr, gather_indices, axis=axis, out_sharding=out_sharding)
 
 
 @export
