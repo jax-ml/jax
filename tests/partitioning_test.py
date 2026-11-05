@@ -598,6 +598,58 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y', 'z')))
     self.assertArraysEqual(out, np_x * 2)
 
+  @parameterized.parameters(
+      # f32[4@x, 4] -> f32[4@x, 4@y] -> f32[4, 4@y]
+      (P('x', None), P(None, 'y'), 'all_gather'),
+      # f32[4@x, 4, 4] -> f32[4@x, 4, 4@y] -> f32[4, 4@x, 4@y]
+      (P('x', None, None), P(None, 'x', 'y'), 'all_to_all'),
+  )
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshard_slices_before_collective(self, in_spec, out_spec,
+                                            collective, mesh):
+    shape = (4,) * len(in_spec)
+    np_x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    x = jax.device_put(np_x, in_spec)
+
+    @jax.jit
+    def f(a):
+      return jax.reshard(a, out_spec)
+
+    hlo = f.lower(x).as_text()
+    self.assertLess(hlo.index('stablehlo.dynamic_slice'),
+                    hlo.index(f'stablehlo.{collective}'))
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+    self.assertArraysEqual(out, np_x)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_reshard_slice_collective_slice(self, mesh):
+    # f32[4@x, 4@y, 4] -> f32[4@x, 4@y, 4@z]  slice 'z'
+    #                  -> f32[4, 4@y, 4@z]    all_gather 'x'
+    #                  -> f32[4@y, 4, 4@z]    all_to_all 'y' to dim 0
+    #                  -> f32[4@y, 4@x, 4@z]  slice 'x'
+    np_x = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
+    x = jax.device_put(np_x, P('x', 'y', None))
+    out_spec = P('y', 'x', 'z')
+
+    @jax.jit
+    def f(a):
+      return jax.reshard(a, out_spec)
+
+    hlo = f.lower(x).as_text()
+    self.assertEqual(hlo.count('stablehlo.dynamic_slice'), 2)
+    first_slice = hlo.index('stablehlo.dynamic_slice')
+    ag = hlo.index('stablehlo.all_gather')
+    a2a = hlo.index('stablehlo.all_to_all')
+    second_slice = hlo.rindex('stablehlo.dynamic_slice')
+    self.assertTrue(first_slice < ag < a2a < second_slice)
+
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+    self.assertArraysEqual(out, np_x)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -2604,6 +2604,35 @@ class _ReshardMove:
   src_dim: int
   dst_dim: int | None
 
+@dataclass(frozen=True, slots=True)
+class _ReshardSlice:
+  """Further shards each dim `i` over `axes_per_dim[i]` with a local slice."""
+  axes_per_dim: tuple[tuple, ...]
+
+def _free_slice_axes(cur: list[tuple], dst: list[tuple]) -> tuple[tuple, ...]:
+  """Axes each dim can be sliced over right now, without any communication.
+
+  A dim can take its next missing axes if it's already a prefix of its target
+  and no dim in `cur` uses those axes yet. Slicing them before the collectives
+  makes the collectives move less data.
+
+  For example:
+
+  * cur = [('x',), ()], dst = [(), ('y',)], return = ((), ('y',))
+    'y' is free, so dim 1 can be sliced on it before 'x' is gathered.
+  * cur = [('x',), ()], dst = [(), ('x',)], return = ((), ())
+    'x' is still on dim 0, so dim 1 has to wait for it to arrive.
+  """
+  used = {a for c in cur for a in c}
+  out = []
+  for c, d in zip(cur, dst):
+    n = len(c)
+    if _dst_starts_with_cur(d, c):
+      while n < len(d) and d[n] not in used:
+        n += 1
+    out.append(d[len(c):n])
+  return tuple(out)
+
 def _next_move(cur: list[tuple], dst: list[tuple]) -> _ReshardMove:
   """Takes the last axis off a dim that isn't a prefix of its target.
 
@@ -2619,35 +2648,36 @@ def _next_move(cur: list[tuple], dst: list[tuple]) -> _ReshardMove:
   i = out_of_place[0]
   return _ReshardMove(cur[i][-1], i, None)
 
-def _plan_reshard(src_spec, dst_spec
-                  ) -> tuple[list[_ReshardMove], list[tuple]]:
-  """Per-shard collectives that reshard `src_spec` into `dst_spec`.
+def _plan_reshard(src_spec, dst_spec) -> list[_ReshardMove | _ReshardSlice]:
+  """Per-shard steps that reshard `src_spec` into `dst_spec`.
+
+  Slices happen as early as possible, so that collectives move less data:
+
+    f32[4@x, 4] -> f32[4@x, 4@y]    slice 'y' ('y' is free, so slice first)
+                -> f32[4, 4@y]      all_gather 'x'
 
     f32[4@x, 4@y] -> f32[4, 4@y]    all_gather 'x' (dim 1 isn't ready for it)
                   -> f32[4@y, 4]    all_to_all 'y' to dim 0
                   -> f32[4@y, 4@x]  slice 'x'
-
-  Returns the moves, followed by the axes each dim must still be sliced over.
   """
   cur = [_tupleize_spec(p) for p in src_spec]
   dst = [_tupleize_spec(p) for p in dst_spec]
-  moves = []
-  # Take axes off the end of out-of-place dims until every dim's current axes
-  # are a prefix of its dst axes. Each move removes `move.axis` from the end
-  # of `move.src_dim`, and an all_to_all also adds it to the end of
-  # `move.dst_dim`.
-  while not all(_dst_starts_with_cur(d, c) for c, d in zip(cur, dst)):
+  steps = []
+  while True:
+    slice_axes = _free_slice_axes(cur, dst)
+    if any(slice_axes):
+      steps.append(_ReshardSlice(slice_axes))
+      cur = [c + s for c, s in zip(cur, slice_axes)]
+    if cur == dst:
+      return steps  # type: ignore
+    # Some dim is still out of place, so it needs a collective.
     move = _next_move(cur, dst)
-    moves.append(move)
+    steps.append(move)  # type: ignore
     cur[move.src_dim] = cur[move.src_dim][:-1]
     if move.dst_dim is not None:
       cur[move.dst_dim] += (move.axis,)
-  # Every dim now only needs the rest of its target axes, which is a local
-  # slice. E.g. cur = [('y',), ()], dst = [('y',), ('x',)]: slice dim 1 on 'x'.
-  slice_axes = [d[len(c):] for c, d in zip(cur, dst)]
-  return moves, slice_axes
 
-def _slice_to_shard(x, axes_per_dim: list[tuple], mesh):
+def _slice_to_shard(x, axes_per_dim: Sequence[tuple], mesh):
   """Further shards each dim of `x` over `axes_per_dim` with a local slice."""
   from jax._src.lax import parallel, slicing  # type: ignore
   if not any(axes_per_dim):
@@ -2676,17 +2706,18 @@ def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh
   if in_s.spec.partitions == out_s.spec.partitions:
     return mlir.PartitioningRule(per_shard_params=per_shard_params)
 
-  moves, slice_axes = _plan_reshard(in_s.spec.partitions, out_s.spec.partitions)
+  steps = _plan_reshard(in_s.spec.partitions, out_s.spec.partitions)
 
   def in_collective(x):
-    for m in moves:
-      if m.dst_dim is None:
-        x = parallel.all_gather(x, m.axis, axis=m.src_dim, tiled=True)
+    for step in steps:
+      if isinstance(step, _ReshardSlice):
+        x = _slice_to_shard(x, step.axes_per_dim, mesh)
+      elif step.dst_dim is None:
+        x = parallel.all_gather(x, step.axis, axis=step.src_dim, tiled=True)
       else:
-        x = parallel.all_to_all(
-            x, m.axis, split_axis=m.dst_dim, concat_axis=m.src_dim, tiled=True)
-    out = _slice_to_shard(x, slice_axes, mesh)
-    return (out,)
+        x = parallel.all_to_all(x, step.axis, split_axis=step.dst_dim,
+                                concat_axis=step.src_dim, tiled=True)
+    return (x,)
 
   return mlir.PartitioningRule(
       in_collective=in_collective, per_shard_params=per_shard_params)
