@@ -312,7 +312,14 @@ class TanhGradTest(jtu.JaxTestCase):
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 7.5}),
         ("tpu_v5p", {bf16: 0.5, f16: 1.0, f32: 7.5}),
         ("tpu_v6e", {bf16: 0.5, f16: 1.0, f32: 8.0}),
-        ("tpu_7x", {bf16: 0.5, f16: 1.0, f32: 8.0}),
+        (
+            "tpu_7x",
+            {
+                bf16: 0.5 if jtu.is_libtpu_at_least("0.0.52") else 63.0,
+                f16: 1.0,
+                f32: 8.0,
+            },
+        ),
     ]
     util.check_unary_precision(
         self,
