@@ -44,7 +44,7 @@ runs:
         if [[ -d "$TEST_ARTIFACTS_DIR" ]] && [[ -n "$(ls -A "$TEST_ARTIFACTS_DIR" 2>/dev/null)" ]]; then
           echo "has_artifacts=true" >> "$GITHUB_OUTPUT"
           echo "Found test artifacts in $TEST_ARTIFACTS_DIR/"
-          ls -la "$TEST_ARTIFACTS_DIR"/*.xml
+          ls -la "$TEST_ARTIFACTS_DIR"
         else
           echo "has_artifacts=false" >> "$GITHUB_OUTPUT"
           echo "No test artifacts found in $TEST_ARTIFACTS_DIR/"

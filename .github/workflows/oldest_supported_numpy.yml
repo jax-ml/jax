@@ -59,6 +59,7 @@ jobs:
         run: ./ci/run_pytest_cpu.sh
       - name: Upload test artifacts
         if: always()
+        continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
         with:
           artifact-name: oldest-supported-numpy
