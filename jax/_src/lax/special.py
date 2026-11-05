@@ -373,6 +373,8 @@ class IgammaMode(Enum):
   SAMPLE_DERIVATIVE = 3
 
 def _any(predicates: Array) -> Array:
+  if not predicates.shape:
+    return predicates
   f = _const(predicates, False)
   predicates_shape = predicates.shape
   all_dimensions = tuple(range(len(predicates_shape)))
