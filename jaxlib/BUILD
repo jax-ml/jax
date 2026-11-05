@@ -805,6 +805,7 @@ nanobind_pywrap_extension(
     },
     deps = [
         ":nb_class_ptr",
+        ":pathways_profiler",
         ":py_client",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
@@ -866,6 +867,57 @@ nanobind_pywrap_extension(
         "@xla//xla/tsl/platform:status",
         "@xla//xla/tsl/platform:statusor",
     ],
+)
+
+cc_library(
+    name = "pathways_profiler",
+    srcs = ["pathways_profiler.cc"],
+    hdrs = ["pathways_profiler.h"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/profiler/lib:profiler_factory",
+        "@tsl//tsl/profiler/lib:profiler_interface",
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+        "@xla//xla/python/ifrt",
+        "@xla//xla/python/ifrt:plugin_program",
+    ] + if_oss(
+        [],
+        ["//google/protobuf:struct_cc_proto"],
+    ),
+)
+
+cc_test(
+    name = "pathways_profiler_test",
+    srcs = ["pathways_profiler_test.cc"],
+    deps = [
+        ":pathways_profiler",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/profiler/lib:profiler_factory",
+        "@tsl//tsl/profiler/lib:profiler_interface",
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
+        "@xla//xla/pjrt:pjrt_client",
+        "@xla//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "@xla//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
+        "@xla//xla/python/ifrt",
+        "@xla//xla/python/pjrt_ifrt",
+        "@xla//xla/tsl/platform:test",
+        "@xla//xla/tsl/platform:test_main",
+    ] + if_oss(
+        [],
+        ["//google/protobuf:struct_cc_proto"],
+    ),
 )
 
 cc_library(
