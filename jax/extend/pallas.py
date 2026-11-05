@@ -19,3 +19,8 @@ from jax._src.pallas.core import (
     GridMapping as GridMapping,
     register_lowering_rule as register_lowering_rule,
 )
+# Note: This is a re-export module; the actual fix must be in
+# jax/_src/pallas/mosaic_tpu.py and related lowering rules.
+# See issue #39744. The proper fix is to filter out unused operands
+# from the in_specs in the lowering so that their addresses don't
+# affect the DMA of other operands.
