@@ -1048,6 +1048,7 @@ jax_multiplatform_test(
             "noasan",  # Times out.
             "notsan",  # Times out.
         ],
+        "gpu": ["noasan"],  # Times out.
     },
     shard_count = {
         "cpu": 20,
