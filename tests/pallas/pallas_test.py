@@ -695,6 +695,31 @@ class PallasCallTest(ptu.PallasTPUTest):
       result = add_one(x)
       np.testing.assert_array_equal(result, x + 1.)
 
+  def test_pallas_call_fori_loop_over_refs_under_disable_jit(self):
+    if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
+      self.skipTest("On TPU the test works only in interpret mode")
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), jnp.float32),
+    )
+    def add_one(n_ref, x_ref, o_ref):
+      def body(i, refs):
+        x_ref, o_ref = refs
+        o_ref[pl.ds(i, 1)] = x_ref[pl.ds(i, 1)] + 1.
+        return refs
+      # The trip count is not static, so this is a while_loop with Ref carries.
+      lax.fori_loop(0, n_ref[0], body, (x_ref, o_ref))
+
+    n = jnp.array([8], dtype=jnp.int32)
+    x = jnp.arange(8, dtype=jnp.float32)
+
+    result = add_one(n, x)
+    np.testing.assert_array_equal(result, x + 1.)
+
+    with jax.disable_jit():
+      result = add_one(n, x)
+      np.testing.assert_array_equal(result, x + 1.)
+
   @parameterized.parameters(
       ("float32", None),
       ("float32", jax.lax.Precision.DEFAULT),
