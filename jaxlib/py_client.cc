@@ -811,6 +811,9 @@ absl::StatusOr<nb::object> PyClient::CreateHloOutputCallback(
 }
 
 /* static */ int PyClient::tp_clear(PyObject* self) {
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   PyClient* c = nb::inst_ptr<PyClient>(self);
   absl::flat_hash_map<ifrt::Device*, nb_class_ptr<PyDevice>> devices;
   std::swap(devices, c->devices_);

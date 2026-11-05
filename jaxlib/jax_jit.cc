@@ -191,17 +191,17 @@ std::string CallSignature::DebugString() const {
 size_t HashShardingForJit(nb::handle sharding) {
   auto type = sharding.type();
 
-  if (type.is(NamedSharding::type())) {
+  if (type.is(NamedSharding::type()) && nb::inst_ready(sharding)) {
     const auto* named_sharding = nb::inst_ptr<NamedSharding>(sharding);
     return absl::Hash<void*>()(named_sharding->mesh().ptr());
   }
 
-  if (type.is(GSPMDSharding::type())) {
+  if (type.is(GSPMDSharding::type()) && nb::inst_ready(sharding)) {
     auto* gspmd_sharding = nb::inst_ptr<GSPMDSharding>(sharding);
     return gspmd_sharding->Hash();
   }
 
-  if (type.is(SingleDeviceSharding::type())) {
+  if (type.is(SingleDeviceSharding::type()) && nb::inst_ready(sharding)) {
     auto* single_device_sharding = nb::inst_ptr<SingleDeviceSharding>(sharding);
     return absl::Hash<void*>()(single_device_sharding->device().ptr());
   }
@@ -228,7 +228,8 @@ bool EqualShardingsForJit(nb::handle a, nb::handle b) {
     return false;
   }
 
-  if (a_type.is(NamedSharding::type())) {
+  if (a_type.is(NamedSharding::type()) && nb::inst_ready(a) &&
+      nb::inst_ready(b)) {
     auto* a_named_sharding = nb::inst_ptr<const NamedSharding>(a);
     auto* b_named_sharding = nb::inst_ptr<const NamedSharding>(b);
     return a_named_sharding->mesh().ptr() == b_named_sharding->mesh().ptr() &&
@@ -239,13 +240,15 @@ bool EqualShardingsForJit(nb::handle a, nb::handle b) {
                b_named_sharding->logical_device_ids());
   }
 
-  if (a_type.is(GSPMDSharding::type())) {
+  if (a_type.is(GSPMDSharding::type()) && nb::inst_ready(a) &&
+      nb::inst_ready(b)) {
     auto* a_gspmd_sharding = nb::inst_ptr<const GSPMDSharding>(a);
     auto* b_gspmd_sharding = nb::inst_ptr<const GSPMDSharding>(b);
     return *a_gspmd_sharding == *b_gspmd_sharding;
   }
 
-  if (a_type.is(SingleDeviceSharding::type())) {
+  if (a_type.is(SingleDeviceSharding::type()) && nb::inst_ready(a) &&
+      nb::inst_ready(b)) {
     auto* a_single_device_sharding =
         nb::inst_ptr<const SingleDeviceSharding>(a);
     auto* b_single_device_sharding =

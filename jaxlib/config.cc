@@ -313,6 +313,9 @@ void Config::SetGlobal(nb::object value) {
 }
 
 /* static */ int Config::tp_clear(PyObject* self) {
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   Config* c = nb::inst_ptr<Config>(self);
   return GlobalConfigState::Instance().tp_clear(c->key_, self);
 }

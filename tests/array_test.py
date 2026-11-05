@@ -25,7 +25,9 @@ from jax._src import core
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import _jax
 from jax._src.lib import ifrt_version
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.layout import Layout
 from jax._src.mesh import AbstractMesh, AxisType, Mesh
@@ -1838,6 +1840,18 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         TypeError, "Expected unreduced_kind to be of type"):
       create_pspec(frozenset())
+
+  @parameterized.named_parameters(
+      ('named_sharding', _jax.NamedSharding),
+      ('gspmd_sharding', _jax.GSPMDSharding),
+      ('single_device_sharding', _jax.SingleDeviceSharding),
+  )
+  def test_uninitialized_sharding_rewrap(self, cls):
+    if jaxlib_extension_version < 517:
+      self.skipTest('Requires jaxlib_extension_version >= 517')
+    x = jnp.ones(1)
+    with self.assertRaises((TypeError, RuntimeError)):
+      x._rewrap_with_aval_and_sharding(x.aval, cls.__new__(cls))
 
 
 class RngShardingTest(jtu.JaxTestCase):

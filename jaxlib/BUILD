@@ -354,6 +354,7 @@ py_test(
     srcs = ["weakref_lru_cache_test.py"],
     deps = [
         ":weakref_lru_cache",
+        ":xla_client",
     ] + py_deps([
         "absl/flags",
         "absl/logging",

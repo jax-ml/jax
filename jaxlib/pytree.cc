@@ -474,6 +474,9 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
 }
 
 /* static */ int PyTreeRegistry::tp_clear(PyObject* self) {
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   PyTreeRegistry* registry = nb::inst_ptr<PyTreeRegistry>(self);
   ft_lock_guard lock(registry->mu_);
   registry->registrations_.clear();
@@ -488,12 +491,19 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
 
 /* static */ int DictKey::tp_traverse(PyObject* self, visitproc visit,
                                       void* arg) {
+  Py_VISIT(Py_TYPE(self));
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   DictKey* key = nb::inst_ptr<DictKey>(self);
   Py_VISIT(key->key_.ptr());
   return 0;
 }
 
 /* static */ int DictKey::tp_clear(PyObject* self) {
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   DictKey* dictkey = nb::inst_ptr<DictKey>(self);
   nb::object tmp;
   std::swap(tmp, dictkey->key_);
@@ -1761,6 +1771,9 @@ int PyTreeDef::Traverse(visitproc visit, void* arg) const {
 }
 
 /* static */ int PyTreeDef::tp_clear(PyObject* self) {
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   PyTreeDef* treedef = nb::inst_ptr<PyTreeDef>(self);
   treedef->registry_ref_.reset();
   treedef->traversal_.clear();

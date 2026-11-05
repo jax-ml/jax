@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 import os
 import platform
 
@@ -22,6 +23,7 @@ from jax._src import compiler
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import _jax
 from jax._src.lib import _profiler
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
@@ -378,6 +380,15 @@ class XlaBridgeTest(jtu.JaxTestCase):
     (target, options), _ = mock_get_client.call_args
     self.assertEqual(target, "grpc://localhost:1234")
     self.assertIsInstance(options, xb.ifrt_proxy.ClientConnectionOptions)
+
+  def test_uninitialized_client_gc_clear(self):
+    if jaxlib_extension_version < 517:
+      self.skipTest("Requires jaxlib_extension_version >= 517")
+    client = _jax.Client.__new__(_jax.Client)
+    cycle = [client]
+    cycle.append(cycle)
+    del client, cycle
+    gc.collect()
 
 
 class GetBackendTest(jtu.JaxTestCase):

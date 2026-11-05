@@ -625,6 +625,10 @@ void StrongLRUCache::TpClear() {
                                                 Py_ssize_t nargsf,
                                                 PyObject* kwnames) {
   try {
+    if (!nb::inst_ready(self_obj)) {
+      PyErr_SetString(PyExc_TypeError, "Uninitialized StrongLRUCache");
+      return nullptr;
+    }
     StrongLRUCache* self = nb::inst_ptr<StrongLRUCache>(self_obj);
     if (!self) {
       PyErr_SetString(PyExc_TypeError, "Not a StrongLRUCache");
@@ -694,6 +698,9 @@ void StrongLRUCache::TpClear() {
 }
 
 /*static*/ int StrongLRUCache::tp_clear(PyObject* self_obj) {
+  if (!nb::inst_ready(self_obj)) {
+    return 0;
+  }
   StrongLRUCache* self = nb::inst_ptr<StrongLRUCache>(self_obj);
   self->TpClear();
   return 0;
