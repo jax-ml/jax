@@ -1583,6 +1583,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "scipy_spatial_test",
     srcs = ["scipy_spatial_test.py"],
+    backend_tags = {
+        "cpu": ["notsan"],  # Times out
+    },
     shard_count = {
         "cpu": 2,
         "gpu": 5,
