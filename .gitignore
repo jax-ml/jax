@@ -32,3 +32,4 @@ jax.iml
 /include/
 /lib/
 /share/
+jax-env/
