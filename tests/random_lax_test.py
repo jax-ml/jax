@@ -430,10 +430,13 @@ class DistributionsTest(RandomTestBase):
         self.assertArraysEqual(normal_jit(key), expected_n)
 
   def testBitsToNormalHighAndHighestTails(self):
-    # TPU < v5 uses a lower-precision hardware `log` approximation.
+    # TPU < v5 and TPU v5e use a lower-precision hardware `log` approximation.
     rtol = (
         2e-5
-        if (jtu.is_device_tpu() and not jtu.is_device_tpu_at_least(5))
+        if (
+            jtu.is_device_tpu()
+            and (not jtu.is_device_tpu_at_least(5) or jtu.is_device_tpu(5, 'e'))
+        )
         else 5e-7
     )
     # `mode="high"` keeps all 4096 tail inputs distinct, strictly ordered,
@@ -470,9 +473,13 @@ class DistributionsTest(RandomTestBase):
     self.assertGreater(float(z_pos_highest[0]), 9.09)
 
   def testSignedMidpointRoundingToOne(self):
+    # TPU < v5 and TPU v5e use a lower-precision hardware `log` approximation.
     rtol = (
         2e-5
-        if (jtu.is_device_tpu() and not jtu.is_device_tpu_at_least(5))
+        if (
+            jtu.is_device_tpu()
+            and (not jtu.is_device_tpu_at_least(5) or jtu.is_device_tpu(5, 'e'))
+        )
         else 5e-7
     )
     # For the top 64 values of `k` (`2^31 - 64 .. 2^31 - 1`), `2 * k + 1`
