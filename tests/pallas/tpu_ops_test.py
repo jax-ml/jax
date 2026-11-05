@@ -1651,10 +1651,12 @@ class OpsTest(ptu.PallasTPUTest):
   def test_request_p_state(self):
     if self.INTERPRET:
       self.skipTest("Not implemented in interpret mode.")
-    # TODO(b/581748519): Remove once the minimum jaxlib version includes
-    # tpu.request_p_state.
+    # TODO(b/581748519): Remove once the minimum jaxlib and libtpu versions
+    # include tpu.request_p_state.
     if not hasattr(tpu, "RequestPStateOp"):
       self.skipTest("Test requires a jaxlib with tpu.request_p_state.")
+    if not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Test requires libtpu >= 0.0.52.")
     with self.assertRaisesRegex(TypeError, "p_state must be an int"):
       pltpu.request_p_state(jnp.int32(3))  # pytype: disable=wrong-arg-types
 
