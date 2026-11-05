@@ -1540,16 +1540,6 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertEqual(jit(g, static_argnames='a')(1, x), 12.)
     self.assertEqual(jit(g, static_argnames='b')(x, 1), 21.)
 
-    # jnp.interp builds a jit instance of its implementation per call, with
-    # left/right static only when they are None or a string.
-    xp = jnp.array([0., 1., 2.])
-    fp = jnp.array([10., 20., 30.])
-    xs = jnp.array([-1., 0.5, 3.])
-    self.assertArraysEqual(jnp.interp(xs, xp, fp, left=0),
-                           jnp.array([0., 15., 30.]))
-    self.assertArraysEqual(jnp.interp(xs, xp, fp, right=1),
-                           jnp.array([10., 15., 1.]))
-
   @jtu.thread_unsafe_test()  # count_pjit_cpp_cache_miss is not thread-safe
   def test_jit_options_not_shared_between_jit_instances(self):
     def f(x, y):

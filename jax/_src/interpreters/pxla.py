@@ -1838,7 +1838,10 @@ class JitGlobalCppCacheKeys:
             any(not isinstance(o, UnspecifiedValue) for o in (self.out_shardings_leaves or [])) or
             any(i is not None for i in (self.in_layouts_leaves or [])) or
             any(o is not None for o in (self.out_layouts_leaves or [])) or
-            self.compiler_options_kvs)
+            self.compiler_options_kvs or
+            bool(self.static_argnums) or
+            bool(self.static_argnames) or
+            self.keep_unused)
 
 
 def reflatten_outputs_for_dispatch(out_tree, out_flat):

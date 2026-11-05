@@ -1248,7 +1248,8 @@ def _pjit_call_impl(*args, jaxpr: core.Jaxpr,
       in_shardings_treedef=None, in_shardings_leaves=in_shardings,
       out_shardings_treedef=None, out_shardings_leaves=out_shardings,
       in_layouts_treedef=None, in_layouts_leaves=in_layouts,
-      out_layouts_treedef=None, out_layouts_leaves=out_layouts)
+      out_layouts_treedef=None, out_layouts_leaves=out_layouts,
+      keep_unused=keep_unused)
   try:
     return _jax.pjit(
         name, f, call_impl_cache_miss, [], [], cache_key,
