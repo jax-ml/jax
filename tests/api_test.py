@@ -1523,6 +1523,42 @@ class JitTest(jtu.BufferDonationTestCase):
       python_should_be_executing = False
       self.assertEqual(x, f(x))
 
+  def test_jit_static_argnums_not_shared_between_jit_instances(self):
+    # The C++ dispatch cache is shared between jit instances of the same
+    # function. Instances that differ in which arguments are static must not
+    # share entries, even when the dynamic avals and the static values match.
+    def f(a, b):
+      return a * 10 + b
+
+    x = jnp.float32(2.)
+    self.assertEqual(jit(f, static_argnums=0)(1, x), 12.)
+    self.assertEqual(jit(f, static_argnums=1)(x, 1), 21.)
+
+    def g(a, b):
+      return a * 10 + b
+
+    self.assertEqual(jit(g, static_argnames='a')(1, x), 12.)
+    self.assertEqual(jit(g, static_argnames='b')(x, 1), 21.)
+
+  @jtu.thread_unsafe_test()  # count_pjit_cpp_cache_miss is not thread-safe
+  def test_jit_options_not_shared_between_jit_instances(self):
+    def f(x, y):
+      return x + 1
+
+    x = jnp.arange(3.)
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      jit(f)(x, x)
+      jit(f)(x, x)
+      self.assertEqual(count(), 1)
+      jit(f, keep_unused=True)(x, x)
+      self.assertEqual(count(), 2)
+      jit(f, donate_argnums=1)(x, jnp.arange(3.))
+      self.assertEqual(count(), 3)
+      jit(f, static_argnums=1)(x, 1)
+      self.assertEqual(count(), 4)
+      jit(f, static_argnames='y')(x, 1)
+      self.assertEqual(count(), 4)
+
   def test_caches_depend_on_axis_env(self):
     # https://github.com/jax-ml/jax/issues/9187
     f = lambda: lax.axis_size("i")

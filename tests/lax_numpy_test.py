@@ -2417,6 +2417,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     actual = jnp.interp(x, xp, fp, **kwargs)
     self.assertAlmostEqual(actual, expected)
 
+  def testInterpLeftRightNotShared(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42317: calls
+    # with different static left/right must not share a dispatch cache entry.
+    xp = jnp.array([0., 1., 2.])
+    fp = jnp.array([10., 20., 30.])
+    x = jnp.array([-1., 0.5, 3.])
+    self.assertArraysEqual(jnp.interp(x, xp, fp, left=0),
+                           jnp.array([0., 15., 30.]))
+    self.assertArraysEqual(jnp.interp(x, xp, fp, right=1),
+                           jnp.array([10., 15., 1.]))
+
   def testInterpErrors(self):
     with self.assertRaisesWithLiteralMatch(
         ValueError,

@@ -281,6 +281,8 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
     return outs, maybe_fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
   cache_key = pxla.JitGlobalCppCacheKeys(
+      static_argnums=jit_info.static_argnums,
+      static_argnames=jit_info.static_argnames,
       donate_argnums=jit_info.donate_argnums,
       donate_argnames=jit_info.donate_argnames,
       device=jit_info.device, backend=jit_info.backend,
@@ -292,7 +294,8 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
       in_layouts_leaves=jit_info.in_layouts_leaves,
       out_layouts_treedef=jit_info.out_layouts_treedef,
       out_layouts_leaves=jit_info.out_layouts_leaves,
-      compiler_options_kvs=jit_info.compiler_options_kvs)
+      compiler_options_kvs=jit_info.compiler_options_kvs,
+      keep_unused=jit_info.keep_unused)
 
   cpp_cache = (cache
                if ((cache := config.jax_jit_cpp_cache_obj.value) is not None
@@ -1245,7 +1248,8 @@ def _pjit_call_impl(*args, jaxpr: core.Jaxpr,
       in_shardings_treedef=None, in_shardings_leaves=in_shardings,
       out_shardings_treedef=None, out_shardings_leaves=out_shardings,
       in_layouts_treedef=None, in_layouts_leaves=in_layouts,
-      out_layouts_treedef=None, out_layouts_leaves=out_layouts)
+      out_layouts_treedef=None, out_layouts_leaves=out_layouts,
+      keep_unused=keep_unused)
   try:
     return _jax.pjit(
         name, f, call_impl_cache_miss, [], [], cache_key,
