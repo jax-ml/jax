@@ -2174,6 +2174,46 @@ class ShardMapTest(jtu.JaxTestCase):
     # error!
     jax.jit(g)(x)  # doesn't crash
 
+  @parameterized.parameters([False, True])
+  def test_device_put_memory_space_eager(self, disable_jit):
+    mesh = jtu.create_mesh((2,), ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(x):
+      y = jax.device_put(x * 2., jax.memory.Space.Host)
+      self.assertEqual(jax.typeof(y).memory_space, core.MemorySpace.Host)
+      z = jax.device_put(y, jax.memory.Space.Device)
+      self.assertEqual(jax.typeof(z).memory_space, core.MemorySpace.Device)
+      return z + 1.
+
+    x = jnp.arange(8.)
+    with jax.disable_jit(disable_jit):
+      out = f(x)
+    self.assertArraysEqual(out, x * 2. + 1.)
+    self.assertArraysEqual(jax.jit(f)(x), x * 2. + 1.)
+
+  @parameterized.parameters([False, True])
+  def test_remat_host_offload_eager(self, disable_jit):
+    mesh = jtu.create_mesh((2,), ('i',))
+    policy = jax.checkpoint_policies.save_and_offload_only_these_names(
+        names_which_can_be_saved=[], names_which_can_be_offloaded=['y'],
+        offload_src='device', offload_dst='pinned_host')
+
+    @partial(jax.checkpoint, policy=policy)
+    def g(x):
+      y = jax.ad_checkpoint.checkpoint_name(jnp.sin(x), 'y')
+      return jnp.sum(jnp.cos(y))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(x):
+      return jax.grad(g)(x)
+
+    x = jnp.arange(8.)
+    with jax.disable_jit(disable_jit):
+      out = f(x)
+    self.assertAllClose(out, -jnp.sin(jnp.sin(x)) * jnp.cos(x))
+    self.assertAllClose(out, jax.jit(f)(x))
+
   @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   def test_key_array_with_replicated_last_tile_dim(self):
     # See https://github.com/jax-ml/jax/issues/16137

@@ -1576,12 +1576,21 @@ def _prim_applier(prim, check_vma, params_tup, concrete_mesh, manual_axes,
 eager_rules: dict[core.Primitive, Callable] = {}
 
 def _device_put_eager_rule(mesh, *xs, srcs, devices, copy_semantics):
-  del mesh, srcs, copy_semantics
   for device in devices:
-    if device is not None:
+    if device is not None and not isinstance(device, core.MemorySpace):
       raise ValueError("device_put with explicit device not allowed within "
                        f"shard_map-decorated functions, but got device {device}")
-  return xs
+  outs = []
+  for x, src, device, copy in zip(xs, srcs, devices, copy_semantics):
+    if device is None:
+      outs.append(x)
+      continue
+    with (core.eval_context(), use_abstract_mesh(mesh.abstract_mesh),
+          sharding_impls._internal_use_concrete_mesh(mesh)):
+      out, = dispatch.device_put_p.bind(
+          x, devices=(device,), srcs=(src,), copy_semantics=(copy,))
+    outs.append(out)
+  return outs
 eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 
 def _ref_raise_valueerror(*args, **kwargs):
