@@ -111,6 +111,8 @@ jobs:
 
           # PR runs only exercise build/Bazel jobs; pytest jobs are disabled for PRs.
           TRIGGER_PATTERNS=(
+            ".bazelrc"
+            "MODULE.bazel"
             "build/requirements_lock_*.txt"
             ".github/workflows/wheel_tests_continuous.yml"
             ".github/workflows/scripts/select_continuous_wheel_test_jobs.py"
