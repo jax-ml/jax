@@ -4788,43 +4788,33 @@ def _naryop_collective_rule(in_avals, out_avals, **params):
   from jax._src.lax import parallel
   out_aval, = out_avals
   out_spec = out_aval.sharding.spec
-  if all(a.sharding.spec == out_spec for a in in_avals):
+  if all(not a.ndim or a.sharding.spec == out_spec for a in in_avals):
     return mlir.PartitioningRule()
 
   mesh = get_abstract_mesh()
-  out_parts = tuple(
-      i for i in flatten_spec(out_spec.partitions) if i is not None)
 
   def _slice_to_shard(x_shard, outer_in_aval):
-    if outer_in_aval.sharding.spec == out_spec:
+    if not outer_in_aval.ndim or outer_in_aval.sharding.spec == out_spec:
       return x_shard
-    # Broadcasted scalars and size-1 dims aren't sliced, so pvary them to match.
-    if not outer_in_aval.ndim:
-      return core.pvary(x_shard, out_parts)
 
-    starts, sizes, pvary_axes, needs_slice = [], [], [], False
+    starts, sizes, needs_slice = [], [], False
     for d, s, out_s in safe_zip(
         x_shard.shape, outer_in_aval.sharding.spec.partitions,
         out_spec.partitions):
-      if s == out_s:
+      if s == out_s or d == 1:
         starts.append(np.int32(0))
         sizes.append(d)
       else:
         out_axes_d = out_s if isinstance(out_s, tuple) else (out_s,)
-        if d == 1:
-          starts.append(np.int32(0))
-          sizes.append(d)
-          pvary_axes.extend(out_axes_d)
-        else:
-          local_d = d // math.prod(mesh.shape[a] for a in out_axes_d)
-          shard_idx = parallel.axis_index(out_s)
-          starts.append(shard_idx * local_d)
-          sizes.append(local_d)
-          needs_slice = True
+        local_d = d // math.prod(mesh.shape[a] for a in out_axes_d)
+        shard_idx = parallel.axis_index(out_s)
+        starts.append(shard_idx * local_d)
+        sizes.append(local_d)
+        needs_slice = True
     if needs_slice:
       x_shard = slicing.dynamic_slice(
           x_shard, starts, sizes, allow_negative_indices=False)
-    return core.pvary(x_shard, tuple(pvary_axes))
+    return x_shard
 
   return mlir.PartitioningRule(
       in_collective=lambda *xs: tuple(
