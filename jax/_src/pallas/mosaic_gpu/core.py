@@ -1676,7 +1676,8 @@ class BlockSpec(pallas_core.BlockSpec):
           "collective_axes is not supported in pallas_call. Use plgpu.kernel"
           " with plgpu.emit_pipeline_warp_specialized instead."
       )
-    bm = super().to_block_mapping(
+    assert not self.transforms
+    return super().to_block_mapping(
         origin,
         array_aval,
         index_map_avals=index_map_avals,
@@ -1685,15 +1686,6 @@ class BlockSpec(pallas_core.BlockSpec):
         vmapped_dims=vmapped_dims,
         allow_captured_consts=allow_captured_consts,
         debug=debug,
-    )
-    block_inner_aval = bm.block_aval.inner_aval
-    for t in self.transforms:
-      block_inner_aval = t.transform_type(block_inner_aval)
-    return bm.replace(
-        transformed_block_aval=bm.block_aval.update(
-            inner_aval=block_inner_aval
-        ),
-        transforms=self.transforms,
     )
 
 
