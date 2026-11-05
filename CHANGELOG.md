@@ -45,6 +45,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.scipy.special.ndtri_exp`, the inverse of
     {func}`jax.scipy.special.log_ndtr`, with custom forward- and reverse-mode
     derivatives.
+  * Added {func}`jax.lax.asinpi`, {func}`jax.lax.acospi`,
+    {func}`jax.lax.atanpi`, and {func}`jax.lax.atan2pi`, which compute the
+    inverse trigonometric functions divided by `pi` (`asin(x) / pi`,
+    `acos(x) / pi`, `atan(x) / pi`, and `atan2(x, y) / pi`).
 
 * Breaking changes
   * The `jax_use_simplified_jaxpr_constants` configuration flag is now `True`

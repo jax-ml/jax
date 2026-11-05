@@ -61,11 +61,15 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 |:---|:---:|:---:|:---:|:---:|:---:|:---:|
 | {func}`~jax.lax.acos` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.acosh` | 2.0 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.acospi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.asin` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.asinh` | 1.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.asinpi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.atan` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.atan2` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.atan2pi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.atanh` | 1.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.lax.atanpi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.bessel_i0e` | 1.0 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.bessel_i1e` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.cbrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
@@ -120,11 +124,15 @@ Maximum error in units in the last place (ULPs) for `float16`:
 |:---|:---:|:---:|:---:|:---:|:---:|:---:|
 | {func}`~jax.lax.acos` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.acosh` | 2.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.acospi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.asin` | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.asinh` | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.asinpi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.atan` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.atan2` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.atan2pi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.atanh` | 1.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
+| {func}`~jax.lax.atanpi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.bessel_i0e` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.bessel_i1e` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.cbrt` | 1.0 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
@@ -178,11 +186,15 @@ Maximum error in units in the last place (ULPs) for `float32`:
 |:---|:---:|:---:|:---:|:---:|:---:|:---:|:---|
 | {func}`~jax.lax.acos` | 1.0 | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.acosh` | 4.5 | 2.5 | 4031.0 | 61.0 | 4.5 | 5.0 | |
+| {func}`~jax.lax.acospi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.asin` | 1.0 | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.asinh` | 3.5 | 2.0 | 4034.5 | 62.5 | 3.5 | 3.5 | |
+| {func}`~jax.lax.asinpi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.atan` | 4.0–5.5 | 1.5 | 2.5 | 2.5 | 2.5 | 2.5 | CPU bound depends on AMD vs Intel |
 | {func}`~jax.lax.atan2` | 0.5 | 3.0 | 3.5 | 3.5 | 3.5 | 3.5 | |
+| {func}`~jax.lax.atan2pi` | 2.0 | 3.0 | 3.5 | 3.0 | 3.0 | 3.0 | |
 | {func}`~jax.lax.atanh` | 3.0 | 3.5 | 2183.5 | 43.0 | 3.5 | 3.5 | |
+| {func}`~jax.lax.atanpi` | 2.0 | 2.0 | 2.5 | 2.5 | 2.5 | 2.0 | |
 | {func}`~jax.lax.bessel_i0e` | 2.0 | 2.5 | 3.0 | 3.0 | 2.0 | 2.0 | |
 | {func}`~jax.lax.bessel_i1e` | 2.0 | 2.5 | 3.0 | 3.0 | 2.0 | 2.0 | |
 | {func}`~jax.lax.cbrt` | 0.5 | 1.5 | 4.5 | 4.5 | 1.5 | 1.5 | |
@@ -245,11 +257,15 @@ these are empirical bounds.
 |:---|:---:|:---:|
 | {func}`~jax.lax.acos` | 1.5 | 2.0 |
 | {func}`~jax.lax.acosh` | 3.5 | 3.0 |
+| {func}`~jax.lax.acospi` | 1.0 | 1.0 |
 | {func}`~jax.lax.asin` | 1.5 | 2.5 |
 | {func}`~jax.lax.asinh` | 2.5 | 2.5 |
+| {func}`~jax.lax.asinpi` | 1.0 | 1.0 |
 | {func}`~jax.lax.atan` | 3.5 | 2.5 |
 | {func}`~jax.lax.atan2` | 0.5 | 2.0 |
+| {func}`~jax.lax.atan2pi` | 2.0 | 2.0 |
 | {func}`~jax.lax.atanh` | 2.5 | 3.5 |
+| {func}`~jax.lax.atanpi` | 2.0 | 2.0 |
 | {func}`~jax.lax.bessel_i0e` | 2.0 | 2.0 |
 | {func}`~jax.lax.bessel_i1e` | 2.0 | 2.0 |
 | {func}`~jax.lax.cbrt` | 0.5 | 1.5 |

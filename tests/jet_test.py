@@ -292,6 +292,12 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_tanpi(self):      self.unary_check(lax.tanpi, lims=[-0.35, 0.35], atol=5e-3, rtol=5e-3)
   @jtu.skip_on_devices("tpu")
+  def test_asinpi(self):     self.unary_check(lax.asinpi, lims=[-0.8, 0.8])
+  @jtu.skip_on_devices("tpu")
+  def test_acospi(self):     self.unary_check(lax.acospi, lims=[-0.8, 0.8])
+  @jtu.skip_on_devices("tpu")
+  def test_atanpi(self):     self.unary_check(lax.atanpi, lims=[-40, 40])
+  @jtu.skip_on_devices("tpu")
   def test_sinh(self):       self.unary_check(jnp.sinh)
   @jtu.skip_on_devices("tpu")
   def test_cosh(self):       self.unary_check(jnp.cosh)
@@ -357,6 +363,13 @@ class JetTest(jtu.JaxTestCase):
   def test_pow(self):         self.binary_check(lambda x, y: x ** y, lims=([0.2, 500], [-500, 500]), finite=False)
   @jtu.skip_on_devices("tpu")
   def test_atan2(self):       self.binary_check(lax.atan2, lims=[-40, 40])
+  @jtu.skip_on_devices("tpu")
+  def test_atan2pi(self):
+    self.binary_check(lax.atan2pi, lims=[-40, 40])
+    self.binary_check(lax.atan2pi, lims=[0.8, 4.0], dtype=np.float32)
+    x = jnp.array(1.0, dtype=jnp.float16)
+    y = jnp.array(2.0, dtype=jnp.float16)
+    self.check_jet(lax.atan2pi, (x, y), ([x], [y]), atol=1e-2, rtol=1e-2)
 
   @jtu.skip_on_devices("tpu")
   def test_clamp(self):

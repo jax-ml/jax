@@ -26,6 +26,7 @@ Operators
     abs
     acos
     acosh
+    acospi
     add
     after_all
     approx_max_k
@@ -34,9 +35,12 @@ Operators
     argmin
     asin
     asinh
+    asinpi
     atan
     atan2
+    atan2pi
     atanh
+    atanpi
     batch_matmul
     bessel_i0e
     bessel_i1e
