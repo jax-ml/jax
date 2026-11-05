@@ -484,14 +484,24 @@ def _saved_residuals(jaxpr: core.Jaxpr,
   res_lits = [x for x in jaxpr.outvars if     isinstance(x, core.Literal)]
   res_vars = {x for x in jaxpr.outvars if not isinstance(x, core.Literal)}
 
-  # don't count reduce_precision_p as the producer, look through it instead
-  subst = {e.outvars[0]: e.invars[0] for e in jaxpr.eqns
-           if e.primitive is lax_internal.reduce_precision_p}
-  def look_through(v):
+  def look_through(subst, v):
     while v in subst:
       v = subst[v]
     return v
-  res_vars = {look_through(v) for v in res_vars}
+
+  # don't count reduce_precision_p as the producer, look through it instead
+  subst = {e.outvars[0]: e.invars[0] for e in jaxpr.eqns
+           if e.primitive is lax_internal.reduce_precision_p}
+  res_vars = {look_through(subst, v) for v in res_vars}
+  # likewise through the optimization_barrier_p that remat uses instead for
+  # floats narrower than 16 bits, stepping only to Vars (Literals can't be
+  # hashed) and only if no two residuals merge, as they would if both a value
+  # and a barrier over it were saved
+  subst.update((e.outvars[0], e.invars[0]) for e in jaxpr.eqns
+               if _is_residual_barrier(e))
+  subst = {o: i for o, i in subst.items() if isinstance(i, core.Var)}
+  if len(through := {look_through(subst, v) for v in res_vars}) == len(res_vars):
+    res_vars = through
 
   results = []
 
@@ -538,6 +548,18 @@ def _saved_residuals(jaxpr: core.Jaxpr,
 
   assert len(results) == len(jaxpr.outvars)
   return results
+
+def _is_residual_barrier(eqn: core.JaxprEqn) -> bool:
+  # Whether eqn is like the optimization_barrier_p with which remat pins a
+  # residual of a float narrower than 16 bits (see _insert_reduce_precision).
+  if (eqn.primitive is not lax_internal.optimization_barrier_p or
+      len(eqn.invars) != 1 or len(eqn.outvars) != 1):
+    return False
+  x, = eqn.invars
+  return (isinstance(x, core.Var) and isinstance(x.aval, core.ShapedArray) and
+          dtypes.issubdtype(x.aval.dtype, np.inexact) and
+          lax_internal._remat_residual_pin(x.aval.dtype)[0]
+          is lax_internal.optimization_barrier_p)
 
 def print_saved_residuals(f, *args, **kwargs):
   for aval, src in saved_residuals(f, *args, **kwargs):
@@ -609,7 +631,9 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
 
   # To avoid precision mismatches in fwd and bwd passes due to XLA excess
   # precision, insert explicit x = reduce_precision(x, **finfo(x.dtype)) calls
-  # on producers of any residuals. See https://github.com/jax-ml/jax/pull/22244.
+  # (or, for floats narrower than 16 bits, optimization barriers; see
+  # lax_internal._remat_residual_pin) on producers of any residuals.
+  # See https://github.com/jax-ml/jax/pull/22244.
   jaxpr_known_ = _insert_reduce_precision(jaxpr_known, num_res)
 
   # Compute known outputs and residuals (hoisted out of remat primitive)
@@ -673,24 +697,20 @@ def _insert_reduce_precision(jaxpr: core.Jaxpr, num_res: int) -> core.Jaxpr:
       continue
     assert isinstance(v, core.Var)
     newvar = core.Var(v.aval)
-    finfo = dtypes.finfo(v.aval.dtype)
-    params = dict(exponent_bits=finfo.nexp, mantissa_bits=finfo.nmant)
+    prim, params = lax_internal._remat_residual_pin(v.aval.dtype)
     if v in constvars or v in invars:
       lst = constvars if v in constvars else invars
-      new_eqn = core.new_jaxpr_eqn(
-          [newvar], [v], lax_internal.reduce_precision_p, params, set())
+      new_eqn = core.new_jaxpr_eqn([newvar], [v], prim, params, set())
       lst[lst.index(v)] = newvar
       eqns.insert(0, new_eqn)
     else:
       (eqn_idx, eqn), = ((i, e) for i, e in enumerate(eqns) if v in e.outvars)
-      if (eqn.primitive == lax_internal.reduce_precision_p and
-          eqn.params == params):
+      if eqn.primitive == prim and eqn.params == params:
         continue
       replace_eqn = eqn.replace(outvars=[v_ if v_ != v else newvar
                                          for v_ in eqn.outvars])
       new_eqn = core.new_jaxpr_eqn(
-          [newvar], [v], lax_internal.reduce_precision_p, params, set(),
-          eqn.source_info, eqn.ctx)
+          [newvar], [v], prim, params, set(), eqn.source_info, eqn.ctx)
       eqns[eqn_idx] = replace_eqn
       eqns.insert(eqn_idx+1, new_eqn)
   new_jaxpr = jaxpr.replace(invars=invars, constvars=constvars, eqns=eqns)
