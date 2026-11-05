@@ -672,27 +672,12 @@ def MosaicGPU_ScanOp : Op<MosaicGPU_Dialect, "scan",
       [MemoryEffects<[MemWrite]>, SameOperandsAndResultType]> {
   let summary = "Computes an inclusive cumulative reduction along a dimension.";
   let description = [{
-    Scans `source` along `dimension`, combining elements with `kind`. The result
-    has the same shape, element type and layout as `source`.
+    Cumulatively reduces `source` along `dimension`, combining elements with
+    `kind`. The result has the same shape and element type as `source`.
 
-    Unlike `vector.scan`, there is no initial value operand and no accumulator
-    result. `vector.scan` requires an accumulator shaped like the operand with
-    the scanned dimension dropped; for a 1-D operand that would be rank 0, and
-    layouts are not defined for rank-0 values. Dropping the accumulator is what
-    lets this op scan a 1-D operand.
-
-    `kind` also admits combining operations that `vector::CombiningKind` cannot
-    name, such as `logaddexp`. `is_signed` disambiguates `max` and `min` on
-    integer element types and is ignored for floating point ones.
-
-    If `reverse` is true the scan runs from the highest index along `dimension`
-    to the lowest, so element i accumulates elements i..n-1 instead of 0..i.
-    This is the form the transpose of a cumulative sum takes, and therefore what
-    a hand-written backward pass needs.
-
-    Scanning a dimension that is partitioned across warps requires SMEM scratch.
-    `offset` is the byte offset of that scratch within the kernel's SMEM
-    allocation, and `scratch_size` is its size in bytes.
+    If `reverse` is true, the reduction runs from the highest index along
+    `dimension` to the lowest, so element i accumulates elements i..n-1 instead
+    of 0..i.
   }];
 
   let arguments = (ins
