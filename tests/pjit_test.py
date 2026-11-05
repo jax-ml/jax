@@ -7879,6 +7879,75 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(jax.device_put(np.arange(8 * 12.).reshape(8, 12), s), key)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
+  def test_random_bits_out_sharding_no_auto_axes(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
+    auto_mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    key = jax.random.key(42)
+    s2d = NamedSharding(mesh, P('x', 'y'))
+
+    b_no_ctx = jax.jit(
+        lambda a, k: a ^ jax.random.bits(k, (4, 6), dtype=jnp.uint32, out_sharding=s2d)
+    )(jax.device_put(np.zeros((4, 6), dtype=np.uint32), s2d), key)
+    self.assertEqual(b_no_ctx.sharding, s2d)
+    self.assertArraysEqual(b_no_ctx, jax.random.bits(key, (4, 6), dtype=jnp.uint32))
+
+    ref_auto = jax.jit(
+        lambda k: jax.random.bits(k, (4, 6)),
+        out_shardings=NamedSharding(auto_mesh, P('x', 'y')),
+    )(key)
+
+    with jax.set_mesh(mesh):
+      b_eager = jax.random.bits(key, (4, 6), out_sharding=P('x', 'y'))
+      self.assertEqual(b_eager.sharding, s2d)
+      self.assertArraysEqual(b_eager, ref_auto)
+
+      f_bits = jax.jit(
+          lambda k: jax.random.bits(k, (4, 6), out_sharding=P('x', 'y'))
+      )
+      self.assertNotIn('Auto', str(f_bits.trace(key).jaxpr))
+      self.assertNotIn('all-', f_bits.lower(key).compile().as_text())
+      out = f_bits(key)
+      self.assertEqual(out.sharding, s2d)
+      self.assertArraysEqual(out, ref_auto)
+
+      f_streams = jax.jit(
+          lambda k: jax.random.bits(
+              k, (4, 4), num_streams=2, out_sharding=P('x', 'y')
+          )
+      )
+      self.assertNotIn('Auto', str(f_streams.trace(key).jaxpr))
+      b0, b1 = f_streams(key)
+      self.assertEqual(b0.sharding, s2d)
+      self.assertEqual(b1.sharding, s2d)
+
+      v_keys = jax.random.split(key, 3)
+      v_out = jax.jit(
+          jax.vmap(lambda k: jax.random.bits(k, (4, 4), out_sharding=P('x', 'y')))
+      )(v_keys)
+      self.assertEqual(v_out.sharding, NamedSharding(mesh, P(None, 'x', 'y')))
+
+      for impl_name in ('threefry2x32', 'rbg', 'unsafe_rbg'):
+        k_impl = jax.random.key(7, impl=impl_name)
+        b_impl = jax.jit(
+            lambda k: jax.random.bits(k, (4, 4), out_sharding=P('x', 'y'))
+        )(k_impl)
+        self.assertEqual(b_impl.sharding, s2d)
+
+      sh_keys = jax.device_put(jax.random.split(key, 2), P('x'))
+      with config.no_collectives({'x'}):
+        with self.assertRaises(core.ForbiddenCollectiveError):
+          jax.jit(
+              lambda k: prng.random_bits(k, 32, (4,), out_sharding=P(None, 'x'))
+          )(sh_keys)
+
+      @jax.jit
+      @jax.shard_map(in_specs=P(), out_specs=P('x', None), axis_names={'x'})
+      def shmap_bits(k):
+        sub_k = jax.random.fold_in(k, lax.axis_index('x'))
+        return jax.random.bits(sub_k, (2, 4), out_sharding=P(None, 'y'))
+
+      self.assertEqual(shmap_bits(key).sharding, s2d)
+
   def test_auto_axes_no_context_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
     np_inp = np.arange(16.).reshape(8, 2)
