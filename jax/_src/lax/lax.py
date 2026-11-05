@@ -5097,29 +5097,52 @@ def _tanh_sech2_jvp(primals, tangents):
 
 
 tanh_p = standard_unop(_float | _complex, 'tanh')
-ad.defjvp2(
-    tanh_p,
-    lambda g, ans, x, accuracy: mul(g, _tanh_sech2(x)[1])
-    if accuracy is AccuracyMode.HIGHEST
-    else mul(g, one_minus_square(ans)),
-)
+
+
+def _tanh_jvp_rule(g, ans, x, accuracy):
+  if accuracy is AccuracyMode.HIGHEST:
+    if config.jax_tanh_sech_jvp.value:
+      return mul(g, _tanh_sech2(x)[1])
+    return mul(
+        g,
+        mul(
+            _const(x, 4),
+            mul(
+                logistic(mul(_const(x, 2), x), accuracy=accuracy),
+                logistic(mul(_const(x, -2), x), accuracy=accuracy),
+            ),
+        ),
+    )
+  return mul(g, one_minus_square(ans))
+
+
+ad.defjvp2(tanh_p, _tanh_jvp_rule)
 mlir.register_lowering(tanh_p, partial(_nary_lower_hlo, hlo.tanh))
 core.pp_eqn_rules[tanh_p] = _unary_with_accuracy_pp_rule
 
 logistic_p = standard_unop(_float | _complex, 'logistic')
-ad.defjvp2(
-    logistic_p,
-    lambda g, ans, x, accuracy: mul(
-        g, mul(_const(x, 0.25), _tanh_sech2(mul(_const(x, 0.5), x))[1])
-    )
-    if accuracy is AccuracyMode.HIGHEST
-    else mul(g, mul(ans, sub(_one(ans), ans))),
-)
+
+
+def _logistic_jvp_rule(g, ans, x, accuracy):
+  if accuracy is AccuracyMode.HIGHEST:
+    if config.jax_tanh_sech_jvp.value:
+      return mul(
+          g, mul(_const(x, 0.25), _tanh_sech2(mul(_const(x, 0.5), x))[1])
+      )
+    return mul(g, mul(ans, logistic(neg(x))))
+  return mul(g, mul(ans, sub(_one(ans), ans)))
+
+
+ad.defjvp2(logistic_p, _logistic_jvp_rule)
 core.pp_eqn_rules[logistic_p] = _unary_with_accuracy_pp_rule
 
 def logistic_impl(x, accuracy):
   one = _const(x, 1)
-  if accuracy is AccuracyMode.HIGHEST and dtypes.issubdtype(x.dtype, np.floating):
+  if (
+      accuracy is AccuracyMode.HIGHEST
+      and config.jax_accurate_logistic.value
+      and dtypes.issubdtype(x.dtype, np.floating)
+  ):
     # For x < 0, 1 / (1 + exp(-x)) loses accuracy when adding 1 to exp(-x)
     # and overflows exp(-x) to inf (yielding 0) well before logistic(x)
     # underflows. Computing e = exp(-|x|) keeps the exponent non-positive so

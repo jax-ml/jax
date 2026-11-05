@@ -324,15 +324,16 @@ class LogisticTest(jtu.JaxTestCase):
             },
         ),
     ]
-    util.check_unary_precision(
-        self,
-        _logistic_highest,
-        lambda x: 1.0 / (1.0 + np.exp(-x)),
-        lambda x: 1 / (1 + mpmath.exp(-x)),
-        dtype,
-        bounds=bounds,
-        interesting_points=_logistic_interesting_points(dtype),
-    )
+    with jtu.global_config_context(jax_accurate_logistic=True):
+      util.check_unary_precision(
+          self,
+          _logistic_highest,
+          lambda x: 1.0 / (1.0 + np.exp(-x)),
+          lambda x: 1 / (1 + mpmath.exp(-x)),
+          dtype,
+          bounds=bounds,
+          interesting_points=_logistic_interesting_points(dtype),
+      )
 
 
 @jtu.thread_unsafe_test_class()
@@ -355,15 +356,16 @@ class LogisticGradTest(jtu.JaxTestCase):
             },
         ),
     ]
-    util.check_unary_precision(
-        self,
-        jax.jit(jax.vmap(jax.grad(_logistic_highest))),
-        lambda x: (1.0 / (1.0 + np.exp(-x))) * (1.0 / (1.0 + np.exp(x))),
-        lambda x: 1 / (4 * mpmath.cosh(x / 2) ** 2),
-        dtype,
-        bounds=bounds,
-        interesting_points=_logistic_interesting_points(dtype),
-    )
+    with jtu.global_config_context(jax_tanh_sech_jvp=True):
+      util.check_unary_precision(
+          self,
+          jax.jit(jax.vmap(jax.grad(_logistic_highest))),
+          lambda x: (1.0 / (1.0 + np.exp(-x))) * (1.0 / (1.0 + np.exp(x))),
+          lambda x: 1 / (4 * mpmath.cosh(x / 2) ** 2),
+          dtype,
+          bounds=bounds,
+          interesting_points=_logistic_interesting_points(dtype),
+      )
 
   @parameterized.named_parameters(("_float32", f32), ("_float64", f64))
   def test_logistic_higher_order_highest_accuracy(self, dtype):
@@ -390,11 +392,12 @@ class LogisticGradTest(jtu.JaxTestCase):
       s = 1 / (4 * mpmath.cosh(v / 2) ** 2)
       return s * (t * t - 2 * s)
 
-    util.check_precision_at_points(self, d2_fn, mp_d2, xs, max_ulp=8.0)
-    util.check_precision_at_points(self, d3_fn, mp_d3, xs, max_ulp=16.0)
-    infs = jnp.array([-jnp.inf, jnp.inf], dtype=dtype)
-    self.assertArraysEqual(d2_fn(infs), jnp.zeros_like(infs))
-    self.assertArraysEqual(d3_fn(infs), jnp.zeros_like(infs))
+    with jtu.global_config_context(jax_tanh_sech_jvp=True):
+      util.check_precision_at_points(self, d2_fn, mp_d2, xs, max_ulp=8.0)
+      util.check_precision_at_points(self, d3_fn, mp_d3, xs, max_ulp=16.0)
+      infs = jnp.array([-jnp.inf, jnp.inf], dtype=dtype)
+      self.assertArraysEqual(d2_fn(infs), jnp.zeros_like(infs))
+      self.assertArraysEqual(d3_fn(infs), jnp.zeros_like(infs))
 
   @parameterized.named_parameters(
       ("_complex64", jnp.complex64), ("_complex128", jnp.complex128)
@@ -405,12 +408,13 @@ class LogisticGradTest(jtu.JaxTestCase):
     xs = jnp.array(
         [-2.0 + 0.5j, -0.1 - 0.3j, 0.1 + 0.3j, 2.0 - 0.5j], dtype=dtype
     )
-    jtu.check_grads(_logistic_highest, (xs,), order=2, modes=["fwd", "rev"])
-    # Also verify large |Re(x)| doesn't produce NaNs from overflow.
-    x_tail = 20.0 if dtype == jnp.complex64 else 50.0
-    xs_tail = jnp.array([-x_tail + 1j, x_tail + 1j], dtype=dtype)
-    _, jvps = jax.jvp(_logistic_highest, (xs_tail,), (jnp.ones_like(xs_tail),))
-    self.assertAllClose(jvps, jnp.zeros_like(jvps), atol=1e-8)
+    with jtu.global_config_context(jax_tanh_sech_jvp=True):
+      jtu.check_grads(_logistic_highest, (xs,), order=2, modes=["fwd", "rev"])
+      # Also verify large |Re(x)| doesn't produce NaNs from overflow.
+      x_tail = 20.0 if dtype == jnp.complex64 else 50.0
+      xs_tail = jnp.array([-x_tail + 1j, x_tail + 1j], dtype=dtype)
+      _, jvps = jax.jvp(_logistic_highest, (xs_tail,), (jnp.ones_like(xs_tail),))
+      self.assertAllClose(jvps, jnp.zeros_like(jvps), atol=1e-8)
 
 
 util.register_benchmark(jnp.exp)

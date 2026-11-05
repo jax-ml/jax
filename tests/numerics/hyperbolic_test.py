@@ -302,10 +302,10 @@ class TanhGradTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_tanh_grad_highest_accuracy(self, dtype):
-    # With accuracy=AccuracyMode.HIGHEST, grad(tanh)(x) is evaluated as
-    # (2 * exp(-|x|) / (1 + exp(-2 * |x|)))^2, avoiding both 1 - tanh(x)^2
-    # cancellation for large |x| and premature underflow/overflow when 2 * |x|
-    # exceeds the normal exponent range.
+    # With accuracy=AccuracyMode.HIGHEST and jax_tanh_sech_jvp=True,
+    # grad(tanh)(x) is evaluated as (2 * exp(-|x|) / (1 + exp(-2 * |x|)))^2,
+    # avoiding both 1 - tanh(x)^2 cancellation for large |x| and premature
+    # underflow/overflow when 2 * |x| exceeds the normal exponent range.
     bounds = [
         ("cpu", {bf16: 3.5, f16: (4.0, 4.5), f32: 6.0, f64: 6.0}),
         ("gpu", {bf16: 3.5, f16: 4.5, f32: 8.5, f64: 5.0}),
@@ -321,15 +321,16 @@ class TanhGradTest(jtu.JaxTestCase):
             },
         ),
     ]
-    util.check_unary_precision(
-        self,
-        tanh_grad_highest,
-        lambda x: np.square(np.reciprocal(np.cosh(x))),
-        lambda x: 1 / mpmath.cosh(x) ** 2,
-        dtype,
-        bounds=bounds,
-        interesting_points=_tanh_interesting_points(dtype),
-    )
+    with jtu.global_config_context(jax_tanh_sech_jvp=True):
+      util.check_unary_precision(
+          self,
+          tanh_grad_highest,
+          lambda x: np.square(np.reciprocal(np.cosh(x))),
+          lambda x: 1 / mpmath.cosh(x) ** 2,
+          dtype,
+          bounds=bounds,
+          interesting_points=_tanh_interesting_points(dtype),
+      )
 
   @parameterized.named_parameters(("_float32", f32), ("_float64", f64))
   def test_tanh_higher_order_highest_accuracy(self, dtype):
@@ -357,11 +358,12 @@ class TanhGradTest(jtu.JaxTestCase):
       s = 1 / mpmath.cosh(v) ** 2
       return -2 * s * (s - 2 * t * t)
 
-    util.check_precision_at_points(self, d2_fn, mp_d2, xs, max_ulp=8.0)
-    util.check_precision_at_points(self, d3_fn, mp_d3, xs, max_ulp=16.0)
-    infs = jnp.array([-jnp.inf, jnp.inf], dtype=dtype)
-    self.assertArraysEqual(d2_fn(infs), jnp.zeros_like(infs))
-    self.assertArraysEqual(d3_fn(infs), jnp.zeros_like(infs))
+    with jtu.global_config_context(jax_tanh_sech_jvp=True):
+      util.check_precision_at_points(self, d2_fn, mp_d2, xs, max_ulp=8.0)
+      util.check_precision_at_points(self, d3_fn, mp_d3, xs, max_ulp=16.0)
+      infs = jnp.array([-jnp.inf, jnp.inf], dtype=dtype)
+      self.assertArraysEqual(d2_fn(infs), jnp.zeros_like(infs))
+      self.assertArraysEqual(d3_fn(infs), jnp.zeros_like(infs))
 
   @parameterized.named_parameters(
       ("_complex64", jnp.complex64), ("_complex128", jnp.complex128)
@@ -373,12 +375,13 @@ class TanhGradTest(jtu.JaxTestCase):
     xs = jnp.array(
         [-2.0 + 0.5j, -0.1 - 0.3j, 0.1 + 0.3j, 2.0 - 0.5j], dtype=dtype
     )
-    jtu.check_grads(f, (xs,), order=2, modes=["fwd", "rev"])
-    # Also verify large |Re(x)| doesn't produce NaNs from overflow.
-    x_tail = 15.0 if dtype == jnp.complex64 else 30.0
-    xs_tail = jnp.array([-x_tail + 1j, x_tail + 1j], dtype=dtype)
-    _, jvps = jax.jvp(f, (xs_tail,), (jnp.ones_like(xs_tail),))
-    self.assertAllClose(jvps, jnp.zeros_like(jvps), atol=1e-10)
+    with jtu.global_config_context(jax_tanh_sech_jvp=True):
+      jtu.check_grads(f, (xs,), order=2, modes=["fwd", "rev"])
+      # Also verify large |Re(x)| doesn't produce NaNs from overflow.
+      x_tail = 15.0 if dtype == jnp.complex64 else 30.0
+      xs_tail = jnp.array([-x_tail + 1j, x_tail + 1j], dtype=dtype)
+      _, jvps = jax.jvp(f, (xs_tail,), (jnp.ones_like(xs_tail),))
+      self.assertAllClose(jvps, jnp.zeros_like(jvps), atol=1e-10)
 
 
 @jtu.thread_unsafe_test_class()

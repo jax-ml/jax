@@ -2526,6 +2526,28 @@ jax_accurate_erf_inv = bool_state(
     include_in_trace_context=True,
 )
 
+jax_tanh_sech_jvp = bool_state(
+    name='jax_tanh_sech_jvp',
+    default=False,
+    help=(
+        'Temporary flag enabling closed ``(tanh, sech^2)`` JVP for'
+        ' ``AccuracyMode.HIGHEST`` ``tanh`` and ``logistic``.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+jax_accurate_logistic = bool_state(
+    name='jax_accurate_logistic',
+    default=False,
+    help=(
+        'Temporary flag enabling ``exp(-|x|)`` lowering for'
+        ' ``AccuracyMode.HIGHEST`` ``lax.logistic``.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 shard_map_partitioning = bool_state(
     name='jax_shard_map_partitioning',
     default=False,
