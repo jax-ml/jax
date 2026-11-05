@@ -377,6 +377,68 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertArraysEqual(s, np.sum(x.astype(np.float32), axis=1))
 
   @parameterized.parameters(
+      (P(None, None), P('x', 'y'), 'dynamic_slice'),
+      (P('x', 'y'), P(None, None), 'all_gather'),
+      (P('x', None), P(None, 'x'), 'all_to_all'),
+      (P('x', 'y'), P('y', 'x'), 'all_to_all'),
+      (P(('x', 'y'), None), P('x', None), 'all_gather'),
+      (P(None, None, reduced={'x'}), P('x', None), 'dynamic_slice'),
+      (P('x', None), P(None, None, reduced={'x'}), 'all_gather'),
+      (P(('x', 'y'), None), P('x', 'y'), 'all_to_all'),
+      (P('x', 'y'), P(None, ('y', 'x')), 'all_to_all'),
+      (P('x', 'y', None), P(None, 'x', 'y'), 'all_to_all'),
+  )
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshard(self, in_spec, out_spec, expected_op, mesh):
+    shape = (4,) * len(in_spec)
+    np_x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    x = jax.device_put(np_x, in_spec)
+
+    @jax.jit
+    def f(a):
+      return jax.reshard(a, out_spec)
+
+    hlo = f.lower(x).as_text()
+    self.assertIn('sdy.manual_computation', hlo)
+    self.assertIn(expected_op, hlo)
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+    self.assertArraysEqual(out, np_x)
+
+    with config.shard_map_partitioning(False):
+      expected = f(x)
+      self.assertArraysEqual(expected, out)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_reshard_rotate_three_axes(self, mesh):
+    # No axis can all_to_all at first, so 'x' is gathered to break the cycle:
+    # f32[4@x, 4@y, 4@z] -> f32[4, 4@y, 4@z]    all_gather 'x'
+    #                    -> f32[4@z, 4@y, 4]    all_to_all 'z' to dim 0
+    #                    -> f32[4@z, 4, 4@y]    all_to_all 'y' to dim 2
+    #                    -> f32[4@z, 4@x, 4@y]  slice 'x'
+    np_x = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
+    x = jax.device_put(np_x, P('x', 'y', 'z'))
+    out_spec = P('z', 'x', 'y')
+
+    @jax.jit
+    def f(a):
+      return jax.reshard(a, out_spec)
+
+    hlo = f.lower(x).as_text()
+    self.assertIn('sdy.manual_computation', hlo)
+    for op in ('all_gather', 'all_to_all', 'dynamic_slice'):
+      self.assertIn(op, hlo)
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+    self.assertArraysEqual(out, np_x)
+
+    with config.shard_map_partitioning(False):
+      expected = f(x)
+      self.assertArraysEqual(expected, out)
+
+  @parameterized.parameters(
       ((8, 12), P(('x', 'y'), None), (0, 3), (8, 11), (1, 2)),
       ((4, 10, 4), P('x', None, 'y'), (0, 1, 0), (4, 9, 4), (1, 3, 1)),
       ((8, 4), P(None, None), (2, 1), (5, 3), None),
@@ -461,6 +523,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       jax.jit(lambda x: lax.slice(x, (0, 0), (8, 2), (2, 1))).lower(arr_e)
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda x: lax.concatenate([x, ones], 1)).lower(arr_e)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

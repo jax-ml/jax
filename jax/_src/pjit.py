@@ -2340,14 +2340,14 @@ def _reshard_is_high(aval, *, dst_sharding, **__):
 reshard_p.is_high = _reshard_is_high
 
 
-def _part_axes(p) -> tuple[Any, ...]:
+def _tupleize_spec(p):
   if p is None:
     return ()
   return p if isinstance(p, tuple) else (p,)
 
 
 def _peeled_axes(src_p, dst_p, added_u) -> tuple[Any, ...]:
-  src_p, dst_p = _part_axes(src_p), _part_axes(dst_p)
+  src_p, dst_p = _tupleize_spec(src_p), _tupleize_spec(dst_p)
   tail = src_p[len(dst_p):]
   # Non-empty when `src_p == (*dst_p, *tail)` with `tail <= added_u`, e.g.
   # P('x') -> P(unreduced={'x'}) or P(('y', 'x')) -> P('y', unreduced={'x'}).
@@ -2414,7 +2414,7 @@ def _lower_shaped_reshard(lo_val, in_aval: core.ShapedArray,
   rep_u = tuple(a for a in new_u if a not in sharded_u)
   u_per_dim = [()] * len(src_u) + peeled
   manual_axes = (frozenset(dst_u) |
-                 frozenset(a for p in dst_parts for a in _part_axes(p)))
+                 frozenset(a for p in dst_parts for a in _tupleize_spec(p)))
 
   def _to_unreduced(v):
     if sharded_u:
@@ -2494,7 +2494,7 @@ def _reshard_shaped_array(aval: core.ShapedArray, dst_sharding
   dst_sharding = _canonicalize_reshard_sharding(dst_sharding, aval, False)
   _check_unreduced_reshard(aval, dst_sharding)
   _check_no_collectives_reshard(aval, dst_sharding)
-  if aval.sharding == dst_sharding:
+  if dst_sharding is None or aval.sharding == dst_sharding:
     return aval
   out_aval = aval.update(sharding=dst_sharding)
   out_layout = lax_utils.call_layout_rule(
@@ -2559,7 +2559,141 @@ ad.fancy_transposes[reshard_p] = _reshard_transpose_fancy
 def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding, concrete_mesh):
   aval_out, = ctx.avals_out
   return [mlir.lower_with_explicit_types(ctx, x_node, aval_out)]
-mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
+
+def _dst_starts_with_cur(dst, cur) -> bool:
+  """For example:
+
+  * _dst_starts_with_cur(('x', 'y'), ('x',)) is True
+  * _dst_starts_with_cur(('x', 'y'), ('y',)) is False
+  """
+  return dst[:len(cur)] == cur
+
+def _a2a_target(cur: list[tuple], dst: list[tuple], axis) -> int | None:
+  """Returns the dim that `axis` can be moved to with one all_to_all, or None.
+
+  `axis` is the last axis of some dim in `cur`. It can only move to the dim it
+  is sharded on in `dst`, and only once every axis before it on that dim is
+  already in place. Otherwise it would land out of order.
+
+  For example:
+
+  * cur = [('x',), ()], dst = [(), ('x', 'y')], axis = 'x', return = 1
+    Dim 1 is empty and 'x' goes first.
+  * cur = [('y',), ('x',)], dst = [(), ('x', 'y')], axis = 'y', return = 1
+    'x' is already on dim 1, so 'y' goes next.
+  * cur = [('x',), ('y',)], dst = [(), ('x', 'y')], axis = 'x', return = None
+    'y' is on dim 1 where 'x' should go.
+  * cur = [('z',), ()], dst = [(), ('x', 'y')], axis = 'z', return = None
+    'z' isn't sharded anywhere in `dst`.
+  """
+  from jax._src.lax import utils as lax_utils  # type: ignore
+  pos = lax_utils._axis_pos(dst, axis)
+  if pos is None:
+    return None
+  dim, axes_before = pos
+  return dim if cur[dim] == axes_before else None
+
+@dataclass(frozen=True, slots=True)
+class _ReshardMove:
+  """Takes mesh `axis` off the end of `src_dim`.
+
+  It's moved to `dst_dim` with an all_to_all, or dropped with an all_gather if
+  `dst_dim` is None.
+  """
+  axis: str
+  src_dim: int
+  dst_dim: int | None
+
+def _next_move(cur: list[tuple], dst: list[tuple]) -> _ReshardMove:
+  """Takes the last axis off a dim that isn't a prefix of its target.
+
+  Prefers moving an axis with an all_to_all over dropping one with an
+  all_gather.
+  """
+  out_of_place = [i for i, (c, d) in enumerate(zip(cur, dst))
+                  if not _dst_starts_with_cur(d, c)]
+  for i in out_of_place:
+    target = _a2a_target(cur, dst, cur[i][-1])
+    if target is not None:
+      return _ReshardMove(cur[i][-1], i, target)
+  i = out_of_place[0]
+  return _ReshardMove(cur[i][-1], i, None)
+
+def _plan_reshard(src_spec, dst_spec
+                  ) -> tuple[list[_ReshardMove], list[tuple]]:
+  """Per-shard collectives that reshard `src_spec` into `dst_spec`.
+
+    f32[4@x, 4@y] -> f32[4, 4@y]    all_gather 'x' (dim 1 isn't ready for it)
+                  -> f32[4@y, 4]    all_to_all 'y' to dim 0
+                  -> f32[4@y, 4@x]  slice 'x'
+
+  Returns the moves, followed by the axes each dim must still be sliced over.
+  """
+  cur = [_tupleize_spec(p) for p in src_spec]
+  dst = [_tupleize_spec(p) for p in dst_spec]
+  moves = []
+  # Take axes off the end of out-of-place dims until every dim's current axes
+  # are a prefix of its dst axes. Each move removes `move.axis` from the end
+  # of `move.src_dim`, and an all_to_all also adds it to the end of
+  # `move.dst_dim`.
+  while not all(_dst_starts_with_cur(d, c) for c, d in zip(cur, dst)):
+    move = _next_move(cur, dst)
+    moves.append(move)
+    cur[move.src_dim] = cur[move.src_dim][:-1]
+    if move.dst_dim is not None:
+      cur[move.dst_dim] += (move.axis,)
+  # Every dim now only needs the rest of its target axes, which is a local
+  # slice. E.g. cur = [('y',), ()], dst = [('y',), ('x',)]: slice dim 1 on 'x'.
+  slice_axes = [d[len(c):] for c, d in zip(cur, dst)]
+  return moves, slice_axes
+
+def _slice_to_shard(x, axes_per_dim: list[tuple], mesh):
+  """Further shards each dim of `x` over `axes_per_dim` with a local slice."""
+  from jax._src.lax import parallel, slicing  # type: ignore
+  if not any(axes_per_dim):
+    return x
+  starts, sizes = [], []
+  for size, axes in zip(x.shape, axes_per_dim):
+    local_size = size // math.prod(mesh.shape[a] for a in axes)
+    starts.append(parallel.axis_index(axes) * local_size if axes
+                  else np.int32(0))
+    sizes.append(local_size)
+  return slicing.dynamic_slice(x, starts, sizes, allow_negative_indices=False)
+
+def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh):
+  from jax._src.lax import parallel  # type: ignore
+
+  (in_aval,), (out_aval,) = in_avals, out_avals
+  in_s, out_s = in_aval.sharding, out_aval.sharding
+  assert not in_s.spec.unreduced and not out_s.spec.unreduced
+
+  mesh = mesh_lib.get_abstract_mesh()
+  if (mesh.auto_axes or (not in_s.mesh.empty and in_s.mesh != mesh) or
+      out_s.mesh != mesh):
+    raise NotImplementedError
+
+  per_shard_params = {'dst_sharding': None, 'concrete_mesh': None}
+  if in_s.spec.partitions == out_s.spec.partitions:
+    return mlir.PartitioningRule(per_shard_params=per_shard_params)
+
+  moves, slice_axes = _plan_reshard(in_s.spec.partitions, out_s.spec.partitions)
+
+  def in_collective(x):
+    for m in moves:
+      if m.dst_dim is None:
+        x = parallel.all_gather(x, m.axis, axis=m.src_dim, tiled=True)
+      else:
+        x = parallel.all_to_all(
+            x, m.axis, split_axis=m.dst_dim, concat_axis=m.src_dim, tiled=True)
+    out = _slice_to_shard(x, slice_axes, mesh)
+    return (out,)
+
+  return mlir.PartitioningRule(
+      in_collective=in_collective, per_shard_params=per_shard_params)
+
+mlir.register_lowering(
+    reshard_p, _reshard_hlo_lowering,
+    shard_map_collective_rule=_reshard_collective_rule)
 
 def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding, concrete_mesh):
   x, = vals_in
