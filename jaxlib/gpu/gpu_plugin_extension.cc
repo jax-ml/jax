@@ -128,6 +128,7 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
       ABSL_ASSIGN_OR_RETURN(args.handler_prepare, handler("prepare"));
       ABSL_ASSIGN_OR_RETURN(args.handler_initialize, handler("initialize"));
       ABSL_ASSIGN_OR_RETURN(args.handler_execute, handler("execute"));
+      ABSL_ASSIGN_OR_RETURN(args.handler_record, handler("record"));
       RETURN_STATUS_IF_PJRT_ERROR(register_custom_call(&args), c_api);
       return absl::OkStatus();
     }

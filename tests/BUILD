@@ -18,6 +18,7 @@ load(
     "jax_multiplatform_test",
     "jax_py_test",
     "jax_test_file_visibility",
+    "nanobind_extension",
     "py_deps",
     "pytype_test",
 )
@@ -329,9 +330,21 @@ jax_multiplatform_test(
     ]),
 )
 
+nanobind_extension(
+    name = "_ffi_test",
+    testonly = True,
+    srcs = ["ffi_test.cc"],
+    deps = [
+        "@nanobind",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
 jax_multiplatform_test(
     name = "ffi_test",
     srcs = ["ffi_test.py"],
+    # Keep the test extension available when testing prebuilt JAX wheels.
+    data = [":_ffi_test"],
     enable_configs = [
         "gpu_h100x2_full",
     ],

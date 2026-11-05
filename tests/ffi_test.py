@@ -31,7 +31,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.layout import Layout
-from jax._src.lib import ifrt_version, lapack
+from jax._src.lib import ifrt_version, lapack, xla_client
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lax import linalg as lax_linalg_internal
 from jax._src.shard_map import shard_map
@@ -54,6 +54,33 @@ class FfiTest(jtu.JaxTestCase):
     base_dir = os.path.join(jax.ffi.include_dir(), "xla", "ffi", "api")
     for header in ["c_api.h", "api.h", "ffi.h"]:
       self.assertTrue(os.path.exists(os.path.join(base_dir, header)))
+
+  @jtu.run_on_devices("cuda")
+  def test_record_handler_registration(self):
+    if jtu.jaxlib_version() < (0, 12, 1):
+      self.skipTest("Requires jaxlib 0.12.1 or newer")
+    try:
+      import tests._ffi_test as ffi_test
+    except ModuleNotFoundError as error:
+      if (error.name not in ("tests", "tests._ffi_test")
+          or "TEST_SRCDIR" in os.environ):
+        raise
+      self.skipTest("Requires the Bazel-built //tests:_ffi_test extension")
+
+    jax.ffi.register_ffi_target(
+        "ffi_test_record", ffi_test.record_handlers(), platform="CUDA",
+        traits=xla_client.CustomCallTargetTraits.COMMAND_BUFFER_COMPATIBLE)
+    call = jax.jit(
+        jax.ffi.ffi_call("ffi_test_record", (), has_side_effect=True),
+        compiler_options={
+            "xla_gpu_enable_command_buffer": "CUSTOM_CALL",
+            "xla_gpu_graph_min_graph_size": 1,
+        })
+    with self.assertRaisesRegex(RuntimeError, "FFI record handler invoked"):
+      # The first call may warm up the executable before graph recording.
+      for _ in range(2):
+        call()
+        jax.effects_barrier()
 
   @parameterized.parameters([
     (tuple(range(3)), tuple(range(3))),
