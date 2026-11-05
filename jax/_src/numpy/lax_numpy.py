@@ -70,7 +70,7 @@ from jax._src.util import (
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.mesh import get_abstract_mesh
-from jax._src.pjit import auto_axes
+from jax._src.pjit import auto_axes, reshard
 from jax._src.tree_util import tree_flatten, tree_map
 
 export = set_module('jax.numpy')
@@ -889,24 +889,61 @@ def histogram(a: ArrayLike, bins: str | ArrayLike = 10,
       raise ValueError("weights should have the same shape as a.")
     a, weights = util.promote_dtypes_inexact(a, weights)
 
-  if sharding is not None:
-    return auto_axes(partial(_histogram, bins=bins, density=density),
-                     out_sharding=sharding,
-                     axes=sharding.mesh.explicit_axes
-                     )(a, range, weights)
-  else:
-    return _histogram(a, range, weights, bins, density)
+  return _histogram(a, range, weights, bins, density, out_sharding=sharding)
 
 
-def _histogram(a, range, weights, bins, density):
+def _histogram(a, range, weights, bins, density, out_sharding=None):
+  rep_s = None if out_sharding is None else NamedSharding(out_sharding.mesh, P())
+  if (
+      out_sharding is not None
+      and range is None
+      and np.ndim(bins) != 1
+      and np.size(a) != 0
+      and np.ndim(a) > 0
+  ):
+    axes = tuple(builtins.range(np.ndim(a)))
+    range = (
+        lax.reduce_min(a, axes, out_sharding=rep_s),
+        lax.reduce_max(a, axes, out_sharding=rep_s),
+    )
   bin_edges = histogram_bin_edges(a, bins, range, weights)
+  if out_sharding is not None:
+    if core.typeof(bin_edges).sharding.spec != P():
+      bin_edges = reshard(bin_edges, rep_s)
+    if core.typeof(weights).sharding.spec != core.typeof(a).sharding.spec:
+      weights = reshard(
+          weights,
+          rep_s if core.typeof(a).sharding.mesh.empty else core.typeof(a).sharding,
+      )
   bin_idx = searchsorted(bin_edges, a, side='right')
   bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
-  counts = array_creation.zeros(len(bin_edges), weights.dtype
-                                ).at[bin_idx].add(weights)[1:]
+  scatter_s = (
+      None
+      if out_sharding is None
+      else (
+          rep_s
+          if density
+          else out_sharding.update(
+              spec=P(
+                  unreduced=out_sharding.spec.unreduced,
+                  unreduced_kind=out_sharding.spec.unreduced_kind,
+              )
+          )
+      )
+  )
+  counts = (
+      array_creation.zeros(len(bin_edges), weights.dtype, out_sharding=scatter_s)
+      .at[bin_idx]
+      .add(weights, out_sharding=scatter_s)[1:]
+  )
   if density:
-    bin_widths = diff(bin_edges)
-    counts = counts / bin_widths / counts.sum()
+    counts = counts / diff(bin_edges) / counts.sum()
+  if out_sharding is not None:
+    if core.typeof(counts).sharding != out_sharding:
+      counts = reshard(counts, out_sharding)
+    edges_s = rep_s if out_sharding.spec.unreduced else out_sharding
+    if core.typeof(bin_edges).sharding != edges_s:
+      bin_edges = reshard(bin_edges, edges_s)
   return counts, bin_edges
 
 
