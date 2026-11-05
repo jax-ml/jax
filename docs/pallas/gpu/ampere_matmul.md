@@ -1,13 +1,11 @@
 ```python
-import functools
-
 import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
 ```
 
-This is a walkthrough of five Pallas kernels for `a @ b` on an Ampere-class GPU
+This is a walkthrough of six Pallas kernels for `a @ b` on an Ampere-class GPU
 (A100), each one fixing the bottleneck the previous one hit. 
 
 # Kernel 1: Basic Ampere Matmul
@@ -205,13 +203,8 @@ buffers never go empty.
 
 ```python
 def matmul4(a, b, bm=128, bn=128, bk=32, stages=4, mt=16, occ=2,
-            m_warps=4, name='matmul4'):
-    """a @ b, persistent: each walking a stride of tiles.
-
-    `m_warps` is how the CTA tile is split over the CTA's 4 warps; 4 is
-    Mosaic's default, so this signature is kernel 4 unchanged. Kernel 5 is
-    this function with `m_warps=2`.
-    """
+            name='matmul4'):
+    """a @ b, persistent: each walking a stride of tiles."""
     ni, nj, nk = M // bm, N // bn, K // bk
     tiles = ni * nj
     num_sms = min(occ * backend.get_default_device().core_count, tiles)
@@ -233,7 +226,8 @@ def matmul4(a, b, bm=128, bn=128, bk=32, stages=4, mt=16, occ=2,
             def k_step(k, acc, wait_count):
                 plgpu.wait_gmem_to_smem(wait_count)
                 slot = jax.lax.rem(k, stages)
-                acc = plgpu.mma(acc, a_smem.at[slot][...], b_smem.at[slot][...])
+                acc = plgpu.mma(acc, a_smem.at[slot][...],
+                                b_smem.at[slot][...])
                 s = k + stages
                 if last:
                     jax.lax.cond(s < nk, lambda: fetch(i, j, s, slot), lambda: None)
@@ -281,7 +275,7 @@ def matmul4(a, b, bm=128, bn=128, bk=32, stages=4, mt=16, occ=2,
         grid=(num_sms,),
         grid_names=('sm',),
         kernel_name=name,
-        compiler_params=plgpu.CompilerParams(mma_m_warps=m_warps),
+        compiler_params=plgpu.CompilerParams(),
     )(a, b)
 ```
 
@@ -320,17 +314,161 @@ $k$ step (16 instead of 20). It also significantly eases register pressure: at
 before spilling. At 64×64, register usage drops to 226 registers per thread
 (freeing 14 registers).
 
-To select the square warp tile we pass `CompilerParams(mma_m_warps=2)`. That is
-the *only* difference from kernel 4 — same tile, same pipeline, same loop — so
-there is no new kernel to write. Lifting `m_warps` into kernel 4's signature,
-defaulting to Mosaic's 4, makes kernel 5 a one-liner:
+So we want `m_warps=2`. There is no parameter for it: the width is carried by
+the operands' layouts, and `plgpu.Layout.MMA_LHS`/`MMA_RHS`/`MMA_ACC` name them
+for any width. Casting the operands is how you pick one.
 
 ```python
-matmul5 = functools.partial(matmul4, m_warps=2, name='matmul5')
+lhs = plgpu.Layout.MMA_LHS(DT, m_warps=2)       # A, 64×32 per warp
+rhs = plgpu.Layout.MMA_RHS(DT, m_warps=2)       # B, 32×64 per warp
+acc_l = plgpu.Layout.MMA_ACC(jnp.float32, m_warps=2)
+
+acc = plgpu.mma(acc,
+                plgpu.layout_cast(a_smem.at[slot][...], lhs),
+                plgpu.layout_cast(b_smem.at[slot][...], rhs))
 ```
 
-(`mma_m_warps` is something I added to Pallas by hand; it is not in the
-official version. Mosaic's MMA layouts are built for a fixed 4-warp warpgroup
-— `n_warps = 4 // m_warps` in `mosaic/gpu/mma.py` — so the split is a
-module-level setting scoped around lowering rather than an attribute on the
-`mma` op. If there is an official way to reach it, I did not find one.)
+The casts go *inside* the loop. That is the whole kernel: kernel 4 with three layouts named at the top and two casts in `k_step`.
+
+```python
+def matmul5(a, b, bm=128, bn=128, bk=32, stages=4, mt=16, occ=2,
+            m_warps=2, name='matmul5'):
+    """matmul4, with the warp split asked for rather than inferred."""
+    ni, nj, nk = M // bm, N // bn, K // bk
+    tiles = ni * nj
+    num_sms = min(occ * backend.get_default_device().core_count, tiles)
+
+    lhs = plgpu.Layout.MMA_LHS(DT, m_warps=m_warps)
+    rhs = plgpu.Layout.MMA_RHS(DT, m_warps=m_warps)
+    acc_l = plgpu.Layout.MMA_ACC(jnp.float32, m_warps=m_warps)
+
+    def body(a_gmem, b_gmem, o_gmem, a_smem, b_smem):
+        def fetch(i, j, k, slot):
+            plgpu.copy_gmem_to_smem(
+                a_gmem.at[pl.ds(i * bm, bm), pl.ds(k * bk, bk)],
+                a_smem.at[slot],
+                oob_mode=OOBFillMode.PROMISE_IN_BOUNDS)
+            plgpu.copy_gmem_to_smem(
+                b_gmem.at[pl.ds(k * bk, bk), pl.ds(j * bn, bn)],
+                b_smem.at[slot],
+                oob_mode=OOBFillMode.PROMISE_IN_BOUNDS)
+
+        def tile(ij, nxt, last=False):
+            i, j = ij
+
+            def k_step(k, acc, wait_count):
+                plgpu.wait_gmem_to_smem(wait_count)
+                slot = jax.lax.rem(k, stages)
+                # The two casts are the only difference from kernel 4.
+                acc = plgpu.mma(
+                    acc,
+                    plgpu.layout_cast(a_smem.at[slot][...], lhs),
+                    plgpu.layout_cast(b_smem.at[slot][...], rhs))
+                s = k + stages
+                if last:
+                    jax.lax.cond(s < nk, lambda: fetch(i, j, s, slot), lambda: None)
+                else:
+                    jax.lax.cond(s < nk,
+                                 lambda: fetch(i, j, s, slot),
+                                 lambda: fetch(nxt[0], nxt[1], s - nk, slot))
+                return acc
+
+            # ...and the cast on the zero, so the carry starts in the right layout.
+            zero = plgpu.layout_cast(jnp.zeros((bm, bn), jnp.float32), acc_l)
+            steady = nk - (stages - 1) if last else nk
+            acc = jax.lax.fori_loop(
+                0, steady, lambda k, acc: k_step(k, acc, (stages - 1) * 2),
+                zero)
+            for k in range(steady, nk):
+                acc = k_step(jnp.int32(k), acc, (nk - 1 - k) * 2)
+            o_gmem[pl.ds(i * bm, bm), pl.ds(j * bn, bn)] = acc.astype(DT)
+
+        @plgpu.nd_loop((ni, nj), collective_axes='sm', tiling=(mt, 1),
+                       init_carry=(jnp.int32(0), jnp.int32(0)))
+        def last_ij(loop_info, carry):
+            ij = loop_info.index
+
+            @pl.when(loop_info.local_index == 0)
+            def _():
+                for k in range(stages):
+                    fetch(ij[0], ij[1], jnp.int32(k), k)
+
+            @pl.when(loop_info.local_index > 0)
+            def _():
+                tile(carry, ij)
+
+            return ij
+
+        tile(last_ij, last_ij, last=True)
+
+    return plgpu.kernel(
+        body,
+        out_type=jax.ShapeDtypeStruct((M, N), DT),
+        scratch_types=[plgpu.SMEM((stages, bm, bk), DT),
+                       plgpu.SMEM((stages, bk, bn), DT)],
+        grid=(num_sms,),
+        grid_names=('sm',),
+        kernel_name=name,
+    )(a, b)
+```
+
+# Kernel 6: Pace the copies by splitting one of them
+
+Kernel 5 exhausts the obvious knobs, and the profile says the machine is idle
+on average but contended in bursts: `mio_throttle` and `math_pipe_throttle`
+dominate, ~80% of cycles have zero eligible warps, and neither pipe is near its
+roof. The warps are arriving at the same resource at the same moment.
+
+One `k` step issues eight `LDGSTS.128` — 8 KB each of `A` and `B`, 64 bytes per
+thread per matrix — from all four warps at once. But not as one burst: Mosaic
+emits a barrier *before* each `async_copy`, so the barrier between the `A` copy
+and the `B` copy already splits them into two bursts of four. That barrier is
+not overhead. It is the only thing pacing the memory pipe.
+
+So split further. Slicing `A`'s copy into `asplit` pieces makes Mosaic emit
+`asplit` barriers where it emitted one, with no new primitive:
+
+```
+asplit=1   3 barriers per k step   LDGSTS bursts of 4, 4
+asplit=2   4 barriers per k step   bursts of 2, 2, 4
+asplit=4   6 barriers per k step   bursts of 1, 1, 1, 1, 4
+```
+
+Where you may cut is fixed by two rules. The tiled copy path wants row tiles
+divisible by 4: `A` is `(128, 32)`, so cutting along `m` gives 8 or 4 row tiles
+and is fine, while `B` cut along `k` gives `(16, 128)` — two row tiles — and is
+rejected. And `B`'s 128 columns are one 128-byte swizzle period, so cutting
+along `n` would slice inside it. `B` stays whole.
+
+One bookkeeping consequence: a `fetch` now issues `asplit + 1` copies, so every
+`wait_gmem_to_smem` count scales with it. Derive them from that number, never
+from the constant `2` — a count that is too small does not raise, it lets the
+`mma` read a slot that has not landed.
+
+Everything else is kernel 5 unchanged, so the diff is `fetch` and the two wait
+counts:
+
+```python
+def matmul6(a, b, bm=128, bn=128, bk=32, stages=4, mt=16, occ=2,
+            m_warps=2, asplit=2, name='matmul6'):
+    assert bm % (32 * asplit) == 0, 'each A slice needs >= 4 row tiles'
+    per_fetch = asplit + 1          # copies issued by one fetch
+
+    def fetch(i, j, k, slot):
+        step = bm // asplit
+        for p in range(asplit):     # asplit barriers, one before each copy
+            plgpu.copy_gmem_to_smem(
+                a_gmem.at[pl.ds(i * bm + p * step, step), pl.ds(k * bk, bk)],
+                a_smem.at[slot, pl.ds(p * step, step)],
+                oob_mode=OOBFillMode.PROMISE_IN_BOUNDS)
+        plgpu.copy_gmem_to_smem(     # B is uncuttable; it stays one burst
+            b_gmem.at[pl.ds(k * bk, bk), pl.ds(j * bn, bn)],
+            b_smem.at[slot],
+            oob_mode=OOBFillMode.PROMISE_IN_BOUNDS)
+
+    acc = jax.lax.fori_loop(
+        0, steady,
+        lambda k, acc: k_step(k, acc, (stages - 1) * per_fetch), zero)
+    for k in range(steady, nk):
+        acc = k_step(jnp.int32(k), acc, (nk - 1 - k) * per_fetch)
+```
