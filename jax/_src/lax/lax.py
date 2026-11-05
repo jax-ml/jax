@@ -9156,6 +9156,12 @@ def raise_reshape_error(operand, new_sizes) -> Never:
 
 
 def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
+  return _reshape_sharding_rule_opt(operand, new_sizes, dimensions, sharding,
+                                    merge_a2a_error=False)
+
+# TODO(yashkatariya): Delete this when merge_a2a_error is always True.
+def _reshape_sharding_rule_opt(operand, new_sizes, dimensions, sharding,
+                               merge_a2a_error):
   if sharding is not None:
     return sharding
   if all(s is None for s in operand.sharding.spec.partitions):
@@ -9180,7 +9186,7 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
     raise_reshape_error(operand, new_sizes)
   if is_merge:
     return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes,
-                                        dimensions)
+                                        dimensions, merge_a2a_error)
   raise_reshape_error(operand, new_sizes)
 
 
@@ -9243,13 +9249,14 @@ def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
   assert len(out_spec) == len(new_sizes), (out_spec, new_sizes)
   return operand.sharding.update(spec=out_spec)
 
-def strip_trailing_nones(lst):
-  while lst[-1] is None:
-    lst.pop()
-  return tuple(lst)
+def strip_trailing_nones(tup_sp, op_merge):
+  while tup_sp[-1] is None:
+    tup_sp.pop()
+    op_merge.pop()
+  return tuple(tup_sp), tuple(op_merge)
 
 def _merge_an_axis_sharding_rule(operand, operand_merge, orig_new_sizes,
-                                 dimensions):
+                                 dimensions, merge_a2a_error):
   new_spec = []
   mesh = operand.sharding.mesh
   op_partitions, op_shape = operand.sharding.spec.partitions, operand.shape
@@ -9258,14 +9265,22 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, orig_new_sizes,
   op_spec_iter = iter(op_spec)
   for ns, op_merge in zip(new_sizes, operand_merge):
     if isinstance(op_merge, list):
-      tup_sp = tuple(next(op_spec_iter) for _ in op_merge)
+      tup_sp = [next(op_spec_iter) for _ in op_merge]
       if all(s is None for s in tup_sp):
         new_spec.append(None)
       elif dimensions is None:
-        tup_sp = strip_trailing_nones(flatten_spec(tup_sp))
-        if None in tup_sp:
-          raise_reshape_error(operand, orig_new_sizes)
-        partitions = split_partitions(mesh, tup_sp, [ns], operand, orig_new_sizes)
+        # Every dim before the last sharded dim must have local size 1; e.g.
+        # f32[4@x, 4@y] -> f32[16@(x,y)] on {x: 2, y: 2} needs an all-to-all.
+        tup_sp, op_merge = strip_trailing_nones(tup_sp, op_merge)
+        for dim_size, sp in zip(op_merge[:-1], tup_sp[:-1]):
+          if sp is None:
+            raise_reshape_error(operand, orig_new_sizes)
+          sp_tup = sp if isinstance(sp, tuple) else (sp,)
+          if (merge_a2a_error and
+              dim_size // math.prod(mesh.shape[a] for a in sp_tup) != 1):
+            raise_reshape_error(operand, orig_new_sizes)
+        partitions = split_partitions(
+            mesh, flatten_spec(tup_sp), [ns], operand, orig_new_sizes)
         new_spec.extend(partitions)
       else:
         raise_reshape_error(operand, orig_new_sizes)
