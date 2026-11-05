@@ -75,6 +75,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     direct evaluation of only the nth bessel function.
 
 * Changes
+  * Operations in user-written {func}`jax.custom_vjp` backward rules now report
+    their backward function source locations instead of the forward call site.
+    Automatically generated (non-custom) derivatives retain their forward
+    source attribution.
   * Mixed real and complex {func}`jax.numpy.add`, {func}`jax.numpy.subtract`,
     {func}`jax.numpy.multiply`, and {func}`jax.numpy.true_divide`
     (`complex / real`) no longer convert the real input to complex before

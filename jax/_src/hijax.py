@@ -32,6 +32,7 @@ from jax._src.api_util import (
 from jax._src import flattree as ft
 from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
+from jax._src import source_info_util
 from jax._src import stages
 from jax._src import traceback_util
 from jax._src.core import typeof
@@ -1026,10 +1027,12 @@ def _custom_vjp_bwd_accums(traced, bwd, args_ft, symbolic_zeros):
   """A user's defvjp_with_accums bwd rule, called like ``CustomVJPTraced.vjp_bwd``."""
   static_args = tuple(x.val for x in args_ft.unpack() if isinstance(x, ft.FTStatic))
   def rule(res, out_ct, *arg_accums):
-    logs = bwd(*static_args, tree_unflatten(res[1].val, res[0]),
-               _bwd_out_ct(traced.out_tree, out_ct, symbolic_zeros),
-               *[a.unflatten() for a in args_ft.update(arg_accums).unpack()
-                 if not isinstance(a, ft.FTStatic)])
+    out_ct = _bwd_out_ct(traced.out_tree, out_ct, symbolic_zeros)
+    with source_info_util.reset_traceback():
+      logs = bwd(*static_args, tree_unflatten(res[1].val, res[0]),
+                 out_ct,
+                 *[a.unflatten() for a in args_ft.update(arg_accums).unpack()
+                   if not isinstance(a, ft.FTStatic)])
     if logs is not None and type(logs) is not dict:
       raise TypeError(
           f"Custom VJP bwd rule {bwd} was registered with defvjp_with_accums, "
@@ -1054,8 +1057,9 @@ def _custom_vjp_bwd(traced, bwd, in_avals, paths_ft, symbolic_zeros, with_logs,
   dyn_tree = ft.pack(tuple(x for x in paths_ft.unpack()
                            if not isinstance(x, ft.FTStatic))).tree
   def rule(res, out_ct):
-    in_cts = bwd(*static_args, tree_unflatten(res[1].val, res[0]),
-                 _bwd_out_ct(traced.out_tree, out_ct, symbolic_zeros))
+    out_ct = _bwd_out_ct(traced.out_tree, out_ct, symbolic_zeros)
+    with source_info_util.reset_traceback():
+      in_cts = bwd(*static_args, tree_unflatten(res[1].val, res[0]), out_ct)
     logs = None
     if with_logs:
       if not (isinstance(in_cts, (list, tuple)) and len(in_cts) == 2):

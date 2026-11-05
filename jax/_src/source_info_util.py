@@ -213,6 +213,22 @@ def current() -> SourceInfo:
     source_info = source_info.replace(traceback=xla_client.Traceback.get_traceback())
   return source_info
 
+@contextlib.contextmanager
+def reset_traceback() -> Generator[None]:
+  """Capture live user tracebacks instead of an inherited forward traceback.
+
+  Preserve the name stack and restore the previous context on exit.
+  """
+  prev = _source_info_context.context
+  source_info = prev.replace()
+  # replace(traceback=None) retains the old traceback rather than clearing it.
+  source_info.traceback = None
+  _source_info_context.context = source_info
+  try:
+    yield
+  finally:
+    _source_info_context.context = prev
+
 class JaxStackTraceBeforeTransformation(Exception): pass
 
 _message = (
