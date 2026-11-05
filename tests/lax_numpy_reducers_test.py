@@ -1209,6 +1209,36 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, tol=tol)
 
   @jtu.sample_product(
+    opname=['quantile', 'nanquantile', 'percentile', 'nanpercentile'],
+    case=[
+      ((1., 10.), (0., 1.)),
+      ((1., 2., 10.), (0., 0., 1.)),
+      ((1., 2., 10.), (0., 1., 0.)),
+      ((10., 1., 2.), (1., 0., 1.)),
+    ],
+    vector_q=[False, True],
+  )
+  def testWeightedQuantileZeroWeight(self, opname, case, vector_q):
+    values, weights = (np.asarray(x, dtype=np.float32) for x in case)
+    q = np.asarray([0., 0.5, 1.] if vector_q else 0., dtype=np.float32)
+    if 'percentile' in opname:
+      q = q * 100
+
+    def args_maker():
+      return [values, q, weights]
+
+    def np_fun(data, q, weights):
+      return getattr(np, opname)(
+          data, q, weights=weights, method='inverted_cdf')
+
+    def jnp_fun(data, q, weights):
+      return getattr(jnp, opname)(
+          data, q, weights=weights, method='inverted_cdf')
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
     [dict(shape=shape, axis=axis)
      for shape, axis in (
          ((0,), None),
