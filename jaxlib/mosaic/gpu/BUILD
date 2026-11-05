@@ -401,6 +401,7 @@ cc_library(
         "@xla//xla/backends/gpu/runtime:collective_memory",
         "@xla//xla/backends/gpu/runtime:collective_memory_requests",
         "@xla//xla/backends/gpu/runtime:collective_params",
+        "@xla//xla/backends/gpu/runtime:command_buffer_requests",
         "@xla//xla/core/collectives:rank_id",
         "@xla//xla/core/collectives:symmetric_memory",
         "@xla//xla/ffi",

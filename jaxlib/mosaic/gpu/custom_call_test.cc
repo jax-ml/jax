@@ -553,8 +553,6 @@ TEST_F(CustomCallTest, MosaicGpuRecordsIntoCommandBuffer) {
       std::unique_ptr<xla::PjRtLoadedExecutable> executable,
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              std::move(compile_options)));
-  // Warmup.
-  EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
   // Create.
   {
     InfoLogCollector collector;
@@ -632,8 +630,6 @@ TEST_P(CollectiveCommandBufferTest,
       std::unique_ptr<xla::PjRtLoadedExecutable> executable,
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              std::move(compile_options)));
-  // Warmup.
-  EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
   // Create.
   {
     InfoLogCollector collector;
