@@ -15,10 +15,12 @@
 """Thread map test for TPU-specific interpret mode."""
 
 import threading
+import time
 
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
+from jax._src.lib import ifrt_version
 from jax._src.pallas.mosaic.interpret.thread_map import thread_map
 import jax.numpy as jnp
 
@@ -66,6 +68,48 @@ class InterpretThreadMapTest(jtu.JaxTestCase):
     # `thread_map` returns only after all threads have completed, so the final
     # value of `concurrent_calls` should be zero.
     self.assertEqual(concurrent_calls[0], 0)
+
+  def test_thread_map_in_program_dispatched_while_device_is_busy(self):
+    if ifrt_version < 80:
+      self.skipTest('Requires ifrt_version >= 80')
+
+    # Programs with host callbacks, like `program`, run synchronously and take
+    # no pacing units. `program` waits for `slow` on the dispatching thread and
+    # returns before the 100 computations that use its output are dispatched,
+    # so the computations of thread_map's threads never wait for their units.
+    def f(core_index, token):
+      # Uses `core_index`, so that the threads' computations have a live input
+      # on the CPU, like interpret mode's.
+      jax.experimental.io_callback(lambda _: None, (), core_index, ordered=True)
+      return token
+
+    program = jax.jit(lambda token: thread_map(f, 2, token))
+    inc = jax.jit(lambda x: x + 1)
+
+    @jax.jit
+    def slow(a):
+      for _ in range(16):
+        a = jnp.tanh(a @ a)
+      return a
+
+    a = jnp.full((1024, 1024), 1e-4, jnp.float32)
+    token = jnp.int32(0)
+    queued = []
+
+    def dispatch():
+      # Compiles first: this thread's configs differ from the test's.
+      jax.block_until_ready((slow(a), inc(program(token))))
+      slow(a)  # Keeps the device busy, so that `program` has to wait for it.
+      out = program(token)
+      queued.extend(inc(out) for _ in range(100))
+
+    # A daemon thread dispatches, so that the test can report a deadlock.
+    threading.Thread(target=dispatch, daemon=True).start()
+    deadline = time.monotonic() + 60
+    while len(queued) < 100 or not all(x.is_ready() for x in queued):
+      if time.monotonic() > deadline:
+        self.fail('Computations did not finish within 60 s.')
+      time.sleep(0.01)
 
 
 if __name__ == '__main__':
