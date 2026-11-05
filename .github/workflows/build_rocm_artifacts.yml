@@ -36,9 +36,9 @@ on:
         type: string
         default: "10"
       rocm-release-version:
-        description: "TheRock release to install (e.g., 10.0.0 or therock-latest); also used in S3 paths"
+        description: "TheRock release to install (e.g., 10.1.0 or therock-latest); also used in S3 paths"
         type: string
-        default: "10.0.0"
+        default: "10.1.0"
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: choice
@@ -84,9 +84,9 @@ on:
         type: string
         default: "10"
       rocm-release-version:
-        description: "TheRock release to install (e.g., 10.0.0 or therock-latest); also used in S3 paths"
+        description: "TheRock release to install (e.g., 10.1.0 or therock-latest); also used in S3 paths"
         type: string
-        default: "10.0.0"
+        default: "10.1.0"
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: string
