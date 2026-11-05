@@ -5940,6 +5940,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "concatenate operands cannot be sharded on the concat dimension 1"):
       f(arr_xy1, arr_xy2)
 
+    for axis in (0, 1):
+      def concat_one_jnp(x, axis=axis):
+        return jnp.concatenate([x], axis=axis)
+
+      def concat_one_lax(x, axis=axis):
+        return lax.concatenate([x], dimension=axis)
+
+      for fn in (concat_one_jnp, concat_one_lax):
+        out_1 = jax.jit(fn)(arr_xy1)
+        self.assertEqual(out_1.sharding, arr_xy1.sharding)
+        self.assertArraysEqual(out_1, np_inp)
+
+        def loss_fn(x, fn=fn):
+          return jnp.sum(fn(x))
+
+        g_1 = jax.jit(jax.grad(loss_fn))(arr_xy1)
+        self.assertEqual(g_1.sharding, arr_xy1.sharding)
+        self.assertArraysEqual(g_1, np.ones_like(np_inp))
+
     def g(x, y):
       out = f(x, y)
       return jnp.square(jnp.sum(out))
@@ -6221,6 +6240,30 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         core.ShardingTypeError,
         "split operand cannot be sharded on the split axis 0"):
       f(arr_xy, sizes=(4, 4), axis=0)
+
+    for axis, size in ((0, 8), (1, 2)):
+      def split_one_jnp(x, axis=axis):
+        out, = jnp.split(x, 1, axis=axis)
+        return out
+
+      def split_one_lax(x, size=size, axis=axis):
+        out, = lax.split(x, (size,), axis=axis)
+        return out
+
+      jaxpr = jax.make_jaxpr(split_one_lax)(arr_xy)
+      self.assertEmpty(jaxpr.eqns)
+
+      for fn in (split_one_jnp, split_one_lax):
+        out_1 = jax.jit(fn)(arr_xy)
+        self.assertEqual(out_1.sharding, arr_xy.sharding)
+        self.assertArraysEqual(out_1, np_inp)
+
+        def loss_fn(x, fn=fn):
+          return jnp.sum(fn(x))
+
+        g_1 = jax.jit(jax.grad(loss_fn))(arr_xy)
+        self.assertEqual(g_1.sharding, arr_xy.sharding)
+        self.assertArraysEqual(g_1, np.ones_like(np_inp))
 
     def g(x):
       out = f(x)
@@ -12275,6 +12318,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         'concatenate operands cannot be sharded on the concat dimension 0'):
       jax.jit(concat_axis0)(u1, u2)
 
+    def concat_one_axis0_jnp(x):
+      return jnp.concatenate([x], axis=0)
+
+    c_one = jax.jit(concat_one_axis0_jnp)(u1)
+    self.assertEqual(c_one.sharding, NamedSharding(mesh, u_spec))
+    self.assertArraysEqual(jax.reshard(c_one, P('y', None)), ref1)
+
     @jax.jit
     @jax.shard_map(out_specs=P('y', None))
     def manual_fn(x, y):
@@ -12596,6 +12646,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         core.ShardingTypeError,
         'split operand cannot be sharded on the split axis 0'):
       jax.jit(split_axis0)(u)
+
+    def split_one_axis0_jnp(x):
+      out, = jnp.split(x, 1, axis=0)
+      return out
+
+    s_one = jax.jit(split_one_axis0_jnp)(u)
+    self.assertEqual(s_one.sharding, NamedSharding(mesh, u_spec))
+    self.assertArraysEqual(jax.reshard(s_one, P('y', None)), ref)
 
     @jax.jit
     @jax.shard_map(out_specs=(P('y', None), P('y', None)))

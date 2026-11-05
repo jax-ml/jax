@@ -2240,8 +2240,12 @@ def split(operand: ArrayLike, sizes: Sequence[DimSize],
     taken along ``axis``.
   """
   operand = asarray(operand)
-  return split_p.bind(operand, sizes=tuple(sizes),
-                      axis=canonicalize_axis(axis, operand.ndim))
+  sizes = tuple(sizes)
+  axis = canonicalize_axis(axis, operand.ndim)
+  if len(sizes) == 1:
+    _split_shape_rule(core.typeof(operand), sizes=sizes, axis=axis)
+    return [operand]
+  return split_p.bind(operand, sizes=sizes, axis=axis)
 
 
 def stack(operands: Sequence[ArrayLike], axis: int = 0) -> Array:
