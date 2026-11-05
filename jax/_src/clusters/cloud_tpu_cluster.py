@@ -120,7 +120,7 @@ class BaseTpuCluster(clusters.ClusterEnv):
     coordinator_retry_secs = 5
     while not coordinator_found and time.time() < max_time:
       try:
-        socket.gethostbyname(coordinator_address)
+        socket.getaddrinfo(coordinator_address, None)
         coordinator_found = True
         logger.debug("Found coordinator with address %s", coordinator_address)
       except socket.gaierror:

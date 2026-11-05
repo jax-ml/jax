@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 import os
+import socket
 import tempfile
+from unittest import mock
 
 from absl.testing import absltest
 from jax._src import test_util as jtu
@@ -164,6 +166,32 @@ class CloudTpuClusterTest(jtu.JaxTestCase):
     os.environ.pop('TPU_WORKER_HOSTNAMES', None)
 
     self.assertIsNone(GkeTpuCluster._get_worker_host_names_env_var())
+
+  def test_wait_for_coordinator_uses_getaddrinfo_ipv6(self):
+    with mock.patch('socket.getaddrinfo') as mock_getaddrinfo:
+      GkeTpuCluster.wait_for_coordinator('fd00::1', timeout_secs=5)
+      mock_getaddrinfo.assert_called_once_with('fd00::1', None)
+
+  def test_wait_for_coordinator_timeout(self):
+    with (
+        mock.patch(
+            'socket.getaddrinfo',
+            side_effect=socket.gaierror(
+                -5, 'No address associated with hostname'
+            ),
+        ),
+        mock.patch('time.sleep'),
+    ):
+      with self.assertRaises(RuntimeError) as ctx:
+        GkeTpuCluster.wait_for_coordinator(
+            'tpu-job-0.tpu-svc', timeout_secs=0.01
+        )
+      self.assertIn(
+          'Failed to recognize coordinator address tpu-job-0.tpu-svc',
+          str(ctx.exception),
+      )
+
+
 
 
 if __name__ == '__main__':
