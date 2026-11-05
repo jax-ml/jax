@@ -1704,6 +1704,22 @@ class LaxTest(jtu.JaxTestCase):
     lhs, rhs = rng(lhs_shape, np.float16), rng(rhs_shape, np.float16)
     self.assertEqual(fun(lhs, rhs).dtype, np.float16)
 
+  def testDotAlgorithmComplexOperandsRaise(self):
+    # see https://github.com/jax-ml/jax/issues/42329
+    if jtu.test_device_matches(["tpu"]):
+      raise SkipTest("F32_F32_F32 is not supported on TPU.")
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng((3, 4), np.complex64), rng((4, 3), np.complex64)
+    with self.assertRaisesRegex(ValueError, "does not support complex operands"):
+      lax.dot(lhs, rhs, precision="F32_F32_F32")
+    with self.assertRaisesRegex(ValueError, "does not support complex operands"):
+      lax.dot(lhs.real, rhs, precision="F32_F32_F32")
+    # Complex dots without an algorithm, or with DEFAULT, are unaffected.
+    expected = np.asarray(lhs, np.complex128) @ np.asarray(rhs, np.complex128)
+    self.assertAllClose(lax.dot(lhs, rhs), expected, rtol=1e-5, atol=1e-5)
+    self.assertAllClose(lax.dot(lhs, rhs, precision="DEFAULT"), expected,
+                        rtol=1e-5, atol=1e-5)
+
   def testDotAlgorithmAllowedOutputStorage(self):
     # see https://github.com/jax-ml/jax/issues/24794
     if not jtu.test_device_matches(["gpu"]):
