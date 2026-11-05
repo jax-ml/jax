@@ -349,6 +349,7 @@ def _run_scoped_resource_estimator(
     *consts,
     jaxpr: jax_core.Jaxpr,
     collective_axes,
+    ref_transforms,
     **_,
 ) -> Resources:
   # NOTE: This rule assumes that the allocation happens collectively, although
@@ -356,7 +357,7 @@ def _run_scoped_resource_estimator(
   # lowering rule.
   del consts  # Unused.
   rs = Resources()
-  for v in jaxpr.invars:
+  for v, transforms in zip(jaxpr.invars, ref_transforms):
     aval = v.aval
     assert isinstance(aval, state_types.AbstractRef)
     if isinstance(aval.dtype, gpu_core.BarrierType):
@@ -368,16 +369,24 @@ def _run_scoped_resource_estimator(
       rs += Resources(barrier_counts=collections.Counter([barrier]))
       continue
     if aval.memory_space == gpu_core.TMEM:
-      if len(aval.shape) != 2:
-        raise ValueError(f"TMEM allocations must be 2D. Got {aval.shape}")
       # Estimate columns used.
       if isinstance(aval, gpu_core.AbstractRefUnion):
-        assert aval.shape[0] == 128
+        # `AbstractRefUnion` is canonicalized to a 2D `(128, max_cols)` shape at
+        # creation time, even when wrapping nD refs.
+        assert len(aval.shape) == 2 and aval.shape[0] == 128
         cols_used = aval.shape[1]
       else:
+        physical_aval = cast(
+            state_types.AbstractRef,
+            state_types.transform_type(transforms, aval),
+        )
+        if len(physical_aval.shape) != 2:
+          raise ValueError(
+              f"TMEM allocations must be 2D. Got {physical_aval.shape}"
+          )
         # pyrefly: ignore[missing-attribute]
         cols_used = aval.layout.cols_in_shape(
-            aval.shape, dtypes.itemsize_bits(aval.dtype)
+            physical_aval.shape, dtypes.itemsize_bits(aval.dtype)
         )
       if aval.collective:  # pyrefly: ignore[missing-attribute]
         rs += Resources(tmem_collective_scratch_cols=cols_used)
@@ -470,7 +479,7 @@ class ModuleContext:
   reduction_scratch_bytes: int
   warp_axis_name: jax_core.AxisName | None = None
   outer_traceback: xc.Traceback | None = None
-  scratch_transforms: dict[ir.Value, ScratchTransforms] = (
+  scratch_transforms: dict[ir.Value | tcgen05.TMEMRef, ScratchTransforms] = (
       dataclasses.field(default_factory=dict)
   )
   _smem_allocation_counter: int = dataclasses.field(default=0, init=False)
@@ -541,21 +550,32 @@ class ModuleContext:
       struct: jax.ShapeDtypeStruct,
       *,
       layout: tcgen05.TMEMLayout,
+      transforms: ScratchTransforms = (),
   ) -> Generator[tcgen05.TMEMRef | ir.Value]:
     assert self.tmem_base is not None
+    if isinstance(transforms, dict):
+      physical_shape = struct.shape
+    else:
+      physical_shape = cast(
+          jax_core.ShapedArray,
+          state_types.transform_type(
+              transforms, jax_core.ShapedArray(struct.shape, struct.dtype)
+          ),
+      ).shape
+    assert len(physical_shape) == 2, physical_shape
     if self.lowering_semantics == mgpu.LoweringSemantics.Lane:
       off = arith_dialect.addi(
           self.tmem_base, _i32_constant(self.tmem_used_cols)
       )
       tmem_ref = tcgen05.TMEMRef(
           address=off,
-          shape=struct.shape,
+          shape=cast(tuple[int, int], physical_shape),
           dtype=mgpu_utils.dtype_to_ir_type(struct.dtype),
           layout=layout,
       )
     else:
       type = ir.MemRefType.get(
-          struct.shape,
+          physical_shape,
           mgpu_utils.dtype_to_ir_type(struct.dtype),
           memory_space=mgpu_utils.tmem(),
       )
@@ -568,11 +588,13 @@ class ModuleContext:
       layout_attr = mgpu.to_layout_attr(layout)
       tmem_ref = mgpu.dialect.tmem_layout_cast(tmem_ref, layout_attr)
     cols_used = layout.cols_in_shape(
-        struct.shape, dtypes.itemsize_bits(struct.dtype)
+        physical_shape, dtypes.itemsize_bits(struct.dtype)
     )
     cols_used = gpu_core.align_to(cols_used, gpu_core.TMEM_COL_ALIGNMENT)
     self.tmem_used_cols += cols_used
+    self.scratch_transforms[tmem_ref] = transforms
     yield tmem_ref
+    del self.scratch_transforms[tmem_ref]
     self.tmem_used_cols -= cols_used
 
   @contextlib.contextmanager
@@ -1273,6 +1295,7 @@ def _extract_aliased_ref(
   transform_avals: Sequence[state_types.Transform],
   transforms: Sequence[state_types.Transform],
   lowering_semantics: mgpu.LoweringSemantics,
+  scratch_transforms: Sequence[state_types.Transform] = (),
 ) -> tuple[
     ir.Value,
     state_types.AbstractRef,
@@ -1288,6 +1311,7 @@ def _extract_aliased_ref(
   transform_avals: Sequence[state_types.Transform],
   transforms: Sequence[state_types.Transform],
   lowering_semantics: mgpu.LoweringSemantics,
+  scratch_transforms: Sequence[state_types.Transform] = (),
 ) -> tuple[
     tcgen05.TMEMRef,
     state_types.AbstractRef,
@@ -1302,12 +1326,18 @@ def _extract_aliased_ref(
     transform_avals: Sequence[state_types.Transform],
     transforms: Sequence[state_types.Transform],
     lowering_semantics: mgpu.LoweringSemantics,
+    scratch_transforms: Sequence[state_types.Transform] = (),
 ) -> tuple[
     ir.Value | tcgen05.TMEMRef,
     state_types.AbstractRef,
     Sequence[state_types.Transform],
     Sequence[state_types.Transform],
 ]:
+  if scratch_transforms and ref_aval.memory_space != gpu_core.TMEM:
+    raise ValueError(
+        "`scratch_transforms` can only be specified for TMEM refs, got"
+        f" {scratch_transforms} for {ref_aval.memory_space}."
+    )
   # Looks for the first transform being an ExtractAliasedRef and pulls out the
   # Ref there, updating the transforms.
   match transforms:
@@ -1319,15 +1349,19 @@ def _extract_aliased_ref(
       mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
       if isinstance(ref, tcgen05.TMEMRef):
         assert layout is not None
-        if ref.shape[0] != transformed_shape[0]:
+        physical_shape = cast(
+            state_types.AbstractRef,
+            state_types.transform_type(scratch_transforms, ref_aval),
+        ).shape
+        if ref.shape[0] != physical_shape[0]:
           raise ValueError(
               "TMEM aliasing only supported for Refs with the same first"
-              f" dimension, got {ref.shape[0]} != {transformed_shape[0]}."
+              f" dimension, got {ref.shape[0]} != {physical_shape[0]}."
           )
         address = arith_dialect.addi(ref.address, _i32_constant(offset))
         ref = tcgen05.TMEMRef(
             address=address,
-            shape=cast(tuple[int, int], transformed_shape),
+            shape=cast(tuple[int, int], physical_shape),
             dtype=mlir_dtype,
             layout=layout,
         )
@@ -1390,11 +1424,15 @@ def _extract_aliased_ref(
           else:
             raise NotImplementedError(f"Unsupported TMEM ref {ref}.")
 
+          physical_shape = cast(
+              state_types.AbstractRef,
+              state_types.transform_type(scratch_transforms, ref_aval),
+          ).shape
           base_offset = source_slice_op.offset.value
           assert isinstance(base_offset, int)  # make pyrefly happy
           total_offset = base_offset + offset
           ref_ty = ir.MemRefType.get(
-              transformed_shape, mlir_dtype, memory_space=mgpu_utils.tmem()
+              physical_shape, mlir_dtype, memory_space=mgpu_utils.tmem()
           )
           alloc_id = source_slice_op.alias_id
           assert alloc_id is not None
@@ -1635,27 +1673,24 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
     allow_peer_refs=False,
     allow_multicast_refs=False,
 ) -> tuple[T, state_types.AbstractRef, Sequence[state_types.Transform]]:
-  scratch_transforms = (
-      ctx.module_ctx.scratch_transforms[ref]
-      if isinstance(ref, ir.Value) and mgpu_utils.is_smem_ref(ref)
-      else ()
-  )
+  scratch_transforms = ctx.module_ctx.scratch_transforms.get(ref, ())
   if isinstance(scratch_transforms, dict):
     assert isinstance(transforms[0], gpu_core.ExtractAliasedRef)
     scratch_transforms = scratch_transforms[transforms[0]]
 
   # Before we handle other transforms, we resolve any possible leading
-  # aliasing transform.
+  # aliasing transform. Only TMEM slices at the physical (2D) shape here; SMEM
+  # slices at the logical shape and applies `scratch_transforms` below.
   ref, ref_aval, transform_avals, transforms = _extract_aliased_ref(  # pyrefly: ignore[bad-assignment]
       ref,
       ref_aval,
       transform_avals,
       transforms,
       ctx.module_ctx.lowering_semantics,
+      scratch_transforms if ref_aval.memory_space == gpu_core.TMEM else (),
   )
 
   if scratch_transforms:
-    assert isinstance(ref, ir.Value)
     physical_ref_aval = cast(
         state_types.AbstractRef,
         state_types.transform_type(scratch_transforms, ref_aval),
@@ -1663,7 +1698,12 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
     untransforms = tuple(
         pallas_core.undo_transforms(ref_aval, scratch_transforms)
     )
-    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+    if ref_aval.memory_space == gpu_core.TMEM:
+      ref_aval = physical_ref_aval
+      transforms = (*untransforms, *transforms)
+      transform_avals = (*untransforms, *transform_avals)
+    elif ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+      assert isinstance(ref, ir.Value)
       # We only bubble up transforms here to verify that all the specified
       # transforms can be commuted correctly with the BlockSpec transforms.
       _bubble_up_transforms_for_lowering(
@@ -1682,6 +1722,7 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
           mgpu.dialect.with_transforms(ref, transforms_attr),
       )
     else:
+      assert isinstance(ref, ir.Value)
       ref = cast(T, mgpu.memref_reshape(ref, physical_ref_aval.shape))
       ref_aval = physical_ref_aval
       transforms = (*untransforms, *transforms)
@@ -3524,20 +3565,20 @@ def _run_scoped_lowering_rule(
         should_discharge.append(False)
         continue
 
+      if isinstance(aval, gpu_core.AbstractRefUnion):
+        # Despite its name, `flatten_ref_union` preserves each ref group's
+        # PyTree structure (for `AbstractRefUnion._iter`).
+        extracted_refs = jax.tree.leaves(
+            gpu_core.flatten_ref_union(aval),
+            is_leaf=lambda x: isinstance(x, pallas_core.TransformedRef),
+        )
+        union_transforms = {}
+        for r, t in zip(extracted_refs, transform):
+          (extract,) = r.transforms
+          assert isinstance(extract, gpu_core.ExtractAliasedRef)
+          union_transforms[extract] = t
+        transform = union_transforms
       if aval.memory_space == gpu_core.SMEM:
-        if isinstance(aval, gpu_core.AbstractRefUnion):
-          # Despite its name, `flatten_ref_union` preserves each ref group's
-          # PyTree structure (for `AbstractRefUnion._iter`).
-          extracted_refs = jax.tree.leaves(
-              gpu_core.flatten_ref_union(aval),
-              is_leaf=lambda x: isinstance(x, pallas_core.TransformedRef),
-          )
-          union_transforms = {}
-          for r, t in zip(extracted_refs, transform):
-            (extract,) = r.transforms
-            assert isinstance(extract, gpu_core.ExtractAliasedRef)
-            union_transforms[extract] = t
-          transform = union_transforms
         input_ref = alloc_stack.enter_context(
             ctx.module_ctx.scratch_view(
                 jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
@@ -3547,12 +3588,11 @@ def _run_scoped_lowering_rule(
         input_refs.append(input_ref)
         should_discharge.append(False)
       elif aval.memory_space == gpu_core.TMEM:
-        # Transforms on TMEM refs are already reflected in the collapsed 2D
-        # invar aval and applied at each use site in `jaxpr`.
         input_ref = alloc_stack.enter_context(
             ctx.module_ctx.alloc_tmem(
                 jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
                 layout=aval.layout,  # pyrefly: ignore[missing-attribute]
+                transforms=transform,
             )
         )
         input_refs.append(input_ref)

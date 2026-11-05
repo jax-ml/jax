@@ -271,7 +271,7 @@ class MemoryRef:
       dtype = jnp.dtype(dtype)
     return self.inner_aval.update(dtype=dtype, memory_space=self.memory_space)
 
-  def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     return state.AbstractRef(self.inner_aval, self.memory_space)
 
   @property
@@ -1350,7 +1350,7 @@ index_map_grid_aval = jax_core.ShapedArray((), jnp.int32)
 class ScratchShape(Protocol):
   def get_array_aval(self) -> jax_core.AbstractValue:
     ...
-  def get_ref_aval(self) -> state.AbstractRef | TransformedRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     ...
 
 

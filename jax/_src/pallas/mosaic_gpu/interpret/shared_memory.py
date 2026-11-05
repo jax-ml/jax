@@ -44,9 +44,6 @@ logger = logging.getLogger(__name__)
 LAYOUT_TRANSFORMS = (
     mosaic_gpu_core.UnswizzleRef,
     mosaic_gpu_core.UntilingTransform,
-    # A TMEM ref of rank > 2 is stored as `(m, prod(batch) * n)` and carries
-    # this transform back to `(*batch, m, n)`.
-    mosaic_gpu_core.ExpandLeadingBatchDimensionsTransform,
 )
 
 

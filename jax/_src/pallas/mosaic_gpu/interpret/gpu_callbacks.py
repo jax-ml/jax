@@ -1485,8 +1485,7 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
       )
 
 
-# Buffers are allocated at their logical shape (see
-# `jaxpr_interpret.apply_layout_transforms`), so the transforms that describe
+# Buffers are allocated at their logical shape, so the transforms that describe
 # how they are laid out are identities on an access and are dropped here.
 NOOP_TRANSFORMS = memory.LAYOUT_TRANSFORMS
 
