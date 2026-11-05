@@ -279,9 +279,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           "and StableHLO >= 1.24.0"
       )
     rng = rng_factory(self.rng())
-    if jtu.test_device_matches(["cpu", "tpu"]):
+    if jtu.test_device_matches(["cpu", "gpu", "tpu"]):
       if op is lax.cosh and dtype == np.complex64:
-        tol = 4e-1  # 2nd-order gradients are noisy on CPU and TPU
+        tol = 4e-1  # 2nd-order gradients are noisy on CPU, GPU, and TPU
     if jtu.test_device_matches(["tpu"]):
       if op is lax.pow:
         raise SkipTest("pow grad imprecise on tpu")
