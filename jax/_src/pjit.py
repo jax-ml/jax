@@ -2664,6 +2664,17 @@ def _auto_axes(fun, *, axes_, out_sharding):
     if set(mesh_info.prev.auto_axes) == set(mesh_info.axes):
       return fun(*args, **kwargs)
     in_avals = [core.typeof(a) for a in tree_leaves(args)]
+    def _strip_auto_reduced(a):
+      aval = core.typeof(a)
+      if not isinstance(aval, core.ShapedArray):
+        return a
+      spec = aval.sharding.spec
+      new_reduced = spec.reduced - set(mesh_info.axes)
+      if new_reduced != spec.reduced:
+        return reshard(a, spec.update(reduced=new_reduced))
+      return a
+    with mesh_lib.use_abstract_mesh(mesh_info.prev):
+      args = tree_map(_strip_auto_reduced, args)
     with mesh_lib.use_abstract_mesh(mesh_info.new):
       in_specs = tree_map(
           lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
