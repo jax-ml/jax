@@ -62,7 +62,7 @@ class TritonKernelAotTest : public ::testing::Test {
   static void SetUpTestSuite() {
     XLA_FFI_Handler_Bundle bundle = {
         /*instantiate=*/kTritonKernelCallFfiInstantiate,
-        /*prepare=*/nullptr,
+        /*prepare=*/kTritonKernelCallFfiPrepare,
         /*initialize=*/kTritonKernelCallFfiInitialize,
         /*execute=*/CountingExecute,
         /*record=*/CountingRecord,
@@ -160,7 +160,8 @@ TEST_F(TritonKernelAotTest, TritonKernelCallFfiCommandBufferRecording) {
   // new output buffer address and exercises Record(kUpdate) for both inputs
   // and outputs.
   std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> held_result;
-  // Warmup, Create, and Replay with the same input buffers.
+  // Create and replay with the same input buffers (no warmup required for
+  // non-autotuned Triton kernels with a record handler).
   for (int i = 0; i < 3; ++i) {
     held_result.clear();
     ASSERT_OK_AND_ASSIGN(held_result, loaded_executable->Execute(
@@ -171,7 +172,7 @@ TEST_F(TritonKernelAotTest, TritonKernelCallFfiCommandBufferRecording) {
     EXPECT_TRUE(xla::LiteralTestUtil::Equal(
         xla::LiteralUtil::CreateR1<float>(expected_3), *result));
   }
-  EXPECT_EQ(execute_count_, 1);
+  EXPECT_EQ(execute_count_, 0);
   EXPECT_EQ(record_count_, 1);
 
   // Execute with newly allocated input buffers to exercise Record(kUpdate).
@@ -197,7 +198,7 @@ TEST_F(TritonKernelAotTest, TritonKernelCallFfiCommandBufferRecording) {
   std::vector<float> expected_9(1024, 9.0f);
   EXPECT_TRUE(xla::LiteralTestUtil::Equal(
       xla::LiteralUtil::CreateR1<float>(expected_9), *result));
-  EXPECT_EQ(execute_count_, 1);
+  EXPECT_EQ(execute_count_, 0);
   EXPECT_EQ(record_count_, 2);
 }
 }  // namespace

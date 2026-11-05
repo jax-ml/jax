@@ -34,6 +34,7 @@ limitations under the License.
 #include <vector>
 
 #include "xla/backends/gpu/ffi.h"
+#include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/ffi/api/record_api.h"
 #include "xla/ffi/api/record_c_api.h"
 #include "xla/ffi/ffi.h"
@@ -1363,6 +1364,30 @@ static absl::StatusOr<KernelCall*> ResolveKernelCall(
   }
   return kernel_call;
 }
+
+// Sets the command buffer warmup preference in the XLA prepare stage: warmup is
+// required only when the custom call has autotuning candidates that have not
+// yet been resolved and cached.
+absl::Status TritonKernelCallFfiPrepare(
+    TritonKernelInstantiateResult* instantiate_result,
+    ::xla::gpu::CommandBufferRequests* cmd_buffer_requests) {
+  if (instantiate_result == nullptr) {
+    return absl::InvalidArgumentError("Instantiate result is null.");
+  }
+  bool requires_warmup =
+      instantiate_result->proto.call_case() ==
+          jax_triton::TritonCustomCallStateProto::kAutotuningKernelCandidates &&
+      instantiate_result->cached_kernel_call.load(std::memory_order_acquire) ==
+          nullptr;
+  cmd_buffer_requests->SetRequiresWarmup(requires_warmup);
+  return absl::OkStatus();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    kTritonKernelCallFfiPrepare, TritonKernelCallFfiPrepare,
+    ::xla::ffi::Ffi::BindPrepare()
+        .Ctx<::xla::ffi::State<TritonKernelInstantiateResult>>()
+        .Ctx<::xla::ffi::CommandBufferRequests>());
 
 // Pre-loads the GPU module into the context during the XLA initialize stage
 // (before command buffer capture begins). For non-autotuned kernels, also
