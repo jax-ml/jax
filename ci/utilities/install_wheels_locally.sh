@@ -31,7 +31,7 @@ for i in "${!WHEELS[@]}"; do
   fi
 done
 
-if [[ -n "${WHEELS[@]}" ]]; then
+if (( ${#WHEELS[@]} > 0 )); then
   echo "Installing the following wheels:"
   echo "${WHEELS[@]}"
 
