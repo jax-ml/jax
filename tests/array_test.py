@@ -1846,6 +1846,10 @@ class ShardingTest(jtu.JaxTestCase):
       ('gspmd_sharding', _jax.GSPMDSharding),
       ('single_device_sharding', _jax.SingleDeviceSharding),
   )
+  @jtu.ignore_warning(
+      category=RuntimeWarning,
+      message='nanobind: attempted to access an uninitialized instance',
+  )
   def test_uninitialized_sharding_rewrap(self, cls):
     if jaxlib_extension_version < 517:
       self.skipTest('Requires jaxlib_extension_version >= 517')
