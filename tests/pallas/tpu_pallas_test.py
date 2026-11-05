@@ -7557,6 +7557,39 @@ class PallasTPUCollectiveIdTest(ptu.PallasTPUTest):
       )(jnp.zeros((8, 128), jnp.float32))
 
 
+class TPULloLoopFlattenReproTest(ptu.PallasTPUTest):
+
+  def test_llo_small_loop_flattening_vmem_ptr_live_range_repro(self):
+    if self.INTERPRET or not jtu.is_device_tpu():
+      self.skipTest('TPU LLO compilation test')
+
+    def kernel(vmem_buf_ref, out_vmem_ref):
+      out_vmem_ref[...] = jnp.zeros_like(out_vmem_ref)
+
+      def outer_loop(j, _):
+        slot = lax.rem(j, 4)
+        vmem_buf_ref[slot] = vmem_buf_ref[slot] + 1.0
+
+        def inner_loop(k, _):
+          out_vmem_ref[k] = out_vmem_ref[k] + vmem_buf_ref[slot]
+
+        lax.fori_loop(0, 4, inner_loop, None)
+
+      lax.fori_loop(0, 4, outer_loop, None)
+
+    buf = jnp.zeros((4, 8, 128), dtype=jnp.float32)
+    out = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        out_shape=jax.ShapeDtypeStruct((4, 8, 128), jnp.float32),
+        compiler_params=pltpu.CompilerParams(
+            flags={'XLA_TPU_ENABLE_LLO_SMALL_LOOP_FLATTENING': True}
+        ),
+    )(buf)
+    np.testing.assert_allclose(out, jnp.full((4, 8, 128), 4.0))
+
+
 @jtu.with_config(jax_pallas_auto_assign_collective_ids='no')
 class PallasTPUNoAutoCollectiveIdTest(ptu.PallasTPUTest):
 
