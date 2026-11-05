@@ -18,6 +18,7 @@ from absl.testing import absltest
 import jax
 from jax._src.lib import _jax, jaxlib_extension_version
 from jax._src import test_util as jtu
+from jax._src.lib import xla_client as xc
 
 jax.config.parse_flags_with_absl()
 
@@ -79,6 +80,15 @@ class DeviceTest(jtu.JaxTestCase):
       self.assertEqual(str(device), 'oneapi:0')
     elif jtu.test_device_matches(['cpu']):
       self.assertEqual(str(device), 'cpu:0')
+
+  def test_empty_device_list_is_fully_addressable(self):
+    if jaxlib_extension_version < 518:
+      self.skipTest('Requires jaxlib_extension_version >= 518')
+    dl = xc.DeviceList(())
+    self.assertLen(dl, 0)
+    self.assertEqual(dl.process_indices, set())
+    self.assertTrue(dl.is_fully_addressable)
+    self.assertEqual(dl.addressable_device_list, dl)
 
 
 if __name__ == '__main__':
