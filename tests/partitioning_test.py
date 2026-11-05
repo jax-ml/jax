@@ -376,6 +376,91 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
         a, axes=(1,), out_sharding=NamedSharding(mesh, P('x'))))(y)
     self.assertArraysEqual(s, np.sum(x.astype(np.float32), axis=1))
 
+  @parameterized.parameters(
+      ((8, 12), P(('x', 'y'), None), (0, 3), (8, 11), (1, 2)),
+      ((4, 10, 4), P('x', None, 'y'), (0, 1, 0), (4, 9, 4), (1, 3, 1)),
+      ((8, 4), P(None, None), (2, 1), (5, 3), None),
+  )
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_slice(self, shape, in_spec, start, limit, strides, mesh):
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    arr = jax.device_put(np_inp, in_spec)
+    f = jax.jit(lambda x: lax.slice(x, start, limit, strides))
+    with config.shard_map_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
+      expected = f(arr)
+    txt = f.lower(arr).as_text()
+    self.assertIn('sdy.manual_computation', txt)
+    self.assertNotIn('all_gather', txt)
+    out = f(arr)
+    slices = tuple(map(slice, start, limit, strides or (None,) * len(shape)))
+    self.assertEqual(out.sharding, NamedSharding(mesh, in_spec))
+    self.assertArraysEqual(out, np_inp[slices])
+    self.assertArraysEqual(out, expected)
+
+  @parameterized.parameters(
+      (((8, 3), (8, 5)), P(('x', 'y'), None), 1),
+      (((4, 3, 4), (4, 5, 4)), P('x', None, 'y'), 1),
+      (((4, 0), (4, 5)), P('x', None), 1),
+  )
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_concatenate(self, shapes, spec, dim, mesh):
+    np_inps = [np.arange(math.prod(s), dtype=np.float32).reshape(s)
+               for s in shapes]
+    arrs = [jax.device_put(x, spec) for x in np_inps]
+    f = jax.jit(lambda *xs: lax.concatenate(xs, dimension=dim))
+    with config.shard_map_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f.lower(*arrs).as_text())
+      expected = f(*arrs)
+    txt = f.lower(*arrs).as_text()
+    self.assertIn('sdy.manual_computation', txt)
+    self.assertNotIn('all_gather', txt)
+    out = f(*arrs)
+    self.assertEqual(out.sharding, NamedSharding(mesh, spec))
+    self.assertArraysEqual(out, np.concatenate(np_inps, axis=dim))
+    self.assertArraysEqual(out, expected)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('m', 'e'))
+  def test_slice_concatenate_mixed_and_unsupported(self, mesh):
+    np_x = np.arange(128, dtype=np.float32).reshape(4, 8, 4)
+    arr = jax.device_put(np_x, NamedSharding(mesh, P('m', 'e', None)))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P('m'), axis_names={'m'})
+    def f(x):
+      y = lax.slice(x, (0, 0, 1), (2, 8, 3))
+      return lax.concatenate([y, y], dimension=2)
+
+    with config.shard_map_partitioning(False):
+      expected = f(arr)
+    self.assertNotIn('all_gather', f.lower(arr).as_text())
+    out = f(arr)
+    self.assertEqual(out.sharding.spec, P('m', 'e', None))
+    np_expected = np.concatenate([np_x[:, :, 1:3], np_x[:, :, 1:3]], axis=2)
+    self.assertArraysEqual(out, np_expected)
+    self.assertArraysEqual(out, expected)
+
+    rep = jax.device_put(np.ones((2, 2), np.float32), P(None, None))
+    lit = np.zeros((2, 2), np.float32)
+    lit_fn = jax.jit(lambda x: lax.concatenate([x, lit], 1))
+    with config.shard_map_partitioning(False):
+      expected_lit = lit_fn(rep)
+    lit_out = lit_fn(rep)
+    self.assertArraysEqual(lit_out, np.concatenate([rep, lit], 1))
+    self.assertArraysEqual(lit_out, expected_lit)
+
+    arr_e = jax.device_put(np.arange(16, dtype=np.float32).reshape(8, 2),
+                           P('e', None))
+    ones = np.ones((8, 2), np.float32)
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda x: lax.slice(x, (2, 0), (6, 2))).lower(arr_e)
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda x: lax.slice(x, (0, 0), (8, 2), (2, 1))).lower(arr_e)
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda x: lax.concatenate([x, ones], 1)).lower(arr_e)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

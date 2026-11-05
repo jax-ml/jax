@@ -1533,7 +1533,40 @@ def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
                       limit_indices=limit_indices, strides=strides)
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(slice_p, _slice_lower)
+
+def _slice_collective_rule(
+    in_avals, out_avals, *, start_indices, limit_indices, strides):
+  del out_avals
+  in_aval, = in_avals
+  in_parts = in_aval.sharding.spec.partitions
+  if all(p is None for p in in_parts):
+    return mlir.PartitioningRule()
+
+  mesh = mesh_lib.get_abstract_mesh()
+  eff_strides = strides or (1,) * in_aval.ndim
+  shard_starts, shard_limits = [], []
+  for in_size, in_s, start, limit, stride in safe_zip(
+      in_aval.shape, in_parts, start_indices, limit_indices, eff_strides):
+    if in_s is None:
+      # Allow sharding non-sharded dimensions.
+      shard_starts.append(start)
+      shard_limits.append(limit)
+    elif (start, limit, stride) == (0, in_size, 1):
+      # Translate a full global slice to a full sharded slice.
+      shard_starts.append(0)
+      shard_limits.append(in_size // _get_sub_spec_size(mesh, in_s))
+    else:
+      raise NotImplementedError
+
+  return mlir.PartitioningRule(per_shard_params={
+      'start_indices': tuple(shard_starts),
+      'limit_indices': tuple(shard_limits),
+  })
+
+
+mlir.register_lowering(
+    slice_p, _slice_lower, shard_map_collective_rule=_slice_collective_rule
+)
 
 
 def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes):

@@ -8560,7 +8560,22 @@ def _concatenate_lower(ctx, *xs, dimension):
   out = _concatenate_tree(xs, dimension)
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(concatenate_p, _concatenate_lower)
+
+def _concatenate_collective_rule(in_avals, out_avals, *, dimension):
+  out_aval, = out_avals
+  out_spec = out_aval.sharding.spec
+  # _concatenate_sharding_rule skips empty-mesh constants.
+  if (out_spec[dimension] is not None or
+      any(a.sharding.spec != out_spec for a in in_avals)):
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
+
+mlir.register_lowering(
+    concatenate_p,
+    _concatenate_lower,
+    shard_map_collective_rule=_concatenate_collective_rule,
+)
 
 # --- stack and unstack primitives ---
 
