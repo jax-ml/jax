@@ -644,6 +644,13 @@ def _dma_start_lowering_rule(
     _unsafe_no_write_effect: bool = False,
 ):
   del _unsafe_no_write_effect
+  # SparseCore only has a single DMA thread and rejects any non-zero priority;
+  # fail early instead.
+  if priority != 0:
+    raise NotImplementedError(
+        "DMA priority is not supported on SparseCore (it has a single DMA"
+        f" thread), but got priority={priority}; use priority=0."
+    )
   src_ref, dst_ref, sem, src_sem, device_id = _dma_unflatten(
       tree, args
   )
