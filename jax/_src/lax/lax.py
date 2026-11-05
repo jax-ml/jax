@@ -5979,7 +5979,7 @@ def _fma_lower(ctx, a, b, c):
     raise NotImplementedError(
         'lax.fma requires jaxlib_extension_version >= 515.'
     )
-  return _nary_lower_hlo(hlo.fma, ctx, a, b, c)
+  return _nary_lower_hlo(hlo.fma, ctx, a, b, c)  # pyrefly: ignore[missing-attribute]
 
 
 fma_p = standard_naryop([_float, _float, _float], 'fma')
@@ -5997,7 +5997,7 @@ def _fmuladd_lower(ctx, a, b, c, *, native_dtypes):
     return _nary_lower_hlo(_muladd_hlo, ctx, a, b, c)
   aval_out, = ctx.avals_out
   if aval_out.dtype in native_dtypes:
-    return _nary_lower_hlo(hlo.fma, ctx, a, b, c)
+    return _nary_lower_hlo(hlo.fma, ctx, a, b, c)  # pyrefly: ignore[missing-attribute]
   f32_type = mlir.aval_to_ir_type(
       ctx.module_context, aval_out.update(dtype=np.dtype(np.float32))
   )
@@ -6005,7 +6005,7 @@ def _fmuladd_lower(ctx, a, b, c, *, native_dtypes):
   return _nary_lower_hlo(
       lambda x, y, z: hlo.convert(
           out_type,
-          hlo.fma(
+          hlo.fma(  # pyrefly: ignore[missing-attribute]
               hlo.convert(f32_type, x),
               hlo.convert(f32_type, y),
               hlo.convert(f32_type, z),
