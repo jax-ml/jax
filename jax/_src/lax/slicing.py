@@ -3016,6 +3016,8 @@ def _scatter_addsub_jvp(
       mode=mode, out_sharding=out_sharding)
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
     tangent_out = ad_util.p2tz(val_out)
+  elif type(g_updates) is ad_util.Zero:
+    tangent_out = g_operand
   else:
     g_operand = ad.instantiate_zeros(g_operand)
     g_updates = ad.instantiate_zeros(g_updates)
