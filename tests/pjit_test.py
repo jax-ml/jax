@@ -11820,6 +11820,142 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_quantile_percentile_out_sharding(self, mesh):
+    rng = np.random.default_rng(0)
+    x_np = rng.normal(size=(4, 7, 4)).astype(np.float32)
+    x = jax.device_put(x_np, P('x', None, 'y'))
+
+    f_p = jax.jit(
+        lambda z: jnp.percentile(
+            z, 50.0, axis=1, out_sharding=P(('x', 'y'), None)
+        )
+    )
+    self.assertNotIn('Auto', str(f_p.trace(x).jaxpr))
+    p_scalar = f_p(x)
+    self.assertEqual(
+        p_scalar.sharding, NamedSharding(mesh, P(('x', 'y'), None))
+    )
+    self.assertAllClose(
+        p_scalar,
+        np.percentile(x_np, 50.0, axis=1),
+        atol=1e-5,
+        rtol=1e-5,
+        check_dtypes=False,
+    )
+    self.assertIn('sdy.sharding_constraint', f_p.lower(x).as_text('stablehlo'))
+
+    f_q = jax.jit(
+        lambda z: jnp.quantile(
+            z,
+            jnp.array([0.25, 0.75], dtype=np.float32),
+            axis=1,
+            keepdims=True,
+            out_sharding=P(None, 'x', None, 'y'),
+        )
+    )
+    self.assertNotIn('Auto', str(f_q.trace(x).jaxpr))
+    q_vec = f_q(x)
+    self.assertEqual(
+        q_vec.sharding, NamedSharding(mesh, P(None, 'x', None, 'y'))
+    )
+    self.assertAllClose(
+        q_vec,
+        np.quantile(x_np, [0.25, 0.75], axis=1, keepdims=True),
+        atol=1e-5,
+        rtol=1e-5,
+        check_dtypes=False,
+    )
+
+    f_sharded_ax = jax.jit(
+        lambda z: jnp.quantile(z, 0.5, axis=0, out_sharding=P(None, 'y'))
+    )
+    self.assertNotIn('Auto', str(f_sharded_ax.trace(x).jaxpr))
+    q_sh = f_sharded_ax(x)
+    self.assertEqual(q_sh.sharding, NamedSharding(mesh, P(None, 'y')))
+    self.assertAllClose(
+        q_sh,
+        np.quantile(x_np, 0.5, axis=0),
+        atol=1e-5,
+        rtol=1e-5,
+        check_dtypes=False,
+    )
+
+    f_tup = jax.jit(
+        lambda z: jnp.quantile(
+            z,
+            jnp.array([0.2, 0.8], dtype=np.float32),
+            axis=(0, 1),
+            out_sharding=P(None, 'y'),
+        )
+    )
+    self.assertNotIn('Auto', str(f_tup.trace(x).jaxpr))
+    q_tup = f_tup(x)
+    self.assertEqual(q_tup.sharding, NamedSharding(mesh, P(None, 'y')))
+    self.assertAllClose(
+        q_tup,
+        np.quantile(x_np, [0.2, 0.8], axis=(0, 1)),
+        atol=1e-5,
+        rtol=1e-5,
+        check_dtypes=False,
+    )
+
+    w_np = np.arange(1, 4 * 7 * 4 + 1, dtype=np.float32).reshape(4, 7, 4)
+    w = jax.device_put(w_np, P('x', None, 'y'))
+    f_w = jax.jit(
+        lambda z, wt: jnp.quantile(
+            z,
+            np.float32(0.5),
+            axis=1,
+            weights=wt,
+            method='inverted_cdf',
+            out_sharding=P('x', 'y'),
+        )
+    )
+    self.assertNotIn('Auto', str(f_w.trace(x, w).jaxpr))
+    q_w = f_w(x, w)
+    self.assertEqual(q_w.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertAllClose(
+        q_w,
+        np.quantile(x_np, 0.5, axis=1, weights=w_np, method='inverted_cdf'),
+        atol=1e-5,
+        rtol=1e-5,
+        check_dtypes=False,
+    )
+
+    x_nan_np = x_np.copy()
+    x_nan_np[0, 2, 1] = np.nan
+    x_nan = jax.device_put(x_nan_np, P('x', None, 'y'))
+    f_nanq = jax.jit(
+        lambda z: (
+            jnp.nanquantile(
+                z,
+                jnp.array([0.25, 0.75], dtype=np.float32),
+                axis=1,
+                out_sharding=P(None, 'x', 'y'),
+            ),
+            jnp.nanpercentile(z, 50.0, axis=None, out_sharding=P()),
+        )
+    )
+    self.assertNotIn('Auto', str(f_nanq.trace(x_nan).jaxpr))
+    nq_out, np_out = f_nanq(x_nan)
+    self.assertEqual(nq_out.sharding, NamedSharding(mesh, P(None, 'x', 'y')))
+    self.assertEqual(np_out.sharding, NamedSharding(mesh, P()))
+    self.assertAllClose(
+        nq_out,
+        np.nanquantile(x_nan_np, [0.25, 0.75], axis=1),
+        atol=1e-5,
+        rtol=1e-5,
+        check_dtypes=False,
+    )
+    self.assertAllClose(
+        np_out,
+        np.nanpercentile(x_nan_np, 50.0),
+        atol=1e-5,
+        rtol=1e-5,
+        check_dtypes=False,
+    )
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_jnp_roll(self, mesh):
     arr = jax.device_put(jnp.arange(64).reshape(8, 4, 2), P('x', 'y', None))
     arr2 = jax.device_put(jnp.arange(16).reshape(8, 2), P('x', None))
