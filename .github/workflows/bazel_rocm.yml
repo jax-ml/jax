@@ -116,6 +116,7 @@ on:
         required: false
         default: ""
         type: string
+permissions: {}
 jobs:
   run-tests:
     defaults:
