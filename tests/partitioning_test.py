@@ -18,6 +18,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
+from jax.sharding import AxisType
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import parallel
@@ -523,6 +524,79 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       jax.jit(lambda x: lax.slice(x, (0, 0), (8, 2), (2, 1))).lower(arr_e)
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda x: lax.concatenate([x, ones], 1)).lower(arr_e)
+
+  @parameterized.parameters((None,), ('x',))
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_auto_axes(self, axes, mesh):
+    np_x = np.arange(16, dtype=np.float32).reshape(4, 4)
+    x = jax.device_put(np_x, P('x', 'y'))
+
+    def g(b):
+      return b * 2
+
+    @jax.jit
+    def f(a):
+      return jax.sharding.auto_axes(g, axes=axes, out_sharding=P('y', 'x'))(a)
+
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('y', 'x')))
+    self.assertArraysEqual(out, np_x * 2)
+
+  @parameterized.parameters(
+      ((AxisType.Auto, AxisType.Auto), None),
+      ((AxisType.Explicit, AxisType.Auto), 'y'),
+  )
+  @config.shard_map_partitioning(True)
+  def test_explicit_axes_in_auto_mesh(self, axis_types, axes):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), axis_types=axis_types)
+    np_x = np.arange(16, dtype=np.float32).reshape(4, 4)
+
+    def g(b):
+      return jax.reshard(b * 2, P('y', 'x'))
+
+    @jax.jit
+    def f(a):
+      return jax.sharding.explicit_axes(
+          g, axes=axes, in_sharding=P('x', 'y'))(a)
+
+    with jax.set_mesh(mesh):
+      x = jax.device_put(np_x, NamedSharding(mesh, P('x', 'y')))
+      # The reshard inside the explicit region still uses shard_map.
+      self.assertIn('sdy.manual_computation', f.lower(x).as_text())
+      out = f(x)
+    self.assertArraysEqual(out, np_x * 2)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_partial_manual_auto_axes(self, mesh):
+    np_x = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
+    x = jax.device_put(np_x, P('x', 'y', 'z'))
+
+    def auto_fn(c):
+      return c * 2
+
+    def manual_fn(b):
+      # 'x' is Manual here; drop into Auto on the remaining axes ('y', 'z').
+      b = jax.reshard(b, P(None, 'z', 'y'))
+      return jax.sharding.auto_axes(
+          auto_fn, axes=('y', 'z'), out_sharding=P(None, 'y', 'z'))(b)
+
+    @jax.jit
+    def f(a):
+      return jax.shard_map(
+          manual_fn, mesh=mesh, in_specs=P('x', None, None),
+          out_specs=P('x', None, None), axis_names={'x'})(a)
+
+    lowered_text = f.lower(x).as_text()
+    # One for the outer shard_map on 'x', one for the explicit reshard on
+    # ('y', 'z'), and none from `auto_axes`.
+    self.assertEqual(lowered_text.count('sdy.manual_computation'), 2)
+    self.assertIn('sdy.sharding_constraint', lowered_text)
+
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y', 'z')))
+    self.assertArraysEqual(out, np_x * 2)
 
 
 if __name__ == '__main__':

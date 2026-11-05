@@ -2798,12 +2798,13 @@ def _auto_axes(fun, *, axes_, out_sharding):
     if set(mesh_info.prev.auto_axes) == set(mesh_info.axes):
       return fun(*args, **kwargs)
     in_avals = [core.typeof(a) for a in tree_leaves(args)]
-    with mesh_lib.use_abstract_mesh(mesh_info.new):
-      in_specs = tree_map(
-          lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
-      args = reshard(args, in_specs)
-      out = fun(*args, **kwargs)
-    res = reshard(out, _out_sharding)
+    with config.shard_map_partitioning(False):
+      with mesh_lib.use_abstract_mesh(mesh_info.new):
+        in_specs = tree_map(
+            lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
+        args = reshard(args, in_specs)
+        out = fun(*args, **kwargs)
+      res = reshard(out, _out_sharding)
     if config.no_collectives.value:
       from jax._src.lax import utils as lax_utils  # type: ignore
       out_shardings = [core.typeof(o).sharding for o in tree_leaves(res)
@@ -2836,12 +2837,15 @@ def _explicit_axes(fun, *, axes, in_sharding):
           'Context mesh cannot be empty. Please use `jax.set_mesh` API to enter'
           ' into a mesh context when using `explicit_axes` API.')
     with mesh_lib.use_abstract_mesh(mesh_info.new):
-      args = reshard(args, _in_sharding)
+      # The input layout was chosen by Shardy, so let it reshard into explicit.
+      with config.shard_map_partitioning(False):
+        args = reshard(args, _in_sharding)
       out = fun(*args, **kwargs)
     out_specs = tree_map(
         lambda o: _modify_spec_for_auto_manual_hi(o, mesh_lib.get_abstract_mesh()),
         out)
-    return reshard(out, out_specs)
+    with config.shard_map_partitioning(False):
+      return reshard(out, out_specs)
   return decorator
 
 # -------------------- with_layout_constraint --------------------
