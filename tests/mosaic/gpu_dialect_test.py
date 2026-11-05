@@ -3271,6 +3271,19 @@ class DialectLoweringTest(MosaicGpuTest):
       files = os.listdir(dump_dir)
       self.assertTrue(any(f.endswith(".constraint_system.txt") for f in files))
 
+  def test_wgmma_nonsquare_large_tile_mn_fastest_raises(self):
+    with self.kernel():
+      f16 = ir.F16Type.get()
+      smem = mgpu_utils.smem()
+      a, b = undefs(
+          ir.MemRefType.get((1, 1, 32, 64), f16, memory_space=smem),
+          ir.MemRefType.get((1, 1, 32, 32), f16, memory_space=smem),
+      )
+      a = mgpu_utils.memref_transpose(a, (0, 1, 3, 2))
+      acc = mgpu.WGMMAAccumulator.zero(64, 32, ir.F32Type.get())
+      with self.assertRaisesRegex(ValueError, "when the tiling is square"):
+        mgpu.wgmma(acc, a, b, swizzle=64)
+
 
 if hp is not None:
   @hps.composite

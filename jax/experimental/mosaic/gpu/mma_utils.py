@@ -81,6 +81,10 @@ def create_descriptor(
   mma_width_k = 8 * mma_bytewidth_k // element_bitwidth
   desc_k_tiling: tuple[int, ...] = ()
   desc_k_strides: tuple[int, ...]
+  if k_tiling_stride > mn_tiling_stride:
+    slower_tiling, faster_tiling = k_tiling, mn_tiling
+  else:
+    faster_tiling, slower_tiling = k_tiling, mn_tiling
   # As far as I can tell (which does not seem to fully align with the way MMA is
   # documented in PTX docs), MMA expects the data to be tiled into matrices
   # of shape 8 x swizzle_elems, with swizzle_elems dim being the fastest
@@ -95,10 +99,14 @@ def create_descriptor(
       large_tile is not None
       and k_large_tile == k_tiling
       and mn_large_tile is not None
-      and (mn_large_tile == mn_tiling or mn_tiles == 1 and mn_tiling < mn_large_tile)
+      and (
+          mn_large_tile == mn_tiling
+          or mn_tiles == 1
+          and mn_tiling < mn_large_tile
+      )
       # There are configurations where large tiles are same size as small ones.
       # We use the small path since it has fewer restrictions.
-      and set(large_tile) != {MMA_ATOM_ROWS, swizzle_elems}
+      and (slower_tiling, faster_tiling) != (MMA_ATOM_ROWS, swizzle_elems)
       and mma_bytewidth_k == 32
   ):  # Large tiles.
     if k_tiling_stride == 1 and mn_tiling_stride == k_tiling:
@@ -123,7 +131,7 @@ def create_descriptor(
         )
       stride_byte_offset = MMA_ATOM_ROWS * swizzle
       desc_k_strides = (mma_bytewidth_k,)  # K is contiguous.
-    elif k_tiling_stride == k_tiling and mn_tiling_stride == 1:
+    elif k_tiling_stride == mn_large_tile and mn_tiling_stride == 1:
       if k_large_tile != mn_large_tile:
         raise ValueError(
             "MMA layout with large tiles that is MN-fastest is only supported"
@@ -141,10 +149,6 @@ def create_descriptor(
     else:
       raise ValueError("MMA tiles must be contiguous")
   else:  # Small tiles.
-    if k_tiling_stride > mn_tiling_stride:
-      slower_tiling, faster_tiling = k_tiling, mn_tiling
-    else:
-      faster_tiling, slower_tiling = k_tiling, mn_tiling
     if slower_tiling != MMA_ATOM_ROWS or faster_tiling != swizzle_elems:
       raise ValueError(
           f"Tiling should be ({MMA_ATOM_ROWS}, swizzle_elems) where"
