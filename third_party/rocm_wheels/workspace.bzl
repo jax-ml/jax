@@ -27,8 +27,8 @@ Usage in MODULE.bazel:
 
     rocm_wheels_repository(
         name = "rocm_wheels",
-        jaxlib_version = JAXLIB_VERSION,
         python_version = DEFAULT_PYTHON_VERSION,
+        version_source = "//jax:version.py",
     )
 
 Then reference the targets as:
@@ -100,7 +100,27 @@ def _major_minor(version):
         return version + "."
     return parts[0] + "." + parts[1] + "."
 
-def _fetch_release_metadata(repository_ctx, headers):
+def _read_version_from_source(repository_ctx):
+    """Reads `version_key = "..."` from `version_source`."""
+    content = repository_ctx.read(
+        repository_ctx.path(repository_ctx.attr.version_source),
+    )
+    key = repository_ctx.attr.version_key
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(key):
+            continue
+        rest = stripped[len(key):].lstrip()
+        if not rest.startswith("=") or rest.startswith("=="):
+            continue
+        value = rest[1:].lstrip()
+        if value and value[0] in ("\"", "'"):
+            end_quote = value.find(value[0], 1)
+            if end_quote > 1:
+                return value[1:end_quote]
+    fail("Could not find {} in {}".format(key, repository_ctx.attr.version_source))
+
+def _fetch_release_metadata(repository_ctx, headers, jaxlib_version):
     owner = repository_ctx.attr.github_owner
     repo = repository_ctx.attr.github_repo
     tag = repository_ctx.attr.tag
@@ -116,7 +136,7 @@ def _fetch_release_metadata(repository_ctx, headers):
             fail("Release '{}' not found in {}/{}".format(tag, owner, repo))
         return release
 
-    version_tag = "rocm-jax-v{}".format(repository_ctx.attr.jaxlib_version)
+    version_tag = "rocm-jax-v{}".format(jaxlib_version)
 
     # Try exact version match first.
     release = _download_release_json(
@@ -130,7 +150,7 @@ def _fetch_release_metadata(repository_ctx, headers):
     # Exact tag not found — scan all recent releases for the best match.
     # Prefer the highest version with the same major.minor, including RCs
     # (e.g. for jaxlib 0.9.1, match rocm-jax-v0.9.0-rc2).
-    mm_prefix = "rocm-jax-v" + _major_minor(repository_ctx.attr.jaxlib_version)
+    mm_prefix = "rocm-jax-v" + _major_minor(jaxlib_version)
     releases = _download_releases_list(
         repository_ctx,
         "{}/releases?per_page=50".format(base_api),
@@ -206,7 +226,7 @@ def _find_wheel_assets(release, python_version, rocm_version):
 
 def _rocm_wheels_repository_impl(repository_ctx):
     python_version = repository_ctx.os.environ.get("HERMETIC_PYTHON_VERSION", repository_ctx.attr.python_version)
-    jaxlib_version = repository_ctx.attr.jaxlib_version
+    jaxlib_version = repository_ctx.attr.jaxlib_version or _read_version_from_source(repository_ctx)
     rocm_version = repository_ctx.attr.rocm_version
 
     py_tag = "cp" + python_version.replace(".", "")
@@ -242,7 +262,7 @@ def _rocm_wheels_repository_impl(repository_ctx):
 
     else:
         headers = _get_github_headers(repository_ctx)
-        release = _fetch_release_metadata(repository_ctx, headers)
+        release = _fetch_release_metadata(repository_ctx, headers, jaxlib_version)
 
         plugin_asset, pjrt_asset = _find_wheel_assets(
             release,
@@ -289,16 +309,25 @@ rocm_wheels_repository = repository_rule(
             doc = "GitHub release tag override. If empty, derived as 'rocm-jax-v{jaxlib_version}'.",
         ),
         "jaxlib_version": attr.string(
-            mandatory = True,
-            doc = "JAX/jaxlib version to match, e.g. '0.9.1'.",
+            default = "",
+            doc = "JAX/jaxlib version to match, e.g. '0.12.1'. Overrides version_source if set.",
         ),
         "python_version": attr.string(
             mandatory = True,
-            doc = "Python version to match wheels against, e.g. '3.11'.",
+            doc = "Python version to match wheels against, e.g. '3.12'.",
         ),
         "rocm_version": attr.string(
             default = "",
             doc = "ROCm version to match, e.g. '7.2.0'. If empty, picks the first match.",
+        ),
+        "version_key": attr.string(
+            default = "_version",
+            doc = "Variable name in version_source holding the JAX/jaxlib version string.",
+        ),
+        "version_source": attr.label(
+            default = Label("//jax:version.py"),
+            allow_single_file = True,
+            doc = "Python file to read version_key from when jaxlib_version is not set.",
         ),
     },
     environ = ["GITHUB_TOKEN", "HERMETIC_PYTHON_VERSION"],
