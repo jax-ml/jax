@@ -1824,12 +1824,6 @@ class JitGlobalCppCacheKeys:
   out_layouts_treedef: PyTreeDef | None = None
   out_layouts_leaves: tuple[Any, ...] | None = None
   compiler_options_kvs: tuple[tuple[str, Any], ...] | None = None
-  # The C++ call signature records the values of the static arguments but not
-  # which positions are static, and it does not record keep_unused, so jit
-  # instances of the same function that differ only in these options must not
-  # share cache entries. They are deliberately not part of
-  # `contains_explicit_attributes`, which only chooses which global cache is
-  # used.
   static_argnums: tuple[int, ...] | None = None
   static_argnames: tuple[str, ...] | None = None
   keep_unused: bool = False
