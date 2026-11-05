@@ -44,6 +44,7 @@ limitations under the License.
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/util.h"
 #include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -53,6 +54,7 @@ limitations under the License.
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/rtti.h"
+#include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
@@ -237,10 +239,10 @@ MakePjrtBuffer(xla::PjRtDevice& device, const DLTensor& dl_tensor,
   // in which case we'll fallback to copy. On non-CPU, array-api copy
   // semantics is handled in dlpack._place_array function.
   bool fallback_to_copy =
-      !copy.has_value() &&
-      (effective_device_type == kDLCPU ||
-       effective_device_type == kDLCUDAHost ||
-       effective_device_type == kDLROCMHost);
+      !copy.has_value() && (effective_device_type == kDLCPU ||
+                            effective_device_type == kDLCUDAHost ||
+                            effective_device_type == kDLROCMHost ||
+                            effective_device_type == kDLTPUHost);
 
   // Create a view.
   if (!copy.value_or(false)) {
@@ -264,7 +266,8 @@ MakePjrtBuffer(xla::PjRtDevice& device, const DLTensor& dl_tensor,
       auto buffer,
       device.client()->BufferFromHostBuffer(
           data, element_type, dimensions, byte_strides,
-          xla::PjRtClient::HostBufferSemantics::kMutableZeroCopy,
+          xla::PjRtClient::HostBufferSemantics::
+              kImmutableUntilTransferCompletes,
           on_delete_callback, memory_space, /*device_layout=*/nullptr));
   return std::make_pair(std::move(buffer), true);
 }
@@ -396,7 +399,8 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
 absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
     const nb::capsule& tensor, ifrt::Device* ifrt_device,
     nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream,
-    std::optional<bool> copy, std::optional<DLDeviceType> dl_device_type) {
+    std::optional<bool> copy, std::optional<DLDeviceType> dl_device_type,
+    nb::object layout) {
   ifrt::PjRtDevice* device =
       xla::ifrt::dyn_cast_or_null<ifrt::PjRtDevice>(ifrt_device);
   if (device == nullptr) {
@@ -461,8 +465,31 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
     minor_to_major.resize(dl_tensor->ndim);
     std::iota(minor_to_major.rbegin(), minor_to_major.rend(), 0);
   }
-  xla::Shape shape = xla::ShapeUtil::MakeShapeWithDenseLayout(
-      element_type, dimensions, minor_to_major);
+  ABSL_ASSIGN_OR_RETURN(xla::Shape shape,
+                        xla::ShapeUtil::MakeValidatedShapeWithDenseLayout(
+                            element_type, dimensions, minor_to_major));
+  if (!layout.is_none()) {
+    ABSL_ASSIGN_OR_RETURN(xla::nb_dtype dtype,
+                          xla::PrimitiveTypeToNbDtype(element_type));
+    xla::Layout custom_layout =
+        nb::cast<xla::Layout>(layout.attr("_to_xla_layout")(dtype));
+    if (custom_layout.minor_to_major().size() != dimensions.size()) {
+      return xla::InvalidArgument(
+          "Layout minor_to_major size %d does not match tensor rank %d",
+          custom_layout.minor_to_major().size(), dimensions.size());
+    }
+    if (custom_layout.minor_to_major() == minor_to_major) {
+      *shape.mutable_layout() = custom_layout;
+      ABSL_RETURN_IF_ERROR(
+          xla::LayoutUtil::ValidateLayoutForShape(shape.layout(), shape));
+      has_custom_layout = true;
+    } else if (!copy.has_value() &&
+               (dl_device_type == kDLCPU || dl_device_type == kDLCUDAHost ||
+                dl_device_type == kDLROCMHost ||
+                dl_device_type == kDLTPUHost)) {
+      copy = true;
+    }
+  }
 
   ABSL_ASSIGN_OR_RETURN(
       auto pjrt_buffer_and_copied,

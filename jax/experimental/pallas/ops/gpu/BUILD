@@ -22,14 +22,6 @@ exports_files(
 )
 
 filegroup(
-    name = "triton_ops",
-    srcs = glob(
-        ["*.py"],
-        exclude = ["*_mgpu.py"],
-    ),
-)
-
-filegroup(
     name = "mgpu_ops",
-    srcs = glob(["*_mgpu.py"]),
+    srcs = glob(["*.py"]),
 )

@@ -816,6 +816,10 @@ class WeakrefLRUCache : public WeakrefLRUCacheBase {
 PyObject* WeakrefLRUCache::VectorCall(PyObject* self_obj, PyObject* const* args,
                                       Py_ssize_t nargsf, PyObject* kwnames) {
   try {
+    if (!nb::inst_ready(self_obj)) {
+      PyErr_SetString(PyExc_TypeError, "Uninitialized WeakrefLRUCache");
+      return nullptr;
+    }
     WeakrefLRUCache* self = nb::inst_ptr<WeakrefLRUCache>(self_obj);
     if (!self) {
       PyErr_SetString(PyExc_TypeError, "Not a WeakrefLRUCache");
@@ -898,6 +902,9 @@ PyObject* WeakrefLRUCache::VectorCall(PyObject* self_obj, PyObject* const* args,
 }
 
 /*static*/ int WeakrefLRUCache::tp_clear(PyObject* self_obj) {
+  if (!nb::inst_ready(self_obj)) {
+    return 0;
+  }
   WeakrefLRUCache* self = nb::inst_ptr<WeakrefLRUCache>(self_obj);
   self->TpClear();
   return 0;
@@ -969,6 +976,10 @@ PyObject* MultiWeakrefLRUCache::VectorCall(PyObject* self_obj,
                                            Py_ssize_t nargsf,
                                            PyObject* kwnames) {
   try {
+    if (!nb::inst_ready(self_obj)) {
+      PyErr_SetString(PyExc_TypeError, "Uninitialized MultiWeakrefLRUCache");
+      return nullptr;
+    }
     MultiWeakrefLRUCache* self = nb::inst_ptr<MultiWeakrefLRUCache>(self_obj);
     if (!self) {
       PyErr_SetString(PyExc_TypeError, "Not a MultiWeakrefLRUCache");
@@ -1067,6 +1078,9 @@ PyObject* MultiWeakrefLRUCache::VectorCall(PyObject* self_obj,
 }
 
 /*static*/ int MultiWeakrefLRUCache::tp_clear(PyObject* self_obj) {
+  if (!nb::inst_ready(self_obj)) {
+    return 0;
+  }
   MultiWeakrefLRUCache* self = nb::inst_ptr<MultiWeakrefLRUCache>(self_obj);
   self->TpClear();
   self->registry_.reset();

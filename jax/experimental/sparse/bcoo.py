@@ -62,7 +62,7 @@ CUSPARSE_INDEX_DTYPES = [np.int32]
 def _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo, batch_size=None):
   data, indices = batched_args
   data_bdim, indices_bdim = batch_dims
-  n_batch = indices.ndim - 2 + bool(indices_bdim is None)
+  n_batch = indices.ndim - 2 + (indices_bdim is None)
   if not all(b is None or 0 <= b < n_batch for b in batch_dims):
     raise NotImplementedError("batch_dims must be None or satisfy 0 < dim < n_batch. "
                               f"Got {batch_dims=} for {n_batch=}.")
@@ -2373,7 +2373,7 @@ def bcoo_conv_general_dilated(lhs, rhs, *, window_strides, padding,
       out_sharding=out_sharding)
   jaxpr = jax.make_jaxpr(func)(jax.ShapeDtypeStruct(lhs.shape, lhs.dtype),
                                jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
-  assert isinstance(jaxpr, core.ClosedJaxpr) and len(jaxpr.eqns) == 1
+  assert isinstance(jaxpr, core.Jaxpr) and len(jaxpr.eqns) == 1
   params = jaxpr.eqns[0].params
 
   if params['lhs_dilation'] !=  (1,) * (lhs.ndim - 2):

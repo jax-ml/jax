@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -59,7 +60,6 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/OperationSupport.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Types.h"
@@ -358,6 +358,134 @@ llvm::LogicalResult AsyncLoadOp::verify() {
       return emitOpError(
           "Only the `promise_in_bounds` out-of-bounds fill mode is supported "
           "without a `barrier`.");
+    }
+  }
+
+  return llvm::success();
+}
+
+llvm::LogicalResult AsyncLoadIm2colOp::verify() {
+  auto error = [this](auto... params) {
+    return emitOpError(llvm::formatv(params...));
+  };
+
+  mlir::MemRefType source_type = getSource().getType();
+  mlir::MemRefType dest_type = getDestination().getType();
+
+  if (source_type.getElementType() != dest_type.getElementType()) {
+    return error(
+        "The `source` and `destination` memrefs must have the same element "
+        "type.");
+  }
+
+  mlir::Type element_type = source_type.getElementType();
+  if (!element_type.isIntOrFloat()) {
+    return error("Expected an integer or float element type, but got {0}.",
+                 element_type);
+  }
+  if (element_type.getIntOrFloatBitWidth() < 8) {
+    return error("Sub-byte types are not supported, got {0}.", element_type);
+  }
+
+  int64_t source_rank = source_type.getRank();
+  if (source_rank < 3 || source_rank > 5) {
+    return error("The rank of `source` must be in [3, 5], but got {0}.",
+                 source_rank);
+  }
+
+  if (dest_type.getRank() < 2) {
+    return error("The rank of `destination` must be at least 2, but got {0}.",
+                 dest_type.getRank());
+  }
+
+  int64_t num_rows = 1;
+  for (int64_t d : dest_type.getShape().drop_back()) {
+    num_rows *= d;
+  }
+  int64_t num_channels = dest_type.getShape().back();
+  if (num_rows < 1 || num_rows > 1024) {
+    return error(
+        "The number of rows in `destination` must be in [1, 1024], but got "
+        "{0}.",
+        num_rows);
+  }
+  if (num_channels < 1 || num_channels > 256) {
+    return error(
+        "The number of columns in `destination` must be in [1, 256], but got "
+        "{0}.",
+        num_channels);
+  }
+  int64_t elem_bytewidth = element_type.getIntOrFloatBitWidth() / 8;
+  if ((num_channels * elem_bytewidth) % 16 != 0) {
+    return error(
+        "The last dimension of `destination` must have a bytewidth divisible "
+        "by 16, but got {0} * {1}.",
+        num_channels, elem_bytewidth);
+  }
+
+  if (getIndices().size() != source_rank) {
+    return error(
+        "The size of `indices` must be equal to the rank of `source`.");
+  }
+
+  int64_t num_spatial = source_rank - 2;
+  if (getFilterOffsets().size() != num_spatial) {
+    return error(
+        "The size of `filter_offsets` must be equal to the number of spatial "
+        "dimensions ({0}), but got {1}.",
+        num_spatial, getFilterOffsets().size());
+  }
+
+  llvm::ArrayRef<int64_t> lower_bounds = getWindowLowerBounds();
+  if (lower_bounds.size() != num_spatial) {
+    return error(
+        "The size of `window_lower_bounds` must be equal to the number of "
+        "spatial dimensions ({0}), but got {1}.",
+        num_spatial, lower_bounds.size());
+  }
+
+  llvm::ArrayRef<int64_t> upper_bounds = getWindowUpperBounds();
+  if (upper_bounds.size() != num_spatial) {
+    return error(
+        "The size of `window_upper_bounds` must be equal to the number of "
+        "spatial dimensions ({0}), but got {1}.",
+        num_spatial, upper_bounds.size());
+  }
+
+  llvm::ArrayRef<int64_t> strides = getWindowStrides();
+  if (strides.size() != num_spatial) {
+    return error(
+        "The size of `window_strides` must be equal to the number of spatial "
+        "dimensions ({0}), but got {1}.",
+        num_spatial, strides.size());
+  }
+
+  int64_t bits = 16 / num_spatial;
+  int64_t min_bound = -(1LL << (bits - 1));
+  int64_t max_bound = (1LL << (bits - 1)) - 1;
+  for (int64_t i = 0; i < num_spatial; ++i) {
+    int64_t lower = lower_bounds[i];
+    int64_t upper = upper_bounds[i];
+    if (std::min(lower, upper) < min_bound ||
+        std::max(lower, upper) > max_bound) {
+      return error(
+          "Window bounds at spatial dimension {0} must be in [{1}, {2}] for "
+          "rank {3}, but got [{4}, {5}].",
+          i, min_bound, max_bound, source_rank, lower, upper);
+    }
+    int64_t spatial_size = source_type.getDimSize(i + 1);
+    if (!mlir::ShapedType::isDynamic(spatial_size) &&
+        spatial_size + upper - lower < 1) {
+      return error(
+          "Window bounds must have non-zero extent along spatial dimension "
+          "{0}, but got {1} + {2} - {3}.",
+          i, spatial_size, upper, lower);
+    }
+    if (strides[i] < 1 || strides[i] > 8) {
+      return error(
+          "Window stride at spatial dimension {0} must be in [1, 8], but got "
+          "{1}.",
+          i, strides[i]);
     }
   }
 
@@ -1245,6 +1373,16 @@ llvm::LogicalResult MultimemLoadReduceOp::verify() {
   return mlir::success();
 }
 
+llvm::LogicalResult CumulativeReductionOp::verify() {
+  mlir::VectorType src_type = getSource().getType();
+  int64_t dimension = getDimension();
+  if (dimension < 0 || dimension >= src_type.getRank()) {
+    return emitOpError() << "The reduction dimension must be in [0, "
+                         << src_type.getRank() << ") but got " << dimension;
+  }
+  return llvm::success();
+}
+
 llvm::LogicalResult VectorStoreOp::verify() {
   mlir::VectorType src_type = getValueToStore().getType();
   mlir::MemRefType dst_type = getDestination().getType();
@@ -1361,72 +1499,6 @@ llvm::LogicalResult RunScopedOp::verify() {
   return llvm::success();
 }
 
-llvm::LogicalResult ReinterpretCastOp::verify() {
-  auto source_type = getSource().getType();
-  auto result_type = getResult().getType();
-
-  if (source_type.getElementType() != result_type.getElementType()) {
-    return emitOpError(
-        "source and result memrefs must have the same element type");
-  }
-
-  int64_t source_num_elements = source_type.getNumElements();
-  int64_t result_num_elements = result_type.getNumElements();
-
-  if (source_num_elements != result_num_elements) {
-    return emitOpError(llvm::formatv(
-        "source and result memrefs must have the same number of elements, "
-        "but got {0} and {1}",
-        source_num_elements, result_num_elements));
-  }
-
-  return llvm::success();
-}
-
-mlir::OpFoldResult ReinterpretCastOp::fold(FoldAdaptor) {
-  // Eliminate no-op casts: if source and result types are identical, return the
-  // source directly.
-  if (getSource().getType() == getResult().getType()) {
-    return getSource();
-  }
-
-  // Fold chains: reinterpret_cast(reinterpret_cast(x)) -> reinterpret_cast(x).
-  if (auto parent_cast = getSource().getDefiningOp<ReinterpretCastOp>()) {
-    getSourceMutable().assign(parent_cast.getSource());
-    return getResult();
-  }
-
-  return {};
-}
-
-namespace {
-
-// Rewrites `mgpu.reinterpret_cast(ty, mgpu.slice_smem(...))` to
-// `mgpu.slice_smem(ty, ...)`.
-struct FoldMGPUReinterpretCastOfSliceSMEM
-    : public mlir::OpRewritePattern<ReinterpretCastOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult matchAndRewrite(
-      ReinterpretCastOp op, mlir::PatternRewriter& rewriter) const override {
-    auto slice_op = op.getSource().getDefiningOp<SliceSMEMOp>();
-    if (!slice_op) {
-      return mlir::failure();
-    }
-
-    MemRefType result_type = op.getResult().getType();
-    rewriter.replaceOpWithNewOp<SliceSMEMOp>(
-        op, result_type, slice_op.getOffsetAttr(), slice_op.getAliasIdAttr());
-    return mlir::success();
-  }
-};
-}  // namespace
-
-void ReinterpretCastOp::getCanonicalizationPatterns(
-    mlir::RewritePatternSet& patterns, mlir::MLIRContext* context) {
-  patterns.add<FoldMGPUReinterpretCastOfSliceSMEM>(context);
-}
-
 mlir::OpFoldResult BroadcastInDimOp::fold(FoldAdaptor) {
   // Fold chains: broadcast_in_dim(broadcast_in_dim(x)) -> broadcast_in_dim(x).
   auto parent_bcast = getOperand().getDefiningOp<BroadcastInDimOp>();
@@ -1445,56 +1517,6 @@ mlir::OpFoldResult BroadcastInDimOp::fold(FoldAdaptor) {
   getOperandMutable().assign(parent_bcast.getOperand());
   setBroadcastDimensions(new_dims);
   return getResult();
-}
-
-namespace {
-
-struct HoistReinterpretCastOutOfWarpMap
-    : public mlir::OpRewritePattern<WarpMapOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult matchAndRewrite(
-      WarpMapOp op, mlir::PatternRewriter& rewriter) const override {
-    bool modified = false;
-    mlir::Block& body = op.getRegion().front();
-    for (auto [i, operand, body_operand] :
-        llvm::enumerate(op->getOperands(), body.getArguments())) {
-      Type user_type = nullptr;
-      // It is only safe to rewrite the type of the argument if all of its uses
-      // are reinterpret_cast operations producing the same return type.
-      if (body_operand.hasNUsesOrMore(1) &&
-          absl::c_all_of(
-              body_operand.getUsers(), [&user_type](mlir::Operation* user) {
-                if (auto rc_op = llvm::dyn_cast<ReinterpretCastOp>(user)) {
-                  if (!user_type) {
-                    user_type = rc_op.getType();
-                  }
-                  return rc_op.getType() == user_type;
-                }
-                return false;
-              })) {
-        auto new_cast = ReinterpretCastOp::create(rewriter, op.getLoc(),
-                                                  user_type, operand);
-        rewriter.modifyOpInPlace(op, [&]() {
-          op->setOperand(i, new_cast);
-          body_operand.setType(user_type);
-        });
-        // Copy the users of the body operand to a vector to avoid invalidating
-        // the iterator while erasing them.
-        for (auto user : llvm::to_vector(body_operand.getUsers())) {
-          rewriter.replaceOp(user, body_operand);
-        }
-        modified = true;
-      }
-    }
-    return modified ? mlir::success() : mlir::failure();
-  }
-};
-}  // namespace
-
-void WarpMapOp::getCanonicalizationPatterns(mlir::RewritePatternSet& patterns,
-                                            mlir::MLIRContext* context) {
-  patterns.add<HoistReinterpretCastOutOfWarpMap>(context);
 }
 
 llvm::LogicalResult GetClusterRefOp::inferReturnTypes(

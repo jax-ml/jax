@@ -884,7 +884,6 @@ class SharedMemory(
     return (device_id, local_core_id)
 
   def print(self, device_id: int):
-    device_id = int(device_id)
     if device_id == 0:
       with self.lock:
         print(self.mem)

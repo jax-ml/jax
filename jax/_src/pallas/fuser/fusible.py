@@ -18,8 +18,8 @@ from typing import Any, Callable
 
 import jax
 from jax._src import api_util
+from jax._src import config
 from jax._src import core as jax_core
-from jax._src import effects
 from jax._src import flattree as ft
 from jax._src import hijax
 from jax._src import tree_util
@@ -31,11 +31,13 @@ from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.traceback_util import api_boundary
 
 
-def _positional_effects(jaxpr: jax_core.Jaxpr) -> frozenset[effects.Effect]:
-  if not any(isinstance(e, effects.JaxprInputEffect) for e in jaxpr.effects):
-    return frozenset(jaxpr.effects)
-  idx = {v: i for i, v in enumerate(jaxpr.constvars + jaxpr.invars)}
-  return frozenset(jax_core.subst_input_effects(jaxpr.effects, idx))
+disable_nested_fuse = config.State[bool](
+    "pallas_fuser_disable_nested_fuse",
+    False,
+    "Prevents nested fuse calls from fusing.",
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
 
 
 class Fusible(hijax.HiPrim):
@@ -66,7 +68,7 @@ class Fusible(hijax.HiPrim):
         "num_consts": num_consts,
         "args_tree": args_tree,
     }
-    self.effects = _positional_effects(jaxpr)
+    self.effects = frozenset(jax_core.positional_effects(jaxpr))
     super().__init__()
 
   def inline(self, *consts_and_args):
@@ -98,10 +100,10 @@ class Fusible(hijax.HiPrim):
     def unbatch_leaf(a, d):
       if d is None:
         return a
-      return a[d]
+      return jax.lax.squeeze(a, (d,))
 
     unbatched_args = tree_util.tree_map(unbatch_leaf, args, dims)
-    out_unbatched = self(*unbatched_args)  # pyrefly: ignore[not-callable]
+    out_unbatched = self(*unbatched_args)
 
     def batch_leaf(o):
       return o[None]
@@ -115,7 +117,7 @@ class Fusible(hijax.HiPrim):
     del ctx
     consts = args[: self.num_consts]
     new_jaxpr = fusible_dtype.physicalize_closed_jaxpr(
-        jax_core.ClosedJaxpr(self.jaxpr, list(consts))
+        self.jaxpr.with_consts(consts)
     )
 
     const_avals = tuple(map(jax_core.typeof, new_jaxpr.consts))
@@ -150,6 +152,32 @@ def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
 
 @partial(api_boundary, repro_api_name="fuser.fusible")
 def fusible(f=None, *, output_fusion_prefix: Any = True):
+  """Decorator that marks a kernel wrapper function as a fusible for ``fuse``.
+
+  The decorated function ``f`` is invoked as ``f(*in_fusions, output_fusions,
+  **kwargs)``, where each positional argument in ``in_fusions`` preserves the
+  PyTree structure of the corresponding input in ``*args`` with array leaves
+  wrapped in ``Fusion`` objects, and ``output_fusions`` is a PyTree matching the
+  structure of ``output_fusion_prefix`` whose leaves are ``Fusion`` objects or
+  ``None`` when no output fusion is present. Keyword arguments are bound to ``f``
+  as static values. When called outside ``fuse``, each input array leaf is
+  wrapped in a trivial ``Fusion`` that returns it and all ``output_fusions``
+  leaves are ``None``.
+
+  Args:
+    f: The fusible kernel function to decorate. If ``None``, returns a
+      decorator.
+    output_fusion_prefix: A PyTree prefix mask whose PyTree structure specifies
+      how the outputs of ``f`` are grouped into separate output fusions (with the
+      default ``True``, all outputs are grouped into a single ``Fusion | None``).
+      Multiple output fusion groups are not supported when the output fusion
+      writes to ``Refs``.
+
+  Returns:
+    A wrapped function that binds a ``Fusible`` primitive when called, or a
+    decorator if ``f`` is ``None``.
+  """
+
   def decorator(f):
     def wrapper(*args, **kwargs):
       f_bound = partial(f, **kwargs) if kwargs else f
@@ -166,9 +194,13 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
       debug_info = api_util.debug_info("fusible", wrapped, args, {})
       args_avals = tree_util.tree_map(jax_core.typeof, args)
       in_avals_ft = ft.flatten_args(*args_avals)
-      jaxpr, out_avals_ft = pe.trace_to_jaxpr(
-          wrapped, in_avals_ft, debug_info
-      )
+      # Trace with nested fusion enabled, like the retrace in `fuse_jaxpr`, so
+      # both traces share the jit trace cache. An enclosing `fuse` disables
+      # nested fusion only to find this fusible, which already exists.
+      with disable_nested_fuse(False):
+        jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+            wrapped, in_avals_ft, debug_info
+        )
       jaxpr, consts = pe.separate_consts(jaxpr)
       prim = Fusible(
           jaxpr=jaxpr,

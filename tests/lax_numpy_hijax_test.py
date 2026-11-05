@@ -24,6 +24,9 @@ import numpy as np
 from jax._src import config
 from jax._src.numpy import hijax
 from jax._src import test_util as jtu
+from jax.sharding import PartitionSpec as P
+
+jtu.request_cpu_devices(4)
 
 config.parse_flags_with_absl()
 
@@ -478,6 +481,138 @@ class SearchsortedTest(jtu.JaxTestCase):
           sorted_arr, query, batch_dims=1, dimension=1
       )
 
+  @jtu.sample_product(method=_METHODS)
+  @jtu.with_explicit_mesh((2, 2), ("x", "y"))
+  def test_explicit_sharding(self, mesh, method):
+    del mesh
+    sa_np = np.sort(self.rng().uniform(size=(2, 4, 8)).astype(np.float32), axis=2)
+    q_np = self.rng().uniform(size=(2, 4, 6)).astype(np.float32)
+
+    with self.subTest("sharded_batch_dims"):
+      sa = jax.device_put(sa_np, P("x", "y", None))
+      q = jax.device_put(q_np, P("x", "y", None))
+      out = jax.jit(
+          lambda a, b: hijax.searchsorted(
+              a, b, batch_dims=2, dimension=2, method=method
+          )
+      )(sa, q)
+      self.assertEqual(jax.typeof(out).sharding.spec, P("x", "y", None))
+      expected = searchsorted_reference(sa_np, q_np, batch_dims=2, dimension=2)
+      self.assertArraysEqual(expected, out)
+
+    with self.subTest("sharded_sorted_arr"):
+      sa = jax.device_put(sa_np, P("x", "y", None))
+      q = jax.device_put(q_np[:, 0, :], P("x", None))
+      out = jax.jit(
+          lambda a, b: hijax.searchsorted(
+              a, b, batch_dims=1, dimension=2, method=method
+          )
+      )(sa, q)
+      self.assertEqual(jax.typeof(out).sharding.spec, P("x", "y", None))
+      expected = searchsorted_reference(
+          sa_np, q_np[:, 0, :], batch_dims=1, dimension=2
+      )
+      self.assertArraysEqual(expected, out)
+
+    with self.subTest("sharded_query"):
+      sa = jax.device_put(sa_np[:, 0, :], P("x", None))
+      q = jax.device_put(q_np, P("x", "y", None))
+      out = jax.jit(
+          lambda a, b: hijax.searchsorted(
+              a, b, batch_dims=1, dimension=1, method=method
+          )
+      )(sa, q)
+      self.assertEqual(jax.typeof(out).sharding.spec, P("x", "y", None))
+      expected = searchsorted_reference(
+          sa_np[:, 0, :], q_np, batch_dims=1, dimension=1
+      )
+      self.assertArraysEqual(expected, out)
+
+    with self.subTest("sharded_query_no_batch_dims"):
+      sa = jax.device_put(sa_np[0, 0, :], P(None))
+      q = jax.device_put(q_np, P("x", None, "y"))
+      out = jax.jit(
+          lambda a, b: hijax.searchsorted(
+              a, b, batch_dims=0, dimension=0, method=method
+          )
+      )(sa, q)
+      self.assertEqual(jax.typeof(out).sharding.spec, P("x", None, "y"))
+      expected = searchsorted_reference(
+          sa_np[0, 0, :], q_np, batch_dims=0, dimension=0
+      )
+      self.assertArraysEqual(expected, out)
+
+    with self.subTest("empty_sorted_arr"):
+      sa_empty = jax.device_put(np.empty((2, 4, 0), dtype=np.float32), P("x", "y", None))
+      q = jax.device_put(q_np[:, 0, :], P("x", None))
+      out = jax.jit(
+          lambda a, b: hijax.searchsorted(
+              a, b, batch_dims=1, dimension=2, method=method
+          )
+      )(sa_empty, q)
+      self.assertEqual(jax.typeof(out).sharding.spec, P("x", "y", None))
+      self.assertEqual(out.shape, (2, 4, 6))
+      self.assertArraysEqual(np.zeros((2, 4, 6), dtype=np.int32), out)
+
+  @jtu.with_explicit_mesh((2, 2), ("x", "y"))
+  def test_explicit_sharding_errors(self, mesh):
+    del mesh
+    with self.subTest("mismatched_meshes"):
+      other_mesh = jtu.create_mesh(
+          (2, 2), ("a", "b"), axis_types=(jax.sharding.AxisType.Explicit,) * 2
+      )
+      sa = jax.device_put(jnp.zeros((4, 8)), P("x", None))
+      q = jax.device_put(
+          jnp.zeros((4, 6)), jax.sharding.NamedSharding(other_mesh, P("a", None))
+      )
+      with self.assertRaisesRegex(
+          ValueError, "sharding meshes must match"
+      ):
+        hijax.searchsorted(sa, q, batch_dims=1, dimension=1)
+
+    with self.subTest("mismatched_batch_dims"):
+      sa = jax.device_put(jnp.zeros((4, 8)), P("x", None))
+      q = jax.device_put(jnp.zeros((4, 6)), P("y", None))
+      with self.assertRaisesRegex(
+          ValueError, "batch dimension shardings must match"
+      ):
+        hijax.searchsorted(sa, q, batch_dims=1, dimension=1)
+
+    with self.subTest("sharded_search_dimension"):
+      sa = jax.device_put(jnp.zeros((4, 8)), P(None, "x"))
+      q = jax.device_put(jnp.zeros((6,)), P(None))
+      with self.assertRaisesRegex(
+          ValueError, "Cannot apply searchsorted over sharded search dimension"
+      ):
+        hijax.searchsorted(sa, q, batch_dims=0, dimension=1)
+
+    with self.subTest("both_sorted_arr_and_query_sharded"):
+      sa = jax.device_put(jnp.zeros((4, 8)), P("x", None))
+      q = jax.device_put(jnp.zeros((6,)), P("y"))
+      with self.assertRaisesRegex(
+          ValueError,
+          "Cannot shard non-batch dimensions of both sorted_arr and query",
+      ):
+        hijax.searchsorted(sa, q, batch_dims=0, dimension=1)
+
+  @jtu.sample_product(method=_METHODS)
+  @jtu.with_explicit_mesh((2, 2), ("x", "y"))
+  def test_shard_map(self, mesh, method):
+    sa_np = np.sort(self.rng().uniform(size=(4, 8)).astype(np.float32), axis=1)
+    q_np = self.rng().uniform(size=(6,)).astype(np.float32)
+    sa = jax.device_put(sa_np, P("x", None))
+    q = jax.device_put(q_np, P(None))
+
+    @functools.partial(
+        jax.shard_map, mesh=mesh, in_specs=(P("x", None), P(None)), out_specs=P("x", None)
+    )
+    def f(a, b):
+      return hijax.searchsorted(a, b, dimension=1, method=method)
+
+    out = f(sa, q)
+    expected = searchsorted_reference(sa_np, q_np, dimension=1)
+    self.assertArraysEqual(expected, out)
+
 
 class NonzeroTest(jtu.JaxTestCase):
 
@@ -618,6 +753,46 @@ class NonzeroTest(jtu.JaxTestCase):
     for e, a_i in zip(expected, actual):
       self.assertArraysEqual(e, a_i)
 
+  @jtu.sample_product(
+      shape=[(0,), (4, 0), (0, 5)],
+      axes=[None, (0,), (1,), (0, 1)],
+      fill_value=[None, 99, (99, 98)],
+      jit=[False, True],
+  )
+  def test_empty_fill_value(self, shape, axes, fill_value, jit):
+    if axes is not None and any(ax >= len(shape) for ax in axes):
+      self.skipTest("axis out of bounds for shape")
+    actual_axes = tuple(range(len(shape))) if axes is None else axes
+    if isinstance(fill_value, tuple) and len(fill_value) != len(actual_axes):
+      self.skipTest("fill_value length must match number of axes")
+
+    a = np.zeros(shape, dtype=np.int32)
+    size = 3
+    fn = functools.partial(hijax.nonzero, size=size, axes=axes)
+    if jit:
+      fn = jax.jit(fn)
+
+    actual = fn(a, fill_value=fill_value)
+    expected = nonzero_reference(a, size=size, fill_value=fill_value, axes=axes)
+    self.assertEqual(len(expected), len(actual))
+    for e, a_i in zip(expected, actual):
+      self.assertArraysEqual(e, a_i)
+
+  def test_vmap_empty_fill_value_batched(self):
+    a = np.zeros((3, 4, 0), dtype=np.int32)
+    fill_val = jax.numpy.array([99, 98, 97])
+    size = 5
+
+    vmapped = jax.vmap(
+        lambda x, fv: hijax.nonzero(x, size=size, fill_value=fv, axes=(1,))[0]
+    )(a, fill_val)
+
+    expected = np.array([
+        nonzero_reference(sub_a, size=size, fill_value=int(fv), axes=(1,))[0]
+        for sub_a, fv in zip(a, fill_val)
+    ])
+    self.assertArraysEqual(expected, vmapped)
+
   def test_invalid_fill_value_shape(self):
     a = self.rng().randint(0, 2, size=(10, 20))
     size = 5
@@ -649,6 +824,90 @@ class NonzeroTest(jtu.JaxTestCase):
           axes=(1,),
           out_dtype=np.dtype("int32"),
       )
+
+  @jtu.with_explicit_mesh((2, 2), ("x", "y"))
+  def test_explicit_sharding(self, mesh):
+    del mesh
+    a_np = self.rng().randint(0, 2, size=(4, 6, 8))
+    size = 5
+
+    with self.subTest("sharded_batch_dims"):
+      a = jax.device_put(a_np, P("x", "y", None))
+      out = jax.jit(lambda x: hijax.nonzero(x, size=size, axes=(2,)))(a)
+      self.assertEqual(jax.typeof(out[0]).sharding.spec, P("x", "y", None))
+      expected = nonzero_reference(a_np, size=size, axes=(2,))
+      self.assertArraysEqual(expected[0], out[0])
+
+    with self.subTest("sharded_fill_value"):
+      a_2d_np = self.rng().randint(0, 2, size=(4, 8))
+      fv_np = np.array([99, 98, 97, 96], dtype=np.int32)
+      a_2d = jax.device_put(a_2d_np, P("x", None))
+      fv = jax.device_put(fv_np, P("x"))
+      out = jax.jit(
+          jax.vmap(
+              lambda x, f: hijax.nonzero(x, size=10, fill_value=f, axes=(0,)),
+              in_axes=(0, 0),
+          )
+      )(a_2d, fv)
+      self.assertEqual(jax.typeof(out[0]).sharding.spec, P("x", None))
+      expected = np.stack([
+          nonzero_reference(sub_a, size=10, fill_value=int(f), axes=(0,))[0]
+          for sub_a, f in zip(a_2d_np, fv_np)
+      ])
+      self.assertArraysEqual(expected, out[0])
+
+    with self.subTest("empty_size"):
+      a = jax.device_put(a_np, P("x", "y", None))
+      out = jax.jit(lambda x: hijax.nonzero(x, size=0, axes=(2,)))(a)
+      self.assertEqual(jax.typeof(out[0]).sharding.spec, P("x", "y", None))
+      self.assertEqual(out[0].shape, (4, 6, 0))
+
+    with self.subTest("empty_array_with_fill_value"):
+      a_empty = jax.device_put(np.zeros((4, 6, 0), dtype=np.int32), P("x", "y", None))
+      out = jax.jit(lambda x: hijax.nonzero(x, size=size, fill_value=99, axes=(2,)))(a_empty)
+      self.assertEqual(jax.typeof(out[0]).sharding.spec, P("x", "y", None))
+      expected = np.full((4, 6, size), 99, dtype=np.int32)
+      self.assertArraysEqual(expected, out[0])
+
+  @jtu.with_explicit_mesh((2, 2), ("x", "y"))
+  def test_explicit_sharding_errors(self, mesh):
+    del mesh
+    a = jax.device_put(jnp.zeros((4, 8)), P(None, "x"))
+    with self.assertRaisesRegex(
+        ValueError, "Cannot apply nonzero over sharded axes"
+    ):
+      hijax.nonzero(a, size=5, axes=(1,))
+
+    a_1d = jax.device_put(jnp.zeros((8,)), P(None))
+    fv = jax.device_put(jnp.zeros((4,), dtype=jnp.int32), P("x"))
+    with self.assertRaisesRegex(
+        ValueError, "fill_value sharding .* is not compatible with batch sharding"
+    ):
+      jax.vmap(
+          lambda x, f: hijax.nonzero(x, size=5, fill_value=f, axes=(0,)),
+          in_axes=(None, 0),
+      )(a_1d, fv)
+
+  @jtu.with_explicit_mesh((2, 2), ("x", "y"))
+  def test_shard_map(self, mesh):
+    a_np = self.rng().randint(0, 2, size=(4, 8))
+    a = jax.device_put(a_np, P("x", None))
+
+    @functools.partial(
+        jax.shard_map, mesh=mesh, in_specs=(P("x", None), P()), out_specs=P("x", None)
+    )
+    def f(x, fv):
+      return hijax.nonzero(x, size=5, fill_value=fv, axes=(1,))[0]
+
+    out = f(a, jnp.int32(99))
+    expected = nonzero_reference(a_np, size=5, fill_value=99, axes=(1,))[0]
+    self.assertArraysEqual(expected, out)
+
+    a_empty_np = np.zeros((4, 0), dtype=np.int32)
+    a_empty = jax.device_put(a_empty_np, P("x", None))
+    out_empty = f(a_empty, jnp.int32(99))
+    expected_empty = nonzero_reference(a_empty_np, size=5, fill_value=99, axes=(1,))[0]
+    self.assertArraysEqual(expected_empty, out_empty)
 
 class EinsumTest(jtu.JaxTestCase):
 

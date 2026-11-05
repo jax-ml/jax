@@ -29,44 +29,44 @@ import urllib.request
 
 logger = logging.getLogger(__name__)
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/9.2.0/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/9.3.1/"
 BazelPackage = collections.namedtuple(
     "BazelPackage", ["base_uri", "file", "sha256"]
 )
 bazel_packages = {
     ("Linux", "x86_64"): BazelPackage(
         base_uri=None,
-        file="bazel-9.2.0-linux-x86_64",
+        file="bazel-9.3.1-linux-x86_64",
         sha256=(
-            "7668a95db1250f12c40407251e4e203b4ec8bf39bc495d2f485b2d8c99048694"
+            "7f775b54bbec487efaf0f49ccda1d2ed02cd34f582edfdd6aeeec76e39ef585c"
         ),
     ),
     ("Linux", "aarch64"): BazelPackage(
         base_uri=None,
-        file="bazel-9.2.0-linux-arm64",
+        file="bazel-9.3.1-linux-arm64",
         sha256=(
-            "049dd21f40ad979db11c3ee68c96a42ce75f1185e69ac61ab20de1501427a410"
+            "10ba9cb76d4ee748d274dcc2981992bb12b74a203dc41a9c2eceeb8f29359366"
         ),
     ),
     ("Darwin", "x86_64"): BazelPackage(
         base_uri=None,
-        file="bazel-9.2.0-darwin-x86_64",
+        file="bazel-9.3.1-darwin-x86_64",
         sha256=(
-            "14c9bcb01303b38192e0e2895051c1bcf19bf89d7e416f5aeeeb48b6b624cfbf"
+            "01eb4368a9c331391448bc1f11b1bec4e57793a0cee0581579ee786cd26baf37"
         ),
     ),
     ("Darwin", "arm64"): BazelPackage(
         base_uri=None,
-        file="bazel-9.2.0-darwin-arm64",
+        file="bazel-9.3.1-darwin-arm64",
         sha256=(
-            "dd466352a3e4d3581b8898740ee1ff208866ccbe25f8d367c5dcb950219587e6"
+            "19c4958626e0e3a564a61c2e85eeaab97b550a30632b82341191aa61ed0ccc1b"
         ),
     ),
     ("Windows", "AMD64"): BazelPackage(
         base_uri=None,
-        file="bazel-9.2.0-windows-x86_64.exe",
+        file="bazel-9.3.1-windows-x86_64.exe",
         sha256=(
-            "5fc2f2805b8c697a54732558576938d06bab63aa0f9b6610cc01d2cae0388705"
+            "12abcedb177ca1bd293875dd7d5aa1ebf4336cf44d406b597907932251cf9714"
         ),
     ),
 }
@@ -139,7 +139,7 @@ def get_bazel_paths(bazel_path_flag):
 def get_bazel_path(bazel_path_flag):
   """Returns the path to a Bazel binary, downloading Bazel if not found.
 
-  Also, checks Bazel's version is at least newer than 9.2.0
+  Also, checks Bazel's version is at least newer than 9.3.1
 
   A manual version check is needed only for really old bazel versions.
   Newer bazel releases perform their own version check against .bazelversion
@@ -153,7 +153,7 @@ def get_bazel_path(bazel_path_flag):
 
   print(
       "Cannot find or download a suitable version of bazel."
-      "Please install bazel >= 9.2.0."
+      "Please install bazel >= 9.3.1."
   )
   sys.exit(-1)
 

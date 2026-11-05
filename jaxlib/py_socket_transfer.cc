@@ -71,7 +71,6 @@ limitations under the License.
 #include "xla/python/transfer/streaming_ifrt.h"
 #include "xla/python/transfer/transfer_socket.pb.h"
 #include "xla/python/types.h"
-#include "xla/python/version.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -89,7 +88,6 @@ absl::StatusOr<xla::PjRtMemorySpace*> MemorySpaceFromSharding(
         sharding);
   }
   auto* device = sharding.devices()->devices()[0];
-#if JAX_IFRT_VERSION_NUMBER >= 64
   if (!sharding.memory_kind().is_default()) {
     // Find `PjRtMemorySpace` that is associated with the sharding's device
     // and matches the sharding's memory_kind.
@@ -111,29 +109,6 @@ absl::StatusOr<xla::PjRtMemorySpace*> MemorySpaceFromSharding(
     }
     return absl::down_cast<xla::ifrt::PjRtMemory*>(memory)->pjrt_memory();
   } else {
-#else
-  if (sharding.memory_kind().memory_kind().has_value()) {
-    // Find `PjRtMemorySpace` that is associated with the sharding's device
-    // and matches the sharding's memory_kind.
-    xla::ifrt::Memory* memory = nullptr;
-    for (xla::ifrt::Memory* ms : device->Memories()) {
-      if (ms->Kind() == sharding.memory_kind()) {
-        memory = ms;
-        break;
-      }
-    }
-    if (memory == nullptr) {
-      return xla::InvalidArgument(
-          "Invalid memory kind: %s; available memory kinds: %s",
-          *sharding.memory_kind().memory_kind(),
-          absl::StrJoin(sharding.devices()->devices().front()->Memories(), ", ",
-                        [](std::string* out, xla::ifrt::Memory* ms) {
-                          absl::StrAppend(out, *ms->Kind().memory_kind());
-                        }));
-    }
-    return tensorflow::down_cast<xla::ifrt::PjRtMemory*>(memory)->pjrt_memory();
-  } else {
-#endif
     if (!device->IsAddressable()) {
       return xla::InvalidArgument(
           "Cannot copy array to non-addressable device %s",

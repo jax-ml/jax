@@ -39,7 +39,7 @@ class InterpretGPUParams(interpret_params.SharedInterpretParams):
   :func:`reset_gpu_interpret_mode_state` before using GPU interpret mode
   again in the same process.
 
-  Attrs:
+  Attributes:
     num_tma_threads_per_device: The number of threads that can be used for
       simulating memory transfers with the TMA unit. The interpreter does not
       in fact spawn separate threads for executing TMA memory transfers, but a
@@ -81,11 +81,11 @@ def force_gpu_interpret_mode(params: InterpretGPUParams = InterpretGPUParams()):
 
   Args:
     params: an instance of :class:`InterpretGPUParams`.  Any call to
-       :func:`jax.experimental.pallas.mosaic_gpu.kernel`,
+      :func:`jax.experimental.pallas.mosaic_gpu.kernel`,
       :func:`jax.experimental.pallas.core_map`, or
       :func:`jax.experimental.pallas.pallas_call` that is traced under this
       context manager will be run with ``interpret=params``.  When ``params``
-      is not``None``, this will cause those calls to run with GPU
+      is not ``None``, this will cause those calls to run with GPU
       interpret mode.
   """
   # TODO(jburnim): Rename to config.pallas_interpret_mode_context_manager.

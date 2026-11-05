@@ -101,6 +101,8 @@ class LaxTest(jtu.JaxTestCase):
           dtype=rec.dtypes)
       for rec in lax_test_util.lax_ops()))
   def testOp(self, op_name, rng_factory, shapes, dtype):
+    if op_name == "fma" and not lax_test_util.backend_supports_fma(dtype):
+      raise SkipTest(f"fma not supported for {dtype} on this backend")
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
     op = getattr(lax, op_name)
@@ -116,6 +118,8 @@ class LaxTest(jtu.JaxTestCase):
       for rec in lax_test_util.lax_ops()))
   @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
   def testOpAgainstNumpy(self, op_name, rng_factory, shapes, dtype, tol):
+    if op_name == "fma" and not lax_test_util.backend_supports_fma(dtype):
+      raise SkipTest(f"fma not supported for {dtype} on this backend")
     if (not config.enable_x64.value and op_name == "nextafter"
         and dtype == np.float64):
       raise SkipTest("64-bit mode disabled")
@@ -241,6 +245,171 @@ class LaxTest(jtu.JaxTestCase):
         jax.grad(lambda z: jnp.sum(lax.log2(z)))(x),
         1.0 / (x * ln2),
     )
+
+  @jtu.sample_product(dtype=lax_test_util.float_dtypes)
+  @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
+  def testLogPow(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41261
+    if jaxlib_extension_version < 510:
+      self.skipTest("Requires jaxlib_extension_version >= 510")
+    a = np.array([-1.0, -2.0, -2.0, -2.0, 2.0, -1.0], dtype=dtype)
+    b = np.array([0.5, 0.5, 3.0, 2.0, 0.5, 0.0], dtype=dtype)
+    args_maker = lambda: [a, b]
+    tol = {np.float32: 2e-4} if jtu.test_device_matches(["tpu"]) else None
+    self._CheckAgainstNumpy(
+        lambda x, y: np.log(np.power(x, y)),
+        lambda x, y: lax.log(lax.pow(x, y)),
+        args_maker,
+        tol=tol,
+    )
+    self._CompileAndCheck(
+        lambda x, y: lax.log(lax.pow(x, y)), args_maker, tol=tol
+    )
+
+  @parameterized.named_parameters(
+      ("f32", jnp.float32, 1.0 + 2**-20, 1.0 - 2**-20, -1.0, -(2**-40), 0.0),
+      ("f64", jnp.float64, 1.0 + 2**-30, 1.0 - 2**-30, -1.0, -(2**-60), 0.0),
+      # 1.5 * (1 + 2^-7) - 2^-24 is strictly below the bf16 midpoint.
+      ("bf16_midpoint", jnp.bfloat16, 1.5, 1.0 + 2**-7, -(2**-24),
+       1.5 + 2**-7, 1.5 + 2**-6),
+      # (1 - 2^-14) * 2^-126 rounds to 2^-126 in bf16, or 0 under f32 FTZ.
+      ("bf16_underflow", jnp.bfloat16, 129.0 * 2**-70, 127.0 * 2**-70, 0.0,
+       2**-126, 0.0),
+      # 1.5 * (1 + 2^-10) - 2^-24 is strictly below the f16 midpoint.
+      ("f16_midpoint", jnp.float16, 1.5, 1.0 + 2**-10, -(2**-24),
+       1.5 + 2**-10, 1.5 + 2**-9),
+      # Native f16 (fused or unfused) gives 1 + 2^-10; f32 upcast gives 1 + 2^-9.
+      ("f16_upcast", jnp.float16, 9.0 / 8.0, 1823.0 / 2048.0, 2**-14 - 2**-24,
+       1.0 + 2**-10, 1.0 + 2**-9),
+      ("f8_e4m3fn", jnp.float8_e4m3fn, 1.5, 2.0, 0.5, 3.5, 3.5),
+      ("f8_e5m2", jnp.float8_e5m2, 1.5, 2.0, 0.5, 3.5, 3.5),
+  )
+  def testFmaSingleRounding(self, dtype, a, b, c, expected, alt):
+    if dtype == jnp.float64 and not config.enable_x64.value:
+      raise SkipTest("64-bit mode disabled")
+    if dtype == jnp.float64:
+      self.assertEqual(lax_reference._float64_fma_scalar(a, b, c), expected)
+    a, b, c, expected, alt = (
+        jnp.asarray(v, dtype=dtype) for v in (a, b, c, expected, alt)
+    )
+    self.assertEqual(lax_reference.fma(a, b, c), np.asarray(expected))
+    if lax_test_util.backend_supports_fma(dtype):
+      self.assertEqual(lax.fma(a, b, c), expected)
+      self.assertEqual(jax.jit(lax.fma)(a, b, c), expected)
+    self.assertIn(lax.fmuladd(a, b, c), (expected, alt))
+    self.assertIn(jax.jit(lax.fmuladd)(a, b, c), (expected, alt))
+
+  @parameterized.parameters([lax.fma, lax.fmuladd])
+  def testFmaJvpMixedShapes(self, op):
+    if op is lax.fma and not lax_test_util.backend_supports_fma(jnp.float32):
+      raise SkipTest("fma not supported on this backend")
+    a = jnp.float32(2.0)
+    b = jnp.float32(3.0)
+    c = jnp.ones((3, 4), dtype=jnp.float32)
+    da = jnp.float32(0.5)
+    db = jnp.float32(0.25)
+
+    p_out, t_out = jax.jvp(lambda x, y: op(x, y, c), (a, b), (da, db))
+    self.assertEqual(p_out.shape, (3, 4))
+    self.assertEqual(t_out.shape, (3, 4))
+    self.assertAllClose(t_out, jnp.full((3, 4), da * b + a * db))
+
+    p_out_a, t_out_a = jax.jvp(lambda x: op(x, b, c), (a,), (da,))
+    self.assertEqual(p_out_a.shape, (3, 4))
+    self.assertEqual(t_out_a.shape, (3, 4))
+    self.assertAllClose(t_out_a, jnp.full((3, 4), da * b))
+
+    a_arr = jnp.ones((3, 4), dtype=jnp.float32)
+    c_scalar = jnp.float32(1.0)
+    dc = jnp.float32(0.75)
+    p_out_c, t_out_c = jax.jvp(
+        lambda z: op(a_arr, b, z), (c_scalar,), (dc,))
+    self.assertEqual(p_out_c.shape, (3, 4))
+    self.assertEqual(t_out_c.shape, (3, 4))
+    self.assertAllClose(t_out_c, jnp.full((3, 4), dc))
+
+  @parameterized.parameters([lax.fma, lax.fmuladd])
+  def testFmaLinearTranspose(self, op):
+    a = jnp.arange(3, dtype=jnp.float32).reshape(3, 1)
+    b = jnp.arange(4, dtype=jnp.float32).reshape(1, 4)
+    c = jnp.float32(2.0)
+    ct = jnp.arange(12, dtype=jnp.float32).reshape(3, 4)
+
+    t_ac = jax.linear_transpose(lambda x, z: op(x, b, z), a, c)
+    da, dc = t_ac(ct)
+    self.assertEqual(da.shape, (3, 1))
+    self.assertEqual(dc.shape, ())
+    self.assertAllClose(da, jnp.sum(ct * b, axis=1, keepdims=True))
+    self.assertAllClose(dc, jnp.sum(ct))
+
+    t_bc = jax.linear_transpose(lambda y, z: op(a, y, z), b, c)
+    db, dc2 = t_bc(ct)
+    self.assertEqual(db.shape, (1, 4))
+    self.assertEqual(dc2.shape, ())
+    self.assertAllClose(db, jnp.sum(a * ct, axis=0, keepdims=True))
+    self.assertAllClose(dc2, jnp.sum(ct))
+
+  def testFmuladdPlatformLowering(self):
+    if jaxlib_extension_version < 515:
+      self.skipTest("Requires jaxlib_extension_version >= 515")
+    if not jtu.stablehlo_version_at_least("1.24.0"):
+      self.skipTest("Requires StableHLO >= 1.24.0")
+    f = jax.jit(lax.fmuladd)
+    a32 = jnp.ones((2, 3), dtype=jnp.float32)
+    for platform in ("cpu", "cuda", "rocm"):
+      hlo_text = f.trace(a32, a32, a32).lower(lowering_platforms=(platform,)).as_text()
+      self.assertIn("stablehlo.fma", hlo_text)
+      self.assertNotIn("stablehlo.convert", hlo_text)
+    tpu_hlo = f.trace(a32, a32, a32).lower(lowering_platforms=("tpu",)).as_text()
+    self.assertIn("stablehlo.multiply", tpu_hlo)
+    self.assertIn("stablehlo.add", tpu_hlo)
+    self.assertNotIn("stablehlo.fma", tpu_hlo)
+
+    exported = export.export(f, platforms=("cpu", "cuda", "tpu"))(a32, a32, a32)
+    self.assertNotIn("stablehlo.fma", exported.mlir_module())
+
+    a16 = jnp.ones((2, 3), dtype=jnp.float16)
+    cpu_f16_hlo = f.trace(a16, a16, a16).lower(lowering_platforms=("cpu",)).as_text()
+    self.assertIn("stablehlo.convert", cpu_f16_hlo)
+    self.assertIn("stablehlo.fma", cpu_f16_hlo)
+    for platform in ("cuda", "rocm"):
+      gpu_f16_hlo = f.trace(a16, a16, a16).lower(lowering_platforms=(platform,)).as_text()
+      self.assertIn("stablehlo.fma", gpu_f16_hlo)
+      self.assertNotIn("stablehlo.convert", gpu_f16_hlo)
+
+    abf16 = jnp.ones((2, 3), dtype=jnp.bfloat16)
+    for platform in ("cpu", "cuda", "rocm"):
+      bf16_hlo = f.trace(abf16, abf16, abf16).lower(lowering_platforms=(platform,)).as_text()
+      self.assertIn("stablehlo.convert", bf16_hlo)
+      self.assertIn("stablehlo.fma", bf16_hlo)
+    tpu_bf16_hlo = f.trace(abf16, abf16, abf16).lower(lowering_platforms=("tpu",)).as_text()
+    self.assertIn("stablehlo.multiply", tpu_bf16_hlo)
+    self.assertIn("stablehlo.add", tpu_bf16_hlo)
+    self.assertNotIn("stablehlo.fma", tpu_bf16_hlo)
+
+    proxy_module_ctx = mlir.ModuleContext(
+        platforms=("cpu",),
+        backend=types.SimpleNamespace(
+            platform="cpu", runtime_type="proxy/pjrt_cpu"
+        ),  # type: ignore[arg-type]
+        axis_context=None,  # type: ignore[arg-type]
+        keepalives=[],
+        channel_iterator=itertools.count(1),
+        host_callbacks=[],
+        lowering_parameters=mlir.LoweringParameters(),
+    )
+    proxy_rule_ctx = mlir.LoweringRuleContext(
+        module_context=proxy_module_ctx,
+        name_stack=mlir.source_info_util.NameStack(),
+        traceback=None,
+        primitive=None,
+        avals_in=(),
+        avals_out=(),
+        tokens_in=mlir.TokenSet(),
+        tokens_out=None,
+        const_lowering={},
+    )
+    self.assertTrue(proxy_rule_ctx.is_forward_compat())
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
@@ -1250,6 +1419,10 @@ class LaxTest(jtu.JaxTestCase):
           (lax.DotAlgorithmPreset.BF16_BF16_F32_X3, [np.float32]),
           (lax.DotAlgorithmPreset.BF16_BF16_F32_X6, [np.float32]),
           (lax.DotAlgorithmPreset.BF16_BF16_F32_X9, [np.float32]),
+          (lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3,
+           [dtypes.bfloat16, np.float32]),
+          (lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4,
+           [dtypes.bfloat16, np.float32]),
           (lax.DotAlgorithmPreset.TF32_TF32_F32, [np.float32]),
           (lax.DotAlgorithmPreset.TF32_TF32_F32_X3, [np.float32]),
           (lax.DotAlgorithmPreset.F32_F32_F32, [np.float32]),
@@ -1260,8 +1433,10 @@ class LaxTest(jtu.JaxTestCase):
   def testDotAlgorithm(self, algorithm, dtype):
     if jtu.test_device_matches(["cpu"]):
       if algorithm not in {
+          "F16_F16_F32",
           lax.DotAlgorithmPreset.DEFAULT,
           lax.DotAlgorithmPreset.F16_F16_F16,
+          lax.DotAlgorithmPreset.F16_F16_F32,
           lax.DotAlgorithmPreset.F32_F32_F32,
           lax.DotAlgorithmPreset.F64_F64_F64,
           lax.DotAlgorithmPreset.BF16_BF16_F32,
@@ -1294,6 +1469,11 @@ class LaxTest(jtu.JaxTestCase):
           raise SkipTest(
               f"The dot algorithm '{algorithm}' requires CUDA compute "
               "capability >= 8.0.")
+      elif algorithm in {
+          lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3,
+          lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4,
+      }:
+        self._skipIfF8E4M3FNDotAlgorithmUnsupported(algorithm)
       elif algorithm not in {
           lax.DotAlgorithmPreset.DEFAULT,
           lax.DotAlgorithmPreset.ANY_F8_ANY_F8_F32,
@@ -1304,7 +1484,12 @@ class LaxTest(jtu.JaxTestCase):
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on GPU.")
     if jtu.test_device_matches(["tpu"]):
-      if algorithm not in {
+      if algorithm in {
+          lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3,
+          lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4,
+      }:
+        self._skipIfF8E4M3FNDotAlgorithmUnsupported(algorithm)
+      elif algorithm not in {
           lax.DotAlgorithmPreset.DEFAULT,
           lax.DotAlgorithmPreset.BF16_BF16_F32,
           lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
@@ -1321,6 +1506,123 @@ class LaxTest(jtu.JaxTestCase):
                           rtol={np.float64: 3e-15})
     self.assertEqual(lax.dot(*args_maker(), precision=algorithm).dtype, dtype)
 
+  def _skipIfF8E4M3FNDotAlgorithmUnsupported(self, algorithm):
+    if jaxlib_extension_version < 514:
+      raise SkipTest(
+          f"The dot algorithm '{algorithm}' requires jaxlib_extension_version "
+          ">= 514."
+      )
+    if not jtu.stablehlo_version_at_least("1.21.0"):
+      raise SkipTest(
+          f"The dot algorithm '{algorithm}' requires StableHLO >= 1.21.0."
+      )
+    if jtu.test_device_matches(["cuda"]):
+      if not jtu.is_cuda_compute_capability_at_least("8.9"):
+        raise SkipTest(
+            f"The dot algorithm '{algorithm}' requires CUDA compute "
+            "capability >= 8.9."
+        )
+    elif jtu.test_device_matches(["tpu"]):
+      # float8_e4m3fn dots require TPU v5+ and libtpu >= 0.0.52.
+      if not (
+          jtu.is_device_tpu_at_least(5) and jtu.is_libtpu_at_least("0.0.52")
+      ):
+        raise SkipTest(
+            f"The dot algorithm '{algorithm}' requires TPU v5+ and libtpu >= "
+            "0.0.52."
+        )
+    else:
+      raise SkipTest(
+          f"The dot algorithm '{algorithm}' is only supported on CUDA and TPU."
+      )
+
+  @jtu.sample_product(dtype=[dtypes.bfloat16, np.float32])
+  def testF8E4M3FNDotAlgorithmAccuracy(self, dtype):
+    x3 = lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3
+    x4 = lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4
+    self._skipIfF8E4M3FNDotAlgorithmUnsupported(x3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng((64, 512), dtype), rng((512, 64), dtype)
+    ref = np.dot(lhs.astype(np.float64), rhs.astype(np.float64))
+
+    def rel_err(algorithm):
+      out = lax.dot(
+          lhs, rhs, precision=algorithm, preferred_element_type=np.float32
+      )
+      self.assertEqual(out.dtype, np.float32)
+      out = np.asarray(out, np.float64)
+      return np.linalg.norm(out - ref) / np.linalg.norm(ref)
+
+    err_x3 = rel_err(x3)
+    err_x4 = rel_err(x4)
+    out_bf16 = lax.dot(
+        lhs, rhs, precision=x4, preferred_element_type=dtypes.bfloat16
+    )
+    self.assertEqual(out_bf16.dtype, dtypes.bfloat16)
+    err_x4_bf16 = np.linalg.norm(
+        np.asarray(out_bf16, np.float64) - ref
+    ) / np.linalg.norm(ref)
+    self.assertLess(err_x4_bf16, 1e-2)
+    dx, dy = jax.grad(
+        lambda x, y: jnp.sum(
+            lax.dot(x, y, precision=x3, preferred_element_type=np.float32)
+        ),
+        argnums=(0, 1),
+    )(lhs, rhs)
+    self.assertEqual(dx.dtype, dtype)
+    self.assertEqual(dy.dtype, dtype)
+
+    # 1D vector dot and its backward pass (which emits a zero contracting dim
+    # outer product), plus explicit outer product under default_matmul_precision.
+    u, v = lhs[0, :64], rhs[:64, 0]
+    du, dv = jax.grad(
+        lambda x, y: lax.dot(
+            x, y, precision=x4, preferred_element_type=np.float32
+        ),
+        argnums=(0, 1),
+    )(u, v)
+    self.assertArraysAllClose(du, v, rtol=1e-2, atol=1e-2, check_dtypes=True)
+    self.assertArraysAllClose(dv, u, rtol=1e-2, atol=1e-2, check_dtypes=True)
+    with jax.default_matmul_precision(x3.name):
+      outer = jnp.einsum("i,j->ij", u[:8], v[:6])
+    self.assertArraysAllClose(
+        outer, np.outer(u[:8], v[:6]).astype(dtype), rtol=1e-2, atol=1e-2
+    )
+
+    # All zero channel rows must clamp cleanly without producing NaNs.
+    lhs_zero = lhs.copy()
+    lhs_zero[0] = 0
+    out_zero = lax.dot(
+        lhs_zero, rhs, precision=x4, preferred_element_type=np.float32
+    )
+    self.assertTrue(np.isfinite(out_zero).all())
+    self.assertTrue(np.all(out_zero[0] == 0))
+    if jtu.is_device_tpu_at_least(7):
+      self.assertLess(err_x3, 5e-3)
+      self.assertLess(err_x4, err_x3)
+      return
+    # X3 drops the residual by residual product, about 2**-10 relative to the
+    # result.
+    self.assertLess(err_x3, 4e-3)
+    if dtype == dtypes.bfloat16:
+      if jtu.test_device_matches(
+          ["cuda"]
+      ) and not jtu.is_cuda_compute_capability_at_least("10.0"):
+        # Before Blackwell, cuBLASLt FP8 uses a reduced precision accumulator.
+        self.assertLess(err_x4, 1e-4)
+        self.assertLess(err_x4, err_x3 / 10)
+      else:
+        # The initial float8_e4m3fn term and residual term preserve all 8
+        # bfloat16 significand bits, so X4 matches BF16_BF16_F32.
+        self.assertLess(err_x4, 1e-5)
+        self.assertLess(err_x4, err_x3 / 100)
+    else:
+      # float32 inputs lose the bits below the residual term; both presets
+      # should still beat a single bfloat16 pass, and X4 should beat X3.
+      err_bf16 = rel_err(lax.DotAlgorithmPreset.BF16_BF16_F32)
+      self.assertLess(err_x3, err_bf16)
+      self.assertLess(err_x4, err_x3)
+
   def testDotAlgorithmInvalidFloat8Type(self):
     if jtu.test_device_matches(["cpu"]):
       raise SkipTest("Not supported on CPU.")
@@ -1331,11 +1633,12 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "The dot algorithm"):
       lax.dot(lhs, rhs, precision="ANY_F8_ANY_F8_F32")
 
-  def testDotAlgorithmCasting(self):
+  @jtu.sample_product(precision=["F32_F32_F32", "F16_F16_F32"])
+  def testDotAlgorithmCasting(self, precision):
     if jtu.test_device_matches(["tpu"]):
-      raise SkipTest("F32_F32_F32 is not supported on TPU.")
+      raise SkipTest(f"{precision} is not supported on TPU.")
     def fun(lhs, rhs):
-      return lax.dot(lhs, rhs, precision="F32_F32_F32")
+      return lax.dot(lhs, rhs, precision=precision)
     lhs_shape = (3, 4)
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
@@ -1366,6 +1669,56 @@ class LaxTest(jtu.JaxTestCase):
     with jax.default_matmul_precision("F32_F32_F32"):
       hlo = jax.jit(lax.dot).lower(lhs, rhs).as_text()
       self.assertRegex(hlo, expected)
+
+    if jaxlib_extension_version >= 514:
+      lhs_f16 = rng(lhs_shape, np.float16)
+      rhs_f16 = rng(rhs_shape, np.float16)
+      for num_ops in (3, 4):
+        preset = f"F8E4M3FN_F8E4M3FN_F32_X{num_ops}"
+        expected = (
+            "algorithm = <lhs_precision_type = f8E4M3FN, rhs_precision_type = "
+            "f8E4M3FN, accumulation_type = f32, lhs_component_count = 1, "
+            f"rhs_component_count = 1, num_primitive_operations = {num_ops}"
+        )
+        with jax.default_matmul_precision(preset):
+          # CPU rejects these presets, so lower for TPU.
+          hlo = (
+              jax.jit(lax.dot)
+              .trace(lhs, rhs)
+              .lower(lowering_platforms=("tpu",))
+              .as_text()
+          )
+          self.assertIn(expected, hlo)
+          hlo_outer = (
+              jax.jit(lambda x, y: jnp.einsum("i,j->ij", x, y))
+              .trace(lhs[0], rhs[0])
+              .lower(lowering_platforms=("tpu",))
+              .as_text()
+          )
+          self.assertNotIn("algorithm =", hlo_outer)
+        hlo_bf16_out = (
+            jax.jit(
+                partial(
+                    lax.dot,
+                    precision=preset,
+                    preferred_element_type=dtypes.bfloat16,
+                )
+            )
+            .trace(lhs, rhs)
+            .lower(lowering_platforms=("tpu",))
+            .as_text()
+        )
+        self.assertIn(expected, hlo_bf16_out)
+        self.assertNotIn("convert", hlo_bf16_out)
+        hlo_f16 = (
+            jax.jit(partial(lax.dot, precision=preset))
+            .trace(lhs_f16, rhs_f16)
+            .lower(lowering_platforms=("tpu",))
+            .as_text()
+        )
+        self.assertIn(
+            "(tensor<3x4xf32>, tensor<4x3xf32>) -> tensor<3x3xf32>", hlo_f16
+        )
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
@@ -1995,12 +2348,7 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       lax.dynamic_slice_in_dim(x, jnp.array([2, 2]), 3)
 
-  @unittest.skipIf(
-      jaxlib_extension_version < 498, "Requires jaxlib_extension_version >= 498"
-  )
   def testNestedDynamicSliceOutOfBounds(self):
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Test requires libtpu >= 0.0.50')
     # Regression test for https://github.com/jax-ml/jax/issues/40849
     buf = jnp.arange(10, dtype=np.int32)
 
@@ -4115,6 +4463,53 @@ class LaxTest(jtu.JaxTestCase):
         [(4, 1, 5), (100, 5), (), (100, 5)],
     )
 
+  def test_polynomial_uses_fmuladd(self):
+    x = jnp.float32(1.0 + 2**-20)
+    c0 = jnp.float32(-1.0)
+    c1 = jnp.float32(1.0 - 2**-20)
+    expected_fused = jnp.float32(-(2**-40))
+
+    unrolled_fn = jax.jit(lambda z: lax.polynomial(z, [c0, c1, 0.0], unroll=4))
+    scan_fn = jax.jit(lambda z: lax.polynomial(z, [c0, c1, 0.0, 0.0], unroll=1))
+    polyval_fn = jax.jit(lambda p, z: jnp.polyval(p, z))
+
+    for fn in (unrolled_fn, scan_fn):
+      cpu_hlo = fn.trace(x).lower(lowering_platforms=("cpu",)).as_text()
+      if jaxlib_extension_version >= 515 and jtu.stablehlo_version_at_least("1.24.0"):
+        self.assertIn("stablehlo.fma", cpu_hlo)
+      tpu_hlo = fn.trace(x).lower(lowering_platforms=("tpu",)).as_text()
+      self.assertNotIn("stablehlo.fma", tpu_hlo)
+
+    if jaxlib_extension_version >= 515 and jtu.stablehlo_version_at_least("1.24.0"):
+      polyval_cpu_hlo = (
+          polyval_fn.trace(jnp.array([c1, c0]), x)
+          .lower(lowering_platforms=("cpu",))
+          .as_text()
+      )
+      self.assertIn("stablehlo.fma", polyval_cpu_hlo)
+
+    exported_poly = export.export(unrolled_fn, platforms=("cpu",))(x)
+    self.assertNotIn("stablehlo.fma", exported_poly.mlir_module())
+
+    if jtu.test_device_matches(["cpu", "gpu"]) and lax_test_util.backend_supports_fma(jnp.float32):
+      self.assertEqual(lax.polynomial(x, [c0, c1]), expected_fused)
+      self.assertEqual(scan_fn(x), expected_fused)
+      self.assertEqual(polyval_fn(jnp.array([c1, c0]), x), expected_fused)
+    else:
+      self.assertIn(
+          lax.polynomial(x, [c0, c1]), (expected_fused, jnp.float32(0.0))
+      )
+
+    # Integer and complex polynomials continue to lower via mul + add.
+    xi = jnp.int32(3)
+    self.assertEqual(lax.polynomial(xi, [1, 5, 2]), jnp.int32(34))
+    self.assertEqual(jnp.polyval(jnp.array([2, 5, 1], dtype=jnp.int32), xi), jnp.int32(34))
+    xc = jnp.complex64(1.0 + 2.0j)
+    cc = [jnp.complex64(1.0), jnp.complex64(2.0 - 1.0j), jnp.complex64(0.5j)]
+    self.assertAllClose(
+        lax.polynomial(xc, cc), cc[0] + xc * (cc[1] + xc * cc[2])
+    )
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
@@ -4938,10 +5333,14 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       regions_with_inaccuracies_keep('pos.imag', 'pinf.imag', 'mpos.imag')
 
     elif name == 'exp2':
+      # TODO: Remove 'ninfj' and 'pinfj' from the list once all supported XLA
+      # versions include https://github.com/llvm/llvm-project/pull/232791,
+      # which changed exp2(+-inf + I*y) for y = +-inf to the C99 values
+      # (0 and inf + nanj) on CPU and GPU, while mpmath gives nan + nanj.
       if dtype == np.complex64:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'pos.imag', 'negj', 'posj', 'ninf', 'pinf', 'mq1', 'mq2', 'mq3', 'mq4', 'mpos.imag', 'mnegj', 'mposj')
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'pos.imag', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq1', 'mq2', 'mq3', 'mq4', 'mpos.imag', 'mnegj', 'mposj')
       if dtype == np.complex128:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'pos.imag', 'negj', 'posj', 'ninf', 'pinf', 'mpos.imag')
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'pos.imag', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
 
     elif name == 'sinc':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'mq1', 'mq2', 'mq3', 'mq4',
@@ -5348,12 +5747,11 @@ class CompositeTest(jtu.JaxTestCase):
     mlir_module = jax.jit(partial(my_consts, scale=scale)).lower(x).as_text()
     if config.use_simplified_jaxpr_constants.value:
       self.assertIn(
-          "@my.consts(%arg0: tensor<3xf32> {jax.const = true}, %arg1: tensor<3xf32>) -> tensor<3xf32>", mlir_module
+          "@main(%arg0: tensor<3xf32> {jax.const = true}, %arg1: tensor<3xf32>)", mlir_module
       )
-    else:
-      self.assertIn(
-          "@my.consts(%arg0: tensor<3xf32>, %arg1: tensor<3xf32>) -> tensor<3xf32>", mlir_module
-      )
+    self.assertIn(
+        "@my.consts(%arg0: tensor<3xf32>, %arg1: tensor<3xf32>) -> tensor<3xf32>", mlir_module
+    )
 
   def test_composite_with_tracer_consts(self):
     def fun(x, scale):
@@ -5393,10 +5791,7 @@ class CompositeTest(jtu.JaxTestCase):
 class RaggedTest(jtu.JaxTestCase):
 
   def check_wsc_in_lowered(self, text):
-    if config.use_shardy_partitioner.value:
-      self.assertIn('sdy.sharding_constraint', text)
-    else:
-      self.assertIn('@Sharding', text)
+    self.assertIn('sdy.sharding_constraint', text)
 
   def _test_ragged_dot(self, m, k, n, num_groups, dtype):
     """Tests ragged_dot.

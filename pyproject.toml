@@ -45,7 +45,7 @@ doctest_optionflags = [
     "NUMBER",
     "NORMALIZE_WHITESPACE"
 ]
-addopts = "--doctest-glob='*.rst' --ignore='examples/ffi' --import-mode=importlib"
+addopts = "--doctest-glob='*.rst' --ignore='examples/ffi' --ignore='tests/numerics' --import-mode=importlib"
 
 [tool.pyrefly]
 python-version = "3.13"
@@ -150,7 +150,6 @@ max-complexity = 18
 "docs/autodidax.py" = ["F811"]
 "docs/pallas/tpu/matmul.ipynb" = ["F811"]
 "docs/pallas/tpu/distributed.ipynb" = ["F811"]
-"docs/pallas/quickstart.ipynb" = ["F811"]
 "docs/notebooks/autodiff_cookbook.ipynb" = ["F811", "F821"]
 "docs/notebooks/autodiff_remat.ipynb" = ["F811", "F821"]
 "docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb" = ["F811"]

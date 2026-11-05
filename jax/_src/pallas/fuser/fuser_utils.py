@@ -14,12 +14,12 @@
 
 """Basic utils for fuser internals."""
 
-import hashlib
+import functools
 import itertools
+from typing import Any
 
 from jax._src import api_util
 from jax._src import core
-from jax._src import effects as effects_lib
 from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import util
@@ -27,7 +27,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
-
 import numpy as np
 
 
@@ -42,91 +41,96 @@ def make_jaxpr(f, *args, **kwargs):
   return closed_jaxpr, closed_jaxpr.consts, in_avals_ft.tree, out_avals_ft.tree
 
 
-# symbolic jaxpr comparison (for index map comparisons)
+def compare_jaxprs(jaxpr1: core.Jaxpr, jaxpr2: core.Jaxpr) -> bool:
+  """Compares two jaxprs for symbolic equivalence up to renaming and DCE.
 
-# Use a value numbering approach to hash the jaxpr, this makes comparison
-# insensitive to variable name choices and topologically equivalent
-# linearizations.
+  Walks both jaxprs back from their outputs in lockstep, making the comparison
+  insensitive to variable names, topologically equivalent linearizations of
+  pure equations, and dead code. Effectful equations must match 1-to-1 in
+  program order.
+
+  The implementation is conservative: it may return False for equivalent jaxprs,
+  but never True for different ones.
+  """
+  if jaxpr1 is jaxpr2:
+    return True
+  if jaxpr1.in_avals != jaxpr2.in_avals or jaxpr1.out_avals != jaxpr2.out_avals:
+    return False
+  effectful1 = [eqn for eqn in jaxpr1.eqns if eqn.effects]
+  effectful2 = [eqn for eqn in jaxpr2.eqns if eqn.effects]
+  if len(effectful1) != len(effectful2):
+    return False
+  effectful_pairs = set(zip(effectful1, effectful2))
+  origins1 = _origins(jaxpr1)
+  origins2 = _origins(jaxpr2)
+
+  def same_atom(a: core.Atom, b: core.Atom) -> bool:
+    if a.aval != b.aval:
+      return False
+    match a, b:
+      case core.Literal(), core.Literal():
+        return _same_value(a.val, b.val)
+      case core.Var(), core.Var():
+        match origins1[a], origins2[b]:
+          case ('invar', i), ('invar', j):
+            return i == j
+          case ('const', c1), ('const', c2):
+            return _same_value(c1, c2)
+          case ('eqn', eqn1, i), ('eqn', eqn2, j):
+            return i == j and same_eqn(eqn1, eqn2)
+    return False
+
+  @functools.cache
+  def same_eqn(eqn1: core.JaxprEqn, eqn2: core.JaxprEqn) -> bool:
+    # Effectful equations cannot be reordered, so they must correspond in
+    # program order.
+    if (eqn1.effects or eqn2.effects) and (eqn1, eqn2) not in effectful_pairs:
+      return False
+    return (
+        eqn1.primitive is eqn2.primitive
+        and len(eqn1.invars) == len(eqn2.invars)
+        and _same_params(eqn1.params, eqn2.params)
+        and all(map(same_atom, eqn1.invars, eqn2.invars))
+    )
+
+  # Effectful equations without outvars are not reachable from outvars, so walk
+  # effectful equations explicitly as well.
+  return (
+      all(map(same_atom, jaxpr1.outvars, jaxpr2.outvars))
+      and all(map(same_eqn, effectful1, effectful2))
+  )
 
 
-def _make_hashable(val):
-  if isinstance(val, core.Jaxpr):
-    return _jaxpr_signature(val)
-  elif isinstance(val, (list, tuple)):
-    return tuple(_make_hashable(v) for v in val)
-  elif isinstance(val, dict):
-    return tuple(sorted((k, _make_hashable(v)) for k, v in val.items()))
-  elif isinstance(val, (set, frozenset)):
-    return frozenset(_make_hashable(v) for v in val)
-  elif hasattr(val, 'shape') and hasattr(val, 'dtype'):
-    try:
-      b = (
-          val.tobytes()
-          if hasattr(val, 'tobytes')
-          else np.asarray(val).tobytes()
-      )
-      arr_hash = hashlib.sha256(b).hexdigest()
-      return ('array', tuple(val.shape), str(val.dtype), arr_hash)
-    except Exception:
-      return ('array_fallback', tuple(val.shape), str(val.dtype))
-  else:
-    try:
-      hash(val)
-      return type(val), val
-    except TypeError:
-      return type(val), str(val)
-
-
-def _jaxpr_signature(jaxpr_obj):
-  env = {}
-  jaxpr = jaxpr_obj
-  # consts pair with a prefix of constvars; any unapplied constvars are
-  # identified positionally.
-  for v, c in zip(jaxpr.constvars, jaxpr.consts):
-    env[v] = ('constval', _make_hashable(c))
-  for i, v in enumerate(jaxpr.constvars[len(jaxpr.consts) :]):
-    env[v] = ('constvar_idx', i)
+def _origins(jaxpr: core.Jaxpr) -> dict[core.Var, tuple[Any, ...]]:
+  """Maps each variable in ``jaxpr`` to where its value comes from."""
+  origins: dict[core.Var, tuple[Any, ...]] = {}
   for i, v in enumerate(jaxpr.invars):
-    env[v] = ('invar', i)
-
-  def get_var_sig(v):
-    if isinstance(v, core.Literal):
-      return ('literal', _make_hashable(v.val))
-    elif type(v).__name__ == 'DropVar':
-      return ('dropvar',)
-    elif v in env:
-      return env[v]
-    else:
-      return ('unknown_var', str(v))
-
-  def get_effect_sig(e):
-    if isinstance(e, effects_lib.JaxprInputEffect) and isinstance(
-        e.input, core.Var):
-      return f'{type(e).__name__}<{get_var_sig(e.input)}>'
-    return str(e)
-
-  eqn_sigs = []
+    origins[v] = ('invar', i)
+  for v, c in zip(jaxpr.constvars, jaxpr.consts, strict=True):
+    origins[v] = ('const', c)
   for eqn in jaxpr.eqns:
-    in_sigs = tuple(hash(get_var_sig(v)) for v in eqn.invars)
-    params_sig = hash(_make_hashable(eqn.params))
-    effects = tuple(sorted(get_effect_sig(e) for e in getattr(eqn, 'effects', [])))
-    op_sig = ('eqn', eqn.primitive.name, in_sigs, params_sig, effects)
-    eqn_sigs.append(op_sig)
-    for i, outvar in enumerate(eqn.outvars):
-      if type(outvar).__name__ != 'DropVar':
-        env[outvar] = ('out', op_sig, i)  # pyrefly: ignore[unsupported-operation]
-  out_sigs = tuple(get_var_sig(v) for v in jaxpr.outvars)
-  jaxpr_effects = tuple(
-      sorted(get_effect_sig(e) for e in getattr(jaxpr, 'effects', [])))
-  eqn_sigs_sorted = tuple(sorted(eqn_sigs, key=lambda x: str(x)))
-  return ('jaxpr_dag', out_sigs, eqn_sigs_sorted, jaxpr_effects)
+    for i, v in enumerate(eqn.outvars):
+      origins[v] = ('eqn', eqn, i)
+  return origins
 
 
-def compare_jaxprs(jaxpr1, jaxpr2):
-  """Compares two JAXPRs for symbolic equivalence."""
-  sig1 = _jaxpr_signature(jaxpr1)
-  sig2 = _jaxpr_signature(jaxpr2)
-  return sig1 == sig2
+def _same_params(p1, p2) -> bool:
+  leaves1, tree1 = tree_util.tree_flatten(p1)
+  leaves2, tree2 = tree_util.tree_flatten(p2)
+  return tree1 == tree2 and all(map(_same_value, leaves1, leaves2))
+
+
+def _same_value(x, y) -> bool:
+  if type(x) is not type(y):
+    return False
+  if isinstance(x, core.Jaxpr):
+    return compare_jaxprs(x, y)
+  if isinstance(x, np.ndarray):
+    return (x.dtype, x.shape, x.tobytes()) == (y.dtype, y.shape, y.tobytes())
+  try:
+    return hash(x) == hash(y) and x == y
+  except TypeError:  # Unhashable, e.g. a closed-over jax.Array.
+    return x is y
 
 
 def get_write_indices(jaxpr):

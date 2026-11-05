@@ -246,6 +246,16 @@ class TupTy(HiType):
     return TupTy(tuple(ty.unshard(mesh, check_vma, s)
                        for ty, s in zip(self.tys, spec.val)))
 
+  @property
+  def sharding(self):
+    return TupP(tuple(ty.sharding.spec for ty in self.tys))
+
+  def reshard(self, sharding):
+    return TupTy(tuple(ty.reshard(s) for ty, s in zip(self.tys, sharding.val)))
+
+  def vspace_zero(self):
+    return make_tup(*map(ad.zeros_like_aval, self.tys))
+
   def vspace_add(self, x_tup, y_tup):
     n = len(self.tys)
     x_elts = [get_tuple_element(x_tup, i) for i in range(n)]
@@ -265,6 +275,9 @@ class TupP(HiPspec):
 
   def to_lo(self) -> tuple[jax.PartitionSpec, ...]:
     return self.val
+
+  def from_lo(self, lo_specs) -> TupP:
+    return TupP(tuple(lo_specs))
 
 class MakeTup(HiPrim):
   def __init__(self, in_avals):
@@ -410,6 +423,9 @@ class ImmutBoxTy(HiType):
     y_leaves = jax.tree.leaves(immutbox_get(y))
     add_leaves = [a.vspace_add(i, j) for a, i, j in zip(self.leaf_avals, x_leaves, y_leaves)]
     return immutbox_new(jax.tree.unflatten(self.treedef, add_leaves))
+
+  def reshard(self, sharding):
+    return ImmutBoxTy(tuple(a.reshard(sharding) for a in self.leaf_avals), self.treedef)
 
 def _map_immutbox_ty(size: int, axis: int | None, aval: ImmutBoxTy) -> ImmutBoxTy:
   if axis is None:
@@ -1678,6 +1694,27 @@ class HijaxTest(jtu.JaxTestCase):
     g(x)
     jax.jit(g)(x)
 
+  @jtu.with_explicit_mesh((2,), ('data',))
+  def test_hijax_primitive_with_consts_under_shard_map(self, mesh):
+    class AddConst(HiPrim):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x + np.ones((1,), dtype=x.dtype)
+
+    x = jax.device_put(jnp.arange(10), jax.P('data'))
+    g = jax.shard_map(
+        lambda x: AddConst(typeof(x))(x),
+        in_specs=(jax.P('data'),),
+        out_specs=jax.P('data'),
+    )
+    self.assertArraysEqual(g(x), x + 1)
+    self.assertArraysEqual(jax.jit(g)(x), x + 1)
+
   def test_hijax_cond_platform_dependent(self):
     x = jnp.arange(10)
     result = jax.jit(partial(jax.lax.platform_dependent, cpu=square, default=square))(x)
@@ -2340,6 +2377,100 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(logs, {'sq': {'x': 3.0, 'ct_in': 2.0}},
                         check_dtypes=False)
 
+  def test_vjp_bwd_refs_under_vmap(self):
+    # vmap applies the batched primitive that `batch` builds, whose vjp_bwd gets
+    # the caller's gradient refs
+    seen = []
+
+    class Take(HiPrim):  # x[..., i]
+      def __init__(self, x_aval, i):
+        self.in_avals = (x_aval,)
+        self.out_aval = ShapedArray(x_aval.shape[:-1], x_aval.dtype)
+        self.params = dict(i=i)
+        super().__init__()
+
+      def expand(self, x):
+        return x[..., self.i]
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), None
+
+      def vjp_bwd(self, res, g, x_acc):
+        seen.append(type(x_acc).__name__)
+        if isinstance(x_acc, ad.RefAccum):
+          x_acc.ref[..., self.i] += g
+        else:
+          x_acc.accum(jnp.zeros(x_acc.aval.shape, x_acc.aval.dtype)
+                      .at[..., self.i].add(g))
+
+      def batch(self, axis_data, args, dims):
+        (x,), (d,) = args, dims
+        if d is None:
+          return Take(jax.typeof(x), self.i)(x), None
+        x = jnp.moveaxis(x, d, 0)
+        return Take(jax.typeof(x), self.i)(x), 0
+
+    take3 = lambda x: Take(jax.typeof(x), 3)(x)
+    xs = jnp.arange(60.).reshape(2, 3, 10)
+    x0 = xs[0]
+    for f, x in [(jax.vmap(take3), x0), (jax.jit(jax.vmap(take3)), x0),
+                 (jax.vmap(jax.vmap(take3)), xs)]:
+      ref = jax.new_ref(jnp.zeros_like(x))
+      jax.vjp(f, x)[1].with_refs(ref)(jnp.ones(x.shape[:-1]))
+      self.assertAllClose(ref[...], jnp.zeros_like(x).at[..., 3].set(1.))
+    self.assertEqual(set(seen), {'RefAccum'})
+
+    def bwd(ref):
+      jax.vjp(jax.vmap(take3), x0)[1].with_refs(ref)(jnp.ones(3))
+    jaxpr = jax.jit(bwd).trace(jax.new_ref(jnp.zeros((3, 10)))).jaxpr
+    self.assertNotIn('3,10] =', str(jaxpr))  # updated in place
+
+    # with the batch axis elsewhere, moveaxis makes a new value, which gets a
+    # ValAccum of its own, so the rule takes the dense path
+    seen.clear()
+    x = x0.T
+    ref = jax.new_ref(jnp.zeros_like(x))
+    jax.vjp(jax.vmap(take3, in_axes=1), x)[1].with_refs(ref)(jnp.ones(3))
+    self.assertAllClose(ref[...], jnp.zeros_like(x).at[3].set(1.))
+    self.assertEqual(seen, ['ValAccum'])
+
+    # a batched primitive's input that's shared across the batch gets the
+    # caller's ref too, and the rule sums the batch's contributions into it
+    class ScaleTake(HiPrim):  # x[i] * s, for shared x and batched s
+      def __init__(self, x_aval, s_aval, i):
+        self.in_avals = (x_aval, s_aval)
+        self.out_aval = s_aval
+        self.params = dict(i=i)
+        super().__init__()
+
+      def expand(self, x, s):
+        return x[self.i] * s
+
+      def vjp_fwd(self, nzs_in, x, s):
+        return self(x, s), (x, s)
+
+      def vjp_bwd(self, res, g, x_acc, s_acc):
+        x, s = res
+        seen.append(type(x_acc).__name__)
+        x_acc.ref[self.i] += (g * s).sum()
+        s_acc.accum(g * x[self.i])
+
+      def batch(self, axis_data, args, dims):
+        (x, s), (x_dim, s_dim) = args, dims
+        assert x_dim is None and s_dim == 0
+        return ScaleTake(jax.typeof(x), jax.typeof(s), self.i)(x, s), 0
+
+    seen.clear()
+    f = jax.vmap(lambda x, s: ScaleTake(jax.typeof(x), jax.typeof(s), 3)(x, s),
+                 in_axes=(None, 0))
+    ref = jax.new_ref(jnp.zeros_like(x0[0]))
+    s = jnp.arange(3.) + 1.
+    _, s_ct = jax.vjp(f, x0[0], s)[1].with_refs(ref, jax.ad.GradValue())(
+        jnp.ones(3))
+    self.assertAllClose(ref[...], jnp.zeros_like(x0[0]).at[3].set(s.sum()))
+    self.assertAllClose(s_ct, jnp.full(3, x0[0, 3]))
+    self.assertEqual(seen, ['RefAccum'])
+
   def test_backward_pass_logging_vjp_pytree_roundtrip(self):
     _, f_vjp = jax.vjp(jnp.sin, 1.0)
 
@@ -2808,6 +2939,40 @@ class HijaxTest(jtu.JaxTestCase):
     f(x, y)
     jax.jit(jax.grad(f))(x, y)
 
+  def test_remat_hitype_in_and_out(self):
+    x = jnp.array([1.0, 2.0, 3.0, 4.0])
+    y = jnp.array([5.0, 6.0])
+    c = make_tup(jnp.full(4, 2.0), jnp.full(2, 3.0))
+
+    @jax.remat
+    def passthrough(tup):
+      return tup
+
+    pt = jax.jit(passthrough)(make_tup(x, y))
+    self.assertAllClose(get_tuple_element(pt, 0), x)
+    self.assertAllClose(get_tuple_element(pt, 1), y)
+
+    @partial(jax.remat, prevent_cse=(True, False))
+    def step(tup, scale):
+      x_ = get_tuple_element(tup, 0) * get_tuple_element(c, 0) * scale
+      y_ = get_tuple_element(tup, 1) + get_tuple_element(c, 1)
+      return make_tup(x_, y_)
+
+    def loss(x, y, scale):
+      out = step(make_tup(x, y), scale)
+      x_ = get_tuple_element(out, 0)
+      y_ = get_tuple_element(out, 1)
+      return jnp.sum(x_ + jnp.concatenate((y_, y_)))
+
+    out_tup = jax.jit(step)(make_tup(x, y), 2.0)
+    self.assertAllClose(get_tuple_element(out_tup, 0), x * 4.0)
+    self.assertAllClose(get_tuple_element(out_tup, 1), y + 3.0)
+
+    dx, dy, dscale = jax.jit(jax.grad(loss, argnums=(0, 1, 2)))(x, y, 2.0)
+    self.assertAllClose(dx, jnp.full(4, 4.0))
+    self.assertAllClose(dy, jnp.full(2, 2.0))
+    self.assertAllClose(dscale, jnp.sum(x * 2.0))
+
   @jtu.with_explicit_mesh((2,), 'x')
   def test_shmap_grad_hitype(self, mesh):
     class Mul(HiPrim):
@@ -2914,6 +3079,11 @@ class HijaxTest(jtu.JaxTestCase):
     x = jax.device_put(jnp.ones((8,), dtype=jnp.float32), jax.P('x'))
     f_vjp(MulH(x))  # doesn't crash
 
+  def test_instantiate_zeros_hipspec_sharding(self):
+    tup = HiTup((jnp.ones(2),))
+    _, f_vjp = jax.vjp(lambda x, t: x, 1.0, tup)
+    f_vjp(1.0)  # doesn't crash
+
   @parameterized.parameters([False, True])
   def test_ref_prim(self, jit):
     class Square(HiPrim):
@@ -3019,6 +3189,17 @@ class HijaxTest(jtu.JaxTestCase):
       traced_h = h.trace(jnp.float32(2.0), jnp.float32(3.0))
       self.assertIn('cos', str(traced_h.jaxpr))
       self.assertNotIn('cos', str(traced_h.lojax.jaxpr))
+
+      @jax.remat
+      def r_internal_dead(x):
+        _ = jnp.cos(x)
+        return jnp.sin(x)
+
+      jaxpr_r = jax.make_jaxpr(r_internal_dead)(jnp.float32(2.0)).jaxpr
+      dced_r, _ = pe.dce_jaxpr(jaxpr_r, True, instantiate=True)
+      self.assertNotIn('cos', str(dced_r))
+      dced_r2, _ = pe.dce_jaxpr(dced_r, True, instantiate=True)
+      self.assertIs(dced_r2, dced_r)
 
     @jax.jit
     def clean_fn(x):
@@ -3315,6 +3496,221 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     self.assertIn("dce_sink", hlo)
     self.assertIn("custom_call", hlo)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshard_hitype(self, mesh):
+    a = jax.device_put(jnp.arange(8, dtype=jnp.float32).reshape(4, 2), jax.P('x', None))
+    box = immutbox_new(a)
+
+    # Eager reshard
+    out_eager = jax.sharding.reshard(box, jax.P(None, 'y'))
+    self.assertEqual(jax.typeof(out_eager).sharding.spec, jax.P(None, 'y'))
+    self.assertAllClose(immutbox_get(out_eager), a)
+
+    # Jit + AD through reshard
+    @jax.jit
+    def f(b):
+      b2 = jax.sharding.reshard(b, jax.P(None, 'y'))
+      return immutbox_new(immutbox_get(b2) * 2.0)
+
+    lowered_text = f.lower(box).as_text()
+    self.assertIn('sdy.sharding_constraint', lowered_text)
+
+    out, f_vjp = jax.vjp(f, box)
+    self.assertEqual(jax.typeof(out).sharding.spec, jax.P(None, 'y'))
+    self.assertAllClose(immutbox_get(out), a * 2.0)
+
+    ct_in, = f_vjp(out)
+    self.assertEqual(jax.typeof(ct_in).sharding.spec, jax.P('x', None))
+    self.assertAllClose(immutbox_get(ct_in), a * 4.0)
+
+  def test_explicit_and_auto_axes_hitype(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'),
+                           axis_types=(jax.sharding.AxisType.Auto,
+                                       jax.sharding.AxisType.Auto))
+    with jax.set_mesh(mesh):
+      a = jax.device_put(jnp.arange(8, dtype=jnp.float32).reshape(4, 2), jax.P('x', None))
+      box = immutbox_new(a)
+
+      @jax.sharding.explicit_axes(in_sharding=jax.P('x', None))
+      def g(b):
+        self.assertEqual(jax.typeof(b).sharding.spec, jax.P('x', None))
+        b_out = immutbox_new(immutbox_get(b) + 1.0)
+        b_resharded = jax.sharding.reshard(b_out, jax.P(None, 'y'))
+        self.assertEqual(jax.typeof(b_resharded).sharding.spec, jax.P(None, 'y'))
+        return b_resharded
+
+      lowered_g = jax.jit(g).lower(box).as_text()
+      self.assertIn('sdy.sharding_constraint', lowered_g)
+
+      out = jax.jit(g)(box)
+      self.assertEqual(jax.typeof(out).sharding.spec, jax.P(None, None))
+      self.assertAllClose(immutbox_get(out), a + 1.0)
+
+      _, g_vjp = jax.vjp(jax.jit(g), box)
+      ct_in, = g_vjp(out)
+      self.assertAllClose(immutbox_get(ct_in), a + 1.0)
+
+    explicit_mesh = jtu.create_mesh((2, 2), ('x', 'y'),
+                                    axis_types=(jax.sharding.AxisType.Explicit,
+                                                jax.sharding.AxisType.Explicit))
+    with jax.set_mesh(explicit_mesh):
+      a = jax.device_put(jnp.arange(8, dtype=jnp.float32).reshape(4, 2), jax.P('x', None))
+      box = immutbox_new(a)
+
+      @jax.sharding.auto_axes(out_sharding=jax.P(None, 'y'))
+      def h(b):
+        self.assertEqual(jax.typeof(b).sharding.spec, jax.P(None, None))
+        return immutbox_new(immutbox_get(b) * 2.0)
+
+      lowered_h = jax.jit(h).lower(box).as_text()
+      self.assertIn('sdy.sharding_constraint', lowered_h)
+
+      out = jax.jit(h)(box)
+      self.assertEqual(jax.typeof(out).sharding.spec, jax.P(None, 'y'))
+      self.assertAllClose(immutbox_get(out), a * 2.0)
+
+  def test_reshard_qarray_hitype(self):
+    @dataclass(frozen=True)
+    class ScaledArray:
+      arr: jax.Array    # f32[m, k]
+      scale: jax.Array  # f32[m]
+
+    @dataclass(frozen=True)
+    class ScaledArrayTy(HiType):
+      arr_aval: ShapedArray
+      scale_aval: ShapedArray
+
+      @property
+      def sharding(self):
+        return self.arr_aval.sharding
+
+      def lo_ty(self):
+        return [self.arr_aval, self.scale_aval]
+
+      def lower_val(self, hi_val: ScaledArray):
+        return [hi_val.arr, hi_val.scale]
+
+      def raise_val(self, arr, scale):
+        return ScaledArray(arr, scale)
+
+      def reshard(self, sharding):
+        scale_sharding = sharding.update(spec=jax.P(sharding.spec[0]))
+        return ScaledArrayTy(
+            self.arr_aval.reshard(sharding),
+            self.scale_aval.reshard(scale_sharding),
+        )
+
+    register_hitype(
+        ScaledArray,
+        lambda q: ScaledArrayTy(jax.typeof(q.arr), jax.typeof(q.scale)),
+    )
+
+    mesh = jtu.create_mesh(
+        (2, 2),
+        ('x', 'y'),
+        axis_types=(jax.sharding.AxisType.Auto, jax.sharding.AxisType.Auto),
+    )
+    with jax.set_mesh(mesh):
+      arr = jax.device_put(
+          jnp.arange(8, dtype=jnp.float32).reshape(4, 2), jax.P('x', None)
+      )
+      scale = jax.device_put(jnp.ones((4,), dtype=jnp.float32), jax.P('x'))
+      q = ScaledArray(arr, scale)
+
+      @jax.sharding.explicit_axes(in_sharding=jax.P('x', None))
+      def f(q_in):
+        self.assertEqual(jax.typeof(q_in).arr_aval.sharding.spec, jax.P('x', None))
+        self.assertEqual(jax.typeof(q_in).scale_aval.sharding.spec, jax.P('x'))
+        q_resharded = jax.sharding.reshard(q_in, jax.P('y', 'x'))
+        self.assertEqual(
+            jax.typeof(q_resharded).arr_aval.sharding.spec, jax.P('y', 'x')
+        )
+        self.assertEqual(
+            jax.typeof(q_resharded).scale_aval.sharding.spec, jax.P('y')
+        )
+        return q_resharded
+
+      lowered = jax.jit(f).lower(q).as_text()
+      self.assertIn('sdy.sharding_constraint', lowered)
+
+      out = jax.jit(f)(q)
+      self.assertEqual(jax.typeof(out).arr_aval.sharding.spec, jax.P(None, None))
+      self.assertEqual(jax.typeof(out).scale_aval.sharding.spec, jax.P(None))
+      self.assertAllClose(out.arr, arr)
+      self.assertAllClose(out.scale, scale)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshard_tuple_hitype(self, mesh):
+    x = jax.device_put(
+        jnp.arange(8, dtype=jnp.float32).reshape(4, 2), jax.P('x', None)
+    )
+    y = jax.device_put(jnp.ones((4,), dtype=jnp.float32), jax.P(None))
+    tup = make_tup(x, y)
+
+    # Eager reshard
+    out_eager = jax.sharding.reshard(tup, TupP((jax.P(None, 'y'), jax.P('x'))))
+    self.assertEqual(jax.typeof(out_eager).sharding,
+                     TupP((jax.P(None, 'y'), jax.P('x'))))
+    self.assertAllClose(get_tuple_element(out_eager, 0), x)
+    self.assertAllClose(get_tuple_element(out_eager, 1), y)
+
+    # Jit + AD through reshard
+    @jax.jit
+    def f(t):
+      t2 = jax.sharding.reshard(t, TupP((jax.P(None, 'y'), jax.P('x'))))
+      a = get_tuple_element(t2, 0) * 2.0
+      b = get_tuple_element(t2, 1) * 3.0
+      return make_tup(a, b)
+
+    lowered_text = f.lower(tup).as_text()
+    self.assertIn('sdy.sharding_constraint', lowered_text)
+
+    out, f_vjp = jax.vjp(f, tup)
+    self.assertEqual(jax.typeof(out).sharding,
+                     TupP((jax.P(None, 'y'), jax.P('x'))))
+    self.assertAllClose(get_tuple_element(out, 0), x * 2.0)
+    self.assertAllClose(get_tuple_element(out, 1), y * 3.0)
+
+    ct_in, = f_vjp(out)
+    self.assertEqual(jax.typeof(ct_in).sharding,
+                     TupP((jax.P('x', None), jax.P(None))))
+    self.assertAllClose(get_tuple_element(ct_in, 0), x * 4.0)
+    self.assertAllClose(get_tuple_element(ct_in, 1), y * 9.0)
+
+    # explicit_axes and auto_axes with TupTy
+    auto_mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'),
+        axis_types=(jax.sharding.AxisType.Auto, jax.sharding.AxisType.Auto))
+    with jax.set_mesh(auto_mesh):
+      x_auto = jax.device_put(
+          jnp.arange(8, dtype=jnp.float32).reshape(4, 2), jax.P('x', None))
+      y_auto = jax.device_put(jnp.ones((4,), dtype=jnp.float32), jax.P('x'))
+      tup_auto = make_tup(x_auto, y_auto)
+
+      @jax.sharding.explicit_axes(in_sharding=TupP((jax.P('x', None), jax.P('x'))))
+      def g(t):
+        self.assertEqual(jax.typeof(t).sharding,
+                         TupP((jax.P('x', None), jax.P('x'))))
+        return jax.sharding.reshard(t, TupP((jax.P(None, 'y'), jax.P('y'))))
+
+      out_g = jax.jit(g)(tup_auto)
+      self.assertEqual(jax.typeof(out_g).sharding,
+                       TupP((jax.P(None, None), jax.P(None))))
+      self.assertAllClose(get_tuple_element(out_g, 0), x_auto)
+      self.assertAllClose(get_tuple_element(out_g, 1), y_auto)
+
+    @jax.sharding.auto_axes(out_sharding=TupP((jax.P(None, 'y'), jax.P('x'))))
+    def h(t):
+      self.assertEqual(jax.typeof(t).sharding,
+                       TupP((jax.P(None, None), jax.P(None))))
+      return t
+
+    out_h = jax.jit(h)(tup)
+    self.assertEqual(jax.typeof(out_h).sharding,
+                     TupP((jax.P(None, 'y'), jax.P('x'))))
+    self.assertAllClose(get_tuple_element(out_h, 0), x)
+    self.assertAllClose(get_tuple_element(out_h, 1), y)
+
 
 @jtu.with_config(jax_remat3=True, jax_custom_vjp3=True)
 class CustomVJPRemat3Test(jtu.JaxTestCase):
@@ -3563,6 +3959,48 @@ class CustomVJPRemat3Test(jtu.JaxTestCase):
     self.assertEqual(calls, 1)
     self.assertEqual(f(-3), 3)
     self.assertEqual(calls, 2)
+
+  def test_custom_pytree_constructor_in_custom_vjp_dce_vmap_and_grad(self):
+    @jax.tree_util.register_pytree_node_class
+    class CheckingNode:
+      def __init__(self, x=None):
+        self.x = jnp.asarray(0.01) if x is None else x
+        _ = getattr(self.x, 'value', self.x).shape
+
+      def tree_flatten(self):
+        return (self.x,), None
+
+      @classmethod
+      def tree_unflatten(cls, _, children):
+        return cls(*children)
+
+    @jax.custom_vjp
+    def f(node, y):
+      return CheckingNode(node.x * y)
+
+    def f_fwd(node, y):
+      x = node.x.value if hasattr(node.x, 'value') else node.x
+      yv = y.value if hasattr(y, 'value') else y
+      return CheckingNode(x * yv), (CheckingNode(x), yv)
+
+    def f_bwd(res, g):
+      node, y = res
+      gx = g.aval if isinstance(g, jax.custom_derivatives.SymbolicZero) else g.x
+      return (CheckingNode(gx * y), gx * node.x)
+
+    f.defvjp(f_fwd, f_bwd, symbolic_zeros=True)
+
+    node = CheckingNode(jnp.ones((4,)))
+    ys = jnp.arange(12.).reshape(3, 4)
+
+    # DCE + vmap with unbatched CheckingNode (dims leaf is None) + grad + remat
+    def loss(node, ys):
+      out = jax.vmap(jax.remat(f), in_axes=(None, 0))(node, ys)
+      return jnp.sum(out.x)
+
+    g_node, g_ys = jax.jit(jax.grad(loss, argnums=(0, 1)))(node, ys)
+    self.assertAllClose(g_node.x, jnp.sum(ys, axis=0))
+    self.assertAllClose(g_ys, jnp.broadcast_to(node.x, ys.shape))
 
 
 if __name__ == '__main__':

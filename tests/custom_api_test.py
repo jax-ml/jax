@@ -51,6 +51,24 @@ from jax._src.interpreters import partial_eval as pe
 config.parse_flags_with_absl()
 
 
+@tree_util.register_pytree_node_class
+class CheckingNode:
+  """A pytree node that, like TFP's LinearOperator, validates its leaves."""
+  def __init__(self, a, b):
+    for x in (a, b):
+      if not isinstance(x, jax.Array):
+        raise TypeError(f"Expected jax.Array, got {type(x).__name__}")
+      _ = x.shape, x.dtype
+    self.a, self.b = a, b
+
+  def tree_flatten(self):
+    return (self.a, self.b), None
+
+  @classmethod
+  def tree_unflatten(cls, _, children):
+    return cls(*children)
+
+
 @jtu.with_config(jax_custom_jvp3=False)
 class CustomJVPTest(jtu.JaxTestCase):
 
@@ -1468,6 +1486,49 @@ class CustomJVPTest(jtu.JaxTestCase):
     x = jnp.arange(3.0)
     jax.jvp(jax.vmap(jax.jit(f)), (x,), (x,))  # doesn't crash
 
+  def test_zero_cotangents_stay_symbolic(self):
+    @jax.custom_jvp
+    def f(x):
+      return x, jnp.sqrt(x)
+    f.defjvp(lambda p, t: (f(*p), (t[0], t[0] / (2 * jnp.sqrt(p[0])))))
+    self.assertAllClose(jax.grad(lambda x: f(x)[0])(0.), 1.)
+
+    @jax.custom_jvp
+    def g(x, y):
+      return x, y
+    g.defjvp(lambda p, t: (g(*p), t))
+    self.assertAllClose(jax.grad(lambda x: g(x, jnp.sqrt(x))[0])(0.), 1.)
+
+    @jax.custom_jvp
+    def h(x, y):
+      return x, y
+    h.defjvp(lambda p, t: (h(*p), h(*t)))
+    self.assertAllClose(jax.grad(lambda x: h(x, jnp.sqrt(x))[0])(0.), 1.)
+
+  def test_zero_cotangent_for_custom_pytree_input(self):
+    @jax.tree_util.register_pytree_node_class
+    class CheckingNode:
+      def __init__(self, x):
+        self.x = x
+        _ = self.x.shape
+
+      def tree_flatten(self):
+        return (self.x,), None
+
+      @classmethod
+      def tree_unflatten(cls, _, children):
+        return cls(*children)
+
+    @jax.custom_jvp
+    def f(node, y):
+      return node.x * 2., y * 3.
+    f.defjvp(lambda p, t: (f(*p), (t[0].x * 2., t[1] * 3.)))
+
+    g_node, g_y = jax.grad(lambda n, y: f(n, y)[1], argnums=(0, 1))(
+        CheckingNode(jnp.array(1.)), 1.)
+    self.assertAllClose(g_node.x, 0.)
+    self.assertAllClose(g_y, 3.)
+
   def test_pretty_print(self):
     @jax.custom_jvp
     def f(x):
@@ -1575,6 +1636,114 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_util.primitives(pe.lower_jaxpr2(jaxpr))['sin'], 1)
     value, grad = jax.jit(jax.value_and_grad(f))(1.)
     self.assertAllClose((value, grad), (jnp.sin(1.), jnp.cos(1.)))
+
+  def test_grad_jit_reading_local_ref(self):
+    @jax.custom_jvp
+    def h(x):
+      return x
+    h.defjvp(lambda p, t: (h(p[0]), t[0]))
+
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(0.)
+      return h(ref[...])
+
+    g = lambda x: f(x) + jnp.sin(x)
+    self.assertAllClose(jax.grad(f)(1.), 0., check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(f))(1.), 0., check_dtypes=False)
+    self.assertAllClose(jax.grad(g)(1.), jnp.cos(1.), check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(g))(1.), jnp.cos(1.),
+                        check_dtypes=False)
+    self.assertAllClose(jax.grad(jax.remat(g))(1.), jnp.cos(1.),
+                        check_dtypes=False)
+
+  def test_eager_custom_jvp_python_scalar_output(self):
+    @partial(jax.custom_jvp, nondiff_argnums=(0,))
+    def f(n, x):
+      return n + 1
+    f.defjvp(lambda n, p, t: (f(n, *p), t[0]))
+    out = f(1, 2.)
+    self.assertIs(type(out), int)
+    self.assertEqual(out, 2)
+    traced_out = jax.jit(lambda: 2).trace()()
+    self.assertIs(type(traced_out), int)
+    self.assertEqual(traced_out, 2)
+
+  def test_validating_custom_pytree_node(self):
+    c = jnp.float32(2.0)
+
+    @jax.custom_jvp
+    def f(node, y):
+      return CheckingNode(node.a * y + c, jnp.sin(node.b))
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      node, y = primals
+      node_dot, y_dot = tangents
+      out = f(node, y)
+      out_dot = CheckingNode(node_dot.a * y + node.a * y_dot,
+                             jnp.cos(node.b) * node_dot.b)
+      return out, out_dot
+
+    node = CheckingNode(jnp.float32(3.0), jnp.float32(1.0))
+    y = jnp.float32(4.0)
+    ys = jnp.arange(3, dtype=jnp.float32)
+
+    out = f(node, y)
+    self.assertAllClose(out.a, 14.0, check_dtypes=False)
+    self.assertAllClose(out.b, jnp.sin(1.0), check_dtypes=False)
+    out_jit = jax.jit(f)(node, y)
+    self.assertAllClose((out_jit.a, out_jit.b), (out.a, out.b))
+    out_vmap = jax.vmap(f, in_axes=(None, 0))(node, ys)
+    self.assertAllClose(out_vmap.a, 3.0 * ys + 2.0, check_dtypes=False)
+
+    # jvp wrt y only (node gets zero tangent)
+    _, t_out = jax.jvp(lambda y_: f(node, y_), (y,), (jnp.float32(1.0),))
+    self.assertAllClose((t_out.a, t_out.b), (3.0, 0.0), check_dtypes=False)
+
+    # grad wrt y of .a only (node gets zero tangent, .b gets zero cotangent)
+    loss_y = lambda n, y_: f(n, y_).a
+    self.assertAllClose(jax.grad(loss_y, argnums=1)(node, y), 3.0,
+                        check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(loss_y, argnums=1))(node, y), 3.0,
+                        check_dtypes=False)
+    g_node, g_y = jax.grad(loss_y, argnums=(0, 1))(node, y)
+    self.assertAllClose((g_node.a, g_node.b, g_y), (4.0, 0.0, 3.0),
+                        check_dtypes=False)
+    self.assertAllClose(
+        jax.vmap(jax.grad(loss_y, argnums=1), in_axes=(None, 0))(node, ys),
+        3.0 * jnp.ones(3), check_dtypes=False)
+    _, f_lin = jax.linearize(lambda y_: f(node, y_).a, y)
+    self.assertAllClose(f_lin(jnp.float32(1.0)), 3.0, check_dtypes=False)
+
+  def test_validating_custom_pytree_node_nondiff_symbolic_zeros(self):
+    @partial(jax.custom_jvp, nondiff_argnums=(0, 2))
+    def f(scale, node, unhashable, y):
+      return CheckingNode(scale * node.a * y, unhashable[0] * node.b)
+
+    @partial(f.defjvp, symbolic_zeros=True)
+    def f_jvp(scale, unhashable, primals, tangents):
+      node, y = primals
+      node_dot, y_dot = tangents
+      self.assertIsInstance(node_dot, CheckingNode)
+      out = f(scale, node, unhashable, y)
+      y_dot = 0. if type(y_dot) is custom_derivatives.SymbolicZero else y_dot
+      out_dot = CheckingNode(scale * (node_dot.a * y + node.a * y_dot),
+                             unhashable[0] * node_dot.b)
+      return out, out_dot
+
+    node = CheckingNode(jnp.float32(3.0), jnp.float32(1.0))
+    y = jnp.float32(4.0)
+    unhashable = [5.0]
+    loss = lambda n, y_: f(2.0, n, unhashable, y_).a + f(
+        2.0, n, unhashable, y_).b
+    g_node, g_y = jax.grad(loss, argnums=(0, 1))(node, y)
+    self.assertAllClose((g_node.a, g_node.b, g_y), (8.0, 5.0, 6.0),
+                        check_dtypes=False)
+    g_node = jax.grad(loss)(node, y)  # y gets a symbolic zero tangent
+    self.assertAllClose((g_node.a, g_node.b), (8.0, 5.0), check_dtypes=False)
+    g_node = jax.jit(jax.grad(loss))(node, y)
+    self.assertAllClose((g_node.a, g_node.b), (8.0, 5.0), check_dtypes=False)
 
 
 @jtu.with_config(jax_custom_vjp3=False)
@@ -1939,13 +2108,9 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_closed_over_jit_tracer(self):
-    # See the comment in CustomJVPTest.test_nondiff_arg_jit_tracer.
-    raise unittest.SkipTest("behavior no longer supported")
-
-    # This test is similar to test_nondiff_arg_tracer except it uses lexical
-    # closure rather than the nondiff_argnums mechanism. We decided to disallow
-    # tracers in nondiff_argnums to greatly simplify bookkeeping while still
-    # supporting the cases for which it is necessary.
+    # Like test_nondiff_arg_jit_tracer, but closing over the jit tracer: the
+    # fwd rule is traced only when the jitted function is differentiated, after
+    # the jit trace has ended. That's an error, unlike differentiating inside.
     def outer(x):
       @jax.custom_vjp
       def f(y):
@@ -1961,13 +2126,22 @@ class CustomVJPTest(jtu.JaxTestCase):
     def g(x, y):
       return outer(x)(y)
 
-    ans = g(2, 3.)
-    expected = 6.
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(g(2., 3.), 6., check_dtypes=False)
+    self.assertAllClose(jit(api.grad(lambda x, y: outer(x)(y), 1))(2., 3.),
+                        jnp.cos(3.), check_dtypes=False)
+    with self.assertRaisesRegex(UnexpectedTracerError, "custom_vjp"):
+      api.grad(g, 1)(2., 3.)
 
-    ans = api.grad(g, 1)(2., 3.)
-    expected = jnp.cos(3.)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    @jax.custom_gradient
+    def take(xs, i):
+      return xs[i], lambda g: (jnp.zeros_like(xs).at[i].set(g), None)
+    take2 = lambda xs, i: jax.custom_gradient(
+        lambda xs: (xs[i], lambda g: (jnp.zeros_like(xs).at[i].set(g),)))(xs)
+    xs, i = jnp.arange(3.), jnp.int32(1)
+    self.assertAllClose(api.grad(jit(take))(xs, i), jnp.array([0., 1., 0.]),
+                        check_dtypes=False)
+    with self.assertRaisesRegex(UnexpectedTracerError, "custom_"):
+      api.grad(jit(take2))(xs, i)
 
   def test_closed_over_vmap_tracer(self):
     def outer(x):
@@ -2869,14 +3043,14 @@ class CustomVJPTest(jtu.JaxTestCase):
         api.grad(lambda x: jax.vmap(lambda x: mul(x, 2.))(x).sum())(xs[0]),
         2 * jnp.ones(3))
 
-    # vmap before differentiation hands the rule ValAccums, even with refs
+    # vmap before differentiation can't hand the rule the caller's refs
     @partial(jax.custom_gradient, with_accums=ad.RefAccum)
     def sin_ref(x):
       def rule(g, x_acc):
         x_acc.ref[...] += g * jnp.cos(x)
       return jnp.sin(x), rule
     _, f_vjp = jax.vjp(jax.vmap(sin_ref), xs)
-    with self.assertRaisesRegex(TypeError, "got a ValAccum"):
+    with self.assertRaisesRegex(ValueError, "under vmap.*HiPrim"):
       f_vjp.with_refs(jax.new_ref(jnp.zeros_like(xs)))(jnp.ones_like(xs))
 
     for spec in [int, ad.NullAccum]:
@@ -2886,6 +3060,61 @@ class CustomVJPTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(NotImplementedError, "remat"):
       jax.custom_gradient(lambda x: (x, None), with_accums=ad.ValAccum,
                           remat=True)
+
+  @parameterized.product(remat3=[False, True])
+  def test_with_accums_jit_scan_remat(self, remat3):
+    # rules staged into jaxprs, by jit, scan, and remat (whose transpose
+    # rematerializes them), still get the caller's RefAccums
+    seen = []
+    accum = self._take_with_accums(seen)
+    ones = jnp.ones(10)
+
+    # closing over ones gives take's staged custom_vjp_call a const
+    @partial(jax.custom_vjp, nondiff_argnums=(1,))
+    def take(x, i):
+      return x[i] * ones[i]
+    take.defvjp_with_accums(lambda x, i: (x[i], None),
+                            lambda i, _, g, x_acc: accum(x_acc, g))
+
+    @partial(jax.custom_gradient, with_accums=ad.RefAccum)
+    def take3(x):
+      def rule(g, x_acc):
+        x_acc.ref[3] += g
+      return x[3], rule
+
+    scan = lambda f: lambda x: lax.scan(lambda c, _: (c + f(x), None), 0.,
+                                        None, length=2)[0] / 2
+    saveable = jax.checkpoint_policies.everything_saveable
+    x = jnp.arange(10.)
+    expected = jnp.zeros(10).at[3].set(1.)
+    with config.remat3(remat3):
+      for f in [lambda x: take(x, 3), take3]:
+        for g in [jax.jit(f), scan(f), jax.remat(f), jax.jit(jax.remat(f)),
+                  jax.remat(jax.remat(f)), scan(jax.remat(f)),
+                  jax.remat(f, policy=saveable),
+                  jax.jit(jax.remat(f, prevent_cse=(False,)))]:
+          ref = jax.new_ref(jnp.zeros(10))
+          jax.vjp(g, x)[1].with_refs(ref)(1.)
+          self.assertAllClose(ref[...], expected)
+
+        # with a ref, the rematerialized backward pass updates x[3] in place
+        def bwd(ref):
+          jax.vjp(jax.remat(f), x)[1].with_refs(ref)(1.)
+        jaxpr = jax.jit(bwd).trace(jax.new_ref(jnp.zeros(10))).jaxpr
+        self.assertNotIn('[10] =', str(jaxpr))
+    self.assertEqual(set(seen), {'RefAccum'})
+
+    # under vmap, a staged rule gets a ValAccum, and the caller's refs are an
+    # error
+    seen.clear()
+    take_xs = jax.vmap(jax.jit(lambda x: take(x, 3)))
+    xs = jnp.stack([x, x])
+    self.assertAllClose(api.grad(lambda xs: take_xs(xs).sum())(xs),
+                        jnp.stack([expected, expected]))
+    self.assertEqual(set(seen), {'ValAccum'})
+    _, f_vjp = jax.vjp(take_xs, xs)
+    with self.assertRaisesRegex(ValueError, "under vmap.*HiPrim"):
+      f_vjp.with_refs(jax.new_ref(jnp.zeros_like(xs)))(jnp.ones(2))
 
   def test_closure_convert(self):
     def cos_after(fn, x):
@@ -3459,7 +3688,6 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     jax.grad(f)((1.0, (2.0, None)))  # don't crash
 
-  @config.custom_vjp3(True)
   def test_bwd_rule_shape_mismatch(self):
     @jax.custom_vjp
     def foo(x, y):
@@ -3475,8 +3703,8 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r'output\[1\] the bwd rule attached to foo.*produced an output of type'
-        r' f.*\[3\]'):
+        r'Custom VJP bwd rule attached to foo.*at output\[1\] the bwd rule'
+        r' produced an output of type f.*\[3\]'):
       jax.grad(lambda x, y: foo(x, y * y).sum(), 1)(jnp.ones(3), jnp.ones(4))
 
   def test_bwd_rule_shape_mismatch_disable(self):
@@ -3877,6 +4105,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     e2.defvjp_with_logs(lambda x: (e2(x), None), lambda _, ct: ((ct,), [1.0]))
     with self.assertRaisesRegex(TypeError, "None or a dict"):
       jax.grad(e2)(1.0)
+
   def test_linear_transpose_of_jvp_and_linearize_of_vmap(self):
     @jax.custom_vjp
     def f(x):
@@ -3890,6 +4119,130 @@ class CustomVJPTest(jtu.JaxTestCase):
       ct, = jax.linear_transpose(g, xs)(jnp.ones(3))
       self.assertAllClose(ct, jnp.cos(xs))
 
+  def _shared_output_fun(self, fwd_out0=lambda x, y: y, generic_batching=False):
+    @jax.custom_vjp
+    def f(x, y):
+      return y, x * y
+    f.defvjp(lambda x, y: ((fwd_out0(x, y), x * y), (x, y)),
+             lambda res, cts: (cts[1] * res[1], cts[0] + cts[1] * res[0]),
+             generic_batching=generic_batching)
+    return f
+
+  def test_vmap_shared_output_error(self):
+    f = self._shared_output_fun()
+    xs = jnp.arange(3.)
+    loss = lambda y: sum(o.sum() for o in jax.vmap(f, (0, None))(xs, y))
+    with self.assertRaisesRegex(ValueError, "shared across the batch"):
+      jax.grad(loss)(2.)
+    with self.assertRaisesRegex(ValueError, "shared across the batch"):
+      jax.jit(jax.grad(loss))(2.)
+    g = jax.grad(lambda y: jax.vmap(f, (0, None))(xs, y)[1].sum())
+    self.assertAllClose(g(2.), 3.)
+    self.assertAllClose(jax.jit(g)(2.), 3.)
+
+  def test_vmap_shared_output_generic_batching(self):
+    f = self._shared_output_fun(generic_batching=True)
+    xs = jnp.arange(3.)
+    loss = lambda y: sum(o.sum() for o in jax.vmap(f, (0, None))(xs, y))
+    self.assertAllClose(jax.grad(loss)(2.), 6.)
+    self.assertAllClose(jax.jit(jax.grad(loss))(2.), 6.)
+
+  def test_vmap_overbatched_fwd_generic_batching(self):
+    f = self._shared_output_fun(lambda x, y: y * (1. + 0. * x),
+                                generic_batching=True)
+    xs = jnp.arange(3.)
+    loss = lambda y: sum(o.sum() for o in jax.vmap(f, (0, None))(xs, y))
+    self.assertAllClose(jax.grad(loss)(2.), 6.)
+
+  def test_vmap_shared_output_with_accums(self):
+    def shared_output_fun(generic_batching):
+      @jax.custom_vjp
+      def f(x, y):
+        return y, x * y
+      def f_bwd(res, cts, x_acc, y_acc):
+        x_acc.accum(cts[1] * res[1])
+        y_acc.accum(cts[0] + cts[1] * res[0])
+      f.defvjp_with_accums(lambda x, y: ((y, x * y), (x, y)), f_bwd,
+                           generic_batching=generic_batching)
+      return f
+
+    xs = jnp.arange(3.)
+    f = shared_output_fun(generic_batching=False)
+    loss = lambda y: sum(o.sum() for o in jax.vmap(f, (0, None))(xs, y))
+    with self.assertRaisesRegex(ValueError, "shared across the batch"):
+      jax.grad(loss)(2.)
+    f = shared_output_fun(generic_batching=True)
+    loss = lambda y: sum(o.sum() for o in jax.vmap(f, (0, None))(xs, y))
+    self.assertAllClose(jax.grad(loss)(2.), 6.)
+    self.assertAllClose(jax.jit(jax.grad(loss))(2.), 6.)
+
+
+  def test_grad_jit_reading_local_ref(self):
+    @jax.custom_vjp
+    def h(x):
+      return x
+    h.defvjp(lambda x: (x, None), lambda _, g: (g,))
+
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(0.)
+      return h(ref[...])
+
+    g = lambda x: f(x) + jnp.sin(x)
+    self.assertAllClose(jax.grad(f)(1.), 0., check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(f))(1.), 0., check_dtypes=False)
+    self.assertAllClose(jax.grad(g)(1.), jnp.cos(1.), check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(g))(1.), jnp.cos(1.),
+                        check_dtypes=False)
+    if config.remat3.value:
+      self.assertAllClose(jax.grad(jax.remat(g))(1.), jnp.cos(1.),
+                          check_dtypes=False)
+
+  def test_grad_hop_reading_local_ref(self):
+    @jax.custom_vjp
+    def h(x):
+      return x
+    h.defvjp(lambda x: (x, None), lambda _, g: (g,))
+    fresh = lambda: h(jax.new_ref(0.)[...])
+    sg = lax.stop_gradient
+
+    fs = dict(
+        cond=lambda x: lax.cond(sg(x) > 0, lambda x: fresh() + 0. * sg(x),
+                                lambda x: fresh() + 0. * sg(x), x),
+        scan_const=lambda x: lax.scan(lambda c, _: (c, fresh() + 0. * sg(x)),
+                                      0., None, length=2)[1].sum(),
+        scan_xs=lambda x: lax.scan(lambda c, xi: (c, fresh() + 0. * sg(xi)),
+                                   0., jnp.stack([x, x]))[1].sum(),
+        jit_in_shard_map=lambda x: jax.shard_map(
+            jax.jit(lambda x: h(jax.new_ref(jnp.zeros_like(sg(x)))[...])
+                    + 0. * sg(x)),
+            mesh=jax.make_mesh((1,), ('i',)), in_specs=jax.P(),
+            out_specs=jax.P())(x))
+    for name, f in fs.items():
+      with self.subTest(name):
+        g = lambda x: f(x) + jnp.sin(x)
+        self.assertAllClose(jax.grad(g)(1.), jnp.cos(1.), check_dtypes=False)
+        self.assertAllClose(jax.jit(jax.grad(g))(1.), jnp.cos(1.),
+                            check_dtypes=False)
+
+  def test_literal_input_in_fwd(self):
+    @jax.custom_vjp
+    def f(x, y):
+      return x * y
+
+    def f_fwd(x, y):
+      self.assertIsInstance(y, jax.Array)
+      return x * y, (x, y)
+
+    def f_bwd(res, g):
+      x, y = res
+      return g * y, g * x
+
+    f.defvjp(f_fwd, f_bwd)
+
+    for y in [2.0, np.array(2.0)]:
+      g = jax.jit(lambda x: f(x, y))
+      self.assertAllClose(jax.grad(g)(3.0), 2.0, check_dtypes=False)
 
 @jtu.with_config(jax_custom_vjp3=True)
 class CustomVJP3Test(CustomVJPTest):
@@ -3897,6 +4250,133 @@ class CustomVJP3Test(CustomVJPTest):
   # regress these, hope no one cares
   def test_python_control_flow(self): pass
   def test_dce(self): pass
+
+  def test_validating_custom_pytree_node(self):
+    c = jnp.float32(2.0)
+
+    @jax.custom_vjp
+    def f(node, y):
+      return CheckingNode(node.a * y + c, jnp.sin(node.b))
+
+    def f_fwd(node, y):
+      return f(node, y), (node, y)
+
+    def f_bwd(res, g):
+      node, y = res
+      return (CheckingNode(g.a * y, g.b * jnp.cos(node.b)), g.a * node.a)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    node = CheckingNode(jnp.float32(3.0), jnp.float32(1.0))
+    y = jnp.float32(4.0)
+    ys = jnp.arange(3, dtype=jnp.float32)
+
+    out = f(node, y)
+    self.assertAllClose(out.a, 14.0, check_dtypes=False)
+    self.assertAllClose(out.b, jnp.sin(1.0), check_dtypes=False)
+    out_jit = jax.jit(f)(node, y)
+    self.assertAllClose((out_jit.a, out_jit.b), (out.a, out.b))
+    out_vmap = jax.vmap(f, in_axes=(None, 0))(node, ys)
+    self.assertAllClose(out_vmap.a, 3.0 * ys + 2.0, check_dtypes=False)
+
+    # grad wrt y of .a only (node gets zero tangent, .b gets zero cotangent)
+    loss_y = lambda n, y_: f(n, y_).a
+    self.assertAllClose(jax.grad(loss_y, argnums=1)(node, y), 3.0,
+                        check_dtypes=False)
+    self.assertAllClose(jax.jit(jax.grad(loss_y, argnums=1))(node, y), 3.0,
+                        check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(jax.remat(loss_y), argnums=1)(node, y), 3.0,
+        check_dtypes=False)
+    g_node, g_y = jax.grad(loss_y, argnums=(0, 1))(node, y)
+    self.assertAllClose((g_node.a, g_node.b, g_y), (4.0, 0.0, 3.0),
+                        check_dtypes=False)
+
+    # vmap of grad and grad of vmap, which batch the rules
+    self.assertAllClose(
+        jax.vmap(jax.grad(loss_y, argnums=1), in_axes=(None, 0))(node, ys),
+        3.0 * jnp.ones(3), check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(lambda y_: jax.vmap(loss_y, in_axes=(None, 0))(node, y_).sum())(ys),
+        3.0 * jnp.ones(3), check_dtypes=False)
+
+    # bwd returning None for CheckingNode argument
+    @jax.custom_vjp
+    def h(node, y):
+      return node.a * y
+    h.defvjp(lambda n, y_: (h(n, y_), (n, y_)),
+             lambda res, g: (None, g * res[0].a))
+    self.assertAllClose(jax.grad(h, argnums=1)(node, y), 3.0,
+                        check_dtypes=False)
+
+  def test_validating_custom_pytree_node_nondiff(self):
+    @partial(jax.custom_vjp, nondiff_argnums=(0, 2))
+    def f(scale, node, unhashable, y):
+      return CheckingNode(scale * node.a * y, unhashable[0] * node.b)
+
+    def f_fwd(scale, node, unhashable, y):
+      return f(scale, node, unhashable, y), (node, y)
+
+    def f_bwd(scale, unhashable, res, g):
+      node, y = res
+      return CheckingNode(scale * g.a * y, unhashable[0] * g.b), scale * g.a * node.a
+
+    f.defvjp(f_fwd, f_bwd)
+
+    node = CheckingNode(jnp.float32(3.0), jnp.float32(1.0))
+    y = jnp.float32(4.0)
+    ys = jnp.arange(3, dtype=jnp.float32)
+    unhashable = [5.0]
+    loss = lambda n, y_: (lambda o: o.a + o.b)(f(2.0, n, unhashable, y_))
+    g_node, g_y = jax.grad(loss, argnums=(0, 1))(node, y)
+    self.assertAllClose((g_node.a, g_node.b, g_y), (8.0, 5.0, 6.0),
+                        check_dtypes=False)
+    g_node, g_y = jax.jit(jax.grad(loss, argnums=(0, 1)))(node, y)
+    self.assertAllClose((g_node.a, g_node.b, g_y), (8.0, 5.0, 6.0),
+                        check_dtypes=False)
+    g_ys = jax.vmap(jax.grad(loss, argnums=1), in_axes=(None, 0))(node, ys)
+    self.assertAllClose(g_ys, 6.0 * jnp.ones(3), check_dtypes=False)
+    g_ys = jax.grad(jax.remat(loss), argnums=1)(node, y)
+    self.assertAllClose(g_ys, 6.0, check_dtypes=False)
+
+  def test_bwd_rule_non_prefix_output_error(self):
+    @jax.custom_vjp
+    def f(x):
+      return x[0]
+    f.defvjp(lambda x: (f(x), None), lambda _, g: ((g, g, g),))
+    with self.assertRaisesRegex(ValueError, "isn't a prefix of the args"):
+      jax.grad(f)((1., 2.))
+
+  def test_validating_custom_pytree_node_defremat(self):
+    @jax.custom_vjp
+    def f(node, y):
+      return CheckingNode(node.a * y, jnp.sin(node.b))
+
+    def f_fwd(node, y):
+      return f(node, y), node
+
+    def f_rem(node, node_, y):
+      del node_
+      return f(node, y), CheckingNode(node.a, jnp.cos(node.b))
+
+    def f_bwd(res, g):
+      return (CheckingNode(g.a * 4.0, g.b * res.b), g.a * res.a)
+
+    f.defremat(f_fwd, f_rem, f_bwd)
+
+    node = CheckingNode(jnp.float32(3.0), jnp.float32(1.0))
+    y = jnp.float32(4.0)
+    loss = lambda n, y_: (lambda o: o.a + o.b)(f(n, y_))
+    expected = (4.0, jnp.cos(1.0), 3.0)
+    for g in [jax.grad(loss, argnums=(0, 1)),
+              jax.grad(jax.remat(loss), argnums=(0, 1)),
+              jax.jit(jax.grad(jax.remat(loss), argnums=(0, 1)))]:
+      g_node, g_y = g(node, y)
+      self.assertAllClose((g_node.a, g_node.b, g_y), expected,
+                          check_dtypes=False)
+    ys = jnp.arange(3, dtype=jnp.float32)
+    g_ys = jax.vmap(jax.grad(jax.remat(loss), argnums=1), in_axes=(None, 0))(node, ys)
+    self.assertAllClose(g_ys, 3.0 * jnp.ones(3), check_dtypes=False)
 
   def test_pretty_print(self):
     @jax.custom_vjp
@@ -4979,15 +5459,7 @@ class CustomJVP3Test(CustomJVPTest):
   def test_ensure_compile_time_eval(self): pass
   def test_dce(self): pass
 
-  # custom_jvp3 functions can't close over Tracers (they raise a good error
-  # instead; see test_closed_over_tracer_error below)
-  def test_closure_with_vmap(self): pass
   def test_closure_with_vmap2(self): pass
-  def test_fun_with_nested_calls_2(self): pass
-
-  # custom_jvp3 nondiff_argnums must be static, not Tracers
-  def test_nondiff_arg_vmap_tracer(self): pass
-  def test_nondiff_argnums_vmap_tracer(self): pass
 
   def test_hard_stuff2(self):
     # Like the base test, except the differentiated cases: the batchedness of
@@ -5088,7 +5560,10 @@ class CustomJVP3Test(CustomJVPTest):
         return g(z)
       return jax.vmap(f)(jnp.arange(3., dtype='float32')).sum()
 
-    with self.assertRaisesRegex(UnexpectedTracerError, "can't close over"):
+    # Closing over a vmap tracer in the jvp rule, with vmap inside jvp, isn't
+    # supported: the jvp rule closes over the tracer, which is out of scope by
+    # the time the jvp rule runs.
+    with self.assertRaisesRegex(UnexpectedTracerError, "unexpected tracer"):
       jax.jvp(h, (jnp.float32(3.14),), (jnp.float32(1.),))
 
   @parameterized.named_parameters(
@@ -5211,6 +5686,20 @@ class CustomJVP3Test(CustomJVPTest):
 
     eqn, = jax.make_jaxpr(jax.vmap(jax.vmap(f)))(jnp.ones((2, 3))).eqns
     self.assertIsInstance(eqn.params['_prim'], hijax.CustomJVPTraced)
+
+  def test_skip_linearization_on_zero_tangents(self):
+    @jax.custom_jvp
+    def f(x):
+      return x
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      raise RuntimeError("jvp rule should not be called on zero tangents")
+
+    def g(x, y):
+      return x * f(y)
+
+    self.assertAllClose(jax.grad(g)(2., 3.), 3.)
+    self.assertAllClose(jax.jit(jax.grad(g))(2., 3.), 3.)
 
 
 @jtu.with_config(jax_remat3=True)

@@ -62,8 +62,11 @@ custom_float_dtypes = [np.dtype(dtypes.bfloat16)]
 
 fp8_dtypes = [np.dtype(dtypes.float8_e4m3b11fnuz), np.dtype(dtypes.float8_e4m3fn),
               np.dtype(dtypes.float8_e4m3fnuz), np.dtype(dtypes.float8_e5m2),
-              np.dtype(dtypes.float8_e5m2fnuz), np.dtype(dtypes.float8_e3m4),
-              np.dtype(dtypes.float8_e4m3), np.dtype(dtypes.float8_e8m0fnu)]
+              np.dtype(dtypes.float8_e5m2fnuz),
+              np.dtype(dtypes.float8_e3m4), np.dtype(dtypes.float8_e4m3),
+              np.dtype(dtypes.float8_e8m0fnu)]
+if dtypes.float8_e5m3fnu is not None:
+  fp8_dtypes.append(np.dtype(dtypes.float8_e5m3fnu))
 float_dtypes += fp8_dtypes
 custom_float_dtypes += fp8_dtypes
 
@@ -1170,6 +1173,8 @@ class TestPromotionTables(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/6051
     if dtype in intn_dtypes:
       self.skipTest('XLA support for int1, int2 and int4 is incomplete.')
+    if dtypes.float8_e5m3fnu is not None and dtype == dtypes.float8_e5m3fnu:
+      self.skipTest("XLA does not support float8_e5m3fnu.")
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest("TPU does not support float8_e8m0fnu.")
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
@@ -1199,6 +1204,8 @@ class TestPromotionTables(jtu.JaxTestCase):
   )
   @jax.numpy_dtype_promotion('standard')
   def testFloatPromotionError(self, dtype, bit_width):
+    if dtypes.float8_e5m3fnu is not None and dtype == dtypes.float8_e5m3fnu:
+      self.skipTest('XLA does not support float8_e5m3fnu.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
@@ -1214,6 +1221,8 @@ class TestPromotionTables(jtu.JaxTestCase):
   @parameterized.parameters(float_dtypes)
   @config.explicit_x64_dtypes('allow')
   def testFloatArrayCreation(self, dtype):
+    if dtypes.float8_e5m3fnu is not None and dtype == dtypes.float8_e5m3fnu:
+      self.skipTest('XLA does not support float8_e5m3fnu.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
@@ -1280,6 +1289,8 @@ class TestPromotionTables(jtu.JaxTestCase):
         self.skipTest('XLA support for int4 is incomplete.')
       if dtypes.iinfo(dtype).bits <= 2:
         self.skipTest('XLA support for int2 is incomplete.')
+    if dtypes.float8_e5m3fnu is not None and dtype == dtypes.float8_e5m3fnu:
+      self.skipTest('XLA does not support float8_e5m3fnu.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
@@ -1321,6 +1332,23 @@ class TestPromotionTables(jtu.JaxTestCase):
       else:
         self.assertEqual(dtypes.result_type(output_dtype) == result_dtype,
                          dtypes.safe_to_cast(input_dtype, output_dtype))
+
+  @parameterized.product(
+      dtype=intn_dtypes,
+      rng_factory=[
+          jtu.rand_default,
+          jtu.rand_nonzero,
+          jtu.rand_positive,
+          jtu.rand_not_small,
+          jtu.rand_some_equal,
+      ],
+  )
+  def testRandDtypeNarrowIntegers(self, dtype, rng_factory):
+    rng = rng_factory(self.rng())
+    with jtu.test_warning_util.raise_on_warnings():
+      x = rng((64,), dtype)
+    self.assertEqual(x.dtype, dtype)
+    self.assertEqual(x.shape, (64,))
 
 
 if __name__ == "__main__":

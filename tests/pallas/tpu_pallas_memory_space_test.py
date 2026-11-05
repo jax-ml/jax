@@ -302,7 +302,7 @@ def _make_run_kernel(**kwargs):
   return lambda fn: pl.kernel(**kwargs)(fn)()
 
 
-class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
+class TPUKernelMemorySpaceTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
@@ -487,6 +487,8 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
   ):
     if jax.device_count() > 1:
       self.skipTest('Test only works with a single device.')
+    if mesh_kind == 'sc' and pltpu.get_tpu_info().sparse_core is None:
+      self.skipTest('SparseCore not supported on this device.')
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))
     host_sharding = jax.sharding.NamedSharding(
         mesh, P(), memory_kind='pinned_host'
@@ -525,6 +527,66 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
     res = f(out_init)
     np.testing.assert_array_equal(
         res, np.arange(8 * 128, dtype=np.int32).reshape((8, 128))
+    )
+
+  @parameterized.product(
+      mesh_kind=['tc', 'sc'],
+      use_memory_space_kwarg=[False, True],
+  )
+  def test_top_level_host_ref_in_jit_and_shard_map(
+      self, mesh_kind, use_memory_space_kwarg
+  ):
+    if mesh_kind == 'sc' and pltpu.get_tpu_info().sparse_core is None:
+      self.skipTest('SparseCore not supported on this device.')
+    mesh = jax.sharding.Mesh(jax.devices()[:1], ('x',))
+    host_sharding = jax.sharding.NamedSharding(
+        mesh, P(), memory_kind='pinned_host'
+    )
+    if mesh_kind == 'tc':
+      pallas_mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+    else:
+      pallas_mesh = sc_core.ScalarSubcoreMesh(axis_name='core', num_cores=1)
+
+    if use_memory_space_kwarg:
+      with jax.set_mesh(mesh):
+        out_host_ref = jax.new_ref(
+            jnp.zeros((8, 128), dtype=jnp.int32, out_sharding=P()),
+            memory_space=pl.HOST,
+        )
+    else:
+      out_host_ref = jax.new_ref(
+          jax.device_put(jnp.zeros((8, 128), dtype=jnp.int32), host_sharding)
+      )
+    self.assertEqual(jax.typeof(out_host_ref).memory_space, pl.HOST)
+    self.assertEqual(out_host_ref.sharding.memory_kind, 'pinned_host')
+    ptr_before = out_host_ref.unsafe_buffer_pointer()
+
+    @jax.jit
+    def f():
+      @jax.shard_map(
+          mesh=mesh,
+          in_specs=(P(), P()),
+          out_specs=(),
+          check_vma=False,
+      )
+      def _push(vals, out_r):
+        self.assertEqual(jax.typeof(out_r).memory_space, pl.HOST)
+        hbm_ref = jax.new_ref(vals)
+        pl.kernel(
+            lambda: pltpu.sync_copy(hbm_ref, out_r),
+            mesh=pallas_mesh,
+        )()
+        return ()
+
+      vals = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+      _push(vals, out_host_ref)
+
+    f()
+    jax.effects_barrier()
+    self.assertEqual(out_host_ref.unsafe_buffer_pointer(), ptr_before)
+    np.testing.assert_array_equal(
+        np.asarray(jax.freeze(out_host_ref)),
+        np.arange(8 * 128, dtype=np.int32).reshape((8, 128)),
     )
 
 

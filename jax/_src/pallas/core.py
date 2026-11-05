@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Hashable, Iterable, Generator, Mapping, Sequence, Set
+from collections.abc import Callable, Generator, Hashable, Iterable, Mapping, Sequence, Set
 import contextlib
 import copy
 import dataclasses
@@ -33,10 +33,13 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import hijax
-from jax._src import numpy as jnp
-from jax._src import state
 from jax._src import flattree as ft
+from jax._src import hijax
+from jax._src import lax
+from jax._src import numpy as jnp
+from jax._src import pretty_printer as pp
+from jax._src import state
+from jax._src import tree
 from jax._src import tree_util
 from jax._src import typing as jax_typing
 from jax._src import util
@@ -241,6 +244,16 @@ class Buffered:
   revisit: RevisitMode | None = None
   prefetched_count: int = 0
 
+  def __post_init__(self):
+    if self.use_lookahead:
+      bc = self.buffer_count
+      in_count = bc[0] if isinstance(bc, tuple) and len(bc) == 2 else bc
+      if isinstance(in_count, int) and in_count < 2:
+        raise ValueError(
+            "use_lookahead=True requires input buffer_count >= 2, got"
+            f" buffer_count={bc!r}."
+        )
+
 
 @dataclasses.dataclass(frozen=True)
 class MemoryRef:
@@ -258,7 +271,7 @@ class MemoryRef:
       dtype = jnp.dtype(dtype)
     return self.inner_aval.update(dtype=dtype, memory_space=self.memory_space)
 
-  def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     return state.AbstractRef(self.inner_aval, self.memory_space)
 
   @property
@@ -406,7 +419,31 @@ def current_grid_env() -> GridEnv | None:
 
 @dataclasses.dataclass(frozen=True)
 class Element:
-  """Use to index an array using an elementwise start index."""
+  """Indexes a dimension by element index rather than block index.
+
+  ``index_map`` returns the scalar start index ``i``, slicing
+  ``[i : i + block_size]``. Optional ``padding=(lo, hi)`` virtually pads the
+  dimension before slicing. Pad values read in the kernel are undefined.
+
+  .. code-block:: text
+
+    block_shape=(Element(2), Element(3)), index_map -> (1, 2)
+      array (4, 6):          ref (2, 3):
+        . . . . . .            a b c
+        . . a b c .     ->     d e f
+        . . d e f .
+        . . . . . .
+
+    block_shape=(Element(2, padding=(1, 2)), 4), index_map -> (0, 0)
+      padded (5, 4):         ref (2, 4):
+        ? ? ? ?  (lo=1)        ? ? ? ?   (?: undefined)
+        -------         ->     a b c d
+        a b c d
+        . . . .
+        -------
+        ? ? ? ?  (hi=2)
+        ? ? ? ?
+  """
   block_size: int
   padding: tuple[int, int] = (0, 0)
 
@@ -417,13 +454,40 @@ class Element:
 
 @dataclasses.dataclass(frozen=True)
 class Squeezed:
-  """Represents a one-sized block dimension that is squeezed out in the kernel."""
+  """Selects a single element along a dimension and squeezes the axis out.
+
+  ``index_map`` returns a scalar index ``i``, indexing ``[i]`` along this
+  dimension rather than slicing ``[i : i + 1]``.
+
+  .. code-block:: text
+
+    block_shape=(Squeezed(), 4), index_map -> (2, 0)
+      array (4, 4):          ref (4,):
+        . . . .
+        . . . .         ->     [a b c d]
+        a b c d
+        . . . .
+  """
 
 squeezed = Squeezed()
 
 @dataclasses.dataclass(frozen=True)
 class Blocked:
-  """The default BlockShape type."""
+  """Slices fixed-size blocks of ``block_size`` along a dimension.
+
+  ``index_map`` returns a scalar block index ``b``, slicing
+  ``[b * block_size : (b + 1) * block_size]``.
+
+  .. code-block:: text
+
+    block_shape=(Blocked(2), Blocked(3)), index_map -> (1, 0)
+      array (4, 6):          ref (2, 3):
+        . . . | . . .          a b c
+        . . . | . . .   ->     d e f
+        ------+------
+        a b c | . . .
+        d e f | . . .
+  """
   block_size: int
 
   def __str__(self):
@@ -431,11 +495,21 @@ class Blocked:
 
 @dataclasses.dataclass(frozen=True)
 class BoundedSlice:
-  """Allows to specify a bounded slice of a dimension.
+  """Slices a dynamic-length window up to ``block_size`` along a dimension.
 
-  Specifically, the index_map need to return a ``pl.Slice/pl.ds`` for this
-  dimension. The start and size may be dynamic, as long as the size <=
-  block_size.
+  ``index_map`` must return a ``pl.Slice`` / ``pl.ds`` whose ``start`` and
+  ``size`` may be dynamic, with ``size <= block_size``. The kernel ``Ref`` has
+  static size ``block_size``, with valid elements at ``[:size]`` and undefined
+  values past ``size``.
+
+  .. code-block:: text
+
+    block_shape=(BoundedSlice(3), 4), index_map -> (pl.ds(start=1, size=2), 0)
+      array (4, 4):          ref (3, 4):
+        . . . .                a b c d
+        a b c d         ->     e f g h
+        e f g h                ? ? ? ?   (?: undefined)
+        . . . .
   """
   block_size: int
 
@@ -445,9 +519,19 @@ class BoundedSlice:
 
 @dataclasses.dataclass(frozen=True)
 class Indirect:
-  """A dimension indexed by an array of indices.
+  """Indexes a dimension via gather (for inputs) or scatter (for outputs).
 
-  Implies a gather for inputs and a scatter for outputs.
+  ``index_map`` returns an ``Array`` or ``Ref`` of indices along this
+  dimension, yielding an axis of size ``block_size`` in the kernel ``Ref``.
+
+  .. code-block:: text
+
+    block_shape=(Indirect(2), 4), index_map -> ([3, 0], 0)
+      array (4, 4):          ref (2, 4):
+        e f g h  (row 0)       a b c d   <- row 3
+        . . . .         ->     e f g h   <- row 0
+        . . . .
+        a b c d  (row 3)
   """
   block_size: int
 
@@ -467,7 +551,7 @@ def _canonicalize_block_dim(dim: BlockDim | int | None) -> BlockDim:
     case None:
       return squeezed
     case int():
-      return Blocked(int(dim))
+      return Blocked(dim)
     case Squeezed() | Blocked() | Element() | BoundedSlice() | Indirect():
       return dim
     case _:
@@ -530,6 +614,16 @@ def _get_ref_block_shape(block_shape: tuple[BlockDim, ...]) -> tuple[int, ...]:
       for dim in block_shape
       if not isinstance(dim, Squeezed)
   )
+
+
+def _get_start_index(i, b: BlockDim):
+  match b:
+    case Squeezed() | Element():
+      return i
+    case Blocked(block_size):
+      return block_size * i
+    case _:
+      raise ValueError(f"Unsupported block dim type: {type(b)}")
 
 
 class _IndexMapFunc:
@@ -719,7 +813,7 @@ class BlockSpec:
 
     mapping = BlockMapping(
         block_shape=block_shape,
-        transformed_block_aval=block_aval,  # There are no transforms by default
+        block_aval=block_aval,
         index_map_jaxpr=closed_jaxpr,
         index_map_out_tree=out_avals.tree,
         array_aval=array_aval,
@@ -762,6 +856,70 @@ def undo_transforms(
   return transforms
 
 
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class _UnpadRef(state_types.Transform):
+  shape: tuple[int, ...] = tree.static()
+
+  def transform_array(self, x: Any) -> Any:
+    return lax.slice(x, (0,) * len(self.shape), self.shape)
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class PadTransform(state_types.Transform):
+  shape: tuple[int, ...] = tree.static()
+
+  def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
+    match x:
+      case state_types.AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case jax_core.ShapedArray():
+        if len(x.shape) != len(self.shape):
+          raise ValueError(
+              f"Padded shape rank {len(self.shape)} does not match ref rank"
+              f" {len(x.shape)}"
+          )
+        for orig_d, pad_d in zip(x.shape, self.shape):
+          if orig_d > pad_d:
+            raise ValueError(
+                f"Padded dim {pad_d} cannot be smaller than original dim"
+                f" {orig_d}"
+            )
+        return x.update(shape=self.shape)
+      case _:
+        raise TypeError(f"Cannot pad {x}")
+
+  def transform_array(self, x: Any) -> Any:
+    padding_config = [
+        (0, padded_dim - dim, 0) for dim, padded_dim in zip(x.shape, self.shape)
+    ]
+    return lax.pad(x, jnp.zeros((), x.dtype), padding_config)
+
+  def undo(self, x: Any) -> state_types.Transform:
+    return _UnpadRef(tuple(x.shape))
+
+  def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
+    del context
+    return pp.text(f"{{pad({list(self.shape)})}}")
+
+
+def pad_ref(
+    ref: jax_core.Ref | state.AbstractRef | TransformedRef,
+    shape: tuple[int, ...],
+) -> TransformedRef:
+  """Translate memref to a padded memref for out-of-bounds reads."""
+  if not isinstance(ref, TransformedRef):
+    if not isinstance(jax_core.typeof(ref), state_types.AbstractRef):
+      raise TypeError("ref must be a reference")
+    ref = TransformedRef(ref, transforms=())
+  shape = tuple(shape)
+  return TransformedRef(
+      ref.ref,
+      (*ref.transforms, PadTransform(shape)),
+  )
+
+
 @dataclasses.dataclass(frozen=True)
 class BlockMapping:
   """An internal canonicalized version of BlockSpec.
@@ -771,12 +929,11 @@ class BlockMapping:
   # TODO(apaszke,sharadmv): Replace mapped dims in block_shape with a transform.
   # After all, it's just indexing out singleton dimensions.
   block_shape: tuple[BlockDim, ...]
-  transformed_block_aval: state.AbstractRef
+  block_aval: state.AbstractRef
   index_map_jaxpr: jax_core.Jaxpr
   index_map_out_tree: tree_util.PyTreeDef
   array_aval: jax_core.ShapedArray  # The whole array
   origin: OriginStr
-  transforms: Sequence[state_types.Transform] = ()
   pipeline_mode: Buffered | None = None
   debug: bool = False
   allow_captured_consts: dataclasses.InitVar[bool] = False
@@ -790,8 +947,8 @@ class BlockMapping:
     if not config.enable_checks.value: return
 
     ref_block_shape = _get_ref_block_shape(self.block_shape)
-    assert ref_block_shape == self.ref_aval.shape, (
-        self.block_shape, self.ref_aval.shape)
+    assert ref_block_shape == self.block_aval.shape, (
+        self.block_shape, self.block_aval.shape)
     assert len(self.block_shape) == len(self.array_aval.shape), (
         self.block_shape, self.array_aval
     )
@@ -807,27 +964,6 @@ class BlockMapping:
     new_self.check_invariants()
     return new_self
 
-  @property
-  def block_aval(self) -> state.AbstractRef:
-    # If you hit this, make sure you take transforms into account and use either
-    # ref_aval or transformed_block_aval.
-    assert not self.transforms, "Lowering failed to handle transforms"
-    return self.transformed_block_aval
-
-  @property
-  def ref_aval(self) -> state.AbstractRef | TransformedRef:
-    """Returns the abstract value of the Ref after transformations."""
-    if not self.transforms:
-      return self.transformed_block_aval
-    ref_block_shape = _get_ref_block_shape(self.block_shape)
-    logical_ref_aval = state.AbstractRef(
-        self.array_aval.update(shape=ref_block_shape),
-        self.transformed_block_aval.memory_space)
-    reverse_transforms = tuple(undo_transforms(
-        logical_ref_aval, self.transforms
-    ))
-    return TransformedRef(self.transformed_block_aval, reverse_transforms)
-
   def compute_start_indices_interpret(self, loop_idx, *args):
     jaxpr = state_discharge.discharge_state(self.index_map_jaxpr, strip_memory_space=True)
     block_indices_and_rest = jax_core.jaxpr_as_fun(jaxpr)(*loop_idx, *args)
@@ -835,14 +971,6 @@ class BlockMapping:
     # updated values since we only care about the return values.
     block_indices, _ = split_list(block_indices_and_rest,
                                   [len(self.block_shape)])
-    def _get_start_index(i, b):
-      match b:
-        case Squeezed() | Element():
-          return i
-        case Blocked(block_size):
-          return block_size * i
-        case _:
-          raise ValueError(f"Unsupported block dim type: {type(b)}")
     return tuple(
         _get_start_index(i, b) for i, b in zip(block_indices, self.block_shape)
     )
@@ -872,23 +1000,35 @@ class BlockMapping:
   def to_lojax(
       self, index_map_avals, index_map_tree, grid, vmapped_dims
   ) -> list[BlockMapping]:
-    block_aval = self.transformed_block_aval
-    if not block_aval.inner_aval.is_high:
+    if not self.block_aval.inner_aval.is_high:
       return [self]
     assert self.array_aval.is_high
+    if isinstance(self.block_aval.inner_aval, jax_core.ShapedArray):
+      assert isinstance(self.array_aval, jax_core.ShapedArray)
+      assert not self.array_aval.sharding.spec.unreduced
+      assert self.array_aval.mat.unreduced
+      lo_inner_aval, = self.block_aval.inner_aval.lo_ty()
+      lo_array_aval, = self.array_aval.lo_ty()
+      return [
+          self.replace(
+              block_aval=self.block_aval.update(inner_aval=lo_inner_aval),
+              array_aval=lo_array_aval,
+          )
+      ]
     lo_array_avals = self.array_aval.lo_ty()
     block_spec = self.to_block_spec()
-    if not hasattr(block_aval.inner_aval, "lower_block_spec"):
+    if not hasattr(self.block_aval.inner_aval, "lower_block_spec"):
       raise ValueError(
-          f"Cannot lower block spec {block_spec} on {block_aval.inner_aval}."
+          f"Cannot lower block spec {block_spec} on"
+          f" {self.block_aval.inner_aval}."
           " Need to define lower_block_spec method on the type."
       )
-    lo_block_specs = block_aval.inner_aval.lower_block_spec(block_spec)
+    lo_block_specs = self.block_aval.inner_aval.lower_block_spec(block_spec)
     return [
         _convert_block_spec_to_block_mapping(
             bs,
             self.origin,
-            lo_array_aval,
+            lo_array_aval,  # type: ignore
             index_map_avals=index_map_avals,
             index_map_tree=index_map_tree,
             grid=grid,
@@ -903,12 +1043,11 @@ class BlockMapping:
     if self.debug:
       return (
           f"BlockMapping(block_shape={self.block_shape}, "
-          f"transformed_block_aval={self.transformed_block_aval}, "
+          f"block_aval={self.block_aval}, "
           f"index_map_jaxpr={self.index_map_jaxpr}, "
           f"index_map_out_tree={self.index_map_out_tree}, "
           f"array_aval={self.array_aval}, "
           f"origin={self.origin}, "
-          f"transforms={self.transforms}, "
           f"pipeline_mode={self.pipeline_mode}, "
           f"debug={self.debug})"
       )
@@ -1211,7 +1350,7 @@ index_map_grid_aval = jax_core.ShapedArray((), jnp.int32)
 class ScratchShape(Protocol):
   def get_array_aval(self) -> jax_core.AbstractValue:
     ...
-  def get_ref_aval(self) -> state.AbstractRef | TransformedRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     ...
 
 
@@ -1259,7 +1398,7 @@ class GridSpec:
     if isinstance(grid, int):
       grid = (grid,)
     elif grid and isinstance(grid[0], tuple):  # Check if we have a named grid
-      grid_names, grid = util.unzip2(grid)  # pyrefly: ignore[bad-argument-type]
+      grid_names, grid = util.unzip2(grid)
 
     # TODO(b/353730556): allow NumPy scalars in grids
     if not all(_is_valid_grid_dim(g) for g in grid):  # pyrefly: ignore[bad-argument-type]
@@ -1408,11 +1547,11 @@ def get_grid_mapping(
       debug=debug,
   )
   grid_mapping.check_invariants()
-  in_ref_avals = [bm.ref_aval for bm in in_block_mappings]
+  in_ref_avals = [bm.block_aval for bm in in_block_mappings]
   jaxpr_in_ref_avals = tree_util.tree_unflatten(in_tree, in_ref_avals)
   jaxpr_in_avals = (*jaxpr_scalar_ref_avals,
                     *jaxpr_in_ref_avals)
-  out_ref_avals = [bm.ref_aval for bm in out_block_mappings]
+  out_ref_avals = [bm.block_aval for bm in out_block_mappings]
   jaxpr_out_avals = tree_util.tree_unflatten(out_tree, out_ref_avals)
   if not isinstance(jaxpr_out_avals, (tuple, list)):
     jaxpr_out_avals = (jaxpr_out_avals,)

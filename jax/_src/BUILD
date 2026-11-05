@@ -136,6 +136,7 @@ pytype_strict_library(
             ":typing",
             ":util",
             ":xla_bridge",
+            "//jax/_src/lib",
         ],
         if_not_building = [],
     ) + py_deps("numpy"),
@@ -225,6 +226,20 @@ pytype_strict_library(
         ":traceback_util",
         ":util",
         "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "avals",
+    srcs = ["avals.py"],
+    deps = [
+        ":core",
+        ":dtypes",
+        ":mesh",
+        ":named_sharding",
+        ":partition_spec",
+        ":typing",
+        ":util",
     ] + py_deps("numpy"),
 )
 
@@ -466,6 +481,7 @@ py_library_providing_imports_info(
         ":api_util",
         ":batching",
         ":callback",
+        ":cloud_tpu_init",
         ":config",
         ":core",
         ":custom_batching",
@@ -716,6 +732,7 @@ pytype_strict_library(
         ":deprecations",
         ":dtypes",
         ":lax",
+        ":layout",
         ":numpy",
         ":sharding",
         ":typing",
@@ -859,6 +876,16 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "gpu_info",
+    srcs = ["gpu_info.py"],
+    deps = [
+        ":api",
+        ":mesh",
+        ":util",
+    ],
+)
+
+pytype_strict_library(
     name = "hardware_utils",
     srcs = ["hardware_utils.py"],
 )
@@ -940,6 +967,7 @@ pytype_strict_library(
         ":dtypes",
         ":flattree",
         ":mesh",
+        ":named_sharding",
         ":partial_eval",
         ":source_info_util",
         ":state_types",
@@ -953,6 +981,7 @@ pytype_strict_library(
     srcs = ["interpreters/batching.py"],
     visibility = ["//jax:internal"] + jax_visibility("batching"),
     deps = [
+        ":ad",
         ":ad_util",
         ":config",
         ":core",
@@ -1245,6 +1274,7 @@ pytype_strict_library(
         ":core",
         ":flattree",
         ":layout",
+        ":literals",
         ":mesh",
         ":mlir",
         ":partial_eval",
@@ -1428,6 +1458,7 @@ py_library_providing_imports_info(
         ":hijax",
         ":indexing",
         ":lax",
+        ":layout",
         ":mesh",
         ":sharding",
         ":sharding_impls",
@@ -1619,6 +1650,8 @@ pytype_strict_library(
         ":lax",
         ":mlir",
         ":numpy",
+        ":partial_eval",
+        ":remat",
         ":sharding_impls",
         ":tree_util",
         ":typing",

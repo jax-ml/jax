@@ -183,6 +183,28 @@ def _philox2x32_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:
   return jnp.array([out0], dtype=np.uint32)
 
 
+def philox2x32_raw_bits(
+    key: typing.Array, shape: tuple[int, ...]
+) -> tuple[typing.Array, ...]:
+  """Sample raw 32-bit uniform random bit streams using a Philox 2x32 key."""
+  if not _is_philox2x32_key(key):
+    raise TypeError("philox2x32_raw_bits got invalid prng key.")
+  return _philox2x32_raw_bits(key, shape)
+
+
+@api.jit(static_argnums=(1,), inline=api.Inline.JAX_EARLY)
+def _philox2x32_raw_bits(
+    key: typing.Array, shape: tuple[int, ...]
+) -> tuple[typing.Array, ...]:
+  """Internal implementation of philox2x32_raw_bits."""
+  if all(core.is_constant_dim(d) for d in shape) and math.prod(shape) > 2**64:
+    raise NotImplementedError("random bits array of size exceeding 2 ** 64")
+
+  counts1, counts2 = prng.iota_2x32_shape(shape)
+  out0, out1 = philox2x32_p.bind(key[0], counts1, counts2)
+  return (out0, out1)
+
+
 def philox2x32_random_bits(
     key: typing.Array, bit_width: int, shape: tuple[int, ...]
 ) -> typing.Array:
@@ -191,29 +213,9 @@ def philox2x32_random_bits(
     raise TypeError("philox2x32_random_bits got invalid prng key.")
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
-  return _philox2x32_random_bits(key, bit_width, shape)
-
-
-@api.jit(static_argnums=(1, 2), inline=api.Inline.JAX_EARLY)
-def _philox2x32_random_bits(
-    key: typing.Array, bit_width: int, shape: tuple[int, ...]
-) -> typing.Array:
-  """Internal implementation of philox2x32_random_bits."""
-  if all(core.is_constant_dim(d) for d in shape) and math.prod(shape) > 2**64:
-    raise NotImplementedError("random bits array of size exceeding 2 ** 64")
-
-  counts1, counts2 = prng.iota_2x32_shape(shape)
-  out0, out1 = philox2x32_p.bind(key[0], counts1, counts2)
-
-  dtype = prng.UINT_DTYPES[bit_width]
-  if bit_width == 64:
-    bits_hi = lax.convert_element_type(out0, dtype)
-    bits_lo = lax.convert_element_type(out1, dtype)
-    return lax.shift_left(bits_hi, jnp.asarray(32, dtype=dtype)) | bits_lo
-  elif bit_width == 32:
-    return out0 ^ out1
-  else:
-    return lax.convert_element_type(out0 ^ out1, dtype)
+  return prng._raw_bits_to_random_bits(
+      philox2x32_prng_impl, key, bit_width, shape
+  )[0]
 
 
 # -- PRNGImpl registration --
@@ -226,6 +228,9 @@ philox2x32_prng_impl = prng.PRNGImpl(
     fold_in=philox2x32_fold_in,
     name="philox2x32",
     tag="phx2",
+    raw_bits=philox2x32_raw_bits,
+    num_streams=2,
+    raw_dtype=np.dtype("uint32"),
 )
 
 prng.register_prng(philox2x32_prng_impl)

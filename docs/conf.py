@@ -156,7 +156,6 @@ exclude_patterns = [
     # Ignore markdown source for notebooks; myst-nb builds from the ipynb
     # These are kept in sync using the jupytext pre-commit hook.
     'notebooks/*.md',
-    'pallas/quickstart.md',
     'pallas/gpu/quickstart.md',
     'pallas/tpu/quickstart.md',
     'pallas/pipelining.md',
@@ -167,6 +166,7 @@ exclude_patterns = [
     'pallas/tpu/matmul.md',
     'pallas/tpu/core_map.md',
     'pallas/tpu/sparsecore.md',
+    'pallas/tpu/fuser.md',
     'jep/9407-type-promotion.md',
     'autodidax.md',
     'autodidax2_part1.md',
@@ -260,7 +260,6 @@ nb_execution_excludepatterns = [
     # Example only gives the specific output demonstrated on some platforms
     'notebooks/layout.*',
     # Requires accelerators
-    'pallas/quickstart.*',
     'pallas/pipelining.*',
     'pallas/gpu/pipelining.*',
     'pallas/tpu/pipelining.*',
@@ -269,6 +268,7 @@ nb_execution_excludepatterns = [
     'pallas/tpu/matmul.*',
     'pallas/tpu/core_map.*',
     'pallas/tpu/sparsecore.*',
+    'pallas/tpu/fuser.*',
     'distributed_data_loading.*',
     'notebooks/cute_dsl_jax.*',
     '401/cute-dsl.*',
@@ -426,6 +426,7 @@ rediraffe_redirects = {
   "Custom_Operation_for_GPUs.md": "ffi.md",
   "notebooks/quickstart.md": "quickstart.md",
   "quickstart.md": "notebooks/thinking_in_jax.md",
+  "pallas/quickstart.md": "pallas/index.rst",
   "advanced_guide.rst": "advanced_guides.rst",
   "user_guides.rst": "advanced_guides.rst",
   "working_with_pytrees.md": "pytrees.md",

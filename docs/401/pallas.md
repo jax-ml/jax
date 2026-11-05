@@ -25,11 +25,13 @@ here:
 
 Good entry points:
 
-* {doc}`Pallas quickstart </pallas/quickstart>` — kernels, `Ref`s, grids,
-  and `BlockSpec`s, on both GPU and TPU.
-* {doc}`Pipelining </pallas/pipelining>` and
-  {doc}`grids and BlockSpecs </pallas/grid_blockspec>` — the core concepts
-  for expressing how data is carved up and streamed through on-chip memory.
+* {doc}`Quickstart for GPU </pallas/gpu/quickstart>` and
+  {doc}`Quickstart for TPU </pallas/tpu/quickstart>` — writing your first custom
+  kernels on GPU and TPU.
+* {doc}`Refs </pallas/refs>`,
+  {doc}`grids and BlockSpecs </pallas/grid_blockspec>`, and
+  {doc}`pipelining </pallas/pipelining>` — the core concepts for working with
+  mutable memory buffers and streaming data through on-chip memory.
 * {doc}`The TPU backend guide </pallas/tpu/index>` and
   {doc}`the Mosaic GPU backend guide </pallas/gpu/index>` — per-platform
   details, lowering paths, and platform-specific features.

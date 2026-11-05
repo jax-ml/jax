@@ -21,11 +21,10 @@ import functools
 from functools import partial
 import math
 import operator as op
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from jax._src import api
 from jax._src import basearray
-from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import errors
@@ -38,7 +37,7 @@ from jax._src.indexing import dslice
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
-from jax._src.lib import _jax, ifrt_version, jaxlib_extension_version
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import (empty_concrete_mesh, empty_abstract_mesh,
                            use_abstract_mesh)
@@ -129,19 +128,6 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
     aval = core.ShapedArray(np_value.shape, np_value.dtype, weak_type=True)
     np_value = literals.TypedNdArray(np_value, aval=aval)
   return api.device_put(np_value)
-
-
-@cache(max_size=4096, trace_context_in_key=False)
-def _cached_index_calc(s, shape):
-  map_ = s.addressable_devices_indices_map(shape)
-  seen_h_indices = set()
-  l = []
-  for array_index, index in enumerate(map_.values()):
-    h_index = hashed_index(index)
-    if h_index not in seen_h_indices:
-      seen_h_indices.add(h_index)
-      l.append((array_index, index))
-  return l
 
 
 @cache(max_size=4096, trace_context_in_key=False)
@@ -308,7 +294,10 @@ class ArrayImpl(basearray.Array):
 
   @property
   def sharding(self):
-    return self._sharding
+    s = self._sharding
+    if isinstance(s, NamedSharding):
+      assert not s.spec.unreduced
+    return s
 
   @property
   def device(self):
@@ -366,10 +355,8 @@ class ArrayImpl(basearray.Array):
     return self._value.tolist()
 
   def __format__(self, format_spec):
-    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
-      return repr(self)
-    elif (self.is_fully_addressable or self.is_fully_replicated and
-          self.sharding.has_addressable_devices):
+    if (self.is_fully_addressable or self.is_fully_replicated and
+        self.sharding.has_addressable_devices):
       # Simulates behavior of https://github.com/numpy/numpy/pull/9883
       return format(self._value if self.ndim else self._value[()], format_spec)
     else:
@@ -398,9 +385,7 @@ class ArrayImpl(basearray.Array):
     else:
       dtype_str = f'dtype={self.dtype.name}'
 
-    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
-      return f"Array(shape={self.shape}, {dtype_str}, sharding={self.sharding})"
-    elif self.is_fully_addressable or self.is_fully_replicated:
+    if self.is_fully_addressable or self.is_fully_replicated:
       line_width = np.get_printoptions()["linewidth"]
       if self.size == 0:
         s = f"[], shape={self.shape}"
@@ -418,10 +403,8 @@ class ArrayImpl(basearray.Array):
       return f"{prefix}shape={self.shape}, {dtype_str})"
 
   def __str__(self):
-    if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
-      return repr(self)
-    elif (self.is_fully_addressable or self.is_fully_replicated and
-          self.sharding.has_addressable_devices) and self.nbytes < 1 << 20:
+    if (self.is_fully_addressable or self.is_fully_replicated and
+        self.sharding.has_addressable_devices) and self.nbytes < 1 << 20:
       return str(self._value)  # doesn't print Array(...)
     else:
       return repr(self)
@@ -663,14 +646,7 @@ class ArrayImpl(basearray.Array):
   def copy_to_host_async(self):
     self._check_if_deleted()
     if self._npy_value is None:
-      if jaxlib_extension_version >= 495 and ifrt_version >= 71:
-        _jax.batched_copy_to_host_async([self])
-      else:
-        if self.is_fully_replicated and self.sharding.has_addressable_devices:
-          self._copy_single_device_array_to_host_async()
-          return
-        for i, _ in _cached_index_calc(self.sharding, self.shape):
-          self._arrays[i]._copy_single_device_array_to_host_async()
+      _jax.batched_copy_to_host_async([self])
 
   @property
   @functools.partial(profiler.annotate_function, name="np.asarray(jax.Array)")
@@ -691,28 +667,11 @@ class ArrayImpl(basearray.Array):
             " inspect the addressable (process local) shards."
         )
 
-      if jaxlib_extension_version >= 495 and ifrt_version >= 71:
-        # Copy the entire array to host in one go.
-        npy_value, did_copy = self._to_np_array_did_copy()
-        if did_copy:
-          self._npy_value = npy_value
-        return npy_value
-      else:
-        if self.is_fully_replicated and self.sharding.has_addressable_devices:
-          npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
-          if did_copy:
-            self._npy_value = npy_value
-          return npy_value
-
-        # Copy each unique shard to host.
-        for i, _ in _cached_index_calc(self.sharding, self.shape):
-          self._arrays[i]._copy_single_device_array_to_host_async()
-
-        npy_value = np.empty(self.shape, self.dtype)
-        for i, ind in _cached_index_calc(self.sharding, self.shape):
-          npy_value[ind], _ = self._arrays[i]._single_device_array_to_np_array_did_copy()
-        npy_value.flags.writeable = False
+      # Copy the entire array to host in one go.
+      npy_value, did_copy = self._to_np_array_did_copy()
+      if did_copy:
         self._npy_value = npy_value
+      return npy_value
     return self._npy_value
 
 
@@ -1169,6 +1128,128 @@ def _get_aval_array(self):
 core.pytype_aval_mappings[ArrayImpl] = _get_aval_array
 
 
+class UnreducedShard(Shard):
+  def __init__(self, lo_shard: Shard, sharding: Sharding, global_shape: Shape):
+    super().__init__(lo_shard.device, sharding, global_shape)
+    self._lo_shard = lo_shard
+
+  @property
+  def replica_id(self) -> int:
+    return self._lo_shard.replica_id
+
+  @functools.cached_property
+  def data(self):
+    if (d := self._lo_shard.data) is None:
+      return None
+    k = len(self._sharding.spec.unreduced)  # type: ignore
+    assert d.shape[:k] == (1,) * k, (d.shape, k)
+    with (_internal_use_concrete_mesh(empty_concrete_mesh),
+          use_abstract_mesh(empty_abstract_mesh)):
+      return d.reshape(d.shape[k:])
+
+
+class UnreducedArray(basearray.Array):
+  __array_priority__ = 1000
+  __slots__ = ['_hi_aval', '_lo_val']
+  __hash__ = None
+
+  def __init__(self, hi_aval: core.ShapedArray, lo_val: Any):
+    self._hi_aval = hi_aval
+    self._lo_val = lo_val
+
+  def _is_traced_array(self) -> bool:
+    return True
+
+  aval = property(lambda self: self._hi_aval)
+  shape = property(lambda self: self._hi_aval.shape)
+  dtype = property(lambda self: self._hi_aval.dtype)
+  ndim = property(lambda self: self._hi_aval.ndim)
+  size = property(lambda self: self._hi_aval.size)
+  weak_type = property(lambda self: self._hi_aval.weak_type)
+  _committed = property(lambda self: self._lo_val._committed)
+  committed = property(lambda self: self._lo_val.committed)
+  device = property(lambda self: self._lo_val.device)
+  is_fully_addressable = property(lambda self: self._lo_val.is_fully_addressable)
+  is_fully_replicated = property(lambda self: self.sharding.is_fully_replicated)
+
+  def devices(self):
+    return self._lo_val.devices()
+
+  def delete(self):
+    self._lo_val.delete()
+
+  def is_deleted(self):
+    return self._lo_val.is_deleted()
+
+  @property
+  def sharding(self):
+    spec = self._hi_aval.sharding.spec
+    lo_s = self._lo_val.sharding
+    assert isinstance(lo_s, NamedSharding), lo_s
+    spec = spec.update(partitions=lo_s.spec.partitions[len(spec.unreduced):])
+    return lo_s.update(spec=spec)
+
+  @property
+  def format(self):
+    lo_f = getattr(self._lo_val, 'format', None)
+    if lo_f is None:
+      return None
+    lo_l = lo_f.layout
+    if isinstance(lo_l, Layout) and (k := len(self._hi_aval.sharding.spec.unreduced)):
+      lo_l = lo_l.update(
+          major_to_minor=tuple(m - k for m in lo_l.major_to_minor if m >= k))
+    return Format(lo_l, self.sharding)
+
+  @property
+  def addressable_shards(self):
+    s = self.sharding
+    return [UnreducedShard(sh, s, self.shape)
+            for sh in self._lo_val.addressable_shards]
+
+  @property
+  def global_shards(self):
+    s = self.sharding
+    return [UnreducedShard(sh, s, self.shape)
+            for sh in self._lo_val.global_shards]
+
+  def addressable_data(self, index: int):
+    return self.addressable_shards[index].data
+
+  def block_until_ready(self):
+    self._lo_val.block_until_ready()
+    return self
+
+  def copy_to_host_async(self):
+    self._lo_val.copy_to_host_async()
+
+  @property
+  def _value(self) -> np.ndarray:
+    raise RuntimeError(
+        "Fetching value for `jax.Array` that is unreduced is not allowed.")
+
+  def __array__(self, dtype=None, context=None, copy=None):
+    del context, copy
+    return np.asarray(self._value, dtype=dtype)
+
+  def __len__(self):
+    if self.ndim == 0:
+      raise TypeError("len() of unsized object")
+    return self.shape[0]
+
+  def __iter__(self):
+    if self.ndim == 0:
+      raise TypeError("iteration over a 0-d array")
+    return (self[i] for i in range(self.shape[0]))
+
+  def __repr__(self):
+    wt = ', weak_type=True' if self.aval.weak_type else ''
+    return f"Array(shape={self.shape}, dtype={self.dtype.name}{wt}, sharding={self.sharding})"
+
+
+core.pytype_aval_mappings[UnreducedArray] = lambda x: x._hi_aval
+dtypes.register_canonicalize_value_handler(UnreducedArray, lambda x: x)
+
+
 def _array_mlir_constant_handler(val, aval):
   try:
     return mlir.ir_constant(val._value)
@@ -1183,9 +1264,6 @@ def _array_mlir_constant_handler(val, aval):
     raise
 
 mlir.register_constant_handler(ArrayImpl, _array_mlir_constant_handler)
-
-if config.use_simplified_jaxpr_constants.value:
-  core.literalable_types.add(ArrayImpl)
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would
@@ -1341,25 +1419,15 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
       return literals.TypedNdArray(np.zeros(global_aval.shape, dtypes.float0),
                                    aval=global_aval)
     phys_aval = core.physical_aval(global_aval)
-    if TYPE_CHECKING or jaxlib_extension_version >= 489:
-      return xc.array_result_handler(
-          phys_aval, out_sharding, committed=committed
-      ).wrap(handler)
-    else:
-      return xc.array_result_handler(
-          phys_aval, out_sharding, committed=committed, _skip_checks=True
-      ).wrap(handler)
+    return xc.array_result_handler(
+        phys_aval, out_sharding, committed=committed
+    ).wrap(handler)
   if dtypes.issubdtype(global_aval.dtype, dtypes.extended):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed)
-  if TYPE_CHECKING or jaxlib_extension_version >= 489:
-    return xc.array_result_handler(
-        global_aval, out_sharding, committed=committed
-    )
-  else:
-    return xc.array_result_handler(
-        global_aval, out_sharding, committed=committed, _skip_checks=True
-    )
+  return xc.array_result_handler(
+      global_aval, out_sharding, committed=committed
+  )
 pxla.global_result_handlers[core.ShapedArray] = _array_global_result_handler
 
 # Token handlers

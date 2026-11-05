@@ -139,7 +139,6 @@ def buffer_callback(
     static_input_output_aliases: list[tuple[int, int]] = []
     if input_output_aliases is not None:
       for i_idx, o_idx in sorted(input_output_aliases.items()):
-        i_idx, o_idx = int(i_idx), int(o_idx)
         if i_idx >= len(args):
           raise ValueError(
               f"input_output_aliases contains the mapping '{i_idx}:{o_idx}' "

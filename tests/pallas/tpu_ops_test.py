@@ -25,6 +25,7 @@ from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -467,6 +468,25 @@ class OpsTest(ptu.PallasTPUTest):
 
     np.testing.assert_array_equal(result, reduce_func(x, axis))
 
+  @parameterized.product(axis=[0, 1], reduce_func=[jnp.argmax, jnp.argmin])
+  def test_bf16_input_reduce_index_large_dim(self, axis, reduce_func):
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+")
+    # One extreme value per column / row, all >= 2^15, distinct (500 apart) and
+    # not aligned to a tile boundary (+7).
+    expected = jnp.arange(32775, 32775 + 16 * 500, 500, dtype=jnp.int32)
+    x = jax.nn.one_hot(expected, 40960, dtype=jnp.bfloat16, axis=axis)
+    if reduce_func is jnp.argmin:
+      x = -x
+
+    def kernel(x, out):
+      out[:] = reduce_func(x[:], axis)
+
+    result = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.int32)
+    )(x)
+    np.testing.assert_array_equal(result, expected)
+
   @parameterized.product(
       k=[1, 2, 4, 8],
       in_shape=[(13, 32, 512), (10, 16, 128)],
@@ -503,6 +523,28 @@ class OpsTest(ptu.PallasTPUTest):
     exp_v, exp_i = jax.lax.top_k(x, k=k, axis=axis)
     np.testing.assert_array_equal(res_v, exp_v)
     np.testing.assert_array_equal(res_i, exp_i)
+
+  @parameterized.parameters(0, 1)
+  def test_bf16_top_k_large_dim(self, axis):
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+")
+    # Two extreme values per column / row, all >= 2^15, distinct (500 apart) and
+    # not aligned to a tile boundary (+7, +107).
+    idx0 = jnp.arange(32775, 32775 + 16 * 500, 500, dtype=jnp.int32)
+    idx1 = idx0 + 100
+    x = (
+        2 * jax.nn.one_hot(idx0, 40960, dtype=jnp.bfloat16, axis=axis)
+        + jax.nn.one_hot(idx1, 40960, dtype=jnp.bfloat16, axis=axis)
+    )
+    expected = jnp.stack([idx0, idx1], axis=axis)
+
+    def kernel(x, out):
+      _, out[:] = jax.lax.top_k(x[:], k=2, axis=axis, is_stable=False)
+
+    result = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.int32)
+    )(x)
+    np.testing.assert_array_equal(result, expected)
 
   @parameterized.product(
       k=[1, 2, 4, 8],
@@ -1283,10 +1325,6 @@ class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(jnp.int16, jnp.uint16, jnp.bfloat16)
   def test_concatenate_16bit_slices(self, dtype):
-    if jtu.is_device_tpu_at_least(version=5) and not jtu.is_libtpu_at_least(
-        "0.0.50"
-    ):
-      self.skipTest("Requires libtpu >= 0.0.50")
     if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(version=4):
       self.skipTest(
           "v4- does not have native vpackc support, so subnormals will be"
@@ -1594,6 +1632,54 @@ class OpsTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(two_bits_out, two_bits_in)
     np.testing.assert_array_equal(four_bits_out, four_bits_in)
 
+  def test_load_transpose_with_sliced_leading_dim(self) -> None:
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPUv5+")
+
+    def kernel(in_ref, out_ref):
+      out_ref[...] = jnp.swapaxes(in_ref[:, 1:3], 2, 3)
+
+    in_shape = (2, 3, 8, 4, 128)
+    out_shape = (2, 2, 4, 8, 128)
+    inputs = np.arange(np.prod(in_shape), dtype=np.float32).reshape(in_shape)
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
+    )(inputs)
+    np.testing.assert_array_equal(result, np.swapaxes(inputs[:, 1:3], 2, 3))
+
+  def test_request_p_state(self):
+    if self.INTERPRET:
+      self.skipTest("Not implemented in interpret mode.")
+    # TODO(b/581748519): Remove once the minimum jaxlib version includes
+    # tpu.request_p_state.
+    if not hasattr(tpu, "RequestPStateOp"):
+      self.skipTest("Test requires a jaxlib with tpu.request_p_state.")
+    with self.assertRaisesRegex(TypeError, "p_state must be an int"):
+      pltpu.request_p_state(jnp.int32(3))  # pytype: disable=wrong-arg-types
+
+    def negative_kernel(x_ref, y_ref):
+      pltpu.request_p_state(-1)
+      y_ref[...] = x_ref[...]
+
+    x = jnp.zeros((8, 128), jnp.float32)
+    with self.assertRaisesRegex(ValueError, "p_state must be non-negative"):
+      self.pallas_call(negative_kernel, out_shape=x)(x)
+
+    def kernel(x_ref, y_ref):
+      pltpu.request_p_state(3)
+      y_ref[...] = x_ref[...]
+
+    if not jtu.is_device_tpu_at_least(7):
+      with self.assertRaisesRegex(
+          NotImplementedError, r"request_p_state is only supported on TPU7x\+"
+      ):
+        self.pallas_call(kernel, out_shape=x)(x)
+      return
+
+    result = self.pallas_call(kernel, out_shape=x)(x)
+    np.testing.assert_array_equal(result, x)
+
 
 class ConvTest(ptu.PallasTPUTest):
 
@@ -1655,6 +1741,14 @@ class ConvTest(ptu.PallasTPUTest):
           lhs_dilation=(3, 7),
           window_reversal=(True, True),
       ),
+      dict(
+          testcase_name="_sliding_window_reversal",
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+          window_reversal=(True, False),
+      ),
   )
   def test_pltpu_conv_2d(
       self,
@@ -1679,7 +1773,8 @@ class ConvTest(ptu.PallasTPUTest):
           dimension_numbers=("NHWC", "HWIO", "NHWC"),
       )
 
-    ref_kernel = jnp.flip(kernel, axis=(0, 1)) if window_reversal else kernel
+    reversed_axes = tuple(i for i, r in enumerate(window_reversal or ()) if r)
+    ref_kernel = jnp.flip(kernel, axis=reversed_axes)
     expected = lax.conv_general_dilated(
         x,
         ref_kernel,
@@ -1930,6 +2025,18 @@ class ConvTest(ptu.PallasTPUTest):
           lhs_shape=(1, 8, 8, 128),
           rhs_shape=(128, 3, 3, 128),
       ),
+      dict(
+          testcase_name="_nchw_hwio_nchw",
+          dimension_numbers=("NCHW", "HWIO", "NCHW"),
+          lhs_shape=(1, 128, 8, 8),
+          rhs_shape=(3, 3, 128, 128),
+      ),
+      dict(
+          testcase_name="_nhwc_hwio_hwnc",
+          dimension_numbers=("NHWC", "HWIO", "HWNC"),
+          lhs_shape=(2, 8, 8, 128),
+          rhs_shape=(3, 3, 128, 128),
+      ),
   )
   def test_conv_dimension_numbers(
       self, *, dimension_numbers, lhs_shape, rhs_shape
@@ -2177,6 +2284,41 @@ class ConvTest(ptu.PallasTPUTest):
     out = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
     result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
     np.testing.assert_array_equal(result, expected)
+
+  @parameterized.parameters(jnp.uint32, jnp.int32)
+  def test_mulhi(self, dtype):
+    shape = (8, 128)
+    rng = np.random.default_rng(42)
+    if dtype == jnp.uint32:
+      x_np = rng.integers(0, 2**32 - 1, size=shape, dtype=np.uint32, endpoint=True)
+      y_np = rng.integers(0, 2**32 - 1, size=shape, dtype=np.uint32, endpoint=True)
+      x_np.ravel()[:4] = [0, 1, 2**32 - 1, 2**31]
+      y_np.ravel()[:4] = [2**32 - 1, 2**32 - 1, 2**32 - 1, 2]
+    else:
+      x_np = rng.integers(-(2**31), 2**31 - 1, size=shape, dtype=np.int32, endpoint=True)
+      y_np = rng.integers(-(2**31), 2**31 - 1, size=shape, dtype=np.int32, endpoint=True)
+      x_np.ravel()[:4] = [0, 1, -1, -(2**31)]
+      y_np.ravel()[:4] = [-(2**31), 2**31 - 1, -1, -(2**31)]
+    x = jnp.asarray(x_np)
+    y = jnp.asarray(y_np)
+
+    def hi_kernel(x_ref, y_ref, hi_ref):
+      hi_ref[...] = jax.lax.mulhi(x_ref[...], y_ref[...])
+
+    out_spec = jax.ShapeDtypeStruct(shape, dtype)
+    hi_got = self.pallas_call(hi_kernel, out_shape=out_spec)(x, y)
+    np.testing.assert_array_equal(hi_got, jax.lax.mulhi(x, y))
+
+    def hilo_kernel(x_ref, y_ref, lo_ref, hi_ref):
+      a, b = x_ref[...], y_ref[...]
+      lo_ref[...] = a * b
+      hi_ref[...] = jax.lax.mulhi(a, b)
+
+    lo_got, hi_got = self.pallas_call(
+        hilo_kernel, out_shape=(out_spec, out_spec)
+    )(x, y)
+    np.testing.assert_array_equal(lo_got, x * y)
+    np.testing.assert_array_equal(hi_got, jax.lax.mulhi(x, y))
 
 
 if __name__ == "__main__":

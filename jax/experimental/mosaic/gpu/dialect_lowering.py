@@ -30,7 +30,6 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
-from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
@@ -280,12 +279,11 @@ def _initialize_barrier_op_lowering_rule(
   )
   for i in range(op.num_barriers.value):
     bar_ptr = utils.getelementptr(op.base_pointer, [i], _lowered_barrier_type())
-    llvm.inline_asm(
-        ir.Type.parse("!llvm.void"),
-        [bar_ptr, utils.c(arrival_count, i32), ctx.single_thread_per_block_predicate],
-        "@$2 mbarrier.init.shared::cta.b64 [$0], $1;",
-        "r,r,b",
-        has_side_effects=True,
+    utils.inline_ptx(
+        "mbarrier.init.shared::cta.b64 [$0], $1;",
+        bar_ptr,
+        utils.c(arrival_count, i32),
+        predicate=ctx.single_thread_per_block_predicate,
     )
   return []
 
@@ -1203,6 +1201,50 @@ def _mgpu_async_load_op_lowering_rule(
   return []
 
 
+# TODO(slebedev): Remove ``hasattr`` once the minimum jaxlib version is >0.12.0.
+if hasattr(mgpu, "AsyncLoadIm2colOp"):
+  @_register_lowering(mgpu.AsyncLoadIm2colOp, support_warp_semantics=True)
+  def _mgpu_async_load_im2col_op_lowering_rule(
+      ctx: LoweringContext, load_op: mgpu.AsyncLoadIm2colOp
+  ) -> Sequence[ir.Value]:
+    barrier = utils.DialectBarrierRef.from_barrier_memref(load_op.barrier)
+    [transforms_attr] = inference_utils.in_transforms(load_op)
+    swizzle = swizzle_from_transforms_attr(transforms_attr)
+    unwrapped_dst = unwrap_transformed_memref(
+        load_op.destination, transforms_attr
+    )
+
+    predicate = ctx.single_lane_predicate
+    if load_op.predicate is not None:
+      predicate = arith.andi(predicate, load_op.predicate)
+
+    if ctx.auto_barriers and ctx.thread_semantics == utils.ThreadSubset.WARPGROUP:
+      utils.warpgroup_barrier()  # Make sure the reads have completed.
+
+    index = ir.IndexType.get()
+    ctx.launch_context.async_copy_im2col(
+        src_ref=load_op.source,
+        dst_ref=unwrapped_dst,
+        barrier=barrier.barrier_ref,
+        window_start_bounds=tuple(
+            zip(
+                load_op.window_lower_bounds,
+                load_op.window_upper_bounds,
+                strict=True,
+            )
+        ),
+        start_indices=[arith.index_cast(index, i) for i in load_op.indices],
+        filter_offsets=[
+            arith.index_cast(index, o) for o in load_op.filter_offsets
+        ],
+        window_strides=tuple(load_op.window_strides),
+        swizzle=swizzle,
+        arrive=False,
+        predicate=predicate,
+    )
+    return []
+
+
 @_register_lowering(mgpu.AsyncPrefetchOp, support_warp_semantics=True)
 def _mgpu_async_prefetch_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncPrefetchOp
@@ -1602,9 +1644,21 @@ def _select_op_lowering_rule(
   [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
-  pred = _fragmented_array_from_ir(op.condition, layout)
   true_value = _fragmented_array_from_ir(op.true_value, layout)
   false_value = _fragmented_array_from_ir(op.false_value, layout)
+  if not isinstance(op.condition.type, ir.VectorType):
+    result_regs = [
+        arith.select(op.condition, t, f)
+        for t, f in zip(
+            true_value.registers.flat, false_value.registers.flat, strict=True
+        )
+    ]
+    conversion_cast = builtin.UnrealizedConversionCastOp(
+        [op.result.type], result_regs
+    )
+    conversion_cast.attributes["layout"] = layout
+    return [conversion_cast.result]
+  pred = _fragmented_array_from_ir(op.condition, layout)
   result = pred.select(true_value, false_value)
   return [fragmented_array_to_ir(result, op.result.type)]
 
@@ -2559,11 +2613,14 @@ def _tcgen05_commit_arrive_op_lowering_rule(
   # TODO(cjfj): simplify when minimum jaxlib version is 0.12.
   if (pred := getattr(op, "predicate", None)) is not None:
     predicate = arith.andi(predicate, pred)
+  # TODO(bchetioui): remove `getattr` once minimum jaxlib version is >= 0.12.1.
+  commit_a_read_only = bool(getattr(op, "commit_a_read_only", False))
   tcgen05.commit_arrive(
       barrier.barrier_ref,
       op.collective.value,
       ctx.launch_context,
       predicate=predicate,
+      commit_a_read_only=commit_a_read_only,
   )
   return []
 
@@ -2847,39 +2904,35 @@ def _infer_flat_result_types(
 
 
 @_register_lowering(scf.IfOp, support_warp_semantics=True)
-def _if_op_lowering_rule(
-    ctx: LoweringContext, if_op: scf.IfOp
-) -> MlirLoweringRuleResult:
-  if not inference_utils.should_have_layout(if_op):
-    return _traverse_op_lowering_rule(ctx, if_op)
-
-  raise NotImplementedError
-
-
 @_register_lowering(scf.IndexSwitchOp, support_warp_semantics=True)
-def _index_switch_op_lowering_rule(
-    ctx: LoweringContext, switch_op: scf.IndexSwitchOp
+def _branching_op_lowering_rule(
+    ctx: LoweringContext, op: scf.IfOp | scf.IndexSwitchOp
 ) -> MlirLoweringRuleResult:
-  if not inference_utils.should_have_layout(switch_op):
-    return _traverse_op_lowering_rule(ctx, switch_op)
+  if not inference_utils.should_have_layout(op):
+    return _traverse_op_lowering_rule(ctx, op)
 
-  out_layouts = inference_utils.out_layouts(switch_op)
-  new_switch_op = scf.IndexSwitchOp(
-      _infer_flat_result_types(switch_op, out_layouts),
-      switch_op.arg,
-      switch_op.cases,
-  )
+  out_layouts = inference_utils.out_layouts(op)
+  result_types = _infer_flat_result_types(op, out_layouts)
+  match op:
+    case scf.IfOp():
+      new_op = scf.IfOp(
+          op.condition,
+          result_types,
+          has_else=bool(op.elseRegion.blocks),
+      )
+    case scf.IndexSwitchOp():
+      new_op = scf.IndexSwitchOp(result_types, op.arg, op.cases)
+    case _:
+      assert_never(op)
 
   results_template: Sequence[_VectorTemplate | None] = []
-  for region, new_region in zip(
-      switch_op.regions, new_switch_op.regions, strict=True
-  ):
+  for region, new_region in zip(op.regions, new_op.regions, strict=True):
     [block] = region.blocks
     new_block = new_region.blocks[0]
     results_template = _move_scf_block_to_block_with_flattened_arguments(
         ctx, block, new_block, scf.YieldOp, []
     )
-  return _unflatten_ir_values(new_switch_op.results, results_template)
+  return _unflatten_ir_values(new_op.results, results_template)
 
 @_register_lowering(mgpu.TryClusterCancelOp)
 def _try_cluster_cancel_op_lowering_rule(

@@ -289,6 +289,7 @@ key_reuse_signatures[consume_p] = KeyReuseSignature(Sink(0), Forward(0, 0))
 key_reuse_signatures[assert_consumed_value_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[random.random_clone_p] = KeyReuseSignature(Source(0))
 key_reuse_signatures[prng.random_bits_p] = KeyReuseSignature(Sink(0))
+key_reuse_signatures[prng.raw_bits_p] = KeyReuseSignature(Sink(0))
 # TODO(jakevdp): should fold_in sink its input key?
 key_reuse_signatures[prng.random_fold_in_p] = KeyReuseSignature(Source(0))
 key_reuse_signatures[prng.random_seed_p] = KeyReuseSignature(Source(0))

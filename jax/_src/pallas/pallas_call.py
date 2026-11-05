@@ -26,6 +26,7 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
+from jax._src import dtypes
 from jax._src import effects
 from jax._src import numpy as jnp
 from jax._src import state
@@ -42,13 +43,14 @@ from jax._src.lib.mlir import ir
 from jax._src.mesh import get_abstract_mesh
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import hlo_interpreter
-from jax._src.pallas import primitives
 from jax._src.shard_map import P, _as_manual_mesh, shard_map
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.traceback_util import api_boundary
 from jax._src import xla_metadata
 from jax._src.util import (
+    merge_lists,
+    partition_list,
     safe_map,
     safe_zip,
     split_list,
@@ -127,10 +129,12 @@ def _pallas_call_abstract_eval(
   #                    f"got {get_abstract_mesh().axis_types}")
 
   # NOTE(mattjj,yashkatariya): this doesn't catch auto-mode non-manual axes
-  if not (all(p is None for a in avals if isinstance(a, jax_core.ShapedArray)
-              for p in a.sharding.spec) and
-          all(p is None for a in out_avals if isinstance(a, jax_core.ShapedArray)
-              for p in a.sharding.spec)):
+  if not (all(not a.sharding.spec.unreduced and not a.sharding.spec.reduced and
+              all(p is None for p in a.sharding.spec)
+              for a in avals if isinstance(a, jax_core.ShapedArray)) and
+          all(not a.sharding.spec.unreduced and not a.sharding.spec.reduced and
+              all(p is None for p in a.sharding.spec)
+              for a in out_avals if isinstance(a, jax_core.ShapedArray))):
     raise ValueError("pallas_call requires all mesh axes to be Manual, "
                      f"got {get_abstract_mesh().axis_types}")
   return out_avals, effs
@@ -138,9 +142,11 @@ def _pallas_call_abstract_eval(
 
 pallas_call_p.def_effectful_abstract_eval(_pallas_call_abstract_eval)
 
-def _pallas_call_is_high(*_, jaxpr, **params):
+def _pallas_call_is_high(*avals, jaxpr, out_avals, **params):
   del params
-  return jaxpr.is_high
+  return (jaxpr.is_high or
+          any(a.is_high for a in avals) or
+          any(a.is_high for a in out_avals))
 pallas_call_p.is_high = _pallas_call_is_high
 
 
@@ -265,11 +271,13 @@ def _pallas_call_jvp_rule(
     raise NotImplementedError("JVP with aliasing not supported.")
   if mesh is not None:
     raise NotImplementedError("pallas_call with a mesh does not support JVP")
-  nonzero_tangents = [not isinstance(t, ad_util.Zero) for t in tangents]
-  tangents = [t for t in tangents if type(t) is not ad_util.Zero]
-  nonzero_tangents_with_outputs = nonzero_tangents + [True] * grid_mapping.num_outputs
-  closed_jaxpr = jaxpr
-  jvp_jaxpr_, _ = ad.jvp_jaxpr(closed_jaxpr, nonzero_tangents_with_outputs, [])
+  nz_tangents_in = [type(t) is not ad_util.Zero for t in tangents]
+  nz_tangents_out = [not (isinstance(a, jax_core.ShapedArray) and
+                          a.to_tangent_aval().dtype == dtypes.float0)
+                     for a in out_avals]
+  _, tangents = partition_list(nz_tangents_in, tangents)
+  with grid_mapping.trace_env():
+    jvp_jaxpr_, _ = ad.jvp_jaxpr(jaxpr, nz_tangents_in + nz_tangents_out, [])
   jvp_jaxpr, () = jvp_jaxpr_, jvp_jaxpr_.consts  # TODO consts
   # `pallas_call` takes in inputs and returns outputs but its jaxpr *does not*.
   # `pallas_call` takes in a stateful jaxpr, meaning the jaxpr accepts input
@@ -287,11 +295,13 @@ def _pallas_call_jvp_rule(
     print(f"\nThe jaxpr for the jvp of pallas_call {debug_info.func_src_info}:")
     print(jvp_jaxpr)
   in_bms, out_bms = split_list(grid_mapping.block_mappings, [len(primals)])
-  jvp_bms = (*in_bms, *in_bms, *out_bms, *out_bms)
+  _, tangent_in_bms = partition_list(nz_tangents_in, in_bms)
+  _, tangent_out_bms = partition_list(nz_tangents_out, out_bms)
+  _, tangent_out_avals = partition_list(nz_tangents_out, out_avals)
   jvp_grid_mapping = grid_mapping.replace(
-      block_mappings=jvp_bms,
-      num_inputs=grid_mapping.num_inputs * 2,
-      num_outputs=grid_mapping.num_outputs * 2,
+      block_mappings=(*in_bms, *tangent_in_bms, *out_bms, *tangent_out_bms),
+      num_inputs=len(in_bms) + len(tangent_in_bms),
+      num_outputs=len(out_bms) + len(tangent_out_bms),
   )
   if cost_estimate is not None:
     jvp_cost_estimate = CostEstimate(
@@ -312,11 +322,15 @@ def _pallas_call_jvp_rule(
       input_output_aliases=(),
       compiler_params=compiler_params,
       cost_estimate=jvp_cost_estimate,
-      out_avals=(*out_avals, *out_avals),
+      out_avals=(*out_avals, *tangent_out_avals),
       metadata=metadata,
       name=name,
   )
-  out_primals, out_tangents = split_list(out_flat, [len(out_flat) // 2])
+  out_primals, nz_out_tangents = split_list(out_flat, [len(out_avals)])
+  zero_out_tangents = [ad_util.p2tz(p) for p, nz
+                       in zip(out_primals, nz_tangents_out) if not nz]
+  out_tangents = merge_lists(nz_tangents_out, zero_out_tangents,
+                             nz_out_tangents)
   return out_primals, out_tangents
 
 
@@ -800,21 +814,15 @@ def _trace_kernel_to_jaxpr(
     debug_info: jax_core.DebugInfo,
     grid_mapping: GridMapping,
     kernel_avals: ft.FlatTree,  # of AbstractRef
-    kernel_in_transforms: tuple[tuple[state.Transform, ...], ...],
     indexer: bool = False,
 ) -> tuple[jax_core.Jaxpr, tuple[jax_typing.Array, ...]]:
-  fun_with_transforms = primitives.wrap_with_transforms(
-      fun, kernel_in_transforms)
-
   with (
       grid_mapping.trace_env(),
       config._check_vma(False),
       config.mutable_array_checks(False),
       xla_metadata.clear_xla_metadata(),
   ):
-    closed_jaxpr, out_avals = pe.trace_to_jaxpr(
-        fun_with_transforms, kernel_avals,
-        debug_info)
+    closed_jaxpr, out_avals = pe.trace_to_jaxpr(fun, kernel_avals, debug_info)
     consts = closed_jaxpr.consts
     jaxpr, _ = pe.dce_jaxpr(closed_jaxpr,
                             used_outputs=[True] * len(closed_jaxpr.outvars),
@@ -1128,8 +1136,7 @@ def pallas_call(
   In contrast to :func:`jax.experimental.pallas.kernel`, this entry point
   assumes that the kernel will be executed over a ``grid``.
 
-  See `Pallas Quickstart
-  <https://docs.jax.dev/en/latest/pallas/quickstart.html>`_.
+  See the `Pallas documentation <https://pallas.jax.dev>`_.
 
   Args:
     kernel: the kernel function, that receives a Ref for each input and output.
@@ -1279,29 +1286,20 @@ def _pallas_call(
       kernel_args_kwargs = (kernel_args, scratch_args)
     else:
       kernel_args_kwargs = (kernel_args + list(scratch_args), {})
-    kernel_args_ft = ft.flatten(
+    flat_kernel_avals = ft.flatten(
         kernel_args_kwargs, registry=tree_util.default_registry
-    )
-    flat_kernel_avals = kernel_args_ft.map(
-        lambda x: x.ref if isinstance(x, state_types.TransformedRef) else x
     )
     if config._check_vma.value:
       flat_kernel_avals = flat_kernel_avals.map(
           lambda a: a.update_manual_axis_type(jax_core.empty_mat)
       )
-    # Note that only a subset of all transforms can be found here, and they are
-    # never expected to contain any arrays.
-    kernel_arg_transforms = tuple(
-        x.transforms if isinstance(x, state_types.TransformedRef) else ()
-        for x in kernel_args_ft.vals
-    )
     kernel_dbg = api_util.debug_info("pallas_call kernel", kernel,
                                       *kernel_args_kwargs)
     if name is not None:
       kernel_dbg = kernel_dbg.replace_func_name(mlir.sanitize_name(name))
     jaxpr, consts = _trace_kernel_to_jaxpr(
-        kernel, kernel_dbg, grid_mapping, flat_kernel_avals,
-        kernel_arg_transforms)
+        kernel, kernel_dbg, grid_mapping, flat_kernel_avals
+    )
     for i_idx, o_idx in input_output_aliases.items():
       if i_idx not in range(len(flat_in_avals)):
         raise ValueError(
@@ -1344,11 +1342,6 @@ def _pallas_call(
           cost_estimate=cost_estimate,
           metadata=FrozenDict(metadata) if metadata is not None else None,
           name=name,
-          # If we're running under GPU Interpret Mode, save the kernel arg
-          # transforms. Checks the string name to avoid a conditional import.
-          # TODO(jburnim): Clean this up.
-          **(dict(kernel_arg_transforms=kernel_arg_transforms)
-             if type(interpret).__name__ == "InterpretGPUParams" else {}),
       )
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out

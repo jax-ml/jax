@@ -45,6 +45,7 @@ from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.state import indexing
+from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import tcgen05
@@ -124,9 +125,13 @@ class CompilerParams:
     profile_dir: The directory to which profiling traces will be written to.
     profile_trace_scope: The scope at which traces are collected (WARP or
       WARPGROUP).
-    profile_bounds_check: If True, profiler events past profile_space are
+    profile_bounds_check: If True, profiler events exceeding ``profile_space`` are
       dropped (the trace is truncated) instead of corrupting SMEM, at the cost
-      of a slightly higher per-event profiling overhead.
+      of a slightly higher per-event profiling overhead. If False, profiler events
+      are written without bounds checking. To avoid possible SMEM errors during
+      profiling, it is advised to reduce the grid size or other related parameters
+      to collect fewer profiler events. Defaults to False, to avoid the overhead
+      related from bounds checking which may distort performance measurements.
     skip_device_barrier: If True, skips the cross-device barrier before kernel
       launch. Improper use of this flag can lead to race conditions. !!!Use with
       caution!!! Defaults to False.
@@ -136,6 +141,12 @@ class CompilerParams:
       AbstractMesh, as with a concrete Mesh in standard JIT compilation,
       multi-process execution is detected automatically from the mesh devices.
       Defaults to False.
+    collective_id: The ID of the collective kernel. Kernels with different
+      collective IDs will not share the same semaphores when using
+      plgpu.get_barrier_semaphore. If two kernels use a barrier semaphore, they
+      must have a different collective_id if they perform communication between
+      different sets of devices (e.g. if one kernel does neighbor comms on mesh
+      axis x, while another does neighbor comms on mesh axis y).
   """
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
@@ -149,8 +160,17 @@ class CompilerParams:
   lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Warpgroup
   skip_device_barrier: bool = False
   is_multi_process: bool = False
+  collective_id: int | None = None
 
   def __post_init__(self):
+    if self.collective_id is not None and not (
+        0 <= self.collective_id < mgpu.launch_context.MAX_COLLECTIVE_IDS
+    ):
+      raise ValueError(
+          "collective_id must be in [0,"
+          f" {mgpu.launch_context.MAX_COLLECTIVE_IDS}), got"
+          f" {self.collective_id}"
+      )
     if self.dimension_semantics is not None:
       object.__setattr__(
           self, "dimension_semantics", tuple(self.dimension_semantics)
@@ -239,7 +259,7 @@ class SemaphoreType(enum.Enum):
   def get_array_aval(self) -> jax_core.ShapedArray:
     return self(()).get_array_aval()
 
-  def get_ref_aval(self) -> _Ref:
+  def get_ref_aval(self) -> state.AbstractRef:
     return self(()).get_ref_aval()
 
 def _check_no_semaphore_outputs(out_type) -> None:
@@ -504,26 +524,26 @@ class GPUMemoryRef(pallas_core.MemoryRef):
     assert (self.layout is not None) == is_tmem
     assert (self.collective is not None) == is_tmem
 
-  def get_ref_aval(self) -> _Ref:
-    aval: Any = jax_core.ShapedArray(self.shape, self.dtype)
-    physical_aval = state_types.transform_type(self.transforms, aval)
+  def get_ref_aval(self) -> state.AbstractRef:
+    aval = jax_core.ShapedArray(self.shape, self.dtype)
+    # Also validates that `self.transforms` are compatible with `aval`.
+    _ = state_types.transform_type(self.transforms, aval)
     if self.memory_space == MemorySpace.TMEM:
-      aval = AbstractTMEMRef(
+      return AbstractTMEMRef(
           aval, self.memory_space, self.layout, self.collective
       )
-      physical_ref_aval = AbstractTMEMRef(
-          physical_aval, self.memory_space, self.layout, self.collective
-      )
-    else:
-      aval = state.AbstractRef(aval, memory_space=self.memory_space)
-      physical_ref_aval = state.AbstractRef(physical_aval, memory_space=self.memory_space)
-    transforms: list[state_types.Transform] = pallas_core.undo_transforms(
-        aval, self.transforms
-    )
-    ref = state_types.TransformedRef(physical_ref_aval, tuple(transforms))
-    if not ref.transforms:
-      return ref.ref
-    return ref
+    return state.AbstractRef(aval, memory_space=self.memory_space)
+
+  # Return type is a union because `RefUnion` subclasses `GPUMemoryRef` and
+  # overrides this method to return one `tuple[Transform, ...]` per aliased
+  # member ref (while keeping `RefUnion.transforms == ()` for its backing ref).
+  def get_ref_transforms(
+      self,
+  ) -> (
+      tuple[state_types.Transform, ...]
+      | tuple[tuple[state_types.Transform, ...], ...]
+  ):
+    return tuple(self.transforms)
 
 
 def align_to(x: int, alignment: int):
@@ -557,20 +577,23 @@ def _ref_group_size(refs: _GPUMemoryRefTree) -> int:
   return size
 
 
+def _tmem_cols_for_ref(ref: GPUMemoryRef | AbstractTMEMRef) -> int:
+  # Refs with leading batch dimensions are collapsed to 2D in TMEM (see
+  # `CollapseLeadingBatchDimensionsTransform`), so we compute the column count
+  # on the collapsed shape.
+  shape = ref.shape
+  if len(shape) > 2:
+    shape = (shape[-2], math.prod(shape[:-2]) * shape[-1])
+  assert ref.layout is not None
+  return ref.layout.cols_in_shape(shape, dtypes.itemsize_bits(ref.dtype))
+
+
 def _ref_group_tmem_col_size(refs: _GPUMemoryRefTree) -> int:
   """Returns the total number of TMEM columns used by a group of aliased Refs.
   """
   ncols = 0
   for ref in jax.tree.leaves(refs):
-    # Refs with leading batch dimensions are collapsed to 2D in TMEM (see
-    # `CollapseLeadingBatchDimensionsTransform`), so we compute the column count
-    # on the collapsed shape.
-    shape = ref.shape
-    if len(shape) > 2:
-      shape = (shape[-2], math.prod(shape[:-2]) * shape[-1])
-    ref_ncols = ref.layout.cols_in_shape(shape,
-                                         dtypes.itemsize_bits(ref.dtype))
-    ncols += align_to(ref_ncols, TMEM_COL_ALIGNMENT)
+    ncols += align_to(_tmem_cols_for_ref(ref), TMEM_COL_ALIGNMENT)
   return ncols
 
 
@@ -604,15 +627,9 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
       def unflatten(ref):
         nonlocal byte_offset
         byte_offset = align_to(byte_offset, SMEM_ALIGNMENT)
-        assert isinstance(ref, state.AbstractRef) or isinstance(
-            ref, pallas_core.TransformedRef
-        )
-        if not isinstance(ref, pallas_core.TransformedRef):
-          ref = pallas_core.TransformedRef(ref, transforms=())
-        transform = ExtractAliasedRef.from_transformed_ref(ref, byte_offset, group_idx)
-        result = pallas_core.TransformedRef(
-            ref_union, transforms=(transform, *ref.transforms)
-        )
+        assert isinstance(ref, state.AbstractRef)
+        transform = ExtractAliasedRef.from_ref(ref, byte_offset, group_idx)
+        result = pallas_core.TransformedRef(ref_union, transforms=(transform,))
         if jnp.issubdtype(ref.dtype, jnp.integer):
           nbits = jnp.iinfo(ref.dtype).bits
         elif jnp.issubdtype(ref.dtype, jnp.floating):
@@ -637,18 +654,10 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
       def unflatten(ref):
         nonlocal col_offset
         col_offset = align_to(col_offset, TMEM_COL_ALIGNMENT)
-        if not isinstance(ref, pallas_core.TransformedRef):
-          ref = pallas_core.TransformedRef(ref, transforms=())
-        # `ref.ref.shape` is the physical (collapsed to 2D) TMEM shape, whereas
-        # `ref.shape` may carry leading batch dimensions.
-        ncols = ref.layout.cols_in_shape(ref.ref.shape,
-                                         dtypes.itemsize_bits(ref.dtype))
-        transform = ExtractAliasedRef.from_transformed_ref(
-            ref, col_offset, group_idx, layout=ref.layout)
-        result = pallas_core.TransformedRef(
-            ref_union, transforms=(transform, *ref.transforms)
-        )
-        col_offset += ncols
+        assert isinstance(ref, AbstractTMEMRef)
+        transform = ExtractAliasedRef.from_ref(ref, col_offset, group_idx)
+        result = pallas_core.TransformedRef(ref_union, transforms=(transform,))
+        col_offset += _tmem_cols_for_ref(ref)
         return result
       flat_refs.append(jax.tree.map(unflatten, ref_group))
       union_cols = max(union_cols, col_offset)
@@ -772,6 +781,14 @@ class RefUnion(GPUMemoryRef):
     refs_aval = jax.tree.map(lambda ref: ref.get_ref_aval(), self.refs)
     return AbstractRefUnion(inner_aval, refs_aval,
                             memory_space=self.memory_space)
+
+  def get_ref_transforms(
+      self,
+  ) -> tuple[tuple[state_types.Transform, ...], ...]:
+    # Flatten via `jax.tree.leaves` rather than preserving the PyTree structure
+    # with `jax.tree.map` because `self.refs` may contain unhashable containers
+    # (e.g. `list` or `dict`), whereas `run_scoped_p` params must be hashable.
+    return tuple(tuple(ref.transforms) for ref in jax.tree.leaves(self.refs))
 
 
 Index = mgpu.DynamicSlice | slice | int | ir.Value
@@ -1191,14 +1208,149 @@ def multicast_ref(
   )
 
 
-def transpose_ref(
-    ref: pallas_core.TransformedRef | Any,
-    permutation: tuple[int, ...],
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class Im2ColTransform(state_types.Transform):
+  window_shape: tuple[int, ...] = jax.tree.static()
+  padding: tuple[tuple[int, int], ...] = jax.tree.static()
+
+  def __post_init__(self):
+    num_spatial = len(self.window_shape)
+    if num_spatial not in (1, 2, 3):
+      raise ValueError(
+          "im2col_ref requires 1, 2, or 3 spatial dimensions, got"
+          f" {num_spatial} ({self.window_shape})"
+      )
+    if len(self.padding) != num_spatial:
+      raise ValueError(
+          f"Expected {num_spatial} (pad_lo, pad_hi) pairs in padding, got"
+          f" {len(self.padding)}"
+      )
+    max_window_size = 1 << (16 // num_spatial)
+    max_bound = max_window_size // 2
+    for i, (k, (pad_lo, pad_hi)) in enumerate(
+        zip(self.window_shape, self.padding)
+    ):
+      # Filter offsets must fit the im2col TMA offset range.
+      if not 1 <= k <= max_window_size:
+        raise ValueError(
+            f"window_shape[{i}] must be in [1, {max_window_size}] with"
+            f" {num_spatial} spatial dims, got {k}"
+        )
+      # Window start bounds must fit the im2col TMA bounding box range.
+      if pad_lo < 0 or pad_hi < 0:
+        raise ValueError(
+            f"padding[{i}] must be non-negative, got ({pad_lo}, {pad_hi})"
+        )
+      if pad_lo > max_bound:
+        raise ValueError(
+            f"padding[{i}][0] must be at most {max_bound} with {num_spatial}"
+            f" spatial dims, got {pad_lo}"
+        )
+      min_pad_hi = max(0, k - 1 - max_bound)
+      max_pad_hi = k - 2 + max_bound
+      if not min_pad_hi <= pad_hi <= max_pad_hi:
+        raise ValueError(
+            f"padding[{i}][1] must be in [{min_pad_hi}, {max_pad_hi}] with"
+            f" window_shape[{i}]={k} and {num_spatial} spatial dims, got"
+            f" {pad_hi}"
+        )
+
+  @property
+  def window_start_bounds(self) -> tuple[tuple[int, int], ...]:
+    return tuple(
+        (-pad_lo, pad_hi - k + 1)
+        for k, (pad_lo, pad_hi) in zip(self.window_shape, self.padding)
+    )
+
+  def spatial_out_shape(self, gmem_shape: Sequence[int]) -> tuple[int, ...]:
+    spatial_in = gmem_shape[1:-1]
+    return tuple(
+        s + hi - lo
+        for s, (lo, hi) in zip(spatial_in, self.window_start_bounds, strict=True)
+    )
+
+  def transform_type(self, x):
+    match x:
+      case state_types.AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case jax_core.ShapedArray():
+        expected_ndim = len(self.window_shape) + 2
+        if x.ndim != expected_ndim:
+          raise ValueError(
+              f"im2col_ref with {len(self.window_shape)} spatial dims requires"
+              f" a rank-{expected_ndim} (N, *spatial, C) reference, got shape"
+              f" {x.shape}"
+          )
+        spatial_out = self.spatial_out_shape(x.shape)
+        for i, s_out in enumerate(spatial_out):
+          if s_out < 1:
+            raise ValueError(
+                f"im2col_ref spatial dim {i} has non-positive output size"
+                f" {s_out} for input size {x.shape[i + 1]}, window size"
+                f" {self.window_shape[i]}, and padding {self.padding[i]}"
+            )
+        num_windows = x.shape[0] * math.prod(spatial_out)
+        return x.update(shape=(num_windows, *self.window_shape, x.shape[-1]))
+      case _:
+        raise TypeError(f"Unsupported type: {x}")
+
+
+def im2col_ref(
+    ref: _Ref,
+    *,
+    window_shape: Sequence[int],
+    padding: Sequence[tuple[int, int]] | None = None,
 ) -> pallas_core.TransformedRef:
-  assert hasattr(ref, "memory_space")
-  if ref.memory_space == MemorySpace.TMEM:
-    raise ValueError("Can't transpose a TMEM reference.")
-  return ref.transpose(permutation)
+  """Returns an im2col view of a GMEM reference for TMA copies.
+
+  For ``ref`` of shape ``(N, *spatial_in, C)`` with 1, 2 or 3 spatial
+  dimensions, the view has shape
+  ``(N * math.prod(spatial_out), *window_shape, C)``, where
+  ``spatial_out[i] = spatial_in[i] + sum(padding[i]) - window_shape[i] + 1``
+  is the number of window positions along spatial dimension ``i``. Each row
+  ``view[r]`` is one window of the zero-padded input, ``padded``. With 2
+  spatial dimensions, for example::
+
+    n, h, w = np.unravel_index(r, (N, *spatial_out))
+    view[r, dh, dw, c] == padded[n, h + dh, w + dw, c]
+
+  The view can only be read by
+  :func:`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem`, and must be
+  indexed as ``view.at[rows, *window_offsets, channels]``, where:
+
+  * ``rows`` is a unit-stride slice selecting up to 1024 windows;
+  * ``window_offsets`` are scalars, one per spatial dimension, selecting the
+    pixel to load from each window;
+  * ``channels`` is a unit-stride slice selecting up to 256 channels of that
+    pixel.
+
+  The destination must be a 2D SMEM reference with one row per selected
+  window and one column per selected channel. If it is tiled, its tiles must
+  span all columns. Rows and channels past the end of the view read as zeros.
+
+  Args:
+    ref: A channels-last GMEM reference of shape ``(N, *spatial_in, C)``. Sliced
+      or otherwise transformed references and sub-byte dtypes are not supported.
+    window_shape: The window size along each spatial dimension.
+    padding: The ``(lo, hi)`` zero padding along each spatial dimension. Must be
+      non-negative. Defaults to no padding.
+  """
+  window_shape = tuple(window_shape)
+  if padding is None:
+    padding = ((0, 0),) * len(window_shape)
+  else:
+    padding = tuple((lo, hi) for lo, hi in padding)
+  ref, transforms = state_primitives.get_ref_and_transforms(
+      ref, None, "im2col_ref"
+  )
+  if transforms:
+    raise TypeError("im2col_ref must be applied to an untransformed reference")
+  res = pallas_core.TransformedRef(
+      ref, (Im2ColTransform(window_shape=window_shape, padding=padding),)
+  )
+  _ = res.type  # Eagerly validate the ref shape.
+  return res
 
 
 @tree_util.register_dataclass
@@ -1216,14 +1368,16 @@ class ExtractAliasedRef(state_types.Transform):
   layout: tcgen05.TMEMLayout | None = jax.tree.static()
 
   @classmethod
-  def from_transformed_ref(
+  def from_ref(
       cls,
-      ref: pallas_core.TransformedRef,
-      byte_offset: int,
+      ref: state.AbstractRef,
+      offset: int,
       alias_group_idx: int,
-      layout: tcgen05.TMEMLayout | None = None,
-  ):
-    return cls(dtypes.dtype(ref.dtype), ref.ref.shape, byte_offset, alias_group_idx, layout)
+  ) -> ExtractAliasedRef:
+    layout = ref.layout if isinstance(ref, AbstractTMEMRef) else None
+    return cls(
+        dtypes.dtype(ref.dtype), ref.shape, offset, alias_group_idx, layout
+    )
 
   def transform_type(self, x):
     match x:
@@ -1495,7 +1649,8 @@ class BlockSpec(pallas_core.BlockSpec):
           "collective_axes is not supported in pallas_call. Use plgpu.kernel"
           " with plgpu.emit_pipeline_warp_specialized instead."
       )
-    bm = super().to_block_mapping(
+    assert not self.transforms
+    return super().to_block_mapping(
         origin,
         array_aval,
         index_map_avals=index_map_avals,
@@ -1504,15 +1659,6 @@ class BlockSpec(pallas_core.BlockSpec):
         vmapped_dims=vmapped_dims,
         allow_captured_consts=allow_captured_consts,
         debug=debug,
-    )
-    block_inner_aval = bm.block_aval.inner_aval
-    for t in self.transforms:
-      block_inner_aval = t.transform_type(block_inner_aval)
-    return bm.replace(
-        transformed_block_aval=bm.block_aval.update(
-            inner_aval=block_inner_aval
-        ),
-        transforms=self.transforms,
     )
 
 
@@ -1938,8 +2084,11 @@ class Layout(SomeLayout, enum.Enum):
   # TODO(b/435159109): Remove this once LLVM regression is addressed.
   _WGMMA_ACC_32BIT = enum.auto()  # Temporarily exposed to work around LLVM bugs
 
+  #: LHS operand layout for SM8x ``mma.sync``
   MMA_LHS = enum.auto()
+  #: RHS operand layout for SM8x ``mma.sync``
   MMA_RHS = enum.auto()
+  #: Accumulator's layout for SM8x ``mma.sync``
   MMA_ACC = enum.auto()
 
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:

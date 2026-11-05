@@ -648,7 +648,8 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
 @export
 def logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, base: ArrayLike = 10.0,
-             dtype: DTypeLike | None = None, axis: int = 0) -> Array:
+             dtype: DTypeLike | None = None, axis: int = 0,
+             *, device: xc.Device | Sharding | None = None) -> Array:
   """Generate logarithmically-spaced values.
 
   JAX implementation of :func:`numpy.logspace`.
@@ -664,6 +665,8 @@ def logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
     base: scalar or array, optional, default=10. Specifies the base of the logarithm.
     dtype: optional. Specifies the dtype of the output.
     axis: int, optional, default=0. Axis along which to generate the logspace.
+    device: optional :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
 
   Returns:
     An array of logarithm.
@@ -711,12 +714,13 @@ def logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   """
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.logspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.logspace")
-  return _logspace(start, stop, num, endpoint, base, dtype, axis)
+  return _logspace(start, stop, num, endpoint, base, dtype, axis, device=device)
 
-@api.jit(static_argnames=('num', 'endpoint', 'dtype', 'axis'))
+@api.jit(static_argnames=('num', 'endpoint', 'dtype', 'axis', 'device'))
 def _logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               endpoint: bool = True, base: ArrayLike = 10.0,
-              dtype: DTypeLike | None = None, axis: int = 0) -> Array:
+              dtype: DTypeLike | None = None, axis: int = 0,
+              *, device: xc.Device | Sharding | None = None) -> Array:
   """Implementation of logspace differentiable in start and stop args."""
   if dtype is None:
     dtype = dtypes.to_inexact_dtype(dtypes.result_type(start, stop))
@@ -728,12 +732,14 @@ def _logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   stop = stop.astype(computation_dtype)
   lin = linspace(start, stop, num,
                  endpoint=endpoint, retstep=False, dtype=None, axis=axis)
-  return lax.convert_element_type(ufuncs.power(base, lin), dtype)
+  sharding = util.canonicalize_device_to_sharding(device)
+  return lax._convert_element_type(ufuncs.power(base, lin), dtype, sharding=sharding)
 
 
 @export
 def geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool = True,
-              dtype: DTypeLike | None = None, axis: int = 0) -> Array:
+              dtype: DTypeLike | None = None, axis: int = 0,
+              *, device: xc.Device | Sharding | None = None) -> Array:
   """Generate geometrically-spaced values.
 
   JAX implementation of :func:`numpy.geomspace`.
@@ -746,6 +752,8 @@ def geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool =
       in the result. If False, then exclude the ``stop`` value.
     dtype: optional. Specifies the dtype of the output.
     axis: int, optional, default=0. Axis along which to generate the geomspace.
+    device: optional :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
 
   Returns:
     An array containing the geometrically-spaced values.
@@ -782,11 +790,12 @@ def geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool =
   """
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.geomspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.geomspace")
-  return _geomspace(start, stop, num, endpoint, dtype, axis)
+  return _geomspace(start, stop, num, endpoint, dtype, axis, device=device)
 
-@api.jit(static_argnames=('num', 'endpoint', 'dtype', 'axis'))
+@api.jit(static_argnames=('num', 'endpoint', 'dtype', 'axis', 'device'))
 def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool = True,
-               dtype: DTypeLike | None = None, axis: int = 0) -> Array:
+               dtype: DTypeLike | None = None, axis: int = 0,
+               *, device: xc.Device | Sharding | None = None) -> Array:
   """Implementation of geomspace differentiable in start and stop args."""
   if dtype is None:
     dtype = dtypes.to_inexact_dtype(dtypes.result_type(start, stop))
@@ -805,4 +814,5 @@ def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool 
   if axis != 0:
     # res = moveaxis(res, 0, axis)
     res = lax.transpose(res, permutation=(*range(1, axis + 1), 0, *range(axis + 1, res.ndim)))
-  return lax.convert_element_type(res, dtype)
+  sharding = util.canonicalize_device_to_sharding(device)
+  return lax._convert_element_type(res, dtype, sharding=sharding)

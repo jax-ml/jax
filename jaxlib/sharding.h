@@ -19,11 +19,13 @@ limitations under the License.
 #include <Python.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <utility>
 
 // placeholder for index annotation headers
 #include "absl/base/thread_annotations.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
@@ -35,6 +37,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device_list.h"
+#include "xla/python/ifrt/sharding.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -100,6 +103,29 @@ class NamedSharding : public Sharding {
   bool Eq(const nanobind::object& other) const;  // Python __eq__
   nanobind::int_ Hash() const;                   // Python __hash__
 
+  std::optional<xla::ifrt::ShardingRef> LookupIfrtHloSharding(
+      int64_t num_dimensions) const {
+    ft_lock_guard lock(mu_);
+    for (const auto& [dims, sharding] : ifrt_hlo_shardings_) {
+      if (dims == num_dimensions) {
+        return sharding;
+      }
+    }
+    return std::nullopt;
+  }
+
+  xla::ifrt::ShardingRef CacheIfrtHloSharding(
+      int64_t num_dimensions, xla::ifrt::ShardingRef sharding) const {
+    ft_lock_guard lock(mu_);
+    for (const auto& [dims, existing] : ifrt_hlo_shardings_) {
+      if (dims == num_dimensions) {
+        return existing;
+      }
+    }
+    ifrt_hlo_shardings_.emplace_back(num_dimensions, sharding);
+    return sharding;
+  }
+
  private:
   nanobind::object mesh_;
   nanobind::object spec_;
@@ -107,6 +133,9 @@ class NamedSharding : public Sharding {
   nanobind::object logical_device_ids_;
   std::optional<nb_class_ptr<PyDeviceList>> internal_device_list_;
   mutable CachedPyObject hash_;
+  mutable ft_mutex mu_;
+  mutable absl::InlinedVector<std::pair<int64_t, xla::ifrt::ShardingRef>, 2>
+      ifrt_hlo_shardings_ ABSL_GUARDED_BY(mu_);
   static PyObject* type_;
 };
 

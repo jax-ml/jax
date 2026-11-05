@@ -86,14 +86,20 @@ run_tests_locally=0
 # need to be run on the host machine and because running the tests on a
 # single machine can take a long time, we skip running them on these
 # platforms in the presubmit jobs.
-if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] ); then
-    rbe_config=rbe_cross_compile_${os}_${arch}
+if [[ $os == "darwin" ]]; then
+    rbe_config="ci_${os}_${arch}"
+    if [[ "$JAXCI_BAZEL_CPU_RBE_MODE" == 'test' ]]; then
+        test_strategy="--strategy=TestRunner=local"
+        run_tests_locally=1
+    fi
+elif [[ $os == "linux" ]] && [[ $arch == "aarch64" ]]; then
+    rbe_config="rbe_cross_compile_${os}_${arch}"
     if [[ "$JAXCI_BAZEL_CPU_RBE_MODE" == 'test' ]]; then
         test_strategy="--strategy=TestRunner=local"
         run_tests_locally=1
     fi
 else
-    rbe_config=rbe_${os}_${arch}
+    rbe_config="rbe_${os}_${arch}"
 fi
 
 portserver_test_env=""
@@ -109,7 +115,7 @@ echo "::endgroup::" >&2
 echo "::group::Bazel CPU RBE tests" >&2
 INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)
 
-bazel "${bazel_startup_options[@]}" $JAXCI_BAZEL_CPU_RBE_MODE \
+bazel ${bazel_startup_options[@]+"${bazel_startup_options[@]}"} $JAXCI_BAZEL_CPU_RBE_MODE \
     --invocation_id="$INVOCATION_ID" \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --build_runfile_links=false \

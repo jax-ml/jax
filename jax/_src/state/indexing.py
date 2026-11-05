@@ -123,7 +123,7 @@ class NDIndexer(state_types.Transform):
         # TODO(slebedev): Find a proper way to support custom indexer types.
         raise NotImplementedError(
             "Custom indexer types are only supported if they are a pytree with"
-            " a single leaf, got {idx}"
+            f" a single leaf, got {idx}"
         )
       idx_shape = (
           flat_idx.shape
@@ -252,7 +252,7 @@ class NDIndexer(state_types.Transform):
       except ValueError as e:
         # Raise a nicer error than the NumPy one.
         raise ValueError(
-            "Cannot broadcast shapes for indexing: {indexer_shapes}"
+            f"Cannot broadcast shapes for indexing: {indexer_shapes}"
         ) from e
 
       if validate and core.trace_ctx.is_top_level():

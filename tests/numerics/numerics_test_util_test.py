@@ -22,14 +22,6 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
-
-# Under pytest, tests run against an installed wheel that does not
-# include `jax.tests`, so skip before importing `jax.tests.numerics`.
-if jtu.is_running_under_pytest():
-  import pytest
-
-  pytest.skip("Only runs under Bazel", allow_module_level=True)
-
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
 import numpy as np
@@ -187,6 +179,7 @@ class UlpDiffTest(jtu.JaxTestCase):
 
   def test_signed_zero_check(self):
     # A function returning +0.0 where -0.0 is expected:
+    @jax.jit
     def bad_neg_zero(x):
       return jnp.where(
           jnp.signbit(x) & (x == 0.0), jnp.asarray(0.0, dtype=x.dtype), x
@@ -224,6 +217,7 @@ class UlpDiffTest(jtu.JaxTestCase):
     # +0.0 instead of -0.0 must also be caught by the signed-zero check.
     tiny_f64 = np.finfo(np.float64).tiny
 
+    @jax.jit
     def bad_f64_subnormal_ftz(x):
       return jnp.where(jnp.abs(x) < tiny_f64, jnp.float64(0.0), x)
 
@@ -436,6 +430,7 @@ class UlpDiffTest(jtu.JaxTestCase):
 
   def test_check_nary_precision_signed_zero_mismatch(self):
     # Verify that a signed-zero mismatch in a binary function is detected.
+    @jax.jit
     def bad_binary_neg_zero(x, y):
       return jnp.zeros_like(x)
 
@@ -484,8 +479,9 @@ class UlpDiffTest(jtu.JaxTestCase):
 
   def test_check_nary_precision_with_ignore_inputs(self):
     # Test that an intentionally inaccurate input region is ignored via callable mask.
+    @jax.jit
     def faulty_add(x, y):
-      return jnp.where(x > 0.0, x + y + 10.0, x + y)
+      return jnp.where(x > 1.0, x + y + 10.0, x + y)
 
     # Without ignore_inputs, it fails.
     with self.assertRaises(AssertionError):
@@ -510,10 +506,30 @@ class UlpDiffTest(jtu.JaxTestCase):
         nargs=2,
         bounds=0.5,
         ignore_inputs=[
-            (["cpu", "gpu", "tpu"], {jnp.float32: lambda x, y: x > 0.0})
+            (["cpu", "gpu", "tpu"], {jnp.float32: lambda x, y: x > 1.0})
         ],
         max_samples=1000,
     )
+
+  def test_check_nary_precision_ignore_inputs_too_many_error(self):
+    # An ignore_inputs predicate that discards over 50% of samples raises an
+    # error.
+    with self.assertRaisesRegex(
+        ValueError, "ignore_predicate ignores too many inputs"
+    ):
+      util.check_nary_precision(
+          self,
+          jnp.add,
+          np.add,
+          lambda x, y: x + y,
+          jnp.float32,
+          nargs=2,
+          bounds=0.5,
+          ignore_inputs=[
+              (["cpu", "gpu", "tpu"], {jnp.float32: lambda x, y: x > -1.0})
+          ],
+          max_samples=1000,
+      )
 
   def test_check_precision_omitted_mpmath_fn(self):
 
@@ -623,6 +639,7 @@ class UlpDiffTest(jtu.JaxTestCase):
     # and at a custom interesting point is caught even with a small sample budget.
     pi_next = np.nextafter(np.float64(np.pi), np.float64(np.inf))
 
+    @jax.jit
     def buggy_at_pi_neighbor(x):
       return jnp.where(x == pi_next, x + 1e-12, x)
 
@@ -640,6 +657,7 @@ class UlpDiffTest(jtu.JaxTestCase):
     custom_pt = 12.3456789
     custom_next = np.nextafter(np.float64(custom_pt), np.float64(-np.inf))
 
+    @jax.jit
     def buggy_at_custom_point(x):
       return jnp.where(x == custom_next, x + 1e-12, x)
 
@@ -661,6 +679,7 @@ class UlpDiffTest(jtu.JaxTestCase):
     x_bad = np.nextafter(np.float32(7.25), np.float32(np.inf))
     y_bad = np.nextafter(np.float32(-3.5), np.float32(-np.inf))
 
+    @jax.jit
     def buggy_binary(x, y):
       return jnp.where((x == x_bad) & (y == y_bad), x + y + 1.0, x + y)
 

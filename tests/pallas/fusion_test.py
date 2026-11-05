@@ -13,6 +13,7 @@
 # limitations under the License.
 import dataclasses
 import functools
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -23,6 +24,7 @@ from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
 from jax._src.pallas.fuser import fusible_dtype
+from jax._src.pallas.fuser.fusible import disable_nested_fuse
 from jax.experimental.pallas import fuser
 import jax.numpy as jnp
 import numpy as np
@@ -45,6 +47,27 @@ class FusionTest(jtu.JaxTestCase):
 
     x = jax.random.normal(jax.random.key(0), (128, 128), dtype=jnp.float32)
     np.testing.assert_array_equal(f(x), x)
+
+  def test_multiple_fusibles_error(self):
+    def f(x_fn, y_fn):
+      x = x_fn()
+      return x if y_fn is None else y_fn(x)
+
+    f1 = fuser.fusible(f)
+    f2 = fuser.fusible(f)
+
+    @fuser.fuse
+    def g(x):
+      y = f1(x)
+      return f2(y)
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Only a single fusible is allowed in a fused function, but found 2"
+        r" at:\n  .*_test\.py:\d+.*\n  .*_test\.py:\d+",
+    ):
+      g(x)
 
   def test_nested_fuse(self):
     @fuser.fusible
@@ -108,6 +131,57 @@ class FusionTest(jtu.JaxTestCase):
     x = jnp.ones((4, 4), dtype=jnp.float32)
     np.testing.assert_allclose(cached_inner(x), x + 1.0)
     np.testing.assert_allclose(outer_cached(x), (x + 1.0) * 2.0)
+
+  def test_fuse_traces_jit_inside_fusible_once(self):
+    num_traces = 0
+
+    @jax.jit
+    def scale(x):
+      nonlocal num_traces
+      num_traces += 1
+      return x * 3.0
+
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      x = scale(x_fn())
+      if y_fn is None:
+        return x
+      return y_fn(x)
+
+    @fuser.fuse
+    def g(x):
+      return f(x) + 1.0
+
+    x = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    jaxpr = jax.make_jaxpr(g)(x)
+    # `fuse` traces the kernel wrapper twice: once to find the fusible and once
+    # to build the fused kernel. Both must share the jit trace cache.
+    self.assertEqual(num_traces, 1)
+    self.assertEqual([eqn.primitive.name for eqn in jaxpr.eqns], ['jit', 'add'])
+    np.testing.assert_allclose(
+        g(jnp.ones((8, 128), jnp.float32)), jnp.full((8, 128), 4.0)
+    )
+
+  def test_nested_fuse_disabled_only_while_finding_fusible(self):
+    seen = []
+
+    @fuser.fusible
+    def f(x_fn, y_fn):
+      seen.append(('f', disable_nested_fuse.value))
+      x = x_fn()
+      if y_fn is None:
+        return x
+      return y_fn(x)
+
+    def body(x):
+      seen.append(('body', disable_nested_fuse.value))
+      return f(x) * 2.0
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    np.testing.assert_allclose(fuser.fuse(body)(x), x * 2.0)
+    # The body is traced with nested fusion disabled, while both traces of the
+    # kernel wrapper run with it enabled.
+    self.assertEqual(seen, [('body', True), ('f', False), ('f', False)])
 
   def test_separate_output_fusions_trivial(self):
 
@@ -467,7 +541,10 @@ class FusionTest(jtu.JaxTestCase):
       return out_fn(x + 1.0)
 
     x = jnp.array(1.0)
-    y = fusible_dtype.physicalize(f)(x)
+    with mock.patch.object(
+        fusible_dtype, 'has_fusion_dtypes', return_value=True
+    ):
+      y = fusible_dtype.physicalize(f)(x)
     np.testing.assert_allclose(y, 2.0)
 
   @parameterized.named_parameters(
@@ -476,7 +553,13 @@ class FusionTest(jtu.JaxTestCase):
       for remat3 in (False, True)
   )
   def test_fusible_physicalize_custom_vjp_and_remat(self, cvjp3, remat3):
-    with config.custom_vjp3(cvjp3), config.remat3(remat3):
+    with (
+        config.custom_vjp3(cvjp3),
+        config.remat3(remat3),
+        mock.patch.object(
+            fusible_dtype, 'has_fusion_dtypes', return_value=True
+        ),
+    ):
       @jax.custom_vjp
       def custom_fn(x):
         return x * 2.0
@@ -498,7 +581,12 @@ class FusionTest(jtu.JaxTestCase):
       for cvjp3 in (False, True)
   )
   def test_fusible_physicalize_custom_vjp_grad(self, cvjp3):
-    with config.custom_vjp3(cvjp3):
+    with (
+        config.custom_vjp3(cvjp3),
+        mock.patch.object(
+            fusible_dtype, 'has_fusion_dtypes', return_value=True
+        ),
+    ):
       @functools.partial(jax.custom_vjp, nondiff_argnums=(1,))
       def custom_fn(x, scale):
         return x * scale
@@ -517,7 +605,12 @@ class FusionTest(jtu.JaxTestCase):
 
   @parameterized.parameters([False, True])
   def test_fusible_physicalize_custom_vjp_grad_with_consts(self, cvjp3):
-    with config.custom_vjp3(cvjp3):
+    with (
+        config.custom_vjp3(cvjp3),
+        mock.patch.object(
+            fusible_dtype, 'has_fusion_dtypes', return_value=True
+        ),
+    ):
       scale = jnp.array(2.0)  # Closed over, so a const of the call_jaxpr.
 
       @jax.custom_vjp
@@ -995,6 +1088,138 @@ class FusionTest(jtu.JaxTestCase):
     x = jnp.ones((4, 4), dtype=jnp.float32)
     y = f(x)
     np.testing.assert_allclose(y, x * 3.0)
+
+  def test_fusion_dtype_op_registry_isolation(self):
+    class DTypeA(fusible_dtype.FusionDType):
+      abstract_unpack = None
+      abstract_pack = None
+      pull_block_spec_one_step = None
+      unpack_push_block_spec = None
+      unpack_pull_block_spec = None
+
+    class DTypeB(fusible_dtype.FusionDType):
+      abstract_unpack = None
+      abstract_pack = None
+      pull_block_spec_one_step = None
+      unpack_push_block_spec = None
+      unpack_pull_block_spec = None
+
+    @DTypeA.register_op(lax.neg_p)
+    def neg_rule(ctx, x):
+      del ctx
+      return x
+
+    self.assertIsNotNone(neg_rule)
+    self.assertIs(DTypeA.get_op_rule(lax.neg_p), neg_rule)
+    self.assertIsNone(DTypeB.get_op_rule(lax.neg_p))
+    self.assertIsNone(fusible_dtype.FusionDType.get_op_rule(lax.neg_p))
+
+  def test_pack_unpack_dtype_abstract_eval_errors(self):
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError, "Attempted to pack non-fusion dtype:.*float32"
+    ):
+      jax.jit(lambda x: fusible_dtype.pack(x, dtype=jnp.float32))(x)
+
+    with self.assertRaisesRegex(
+        ValueError, "Attempted to unpack non-fusion dtype: float32"
+    ):
+      jax.jit(fusible_dtype.unpack)(x)
+
+  @parameterized.parameters(0, 1, 2)
+  def test_fusible_vmap_batch_axis(self, in_axis):
+    @fuser.fusible
+    def scale(x_fn, out_fn):
+      x = x_fn()
+      if out_fn is None:
+        out_fn = lambda v: v
+      return out_fn(x * 2.0)
+
+    shape = [1, 4, 8]
+    shape.insert(in_axis, 1)
+    x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+    y = jax.vmap(scale, in_axes=in_axis)(x)
+    expected = jnp.squeeze(x, axis=in_axis)[None] * 2.0
+    np.testing.assert_allclose(y, expected)
+
+  def test_fuse_and_physicalize_fusion_dtype_fastpath(self):
+    @dataclasses.dataclass(frozen=True)
+    class PairDType(fusible_dtype.FusionDType):
+      pull_block_spec_one_step = None
+      unpack_push_block_spec = None
+      unpack_pull_block_spec = None
+      abstract_pack = lambda self, x, y: x.update(dtype=self)
+      abstract_unpack = lambda self, x: (
+          x.update(dtype=jnp.float32),
+          x.update(dtype=jnp.float32),
+      )
+
+    @fuser.fusible
+    def kernel(x_fn, out_fn):
+      x = x_fn()
+      if isinstance(x.dtype, PairDType):
+        a, b = fusible_dtype.unpack(x)
+        x = a + b
+      return (out_fn or (lambda v: v))(x + 1.0)
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    with mock.patch.object(
+        fusible_dtype,
+        "physicalize_closed_jaxpr",
+        wraps=fusible_dtype.physicalize_closed_jaxpr,
+    ) as mock_phys:
+      y = jax.jit(fuser.fuse(lambda x: kernel(x * 2.0) * 3.0))(x)
+      np.testing.assert_allclose(y, (x * 2.0 + 1.0) * 3.0)
+      mock_phys.assert_not_called()
+
+      fused_pair = jax.jit(
+          fuser.fuse(
+              lambda x, y: kernel(fusible_dtype.pack(x, y, dtype=PairDType()))
+          )
+      )
+      np.testing.assert_allclose(fused_pair(x, x), 2.0 * x + 1.0)
+      mock_phys.assert_called_once()
+
+    no_fusion_fn = lambda x: lax.scan(
+        lambda c, _: (c + 1.0, None), x, None, length=2
+    )[0]
+    no_fusion_jaxpr = jax.make_jaxpr(no_fusion_fn)(x)
+    self.assertIs(
+        fusible_dtype.physicalize_closed_jaxpr(no_fusion_jaxpr), no_fusion_jaxpr
+    )
+
+    mixed_jaxpr = jax.make_jaxpr(
+        lambda x, y: no_fusion_fn(
+            sum(
+                fusible_dtype.unpack(
+                    fusible_dtype.pack(x, y, dtype=PairDType())
+                )
+            )
+        )
+    )(x, x)
+    phys_jaxpr = fusible_dtype.physicalize_closed_jaxpr(mixed_jaxpr)
+    self.assertFalse(fusible_dtype.has_fusion_dtypes(phys_jaxpr))
+    self.assertIs(
+        phys_jaxpr.eqns[-1].params["jaxpr"],
+        mixed_jaxpr.eqns[-1].params["jaxpr"],
+    )
+
+  def test_evaluate_kwargs(self):
+    x = jnp.arange(4, dtype=jnp.float32)
+    out = fuser.evaluate(lambda a, *, b: a + b)(x, b=x * 2)
+    np.testing.assert_array_equal(out, x * 3)
+
+  def test_evaluate_nested_subjaxprs(self):
+    x = jnp.ones((2, 3), dtype=jnp.float32)
+    with self.assertRaisesRegex(ValueError, "Transpose not allowed"):
+      fuser.evaluate(jax.jit(lambda a: a.T), allow_transpose=False)(x)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, r"Primitives \{.*cond.*\} not supported"
+    ):
+      fuser.evaluate(
+          jax.jit(lambda a: lax.cond(a.sum() > 0, lambda y: y, lambda y: -y, a))
+      )(x)
 
 
 @dataclasses.dataclass(frozen=True)

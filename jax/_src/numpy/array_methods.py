@@ -34,7 +34,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import literals
 from jax._src.api_util import _ensure_index_tuple
-from jax._src.array import ArrayImpl
+from jax._src.array import ArrayImpl, UnreducedArray
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lib import xla_client as xc
@@ -1595,6 +1595,7 @@ def register_jax_array_methods():
 
   _set_array_base_attributes(ArrayImpl, exclude={'__getitem__'})
   _set_tracer_aval_forwarding(core.Tracer, exclude={*_impl_only_array_methods, "at"})
+  _set_tracer_aval_forwarding(UnreducedArray, exclude=_impl_only_array_methods)
   _set_array_attributes(ArrayImpl)
 
   _set_array_abstract_methods(Array)

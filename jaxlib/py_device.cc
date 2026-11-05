@@ -47,7 +47,6 @@ limitations under the License.
 #include "xla/python/nb_helpers.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
-#include "xla/python/version.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -103,20 +102,12 @@ absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::Memory(
     std::string_view kind) const {
   ifrt::Memory* result_memory_space = nullptr;
   for (auto* memory_space : device_->Memories()) {
-#if JAX_IFRT_VERSION_NUMBER >= 64
     if (memory_space->Kind().value() == kind) {
-#else
-    if (memory_space->Kind().memory_kind() == kind) {
-#endif
       if (result_memory_space != nullptr) {
         std::string memories =
             absl::StrJoin(device_->Memories(), ", ",
                           [](std::string* out, const auto& memory_space) {
-#if JAX_IFRT_VERSION_NUMBER >= 64
                             absl::StrAppend(out, memory_space->Kind().value());
-#else
-              absl::StrAppend(out, *memory_space->Kind().memory_kind());
-#endif
                           });
         auto device_kind = device_->Kind();
         return xla::InvalidArgument(
@@ -134,11 +125,7 @@ absl::StatusOr<nb_class_ptr<PyMemorySpace>> PyDevice::Memory(
     std::string memories =
         absl::StrJoin(device_->Memories(), ", ",
                       [](std::string* out, const auto& memory_space) {
-#if JAX_IFRT_VERSION_NUMBER >= 64
                         absl::StrAppend(out, memory_space->Kind().value());
-#else
-          absl::StrAppend(out, *memory_space->Kind().memory_kind());
-#endif
                       });
     auto device_kind = device_->Kind();
     return xla::InvalidArgument(
@@ -233,12 +220,19 @@ absl::StatusOr<bool> PyDevice::PoisonExecution(
 
 /* static */ int PyDevice::tp_traverse(PyObject* self, visitproc visit,
                                        void* arg) {
+  Py_VISIT(Py_TYPE(self));
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   PyDevice* d = nb::inst_ptr<PyDevice>(self);
   Py_VISIT(d->client().ptr());
   return 0;
 }
 
 /* static */ int PyDevice::tp_clear(PyObject* self) {
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   PyDevice* d = nb::inst_ptr<PyDevice>(self);
   nb_class_ptr<PyClient> client;
   std::swap(client, d->client_);

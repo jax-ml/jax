@@ -15,6 +15,7 @@
 """Python interface for programming the XLA:GPU Thunk Executor directly."""
 
 from collections.abc import Callable, Mapping, Sequence
+import contextlib
 import functools
 import math
 import struct
@@ -26,11 +27,12 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import flattree as ft
 from jax._src import linear_util as lu
+from jax._src import mesh as mesh_lib
+from jax._src import sharding_impls
 from jax._src import tree_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import thunky_dialect
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
@@ -54,17 +56,8 @@ import numpy as np
 _thunky: Any = thunky_dialect
 
 
-def _check_thunky_available():
-  if _thunky is None:
-    raise RuntimeError(
-        "jax.experimental.thunky requires jaxlib_extension_version >= 503, got"
-        f" {jaxlib_extension_version}."
-    )
-
-
 def make_ir_context() -> ir.Context:
   """Creates an MLIR Context with the `thunky` dialect registered."""
-  _check_thunky_available()
   ctx = mlir.make_ir_context()
   _thunky.register_dialect(ctx)
   return ctx
@@ -74,7 +67,6 @@ def jax_executable_to_mlir(
     compiled: jax.stages.Compiled, ctx: ir.Context | None = None
 ) -> ir.Module:
   """Converts a compiled JAX executable directly into an `ir.Module` in the `thunky` dialect."""
-  _check_thunky_available()
   runtime_exe = compiled.runtime_executable()
   if runtime_exe is None:
     raise ValueError("Compiled executable has no runtime_executable()")
@@ -279,7 +271,7 @@ def _transforms_to_slice_params(
       )
       curr_shape = tuple(int(d) for d in transformed_aval.shape)
     elif isinstance(t, ReshapeTransform):
-      curr_shape = tuple(int(d) for d in t.shape)
+      curr_shape = tuple(t.shape)
     else:
       raise TypeError(f"Unsupported Ref transform in thunky: {t}")
 
@@ -440,11 +432,11 @@ def ptx_kernel(
       *base_refs,
       slice_specs=slice_specs,
       written=tuple(written),
-      kernel_name=str(kernel_name),
-      ptx=str(ptx),
-      grid_dim=tuple(int(d) for d in grid_dim),
-      block_dim=tuple(int(d) for d in block_dim),
-      shmem_bytes=int(shmem_bytes),
+      kernel_name=kernel_name,
+      ptx=ptx,
+      grid_dim=tuple(grid_dim),
+      block_dim=tuple(block_dim),
+      shmem_bytes=shmem_bytes,
   )
 
 
@@ -494,7 +486,7 @@ def custom_call(
       slice_specs=slice_specs,
       num_operands=len(op_pairs),
       num_results=len(res_pairs),
-      target_name=str(target_name),
+      target_name=target_name,
       backend_config=config_tuple,
   )
 
@@ -553,7 +545,7 @@ def _call_jax_abstract_eval(
       lu.wrap_init(fn, debug_info=dbg), in_tree
   )
   jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(flat_fn, flat_avals)
-  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+  closed_jaxpr = jaxpr.with_consts(consts)
   var_to_idx = {v: i for i, v in enumerate(closed_jaxpr.invars)}
   effs: set[Any] = {thunk_effect}
   for eff in closed_jaxpr.effects:
@@ -630,7 +622,7 @@ def _call_thunky_nested_abstract_eval(
     *unique_buffers: AbstractRef,
     arg_to_unique_idx: tuple[int, ...],
     slice_specs: tuple[SliceSpec, ...],
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
 ) -> tuple[list[Any], set[Any]]:
   for b in unique_buffers:
     if not _is_buffer_aval(b):
@@ -867,7 +859,7 @@ def async_start(
   return async_start_p.bind(
       *body_consts,
       body_jaxpr=body_jaxpr,
-      stream_id=int(stream_id),
+      stream_id=stream_id,
       stream_kind=stream_kind,
   )
 
@@ -982,7 +974,7 @@ def all_reduce(
       dst_ref,
       src_spec=src_spec,
       dst_spec=dst_spec,
-      reduction_kind=str(reduction),
+      reduction_kind=reduction,
       replica_groups=groups,
   )
 
@@ -1079,7 +1071,7 @@ def reduce_scatter(
       dst_ref,
       src_spec=src_spec,
       dst_spec=dst_spec,
-      reduction_kind=str(reduction),
+      reduction_kind=reduction,
       replica_groups=groups,
   )
 
@@ -1124,7 +1116,7 @@ def all_to_all(
   """Executes an XLA:GPU AllToAllThunk across participating devices."""
   groups = _resolve_replica_groups(axis_name, axis_index_groups)
   num_ranks = len(groups[0]) if groups else 0
-  has_split = bool(has_split_dimension)
+  has_split = has_split_dimension
 
   if has_split:
     if isinstance(src, (tuple, list)):
@@ -1214,7 +1206,7 @@ def collective_permute(
   dst_ref, dst_spec = _unwrap_ref_and_spec(dst)
   groups = _resolve_replica_groups(axis_name, axis_index_groups)
   group_size = len(groups[0]) if groups else 0
-  pairs = tuple((int(s), int(t)) for s, t in source_target_pairs)
+  pairs = tuple((s, t) for s, t in source_target_pairs)
   srcs = [s % group_size for s, _ in pairs]
   dsts = [t % group_size for _, t in pairs]
   if len(srcs) != len(set(srcs)) or len(dsts) != len(set(dsts)):
@@ -1463,6 +1455,16 @@ def _add_main_buffer_arg(
   return new_arg
 
 
+@contextlib.contextmanager
+def _reset_axis_env():
+  prev_axis_env = core.trace_ctx.axis_env
+  core.trace_ctx.set_axis_env(core.AxisEnv())
+  try:
+    yield
+  finally:
+    core.trace_ctx.set_axis_env(prev_axis_env)
+
+
 def _lower_call_jax(
     ctx: ir.Context,
     target_block: ir.Block,
@@ -1500,16 +1502,40 @@ def _lower_call_jax(
     return fn(*actual_args)
 
   active_mesh = jax.sharding.get_abstract_mesh()
-  if not active_mesh.empty:
-    _wrapped_fn = jax.shard_map(
-        _wrapped_fn,
-        mesh=active_mesh,
-        in_specs=tuple(jax.sharding.PartitionSpec() for _ in unique_avals),
-        out_specs=jax.sharding.PartitionSpec(),
-        check_vma=False,
-    )
+  concrete_mesh = mesh_lib.get_concrete_mesh()
 
-  compiled = jax.jit(_wrapped_fn).lower(*unique_avals).compile()
+  with (
+      _reset_axis_env(),
+      sharding_impls._internal_use_concrete_mesh(mesh_lib.empty_concrete_mesh),
+      mesh_lib.use_abstract_mesh(mesh_lib.empty_abstract_mesh),
+  ):
+    try:
+      traced = jax.jit(_wrapped_fn).trace(*unique_avals)
+    except NameError:
+      if active_mesh.empty:
+        raise
+      devices = (
+          concrete_mesh.devices.reshape(active_mesh.axis_sizes)
+          if not concrete_mesh.empty
+          else np.array(jax.devices()[: active_mesh.size]).reshape(
+              active_mesh.axis_sizes
+          )
+      )
+      compile_mesh = jax.sharding.Mesh(devices, active_mesh.axis_names)
+      _wrapped_fn = jax.shard_map(
+          _wrapped_fn,
+          mesh=compile_mesh,
+          in_specs=tuple(jax.sharding.PartitionSpec() for _ in unique_avals),
+          out_specs=jax.sharding.PartitionSpec(),
+          check_vma=False,
+      )
+      traced = jax.jit(_wrapped_fn).trace(*unique_avals)
+
+    compiled = traced.lower(
+        _private_parameters=mlir.LoweringParameters(
+            hoist_constants_as_args=False
+        )
+    ).compile()
   callee_module = jax_executable_to_mlir(compiled, ctx=ctx)
 
   out_ir_vals: list[ir.Value] = []
@@ -1882,7 +1908,7 @@ def _trace_thunk_jaxpr(
     fn: Callable[..., Any],
     in_avals: Sequence[AbstractRef],
     scratch_shapes: Any,
-) -> core.ClosedJaxpr:
+) -> core.Jaxpr:
   def _to_ref_aval(s: Any) -> AbstractRef:
     if _is_buffer_aval(s):
       return s
@@ -1917,9 +1943,9 @@ def _trace_thunk_jaxpr(
 
 
 def jaxpr_to_mlir(
-    closed_jaxpr: core.ClosedJaxpr, ctx: ir.Context | None = None
+    closed_jaxpr: core.Jaxpr, ctx: ir.Context | None = None
 ) -> ir.Module:
-  """Translates a thunky ClosedJaxpr into an ir.Module in the thunky dialect."""
+  """Translates a thunky Jaxpr into an ir.Module in the thunky dialect."""
   if ctx is None:
     ctx = make_ir_context()
   with ctx, ir.Location.unknown():
@@ -1951,7 +1977,7 @@ def _build_call_thunky_mlir_module(
     unique_avals: Sequence[Any],
     arg_to_unique_idx: tuple[int, ...],
     slice_specs: tuple[SliceSpec, ...],
-    closed_jaxpr: core.ClosedJaxpr,
+    closed_jaxpr: core.Jaxpr,
     ctx: ir.Context | None = None,
 ) -> ir.Module:
   if ctx is None:
@@ -2036,7 +2062,7 @@ def _call_thunky_discharge_rule(
     *args: Any,
     arg_to_unique_idx: tuple[int, ...],
     slice_specs: tuple[SliceSpec, ...],
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
 ) -> tuple[Sequence[Any | None], Sequence[Any]]:
   body_jaxpr = jaxpr.jaxpr
   var_to_idx = {
@@ -2120,7 +2146,6 @@ def jit(
     scratch_shapes: Any = (),
 ) -> Any:
   """Compiles a thunky DSL function into an XLA:GPU ThunkExecutor via Jaxpr -> MLIR."""
-  _check_thunky_available()
   if fn is None:
     return functools.partial(jit, scratch_shapes=scratch_shapes)
 

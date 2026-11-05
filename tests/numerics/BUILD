@@ -35,10 +35,6 @@ DISABLED_CONFIGS = [
     "gpu_a100",
     "gpu_a100_x32",
     "gpu_h100_x32",
-    "gpu_p100",
-    "gpu_p100_x32",
-    "gpu_v100",
-    "gpu_v100_x32",
     "tpu_v4_compilation_cache",
 ]
 
@@ -54,6 +50,21 @@ py_library(
         "absl/flags",
         "absl/testing",
         "google_benchmark",
+        "mpmath",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "arithmetic_test",
+    srcs = ["arithmetic_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 1,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
         "mpmath",
         "numpy",
     ]),
@@ -78,8 +89,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "erf_test",
     srcs = ["erf_test.py"],
+    backend_tags = {
+        "tpu": ["notsan"],
+    },
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 7,
+    shard_count = 10,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
@@ -95,7 +109,7 @@ jax_multiplatform_test(
     name = "exp_test",
     srcs = ["exp_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 4,
+    shard_count = 5,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
@@ -110,7 +124,7 @@ jax_multiplatform_test(
     name = "gamma_test",
     srcs = ["gamma_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 2,
+    shard_count = 6,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
@@ -141,7 +155,7 @@ jax_multiplatform_test(
     name = "log_test",
     srcs = ["log_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 4,
+    shard_count = 5,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
@@ -149,6 +163,7 @@ jax_multiplatform_test(
         "absl/testing",
         "mpmath",
         "numpy",
+        "scipy",
     ]),
 )
 
@@ -171,7 +186,7 @@ jax_multiplatform_test(
     name = "trig_test",
     srcs = ["trig_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 10,
+    shard_count = 18,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",

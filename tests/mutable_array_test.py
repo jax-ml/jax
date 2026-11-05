@@ -30,7 +30,7 @@ from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
 import jax.numpy as jnp
 
 from jax._src.state import discharge as state_discharge
-from jax._src.state.types import (RefEffect)
+from jax._src.state.types import (AbstractRef, RefEffect)
 
 config.parse_flags_with_absl()
 
@@ -1202,6 +1202,71 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertAllClose(v_ref[...], v_bar)
     self.assertAllClose(x_bar_, x_bar)
 
+  @parameterized.parameters(['jit', 'scan', 'cond'])
+  def test_vjp3_with_refs_aliased_args(self, hop):
+    if hop == 'jit':
+      f = lambda w: jax.jit(lambda a, b: (a * b).sum())(w, w)
+    elif hop == 'scan':
+      f = lambda w: jax.lax.scan(
+          lambda c, ab: (c + ab[0] * ab[1], None), 0., (w, w))[0]
+    else:
+      f = lambda w: jax.lax.cond(
+          w[0] > 0, lambda a, b: (a * b).sum(), lambda a, b: 0., w, w)
+    w = jnp.arange(1., 4.)
+
+    @jax.jit
+    def run(w):
+      _, f_vjp = jax.vjp(f, w)
+      w_ref = jax.new_ref(jnp.zeros_like(w))
+      f_vjp.with_refs(w_ref)(1.)
+      return jax.freeze(w_ref)
+
+    self.assertAllClose(run(w), 2 * w)
+
+  def test_vjp3_with_refs_aliased_sparse_reads(self):
+    f = jax.jit(lambda x, y: jnp.sin(x[0]) + jnp.cos(y[0]))
+    z = jnp.arange(1., 11.)
+
+    def run(z):
+      _, f_vjp = jax.vjp(lambda z: f(z, z), z)
+      z_ref = jax.new_ref(jnp.zeros_like(z))
+      f_vjp.with_refs(z_ref)(1.)
+      return jax.freeze(z_ref)
+
+    expected = jnp.zeros_like(z).at[0].set(jnp.cos(z[0]) - jnp.sin(z[0]))
+    self.assertAllClose(jax.jit(run)(z), expected)
+    self.assertAllClose(run(z), expected)
+    jaxpr = jax.make_jaxpr(run)(z).jaxpr
+    transposed_jit, = [e for e in jaxpr.eqns if e.primitive.name == 'jit' and
+                       any(isinstance(v.aval, AbstractRef) for v in e.invars)]
+    self.assertEmpty(transposed_jit.outvars)
+
+  def test_vjp3_with_refs_same_ref_for_two_inputs(self):
+    f = lambda a, b: jax.jit(lambda a, b: (a * b).sum())(a, b)
+    a = jnp.arange(1., 4.)
+
+    @jax.jit
+    def run(a, b):
+      _, f_vjp = jax.vjp(f, a, b)
+      r = jax.new_ref(jnp.zeros_like(a))
+      f_vjp.with_refs(r, r)(1.)
+      return jax.freeze(r)
+
+    self.assertAllClose(run(a, 2 * a), 3 * a)
+
+  def test_vjp3_with_refs_scan_const_and_xs_error(self):
+    f = lambda w: jax.lax.scan(lambda c, x: (c + w[0] * x, None), 0., w)[0]
+
+    @jax.jit
+    def run(w):
+      _, f_vjp = jax.vjp(f, w)
+      w_ref = jax.new_ref(jnp.zeros_like(w))
+      f_vjp.with_refs(w_ref)(1.)
+      return jax.freeze(w_ref)
+
+    with self.assertRaisesRegex(NotImplementedError, "both a constant and a scanned-over"):
+      run(jnp.arange(1., 4.))
+
   @jtu.sample_product(
       seed=range(20),
       num_params=[1, 2, 3, 4],
@@ -1852,6 +1917,44 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "closed over and passed as the argument y_ref"):
       jax.jit(lambda y_ref: x_ref[...] + y_ref[...])(x_ref)
+
+  @parameterized.parameters(
+      ['jit', 'scan', 'cond', 'while', 'custom_jvp', 'custom_vjp'])
+  def test_argument_aliases_typecheck(self, hop):
+    read = lambda x_ref, y_ref: x_ref[...] + y_ref[...]
+    custom_jvp = jax.custom_jvp(read)
+    custom_jvp.defjvp(lambda primals, tangents: (read(*primals), 0.))
+    custom_vjp = jax.custom_vjp(read)
+    custom_vjp.defvjp(lambda *args: (read(*args), None),
+                      lambda _, g: (None, None))
+    fs = dict(
+        jit=lambda p, x_ref, y_ref: jax.jit(read)(x_ref, y_ref),
+        scan=lambda p, x_ref, y_ref: jax.lax.scan(
+            lambda c, _: (c + read(x_ref, y_ref), None), 0., None,
+            length=1)[0],
+        cond=lambda p, x_ref, y_ref: jax.lax.cond(
+            p, lambda: read(x_ref, y_ref), lambda: 0.),
+        while_=lambda p, x_ref, y_ref: jax.lax.while_loop(
+            lambda c: c < 1., lambda c: c + read(x_ref, y_ref), 0.),
+        custom_jvp=lambda p, x_ref, y_ref: custom_jvp(x_ref, y_ref),
+        custom_vjp=lambda p, x_ref, y_ref: custom_vjp(x_ref, y_ref))
+    f = fs['while_' if hop == 'while' else hop]
+    with config.custom_jvp3(False), config.custom_vjp3(False):
+      jaxpr = jax.make_jaxpr(f)(True, core.new_ref(0.), core.new_ref(0.)).jaxpr
+    core.check_jaxpr(jaxpr)
+    _, x_var, y_var = jaxpr.invars
+    alias = lambda e: e.replace(
+        invars=[x_var if v is y_var else v for v in e.invars])
+    jaxpr = jaxpr.replace(eqns=map(alias, jaxpr.eqns))
+    with self.assertRaisesRegex(
+        core.JaxprTypeError, "passes the same Ref as more than one operand"):
+      core.check_jaxpr(jaxpr)
+
+  def test_while_same_ref_in_cond_and_body_typechecks(self):
+    def f(x_ref):
+      return jax.lax.while_loop(lambda c: c < x_ref[...],
+                                lambda c: c + x_ref[...], 0.)
+    core.check_jaxpr(jax.make_jaxpr(f)(core.new_ref(1.)).jaxpr)
 
   def test_return_from_scan(self):
     with self.assertRaisesRegex(

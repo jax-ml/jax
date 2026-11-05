@@ -43,6 +43,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.export import shape_poly
 from jax._src.export import shape_poly_decision
+from jax._src.interpreters import mlir
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import utils as lax_utils
@@ -1390,7 +1391,12 @@ class PolyHarness(Harness):
     if not self.check_result:
       return None
     # Run the JAX natively and then the exported function and compare
-    res_jax_native = f_jax(*args)
+    res_jax_native = f_jax.trace(*args).lower(
+        _private_parameters=mlir.LoweringParameters(
+            for_export=True,
+            export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value,
+        )
+    ).compile()(*args)
     res_jax_exported = exp.call(*args)
     custom_assert_lims = [
         l for l in self.limitations if l.custom_assert is not None]

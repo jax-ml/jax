@@ -47,7 +47,6 @@ from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
-from jax._src.state import types as state_types
 from jax.interpreters import mlir
 
 
@@ -637,29 +636,6 @@ def check_debug_print_format(
     )
 
 
-# All of those shenanigans are because we can't make TransformedRef a PyTree,
-# because they should appear as atomic JAX values to the users.
-# TODO(apaszke): This can be deleted once we make transforms in Mosaic GPU
-# inferred by the compiler.
-def wrap_with_transforms(
-    fun: Callable,
-    ref_transforms: tuple[tuple[state_types.Transform, ...], ...],
-) -> Callable:
-  if all(not t for t in ref_transforms):
-    return fun
-  def wrapped(*args, **kwargs):
-    args_ft = ft.flatten(
-        (args, kwargs), registry=tree_util.default_registry
-    )
-    transformed_ft = args_ft.map2(
-        ref_transforms,
-        lambda a, t: state_types.TransformedRef(a, t) if t else a
-    )
-    t_args, t_kwargs = transformed_ft.unflatten()
-    return fun(*t_args, **t_kwargs)
-  return wrapped
-
-
 run_scoped_p = jax_core.Primitive("run_scoped")
 run_scoped_p.multiple_results = True
 
@@ -696,18 +672,7 @@ def run_scoped(
     collective_axes = (collective_axes,)
   flat_types = ft.flatten((types, kw_types),
                           registry=tree_util.default_registry)
-  # We allow ref avals to be transformed references.
   ref_avals = flat_types.map(lambda t: t.get_ref_aval())
-  avals = ref_avals.map(
-      lambda t: t.ref if isinstance(t, state_types.TransformedRef) else t
-  )
-  # Note that only a subset of all transforms can be found here, and they are
-  # never expected to contain any arrays.
-  ref_transforms = tuple(
-      t.transforms if isinstance(t, state_types.TransformedRef) else ()
-      for t in ref_avals.vals
-  )
-  f_with_transforms = wrap_with_transforms(f, ref_transforms)
   # Turn the function into a jaxpr. The body of run_scoped may have
   # effects (IO) on constvars (i.e. variables inherited from the
   # parent scope). Jax can't reason about effects to references that
@@ -715,9 +680,13 @@ def run_scoped(
   # there.
   with config.mutable_array_checks(False):
     jaxpr, out_avals = pe.trace_to_jaxpr_nocache(
-        f_with_transforms,
-        avals,
+        f,
+        ref_avals,
         api_util.debug_info("pallas run_scoped", f, types, kw_types))
+  ref_transforms = tuple(
+      s.get_ref_transforms() if hasattr(s, "get_ref_transforms") else ()
+      for s in flat_types.vals
+  )
   out = run_scoped_p.bind(*jaxpr.consts,
                           jaxpr=jaxpr,
                           collective_axes=collective_axes,
@@ -748,8 +717,7 @@ def _run_scoped_discharge_rule(
     *args_flat,
     jaxpr,
     collective_axes,
-    ref_transforms,
-    **_,
+    **params,
 ):
   if collective_axes:
     raise NotImplementedError(
@@ -776,7 +744,7 @@ def _run_scoped_discharge_rule(
   # are not discharged.
   out = run_scoped_p.bind(
       *args_flat, jaxpr=discharged_body, collective_axes=collective_axes,
-      ref_transforms=ref_transforms,
+      **params,
   )
   # Order of outputs:
   # (1) return values, (2) closed refs, (3) scoped refs.

@@ -277,7 +277,7 @@ def donation_vector(donate_argnums, donate_argnames, in_tree,
   else:
     args_tree, kwargs_tree = in_tree, None
   for i, arg in enumerate(args_tree.children()):
-    donate = bool(i in donate_argnums)
+    donate = i in donate_argnums
     res.extend((donate,) * arg.num_leaves)
   if kwargs_tree is not None:
     for key, val in zip(kwargs_tree.node_data()[1], kwargs_tree.children()):  # pyrefly: ignore[unsupported-operation]

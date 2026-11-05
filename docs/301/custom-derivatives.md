@@ -830,6 +830,17 @@ transpose checks for a ref-backed accumulator and add-updates only the
 sliced window, which is what makes the sparse-gradient examples in
 {doc}`refs` work.
 
+`jax.custom_vjp` backward rules can take accumulators too, with no hijax
+rewrite needed: register the rules with `defvjp_with_accums` instead of
+`defvjp`. The backward rule then takes one accumulator per primal argument
+after its usual two arguments, as in `bwd(res, g, *arg_accums)`, and returns
+`None` (or a dict of logs). The `jax.custom_gradient` convenience wrapper
+supports the same thing via `@custom_gradient(with_accums=...)`. Since its VJP
+function is traced on the forward pass, `with_accums` declares which kind of
+accumulator each argument gets. Unlike a hijax primitive's `vjp_bwd`, these
+rules can't get the caller's gradient refs when `vmap` is applied before
+differentiation; see {ref}`jax-301-vmap-ref-accums`.
+
 ### Custom JVPs with `jvp`
 
 The `jvp` method defines forward-mode differentiation. It takes a tuple of
@@ -1120,6 +1131,263 @@ A = jnp.arange(6.).reshape(2, 3)
 xs = jnp.arange(12.).reshape(4, 3)  # batch of 4 vectors
 print(vmap(matvec, in_axes=(None, 0))(A, xs))
 ```
+
+(jax-301-vmap-shared-outputs)=
+
+### `vmap` and shared outputs
+
+Under `vmap`, a primal output that doesn't depend on any batched input stays
+unbatched: one value, shared by every example. For a {func}`jax.custom_vjp`
+function, that raises a question in reverse mode. Here output 0 is `y`, which
+is shared when we batch over `x` only:
+
+```{code-cell}
+@jax.custom_vjp
+def f(x, y):
+  return y, x * y
+
+def f_fwd(x, y):
+  return (y, x * y), (x, y)
+
+def f_bwd(res, cts):
+  x, y = res
+  ct0, ct1 = cts
+  return ct1 * y, ct0 + ct1 * x
+
+f.defvjp(f_fwd, f_bwd)
+
+xs = jnp.arange(3.)
+
+def loss(f, y):
+  out0, out1 = vmap(f, in_axes=(0, None))(xs, y)
+  return out0.sum() + out1.sum()  # 3 * y + sum(xs) * y, so the gradient is 6
+```
+
+The shared output's right cotangent is a single value: here 3, one 1 for each
+example's copy of `y`. `f_bwd` adds it into `y`'s left cotangent along with
+`ct1 * x`, which differs per example, so under `vmap` that left cotangent comes
+out batched. Since `y` is an unbatched primal input, its left cotangents have to
+be summed over the batch, but that sum would count the shared output's right
+cotangent once per example, giving 12 instead of 6. From outside `f_bwd`, `vmap`
+can't tell which part of the left cotangent came from the shared output, so it
+raises an error:
+
+```{code-cell}
+try:
+  grad(partial(loss, f))(2.)
+except ValueError as e:
+  print(e)
+```
+
+One way to resolve this is to pass `generic_batching=True` to `defvjp`. Then
+`vmap` runs `f_bwd` with the shared output's whole right cotangent given to the
+first example and zero given to the rest, and sums the left cotangents over the
+batch:
+
+```{code-cell}
+f.defvjp(f_fwd, f_bwd, generic_batching=True)
+print(grad(partial(loss, f))(2.))
+```
+
+That's correct for any correct `bwd` rule, but it can be wasteful. Whatever
+`f_bwd` computes from the shared right cotangent, it now computes for every
+example, all but one of them on zeros, and the padded cotangent takes as much
+memory as one copy per example.
+
+`generic_batching=True` also covers `f_fwd`: if it computes a shared primal
+output in a way that `vmap` sees as batched, `vmap` uses the first example's
+value.
+
+The other way is to define the operation as a hijax primitive whose `batch`
+rule says exactly what the batched computation is. Here the batched primitive
+keeps output 0 shared, and its backward rule, written for the whole batch,
+counts that output's cotangent once and sums the rest over the batch:
+
+```{code-cell}
+class F(HiPrim):
+  def __init__(self, x_aval, y_aval):
+    self.in_avals = (x_aval, y_aval)
+    self.out_aval = (y_aval, x_aval)
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x, y):
+    return y, x * y
+
+  def vjp_fwd(self, nzs_in, x, y):
+    return self(x, y), (x, y)
+
+  def vjp_bwd_retval(self, res, cts):
+    x, y = res
+    ct0, ct1 = cts
+    return ct1 * y, ct0 + ct1 * x
+
+  def batch(self, axis_data, args, dims):
+    (x, y), (x_dim, y_dim) = args, dims
+    assert y_dim is None  # this example batches only x
+    x = jnp.moveaxis(x, x_dim, 0)
+    return FBatched(jax.typeof(x), jax.typeof(y))(x, y), (None, 0)
+
+class FBatched(F):  # x has a leading batch axis; y and output 0 are shared
+  def vjp_bwd_retval(self, res, cts):
+    x, y = res
+    ct0, ct1 = cts
+    return ct1 * y, ct0 + (ct1 * x).sum(0)
+
+def f_prim(x, y):
+  return F(jax.typeof(x), jax.typeof(y))(x, y)
+
+print(grad(partial(loss, f_prim))(2.))
+```
+
+Writing the primitive resolves the question in code: the batched backward rule
+decides what happens to the shared output's cotangent, and it can do so without
+the wasted work.
+
+Forward mode has a counterpart. A {func}`jax.custom_jvp` rule can produce a
+tangent that is batched where its primal output isn't, for example one computed
+as `0. * t`. The classic implementation then makes the primal output batched
+too, but the new one (`jax_custom_jvp3`) raises an error. If the tangent is the
+same for every example, compute it without the batched input, for example as
+`jnp.zeros_like(out)`. When the tangent really does differ per example, as for
+a straight-through estimator of a function that ignores its batched input,
+define a hijax primitive whose `batch` rule declares the output batched, so
+that each example keeps its own tangent:
+
+```{code-cell}
+class ZerosStraightThrough(HiPrim):
+  def __init__(self, x_aval):
+    self.in_avals = (x_aval,)
+    self.out_aval = x_aval
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x):
+    return jnp.zeros_like(x)
+
+  def jvp(self, primals, tangents):
+    (x,), (t,) = primals, tangents
+    return self(x), t
+
+  lin, linearized = linearize_from_jvp
+  vjp_fwd, vjp_bwd_retval = vjp_from_lin
+
+  def batch(self, axis_data, args, dims):
+    (x,), (x_dim,) = args, dims
+    return zeros_straight_through(x), x_dim  # the output is batched along with x
+
+def zeros_straight_through(x):
+  return ZerosStraightThrough(jax.typeof(x))(x)
+
+xs = jnp.arange(3.)
+print(jvp(vmap(zeros_straight_through), (xs,), (jnp.array([1., 2., 3.]),))[1])
+print(grad(lambda x: vmap(zeros_straight_through)(x).sum())(xs))
+```
+
+(jax-301-vmap-ref-accums)=
+
+### `vmap` and gradient refs
+
+When `vmap` is applied before differentiation, as in `jax.vjp(vmap(f), xs)`,
+a gradient ref bound with `.with_refs(...)` has the batched input's shape: it
+holds the gradient for every example. A hijax primitive with a `batch` rule
+can update that ref in place, but a {func}`jax.custom_vjp` rule registered with
+`defvjp_with_accums` (or a `jax.custom_gradient` VJP function with
+`with_accums`) can't. That rule is batched by running it under `vmap`, which
+can hand it fresh `ValAccum`s but not the caller's refs: for a batched input,
+each example would need a view of the ref, and for an input shared across the
+batch, every example would update the same ref. So passing a ref there is an
+error:
+
+```{code-cell}
+@jax.custom_vjp
+def take3(x):
+  return x[3]
+
+def take3_bwd(_, g, x_acc):
+  if isinstance(x_acc, RefAccum):
+    x_acc.ref[3] += g
+  else:
+    x_acc.accum(jnp.zeros(x_acc.aval.shape, x_acc.aval.dtype).at[3].add(g))
+
+take3.defvjp_with_accums(lambda x: (take3(x), None), take3_bwd)
+
+xs = jnp.arange(20.).reshape(2, 10)
+_, f_vjp = jax.vjp(vmap(take3), xs)
+try:
+  f_vjp.with_refs(jax.new_ref(jnp.zeros((2, 10))))(jnp.ones(2))
+except ValueError as e:
+  print(e)
+```
+
+With a hijax primitive, `vmap` instead applies the batched primitive that your
+`batch` rule builds, and the backward pass calls that primitive's `vjp_bwd`
+with the caller's accumulators for the whole batch: here, a `RefAccum` over the
+batched ref. Indexing with `...` lets one class serve as its own batched
+version:
+
+```{code-cell}
+class Take(HiPrim):  # x[..., i], for x with any number of leading batch axes
+  def __init__(self, x_aval, i):
+    self.in_avals = (x_aval,)
+    self.out_aval = ShapedArray(x_aval.shape[:-1], x_aval.dtype)
+    self.params = dict(i=i)
+    super().__init__()
+
+  def expand(self, x):
+    return x[..., self.i]
+
+  def vjp_fwd(self, nzs_in, x):
+    return self(x), None
+
+  def vjp_bwd(self, res, g, x_acc):
+    if isinstance(x_acc, RefAccum):
+      x_acc.ref[..., self.i] += g  # one column, for the whole batch, in place
+    else:
+      zeros = jnp.zeros(x_acc.aval.shape, x_acc.aval.dtype)
+      x_acc.accum(zeros.at[..., self.i].add(g))
+
+  def batch(self, axis_data, args, dims):
+    (x,), (x_dim,) = args, dims
+    if x_dim is None:
+      return take(x, self.i), None
+    x = jnp.moveaxis(x, x_dim, 0)  # returns x itself if x_dim is already 0
+    return take(x, self.i), 0
+
+def take(x, i):
+  return Take(jax.typeof(x), i)(x)
+
+grad_ref = jax.new_ref(jnp.zeros((2, 10)))
+_, f_vjp = jax.vjp(vmap(lambda x: take(x, 3)), xs)
+f_vjp.with_refs(grad_ref)(jnp.ones(2))
+print(grad_ref)
+```
+
+```{code-cell}
+def bwd_jaxpr():
+  _, f_vjp = jax.vjp(vmap(lambda x: take(x, 3)), xs)
+  f_vjp.with_refs(grad_ref)(jnp.ones(2))
+
+print(jax.jit(bwd_jaxpr).trace().jaxpr)
+```
+
+The batched backward pass is a read-add-write of column 3 for the whole batch
+at once. To keep updates in place, `batch` should pass a batched input to the
+batched primitive as is: only an input of the differentiated function gets the
+caller's accumulator, while a value computed from an input gets a fresh
+`ValAccum`. Here `jnp.moveaxis` returns `x` itself when the batch axis is
+already in front, as with the default `in_axes=0`. With another `in_axes`,
+`moveaxis` makes a new value, and the update takes the dense path, which is
+still correct. To keep it in place for any batch axis, have the batched
+primitive take the batch axis as a parameter instead, so that `batch` can pass
+`x` to it unchanged.
+
+For an input shared across the batch (`in_axes=None`) of a primitive with
+other, batched inputs, the batched primitive's `vjp_bwd` gets the caller's
+accumulator for the shared value and adds the whole batch's contribution to it,
+summing over the batch axis of the cotangent, as in
+`x_acc.ref[self.i] += g.sum(0)`, much as `FBatched` does for its shared input
+`y` above.
 
 ## More features and details
 

@@ -359,7 +359,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(shape=shape, fill_value=fill_value)
-      for shape in nonempty_nonscalar_array_shapes
+      for shape in nonzerodim_shapes
       for fill_value in [None, -1, shape or (1,)]
      ],
     dtype=all_dtypes,
@@ -393,7 +393,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    shape=nonempty_nonscalar_array_shapes,
+    shape=nonzerodim_shapes,
     dtype=all_dtypes,
     fill_value=[None, -1, 10, (-1,), (10,)],
     size=[1, 5, 10],
@@ -425,7 +425,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(shape=shape, fill_value=fill_value)
-      for shape in nonempty_nonscalar_array_shapes
+      for shape in nonzerodim_shapes
       for fill_value in [None, -1, shape or (1,)]
      ],
     dtype=all_dtypes,
@@ -2889,6 +2889,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
+    name=['blackman', 'bartlett', 'hamming', 'hanning'],
+    size=[1, 2, 3, 4, 5, 10, 16, 17],
+  )
+  def testWindowFunctionSymmetry(self, name, size):
+    w = getattr(jnp, name)(size)
+    self.assertArraysEqual(w, w[::-1])
+    if size % 2 == 1:
+      self.assertArraysEqual(w[size // 2], jnp.array(1, dtype=w.dtype))
+    if name in ('blackman', 'hanning') and size >= 2:
+      self.assertArraysEqual(w[0], jnp.array(0, dtype=w.dtype))
+      self.assertArraysEqual(w[-1], jnp.array(0, dtype=w.dtype))
+
+  @jtu.sample_product(
     [dict(shape=shape, fill_value_shape=fill_value_shape)
       for shape in array_shapes + [3, np.array(7, dtype=np.int32)]
       for fill_value_shape in _compatible_shapes(shape)],
@@ -3055,6 +3068,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         lambda dtype, device: jnp.linspace(5, 6, 7, dtype=dtype, device=device),
         lambda dtype, device: jnp.linspace(5, 6, 7, retstep=True, dtype=dtype, device=device),
         lambda dtype, device: jnp.array([1, 2, 3, 4, 5], dtype=dtype, device=device),
+        lambda dtype, device: jnp.logspace(-3, 3, dtype=dtype, device=device),
+        lambda dtype, device: jnp.geomspace(1e-3, 1e3, dtype=dtype, device=device),
       ],
       dtype=default_dtypes,
   )
@@ -3073,6 +3088,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         lambda dtype, device: jnp.linspace(5, 6, 7, dtype=dtype, device=device),
         lambda dtype, device: jnp.linspace(5, 6, 7, retstep=True, dtype=dtype, device=device),
         lambda dtype, device: jnp.array([1, 2, 3, 4, 5], dtype=dtype, device=device),
+        lambda dtype, device: jnp.logspace(-3, 3, dtype=dtype, device=device),
+        lambda dtype, device: jnp.geomspace(1e-3, 1e3, dtype=dtype, device=device),
       ],
       dtype=default_dtypes,
   )
@@ -4803,6 +4820,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_op = partial(np.rollaxis, axis=axis, start=start)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
+
+  def testMoveaxis(self):
+    x = jnp.arange(24.).reshape(2, 3, 4)
+    for source, destination in [(0, 2), (-1, 0), ((0, 1), (2, 0))]:
+      self.assertArraysEqual(jnp.moveaxis(x, source, destination),
+                             np.moveaxis(np.asarray(x), source, destination))
+    # if no axis moves, the input comes back, rather than a copy from an
+    # identity transpose outside of jit
+    for source, destination in [(0, 0), (-1, 2), ((0, 1), (0, -2))]:
+      self.assertIs(jnp.moveaxis(x, source, destination), x)
+    self.assertIsInstance(jnp.moveaxis(np.asarray(x), 0, 0), jax.Array)
+    with self.assertRaises((TypeError, ValueError)):
+      jnp.moveaxis(x, (0, 0), (0, 0))  # repeated axes
 
   @jtu.sample_product(
     dtype=int_dtypes + unsigned_dtypes + bool_dtypes,
@@ -7119,8 +7149,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'load': ['mmap_mode', 'allow_pickle', 'fix_imports', 'encoding', 'max_header_size'],
       'nanpercentile': ['interpolation'],
       'nanquantile': ['interpolation'],
-      'nanstd': ['correction'],
-      'nanvar': ['correction'],
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'partition': ['kind', 'order'],

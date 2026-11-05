@@ -46,12 +46,6 @@ class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.enter_context(
-        jtu.ignore_warning(
-            category=DeprecationWarning,
-            message='jax.experimental.pallas.core_map is deprecated',
-        )
-    )
     try:
       # If an exception was thrown by a jitted computation during the
       # previous test, we observe/consume exception here to avoid propagating
@@ -111,39 +105,6 @@ class InterpretTest(jtu.JaxTestCase):
       )()
 
     np.testing.assert_equal(kernel(), np.array([42], dtype=jnp.int32))
-
-  @jtu.parameterized.parameters(range(1, 17))
-  def test_interpret_core_map(self, num_threads: int):
-    @pl.run_state
-    def kernel(o_ref):
-      mesh = plgpu.Mesh(num_threads=num_threads, thread_name='x')
-
-      @pl.core_map(
-          mesh,
-          interpret=InterpretParams(detect_races=True),
-      )
-      def _():
-        thread_idx = jax.lax.axis_index('x')
-        o_ref[thread_idx] = thread_idx
-
-    y = kernel(jnp.zeros((num_threads,), jnp.int32))
-    np.testing.assert_equal(y, np.arange(num_threads, dtype=jnp.int32))
-
-  def test_interpret_core_map_with_race(self):
-    @pl.run_state
-    def kernel(o_ref):
-      mesh = plgpu.Mesh(num_threads=2, thread_name='x')
-
-      @pl.core_map(
-          mesh,
-          interpret=InterpretParams(detect_races=True),
-      )
-      def _():
-        thread_idx = jax.lax.axis_index('x')
-        o_ref[...] = thread_idx
-
-    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
-      kernel(jnp.zeros((), jnp.int32)).block_until_ready()
 
   @jtu.parameterized.parameters(range(1, 17))
   def test_interpret_kernel(self, num_threads):
@@ -639,6 +600,26 @@ class InterpretTest(jtu.JaxTestCase):
     y = np.asarray(_kernel(jnp.array([0], jnp.int32), x))
     np.testing.assert_array_equal(y[:3], x)
     np.testing.assert_array_equal(y[3], np.zeros((2,), np.int32))
+
+  def test_copy_gmem_to_smem_im2col_raises(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((8, 8), jnp.int16),
+        interpret=InterpretParams(),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(), smem=plgpu.SMEM((8, 8), jnp.int16)
+        ),
+    )
+    def _kernel(in_gmem, out_gmem, barrier, smem):
+      in_im2col = plgpu.im2col_ref(in_gmem, window_shape=(3,))
+      plgpu.copy_gmem_to_smem(in_im2col.at[:, 0, :], smem, barrier)
+      plgpu.barrier_wait(barrier)
+      out_gmem[...] = smem[...]
+
+    with self.assertRaisesRegex(
+        NotImplementedError, 'does not support im2col copies'
+    ):
+      _kernel(jnp.zeros((1, 10, 8), jnp.int16))
 
   @jtu.parameterized.product(
       memory_space=['smem', 'tmem'], synchronized=[False, True]
@@ -1816,6 +1797,103 @@ class InterpretTest(jtu.JaxTestCase):
     y = kernel(jnp.array([num_barriers - 1], jnp.int32), x)
     np.testing.assert_array_equal(y, np.asarray(x) + 1.0)
 
+  def test_run_state_with_accumulator_and_closed_over_refs(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=(
+            jax.ShapeDtypeStruct((64, 64), jnp.float32),
+            jax.ShapeDtypeStruct((64, 64), jnp.float32),
+        ),
+        scratch_types=dict(
+            a_smem=plgpu.SMEM((64, 64), jnp.float16),
+            b_smem=plgpu.SMEM((64, 64), jnp.float16),
+            flag=plgpu.SMEM((1,), jnp.float32),
+        ),
+        interpret=InterpretParams(detect_races=True),
+    )
+    def kernel(
+        a_ref, b_ref, c_ref, acc_out_ref, l_out_ref, a_smem, b_smem, flag
+    ):
+      a_smem[...] = a_ref[...]
+      b_smem[...] = b_ref[...]
+      flag[...] = jnp.full((1,), 5.0, jnp.float32)
+      bias = jnp.full((64, 64), 0.5, jnp.float32)
+
+      def body(refs):
+        acc_ref, l_ref = refs
+        plgpu.wgmma(acc_ref, a_smem, b_smem)
+        plgpu.wgmma_wait(0)
+        l_ref[...] += flag[0] + bias
+
+      acc = plgpu.ACC.init(c_ref[...])
+      acc, l = pl.run_state(body)((acc, jnp.full((64, 64), 2.0, jnp.float32)))
+      acc_out_ref[...] = acc
+      l_out_ref[...] = l
+
+    a = (jnp.arange(64 * 64, dtype=jnp.float16).reshape(64, 64) % 7) - 3
+    b = (jnp.arange(64 * 64, dtype=jnp.float16).reshape(64, 64) % 5) - 2
+    c = jnp.arange(64 * 64, dtype=jnp.float32).reshape(64, 64) / 64
+    acc, l = kernel(a, b, c)
+    np.testing.assert_allclose(
+        acc, np.asarray(a, np.float32) @ np.asarray(b, np.float32) + c,
+        atol=1e-3,
+    )
+    np.testing.assert_allclose(l, np.full((64, 64), 7.5), atol=1e-3)
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+
+  def test_run_state_with_closed_over_accumulator(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((64, 64), jnp.float32),
+        scratch_types=dict(
+            a_smem=plgpu.SMEM((64, 64), jnp.float16),
+            b_smem=plgpu.SMEM((64, 64), jnp.float16),
+        ),
+        interpret=InterpretParams(detect_races=True),
+    )
+    def kernel(a_ref, b_ref, o_ref, a_smem, b_smem):
+      a_smem[...] = a_ref[...]
+      b_smem[...] = b_ref[...]
+
+      def scoped(acc_ref):
+        def body(l_ref):
+          plgpu.wgmma(acc_ref, a_smem, b_smem)
+          plgpu.wgmma_wait(0)
+          l_ref[...] += 1.0
+
+        l = pl.run_state(body)(jnp.zeros((64, 64), jnp.float32))
+        return acc_ref[...] + l
+
+      o_ref[...] = pl.run_scoped(scoped, plgpu.ACC((64, 64), jnp.float32))
+
+    a = (jnp.arange(64 * 64, dtype=jnp.float16).reshape(64, 64) % 7) - 3
+    b = (jnp.arange(64 * 64, dtype=jnp.float16).reshape(64, 64) % 5) - 2
+    expected = np.asarray(a, np.float32) @ np.asarray(b, np.float32) + 1.0
+    np.testing.assert_allclose(kernel(a, b), expected, atol=1e-3)
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+
+  def test_wgmma_with_register_a_operand(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((64, 64), jnp.float32),
+        scratch_types=dict(b_smem=plgpu.SMEM((64, 64), jnp.float16)),
+        interpret=InterpretParams(),
+    )
+    def kernel(a_ref, b_ref, o_ref, b_smem):
+      b_smem[...] = b_ref[...]
+      a = a_ref[...]
+
+      def body(acc_ref):
+        plgpu.wgmma(acc_ref, a, b_smem)
+        return acc_ref[...]
+
+      o_ref[...] = pl.run_scoped(body, plgpu.ACC((64, 64), jnp.float32))
+
+    a = (jnp.arange(64 * 64, dtype=jnp.float16).reshape(64, 64) % 7) - 3
+    b = (jnp.arange(64 * 64, dtype=jnp.float16).reshape(64, 64) % 5) - 2
+    expected = np.asarray(a, np.float32) @ np.asarray(b, np.float32)
+    np.testing.assert_allclose(kernel(a, b), expected, atol=1e-3)
+
   def test_not_waiting_for_all_barrier_completions_in_thread_raises(self):
     @functools.partial(
         plgpu.kernel,
@@ -2880,6 +2958,46 @@ class InterpretTest(jtu.JaxTestCase):
     a = jnp.full((128,128), 42, dtype=jnp.int32)
     output = kernel(a)
     self.assertArraysEqual(output, a)
+
+  def test_3d_tmem(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=(
+            jax.ShapeDtypeStruct((2, 128, 64), jnp.int32),
+            jax.ShapeDtypeStruct((128, 64), jnp.int32),
+            jax.ShapeDtypeStruct((128, 128), jnp.int32),
+        ),
+        scratch_types=dict(
+            tmem_ref=plgpu.TMEM((2, 128, 64), jnp.int32),
+            union=plgpu.RefUnion(
+                plgpu.TMEM((2, 128, 64), jnp.int32),
+                plgpu.TMEM((128, 128), jnp.int32),
+            ),
+        ),
+        interpret=InterpretParams(detect_races=True),
+    )
+    def kernel(in_ref, out0_ref, out1_ref, out2_ref, tmem_ref, union):
+      aliased_3d, aliased_2d = union
+      plgpu.async_store_tmem(
+          aliased_2d, jnp.concatenate([in_ref[0], in_ref[1]], axis=1)
+      )
+      plgpu.commit_tmem()
+      out2_ref[...] = plgpu.async_load_tmem(aliased_2d)
+      plgpu.wait_load_tmem()
+
+      plgpu.async_store_tmem(tmem_ref.at[0], in_ref[0])
+      plgpu.async_store_tmem(tmem_ref.at[1], in_ref[1])
+      plgpu.async_store_tmem(aliased_3d, in_ref[...] + 1)
+      plgpu.commit_tmem()
+      out0_ref[0] = plgpu.async_load_tmem(tmem_ref.at[0])
+      out0_ref[1] = plgpu.async_load_tmem(tmem_ref.at[1])
+      out1_ref[...] = plgpu.async_load_tmem(aliased_3d.at[0])
+
+    a = jnp.arange(2 * 128 * 64, dtype=jnp.int32).reshape((2, 128, 64))
+    out0, out1, out2 = kernel(a)
+    self.assertArraysEqual(out0, a)
+    self.assertArraysEqual(out1, a[0] + 1)
+    self.assertArraysEqual(out2, jnp.concatenate([a[0], a[1]], axis=1))
 
   @jtu.parameterized.product(grid=[(4,), (2, 3)])
   def test_dynamic_scheduling_loop(self, grid):

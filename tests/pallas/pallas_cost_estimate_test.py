@@ -155,6 +155,43 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
     self.assertEqual(cost.transcendentals, 0)
     self.assertEqual(cost.bytes_accessed, 4 * (m * k + k * n + m * n))
 
+  def test_custom_jvp(self):
+    @jax.custom_jvp
+    def exp_add(x, y):
+      return jnp.exp(x + y)
+
+    @exp_add.defjvp
+    def exp_add_jvp(primals, tangents):
+      x, y = primals
+      x_dot, y_dot = tangents
+      primal_out = exp_add(x, y)
+      tangent_out = primal_out * (x_dot + y_dot)
+      return primal_out, tangent_out
+
+    cost = cost_estimate.estimate_cost(
+        exp_add,
+        jnp.ones(10, dtype=jnp.float32),
+        jnp.ones(10, dtype=jnp.float32),
+    )
+    self.assertEqual(cost.flops, 10)
+    self.assertEqual(cost.transcendentals, 10)
+    self.assertEqual(cost.bytes_accessed, 4 * 30)
+
+  def test_pi_trig_transcendentals(self):
+    def fn(x):
+      return (
+          lax.sinpi(x)
+          + lax.cospi(x)
+          + lax.tanpi(x)
+          + lax.asinpi(x)
+          + lax.acospi(x)
+          + lax.atanpi(x)
+      )
+
+    cost = cost_estimate.estimate_cost(fn, jnp.ones(10, dtype=jnp.float32))
+    self.assertEqual(cost.flops, 50)
+    self.assertEqual(cost.transcendentals, 60)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

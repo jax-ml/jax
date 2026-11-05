@@ -46,6 +46,7 @@ from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import special as lax_special
 from jax._src.lax import utils as lax_utils
+from jax._src.layout import Format
 from jax._src.lib import xla_client as xc
 from jax._src.numpy.array_constructors import array, asarray
 from jax._src.numpy import array_creation
@@ -2487,7 +2488,8 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
     destination: index or indices of the axes destinations
 
   Returns:
-    Copy of ``a`` with axes moved from ``source`` to ``destination``.
+    Copy of ``a`` with axes moved from ``source`` to ``destination``, or ``a``
+    itself if no axis moves.
 
   Notes:
     Unlike :func:`numpy.moveaxis`, :func:`jax.numpy.moveaxis` will return a copy rather
@@ -2523,8 +2525,13 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
     (4, 5, 3, 2)
   """
   arr = util.ensure_arraylike("moveaxis", a)
-  return _moveaxis(arr, _ensure_index_tuple(source),
-                   _ensure_index_tuple(destination))
+  source = tuple(_canonicalize_axis(i, np.ndim(arr))
+                 for i in _ensure_index_tuple(source))
+  destination = tuple(_canonicalize_axis(i, np.ndim(arr))
+                      for i in _ensure_index_tuple(destination))
+  if source == destination and len(set(source)) == len(source):
+    return arr  # nothing moves, so don't apply even an identity transpose
+  return _moveaxis(arr, source, destination)
 
 @api.jit(static_argnames=('source', 'destination'), inline=api.Inline.JAX_EARLY)
 def _moveaxis(a: Array, source: tuple[int, ...], destination: tuple[int, ...]) -> Array:
@@ -2889,16 +2896,6 @@ def select(
   idx = argmax(conditions.astype(bool), axis=0)
   return lax.select_n(*broadcast_arrays(idx, *choicelist))
 
-def is_replicated_or_unreduced(sharding: NamedSharding) -> bool:
-  if sharding.spec.partitions:
-    return False
-  if sharding.spec.reduced:
-    return False
-  if (sharding.spec.unreduced and
-      sharding.spec.unreduced != set(sharding.mesh.axis_names)):
-    return False
-  return True
-
 @export
 def bincount(x: ArrayLike, weights: ArrayLike | None = None,
              minlength: int = 0, *, length: int | None = None,
@@ -2981,7 +2978,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
         asarray, x,
         "The error occurred because of argument 'x' of jnp.bincount. "
         "To avoid this error, pass a static `length` argument.")
-    length = max(minlength, x_arr.size and int(max(0, x_arr.max())) + 1)
+    length = max(minlength, x_arr.size and max(0, int(x_arr.max())) + 1)
   else:
     length = core.concrete_dim_or_error(
         length,
@@ -2999,10 +2996,10 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
           f" typeof(x)={core.typeof(x).str_short(True, True)} and"
           f" typeof(weights)={core.typeof(weights).str_short(True, True)}")
   sharding = canonicalize_sharding(out_sharding, 'jnp.bincount')
-  if sharding is not None and not is_replicated_or_unreduced(sharding):
+  if sharding is not None and sharding.spec != P():
     raise core.ShardingTypeError(
-        "out_sharding passed to `jnp.bincount` can only be fully replicated"
-        " or fully unreduced along all mesh axes")
+        "out_sharding passed to `jnp.bincount` can only be fully replicated."
+        f" Got {sharding.spec}")
   return array_creation.zeros(length, _dtype(weights)).at[clip(x, 0)].add(
       weights, mode='drop', out_sharding=sharding)
 
@@ -4217,7 +4214,7 @@ def _pad(array: ArrayLike, pad_width: PadValueLike[int], mode: str,
   elif mode in stat_funcs:
     if stat_length is not None:
       stat_length = _broadcast_to_pairs(stat_length, nd, "stat_length")
-    return _pad_stats(array, pad_width, stat_length, stat_funcs[str(mode)])
+    return _pad_stats(array, pad_width, stat_length, stat_funcs[mode])
 
   elif mode == "empty":
     return _pad_empty(array, pad_width)
@@ -5570,7 +5567,7 @@ def fromiter(*args, **kwargs):
 
 
 @export
-def from_dlpack(x: Any, /, *, device: xc.Device | Sharding | None = None,
+def from_dlpack(x: Any, /, *, device: xc.Device | Sharding | Format | None = None,
                 copy: bool | None = None) -> Array:
   """Construct a JAX array via DLPack.
 
@@ -5580,17 +5577,19 @@ def from_dlpack(x: Any, /, *, device: xc.Device | Sharding | None = None,
     x: An object that implements the DLPack_ protocol via the ``__dlpack__``
       and ``__dlpack_device__`` methods, or a legacy DLPack tensor on either
       CPU or GPU.
-    device: An optional :class:`~jax.Device` or :class:`~jax.sharding.Sharding`,
-      representing the single device onto which the returned array should be placed.
-      If given, then the result is committed to the device. If unspecified,
-      the resulting array will be unpacked onto the same device it originated from.
-      Setting ``device`` to a device different from the source of ``external_array``
-      will require a copy, meaning ``copy`` must be set to either ``True`` or ``None``.
+    device: An optional :class:`~jax.Device`, :class:`~jax.sharding.Sharding`
+      (spanning a single device), or ``Format``, representing the single device
+      (and optional device-local layout) onto which the returned array should
+      be placed. If given, then the result is committed to the device. If
+      unspecified, the resulting array will be unpacked onto the same device it
+      originated from. Setting ``device`` to a device or format requiring a
+      transfer from the source of ``x`` will require a copy, meaning ``copy``
+      must be set to either ``True`` or ``None``.
     copy: An optional boolean, controlling whether or not a copy is performed.
       If ``copy=True`` then a copy is always performed, even if unpacked onto the
       same device. If ``copy=False`` then the copy is never performed and will raise
       an error if necessary. When ``copy=None`` (default) then a copy may be performed
-      if needed for a device transfer.
+      if needed for a device or format transfer.
 
   Returns:
     A JAX array of the input buffer.
@@ -6150,7 +6149,7 @@ def i0(x: ArrayLike) -> Array:
   Examples:
     >>> x = jnp.array([-2, -1, 0, 1, 2])
     >>> jnp.i0(x)
-    Array([2.2795851, 1.266066 , 1.0000001, 1.266066 , 2.2795851], dtype=float32)
+    Array([2.2795854, 1.2660658, 1.       , 1.2660658, 2.2795854], dtype=float32)
   """
   x, = util.promote_args_inexact("i0", x)
   if not issubdtype(x.dtype, np.floating):
@@ -6161,15 +6160,12 @@ def i0(x: ArrayLike) -> Array:
 @partial(custom_jvp, nondiff_argnums=(0,))
 def _i1_maclaurin(k: int, x: Array) -> Array:
   # compute the kth derivative of i1 evaluated near zero using a two-term
-  # Maclaurin series.
-  if k % 2 == 0:
-    m = (k + 1) // 2
-    c = math.comb(k + 1, m) / (2 ** (k + 1))
-    return lax.mul(lax._const(x, c), x)
-  else:
-    m = k // 2
-    c = math.comb(k, m) / (2 ** k)
-    return lax.full_like(x, c)
+  # Maclaurin series, i.e. the terms a(k+j) x^j / j! for the two smallest j
+  # with a(k+j) = i1^(k+j)(0) nonzero.
+  a = lambda n: math.comb(n, n // 2) / 2 ** n / math.factorial(n - k)
+  j = 1 - k % 2
+  p = lax.add(lax._const(x, a(k + j)), lax.mul(lax._const(x, a(k + j + 2)), lax.mul(x, x)))
+  return lax.mul(p, x) if j else p
 
 @_i1_maclaurin.defjvp
 def _i1_maclaurin_jvp(k: int, primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
@@ -6177,32 +6173,48 @@ def _i1_maclaurin_jvp(k: int, primals: tuple[Array], tangents: tuple[Array]) -> 
   return _i1_maclaurin(k, x), lax.mul(_i1_maclaurin(k + 1, x), t)
 
 
+def _exp_mul_bessel_ie(abs_x: Array, ie: Array) -> Array:
+  # For |x| <= max_log, evaluate ie * exp(|x|) directly so low-precision dtypes
+  # (e.g. bfloat16) do not accumulate extra rounding error from squaring
+  # exp(|x|/2). For |x| > max_log, exp(|x|) overflows, so split the exponent
+  # as (exp(|x|/2) * ie) * exp(|x|/2) while still issuing a single lax.exp op.
+  max_log = lax._const(abs_x, math.floor(math.log(dtypes.finfo(abs_x.dtype).max)))
+  use_half = lax.gt(abs_x, max_log)
+  e = lax.exp(where(use_half, lax.mul(abs_x, lax._const(abs_x, 0.5)), abs_x))
+  return lax.mul(where(use_half, lax.mul(e, ie), ie), e)
+
+
 def _i1(x: Array) -> Array:
-  return lax.mul(lax.exp(lax.abs(x)), lax_special.bessel_i1e(x))
+  return _exp_mul_bessel_ie(lax.abs(x), lax_special.bessel_i1e(x))
 i1_impl = custom_jvp(_i1)
 
 @i1_impl.defjvp
 def i1_impl_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
-  # A closed-form JVP using Bessel recurrence (e.g. i1'(x) = i0(x) - i1(x)/x)
-  # is not viable due to the 0/0 singularity at x = 0. Meanwhile, autodiff
-  # through exp(abs(x)) * bessel_i1e(x) fails for higher-order derivatives
-  # near 0 due to (1) the cusp in abs(x) and (2) catastrophic cancellation when
-  # evaluating (i0e(x) - i1e(x)/x) / x^2 in floating-point arithmetic.
-  # We therefore use a recursive two-term Maclaurin series approximation for
-  # |x| <= sqrt(eps), where the series truncation error is strictly below
-  # machine precision.
-  primal_out, tangent_out = api.jvp(_i1, primals, tangents)
+  # A closed-form JVP using Bessel recurrence (i1'(x) = i0(x) - i1(x)/x) has a
+  # 0/0 singularity at x = 0 and suffers from catastrophic cancellation near 0
+  # for higher-order derivatives when evaluating (i0(x) - i1(x)/x) / x^2 in
+  # floating-point arithmetic. We therefore use a recursive two-term Maclaurin
+  # series approximation for |x| <= sqrt(eps), where the series truncation
+  # error is strictly below machine precision, and the closed-form Bessel
+  # recurrence for |x| > sqrt(eps).
   x, = primals
   t, = tangents
+  primal_out = i1_impl(x)
   cutoff = math.sqrt(dtypes.finfo(x.dtype).eps)
   use_series = lax.le(lax.abs(x), lax._const(x, cutoff))
-  return primal_out, where(use_series, lax.mul(_i1_maclaurin(1, x), t), tangent_out)
+  safe_x = where(use_series, lax._const(x, 1.0), x)
+  deriv = where(
+      use_series,
+      _i1_maclaurin(1, x),
+      lax.sub(i0_impl(safe_x), lax.div(primal_out, safe_x)),
+  )
+  return primal_out, lax.mul(deriv, t)
 
 
 @custom_jvp
 def i0_impl(x: Array) -> Array:
   abs_x = lax.abs(x)
-  return lax.mul(lax.exp(abs_x), lax_special.bessel_i0e(abs_x))
+  return _exp_mul_bessel_ie(abs_x, lax_special.bessel_i0e(abs_x))
 
 @i0_impl.defjvp
 def i0_impl_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:

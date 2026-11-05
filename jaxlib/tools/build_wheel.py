@@ -232,6 +232,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
       dst_dir=jaxlib_dir / "cpu",
       src_files=[
           f"{source_file_prefix}jaxlib/cpu/_lapack.{pyext}",
+          f"{source_file_prefix}jaxlib/cpu/_math.{pyext}",
           f"{source_file_prefix}jaxlib/cpu/_sparse.{pyext}",
       ],
   )
@@ -448,6 +449,8 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
         "xla/ffi/api/ffi.h",
         "xla/ffi/api/collectives_c_api.h",
         "xla/ffi/api/collectives_api.h",
+        "xla/ffi/api/kernel_c_api.h",
+        "xla/ffi/api/kernel_api.h",
         "xla/ffi/api/record_c_api.h",
         "xla/ffi/api/record_api.h",
     ]
@@ -458,6 +461,8 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
         f"{source_file_prefix}jaxlib/include/xla/ffi/api/ffi.h",
         f"{source_file_prefix}jaxlib/include/xla/ffi/api/collectives_c_api.h",
         f"{source_file_prefix}jaxlib/include/xla/ffi/api/collectives_api.h",
+        f"{source_file_prefix}jaxlib/include/xla/ffi/api/kernel_c_api.h",
+        f"{source_file_prefix}jaxlib/include/xla/ffi/api/kernel_api.h",
         f"{source_file_prefix}jaxlib/include/xla/ffi/api/record_c_api.h",
         f"{source_file_prefix}jaxlib/include/xla/ffi/api/record_api.h",
     ]

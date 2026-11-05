@@ -32,14 +32,12 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/cord.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/free_threading.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_user_context.h"
-#include "jaxlib/python_ref_manager.h"
 #include "jaxlib/traceback.h"
 #include "xla/future.h"
 #include "xla/pjrt/exceptions.h"
@@ -60,7 +58,6 @@ limitations under the License.
 namespace jax {
 
 class PyArray;
-struct CopyToHostState;
 struct PyHostValue;
 
 // Private to PyArray, but you cannot forward declare member classes.

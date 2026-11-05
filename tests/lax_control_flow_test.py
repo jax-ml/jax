@@ -46,7 +46,6 @@ from jax._src import dispatch
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lib import ifrt_version
 
 jax.config.parse_flags_with_absl()
 
@@ -1069,6 +1068,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.switch(1, [lambda _: dict(a=jnp.array([1.], jnp.float32)),
                      lambda _: dict(a=jnp.float32(1.))],
                  1.)
+
+  def testCondTypeErrorsAuxDataFromLeaves(self):
+    # Aux data computed from the leaves makes the branches' treedefs differ even
+    # though their structures are the same; output types must still be checked.
+    @jax.tree_util.register_pytree_node_class
+    class Box:
+      def __init__(self, x):
+        self.x = x
+      def tree_flatten(self):
+        return (self.x,), getattr(self.x, 'shape', None)
+      @classmethod
+      def tree_unflatten(cls, aux, children):
+        del aux
+        return cls(*children)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"(?s)cond branches must have equal output types but they differ.*"
+        r"so the shapes do not match"):
+      lax.cond(True, lambda _: Box(jnp.zeros(2)), lambda _: Box(jnp.zeros(3)),
+               1.)
 
   def testCondOneBranchConstant(self):
     def fun(x):
@@ -2945,6 +2965,23 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       self.assertNotIn("stablehlo.sine", stablehlo)
       self.assertIn("stablehlo.cosine", stablehlo)
 
+  def test_platform_dependent_lowers_to_its_branch_without_a_conditional(self):
+    # A lowering whose platforms keep one branch lowers that branch alone: no
+    # conditional computes its index at run time, in the function, its
+    # gradient (AD's cotangent conditional) or its batching, where XLA keeps a
+    # conditional around a branch that holds collectives.
+    def f(x):
+      return lax.platform_dependent(x, cpu=jnp.sin, default=jnp.cos)
+
+    x = np.arange(3, dtype=np.float32)
+    for g, arg in ((f, x), (jax.grad(lambda x: f(x).sum()), x),
+                   (jax.vmap(f), x), (jax.grad(lambda y: f(y)), 1.)):
+      stablehlo = jax.jit(g).lower(arg).as_text()
+      self.assertNotIn("stablehlo.case", stablehlo)
+    self.assertAllClose(
+      jax.grad(lambda x: f(x).sum())(x),
+      np.cos(x) if jtu.device_under_test() == "cpu" else -np.sin(x))
+
   def test_platform_dependent_with_non_existent_custom_call(self):
     if not jtu.test_device_matches(["cpu"]):
       self.skipTest("Only for CPU")
@@ -3509,11 +3546,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_scan_counter_where(self):
     # https://github.com/jax-ml/jax/issues/41027
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
-    if ifrt_version < 75:
-      self.skipTest('Requires ifrt_version >= 75')
-
     @jax.jit
     def gt_zero(x):
       def body(carry, _):

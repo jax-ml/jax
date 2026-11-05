@@ -111,6 +111,8 @@ jobs:
 
           # PR runs only exercise build/Bazel jobs; pytest jobs are disabled for PRs.
           TRIGGER_PATTERNS=(
+            ".bazelrc"
+            "MODULE.bazel"
             "build/requirements_lock_*.txt"
             ".github/workflows/wheel_tests_continuous.yml"
             ".github/workflows/scripts/select_continuous_wheel_test_jobs.py"
@@ -508,7 +510,7 @@ jobs:
           artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
           python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-10.0:latest" },
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0"},
           ]
           exclude:
             - artifact: "jax-rocm-pjrt"
@@ -524,7 +526,6 @@ jobs:
       python: ${{ matrix.python }}
       rocm-version: ${{ matrix.rocm.wheel-version }}
       rocm-release-version: ${{ matrix.rocm.release-version }}
-      manylinux-image: ${{ matrix.rocm.manylinux-image }}
       clone_main_xla: 0
       halt-for-connection: 'no'
       upload_artifacts_to_s3: true
@@ -551,7 +552,7 @@ jobs:
           runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
           python: ["3.12"]
           rocm: [
-            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", tag: "therock-10.0"},
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
           ]
     name: "Pytest ROCm ${{ matrix.rocm.label }}"
     with:
@@ -586,7 +587,7 @@ jobs:
           runner: ["amd-do-linux.jax.gpu.gfx950.4"]
           python: ["3.12"]
           rocm: [
-            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", tag: "therock-10.0"},
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
           ]
           enable-x64: [0]
     name: "Bazel ROCm ${{ matrix.rocm.label }}"
@@ -626,7 +627,7 @@ jobs:
           runner: ["amd-do-linux.jax.gpu.gfx950.4"]
           python: ["3.12"]
           rocm: [
-            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", tag: "therock-10.0"},
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
           ]
           enable-x64: [0]
     name: "Bazel ROCm PyPI ${{ matrix.rocm.label }}"

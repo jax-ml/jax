@@ -22,12 +22,7 @@ import jax
 from jax import shard_map
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
-
-if jaxlib_extension_version >= 503:
-  from jax.experimental import thunky
-else:
-  thunky = None  # pyrefly: ignore
+from jax.experimental import thunky
 import jax.numpy as jnp
 from jax.sharding import Mesh, PartitionSpec as P
 import numpy as np
@@ -292,8 +287,6 @@ class ThunkyCollectiveMatmulTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jaxlib_extension_version < 503:
-      self.skipTest("Requires jaxlib_extension_version >= 503")
     if jax.default_backend() != "gpu":
       self.skipTest("ThunkyCollectiveMatmulTest requires a GPU backend")
     if jtu.test_device_matches(

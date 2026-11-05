@@ -46,7 +46,6 @@ class CustomEvalContext:
   out_block_specs: tuple[pallas_core.BlockSpec, ...]
   out_block_indices: tuple[Any, ...]
   scalar_prefetch: Any | None = None
-  scalar_prefetch_handler: Any | None = None
 
 class CustomEvalRuleFn(Protocol):
 
@@ -60,6 +59,31 @@ class CustomEvalRuleFn(Protocol):
 
 @custom_api_util.register_custom_decorator_type
 class custom_fusion:
+  """Wraps a pure JAX function as a primitive with user-defined fuser rules.
+
+  ``custom_fusion`` allows defining custom block spec propagation and block-level
+  evaluation rules for an operation so that it can participate in input and
+  output fusions without decomposing into its constituent JAX primitives.
+  Effects are not supported.
+
+  Rule registration methods and expected callback signatures:
+    - ``def_eval_rule(fn)``: Required. ``fn(ctx: CustomEvalContext, *args) ->
+      Sequence[Any]`` evaluates the operation on a single block and must return
+      a sequence of flat output leaves (even for a single output).
+    - ``def_pull_block_spec(fn)``: Required. ``fn(out_block_transforms:
+      tuple[BlockIndexTransform, ...]) -> Sequence[BlockIndexTransform]``
+      propagates output block transforms backward to the inputs.
+    - ``def_push_block_spec(fn)``: Optional (only needed for output fusions).
+      ``fn(in_block_specs: tuple[BlockSpec, ...]) -> tuple[BlockSpec, ...]``
+      propagates input ``BlockSpecs`` forward to the outputs.
+    - ``def_pallas_impl(fn)``: Optional alternative implementation for use inside
+      a Pallas kernel; must produce the same output abstract values as ``fun``.
+
+  Args:
+    fun: The pure JAX function defining the operation's abstract evaluation and
+      default eager/lowering behavior outside of a fused Pallas kernel.
+  """
+
   fun: Callable[..., Any]
 
   eval_rule: CustomEvalRuleFn | None = None
@@ -121,7 +145,7 @@ class custom_fusion:
       ) from e
 
     # flatten and get jaxpr
-    args_flat, in_tree = tree_util.tree_flatten(args)
+    args_flat = tree_util.tree_leaves(args)
     args_avals = tree_util.tree_map(core.typeof, args)
     in_avals_ft = ft.flatten((args_avals, {}))
     closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
@@ -155,10 +179,7 @@ class custom_fusion:
         pull_block_spec_rule=self.pull_block_spec_rule,
         push_block_spec_rule=self.push_block_spec_rule,
         pallas_jaxpr=pallas_jaxpr,
-        pallas_num_consts=len(pallas_consts),
-        in_tree=in_tree,
-        out_tree=out_tree_val,
-        kernel_out_tree=out_tree_val)
+        pallas_num_consts=len(pallas_consts))
 
     return tree_util.tree_unflatten(out_tree_val, out_flat)
 
@@ -219,7 +240,6 @@ def _custom_fusion_eval_rule(
       out_block_specs=ctx.out_block_specs,
       out_block_indices=ctx.get_out_block_indices(),
       scalar_prefetch=ctx.scalar_prefetch,
-      scalar_prefetch_handler=ctx.scalar_prefetch_handler,
   ), *args)
 
 

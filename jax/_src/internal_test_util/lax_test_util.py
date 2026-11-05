@@ -27,6 +27,7 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import lax
 from jax._src import test_util
+from jax._src.lib import jaxlib_extension_version
 from jax._src.util import safe_map, safe_zip
 
 import numpy as np
@@ -234,10 +235,13 @@ def lax_ops():
       op_record(
           "sin", 1, float_dtypes + complex_dtypes, test_util.rand_default
       ),
+      op_record("sinpi", 1, float_dtypes, test_util.rand_default),
       op_record(
           "cos", 1, float_dtypes + complex_dtypes, test_util.rand_default
       ),
+      op_record("cospi", 1, float_dtypes, test_util.rand_default),
       op_record("atan2", 2, float_dtypes, test_util.rand_default),
+      op_record("atan2pi", 2, float_dtypes, test_util.rand_default),
       op_record("sqrt", 1, float_dtypes, test_util.rand_positive),
       op_record("sqrt", 1, complex_dtypes, test_util.rand_default),
       op_record("rsqrt", 1, float_dtypes, test_util.rand_positive),
@@ -260,6 +264,13 @@ def lax_ops():
           {np.float32: 3e-5, np.complex64: 3e-5},
       ),
       op_record(
+          "tanpi",
+          1,
+          float_dtypes,
+          test_util.rand_default,
+          {np.float32: 3e-5},
+      ),
+      op_record(
           "asin",
           1,
           float_dtypes + complex_dtypes,
@@ -267,7 +278,10 @@ def lax_ops():
           {np.complex128: 5e-12},
       ),
       op_record("acos", 1, float_dtypes + complex_dtypes, test_util.rand_small),
+      op_record("acospi", 1, float_dtypes, test_util.rand_small),
       op_record("atan", 1, float_dtypes + complex_dtypes, test_util.rand_small),
+      op_record("atanpi", 1, float_dtypes, test_util.rand_small),
+      op_record("asinpi", 1, float_dtypes, test_util.rand_small),
       op_record(
           "asinh",
           1,
@@ -375,6 +389,8 @@ def lax_ops():
           "mul", 2, default_dtypes + complex_dtypes, test_util.rand_small
       ),
       op_record("mulhi", 2, int_dtypes + uint_dtypes, test_util.rand_fullrange),
+      op_record("fma", 3, float_dtypes, test_util.rand_default, tol=0),
+      op_record("fmuladd", 3, float_dtypes, test_util.rand_default),
       op_record(
           "div", 2, default_dtypes + complex_dtypes, test_util.rand_nonzero
       ),
@@ -388,6 +404,34 @@ def lax_ops():
       op_record("le", 2, default_dtypes, test_util.rand_small),
       op_record("lt", 2, default_dtypes, test_util.rand_small),
   ]
+
+
+def backend_supports_fma(dtype) -> bool:
+  if (
+      jaxlib_extension_version < 515
+      or not test_util.is_libtpu_at_least("0.0.52")
+      or not test_util.stablehlo_version_at_least("1.24.0")
+  ):
+    return False
+  dtype = np.dtype(dtype)
+  if dtype in (np.dtype(np.float32), np.dtype(np.float64)):
+    return True
+  if dtype == np.dtype(np.float16):
+    return (
+        test_util.test_device_matches(["tpu"])
+        or test_util.is_device_rocm()
+        or test_util.is_cuda_compute_capability_at_least("5.3")
+    )
+  if dtype == np.dtype(dtypes.bfloat16):
+    return (
+        test_util.test_device_matches(["tpu"])
+        or test_util.is_cuda_compute_capability_at_least("8.0")
+        or (
+            test_util.is_device_rocm()
+            and bool(test_util.device_kind_match("gfx1250"))
+        )
+    )
+  return False
 
 
 def all_bdims(*shapes):

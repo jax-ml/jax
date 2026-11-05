@@ -29,7 +29,10 @@ from jax._src.pallas.mosaic import tpu_info
 
 
 def _allocate_bref(
-    bref: pipeline.BufferedRef, mesh: pallas_core.Mesh, input_val,
+    bref: pipeline.BufferedRef,
+    mesh: pallas_core.Mesh,
+    input_val,
+    no_pipelining=False,
 ) -> pipeline.BufferedRef:
   if not bref.is_buffered:
     return bref
@@ -51,7 +54,8 @@ def _allocate_bref(
       jax.ShapeDtypeStruct(buf_shape, input_val.dtype),
       memory_space=target_mem_space,
   )
-  if bref.is_trivial_windowing and bref.prefetched_count == 0:
+  if (no_pipelining
+      or (bref.is_trivial_windowing and bref.prefetched_count == 0)):
     sem_out = None
   else:
     sem_out = jax.empty_ref(
@@ -65,7 +69,7 @@ def _allocate_bref(
       window_ref=window_out,
       sem_recvs=sem_out if bref.buffer_type.is_input else None,
       sem_sends=sem_out if bref.buffer_type.is_output else None,
-      await_prefetch=bref.prefetched_count > 0,
+      await_prefetch=bref.prefetched_count > 0 and not no_pipelining,
   )
 
 
@@ -109,16 +113,17 @@ def emit_pipeline_with_async_prefetch(
     # TODO(rdyro): Support TransformedRefs.
     inputs_flat = [
         x
-        if isinstance(x, (state.AbstractRef, state.TransformedRef))
+        if isinstance(x, (jax.Ref, state.AbstractRef, state.TransformedRef))
         else jax.new_ref(x)
         for x in jax.tree.leaves(filt_inputs)
     ]
     in_specs_flat = jax.tree.leaves(filt_in_specs)
     raw_allocs = pipeline._make_pipeline_allocations(
-        *inputs_flat, in_specs=in_specs_flat, out_specs=(), grid=grid
+        *inputs_flat, in_specs=in_specs_flat, tiling=tiling, grid=grid
     )
     allocs_flat = [
-        _allocate_bref(b, mesh, x) for b, x in zip(raw_allocs, inputs_flat)
+        _allocate_bref(b, mesh, x, no_pipelining)
+        for b, x in zip(raw_allocs, inputs_flat)
     ]
     allocations = jax.tree.unflatten(
         jax.tree.structure(filt_in_specs), allocs_flat
@@ -128,7 +133,7 @@ def emit_pipeline_with_async_prefetch(
         (b.prefetched_count for b in allocs_flat if b.is_buffered),
         default=0,
     )
-    if max_prefetch == 0:
+    if no_pipelining or max_prefetch == 0:
       return allocations
 
     def _prefetch_kernel(*in_refs):

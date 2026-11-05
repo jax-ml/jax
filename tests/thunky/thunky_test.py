@@ -20,22 +20,15 @@ import textwrap
 
 from absl.testing import absltest
 import jax
-from jax import shard_map
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
-
 from jax._src.state import discharge as state_discharge
 from jax._src.state.types import AbstractRef, ReadEffect, WriteEffect
-
-if jaxlib_extension_version >= 503:
-  from jax._src.thunky import thunky
-else:
-  thunky = None  # pyrefly: ignore
+from jax._src.thunky import thunky
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
-from jax.sharding import Mesh, PartitionSpec as P
+from jax.sharding import Mesh
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -51,7 +44,7 @@ def _normalize_mlir(mlir_text: str) -> str:
   return text.strip()
 
 
-def _trace_jaxpr(fn, *args) -> core.ClosedJaxpr:
+def _trace_jaxpr(fn, *args) -> core.Jaxpr:
   avals = [
       AbstractRef(
           core.ShapedArray(tuple(int(d) for d in a.shape), np.dtype(a.dtype))
@@ -100,8 +93,6 @@ class ThunkyJaxTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jaxlib_extension_version < 503:
-      self.skipTest("Requires jaxlib_extension_version >= 503")
     if jax.default_backend() != "gpu":
       self.skipTest("ThunkyJaxTest requires a GPU backend")
     if jtu.test_device_matches(
@@ -412,10 +403,6 @@ class ThunkyJaxTest(jtu.JaxTestCase):
 
     def accum_kernel(x_ref, y_ref):
       y_ref[...] += x_ref[...] * 2.0
-
-    @jax.jit
-    def add_one_val(x):
-      return x + 1.0
 
     @thunky.jit
     def sliced_writes_fn(in_buf, out_buf):
@@ -1459,44 +1446,6 @@ class ThunkyJaxTest(jtu.JaxTestCase):
     aval = AbstractRef(core.ShapedArray((4,), np.dtype(jnp.float32)))
     with jax.sharding.use_abstract_mesh(large_abstract_mesh):
       _lower_to_mlir(prog, aval)
-
-  def test_executable_to_mlir_multi_operand_collectives(self):
-    """Verifies jax_executable_to_mlir extracts all buffers from combined multi-operand collective thunks."""
-    abstract_mesh = jax.sharding.AbstractMesh(
-        (2,), ("x",), axis_types=(jax.sharding.AxisType.Manual,)
-    )
-
-    @jax.jit
-    @shard_map(
-        mesh=abstract_mesh,
-        in_specs=(P(), P()),
-        out_specs=(P(), P()),
-        check_vma=False,
-    )
-    def two_pperms(a, b):
-      return (
-          jax.lax.ppermute(a, "x", perm=[(0, 1), (1, 0)]),
-          jax.lax.ppermute(b, "x", perm=[(0, 1), (1, 0)]),
-      )
-
-    compiled = two_pperms.lower(
-        jax.ShapeDtypeStruct((16,), jnp.float32),
-        jax.ShapeDtypeStruct((32,), jnp.float32),
-    ).compile()
-    with thunky.make_ir_context():
-      mlir_mod = thunky.jax_executable_to_mlir(compiled)
-
-    main_func = [
-        op.operation
-        for op in mlir_mod.body.operations
-        if op.operation.name == "func.func"
-    ][0]
-    cp_ops = [
-        op.operation
-        for op in main_func.regions[0].blocks[0].operations
-        if op.operation.name == "thunky.collective_permute"
-    ]
-    self.assertLen(cp_ops, 2)
 
   def test_non_manual_mesh_raises_error(self):
     """Verifies calling a thunky function in a non-manual mesh environment raises ValueError."""

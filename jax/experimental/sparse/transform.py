@@ -93,27 +93,33 @@ _zero_preserving_unary_primitives = [
   lax.abs_p,
   lax.asin_p,
   lax.asinh_p,
+  lax.asinpi_p,
   lax.atan_p,
   lax.atanh_p,
+  lax.atanpi_p,
   lax.bessel_i1e_p,
   lax.expm1_p,
   lax.log1p_p,
   lax.sign_p,
   lax.sin_p,
   lax.sinh_p,
+  lax.sinpi_p,
   lax.sqrt_p,
   lax.square_p,
   lax.tan_p,
   lax.tanh_p,
+  lax.tanpi_p,
   lax.convert_element_type_p,
 ]
 
 _densifying_primitives : list[core.Primitive] = [
   lax.acos_p,
   lax.acosh_p,
+  lax.acospi_p,
   lax.bessel_i0e_p,
   lax.cos_p,
   lax.cosh_p,
+  lax.cospi_p,
   lax.eq_p,
   lax.exp_p,
   lax.exp2_p,
@@ -731,6 +737,22 @@ def _div_sparse(spenv, *spvalues):
 
 sparse_rules_bcoo[lax.div_p] = _div_sparse
 
+def _complex_sparse(spenv, *spvalues):
+  def to_complex(spval, imag: bool):
+    buf = spenv.data(spval)
+    zero = lax.full_like(buf, 0)
+    out = lax.complex(zero, buf) if imag else lax.complex(buf, zero)
+    if spval.is_sparse():
+      return spenv.sparse(spval.shape, out, indices_ref=spval.indices_ref,
+                          indices_sorted=spval.indices_sorted,
+                          unique_indices=spval.unique_indices)
+    return spenv.dense(out)
+
+  X, Y = spvalues
+  return _add_sparse(spenv, to_complex(X, False), to_complex(Y, True))
+
+sparse_rules_bcoo[lax.complex_p] = _complex_sparse
+
 def _reduce_sum_sparse(spenv, *spvalues, axes, out_sharding):
   X, = spvalues
   X_promoted = spvalues_to_arrays(spenv, X)
@@ -746,7 +768,7 @@ sparse_rules_bcoo[lax.reduce_sum_p] = _reduce_sum_sparse
 
 
 def _gather_sparse_rule(spenv, *args, dimension_numbers, slice_sizes, unique_indices,
-                        indices_are_sorted, mode, fill_value):
+                        indices_are_sorted, mode, fill_value, out_sharding):
   operand, start_indices = spvalues_to_arrays(spenv, args)
   result = sparse.bcoo_gather(operand, start_indices, dimension_numbers=dimension_numbers,
                               slice_sizes=slice_sizes, unique_indices=unique_indices,
@@ -757,7 +779,7 @@ def _gather_sparse_rule(spenv, *args, dimension_numbers, slice_sizes, unique_ind
 sparse_rules_bcoo[lax.gather_p] = _gather_sparse_rule
 
 def _sparsify_jaxpr(spenv: SparsifyEnv,
-                    jaxpr: core.ClosedJaxpr, *spvalues):
+                    jaxpr: core.Jaxpr, *spvalues):
   # TODO(jakevdp): currently this approach discards all information about
   #   shared data & indices when generating the sparsified jaxpr. The
   #   current approach produces valid sparsified while loops, but they
@@ -898,7 +920,7 @@ sparse_rules_bcoo[sparse.todense_p] = _todense_sparse_rule
 sparse_rules_bcsr[sparse.todense_p] = _todense_sparse_rule
 
 def _custom_jvp_sparse_rule(spenv, *spvalues, **params):
-  call_jaxpr: core.ClosedJaxpr = params.pop('call_jaxpr')
+  call_jaxpr: core.Jaxpr = params.pop('call_jaxpr')
   jvp_jaxpr_fun: lu.WrappedFun = params.pop('jvp_jaxpr_fun')
   num_consts: int = params.pop('num_consts')
   sp_call_jaxpr, out_tree = _sparsify_jaxpr(spenv, call_jaxpr, *spvalues)

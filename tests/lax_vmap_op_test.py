@@ -68,6 +68,8 @@ class LaxVmapOpTest(jtu.JaxTestCase):
   def testOp(self, op_name, rng_factory, shapes, dtype, bdims, tol):
     if dtype == np.float64 or any(len(shape) > 2 for shape in shapes):
       self.skipTest('Skipping big tests under sanitizers due to slowdown.')
+    if op_name == 'fma' and not lax_test_util.backend_supports_fma(dtype):
+      self.skipTest(f'fma not supported for {dtype} on this backend')
 
     rng = rng_factory(self.rng())
     op = getattr(lax, op_name)

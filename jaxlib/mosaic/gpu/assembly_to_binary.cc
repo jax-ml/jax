@@ -44,7 +44,7 @@ limitations under the License.
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/gpu/dump.h"
-#include "jaxlib/mosaic/pass_boilerplate.h"
+#include "xla/mosaic/pass_boilerplate.h"
 #include "xla/stream_executor/cuda/compilation_options.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"

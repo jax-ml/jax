@@ -34,19 +34,15 @@ git_override(
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-QXaXIdifM/Sxa5Md+HuXKLiw7Z2oVgFTSt6pBc3QDdg=",
-    strip_prefix = "rules_ml_toolchain-fb4e7404fa2fec0e894b429e0c188fc5540cc8ed",
-    urls = ["https://github.com/yuriivcs/rules_ml_toolchain/archive/fb4e7404fa2fec0e894b429e0c188fc5540cc8ed.tar.gz"],
+    integrity = "sha256-9+4rpwQMv77PxA+AGMWpwcjioakWHi4nJ7UQ0iPHrJo=",
+    strip_prefix = "rules_ml_toolchain-3a4df0c8e9e51687ac4c62c793a00a27286e5e83",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/3a4df0c8e9e51687ac4c62c793a00a27286e5e83.tar.gz"],
 )
 
 # TODO: use a released version when available
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
-    patch_strip = 1,
-    patches = [
-        "//third_party/xla:eigen_archive.patch",
-    ],
     integrity = "sha256-+AmOfQ2ud1BGn1nbJk675nb69OB7vQ94wDZDwMDuzBY=",
     strip_prefix = "xla-8251a1aaa1ab00b6fdbee069b2da42d671ea7086",
     urls = ["https://github.com/openxla/xla/archive/8251a1aaa1ab00b6fdbee069b2da42d671ea7086.tar.gz"],

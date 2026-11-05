@@ -10,8 +10,8 @@
 
 -//tests/pallas:ops_test_mgpu_gpu
 
-# Known ROCm bug in TritonPallasTest.test_atomic_counter4 (8 threads).
--//tests/pallas:triton_pallas_test_gpu
-
 # Flaky on the CI workers.
 -//tests:export_harnesses_multi_platform_test_gpu
+
+# Times out on the CI workers since #41867.
+-//tests:lax_scipy_special_functions_test_gpu

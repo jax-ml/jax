@@ -141,6 +141,7 @@ def prepare_wheel_cuda(
       src_files=[
           f"{source_file_prefix}jaxlib/cuda/_solver.{pyext}",
           f"{source_file_prefix}jaxlib/cuda/_linalg.{pyext}",
+          f"{source_file_prefix}jaxlib/cuda/_math.{pyext}",
           f"{source_file_prefix}jaxlib/cuda/_prng.{pyext}",
           f"{source_file_prefix}jaxlib/cuda/_rnn.{pyext}",
           f"{source_file_prefix}jaxlib/cuda/_sparse.{pyext}",
@@ -198,6 +199,7 @@ def prepare_wheel_rocm(
       dst_dir=plugin_dir,
       src_files=[
           f"{source_file_prefix}jaxlib/rocm/_linalg.{pyext}",
+          f"{source_file_prefix}jaxlib/rocm/_math.{pyext}",
           f"{source_file_prefix}jaxlib/rocm/_prng.{pyext}",
           f"{source_file_prefix}jaxlib/rocm/_solver.{pyext}",
           f"{source_file_prefix}jaxlib/rocm/_sparse.{pyext}",
@@ -238,6 +240,10 @@ def prepare_wheel_oneapi(
       f"{source_file_prefix}jax_plugins/oneapi/plugin_setup.py",
       dst_dir=wheel_sources_path,
       dst_filename="setup.py",
+  )
+  copy_files(
+      f"{source_file_prefix}jax_plugins/oneapi/README.md",
+      dst_dir=wheel_sources_path,
   )
   write_setup_cfg(wheel_sources_path, cpu)
 

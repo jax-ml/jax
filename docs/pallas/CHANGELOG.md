@@ -14,6 +14,49 @@ Remember to align the itemized text with the first line of an item within a list
 ## Unreleased
 
 * New features
+  * The Pallas API is now available as `jax.pallas`. Existing imports from
+    `jax.experimental.pallas` remain valid.
+
+### TPU
+
+* New features
+
+  * Added {func}`jax.pallas.tpu.request_p_state` to request a TensorCore
+    P-state transition on TPU7x+ targets.
+
+* Removals
+
+  * Removed the previously deprecated {class}`jax.experimental.pallas.tpu.create_tensorcore_mesh`. Use
+    {class}`jax.pallas.tpu.TensorCoreMesh` instead.
+
+### Triton
+
+* Removals
+  * Removed the previously deprecated Pallas Triton ops in
+    {mod}`jax.experimental.pallas.ops.gpu`.
+
+### Mosaic GPU
+
+* New features
+
+  * {func}`jax.experimental.pallas.mosaic_gpu.tcgen05_commit_arrive` now accepts
+    a keyword-only `commit_a_read_only` boolean flag (defaulting to `False`) to
+    track completion of SMEM reads of the `a` operand of preceding
+    {func}`jax.experimental.pallas.mosaic_gpu.tcgen05_mma` calls on `sm_107f`.
+  * {class}`jax.experimental.pallas.mosaic_gpu.RefType` now accepts keyword-only
+    `read` and `write` boolean flags (both defaulting to `True`) to declare
+    which memory effects {func}`jax.experimental.pallas.mosaic_gpu.inline_mgpu`
+    has on each reference argument.
+
+* Removals
+
+  * Removed the previously deprecated
+    {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref`. Use
+    `ref.transpose(...)` or `ref.T` directly instead.
+
+## Released with JAX 0.12.0 (October 19, 2026)
+
+* New features
   * Added `ref.memory_space_cast` to cast the memory space of a reference.
 
 * Deprecations
@@ -54,6 +97,9 @@ Remember to align the itemized text with the first line of an item within a list
     `leader_tracked=CopyPartition.REPLICATED` now support clusters of total size
     greater than 2, provided the collective axis is the minormost cluster
     dimension and has size 2.
+  * Added support for im2col TMA copies to
+    {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` via the
+    {func}`jax.experimental.pallas.mosaic_gpu.im2col_ref` transformation.
 
 * Deprecations
 
@@ -78,6 +124,8 @@ Remember to align the itemized text with the first line of an item within a list
   * The `device_id_type` parameter of
     {func}`jax.experimental.pallas.tpu.async_remote_copy` and
     {func}`jax.experimental.pallas.tpu.make_async_remote_copy` is deprecated.
+  * {class}`jax.experimental.pallas.tpu.BufferedRefBase` and
+    {data}`jax.experimental.pallas.tpu.BufferType.MANUAL` are deprecated.
 
 ## Released with JAX 0.11.2 (September 17, 2026)
 

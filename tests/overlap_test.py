@@ -49,6 +49,8 @@ class OverlapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((8,), ('x',))
   def test_fsdp_pipeline_grad(self, mesh):
+    if jtu.is_device_tpu_at_least(7) and not jtu.is_libtpu_at_least('0.0.52'):
+      self.skipTest('Fails on TPU v7+ with libtpu < 0.0.52')
     def ag(x):
       return jax.reshard(x, P(reduced={'x'}))
 
@@ -864,8 +866,6 @@ class OverlapTest(jtu.JaxTestCase):
   def test_async_psum_scatter_opt_barrier(self, mesh):
     if jtu.device_under_test() == 'tpu' and not jtu.is_device_tpu_at_least(7):
       self.skipTest('Requires TPU >= 7')
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
 
     @jax.jit
     @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
@@ -897,8 +897,6 @@ class OverlapTest(jtu.JaxTestCase):
   def test_async_all_to_all_opt_barrier(self, mesh):
     if jtu.device_under_test() == 'tpu' and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Requires TPU >= 5')
-    if not jtu.is_libtpu_at_least('0.0.50'):
-      self.skipTest('Requires libtpu >= 0.0.50')
 
     @jax.jit
     @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
@@ -935,8 +933,6 @@ class OverlapTest(jtu.JaxTestCase):
     if jtu.device_under_test() == 'tpu':
       if not jtu.is_device_tpu_at_least(5):
         self.skipTest('Requires TPU >= 5')
-      if not jtu.is_libtpu_at_least('0.0.50'):
-        self.skipTest('Requires libtpu >= 0.0.50')
 
     permutation = [(i, (i + 1) % 8) for i in range(8)]
 
@@ -1094,6 +1090,20 @@ class OverlapTest(jtu.JaxTestCase):
 
     x = jnp.arange(3.)
     self.assertAllClose(f(x, x), jnp.sin(x) * x)
+
+  def test_program_order_vjp_with_refs_aliased_args(self):
+    f = lambda w: program_order(
+        lambda a, b: (a * b).sum(), enforce=False)(w, w)
+    w = jnp.arange(1., 4.)
+
+    @jax.jit
+    def run(w):
+      _, f_vjp = jax.vjp(f, w)
+      w_ref = jax.new_ref(jnp.zeros_like(w))
+      f_vjp.with_refs(w_ref)(1.)
+      return jax.freeze(w_ref)
+
+    self.assertAllClose(run(w), 2 * w)
 
 
 class AsyncCollectivesTest(jtu.JaxTestCase):

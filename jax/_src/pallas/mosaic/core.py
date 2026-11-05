@@ -28,6 +28,7 @@ import jax
 from jax._src import core as jax_core
 from jax._src import pretty_printer as pp
 from jax._src import state
+from jax._src import tpu_info
 from jax._src import tree_util
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
@@ -212,7 +213,6 @@ class CompilerParams:
 
 
 def check_accumulator_ref(shape: tuple[int, ...], dtype: jax.typing.DTypeLike, mxu_id: int):
-  from jax._src.pallas.mosaic import tpu_info  # pyrefly: ignore[missing-module-attribute]
   if len(shape) < 2:
     raise ValueError(f"Acc ref must be at least 2D, got shape {shape}")
 
@@ -409,12 +409,7 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
 
 
 def _get_default_num_cores() -> int:
-  abstract_device = jax.sharding.get_abstract_mesh().abstract_device
-  if abstract_device is None:
-    device = jax.devices()[0]
-  else:
-    device = abstract_device
-  return device.num_cores
+  return tpu_info.get_tpu_info().num_cores
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -464,21 +459,6 @@ class TensorCoreMesh(pallas_core.Mesh):
   @contextlib.contextmanager
   def tracing_context(self):
     yield
-
-
-def create_tensorcore_mesh(
-    axis_name: str,
-    devices: Sequence[jax.Device] | None = None,
-    num_cores: int | None = None,
-) -> TensorCoreMesh:
-  if devices is not None and num_cores is not None:
-    raise ValueError("cannot specify both devices and num_cores")
-  if num_cores is None:
-    if devices is None:
-      num_cores = _get_default_num_cores()
-    else:
-      num_cores = devices[0].num_cores
-  return TensorCoreMesh(axis_name=axis_name, num_cores=num_cores)
 
 
 def _convert_semaphore_type_to_aval(
@@ -542,6 +522,28 @@ def memory_space_to_tpu_memory_space(
       return memory_space
     case _:
       raise ValueError(f"Invalid memory space: {memory_space!r}")
+
+
+def unwrap_core_memory_space(
+    memory_space: (
+        MemorySpace
+        | AccMemorySpace
+        | pallas_core.MemorySpace
+        | pallas_core.CoreMemorySpace
+        | jax_core.MemorySpace
+        | None
+    ),
+) -> (
+    MemorySpace
+    | AccMemorySpace
+    | pallas_core.MemorySpace
+    | jax_core.MemorySpace
+    | None
+):
+  """Extracts the inner memory space from a `CoreMemorySpace` if wrapped."""
+  if isinstance(memory_space, pallas_core.CoreMemorySpace):
+    return memory_space.memory_space
+  return memory_space
 
 
 @tree_util.register_dataclass

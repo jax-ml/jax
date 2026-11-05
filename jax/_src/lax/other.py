@@ -252,12 +252,6 @@ def _wrap_between(x, _a):
   return lax.sub(rem, a)
 
 
-def _replace_inf(x: Array) -> Array:
-  re_x = lax.real(x) if dtypes.issubdtype(x.dtype, np.complexfloating) else x
-  inf = lax._const(re_x, float('inf'))
-  return lax.select(lax.eq(re_x, inf), lax._zeros(x), x)
-
-
 @custom_jvp
 def logaddexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Compute log(exp(x1) + exp(x2)) avoiding overflow."""
@@ -285,8 +279,9 @@ def _logaddexp_jvp(primals, tangents):
   t1, t2 = tangents
   primal_out = logaddexp(x1, x2)
   tangent_out = lax.add(
-      lax.mul(t1, lax.exp(lax.sub(_replace_inf(x1), _replace_inf(primal_out)))),
-      lax.mul(t2, lax.exp(lax.sub(_replace_inf(x2), _replace_inf(primal_out)))))
+      lax.mul(t1, lax.logistic(lax.sub(x1, x2))),
+      lax.mul(t2, lax.logistic(lax.sub(x2, x1))),
+  )
   return primal_out, tangent_out
 
 
@@ -317,6 +312,9 @@ def _logaddexp2_jvp(primals, tangents):
   x1, x2 = primals
   t1, t2 = tangents
   primal_out = logaddexp2(x1, x2)
-  tangent_out = lax.add(lax.mul(t1, lax.exp2(lax.sub(_replace_inf(x1), _replace_inf(primal_out)))),
-                        lax.mul(t2, lax.exp2(lax.sub(_replace_inf(x2), _replace_inf(primal_out)))))
+  ln2 = lax._const(x1, np.log(2))
+  tangent_out = lax.add(
+      lax.mul(t1, lax.logistic(lax.mul(lax.sub(x1, x2), ln2))),
+      lax.mul(t2, lax.logistic(lax.mul(lax.sub(x2, x1), ln2))),
+  )
   return primal_out, tangent_out

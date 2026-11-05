@@ -1182,7 +1182,7 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         jax.random.key(1), shape=RHS_SHAPE, dtype=jnp.float16
     )
     acc_init = jnp.full(ACC_SHAPE, 1.0, jnp.float32)
-    result = _kernel(acc_init, a, b)
+    result = _kernel(acc_init, jax.new_ref(a), b)
     expected = acc_init + jnp.dot(a, b, preferred_element_type=jnp.float32)
     np.testing.assert_allclose(result, expected, 1e-6, 1e-6)
 

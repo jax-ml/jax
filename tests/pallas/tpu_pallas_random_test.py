@@ -277,7 +277,7 @@ class PRNGTest(jtu.JaxTestCase):
     )(key)
     np.testing.assert_array_equal(result[0], result[1])
 
-  def test_key_in_core_map(self):
+  def test_key_in_kernel(self):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Fails on TPU <= v3")
 

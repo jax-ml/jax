@@ -1501,9 +1501,9 @@ def _reduce_system_once(
           return Unsatisfiable()
         changed = True
       case new_constraint:
-        match new_constraint.holds():  # pyrefly: ignore[missing-attribute]
+        match new_constraint.holds():
           case None:
-            constraints.append(new_constraint)  # pyrefly: ignore[bad-argument-type]
+            constraints.append(new_constraint)
             changed |= new_constraint != constraint
           case False:
             return Unsatisfiable()
@@ -1545,6 +1545,6 @@ def reduce(
       case ConstraintSystem() as new_system:
         constraint_system = new_system
       case _ as never:
-        assert_never(never)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2858
+        assert_never(never)  # pyrefly#2858
 
   return constraint_system

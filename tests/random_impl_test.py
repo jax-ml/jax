@@ -24,6 +24,7 @@ from jax import random
 from jax._src import test_util as jtu
 from jax._src.random import philox2x32 as philox2x32_internal
 from jax._src.random import philox4x32 as philox4x32_internal
+from jax._src.random import prng as prng_internal
 from jax._src.random import threefry2x32 as threefry2x32_internal
 from jax._src.random import threefry4x32 as threefry4x32_internal
 import numpy as np
@@ -36,13 +37,23 @@ class _PRNGConfig(NamedTuple):
   dtype_name: str
   key_shape: tuple[int, ...]
   key_dtype: np.dtype
+  num_streams: int
+  raw_dtype: np.dtype
 
 
 _PRNG_IMPLS = [
-    _PRNGConfig('threefry2x32', 'key<fry>', (2,), np.uint32),
-    _PRNGConfig('threefry4x32', 'key<fry4>', (4,), np.uint32),
-    _PRNGConfig('philox2x32', 'key<phx2>', (1,), np.uint32),
-    _PRNGConfig('philox4x32', 'key<phx4>', (2,), np.uint32),
+    _PRNGConfig(
+        'threefry2x32', 'key<fry>', (2,), np.uint32, 2, np.dtype('uint32')
+    ),
+    _PRNGConfig(
+        'threefry4x32', 'key<fry4>', (4,), np.uint32, 4, np.dtype('uint32')
+    ),
+    _PRNGConfig(
+        'philox2x32', 'key<phx2>', (1,), np.uint32, 2, np.dtype('uint32')
+    ),
+    _PRNGConfig(
+        'philox4x32', 'key<phx4>', (2,), np.uint32, 4, np.dtype('uint32')
+    ),
 ]
 
 
@@ -210,6 +221,33 @@ class PRNGImplTest(jtu.JaxTestCase):
     d2 = random.key_data(k2)
     self.assertFalse(np.array_equal(d1, d2))
 
+  def test_raw_bits(self, p):
+    impl_obj = prng_internal.prngs[p.impl]
+    self.assertEqual(impl_obj.num_streams, p.num_streams)
+    self.assertEqual(impl_obj.raw_dtype, p.raw_dtype)
+
+    key = random.key(0, impl=p.impl)
+    raw = prng_internal.raw_bits(key, shape=(100,))
+    self.assertIsInstance(raw, tuple)
+    self.assertLen(raw, p.num_streams)
+    for i, s in enumerate(raw):
+      self.assertEqual(s.shape, (100,))
+      self.assertEqual(s.dtype, p.raw_dtype)
+      self.assertTrue(np.any(np.asarray(s) != 0))
+      for j in range(i + 1, p.num_streams):
+        self.assertFalse(np.array_equal(s, raw[j]))
+
+    # Check jit and vmap compatibility with raw_bits.
+    keys = random.split(key, 3)
+    batched_raw = prng_internal.raw_bits(keys, shape=(10,))
+    vmapped_raw = jax.jit(
+        jax.vmap(lambda k: prng_internal.raw_bits(k, shape=(10,)))
+    )(keys)
+    self.assertLen(batched_raw, p.num_streams)
+    for s_batched, s_vmapped in zip(batched_raw, vmapped_raw):
+      self.assertEqual(s_batched.shape, (3, 10))
+      self.assertArraysEqual(s_batched, s_vmapped)
+
   def test_random_bits(self, p):
     for dtype in [np.uint8, np.uint16, np.uint32, np.uint64]:
       with self.subTest(dtype=dtype):
@@ -220,6 +258,81 @@ class PRNGImplTest(jtu.JaxTestCase):
           self.assertEqual(bits.dtype, dtype)
           # Basic plausibility check: not all zeros.
           self.assertTrue(np.any(np.asarray(bits) != 0))
+
+  def test_random_bits_num_streams(self, p):
+    for dtype in [np.uint8, np.uint16, np.uint32, np.uint64]:
+      with self.subTest(dtype=dtype), jax.enable_x64(dtype == np.uint64):
+        bits_single = random.bits(
+            random.key(0, impl=p.impl),
+            shape=(100,),
+            dtype=dtype,
+            num_streams=None,
+        )
+        self.assertIsInstance(bits_single, jax.Array)
+        self.assertEqual(bits_single.shape, (100,))
+        self.assertEqual(bits_single.dtype, dtype)
+
+        bits_1 = random.bits(
+            random.key(0, impl=p.impl),
+            shape=(100,),
+            dtype=dtype,
+            num_streams=1,
+        )
+        self.assertIsInstance(bits_1, tuple)
+        self.assertLen(bits_1, 1)
+        self.assertArraysEqual(bits_1[0], bits_single)
+
+        bit_width = np.dtype(dtype).itemsize * 8
+        prng_default = prng_internal.random_bits(
+            random.key(0, impl=p.impl), bit_width=bit_width, shape=(100,)
+        )
+        self.assertIsInstance(prng_default, tuple)
+        self.assertLen(prng_default, 1)
+        self.assertArraysEqual(prng_default[0], bits_single)
+
+        for num_streams in (2, 4):
+          streams = random.bits(
+              random.key(0, impl=p.impl),
+              shape=(100,),
+              dtype=dtype,
+              num_streams=num_streams,
+          )
+          self.assertIsInstance(streams, tuple)
+          self.assertLen(streams, num_streams)
+          for i, s in enumerate(streams):
+            self.assertEqual(s.shape, (100,))
+            self.assertEqual(s.dtype, dtype)
+            self.assertTrue(np.any(np.asarray(s) != 0))
+            for j in range(i + 1, num_streams):
+              self.assertFalse(np.array_equal(s, streams[j]))
+
+          # Check jit and vmap compatibility.
+          keys = random.split(random.key(0, impl=p.impl), 3)
+          vmapped = jax.jit(
+              jax.vmap(
+                  lambda k, ns=num_streams, dt=dtype: random.bits(
+                      k, shape=(10,), dtype=dt, num_streams=ns
+                  )
+              )
+          )(keys)
+          self.assertIsInstance(vmapped, tuple)
+          self.assertLen(vmapped, num_streams)
+          for s in vmapped:
+            self.assertEqual(s.shape, (3, 10))
+            self.assertEqual(s.dtype, dtype)
+
+          # Check direct prng.random_bits on batched keys.
+          bit_width = np.dtype(dtype).itemsize * 8
+          prng_streams = prng_internal.random_bits(
+              random.split(random.key(0, impl=p.impl), 3),
+              bit_width=bit_width,
+              shape=(10,),
+              num_streams=num_streams,
+          )
+          self.assertIsInstance(prng_streams, tuple)
+          self.assertLen(prng_streams, num_streams)
+          for s_vmap, s_prng in zip(vmapped, prng_streams):
+            self.assertArraysEqual(s_vmap, s_prng)
 
   def test_uniform(self, p):
     key = random.key(0, impl=p.impl)

@@ -71,6 +71,45 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
 
   @jtu.sample_product(
+    mode=['full', 'same', 'valid'],
+    op=['convolve', 'correlate'],
+    method=['auto', 'direct'],
+    shapes=[
+      ((8, 2), (3, 5)),
+      ((3, 5), (8, 2)),
+      ((4, 2, 7), (2, 5, 3)),
+    ],
+  )
+  def testConvolutionsMixedSizes(self, mode, op, method, shapes):
+    xshape, yshape = shapes
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [
+        rng(xshape, np.float32), rng(yshape, np.float32)
+    ]
+
+    jsp_fun = partial(
+        getattr(jsp_signal, op), mode=mode, method=method,
+        precision=lax.Precision.HIGHEST
+    )
+
+    if mode == 'valid':
+      with self.assertRaisesRegex(ValueError, 'smaller than the other'):
+        jsp_fun(*args_maker())
+      return
+
+    osp_fun = partial(
+        getattr(osp_signal, op), mode=mode, method=method
+    )
+
+    self._CheckAgainstNumpy(
+        osp_fun, jsp_fun, args_maker,
+        check_dtypes=False, tol=1e-5
+    )
+    self._CompileAndCheck(
+        jsp_fun, args_maker, rtol=1e-5, atol=1e-5
+    )
+
+  @jtu.sample_product(
     [dict(xshape=xshape, yshape=yshape)
      for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
      for xshape in shapeset
@@ -350,8 +389,6 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   def testWelchWithDefaultStepArgsAgainstNumpy(
       self, *, shape, dtype, nperseg, noverlap, use_nperseg, use_noverlap,
       use_window, timeaxis):
-    if tuple(shape) == (2, 3, 389, 5) and nperseg == 17 and noverlap == 13:
-      raise unittest.SkipTest("Test fails for these inputs")
     kwargs = {'axis': timeaxis}
 
     if use_nperseg:
@@ -365,7 +402,8 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     def osp_fun(x):
       freqs, Pxx = osp_signal.welch(x, **kwargs)
       return freqs.astype(_real_dtype(dtype)), Pxx.astype(_real_dtype(dtype))
-    jsp_fun = partial(jsp_signal.welch, **kwargs)
+    jsp_fun = jtu.ignore_warning(message="nperseg")(
+        partial(jsp_signal.welch, **kwargs))
     tol = {
         np.float32: 1e-5, np.float64: 1e-12,
         np.complex64: 1e-5, np.complex128: 1e-12
