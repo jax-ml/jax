@@ -502,6 +502,9 @@ jax_multiplatform_test(
         "tpu_v3_x4",
         "gpu_h100x2_full",
     ],
+    shard_count = {
+        "cpu": 5,
+    },
     tags = ["multiaccelerator"],
     deps = py_deps([
         "absl/testing",

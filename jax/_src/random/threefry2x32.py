@@ -181,14 +181,22 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   return tuple(x)
 
 
-# Since the unrolled lowering is large, emit it as an out-of-line function.
-_threefry2x32_lowering_rule = mlir.lower_fun(
-    partial(_threefry2x32_lowering, use_rolled_loops=False),
-    multiple_results=True)
+def _make_threefry2x32_lowering_rule(*, use_rolled_loops: bool):
+  base_rule = mlir.lower_fun(
+      partial(_threefry2x32_lowering, use_rolled_loops=use_rolled_loops),
+      multiple_results=True)
+  def _rule(ctx, *args):
+    avals_in = [
+        a.update(manual_axis_type=core.empty_mat) for a in ctx.avals_in]
+    return mlir.delegate_lowering(ctx, base_rule, *args, avals_in=avals_in)
+  return _rule
 
-_threefry2x32_cpu_lowering_rule = mlir.lower_fun(
-    partial(_threefry2x32_lowering, use_rolled_loops=True),
-    multiple_results=True)
+# Since the unrolled lowering is large, emit it as an out-of-line function.
+_threefry2x32_lowering_rule = _make_threefry2x32_lowering_rule(
+    use_rolled_loops=False)
+
+_threefry2x32_cpu_lowering_rule = _make_threefry2x32_lowering_rule(
+    use_rolled_loops=True)
 
 
 def _threefry2x32_gpu_lowering_rule(ctx, k1, k2, x1, x2, *, target_name_prefix):
@@ -201,16 +209,19 @@ def _threefry2x32_gpu_lowering_rule(ctx, k1, k2, x1, x2, *, target_name_prefix):
   rank = len(aval_out.shape)
   if 0 in aval_out.shape:
     zeros = mlir.full_like_aval(ctx, 0, aval_out)
-    return [zeros, zeros]
-  def _broadcast(x, aval):
-    return mlir.broadcast_in_dim(ctx, x, aval_out,
-                                 broadcast_dimensions=range(rank - len(aval.shape), rank))
+    outs = [zeros, zeros]
+  else:
+    def _broadcast(x, aval):
+      return mlir.broadcast_in_dim(
+          ctx, x, aval_out,
+          broadcast_dimensions=range(rank - len(aval.shape), rank))
 
-  sub_ctx = ctx.replace(avals_in=(aval_out,) * 4)
-  rule = ffi.ffi_lowering(
-      f"{target_name_prefix}_threefry2x32_ffi")
-  return rule(sub_ctx, _broadcast(k1, k1_aval), _broadcast(k2, k2_aval),
-              _broadcast(x1, x1_aval), _broadcast(x2, x2_aval))
+    sub_ctx = ctx.replace(avals_in=(aval_out,) * 4)
+    rule = ffi.ffi_lowering(f"{target_name_prefix}_threefry2x32_ffi")
+    outs = rule(sub_ctx, _broadcast(k1, k1_aval), _broadcast(k2, k2_aval),
+                _broadcast(x1, x1_aval), _broadcast(x2, x2_aval))
+  return [mlir.lower_with_sharding_in_types(ctx, o, a)
+          for o, a in zip(outs, ctx.avals_out)]
 
 
 threefry2x32_p = core.Primitive("threefry2x32")
@@ -288,14 +299,19 @@ def threefry_2x32(keypair, count):
   return lax.reshape(out_no_padding, count.shape)
 
 
-def threefry_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
+def threefry_split(
+    key: typing.Array, shape: prng.Shape, *, out_sharding=None
+) -> typing.Array:
   shape = tuple(map(core.concrete_dim_or_error, shape))
-  return _threefry_split(key, shape)
+  return _threefry_split(key, shape, out_sharding)
 
-@api.jit(static_argnums=(1,))
-def _threefry_split(key, shape) -> typing.Array:
+@api.jit(static_argnums=(1, 2))
+def _threefry_split(key, shape, out_sharding=None) -> typing.Array:
   if config.threefry_partitionable.value:
-    return _threefry_split_foldlike(key, shape)
+    return _threefry_split_foldlike(key, shape, out_sharding)
+  elif out_sharding is not None and not out_sharding.is_fully_replicated:
+    raise NotImplementedError(
+        'out_sharding requires jax_threefry_partitionable=True.')
   else:
     return _threefry_split_original(key, shape)
 
@@ -305,10 +321,10 @@ def _threefry_split_original(key, shape) -> typing.Array:
   counts = lax.iota(np.uint32, num * 2)
   return lax.reshape(threefry_2x32(key, counts), (*shape, 2))
 
-@api.jit(static_argnums=(1,), inline=api.Inline.JAX_EARLY)
-def _threefry_split_foldlike(key, shape) -> typing.Array:
+@api.jit(static_argnums=(1, 2), inline=api.Inline.JAX_EARLY)
+def _threefry_split_foldlike(key, shape, out_sharding=None) -> typing.Array:
   k1, k2 = key
-  counts1, counts2 = prng.iota_2x32_shape(shape)
+  counts1, counts2 = prng.iota_2x32_shape(shape, out_sharding=out_sharding)
   bits1, bits2 = threefry2x32_p.bind(k1, k2, counts1, counts2)
   return jnp.stack([bits1, bits2], axis=bits1.ndim)
 
@@ -323,13 +339,17 @@ def _threefry_fold_in(key, data):
 
 
 def threefry_raw_bits(
-    key: typing.Array, shape: prng.Shape
+    key: typing.Array, shape: prng.Shape, *, out_sharding=None
 ) -> tuple[typing.Array, ...]:
   """Sample raw 32-bit uniform random bit streams using PRNG key."""
   if not _is_threefry_prng_key(key):
     raise TypeError("threefry_raw_bits got invalid prng key.")
   if config.threefry_partitionable.value:
-    return _threefry_raw_bits_partitionable(key, shape)
+    return _threefry_raw_bits_partitionable(
+        key, shape, out_sharding=out_sharding)
+  elif out_sharding is not None and not out_sharding.is_fully_replicated:
+    raise NotImplementedError(
+        'out_sharding requires jax_threefry_partitionable=True.')
   else:
     k0, k1 = _threefry_split_original(key, (2,))
     return (
@@ -338,16 +358,18 @@ def threefry_raw_bits(
     )
 
 def _threefry_raw_bits_partitionable(
-    key: typing.Array, shape: prng.Shape
+    key: typing.Array, shape: prng.Shape, *, out_sharding=None
 ) -> tuple[typing.Array, ...]:
   if all(core.is_constant_dim(d) for d in shape) and math.prod(shape) > 2 ** 64:
     raise NotImplementedError('random bits array of size exceeding 2 ** 64')
   k1, k2 = key
-  counts1, counts2 = prng.iota_2x32_shape(shape)
+  counts1, counts2 = prng.iota_2x32_shape(shape, out_sharding=out_sharding)
   return tuple(threefry2x32_p.bind(k1, k2, counts1, counts2))
 
 
-def threefry_random_bits(key: typing.Array, bit_width, shape):
+def threefry_random_bits(
+    key: typing.Array, bit_width, shape, *, out_sharding=None
+):
   """Sample uniform random bits of given width and shape using PRNG key."""
   if not _is_threefry_prng_key(key):
     raise TypeError("threefry_random_bits got invalid prng key.")
@@ -356,8 +378,10 @@ def threefry_random_bits(key: typing.Array, bit_width, shape):
 
   if config.threefry_partitionable.value:
     return prng._raw_bits_to_random_bits(
-        threefry_prng_impl, key, bit_width, shape
-    )[0]
+        threefry_prng_impl, key, bit_width, shape, out_sharding=out_sharding)[0]
+  elif out_sharding is not None and not out_sharding.is_fully_replicated:
+    raise NotImplementedError(
+        'out_sharding requires jax_threefry_partitionable=True.')
   else:
     return _threefry_random_bits_original(key, bit_width, shape)
 
@@ -415,7 +439,8 @@ threefry_prng_impl = prng.PRNGImpl(
     tag='fry',
     raw_bits=threefry_raw_bits,
     num_streams=2,
-    raw_dtype=np.dtype('uint32'))
+    raw_dtype=np.dtype('uint32'),
+    supports_out_sharding=True)
 
 prng.register_prng(threefry_prng_impl)
 

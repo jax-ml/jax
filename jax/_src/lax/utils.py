@@ -235,8 +235,12 @@ def call_ur_rule(prim, ur_rule, out_s, num_out, *avals, **kwargs):
 def call_sharding_rule(prim, sh_rule, ur_rule, num_out, *avals, **kwargs):
   cur_mesh = mesh_lib.get_abstract_mesh()
   aval_mesh = _get_abstract_mesh_from_avals(avals)
+  out_s_kw = kwargs.get('out_sharding')
+  out_mesh = (out_s_kw.mesh if isinstance(out_s_kw, NamedSharding)
+              else mesh_lib.empty_abstract_mesh)
   if ((cur_mesh.empty or cur_mesh._are_all_axes_auto_or_manual) and
-      (aval_mesh.empty or aval_mesh._are_all_axes_auto_or_manual)):
+      (aval_mesh.empty or aval_mesh._are_all_axes_auto_or_manual) and
+      (out_mesh.empty or out_mesh._are_all_axes_auto_or_manual)):
     aval_mesh = cur_mesh if aval_mesh.empty else aval_mesh
     out_s = NamedSharding(aval_mesh, P())
     return out_s if num_out is None else [out_s] * num_out
