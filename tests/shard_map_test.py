@@ -2995,6 +2995,22 @@ class ShardMapTest(jtu.JaxTestCase):
     with jax.disable_jit():
       f(x)  # don't crash
 
+  @parameterized.parameters([False, True])
+  def test_eager_no_recompile_on_second_call(self, disable_jit):
+    mesh = jtu.create_mesh((2,), ('x',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      return jnp.sin(x) * 2. + 1.
+
+    x = jnp.arange(8.)
+    with jax.disable_jit(disable_jit):
+      expected = f(x)
+      with jtu.count_jit_and_pmap_lowerings() as count:
+        out = f(x)
+    self.assertEqual(count(), 0)
+    self.assertArraysEqual(out, expected)
+
   @jtu.with_explicit_mesh((2,), 'x')
   def test_jacrev_explicit(self, mesh):
     B, N, H = 20, 6, 8
