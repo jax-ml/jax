@@ -10747,6 +10747,20 @@ def _top_k_batch_rule(batched_args, batch_dims, *, k, axis, is_stable):
   bdim, = batch_dims
   if bdim <= axis:
     axis += 1
+  if axis == operand.ndim - 1 and operand.ndim > 2:
+    orig_shape = operand.shape
+    out_shape = (*orig_shape[:-1], k)
+    try:
+      operand_2d = reshape(
+          operand, (math.prod(orig_shape[:-1]), orig_shape[-1])
+      )
+      values, indices = top_k(operand_2d, k=k, axis=1, is_stable=is_stable)
+      return (reshape(values, out_shape), reshape(indices, out_shape)), (
+          bdim,
+          bdim,
+      )
+    except core.ShardingTypeError:
+      pass
   return top_k(operand, k=k, axis=axis, is_stable=is_stable), (bdim, bdim)
 
 

@@ -734,6 +734,39 @@ class LaxVmapTest(jtu.JaxTestCase):
     op2 = lambda x: lax.top_k(x, k=k, axis=axis)[1]
     self._CheckBatching(op2, 5, bdims, (shape,), (dtype,), rng)
 
+  @jtu.sample_product(bdim=[0, 1])
+  def test_top_k_vmap_reshapes_to_2d(self, bdim):
+    x = jnp.arange(4 * 3 * 8, dtype=jnp.float32).reshape(4, 3, 8)
+    fn = jax.vmap(partial(lax.top_k, k=2), in_axes=bdim)
+    jaxpr = jax.make_jaxpr(fn)(x)
+    top_k_eqns = [e for e in jaxpr.eqns if e.primitive is lax.top_k_p]
+    self.assertLen(top_k_eqns, 1)
+    self.assertEqual(top_k_eqns[0].invars[0].aval.shape, (12, 8))
+    self.assertEqual(top_k_eqns[0].params['axis'], 1)
+    vals, idxs = fn(x)
+    expected_vals, expected_idxs = lax.top_k(
+        jnp.moveaxis(x, bdim, 0), k=2, axis=-1
+    )
+    self.assertArraysEqual(vals, expected_vals)
+    self.assertArraysEqual(idxs, expected_idxs)
+
+    # Nested vmap should also flatten all leading + vmap dims into 2D.
+    x_4d = jnp.arange(2 * 4 * 3 * 8, dtype=jnp.float32).reshape(2, 4, 3, 8)
+    nested_fn = jax.vmap(fn, in_axes=0)
+    nested_jaxpr = jax.make_jaxpr(nested_fn)(x_4d)
+    nested_top_k_eqns = [
+        e for e in nested_jaxpr.eqns if e.primitive is lax.top_k_p
+    ]
+    self.assertLen(nested_top_k_eqns, 1)
+    self.assertEqual(nested_top_k_eqns[0].invars[0].aval.shape, (24, 8))
+    self.assertEqual(nested_top_k_eqns[0].params['axis'], 1)
+    nested_vals, nested_idxs = nested_fn(x_4d)
+    expected_nested_vals, expected_nested_idxs = lax.top_k(
+        jnp.moveaxis(x_4d, bdim + 1, 1), k=2, axis=-1
+    )
+    self.assertArraysEqual(nested_vals, expected_nested_vals)
+    self.assertArraysEqual(nested_idxs, expected_nested_idxs)
+
   @jtu.sample_product(
     [dict(shape=shape, bdims=bdims)
       for shape in [(8,), (3, 4, 5)]
