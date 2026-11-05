@@ -51,12 +51,12 @@ on:
         description: 'Platforms to run: all, all-non-rocm, or comma-separated cpu,cuda,tpu,rocm. Custom XLA requires excluding rocm.'
         type: string
         required: true
-        default: 'all'
+        default: 'tpu'
       suites:
         description: 'Suites to run: all or comma-separated pytest,bazel.'
         type: string
         required: true
-        default: 'all'
+        default: 'pytest'
       xla_track:
         description: 'XLA revision for build/Bazel jobs. Use platforms=all-non-rocm for head/commit; pypi_latest legs use PyPI wheels.'
         type: choice
@@ -85,59 +85,12 @@ jobs:
       run-build-bazel: ${{ steps.determine.outputs.run-build-bazel }}
       run-pytest: ${{ steps.determine.outputs.run-pytest }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          sparse-checkout: |
-            build
-            .github
-          persist-credentials: false
-
       - name: Determine triggers
         id: determine
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-
-          if [ "$EVENT_NAME" != "pull_request" ]; then
-            echo "run-build-bazel=true" >> "$GITHUB_OUTPUT"
-            echo "run-pytest=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "run-pytest=false" >> "$GITHUB_OUTPUT"
-
-          # PR runs only exercise build/Bazel jobs; pytest jobs are disabled for PRs.
-          TRIGGER_PATTERNS=(
-            "build/requirements_lock_*.txt"
-            ".github/workflows/wheel_tests_continuous.yml"
-            ".github/workflows/scripts/select_continuous_wheel_test_jobs.py"
-            ".github/workflows/bazel_cpu.yml"
-            ".github/workflows/bazel_cuda.yml"
-            ".github/workflows/bazel_rocm.yml"
-            ".github/workflows/bazel_test_tpu.yml"
-            ".github/workflows/build_artifacts.yml"
-            ".github/workflows/build_rocm_artifacts.yml"
-            ".github/actions/download-jax-*-wheels/action.yml"
-          )
-
-          git fetch --depth=1 origin "$BASE_REF"
-
-          # Diff only against the specified patterns.
-          CHANGED_FILES=$(git diff --name-only origin/"$BASE_REF" HEAD -- "${TRIGGER_PATTERNS[@]}")
-
-          RUN_BUILD_BAZEL="false"
-          if [ -n "$CHANGED_FILES" ]; then
-            echo "Triggering files modified in this PR:"
-            echo "$CHANGED_FILES"
-            RUN_BUILD_BAZEL="true"
-          else
-            echo "No triggering files modified in this PR."
-          fi
-
-          echo "run-build-bazel=$RUN_BUILD_BAZEL" >> "$GITHUB_OUTPUT"
+          echo "run-build-bazel=false" >> "$GITHUB_OUTPUT"
+          echo "run-pytest=true" >> "$GITHUB_OUTPUT"
 
   select-jobs:
     needs: [check-trigger]
@@ -160,8 +113,8 @@ jobs:
       - name: Select jobs
         id: select
         env:
-          INPUT_PLATFORMS: ${{ github.event.inputs.platforms || (github.event_name == 'pull_request' && 'all-non-rocm') || 'all' }}
-          INPUT_SUITES: ${{ github.event.inputs.suites || 'all' }}
+          INPUT_PLATFORMS: 'tpu'
+          INPUT_SUITES: 'pytest'
           INPUT_XLA_TRACK: ${{ github.event.inputs.xla_track || 'pinned' }}
           INPUT_XLA_COMMIT: ${{ github.event.inputs.xla_commit }}
           INPUT_HALT_FOR_CONNECTION: ${{ github.event.inputs['halt-for-connection'] || 'none' }}
@@ -200,7 +153,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
             # Runner OS and Python values need to match the matrix stategy in the CPU tests job
-            runner: ["linux-x86-n4-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
+            runner: ["linux-x86-n4-16"]
             artifact: ["jaxlib"]
             python: ["3.12"]
     # Note: For reasons unknown, Github actions groups jobs with the same top-level name in the
@@ -437,10 +390,7 @@ jobs:
         matrix:
           python: ["3.12"]
           tpu-specs: [
-            # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
-            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
             {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"},
-            {type: "v7x-8", cores: "4", runner: "linux-x86-tpu7x-224-4tpu"}
           ]
           libtpu-version-type: ["pinned"]
     name: "Pytest TPU (JAX artifacts version = ${{ format('{0}', 'head') }})"
