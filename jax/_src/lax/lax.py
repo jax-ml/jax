@@ -5140,24 +5140,33 @@ def _logistic_jvp_rule(g, ans, x, accuracy):
 ad.defjvp2(logistic_p, _logistic_jvp_rule)
 core.pp_eqn_rules[logistic_p] = _unary_with_accuracy_pp_rule
 
-def logistic_impl(x, accuracy):
-  one = _const(x, 1)
+def logistic_impl(x, accuracy, *, preserve_subnormals=False):
+  one = full_like(x, 1)
   if (
-      accuracy is AccuracyMode.HIGHEST
-      and config.jax_accurate_logistic.value
-      and dtypes.issubdtype(x.dtype, np.floating)
-  ):
+      preserve_subnormals
+      or x.dtype == np.float16
+      or (
+          accuracy is AccuracyMode.HIGHEST
+          and config.jax_accurate_logistic.value
+      )
+  ) and dtypes.issubdtype(x.dtype, np.floating):
     # For x < 0, 1 / (1 + exp(-x)) loses accuracy when adding 1 to exp(-x)
-    # and overflows exp(-x) to inf (yielding 0) well before logistic(x)
-    # underflows. Computing e = exp(-|x|) keeps the exponent non-positive so
-    # exp never overflows, and selects 1 / (1 + e) for x >= 0 and e / (1 + e)
-    # for x < 0.
-    e = exp(neg(abs(x)), accuracy=accuracy)
-    one_plus_e = add(one, e)
-    return select(ge(x, _const(x, 0)), div(one, one_plus_e), div(e, one_plus_e))
-  return div(one, add(one, exp(neg(x))))
+    # and overflows exp(-x) to inf (yielding 0) well before subnormal
+    # logistic(x) underflows. Computing e = exp(-|x|) keeps the exponent
+    # non-positive so exp never overflows.
+    e = exp(-abs(x), accuracy=accuracy)
+    return select(x >= _const(x, 0), one, e) / (one + e)
+  return one / (one + exp(-x))
 mlir.register_lowering(logistic_p,
                        mlir.lower_fun(logistic_impl, multiple_results=False))
+# Unlike CPU and TPU, GPU preserves subnormals by default.
+mlir.register_lowering(
+    logistic_p,
+    mlir.lower_fun(
+        partial(logistic_impl, preserve_subnormals=True), multiple_results=False
+    ),
+    platform='gpu',
+)
 
 def _logistic_tpu_lowering(ctx, x, *, accuracy):
   old_impl = lambda: mlir.lower_fun(logistic_impl, multiple_results=False
