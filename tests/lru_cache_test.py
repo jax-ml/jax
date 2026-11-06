@@ -21,7 +21,7 @@ import time
 from absl.testing import absltest
 
 from jax._src import path as pathlib
-from jax._src.lru_cache import _ATIME_SUFFIX, _CACHE_SUFFIX, LRUCache
+from jax._src.lru_cache import _ATIME_SUFFIX, _CACHE_SUFFIX, _SIZE_FILE, LRUCache
 import jax._src.test_util as jtu
 
 
@@ -157,6 +157,16 @@ class LRUCacheTest(LRUCacheTestCase):
     # before entries with a valid atime.
     cache.put("c", b"c")
     self.assertCacheKeys(("b", "c"))
+
+  def test_unreadable_size_file_does_not_block_writes(self):
+    cache = LRUCache(self.name, max_size=1)
+    cache.put("a", b"a")
+
+    # A process can exit while writing the size total and leave it empty.
+    # Writes should still succeed and keep the cache within its limit.
+    (self.path / _SIZE_FILE).write_text("")
+    cache.put("b", b"b")
+    self.assertCacheKeys(("b",))
 
   def test_enable_eviction_for_existing_unbounded_cache(self):
     cache = LRUCache(self.name, max_size=-1)
