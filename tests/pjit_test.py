@@ -10951,6 +10951,41 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertRegex(lowered_text, r'multiply.*frontend_attributes')
 
   @jtu.with_explicit_mesh((2,), 'x')
+  def test_xla_metadata_value_on_unreduced(self, mesh):
+    np_x = np.arange(8, dtype=np.float32).reshape(4, 2)
+    np_dy = np.arange(12, dtype=np.float32).reshape(4, 3)
+    x = jax.device_put(np_x, P('x', None))
+    dy = jax.device_put(np_dy, P('x', None))
+
+    def unreduced_dw(x, dy):
+      return jnp.einsum('bi,bo->io', x, dy, out_sharding=P(unreduced={'x'}))
+
+    @jax.jit
+    def tagged_op(x, dy):
+      dw = set_xla_metadata(unreduced_dw(x, dy), _op_tag='yes')
+      return jax.reshard(dw, P())
+
+    self.assertIn('_op_tag = "yes"', tagged_op.lower(x, dy).as_text())
+    self.assertArraysEqual(tagged_op(x, dy), np_x.T @ np_dy)
+
+    @jax.jit
+    def tagged_loop(x, dy):
+      def body(_, acc):
+        return acc + unreduced_dw(x, dy)
+
+      dw = jax.lax.fori_loop(jnp.asarray(1), 3, body, unreduced_dw(x, dy))
+      dw = set_xla_metadata(dw, _loop_tag='yes')
+      return jax.reshard(dw, P())
+
+    hlo = tagged_loop.lower(x, dy).as_text('hlo')
+    while_lines = [
+        line for line in hlo.splitlines()
+        if 'while(' in line and '_loop_tag="yes"' in line
+    ]
+    self.assertLen(while_lines, 1)
+    self.assertArraysEqual(tagged_loop(x, dy), 3 * (np_x.T @ np_dy))
+
+  @jtu.with_explicit_mesh((2,), 'x')
   def test_cet_unreduced(self, mesh):
     x = jnp.array([[1, 2], [3, 4]])
     out = jnp.array(x, out_sharding=P(unreduced={'x'}))

@@ -129,6 +129,19 @@ xla_metadata_value_p.def_abstract_eval(lambda aval, *, xla_metadata_kvs: aval)
 batching.defvectorized(xla_metadata_value_p)
 # TODO(nbasile): Implement tagging gradient ops with metadata.
 ad.deflinear2(xla_metadata_value_p, lambda ct, _, **kwargs: (ct,))
+xla_metadata_value_p.is_high = lambda aval, **_: aval.is_high  # type: ignore
+
+
+def _xla_metadata_value_to_lojax(hi_x, *, xla_metadata_kvs):
+  aval = core.typeof(hi_x)
+  lo_outs = [
+      xla_metadata_value_p.bind(lo_x, xla_metadata_kvs=xla_metadata_kvs)
+      for lo_x in aval.lower_val(hi_x)
+  ]
+  return aval.raise_val(*lo_outs)
+
+
+xla_metadata_value_p.to_lojax = _xla_metadata_value_to_lojax  # type: ignore
 
 
 def _xla_metadata_value_lowering_rule(
