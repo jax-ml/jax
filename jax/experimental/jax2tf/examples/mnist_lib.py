@@ -170,9 +170,10 @@ class PureJaxMNIST:
         - the parameters "Params" for the predictor function
     """
     rng = jax.random.PRNGKey(0)
+    rngs = [jax.random.fold_in(rng, i) for i in range(len(layer_sizes) - 1)]
     params = []
-    for m, n in zip(layer_sizes[:-1], layer_sizes[1:]):
-      rng, w_key, b_key = jax.random.split(rng, 3)
+    for key, m, n in zip(rngs, layer_sizes[:-1], layer_sizes[1:]):
+      w_key, b_key = jax.random.split(key)
       params.append((param_scale * jax.random.normal(w_key, (m, n)),
                      param_scale * jax.random.normal(b_key, (n,))))
 
