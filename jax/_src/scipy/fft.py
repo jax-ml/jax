@@ -500,3 +500,380 @@ def _dct_deinterleave(x: Array, axis: int) -> Array:
   out =  out.at[evens].set(v0)
   out = out.at[odds].set(v1)
   return out
+
+
+def dst(x: Array, type: int = 2, n: int | None = None,
+        axis: int = -1, norm: str | None = None) -> Array:
+  """Computes the discrete sine transform of the input
+
+  JAX implementation of :func:`scipy.fft.dst`.
+
+  Args:
+    x: array
+    type: integer, default = 2. Currently only type 2 is supported.
+    n: integer, default = x.shape[axis]. The length of the transform.
+      If larger than ``x.shape[axis]``, the input will be zero-padded, if
+      smaller, the input will be truncated.
+    axis: integer, default=-1. The axis along which the dst will be performed.
+    norm: string. The normalization mode: one of ``[None, "backward", "ortho"]``.
+      The default is ``None``, which is equivalent to ``"backward"``.
+
+  Returns:
+    array containing the discrete sine transform of x
+
+  See Also:
+    - :func:`jax.scipy.fft.dstn`: multidimensional DST
+    - :func:`jax.scipy.fft.idst`: inverse DST
+    - :func:`jax.scipy.fft.idstn`: multidimensional inverse DST
+
+  Examples:
+    >>> x = jax.random.normal(jax.random.key(0), (3, 3))
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dst(x))
+    [[ 5.24  3.56 -1.67]
+     [-0.7   1.55 -2.45]
+     [ 1.16 -2.01 -0.65]]
+
+    When ``n`` smaller than ``x.shape[axis]``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dst(x, n=2))
+    [[ 5.16 -0.81]
+     [ 0.14 -0.51]
+     [-0.   -1.98]]
+
+    When ``n`` smaller than ``x.shape[axis]`` and ``axis=0``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dst(x, n=2, axis=0))
+    [[ 2.18  3.11 -1.99]
+     [ 3.4   3.7   1.08]]
+
+    When ``n`` larger than ``x.shape[axis]`` and ``axis=1``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dst(x, n=4, axis=1))
+    [[ 4.18  5.77  1.78 -1.67]
+     [-1.53  1.51  0.46 -2.45]
+     [ 1.76 -0.94 -1.8  -0.65]]
+  """
+  x = ensure_arraylike("dst", x)
+  axis = canonicalize_axis(axis, x.ndim)
+  if type == 2:
+    empty_slice = slice(None)
+    odds = tuple(
+        slice(1, None, 2) if i == axis else empty_slice for i in range(len(x.shape)))
+    if jnp.issubdtype(x.dtype, jnp.bool_):
+      x = x.astype("f4")
+    x = x.at[odds].multiply(-1)
+    return lax.rev(dct(x, type, n, axis, norm), (axis,))
+  raise ValueError('Only DST type 2 is implemented.')
+
+
+def dstn(x: Array, type: int = 2,
+         s: Sequence[int] | None=None,
+         axes: Sequence[int] | None = None,
+         norm: str | None = None) -> Array:
+  """Computes the multidimensional discrete sine transform of the input
+
+  JAX implementation of :func:`scipy.fft.dstn`.
+
+  Args:
+    x: array
+    type: integer, default = 2. Currently only type 2 is supported.
+    s: integer or sequence of integers. Specifies the shape of the result. If
+      not specified, it will default to the shape of ``x`` along the specified
+      ``axes``.
+    axes: integer or sequence of integers. Specifies the axes along which the
+      transform will be computed. If not given, the last ``len(s)`` axes are
+      used, or all axes if ``s`` is also not specified.
+    norm: string. The normalization mode: one of
+      ``[None, "backward", "ortho"]``. The default is ``None``, which is
+      equivalent to ``"backward"``.
+
+  Returns:
+    array containing the discrete sine transform of x
+
+  See Also:
+    - :func:`jax.scipy.fft.dst`: one-dimensional DST
+    - :func:`jax.scipy.fft.idst`: one-dimensional inverse DST
+    - :func:`jax.scipy.fft.idstn`: multidimensional inverse DST
+
+  Examples:
+
+    ``jax.scipy.fft.dstn`` computes the transform along both the axes by default
+    when ``axes`` argument is ``None`` and ``s`` is also ``None``.
+
+    >>> x = jax.random.normal(jax.random.key(0), (3, 3))
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dstn(x))
+    [[ 5.    4.65 -7.23]
+     [ 7.07  9.65 -1.77]
+     [14.19  0.01  0.26]]
+
+    When ``s=[2]``, the transform will be computed only along the last axis,
+    with its dimension padded or truncated to size ``2``:
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dstn(x, s=[2]))
+    [[ 5.16 -0.81]
+     [ 0.14 -0.51]
+     [-0.   -1.98]]
+
+    When ``s=[2]`` and ``axes=[0]``, the transform will be computed only along
+    the specified axis, with its dimension padded or truncated to size ``2``:
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dstn(x, s=[2], axes=[0]))
+    [[ 2.18  3.11 -1.99]
+     [ 3.4   3.7   1.08]]
+
+    When ``s=[2, 4]``, shape of the transform will be ``(2, 4)``.
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dstn(x, s=[2, 4]))
+    [[ 3.75 10.3   3.17 -5.84]
+     [11.43  8.52  2.63  1.56]]
+  """
+  x = ensure_arraylike("dstn", x)
+
+  if type != 2:
+    raise NotImplementedError('Only DST type 2 is implemented.')
+  if norm is not None and norm not in ['backward', 'ortho']:
+    raise ValueError(f"jax.scipy.fft.dstn: {norm=!r} is not implemented")
+
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return lax.complex(
+      dstn(x.real, type=type, s=s, norm=norm, axes=axes),
+      dstn(x.imag, type=type, s=s, norm=norm, axes=axes),
+    )
+
+  if s is not None:
+    try:
+      s = list(s)
+    except TypeError:
+      assert not isinstance(s, Sequence)
+      s = [operator.index(s)]
+    if len(s) > x.ndim:
+      raise ValueError(
+          f"s must have at most x.ndim ({x.ndim}) elements, got {len(s)}"
+      )
+
+  if axes is None:
+    if s is not None:
+      axes = tuple(range(x.ndim - len(s), x.ndim))
+    else:
+      axes = tuple(range(x.ndim))
+  else:
+    axes = canonicalize_axis_tuple(axes, x.ndim)
+
+  if len(axes) == 1:
+    return dst(x, n=s[0] if s is not None else None, axis=axes[0], norm=norm)
+
+  if s is not None:
+    ns = dict(zip(axes, s))
+    pads = [(0, ns[a] - x.shape[a] if a in ns else 0, 0) for a in range(x.ndim)]
+    x = lax.pad(x, jnp.array(0, x.dtype), pads)
+
+  # compose high-D DSTs from 1D DSTs:
+  for axis in axes:
+    x = dst(x, axis=axis, norm=norm)
+  return x
+
+
+def idst(x: Array, type: int = 2, n: int | None = None,
+         axis: int = -1, norm: str | None = None) -> Array:
+  """Computes the inverse discrete sine transform of the input
+
+  JAX implementation of :func:`scipy.fft.idst`.
+
+  Args:
+    x: array
+    type: integer, default = 2. Currently only type 2 is supported.
+    n: integer, default = x.shape[axis]. The length of the transform.
+      If larger than ``x.shape[axis]``, the input will be zero-padded, if
+      smaller, the input will be truncated.
+    axis: integer, default=-1. The axis along which the dst will be performed.
+    norm: string. The normalization mode: one of ``[None, "backward", "ortho"]``.
+      The default is ``None``, which is equivalent to ``"backward"``.
+
+  Returns:
+    array containing the inverse discrete sine transform of x
+
+  See Also:
+    - :func:`jax.scipy.fft.dst`: DST
+    - :func:`jax.scipy.fft.dstn`: multidimensional DST
+    - :func:`jax.scipy.fft.idstn`: multidimensional inverse DST
+
+  Examples:
+
+    >>> x = jax.random.normal(jax.random.key(0), (3, 3))
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...    print(jax.scipy.fft.idst(x))
+    [[ 0.78  0.61 -0.39]
+     [-0.12  0.14 -0.23]
+     [ 0.17 -0.28 -0.11]]
+
+    When ``n`` smaller than ``x.shape[axis]``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...    print(jax.scipy.fft.idst(x, n=2))
+    [[ 1.08  0.07]
+     [ 0.02 -0.07]
+     [-0.05 -0.3 ]]
+
+    When ``n`` smaller than ``x.shape[axis]`` and ``axis=0``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...    print(jax.scipy.fft.idst(x, n=2, axis=0))
+    [[ 0.55  0.76 -0.4 ]
+     [ 0.59  0.67  0.09]]
+
+    When ``n`` larger than ``x.shape[axis]`` and ``axis=0``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...    print(jax.scipy.fft.idst(x, n=4, axis=0))
+    [[ 0.03  0.34 -0.06]
+     [ 0.41  0.45 -0.34]
+     [ 0.44  0.39  0.01]
+     [ 0.05  0.28  0.28]]
+
+    ``jax.scipy.fft.idst`` can be used to reconstruct ``x`` from the result
+    of ``jax.scipy.fft.dst``
+
+    >>> x_dst = jax.scipy.fft.dst(x)
+    >>> jnp.allclose(x, jax.scipy.fft.idst(x_dst))
+    Array(True, dtype=bool)
+  """
+  x = ensure_arraylike("idst", x)
+  axis = canonicalize_axis(axis, x.ndim)
+  if type == 2:
+    if n is not None:
+      x = lax.pad(x, jnp.array(0, x.dtype),
+                  [(0, n - x.shape[axis] if a == axis else 0, 0)
+                  for a in range(x.ndim)])
+    res = idct(lax.rev(x, (axis,)), type, n, axis, norm)
+    empty_slice = slice(None)
+    odds = tuple(
+        slice(1, None, 2) if i == axis else empty_slice for i in range(len(x.shape)))
+    res = res.at[odds].multiply(-1)
+    return res
+  raise ValueError('Only DST type 2 is implemented.')
+
+
+def idstn(x: Array, type: int = 2,
+          s: Sequence[int] | None=None,
+          axes: Sequence[int] | None = None,
+          norm: str | None = None) -> Array:
+  """Computes the multidimensional inverse discrete sine transform of the input
+
+  JAX implementation of :func:`scipy.fft.idstn`.
+
+  Args:
+    x: array
+    type: integer, default = 2. Currently only type 2 is supported.
+    s: integer or sequence of integers. Specifies the shape of the result. If
+      not specified, it will default to the shape of ``x`` along the specified
+      ``axes``.
+    axes: integer or sequence of integers. Specifies the axes along which the
+      transform will be computed. If not given, the last ``len(s)`` axes are
+      used, or all axes if ``s`` is also not specified.
+    norm: string. The normalization mode: one of
+      ``[None, "backward", "ortho"]``. The default is ``None``, which is
+      equivalent to ``"backward"``.
+
+  Returns:
+    array containing the inverse discrete sine transform of x
+
+  See Also:
+    - :func:`jax.scipy.fft.dst`: one-dimensional DST
+    - :func:`jax.scipy.fft.dstn`: multidimensional DST
+    - :func:`jax.scipy.fft.idst`: one-dimensional inverse DST
+
+  Examples:
+
+    ``jax.scipy.fft.idstn`` computes the transform along both the axes by
+    default when ``axes`` argument is ``None`` and ``s`` is also ``None``.
+
+    >>> x = jax.random.normal(jax.random.key(0), (3, 3))
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...    print(jax.scipy.fft.idstn(x))
+    [[ 0.12  0.1  -0.15]
+     [ 0.23  0.25 -0.11]
+     [ 0.19  0.02 -0.02]]
+
+    When ``s=[2]``, the transform will be computed only along the last axis,
+    with its dimension padded or truncated to size ``2``:
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...  print(jax.scipy.fft.idstn(x, s=[2]))
+    [[ 1.08  0.07]
+     [ 0.02 -0.07]
+     [-0.05 -0.3 ]]
+
+    When ``s=[2]`` and ``axes=[0]``, the transform will be computed only along
+    the specified axis, with its dimension padded or truncated to size ``2``:
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...  print(jax.scipy.fft.idstn(x, s=[2], axes=[0]))
+    [[ 0.55  0.76 -0.4 ]
+     [ 0.59  0.67  0.09]]
+
+    When ``s=[2, 4]``, shape of the transform will be ``(2, 4)``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...  print(jax.scipy.fft.idstn(x, s=[2, 4]))
+    [[ 0.1   0.3   0.03 -0.17]
+     [ 0.2   0.25  0.01 -0.04]]
+
+    ``jax.scipy.fft.idstn`` can be used to reconstruct ``x`` from the result
+    of ``jax.scipy.fft.dstn``
+
+    >>> x_dstn = jax.scipy.fft.dstn(x)
+    >>> jnp.allclose(x, jax.scipy.fft.idstn(x_dstn))
+    Array(True, dtype=bool)
+  """
+  x = ensure_arraylike("idstn", x)
+
+  if type != 2:
+    raise NotImplementedError('Only DST type 2 is implemented.')
+  if norm is not None and norm not in ['backward', 'ortho']:
+    raise ValueError(f"jax.scipy.fft.idstn: {norm=!r} is not implemented")
+
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return lax.complex(
+      idstn(x.real, type=type, s=s, norm=norm, axes=axes),
+      idstn(x.imag, type=type, s=s, norm=norm, axes=axes)
+    )
+
+  if s is not None:
+    try:
+      s = list(s)
+    except TypeError:
+      assert not isinstance(s, Sequence)
+      s = [operator.index(s)]
+    if len(s) > x.ndim:
+      raise ValueError(
+          f"s must have at most x.ndim ({x.ndim}) elements, got {len(s)}"
+      )
+
+  if axes is None:
+    if s is not None:
+      axes = tuple(range(x.ndim - len(s), x.ndim))
+    else:
+      axes = tuple(range(x.ndim))
+  else:
+    axes = canonicalize_axis_tuple(axes, x.ndim)
+
+  if len(axes) == 1:
+    return idst(x, n=s[0] if s is not None else None, axis=axes[0], norm=norm)
+
+  if s is not None:
+    ns = dict(zip(axes, s))
+    pads = [(0, ns[a] - x.shape[a] if a in ns else 0, 0) for a in range(x.ndim)]
+    x = lax.pad(x, jnp.array(0, x.dtype), pads)
+
+  # compose high-D IDSTs from 1D IDSTs:
+  for axis in axes:
+    x = idst(x, axis=axis, norm=norm)
+  return x
