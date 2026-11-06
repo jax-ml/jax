@@ -732,11 +732,13 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
   if mode is None or mode == "fill":
     gather_mode = slicing.GatherScatterMode.FILL_OR_DROP
     # lax.gather() does not support negative indices, so we wrap them here
+    indices = _upcast_index_dtype(indices, a.shape[axis_idx])
     indices = util._where(indices < 0, indices + a.shape[axis_idx], indices)
   elif mode == "raise":
     # TODO(phawkins): we have no way to report out of bounds errors yet.
     raise NotImplementedError("The 'raise' mode to jnp.take is not supported.")
   elif mode == "wrap":
+    indices = _upcast_index_dtype(indices, a.shape[axis_idx])
     indices = ufuncs.mod(indices, lax._const(indices, a.shape[axis_idx]))
     gather_mode = slicing.GatherScatterMode.PROMISE_IN_BOUNDS
   elif mode == "clip":
@@ -767,6 +769,18 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
                         slice_sizes=tuple(slice_sizes),
                         mode=gather_mode, unique_indices=unique_indices,
                         indices_are_sorted=indices_are_sorted, fill_value=fill_value)
+
+
+def _upcast_index_dtype(indices, axis_size):
+  """Upcasts indices if needed so wrapping negative indices cannot overflow."""
+  if not dtypes.issubdtype(indices.dtype, np.signedinteger):
+    return indices
+  if core.is_constant_dim(axis_size) and axis_size <= dtypes.iinfo(indices.dtype).max:
+    return indices
+  default_int = dtypes.default_int_dtype()
+  if indices.dtype.itemsize >= default_int.itemsize:
+    return indices
+  return lax.convert_element_type(indices, default_int)
 
 
 def _normalize_index(index, axis_size):

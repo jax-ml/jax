@@ -4923,6 +4923,39 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                       indices_are_sorted=True, fill_value=10.0)
     self.assertArraysEqual(expected, actual)
 
+  def testTakeNegativeIndicesSmallDtype(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42377
+    x = jnp.arange(200.0)
+    np_indices = np.array([-1, -2, 5], dtype=np.int8)
+    indices = jnp.asarray(np_indices)
+    for mode in [None, "wrap"]:
+      np_mode = "raise" if mode is None else mode
+      expected = np.take(np.arange(200.0), np_indices, mode=np_mode)
+      actual = jnp.take(x, indices, mode=mode)
+      self.assertArraysEqual(expected, actual)
+      jit_actual = jax.jit(lambda arr, idx: jnp.take(arr, idx, mode=mode))
+      self.assertArraysEqual(expected, jit_actual(x, indices))
+
+    x2d = jnp.arange(300.0).reshape(150, 2)
+    indices2d = jnp.array([-1, -50], dtype=jnp.int8)
+    expected2d = np.take(np.asarray(x2d), np.asarray(indices2d), axis=0)
+    self.assertArraysEqual(expected2d, jnp.take(x2d, indices2d, axis=0))
+
+    default_int = dtypes.default_int_dtype()
+    for size, dtype, expected_index_dtype in [
+        (100, np.int8, np.int8),
+        (200, np.int8, default_int),
+        (200, np.int16, np.int16),
+        (40000, np.int16, default_int),
+    ]:
+      arr = jnp.arange(size, dtype=jnp.float32)
+      idx = jnp.array([-1, -2], dtype=dtype)
+      jaxpr = jax.make_jaxpr(jnp.take)(arr, idx).jaxpr
+      inner_jaxpr = jaxpr.eqns[0].params["jaxpr"].jaxpr
+      gather_eqns = [e for e in inner_jaxpr.eqns if e.primitive == lax.gather_p]
+      self.assertLen(gather_eqns, 1)
+      self.assertEqual(gather_eqns[0].invars[1].aval.dtype, expected_index_dtype)
+
   @jtu.sample_product(
     [dict(x_shape=x_shape, i_shape=i_shape, axis=axis)
       for x_shape, i_shape in filter(
