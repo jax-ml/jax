@@ -919,6 +919,7 @@ def _common_interesting_points(dtype) -> tuple[float, ...]:
       | set(range(min_exp, max_exp + 1, exp_step))
       | {
           min_exp,
+          -finfo.maxexp,
           finfo.minexp - 1,
           finfo.minexp,
           finfo.minexp + 1,

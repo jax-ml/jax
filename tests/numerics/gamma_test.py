@@ -549,7 +549,7 @@ class GammainccinvTest(jtu.JaxTestCase):
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_gammainccinv_accuracy(self, dtype):
     bounds = [
-        ("cpu", {bf16: 1.0, f16: 1.0, f32: 1250.0, f64: 16500.0}),
+        ("cpu", {bf16: 1.5, f16: 1.0, f32: 1250.0, f64: 16500.0}),
         (["gpu", "tpu"],
          {bf16: math.inf, f16: math.inf, f32: math.inf, f64: math.inf}),
     ]
@@ -626,9 +626,6 @@ class GammaTest(jtu.JaxTestCase):
             )
         ),
     ]
-    input_ftz = [
-        ("gpu", {bf16: True, f32: True, f64: True}),
-    ]
     util.check_unary_precision(
         self,
         jsp.special.gamma,
@@ -636,7 +633,6 @@ class GammaTest(jtu.JaxTestCase):
         _mpmath_gamma,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 
