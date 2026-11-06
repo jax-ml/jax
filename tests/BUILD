@@ -974,6 +974,9 @@ jax_multiplatform_test(
             "notsan",  # Times out.
         ],
     },
+    minimal_shard_count = {
+        "tpu": 8,
+    },
     shard_count = {
         "cpu": 50,
         "gpu": 50,

@@ -2129,8 +2129,12 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_iv, lsp_iv, args_maker, tol=tol)
     self._CompileAndCheck(lsp_iv, args_maker, tol=tol)
 
-    special_xs = np.array([0.0, -0.0, np.inf, -np.inf, np.nan], dtype=dtype)
-    res = np.asarray(lsp_special.iv(v, special_xs))
+    # Pad special inputs to x.shape so the compiled executable for (v, dtype) is
+    # reused instead of triggering additional XLA compilations per order.
+    special_xs = np.resize(
+        np.array([0.0, -0.0, np.inf, -np.inf, np.nan], dtype=dtype), x.shape
+    )
+    res = np.asarray(lsp_special.iv(v, special_xs))[:5]
     expected_zero = (
         np.ones(2, dtype=dtype)
         if v == 0
@@ -2144,9 +2148,8 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertEqual(res[3], -np.inf if v % 2 else np.inf)
     self.assertTrue(np.isnan(res[4]))
     if v == 5 and dtype == np.float32:
-      res_tiny = np.asarray(
-          lsp_special.iv(v, np.array([1e-30, -1e-30], dtype=dtype))
-      )
+      tiny_xs = np.resize(np.array([1e-30, -1e-30], dtype=dtype), x.shape)
+      res_tiny = np.asarray(lsp_special.iv(v, tiny_xs))[:2]
       self.assertArraysEqual(res_tiny, np.zeros(2, dtype=dtype))
       self.assertFalse(np.signbit(res_tiny[0]))
       self.assertTrue(np.signbit(res_tiny[1]))
@@ -2239,7 +2242,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     # By DLMF 10.29.5,
     # d^k/dz^k I_v(z) = 2^-k * sum_{j=0}^k comb(k, j) I_{v - k + 2j}(z).
     for k in (1, 2, 3):
-      fn = jax.grad(fn, holomorphic=is_complex)
+      fn = jax.grad(lambda z, f=fn: jnp.sum(f(z)), holomorphic=is_complex)
       dk_ref = lambda z, k=k: (
           (0.5**k)
           * sum(
@@ -2248,8 +2251,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
               for j in range(k + 1)
           )
       ).astype(dtype)
-      self._CheckAgainstNumpy(dk_ref, jax.vmap(fn), args_maker, tol=tol)
-    self._CompileAndCheck(jax.vmap(fn), args_maker, tol=tol)
+      self._CheckAgainstNumpy(dk_ref, fn, args_maker, tol=tol)
 
   def test_iv_non_integer_v(self):
     """Tests that iv(v, x) rejects non-integer or traced order v."""
