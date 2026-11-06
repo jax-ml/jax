@@ -1275,6 +1275,29 @@ class LayoutInferenceTest(parameterized.TestCase):
     layout = tcgen05._infer_tmem_layout(shape, collective=False, packing=1)
     self.checkOutTmemLayouts(op, [layout])
 
+  def test_infer_layout_for_slice_of_tmem_alloc_by_default(self):
+    # Only direct slices of a `tmem_alloc` get a default layout. A slice of a
+    # slice of an allocation gets none.
+    i32 = ir.IntegerType.get_signless(32)
+    ptr_type = ir.MemRefType.get((1,), i32, memory_space=mgpu.utils.smem())
+    alloc_ty = ir.MemRefType.get(
+        (128, 512), i32, memory_space=mgpu.utils.tmem()
+    )
+    slice_ty = ir.MemRefType.get(
+        (128, 64), ir.F32Type.get(), memory_space=mgpu.utils.tmem()
+    )
+
+    with ir.InsertionPoint(self.module.body):
+      ptr = llvm.mlir_undef(ptr_type)
+      alloc = mgpu.dialect.tmem_alloc(result=alloc_ty, smem_ptr=ptr)
+      op = mgpu.dialect.slice_tmem(slice_ty, alloc, 64)
+
+    mgpu.infer_layout(self.module)
+
+    layout = tcgen05.tmem_default_layout(packing=1)
+    self.checkInTmemLayouts(op.owner, [layout])
+    self.checkOutTmemLayouts(op.owner, [layout])
+
   def test_infer_tmem_layout_cast_correctly(self):
     f32 = ir.F32Type.get()
     ref_ty = ir.MemRefType.get((128, 128), f32, memory_space=mgpu.utils.tmem())

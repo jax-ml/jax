@@ -913,11 +913,19 @@ def _launch(
           cols_used = 0
           for alloc in tmem_allocs:
             cols_used += alloc.alloc()
-          if cols_used > tcgen05.TMEM_MAX_COLS:
+          if len(tmem_allocs) == 1:
+            # A single allocation might be .exclusive, which means the limit is
+            # larger.
+            max_cols = tcgen05.tmem_max_cols()
+          else:
+            # Separate allocations cannot be exclusive, they have to fit in
+            # `tcgen05.TMEM_MAX_COLS`.
+            max_cols = tcgen05.TMEM_MAX_COLS
+          if cols_used > max_cols:
             raise ValueError(
                 "Total TMEM allocation exceeds memory limit. "
                 f"Requested {cols_used} columns which exceeds limit of "
-                f"{tcgen05.TMEM_MAX_COLS}."
+                f"{max_cols}."
             )
           collective_types = {alloc.collective for alloc in tmem_allocs}
           if len(collective_types) > 1:

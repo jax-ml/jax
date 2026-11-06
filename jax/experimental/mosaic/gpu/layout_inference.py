@@ -214,6 +214,15 @@ def _default_tmem_layout_for_variable(
     return tcgen05._infer_tmem_layout(
         tuple(value.type.shape), bool(parent.collective), packing=1
     )
+  # Slices of a TMEM allocation get the same default layout as allocations.
+  # Note that we only look at the direct source of the slice: a slice of a slice
+  # of an allocation gets no default layout.
+  if isinstance(parent, mgpu.SliceTmemOp) and isinstance(
+      alloc := parent.source.owner, mgpu.TmemAllocOp
+  ):
+    return tcgen05._infer_tmem_layout(
+        tuple(value.type.shape), bool(alloc.collective), packing=1
+    )
   return None
 
 
