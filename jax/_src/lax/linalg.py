@@ -2619,7 +2619,10 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
     kwargs = {"transposed": False}
   elif impl in (_GpuSvdImpl.QR_GESVD, _GpuSvdImpl.GESVD):
     target_name = f"{target_name_prefix}solver_gesvd_ffi"
-    transposed = m < n
+    try:
+      transposed = m < n
+    except core.InconclusiveDimensionOperation:
+      transposed = m <= n
     kwargs = {"transposed": transposed}
     if transposed:
       column_major = False
