@@ -7441,7 +7441,39 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
     result = mlir.convert_hlo(ctx, result, accumulation_aval, aval_out)
   return [result]
 
-mlir.register_lowering(dot_general_p, _dot_general_lower)
+
+def _dot_general_collective_rule(
+    in_avals, out_avals, *, dimension_numbers, **params
+):
+  del params
+  (lhs_aval, rhs_aval), (out_aval,) = in_avals, out_avals
+  lhs_spec, rhs_spec = lhs_aval.sharding.spec, rhs_aval.sharding.spec
+  (lhs_c, rhs_c), _ = dimension_numbers
+  if any(lhs_spec.partitions[i] is not None for i in lhs_c) or any(
+      rhs_spec.partitions[i] is not None for i in rhs_c
+  ):
+    raise NotImplementedError
+  try:
+    expected_out = _dot_general_sharding_rule(
+        lhs_aval,
+        rhs_aval,
+        dimension_numbers=dimension_numbers,
+        precision=None,
+        preferred_element_type=None,
+        out_sharding=None,
+    )
+  except (core.ShardingTypeError, lax_utils.DuplicateSpecError):
+    raise NotImplementedError from None
+  if out_aval.sharding.spec.partitions != expected_out.spec.partitions:
+    raise NotImplementedError
+  return mlir.PartitioningRule(per_shard_params={'out_sharding': None})
+
+
+mlir.register_lowering(
+    dot_general_p,
+    _dot_general_lower,
+    shard_map_collective_rule=_dot_general_collective_rule,
+)
 
 for platform in ["cpu", "tpu"]:
   mlir.register_lowering(dot_general_p,

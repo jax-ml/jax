@@ -726,6 +726,115 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       with self.assertRaises(NotImplementedError):
         f.lower(arr)
 
+  @parameterized.parameters(
+      (
+          (8, 4),
+          P('x', None),
+          (4, 8),
+          P(None, 'y'),
+          (((1,), (0,)), ((), ())),
+          None,
+      ),
+      (
+          (8, 4),
+          P(('x', 'y'), None),
+          (4, 8),
+          P(None, None),
+          (((1,), (0,)), ((), ())),
+          P(('x', 'y'), None),
+      ),
+      (
+          (4, 8, 4),
+          P('x', None, None),
+          (4, 4, 8),
+          P('x', None, None),
+          (((2,), (1,)), ((0,), (0,))),
+          None,
+      ),
+      (
+          (4, 2, 4, 4),
+          P('x', 'y', 'z', None),
+          (2, 4, 4, 4),
+          P('y', 'x', None, None),
+          (((3,), (3,)), ((0, 1), (1, 0))),
+          P('x', 'y', 'z', None),
+      ),
+      (
+          (0, 4),
+          P('x', None),
+          (4, 8),
+          P(None, 'y'),
+          (((1,), (0,)), ((), ())),
+          None,
+      ),
+      (
+          (4, 4),
+          P('x', None, reduced={'z'}),
+          (4, 8),
+          P(None, 'y'),
+          (((1,), (0,)), ((), ())),
+          None,
+      ),
+  )
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_dot_general_no_collectives(
+      self, lhs_shape, lhs_spec, rhs_shape, rhs_spec, dnums, out_spec, mesh
+  ):
+    np_lhs = np.arange(math.prod(lhs_shape), dtype=np.float32).reshape(
+        lhs_shape
+    )
+    np_rhs = np.arange(math.prod(rhs_shape), 0, -1, dtype=np.float32).reshape(
+        rhs_shape
+    )
+    lhs = jax.device_put(np_lhs, lhs_spec)
+    rhs = jax.device_put(np_rhs, rhs_spec)
+
+    @jax.jit
+    def f(a, b):
+      return lax.dot_general(
+          a, b, dnums, precision=lax.Precision.HIGHEST, out_sharding=out_spec
+      )
+
+    with config.shard_map_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f.lower(lhs, rhs).as_text())
+      expected = f(lhs, rhs)
+    self.assertIn('sdy.manual_computation', f.lower(lhs, rhs).as_text())
+
+    out = f(lhs, rhs)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertArraysEqual(out, expected)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_dot_general_collectives_needed_raises(self, mesh):
+    d2 = (((1,), (0,)), ((), ()))
+    d3 = (((2,), (1,)), ((0,), (0,)))
+    for shape, dnums, lhs_spec, rhs_spec, out_spec in (
+        ((8, 8), d2, P(None, 'x'), P(None, None), None),
+        ((8, 8), d2, P(None, None), P('x', None), None),
+        ((8, 8), d2, P('x', None), P('x', None), None),
+        (
+            (4, 4, 4),
+            d3,
+            P('x', None, None),
+            P(None, None, None),
+            P('x', None, None),
+        ),
+        ((8, 8), d2, P('x', None), P(None, 'x'), P('x', None)),
+        ((8, 8), d2, P('x', None), P(None, None), P(('x', 'y'), None)),
+    ):
+      z = np.zeros(shape, dtype=np.float32)
+      lhs = jax.device_put(z, lhs_spec)
+      rhs = jax.device_put(z, rhs_spec)
+
+      @jax.jit
+      def f(a, b):
+        return lax.dot_general(a, b, dnums, out_sharding=out_spec)
+
+      with self.assertRaises(NotImplementedError):
+        f.lower(lhs, rhs)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
