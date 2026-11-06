@@ -1,0 +1,34 @@
+# Service account and RBAC for JAX distributed peer discovery.
+#
+# JAX processes need to list pods in the same Job to auto-detect
+# coordinator_address, num_processes, and process_id.
+#
+# This is the same svc-acct.yaml referenced by the upstream JAX docs.
+# Apply once per namespace:
+#   kubectl apply -f svc-acct.yaml
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jax-job-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jax-job-role
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jax-job-rolebinding
+subjects:
+  - kind: ServiceAccount
+    name: jax-job-sa
+roleRef:
+  kind: Role
+  name: jax-job-role
+  apiGroup: rbac.authorization.k8s.io
