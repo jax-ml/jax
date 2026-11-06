@@ -116,7 +116,9 @@ on:
         required: false
         default: ""
         type: string
-permissions: {}
+permissions:
+  id-token: write
+  contents: read
 jobs:
   run-tests:
     defaults:
