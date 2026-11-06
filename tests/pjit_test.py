@@ -5896,7 +5896,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
   def test_concatenate(self, mesh):
     np_inp = np.arange(16.).reshape(4, 4)
-    s = NamedSharding(mesh, P('x', None))
+    s = NamedSharding(mesh, P('x', 'y'))
     arr1 = jax.device_put(np_inp, s)
     arr2 = jax.device_put(np.arange(4.).reshape(4, 1), s)
 
@@ -5907,7 +5907,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       else:
         assert method == 'lax'
         y = lax.concatenate([x, y], dimension=1)
-      self.assertEqual(y.aval.sharding.spec, P('x', None))
+      self.assertEqual(y.aval.sharding.spec, P('x', 'y'))
       return y
 
     out = f(arr1, arr2)
@@ -5922,25 +5922,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         core.ShardingTypeError, "All operands should have the same sharding"):
       arr3 = jax.device_put(np.arange(4.).reshape(4, 1),
-                            NamedSharding(mesh, P(None, None)))
+                            NamedSharding(mesh, P('x')))
       f(arr1, arr3)
 
-    def concat_axis0(x, y):
-      return jnp.concatenate([x, y], axis=0)
-
-    with self.assertRaisesRegex(
-        core.ShardingTypeError,
-        "concatenate operands cannot be sharded on the concat dimension 0"):
-      jax.jit(concat_axis0)(arr1, arr1)
-
     arr_xy1 = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
-    arr_xy2 = jax.device_put(np.arange(4.).reshape(4, 1),
-                             NamedSharding(mesh, P('x', 'y')))
-    with self.assertRaisesRegex(
-        core.ShardingTypeError,
-        "concatenate operands cannot be sharded on the concat dimension 1"):
-      f(arr_xy1, arr_xy2)
-
     for axis in (0, 1):
       def concat_one_jnp(x, axis=axis):
         return jnp.concatenate([x], axis=axis)
@@ -6218,30 +6203,23 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_split(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)
-    s = NamedSharding(mesh, P(None, 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
     @jax.jit(static_argnums=(1, 2))
     def f(x, sizes=(4, 4), axis=0):
       ys = lax.split(x, sizes, axis=axis)
-      self.assertEqual(ys[0].aval.sharding.spec, P(None, 'y'))
-      self.assertEqual(ys[1].aval.sharding.spec, P(None, 'y'))
+      self.assertEqual(ys[0].aval.sharding.spec, P('x', 'y'))
+      self.assertEqual(ys[1].aval.sharding.spec, P('x', 'y'))
       return ys
 
     f(arr)
     self.check_wsc_in_lowered(f.lower(arr).as_text())
 
-    with self.assertRaisesRegex(
-        core.ShardingTypeError,
-        "split operand cannot be sharded on the split axis 1"):
+    with self.assertRaisesRegex(core.ShardingTypeError, "split on sharded dims"):
       f(arr, sizes=(1, 1), axis=1)
 
     arr_xy = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
-    with self.assertRaisesRegex(
-        core.ShardingTypeError,
-        "split operand cannot be sharded on the split axis 0"):
-      f(arr_xy, sizes=(4, 4), axis=0)
-
     for axis, size in ((0, 8), (1, 2)):
       def split_one_jnp(x, axis=axis):
         out, = jnp.split(x, 1, axis=axis)
@@ -12311,13 +12289,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(
         jax.reshard(c_out1, P('y', None)), jnp.concat([ref1, ref2], axis=1))
 
-    def concat_axis0(x, y):
-      return jnp.concatenate([x, y], axis=0)
-
-    with self.assertRaisesRegex(
-        core.ShardingTypeError,
-        'concatenate operands cannot be sharded on the concat dimension 0'):
-      jax.jit(concat_axis0)(u1, u2)
+    c_out0 = jax.jit(lambda x, y: jnp.concatenate([x, y], axis=0))(u1, u2)
+    self.assertEqual(c_out0.sharding, NamedSharding(mesh, u_spec))
+    self.assertArraysEqual(
+        jax.reshard(c_out0, P('y', None)), jnp.concatenate([ref1, ref2], axis=0))
 
     def concat_one_axis0_jnp(x):
       return jnp.concatenate([x], axis=0)
@@ -12639,14 +12614,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     for o, r in zip(outs, ref_outs):
       self.assertEqual(o.sharding, NamedSharding(mesh, u_spec))
       self.assertArraysEqual(jax.reshard(o, P('y', None)), r)
-
-    def split_axis0(x):
-      return jax.lax.split(x, sizes=(1, 1), axis=0)
-
-    with self.assertRaisesRegex(
-        core.ShardingTypeError,
-        'split operand cannot be sharded on the split axis 0'):
-      jax.jit(split_axis0)(u)
 
     def split_one_axis0_jnp(x):
       out, = jnp.split(x, 1, axis=0)
