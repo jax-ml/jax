@@ -1140,9 +1140,13 @@ def _platform_branch_lowering(ctx, jaxpr, args):
 
 
 def _cond_lowering(ctx, index, *args, branches, **params):
+  # The lowering platforms of each branch, if this is a multi-platform
+  # lowering of a `platform_dependent` conditional.
+  branches_lowering_platforms: list[tuple[str, ...]] | None = None
   if (branches_platforms := params.get("branches_platforms", None)) is not None:
     branches_kept: list[core.Jaxpr] = []
     index_to_kept_index: dict[int, int] = {}
+    kept_platforms: list[list[str]] = []
     for p in mlir._platforms_for_eqn(ctx):
       # Each `p` must appear in exactly one branches_platforms, or in the
       # last default branch. Otherwise, platform_index lowering would have
@@ -1152,6 +1156,8 @@ def _cond_lowering(ctx, index, *args, branches, **params):
           if b_idx not in index_to_kept_index:
             index_to_kept_index[b_idx] = len(branches_kept)
             branches_kept.append(branches[b_idx])
+            kept_platforms.append([])
+          kept_platforms[index_to_kept_index[b_idx]].append(p)
           break
       else:
         assert False, p
@@ -1174,6 +1180,7 @@ def _cond_lowering(ctx, index, *args, branches, **params):
 
     index = kept_index_case_op
     branches = branches_kept
+    branches_lowering_platforms = [tuple(ps) for ps in kept_platforms]
     assert branches, "platform_index lowering should have failed first"
 
   joined_effects = core.join_effects(*(branch.effects for branch in branches))
@@ -1193,12 +1200,20 @@ def _cond_lowering(ctx, index, *args, branches, **params):
   name_stack = ctx.name_stack.extend('cond')
   for i, jaxpr in enumerate(branches):
     branch = case_op.regions[i].blocks.append()
+    # Lower each branch of a multi-platform `platform_dependent` only for the
+    # platforms it runs on, e.g. so that a TPU-only kernel in the 'tpu' branch
+    # is not lowered for CPU.
+    branch_module_context = (
+        ctx.module_context.replace(platforms=branches_lowering_platforms[i])
+        if branches_lowering_platforms is not None
+        else ctx.module_context
+    )
     with ir.InsertionPoint(branch):
       consts = mlir.ir_consts(
           jaxpr.consts, [v.aval for v in jaxpr.constvars],
           const_lowering=ctx.const_lowering)
       out_vals, tokens_out = mlir.jaxpr_subcomp(
-          ctx.module_context, jaxpr, name_stack.extend(f'branch_{i}_fun'),
+          branch_module_context, jaxpr, name_stack.extend(f'branch_{i}_fun'),
           tokens_in, consts, *args,
           dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
           outer_traceback=ctx.traceback)
