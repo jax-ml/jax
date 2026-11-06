@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 522  # Expose ExecutionContext.device_ordinal
+_version = 523  # Add compile_to_relocatable and link_relocatables to Client
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -342,6 +342,7 @@ Array = _xla.Array
 ArrayImpl = _xla.ArrayImpl
 LoadedExecutable = _xla.LoadedExecutable
 Executable = _xla.Executable
+Relocatable = _xla.Relocatable
 DeviceList = _xla.DeviceList
 OpSharding = hlo.OpSharding
 HloSharding = hlo.HloSharding
