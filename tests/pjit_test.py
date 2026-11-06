@@ -5559,6 +5559,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
          P('x', None, None, None, None, None), False),
         ((4, 1, 2, 4, 1, 32), (4, 1, 8, 1, 32), P('x', None, None, None, None, None),
          P('x', None, None, None, None), False),
+        ((2, 2), (4, 1, 1), P('x', None), P('x', None, None), False),
       ]
   )
   @jtu.with_explicit_mesh((2,), ('x',))

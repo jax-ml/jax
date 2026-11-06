@@ -9296,7 +9296,7 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, orig_new_sizes,
   out_spec = []
   for i, n in enumerate(orig_new_sizes):
     if n == 1:
-      if op_shape[i] == 1:
+      if i < len(op_shape) and op_shape[i] == 1:
         out_spec.append(op_partitions[i])
       else:
         out_spec.append(None)
