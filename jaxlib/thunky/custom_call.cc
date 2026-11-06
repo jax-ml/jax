@@ -108,6 +108,8 @@ XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(), "thunky.inline_module",
                          "CUDA", kThunkyInlineModuleFfiStub);
 XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(), "thunky.inline_module",
                          "ROCM", kThunkyInlineModuleFfiStub);
+XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(), "thunky.inline_module",
+                         "ONEAPI", kThunkyInlineModuleFfiStub);
 
 }  // namespace
 }  // namespace xla::gpu
