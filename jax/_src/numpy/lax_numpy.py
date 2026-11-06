@@ -753,7 +753,7 @@ def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
 
 
 @export
-def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
+def histogram_bin_edges(a: ArrayLike, bins: str | ArrayLike = 10,
                         range: None | Array | Sequence[ArrayLike] = None,
                         weights: ArrayLike | None = None) -> Array:
   """Compute the bin edges for a histogram.
@@ -783,10 +783,16 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
     Array([-10.,  -6.,  -2.,   2.,   6.,  10.], dtype=float32)
   """
   del weights  # unused, because string bins is not supported.
-  if isinstance(bins, str):
-    raise NotImplementedError("string values for `bins` not implemented.")
   util.check_arraylike("histogram_bin_edges", a, bins)
   arr = asarray(a)
+
+  if isinstance(bins, str):
+    if bins == 'sqrt':
+      bins = int(np.ceil(np.sqrt(max(arr.size, 1))))
+    elif bins == 'sturges':
+      bins = int(np.ceil(np.log2(max(arr.size, 1)))) + 1
+    else:
+      raise NotImplementedError(f"string value '{bins}' for `bins` not implemented.")
   dtype = dtypes.to_inexact_dtype(arr.dtype)
   if np.ndim(bins) == 1:
     return asarray(bins, dtype=dtype)
@@ -805,7 +811,7 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
 
 
 @export
-def histogram(a: ArrayLike, bins: ArrayLike = 10,
+def histogram(a: ArrayLike, bins: str | ArrayLike = 10,
               range: Sequence[ArrayLike] | None = None,
               weights: ArrayLike | None = None, density: bool | None = None,
               out_sharding: NamedSharding | P | None = None
@@ -868,6 +874,11 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
     Array(True, dtype=bool)
   """
   sharding = canonicalize_sharding(out_sharding, 'jnp.histogram')
+  if isinstance(bins, str):
+    if weights is not None:
+      raise TypeError("Automated estimation of the number of "
+                      "bins is not supported for weighted data")
+    bins = histogram_bin_edges(a, bins=bins, range=range)
   if weights is None:
     a, _ = util.ensure_arraylike("histogram", a, bins)
     a, = util.promote_dtypes_inexact(a)
