@@ -4987,7 +4987,7 @@ def _semaphore_signal_lowering_rule(
   sems, transforms, values, device_ids = tree_util.tree_unflatten(
       args_tree, args
   )
-  sem_avals, transform_avals, value_avals, device_id_avals = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem_avals, transform_avals, _, device_id_avals = tree_util.tree_unflatten(args_tree, ctx.avals_in)
   transformed_sems = []
   for sem, sem_aval, sem_transform_avals, sem_transforms in zip(
       sems, sem_avals, transform_avals, transforms, strict=True
