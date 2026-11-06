@@ -136,6 +136,7 @@ pytype_strict_library(
             ":typing",
             ":util",
             ":xla_bridge",
+            "//jax/_src/lib",
         ],
         if_not_building = [],
     ) + py_deps("numpy"),
@@ -225,6 +226,20 @@ pytype_strict_library(
         ":traceback_util",
         ":util",
         "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "avals",
+    srcs = ["avals.py"],
+    deps = [
+        ":core",
+        ":dtypes",
+        ":mesh",
+        ":named_sharding",
+        ":partition_spec",
+        ":typing",
+        ":util",
     ] + py_deps("numpy"),
 )
 
@@ -861,6 +876,16 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "gpu_info",
+    srcs = ["gpu_info.py"],
+    deps = [
+        ":api",
+        ":mesh",
+        ":util",
+    ],
+)
+
+pytype_strict_library(
     name = "hardware_utils",
     srcs = ["hardware_utils.py"],
 )
@@ -1433,6 +1458,7 @@ py_library_providing_imports_info(
         ":hijax",
         ":indexing",
         ":lax",
+        ":layout",
         ":mesh",
         ":sharding",
         ":sharding_impls",

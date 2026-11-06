@@ -28,6 +28,8 @@
 
 # # `Ref`: mutable arrays for data plumbing and memory control
 #
+# <!--* freshness: { reviewed: '2026-10-27' } *-->
+#
 # JAX `Array`s are immutable, representing mathematical values. Immutability can
 # make code easier to reason about, and is useful for optimized compilation,
 # parallelization, rematerialization, and transformations like autodiff.
@@ -92,7 +94,7 @@ except Exception as e:
 # ### API
 #
 # If you've ever used
-# [Pallas](https://docs.jax.dev/en/latest/pallas/quickstart.html), then `Ref`
+# [Pallas](https://docs.jax.dev/en/latest/pallas/index.html), then `Ref`
 # should look familiar. A big difference is that you can create new `Ref`s
 # yourself directly using `jax.new_ref`:
 

@@ -62,7 +62,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.mesh import get_abstract_mesh, use_abstract_mesh
-from jax._src.pjit import PartitionSpec as P, auto_axes, reshard
+from jax._src.pjit import PartitionSpec as P, auto_axes
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.state import AbstractRef, discharge as state_discharge
 from jax._src.traceback_util import api_boundary
@@ -693,17 +693,7 @@ def _scan_impl(*args, reverse, length, ft_in, ft_out, jaxpr,
   if remainder:
     carry, ys_rem = inner(remainder, carry, xs_rem)
     ys = _map(_concat, ys, ys_rem) if not reverse else _map(_concat, ys_rem, ys)
-  # If any carry leaf is unreduced, we need to add a reshard to
-  # typeof(carry).sharding which inserts a sharding_constraint so that shardy
-  # knows not to AR at the boundary of while. This is a no-op at the trace level
-  # but during lowering time, it inserts an extra sharding constraint.
-  carry = tree_map(_constrain_unreduced, carry)
-  ys = tree_map(_constrain_unreduced, ys)
   return [*carry, *ys]
-
-def _constrain_unreduced(val):
-  val_s = core.typeof(val).sharding
-  return reshard(val, val_s) if val_s.spec.unreduced else val
 
 def _split_leading(sz, x):
   return (slicing.slice_in_dim(x, 0, sz),
@@ -1614,8 +1604,9 @@ ad.primitive_jvps[scan_p] = _scan_jvp
 ad.fancy_transposes[scan_p] = _scan_transpose_fancy
 ad.primitive_linearizations[scan_p] = _scan_linearize
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
-mlir.register_lowering(scan_p,
-                       mlir.lower_fun(_scan_impl, multiple_results=True))
+mlir.register_lowering(
+    scan_p, mlir.lower_fun(_scan_impl, multiple_results=True),
+    shard_map_passthrough=True)
 batching.fancy_primitive_batchers[scan_p] = _scan_batching_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
@@ -1627,14 +1618,34 @@ def _scan_is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.is_high
 scan_p.is_high = _scan_is_high
 
+def _lower_scan_ext(x):
+  # f32[L, 8]{U:x} --lojax--> f32[2@x, L, 8] -> f32[L, 2@x, 8]
+  a = typeof(x)
+  lo_xs = a.lower_val(x)
+  if isinstance(a, core.ShapedArray) and a.is_high:
+    k = len(a.sharding.spec.unreduced)
+    lo_x, = lo_xs
+    return [lax.transpose(lo_x, (k, *range(k), *range(k + 1, lo_x.ndim)))]
+  return lo_xs
+
+def _raise_scan_ext(length, body_a, y):
+  # f32[L, 2@x, 8] -> f32[2@x, L, 8] --raise--> f32[L, 8]{U:x}
+  if isinstance(body_a, core.ShapedArray) and body_a.is_high:
+    a = core.unmapped_leading_aval(length, body_a)
+    k = len(a.sharding.spec.unreduced)  # type: ignore
+    lo_y, = y
+    lo_y = lax.transpose(lo_y, (*range(1, k + 1), 0, *range(k + 1, lo_y.ndim)))
+    return a.raise_val(lo_y)
+  return body_a.raise_val2(y)
+
 def _scan_to_lojax(*hi_args, jaxpr, ft_in, ft_out, **params):
   num_consts, num_carry, _ = _map(len, ft_in.unpack())
 
   const, carry, ext = split_list(hi_args, [num_consts, num_carry])
-  const_avals, carry_avals, ext_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
+  const_avals, carry_avals, _ = split_list(jaxpr.in_avals, [num_consts, num_carry])
   const_lol = [a.lower_val(x) for a, x in zip(const_avals, const)]
   carry_lol = [a.lower_val(x) for a, x in zip(carry_avals, carry)]
-  ext_lol   = [a.lower_val(x) for a, x in zip(ext_avals, ext)]
+  ext_lol = [_lower_scan_ext(x) for x in ext]
   num_lo_carry = sum(len(xs) for xs in carry_lol)
   lo_args_lol = [*const_lol, *carry_lol, *ext_lol]
   rrtype = lambda x: core.mapped_leading_aval(params['length'], typeof(x))
@@ -1654,7 +1665,12 @@ def _scan_to_lojax(*hi_args, jaxpr, ft_in, ft_out, **params):
       **params)
 
   lo_outs = out_avals.update(all_outs)
-  return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
+  carry_out_avals, ext_out_avals = split_list(jaxpr.out_avals, [num_carry])
+  carry_lo_outs, ext_lo_outs = split_list(lo_outs.unpack(), [num_carry])
+  carry_hi_outs = [a.raise_val2(y) for a, y in zip(carry_out_avals, carry_lo_outs)]
+  ext_hi_outs = [_raise_scan_ext(params['length'], a, y)
+                 for a, y in zip(ext_out_avals, ext_lo_outs)]
+  return carry_hi_outs + ext_hi_outs
 scan_p.to_lojax = _scan_to_lojax
 
 ### while_loop
@@ -2590,7 +2606,7 @@ ad.primitive_transposes[while_p] = _while_transpose_error
 batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 core.custom_typechecks[while_p] = _while_typecheck
-mlir.register_lowering(while_p, _while_lowering)
+mlir.register_lowering(while_p, _while_lowering, shard_map_passthrough=True)
 state_discharge.register_discharge_rule(while_p)(_while_discharge_rule)
 pe.dce_rules[while_p] = _while_dce_rule
 

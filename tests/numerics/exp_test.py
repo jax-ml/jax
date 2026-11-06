@@ -49,6 +49,11 @@ def _expm1_highest(x):
   return lax.expm1(x, accuracy=lax.AccuracyMode.HIGHEST)
 
 
+@jax.jit
+def _logistic_highest(x):
+  return lax.logistic(x, accuracy=lax.AccuracyMode.HIGHEST)
+
+
 # Additional range-reduction boundaries (k * ln(2)) beyond +-0.5*ln(2) and
 # +-ln(2) (which are already in _common_interesting_points), plus worst-case
 # inputs across math libraries from Gladman et al., "Accuracy of Mathematical
@@ -95,6 +100,15 @@ def _expm1_interesting_points(dtype):
               "0x1.6339ea76a70cap-2",
           )
       ),
+  ]
+
+
+def _logistic_interesting_points(dtype):
+  # Saturation to 1.0 thresholds for `dtype` (underflow to 0.0 at
+  # -log(fmax) / -log(tiny) is already in _common_interesting_points).
+  p = jnp.finfo(dtype).nmant + 1
+  return [
+      *(sign * k * math.log(2.0) for k in (p, p + 1) for sign in (-1, 1)),
   ]
 
 
@@ -277,12 +291,6 @@ class LogisticTest(jtu.JaxTestCase):
         ("tpu_v6e", {f16: 1.0, f32: 65.5}),
         ("tpu_7x", {bf16: 63.0, f16: 1.0, f32: 64.0}),
     ]
-    p = jnp.finfo(dtype).nmant + 1
-    interesting_points = [
-        # Saturation to 1.0 thresholds for `dtype` (underflow to 0.0 at
-        # -log(fmax) / -log(tiny) is already in _common_interesting_points).
-        *(sign * k * math.log(2.0) for k in (p, p + 1) for sign in (-1, 1)),
-    ]
     # TODO(phawkins): lax.logistic lowers to 1 / (1 + exp(-x)), which prematurely
     # underflows to 0.0 on CPU and GPU when exp(-x) overflows in float16 for
     # x <= -11.09.
@@ -297,8 +305,116 @@ class LogisticTest(jtu.JaxTestCase):
         dtype,
         bounds=bounds,
         output_ftz=output_ftz,
-        interesting_points=interesting_points,
+        interesting_points=_logistic_interesting_points(dtype),
     )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_logistic_highest_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {bf16: 2.0, f16: 2.0, f32: 2.5, f64: 2.5}),
+        ("gpu", {bf16: 2.0, f16: 2.0, f32: 4.0, f64: 2.5}),
+        ([*TPU_EUPV1, "tpu_v6e"], {bf16: 1.0, f16: 1.0, f32: 4.0}),
+        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 3.5}),
+        (
+            "tpu_7x",
+            {
+                bf16: 0.5 if jtu.is_libtpu_at_least("0.0.52") else 63.0,
+                f16: 1.0,
+                f32: 4.0,
+            },
+        ),
+    ]
+    with jtu.global_config_context(jax_accurate_logistic=True):
+      util.check_unary_precision(
+          self,
+          _logistic_highest,
+          lambda x: 1.0 / (1.0 + np.exp(-x)),
+          lambda x: 1 / (1 + mpmath.exp(-x)),
+          dtype,
+          bounds=bounds,
+          interesting_points=_logistic_interesting_points(dtype),
+      )
+
+
+@jtu.thread_unsafe_test_class()
+class LogisticGradTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_logistic_grad_highest_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {bf16: 3.5, f16: (4.0, 4.5), f32: 6.0, f64: 6.0}),
+        ("gpu", {bf16: 3.5, f16: 4.5, f32: 8.5, f64: 4.5}),
+        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 7.5}),
+        ("tpu_v5p", {bf16: 0.5, f16: 1.0, f32: 7.5}),
+        ("tpu_v6e", {bf16: 0.5, f16: 1.0, f32: 8.0}),
+        (
+            "tpu_7x",
+            {
+                bf16: 0.5 if jtu.is_libtpu_at_least("0.0.52") else 63.0,
+                f16: 1.0,
+                f32: 8.0,
+            },
+        ),
+    ]
+    with jtu.global_config_context(jax_tanh_sech_jvp=True):
+      util.check_unary_precision(
+          self,
+          jax.jit(jax.vmap(jax.grad(_logistic_highest))),
+          lambda x: (1.0 / (1.0 + np.exp(-x))) * (1.0 / (1.0 + np.exp(x))),
+          lambda x: 1 / (4 * mpmath.cosh(x / 2) ** 2),
+          dtype,
+          bounds=bounds,
+          interesting_points=_logistic_interesting_points(dtype),
+      )
+
+  @parameterized.named_parameters(("_float32", f32), ("_float64", f64))
+  def test_logistic_higher_order_highest_accuracy(self, dtype):
+    if dtype == f64 and jtu.device_under_test() == "tpu":
+      self.skipTest("float64 on TPU is ef57 double-double")
+    d2_fn = jax.jit(jax.vmap(jax.grad(jax.grad(_logistic_highest))))
+    d3_fn = jax.jit(jax.vmap(jax.grad(jax.grad(jax.grad(_logistic_highest)))))
+
+    # Include tiny non-zero x (where 1 - 2 * logistic(x) previously cancelled
+    # 0.5 - 0.5 to 0.0) and large |x| where logistic(x) saturates to 0 or 1.
+    x_tiny = 1e-8 if dtype == f32 else 1e-17
+    x_tail = 20.0 if dtype == f32 else 50.0
+    xs = jnp.array(
+        [-x_tail, -2.0, -x_tiny, 0.0, x_tiny, 2.0, x_tail], dtype=dtype
+    )
+
+    def mp_d2(v):
+      t = mpmath.tanh(v / 2)
+      s = 1 / (4 * mpmath.cosh(v / 2) ** 2)
+      return -t * s
+
+    def mp_d3(v):
+      t = mpmath.tanh(v / 2)
+      s = 1 / (4 * mpmath.cosh(v / 2) ** 2)
+      return s * (t * t - 2 * s)
+
+    with jtu.global_config_context(jax_tanh_sech_jvp=True):
+      util.check_precision_at_points(self, d2_fn, mp_d2, xs, max_ulp=8.0)
+      util.check_precision_at_points(self, d3_fn, mp_d3, xs, max_ulp=16.0)
+      infs = jnp.array([-jnp.inf, jnp.inf], dtype=dtype)
+      self.assertArraysEqual(d2_fn(infs), jnp.zeros_like(infs))
+      self.assertArraysEqual(d3_fn(infs), jnp.zeros_like(infs))
+
+  @parameterized.named_parameters(
+      ("_complex64", jnp.complex64), ("_complex128", jnp.complex128)
+  )
+  def test_logistic_complex_grad_highest_accuracy(self, dtype):
+    if dtype == jnp.complex128 and jtu.device_under_test() == "tpu":
+      self.skipTest("complex128/float64 on TPU is ef57 double-double")
+    xs = jnp.array(
+        [-2.0 + 0.5j, -0.1 - 0.3j, 0.1 + 0.3j, 2.0 - 0.5j], dtype=dtype
+    )
+    with jtu.global_config_context(jax_tanh_sech_jvp=True):
+      jtu.check_grads(_logistic_highest, (xs,), order=2, modes=["fwd", "rev"])
+      # Also verify large |Re(x)| doesn't produce NaNs from overflow.
+      x_tail = 20.0 if dtype == jnp.complex64 else 50.0
+      xs_tail = jnp.array([-x_tail + 1j, x_tail + 1j], dtype=dtype)
+      _, jvps = jax.jvp(_logistic_highest, (xs_tail,), (jnp.ones_like(xs_tail),))
+      self.assertAllClose(jvps, jnp.zeros_like(jvps), atol=1e-8)
 
 
 util.register_benchmark(jnp.exp)
@@ -308,6 +424,7 @@ util.register_benchmark(_exp2_highest)
 util.register_benchmark(jnp.expm1)
 util.register_benchmark(_expm1_highest)
 util.register_benchmark(lax.logistic)
+util.register_benchmark(_logistic_highest)
 
 
 if __name__ == "__main__":

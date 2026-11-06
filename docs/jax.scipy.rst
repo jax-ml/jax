@@ -199,6 +199,7 @@ jax.scipy.special
    i0e
    i1
    i1e
+   jn
    kl_div
    log_ndtr
    log_softmax
@@ -210,6 +211,7 @@ jax.scipy.special
    multigammaln
    ndtr
    ndtri
+   ndtri_exp
    owens_t
    poch
    polygamma
@@ -221,6 +223,7 @@ jax.scipy.special
    wofz
    xlog1py
    xlogy
+   yn
    zeta
 
 

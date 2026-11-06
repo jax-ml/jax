@@ -61,20 +61,26 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 |:---|:---:|:---:|:---:|:---:|:---:|:---:|
 | {func}`~jax.lax.acos` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.acosh` | 2.0 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.acospi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.asin` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.asinh` | 1.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.asinpi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.atan` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.atan2` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.atan2pi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.atanh` | 1.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.lax.atanpi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.bessel_i0e` | 1.0 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.bessel_i1e` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.cbrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.cos` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.cosh` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.lax.cospi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.digamma` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.erf` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.erf_inv` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.erfc` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.lax.erfc` (`highest`) | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp` | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.exp` (`highest`) | 0.5 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp2` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
@@ -87,14 +93,17 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.log2` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.log2` (`highest`) | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.logistic` | 2.5 | 2.5 | 1.0 | 1.0 | 0.5 | 63.0 |
+| {func}`~jax.lax.logistic` (`highest`, `jax_accurate_logistic`) | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 0.5 |
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.sin` | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.sinh` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.lax.sinpi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.sqrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.square` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.tan` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.tanh` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.lax.tanpi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.numpy.deg2rad` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.numpy.hypot` | 1.5 | 1.5 | 1.0 | 1.0 | 0.5 | 1.0 |
 | {func}`~jax.numpy.log10` | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 1.0 |
@@ -103,6 +112,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.scipy.special.erfcinv` | 1.0 | 1.0 | 1.0 | 0.5 | 1.0 | 0.5 |
 | {func}`~jax.scipy.special.erfcx` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.scipy.special.gamma` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.scipy.special.ndtri_exp` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 
 ---
 
@@ -114,16 +124,21 @@ Maximum error in units in the last place (ULPs) for `float16`:
 |:---|:---:|:---:|:---:|:---:|:---:|:---:|
 | {func}`~jax.lax.acos` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.acosh` | 2.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.acospi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.asin` | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.asinh` | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.asinpi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.atan` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.atan2` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.atan2pi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.atanh` | 1.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
+| {func}`~jax.lax.atanpi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.bessel_i0e` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.bessel_i1e` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.cbrt` | 1.0 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.cos` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.cosh` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.cospi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.digamma` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.erf` | 1.0 | 1.0 | 0.5 | 0.5 | 1.0 | 1.0 |
 | {func}`~jax.lax.erf_inv` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
@@ -140,14 +155,17 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.lax.log2` | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.log2` (`highest`) | 0.5 | 0.5 | 0.5 | 0.5 | 1.0 | 1.0 |
 | {func}`~jax.lax.logistic` | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.logistic` (`highest`, `jax_accurate_logistic`) | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.sin` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.sinh` | 1.0 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
+| {func}`~jax.lax.sinpi` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.sqrt` | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.square` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.tan` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.tanh` | 0.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
+| {func}`~jax.lax.tanpi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.numpy.deg2rad` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.numpy.hypot` | 1.5 | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.numpy.log10` | 1.5 | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 |
@@ -156,6 +174,7 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.scipy.special.erfcinv` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.scipy.special.erfcx` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.scipy.special.gamma` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.scipy.special.ndtri_exp` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 
 ---
 
@@ -167,22 +186,27 @@ Maximum error in units in the last place (ULPs) for `float32`:
 |:---|:---:|:---:|:---:|:---:|:---:|:---:|:---|
 | {func}`~jax.lax.acos` | 1.0 | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.acosh` | 4.5 | 2.5 | 4031.0 | 61.0 | 4.5 | 5.0 | |
+| {func}`~jax.lax.acospi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.asin` | 1.0 | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.asinh` | 3.5 | 2.0 | 4034.5 | 62.5 | 3.5 | 3.5 | |
+| {func}`~jax.lax.asinpi` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.atan` | 4.0–5.5 | 1.5 | 2.5 | 2.5 | 2.5 | 2.5 | CPU bound depends on AMD vs Intel |
 | {func}`~jax.lax.atan2` | 0.5 | 3.0 | 3.5 | 3.5 | 3.5 | 3.5 | |
+| {func}`~jax.lax.atan2pi` | 2.0 | 3.0 | 3.5 | 3.0 | 3.0 | 3.0 | |
 | {func}`~jax.lax.atanh` | 3.0 | 3.5 | 2183.5 | 43.0 | 3.5 | 3.5 | |
+| {func}`~jax.lax.atanpi` | 2.0 | 2.0 | 2.5 | 2.5 | 2.5 | 2.0 | |
 | {func}`~jax.lax.bessel_i0e` | 2.0 | 2.5 | 3.0 | 3.0 | 2.0 | 2.0 | |
 | {func}`~jax.lax.bessel_i1e` | 2.0 | 2.5 | 3.0 | 3.0 | 2.0 | 2.0 | |
 | {func}`~jax.lax.cbrt` | 0.5 | 1.5 | 4.5 | 4.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.cos` | 0.5 | 2.0 | 3.5 | 3.5 | 3.5 | 3.0 | |
 | {func}`~jax.lax.cosh` | 1.0 | 2.5 | 1.0 | 1.0 | 1.0 | 1.0 | |
+| {func}`~jax.lax.cospi` | 1.0 | 2.0 | 1.5 | 1.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.digamma` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.erf` | 7.0 | 6.5 | 7.5 | 8.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.erf_inv` | 65.0 | 65.0 | 427.0 | 65.5 | 65.0 | 65.5 | |
 | {func}`~jax.lax.erf_inv` (`jax_accurate_erf_inv`) | 2.0 | 2.5 | 427.0 | 5.5 | 2.5 | 2.5 | `jax.config.update('jax_accurate_erf_inv', True)` |
 | {func}`~jax.lax.erfc` | 66.0 | 66.5 | 145.0 | 157.0 | 124.5 | 125.0 | |
-| {func}`~jax.lax.erfc` (`highest`) | 4.0 | 5.0 | 5.5 | 5.0 | 5.0 | 5.0 | `accuracy=lax.AccuracyMode.HIGHEST` |
+| {func}`~jax.lax.erfc` (`highest`) | 1.5 | 1.5 | 1.5 | 1.5 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.exp` | 1.5 | 2.0 | 116.0 | 109.5 | 64.5 | 65.0 | |
 | {func}`~jax.lax.exp` (`highest`) | 1.5 | 2.0 | 1.5 | 1.5 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.exp2` | 0.5 | 2.5 | 61.0 | 65.5 | 1.5 | 1.5 | |
@@ -195,14 +219,17 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.log2` | 0.5 | 1.0 | 5159.0 | 56.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.log2` (`highest`) | 0.5 | 1.0 | 3.0 | 3.0 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.logistic` | 2.5 | 4.0 | 243.0 | 124.0 | 65.5 | 64.0 | |
+| {func}`~jax.lax.logistic` (`highest`, `jax_accurate_logistic`) | 2.5 | 4.0 | 4.0 | 3.5 | 4.0 | 4.0 | `accuracy=lax.AccuracyMode.HIGHEST`, `jax.config.update('jax_accurate_logistic', True)` |
 | {func}`~jax.lax.reciprocal` | 0.5 | 1.0 | 198.0 | 40.0 | 1.5 | 1.5 | |
 | {func}`~jax.lax.rsqrt` | 1.0 | 2.0 | 2.5 | 2.5 | 1.5 | 1.0 | |
 | {func}`~jax.lax.sin` | 0.5 | 1.5 | 3.5 | 3.5 | 3.5 | 3.5 | |
 | {func}`~jax.lax.sinh` | 1.0 | 3.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
+| {func}`~jax.lax.sinpi` | 1.0 | 2.0 | 1.5 | 1.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.sqrt` | 0.5 | 1.0 | 3.0 | 3.0 | 2.0 | 2.0 | |
 | {func}`~jax.lax.square` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | |
 | {func}`~jax.lax.tan` | 0.5 | 3.5 | 6.5 | 7.0 | 5.5 | 5.5 | |
 | {func}`~jax.lax.tanh` | 5.0 | 5.5 | 1365.5 | 92.0 | 1.5 | 1.5 | |
+| {func}`~jax.lax.tanpi` | 2.0 | 3.0 | 3.0 | 3.0 | 3.0 | 3.0 | |
 | {func}`~jax.numpy.deg2rad` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.numpy.hypot` | 1.5 | 2.0 | 3.5 | 3.5 | 2.5 | 2.5 | |
 | {func}`~jax.numpy.log10` | 3.0 | 2.5 | 6213.0 | 57.0 | 3.0 | 3.0 | |
@@ -212,6 +239,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.scipy.special.erfcx` | 3.5 | 4.0 | 4.0 | 4.0 | 4.5 | 4.5 | |
 | {func}`~jax.scipy.special.gamma` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.scipy.special.ndtri` | 2.5 | 3.0 | 302.0 | 5.0 | 3.0 | 3.0 | |
+| {func}`~jax.scipy.special.ndtri_exp` | 3.0 | 3.5 | 3.5 | 3.5 | 3.5 | 3.5 | |
 
 ---
 
@@ -229,22 +257,27 @@ these are empirical bounds.
 |:---|:---:|:---:|
 | {func}`~jax.lax.acos` | 1.5 | 2.0 |
 | {func}`~jax.lax.acosh` | 3.5 | 3.0 |
+| {func}`~jax.lax.acospi` | 1.0 | 1.0 |
 | {func}`~jax.lax.asin` | 1.5 | 2.5 |
 | {func}`~jax.lax.asinh` | 2.5 | 2.5 |
+| {func}`~jax.lax.asinpi` | 1.0 | 1.0 |
 | {func}`~jax.lax.atan` | 3.5 | 2.5 |
 | {func}`~jax.lax.atan2` | 0.5 | 2.0 |
+| {func}`~jax.lax.atan2pi` | 2.0 | 2.0 |
 | {func}`~jax.lax.atanh` | 2.5 | 3.5 |
+| {func}`~jax.lax.atanpi` | 2.0 | 2.0 |
 | {func}`~jax.lax.bessel_i0e` | 2.0 | 2.0 |
 | {func}`~jax.lax.bessel_i1e` | 2.0 | 2.0 |
 | {func}`~jax.lax.cbrt` | 0.5 | 1.5 |
 | {func}`~jax.lax.cos` | 0.5 | 2.0 |
 | {func}`~jax.lax.cosh` | 2.0 | 2.5 |
+| {func}`~jax.lax.cospi` | 1.0 | 1.5 |
 | {func}`~jax.lax.digamma` | 1.0 | 1.0 |
 | {func}`~jax.lax.erf` | 2.5 | 2.5 |
 | {func}`~jax.lax.erf_inv` | 500000.0 | 500000.0 |
 | {func}`~jax.lax.erf_inv` (`jax_accurate_erf_inv`) | 2.5 | 2.5 |
 | {func}`~jax.lax.erfc` | 350.0 | 350.0 |
-| {func}`~jax.lax.erfc` (`highest`) | 2.5 | 2.5 |
+| {func}`~jax.lax.erfc` (`highest`) | 2.0 | 2.0 |
 | {func}`~jax.lax.exp` | 2.0 | 1.5 |
 | {func}`~jax.lax.exp2` | 0.5 | 1.0 |
 | {func}`~jax.lax.expm1` | 1.0 | 1.5 |
@@ -253,14 +286,17 @@ these are empirical bounds.
 | {func}`~jax.lax.log1p` | 2.0 | 1.5 |
 | {func}`~jax.lax.log2` | 0.5 | 1.5 |
 | {func}`~jax.lax.logistic` | 3.5 | 4.5 |
+| {func}`~jax.lax.logistic` (`highest`, `jax_accurate_logistic`) | 2.5 | 2.5 |
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 1.5 | 1.5 |
 | {func}`~jax.lax.sin` | 0.5 | 2.5 |
 | {func}`~jax.lax.sinh` | 2.0 | 2.5 |
+| {func}`~jax.lax.sinpi` | 1.0 | 1.5 |
 | {func}`~jax.lax.sqrt` | 0.5 | 0.5 |
 | {func}`~jax.lax.square` | 0.5 | 0.5 |
 | {func}`~jax.lax.tan` | 0.5 | 2.5 |
 | {func}`~jax.lax.tanh` | 7.0 | 3.5 |
+| {func}`~jax.lax.tanpi` | 1.5 | 2.0 |
 | {func}`~jax.numpy.deg2rad` | 1.0 | 1.0 |
 | {func}`~jax.numpy.hypot` | 1.5 | 1.5 |
 | {func}`~jax.numpy.log10` | 2.0 | 2.5 |
@@ -270,3 +306,4 @@ these are empirical bounds.
 | {func}`~jax.scipy.special.erfcx` | 3.0 | 3.0 |
 | {func}`~jax.scipy.special.gamma` | 1.0 | 1.0 |
 | {func}`~jax.scipy.special.ndtri` | 2.0 | 2.0 |
+| {func}`~jax.scipy.special.ndtri_exp` | 2.5 | 2.5 |

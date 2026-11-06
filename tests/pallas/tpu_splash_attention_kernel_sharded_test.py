@@ -222,7 +222,7 @@ class SplashAttentionShardingTest(PallasBaseTest):
     self.assertAllClose(dv, dv_ref, atol=5e-2)
 
   def test_splash_explicit_vmap_one_mesh_axis(self):
-    mesh = jax.make_mesh((4,), ("dp",))
+    mesh = jax.make_mesh((2, 2), ("dp", "tp"))
 
     NUM_HEADS = 4
     SEQ_LEN = 256
@@ -256,7 +256,7 @@ class SplashAttentionShardingTest(PallasBaseTest):
 
     def attention_fn_with_shmap(splash_sharded, kernel, x_seq):
       s = x_seq.shape[0]
-      q, k, v = jnp.ones((3, NUM_HEADS, s, HEAD_DIM), out_sharding=jax.P())
+      q = k = v = x_seq.reshape(s, NUM_HEADS, HEAD_DIM).transpose(1, 0, 2)
       segment_ids = SegmentIds(q=jnp.zeros((s,)), kv=jnp.zeros((s,)))
       scale = HEAD_DIM ** -0.25
       out = splash_sharded(kernel, q * scale, k * scale, v, segment_ids)

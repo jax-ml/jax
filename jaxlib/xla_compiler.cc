@@ -379,11 +379,6 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                    [](DebugOptions* self, std::string value) {
                      self->set_xla_dump_hlo_pipeline_re(value);
                    })
-      .def_prop_rw("xla_gpu_dump_autotune_logs_to",
-                   &DebugOptions::xla_gpu_dump_autotune_logs_to,
-                   [](DebugOptions* self, std::string value) {
-                     self->set_xla_gpu_dump_autotune_logs_to(value);
-                   })
       .def_prop_rw("xla_gpu_kernel_cache_file",
                    &DebugOptions::xla_gpu_kernel_cache_file,
                    [](DebugOptions* self, std::string value) {

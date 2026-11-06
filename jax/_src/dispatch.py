@@ -493,34 +493,21 @@ def _device_put_sharding_impl(
         and copy == ArrayCopySemantics.REUSE_INPUT):
       return x
 
-    if config.hijax_unreduced.value:
-      if (isinstance(x, array.UnreducedArray) or
-          (isinstance(s, NamedSharding) and s.spec.unreduced)):
-        if (isinstance(s, NamedSharding) and s.spec.unreduced and
-            s.spec.unreduced_kind != UnreducedKind.sum):
-          raise NotImplementedError
-        norm = lambda p: p._normalized_spec_for_aval(x.ndim)
-        if (xb.process_count() == 1 and isinstance(x, array.UnreducedArray) and
-            isinstance(s, NamedSharding) and
-            norm(x.sharding.spec) == norm(s.spec) and
-            x.sharding.mesh.shape_tuple == s.mesh.shape_tuple):
-          lo_aval, = aval.lo_ty()
-          lo_s = s.update(spec=lo_aval.sharding.spec)  # type:ignore
-          return _DeferredShardArg(x._lo_val, lo_s, aval, True, copy)
-        # TODO(mattjj,yashkatariya): handle donation
-        return pjit.reshard(x, s)
-    else:
-      if isinstance(s, NamedSharding) and s.spec.unreduced:
-        if s.spec.unreduced_kind != UnreducedKind.sum:
-          raise NotImplementedError
-        norm = lambda p: p._normalized_spec_for_aval(x.ndim)
-        if (xb.process_count() == 1 and x_is_jax_array and
-            isinstance(x_sharding, NamedSharding) and
-            norm(x_sharding.spec) == norm(s.spec) and
-            x_sharding.mesh.size == s.mesh.size):
-          return _DeferredShardArg(x, s, aval, True, copy)
-        # TODO(mattjj,yashkatariya): handle donation
-        return api.jit(_device_put_reshard, out_shardings=s)(x)
+    if (isinstance(x, array.UnreducedArray) or
+        (isinstance(s, NamedSharding) and s.spec.unreduced)):
+      if (isinstance(s, NamedSharding) and s.spec.unreduced and
+          s.spec.unreduced_kind != UnreducedKind.sum):
+        raise NotImplementedError
+      norm = lambda p: p._normalized_spec_for_aval(x.ndim)
+      if (xb.process_count() == 1 and isinstance(x, array.UnreducedArray) and
+          isinstance(s, NamedSharding) and
+          norm(x.sharding.spec) == norm(s.spec) and
+          x.sharding.mesh.shape_tuple == s.mesh.shape_tuple):
+        lo_aval, = aval.lo_ty()
+        lo_s = s.update(spec=lo_aval.sharding.spec)  # type:ignore
+        return _DeferredShardArg(x._lo_val, lo_s, aval, True, copy)
+      # TODO(mattjj,yashkatariya): handle donation
+      return pjit.reshard(x, s)
 
     if (not s_is_fully_addressable and
         x_is_jax_array and not x_is_fully_addressable and
@@ -747,9 +734,8 @@ device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
 def _device_put_is_high(*avals, devices, **__):
   return (any(a.is_high for a in avals) or
-          (config.hijax_unreduced.value and
-           any(isinstance(d, NamedSharding) and bool(d.spec.unreduced)
-               for d in devices)))
+          any(isinstance(d, NamedSharding) and bool(d.spec.unreduced)
+              for d in devices))
 device_put_p.is_high = _device_put_is_high  # type: ignore[method-assign]
 
 def _device_put_to_lojax(*hi_xs, devices, srcs, copy_semantics):

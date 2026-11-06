@@ -359,7 +359,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(shape=shape, fill_value=fill_value)
-      for shape in nonempty_nonscalar_array_shapes
+      for shape in nonzerodim_shapes
       for fill_value in [None, -1, shape or (1,)]
      ],
     dtype=all_dtypes,
@@ -393,7 +393,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    shape=nonempty_nonscalar_array_shapes,
+    shape=nonzerodim_shapes,
     dtype=all_dtypes,
     fill_value=[None, -1, 10, (-1,), (10,)],
     size=[1, 5, 10],
@@ -425,7 +425,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(shape=shape, fill_value=fill_value)
-      for shape in nonempty_nonscalar_array_shapes
+      for shape in nonzerodim_shapes
       for fill_value in [None, -1, shape or (1,)]
      ],
     dtype=all_dtypes,
@@ -2417,6 +2417,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     actual = jnp.interp(x, xp, fp, **kwargs)
     self.assertAlmostEqual(actual, expected)
 
+  def testInterpLeftRightNotShared(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42317: calls
+    # with different static left/right must not share a dispatch cache entry.
+    xp = jnp.array([0., 1., 2.])
+    fp = jnp.array([10., 20., 30.])
+    x = jnp.array([-1., 0.5, 3.])
+    self.assertArraysEqual(jnp.interp(x, xp, fp, left=0),
+                           jnp.array([0., 15., 30.]))
+    self.assertArraysEqual(jnp.interp(x, xp, fp, right=1),
+                           jnp.array([10., 15., 1.]))
+
   def testInterpErrors(self):
     with self.assertRaisesWithLiteralMatch(
         ValueError,
@@ -2887,6 +2898,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     )
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker, atol=tol, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    name=['blackman', 'bartlett', 'hamming', 'hanning'],
+    size=[1, 2, 3, 4, 5, 10, 16, 17],
+  )
+  def testWindowFunctionSymmetry(self, name, size):
+    w = getattr(jnp, name)(size)
+    self.assertArraysEqual(w, w[::-1])
+    if size % 2 == 1:
+      self.assertArraysEqual(w[size // 2], jnp.array(1, dtype=w.dtype))
+    if name in ('blackman', 'hanning') and size >= 2:
+      self.assertArraysEqual(w[0], jnp.array(0, dtype=w.dtype))
+      self.assertArraysEqual(w[-1], jnp.array(0, dtype=w.dtype))
 
   @jtu.sample_product(
     [dict(shape=shape, fill_value_shape=fill_value_shape)

@@ -847,7 +847,7 @@ def _remat_lowering(
   ctx.set_tokens_out(tokens_out)
   return outs
 
-mlir.register_lowering(remat_p, _remat_lowering)
+mlir.register_lowering(remat_p, _remat_lowering, shard_map_passthrough=True)
 
 
 def _remat_is_high(*_, jaxpr, **__) -> bool:

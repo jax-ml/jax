@@ -14,6 +14,7 @@
 
 import copy
 import functools
+import gc
 import math
 import re
 from absl.testing import absltest
@@ -26,6 +27,8 @@ from jax import lax
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import _jax
+from jax._src.lib import jaxlib_extension_version
 from jax._src.layout import Layout as DLL, Format
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, Recompute
@@ -171,6 +174,15 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
   def test_default_memory_kind(self):
     dev = jax.devices()[0]
     self.assertEqual(dev.default_memory().kind, self._default_memory_kind)
+
+  def test_uninitialized_memory_gc_clear(self):
+    if jaxlib_extension_version < 517:
+      self.skipTest("Requires jaxlib_extension_version >= 517")
+    mem = _jax.Memory.__new__(_jax.Memory)
+    cycle = [mem]
+    cycle.append(cycle)
+    del mem, cycle
+    gc.collect()
 
 
 class DevicePutTest(jtu.JaxTestCase):
@@ -1797,8 +1809,10 @@ class ComputeOffload(jtu.BufferDonationTestCase):
       out = w * x
       return jnp.sum(jax.reshard(out, P()))
 
-    lowered_text = jax.jit(jax.grad(loss)).lower(w, x).as_text()
-    self.assertIn("unreduced", lowered_text)
+    traced = jax.jit(jax.grad(loss)).trace(w, x)
+    self.assertIn("{U:x}", str(traced.jaxpr))
+    lowered_text = traced.lower().as_text()
+    self.assertNotIn("unreduced", lowered_text)
 
     dw = jax.jit(jax.grad(loss))(w, x)
     self.assertEqual(dw.sharding, NamedSharding(mesh, P("y", unreduced={'x'})))

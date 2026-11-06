@@ -613,6 +613,12 @@ class InternedTest(jtu.JaxTestCase):
     with self.assertRaises(AttributeError):
       del mt.varying
 
+  def test_manual_axis_type_unreduced_reduced_disjoint(self):
+    with self.assertRaisesRegex(
+        ValueError, "`unreduced` and `reduced` argument to ManualAxisType"
+        " cannot overlap"):
+      core.ManualAxisType(unreduced={'x'}, reduced={'x'})
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -62,6 +62,7 @@ CommonTmaParams prepare_tma_params(const CUtensorMap* tma_desc,
   CUtensorMapDataType data_type;
   int64_t elem_bitwidth;
   // types are defined in: launch_context._tma_dma_type()
+  // TODO(b/582181389): Delete sub-byte handling.
   if (elem_type == 8) {
     // this is for int2s
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
@@ -188,8 +189,8 @@ void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
                               int64_t elem_type, int64_t rank, int64_t* sizes,
                               int64_t* strides, int64_t swizzle_bytes,
                               int64_t* window_shape) {
-  CommonTmaParams params = prepare_tma_params(
-      tma_desc, elem_type, rank, sizes, strides, swizzle_bytes);
+  CommonTmaParams params = prepare_tma_params(tma_desc, elem_type, rank, sizes,
+                                              strides, swizzle_bytes);
   if (params.elem_bitwidth < 8) {
     int packing = 8 / params.elem_bitwidth;
     assert(window_shape[rank - 1] % packing == 0);

@@ -153,6 +153,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/executable_run_options.h"
@@ -322,8 +323,7 @@ absl::StatusOr<mlir::OpPassManager> GetPassPipeline(
   return std::move(*passes);
 }
 
-absl::Status RunPasses(mlir::OpPassManager&& passes,
-                       mlir::ModuleOp module,
+absl::Status RunPasses(mlir::OpPassManager&& passes, mlir::ModuleOp module,
                        const mosaic::gpu::DumpOptions& dump_opts) {
   mlir::PassManager pm(module.getContext());
   pm.enableVerifier(false);
@@ -1426,11 +1426,17 @@ absl::Status MosaicGpuPrepare(
     xla::gpu::CollectiveMemoryRequests* absl_nullable
         collective_memory_requests,
     xla::gpu::CollectiveCliqueRequests* absl_nullable clique_requests,
+    xla::gpu::CommandBufferRequests* absl_nonnull command_buffer_requests,
     se::DeviceAddressAllocator* absl_nullable allocator,
     CustomCallResources* resources, ffi::RemainingArgs inputs,
     ffi::RemainingRets results, xla::ffi::Dictionary attributes) {
   int device_ordinal = collective_params->global_device_id.value();
   XLA_VLOG_DEVICE(5, device_ordinal) << "MosaicGpuPrepare";
+  // Command buffer warmup can be skipped as long as the first execution does
+  // not run runtime autotuning, allocate temporary scratch space on the fly,
+  // lazily initialize library handles/plans (e.g. cuBLAS, cuSOLVER, or cuDNN),
+  // or load a CUDA module on first execute.
+  command_buffer_requests->SetRequiresWarmup(false);
   // Module initialization calls cuModuleLoadData to load the PTX into the GPU.
   // CUDA has a system-wide mutex around this call which can cause a deadlock
   // if user tries to load the module on one GPU while another GPU is executing
@@ -1940,6 +1946,7 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuPrepare, MosaicGpuPrepare,
                            .Ctx<ffi::CollectiveParams>()
                            .Ctx<ffi::CollectiveMemoryRequests>()
                            .Ctx<ffi::CollectiveCliqueRequests>()
+                           .Ctx<ffi::CommandBufferRequests>()
                            .Ctx<ffi::Allocator>()
                            .Ctx<xla::ffi::State<CustomCallResources>>()
                            .RemainingArgs()

@@ -30,7 +30,6 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import dtypes
 from jax._src.api import Inline, jit
-from jax._src.custom_derivatives import custom_jvp
 from jax._src.hijax import HiPrim, linearize_from_jvp, vjp_from_jvp
 from jax._src.interpreters import ad, batching
 from jax._src.lax import lax
@@ -66,9 +65,6 @@ _UINT_DTYPES = {
 
 def _constant_like(x, const):
   return array_constructors.array(const, dtype=dtypes.dtype(x))
-
-def _replace_inf(x: ArrayLike) -> Array:
-  return lax.select(isposinf(real(x)), lax._zeros(x), x)
 
 def _to_bool(x: Array) -> Array:
   return x if x.dtype == bool else lax.ne(x, _lax_const(x, 0))
@@ -1282,10 +1278,15 @@ def add(x: ArrayLike, y: ArrayLike, /) -> Array:
     >>> x + 10
     Array([10, 11, 12, 13], dtype=int32)
   """
-  x, y = promote_args("add", x, y)
+  x, y = promote_args("add", x, y, allow_mixed_real_complex=True)
   if x.dtype == bool:
     return lax.bitwise_or(x, y)
-  out = lax.add(x, y)
+  if x.dtype == y.dtype:
+    out = lax.add(x, y)
+  elif dtypes.issubdtype(x.dtype, np.complexfloating):
+    out = lax.complex(lax.add(lax.real(x), y), lax.imag(x))
+  else:
+    out = lax.complex(lax.add(x, lax.real(y)), lax.imag(y))
   jnp_error._set_error_if_nan(out)
   return out
 
@@ -1327,8 +1328,14 @@ def multiply(x: ArrayLike, y: ArrayLike, /) -> Array:
     >>> x * 10
     Array([ 0, 10, 20, 30], dtype=int32)
   """
-  x, y = promote_args("multiply", x, y)
-  return lax.mul(x, y) if x.dtype != bool else lax.bitwise_and(x, y)
+  x, y = promote_args("multiply", x, y, allow_mixed_real_complex=True)
+  if x.dtype == bool:
+    return lax.bitwise_and(x, y)
+  if x.dtype == y.dtype:
+    return lax.mul(x, y)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return lax.complex(lax.mul(lax.real(x), y), lax.mul(lax.imag(x), y))
+  return lax.complex(lax.mul(x, lax.real(y)), lax.mul(x, lax.imag(y)))
 
 
 @binary_ufunc(identity=-1, reduce=reductions._reduce_bitwise_and, associative=True)
@@ -1616,7 +1623,13 @@ def subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
     >>> x - 10
     Array([-10,  -9,  -8,  -7], dtype=int32)
   """
-  out = lax.sub(*promote_args("subtract", x, y))
+  x, y = promote_args("subtract", x, y, allow_mixed_real_complex=True)
+  if x.dtype == y.dtype:
+    out = lax.sub(x, y)
+  elif dtypes.issubdtype(x.dtype, np.complexfloating):
+    out = lax.complex(lax.sub(lax.real(x), y), lax.imag(x))
+  else:
+    out = lax.complex(lax.sub(x, lax.real(y)), lax.neg(lax.imag(y)))
   jnp_error._set_error_if_nan(out)
   return out
 
@@ -2523,9 +2536,14 @@ def true_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   See Also:
     :func:`jax.numpy.floor_divide` for integer division
   """
-  x1, x2 = promote_args_inexact("true_divide", x1, x2)
+  x1, x2 = promote_args_inexact(
+      "true_divide", x1, x2, allow_mixed_real_complex=True)
   jnp_error._set_error_if_divide_by_zero(x2)
-  out = lax.div(x1, x2)
+  if x1.dtype != x2.dtype and dtypes.issubdtype(x1.dtype, np.complexfloating):
+    out = lax.complex(lax.div(lax.real(x1), x2), lax.div(lax.imag(x1), x2))
+  else:
+    x1 = lax._convert_element_type(x1, x2.dtype, dtypes.is_weakly_typed(x1))
+    out = lax.div(x1, x2)
   jnp_error._set_error_if_nan(out)
   return out
 
@@ -3985,25 +4003,7 @@ def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
       "jnp.hypot is not well defined for complex-valued inputs. "
       "Please convert to real values first, such as by using abs(x)")
   x1, x2 = _broadcast_arrays(x1, x2)
-  return _hypot(x1, x2)[0]
-
-
-@custom_jvp
-def _hypot(x1: Array, x2: Array) -> tuple[Array, Array, Array]:
-  """Returns (r, x1 / r, x2 / r) where r = hypot(x1, x2)."""
-  return lax.hypot(x1, x2)
-
-
-@_hypot.defjvp
-def _hypot_jvp(primals, tangents):
-  # The JVP is written entirely in terms of _hypot's outputs, so derivatives of
-  # any order recurse through this rule and never differentiate the power-of-two
-  # scale in _hypot (which would produce overflowing scale^n factors).
-  x1, x2 = primals
-  dx1, dx2 = tangents
-  r, u1, u2 = _hypot(x1, x2)
-  dr = u1 * dx1 + u2 * dx2
-  return (r, u1, u2), (dr, (dx1 - u1 * dr) / r, (dx2 - u2 * dr) / r)
+  return lax.hypot(x1, x2)[0]
 
 
 @export

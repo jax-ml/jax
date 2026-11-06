@@ -353,10 +353,10 @@ def vmap_rule(axis_data, f, in_axes, out_axes, *, sum_match=False):
                              and d is not batching.infer else x)
   infer = any(d is batching.infer for d in tree_leaves(out_axes))
   assert not (axis_data.spmd_name and axis_data.explicit_mesh_axis)
-  vmapped = api.vmap(f, in_axes=in_axes, out_axes=out_axes,
-                     axis_size=axis_data.size, axis_name=axis_data.name,
-                     spmd_axis_name=axis_data.spmd_name or axis_data.explicit_mesh_axis,
-                     sum_match=sum_match)
+  vmapped = api._vmap(f, in_axes=in_axes, out_axes=out_axes,
+                      axis_size=axis_data.size, axis_name=axis_data.name,
+                      spmd_axis_name=axis_data.spmd_name or axis_data.explicit_mesh_axis,
+                      sum_match=sum_match, transform_stack=False)
   def batched(*args):
     args = _tuptree_axes_map(map_zero, args, in_axes, is_leaf=zero)
     out, inferred = vmapped(*args) if infer else (vmapped(*args), None)

@@ -88,23 +88,13 @@ pytype_strict_library(
     srcs = ["pallas_call_registration.py"],
     deps = [
         ":core",
-        ":gpu_info",
         ":lowering",
         "//jax/_src:core",
         "//jax/_src:deprecations",
         "//jax/_src:frozen_dict",
+        "//jax/_src:gpu_info",
         "//jax/_src:mlir",
         "//jax/_src/lib",
         "//jax/_src/pallas",
-    ],
-)
-
-pytype_strict_library(
-    name = "gpu_info",
-    srcs = ["gpu_info.py"],
-    deps = [
-        "//jax/_src:api",
-        "//jax/_src:mesh",
-        "//jax/_src:util",
     ],
 )

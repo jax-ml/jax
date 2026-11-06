@@ -46,6 +46,7 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiInitialize);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiInstantiate);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiPrepare);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiRecord);
 
 class ModuleImage;

@@ -838,7 +838,8 @@ class MpmdTest(PallasSCTest):
 
   def test_vmap_emit_pipeline(self):
     with config.use_emit_pipeline_primitive(True):
-      def pipeline_body(x_ref, o_ref):
+      def pipeline_body(step, x_ref, o_ref):
+        del step  # Unused.
         o_ref[...] = x_ref[...] + 1
 
       @pl.kernel(
@@ -851,6 +852,7 @@ class MpmdTest(PallasSCTest):
             grid=(16,),
             in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
             out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            _explicit_indices=True,
         )(x_hbm_ref, o_hbm_ref)
 
       x = jnp.arange(8 * 16 * 8 * 128, dtype=jnp.int32).reshape(8, 16 * 8, 128)
@@ -867,7 +869,8 @@ class MpmdTest(PallasSCTest):
       def kernel(x_hbm_ref, o_hbm_ref, scratch_ref):
         assert x_hbm_ref.shape == (16 * 8, 128)
         assert scratch_ref.shape == (8, 128)  # used inside pipeline
-        def pipeline_body(x_ref, o_ref):
+        def pipeline_body(step, x_ref, o_ref):
+          del step  # Unused.
           scratch_ref[...] = x_ref[...] + 1
           o_ref[...] = scratch_ref[...]
         pltpu.emit_pipeline(
@@ -875,6 +878,7 @@ class MpmdTest(PallasSCTest):
             grid=(16,),
             in_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
             out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            _explicit_indices=True,
         )(x_hbm_ref, o_hbm_ref)
 
       x = jnp.arange(8 * 16 * 8 * 128, dtype=jnp.int32).reshape(8, 16 * 8, 128)
@@ -883,7 +887,8 @@ class MpmdTest(PallasSCTest):
 
   def test_vmap_emit_pipeline_unbatched_scalar_prefetch(self):
     with config.use_emit_pipeline_primitive(True):
-      def pipeline_body(x_ref, o_ref):
+      def pipeline_body(step, x_ref, o_ref):
+        del step  # Unused.
         o_ref[...] = x_ref[...]
 
       s = jnp.array([4, 3, 2, 5, 3, 5, 2, 7], jnp.int32)
@@ -905,6 +910,7 @@ class MpmdTest(PallasSCTest):
             grid=(8,),
             in_specs=pl.BlockSpec((8, 128), lambda i: (s_smem_ref[i], 0)),
             out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            _explicit_indices=True,
         )(x_hbm_ref, o_hbm_ref)
 
       out = jax.vmap(kernel)(x)
@@ -914,7 +920,8 @@ class MpmdTest(PallasSCTest):
 
   def test_vmap_emit_pipeline_batched_scalar_prefetch(self):
     with config.use_emit_pipeline_primitive(True):
-      def pipeline_body(x_ref, o_ref):
+      def pipeline_body(step, x_ref, o_ref):
+        del step  # Unused.
         o_ref[...] = x_ref[...]
 
       def fn(s, x):
@@ -928,6 +935,7 @@ class MpmdTest(PallasSCTest):
               grid=(8,),
               in_specs=pl.BlockSpec((8, 128), lambda i: (s_smem_ref[i], 0)),
               out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              _explicit_indices=True,
           )(x_hbm_ref, o_hbm_ref)
 
         s_smem = pltpu.with_memory_space_constraint(s, pltpu.SMEM)
@@ -2065,6 +2073,32 @@ class MpmdHijaxTest(jtu.JaxTestCase):
     ot = f(xt)
     self.assertArraysEqual(ot.x0, xt.x0)
     self.assertArraysEqual(ot.x1, xt.x1)
+
+  @parameterized.parameters(True, False)
+  @jtu.with_explicit_mesh((2,), "x")
+  def test_mpmd_map_shard_map_unreduced(self, check_vma, mesh):
+    x_np = np.arange(8 * 128, dtype=np.float32).reshape(8, 128)
+    acc = jax.device_put(x_np, jax.P(unreduced={"x"}))
+
+    @jax.jit
+    @jax.shard_map(mesh=mesh, out_specs=jax.P(unreduced={"x"}))
+    def f(acc):
+      with config._check_vma(check_vma):
+        @pl.kernel(
+            out_type=jax.typeof(acc),
+            mesh=pltpu.TensorCoreMesh(axis_name="tc_core", num_cores=1),
+            scratch_types=(pltpu.VMEM(acc.shape, acc.dtype),),
+        )
+        def add_one_kernel(in_ref, out_ref, vmem_ref):
+          pltpu.sync_copy(in_ref, vmem_ref)
+          vmem_ref[...] = vmem_ref[...] + 1.0
+          pltpu.sync_copy(vmem_ref, out_ref)
+
+        return add_one_kernel(acc)
+
+    out = f(acc)
+    self.assertEqual(out.sharding.spec, jax.P(None, None, unreduced={"x"}))
+    self.assertArraysEqual(jax.reshard(out, jax.P()), x_np + 2.0)
 
 
 # TODO(rdyro): A temporary workaround to avoid flakiness.

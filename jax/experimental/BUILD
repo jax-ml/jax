@@ -364,15 +364,11 @@ pytype_strict_library(
     ),
     visibility = ["//visibility:public"],
     deps = [
-        "//jax",
-        "//jax/_src:core",
         "//jax/_src:deprecations",
-        "//jax/_src:lax",
         "//jax/_src:source_info_util",
-        "//jax/_src:state_types",
         "//jax/_src/pallas",
-        "//jax/_src/pallas/mosaic:sc_core",
-        "//jax/_src/pallas/mosaic:sc_primitives",
+        "//jax/pallas",
+        "//jax/pallas:tpu_sc",
     ] + py_deps("numpy"),
 )
 
@@ -384,25 +380,8 @@ pytype_strict_library(
     ],
     deps = [
         ":pallas",  # build_cleaner: keep
-        "//jax/_src/pallas/fuser:block_spec",
-        "//jax/_src/pallas/fuser:custom_evaluate",
-        "//jax/_src/pallas/fuser:custom_fusion",
-        "//jax/_src/pallas/fuser:fuser_utils",
-        "//jax/_src/pallas/fuser:fusible",
-        "//jax/_src/pallas/fuser:fusion",
-        "//jax/_src/pallas/fuser:jaxpr_fusion",
+        "//jax/pallas:fuser",
     ],
-)
-
-pytype_strict_library(
-    name = "pallas_gpu_ops",
-    srcs = ["//jax/experimental/pallas/ops/gpu:triton_ops"],
-    deps = [
-        ":pallas",
-        ":pallas_triton",
-        "//jax",
-        "//jax/_src:lax",
-    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -430,17 +409,8 @@ pytype_strict_library(
         ":mosaic_gpu_users",
     ],
     deps = [
-        ":mosaic_gpu",
-        "//jax/_src:lax",
-        "//jax/_src/pallas/mosaic_gpu:core",
-        "//jax/_src/pallas/mosaic_gpu:helpers",
-        "//jax/_src/pallas/mosaic_gpu:layout_rules",
-        "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
-        "//jax/_src/pallas/mosaic_gpu:pipeline",
-        "//jax/_src/pallas/mosaic_gpu:primitives",
-        "//jax/_src/pallas/mosaic_gpu:torch",
-        "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
-        "//jax/_src/pallas/mosaic_gpu/interpret:params",
+        "//jax/_src:deprecations",
+        "//jax/pallas:mosaic_gpu",
     ],
 )
 
@@ -450,20 +420,10 @@ pytype_strict_library(
     visibility = ["//visibility:public"],
     deps = [
         ":pallas",  # build_cleaner: keep
-        "//jax/_src:core",
         "//jax/_src:deprecations",
-        "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
-        "//jax/_src/pallas/mosaic:helpers",
-        "//jax/_src/pallas/mosaic:lowering",
-        "//jax/_src/pallas/mosaic:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic:pipeline",
-        "//jax/_src/pallas/mosaic:prefetch",
-        "//jax/_src/pallas/mosaic:primitives",
-        "//jax/_src/pallas/mosaic:random",
-        "//jax/_src/pallas/mosaic:tpu_info",
-        "//jax/_src/pallas/mosaic/interpret:interpret_pallas_call",
-        "//jax/_src/pallas/mosaic/interpret:params",
+        "//jax/pallas:tpu",
     ],
 )
 
@@ -475,8 +435,7 @@ pytype_strict_library(
     ],
     deps = [
         ":pallas",  # build_cleaner: keep
-        "//jax/_src/pallas/mosaic:sc_core",
-        "//jax/_src/pallas/mosaic:sc_primitives",
+        "//jax/pallas:tpu_sc",
     ],
 )
 
@@ -507,9 +466,9 @@ pytype_strict_library(
     ],
     deps = [
         "//jax/_src:deprecations",
+        "//jax/_src:gpu_info",
         "//jax/_src/pallas",
         "//jax/_src/pallas/triton:core",
-        "//jax/_src/pallas/triton:gpu_info",
         "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/triton:primitives",
     ],

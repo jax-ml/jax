@@ -334,6 +334,9 @@ StrongLRUCache::StrongLRUCache(std::optional<nb::callable> cache_context_fn,
 /*static*/ nb_class_ptr<StrongLRUCache> StrongLRUCache::Create(
     std::optional<nb::callable> cache_context_fn, nb::callable fn,
     int64_t maxsize, std::optional<nb::callable> explain, int64_t num_shards) {
+  if (num_shards <= 0) {
+    throw std::invalid_argument("num_shards must be positive");
+  }
   return make_nb_class<StrongLRUCache>(std::move(cache_context_fn),
                                        std::move(fn), maxsize,
                                        std::move(explain), num_shards);
@@ -622,6 +625,10 @@ void StrongLRUCache::TpClear() {
                                                 Py_ssize_t nargsf,
                                                 PyObject* kwnames) {
   try {
+    if (!nb::inst_ready(self_obj)) {
+      PyErr_SetString(PyExc_TypeError, "Uninitialized StrongLRUCache");
+      return nullptr;
+    }
     StrongLRUCache* self = nb::inst_ptr<StrongLRUCache>(self_obj);
     if (!self) {
       PyErr_SetString(PyExc_TypeError, "Not a StrongLRUCache");
@@ -691,6 +698,9 @@ void StrongLRUCache::TpClear() {
 }
 
 /*static*/ int StrongLRUCache::tp_clear(PyObject* self_obj) {
+  if (!nb::inst_ready(self_obj)) {
+    return 0;
+  }
   StrongLRUCache* self = nb::inst_ptr<StrongLRUCache>(self_obj);
   self->TpClear();
   return 0;
@@ -743,6 +753,9 @@ void RegisterStrongLruCache(nb::module_& m) {
             auto explain =
                 nb::cast<std::optional<nb::callable>>(pickle["explain"]);
             int64_t num_shards = nb::cast<int64_t>(pickle["num_shards"]);
+            if (num_shards <= 0) {
+              throw std::invalid_argument("num_shards must be positive");
+            }
 
             new (cache)
                 StrongLRUCache(std::move(cache_context_fn), std::move(fn),

@@ -41,6 +41,7 @@ from jax._src import source_info_util
 from jax._src import state
 from jax._src import traceback_util
 from jax._src import tree_util
+from jax._src import util
 from jax._src import xla_bridge
 from jax._src.cloud_tpu_init import is_libtpu_at_least
 from jax._src.export import shape_poly
@@ -51,6 +52,7 @@ from jax._src.lax import ann
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
+from jax._src.lib import ifrt_version
 from jax._src.lib import jax_mlir_ext
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
@@ -62,9 +64,9 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas.fuser import custom_fusion_lib
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
+from jax._src.pallas.fuser import custom_fusion_lib
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import error_handling
 from jax._src.pallas.mosaic import primitives as tpu_primitives
@@ -421,9 +423,13 @@ class PallasLoweringCacheKey:
   block_shapes: tuple[tuple[int | pallas_core.Squeezed, ...] | None, ...]
   grid_arity: int
   forward_compatible: bool = False
+  needs_layout_passes: bool = False
   fuse_transposed_lhs_in_matmul: bool = False
   grid_sizes: tuple[int, ...] = ()
   vmapped_dims: tuple[int, ...] = ()
+  grid_names: tuple[Hashable, ...] | None = None
+  core_axis_names: tuple[Hashable, ...] = ()
+  jax_mesh_context: pallas_utils.MeshInfo | None = None
   dynamic_shape_env: frozenset[tuple[shape_poly._DimExpr, Any]] | None = None
 
 
@@ -679,14 +685,14 @@ lowering_rules: dict[tpu_core.CoreType, dict[jax_core.Primitive, Callable]]
 lowering_rules = {kernel_type: {} for kernel_type in tpu_core.CoreType}
 skip_mlir_conversions = set()
 
-# TODO(phawkins): currently we are excluding higher-order primitives because
-# we have not yet taught them to propagate the implicit grid arguments.
+# TODO(phawkins): currently we are excluding higher-order primitives other
+# than jit_p because we have not yet taught them to propagate the implicit
+# grid arguments.
 _uncacheable_primitives: set[jax_core.Primitive] = {
     lax.while_p,
     lax.scan_p,
     lax.cond_p,
     primitives.run_scoped_p,
-    pjit.jit_p,
     custom_derivatives.custom_jvp_call_p,
     custom_derivatives.custom_vjp_call_p,
     primitives.num_programs_p,
@@ -699,7 +705,30 @@ _primitives_needing_grid: set[jax_core.Primitive] = {
     tpu_primitives.dma_wait_p,
     primitives.program_id_p,
     lax.axis_index_p,
+    pjit.jit_p,
 }
+
+
+def _is_acc_aval(aval: Any) -> bool:
+  return isinstance(aval, state.AbstractRef) and isinstance(
+      aval.memory_space, tpu_core.AccMemorySpace
+  )
+
+
+def _is_cacheable_eqn(eqn: jax_core.JaxprEqn) -> bool:
+  if eqn.primitive is pjit.jit_p:
+    return _is_cacheable_jaxpr(eqn.params["jaxpr"])
+  return eqn.primitive not in _uncacheable_primitives and not any(
+      _is_acc_aval(v.aval) for v in eqn.outvars
+  )
+
+
+@util.weakref_lru_cache(trace_context_in_key=False)
+def _is_cacheable_jaxpr(jaxpr: jax_core.Jaxpr) -> bool:
+  """Returns whether a pjit sub-jaxpr can be lowered into a cached FuncOp."""
+  return not jaxpr.constvars and all(
+      _is_cacheable_eqn(eqn) for eqn in jaxpr.eqns
+  )
 
 
 def register_lowering_rule(
@@ -1825,15 +1854,10 @@ def jaxpr_subcomp(
         cache_key = None
         rule_context = None
 
-        def is_acc_aval(aval):
-          return (
-              isinstance(aval, state.AbstractRef) and
-              isinstance(aval.memory_space, tpu_core.AccMemorySpace)
-          )
         # TODO(phawkins): allow KeyScalarBundle/AccRef here as well as ir.Value.
-        can_cache = (eqn.primitive not in _uncacheable_primitives and
-                     all(isinstance(x, ir.Value) for x in invals) and
-                     not any(is_acc_aval(o) for o in avals_out))
+        can_cache = _is_cacheable_eqn(eqn) and all(
+            isinstance(x, ir.Value) for x in invals
+        )
         if can_cache:
           grid_arity = (
               len(ctx.user_grid_indices)
@@ -1849,9 +1873,13 @@ def jaxpr_subcomp(
               block_shapes=block_shapes,
               grid_arity=grid_arity,
               forward_compatible=ctx.forward_compatible,
+              needs_layout_passes=ctx.needs_layout_passes,
               fuse_transposed_lhs_in_matmul=ctx.fuse_transposed_lhs_in_matmul,
               grid_sizes=ctx.grid_sizes,
               vmapped_dims=ctx.vmapped_dims,
+              grid_names=ctx.grid_names,
+              core_axis_names=ctx.core_axis_names,
+              jax_mesh_context=ctx.jax_mesh_context,
               dynamic_shape_env=(
                   ctx.dynamic_shape_env.snapshot()
                   if ctx.dynamic_shape_env is not None
@@ -3504,6 +3532,7 @@ def _gather_lowering_rule(
     indices_are_sorted,
     mode,
     fill_value,
+    out_sharding,
 ):
   in_aval = ctx.avals_in[0]
   indices_aval = ctx.avals_in[1]
@@ -3729,26 +3758,36 @@ def _reduce_index_helper(
         x,
     )
     axis += 1
-    out_shape = (1, *out_aval.shape)
+    in_shape = (1, *x_aval.shape)
   else:
-    out_shape = out_aval.shape
+    in_shape = x_aval.shape
 
+  keep_dims = ifrt_version >= 84
+  out_shape = (
+      *in_shape[:axis],
+      *((1,) if keep_dims else ()),
+      *in_shape[axis + 1 :],
+  )
   native_dtype = jnp.int16 if x_aval.dtype == jnp.bfloat16 else jnp.int32
   native_out_type = ctx.aval_to_ir_type(
       jax_core.ShapedArray(out_shape, native_dtype)
   )
   result = tpu.reduce_index(native_out_type, x, axis, reduction_kind)
 
-  if out_aval.dtype != native_dtype:
+  if dtypes.itemsize_bits(out_aval.dtype) > dtypes.itemsize_bits(native_dtype):
     out_type = ctx.aval_to_ir_type(
         jax_core.ShapedArray(out_shape, out_aval.dtype)
     )
     # To make sure jnp.argmax/argmin always return int32, we need to convert
     # the int16 output of tpu.reduce_index to int32 when the input is bf16.
-    result = arith.extsi(out_type, result)
+    # The reduced dimension can have up to 2^16 elements, so the int16
+    # indices must be zero-extended.
+    result = arith.extui(out_type, result)
 
   if is_1d:
-    return vector.extract(result, [], [0])
+    return vector.extract(result, [], [0] * len(out_shape))
+  if keep_dims:
+    return tpu.reshape(ctx.aval_to_ir_type(out_aval), result)
   return result
 
 @register_lowering_rule(lax.argmax_p, ensure_mlir_values=False)
@@ -3795,8 +3834,10 @@ def _top_k_impl(operand, *, k: int, axis: int = -1, carried_idx=None):
 
   vals_stacked = jnp.stack(vals, axis=axis)
   idxs_stacked = jnp.stack(idxs, axis=axis)
-  if idxs_stacked.dtype != jnp.int32:
-    idxs_stacked = idxs_stacked.astype(jnp.int32)
+  if dtypes.itemsize_bits(idxs_stacked.dtype) < 32:
+    # The reduced dimension can have up to 2^16 elements, so 16-bit indices
+    # must be zero-extended.
+    idxs_stacked = idxs_stacked.astype(jnp.uint16).astype(jnp.int32)
 
   return vals_stacked, idxs_stacked
 
@@ -4945,6 +4986,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
 
 @register_lowering_rule(pjit.jit_p, kernel_types=[*tpu_core.CoreType])
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
+  util.test_event("pallas_mosaic_pjit_lowering")
   lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
   return jaxpr_subcomp(lowering_context, jaxpr, *args)
 
@@ -5168,6 +5210,17 @@ def _erf_inv_lowering_rule(ctx: LoweringRuleContext, x):
   return lower_fun(
       pallas_utils.erf_inv_lowering_helper,
   )(ctx, x)
+
+
+@register_lowering_rule(lax.fmuladd_p, kernel_types=[*tpu_core.CoreType])
+def _fmuladd_lowering_rule(ctx: LoweringRuleContext, a, b, c):
+  (aval_out,) = ctx.avals_out
+  out_ty = ctx.aval_to_ir_type(aval_out)
+  a, b, c = (
+      vector.broadcast(out_ty, x) if x_aval.shape != aval_out.shape else x
+      for x, x_aval in zip((a, b, c), ctx.avals_in)
+  )
+  return arith.addf(arith.mulf(a, b), c)
 
 
 @register_lowering_rule(lax.polynomial_p, kernel_types=[*tpu_core.CoreType])
@@ -5882,6 +5935,23 @@ def _get_barrier_semaphore_rule(ctx: LoweringRuleContext, *, tag: Any = None):
 @register_lowering_rule(primitives.delay_p, kernel_types=[*tpu_core.CoreType])
 def _delay_rule(ctx: LoweringRuleContext, nanos: ir.Value):
   tpu.delay(nanos)
+  return []
+
+
+@register_lowering_rule(
+    tpu_primitives.request_p_state_p, kernel_types=[*tpu_core.CoreType]
+)
+def _request_p_state_rule(ctx: LoweringRuleContext, *, p_state: int):
+  del ctx
+  if tpu_info.get_tpu_info().generation < 7:
+    raise NotImplementedError("request_p_state is only supported on TPU7x+")
+  # TODO(b/581748519): Remove once the minimum jaxlib version includes
+  # tpu.request_p_state.
+  if not hasattr(tpu, "RequestPStateOp"):
+    raise NotImplementedError(
+        "request_p_state requires a jaxlib with tpu.request_p_state"
+    )
+  tpu.request_p_state(p_state)  # pyrefly: ignore[missing-attribute]
   return []
 
 

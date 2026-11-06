@@ -281,6 +281,8 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
     return outs, maybe_fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
   cache_key = pxla.JitGlobalCppCacheKeys(
+      static_argnums=jit_info.static_argnums,
+      static_argnames=jit_info.static_argnames,
       donate_argnums=jit_info.donate_argnums,
       donate_argnames=jit_info.donate_argnames,
       device=jit_info.device, backend=jit_info.backend,
@@ -292,7 +294,8 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
       in_layouts_leaves=jit_info.in_layouts_leaves,
       out_layouts_treedef=jit_info.out_layouts_treedef,
       out_layouts_leaves=jit_info.out_layouts_leaves,
-      compiler_options_kvs=jit_info.compiler_options_kvs)
+      compiler_options_kvs=jit_info.compiler_options_kvs,
+      keep_unused=jit_info.keep_unused)
 
   cpp_cache = (cache
                if ((cache := config.jax_jit_cpp_cache_obj.value) is not None
@@ -846,7 +849,7 @@ def pjit_check_aval_sharding(
           'unspecified shardings are allowed for non-array types. If this '
           'would be useful to you, please open an issue at '
           'https://github.com/jax-ml/jax/issues.')
-    if (config.hijax_unreduced.value and what_aval == 'pjit outputs' and
+    if (what_aval == 'pjit outputs' and
         isinstance(aval, core.ShapedArray) and isinstance(s, NamedSharding) and
         aval.sharding.spec.unreduced != s.spec.unreduced):
       raise ValueError(
@@ -920,8 +923,7 @@ def _lojax_expand_params(
   out_lol = out_avals.unpack()
 
   def _lower_sharding(s):
-    if (config.hijax_unreduced.value and isinstance(s, NamedSharding) and
-        s.spec.unreduced):
+    if isinstance(s, NamedSharding) and s.spec.unreduced:
       u_axes = core.order_wrt_mesh(s.mesh, s.spec.unreduced)
       lo_spec = s.spec.update(
           partitions=(*u_axes, *s.spec.partitions),
@@ -929,14 +931,22 @@ def _lojax_expand_params(
       return s.update(spec=lo_spec)
     return s
 
-  def expand(lol, stuff, lower_s=False):
-    return tuple(_lower_sharding(x) if lower_s else x
-                 for l, x in zip(lol, stuff) for _ in l)
+  def _lower_layout(lay, lo_aval):
+    if (isinstance(lay, Layout) and isinstance(lo_aval, core.ShapedArray) and
+        (k := lo_aval.ndim - len(lay.major_to_minor))):
+      return lay.update(
+          major_to_minor=(*range(k), *(m + k for m in lay.major_to_minor)))
+    return lay
+
+  def expand(lol, stuff, lower_s=False, lower_l=False):
+    return tuple(_lower_sharding(x) if lower_s else
+                 _lower_layout(x, a) if lower_l else x
+                 for l, x in zip(lol, stuff) for a in l)
   donated_invars = expand(in_lol , donated_invars)
   in_shardings   = expand(in_lol , in_shardings  , lower_s=True)
-  in_layouts     = expand(in_lol , in_layouts    )
+  in_layouts     = expand(in_lol , in_layouts    , lower_l=True)
   out_shardings  = expand(out_lol, out_shardings , lower_s=True)
-  out_layouts    = expand(out_lol, out_layouts   )
+  out_layouts    = expand(out_lol, out_layouts   , lower_l=True)
 
   new_params = dict(params, donated_invars=donated_invars,
                     in_shardings=in_shardings, in_layouts=in_layouts,
@@ -1238,7 +1248,8 @@ def _pjit_call_impl(*args, jaxpr: core.Jaxpr,
       in_shardings_treedef=None, in_shardings_leaves=in_shardings,
       out_shardings_treedef=None, out_shardings_leaves=out_shardings,
       in_layouts_treedef=None, in_layouts_leaves=in_layouts,
-      out_layouts_treedef=None, out_layouts_leaves=out_layouts)
+      out_layouts_treedef=None, out_layouts_leaves=out_layouts,
+      keep_unused=keep_unused)
   try:
     return _jax.pjit(
         name, f, call_impl_cache_miss, [], [], cache_key,
@@ -1450,7 +1461,8 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 # TODO(phawkins): this is marked uncacheable because it has its own cache and
 # because the cache breaks jaxpr metadata like source locations. We should fix
 # the metadata problem and consolidate the caches.
-mlir.register_lowering(jit_p, _pjit_lowering, cacheable=False)
+mlir.register_lowering(
+    jit_p, _pjit_lowering, cacheable=False, shard_map_passthrough=True)
 
 def const_args_shardings(
     const_args: Sequence[Array | np.ndarray],
@@ -2327,19 +2339,19 @@ reshard_p.skip_canonicalization = True
 
 def _reshard_is_high(aval, *, dst_sharding, **__):
   return (aval.is_high or
-          (config.hijax_unreduced.value and isinstance(dst_sharding, NamedSharding)
+          (isinstance(dst_sharding, NamedSharding)
            and bool(dst_sharding.spec.unreduced)))
 reshard_p.is_high = _reshard_is_high
 
 
-def _part_axes(p) -> tuple[Any, ...]:
+def _tupleize_spec(p):
   if p is None:
     return ()
   return p if isinstance(p, tuple) else (p,)
 
 
 def _peeled_axes(src_p, dst_p, added_u) -> tuple[Any, ...]:
-  src_p, dst_p = _part_axes(src_p), _part_axes(dst_p)
+  src_p, dst_p = _tupleize_spec(src_p), _tupleize_spec(dst_p)
   tail = src_p[len(dst_p):]
   # Non-empty when `src_p == (*dst_p, *tail)` with `tail <= added_u`, e.g.
   # P('x') -> P(unreduced={'x'}) or P(('y', 'x')) -> P('y', unreduced={'x'}).
@@ -2406,7 +2418,7 @@ def _lower_shaped_reshard(lo_val, in_aval: core.ShapedArray,
   rep_u = tuple(a for a in new_u if a not in sharded_u)
   u_per_dim = [()] * len(src_u) + peeled
   manual_axes = (frozenset(dst_u) |
-                 frozenset(a for p in dst_parts for a in _part_axes(p)))
+                 frozenset(a for p in dst_parts for a in _tupleize_spec(p)))
 
   def _to_unreduced(v):
     if sharded_u:
@@ -2551,7 +2563,188 @@ ad.fancy_transposes[reshard_p] = _reshard_transpose_fancy
 def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding, concrete_mesh):
   aval_out, = ctx.avals_out
   return [mlir.lower_with_explicit_types(ctx, x_node, aval_out)]
-mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
+
+def _dst_starts_with_cur(dst, cur) -> bool:
+  """For example:
+
+  * _dst_starts_with_cur(('x', 'y'), ('x',)) is True
+  * _dst_starts_with_cur(('x', 'y'), ('y',)) is False
+  """
+  return dst[:len(cur)] == cur
+
+def _a2a_target(cur: list[tuple], dst: list[tuple], axes: tuple) -> int | None:
+  """Returns the dim that `axes` can be moved to with one all_to_all, or None.
+
+  `axes` are the last axes of some dim in `cur`. They can only move to the dim
+  they are sharded on in `dst`, and only if that dim already holds exactly the
+  axes that come before them there. Otherwise they would land out of order.
+
+  For example:
+
+  * cur = [('x',), ()], dst = [(), ('x', 'y')], axes = ('x',), return = 1
+    Dim 1 is empty and 'x' goes first.
+  * cur = [('y',), ('x',)], dst = [(), ('x', 'y')], axes = ('y',), return = 1
+    'x' is already on dim 1, so 'y' goes next.
+  * cur = [('x', 'y'), ()], dst = [(), ('x', 'y')], axes = ('x', 'y'),
+    return = 1
+    Both axes move to dim 1 together.
+  * cur = [('x',), ('y',)], dst = [(), ('x', 'y')], axes = ('x',), return = None
+    'y' is on dim 1 where 'x' should go.
+  * cur = [('z',), ()], dst = [(), ('x', 'y')], axes = ('z',), return = None
+    'z' isn't sharded anywhere in `dst`.
+  """
+  for i, (c, d) in enumerate(zip(cur, dst)):
+    if _dst_starts_with_cur(d, c + axes):
+      return i
+  return None
+
+@dataclass(frozen=True, slots=True)
+class _ReshardMove:
+  """Takes mesh `axes` off the end of `src_dim`.
+
+  They're moved to `dst_dim` with an all_to_all, or dropped with an all_gather
+  if `dst_dim` is None.
+  """
+  axes: tuple
+  src_dim: int
+  dst_dim: int | None
+
+@dataclass(frozen=True, slots=True)
+class _ReshardSlice:
+  """Further shards each dim `i` over `axes_per_dim[i]` with a local slice."""
+  axes_per_dim: tuple[tuple, ...]
+
+def _free_slice_axes(cur: list[tuple], dst: list[tuple]) -> tuple[tuple, ...]:
+  """Axes each dim can be sliced over right now, without any communication.
+
+  A dim can take its next missing axes if it's already a prefix of its target
+  and no dim in `cur` uses those axes yet. Slicing them before the collectives
+  makes the collectives move less data.
+
+  For example:
+
+  * cur = [('x',), ()], dst = [(), ('y',)], return = ((), ('y',))
+    'y' is free, so dim 1 can be sliced on it before 'x' is gathered.
+  * cur = [('x',), ()], dst = [(), ('x',)], return = ((), ())
+    'x' is still on dim 0, so dim 1 has to wait for it to arrive.
+  """
+  used = {a for c in cur for a in c}
+  out = []
+  for c, d in zip(cur, dst):
+    n = len(c)
+    if _dst_starts_with_cur(d, c):
+      while n < len(d) and d[n] not in used:
+        n += 1
+    out.append(d[len(c):n])
+  return tuple(out)
+
+def _next_move(cur: list[tuple], dst: list[tuple]) -> _ReshardMove:
+  """Takes axes off the end of a dim that isn't a prefix of its target.
+
+  Prefers moving axes with an all_to_all over dropping them with an
+  all_gather, trying the whole dim's axes before falling back to its last axis.
+  """
+  out_of_place = [i for i, (c, d) in enumerate(zip(cur, dst))
+                  if not _dst_starts_with_cur(d, c)]
+  for i in out_of_place:
+    for axes in (cur[i], cur[i][-1:]):
+      target = _a2a_target(cur, dst, axes)
+      if target is not None:
+        return _ReshardMove(axes, i, target)
+
+  # No all_to_all is possible, so all_gather on the first out-of-place dim.
+  # If none of its axes are in `dst`, gather them all at once, e.g.
+  # P(('x', 'y'), None) -> P(None, None) gathers ('x', 'y') together.
+  # Otherwise gather only its last axis, so the axes `dst` still needs stay
+  # sharded, e.g. P(('x', 'y'), None) -> P('x', None) gathers just 'y'
+  # instead of gathering ('x', 'y') and then slicing 'x' back in.
+  i = out_of_place[0]
+  dst_axes = {a for d in dst for a in d}
+  if any(a in dst_axes for a in cur[i]):
+    axes = cur[i][-1:]
+  else:
+    axes = cur[i]
+  return _ReshardMove(axes, i, None)
+
+def _plan_reshard(src_spec, dst_spec) -> list[_ReshardMove | _ReshardSlice]:
+  """Per-shard steps that reshard `src_spec` into `dst_spec`.
+
+  Slices happen as early as possible, so that collectives move less data:
+
+    f32[4@x, 4] -> f32[4@x, 4@y]    slice 'y' ('y' is free, so slice first)
+                -> f32[4, 4@y]      all_gather 'x'
+
+    f32[4@x, 4@y] -> f32[4, 4@y]    all_gather 'x' (dim 1 isn't ready for it)
+                  -> f32[4@y, 4]    all_to_all 'y' to dim 0
+                  -> f32[4@y, 4@x]  slice 'x'
+
+    f32[4@(x,y), 4] -> f32[4, 4@(x,y)]  all_to_all ('x', 'y') to dim 1
+  """
+  # TODO(yashkatariya): Reordering axes within a dim, e.g. P(('x', 'y')) ->
+  # P(('y', 'x')), is a single ppermute but is planned as gathers and a slice.
+  cur = [_tupleize_spec(p) for p in src_spec]
+  dst = [_tupleize_spec(p) for p in dst_spec]
+  steps = []
+  while True:
+    slice_axes = _free_slice_axes(cur, dst)
+    if any(slice_axes):
+      steps.append(_ReshardSlice(slice_axes))
+      cur = [c + s for c, s in zip(cur, slice_axes)]
+    if cur == dst:
+      return steps  # type: ignore
+    # Some dim is still out of place, so it needs a collective.
+    move = _next_move(cur, dst)
+    steps.append(move)  # type: ignore
+    cur[move.src_dim] = cur[move.src_dim][:-len(move.axes)]
+    if move.dst_dim is not None:
+      cur[move.dst_dim] += move.axes
+
+def _slice_to_shard(x, axes_per_dim: Sequence[tuple], mesh):
+  """Further shards each dim of `x` over `axes_per_dim` with a local slice."""
+  from jax._src.lax import parallel, slicing  # type: ignore
+  if not any(axes_per_dim):
+    return x
+  starts, sizes = [], []
+  for size, axes in zip(x.shape, axes_per_dim):
+    local_size = size // math.prod(mesh.shape[a] for a in axes)
+    starts.append(parallel.axis_index(axes) * local_size if axes
+                  else np.int32(0))
+    sizes.append(local_size)
+  return slicing.dynamic_slice(x, starts, sizes, allow_negative_indices=False)
+
+def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh):
+  from jax._src.lax import parallel  # type: ignore
+
+  (in_aval,), (out_aval,) = in_avals, out_avals
+  in_s, out_s = in_aval.sharding, out_aval.sharding
+  assert not in_s.spec.unreduced and not out_s.spec.unreduced
+
+  mesh = mesh_lib.get_abstract_mesh()
+  if (mesh.auto_axes or (not in_s.mesh.empty and in_s.mesh != mesh) or
+      out_s.mesh != mesh):
+    raise NotImplementedError
+
+  if in_s.spec.partitions == out_s.spec.partitions:
+    return mlir.PartitioningRule()
+
+  steps = _plan_reshard(in_s.spec.partitions, out_s.spec.partitions)
+
+  def in_collective(x):
+    for step in steps:
+      if isinstance(step, _ReshardSlice):
+        x = _slice_to_shard(x, step.axes_per_dim, mesh)
+      elif step.dst_dim is None:
+        x = parallel.all_gather(x, step.axes, axis=step.src_dim, tiled=True)
+      else:
+        x = parallel.all_to_all(x, step.axes, split_axis=step.dst_dim,
+                                concat_axis=step.src_dim, tiled=True)
+    return (x,)
+
+  return mlir.PartitioningRule(in_collective=in_collective)
+
+mlir.register_lowering(
+    reshard_p, _reshard_hlo_lowering,
+    shard_map_collective_rule=_reshard_collective_rule)
 
 def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding, concrete_mesh):
   x, = vals_in
@@ -2656,12 +2849,13 @@ def _auto_axes(fun, *, axes_, out_sharding):
     if set(mesh_info.prev.auto_axes) == set(mesh_info.axes):
       return fun(*args, **kwargs)
     in_avals = [core.typeof(a) for a in tree_leaves(args)]
-    with mesh_lib.use_abstract_mesh(mesh_info.new):
-      in_specs = tree_map(
-          lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
-      args = reshard(args, in_specs)
-      out = fun(*args, **kwargs)
-    res = reshard(out, _out_sharding)
+    with config.shard_map_partitioning(False):
+      with mesh_lib.use_abstract_mesh(mesh_info.new):
+        in_specs = tree_map(
+            lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
+        args = reshard(args, in_specs)
+        out = fun(*args, **kwargs)
+      res = reshard(out, _out_sharding)
     if config.no_collectives.value:
       from jax._src.lax import utils as lax_utils  # type: ignore
       out_shardings = [core.typeof(o).sharding for o in tree_leaves(res)
@@ -2694,12 +2888,15 @@ def _explicit_axes(fun, *, axes, in_sharding):
           'Context mesh cannot be empty. Please use `jax.set_mesh` API to enter'
           ' into a mesh context when using `explicit_axes` API.')
     with mesh_lib.use_abstract_mesh(mesh_info.new):
-      args = reshard(args, _in_sharding)
+      # The input layout was chosen by Shardy, so let it reshard into explicit.
+      with config.shard_map_partitioning(False):
+        args = reshard(args, _in_sharding)
       out = fun(*args, **kwargs)
     out_specs = tree_map(
         lambda o: _modify_spec_for_auto_manual_hi(o, mesh_lib.get_abstract_mesh()),
         out)
-    return reshard(out, out_specs)
+    with config.shard_map_partitioning(False):
+      return reshard(out, out_specs)
   return decorator
 
 # -------------------- with_layout_constraint --------------------
@@ -2733,10 +2930,25 @@ def with_layout_constraint(x, layouts):
       outs.append(layout_constraint_p.bind(xf, layout=l))
   return tree_unflatten(tree, outs)
 
+def _lower_layout_for_unreduced(layout, aval):
+  if isinstance(layout, Layout) and (k := len(aval.sharding.spec.unreduced)):
+    return layout.update(
+        major_to_minor=(*range(k), *(m + k for m in layout.major_to_minor)))
+  return layout
+
 layout_constraint_p = core.Primitive('layout_constraint')
 layout_constraint_p.def_abstract_eval(lambda x, **_: x)
 ad.deflinear2(layout_constraint_p,
               lambda ct, _, **params: (layout_constraint_p.bind(ct, **params),))
+layout_constraint_p.is_high = lambda aval, **_: aval.is_high  # type: ignore
+
+def _layout_constraint_to_lojax(x, *, layout):
+  aval = core.typeof(x)
+  lo_val, = aval.lower_val(x)
+  lo_layout = _lower_layout_for_unreduced(layout, aval)
+  lo_out = layout_constraint_p.bind(lo_val, layout=lo_layout)
+  return aval.raise_val(lo_out)
+layout_constraint_p.to_lojax = _layout_constraint_to_lojax  # type: ignore
 
 def _layout_constraint_impl(x, *, layout):
   if not isinstance(x, xc.ArrayImpl):
@@ -2825,6 +3037,16 @@ def _relayout_abstract_eval(aval, *, dst_layout):
   assert isinstance(aval, core.ShapedArray)
   return aval.update(layout=dst_layout)
 relayout_p.def_abstract_eval(_relayout_abstract_eval)
+relayout_p.is_high = lambda aval, **_: aval.is_high  # type: ignore
+
+def _relayout_to_lojax(x, *, dst_layout):
+  in_aval = core.typeof(x)
+  out_aval = _relayout_abstract_eval(in_aval, dst_layout=dst_layout)
+  lo_val, = in_aval.lower_val(x)
+  lo_layout = _lower_layout_for_unreduced(dst_layout, in_aval)
+  lo_out = relayout_p.bind(lo_val, dst_layout=lo_layout)
+  return out_aval.raise_val(lo_out)
+relayout_p.to_lojax = _relayout_to_lojax  # type: ignore
 
 def _relayout_impl(x, *, dst_layout):
   raise NotImplementedError

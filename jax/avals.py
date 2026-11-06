@@ -11,14 +11,32 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
 
-load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+# Note: import <name> as <name> is required for names to be exported.
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
-package(default_applicable_licenses = [])
-
-sh_binary(
-    name = "process_test_results",
-    srcs = ["process_test_results.sh"],
-    data = [":xml2json.py"],
+from jax._src.avals import (
+    AvalDType as AvalDType,
+    MeshAxis as MeshAxis,
+    bf16 as bf16,
+    bool_ as bool,  # noqa: F401
+    bool_ as bool_,
+    c64 as c64,
+    c128 as c128,
+    f16 as f16,
+    f32 as f32,
+    f64 as f64,
+    float0 as float0,
+    i2 as i2,
+    i4 as i4,
+    i8 as i8,
+    i16 as i16,
+    i32 as i32,
+    i64 as i64,
+    u2 as u2,
+    u4 as u4,
+    u8 as u8,
+    u16 as u16,
+    u32 as u32,
+    u64 as u64,
 )

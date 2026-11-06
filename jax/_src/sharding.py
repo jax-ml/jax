@@ -56,6 +56,24 @@ def common_devices_indices_map(
   return dict(safe_zip(s._device_assignment, indices))
 
 
+def _divide_shape_by_partitions(
+    sharding: Sharding, global_shape: Shape, partitions: Sequence[int]
+) -> Shape:
+  assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
+  out = []
+  for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
+    quotient, remainder = divmod(s, p)
+    if remainder != 0:
+      raise IndivisibleError(
+          f"{sharding} implies that array axis {dim} is partitioned "
+          f"{p} times, but the dimension size is {s} "
+          f"(full shape: {global_shape}, "
+          f"per-dimension tiling factors: {tuple(partitions)} should evenly "
+          "divide the shape)")
+    out.append(quotient)
+  return tuple(out)
+
+
 @cache(max_size=4096, trace_context_in_key=False)
 def _common_shard_shape(self, global_shape: Shape) -> Shape:
   hlo_sharding = self._to_xla_hlo_sharding(len(global_shape))
@@ -64,19 +82,7 @@ def _common_shard_shape(self, global_shape: Shape) -> Shape:
   if hlo_sharding.is_unreduced():
     return global_shape
   partitions, _ = get_num_ways_dim_sharded(hlo_sharding)
-  assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
-  out = []
-  for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
-    quotient, remainder = divmod(s, p)
-    if remainder != 0:
-      raise IndivisibleError(
-          f"{self} implies that array axis {dim} is partitioned "
-          f"{p} times, but the dimension size is {s} "
-          f"(full shape: {global_shape}, "
-          f"per-dimension tiling factors: {tuple(partitions)} should evenly "
-          "divide the shape)")
-    out.append(quotient)
-  return tuple(out)
+  return _divide_shape_by_partitions(self, global_shape, partitions)
 
 def common_is_equivalent_to(s1: Sharding, s2: Sharding, ndim: int,
                             check_devices: bool = True) -> bool:

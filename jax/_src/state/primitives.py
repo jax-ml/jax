@@ -416,6 +416,7 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`get` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
+    _check_read_vma(ref_aval.inner_aval, args)
     out_aval = transform_type(transforms, ref_aval.inner_aval)
   else:
     if transforms:
@@ -423,6 +424,21 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
     out_aval = ref_aval.inner_aval
   return (out_aval, {ReadEffect(0)})
 get_p.def_effectful_abstract_eval(_get_abstract_eval)
+
+def _check_read_vma(inner_aval, idx_avals):
+  if not config._check_vma.value:
+    return
+  ref_vma = inner_aval.mat.varying
+  idx_vma = frozenset().union(*(a.mat.varying for a in idx_avals
+                                if isinstance(a, core.ShapedArray)))
+  if names := idx_vma - ref_vma:
+    raise ValueError(
+        f"Primitive get requires the index's varying manual axes to be a "
+        f"subset of the Ref's, but got {idx_vma} for the index and {ref_vma} "
+        f"for the Ref. To read at this index, read the whole Ref, mark it as "
+        f"varying, then index the resulting array, e.g. "
+        f"`jax.lax.pcast(r[...], {tuple(sorted(names))}, to='varying')[i]` "
+        f"instead of `r[i]`.")
 
 def _check_write_vma(name, inner_aval, val_aval, idx_avals):
   if not config._check_vma.value:

@@ -205,6 +205,22 @@ class JaxExportTest(jtu.JaxTestCase):
     exp_f = get_exported(f)(x)
     self.assertAllClose(f(x), exp_f.call(x))
 
+  def test_weak_type_preserved(self):
+    f = jax.jit(lambda x: x * 1.5 + 1.0)
+    exp = get_exported(f)(0.0)
+    self.assertTrue(exp.in_avals[0].weak_type)
+    self.assertTrue(exp.out_avals[0].weak_type)
+    y = exp.call(0.0)
+    self.assertTrue(y.weak_type)
+    self.assertEqual((y + jnp.float16(1)).dtype, jnp.float16)
+    self.assertEqual((y + jnp.float32(1)).dtype, jnp.float32)
+
+    exp_strong = get_exported(f)(jnp.float32(0.0))
+    self.assertFalse(exp_strong.in_avals[0].weak_type)
+    self.assertFalse(exp_strong.out_avals[0].weak_type)
+    y_strong = exp_strong.call(jnp.float32(0.0))
+    self.assertFalse(y_strong.weak_type)
+
   def test_basic_single_device_sharding(self):
     device = jax.local_devices()[0]
     s = make_single_device_sharding(device)
@@ -1171,6 +1187,7 @@ class JaxExportTest(jtu.JaxTestCase):
         "float8_e4m3b11fnuz",
         "float8_e4m3fnuz",
         "float8_e5m2fnuz",
+        "float8_e5m3fnu",
         "float6_e2m3fn",
         "float6_e3m2fn",
         "int1",

@@ -29,13 +29,13 @@ from jax._src.custom_partitioning_sharding_rule import (
 )
 from jax._src import ffi
 from jax._src.lax.bessel import bessel_i0e_impl, bessel_i1e_impl
-from jax._src.lax.erf import erf_inv_core, erfc_impl, exp_neg_sq
+from jax._src.lax.erf import erf_inv_core, erf_inv_jvp_scale, erfc_impl, exp_neg_sq
 from jax._src.lax.lax import (AccuracyMode, Tolerance, add, bitwise_and,
                               bitwise_not, bitwise_or, broadcast_in_dim,
                               broadcast_shapes, convert_element_type, div, eq,
                               exp, full_like, ge, gt, le, log, log1p, lt, mul,
                               ne, neg, reciprocal, reduce, select, sign,
-                              square, standard_naryop, standard_unop, sub,
+                              standard_naryop, standard_unop, sub,
                               _const, _dtype, _float, _nary_lower_hlo, _ones,
                               _isnan, _unary_with_accuracy_pp_rule)
 from jax._src.lax.control_flow.loops import while_loop
@@ -182,23 +182,6 @@ def erf_inv(x: ArrayLike) -> Array:
     For accuracy bounds, see :ref:`numerical-accuracy`.
   """
   return erf_inv_p.bind(x)
-
-def ndtr(x: Array) -> Array:
-  r"""Elementwise cumulative distribution function of the standard normal.
-
-  Implements the core logic of :func:`jax.scipy.special.ndtr`, placed here so
-  that lower-level modules can use it without importing ``jax.scipy``.
-  """
-  dtype = _dtype(x).type
-  half_sqrt_2 = dtype(0.5) * np.sqrt(2., dtype=dtype)
-  w = x * half_sqrt_2
-  z = abs(w)
-  y = select(lt(z, half_sqrt_2),
-             dtype(1.) + erf(w),
-             select(gt(w, dtype(0.)),
-                    dtype(2.) - erfc(z),
-                    erfc(z)))
-  return dtype(0.5) * y
 
 def betainc_gradx(g, a, b, x):
   lbeta = lgamma(a) + lgamma(b) - lgamma(a + b)
@@ -875,9 +858,9 @@ ad.defjvp(
     ),
 )
 def _erfc_lowering(ctx, x, *, accuracy=None):
-  if (
-      accuracy is AccuracyMode.HIGHEST
-      and ctx.avals_in[0].dtype in (np.float32, np.float64)
+  dtype = ctx.avals_in[0].dtype
+  if dtype == dtypes.bfloat16 or (
+      accuracy is AccuracyMode.HIGHEST and dtype in (np.float32, np.float64)
   ):
     return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
   return _nary_lower_hlo(chlo.erfc, ctx, x)
@@ -885,8 +868,18 @@ mlir.register_lowering(erfc_p, _erfc_lowering)
 core.pp_eqn_rules[erfc_p] = _unary_with_accuracy_pp_rule
 
 erf_inv_p = standard_unop(_float, 'erf_inv')
-ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
-                                            mul(g, exp(square(ans)))))
+
+
+def _erf_inv_jvp_rule(g: Array, ans: Array, x: Array) -> Array:
+  dtype = _dtype(x)
+  if dtype not in (np.float32, np.float64):
+    x32 = convert_element_type(x, np.float32)
+    z32 = convert_element_type(ans, np.float32)
+    return g * convert_element_type(erf_inv_jvp_scale(x32, z32), dtype)
+  return g * erf_inv_jvp_scale(x, ans)
+
+
+ad.defjvp2(erf_inv_p, _erf_inv_jvp_rule)
 
 def erf_inv_impl(x: Array) -> Array:
   if x.dtype not in (np.float32, np.float64):

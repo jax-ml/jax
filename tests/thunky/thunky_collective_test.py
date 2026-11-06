@@ -330,6 +330,43 @@ class ThunkyCollectiveTest(jtu.JaxTestCase):
         np.asarray(run_spliced_jitted(x)), expected, rtol=1e-5
     )
 
+  def test_executable_to_mlir_multi_operand_collectives(self):
+    """Verifies jax_executable_to_mlir extracts all buffers from combined multi-operand collective thunks."""
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ("x",))
+
+    @jax.jit
+    @shard_map(
+        mesh=mesh,
+        in_specs=(P("x"), P("x")),
+        out_specs=(P("x"), P("x")),
+        check_vma=False,
+    )
+    def two_pperms(a, b):
+      return (
+          jax.lax.ppermute(a, "x", perm=[(0, 1), (1, 0)]),
+          jax.lax.ppermute(b, "x", perm=[(0, 1), (1, 0)]),
+      )
+
+    s = jax.sharding.NamedSharding(mesh, P("x"))
+    compiled = two_pperms.lower(
+        jax.ShapeDtypeStruct((32,), jnp.float32, sharding=s),
+        jax.ShapeDtypeStruct((64,), jnp.float32, sharding=s),
+    ).compile()
+    with thunky.make_ir_context():
+      mlir_mod = thunky.jax_executable_to_mlir(compiled)
+
+    main_func = [
+        op.operation
+        for op in mlir_mod.body.operations
+        if op.operation.name == "func.func"
+    ][0]
+    cp_ops = [
+        op.operation
+        for op in main_func.regions[0].blocks[0].operations
+        if op.operation.name == "thunky.collective_permute"
+    ]
+    self.assertLen(cp_ops, 2)
+
   def test_executable_to_mlir_multi_operand_collectives_execution(self):
     """Verifies combined multi-operand collective thunks execute across 2 GPUs."""
     mesh = jax.sharding.Mesh(jax.devices()[:2], ("x",))

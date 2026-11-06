@@ -1900,13 +1900,15 @@ def mem_space_to_kind(mem_space: Any) -> str:
 
 @cache(max_size=4096,
        trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
-def update_aval_with_sharding(aval, sharding, mat=None):
+def update_aval_with_sharding(aval, sharding, mat=None, memory_space=None):
   if isinstance(sharding, NamedSharding):
     s = NamedSharding(sharding.mesh.abstract_mesh,
                       sharding.spec._normalized_spec_for_aval(aval.ndim))
+    mem_space = (mem_kind_to_space(sharding.memory_kind)
+                 if memory_space is None else memory_space)
     return aval.update(
         sharding=s, manual_axis_type=(aval.mat if mat is None else mat),
-        memory_space=mem_kind_to_space(sharding.memory_kind))
+        memory_space=mem_space)
   return aval if mat is None else aval.update(manual_axis_type=mat)
 
 
@@ -2295,7 +2297,10 @@ def _check_mat(varying, unreduced, reduced, unreduced_kind):
     raise ValueError(
         "varying and reduced cannot have common mesh axes. Got"
         f" varying={varying} and reduced={reduced}")
-  assert not (varying & unreduced & reduced)
+  if unreduced & reduced:
+    raise ValueError(
+        "`unreduced` and `reduced` argument to ManualAxisType cannot overlap. "
+        f"Got unreduced: {unreduced} and reduced: {reduced}")
 
   if unreduced_kind is not None and not isinstance(unreduced_kind, UnreducedKind):
     raise TypeError(
@@ -2560,18 +2565,31 @@ class ShapedArray(AbstractValue):
 
   @property
   def is_high(self) -> bool:
-    return config.hijax_unreduced.value and bool(self.sharding.spec.unreduced)
+    return bool(self.sharding.spec.unreduced or self.mat.unreduced)
 
   def lo_ty(self) -> list[AbstractValue]:
     if not self.is_high:
       return [self]
-    mesh = self.sharding.mesh
-    spec = self.sharding.spec
-    u_axes = order_wrt_mesh(mesh, spec.unreduced)
-    u_shape = tuple(mesh.shape[a] for a in u_axes)
-    lo_spec = P(*u_axes, *spec.partitions, reduced=spec.reduced)
-    return [self.update(shape=(*u_shape, *self.shape),
-                        sharding=self.sharding.update(spec=lo_spec))]
+    shape, sharding, mat, layout = self.shape, self.sharding, self.mat, self.layout
+    if sharding.spec.unreduced:
+      mesh, spec = sharding.mesh, sharding.spec
+      u_axes = order_wrt_mesh(mesh, spec.unreduced)
+      u_shape = tuple(mesh.shape[a] for a in u_axes)
+      shape = (*u_shape, *shape)
+      lo_spec = P(*u_axes, *spec.partitions, reduced=spec.reduced)
+      sharding = self.sharding.update(spec=lo_spec)
+      if isinstance(layout, Layout):
+        k = len(u_axes)
+        layout = layout.update(
+            major_to_minor=(*range(k), *(m + k for m in layout.major_to_minor)))
+    if mat.unreduced:
+      mat = ManualAxisType(varying=mat.varying | mat.unreduced,
+                           reduced=mat.reduced)
+    out = self.update(shape=shape, sharding=sharding, manual_axis_type=mat,
+                      layout=layout)
+    assert not out.sharding.spec.unreduced and not out.mat.unreduced
+    assert out.sharding.spec.unreduced_kind is None
+    return [out]
 
   def lower_val(self, hi_val: Any, /) -> list[Any]:
     if not self.is_high:
@@ -4080,10 +4098,15 @@ class ShapeDtypeStruct:
 def _sds_aval_mapping(x):
   dtype = dtypes.check_and_canonicalize_user_dtype(
       x.dtype, "ShapeDtypeStruct", allow_non_jax_dtypes=True)
-  memory_space = getattr(x, "_memory_space", None) or MemorySpace.Device
+  memory_space = getattr(x, "_memory_space", None)
+  if memory_space is None:
+    memory_space = (mem_kind_to_space(x.sharding.memory_kind)
+                    if isinstance(x.sharding, NamedSharding) else
+                    MemorySpace.Device)
   aval = ShapedArray(x.shape, dtype, weak_type=x.weak_type,
                      memory_space=memory_space)
-  aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type)
+  aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type,
+                                   memory_space=memory_space)
   if x.is_ref:
     from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     return AbstractRef(aval)

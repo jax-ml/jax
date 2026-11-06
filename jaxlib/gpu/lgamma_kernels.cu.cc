@@ -43,7 +43,6 @@ limitations under the License.
 
 #include <algorithm>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
 
 #include "jaxlib/gpu/double_word.cu.h"

@@ -170,7 +170,7 @@ def _convolve_nd(in1: Array, in2: Array, mode: ModeString, *, precision: Precisi
 
   no_swap = all(s1 >= s2 for s1, s2 in zip(in1.shape, in2.shape))
   swap = all(s1 <= s2 for s1, s2 in zip(in1.shape, in2.shape))
-  if not (no_swap or swap):
+  if mode == 'valid' and not (no_swap or swap):
     raise ValueError("One input must be smaller than the other in every dimension.")
 
   shape_o = in2.shape
@@ -1146,7 +1146,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   # Get window as array
   if isinstance(window, str) and window == 'hann':
     # Implement the default case without scipy
-    win = jnp.array([1.0]) if nperseg_int == 1 else jnp.sin(jnp.linspace(0, np.pi, nperseg_int, endpoint=False)) ** 2
+    win = jnp.array([1.0]) if nperseg_int == 1 else lax.sinpi(jnp.linspace(0, 1, nperseg_int, endpoint=False)) ** 2
     win = win.astype(xsubs.dtype)
   elif isinstance(window, (str, tuple)):
     # TODO(jakevdp): implement get_window() in JAX to remove optional scipy dependency

@@ -17,19 +17,64 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added `jax.lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3` and
+    `F8E4M3FN_F8E4M3FN_F32_X4` dot algorithm presets (requiring `jaxlib` >= 514)
+    for emulating `bfloat16` precision matmuls on `bfloat16` or `float32` inputs
+    using 3 or 4 `float8_e4m3fn` dot products accumulated in `float32`.
+  * When neither `XLA_CLIENT_MEM_FRACTION` nor its deprecated alias
+    `XLA_PYTHON_CLIENT_MEM_FRACTION` is set, the GPU client now selects XLA's
+    `0.75+` memory policy. The default preallocated spatial BFC pool starts at
+    75% of total GPU memory and can grow for ordinary buffers as needed, up to
+    available device memory. Set `XLA_CLIENT_MEM_FRACTION=0.75` to retain the
+    previous fixed limit. Explicit XLA memory-policy flags take precedence;
+    allocator modes that do not support growth retain their existing behavior.
   * {func}`jax.dlpack.from_dlpack` now accepts `Format` in its `device` argument
     to specify device-local layouts (such as linear layout `tiling=((1,),)` for
     `kDLTPUHost` buffers) and supports `copy=None` fallback for `kDLTPUHost`.
   * Added {func}`jax.scipy.special.gammaincinv` and
     {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
     incomplete gamma functions, with gradients with respect to both arguments.
+  * Added {func}`jax.scipy.special.jn` and {func}`jax.scipy.special.yn`,
+    providing accurate evaluation of integer-order Bessel functions of the first
+    and second kind.
+  * Added {func}`jax.lax.sinpi`, {func}`jax.lax.cospi`, and
+    {func}`jax.lax.tanpi`, which compute `sin(pi * x)`, `cos(pi * x)`, and
+    `tan(pi * x)` more accurately than multiplying by `pi` first. They return
+    exact values at integers and half-integers and stay accurate for large
+    inputs.
+  * Added {func}`jax.scipy.special.ndtri_exp`, the inverse of
+    {func}`jax.scipy.special.log_ndtr`, with custom forward- and reverse-mode
+    derivatives.
+  * Added {func}`jax.lax.asinpi`, {func}`jax.lax.acospi`,
+    {func}`jax.lax.atanpi`, and {func}`jax.lax.atan2pi`, which compute the
+    inverse trigonometric functions divided by `pi` (`asin(x) / pi`,
+    `acos(x) / pi`, `atan(x) / pi`, and `atan2(x, y) / pi`).
+
+* Breaking changes
+  * The `jax_use_simplified_jaxpr_constants` configuration flag is now `True`
+    by default. This changes the handling of closed-over constants in Jaxpr.
+    See [here](https://docs.jax.dev/en/latest/internals/constants.html) for
+    more details, including how to recognize a breakage and migrate your code.
+    The flag will be removed in a future release.
 
 * Deprecations
+  * `jax.sharding.SingleDeviceSharding` is deprecated; use
+    `jax.sharding.make_single_device_sharding` or
+    `jax.sharding.is_single_device_sharding` instead.
   * The `jax_use_shardy_partitioner` configuration flag is deprecated and is now
     a no-op. JAX always lowers to Shardy, and the flag will be removed in a
     future release.
+  * The `jax.scipy.special.bessel_jn` function is deprecated; use the new
+    `jax.scipy.special.jn` instead, which is more accurate and provides
+    direct evaluation of only the nth bessel function.
 
 * Changes
+  * Mixed real and complex {func}`jax.numpy.add`, {func}`jax.numpy.subtract`,
+    {func}`jax.numpy.multiply`, and {func}`jax.numpy.true_divide`
+    (`complex / real`) no longer convert the real input to complex before
+    operating. This avoids unnecessary operations on zeros and fixes edge cases
+    with infinities and signed zeros (for example, `0.5 * (inf + 1j)` now
+    returns `inf + 0.5j` instead of `inf + nan*j`).
   * JAX now uses Bazel 9.3.1 to build from source.
   * On GPU and TPU, `accumulate` for {func}`jax.numpy.bitwise_and`,
     {func}`jax.numpy.bitwise_or`, {func}`jax.numpy.bitwise_xor`,
@@ -47,6 +92,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed {func}`jax.numpy.modf` returning `nan` as the fractional part for
     infinite inputs; it now returns a signed zero, matching NumPy
     ({jax-issue}`#41102`).
+  * Fixed {func}`jax.jit` instances of the same function that differ only in
+    `static_argnums`, `static_argnames` or `keep_unused` sharing C++ dispatch
+    cache entries, which could run the executable compiled for one instance
+    with the arguments of another and return wrong results.
   * {func}`jax.scipy.sparse.linalg.gmres` and
     {func}`jax.scipy.sparse.linalg.bicgstab` now use the transpose of the
     preconditioner `M` when solving the transposed system for reverse-mode

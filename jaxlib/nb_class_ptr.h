@@ -38,7 +38,7 @@ class nb_class_ptr : public nanobind::object {
       : nanobind::object(h, ::nanobind::detail::steal_t{}) {}
   inline static bool check_(nanobind::handle h) {
     nanobind::handle type = nanobind::type<T>();
-    return nanobind::isinstance(h, type);
+    return nanobind::isinstance(h, type) && nanobind::inst_ready(h);
   };
 
   template <typename U,

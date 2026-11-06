@@ -137,6 +137,14 @@ out = pl.pallas_call(hbm_vmem_kernel,
 np.testing.assert_allclose(out, x[0:1] + 1)
 ```
 
+(pallas_tpu_copy_semaphores)=
+### Copy semaphores
+
+`pltpu.async_copy` starts a copy and returns a descriptor to await later. Its DMA semaphore follows two rules:
+
+- **If you pass a semaphore, you must await it**.
+- **If you pass `sem=None`, the copy will be tracked in bulk (if hardware supported)**: awaiting the copy performs a bulk wait rather than awaiting that copy alone, as with [SparseCore streams](https://docs.jax.dev/en/latest/pallas/tpu/sparsecore.html#dma-semaphores-on-sparsecore).
+
 ### Multiple Buffering
 
 Multiple buffering can be specified on a per-argument basis to the pipeline via the `pipeline_mode` option on `pl.BlockSpec`. To do so, pass a `pl.Buffered` object to `pl.BlockSpec` specifying the number of buffers to allocate for this particular argument:

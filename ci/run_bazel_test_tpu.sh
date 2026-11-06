@@ -56,7 +56,8 @@ J=$((NB_TPUS * JOBS_PER_ACC))
 
 # TODO(ybaturina): Bazel cache shouldn't be invalidated when
 # `VBAR_CONTROL_SERVICE_URL` changes.
-COMMON_TPU_TEST_ENV_VARS="--test_env=PORTSERVER_ADDRESS=@unittest-portserver \
+COMMON_TPU_TEST_ENV_VARS="--action_env=JAX_ENABLE_X64=${JAXCI_ENABLE_X64} \
+ --test_env=PORTSERVER_ADDRESS=@unittest-portserver \
  --test_env=TPU_SKIP_MDS_QUERY=true \
  --test_env=TPU_TOPOLOGY \
  --test_env=TPU_WORKER_ID \
@@ -163,8 +164,8 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
     $RBE_CACHE_OPTION \
-    --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-    --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+    --//jax:build_jaxlib="$JAXCI_BUILD_JAXLIB" \
+    --//jax:build_jax="$JAXCI_BUILD_JAX" \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
     --strategy=TestRunner=local \
     --local_test_jobs=1 \
@@ -202,8 +203,8 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
     $RBE_CACHE_OPTION \
-    --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-    --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+    --//jax:build_jaxlib="$JAXCI_BUILD_JAXLIB" \
+    --//jax:build_jax="$JAXCI_BUILD_JAX" \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
     --strategy=TestRunner=local \
     --local_test_jobs=1 \
@@ -240,8 +241,8 @@ else
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     --config=ci_linux_x86_64 \
     $RBE_CACHE_OPTION \
-    --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-    --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+    --//jax:build_jaxlib="$JAXCI_BUILD_JAXLIB" \
+    --//jax:build_jax="$JAXCI_BUILD_JAX" \
     --run_under="$(pwd)/build/parallel_accelerator_execute.sh" \
     --test_env=JAX_ACCELERATOR_COUNT=${NB_TPUS} \
     --test_env=JAX_TESTS_PER_ACCELERATOR=${JOBS_PER_ACC} \
@@ -299,8 +300,8 @@ else
     $OVERRIDE_XLA_REPO \
     --config=ci_linux_x86_64 \
     $RBE_CACHE_OPTION \
-    --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-    --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+    --//jax:build_jaxlib="$JAXCI_BUILD_JAXLIB" \
+    --//jax:build_jax="$JAXCI_BUILD_JAX" \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
     --strategy=TestRunner=local \
     --local_test_jobs=1 \

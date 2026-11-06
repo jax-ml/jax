@@ -613,14 +613,20 @@ def _nonzero_impl(a: ArrayLike, *fill_value: ArrayLike, size: int, axes: tuple[i
   if a.size == 0 or size == 0:
     out_spec = P(*(a_aval.sharding.spec[ax] for ax in batch_axes), None)
     out_sharding = a_aval.sharding.update(spec=out_spec)
-    vma = tuple(
-        core.standard_vma_rule(
-            "nonzero", a_aval, *(core.typeof(fv) for fv in fill_value)
-        )
-    )
+    if fill_value:
+      return tuple(
+          jnp.full(
+              (*batch_shape, size),
+              lax.expand_dims(fv, [np.ndim(fv)]),
+              dtype=out_dtype,
+              out_sharding=out_sharding,
+          )
+          for fv in fill_value
+      )
+    vma = tuple(core.standard_vma_rule("nonzero", a_aval))
     return tuple(
         core.pvary(
-            jnp.empty((*batch_shape, size), dtype=out_dtype, out_sharding=out_sharding),
+            jnp.zeros((*batch_shape, size), dtype=out_dtype, out_sharding=out_sharding),
             vma,
         )
         for _ in axes

@@ -26,6 +26,7 @@ from jax._src import hijax
 from jax._src import pjit
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
+from jax._src.lax import trig
 from jax._src.pallas import core as pallas_core
 from jax._src.state import discharge
 from jax._src.util import safe_map
@@ -159,14 +160,20 @@ for op in UN_OPS:
 
 TRANSCENDENTAL_OPS = [
     lax.cos_p,
+    trig.cospi_p,
     lax.sin_p,
+    trig.sinpi_p,
     lax.tan_p,
+    trig.tanpi_p,
     lax.sinh_p,
     lax.cosh_p,
     lax.tanh_p,
     lax.acos_p,
+    trig.acospi_p,
     lax.asin_p,
+    trig.asinpi_p,
     lax.atan_p,
+    trig.atanpi_p,
     lax.exp_p,
     lax.log_p,
     lax.logistic_p,

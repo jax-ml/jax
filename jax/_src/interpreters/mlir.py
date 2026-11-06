@@ -54,7 +54,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.lib.mlir.dialects import sdy
-from jax._src.mesh import AxisType
+from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import NamedSharding, SdyArray, SdyArrayList
@@ -158,6 +158,9 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(dtypes.float6_e2m3fn): ir.Float6E2M3FNType.get,
   np.dtype(dtypes.float6_e3m2fn): ir.Float6E3M2FNType.get,
 }
+
+if dtypes.float8_e5m3fnu is not None:
+  _dtype_to_ir_type[np.dtype(dtypes.float8_e5m3fnu)] = ir.Float8E5M3FNUType.get
 
 if dtypes.int1 is not None:
   assert dtypes.uint1 is not None
@@ -1034,9 +1037,10 @@ class LoweringRuleContext:
 
     force_forward_compat = False
     if self.module_context.backend is not None:
+      runtime_type = getattr(self.module_context.backend, 'runtime_type', '') or ''
       force_forward_compat = (
-          self.module_context.backend.runtime_type
-          in xb.FORCE_FORWARD_COMPAT_LOWERING_RUNTIMES
+          runtime_type in xb.FORCE_FORWARD_COMPAT_LOWERING_RUNTIMES
+          or runtime_type.startswith('proxy/')
       )
 
     return (
@@ -1052,14 +1056,29 @@ class LoweringRuleEntry:
   rule: LoweringRule
   inline: core.Inline
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class PartitioningRule:
+  in_collective: Callable | None = None
+  out_collective: Callable | None = None
+  per_shard_params: dict[str, Any] | None = None
+
 _lowerings: dict[core.Primitive, LoweringRuleEntry] = {}
 _platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRuleEntry]]
 _platform_specific_lowerings = collections.defaultdict(dict)
+shard_map_collective_rules: dict[
+    core.Primitive, Callable[..., PartitioningRule]] = {}
+shard_map_passthrough_primitives: set[core.Primitive] = {
+    core.call_p,
+    core.closed_call_p,
+}
 
 def register_lowering(prim: core.Primitive, rule: LoweringRule,
                       platform: str | None = None,
                       inline: bool | core.Inline = True,
-                      cacheable: bool = True) -> None:
+                      cacheable: bool = True,
+                      *,
+                      shard_map_collective_rule: Callable | None = None,
+                      shard_map_passthrough: bool = False) -> None:
   """Registers a lowering rule for a primitive.
 
   Args:
@@ -1077,6 +1096,12 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     uncacheable: Whether this primitive's lowering can be cached. This is a
       temporary flag that will be removed after primitives that have problems
       with caching are fixed.
+    shard_map_collective_rule: Optional rule returning ``PartitioningRule`` (or
+      raising ``NotImplementedError`` if unsupported) to lower explicit-mesh
+      collectives via ``shard_map`` when ``jax_shard_map_partitioning`` is
+      enabled.
+    shard_map_passthrough: If ``True``, allow this higher-order container
+      primitive to lower directly so its sub-jaxprs are partitioned instead.
   """
   assert not isinstance(rule, LoweringRuleEntry)
   if isinstance(inline, bool):
@@ -1090,6 +1115,11 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     inline_mode = inline
   if not cacheable:
     _uncacheable_primitives.add(prim)
+  if shard_map_passthrough:
+    shard_map_passthrough_primitives.add(prim)
+  if shard_map_collective_rule is not None:
+    # TODO(rdyro): Support platform-specific shard_map_collective_rules.
+    shard_map_collective_rules[prim] = shard_map_collective_rule
   if platform is None:
     _lowerings[prim] = LoweringRuleEntry(rule, inline_mode)
   else:
@@ -1722,26 +1752,15 @@ class TokenSet:
     })
 
 
-def _aval_unreduced_sharding(aval):
-  if isinstance(aval, core.ShapedArray) and aval.sharding.spec.unreduced:
-    return aval.sharding
-  return None
-
-def _get_arg_shardings(arg_shardings, in_avals, num_dim_vars, num_tokens):
-  prefix_shardings = [None] * (num_dim_vars + num_tokens)
+def _get_arg_shardings(arg_shardings, num_dim_vars, num_tokens):
   if arg_shardings is None:
-    arg_shardings = [_aval_unreduced_sharding(a) for a in in_avals]
-    if all(s is None for s in arg_shardings):
-      return None
-  return [*prefix_shardings, *arg_shardings]
+    return None
+  return [*([None] * (num_dim_vars + num_tokens)), *arg_shardings]
 
-def _get_res_shardings(result_shardings, out_avals, num_tokens):
-  token_shardings = [None] * num_tokens
+def _get_res_shardings(result_shardings, num_tokens):
   if result_shardings is None:
-    result_shardings = [_aval_unreduced_sharding(o) for o in out_avals]
-    if all(s is None for s in result_shardings):
-      return None
-  return [*token_shardings, *result_shardings]
+    return None
+  return [*([None] * num_tokens), *result_shardings]
 
 
 
@@ -1853,8 +1872,8 @@ def lower_jaxpr_to_fun(
                             else a + num_tokens
                             for a in input_output_aliases]
 
-  arg_shardings = _get_arg_shardings(arg_shardings, in_avals, num_dim_vars, num_tokens)
-  result_shardings = _get_res_shardings(result_shardings, out_avals, num_tokens)
+  arg_shardings = _get_arg_shardings(arg_shardings, num_dim_vars, num_tokens)
+  result_shardings = _get_res_shardings(result_shardings, num_tokens)
 
   if replicated_args is not None:
     prefix_replicated_args = [False] * (num_dim_vars + num_tokens)
@@ -1967,11 +1986,9 @@ def lower_jaxpr_to_fun(
         if replicated:
           attrs["mhlo.is_same_data_across_replicas"] = ir.BoolAttr.get(True)
 
-    if ir_arg_shardings is not None:
-      for attrs, ir_s, arg_s in zip(arg_attrs, ir_arg_shardings, arg_shardings):  # pyrefly: ignore[bad-argument-type]
-        if (ir_s is not None and
-            (use_sharding_annotations or
-            (isinstance(arg_s, NamedSharding) and arg_s.spec.unreduced))):
+    if ir_arg_shardings is not None and use_sharding_annotations:
+      for attrs, ir_s in zip(arg_attrs, ir_arg_shardings):
+        if ir_s is not None:
           attrs["sdy.sharding"] = get_sharding_attr(ctx, ir_s)
 
     if ir_arg_memory_kinds is not None:
@@ -2039,13 +2056,11 @@ def lower_jaxpr_to_fun(
       for attrs, name_ in zip(named_result_attrs, result_names):
         attrs['jax.result_info'] = ir.StringAttr.get(name_)
 
-  if ir_result_shardings is not None:
-    for attrs, ir_s, res_s, cu in zip(
-        result_attrs, ir_result_shardings, result_shardings,  # pyrefly: ignore[bad-argument-type]
+  if ir_result_shardings is not None and use_sharding_annotations:
+    for attrs, ir_s, cu in zip(
+        result_attrs, ir_result_shardings,
         sharding_contains_unconstrained):  # type: ignore
-      if (ir_s is not None and not cu and
-          (use_sharding_annotations or
-          (isinstance(res_s, NamedSharding) and res_s.spec.unreduced))):
+      if ir_s is not None and not cu:
         attrs["sdy.sharding"] = get_sharding_attr(ctx, ir_s)
 
   if ir_result_memory_kinds is not None:
@@ -2111,12 +2126,6 @@ def lower_jaxpr_to_fun(
         axis_size_env=None, dim_var_values=dim_var_values,
         const_lowering=const_lowering)
 
-    flat_args = [
-        lower_with_sharding_in_types(entry_lowering_ctx, o, aval)
-        if isinstance(aval, core.ShapedArray) and aval.sharding.spec.unreduced
-        else o for o, aval in zip(flat_args, input_avals)
-    ]
-
     if not use_sharding_annotations and ir_arg_shardings is not None:
       flat_args = [
           a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
@@ -2175,12 +2184,6 @@ def lower_jaxpr_to_fun(
           for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,
                                  result_shardings)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       ]
-
-    flat_outputs = [
-        lower_with_sharding_in_types(entry_lowering_ctx, o, aval)
-        if isinstance(aval, core.ShapedArray) and aval.sharding.spec.unreduced
-        else o for o, aval in zip(flat_outputs, output_avals)
-    ]
 
     func_dialect.return_(flat_outputs)
 
@@ -2560,21 +2563,60 @@ def _get_override_lowering_rule(
       return rule
   return None
 
-def _uncached_lowering(
-    primitive: core.Primitive,
-    eqn_ctx: core.JaxprEqnContext,
-    effects: effects_lib.Effects,
-    platform_rules: dict[str, LoweringRule],
-    default_rule: LoweringRule | None,
-    ctx: LoweringRuleContext,
-    *args,
-    **params,
-):
+def _maybe_lower_with_shard_map(
+    _prim: core.Primitive, ctx: LoweringRuleContext, *args, **params):
+  from jax._src import shard_map  # type: ignore
+  from jax._src import pjit  # type: ignore
+  if (not config.shard_map_partitioning.value or
+      _prim in shard_map_passthrough_primitives):
+    return None
 
+  mesh = get_abstract_mesh()
+  if not mesh.explicit_axes:
+    return None
+
+  if (rule := shard_map_collective_rules.get(_prim)) is None:
+    raise NotImplementedError
+
+  if _prim.multiple_results:
+    # TODO(rdyro): Support multi-output primitives.
+    raise NotImplementedError
+  assert ctx.avals_out is not None
+  out_aval, = ctx.avals_out
+  assert isinstance(out_aval, core.ShapedArray)
+
+  partitioning_rule = rule(ctx.avals_in, ctx.avals_out, **params)
+  assert isinstance(partitioning_rule, PartitioningRule)
+  if partitioning_rule.per_shard_params:
+    params = params | partitioning_rule.per_shard_params
+
+  def fn(*operands):
+    @partial(shard_map.shard_map, mesh=mesh, out_specs=out_aval.sharding.spec,
+             axis_names=set(mesh.explicit_axes), check_vma=False)
+    def body(*xs):
+      assert get_abstract_mesh().are_all_axes_manual
+      if partitioning_rule.in_collective is not None:
+        xs = partitioning_rule.in_collective(*xs)
+      if _prim is not pjit.reshard_p:
+        xs = _prim.bind(*xs, **params)
+      if partitioning_rule.out_collective is not None:
+        xs = partitioning_rule.out_collective(xs)
+      return xs
+    return body(*operands)
+
+  return lower_fun(fn, multiple_results=False)(ctx, *args)
+
+def _uncached_lowering(
+    primitive: core.Primitive, eqn_ctx: core.JaxprEqnContext,
+    effects: effects_lib.Effects, platform_rules: dict[str, LoweringRule],
+    default_rule: LoweringRule | None, ctx: LoweringRuleContext,
+    *args, **params):
   assert not isinstance(default_rule, LoweringRuleEntry)
   assert not any(isinstance(r, LoweringRuleEntry) for r in platform_rules.values())
-  ans = lower_per_platform(ctx, str(primitive), platform_rules, default_rule,
-                           effects, *args, **params)
+  ans = _maybe_lower_with_shard_map(primitive, ctx, *args, **params)
+  if ans is None:
+    ans = lower_per_platform(ctx, str(primitive), platform_rules, default_rule,
+                             effects, *args, **params)
   try:
     rets = tuple(ans)
   except TypeError as e:
@@ -2703,9 +2745,8 @@ def lower_per_platform(ctx: LoweringRuleContext,
     rule, = kept_rules
     output = type_cast(Sequence[IrValues], rule(ctx, *rule_args, **rule_kwargs))
     flat_output, _ = ir_tree_registry.flatten(output)
-    for o, a in zip(flat_output, ctx.avals_out):
+    for o in flat_output:
       if not isinstance(o, ir.BlockArgument):
-        check_unreduced_constraint(o, a, description)
         wrap_compute_type_in_place(ctx, o)
         wrap_xla_metadata_in_place(ctx, o)
     return flat_output
@@ -2747,9 +2788,8 @@ def lower_per_platform(ctx: LoweringRuleContext,
       except TypeError as e:
         raise ValueError("Output of translation rule must be iterable: "
                         f"{description}, got output {output}") from e
-      for o, a in zip(out_nodes, ctx.avals_out):
+      for o in out_nodes:
         if not isinstance(o, ir.BlockArgument):
-          check_unreduced_constraint(o, a, description)
           wrap_compute_type_in_place(ctx, o)
           wrap_xla_metadata_in_place(ctx, o)
       if inner_ctx.tokens_out is not None:
@@ -3000,26 +3040,6 @@ def wrap_xla_metadata_in_place(ctx: LoweringRuleContext,
   _update_frontend_attributes(op, ctx_attributes)
 
 
-def check_unreduced_constraint(op: ir.Value | ir.Operation, aval, name) -> None:
-  if not isinstance(aval, core.ShapedArray):
-    return
-  if not aval.sharding.spec.unreduced:
-    return
-  if isinstance(op, ir.Value):
-    op = op.owner.operation if isinstance(op.owner, ir.OpView) else op.owner  # type: ignore
-  assert isinstance(op, ir.Operation)
-  if op.name == "mpmd.named_computation":
-    return
-  assert op.name == "sdy.sharding_constraint", (
-      f"Expected last op to be sdy.sharding_constraint, but got: {op.name} and "
-      f"output type={aval.str_short(True)} for primitive {name}")
-  sharding = sdy.TensorShardingAttr(op.attributes["sharding"])
-  assert sharding.unreduced_axes, (
-      "Expected sdy.sharding_constraint to have unreduced_axes populated, but"
-      f" got: {sharding} and output type={aval.str_short(True)} for primitive"
-      f" {name}")
-
-
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
                      broadcast_dimensions) -> ir.Value:
   # broadcast_dimension[i] is the axis of the result where the axis i of
@@ -3064,15 +3084,11 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
     out_aval = core.ShapedArray(
         out_shape, op_aval.dtype, sharding=out_sharding)  # pyrefly: ignore[missing-attribute]
     if core.definitely_equal_shape(op_aval_shape, out_shape):
-      if op_aval_sharding.spec.unreduced or op_aval_sharding.spec.reduced:
-        out.append(op)
-      elif op_aval_sharding == out_sharding:
+      if op_aval_sharding.spec.reduced or op_aval_sharding == out_sharding:
         out.append(op)
       else:
         out.append(lower_with_explicit_types(ctx, op, out_aval))
     else:
-      if op_aval_sharding.spec.unreduced:
-        raise NotImplementedError()
       assert len(op_aval_shape) <= len(out_shape), (op_aval_shape, out_shape)
       broadcast_dimensions = list(range(len(out_shape) - len(op_aval_shape), len(out_shape)))
       b_out = broadcast_in_dim(

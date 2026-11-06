@@ -153,7 +153,7 @@ def main(_: Sequence[str]) -> None:
           elif d.process_index == jax.process_index():
             print('receiving...')
             weights = recv(weights, jax.devices()[0], d)
-            step = recv(jnp.array([step]), jax.devices()[0], d)[0]
+            step = int(recv(jnp.array([step]), jax.devices()[0], d).addressable_data(0)[0])
 
         # Replicate the model weights.
         weights = replicated(weights, devices)

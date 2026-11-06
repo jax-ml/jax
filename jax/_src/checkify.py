@@ -598,22 +598,24 @@ def check_nans(prim, ctx: CheckifyContext, error, enabled_errors, out):
 
 
 # All primitives which can generate a NaN.
-nan_primitives = [lax.acos_p, lax.acosh_p, lax.add_p, lax.asin_p, lax.asinh_p,
-                  lax.atan2_p, lax.atan_p, lax.atanh_p, lax.bessel_i0e_p,
-                  lax.bessel_i1e_p, lax.cbrt_p, lax.conv_general_dilated_p,
-                  lax.cos_p, lax.cosh_p, lax.cumlogsumexp_p, lax.cummax_p,
-                  lax.cummin_p, lax.cumprod_p, lax.cumsum_p, lax.digamma_p,
-                  lax.dot_general_p, lax.erf_inv_p, lax.erf_p, lax.erfc_p,
-                  lax.exp_p, lax.exp2_p, lax.expm1_p, lax.fft_p,
-                  lax.igamma_grad_a_p, lax.igamma_p, lax.igammac_p,
-                  lax.integer_pow_p, lax.lgamma_p, lax.linear_solve_p,
-                  lax.log1p_p, lax.log2_p, lax.log_p, lax.logistic_p,
-                  lax.mul_p, lax.pad_p, lax.pow_p, lax.psum_p,
-                  lax.reduce_p, lax.reduce_prod_p,
-                  lax.reduce_sum_p, lax.reduce_window_p,
-                  lax.reduce_window_sum_p, lax.regularized_incomplete_beta_p,
-                  lax.rem_p, lax.rng_uniform_p, lax.rsqrt_p, lax.sin_p,
-                  lax.sinh_p, lax.sqrt_p, lax.sub_p, lax.tan_p, lax.tanh_p]
+nan_primitives = [lax.acos_p, lax.acosh_p, lax.acospi_p, lax.add_p,
+                  lax.asin_p, lax.asinh_p, lax.asinpi_p, lax.atan2_p,
+                  lax.atan2pi_p, lax.atan_p, lax.atanh_p, lax.atanpi_p,
+                  lax.bessel_i0e_p, lax.bessel_i1e_p, lax.cbrt_p,
+                  lax.conv_general_dilated_p, lax.cos_p, lax.cosh_p,
+                  lax.cospi_p, lax.cumlogsumexp_p, lax.cummax_p, lax.cummin_p,
+                  lax.cumprod_p, lax.cumsum_p, lax.digamma_p, lax.dot_general_p,
+                  lax.erf_inv_p, lax.erf_p, lax.erfc_p, lax.exp_p, lax.exp2_p,
+                  lax.expm1_p, lax.fft_p, lax.igamma_grad_a_p, lax.igamma_p,
+                  lax.igammac_p, lax.integer_pow_p, lax.lgamma_p,
+                  lax.linear_solve_p, lax.log1p_p, lax.log2_p, lax.log_p,
+                  lax.logistic_p, lax.mul_p, lax.pad_p, lax.pow_p, lax.psum_p,
+                  lax.reduce_p, lax.reduce_prod_p, lax.reduce_sum_p,
+                  lax.reduce_window_p, lax.reduce_window_sum_p,
+                  lax.regularized_incomplete_beta_p, lax.rem_p,
+                  lax.rng_uniform_p, lax.rsqrt_p, lax.sin_p, lax.sinh_p,
+                  lax.sinpi_p, lax.sqrt_p, lax.sub_p, lax.tan_p, lax.tanh_p,
+                  lax.tanpi_p]
 
 for _prim in nan_primitives:
   error_checks[_prim] = functools.partial(nan_error_check, _prim)
@@ -656,11 +658,13 @@ error_checks[lax.dynamic_update_slice_p] = dynamic_update_slice_error_check
 
 def gather_error_check(ctx: CheckifyContext, error, enabled_errors, operand,
                        start_indices, *, dimension_numbers, slice_sizes,
-                       unique_indices, indices_are_sorted, mode, fill_value):
+                       unique_indices, indices_are_sorted, mode, fill_value,
+                       out_sharding):
   out = lax.gather_p.bind(
       operand, start_indices, dimension_numbers=dimension_numbers,
       slice_sizes=slice_sizes, unique_indices=unique_indices,
-      indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+      indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value,
+      out_sharding=out_sharding)
 
   if OOBError not in enabled_errors:
     return error, out
@@ -731,13 +735,14 @@ def scatter_oob(operand, indices, updates, dnums):
 def scatter_error_check(prim, ctx: CheckifyContext, error, enabled_errors,
                         operand, indices, updates, *, update_jaxpr,
                         update_consts, dimension_numbers,
-                        indices_are_sorted, unique_indices, mode):
+                        indices_are_sorted, unique_indices, mode,
+                        out_sharding=None):
   """Checks if indices are within bounds and update does not generate NaN."""
   out = prim.bind(
       operand, indices, updates, update_jaxpr=update_jaxpr,
       update_consts=update_consts, dimension_numbers=dimension_numbers,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode)
+      mode=mode, out_sharding=out_sharding)
 
   if OOBError not in enabled_errors:
     return error, out

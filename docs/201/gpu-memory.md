@@ -4,10 +4,20 @@
 <!--* freshness: { reviewed: '2026-07-10' } *-->
 
 **JAX will preallocate 75% of the total GPU memory when the first JAX
-operation is run.** Preallocating minimizes allocation overhead and memory
-fragmentation, but can sometimes cause out-of-memory (OOM) errors. If your JAX
-process fails with OOM, the following environment variables can be used to
-override the default behavior:
+operation is run, and the default pool can grow beyond that as needed.**
+When neither memory-fraction environment variable is set, JAX selects XLA's
+`0.75+` memory policy: an initial reservation of 75%, with a growth cap of
+100% of total GPU memory. Actual growth depends on available memory.
+This applies to the preallocated, spatially partitioned BFC device-memory
+pool; collective buffers remain limited to the initial region. Other
+allocator modes retain their existing behavior using the initial fraction.
+An explicit `--xla_gpu_memory_fraction_policy` in `XLA_FLAGS` overrides this
+policy. Enabling `--xla_gpu_enable_nccl_user_buffers_in_default_space` pins
+the spatial BFC pool to its initial size for collective memory registration.
+
+Preallocating minimizes allocation overhead and memory fragmentation, but
+can sometimes cause out-of-memory (OOM) errors. The following environment
+variables can be used to override the default behavior:
 
 **`XLA_PYTHON_CLIENT_PREALLOCATE=false`**
 
@@ -15,13 +25,16 @@ This disables the preallocation behavior. JAX will instead allocate GPU
 memory as needed, potentially decreasing the overall memory usage. However,
 this behavior is more prone to GPU memory fragmentation, meaning a JAX
 program that uses most of the available GPU memory may OOM with
-preallocation disabled.
+preallocation disabled. With the BFC allocator, this retains the default
+75% memory limit unless an explicit memory fraction is set.
 
 **`XLA_CLIENT_MEM_FRACTION=.XX`**
 
-If preallocation is enabled, this makes JAX preallocate XX% of the total
-GPU memory, instead of the default 75%. Lowering the amount preallocated
-can fix OOMs that occur when the JAX program starts. (You may see the old
+For the BFC allocator, this sets a fixed limit of XX% of total GPU memory,
+disabling growth beyond that fraction. If preallocation is enabled, JAX
+also preallocates that amount. Set `XLA_CLIENT_MEM_FRACTION=0.75` to retain
+the previous fixed 75% limit. Lowering the amount preallocated can fix OOMs
+that occur when the JAX program starts. (You may see the old
 name `XLA_PYTHON_CLIENT_MEM_FRACTION` in existing code; it is deprecated in
 favor of `XLA_CLIENT_MEM_FRACTION`.)
 

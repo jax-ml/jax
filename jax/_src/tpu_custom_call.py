@@ -61,7 +61,7 @@ ir_version_override: Callable[[], int | None] | None = None
 
 
 # Controls the IR serialization version. Upon incrementing the
-# default version in jaxlib/mosaic/dialect/tpu/transforms/serde.cc we must
+# default version in xla/mosaic/dialect/tpu/transforms/serde.cc we must
 # continue to use the old serialization version when in forward compatibility
 # mode: for 1 month when exporting, or when using old cloud TPU.
 #
@@ -1034,7 +1034,7 @@ def lowered_as_tpu_kernel(
     # We hardcode a specific version both here and below, since this path is
     # only used by some internal tests that don't need serialization, but we do
     # need a concrete version on the module.
-    current_ir_version = 19
+    current_ir_version = 20
     try:
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true"

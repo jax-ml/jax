@@ -20,7 +20,9 @@ import time
 import weakref
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from jax.jaxlib import weakref_lru_cache
+from jax.jaxlib import xla_client
 
 
 def _dummy_context_fn():
@@ -31,7 +33,7 @@ def _dummy_target_fn(x):
   return x * 2
 
 
-class WeakrefLRUCacheTest(absltest.TestCase):
+class WeakrefLRUCacheTest(parameterized.TestCase):
 
   def testMultiThreaded(self):
     insert_evs = [threading.Event() for _ in range(2)]
@@ -580,6 +582,25 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     self.assertEqual(len(deleted_strong_keys), 10)
     self.assertEqual(set(deleted_strong_keys), set(range(10)))
 
+  @parameterized.named_parameters(
+      ("strong_lru_cache", weakref_lru_cache.StrongLRUCache),
+      ("weakref_lru_cache", weakref_lru_cache.WeakrefLRUCache),
+      ("multi_weakref_lru_cache", weakref_lru_cache.MultiWeakrefLRUCache),
+      ("weak_value_interner", weakref_lru_cache.WeakValueInterner),
+      ("weak_key_weak_value_cache", weakref_lru_cache.WeakKeyWeakValueCache),
+  )
+  def testCallUninitialized(self, cls):
+    if xla_client._version < 517:
+      self.skipTest("Requires jaxlib_extension_version >= 517")
+    cache = cls.__new__(cls)
+    with self.assertRaises(TypeError):
+      cache(object())
+
+    cycle = [cache]
+    cycle.append(cycle)
+    del cache, cycle
+    gc.collect()
+
 
 class WeakKeyWeakValueCacheTest(absltest.TestCase):
 
@@ -806,6 +827,25 @@ class StrongLRUCacheTest(absltest.TestCase):
     # Verify it still functions correctly
     self.assertEqual(cache_2(3), 6)
     self.assertEqual(cache_2.cache_info().currsize, 1)
+
+  def testInvalidNumShards(self):
+    for num_shards in (0, -1):
+      with self.assertRaisesRegex(ValueError, "num_shards must be positive"):
+        cache = weakref_lru_cache.StrongLRUCache.__new__(
+            weakref_lru_cache.StrongLRUCache
+        )
+        cache.__setstate__({
+            "version": 1,
+            "fn": _dummy_target_fn,
+            "cache_context_fn": _dummy_context_fn,
+            "maxsize": 10,
+            "explain": None,
+            "num_shards": num_shards,
+        })
+      with self.assertRaisesRegex(ValueError, "num_shards must be positive"):
+        weakref_lru_cache.strong_lru_cache(
+            _dummy_target_fn, _dummy_context_fn, num_shards=num_shards
+        )
 
 
 if __name__ == "__main__":

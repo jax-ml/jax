@@ -1496,7 +1496,7 @@ use_direct_linearize = bool_state(
 
 use_simplified_jaxpr_constants = bool_state(
     name='jax_use_simplified_jaxpr_constants',
-    default=False,
+    default=True,
     help=('Enable a simplification of the handling of closed-over constants '
           'in Jaxpr. The value `True` enables the new behavior. '
           'This flag will exist only briefly, while we transition '
@@ -1555,7 +1555,7 @@ _check_vma = bool_state(
 
 softmax_custom_jvp = bool_state(
     name='jax_softmax_custom_jvp',
-    default=False,
+    default=True,
     upgrade=True,
     help=('Use a new custom_jvp rule for jax.nn.softmax. The new rule should '
           'improve memory usage and stability. Set True to use new '
@@ -1919,8 +1919,9 @@ default_matmul_precision = optional_enum_state(
         'ANY_F8_ANY_F8_F32', 'ANY_F8_ANY_F8_F32_FAST_ACCUM', 'ANY_F8_ANY_F8_ANY',
         'ANY_F8_ANY_F8_ANY_FAST_ACCUM', 'F16_F16_F16', 'F16_F16_F32',
         'BF16_BF16_BF16', 'BF16_BF16_F32', 'BF16_BF16_F32_X3',
-        'BF16_BF16_F32_X6', 'BF16_BF16_F32_X9', 'TF32_TF32_F32',
-        'TF32_TF32_F32_X3', 'F32_F32_F32', 'F64_F64_F64',
+        'BF16_BF16_F32_X6', 'BF16_BF16_F32_X9', 'F8E4M3FN_F8E4M3FN_F32_X3',
+        'F8E4M3FN_F8E4M3FN_F32_X4', 'TF32_TF32_F32', 'TF32_TF32_F32_X3',
+        'F32_F32_F32', 'F64_F64_F64',
     ],
     default=None,
     help=('Control the default matmul and conv precision for 32bit inputs.\n\n'
@@ -2381,6 +2382,15 @@ use_high_dynamic_range_gumbel = bool_state(
     include_in_trace_context=True,
 )
 
+random_normal_mode = enum_state(
+    name='jax_random_normal_mode',
+    enum_values=['low', 'high', 'highest'],
+    default='low',
+    help='Default precision mode for jax.random.normal.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 jax_dump_ir_to = string_flag(
     name='jax_dump_ir_to',
     default=os.getenv('JAX_DUMP_IR_TO', ''),
@@ -2516,10 +2526,33 @@ jax_accurate_erf_inv = bool_state(
     include_in_trace_context=True,
 )
 
-hijax_unreduced = bool_state(
-    name='hijax_unreduced',
+jax_tanh_sech_jvp = bool_state(
+    name='jax_tanh_sech_jvp',
     default=False,
-    help='Lower unreduced shardings via HiJAX instead of MLIR/Shardy.',
+    help=(
+        'Temporary flag enabling closed ``(tanh, sech^2)`` JVP for'
+        ' ``AccuracyMode.HIGHEST`` ``tanh`` and ``logistic``.'
+    ),
     include_in_jit_key=True,
     include_in_trace_context=True,
+)
+
+jax_accurate_logistic = bool_state(
+    name='jax_accurate_logistic',
+    default=False,
+    help=(
+        'Temporary flag enabling ``exp(-|x|)`` lowering for'
+        ' ``AccuracyMode.HIGHEST`` ``lax.logistic``.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+shard_map_partitioning = bool_state(
+    name='jax_shard_map_partitioning',
+    default=False,
+    help='Lower explicit-mesh collectives via shard_map instead of Shardy.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+    include_in_jaxpr_eqn_ctx=True,
 )

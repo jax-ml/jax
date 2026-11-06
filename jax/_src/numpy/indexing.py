@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-from functools import partial
 import operator
 import string
 from typing import Any, NamedTuple
@@ -42,8 +41,9 @@ from jax._src.numpy import error as jnp_error
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
+from jax._src.named_sharding import DuplicateSpecError
 from jax._src.partition_spec import PartitionSpec
-from jax._src.pjit import auto_axes
+from jax._src.pjit import reshard
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.tree_util import tree_flatten, tree_unflatten, register_pytree_node_class
 from jax._src.typing import Array, ArrayLike, Index, StaticScalar
@@ -1137,19 +1137,24 @@ def rewriting_take(
   if config.check_static_indices.value and (mode is None or slicing.GatherScatterMode.from_any(mode) == slicing.GatherScatterMode.PROMISE_IN_BOUNDS):
     indexer.validate_static_indices(normalize_indices=normalize_indices)
 
+  if out_sharding is not None:
+    out_sharding = canonicalize_sharding(out_sharding, 'take')
+
   if strategy == IndexingStrategy.STATIC_SLICE:
     static_slice_indexer = indexer.to_static_slice(
       arr_is_sharded=indexer.is_sharded(arr),
       normalize_indices=normalize_indices,
       mode=mode)
-    return _static_slice(arr, static_slice_indexer)
+    out = _static_slice(arr, static_slice_indexer)
+    return reshard(out, out_sharding) if out_sharding is not None else out
 
   if strategy == IndexingStrategy.DYNAMIC_SLICE:
     dynamic_slice_indexer = indexer.to_dynamic_slice(
       arr_is_sharded=indexer.is_sharded(arr),
       normalize_indices=normalize_indices,
       mode=mode)
-    return _dynamic_slice(arr, dynamic_slice_indexer)
+    out = _dynamic_slice(arr, dynamic_slice_indexer)
+    return reshard(out, out_sharding) if out_sharding is not None else out
 
   if strategy == IndexingStrategy.AUTO:
     # Attempt static slice first
@@ -1161,7 +1166,8 @@ def rewriting_take(
     except (TypeError, ValueError, IndexError):
       pass
     else:
-      return _static_slice(arr, static_slice_indexer)
+      out = _static_slice(arr, static_slice_indexer)
+      return reshard(out, out_sharding) if out_sharding is not None else out
 
     # Attempt dynamic slice next
     try:
@@ -1172,21 +1178,17 @@ def rewriting_take(
     except (TypeError, ValueError, IndexError):
       pass
     else:
-      return _dynamic_slice(arr, dynamic_slice_indexer)
+      out = _dynamic_slice(arr, dynamic_slice_indexer)
+      return reshard(out, out_sharding) if out_sharding is not None else out
 
   # In remaining cases, compute via gather.
   indexer = indexer.expand_bool_indices()
   dynamic_idx, treedef = tree_flatten(indexer)
-  internal_gather = partial(
-      _gather, treedef=treedef,
-      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode, fill_value=fill_value, normalize_indices=normalize_indices)
-  if out_sharding is not None:
-    out_sharding = canonicalize_sharding(out_sharding, 'take')
-    return auto_axes(internal_gather, out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes,
-                     )(arr, dynamic_idx)
-  return internal_gather(arr, dynamic_idx)
+  return _gather(arr, dynamic_idx, treedef=treedef,
+                 indices_are_sorted=indices_are_sorted,
+                 unique_indices=unique_indices, mode=mode,
+                 fill_value=fill_value, normalize_indices=normalize_indices,
+                 out_sharding=out_sharding)
 
 
 def _static_slice(arr: Array, indexer: _StaticSliceIndexer) -> Array:
@@ -1236,7 +1238,8 @@ def _dynamic_slice(arr: Array, indexer: _DynamicSliceIndexer) -> Array:
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @api.jit(static_argnums=(1, 2))
 def _gather(arr, dynamic_idx, *, treedef, indices_are_sorted,
-            unique_indices, mode, fill_value, normalize_indices):
+            unique_indices, mode, fill_value, normalize_indices,
+            out_sharding):
   parsed_idx = tree_unflatten(treedef, dynamic_idx)
   indexer = parsed_idx.to_gather(core.typeof(arr).sharding,
                                  normalize_indices=normalize_indices)
@@ -1258,7 +1261,20 @@ def _gather(arr, dynamic_idx, *, treedef, indices_are_sorted,
   # handle cases like zeros(0)[array([], int32)].
   if core.is_empty_shape(indexer.slice_shape):
     return lax.full_like(y, 0, shape=indexer.slice_shape,
-                         sharding=indexer.slice_sharding)
+                         sharding=out_sharding or indexer.slice_sharding)
+
+  # `out_sharding` describes the final output; drop the newaxis dims that are
+  # only added after the gather.
+  gather_s = out_sharding
+  if out_sharding is not None and indexer.newaxis_dims:
+    out_sharding.check_compatible_aval(indexer.slice_shape)
+    parts = out_sharding.spec.partitions
+    if any(i < len(parts) and parts[i] is not None for i in indexer.newaxis_dims):
+      raise ValueError(
+          f"Cannot shard newaxis dimensions {indexer.newaxis_dims} in"
+          f" out_sharding={out_sharding}")
+    gather_s = out_sharding.update(spec=out_sharding.spec.update(
+        partitions=tuple(p for i, p in enumerate(parts) if i not in indexer.newaxis_dims)))
 
   # We avoid generating a gather when indexer.gather_indices.size is empty.
   if not core.is_empty_shape(indexer.gather_indices.shape):
@@ -1266,7 +1282,9 @@ def _gather(arr, dynamic_idx, *, treedef, indices_are_sorted,
         y, indexer.gather_indices, indexer.dnums, indexer.gather_slice_shape,
         unique_indices=unique_indices or indexer.unique_indices,
         indices_are_sorted=indices_are_sorted or indexer.indices_are_sorted,
-        mode=mode, fill_value=fill_value)
+        mode=mode, fill_value=fill_value, out_sharding=gather_s)
+  elif gather_s is not None:
+    y = reshard(y, gather_s)
 
   # Reverses axes with negative strides.
   if indexer.reversed_y_dims:
@@ -1512,9 +1530,15 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
     collapsed_slice_dims = tuple(sorted(collapsed_slice_dims)),
     start_index_map = tuple(start_index_map)
   )
-  slice_sharding = canonicalize_sharding(
-      x_sharding.update(spec=x_sharding.spec.update(partitions=slice_spec)),
-      "index_to_gather")
+  if x_sharding.spec.unreduced:
+    slice_sharding = None
+  else:
+    try:
+      slice_sharding = canonicalize_sharding(
+          x_sharding.update(spec=x_sharding.spec.update(partitions=slice_spec)),
+          "index_to_gather")
+    except (DuplicateSpecError, ValueError):
+      slice_sharding = None
   return _GatherIndexer(
     slice_shape=slice_shape,
     newaxis_dims=tuple(newaxis_dims),

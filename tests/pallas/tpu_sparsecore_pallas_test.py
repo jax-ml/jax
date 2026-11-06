@@ -28,6 +28,7 @@ import jax
 from jax import lax
 from jax._src import hypothesis_test_util as htu
 from jax._src import test_util as jtu
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import tpu_info
@@ -146,9 +147,11 @@ class PallasSCTest(jtu.JaxTestCase):
           args_hbm = args
           scratch_args = ()
 
+        pipeline_grid = (1,) if grid is None else grid
+
         @functools.partial(
             pltpu.emit_pipeline,
-            grid=(1,) if grid is None else grid,
+            grid=pipeline_grid,
             in_specs=[pl.BlockSpec()] * (
                 len(args_hbm) - len(jax.tree.leaves(out_shape))
             )
@@ -157,9 +160,13 @@ class PallasSCTest(jtu.JaxTestCase):
             out_specs=jax.tree.map(lambda _: pl.BlockSpec(), out_shape)
             if out_specs is None
             else out_specs,
+            _explicit_indices=True,
         )
-        def pipeline(*args):
-          fn(*args, *scratch_args, **kwargs)
+        def pipeline(step, *args):
+          with pallas_core.grid_env(
+              list(map(pallas_core.GridAxis, step.index, pipeline_grid))
+          ):
+            fn(*args, *scratch_args, **kwargs)
 
         pipeline(*args_hbm)
 
@@ -2024,6 +2031,94 @@ class VectorSubcoreTest(PallasSCTest):
     actual = kernel(x_pad)[..., :x.shape[-1]]
     np.testing.assert_array_equal(actual, x + 1)
 
+  @parameterized.named_parameters(
+      ("vmem_shared_and_hbm_no_wait_between", "vmem_shared", False),
+      ("vmem_shared_and_hbm_wait_between", "vmem_shared", True),
+      ("hbm_and_hbm_no_wait_between", "hbm", False),
+  )
+  def test_concurrent_push_streams(self, first_dst, wait_between):
+    if not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Requires libtpu >= 0.0.52")
+    # Regression test for b/575914970: each vector subcore starts two push
+    # streams out of its tile memory back to back, the first one to
+    # ``first_dst`` (VMEM_SHARED or HBM) and the second one to HBM, each with
+    # its own DMA semaphore, and only then waits for both.
+    num_subcores = self.sc_info.num_subcores
+    rows_a = 64  # Rows of ``num_lanes`` words in the first stream.
+    words_b = 32  # Words in the second stream.
+    lanes = self.num_lanes
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=1,
+        num_subcores=num_subcores,
+    )
+
+    @self.kernel(
+        out_type=(
+            jax.ShapeDtypeStruct((num_subcores * rows_a, lanes), jnp.uint32),
+            jax.ShapeDtypeStruct((num_subcores * words_b,), jnp.uint32),
+        ),
+        mesh=mesh,
+        scratch_types=[
+            pltpu.VMEM((rows_a, lanes), jnp.uint32),
+            pltpu.VMEM((words_b,), jnp.uint32),
+            pltpu.VMEM_SHARED((num_subcores * rows_a, lanes), jnp.uint32),
+            pltpu.SemaphoreType.DMA((2,)),
+        ],
+        compiler_params=pltpu.CompilerParams(has_side_effects=True),
+    )
+    def kernel(xa, xb, pa, pb, out_a, out_b, bank_a, bank_b, spm, sem):
+      u = lax.axis_index("subcore")
+      rows = pl.ds(pl.multiple_of(u * rows_a, 8), rows_a)
+      words = pl.ds(pl.multiple_of(u * words_b, 8), words_b)
+      dst_a = spm.at[rows] if first_dst == "vmem_shared" else out_a.at[rows]
+      dst_b = out_b.at[words]
+      # Write a fill word over both destinations.
+      pltpu.sync_copy(pa, bank_a)
+      pltpu.sync_copy(bank_a, dst_a)
+      pltpu.sync_copy(pb, bank_b)
+      pltpu.sync_copy(bank_b, dst_b)
+      # Load the data into tile memory.
+      pltpu.sync_copy(xa.at[rows], bank_a)
+      pltpu.sync_copy(xb.at[words], bank_b)
+      copy_a = pltpu.make_async_copy(bank_a, dst_a, sem.at[0])
+      copy_b = pltpu.make_async_copy(bank_b, dst_b, sem.at[1])
+
+      @pl.loop(0, 1)
+      def _(_):
+        if wait_between:
+          copy_a.start()
+          copy_a.wait()
+          copy_b.start()
+          copy_b.wait()
+        else:
+          # Back to back, no wait between.
+          copy_a.start()
+          copy_b.start()
+          copy_a.wait()
+          copy_b.wait()
+
+      if first_dst == "vmem_shared":
+        plsc.subcore_barrier()
+        # VMEM_SHARED back to HBM for the check.
+        pltpu.sync_copy(dst_a, out_a.at[rows])
+
+    fill = np.uint32(0xDEADBEEF)
+    pa = jnp.full((rows_a, lanes), fill, jnp.uint32)
+    pb = jnp.full((words_b,), fill, jnp.uint32)
+    for c in range(3):
+      rng = np.random.default_rng(100 + c)
+      xa = rng.integers(
+          1, 1 << 31, size=(num_subcores * rows_a, lanes), dtype=np.uint64
+      ).astype(np.uint32)
+      xb = rng.integers(
+          1, 1 << 31, size=(num_subcores * words_b,), dtype=np.uint64
+      ).astype(np.uint32)
+      a, b = kernel(xa, xb, pa, pb)
+      np.testing.assert_array_equal(a, xa)
+      np.testing.assert_array_equal(b, xb)
+
   def test_smem_vmem_store_literals(self):
     num_subcores = self.sc_info.num_subcores
 
@@ -3355,8 +3450,10 @@ class PipelineTest(PallasSCTest):
           out_specs=pl.BlockSpec(
               (pl.Squeezed(), self.num_lanes), lambda i: (i, 0)
           ),
+          _explicit_indices=True,
       )
-      def pipeline(x_ref, o_ref):
+      def pipeline(step, x_ref, o_ref):
+        del step  # Unused.
         o_ref[...] = x_ref[...] + 1
 
       pipeline(x_hbm_ref, o_hbm_ref)
@@ -3393,7 +3490,8 @@ class PipelineTest(PallasSCTest):
           mesh=sc_mesh,
       )
       def kernel(x_hbm, i_hbm, o_hbm):
-        def body(i_vmem, o_vmem):
+        def body(step, i_vmem, o_vmem):
+          del step  # Unused.
           pltpu.sync_copy(x_hbm.at[i_vmem.at[0]], o_vmem)  # The gather op
 
         pltpu.emit_pipeline(
@@ -3403,6 +3501,7 @@ class PipelineTest(PallasSCTest):
             out_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
             core_axis_name="subcore",
             dimension_semantics=(pltpu.PARALLEL,),
+            _explicit_indices=True,
         )(i_hbm, o_hbm)
 
       return kernel(x, indices)
@@ -3459,8 +3558,10 @@ class PipelineTest(PallasSCTest):
               lambda i: (i, 0, 0),
           ),
           tiling=pltpu.Tiling.SPARSE_CORE,
+          _explicit_indices=True,
       )
-      def pipeline(x_ref, o_ref):
+      def pipeline(step, x_ref, o_ref):
+        del step  # Unused.
 
         @pl.loop(0, self.num_lanes)
         def _(j):
@@ -3492,8 +3593,10 @@ class PipelineTest(PallasSCTest):
           in_specs=spec,
           out_specs=spec,
           tiling=pltpu.Tiling.SPARSE_CORE,
+          _explicit_indices=True,
       )
-      def pipeline(x_ref, o_ref):
+      def pipeline(step, x_ref, o_ref):
+        del step  # Unused.
         o_ref[...] = x_ref[...] + 1
 
       pipeline(x_hbm_ref, o_hbm_ref)
@@ -3520,8 +3623,10 @@ class PipelineTest(PallasSCTest):
           in_specs=[spec],
           out_specs=[spec],
           tiling=pltpu.Tiling.SPARSE_CORE,
+          _explicit_indices=True,
       )
-      def pipeline(x_ref, o_ref):
+      def pipeline(step, x_ref, o_ref):
+        del step  # Unused.
         @pl.loop(0, 8)
         def _(i):
           @pl.loop(0, 128, step=self.num_lanes)
@@ -3671,7 +3776,7 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
     o = jax.block_until_ready(foo(x))
     np.testing.assert_array_equal(o, x)
 
-  def test_memory_space_annotations_aliased_input_core_map(self):
+  def test_memory_space_annotations_aliased_input_kernel(self):
     if jtu.is_device_tpu(8, "i"):
       self.skipTest("Scalar subcore mesh is not supported on TPU v8i.")
     @jax.jit
@@ -3879,6 +3984,60 @@ class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
           "Only interpret mode is supported on CPU",
       ):
         run_mpmd.lower(x).compile()
+
+
+class LoweringCacheTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.test_device_matches(["tpu", "cpu"]):
+      self.skipTest("Test only works on TPU or CPU.")
+    tpu7x = jax.sharding.AbstractDevice(
+        device_kind="TPU7x", num_cores=1, platform="tpu"
+    )
+    self.enter_context(
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=tpu7x)
+        )
+    )
+
+  def test_needs_layout_passes_in_lowering_cache_key(self):
+    num_lanes = plsc.get_sparse_core_info().num_lanes
+    scv_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=1,
+        num_subcores=1,
+    )
+    scratch = (
+        pltpu.VMEM((num_lanes,), jnp.float32),
+        pltpu.VMEM((2 * num_lanes,), jnp.bfloat16),
+    )
+
+    def kernel(a_vmem, o_vmem):
+      o_vmem[...] = plsc.pack(
+          a_vmem[...], a_vmem[...], format=plsc.PackFormat.INTERLEAVED
+      )
+
+    k_false = pl.kernel(
+        kernel,
+        mesh=scv_mesh,
+        scratch_types=scratch,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+    )
+    k_true = pl.kernel(
+        kernel,
+        mesh=scv_mesh,
+        scratch_types=scratch,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "plsc.pack is not supported with needs_layout_passes=True",
+    ):
+      jax.jit(lambda: (k_false(), k_true())).trace().lower(
+          lowering_platforms=("tpu",)
+      )
 
 
 if __name__ == "__main__":

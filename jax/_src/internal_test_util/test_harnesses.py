@@ -457,6 +457,12 @@ for dtype in jtu.dtypes.all_floating:
   _make_unary_elementwise_harness(prim=lax.lgamma_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.digamma_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.cbrt_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.acospi_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.asinpi_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.atanpi_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.cospi_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.sinpi_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.tanpi_p, dtype=dtype)
 
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
   _make_unary_elementwise_harness(prim=lax.neg_p, dtype=dtype)
@@ -986,6 +992,9 @@ _make_binary_elementwise_harnesses(
 
 _make_binary_elementwise_harnesses(
     prim=lax.atan2_p, dtypes=jtu.dtypes.all_floating)
+
+_make_binary_elementwise_harnesses(
+    prim=lax.atan2pi_p, dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
     prim=lax.igamma_p, dtypes=jtu.dtypes.all_floating)

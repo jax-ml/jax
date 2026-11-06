@@ -25,6 +25,7 @@ from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -467,6 +468,25 @@ class OpsTest(ptu.PallasTPUTest):
 
     np.testing.assert_array_equal(result, reduce_func(x, axis))
 
+  @parameterized.product(axis=[0, 1], reduce_func=[jnp.argmax, jnp.argmin])
+  def test_bf16_input_reduce_index_large_dim(self, axis, reduce_func):
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+")
+    # One extreme value per column / row, all >= 2^15, distinct (500 apart) and
+    # not aligned to a tile boundary (+7).
+    expected = jnp.arange(32775, 32775 + 16 * 500, 500, dtype=jnp.int32)
+    x = jax.nn.one_hot(expected, 40960, dtype=jnp.bfloat16, axis=axis)
+    if reduce_func is jnp.argmin:
+      x = -x
+
+    def kernel(x, out):
+      out[:] = reduce_func(x[:], axis)
+
+    result = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.int32)
+    )(x)
+    np.testing.assert_array_equal(result, expected)
+
   @parameterized.product(
       k=[1, 2, 4, 8],
       in_shape=[(13, 32, 512), (10, 16, 128)],
@@ -503,6 +523,28 @@ class OpsTest(ptu.PallasTPUTest):
     exp_v, exp_i = jax.lax.top_k(x, k=k, axis=axis)
     np.testing.assert_array_equal(res_v, exp_v)
     np.testing.assert_array_equal(res_i, exp_i)
+
+  @parameterized.parameters(0, 1)
+  def test_bf16_top_k_large_dim(self, axis):
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+")
+    # Two extreme values per column / row, all >= 2^15, distinct (500 apart) and
+    # not aligned to a tile boundary (+7, +107).
+    idx0 = jnp.arange(32775, 32775 + 16 * 500, 500, dtype=jnp.int32)
+    idx1 = idx0 + 100
+    x = (
+        2 * jax.nn.one_hot(idx0, 40960, dtype=jnp.bfloat16, axis=axis)
+        + jax.nn.one_hot(idx1, 40960, dtype=jnp.bfloat16, axis=axis)
+    )
+    expected = jnp.stack([idx0, idx1], axis=axis)
+
+    def kernel(x, out):
+      _, out[:] = jax.lax.top_k(x[:], k=2, axis=axis, is_stable=False)
+
+    result = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.int32)
+    )(x)
+    np.testing.assert_array_equal(result, expected)
 
   @parameterized.product(
       k=[1, 2, 4, 8],
@@ -1605,6 +1647,40 @@ class OpsTest(ptu.PallasTPUTest):
         out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
     )(inputs)
     np.testing.assert_array_equal(result, np.swapaxes(inputs[:, 1:3], 2, 3))
+
+  def test_request_p_state(self):
+    if self.INTERPRET:
+      self.skipTest("Not implemented in interpret mode.")
+    # TODO(b/581748519): Remove once the minimum jaxlib and libtpu versions
+    # include tpu.request_p_state.
+    if not hasattr(tpu, "RequestPStateOp"):
+      self.skipTest("Test requires a jaxlib with tpu.request_p_state.")
+    if not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Test requires libtpu >= 0.0.52.")
+    with self.assertRaisesRegex(TypeError, "p_state must be an int"):
+      pltpu.request_p_state(jnp.int32(3))  # pytype: disable=wrong-arg-types
+
+    def negative_kernel(x_ref, y_ref):
+      pltpu.request_p_state(-1)
+      y_ref[...] = x_ref[...]
+
+    x = jnp.zeros((8, 128), jnp.float32)
+    with self.assertRaisesRegex(ValueError, "p_state must be non-negative"):
+      self.pallas_call(negative_kernel, out_shape=x)(x)
+
+    def kernel(x_ref, y_ref):
+      pltpu.request_p_state(3)
+      y_ref[...] = x_ref[...]
+
+    if not jtu.is_device_tpu_at_least(7):
+      with self.assertRaisesRegex(
+          NotImplementedError, r"request_p_state is only supported on TPU7x\+"
+      ):
+        self.pallas_call(kernel, out_shape=x)(x)
+      return
+
+    result = self.pallas_call(kernel, out_shape=x)(x)
+    np.testing.assert_array_equal(result, x)
 
 
 class ConvTest(ptu.PallasTPUTest):

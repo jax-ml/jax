@@ -450,7 +450,9 @@ def _custom_jvp_vjp_call_lowering(ctx: mlir.LoweringRuleContext, *args,
                                    outer_traceback=ctx.traceback)
   ctx.set_tokens_out(tokens)
   return out
-mlir.register_lowering(custom_jvp_call_p, _custom_jvp_vjp_call_lowering)
+mlir.register_lowering(
+    custom_jvp_call_p, _custom_jvp_vjp_call_lowering,
+    shard_map_passthrough=True)
 
 def _custom_jvp_call_transpose_fancy(cts, *args, call_jaxpr, **_):
   return ad.backward_pass3(call_jaxpr, False, call_jaxpr.consts, args, cts)
@@ -1239,8 +1241,9 @@ class _PrependCtsBwdWithAccums(ad.CustomBwdWithAccums):
 
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
 # TODO(phawkins,mattjj): make this primitive cacheable.
-mlir.register_lowering(custom_vjp_call_p, _custom_jvp_vjp_call_lowering,
-                       cacheable=False)
+mlir.register_lowering(
+    custom_vjp_call_p, _custom_jvp_vjp_call_lowering, cacheable=False,
+    shard_map_passthrough=True)
 
 def _custom_vjp_call_typecheck(_, *in_avals, call_jaxpr, **kwargs):
   core.check_distinct_refs(custom_vjp_call_p, in_avals)

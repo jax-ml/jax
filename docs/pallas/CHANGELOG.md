@@ -13,10 +13,36 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* New features
+  * The Pallas API is now available as `jax.pallas`. Existing imports from
+    `jax.experimental.pallas` remain valid.
+
+### TPU
+
+* New features
+
+  * Added {func}`jax.pallas.tpu.request_p_state` to request a TensorCore
+    P-state transition on TPU7x+ targets.
+
+* Removals
+
+  * Removed the previously deprecated {class}`jax.experimental.pallas.tpu.create_tensorcore_mesh`. Use
+    {class}`jax.pallas.tpu.TensorCoreMesh` instead.
+
+### Triton
+
+* Removals
+  * Removed the previously deprecated Pallas Triton ops in
+    {mod}`jax.experimental.pallas.ops.gpu`.
+
 ### Mosaic GPU
 
 * New features
 
+  * {func}`jax.experimental.pallas.mosaic_gpu.tcgen05_commit_arrive` now accepts
+    a keyword-only `commit_a_read_only` boolean flag (defaulting to `False`) to
+    track completion of SMEM reads of the `a` operand of preceding
+    {func}`jax.experimental.pallas.mosaic_gpu.tcgen05_mma` calls on `sm_107f`.
   * {class}`jax.experimental.pallas.mosaic_gpu.RefType` now accepts keyword-only
     `read` and `write` boolean flags (both defaulting to `True`) to declare
     which memory effects {func}`jax.experimental.pallas.mosaic_gpu.inline_mgpu`

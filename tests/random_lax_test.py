@@ -31,8 +31,13 @@ from jax import random
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
-from jax._src.random.core import (_safe_int_to_float, _check_broadcast_shapes,
-                                  _poisson_from_normal)
+from jax._src.random.core import (
+    _bits_to_normal,
+    _check_broadcast_shapes,
+    _poisson_from_normal,
+    _safe_int_to_float,
+    _signed_midpoint_and_complement,
+)
 from jax._src import test_util as jtu
 from jax import vmap
 
@@ -367,12 +372,12 @@ class DistributionsTest(RandomTestBase):
   tests. So long as the input bits are valid (as tested in BasicRandomTest) then
   the distribution logic tested here will apply correctly.
   """
-  @jtu.sample_product(dtype=float_dtypes, use_jit=[False, True])
-  def testNormal(self, dtype, use_jit):
+  @jtu.sample_product(dtype=float_dtypes, use_jit=[False, True], mode=['low', 'high', 'highest'])
+  def testNormal(self, dtype, use_jit, mode):
     key = self.make_key(0)
     rand = random.normal if not use_jit else jax.jit(
-        random.normal, static_argnames=['shape', 'dtype'])
-    samples = rand(key, shape=(10000,), dtype=dtype)
+        random.normal, static_argnames=['shape', 'dtype', 'mode'])
+    samples = rand(key, shape=(10000,), dtype=dtype, mode=mode)
     self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.norm().cdf)
 
   def testNormalBfloat16(self):
@@ -382,16 +387,210 @@ class DistributionsTest(RandomTestBase):
     res_bfloat16 = random.normal(self.make_key(0), dtype=jnp.bfloat16)
     self.assertAllClose(res_bfloat16, res_bfloat16_str)
 
-  @jtu.sample_product(dtype=complex_dtypes, use_jit=[False, True])
-  def testNormalComplex(self, dtype, use_jit):
+  @jtu.sample_product(dtype=complex_dtypes, use_jit=[False, True], mode=['low', 'high', 'highest'])
+  def testNormalComplex(self, dtype, use_jit, mode):
     key = self.make_key(0)
     rand = random.normal if not use_jit else jax.jit(
-        random.normal, static_argnames=['shape', 'dtype'])
-    samples = rand(key, shape=(10000,), dtype=dtype)
+        random.normal, static_argnames=['shape', 'dtype', 'mode'])
+    samples = rand(key, shape=(10000,), dtype=dtype, mode=mode)
     self._CheckKolmogorovSmirnovCDF(jnp.real(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
     self._CheckKolmogorovSmirnovCDF(jnp.imag(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
     self.assertEqual(dtype, samples.dtype)
 
+  def testSamplingModeConfigFlags(self):
+    key = self.make_key(42)
+    n_low = random.normal(key, shape=(128,), dtype=np.float32, mode='low')
+    n_high = random.normal(key, shape=(128,), dtype=np.float32, mode='high')
+    n_highest = random.normal(key, shape=(128,), dtype=np.float32, mode='highest')
+
+    # Default mode preserves the existing `uniform` + `erf_inv` behavior.
+    lo = np.nextafter(np.float32(-1.0), np.float32(0.0))
+    expected_default = np.float32(np.sqrt(2.0)) * lax.erf_inv(
+        random.uniform(key, shape=(128,), dtype=np.float32, minval=lo, maxval=np.float32(1.0))
+    )
+    self.assertArraysEqual(random.normal(key, shape=(128,), dtype=np.float32), n_low)
+    self.assertArraysEqual(n_low, expected_default)
+
+    # `mode="highest"` draws two bit streams via `num_streams=2`.
+    streams = random.bits(key, shape=(128,), dtype=np.uint32, num_streams=2)
+    self.assertArraysEqual(
+        n_highest, _bits_to_normal(streams, np.float32, mode='highest')
+    )
+
+    normal_jit = jax.jit(
+        lambda k: random.normal(k, shape=(128,), dtype=np.float32)
+    )
+    self.assertArraysEqual(normal_jit(key), n_low)
+
+    for mode, expected_n in [('high', n_high), ('highest', n_highest)]:
+      with config.random_normal_mode(mode):
+        self.assertArraysEqual(
+            random.normal(key, shape=(128,), dtype=np.float32), expected_n
+        )
+        self.assertArraysEqual(normal_jit(key), expected_n)
+
+  def testBitsToNormalHighAndHighestTails(self):
+    # TPU < v5 and TPU v5e use a lower-precision hardware `log` approximation.
+    rtol = (
+        2e-5
+        if (
+            jtu.is_device_tpu()
+            and (not jtu.is_device_tpu_at_least(5) or jtu.is_device_tpu(5, 'e'))
+        )
+        else 5e-7
+    )
+    # `mode="high"` keeps all 4096 tail inputs distinct, strictly ordered,
+    # symmetric between positive and negative tails, and close to the exact
+    # normal quantiles.
+    pos_tail_high = jnp.uint32(0x7FFFFFFF) - jnp.arange(4096, dtype=jnp.uint32)
+    neg_tail_high = jnp.uint32(0xFFFFFFFF) - jnp.arange(4096, dtype=jnp.uint32)
+    z_pos_high = np.asarray(_bits_to_normal(pos_tail_high, np.float32, mode='high'))
+    z_neg_high = np.asarray(_bits_to_normal(neg_tail_high, np.float32, mode='high'))
+
+    self.assertEqual(len(np.unique(z_pos_high)), 4096)
+    self.assertTrue(np.all(np.diff(z_pos_high) < 0))
+    self.assertArraysEqual(z_neg_high, -z_pos_high)
+    expected_tail = scipy.stats.norm.isf((2 * np.arange(4096) + 1) * 2.0 ** -33)
+    self.assertAllClose(z_pos_high, expected_tail.astype(np.float32), rtol=rtol)
+
+    # `mode="highest"` uses 64 random bits to extend tail reach past +/-9.0 in
+    # pure 32-bit floating-point arithmetic.
+    hi_pos_ext = jnp.full((4096,), 0x7FFFFFFF, dtype=jnp.uint32)
+    hi_neg_ext = jnp.full((4096,), 0xFFFFFFFF, dtype=jnp.uint32)
+    lo_ext = jnp.uint32(0xFFFFFFFF) - jnp.arange(4096, dtype=jnp.uint32)
+    z_pos_highest = np.asarray(
+        _bits_to_normal((hi_pos_ext, lo_ext), np.float32, mode='highest')
+    )
+    z_neg_highest = np.asarray(
+        _bits_to_normal((hi_neg_ext, lo_ext), np.float32, mode='highest')
+    )
+    self.assertArraysEqual(z_neg_highest, -z_pos_highest)
+    self.assertTrue(np.all(np.diff(z_pos_highest) <= 0))
+    expected_tail_highest = scipy.stats.norm.isf(
+        (2 * np.arange(4096, dtype=np.float64) + 1) * 2.0 ** -65
+    )
+    self.assertAllClose(z_pos_highest, expected_tail_highest.astype(np.float32), rtol=rtol)
+    self.assertGreater(float(z_pos_highest[0]), 9.09)
+
+  def testSignedMidpointRoundingToOne(self):
+    # TPU < v5 and TPU v5e use a lower-precision hardware `log` approximation.
+    rtol = (
+        2e-5
+        if (
+            jtu.is_device_tpu()
+            and (not jtu.is_device_tpu_at_least(5) or jtu.is_device_tpu(5, 'e'))
+        )
+        else 5e-7
+    )
+    # For the top 64 values of `k` (`2^31 - 64 .. 2^31 - 1`), `2 * k + 1`
+    # rounds up to `2^32` in float32, so `abs_x == 1.0`. Because `q_int` is in
+    # `1 .. 127`, `q` has zero rounding error and `_bits_to_normal` still maps
+    # all 64 inputs to distinct, finite, symmetric tail values.
+    pos_round_to_one = jnp.uint32(0x7FFFFFFF) - jnp.arange(64, dtype=jnp.uint32)
+    neg_round_to_one = jnp.uint32(0xFFFFFFFF) - jnp.arange(64, dtype=jnp.uint32)
+    x_pos, abs_x_pos, q_pos = _signed_midpoint_and_complement(
+        pos_round_to_one, np.float32, mode='high'
+    )
+    x_neg, abs_x_neg, q_neg = _signed_midpoint_and_complement(
+        neg_round_to_one, np.float32, mode='high'
+    )
+    self.assertArraysEqual(np.asarray(abs_x_pos), np.ones(64, dtype=np.float32))
+    self.assertArraysEqual(np.asarray(abs_x_neg), np.ones(64, dtype=np.float32))
+    self.assertArraysEqual(np.asarray(x_pos), np.ones(64, dtype=np.float32))
+    self.assertArraysEqual(np.asarray(x_neg), -np.ones(64, dtype=np.float32))
+    expected_q = ((2 * np.arange(64) + 1) * 2.0 ** -32).astype(np.float32)
+    self.assertArraysEqual(np.asarray(q_pos), expected_q)
+    self.assertArraysEqual(np.asarray(q_neg), expected_q)
+
+    z_pos = np.asarray(_bits_to_normal(pos_round_to_one, np.float32, mode='high'))
+    z_neg = np.asarray(_bits_to_normal(neg_round_to_one, np.float32, mode='high'))
+    self.assertTrue(np.all(np.isfinite(z_pos)))
+    self.assertEqual(len(np.unique(z_pos)), 64)
+    self.assertTrue(np.all(np.diff(z_pos) < 0))
+    self.assertArraysEqual(z_neg, -z_pos)
+    expected_z = scipy.stats.norm.isf((2 * np.arange(64) + 1) * 2.0 ** -33)
+    self.assertAllClose(z_pos, expected_z.astype(np.float32), rtol=rtol)
+
+    # Symmetrically, for `k` in `0 .. 63` near `x = 0`, `q_int` rounds up to
+    # `2^32` so `q == 1.0`, while `x` has zero rounding error.
+    center_pos = jnp.arange(64, dtype=jnp.uint32)
+    center_neg = jnp.uint32(0x80000000) + jnp.arange(64, dtype=jnp.uint32)
+    x_cpos, _, q_cpos = _signed_midpoint_and_complement(
+        center_pos, np.float32, mode='high'
+    )
+    x_cneg, _, q_cneg = _signed_midpoint_and_complement(
+        center_neg, np.float32, mode='high'
+    )
+    self.assertArraysEqual(np.asarray(q_cpos), np.ones(64, dtype=np.float32))
+    self.assertArraysEqual(np.asarray(q_cneg), np.ones(64, dtype=np.float32))
+    self.assertArraysEqual(np.asarray(x_cpos), expected_q)
+    self.assertArraysEqual(np.asarray(x_cneg), -expected_q)
+
+    z_cpos = np.asarray(_bits_to_normal(center_pos, np.float32, mode='high'))
+    z_cneg = np.asarray(_bits_to_normal(center_neg, np.float32, mode='high'))
+    self.assertEqual(len(np.unique(z_cpos)), 64)
+    self.assertTrue(np.all(np.diff(z_cpos) > 0))
+    self.assertArraysEqual(z_cneg, -z_cpos)
+    self.assertAllClose(
+        z_cpos[0], np.float32(np.sqrt(np.pi / 2.0) * 2.0 ** -32), rtol=1e-5
+    )
+
+  @jtu.skip_on_devices('tpu')
+  def testBitsToNormalFloat64(self):
+    with jax.enable_x64():
+      pos64 = jnp.uint64(0x7FFFFFFFFFFFFFFF) - jnp.arange(4096, dtype=jnp.uint64)
+      neg64 = jnp.uint64(0xFFFFFFFFFFFFFFFF) - jnp.arange(4096, dtype=jnp.uint64)
+      z64_pos = np.asarray(_bits_to_normal(pos64, np.float64, mode='high'))
+      z64_neg = np.asarray(_bits_to_normal(neg64, np.float64, mode='high'))
+      self.assertEqual(len(np.unique(z64_pos)), 4096)
+      self.assertTrue(np.all(np.diff(z64_pos) < 0))
+      self.assertArraysEqual(z64_neg, -z64_pos)
+      expected_tail64 = scipy.stats.norm.isf(
+          (2 * np.arange(4096, dtype=np.float64) + 1) * 2.0 ** -65
+      )
+      self.assertAllClose(z64_pos, expected_tail64, rtol=1e-14)
+
+      hi64_pos = jnp.full((4096,), 0x7FFFFFFFFFFFFFFF, dtype=jnp.uint64)
+      hi64_neg = jnp.full((4096,), 0xFFFFFFFFFFFFFFFF, dtype=jnp.uint64)
+      lo64_ext = jnp.uint64(0xFFFFFFFFFFFFFFFF) - jnp.arange(4096, dtype=jnp.uint64)
+      z128_pos = np.asarray(
+          _bits_to_normal((hi64_pos, lo64_ext), np.float64, mode='highest')
+      )
+      z128_neg = np.asarray(
+          _bits_to_normal((hi64_neg, lo64_ext), np.float64, mode='highest')
+      )
+      self.assertArraysEqual(z128_neg, -z128_pos)
+      self.assertTrue(np.all(np.diff(z128_pos) < 0))
+      self.assertGreater(float(z128_pos[0]), 13.10)
+
+  def testBitsToNormalBfloat16Tails(self):
+    # In bfloat16, `mode="low"` never samples past +/-2.63; `mode="high"`
+    # matches the expected two-tail probability above 3.0.
+    key = jax.random.key(0)
+    num_chunks, chunk_size = 64, 4096
+    threshold = jnp.bfloat16(3.0)
+    low_hits = int(
+        jax.lax.map(
+            lambda k: (
+                jnp.abs(random.normal(k, (chunk_size,), dtype=jnp.bfloat16, mode='low'))
+                > threshold
+            ).sum(),
+            random.split(key, num_chunks),
+        ).sum()
+    )
+    high_hits = int(
+        jax.lax.map(
+            lambda k: (
+                jnp.abs(random.normal(k, (chunk_size,), dtype=jnp.bfloat16, mode='high'))
+                > threshold
+            ).sum(),
+            random.split(key, num_chunks),
+        ).sum()
+    )
+    self.assertEqual(low_hits, 0)
+    expected_prob = 2.0 * scipy.stats.norm.sf(float(threshold))
+    empirical_prob = high_hits / (num_chunks * chunk_size)
+    self.assertAllClose(empirical_prob, expected_prob, rtol=0.15)
   @jtu.sample_product(dtype=float_dtypes, use_jit=[False, True])
   def testTruncatedNormal(self, dtype, use_jit):
     key = self.make_key(0)
@@ -1181,6 +1380,16 @@ class DistributionsTest(RandomTestBase):
       self.assertTrue(np.all(np.isnan(result)))
     else:
       self.assertFalse(np.any(np.isnan(result)))
+
+  @jtu.sample_product(method=['eigh', 'svd'], dtype=jtu.dtypes.floating)
+  def testMultivariateNormalSingularRank1(self, method, dtype):
+    u = jnp.array([1.0, 2.0, 3.0], dtype=dtype)
+    samples = random.multivariate_normal(
+        self.make_key(0), jnp.zeros(3, dtype=dtype), jnp.outer(u, u),
+        shape=(10,), method=method)
+    self.assertFalse(np.any(np.isnan(samples)))
+    tol = 2e-2 if dtype == np.float32 else 1e-5
+    self.assertAllClose(samples, samples[:, :1] * u[None, :], atol=tol, rtol=tol)
 
   def testIssue222(self):
     x = random.randint(self.make_key(10003), (), 0, 0)

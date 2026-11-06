@@ -44,11 +44,9 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
 if sys.platform != "win32":
   from jax.experimental.pallas import tpu as pltpu
-  from jax.experimental.pallas import triton as pltriton
   from jax.experimental.pallas import mosaic_gpu as plmgpu
 else:
   pltpu = None
-  pltriton = None
   plmgpu = None
 
 
@@ -306,44 +304,6 @@ class PallasTest(ptu.PallasTest):
     np.testing.assert_array_equal(y, x)
 
 
-class PallasTritonTest(PallasTest):
-
-  def setUp(self):
-    if not jtu.is_cuda_compute_capability_at_least("8.0"):
-      self.skipTest("Only works on a GPU with capability >= sm80")
-    if not pltriton:
-      self.skipTest("Pallas Triton is not available")
-    super().setUp()
-
-  def pallas_call(self, *args, **kwargs):
-    assert "compiler_params" not in kwargs
-    return super().pallas_call(
-        *args, compiler_params=pltriton.CompilerParams(), **kwargs
-    )
-
-  def test_store_reshaped_ref(self):
-    with self.assertRaisesRegex(
-        AttributeError, "object has no attribute 'get_indexer_shape_static'"
-    ):
-      super().test_store_reshaped_ref()
-
-  def test_array_indexing(self):
-    x = jnp.arange(128, dtype=floatx)
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct.like(x),
-    )
-    def kernel(x_ref, i_ref, o_ref):
-      o_ref[...] = x_ref[i_ref[...]]
-
-    for i in range(4):
-      indices = jax.random.permutation(
-          jax.random.key(i), jnp.arange(x.size, dtype=intx)
-      )
-      np.testing.assert_allclose(kernel(x, indices), x[indices])
-
-
 class PallasTPUTest(PallasTest):
 
   def setUp(self):
@@ -416,7 +376,7 @@ class PallasInterpretTest(PallasTest):
     super().setUp()
 
 
-class PallasCallTest(ptu.PallasTest):
+class PallasCallTest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -975,7 +935,7 @@ class PallasCallDCETest(jtu.JaxTestCase):
       self.assertEmpty(dced.eqns)
 
 
-class PallasCallElementIndexingTest(ptu.PallasTest):
+class PallasCallElementIndexingTest(ptu.PallasTPUTest):
   def setUp(self):
     super().setUp()
 
@@ -1143,7 +1103,7 @@ class PallasCallBoundedSliceIndexingTest(ptu.PallasTest):
       )(x)
 
 
-class ApiErrorTest(ptu.PallasTest):
+class ApiErrorTest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -1397,7 +1357,7 @@ class ApiErrorInterpretTest(ApiErrorTest):
   INTERPRET = True
 
 
-class PallasCallInputOutputAliasingTest(ptu.PallasTest):
+class PallasCallInputOutputAliasingTest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -1505,7 +1465,7 @@ class PallasCallInputOutputAliasingInterpretTest(ptu.PallasTest):
   INTERPRET = True
 
 
-class PallasControlFlowTest(ptu.PallasTest):
+class PallasControlFlowTest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -2376,7 +2336,7 @@ AD_TEST_CASES = [
 ]
 
 
-class PallasCallAutodifferentiationTest(ptu.PallasTest):
+class PallasCallAutodifferentiationTest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -2455,6 +2415,52 @@ class PallasCallAutodifferentiationTest(ptu.PallasTest):
     jtu.check_grads(pallas_impl, (x,), modes=["fwd"], order=2,
                     atol=grad_tol, rtol=grad_tol)
 
+  def test_jvp_symbolic_zero_input_tangents(self):
+    # y and n get symbolic zero tangents, and they come before x with different
+    # shapes, so x's tangent must be paired with x's block mapping.
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4, 8), floatx),
+    )
+    def pallas_impl(y_ref, n_ref, x_ref, o_ref):
+      o_ref[...] = jnp.sin(x_ref[...]) * y_ref[...] * n_ref[...].astype(floatx)
+
+    k1, k2, k3 = random.split(random.key(0), 3)
+    x = random.normal(k1, (4, 8))
+    t = random.normal(k2, (4, 8))
+    y = random.normal(k3, (1, 8))
+    n = jnp.arange(8, dtype=intx).reshape(1, 8)
+    f = lambda x: pallas_impl(y, n, x)
+    f_ref = lambda x: jnp.sin(x) * y * n.astype(floatx)
+    out_primal, out_tangent = jax.jvp(f, (x,), (t,))
+    out_primal_ref, out_tangent_ref = jax.jvp(f_ref, (x,), (t,))
+    np.testing.assert_allclose(out_primal, out_primal_ref, atol=self.tol,
+                               rtol=self.tol)
+    np.testing.assert_allclose(out_tangent, out_tangent_ref, atol=self.tol,
+                               rtol=self.tol)
+    jtu.check_grads(f, (x,), modes=["fwd"], order=2,
+                    atol=self.grad_tol, rtol=self.grad_tol)
+
+  def test_jvp_integer_output(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((8,), intx),
+                   jax.ShapeDtypeStruct((8,), floatx)),
+    )
+    def pallas_impl(x_ref, s_ref, o_ref):
+      s_ref[...] = (x_ref[...] > 0).astype(intx)
+      o_ref[...] = jnp.sin(x_ref[...])
+
+    k1, k2 = random.split(random.key(0))
+    x = random.normal(k1, (8,))
+    t = random.normal(k2, (8,))
+    (s, out_primal), (s_dot, out_tangent) = jax.jvp(pallas_impl, (x,), (t,))
+    np.testing.assert_array_equal(s, (x > 0).astype(intx))
+    self.assertEqual(s_dot.dtype, dtypes.float0)
+    np.testing.assert_allclose(out_primal, jnp.sin(x), atol=self.tol,
+                               rtol=self.tol)
+    np.testing.assert_allclose(out_tangent, jnp.cos(x) * t, atol=self.tol,
+                               rtol=self.tol)
+
   def test_custom_jvp_call(self):
     @functools.partial(jax.custom_jvp, nondiff_argnums=(1,))
     def softmax(x, axis=-1):
@@ -2476,15 +2482,29 @@ class PallasCallAutodifferentiationTest(ptu.PallasTest):
 
     np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
 
-  # TODO(sharadmv): enable this when we update Triton
-  # def test_jvp_matmul(self):
-  #   k1, k2 = random.split(random.key(0))
-  #   x = random.normal(k1, (256, 128))
-  #   y = random.normal(k2, (128, 64))
-  #   bm, bn, bk, gm = 64, 128, 32, 8
-  #   mm = functools.partial(matmul, bm=bm, bn=bn, bk=bk, gm=gm,
-  #                          interpret=self.INTERPRET)
-  #   jtu.check_grads(mm, (x, y), modes=["fwd"], order=1)
+  def test_jvp_program_id(self):
+    @functools.partial(
+        self.pallas_call,
+        grid=(4,),
+        in_specs=[pl.BlockSpec((8,), lambda i: (i,))],
+        out_specs=pl.BlockSpec((8,), lambda i: (i,)),
+        out_shape=jax.ShapeDtypeStruct((32,), floatx),
+    )
+    def pallas_impl(x_ref, o_ref):
+      scale = (pl.program_id(0) + 1).astype(floatx)
+      o_ref[...] = jnp.sin(x_ref[...]) * scale
+
+    k1, k2 = random.split(random.key(0))
+    x = random.normal(k1, (32,))
+    t = random.normal(k2, (32,))
+    scale = jnp.repeat(jnp.arange(1, 5, dtype=floatx), 8)
+    out_primal, out_tangent = jax.jvp(pallas_impl, (x,), (t,))
+    np.testing.assert_allclose(out_primal, jnp.sin(x) * scale, atol=self.tol,
+                               rtol=self.tol)
+    np.testing.assert_allclose(out_tangent, jnp.cos(x) * t * scale,
+                               atol=self.tol, rtol=self.tol)
+    jtu.check_grads(pallas_impl, (x,), modes=["fwd"], order=2,
+                    atol=self.grad_tol, rtol=self.grad_tol)
 
 
 class PallasCallAutodifferentiationInterpretTest(PallasCallAutodifferentiationTest):
@@ -2609,7 +2629,7 @@ class PallasCheckifyInterpretTest(PallasCheckifyTest):
   INTERPRET = True
 
 
-class PallasCallNamedGridTest(ptu.PallasTest):
+class PallasCallNamedGridTest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -2852,7 +2872,7 @@ def index_to_lojax(xt: jax.Ref) -> jax.Array:
 index_p.to_lojax = index_to_lojax
 
 
-class PallasHiJaxTest(ptu.PallasTest):
+class PallasHiJaxTest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -2910,6 +2930,32 @@ class PallasHiJaxTest(ptu.PallasTest):
     os = f(xs)
     self.assertArraysEqual(os.x, xs.x)
     self.assertArraysEqual(os.s, xs.s)
+
+  @jtu.with_explicit_mesh((2,), "x")
+  def test_pallas_call_shard_map_unreduced(self, mesh):
+    x_np = np.arange(16, dtype=np.float32).reshape(8, 2)
+    y_np = np.arange(256, dtype=np.float32).reshape(2, 128)
+    x = jax.device_put(x_np, jax.P(None, "x"))
+    y = jax.device_put(y_np, jax.P("x", None))
+    acc = jnp.einsum("ab,bc->ac", x, y, out_sharding=jax.P(unreduced={"x"}))
+
+    def add_one_kernel(in_ref, out_ref):
+      out_ref[...] = in_ref[...] + 1.0
+
+    @jax.jit
+    @jax.shard_map(mesh=mesh, out_specs=jax.P(unreduced={"x"}))
+    def f(acc):
+      return self.pallas_call(
+          add_one_kernel,
+          out_shape=jax.ShapeDtypeStruct(
+              acc.shape, acc.dtype, manual_axis_type=jax.typeof(acc).mat
+          ),
+          input_output_aliases={0: 0},
+      )(acc)
+
+    out = f(acc)
+    self.assertEqual(out.sharding.spec, jax.P(None, None, unreduced={"x"}))
+    self.assertArraysEqual(jax.reshard(out, jax.P()), x_np @ y_np + 2.0)
 
 
 class PadRefTest(jtu.JaxTestCase):

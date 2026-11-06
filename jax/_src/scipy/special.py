@@ -31,23 +31,29 @@ from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.numpy.ufuncs import arctan, isposinf, isneginf, sinc
 from jax._src.api import jit, jvp, vmap
+from jax._src.lax.double_word import two_sum
 from jax._src.lax.erf import (
+    _erfcx_from_grad_large,
+    _split_square,
     erf_inv_core,
     erfcx_grad_impl as _erfcx_grad_impl,
     erfcx_grad_large,
     erfcx_impl as _erfcx_impl,
     erfcx_large,
+    log_ndtr as _log_ndtr,
+    ndtr as _ndtr,
+    ndtri_exp_core,
 )
 from jax._src.lax.lax import AccuracyMode, _const as _lax_const
-from jax._src.lax.special import ndtr as _ndtr
 from jax._src.lax.special import random_gamma_grad
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import promote_args_complex, promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
+from jax._src.scipy.bessel import jn as jn, yn as yn
+from jax._src.scipy.betaln import _betaln
 from jax._src.scipy.gamma import gamma_real
-from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
 from jax._src.nn.functions import softmax as nn_softmax
 from jax._src.nn.functions import log_softmax as nn_log_softmax
@@ -341,7 +347,9 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     :func:`jax.scipy.special.beta`
   """
   a, b = promote_args_inexact("betaln", a, b)
-  return _betaln_impl(a, b)
+  if dtypes.issubdtype(a.dtype, np.complexfloating):
+    raise ValueError("betaln does not support complex-valued inputs.")
+  return _betaln(a, b)
 
 
 def factorial(n: ArrayLike, exact: bool = False) -> Array:
@@ -2204,15 +2212,6 @@ def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
 # >
 # >
 
-# log_ndtr uses different functions over the ranges
-# (-infty, lower](lower, 0](0, infty)
-# Lower bound values were chosen by examining where the support of ndtr
-# appears to be zero, relative to scipy's (which is always 64bit). They were
-# then made more conservative just to be safe. (Conservative means use the
-# expansion more than we probably need to.)
-_LOGNDTR_FLOAT64_LOWER = np.array(-20, np.float64)
-_LOGNDTR_FLOAT32_LOWER = np.array(-10, np.float32)
-
 
 def ndtr(x: ArrayLike) -> Array:
   r"""Normal distribution function.
@@ -2355,7 +2354,186 @@ def _ndtri_grad_jvp(primals, tangents):
   return g, p_dot * ((x * g) * g)
 
 
-@partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
+def ndtri_exp(y: ArrayLike) -> Array:
+  r"""The inverse of :func:`~jax.scipy.special.log_ndtr`.
+
+  JAX implementation of :obj:`scipy.special.ndtri_exp`.
+
+  Computes :math:`\Phi^{-1}(\exp(y))` for :math:`y \le 0` without underflow in
+  the left tail (:math:`y \ll 0`) or catastrophic cancellation near
+  :math:`y = -\ln 2` and :math:`y = 0`.
+
+  Args:
+    y: arraylike, real-valued. Log-probability in :math:`(-\infty, 0]`.
+
+  Returns:
+    array containing values of ``ndtri(exp(y))``. Returns ``-inf`` for
+    ``y == -inf``, ``inf`` for ``y == 0``, and ``nan`` for ``y > 0``.
+
+  Notes:
+    ``ndtri_exp`` does not support complex-valued inputs.
+
+  Numerical Precision:
+    For accuracy bounds, see :ref:`numerical-accuracy`.
+
+  Examples:
+    >>> y = jnp.array([-100.0, -1.0, -1e-6, 0.0])
+    >>> with jnp.printoptions(precision=4):
+    ...   print(jax.scipy.special.ndtri_exp(y))
+    [-13.8885  -0.3375   4.7534      inf]
+
+  See also:
+    - :func:`jax.scipy.special.log_ndtr`
+    - :func:`jax.scipy.special.ndtri`
+    - :func:`jax.scipy.special.ndtr`
+  """
+  (y,) = promote_args_inexact("ndtri_exp", y)
+  if dtypes.issubdtype(y.dtype, np.complexfloating):
+    raise ValueError("ndtri_exp does not support complex-valued inputs.")
+  if dtypes.finfo(y.dtype).bits < 32:
+    return _ndtri_exp(y.astype(np.float32)).astype(y.dtype)
+  return _ndtri_exp(y)
+
+
+_NDTRI_EXP_SAFE_Y = -0.5
+_NDTRI_EXP_GRAD_CUTOFF = math.sqrt(2.0)
+
+
+@custom_derivatives.custom_jvp
+@jit
+def _ndtri_exp(y: Array) -> Array:
+  """Evaluates `ndtri_exp(y)` with domain and infinity handling."""
+  out_of_bounds = (y > 0.0) | jnp.isnan(y)
+  is_neg_inf = ~jnp.isfinite(y) & (y < 0.0)
+  y_safe = jnp.where(
+      out_of_bounds | (y == 0.0) | is_neg_inf, _NDTRI_EXP_SAFE_Y, y
+  )
+  x = ndtri_exp_core(y_safe)
+  edge = jnp.where(y == 0.0, jnp.inf, jnp.where(is_neg_inf, -jnp.inf, x))
+  return jnp.where(out_of_bounds, jnp.nan, edge)
+
+
+@_ndtri_exp.defjvp
+def _ndtri_exp_jvp(primals, tangents):
+  (y,), (y_dot,) = primals, tangents
+  x = _ndtri_exp(y)
+  g, _ = _ndtri_exp_grad_and_shift(y, x)
+  return x, y_dot * g
+
+
+@custom_derivatives.custom_jvp
+def _ndtri_exp_grad_and_shift(y: Array, x: Array) -> tuple[Array, Array]:
+  """Returns `(g, h)` where `g = d/dy ndtri_exp(y)` and `h = 1 + x * g`.
+
+  Implicitly differentiating `ndtr(x) = exp(y)` (using `ndtr'(x) =
+  exp(-x^2/2) / sqrt(2*pi)`) gives the base derivative
+    `g(y) = exp(y) / ndtr'(x) = sqrt(2*pi) * exp(y) * exp(x^2/2)`.
+
+  - For `|x| <= sqrt(2)`: `x^2 / 2 <= 1`, so `exp(y + x^2/2)` neither overflows
+    nor amplifies 1-ULP errors in `x` by `O(x^2)`. Sum `y + x^2/2` as a
+    `(hi, lo)` float pair (avoiding cancellation near `y + x^2/2 = 0`) and
+    exponentiate.
+  - For `|x| > sqrt(2)`: evaluating `exp(x^2/2)` from `x` alone would amplify
+    any 1-ULP rounding error in `x` by `~x^2` ULPs (and overflow for large
+    `|x|`), while adding `y + x^2/2` cancels `-x^2/2` against `+x^2/2` in the
+    left tail. Instead, cancel `exp(x^2/2)` analytically in each tail using
+    `ndtr(-|x|) = 0.5 * exp(-x^2/2) * erfcx(|x| / sqrt(2))` (where `erfcx`
+    varies slowly with `x` instead of growing exponentially):
+    * Left tail (`x < -sqrt(2)`): substituting
+      `exp(y) = ndtr(x) = 0.5 * exp(-x^2/2) * erfcx(-x/sqrt(2))` into
+      `sqrt(2*pi) * exp(y) * exp(x^2/2)` cancels `exp(-x^2/2)` against
+      `exp(x^2/2)`, leaving `g(y) = sqrt(pi/2) * erfcx(-x/sqrt(2))`, which
+      stays finite and accurate down to `y = -fmax`.
+    * Right tail (`x > sqrt(2)`): here `exp(y)` is near `1`, and the small tail
+      probability is `1 - exp(y) = ndtr(-x) = 0.5 * exp(-x^2/2) *
+      erfcx(x/sqrt(2))`. Rewriting `exp(y) * exp(x^2/2)` as
+      `(exp(y) / (1 - exp(y))) * ((1 - exp(y)) * exp(x^2/2))` cancels
+      `exp(x^2/2)` analytically in the second factor and leaves
+      `exp(y) / (1 - exp(y)) = 1 / (exp(-y) - 1) = 1 / expm1(-y)` in the first,
+      giving `g(y) = sqrt(pi/2) * erfcx(x/sqrt(2)) / expm1(-y)`.
+
+  For `h(y) = 1 + x * g(y)` (used for higher-order derivatives in
+  `_ndtri_exp_grad_and_shift_jvp`):
+  - On `x < -sqrt(2)` (`u = -x / sqrt(2) > 1`), `1 + x * g(y)` cancels as
+    `O(1/x^2)`. Using `erfcx'(u) = 2*u*erfcx(u) - 2/sqrt(pi)` rewrites
+    `1 + x * g(y) = 1 - sqrt(pi)*u*erfcx(u) = -0.5 * sqrt(pi) * erfcx'(u)`,
+    reusing `grad_large = erfcx_grad_large(u)` already computed for `g(y)`.
+  - On `x >= -sqrt(2)`, `x * g(y) > -0.76`, so `1 + x * g(y) > 0.24` has no
+    cancellation.
+  """
+  y_arr = jnp.asarray(y, dtype=x.dtype)
+  out_of_bounds = (y_arr > 0.0) | jnp.isnan(y_arr)
+  is_neg_inf = ~jnp.isfinite(y_arr) & (y_arr < 0.0)
+  is_neg = x < -_NDTRI_EXP_GRAD_CUTOFF
+  is_pos = x > _NDTRI_EXP_GRAD_CUTOFF
+
+  # Shared `erfcx` evaluation on `u_tail = |x| / sqrt(2) >= 1` for both tails;
+  # `grad_large = erfcx'(u_tail)` also gives `h` in the left tail directly.
+  is_finite_tail = (is_neg | is_pos) & jnp.isfinite(x)
+  u_raw = jnp.where(is_finite_tail, lax.abs(x) * math.sqrt(0.5), 1.0)
+  u_tail = lax.max(u_raw, _lax_const(u_raw, 1.0))
+  grad_large = erfcx_grad_large(u_tail)
+  tail_num = math.sqrt(0.5 * math.pi) * _erfcx_from_grad_large(
+      u_tail, grad_large
+  )
+  g_neg = jnp.where(is_neg_inf, 0.0, tail_num)
+  h_neg = jnp.where(is_neg_inf, 0.0, (-0.5 * math.sqrt(math.pi)) * grad_large)
+
+  # Central region (`|x| <= sqrt(2)`): `(hi, lo)` float pair for `y + x^2 / 2`.
+  is_mid = ~(is_neg | is_pos) & jnp.isfinite(x)
+  x_mid = jnp.where(is_mid, x, 0.0)
+  y_mid = jnp.where(is_mid, y_arr, _NDTRI_EXP_SAFE_Y)
+  x2_hi, x2_lo = _split_square(x_mid)
+  arg_hi, arg_err = two_sum(y_mid, 0.5 * x2_hi)
+  arg_lo = arg_err + 0.5 * x2_lo
+  exp_hi = lax.exp(arg_hi, accuracy=AccuracyMode.HIGHEST)
+  exp_corr = arg_lo * (1.0 + 0.5 * arg_lo)
+  g_mid = math.sqrt(2.0 * math.pi) * (exp_hi + exp_hi * exp_corr)
+
+  # Right tail (`x > sqrt(2)`): for `-y < eps/4`, `expm1(-y)` equals `-y` to
+  # machine precision. Scaling both numerator and denominator by `2^bits` lifts
+  # subnormal `-y` into the normal float range so dividing by `denom` avoids
+  # reciprocal overflow or subnormal flush.
+  finfo = np.finfo(x.dtype)
+  tiny_cut = 0.25 * float(finfo.eps)
+  tiny_scale = math.ldexp(1.0, finfo.bits)
+  is_finite_pos = is_pos & (y_arr < 0.0) & jnp.isfinite(x)
+  neg_y = jnp.where(is_finite_pos, -y_arr, 1.0)
+  is_tiny = is_finite_pos & (neg_y < tiny_cut)
+  scale = jnp.where(is_tiny, _lax_const(x, tiny_scale), _lax_const(x, 1.0))
+  expm1_val = lax.expm1(neg_y, accuracy=AccuracyMode.HIGHEST)
+  denom = jnp.where(is_tiny, neg_y * scale, expm1_val)
+  g_pos = jnp.where(y_arr == 0.0, np.inf, (tail_num * scale) / denom)
+
+  g = jnp.where(is_neg, g_neg, jnp.where(is_pos, g_pos, g_mid))
+  # Mask out the `is_neg` branch with `0.0` before multiplying so `y = -inf`
+  # (`x = -inf`, `g = 0`) cannot produce `(-inf) * 0 = NaN` in `h_pos`.
+  x_nonneg = jnp.where(is_neg, 0.0, x)
+  g_nonneg = jnp.where(is_neg, 0.0, g)
+  h_pos = 1.0 + x_nonneg * g_nonneg
+  h = jnp.where(is_neg, h_neg, h_pos)
+  return jnp.where(out_of_bounds, jnp.nan, g), jnp.where(
+      out_of_bounds, jnp.nan, h
+  )
+
+
+@_ndtri_exp_grad_and_shift.defjvp
+def _ndtri_exp_grad_and_shift_jvp(primals, tangents):
+  """JVP for `_ndtri_exp_grad_and_shift` via a closed polynomial system.
+
+  `x = _ndtri_exp(y)` is a function of `y` cached from the primal pass rather
+  than an independent input, so its incoming tangent is ignored in
+  `(y_dot, _) = tangents` and total derivatives with respect to `y` satisfy:
+  - Differentiating `g(y) = sqrt(2*pi) * exp(y + x(y)^2 / 2)` with `dx/dy = g`
+    gives `g'(y) = g * (1 + x * g) = g * h`.
+  - Differentiating `h(y) = 1 + x(y) * g(y)` gives
+    `h'(y) = x'(y) * g + x * g'(y) = g^2 + x * g * h = g^2 + h * (h - 1)`.
+  """
+  (y, x), (y_dot, _) = primals, tangents
+  g, h = _ndtri_exp_grad_and_shift(y, x)
+  return (g, h), (y_dot * (g * h), y_dot * (g * g + h * (h - 1.0)))
+
+
 def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   r"""Log Normal distribution function.
 
@@ -2363,54 +2541,17 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
 
   For details of the Normal distribution function see `ndtr`.
 
-  This function calculates :math:`\log(\mathrm{ndtr}(x))` by either calling
-  :math:`\log(\mathrm{ndtr}(x))` or using an asymptotic series. Specifically:
-
-  - For `x > 0`, use `log1p(-ndtr(-x))` based on
-    :math:`\mathrm{ndtr}(x) = 1 - \mathrm{ndtr}(-x)` to avoid loss of precision
-    when :math:`\mathrm{ndtr}(x)` is close to 1.
-  - For `lower_segment < x <= 0`, use the existing `ndtr` technique
-    and take a log.
-  - For `x <= lower_segment`, we use the series approximation of `erf` to compute
-    the log CDF directly.
-
-  The `lower_segment` is set based on the precision of the input:
-
-  .. math::
-    \mathit{lower\_segment} =
-      \ \begin{cases}
-        -20 &  x.\mathrm{dtype}=\mathit{float64} \\
-        -10 &  x.\mathrm{dtype}=\mathit{float32} \\
-        \end{cases}
-
-
-  When `x < lower_segment`, the `ndtr` asymptotic series approximation is:
-
-  .. math::
-    \begin{align}
-     \mathrm{ndtr}(x) =&\  \mathit{scale} * (1 + \mathit{sum}) + R_N \\
-     \mathit{scale}   =&\  \frac{e^{-0.5 x^2}}{-x \sqrt{2 \pi}} \\
-     \mathit{sum}     =&\  \sum_{n=1}^N {-1}^n (2n-1)!! / (x^2)^n \\
-     R_N     =&\  O(e^{-0.5 x^2} (2N+1)!! / |x|^{2N+3})
-    \end{align}
-
-  where :math:`(2n-1)!! = (2n-1) (2n-3) (2n-5) ...  (3) (1)` is a
-  `double-factorial
-  <https://en.wikipedia.org/wiki/Double_factorial>`_ operator.
-
-
   Args:
     x: an array of type `float32`, `float64`.
-    series_order: Positive Python integer. Maximum depth to
-      evaluate the asymptotic expansion. This is the `N` above.
+    series_order: Deprecated; ignored. Kept for backwards compatibility.
 
   Returns:
     an array with `dtype=x.dtype`.
 
   Raises:
     TypeError: if `x.dtype` is not handled.
-    TypeError: if `series_order` is a not Python `integer.`
-    ValueError:  if `series_order` is not in `[0, 30]`.
+    TypeError: if `series_order` is not a Python `integer`.
+    ValueError: if `series_order` is not in `[0, 30]`.
   """
   if not isinstance(series_order, int):
     raise TypeError("series_order must be a Python integer.")
@@ -2421,90 +2562,10 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
 
   x_arr = jnp.asarray(x)
   dtype = lax.dtype(x_arr)
-
-  if dtype == np.float64:
-    lower_segment: np.ndarray = _LOGNDTR_FLOAT64_LOWER
-  elif dtype == np.float32:
-    lower_segment = _LOGNDTR_FLOAT32_LOWER
-  else:
+  if dtype not in (np.float32, np.float64):
     raise TypeError(f"x.dtype={np.dtype(dtype)} is not supported.")
 
-  # The basic idea here was ported from:
-  #   https://root.cern.ch/doc/v608/SpecFuncCephesInv_8cxx_source.html
-  # We copy the main idea, with a few changes
-  # * For x > 0, and X ~ Normal(0, 1),
-  #     Log[P[X < x]] = Log[1 - P[X < -x]] = log1p(-ndtr(-x)),
-  #     which avoids cancellation when P[X < x] is close to 1 and extends the
-  #     range of validity of this function.
-  # * We use one fixed series_order for all of 'x', rather than adaptive.
-  # * Our docstring properly reflects that this is an asymptotic series, not a
-  #   Taylor series. We also provided a correct bound on the remainder.
-  # * We need to use the max/min in the _log_ndtr_lower arg to avoid nan when
-  #   x=0. This happens even though the branch is unchosen because when x=0
-  #   the gradient of a select involves the calculation 1*dy+0*(-inf)=nan
-  #   regardless of whether dy is finite. Note that the minimum is a NOP if
-  #   the branch is chosen.
-  x_arr_gt_zero = lax.gt(x_arr, _lax_const(x_arr, 0))
-  ndtr_arg = jnp.where(x_arr_gt_zero, -x_arr,
-                       lax.max(x_arr, lower_segment))
-  # We combine both ndtr calls to minimize program size
-  ndtr_res = _ndtr(ndtr_arg)
-  return jnp.where(
-      x_arr_gt_zero,
-      lax.log1p(lax.neg(ndtr_res)),
-      jnp.where(
-          lax.gt(x_arr, lower_segment),
-          lax.log(ndtr_res),
-          _log_ndtr_lower(lax.min(x_arr, lower_segment), series_order),
-      ),
-  )
-
-def _log_ndtr_jvp(series_order, primals, tangents):
-  (x,), (t,) = primals, tangents
-  ans = log_ndtr(x, series_order=series_order)
-  t_out = lax.mul(t, lax.exp(lax.sub(_norm_logpdf(x), ans)))
-  return ans, t_out
-log_ndtr.defjvp(_log_ndtr_jvp)
-
-def _log_ndtr_lower(x, series_order):
-  """Asymptotic expansion version of `Log[cdf(x)]`, appropriate for `x<<-1`."""
-  dtype = lax.dtype(x).type
-  x_2 = lax.square(x)
-  # Log of the term multiplying (1 + sum)
-  log_scale = -dtype(0.5) * x_2 - lax.log(-x) - dtype(0.5 * np.log(2. * np.pi))
-  return log_scale + lax.log(_log_ndtr_asymptotic_series(x, series_order))
-
-
-def _log_ndtr_asymptotic_series(x, series_order):
-  """Calculates the asymptotic series used in log_ndtr."""
-  dtype = lax.dtype(x).type
-  if series_order <= 0:
-    return np.array(1, dtype)
-  x_2 = lax.square(x)
-  even_sum = jnp.zeros_like(x)
-  odd_sum = jnp.zeros_like(x)
-  x_2n = x_2  # Start with x^{2*1} = x^{2*n} with n = 1.
-  for n in range(1, series_order + 1):
-    y = np.array(_double_factorial(2 * n - 1), dtype) / x_2n
-    if n % 2:
-      odd_sum += y
-    else:
-      even_sum += y
-    x_2n *= x_2
-  return dtype(1.) + even_sum - odd_sum
-
-
-def _double_factorial(n: int) -> np.integer:
-  """The double factorial function for small Python integer `n`."""
-  return np.prod(np.arange(n, 1, -2))
-
-
-_norm_logpdf_constant = np.log(np.sqrt(2 * np.pi))
-
-def _norm_logpdf(x):
-  neg_half = _lax_const(x, -0.5)
-  log_normalizer = _lax_const(x, _norm_logpdf_constant)
-  return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
+  return _log_ndtr(x_arr)
 
 
 def i0e(x: ArrayLike) -> Array:
@@ -2656,6 +2717,11 @@ def _bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
 @jit(static_argnames=["v", "n_iter"])
 def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
   """Bessel function of the first kind of integer order and real argument.
+
+  .. note::
+
+     This function is deprecated as of JAX v0.12.1; use the replacement
+     :func:`jax.scipy.special.jn` instead, but note its different API.
 
   Reference:
   Shanjie Zhang and Jian-Ming Jin. Computation of special functions.

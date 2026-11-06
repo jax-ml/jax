@@ -818,6 +818,29 @@ class PythonPmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jtu.skip_on_devices("tpu")
+  def testPmeanUnevenReplicaGroups(self):
+    replicas = jax.device_count()
+    if replicas <= 2:
+      raise SkipTest("Test expected devices greater than 2.")
+    axis_index_groups = [[0, 1], np.arange(2, replicas)]
+    f = lambda x: x - lax.pmean(x, 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    def mean_helper(a):
+      return np.broadcast_to(a.mean(0, keepdims=True),
+                             (len(a), x.shape[1]))
+    expected_pmean_1 = mean_helper(x[0:2])
+    expected_pmean_2 = mean_helper(x[2:])
+    expected_pmean = np.concatenate([expected_pmean_1, expected_pmean_2], 0)
+    expected = x - expected_pmean
+
+    ans = f(x)
+    self.assertAllClose(ans, expected)
+    jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
+
   def testPsumReplicaGroups(self):
     replicas = jax.device_count()
     if replicas % 2 != 0:

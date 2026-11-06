@@ -335,7 +335,7 @@ def _debug_scalar_ty_format(arg):
         ir.IntegerType.get_signless(32),
         arith.bitcast(ir.IntegerType.get_signless(8), arg),
     )
-  if isinstance(arg.type, (ir.BF16Type, ir.F16Type)):
+  if isinstance(arg.type, (ir.BF16Type, ir.F16Type, ir.Float8E5M3FNUType)):
     arg = arith.extf(ir.F32Type.get(), arg)
     return "%f", arg
   raise NotImplementedError(f"Can't print the type {arg.type}")

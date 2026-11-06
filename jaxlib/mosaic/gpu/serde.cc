@@ -43,6 +43,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/mosaic/serde.h"
+#include "xla/python/version.h"
 
 namespace mosaic::gpu {
 
@@ -60,7 +61,13 @@ constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // version in Mosaic GPU lowering in a month!
 constexpr int kVersion = 9;
 
-using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
+#if JAX_IFRT_VERSION_NUMBER >= 82
+using UpgradeRuleType = jaxlib::mosaic::UpgradeRuleType;
+using DowngradeRuleType = jaxlib::mosaic::DowngradeRuleType;
+#else
+using UpgradeRuleType = jaxlib::mosaic::SerdeRuleType;
+using DowngradeRuleType = jaxlib::mosaic::SerdeRuleType;
+#endif
 
 std::optional<mlir::Attribute> MakeNvvmProperty(llvm::StringRef tag,
                                                 llvm::StringRef inner,
@@ -363,8 +370,8 @@ LogicalResult gpu_launch_upgrade(Operation* op, int version, bool& erased) {
   return success();
 }
 
-const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
-  static auto rules = new llvm::StringMap<SerdeRuleType>{
+const llvm::StringMap<UpgradeRuleType>& upgrade_rules() {
+  static auto rules = new llvm::StringMap<UpgradeRuleType>{
       {::llvm::StringLiteral("vector.extractelement"),
        vector_extractelement_upgrade},
       {::llvm::StringLiteral("vector.insertelement"),
@@ -410,8 +417,8 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   return *rules;
 }
 
-const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
-  static auto rules = new llvm::StringMap<SerdeRuleType>{};
+const llvm::StringMap<DowngradeRuleType>& downgrade_rules() {
+  static auto rules = new llvm::StringMap<DowngradeRuleType>{};
   return *rules;
 }
 

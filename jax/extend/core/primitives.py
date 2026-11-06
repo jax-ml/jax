@@ -81,6 +81,8 @@ from jax._src.lax.lax import (
   exp2_p as exp2_p,
   expm1_p as expm1_p,
   floor_p as floor_p,
+  fma_p as fma_p,
+  fmuladd_p as fmuladd_p,
   ge_p as ge_p,
   gt_p as gt_p,
   imag_p as imag_p,
@@ -216,6 +218,16 @@ from jax._src.lax.parallel import (
 
 from jax._src.lax.ann import (
   approx_top_k_p as approx_top_k_p
+)
+
+from jax._src.lax.trig import (
+  acospi_p as acospi_p,
+  asinpi_p as asinpi_p,
+  atan2pi_p as atan2pi_p,
+  atanpi_p as atanpi_p,
+  cospi_p as cospi_p,
+  sinpi_p as sinpi_p,
+  tanpi_p as tanpi_p,
 )
 
 from jax._src.lax.linalg import (

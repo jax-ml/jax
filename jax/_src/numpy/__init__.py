@@ -97,6 +97,13 @@ from jax._src.numpy.scalar_types import (
     uint64 as uint64,
 )
 
+try:
+  from jax._src.numpy.scalar_types import (
+      float8_e5m3fnu as float8_e5m3fnu,
+  )
+except ImportError:
+  pass
+
 from jax._src.numpy.lax_numpy import (
     apply_along_axis as apply_along_axis,
     arange as arange,

@@ -1811,6 +1811,8 @@ def clear_in_memory_compilation_cache() -> None:
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class JitGlobalCppCacheKeys:
+  static_argnums: tuple[int, ...] | None = None
+  static_argnames: tuple[str, ...] | None = None
   donate_argnums: tuple[int, ...] | None = None
   donate_argnames: tuple[str, ...] | None = None
   device: xc.Device | None = None
@@ -1824,18 +1826,22 @@ class JitGlobalCppCacheKeys:
   out_layouts_treedef: PyTreeDef | None = None
   out_layouts_leaves: tuple[Any, ...] | None = None
   compiler_options_kvs: tuple[tuple[str, Any], ...] | None = None
+  keep_unused: bool = False
 
   @functools.cached_property
   def contains_explicit_attributes(self):
-    return (self.donate_argnums is not None or
-            self.donate_argnames is not None or
+    return (bool(self.static_argnums) or
+            bool(self.static_argnames) or
+            bool(self.donate_argnums) or
+            bool(self.donate_argnames) or
             self.device is not None or
             self.backend is not None or
             any(not isinstance(i, UnspecifiedValue) for i in (self.in_shardings_leaves or [])) or
             any(not isinstance(o, UnspecifiedValue) for o in (self.out_shardings_leaves or [])) or
             any(i is not None for i in (self.in_layouts_leaves or [])) or
             any(o is not None for o in (self.out_layouts_leaves or [])) or
-            self.compiler_options_kvs)
+            self.compiler_options_kvs or
+            self.keep_unused)
 
 
 def reflatten_outputs_for_dispatch(out_tree, out_flat):

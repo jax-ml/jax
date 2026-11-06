@@ -82,7 +82,8 @@ class ProfilerTest(TestCase):
       y_np = multihost_utils.process_allgather(y, tiled=True)
       np.testing.assert_array_equal(y_np, np.arange(jax.device_count()))
 
-  def test_remote_async_copy_basic(self):
+  @parameterized.parameters(jnp.float32, jnp.int4)
+  def test_remote_async_copy_basic(self, dtype):
     i32 = ir.IntegerType.get_signless(32)
     def kernel(ctx, src, sem, dst, scratch):
       tmp, barrier = scratch
@@ -102,7 +103,7 @@ class ProfilerTest(TestCase):
         (2,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
     )
     with jax.set_mesh(mesh):
-      x_np = np.arange(64 * 64, dtype=jnp.float32).reshape(64, 64)
+      x_np = np.arange(64 * 64, dtype=dtype).reshape(64, 64)
       x = jax.sharding.reshard(x_np, P("x"))
       sem = jax.sharding.reshard(jnp.zeros((1,), dtype=jnp.int32), P())
       y, _ = jax.jit(

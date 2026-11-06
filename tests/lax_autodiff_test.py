@@ -30,6 +30,7 @@ import jax.numpy as jnp
 from jax import dtypes
 from jax import lax
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax.test_util import check_grads
 
 jax.config.parse_flags_with_absl()
@@ -151,6 +152,10 @@ LAX_GRAD_OPS = [
                    dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.mul, nargs=2, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes),
+    grad_test_spec(lax.fma, nargs=3, order=2, rng_factory=jtu.rand_default,
+                   dtypes=grad_float_dtypes),
+    grad_test_spec(lax.fmuladd, nargs=3, order=2, rng_factory=jtu.rand_default,
+                   dtypes=grad_float_dtypes),
     grad_test_spec(lax.div, nargs=2, order=1, rng_factory=jtu.rand_not_small,
                    dtypes=grad_inexact_dtypes),
 
@@ -172,6 +177,23 @@ LAX_GRAD_OPS = [
                    dtypes=grad_float_dtypes),
     grad_test_spec(lax.sign, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_complex_dtypes),
+    grad_test_spec(lax.sinpi, nargs=1, order=2, rng_factory=jtu.rand_default,
+                   dtypes=grad_float_dtypes, tol={np.float32: 5e-1}),
+    grad_test_spec(lax.cospi, nargs=1, order=2, rng_factory=jtu.rand_default,
+                   dtypes=grad_float_dtypes, tol={np.float32: 5e-1}),
+    grad_test_spec(lax.tanpi, nargs=1, order=2,
+                   rng_factory=partial(jtu.rand_uniform, low=-0.4, high=0.4),
+                   dtypes=grad_float_dtypes, tol=2e-3),
+    grad_test_spec(lax.asinpi, nargs=1, order=2,
+                   rng_factory=partial(jtu.rand_uniform, low=-1.3, high=1.3),
+                   dtypes=grad_float_dtypes, tol=1e-3),
+    grad_test_spec(lax.acospi, nargs=1, order=2,
+                   rng_factory=partial(jtu.rand_uniform, low=-1.3, high=1.3),
+                   dtypes=grad_float_dtypes, tol=2e-2),
+    grad_test_spec(lax.atanpi, nargs=1, order=2, rng_factory=jtu.rand_small,
+                   dtypes=grad_float_dtypes),
+    grad_test_spec(lax.atan2pi, nargs=2, order=2, rng_factory=jtu.rand_default,
+                   dtypes=grad_float_dtypes),
 ]
 
 GradSpecialValuesTestSpec = collections.namedtuple(
@@ -191,6 +213,12 @@ LAX_GRAD_SPECIAL_VALUE_TESTS = [
     grad_special_values_test_spec(lax.atan, [0., 1000.]),
     grad_special_values_test_spec(lax.erf, [0., 10.]),
     grad_special_values_test_spec(lax.erfc, [0., 10.]),
+    grad_special_values_test_spec(lax.sinpi, [0., 1., 0.5, 0.25]),
+    grad_special_values_test_spec(lax.cospi, [0., 1., 0.5, 0.25]),
+    grad_special_values_test_spec(lax.tanpi, [0., 0.25]),
+    grad_special_values_test_spec(lax.asinpi, [0.]),
+    grad_special_values_test_spec(lax.acospi, [0.]),
+    grad_special_values_test_spec(lax.atanpi, [0., 1000.]),
 ]
 
 
@@ -241,10 +269,19 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     for rec in LAX_GRAD_OPS
   ))
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
+    if op is lax.fma and (
+        jaxlib_extension_version < 515
+        or not jtu.is_libtpu_at_least("0.0.52")
+        or not jtu.stablehlo_version_at_least("1.24.0")
+    ):
+      raise SkipTest(
+          "fma requires jaxlib_extension_version >= 515, libtpu >= 0.0.52, "
+          "and StableHLO >= 1.24.0"
+      )
     rng = rng_factory(self.rng())
-    if jtu.test_device_matches(["cpu", "tpu"]):
+    if jtu.test_device_matches(["cpu", "gpu", "tpu"]):
       if op is lax.cosh and dtype == np.complex64:
-        tol = 4e-1  # 2nd-order gradients are noisy on CPU and TPU
+        tol = 4e-1  # 2nd-order gradients are noisy on CPU, GPU, and TPU
     if jtu.test_device_matches(["tpu"]):
       if op is lax.pow:
         raise SkipTest("pow grad imprecise on tpu")
@@ -1469,6 +1506,12 @@ class LaxAutodiffTest(jtu.JaxTestCase):
            d1=lambda x: lax.rsqrt((1 - x) * (1 + x)), d2=lambda t: t),
       dict(testcase_name="acos", fn=lax.acos, x=0.9999,
            d1=lambda x: -lax.rsqrt((1 - x) * (1 + x)), d2=lambda t: -t),
+      dict(testcase_name="asinpi", fn=lax.asinpi, x=0.9999,
+           d1=lambda x: lax.rsqrt((1 - x) * (1 + x)) / np.pi,
+           d2=lambda t: t / np.pi),
+      dict(testcase_name="acospi", fn=lax.acospi, x=0.9999,
+           d1=lambda x: -lax.rsqrt((1 - x) * (1 + x)) / np.pi,
+           d2=lambda t: -t / np.pi),
       dict(testcase_name="acosh", fn=lax.acosh, x=1.0001,
            d1=lambda x: lax.rsqrt((x - 1) * (x + 1)), d2=None),
   )
@@ -1609,6 +1652,146 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                         np.zeros((2, 2), real_dtype))
     self.assertAllClose(jax.hessian(real_view)(zeros),
                         np.zeros((2, 2, 2), real_dtype))
+
+  def testDivDerivativesOpCountAndBroadcast(self):
+    x = jnp.array([[1.5], [-3.0], [4.5]], dtype=jnp.float32)
+    y = jnp.array([[2.0, -1.5, 3.0, -2.5]], dtype=jnp.float32)
+    dx = jnp.array([[0.5], [-0.25], [1.0]], dtype=jnp.float32)
+    dy = jnp.array([[-0.5, 0.75, -0.25, 1.0]], dtype=jnp.float32)
+
+    jaxpr_both = jax.make_jaxpr(
+        lambda a, b, da, db: jax.jvp(lax.div, (a, b), (da, db))
+    )(x, y, dx, dy)
+    self.assertEqual(
+        [e.primitive for e in jaxpr_both.eqns].count(lax.div_p), 2
+    )
+    self.assertNotIn(lax.integer_pow_p, [e.primitive for e in jaxpr_both.eqns])
+
+    jaxpr_rhs = jax.make_jaxpr(
+        lambda a, b, db: jax.jvp(lambda v: lax.div(a, v), (b,), (db,))
+    )(x, y, dy)
+    self.assertEqual(
+        [e.outvars[0].aval.shape for e in jaxpr_rhs.eqns if e.primitive is lax.div_p],
+        [(3, 4), y.shape],
+    )
+    self.assertNotIn(lax.integer_pow_p, [e.primitive for e in jaxpr_rhs.eqns])
+
+    grad_fn = jax.grad(lambda a, b: lax.div(a, b).sum(), argnums=(0, 1))
+    jaxpr_grad = jax.make_jaxpr(grad_fn)(x, y)
+    self.assertEqual([e.primitive for e in jaxpr_grad.eqns].count(lax.div_p), 2)
+
+    grad_rhs_fn = jax.grad(lambda a, b: lax.div(a, b).sum(), argnums=1)
+    jaxpr_grad_rhs = jax.make_jaxpr(grad_rhs_fn)(x, y)
+    self.assertEqual(
+        [e.outvars[0].aval.shape for e in jaxpr_grad_rhs.eqns if e.primitive is lax.div_p],
+        [(3, 4), y.shape],
+    )
+
+    check_grads(lax.div, (x, y), order=2, modes=["fwd", "rev"],
+                atol=1e-3, rtol=1e-3, eps=1e-2)
+    xc = x.astype(jnp.complex64) * (1.0 - 0.5j)
+    yc = y.astype(jnp.complex64) * (0.5 + 1.0j)
+    check_grads(lax.div, (xc, yc), order=2, modes=["fwd", "rev"],
+                atol=1e-3, rtol=1e-3, eps=1e-2)
+
+  def testDivDerivativesOverflowAndUnderflow(self):
+    # 1. Large |y| > sqrt(maxfloat): y^2 would overflow.
+    cases = [
+        (jnp.float16, 300.0),
+        (jnp.bfloat16, 1e20),
+        (jnp.float32, 1e20),
+    ]
+    for dtype, val in cases:
+      x = y = jnp.asarray(val, dtype=dtype)
+      inv_y = np.asarray(1.0 / float(val), dtype=dtype)
+      rtol = 2e-2 if dtype in (jnp.float16, jnp.bfloat16) else 1e-5
+
+      _, ty = jax.jvp(lax.div, (x, y), (jnp.zeros_like(x), jnp.ones_like(y)))
+      self.assertAllClose(ty, -inv_y, rtol=rtol, atol=0.0)
+
+      _, txy = jax.jvp(
+          lax.div, (x, y), (jnp.asarray(2.0, dtype=dtype), jnp.ones_like(y))
+      )
+      self.assertAllClose(txy, inv_y, rtol=rtol, atol=0.0)
+
+      gx, gy = jax.grad(lax.div, argnums=(0, 1))(x, y)
+      self.assertAllClose(gx, inv_y, rtol=rtol, atol=0.0)
+      self.assertAllClose(gy, -inv_y, rtol=rtol, atol=0.0)
+
+    # 2. Second derivative where y^3 would overflow in float16 (50^3 > 65504).
+    x16 = jnp.float16(1000.0)
+    y16 = jnp.float16(50.0)
+    d2_rev = jax.grad(jax.grad(lambda b: lax.div(x16, b)))(y16)
+    d2_fwd = jax.jvp(
+        lambda b: jax.jvp(lambda u: lax.div(x16, u), (b,), (jnp.float16(1.0),))[1],
+        (y16,),
+        (jnp.float16(1.0),),
+    )[1]
+    self.assertAllClose(d2_rev, np.float16(0.016), rtol=1e-2, atol=0.0)
+    self.assertAllClose(d2_fwd, np.float16(0.016), rtol=1e-2, atol=0.0)
+
+    # Regression test for https://github.com/jax-ml/jax/issues/37909:
+    # 2 * s0^-3 overflows float16 even though s0^-3 and the Hessian are finite.
+    def f_37909(x):
+      s0 = (x / jnp.atan2(x, x)) / 2.0
+      return jnp.float16(1.0) / s0
+
+    x_37909 = jnp.float16(-0.12)
+    expected_h = np.float16(-3.0 * math.pi / float(x_37909) ** 3)
+    self.assertAllClose(jax.hessian(f_37909)(x_37909), expected_h, rtol=1e-2)
+    self.assertAllClose(
+        jax.grad(jax.grad(f_37909))(x_37909), expected_h, rtol=1e-2
+    )
+    self.assertAllClose(
+        jax.jit(jax.hessian(f_37909))(x_37909), expected_h, rtol=1e-2
+    )
+
+    # 3. Complex large denominator where y^2 overflows.
+    zc = jnp.complex64(1e20 + 1e20j)
+    expected_tc = np.complex64(-1.0 / complex(1e20, 1e20))
+    _, tc = jax.jvp(lax.div, (zc, zc), (jnp.complex64(0.0), jnp.complex64(1.0)))
+    self.assertAllClose(tc, expected_tc, rtol=1e-5, atol=0.0)
+
+    # 4. Tiny |y| < sqrt(minnormal): y^2 underflows to 0, so y^-2 is inf.
+    tiny = jnp.float32(1e-25)
+    _, t_tiny = jax.jvp(lax.div, (tiny, tiny), (jnp.float32(0.0), tiny))
+    self.assertAllClose(t_tiny, jnp.float32(-1.0), rtol=1e-5, atol=0.0)
+    _, vjp_fn = jax.vjp(lax.div, tiny, tiny)
+    gx_tiny, gy_tiny = vjp_fn(tiny)
+    self.assertAllClose(gx_tiny, jnp.float32(1.0), rtol=1e-5, atol=0.0)
+    self.assertAllClose(gy_tiny, jnp.float32(-1.0), rtol=1e-5, atol=0.0)
+
+    # Zero numerator with tiny denominator must not produce 0 * inf = NaN.
+    z0 = jnp.float32(0.0)
+    _, t_zero = jax.jvp(lax.div, (z0, tiny), (z0, jnp.float32(1.0)))
+    self.assertEqual(t_zero, jnp.float32(0.0))
+    gx0, gy0 = jax.grad(lax.div, argnums=(0, 1))(z0, tiny)
+    self.assertAllClose(gx0, jnp.float32(1e25), rtol=1e-5, atol=0.0)
+    self.assertEqual(gy0, jnp.float32(0.0))
+
+    # 5. Infinite denominator.
+    y_inf = jnp.float32(jnp.inf)
+    _, t_inf = jax.jvp(
+        lax.div, (jnp.float32(1.0), y_inf), (jnp.float32(1.0), jnp.float32(1.0))
+    )
+    self.assertEqual(t_inf, jnp.float32(0.0))
+    gx_inf, gy_inf = jax.grad(lax.div, argnums=(0, 1))(jnp.float32(1.0), y_inf)
+    self.assertEqual(gx_inf, jnp.float32(0.0))
+    self.assertEqual(gy_inf, jnp.float32(0.0))
+
+  @jtu.skip_on_devices("tpu")
+  def testDivDerivativesOverflowAndUnderflowFloat64(self):
+    with jax.enable_x64():
+      x = y = jnp.float64(1e200)
+      _, ty = jax.jvp(lax.div, (x, y), (jnp.float64(0.0), jnp.float64(1.0)))
+      self.assertAllClose(ty, jnp.float64(-1e-200), rtol=1e-12, atol=0.0)
+      gx, gy = jax.grad(lax.div, argnums=(0, 1))(x, y)
+      self.assertAllClose(gx, jnp.float64(1e-200), rtol=1e-12, atol=0.0)
+      self.assertAllClose(gy, jnp.float64(-1e-200), rtol=1e-12, atol=0.0)
+
+      tiny = jnp.float64(1e-200)
+      _, gy0 = jax.grad(lax.div, argnums=(0, 1))(jnp.float64(0.0), tiny)
+      self.assertEqual(gy0, jnp.float64(0.0))
 
 
 if __name__ == '__main__':

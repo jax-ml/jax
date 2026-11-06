@@ -244,6 +244,16 @@ class Buffered:
   revisit: RevisitMode | None = None
   prefetched_count: int = 0
 
+  def __post_init__(self):
+    if self.use_lookahead:
+      bc = self.buffer_count
+      in_count = bc[0] if isinstance(bc, tuple) and len(bc) == 2 else bc
+      if isinstance(in_count, int) and in_count < 2:
+        raise ValueError(
+            "use_lookahead=True requires input buffer_count >= 2, got"
+            f" buffer_count={bc!r}."
+        )
+
 
 @dataclasses.dataclass(frozen=True)
 class MemoryRef:
@@ -261,7 +271,7 @@ class MemoryRef:
       dtype = jnp.dtype(dtype)
     return self.inner_aval.update(dtype=dtype, memory_space=self.memory_space)
 
-  def get_ref_aval(self) -> TransformedRef | state.AbstractRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     return state.AbstractRef(self.inner_aval, self.memory_space)
 
   @property
@@ -606,6 +616,16 @@ def _get_ref_block_shape(block_shape: tuple[BlockDim, ...]) -> tuple[int, ...]:
   )
 
 
+def _get_start_index(i, b: BlockDim):
+  match b:
+    case Squeezed() | Element():
+      return i
+    case Blocked(block_size):
+      return block_size * i
+    case _:
+      raise ValueError(f"Unsupported block dim type: {type(b)}")
+
+
 class _IndexMapFunc:
   """Helper class that checks for index_map equality."""
 
@@ -793,7 +813,7 @@ class BlockSpec:
 
     mapping = BlockMapping(
         block_shape=block_shape,
-        transformed_block_aval=block_aval,  # There are no transforms by default
+        block_aval=block_aval,
         index_map_jaxpr=closed_jaxpr,
         index_map_out_tree=out_avals.tree,
         array_aval=array_aval,
@@ -885,7 +905,7 @@ class PadTransform(state_types.Transform):
 
 
 def pad_ref(
-    ref: state.AbstractRef | TransformedRef,
+    ref: jax_core.Ref | state.AbstractRef | TransformedRef,
     shape: tuple[int, ...],
 ) -> TransformedRef:
   """Translate memref to a padded memref for out-of-bounds reads."""
@@ -909,12 +929,11 @@ class BlockMapping:
   # TODO(apaszke,sharadmv): Replace mapped dims in block_shape with a transform.
   # After all, it's just indexing out singleton dimensions.
   block_shape: tuple[BlockDim, ...]
-  transformed_block_aval: state.AbstractRef
+  block_aval: state.AbstractRef
   index_map_jaxpr: jax_core.Jaxpr
   index_map_out_tree: tree_util.PyTreeDef
   array_aval: jax_core.ShapedArray  # The whole array
   origin: OriginStr
-  transforms: Sequence[state_types.Transform] = ()
   pipeline_mode: Buffered | None = None
   debug: bool = False
   allow_captured_consts: dataclasses.InitVar[bool] = False
@@ -928,8 +947,8 @@ class BlockMapping:
     if not config.enable_checks.value: return
 
     ref_block_shape = _get_ref_block_shape(self.block_shape)
-    assert ref_block_shape == self.ref_aval.shape, (
-        self.block_shape, self.ref_aval.shape)
+    assert ref_block_shape == self.block_aval.shape, (
+        self.block_shape, self.block_aval.shape)
     assert len(self.block_shape) == len(self.array_aval.shape), (
         self.block_shape, self.array_aval
     )
@@ -945,27 +964,6 @@ class BlockMapping:
     new_self.check_invariants()
     return new_self
 
-  @property
-  def block_aval(self) -> state.AbstractRef:
-    # If you hit this, make sure you take transforms into account and use either
-    # ref_aval or transformed_block_aval.
-    assert not self.transforms, "Lowering failed to handle transforms"
-    return self.transformed_block_aval
-
-  @property
-  def ref_aval(self) -> state.AbstractRef | TransformedRef:
-    """Returns the abstract value of the Ref after transformations."""
-    if not self.transforms:
-      return self.transformed_block_aval
-    ref_block_shape = _get_ref_block_shape(self.block_shape)
-    logical_ref_aval = state.AbstractRef(
-        self.array_aval.update(shape=ref_block_shape),
-        self.transformed_block_aval.memory_space)
-    reverse_transforms = tuple(undo_transforms(
-        logical_ref_aval, self.transforms
-    ))
-    return TransformedRef(self.transformed_block_aval, reverse_transforms)
-
   def compute_start_indices_interpret(self, loop_idx, *args):
     jaxpr = state_discharge.discharge_state(self.index_map_jaxpr, strip_memory_space=True)
     block_indices_and_rest = jax_core.jaxpr_as_fun(jaxpr)(*loop_idx, *args)
@@ -973,14 +971,6 @@ class BlockMapping:
     # updated values since we only care about the return values.
     block_indices, _ = split_list(block_indices_and_rest,
                                   [len(self.block_shape)])
-    def _get_start_index(i, b):
-      match b:
-        case Squeezed() | Element():
-          return i
-        case Blocked(block_size):
-          return block_size * i
-        case _:
-          raise ValueError(f"Unsupported block dim type: {type(b)}")
     return tuple(
         _get_start_index(i, b) for i, b in zip(block_indices, self.block_shape)
     )
@@ -1010,18 +1000,30 @@ class BlockMapping:
   def to_lojax(
       self, index_map_avals, index_map_tree, grid, vmapped_dims
   ) -> list[BlockMapping]:
-    block_aval = self.transformed_block_aval
-    if not block_aval.inner_aval.is_high:
+    if not self.block_aval.inner_aval.is_high:
       return [self]
     assert self.array_aval.is_high
+    if isinstance(self.block_aval.inner_aval, jax_core.ShapedArray):
+      assert isinstance(self.array_aval, jax_core.ShapedArray)
+      assert not self.array_aval.sharding.spec.unreduced
+      assert self.array_aval.mat.unreduced
+      lo_inner_aval, = self.block_aval.inner_aval.lo_ty()
+      lo_array_aval, = self.array_aval.lo_ty()
+      return [
+          self.replace(
+              block_aval=self.block_aval.update(inner_aval=lo_inner_aval),
+              array_aval=lo_array_aval,
+          )
+      ]
     lo_array_avals = self.array_aval.lo_ty()
     block_spec = self.to_block_spec()
-    if not hasattr(block_aval.inner_aval, "lower_block_spec"):
+    if not hasattr(self.block_aval.inner_aval, "lower_block_spec"):
       raise ValueError(
-          f"Cannot lower block spec {block_spec} on {block_aval.inner_aval}."
+          f"Cannot lower block spec {block_spec} on"
+          f" {self.block_aval.inner_aval}."
           " Need to define lower_block_spec method on the type."
       )
-    lo_block_specs = block_aval.inner_aval.lower_block_spec(block_spec)
+    lo_block_specs = self.block_aval.inner_aval.lower_block_spec(block_spec)
     return [
         _convert_block_spec_to_block_mapping(
             bs,
@@ -1041,12 +1043,11 @@ class BlockMapping:
     if self.debug:
       return (
           f"BlockMapping(block_shape={self.block_shape}, "
-          f"transformed_block_aval={self.transformed_block_aval}, "
+          f"block_aval={self.block_aval}, "
           f"index_map_jaxpr={self.index_map_jaxpr}, "
           f"index_map_out_tree={self.index_map_out_tree}, "
           f"array_aval={self.array_aval}, "
           f"origin={self.origin}, "
-          f"transforms={self.transforms}, "
           f"pipeline_mode={self.pipeline_mode}, "
           f"debug={self.debug})"
       )
@@ -1349,7 +1350,7 @@ index_map_grid_aval = jax_core.ShapedArray((), jnp.int32)
 class ScratchShape(Protocol):
   def get_array_aval(self) -> jax_core.AbstractValue:
     ...
-  def get_ref_aval(self) -> state.AbstractRef | TransformedRef:
+  def get_ref_aval(self) -> state.AbstractRef:
     ...
 
 
@@ -1546,11 +1547,11 @@ def get_grid_mapping(
       debug=debug,
   )
   grid_mapping.check_invariants()
-  in_ref_avals = [bm.ref_aval for bm in in_block_mappings]
+  in_ref_avals = [bm.block_aval for bm in in_block_mappings]
   jaxpr_in_ref_avals = tree_util.tree_unflatten(in_tree, in_ref_avals)
   jaxpr_in_avals = (*jaxpr_scalar_ref_avals,
                     *jaxpr_in_ref_avals)
-  out_ref_avals = [bm.ref_aval for bm in out_block_mappings]
+  out_ref_avals = [bm.block_aval for bm in out_block_mappings]
   jaxpr_out_avals = tree_util.tree_unflatten(out_tree, out_ref_avals)
   if not isinstance(jaxpr_out_avals, (tuple, list)):
     jaxpr_out_avals = (jaxpr_out_avals,)

@@ -222,19 +222,9 @@ def approx_min_k(operand: Array,
       aggregate_to_topk=aggregate_to_topk)
 
 
-def _approx_top_k_sharding_rule(operand, *, reduction_dimension):
-  operand_s = operand.sharding
-  if operand_s.spec[reduction_dimension] is not None:
-    raise core.ShardingTypeError(
-        f"reduction dimension {reduction_dimension} in operand"
-        f" {operand.str_short()} should be unsharded i.e. the spec of that dim"
-        " should be `None`.")
-  return (operand_s, operand_s)
-
-def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
-                                recall_target, is_max_k,
-                                reduction_input_size_override,
-                                aggregate_to_topk):
+def _approx_top_k_shape_rule(operand, *, k, reduction_dimension, recall_target,
+                             is_max_k, reduction_input_size_override,
+                             aggregate_to_topk):
   if k <= 0:
     raise ValueError(f'k must be positive, got {k}')
   if len(operand.shape) == 0:
@@ -245,8 +235,6 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
     raise ValueError(
         'k must be smaller than the size of reduction_dim {}, got {}'.format(
             dims[reduction_dimension], k))
-  if not dtypes.issubdtype(operand.dtype, np.floating):
-    raise ValueError('operand must be a floating type')
   reduction_input_size = dims[reduction_dimension]
   if aggregate_to_topk:
     dims[reduction_dimension] = k
@@ -259,19 +247,46 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
          "approx_top_k with aggregate_to_topk=False not yet implemented when "
          f"either the `k` ({k}) or the "
          f" reduction dimension size ({reduction_input_size}) are symbolic")
-  s0, s1 = lax_utils.call_sharding_rule(
-      approx_top_k_p, _approx_top_k_sharding_rule, None, 2, operand,
-      reduction_dimension=reduction_dimension)
-  out_avals = [
-      operand.update(shape=dims, dtype=operand.dtype,
-                     weak_type=operand.weak_type,
-                     manual_axis_type=operand.mat, sharding=s0),
-      operand.update(shape=dims, dtype=np.dtype(np.int32),
-                     manual_axis_type=operand.mat, sharding=s1)]
-  out_layouts = lax_utils.call_layout_rule(
-      approx_top_k_p, None, [operand], out_avals,
-      reduction_dimension=reduction_dimension)
-  return tuple(o.update(layout=l) for o, l in zip(out_avals, out_layouts))
+  return (tuple(dims), tuple(dims))
+
+def _approx_top_k_dtype_rule(operand, *, k, reduction_dimension, recall_target,
+                             is_max_k, reduction_input_size_override,
+                             aggregate_to_topk):
+  if not dtypes.issubdtype(operand.dtype, np.floating):
+    raise ValueError('operand must be a floating type')
+  return (operand.dtype, np.dtype(np.int32))
+
+def _approx_top_k_weak_type_rule(operand, *, k, reduction_dimension,
+                                 recall_target, is_max_k,
+                                 reduction_input_size_override,
+                                 aggregate_to_topk):
+  return (operand.weak_type, False)
+
+def _approx_top_k_sharding_rule(operand, *, k, reduction_dimension,
+                                recall_target, is_max_k,
+                                reduction_input_size_override,
+                                aggregate_to_topk):
+  operand_s = operand.sharding
+  if operand_s.spec.partitions[reduction_dimension] is not None:
+    raise core.ShardingTypeError(
+        f"reduction dimension {reduction_dimension} in operand"
+        f" {operand.str_short()} should be unsharded i.e. the spec of that dim"
+        " should be `None`.")
+  return (operand_s, operand_s)
+
+def _approx_top_k_vma_rule(operand, *, k, reduction_dimension, recall_target,
+                           is_max_k, reduction_input_size_override,
+                           aggregate_to_topk):
+  return [core.standard_vma_rule('approx_top_k', operand)] * 2
+
+def _approx_top_k_ur_rule(operand, *, k, reduction_dimension, recall_target,
+                          is_max_k, reduction_input_size_override,
+                          aggregate_to_topk):
+  if core.getu(operand, kind=None)[0]:
+    raise core.ShardingTypeError(
+        'approx_top_k cannot accept unreduced inputs. Got'
+        f' {operand.str_short(mesh_axis_types=True)}')
+  return [frozenset()] * 2, [core.getr(operand), frozenset()], [None] * 2
 
 def _get_init_val_literal(op_type, is_max_k):
   return np.array(-np.inf if is_max_k else np.inf, dtype=op_type)
@@ -420,7 +435,11 @@ def _approx_top_k_jvp(primals, tangents, *, k, reduction_dimension,
 approx_top_k_p = core.Primitive('approx_top_k')
 approx_top_k_p.multiple_results = True
 approx_top_k_p.def_impl(partial(dispatch.apply_primitive, approx_top_k_p))
-approx_top_k_p.def_abstract_eval(_approx_top_k_abstract_eval)
+approx_top_k_p.def_abstract_eval(
+    partial(lax_utils.standard_multi_result_abstract_eval, approx_top_k_p,
+            _approx_top_k_shape_rule, _approx_top_k_dtype_rule,
+            _approx_top_k_weak_type_rule, _approx_top_k_sharding_rule,
+            _approx_top_k_vma_rule, _approx_top_k_ur_rule, None))
 mlir.register_lowering(approx_top_k_p,
                       partial(_approx_top_k_lowering, fallback=True))
 mlir.register_lowering(approx_top_k_p, _approx_top_k_lowering,

@@ -656,6 +656,47 @@ def MosaicGPU_VectorStoreOp : Op<MosaicGPU_Dialect, "vector_store",
   let hasVerifier = 1;
 }
 
+def MosaicGPU_CumulativeReductionKind : I32EnumAttr<"CumulativeReductionKind",
+    "Combining operation for a cumulative reduction.",
+    [
+      I32EnumAttrCase<"Add", 0, "add">,
+      I32EnumAttrCase<"Mul", 1, "mul">,
+      I32EnumAttrCase<"MaxSI", 2, "maxsi">,
+      I32EnumAttrCase<"MaxUI", 3, "maxui">,
+      I32EnumAttrCase<"MaximumF", 4, "maximumf">,
+      I32EnumAttrCase<"MinSI", 5, "minsi">,
+      I32EnumAttrCase<"MinUI", 6, "minui">,
+      I32EnumAttrCase<"MinimumF", 7, "minimumf">,
+      I32EnumAttrCase<"LogAddExp", 8, "logaddexp">
+    ]>{
+  let cppNamespace = "::mosaic_gpu";
+}
+
+def MosaicGPU_CumulativeReductionOp : Op<MosaicGPU_Dialect, "cumulative_reduction",
+      [Pure, SameOperandsAndResultType]> {
+  let summary = "Computes an inclusive cumulative reduction along a dimension.";
+  let description = [{
+    Cumulatively reduces `source` along `dimension`, combining elements with
+    `kind`. The result has the same shape, element type and layout as `source`.
+    For integer min/max, `kind` selects signed or unsigned comparison.
+
+    If `reverse` is true, the reduction runs from the highest index along
+    `dimension` to the lowest, so element i accumulates elements i..n-1 instead
+    of 0..i.
+  }];
+
+  let arguments = (ins
+    AnyFixedVectorOfNonZeroRank:$source,
+    MosaicGPU_CumulativeReductionKind:$kind,
+    I64Attr:$dimension,
+    DefaultValuedAttr<BoolAttr, "false">:$reverse
+  );
+
+  let results = (outs AnyFixedVectorOfNonZeroRank:$result);
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_AsyncStoreSmemOp : Op<MosaicGPU_Dialect, "async_store_smem",
       [MemoryEffects<[MemWrite]>]> {
   let summary = "Issues an async store of a vector from registers to SMEM of a block in a cluster";
@@ -775,26 +816,6 @@ def MosaicGPU_VectorConcatOp : Op<MosaicGPU_Dialect, "vector_concat",
   let assemblyFormat = [{
     `(` $operands `:` type($operands) `)` prop-dict attr-dict `->` type(results)
   }];
-}
-
-def MosaicGPU_ReinterpretCastOp : Op<MosaicGPU_Dialect, "reinterpret_cast",
-    [Pure]> {
-  let summary = "Reinterprets a memref without changing the underlying data.";
-  let description = [{
-    Casts a memref to a new memref type with a potentially different shape but
-    the same total number of elements and the same element type. This is a
-    pure reinterpretation of the shape and layout; no data is moved or copied.
-
-    Unlike `memref.reinterpret_cast`, this op does not take explicit offsets,
-    sizes, or strides. The result type fully determines the reinterpretation.
-  }];
-
-  let arguments = (ins AnyMemRef:$source);
-  let results = (outs AnyMemRef:$result);
-
-  let hasFolder = 1;
-  let hasCanonicalizer = 1;
-  let hasVerifier = 1;
 }
 
 def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", [Pure]> {
@@ -967,8 +988,8 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [AttrSizedOper
     MemRefRankOf<[MosaicGPU_TcGen05MMASupportedABType], [2]>:$b,
     I1:$accumulate,
     // TODO: allanrenucci - F8E4M3FNU (ue4m3) does not exist in MLIR. We use F8E4M3FN (e4m3) instead.
-    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$a_scale,
-    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$b_scale,
+    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN, F8E5M3FNU], [2]>>:$a_scale,
+    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN, F8E5M3FNU], [2]>>:$b_scale,
     Optional<MemRefRankOf<[I<2>], [2]>>:$a_sparse_metadata,
     DefaultValuedAttr<BoolAttr, "false">:$collective
   );
@@ -1043,7 +1064,6 @@ def MosaicGPU_WarpMapOp : Op<MosaicGPU_Dialect, "warp_map",
   let arguments = (ins Variadic<AnyType>:$operands);
   let regions = (region SizedRegion<1>:$region);
 
-  let hasCanonicalizer = 1;
   let hasVerifier = 1;
 }
 
@@ -1252,7 +1272,7 @@ def MosaicGPU_AsyncStoreScalesSmemToTmemOp : Op<MosaicGPU_Dialect, "async_store_
     in SMEM to the `destination` MemRef in TMEM.
 
     The `source` and `destination` MemRefs must have the same element type
-    (F8E8M0FNU or F8E4M3FN).
+    (F8E8M0FNU, F8E4M3FN, or F8E5M3FNU).
 
     Given a destination shape [M, N], the source shape must be
     [M/128, N/4, 32, 16], and M % 128 == 0 and N % 4 == 0.
@@ -1263,8 +1283,8 @@ def MosaicGPU_AsyncStoreScalesSmemToTmemOp : Op<MosaicGPU_Dialect, "async_store_
   }];
 
   let arguments = (ins
-    MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [4]>:$source,
-    MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>:$destination,
+    MemRefRankOf<[F8E8M0FNU, F8E4M3FN, F8E5M3FNU], [4]>:$source,
+    MemRefRankOf<[F8E8M0FNU, F8E4M3FN, F8E5M3FNU], [2]>:$destination,
     DefaultValuedAttr<BoolAttr, "false">:$collective
   );
 
@@ -1302,12 +1322,16 @@ def MosaicGPU_TcGen05CommitArriveOp : Op<MosaicGPU_Dialect, "tcgen05_commit_arri
 
     if `collective` is `true`, allow signaling on the `barrier` object of
     multiple CTAs within the cluster.
+
+    If `commit_a_read_only` is `true`, the `barrier` tracks only the completion of
+    SMEM reads of operand A of preceding `tcgen05_mma` operations.
   }];
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
     DefaultValuedAttr<BoolAttr, "false">:$collective,
-    PtxPredicate:$predicate
+    PtxPredicate:$predicate,
+    DefaultValuedAttr<BoolAttr, "false">:$commit_a_read_only
   );
 }
 
