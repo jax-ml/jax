@@ -62,6 +62,7 @@ limitations under the License.
 #include "jaxlib/py_executable.h"
 #include "jaxlib/py_host_callback.h"
 #include "jaxlib/py_memory_space.h"
+#include "jaxlib/py_relocatable.h"
 #include "jaxlib/py_user_context.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/traceback.h"
@@ -69,11 +70,13 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 #include "xla/pjrt/exceptions.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/pjrt/pjrt_relocatable.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/attribute_map.h"
@@ -94,10 +97,13 @@ limitations under the License.
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/python/pjrt_ifrt/pjrt_compiler.h"
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
+#include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/types.h"
 #include "xla/python/version.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/platform_util.h"  // IWYU pragma: keep
 #include "xla/service/spmd/shardy/utils.h"  // IWYU pragma: keep
 #include "xla/shape.h"
@@ -477,6 +483,185 @@ absl::StatusOr<nb_class_ptr<PyExecutable>> PyClient::Compile(
     xla::CompileOptions options) {
   return CompileWithTopology(std::move(client), module, *topology,
                              std::move(options), ifrt::DeviceListRef());
+}
+
+namespace {
+
+// Translates IFRT device IDs in `options` to PjRt global device IDs in place.
+absl::Status TranslateDeviceIds(ifrt::PjRtClient* client,
+                                xla::CompileOptions& options) {
+  if (options.executable_build_options.device_ordinal() != -1) {
+    ABSL_ASSIGN_OR_RETURN(
+        auto pjrt_global_device_id,
+        client->GetGlobalDeviceId(
+            ifrt::DeviceId(options.executable_build_options.device_ordinal())));
+    options.executable_build_options.set_device_ordinal(
+        pjrt_global_device_id.value());
+  }
+  if (options.executable_build_options.has_device_assignment()) {
+    absl::Status result;
+    xla::DeviceAssignment device_assignment =
+        options.executable_build_options.device_assignment();
+    device_assignment.Each(
+        [&](int64_t replica, int64_t computation, int64_t* device_id) {
+          if (!result.ok()) {
+            return;
+          }
+          auto pjrt_global_device_id =
+              client->GetGlobalDeviceId(ifrt::DeviceId(*device_id));
+          if (pjrt_global_device_id.ok()) {
+            *device_id = pjrt_global_device_id->value();
+          } else {
+            result.Update(pjrt_global_device_id.status());
+          }
+        });
+    ABSL_RETURN_IF_ERROR(result);
+    options.executable_build_options.set_device_assignment(
+        std::move(device_assignment));
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<nb_class_ptr<PyRelocatable>> CompileToRelocatableWithTopology(
+    nb_class_ptr<PyClient> client, mlir::ModuleOp module,
+    const xla::ifrt::Topology& topology, std::string_view name,
+    bool is_entrypoint, xla::CompileOptions options,
+    ifrt::DeviceListRef devices) {
+  auto* ifrt_pjrt_compiler = xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompiler>(
+      client->ifrt_client()->GetDefaultCompiler());
+  if (ifrt_pjrt_compiler == nullptr) {
+    return absl::UnimplementedError(
+        "CompileToRelocatable requires a PjRt-backed IFRT compiler.");
+  }
+  const auto* pjrt_topology =
+      xla::ifrt::dyn_cast<ifrt::PjRtTopology>(&topology);
+  if (pjrt_topology == nullptr || pjrt_topology->description() == nullptr) {
+    return absl::UnimplementedError(
+        "CompileToRelocatable requires a PjRtTopology.");
+  }
+
+  absl::StatusOr<xla::PjRtCompiler*> pjrt_compiler =
+      xla::GetPjRtCompiler(*pjrt_topology->description());
+  if (!pjrt_compiler.ok()) {
+    return absl::UnimplementedError(
+        absl::StrCat("CompileToRelocatable failed to get PjRtCompiler: ",
+                     pjrt_compiler.status().message()));
+  }
+  xla::PjRtPhaseCompiler* phase_compiler = (*pjrt_compiler)->AsPhaseCompiler();
+  if (phase_compiler == nullptr) {
+    return absl::UnimplementedError(absl::StrCat(
+        "Compiler for platform ", pjrt_topology->description()->platform_name(),
+        " does not implement PjRtPhaseCompiler."));
+  }
+
+  xla::PjRtClient* compile_client = nullptr;
+  if (auto* ifrt_pjrt_client =
+          xla::ifrt::dyn_cast_or_null<ifrt::PjRtClient>(client->ifrt_client());
+      ifrt_pjrt_client != nullptr) {
+    if (devices) {
+      ABSL_RETURN_IF_ERROR(TranslateDeviceIds(ifrt_pjrt_client, options));
+    }
+    compile_client = ifrt_pjrt_client->pjrt_client();
+  }
+
+  mlir::OwningOpRef<mlir::ModuleOp> clone(module.clone());
+  options.allow_in_place_mlir_modification = true;
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<xla::PjRtRelocatable> relocatable,
+      phase_compiler->CompileToRelocatable(
+          std::move(options), xla::MaybeOwningMlirModule(std::move(clone)),
+          *pjrt_topology->description(), name, is_entrypoint, compile_client));
+  return make_nb_class<PyRelocatable>(
+      std::shared_ptr<const xla::PjRtRelocatable>(std::move(relocatable)));
+}
+
+absl::StatusOr<nb_class_ptr<PyExecutable>> LinkRelocatablesWithTopology(
+    nb_class_ptr<PyClient> client, nb_class_ptr<PyRelocatable> entrypoint,
+    absl::Span<const nb_class_ptr<PyRelocatable>> dependencies,
+    const xla::ifrt::Topology& topology, xla::CompileOptions options,
+    ifrt::DeviceListRef devices) {
+  if (entrypoint.get() == nullptr) {
+    return absl::InvalidArgumentError(
+        "LinkRelocatables requires a non-null entrypoint relocatable.");
+  }
+  std::vector<std::shared_ptr<const xla::PjRtRelocatable>>
+      dependent_relocatables;
+  dependent_relocatables.reserve(dependencies.size());
+  for (const auto& dependency : dependencies) {
+    if (dependency.get() == nullptr) {
+      return absl::InvalidArgumentError(
+          "LinkRelocatables requires non-null dependent relocatables.");
+    }
+    dependent_relocatables.push_back(dependency->relocatable());
+  }
+
+  auto xla_options = std::make_unique<ifrt::XlaCompileOptions>(
+      std::move(options), std::move(devices),
+      /*loaded_host_callbacks=*/
+      std::vector<tsl::RCReference<ifrt::LoadedHostCallback>>{},
+      entrypoint->relocatable(), std::move(dependent_relocatables));
+  ifrt::ExecutableRef ifrt_executable;
+  {
+    nb::gil_scoped_release gil_release;
+    ABSL_ASSIGN_OR_RETURN(
+        ifrt_executable,
+        client->ifrt_client()
+            ->GetDefaultCompiler()
+            ->Compile(/*program=*/nullptr, topology, std::move(xla_options))
+            .Await());
+  }
+  return make_nb_class<PyExecutable>(std::move(ifrt_executable));
+}
+
+}  // namespace
+
+absl::StatusOr<nb_class_ptr<PyRelocatable>> PyClient::CompileToRelocatable(
+    nb_class_ptr<PyClient> client, mlir::ModuleOp module,
+    ifrt::DeviceListRef executable_devices, std::string_view name,
+    bool is_entrypoint, xla::CompileOptions options) {
+  ABSL_ASSIGN_OR_RETURN(
+      auto topology,
+      client->ifrt_client()->GetTopologyForDevices(executable_devices));
+  return CompileToRelocatableWithTopology(
+      std::move(client), module, *topology, name, is_entrypoint,
+      std::move(options), std::move(executable_devices));
+}
+
+absl::StatusOr<nb_class_ptr<PyRelocatable>> PyClient::CompileToRelocatable(
+    nb_class_ptr<PyClient> client, mlir::ModuleOp module,
+    std::shared_ptr<xla::ifrt::Topology> topology, std::string_view name,
+    bool is_entrypoint, xla::CompileOptions options) {
+  if (topology == nullptr) {
+    return absl::InvalidArgumentError("Topology must not be null.");
+  }
+  return CompileToRelocatableWithTopology(
+      std::move(client), module, *topology, name, is_entrypoint,
+      std::move(options), ifrt::DeviceListRef());
+}
+
+absl::StatusOr<nb_class_ptr<PyExecutable>> PyClient::LinkRelocatables(
+    nb_class_ptr<PyClient> client, nb_class_ptr<PyRelocatable> entrypoint,
+    absl::Span<const nb_class_ptr<PyRelocatable>> dependencies,
+    ifrt::DeviceListRef executable_devices, xla::CompileOptions options) {
+  ABSL_ASSIGN_OR_RETURN(
+      auto topology,
+      client->ifrt_client()->GetTopologyForDevices(executable_devices));
+  return LinkRelocatablesWithTopology(
+      std::move(client), std::move(entrypoint), dependencies, *topology,
+      std::move(options), std::move(executable_devices));
+}
+
+absl::StatusOr<nb_class_ptr<PyExecutable>> PyClient::LinkRelocatables(
+    nb_class_ptr<PyClient> client, nb_class_ptr<PyRelocatable> entrypoint,
+    absl::Span<const nb_class_ptr<PyRelocatable>> dependencies,
+    std::shared_ptr<xla::ifrt::Topology> topology,
+    xla::CompileOptions options) {
+  if (topology == nullptr) {
+    return absl::InvalidArgumentError("Topology must not be null.");
+  }
+  return LinkRelocatablesWithTopology(
+      std::move(client), std::move(entrypoint), dependencies, *topology,
+      std::move(options), ifrt::DeviceListRef());
 }
 
 /* static */ absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
@@ -925,6 +1110,110 @@ PyType_Slot PyClient::slots_[] = {
               "def compile("
               "self, "
               "computation: object, "
+              "topology: DeviceTopology, "
+              "compile_options: CompileOptions = ..."
+              ") -> Executable"
+              // clang-format on
+              ))
+      .def(
+          "compile_to_relocatable",
+          [](nb_class_ptr<PyClient> client, PyModule& mlir_module,
+             PyDeviceList& py_executable_devices, std::string_view name,
+             bool is_entrypoint, xla::CompileOptions options) {
+            ifrt::DeviceListRef executable_devices =
+                xla::ValueOrThrow(py_executable_devices.ifrt_device_list());
+            return xla::ValueOrThrow(PyClient::CompileToRelocatable(
+                std::move(client), unwrap(mlir_module.get()),
+                std::move(executable_devices), name, is_entrypoint,
+                std::move(options)));
+          },
+          nb::arg("computation"), nb::arg("executable_devices"),
+          nb::arg("name"), nb::arg("is_entrypoint"),
+          nb::arg("compile_options") = xla::CompileOptions(),
+          nb::sig(
+              // clang-format off
+              "def compile_to_relocatable("
+              "self, "
+              "computation: object, "
+              "executable_devices: DeviceList, "
+              "name: str, "
+              "is_entrypoint: bool, "
+              "compile_options: CompileOptions = ..."
+              ") -> Relocatable"
+              // clang-format on
+              ))
+      .def(
+          "compile_to_relocatable",
+          [](nb_class_ptr<PyClient> client, PyModule& mlir_module,
+             std::shared_ptr<xla::ifrt::Topology> topology,
+             std::string_view name, bool is_entrypoint,
+             xla::CompileOptions options) {
+            return xla::ValueOrThrow(PyClient::CompileToRelocatable(
+                std::move(client), unwrap(mlir_module.get()),
+                std::move(topology), name, is_entrypoint, std::move(options)));
+          },
+          nb::arg("computation"), nb::arg("topology"), nb::arg("name"),
+          nb::arg("is_entrypoint"),
+          nb::arg("compile_options") = xla::CompileOptions(),
+          nb::sig(
+              // clang-format off
+              "def compile_to_relocatable("
+              "self, "
+              "computation: object, "
+              "topology: DeviceTopology, "
+              "name: str, "
+              "is_entrypoint: bool, "
+              "compile_options: CompileOptions = ..."
+              ") -> Relocatable"
+              // clang-format on
+              ))
+      .def(
+          "link_relocatables",
+          [](nb_class_ptr<PyClient> client,
+             nb_class_ptr<PyRelocatable> entrypoint,
+             std::vector<nb_class_ptr<PyRelocatable>> dependencies,
+             PyDeviceList& py_executable_devices, xla::CompileOptions options) {
+            ifrt::DeviceListRef executable_devices =
+                xla::ValueOrThrow(py_executable_devices.ifrt_device_list());
+            return xla::ValueOrThrow(PyClient::LinkRelocatables(
+                std::move(client), std::move(entrypoint),
+                std::move(dependencies), std::move(executable_devices),
+                std::move(options)));
+          },
+          nb::arg("entrypoint"), nb::arg("dependencies"),
+          nb::arg("executable_devices"),
+          nb::arg("compile_options") = xla::CompileOptions(),
+          nb::sig(
+              // clang-format off
+              "def link_relocatables("
+              "self, "
+              "entrypoint: Relocatable, "
+              "dependencies: Sequence[Relocatable], "
+              "executable_devices: DeviceList, "
+              "compile_options: CompileOptions = ..."
+              ") -> Executable"
+              // clang-format on
+              ))
+      .def(
+          "link_relocatables",
+          [](nb_class_ptr<PyClient> client,
+             nb_class_ptr<PyRelocatable> entrypoint,
+             std::vector<nb_class_ptr<PyRelocatable>> dependencies,
+             std::shared_ptr<xla::ifrt::Topology> topology,
+             xla::CompileOptions options) {
+            return xla::ValueOrThrow(PyClient::LinkRelocatables(
+                std::move(client), std::move(entrypoint),
+                std::move(dependencies), std::move(topology),
+                std::move(options)));
+          },
+          nb::arg("entrypoint"), nb::arg("dependencies"), nb::arg("topology"),
+          nb::arg("compile_options") = xla::CompileOptions(),
+          nb::sig(
+              // clang-format off
+              "def link_relocatables("
+              "self, "
+              "entrypoint: Relocatable, "
+              "dependencies: Sequence[Relocatable], "
               "topology: DeviceTopology, "
               "compile_options: CompileOptions = ..."
               ") -> Executable"
