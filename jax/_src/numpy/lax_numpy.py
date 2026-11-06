@@ -2640,6 +2640,18 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
   if dtypes.issubdtype(x_arr.dtype, np.complexfloating):
     raise ValueError("jnp.interp: complex x values not supported.")
 
+  if dtypes.issubdtype(fp_arr.dtype, np.complexfloating):
+    # numpy.interp applies its NaN handling to the real and imaginary parts
+    # separately, and sets the imaginary part to zero where x is NaN. Linear
+    # interpolation is exact per component, so interpolate them separately.
+    def split(v):
+      return (v, v) if v is None or isinstance(v, str) else (
+          ufuncs.real(v), ufuncs.imag(v))
+    (left_re, left_im), (right_re, right_im) = split(left), split(right)
+    f_re = _interp(x_arr, xp_arr, ufuncs.real(fp_arr), left_re, right_re, period)
+    f_im = _interp(x_arr, xp_arr, ufuncs.imag(fp_arr), left_im, right_im, period)
+    return lax.complex(f_re, where(ufuncs.isnan(x_arr), 0, f_im))
+
   if period is not None:
     if np.ndim(period) != 0:
       raise ValueError(f"period must be a scalar; got {period}")
@@ -2651,13 +2663,25 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
     fp_arr = concatenate([fp_arr[-1:], fp_arr, fp_arr[:1]])
 
   i = clip(searchsorted(xp_arr, x_arr, side='right'), 1, len(xp_arr) - 1)
-  df = fp_arr[i] - fp_arr[i - 1]
-  dx = xp_arr[i] - xp_arr[i - 1]
-  delta = x_arr - xp_arr[i - 1]
+  fp_left, fp_right = fp_arr[i - 1], fp_arr[i]
+  xp_left, xp_right = xp_arr[i - 1], xp_arr[i]
+  df = fp_right - fp_left
+  dx = xp_right - xp_left
+  delta = x_arr - xp_left
 
   epsilon = np.spacing(np.finfo(xp_arr.dtype).eps)
   dx0 = lax.abs(dx) <= epsilon  # Prevent NaN gradients when `dx` is small.
-  f = where(dx0, fp_arr[i - 1], fp_arr[i - 1] + (delta / where(dx0, 1, dx)) * df)
+  dx_safe = where(dx0, 1, dx)
+  f = where(dx0, fp_left, fp_left + (delta / dx_safe) * df)
+  # `f` is NaN at and around an infinite knot (inf - inf, 0 * inf). Like
+  # numpy.interp, return the knot value at an exact knot; elsewhere re-evaluate
+  # from the other end of the interval, and fall back to the shared value when
+  # both ends are equal. Only entries that are already NaN are replaced.
+  other = fp_right + ((x_arr - xp_right) / dx_safe) * df
+  other = where(ufuncs.isnan(other) & (fp_left == fp_right), fp_left, other)
+  f_alt = where(x_arr == xp_left, fp_left,
+                where(x_arr == xp_right, fp_right, other))
+  f = where(ufuncs.isnan(f) & ~ufuncs.isnan(x_arr), f_alt, f)
 
   if not extrapolate_left:
     assert not isinstance(left, str)
