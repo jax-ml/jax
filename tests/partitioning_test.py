@@ -676,6 +676,56 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_x)
 
+  @parameterized.parameters(
+      ((), P(), (1, 1), None),
+      ((4, 16), P('x', 'y'), (4, 2, 8), None),
+      ((2, 2, 4), P('x', 'y', None), (16,), None),
+      ((8, 4), P(('x', 'y'), None), (2, 4, 4), P('x', 'y', None)),
+      ((4, 16), P('x', 'y'), (4, 2, 8), P('x', 'y', None)),
+      ((4, 16), P('x', None, reduced={'y'}), (4, 2, 8),
+       P('x', None, None, reduced={'y'})),
+  )
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshape_no_collectives(
+      self, in_shape, in_spec, out_shape, out_sharding, mesh):
+    np_inp = np.arange(math.prod(in_shape), dtype=np.float32).reshape(in_shape)
+    arr = jax.device_put(np_inp, in_spec)
+
+    @jax.jit
+    def f(x):
+      return lax.reshape(x, out_shape, out_sharding=out_sharding)
+
+    with config.shard_map_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
+      expected = f(arr)
+    txt = f.lower(arr).as_text()
+    self.assertIn('sdy.manual_computation', txt)
+    self.assertNotIn('all_to_all', txt)
+    self.assertNotIn('all_gather', txt)
+    out = f(arr)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertArraysEqual(out, expected)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshape_collectives_needed_raises(self, mesh):
+    for shape, in_spec, dims, out_shape, out_spec in (
+        ((4, 4), P('x', 'y'), None, (16,), None),
+        ((16,), P(('x', 'y')), None, (4, 4), P('x', 'y')),
+        ((4, 8), P('x', None), None, (2, 2, 8), P(None, 'x', None)),
+        ((4, 4), P('x', 'y'), None, (16,), P('x')),
+        ((4, 6), P('x', 'y'), (1, 0), (6, 2, 2), P('y', 'x', None)),
+    ):
+      arr = jax.device_put(np.zeros(shape, dtype=np.float32), in_spec)
+
+      @jax.jit
+      def f(x):
+        return lax.reshape(x, out_shape, dimensions=dims, out_sharding=out_spec)
+
+      with self.assertRaises(NotImplementedError):
+        f.lower(arr)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

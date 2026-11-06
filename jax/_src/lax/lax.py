@@ -9497,6 +9497,29 @@ def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
   return out, 0
 
 
+def _reshape_collective_rule(
+    in_avals, out_avals, *, new_sizes, dimensions, sharding):
+  del sharding
+  # Reject reshape-with-transpose (`dimensions` is not None), matching
+  # `_reshape_sharding_rule` on split/merge reshapes.
+  if dimensions is not None:
+    raise NotImplementedError
+  in_aval, = in_avals
+  out_aval, = out_avals
+  try:
+    expected_out = _reshape_sharding_rule_opt(
+        in_aval, new_sizes, dimensions=None, sharding=None,
+        merge_a2a_error=True)
+  except core.ShardingTypeError:
+    raise NotImplementedError from None
+  if out_aval.sharding.spec.partitions != expected_out.spec.partitions:
+    raise NotImplementedError
+  return mlir.PartitioningRule(per_shard_params={
+      'new_sizes': out_aval.sharding.shard_shape(out_aval.shape),
+      'sharding': None,
+  })
+
+
 def _reshape_lower(ctx, x, new_sizes, dimensions, sharding):
   aval_out, = ctx.avals_out
   if dimensions is not None:
@@ -9517,7 +9540,9 @@ reshape_p = standard_primitive(
     ur_rule=_reshape_ur_rule, layout_rule=_reshape_layout_rule)
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
 batching.fancy_primitive_batchers[reshape_p] = _reshape_batch_rule
-mlir.register_lowering(reshape_p, _reshape_lower)
+mlir.register_lowering(
+    reshape_p, _reshape_lower,
+    shard_map_collective_rule=_reshape_collective_rule)
 core.custom_typechecks[reshape_p] = _reshape_typecheck_rule
 pe.custom_staging_rules[reshape_p] = _reshape_staging_rule
 lax_utils.register_unreduced_lojax(reshape_p, 'sharding')
