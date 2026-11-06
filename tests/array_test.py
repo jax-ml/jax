@@ -1220,6 +1220,52 @@ class ShardingTest(jtu.JaxTestCase):
     mps = jax.sharding.NamedSharding(mesh, pspec)
     self.assertEqual(mps.shard_shape(shape), expected_shard_shape)
 
+  @parameterized.named_parameters(
+      ("x_y", (8, 4), P("x", "y"), (8, 2)),
+      ("none_y", (8, 4), P(None, "y"), (8, 2)),
+      ("x_none", (8, 4), P("x", None), (8, 4)),
+      ("y_none", (8, 4), P("y", None), (4, 4)),
+      ("xy", (8, 4), P(("x", "y")), (4, 4)),
+      ("replicated", (8, 4), P(), (8, 4)),
+      ("manual_dim_uneven", (3, 4), P("x", "y"), (3, 2)),
+      ("manual_dim_none_uneven", (3, 4), P(None, "y"), (3, 2)),
+  )
+  def test_shard_shape_partial_manual(self, shape, pspec, expected_shard_shape):
+    auto_types = (AxisType.Manual, AxisType.Auto)
+    mesh_auto = jtu.create_mesh((4, 2), ('x', 'y'), axis_types=auto_types)
+    abs_mesh_auto = AbstractMesh((4, 2), ('x', 'y'), axis_types=auto_types)
+    self.assertEqual(
+        NamedSharding(mesh_auto, pspec).shard_shape(shape),
+        expected_shard_shape)
+    self.assertEqual(
+        NamedSharding(abs_mesh_auto, pspec).shard_shape(shape),
+        expected_shard_shape)
+
+    exp_types = (AxisType.Manual, AxisType.Explicit)
+    mesh_exp = jtu.create_mesh((4, 2), ('x', 'y'), axis_types=exp_types)
+    abs_mesh_exp = AbstractMesh((4, 2), ('x', 'y'), axis_types=exp_types)
+    self.assertEqual(
+        NamedSharding(mesh_exp, pspec).shard_shape(shape),
+        expected_shard_shape)
+    self.assertEqual(
+        NamedSharding(abs_mesh_exp, pspec).shard_shape(shape),
+        expected_shard_shape)
+
+  def test_shard_shape_full_manual_and_uneven_error(self):
+    full_manual = jtu.create_mesh(
+        (4, 2), ('x', 'y'), axis_types=(AxisType.Manual, AxisType.Manual))
+    self.assertEqual(
+        NamedSharding(full_manual, P('x', 'y')).shard_shape((3, 5)), (3, 5))
+    self.assertEqual(
+        NamedSharding(full_manual, P()).shard_shape((3, 5)), (3, 5))
+
+    partial_manual = jtu.create_mesh(
+        (4, 2), ('x', 'y'), axis_types=(AxisType.Manual, AxisType.Explicit))
+    self.assertEqual(
+        NamedSharding(partial_manual, P(None, 'y')).shard_shape((3, 4)), (3, 2))
+    with self.assertRaises(IndivisibleError):
+      NamedSharding(partial_manual, P('x', 'y')).shard_shape((3, 3))
+
   def test_uneven_shard_error(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     mps = jax.sharding.NamedSharding(mesh, P('x', 'y'))
