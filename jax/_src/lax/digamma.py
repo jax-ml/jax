@@ -444,6 +444,8 @@ def _restore_special_outputs(
     is_delta_zero,
     gt_int_lim,
     is_zero_or_sub,
+    *,
+    subnormals: bool = False,
 ):
   """Applies near-root overrides and restores special outputs for NaN, poles, +-0, and +inf."""
   for x_i, y_i in cfg.overrides:
@@ -454,11 +456,22 @@ def _restore_special_outputs(
   res = lax.select(is_nan_out, lax.full_like(x, np.nan), res)
   bits = lax.bitcast_convert_type(x, cfg.int_dtype)
   zero_inf = lax.select(bits < 0, inf, -inf)
-  res = lax.select(is_zero_or_sub, zero_inf, res)
+  if subnormals:
+    is_exact_zero = x == 0.0
+    x_sub = lax.select(
+        is_zero_or_sub & (~is_exact_zero), x, lax.full_like(x, 0.125)
+    )
+    q = lax.div(lax._const(x, -4.0), x_sub * lax._const(x, 8.0))
+    tiny_out = lax.select(is_exact_zero, zero_inf, q + q)
+  else:
+    tiny_out = zero_inf
+  res = lax.select(is_zero_or_sub, tiny_out, res)
   return lax.select(x == inf, inf, res)
 
 
-def _digamma_cpu_f32(x, *, use_optimization_barrier: bool = False):
+def _digamma_cpu_f32(
+    x, *, use_optimization_barrier: bool = False, subnormals: bool = False
+):
   """Computes float32 digamma(x) to <= 1 ULP on CPU using native float64."""
   x = lax.convert_element_type(x, np.float32)
   (
@@ -512,11 +525,16 @@ def _digamma_cpu_f32(x, *, use_optimization_barrier: bool = False):
       is_delta_zero,
       gt_int_lim,
       is_zero_or_sub,
+      subnormals=subnormals,
   )
 
 
 def _digamma_f2(
-    x, cfg: _DigammaConfig, *, use_optimization_barrier: bool = False
+    x,
+    cfg: _DigammaConfig,
+    *,
+    use_optimization_barrier: bool = False,
+    subnormals: bool = False,
 ):
   """Computes float32 or float64 digamma(x) to <= 1 ULP using `(hi, lo)` pairs."""
   x = lax.convert_element_type(x, cfg.dtype)
@@ -639,23 +657,38 @@ def _digamma_f2(
       is_delta_zero,
       gt_int_lim,
       is_zero_or_sub,
+      subnormals=subnormals,
   )
 
 
 @config.explicit_x64_dtypes("allow")
-@jit(static_argnames=["use_f64_for_f32", "use_optimization_barrier"])
+@jit(
+    static_argnames=["use_f64_for_f32", "use_optimization_barrier", "subnormals"]
+)
 def digamma_impl(
-    x, *, use_f64_for_f32: bool = False, use_optimization_barrier: bool = False
+    x,
+    *,
+    use_f64_for_f32: bool = False,
+    use_optimization_barrier: bool = False,
+    subnormals: bool = False,
 ):
   """Computes float32 or float64 digamma(x) to <= 1 ULP."""
   if x.dtype == np.float64:
     return _digamma_f2(
-        x, _F64_CFG, use_optimization_barrier=use_optimization_barrier
+        x,
+        _F64_CFG,
+        use_optimization_barrier=use_optimization_barrier,
+        subnormals=subnormals,
     )
   if use_f64_for_f32:
     return _digamma_cpu_f32(
-        x, use_optimization_barrier=use_optimization_barrier
+        x,
+        use_optimization_barrier=use_optimization_barrier,
+        subnormals=subnormals,
     )
   return _digamma_f2(
-      x, _F32_CFG, use_optimization_barrier=use_optimization_barrier
+      x,
+      _F32_CFG,
+      use_optimization_barrier=use_optimization_barrier,
+      subnormals=subnormals,
   )

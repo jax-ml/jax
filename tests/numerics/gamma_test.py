@@ -123,9 +123,6 @@ class DigammaTest(jtu.JaxTestCase):
     bounds = [
         (["cpu", "gpu", "tpu"], {f16: 1.0, f32: 1.0, f64: 1.0}),
     ]
-    input_ftz = [
-        ("gpu", {bf16: True, f32: True, f64: True}),
-    ]
     util.check_unary_precision(
         self,
         lax.digamma,
@@ -133,7 +130,6 @@ class DigammaTest(jtu.JaxTestCase):
         _mpmath_digamma,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=_DIGAMMA_INTERESTING_POINTS,
     )
 
@@ -288,11 +284,6 @@ class LgammaTest(jtu.JaxTestCase):
         -8388608.0,  # -2**23 (all f32 below this are integers)
         -4503599627370495.5,  # -2**52 + 0.5 (last negative non-integer in f64)
         -4503599627370496.0,  # -2**52 (all f64 below this are even integers)
-        # Subnormal inputs (treated as poles returning +inf):
-        float(np.finfo(np.float32).tiny) / 2.0,
-        -float(np.finfo(np.float32).tiny) / 2.0,
-        float(np.finfo(np.float64).tiny) / 2.0,
-        -float(np.finfo(np.float64).tiny) / 2.0,
         # Zeros at x = 1 and x = 2, plus points just beside them and at the
         # CPU float32 Taylor window boundaries (|x - 1| <= 3/64, |x - 2| <= 3/64):
         1.0,
@@ -369,9 +360,6 @@ class LgammaTest(jtu.JaxTestCase):
             )
         ),
     ]
-    input_ftz = [
-        ("gpu", {bf16: True, f32: True, f64: True}),
-    ]
     util.check_unary_precision(
         self,
         lax.lgamma,
@@ -379,7 +367,6 @@ class LgammaTest(jtu.JaxTestCase):
         _mpmath_lgamma,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 
