@@ -136,6 +136,13 @@ def mean_error_ratio(error_estimate, rtol, atol, y0, y1):
 def optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0,
                       dfactor=0.2, order=5.0):
   """Compute optimal Runge-Kutta stepsize."""
+  # A NaN error ratio means the trial step evaluated `func` outside its domain
+  # (e.g. the step was so large that an intermediate stage left the region
+  # where `func` is finite). Treat it like an infinite error so that the step is
+  # shrunk by `dfactor` and retried; otherwise NaN propagates into the step size,
+  # the `dt > 0` loop condition fails, and integration silently stops.
+  mean_error_ratio = jnp.where(jnp.isnan(mean_error_ratio), jnp.inf,
+                               mean_error_ratio)
   dfactor = jnp.where(mean_error_ratio < 1, 1.0, dfactor)
 
   factor = jnp.minimum(ifactor,
