@@ -244,6 +244,10 @@ common:build_cuda_with_clang --@local_config_cuda//:cuda_compiler=clang
 # Clang 22's upper-bounded CUDA version check for sm_101 (Thor) on CUDA 12.9
 # to see an empty version and fail.
 common:build_cuda_with_clang --copt=--no-cuda-version-check
+# NCCL 2.30.7 headers (nccl_device/gin/gpi/gin_gpi_device_host_common.h) use
+# the GNU `typeof` keyword in `GPI_ACCESS_ONCE`, which is disabled under
+# `-std=c++20` unless `-fgnu-keywords` is enabled.
+common:build_cuda_with_clang --copt=-fgnu-keywords
 
 # common CUDA with NVCC and other C++ targets with Clang
 common:build_cuda_with_nvcc --action_env=TF_NVCC_CLANG="1"
