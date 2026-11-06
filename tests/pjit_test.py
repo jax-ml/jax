@@ -10897,6 +10897,28 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jnp.argsort(x, axis=0)
     self.assertEqual(out.sharding, x.sharding)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_lgamma_impl_explicit_sharding(self, mesh):
+    from jax._src.lax.lgamma import lgamma_impl
+
+    x_np = np.linspace(-9.3, 4.7, 16, dtype=np.float32).reshape(4, 4)
+    x = jax.device_put(x_np, P('x', 'y'))
+    f = jax.jit(partial(lgamma_impl, use_f64_for_f32=False))
+    self.assertNotIn('Auto', str(f.trace(x).jaxpr))
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertAllClose(
+        out, lgamma_impl(x_np, use_f64_for_f32=False), atol=1e-5, rtol=1e-5
+    )
+    if config.enable_x64.value:
+      x64_np = x_np.astype(np.float64)
+      x64 = jax.device_put(x64_np, P('x', 'y'))
+      f64 = jax.jit(lgamma_impl)
+      self.assertNotIn('Auto', str(f64.trace(x64).jaxpr))
+      out64 = f64(x64)
+      self.assertEqual(out64.sharding, NamedSharding(mesh, P('x', 'y')))
+      self.assertAllClose(out64, lgamma_impl(x64_np))
+
   @jtu.with_explicit_mesh((2,), 'x')
   def test_cond_lowering_constraint(self, mesh):
     arr1 = jax.device_put(np.arange(8), P('x'))
