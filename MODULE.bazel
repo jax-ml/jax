@@ -31,6 +31,8 @@ archive_override(
 )
 
 # TODO: use a released version when available
+# TODO: Once openxla/xla#52250 merges, move this pin to that commit before
+# landing the ROCm C++20 switch. MORI's -std=c++17 copts are in that PR.
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
