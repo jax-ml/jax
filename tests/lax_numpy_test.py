@@ -2405,6 +2405,99 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                               rtol=3e-3, atol=1e-3)
       self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.sample_product(
+    fp=[
+      [0., np.inf, 1.],      # +inf at an interior knot
+      [0., -np.inf, 1.],     # -inf at an interior knot
+      [np.inf, 0., 1.],      # +inf at the left end knot
+      [-np.inf, 0., 1.],     # -inf at the left end knot
+      [0., 1., np.inf],      # +inf at the right end knot
+      [0., 1., -np.inf],     # -inf at the right end knot
+      [np.inf, np.inf, 1.],  # equal infinite values on both ends of an interval
+      [-np.inf, np.inf, 1.], # opposite infinities: interior stays NaN
+      [0., np.nan, 1.],      # NaN in fp must still propagate
+    ],
+    period=[None, 3.0],
+    left=[None, 0],
+    right=[None, 1],
+    dtype=jtu.dtypes.floating,
+  )
+  def testInterpInfiniteFp(self, fp, period, left, right, dtype):
+    # Regression test: jnp.interp returned NaN at every point in or next to an
+    # interval with an infinite fp value, where numpy returns the knot value
+    # or +/-inf. The x values include every knot, interval midpoints, points
+    # outside [xp[0], xp[-1]], and a NaN.
+    kwds = dict(period=period, left=left, right=right)
+    np_fun = partial(np.interp, **kwds)
+    jnp_fun = partial(jnp.interp, **kwds)
+    args_maker = lambda: [
+      np.array([-0.5, 0., 0.25, 0.5, 1., 1.5, 2., 2.5, np.nan], dtype),
+      np.array([0., 1., 2.], dtype),
+      np.array(fp, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    fp=[
+      [0., complex(np.inf, 1), 1.],                   # infinite real part
+      [0., complex(1, np.inf), 2.],                   # infinite imaginary part
+      [complex(np.inf, 2), complex(1, 3), 0.],        # infinite real part at the left end
+      [complex(1, 1), complex(np.inf, np.inf), 2.],   # both parts infinite
+      [complex(-np.inf, 0), complex(np.inf, 0), 1.],  # opposite infinities: interior stays NaN
+      [1j, complex(np.nan, 1), 2.],                   # NaN in one part propagates in that part
+      [complex(np.nan, 1), complex(2, np.inf), 3.],   # the rules apply per component
+      [complex(1, 2), complex(3, -1), complex(2, 0.5)],  # finite complex values
+    ],
+    period=[None, 3.0],
+    left=[None, 0, 1 + 2j],
+    right=[None, 1, -1j],
+    dtype=jtu.dtypes.complex,
+  )
+  def testInterpComplexFp(self, fp, period, left, right, dtype):
+    # numpy applies the infinite/NaN handling to the real and imaginary parts
+    # separately, so the result can be infinite in one part and finite in the
+    # other. The x values are the same as in testInterpInfiniteFp.
+    kwds = dict(period=period, left=left, right=right)
+    np_fun = partial(np.interp, **kwds)
+    jnp_fun = partial(jnp.interp, **kwds)
+    real_dtype = np.finfo(dtype).dtype
+    args_maker = lambda: [
+      np.array([-0.5, 0., 0.25, 0.5, 1., 1.5, 2., 2.5, np.nan], real_dtype),
+      np.array([0., 1., 2.], real_dtype),
+      np.array(fp, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+    # For a NaN x, numpy returns nan+0j; the comparison above skips the
+    # imaginary part of NaN entries, so check it explicitly.
+    self.assertEqual(float(jnp_fun(*args_maker()).imag[-1]), 0.)
+
+  @jtu.sample_product(
+    period=[None, 5.0],
+    left=[None, 0],
+    right=[None, 1],
+    dtype=jtu.dtypes.floating,
+  )
+  def testInterpGradFiniteFp(self, period, left, right, dtype):
+    # For finite fp, the gradient with respect to x is the slope of the
+    # interval containing x (the interval to the right of x at a knot).
+    kwds = dict(period=period, left=left, right=right)
+    xp = np.array([0., 1., 2., 4.], dtype)
+    fp = np.array([1., 3., 2., 6.], dtype)
+    x = np.array([0., 0.25, 1., 1.5, 2., 3., 4.], dtype)
+    g = jax.vmap(jax.grad(lambda z: jnp.interp(z, xp, fp, **kwds)))(x)
+    if period is None:
+      xp_ref, fp_ref, x_ref = xp, fp, x
+    else:
+      # numpy wraps the table around by one knot on each side.
+      xp_ref = np.concatenate([xp[-1:] - period, xp, xp[:1] + period])
+      fp_ref = np.concatenate([fp[-1:], fp, fp[:1]])
+      x_ref = x % period
+    i = np.clip(np.searchsorted(xp_ref, x_ref, side='right'), 1, len(xp_ref) - 1)
+    expected = (np.diff(fp_ref) / np.diff(xp_ref))[i - 1]
+    tol = {np.float16: 1e-2, jnp.bfloat16: 1e-1}.get(dtype, 1e-5)
+    self.assertAllClose(g, expected.astype(dtype), check_dtypes=False,
+                        rtol=tol, atol=tol)
+
   @jtu.sample_product([
     dict(x=0.5, left='extrapolate', expected=5),
     dict(x=1.5, left='extrapolate', expected=15),
