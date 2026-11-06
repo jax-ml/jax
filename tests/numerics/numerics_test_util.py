@@ -15,7 +15,7 @@
 """Precision testing utilities for elementary floating-point functions."""
 
 import collections
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 import concurrent.futures
 import functools
 import math
@@ -984,12 +984,159 @@ def _with_ulp_neighbors(
   return out
 
 
+class Domain:
+  """A set of floating-point bit patterns of a given `dtype`."""
+
+  # Floating-point dtype of the values in this domain (e.g. float16, float32).
+  dtype: np.dtype
+  # Unsigned integer dtype of the same bit width, used to view bit patterns.
+  bits_dtype: np.dtype
+  # Sorted, disjoint half-open `[start, stop)` unsigned bit-pattern intervals.
+  ranges: tuple[tuple[int, int], ...]
+
+  def __init__(self, dtype, ranges: Iterable[tuple[int, int]]):
+    self.dtype = np.dtype(dtype)
+    self.bits_dtype = np.dtype(f"u{self.dtype.itemsize}")
+    limit = 1 << (self.dtype.itemsize * 8)
+    merged: list[tuple[int, int]] = []
+    for s, e in sorted((s, e) for s, e in ranges if s < e):
+      if s < 0 or e > limit:
+        raise ValueError(
+            f"Bit range ({s}, {e}) out of bounds for {self.dtype.name}."
+        )
+      if merged and s <= merged[-1][1]:
+        merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+      else:
+        merged.append((s, e))
+    if not merged:
+      raise ValueError(f"Domain contains no {self.dtype.name} bit patterns.")
+    self.ranges = tuple(merged)
+
+  @property
+  def size(self) -> int:
+    """Returns the total number of distinct bit patterns in this domain."""
+    return sum(e - s for s, e in self.ranges)
+
+  @property
+  def is_all(self) -> bool:
+    """Returns True if this domain covers all bit patterns of `self.dtype`."""
+    return self.ranges == ((0, 1 << (self.dtype.itemsize * 8)),)
+
+  def __eq__(self, other: object) -> bool:
+    return (
+        isinstance(other, Domain)
+        and self.dtype == other.dtype
+        and self.ranges == other.ranges
+    )
+
+  def __or__(self, other: "Domain") -> "Domain":
+    """Returns a `Domain` representing the union of `self` and `other`."""
+    if self.dtype != other.dtype:
+      raise ValueError(
+          f"Cannot union Domains with dtypes {self.dtype} and {other.dtype}."
+      )
+    return Domain(self.dtype, (*self.ranges, *other.ranges))
+
+  def contains(self, a: np.ndarray) -> np.ndarray:
+    """Returns a boolean mask indicating which elements of `a` are in `self`."""
+    u = np.asarray(a, dtype=self.dtype).view(self.bits_dtype)
+    return np.logical_or.reduce([(u >= s) & (u < e) for s, e in self.ranges])
+
+  def at(self, idx: np.ndarray) -> np.ndarray:
+    """Maps 0-based indices `idx` into `self.ranges` as a `self.dtype` array."""
+    out = np.empty(idx.shape, dtype=self.bits_dtype)
+    offset = 0
+    for s, e in self.ranges:
+      n = e - s
+      m = (idx >= offset) & (idx < offset + n)
+      out[m] = (s + (idx[m] - offset)).astype(self.bits_dtype)
+      offset += n
+    return out.view(self.dtype)
+
+  def sample(self, rng: np.random.RandomState, n: int) -> np.ndarray:
+    """Uniformly samples `n` values of `self.dtype` from `self.ranges`."""
+    if self.is_all:
+      return jtu.rand_fullrange(rng)((n,), self.dtype)
+    counts = np.array([e - s for s, e in self.ranges], dtype=np.float64)
+    which = rng.choice(len(self.ranges), size=n, p=counts / counts.sum())
+    out = np.empty(n, dtype=self.bits_dtype)
+    for r_idx, (s, e) in enumerate(self.ranges):
+      m = which == r_idx
+      k = rng.randint(0, np.uint64(e - s), size=int(m.sum()), dtype=np.uint64)
+      out[m] = (np.uint64(s) + k).astype(self.bits_dtype)
+    return out.view(self.dtype)
+
+  @staticmethod
+  def all(dtype) -> "Domain":
+    """Returns a `Domain` covering all bit patterns of `dtype`."""
+    dt = np.dtype(dtype)
+    return Domain(dt, [(0, 1 << (dt.itemsize * 8))])
+
+  @staticmethod
+  def interval(dtype, lo: float, hi: float) -> "Domain":
+    """Returns a `Domain` of all `dtype` floats `x` with `lo <= x <= hi`.
+
+    Includes both `-0.0` and `+0.0` whenever `0` lies in `[lo, hi]`.
+    """
+    if math.isnan(lo) or math.isnan(hi) or lo > hi:
+      raise ValueError(f"Invalid interval [{lo}, {hi}]: expected lo <= hi.")
+    dt = np.dtype(dtype)
+    bits_dtype = np.dtype(f"u{dt.itemsize}")
+    bits = lambda x: int(np.asarray(x, dtype=dt).view(bits_dtype))
+    ranges = []
+    with np.errstate(over="ignore"):
+      if hi >= 0:
+        u_lo = bits(0.0 if lo <= 0 else lo)
+        u_hi = bits(0.0 if hi == 0 else hi)
+        ranges.append((u_lo, u_hi + 1))
+      if lo <= 0:
+        u_hi = bits(-0.0 if hi >= 0 else hi)
+        u_lo = bits(-0.0 if lo == 0 else lo)
+        ranges.append((u_hi, u_lo + 1))
+    return Domain(dt, ranges)
+
+  @staticmethod
+  def points(dtype, *values: float) -> "Domain":
+    """Returns a `Domain` containing specific `dtype` values."""
+    dt = np.dtype(dtype)
+    bits_dtype = np.dtype(f"u{dt.itemsize}")
+    ranges = []
+    with np.errstate(over="ignore"):
+      for v in values:
+        b = int(np.asarray(v, dtype=dt).view(bits_dtype))
+        ranges.append((b, b + 1))
+    return Domain(dt, ranges)
+
+  @staticmethod
+  def infs(dtype) -> "Domain":
+    """Returns a `Domain` containing `-inf` and `+inf` of `dtype`."""
+    return Domain.points(dtype, -np.inf, np.inf)
+
+  @staticmethod
+  def nans(dtype) -> "Domain":
+    """Returns a `Domain` containing all IEEE NaN bit patterns of `dtype`."""
+    dt = np.dtype(dtype)
+    sign = 1 << (dt.itemsize * 8 - 1)
+    bits_dtype = np.dtype(f"u{dt.itemsize}")
+    pos_inf = int(np.asarray(np.inf, dtype=dt).view(bits_dtype))
+    return Domain(dt, [(pos_inf + 1, sign), (sign + pos_inf + 1, sign << 1)])
+
+  @staticmethod
+  def infs_and_nans(dtype) -> "Domain":
+    """Returns a `Domain` containing `±inf` and all NaN bit patterns."""
+    return Domain.infs(dtype) | Domain.nans(dtype)
+
+
+DomainLike = Domain | Callable[[Any], Domain]
+
+
 def _make_interesting_samples(
     nargs: int,
     dtype,
     rng: np.random.RandomState,
     max_points: int,
     interesting_points: Sequence[Any] | None = None,
+    domains: Sequence[Domain] = (),
 ) -> tuple[np.ndarray, ...]:
   """Generates up to `max_points` test inputs at and near interesting values.
 
@@ -1017,6 +1164,8 @@ def _make_interesting_samples(
     max_points: Maximum number of test inputs to return.
     interesting_points: Optional extra test values. Each entry can be a scalar
       float or a tuple/list of `nargs` floats.
+    domains: Optional sequence of `nargs` `Domain`s restricting the generated
+      values for each argument.
 
   Returns:
     A tuple of `nargs` 1D arrays of `dtype`, each of length at most
@@ -1038,15 +1187,23 @@ def _make_interesting_samples(
     else:
       custom_scalars.append(float(item))
 
+  # Include the finite start and end values of each domain range so sampled runs
+  # probe at and within 3 ULPs of domain boundaries.
+  domains = domains or (Domain.all(dtype),) * nargs
+  for d in domains:
+    boundary_bits = [b for start, stop in d.ranges for b in (start, stop - 1)]
+    boundary_vals = np.array(boundary_bits, dtype=d.bits_dtype).view(d.dtype)
+    custom_scalars.extend(float(x) for x in boundary_vals if np.isfinite(x))
+
   # Put caller-supplied scalars first so they are kept if `max_points` is small.
   vals_1d = _with_ulp_neighbors(
       (*custom_scalars, *_common_interesting_points(dtype)),
       dtype,
       radius=3,
-      max_points=max_points if nargs == 1 else max(256, max_points // (2 * nargs)),
+      max_points=None if nargs == 1 else max(256, max_points // (2 * nargs)),
   )
   if nargs == 1:
-    return (vals_1d,)
+    return (vals_1d[domains[0].contains(vals_1d)][:max_points],)
 
   finfo = np.finfo(dtype)
   fmax = float(finfo.max)
@@ -1096,12 +1253,19 @@ def _make_interesting_samples(
           coords[i].append(sign * shifted)
 
   # 4. Tuples where one argument is an interesting 1D value and the rest are random.
-  rand_gen = jtu.rand_fullrange(rng)
   for fixed_axis in range(nargs):
+    fixed_vals = vals_1d[domains[fixed_axis].contains(vals_1d)]
     for i in range(nargs):
-      coords[i].append(vals_1d if i == fixed_axis else rand_gen((len(vals_1d),), dtype))
+      coords[i].append(
+          fixed_vals
+          if i == fixed_axis
+          else domains[i].sample(rng, len(fixed_vals))
+      )
 
   out = [np.concatenate(c) for c in coords]
+  valid = np.logical_and.reduce([d.contains(a) for a, d in zip(out, domains)])
+  tier1_len = int(np.sum(valid[:tier1_len]))
+  out = [a[valid] for a in out]
   if len(out[0]) > max_points:
     if tier1_len < max_points:
       perm = tier1_len + rng.permutation(len(out[0]) - tier1_len)
@@ -1113,29 +1277,27 @@ def _make_interesting_samples(
 
 
 def _make_exhaustive_chunk(
-    start: int, count: int, nargs: int, dtype
+    start: int,
+    count: int,
+    nargs: int,
+    dtype,
+    domains: Sequence[Domain] = (),
 ) -> tuple[np.ndarray, ...]:
-  """Generates `count` exhaustive n-ary bit-pattern tuples starting at flat index `start`."""
-  itemsize = np.dtype(dtype).itemsize
-  bits_per_arg = itemsize * 8
-  udt = np.dtype(f"u{itemsize}")
-  if nargs == 1:
-    return (np.arange(start, start + count, dtype=udt).view(dtype),)
-  radix = 1 << bits_per_arg
-  if nargs == 2 and start % radix == 0 and count % radix == 0:
-    n_rows = count // radix
-    row_start = start // radix
-    arg0 = np.tile(np.arange(radix, dtype=udt).view(dtype), n_rows)
-    arg1 = np.repeat(
-        np.arange(row_start, row_start + n_rows, dtype=udt).view(dtype), radix
+  """Generates `count` exhaustive n-ary bit-pattern tuples from `start`."""
+  domains = domains or (Domain.all(dtype),) * nargs
+  radices = tuple(d.size for d in domains)
+  r0 = radices[0]
+  if nargs == 2 and start % r0 == 0 and count % r0 == 0:
+    n_rows = count // r0
+    row0 = domains[0].at(np.arange(r0, dtype=np.intp))
+    col1 = domains[1].at(
+        np.arange(start // r0, start // r0 + n_rows, dtype=np.intp)
     )
-    return (arg0, arg1)
-  arg_mask = np.uint64(radix - 1)
-  idx = np.arange(start, start + count, dtype=np.uint64)
-  return tuple(
-      ((idx >> np.uint64(i * bits_per_arg)) & arg_mask).astype(udt).view(dtype)
-      for i in range(nargs)
+    return (np.tile(row0, n_rows), np.repeat(col1, r0))
+  coords = np.unravel_index(
+      np.arange(start, start + count, dtype=np.intp), radices, order="F"
   )
+  return tuple(d.at(idx) for idx, d in zip(coords, domains))
 
 
 def check_nary_precision(
@@ -1153,6 +1315,7 @@ def check_nary_precision(
     ref_dtype: object | None = None,
     max_samples: int | None = None,
     interesting_points: Sequence[Any] | None = None,
+    domains: Sequence[DomainLike | None] | None = None,
 ):
   """Checks precision of n-ary `jax_fn` against reference implementations.
 
@@ -1211,6 +1374,9 @@ def check_nary_precision(
     interesting_points: Optional sequence of additional function-specific
       test points (scalars, or `nargs`-tuples for n-ary functions) to sample at
       and near during non-exhaustive runs.
+    domains: Optional sequence of `nargs` `Domain`s, `dtype -> Domain`
+      callables, or `None` (for `Domain.all(dtype)`) restricting the bit
+      patterns tested for each argument.
   """
   if dtype is None:
     dtype = mpmath_fn
@@ -1234,13 +1400,30 @@ def check_nary_precision(
 
   is_f64 = dtype == jnp.float64 or dtype == np.float64
   itemsize = np.dtype(dtype).itemsize
-  bits_per_arg = itemsize * 8
   udt = np.dtype(f"u{itemsize}")
+
+  def _resolve_domain(d: DomainLike | None) -> Domain:
+    if d is None:
+      return Domain.all(dtype)
+    resolved = d(dtype) if callable(d) else d
+    if resolved.dtype != np.dtype(dtype):
+      raise ValueError(
+          f"Domain dtype {resolved.dtype} does not match {np.dtype(dtype)}."
+      )
+    return resolved
+
+  if domains is not None and len(domains) != nargs:
+    raise ValueError(
+        f"Expected len(domains) == nargs ({nargs}), got {len(domains)}."
+    )
+  resolved_domains = tuple(
+      _resolve_domain(d) for d in (domains or (None,) * nargs)
+  )
 
   if max_samples is None:
     max_samples = MAX_F64_SAMPLES.value if is_f64 else MAX_SAMPLES.value
 
-  total_elements = 1 << (bits_per_arg * nargs)
+  total_elements = math.prod(d.size for d in resolved_domains)
   is_exhaustive = total_elements <= max_samples
   total_points = min(total_elements, max_samples)
 
@@ -1275,7 +1458,7 @@ def check_nary_precision(
     label = "exhaustive"
     chunks = [
         lambda s=start, c=min(chunk_size, total_points - start): (
-            _make_exhaustive_chunk(s, c, nargs, dtype)
+            _make_exhaustive_chunk(s, c, nargs, dtype, resolved_domains)
         )
         for start in range(0, total_points, chunk_size)
     ]
@@ -1294,18 +1477,22 @@ def check_nary_precision(
         if first:
           interesting_budget = min(max_interesting_cap, c // 2)
           int_samples = _make_interesting_samples(
-              nargs, dtype, rng, interesting_budget, interesting_points
+              nargs,
+              dtype,
+              rng,
+              interesting_budget,
+              interesting_points,
+              resolved_domains,
           )
-          n_int = len(int_samples[0])
-          n_rand = c - n_int
+          n_rand = c - len(int_samples[0])
           rand_samples = tuple(
-              jtu.rand_fullrange(rng)((n_rand,), dtype) for _ in range(nargs)
+              d.sample(rng, n_rand) for d in resolved_domains
           )
           return tuple(
               np.concatenate([int_a, rand_a])
               for int_a, rand_a in zip(int_samples, rand_samples)
           )
-        return tuple(jtu.rand_fullrange(rng)((c,), dtype) for _ in range(nargs))
+        return tuple(d.sample(rng, c) for d in resolved_domains)
 
       chunks.append(_make_chunk)
 
@@ -1470,6 +1657,7 @@ def check_unary_precision(
     check_signed_zeros: bool | list = True,
     max_samples: int | None = None,
     interesting_points: Sequence[Any] | None = None,
+    domain: DomainLike | None = None,
 ):
   """Checks unary precision of `jax_fn` against reference implementations.
 
@@ -1494,6 +1682,7 @@ def check_unary_precision(
       check_signed_zeros=check_signed_zeros,
       max_samples=max_samples,
       interesting_points=interesting_points,
+      domains=(domain,) if domain is not None else None,
   )
 
 

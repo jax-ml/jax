@@ -736,6 +736,89 @@ class UlpDiffTest(jtu.JaxTestCase):
         )
     )
 
+  def test_domain_bounds(self):
+    # Full interval unioned with infs_and_nans equals all bit patterns.
+    for dt in (jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64):
+      full = util.Domain.interval(
+          dt, -np.inf, np.inf
+      ) | util.Domain.infs_and_nans(dt)
+      self.assertEqual(full, util.Domain.all(dt))
+    self.assertEqual(util.Domain.nans(jnp.bfloat16).size, 2 * 127)
+
+    # Pure finite interval: zero non-finite values, covers -0.0 and +0.0.
+    seen_finite = []
+    util.check_unary_precision(
+        self,
+        jnp.negative,
+        lambda x: (seen_finite.append(x.copy()), -x)[1],
+        dtype=jnp.bfloat16,
+        bounds=0.5,
+        domain=util.Domain.interval(jnp.bfloat16, -1.0, 1.0),
+    )
+    arr = np.concatenate(seen_finite)
+    self.assertEqual(len(arr), 2 * (0x3F80 + 1))
+    self.assertTrue(np.all((arr >= -1.0) & (arr <= 1.0)))
+    self.assertTrue(np.any((arr == 0) & np.signbit(arr.astype(float))))
+    self.assertTrue(np.any((arr == 0) & ~np.signbit(arr.astype(float))))
+
+    # Union with infs_and_nans via callable (exhaustive bf16, sampled f32/f64).
+    dom = lambda dt: (
+        util.Domain.interval(dt, -1.0, 1.0) | util.Domain.infs_and_nans(dt)
+    )
+    cases = (
+        (jnp.bfloat16, {}),
+        (jnp.float32, {"max_samples": 2048}),
+        (jnp.float64, {"max_samples": 2048}),
+    )
+    for dt, kwargs in cases:
+      seen = []
+      util.check_unary_precision(
+          self,
+          jnp.negative,
+          lambda x, s=seen: (s.append(x.copy()), -x)[1],
+          dtype=dt,
+          bounds=0.5,
+          domain=dom,
+          **kwargs,
+      )
+      vals = np.concatenate(seen)
+      fin = vals[np.isfinite(vals)]
+      self.assertTrue(np.all((fin >= -1.0) & (fin <= 1.0)))
+      self.assertTrue(np.any(vals == -np.inf))
+      self.assertTrue(np.any(vals == np.inf))
+      self.assertTrue(np.any(np.isnan(vals)))
+      if dt == jnp.bfloat16:
+        self.assertEqual(int(np.isnan(vals).sum()), 2 * 127)
+
+    # Binary domains (exhaustive).
+    seen_xy = []
+    util.check_nary_precision(
+        self,
+        jnp.add,
+        lambda x, y: (seen_xy.append((x.copy(), y.copy())), x + y)[1],
+        dtype=jnp.bfloat16,
+        nargs=2,
+        bounds=0.5,
+        domains=[
+            lambda dt: util.Domain.interval(dt, 0.0, 0.0),
+            lambda dt: (
+                util.Domain.interval(dt, -1.0, -1.0) | util.Domain.infs(dt)
+            ),
+        ],
+    )
+    xs = np.concatenate([x for x, _ in seen_xy])
+    ys = np.concatenate([y for _, y in seen_xy])
+    self.assertEqual(len(xs), 2 * (1 + 2))
+    self.assertTrue(np.all(xs == 0.0))
+    self.assertTrue(np.all((ys == -1.0) | np.isinf(ys)))
+
+    with self.assertRaises(ValueError):
+      util.Domain.interval(jnp.float32, 2.0, 1.0)
+    with self.assertRaises(ValueError):
+      util.check_nary_precision(
+          self, jnp.add, np.add, dtype=jnp.bfloat16, nargs=2, domains=[dom]
+      )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=util.ClassShardedTestLoader())
