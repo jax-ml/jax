@@ -3617,8 +3617,8 @@ def nan_to_num(x: ArrayLike, copy: bool = True, nan: ArrayLike = 0.0,
   posinf = info.max if posinf is None else posinf
   neginf = info.min if neginf is None else neginf
   out = where(ufuncs.isnan(x), asarray(nan, dtype=dtype), x)
-  out = where(ufuncs.isposinf(out), asarray(posinf, dtype=dtype), out)
-  out = where(ufuncs.isneginf(out), asarray(neginf, dtype=dtype), out)
+  out = where(ufuncs.isposinf(x), asarray(posinf, dtype=dtype), out)
+  out = where(ufuncs.isneginf(x), asarray(neginf, dtype=dtype), out)
   return out
 
 
