@@ -1209,14 +1209,9 @@ def _unravel_program_id(
     block_id: ir.Value,
     axis: int,
     dimensions: tuple[int, ...],
-    row_major: bool = False
 ) -> ir.Value:
   """Computes the program ID for axes compressed into one block dimension."""
-  if row_major:
-    div_value = math.prod(dimensions[axis+1:])
-  else:
-    div_value = math.prod(dimensions[:axis])
-  div_value = _as_index(_i32_constant(div_value))
+  div_value = _as_index(_i32_constant(math.prod(dimensions[:axis])))
   pid = arith_dialect.divui(block_id, div_value)
   axis_size = _as_index(_i32_constant(dimensions[axis]))
   pid = arith_dialect.remui(pid, axis_size)
@@ -1591,7 +1586,6 @@ def _bubble_up_transforms_for_lowering(
     list[state_types.Transform],
     list[state_types.Transform],
     list[state_types.Transform],
-    list[state_types.Transform],
 ]:
   """Bubbles up eligible `transforms` to the head of the sequence.
 
@@ -1607,7 +1601,6 @@ def _bubble_up_transforms_for_lowering(
     * second element is a list of avals corresponding to bubbled up transforms
     * third element is a list of remaining transforms (i.e.,
     `remaining_transforms`)
-    * fourth element is a list of avals corresponding to remaining transforms
   """
   bubbled_up_transforms = []
   bubbled_up_transform_avals = []
@@ -1653,12 +1646,7 @@ def _bubble_up_transforms_for_lowering(
 
   assert len(bubbled_up_transforms) == len(bubbled_up_transform_avals)
   assert len(remaining_transforms) == len(remaining_transform_avals)
-  return (
-      bubbled_up_transforms,
-      bubbled_up_transform_avals,
-      remaining_transforms,
-      remaining_transform_avals,
-  )
+  return bubbled_up_transforms, bubbled_up_transform_avals, remaining_transforms
 
 
 def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
@@ -1671,7 +1659,6 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
     handle_transposes=True,
     handle_reshapes=True,
     allow_peer_refs=False,
-    allow_multicast_refs=False,
 ) -> tuple[T, state_types.AbstractRef, Sequence[state_types.Transform]]:
   scratch_transforms = ctx.module_ctx.scratch_transforms.get(ref, ())
   if isinstance(scratch_transforms, dict):
@@ -1728,23 +1715,19 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
       transforms = (*untransforms, *transforms)
       transform_avals = (*untransforms, *transform_avals)
 
-  (
-      bubbled_up_transforms,
-      bubbled_up_transform_avals,
-      remaining_transforms,
-      _,
-  ) = _bubble_up_transforms_for_lowering(
-      ctx,
-      ref_aval,
-      transforms,
-      transform_avals,
-      handle_transposes=handle_transposes,
-      handle_reshapes=handle_reshapes,
+  bubbled_up_transforms, bubbled_up_transform_avals, remaining_transforms = (
+      _bubble_up_transforms_for_lowering(
+          ctx,
+          ref_aval,
+          transforms,
+          transform_avals,
+          handle_transposes=handle_transposes,
+          handle_reshapes=handle_reshapes,
+      )
   )
 
   transformed_ref: Any = ref
   peer_device_id = None
-  is_multicast = False
   cluster_dim = None
   cluster_idx = None
 
@@ -1783,12 +1766,10 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
             ctx, device_id, device_id_type, t_aval.device_id
         )
       case gpu_core.MulticastRef(_):
-        if not allow_multicast_refs:
-          raise NotImplementedError(
-              "Multicast references are not allowed in the lowering of this"
-              " primitive."
-          )
-        is_multicast = True
+        raise NotImplementedError(
+            "Multicast references are not allowed in the lowering of this"
+            " primitive."
+        )
       case gpu_core.ClusterRefTransform(dims, idxs):
         if len(dims) != 1:
           raise NotImplementedError(
@@ -1813,7 +1794,6 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
           transformed_ref, cluster_dim, cluster_idx, generic=False
       )
   if peer_device_id is not None:
-    assert not is_multicast
     if not allow_peer_refs:
       raise NotImplementedError(
           "Peer device references are not allowed in the lowering of this"
@@ -1822,8 +1802,6 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
     transformed_ref = ctx.launch_ctx.to_remote(
         transformed_ref, _ensure_ir_value(peer_device_id, jnp.int32)
     )
-  if is_multicast:
-    transformed_ref = ctx.launch_ctx.to_remote_multicast(transformed_ref)
   assert isinstance(ref_aval, state_types.AbstractRef)
   return transformed_ref, ref_aval, remaining_transforms
 
@@ -4383,12 +4361,6 @@ def _i32_constant(v: int) -> ir.Value:
   if v < jnp.iinfo(jnp.int32).min or v > jnp.iinfo(jnp.int32).max:
     raise ValueError(f"Integer constant out of range for i32: {v}")
   return arith_dialect.constant(ir.IntegerType.get_signless(32), v)
-
-
-def _i64_constant(v: int) -> ir.Value:
-  if v < jnp.iinfo(jnp.int64).min or v > jnp.iinfo(jnp.int64).max:
-    raise ValueError(f"Integer constant out of range for i64: {v}")
-  return arith_dialect.constant(ir.IntegerType.get_signless(64), v)
 
 
 def _as_index(v: object) -> ir.Value:
