@@ -75,8 +75,8 @@ on:
       - main
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/heads/release/') && github.ref != 'refs/heads/main' }}
 
 jobs:
   check-trigger:
