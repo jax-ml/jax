@@ -2572,39 +2572,40 @@ def _dst_starts_with_cur(dst, cur) -> bool:
   """
   return dst[:len(cur)] == cur
 
-def _a2a_target(cur: list[tuple], dst: list[tuple], axis) -> int | None:
-  """Returns the dim that `axis` can be moved to with one all_to_all, or None.
+def _a2a_target(cur: list[tuple], dst: list[tuple], axes: tuple) -> int | None:
+  """Returns the dim that `axes` can be moved to with one all_to_all, or None.
 
-  `axis` is the last axis of some dim in `cur`. It can only move to the dim it
-  is sharded on in `dst`, and only once every axis before it on that dim is
-  already in place. Otherwise it would land out of order.
+  `axes` are the last axes of some dim in `cur`. They can only move to the dim
+  they are sharded on in `dst`, and only if that dim already holds exactly the
+  axes that come before them there. Otherwise they would land out of order.
 
   For example:
 
-  * cur = [('x',), ()], dst = [(), ('x', 'y')], axis = 'x', return = 1
+  * cur = [('x',), ()], dst = [(), ('x', 'y')], axes = ('x',), return = 1
     Dim 1 is empty and 'x' goes first.
-  * cur = [('y',), ('x',)], dst = [(), ('x', 'y')], axis = 'y', return = 1
+  * cur = [('y',), ('x',)], dst = [(), ('x', 'y')], axes = ('y',), return = 1
     'x' is already on dim 1, so 'y' goes next.
-  * cur = [('x',), ('y',)], dst = [(), ('x', 'y')], axis = 'x', return = None
+  * cur = [('x', 'y'), ()], dst = [(), ('x', 'y')], axes = ('x', 'y'),
+    return = 1
+    Both axes move to dim 1 together.
+  * cur = [('x',), ('y',)], dst = [(), ('x', 'y')], axes = ('x',), return = None
     'y' is on dim 1 where 'x' should go.
-  * cur = [('z',), ()], dst = [(), ('x', 'y')], axis = 'z', return = None
+  * cur = [('z',), ()], dst = [(), ('x', 'y')], axes = ('z',), return = None
     'z' isn't sharded anywhere in `dst`.
   """
-  from jax._src.lax import utils as lax_utils  # type: ignore
-  pos = lax_utils._axis_pos(dst, axis)
-  if pos is None:
-    return None
-  dim, axes_before = pos
-  return dim if cur[dim] == axes_before else None
+  for i, (c, d) in enumerate(zip(cur, dst)):
+    if _dst_starts_with_cur(d, c + axes):
+      return i
+  return None
 
 @dataclass(frozen=True, slots=True)
 class _ReshardMove:
-  """Takes mesh `axis` off the end of `src_dim`.
+  """Takes mesh `axes` off the end of `src_dim`.
 
-  It's moved to `dst_dim` with an all_to_all, or dropped with an all_gather if
-  `dst_dim` is None.
+  They're moved to `dst_dim` with an all_to_all, or dropped with an all_gather
+  if `dst_dim` is None.
   """
-  axis: str
+  axes: tuple
   src_dim: int
   dst_dim: int | None
 
@@ -2638,19 +2639,32 @@ def _free_slice_axes(cur: list[tuple], dst: list[tuple]) -> tuple[tuple, ...]:
   return tuple(out)
 
 def _next_move(cur: list[tuple], dst: list[tuple]) -> _ReshardMove:
-  """Takes the last axis off a dim that isn't a prefix of its target.
+  """Takes axes off the end of a dim that isn't a prefix of its target.
 
-  Prefers moving an axis with an all_to_all over dropping one with an
-  all_gather.
+  Prefers moving axes with an all_to_all over dropping them with an
+  all_gather, trying the whole dim's axes before falling back to its last axis.
   """
   out_of_place = [i for i, (c, d) in enumerate(zip(cur, dst))
                   if not _dst_starts_with_cur(d, c)]
   for i in out_of_place:
-    target = _a2a_target(cur, dst, cur[i][-1])
-    if target is not None:
-      return _ReshardMove(cur[i][-1], i, target)
+    for axes in (cur[i], cur[i][-1:]):
+      target = _a2a_target(cur, dst, axes)
+      if target is not None:
+        return _ReshardMove(axes, i, target)
+
+  # No all_to_all is possible, so all_gather on the first out-of-place dim.
+  # If none of its axes are in `dst`, gather them all at once, e.g.
+  # P(('x', 'y'), None) -> P(None, None) gathers ('x', 'y') together.
+  # Otherwise gather only its last axis, so the axes `dst` still needs stay
+  # sharded, e.g. P(('x', 'y'), None) -> P('x', None) gathers just 'y'
+  # instead of gathering ('x', 'y') and then slicing 'x' back in.
   i = out_of_place[0]
-  return _ReshardMove(cur[i][-1], i, None)
+  dst_axes = {a for d in dst for a in d}
+  if any(a in dst_axes for a in cur[i]):
+    axes = cur[i][-1:]
+  else:
+    axes = cur[i]
+  return _ReshardMove(axes, i, None)
 
 def _plan_reshard(src_spec, dst_spec) -> list[_ReshardMove | _ReshardSlice]:
   """Per-shard steps that reshard `src_spec` into `dst_spec`.
@@ -2663,7 +2677,11 @@ def _plan_reshard(src_spec, dst_spec) -> list[_ReshardMove | _ReshardSlice]:
     f32[4@x, 4@y] -> f32[4, 4@y]    all_gather 'x' (dim 1 isn't ready for it)
                   -> f32[4@y, 4]    all_to_all 'y' to dim 0
                   -> f32[4@y, 4@x]  slice 'x'
+
+    f32[4@(x,y), 4] -> f32[4, 4@(x,y)]  all_to_all ('x', 'y') to dim 1
   """
+  # TODO(yashkatariya): Reordering axes within a dim, e.g. P(('x', 'y')) ->
+  # P(('y', 'x')), is a single ppermute but is planned as gathers and a slice.
   cur = [_tupleize_spec(p) for p in src_spec]
   dst = [_tupleize_spec(p) for p in dst_spec]
   steps = []
@@ -2677,9 +2695,9 @@ def _plan_reshard(src_spec, dst_spec) -> list[_ReshardMove | _ReshardSlice]:
     # Some dim is still out of place, so it needs a collective.
     move = _next_move(cur, dst)
     steps.append(move)  # type: ignore
-    cur[move.src_dim] = cur[move.src_dim][:-1]
+    cur[move.src_dim] = cur[move.src_dim][:-len(move.axes)]
     if move.dst_dim is not None:
-      cur[move.dst_dim] += (move.axis,)
+      cur[move.dst_dim] += move.axes
 
 def _slice_to_shard(x, axes_per_dim: Sequence[tuple], mesh):
   """Further shards each dim of `x` over `axes_per_dim` with a local slice."""
@@ -2717,9 +2735,9 @@ def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh
       if isinstance(step, _ReshardSlice):
         x = _slice_to_shard(x, step.axes_per_dim, mesh)
       elif step.dst_dim is None:
-        x = parallel.all_gather(x, step.axis, axis=step.src_dim, tiled=True)
+        x = parallel.all_gather(x, step.axes, axis=step.src_dim, tiled=True)
       else:
-        x = parallel.all_to_all(x, step.axis, split_axis=step.dst_dim,
+        x = parallel.all_to_all(x, step.axes, split_axis=step.dst_dim,
                                 concat_axis=step.src_dim, tiled=True)
     return (x,)
 

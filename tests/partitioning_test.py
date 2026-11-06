@@ -411,6 +411,32 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       expected = f(x)
       self.assertArraysEqual(expected, out)
 
+  @parameterized.parameters(
+      # Both axes move together in one all_to_all.
+      (P(('x', 'y'), None), P(None, ('x', 'y')), (1, 0, 0)),
+      # Both axes are gathered together in one all_gather.
+      (P(('x', 'y'), None), P(None, None), (0, 1, 0)),
+      (P('x', 'y'), P('y', 'x'), (1, 1, 1)),
+  )
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshard_collective_counts(self, in_spec, out_spec, counts, mesh):
+    np_x = np.arange(16, dtype=np.float32).reshape(4, 4)
+    x = jax.device_put(np_x, in_spec)
+
+    @jax.jit
+    def f(a):
+      return jax.reshard(a, out_spec)
+
+    hlo = f.lower(x).as_text()
+    num_a2a, num_ag, num_slice = counts
+    self.assertEqual(hlo.count('stablehlo.all_to_all'), num_a2a)
+    self.assertEqual(hlo.count('stablehlo.all_gather'), num_ag)
+    self.assertEqual(hlo.count('stablehlo.dynamic_slice'), num_slice)
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+    self.assertArraysEqual(out, np_x)
+
   @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
   def test_reshard_rotate_three_axes(self, mesh):
