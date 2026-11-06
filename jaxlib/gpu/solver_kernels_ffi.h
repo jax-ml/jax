@@ -21,6 +21,22 @@ limitations under the License.
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
 
+// Dispatch an FFI kernel template over the four supported dtypes.
+// Requires a local `dataType` variable of type ffi::DataType.
+#define SOLVER_DISPATCH_IMPL(impl, ...)           \
+  switch (dataType) {                             \
+    case ffi::F32:                                \
+      return impl<float>(__VA_ARGS__);            \
+    case ffi::F64:                                \
+      return impl<double>(__VA_ARGS__);           \
+    case ffi::C64:                                \
+      return impl<gpuComplex>(__VA_ARGS__);       \
+    case ffi::C128:                               \
+      return impl<gpuDoubleComplex>(__VA_ARGS__); \
+    default:                                      \
+      break;                                      \
+  }
+
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
