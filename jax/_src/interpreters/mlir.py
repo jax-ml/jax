@@ -2565,7 +2565,8 @@ def _get_override_lowering_rule(
 
 def _maybe_lower_with_shard_map(
     _prim: core.Primitive, ctx: LoweringRuleContext, *args, **params):
-  from jax._src import shard_map  # pyrefly: ignore[missing-module-attribute]
+  from jax._src import shard_map  # type: ignore
+  from jax._src import pjit  # type: ignore
   if (not config.shard_map_partitioning.value or
       _prim in shard_map_passthrough_primitives):
     return None
@@ -2596,10 +2597,11 @@ def _maybe_lower_with_shard_map(
       assert get_abstract_mesh().are_all_axes_manual
       if partitioning_rule.in_collective is not None:
         xs = partitioning_rule.in_collective(*xs)
-      ans = _prim.bind(*xs, **params)
+      if _prim is not pjit.reshard_p:
+        xs = _prim.bind(*xs, **params)
       if partitioning_rule.out_collective is not None:
-        ans = partitioning_rule.out_collective(ans)
-      return ans
+        xs = partitioning_rule.out_collective(xs)
+      return xs
     return body(*operands)
 
   return lower_fun(fn, multiple_results=False)(ctx, *args)

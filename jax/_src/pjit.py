@@ -2498,7 +2498,7 @@ def _reshard_shaped_array(aval: core.ShapedArray, dst_sharding
   dst_sharding = _canonicalize_reshard_sharding(dst_sharding, aval, False)
   _check_unreduced_reshard(aval, dst_sharding)
   _check_no_collectives_reshard(aval, dst_sharding)
-  if dst_sharding is None or aval.sharding == dst_sharding:
+  if aval.sharding == dst_sharding:
     return aval
   out_aval = aval.update(sharding=dst_sharding)
   out_layout = lax_utils.call_layout_rule(
@@ -2724,9 +2724,8 @@ def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh
       out_s.mesh != mesh):
     raise NotImplementedError
 
-  per_shard_params = {'dst_sharding': None, 'concrete_mesh': None}
   if in_s.spec.partitions == out_s.spec.partitions:
-    return mlir.PartitioningRule(per_shard_params=per_shard_params)
+    return mlir.PartitioningRule()
 
   steps = _plan_reshard(in_s.spec.partitions, out_s.spec.partitions)
 
@@ -2741,8 +2740,7 @@ def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh
                                 concat_axis=step.src_dim, tiled=True)
     return (x,)
 
-  return mlir.PartitioningRule(
-      in_collective=in_collective, per_shard_params=per_shard_params)
+  return mlir.PartitioningRule(in_collective=in_collective)
 
 mlir.register_lowering(
     reshard_p, _reshard_hlo_lowering,
