@@ -13,6 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
+import dataclasses
 import enum
 import math
 
@@ -40,16 +41,86 @@ class Dim(enum.Enum):
   MN = enum.auto()
 
 
+_MMA_ATOM_ROWS = 8
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class SmemDescriptor:
+  """MMA shared memory operand descriptor and slicing metadata.
+
+  Attributes:
+    addr_base: Dynamic `i32` `ir.Value` holding the 16-byte encoded shared
+      memory base address `((ptr & 0x3FFFF) >> 4)`.
+    fastest_dim: The contiguous dimension in shared memory.
+  """
+
+  addr_base: ir.Value
+  fastest_dim: Dim
+  _desc_const: int
+  _mn_tiles: int
+  _k_tiles: int
+  _mn_tiling: int
+  _k_tiling: int
+  _mn_tile_stride: int
+  _k_tile_stride: int
+  _k_tiling_stride: int
+  _element_bitwidth: int
+
+  def encoded_offset(self, mn_idx: int, k_idx: int) -> int:
+    """Returns the 64-bit constant to add to `addr_base` for `(mn_idx, k_idx)`.
+
+    Packs the static descriptor metadata (LBO, SBO, swizzle) in bits [16:63]
+    with the 16-byte encoded slice byte offset in bits [0:13].
+    """
+    mn_tile, mn_rem = divmod(mn_idx, self._mn_tiling)
+    if mn_rem:
+      raise ValueError(
+          f"MN offset {mn_idx} must be a multiple of tile size"
+          f" {self._mn_tiling}"
+      )
+    if self.fastest_dim == Dim.MN and k_idx % _MMA_ATOM_ROWS:
+      raise ValueError(
+          f"K offset {k_idx} must be a multiple of {_MMA_ATOM_ROWS} when MN is"
+          " fastest"
+      )
+    k_tile, k_in_tile = divmod(k_idx, self._k_tiling)
+    if not (0 <= mn_tile < self._mn_tiles):
+      raise ValueError(
+          f"MN offset {mn_idx} out of bounds for"
+          f" {self._mn_tiles * self._mn_tiling} elements"
+      )
+    if not (0 <= k_tile < self._k_tiles):
+      raise ValueError(
+          f"K offset {k_idx} out of bounds for"
+          f" {self._k_tiles * self._k_tiling} elements"
+      )
+    bit_offset = (
+        mn_tile * self._mn_tile_stride
+        + k_tile * self._k_tile_stride
+        + k_in_tile * self._k_tiling_stride
+    ) * self._element_bitwidth
+    if bit_offset % 8:
+      raise ValueError(
+          f"Slice ({mn_idx}, {k_idx}) offset ({bit_offset} bits) must be"
+          " byte-aligned"
+      )
+    return self._desc_const | encode_addr(bit_offset // 8)
+
+  def slice_i64(self, mn_idx: int = 0, k_idx: int = 0) -> ir.Value:
+    """Materializes the `i64` SMEM descriptor for slice `(mn_idx, k_idx)`."""
+    i64 = ir.IntegerType.get_signless(64)
+    offset = self.encoded_offset(mn_idx, k_idx)
+    return arith.addi(arith.extui(i64, self.addr_base), _i64_const(offset))
+
+
 def create_descriptor(
     ref: ir.Value,
     swizzle: int,
-    group_size: tuple[int, int],  # Instruction group size on each operand dim.
-    logical_k_major: bool,  # False for LHS, True for RHS.
+    mn_size: int,  # Single-instruction extent along the M or N dimension.
+    logical_k_major: bool,  # False for LHS (M, K), True for RHS (K, N).
     # Soft deprecated. Use small tiling instead.
     large_tile: tuple[int, int] | None = None,
-    mma_bytewidth_k: int = 32,
-    split_const: bool = False,
-):
+) -> SmemDescriptor:
   ref_ty = ir.MemRefType(ref.type)
   element_bitwidth = utils.bitwidth(ref_ty.element_type)
   swizzle_elems = 8 * swizzle // element_bitwidth
@@ -60,27 +131,21 @@ def create_descriptor(
     return bit_stride // 8
   mn_large_tile = k_large_tile = None
   if logical_k_major:
-    _, mn_tiles, k_tiling, mn_tiling = ref_ty.shape
+    k_tiles, mn_tiles, k_tiling, mn_tiling = ref_ty.shape
     k_tile_stride, mn_tile_stride, k_tiling_stride, mn_tiling_stride = (
         ref_strides
     )
-    k_group_size, mn_group_size = group_size
     if large_tile is not None:
       k_large_tile, mn_large_tile = large_tile
   else:
-    mn_tiles, _, mn_tiling, k_tiling = ref_ty.shape
+    mn_tiles, k_tiles, mn_tiling, k_tiling = ref_ty.shape
     mn_tile_stride, k_tile_stride, mn_tiling_stride, k_tiling_stride = (
         ref_strides
     )
-    mn_group_size, k_group_size = group_size
     if large_tile is not None:
       mn_large_tile, k_large_tile = large_tile
 
   IGNORED = 0
-  MMA_ATOM_ROWS = 8
-  mma_width_k = 8 * mma_bytewidth_k // element_bitwidth
-  desc_k_tiling: tuple[int, ...] = ()
-  desc_k_strides: tuple[int, ...]
   if k_tiling_stride > mn_tiling_stride:
     slower_tiling, faster_tiling = k_tiling, mn_tiling
   else:
@@ -106,13 +171,12 @@ def create_descriptor(
       )
       # There are configurations where large tiles are same size as small ones.
       # We use the small path since it has fewer restrictions.
-      and (slower_tiling, faster_tiling) != (MMA_ATOM_ROWS, swizzle_elems)
-      and mma_bytewidth_k == 32
+      and (slower_tiling, faster_tiling) != (_MMA_ATOM_ROWS, swizzle_elems)
   ):  # Large tiles.
     if k_tiling_stride == 1 and mn_tiling_stride == k_tiling:
       fastest_dim = Dim.K
       leading_byte_offset = IGNORED  # TC assumes K to be contiguous here.
-      assert k_tiling == k_group_size  # Else we need multi-level striding.
+      assert k_tiling == swizzle_elems
       # MMA atoms in a group are contiguous, so we increment by the MMA atom
       # size. However, we only have one level of striding, and so if the group
       # size exceeds a single large tile (and there is more than one tile) then
@@ -120,7 +184,7 @@ def create_descriptor(
       # need another striding level.
       if (
           mn_tiles > 1
-          and mn_group_size > mn_tiling
+          and mn_size > mn_tiling
           and mn_tile_stride != math.prod(large_tile)
       ):
         raise ValueError(
@@ -129,29 +193,24 @@ def create_descriptor(
             " stack of tiles "
             f"({mn_tiles}, {mn_tile_stride} != {math.prod(large_tile)})"
         )
-      stride_byte_offset = MMA_ATOM_ROWS * swizzle
-      desc_k_strides = (mma_bytewidth_k,)  # K is contiguous.
+      stride_byte_offset = _MMA_ATOM_ROWS * swizzle
     elif k_tiling_stride == mn_large_tile and mn_tiling_stride == 1:
       if k_large_tile != mn_large_tile:
         raise ValueError(
             "MMA layout with large tiles that is MN-fastest is only supported"
             " when the tiling is square"
         )
+      assert mn_large_tile == swizzle_elems
       fastest_dim = Dim.MN
       # Next swizzle atom with the same K coordinate is in the next MN tile.
       leading_byte_offset = to_byte_stride(mn_tile_stride)
-      # MMA atoms in a group are contiguous and a group does not exceed a tile.
-      assert k_large_tile == k_group_size
-      stride_byte_offset = MMA_ATOM_ROWS * swizzle
-      # Each row is swizzle bytes wide, and we read mma_width_k rows at a time.
-      assert mn_large_tile == swizzle_elems
-      desc_k_strides = (mma_width_k * swizzle,)
+      stride_byte_offset = _MMA_ATOM_ROWS * swizzle
     else:
       raise ValueError("MMA tiles must be contiguous")
   else:  # Small tiles.
-    if slower_tiling != MMA_ATOM_ROWS or faster_tiling != swizzle_elems:
+    if slower_tiling != _MMA_ATOM_ROWS or faster_tiling != swizzle_elems:
       raise ValueError(
-          f"Tiling should be ({MMA_ATOM_ROWS}, swizzle_elems) where"
+          f"Tiling should be ({_MMA_ATOM_ROWS}, swizzle_elems) where"
           f" swizzle_elems = 8 * swizzle // bitwidth(dtype) (= 8 * {swizzle} //"
           f" {element_bitwidth} = {swizzle_elems}), but got ({slower_tiling},"
           f" {faster_tiling})"
@@ -160,54 +219,40 @@ def create_descriptor(
       fastest_dim = Dim.K
       leading_byte_offset = IGNORED  # TC assumes K to be contiguous here.
       stride_byte_offset = to_byte_stride(mn_tile_stride)
-      if k_tiling == k_group_size:
-        desc_k_strides = (mma_bytewidth_k,)  # K is contiguous.
-      elif k_group_size % k_tiling == 0:
-        desc_k_tiling = (k_tiling // mma_width_k,)
-        desc_k_strides = (MMA_ATOM_ROWS * swizzle, mma_bytewidth_k)
-      else:
-        if k_tiling < mma_width_k:
-          raise ValueError(
-              "K dimension tiling is smaller than the width of a single MMA"
-              " instruction. Increase swizzle."
-          )
-        raise NotImplementedError(f"{k_group_size=} must be larger than {k_tiling=}")
     elif mn_tiling_stride == 1 and k_tiling_stride == swizzle_elems:
       fastest_dim = Dim.MN
       leading_byte_offset = to_byte_stride(mn_tile_stride)
       stride_byte_offset = to_byte_stride(k_tile_stride)
-      k_tiles_per_mma = mma_width_k // MMA_ATOM_ROWS
-      desc_k_strides = (to_byte_stride(k_tile_stride) * k_tiles_per_mma,)
     else:
       raise ValueError("MMA tiles must be contiguous")
-  desc_base = encode_descriptor(
+
+  if mn_size % mn_tiling:
+    raise ValueError(
+        f"The M or N MMA instruction size was chosen to be {mn_size},"
+        " which is not a multiple of the tiling of the non-contracting"
+        f" dimension {mn_tiling}"
+    )
+
+  addr_base, desc_const = _split_descriptor(
       ref,
       leading_byte_offset=leading_byte_offset,
       stride_byte_offset=stride_byte_offset,
       swizzle=swizzle,
-      split_const=split_const,
   )
+  assert (desc_const & 0xFFFF) == 0
 
-  mn_tiles_per_group, rem = divmod(mn_group_size, mn_tiling)
-  if rem:
-    raise ValueError(
-        f"The M or N MMA instruction size was chosen to be {mn_group_size},"
-        " which is not a multiple of the tiling of the non-contracting"
-        f" dimension {mn_tiling}"
-    )
-  mn_group_stride = to_byte_stride(mn_tile_stride) * mn_tiles_per_group
-  k_tiles_per_group, rem = divmod(k_group_size, k_tiling)
-  if rem:
-    raise ValueError(
-        f"The K MMA instruction size was chosen to be {k_group_size}, which is"
-        f" not a multiple of the tiling of the contracting dimension {k_tiling}"
-    )
-  k_group_stride = to_byte_stride(k_tile_stride) * k_tiles_per_group
-
-  return (
-      (desc_base, (desc_k_tiling, desc_k_strides)),
-      (mn_group_stride, k_group_stride),
-      fastest_dim,
+  return SmemDescriptor(
+      addr_base=addr_base,
+      fastest_dim=fastest_dim,
+      _desc_const=desc_const,
+      _mn_tiles=mn_tiles,
+      _k_tiles=k_tiles,
+      _mn_tiling=mn_tiling,
+      _k_tiling=k_tiling,
+      _mn_tile_stride=mn_tile_stride,
+      _k_tile_stride=k_tile_stride,
+      _k_tiling_stride=k_tiling_stride,
+      _element_bitwidth=element_bitwidth,
   )
 
 
@@ -218,14 +263,25 @@ def encode_addr(x: int) -> int:
   return result
 
 
-def encode_descriptor(
-    ref_arg,
+def _i64_const(val: int) -> ir.Value:
+  i64 = ir.IntegerType.get_signless(64)
+  # Descriptor constants frequently have the MSB set, leading to errors when
+  # trying to create ir.IntegerAttr through the MLIR Python bindings. This
+  # should be easy enough for LLVM to constant fold away.
+  if val >> 63:
+    low = arith.constant(i64, val & 0xFFFFFFFF)
+    high = arith.constant(i64, val >> 32)
+    return llvm.or_(low, arith.shli(high, arith.constant(i64, 32)))
+  return arith.constant(i64, val)
+
+
+def _split_descriptor(
+    ref_arg: ir.Value,
     leading_byte_offset: int,
     stride_byte_offset: int,
     swizzle: int | mgpu_dialect.SwizzlingMode | None,
     const_init: int = 0,
-    split_const: bool = False,
-):
+) -> tuple[ir.Value, int]:
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
   if isinstance(ref_arg.type, ir.MemRefType):
@@ -253,16 +309,19 @@ def encode_descriptor(
       | (encode_addr(stride_byte_offset) << 32)
       | (swizzle_encoding << 62)
   )
-  if split_const:
-    # The encoded base addr fits within a single 32-bit register.
-    return arith.trunci(i32, encoded_base_addr), desc_const
-  else:
-    # The desc_const frequently has the MSB set, leading to errors when trying
-    # to create ir.IntegerAttr through the MLIR python bindings... This should
-    # be easy enough for LLVM to constant fold away.
-    if desc_const >> 63:
-      desc_val = c(desc_const & 0xFFFFFFFF)
-      desc_val = llvm.or_(desc_val, arith.shli(c(desc_const >> 32), c(32)))
-    else:
-      desc_val = c(desc_const)
-    return llvm.or_(encoded_base_addr, desc_val)
+  # The encoded base addr fits within a single 32-bit register.
+  return arith.trunci(i32, encoded_base_addr), desc_const
+
+
+def encode_descriptor(
+    ref_arg: ir.Value,
+    leading_byte_offset: int,
+    stride_byte_offset: int,
+    swizzle: int | mgpu_dialect.SwizzlingMode | None,
+    const_init: int = 0,
+) -> ir.Value:
+  i64 = ir.IntegerType.get_signless(64)
+  addr_base, desc_const = _split_descriptor(
+      ref_arg, leading_byte_offset, stride_byte_offset, swizzle, const_init
+  )
+  return llvm.or_(arith.extui(i64, addr_base), _i64_const(desc_const))
