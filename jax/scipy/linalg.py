@@ -51,6 +51,7 @@ from jax._src.scipy.linalg import (
   schur as schur,
   sqrtm as sqrtm,
   solve as solve,
+  solve_banded as solve_banded,
   solve_sylvester as solve_sylvester,
   solve_triangular as solve_triangular,
   svd as svd,

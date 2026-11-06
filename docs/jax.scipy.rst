@@ -88,6 +88,7 @@ jax.scipy.linalg
    rsf2csf
    schur
    solve
+   solve_banded
    solve_sylvester
    solve_triangular
    sqrtm

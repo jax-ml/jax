@@ -1700,6 +1700,73 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker)
 
   @jtu.sample_product(
+    [dict(n=n, l=l, u=u)
+     for n, l, u in [
+        (1, 0, 0),
+        (4, 0, 0),
+        (4, 1, 0),
+        (4, 0, 2),
+        (5, 1, 1),
+        (8, 2, 1),
+        (8, 3, 3),
+        (12, 4, 2),
+      ]
+    ],
+    rhs_shape=[(0,), (3,)],  # (0,) means a vector right-hand side
+    dtype=float_types + complex_types,
+  )
+  def testSolveBanded(self, n, l, u, rhs_shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    osp_fun = lambda ab, b: osp.linalg.solve_banded((l, u), ab, b)
+    jsp_fun = lambda ab, b: jsp.linalg.solve_banded((l, u), ab, b)
+
+    def args_maker():
+      a = rng((n, n), dtype)
+      band_mask = (np.subtract.outer(np.arange(n), np.arange(n)) <= l) & \
+                  (np.subtract.outer(np.arange(n), np.arange(n)) >= -u)
+      a = np.where(band_mask, a, 0) + n * np.eye(n, dtype=dtype)
+      ab = np.zeros((l + u + 1, n), dtype=dtype)
+      for i in range(n):
+        for j in range(max(0, i - l), min(n, i + u + 1)):
+          ab[u + i - j, j] = a[i, j]
+      b_shape = (n,) if rhs_shape == (0,) else (n, rhs_shape[0])
+      return [ab, rng(b_shape, dtype)]
+
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=1e-3)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  def testSolveBandedGrad(self):
+    # Gradients with respect to ab and b should match the gradients of
+    # the equivalent dense solve.
+    with config.enable_x64(True):
+      self._testSolveBandedGrad()
+
+  def _testSolveBandedGrad(self):
+    rng = jtu.rand_default(self.rng())
+    n, l, u = 6, 2, 1
+    a = rng((n, n), np.float64)
+    band_mask = (np.subtract.outer(np.arange(n), np.arange(n)) <= l) & \
+                (np.subtract.outer(np.arange(n), np.arange(n)) >= -u)
+    a = np.where(band_mask, a, 0) + n * np.eye(n)
+    ab = np.zeros((l + u + 1, n))
+    for i in range(n):
+      for j in range(max(0, i - l), min(n, i + u + 1)):
+        ab[u + i - j, j] = a[i, j]
+    b = rng((n,), np.float64)
+
+    banded_loss = lambda ab, b: jnp.sum(
+        jsp.linalg.solve_banded((l, u), ab, b) ** 2)
+    dense_loss = lambda a, b: jnp.sum(jnp.linalg.solve(a, b) ** 2)
+    g_ab, g_b = jax.grad(banded_loss, argnums=(0, 1))(ab, b)
+    g_a, g_b_dense = jax.grad(dense_loss, argnums=(0, 1))(a, b)
+    g_ab_dense = np.zeros_like(ab)
+    for i in range(n):
+      for j in range(max(0, i - l), min(n, i + u + 1)):
+        g_ab_dense[u + i - j, j] = g_a[i, j]
+    self.assertAllClose(g_ab, g_ab_dense, rtol=1e-10, atol=1e-10)
+    self.assertAllClose(g_b, g_b_dense, rtol=1e-10, atol=1e-10)
+
+  @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
       for lhs_shape, rhs_shape in [
         ((4, 4), (4,)),
