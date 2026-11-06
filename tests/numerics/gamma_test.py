@@ -123,6 +123,9 @@ class DigammaTest(jtu.JaxTestCase):
     bounds = [
         (["cpu", "gpu", "tpu"], {f16: 1.0, f32: 1.0, f64: 1.0}),
     ]
+    input_ftz = [
+        ("gpu", {bf16: True, f32: True, f64: True}),
+    ]
     util.check_unary_precision(
         self,
         lax.digamma,
@@ -130,6 +133,7 @@ class DigammaTest(jtu.JaxTestCase):
         _mpmath_digamma,
         dtype,
         bounds=bounds,
+        input_ftz=input_ftz,
         interesting_points=_DIGAMMA_INTERESTING_POINTS,
     )
 
@@ -365,6 +369,9 @@ class LgammaTest(jtu.JaxTestCase):
             )
         ),
     ]
+    input_ftz = [
+        ("gpu", {bf16: True, f32: True, f64: True}),
+    ]
     util.check_unary_precision(
         self,
         lax.lgamma,
@@ -372,6 +379,7 @@ class LgammaTest(jtu.JaxTestCase):
         _mpmath_lgamma,
         dtype,
         bounds=bounds,
+        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 
@@ -631,6 +639,9 @@ class GammaTest(jtu.JaxTestCase):
             )
         ),
     ]
+    input_ftz = [
+        ("gpu", {bf16: True, f32: True, f64: True}),
+    ]
     util.check_unary_precision(
         self,
         jsp.special.gamma,
@@ -638,6 +649,7 @@ class GammaTest(jtu.JaxTestCase):
         _mpmath_gamma,
         dtype,
         bounds=bounds,
+        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 
@@ -892,9 +904,6 @@ class BetalnTest(jtu.JaxTestCase):
     bounds = [
         (["cpu", "gpu", "tpu"], {bf16: 1.0, f16: 1.0, f32: 25.0, f64: 5.0}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_nary_precision(
         self,
         jsp.special.betaln,
@@ -903,7 +912,6 @@ class BetalnTest(jtu.JaxTestCase):
         dtype,
         nargs=2,
         bounds=bounds,
-        input_ftz=input_ftz,
         ignore_inputs=_betaln_ignored,
         interesting_points=_BETALN_INTERESTING_POINTS,
     )

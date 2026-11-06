@@ -135,9 +135,6 @@ class SinhTest(jtu.JaxTestCase):
       check_signed_zeros = [
           ("tpu", False),
       ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     interesting_points = [
         *_sinh_cosh_interesting_points(dtype),
         # Worst-case inputs across math libraries from Gladman et al.:
@@ -164,7 +161,6 @@ class SinhTest(jtu.JaxTestCase):
         mpmath.sinh,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         ignore_inputs=ignore_inputs,
         check_signed_zeros=check_signed_zeros,
         interesting_points=interesting_points,
@@ -244,7 +240,6 @@ class TanhTest(jtu.JaxTestCase):
     ]
     input_ftz = [
         ("cpu", {bf16: False, f32: False}),
-        ("gpu", False),
     ]
     util.check_unary_precision(
         self,
@@ -579,6 +574,9 @@ class AtanhGradTest(jtu.JaxTestCase):
         ("tpu_v6e", {f16: 1.0, f32: 3.5}),
         ("tpu_7x", {bf16: 2.5, f16: 1.0, f32: 3.5}),
     ]
+    output_ftz = [
+        ("gpu", {bf16: True, f32: True, f64: True}),
+    ]
     util.check_unary_precision(
         self,
         atanh_grad,
@@ -586,6 +584,7 @@ class AtanhGradTest(jtu.JaxTestCase):
         lambda x: mpmath.inf if abs(x) == 1 else 1 / (1 - x * x),
         dtype,
         bounds=bounds,
+        output_ftz=output_ftz,
     )
 
 

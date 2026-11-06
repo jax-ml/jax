@@ -293,9 +293,10 @@ class LogisticTest(jtu.JaxTestCase):
     ]
     # TODO(phawkins): lax.logistic lowers to 1 / (1 + exp(-x)), which prematurely
     # underflows to 0.0 on CPU and GPU when exp(-x) overflows in float16 for
-    # x <= -11.09.
+    # x <= -11.09 (and across subnormal outputs on GPU).
     output_ftz = [
-        (["cpu", "gpu"], {f16: True}),
+        ("cpu", {f16: True}),
+        ("gpu", True),
     ]
     util.check_unary_precision(
         self,

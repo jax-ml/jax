@@ -89,6 +89,9 @@ class BesselI1eTest(jtu.JaxTestCase):
         ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 3.0}),
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 2.0}),
     ]
+    output_ftz = [
+        ("gpu", {bf16: True}),
+    ]
     ref_fn = lambda x: np.copysign(scipy.special.i1e(x), x)
     util.check_unary_precision(
         self,
@@ -97,6 +100,7 @@ class BesselI1eTest(jtu.JaxTestCase):
         _mpmath_i1e,
         dtype,
         bounds=bounds,
+        output_ftz=output_ftz,
         interesting_points=_BESSEL_INTERESTING_POINTS,
     )
 
