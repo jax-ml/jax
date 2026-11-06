@@ -2965,8 +2965,11 @@ def _layout_constraint_hlo_lowering(ctx, x_node, *, layout):
   out_aval, = ctx.avals_out
   out = mlir.wrap_with_layout_op(ctx, x_node, out_aval, layout, aval)
   return [mlir.lower_with_sharding_in_types(ctx, out, out_aval)]
-mlir.register_lowering(layout_constraint_p,
-                       _layout_constraint_hlo_lowering)
+mlir.register_lowering(
+    layout_constraint_p,
+    _layout_constraint_hlo_lowering,
+    shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule(),
+)
 
 def _layout_constraint_batcher(axis_data, vals_in, dims_in, layout):
   x, = vals_in

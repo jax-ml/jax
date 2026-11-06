@@ -18,11 +18,13 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
-from jax.sharding import AxisType
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import parallel
+from jax._src.layout import Layout
+from jax._src.pjit import with_layout_constraint
 import jax.numpy as jnp
+from jax.sharding import AxisType
 from jax.sharding import NamedSharding, PartitionSpec as P
 import numpy as np
 
@@ -834,6 +836,29 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
       with self.assertRaises(NotImplementedError):
         f.lower(lhs, rhs)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_layout_constraint(self, mesh):
+    np_x = np.arange(64, dtype=np.float32).reshape(8, 8)
+    x = jax.device_put(np_x, P('x', 'y'))
+    layout = Layout(major_to_minor=(1, 0))
+
+    @jax.jit
+    def f(a):
+      return with_layout_constraint(a * 2, layout)
+
+    with config.shard_map_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f.lower(x).as_text())
+      expected = f(x)
+    hlo = f.lower(x).as_text()
+    self.assertIn('sdy.manual_computation', hlo)
+    self.assertIn('LayoutConstraint', hlo)
+
+    out = f(x)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertEqual(out.format.layout.major_to_minor, (1, 0))
+    self.assertArraysEqual(out, expected)
 
 
 if __name__ == '__main__':
