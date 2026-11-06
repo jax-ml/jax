@@ -1,6 +1,6 @@
 (pallas_refs)=
 
-# Working with `Ref`s
+# Working with Refs
 
 <!--* freshness: { reviewed: '2026-10-27' } *-->
 
