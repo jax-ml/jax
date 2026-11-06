@@ -14,11 +14,15 @@
 
 """Precision tests for modified Bessel functions against reference implementations."""
 
+import functools
+import math
+
 from absl.testing import parameterized
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
+import jax.scipy as jsp
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
 import numpy as np
@@ -28,6 +32,7 @@ config.parse_flags_with_absl()
 
 bf16, f16, f32, f64 = jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64
 DTYPE_PARAMS = [(f"_{d.__name__}", d) for d in [bf16, f16, f32, f64]]
+_IV_ORDERS = (0, 1, 2, 10, 50)
 TPU_EUPV1 = ["tpu_v2", "tpu_v3", "tpu_v4", "tpu_v4i", "tpu_v5e"]
 
 
@@ -61,6 +66,7 @@ class BesselI0eTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_bessel_i0e_accuracy(self, dtype):
+    """Tests ULP accuracy of lax.bessel_i0e across the floating-point domain."""
     bounds = [
         ("cpu", {bf16: 1.0, f16: 1.0, f32: 2.0, f64: 2.0}),
         ("gpu", {f16: 1.0, f32: 2.5, f64: 2.0}),
@@ -83,6 +89,7 @@ class BesselI1eTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_bessel_i1e_accuracy(self, dtype):
+    """Tests ULP accuracy of lax.bessel_i1e across the floating-point domain."""
     bounds = [
         ("cpu", {f16: 1.0, f32: 2.0, f64: 2.0}),
         ("gpu", {f16: 1.0, f32: 2.5, f64: 2.0}),
@@ -105,8 +112,181 @@ class BesselI1eTest(jtu.JaxTestCase):
     )
 
 
+def _make_scipy_iv(v: int):
+  n = abs(v)
+  is_odd = (n & 1) == 1
+  fact = float(math.factorial(n))
+
+  def _scipy_iv(x: np.ndarray) -> np.ndarray:
+    x64 = np.asarray(x, dtype=np.float64)
+    ax = np.abs(x64)
+    is_inf = np.isinf(x64)
+    ax_finite = np.where(is_inf, 1.0, ax)
+    if n == 0:
+      res = scipy.special.i0(ax_finite)
+    elif n == 1:
+      res = scipy.special.i1(ax_finite)
+    else:
+      # For tiny |x| < 1e-8, (x/2)^2 / (n + 1) < 2.5e-17 < eps_f64 / 4, so the
+      # leading series term (|x|/2)^n / n! is accurate to 0.5 ULP in float64
+      # while avoiding scipy.special.iv's premature underflow when K_{n+1}(|x|)
+      # overflows.
+      small = ax_finite < 1e-8
+      under_one = ax_finite < 1.0
+      ax_safe = np.where(small, 1.0, ax_finite)
+      res = np.where(
+          small,
+          ((0.5 * ax_finite) ** n) / fact,
+          np.where(
+              under_one,
+              scipy.special.iv(n, ax_safe.astype(np.complex128)).real,
+              scipy.special.iv(n, ax_safe),
+          ),
+      )
+    res = np.where(is_inf, np.inf, res)
+    if is_odd:
+      res = np.copysign(res, x64)
+    return res
+
+  return _scipy_iv
+
+
+def _make_mpmath_iv(v: int):
+  n = abs(v)
+  is_odd = (n & 1) == 1
+  overflow_x = max(1000.0, 2.0 * n)
+
+  def _mpmath_iv(x):
+    if mpmath.isnan(x):
+      return mpmath.nan
+    if x == 0.0:
+      return mpmath.mpf(1.0 if n == 0 else 0.0)
+    if mpmath.isinf(x) or abs(x) > overflow_x:
+      return -mpmath.inf if (x < 0 and is_odd) else mpmath.inf
+    return mpmath.besseli(n, x)
+
+  return _mpmath_iv
+
+
+def _iv_interesting_points(v: int) -> list[float]:
+  n = abs(v)
+  r_ser = max(12.0, math.sqrt(2.0 * (n + 1)))
+  r_asy_f32 = max(r_ser, 10.0 + 0.5 * n * n)
+  r_asy_f64 = max(r_ser, 24.0 + 0.5 * n * n)
+  r_ser_next_f32 = float(np.nextafter(np.float32(r_ser), np.float32(np.inf)))
+  r_ser_next_f64 = float(np.nextafter(np.float64(r_ser), np.float64(np.inf)))
+  r_asy_prev_f32 = float(
+      np.nextafter(np.float32(r_asy_f32), np.float32(-np.inf))
+  )
+  r_asy_prev_f64 = float(
+      np.nextafter(np.float64(r_asy_f64), np.float64(-np.inf))
+  )
+  return [
+      *_BESSEL_INTERESTING_POINTS,
+      *(
+          sign * x
+          for x in (
+              r_ser,
+              r_ser_next_f32,
+              r_ser_next_f64,
+              r_asy_prev_f32,
+              r_asy_f32,
+              r_asy_prev_f64,
+              r_asy_f64,
+              91.9,  # near float32 overflow threshold
+              713.98,  # near float64 overflow threshold
+          )
+          for sign in (-1, 1)
+      ),
+  ]
+
+
+def _check_iv_accuracy(test_case, v: int, dtype, bounds):
+  jax_fn = functools.partial(jsp.special.iv, v)
+  jax_fn.__name__ = f"bessel_iv_{v}"
+  util.check_unary_precision(
+      test_case,
+      jax_fn,
+      _make_scipy_iv(v),
+      _make_mpmath_iv(v),
+      dtype,
+      bounds=bounds,
+      interesting_points=_iv_interesting_points(v),
+  )
+
+
+@jtu.thread_unsafe_test_class()
+class BesselIv0Test(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_bessel_iv_0_accuracy(self, dtype):
+    """Tests ULP accuracy of jax.scipy.special.iv(0, x) across real inputs."""
+    bounds = [
+        ("cpu", {f32: 2.5, f64: 2.0}),
+        ("gpu", {f32: 3.0, f64: 2.0}),
+        ([*TPU_EUPV1, "tpu_v5p"], {f32: 3.5}),
+        (["tpu_v6e", "tpu_7x"], {f32: 2.5}),
+    ]
+    _check_iv_accuracy(self, 0, dtype, bounds)
+
+
+@jtu.thread_unsafe_test_class()
+class BesselIv1Test(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_bessel_iv_1_accuracy(self, dtype):
+    """Tests ULP accuracy of jax.scipy.special.iv(1, x) across real inputs."""
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 3.0, f64: 2.5}),
+        ("gpu", {bf16: 1.0, f16: 1.0, f32: 3.0, f64: 2.0}),
+        ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 3.5}),
+        (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 3.0}),
+    ]
+    _check_iv_accuracy(self, 1, dtype, bounds)
+
+
+@jtu.thread_unsafe_test_class()
+class BesselIv2Test(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_bessel_iv_2_accuracy(self, dtype):
+    """Tests ULP accuracy of jax.scipy.special.iv(2, x) across real inputs."""
+    bounds = [
+        (["cpu", "gpu", "tpu"], {bf16: 1.0, f16: 1.0, f32: 1.0, f64: 1.0}),
+    ]
+    _check_iv_accuracy(self, 2, dtype, bounds)
+
+
+@jtu.thread_unsafe_test_class()
+class BesselIv10Test(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_bessel_iv_10_accuracy(self, dtype):
+    """Tests ULP accuracy of jax.scipy.special.iv(10, x) across real inputs."""
+    bounds = [
+        (["cpu", "gpu", "tpu"], {f32: 1.0, f64: 1.0}),
+    ]
+    _check_iv_accuracy(self, 10, dtype, bounds)
+
+
+@jtu.thread_unsafe_test_class()
+class BesselIv50Test(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_bessel_iv_50_accuracy(self, dtype):
+    """Tests ULP accuracy of jax.scipy.special.iv(50, x) across real inputs."""
+    bounds = [
+        (["cpu", "gpu", "tpu"], {f32: 1.0, f64: 1.0}),
+    ]
+    _check_iv_accuracy(self, 50, dtype, bounds)
+
+
 util.register_benchmark(lax.bessel_i0e)
 util.register_benchmark(lax.bessel_i1e)
+for _v in _IV_ORDERS:
+  util.register_benchmark(
+      functools.partial(jsp.special.iv, _v), name=f"bessel_iv_{_v}"
+  )
 
 
 if __name__ == "__main__":

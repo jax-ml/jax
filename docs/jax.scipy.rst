@@ -199,6 +199,7 @@ jax.scipy.special
    i0e
    i1
    i1e
+   iv
    jn
    kl_div
    log_ndtr
