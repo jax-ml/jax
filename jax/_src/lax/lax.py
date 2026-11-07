@@ -8648,7 +8648,7 @@ def _concatenate_collective_rule(in_avals, out_avals, *, dimension):
   out_aval, = out_avals
   out_spec = out_aval.sharding.spec
   # _concatenate_sharding_rule skips empty-mesh constants.
-  if (out_spec[dimension] is not None or
+  if (out_spec.partitions[dimension] is not None or
       any(a.sharding.spec != out_spec for a in in_avals)):
     raise NotImplementedError
   return mlir.PartitioningRule()

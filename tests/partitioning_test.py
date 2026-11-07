@@ -530,6 +530,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       (((8, 3), (8, 5)), P(('x', 'y'), None), 1),
       (((4, 3, 4), (4, 5, 4)), P('x', None, 'y'), 1),
       (((4, 0), (4, 5)), P('x', None), 1),
+      (((4, 2), (4, 3)), P('x', None, reduced={'y'}), 1),
   )
   @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
