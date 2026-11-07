@@ -383,7 +383,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       (P(None, None), P('x', 'y'), 'dynamic_slice'),
       (P('x', 'y'), P(None, None), 'all_gather'),
       (P('x', None), P(None, 'x'), 'all_to_all'),
-      (P('x', 'y'), P('y', 'x'), 'all_to_all'),
+      (P('x', 'y'), P('y', 'x'), 'collective_permute'),
       (P(('x', 'y'), None), P('x', None), 'all_gather'),
       (P(None, None, reduced={'x'}), P('x', None), 'dynamic_slice'),
       (P('x', None), P(None, None, reduced={'x'}), 'all_gather'),
@@ -418,7 +418,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       (P(('x', 'y'), None), P(None, ('x', 'y')), (1, 0, 0)),
       # Both axes are gathered together in one all_gather.
       (P(('x', 'y'), None), P(None, None), (0, 1, 0)),
-      (P('x', 'y'), P('y', 'x'), (1, 1, 1)),
   )
   @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
@@ -439,24 +438,58 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_x)
 
+  @parameterized.parameters(
+      # Reorder axes within a dim.
+      ((2, 4), ('x', 'y'), P(('x', 'y'), None), P(('y', 'x'), None)),
+      # Swap axes between dims.
+      ((2, 2), ('x', 'y'), P('x', 'y'), P('y', 'x')),
+      # Swap two axes while keeping a third in place.
+      ((2, 2, 2), ('x', 'y', 'z'), P('x', 'y', 'z'), P('x', 'z', 'y')),
+      # Rotate three axes.
+      ((2, 2, 2), ('x', 'y', 'z'), P('x', 'y', 'z'), P('z', 'x', 'y')),
+  )
   @config.shard_map_partitioning(True)
-  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
-  def test_reshard_rotate_three_axes(self, mesh):
-    # No axis can all_to_all at first, so 'x' is gathered to break the cycle:
-    # f32[4@x, 4@y, 4@z] -> f32[4, 4@y, 4@z]    all_gather 'x'
-    #                    -> f32[4@z, 4@y, 4]    all_to_all 'z' to dim 0
-    #                    -> f32[4@z, 4, 4@y]    all_to_all 'y' to dim 2
-    #                    -> f32[4@z, 4@x, 4@y]  slice 'x'
-    np_x = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
-    x = jax.device_put(np_x, P('x', 'y', 'z'))
-    out_spec = P('z', 'x', 'y')
+  def test_reshard_permute(self, mesh_shape, axis_names, in_spec, out_spec):
+    mesh = jtu.create_mesh(mesh_shape, axis_names,
+                           axis_types=(AxisType.Explicit,) * len(axis_names))
+    shape = (8,) * len(in_spec)
+    np_x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+
+    @jax.jit
+    def f(a):
+      return jax.reshard(a, out_spec)
+
+    with jax.set_mesh(mesh):
+      x = jax.device_put(np_x, in_spec)
+      hlo = f.lower(x).as_text()
+      out = f(x)
+      with config.shard_map_partitioning(False):
+        expected = f(x)
+
+    self.assertEqual(hlo.count('stablehlo.collective_permute'), 1)
+    for op in ('all_gather', 'all_to_all', 'dynamic_slice'):
+      self.assertNotIn(op, hlo)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+    self.assertArraysEqual(out, np_x)
+    self.assertArraysEqual(out, expected)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 4), ('x', 'y'))
+  def test_reshard_no_permute_when_shard_count_changes(self, mesh):
+    # Dim 0 goes from 2 to 4 shards, so no device holds a whole new block:
+    # f32[8@x, 8@y] -> f32[8, 8@y]    all_gather 'x'
+    #               -> f32[8@y, 8]    all_to_all 'y' to dim 0
+    #               -> f32[8@y, 8@x]  slice 'x'
+    np_x = np.arange(64, dtype=np.float32).reshape(8, 8)
+    x = jax.device_put(np_x, P('x', 'y'))
+    out_spec = P('y', 'x')
 
     @jax.jit
     def f(a):
       return jax.reshard(a, out_spec)
 
     hlo = f.lower(x).as_text()
-    self.assertIn('sdy.manual_computation', hlo)
+    self.assertNotIn('collective_permute', hlo)
     for op in ('all_gather', 'all_to_all', 'dynamic_slice'):
       self.assertIn(op, hlo)
     out = f(x)
@@ -465,7 +498,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x)
-      self.assertArraysEqual(expected, out)
+    self.assertArraysEqual(out, expected)
 
   @parameterized.parameters(
       ((8, 12), P(('x', 'y'), None), (0, 3), (8, 11), (1, 2)),
@@ -631,9 +664,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       (P('x', None), P(None, 'y'), 'all_gather'),
       # f32[4@x, 4, 4] -> f32[4@x, 4, 4@y] -> f32[4, 4@x, 4@y]
       (P('x', None, None), P(None, 'x', 'y'), 'all_to_all'),
+      # f32[4@x, 4@y, 4] -> f32[4@x, 4@y, 4@z] -> f32[4@y, 4@x, 4@z]
+      (P('x', 'y', None), P('y', 'x', 'z'), 'collective_permute'),
   )
   @config.shard_map_partitioning(True)
-  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
   def test_reshard_slices_before_collective(self, in_spec, out_spec,
                                             collective, mesh):
     shape = (4,) * len(in_spec)
@@ -645,6 +680,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return jax.reshard(a, out_spec)
 
     hlo = f.lower(x).as_text()
+    self.assertEqual(hlo.count('stablehlo.dynamic_slice'), 1)
     self.assertLess(hlo.index('stablehlo.dynamic_slice'),
                     hlo.index(f'stablehlo.{collective}'))
     out = f(x)
@@ -654,12 +690,12 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
   @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
   def test_reshard_slice_collective_slice(self, mesh):
-    # f32[4@x, 4@y, 4] -> f32[4@x, 4@y, 4@z]  slice 'z'
-    #                  -> f32[4, 4@y, 4@z]    all_gather 'x'
-    #                  -> f32[4@y, 4, 4@z]    all_to_all 'y' to dim 0
-    #                  -> f32[4@y, 4@x, 4@z]  slice 'x'
+    # f32[4@(x,y), 4, 4] -> f32[4@(x,y), 4, 4@z]  slice 'z'
+    #                    -> f32[4@x, 4, 4@z]      all_gather 'y'
+    #                    -> f32[4, 4@x, 4@z]      all_to_all 'x' to dim 1
+    #                    -> f32[4@y, 4@x, 4@z]    slice 'y'
     np_x = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
-    x = jax.device_put(np_x, P('x', 'y', None))
+    x = jax.device_put(np_x, P(('x', 'y'), None, None))
     out_spec = P('y', 'x', 'z')
 
     @jax.jit

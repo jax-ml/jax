@@ -2666,7 +2666,57 @@ def _next_move(cur: list[tuple], dst: list[tuple]) -> _ReshardMove:
     axes = cur[i]
   return _ReshardMove(axes, i, None)
 
-def _plan_reshard(src_spec, dst_spec) -> list[_ReshardMove | _ReshardSlice]:
+@dataclass(frozen=True, slots=True)
+class _ReshardPermute:
+  """Sends each device's whole block to another device with one ppermute.
+
+  `perm` holds `(src, dst)` device pairs, numbered row-major over `axes`.
+  """
+  axes: tuple
+  perm: tuple[tuple[int, int], ...]
+
+_ReshardStep = _ReshardMove | _ReshardSlice | _ReshardPermute
+
+def _num_shards(axes: tuple, mesh) -> int:
+  return math.prod(mesh.shape[a] for a in axes)
+
+def _permute_step(cur: list[tuple], dst: list[tuple], mesh
+                  ) -> _ReshardPermute | None:
+  """One ppermute that turns `cur` into `dst`, or None if one isn't enough.
+
+  One ppermute suffices when the changed dims shard over the same mesh axes and
+  every dim keeps the same number of shards.
+  """
+  cur_flat, dst_flat = [], []
+  for c, d in zip(cur, dst):
+    if c == d:
+      continue
+    if _num_shards(c, mesh) != _num_shards(d, mesh):
+      return None
+    cur_flat.extend(c)
+    dst_flat.extend(d)
+  if not cur_flat or set(cur_flat) != set(dst_flat):
+    return None
+
+  axes = core.order_wrt_mesh(mesh, cur_flat)
+  sizes = [mesh.shape[a] for a in axes]
+  # `ppermute(x, axes, perm)` treats `axes` as one flat group of `prod(sizes)`
+  # devices, with `devices[i, j, ...]` giving the device ID at `(i, j, ...)`.
+  # Transposing into `cur_flat` / `dst_flat` order and raveling lists device IDs
+  # in flat shard order (0..N-1); since each dim keeps the same shard count,
+  # flat index `k` names the same array block in both. E.g. for mesh shape
+  # (2, 4) on ('x', 'y') (8 devices) and P(('x', 'y')) -> P(('y', 'x')):
+  #   devices = [[0, 1, 2, 3], [4, 5, 6, 7]]
+  #   src_devs = devices.transpose([0, 1]).ravel()  # [0, 1, 2, 3, 4, 5, 6, 7]
+  #   dst_devs = devices.transpose([1, 0]).ravel()  # [0, 4, 1, 5, 2, 6, 3, 7]
+  #   perm = ((0, 0), (1, 4), (2, 1), (3, 5), (4, 2), (5, 6), (6, 3), (7, 7))
+  devices = np.arange(math.prod(sizes)).reshape(sizes)
+  src_devs = devices.transpose([axes.index(a) for a in cur_flat]).ravel()
+  dst_devs = devices.transpose([axes.index(a) for a in dst_flat]).ravel()
+  perm = tuple(zip(src_devs.tolist(), dst_devs.tolist()))
+  return _ReshardPermute(axes, perm)
+
+def _plan_reshard(src_spec, dst_spec, mesh) -> list[_ReshardStep]:
   """Per-shard steps that reshard `src_spec` into `dst_spec`.
 
   Slices happen as early as possible, so that collectives move less data:
@@ -2674,27 +2724,33 @@ def _plan_reshard(src_spec, dst_spec) -> list[_ReshardMove | _ReshardSlice]:
     f32[4@x, 4] -> f32[4@x, 4@y]    slice 'y' ('y' is free, so slice first)
                 -> f32[4, 4@y]      all_gather 'x'
 
-    f32[4@x, 4@y] -> f32[4, 4@y]    all_gather 'x' (dim 1 isn't ready for it)
-                  -> f32[4@y, 4]    all_to_all 'y' to dim 0
-                  -> f32[4@y, 4@x]  slice 'x'
-
     f32[4@(x,y), 4] -> f32[4, 4@(x,y)]  all_to_all ('x', 'y') to dim 1
+
+  When only the order of the axes changes and every dim keeps the same number
+  of shards, one ppermute does it (with x=2, y=2):
+
+    f32[4@x, 4@y] -> f32[4@y, 4@x]  ppermute
+
+  With x=2, y=4, dim 0 goes from 2 to 4 shards, so a ppermute isn't enough:
+
+    f32[8@x, 8@y] -> f32[8, 8@y]    all_gather 'x' (dim 1 isn't ready for it)
+                  -> f32[8@y, 8]    all_to_all 'y' to dim 0
+                  -> f32[8@y, 8@x]  slice 'x'
   """
-  # TODO(yashkatariya): Reordering axes within a dim, e.g. P(('x', 'y')) ->
-  # P(('y', 'x')), is a single ppermute but is planned as gathers and a slice.
   cur = [_tupleize_spec(p) for p in src_spec]
   dst = [_tupleize_spec(p) for p in dst_spec]
-  steps = []
+  steps: list[_ReshardStep] = []
   while True:
-    slice_axes = _free_slice_axes(cur, dst)
-    if any(slice_axes):
+    if any(slice_axes := _free_slice_axes(cur, dst)):
       steps.append(_ReshardSlice(slice_axes))
       cur = [c + s for c, s in zip(cur, slice_axes)]
     if cur == dst:
-      return steps  # type: ignore
+      return steps
+    if (permute := _permute_step(cur, dst, mesh)) is not None:
+      return [*steps, permute]
     # Some dim is still out of place, so it needs a collective.
     move = _next_move(cur, dst)
-    steps.append(move)  # type: ignore
+    steps.append(move)
     cur[move.src_dim] = cur[move.src_dim][:-len(move.axes)]
     if move.dst_dim is not None:
       cur[move.dst_dim] += move.axes
@@ -2706,7 +2762,7 @@ def _slice_to_shard(x, axes_per_dim: Sequence[tuple], mesh):
     return x
   starts, sizes = [], []
   for size, axes in zip(x.shape, axes_per_dim):
-    local_size = size // math.prod(mesh.shape[a] for a in axes)
+    local_size = size // _num_shards(axes, mesh)
     starts.append(parallel.axis_index(axes) * local_size if axes
                   else np.int32(0))
     sizes.append(local_size)
@@ -2727,12 +2783,14 @@ def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh
   if in_s.spec.partitions == out_s.spec.partitions:
     return mlir.PartitioningRule()
 
-  steps = _plan_reshard(in_s.spec.partitions, out_s.spec.partitions)
+  steps = _plan_reshard(in_s.spec.partitions, out_s.spec.partitions, mesh)
 
   def in_collective(x):
     for step in steps:
       if isinstance(step, _ReshardSlice):
         x = _slice_to_shard(x, step.axes_per_dim, mesh)
+      elif isinstance(step, _ReshardPermute):
+        x = parallel.ppermute(x, step.axes, step.perm)
       elif step.dst_dim is None:
         x = parallel.all_gather(x, step.axes, axis=step.src_dim, tiled=True)
       else:
