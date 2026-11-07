@@ -207,6 +207,35 @@ class RaggedDotTestCase(jtu.JaxTestCase):
         jnp.zeros((num_groups, k, n), dtype=dtype),
     ).lower(lowering_platforms=("gpu",))  # doesn't crash
 
+  @parameterized.parameters(
+      ((100, 0, 333, 211),),  # Ends inside a block, later blocks unvisited.
+      ((128, 0, 0, 128),),  # Ends on a block boundary.
+      ((0, 0, 0, 0),),  # No rows at all.
+  )
+  def test_ragged_dot_rows_past_group_sizes_are_zero(self, group_sizes):
+    m, k, n = 1024, 512, 512
+    lhs, rhs, _ = sample_inputs(random.key(0), m, k, n, len(group_sizes))
+    group_sizes = jnp.array(group_sizes, jnp.int32)
+    # Free a NaN-filled buffer of the output's size first, so that rows the
+    # kernel does not write are likely to hold NaNs rather than zeros.
+    jnp.full((m, n), jnp.nan, jnp.float16).block_until_ready()
+    out = ragged_dot_mgpu.ragged_dot(
+        lhs,
+        rhs,
+        group_sizes=group_sizes,
+        block_m=64,
+        block_n=128,
+        block_k=64,
+        max_concurrent_steps=2,
+        grid_block_n=1,
+    )
+    out_ref = jax.lax.ragged_dot(lhs, rhs, group_sizes=group_sizes)
+    valid = int(group_sizes.sum())
+    np.testing.assert_array_equal(out[valid:], 0)
+    np.testing.assert_allclose(
+        out[:valid], out_ref[:valid], atol=1e-3, rtol=1e-3
+    )
+
 
 @jtu.with_config(jax_traceback_filtering="off")
 class RaggedDotTCGen05TestCase(jtu.JaxTestCase, jtu.CudaArchSpecificTest):

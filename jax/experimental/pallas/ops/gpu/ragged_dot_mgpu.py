@@ -90,6 +90,30 @@ class GroupInfo:
     )
 
 
+def _zero_rows_from(
+    out: jax.Array, start_row: jax.Array, block_rows: int
+) -> jax.Array:
+  """Zeroes rows `start_row:` of `out`.
+
+  Only the blocks of `block_rows` rows that contain such rows are read and
+  written, so nothing is done if `start_row >= out.shape[0]`.
+  """
+  m = out.shape[0]
+  block_rows = min(block_rows, m)
+  num_blocks = pl.cdiv(m, block_rows)
+  first_block = jnp.clip(start_row // block_rows, 0, num_blocks)
+
+  def zero_block(i, out):
+    # Clamp the last block to stay in bounds, as `dynamic_slice` would.
+    start = jnp.minimum(i * block_rows, m - block_rows)
+    block = lax.dynamic_slice_in_dim(out, start, block_rows)
+    rows = start + lax.broadcasted_iota(jnp.int32, block.shape, 0)
+    block = jnp.where(rows < start_row, block, jnp.zeros_like(block))
+    return lax.dynamic_update_slice_in_dim(out, block, start, axis=0)
+
+  return lax.fori_loop(first_block, num_blocks, zero_block, out)
+
+
 def ragged_dot(
     lhs,  # (M, K)
     rhs,  # (G, K, N)
@@ -239,7 +263,16 @@ def ragged_dot(
           lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
       ),
   )
-  return kernel(group_sizes, lhs, rhs)
+  out = kernel(group_sizes, lhs, rhs)
+  # The kernel does not write rows >= sum(group_sizes), neither those in the
+  # block containing the end of the last group nor the blocks after it. Zero
+  # them, as `jax.lax.ragged_dot` does. Each loop iteration has a fixed cost
+  # on GPU, so use a few large blocks rather than many `block_m` ones.
+  return _zero_rows_from(
+      out,
+      jnp.sum(group_sizes).astype(jnp.int32),
+      max(block_m, pl.cdiv(m, 8)),
+  )
 
 
 def main(unused_argv):
