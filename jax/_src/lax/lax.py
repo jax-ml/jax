@@ -11681,7 +11681,22 @@ def _empty_lower(ctx, *, shape, dtype, out_sharding):
   out = mlir.ir_constant(np.zeros((), phys_aval.dtype))
   out = mlir.broadcast_in_dim(ctx, out, phys_aval, broadcast_dimensions=[])
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
-mlir.register_lowering(empty_p, _empty_lower)
+
+
+def _empty_collective_rule(in_avals, out_avals, **params):
+  del in_avals, params
+  (out_aval,) = out_avals
+  return mlir.PartitioningRule(
+      per_shard_params={
+          'shape': out_aval.sharding.shard_shape(out_aval.shape),
+          'out_sharding': None,
+      }
+  )
+
+
+mlir.register_lowering(
+    empty_p, _empty_lower, shard_map_collective_rule=_empty_collective_rule
+)
 
 # TODO(yashkatariya): Delete `empty2` and replace scan's usage with `empty` once
 # AllocateBuffer issues are fixed
@@ -11706,7 +11721,9 @@ def _empty2_lower(ctx, *, dtype, memory_space):
   phys_aval = core.physical_aval(aval_out)
   out = mlir.ir_constant(np.zeros(phys_aval.shape, phys_aval.dtype))
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
-mlir.register_lowering(empty2_p, _empty2_lower)
+mlir.register_lowering(
+    empty2_p, _empty2_lower, shard_map_collective_rule=_unop_collective_rule
+)
 
 
 tie_p = core.Primitive('tie')

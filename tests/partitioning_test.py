@@ -1241,5 +1241,30 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_empty(self, mesh):
+    for shape, spec in (
+        ((4, 8), P('x', 'y')),
+        ((8, 3), P(('x', 'y'), None)),
+        ((2, 2), P(None, None)),
+        ((), None),
+    ):
+
+      @jax.jit
+      def f():
+        return lax.empty(shape, jnp.float32, out_sharding=spec)
+
+      with config.shard_map_partitioning(False):
+        self.assertNotIn('sdy.manual_computation', f.lower().as_text())
+        expected = f()
+      self.assertIn('sdy.manual_computation', f.lower().as_text())
+      # lax.empty returns uninitialized memory, so compare aval and sharding.
+      out = f()
+      self.assertEqual(out.aval, expected.aval)
+      self.assertEqual(out.sharding, expected.sharding)
+      expected_spec = P() if spec is None else spec
+      self.assertEqual(out.sharding, NamedSharding(mesh, expected_spec))
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
