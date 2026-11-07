@@ -2573,8 +2573,9 @@ def _maybe_lower_with_shard_map(
     return None
 
   mesh = get_abstract_mesh()
-  if not mesh.explicit_axes:
+  if mesh.empty or mesh.are_all_axes_manual or mesh.auto_axes:
     return None
+  assert mesh.explicit_axes and mesh.are_all_axes_explicit_or_manual
 
   if (rule := shard_map_collective_rules.get(_prim)) is None:
     raise NotImplementedError

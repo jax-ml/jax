@@ -663,6 +663,22 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y', 'z')))
     self.assertArraysEqual(out, np_x * 2)
 
+  @config.shard_map_partitioning(True)
+  def test_mixed_explicit_auto_mesh(self):
+    mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit, AxisType.Auto))
+    x = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(4, 4),
+        NamedSharding(mesh, P('x', 'y')))
+    f = jax.jit(lambda a: jnp.sum(a * 2, axis=0))
+    with jax.set_mesh(mesh):
+      with config.shard_map_partitioning(False):
+        expected = f(x)
+      self.assertNotIn('sdy.manual_computation', f.lower(x).as_text())
+      out = f(x)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertArraysEqual(out, expected)
+
   @parameterized.parameters(
       # f32[4@x, 4] -> f32[4@x, 4@y] -> f32[4, 4@y]
       (P('x', None), P(None, 'y'), 'all_gather'),
