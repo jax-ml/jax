@@ -2599,20 +2599,44 @@ def _a2a_target(cur: list[tuple], dst: list[tuple], axes: tuple) -> int | None:
   return None
 
 @dataclass(frozen=True, slots=True)
-class _ReshardMove:
+class ReshardA2A:
   """Takes mesh `axes` off the end of `src_dim`.
 
-  They're moved to `dst_dim` with an all_to_all, or dropped with an all_gather
-  if `dst_dim` is None.
+  They're moved to `dst_dim` with an all_to_all.
   """
   axes: tuple
   src_dim: int
-  dst_dim: int | None
+  dst_dim: int
+
 
 @dataclass(frozen=True, slots=True)
-class _ReshardSlice:
+class ReshardAG:
+  """Takes mesh `axes` off the end of `src_dim`.
+
+  They're dropped with an all_gather.
+  """
+  axes: tuple
+  src_dim: int
+
+
+@dataclass(frozen=True, slots=True)
+class ReshardSlice:
   """Further shards each dim `i` over `axes_per_dim[i]` with a local slice."""
   axes_per_dim: tuple[tuple, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReshardPermute:
+  """Sends each device's whole block to another device with one ppermute.
+
+  `perm` holds `(src, dst)` device pairs, numbered row-major over `axes`.
+  """
+  axes: tuple
+  perm: tuple[tuple[int, int], ...]
+
+
+_ReshardStep = ReshardA2A | ReshardAG | ReshardSlice | ReshardPermute
+
 
 def _free_slice_axes(cur: list[tuple], dst: list[tuple]) -> tuple[tuple, ...]:
   """Axes each dim can be sliced over right now, without any communication.
@@ -2638,7 +2662,7 @@ def _free_slice_axes(cur: list[tuple], dst: list[tuple]) -> tuple[tuple, ...]:
     out.append(d[len(c):n])
   return tuple(out)
 
-def _next_move(cur: list[tuple], dst: list[tuple]) -> _ReshardMove:
+def _next_move(cur: list[tuple], dst: list[tuple]) -> ReshardA2A | ReshardAG:
   """Takes axes off the end of a dim that isn't a prefix of its target.
 
   Prefers moving axes with an all_to_all over dropping them with an
@@ -2650,7 +2674,7 @@ def _next_move(cur: list[tuple], dst: list[tuple]) -> _ReshardMove:
     for axes in (cur[i], cur[i][-1:]):
       target = _a2a_target(cur, dst, axes)
       if target is not None:
-        return _ReshardMove(axes, i, target)
+        return ReshardA2A(axes, i, target)
 
   # No all_to_all is possible, so all_gather on the first out-of-place dim.
   # If none of its axes are in `dst`, gather them all at once, e.g.
@@ -2660,28 +2684,15 @@ def _next_move(cur: list[tuple], dst: list[tuple]) -> _ReshardMove:
   # instead of gathering ('x', 'y') and then slicing 'x' back in.
   i = out_of_place[0]
   dst_axes = {a for d in dst for a in d}
-  if any(a in dst_axes for a in cur[i]):
-    axes = cur[i][-1:]
-  else:
-    axes = cur[i]
-  return _ReshardMove(axes, i, None)
+  axes = cur[i][-1:] if any(a in dst_axes for a in cur[i]) else cur[i]
+  return ReshardAG(axes, i)
 
-@dataclass(frozen=True, slots=True)
-class _ReshardPermute:
-  """Sends each device's whole block to another device with one ppermute.
-
-  `perm` holds `(src, dst)` device pairs, numbered row-major over `axes`.
-  """
-  axes: tuple
-  perm: tuple[tuple[int, int], ...]
-
-_ReshardStep = _ReshardMove | _ReshardSlice | _ReshardPermute
 
 def _num_shards(axes: tuple, mesh) -> int:
   return math.prod(mesh.shape[a] for a in axes)
 
 def _permute_step(cur: list[tuple], dst: list[tuple], mesh
-                  ) -> _ReshardPermute | None:
+                  ) -> ReshardPermute | None:
   """One ppermute that turns `cur` into `dst`, or None if one isn't enough.
 
   One ppermute suffices when the changed dims shard over the same mesh axes and
@@ -2714,7 +2725,7 @@ def _permute_step(cur: list[tuple], dst: list[tuple], mesh
   src_devs = devices.transpose([axes.index(a) for a in cur_flat]).ravel()
   dst_devs = devices.transpose([axes.index(a) for a in dst_flat]).ravel()
   perm = tuple(zip(src_devs.tolist(), dst_devs.tolist()))
-  return _ReshardPermute(axes, perm)
+  return ReshardPermute(axes, perm)
 
 def _plan_reshard(src_spec, dst_spec, mesh) -> list[_ReshardStep]:
   """Per-shard steps that reshard `src_spec` into `dst_spec`.
@@ -2742,7 +2753,7 @@ def _plan_reshard(src_spec, dst_spec, mesh) -> list[_ReshardStep]:
   steps: list[_ReshardStep] = []
   while True:
     if any(slice_axes := _free_slice_axes(cur, dst)):
-      steps.append(_ReshardSlice(slice_axes))
+      steps.append(ReshardSlice(slice_axes))
       cur = [c + s for c, s in zip(cur, slice_axes)]
     if cur == dst:
       return steps
@@ -2752,7 +2763,7 @@ def _plan_reshard(src_spec, dst_spec, mesh) -> list[_ReshardStep]:
     move = _next_move(cur, dst)
     steps.append(move)
     cur[move.src_dim] = cur[move.src_dim][:-len(move.axes)]
-    if move.dst_dim is not None:
+    if isinstance(move, ReshardA2A):
       cur[move.dst_dim] += move.axes
 
 def _slice_to_shard(x, axes_per_dim: Sequence[tuple], mesh):
@@ -2787,13 +2798,14 @@ def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh
 
   def in_collective(x):
     for step in steps:
-      if isinstance(step, _ReshardSlice):
+      if isinstance(step, ReshardSlice):
         x = _slice_to_shard(x, step.axes_per_dim, mesh)
-      elif isinstance(step, _ReshardPermute):
+      elif isinstance(step, ReshardPermute):
         x = parallel.ppermute(x, step.axes, step.perm)
-      elif step.dst_dim is None:
+      elif isinstance(step, ReshardAG):
         x = parallel.all_gather(x, step.axes, axis=step.src_dim, tiled=True)
       else:
+        assert isinstance(step, ReshardA2A)
         x = parallel.all_to_all(x, step.axes, split_axis=step.dst_dim,
                                 concat_axis=step.src_dim, tiled=True)
     return (x,)
