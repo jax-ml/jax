@@ -1511,6 +1511,134 @@ class IndexingTest(jtu.JaxTestCase):
     expected = x[jnp.asarray(i)]
     self.assertArraysEqual(result, expected)
 
+  @parameterized.named_parameters(
+      ("int8", np.int8, 300),
+      ("int16", np.int16, 40000),
+  )
+  def testNarrowNegativeIntegerIndex(self, dtype, size):
+    x = jnp.arange(size)
+    static_index = dtype(-1)
+    dynamic_index = jnp.asarray(-1, dtype=dtype)
+    advanced_index = jnp.asarray([-1], dtype=dtype)
+
+    # A NumPy integer scalar is valid for all four read strategies.
+    for strategy in ("auto", "static_slice", "dynamic_slice", "gather"):
+      with self.subTest(strategy=strategy, index_type="numpy_scalar"):
+        def read(a):
+          return a.at[static_index].get(strategy=strategy)
+
+        self.assertEqual(int(read(x)), size - 1)
+        self.assertEqual(int(jax.jit(read)(x)), size - 1)
+
+    # A JAX scalar index supports dynamic slice and gather.
+    for strategy in ("auto", "dynamic_slice", "gather"):
+      with self.subTest(strategy=strategy, index_type="jax_scalar"):
+        def read(a, i):
+          return a.at[i].get(strategy=strategy)
+
+        self.assertEqual(int(read(x, dynamic_index)), size - 1)
+        self.assertEqual(
+          int(jax.jit(read)(x, dynamic_index)), size - 1
+        )
+
+    # A non-scalar array index must use gather.
+    for strategy in ("auto", "gather"):
+      with self.subTest(strategy=strategy, index_type="jax_array"):
+        def read(a, i):
+          return a.at[i].get(strategy=strategy)
+
+        expected = np.array([size - 1])
+        self.assertArraysEqual(
+          np.asarray(read(x, advanced_index)), expected
+        )
+        self.assertArraysEqual(
+          np.asarray(jax.jit(read)(x, advanced_index)), expected
+        )
+
+    # Verify the primitives selected by AUTO
+    static_jaxpr = jax.make_jaxpr(
+      lambda a: a[static_index]
+    )(x).jaxpr
+    dynamic_jaxpr = jax.make_jaxpr(
+      lambda a, i: a[i]
+    )(x, dynamic_index).jaxpr
+    gather_jaxpr = jax.make_jaxpr(
+      lambda a, i: a[i]
+    )(x, advanced_index).jaxpr
+
+    self.assertIn(
+      lax.slice_p,
+      [eqn.primitive for eqn in static_jaxpr.eqns],
+    )
+    self.assertIn(
+      lax.dynamic_slice_p,
+      [eqn.primitive for eqn in dynamic_jaxpr.eqns],
+    )
+    self.assertIn(
+      lax.gather_p,
+      [eqn.primitive for eqn in gather_jaxpr.eqns],
+    )
+
+  @parameterized.named_parameters(
+      ("int8", np.int8, 300),
+      ("int16", np.int16, 40000),
+  )
+  def testNarrowNegativeIntegerScatter(self, dtype, size):
+    x = jnp.arange(size)
+
+    expected = np.arange(size)
+    expected[-1] = -7
+
+    # Static NumPy scalar index.
+    static_index = dtype(-1)
+
+    def static_update(a):
+      return a.at[static_index].set(-7)
+
+    self.assertArraysEqual(
+      np.asarray(static_update(x)), expected
+    )
+    self.assertArraysEqual(
+      np.asarray(jax.jit(static_update)(x)), expected
+    )
+
+    # Dynamic scalar and non-scalar array indices.
+    for index in (
+        jnp.asarray(-1, dtype=dtype),
+        jnp.asarray([-1], dtype=dtype),
+    ):
+      with self.subTest(index_shape=index.shape):
+        def update(a, i):
+          return a.at[i].set(-7)
+
+        self.assertArraysEqual(
+          np.asarray(update(x, index)), expected
+        )
+        self.assertArraysEqual(
+          np.asarray(jax.jit(update)(x, index)), expected
+        )
+
+    @parameterized.named_parameters(
+      ("int8", np.int8, 300),
+      ("int16", np.int16, 40000),
+    )
+    def testNarrowIntegerScalarRemainsStatic(self, dtype, size):
+      x = jnp.arange(size)
+      index = dtype(-1)
+
+      def read(a):
+        return a[index]
+
+      jaxpr = jax.make_jaxpr(read)(x).jaxpr
+      primitives = [eqn.primitive for eqn in jaxpr.eqns]
+
+      self.assertIn(lax.slice_p, primitives)
+      self.assertNotIn(lax.dynamic_slice_p, primitives)
+      self.assertNotIn(lax.gather_p, primitives)
+
+      self.assertEqual(int(read(x)), size - 1)
+      self.assertEqual(int(jax.jit(read)(x)), size - 1)
+
 
 def _broadcastable_shapes(shape):
   """Returns all shapes that broadcast to `shape`."""

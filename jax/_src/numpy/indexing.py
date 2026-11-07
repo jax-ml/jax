@@ -361,8 +361,12 @@ class NDIndexer:
         if isinstance(idx.index, np.unsignedinteger):
           normed_index: Index = idx.index
         else:
-          normed_index = idx.index + size if idx.index < 0 else idx.index  # pyrefly: ignore[bad-assignment, unsupported-operation]
-        new_indices.append(ParsedIndex(normed_index, typ=idx.typ, consumed_axes=idx.consumed_axes))
+          # Avoid overflow when adding the axis size to narrow NumPy scalars.
+          index = int(idx.index) if isinstance(idx.index,
+                                               np.integer) else idx.index
+          normed_index = index + size if index < 0 else index  # pyrefly: ignore[bad-assignment, unsupported-operation]
+        new_indices.append(ParsedIndex(normed_index, typ=idx.typ,
+                                       consumed_axes=idx.consumed_axes))
       elif idx.typ in [IndexType.ARRAY, IndexType.INTEGER]:
         assert isinstance(idx.index, (Array, np.ndarray))
         axis, = idx.consumed_axes
@@ -370,13 +374,15 @@ class NDIndexer:
           normed_index = idx.index
         else:
           size = self.shape[axis]
+          index = _promote_index_for_axis_size(idx.index, size)
           if core.is_constant_dim(size):
-            size = lax._const(idx.index, size)
+            size = lax._const(index, size)
           else:
             size = lax.convert_element_type(core.dimension_as_value(size),
-                                            idx.index.dtype)
-          normed_index = lax.select(idx.index < 0, lax.add(idx.index, size), idx.index)
-        new_indices.append(ParsedIndex(normed_index, typ=idx.typ, consumed_axes=idx.consumed_axes))
+                                            index.dtype)
+          normed_index = lax.select(index < 0, lax.add(index, size), index)
+        new_indices.append(ParsedIndex(normed_index, typ=idx.typ,
+                                       consumed_axes=idx.consumed_axes))
       else:
         new_indices.append(idx)
     return NDIndexer(indices=new_indices, shape=self.shape)
@@ -768,11 +774,36 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
                         mode=gather_mode, unique_indices=unique_indices,
                         indices_are_sorted=indices_are_sorted, fill_value=fill_value)
 
+def _promote_index_for_axis_size(index, axis_size):
+  """Widen signed indices when an axis size cannot fit in their dtype."""
+  index_dtype = dtypes.dtype(index)
+
+  if not dtypes.issubdtype(index_dtype, np.signedinteger):
+    return index
+
+  if (core.is_constant_dim(axis_size) and
+    axis_size <= np.iinfo(index_dtype).max):
+    return index
+
+    # Keep scalar indices on the host and preserve their static nature.
+  if isinstance(index, (int, np.integer)):
+    return int(index)
+
+  promoted_dtype = np.promote_types(
+    index_dtype,
+    lax_utils.index_dtype_for_axis_size(
+      index_dtype, axis_size, True
+    ),
+  )
+  return lax.convert_element_type(index, promoted_dtype)
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
   if dtypes.issubdtype(dtypes.dtype(index), np.unsignedinteger):
     return index
+
+  index = _promote_index_for_axis_size(index, axis_size)
+
   if core.is_constant_dim(axis_size):
     axis_size_val = lax._const(index, axis_size)
   else:

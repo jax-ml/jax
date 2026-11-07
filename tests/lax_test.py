@@ -2421,6 +2421,77 @@ class LaxTest(jtu.JaxTestCase):
       lax.dynamic_update_slice_in_dim(x, jnp.ones((2, 7), np.int32),
                                       jnp.array([2, 2]), axis=0)
 
+  @parameterized.named_parameters(
+      ("int8", np.int8, 300),
+      ("int16", np.int16, 40000),
+  )
+  def testNarrowNegativeIndexDynamicSlice(self, dtype, size):
+    x = jnp.arange(size)
+    index = jnp.asarray(-1, dtype=dtype)
+
+    expected = np.arange(size - 5, size)
+
+    # Eager execution.
+    result = lax.dynamic_slice(x, (index,), (5,))
+    self.assertArraysEqual(np.asarray(result), expected)
+
+    # JIT compilation.
+    compiled = jax.jit(
+        lambda a, i: lax.dynamic_slice(a, (i,), (5,))
+    )
+    result = compiled(x, index)
+    self.assertArraysEqual(np.asarray(result), expected)
+
+    # NumPy scalar index.
+    result = lax.dynamic_slice(x, (dtype(-1),), (5,))
+    self.assertArraysEqual(np.asarray(result), expected)
+
+  @parameterized.named_parameters(
+      ("int8", np.int8, 300),
+      ("int16", np.int16, 40000),
+  )
+  def testNarrowNegativeIndexDynamicIndexInDim(self, dtype, size):
+    x = jnp.arange(size)
+    index = jnp.asarray(-1, dtype=dtype)
+
+    result = lax.dynamic_index_in_dim(
+        x, index, keepdims=False
+    )
+    self.assertEqual(int(result), size - 1)
+
+    compiled = jax.jit(
+        lambda a, i: lax.dynamic_index_in_dim(
+            a, i, keepdims=False
+        )
+    )
+    self.assertEqual(int(compiled(x, index)), size - 1)
+
+  @parameterized.named_parameters(
+      ("int8", np.int8, 300),
+      ("int16", np.int16, 40000),
+  )
+  def testNarrowNegativeIndexDynamicUpdateSlice(self, dtype, size):
+    x = jnp.arange(size)
+    index = jnp.asarray(-1, dtype=dtype)
+    updates = jnp.full((5,), -9, dtype=x.dtype)
+
+    expected = np.arange(size)
+    expected[-5:] = -9
+
+    # Eager execution.
+    result = lax.dynamic_update_slice(
+        x, updates, (index,)
+    )
+    self.assertArraysEqual(np.asarray(result), expected)
+
+    # JIT compilation.
+    compiled = jax.jit(
+        lambda a, u, i: lax.dynamic_update_slice(
+            a, u, (i,)
+        )
+    )
+    result = compiled(x, updates, index)
+    self.assertArraysEqual(np.asarray(result), expected)
   @jtu.sample_product(
       [
           dict(shape=shape, perm=perm)

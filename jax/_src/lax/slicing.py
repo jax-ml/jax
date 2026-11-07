@@ -3786,6 +3786,27 @@ def _dynamic_slice_indices(
     if dtypes.issubdtype(_dtype(i), np.unsignedinteger):
       result.append(i)
       continue
+    index_dtype = _dtype(i)
+
+    if (
+        allow_negative_index
+        and dtypes.issubdtype(index_dtype, np.signedinteger)
+        and (
+            not core.is_constant_dim(d)
+            or d > np.iinfo(index_dtype).max
+        )
+    ):
+      if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):
+        # Normalise static scalar indices using Python integer arithmetic.
+        i = int(i)
+      else:
+        promoted_dtype = np.promote_types(
+          index_dtype,
+          lax_utils.index_dtype_for_axis_size(
+            index_dtype, d, True
+          ),
+        )
+        i = lax.convert_element_type(i, promoted_dtype)
     # Test whether i and d are static to avoid unnecessary staging.
     if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):
       if allow_negative_index:
