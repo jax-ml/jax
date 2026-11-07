@@ -16,6 +16,11 @@ message MosaicGpuKernelProto {
   string kernel_name = 9;
   int32 smem_bytes = 10;
   int32 cluster_size = 11;
+  repeated int64 xla_replica_ids = 12;
+  repeated bool symmetric_memory_parameters = 13;
+  bool uses_xla_collective_metadata = 14;
+  bool skip_device_barrier = 15;
+  optional int64 collective_id = 16;
 
   reserved 6;
   reserved "init_func_name";
