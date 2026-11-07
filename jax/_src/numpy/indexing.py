@@ -635,6 +635,8 @@ def take(
     unique_indices: bool = False,
     indices_are_sorted: bool = False,
     fill_value: StaticScalar | None = None,
+    *,
+    out_sharding: NamedSharding | PartitionSpec | None = None,
 ) -> Array:
   """Take elements from an array.
 
@@ -713,18 +715,28 @@ def take(
   """
   return _take(a, indices, None if axis is None else operator.index(axis), out,
                mode, unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
-               fill_value=fill_value)
+               fill_value=fill_value, out_sharding=out_sharding)
 
 
-@api.jit(static_argnames=('axis', 'mode', 'unique_indices', 'indices_are_sorted', 'fill_value'))
+@api.jit(static_argnames=('axis', 'mode', 'unique_indices', 'indices_are_sorted',
+                          'fill_value', 'out_sharding'))
 def _take(a, indices, axis: int | None = None, out=None, mode=None,
-          unique_indices=False, indices_are_sorted=False, fill_value=None):
+          unique_indices=False, indices_are_sorted=False, fill_value=None,
+          out_sharding=None):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.take is not supported.")
   a, indices = util.ensure_arraylike("take", a, indices)
+  out_sharding = canonicalize_sharding(out_sharding, "take")
 
   if axis is None:
-    a = a.ravel()
+    a = lax_numpy.ravel(
+        a,
+        out_sharding=(
+            NamedSharding(out_sharding.mesh, PartitionSpec())
+            if out_sharding is not None
+            else None
+        ),
+    )
     axis_idx = 0
   else:
     axis_idx = canonicalize_axis(axis, np.ndim(a))
@@ -749,12 +761,12 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
   if slice_sizes[axis_idx] == 0:
     if indices.size != 0:
       raise IndexError("Cannot do a non-empty jnp.take() from an empty axis.")
-    return a
+    return reshard(a, out_sharding) if out_sharding is not None else a
 
   if indices.size == 0:
     out_shape = (slice_sizes[:axis_idx] + list(indices.shape) +
                  slice_sizes[axis_idx + 1:])
-    return lax.full_like(a, 0, shape=out_shape)
+    return lax.full_like(a, 0, shape=out_shape, sharding=out_sharding)
 
   slice_sizes[axis_idx] = 1
   dnums = slicing.GatherDimensionNumbers(
@@ -766,7 +778,8 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
   return slicing.gather(a, indices[..., None], dimension_numbers=dnums,
                         slice_sizes=tuple(slice_sizes),
                         mode=gather_mode, unique_indices=unique_indices,
-                        indices_are_sorted=indices_are_sorted, fill_value=fill_value)
+                        indices_are_sorted=indices_are_sorted,
+                        fill_value=fill_value, out_sharding=out_sharding)
 
 
 def _normalize_index(index, axis_size):
