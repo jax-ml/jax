@@ -4790,7 +4790,7 @@ def broadcasting_layout_rule(name, out_aval, *avals, **kwargs):
 
 def _naryop_collective_rule(in_avals, out_avals, **params):
   from jax._src.lax import parallel
-  out_aval, = out_avals
+  out_aval, *_ = out_avals
   out_parts = out_aval.sharding.spec.partitions
   if all(not a.ndim or a.sharding.spec.partitions == out_parts
          for a in in_avals):
@@ -6572,7 +6572,8 @@ ad.defjvp(to_edtype_p,
 ad.primitive_transposes[to_edtype_p] = \
     lambda ct, x, edtype: [from_edtype_p.bind(ct, dtype=x.aval.dtype)]
 batching.defvectorized(to_edtype_p)
-mlir.register_lowering(to_edtype_p, lambda _, x, **__: [x])
+mlir.register_lowering(
+    to_edtype_p, lambda _, x, **__: [x], shard_map_passthrough=True)
 
 
 def _from_edtype_abstract_eval(x, *, dtype):
@@ -6614,7 +6615,8 @@ ad.defjvp(from_edtype_p,
 ad.primitive_transposes[from_edtype_p] = \
     lambda ct, x, dtype: [to_edtype_p.bind(ct, edtype=x.dtype)]
 batching.defvectorized(from_edtype_p)
-mlir.register_lowering(from_edtype_p, lambda _, x, **__: [x])
+mlir.register_lowering(
+    from_edtype_p, lambda _, x, **__: [x], shard_map_passthrough=True)
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
@@ -10592,7 +10594,9 @@ def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
                              mlir.i32_attr(mantissa_bits))
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
+mlir.register_lowering(
+    reduce_precision_p, _reduce_precision_lower,
+    shard_map_collective_rule=_unop_collective_rule)
 lax_utils.register_unreduced_lojax(reduce_precision_p)
 
 
@@ -10919,7 +10923,9 @@ def _top_k_lower(ctx, operand, k, axis, is_stable):
     results = [hlo.transpose(result, mlir.dense_int_array(perm))
                for result in results]
   return results
-mlir.register_lowering(top_k_p, _top_k_lower)
+
+mlir.register_lowering(
+    top_k_p, _top_k_lower, shard_map_collective_rule=_unop_collective_rule)
 
 ad.primitive_jvps[top_k_p] = _top_k_jvp
 batching.primitive_batchers[top_k_p] = _top_k_batch_rule
@@ -11288,7 +11294,19 @@ def _iota_lower(ctx, dtype, shape, dimension, sharding):
   aval_out, = ctx.avals_out
   out = mlir.iota(ctx, aval_out, dimension=dimension)
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
-mlir.register_lowering(iota_p, _iota_lower)
+
+def _iota_collective_rule(in_avals, out_avals, *, dimension, **_):
+  del in_avals
+  out_aval, = out_avals
+  if out_aval.sharding.spec.partitions[dimension] is not None:
+    raise NotImplementedError
+  return mlir.PartitioningRule(per_shard_params={
+      'shape': out_aval.sharding.shard_shape(out_aval.shape),
+      'sharding': None,
+  })
+
+mlir.register_lowering(
+    iota_p, _iota_lower, shard_map_collective_rule=_iota_collective_rule)
 
 ### util
 

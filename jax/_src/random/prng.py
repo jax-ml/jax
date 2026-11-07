@@ -1032,4 +1032,8 @@ def iota_2x32_shape_lowering(ctx, *, shape):
   counts_lo = mlir.hlo.convert(result_type, counts)
   counts_hi = mlir.hlo.convert(result_type, counts_shifted)
   return counts_hi, counts_lo
-mlir.register_lowering(iota_2x32_shape_p, iota_2x32_shape_lowering)
+
+mlir.register_lowering(
+    iota_2x32_shape_p, iota_2x32_shape_lowering,
+    shard_map_collective_rule=(
+        lambda in_avals, out_avals, **params: mlir.PartitioningRule()))

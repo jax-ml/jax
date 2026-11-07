@@ -21,6 +21,7 @@ from jax import lax
 from jax._src import ad_util
 from jax._src import config
 from jax._src import core
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import parallel
 from jax._src.layout import Layout
@@ -1140,6 +1141,105 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_iota(self, mesh):
+    @jax.jit
+    def f():
+      return lax.broadcasted_iota(
+          np.int32, (4, 3, 4), 1, out_sharding=P('x', None, 'y'))
+
+    with config.shard_map_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f.lower().as_text())
+      expected = f()
+    self.assertIn('sdy.manual_computation', f.lower().as_text())
+    out = f()
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertArraysEqual(out, expected)
+
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda: lax.broadcasted_iota(
+          np.int32, (4, 4), 0, out_sharding=P('x', 'y'))).lower()
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_top_k(self, mesh):
+    x = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(4, 4), P('x', None))
+
+    @jax.jit
+    def f(a):
+      return lax.top_k(a, k=3, axis=1)
+
+    with config.shard_map_partitioning(False):
+      exp_v, exp_i = f(x)
+    out_v, out_i = f(x)
+    self.assertEqual(out_v.sharding, exp_v.sharding)
+    self.assertEqual(out_i.sharding, exp_i.sharding)
+    self.assertArraysEqual(out_v, exp_v)
+    self.assertArraysEqual(out_i, exp_i)
+
+    with self.assertRaises(core.ShardingTypeError):
+      jax.jit(lambda a: lax.top_k(a, k=2, axis=0)).lower(x)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reduce_precision(self, mesh):
+    x = jax.device_put(
+        (np.arange(16, dtype=np.float32).reshape(4, 4) + 0.12345),
+        P('x', 'y'))
+
+    @jax.jit
+    def f(a):
+      return lax.reduce_precision(a, exponent_bits=8, mantissa_bits=7)
+
+    with config.shard_map_partitioning(False):
+      expected = f(x)
+    out = f(x)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertArraysEqual(out, expected)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_threefry_and_iota_2x32(self, mesh):
+    from jax._src.random import prng, threefry2x32
+
+    k = jax.device_put(
+        np.arange(4, dtype=np.uint32).reshape(4, 1), P('x', None))
+    c_sharded = jax.device_put(
+        np.arange(16, dtype=np.uint32).reshape(4, 4), P('x', None))
+
+    @jax.jit
+    def f(k, cs):
+      c0, c1 = prng.iota_2x32_shape((4, 4))
+      r0, r1 = threefry2x32.threefry2x32_p.bind(
+          k, k + np.uint32(1), c0 + cs, c1)
+      return r0, r1
+
+    with config.shard_map_partitioning(False):
+      exp0, exp1 = f(k, c_sharded)
+    out0, out1 = f(k, c_sharded)
+    self.assertEqual(out0.sharding, exp0.sharding)
+    self.assertEqual(out1.sharding, exp1.sharding)
+    self.assertArraysEqual(out0, exp0)
+    self.assertArraysEqual(out1, exp1)
+
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_edtype_casts(self, mesh):
+    dt = dtypes.primal_tangent_dtype(jnp.int8, jnp.float32)
+    x = jax.device_put(
+        np.arange(16, dtype=np.int8).reshape(4, 4), P('x', 'y'))
+
+    @jax.jit
+    def f(a):
+      return a.astype(dt).astype(jnp.int8)
+
+    with config.shard_map_partitioning(False):
+      expected = f(x)
+    out = f(x)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertArraysEqual(out, expected)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

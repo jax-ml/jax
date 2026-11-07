@@ -218,8 +218,10 @@ threefry2x32_p.multiple_results = True
 threefry2x32_p.def_impl(partial(dispatch.apply_primitive, threefry2x32_p))
 threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
 batching.defbroadcasting(threefry2x32_p)
+
 mlir.register_lowering(
-    threefry2x32_p, _threefry2x32_lowering_rule, inline=False)
+    threefry2x32_p, _threefry2x32_lowering_rule, inline=False,
+    shard_map_collective_rule=lax._naryop_collective_rule)
 mlir.register_lowering(
     threefry2x32_p, _threefry2x32_cpu_lowering_rule, platform='cpu')
 mlir.register_lowering(
