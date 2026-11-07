@@ -4791,20 +4791,25 @@ def broadcasting_layout_rule(name, out_aval, *avals, **kwargs):
 def _naryop_collective_rule(in_avals, out_avals, **params):
   from jax._src.lax import parallel
   out_aval, = out_avals
-  out_spec = out_aval.sharding.spec
-  if all(not a.ndim or a.sharding.spec == out_spec for a in in_avals):
+  out_parts = out_aval.sharding.spec.partitions
+  if all(not a.ndim or a.sharding.spec.partitions == out_parts
+         for a in in_avals):
     return mlir.PartitioningRule()
+  for a in in_avals:
+    if a.ndim and any(s not in (out_s, None) for s, out_s in
+                      zip(a.sharding.spec.partitions, out_parts)):
+      raise NotImplementedError
 
   mesh = get_abstract_mesh()
 
   def _slice_to_shard(x_shard, outer_in_aval):
-    if not outer_in_aval.ndim or outer_in_aval.sharding.spec == out_spec:
+    if (not outer_in_aval.ndim or
+        outer_in_aval.sharding.spec.partitions == out_parts):
       return x_shard
 
     starts, sizes, needs_slice = [], [], False
     for d, s, out_s in safe_zip(
-        x_shard.shape, outer_in_aval.sharding.spec.partitions,
-        out_spec.partitions):
+        x_shard.shape, outer_in_aval.sharding.spec.partitions, out_parts):
       if s == out_s or d == 1:
         starts.append(np.int32(0))
         sizes.append(d)
@@ -8410,7 +8415,8 @@ tile_p.def_abstract_eval(_tile_abstract_eval)
 tile_p.def_impl(partial(dispatch.apply_primitive, tile_p))
 ad.deflinear2(tile_p, _tile_transpose_rule)
 batching.primitive_batchers[tile_p] = _tile_batch_rule
-mlir.register_lowering(tile_p, _tile_lower)
+mlir.register_lowering(
+    tile_p, _tile_lower, shard_map_collective_rule=_unop_collective_rule)
 
 
 def _clamp_shape_rule(min, operand, max):
@@ -8492,7 +8498,9 @@ ad.defjvp(clamp_p,
           lambda g, min, operand, max:
           select(lt(max, operand), g, _zeros(operand)))
 batching.primitive_batchers[clamp_p] = _clamp_batch_rule
-mlir.register_lowering(clamp_p, partial(_nary_lower_hlo, hlo.clamp))
+mlir.register_lowering(
+    clamp_p, partial(_nary_lower_hlo, hlo.clamp),
+    shard_map_collective_rule=_naryop_collective_rule)
 
 def _concatenate_shape_rule(*operands, **kwargs):
   dimension = kwargs.pop('dimension')
@@ -9081,7 +9089,15 @@ def _pad_lower(ctx, x, padding_value, *, padding_config):
   out = mlir.pad(ctx, aval_out, x, padding_value, low, high, interior)
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
-mlir.register_lowering(pad_p, _pad_lower)
+def _pad_collective_rule(in_avals, out_avals, *, padding_config):
+  in_aval, _ = in_avals
+  if any(s is not None and cfg != (0, 0, 0)
+         for s, cfg in zip(in_aval.sharding.spec.partitions, padding_config)):
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
+mlir.register_lowering(
+    pad_p, _pad_lower, shard_map_collective_rule=_pad_collective_rule)
 lax_utils.register_unreduced_lojax(pad_p)
 
 
@@ -9938,7 +9954,9 @@ select_n_p = standard_primitive(
 ad.primitive_jvps[select_n_p] = _select_jvp
 ad.primitive_transposes[select_n_p] = _select_transpose_rule
 batching.fancy_primitive_batchers[select_n_p] = _select_batch_rule
-mlir.register_lowering(select_n_p, _select_hlo_lowering)
+mlir.register_lowering(
+    select_n_p, _select_hlo_lowering,
+    shard_map_collective_rule=_naryop_collective_rule)
 lax_utils.register_unreduced_lojax(select_n_p)
 
 

@@ -3228,7 +3228,9 @@ def add_jaxvals_lowering(ctx, x, y):
   out = hlo.add(x, y)
   return [lower_with_explicit_types(ctx, out, out_aval)]
 
-register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
+register_lowering(
+    ad_util.add_jaxvals_p, add_jaxvals_lowering,
+    shard_map_collective_rule=lambda *_, **__: PartitioningRule())
 
 register_lowering(ad_util.stop_gradient_p, lambda ctx, x: [x])
 
