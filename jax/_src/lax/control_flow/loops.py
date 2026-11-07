@@ -3267,7 +3267,8 @@ def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
         reducer_p,
         mlir.lower_fun(fn, multiple_results=False),
         platform=platform,
-        inline=False)
+        inline=False,
+        shard_map_collective_rule=lambda *_, **__: mlir.PartitioningRule())
 
   # In XLA, there's a rewriter for an O(N^2) reduce-window implementation.
   register_lowering(

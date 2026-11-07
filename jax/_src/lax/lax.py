@@ -5812,7 +5812,9 @@ def _integer_pow_lowering(ctx, x, *, y):
   aval_out, = ctx.avals_out
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(integer_pow_p, _integer_pow_lowering)
+mlir.register_lowering(
+    integer_pow_p, _integer_pow_lowering,
+    shard_map_collective_rule=_unop_collective_rule)
 
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
@@ -6679,7 +6681,18 @@ def _bitcast_convert_type_lower(ctx, operand, *, new_dtype):
   out = hlo.bitcast_convert(out_type, operand)
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
-mlir.register_lowering(bitcast_convert_type_p, _bitcast_convert_type_lower)
+def _bitcast_convert_type_collective_rule(in_avals, out_avals, *, new_dtype):
+  del out_avals
+  in_aval, = in_avals
+  # Widening consumes the trailing dim, which requires an all-gather if sharded.
+  if (dtypes.itemsize_bits(in_aval.dtype) < dtypes.itemsize_bits(new_dtype) and
+      in_aval.sharding.spec.partitions[-1] is not None):
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
+mlir.register_lowering(
+    bitcast_convert_type_p, _bitcast_convert_type_lower,
+    shard_map_collective_rule=_bitcast_convert_type_collective_rule)
 
 
 def _validate_preferred_element_type(input_dtype, preferred_element_type):
@@ -10371,6 +10384,14 @@ argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
 batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
 
+def _argminmax_collective_rule(in_avals, out_avals, *, axes, index_dtype):
+  del out_avals, index_dtype
+  in_aval, = in_avals
+  axis, = axes
+  if in_aval.sharding.spec.partitions[axis] is not None:
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
 mlir.register_lowering(
     argmin_p,
     mlir.lower_fun(
@@ -10378,6 +10399,7 @@ mlir.register_lowering(
         multiple_results=False,
     ),
     inline=False,
+    shard_map_collective_rule=_argminmax_collective_rule,
 )
 
 mlir.register_lowering(
@@ -10387,6 +10409,7 @@ mlir.register_lowering(
         multiple_results=False,
     ),
     inline=False,
+    shard_map_collective_rule=_argminmax_collective_rule,
 )
 
 def _reduce_logical_shape_rule(operand, *, axes):
@@ -10791,7 +10814,15 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
   return [mlir.lower_with_sharding_in_types(ctx, op, aval)
           for op, aval in zip(sort.results, ctx.avals_out)]
 
-mlir.register_lowering(sort_p, _sort_lower)
+def _sort_collective_rule(in_avals, out_avals, **params):
+  del out_avals, params
+  # _sort_sharding_rule skips empty-mesh constants.
+  if len({a.sharding.spec for a in in_avals}) > 1:
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
+mlir.register_lowering(
+    sort_p, _sort_lower, shard_map_collective_rule=_sort_collective_rule)
 
 
 def _top_k_shape_rule(operand, *, k, axis, is_stable):
@@ -11168,7 +11199,7 @@ copy_p.def_abstract_eval(lambda x: x)
 def _copy_lowering(ctx, x):
   out_aval, = ctx.avals_out
   return [mlir.lower_with_sharding_in_types(ctx, x, out_aval)]
-mlir.register_lowering(copy_p, _copy_lowering)
+mlir.register_lowering(copy_p, _copy_lowering, shard_map_passthrough=True)
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
 batching.defvectorized(copy_p)
 copy_p.is_high = lambda x: x.is_high  # type: ignore

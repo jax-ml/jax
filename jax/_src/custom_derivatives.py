@@ -1948,8 +1948,9 @@ linear_call_p.def_impl(_linear_call_impl)
 linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
 ad.primitive_jvps[linear_call_p] = _linear_call_jvp_rule
 ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule
-mlir.register_lowering(linear_call_p, mlir.lower_fun(
-    _linear_call_impl, multiple_results=True))
+mlir.register_lowering(
+    linear_call_p, mlir.lower_fun(_linear_call_impl, multiple_results=True),
+    shard_map_passthrough=True)
 
 
 # A stageable primitive that fails when evaluated
@@ -2251,8 +2252,9 @@ remat_opt_p.is_high = lambda *_, fwd_jaxpr, **__: fwd_jaxpr.is_high
 remat_opt_p.to_lojax = _remat_opt_to_lojax
 remat_opt_p.def_impl(_remat_opt_impl)
 remat_opt_p.def_effectful_abstract_eval(_remat_opt_abstract_eval)
-mlir.register_lowering(remat_opt_p, mlir.lower_fun(
-    _remat_opt_impl, multiple_results=True))
+mlir.register_lowering(
+    remat_opt_p, mlir.lower_fun(_remat_opt_impl, multiple_results=True),
+    shard_map_passthrough=True)
 
 
 batching.fancy_primitive_batchers[remat_opt_p] = _remat_opt_vmap
