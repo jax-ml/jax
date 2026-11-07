@@ -217,6 +217,13 @@ def as_e5m3(ref: ir.Value) -> ir.Value:
     return new_ref
 
 
+def is_sm107f() -> bool:
+  """Returns whether the device belongs to the sm_107f family (sm_10x, x >= 7)."""
+  return jtu.is_cuda_compute_capability_at_least(
+      "10.7"
+  ) and not jtu.is_cuda_compute_capability_at_least("11.0")
+
+
 class TestCase(parameterized.TestCase):
 
   def setUp(self, *, artificial_shared_memory_limit=jtu._SMEM_SIZE_BOUND_FOR_TESTS, min_compute_capability="9.0"):
@@ -1676,6 +1683,70 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         kernel, (1, 1, 1), (128, 1, 1), x, x, mgpu.TMEM(x.shape, jax_dtype, packing=packing)
     )(x)
     np.testing.assert_array_equal(x, y)
+
+  def _tmem_round_trip(self, shapes) -> str:
+    """Round-trips data through TMEM buffers of the given shapes.
+
+    Returns:
+      The PTX of the kernel.
+    """
+    dtype = jnp.float32
+    num_buffers = len(shapes)
+
+    def kernel(ctx, *args):
+      del ctx
+      inputs = args[:num_buffers]
+      outputs = args[num_buffers:2 * num_buffers]
+      tmems = args[-1]
+      for x_ref, tmem in zip(inputs, tmems, strict=True):
+        tmem.store(
+            fa.FragmentedArray.load_untiled(
+                x_ref, layout=tcgen05.LAYOUT, optimized=False
+            )
+        )
+      tcgen05.commit_tmem()
+      for y_ref, tmem in zip(outputs, tmems, strict=True):
+        tmem.load(tcgen05.LAYOUT).store_untiled(y_ref, optimized=False)
+
+    xs = tuple(self.prng.uniform(-1, 1, s).astype(dtype) for s in shapes)
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      ys = mgpu.as_gpu_kernel(
+          kernel,
+          (1, 1, 1),
+          (128, 1, 1),
+          xs,
+          xs,
+          [mgpu.TMEM(s, dtype) for s in shapes],
+      )(*xs)
+    for x, y in zip(xs, ys, strict=True):
+      np.testing.assert_array_equal(x, y)
+    return ptx()
+
+  def test_tmem_alloc_exclusive(self):
+    if not is_sm107f():
+      self.skipTest("Only sm_107f supports allocating more than 512 columns.")
+    ptx = self._tmem_round_trip([(128, 576)])
+    self.assertLen(re.findall(r"tcgen05\.alloc\.", ptx), 1)
+    self.assertLen(
+        re.findall(r"tcgen05\.alloc\.exclusive\.cta_group::1\.", ptx), 1
+    )
+    self.assertLen(
+        re.findall(r"tcgen05\.dealloc\.exclusive\.cta_group::1\.", ptx), 1
+    )
+
+  def test_tmem_alloc_more_than_512_cols_requires_sm107f(self):
+    if is_sm107f():
+      self.skipTest("sm_107f supports allocating more than 512 columns.")
+
+    def kernel(ctx, input, output, scratch):
+      del ctx, input, output, scratch
+
+    x = jnp.zeros((128, 128), dtype=jnp.float32)
+    with self.assertRaisesRegex(ValueError, "exceeding the limit of 512"):
+      mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x,
+          mgpu.TMEM((128, 576), jnp.float32),
+      )(x).block_until_ready()
 
   @parameterized.parameters([
       (jnp.float32, 1, tcgen05.LAYOUT),
