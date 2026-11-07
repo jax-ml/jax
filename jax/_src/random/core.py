@@ -1384,18 +1384,45 @@ def _truncated_normal(key: Key, lower, upper, shape, dtype) -> Array:
     shape = lax.broadcast_shapes(np.shape(lower), np.shape(upper))
   else:
     _check_shape("truncated_normal", shape, np.shape(lower), np.shape(upper))
-
-  sqrt2 = np.array(np.sqrt(2), dtype)
-  lower = lax.convert_element_type(lower, dtype)
-  upper = lax.convert_element_type(upper, dtype)
-  a = lax_special.erf(lower / sqrt2)
-  b = lax_special.erf(upper / sqrt2)
   if not dtypes.issubdtype(dtype, np.floating):
     raise TypeError("truncated_normal only accepts floating point dtypes.")
-  u = uniform(key, shape, dtype, minval=a, maxval=b)
-  out = sqrt2 * lax_special.erf_inv(u)
+
+  lower = lax.broadcast_to_rank(
+      lax.convert_element_type(lower, dtype), len(shape)
+  )
+  upper = lax.broadcast_to_rank(
+      lax.convert_element_type(upper, dtype), len(shape)
+  )
+
+  # Compute in at least float32 so 16-bit dtypes get full 23-bit quantile
+  # resolution and avoid underflow/rounding in the tails.
+  compute_dtype = (
+      np.dtype("float32") if dtypes.finfo(dtype).bits < 32 else dtype
+  )
+  lo = lax.convert_element_type(lower, compute_dtype)
+  hi = lax.convert_element_type(upper, compute_dtype)
+
+  # Reflect intervals with positive midpoint so tail bounds lie in (-inf, 0],
+  # where ndtr(x) -> 0 retains full floating-point exponent precision.
+  flip = lo > -hi
+  a = jnp.where(flip, -hi, lo)
+  b = jnp.where(flip, -lo, hi)
+
+  finfo = dtypes.finfo(compute_dtype)
+  min_u = np.ldexp(np.array(1.0, compute_dtype), -(finfo.nmant + 1))
+  u = uniform(key, shape, compute_dtype, minval=min_u, maxval=1.0)
+
+  pa, pb = ndtr(a), ndtr(b)
+  p = jnp.clip(pa + u * (pb - pa), finfo.tiny, 1.0 - min_u)
+  z = erf_inv_core(
+      2.0 * (p - 0.5),
+      2.0 * jnp.minimum(p, 1.0 - p),
+      has_far_tail=True,
+      is_ndtri=True,
+  )
+  out = lax.convert_element_type(jnp.where(flip, -z, z), dtype)
   # Clamp the value to the open interval (lower, upper) to make sure that
-  # rounding (or if we chose `a` for `u`) doesn't push us outside of the range.
+  # rounding doesn't push us outside of the range.
   return jnp.clip(
       out,
       lax.nextafter(lax.stop_gradient(lower), np.array(np.inf, dtype=dtype)),
