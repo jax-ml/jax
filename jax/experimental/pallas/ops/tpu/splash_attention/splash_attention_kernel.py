@@ -41,6 +41,10 @@ NUM_SUBLANES = 8
 # We predefine some useful dimension numbers for dot_general
 NN_DIM_NUMBERS = (((1,), (0,)), ((), ()))  # standard matmul
 NT_DIM_NUMBERS = (((1,), (1,)), ((), ()))  # RHS transposed
+# Pallas TPU's 2-deep input/output DMA pipeline requires at least 3 distinct
+# ring-buffer slots when accumulating dQ in-place across outer kv_index steps
+# so the next cycle's prefetch does not race with the previous cycle's store.
+_FUSED_BWD_DQ_RING_BUFFER_SLOTS = 3
 
 
 class SegmentIds(NamedTuple):
@@ -1699,6 +1703,7 @@ def _flash_attention_dkv_kernel(
     di_ref,
     mask_ref,
     q_sequence_ref,
+    dq_alias_ref,
     # Outputs
     dq_ref,
     dk_ref,
@@ -1834,22 +1839,36 @@ def _flash_attention_dkv_kernel(
       else:
         # Compute block size == memory block size
         assert dq_ref is not None
-        dq_ref[...] = dq.astype(dq_ref.dtype)
-
-  if dq_scratch_ref is not None:
-    dq_scratch_ref[...] = jnp.zeros_like(dq_scratch_ref)
-  elif dq_scratch_ref is None and dq_ref is not None:
-    dq_ref[...] = jnp.zeros_like(dq_ref)
+        if dq_alias_ref is not None:
+          dq_ref[...] = (dq_alias_ref[...].astype(dq.dtype) + dq).astype(
+              dq_ref.dtype
+          )
+        else:
+          dq_ref[...] = dq.astype(dq_ref.dtype)
 
   @pl.when(should_run)
   def run():
+    if dq_scratch_ref is not None:
+      if dq_alias_ref is not None:
+        dq_scratch_ref[...] = dq_alias_ref[...].astype(dq_scratch_ref.dtype)
+      else:
+        dq_scratch_ref[...] = jnp.zeros_like(dq_scratch_ref)
     num_iters = (
         k_ref.shape[0 if k_layout is HEAD_DIM_MINOR else 1] // bkv_compute
     )
     lax.fori_loop(0, num_iters, body, None, unroll=True)
-  if dq_scratch_ref is not None:
-    assert dq_ref is not None
-    dq_ref[...] = dq_scratch_ref[...].astype(dq_ref.dtype)
+    if dq_scratch_ref is not None:
+      assert dq_ref is not None
+      dq_ref[...] = dq_scratch_ref[...].astype(dq_ref.dtype)
+
+  if dq_ref is not None:
+
+    @pl.when(jnp.logical_not(should_run))
+    def _():
+      if dq_alias_ref is not None:
+        dq_ref[...] = dq_alias_ref[...]
+      else:
+        dq_ref[...] = jnp.zeros_like(dq_ref)
 
   should_write = q_index == grid_width - 1
   if is_mqa:
@@ -2005,11 +2024,22 @@ def _splash_attention_bwd_dkv(
       v_index_map,
   )
 
+  dq_alias = dq_alias_spec = None
   if use_fused_bwd_kernel:
+    kv_steps = kv_seq_len // bkv
+    use_dq_ring_buffer = kv_steps > _FUSED_BWD_DQ_RING_BUFFER_SLOTS
+    dq_slots = min(kv_steps, _FUSED_BWD_DQ_RING_BUFFER_SLOTS)
+
     def dq_index_map(kv_index, head_index, q_index, *_):
-      return (kv_index, head_index, q_index, 0)
+      slot = kv_index % dq_slots if use_dq_ring_buffer else kv_index
+      return (slot, head_index, q_index, 0)
+
     dq_spec = pl.BlockSpec((None, None, bq, head_dim_qk), dq_index_map)
-    dq_shape = jax.ShapeDtypeStruct((kv_seq_len // bkv, *q.shape), q.dtype)
+    dq_shape = jax.ShapeDtypeStruct((dq_slots, *q.shape), q.dtype)
+    if use_dq_ring_buffer:
+      dq_alias = jnp.zeros(dq_shape.shape, dq_shape.dtype)
+      dq_alias_spec = dq_spec
+
     if bkv == bkv_compute:
       dq_scratch_shape = None
     else:
@@ -2158,6 +2188,8 @@ def _splash_attention_bwd_dkv(
     q_sequence = None
     in_specs.append(None)
 
+  in_specs.append(dq_alias_spec)
+
   out_shapes = [
       dq_shape,
       jax.ShapeDtypeStruct.like(k),
@@ -2206,6 +2238,29 @@ def _splash_attention_bwd_dkv(
       k_layout=k_layout,
       v_layout=v_layout,
   ))}
+  call_args = [
+      mask_info.data_next,
+      mask_info.block_mask,
+      mask_info.mask_next,
+      q if q_layout == QKVLayout.HEAD_DIM_MINOR else q.swapaxes(-1, -2),
+      k if k_layout == QKVLayout.HEAD_DIM_MINOR else k.swapaxes(-1, -2),
+      v if v_layout == QKVLayout.HEAD_DIM_MINOR else v.swapaxes(-1, -2),
+      q_segment_ids,
+      kv_segment_ids,
+      sinks,
+      logsumexp,
+      do,
+      di,
+      mask_info.partial_mask_blocks,
+      q_sequence,
+      dq_alias,
+  ]
+  # pallas_call indexes input_output_aliases after tree_flatten drops None args.
+  input_output_aliases = (
+      {sum(1 for x in call_args[:-1] if x is not None): 0}
+      if dq_alias is not None
+      else {}
+  )
   with jax.named_scope(kernel_name):
     dq_unreduced, dk, dv = pl.pallas_call(
         kernel,
@@ -2217,33 +2272,19 @@ def _splash_attention_bwd_dkv(
             scratch_shapes=scratch_shapes,
         ),
         out_shape=out_shapes,
+        input_output_aliases=input_output_aliases,
         # We set all dimensions to arbitrary because:
         # 1) for kv_seq_len, the splash attention prefetch schedule assumes no
         #    megacore
         # 2) for heads, we are reducing over heads
         # 3) for q_seq_len, we are reducing over it to compute dkv
         compiler_params=pltpu.CompilerParams(
-          dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
+            dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
         ),
         name=kernel_name,
         interpret=interpret,
         metadata=metadata,
-    )(
-        mask_info.data_next,
-        mask_info.block_mask,
-        mask_info.mask_next,
-        q if q_layout == QKVLayout.HEAD_DIM_MINOR else q.swapaxes(-1, -2),
-        k if k_layout == QKVLayout.HEAD_DIM_MINOR else k.swapaxes(-1, -2),
-        v if v_layout == QKVLayout.HEAD_DIM_MINOR else v.swapaxes(-1, -2),
-        q_segment_ids,
-        kv_segment_ids,
-        sinks,
-        logsumexp,
-        do,
-        di,
-        mask_info.partial_mask_blocks,
-        q_sequence,
-    )
+    )(*call_args)
   if use_fused_bwd_kernel:
     assert dq_unreduced is not None
     dq = dq_unreduced.sum(axis=0)
