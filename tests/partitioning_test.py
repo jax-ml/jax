@@ -783,6 +783,8 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       ((2, 2, 4), P('x', 'y', None), (16,), None),
       ((8, 4), P(('x', 'y'), None), (2, 4, 4), P('x', 'y', None)),
       ((4, 16), P('x', 'y'), (4, 2, 8), P('x', 'y', None)),
+      ((4, 4), P('x', 'y'), (2, 2, 2, 2), P('x', None, 'y', None)),
+      ((2, 2, 2, 2), P('x', None, 'y', None), (4, 4), P('x', 'y')),
       ((4, 16), P('x', None, reduced={'y'}), (4, 2, 8),
        P('x', None, None, reduced={'y'})),
   )
@@ -810,14 +812,127 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, expected)
 
   @parameterized.parameters(
-      ((4, 4), P('x', 'y'), None, (16,), None),
-      ((16,), P(('x', 'y')), None, (4, 4), P('x', 'y')),
-      ((4, 8), P('x', None), None, (2, 2, 8), P(None, 'x', None)),
-      ((4, 4), P('x', 'y'), None, (16,), P('x')),
+      # Merge all_to_all (propagated and explicit out_sharding)
+      ((4, 4), P('x', 'y'), (16,), None, P(('x', 'y')), {'all_to_all': 1}),
+      ((4, 4), P('x', 'y'), (16,), P(('x', 'y')), P(('x', 'y')),
+       {'all_to_all': 1}),
+      ((8, 4), P('x', 'y'), (32,), None, P(('x', 'y')), {'all_to_all': 1}),
+      ((2, 1, 4, 4, 3), P('z', None, 'x', 'y', None), (2, 16, 3), None,
+       P('z', ('x', 'y'), None), {'all_to_all': 1}),
+      ((8, 4), P('x', ('y', 'z')), (32,), None, P(('x', 'y', 'z')),
+       {'all_to_all': 1}),
+      ((2, 4, 4), P('x', 'y', 'z'), (32,), None, P(('x', 'y', 'z')),
+       {'all_to_all': 1}),
+      ((4, 2, 4), P('x', 'y', 'z'), (32,), None, P(('x', 'y', 'z')),
+       {'all_to_all': 2}),
+      ((8, 4, 4), P('x', 'y', 'z'), (128,), None, P(('x', 'y', 'z')),
+       {'all_to_all': 2}),
+      ((4, 4), P('x', 'y', reduced={'z'}), (16,), None,
+       P(('x', 'y'), reduced={'z'}), {'all_to_all': 1}),
+      # Merge with unsharded gap
+      ((4, 2, 2), P('x', None, 'y'), (16,), P(('x', 'y')), P(('x', 'y')),
+       {'all_to_all': 1}),
+      # Split all_to_all and split + move
+      ((16,), P(('x', 'y')), (4, 4), P('x', 'y'), P('x', 'y'),
+       {'all_to_all': 1}),
+      ((4, 4), P('x', 'y'), (4, 2, 2), P('x', None, 'y'), P('x', None, 'y'),
+       {'all_to_all': 1}),
+      ((4, 8), P('x', 'y'), (4, 2, 4), P('x', None, 'y'), P('x', None, 'y'),
+       {'all_to_all': 1}),
+      ((4, 8), P('x', None), (2, 2, 8), P(None, 'x', None), P(None, 'x', None),
+       {'all_to_all': 1}),
+      # Multi-axis split and merge with collectives
+      ((4, 4), P('x', 'y'), (2, 2, 2, 2), P(None, 'x', None, 'y'),
+       P(None, 'x', None, 'y'), {'all_to_all': 2}),
+      ((2, 2, 2, 2), P(None, 'x', None, 'y'), (4, 4), P('x', 'y'),
+       P('x', 'y'), {'all_to_all': 2}),
+      ((4, 4, 1, 2, 2), P('x', 'y', None, None, 'z'), (16, 1, 4),
+       P(('x', 'y'), None, 'z'), P(('x', 'y'), None, 'z'), {'all_to_all': 2}),
+      ((4, 4, 2, 2), P('x', 'y', 'z', None), (16, 4), P('x', 'z'),
+       P('x', 'z'), {'all_gather': 1}),
+      ((16, 4), P('x', 'z'), (4, 4, 2, 2), P('x', 'y', None, 'z'),
+       P('x', 'y', None, 'z'), {'all_to_all': 1, 'dynamic_slice': 1}),
+      # Axis drop (all_gather) and axis add (dynamic_slice)
+      ((4, 4), P('x', 'y'), (16,), P('x'), P('x'), {'all_gather': 1}),
+      ((16,), P('x'), (4, 4), P('x', 'y'), P('x', 'y'), {'dynamic_slice': 1}),
+      # Prefer all_to_all over all_gather when step counts tie
+      ((2, 2, 4), P('x', None, None), (4, 4), P(('y', 'x'), None),
+       P(('y', 'x'), None), {'all_to_all': 1, 'dynamic_slice': 1}),
+      ((2, 2, 4), P('x', 'y', None), (4, 4), P('y', None), P('y', None),
+       {'all_gather': 1, 'all_to_all': 1}),
+      # Axis swap (collective_permute)
+      ((2, 2, 4), P('x', None, 'y'), (4, 4), P('y', 'x'), P('y', 'x'),
+       {'collective_permute': 1}),
+      ((2, 2, 4), P('x', 'y', None), (4, 4), P(('y', 'x'), None),
+       P(('y', 'x'), None), {'collective_permute': 1}),
+      ((4, 4), P('x', 'y'), (16,), P(('y', 'x')), P(('y', 'x')),
+       {'all_to_all': 1, 'collective_permute': 1}),
+  )
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_reshape_collectives(
+      self, in_shape, in_spec, out_shape, out_spec, expected_spec,
+      expected_collectives, mesh):
+    np_inp = np.arange(math.prod(in_shape), dtype=np.float32).reshape(in_shape)
+    arr = jax.device_put(np_inp, in_spec)
+
+    @jax.jit
+    def f(x):
+      y = lax.reshape(x, out_shape, out_sharding=out_spec)
+      self.assertEqual(jax.typeof(y).sharding.spec, expected_spec)
+      return y
+
+    lowered_txt = f.lower(arr).as_text()
+    self.assertIn('sdy.manual_computation', lowered_txt)
+
+    for op in ('all_to_all', 'all_gather', 'dynamic_slice',
+               'collective_permute'):
+      self.assertEqual(
+          lowered_txt.count(f'stablehlo.{op}'), expected_collectives.get(op, 0),
+          msg=op)
+
+    with config.shard_map_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
+      expected = f(arr)
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, expected_spec))
+    self.assertArraysEqual(out, np_inp.reshape(out_shape))
+    self.assertArraysEqual(out, expected)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reshape_collectives_vjp(self, mesh):
+    np_inp = np.arange(16, dtype=np.float32).reshape(4, 4)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    def reshape_fn(x):
+      return lax.reshape(x, (16,))
+
+    @jax.jit
+    def f(x):
+      y, vjp_fn = jax.vjp(reshape_fn, x)
+      dx, = vjp_fn(y * 2)
+      return y, dx
+
+    with config.shard_map_partitioning(False):
+      expected_y, expected_dx = f(arr)
+
+    txt = f.lower(arr).as_text()
+    self.assertIn('sdy.manual_computation', txt)
+    self.assertEqual(txt.count('stablehlo.all_to_all'), 2)
+
+    out_y, out_dx = f(arr)
+    self.assertEqual(out_y.sharding, NamedSharding(mesh, P(('x', 'y'))))
+    self.assertEqual(out_dx.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertArraysEqual(out_y, expected_y)
+    self.assertArraysEqual(out_dx, expected_dx)
+
+  @parameterized.parameters(
       ((4, 6), P('x', 'y'), (1, 0), (6, 2, 2), P('y', 'x', None)),
+      ((4, 6), P('x', 'y'), None, (3, 8), P(None, 'x')),
+      ((2, 2, 8), P('x', None, 'y'), None, (4, 2, 4), P('x', None, 'y')),
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_reshape_collectives_needed_raises(
+  def test_reshape_unsupported_raises(
       self, shape, in_spec, dims, out_shape, out_spec, mesh):
     arr = jax.device_put(np.zeros(shape, dtype=np.float32), in_spec)
 
@@ -826,7 +941,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return lax.reshape(x, out_shape, dimensions=dims, out_sharding=out_spec)
 
     with self.assertRaises(NotImplementedError):
-      f.lower(arr)
+      f(arr)
 
   @parameterized.parameters(
       (

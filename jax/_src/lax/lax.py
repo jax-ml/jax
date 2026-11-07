@@ -9221,7 +9221,7 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions, sharding):
 class ReshapeExplicitError(Exception):
   pass
 
-def _split_on_one_axis(op_shape, new_sizes):
+def _split_on_one_axis(op_shape, new_sizes, allow_multi=False):
   op_shape = [s for s in op_shape if s != 1]
   new_sizes = [s for s in new_sizes if s != 1]
 
@@ -9237,7 +9237,7 @@ def _split_on_one_axis(op_shape, new_sizes):
       out_indices.append(j)
     else:
       count += 1
-      if count > 1:
+      if not allow_multi and count > 1:
         raise ReshapeExplicitError()
       temp = [new_sizes[j]]
       temp_indices = [j]
@@ -9255,8 +9255,8 @@ def _split_on_one_axis(op_shape, new_sizes):
   return True, out, out_indices
 
 
-def _merge_on_one_axis(operand, new_sizes):
-  return _split_on_one_axis(new_sizes, operand.shape)
+def _merge_on_one_axis(operand, new_sizes, allow_multi=False):
+  return _split_on_one_axis(new_sizes, operand.shape, allow_multi=allow_multi)
 
 
 def raise_reshape_error(operand, new_sizes) -> Never:
@@ -9267,12 +9267,13 @@ def raise_reshape_error(operand, new_sizes) -> Never:
 
 
 def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
-  return _reshape_sharding_rule_opt(operand, new_sizes, dimensions, sharding,
-                                    merge_a2a_error=False)
+  return _reshape_sharding_rule_opt(
+      operand, new_sizes=new_sizes, dimensions=dimensions, sharding=sharding,
+      allow_multi=False)
 
-# TODO(yashkatariya): Delete this when merge_a2a_error is always True.
-def _reshape_sharding_rule_opt(operand, new_sizes, dimensions, sharding,
-                               merge_a2a_error):
+
+def _reshape_sharding_rule_opt(operand, *, new_sizes, dimensions, sharding,
+                               allow_multi):
   if sharding is not None:
     return sharding
   if all(s is None for s in operand.sharding.spec.partitions):
@@ -9284,7 +9285,8 @@ def _reshape_sharding_rule_opt(operand, new_sizes, dimensions, sharding,
     return _split_merge_singleton_dim_sharding_rule(operand, new_sizes)
 
   try:
-    is_split, out_split, _ = _split_on_one_axis(operand.shape, new_sizes)
+    is_split, out_split, _ = _split_on_one_axis(
+        operand.shape, new_sizes, allow_multi=allow_multi)
   except ReshapeExplicitError:
     raise_reshape_error(operand, new_sizes)
   if is_split:
@@ -9292,12 +9294,13 @@ def _reshape_sharding_rule_opt(operand, new_sizes, dimensions, sharding,
                                         dimensions)
 
   try:
-    is_merge, operand_merge, _ = _merge_on_one_axis(operand, new_sizes)
+    is_merge, operand_merge, _ = _merge_on_one_axis(
+        operand, new_sizes, allow_multi=allow_multi)
   except ReshapeExplicitError:
     raise_reshape_error(operand, new_sizes)
   if is_merge:
     return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes,
-                                        dimensions, merge_a2a_error)
+                                        dimensions)
   raise_reshape_error(operand, new_sizes)
 
 
@@ -9360,14 +9363,13 @@ def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
   assert len(out_spec) == len(new_sizes), (out_spec, new_sizes)
   return operand.sharding.update(spec=out_spec)
 
-def strip_trailing_nones(tup_sp, op_merge):
-  while tup_sp[-1] is None:
-    tup_sp.pop()
-    op_merge.pop()
-  return tuple(tup_sp), tuple(op_merge)
+def strip_trailing_nones(lst):
+  while lst[-1] is None:
+    lst.pop()
+  return tuple(lst)
 
 def _merge_an_axis_sharding_rule(operand, operand_merge, orig_new_sizes,
-                                 dimensions, merge_a2a_error):
+                                 dimensions):
   new_spec = []
   mesh = operand.sharding.mesh
   op_partitions, op_shape = operand.sharding.spec.partitions, operand.shape
@@ -9380,18 +9382,11 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, orig_new_sizes,
       if all(s is None for s in tup_sp):
         new_spec.append(None)
       elif dimensions is None:
-        # Every dim before the last sharded dim must have local size 1; e.g.
-        # f32[4@x, 4@y] -> f32[16@(x,y)] on {x: 2, y: 2} needs an all-to-all.
-        tup_sp, op_merge = strip_trailing_nones(tup_sp, op_merge)
-        for dim_size, sp in zip(op_merge[:-1], tup_sp[:-1]):
-          if sp is None:
-            raise_reshape_error(operand, orig_new_sizes)
-          sp_tup = sp if isinstance(sp, tuple) else (sp,)
-          if (merge_a2a_error and
-              dim_size // math.prod(mesh.shape[a] for a in sp_tup) != 1):
-            raise_reshape_error(operand, orig_new_sizes)
+        tup_sp = strip_trailing_nones(flatten_spec(tup_sp))
+        if None in tup_sp:
+          raise_reshape_error(operand, orig_new_sizes)
         partitions = split_partitions(
-            mesh, flatten_spec(tup_sp), [ns], operand, orig_new_sizes)
+            mesh, tup_sp, [ns], operand, orig_new_sizes)
         new_spec.extend(partitions)
       else:
         raise_reshape_error(operand, orig_new_sizes)
@@ -9604,27 +9599,63 @@ def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
   return out, 0
 
 
-def _reshape_collective_rule(
-    in_avals, out_avals, *, new_sizes, dimensions, sharding):
-  del sharding
-  # Reject reshape-with-transpose (`dimensions` is not None), matching
-  # `_reshape_sharding_rule` on split/merge reshapes.
+def _roundtrip_reshape_sharding(src_aval, dst_aval):
+  try:
+    mid_dst = _reshape_sharding_rule_opt(
+        src_aval, new_sizes=dst_aval.shape, dimensions=None, sharding=None,
+        allow_multi=True)
+    mid_src = _reshape_sharding_rule_opt(
+        dst_aval.update(sharding=mid_dst), new_sizes=src_aval.shape,
+        dimensions=None, sharding=None, allow_multi=True)
+  except core.ShardingTypeError:
+    return None
+  return mid_src, mid_dst
+
+
+def _reshard_cost(steps):
+  num_collectives = sum(not isinstance(s, pjit.ReshardSlice) for s in steps)
+  num_ag = sum(isinstance(s, pjit.ReshardAG) for s in steps)
+  return (num_collectives, num_ag, len(steps))
+
+
+def _reshape_collective_rule(in_avals, out_avals, *, new_sizes, dimensions,
+                             sharding):
   if dimensions is not None:
     raise NotImplementedError
-  in_aval, = in_avals
-  out_aval, = out_avals
-  try:
-    expected_out = _reshape_sharding_rule_opt(
-        in_aval, new_sizes, dimensions=None, sharding=None,
-        merge_a2a_error=True)
-  except core.ShardingTypeError:
-    raise NotImplementedError from None
-  if out_aval.sharding.spec.partitions != expected_out.spec.partitions:
+
+  (in_aval,), (out_aval,) = in_avals, out_avals
+  in_spec = in_aval.sharding.spec.partitions
+  out_spec = out_aval.sharding.spec.partitions
+  mesh = get_abstract_mesh()
+
+  pairs = []
+  if (fwd := _roundtrip_reshape_sharding(in_aval, out_aval)) is not None:
+    pairs.append(fwd)
+  if (bwd := _roundtrip_reshape_sharding(out_aval, in_aval)) is not None:
+    mid_out, mid_in = bwd
+    pairs.append((mid_in, mid_out))
+
+  if not pairs:
     raise NotImplementedError
-  return mlir.PartitioningRule(per_shard_params={
-      'new_sizes': out_aval.sharding.shard_shape(out_aval.shape),
-      'sharding': None,
-  })
+
+  candidates = []
+  for mid_in, mid_out in pairs:
+    in_steps = pjit._plan_reshard(in_spec, mid_in.spec, mesh)
+    out_steps = pjit._plan_reshard(mid_out.spec, out_spec, mesh)
+    candidates.append((mid_out, in_steps, out_steps))
+
+  mid_out, in_steps, out_steps = _min(
+      candidates, key=lambda c: _reshard_cost(c[1] + c[2]))
+
+  return mlir.PartitioningRule(
+      in_collective=(None if not in_steps else
+                     lambda x: (pjit._apply_reshard_steps(x, in_steps, mesh),)),
+      out_collective=(None if not out_steps else
+                      lambda y: pjit._apply_reshard_steps(y, out_steps, mesh)),
+      per_shard_params={
+          'new_sizes': mid_out.shard_shape(out_aval.shape),
+          'sharding': None,
+      })
 
 
 def _reshape_lower(ctx, x, new_sizes, dimensions, sharding):

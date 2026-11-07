@@ -2779,9 +2779,23 @@ def _slice_to_shard(x, axes_per_dim: Sequence[tuple], mesh):
     sizes.append(local_size)
   return slicing.dynamic_slice(x, starts, sizes, allow_negative_indices=False)
 
-def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh):
+def _apply_reshard_steps(x, steps: Sequence[_ReshardStep], mesh):
   from jax._src.lax import parallel  # type: ignore
+  for step in steps:
+    if isinstance(step, ReshardSlice):
+      x = _slice_to_shard(x, step.axes_per_dim, mesh)
+    elif isinstance(step, ReshardPermute):
+      x = parallel.ppermute(x, step.axes, step.perm)
+    elif isinstance(step, ReshardAG):
+      x = parallel.all_gather(x, step.axes, axis=step.src_dim, tiled=True)
+    else:
+      assert isinstance(step, ReshardA2A)
+      x = parallel.all_to_all(x, step.axes, split_axis=step.dst_dim,
+                              concat_axis=step.src_dim, tiled=True)
+  return x
 
+
+def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh):
   (in_aval,), (out_aval,) = in_avals, out_avals
   in_s, out_s = in_aval.sharding, out_aval.sharding
   assert not in_s.spec.unreduced and not out_s.spec.unreduced
@@ -2797,18 +2811,7 @@ def _reshard_collective_rule(in_avals, out_avals, *, dst_sharding, concrete_mesh
   steps = _plan_reshard(in_s.spec.partitions, out_s.spec.partitions, mesh)
 
   def in_collective(x):
-    for step in steps:
-      if isinstance(step, ReshardSlice):
-        x = _slice_to_shard(x, step.axes_per_dim, mesh)
-      elif isinstance(step, ReshardPermute):
-        x = parallel.ppermute(x, step.axes, step.perm)
-      elif isinstance(step, ReshardAG):
-        x = parallel.all_gather(x, step.axes, axis=step.src_dim, tiled=True)
-      else:
-        assert isinstance(step, ReshardA2A)
-        x = parallel.all_to_all(x, step.axes, split_axis=step.dst_dim,
-                                concat_axis=step.src_dim, tiled=True)
-    return (x,)
+    return (_apply_reshard_steps(x, steps, mesh),)
 
   return mlir.PartitioningRule(in_collective=in_collective)
 
