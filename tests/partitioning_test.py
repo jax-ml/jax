@@ -39,6 +39,10 @@ jtu.request_cpu_devices(8)
 @jtu.pytest_mark_if_available('multiaccelerator')
 class ShardMapPartitioningTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    super().setUp()
+    self.enterContext(config.shard_map_partitioning(True))
+
   @parameterized.product(
       op=((jnp.sum, np.sum), (jnp.max, np.max), (jnp.min, np.min)),
       case=(
@@ -48,7 +52,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           (1, P(('x', 'y'), None), P(('x', 'y')), False),
       ),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce(self, op, case, mesh):
     jnp_op, np_op = op
@@ -56,20 +59,21 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     np_inp = np.arange(32, dtype=np.float32).reshape(4, 8)
     arr = jax.device_put(np_inp, in_spec)
 
+    @jax.jit
     def f(x):
       y = jnp_op(x, axis=axis)
       self.assertEqual(jax.typeof(y).sharding.spec, out_spec)
       return y
 
-    f_jit = jax.jit(f)
     with config.shard_map_partitioning(False):
-      self.assertNotIn('sdy.manual_computation', f_jit.lower(arr).as_text())
-      expected = f_jit(arr)
-    lowered_text = f_jit.lower(arr).as_text()
+      self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
+      expected = f(arr)
+
+    lowered_text = f.lower(arr).as_text()
     self.assertIn('sdy.manual_computation', lowered_text)
     self.assertEqual('all_reduce' in lowered_text, has_ar)
 
-    out = f_jit(arr)
+    out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_op(np_inp, axis=axis))
     self.assertArraysEqual(out, expected)
@@ -99,7 +103,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           ),
       ),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_scatter(self, op, case, mesh):
     lax_op, np_op = op
@@ -123,6 +126,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
       expected = f(arr)
+
     lowered_text = f.lower(arr).as_text()
     self.assertIn('sdy.manual_computation', lowered_text)
     self.assertEqual('reduce_scatter' in lowered_text, is_rs)
@@ -133,7 +137,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_op(np_inp, axis=axes))
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_missing_rule_raises_not_implemented(self, mesh):
     arr = jax.device_put(np.ones((4, 8), dtype=np.float32), P('x', 'y'))
@@ -146,7 +149,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           lambda x: lax.reduce_sum(x, axes=(0,), out_sharding=P(None)))
       f_bad.lower(arr)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('m', 'e'))
   def test_manual_collectives_under_partial_shard_map(self, mesh):
     np_x = np.arange(16, dtype=np.float32).reshape(2, 8)
@@ -161,6 +163,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(arr)
+
     out = f(arr)
     self.assertAllClose(out, np.sum(np_x, axis=0))
     self.assertArraysEqual(out, expected)
@@ -172,6 +175,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected_idx = f_idx_psum()
+
     out_idx = f_idx_psum()
     self.assertArraysEqual(out_idx, np.int32(1))
     self.assertArraysEqual(out_idx, expected_idx)
@@ -183,6 +187,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected_ag = f_ag_unsharded_dim(arr)
+
     out_ag = f_ag_unsharded_dim(arr)
     self.assertAllClose(out_ag, np_x)
     self.assertArraysEqual(out_ag, expected_ag)
@@ -195,6 +200,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected_ag_const = f_ag_const()
+
     out_ag_const = f_ag_const()
     self.assertAllClose(out_ag_const, np.ones((1, 8), dtype=np.float32))
     self.assertArraysEqual(out_ag_const, expected_ag_const)
@@ -211,7 +217,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       jnp_op=(jnp.sin, jnp.exp, jnp.negative, jnp.round, lax.erf),
       in_spec=(P('x', 'y'), P(('x', 'y'), None), P(None, None)),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unop(self, jnp_op, in_spec, mesh):
     np_inp = np.arange(1, 33, dtype=np.float32).reshape(4, 8) / 8.0
@@ -233,9 +238,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, expected_eager)
 
     f_jit = jax.jit(f)
+
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f_jit.lower(arr).as_text())
       expected_jit = f_jit(arr)
+
     self.assertIn('sdy.manual_computation', f_jit.lower(arr).as_text())
 
     out = f_jit(arr)
@@ -250,6 +257,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
       with config.shard_map_partitioning(False):
         expected_grad, = vjp_fn(arr, arr)
+
       grad, = vjp_fn(arr, arr)
       self.assertEqual(grad.sharding, arr.sharding)
       self.assertArraysEqual(grad, -np_inp)
@@ -263,7 +271,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       ((4, 8), P('x', 'y'), (1, 8), P(None, None), P('x', 'y'), True),
       ((), P(), (4, 8), P('x', 'y'), P('x', 'y'), False),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_binop(
       self, x_shape, x_spec, y_shape, y_spec, out_spec, has_slice, mesh):
@@ -272,9 +279,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     arr_x, arr_y = jax.device_put(np_x, x_spec), jax.device_put(np_y, y_spec)
 
     f = jax.jit(jnp.subtract)
+
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr_x, arr_y).as_text())
       expected = f(arr_x, arr_y)
+
     lowered = f.lower(arr_x, arr_y).as_text()
     self.assertIn('sdy.manual_computation', lowered)
     self.assertEqual('stablehlo.dynamic_slice' in lowered, has_slice)
@@ -291,7 +300,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       ),
       tiled=(False, True),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_pmin_pmax_scatter_primitives(self, op, tiled, mesh):
     scatter_op, np_op = op
@@ -310,10 +318,12 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     f_vmap = jax.vmap(f)
     batched = jax.device_put(
         np.stack([np_inp, np_inp + 10]), P(None, 'x', None))
+
     with config.shard_map_partitioning(False):
       expected_eager = f(arr)
       expected_jit = f_jit(arr)
       expected_vmap = f_vmap(batched)
+
     out_eager = f(arr)
     out_jit = f_jit(arr)
     out_vmap = f_vmap(batched)
@@ -331,7 +341,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       (lax.reduce_xor, np.bitwise_xor.reduce, np.int32, P('x', None), (1,),
        P('x'), False),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_prod_and_bitwise(
       self, lax_op, np_op, dtype, in_spec, axes, out_spec, has_ar, mesh):
@@ -354,32 +363,46 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
       expected = f(arr)
+
     lowered = f.lower(arr).as_text()
     self.assertIn('sdy.manual_computation', lowered)
     self.assertEqual('all_reduce' in lowered, has_ar)
+
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_op(np_inp, axis=axes).astype(dtype))
     self.assertArraysEqual(out, expected)
 
     int_arr = jax.device_put(np.ones((4, 4), dtype=np.int32), P('x', 'y'))
+
     for op in (lax.reduce_prod, lax.reduce_and, lax.reduce_or, lax.reduce_xor):
       with self.assertRaises(NotImplementedError):
         jax.jit(lambda x, op=op: op(x, axes=(0,))).lower(int_arr)
+
     c_arr = jax.device_put(np.ones((4,), dtype=np.complex64), P('x'))
+
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda x: lax.reduce_prod(x, axes=(0,))).lower(c_arr)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_per_shard_params(self, mesh):
     x = jax.device_put(np.arange(8, dtype=np.int32).reshape(4, 2), P('x', None))
-    y = jax.jit(lambda a: lax.convert_element_type_p.bind(
-        a, new_dtype=np.dtype(np.float32), weak_type=False,
-        sharding=NamedSharding(mesh, P('x', None))))(x)
+
+    @jax.jit
+    def f(a):
+      return lax.convert_element_type_p.bind(
+          a, new_dtype=np.dtype(np.float32), weak_type=False,
+          sharding=NamedSharding(mesh, P('x', None)))
+
+    y = f(x)
     self.assertArraysEqual(y, x.astype(np.float32))
-    s = jax.jit(lambda a: lax.reduce_sum(
-        a, axes=(1,), out_sharding=NamedSharding(mesh, P('x'))))(y)
+
+    @jax.jit
+    def g(a):
+      return lax.reduce_sum(
+          a, axes=(1,), out_sharding=NamedSharding(mesh, P('x')))
+
+    s = g(y)
     self.assertArraysEqual(s, np.sum(x.astype(np.float32), axis=1))
 
   @parameterized.parameters(
@@ -394,7 +417,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       (P('x', 'y'), P(None, ('y', 'x')), 'all_to_all'),
       (P('x', 'y', None), P(None, 'x', 'y'), 'all_to_all'),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshard(self, in_spec, out_spec, expected_op, mesh):
     shape = (4,) * len(in_spec)
@@ -408,6 +430,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     hlo = f.lower(x).as_text()
     self.assertIn('sdy.manual_computation', hlo)
     self.assertIn(expected_op, hlo)
+
     out = f(x)
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_x)
@@ -422,7 +445,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       # Both axes are gathered together in one all_gather.
       (P(('x', 'y'), None), P(None, None), (0, 1, 0)),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshard_collective_counts(self, in_spec, out_spec, counts, mesh):
     np_x = np.arange(16, dtype=np.float32).reshape(4, 4)
@@ -437,6 +459,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(hlo.count('stablehlo.all_to_all'), num_a2a)
     self.assertEqual(hlo.count('stablehlo.all_gather'), num_ag)
     self.assertEqual(hlo.count('stablehlo.dynamic_slice'), num_slice)
+
     out = f(x)
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_x)
@@ -451,7 +474,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       # Rotate three axes.
       ((2, 2, 2), ('x', 'y', 'z'), P('x', 'y', 'z'), P('z', 'x', 'y')),
   )
-  @config.shard_map_partitioning(True)
   def test_reshard_permute(self, mesh_shape, axis_names, in_spec, out_spec):
     mesh = jtu.create_mesh(mesh_shape, axis_names,
                            axis_types=(AxisType.Explicit,) * len(axis_names))
@@ -466,17 +488,18 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       x = jax.device_put(np_x, in_spec)
       hlo = f.lower(x).as_text()
       out = f(x)
+
       with config.shard_map_partitioning(False):
         expected = f(x)
 
     self.assertEqual(hlo.count('stablehlo.collective_permute'), 1)
     for op in ('all_gather', 'all_to_all', 'dynamic_slice'):
       self.assertNotIn(op, hlo)
+
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_x)
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 4), ('x', 'y'))
   def test_reshard_no_permute_when_shard_count_changes(self, mesh):
     # Dim 0 goes from 2 to 4 shards, so no device holds a whole new block:
@@ -495,12 +518,14 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertNotIn('collective_permute', hlo)
     for op in ('all_gather', 'all_to_all', 'dynamic_slice'):
       self.assertIn(op, hlo)
+
     out = f(x)
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_x)
 
     with config.shard_map_partitioning(False):
       expected = f(x)
+
     self.assertArraysEqual(out, expected)
 
   @parameterized.parameters(
@@ -508,18 +533,23 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       ((4, 10, 4), P('x', None, 'y'), (0, 1, 0), (4, 9, 4), (1, 3, 1)),
       ((8, 4), P(None, None), (2, 1), (5, 3), None),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_slice(self, shape, in_spec, start, limit, strides, mesh):
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     arr = jax.device_put(np_inp, in_spec)
-    f = jax.jit(lambda x: lax.slice(x, start, limit, strides))
+
+    @jax.jit
+    def f(x):
+      return lax.slice(x, start, limit, strides)
+
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
       expected = f(arr)
+
     txt = f.lower(arr).as_text()
     self.assertIn('sdy.manual_computation', txt)
     self.assertNotIn('all_gather', txt)
+
     out = f(arr)
     slices = tuple(map(slice, start, limit, strides or (None,) * len(shape)))
     self.assertEqual(out.sharding, NamedSharding(mesh, in_spec))
@@ -532,25 +562,29 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       (((4, 0), (4, 5)), P('x', None), 1),
       (((4, 2), (4, 3)), P('x', None, reduced={'y'}), 1),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_concatenate(self, shapes, spec, dim, mesh):
     np_inps = [np.arange(math.prod(s), dtype=np.float32).reshape(s)
                for s in shapes]
     arrs = [jax.device_put(x, spec) for x in np_inps]
-    f = jax.jit(lambda *xs: lax.concatenate(xs, dimension=dim))
+
+    @jax.jit
+    def f(*xs):
+      return lax.concatenate(xs, dimension=dim)
+
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(*arrs).as_text())
       expected = f(*arrs)
+
     txt = f.lower(*arrs).as_text()
     self.assertIn('sdy.manual_computation', txt)
     self.assertNotIn('all_gather', txt)
+
     out = f(*arrs)
     self.assertEqual(out.sharding, NamedSharding(mesh, spec))
     self.assertArraysEqual(out, np.concatenate(np_inps, axis=dim))
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('m', 'e'))
   def test_slice_concatenate_mixed_and_unsupported(self, mesh):
     np_x = np.arange(128, dtype=np.float32).reshape(4, 8, 4)
@@ -564,18 +598,25 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(arr)
+
     self.assertNotIn('all_gather', f.lower(arr).as_text())
     out = f(arr)
     self.assertEqual(out.sharding.spec, P('m', 'e', None))
+
     np_expected = np.concatenate([np_x[:, :, 1:3], np_x[:, :, 1:3]], axis=2)
     self.assertArraysEqual(out, np_expected)
     self.assertArraysEqual(out, expected)
 
     rep = jax.device_put(np.ones((2, 2), np.float32), P(None, None))
     lit = np.zeros((2, 2), np.float32)
-    lit_fn = jax.jit(lambda x: lax.concatenate([x, lit], 1))
+
+    @jax.jit
+    def lit_fn(x):
+      return lax.concatenate([x, lit], 1)
+
     with config.shard_map_partitioning(False):
       expected_lit = lit_fn(rep)
+
     lit_out = lit_fn(rep)
     self.assertArraysEqual(lit_out, np.concatenate([rep, lit], 1))
     self.assertArraysEqual(lit_out, expected_lit)
@@ -583,15 +624,17 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     arr_e = jax.device_put(np.arange(16, dtype=np.float32).reshape(8, 2),
                            P('e', None))
     ones = np.ones((8, 2), np.float32)
+
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda x: lax.slice(x, (2, 0), (6, 2))).lower(arr_e)
+
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda x: lax.slice(x, (0, 0), (8, 2), (2, 1))).lower(arr_e)
+
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda x: lax.concatenate([x, ones], 1)).lower(arr_e)
 
   @parameterized.parameters((None,), ('x',))
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_auto_axes(self, axes, mesh):
     np_x = np.arange(16, dtype=np.float32).reshape(4, 4)
@@ -612,7 +655,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       ((AxisType.Auto, AxisType.Auto), None),
       ((AxisType.Explicit, AxisType.Auto), 'y'),
   )
-  @config.shard_map_partitioning(True)
   def test_explicit_axes_in_auto_mesh(self, axis_types, axes):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'), axis_types=axis_types)
     np_x = np.arange(16, dtype=np.float32).reshape(4, 4)
@@ -630,9 +672,9 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       # The reshard inside the explicit region still uses shard_map.
       self.assertIn('sdy.manual_computation', f.lower(x).as_text())
       out = f(x)
+
     self.assertArraysEqual(out, np_x * 2)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
   def test_partial_manual_auto_axes(self, mesh):
     np_x = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
@@ -663,19 +705,21 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y', 'z')))
     self.assertArraysEqual(out, np_x * 2)
 
-  @config.shard_map_partitioning(True)
-  def test_mixed_explicit_auto_mesh(self):
-    mesh = jtu.create_mesh(
-        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit, AxisType.Auto))
-    x = jax.device_put(
-        np.arange(16, dtype=np.float32).reshape(4, 4),
-        NamedSharding(mesh, P('x', 'y')))
-    f = jax.jit(lambda a: jnp.sum(a * 2, axis=0))
-    with jax.set_mesh(mesh):
-      with config.shard_map_partitioning(False):
-        expected = f(x)
-      self.assertNotIn('sdy.manual_computation', f.lower(x).as_text())
-      out = f(x)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
+                          axis_types=(AxisType.Explicit, AxisType.Auto))
+  def test_mixed_explicit_auto_mesh(self, mesh):
+    x = jax.device_put(np.arange(16).reshape(4, 4), P('x', 'y'))
+
+    @jax.jit
+    def f(a):
+      return jnp.sum(a * 2)
+
+    self.assertNotIn('sdy.manual_computation', f.lower(x).as_text())
+    out = f(x)
+
+    with config.shard_map_partitioning(False):
+      expected = f(x)
+
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
@@ -687,7 +731,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       # f32[4@x, 4@y, 4] -> f32[4@x, 4@y, 4@z] -> f32[4@y, 4@x, 4@z]
       (P('x', 'y', None), P('y', 'x', 'z'), 'collective_permute'),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
   def test_reshard_slices_before_collective(self, in_spec, out_spec,
                                             collective, mesh):
@@ -703,11 +746,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(hlo.count('stablehlo.dynamic_slice'), 1)
     self.assertLess(hlo.index('stablehlo.dynamic_slice'),
                     hlo.index(f'stablehlo.{collective}'))
+
     out = f(x)
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
     self.assertArraysEqual(out, np_x)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
   def test_reshard_slice_collective_slice(self, mesh):
     # f32[4@(x,y), 4, 4] -> f32[4@(x,y), 4, 4@z]  slice 'z'
@@ -743,7 +786,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       ((4, 16), P('x', None, reduced={'y'}), (4, 2, 8),
        P('x', None, None, reduced={'y'})),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshape_no_collectives(
       self, in_shape, in_spec, out_shape, out_sharding, mesh):
@@ -757,32 +799,34 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
       expected = f(arr)
+
     txt = f.lower(arr).as_text()
     self.assertIn('sdy.manual_computation', txt)
     self.assertNotIn('all_to_all', txt)
     self.assertNotIn('all_gather', txt)
+
     out = f(arr)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
+  @parameterized.parameters(
+      ((4, 4), P('x', 'y'), None, (16,), None),
+      ((16,), P(('x', 'y')), None, (4, 4), P('x', 'y')),
+      ((4, 8), P('x', None), None, (2, 2, 8), P(None, 'x', None)),
+      ((4, 4), P('x', 'y'), None, (16,), P('x')),
+      ((4, 6), P('x', 'y'), (1, 0), (6, 2, 2), P('y', 'x', None)),
+  )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_reshape_collectives_needed_raises(self, mesh):
-    for shape, in_spec, dims, out_shape, out_spec in (
-        ((4, 4), P('x', 'y'), None, (16,), None),
-        ((16,), P(('x', 'y')), None, (4, 4), P('x', 'y')),
-        ((4, 8), P('x', None), None, (2, 2, 8), P(None, 'x', None)),
-        ((4, 4), P('x', 'y'), None, (16,), P('x')),
-        ((4, 6), P('x', 'y'), (1, 0), (6, 2, 2), P('y', 'x', None)),
-    ):
-      arr = jax.device_put(np.zeros(shape, dtype=np.float32), in_spec)
+  def test_reshape_collectives_needed_raises(
+      self, shape, in_spec, dims, out_shape, out_spec, mesh):
+    arr = jax.device_put(np.zeros(shape, dtype=np.float32), in_spec)
 
-      @jax.jit
-      def f(x):
-        return lax.reshape(x, out_shape, dimensions=dims, out_sharding=out_spec)
+    @jax.jit
+    def f(x):
+      return lax.reshape(x, out_shape, dimensions=dims, out_sharding=out_spec)
 
-      with self.assertRaises(NotImplementedError):
-        f.lower(arr)
+    with self.assertRaises(NotImplementedError):
+      f.lower(arr)
 
   @parameterized.parameters(
       (
@@ -834,7 +878,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           None,
       ),
   )
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
   def test_dot_general_no_collectives(
       self, lhs_shape, lhs_spec, rhs_shape, rhs_spec, dnums, out_spec, mesh
@@ -857,56 +900,51 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(lhs, rhs).as_text())
       expected = f(lhs, rhs)
+
     self.assertIn('sdy.manual_computation', f.lower(lhs, rhs).as_text())
 
     out = f(lhs, rhs)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
+  @parameterized.parameters(
+      ((8, 8), (((1,), (0,)), ((), ())), P(None, 'x'), P(None, None), None),
+      ((8, 8), (((1,), (0,)), ((), ())), P(None, None), P('x', None), None),
+      ((8, 8), (((1,), (0,)), ((), ())), P('x', None), P('x', None), None),
+      ((4, 4, 4), (((2,), (1,)), ((0,), (0,))), P('x', None, None),
+       P(None, None, None), P('x', None, None)),
+      ((8, 8), (((1,), (0,)), ((), ())), P('x', None), P(None, 'x'),
+       P('x', None)),
+      ((8, 8), (((1,), (0,)), ((), ())), P('x', None), P(None, None),
+       P(('x', 'y'), None)),
+  )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_dot_general_collectives_needed_raises(self, mesh):
-    d2 = (((1,), (0,)), ((), ()))
-    d3 = (((2,), (1,)), ((0,), (0,)))
-    for shape, dnums, lhs_spec, rhs_spec, out_spec in (
-        ((8, 8), d2, P(None, 'x'), P(None, None), None),
-        ((8, 8), d2, P(None, None), P('x', None), None),
-        ((8, 8), d2, P('x', None), P('x', None), None),
-        (
-            (4, 4, 4),
-            d3,
-            P('x', None, None),
-            P(None, None, None),
-            P('x', None, None),
-        ),
-        ((8, 8), d2, P('x', None), P(None, 'x'), P('x', None)),
-        ((8, 8), d2, P('x', None), P(None, None), P(('x', 'y'), None)),
-    ):
-      z = np.zeros(shape, dtype=np.float32)
-      lhs = jax.device_put(z, lhs_spec)
-      rhs = jax.device_put(z, rhs_spec)
+  def test_dot_general_collectives_needed_raises(
+      self, shape, dnums, lhs_spec, rhs_spec, out_spec, mesh):
+    z = np.zeros(shape, dtype=np.float32)
+    lhs = jax.device_put(z, lhs_spec)
+    rhs = jax.device_put(z, rhs_spec)
 
-      @jax.jit
-      def f(a, b):
-        return lax.dot_general(a, b, dnums, out_sharding=out_spec)
+    @jax.jit
+    def f(a, b):
+      return lax.dot_general(a, b, dnums, out_sharding=out_spec)
 
-      with self.assertRaises(NotImplementedError):
-        f.lower(lhs, rhs)
+    with self.assertRaises(NotImplementedError):
+      f.lower(lhs, rhs)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_layout_constraint(self, mesh):
     np_x = np.arange(64, dtype=np.float32).reshape(8, 8)
     x = jax.device_put(np_x, P('x', 'y'))
-    layout = Layout(major_to_minor=(1, 0))
 
     @jax.jit
     def f(a):
-      return with_layout_constraint(a * 2, layout)
+      return with_layout_constraint(a * 2, Layout(major_to_minor=(1, 0)))
 
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(x).as_text())
       expected = f(x)
+
     hlo = f.lower(x).as_text()
     self.assertIn('sdy.manual_computation', hlo)
     self.assertIn('LayoutConstraint', hlo)
@@ -916,7 +954,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.format.layout.major_to_minor, (1, 0))
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_broadcast_in_dim(self, mesh):
     x = jax.device_put(
@@ -935,7 +972,9 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(x, row).as_text())
       expected = f(x, row)
+
     self.assertIn('sdy.manual_computation', f.lower(x, row).as_text())
+
     out = f(x, row)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
@@ -945,7 +984,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
         jax.jit(lambda a: lax.broadcast_in_dim(
             a, (2, 4, 4), (1, 2), out_sharding=bad_spec)).lower(x)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_squeeze(self, mesh):
     x = jax.device_put(
@@ -957,6 +995,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x)
+
     out = f(x)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
@@ -964,7 +1003,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with self.assertRaises(ValueError):
       jax.jit(lambda a: lax.squeeze(a, dimensions=(0,))).lower(x)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_transpose(self, mesh):
     x = jax.device_put(
@@ -978,13 +1016,13 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       exp0, exp1 = f(x, y)
+
     out0, out1 = f(x, y)
     self.assertEqual(out0.sharding, exp0.sharding)
     self.assertEqual(out1.sharding, exp1.sharding)
     self.assertArraysEqual(out0, exp0)
     self.assertArraysEqual(out1, exp1)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_split(self, mesh):
     x = jax.device_put(
@@ -996,6 +1034,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       exp0, exp1 = f(x)
+
     out0, out1 = f(x)
     self.assertEqual(out0.sharding, exp0.sharding)
     self.assertEqual(out1.sharding, exp1.sharding)
@@ -1004,12 +1043,13 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     xy = jax.device_put(
         np.arange(24, dtype=np.float32).reshape(4, 6), P('x', 'y'))
+
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda a: lax.split(a, (2, 2), axis=0)).lower(xy)
+
     with self.assertRaises(core.ShardingTypeError):
       jax.jit(lambda a: lax.split(a, (1, 3), axis=0)).lower(xy)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_stack(self, mesh):
     x = jax.device_put(
@@ -1023,18 +1063,20 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x, y)
+
     out = f(x, y)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
     bad_y = jax.device_put(np.zeros((4, 4), np.float32), P('y', 'x'))
+
     with self.assertRaises(core.ShardingTypeError):
       jax.jit(lambda a, b: jnp.stack([a, b], axis=0)).lower(x, bad_y)
+
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda a: jnp.stack(
           [a, np.zeros(a.shape, np.float32)], axis=0)).lower(x)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unstack(self, mesh):
     x = jax.device_put(
@@ -1046,6 +1088,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x)
+
     for out, exp in zip(f(x), expected):
       self.assertEqual(out.sharding, exp.sharding)
       self.assertArraysEqual(out, exp)
@@ -1053,7 +1096,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with self.assertRaises(core.ShardingTypeError):
       jax.jit(lambda a: jnp.unstack(a, axis=0)).lower(x)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_pad(self, mesh):
     x = jax.device_put(
@@ -1066,7 +1108,9 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(x).as_text())
       expected = f(x)
+
     self.assertIn('sdy.manual_computation', f.lower(x).as_text())
+
     out = f(x)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
@@ -1075,7 +1119,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       jax.jit(lambda a: lax.pad(
           a, jnp.float32(0.0), ((2, 0, 0), (0, 0, 0), (0, 0, 0)))).lower(x)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_tile(self, mesh):
     x = jax.device_put(
@@ -1087,6 +1130,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x)
+
     out = f(x)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
@@ -1094,7 +1138,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with self.assertRaises(core.ShardingTypeError):
       jax.jit(lambda a: lax.tile(a, (2, 1, 1))).lower(x)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_clamp(self, mesh):
     x = jax.device_put(
@@ -1108,15 +1151,14 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x, lo)
+
     out = f(x, lo)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
     with self.assertRaises(NotImplementedError):
-      jax.jit(
-          lambda a: lax.clamp(a, np.ones(a.shape, np.float32), a)).lower(x)
+      jax.jit(lambda a: lax.clamp(a, np.ones(a.shape, np.float32), a)).lower(x)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_select_n(self, mesh):
     x = jax.device_put(
@@ -1129,6 +1171,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x)
+
     out = f(x)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
@@ -1138,7 +1181,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           a > 0, np.zeros(a.shape, np.float32),
           np.ones(a.shape, np.float32))).lower(x)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_add_any(self, mesh):
     x = jax.device_put(
@@ -1154,11 +1196,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x, y)
+
     out = f(x, y)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_iota(self, mesh):
     @jax.jit
@@ -1169,7 +1211,9 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower().as_text())
       expected = f()
+
     self.assertIn('sdy.manual_computation', f.lower().as_text())
+
     out = f()
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
@@ -1178,7 +1222,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       jax.jit(lambda: lax.broadcasted_iota(
           np.int32, (4, 4), 0, out_sharding=P('x', 'y'))).lower()
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_top_k(self, mesh):
     x = jax.device_put(
@@ -1190,6 +1233,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       exp_v, exp_i = f(x)
+
     out_v, out_i = f(x)
     self.assertEqual(out_v.sharding, exp_v.sharding)
     self.assertEqual(out_i.sharding, exp_i.sharding)
@@ -1199,7 +1243,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with self.assertRaises(core.ShardingTypeError):
       jax.jit(lambda a: lax.top_k(a, k=2, axis=0)).lower(x)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_precision(self, mesh):
     x = jax.device_put(
@@ -1212,11 +1255,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x)
+
     out = f(x)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_threefry_and_iota_2x32(self, mesh):
     from jax._src.random import prng, threefry2x32
@@ -1235,13 +1278,13 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       exp0, exp1 = f(k, c_sharded)
+
     out0, out1 = f(k, c_sharded)
     self.assertEqual(out0.sharding, exp0.sharding)
     self.assertEqual(out1.sharding, exp1.sharding)
     self.assertArraysEqual(out0, exp0)
     self.assertArraysEqual(out1, exp1)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_edtype_casts(self, mesh):
     dt = dtypes.primal_tangent_dtype(jnp.int8, jnp.float32)
@@ -1254,36 +1297,36 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x)
+
     out = f(x)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
+  @parameterized.parameters(
+      ((4, 8), P('x', 'y')),
+      ((8, 3), P(('x', 'y'), None)),
+      ((2, 2), P(None, None)),
+      ((), None),
+  )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_empty(self, mesh):
-    for shape, spec in (
-        ((4, 8), P('x', 'y')),
-        ((8, 3), P(('x', 'y'), None)),
-        ((2, 2), P(None, None)),
-        ((), None),
-    ):
+  def test_empty(self, shape, spec, mesh):
+    @jax.jit
+    def f():
+      return lax.empty(shape, jnp.float32, out_sharding=spec)
 
-      @jax.jit
-      def f():
-        return lax.empty(shape, jnp.float32, out_sharding=spec)
+    with config.shard_map_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f.lower().as_text())
+      expected = f()
 
-      with config.shard_map_partitioning(False):
-        self.assertNotIn('sdy.manual_computation', f.lower().as_text())
-        expected = f()
-      self.assertIn('sdy.manual_computation', f.lower().as_text())
-      # lax.empty returns uninitialized memory, so compare aval and sharding.
-      out = f()
-      self.assertEqual(out.aval, expected.aval)
-      self.assertEqual(out.sharding, expected.sharding)
-      expected_spec = P() if spec is None else spec
-      self.assertEqual(out.sharding, NamedSharding(mesh, expected_spec))
+    self.assertIn('sdy.manual_computation', f.lower().as_text())
 
-  @config.shard_map_partitioning(True)
+    # lax.empty returns uninitialized memory, so compare aval and sharding.
+    out = f()
+    self.assertEqual(out.aval, expected.aval)
+    self.assertEqual(out.sharding, expected.sharding)
+    expected_spec = P() if spec is None else spec
+    self.assertEqual(out.sharding, NamedSharding(mesh, expected_spec))
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_passthrough_and_composite_primitives(self, mesh):
     from jax.ad_checkpoint import checkpoint_name
@@ -1304,17 +1347,19 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       return x, y, jax.random.key_data(k1), bits
 
     f_jit = jax.jit(f)
+
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f_jit.lower(x, y).as_text())
       expected = f_jit(x, y)
+
     lowered = f_jit.lower(x, y).as_text()
     self.assertIn('sdy.manual_computation', lowered)
     self.assertIn('keep_me', lowered)
+
     for out, exp in zip(f_jit(x, y), expected):
       self.assertEqual(out.sharding, exp.sharding)
       self.assertArraysEqual(out, exp)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_remat_opt(self, mesh):
     x = jax.device_put(
@@ -1332,11 +1377,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x)
+
     out = f(x)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_linear_call(self, mesh):
     from jax._src import custom_derivatives
@@ -1356,11 +1401,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x)
+
     out = f(x)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_integer_pow(self, mesh):
     x = jax.device_put(
@@ -1372,11 +1417,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x)
+
     out = f(x)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_copy(self, mesh):
     x = jax.device_put(
@@ -1388,11 +1433,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x)
+
     out = f(x)
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_bitcast_convert_type(self, mesh):
     x32 = jax.device_put(
@@ -1409,16 +1454,17 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       expected = f(x32, x16)
+
     for out, exp in zip(f(x32, x16), expected):
       self.assertEqual(out.sharding, exp.sharding)
       self.assertArraysEqual(out, exp)
 
     bad_x16 = jax.device_put(
         np.arange(8, dtype=np.int16).reshape(4, 2), P('x', 'y'))
+
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda a: lax.bitcast_convert_type(a, np.int32)).lower(bad_x16)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_argmin_and_argmax(self, mesh):
     x = jax.device_put(
@@ -1432,6 +1478,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       exp_min, exp_max = f(x)
+
     out_min, out_max = f(x)
     self.assertEqual(out_min.sharding, exp_min.sharding)
     self.assertEqual(out_max.sharding, exp_max.sharding)
@@ -1442,7 +1489,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       with self.assertRaises(NotImplementedError):
         jax.jit(lambda a: op(a, axis=0)).lower(x)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_sort(self, mesh):
     keys = jax.device_put(
@@ -1458,6 +1504,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       exp_s, (exp_k, exp_v) = f(keys, vals)
+
     out_s, (out_k, out_v) = f(keys, vals)
     for out, exp in ((out_s, exp_s), (out_k, exp_k), (out_v, exp_v)):
       self.assertEqual(out.sharding, exp.sharding)
@@ -1465,11 +1512,11 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with self.assertRaises(core.ShardingTypeError):
       jax.jit(lambda k: lax.sort(k, dimension=0)).lower(keys)
+
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda k: lax.sort(
           (k, np.zeros((4, 4), np.int32)), dimension=1, num_keys=1)).lower(keys)
 
-  @config.shard_map_partitioning(True)
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_cumred(self, mesh):
     x = jax.device_put(
@@ -1481,6 +1528,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.shard_map_partitioning(False):
       exp_sum, exp_prod = f(x)
+
     out_sum, out_prod = f(x)
     self.assertEqual(out_sum.sharding, exp_sum.sharding)
     self.assertEqual(out_prod.sharding, exp_prod.sharding)
