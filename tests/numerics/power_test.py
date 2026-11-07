@@ -46,9 +46,6 @@ class SqrtTest(jtu.JaxTestCase):
         ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 3.0}),
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 2.0}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     # Worst-case input across math libraries from Gladman et al., "Accuracy of
     # Mathematical Functions in Single, Double, Double Extended, and Quadruple
     # Precision".
@@ -60,7 +57,6 @@ class SqrtTest(jtu.JaxTestCase):
         mpmath.sqrt,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 
@@ -93,9 +89,6 @@ class RsqrtTest(jtu.JaxTestCase):
         ("tpu_v6e", {f32: 1.5}),
         ("tpu_7x", {f32: 1.0}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     # Worst-case inputs across math libraries from Gladman et al.
     interesting_points = [
         float.fromhex(h)
@@ -114,7 +107,6 @@ class RsqrtTest(jtu.JaxTestCase):
         _mpmath_rsqrt,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 
@@ -129,9 +121,6 @@ class CbrtTest(jtu.JaxTestCase):
         ("gpu", {f16: 1.0, f32: 1.5, f64: 1.5}),
         ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 4.5}),
         (["tpu_v6e", "tpu_7x"], {f32: 1.5}),
-    ]
-    input_ftz = [
-        ("gpu", False),
     ]
     # Worst-case inputs across math libraries from Gladman et al.
     interesting_points = [
@@ -157,7 +146,6 @@ class CbrtTest(jtu.JaxTestCase):
         lambda x: -mpmath.cbrt(-x) if x < 0 else mpmath.cbrt(x),
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 
@@ -190,9 +178,6 @@ class ReciprocalTest(jtu.JaxTestCase):
         ("tpu_v5p", {bf16: 1.0, f32: 40.0}),
         (["tpu_v6e", "tpu_7x"], {f32: 1.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_unary_precision(
         self,
         jnp.reciprocal,
@@ -200,7 +185,6 @@ class ReciprocalTest(jtu.JaxTestCase):
         _mpmath_reciprocal,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
     )
 
 
@@ -216,9 +200,6 @@ class HypotTest(jtu.JaxTestCase):
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 3.5}),
         ("tpu_v6e", {f16: 1.0, f32: 2.5}),
         ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 2.5}),
-    ]
-    input_ftz = [
-        ("gpu", False),
     ]
 
     # _hypot_ref is evaluated in float64 for bf16/f16/f32 (f64 uses mpmath),
@@ -288,7 +269,6 @@ class HypotTest(jtu.JaxTestCase):
         dtype,
         nargs=2,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 

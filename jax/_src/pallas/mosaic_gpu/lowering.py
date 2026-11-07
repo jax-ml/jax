@@ -2832,7 +2832,9 @@ def _tanh_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
 def _logistic(x, accuracy):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
-  return 1.0 / (1 + lax.exp(-x))
+  one = lax.full_like(x, 1)
+  e = lax.exp(-lax.abs(x))
+  return lax.select(x >= 0, one, e) / (one + e)
 
 
 mosaic_lowering_rules[gpu_core.LANExWG_SEMANTICS][lax.logistic_p] = _lower_fun(

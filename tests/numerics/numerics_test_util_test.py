@@ -377,6 +377,15 @@ class UlpDiffTest(jtu.JaxTestCase):
     self.assertTrue(
         util.eval_mpmath(lambda x: bool(np.signbit(float(x))), neg_nan)
     )
+    bf16_sub = np.uint16(0x0001).view(jnp.bfloat16)
+    self.assertEqual(
+        util.eval_mpmath(lambda x: x, bf16_sub, dtype=jnp.bfloat16, input_ftz=True),
+        mpmath.mpf(0.0),
+    )
+    self.assertNotEqual(
+        util.eval_mpmath(lambda x: x, bf16_sub, dtype=jnp.bfloat16, input_ftz=False),
+        mpmath.mpf(0.0),
+    )
 
   def test_check_nary_precision_binary(self):
     # Verify check_nary_precision correctly evaluates an exact binary op.
@@ -697,13 +706,14 @@ class UlpDiffTest(jtu.JaxTestCase):
       )
 
   def test_f16_default_non_ftz(self):
-    # float16 defaults to non-FTZ mode across all platforms, while other
-    # floating-point dtypes default to FTZ.
+    # float16 defaults to non-FTZ mode across all platforms, and GPU defaults to
+    # non-FTZ mode across all floating-point dtypes.
     self.assertFalse(util._default_ftz(jnp.float16))
     self.assertFalse(util._default_ftz(np.float16))
-    self.assertTrue(util._default_ftz(jnp.bfloat16))
-    self.assertTrue(util._default_ftz(jnp.float32))
-    self.assertTrue(util._default_ftz(jnp.float64))
+    expected_non_f16 = jtu.device_under_test() != "gpu"
+    self.assertEqual(util._default_ftz(jnp.bfloat16), expected_non_f16)
+    self.assertEqual(util._default_ftz(jnp.float32), expected_non_f16)
+    self.assertEqual(util._default_ftz(jnp.float64), expected_non_f16)
 
     # _resolve_override falls back to _default_ftz for float16 when omitted.
     self.assertFalse(

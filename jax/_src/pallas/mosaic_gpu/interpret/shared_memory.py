@@ -38,15 +38,6 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-# How a ref is laid out rather than what it contains. Applying these to a ref's
-# physical aval gives its logical one, and since every buffer is allocated at
-# that logical shape they are identities at every use site.
-LAYOUT_TRANSFORMS = (
-    mosaic_gpu_core.UnswizzleRef,
-    mosaic_gpu_core.UntilingTransform,
-)
-
-
 IDX_BY_GPU_MEMORY_SPACE: collections.abc.Mapping[
     mosaic_gpu_core.MemorySpace, int
 ]

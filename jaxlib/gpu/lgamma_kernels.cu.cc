@@ -197,7 +197,18 @@ __device__ float LgammaF32Device(float x) {
   if (isnan(x)) {
     return mi::QuietNan<float>();
   }
-  if (mi::AbsVal(x) < mc::kLgammaTinyF32 || x > mc::kLgammaMaxFiniteArgF32) {
+  const float ax = mi::AbsVal(x);
+  if (ax < mc::kLgammaTinyF32) {
+    if (ax == 0.0f) {
+      return mi::PosInf<float>();
+    }
+    float log_lo;
+    const float log_hi = mi::LogF32HiLo(mi::MulRn(ax, 16777216.0f), log_lo);
+    // -ln(|x|) = 24 * ln(2) - ln(|x| * 2^24).
+    return mi::F2Sum(16.63553237915039f, -4.5711704643736084e-08f, -log_hi,
+                     -log_lo);
+  }
+  if (x > mc::kLgammaMaxFiniteArgF32) {
     return mi::PosInf<float>();
   }
 
@@ -295,7 +306,14 @@ __device__ float LgammaF32WithF64Device(float x) {
   if (isnan(x)) {
     return mi::QuietNan<float>();
   }
-  if (mi::AbsVal(x) < mc::kLgammaTinyF32 || x > mc::kLgammaMaxFiniteArgF32) {
+  const float ax = mi::AbsVal(x);
+  if (ax < mc::kLgammaTinyF32) {
+    if (ax == 0.0f) {
+      return mi::PosInf<float>();
+    }
+    return __double2float_rn(-mi::LogF64(static_cast<double>(ax)));
+  }
+  if (x > mc::kLgammaMaxFiniteArgF32) {
     return mi::PosInf<float>();
   }
 
@@ -511,7 +529,17 @@ __device__ double LgammaF64Device(double x) {
   if (isnan(x)) {
     return mi::QuietNan<double>();
   }
-  if (mi::AbsVal(x) < mc::kLgammaTinyF64 || x > mc::kLgammaMaxFiniteArgF64) {
+  const double ax = mi::AbsVal(x);
+  if (ax < mc::kLgammaTinyF64) {
+    if (ax == 0.0) {
+      return mi::PosInf<double>();
+    }
+    double log_l;
+    const double log_h =
+        mi::LogF64HiLo(mi::MulRn(ax, 18014398509481984.0), -54.0, log_l);
+    return -mi::AddRn(log_h, log_l);
+  }
+  if (x > mc::kLgammaMaxFiniteArgF64) {
     return mi::PosInf<double>();
   }
 

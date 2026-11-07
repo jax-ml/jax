@@ -33,10 +33,11 @@ This document summarizes the accuracy of JAX mathematical functions.
     and approximation thresholds) along with random floating-point values drawn
     across all exponents. Because sampling cannot guarantee hitting the
     worst-case input, these values are empirical bounds on the maximum error.
-- **Flush-To-Zero (FTZ) and Subnormals**: Subnormal floating-point inputs and
-  outputs ($|v| < 2^{e_{\min}}$) are typically flushed to zero by default,
-  though some operations on types smaller than `float32` (and `float64` on
-  GPU) preserve gradual underflow.
+- **Flush-To-Zero (FTZ) and Subnormals**: On GPU and for `float16` across all
+  platforms, gradual underflow is preserved by default (`ftz=False`). On CPU and
+  TPU, subnormal floating-point inputs and outputs ($|v| < 2^{e_{\min}}$) for
+  `bfloat16`, `float32`, and `float64` are typically flushed to zero by default
+  (`ftz=True`).
   - When gradual underflow is preserved (`ftz=False`), subnormal values are
     measured on the standard number line against the subnormal quantum
     $\operatorname{ulp}_{\text{tiny}} = 2^{e_{\min} - (p - 1)}$.
@@ -92,7 +93,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.log1p` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.log2` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.log2` (`highest`) | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
-| {func}`~jax.lax.logistic` | 2.5 | 2.5 | 1.0 | 1.0 | 0.5 | 63.0 |
+| {func}`~jax.lax.logistic` | 2.5 | 2.0 | 1.0 | 1.0 | 0.5 | 63.0 |
 | {func}`~jax.lax.logistic` (`highest`, `jax_accurate_logistic`) | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 0.5 |
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
@@ -285,7 +286,7 @@ these are empirical bounds.
 | {func}`~jax.lax.log` | 0.5 | 1.5 |
 | {func}`~jax.lax.log1p` | 2.0 | 1.5 |
 | {func}`~jax.lax.log2` | 0.5 | 1.5 |
-| {func}`~jax.lax.logistic` | 3.5 | 4.5 |
+| {func}`~jax.lax.logistic` | 3.5 | 2.5 |
 | {func}`~jax.lax.logistic` (`highest`, `jax_accurate_logistic`) | 2.5 | 2.5 |
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 |
 | {func}`~jax.lax.rsqrt` | 1.5 | 1.5 |

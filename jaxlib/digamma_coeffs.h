@@ -59,8 +59,9 @@ namespace math_coeffs {
 // ---------------------------------------------------------------------------
 
 // Smallest positive normal float (`2^-126` in `float32`, `2^-1022` in
-// `float64`). Inputs with `|x| < kDigammaTiny*` (zeros and subnormals) return
-// `-copysign(inf, x)` so CPU and GPU agree regardless of subnormal flushing.
+// `float64`). For `|x| < kDigammaTiny*`, CPU flushes subnormals to zero and
+// returns `-copysign(inf, x)`, while GPU evaluates `-1 / x` directly (since
+// `|-1 / x| >> gamma`).
 JAXLIB_GPU_DEVICE constexpr float kDigammaTinyF32 =
     1.1754943508222875e-38f;  // 2^-126
 // Every `float32 <= -2^23` has spacing `>= 1` and is therefore an exact

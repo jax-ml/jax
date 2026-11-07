@@ -116,7 +116,11 @@ on:
         required: false
         default: ""
         type: string
-permissions: {}
+# Do not set workflow-level `permissions: {}` here: callers that download
+# prebuilt ROCm wheels from S3 (`wheel_tests_continuous.yml` and
+# `wheel_tests_nightly_release.yml`) pass `id-token: write` for AWS OIDC, while
+# callers that do not touch S3 (`bazel_rocm_presubmit.yml` and
+# `run-bazel-test-rocm-pypi`) pass `permissions: {}` or `contents: read`.
 jobs:
   run-tests:
     defaults:

@@ -592,7 +592,9 @@ def random_seed_lowering(ctx, seeds, *, impl):
       ctx, seed_lowering, seeds,
       avals_out=map(core.physical_aval, ctx.avals_out))
 
-mlir.register_lowering(random_seed_p, random_seed_lowering)
+mlir.register_lowering(
+    random_seed_p, random_seed_lowering, shard_map_passthrough=True
+)
 
 
 def random_split(keys, shape: Shape):
@@ -639,7 +641,9 @@ def random_split_lowering(ctx, keys, *, shape):
       avals_in=[core.physical_aval(aval)],
       avals_out=map(core.physical_aval, ctx.avals_out))
 
-mlir.register_lowering(random_split_p, random_split_lowering)
+mlir.register_lowering(
+    random_split_p, random_split_lowering, shard_map_passthrough=True
+)
 
 
 def random_fold_in(keys, msgs):
@@ -685,7 +689,9 @@ def random_fold_in_lowering(ctx, keys, msgs):
       avals_in=[core.physical_aval(keys_aval), msgs_aval],
       avals_out=map(core.physical_aval, ctx.avals_out))
 
-mlir.register_lowering(random_fold_in_p, random_fold_in_lowering)
+mlir.register_lowering(
+    random_fold_in_p, random_fold_in_lowering, shard_map_passthrough=True
+)
 
 
 def _call_impl_raw_bits(
@@ -741,7 +747,9 @@ def raw_bits_lowering(ctx, keys, *, shape):
   ctx.set_tokens_out(ctx_new.tokens_out)
   return out
 
-mlir.register_lowering(raw_bits_p, raw_bits_lowering)
+mlir.register_lowering(
+    raw_bits_p, raw_bits_lowering, shard_map_passthrough=True
+)
 
 
 def _raw_bits_to_random_bits(
@@ -856,7 +864,9 @@ def random_bits_lowering(ctx, keys, *, bit_width, shape, num_streams=1):
   ctx.set_tokens_out(ctx_new.tokens_out)
   return out
 
-mlir.register_lowering(random_bits_p, random_bits_lowering)
+mlir.register_lowering(
+    random_bits_p, random_bits_lowering, shard_map_passthrough=True
+)
 
 
 # The following wrap/unwrap primitives are at least a stopgap for
@@ -905,7 +915,9 @@ def random_wrap_batch_rule(batched_args, batch_dims, *, impl):
   x = batching.bdim_at_front(x, d, 1)
   return random_wrap(x, impl=impl), 0
 
-mlir.register_lowering(random_wrap_p, random_wrap_lowering)
+mlir.register_lowering(
+    random_wrap_p, random_wrap_lowering, shard_map_passthrough=True
+)
 batching.primitive_batchers[random_wrap_p] = random_wrap_batch_rule
 
 
@@ -929,7 +941,9 @@ def random_unwrap_impl(keys):
 def random_unwrap_lowering(ctx, keys):
   return [keys]
 
-mlir.register_lowering(random_unwrap_p, random_unwrap_lowering)
+mlir.register_lowering(
+    random_unwrap_p, random_unwrap_lowering, shard_map_passthrough=True
+)
 
 
 def iota_2x32_shape(shape):
@@ -1032,4 +1046,8 @@ def iota_2x32_shape_lowering(ctx, *, shape):
   counts_lo = mlir.hlo.convert(result_type, counts)
   counts_hi = mlir.hlo.convert(result_type, counts_shifted)
   return counts_hi, counts_lo
-mlir.register_lowering(iota_2x32_shape_p, iota_2x32_shape_lowering)
+
+mlir.register_lowering(
+    iota_2x32_shape_p, iota_2x32_shape_lowering,
+    shard_map_collective_rule=(
+        lambda in_avals, out_avals, **params: mlir.PartitioningRule()))

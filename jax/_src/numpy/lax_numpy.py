@@ -753,7 +753,7 @@ def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
 
 
 @export
-def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
+def histogram_bin_edges(a: ArrayLike, bins: str | ArrayLike = 10,
                         range: None | Array | Sequence[ArrayLike] = None,
                         weights: ArrayLike | None = None) -> Array:
   """Compute the bin edges for a histogram.
@@ -783,10 +783,16 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
     Array([-10.,  -6.,  -2.,   2.,   6.,  10.], dtype=float32)
   """
   del weights  # unused, because string bins is not supported.
-  if isinstance(bins, str):
-    raise NotImplementedError("string values for `bins` not implemented.")
   util.check_arraylike("histogram_bin_edges", a, bins)
   arr = asarray(a)
+
+  if isinstance(bins, str):
+    if bins == 'sqrt':
+      bins = int(np.ceil(np.sqrt(max(arr.size, 1))))
+    elif bins == 'sturges':
+      bins = int(np.ceil(np.log2(max(arr.size, 1)))) + 1
+    else:
+      raise NotImplementedError(f"string value '{bins}' for `bins` not implemented.")
   dtype = dtypes.to_inexact_dtype(arr.dtype)
   if np.ndim(bins) == 1:
     return asarray(bins, dtype=dtype)
@@ -805,7 +811,7 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
 
 
 @export
-def histogram(a: ArrayLike, bins: ArrayLike = 10,
+def histogram(a: ArrayLike, bins: str | ArrayLike = 10,
               range: Sequence[ArrayLike] | None = None,
               weights: ArrayLike | None = None, density: bool | None = None,
               out_sharding: NamedSharding | P | None = None
@@ -868,6 +874,11 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
     Array(True, dtype=bool)
   """
   sharding = canonicalize_sharding(out_sharding, 'jnp.histogram')
+  if isinstance(bins, str):
+    if weights is not None:
+      raise TypeError("Automated estimation of the number of "
+                      "bins is not supported for weighted data")
+    bins = histogram_bin_edges(a, bins=bins, range=range)
   if weights is None:
     a, _ = util.ensure_arraylike("histogram", a, bins)
     a, = util.promote_dtypes_inexact(a)
@@ -2640,6 +2651,18 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
   if dtypes.issubdtype(x_arr.dtype, np.complexfloating):
     raise ValueError("jnp.interp: complex x values not supported.")
 
+  if dtypes.issubdtype(fp_arr.dtype, np.complexfloating):
+    # numpy.interp applies its NaN handling to the real and imaginary parts
+    # separately, and sets the imaginary part to zero where x is NaN. Linear
+    # interpolation is exact per component, so interpolate them separately.
+    def split(v):
+      return (v, v) if v is None or isinstance(v, str) else (
+          ufuncs.real(v), ufuncs.imag(v))
+    (left_re, left_im), (right_re, right_im) = split(left), split(right)
+    f_re = _interp(x_arr, xp_arr, ufuncs.real(fp_arr), left_re, right_re, period)
+    f_im = _interp(x_arr, xp_arr, ufuncs.imag(fp_arr), left_im, right_im, period)
+    return lax.complex(f_re, where(ufuncs.isnan(x_arr), 0, f_im))
+
   if period is not None:
     if np.ndim(period) != 0:
       raise ValueError(f"period must be a scalar; got {period}")
@@ -2651,13 +2674,25 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
     fp_arr = concatenate([fp_arr[-1:], fp_arr, fp_arr[:1]])
 
   i = clip(searchsorted(xp_arr, x_arr, side='right'), 1, len(xp_arr) - 1)
-  df = fp_arr[i] - fp_arr[i - 1]
-  dx = xp_arr[i] - xp_arr[i - 1]
-  delta = x_arr - xp_arr[i - 1]
+  fp_left, fp_right = fp_arr[i - 1], fp_arr[i]
+  xp_left, xp_right = xp_arr[i - 1], xp_arr[i]
+  df = fp_right - fp_left
+  dx = xp_right - xp_left
+  delta = x_arr - xp_left
 
   epsilon = np.spacing(np.finfo(xp_arr.dtype).eps)
   dx0 = lax.abs(dx) <= epsilon  # Prevent NaN gradients when `dx` is small.
-  f = where(dx0, fp_arr[i - 1], fp_arr[i - 1] + (delta / where(dx0, 1, dx)) * df)
+  dx_safe = where(dx0, 1, dx)
+  f = where(dx0, fp_left, fp_left + (delta / dx_safe) * df)
+  # `f` is NaN at and around an infinite knot (inf - inf, 0 * inf). Like
+  # numpy.interp, return the knot value at an exact knot; elsewhere re-evaluate
+  # from the other end of the interval, and fall back to the shared value when
+  # both ends are equal. Only entries that are already NaN are replaced.
+  other = fp_right + ((x_arr - xp_right) / dx_safe) * df
+  other = where(ufuncs.isnan(other) & (fp_left == fp_right), fp_left, other)
+  f_alt = where(x_arr == xp_left, fp_left,
+                where(x_arr == xp_right, fp_right, other))
+  f = where(ufuncs.isnan(f) & ~ufuncs.isnan(x_arr), f_alt, f)
 
   if not extrapolate_left:
     assert not isinstance(left, str)
@@ -3582,8 +3617,8 @@ def nan_to_num(x: ArrayLike, copy: bool = True, nan: ArrayLike = 0.0,
   posinf = info.max if posinf is None else posinf
   neginf = info.min if neginf is None else neginf
   out = where(ufuncs.isnan(x), asarray(nan, dtype=dtype), x)
-  out = where(ufuncs.isposinf(out), asarray(posinf, dtype=dtype), out)
-  out = where(ufuncs.isneginf(out), asarray(neginf, dtype=dtype), out)
+  out = where(ufuncs.isposinf(x), asarray(posinf, dtype=dtype), out)
+  out = where(ufuncs.isneginf(x), asarray(neginf, dtype=dtype), out)
   return out
 
 

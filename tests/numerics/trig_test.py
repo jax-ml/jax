@@ -367,7 +367,6 @@ class SinTest(jtu.JaxTestCase):
     ]
     input_ftz = [
         ("cpu", {f32: False}),
-        ("gpu", False),
     ]
     check_signed_zeros = [
         ("cpu", {bf16: False}),
@@ -454,9 +453,6 @@ class TanTest(jtu.JaxTestCase):
         ("tpu_v5p", {f16: 1.0, f32: 7.0}),
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 5.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     # Worst-case inputs across math libraries from Gladman et al.
     interesting_points = [
         float.fromhex(h)
@@ -480,7 +476,6 @@ class TanTest(jtu.JaxTestCase):
         mpmath.tan,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 
@@ -662,9 +657,6 @@ class Atan2Test(jtu.JaxTestCase):
         ("gpu", {bf16: 1.0, f16: 1.0, f32: 3.0, f64: 2.0}),
         ("tpu", {bf16: 1.0, f16: 1.0, f32: 3.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     tiny_f64 = float(np.finfo(np.float64).tiny)
     ignore_inputs = [
         # On CPU float64, glibc's atan2 inspects y via integer bits (ignoring
@@ -685,7 +677,6 @@ class Atan2Test(jtu.JaxTestCase):
         dtype,
         nargs=2,
         bounds=bounds,
-        input_ftz=input_ftz,
         ignore_inputs=ignore_inputs,
         interesting_points=_ATAN2_INTERESTING_POINTS,
     )
@@ -758,9 +749,6 @@ class Deg2radTest(jtu.JaxTestCase):
         ("gpu", {bf16: 1.0, f16: 1.0, f32: 1.0, f64: 1.0}),
         ("tpu", {bf16: 1.0, f16: 1.0, f32: 1.0}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_unary_precision(
         self,
         jnp.deg2rad,
@@ -768,7 +756,6 @@ class Deg2radTest(jtu.JaxTestCase):
         mpmath.radians,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
     )
 
 
@@ -782,9 +769,6 @@ class Rad2degTest(jtu.JaxTestCase):
         ("gpu", {bf16: 1.0, f16: 1.5, f32: 1.0, f64: 1.0}),
         ("tpu", {bf16: 1.0, f16: 1.5, f32: 1.0}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_unary_precision(
         self,
         jnp.rad2deg,
@@ -792,7 +776,6 @@ class Rad2degTest(jtu.JaxTestCase):
         mpmath.degrees,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
     )
 
 
@@ -806,9 +789,6 @@ class SinpiTest(jtu.JaxTestCase):
         ("gpu", {f32: 2.0, f64: 1.5}),
         ("tpu", {f32: 1.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     check_signed_zeros = [
         ("cpu", {bf16: False}),
     ]
@@ -819,7 +799,6 @@ class SinpiTest(jtu.JaxTestCase):
         _mpmath_sinpi,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         check_signed_zeros=check_signed_zeros,
         interesting_points=_PI_TRIG_INTERESTING_POINTS,
     )
@@ -920,9 +899,6 @@ class TanpiTest(jtu.JaxTestCase):
         ("gpu", {f16: 1.0, f32: 3.0, f64: 2.0}),
         ("tpu", {f16: 1.0, f32: 3.0}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     check_signed_zeros = [
         ("cpu", {bf16: False}),
     ]
@@ -933,7 +909,6 @@ class TanpiTest(jtu.JaxTestCase):
         _mpmath_tanpi,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         check_signed_zeros=check_signed_zeros,
         interesting_points=_PI_TRIG_INTERESTING_POINTS,
     )
@@ -988,9 +963,6 @@ class AsinpiTest(jtu.JaxTestCase):
         ("gpu", {f16: 1.0, f32: 1.0, f64: 1.0}),
         ("tpu", {f16: 1.0, f32: 1.0}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     check_signed_zeros = [
         ("cpu", {bf16: False}),
     ]
@@ -1001,7 +973,6 @@ class AsinpiTest(jtu.JaxTestCase):
         _mpmath_asinpi,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         check_signed_zeros=check_signed_zeros,
         interesting_points=_ASIN_INTERESTING_POINTS,
     )
@@ -1112,9 +1083,6 @@ class AtanpiTest(jtu.JaxTestCase):
         ([*TPU_EUPV1, "tpu_v5p", "tpu_v6e"], {f16: 1.0, f32: 2.5}),
         ("tpu_7x", {f16: 1.0, f32: 2.0}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     check_signed_zeros = [
         ("cpu", {bf16: False}),
     ]
@@ -1125,7 +1093,6 @@ class AtanpiTest(jtu.JaxTestCase):
         _mpmath_atanpi,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         check_signed_zeros=check_signed_zeros,
         interesting_points=_ATAN_INTERESTING_POINTS,
     )
@@ -1242,9 +1209,6 @@ class Atan2piTest(jtu.JaxTestCase):
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 3.5}),
         (["tpu_v5p", "tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 3.0}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_nary_precision(
         self,
         lax.atan2pi,
@@ -1253,7 +1217,6 @@ class Atan2piTest(jtu.JaxTestCase):
         dtype,
         nargs=2,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=_ATAN2_INTERESTING_POINTS,
     )
 

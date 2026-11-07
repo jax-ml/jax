@@ -39,9 +39,8 @@ namespace math_coeffs {
 // ---------------------------------------------------------------------------
 
 // Smallest positive normal float (`2^-126` in `float32`, `2^-1022` in
-// `float64`). Inputs with `|x| < kLgammaTiny*` (zeros and subnormals) return
-// `+inf` so backends that flush subnormals and backends that preserve them
-// agree.
+// `float64`). For `|x| < kLgammaTiny*`, FTZ backends (CPU/TPU) return `+inf`,
+// while GPU returns `+inf` at `x == 0` and `-ln(|x|)` for non-zero subnormals.
 JAXLIB_GPU_DEVICE constexpr float kLgammaTinyF32 =
     1.1754943508222875e-38f;  // 2^-126
 // Largest `float32` whose `lgamma` is finite (`lgamma(4.085003e36) =

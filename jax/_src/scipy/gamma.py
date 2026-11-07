@@ -201,32 +201,33 @@ def _gamma_real_impl(x: Array) -> Array:
     stir_poly = _STIR_REAL_F64
     sinc_poly = _SINC_DIRECT_F64
 
-  # Classify +/-0, subnormals (flushed to signed zero -> +/-inf, matching
-  # `lax.lgamma` and `lax.digamma`), +/-inf, and NaN via raw IEEE bits.
+  # Classify +/-0, subnormals (1/x on GPU; flushed to signed zero -> +/-inf on
+  # CPU and TPU, matching `lax.lgamma` and `lax.digamma`), +/-inf, and NaN via
+  # raw IEEE bits.
   xi = lax.bitcast_convert_type(x, int_dtype)
   zero_i = lax.full_like(xi, 0)
   inf_bits_v = lax.full_like(xi, inf_bits)
   abs_bits = xi & lax.full_like(xi, abs_mask)
   sign_neg = lax.lt(xi, zero_i)
-  is_zero = lax.lt(abs_bits, lax.full_like(xi, min_norm_bits))
+  is_tiny = lax.lt(abs_bits, lax.full_like(xi, min_norm_bits))
   is_inf = lax.eq(abs_bits, inf_bits_v)
   is_nan_in = lax.gt(abs_bits, inf_bits_v)
   is_finite_in = lax.lt(abs_bits, inf_bits_v)
 
   # Clamp inputs into the finite output range and split x = n + delta for the
   # x < 0.5 reflection branch, with integer n = round(x) and delta in [-0.5, 0.5].
-  is_pos = (~sign_neg) & (~is_zero) & lax.ge(x, half)
+  is_pos = (~sign_neg) & (~is_tiny) & lax.ge(x, half)
   x_clamped = lax.select(
-      is_nan_in | is_zero, zero, lax.clamp(x_under, x, x_over)
+      is_nan_in | is_tiny, zero, lax.clamp(x_under, x, x_over)
   )
   x_neg = lax.select(is_pos, neg_half, x_clamped)
   n = lax.round(x_neg, lax.RoundingMethod.TO_NEAREST_EVEN)
   delta = x_neg - n
   ad = lax.abs(delta)
 
-  x_fin = lax.select(is_finite_in & (~is_zero), x, zero)
+  x_fin = lax.select(is_finite_in & (~is_tiny), x, zero)
   x_floor = lax.floor(x_fin)
-  is_int = is_finite_in & (is_zero | lax.eq(x, x_floor))
+  is_int = is_finite_in & (is_tiny | lax.eq(x, x_floor))
   is_zero_or_neg_int = (~is_pos) & is_int
 
   # Split normal `|delta| = ad_mant * 2^e_ad` with `ad_mant in [1, 2)` so
@@ -296,16 +297,15 @@ def _gamma_real_impl(x: Array) -> Array:
   mag = scale_f2_pow2(m0, m1, k_tot)
 
   # Apply sign `(-1)^floor(x)` on negative intervals and substitute special values:
-  # `|x| < finfo.tiny -> +/-inf`, `+inf -> +inf`, negative integers / `-inf -> NaN`.
+  # `|x| < finfo.tiny -> 1/x` (`+/-inf` at `+/-0` and when FTZ flushes subnormals),
+  # `+inf -> +inf`, negative integers / `-inf -> NaN`.
   neg_odd = lax.ne(lax.rem(x_floor, two), zero)
   sign = lax.select(is_pos, one, lax.select(neg_odd, neg_one, one))
   res = sign * mag
   pos_inf = lax.full_like(x, np.inf)
-  neg_inf = lax.full_like(x, -np.inf)
-  zero_inf = lax.select(sign_neg, neg_inf, pos_inf)
-  res = lax.select(is_zero, zero_inf, res)
+  res = lax.select(is_tiny, lax.reciprocal(x), res)
   res = lax.select(is_inf & (~sign_neg), pos_inf, res)
-  is_nan_out = is_nan_in | (is_inf & sign_neg) | (sign_neg & is_int & (~is_zero))
+  is_nan_out = is_nan_in | (is_inf & sign_neg) | (sign_neg & is_int & (~is_tiny))
   return _nan_where(is_nan_out, res)
 
 

@@ -132,9 +132,6 @@ class ErfTest(jtu.JaxTestCase):
         ("tpu_v5p", {f16: 0.5, f32: 8.5}),
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     # Thresholds where |erf(x)| rounds to 1.0 in float32 (1 - 2^-24) and
     # float64 (1 - 2^-53):
     f32_sat = float(scipy.special.erfinv(1.0 - 2.0**-24))
@@ -170,7 +167,6 @@ class ErfTest(jtu.JaxTestCase):
         mpmath.erf,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 
@@ -224,6 +220,9 @@ class ErfcTest(jtu.JaxTestCase):
         ("tpu_v6e", {f16: 1.0, f32: 124.5}),
         ("tpu_7x", {f16: 1.0, f32: 125.0}),
     ]
+    output_ftz = [
+        ("gpu", {bf16: True, f32: True, f64: True}),
+    ]
     util.check_unary_precision(
         self,
         lax.erfc,
@@ -231,6 +230,7 @@ class ErfcTest(jtu.JaxTestCase):
         _mpmath_erfc,
         dtype,
         bounds=bounds,
+        output_ftz=output_ftz,
         interesting_points=_ERFC_INTERESTING_POINTS,
     )
 
@@ -828,9 +828,6 @@ class ErfcInvTest(jtu.JaxTestCase):
         ("tpu_v6e", {bf16: 0.5, f16: 1.0, f32: 3.0}),
         ("tpu_7x", {f16: 1.0, f32: 3.0}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     # At y = 1.0, erfcinv(1.0) returns +0.0 while scipy.special.erfcinv
     # returns -0.0 from -erfinv(y - 1.0).
     util.check_unary_precision(
@@ -840,7 +837,6 @@ class ErfcInvTest(jtu.JaxTestCase):
         _mpmath_erfcinv,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         check_signed_zeros=False,
         interesting_points=_ERFCINV_INTERESTING_POINTS,
     )
@@ -855,9 +851,6 @@ class ErfcInvTest(jtu.JaxTestCase):
         ("tpu_v6e", {f16: 1.0, f32: 7.5}),
         ("tpu_7x", {f16: 1.0, f32: 6.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_unary_precision(
         self,
         erfcinv_grad,
@@ -865,7 +858,6 @@ class ErfcInvTest(jtu.JaxTestCase):
         _mpmath_erfcinv_grad,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=_ERFCINV_INTERESTING_POINTS,
     )
 
@@ -1004,9 +996,6 @@ class NdtriTest(jtu.JaxTestCase):
         ("tpu_v5p", {f32: 5.0}),
         (["tpu_v6e", "tpu_7x"], {f32: 3.0}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_unary_precision(
         self,
         jax.jit(jsp.special.ndtri),
@@ -1014,7 +1003,6 @@ class NdtriTest(jtu.JaxTestCase):
         _mpmath_ndtri,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=_NDTRI_INTERESTING_POINTS,
     )
 
@@ -1031,9 +1019,6 @@ class NdtriTest(jtu.JaxTestCase):
         ("tpu_v6e", {f32: 7.5}),
         ("tpu_7x", {f32: 6.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_unary_precision(
         self,
         ndtri_grad,
@@ -1041,7 +1026,6 @@ class NdtriTest(jtu.JaxTestCase):
         _mpmath_ndtri_grad,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=_NDTRI_INTERESTING_POINTS,
     )
 
@@ -1303,9 +1287,6 @@ class NdtriExpTest(jtu.JaxTestCase):
         ("gpu", {f16: 1.0, f32: 3.5, f64: 2.5}),
         ("tpu", {f16: 1.0, f32: 3.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_unary_precision(
         self,
         jax.jit(jsp.special.ndtri_exp),
@@ -1313,7 +1294,6 @@ class NdtriExpTest(jtu.JaxTestCase):
         _mpmath_ndtri_exp,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=_ndtri_exp_interesting_points(dtype),
     )
 
@@ -1325,9 +1305,6 @@ class NdtriExpTest(jtu.JaxTestCase):
         (["tpu_v5p", "tpu_7x"], {f16: 1.0, f32: 7.0}),
         ("tpu", {f16: 1.0, f32: 7.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_unary_precision(
         self,
         ndtri_exp_grad,
@@ -1335,7 +1312,6 @@ class NdtriExpTest(jtu.JaxTestCase):
         _mpmath_ndtri_exp_grad,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=_ndtri_exp_interesting_points(dtype),
     )
 
@@ -1477,9 +1453,6 @@ class NdtrTest(jtu.JaxTestCase):
         ([*TPU_EUPV1, "tpu_v5p"], {f32: 6.0}),
         (["tpu_v6e", "tpu_7x"], {f32: 5.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_unary_precision(
         self,
         jax.jit(jsp.special.ndtr),
@@ -1487,7 +1460,6 @@ class NdtrTest(jtu.JaxTestCase):
         _mpmath_ndtr,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=_NDTR_INTERESTING_POINTS,
     )
 
@@ -1562,9 +1534,6 @@ class LogNdtrTest(jtu.JaxTestCase):
         ([*TPU_EUPV1, "tpu_v5p"], {f32: 6.0}),
         (["tpu_v6e", "tpu_7x"], {f32: 5.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_unary_precision(
         self,
         jax.jit(jsp.special.log_ndtr),
@@ -1572,7 +1541,6 @@ class LogNdtrTest(jtu.JaxTestCase):
         _mpmath_log_ndtr,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=_LOG_NDTR_INTERESTING_POINTS,
     )
 

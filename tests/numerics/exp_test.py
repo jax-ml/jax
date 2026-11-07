@@ -285,17 +285,11 @@ class LogisticTest(jtu.JaxTestCase):
   def test_logistic_accuracy(self, dtype):
     bounds = [
         ("cpu", {bf16: 2.5, f16: 2.0, f32: 2.5, f64: 3.5}),
-        ("gpu", {bf16: 2.5, f16: 2.0, f32: 4.0, f64: 4.5}),
+        ("gpu", {bf16: 2.0, f16: 2.0, f32: 4.0, f64: 2.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 243.0}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 124.0}),
         ("tpu_v6e", {f16: 1.0, f32: 65.5}),
         ("tpu_7x", {bf16: 63.0, f16: 1.0, f32: 64.0}),
-    ]
-    # TODO(phawkins): lax.logistic lowers to 1 / (1 + exp(-x)), which prematurely
-    # underflows to 0.0 on CPU and GPU when exp(-x) overflows in float16 for
-    # x <= -11.09.
-    output_ftz = [
-        (["cpu", "gpu"], {f16: True}),
     ]
     util.check_unary_precision(
         self,
@@ -304,7 +298,6 @@ class LogisticTest(jtu.JaxTestCase):
         lambda x: 1 / (1 + mpmath.exp(-x)),
         dtype,
         bounds=bounds,
-        output_ftz=output_ftz,
         interesting_points=_logistic_interesting_points(dtype),
     )
 

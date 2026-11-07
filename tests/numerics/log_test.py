@@ -61,9 +61,6 @@ class LogTest(jtu.JaxTestCase):
         ("tpu_v5p", {f16: 1.0, f32: 62.0}),
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 2.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     interesting_points = [
         *_LOG_INTERESTING_POINTS,
         # Worst-case inputs across math libraries from Gladman et al.,
@@ -92,7 +89,6 @@ class LogTest(jtu.JaxTestCase):
         mpmath.log,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 
@@ -117,9 +113,6 @@ class Log2Test(jtu.JaxTestCase):
           ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 57.5}),
           (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 2.5}),
       ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     interesting_points = [
         *_LOG_INTERESTING_POINTS,
         # Worst-case inputs across math libraries from Gladman et al.:
@@ -148,7 +141,6 @@ class Log2Test(jtu.JaxTestCase):
         mpmath.log2,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 
@@ -161,9 +153,6 @@ class Log2Test(jtu.JaxTestCase):
         ([*TPU_EUPV1, "tpu_v5p"], {f32: 3.0}),
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 1.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_unary_precision(
         self,
         _log2_highest,
@@ -171,7 +160,6 @@ class Log2Test(jtu.JaxTestCase):
         mpmath.log2,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
     )
 
 
@@ -187,9 +175,6 @@ class Log10Test(jtu.JaxTestCase):
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 57.0}),
         (["tpu_v6e", "tpu_7x"], {bf16: 1.0, f16: 1.0, f32: 3.0}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     util.check_unary_precision(
         self,
         jnp.log10,
@@ -197,7 +182,6 @@ class Log10Test(jtu.JaxTestCase):
         mpmath.log10,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=[
             *_LOG_INTERESTING_POINTS,
             # Exact powers of 10 where log10(x) is an integer.
@@ -292,9 +276,6 @@ class LogitTest(jtu.JaxTestCase):
         ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 4.0}),
         ("tpu_7x", {bf16: 1.0, f16: 1.0, f32: 4.5}),
     ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     interesting_points = [
         0.25,
         1.0 / 3.0,
@@ -311,7 +292,6 @@ class LogitTest(jtu.JaxTestCase):
         _mpmath_logit,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         interesting_points=interesting_points,
     )
 

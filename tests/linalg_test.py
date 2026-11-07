@@ -1617,7 +1617,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     trans=[0, 1, 2],
     dtype=float_types + complex_types,
   )
-  @jtu.skip_on_devices("cpu")  # TODO(frostig): Test fails on CPU sometimes
   def testLuSolve(self, lhs_shape, rhs_shape, dtype, trans):
     rng = jtu.rand_default(self.rng())
     osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv.copy()), rhs, trans=trans)
@@ -1645,7 +1644,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     trans=[0, 1, 2],
     dtype=float_types + complex_types,
   )
-  @jtu.skip_on_devices("cpu")  # TODO(frostig): Test fails on CPU sometimes
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLuSolveBroadcast(self, lhs_shape, rhs_shape, dtype, trans):
     if scipy_version < (1, 16, 0):

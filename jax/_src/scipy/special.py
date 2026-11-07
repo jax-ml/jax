@@ -51,7 +51,7 @@ from jax._src.numpy import lax_numpy
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import promote_args_complex, promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
-from jax._src.scipy.bessel import jn as jn, yn as yn
+from jax._src.scipy.bessel import iv as iv, jn as jn, yn as yn
 from jax._src.scipy.betaln import _betaln
 from jax._src.scipy.gamma import gamma_real
 from jax._src.typing import Array, ArrayLike

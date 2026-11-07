@@ -27,9 +27,206 @@ from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.api import jit
-from jax._src.numpy.ufuncs import cbrt, copysign, exp2
+from jax._src.lax.double_word import (
+    f2_add,
+    f2_div,
+    f2_mul,
+    f2_recip,
+    f2_square,
+    fast_two_sum,
+    scale_f2_pow2,
+    split_half,
+    two_prod,
+    two_sum,
+)
+from jax._src.lax.lax import (
+    _const,
+    bitcast_convert_type,
+    shift_left,
+    shift_right_arithmetic,
+)
+from jax._src.numpy.ufuncs import cbrt, copysign
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
+
+_INV_SQRT_2PI_F32 = (0.3989422917366028, -1.1335170135851058e-08)
+_INV_SQRT_2PI_F64 = (0.3989422804014327, -2.49232720227773e-17)
+# 12 + 7 + 24 bit split of ln(2) for float32 so kf * hi and kf * mid are exact
+# single-word products for all |kf| <= 4096 (|w| <= 2839).
+_LN2_SPLIT_12_F32 = (
+    0.693115234375,
+    3.1948089599609375e-05,
+    -1.9046543252431068e-09,
+)
+# 26 + 26 + 53 bit split of ln(2) for float64 so kf * hi and kf * mid are exact
+# single-word products for all |kf| <= 2**27 (|w| <= 9.3e7).
+_LN2_SPLIT_26_F64 = (
+    0.6931471675634384,
+    1.2996506759677118e-08,
+    1.3421277060097865e-16,
+)
+_EXP_R_POLY_F32 = tuple(1.0 / math.factorial(m) for m in range(2, 9))
+_EXP_R_POLY_F64 = tuple(1.0 / math.factorial(m) for m in range(2, 15))
+
+
+def _pow2_int(e: Array) -> Array:
+  """Computes 2**e for integer float Array e via IEEE 754 exponent bits."""
+  dtype = e.dtype
+  if dtype == np.float64:
+    int_ty, mant_bits, bias, emin, emax = np.int64, 52, 1023, -1022, 1023
+  else:
+    int_ty, mant_bits, bias, emin, emax = np.int32, 23, 127, -126, 127
+  e_clamped = lax.clamp(
+      lax.full_like(e, float(emin - 1)), e, lax.full_like(e, float(emax + 1))
+  )
+  ei = lax.convert_element_type(e_clamped, int_ty)
+  bits = shift_left(
+      ei + lax.full_like(ei, bias), lax.full_like(ei, mant_bits)
+  )
+  return bitcast_convert_type(bits, dtype)
+
+
+def _f2_frexp_sqrt2(a0: Array, a1: Array) -> tuple[Array, Array, Array]:
+  """Normalizes positive (a0, a1) into a0 * 2**(-e) in [sqrt(2)/2, sqrt(2))."""
+  dtype = a0.dtype
+  if dtype == np.float64:
+    int_ty, mant_bits, bias = np.int64, 52, 1023
+    sqrt2_bits = 0x3FE6A09E667F3BCD
+  else:
+    int_ty, mant_bits, bias = np.int32, 23, 127
+    sqrt2_bits = 0x3F3504F3
+  bits = bitcast_convert_type(a0, int_ty)
+  s_mant = lax.full_like(bits, mant_bits)
+  e = shift_right_arithmetic(bits - _const(bits, sqrt2_bits), s_mant)
+  e_clamped = lax.clamp(
+      lax.full_like(e, -(bias - 1)), e, lax.full_like(e, bias)
+  )
+  scale = bitcast_convert_type(
+      shift_left(lax.full_like(bits, bias) - e_clamped, s_mant), dtype
+  )
+  return a0 * scale, a1 * scale, e_clamped
+
+
+def _f2_ipow_mant_exp(w_pos: Array, p: int) -> tuple[Array, Array, Array]:
+  """Computes w_pos**p as (m0, m1) * 2**e with m0 in [sqrt(2)/2, sqrt(2))."""
+  dtype = w_pos.dtype
+  if dtype == np.float64:
+    int_ty, mant_bits = np.int64, 52
+    sqrt2_bits = 0x3FE6A09E667F3BCD
+  else:
+    int_ty, mant_bits = np.int32, 23
+    sqrt2_bits = 0x3F3504F3
+  bits = bitcast_convert_type(w_pos, int_ty)
+  s_mant = lax.full_like(bits, mant_bits)
+  eb = shift_right_arithmetic(bits - _const(bits, sqrt2_bits), s_mant)
+  b0 = bitcast_convert_type(bits - shift_left(eb, s_mant), dtype)
+  b1 = lax.full_like(w_pos, 0.0)
+  acc: tuple[Array, Array, Array] | None = None
+  while p > 0:
+    if p & 1:
+      if acc is None:
+        acc = (b0, b1, eb)
+      else:
+        a0, a1 = f2_mul(acc[0], acc[1], b0, b1)
+        a0, a1, ea = _f2_frexp_sqrt2(a0, a1)
+        acc = (a0, a1, acc[2] + eb + ea)
+    p >>= 1
+    if p > 0:
+      b0, b1 = f2_square(b0, b1)
+      b0, b1, ed = _f2_frexp_sqrt2(b0, b1)
+      eb = eb + eb + ed
+  assert acc is not None
+  return acc
+
+
+def _scale_by_w_half_pow_n_over_fact_f2(
+    n: int, w_safe: Array, t0: Array, t1: Array
+) -> Array:
+  """Computes (t0 + t1) * (w_safe / 2)^n / n! for real w_safe >= 0."""
+  if n == 0:
+    return t0 + t1
+  zero = lax.full_like(w_safe, 0.0)
+  if n == 1:
+    p0, p1 = f2_mul(w_safe, zero, 0.5 * t0, 0.5 * t1)
+    return p0 + p1
+  dtype = w_safe.dtype
+  emin = -1022 if dtype == np.float64 else -126
+  fact = math.factorial(n)
+  k_exp = fact.bit_length()
+  c_frac = fractions.Fraction(1 << k_exp, fact)
+  if dtype == np.float32:
+    c_hi = float(np.float32(float(c_frac)))
+    c_lo = float(np.float32(float(c_frac - fractions.Fraction(c_hi))))
+  else:
+    c_hi = float(c_frac)
+    c_lo = float(c_frac - fractions.Fraction(c_hi))
+  w_pos = jnp.where(w_safe > 0.0, w_safe, jnp.ones_like(w_safe))
+  p0, p1, ep = _f2_ipow_mant_exp(w_pos, n)
+  s0, s1 = f2_mul(t0, t1, _const(w_safe, c_hi), _const(w_safe, c_lo))
+  v0, v1 = f2_mul(p0, p1, s0, s1)
+  k_tot = ep - _const(ep, n + k_exp)
+  res = scale_f2_pow2(v0, v1, k_tot)
+  return jnp.where((w_safe <= 0.0) | (k_tot < 2 * emin), 0.0, res)
+
+
+def _scale_f2_exp_w(
+    val0: Array,
+    val1: Array | None,
+    w_safe: Array,
+    scale_exp: Array | None = None,
+) -> Array:
+  """Multiplies (val0, val1) by exp(w_safe) * 2**scale_exp without overflow.
+
+  Args:
+    val0: High-order word of the multiplicand.
+    val1: Low-order word of the multiplicand, or None if the multiplicand is a
+      single-word floating-point value.
+    w_safe: Real exponential argument.
+    scale_exp: Additional power-of-two exponent scaling factor, or None to apply
+      no extra exponent scaling.
+
+  Returns:
+    The scaled result in standard floating-point precision.
+  """
+  real_dtype = w_safe.dtype
+  int_ty = np.int64 if real_dtype == np.float64 else np.int32
+  emin = -1022 if real_dtype == np.float64 else -126
+  if real_dtype == np.float64:
+    ln2_hi, ln2_mid, ln2_lo = _LN2_SPLIT_26_F64
+    exp_coeffs = _EXP_R_POLY_F64
+  else:
+    ln2_hi, ln2_mid, ln2_lo = _LN2_SPLIT_12_F32
+    exp_coeffs = _EXP_R_POLY_F32
+  # Split w_safe = kf * ln(2) + r with integer kf and |r| <= ln(2) / 2 so
+  # exp(w_safe) = 2**kf * exp(r). We combine 2**kf with 2**scale_exp at the end
+  # via scale_f2_pow2 so that large w_safe values where exp(w_safe) alone would
+  # overflow can still cancel against small (val0, val1) or negative scale_exp.
+  kf = lax.round(
+      w_safe * _const(w_safe, 1.4426950408889634),
+      lax.RoundingMethod.TO_NEAREST_EVEN,
+  )
+  # Subtract kf * ln(2) using a three-part split of ln(2) so the remainder
+  # r + r_lo retains full double-word precision even when kf is large.
+  r_hi = w_safe - kf * _const(w_safe, ln2_hi)
+  kl_mid = kf * _const(w_safe, ln2_mid)
+  r, e1 = two_sum(r_hi, -kl_mid)
+  r, r_lo = fast_two_sum(r, e1 - kf * _const(w_safe, ln2_lo))
+  # Approximate exp(r + r_lo) in double-word precision as eh + el via a Taylor
+  # polynomial on the narrow interval |r| <= ln(2) / 2.
+  one = lax.full_like(w_safe, 1.0)
+  p = lax.polynomial(r, exp_coeffs, unroll=len(exp_coeffs))
+  q = (r * r) * p + r_lo * (one + r)
+  s0, s1 = fast_two_sum(one, r)
+  eh, el = fast_two_sum(s0, s1 + q)
+  # Multiply (val0, val1) by (eh, el) and apply the combined power of two.
+  p0, p1 = two_prod(val0, eh)
+  m1 = p1 + val0 * el if val1 is None else p1 + (val0 * el + val1 * eh)
+  k_tot = lax.convert_element_type(kf, int_ty)
+  if scale_exp is None:
+    return scale_f2_pow2(p0, m1, k_tot)
+  k_tot = k_tot + lax.convert_element_type(scale_exp, int_ty)
+  res = scale_f2_pow2(p0, m1, k_tot)
+  return jnp.where(k_tot < 2 * emin, 0.0, res)
 
 
 def _scale_by_w_half_pow_n_over_fact(
@@ -67,7 +264,7 @@ def _scale_exp2(
   # rescaling on tiny values) don't overflow a single 2**total_exp factor.
   e1 = jnp.floor(0.5 * total_exp)
   e2 = total_exp - e1
-  s1, s2 = exp2(e1), exp2(e2)
+  s1, s2 = _pow2_int(e1), _pow2_int(e2)
   if not dtypes.issubdtype(val.dtype, np.complexfloating):
     res = val if er is None else val * er
     return (res * s1) * s2
@@ -82,7 +279,7 @@ def _scale_exp2(
 def _scale_exp_y_and_exp2(
     val: Array, y: Array, scale_exp: Array, sign_y: float
 ) -> Array:
-  """Multiplies complex val by exp(sign_y * y) * 2**scale_exp without overflow."""
+  """Multiplies complex val by exp(sign_y * y) * 2**scale_exp."""
   real_dtype = y.dtype
   # Rewrite y = k_y * ln(2) + r_y with |r_y| <= ln(2)/2 so exp(sign_y * y)
   # splits into a bounded factor exp(sign_y * r_y) and a power of 2 that merges
@@ -153,23 +350,41 @@ def _forward_recur_rescaled(
   return f_n, scale_exp
 
 
-def _jn_series(n: int, w: Array, max_iter: int, r_max: float) -> Array:
-  """Ascending power series for J_n(w) for integer n >= 0 and Re(w), Im(w) >= 0."""
+def _jn_series(
+    n: int, w: Array, max_iter: int, r_max: float, *, modified: bool = False
+) -> Array:
+  """Ascending power series for J_n(w) or I_n(w) for integer n >= 0."""
   real_dtype = jnp.real(w).dtype
   w_safe = jnp.where(jnp.isfinite(w) & (jnp.abs(w) <= r_max), w, 0.0)
-  z2 = -0.25 * (w_safe * w_safe)
-
-  def body(k, state):
-    term, total = state
-    kf = k.astype(real_dtype)
-    term = term * (z2 / (kf * (n + kf)))
-    total = total + term
-    return term, total
-
+  coeff = 0.25 if modified else -0.25
   one = jnp.ones_like(w_safe)
-  _, total = lax.fori_loop(1, max_iter + 1, body, (one, one))
-  res = _scale_by_w_half_pow_n_over_fact(n, w_safe, total)
   zero = jnp.zeros_like(w)
+
+  if not dtypes.issubdtype(w.dtype, np.complexfloating):
+    # Evaluate 1 + sum_{k>=1} (coeff * w^2)^k / (k! * (n + 1)...(n + k))
+    # from the inside out (Horner's method) in double-word arithmetic.
+    z2_0, z2_1 = two_prod(w_safe, w_safe)
+    z2_0, z2_1 = coeff * z2_0, coeff * z2_1
+
+    def body_f2(i, state):
+      t0, t1 = state
+      kf = lax.convert_element_type(max_iter - i, real_dtype)
+      p0, p1 = f2_mul(t0, t1, z2_0, z2_1)
+      q0, q1 = f2_div(p0, p1, kf * (_const(kf, n) + kf), zero)
+      return f2_add(one, zero, q0, q1)
+
+    t0, t1 = lax.fori_loop(0, max_iter, body_f2, (one, zero))
+    res = _scale_by_w_half_pow_n_over_fact_f2(n, w_safe, t0, t1)
+    return jnp.where(w == 0, one if n == 0 else zero, res)
+
+  z2 = coeff * (w_safe * w_safe)
+
+  def body(i, total):
+    kf = lax.convert_element_type(max_iter - i, real_dtype)
+    return one + total * (z2 / (kf * (n + kf)))
+
+  total = lax.fori_loop(0, max_iter, body, one)
+  res = _scale_by_w_half_pow_n_over_fact(n, w_safe, total)
   return jnp.where(w == 0, one if n == 0 else zero, res)
 
 
@@ -681,6 +896,7 @@ def jn(n: int, z: ArrayLike) -> Array:
   See Also:
     - :func:`jax.scipy.special.bessel_jn`
     - :func:`jax.scipy.special.yn`
+    - :func:`jax.scipy.special.iv`
     - :func:`jax.scipy.special.i0`
     - :func:`jax.scipy.special.i1`
   """
@@ -1386,6 +1602,7 @@ def yn(n: int, z: ArrayLike) -> Array:
 
   See Also:
     - :func:`jax.scipy.special.jn`
+    - :func:`jax.scipy.special.iv`
     - :func:`jax.scipy.special.bessel_jn`
   """
   n = core.concrete_or_error(
@@ -1399,3 +1616,329 @@ def yn(n: int, z: ArrayLike) -> Array:
     z = z.astype(np.float32)
     return _yn(n, z).astype(orig_dtype)
   return _yn(n, z)
+
+
+def _iv_asymptotic_real(
+    n: int, w: Array, max_terms: int, r_min: float
+) -> Array:
+  """Evaluates I_n(w) for large real w > 0 using its 1/w expansion."""
+  real_dtype = w.dtype
+  overflow_w = 1000.0 if real_dtype == np.float64 else 120.0
+  w_safe = jnp.where(
+      jnp.isfinite(w) & (w >= r_min) & (w < overflow_w),
+      w,
+      jnp.full_like(w, r_min),
+  )
+  # For large w, I_n(w) ~ (exp(w) / sqrt(2*pi*w)) * sum_{k>=0} a_k(n) / (8w)^k,
+  # where consecutive terms satisfy
+  # a_k / a_{k-1} = -((2k - 1)^2 - 4n^2) / (8 * k * w) (DLMF 10.40.1).
+  # Evaluate the finite series from the inside out (Horner's method) in
+  # double-word arithmetic so rounding errors don't build up.
+  mu = float(4 * n * n)
+  zero = jnp.zeros_like(w_safe)
+  one = jnp.ones_like(w_safe)
+  inv_8w0, inv_8w1 = f2_recip(8.0 * w_safe, zero)
+
+  def body(i, state):
+    s0, s1 = state
+    kf = lax.convert_element_type(max_terms - i, real_dtype)
+    two_k_m1 = 2.0 * kf - 1.0
+    c0, c1 = f2_div(two_k_m1 * two_k_m1 - mu, zero, kf, zero)
+    f0, f1 = f2_mul(c0, c1, inv_8w0, inv_8w1)
+    t0, t1 = f2_mul(s0, s1, f0, f1)
+    return f2_add(one, zero, t0, t1)
+
+  tot0, tot1 = lax.fori_loop(0, max_terms, body, (one, zero))
+  # Refine sqrt(w_safe) to double-word precision (sw0, sw1) with one Newton step
+  # sqrt(w) ≈ sw + (w - sw^2) / (2 * sw), then divide by sqrt(2 * pi * w) and
+  # multiply by exp(w_safe).
+  sw = jnp.sqrt(w_safe)
+  sw2_0, sw2_1 = two_prod(sw, sw)
+  sw_rem = (w_safe - sw2_0) - sw2_1
+  sw0, sw1 = fast_two_sum(sw, sw_rem / (2.0 * sw))
+  q0, q1 = f2_div(tot0, tot1, sw0, sw1)
+  c2pi_hi, c2pi_lo = (
+      _INV_SQRT_2PI_F64 if real_dtype == np.float64 else _INV_SQRT_2PI_F32
+  )
+  u0, u1 = f2_mul(
+      q0, q1, _const(w_safe, c2pi_hi), _const(w_safe, c2pi_lo)
+  )
+  res = _scale_f2_exp_w(u0, u1, w_safe)
+  return jnp.where(w >= overflow_w, np.inf, res)
+
+
+def _iv_recur_neumann_real(
+    n: int,
+    w: Array,
+    in_recur: Array,
+    r_min: float,
+    cf_pad: int,
+) -> Array:
+  """Evaluates I_n(w) for intermediate real w > 0 via backward recurrence."""
+  # Modified Bessel functions satisfy
+  # I_{k-1}(w) = (2k / w) * I_k(w) + I_{k+1}(w).
+  # Stepping this recurrence forward from k = 0 to n loses precision when k > w
+  # because I_k(w) shrinks rapidly with k while rounding errors grow. Stepping
+  # backward from a large starting index k_top down to 1 is numerically stable.
+  #
+  # Dividing the recurrence by I_{k-1}(w) gives a backward step for the ratio
+  # r_k = I_k(w) / I_{k-1}(w):
+  #   r_k = 1 / (2k / w + r_{k+1}),  starting from r_{k_top + 1} = 0.
+  # In a single backward pass from k = k_top down to 1, we also maintain:
+  #   1. p = r_1 * r_2 * ... * r_n = I_n(w) / I_0(w)
+  #   2. s = 1 + r_1 * (1 + r_2 * (1 + ...))
+  #        = (I_0(w) + I_1(w) + ... + I_{k_top}(w)) / I_0(w)
+  # Using the identity I_0(w) + 2 * sum_{k>=1} I_k(w) = exp(w) (DLMF 10.35.2),
+  # 2 * s - 1 equals exp(w) / I_0(w), so p / (2 * s - 1) = exp(-w) * I_n(w),
+  # which we then multiply by exp(w) via _scale_f2_exp_w.
+  real_dtype = w.dtype
+  w_safe = jnp.where(in_recur, w, jnp.full_like(w, r_min))
+  zero = jnp.zeros_like(w_safe)
+  one = jnp.ones_like(w_safe)
+  inv_w0, inv_w1 = f2_recip(w_safe, zero)
+  # Pre-split inv_w0 outside the loop so 2k * inv_w is computed in double-word
+  # precision without calling split_half every iteration (and without XLA/LLVM
+  # fusing s - 2k * inv_w0 into an FMA that would corrupt the error term).
+  inv_w_hi, inv_w_mid = split_half(inv_w0)
+
+  w_int = jnp.floor(w_safe).astype(np.int32)
+  m_top = jnp.maximum(np.int32(n), w_int)
+  k_top = jnp.where(in_recur, m_top + np.int32(cf_pad), np.int32(0))
+  k_init = jnp.max(k_top, initial=np.int32(0))
+
+  scale_thresh = 2.0 ** (-500 if real_dtype == np.float64 else -60)
+  scale_up = 2.0 ** (500 if real_dtype == np.float64 else 60)
+  scale_bits = np.int32(500 if real_dtype == np.float64 else 60)
+
+  def cf_cond(state):
+    k, *_ = state
+    return k >= 1
+
+  def cf_body(state):
+    k, r0, r1, s0, s1, p0, p1, scale_exp = state
+    active = in_recur & (k <= k_top)
+    two_kf = lax.convert_element_type(2 * k, real_dtype)
+    tk_p0, tk_e0 = fast_two_sum(two_kf * inv_w_hi, two_kf * inv_w_mid)
+    tk0, tk1 = fast_two_sum(tk_p0, tk_e0 + two_kf * inv_w1)
+    den0, den1 = f2_add(tk0, tk1, r0, r1)
+    rk0, rk1 = f2_recip(den0, den1)
+    rs0, rs1 = f2_mul(rk0, rk1, s0, s1)
+    sn0, sn1 = f2_add(one, zero, rs0, rs1)
+    r0 = jnp.where(active, rk0, r0)
+    r1 = jnp.where(active, rk1, r1)
+    s0 = jnp.where(active, sn0, s0)
+    s1 = jnp.where(active, sn1, s1)
+    in_prod = active & (k <= n)
+    pn0, pn1 = f2_mul(p0, p1, rk0, rk1)
+    p0 = jnp.where(in_prod, pn0, p0)
+    p1 = jnp.where(in_prod, pn1, p1)
+    # When n is large, the ratio product p = I_n(w) / I_0(w) can become very
+    # small; rescale (p0, p1) by 2**scale_bits and record -scale_bits in
+    # scale_exp so p does not underflow before multiplying by exp(w).
+    small = in_prod & (p0 < scale_thresh) & (p0 > 0.0)
+    p0 = jnp.where(small, p0 * scale_up, p0)
+    p1 = jnp.where(small, p1 * scale_up, p1)
+    scale_exp = jnp.where(small, scale_exp - scale_bits, scale_exp)
+    return k - np.int32(1), r0, r1, s0, s1, p0, p1, scale_exp
+
+  init_cf = (
+      k_init,
+      zero,
+      zero,
+      one,
+      zero,
+      one,
+      zero,
+      jnp.zeros_like(w_int),
+  )
+  _, _, _, s0, s1, p0, p1, scale_exp = lax.while_loop(cf_cond, cf_body, init_cf)
+  s0, s1 = f2_add(2.0 * s0, 2.0 * s1, -one, zero)
+  u0, u1 = f2_div(p0, p1, s0, s1)
+  return _scale_f2_exp_w(u0, u1, w_safe, scale_exp)
+
+
+def _iv_real_nonneg(n: int, w: Array) -> Array:
+  """Evaluates I_n(w) for static integer n >= 0 and real w >= 0."""
+  real_dtype = w.dtype
+  overflow_w = 1000.0 if real_dtype == np.float64 else 120.0
+
+  # For orders n = 0 and n = 1, delegate to the dedicated rational minimax
+  # primitives bessel_i0e and bessel_i1e (which compute exp(-w) * I_n(w))
+  # and multiply by exp(w).
+  if n <= 1:
+    w_safe = jnp.where(jnp.isfinite(w) & (w < overflow_w), w, 0.0)
+    ie = lax.bessel_i0e(w_safe) if n == 0 else lax.bessel_i1e(w_safe)
+    res = _scale_f2_exp_w(ie, None, w_safe)
+    return jnp.where(w >= overflow_w, np.inf, res)
+
+  # For n >= 2, split w >= 0 into up to three regimes:
+  #   1. Small w (w <= r_ser): ascending power series (all terms are positive,
+  #      so there is no alternating-sign cancellation).
+  #   2. Intermediate w (r_ser < w < r_rec_max): backward recurrence.
+  #   3. Large w (w >= r_rec_max): large-argument 1/w expansion (or +inf when
+  #      r_rec_max is already past the overflow threshold).
+  if real_dtype == np.float64:
+    rl = 24.0
+    series_iters = 38
+    asym_terms = 20
+    cf_pad = 40
+  else:
+    rl = 10.0
+    series_iters = 26
+    asym_terms = 12
+    cf_pad = 20
+
+  r_ser = max(12.0, math.sqrt(2.0 * (n + 1)))
+  r_asy = max(r_ser, rl + 0.5 * n * n)
+  r_rec_max = min(r_asy, max(overflow_w, 2.0 * n))
+
+  in_series = w <= r_ser
+  res_ser = _jn_series(n, w, series_iters, r_ser, modified=True)
+  res_asy = (
+      jnp.full_like(w, np.inf)
+      if r_rec_max >= overflow_w
+      else _iv_asymptotic_real(n, w, asym_terms, r_rec_max)
+  )
+  res = jnp.where(in_series, res_ser, res_asy)
+
+  if r_ser < r_rec_max:
+    in_recur = (w > r_ser) & (w < r_rec_max)
+    res_rec = _iv_recur_neumann_real(n, w, in_recur, r_ser, cf_pad)
+    res = jnp.where(in_recur, res_rec, res)
+
+  return res
+
+
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
+@partial(jit, static_argnums=(0,))
+def _iv(v: int, z: Array) -> Array:
+  with config.numpy_dtype_promotion("standard"):
+    return _iv_impl(v, z)
+
+
+def _iv_impl(v: int, z: Array) -> Array:
+  is_complex = dtypes.issubdtype(z.dtype, np.complexfloating)
+  # For integer orders, I_{-v}(z) = I_v(z) for all v in Z.
+  n_abs = abs(v)
+  is_odd = (n_abs & 1) == 1
+
+  if not is_complex:
+    res = _iv_real_nonneg(n_abs, jnp.abs(z))
+    if is_odd:
+      res = copysign(res, z)
+    return jnp.where(jnp.isnan(z), np.nan, res)
+
+  x = lax.real(z)
+  y = lax.imag(z)
+  # By DLMF 10.27.6, I_n(z) = i^{-n} J_n(i * z). For x >= 0 and y >= 0,
+  # let w = |y| + i * |x| in the first quadrant; then
+  # I_n(|x| + i * |y|) = i^n * conj(J_n(|y| + i * |x|)).
+  w = lax.complex(jnp.abs(y), jnp.abs(x))
+  j_w = _jn_first_quadrant(n_abs, w)
+  jr = lax.real(j_w)
+  ji = lax.imag(j_w)
+  mod4 = n_abs & 3
+  if mod4 == 0:
+    res = lax.complex(jr, -ji)
+  elif mod4 == 1:
+    res = lax.complex(ji, jr)
+  elif mod4 == 2:
+    res = lax.complex(-jr, ji)
+  else:
+    res = lax.complex(-ji, -jr)
+
+  # Map from the first quadrant |x| + i * |y| back to z = x + i * y:
+  # 1. If x < 0: I_n(-|x| + i * |y|) = (-1)^n * conj(I_n(|x| + i * |y|))
+  res_neg_x = -jnp.conj(res) if is_odd else jnp.conj(res)
+  res = jnp.where(x < 0.0, res_neg_x, res)
+  # 2. If y < 0: I_n(x - i * |y|) = conj(I_n(x + i * |y|))
+  res = jnp.where(y < 0.0, jnp.conj(res), res)
+  # 3. On the imaginary axis (x == 0), I_n(i * y) = i^n * J_n(y) is purely
+  # imaginary for odd n and purely real for even n; on the real axis
+  # (y == 0), I_n(x) is purely real.
+  if is_odd:
+    res = jnp.where(
+        x == 0.0, lax.complex(jnp.zeros_like(x), lax.imag(res)), res
+    )
+  else:
+    res = jnp.where(
+        x == 0.0, lax.complex(lax.real(res), jnp.zeros_like(y)), res
+    )
+  res = jnp.where(
+      y == 0.0, lax.complex(lax.real(res), jnp.zeros_like(y)), res
+  )
+
+  nan_c = lax.complex(jnp.full_like(x, np.nan), jnp.full_like(y, np.nan))
+  zero_c = jnp.zeros_like(z)
+  one_c = jnp.ones_like(z)
+  res = jnp.where(z == 0, one_c if n_abs == 0 else zero_c, res)
+  res = jnp.where(jnp.isinf(y), zero_c, res)
+  res = jnp.where(jnp.isnan(x) | jnp.isnan(y) | jnp.isinf(x), nan_c, res)
+  return res
+
+
+@_iv.defjvp
+def _iv_jvp(
+    v: int, primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
+  (z,) = primals
+  (z_dot,) = tangents
+  y = _iv(v, z)
+  n_abs = abs(v)
+  # DLMF 10.29.2: I_0'(z) = I_1(z), and
+  # I_v'(z) = 0.5 * (I_{v-1}(z) + I_{v+1}(z)).
+  dy_dz = (
+      _iv(1, z)
+      if n_abs == 0
+      else _const(z, 0.5) * (_iv(n_abs - 1, z) + _iv(n_abs + 1, z))
+  )
+  return y, dy_dz * z_dot
+
+
+def iv(v: int, z: ArrayLike) -> Array:
+  r"""Modified Bessel function of the first kind of integer order `v`.
+
+  JAX implementation of :obj:`scipy.special.iv` for integer orders.
+
+  .. math::
+
+     I_v(z) = \sum_{k=0}^{\infty} \frac{1}{k!\,(v + k)!}
+     \left(\frac{z}{2}\right)^{2k + v}
+
+  for integer order :math:`v \ge 0` (with :math:`I_{-v}(z) = I_v(z)`).
+
+  Args:
+    v: The integer order of the modified Bessel function (must be a static
+      integer).
+    z: The argument(s) at which to evaluate :math:`I_v(z)`. Real and complex
+      inputs are supported.
+
+  Returns:
+    An array containing the evaluated modified Bessel function values.
+
+  Notes:
+    Unlike :obj:`scipy.special.iv`, ``jax.scipy.special.iv`` requires ``v`` to
+    be a concrete integer order (so non-integer orders are not supported and
+    ``v`` cannot be traced or batched with :func:`jax.vmap`).
+
+  See Also:
+    - :func:`jax.scipy.special.i0`
+    - :func:`jax.scipy.special.i0e`
+    - :func:`jax.scipy.special.i1`
+    - :func:`jax.scipy.special.i1e`
+    - :func:`jax.scipy.special.jn`
+    - :func:`jax.scipy.special.yn`
+  """
+  v = abs(
+      core.concrete_or_error(
+          operator.index,
+          v,
+          "The 'v' argument of jax.scipy.special.iv must be a static integer.",
+      )
+  )
+  (z,) = promote_args_inexact("iv", z)
+  orig_dtype = z.dtype
+  if orig_dtype in (dtypes.bfloat16, np.float16):
+    z = z.astype(np.float32)
+    return _iv(v, z).astype(orig_dtype)
+  return _iv(v, z)

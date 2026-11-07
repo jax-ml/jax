@@ -2097,6 +2097,248 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         atol=tol,
     )
 
+  @jtu.sample_product(
+      v=[-2, -1, 0, 1, 2, 5, 15, 50],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_iv_orders_and_regimes(self, v, dtype):
+    """Tests real iv(v, x) across orders, regimes, and special values."""
+    max_x = (
+        8.0
+        if dtype == np.float16
+        else (60.0 if dtype in (dtypes.bfloat16, np.float32) else 500.0)
+    )
+    pts = [
+        p
+        for p in [
+            -150.0, -60.0, -15.0, -8.0, -2.5, 0.0, 0.2, 0.5, 1.5, 2.0, 3.5,
+            6.0, 8.0, 10.0, 15.0, 24.0, 30.0, 60.0, 150.0, 500.0,
+        ]
+        if abs(p) <= max_x
+    ]
+    x = np.array(pts, dtype=dtype)
+    args_maker = lambda: [x]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 5e-4 if jtu.test_device_matches(["tpu"]) else 3e-5,
+        np.float64: 1e-12,
+    }
+    osp_iv = lambda z: osp_special.iv(v, z.astype(np.float64)).astype(dtype)
+    lsp_iv = lambda z: lsp_special.iv(v, z)
+    self._CheckAgainstNumpy(osp_iv, lsp_iv, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_iv, args_maker, tol=tol)
+
+    # Pad special inputs to x.shape so the compiled executable for (v, dtype) is
+    # reused instead of triggering additional XLA compilations per order.
+    special_xs = np.resize(
+        np.array([0.0, -0.0, np.inf, -np.inf, np.nan], dtype=dtype), x.shape
+    )
+    res = np.asarray(lsp_special.iv(v, special_xs))[:5]
+    expected_zero = (
+        np.ones(2, dtype=dtype)
+        if v == 0
+        else np.array([0.0, -0.0 if v % 2 else 0.0], dtype=dtype)
+    )
+    self.assertArraysEqual(res[:2], expected_zero)
+    if v % 2:
+      self.assertFalse(np.signbit(res[0]))
+      self.assertTrue(np.signbit(res[1]))
+    self.assertEqual(res[2], np.inf)
+    self.assertEqual(res[3], -np.inf if v % 2 else np.inf)
+    self.assertTrue(np.isnan(res[4]))
+    if v == 5 and dtype == np.float32:
+      tiny_xs = np.resize(np.array([1e-30, -1e-30], dtype=dtype), x.shape)
+      res_tiny = np.asarray(lsp_special.iv(v, tiny_xs))[:2]
+      self.assertArraysEqual(res_tiny, np.zeros(2, dtype=dtype))
+      self.assertFalse(np.signbit(res_tiny[0]))
+      self.assertTrue(np.signbit(res_tiny[1]))
+
+  @jtu.sample_product(
+      v=[-1, 0, 1, 2, 3, 15],
+      dtype=jtu.dtypes.complex,
+  )
+  def test_iv_complex(self, v, dtype):
+    """Tests complex iv(v, z) across quadrants, axes, and special values."""
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    zs = np.array(
+        [0.0 + 0.0j, 0.3 + 0.4j, -0.3 + 0.4j, 0.3 - 0.4j, -0.3 - 0.4j,
+         2.0 + 1.5j, 0.0 - 2.5j, 20.0 + 0.0j, -20.0 + 0.0j, 1.2 + 5.0j,
+         -1.2 - 5.0j, 3.0 + 15.0j, 2.0 + 25.0j, 2.0 - 25.0j],
+        dtype=dtype,
+    )
+    args_maker = lambda: [zs]
+    tol = {np.complex64: 5e-5, np.complex128: 1e-12}
+    osp_iv = lambda z: osp_special.iv(v, z.astype(np.complex128)).astype(dtype)
+    lsp_iv = lambda z: lsp_special.iv(v, z)
+    self._CheckAgainstNumpy(osp_iv, lsp_iv, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_iv, args_maker, tol=tol)
+
+    # Check complex special values and overflow behavior using the same shape
+    # so the compiled executable for (v, dtype) is reused.
+    big_x = 1000.0 if dtype == np.complex128 else 100.0
+    special_zs = np.array(
+        [
+            # 0..3: infinite imaginary part with finite real part -> 0 + 0j
+            complex(0.0, np.inf), complex(0.0, -np.inf),
+            complex(1.0, np.inf), complex(-2.5, -np.inf),
+            # 4..8: infinite real part or NaN -> nan + nan*j
+            complex(np.inf, 0.0), complex(-np.inf, 1.0),
+            complex(np.inf, np.inf), complex(np.nan, 1.0), complex(1.0, np.nan),
+            # 9..10: large |Re(z)| overflow without inf - inf = NaN;
+            # 11..13: origin
+            complex(big_x, 0.0), complex(big_x, 1.0),
+            complex(0.0, 0.0), complex(-0.0, 0.0), complex(0.0, -0.0),
+        ],
+        dtype=dtype,
+    )
+    res_spec = np.asarray(lsp_special.iv(v, special_zs))
+    self.assertArraysEqual(res_spec[:4], np.zeros(4, dtype=dtype))
+    self.assertTrue(np.all(np.isnan(res_spec[4:9].real)))
+    self.assertTrue(np.all(np.isnan(res_spec[4:9].imag)))
+    self.assertEqual(res_spec[9].real, np.inf)
+    self.assertEqual(res_spec[9].imag, 0.0)
+    self.assertFalse(np.isnan(res_spec[10].real))
+    self.assertFalse(np.isnan(res_spec[10].imag))
+    self.assertTrue(np.isinf(res_spec[10].real) or np.isinf(res_spec[10].imag))
+    expected_zero = (
+        np.ones(3, dtype=dtype) if v == 0 else np.zeros(3, dtype=dtype)
+    )
+    self.assertArraysEqual(res_spec[11:], expected_zero)
+
+  @jtu.sample_product(
+      v=[-1, 0, 1, 2, 3],
+      dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
+  def test_iv_grad(self, v, dtype):
+    """Tests 1st, 2nd, and 3rd derivatives of real and complex iv(v, z)."""
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    is_complex = dtypes.issubdtype(dtype, np.complexfloating)
+    if is_complex:
+      pts = [
+          0.0 + 0.0j, 0.5 + 1.2j, -0.5 + 1.2j, 0.5 - 1.2j, -0.5 - 1.2j,
+          0.0 + 3.5j, -2.5 + 0.0j, 2.0 + 15.0j,
+      ]
+    elif dtype == np.float16:
+      pts = [-8.0, -2.5, -0.5, 0.0, 0.5, 1.5, 2.5, 6.0, 8.0]
+    elif dtype in (dtypes.bfloat16, np.float32):
+      pts = [-12.0, -2.5, -0.5, 0.0, 1e-4, 0.5, 1.5, 2.5, 6.0, 12.0, 30.0]
+    else:
+      pts = [-12.0, -2.5, -0.5, 0.0, 1e-7, 0.5, 1.5, 2.5, 6.0, 12.0, 30.0]
+    zs = np.array(pts, dtype=dtype)
+    args_maker = lambda: [zs]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 1e-4 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-12,
+        np.complex64: 1e-4,
+        np.complex128: 1e-12,
+    }
+    ref_dtype = np.complex128 if is_complex else np.float64
+    fn = lambda z: lsp_special.iv(v, z)
+    # By DLMF 10.29.5,
+    # d^k/dz^k I_v(z) = 2^-k * sum_{j=0}^k comb(k, j) I_{v - k + 2j}(z).
+    for k in (1, 2, 3):
+      fn = jax.grad(lambda z, f=fn: jnp.sum(f(z)), holomorphic=is_complex)
+      dk_ref = lambda z, k=k: (
+          (0.5**k)
+          * sum(
+              math.comb(k, j)
+              * osp_special.iv(v - k + 2 * j, z.astype(ref_dtype))
+              for j in range(k + 1)
+          )
+      ).astype(dtype)
+      self._CheckAgainstNumpy(dk_ref, fn, args_maker, tol=tol)
+
+  def test_iv_non_integer_v(self):
+    """Tests that iv(v, x) rejects non-integer or traced order v."""
+    xs = jnp.arange(5.0)
+    with self.assertRaisesRegex(
+        TypeError, "'float' object cannot be interpreted as an integer"
+    ):
+      lsp_special.iv(0.5, xs)
+    with self.assertRaisesRegex(
+        jax.errors.ConcretizationTypeError,
+        "The 'v' argument of jax.scipy.special.iv must be a static integer.",
+    ):
+      jax.jit(lsp_special.iv)(1, xs)
+
+  @jtu.sample_product(
+      dtype=[np.float32, np.float64, np.complex64, np.complex128]
+  )
+  def test_iv_high_order_and_large_argument(self, dtype):
+    """Tests iv(v, z) for large v where exp(|Re(z)|) overflows."""
+    if dtype not in (*jtu.dtypes.floating, *jtu.dtypes.complex):
+      self.skipTest(f"Dtype {dtype} not enabled")
+    if (
+        dtype in (np.float64, np.complex128)
+        and jtu.test_device_matches(["tpu"])
+    ):
+      self.skipTest("64-bit on TPU is ef57")
+    if dtype == np.float32:
+      cases = [
+          (30, [86.0, -86.0]),
+          (50, [90.0, -90.0]),
+          (150, [90.0, -90.0]),
+          (720, [520.0, -520.0]),
+      ]
+      rtol, atol = 5e-5, 1e-15
+    elif dtype == np.float64:
+      cases = [
+          (100, [705.0, -705.0]),
+          (180, [19.5, -19.5]),
+          (500, [499.9, -499.9, 750.0, -750.0]),
+          (2000, [1500.0, -1500.0, 1700.0, -1700.0]),
+      ]
+      rtol, atol = 1e-12, 1e-25
+    elif dtype == np.complex64:
+      cases = [
+          (30, [86.0 + 0.0j, 86.0 + 5.0j]),
+          (50, [90.0 + 0.0j, -90.0 + 0.0j, 90.0 + 5.0j, -90.0 - 5.0j]),
+          (150, [90.0 + 0.0j, -90.0 + 0.0j, 90.0 + 10.0j]),
+      ]
+      rtol, atol = 5e-5, 1e-15
+    else:
+      cases = [
+          (100, [705.0 + 0.0j, -705.0 + 0.0j, 705.0 + 5.0j]),
+          (500, [750.0 + 0.0j, -750.0 + 0.0j, 750.0 + 20.0j]),
+          (700, [750.0 + 0.0j, 750.0 + 20.0j]),
+      ]
+      rtol, atol = 1e-12, 1e-25
+    ref_dtype = (
+        np.complex128
+        if dtypes.issubdtype(dtype, np.complexfloating)
+        else np.float64
+    )
+    for v, pts in cases:
+      zs = np.array(pts, dtype=dtype)
+      expected = osp_special.iv(v, zs.astype(ref_dtype)).astype(dtype)
+      actual = lsp_special.iv(v, zs)
+      self.assertAllClose(actual, expected, rtol=rtol, atol=atol)
+    if dtype == np.float64:
+      for v, x_overflow in [(1501, 1450.0), (2000, 1950.0)]:
+        xs = np.array([-x_overflow, x_overflow], dtype=np.float64)
+        expected_inf = np.array(
+            [-np.inf if (v & 1) else np.inf, np.inf], dtype=np.float64
+        )
+        self.assertArraysEqual(lsp_special.iv(v, xs), expected_inf)
+
+  @jtu.sample_product(dtype=jtu.dtypes.integer)
+  def test_iv_integer_input(self, dtype):
+    """Tests that integer inputs to iv(v, x) are promoted to floating-point."""
+    int_xs = jnp.array([0, 1, 3], dtype=dtype)
+    float_dt = dtypes.to_inexact_dtype(int_xs.dtype)
+    tol = 5e-5 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self.assertAllClose(
+        lsp_special.iv(1, int_xs),
+        osp_special.iv(1, np.array([0.0, 1.0, 3.0])).astype(float_dt),
+        rtol=tol,
+        atol=tol,
+    )
+
   @jtu.sample_product(dtype=jtu.dtypes.all_floating)
   def testFresnelHigherOrderDerivatives(self, dtype):
     # S'(x) = sin(pi * x^2 / 2), C'(x) = cos(pi * x^2 / 2)

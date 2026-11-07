@@ -19,7 +19,6 @@ import contextlib
 import dataclasses
 import functools
 import inspect
-import itertools
 import threading
 from typing import Any
 
@@ -622,7 +621,6 @@ def _get(
   allocation_key = HostAllocationKey.from_array(allocation_key_as_array)
   del allocation_key_as_array
 
-  transforms = _remove_noop_transforms(transforms)
   _validate_transforms(transforms)
   transforms = jax.tree.map(int, transforms)
 
@@ -721,7 +719,6 @@ def _swap(
   allocation_key = HostAllocationKey.from_array(allocation_key_as_array)
   del allocation_key_as_array
 
-  transforms = _remove_noop_transforms(transforms)
   _validate_transforms(transforms)
   transforms = jax.tree.map(int, transforms)
 
@@ -1485,19 +1482,6 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
       )
 
 
-# Buffers are allocated at their logical shape, so the transforms that describe
-# how they are laid out are identities on an access and are dropped here.
-NOOP_TRANSFORMS = memory.LAYOUT_TRANSFORMS
-
-
-def _remove_noop_transforms(transforms: tuple[Any, ...]) -> tuple[Any, ...]:
-  # TODO(jburnim): Instead of just filtering out these transforms, should we
-  # check that every access of a buffer uses untiling and/or unswizzling
-  # transforms that match how the buffer was allocated?
-  return tuple(itertools.dropwhile(lambda t: isinstance(t, NOOP_TRANSFORMS),
-                                   transforms))
-
-
 @fail_on_exception
 def wgmma(
     *,
@@ -1520,8 +1504,8 @@ def wgmma(
 
   acc_allocation_key = HostAllocationKey.from_array(acc_allocation_key_as_array)
   b_allocation_key = HostAllocationKey.from_array(b_allocation_key_as_array)
-  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
-  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
+  b_transforms = jax.tree.map(int, b_transforms)
+  acc_transforms = jax.tree.map(int, acc_transforms)
 
   shared_memory = _get_shared_memory()
 
@@ -1531,7 +1515,7 @@ def wgmma(
     a = np.asarray(a_allocation_key_as_array)
   else:
     a_allocation_key = HostAllocationKey.from_array(a_allocation_key_as_array)
-    a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
+    a_transforms = jax.tree.map(int, a_transforms)
     a, _, _ = shared_memory.get_buffer_content(
         a_allocation_key,
         shared_memory.access(a_allocation_key, a_transforms),
@@ -1613,9 +1597,9 @@ def copy_smem_to_gmem(
   # TODO(jburnim,paulbib): Implement commit_group.
   del commit_group
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_transforms = jax.tree.map(int, src_transforms)
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_transforms = jax.tree.map(int, dst_transforms)
 
   if predicate is not None:
     raise NotImplementedError("predicate not supported")
@@ -1674,9 +1658,9 @@ def copy_gmem_to_smem(
     barrier_allocation_key_as_array: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
 ):
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_transforms = jax.tree.map(int, src_transforms)
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_transforms = jax.tree.map(int, dst_transforms)
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
   barrier_allocation_key = HostAllocationKey.from_array(
       barrier_allocation_key_as_array
@@ -1910,20 +1894,16 @@ def tcgen05_mma(
       a_sparse_metadata_allocation_key_as_array
   )
 
-  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
-  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
-  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
+  acc_transforms = jax.tree.map(int, acc_transforms)
+  a_transforms = jax.tree.map(int, a_transforms)
+  b_transforms = jax.tree.map(int, b_transforms)
   if a_scale_transforms is not None:
-    a_scale_transforms = jax.tree.map(
-        int, _remove_noop_transforms(a_scale_transforms)
-    )
+    a_scale_transforms = jax.tree.map(int, a_scale_transforms)
   if b_scale_transforms is not None:
-    b_scale_transforms = jax.tree.map(
-        int, _remove_noop_transforms(b_scale_transforms)
-    )
+    b_scale_transforms = jax.tree.map(int, b_scale_transforms)
   if a_sparse_metadata_transforms is not None:
     a_sparse_metadata_transforms = jax.tree.map(
-        int, _remove_noop_transforms(a_sparse_metadata_transforms)
+        int, a_sparse_metadata_transforms
     )
   accumulate: bool = bool(accumulate)  # pyrefly: ignore[redefinition]
 
@@ -2056,8 +2036,8 @@ def async_copy_smem_to_tmem(
   tmem_allocation_key = HostAllocationKey.from_array(
       tmem_allocation_key_as_array
   )
-  smem_transforms = jax.tree.map(int, _remove_noop_transforms(smem_transforms))
-  tmem_transforms = jax.tree.map(int, _remove_noop_transforms(tmem_transforms))
+  smem_transforms = jax.tree.map(int, smem_transforms)
+  tmem_transforms = jax.tree.map(int, tmem_transforms)
 
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
@@ -2140,7 +2120,7 @@ def async_store_tmem(
     source_info: source_info_util.SourceInfo | None = None,
 ):
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_transforms = jax.tree.map(int, dst_transforms)
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
 
   def f(tma_thread_id: int):
@@ -2182,7 +2162,7 @@ def async_load_tmem(
     source_info: source_info_util.SourceInfo | None = None,
 ):
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_transforms = jax.tree.map(int, src_transforms)
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
 
   def f(tma_thread_id: int):

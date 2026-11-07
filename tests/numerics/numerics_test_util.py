@@ -106,6 +106,8 @@ def get_hardware_variant() -> str:
 
 def _default_ftz(dtype) -> bool:
   """Returns whether subnormals flush to zero by default for `dtype`."""
+  if jtu.device_under_test() == "gpu":
+    return False
   if dtype is not None and np.dtype(dtype) == np.float16:
     return False
   return True
@@ -531,7 +533,7 @@ def eval_mpmath(mpmath_fn, *vals, dtype=None, input_ftz: bool | None = None):
   if input_ftz and dtype is not None:
     vals = tuple(
         _flush_subnormals(np.array(v, dtype=dtype), dtype).item()
-        if np.issubdtype(np.dtype(dtype), np.floating)
+        if jnp.issubdtype(dtype, jnp.floating)
         else v
         for v in vals
     )
@@ -917,6 +919,7 @@ def _common_interesting_points(dtype) -> tuple[float, ...]:
       | set(range(min_exp, max_exp + 1, exp_step))
       | {
           min_exp,
+          -finfo.maxexp,
           finfo.minexp - 1,
           finfo.minexp,
           finfo.minexp + 1,
@@ -1187,12 +1190,12 @@ def check_nary_precision(
       different tight bounds. Defaults to 0.5 ULP (correctly rounded) if a
       platform/dtype combination is not listed.
     input_ftz: Whether subnormal inputs are flushed to zero before reference
-      evaluation (bool or per-variant override list). Defaults to False for
-      float16 (which does not flush subnormals on CPU, GPU, or TPU) and True
-      for other dtypes.
+      evaluation (bool or per-variant override list). Defaults to False on GPU
+      and for float16 (which does not flush subnormals on CPU, GPU, or TPU),
+      and True otherwise.
     output_ftz: Whether subnormal outputs are flushed to zero when computing ULP
-      distances (bool or per-variant override list). Defaults to False for
-      float16 and True for other dtypes.
+      distances (bool or per-variant override list). Defaults to False on GPU
+      and for float16, and True otherwise.
     ignore_inputs: Optional per-variant list of callable predicates
       `ignore_fn(*args: np.ndarray) -> np.ndarray[bool]` where True indicates
       that the input should be excluded from accuracy checking.
@@ -1515,9 +1518,9 @@ def check_precision_at_points(
     max_ulp: The maximum allowed real ULP distance between the computed JAX
       output and the `mpmath` reference.
     input_ftz: Whether to flush subnormal inputs to zero before evaluating
-      `mpmath_fn`. Defaults to False for float16 and True for other dtypes.
+      `mpmath_fn`. Defaults to False on GPU and for float16, and True otherwise.
     output_ftz: Whether to flush subnormal outputs to zero when computing ULP
-      distances. Defaults to False for float16 and True for other dtypes.
+      distances. Defaults to False on GPU and for float16, and True otherwise.
   """
   res = np.asarray(jax_fn(*args))
   dtype = res.dtype.type

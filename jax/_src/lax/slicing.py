@@ -1583,17 +1583,26 @@ def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes):
                     f" got indices {start_indices}")
   return tuple(slice_sizes)
 
-def _dynamic_slice_sharding_rule(operand, *starts_and_dyn_sizes, slice_sizes):
+def _dynamic_slice_sharding_rule(operand, *start_indices, slice_sizes):
   out_shape = _dynamic_slice_shape_rule(
-      operand, *starts_and_dyn_sizes, slice_sizes=slice_sizes)
+      operand, *start_indices, slice_sizes=slice_sizes)
   return _get_sharding_for_varying_out_shape(out_shape, operand, 'dynamic_slice')
 
-def _dynamic_slice_ur_rule(operand, *starts_and_dyn_sizes, slice_sizes):
-  if core.getu(operand)[0]:
-    raise NotImplementedError(
-        'unreduced rule for dynamic_slice is not implemented. Please'
-        ' file an issue at https://github.com/jax-ml/jax/issues')
-  return frozenset(), core.getr(operand), None
+def _dynamic_slice_ur_rule(operand, *start_indices, slice_sizes):
+  assert all(p is None for i in start_indices for p in i.sharding.spec.partitions)
+  if any(core.getu(i, None)[0] for i in start_indices):
+    raise core.ShardingTypeError(
+        "dynamic_slice start_indices cannot have unreduced axes."
+        f" Got start_indices={start_indices}"
+    )
+  out_u, kind = core.getu(operand, None)
+  out_r = core.getr(operand)
+  if (out_u or out_r) and any(i.mat.varying for i in start_indices):
+    raise core.ShardingTypeError(
+        "dynamic_slice start_indices cannot be varying when operand has"
+        f" unreduced or reduced axes. Got start_indices={start_indices}"
+    )
+  return out_u, out_r, kind
 
 def _dynamic_slice_dtype_rule(operand, *starts_and_dyn_sizes, slice_sizes):
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [operand.ndim])
@@ -1698,6 +1707,7 @@ ad.fancy_transposes[dynamic_slice_p] = _dynamic_slice_transpose_fancy
 batching.fancy_primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 pe.custom_staging_rules[dynamic_slice_p] = _dynamic_slice_staging_rule
 core.custom_typechecks[dynamic_slice_p] = _dynamic_slice_typecheck_rule
+lax_utils.register_unreduced_lojax(dynamic_slice_p)
 
 def _dynamic_slice_lower(ctx, x, *start_indices, slice_sizes):
   x_aval, *_ = ctx.avals_in
@@ -1757,10 +1767,11 @@ def _dus_reduced_rule(operand, update):
   return core.getr(operand)
 
 def _dynamic_update_slice_ur_rule(operand, update, *start_indices):
-  if any(core.getu(i, None)[0] or core.getr(i) for i in start_indices):
+  assert all(p is None for i in start_indices for p in i.sharding.spec.partitions)
+  if any(core.getu(i, None)[0] for i in start_indices):
     raise core.ShardingTypeError(
-        "dynamic_update_slice start_indices cannot have unreduced or reduced"
-        f" axes. Got start_indices={start_indices}"
+        "dynamic_update_slice start_indices cannot have unreduced axes."
+        f" Got start_indices={start_indices}"
     )
   out_u, kind = _dus_unreduced_rule(operand, update)
   out_r = _dus_reduced_rule(operand, update)

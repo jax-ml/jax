@@ -757,6 +757,29 @@ class PythonCallbackTest(jtu.JaxTestCase):
     result = f(x)
     np.testing.assert_array_equal(x, result)
 
+  @with_pure_and_io_callbacks
+  def test_callback_preserves_subnormals(self, *, callback):
+    if jax._src.lib.ifrt_version < 85:
+      self.skipTest("Requires ifrt_version >= 85")
+
+    def cb(x):
+      # Test that multiplying to produce a subnormal float32 doesn't flush to zero
+      a = np.array([1e-38], dtype=np.float32)
+      b = np.array([0.1], dtype=np.float32)
+      self.assertNotEqual((a * b)[0], 0.0)
+
+      # Test that operating on an existing subnormal float32 preserves it
+      sub = np.nextafter(np.float32(0), np.float32(1))
+      c = np.array([sub], dtype=np.float32)
+      self.assertNotEqual((c * np.float32(1.0))[0], 0.0)
+      return x
+
+    f = jax.jit(
+        lambda x: callback(cb, jax.ShapeDtypeStruct(x.shape, x.dtype), x)
+    )
+    f(np.float32(1.0))
+    jax.effects_barrier()
+
 
 class PureCallbackTest(jtu.JaxTestCase):
 

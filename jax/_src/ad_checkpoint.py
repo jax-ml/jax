@@ -927,7 +927,9 @@ def name_jvp(primals, tangents, *, name):
   return name_p.bind(x, name=name), xdot  # don't name the tangent value
 ad.primitive_jvps[name_p] = name_jvp
 
-mlir.register_lowering(name_p, lambda ctx, x, *, name: [x])
+mlir.register_lowering(
+    name_p, lambda ctx, x, *, name: [x], shard_map_passthrough=True
+)
 
 def name_batcher(args, dims, *, name):
   (x,), (d,) = args, dims

@@ -96,6 +96,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `static_argnums`, `static_argnames` or `keep_unused` sharing C++ dispatch
     cache entries, which could run the executable compiled for one instance
     with the arguments of another and return wrong results.
+  * Fixed {func}`jax.numpy.interp` returning `nan` at and around knots whose
+    `fp` value is infinite; it now returns the knot value or the signed
+    infinity, matching NumPy. For complex `fp`, the real and imaginary parts
+    are now interpolated separately, as in NumPy.
   * {func}`jax.scipy.sparse.linalg.gmres` and
     {func}`jax.scipy.sparse.linalg.bicgstab` now use the transpose of the
     preconditioner `M` when solving the transposed system for reverse-mode
