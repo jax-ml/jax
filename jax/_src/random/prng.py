@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
+import contextlib
 from functools import partial, reduce
 import math
 from typing import Any, NamedTuple
@@ -26,6 +27,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import ffi
+from jax._src import mesh as mesh_lib
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
 from jax._src.sharding import Sharding
@@ -47,6 +49,7 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import (
     _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
 from jax._src.sharding_impls import (
+    NamedSharding, PartitionSpec as P, canonicalize_sharding,
     make_single_device_sharding, physical_sharding, logical_sharding)
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
@@ -812,38 +815,107 @@ def _call_impl_random_bits(
 
 
 def random_bits(
-    keys, bit_width: int, shape: Sequence[int], num_streams: int = 1
+    keys,
+    bit_width: int,
+    shape: Sequence[int],
+    num_streams: int = 1,
+    out_sharding: NamedSharding | P | None = None,
 ) -> tuple[Array, ...]:
   if isinstance(num_streams, bool) or num_streams not in (1, 2, 4):
     raise ValueError(f"num_streams must be 1, 2, or 4, got {num_streams}")
+  out_sharding = canonicalize_sharding(out_sharding, 'random_bits')
   return tuple(
       random_bits_p.bind(
-          keys, bit_width=bit_width, shape=shape, num_streams=num_streams
+          keys,
+          bit_width=bit_width,
+          shape=shape,
+          num_streams=num_streams,
+          out_sharding=out_sharding,
       )
   )
+
 
 random_bits_p = core.Primitive('random_bits')
 random_bits_p.multiple_results = True
 ad.defjvp_zero(random_bits_p)
-batching.defvectorized(random_bits_p)
+
+
+def _random_bits_batcher(
+    axis_data, batched_args, batch_dims, *, bit_width, shape, num_streams,
+    out_sharding
+):
+  (keys,) = batched_args
+  (bd,) = batch_dims
+  if bd is not None and out_sharding is not None:
+    out_sharding = batching.get_sharding_for_vmap(axis_data, out_sharding, bd)
+  out = random_bits_p.bind(
+      keys,
+      bit_width=bit_width,
+      shape=shape,
+      num_streams=num_streams,
+      out_sharding=out_sharding,
+  )
+  return out, [bd] * len(out)
+
+
+batching.fancy_primitive_batchers[random_bits_p] = _random_bits_batcher
+
+
+def _random_bits_sharding_rule(keys_aval, *, shape, out_sharding=None):
+  if out_sharding is not None:
+    lax.lax_utils._check_no_collectives_dim_change(
+        'random_bits',
+        (*keys_aval.sharding.spec.partitions, *([None] * len(shape))),
+        out_sharding.spec.partitions,
+    )
+    return out_sharding
+  return _random_split_sharding_rule(keys_aval, shape=shape)
+
 
 @random_bits_p.def_abstract_eval
-def random_bits_abstract_eval(keys_aval, *, bit_width, shape, num_streams=1):
+def random_bits_abstract_eval(
+    keys_aval, *, bit_width, shape, num_streams=1, out_sharding=None
+):
   out_shape = (*keys_aval.shape, *shape)
   out_dtype = dtypes.dtype(f'uint{bit_width}')
-  # TODO(yashkatariya): random_bits should take an out_sharding argument.
-  out_sharding = lax.lax_utils.call_sharding_rule(
-      random_bits_p, _random_split_sharding_rule, None, None, keys_aval,
-      shape=shape)
-  out_aval = core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
-                              manual_axis_type=keys_aval.mat)
+  mesh_ctx = (
+      mesh_lib.use_abstract_mesh(out_sharding.mesh)
+      if out_sharding is not None and mesh_lib.get_abstract_mesh().empty
+      else contextlib.nullcontext()
+  )
+  with mesh_ctx:
+    sharding = lax.lax_utils.call_sharding_rule(
+        random_bits_p,
+        _random_bits_sharding_rule,
+        None,
+        None,
+        keys_aval,
+        shape=shape,
+        out_sharding=out_sharding,
+    )
+  out_aval = core.ShapedArray(
+      out_shape, out_dtype, sharding=sharding, manual_axis_type=keys_aval.mat
+  )
   return (out_aval,) * num_streams
 
+
 @random_bits_p.def_impl
-def random_bits_impl(keys, *, bit_width, shape, num_streams=1):
+def random_bits_impl(
+    keys, *, bit_width, shape, num_streams=1, out_sharding=None
+):
+  if out_sharding is not None:
+    return dispatch.apply_primitive(
+        random_bits_p,
+        keys,
+        bit_width=bit_width,
+        shape=shape,
+        num_streams=num_streams,
+        out_sharding=out_sharding,
+    )
   return random_bits_impl_base(keys._impl, keys._base_array, keys.ndim,
                                bit_width=bit_width, shape=shape,
                                num_streams=num_streams)
+
 
 def random_bits_impl_base(impl, base_arr, keys_ndim, *, bit_width, shape,
                           num_streams=1):
@@ -852,12 +924,35 @@ def random_bits_impl_base(impl, base_arr, keys_ndim, *, bit_width, shape,
       lambda k: _call_impl_random_bits(impl, k, bit_width, shape, num_streams))
   return bits(base_arr)
 
-def random_bits_lowering(ctx, keys, *, bit_width, shape, num_streams=1):
+
+def random_bits_lowering(
+    ctx, keys, *, bit_width, shape, num_streams=1, out_sharding=None
+):
   aval, = ctx.avals_in
   impl = aval.dtype._impl
   bits = iterated_vmap_unary(
       aval.ndim,
       lambda k: _call_impl_random_bits(impl, k, bit_width, shape, num_streams))
+  if out_sharding is not None or any(
+      a.sharding.mesh._any_axis_explicit for a in ctx.avals_out
+  ):
+    empty_s = NamedSharding(mesh_lib.empty_abstract_mesh, P())
+    with mesh_lib.use_abstract_mesh(mesh_lib.empty_abstract_mesh):
+      bits_lowering = mlir.lower_fun(bits, multiple_results=True)
+      phys_in = core.physical_aval(aval).update(
+          sharding=empty_s, manual_axis_type=core.empty_mat
+      )
+      phys_out = [
+          a.update(sharding=empty_s, manual_axis_type=core.empty_mat)
+          for a in ctx.avals_out
+      ]
+      ctx_new = ctx.replace(avals_in=[phys_in], avals_out=phys_out)
+      out = bits_lowering(ctx_new, keys)
+    ctx.set_tokens_out(ctx_new.tokens_out)
+    return [
+        mlir.lower_with_sharding_in_types(ctx, o, a)
+        for o, a in zip(out, ctx.avals_out)
+    ]
   bits_lowering = mlir.lower_fun(bits, multiple_results=True)
   ctx_new = ctx.replace(avals_in=[core.physical_aval(aval)])
   out = bits_lowering(ctx_new, keys)

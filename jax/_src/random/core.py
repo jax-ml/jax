@@ -135,9 +135,16 @@ def _return_prng_keys(was_wrapped: bool, key: Key) -> Key:
     return prng.random_unwrap(key) if was_wrapped else key
 
 
-def _random_bits(key: Key, bit_width: int, shape: Shape) -> Array:
+def _random_bits(
+    key: Key,
+    bit_width: int,
+    shape: Shape,
+    out_sharding: NamedSharding | P | None = None,
+) -> Array:
   assert dtypes.issubdtype(key.dtype, dtypes.prng_key)
-  return prng.random_bits(key, bit_width=bit_width, shape=shape)[0]
+  return prng.random_bits(
+      key, bit_width=bit_width, shape=shape, out_sharding=out_sharding
+  )[0]
 
 
 # TODO(frostig,vanderplas): remove from public API altogether, or at
@@ -497,10 +504,13 @@ def bits(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "bits", shape)
   bit_width = dtype.itemsize * 8
-  out = maybe_auto_axes(
-      prng.random_bits, out_sharding,
-      bit_width=bit_width, shape=shape,
-      num_streams=1 if num_streams is None else num_streams)(key)
+  out = prng.random_bits(
+      key,
+      bit_width=bit_width,
+      shape=shape,
+      num_streams=1 if num_streams is None else num_streams,
+      out_sharding=out_sharding,
+  )
   return out[0] if num_streams is None else out
 
 
