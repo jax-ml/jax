@@ -1345,6 +1345,15 @@ def _prefix_error(
   if treedef_is_strict_leaf(tree_structure(prefix_tree, is_leaf=is_leaf)):
     return
 
+  if is_leaf is not None and is_leaf(full_tree):
+    yield lambda name: ValueError(
+      "pytree structure error: prefix is not a leaf at key path\n"
+      f"    {name}{keystr(key_path)}\n"
+      f"At that key path, the prefix pytree {name} has a subtree of type\n"
+      f"    {type(prefix_tree)}\n"
+      f"but at the same key path the full pytree has a leaf.")
+    return
+
   # The subtrees may disagree because their roots are of different types:
   if type(prefix_tree) != type(full_tree):
     yield lambda name: ValueError(
@@ -1429,4 +1438,4 @@ def _prefix_error(
     ("equal pytree nodes gave differing prefix_tree_keys: "
      f"{prefix_tree_keys} and {full_tree_keys}")
   for k, t1, t2 in zip(prefix_tree_keys, prefix_tree_children, full_tree_children):
-    yield from _prefix_error((*key_path, k), t1, t2)
+    yield from _prefix_error((*key_path, k), t1, t2, is_leaf)
