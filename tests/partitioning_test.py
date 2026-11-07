@@ -1266,5 +1266,36 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       expected_spec = P() if spec is None else spec
       self.assertEqual(out.sharding, NamedSharding(mesh, expected_spec))
 
+  @config.shard_map_partitioning(True)
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_passthrough_and_composite_primitives(self, mesh):
+    from jax.ad_checkpoint import checkpoint_name
+    from jax.experimental import xla_metadata
+
+    x = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(4, 4), P('x', 'y')
+    )
+    y = jax.device_put(np.arange(4, dtype=np.int32), P('x'))
+
+    def f(x, y):
+      x = xla_metadata.set_xla_metadata(x + x, test_attr='keep_me')
+      x = checkpoint_name(lax.stop_gradient(x), 'act')
+      x, y = lax.optimization_barrier((x, y))
+      k1, k2 = jax.random.split(jax.random.key(0))
+      k1 = jax.random.fold_in(k1, 1)
+      bits = jax.random.bits(k2, (4,))
+      return x, y, jax.random.key_data(k1), bits
+
+    f_jit = jax.jit(f)
+    with config.shard_map_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f_jit.lower(x, y).as_text())
+      expected = f_jit(x, y)
+    lowered = f_jit.lower(x, y).as_text()
+    self.assertIn('sdy.manual_computation', lowered)
+    self.assertIn('keep_me', lowered)
+    for out, exp in zip(f_jit(x, y), expected):
+      self.assertEqual(out.sharding, exp.sharding)
+      self.assertArraysEqual(out, exp)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

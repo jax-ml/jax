@@ -1100,8 +1100,9 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
       raising ``NotImplementedError`` if unsupported) to lower explicit-mesh
       collectives via ``shard_map`` when ``jax_shard_map_partitioning`` is
       enabled.
-    shard_map_passthrough: If ``True``, allow this higher-order container
-      primitive to lower directly so its sub-jaxprs are partitioned instead.
+    shard_map_passthrough: If ``True``, lower this primitive directly without
+      wrapping it in ``shard_map`` (e.g. for identity primitives or primitives
+      whose lowering delegates to other JAX ops).
   """
   assert not isinstance(rule, LoweringRuleEntry)
   if isinstance(inline, bool):
@@ -3232,7 +3233,9 @@ register_lowering(
     ad_util.add_jaxvals_p, add_jaxvals_lowering,
     shard_map_collective_rule=lambda *_, **__: PartitioningRule())
 
-register_lowering(ad_util.stop_gradient_p, lambda ctx, x: [x])
+register_lowering(
+    ad_util.stop_gradient_p, lambda ctx, x: [x], shard_map_passthrough=True
+)
 
 
 def compare_hlo(x, y, direction: str, comparison_type: str | None = None):

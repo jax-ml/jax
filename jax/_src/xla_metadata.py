@@ -157,7 +157,10 @@ def _xla_metadata_value_lowering_rule(
 # If we leave `cacheable=True`, when we are in the lowering rule, the `val.owner`
 # becomes a cached `FuncOp`. FuncOp.owners are Blocks, which we can't tag.
 mlir.register_lowering(
-    xla_metadata_value_p, _xla_metadata_value_lowering_rule, cacheable=False
+    xla_metadata_value_p,
+    _xla_metadata_value_lowering_rule,
+    cacheable=False,
+    shard_map_passthrough=True,
 )
 
 

@@ -11807,8 +11807,11 @@ def _optimization_barrier_lowering_rule(ctx, *args):
          if isinstance(aval, core.ShapedArray) else op
          for op, aval in zip(barrier_op.results, ctx.avals_out)]
   return treedef.unflatten(out)
-mlir.register_lowering(optimization_barrier_p,
-                       _optimization_barrier_lowering_rule)
+mlir.register_lowering(
+    optimization_barrier_p,
+    _optimization_barrier_lowering_rule,
+    shard_map_passthrough=True,
+)
 
 def _optimization_barrier_batcher(batched_args, batch_dims, **params):
   return optimization_barrier_p.bind(*batched_args, **params), batch_dims
