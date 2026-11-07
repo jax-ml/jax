@@ -222,10 +222,7 @@ def make_group_metadata(
       partial_tile_mask, tiles_m, group_offsets[:-1] // tm
   )
 
-  tile_visits = (
-      jnp.histogram(partial_tile_ids, bins=tiles_m, range=(0, tiles_m - 1))[0]
-      + 1
-  )
+  tile_visits = jnp.bincount(partial_tile_ids, length=tiles_m) + 1
 
   # Create the m-dimension tile ids for each grid index based on the visit
   # counts for each tile.
@@ -279,8 +276,9 @@ def _get_store_mask(
   group_start = group_offsets[group_id]
   group_end = group_offsets[group_id + 1]
   m_id = m_tile_ids[grid_id] * tm
-  iota = jax.lax.broadcasted_iota(jnp.int32, (tm, tn), 0) + m_id
-  return jnp.logical_and(iota >= group_start, iota < group_end)
+  iota = jax.lax.broadcasted_iota(jnp.int32, (tm, 1), 0) + m_id
+  mask = jnp.logical_and(iota >= group_start, iota < group_end)
+  return jnp.broadcast_to(mask, (tm, tn))
 
 
 def _zero_uninitialized_memory(
@@ -442,36 +440,46 @@ def gmm(
           mask[...], to_store, out[...].astype(jnp.float32)
       ).astype(preferred_element_type)
 
-    def _accum(is_last_k_tile):
-      if is_last_k_tile:
-        mask_k_rem_lhs = partial(mask_k_rem, dim=1)
-        mask_k_rem_rhs = partial(mask_k_rem, dim=int(transpose_rhs))
-      else:
-        mask_k_rem_lhs = lambda x: x
-        mask_k_rem_rhs = lambda x: x
+    if transpose_rhs:
+      dot_general_dims = (((1,), (1,)), ((), ()))
+    else:
+      dot_general_dims = (((1,), (0,)), ((), ()))
 
-      if transpose_rhs:
-        dot_general_dims = (((1,), (1,)), ((), ()))
-      else:
-        dot_general_dims = (((1,), (0,)), ((), ()))
-
-      loaded_lhs = lhs[...]
-      loaded_rhs = rhs[...]
+    if k_rem == 0:
       acc_scratch[...] += lax.dot_general(
-          mask_k_rem_lhs(loaded_lhs).astype(input_dtype),
-          mask_k_rem_rhs(loaded_rhs).astype(input_dtype),
+          lhs[...].astype(input_dtype),
+          rhs[...].astype(input_dtype),
           preferred_element_type=jnp.float32,
           dimension_numbers=dot_general_dims,
       )
+      pl.when(k_i == tiles_k - 1)(_store_accum)
+    else:
 
-      if is_last_k_tile:
-        _store_accum()
+      def _accum(is_last_k_tile):
+        if is_last_k_tile:
+          mask_k_rem_lhs = partial(mask_k_rem, dim=1)
+          mask_k_rem_rhs = partial(mask_k_rem, dim=int(transpose_rhs))
+        else:
+          mask_k_rem_lhs = lambda x: x
+          mask_k_rem_rhs = lambda x: x
 
-    lax.cond(
-        k_i == tiles_k - 1,
-        partial(_accum, True),
-        partial(_accum, False),
-    )
+        loaded_lhs = lhs[...]
+        loaded_rhs = rhs[...]
+        acc_scratch[...] += lax.dot_general(
+            mask_k_rem_lhs(loaded_lhs).astype(input_dtype),
+            mask_k_rem_rhs(loaded_rhs).astype(input_dtype),
+            preferred_element_type=jnp.float32,
+            dimension_numbers=dot_general_dims,
+        )
+
+        if is_last_k_tile:
+          _store_accum()
+
+      lax.cond(
+          k_i == tiles_k - 1,
+          partial(_accum, True),
+          partial(_accum, False),
+      )
 
   def lhs_transform_indices(n_i, grid_id, k_i, group_metadata, group_offset):
     # lhs is (m, k). Load the [tm, tk] matrix for this m-tile.
@@ -669,18 +677,14 @@ def tgmm(
 
     @pl.when(dont_skip)
     def _do():
-      rhs_mask = _get_store_mask(
+      row_mask = _get_store_mask(
           grid_id=grid_id,
           group_metadata=group_metadata,
           tm=tm,
-          tn=tn,
+          tn=1,
       )
-      lhs_mask = _get_store_mask(
-          grid_id=grid_id,
-          group_metadata=group_metadata,
-          tm=tm,
-          tn=tk,
-      )
+      rhs_mask = jnp.broadcast_to(row_mask, (tm, tn))
+      lhs_mask = jnp.broadcast_to(row_mask, (tm, tk))
 
       loaded_lhs = lhs[...]
       loaded_rhs = rhs[...]
