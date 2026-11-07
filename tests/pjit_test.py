@@ -8021,6 +8021,75 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jnp.repeat(jnp.arange(4), 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jnp_repeat_out_sharding_no_auto_axes(self, mesh):
+    mat_np = np.arange(12, dtype=np.float32).reshape(4, 3)
+    mat = jax.device_put(mat_np, P('x', None))
+
+    @jax.jit
+    def rep_scalar(a):
+      return jnp.repeat(a, 2, axis=1, out_sharding=P('x', 'y'))
+
+    self.assertNotIn('Auto', str(rep_scalar.trace(mat).jaxpr))
+    out_sc = rep_scalar(mat)
+    self.assertEqual(out_sc.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertArraysEqual(out_sc, np.repeat(mat_np, 2, axis=1))
+
+    mat2_np = np.arange(16, dtype=np.float32).reshape(4, 4)
+    mat2 = jax.device_put(mat2_np, P('x', 'y'))
+    rep_flat = jax.jit(
+        lambda a: jnp.repeat(a, 2, axis=None, out_sharding=P(('x', 'y')))
+    )
+    self.assertNotIn('Auto', str(rep_flat.trace(mat2).jaxpr))
+    out_flat = rep_flat(mat2)
+    self.assertEqual(out_flat.sharding, NamedSharding(mesh, P(('x', 'y'))))
+    self.assertArraysEqual(out_flat, np.repeat(mat2_np, 2, axis=None))
+
+    reps_sh = jax.device_put(np.array([1, 3, 2, 2], dtype=np.int32), P('x'))
+    rep_dyn = jax.jit(
+        lambda a, r: jnp.repeat(
+            a, r, axis=0, total_repeat_length=8, out_sharding=P('x', 'y')
+        )
+    )
+    self.assertNotIn('Auto', str(rep_dyn.trace(mat2, reps_sh).jaxpr))
+    out_dyn = rep_dyn(mat2, reps_sh)
+    self.assertEqual(out_dyn.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertArraysEqual(out_dyn, np.repeat(mat2_np, [1, 3, 2, 2], axis=0))
+
+    v_out = jax.jit(
+        jax.vmap(lambda a: jnp.repeat(a, 2, axis=0, out_sharding=P('x')))
+    )(mat2.T)
+    self.assertEqual(v_out.sharding, NamedSharding(mesh, P('y', 'x')))
+    self.assertArraysEqual(v_out, np.repeat(mat2_np.T, 2, axis=1))
+
+    out_0d = jax.jit(lambda x: jnp.repeat(x, 4, out_sharding=P('x')))(
+        jnp.array(3.0, dtype=jnp.float32)
+    )
+    self.assertEqual(out_0d.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out_0d, np.full((4,), 3.0, dtype=np.float32))
+
+    out_zero = jax.jit(
+        lambda a: jnp.repeat(a, 0, axis=0, out_sharding=P(None, 'y'))
+    )(mat2)
+    self.assertEqual(out_zero.shape, (0, 4))
+    self.assertEqual(out_zero.sharding, NamedSharding(mesh, P(None, 'y')))
+
+  def test_jnp_repeat_wo_mesh_context(self):
+    mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit, AxisType.Explicit)
+    )
+    mat_np = np.arange(12, dtype=np.float32).reshape(4, 3)
+    mat = jax.device_put(mat_np, NamedSharding(mesh, P('x', None)))
+
+    out = jax.jit(lambda a: jnp.repeat(a, 2, axis=1))(mat)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out, np.repeat(mat_np, 2, axis=1))
+
+    with self.assertRaisesRegex(
+        ValueError, 'Please pass sharding to `jnp.repeat` via `out_sharding`'
+    ):
+      jax.jit(lambda a: jnp.repeat(a, 2, axis=0))(mat)
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_scatter_gather(self, mesh):
     x = np.random.uniform(size=(mesh.size * 2, 3))
@@ -11656,6 +11725,58 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       f_bad_reduced(x, idx)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jnp_take_out_sharding(self, mesh):
+    x_np = np.arange(32, dtype=np.float32).reshape(8, 4)
+    idx_np = np.array([7, 1, -1, 10], dtype=np.int32)
+    x = jax.device_put(x_np, P('x', 'y'))
+    idx = jax.device_put(idx_np, P('x'))
+
+    @jax.jit
+    def f_axis0(a, i):
+      return jnp.take(a, i, axis=0, mode='clip', out_sharding=P('x', 'y'))
+
+    self.assertNotIn('Auto', str(f_axis0.trace(x, idx).jaxpr))
+    out0 = f_axis0(x, idx)
+    self.assertEqual(out0.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertArraysEqual(out0, np.take(x_np, idx_np, axis=0, mode='clip'))
+
+    @jax.jit
+    def f_flat(a, i):
+      return jnp.take(a, i, axis=None, mode='wrap', out_sharding=P('x'))
+
+    self.assertNotIn('Auto', str(f_flat.trace(x, idx).jaxpr))
+    out_flat = f_flat(x, idx)
+    self.assertEqual(out_flat.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out_flat, np.take(x_np, idx_np, axis=None, mode='wrap'))
+
+    out_fill = jax.jit(
+        lambda a, i: jnp.take(
+            a, i, axis=0, mode='fill', fill_value=-1.0, out_sharding=P('x', 'y')
+        )
+    )(x, idx)
+    self.assertEqual(out_fill.sharding, NamedSharding(mesh, P('x', 'y')))
+    expected_fill = np.where(
+        (idx_np[:, None] >= -8) & (idx_np[:, None] < 8),
+        x_np[np.clip(idx_np, -8, 7)],
+        -1.0,
+    )
+    self.assertArraysEqual(out_fill, expected_fill)
+
+    empty_idx = jnp.zeros((0,), dtype=jnp.int32)
+    out_empty_idx = jax.jit(
+        lambda a: jnp.take(a, empty_idx, axis=0, out_sharding=P(None, 'y'))
+    )(x)
+    self.assertEqual(out_empty_idx.shape, (0, 4))
+    self.assertEqual(out_empty_idx.sharding, NamedSharding(mesh, P(None, 'y')))
+
+    x_empty_axis = jax.device_put(np.zeros((8, 0), dtype=np.float32), P('x', None))
+    out_empty_axis = jax.jit(
+        lambda a: jnp.take(a, empty_idx, axis=1, out_sharding=P('y', None))
+    )(x_empty_axis)
+    self.assertEqual(out_empty_axis.shape, (8, 0))
+    self.assertEqual(out_empty_axis.sharding, NamedSharding(mesh, P('y', None)))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_scatter_add_hijax_unreduced(self, mesh):
     x_np = np.arange(16, dtype=np.float32).reshape(4, 4) + 3.0
     idx_np = np.array([0, 2, 1, 2], dtype=np.int32)
@@ -13189,6 +13310,61 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                            weights=mask.flatten(), out_sharding=P())[0]
 
     f(positions, mask)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_histogram_out_sharding_no_auto_axes(self, mesh):
+    a_np = np.array(
+        [[0.5, 1.5, 2.5, 3.5], [4.0, 5.5, 7.0, 8.0], [1.0, 3.0, 6.0, 7.5], [0.0, 2.0, 4.5, 8.0]],
+        dtype=np.float32,
+    )
+    w_np = np.arange(1, 17, dtype=np.float32).reshape(4, 4)
+    a_rep = jax.device_put(a_np, P())
+    a_sh = jax.device_put(a_np, P('x', 'y'))
+
+    c_rep, e_rep = jax.jit(lambda x: jnp.histogram(x, bins=4))(a_rep)
+    self.assertEqual(c_rep.sharding, NamedSharding(mesh, P(None)))
+    self.assertEqual(e_rep.sharding, NamedSharding(mesh, P(None)))
+
+    with self.assertRaises(core.ShardingTypeError):
+      jax.jit(lambda x: jnp.histogram(x, bins=4))(a_sh)
+
+    @jax.jit
+    def f_inferred(x):
+      return jnp.histogram(x, bins=4, out_sharding=P())
+
+    self.assertNotIn('Auto', str(f_inferred.trace(a_sh).jaxpr))
+    c_inf, e_inf = f_inferred(a_sh)
+    ref_c, ref_e = np.histogram(a_np, bins=4)
+    self.assertEqual(c_inf.sharding, NamedSharding(mesh, P(None)))
+    self.assertEqual(e_inf.sharding, NamedSharding(mesh, P(None)))
+    self.assertAllClose(c_inf, ref_c.astype(np.float32))
+    self.assertAllClose(e_inf, ref_e.astype(np.float32))
+
+    bins_sh = jax.device_put(np.array([0.0, 2.0, 4.0, 8.0], dtype=np.float32), P('x'))
+    w_sh = jax.device_put(w_np, P('x', None))
+    f_wd = jax.jit(
+        lambda x, b, w: jnp.histogram(
+            x, bins=b, weights=w, density=True, out_sharding=P()
+        )
+    )
+    self.assertNotIn('Auto', str(f_wd.trace(a_sh, bins_sh, w_sh).jaxpr))
+    c_wd, e_wd = f_wd(a_sh, bins_sh, w_sh)
+    ref_wd_c, ref_wd_e = np.histogram(
+        a_np, bins=np.array([0.0, 2.0, 4.0, 8.0], dtype=np.float32), weights=w_np, density=True
+    )
+    self.assertAllClose(c_wd, ref_wd_c.astype(np.float32), atol=1e-5, rtol=1e-5)
+    self.assertAllClose(e_wd, ref_wd_e.astype(np.float32))
+
+    f_unred = jax.jit(
+        lambda x: jnp.histogram(
+            x, bins=4, range=(0.0, 8.0), out_sharding=P(unreduced={'x', 'y'})
+        )
+    )
+    self.assertNotIn('Auto', str(f_unred.trace(a_sh).jaxpr))
+    c_u, e_u = f_unred(a_sh)
+    self.assertEqual(c_u.sharding, NamedSharding(mesh, P(None, unreduced={'x', 'y'})))
+    self.assertEqual(e_u.sharding, NamedSharding(mesh, P(None)))
+    self.assertAllClose(reshard(c_u, P()), ref_c.astype(np.float32))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_jnp_zeros_out_sharding_partial_manual_unreduced_reduced(self, mesh):
