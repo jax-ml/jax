@@ -1426,17 +1426,22 @@ absl::Status MosaicGpuPrepare(
     xla::gpu::CollectiveMemoryRequests* absl_nullable
         collective_memory_requests,
     xla::gpu::CollectiveCliqueRequests* absl_nullable clique_requests,
-    xla::gpu::CommandBufferRequests* absl_nonnull command_buffer_requests,
+    xla::gpu::CommandBufferRequests* absl_nullable command_buffer_requests,
     se::DeviceAddressAllocator* absl_nullable allocator,
     CustomCallResources* resources, ffi::RemainingArgs inputs,
     ffi::RemainingRets results, xla::ffi::Dictionary attributes) {
+  // Mosaic GPU loads its CUDA module in Prepare, initializes collective
+  // metadata in Initialize, and does no runtime autotuning, so command buffers
+  // can record it on the first execution without an unrecorded warmup run.
+  if (command_buffer_requests != nullptr) {
+    command_buffer_requests->SetRequiresWarmup(false);
+  }
+  if (collective_params == nullptr || resources == nullptr) {
+    return absl::InternalError(
+        "collective_params and resources must not be null in MosaicGpuPrepare");
+  }
   int device_ordinal = collective_params->global_device_id.value();
   XLA_VLOG_DEVICE(5, device_ordinal) << "MosaicGpuPrepare";
-  // Command buffer warmup can be skipped as long as the first execution does
-  // not run runtime autotuning, allocate temporary scratch space on the fly,
-  // lazily initialize library handles/plans (e.g. cuBLAS, cuSOLVER, or cuDNN),
-  // or load a CUDA module on first execute.
-  command_buffer_requests->SetRequiresWarmup(false);
   // Module initialization calls cuModuleLoadData to load the PTX into the GPU.
   // CUDA has a system-wide mutex around this call which can cause a deadlock
   // if user tries to load the module on one GPU while another GPU is executing
@@ -1458,11 +1463,11 @@ absl::Status MosaicGpuPrepare(
   XLA_VLOG_DEVICE(5, device_ordinal)
       << "MosaicGpuPrepare uses collective metadata";
 
-  if (collective_params == nullptr || clique_requests == nullptr ||
-      collective_memory_requests == nullptr || allocator == nullptr) {
+  if (clique_requests == nullptr || collective_memory_requests == nullptr ||
+      allocator == nullptr) {
     return absl::InternalError(
-        "collective_params, clique_requests, collective_memory_requests, and "
-        "allocator must not be null in MosaicGpuPrepare");
+        "clique_requests, collective_memory_requests, and allocator must not "
+        "be null in MosaicGpuPrepare");
   }
 
   ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,

@@ -368,6 +368,48 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(f(x), x + 10)
+    np.testing.assert_array_equal(f(x), x + 10)
+
+  def test_command_buffer_first_and_second_call(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((256,), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] * 2.0 + 1.0
+
+    with tempfile.TemporaryDirectory() as dump_dir:
+
+      @functools.partial(
+          jax.jit,
+          compiler_options={
+              "xla_dump_to": dump_dir,
+              "xla_gpu_enable_command_buffer": "CUSTOM_CALL,FUSION",
+              "xla_gpu_graph_min_graph_size": 1,
+          },
+      )
+      def f(x):
+        return kernel(kernel(x))
+
+      x0 = jnp.arange(256, dtype=jnp.float32)
+      expected0 = (x0 * 2.0 + 1.0) * 2.0 + 1.0
+      # First call records and executes the command buffer directly.
+      np.testing.assert_array_equal(f(x0), expected0)
+      # Second call with the same input exercises replay or update.
+      np.testing.assert_array_equal(f(x0), expected0)
+      # Distinct input buffer exercises command buffer update.
+      x1 = jnp.arange(100, 356, dtype=jnp.float32)
+      expected1 = (x1 * 2.0 + 1.0) * 2.0 + 1.0
+      np.testing.assert_array_equal(f(x1), expected1)
+
+      after_files = [
+          name
+          for name in os.listdir(dump_dir)
+          if name.endswith(".thunk_sequence_after_thunk_passes.txt")
+      ]
+      self.assertLen(after_files, 1)
+      with open(os.path.join(dump_dir, after_files[0])) as thunk_file:
+        self.assertStartsWith(thunk_file.read(), "000: kCommandBuffer")
 
   @parameterized.product(
       op=[
