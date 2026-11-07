@@ -11656,6 +11656,58 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       f_bad_reduced(x, idx)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jnp_take_out_sharding(self, mesh):
+    x_np = np.arange(32, dtype=np.float32).reshape(8, 4)
+    idx_np = np.array([7, 1, -1, 10], dtype=np.int32)
+    x = jax.device_put(x_np, P('x', 'y'))
+    idx = jax.device_put(idx_np, P('x'))
+
+    @jax.jit
+    def f_axis0(a, i):
+      return jnp.take(a, i, axis=0, mode='clip', out_sharding=P('x', 'y'))
+
+    self.assertNotIn('Auto', str(f_axis0.trace(x, idx).jaxpr))
+    out0 = f_axis0(x, idx)
+    self.assertEqual(out0.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertArraysEqual(out0, np.take(x_np, idx_np, axis=0, mode='clip'))
+
+    @jax.jit
+    def f_flat(a, i):
+      return jnp.take(a, i, axis=None, mode='wrap', out_sharding=P('x'))
+
+    self.assertNotIn('Auto', str(f_flat.trace(x, idx).jaxpr))
+    out_flat = f_flat(x, idx)
+    self.assertEqual(out_flat.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out_flat, np.take(x_np, idx_np, axis=None, mode='wrap'))
+
+    out_fill = jax.jit(
+        lambda a, i: jnp.take(
+            a, i, axis=0, mode='fill', fill_value=-1.0, out_sharding=P('x', 'y')
+        )
+    )(x, idx)
+    self.assertEqual(out_fill.sharding, NamedSharding(mesh, P('x', 'y')))
+    expected_fill = np.where(
+        (idx_np[:, None] >= -8) & (idx_np[:, None] < 8),
+        x_np[np.clip(idx_np, -8, 7)],
+        -1.0,
+    )
+    self.assertArraysEqual(out_fill, expected_fill)
+
+    empty_idx = jnp.zeros((0,), dtype=jnp.int32)
+    out_empty_idx = jax.jit(
+        lambda a: jnp.take(a, empty_idx, axis=0, out_sharding=P(None, 'y'))
+    )(x)
+    self.assertEqual(out_empty_idx.shape, (0, 4))
+    self.assertEqual(out_empty_idx.sharding, NamedSharding(mesh, P(None, 'y')))
+
+    x_empty_axis = jax.device_put(np.zeros((8, 0), dtype=np.float32), P('x', None))
+    out_empty_axis = jax.jit(
+        lambda a: jnp.take(a, empty_idx, axis=1, out_sharding=P('y', None))
+    )(x_empty_axis)
+    self.assertEqual(out_empty_axis.shape, (8, 0))
+    self.assertEqual(out_empty_axis.sharding, NamedSharding(mesh, P('y', None)))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_scatter_add_hijax_unreduced(self, mesh):
     x_np = np.arange(16, dtype=np.float32).reshape(4, 4) + 3.0
     idx_np = np.array([0, 2, 1, 2], dtype=np.int32)
