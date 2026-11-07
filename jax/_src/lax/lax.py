@@ -8321,7 +8321,26 @@ pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
 pe.custom_partial_eval_rules[broadcast_in_dim_p] = _broadcast_in_dim_partial_eval
 pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
-mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
+
+def _broadcast_in_dim_collective_rule(
+    in_avals, out_avals, *, shape, broadcast_dimensions, sharding):
+  del shape, sharding
+  in_aval, = in_avals
+  out_aval, = out_avals
+  out_parts = out_aval.sharding.spec.partitions
+  for in_size, in_s, out_dim in zip(
+      in_aval.shape, in_aval.sharding.spec.partitions, broadcast_dimensions):
+    if in_s == out_parts[out_dim] or (in_s is None and in_size == 1):
+      continue
+    raise NotImplementedError
+  return mlir.PartitioningRule(per_shard_params={
+      'shape': out_aval.sharding.shard_shape(out_aval.shape),
+      'sharding': None,
+  })
+
+mlir.register_lowering(
+    broadcast_in_dim_p, _broadcast_in_dim_lower,
+    shard_map_collective_rule=_broadcast_in_dim_collective_rule)
 core.pp_eqn_rules[broadcast_in_dim_p] = _broadcast_in_dim_pp_rule
 lax_utils.register_unreduced_lojax(broadcast_in_dim_p, 'sharding')
 
@@ -8724,7 +8743,16 @@ stack_p = standard_primitive(
     ur_rule=_stack_ur_rule,
     layout_rule=_stack_layout_rule)
 ad.deflinear2(stack_p, _stack_transpose_rule)
-mlir.register_lowering(stack_p, _stack_lower)
+
+def _stack_collective_rule(in_avals, out_avals, *, axis):
+  del out_avals, axis
+  # _stack_sharding_rule skips empty-mesh constants.
+  if len({a.sharding.spec for a in in_avals}) > 1:
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
+mlir.register_lowering(
+    stack_p, _stack_lower, shard_map_collective_rule=_stack_collective_rule)
 lax_utils.register_unreduced_lojax(stack_p)
 
 
@@ -8840,7 +8868,8 @@ unstack_p.def_abstract_eval(
             _unstack_vma_rule, _unstack_ur_rule, _unstack_layout_rule))
 unstack_p.def_impl(partial(dispatch.apply_primitive, unstack_p))
 ad.deflinear2(unstack_p, _unstack_transpose_rule)
-mlir.register_lowering(unstack_p, _unstack_lower)
+mlir.register_lowering(
+    unstack_p, _unstack_lower, shard_map_collective_rule=_unop_collective_rule)
 lax_utils.register_unreduced_lojax(unstack_p)
 
 batching.primitive_batchers[stack_p] = _stack_batch_rule
@@ -8929,7 +8958,16 @@ split_p.def_abstract_eval(
 split_p.def_impl(partial(dispatch.apply_primitive, split_p))
 ad.deflinear2(split_p, _split_transpose_rule)
 batching.primitive_batchers[split_p] = _split_batch_rule
-mlir.register_lowering(split_p, _split_lower)
+
+def _split_collective_rule(in_avals, out_avals, *, sizes, axis):
+  del out_avals, sizes
+  in_aval, = in_avals
+  if in_aval.sharding.spec.partitions[axis] is not None:
+    raise NotImplementedError
+  return mlir.PartitioningRule()
+
+mlir.register_lowering(
+    split_p, _split_lower, shard_map_collective_rule=_split_collective_rule)
 lax_utils.register_unreduced_lojax(split_p)
 
 def _pad_dtype_rule(operand, padding_value, *, padding_config):
@@ -9118,7 +9156,8 @@ def _squeeze_lower(ctx, operand, *, dimensions):
   out = mlir.reshape(ctx, operand, aval_out)
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(squeeze_p, _squeeze_lower)
+mlir.register_lowering(
+    squeeze_p, _squeeze_lower, shard_map_collective_rule=_unop_collective_rule)
 lax_utils.register_unreduced_lojax(squeeze_p)
 
 
@@ -9668,7 +9707,9 @@ transpose_p = standard_primitive(
 ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
-mlir.register_lowering(transpose_p, _transpose_lower)
+mlir.register_lowering(
+    transpose_p, _transpose_lower,
+    shard_map_collective_rule=_unop_collective_rule)
 lax_utils.register_unreduced_lojax(transpose_p)
 
 
