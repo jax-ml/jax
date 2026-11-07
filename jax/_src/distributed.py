@@ -425,3 +425,40 @@ def shutdown():
   Does nothing if the distributed system is not running.
   """
   global_state.shutdown()
+
+
+def client() -> _jax.DistributedRuntimeClient | Any | None:
+  """Returns the coordination client, or ``None`` if it is unset.
+
+  The result is ``None`` before :func:`~jax.distributed.initialize` and after
+  :func:`~jax.distributed.shutdown`. Otherwise it is the
+  ``DistributedRuntimeClient`` stored by ``initialize``.
+
+  That object's stable contract is the key-value store and barrier processes
+  use to agree on small host values before any backend opens:
+  ``key_value_set``, ``blocking_key_value_get``, ``key_value_dir_get``,
+  ``key_value_delete``, and ``wait_at_barrier``.
+
+  :func:`~jax.distributed.initialize` and :func:`~jax.distributed.shutdown`
+  own ``connect`` and ``shutdown`` on this object.
+  """
+  return global_state.client
+
+
+def detected_cluster() -> tuple[str, int, int] | None:
+  """Returns the cluster no-argument initialize() would auto-detect.
+
+  Returns:
+    ``(name, process_id, process_count)`` for the first registered cluster
+    environment that is present and not opt-in only, or ``None`` if none is.
+    ``name`` is that environment's ``name``, for example ``"slurm"``,
+    ``"ompi"``, ``"gcetpu"``, ``"gketpu"``, or ``""`` for Kubernetes.
+
+  Selection matches :func:`~jax.distributed.initialize` with no arguments, so
+  opt-in methods such as ``"mpi4py"`` are skipped. This does not start the
+  coordination service, connect a client, or resolve a coordinator address.
+  """
+  env = clusters.ClusterEnv.auto_detected_env()
+  if env is None:
+    return None
+  return (env.name, env.get_process_id(), env.get_process_count())
