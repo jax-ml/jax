@@ -13,6 +13,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Deprecations
+
+  * `jax.experimental.pallas.pallas_call_p` is deprecated and will be removed from the public API in a future version of JAX.
+
 * New features
   * The Pallas API is now available as `jax.pallas`. Existing imports from
     `jax.experimental.pallas` remain valid.

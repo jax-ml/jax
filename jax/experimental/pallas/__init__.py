@@ -30,6 +30,8 @@ from jax._src.pallas.primitives import reciprocal as _deprecated_reciprocal
 
 
 _deprecations = {
+    **locals().get("_deprecations", {}),
+
     # Added September 28, 2026
     "DeviceIdType": (
         (
