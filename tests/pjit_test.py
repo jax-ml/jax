@@ -8451,6 +8451,56 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     jax.lax.map(lambda _x: simple_func(w, _x), x, batch_size=2)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_lax_map_batch_size_no_auto_axes(self, mesh):
+    fn = lambda row: (row * 2.0 + 1.0, jnp.sum(row, axis=-1))
+    xs_even_np = np.arange(6 * 4 * 4, dtype=np.float32).reshape(6, 4, 4)
+    xs_rem_np = np.arange(7 * 4 * 4, dtype=np.float32).reshape(7, 4, 4)
+
+    for in_spec, out_spec0, out_spec1 in [
+        (P(None, 'x', 'y'), P(None, 'x', 'y'), P(None, 'x')),
+        (
+            P(None, ('x', 'y'), None),
+            P(None, ('x', 'y'), None),
+            P(None, ('x', 'y')),
+        ),
+    ]:
+      xs_even = jax.device_put(xs_even_np, in_spec)
+      xs_rem = jax.device_put(xs_rem_np, in_spec)
+      f_even = jax.jit(partial(lax.map, fn, batch_size=2))
+      f_rem = jax.jit(partial(lax.map, fn, batch_size=4))
+      self.assertNotIn('Auto', str(f_even.trace(xs_even).jaxpr))
+      self.assertNotIn('Auto', str(f_rem.trace(xs_rem).jaxpr))
+
+      for g_even, g_rem in [
+          (
+              partial(lax.map, fn, batch_size=2),
+              partial(lax.map, fn, batch_size=4),
+          ),
+          (f_even, f_rem),
+      ]:
+        y0, y1 = g_even(xs_even)
+        self.assertEqual(y0.sharding, NamedSharding(mesh, out_spec0))
+        self.assertEqual(y1.sharding, NamedSharding(mesh, out_spec1))
+        self.assertAllClose(y0, xs_even_np * 2.0 + 1.0)
+        self.assertAllClose(y1, np.sum(xs_even_np, axis=-1))
+
+        r0, r1 = g_rem(xs_rem)
+        self.assertEqual(r0.sharding, NamedSharding(mesh, out_spec0))
+        self.assertEqual(r1.sharding, NamedSharding(mesh, out_spec1))
+        self.assertAllClose(r0, xs_rem_np * 2.0 + 1.0)
+        self.assertAllClose(r1, np.sum(xs_rem_np, axis=-1))
+
+    xs_vmap_np = np.arange(4 * 5 * 4, dtype=np.float32).reshape(4, 5, 4)
+    xs_vmap = jax.device_put(xs_vmap_np, P('x', None, 'y'))
+    f_vmap = jax.jit(
+        jax.vmap(lambda z: lax.map(lambda r: r * 3.0, z, batch_size=2))
+    )
+    self.assertNotIn('Auto', str(f_vmap.trace(xs_vmap).jaxpr))
+    vmapped = f_vmap(xs_vmap)
+    self.assertEqual(vmapped.sharding, NamedSharding(mesh, P('x', None, 'y')))
+    self.assertAllClose(vmapped, xs_vmap_np * 3.0)
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_extended_dtypes(self, mesh):
     dtype = primal_tangent_dtype(jnp.dtype('int8'), jnp.dtype('bfloat16'))
