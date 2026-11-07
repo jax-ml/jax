@@ -26,6 +26,7 @@ import numpy as np
 from jax._src import api
 from jax._src import core
 from jax._src import config
+from jax._src import dtypes
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
@@ -1488,10 +1489,47 @@ def solve(a: ArrayLike, b: ArrayLike) -> Array:
   return jnp.vectorize(lax_linalg._solve, signature=signature)(a, b)
 
 
+def _lstsq_svd(a: Array, b: Array, rcond: Array | float):
+  u, s, vt = svd(a, full_matrices=False)
+  mask = (s > 0) & (s >= jnp.array(rcond, dtype=s.dtype) * s[0])
+  safe_s = jnp.where(mask, s, 1).astype(a.dtype)
+  s_inv = jnp.where(mask, 1 / safe_s, 0)[:, np.newaxis]
+  uTb = tensor_contractions.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
+  x = tensor_contractions.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)
+  return x, mask, s, u, vt, s_inv
+
+
+@custom_jvp
+def _lstsq_solve(a: Array, b: Array, rcond: Array | float
+                 ) -> tuple[Array, Array, Array]:
+  x, mask, s, *_ = _lstsq_svd(a, b, rcond)
+  return x, mask.sum(), s
+
+
+@_lstsq_solve.defjvp
+@config.default_matmul_precision("float32")
+def _lstsq_solve_jvp(primals, tangents):
+  # Differentiating through the SVD divides by s_i**2 - s_j**2, which fails for
+  # repeated singular values. Instead apply the derivative of the
+  # pseudo-inverse (Golub & Pereyra, see _pinv_jvp) to b, reusing the SVD. As
+  # in _pinv_jvp, singular values below the rcond cutoff are treated as zero.
+  a, b, rcond = primals
+  a_dot, b_dot, _ = tangents
+  x, mask, s, u, vt, s_inv = _lstsq_svd(a, b, rcond)
+  a_pinv = lambda y: _H(vt) @ (s_inv * (_H(u) @ y))  # A^+ y
+  a_pinv_h = lambda y: u @ (s_inv * (vt @ y))  # (A^+)^H y
+  r = b - a @ x
+  w = _H(a_dot) @ a_pinv_h(x)
+  x_dot = (a_pinv(b_dot - a_dot @ x + a_pinv_h(_H(a_dot) @ r))
+           + w - _H(vt) @ jnp.where(mask[:, np.newaxis], vt @ w, 0))
+  s_dot = ufuncs.real((u.conj() * (a_dot @ _H(vt))).sum(0))
+  rank = mask.sum()
+  return (x, rank, s), (x_dot, np.zeros(rank.shape, dtypes.float0), s_dot)
+
+
 def _lstsq(a: ArrayLike, b: ArrayLike, rcond: Array | float | None, *,
            numpy_resid: bool = False) -> tuple[Array, Array, Array, Array]:
   # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
-  # TODO: add custom jvp rule for more robust lstsq differentiation
   a, b = promote_dtypes_inexact(a, b)
   if a.shape[0] != b.shape[0]:
     raise ValueError("Leading dimensions of input arrays must match")
@@ -1515,13 +1553,7 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: Array | float | None, *,
       rcond = float(jnp.finfo(dtype).eps) * max(n, m)
     else:
       rcond = jnp.where(rcond < 0, jnp.finfo(dtype).eps, rcond)
-    u, s, vt = svd(a, full_matrices=False)
-    mask = (s > 0) & (s >= jnp.array(rcond, dtype=s.dtype) * s[0])
-    rank = mask.sum()
-    safe_s = jnp.where(mask, s, 1).astype(a.dtype)
-    s_inv = jnp.where(mask, 1 / safe_s, 0)[:, np.newaxis]
-    uTb = tensor_contractions.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
-    x = tensor_contractions.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)
+    x, rank, s = _lstsq_solve(a, b, rcond)
   # Numpy returns empty residuals in some cases. To allow compilation, we
   # default to returning full residuals in all cases.
   if numpy_resid and (rank < n or m <= n):
