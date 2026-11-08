@@ -343,7 +343,12 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
       cluster_names=("x",) if collective else (),
       cluster=(2,) if collective else (),
   )
-  return f(a, b, group_sizes)
+  out = f(a, b, group_sizes)
+  # Like the Hopper kernel, this one does not write rows >= sum(group_sizes).
+  # Zero them, as `jax.lax.ragged_dot` does.
+  return ragged_dot_mgpu._zero_rows_from(
+      out, jnp.sum(group_sizes).astype(jnp.int32), max(tile_m, pl.cdiv(m, 8))
+  )
 
 
 def ragged_dot_reference(a, b, g):
