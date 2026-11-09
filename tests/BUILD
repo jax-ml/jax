@@ -516,6 +516,7 @@ jax_multiplatform_test(
         "tpu": [
             "notsan",  # Times out.
             "noasan",  # Times out.
+            "nomsan",  # Times out.
         ],
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
