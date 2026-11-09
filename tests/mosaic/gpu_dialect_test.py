@@ -2420,16 +2420,22 @@ ir.MLIRError,
     self.assertEqual(ref2.owner.opview.alignment.value, 64)
     self.assertLen(scope.results, 2)
 
-  def test_alloc_smem_requires_alloca_scope_ancestor(self):
+  def test_alloc_smem_requires_alloca_scope_parent(self):
+    ref_ty = ir.MemRefType.get(
+        (8, 16), ir.F32Type.get(), memory_space=mgpu_utils.smem()
+    )
     with ir.InsertionPoint(self.module.body):
-      ref_ty = ir.MemRefType.get(
-          (8, 16), ir.F32Type.get(), memory_space=mgpu_utils.smem()
-      )
-      mgpu.dialect.alloc_smem(ref_ty)
+      # `alloc_smem` is nested in an `alloca_scope`, but not directly.
+      scope = mgpu.dialect.alloca_scope()
+      with ir.InsertionPoint(scope.body):
+        [cond] = undefs(ir.IntegerType.get_signless(1))
+        with mgpu_utils.when(cond):
+          mgpu.dialect.alloc_smem(ref_ty)
+        mgpu.dialect.alloca_scope_return([])
 
     with self.assertRaisesRegex(
         ir.MLIRError,
-        r"requires an ancestor `mosaic_gpu\.alloca_scope` op",
+        r"expects parent op 'mosaic_gpu\.alloca_scope'",
     ):
       self.module.operation.verify()
 

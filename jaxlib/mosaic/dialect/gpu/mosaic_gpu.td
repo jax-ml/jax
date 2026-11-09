@@ -1404,11 +1404,13 @@ def MosaicGPU_AssumeMultipleOp : Op<MosaicGPU_Dialect, "assume_multiple", [Pure,
   let assemblyFormat = [{$value `,` $multiple attr-dict `:` type($result)}];
 }
 
-def MosaicGPU_AllocSmemOp : Op<MosaicGPU_Dialect, "alloc_smem", []> {
+def MosaicGPU_AllocSmemOp : Op<MosaicGPU_Dialect, "alloc_smem",
+    [HasParent<"AllocaScopeOp">]> {
   let summary = "Allocates a statically shaped SMEM memref within an `alloca_scope`.";
   let description = [{
     Allocates a statically shaped SMEM memref that is valid for the duration of
-    the enclosing `alloca_scope` operation.
+    the parent `alloca_scope` operation. `alloc_smem` must be directly nested in
+    the region of an `alloca_scope`.
 
     An optional `alignment` attribute specifies the minimum byte alignment for
     the allocation and must be a positive power of 2.

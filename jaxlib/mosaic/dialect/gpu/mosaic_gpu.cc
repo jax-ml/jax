@@ -1536,9 +1536,6 @@ llvm::LogicalResult GetClusterRefOp::inferReturnTypes(
 }
 
 llvm::LogicalResult AllocSmemOp::verify() {
-  if (!(*this)->getParentOfType<AllocaScopeOp>()) {
-    return emitOpError("requires an ancestor `mosaic_gpu.alloca_scope` op");
-  }
   mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
       getContext(), mlir::gpu::AddressSpace::Workgroup);
   if (getResult().getType().getMemorySpace() != smem) {
