@@ -4207,6 +4207,7 @@ class Sm80Test(TestCase):
           gmem_transform=mgpu.TileTransform((8, swizzle_elems)),
           barrier=barrier,
           implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+          oob_mode=mgpu.OOBFillMode.PROMISE_IN_BOUNDS,
       )
       barrier.wait()
       if transpose:
@@ -5421,6 +5422,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
           swizzle=swizzle,
           gmem_transform=mgpu.TileTransform(tiling) if tiling else (),
           implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+          oob_mode=mgpu.OOBFillMode.PROMISE_IN_BOUNDS,
           barrier=barrier if use_barrier else None,
       )
       if use_barrier:
@@ -5484,6 +5486,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
           swizzle=swizzle,
           gmem_transform=mgpu.TileTransform(tiling),
           implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+          oob_mode=mgpu.OOBFillMode.PROMISE_IN_BOUNDS,
           barrier=barrier if use_barrier else None,
       )
       if use_barrier:
@@ -5514,6 +5517,21 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
   def test_cp_async_untiled(self, shape, dtype, use_barrier):
     self._test_cp_async(shape, dtype, use_barrier=use_barrier)
 
+  @parameterized.parameters(mgpu.OOBFillMode.ZEROS, mgpu.OOBFillMode.UNDEFINED)
+  def test_cp_async_unsupported_oob_mode_raises(self, oob_mode):
+    def kernel(ctx, src, dst, smem):
+      del dst
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=smem,
+          implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+          oob_mode=oob_mode,
+      )
+
+    shape = jax.ShapeDtypeStruct((128,), jnp.float32)
+    with self.assertRaises(NotImplementedError):
+      mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), shape, shape, shape)
+
   @parameterized.product(
       slice=[(1,), (1, 1)],
       use_barrier=(False, True),
@@ -5526,6 +5544,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
           dst_ref=tmp,
           gmem_slice=slice,
           implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+          oob_mode=mgpu.OOBFillMode.PROMISE_IN_BOUNDS,
           barrier=barrier if use_barrier else None,
       )
       if use_barrier:

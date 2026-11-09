@@ -1616,6 +1616,10 @@ class LaunchContext:
     if implementation == AsyncCopyImplementation.CP_ASYNC:
       assert not collective
       assert leader_tracked is None
+      if oob_mode != OOBFillMode.PROMISE_IN_BOUNDS:
+        raise NotImplementedError(
+            f"CP_ASYNC implementation does not support {oob_mode=}"
+        )
       if not isinstance(predicate, _DefaultPredicate):
         raise NotImplementedError(
             "CP_ASYNC needs to be performed by the whole warpgroup and does not"
