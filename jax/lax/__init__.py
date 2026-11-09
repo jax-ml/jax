@@ -369,6 +369,14 @@ from jax._src.lax.control_flow import (
   while_p as while_p,
   platform_dependent as platform_dependent,
 )
+# From the module itself: `jax._src.lax.control_flow.pipeline` must keep
+# naming the module, not the function.
+from jax._src.lax.control_flow.pipeline import (
+  block_slice as block_slice,
+  block_update as block_update,
+  pipeline as pipeline,
+)
+from jax._src.lax.fusion import fusion as fusion
 from jax._src.lax.fft import (
   fft as fft,
   fft_p as fft_p,
