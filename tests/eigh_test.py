@@ -471,5 +471,20 @@ class LaxLinalgEighTest(jtu.JaxTestCase):
         self.assertAllClose(
             eigvals_all[first:(last + 1)], eigvals_index, atol=atol)
 
+  @jtu.sample_product(dtype=float_types + complex_types)
+  def testZeroFirstOffDiagonal(self, dtype):
+    # With e[0] == 0 (or e[0]**2 underflowing), the bisection can evaluate
+    # the Sturm count exactly at x == d[0], which is likely for integer
+    # diagonals. That pivot must not produce 0/0 in the next step.
+    tiny_e0 = np.sqrt(np.finfo(dtype).tiny)
+    cases = [
+        ([0, 1, -2, 3], [0, -1, -1]),
+        ([0, 1, -2, 3], [tiny_e0, -1, -1]),
+        ([1, 0, 2, -1], [0, 1, 0]),
+        ([2, 2, 2, 1, 1, 3], [0, 0, 0, 0, 0]),
+    ]
+    for d, e in cases:
+      self.run_eigh_tridiagonal_test(np.array(d, dtype), np.array(e, dtype))
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
