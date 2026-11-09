@@ -3754,12 +3754,65 @@ def _scatter_lower(ctx: mlir.LoweringRuleContext, operand, indices, updates, *,
   return [mlir.lower_with_sharding_in_types(ctx, r, aval)
           for r, aval in safe_zip(op.results, ctx.avals_out)]
 
-mlir.register_lowering(scatter_p, _scatter_lower)
-mlir.register_lowering(scatter_add_p, partial(_scatter_lower, reducer=hlo.add))
-mlir.register_lowering(scatter_sub_p, partial(_scatter_lower, reducer=hlo.subtract))
-mlir.register_lowering(scatter_mul_p, partial(_scatter_lower, reducer=hlo.multiply))
-mlir.register_lowering(scatter_min_p, partial(_scatter_lower, reducer=mlir.min_hlo))
-mlir.register_lowering(scatter_max_p, partial(_scatter_lower, reducer=mlir.max_hlo))
+def _scatter_collective_rule(
+    in_avals, out_avals, *, dimension_numbers, mode, out_sharding, **params):
+  del params
+  op_aval, idx_aval, upd_aval = in_avals
+  out_aval, = out_avals
+  op_parts = op_aval.sharding.spec.partitions
+  idx_parts = idx_aval.sharding.spec.partitions
+  upd_parts = upd_aval.sharding.spec.partitions
+  dnums = dimension_numbers
+
+  # FILL_OR_DROP checks bounds against local shard size instead of global size.
+  if (mode == GatherScatterMode.FILL_OR_DROP and
+      any(op_parts[d] is not None
+          for d in dnums.scatter_dims_to_operand_dims)):
+    raise NotImplementedError
+
+  # _scatter_spec_computation allows replicated-vs-sharded batch broadcasting.
+  upd_bdims = _get_updates_batching_dims(
+      dnums.scatter_indices_batching_dims, dnums.update_window_dims,
+      idx_aval.ndim - 1, upd_aval.shape)
+  if any(idx_parts[idim] != op_parts[odim] or upd_parts[udim] != op_parts[odim]
+         for odim, idim, udim in safe_zip(
+             dnums.operand_batching_dims, dnums.scatter_indices_batching_dims,
+             upd_bdims)):
+    raise NotImplementedError
+
+  # Explicit out_sharding bypasses _scatter_spec_computation in propagation.
+  if out_sharding is not None and (
+      out_aval.sharding.spec.partitions != op_parts or
+      _scatter_spec_computation(op_aval, idx_aval, upd_aval, dnums) is None):
+    raise NotImplementedError
+
+  return mlir.PartitioningRule(per_shard_params={'out_sharding': None})
+
+def _scatter_set_collective_rule(
+    in_avals, out_avals, *, update_jaxpr, **params):
+  # scatter_apply's update_jaxpr can close over sharded update_consts.
+  if update_jaxpr is not None:
+    raise NotImplementedError
+  return _scatter_collective_rule(in_avals, out_avals, **params)
+
+mlir.register_lowering(
+    scatter_p, _scatter_lower,
+    shard_map_collective_rule=_scatter_set_collective_rule)
+mlir.register_lowering(
+    scatter_add_p, partial(_scatter_lower, reducer=hlo.add),
+    shard_map_collective_rule=_scatter_collective_rule)
+mlir.register_lowering(
+    scatter_sub_p, partial(_scatter_lower, reducer=hlo.subtract),
+    shard_map_collective_rule=_scatter_collective_rule)
+mlir.register_lowering(
+    scatter_mul_p, partial(_scatter_lower, reducer=hlo.multiply),
+    shard_map_collective_rule=_scatter_collective_rule)
+mlir.register_lowering(
+    scatter_min_p, partial(_scatter_lower, reducer=mlir.min_hlo),
+    shard_map_collective_rule=_scatter_collective_rule)
+mlir.register_lowering(
+    scatter_max_p, partial(_scatter_lower, reducer=mlir.max_hlo),
+    shard_map_collective_rule=_scatter_collective_rule)
 
 
 def _real_dtype(dtype): return np.finfo(dtype).dtype

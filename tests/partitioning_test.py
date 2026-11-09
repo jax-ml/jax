@@ -1767,5 +1767,80 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           lambda a: a.at[idx].get(out_sharding=P(None, None, 'y'))
       ).lower(x)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_scatter(self, mesh):
+    x = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(4, 4), P(None, 'y'))
+    upd = jax.device_put(
+        np.arange(8, dtype=np.float32).reshape(2, 4), P(None, 'y'))
+    idx = jax.device_put(np.array([3, 1], dtype=np.int32), P(None))
+    bx = jax.device_put(
+        np.arange(48, dtype=np.float32).reshape(4, 3, 4), P('x', None, 'y'))
+    bupd = jax.device_put(np.ones((4, 4), dtype=np.float32), P('x', 'y'))
+    bidx = jax.device_put(np.array([2, 0, 1, 2], dtype=np.int32), P('x'))
+
+    full_upd = jax.device_put(np.ones((4, 4), dtype=np.float32), P(None, 'y'))
+    full_dnums = lax.ScatterDimensionNumbers(
+        update_window_dims=(0, 1),
+        inserted_window_dims=(),
+        scatter_dims_to_operand_dims=(0, 1),
+    )
+
+    @jax.jit
+    def f(a, u, i, ba, bu, bi, fu):
+      s_set = a.at[i].set(u)
+      s_add = a.at[i].add(u, out_sharding=P(None, 'y'))
+      s_max = a.at[i].max(u)
+      s_vmap = jax.vmap(lambda r, j, v: r.at[j].add(v))(ba, bi, bu)
+      s_clip = lax.scatter(
+          a, jnp.array([0, 1], dtype=np.int32), fu, full_dnums, mode='clip')
+      return s_set, s_add, s_max, s_vmap, s_clip
+
+    args = (x, upd, idx, bx, bupd, bidx, full_upd)
+
+    with config.shard_map_partitioning(False):
+      expected = f(*args)
+
+    for out, exp in zip(f(*args), expected):
+      self.assertEqual(out.sharding, exp.sharding)
+      self.assertArraysEqual(out, exp)
+
+    xy = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(4, 4), P('x', 'y'))
+
+    with self.assertRaises(core.ShardingTypeError):
+      jax.jit(lambda a: a.at[idx].add(upd)).lower(xy)
+
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda a: a.at[idx].add(upd, out_sharding=P('x', 'y'))).lower(xy)
+
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda a: a.at[idx].add(upd, out_sharding=P(None, None))).lower(x)
+
+    op_nx = jax.device_put(np.zeros((2, 2), dtype=np.float32), P(None, 'x'))
+    idx_xn = jax.device_put(np.zeros((2, 1), dtype=np.int32), P('x', None))
+    batch_dnums = lax.ScatterDimensionNumbers(
+        update_window_dims=(1,),
+        inserted_window_dims=(),
+        scatter_dims_to_operand_dims=(1,),
+        operand_batching_dims=(0,),
+        scatter_indices_batching_dims=(0,),
+    )
+
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda a, i: lax.scatter_add(
+          a, i, a, batch_dnums, out_sharding=P(None, 'x')
+      )).lower(op_nx, idx_xn)
+
+    rep1d = jax.device_put(np.ones((4,), dtype=np.float32), P(None))
+
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda r: r.at[0].apply(lambda v: v + 1.0)).lower(rep1d)
+
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda a: lax.scatter(
+          a, jnp.array([0, 1], dtype=np.int32), full_upd, full_dnums,
+          mode='fill')).lower(x)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
