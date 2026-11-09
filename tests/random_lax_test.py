@@ -141,14 +141,18 @@ class CommonRandomTest(RandomTestBase):
         lambda: lax.bitcast_convert_type(np.array(1., dtype), bits_dtype))()
     self.assertEqual(numpy_bits, xla_bits)
 
-  @jtu.sample_product(dtype=float_dtypes, use_jit=[False, True])
-  def testRngUniform(self, dtype, use_jit):
-    key = self.make_key(0)
-    rand = random.uniform if not use_jit else jax.jit(
-        random.uniform, static_argnames=['shape', 'dtype'])
-    samples = rand(key, shape=(10000,), dtype=dtype)
-    self._CheckCollisions(samples, jnp.finfo(dtype).nmant)
-    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf)
+  @jtu.sample_product(
+      dtype=float_dtypes, use_jit=[False, True], legacy=[False, True]
+  )
+  def testRngUniform(self, dtype, use_jit, legacy):
+    with config.legacy_random_uniform(legacy):
+      key = self.make_key(0)
+      rand = random.uniform if not use_jit else jax.jit(
+          random.uniform, static_argnames=['shape', 'dtype'])
+      samples = rand(key, shape=(10000,), dtype=dtype)
+      n_bits = jnp.finfo(dtype).nmant + (0 if legacy else 1)
+      self._CheckCollisions(samples, n_bits)
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf)
 
   @jtu.sample_product(dtype=int_dtypes + uint_dtypes, use_jit=[False, True])
   def testRngRandint(self, dtype, use_jit):
@@ -372,6 +376,71 @@ class DistributionsTest(RandomTestBase):
   tests. So long as the input bits are valid (as tested in BasicRandomTest) then
   the distribution logic tested here will apply correctly.
   """
+  @jtu.sample_product(
+      dtype=float_dtypes,
+      use_jit=[False, True],
+      legacy=[False, True],
+  )
+  def testUniformExactBits(self, dtype, use_jit, legacy):
+    expected_bits = {
+        (jnp.bfloat16, True): np.array(
+            [0x3F26, 0x3F12, 0x3E20, 0x3E50, 0x3F36,
+             0x3E84, 0x3EF8, 0x3F7E, 0x3EC4, 0x3F56],
+            dtype=np.uint16,
+        ),
+        (jnp.bfloat16, False): np.array(
+            [0x3F27, 0x3F12, 0x3E20, 0x3E54, 0x3F37,
+             0x3E86, 0x3EFA, 0x3F7E, 0x3EC6, 0x3F56],
+            dtype=np.uint16,
+        ),
+        (np.float16, True): np.array(
+            [0x34F8, 0x32D0, 0x2B00, 0x3940, 0x3370,
+             0x3694, 0x3B52, 0x3A66, 0x2E50, 0x38EE],
+            dtype=np.uint16,
+        ),
+        (np.float16, False): np.array(
+            [0x34FA, 0x32D0, 0x2B10, 0x3941, 0x3374,
+             0x3694, 0x3B53, 0x3A67, 0x2E58, 0x38EE],
+            dtype=np.uint16,
+        ),
+        (np.float32, True): np.array(
+            [0x3F729A4E, 0x3F7A8436, 0x3EAA221C, 0x3EEFF550, 0x3F11E43A,
+             0x3E2979A0, 0x3E9ED1D4, 0x3F3081CC, 0x3F3F2C18, 0x3E2F1E70],
+            dtype=np.uint32,
+        ),
+        (np.float32, False): np.array(
+            [0x3F729A4F, 0x3F7A8436, 0x3EAA221C, 0x3EEFF550, 0x3F11E43B,
+             0x3E2979A4, 0x3E9ED1D4, 0x3F3081CC, 0x3F3F2C19, 0x3E2F1E74],
+            dtype=np.uint32,
+        ),
+        (np.float64, True): np.array(
+            [0x3FDAC80056666E90, 0x3FCBAF91C7E6ED88,
+             0x3FEEE3E9D53441C8, 0x3FE2624EF17C9D1A,
+             0x3FE107FFD8233B78, 0x3FD6B6C4379C215C,
+             0x3FEC419C0A55AC80, 0x3FE43DEF49A22DD6,
+             0x3FE114E3E606F160, 0x3FC8881D488D6BD0],
+            dtype=np.uint64,
+        ),
+        (np.float64, False): np.array(
+            [0x3FDAC80056666E92, 0x3FCBAF91C7E6ED88,
+             0x3FEEE3E9D53441C8, 0x3FE2624EF17C9D1B,
+             0x3FE107FFD8233B78, 0x3FD6B6C4379C215E,
+             0x3FEC419C0A55AC81, 0x3FE43DEF49A22DD6,
+             0x3FE114E3E606F160, 0x3FC8881D488D6BD0],
+            dtype=np.uint64,
+        ),
+    }[(dtype, legacy)]
+    key = self.make_key(0)
+    rand = (
+        random.uniform
+        if not use_jit
+        else jax.jit(random.uniform, static_argnames=['shape', 'dtype'])
+    )
+    with config.threefry_partitionable(True), config.legacy_random_uniform(legacy):
+      samples = rand(key, shape=(10,), dtype=dtype)
+    actual_bits = lax.bitcast_convert_type(samples, expected_bits.dtype)
+    self.assertArraysEqual(actual_bits, expected_bits)
+
   @jtu.sample_product(dtype=float_dtypes, use_jit=[False, True], mode=['low', 'high', 'highest'])
   def testNormal(self, dtype, use_jit, mode):
     key = self.make_key(0)
@@ -704,15 +773,17 @@ class DistributionsTest(RandomTestBase):
     dtype=jtu.dtypes.floating,
     mode=[None, 'low', 'high'],
     use_jit=[False, True],
+    legacy=[False, True],
   )
-  def testBernoulli(self, p, dtype, mode, use_jit):
-    key = self.make_key(0)
-    p = np.array(p, dtype=dtype)
-    kwds = {} if mode is None else {'mode': mode}
-    rand = random.bernoulli if not use_jit else jax.jit(
-        random.bernoulli, static_argnames=['shape', 'mode'])
-    samples = rand(key, p, shape=(10000,), **kwds)
-    self._CheckChiSquared(samples, scipy.stats.bernoulli(p).pmf)
+  def testBernoulli(self, p, dtype, mode, use_jit, legacy):
+    with config.legacy_random_uniform(legacy):
+      key = self.make_key(0)
+      p = np.array(p, dtype=dtype)
+      kwds = {} if mode is None else {'mode': mode}
+      rand = random.bernoulli if not use_jit else jax.jit(
+          random.bernoulli, static_argnames=['shape', 'mode'])
+      samples = rand(key, p, shape=(10000,), **kwds)
+      self._CheckChiSquared(samples, scipy.stats.bernoulli(p).pmf)
 
   @jtu.sample_product(
     [dict(p=p, axis=axis)
@@ -1121,24 +1192,26 @@ class DistributionsTest(RandomTestBase):
     samples = rand(key, shape=(10000,), dtype=dtype)
     self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gumbel_r().cdf)
 
-  def testLowProbabilityGumbel(self):
-    dtype = jnp.bfloat16
+  @jtu.sample_product(legacy=[False, True])
+  def testLowProbabilityGumbel(self, legacy):
+    with config.legacy_random_uniform(legacy):
+      dtype = jnp.bfloat16
 
-    nmant = jnp.finfo(dtype).nmant
-    probs = [x * 2 ** -nmant for x in [0.125, 0.75, 1.25, 2.125]]
-    num_samples = 1024 * 128
-    num_groups = 128
-    key = jax.random.key(0)
+      nmant = jnp.finfo(dtype).nmant
+      probs = [x * 2 ** -nmant for x in [0.125, 0.75, 1.25, 2.125]]
+      num_samples = 1024 * 128
+      num_groups = 128
+      key = jax.random.key(0)
 
-    def compute_counts(key):
-      v = jax.random.gumbel(key, (num_samples, 1), dtype=dtype, mode="high")
-      thresholds = np.array([[-np.log(-np.log(1 - x)) for x in probs]],
-                            dtype=dtype)
-      return (v > thresholds).sum(axis=0)
-    pts = [float(x) for x in jax.lax.map(
-        compute_counts, jax.random.split(key, num_groups)).sum(axis=0)]
-    cdf_probs = [x / (num_samples * num_groups) for x in pts]
-    np.testing.assert_allclose(cdf_probs, probs, rtol=0.25, atol=0)
+      def compute_counts(key):
+        v = jax.random.gumbel(key, (num_samples, 1), dtype=dtype, mode="high")
+        thresholds = np.array([[-np.log(-np.log(1 - x)) for x in probs]],
+                              dtype=dtype)
+        return (v > thresholds).sum(axis=0)
+      pts = [float(x) for x in jax.lax.map(
+          compute_counts, jax.random.split(key, num_groups)).sum(axis=0)]
+      cdf_probs = [x / (num_samples * num_groups) for x in pts]
+      np.testing.assert_allclose(cdf_probs, probs, rtol=0.25, atol=0)
 
   def testSafeIntToFloat(self):
     dtype = np.float32
@@ -2051,23 +2124,26 @@ class RBGPRNGTest(CommonRandomTest):
     ref_nums = rand_fun(mapped_keys[0], shape=(3,))
     self.assertArraysEqual(rand_nums, ref_nums)
 
-  def test_vmap_random_bits_distribution(self):
-    dtype = jnp.float32
-    keys = lambda: jax.random.split(self.make_key(0), 10)
+  @jtu.sample_product(legacy=[False, True])
+  def test_vmap_random_bits_distribution(self, legacy):
+    with config.legacy_random_uniform(legacy):
+      dtype = jnp.float32
+      keys = lambda: jax.random.split(self.make_key(0), 10)
 
-    def rand(key):
-      nums = jax.vmap(lambda key: random.uniform(key, (1000,), dtype))(key)
-      return nums.flatten()
+      def rand(key):
+        nums = jax.vmap(lambda key: random.uniform(key, (1000,), dtype))(key)
+        return nums.flatten()
 
-    crand = jax.jit(rand)
+      crand = jax.jit(rand)
 
-    uncompiled_samples = rand(keys())
-    compiled_samples = crand(keys())
+      uncompiled_samples = rand(keys())
+      compiled_samples = crand(keys())
 
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckCollisions(samples, jnp.finfo(dtype).nmant)
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf,
-                                      pval=0.005)
+      n_bits = jnp.finfo(dtype).nmant + (0 if legacy else 1)
+      for samples in [uncompiled_samples, compiled_samples]:
+        self._CheckCollisions(samples, n_bits)
+        self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf,
+                                        pval=0.005)
 
   def test_cannot_add(self):
     key = self.make_key(73)

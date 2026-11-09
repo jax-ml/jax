@@ -2391,6 +2391,18 @@ random_normal_mode = enum_state(
     include_in_trace_context=True,
 )
 
+legacy_random_uniform = bool_state(
+    name='jax_legacy_random_uniform',
+    default=True,
+    help=(
+        'If True, jax.random.uniform uses the legacy nmant-bit mantissa '
+        'bitcast conversion. If False, it uses the (nmant + 1)-bit '
+        'shift-and-scale conversion.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 jax_dump_ir_to = string_flag(
     name='jax_dump_ir_to',
     default=os.getenv('JAX_DUMP_IR_TO', ''),

@@ -577,24 +577,41 @@ def _uniform(key: Key, minval, maxval, shape, dtype) -> Array:
   if nmant < 8:
     rng_bits = 8
   bits = _random_bits(key, rng_bits, shape)
-  uint_dtype = UINT_DTYPES[nbits]
-  if rng_bits != nbits:
-    bits = lax.convert_element_type(bits, uint_dtype)
 
-  # The strategy here is to randomize only the mantissa bits with an exponent of
-  # 1 (after applying the bias), then shift and scale to the desired range. The
-  # bit-level transformation we use relies on Numpy and XLA having bit-for-bit
-  # equivalent float representations, which might not be true on all platforms.
-  float_bits = lax.shift_right_logical(
-      bits, jnp.array(rng_bits - nmant, uint_dtype))
-  float_bits = lax.bitwise_or(
-      float_bits,
-      # The double cast is because the TPU backend does not implement `view` on
-      # float64 values => do the `view` in NumPy first, but then ensure that
-      # we have a JAX array that won't be canonicalized further.
-      jnp.asarray(np.array(1.0, dtype).view(float_bits.dtype),
-                  dtype=float_bits.dtype))
-  floats = lax.bitcast_convert_type(float_bits, dtype) - jnp.array(1., dtype)
+  if config.legacy_random_uniform.value:
+    uint_dtype = UINT_DTYPES[nbits]
+    if rng_bits != nbits:
+      bits = lax.convert_element_type(bits, uint_dtype)
+
+    # The strategy here is to randomize only the mantissa bits with an exponent
+    # of 1 (after applying the bias), then shift and scale to the desired range.
+    # The bit-level transformation we use relies on Numpy and XLA having
+    # bit-for-bit equivalent float representations, which might not be true on
+    # all platforms.
+    float_bits = lax.shift_right_logical(
+        bits, jnp.array(rng_bits - nmant, uint_dtype)
+    )
+    float_bits = lax.bitwise_or(
+        float_bits,
+        # The double cast is because the TPU backend does not implement `view`
+        # on float64 values => do the `view` in NumPy first, but then ensure
+        # that we have a JAX array that won't be canonicalized further.
+        jnp.asarray(
+            np.array(1.0, dtype).view(float_bits.dtype), dtype=float_bits.dtype
+        ),
+    )
+    floats = lax.bitcast_convert_type(float_bits, dtype) - jnp.array(1.0, dtype)
+  else:
+    # Convert (nmant + 1)-bit random integers to floats and scale by
+    # 2**-(nmant + 1) to sample uniformly on [0, 1) with spacing 2**-(nmant + 1).
+    n_float_bits = nmant + 1
+    float_bits = lax.shift_right_logical(
+        bits, jnp.array(rng_bits - n_float_bits, bits.dtype)
+    )
+    floats = (
+        lax.convert_element_type(float_bits, dtype)
+        * jnp.array(2.0 ** -n_float_bits, dtype)
+    )
   return lax.max(
       minval,
       lax.reshape(floats * (maxval - minval) + minval, shape))
@@ -1468,8 +1485,11 @@ def _bernoulli(key: Key, p: Array, shape: Shape | None, mode: str) -> Array:
 
   if mode == 'high':
     u1, u2 = uniform(key, (2, *shape), dtype)
-    # resolution of uniform samples is 2 ** -n_mantissa
-    u2 *= 2 ** -dtypes.finfo(dtype).nmant
+    # resolution of uniform samples is 2 ** -n_bits
+    n_bits = dtypes.finfo(dtype).nmant + (
+        0 if config.legacy_random_uniform.value else 1
+    )
+    u2 *= 2 ** -n_bits
     return u2 < p - u1
   else:
     return uniform(key, shape, lax.dtype(p)) < p
@@ -2579,8 +2599,9 @@ def _gumbel(key: Key, shape, dtype, mode) -> Array:
                          shape=(2,) + shape, dtype=dtype)
     # TODO(parkers): The condition is to protect against rounding up but
     # we should be able to add safely with the right addition operation.
-    x = jnp.where(high >= 0.5, high, high + 2 ** -(info.nmant) * low + max(
-        2 ** -(2 * info.nmant + 1), info.tiny))
+    n_bits = info.nmant + (0 if config.legacy_random_uniform.value else 1)
+    x = jnp.where(high >= 0.5, high, high + 2 ** -n_bits * low + max(
+        2 ** -(2 * n_bits + 1), info.tiny))
     return -jnp.log(-jnp.log1p(-x))
   else:
     return -jnp.log(-jnp.log(
