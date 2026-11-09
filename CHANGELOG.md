@@ -82,6 +82,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.numpy.logical_xor`, {func}`jax.numpy.maximum` and
     {func}`jax.numpy.minimum` now uses a parallel prefix scan for integer and
     boolean outputs, which is much faster for long axes ({jax-issue}`#28097`).
+  * On CPU, {func}`jax.random.gamma` and the samplers built on it, such as
+    {func}`jax.random.beta` and {func}`jax.random.dirichlet`, are several times
+    faster for large arrays: the rejection loop now runs in small batches
+    instead of a single vectorized loop over all elements
+    ({jax-issue}`#18984`). The samples are unchanged.
 
 * Bug fixes
   * {func}`jax.scipy.linalg.polar` with `method="qdwh"` now honors
