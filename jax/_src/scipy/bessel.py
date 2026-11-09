@@ -36,6 +36,7 @@ from jax._src.lax.double_word import (
     fast_two_sum,
     scale_f2_pow2,
     split_half,
+    split_half_mask,
     two_prod,
     two_sum,
 )
@@ -363,8 +364,16 @@ def _jn_series(
   if not dtypes.issubdtype(w.dtype, np.complexfloating):
     # Evaluate 1 + sum_{k>=1} (coeff * w^2)^k / (k! * (n + 1)...(n + k))
     # from the inside out (Horner's method) in double-word arithmetic.
-    z2_0, z2_1 = two_prod(w_safe, w_safe)
-    z2_0, z2_1 = coeff * z2_0, coeff * z2_1
+    # Pre-split w_safe / 2 via bitmask truncation so wh * wh (<= 52 bits in f64,
+    # 24 bits in f32) and (wh + wh) * wl (<= 53 bits in f64, 24 bits in f32) are
+    # exact IEEE 754 products; this prevents XLA/LLVM from contracting
+    # ah * ah - w_safe * w_safe in two_prod across separate pre-loop fusions into
+    # an FMA that zeroes out the low word z2_1 on targets with hardware FMA.
+    wh, wl = split_half_mask(0.5 * w_safe)
+    s0, s1 = fast_two_sum(wh * wh, (wh + wh) * wl)
+    z2_0, z2_1 = fast_two_sum(s0, s1 + wl * wl)
+    if not modified:
+      z2_0, z2_1 = -z2_0, -z2_1
 
     def body_f2(i, state):
       t0, t1 = state
