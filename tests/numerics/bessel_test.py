@@ -48,6 +48,14 @@ def _mpmath_i1e(x):
   return mpmath.besseli(1, x) * mpmath.exp(-abs(x))
 
 
+def _i1e_reference(x):
+  # For tiny |x|, Cephes scipy.special.i1e evaluates a Chebyshev expansion in
+  # 0.5 * |x| - 2 whose value at 0 is 0.5 + 2^-53 instead of 0.5.
+  ax = np.abs(x)
+  small = 0.5 * x * (1.0 - ax + 0.625 * x * x)
+  return np.where(ax < 1e-6, small, np.copysign(scipy.special.i1e(x), x))
+
+
 # Region crossover boundaries at |x| in {0.5, 2.625, 8.0} in bessel_i0e and
 # bessel_i1e, plus centers {1.5, 5.25} and nearby transition points.
 _BESSEL_INTERESTING_POINTS = [
@@ -96,20 +104,24 @@ class BesselI1eTest(jtu.JaxTestCase):
         ([*TPU_EUPV1, "tpu_v5p"], {f16: 1.0, f32: 3.0}),
         (["tpu_v6e", "tpu_7x"], {f16: 1.0, f32: 2.0}),
     ]
-    output_ftz = [
-        ("gpu", {bf16: True}),
-    ]
-    ref_fn = lambda x: np.copysign(scipy.special.i1e(x), x)
     util.check_unary_precision(
         self,
         lax.bessel_i1e,
-        ref_fn,
+        _i1e_reference,
         _mpmath_i1e,
         dtype,
         bounds=bounds,
-        output_ftz=output_ftz,
         interesting_points=_BESSEL_INTERESTING_POINTS,
     )
+
+  def test_i1e_reference_accuracy(self):
+    pos = [2.0**-133, 3 * 2.0**-133, 255 * 2.0**-133, 9.99e-7, 1e-6, 1.01e-6]
+    x = np.array([*pos, *(-v for v in pos)], dtype=np.float64)
+    with mpmath.workprec(200):
+      ref = [_mpmath_i1e(mpmath.mpf(float(v))) for v in x]
+      ulp = np.abs(util.ulp_diff_mpmath(_i1e_reference(x), ref, f64, ftz=False))
+    np.testing.assert_array_less(ulp[np.abs(x) < 1e-6], 1.0)
+    np.testing.assert_array_less(ulp[np.abs(x) >= 1e-6], 10.0)
 
 
 def _make_scipy_iv(v: int):
