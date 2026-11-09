@@ -1715,7 +1715,19 @@ def _dynamic_slice_lower(ctx, x, *start_indices, slice_sizes):
   out = mlir.dynamic_slice(ctx, aval_out, x, start_indices=start_indices)
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
+def _dynamic_slice_collective_rule(in_avals, out_avals, *, slice_sizes):
+  in_aval, *_ = in_avals
+  out_aval, = out_avals
+  for dim_size, slice_size, part in safe_zip(
+      in_aval.shape, slice_sizes, in_aval.sharding.spec.partitions):
+    if part is not None and slice_size != dim_size:
+      raise NotImplementedError
+  return mlir.PartitioningRule(per_shard_params={
+      'slice_sizes': out_aval.sharding.shard_shape(out_aval.shape)})
+
+mlir.register_lowering(
+    dynamic_slice_p, _dynamic_slice_lower,
+    shard_map_collective_rule=_dynamic_slice_collective_rule)
 
 
 def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
@@ -1872,7 +1884,19 @@ def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
                                   start_indices=start_indices)
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
-mlir.register_lowering(dynamic_update_slice_p, _dynamic_update_slice_lower)
+def _dynamic_update_slice_collective_rule(in_avals, out_avals):
+  del out_avals
+  op_aval, upd_aval, *_ = in_avals
+  # Partial updates on a sharded dim (upd_size < op_size) need cross-shard comms.
+  for op_size, upd_size, part in safe_zip(
+      op_aval.shape, upd_aval.shape, op_aval.sharding.spec.partitions):
+    if part is not None and upd_size != op_size:
+      raise NotImplementedError
+  return mlir.PartitioningRule()
+
+mlir.register_lowering(
+    dynamic_update_slice_p, _dynamic_update_slice_lower,
+    shard_map_collective_rule=_dynamic_update_slice_collective_rule)
 
 
 def _gather_dtype_rule(operand, indices, *, fill_value, **kwargs):
@@ -2563,7 +2587,52 @@ def _gather_lower(ctx, operand, indices, *,
                      indices_are_sorted=ir.BoolAttr.get(indices_are_sorted))
     return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
-mlir.register_lowering(gather_p, _gather_lower)
+def _gather_collective_rule(
+    in_avals, out_avals, *, dimension_numbers, slice_sizes, out_sharding,
+    **params):
+  del params
+  op_aval, idx_aval = in_avals
+  out_aval, = out_avals
+  op_parts = op_aval.sharding.spec.partitions
+  idx_parts = idx_aval.sharding.spec.partitions
+  dnums = dimension_numbers
+
+  # Sharded index vectors or collapsed dims need an all-gather across shards.
+  if (idx_parts[-1] is not None or
+      any(op_parts[i] is not None for i in dnums.collapsed_slice_dims)):
+    raise NotImplementedError
+
+  # Propagation allows replicated-vs-sharded batch dims, which need a slice.
+  for odim, idim in safe_zip(
+      dnums.operand_batching_dims, dnums.start_indices_batching_dims):
+    if idx_parts[idim] != op_parts[odim]:
+      raise NotImplementedError
+
+  # Sharded window dims only work without comms if unsliced.
+  non_offset_dims = (*dnums.operand_batching_dims, *dnums.collapsed_slice_dims)
+  offset_op_dims = [i for i in range(op_aval.ndim) if i not in non_offset_dims]
+  out_shard_shape = out_aval.sharding.shard_shape(out_aval.shape)
+  shard_slice_sizes = list(slice_sizes)
+  for i, d in safe_zip(offset_op_dims, dnums.offset_dims):
+    if op_parts[i] is not None and slice_sizes[i] != op_aval.shape[i]:
+      raise NotImplementedError
+    shard_slice_sizes[i] = out_shard_shape[d]
+
+  # Explicit out_sharding bypasses propagation; output dims must match inputs.
+  if out_sharding is not None:
+    out_parts = out_aval.sharding.spec.partitions
+    out_offset_parts = tuple(out_parts[d] for d in dnums.offset_dims)
+    out_batch_parts = tuple(
+        p for d, p in enumerate(out_parts) if d not in dnums.offset_dims)
+    if (out_offset_parts != tuple(op_parts[i] for i in offset_op_dims) or
+        out_batch_parts != idx_parts[:-1]):
+      raise NotImplementedError
+
+  return mlir.PartitioningRule(per_shard_params={
+      'slice_sizes': tuple(shard_slice_sizes), 'out_sharding': None})
+
+mlir.register_lowering(
+    gather_p, _gather_lower, shard_map_collective_rule=_gather_collective_rule)
 
 def _scatter_dtype_rule(operand, indices, updates, **kwargs):
   if not dtypes.issubdtype(indices.dtype, np.integer):

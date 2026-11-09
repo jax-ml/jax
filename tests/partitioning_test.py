@@ -1653,5 +1653,119 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with self.assertRaises(core.ShardingTypeError):
       jax.jit(lambda a: jnp.cumsum(a, axis=0)).lower(x)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_dynamic_slice(self, mesh):
+    x = jax.device_put(
+        np.arange(48, dtype=np.float32).reshape(4, 3, 4), P('x', None, 'y'))
+    off = jax.device_put(np.int32(1), P())
+
+    @jax.jit
+    def f(a, i):
+      return lax.dynamic_slice(a, (i, i, i), (4, 1, 4))
+
+    with config.shard_map_partitioning(False):
+      self.assertNotIn('sdy.manual_computation', f.lower(x, off).as_text())
+      expected = f(x, off)
+
+    self.assertIn('sdy.manual_computation', f.lower(x, off).as_text())
+
+    out = f(x, off)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertArraysEqual(out, expected)
+
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda a: lax.dynamic_slice(a, (1, 0, 0), (2, 2, 4))).lower(x)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_dynamic_update_slice(self, mesh):
+    x = jax.device_put(
+        np.arange(48, dtype=np.float32).reshape(4, 3, 4), P('x', None, 'y'))
+    upd = jax.device_put(
+        np.ones((4, 1, 4), dtype=np.float32), P('x', None, 'y'))
+    off = jax.device_put(np.int32(1), P())
+
+    @jax.jit
+    def f(a, u, i):
+      return lax.dynamic_update_slice(a, u, (i, i, i))
+
+    with config.shard_map_partitioning(False):
+      expected = f(x, upd, off)
+
+    out = f(x, upd, off)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertArraysEqual(out, expected)
+
+    bad_upd = jax.device_put(
+        np.zeros((2, 3, 4), dtype=np.float32), P('x', None, 'y'))
+
+    with self.assertRaises(NotImplementedError):
+      jax.jit(
+          lambda a, u: lax.dynamic_update_slice(a, u, (0, 0, 0))
+      ).lower(x, bad_upd)
+
+    rep_upd = jax.device_put(
+        np.zeros((4, 1, 4), dtype=np.float32), P(None, None, None))
+
+    with self.assertRaises(core.ShardingTypeError):
+      jax.jit(
+          lambda a, u: lax.dynamic_update_slice(a, u, (0, 0, 0))
+      ).lower(x, rep_upd)
+
+    # lax.scan allocates its output buffer via lax.empty2 and writes via
+    # dynamic_update_slice.
+    c0 = jax.device_put(
+        np.arange(8, dtype=np.float32).reshape(2, 4), P('x', 'y'))
+
+    @jax.jit
+    def run_scan(c):
+      def body(carry, _):
+        return carry + 1, carry * 2
+
+      return lax.scan(body, c, None, length=3)
+
+    with config.shard_map_partitioning(False):
+      expected_carry, expected_ys = run_scan(c0)
+
+    carry, ys = run_scan(c0)
+    self.assertEqual(carry.sharding, expected_carry.sharding)
+    self.assertEqual(ys.sharding, expected_ys.sharding)
+    self.assertArraysEqual(carry, expected_carry)
+    self.assertArraysEqual(ys, expected_ys)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_gather(self, mesh):
+    x = jax.device_put(
+        np.arange(48, dtype=np.float32).reshape(4, 3, 4), P('x', None, 'y'))
+    table = jax.device_put(
+        np.arange(32, dtype=np.float32).reshape(8, 4), P(None, 'y'))
+    sharded_idx = jax.device_put(
+        np.array([2, 0, 5, 1], dtype=np.int32), P('x'))
+    idx = jax.device_put(np.array([2, 0], dtype=np.int32), P(None))
+
+    @jax.jit
+    def f(a, tbl, s_idx, i):
+      vds = jax.vmap(
+          lambda r, j: lax.dynamic_slice(r, (j, np.int32(0)), (1, 4))
+      )(a, s_idx)
+      emb = tbl.at[s_idx].get(out_sharding=P('x', 'y'))
+      return vds, emb, tbl[i]
+
+    with config.shard_map_partitioning(False):
+      expected = f(x, table, sharded_idx, idx)
+
+    for out, exp in zip(f(x, table, sharded_idx, idx), expected):
+      self.assertEqual(out.sharding, exp.sharding)
+      self.assertArraysEqual(out, exp)
+
+    with self.assertRaises(NotImplementedError):
+      jax.jit(
+          lambda t: t.at[idx].get(out_sharding=P(None, None))
+      ).lower(table)
+
+    with self.assertRaises(NotImplementedError):
+      jax.jit(
+          lambda a: a.at[idx].get(out_sharding=P(None, None, 'y'))
+      ).lower(x)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
