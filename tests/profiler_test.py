@@ -69,6 +69,7 @@ def _worker_func(port: int, started_queue):
 
 
 # We do not allow multiple concurrent profiler sessions.
+@jtu.pytest_mark_if_available("multiaccelerator")
 @jtu.thread_unsafe_test_class()
 class ProfilerTest(unittest.TestCase):
   # These tests simply test that the profiler API does not crash; they do not
