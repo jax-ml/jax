@@ -16,6 +16,7 @@
 import builtins
 import collections
 import itertools
+import math
 
 import numpy as np
 import opt_einsum
@@ -24,6 +25,7 @@ import scipy.special
 from jax._src import dtypes
 from jax._src import util
 
+_abs = builtins.abs
 _slice = builtins.slice
 _max = builtins.max
 _min = builtins.min
@@ -48,6 +50,7 @@ exp = np.exp
 exp2 = np.exp2
 expm1 = np.expm1
 log = np.log
+log2 = np.log2
 log1p = np.log1p
 tanh = np.tanh
 sin = np.sin
@@ -69,6 +72,97 @@ cosh = np.cosh
 asinh = np.arcsinh
 acosh = np.arccosh
 atanh = np.arctanh
+
+
+def _pi_trig_reduce(x):
+  t = np.fmod(x.astype(np.float64), 2.0)
+  k = np.rint(2.0 * t)
+  r = np.where(k == 0.0, t, t - 0.5 * k)
+  q = np.where(np.isfinite(k), k, 0.0).astype(np.int64) & 3
+  return t, r, q
+
+
+def sinpi(x):
+  x = np.asarray(x)
+  with np.errstate(all='ignore'):
+    t, r, q = _pi_trig_reduce(x)
+    theta = np.pi * r
+    res = np.where((q & 1) != 0, np.cos(theta), np.sin(theta))
+    res = np.where((q & 2) != 0, -res, res)
+    res = np.where(np.abs(t) == 1.0, np.copysign(0.0, t), res)
+    return res.astype(x.dtype)
+
+
+def cospi(x):
+  x = np.asarray(x)
+  with np.errstate(all='ignore'):
+    t, r, q = _pi_trig_reduce(x)
+    theta = np.pi * r
+    res = np.where((q & 1) != 0, np.sin(theta), np.cos(theta))
+    res = np.where((q == 1) | (q == 2), -res, res)
+    res = np.where((np.abs(t) == 0.5) | (np.abs(t) == 1.5), 0.0, res)
+    return res.astype(x.dtype)
+
+
+def tanpi(x):
+  x = np.asarray(x)
+  with np.errstate(all='ignore'):
+    t, r, q = _pi_trig_reduce(x)
+    at = np.abs(t)
+    tan_r = np.tan(np.pi * r)
+    res = np.where((q & 1) != 0, -1.0 / tan_r, tan_r)
+    res = np.where(at == 1.0, np.copysign(0.0, -t), res)
+    res = np.where(at == 0.5, np.copysign(np.inf, t), res)
+    res = np.where(at == 1.5, np.copysign(np.inf, -t), res)
+    res = np.where((at == 0.25) | (at == 1.25), np.copysign(1.0, t), res)
+    res = np.where((at == 0.75) | (at == 1.75), np.copysign(1.0, -t), res)
+    return res.astype(x.dtype)
+
+
+def asinpi(x):
+  x = np.asarray(x)
+  with np.errstate(all='ignore'):
+    x64 = x.astype(np.float64)
+    res = np.arcsin(x64) / np.pi
+    res = np.where(np.abs(x64) == 1.0, np.copysign(0.5, x64), res)
+    return res.astype(x.dtype)
+
+
+def acospi(x):
+  x = np.asarray(x)
+  with np.errstate(all='ignore'):
+    x64 = x.astype(np.float64)
+    res = np.arccos(x64) / np.pi
+    res = np.where(x64 == 1.0, 0.0, np.where(x64 == -1.0, 1.0, res))
+    return res.astype(x.dtype)
+
+
+def atanpi(x):
+  x = np.asarray(x)
+  with np.errstate(all='ignore'):
+    x64 = x.astype(np.float64)
+    res = np.arctan(x64) / np.pi
+    res = np.where(np.isinf(x64), np.copysign(0.5, x64), res)
+    return res.astype(x.dtype)
+
+
+def atan2pi(x, y):
+  x, y = np.asarray(x), np.asarray(y)
+  with np.errstate(all='ignore'):
+    x64, y64 = x.astype(np.float64), y.astype(np.float64)
+    res = np.arctan2(x64, y64) / np.pi
+    neg_y = np.signbit(y64)
+    both_inf = np.isinf(x64) & np.isinf(y64)
+    only_x_inf = np.isinf(x64) & np.isfinite(y64)
+    only_y_inf = np.isfinite(x64) & np.isinf(y64)
+    res = np.where(
+        both_inf, np.copysign(np.where(neg_y, 0.75, 0.25), x64), res
+    )
+    res = np.where(only_x_inf, np.copysign(0.5, x64), res)
+    res = np.where(
+        only_y_inf, np.copysign(np.where(neg_y, 1.0, 0.0), x64), res
+    )
+    return res.astype(x.dtype)
 
 def logistic(x): return (1 / (1 + np.exp(-x))).astype(x.dtype)
 def betainc(a, b, x): return scipy.special.betainc(a, b, x).astype(x.dtype)
@@ -131,6 +225,107 @@ def mulhi(x, y):
     widen_dtype = np.dtype(f'{"i" if is_signed else "u"}{widen_bits // 8}')
   prod = x.astype(widen_dtype) * y.astype(widen_dtype)
   return (prod >> bits).astype(dtype)
+
+
+def _float64_fma_scalar(x: float, y: float, z: float) -> float:
+  x, y, z = float(x), float(y), float(z)
+  if math.isnan(x) or math.isnan(y) or math.isnan(z):
+    return math.nan
+  if math.isinf(x) or math.isinf(y):
+    if x == 0.0 or y == 0.0:
+      return math.nan
+    return (x * y) + z
+  if math.isinf(z):
+    return z
+  if x == 0.0 or y == 0.0:
+    return (x * y) + z
+  if z == 0.0:
+    return x * y
+  mx, ex = math.frexp(x)
+  my, ey = math.frexp(y)
+  mz, ez = math.frexp(z)
+  ix = int(math.ldexp(mx, 53))
+  iy = int(math.ldexp(my, 53))
+  iz = int(math.ldexp(mz, 53))
+  ep = ex + ey - 106
+  ec = ez - 53
+  e0 = _min(ep, ec)
+  total = ((ix * iy) << (ep - e0)) + (iz << (ec - e0))
+  if total == 0:
+    return 0.0
+  sign = -1.0 if total < 0 else 1.0
+  m = _abs(total)
+  e_top = e0 + m.bit_length() - 1
+  q = _max(-1074, e_top - 52)
+  if e0 >= q:
+    q_int = m << (e0 - q)
+  else:
+    shift = q - e0
+    q_int = m >> shift
+    rem = m & ((1 << shift) - 1)
+    half = 1 << (shift - 1)
+    if rem > half or (rem == half and (q_int & 1)):
+      q_int += 1
+  if q + q_int.bit_length() - 1 > 1023:
+    return math.copysign(math.inf, sign)
+  return math.copysign(math.ldexp(q_int, q), sign)
+
+
+_float64_fma = np.vectorize(
+    getattr(math, 'fma', _float64_fma_scalar), otypes=[np.float64]
+)
+
+
+def fma(a, b, c):
+  dtype = dtypes.result_type(a, b, c)
+  if dtype == np.float64:
+    return _float64_fma(a, b, c).astype(np.float64)
+  # For types narrower than float64 (float32, float16, bfloat16, float8_*),
+  # the exact product a * b has at most 48 significand bits and fits exactly in
+  # float64 (53 bits). Compute (a * b) + c in float64 with Knuth's 2Sum and
+  # Round-To-Odd so the subsequent narrowing to dtype never double-rounds.
+  da = np.asarray(a, dtype=np.float64)
+  db = np.asarray(b, dtype=np.float64)
+  dc = np.asarray(c, dtype=np.float64)
+  with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+    p = np.multiply(da, db)
+    s = np.add(p, dc)
+    v = s - p
+    err = (p - (s - v)) + (dc - v)
+  s_arr = np.asarray(s, dtype=np.float64)
+  nudge_64 = (
+      np.isfinite(s_arr) & (err != 0) & ((s_arr.view(np.uint64) & 1) == 0)
+  )
+  s_rto = np.where(
+      nudge_64,
+      np.nextafter(s_arr, np.where(err > 0, np.inf, -np.inf)),
+      s_arr,
+  )
+  with np.errstate(over='ignore'):
+    f = s_rto.astype(np.float32)
+  if dtype == np.float32:
+    return f
+  # ml_dtypes narrow floats (such as bfloat16) cast float64 -> float32 -> dtype,
+  # so apply Round-To-Odd in float32 before narrowing to dtype.
+  fd = f.astype(np.float64)
+  nudge_32 = (
+      np.isfinite(s_rto)
+      & np.isfinite(f)
+      & (fd != s_rto)
+      & ((f.view(np.uint32) & 1) == 0)
+  )
+  f_rto = np.where(
+      nudge_32,
+      np.nextafter(
+          f, np.where(s_rto > fd, np.float32(np.inf), np.float32(-np.inf))
+      ),
+      f,
+  )
+  with np.errstate(over='ignore'):
+    return f_rto.astype(dtype)
+
+
+fmuladd = fma
 
 
 def div(lhs, rhs):
@@ -314,7 +509,7 @@ def ragged_dot(
   assert lhs.dtype == rhs.dtype
 
   out = np.zeros((m, n), dtype=lhs.dtype)
-  result_iota = np.expand_dims(np.arange(out.shape[0]), list(range(1, out.ndim)))
+  result_iota = np.expand_dims(np.arange(out.shape[0]), tuple(range(1, out.ndim)))
   result_iota = result_iota.astype(group_sizes.dtype)
   start = np.asarray(0, dtype=group_sizes.dtype)
   for i, size in enumerate(group_sizes):
@@ -560,12 +755,13 @@ def _reducer_from_pyfunc(py_binop, init_val):
     return result
   return reducer
 
-def top_k(operand, k, axis=-1):
+def top_k(operand, k, axis=-1, *, is_stable=True):
   if axis < 0:
     axis = operand.ndim + axis
   assert 0 <= axis < operand.ndim
   operand_flipped = np.flip(operand, axis)
-  indices_flipped = np.argsort(operand_flipped, axis=axis, kind="stable")
+  sort_kind = "stable" if is_stable else "quicksort"
+  indices_flipped = np.argsort(operand_flipped, axis=axis, kind=sort_kind)
   indices_all = (operand.shape[axis] - 1 - np.flip(indices_flipped, axis)).astype(np.int32)
   indices = indices_all[(_slice(None),) * axis + (_slice(k),)]
   values = np.take_along_axis(operand, indices, axis=axis)

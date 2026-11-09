@@ -66,7 +66,7 @@ fi
 
 if [[ ! -z ${JAXCI_XLA_GIT_DIR} ]]; then
   echo "INFO: Overriding XLA to be read from $JAXCI_XLA_GIT_DIR instead of the"
-  echo "pinned version in the WORKSPACE."
+  echo "pinned version in MODULE.bazel."
   echo "If you would like to revert this behavior, unset JAXCI_CLONE_MAIN_XLA"
   echo "and JAXCI_XLA_COMMIT in your environment. Note that the Bazel RBE test"
   echo "commands overrides the XLA repository and thus require a local copy of"

@@ -84,18 +84,42 @@ def _get_y_shapes(y_dtype, shape, rowvar):
     return [(1, shape[-1]), (2, shape[-1]), (5, shape[-1])]
   return [(shape[0], 1), (shape[0], 2), (shape[0], 5)]
 
+def _numpy_minmax(a, axis=None, **kwargs):
+  if jtu.numpy_version() >= (2, 6, 0):
+    return np.minmax(a, axis, **kwargs)
+  if isinstance(kwargs.get("initial", None), tuple):
+    initial_min, initial_max = kwargs.pop("initial")
+    kwargs_min = {**kwargs, "initial": initial_min}
+    kwargs_max = {**kwargs, "initial": initial_max}
+  else:
+    kwargs_min = kwargs_max = kwargs
+  return np.min(a, axis, **kwargs_min), np.max(a, axis, **kwargs_max)
+
+def get_np_op(name):
+  if name == "minmax" and not hasattr(np, name):
+    return _numpy_minmax
+  return getattr(np, name)
+
+def get_jnp_op(name, use_method=False):
+  if use_method:
+    return lambda x, *args, **kwargs: getattr(jnp.asarray(x), name)(*args, **kwargs)
+  return getattr(jnp, name)
+
+def _to_dtype(arrs, dtype):
+  return jax.tree.map(lambda x: x.astype(dtype), arrs)
+
 
 OpRecord = collections.namedtuple(
   "OpRecord",
   ["name", "nargs", "dtypes", "shapes", "rng_factory", "diff_modes",
-   "test_name", "check_dtypes", "tolerance", "inexact", "kwargs"])
+   "test_name", "check_dtypes", "tolerance", "inexact", "kwargs", "use_method"])
 
 def op_record(name, nargs, dtypes, shapes, rng_factory, diff_modes,
               test_name=None, check_dtypes=True,
-              tolerance=None, inexact=False, kwargs=None):
+              tolerance=None, inexact=False, kwargs=None, use_method=False):
   test_name = test_name or name
   return OpRecord(name, nargs, dtypes, shapes, rng_factory, diff_modes,
-                  test_name, check_dtypes, tolerance, inexact, kwargs)
+                  test_name, check_dtypes, tolerance, inexact, kwargs, use_method)
 
 JAX_REDUCER_RECORDS = [
     op_record("mean", 1, number_dtypes, nonempty_shapes, jtu.rand_default, [],
@@ -106,6 +130,13 @@ JAX_REDUCER_RECORDS = [
               [], inexact=True),
     op_record("nanprod", 1, all_dtypes, all_shapes, jtu.rand_some_nan, []),
     op_record("nansum", 1, number_dtypes, all_shapes, jtu.rand_some_nan, []),
+    # Array method versions
+    op_record("mean", 1, number_dtypes, nonempty_shapes, jtu.rand_default, [],
+              inexact=True, use_method=True),
+    op_record("prod", 1, all_dtypes, all_shapes, jtu.rand_small_positive, [],
+              use_method=True),
+    op_record("sum", 1, all_dtypes, all_shapes, jtu.rand_default, [],
+              use_method=True),
 ]
 
 JAX_REDUCER_INITIAL_RECORDS = [
@@ -114,11 +145,21 @@ JAX_REDUCER_INITIAL_RECORDS = [
               tolerance={jnp.bfloat16: 2e-2}),
     op_record("max", 1, all_dtypes + custom_float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("min", 1, all_dtypes + custom_float_dtypes, all_shapes, jtu.rand_default, []),
+    op_record("minmax", 1, all_dtypes + custom_float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("nanprod", 1, inexact_dtypes, all_shapes, jtu.rand_small_positive, []),
     op_record("nansum", 1, inexact_dtypes, all_shapes, jtu.rand_default, [],
               tolerance={jnp.bfloat16: 3e-2}),
     op_record("nanmax", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
     op_record("nanmin", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
+    # Array method versions
+    op_record("prod", 1, all_dtypes, all_shapes, jtu.rand_small_positive, [],
+              use_method=True),
+    op_record("sum", 1, all_dtypes, all_shapes, jtu.rand_default, [],
+              tolerance={jnp.bfloat16: 2e-2}, use_method=True),
+    op_record("max", 1, all_dtypes + custom_float_dtypes, all_shapes, jtu.rand_default, [],
+              use_method=True),
+    op_record("min", 1, all_dtypes + custom_float_dtypes, all_shapes, jtu.rand_default, [],
+              use_method=True),
 ]
 
 JAX_REDUCER_WHERE_NO_INITIAL_RECORDS = [
@@ -127,15 +168,26 @@ JAX_REDUCER_WHERE_NO_INITIAL_RECORDS = [
     op_record("mean", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
               inexact=True),
     op_record("var", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
-              inexact=True),
+              inexact=True, tolerance={jnp.float16: 3e-3}),
     op_record("std", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
-              inexact=True),
+              inexact=True, tolerance={jnp.float16: 3e-3}),
     op_record("nanmean", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
               inexact=True, tolerance={np.float16: 3e-3}),
     op_record("nanvar", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
               inexact=True, tolerance={np.float16: 3e-3}),
     op_record("nanstd", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
               inexact=True, tolerance={np.float16: 1e-3}),
+    # Array method versions
+    op_record("all", 1, bool_dtypes, all_shapes, jtu.rand_some_zero, [],
+              use_method=True),
+    op_record("any", 1, bool_dtypes, all_shapes, jtu.rand_some_zero, [],
+              use_method=True),
+    op_record("mean", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
+              inexact=True, use_method=True),
+    op_record("var", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
+              inexact=True, use_method=True, tolerance={jnp.float16: 3e-3}),
+    op_record("std", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
+              inexact=True, use_method=True, tolerance={jnp.float16: 3e-3}),
 ]
 
 JAX_REDUCER_NO_DTYPE_RECORDS = [
@@ -143,6 +195,7 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("any", 1, all_dtypes, all_shapes, jtu.rand_some_zero, []),
     op_record("max", 1, all_dtypes, nonempty_shapes, jtu.rand_default, []),
     op_record("min", 1, all_dtypes, nonempty_shapes, jtu.rand_default, []),
+    op_record("minmax", 1, all_dtypes, nonempty_shapes, jtu.rand_default, []),
     op_record("var", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
               inexact=True, tolerance={jnp.bfloat16: 2e-2}),
     op_record("std", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
@@ -154,11 +207,31 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("nanstd", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan,
               [], inexact=True),
     op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default, []),
+    # Array method versions
+    op_record("all", 1, all_dtypes, all_shapes, jtu.rand_some_zero, [],
+              use_method=True),
+    op_record("any", 1, all_dtypes, all_shapes, jtu.rand_some_zero, [],
+              use_method=True),
+    op_record("max", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
+              use_method=True),
+    op_record("min", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
+              use_method=True),
+    op_record("var", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
+              inexact=True, tolerance={jnp.bfloat16: 2e-2}, use_method=True),
+    op_record("std", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
+              inexact=True, use_method=True),
+    op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default, [],
+              use_method=True),
 ]
 
 JAX_REDUCER_PROMOTE_INT_RECORDS = [
     op_record("prod", 1, all_dtypes, all_shapes, jtu.rand_small_positive, []),
     op_record("sum", 1, all_dtypes, all_shapes, jtu.rand_default, []),
+    # Array method versions
+    op_record("prod", 1, all_dtypes, all_shapes, jtu.rand_small_positive, [],
+              use_method=True),
+    op_record("sum", 1, all_dtypes, all_shapes, jtu.rand_default, [],
+              use_method=True),
 ]
 
 def _reducer_output_dtype(name: str, input_dtype: np.dtype, promote_integers: bool = True) -> np.dtype:
@@ -192,7 +265,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
+      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
+            use_method=rec.use_method)],
       [dict(shape=shape, axis=axis, dtype=dtype)
         for shape in rec.shapes
         for dtype in rec.dtypes
@@ -206,9 +280,9 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     for rec in JAX_REDUCER_RECORDS
   ))
   def testReducer(self, name, rng_factory, shape, dtype, out_dtype,
-                  axis, keepdims, inexact):
-    np_op = getattr(np, name)
-    jnp_op = getattr(jnp, name)
+                  axis, keepdims, inexact, use_method):
+    np_op = get_np_op(name)
+    jnp_op = get_jnp_op(name, use_method)
     rng = rng_factory(self.rng())
     @jtu.ignore_warning(category=np.exceptions.ComplexWarning)
     @jtu.ignore_warning(category=RuntimeWarning,
@@ -247,7 +321,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
-            tolerance=rec.tolerance)],
+            tolerance=rec.tolerance, use_method=rec.use_method)],
       [dict(shape=shape, axis=axis, dtype=dtype)
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
@@ -258,9 +332,9 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     for rec in JAX_REDUCER_NO_DTYPE_RECORDS
   ))
   def testReducerNoDtype(self, name, rng_factory, shape, dtype, axis,
-                         keepdims, inexact, tolerance):
-    np_op = getattr(np, name)
-    jnp_op = getattr(jnp, name)
+                         keepdims, inexact, tolerance, use_method):
+    np_op = get_np_op(name)
+    jnp_op = get_jnp_op(name, use_method)
     rng = rng_factory(self.rng())
     is_bf16_nan_test = (dtype == jnp.bfloat16 and
                         rng_factory.__name__ == 'rand_some_nan')
@@ -274,7 +348,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
         x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims)
-      res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
+      res = res if not is_bf16_nan_test else _to_dtype(res, jnp.bfloat16)
       return res
 
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims)
@@ -286,7 +360,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @jtu.sample_product(rec = JAX_REDUCER_INITIAL_RECORDS)
   def testReducerBadInitial(self, rec):
-    jnp_op = getattr(jnp, rec.name)
+    jnp_op = get_jnp_op(rec.name, rec.use_method)
     arr = jnp.ones((2, 3, 4))
     initial = jnp.zeros((1, 2, 3))
     msg = r"initial value must be a scalar. Got array of shape \(1, 2, 3\)"
@@ -295,7 +369,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
+      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
+            use_method=rec.use_method)],
       [dict(shape=shape, axis=axis, dtype=dtype)
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
@@ -307,9 +382,9 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     for rec in JAX_REDUCER_INITIAL_RECORDS
   ))
   def testReducerInitial(self, name, rng_factory, shape, dtype, axis,
-                         keepdims, initial, inexact):
-    np_op = getattr(np, name)
-    jnp_op = getattr(jnp, name)
+                         keepdims, initial, inexact, use_method):
+    np_op = get_np_op(name)
+    jnp_op = get_jnp_op(name, use_method)
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     @jtu.ignore_warning(category=RuntimeWarning,
@@ -321,19 +396,20 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
         x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, initial=initial)
-      res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
-      return res.astype(_reducer_output_dtype(name, x.dtype))
+      res = res if not is_bf16_nan_test else _to_dtype(res, jnp.bfloat16)
+      return _to_dtype(res, _reducer_output_dtype(name, x.dtype))
 
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial)
     jnp_fun = jtu.ignore_warning(category=np.exceptions.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
-    tol = {jnp.bfloat16: 3E-2}
+    tol = {jnp.bfloat16: 3E-2, jnp.float16: 1E-2}
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
+      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
+            use_method=rec.use_method)],
       [dict(shape=shape, axis=axis, dtype=dtype)
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
@@ -346,9 +422,10 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     for rec in JAX_REDUCER_PROMOTE_INT_RECORDS
   ))
   def testReducerPromoteInt(self, name, rng_factory, shape, dtype, axis,
-                            keepdims, initial, inexact, promote_integers):
-    np_op = getattr(np, name)
-    jnp_op = getattr(jnp, name)
+                            keepdims, initial, inexact, promote_integers,
+                            use_method):
+    np_op = get_np_op(name)
+    jnp_op = get_jnp_op(name, use_method)
     rng = rng_factory(self.rng())
     is_bf16_nan_test = (dtype == jnp.bfloat16 and
                         rng_factory.__name__ == 'rand_some_nan')
@@ -361,8 +438,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
         x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, initial=initial)
-      res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
-      return res.astype(_reducer_output_dtype(name, x.dtype, promote_integers))
+      res = res if not is_bf16_nan_test else _to_dtype(res, jnp.bfloat16)
+      return _to_dtype(res, _reducer_output_dtype(name, x.dtype, promote_integers))
 
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial, promote_integers=promote_integers)
     jnp_fun = jtu.ignore_warning(category=np.exceptions.ComplexWarning)(jnp_fun)
@@ -373,7 +450,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
+      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
+            use_method=rec.use_method)],
       [dict(shape=shape, axis=axis)
         for shape in rec.shapes if np.prod(shape) == 0
         for axis in range(-len(shape), len(shape)) if shape[axis] >= 1
@@ -384,9 +462,9 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     for rec in JAX_REDUCER_INITIAL_RECORDS
   ))
   def testReducerNoInitialZeroDims(self, name, rng_factory, shape, dtype, axis,
-                                   keepdims, inexact):
-    np_op = getattr(np, name)
-    jnp_op = getattr(jnp, name)
+                                   keepdims, inexact, use_method):
+    np_op = get_np_op(name)
+    jnp_op = get_jnp_op(name, use_method)
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     @jtu.ignore_warning(category=RuntimeWarning,
@@ -398,8 +476,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
         x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims)
-      res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
-      return res.astype(_reducer_output_dtype(name, x.dtype))
+      res = res if not is_bf16_nan_test else _to_dtype(res, jnp.bfloat16)
+      return _to_dtype(res, _reducer_output_dtype(name, x.dtype))
 
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims)
     jnp_fun = jtu.ignore_warning(category=np.exceptions.ComplexWarning)(jnp_fun)
@@ -411,7 +489,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
-            tol=rec.tolerance)],
+            tol=rec.tolerance, use_method=rec.use_method)],
       [dict(shape=shape, axis=axis, dtype=dtype, whereshape=whereshape)
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
@@ -424,12 +502,12 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     for rec in JAX_REDUCER_INITIAL_RECORDS
   ))
   def testReducerWhere(self, name, rng_factory, shape, dtype, axis,
-                       keepdims, initial, inexact, whereshape, tol):
-    np_op = getattr(np, name)
-    jnp_op = getattr(jnp, name)
+                       keepdims, initial, inexact, whereshape, tol, use_method):
+    np_op = get_np_op(name)
+    jnp_op = get_jnp_op(name, use_method)
     if (shape in [()] + scalar_shapes and
         dtype in [jnp.int16, jnp.uint16] and
-        jnp_op in [jnp.min, jnp.max]):
+        name in ["min", "max"]):
       self.skipTest("Known XLA failure; see https://github.com/jax-ml/jax/issues/4971.")
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
@@ -444,8 +522,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
         x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, initial=initial, where=where)
-      res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
-      return res.astype(_reducer_output_dtype(name, x.dtype))
+      res = res if not is_bf16_nan_test else _to_dtype(res, jnp.bfloat16)
+      return _to_dtype(res, _reducer_output_dtype(name, x.dtype))
 
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial, where=where)
     jnp_fun = jtu.ignore_warning(category=np.exceptions.ComplexWarning)(jnp_fun)
@@ -458,7 +536,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     dtype = rec.dtypes[0]
     x = jnp.zeros((10,), dtype)
     where = jnp.ones(10, dtype=int)
-    func = getattr(jnp, rec.name)
+    func = get_jnp_op(rec.name, rec.use_method)
     with self.assertRaisesRegex(
         ValueError, f"jnp.{rec.name}: where must be None or a boolean array"):
       func(x, where=where, initial=jnp.array(0, dtype=dtype))
@@ -468,7 +546,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     dtype = rec.dtypes[0]
     x = jnp.zeros((10,), dtype)
     where = jnp.ones(10, dtype=int)
-    func = getattr(jnp, rec.name)
+    func = get_jnp_op(rec.name, rec.use_method)
     with self.assertRaisesRegex(
         ValueError, f"jnp.{rec.name}: where must be None or a boolean array"):
       func(x, where=where)
@@ -476,7 +554,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
-            tol=rec.tolerance)],
+            tol=rec.tolerance, use_method=rec.use_method)],
       [dict(shape=shape, axis=axis, dtype=dtype, whereshape=whereshape)
         for shape in rec.shapes for dtype in rec.dtypes
         for whereshape in _compatible_shapes(shape)
@@ -487,9 +565,9 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     ) for rec in JAX_REDUCER_WHERE_NO_INITIAL_RECORDS
   ))
   def testReducerWhereNoInitial(self, name, rng_factory, shape, dtype, axis,
-                                keepdims, inexact, whereshape, tol):
-    np_op = getattr(np, name)
-    jnp_op = getattr(jnp, name)
+                                keepdims, inexact, whereshape, tol, use_method):
+    np_op = get_np_op(name)
+    jnp_op = get_jnp_op(name, use_method)
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16
     # Do not pass where via args_maker as that is incompatible with _promote_like_jnp.
@@ -507,7 +585,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
         x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, where=where)
-      res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
+      res = res if not is_bf16_nan_test else _to_dtype(res, jnp.bfloat16)
       return res
 
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, where=where)
@@ -633,31 +711,44 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertTrue(np.isnan(jnp_fn(x, ddof=size + 2)))
 
   @jtu.sample_product(
+    test_fn=['nanvar', 'nanstd'],
     shape=[(5,), (10, 5)],
     dtype=all_dtypes,
     out_dtype=inexact_dtypes,
     axis=[None, 0, -1],
-    ddof=[0, 1, 2],
+    ddof_correction=[(None, None), (0, None), (1, None), (2, None),
+                     (None, 0), (None, 1), (None, 2), (0, 0), (1, 0)],
     keepdims=[False, True],
   )
-  def testNanVar(self, shape, dtype, out_dtype, axis, ddof, keepdims):
+  def testNanStdOrVar(self, test_fn, shape, dtype, out_dtype, axis, ddof_correction, keepdims):
+    np_fn = getattr(np, test_fn)
+    jnp_fn = getattr(jnp, test_fn)
+    ddof, correction = ddof_correction
     rng = jtu.rand_some_nan(self.rng())
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Degrees of freedom <= 0 for slice.")
     @jtu.ignore_warning(category=np.exceptions.ComplexWarning)
     def np_fun(x):
+      ddof_correction_kwargs = {}
+      if ddof is not None:
+        ddof_correction_kwargs["ddof"] = ddof
+      if correction is not None:
+        ddof_correction_kwargs["correction"] = correction
       # Numpy fails with bfloat16 inputs
-      out = np.nanvar(x.astype(np.float32 if dtype == dtypes.bfloat16 else dtype),
-                      dtype=np.float32 if out_dtype == dtypes.bfloat16 else out_dtype,
-                      axis=axis, ddof=ddof, keepdims=keepdims)
+      out = np_fn(x.astype(np.float32 if dtype == dtypes.bfloat16 else dtype),
+                  dtype=np.float32 if out_dtype == dtypes.bfloat16 else out_dtype,
+                  axis=axis, keepdims=keepdims, **ddof_correction_kwargs)
       return out.astype(out_dtype)
-    jnp_fun = partial(jnp.nanvar, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
+    jnp_fun = partial(jnp_fn, dtype=out_dtype, axis=axis, ddof=ddof, correction=correction,
+                      keepdims=keepdims)
     tol = jtu.tolerance(out_dtype, {np.float16: 1e-1, np.float32: 1e-3,
                                     np.float64: 1e-3, np.complex64: 1e-3,
                                     np.complex128: 5e-4})
     if (jnp.issubdtype(dtype, jnp.complexfloating) and
         not jnp.issubdtype(out_dtype, jnp.complexfloating)):
+      self.assertRaises(ValueError, lambda: jnp_fun(*args_maker()))
+    elif ddof is not None and correction is not None:
       self.assertRaises(ValueError, lambda: jnp_fun(*args_maker()))
     else:
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
@@ -781,7 +872,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @unittest.skipIf(jtu.numpy_version() < (2, 2, 0), "test covers NumPy 2.2+ behavior.")
   @jtu.sample_product(
       shape=[(1, 3), (3, 1)],
       rowvar=[True, False]
@@ -958,19 +1048,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       return [x]
     kwargs = dict(axis=axis, dtype=out_dtype, include_initial=include_initial)
 
-    if jtu.numpy_version() >= (2, 1, 0):
-      np_op = np.cumulative_sum
-    else:
-      def np_op(x, axis=None, dtype=None, include_initial=False):
-        axis = axis or 0
-        out = np.cumsum(x, axis=axis, dtype=dtype or x.dtype)
-        if include_initial:
-          zeros_shape = list(x.shape)
-          zeros_shape[axis] = 1
-          out = jnp.concat([jnp.zeros(zeros_shape, dtype=out.dtype), out], axis=axis)
-        return out
-
-    np_fun = lambda x: np_op(x, **kwargs)
+    np_fun = lambda x: np.cumulative_sum(x, **kwargs)
     jnp_fun = lambda x: jnp.cumulative_sum(x, **kwargs)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                             rtol={jnp.bfloat16: 5e-2})
@@ -1042,19 +1120,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       return [x]
     kwargs = dict(axis=axis, dtype=out_dtype, include_initial=include_initial)
 
-    if jtu.numpy_version() >= (2, 1, 0):
-      np_op = np.cumulative_prod
-    else:
-      def np_op(x, axis=None, dtype=None, include_initial=False):
-        axis = axis or 0
-        out = np.cumprod(x, axis=axis, dtype=dtype or x.dtype)
-        if include_initial:
-          ones_shape = list(x.shape)
-          ones_shape[axis] = 1
-          out = jnp.concat([jnp.ones(ones_shape, dtype=out.dtype), out], axis=axis)
-        return out
-
-    np_fun = lambda x: np_op(x, **kwargs)
+    np_fun = lambda x: np.cumulative_prod(x, **kwargs)
     jnp_fun = lambda x: jnp.cumulative_prod(x, **kwargs)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
@@ -1141,6 +1207,103 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     tol = {jnp.float16: 1e-2, dtypes.bfloat16: 1e-1, jnp.float32: 1e-5}
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, tol=tol)
+
+  @jtu.sample_product(
+    opname=['quantile', 'nanquantile', 'percentile', 'nanpercentile'],
+    case=[
+      ((1., 10.), (0., 1.)),
+      ((1., 2., 10.), (0., 0., 1.)),
+      ((1., 2., 10.), (0., 1., 0.)),
+      ((10., 1., 2.), (1., 0., 1.)),
+    ],
+    vector_q=[False, True],
+  )
+  def testWeightedQuantileZeroWeight(self, opname, case, vector_q):
+    values, weights = (np.asarray(x, dtype=np.float32) for x in case)
+    q = np.asarray([0., 0.5, 1.] if vector_q else 0., dtype=np.float32)
+    if 'percentile' in opname:
+      q = q * 100
+
+    def args_maker():
+      return [values, q, weights]
+
+    def np_fun(data, q, weights):
+      return getattr(np, opname)(
+          data, q, weights=weights, method='inverted_cdf')
+
+    def jnp_fun(data, q, weights):
+      return getattr(jnp, opname)(
+          data, q, weights=weights, method='inverted_cdf')
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+     for shape, axis in (
+         ((0,), None),
+         ((0,), 0),
+         ((0, 4), 0),
+         ((0, 4), None),
+         ((3, 0), 1),
+         ((3, 0), None),
+         ((2, 0, 3), (0, 1)),
+         ((2, 0, 3), (1, 2)),
+     )],
+    opname=["nanquantile", "nanpercentile"],
+    keepdims=[False, True],
+  )
+  @jtu.ignore_warning(category=RuntimeWarning, message="Mean of empty slice")
+  def testNanQuantileEmptyReduction(self, shape, axis, opname, keepdims):
+    is_percentile = "percentile" in opname
+    q = np.array(
+      [25.0, 50.0, 75.0] if is_percentile else [0.25, 0.5, 0.75],
+      dtype=np.float32,
+    )
+    args_maker = lambda: [np.empty(shape, dtype=np.float32)]
+    np_fun = partial(
+      getattr(np, opname), q=q, axis=axis, keepdims=keepdims)
+    jnp_fun = partial(
+      getattr(jnp, opname), q=q, axis=axis, keepdims=keepdims)
+
+    self._CheckAgainstNumpy(
+      np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(
+      jnp_fun, args_maker, check_dtypes=False)
+
+  def testMedianEmptyReductionRaises(self):
+    x = np.empty((0,), dtype=np.float32)
+    msg = "median reduction axis must be non-empty"
+    with self.assertRaisesRegex(ValueError, msg):
+      jnp.median(x)
+    with self.assertRaisesRegex(ValueError, msg):
+      jax.jit(jnp.median)(x)
+
+  def testMedianEmptyArrayNonEmptyReductionAxis(self):
+    # Array is empty, but the reduction axis itself is not.
+    x = np.empty((0, 3), dtype=np.float32)
+    np_fun = partial(np.median, axis=1)
+    jnp_fun = partial(jnp.median, axis=1)
+    args_maker = lambda: [x]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=False)
+
+  @jtu.sample_product(
+      initial=[(-5, -5), (15, 15), (-5, 15), (15, -5)]
+  )
+  def testMinmaxInitialTuple(self, initial):
+    args_maker = lambda: [np.arange(10, dtype='int32')]
+    np_fun = partial(_numpy_minmax, initial=initial)
+    jnp_fun = partial(jnp.minmax, initial=initial)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testMinmaxSinglePass(self):
+    x = jnp.arange(10)
+    jaxpr = jax.make_jaxpr(jnp.minmax)(x)
+    reduce_eqns = [eqn for eqn in jaxpr.eqns if eqn.primitive is jax.lax.reduce_p]
+    self.assertLen(reduce_eqns, 1)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

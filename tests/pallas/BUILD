@@ -60,7 +60,6 @@ jax_multiplatform_test(
         "tpu",
     ],
     enable_configs = [
-        "gpu_a100",
         "gpu_h100",
         "gpu_b200",
     ],
@@ -71,12 +70,11 @@ jax_multiplatform_test(
     },
     deps = [
         "//jax/_src/pallas:pallas_test_util",
+        "//jax/_src/pallas/mosaic_gpu:pallas_call",
         "//jax/experimental:pallas",
-        "//jax/experimental:pallas_gpu_ops",
         "//jax/experimental:pallas_mosaic_gpu",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
-        "//jax/experimental:pallas_triton",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -99,33 +97,39 @@ jax_py_test(
 )
 
 jax_multiplatform_test(
+    name = "utils_test",
+    srcs = [
+        "utils_test.py",
+    ],
+    enable_backends = [],
+    enable_configs = [
+        "cpu",
+    ],
+    deps = [
+        "//jax/_src:hypothesis_test_util",
+        "//jax/_src/pallas",
+        "//jax/experimental:pallas",
+    ] + py_deps([
+        "absl/testing",
+        "hypothesis",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "ops_test",
     srcs = [
         "ops_test.py",
     ],
-    disable_configs = [
-        "gpu_v100",
-        "gpu_v100_x32",
-        "gpu_p100",
-        "gpu_p100_x32",
+    enable_backends = [
+        "cpu",
+        "tpu",
     ],
     enable_configs = [
-        "gpu_a100",
-        "gpu_a100_x32",
-        "gpu_h100",
-        "gpu_h100_x32",
-        "gpu_b200",
         "tpu_v6e",
     ],
-    env = {
-        "JAX_PALLAS_USE_MOSAIC_GPU": "0",
-    },
-    minimal_shard_count = {
-        "tpu": 8,
-    },
     shard_count = {
         "cpu": 16,
-        "gpu": 32,
         "tpu": 16,
     },
     tags = [
@@ -139,7 +143,6 @@ jax_multiplatform_test(
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
-        "//jax/experimental:pallas_triton",  # build_cleaner: keep
     ] + py_deps([
         "absl/testing:flagsaver",
         "absl/testing",
@@ -191,10 +194,6 @@ jax_multiplatform_test(
         "ops_test.py",
     ],
     disable_configs = [
-        "gpu_v100",
-        "gpu_v100_x32",
-        "gpu_p100",
-        "gpu_p100_x32",
         "gpu_a100",
         "gpu_a100_x32",
     ],
@@ -206,9 +205,6 @@ jax_multiplatform_test(
         "gpu_h100_x32",
         "gpu_b200",
     ],
-    env = {
-        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
-    },
     shard_count = 16,
     tags = [
         "mosaic_gpu_test",
@@ -219,10 +215,10 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
+        "//jax/_src/pallas/mosaic_gpu:pallas_call",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax/experimental:pallas_tpu",
-        "//jax/experimental:pallas_triton",  # build_cleaner: keep
     ] + py_deps([
         "absl/testing:flagsaver",
         "absl/testing",
@@ -262,18 +258,12 @@ jax_multiplatform_test(
         "pallas_vmap_test.py",
     ],
     enable_backends = ["cpu"],
-    enable_configs = [
-        "gpu_a100_x32",
-        "gpu_h100_x32",
-        "gpu_b200",
-    ],
     shard_count = 4,
     deps = [
+        "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas",
-        "//jax/experimental:pallas_gpu_ops",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
-        "//jax/experimental:pallas_triton",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -287,18 +277,50 @@ jax_multiplatform_test(
     ],
     enable_backends = [],
     enable_configs = [
+        "gpu_a100",
+        "gpu_a100_x32",
         "gpu_h100_x32",
         "gpu_h100",
         "gpu_b200",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
-    shard_count = 8,
+    shard_count = 24,
     tags = [
         "mosaic_gpu_test",
         "noasan",
         "notsan",  # Times out.
     ],
     deps = [
+        "//jax/_src/pallas/mosaic_gpu:pallas_call",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "mgpu_layout_rules_test",
+    srcs = [
+        "mgpu_layout_rules_test.py",
+    ],
+    enable_backends = [],
+    enable_configs = [
+        "cpu",
+        "cpu_x32",
+        "gpu_a100",
+        "gpu_a100_x32",
+        "gpu_h100_x32",
+        "gpu_h100",
+        "gpu_b200",
+    ],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
+    tags = [
+        "mosaic_gpu_test",
+    ],
+    deps = [
+        "//jax/_src/pallas/mosaic_gpu:pallas_call",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
     ] + py_deps([
@@ -312,7 +334,6 @@ jax_multiplatform_test(
     srcs = ["export_back_compat_pallas_test.py"],
     enable_backends = ["cpu"],
     enable_configs = [
-        "gpu_a100_x32",
         "gpu_h100_x32",
         "gpu_b200",
     ],
@@ -320,32 +341,25 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src:internal_export_back_compat_test_data",
         "//jax/_src:internal_export_back_compat_test_util",
+        "//jax/_src/pallas/mosaic_gpu:pallas_call",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax/experimental:pallas_tpu_ops",  # build_cleaner: keep
-        "//jax/experimental:pallas_triton",  # build_cleaner: keep
     ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
     name = "pallas_shape_poly_test",
     srcs = ["pallas_shape_poly_test.py"],
-    disable_configs = [
-        "gpu_h100",
-        "gpu_p100",
-        "gpu_p100_x32",
-        "gpu_v100_x32",
-    ],
-    enable_configs = [
-        "gpu_a100_x32",
+    enable_backends = [
+        "cpu",
+        "tpu",
     ],
     tags = [],
     deps = [
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas",
-        "//jax/experimental:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax/experimental:pallas_tpu",  # build_cleaner: keep
-        "//jax/experimental:pallas_triton",  # build_cleaner: keep
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -394,8 +408,7 @@ jax_multiplatform_test(
         "tpu_gmm_test.py",
     ],
     enable_backends = ["tpu"],
-    minimal_shard_count = 5,
-    shard_count = 5,
+    shard_count = 2,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
@@ -433,8 +446,13 @@ jax_multiplatform_test(
         "tpu_v5p",
     ],
     shard_count = 8,
+    tags = [
+        "noasan",
+        "notsan",  # Times out.
+    ],
     deps = [
         "//jax/_src/pallas:pallas_test_util",
+        "//jax/experimental:layout",
         "//jax/experimental:mesh_utils",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
@@ -455,12 +473,9 @@ jax_multiplatform_test(
         "tpu_v5e",
         "tpu_v5p",
     ],
-    env = if_oss(
-        {
-            "TPU_STDERR_LOG_LEVEL": "0",
-        },
-        google_value = {},
-    ),
+    env = {
+        "TPU_STDERR_LOG_LEVEL": "0",
+    },
     shard_count = 8,
     deps = [
         "//jax/_src/pallas:pallas_test_util",
@@ -507,48 +522,18 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "gpu_pallas_distributed_nvshmem_test",
-    srcs = ["gpu_pallas_distributed_test.py"],
-    args = [
-        "--num_processes=2",
-        "--gpus_per_process=1",
-    ],
-    enable_backends = [],
-    enable_configs = [
-        # Need to use 2 physical GPUs since test checks P2P memory access unavailable with MIG
-        # partitioning.
-        "gpu_h100x2_full",
-        "gpu_b200x2",
-    ],
-    env = {
-        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true --xla_gpu_enable_allocator_spatial_partitioning=false",
-        "MULTIPROCESS_TEST": "1",
-    },
-    tags = [
-        "mosaic_gpu_test",
-        "multiaccelerator",
-    ],
-    deps = [
-        "//jax/_src:test_multiprocess",
-        "//jax/experimental:pallas_experimental_gpu_ops",
-        "//jax/experimental:pallas_mosaic_gpu",
-        "//jax/extend",
-    ] + py_deps([
-        "portpicker",
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
     name = "gpu_pallas_distributed_test",
     srcs = ["gpu_pallas_distributed_test.py"],
+    config_tags_overrides = {
+        "gpu_b200x2": {"ondemand": False},
+    },
     enable_backends = [],
     enable_configs = [
         # Need to use 2 physical GPUs since test checks P2P memory access unavailable with MIG
         # partitioning.
         "gpu_h100x2_full",
         "gpu_b200x2",
+        # "gpu_gb300x2",  # TODO(b/548528820): Re-enable this.
     ],
     tags = [
         "mosaic_gpu_test",
@@ -572,13 +557,17 @@ jax_multiplatform_test(
     ],
     enable_backends = ["tpu"],
     shard_count = 8,
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
     deps = [
         "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
-        "//jax/experimental:pallas_triton",  # build_cleaner: keep
     ] + py_deps([
         "absl/testing",
         "hypothesis",
@@ -734,6 +723,7 @@ jax_multiplatform_test(
     ],
     enable_backends = ["cpu"],
     tags = [
+        "noasan",  # Times out.
         "nomsan",
         "notsan",
     ],
@@ -768,6 +758,7 @@ jax_multiplatform_test(
         "tpu_pallas_interpret_distributed_test.py",
     ],
     enable_backends = ["cpu"],
+    shard_count = 4,
     tags = [
         "noasan",  # Times out.
         "nomsan",
@@ -793,6 +784,7 @@ jax_multiplatform_test(
     shard_count = 10,
     tags = [
         "noasan",  # Times out.
+        "noassert",
         "nomsan",  # Times out.
         "notsan",  # Times out.
     ],
@@ -856,6 +848,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_splash_attention_kernel_sharded_test",
     srcs = ["tpu_splash_attention_kernel_sharded_test.py"],
+    enable_backends = [],
     enable_configs = [
         "tpu_v5e_x8",
         "tpu_v5p_x4",
@@ -886,103 +879,6 @@ jax_py_test(
         "absl/testing",
         "numpy",
         "hypothesis",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "gpu_attention_test",
-    srcs = [
-        "gpu_attention_test.py",
-    ],
-    enable_backends = [],
-    enable_configs = [
-        "gpu_a100_x32",
-        "gpu_h100_x32",
-        "gpu_b200",
-    ],
-    shard_count = 1,
-    tags = [
-        "noasan",  # Times out.
-    ],
-    deps = [
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_gpu_ops",
-        "//jax/experimental:pallas_triton",  # build_cleaner: keep
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "gpu_ops_test",
-    srcs = [
-        "gpu_ops_test.py",
-    ],
-    enable_backends = ["cpu"],
-    enable_configs = [
-        "gpu_a100_x32",
-        "gpu_h100_x32",
-        "gpu_b200",
-    ],
-    shard_count = 20,
-    tags = [
-        "noasan",  # Times out.
-        "nomsan",  # Times out.
-        "notsan",  # Times out.
-    ],
-    deps = [
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_gpu_ops",
-        "//jax/experimental:pallas_triton",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "gpu_paged_attention_test",
-    srcs = [
-        "gpu_paged_attention_test.py",
-    ],
-    enable_backends = ["cpu"],
-    enable_configs = [
-        "gpu_a100_x32",
-        "gpu_h100_x32",
-        "gpu_b200",
-    ],
-    shard_count = 12,
-    tags = [
-        "noasan",  # Times out.
-        "notsan",  # Times out.
-    ],
-    deps = [
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_gpu_ops",
-        "//jax/experimental:pallas_triton",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "triton_pallas_test",
-    srcs = [
-        "triton_pallas_test.py",
-    ],
-    enable_backends = ["cpu"],
-    enable_configs = [
-        "gpu_h100_x32",
-        "gpu_b200",
-    ],
-    shard_count = 1,
-    deps = [
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_triton",
-    ] + py_deps([
-        "absl/testing",
     ]),
 )
 
@@ -1033,16 +929,14 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "mgpu_examples_test_b200",
+    name = "mgpu_examples_test",
     srcs = ["mgpu_examples_test.py"],
     enable_backends = [],
     enable_configs = ["gpu_b200"],
-    # env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     shard_count = 8,
     tags = [
         "mosaic_gpu_test",
-        # TODO(b/330364373): Remove when B200 is fully supported.
-        "notap",
     ],
     deps = [
         "//jax/experimental:pallas",
@@ -1220,36 +1114,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "mgpu_collective_matmul_nvshmem_test",
-    srcs = ["mgpu_collective_matmul_test.py"],
-    args = [
-        "--num_processes=2",
-        "--gpus_per_process=1",
-    ],
-    enable_backends = [],
-    enable_configs = [
-        "gpu_h100x2_full",
-        "gpu_b200x2",
-    ],
-    env = {
-        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
-        "FAIL_ON_NVSHMEM_UNAVAILABLE": "",
-    },
-    shard_count = 8,
-    tags = [
-        "manual",
-        "multiaccelerator",
-        "notap",
-    ],
-    deps = [
-        "//jax/_src:test_multiprocess",
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_experimental_gpu_ops",
-        "//jax/experimental:pallas_mosaic_gpu",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
-)
-
-jax_multiplatform_test(
     name = "mgpu_collective_matmul_test",
     srcs = ["mgpu_collective_matmul_test.py"],
     enable_backends = [],
@@ -1279,41 +1143,15 @@ jax_multiplatform_test(
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     tags = [
+        "mosaic_gpu_test",
         "noasan",
-        "notap",  # TODO(b/477964663): Broken by PyTorch 2.10.0 upgrade.
+        "noassert",  # Times out.
     ],
     deps = [
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_experimental_gpu_ops",
         "//jax/experimental:pallas_mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("torch"),
-)
-
-jax_multiplatform_test(
-    name = "mgpu_collective_matmul_nvshmem_run",
-    srcs = ["//jax/experimental/pallas/ops/gpu:collective_matmul_mgpu.py"],
-    args = [
-        "--num_processes=2",
-        "--gpus_per_process=1",
-    ],
-    enable_backends = [],
-    enable_configs = [
-        "gpu_h100x2_full",
-    ],
-    env = {
-        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
-    },
-    tags = [
-        "manual",
-        "multiaccelerator",
-        "notap",
-    ],
-    deps = [
-        "//jax/_src:test_multiprocess",
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_experimental_gpu_ops",
-        "//jax/experimental:pallas_mosaic_gpu",
-    ],
 )
 
 jax_multiplatform_test(
@@ -1346,9 +1184,6 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100x2_full",
     ],
-    env = {
-        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
-    },
     tags = [
         "manual",
         "multiaccelerator",
@@ -1373,9 +1208,6 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100x2_full",
     ],
-    env = {
-        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
-    },
     tags = [
         "manual",
         "mosaic_gpu_test",
@@ -1410,7 +1242,38 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax/_src/pallas/fuser",
+        "//jax/experimental:checkify",
         "//jax/experimental:pallas",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "fuser_shard_map_test",
+    srcs = [
+        "fuser_shard_map_test.py",
+    ],
+    disable_configs = [
+        "cpu",
+    ],
+    enable_backends = ["cpu"],
+    enable_configs = [
+        "tpu_7x_x4",
+        "tpu_v5e_x8",
+        "tpu_v5p_x4",
+    ],
+    tags = [
+        "multiaccelerator",
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_fuser",
+        "//jax/experimental:pallas_tpu",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1517,18 +1380,27 @@ jax_multiplatform_test(
             [],
             google_value = [
                 "--xla_tpu_enable_mlir_verifier=ALL",
+                "--xla_sc_assert_level=san",
             ],
         ),
+        "tpu_8i_grm": [
+            "--xla_tpu_enable_mlir_verifier=ALL",
+            "--xla_sc_assert_level=san",
+        ],
     },
     enable_backends = [],
     enable_configs = [
         "tpu_v5p",
         "tpu_v6e",
         "tpu_7x",
+        "tpu_8i_grm",
         "cpu",
     ],
     shard_count = 10,
-    tags = ["sparsecore_test"],
+    tags = [
+        "cpu:4",
+        "sparsecore_test",
+    ],
     deps = [
         "//jax/_src:hypothesis_test_util",
         "//jax/_src:mesh",
@@ -1551,9 +1423,7 @@ jax_multiplatform_test(
         [],
         google_value = [
             "--xla_tpu_enable_mlir_verifier=ALL",
-            "--xla_msa_enable=false",
-            "--xla_tpu_vmem_scavenging_mode=NONE",
-            "--xla_mosaic_unsafe_allow_multicore_remote_dma=true",
+            "--xla_sc_assert_level=san",
         ],
     ),
     enable_backends = [],
@@ -1564,6 +1434,7 @@ jax_multiplatform_test(
     tags = ["sparsecore_test"],
     deps = [
         "//jax/_src/pallas",
+        "//jax/_src/pallas/mosaic:primitives",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_fuser",
         "//jax/experimental:pallas_tpu",
@@ -1582,6 +1453,7 @@ jax_multiplatform_test(
             [],
             google_value = [
                 "--xla_tpu_enable_mlir_verifier=ALL",
+                "--xla_sc_assert_level=san",
             ],
         ),
     },
@@ -1590,9 +1462,70 @@ jax_multiplatform_test(
         "tpu_v5p",
         "tpu_v6e",
         "tpu_7x",
-        "cpu",  # Just to make sure we at least check the shard_count in presubmit.
+        "cpu",
     ],
-    shard_count = 4,
+    tags = ["sparsecore_test"],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+        "absl/flags",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_sparsecore_pallas_scalar_debug_check_test",
+    srcs = ["tpu_sparsecore_pallas_scalar_debug_check_test.py"],
+    backend_variant_args = {
+        "tpu": if_oss(
+            [],
+            google_value = [
+                "--xla_tpu_enable_mlir_verifier=ALL",
+                "--xla_sc_assert_level=san",
+            ],
+        ),
+    },
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5p",
+        "tpu_v6e",
+        "tpu_7x",
+        "cpu",
+    ],
+    tags = ["sparsecore_test"],
+    deps = [
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_sc",
+    ] + py_deps([
+        "numpy",
+        "absl/testing",
+        "absl/flags",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "tpu_sparsecore_pallas_bounds_check_test",
+    srcs = ["tpu_sparsecore_pallas_bounds_check_test.py"],
+    backend_variant_args = {
+        "tpu": if_oss(
+            [],
+            google_value = [
+                "--xla_tpu_enable_mlir_verifier=ALL",
+                "--xla_sc_assert_level=san",
+            ],
+        ),
+    },
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5p",
+        "tpu_v6e",
+        "tpu_7x",
+        "cpu",
+    ],
     tags = ["sparsecore_test"],
     deps = [
         "//jax/experimental:pallas",
@@ -1612,6 +1545,7 @@ jax_multiplatform_test(
         [],
         google_value = [
             "--xla_tpu_enable_mlir_verifier=ALL",
+            "--xla_sc_assert_level=san",
         ],
     ),
     config_tags_overrides = {
@@ -1667,6 +1601,23 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "gpu_pallas_interpret_race_detection_test",
+    srcs = ["gpu_pallas_interpret_race_detection_test.py"],
+    enable_backends = ["cpu"],
+    shard_count = 4,
+    deps = [
+        "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_experimental_gpu_ops",
+        "//jax/experimental:pallas_mosaic_gpu",
+        "//jax/experimental:pallas_tpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "gpu_pallas_interpret_distributed_test",
     srcs = ["gpu_pallas_interpret_distributed_test.py"],
     enable_backends = ["cpu"],
@@ -1680,7 +1631,43 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
         "//jax/experimental:pallas",
+        "//jax/experimental:pallas_mosaic_gpu",
         "//jax/experimental:pallas_tpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "gpu_pallas_interpret_cluster_barrier_test",
+    srcs = ["gpu_pallas_interpret_cluster_barrier_test.py"],
+    enable_backends = ["cpu"],
+    shard_count = 8,
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_mosaic_gpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "gpu_pallas_interpret_tcgen05_race_detection_test",
+    srcs = ["gpu_pallas_interpret_tcgen05_race_detection_test.py"],
+    enable_backends = ["cpu"],
+    shard_count = 6,
+    deps = [
+        "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_mosaic_gpu",
     ] + py_deps([
         "absl/testing",
         "numpy",
@@ -1694,6 +1681,7 @@ jax_multiplatform_test(
         [],
         google_value = [
             "--xla_tpu_enable_mlir_verifier=ALL",
+            "--xla_sc_assert_level=san",
         ],
     ),
     enable_backends = ["tpu"],

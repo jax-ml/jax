@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -55,6 +56,7 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/call_location.h"
 #include "jaxlib/config.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/guard_lib.h"
 #include "jaxlib/jax_jit.h"
 #include "jaxlib/nb_class_ptr.h"
@@ -75,19 +77,24 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/index.h"
+#include "xla/python/ifrt/index_domain.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
+#include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
+#include "xla/python/types.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace jax {
 namespace {
@@ -194,6 +201,7 @@ class PjitFunctionCache {
     // Normal lookup: uses Python equal() but short-circuits on pointer
     // mismatch.
     bool operator()(const Key& a, const Key& b) const {
+      if (a.cached_hash != b.cached_hash) return false;
       if (a.function.ptr() != b.function.ptr()) return false;
       try {
         return a.global_cache_key.equal(b.global_cache_key);
@@ -209,6 +217,7 @@ class PjitFunctionCache {
     // Explicitly compare .ptr() to ensure we do not trigger Python-level
     // equality.
     bool operator()(const Key& a, const PointerKey& b) const {
+      if (a.cached_hash != b.cached_hash) return false;
       return a.function.ptr() == b.function.ptr() &&
              a.global_cache_key.ptr() == b.global_cache_key.ptr();
     }
@@ -465,7 +474,7 @@ void CallShardArgFallback(nb::handle arg, nb::handle sharding,
   tsl::profiler::TraceMe traceme("cpp_pjit_shard_arg_fallback");
   auto py_array_or_bufs = fallback(arg, sharding, layout);
   auto py_array = nb::cast<PyArray>(py_array_or_bufs);
-  num_args_arrays.push_back(tsl::FormRef(py_array.ifrt_array()));
+  num_args_arrays.push_back(py_array.ifrt_array_ref());
   keep_alive_objects.push_back(std::move(py_array_or_bufs));
 }
 
@@ -473,21 +482,25 @@ void CallShardArgFallback(nb::handle arg, nb::handle sharding,
 // to shard_args() in pxla.py but for only a few supported cases.
 absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
     const PyLoadedExecutable& executable,
-    absl::Span<nb::object const> flat_dynamic_args,
-    absl::Span<PyArgSignature const> flat_dynamic_arg_signatures,
-    bool enable_x64, const std::vector<bool>& kept_args,
+    absl::Span<nb::object const> const_args,
+    absl::Span<nb::object const> flat_dynamic_args, bool enable_x64,
+    const std::vector<bool>& kept_args,
     const std::vector<nb::object>& in_shardings,
     const std::vector<nb::object>& in_device_local_layouts,
     const nb::callable& shard_arg_fallback,
     std::vector<nb::object>& keep_alive_objects) {
-  const auto& addressable_devices =
-      executable.ifrt_loaded_executable()->addressable_devices();
-  const auto& num_global_devices =
-      executable.ifrt_loaded_executable()->num_devices();
-  int num_args = flat_dynamic_args.size();
+  std::optional<xla::ifrt::DeviceListRef> devices =
+      executable.ifrt_loaded_executable()->devices();
+  const absl::Span<xla::ifrt::Device* const> addressable_devices =
+      devices.has_value() ? (*devices)->AddressableDeviceList()->devices()
+                          : absl::Span<xla::ifrt::Device* const>();
+  const int num_global_devices = devices.has_value() ? (*devices)->size() : 1;
+  const int num_const_args = const_args.size();
+  const int num_args = num_const_args + flat_dynamic_args.size();
+  const int num_kept_args = in_shardings.size();
 
   std::vector<xla::ifrt::ArrayRef> num_args_arrays;
-  num_args_arrays.reserve(num_args);
+  num_args_arrays.reserve(num_kept_args);
 
   struct CopyGroup {
     std::vector<int> indices;
@@ -502,19 +515,20 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
   options.squash_64bit_types = !enable_x64;
   options.allow_zero_copy = true;
   xla::ifrt::Device* data_device = nullptr;
-  if (executable.ifrt_loaded_executable()->num_devices() == 1 &&
-      !addressable_devices.empty()) {
+  if (num_global_devices == 1 && !addressable_devices.empty()) {
     data_device = addressable_devices[0];
   }
   int dce_i = 0;
-  for (int i = 0; i < num_args; ++i) {
+  for (int i = 0; i < num_args && dce_i < num_kept_args; ++i) {
     if (!kept_args[i]) {
       continue;
     }
     int dce_index = dce_i;
     ++dce_i;
 
-    const nb::object& arg = flat_dynamic_args[i];
+    const nb::object& arg = i < num_const_args
+                                ? const_args[i]
+                                : flat_dynamic_args[i - num_const_args];
     const nb::object& in_device_local_layout =
         in_device_local_layouts[dce_index];
 
@@ -522,9 +536,9 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
 
     if (arg.type().ptr() != PyArray::type().ptr()) {
       if (data_device != nullptr && in_device_local_layout.is_none()) {
-        TF_RETURN_IF_ERROR(
+        ABSL_RETURN_IF_ERROR(
             ApplyTransferGuardToHostToDevice(transfer_guard_formatter));
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             auto device_put_result,
             DevicePutWithDevice(arg,
                                 executable.ifrt_loaded_executable()->client(),
@@ -551,13 +565,13 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
            (!py_array.committed() && sharding_num_devices == 1));
 
     if (!in_device_local_layout.is_none()) {
-      xla::ifrt::Array* ifrt_array = py_array.ifrt_array();
-      TF_ASSIGN_OR_RETURN(auto arr_layout, ifrt_array->pjrt_layout());
+      xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
+      ABSL_ASSIGN_OR_RETURN(auto arr_layout, ifrt_array->pjrt_layout());
       if (arr_layout == nullptr) {
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             xla::ifrt::Shape shard_shape,
             ifrt_array->sharding().GetShardShape(ifrt_array->shape()));
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             arr_layout,
             executable.ifrt_loaded_executable()->client()->GetDefaultPjRtLayout(
                 ifrt_array->dtype(), shard_shape.dims(),
@@ -581,7 +595,7 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
       continue;
     }
 
-    xla::ifrt::Array* ifrt_array = py_array.ifrt_array();
+    xla::ifrt::ArrayRef ifrt_array = py_array.ifrt_array_ref();
     // PyArray inputs should have already been checked in
     // `PyArgSignatureOfValue()` called by
     // `PjitFunction::ComputeCallSignature()`.
@@ -594,10 +608,10 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
           ifrt_sharding.devices()->devices().front(),
           ifrt_sharding.memory_kind(), GetMemoryKind(in_shardings[dce_index]))];
       copy_group.indices.push_back(num_args_arrays.size());
-      copy_group.arrays.push_back(tsl::FormRef(ifrt_array));
+      copy_group.arrays.push_back(ifrt_array);
       num_args_arrays.push_back({});
     } else {
-      num_args_arrays.push_back(tsl::FormRef(ifrt_array));
+      num_args_arrays.push_back(ifrt_array);
     }
 
     keep_alive_objects.push_back(arg);
@@ -606,10 +620,11 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PrepareIfrtInputs(
   if (!copy_groups.empty() && !addressable_devices.empty()) {
     xla::ifrt::Client* const ifrt_client =
         executable.ifrt_loaded_executable()->client();
-    TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef ifrt_devices,
-                        ifrt_client->MakeDeviceList({addressable_devices[0]}));
+    ABSL_ASSIGN_OR_RETURN(
+        xla::ifrt::DeviceListRef ifrt_devices,
+        ifrt_client->MakeDeviceList({addressable_devices[0]}));
     for (auto& [key, group] : copy_groups) {
-      TF_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           auto copied_ifrt_arrays,
           ifrt_client->CopyArrays(absl::MakeSpan(group.arrays), ifrt_devices,
                                   std::get<2>(key),
@@ -652,6 +667,10 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // Calls the cache_miss_ function. This just calls the Python function; it may
   // return nullptr value if a Python exception is thrown.
   auto cache_miss = [&]() -> nb::tuple {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode("PjitFunction::Call::CacheMissPython",
+                                          {{"function", function_name_}});
+    });
     return nb::steal<nb::tuple>(
         PyObject_Vectorcall(cache_miss_.ptr(), args, nargs, kwnames));
   };
@@ -659,7 +678,15 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // Call the cache_miss() function, extracting the output data and ignoring
   // the fastpath data. If the cache miss returns a Python error, returns
   // nullptr and leaves the Python error set.
-  auto fallback_to_cache_miss = [&]() {
+  //
+  // `reason` records why the C++ fastpath was abandoned, so that a profile
+  // makes it obvious which check pushed the call back into Python. Each caller
+  // passes a distinct, stable literal.
+  auto fallback_to_cache_miss = [&](std::string_view reason) {
+    tsl::profiler::TraceMe traceme([&] {
+      return tsl::profiler::TraceMeEncode(
+          "PjitFunction::Call::FallbackToPython", {{"reason", reason}});
+    });
     nb::tuple cache_miss_output = cache_miss();
     if (!cache_miss_output.ptr()) {
       return nb::object();
@@ -681,7 +708,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
       pytree_registry_.get(), call_signature.arg_signature, flat_dynamic_args);
   if (!status.ok()) {
     VLOG(2) << "ParseArguments failed: " << status;
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("parse_arguments_failed");
   }
 
   // Perform a few checks for the arguments. Currently we are only allowing
@@ -706,7 +733,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     if (!py_array.committed() && sharding_num_devices > 1) {
       VLOG(2) << "PyArray argument is not committed and number of global "
                  "devices is more than 1; fallback to python.";
-      return fallback_to_cache_miss();
+      return fallback_to_cache_miss("uncommitted_multi_device_array");
     }
   }
 
@@ -714,7 +741,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   status = ComputeCallSignature(flat_dynamic_args, enable_x64, call_signature);
   if (!status.ok()) {
     VLOG(2) << "ComputeCallSignature failed: " << status;
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("compute_call_signature_failed");
   }
 
   VLOG(2) << "CallSignature:\n" << call_signature.DebugString();
@@ -784,40 +811,27 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
 
   if (cache_entry->fall_back_to_python) {
     VLOG(2) << "cpp pjit fallback to python.";
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("cache_entry_fall_back_to_python");
   }
 
-  absl::InlinedVector<PyArgSignature, 2> dynamic_arg_signatures;
-  dynamic_arg_signatures.reserve(cache_entry->const_args.size() +
-                                 flat_dynamic_args.size());
-  if (!cache_entry->const_args.empty()) {
-    flat_dynamic_args.reserve(cache_entry->const_args.size() +
-                              flat_dynamic_args.size());
-    flat_dynamic_args.insert(flat_dynamic_args.begin(),
-                             cache_entry->const_args.begin(),
-                             cache_entry->const_args.end());
-
-    for (nb::handle const_arg : cache_entry->const_args) {
-      TF_ASSIGN_OR_RETURN(auto const_arg_signature,
-                          PyArgSignatureOfValue(const_arg, enable_x64));
-      dynamic_arg_signatures.push_back(std::move(const_arg_signature));
+  for (nb::handle const_arg : cache_entry->const_args) {
+    if (const_arg.type().ptr() == PyArray::type().ptr() &&
+        nb::borrow<PyArray>(const_arg).IsDeleted()) {
+      return xla::InvalidArgument("Array has been deleted.");
     }
-  }
-  for (const auto& arg : call_signature.dynamic_arg_signatures) {
-    dynamic_arg_signatures.push_back(std::move(arg));
   }
 
   PyUserContextScope user_context_scope;
   // A vector of [num_inputs].
   auto num_args_arrays = PrepareIfrtInputs(
-      *cache_entry->executable, flat_dynamic_args, dynamic_arg_signatures,
+      *cache_entry->executable, cache_entry->const_args, flat_dynamic_args,
       enable_x64, cache_entry->kept_var_bitvec, cache_entry->in_shardings,
       cache_entry->in_device_local_layouts, shard_arg_fallback_,
       keep_alive_objects);
 
   if (!num_args_arrays.ok()) {
     VLOG(2) << "Failed to prepare IFRT inputs: " << num_args_arrays.status();
-    return fallback_to_cache_miss();
+    return fallback_to_cache_miss("prepare_ifrt_inputs_failed");
   }
 
   xla::ifrt::ExecuteOptions execute_options =
@@ -834,7 +848,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // Check if the thread guard is active and should prevent execution.
   // Skipped for portable executables.
   if (cache_entry->executable->ifrt_executable()->devices().has_value()) {
-    TF_RETURN_IF_ERROR(CheckThreadGuard(
+    ABSL_RETURN_IF_ERROR(CheckThreadGuard(
         *cache_entry->executable->ifrt_executable()->devices()));
   }
 
@@ -842,10 +856,10 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   std::vector<xla::ifrt::ArrayRef> output_arrays;
   {
     nb::gil_scoped_release gil_release;
-    TF_ASSIGN_OR_RETURN(auto result,
-                        cache_entry->executable->ifrt_executable()->Execute(
-                            absl::MakeSpan(*num_args_arrays), execute_options,
-                            /*devices=*/std::nullopt));
+    ABSL_ASSIGN_OR_RETURN(auto result,
+                          cache_entry->executable->ifrt_executable()->Execute(
+                              absl::MakeSpan(*num_args_arrays), execute_options,
+                              /*devices=*/std::nullopt));
     output_arrays = std::move(result.outputs);
   }
 
@@ -857,12 +871,12 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
     // Creating the PyArray result. In addition to the IFRT arrays, the metadata
     // like `aval` and `sharding` are retrieved from the cache for this
     // function, which are produced by the python path in `cache_miss`.
-    PyArray py_array(
-        cache_entry->out_avals[i], cache_entry->out_weak_types[i],
-        cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
-        cache_entry->out_shardings[i], cache_entry->executable->client(),
-        std::move(output_arrays[i]),
-        /*committed=*/cache_entry->out_committed.at(i), /*skip_checks=*/true);
+    PyArray py_array(cache_entry->out_avals[i], cache_entry->out_weak_types[i],
+                     cache_entry->out_dtypes[i], cache_entry->out_shapes[i],
+                     cache_entry->out_shardings[i],
+                     cache_entry->executable->client(),
+                     std::move(output_arrays[i]),
+                     /*committed=*/cache_entry->out_committed.at(i));
 
     outputs.push_back(std::move(py_array));
   }
@@ -873,11 +887,9 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   // If there is a post-hook function, call it with the inputs and the outputs.
   std::optional<nb::object> post_hook = GetPostHook();
   if (post_hook) {
-    nb::tuple args_tuple =
-        nb::steal<nb::tuple>(PyTuple_New(num_positional_args));
+    nb::tuple_builder args_tuple(num_positional_args);
     for (size_t i = 0; i < num_positional_args; ++i) {
-      Py_INCREF(args[i]);
-      PyTuple_SET_ITEM(args_tuple.ptr(), i, args[i]);
+      args_tuple.put(nb::handle(args[i]));
     }
     nb::dict kwargs;
     if (kwnames) {
@@ -886,7 +898,7 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
             nb::borrow(args[num_positional_args + i]);
       }
     }
-    (*post_hook)(nb::handle(callable.ptr()), args_tuple, kwargs,
+    (*post_hook)(nb::handle(callable.ptr()), args_tuple.commit(), kwargs,
                  nb::handle(out.ptr()));
   }
 
@@ -907,8 +919,8 @@ absl::Status PjitFunction::ComputeCallSignature(
   dynamic_arg_layouts.reserve(flat_dynamic_args.size());
 
   for (nb::handle arg : flat_dynamic_args) {
-    TF_ASSIGN_OR_RETURN(auto arg_signature,
-                        PyArgSignatureOfValue(arg, enable_x64));
+    ABSL_ASSIGN_OR_RETURN(auto arg_signature,
+                          PyArgSignatureOfValue(arg, enable_x64));
     signature.dynamic_arg_signatures.push_back(std::move(arg_signature));
 
     // It should be already checked previously in the entry point of
@@ -917,10 +929,12 @@ absl::Status PjitFunction::ComputeCallSignature(
       auto py_array = nb::borrow<PyArray>(arg);
       signature.dynamic_arg_shardings.push_back(py_array.sharding());
       auto layout = py_array.layout();
-      if (absl::IsUnimplemented(layout.status())) {
+      if (layout.ok()) {
+        signature.dynamic_arg_layouts.push_back(*std::move(layout));
+      } else if (absl::IsUnimplemented(layout.status())) {
         signature.dynamic_arg_layouts.push_back(nullptr);
       } else {
-        signature.dynamic_arg_layouts.push_back(*std::move(layout));
+        return layout.status();
       }
       signature.committed_args.push_back(py_array.committed());
     } else {
@@ -1024,11 +1038,8 @@ void PjitFunction::ClearPythonReferences() {
 
 struct PjitFunctionObject {
   PyObject_HEAD;
-#if PY_VERSION_HEX < 0x030C0000
-  PyObject* dict;      // Dictionary for __dict__
-  PyObject* weakrefs;  // Weak references; for use by the Python interpreter.
-#endif                 // PY_VERSION_HEX < 0x030C0000
   vectorcallfunc vectorcall;
+  bool fun_initialized;
   PjitFunction fun;
 
   // Doubly-linked list of PjitFunctionObjects, protected by
@@ -1042,7 +1053,7 @@ struct PjitFunctionObject {
 class PjitFunctionStore {
  public:
   void Insert(PjitFunctionObject* o) {
-    nb::ft_lock_guard lock(mu_);
+    ft_lock_guard lock(mu_);
     o->next = compiled_functions_;
     o->prev = nullptr;
     if (o->next) {
@@ -1052,7 +1063,7 @@ class PjitFunctionStore {
   }
 
   void Remove(PjitFunctionObject* o) {
-    nb::ft_lock_guard lock(mu_);
+    ft_lock_guard lock(mu_);
     if (o->next) {
       o->next->prev = o->prev;
     }
@@ -1068,7 +1079,7 @@ class PjitFunctionStore {
         std::pair<nb::object, std::shared_ptr<PjitFunctionCache::Cache>>>
         caches;
     {
-      nb::ft_lock_guard lock(mu_);
+      ft_lock_guard lock(mu_);
       for (PjitFunctionObject* fn = compiled_functions_; fn != nullptr;
            fn = fn->next) {
         caches.emplace_back(fn->fun.cache(), fn->fun.executables());
@@ -1081,9 +1092,8 @@ class PjitFunctionStore {
   };
 
  private:
-  // Protected by the GIL in GIL mode, and by mu_ in freethreading mode.
-  nb::ft_mutex mu_;
-  PjitFunctionObject* compiled_functions_;
+  ft_mutex mu_;
+  PjitFunctionObject* compiled_functions_ ABSL_GUARDED_BY(mu_);
 };
 
 PjitFunctionStore pjit_function_store;
@@ -1091,7 +1101,8 @@ PjitFunctionStore pjit_function_store;
 PyObject* PjitFunction_Type = nullptr;
 
 bool PjitFunction::IsPjitFunction(nb::handle handle) {
-  return handle.type().ptr() == PjitFunction_Type;
+  return handle.type().ptr() == PjitFunction_Type &&
+         reinterpret_cast<PjitFunctionObject*>(handle.ptr())->fun_initialized;
 }
 
 PjitFunction* PjitFunction::AsPjitFunctionUnchecked(nb::handle handle) {
@@ -1110,6 +1121,10 @@ extern "C" {
 PyObject* PjitFunction_tp_vectorcall(PyObject* callable, PyObject* const* args,
                                      size_t nargs, PyObject* kwnames) {
   PjitFunctionObject* o = reinterpret_cast<PjitFunctionObject*>(callable);
+  if (!o->fun_initialized) {
+    PyErr_SetString(PyExc_TypeError, "Uninitialized PjitFunction");
+    return nullptr;
+  }
   tsl::profiler::TraceMe traceme([&] {
     return absl::StrCat("PjitFunction(", o->fun.function_name(), ")");
   });
@@ -1141,10 +1156,9 @@ PyObject* PjitFunction_tp_new(PyTypeObject* subtype, PyObject* args,
   PjitFunctionObject* self =
       reinterpret_cast<PjitFunctionObject*>(subtype->tp_alloc(subtype, 0));
   if (!self) return nullptr;
-#if PY_VERSION_HEX < 0x030C0000
-  self->dict = nullptr;
-  self->weakrefs = nullptr;
-#endif  // PY_VERSION_HEX < 0x030C0000
+
+  self->fun_initialized = false;
+  self->next = self->prev = nullptr;
   self->vectorcall = PjitFunction_tp_vectorcall;
   return reinterpret_cast<PyObject*>(self);
 }
@@ -1153,16 +1167,19 @@ void PjitFunction_tp_dealloc(PyObject* self) {
   PyObject_GC_UnTrack(self);
   PyTypeObject* tp = Py_TYPE(self);
   PjitFunctionObject* o = reinterpret_cast<PjitFunctionObject*>(self);
-  pjit_function_store.Remove(o);
+  if (o->fun_initialized) {
+    pjit_function_store.Remove(o);
+  }
   PyObject_ClearWeakRefs(self);
-#if PY_VERSION_HEX < 0x030C0000
-  Py_CLEAR(o->dict);
-#elif PY_VERSION_HEX < 0x030D0000
+#if PY_VERSION_HEX < 0x030D0000
   _PyObject_ClearManagedDict(self);
 #else
   PyObject_ClearManagedDict(self);
-#endif  // PY_VERSION_HEX < 0x030C0000
-  o->fun.~PjitFunction();
+#endif
+  if (o->fun_initialized) {
+    o->fun.~PjitFunction();
+    o->fun_initialized = false;
+  }
   tp->tp_free(self);
   Py_DECREF(tp);
 }
@@ -1171,13 +1188,14 @@ int PjitFunction_tp_traverse(PyObject* self, visitproc visit, void* arg) {
   PjitFunctionObject* o = reinterpret_cast<PjitFunctionObject*>(self);
   // https://docs.python.org/3/c-api/typeobj.html#c.PyTypeObject.tp_traverse
   Py_VISIT(Py_TYPE(self));
-#if PY_VERSION_HEX < 0x030C0000
-  Py_VISIT(o->dict);
-#elif PY_VERSION_HEX < 0x030D0000
+#if PY_VERSION_HEX < 0x030D0000
   _PyObject_VisitManagedDict(self, visit, arg);
 #else
   PyObject_VisitManagedDict(self, visit, arg);
-#endif  // PY_VERSION_HEX < 0x030C0000
+#endif
+  if (!o->fun_initialized) {
+    return 0;
+  }
   Py_VISIT(o->fun.cache_miss().ptr());
   Py_VISIT(o->fun.shard_arg_fallback().ptr());
   Py_VISIT(o->fun.global_cache_key().ptr());
@@ -1190,14 +1208,14 @@ int PjitFunction_tp_traverse(PyObject* self, visitproc visit, void* arg) {
 
 int PjitFunction_tp_clear(PyObject* self) {
   PjitFunctionObject* o = reinterpret_cast<PjitFunctionObject*>(self);
-#if PY_VERSION_HEX < 0x030C0000
-  Py_CLEAR(o->dict);
-#elif PY_VERSION_HEX < 0x030D0000
+#if PY_VERSION_HEX < 0x030D0000
   _PyObject_ClearManagedDict(self);
 #else
   PyObject_ClearManagedDict(self);
-#endif  // PY_VERSION_HEX < 0x030C0000
-  o->fun.ClearPythonReferences();
+#endif
+  if (o->fun_initialized) {
+    o->fun.ClearPythonReferences();
+  }
   return 0;
 }
 
@@ -1249,10 +1267,16 @@ void InitializePjitFunction(
       std::move(static_argnums), std::move(static_argnames),
       std::move(global_cache_key), std::move(pytree_registry),
       std::move(shard_arg_fallback), std::move(cache));
-  // Handled separately because it is not exception safe to call this
-  // in the constructor because it leaves the object improperly constructed.
-  fn_obj->fun.InitExecutables();
+  try {
+    // Handled separately because it is not exception safe to call this
+    // in the constructor because it leaves the object improperly constructed.
+    fn_obj->fun.InitExecutables();
+  } catch (...) {
+    fn_obj->fun.~PjitFunction();
+    throw;
+  }
 
+  fn_obj->fun_initialized = true;
   // Only add the executable to the store after executables_ has been
   // initialized. We want only fully constructed executables in the store.
   pjit_function_store.Insert(fn_obj);
@@ -1288,14 +1312,6 @@ PyMemberDef PjitFunction_members[] = {
     {"__vectorcalloffset__", T_PYSSIZET,
      static_cast<Py_ssize_t>(offsetof(PjitFunctionObject, vectorcall)),
      READONLY, nullptr},
-#if PY_VERSION_HEX < 0x030C0000
-    {"__dictoffset__", T_PYSSIZET,
-     static_cast<Py_ssize_t>(offsetof(PjitFunctionObject, dict)), READONLY,
-     nullptr},
-    {"__weaklistoffset__", T_PYSSIZET,
-     static_cast<Py_ssize_t>(offsetof(PjitFunctionObject, weakrefs)), READONLY,
-     nullptr},
-#endif  // PY_VERSION_HEX < 0x030C0000
     {nullptr, 0, 0, 0, nullptr},
 };
 
@@ -1310,6 +1326,274 @@ PyType_Slot PjitFunction_slots[] = {
     {Py_tp_repr, reinterpret_cast<void*>(PjitFunction_tp_repr)},
     {Py_tp_members, reinterpret_cast<void*>(PjitFunction_members)},
     {0, nullptr},
+};
+
+class ShardArgsHandler {
+ public:
+  virtual ~ShardArgsHandler() = default;
+
+  virtual bool TryAdd(size_t result_idx, nb::handle arg, nb::handle sharding,
+                      nb::handle layout, nb::handle copy_semantics) = 0;
+
+  virtual void Run(std::vector<nb::object>& results) = 0;
+};
+
+class FallbackHandler : public ShardArgsHandler {
+ public:
+  explicit FallbackHandler(std::optional<nb::callable> fallback)
+      : fallback_(std::move(fallback)) {}
+
+  bool TryAdd(size_t result_idx, nb::handle arg, nb::handle sharding,
+              nb::handle layout, nb::handle copy_semantics) override {
+    indices_.push_back(result_idx);
+    args_.append(arg);
+    shardings_.append(sharding);
+    layouts_.append(layout);
+    copy_semantics_.append(copy_semantics);
+    return true;
+  }
+
+  void Run(std::vector<nb::object>& results) override {
+    if (indices_.empty()) {
+      return;
+    }
+    if (!fallback_.has_value() || fallback_->is_none()) {
+      throw nb::value_error("Fallback handler has no valid fallback function.");
+    }
+    nb::sequence fallback_results = nb::cast<nb::sequence>(
+        (*fallback_)(shardings_, layouts_, copy_semantics_, args_));
+
+    for (size_t i = 0; i < indices_.size(); ++i) {
+      results[indices_[i]] = fallback_results[i];
+    }
+  }
+
+ private:
+  std::optional<nb::callable> fallback_;
+  std::vector<size_t> indices_;
+  nb::list args_;
+  nb::list shardings_;
+  nb::list layouts_;
+  nb::list copy_semantics_;
+};
+
+class NumpyHandler : public ShardArgsHandler {
+ private:
+  struct GroupKey {
+    nb_class_ptr<PyClient> py_client;
+    xla::ifrt::DeviceListRef devices;
+    xla::ifrt::MemoryKind memory_kind;
+
+    template <typename H>
+    friend H AbslHashValue(H h, const GroupKey& key) {
+      return H::combine(std::move(h), key.py_client.ptr(), key.devices,
+                        key.memory_kind);
+    }
+
+    bool operator==(const GroupKey& other) const {
+      return py_client.ptr() == other.py_client.ptr() &&
+             devices == other.devices && memory_kind == other.memory_kind;
+    }
+  };
+
+  struct Group {
+    std::vector<xla::ifrt::Client::MakeArraysFromHostBufferShardsSpec> specs;
+    std::vector<size_t> indices;
+    std::vector<nb::object> shardings;
+    std::vector<bool> weak_types;
+  };
+
+ public:
+  NumpyHandler() = default;
+
+  bool TryAdd(size_t result_idx, nb::handle arg, nb::handle sharding,
+              nb::handle layout, nb::handle copy_semantics) override {
+    if (!layout.is_none()) {
+      return false;
+    }
+    static nb::object typed_ndarray_type = []() -> nb::object {
+      try {
+        return nb::module_::import_("jax._src.literals").attr("TypedNdArray");
+      } catch (...) {
+        return nb::object();
+      }
+    }();
+    PyObject* typ = reinterpret_cast<PyObject*>(arg.type().ptr());
+    if (typ != reinterpret_cast<PyObject*>(&PyArray_Type) &&
+        (typed_ndarray_type.ptr() == nullptr ||
+         typ != typed_ndarray_type.ptr())) {
+      return false;
+    }
+
+    auto device_list_or = GetPyDeviceList(sharding);
+    if (!device_list_or.ok()) {
+      VLOG(2) << "GetPyDeviceList failed: " << device_list_or.status()
+              << "; fallback to python.";
+      return false;
+    }
+    nb_class_ptr<PyClient> arg_py_client = (*device_list_or)->py_client();
+    xla::ifrt::Client* arg_client = arg_py_client->ifrt_client();
+    if (arg_client == nullptr) {
+      VLOG(2) << "IFRT client is null; fallback to python.";
+      return false;
+    }
+
+    bool enable_x64 = GetEnableX64();
+    auto signature_or = PyArgSignatureOfValue(arg, enable_x64);
+    if (!signature_or.ok()) {
+      VLOG(2) << "PyArgSignatureOfValue failed: " << signature_or.status()
+              << "; fallback to python.";
+      return false;
+    }
+    const PyArgSignature& signature = *signature_or;
+
+    auto ifrt_dtype_or = xla::ifrt::ToDType(signature.dtype);
+    if (!ifrt_dtype_or.ok()) {
+      VLOG(2) << "ToDType failed: " << ifrt_dtype_or.status()
+              << "; fallback to python.";
+      return false;
+    }
+    xla::ifrt::DType ifrt_dtype = *ifrt_dtype_or;
+    xla::ifrt::Shape ifrt_shape(signature.shape);
+
+    xla::nb_numpy_ndarray ndarray = nb::borrow<xla::nb_numpy_ndarray>(arg);
+
+    auto actual_type_or = xla::DtypeToPrimitiveType(ndarray.dtype());
+    if (!actual_type_or.ok() || *actual_type_or != signature.dtype) {
+      VLOG(2) << "Type mismatch or conversion needed: actual="
+              << (actual_type_or.ok() ? static_cast<int>(*actual_type_or) : -1)
+              << " expected=" << static_cast<int>(signature.dtype)
+              << "; fallback to python.";
+      return false;
+    }
+
+    std::shared_ptr<PythonRefManager::ManagedPyObjects> py_buffer_ref =
+        GlobalPyRefManager()->ManageReference(nb::borrow<nb::object>(arg));
+
+    auto ifrt_sharding_or = GetIfrtHloSharding(sharding, ifrt_shape);
+    if (!ifrt_sharding_or.ok()) {
+      VLOG(2) << "GetIfrtHloSharding failed: " << ifrt_sharding_or.status()
+              << "; fallback to python.";
+      return false;
+    }
+    xla::ifrt::ShardingRef ifrt_sharding = std::move(*ifrt_sharding_or);
+    xla::ifrt::DeviceListRef devices = ifrt_sharding->devices();
+    xla::ifrt::MemoryKind memory_kind = ifrt_sharding->memory_kind();
+
+    auto index_domains_or = ifrt_sharding->IndexDomains(
+        ifrt_shape, xla::ifrt::SingleDeviceShardSemantics::kAddressableShards);
+    if (!index_domains_or.ok()) {
+      VLOG(2) << "IndexDomains failed: " << index_domains_or.status()
+              << "; fallback to python.";
+      return false;
+    }
+    auto index_domains = std::move(*index_domains_or);
+
+    xla::ifrt::Client::MakeArraysFromHostBufferShardsSpec spec = {
+        .array_spec = {
+            .dtype = ifrt_dtype,
+            .shape = ifrt_shape,
+            .sharding = std::move(ifrt_sharding),
+            .layout = nullptr,
+        }};
+
+    absl::flat_hash_map<xla::ifrt::IndexDomain, size_t> shards;
+    for (int i = 0; i < index_domains.size(); ++i) {
+      const auto& index_domain = index_domains[i];
+      auto [it, inserted] =
+          shards.try_emplace(index_domain, spec.buffers.size());
+      if (!inserted) {
+        spec.buffers[it->second].first.push_back(i);
+        continue;
+      }
+      const char* base_ptr = reinterpret_cast<const char*>(ndarray.data());
+      int64_t offset = 0;
+      for (int d = 0; d < ndarray.ndim(); ++d) {
+        offset += index_domain.origin().elements()[d] * ndarray.strides(d);
+      }
+      const char* shard_ptr = base_ptr + offset;
+
+      xla::ifrt::Shape shard_shape = index_domain.shape();
+
+      std::vector<int64_t> byte_strides(ndarray.ndim());
+      for (int d = 0; d < ndarray.ndim(); ++d) {
+        byte_strides[d] = ndarray.strides(d);
+      }
+
+      std::function<void()> on_done = [py_buffer_ref]() {
+        // keeps py_buffer_ref alive
+      };
+
+      xla::ifrt::Client::HostBuffer host_buffer = {
+          .data = shard_ptr,
+          .dtype = ifrt_dtype,
+          .shape = shard_shape,
+          .byte_strides = std::move(byte_strides),
+          .on_done = std::move(on_done),
+      };
+      spec.buffers.push_back({{i}, std::move(host_buffer)});
+    }
+
+    auto transfer_guard_status = ApplyTransferGuardToHostToDevice(
+        [&arg]() { return nb::cast<std::string>(nb::repr(arg)); });
+    if (!transfer_guard_status.ok()) {
+      throw nb::value_error(
+          std::string(transfer_guard_status.message()).c_str());
+    }
+
+    GroupKey key{std::move(arg_py_client), std::move(devices),
+                 std::move(memory_kind)};
+    Group& group = groups_[key];
+    group.specs.push_back(std::move(spec));
+    group.indices.push_back(result_idx);
+    group.shardings.push_back(nb::borrow<nb::object>(sharding));
+    group.weak_types.push_back(signature.weak_type);
+    return true;
+  }
+
+  void Run(std::vector<nb::object>& results) override {
+    auto status = RunInternal(results);
+    if (!status.ok()) {
+      throw nb::value_error(
+          absl::StrCat("NumpyHandler failed: ", status.message()).c_str());
+    }
+  }
+
+ private:
+  absl::Status RunInternal(std::vector<nb::object>& results) {
+    if (groups_.empty()) {
+      return absl::OkStatus();
+    }
+    PyUserContextScope user_context_scope;
+    for (auto& [key, group] : groups_) {
+      xla::ifrt::Client* client = key.py_client->ifrt_client();
+      if (client == nullptr) {
+        return xla::InvalidArgument("Numpy handler has no valid IFRT client.");
+      }
+      std::vector<xla::ifrt::ArrayRef> arrays;
+      {
+        nb::gil_scoped_release gil_release;
+        ABSL_ASSIGN_OR_RETURN(
+            arrays,
+            client->MakeArraysFromHostBufferShards(
+                absl::MakeSpan(group.specs),
+                xla::ifrt::Client::HostBufferSemantics::kImmutableZeroCopy));
+      }
+
+      for (size_t i = 0; i < arrays.size(); ++i) {
+        size_t orig_idx = group.indices[i];
+        PyArray py_array = PyArray::MakeFromIfrtArrayAndSharding(
+            key.py_client, std::move(arrays[i]), group.shardings[i],
+            /*weak_type=*/group.weak_types[i], /*committed=*/true,
+            /*skip_checks=*/false);
+        results[orig_idx] = py_array;
+      }
+    }
+
+    return absl::OkStatus();
+  }
+
+  absl::flat_hash_map<GroupKey, Group> groups_;
 };
 
 }  // namespace
@@ -1354,14 +1638,9 @@ void BuildPjitSubmodule(nb::module_& m) {
       /*.name=*/name.c_str(),
       /*.basicsize=*/static_cast<int>(sizeof(PjitFunctionObject)),
       /*.itemsize=*/0,
-#if PY_VERSION_HEX < 0x030C0000
-      /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
-          Py_TPFLAGS_HAVE_VECTORCALL,
-#else   // PY_VERSION_HEX < 0x030C0000
       /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
           Py_TPFLAGS_HAVE_VECTORCALL | Py_TPFLAGS_MANAGED_DICT |
           Py_TPFLAGS_MANAGED_WEAKREF,
-#endif  // PY_VERSION_HEX < 0x030C0000
       /*.slots=*/PjitFunction_slots,
   };
   PjitFunction_Type = PyType_FromSpec(&PjitFunction_spec);
@@ -1393,6 +1672,14 @@ void BuildPjitSubmodule(nb::module_& m) {
       nb::is_method());
   cfun.attr("__setstate__") = nb::cpp_function(
       [](nb::object& self, const nb::dict& pickle) {
+        if (self.type().ptr() != PjitFunction_Type) {
+          throw nb::type_error("Expected a PjitFunction");
+        }
+        PjitFunctionObject* fn_obj =
+            reinterpret_cast<PjitFunctionObject*>(self.ptr());
+        if (fn_obj->fun_initialized) {
+          throw xla::XlaRuntimeError("PjitFunction is already initialized");
+        }
         int version = nb::cast<int>(pickle["version"]);
         if (version != kPjitFunctionPickleVersion) {
           throw std::invalid_argument(absl::StrFormat(
@@ -1420,12 +1707,12 @@ void BuildPjitSubmodule(nb::module_& m) {
             nb::cast<nb::callable>(pickle["shard_arg_fallback"]);
         nb_class_ptr<PjitFunctionCache> cache =
             nb::cast<nb_class_ptr<PjitFunctionCache>>(pickle["cache"]);
-        InitializePjitFunction(
-            reinterpret_cast<PjitFunctionObject*>(self.ptr()),
-            std::move(function_name), std::move(fun), std::move(cache_miss),
-            std::move(static_argnums), std::move(static_argnames),
-            std::move(global_cache_key), std::move(pytree_registry),
-            std::move(shard_arg_fallback), std::move(cache));
+        InitializePjitFunction(fn_obj, std::move(function_name), std::move(fun),
+                               std::move(cache_miss), std::move(static_argnums),
+                               std::move(static_argnames),
+                               std::move(global_cache_key),
+                               std::move(pytree_registry),
+                               std::move(shard_arg_fallback), std::move(cache));
       },
       nb::is_method());
   cfun.attr("__signature__") = xla::nb_property_readonly(
@@ -1442,6 +1729,52 @@ void BuildPjitSubmodule(nb::module_& m) {
   cfun.attr("_clear_cache") = nb::cpp_function(
       [](nb::handle self) { AsPjitFunction(self)->ClearCache(); },
       nb::is_method());
+
+  m.def(
+      "shard_args",
+      [](nb::sequence shardings, nb::sequence layouts,
+         nb::sequence copy_semantics, nb::sequence args,
+         std::optional<nb::callable> fallback) -> std::vector<nb::object> {
+        size_t num_args = nb::len(args);
+        if (nb::len(shardings) != num_args || nb::len(layouts) != num_args ||
+            nb::len(copy_semantics) != num_args) {
+          throw nb::value_error(
+              "shard_args arguments must have the same length.");
+        }
+
+        GlobalPyRefManager()->CollectGarbage();
+
+        PyUserContextScope user_context_scope;
+
+        FallbackHandler fallback_handler(fallback);
+        NumpyHandler numpy_handler;
+
+        absl::InlinedVector<ShardArgsHandler*, 2> handlers = {
+            &numpy_handler, &fallback_handler};
+
+        for (size_t i = 0; i < num_args; ++i) {
+          nb::object arg = args[i];
+          nb::object sharding = shardings[i];
+          nb::object layout = layouts[i];
+          nb::object cs = copy_semantics[i];
+
+          for (auto* handler : handlers) {
+            if (handler->TryAdd(i, arg, sharding, layout, cs)) {
+              break;
+            }
+          }
+        }
+
+        std::vector<nb::object> results_list(num_args);
+
+        for (auto* handler : handlers) {
+          handler->Run(results_list);
+        }
+
+        return results_list;
+      },
+      nb::arg("shardings"), nb::arg("layouts"), nb::arg("copy_semantics"),
+      nb::arg("args"), nb::arg("fallback").none() = nb::none());
 
   m.def(
       "pjit",

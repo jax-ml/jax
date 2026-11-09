@@ -75,7 +75,7 @@ def random_bcoo(key: Array,
   if not 0 <= nse < sparse_size:
     raise ValueError(f"got {nse=}, expected to be between 0 and {sparse_size}")
   if 0 < nse < 1:
-    nse = int(math.ceil(nse * sparse_size))
+    nse = math.ceil(nse * sparse_size)
   assert not isinstance(nse, float)
   nse = operator.index(nse)
 

@@ -14,14 +14,15 @@
 
 """Tests for distributed pallas GPU operations."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import math
 import os
+import re
 import tempfile
 import types
-from typing import ClassVar, TYPE_CHECKING
+from typing import Any, ClassVar, TYPE_CHECKING
 from unittest import mock
 
 from absl.testing import absltest
@@ -35,6 +36,7 @@ from jax._src.config import config
 from jax._src.lib import cuda_versions
 from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.gpu import launch_context as mgpu_launch_context
 from jax.experimental.pallas import mosaic_gpu as _plgpu
 from jax.experimental.pallas.ops.gpu.all_gather_mgpu import all_gather
 from jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu import reduce_scatter
@@ -63,12 +65,6 @@ else:
   del _plgpu
 
   plgpu.kernel = do_not_call_me_directly
-
-
-def is_nvshmem_used() -> bool:
-  return (
-      "XLA_FLAGS" in os.environ
-        and "--xla_gpu_experimental_enable_nvshmem" in os.environ["XLA_FLAGS"])
 
 
 def is_multiprocess():
@@ -128,21 +124,12 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
     if (not jtu.is_device_cuda() or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
-    if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
-      self.skipTest("NVSHMEM doesn't work with the platform allocator.")
 
     self.monkey_patched_api_was_used = False
     super().setUp()
 
   def tearDown(self):
     self.assertTrue(self.monkey_patched_api_was_used)
-
-  def is_wg_semantics(self):
-    return self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup
-
-  def skip_if_wg_semantics(self):
-    if self.is_wg_semantics():
-      self.skipTest("Not supported under WG semantics")
 
   def kernel(self, *args, **kwargs):
     compiler_params = dataclasses.replace(
@@ -168,18 +155,37 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
         plgpu.SwizzleTransform(swizzle),
     )
 
+  def assert_arrays_equal_per_shard(
+      self,
+      y: jax.Array,
+      expected_fn: Callable[[int], Any],
+      **kwargs,
+  ):
+    if hasattr(y.sharding, "mesh"):
+      devices = list(y.sharding.mesh.devices.flat)
+    elif hasattr(y.sharding, "_internal_device_list"):
+      devices = list(y.sharding._internal_device_list)
+    else:
+      devices = list(y.sharding.device_set)
+    self.assertNotEmpty(y.addressable_shards)
+    if jax.process_count() == 1:
+      self.assertLen(y.addressable_shards, len(devices))
+    for shard in y.addressable_shards:
+      dev_idx = devices.index(shard.device)
+      np.testing.assert_array_equal(shard.data, expected_fn(dev_idx), **kwargs)
+
 
 class PallasCallRemoteDMATest(TestCase):
   def setUp(self):
+    super().setUp()
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
-    super().setUp()
 
   def test_remote_dma_basic(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       y_ref[...] = x_ref[...]
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -197,7 +203,6 @@ class PallasCallRemoteDMATest(TestCase):
               plgpu.SemaphoreType.REGULAR,
               plgpu.SemaphoreType.REGULAR,
           ],
-          compiler_params=plgpu.CompilerParams(),
       )(x)
 
     devices = jax.devices()[:2]
@@ -212,8 +217,596 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
+
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_remote_store_vectorized(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, y_ref, ready_sem, recv_sem):
+      other_dev_id = 1 - lax.axis_index("x")
+      other_dev = {"x": other_dev_id}
+      pl.semaphore_signal(ready_sem, device_id=other_dev)
+      pl.semaphore_wait(ready_sem)
+      for i in range(2):
+        for j in range(2):
+          idx = (
+              pl.ds(lax.rem(other_dev_id + i, jnp.int32(2)) * 16, 16),
+              pl.ds(j * 64, 64),
+          )
+          plgpu.remote_ref(y_ref, other_dev)[idx] = x_ref[idx]
+      pl.semaphore_signal(recv_sem, device_id=other_dev)
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 32 * 128, dtype=jnp.bfloat16).reshape((2 * 32, 128))
+    body = self.kernel(
+        kernel,
+        out_type=jax.ShapeDtypeStruct((32, 128), jnp.bfloat16),
+        scratch_types=[
+            plgpu.SemaphoreType.REGULAR,
+            plgpu.SemaphoreType.REGULAR,
+        ],
+    )
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as ptx:
+      y = jax.block_until_ready(
+          jax.jit(
+              jax.shard_map(
+                  body,
+                  mesh=mesh,
+                  in_specs=P("x"),
+                  out_specs=P("x"),
+                  check_vma=False,
+              )
+          )(x)
+      )
+    self.assertIn("st.global.v2.b32", ptx())
+    self.assertNotIn("st.b16", ptx())
+    self.assertNotIn("st.global.b16", ptx())
+
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[32:] if dev_idx == 0 else x[:32]
+    )
+
+  def test_skip_device_sync(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    # Kernel with cross-device barrier which makes sure that the other device
+    # has completed the previous kernel.
+    def barrier_kernel(x_ref, y_ref):
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+
+    # Kernel with no cross-device barrier.
+    def skip_barrier_kernel(x_ref, y_ref):
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...] * 2
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    # The first kernel is executed with a device barrier, the second without.
+    def body(x):
+      y = self.kernel(
+          barrier_kernel,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+      )(x)
+      y_ref = jax.new_ref(y)
+      self.kernel(
+          skip_barrier_kernel,
+          compiler_params=plgpu.CompilerParams(skip_device_barrier=True),
+      )(x, y_ref)
+      return jax.freeze(y_ref)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    hlo = sharded_fn.lower(x).compile().as_text()
+    self.assertIn("skip_device_barrier = true", hlo)
+
+  def test_rma_with_barrier_semaphore(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      sem = plgpu.get_barrier_semaphore().at[0]
+      y_ref[...] = x_ref[...]
+      pl.semaphore_signal(sem, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(sem, device_id=other_dev_id)
+      pl.semaphore_wait(sem)
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    def body(x):
+      return self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          compiler_params=plgpu.CompilerParams(
+              collective_id=0,
+              skip_device_barrier=True,
+          ),
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    hlo = sharded_fn.lower(x).compile().as_text()
+    self.assertIn("collective_id = 0", hlo)
+
+    y = sharded_fn(x)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
+
+  def test_rma_with_barrier_granular_semaphores(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      ready_sem = plgpu.get_barrier_semaphore().at[0]
+      recv_sem = plgpu.get_barrier_semaphore().at[1]
+      y_ref[...] = x_ref[...]
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    def body(x):
+      return self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          compiler_params=plgpu.CompilerParams(
+              collective_id=0, skip_device_barrier=True
+          ),
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    hlo = sharded_fn.lower(x).compile().as_text()
+    self.assertIn("collective_id = 0", hlo)
+
+    y = sharded_fn(x)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
+
+  def test_different_collective_ids_unique_semaphores(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel_cid0(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      sem0 = plgpu.get_barrier_semaphore().at[0]
+      y_ref[...] = x_ref[...]
+      pl.semaphore_signal(sem0, device_id=other_dev_id)
+      pl.semaphore_wait(sem0)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...]
+      pl.semaphore_signal(sem0, device_id=other_dev_id)
+      pl.semaphore_wait(sem0)
+
+    def kernel_cid1(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      sem1 = plgpu.get_barrier_semaphore().at[0]
+      y_ref[...] = x_ref[...] + 1.0
+      pl.semaphore_signal(sem1, device_id=other_dev_id)
+      pl.semaphore_wait(sem1)
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_ptr[...] = x_ref[...] + 2.0
+      pl.semaphore_signal(sem1, device_id=other_dev_id)
+      pl.semaphore_wait(sem1)
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    def body(x):
+      y = self.kernel(
+          kernel_cid0,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          compiler_params=plgpu.CompilerParams(
+              collective_id=0, skip_device_barrier=True
+          ),
+      )(x)
+      z = self.kernel(
+          kernel_cid1,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          compiler_params=plgpu.CompilerParams(
+              collective_id=1, skip_device_barrier=True
+          ),
+      )(y)
+      return z
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    hlo = sharded_fn.lower(x).compile().as_text()
+    self.assertIn("collective_id = 0", hlo)
+    self.assertIn("collective_id = 1", hlo)
+
+    z = sharded_fn(x)
+    self.assert_arrays_equal_per_shard(
+        z, lambda dev_idx: (x[:8] if dev_idx == 0 else x[8:]) + 2.0
+    )
+
+  def test_two_kernels_same_collective_id_signal_wait(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    # First kernel signals the semaphore across devices
+    def kernel_first(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      sem = plgpu.get_barrier_semaphore().at[0]
+      neighbor_y = plgpu.remote_ref(y_ref, other_dev_id)
+      neighbor_y[...] = x_ref[...] + 42.0
+      pl.semaphore_signal(sem, device_id=other_dev_id)
+
+    # Second kernel with the SAME collective_id waits for the signal from the first kernel
+    def kernel_second(y_ref, z_ref):
+      sem = plgpu.get_barrier_semaphore().at[0]
+      pl.semaphore_wait(sem)
+      z_ref[...] = y_ref[...] * 2.0
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    def body(x):
+      y = self.kernel(
+          kernel_first,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          compiler_params=plgpu.CompilerParams(
+              collective_id=0,
+              skip_device_barrier=True,
+          ),
+      )(x)
+      z = self.kernel(
+          kernel_second,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          compiler_params=plgpu.CompilerParams(
+              collective_id=0,
+              skip_device_barrier=True,
+          ),
+      )(y)
+      return z
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_fn = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    hlo = sharded_fn.lower(x).compile().as_text()
+    self.assertIn("collective_id = 0", hlo)
+    self.assertIn("skip_device_barrier = true", hlo)
+
+    z = sharded_fn(x)
+    self.assert_arrays_equal_per_shard(
+        z, lambda dev_idx: ((x[8:] if dev_idx == 0 else x[:8]) + 42.0) * 2.0
+    )
+
+  def test_barrier_semaphores_many(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel_many_semaphores(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index("x")
+      y_ref[...] = x_ref[...]
+      for idx in (0, 25, 1023):
+        sem = plgpu.get_barrier_semaphore().at[idx]
+        pl.semaphore_signal(sem, device_id=other_dev_id)
+        pl.semaphore_wait(sem)
+
+    x = jnp.arange(2 * 8 * 128.0, dtype=jnp.float32).reshape((2 * 8, 128))
+
+    def body_single_kernel(x):
+      return self.kernel(
+          kernel_many_semaphores,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          compiler_params=plgpu.CompilerParams(
+              collective_id=0, skip_device_barrier=True
+          ),
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    sharded_single = jax.jit(
+        jax.shard_map(
+            body_single_kernel,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+    hlo = sharded_single.lower(x).compile().as_text()
+    self.assertIn("collective_id = 0", hlo)
+    y = sharded_single(x)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[:8] if dev_idx == 0 else x[8:]
+    )
+
+  def test_barrier_semaphore_missing_collective_id(self):
+    if jax.process_index() > 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+
+    def kernel(o_ref):
+      del o_ref
+      _ = plgpu.get_barrier_semaphore()
+
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
+    with self.assertRaisesRegex(
+        ValueError,
+        "collective_id has to be specified when using a custom barrier",
+    ):
+      jax.jit(
+          jax.shard_map(
+              self.kernel(
+                  kernel,
+                  out_type=jax.ShapeDtypeStruct((1,), jnp.float32),
+              ),
+              mesh=mesh,
+              in_specs=(),
+              out_specs=P("x"),
+              check_vma=False,
+          )
+      ).lower()
+
+  @parameterized.parameters(-1, 32)
+  def test_barrier_semaphore_invalid_collective_id(self, collective_id):
+    self.monkey_patched_api_was_used = True
+    with self.assertRaisesRegex(
+        ValueError, r"collective_id must be in \[0, 32\)"
+    ):
+      plgpu.CompilerParams(collective_id=collective_id)
+
+  def test_remote_dma_tma_load(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    def kernel(x_ref, y_ref, ready_sem, recv_sem, scratch_ref, barrier):
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+
+      neighbor_ptr = plgpu.remote_ref(x_ref, other_dev_id)
+      plgpu.copy_gmem_to_smem(neighbor_ptr, scratch_ref, barrier)
+      plgpu.barrier_wait(barrier)
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+
+      plgpu.copy_smem_to_gmem(scratch_ref, y_ref)
+      plgpu.wait_smem_to_gmem(0)
+      # Make sure the other device's copy completed before exiting the kernel.
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 8 * 128, dtype=jnp.float32).reshape((2 * 8, 128))
+    def body(x):
+      return self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_types=[
+              plgpu.SemaphoreType.REGULAR,
+              plgpu.SemaphoreType.REGULAR,
+              plgpu.SMEM((8, 128), jnp.float32),
+              plgpu.Barrier(),
+          ],
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )(x)
+
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
+
+  def test_remote_tma_dynamic_peer_id(self):
+    if jax.process_index() >= 2:
+      self.monkey_patched_api_was_used = True
+      return  # Only 2 processes needed.
+    # Block `i` of device 0 writes `iota + i` to device `i`, so a wrong entry
+    # in the dynamic descriptor table shows up as a wrong shard.
+    def kernel(y_ref, scratch_ref, sem):
+      dev_id = lax.axis_index("x")
+      peer_id = lax.axis_index("peer_id")
+      @pl.when(dev_id == 0)
+      def _store():
+        output = plgpu.layout_cast(
+            lax.broadcasted_iota(jnp.int32, (128, 128), 1), plgpu.Layout.WGMMA
+        )
+        scratch_ref[...] = output + peer_id
+        plgpu.copy_smem_to_gmem(
+            scratch_ref, plgpu.remote_ref(y_ref, {"x": peer_id})
+        )
+        plgpu.wait_smem_to_gmem(0)
+      pl.semaphore_signal(sem, device_id=1 - dev_id)
+      pl.semaphore_wait(sem)
+    transforms = self.default_transforms(dtype=jnp.int32)
+    def body():
+      return self.kernel(
+          kernel,
+          grid=(2,),
+          grid_names=("peer_id",),
+          out_type=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+          scratch_types=[
+              plgpu.SMEM((128, 128), jnp.int32, transforms=transforms),
+              plgpu.SemaphoreType.REGULAR,
+          ],
+      )()
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False
+        )
+    )()
+    expected = lax.broadcasted_iota(jnp.int32, (128, 128), 1)
+    self.assert_arrays_equal_per_shard(y, lambda dev_idx: expected + dev_idx)
+
+  @jtu.thread_unsafe_test()  # Monkey-patches LaunchContext._alloc_scratch.
+  def test_recomputable_peer_id_does_not_allocate_dynamic_table(self):
+    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
+    def scratch_sizes(get_peer_id, **kernel_kwargs):
+      """Lowers a remote TMA store and returns its GMEM scratch sizes."""
+      def kernel(y_ref, scratch_ref):
+        remote_y = plgpu.remote_ref(y_ref, {"x": get_peer_id()})
+        plgpu.copy_smem_to_gmem(scratch_ref, remote_y)
+        plgpu.wait_smem_to_gmem(0)
+      transforms = self.default_transforms(dtype=jnp.int32)
+      kernel_call = self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+          scratch_types=[
+              plgpu.SMEM((128, 128), jnp.int32, transforms=transforms)
+          ],
+          **kernel_kwargs,
+      )
+      sharded_call = jax.shard_map(
+          kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False
+      )
+      sizes = []
+      alloc_scratch = mgpu_launch_context.LaunchContext._alloc_scratch
+
+      def recording_alloc_scratch(launch_ctx, size, *args, **kwargs):
+        sizes.append(size)
+        return alloc_scratch(launch_ctx, size, *args, **kwargs)
+
+      with mock.patch.object(
+          mgpu_launch_context.LaunchContext,
+          "_alloc_scratch",
+          recording_alloc_scratch,
+      ):
+        jax.jit(sharded_call).lower()
+      return sizes
+    desc_bytes = mgpu_launch_context.TMA_DESCRIPTOR_BYTES
+    # `1 - device_id` can be recomputed on the host: a single descriptor.
+    self.assertEqual(
+        scratch_sizes(lambda: 1 - lax.axis_index("x")), [desc_bytes]
+    )
+    # A grid-derived peer id can't: a table with one descriptor per peer.
+    self.assertEqual(
+        scratch_sizes(
+            lambda: lax.axis_index("peer_id"), grid=(2,), grid_names=("peer_id",)
+        ),
+        [desc_bytes * mesh.size],
+    )
+
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_remote_dma_dynamic_other_device_id(self):
+    # Regression test for device_collective_metadata being DCE'd under
+    # WG lowering.
+    #
+    # We use a dynamic device_id (loaded from a memref)
+    # which forces the lowering to use `device_collective_metadata` to resolve
+    # the remote address.
+    #
+    # The choice of `copy_smem_to_gmem` instead of simple store is deliberate as
+    # in the former case we do not handle remote ref GMEM transforms in Pallas
+    # lowering. As a consequence we do not call `launch_ctx.to_remote` leaving
+    # device collective metadata unused and prone to DCE.
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        scratch_types=[
+            plgpu.SMEM((8, 128), jnp.float32),
+        ],
+    )
+    def kernel(other_dev_id_ref, y_ref, x_smem):
+      x_smem[...] = jnp.ones_like(x_smem)
+      plgpu.commit_smem()
+      other_dev_id = {"x": other_dev_id_ref[0]}
+      remote_y_ref = plgpu.remote_ref(y_ref, other_dev_id)
+      plgpu.copy_smem_to_gmem(x_smem, remote_y_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    other_dev_ids = jnp.array([1, 0], dtype=jnp.int32)
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as ptx:
+      jax.jit(
+          jax.shard_map(
+              kernel,
+              mesh=mesh,
+              in_specs=P("x"),
+              out_specs=P("x"),
+              check_vma=False,
+          )
+      ).lower(other_dev_ids).compile()
+
+    # The kernel has 2 GMEM buffer arguments (`other_dev_id_ref` and `y_ref`,
+    # mapped to `_param_0` and `_param_1`). `device_collective_metadata` is
+    # outlined as the 3rd kernel parameter (`_param_2`) only if its host-side
+    # definition survives DCE.
+    self.assertIn("kernel_mosaic_gpu_kernel_param_2", ptx())
 
   # Test verifies an execution of HLO with several slightly different mosaic
   # custom calls. The difference is needed to validate correct initialization
@@ -223,7 +816,7 @@ class PallasCallRemoteDMATest(TestCase):
       return  # Only 2 processes needed.
 
     def kernel(x_ref, y_ref, done_sem):
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       pl.semaphore_signal(done_sem, device_id=other_dev_id)
       pl.semaphore_wait(done_sem)
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
@@ -232,7 +825,7 @@ class PallasCallRemoteDMATest(TestCase):
       pl.semaphore_wait(done_sem)
 
     def different_kernel(x_ref, y_ref, wait_sem, ready_sem):
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       pl.semaphore_signal(wait_sem, device_id=other_dev_id)
       pl.semaphore_wait(wait_sem)
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
@@ -275,14 +868,85 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[:8] if jax.process_index() == 0 else x[8:]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[:8] if dev_idx == 0 else x[8:]
+    )
+
+  def test_remote_dma_inline_mgpu(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    def kernel(x_ref, y_ref):
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+
+      @plgpu.inline_mgpu(arg_types=(plgpu.RefType(),))
+      def write_inline(ctx, ref):
+        del ctx
+        pass
+
+      write_inline(neighbor_ptr)
+
+    x = jnp.arange(128, dtype=jnp.float32)
+    def body(x):
+      return self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    y = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False,
+        )
+    )(x)
+    y.block_until_ready()
+
+  def test_remote_dma_atomic_store(self):
+    if jax.process_index() > 2:
+      self.skipTest("Needs at least two devices")
+    def kernel(x_ref, y_ref, ready_sem, recv_sem):
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
+      y_ref[...] = jnp.zeros_like(y_ref)
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      plgpu.atomic_add(neighbor_ptr, x_ref[...])
+
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(256, dtype=jnp.float32)
+    def body(x):
+      return self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+          scratch_types=[
+              plgpu.SemaphoreType.REGULAR,
+              plgpu.SemaphoreType.REGULAR,
+          ],
+          compiler_params=plgpu.CompilerParams(),
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    y = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False,
+        )
+    )(x)
+    y.block_until_ready()
+
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[128:] if dev_idx == 0 else x[:128]
+    )
 
   def test_remote_dma_with_retries(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       y_ref[...] = x_ref[...]
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -315,14 +979,15 @@ class PallasCallRemoteDMATest(TestCase):
     for _ in range(51):
       y = jit_body(y)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+    )
 
   def test_remote_dma_with_profiler(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       y_ref[...] = x_ref[...]
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -359,8 +1024,9 @@ class PallasCallRemoteDMATest(TestCase):
             )
         )(x)
 
-      expected = x[8:] if jax.process_index() == 0 else x[:8]
-      np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+      self.assert_arrays_equal_per_shard(
+          y, lambda dev_idx: x[8:] if dev_idx == 0 else x[:8]
+      )
 
   def test_remote_dma_in_loop(self):
     if jax.process_index() > 2:
@@ -368,7 +1034,7 @@ class PallasCallRemoteDMATest(TestCase):
 
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
       device_id = lax.axis_index('x')
-      other_dev_id = 1 - device_id
+      other_dev_id = {'x': 1 - device_id}
       neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
       def body(i, _):
         y_ref.at[0, i].set(x_ref.at[0, i].get())
@@ -400,14 +1066,15 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[1:] if jax.process_index() == 0 else x[:1]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[1:] if dev_idx == 0 else x[:1]
+    )
 
   def test_remote_dma_dynamic_index(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
     def kernel(x_ref, y_ref, ready_sem, recv_sem):
-      other_dev_id = jnp.sum(x_ref[...] == 1, dtype=jnp.int32)
+      other_dev_id = {'x': jnp.sum(x_ref[...] == 1, dtype=jnp.int32)}
       y_ref[...] = x_ref[...]
       pl.semaphore_signal(ready_sem, device_id=other_dev_id)
       pl.semaphore_wait(ready_sem)
@@ -437,8 +1104,9 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[1:] if jax.process_index() == 0 else x[:1]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    self.assert_arrays_equal_per_shard(
+        y, lambda dev_idx: x[1:] if dev_idx == 0 else x[:1]
+    )
 
   @parameterized.parameters(('x',), ('y',))
   def test_remote_dma_2d_mesh(self, axis):
@@ -472,15 +1140,20 @@ class PallasCallRemoteDMATest(TestCase):
         )
     )(x)
 
-    expected = x[8:] if jax.process_index() == 0 else x[:8]
-    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+    axis_idx = ["x", "y"].index(axis)
+    self.assert_arrays_equal_per_shard(
+        y,
+        lambda dev_idx: (
+            x[8:] if np.unravel_index(dev_idx, (2, 2))[axis_idx] == 0 else x[:8]
+        ),
+    )
 
   def test_wait_twice(self):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 2, device_id=other_dev_id)
       pl.semaphore_wait(sem)
       pl.semaphore_wait(sem)
@@ -507,7 +1180,7 @@ class PallasCallRemoteDMATest(TestCase):
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 2, device_id=other_dev_id)
       pl.semaphore_wait(sem, decrement=False)
       pl.semaphore_wait(sem, 2, decrement=False)
@@ -535,7 +1208,7 @@ class PallasCallRemoteDMATest(TestCase):
       return  # Only 2 processes needed.
 
     def kernel(y_ref, sem, sem2):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       plgpu.semaphore_signal_parallel(
           plgpu.SemaphoreSignal(sem, device_id=other_dev_id),
           plgpu.SemaphoreSignal(sem2, device_id=other_dev_id),
@@ -561,6 +1234,10 @@ class PallasCallRemoteDMATest(TestCase):
     np.testing.assert_allclose(y, jnp.ones_like(y))
 
   def test_semaphore_signal_collective_axes(self):
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.process_index() > 2:
       self.monkey_patched_api_was_used = True
       return  # Only 2 processes needed.
@@ -601,6 +1278,10 @@ class PallasCallRemoteDMATest(TestCase):
         raise
 
   def test_semaphore_signal_multicast_collective_axes_warp_level(self):
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.process_index() > 2:
       self.monkey_patched_api_was_used = True
       return  # Only 2 processes needed.
@@ -608,14 +1289,13 @@ class PallasCallRemoteDMATest(TestCase):
     def kernel(y_ref, sem_out_ref, sem):
       dev_idx = jax.lax.axis_index("x")
 
-      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-      def _per_warp():
-        warp_idx = jax.lax.axis_index("warp")
+      @plgpu.warp_map
+      def _per_warp(warp_id):
 
-        @pl.when(warp_idx == dev_idx)
+        @pl.when(warp_id == dev_idx)
         def _():
           # One warp on each device signals. In total, both semaphores get signaled once.
-          plgpu.semaphore_signal_multicast(sem.at[warp_idx], collective_axes="x")
+          plgpu.semaphore_signal_multicast(sem.at[warp_id], collective_axes="x")
 
           y_ref[0, 0] = 1.0
 
@@ -653,7 +1333,7 @@ class PallasCallRemoteDMATest(TestCase):
 
   def test_permuted_mesh(self):
     def kernel(y_ref, sem):
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -750,15 +1430,15 @@ class PallasCallRemoteDMATest(TestCase):
           y_slice = pl.ds(i * tile, tile)
           plgpu.copy_smem_to_gmem(
               smem_ref,
-              plgpu.remote_ref(y_ref, (zero, dev_id)).at[y_slice]
+              plgpu.remote_ref(y_ref, {"x": zero, "y": dev_id}).at[y_slice]
           )
           plgpu.copy_smem_to_gmem(
               smem_ref,
-              plgpu.remote_ref(y_ref, (zero, other_dev_id)).at[y_slice]
+              plgpu.remote_ref(y_ref, {"x": zero, "y": other_dev_id}).at[y_slice]
           )
           plgpu.wait_smem_to_gmem(0)
 
-      pl.semaphore_signal(sem, 1, device_id=(zero, other_dev_id))
+      pl.semaphore_signal(sem, 1, device_id={"x": zero, "y": other_dev_id})
       pl.semaphore_wait(sem)
 
     kernel_call = self.kernel(
@@ -786,9 +1466,14 @@ class PallasCallRemoteDMATest(TestCase):
 
 class PallasCallMultimemTest(TestCase):
   def setUp(self):
+    super().setUp()
+    # TODO: b/541298091 - Skip when NCCL_NVLS_ENABLE='0' until b/541298091 is resolved.
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
-    super().setUp()
     if any(
       not cuda_versions.cuda_supports_multicast(d.local_hardware_id)
       for d in jax.local_devices()
@@ -805,7 +1490,7 @@ class PallasCallMultimemTest(TestCase):
       def _store():
         output = plgpu.layout_cast(lax.broadcasted_iota(jnp.int32, (128, 128), 1), plgpu.Layout.WGMMA)
         plgpu.multimem_store(output, y_ref, 'x')
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -833,7 +1518,7 @@ class PallasCallMultimemTest(TestCase):
       @pl.when(lax.axis_index('x') == 0)
       def _store():
         plgpu.multimem_store(jnp.int32(1), y_ref.at[0], 'x')
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -864,7 +1549,7 @@ class PallasCallMultimemTest(TestCase):
         smem_ref[...] = output
         plgpu.copy_smem_to_gmem(smem_ref, plgpu.multicast_ref(y_ref, 'x'))
         plgpu.wait_smem_to_gmem(0)
-      other_dev_id = 1 - lax.axis_index('x')
+      other_dev_id = {'x': 1 - lax.axis_index('x')}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -912,7 +1597,7 @@ class PallasCallMultimemTest(TestCase):
           )
           plgpu.wait_smem_to_gmem(0)
 
-      other_dev_id = 1 - lax.axis_index("x")
+      other_dev_id = {"x": 1 - lax.axis_index("x")}
       pl.semaphore_signal(sem, 1, device_id=other_dev_id)
       pl.semaphore_wait(sem)
 
@@ -996,14 +1681,18 @@ class PallasCallMultimemTest(TestCase):
         )
       else:
         layout = plgpu.Layout.WG_STRIDED((64, 32), vec_size=vector_length)
-      y_ref[...] = plgpu.layout_cast(
-          plgpu.multimem_load_reduce(
-              x_ref.at[16:-16], collective_axes="x", reduction_op=reduction,
+      plgpu.store(
+          y_ref,
+          plgpu.layout_cast(
+              plgpu.multimem_load_reduce(
+                  x_ref.at[16:-16], collective_axes="x", reduction_op=reduction,
+              ),
+              layout
           ),
-          layout
+          optimized=False,
       )
       my_device = lax.axis_index("x")
-      other_device = 1 - my_device
+      other_device = {"x": 1 - my_device}
       pl.semaphore_signal(sem_ref, 1, device_id=other_device)
       pl.semaphore_wait(sem_ref)
 
@@ -1044,6 +1733,100 @@ class PallasCallMultimemTest(TestCase):
         np.tile(np_reduction(x_local[16:64+16], x_local[64+48:128+48]), (2, 1)),
     )
 
+  def test_multimem_operand_is_placed_in_collective_memory(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    devices = jax.devices()[:2]
+
+    def kernel(x_ref, y_ref, sem_ref):
+      y_ref[...] = plgpu.layout_cast(
+          plgpu.multimem_load_reduce(
+              x_ref.at[...], collective_axes="x", reduction_op="add"
+          ),
+          plgpu.Layout.WG_STRIDED((8, 128), vec_size=4),
+      )
+      other_device = {"x": 1 - lax.axis_index("x")}
+      pl.semaphore_signal(sem_ref, 1, device_id=other_device)
+      pl.semaphore_wait(sem_ref)
+
+    mesh = jax.sharding.Mesh(devices, ("x",))
+    x = jnp.zeros((2 * 8, 128), jnp.float32)
+    f = jax.jit(
+        jax.shard_map(
+            self.kernel(
+                kernel,
+                out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+                scratch_types=[plgpu.SemaphoreType.REGULAR],
+                compiler_params=plgpu.CompilerParams(),
+            ),
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )
+
+    lowered = f.lower(x).as_text()
+
+    # The multimem operand has to live in symmetric memory, so Mosaic asks XLA
+    # to place it in the collective memory space.
+    match = re.search(r'operands_memory_spaces = "\{([^}]*)\}"', lowered)
+    self.assertIsNotNone(match, lowered)
+    operand_memory_spaces = dict(
+        tuple(int(i) for i in pair.split(":"))
+        for pair in match.group(1).split(",")
+        if pair
+    )
+    collective_memory_space = 7
+    self.assertEqual(operand_memory_spaces.get(0), collective_memory_space)
+
+    if jax.process_count() == 1:
+      # Within a single process the multimem operand is the only buffer that
+      # has to be symmetric. Across processes all of them do.
+      self.assertEqual(operand_memory_spaces, {0: collective_memory_space})
+      self.assertNotIn("results_memory_spaces", lowered)
+
+    # And XLA has to honour the request by coloring the operand buffers S(7).
+    compiled = f.lower(x).compile().as_text()
+    custom_calls = [
+        line
+        for line in compiled.splitlines()
+        if 'custom_call_target="mosaic_gpu_v2"' in line
+    ]
+    self.assertLen(custom_calls, 1, compiled)
+    # Operands are printed by name only (and annotated with /*index=N*/ past
+    # the first few), e.g. `%custom-call = f32[8,128]{1,0} custom-call(%copy)`.
+    operands = re.search(r"custom-call\(([^)]*)\)", custom_calls[0])
+    self.assertIsNotNone(operands, custom_calls[0])
+    operand_names = [
+        re.sub(r"/\*.*?\*/", "", operand).strip()
+        for operand in operands.group(1).split(",")
+    ]
+
+    def memory_space(name: str) -> int:
+      # Definitions carry the memory space in the layout of their shape, e.g.
+      #   %copy = f32[16,128]{1,0:S(7)} copy(%param)
+      definition = re.search(
+          rf"^\s*{re.escape(name)} = (\S+)\s", compiled, re.MULTILINE
+      )
+      self.assertIsNotNone(
+          definition, f"No definition of {name} in:\n{compiled}"
+      )
+      space = re.search(r"S\((\d+)\)", definition.group(1))
+      return int(space.group(1)) if space else 0  # Default memory space.
+
+    # Note that XLA is free to place more buffers in collective memory than we
+    # asked for (it currently colors all buffers of a symmetric Mosaic kernel),
+    # so we only check that the buffers we did ask for got colored.
+    for index, requested_space in operand_memory_spaces.items():
+      self.assertLess(index, len(operand_names), compiled)
+      self.assertEqual(
+          memory_space(operand_names[index]),
+          requested_space,
+          f"Operand {index} ({operand_names[index]}) is not in memory space"
+          f" {requested_space}:\n{compiled}",
+      )
+
 
 @jtu.thread_unsafe_test_class()
 class PallasCallMultimemThreadUnsafeTest(TestCase):
@@ -1052,52 +1835,19 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
   """
 
   def setUp(self):
+    super().setUp()
+    # TODO: b/541298091 - Skip when NCCL_NVLS_ENABLE='0' until b/541298091 is resolved.
+    if os.environ.get("NCCL_NVLS_ENABLE") == "0":
+      self.skipTest(
+          "Skipping multimem test when NCCL_NVLS_ENABLE='0' (b/541298091)."
+      )
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
-    super().setUp()
     if any(
       not cuda_versions.cuda_supports_multicast(d.local_hardware_id)
       for d in jax.local_devices()
     ):
       self.skipTest("Not all local devices support multicast")
-
-  def test_collective_metadata_with_nvshmem_raises(self):
-    if is_multiprocess():
-      self.skipTest("This test runs only in single-process mode.")
-
-    def kernel(y_ref, sem):
-      @pl.when(lax.axis_index('x') == 0)
-      def _store():
-        output = plgpu.layout_cast(lax.broadcasted_iota(jnp.int32, (128, 128), 1), plgpu.Layout.WGMMA)
-        plgpu.multimem_store(output, y_ref, 'x')
-      other_dev_id = 1 - lax.axis_index('x')
-      pl.semaphore_signal(sem, 1, device_id=other_dev_id)
-      pl.semaphore_wait(sem)
-
-    kernel_call = self.kernel(
-        kernel,
-        out_type=jax.ShapeDtypeStruct((128, 128), jnp.int32),
-        scratch_types=[plgpu.SemaphoreType.REGULAR],
-    )
-    mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
-    f = jax.jit(
-        jax.shard_map(
-            kernel_call, mesh=mesh, in_specs=(), out_specs=P("x"), check_vma=False,
-        )
-    )
-
-    enable_nvshmem_flag = "--xla_gpu_experimental_enable_nvshmem=true"
-    xla_flags = os.environ.get("XLA_FLAGS", "")
-    if xla_flags:
-      xla_flags = f"{xla_flags} {enable_nvshmem_flag}"
-    else:
-      xla_flags = enable_nvshmem_flag
-    with jtu.set_env(XLA_FLAGS=xla_flags):
-      with self.assertRaisesRegex(
-          Exception,
-          "remove --xla_gpu_experimental_enable_nvshmem from your XLA flags.",
-      ):
-        f().block_until_ready()
 
   def _test_reduce_scatter(
       self,
@@ -1376,15 +2126,6 @@ if __name__ == '__main__':
   # allocator is used, setUp will skip the test.
   os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.01'
   os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'default'
-  if is_nvshmem_used():
-    # TODO(b/483671897) re-enable once command buffers supported with collectives.
-    additional_xla_flags = "--xla_gpu_enable_command_buffer=''"
-    if "XLA_FLAGS" in os.environ:
-      os.environ["XLA_FLAGS"] = (
-          f"{os.environ['XLA_FLAGS']} {additional_xla_flags}"
-      )
-    else:
-      os.environ["XLA_FLAGS"] = additional_xla_flags
 
   if is_multiprocess():
     jt_multiprocess.main()

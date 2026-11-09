@@ -143,6 +143,32 @@ class LRUCacheTest(LRUCacheTestCase):
     cache.put("c", b"c")
     self.assertCacheKeys(("a", "c"))
 
+  def test_missing_atime_is_evicted_first(self):
+    cache = LRUCache(self.name, max_size=2)
+
+    cache.put("a", b"a")
+    (self.path / f"a{_ATIME_SUFFIX}").unlink()
+
+    # A missing atime should not prevent writes while there is enough space.
+    cache.put("b", b"b")
+    self.assertCacheKeys(("a", "b"))
+
+    # Once eviction is needed, the entry without an atime should be evicted
+    # before entries with a valid atime.
+    cache.put("c", b"c")
+    self.assertCacheKeys(("b", "c"))
+
+  def test_enable_eviction_for_existing_unbounded_cache(self):
+    cache = LRUCache(self.name, max_size=-1)
+    cache.put("a", b"a")
+
+    # Unbounded caches intentionally do not have atime files. Enabling
+    # eviction for an existing cache directory should preserve those entries
+    # while there is enough space and should not prevent new writes.
+    cache = LRUCache(self.name, max_size=2)
+    cache.put("b", b"b")
+    self.assertCacheKeys(("a", "b"))
+
   def test_max_size(self):
     cache = LRUCache(self.name, max_size=1)
 

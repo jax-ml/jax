@@ -15,9 +15,7 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-# Placeholder: load proto_library
-
-load("//jaxlib:jax.bzl", "cc_proto_library", "if_oss", "nanobind_extension", "py_library")
+load("//jaxlib:jax.bzl", "cc_proto_library", "if_oss", "nanobind_extension", "proto_library", "py_library")
 
 package(
     default_applicable_licenses = [],
@@ -145,15 +143,19 @@ cc_library(
     srcs = ["serde.cc"],
     hdrs = ["serde.h"],
     deps = [
-        "//jaxlib/mosaic:pass_boilerplate",
-        "//jaxlib/mosaic:serde",
+        "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:VectorDialect",
+        "@xla//xla/mosaic:pass_boilerplate",
+        "@xla//xla/mosaic:serde",
+        "@xla//xla/python:version",
     ],
 )
 
@@ -173,9 +175,10 @@ cc_library(
     ],
     deps = [
         ":dump",
-        "//jaxlib/mosaic:pass_boilerplate",
+        "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -183,6 +186,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:DialectUtils",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:GPUToGPURuntimeTransforms",
@@ -195,6 +199,7 @@ cc_library(
         "@llvm-project//mlir:TargetLLVM",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:VectorDialect",
+        "@xla//xla/mosaic:pass_boilerplate",
         "@xla//xla/service/gpu/llvm_gpu_backend:load_ir_module",
         "@xla//xla/stream_executor/cuda:compilation_options",
         "@xla//xla/stream_executor/cuda:compilation_provider",
@@ -245,6 +250,12 @@ cc_library(
 )
 
 cc_library(
+    name = "launch_config",
+    hdrs = ["launch_config.h"],
+    deps = ["@com_google_absl//absl/container:inlined_vector"],
+)
+
+cc_library(
     name = "runtime",
     srcs = ["runtime.cc"],
     # Linker may prune these symbols if they are not explicitly exported.
@@ -260,10 +271,21 @@ cc_library(
         "-Wl,--export-dynamic-symbol='nvshmemx_mc_ptr'",
     ],
     deps = [
-        ":nvshmem",
+        ":launch_config",
         "@local_config_cuda//cuda:cuda_headers",
     ],
     alwayslink = True,
+)
+
+cc_test(
+    name = "runtime_test",
+    srcs = ["runtime_test.cc"],
+    deps = [
+        ":launch_config",
+        ":runtime",  # buildcleaner: keep
+        "@com_google_googletest//:gtest_main",
+        "@xla//xla/stream_executor/cuda:all_runtime",  # buildcleaner: keep
+    ],
 )
 
 cc_library(
@@ -285,9 +307,12 @@ cc_library(
             "-Wl,--export-dynamic-symbol='MosaicGpuUnload'",
         ],
     ),
+    local_defines = [
+        "ABSL_DEFINE_UNQUALIFIED_STATUS_MACROS=1",
+    ],
     deps = [
         ":dump",
-        ":library_paths",  # buildcleaner: keep
+        ":launch_config",
         ":mosaic_gpu_cc_proto",
         ":nvshmem",
         ":passes",
@@ -300,12 +325,14 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -330,6 +357,7 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncToLLVM",
         "@llvm-project//mlir:GPUDialect",
+        "@llvm-project//mlir:GPUNVVMTransforms",
         "@llvm-project//mlir:GPUToLLVMIRTranslation",
         "@llvm-project//mlir:GPUTransforms",
         "@llvm-project//mlir:IR",
@@ -360,35 +388,34 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/profiler/lib:traceme",
         "@xla//xla:executable_run_options",
+        "@xla//xla:status_macros",
         "@xla//xla:util",
         "@xla//xla/backends/cpu:target_machine_options",
         "@xla//xla/backends/gpu:ffi",
         "@xla//xla/backends/gpu/collectives:gpu_clique_key",
+        "@xla//xla/backends/gpu/collectives:gpu_collectives",
+        "@xla//xla/backends/gpu/collectives:gpu_communicator",
         "@xla//xla/backends/gpu/runtime:collective_clique_requests",
         "@xla//xla/backends/gpu/runtime:collective_cliques",
         "@xla//xla/backends/gpu/runtime:collective_execution",
-        "@xla//xla/backends/gpu/runtime:collective_kernel_api",
         "@xla//xla/backends/gpu/runtime:collective_memory",
         "@xla//xla/backends/gpu/runtime:collective_memory_requests",
         "@xla//xla/backends/gpu/runtime:collective_params",
+        "@xla//xla/backends/gpu/runtime:command_buffer_requests",
         "@xla//xla/core/collectives:rank_id",
         "@xla//xla/core/collectives:symmetric_memory",
         "@xla//xla/ffi",
+        "@xla//xla/ffi:record_ffi",
         "@xla//xla/ffi:type_registry",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:record_api",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "@xla//xla/service/llvm_ir:llvm_command_line_options",
-        "@xla//xla/stream_executor:device_address_handle",
+        "@xla//xla/stream_executor:device_address_allocator",
         "@xla//xla/stream_executor:device_description",
-        "@xla//xla/stream_executor:memory_allocation",
-        "@xla//xla/stream_executor:memory_allocator",
-        "@xla//xla/stream_executor:memory_space",
         "@xla//xla/stream_executor/cuda:compilation_provider",
         "@xla//xla/stream_executor/cuda:cuda_compute_capability",
         "@xla//xla/stream_executor/gpu:collective_kernel_metadata",
-        "@xla//xla/tsl/platform:errors",
-        "@xla//xla/tsl/platform:logging",
-        "@xla//xla/tsl/platform:statusor",
-        "@xla//xla/tsl/util:tied_ref",
     ],
     alwayslink = True,
 )
@@ -396,26 +423,41 @@ cc_library(
 cc_test(
     name = "custom_call_test",
     srcs = ["custom_call_test.cc"],
+    args = ["--heap_check="],  # TODO(b/452513034): Enable heapcheck once the bug is fixed.
+    local_defines = [
+        "ABSL_DEFINE_UNQUALIFIED_STATUS_MACROS=1",
+    ],
     tags = ["requires-gpu-sm90"],
     deps = [
         ":mosaic_gpu_support",
+        ":target",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/log:globals",
-        "@com_google_absl//absl/log:scoped_mock_log",
+        "@com_google_absl//absl/log:log_entry",
+        "@com_google_absl//absl/log:log_sink",
+        "@com_google_absl//absl/log:log_sink_registry",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
+        "@xla//xla/client:local_client",
         "@xla//xla/hlo/builder:xla_computation",
         "@xla//xla/hlo/parser:hlo_parser",
         "@xla//xla/pjrt:pjrt_client",
         "@xla//xla/pjrt:pjrt_executable",
+        "@xla//xla/pjrt:stream_executor_executable",
         "@xla//xla/pjrt/plugin/xla_gpu:xla_gpu_pjrt_client",
         "@xla//xla/service:gpu_plugin",
+        "@xla//xla/stream_executor/cuda:all_runtime",
+        "@xla//xla/stream_executor/cuda:compilation_provider",
         "@xla//xla/stream_executor/cuda:cuda_platform",
         "@xla//xla/tsl/platform:env",
-        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -436,6 +478,7 @@ nanobind_extension(
         "@com_google_absl//absl/strings",
         "@nanobind",
         "@xla//xla/tsl/cuda:cudart",
+        "@xla//xla/tsl/cuda:cupti",
     ],
 )
 
@@ -449,7 +492,7 @@ cc_binary(
         "notap",
     ],
     deps = [
-        ":nvshmem",
+        ":launch_config",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
     ],

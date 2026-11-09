@@ -18,6 +18,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/gpu/gpu_plugin_extension.h"
+#include "jaxlib/gpu/py_client_gpu.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/pjrt/status_casters.h"
 
@@ -26,8 +27,37 @@ namespace nb = nanobind;
 namespace jax {
 namespace {
 
-nb::dict FfiTypes() { return nb::dict(); }
-nb::dict FfiHandlers() { return nb::dict(); }
+static nb::dict GpuTransposePlanCacheType() {
+  auto [type_id, type_info] = oneapi::GpuTransposePlanCacheTypeInfo();
+  nb::dict d;
+  d["type_id"] = nb::capsule(type_id);
+  d["type_info"] = nb::capsule(type_info);
+  return d;
+}
+
+nb::dict FfiTypes() {
+  nb::dict dict;
+  dict["GpuTransposePlanCache"] = GpuTransposePlanCacheType();
+  return dict;
+}
+
+nb::dict FfiHandlers() {
+  nb::dict dict;
+  nb::dict gpu_callback_dict;
+  gpu_callback_dict["instantiate"] =
+      EncapsulateFfiHandler(oneapi::kGpuTransposePlanCacheInstantiate);
+  gpu_callback_dict["execute"] =
+      EncapsulateFfiHandler(oneapi::kXlaFfiPythonGpuCallback);
+  dict["xla_ffi_python_gpu_callback"] = gpu_callback_dict;
+  dict["xla_ffi_partitioned_python_gpu_callback"] = gpu_callback_dict;
+  dict["xla_buffer_python_gpu_callback"] =
+      EncapsulateFfiHandler(oneapi::kXlaBufferPythonGpuCallback);
+  dict["xla_buffer_python_gpu_callback_cmd_buffer"] =
+      EncapsulateFfiHandler(oneapi::kXlaBufferPythonGpuCallbackCmdBuffer);
+  dict["dce_sink"] =
+      EncapsulateFfiHandler(oneapi::dce_sink_gpu_ffi);
+  return dict;
+}
 
 }  // namespace
 

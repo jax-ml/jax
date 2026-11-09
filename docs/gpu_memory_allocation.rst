@@ -1,23 +1,39 @@
+:nosearch:
+
 GPU memory allocation
 =====================
 
 **JAX will preallocate 75% of the total GPU memory when the first JAX
-operation is run.** Preallocating minimizes allocation overhead and memory
-fragmentation, but can sometimes cause out-of-memory (OOM) errors. If your JAX
-process fails with OOM, the following environment variables can be used to
-override the default behavior:
+operation is run, and the default pool can grow beyond that as needed.**
+When neither memory-fraction environment variable is set, JAX selects XLA's
+``0.75+`` policy: preallocate 75% and allow growth up to 100% of total GPU
+memory, subject to availability. Growth applies to ordinary buffers in the
+preallocated, spatially partitioned BFC device-memory pool; collective buffers
+remain limited to the initial region. Other allocator modes retain their
+existing behavior using the initial fraction. An explicit
+``--xla_gpu_memory_fraction_policy`` in ``XLA_FLAGS`` overrides this policy.
+Enabling ``--xla_gpu_enable_nccl_user_buffers_in_default_space`` pins the spatial
+BFC pool to its initial size for collective memory registration.
+
+Preallocating minimizes allocation overhead and memory fragmentation, but can
+sometimes cause out-of-memory (OOM) errors. The following environment variables
+can be used to override the default behavior:
 
 ``XLA_PYTHON_CLIENT_PREALLOCATE=false``
   This disables the preallocation behavior.  JAX will instead allocate GPU
   memory as needed, potentially decreasing the overall memory usage.  However,
   this behavior is more prone to GPU memory fragmentation, meaning a JAX program
   that uses most of the available GPU memory may OOM with preallocation
-  disabled.
+  disabled. With the BFC allocator, this retains the default 75% memory limit
+  unless an explicit memory fraction is set.
 
-``XLA_PYTHON_CLIENT_MEM_FRACTION=.XX``
-  If preallocation is enabled, this makes JAX preallocate XX% of
-  the total GPU memory, instead of the default 75%. Lowering the
-  amount preallocated can fix OOMs that occur when the JAX program starts.
+``XLA_CLIENT_MEM_FRACTION=.XX``
+  For the BFC allocator, this sets a fixed limit of XX% of total GPU memory,
+  disabling growth beyond that fraction. If preallocation is enabled, JAX also
+  preallocates that amount. Set ``XLA_CLIENT_MEM_FRACTION=0.75`` to retain the
+  previous fixed 75% limit. Lowering the amount preallocated can fix OOMs that
+  occur when the JAX program starts. The deprecated name
+  ``XLA_PYTHON_CLIENT_MEM_FRACTION`` is also supported.
 
 ``XLA_PYTHON_CLIENT_ALLOCATOR=platform``
   This makes JAX allocate exactly what is needed on demand, and deallocate
@@ -84,9 +100,17 @@ Features here are experimental and must be tried with caution.
   preallocate memory; use ``XLA_CLIENT_MEM_FRACTION`` to control the
   fraction of GPU memory used.
 
+``XLA_PYTHON_CLIENT_ALLOCATOR=address``
+  This makes the PJRT client use a dedicated synchronous passthrough allocator
+  (``StreamExecutorAddressAllocator``) that calls the underlying StreamExecutor
+  allocate/deallocate APIs directly, bypassing the BFC allocator entirely.
+  Unlike ``platform``, it constructs its own allocator at the PJRT level instead
+  of sharing the backend allocator, which avoids the BFC allocator being built
+  alongside it. This allocator is platform-agnostic (CUDA and ROCm).
+
 ``TF_GPU_ALLOCATOR=cuda_malloc_async``
   This replace XLA's own BFC memory allocator with `cudaMallocAsync
-  <https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY__POOLS.html>`_.
+  <https://docs.nvidia.com/cuda/cuda-runtime-api/cuda_runtime_api/group__CUDART__MEMORY__POOLS.html>`_.
   This will remove the big fixed pre-allocation and use a memory pool that grows.
   The expected benefit is no need to set `XLA_PYTHON_CLIENT_MEM_FRACTION`.
 

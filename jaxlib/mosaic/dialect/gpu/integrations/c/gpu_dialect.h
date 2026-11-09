@@ -41,6 +41,28 @@ MLIR_CAPI_EXPORTED bool mlirMosaicGpuBarrierTypeGetOrdersTensorCore(
     MlirType type);
 MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuBarrierTypeGetTypeID();
 
+//===----------------------------------------------------------------------===//
+// B6x16P32Type
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsAB6x16P32Type(MlirType type);
+MLIR_CAPI_EXPORTED MlirType
+mlirMosaicGpuB6x16P32TypeGet(MlirContext ctx, MlirType element_type);
+MLIR_CAPI_EXPORTED MlirType
+mlirMosaicGpuB6x16P32TypeGetElementType(MlirType type);
+MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuB6x16P32TypeGetTypeID(void);
+
+//===----------------------------------------------------------------------===//
+// P2B6Type
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsAP2B6Type(MlirType type);
+MLIR_CAPI_EXPORTED MlirType
+mlirMosaicGpuP2B6TypeGet(MlirContext ctx, MlirType element_type);
+MLIR_CAPI_EXPORTED MlirType
+mlirMosaicGpuP2B6TypeGetElementType(MlirType type);
+MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuP2B6TypeGetTypeID(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 # Debugging runtime values
 
 <!--* freshness: { reviewed: '2024-04-11' } *-->
@@ -9,7 +13,8 @@ Table of contents:
 * [Interactive inspection with `jax.debug`](print_breakpoint)
 * [Functional error checks with jax.experimental.checkify](checkify_guide)
 * [Throwing Python errors with JAX’s debug flags](./flags)
-* [Attaching XLA metadata with `set_xla_metadata`](xla_metadata)
+* [Attaching XLA metadata with `set_xla_metadata`](./xla_metadata)
+* [Debugging slow JAX tracing and XLA compilation](slow_tracing_compilation)
 
 ## Interactive inspection with `jax.debug`
 
@@ -103,7 +108,7 @@ jax.jit(f)(0., 0.)  # ==> raises FloatingPointError exception!
 
 ## Attaching XLA Metadata with `set_xla_metadata`
 
-Complete guide [here](xla_metadata)
+Complete guide [here](./xla_metadata)
 
 **Summary:** `set_xla_metadata` allows you to attach metadata to operations in your JAX code. This metadata is passed down to the XLA compiler as `frontend_attributes` and can be used to enable compiler-level debugging tools, such as the XLA-TPU debugger.
 
@@ -132,7 +137,7 @@ ENTRY main.5 {
 }
 ```
 
-[Read more](xla_metadata).
+[Read more](./xla_metadata).
 
 ```{toctree}
 :caption: Read more
@@ -142,4 +147,5 @@ flags
 print_breakpoint
 checkify_guide
 xla_metadata
+slow_tracing_compilation
 ```

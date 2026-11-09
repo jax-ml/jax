@@ -28,6 +28,7 @@ limitations under the License.
 #define EIGEN_USE_GPU
 #include <Eigen/Core>
 
+#include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 
 namespace jax {
@@ -159,13 +160,13 @@ __global__ void ProductOfElementaryHouseholderReflectorsSmallBatchedRightKernel(
 }  // namespace
 
 template <typename T>
-gpuError_t LaunchOrmqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
-                                         int n, int k, int lda,
-                                         int64_t a_stride, const T* a,
-                                         const T* tau, T* out, bool left,
-                                         bool transpose) {
+absl::Status LaunchOrmqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
+                                           int n, int k, int lda,
+                                           int64_t a_stride, const T* a,
+                                           const T* tau, T* out, bool left,
+                                           bool transpose) {
   if (batch == 0) {
-    return gpuSuccess;
+    return absl::OkStatus();
   }
 
   if (left) {
@@ -181,16 +182,16 @@ gpuError_t LaunchOrmqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
         <<<batch, threadsPerBlock, 0, stream>>>(batch, m, n, k, lda, a_stride,
                                                 a, tau, out, transpose);
   }
-  return gpuGetLastError();
+  return JAX_AS_STATUS(gpuGetLastError());
 }
 
 template <typename T>
-gpuError_t LaunchOrgqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
-                                         int n, int k, int lda,
-                                         int64_t a_stride, const T* a,
-                                         const T* tau, T* out) {
+absl::Status LaunchOrgqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
+                                           int n, int k, int lda,
+                                           int64_t a_stride, const T* a,
+                                           const T* tau, T* out) {
   if (batch == 0) {
-    return gpuSuccess;
+    return absl::OkStatus();
   }
 
   int threadsPerBlock = n;  // Parallelize over columns
@@ -198,26 +199,26 @@ gpuError_t LaunchOrgqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
   ProductOfElementaryHouseholderReflectorsSmallBatchedLeftKernel<T, true>
       <<<batch, threadsPerBlock, 0, stream>>>(batch, m, n, k, lda, a_stride, a,
                                               tau, out, /*transpose=*/false);
-  return gpuGetLastError();
+  return JAX_AS_STATUS(gpuGetLastError());
 }
 
 /// Explicit instantiations for real types
-template gpuError_t LaunchOrmqrSmallBatchedKernel<float>(
+template absl::Status LaunchOrmqrSmallBatchedKernel<float>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
     int64_t a_stride, const float* a, const float* tau, float* out, bool left,
     bool transpose);
 
-template gpuError_t LaunchOrmqrSmallBatchedKernel<double>(
+template absl::Status LaunchOrmqrSmallBatchedKernel<double>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
     int64_t a_stride, const double* a, const double* tau, double* out,
     bool left, bool transpose);
 
 template <>
-gpuError_t LaunchOrmqrSmallBatchedKernel<gpuComplex>(
+absl::Status LaunchOrmqrSmallBatchedKernel<gpuComplex>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
     int64_t a_stride, const gpuComplex* a, const gpuComplex* tau,
     gpuComplex* out, bool left, bool transpose) {
-  if (batch == 0) return gpuSuccess;
+  if (batch == 0) return absl::OkStatus();
   if (left) {
     int threadsPerBlock = n;
     ProductOfElementaryHouseholderReflectorsSmallBatchedLeftKernel<
@@ -235,15 +236,15 @@ gpuError_t LaunchOrmqrSmallBatchedKernel<gpuComplex>(
         reinterpret_cast<const std::complex<float>*>(tau),
         reinterpret_cast<std::complex<float>*>(out), transpose);
   }
-  return gpuGetLastError();
+  return JAX_AS_STATUS(gpuGetLastError());
 }
 
 template <>
-gpuError_t LaunchOrmqrSmallBatchedKernel<gpuDoubleComplex>(
+absl::Status LaunchOrmqrSmallBatchedKernel<gpuDoubleComplex>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
     int64_t a_stride, const gpuDoubleComplex* a, const gpuDoubleComplex* tau,
     gpuDoubleComplex* out, bool left, bool transpose) {
-  if (batch == 0) return gpuSuccess;
+  if (batch == 0) return absl::OkStatus();
   if (left) {
     int threadsPerBlock = n;
     ProductOfElementaryHouseholderReflectorsSmallBatchedLeftKernel<
@@ -261,23 +262,23 @@ gpuError_t LaunchOrmqrSmallBatchedKernel<gpuDoubleComplex>(
         reinterpret_cast<const std::complex<double>*>(tau),
         reinterpret_cast<std::complex<double>*>(out), transpose);
   }
-  return gpuGetLastError();
+  return JAX_AS_STATUS(gpuGetLastError());
 }
 
-template gpuError_t LaunchOrgqrSmallBatchedKernel<float>(
+template absl::Status LaunchOrgqrSmallBatchedKernel<float>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
     int64_t a_stride, const float* a, const float* tau, float* out);
 
-template gpuError_t LaunchOrgqrSmallBatchedKernel<double>(
+template absl::Status LaunchOrgqrSmallBatchedKernel<double>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
     int64_t a_stride, const double* a, const double* tau, double* out);
 
 template <>
-gpuError_t LaunchOrgqrSmallBatchedKernel<gpuComplex>(
+absl::Status LaunchOrgqrSmallBatchedKernel<gpuComplex>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
     int64_t a_stride, const gpuComplex* a, const gpuComplex* tau,
     gpuComplex* out) {
-  if (batch == 0) return gpuSuccess;
+  if (batch == 0) return absl::OkStatus();
   int threadsPerBlock = n;
   ProductOfElementaryHouseholderReflectorsSmallBatchedLeftKernel<
       std::complex<float>, true><<<batch, threadsPerBlock, 0, stream>>>(
@@ -285,15 +286,15 @@ gpuError_t LaunchOrgqrSmallBatchedKernel<gpuComplex>(
       reinterpret_cast<const std::complex<float>*>(a),
       reinterpret_cast<const std::complex<float>*>(tau),
       reinterpret_cast<std::complex<float>*>(out), /*transpose=*/false);
-  return gpuGetLastError();
+  return JAX_AS_STATUS(gpuGetLastError());
 }
 
 template <>
-gpuError_t LaunchOrgqrSmallBatchedKernel<gpuDoubleComplex>(
+absl::Status LaunchOrgqrSmallBatchedKernel<gpuDoubleComplex>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
     int64_t a_stride, const gpuDoubleComplex* a, const gpuDoubleComplex* tau,
     gpuDoubleComplex* out) {
-  if (batch == 0) return gpuSuccess;
+  if (batch == 0) return absl::OkStatus();
   int threadsPerBlock = n;
   ProductOfElementaryHouseholderReflectorsSmallBatchedLeftKernel<
       std::complex<double>, true><<<batch, threadsPerBlock, 0, stream>>>(
@@ -301,7 +302,7 @@ gpuError_t LaunchOrgqrSmallBatchedKernel<gpuDoubleComplex>(
       reinterpret_cast<const std::complex<double>*>(a),
       reinterpret_cast<const std::complex<double>*>(tau),
       reinterpret_cast<std::complex<double>*>(out), /*transpose=*/false);
-  return gpuGetLastError();
+  return JAX_AS_STATUS(gpuGetLastError());
 }
 
 }  // namespace JAX_GPU_NAMESPACE

@@ -35,17 +35,20 @@ import dataclasses
 from dataclasses import dataclass
 import enum
 import itertools as it
-from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
+from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from jax._src import config
 from jax._src import core
+from jax._src import literals
 from jax._src import sharding as sharding_lib
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src.core import typeof
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
 from jax._src.lib import _jax
 from jax._src.lib import hlo
@@ -53,7 +56,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.sharding_impls import UnspecifiedValue
 from jax._src.mesh import AbstractMesh
-from jax._src.tree_util import FlatTree, tree_unflatten
+from jax._src import flattree as ft
+from jax._src.tree_util import tree_unflatten
 from jax._src.typing import ArrayLike
 
 source_info_util.register_exclusion(__file__)
@@ -62,7 +66,7 @@ traceback_util.register_exclusion(__file__)
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
-CompilerOptions = dict[str, Union[str, bool]]
+CompilerOptions = dict[str, Any]
 
 
 # -- Internal types
@@ -82,6 +86,10 @@ class Executable:
   def create_cpp_call(self, params: CompiledCallParams) -> Any:
     """Optionally constructs a fast c++ dispatcher."""
     return None
+
+  def shard_const_args(self, const_args: Sequence[ArrayLike]) -> list[ArrayLike]:
+    raise NotImplementedError(
+        f"sharding const_args unsupported on {type(self)}")
 
   def input_shardings(self) -> Sequence[sharding_lib.Sharding]:
     """Flat sequence of input shardings.
@@ -366,13 +374,20 @@ class CompiledCallParams(NamedTuple):
   in_tree: tree_util.PyTreeDef  # lo tree
   out_tree: tree_util.PyTreeDef  # lo tree
   const_args: list[ArrayLike]  # https://docs.jax.dev/en/latest/internals/constants.html
-  in_types: tuple[tree_util.PyTreeDef, list[core.AbstractValue | core.AvalQDD]] | None
+  in_types: tuple[tree_util.PyTreeDef, list[core.AbstractValue]] | None
   out_types: tuple[tree_util.PyTreeDef, list[core.AbstractValue]] | None
 
   @property
+  def _in_is_high(self):
+    return bool(self.in_types and any(a.is_high for a in self.in_types[1]))
+
+  @property
+  def _out_is_high(self):
+    return bool(self.out_types and any(a.is_high for a in self.out_types[1]))
+
+  @property
   def is_high(self):
-    return self.in_types and self.out_types and any(
-        a.is_high for a in it.chain(self.in_types[1], self.out_types[1]))
+    return self._in_is_high or self._out_is_high
 
 
 def _traced_args_info(self):
@@ -388,16 +403,43 @@ def _traced_out_info(self):
   out = []
   for a, out_s, out_l in zip(self.jaxpr.out_avals, out_shardings, out_layouts):
     if isinstance(a, core.ShapedArray):
-      s = ((a.sharding if a.sharding.mesh._are_all_axes_explicit_or_manual
+      if out_s is None:
+        s = (a.sharding if a.sharding.mesh.are_all_axes_explicit_or_manual else
+             None)
+        mem_space = a.memory_space
+      else:
+        s = out_s
+        mem_space = None
+      s = ((a.sharding if a.sharding.mesh.are_all_axes_explicit_or_manual
             else out_s) if out_s is None else out_s)
       out.append(
           core.ShapeDtypeStruct(
               a.shape, a.dtype, sharding=Format(out_l, s),
               weak_type=a.weak_type,
-              manual_axis_type=(a.mat if config._check_vma.value else None)))
+              manual_axis_type=(a.mat if config._check_vma.value else None),
+              _memory_space=mem_space))
     else:
       out.append(a)
   return tree_util.tree_unflatten(self.out_tree, out)
+
+# Cached on the jaxpr, which jit's tracing cache shares among Traceds of the same
+# function and argument types, so that those Traceds get the same `fun`, and
+# thus tracing cache hits when `fun` is traced (e.g. in `with_consts_as_arg`).
+@util.weakref_lru_cache
+def _flat_closure_converted_fun(jaxpr):
+  jaxpr = jaxpr.replace(consts=None)
+  return lambda consts, *args: core.eval_jaxpr_p.bind(*consts, *args, call_jaxpr=jaxpr)
+
+@util.weakref_lru_cache
+def _closure_converted_fun(jaxpr, consts_tree, in_tree, out_tree):
+  jaxpr = jaxpr.replace(consts=None)
+  in_tree = tree_util.treedef_tuple_tracing_registry(
+      (consts_tree, *in_tree.children()))
+  def fun(consts, *args, **kwargs):
+    args_flat = tree_util.tree_leaves_checked(in_tree, (consts, args, kwargs))
+    out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=jaxpr)
+    return tree_unflatten(out_tree, out_flat)
+  return fun
 
 
 class Traced(Stage):
@@ -411,15 +453,18 @@ class Traced(Stage):
   representations via `.jaxpr` and `.lojax` properties respectively.
   """
   __slots__ = ['_meta_tys_flat', '_params', '_in_tree', 'out_tree', '_consts',
-               '_lojax']
+               '_fun_sourceinfo', '_lojax', '_closure_converted']
 
-  def __init__(self, meta_tys_flat, params, in_tree, out_tree, consts):
+  def __init__(self, meta_tys_flat, params, in_tree, out_tree, consts,
+               fun_sourceinfo):
     self._meta_tys_flat = meta_tys_flat
     self._params = params
     self._in_tree = in_tree
     self.out_tree = out_tree
     self._consts = consts
+    self._fun_sourceinfo = fun_sourceinfo
     self._lojax = None
+    self._closure_converted = None
 
   jaxpr = property(lambda self: self._params['jaxpr'])
   fun_name = property(lambda self: self._params['name'])
@@ -431,10 +476,80 @@ class Traced(Stage):
   def out_avals(self):
     return tree_unflatten(self.out_tree, self.jaxpr.out_avals)
 
+  @property
+  def effects(self) -> frozenset[core.Effect]:
+    return frozenset(core.positional_effects(self.jaxpr))
+
   def __call__(self, *args, **kwargs):
     args_flat = tree_util.tree_leaves_checked(self.in_tree, (args, kwargs))
-    out_flat = core.jaxpr_as_fun(self.jaxpr)(*args_flat)
+    out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=self.jaxpr)
+    out_flat = [type(x).__base__(x) if type(x) in literals.typed_scalar_types  # pyrefly: ignore[not-callable]
+                else x for x in out_flat]
     return tree_unflatten(self.out_tree, out_flat)
+
+  def closure_convert(self):
+    """Closure conversion: makes this Traced's captured constants explicit.
+
+    Returns a pair ``(consts, fun)``, where ``consts`` are the values this
+    Traced captured from its function's closure during tracing (not Python
+    ``__closure__`` cells: any values encountered during tracing that
+    determine the output), and ``fun`` is a closed function such that
+    ``fun(consts, *args, **kwargs)`` computes the same results as this Traced
+    applied to ``args`` and ``kwargs``. The environment ``consts`` is passed
+    as a single leading argument, and may be replaced by any pytree of values
+    of the same types.
+    """
+    if self._closure_converted is None:
+      consts = [*self.jaxpr.consts, *self._consts]
+      _, consts_tree = tree_util.tracing_registry.flatten(consts)
+      fun = _closure_converted_fun(self.jaxpr, consts_tree, self.in_tree,
+                                   self.out_tree)
+      self._closure_converted = (consts, fun)
+    return self._closure_converted
+
+  def with_consts_as_arg(self) -> tuple[list[Any], Traced]:
+    """Returns consts and an equivalent flat Traced taking them as one leading argument.
+
+    The returned Traced takes ``(consts, *args_flat)`` and returns a flat list,
+    where ``args_flat`` are this Traced's flattened arguments, so that argument
+    and result pytrees are never rebuilt around types. Its trace stages a single
+    call eqn, not a re-trace of the original function.
+    """
+    from jax._src.api import jit  # type: ignore
+    consts = [*self.jaxpr.consts, *self._consts]
+    arg_avals = self.jaxpr.in_avals[len(self._consts):]
+    traced = jit(_flat_closure_converted_fun(self.jaxpr)).trace(consts, *arg_avals)
+    jaxpr = traced.jaxpr
+    if (not jaxpr.consts and len(jaxpr.eqns) == 1 and
+        (eqn := jaxpr.eqns[0]).primitive is core.eval_jaxpr_p and
+        list(eqn.invars) == list(jaxpr.invars) and
+        list(eqn.outvars) == list(jaxpr.outvars)):
+      traced._params = dict(traced._params, jaxpr=eqn.params['call_jaxpr'])
+    traced._params = dict(traced._params, name=self.fun_name)
+    traced._fun_sourceinfo = self._fun_sourceinfo
+    return consts, traced
+
+  def _batch(self, axis_data, in_axes) -> tuple[Traced, tuple[Any, ...]]:
+    """Returns this Traced batched along `axis_data`, with its flattened
+    arguments batched along `in_axes` (one int or None each), and the batch
+    axes of its flattened results."""
+    in_axes = (None,) * len(self._consts) + tuple(in_axes)
+    new_jaxpr, out_axes = batching.batch_jaxpr2(self.jaxpr, axis_data, in_axes)
+    new_params = dict(self._params, jaxpr=new_jaxpr)
+    return Traced(list(new_jaxpr.in_avals), new_params, self._in_tree,
+                  self.out_tree, self._consts, self._fun_sourceinfo), out_axes
+
+  def physicalize(self, ctx) -> Traced:
+    new_jaxpr = ctx.physicalize_closed_jaxpr(self.jaxpr)
+    new_params = dict(self._params, jaxpr=new_jaxpr)
+    return Traced(
+        list(new_jaxpr.in_avals),
+        new_params,
+        self._in_tree,
+        self.out_tree,
+        self._consts,
+        self._fun_sourceinfo,
+    )
 
   @property
   def lojax(self) -> LoJax:
@@ -446,35 +561,48 @@ class Traced(Stage):
           self._meta_tys_flat, self._params, self._in_tree, self.out_tree,
           (self._in_tree, self.jaxpr.in_avals),
           (self.out_tree, self.jaxpr.out_avals),
-          self._consts)
+          self._consts, self._fun_sourceinfo)
       return self._lojax
 
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
-    from jax._src.interpreters import partial_eval as pe  # type:ignore
+    from jax._src.named_sharding import NamedSharding  # pyrefly: ignore[missing-import]
     from jax._src.pjit import _lojax_expand_params  # pyrefly: ignore[missing-import]
     hi_jaxpr = self.jaxpr
-    _, closed_over_himutables = pe.convert_const_himutables(hi_jaxpr)
-    if closed_over_himutables: raise NotImplementedError  # TODO(mattjj)
-    in_avals = FlatTree.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
+    in_avals = ft.flatten(([a.lo_ty() for a in hi_jaxpr.in_avals], {}))
     lo_jaxpr, out_avals = pe.lower_jaxpr(hi_jaxpr, in_avals)
     params = dict(_lojax_expand_params(in_avals, out_avals, **self._params), jaxpr=lo_jaxpr)
-    if any(a.is_high for a in hi_jaxpr.final_aval_qdds):
-      in_tree = lojax_pytree(hi_jaxpr.in_aval_qdds, self._in_tree)
+    if any(a.is_high for a in hi_jaxpr.in_avals):
+      in_tree = lojax_pytree(hi_jaxpr.in_avals, self._in_tree)
     else:
       in_tree = self._in_tree
     if any(a.is_high for a in hi_jaxpr.out_avals):
       out_tree = lojax_pytree(hi_jaxpr.out_avals, self.out_tree)
     else:
       out_tree = self.out_tree
-    lo_meta_tys = [mty.replace(aval=lo_ty)
-                   for mty, aq in zip(self._meta_tys_flat, hi_jaxpr.in_aval_qdds)
-                   for lo_ty in (mty.aval.lo_ty_qdd(aq.qdd)
-                                 if mty.aval.has_qdd else mty.aval.lo_ty())]
+
+    def _lower_mty(mty, lo_ty):
+      if not mty.aval.is_high:
+        return mty
+      s = (mty.sharding.update(spec=lo_ty.sharding.spec)
+           if isinstance(mty.sharding, NamedSharding) else mty.sharding)
+      if mty.format is not None:
+        l = mty.format.layout
+        if isinstance(l, Layout) and (k := len(mty.aval.sharding.spec.unreduced)):
+          l = l.update(
+              major_to_minor=(*range(k), *(m + k for m in l.major_to_minor)))
+        f = Format(l, s)
+      else:
+        f = None
+      return mty.replace(aval=lo_ty, sharding=s, format=f)
+
+    lo_meta_tys = [_lower_mty(mty, lo_ty)
+                   for mty in self._meta_tys_flat
+                   for lo_ty in mty.aval.lo_ty()]
     self._lojax = LoJax(
         lo_meta_tys, params, in_tree, out_tree,
-        (self._in_tree, hi_jaxpr.final_aval_qdds),
+        (self._in_tree, hi_jaxpr.in_avals),
         (self.out_tree, hi_jaxpr.out_avals),
-        self._consts)
+        self._consts, self._fun_sourceinfo)
     return self._lojax
 
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
@@ -509,15 +637,16 @@ def lojax_pytree(hi_avals, tree):
 
 class LoJax:
   __slots__ = ['_meta_tys_flat', '_params', '_in_tree', 'out_tree',
-               '_consts', '_in_types', '_out_types']
+               '_consts', '_fun_sourceinfo', '_in_types', '_out_types']
 
   def __init__(self, meta_tys_flat, params, in_tree, out_tree, in_types, out_types,
-               consts):
+               consts, fun_sourceinfo):
     self._meta_tys_flat = meta_tys_flat
     self._params = params
     self._in_tree = in_tree
     self.out_tree = out_tree
     self._consts = consts
+    self._fun_sourceinfo = fun_sourceinfo
     self._in_types = in_types  # hi types
     self._out_types = out_types
 
@@ -544,7 +673,7 @@ class Lowered(Stage):
   args_info: Any  # PyTree of ArgInfo, not including the const_args
   out_tree: tree_util.PyTreeDef
   _no_kwargs: bool
-  _in_types: list[tuple[core.AbstractValue, core.QuasiDynamicData]] | None
+  _in_types: tuple[tree_util.PyTreeDef, list[core.AbstractValue]] | None
   _out_types: list[core.AbstractValue] | None
 
   def __init__(self, lowering: Lowering, args_info,
@@ -825,17 +954,12 @@ class Compiled(Stage):
           "function was compiled by a transformation that does not support "
           f"keyword arguments, but called with keyword arguments: {kws}")
 
-    if params.is_high:
+    if params._in_is_high:
       hi_args_flat, hi_tree = tree_util.tracing_registry.flatten((args, kwargs))
-      _in_hi_tree, final_qdds = params.in_types
-      # TODO(jakevdp): remove pyrefly ignore when https://github.com/facebook/pyrefly/issues/2382 is fixed.
-      args_flat = [a.read_loval(core.cur_qdd(x), x) if (a := typeof(x)).has_qdd
-                   else a.lower_val(x) for x in hi_args_flat]
+      args_flat = [typeof(x).lower_val(x) for x in hi_args_flat]
       args_flat, in_tree = tree_util.tracing_registry.flatten(
           tree_util.tree_unflatten(hi_tree, args_flat))
     else:
-      hi_args_flat = []
-      final_qdds = None
       args_flat, in_tree = tree_util.tracing_registry.flatten((args, kwargs))
 
     # TODO(mattjj): improve wrong-number-of-args error
@@ -866,9 +990,7 @@ class Compiled(Stage):
               f"Tracer type {type(arg)}.")
     lo_outs = params.executable.call(*params.const_args, *args_flat)
 
-    if params.is_high:
-      out_mut, lo_outs = util.split_list(lo_outs, [_num_himuts_out(final_qdds)])
-      _apply_himut(final_qdds, hi_args_flat, out_mut)
+    if params._out_is_high:
       out_hi_tree, out_hi_types = params.out_types
       out_flat = raise_lo_outs(out_hi_types, lo_outs)
       outs = tree_util.tree_unflatten(out_hi_tree, out_flat)
@@ -882,25 +1004,13 @@ class Compiled(Stage):
     if self._call is None:
       self._call = self._executable.create_cpp_call(self._params)
       if self._call is None:
-        params = self._params
+        params = self._params._replace(
+            const_args=list(self._executable.shard_const_args(self._params.const_args)))
         def cpp_call_fallback(*args, **kwargs):
           outs, _, _ = Compiled.call(params, *args, **kwargs)
           return outs
         self._call = cpp_call_fallback
     return self._call(*args, **kwargs)
-
-# TODO(mattjj): de-dup with partial_eval.py
-def _num_himuts_out(final_qdds):
-  return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)
-
-# TODO(mattjj): de-dup with partial_eval.py
-def _apply_himut(final_qdds, hi_args, out_mut):
-  out_mut_ = iter(out_mut)
-  for i, a in enumerate(final_qdds):
-    if isinstance(a, core.AvalQDD):
-      lo_vals = it.islice(out_mut_, len(a.aval.lo_ty_qdd(a.qdd)))
-      a.aval.update_from_loval(a.qdd, hi_args[i], *lo_vals)  # pyrefly: ignore[missing-attribute]
-  assert next(out_mut_, None) is None
 
 # TODO(mattjj): de-dup with partial_eval.py
 def raise_lo_outs(hi_avals, lo_outs):

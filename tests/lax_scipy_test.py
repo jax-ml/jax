@@ -88,8 +88,9 @@ def _initialize_polar_test(rng, shape, n_zero_svs, degeneracy, geometric_spectru
 
   result = np.dot(left_vecs * svs, right_vecs.conj().T)
   result = jnp.array(result).astype(dtype)
-  spectrum = jnp.array(svs).astype(dtype)
-  return result, spectrum
+  return (result,
+          left_vecs[:, :num_nonzero_svs].astype(dtype),
+          right_vecs[:, :num_nonzero_svs].astype(dtype))
 
 
 class LaxBackedScipyTests(jtu.JaxTestCase):
@@ -315,6 +316,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
          [0, 1, 2, 3, 6], [0.01, 1.1, 11.4, 30.0, 100.6], [5, 20, 50, 80, 200]
      )],
   )
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.scipy.special.bessel_jn is deprecated")
   def testBesselJn(self, order, z, n_iter):
     def lax_fun(z):
       return lsp_special.bessel_jn(z, v=order, n_iter=n_iter)
@@ -332,6 +334,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     shape=[(2,), (3,), (4,), (3, 5), (2, 2, 3)],
     dtype=float_dtypes,
   )
+  @jtu.ignore_warning(category=DeprecationWarning, message="jax.scipy.special.bessel_jn is deprecated")
   def testBesselJnRandomPositiveZ(self, order, shape, dtype):
     rng = jtu.rand_default(self.rng(), scale=1)
     points = jnp.abs(rng(shape, dtype))
@@ -429,11 +432,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     lsp_special_fn = partial(lsp_special.sph_harm_y, n_max=n_max)
     self._CompileAndCheck(lsp_special_fn, args_maker)
-    if scipy_version < (1, 15, 0):
-      osp_special_fn = lambda n, m, theta, phi: osp_special.sph_harm(m, n, phi, theta)
-    else:
-      osp_special_fn = osp_special.sph_harm_y
-    self._CheckAgainstNumpy(osp_special_fn, lsp_special_fn, args_maker)
+    self._CheckAgainstNumpy(osp_special.sph_harm_y, lsp_special_fn, args_maker)
 
   @jtu.sample_product(
     n_zero_sv=n_zero_svs,
@@ -476,8 +475,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                               (side == "right" and m < n))):
       raise unittest.SkipTest("method=qdwh does not support these sizes")
 
-    matrix, _ = _initialize_polar_test(self.rng(),
-      shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
+    matrix, left_vecs, right_vecs = _initialize_polar_test(
+      self.rng(), shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
       nonzero_condition_number, dtype)
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       self.assertRaises(
@@ -487,14 +486,16 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     unitary, posdef = jsp.linalg.polar(matrix, method=method, side=side)
     if shape[0] >= shape[1]:
-      should_be_eye = np.matmul(unitary.conj().T, unitary)
+      ub = np.matmul(unitary, right_vecs)
+      should_be_eye = np.matmul(ub.conj().T, ub)
     else:
-      should_be_eye = np.matmul(unitary, unitary.conj().T)
+      ub = np.matmul(left_vecs.conj().T, unitary)
+      should_be_eye = np.matmul(ub, ub.conj().T)
     tol = 650 * float(jnp.finfo(matrix.dtype).eps)
     eye_mat = np.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
     with self.subTest('Test unitarity.'):
       self.assertAllClose(
-        eye_mat, should_be_eye, atol=tol * 1000 * min(shape))
+        eye_mat, should_be_eye, atol=tol * min(shape))
 
     with self.subTest('Test Hermiticity.'):
       self.assertAllClose(

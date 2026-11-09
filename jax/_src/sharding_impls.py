@@ -23,7 +23,6 @@ import math
 import itertools as it
 from typing import Any, cast
 
-from jax._src import config
 from jax._src import core
 from jax._src import sharding as jsharding
 from jax._src import tree_util
@@ -33,12 +32,14 @@ from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
 from jax._src.mesh import (
     Mesh, AbstractMesh, AxisType, empty_abstract_mesh, empty_concrete_mesh,
-    get_abstract_mesh, get_concrete_mesh)
+    get_abstract_mesh, get_concrete_mesh, abstract_mesh_context_manager,
+    device_context)
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
-    SdyArray, SdyDim, UnspecifiedValue, flatten_spec, NamedSharding,
+    SdyArray, SdyDim, UnspecifiedValue, flatten_spec, flatten_spec_no_none,
+    NamedSharding,
     _check_unique_resources, UNSPECIFIED,
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, get_array_mapping,
     array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding)
@@ -56,8 +57,6 @@ Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
 XLADeviceAssignment = tuple[Device, ...]
-# TODO(yashkatariya): Remove this after 3 months of deprecation.
-XLACompatibleSharding = jsharding.Sharding
 
 
 def hashed_index(x) -> int:
@@ -189,6 +188,15 @@ SingleDeviceSharding.__module__ = 'jax.sharding'
 
 def make_single_device_sharding(device, *, memory_kind=None):
   return SingleDeviceSharding(device, memory_kind=memory_kind)
+
+
+def is_single_device_sharding(sharding: jsharding.Sharding) -> bool:
+  """
+  Only to replace explicit checks for SingleDeviceSharding to avoid
+  deprecation warnings. Will return False once make_single_device_sharding
+  returns NamedSharding.
+  """
+  return isinstance(sharding, SingleDeviceSharding)
 
 
 def _unpickle_gspmd_sharding(devices, op_sharding, memory_kind):
@@ -767,7 +775,8 @@ def make_key_array_phys_sharding(aval, sharding):
   elif isinstance(sharding, NamedSharding):
     elt_aval = core.physical_element_aval(aval.dtype)
     trailing_spec = [None] * elt_aval.ndim
-    return sharding.update(spec=PartitionSpec(*sharding.spec, *trailing_spec))
+    out_partitions = (*sharding.spec.partitions, *trailing_spec)
+    return sharding.update(spec=sharding.spec.update(partitions=out_partitions))
   else:
     hlos = sharding._to_xla_hlo_sharding(aval.ndim)
     return GSPMDSharding(
@@ -810,9 +819,7 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
   # TODO(yashkatariya): Maybe remove this check or do this at the pxla level?
   check_replicated_trailing_dims(phys_sharding, logical_shape, dtype)
 
-  if phys_sharding.num_devices == 1:
-    return phys_sharding
-  elif isinstance(phys_sharding, NamedSharding):
+  if isinstance(phys_sharding, NamedSharding):
     elt_aval = core.physical_element_aval(dtype)
     phys_shape = core.physical_shape(logical_shape, dtype)
     if len(phys_sharding.spec) < len(phys_shape):
@@ -821,6 +828,8 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
     else:
       phys_spec = phys_sharding.spec
     return phys_sharding.update(spec=phys_spec[:-elt_aval.ndim])
+  elif phys_sharding.num_devices == 1:
+    return phys_sharding
   else:
     return get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding)
 
@@ -896,7 +905,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
   return sharding
 
 
-def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
+def make_mesh(axis_sizes: Sequence[int], axis_names: Sequence[str],
               axis_types: tuple[AxisType, ...] | None = None,
               *, devices: Sequence[xc.Device] | None = None) -> Mesh:
   """Creates an efficient mesh with the shape and axis names specified.
@@ -921,7 +930,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   >>> [d.id for d in mesh.devices.flat]  # doctest: +SKIP
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 
-  As you can see, logical axes (`axis_shapes`) affect the ordering of the
+  As you can see, logical axes (`axis_sizes`) affect the ordering of the
   devices.
 
   You can use `jax.experimental.mesh_utils.create_device_mesh` if you want to
@@ -929,7 +938,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   `allow_split_physical_axes`.
 
   Args:
-    axis_shapes: Shape of the mesh. For example, axis_shape=(4, 2)
+    axis_sizes: Shape of the mesh. For example, axis_shape=(4, 2)
     axis_names: Names of the mesh axes. For example, axis_names=('x', 'y')
     axis_types: Optional tuple of :class:`jax.sharding.AxisType` entries
       corresponding to the ``axis_names``. See `Explicit Sharding`_ for more
@@ -940,22 +949,22 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   Returns:
     A :class:`jax.sharding.Mesh` object.
 
-  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/parallel.html
+  .. _Explicit Sharding:  https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
   """
   if devices is None:
     devices = xb.devices()
-  new_axis_shapes = mesh_utils._canonicalize_axis_sizes(axis_shapes)
-  if new_axis_shapes is None:
+  new_axis_sizes = mesh_utils._canonicalize_axis_sizes(axis_sizes)
+  if new_axis_sizes is None:
     raise ValueError(
-        '`axis_shapes` passed to `make_mesh` should be a sequence of ints.'
-        f' Got {axis_shapes}')
-  del axis_shapes
+        '`axis_sizes` passed to `make_mesh` should be a sequence of ints.'
+        f' Got {axis_sizes}')
+  del axis_sizes
 
-  axis_size = math.prod(new_axis_shapes)
+  axis_size = math.prod(new_axis_sizes)
   if axis_size > len(devices):
     raise ValueError(
         f'Number of devices {len(devices)} must be >= the product '
-        f'of mesh_shape {new_axis_shapes}')
+        f'of mesh_shape {new_axis_sizes}')
   elif axis_size < len(devices):
     devices = devices[:axis_size]
   if devices[0].device_kind in (mesh_utils._TPU_V5_LITE, mesh_utils._TPU_V5E):
@@ -963,7 +972,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   else:
     allow_split_physical_axes = False
   mesh_devices = mesh_utils.create_device_mesh(
-      new_axis_shapes, devices,
+      new_axis_sizes, devices,
       allow_split_physical_axes=allow_split_physical_axes)
   if (hasattr(mesh_devices.flat[0], 'slice_index') and
       len({d.slice_index for d in mesh_devices.flat}) > 1):
@@ -974,6 +983,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
     axis_types = (AxisType.Explicit,) * len(mesh_devices.shape)
   return Mesh(mesh_devices, axis_names, axis_types=axis_types)
 
+
 class set_mesh:
   """Sets a concrete mesh in a thread-local context.
 
@@ -983,7 +993,7 @@ class set_mesh:
   When a mesh is in context via ``jax.set_mesh``, you can use pass
   raw PartitionSpecs to all APIs that accept sharding as an argument.
   Using ``jax.set_mesh`` is also required for enabling explicit sharding mode:
-  https://docs.jax.dev/en/latest/parallel.html
+  https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time
 
   For example::
 
@@ -1011,16 +1021,16 @@ class set_mesh:
 
     abs_mesh = empty_abstract_mesh if mesh is None else mesh.abstract_mesh
     conc_mesh = empty_concrete_mesh if mesh is None else mesh
-    self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
+    self.prev_abstract_mesh = abstract_mesh_context_manager.swap_local(
         abs_mesh)
-    self.prev_mesh = config.device_context.swap_local(conc_mesh)
+    self.prev_mesh = device_context.swap_local(conc_mesh)
 
   def __enter__(self):
     pass
 
   def __exit__(self, exc_type, exc_value, traceback):
-    config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
-    config.device_context.set_local(self.prev_mesh)
+    abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
+    device_context.set_local(self.prev_mesh)
 
 
 def get_mesh() -> Mesh:
@@ -1034,8 +1044,8 @@ def get_mesh() -> Mesh:
 @contextlib.contextmanager
 def _internal_use_concrete_mesh(mesh: Mesh):
   assert isinstance(mesh, Mesh)
-  prev_val = config.device_context.swap_local(mesh)
+  prev_val = device_context.swap_local(mesh)
   try:
     yield
   finally:
-    config.device_context.set_local(prev_val)
+    device_context.set_local(prev_val)

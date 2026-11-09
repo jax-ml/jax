@@ -1,17 +1,34 @@
+# Patch for rules_python to support local wheel overrides (local_wheels in pip.parse).
+#
+# Changes:
+# 1. python/private/pypi/extension.bzl:
+#    - Adds the `local_wheels` attribute (string_dict) to the `pip.parse` extension tag class.
+#    - Passes `is_root = mod.is_root` to restrict local wheel overrides to the root module.
+#
+# 2. python/private/pypi/hub_builder.bzl:
+#    - Adds `_collect_local_wheels` to discover matching .whl files from workspace-relative paths or globs (e.g. dist/scipy-*.whl).
+#    - In `_create_whl_repos`, when PyPI has no matching wheels for the target Python version (leaving whl.srcs empty),
+#      synthesizes target platform source entries pointing to the local wheel override so Bazel select() aliases resolve correctly.
+#    - In `_whl_repo`, handles `local_wheel` upfront to construct a file:/// wheel repo before checking download_only or sdist fallbacks.
+#
+# 3. python/private/pypi/urllib.bzl:
+#    - In `_strip_empty_path_segments`, preserves the scheme if scheme == "file" so that "file:///path/to/wheel.whl"
+#      is not collapsed to "file://path/to/wheel.whl" (which causes Java's URL downloader to fail with UnknownHostException).
+
 diff --git a/python/private/pypi/extension.bzl b/python/private/pypi/extension.bzl
-index 3927f61c..707fef59 100644
+index 2e9498ca..6a7ba634 100644
 --- a/python/private/pypi/extension.bzl
 +++ b/python/private/pypi/extension.bzl
-@@ -262,6 +262,7 @@ You cannot use both the additive_build_content and additive_build_content_file a
+@@ -438,6 +438,7 @@ You cannot use both the additive_build_content and additive_build_content_file a
              builder.pip_parse(
                  module_ctx,
                  pip_attr = pip_attr,
 +                is_root = mod.is_root,
              )
  
-     # Keeps track of all the hub's whl repos across the different versions.
-@@ -631,6 +632,9 @@ hubs can be created, and each program can use its respective hub's targets.
- Targets from different hubs should not be used together.
+     # dict[str package, dict[str, None] extra_targets]
+@@ -887,6 +888,9 @@ Using the hub name `"pypi"` is deprecated and is changed to
+ :::
  """,
          ),
 +        "local_wheels": attr.string_dict(
@@ -21,10 +38,10 @@ index 3927f61c..707fef59 100644
              doc = """\
  The flag allows to make use of parallel downloading feature in bazel 7.1 and above
 diff --git a/python/private/pypi/hub_builder.bzl b/python/private/pypi/hub_builder.bzl
-index 700f22e2..8e6e6840 100644
+index 18fb7f8c..c480fae1 100644
 --- a/python/private/pypi/hub_builder.bzl
 +++ b/python/private/pypi/hub_builder.bzl
-@@ -102,7 +102,7 @@ def _build(self):
+@@ -144,7 +144,7 @@ def _build(self):
          whl_libraries = self._whl_libraries,
      )
  
@@ -33,31 +50,23 @@ index 700f22e2..8e6e6840 100644
      python_version = pip_attr.python_version
      if python_version in self._platforms:
          fail((
-@@ -152,6 +152,7 @@ def _pip_parse(self, module_ctx, pip_attr):
+@@ -191,6 +191,7 @@ def _pip_parse(self, module_ctx, pip_attr):
          self,
          module_ctx,
          pip_attr = pip_attr,
 +        is_root = is_root,
-         enable_pipstar = self._config.enable_pipstar or self._get_index_urls.get(pip_attr.python_version),
-         enable_pipstar_extract = self._config.enable_pipstar_extract or self._get_index_urls.get(pip_attr.python_version),
+         enable_pipstar_extract = bool(self._config.enable_pipstar_extract or self._get_index_urls.get(pip_attr.python_version)),
      )
-@@ -408,6 +409,7 @@ def _create_whl_repos(
+ 
+@@ -484,6 +485,7 @@ def _create_whl_repos(
          module_ctx,
          *,
          pip_attr,
 +        is_root = False,
-         enable_pipstar = False,
          enable_pipstar_extract = False):
      """create all of the whl repositories
-@@ -416,6 +418,7 @@ def _create_whl_repos(
-         self: the builder.
-         module_ctx: {type}`module_ctx`.
-         pip_attr: {type}`struct` - the struct that comes from the tag class iteration.
-+        is_root: {type}`bool` - whether the calling module is the root workspace.
-         enable_pipstar: {type}`bool` - enable the pipstar or not.
-         enable_pipstar_extract: {type}`bool` - enable the pipstar extraction or not.
-     """
-@@ -464,7 +467,10 @@ def _create_whl_repos(
+ 
+@@ -538,12 +540,49 @@ def _create_whl_repos(
  
      interpreter = _detect_interpreter(self, pip_attr)
  
@@ -68,34 +77,92 @@ index 700f22e2..8e6e6840 100644
          whl_library_args = common_args | _whl_library_args(
              self,
              whl = whl,
-@@ -481,6 +487,7 @@ def _create_whl_repos(
+             whl_modifications = whl_modifications,
+         )
++        if not whl.srcs and local_wheel:
++            for target_platform in sorted(platforms):
++                src = struct(
++                    distribution = whl.name,
++                    extra_pip_args = pip_attr.extra_pip_args,
++                    requirement_line = whl.name,
++                    target_platforms = [target_platform],
++                    filename = local_wheel.basename,
++                    sha256 = "",
++                    url = "file:///" + (local_wheel._path if hasattr(local_wheel, "_path") else str(local_wheel)).lstrip("/"),
++                    yanked = None,
++                )
++                repo = _whl_repo(
++                    src = src,
++                    index_url = whl.index_url,
++                    whl_library_args = whl_library_args,
++                    download_only = pip_attr.download_only,
++                    netrc = self._config.netrc or pip_attr.netrc,
++                    use_downloader = False,
++                    auth_patterns = self._config.auth_patterns or pip_attr.auth_patterns,
++                    python_version = _major_minor_version(pip_attr.python_version),
++                    is_multiple_versions = whl.is_multiple_versions,
++                    interpreter = interpreter,
++                    local_wheel = local_wheel,
++                    enable_pipstar_extract = enable_pipstar_extract,
++                )
++                _add_whl_library(
++                    self,
++                    python_version = pip_attr.python_version,
++                    whl = whl,
++                    repo = repo,
++                )
++            continue
++
+         for src in whl.srcs:
+             repo = _whl_repo(
+                 src = src,
+@@ -556,6 +595,7 @@ def _create_whl_repos(
                  python_version = _major_minor_version(pip_attr.python_version),
                  is_multiple_versions = whl.is_multiple_versions,
                  interpreter = interpreter,
 +                local_wheel = local_wheel,
-                 enable_pipstar = enable_pipstar,
                  enable_pipstar_extract = enable_pipstar_extract,
              )
-@@ -559,6 +566,7 @@ def _whl_repo(
+             _add_whl_library(
+@@ -631,9 +671,33 @@ def _whl_repo(
          python_version,
          use_downloader,
          interpreter,
 +        local_wheel = None,
-         enable_pipstar = False,
          enable_pipstar_extract = False):
      args = dict(whl_library_args)
-@@ -622,9 +630,17 @@ def _whl_repo(
+     args["requirement"] = src.requirement_line
++
++    if local_wheel:
++        target_platforms = src.target_platforms if is_multiple_versions else []
++        repo_name = whl_repo_name(src.filename or local_wheel.basename, src.sha256, *target_platforms) + "_local_override"
++        path_str = local_wheel._path if hasattr(local_wheel, "_path") else str(local_wheel)
++        args["urls"] = ["file:///" + path_str.lstrip("/")]
++        args["filename"] = local_wheel.basename
++        args["sha256"] = ""
++        if netrc:
++            args["netrc"] = netrc
++        if auth_patterns:
++            args["auth_patterns"] = auth_patterns
++        if index_url:
++            args["index_url"] = index_url
++        return struct(
++            repo_name = repo_name,
++            args = args,
++            config_setting = whl_config_setting(
++                version = python_version,
++                target_platforms = src.target_platforms,
++            ),
++        )
++
+     is_whl = src.filename.endswith(".whl")
+ 
+     if src.extra_pip_args and not is_whl:
+@@ -687,9 +751,10 @@ def _whl_repo(
      # targets to each hub for each extra combination and solve this more cleanly as opposed to
      # duplicating whl_library repositories.
      target_platforms = src.target_platforms if is_multiple_versions else []
 +    repo_name = whl_repo_name(src.filename, src.sha256, *target_platforms)
-+
-+    if local_wheel:
-+        repo_name += "_local_override"
-+        path_str = local_wheel._path if hasattr(local_wheel, "_path") else str(local_wheel)
-+        args["urls"] = ["file://" + path_str]
-+        args["filename"] = local_wheel.basename
-+        args["sha256"] = ""
  
      return struct(
 -        repo_name = whl_repo_name(src.filename, src.sha256, *target_platforms),
@@ -103,7 +170,7 @@ index 700f22e2..8e6e6840 100644
          args = args,
          config_setting = whl_config_setting(
              version = python_version,
-@@ -637,3 +653,61 @@ def _use_downloader(self, python_version, whl_name):
+@@ -702,3 +767,61 @@ def _use_downloader(self, python_version, whl_name):
          normalize_name(whl_name),
          self._get_index_urls.get(python_version) != None,
      )
@@ -165,3 +232,72 @@ index 700f22e2..8e6e6840 100644
 +        return name.startswith(parts[0]) and name.endswith(parts[1]) and len(name) >= len(parts[0]) + len(parts[1])
 +    else:
 +        return name == pattern
+diff --git a/python/private/pypi/urllib.bzl b/python/private/pypi/urllib.bzl
+index ea4cd32c..526b30c4 100644
+--- a/python/private/pypi/urllib.bzl
++++ b/python/private/pypi/urllib.bzl
+@@ -66,7 +66,7 @@ def _strip_empty_path_segments(url):
+         If the url had no scheme it is returned unchanged.
+     """
+     scheme, _, rest = url.partition("://")
+-    if rest == "":
++    if rest == "" or scheme == "file":
+         return url
+     stripped = "/".join([p for p in rest.split("/") if p])
+     if url.endswith("/"):
+diff --git a/python/private/pypi/whl_installer/wheel_installer.py b/python/private/pypi/whl_installer/wheel_installer.py
+index a5b1ce5..09c2a3e 100644
+--- a/python/private/pypi/whl_installer/wheel_installer.py
++++ b/python/private/pypi/whl_installer/wheel_installer.py
+@@ -61,31 +61,49 @@ def main() -> None:
++    req_target = args.requirement.split("@")[-1].strip()
++    is_local = (
++        "file://" in args.requirement
++        or req_target.startswith("/")
++        or req_target.startswith(".")
++    )
++    use_download = args.download_only and not is_local
++
+     pip_args = (
+         [sys.executable, "-m", "pip"]
+         + (["--isolated"] if args.isolated else [])
+-        + (["download", "--only-binary=:all:"] if args.download_only else ["wheel"])
++        + (["download", "--only-binary=:all:"] if use_download else ["wheel"])
+         + ["--no-deps"]
+         + deserialized_args["extra_pip_args"]
+     )
+ 
+     requirement_file = NamedTemporaryFile(mode="wb", delete=False)
+     try:
+         requirement_file.write(args.requirement.encode("utf-8"))
+         requirement_file.flush()
+         # Close the file so pip is allowed to read it when running on Windows.
+         # For more information, see: https://bugs.python.org/issue14243
+         requirement_file.close()
+         # Requirement specific args like --hash can only be passed in a requirements file,
+         # so write our single requirement into a temp file in case it has any of those flags.
+         pip_args.extend(["-r", requirement_file.name])
+ 
+         env = os.environ.copy()
+         env.update(deserialized_args["environment"])
+         # Assumes any errors are logged by pip so do nothing. This command will fail if pip fails
+         subprocess.run(pip_args, check=True, env=env)
++        whls = glob.glob("*.whl")
++        if not whls and use_download:
++            fallback_args = (
++                [sys.executable, "-m", "pip"]
++                + (["--isolated"] if args.isolated else [])
++                + ["wheel", "--no-deps"]
++                + deserialized_args["extra_pip_args"]
++                + ["-r", requirement_file.name]
++            )
++            subprocess.run(fallback_args, check=True, env=env)
+     finally:
+         try:
+             os.unlink(requirement_file.name)
+         except OSError as e:
+             if e.errno != errno.ENOENT:
+                 raise
+ 
+     whl = Path(next(iter(glob.glob("*.whl"))))
+

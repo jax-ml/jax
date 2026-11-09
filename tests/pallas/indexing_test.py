@@ -13,20 +13,22 @@
 # limitations under the License.
 
 from __future__ import annotations
+
 import sys
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax import export
 from jax import random
 from jax._src import core
-from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
+from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.state import indexing
-import numpy as np
-import jax.numpy as jnp
 from jax.experimental import pallas as pl
+import jax.numpy as jnp
+import numpy as np
 
 if sys.platform != "win32":
   from jax.experimental.pallas import tpu as pltpu
@@ -124,7 +126,7 @@ class PallasBaseTest(jtu.JaxTestCase):
     return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
 
 
-@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class IndexerTest(jtu.JaxTestCase):
   """These are unit tests for the indexer logic, not using pallas_call."""
 
@@ -146,6 +148,7 @@ class IndexerTest(jtu.JaxTestCase):
       ((4, 0), (3, 5)),
       ((slice(3, 2), 0), (3, 5)),
       ((Slice(2, 2), 0), (3, 5)),
+      ((Slice(0, 4), 0), (3, 5)),
   )
   def test_invalid_ndindexer_oob(self, indices, shape):
     with self.assertRaisesRegex(ValueError, "Out of bound"):
@@ -253,8 +256,49 @@ class IndexerTest(jtu.JaxTestCase):
     indexer = NDIndexer.from_indices_shape(indices, shape)
     self.assertTupleEqual(indexer.get_indexer_shape(), (2, 5, 4))
 
+  def test_ndindexer_with_symbolic_shape(self):
+    (m,) = export.symbolic_shape("m")
+    indices = (ds(0, (m + 1) // 2), slice(None))
+    shape = (m, 128)
+    indexer = NDIndexer.from_indices_shape(indices, shape)
+    self.assertTupleEqual(indexer.get_indexer_shape(), ((m + 1) // 2, 128))
+
+  def test_ndindexer_with_symbolic_shape_full_slice(self):
+    (m,) = export.symbolic_shape("m")
+    indices = (slice(None), slice(None))
+    shape = (m, 128)
+    indexer = NDIndexer.from_indices_shape(indices, shape)
+    self.assertTupleEqual(indexer.get_indexer_shape(), (m, 128))
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="slice_indexer",
+          indices=(ds(64, 8), slice(None)),
+          expected_shape=(8, 128),
+      ),
+      dict(
+          testcase_name="int_indexer",
+          indices=(64, slice(None)),
+          expected_shape=(128,),
+      ),
+  )
+  def test_ndindexer_with_symbolic_shape_skips_bounds_check(
+      self, indices, expected_shape
+  ):
+    # Whether e.g. `64 + 8 >= m` holds cannot be decided for a symbolic `m`, so
+    # the bounds check must be skipped instead of raising
+    # InconclusiveDimensionOperation.
+    (m,) = export.symbolic_shape("m")
+    indexer = NDIndexer.from_indices_shape(indices, (m, 128))
+    self.assertTupleEqual(indexer.get_indexer_shape(), expected_shape)
+
   @hp.given(hps.data())
-  @hp.settings(suppress_health_check=[hp.HealthCheck.too_slow])  # ASAN is slow
+  @hp.settings(
+      suppress_health_check=[
+          *hp.settings.default.suppress_health_check,
+          hp.HealthCheck.too_slow,
+      ]
+  )  # ASAN is slow
   def test_ndindexer(self, data):
     shape = data.draw(hnp.array_shapes())
     indices = data.draw(nd_indices_strategy(shape))
@@ -279,7 +323,7 @@ class IndexerTest(jtu.JaxTestCase):
         self.assertEqual(idx.dtype, np.dtype("int32"))
 
 
-@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class IndexerOpsTest(PallasBaseTest):
 
   def test_multi_indexing_interpreter_only(self):

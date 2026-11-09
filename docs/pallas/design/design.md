@@ -482,8 +482,11 @@ z = matmul(x, y, block_shape=block_shape, activation=jax.nn.gelu)
 
 After users express their Pallas kernels, we lower them to different
 representations depending on the target backend.
-On GPUs, we lower Pallas to Triton IR, and on TPU we lower Pallas to
-Mosaic.
+On GPUs, we lower Pallas to Mosaic GPU (formerly Triton[^1]), and on TPUs, we
+lower Pallas to Mosaic.
+
+[^1]: The Pallas-to-Triton lowering path has been removed. It is discussed here
+only for historical reasons.
 
 #### Lowering Pallas to Triton for GPU
 

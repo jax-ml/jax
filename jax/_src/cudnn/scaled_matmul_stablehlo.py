@@ -19,6 +19,7 @@ from functools import partial, reduce
 
 import numpy as np
 
+from jax._src import ad_checkpoint
 from jax._src import api
 from jax._src import core
 from jax._src import dispatch
@@ -30,6 +31,8 @@ from jax._src.custom_derivatives import custom_vjp
 from jax._src.custom_partitioning import custom_partitioning
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import remat
 from jax._src.interpreters.mlir import ir
 from jax._src.lax import lax
 from jax._src.lax import parallel as lax_parallel
@@ -126,6 +129,39 @@ def _scaled_matmul_rocm_lowering(
   )
 
 
+def _scaled_matmul_cpu_lowering_impl(
+    a, b, a_scales, b_scales, *, preferred_element_type
+):
+  # Cast inputs to preferred_element_type first to avoid unsupported float8 ops on CPU.
+  a = a.astype(preferred_element_type)
+  b = b.astype(preferred_element_type)
+  a_scales = a_scales.astype(preferred_element_type)
+  b_scales = b_scales.astype(preferred_element_type)
+
+  B, M, K = a.shape
+  _, N, _ = b.shape
+  _, _, K_a = a_scales.shape
+  _, _, K_b = b_scales.shape
+
+  a_block_size = K // K_a
+  b_block_size = K // K_b
+
+  a_reshaped = jnp.reshape(a, (B, M, K_a, a_block_size))
+  a_scales_reshaped = jnp.reshape(a_scales, (B, M, K_a, 1))
+  a_scaled = jnp.reshape(a_reshaped * a_scales_reshaped, (B, M, K))
+
+  b_reshaped = jnp.reshape(b, (B, N, K_b, b_block_size))
+  b_scales_reshaped = jnp.reshape(b_scales, (B, N, K_b, 1))
+  b_scaled = jnp.reshape(b_reshaped * b_scales_reshaped, (B, N, K))
+
+  return lax.dot_general(
+      a_scaled,
+      b_scaled,
+      (((2,), (2,)), ((0,), (0,))),
+      preferred_element_type=preferred_element_type,
+  )
+
+
 def _scaled_matmul_abstract(a, b, a_scale, b_scale, *, preferred_element_type):
   batch, non_contracting_lhs, contracting_lhs = a.shape
   _, non_contracting_rhs, _ = b.shape
@@ -138,6 +174,11 @@ _scaled_matmul_p.multiple_results = True
 dispatch.simple_impl(_scaled_matmul_p)
 _scaled_matmul_p.def_abstract_eval(_scaled_matmul_abstract)
 
+
+mlir.register_lowering(
+    _scaled_matmul_p,
+    mlir.lower_fun(_scaled_matmul_cpu_lowering_impl, multiple_results=False),
+)
 
 mlir.register_lowering(
     _scaled_matmul_p,
@@ -155,10 +196,62 @@ mlir.register_lowering(
     platform="rocm",
 )
 
+# OneAPI reuses the ROCm composite lowering, which XLA expands to standard HLO
+# until OneAPI `scaled-dot` optimization support is added.
+mlir.register_lowering(
+    _scaled_matmul_p,
+    _scaled_matmul_rocm_lowering,
+    platform="oneapi",
+)
+
 _scaled_matmul_p_wrapper = core.Primitive("scaled_matmul_wrapper")
 _scaled_matmul_p_wrapper.multiple_results = True
 _scaled_matmul_p_wrapper.def_impl(_scaled_matmul_impl)
 _scaled_matmul_p_wrapper.def_abstract_eval(_scaled_matmul_abstract)
+
+
+def _scaled_matmul_remat(trace, lhs, rhs, lhs_scales, rhs_scales, **params):
+  call = partial(_scaled_matmul_p_wrapper.bind, **params)
+  (out,) = call(lhs, rhs, lhs_scales, rhs_scales)
+  if trace.policy is None:
+    return [out], (), lambda _, *args: call(*args)
+  case = pe.ensure_enum(
+      trace.policy(
+          _scaled_matmul_p_wrapper,
+          core.typeof(lhs),
+          core.typeof(rhs),
+          core.typeof(lhs_scales),
+          core.typeof(rhs_scales),
+          **params,
+      )
+  )
+  if isinstance(case, pe.SaveableType):
+    out = remat.reduce_precision(out)
+    if not trace.custom_vjp_rules:
+      return [out], out, lambda out, *_: [out]
+    return (
+        [out],
+        out,
+        lambda out, *args: [
+            ad_checkpoint.primal_left_tangent_right(out, call(*args)[0])
+        ],
+    )
+  if isinstance(case, pe.Offloadable):
+    out = remat.reduce_precision(out)
+    out_host = api.device_put(
+        out, core.mem_kind_to_space(case.dst), may_alias=False
+    )
+    src_space = core.mem_kind_to_space(case.src)
+    def rem(out_host, *args):
+      out_dev = api.device_put(out_host, src_space, may_alias=False)
+      if not trace.custom_vjp_rules:
+        return [out_dev]
+      return [ad_checkpoint.primal_left_tangent_right(out_dev, call(*args)[0])]
+    return [out], out_host, rem
+  return [out], (), lambda _, *args: call(*args)
+
+
+remat.rules[_scaled_matmul_p_wrapper] = _scaled_matmul_remat
 
 # Given the inputs already sharded as
 #   ([B], M, K1), ([B], N, K2)
@@ -340,13 +433,19 @@ _scaled_matmul_lower.def_partition(
 
 def _scaled_matmul_batcher(batched_args, batch_dims, *, preferred_element_type):
   assert len(batch_dims) == 4
-  assert (
-      batch_dims[0] == batch_dims[1]
-      and batch_dims[0] == batch_dims[2]
-      and batch_dims[0] == batch_dims[3]
-  )
-  out_bdims = (batch_dims[0],)
-  lhs, rhs, lhs_scales, rhs_scales = batched_args
+  if (batch_dims[0] is not None
+      and batch_dims[0] == batch_dims[1] == batch_dims[2] == batch_dims[3]):
+    out_bdims = (batch_dims[0],)
+    lhs, rhs, lhs_scales, rhs_scales = batched_args
+  else:
+    size = next(
+        x.shape[d] for x, d in zip(batched_args, batch_dims) if d is not None
+    )
+    lhs, rhs, lhs_scales, rhs_scales = [
+        batching.bdim_at_front(x, d, size)
+        for x, d in zip(batched_args, batch_dims)
+    ]
+    out_bdims = (0,)
   *batch, lhs_non_contracting, contracting = lhs.shape
   *_, _, scales_contracting = lhs_scales.shape
   *_, rhs_non_contracting, _ = rhs.shape
@@ -554,18 +653,22 @@ def quantize(x, config):
   assert contract_dim >= block_size and contract_dim % block_size == 0
   x_new_shape = x_shape[:-1] + (x_shape[-1] // block_size, block_size)
   x = x.reshape(x_new_shape)  # shape = (B, M, K / block_size, block_size)
-  MAX = dtypes.finfo(config.data_type).max.astype(x.dtype)
+  MAX = dtypes.finfo(config.data_type).max.astype(np.float32)
 
   def get_scales_per_block(values):
-    # shape = (B, M, K / block_size, 1)
-    return jnp.max(jnp.abs(values), axis=-1, keepdims=True) / MAX
+    # shape = (B, M, K / block_size, 1). The ratio is computed in float32
+    # whatever the input dtype: XLA rewrites `amax / MAX` as `amax * (1 / MAX)`
+    # with the reciprocal rounded in the division's dtype, and in bfloat16
+    # 6 * bf16(1 / 6) = 1.001953125 selects the E2M1 scale 2 instead of 1.
+    amax = jnp.max(jnp.abs(values), axis=-1, keepdims=True)
+    return amax.astype(np.float32) / MAX
 
-  if config.mode == "mxfp8":
+  if config.mode in ("mxfp8", "mxfp4"):
     assert config.global_scale is None
     assert config.scale_type == dtypes.float8_e8m0fnu
 
     scales_q = cast_to_e8m0_with_rounding_up(get_scales_per_block(x))
-    scaled_x = x / e8m0_to_dtype(scales_q, x.dtype)
+    scaled_x = x.astype(np.float32) / e8m0_to_dtype(scales_q, np.float32)
   elif config.mode == "nvfp4":
     assert config.scale_type == dtypes.float8_e4m3fn
     assert config.global_scale.dtype == np.float32
@@ -586,7 +689,11 @@ def quantize(x, config):
   scales_q = jnp.reshape(scales_q, scales_q.shape[:-1]).view(
       config.scale_type
   )
-  return x_q, scales_q
+  # Without a native kernel XLA expands the scaled matmul into a dequantize
+  # and an ordinary dot, and SimplifyFPConversions (on by default through
+  # xla_allow_excess_precision) then folds `f32 -> e2m1 -> f32` into a no-op,
+  # so the dot would run on unquantized values. The barrier keeps the casts.
+  return lax.optimization_barrier((x_q, scales_q))
 
 def scaled_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type,
                     configs):

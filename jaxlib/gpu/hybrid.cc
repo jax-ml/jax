@@ -30,6 +30,29 @@ namespace {
 namespace ffi = xla::ffi;
 namespace nb = nanobind;
 
+template <typename IntType>
+void RegisterAllHybridKernels(nb::dict lapack_capi) {
+  auto lapack_ptr = [&](const char* name) {
+    return nb::cast<nb::capsule>(lapack_capi[name]).data();
+  };
+  AssignKernelFn<EigenvalueDecomposition<ffi::F32, IntType>>(
+      lapack_ptr("sgeev"));
+  AssignKernelFn<EigenvalueDecomposition<ffi::F64, IntType>>(
+      lapack_ptr("dgeev"));
+  AssignKernelFn<EigenvalueDecompositionComplex<ffi::C64, IntType>>(
+      lapack_ptr("cgeev"));
+  AssignKernelFn<EigenvalueDecompositionComplex<ffi::C128, IntType>>(
+      lapack_ptr("zgeev"));
+  AssignKernelFn<PivotingQrFactorization<ffi::F32, IntType>>(
+      lapack_ptr("sgeqp3"));
+  AssignKernelFn<PivotingQrFactorization<ffi::F64, IntType>>(
+      lapack_ptr("dgeqp3"));
+  AssignKernelFn<PivotingQrFactorization<ffi::C64, IntType>>(
+      lapack_ptr("cgeqp3"));
+  AssignKernelFn<PivotingQrFactorization<ffi::C128, IntType>>(
+      lapack_ptr("zgeqp3"));
+}
+
 void GetLapackKernelsFromScipy() {
   static xla::SafeStatic<bool> initialized;
   initialized.Get([]() {
@@ -43,26 +66,17 @@ void GetLapackKernelsFromScipy() {
         nb::module_::import_("scipy.linalg.cython_lapack");
 
     nb::dict lapack_capi = cython_lapack.attr("__pyx_capi__");
-    auto lapack_ptr = [&](const char* name) {
-      return nb::cast<nb::capsule>(lapack_capi[name]).data();
-    };
 
-    AssignKernelFn<EigenvalueDecomposition<ffi::F32, int32_t>>(
-        lapack_ptr("sgeev"));
-    AssignKernelFn<EigenvalueDecomposition<ffi::F64, int32_t>>(
-        lapack_ptr("dgeev"));
-    AssignKernelFn<EigenvalueDecompositionComplex<ffi::C64, int32_t>>(
-        lapack_ptr("cgeev"));
-    AssignKernelFn<EigenvalueDecompositionComplex<ffi::C128, int32_t>>(
-        lapack_ptr("zgeev"));
-    AssignKernelFn<PivotingQrFactorization<ffi::F32, int32_t>>(
-        lapack_ptr("sgeqp3"));
-    AssignKernelFn<PivotingQrFactorization<ffi::F64, int32_t>>(
-        lapack_ptr("dgeqp3"));
-    AssignKernelFn<PivotingQrFactorization<ffi::C64, int32_t>>(
-        lapack_ptr("cgeqp3"));
-    AssignKernelFn<PivotingQrFactorization<ffi::C128, int32_t>>(
-        lapack_ptr("zgeqp3"));
+    int blas_int_size = 4;
+    if (nb::hasattr(cython_lapack, "_blas_int_size")) {
+      blas_int_size = nb::cast<int>(cython_lapack.attr("_blas_int_size")());
+    }
+    if (blas_int_size == 8) {
+      RegisterAllHybridKernels<int64_t>(lapack_capi);
+    } else {
+      RegisterAllHybridKernels<int32_t>(lapack_capi);
+    }
+
     lapack_kernels_initialized = true;
     return std::make_unique<bool>(true);
   });

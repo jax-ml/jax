@@ -1,0 +1,60 @@
+.. _jax-101:
+
+
+JAX 101: expressing computations
+================================
+
+JAX is a Python library for high-performance numerical computing and machine
+learning. Its interface, centered on :mod:`jax.numpy`, will look familiar if
+you've used NumPy. What sets JAX apart is what it can do with the functions
+you write: transform them, to compute gradients or to vectorize over batches;
+and compile them, to run fast on CPU, GPU, and TPU, at any scale.
+
+These pages cover the first half of that story: how to *express* computations
+in JAX. They're meant to be read in order:
+
+1. :doc:`arrays` — JAX's array type and the :mod:`jax.numpy` API: what's the
+   same as NumPy, what's different, and why.
+2. :doc:`transformations` — computing gradients with :func:`jax.grad` and
+   vectorizing with :func:`jax.vmap`, plus the tracing model that underlies
+   every JAX transformation.
+3. :doc:`pytrees` — how JAX handles structured data, like nested dictionaries
+   and lists of arrays.
+4. :doc:`random` — pseudorandom numbers with explicit PRNG keys: pure
+   functions of key values, with no hidden generator state.
+5. :doc:`state` — stateful computations: threading state through pure
+   functions, and in-place mutation with refs, JAX's mutable array type.
+
+**Reference pages** are there for when you need them, in any order:
+
+6. :doc:`errors` — common JAX errors, explained: most arise from expressing
+   something in a way that's incompatible with tracing, so the tracing model
+   from :doc:`transformations` is the key to fixing them.
+7. :doc:`convolutions` — batched N-dimensional convolutions with
+   :func:`jax.lax.conv_general_dilated`: dimension numbers, strides,
+   dilation, and transposed convolutions.
+8. :doc:`default_dtypes` — how JAX chooses default dtypes, and the X64
+   flag.
+9. :doc:`type_promotion` — the full type promotion semantics: the result
+   of combining every pair of types.
+10. :doc:`rank_promotion_warning` — configuring :mod:`jax.numpy` to warn or
+    error on implicit rank promotion.
+
+The performance and scaling docs, :doc:`/201/index`, cover making these
+computations fast: compilation with :func:`jax.jit`, sharded arrays and
+parallelism, and profiling.
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+
+   arrays
+   transformations
+   pytrees
+   random
+   state
+   errors
+   convolutions
+   default_dtypes
+   type_promotion
+   rank_promotion_warning

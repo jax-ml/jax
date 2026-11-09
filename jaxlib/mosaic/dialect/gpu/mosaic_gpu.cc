@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -24,11 +25,13 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
 #include "llvm/Support/Casting.h"
@@ -57,7 +60,6 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/OperationSupport.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Types.h"
@@ -208,9 +210,9 @@ absl::Status InitTmaDescriptor(mlir::OpBuilder& builder,
     slice_as_i64.push_back(Constant(b, slice_dim, b.getI64Type()));
   }
 
-  TF_ASSIGN_OR_RETURN(Pointer sizes_array, ToLLVMArray(b, sizes_as_i64));
-  TF_ASSIGN_OR_RETURN(Pointer strides_array, ToLLVMArray(b, strides_as_i64));
-  TF_ASSIGN_OR_RETURN(Pointer slice_array, ToLLVMArray(b, slice_as_i64));
+  ABSL_ASSIGN_OR_RETURN(Pointer sizes_array, ToLLVMArray(b, sizes_as_i64));
+  ABSL_ASSIGN_OR_RETURN(Pointer strides_array, ToLLVMArray(b, strides_as_i64));
+  ABSL_ASSIGN_OR_RETURN(Pointer slice_array, ToLLVMArray(b, slice_as_i64));
 
   IntegerType i64 = b.getI64Type();
 
@@ -307,6 +309,26 @@ llvm::LogicalResult VerifyCommonLoadStoreOp(
 }
 }  // namespace
 
+mlir::LogicalResult B6x16P32Type::verify(
+    llvm::function_ref<mlir::InFlightDiagnostic()> emitError,
+    Type elementType) {
+  if (elementType.isIntOrFloat() && elementType.getIntOrFloatBitWidth() == 6) {
+    return mlir::success();
+  }
+  return emitError() << "B6x16P32 element type must be 6-bit wide, got "
+                     << elementType;
+}
+
+mlir::LogicalResult P2B6Type::verify(
+    llvm::function_ref<mlir::InFlightDiagnostic()> emitError,
+    mlir::Type elementType) {
+  if (elementType.isIntOrFloat() && elementType.getIntOrFloatBitWidth() == 6) {
+    return mlir::success();
+  }
+  return emitError() << "P2B6 element type must be 6-bit wide, got "
+                     << elementType;
+}
+
 llvm::LogicalResult AsyncLoadOp::verify() {
   auto r =
       VerifyCommonLoadStoreOp(getOperation(), getSource().getType(), "source",
@@ -323,6 +345,148 @@ llvm::LogicalResult AsyncLoadOp::verify() {
             "The `collective` attribute must not contain duplicate "
             "dimensions.");
       }
+  }
+
+  if (!getBarrier()) {
+    if (!getCollective().empty()) {
+      return emitOpError("`collective` requires a `barrier`.");
+    }
+    if (getLeaderTracked()) {
+      return emitOpError("`leader_tracked` requires a `barrier`.");
+    }
+    if (getOobFillMode() != OOBFillMode::kPromiseInBounds) {
+      return emitOpError(
+          "Only the `promise_in_bounds` out-of-bounds fill mode is supported "
+          "without a `barrier`.");
+    }
+  }
+
+  return llvm::success();
+}
+
+llvm::LogicalResult AsyncLoadIm2colOp::verify() {
+  auto error = [this](auto... params) {
+    return emitOpError(llvm::formatv(params...));
+  };
+
+  mlir::MemRefType source_type = getSource().getType();
+  mlir::MemRefType dest_type = getDestination().getType();
+
+  if (source_type.getElementType() != dest_type.getElementType()) {
+    return error(
+        "The `source` and `destination` memrefs must have the same element "
+        "type.");
+  }
+
+  mlir::Type element_type = source_type.getElementType();
+  if (!element_type.isIntOrFloat()) {
+    return error("Expected an integer or float element type, but got {0}.",
+                 element_type);
+  }
+  if (element_type.getIntOrFloatBitWidth() < 8) {
+    return error("Sub-byte types are not supported, got {0}.", element_type);
+  }
+
+  int64_t source_rank = source_type.getRank();
+  if (source_rank < 3 || source_rank > 5) {
+    return error("The rank of `source` must be in [3, 5], but got {0}.",
+                 source_rank);
+  }
+
+  if (dest_type.getRank() < 2) {
+    return error("The rank of `destination` must be at least 2, but got {0}.",
+                 dest_type.getRank());
+  }
+
+  int64_t num_rows = 1;
+  for (int64_t d : dest_type.getShape().drop_back()) {
+    num_rows *= d;
+  }
+  int64_t num_channels = dest_type.getShape().back();
+  if (num_rows < 1 || num_rows > 1024) {
+    return error(
+        "The number of rows in `destination` must be in [1, 1024], but got "
+        "{0}.",
+        num_rows);
+  }
+  if (num_channels < 1 || num_channels > 256) {
+    return error(
+        "The number of columns in `destination` must be in [1, 256], but got "
+        "{0}.",
+        num_channels);
+  }
+  int64_t elem_bytewidth = element_type.getIntOrFloatBitWidth() / 8;
+  if ((num_channels * elem_bytewidth) % 16 != 0) {
+    return error(
+        "The last dimension of `destination` must have a bytewidth divisible "
+        "by 16, but got {0} * {1}.",
+        num_channels, elem_bytewidth);
+  }
+
+  if (getIndices().size() != source_rank) {
+    return error(
+        "The size of `indices` must be equal to the rank of `source`.");
+  }
+
+  int64_t num_spatial = source_rank - 2;
+  if (getFilterOffsets().size() != num_spatial) {
+    return error(
+        "The size of `filter_offsets` must be equal to the number of spatial "
+        "dimensions ({0}), but got {1}.",
+        num_spatial, getFilterOffsets().size());
+  }
+
+  llvm::ArrayRef<int64_t> lower_bounds = getWindowLowerBounds();
+  if (lower_bounds.size() != num_spatial) {
+    return error(
+        "The size of `window_lower_bounds` must be equal to the number of "
+        "spatial dimensions ({0}), but got {1}.",
+        num_spatial, lower_bounds.size());
+  }
+
+  llvm::ArrayRef<int64_t> upper_bounds = getWindowUpperBounds();
+  if (upper_bounds.size() != num_spatial) {
+    return error(
+        "The size of `window_upper_bounds` must be equal to the number of "
+        "spatial dimensions ({0}), but got {1}.",
+        num_spatial, upper_bounds.size());
+  }
+
+  llvm::ArrayRef<int64_t> strides = getWindowStrides();
+  if (strides.size() != num_spatial) {
+    return error(
+        "The size of `window_strides` must be equal to the number of spatial "
+        "dimensions ({0}), but got {1}.",
+        num_spatial, strides.size());
+  }
+
+  int64_t bits = 16 / num_spatial;
+  int64_t min_bound = -(1LL << (bits - 1));
+  int64_t max_bound = (1LL << (bits - 1)) - 1;
+  for (int64_t i = 0; i < num_spatial; ++i) {
+    int64_t lower = lower_bounds[i];
+    int64_t upper = upper_bounds[i];
+    if (std::min(lower, upper) < min_bound ||
+        std::max(lower, upper) > max_bound) {
+      return error(
+          "Window bounds at spatial dimension {0} must be in [{1}, {2}] for "
+          "rank {3}, but got [{4}, {5}].",
+          i, min_bound, max_bound, source_rank, lower, upper);
+    }
+    int64_t spatial_size = source_type.getDimSize(i + 1);
+    if (!mlir::ShapedType::isDynamic(spatial_size) &&
+        spatial_size + upper - lower < 1) {
+      return error(
+          "Window bounds must have non-zero extent along spatial dimension "
+          "{0}, but got {1} + {2} - {3}.",
+          i, spatial_size, upper, lower);
+    }
+    if (strides[i] < 1 || strides[i] > 8) {
+      return error(
+          "Window stride at spatial dimension {0} must be in [1, 8], but got "
+          "{1}.",
+          i, strides[i]);
+    }
   }
 
   return llvm::success();
@@ -433,8 +597,20 @@ llvm::LogicalResult WGMMAOp::verify() {
   auto b_type = getB().getType();
   auto acc_type = getAccumulator().getType();
 
-  if (a_type.getElementType() != b_type.getElementType()) {
-    return error("The `a` and `b` inputs must have the same element type.");
+  auto a_element_type = a_type.getElementType();
+  auto b_element_type = b_type.getElementType();
+  // FP8 is the exception to the "same element type" rule: the PTX
+  // `wgmma.mma_async` instruction takes independent `.atype`/`.btype` operand
+  // types, each of which may be `.e4m3` or `.e5m2`, so any mix of the two FP8
+  // types is a valid `a`/`b` pairing.
+  auto is_fp8 = [](mlir::Type t) {
+    return llvm::isa<mlir::Float8E4M3FNType, mlir::Float8E5M2Type>(t);
+  };
+  if (a_element_type != b_element_type &&
+      !(is_fp8(a_element_type) && is_fp8(b_element_type))) {
+    return error(
+        "The `a` and `b` inputs must have the same element type, except that "
+        "FP8 types (f8E4M3FN and f8E5M2) may be mixed.");
   }
 
   auto a_shape = a_type.getShape();
@@ -553,8 +729,16 @@ llvm::LogicalResult TcGen05MMAOp::verify() {
   auto b_type = getB().getType();
   auto acc_type = getAccumulator().getType();
 
-  if (a_type.getElementType() != b_type.getElementType()) {
-    return error("The `a` and `b` inputs must have the same element type.");
+  auto a_element_type = a_type.getElementType();
+  auto b_element_type = b_type.getElementType();
+  auto is_fp8 = [](mlir::Type t) {
+    return llvm::isa<mlir::Float8E4M3FNType, mlir::Float8E5M2Type>(t);
+  };
+  if (a_element_type != b_element_type &&
+      !(is_fp8(a_element_type) && is_fp8(b_element_type))) {
+    return error(
+        "The `a` and `b` inputs must have the same element type, except that "
+        "FP8 types (f8E4M3FN and f8E5M2) may be mixed.");
   }
 
   auto a_shape = a_type.getShape();
@@ -762,22 +946,77 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
   return llvm::success();
 }
 
-llvm::LogicalResult ReturnOp::verify() {
-  // The operand number and types must match the custom primitive signature.
-  const auto& results = getParentOp()->getResultTypes();
-  if (getNumOperands() != results.size())
-    return emitOpError("has ")
-           << getNumOperands() << " operands, but enclosing custom_primitive (@"
-           << getParentOp()->getName() << ") returns " << results.size();
+llvm::LogicalResult VectorConcatOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::PropertyRef properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  auto error = [location](auto... params) {
+    return mlir::emitOptionalError(location, llvm::formatv(params...));
+  };
+  if (operands.empty()) {
+    return error("Must have at least one operand.");
+  }
+  VectorConcatOp::Adaptor adaptor(operands, attributes, properties);
+  int64_t dim = adaptor.getDimension();
+  mlir::VectorType first_type =
+      mlir::cast<mlir::VectorType>(operands[0].getType());
+  int64_t rank = first_type.getRank();
+  if (dim < 0 || dim >= rank) {
+    return error("Dimension {0} is out of bounds for vector of rank {1}.", dim,
+                 rank);
+  }
+  llvm::SmallVector<int64_t> shape(first_type.getShape());
+  shape[dim] = 0;
+  for (auto [i, op] : llvm::enumerate(operands)) {
+    mlir::VectorType op_type = mlir::cast<mlir::VectorType>(op.getType());
+    if (op_type.getRank() != rank) {
+      return error(
+          "All operands must have the same rank, got rank {0} at index {1} "
+          "(expected {2}).",
+          op_type.getRank(), i, rank);
+    }
+    if (op_type.getElementType() != first_type.getElementType()) {
+      return error(
+          "All operands must match result element type, got {0} at index {1} "
+          "(expected {2}).",
+          op_type.getElementType(), i, first_type.getElementType());
+    }
+    for (int64_t d = 0; d < rank; ++d) {
+      if (d != dim && op_type.getDimSize(d) != first_type.getDimSize(d)) {
+        return error(
+            "Operand shape does not match result shape along non-concatenated "
+            "dimension {0} at index {1} (got {2}, expected {3}).",
+            d, i, op_type.getDimSize(d), first_type.getDimSize(d));
+      }
+    }
+    shape[dim] += op_type.getDimSize(dim);
+  }
+  inferredReturnTypes.assign(
+      {mlir::VectorType::get(shape, first_type.getElementType())});
+  return mlir::success();
+}
 
-  for (unsigned i = 0, e = results.size(); i != e; ++i)
-    if (getOperand(i).getType() != results[i])
+llvm::LogicalResult ReturnOp::verify() {
+  // The operand number and types must match the parent op signature.
+  mlir::Operation* parent = (*this)->getParentOp();
+  mlir::TypeRange results = parent->getResultTypes();
+  if (getNumOperands() != results.size()) {
+    return emitOpError("has ")
+           << getNumOperands() << " operands, but enclosing "
+           << parent->getName().stripDialect() << " (@" << parent->getName()
+           << ") returns " << results.size();
+  }
+
+  for (unsigned i = 0, e = results.size(); i != e; ++i) {
+    if (getOperand(i).getType() != results[i]) {
       return emitOpError() << "type of return operand " << i << " ("
                            << getOperand(i).getType()
                            << ") doesn't match the result type (" << results[i]
-                           << ")"
-                           << " in custom_primitive @"
-                           << getParentOp()->getName();
+                           << ") in " << parent->getName().stripDialect()
+                           << " @" << parent->getName();
+    }
+  }
 
   return llvm::success();
 }
@@ -988,21 +1227,44 @@ llvm::LogicalResult AsyncLoadTmemOp::inferReturnTypes(
     mlir::ValueRange operands, mlir::DictionaryAttr attributes,
     mlir::PropertyRef properties, mlir::RegionRange regions,
     llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  AsyncLoadTmemOpAdaptor adaptor(operands, attributes, properties, regions);
   mlir::MemRefType memref_type =
       mlir::cast<mlir::MemRefType>(operands[0].getType());
   auto vector_type = mlir::VectorType::get(memref_type.getShape(),
                                            memref_type.getElementType());
   inferredReturnTypes.assign({vector_type});
+  if (adaptor.getReduce().has_value()) {
+    auto reduced_vector_type = mlir::VectorType::get(
+        memref_type.getShape().drop_back(), memref_type.getElementType());
+    inferredReturnTypes.push_back(reduced_vector_type);
+  }
   return mlir::success();
 }
 
 llvm::LogicalResult AsyncLoadTmemOp::verify() {
-  if (getSource().getType().getElementType() !=
-      getResult().getType().getElementType()) {
+  if (getNumResults() < 1) {
+    return emitOpError() << "expected at least 1 result, got "
+                         << getNumResults();
+  }
+  if (!llvm::all_of(getResults(), [](mlir::Value result) {
+        return llvm::isa<mlir::VectorType>(result.getType());
+      })) {
+    return emitOpError() << "expected all results to be vector types";
+  }
+  mlir::VectorType result_type =
+      mlir::cast<mlir::VectorType>(getResult(0).getType());
+  if (getSource().getType().getElementType() != result_type.getElementType()) {
     return emitOpError() << "The `source` and `result` must have "
                             "the same element type.";
   }
-  if (getSource().getType().getShape() != getResult().getType().getShape()) {
+  if (getReduce().has_value()) {
+    if (!result_type.getElementType().isF32() &&
+        !result_type.getElementType().isSignlessInteger(32)) {
+      return emitOpError()
+             << "Reductions only supported for f32 and i32 loads.";
+    }
+  }
+  if (getSource().getType().getShape() != result_type.getShape()) {
     return emitOpError()
            << "The `source` and `result` must have the same shape.";
   }
@@ -1111,6 +1373,16 @@ llvm::LogicalResult MultimemLoadReduceOp::verify() {
   return mlir::success();
 }
 
+llvm::LogicalResult CumulativeReductionOp::verify() {
+  mlir::VectorType src_type = getSource().getType();
+  int64_t dimension = getDimension();
+  if (dimension < 0 || dimension >= src_type.getRank()) {
+    return emitOpError() << "The reduction dimension must be in [0, "
+                         << src_type.getRank() << ") but got " << dimension;
+  }
+  return llvm::success();
+}
+
 llvm::LogicalResult VectorStoreOp::verify() {
   mlir::VectorType src_type = getValueToStore().getType();
   mlir::MemRefType dst_type = getDestination().getType();
@@ -1146,8 +1418,14 @@ llvm::LogicalResult BroadcastedIotaOp::verify() {
 
 llvm::LogicalResult PrintLayoutOp::verify() {
   if (auto ref_ty = mlir::dyn_cast<mlir::MemRefType>(getValue().getType())) {
-    if (VerifyTmemRefType(getOperation(), ref_ty).failed()) {
-      return llvm::failure();
+    mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+        getContext(), mlir::gpu::AddressSpace::Workgroup);
+    mlir::Attribute tmem = TmemAttr::get(getContext());
+    if (ref_ty.getMemorySpace() != smem && ref_ty.getMemorySpace() != tmem) {
+      return emitOpError()
+             << "The memref must have a mosaic_gpu.tmem or "
+                "gpu.address_space<workgroup> memory space but got: "
+             << ref_ty.getMemorySpace();
     }
   }
   return llvm::success();
@@ -1175,120 +1453,70 @@ llvm::LogicalResult WarpMapOp::verify() {
   return llvm::success();
 }
 
-llvm::LogicalResult ReinterpretCastOp::verify() {
-  auto source_type = getSource().getType();
-  auto result_type = getResult().getType();
-
-  if (source_type.getElementType() != result_type.getElementType()) {
-    return emitOpError(
-        "source and result memrefs must have the same element type");
+llvm::LogicalResult RunScopedOp::verify() {
+  mlir::Block& body = getRegion().front();
+  if (getBufferAttrs().size() != body.getNumArguments()) {
+    return emitOpError() << "Expected the number of buffer attributes ("
+                         << getBufferAttrs().size()
+                         << ") to match the number of block arguments ("
+                         << body.getNumArguments() << ").";
   }
 
-  int64_t source_num_elements = source_type.getNumElements();
-  int64_t result_num_elements = result_type.getNumElements();
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
 
-  if (source_num_elements != result_num_elements) {
-    return emitOpError(llvm::formatv(
-        "source and result memrefs must have the same number of elements, "
-        "but got {0} and {1}",
-        source_num_elements, result_num_elements));
+  for (auto [arg, attr] :
+       llvm::zip_equal(body.getArguments(), getBufferAttrs())) {
+    auto memref_type = mlir::dyn_cast<mlir::MemRefType>(arg.getType());
+    if (!memref_type) {
+      return emitOpError() << "Expected block argument " << arg.getArgNumber()
+                           << " to be a memref, but got: " << arg.getType();
+    }
+    if (!memref_type.hasStaticShape()) {
+      return emitOpError()
+             << "Expected block argument " << arg.getArgNumber()
+             << " to have a static shape, but got: " << memref_type;
+    }
+    if (memref_type.getMemorySpace() != smem) {
+      return emitOpError()
+             << "Expected block argument " << arg.getArgNumber()
+             << " to be in SMEM memory space, but got: " << memref_type;
+    }
+    if (!mlir::isa<SmemAllocAttr>(attr)) {
+      return emitOpError() << "Expected buffer attribute " << arg.getArgNumber()
+                           << " for SMEM allocation to be a "
+                              "#mosaic_gpu.smem_alloc attribute, but got: "
+                           << attr;
+    }
+  }
+
+  for (mlir::Value result : getResults()) {
+    if (mlir::isa<mlir::MemRefType>(result.getType())) {
+      return emitOpError("run_scoped cannot return memref");
+    }
   }
 
   return llvm::success();
 }
 
-mlir::OpFoldResult ReinterpretCastOp::fold(FoldAdaptor) {
-  // Eliminate no-op casts: if source and result types are identical, return the
-  // source directly.
-  if (getSource().getType() == getResult().getType()) {
-    return getSource();
+mlir::OpFoldResult BroadcastInDimOp::fold(FoldAdaptor) {
+  // Fold chains: broadcast_in_dim(broadcast_in_dim(x)) -> broadcast_in_dim(x).
+  auto parent_bcast = getOperand().getDefiningOp<BroadcastInDimOp>();
+  if (!parent_bcast) {
+    return {};
+  }
+  llvm::ArrayRef<int64_t> dims1 = parent_bcast.getBroadcastDimensions();
+  llvm::ArrayRef<int64_t> dims2 = getBroadcastDimensions();
+
+  llvm::SmallVector<int64_t> new_dims;
+  new_dims.reserve(dims1.size());
+  for (int64_t dim : dims1) {
+    new_dims.push_back(dims2[dim]);
   }
 
-  // Fold chains: reinterpret_cast(reinterpret_cast(x)) -> reinterpret_cast(x).
-  if (auto parent_cast = getSource().getDefiningOp<ReinterpretCastOp>()) {
-    getSourceMutable().assign(parent_cast.getSource());
-    return getResult();
-  }
-
-  return {};
-}
-
-namespace {
-
-// Rewrites `mgpu.reinterpret_cast(ty, mgpu.slice_smem(...))` to
-// `mgpu.slice_smem(ty, ...)`.
-struct FoldMGPUReinterpretCastOfSliceSMEM
-    : public mlir::OpRewritePattern<ReinterpretCastOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult matchAndRewrite(
-      ReinterpretCastOp op, mlir::PatternRewriter& rewriter) const override {
-    auto slice_op = op.getSource().getDefiningOp<SliceSMEMOp>();
-    if (!slice_op) {
-      return mlir::failure();
-    }
-
-    MemRefType result_type = op.getResult().getType();
-    rewriter.replaceOpWithNewOp<SliceSMEMOp>(
-        op, result_type, slice_op.getOffsetAttr(), slice_op.getAliasIdAttr());
-    return mlir::success();
-  }
-};
-}  // namespace
-
-void ReinterpretCastOp::getCanonicalizationPatterns(
-    mlir::RewritePatternSet& patterns, mlir::MLIRContext* context) {
-  patterns.add<FoldMGPUReinterpretCastOfSliceSMEM>(context);
-}
-
-namespace {
-
-struct HoistReinterpretCastOutOfWarpMap
-    : public mlir::OpRewritePattern<WarpMapOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult matchAndRewrite(
-      WarpMapOp op, mlir::PatternRewriter& rewriter) const override {
-    bool modified = false;
-    mlir::Block& body = op.getRegion().front();
-    for (auto [i, operand, body_operand] :
-        llvm::enumerate(op->getOperands(), body.getArguments())) {
-      Type user_type = nullptr;
-      // It is only safe to rewrite the type of the argument if all of its uses
-      // are reinterpret_cast operations producing the same return type.
-      if (body_operand.hasNUsesOrMore(1) &&
-          absl::c_all_of(
-              body_operand.getUsers(), [&user_type](mlir::Operation* user) {
-                if (auto rc_op = llvm::dyn_cast<ReinterpretCastOp>(user)) {
-                  if (!user_type) {
-                    user_type = rc_op.getType();
-                  }
-                  return rc_op.getType() == user_type;
-                }
-                return false;
-              })) {
-        auto new_cast = ReinterpretCastOp::create(rewriter, op.getLoc(),
-                                                  user_type, operand);
-        rewriter.modifyOpInPlace(op, [&]() {
-          op->setOperand(i, new_cast);
-          body_operand.setType(user_type);
-        });
-        // Copy the users of the body operand to a vector to avoid invalidating
-        // the iterator while erasing them.
-        for (auto user : llvm::to_vector(body_operand.getUsers())) {
-          rewriter.replaceOp(user, body_operand);
-        }
-        modified = true;
-      }
-    }
-    return modified ? mlir::success() : mlir::failure();
-  }
-};
-}  // namespace
-
-void WarpMapOp::getCanonicalizationPatterns(mlir::RewritePatternSet& patterns,
-                                            mlir::MLIRContext* context) {
-  patterns.add<HoistReinterpretCastOutOfWarpMap>(context);
+  getOperandMutable().assign(parent_bcast.getOperand());
+  setBroadcastDimensions(new_dims);
+  return getResult();
 }
 
 llvm::LogicalResult GetClusterRefOp::inferReturnTypes(
@@ -1307,6 +1535,45 @@ llvm::LogicalResult GetClusterRefOp::inferReturnTypes(
   return mlir::success();
 }
 
+llvm::LogicalResult AllocSmemOp::verify() {
+  if (!(*this)->getParentOfType<AllocaScopeOp>()) {
+    return emitOpError("requires an ancestor `mosaic_gpu.alloca_scope` op");
+  }
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  if (getResult().getType().getMemorySpace() != smem) {
+    return emitOpError("The result memref must be in SMEM.");
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult AllocaScopeOp::verify() {
+  for (mlir::Value result : getResults()) {
+    if (mlir::isa<mlir::MemRefType>(result.getType())) {
+      return emitOpError("alloca_scope cannot return memrefs.");
+    }
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult AllocaScopeReturnOp::verify() {
+  mlir::TypeRange results = getParentOp()->getResultTypes();
+  if (getNumOperands() != results.size()) {
+    return emitOpError("has ")
+           << getNumOperands() << " operands, but enclosing alloca_scope (@"
+           << getParentOp()->getName() << ") returns " << results.size();
+  }
+  for (unsigned i = 0, e = results.size(); i != e; ++i) {
+    if (getOperand(i).getType() != results[i]) {
+      return emitOpError() << "type of return operand " << i << " ("
+                           << getOperand(i).getType()
+                           << ") doesn't match the result type (" << results[i]
+                           << ") in alloca_scope @" << getParentOp()->getName();
+    }
+  }
+  return llvm::success();
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST
@@ -1323,3 +1590,4 @@ void MosaicGPUDialect::initialize() {
 }
 
 }  // namespace mosaic_gpu
+

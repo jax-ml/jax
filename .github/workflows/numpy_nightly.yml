@@ -37,21 +37,21 @@ jobs:
     strategy:
       matrix:
             python: ["3.13",]
-    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"  # zizmor: ignore[unpinned-images]
     name: "CI - jaxlib head with NumPy nightly"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ matrix.python }}"
       JAXCI_PYTHON: "python${{ matrix.python }}"
       JAXCI_BUILD_ARTIFACT_WITH_RBE: 1
-      JAXCI_CLONE_MAIN_XLA: 1
+      JAXCI_CLONE_MAIN_XLA: 0
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Checkout ml_dtypes
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: jax-ml/ml_dtypes
           ref: main
@@ -92,6 +92,7 @@ jobs:
         run: ./ci/run_pytest_cpu.sh
       - name: Upload test artifacts
         if: always()
+        continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
         with:
           artifact-name: numpy-nightly-py${{ matrix.python }}

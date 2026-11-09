@@ -103,6 +103,8 @@ def einsum(
     out: unsupported by JAX
     _dot_general: optionally override the ``dot_general`` callable used by ``einsum``.
       This parameter is experimental, and may be removed without warning at any time.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     array containing the result of the einstein summation.
@@ -318,15 +320,18 @@ def einsum(
         "`out_sharding` argument of `einsum` only supports NamedSharding"
         " instances.")
 
-  jit_einsum = api.jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=True)
+  jit_einsum = api.jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=api.Inline.JAX_EARLY)
   if spec is not None:
     jit_einsum = api.named_call(jit_einsum, name=spec)
   operand_arrays = list(util.ensure_arraylike_tuple("einsum", operands))
 
   if num_contractions > 1 and out_sharding is not None:
-    # TODO(yashkatariya): If the out_sharding is unreduced, figure out a way to
-    # run the dot_general unreduced_rule on these einsums because right now we
-    # drop into Auto mode skipping the checks happening in the rule.
+    if out_sharding.spec.unreduced or out_sharding.spec.reduced:
+      raise ValueError(
+          '`out_sharding` with `unreduced` or `reduced` is not supported for'
+          ' `einsum` with more than 2 operands (multiple contractions). Please'
+          ' decompose it into 2-operand `einsum`s. Got'
+          f' out_sharding={out_sharding}')
     return auto_axes(
         jit_einsum,
         axes=out_sharding.mesh.explicit_axes,

@@ -67,9 +67,9 @@ absl::StatusOr<std::string> GetSmVersion(int major, int minor) {
     }
     for (const llvm::SubtargetSubTypeKV& subtype :
          subtarget_info->getAllProcessorDescriptions()) {
-      if (absl::StartsWith(subtype.Key, sm_base) &&
-          absl::EndsWith(subtype.Key, "a")) {
-        sm_arch_specific = subtype.Key;
+      if (absl::StartsWith(subtype.key(), sm_base) &&
+          absl::EndsWith(subtype.key(), "a")) {
+        sm_arch_specific = subtype.key();
         break;
       }
     }
@@ -97,7 +97,7 @@ absl::StatusOr<int> GetLatestLlvmPtxIsaVersion() {
   int llvm_latest_version = 0;
   for (const llvm::SubtargetFeatureKV& feature :
        subtarget_info->getAllProcessorFeatures()) {
-    std::string_view version_string = feature.Key;
+    std::string_view version_string = feature.key();
     if (absl::ConsumePrefix(&version_string, "ptx")) {
       int version;
       if (!absl::SimpleAtoi(version_string, &version)) {
@@ -117,16 +117,14 @@ GetAssemblyToBinaryCompilationProvider() {
   static absl::NoDestructor<
       absl::StatusOr<std::unique_ptr<se::cuda::CompilationProvider>>>
       compilation_provider([]() {
-#ifdef PLATFORM_GOOGLE
-        constexpr bool enable_driver_compilation = true;
-#else
         constexpr bool enable_driver_compilation = false;
-#endif
-        // Defaults mirror those used in `xla/debug_options_flags.cc`.
+        // Defaults mirror those used in `xla/debug_options_flags.cc`, except
+        // that nvJitLink is disabled because Mosaic GPU compiles a single
+        // self-contained PTX module and nvJitLink's relocatable compilation
+        // causes ptxas to ignore `setmaxnreg` (C7504).
         se::cuda::CompilationProviderOptions opts(
-            se::cuda::CompilationProviderOptions::NvJitLinkMode::kAuto,
+            se::cuda::CompilationProviderOptions::NvJitLinkMode::kDisabled,
             /*enable_libnvptxcompiler=*/se::IsLibNvPtxCompilerSupported(),
-            /*enable_llvm_module_compilation_parallelism=*/false,
             enable_driver_compilation, std::string(kDefaultCudaDataDir));
         return se::cuda::AssembleCompilationProvider(opts);
       }());

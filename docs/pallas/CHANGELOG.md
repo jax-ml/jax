@@ -2,7 +2,7 @@
 
 # Pallas Changelog
 
-<!--* freshness: { reviewed: '2026-02-13' } *-->
+<!--* freshness: { reviewed: '2026-06-23' } *-->
 
 This is the list of changes specific to {class}`jax.experimental.pallas`.
 For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changelog.html).
@@ -14,13 +14,279 @@ Remember to align the itemized text with the first line of an item within a list
 ## Unreleased
 
 * New features
+  * The Pallas API is now available as `jax.pallas`. Existing imports from
+    `jax.experimental.pallas` remain valid.
+
+### TPU
+
+* New features
+
+  * Added {func}`jax.pallas.tpu.request_p_state` to request a TensorCore
+    P-state transition on TPU7x+ targets.
+
+* Removals
+
+  * Removed the previously deprecated {class}`jax.experimental.pallas.tpu.create_tensorcore_mesh`. Use
+    {class}`jax.pallas.tpu.TensorCoreMesh` instead.
+
+### Triton
+
+* Removals
+  * Removed the previously deprecated Pallas Triton ops in
+    {mod}`jax.experimental.pallas.ops.gpu`.
+
+### Mosaic GPU
+
+* New features
+
+  * {func}`jax.experimental.pallas.mosaic_gpu.tcgen05_commit_arrive` now accepts
+    a keyword-only `commit_a_read_only` boolean flag (defaulting to `False`) to
+    track completion of SMEM reads of the `a` operand of preceding
+    {func}`jax.experimental.pallas.mosaic_gpu.tcgen05_mma` calls on `sm_107f`.
+  * {class}`jax.experimental.pallas.mosaic_gpu.RefType` now accepts keyword-only
+    `read` and `write` boolean flags (both defaulting to `True`) to declare
+    which memory effects {func}`jax.experimental.pallas.mosaic_gpu.inline_mgpu`
+    has on each reference argument.
+
+* Removals
+
+  * Removed the previously deprecated
+    {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref`. Use
+    `ref.transpose(...)` or `ref.T` directly instead.
+
+## Released with JAX 0.12.0 (October 19, 2026)
+
+* New features
+  * Added `ref.memory_space_cast` to cast the memory space of a reference.
+
+* Deprecations
+
+  * {class}`jax.experimental.pallas.DeviceIdType` and the `device_id_type`
+    parameter of {func}`jax.experimental.pallas.semaphore_signal` are deprecated.
+
+### Mosaic GPU
+
+* Changes
+
+  * `ref[...] = value` now always requires an optimized transfer; use
+    {func}`jax.experimental.pallas.mosaic_gpu.store` with `optimized=False` to
+    opt out. This is necessary when storing to GMEM, since optimized transfers
+    are currently only supported for SMEM.
+  * {func}`jax.experimental.pallas.mosaic_gpu.atomic_add`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_max`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_min`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_and`,
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_or`, and
+    {func}`jax.experimental.pallas.mosaic_gpu.atomic_xor` now take an
+    `optimized` argument (defaulting to `True`) that controls whether an
+    optimized transfer is required. Setting `optimized=False` is necessary when
+    storing to GMEM, since optimized transfers are currently only supported for
+    SMEM.
+
+* New features
+
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.min`,
+  {func}`jax.experimental.pallas.mosaic_gpu.max`,
+  {func}`jax.experimental.pallas.mosaic_gpu.sum`, and
+  {func}`jax.experimental.pallas.mosaic_gpu.prod`. These mirror the equivalent
+  `jax.numpy` functions, but add an `accumulator_ilp` parameter.
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.alloc_semaphore`, which
+    allocates GMEM semaphores that can be shared across kernel invocations.
+  * {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` with
+    `leader_tracked=CopyPartition.PARTITIONED(...)` or
+    `leader_tracked=CopyPartition.REPLICATED` now support clusters of total size
+    greater than 2, provided the collective axis is the minormost cluster
+    dimension and has size 2.
+  * Added support for im2col TMA copies to
+    {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` via the
+    {func}`jax.experimental.pallas.mosaic_gpu.im2col_ref` transformation.
+
+* Deprecations
+
+  * The `device_id_type` parameter of
+    {func}`jax.experimental.pallas.mosaic_gpu.remote_ref` is deprecated.
+
+* Removals
+
+  * Removed the previously deprecated `idx` parameter of
+    {func}`jax.experimental.pallas.mosaic_gpu.load`. Index the ref explicitly
+    via `ref.at[idx]` prior to loading from it.
+
+### TPU
+
+* New features
+
+  * Added {func}`jax.experimental.pallas.tpu.has_memory_space` to dynamically
+    query the memory space of an `ANY` reference.
+
+* Deprecations
+
+  * The `device_id_type` parameter of
+    {func}`jax.experimental.pallas.tpu.async_remote_copy` and
+    {func}`jax.experimental.pallas.tpu.make_async_remote_copy` is deprecated.
+  * {class}`jax.experimental.pallas.tpu.BufferedRefBase` and
+    {data}`jax.experimental.pallas.tpu.BufferType.MANUAL` are deprecated.
+
+## Released with JAX 0.11.2 (September 17, 2026)
+
+* Deprecations
+
+  * `pl.reciprocal` was moved into {mod}`jax.experimental.pallas.tpu`.
+    Accessing it via {mod}`jax.experimental.pallas` is deprecated.
+
+* Removals
+
+  * Removed the previously deprecated `pl.dot`. Use {func}`jax.numpy.dot`,
+    {func}`jax.numpy.einsum` or the `@` operator instead in TPU or MGPU kernels.
+  * Removed the previously deprecated `pl.debug_checks_enabled`. Use
+    `pl.enable_debug_checks.value` instead.
+  * Removed the previously deprecated `pltpu.HOST`. Use `pl.HOST` instead.
+  * Removed the previously deprecated `scrach_shapes` and `out_shapes`
+    arguments from {func}`jax.experimental.pallas.mosaic_gpu.kernel`. Use
+    `scratch_types` and `out_type` instead.
+
+### Mosaic GPU
+
+* Changes
+
+  * {func}`jax.experimental.pallas.mosaic_gpu.try_cluster_cancel` now takes a
+    `collective_axes` argument. It is now not, for example, collective in the
+    thread axis unless that is included in `collective_axes`. Users of
+    {func}`jax.experimental.pallas.mosaic_gpu.dynamic_scheduling_loop` that fail
+    to pass complete `thread_axis` and/or `cluster_axes` arguments will now see
+    multiple cluster cancellations (these arguments have always been mandatory,
+    but it may previously have worked without, albeit non-deterministically!).
+
+* New features
+
+  * Added the `MOSAIC_GPU_DUMP_RESOURCES` environment variable, which dumps
+    the estimated resources (e.g. TMEM columns, SMEM bytes) when compiling a
+    model. Like the other dump variables, it is also enabled by
+    `MOSAIC_GPU_DUMP_TO`.
+  * Added the `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM` environment variable, which
+    dumps the constraint system built during layout inference. This is useful
+    for debugging layout inference failures. Like the other dump variables, it
+    is also enabled by `MOSAIC_GPU_DUMP_TO`.
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.store`, the counterpart to
+    {func}`jax.experimental.pallas.mosaic_gpu.load`. Like `load`, it takes an
+    `optimized` argument that controls whether a conflict-free transfer is
+    required.
+
+* Deprecations
+
+  * {func}`jax.experimental.pallas.mosaic_gpu.transpose_ref` is
+    deprecated. Use `ref.transpose(...)` directly instead.
+  * Using {func}`jax.experimental.pallas.program_id` and
+    {func}`jax.experimental.pallas.num_programs` in Pallas MGPU kernels is
+    deprecated. Use {func}`jax.lax.axis_index` and {func}`jax.lax.axis_size`
+    instead.
+
+* Removals
+
+  * Removed {func}`jax.experimental.pallas.mosaic_gpu.transform_ref`. It is
+    only marginally useful in the presence of transform inference. If you find
+    that transform inference is insufficient, please file a bug.
+  * Removed the previously deprecated support for
+    {func}`jax.experimental.pallas.pallas_call`. Mosaic GPU kernels can now
+    only be defined via {func}`jax.experimental.pallas.mosaic_gpu.kernel`.
+
+### TPU
+
+* New features
+
+  * Added {func}`jax.experimental.pallas.tpu.annotate` to attach memory access
+    assumptions (`no_store`, `no_bank_conflict`, `no_hazard`, and
+    `no_hazard_no_deps`) to VMEM/SMEM references, allowing kernels to
+    override compiler scheduling, bundle packing, and memory dependency analysis.
+  * Added `jax_pallas_auto_assign_collective_ids_limit` config flag to allow
+    configuring the limit for auto-assigned collective IDs.
+  * {func}`jax.experimental.pallas.tpu.get_barrier_semaphore` now accepts an
+    optional hashable `tag` argument, assigning barrier semaphores automatically
+    to kernels sharing the same tag.
+
+## Released with JAX 0.11.1 (August 17, 2026)
+
+* Deprecations
+
+  * Pallas Triton ops in {mod}`jax.experimental.pallas.ops.gpu` are deprecated.
+    Please use [`tokamax`](https://github.com/openxla/tokamax) for equivalent
+    implementations if available, e.g., `tokamax.layer_norm`,
+    `tokamax.dot_product_attention`.
+  * {func}`jax.experimental.pallas.core_map` is deprecated. Please migrate to
+    {func}`jax.experimental.pallas.kernel`.
+
+### Mosaic GPU
+
+* New features
+
+  * The ``barrier`` argument of
+    {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` must now be
+    omitted on pre-Hopper GPUs (which use the ``cp.async`` implementation).
+    When omitted, the completion of the copy must be awaited via
+    {func}`jax.experimental.pallas.mosaic_gpu.wait_gmem_to_smem`.
+
+## Released with JAX 0.11.0 (July 16, 2026)
+
+* Changes
+
+  * {func}`jax.experimental.pallas.kernel` now only aliases closed over or
+    passed in refs if the kernel writes to them. If you need aliasing without
+    an explicit write, use {func}`jax.experimental.pallas.tpu.touch`.
+
+### Triton
+
+The Triton backend is deprecated and will be removed in a future version of JAX.
+To keep using Pallas on GPU, please migrate to the Mosaic GPU backend. To keep
+using Triton, switch to the official Triton bindings and `jax_triton`.
+
+* New features
+
+  * Added {data}`jax.experimental.pallas.triton.CUSTOM_CALL_TARGET_NAME`, the
+    name of the custom call targeted by Pallas Triton. The exact value is not
+    guaranteed to be stable, but it is safe to assume that it is always aligned
+    with what the lowering emits. This is useful, for example, when exporting
+    a computation with Pallas Triton kernels via
+    {func}`jax.experimental.export.export`, since the corresponding custom call
+    is not considered export-stable and needs to be enabled explicitly.
+
+### Mosaic GPU
+
+* New features
+
+  * Added support for Ampere matrix multiply-accumulate instructions via
+    {func}`jax.experimental.pallas.mosaic_gpu.mma`.
+  * Added support for `cp.async` to
+    {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem`.
+  * {func}`jax.experimental.pallas.mosaic_gpu.wgmma` now supports mixing the
+    e4m3 and e5m2 FP8 types across its two operands.
+  * Added support for manual "ready" barriers to
+    {func}`jax.experimental.pallas.mosaic_gpu.emit_pipeline_warp_specialized`.
+  * Added ``oob_fill_mode`` to
+    {class}`jax.experimental.pallas.mosaic_gpu.BlockSpec`, which controls
+    the behavior for out-of-bounds accesses during pipelined GMEM-to-SMEM
+    copies.
+
+* Changes
+
+    * Turned on Warpgroup lowering by default. If this causes regression or
+    breakages, switch back to
+    {data}`jax.experimental.pallas.mosaic_gpu.LoweringSemantics.Lane` in your
+    kernel's {class}`jax.experimental.pallas.mosaic_gpu.CompilerParams` and file
+    a bug.
+
+* Deprecations
+
+  * The `idx` parameter of {func}`jax.experimental.pallas.mosaic_gpu.load` is
+    deprecated. Index the ref explicitly via `ref.at[idx]` prior to loading
+    from it.
+
+## Released with JAX 0.10.2
+
+* New features
 
   * Added {data}`jax.experimental.pallas.enable_poison_buffers` (config flag
     `jax_pallas_poison_buffers`) to poison (initialize with NaNs or lowest
-    possible integers) any scratch buffers allocated by Pallas in Mosaic TPU
-    lowering for debugging.
-  * Support TMA scatter.
-  * Rename `TMA_GATHER_INDICES_LAYOUT` to `TMA_INDICES_LAYOUT`.
+    possible integers) any scratch buffers allocated by Pallas for debugging.
 
 * Deprecations
 
@@ -31,6 +297,13 @@ Remember to align the itemized text with the first line of an item within a list
     operator instead in a TPU or MGPU kernel.
 
 ### TPU
+
+* New features
+
+  * Added `jax_pallas_auto_assign_collective_ids` config flag to allow two new
+    custom semaphore barrier collective IDs modes: ('yes') assigning missing
+    collective IDs automatically or ('override') overridding all collective IDs
+    and assigning them automatically, both based on the serialized kernel hash.
 
 * Changes
 
@@ -63,6 +336,8 @@ Remember to align the itemized text with the first line of an item within a list
   * Support for TMEM references with batch dimensions. This includes indexing
     over batch dimensions and `plgpu.async_store_tmem` support for TMEM
     references with batch dimensions.
+  * Support TMA scatter.
+  * Rename `TMA_GATHER_INDICES_LAYOUT` to `TMA_INDICES_LAYOUT`.
 
 * Changes
 

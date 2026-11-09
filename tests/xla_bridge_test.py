@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 import os
 import platform
 
@@ -22,12 +23,90 @@ from jax._src import compiler
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import _jax
 from jax._src.lib import _profiler
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 
 config.parse_flags_with_absl()
 
 mock = absltest.mock
+
+
+class GpuPluginOptionsTest(absltest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if jaxlib_extension_version < 516:
+      self.skipTest("Requires jaxlib_extension_version >= 516")
+
+  def test_default_memory_fraction_policy(self):
+    for env in (
+        {},
+        {"XLA_CLIENT_MEM_FRACTION": "", "XLA_PYTHON_CLIENT_MEM_FRACTION": ""},
+    ):
+      with self.subTest(env=env), mock.patch.dict(os.environ, env, clear=True):
+        options = xc.generate_pjrt_gpu_plugin_options()
+        self.assertEqual(options["memory_fraction_policy"], "0.75+")
+        self.assertNotIn("memory_fraction", options)
+
+  def test_explicit_memory_fraction(self):
+    for name in ("XLA_CLIENT_MEM_FRACTION", "XLA_PYTHON_CLIENT_MEM_FRACTION"):
+      for fraction in ("0.5", "0.75", "0.9"):
+        with self.subTest(name=name, fraction=fraction):
+          with mock.patch.dict(os.environ, {name: fraction}, clear=True):
+            options = xc.generate_pjrt_gpu_plugin_options()
+          self.assertEqual(options["memory_fraction"], float(fraction))
+          self.assertNotIn("memory_fraction_policy", options)
+
+  def test_deprecated_fraction_with_empty_current_fraction(self):
+    env = {
+        "XLA_CLIENT_MEM_FRACTION": "",
+        "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.5",
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+      options = xc.generate_pjrt_gpu_plugin_options()
+    self.assertEqual(options["memory_fraction"], 0.5)
+    self.assertNotIn("memory_fraction_policy", options)
+
+  def test_conflicting_memory_fractions(self):
+    env = {
+        "XLA_CLIENT_MEM_FRACTION": "0.75",
+        "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.75",
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+      with self.assertRaisesRegex(ValueError, "specified together"):
+        xc.generate_pjrt_gpu_plugin_options()
+
+  def test_explicit_preallocation(self):
+    for value, expected in (
+        ("false", False), ("False", False), ("0", False), ("true", True)
+    ):
+      with self.subTest(value=value):
+        with mock.patch.dict(
+            os.environ, {"XLA_PYTHON_CLIENT_PREALLOCATE": value}, clear=True):
+          options = xc.generate_pjrt_gpu_plugin_options()
+        self.assertEqual(options["memory_fraction_policy"], "0.75+")
+        self.assertEqual(options["preallocate"], expected)
+
+  def test_explicit_allocator(self):
+    for allocator in (
+        "default", "bfc", "platform", "cuda_async", "vmm", "address"
+    ):
+      with self.subTest(allocator=allocator):
+        with mock.patch.dict(
+            os.environ, {"XLA_PYTHON_CLIENT_ALLOCATOR": allocator}, clear=True):
+          options = xc.generate_pjrt_gpu_plugin_options()
+        self.assertEqual(options["allocator"], allocator)
+        self.assertEqual(options["memory_fraction_policy"], "0.75+")
+
+  def test_explicit_xla_flags_are_preserved(self):
+    flags = "--xla_gpu_memory_fraction_policy=0.5"
+    with mock.patch.dict(os.environ, {"XLA_FLAGS": flags}, clear=True):
+      options = xc.generate_pjrt_gpu_plugin_options()
+      self.assertEqual(os.environ["XLA_FLAGS"], flags)
+    # XLA resolves its explicit flag ahead of the client policy.
+    self.assertEqual(options["memory_fraction_policy"], "0.75+")
 
 
 class XlaBridgeTest(jtu.JaxTestCase):
@@ -112,6 +191,46 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertEqual(c1str, c1.SerializeAsString())
     # Map order does not matter.
     self.assertEqual(c1str, c2.SerializeAsString())
+
+  def test_add_disabled_hlo_pass(self):
+    self.assertEqual(
+        compiler._add_disabled_hlo_pass("", "rematerialization"),
+        "rematerialization",
+    )
+    self.assertEqual(
+        compiler._add_disabled_hlo_pass(
+            "scalar-constant-sinker", "rematerialization"
+        ),
+        "scalar-constant-sinker,rematerialization",
+    )
+    # No duplicates, and entries are normalized (XLA matches names exactly,
+    # so a leading space would make a pass name unmatchable).
+    self.assertEqual(
+        compiler._add_disabled_hlo_pass(
+            "scalar-constant-sinker, rematerialization", "rematerialization"
+        ),
+        "scalar-constant-sinker,rematerialization",
+    )
+
+  def test_disable_remat_pass(self):
+    # Note: compile_options must outlive debug_options, which is a view
+    # into it that does not keep it alive.
+    with config.enable_remat_opt_pass(False):
+      compile_options = compiler.get_compile_options(
+          num_replicas=1, num_partitions=1
+      )
+      debug_options = compile_options.executable_build_options.debug_options
+      disabled = debug_options.xla_disable_hlo_passes.split(",")
+      self.assertEqual(disabled.count("rematerialization"), 1)
+    with config.enable_remat_opt_pass(True):
+      compile_options = compiler.get_compile_options(
+          num_replicas=1, num_partitions=1
+      )
+      debug_options = compile_options.executable_build_options.debug_options
+      self.assertNotIn(
+          "rematerialization",
+          debug_options.xla_disable_hlo_passes.split(","),
+      )
 
   def test_local_devices(self):
     self.assertNotEmpty(xb.local_devices())
@@ -237,6 +356,39 @@ class XlaBridgeTest(jtu.JaxTestCase):
         " initialized",
     ):
       config.update("jax_num_cpu_devices", current_val + 2)
+
+  def test_proxy_backend_is_registered(self):
+    registration = xb._backend_factories["proxy"]
+    self.assertEqual(registration.priority, -1)
+    self.assertTrue(registration.fail_quietly)
+
+  def test_make_ifrt_proxy_client_requires_backend_target(self):
+    with mock.patch.object(xb.BACKEND_TARGET, "value", ""):
+      with self.assertRaisesRegex(RuntimeError, "JAX_BACKEND_TARGET"):
+        xb.make_ifrt_proxy_client()
+
+  def test_make_ifrt_proxy_client(self):
+    mock_client = mock.Mock()
+    with (
+        mock.patch.object(xb.BACKEND_TARGET, "value", "grpc://localhost:1234"),
+        mock.patch.object(
+            xb.ifrt_proxy, "get_client", return_value=mock_client
+        ) as mock_get_client,
+    ):
+      self.assertIs(xb.make_ifrt_proxy_client(), mock_client)
+    mock_get_client.assert_called_once()
+    (target, options), _ = mock_get_client.call_args
+    self.assertEqual(target, "grpc://localhost:1234")
+    self.assertIsInstance(options, xb.ifrt_proxy.ClientConnectionOptions)
+
+  def test_uninitialized_client_gc_clear(self):
+    if jaxlib_extension_version < 517:
+      self.skipTest("Requires jaxlib_extension_version >= 517")
+    client = _jax.Client.__new__(_jax.Client)
+    cycle = [client]
+    cycle.append(cycle)
+    del client, cycle
+    gc.collect()
 
 
 class GetBackendTest(jtu.JaxTestCase):
@@ -395,6 +547,44 @@ class GetBackendTest(jtu.JaxTestCase):
       "not all JAX functionality may be correctly supported!",
       logs.output
     )
+
+  def _register_proxy_factory(self):
+    xb.register_backend_factory("proxy", xb.make_ifrt_proxy_client,
+                                priority=-1)
+
+  def test_proxy_backend_not_default_without_backend_target(self):
+    self._register_proxy_factory()
+    with mock.patch.object(xb.BACKEND_TARGET, "value", ""):
+      backend = xb.get_backend()
+    self.assertEqual(backend.platform, "cpu")
+    self.assertNotIn("proxy", xb._backends)
+    self.assertIn("JAX_BACKEND_TARGET", xb._backend_errors["proxy"])
+
+  def test_proxy_backend_requested_without_backend_target(self):
+    self._register_proxy_factory()
+    with (
+        config.jax_platforms("proxy"),
+        mock.patch.object(xb.BACKEND_TARGET, "value", ""),
+    ):
+      with self.assertRaisesRegex(
+          RuntimeError,
+          "Unable to initialize backend 'proxy': .*JAX_BACKEND_TARGET"):
+        xb.get_backend()
+
+  def test_proxy_backend_requested(self):
+    self._register_proxy_factory()
+    proxy_backend = self._DummyBackend("tpu", device_count=8)
+    with (
+        config.jax_platforms("proxy"),
+        mock.patch.object(xb.BACKEND_TARGET, "value", "grpc://localhost:1234"),
+        mock.patch.object(
+            xb.ifrt_proxy, "get_client", return_value=proxy_backend
+        ) as mock_get_client,
+    ):
+      self.assertIs(xb.get_backend(), proxy_backend)
+      self.assertIs(xb.get_backend("proxy"), proxy_backend)
+    mock_get_client.assert_called_once()
+    self.assertEqual(mock_get_client.call_args.args[0], "grpc://localhost:1234")
 
 
 if __name__ == "__main__":

@@ -19,7 +19,6 @@ from functools import partial
 import math
 from operator import index
 import typing
-from typing import Union
 import warnings
 
 import numpy as np
@@ -34,11 +33,12 @@ from jax._src.random import threefry2x32
 from jax._src import xla_bridge
 from jax._src.mesh import get_abstract_mesh
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
-from jax._src.api import jit, vmap
+from jax._src.api import Inline, jit, vmap
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax.erf import erf_inv_core, ndtr
 from jax._src.lax import lax
 from jax._src.lax import special as lax_special
 from jax._src.numpy import einsum as jnp_einsum
@@ -49,6 +49,8 @@ from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import canonicalize_axis
 
+# Internal type for PRNG keys.
+Key = typing.NewType("Key", Array)
 
 RealArray = ArrayLike
 IntegerArray = ArrayLike
@@ -89,8 +91,8 @@ def _isnan(x: ArrayLike) -> Array:
   return lax.ne(x, x)
 
 
-def _check_prng_key(name: str, key: ArrayLike, *,
-                    allow_batched: bool = False) -> tuple[Array, bool]:
+def _check_prng_key(name: str, key: Key | ArrayLike, *,
+                    allow_batched: bool = False) -> tuple[Key, bool]:
   if isinstance(key, Array) and dtypes.issubdtype(key.dtype, dtypes.prng_key):
     wrapped_key = key
     wrapped = False
@@ -121,10 +123,10 @@ def _check_prng_key(name: str, key: ArrayLike, *,
     raise ValueError(f"{name} accepts a single key, but was given a key array of"
                      f" shape {np.shape(key)} != (). Use jax.vmap for batching.")
 
-  return wrapped_key, wrapped
+  return Key(wrapped_key), wrapped
 
 
-def _return_prng_keys(was_wrapped, key):
+def _return_prng_keys(was_wrapped: bool, key: Key) -> Key:
   # TODO(frostig): remove once we always enable_custom_prng
   assert dtypes.issubdtype(key.dtype, dtypes.prng_key)
   if config.enable_custom_prng.value:
@@ -133,9 +135,9 @@ def _return_prng_keys(was_wrapped, key):
     return prng.random_unwrap(key) if was_wrapped else key
 
 
-def _random_bits(key: Array, bit_width: int, shape: Shape) -> Array:
+def _random_bits(key: Key, bit_width: int, shape: Shape) -> Array:
   assert dtypes.issubdtype(key.dtype, dtypes.prng_key)
-  return prng.random_bits(key, bit_width=bit_width, shape=shape)
+  return prng.random_bits(key, bit_width=bit_width, shape=shape)[0]
 
 
 # TODO(frostig,vanderplas): remove from public API altogether, or at
@@ -181,8 +183,8 @@ class PRNGSpec:
 
 # TODO(frostig,vanderplas): remove PRNGImpl from this union when it's
 # no longer in the public API because `default_prng_impl` is gone
-PRNGSpecDesc = Union[str, PRNGSpec, PRNGImpl, Hashable]
-KeyDTypeLike = Union[str, prng.KeyTy]
+PRNGSpecDesc = str | PRNGSpec | PRNGImpl | Hashable
+KeyDTypeLike = str | prng.KeyTy
 
 
 def resolve_prng_impl(
@@ -218,7 +220,7 @@ def key_dtype(impl_spec: PRNGSpecDesc | None = None) -> prng.KeyTy:
 
 
 def _key(ctor_name: str, seed: int | ArrayLike,
-         impl_spec: PRNGSpecDesc | None) -> Array:
+         impl_spec: PRNGSpecDesc | None) -> Key:
   impl = resolve_prng_impl(impl_spec)
   if hasattr(seed, 'dtype') and dtypes.issubdtype(seed.dtype, dtypes.prng_key):
     raise TypeError(
@@ -227,11 +229,11 @@ def _key(ctor_name: str, seed: int | ArrayLike,
     raise TypeError(
         f"{ctor_name} accepts a scalar seed, but was given an array of "
         f"shape {np.shape(seed)} != (). Use jax.vmap for batching")
-  return prng.random_seed(seed, impl=impl)
+  return Key(prng.random_seed(seed, impl=impl))
 
 def key(seed: int | ArrayLike, *,
         impl: PRNGSpecDesc | None = None,
-        dtype: KeyDTypeLike | None = None) -> Array:
+        dtype: KeyDTypeLike | None = None) -> Array:  # TODO(jakevdp): make this Key
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   The result is a scalar array containing a key, whose dtype indicates
@@ -286,7 +288,10 @@ def PRNGKey(seed: int | ArrayLike, *,
   return _return_prng_keys(True, _key('PRNGKey', seed, impl))
 
 
-def fold_in(key: ArrayLike, data: IntegerArray) -> Array:
+def fold_in(
+    key: Key | ArrayLike,  # TODO(jakevdp): make this Key
+    data: IntegerArray,
+) -> Array:  # TODO(jakevdp): make this Key
   """Folds in data to a PRNG key to form a new PRNG key.
 
   Args:
@@ -305,7 +310,7 @@ def fold_in(key: ArrayLike, data: IntegerArray) -> Array:
   return _return_prng_keys(wrapped, key_out)
 
 
-def _split(key: Array, num: int | tuple[int, ...] = 2) -> Array:
+def _split(key: Key, num: int | tuple[int, ...] = 2) -> Key:
   # Alternative to split() to use within random samplers.
   # TODO(frostig): remove and use split(); we no longer need to wait
   # to always enable_custom_prng
@@ -316,7 +321,10 @@ def _split(key: Array, num: int | tuple[int, ...] = 2) -> Array:
   shape = tuple(num) if isinstance(num, Sequence) else (num,)
   return prng.random_split(key, shape=shape)
 
-def split(key: ArrayLike, num: int | tuple[int, ...] = 2) -> Array:
+def split(
+    key: Key | ArrayLike,  # TODO(jakevdp): make this Key
+    num: int | tuple[int, ...] = 2,
+) -> Array:  # TODO(jakevdp): make this Key
   """Splits a PRNG key into `num` new keys by adding a leading axis.
 
   Args:
@@ -331,25 +339,25 @@ def split(key: ArrayLike, num: int | tuple[int, ...] = 2) -> Array:
   return _return_prng_keys(wrapped, _split(typed_key, num))
 
 
-def _key_impl(keys: Array) -> PRNGImpl:
+def _key_impl(keys: Key) -> PRNGImpl:
   assert dtypes.issubdtype(keys.dtype, dtypes.prng_key)
   keys_dtype = typing.cast(prng.KeyTy, keys.dtype)
   return keys_dtype._impl
 
-def _key_spec(keys: Array) -> str | PRNGSpec:
+def _key_spec(keys: Key) -> str | PRNGSpec:
   impl = _key_impl(keys)
   return impl.name if impl.name in prng.prngs else PRNGSpec(impl)
 
-def key_impl(keys: ArrayLike) -> str | PRNGSpec:
+def key_impl(keys: Key | ArrayLike) -> str | PRNGSpec:  # TODO(jakevdp): make this Key
   typed_keys, _ = _check_prng_key("key_impl", keys, allow_batched=True)
   return _key_spec(typed_keys)
 
 
-def _key_data(keys: Array) -> Array:
+def _key_data(keys: Key) -> Array:
   assert dtypes.issubdtype(keys.dtype, dtypes.prng_key)
   return prng.random_unwrap(keys)
 
-def key_data(keys: ArrayLike) -> Array:
+def key_data(keys: Key | ArrayLike) -> Array:  # TODO(jakevdp): make this Key
   """Recover the bits of key data underlying a PRNG key array."""
   keys, _ = _check_prng_key("key_data", keys, allow_batched=True)
   return _key_data(keys)
@@ -357,7 +365,7 @@ def key_data(keys: ArrayLike) -> Array:
 
 def wrap_key_data(key_bits_array: Array, *,
                   impl: PRNGSpecDesc | None = None,
-                  dtype: KeyDTypeLike | None = None):
+                  dtype: KeyDTypeLike | None = None) -> Array:  # TODO(jakevdp): make this Key
   """Wrap an array of key data bits into a PRNG key array.
 
   Args:
@@ -418,11 +426,39 @@ def maybe_auto_axes(f, out_sharding, **hoist_kwargs):
                      axes=out_sharding.mesh.explicit_axes)
 
 
-def bits(key: ArrayLike,
+@typing.overload
+def bits(key: Key | ArrayLike,
          shape: Shape = (),
          dtype: DTypeLikeUInt | None = None,
          *,
+         num_streams: None = None,
          out_sharding: NamedSharding | P | None = None) -> Array:
+  ...
+
+@typing.overload
+def bits(key: Key | ArrayLike,
+         shape: Shape = (),
+         dtype: DTypeLikeUInt | None = None,
+         *,
+         num_streams: int,
+         out_sharding: NamedSharding | P | None = None) -> tuple[Array, ...]:
+  ...
+
+@typing.overload
+def bits(key: Key | ArrayLike,
+         shape: Shape = (),
+         dtype: DTypeLikeUInt | None = None,
+         *,
+         num_streams: int | None = None,
+         out_sharding: NamedSharding | P | None = None) -> Array | tuple[Array, ...]:
+  ...
+
+def bits(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
+         shape: Shape = (),
+         dtype: DTypeLikeUInt | None = None,
+         *,
+         num_streams: int | None = None,
+         out_sharding: NamedSharding | P | None = None) -> Array | tuple[Array, ...]:
   """Sample uniform bits in the form of unsigned integers.
 
   Args:
@@ -431,17 +467,22 @@ def bits(key: ArrayLike,
       shape. Default ``()``.
     dtype: optional, an unsigned integer dtype for the returned values (default
       ``uint64`` if ``jax_enable_x64`` is true, otherwise ``uint32``).
+    num_streams: optional, the number of independent random streams to return.
+      If ``None`` (default), returns a single array. If an integer (currently
+      supported values are ``1``, ``2``, or ``4``), returns a tuple of
+      ``num_streams`` independent random arrays of the given shape and dtype.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
-    A random array with the specified shape and dtype.
+    A random array with the specified shape and dtype, or a tuple of
+    ``num_streams`` such arrays if ``num_streams`` is specified.
   """
   key, _ = _check_prng_key("bits", key)
   if dtype is None:
@@ -451,11 +492,16 @@ def bits(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.unsignedinteger):
     raise ValueError("dtype argument to `bits` must be an unsigned int dtype, "
                      f"got {dtype}")
+  if isinstance(num_streams, bool) or num_streams not in (None, 1, 2, 4):
+    raise ValueError(f"num_streams must be None, 1, 2, or 4, got {num_streams}")
   shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "bits", shape)
   bit_width = dtype.itemsize * 8
-  return maybe_auto_axes(_random_bits, out_sharding,
-                         bit_width=bit_width, shape=shape)(key)
+  out = maybe_auto_axes(
+      prng.random_bits, out_sharding,
+      bit_width=bit_width, shape=shape,
+      num_streams=1 if num_streams is None else num_streams)(key)
+  return out[0] if num_streams is None else out
 
 
 def canonicalize_sharding_for_samplers(out_sharding, name, shape):
@@ -467,7 +513,7 @@ def canonicalize_sharding_for_samplers(out_sharding, name, shape):
   return out_sharding
 
 
-def uniform(key: ArrayLike,
+def uniform(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
             shape: Shape = (),
             dtype: DTypeLikeFloat | None = None,
             minval: RealArray = 0.,
@@ -490,7 +536,7 @@ def uniform(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -509,7 +555,7 @@ def uniform(key: ArrayLike,
                          shape=shape, dtype=dtype)(key, minval, maxval)
 
 @jit(static_argnums=(3, 4))
-def _uniform(key, minval, maxval, shape, dtype) -> Array:
+def _uniform(key: Key, minval, maxval, shape, dtype) -> Array:
   _check_shape("uniform", shape)
   if not dtypes.issubdtype(dtype, np.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
@@ -590,7 +636,7 @@ def _convert_and_clip_integer(val: Array, dtype: DType) -> Array:
   return jnp.clip(val, min_val, max_val).astype(dtype)
 
 
-def randint(key: ArrayLike,
+def randint(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
             shape: Shape,
             minval: IntegerArray,
             maxval: IntegerArray,
@@ -614,7 +660,7 @@ def randint(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -655,15 +701,15 @@ def randint(key: ArrayLike,
   if info.bits < 32:
     # Sample in 32 bits to avoid biased results.
     dtype_for_sampling = np.dtype('int32')
-    minval = jnp.asarray(minval).astype('int32').clip(int(info.min), int(info.max))
-    maxval = jnp.asarray(maxval).astype('int32').clip(int(info.min), int(info.max) + 1)
+    minval = jnp.asarray(minval).astype('int32').clip(info.min, info.max)
+    maxval = jnp.asarray(maxval).astype('int32').clip(info.min, info.max + 1)
 
   return maybe_auto_axes(_randint, out_sharding, shape=shape, dtype=dtype_for_sampling)(
       key, minval, maxval).astype(dtype)
 
 
 @jit(static_argnums=(3, 4))
-def _randint(key, minval, maxval, shape, dtype) -> Array:
+def _randint(key: Key, minval, maxval, shape, dtype) -> Array:
   # We have three imperfect options for generating random integers in an arbitrary
   # user-specified range:
   #
@@ -742,7 +788,7 @@ def _randint(key, minval, maxval, shape, dtype) -> Array:
   return lax.add(minval, lax.convert_element_type(random_offset, dtype))
 
 
-def permutation(key: ArrayLike,
+def permutation(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                 x: int | ArrayLike,
                 axis: int = 0,
                 independent: bool = False,
@@ -763,7 +809,7 @@ def permutation(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -782,7 +828,7 @@ def permutation(key: ArrayLike,
   return maybe_auto_axes(
       _permutation, out_sharding, axis=axis, independent=independent)(key, x)
 
-def _permutation(key, x, axis, independent):
+def _permutation(key: Key, x, axis, independent):
   if independent or np.ndim(x) == 1:
     return _shuffle(key, x, axis)
   ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)
@@ -790,7 +836,7 @@ def _permutation(key, x, axis, independent):
 
 
 @jit(static_argnums=(2,))
-def _shuffle(key, x, axis) -> Array:
+def _shuffle(key: Key, x, axis) -> Array:
   # On parallel architectures, Fisher-Yates is more expensive than doing
   # multiple sorts. This algorithm is based on one developed and analyzed by
   # tjablin@. We sort according to randomly-generated 32bit keys, but those keys
@@ -821,7 +867,7 @@ def _shuffle(key, x, axis) -> Array:
   return x
 
 
-def choice(key: ArrayLike,
+def choice(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
            a: int | ArrayLike,
            shape: Shape = (),
            replace: bool = True,
@@ -909,10 +955,11 @@ def choice(key: ArrayLike,
                         arr.shape[0:axis] + tuple(shape) + arr.shape[axis+1:])
 
 
-def normal(key: ArrayLike,
+def normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
            shape: Shape = (),
            dtype: DTypeLikeFloat | None = None,
            *,
+           mode: str | None = None,
            out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample standard normal random values with given shape and float dtype.
 
@@ -929,13 +976,16 @@ def normal(key: ArrayLike,
       shape. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    mode: optional, "low", "high", or "highest" for how many bits of entropy to
+      convert into floating-point samples. Defaults to ``jax_random_normal_mode``
+      config ("low").
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -943,37 +993,176 @@ def normal(key: ArrayLike,
   """
   key, _ = _check_prng_key("normal", key)
   shape = core.canonicalize_shape(shape)
+  if mode is None:
+    mode = config.random_normal_mode.value
+  if mode not in ("low", "high", "highest"):
+    raise ValueError(f"Must provide valid mode for normal, got: {mode}")
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "normal", shape)
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `normal` must be a float or complex dtype, "
                      f"got {dtype}")
-  return maybe_auto_axes(_normal, out_sharding, shape=shape, dtype=dtype)(key)
+  return maybe_auto_axes(
+      _normal, out_sharding, shape=shape, dtype=dtype, mode=mode
+  )(key)
 
-@jit(static_argnums=(1, 2))
-def _normal(key, shape, dtype) -> Array:
+
+def _signed_midpoint_and_complement(
+    bits: Array | tuple[Array, Array], compute_dtype: DType, mode: str
+) -> tuple[Array, Array, Array]:
+  """Convert random integer bits into `(x, |x|, 1 - |x|)` for `x` uniform on `(-1, 1)`.
+
+  To sample from a normal distribution, we map a uniform random value `x` in
+  `(-1, 1)` through `sqrt(2) * erfinv(x)`. If `x` is converted to float first,
+  values close to `+/-1` (which map into the tails of the normal distribution)
+  round to `1.0` or lose precision when subtracting `1 - |x|` in floating point.
+
+  Instead, this helper computes both `|x|` (used near `0`) and `q = 1 - |x|`
+  (used near `|x| = 1`) directly from the integer bits before converting to
+  float.
+  """
+  w = dtypes.finfo(compute_dtype).bits
+  uint_dtype = UINT_DTYPES[w]
+  if mode == "high":
+    assert not isinstance(bits, tuple)
+    bits_u = lax.convert_element_type(bits, uint_dtype)
+    input_bits = dtypes.iinfo(bits.dtype).bits
+    if input_bits < w:
+      bits_u = lax.shift_left(
+          bits_u, np.array(w - input_bits, dtype=uint_dtype)
+      )
+    sign_bit = lax.bitwise_and(
+        bits_u, np.array(1 << (w - 1), dtype=uint_dtype)
+    )
+    # Shift left by 1 to drop `sign_bit`, leaving `2 * k` in bits `1 .. w-1`
+    # (where `k` is the `(w - 1)`-bit integer in `0 .. 2^(w-1) - 1`).
+    two_k = lax.shift_left(bits_u, np.array(1, dtype=uint_dtype))
+
+    # Map `k` to `(k + 0.5) / 2^(w-1) = (2 * k + 1) * 2^-w`:
+    # - at `k = 0`, `+x` and `-x` land at `+2^-w` and `-2^-w` instead of
+    #   mapping both `+0` and `-0` to `0.0`;
+    # - at `k = 2^(w-1) - 1`, `1 - |x| = 2^-w > 0`, avoiding `erfinv(1) = inf`.
+    abs_x_int = lax.bitwise_or(two_k, np.array(1, dtype=uint_dtype))
+
+    # Since `|x| = (2 * k + 1) * 2^-w`, `1 - |x| = ((2^w - 1) - 2 * k) * 2^-w`,
+    # whose numerator `(2^w - 1) - two_k` is the bitwise complement `~two_k`.
+    q_int = lax.bitwise_not(two_k)
+
+    # Converting an unsigned integer to float rounds it to the nearest float,
+    # and multiplying by `2^-w` shifts its exponent down by `w`, so `abs_x`
+    # and `q` round to the nearest floats to `|x|` and `1 - |x|`.
+    #
+    # `erf_inv_core` computes `1 - x^2` as `q * (1 + |x|)`:
+    # - Near `|x| = 1`, `abs_x` rounds up to `1.0`, giving `1 + |x| == 2.0`,
+    #   while `q` stays positive (`q_int >= 1`), avoiding `erfinv(1) = inf`.
+    # - Near `x = 0`, `q` rounds up to `1.0`, giving `q * (1 + |x|) == 1.0`,
+    #   while `erf_inv_core` scales its result by `x` so small values stay
+    #   distinct.
+    scale = np.array(2.0 ** -w, compute_dtype)
+    abs_x = lax.convert_element_type(abs_x_int, compute_dtype) * scale
+    q = lax.convert_element_type(q_int, compute_dtype) * scale
+  elif mode == "highest":
+    assert isinstance(bits, tuple) and len(bits) == 2
+    hi, lo = bits
+    sign_bit = lax.bitwise_and(hi, np.array(1 << (w - 1), dtype=uint_dtype))
+    # Same construction across two `w`-bit words `(hi, lo)`: shift left by 1
+    # into `(two_k_hi, two_k_lo)` to drop `sign_bit`.
+    two_k_hi = lax.bitwise_or(
+        lax.shift_left(hi, np.array(1, dtype=uint_dtype)),
+        lax.shift_right_logical(lo, np.array(w - 1, dtype=uint_dtype)),
+    )
+    two_k_lo = lax.shift_left(lo, np.array(1, dtype=uint_dtype))
+    abs_x_hi = two_k_hi
+    abs_x_lo = lax.bitwise_or(two_k_lo, np.array(1, dtype=uint_dtype))
+    q_hi = lax.bitwise_not(two_k_hi)
+    q_lo = lax.bitwise_not(two_k_lo)
+    # Scale the high and low words separately by `2^-w` and `2^(-2*w)` before
+    # adding in floating point so tail values down to `2^(-2*w)` do not round to
+    # zero when `q_hi == 0`.
+    scale_hi = np.array(2.0 ** -w, compute_dtype)
+    scale_lo = np.array(2.0 ** (-2 * w), compute_dtype)
+    abs_x = (
+        lax.convert_element_type(abs_x_hi, compute_dtype) * scale_hi
+        + lax.convert_element_type(abs_x_lo, compute_dtype) * scale_lo
+    )
+    q = (
+        lax.convert_element_type(q_hi, compute_dtype) * scale_hi
+        + lax.convert_element_type(q_lo, compute_dtype) * scale_lo
+    )
+  else:
+    raise ValueError(f"Unsupported mode: {mode}")
+  # Attach `sign_bit` to `abs_x` to form signed `x`.
+  x = lax.bitcast_convert_type(
+      lax.bitwise_or(lax.bitcast_convert_type(abs_x, uint_dtype), sign_bit),
+      compute_dtype,
+  )
+  return x, abs_x, q
+
+
+def _bits_to_normal(
+    bits: Array | tuple[Array, Array], dtype: DType, mode: str
+) -> Array:
+  """Convert random unsigned integer bits into standard normal samples.
+
+  If `x` is uniform on `(-1, 1)`, `sqrt(2) * erfinv(x)` is standard normal.
+  Public inverse functions (`lax.erf_inv` and `jax.scipy.special.ndtri`) take a
+  single floating-point input, so values near `x = +/-1` (in the tails of the
+  normal distribution) lose precision or round to `1.0`.
+
+  In `"high"` and `"highest"` modes, `_signed_midpoint_and_complement` produces
+  both `x` and `q = 1 - |x|` in integer arithmetic before casting to float, and
+  we pass both directly to `erf_inv_core(..., has_far_tail=True, is_ndtri=True)`,
+  which uses `x` near zero and `q` in the tails to evaluate `sqrt(2) * erfinv(x)`
+  without losing tail precision.
+  """
+  if mode not in ("high", "highest"):
+    raise ValueError(f"Unsupported mode for _bits_to_normal: {mode}")
+  compute_dtype = (
+      dtype if dtype in (np.float32, np.float64) else np.dtype(np.float32)
+  )
+  x, _, q = _signed_midpoint_and_complement(bits, compute_dtype, mode)
+  z = erf_inv_core(x, q, has_far_tail=True, is_ndtri=True)
+  return lax.convert_element_type(z, dtype)
+
+
+@jit(static_argnums=(1, 2, 3))
+def _normal(key: Key, shape, dtype, mode: str = "low") -> Array:
   if dtypes.issubdtype(dtype, np.complexfloating):
     sqrt2 = np.array(np.sqrt(2), dtype)
 
     key_re, key_im = _split(key)
     real_dtype = np.array(0, dtype).real.dtype
-    _re = _normal_real(key_re, shape, real_dtype).astype(dtype)
-    _im = _normal_real(key_im, shape, real_dtype).astype(dtype)
+    _re = _normal_real(key_re, shape, real_dtype, mode=mode).astype(dtype)
+    _im = _normal_real(key_im, shape, real_dtype, mode=mode).astype(dtype)
     return (_re + 1j * _im) / sqrt2
   else:
-    return _normal_real(key, shape, dtype)
+    return _normal_real(key, shape, dtype, mode=mode)
 
-@jit(static_argnums=(1, 2))
-def _normal_real(key, shape, dtype) -> Array:
+
+@jit(static_argnums=(1, 2, 3))
+def _normal_real(key: Key, shape, dtype, mode: str = "low") -> Array:
   _check_shape("normal", shape)
-  lo = np.nextafter(np.array(-1., dtype), np.array(0., dtype), dtype=dtype)
-  hi = np.array(1., dtype)
-  u = uniform(key, shape, dtype, lo, hi)
-  return lax.mul(np.array(np.sqrt(2), dtype), lax_special.erf_inv(u))
+  if mode == "low":
+    lo = np.nextafter(np.array(-1.0, dtype), np.array(0.0, dtype), dtype=dtype)
+    hi = np.array(1.0, dtype)
+    u = uniform(key, shape, dtype, lo, hi)
+    return lax.mul(np.array(np.sqrt(2), dtype), lax_special.erf_inv(u))
+  compute_dtype = (
+      dtype if dtype in (np.float32, np.float64) else np.dtype(np.float32)
+  )
+  word_bits = dtypes.finfo(compute_dtype).bits
+  if mode == "highest":
+    hi_bits, lo_bits = prng.random_bits(
+        key, bit_width=word_bits, shape=shape, num_streams=2
+    )
+    bits: Array | tuple[Array, Array] = (hi_bits, lo_bits)
+  else:
+    bits = _random_bits(key, word_bits, shape)
+  return lax.reshape(_bits_to_normal(bits, dtype, mode=mode), shape)
 
 
-def multivariate_normal(key: ArrayLike,
+def multivariate_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                         mean: RealArray,
                         cov: RealArray,
                         shape: Shape | None = None,
@@ -1004,21 +1193,86 @@ def multivariate_normal(key: ArrayLike,
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
     method: optional, a method to compute the factor of ``cov``.
-      Must be one of 'svd', 'eigh', and 'cholesky'. Default 'cholesky'. For
-      singular covariance matrices, use 'svd' or 'eigh'.
+      Must be one of ``'svd'``, ``'eigh'``, and ``'cholesky'``. Default
+      ``'cholesky'``. For singular or ill-conditioned covariance matrices, use
+      ``'svd'`` or ``'eigh'``, or add a small diagonal jitter to ``cov``; see
+      the note below.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
     A random array with the specified dtype and shape given by
     ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
+
+  .. note::
+
+     :func:`multivariate_normal` works by factoring :math:`\Sigma = F F^T` and
+     transforming standard normal draws :math:`z \sim \mathcal{N}(0, I)` via
+     :math:`\mu + F z`. The default ``method='cholesky'`` is the fastest
+     decomposition, but can fail and return ``NaN`` values if ``cov`` is
+     singular or ill-conditioned enough that floating-point rounding makes some
+     eigenvalues non-positive (for example, large smooth Gaussian process kernel
+     matrices, especially in ``float32``).
+
+     Whenever ``cov`` is already available in factored form
+     :math:`\Sigma = F F^T`—where :math:`F` has shape ``(n, k)`` (such as a
+     Cholesky factor, a low-rank factor with ``k < n``, or scaled features)—it
+     is better to skip :func:`multivariate_normal` and transform standard normal
+     draws directly: draw ``z = jax.random.normal(key, (*batch_shape, k))`` and
+     compute ``mean + z @ F.T`` (or ``mean + F @ z`` for a single sample). This
+     costs :math:`O(n k)` per sample without an :math:`O(n^3)` matrix
+     factorization, avoids squaring the condition number by forming
+     ``F @ F.T``, and works even when ``k < n`` makes :math:`F F^T` singular.
+
+     When only a dense ``cov`` matrix is available and it may be singular or
+     ill-conditioned, either add a small diagonal jitter scaled to ``cov`` (e.g.
+     ``cov + eps * jnp.eye(n)``) or pass ``method='eigh'`` or ``method='svd'``
+     (note that eigendecomposition and SVD are substantially slower than
+     Cholesky, particularly on TPU).
+
+  Examples:
+    Draw a single sample from a 2D multivariate normal distribution:
+
+    >>> import jax
+    >>> import jax.numpy as jnp
+    >>> key = jax.random.key(0)
+    >>> mean = jnp.array([1.0, 2.0])
+    >>> cov = jnp.array([[2.0, 1.0],
+    ...                  [1.0, 2.0]])
+    >>> jax.random.multivariate_normal(key, mean, cov)
+    Array([3.2947626, 5.6278143], dtype=float32)
+
+    Draw a batch of 4 samples by passing ``shape``:
+
+    >>> jax.random.multivariate_normal(key, mean, cov, shape=(4,))
+    Array([[3.2947626 , 5.6278143 ],
+           [0.38680488, 1.5971162 ],
+           [1.2490301 , 0.93395376],
+           [0.29954183, 2.2552586 ]], dtype=float32)
+
+    If the covariance is already known in factored form ``cov = F @ F.T`` (for
+    example, a ``3 x 2`` low-rank factor ``F`` whose ``3 x 3`` covariance
+    ``F @ F.T`` has rank 2 and is therefore singular), sample directly from
+    ``F`` rather than forming ``cov``:
+
+    >>> F = jnp.array([[1.0, 0.0],
+    ...                [1.0, 1.0],
+    ...                [0.0, 1.0]])
+    >>> mean = jnp.array([1.0, 2.0, 3.0])
+    >>> z = jax.random.normal(key, (F.shape[-1],))
+    >>> mean + F @ z  # single sample from N(mean, F @ F.T)
+    Array([2.622642 , 5.647907 , 5.0252647], dtype=float32)
+    >>> z_batch = jax.random.normal(key, (10_000, F.shape[-1]))
+    >>> samples = mean + z_batch @ F.T  # batch of samples from N(mean, F @ F.T)
+    >>> jnp.allclose(jnp.cov(samples, rowvar=False), F @ F.T, atol=0.1)
+    Array(True, dtype=bool)
   """
   key, _ = _check_prng_key("multivariate_normal", key)
   mean, cov = promote_dtypes_inexact(mean, cov)
@@ -1038,7 +1292,7 @@ def multivariate_normal(key: ArrayLike,
                          shape=shape, dtype=dtype)(key, mean, cov, method=method)
 
 @jit(static_argnums=(3, 4, 5))
-def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
+def _multivariate_normal(key: Key, mean, cov, shape, dtype, method) -> Array:
   if not np.ndim(mean) >= 1:
     msg = "multivariate_normal requires mean.ndim >= 1, got mean.ndim == {}"
     raise ValueError(msg.format(np.ndim(mean)))
@@ -1061,7 +1315,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
     factor = u * jnp.sqrt(s[..., None, :])
   elif method == 'eigh':
     (w, v) = jnp_linalg.eigh(cov)
-    factor = v * jnp.sqrt(w[..., None, :])
+    factor = v * jnp.sqrt(jnp.maximum(w[..., None, :], 0))
   else: # 'cholesky'
     factor = jnp_linalg.cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)
@@ -1070,7 +1324,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
   return result
 
 
-def truncated_normal(key: ArrayLike,
+def truncated_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                      lower: RealArray,
                      upper: RealArray,
                      shape: Shape | None = None,
@@ -1104,7 +1358,7 @@ def truncated_normal(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1125,7 +1379,7 @@ def truncated_normal(key: ArrayLike,
                          shape=shape, dtype=dtype)(key, lower, upper)
 
 @jit(static_argnums=(3, 4))
-def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
+def _truncated_normal(key: Key, lower, upper, shape, dtype) -> Array:
   if shape is None:
     shape = lax.broadcast_shapes(np.shape(lower), np.shape(upper))
   else:
@@ -1148,7 +1402,7 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
       lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
 
 
-def bernoulli(key: ArrayLike,
+def bernoulli(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
               p: RealArray = 0.5,
               shape: Shape | None = None,
               mode: str = 'low',
@@ -1181,7 +1435,7 @@ def bernoulli(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1204,7 +1458,7 @@ def bernoulli(key: ArrayLike,
 
 
 @jit(static_argnames=['shape', 'mode'])
-def _bernoulli(key: Array, p: Array, shape: Shape | None, mode: str) -> Array:
+def _bernoulli(key: Key, p: Array, shape: Shape | None, mode: str) -> Array:
   if shape is None:
     # TODO: Use the named part of `p` as well
     shape = np.shape(p)
@@ -1221,12 +1475,13 @@ def _bernoulli(key: Array, p: Array, shape: Shape | None, mode: str) -> Array:
     return uniform(key, shape, lax.dtype(p)) < p
 
 
-def beta(key: ArrayLike,
+def beta(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
          a: RealArray,
          b: RealArray,
          shape: Shape | None = None,
          dtype: DTypeLikeFloat | None = None,
          *,
+         method: str = "exact",
          out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Beta random values with given shape and float dtype.
 
@@ -1248,13 +1503,18 @@ def beta(key: ArrayLike,
       (None) produces a result shape by broadcasting ``a`` and ``b``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method is a rejection
+      sampler. The ``'approximate'`` method is loop-free and faster but carries
+      a small bias. The gradient w.r.t. ``a`` and ``b`` differs between the two
+      methods because of the ambiguity in defining a gradient for random variates.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1262,6 +1522,9 @@ def beta(key: ArrayLike,
     ``shape`` is not None, or else by broadcasting ``a`` and ``b``.
   """
   key, _ = _check_prng_key("beta", key)
+  if method not in {'exact', 'approximate'}:
+    raise ValueError("method argument to `beta` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -1271,11 +1534,11 @@ def beta(key: ArrayLike,
   shape = _check_broadcast_shapes("beta", shape, a, b)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "beta", shape)
 
-  return maybe_auto_axes(_beta, out_sharding,
+  return maybe_auto_axes(_beta, out_sharding, method=method,
                          shape=shape, dtype=dtype)(key, a, b)
 
-@jit(static_argnums=(3, 4))
-def _beta(key, a, b, shape, dtype) -> Array:
+@jit(static_argnums=(3, 4, 5))
+def _beta(key: Key, a, b, method, shape, dtype) -> Array:
   if shape is None:
     shape = lax.broadcast_shapes(np.shape(a), np.shape(b))
   else:
@@ -1288,8 +1551,8 @@ def _beta(key, a, b, shape, dtype) -> Array:
   key_a, key_b = _split(key)
   a = jnp.broadcast_to(a, shape)
   b = jnp.broadcast_to(b, shape)
-  log_gamma_a = loggamma(key_a, a, shape, dtype)
-  log_gamma_b = loggamma(key_b, b, shape, dtype)
+  log_gamma_a = loggamma(key_a, a, shape, dtype, method=method)
+  log_gamma_b = loggamma(key_b, b, shape, dtype, method=method)
   # Compute gamma_a / (gamma_a + gamma_b) without losing precision.
   log_max = lax.max(log_gamma_a, log_gamma_b)
   gamma_a_scaled = jnp.exp(log_gamma_a - log_max)
@@ -1297,7 +1560,7 @@ def _beta(key, a, b, shape, dtype) -> Array:
   return gamma_a_scaled / (gamma_a_scaled + gamma_b_scaled)
 
 
-def cauchy(key: ArrayLike,
+def cauchy(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
            shape: Shape = (),
            dtype: DTypeLikeFloat | None = None,
            *,
@@ -1323,7 +1586,7 @@ def cauchy(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1341,14 +1604,14 @@ def cauchy(key: ArrayLike,
                          shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2))
-def _cauchy(key, shape, dtype) -> Array:
+def _cauchy(key: Key, shape, dtype) -> Array:
   _check_shape("cauchy", shape)
   u = uniform(key, shape, dtype, minval=dtypes.finfo(dtype).eps, maxval=1.)
   pi = lax._const(u, np.pi)
   return lax.tan(lax.mul(pi, lax.sub(u, lax._const(u, 0.5))))
 
 
-def dirichlet(key: ArrayLike,
+def dirichlet(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
               alpha: RealArray,
               shape: Shape | None = None,
               dtype: DTypeLikeFloat | None = None,
@@ -1385,7 +1648,7 @@ def dirichlet(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1406,7 +1669,7 @@ def dirichlet(key: ArrayLike,
                          shape=shape, dtype=dtype)(key, alpha)
 
 @jit(static_argnums=(2, 3))
-def _dirichlet(key, alpha, shape, dtype) -> Array:
+def _dirichlet(key: Key, alpha, shape, dtype) -> Array:
   from jax._src.nn.functions import softmax  # pyrefly: ignore[missing-import]
 
   if not np.ndim(alpha) >= 1:
@@ -1425,7 +1688,7 @@ def _dirichlet(key, alpha, shape, dtype) -> Array:
   return softmax(log_gamma_samples, -1)
 
 
-def exponential(key: ArrayLike,
+def exponential(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                 shape: Shape = (),
                 dtype: DTypeLikeFloat | None = None,
                 *,
@@ -1451,7 +1714,7 @@ def exponential(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1469,14 +1732,14 @@ def exponential(key: ArrayLike,
                          shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2))
-def _exponential(key, shape, dtype) -> Array:
+def _exponential(key: Key, shape, dtype) -> Array:
   _check_shape("exponential", shape)
   u = uniform(key, shape, dtype)
   # taking 1 - u to move the domain of log to (0, 1] instead of [0, 1)
   return lax.neg(lax.log1p(lax.neg(u)))
 
 
-def _gamma_one(key: Array, alpha, log_space) -> Array:
+def _gamma_one(key: Key, alpha, log_space) -> Array:
   # Ref: A simple method for generating gamma variables, George Marsaglia and Wai Wan Tsang
   # The algorithm can also be founded in:
   # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
@@ -1576,7 +1839,7 @@ def _gamma_grad(sample, a, *, log_space):
     grads = vmap(gamma_grad)(alphas, samples)
   return grads.reshape(np.shape(a))
 
-def _gamma_impl(key, a, *, log_space, use_vmap=False):
+def _gamma_impl(key: Key, a, *, log_space, use_vmap=False):
   # split key to match the shape of a
   a_shape = np.shape(a)
   split_count = math.prod(a_shape[key.ndim:])
@@ -1621,11 +1884,12 @@ mlir.register_lowering(random_gamma_p, mlir.lower_fun(
     multiple_results=False), platform='cpu')
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
-def gamma(key: ArrayLike,
+def gamma(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
           a: RealArray,
           shape: Shape | None = None,
           dtype: DTypeLikeFloat | None = None,
           *,
+          method: str = 'exact',
           out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Gamma random values with given shape and float dtype.
 
@@ -1650,13 +1914,18 @@ def gamma(key: ArrayLike,
       produces a result shape equal to ``a.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method is a rejection
+      sampler. The ``'approximate'`` method is loop-free and faster but carries
+      a small bias. The gradient w.r.t. `a` differs between the two methods
+      because of the ambiguity in defining a gradient for random variates.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1668,6 +1937,9 @@ def gamma(key: ArrayLike,
       accuracy for small values of ``a``.
   """
   key, _ = _check_prng_key("gamma", key)
+  if method not in {'exact', 'approximate'}:
+    raise ValueError("method argument to `gamma` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -1676,14 +1948,18 @@ def gamma(key: ArrayLike,
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "gamma", shape)
+  if method == 'approximate':
+    return maybe_auto_axes(_gamma_approx, out_sharding,
+                           shape=shape, dtype=dtype)(key, a)
   return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype)(key, a)
 
 
-def loggamma(key: ArrayLike,
+def loggamma(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
              a: RealArray,
              shape: Shape | None = None,
              dtype: DTypeLikeFloat | None = None,
              *,
+             method: str = 'exact',
              out_sharding: NamedSharding | P | None =None) -> Array:
   """Sample log-gamma random values with given shape and float dtype.
 
@@ -1704,13 +1980,18 @@ def loggamma(key: ArrayLike,
       produces a result shape equal to ``a.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method is a rejection
+      sampler. The ``'approximate'`` method is loop-free and faster but carries
+      a small bias. The gradient w.r.t. `a` differs between the two methods
+      because of the ambiguity in defining a gradient for random variates.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1721,6 +2002,9 @@ def loggamma(key: ArrayLike,
     gamma : standard gamma sampler.
   """
   key, _ = _check_prng_key("loggamma", key)
+  if method not in {'exact', 'approximate'}:
+    raise ValueError("method argument to `loggamma` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -1729,11 +2013,14 @@ def loggamma(key: ArrayLike,
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding(out_sharding, "loggamma")
+  if method == 'approximate':
+    return maybe_auto_axes(_gamma_approx, out_sharding, shape=shape,
+                           dtype=dtype, log_space=True)(key, a)
   return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype, log_space=True)(key, a)
 
 
 @jit(static_argnames=('shape', 'dtype', 'log_space'))
-def _gamma(key, a, shape, dtype, log_space=False) -> Array:
+def _gamma(key: Key, a, shape, dtype, log_space=False) -> Array:
   if shape is None:
     shape = np.shape(a)
   else:
@@ -1746,8 +2033,142 @@ def _gamma(key, a, shape, dtype, log_space=False) -> Array:
   return random_gamma_p.bind(key, a, log_space=log_space)
 
 
+# Coefficients of the chi-square quantile series used by `_gamma_approx` (see
+# there for how they are applied). Each inner tuple k (k=0..6) holds the
+# coefficients of x^k nu^(-k/2), written as a quadratic in 1 / nu: entry [k][j]
+# multiplies nu^(-j) for j=0..2. The leading constant is set to exactly 1 rather
+# than the published 1.0000886; see `_gamma_approx` for why.
+_CHI2_QUANTILE_COEF = (
+    (1.0, -0.2237368, -0.01513904),
+    (0.4713941, 0.02607083, -0.008986007),
+    (0.0001348028, 0.01128186, 0.02277679),
+    (-0.008553069, -0.01153761, -0.01323293),
+    (0.00312558, 0.005169654, -0.006950356),
+    (-0.0008426812, 0.00253001, 0.001060438),
+    (0.00009780499, -0.001450117, 0.001565326),
+)
+
+# Number of Stuart boosting steps used by `_gamma_approx`. Four steps keep the
+# base draw at shape a + 4 >= 4, where the chi-square quantile series is
+# accurate, even as a -> 0.
+_LOGGAMMA_NUM_BOOSTS = 4
+
+
+def _loggamma_chisquare(key: Key, a) -> Array:
+  r"""Sample ``log(Gamma(a, 1))`` via the chi-square quantile series.
+
+  Cubes a 6th-degree polynomial in a standard normal applied to the chi-square
+  distribution with ``nu = 2 * a`` degrees of freedom, using
+  ``Gamma(a, 1) = chi2(2a) / 2``. The polynomial is evaluated by Horner's method
+  both in the normal variate and in ``1 / nu``. The series is only accurate for
+  ``a`` away from zero, so callers boost ``a`` to keep it there; see
+  :func:`_gamma_approx` for the references and overall algorithm.
+  """
+  nu = 2 * a
+  x = _normal(key, np.shape(a), a.dtype)
+  u = 1 / nu
+  # x^k nu^(-k/2) = t^k, so the series is a degree-6 Horner polynomial in t.
+  t = x * lax.rsqrt(nu)
+
+  row_coeffs = [lax.polynomial(u, row) for row in _CHI2_QUANTILE_COEF]
+  poly = lax.polynomial(t, row_coeffs)
+
+  # chi2 = nu poly^3 and Gamma(a, 1) = chi2 / 2 = a poly^3, so log gains log(a).
+  # `poly` should never actually reach values <= 0, but clip just in case
+  # someone changes some other param
+  poly = jnp.maximum(poly, dtypes.finfo(a.dtype).tiny)
+  return jnp.log(a) + 3 * jnp.log(poly)
+
+
+@jit(static_argnames=('shape', 'dtype', 'log_space'))
+def _gamma_approx(key: Key, a, shape, dtype, log_space=False) -> Array:
+  r"""Loop-free approximate sampler for ``Gamma(a, 1)``.
+
+  Backs the ``method='approximate'`` path of :func:`gamma` and :func:`loggamma`,
+  returning ``log(Gamma(a, 1))`` when ``log_space`` is true and ``Gamma(a, 1)``
+  otherwise. It avoids the rejection loops of the exact sampler, trading a small
+  bias for a fully vectorized computation that is much faster, especially on
+  accelerators.
+
+  The sampler has two ingredients. The first is a base draw from a chi-square
+  quantile series: since :math:`\mathrm{Gamma}(a, 1) = \chi^2_{2a} / 2`, a draw
+  is obtained by cubing a 6th-degree polynomial in a standard normal evaluated at
+  :math:`\nu = 2a` degrees of freedom (eq. 18.37 of Johnson, Kotz & Balakrishnan,
+  originally Goldstein's Algorithm 451). This series is accurate to about 0.05%
+  relative error on the quantiles for shape :math:`\geq 4` (Zar, 1978, table 2)
+  but degrades near zero. The second is Stuart's boosting identity (Stuart,
+  1962), which for independent uniforms :math:`U_k` on :math:`(0, 1)` gives
+
+  .. math::
+     \log G_a = \log G_{a + n} + \sum_{k=0}^{n-1} \frac{\log U_k}{a + k}.
+
+  We take the base draw :math:`G_{a + n}` at the boosted shape :math:`a + n`,
+  where the series is accurate, and let the sum carry the small-``a`` behavior,
+  which it does exactly. :math:`\log U_k` is drawn as
+  :math:`-\mathrm{Exponential}(1)` to avoid evaluating ``log`` at zero.
+
+  With ``n = _LOGGAMMA_NUM_BOOSTS = 4`` the base shape stays :math:`\geq 4` even
+  as :math:`a \to 0`. The cubed polynomial can become non-positive for an
+  extreme normal draw, which would imply a negative chi-square value; we clip it
+  to the smallest positive float, though it should never actually reach that
+  value.
+
+  One coefficient in ``_CHI2_QUANTILE_COEF`` departs from the published series:
+  the leading constant is set to exactly 1 rather than the published 1.0000886.
+  As :math:`\nu \to \infty` the cube root :math:`(\chi^2 / \nu)^{1/3} \to 1`, so
+  this term must be 1; the published value is a fit artifact that scales every
+  draw by :math:`1.0000886^3`, adding a constant :math:`3 \log(1.0000886)
+  \approx 2.7 \times 10^{-4}` bias to ``log(Gamma)``. That bias is negligible
+  against the :math:`O(1 / \sqrt{a})` spread at small ``a``, but at large ``a``
+  the spread shrinks below it and it would otherwise dominate the sampling error.
+
+  The computation runs in at least float32 and narrows to ``dtype`` only at the
+  end: its cost is the rng and transcendentals, which run in float32 regardless,
+  so a narrower compute dtype gives no speedup and only loses accuracy in the
+  draws. Samples below the smallest representable ``dtype`` value underflow to
+  :math:`-\infty` in log space, or to ``0`` otherwise.
+
+  References:
+    Stuart, A. (1962). Gamma-distributed products of independent random
+    variables. Biometrika, 49(3-4), 564-565.
+
+    Johnson, N. L., Kotz, S., & Balakrishnan, N. (1994). Continuous Univariate
+    Distributions, vol. 1 (2nd ed.), eq. 18.37. Wiley.
+
+    Goldstein, R. B. (1973). Algorithm 451: Chi-square quantiles. Communications
+    of the ACM, 16(8), 483-485.
+
+    Zar, J. H. (1978). Approximations for the percentage points of the
+    chi-squared distribution. Journal of the Royal Statistical Society Series C,
+    27(3), 280-290.
+  """
+  # compute at least in float32; don't use dtypes.promote_types, fails in strict mode
+  compute_dtype = np.dtype('float32') if dtypes.finfo(dtype).bits < 32 else dtype
+  shape = _check_broadcast_shapes("gamma", shape, a)
+  a = lax.convert_element_type(a, compute_dtype)
+  if np.shape(a) != shape:
+    a = jnp.broadcast_to(a, shape)
+  key, (a,) = random_insert_pvary('gamma', key, a)
+
+  key_base, key_boost = _split(key)
+  n = _LOGGAMMA_NUM_BOOSTS
+
+  # Base draw at the boosted shape a + n, where the series is accurate.
+  log_base = _loggamma_chisquare(key_base, a + n)
+
+  # Boosting correction sum_k log(U_k) / (a + k), with log(U_k) = -Exp(1). The
+  # boost index k and a sample are stacked along a leading axis; both operands
+  # are reshaped to that rank so the divide needs no implicit rank promotion.
+  k = jnp.arange(n, dtype=compute_dtype).reshape((n,) + (1,) * len(shape))
+  log_u = -_exponential(key_boost, (n, *shape), compute_dtype)
+  log_sample = log_base + jnp.sum(log_u / (a[None, ...] + k), axis=0)
+
+  out = log_sample if log_space else lax.exp(log_sample)
+  return lax.convert_element_type(out, dtype)
+
+
 @jit(static_argnums=(2, 3, 4))
-def _poisson_knuth(key, lam, shape, dtype, max_iters) -> Array:
+def _poisson_knuth(key: Key, lam, shape, dtype, max_iters) -> Array:
   # Knuth's algorithm for generating Poisson random variates.
   # Reference:
   # https://en.wikipedia.org/wiki/Poisson_distribution#Generating_Poisson-distributed_random_variables
@@ -1770,7 +2191,7 @@ def _poisson_knuth(key, lam, shape, dtype, max_iters) -> Array:
 
 
 @jit(static_argnums=(2, 3, 4))
-def _poisson_rejection(key, lam, shape, dtype, max_iters) -> Array:
+def _poisson_rejection(key: Key, lam, shape, dtype, max_iters) -> Array:
   # Transformed rejection due to Hormann.
   # Reference:
   # http://citeseer.ist.psu.edu/viewdoc/citations;jsessionid=1BEB35946CC807879F55D42512E5490C?doi=10.1.1.48.3054.
@@ -1813,14 +2234,14 @@ def _poisson_rejection(key, lam, shape, dtype, max_iters) -> Array:
 
 
 @jit(static_argnums=(2, 3))
-def _poisson(key, lam, shape, dtype) -> Array:
+def _poisson(key: Key, lam, shape, dtype) -> Array:
   # The implementation matches TensorFlow and NumPy:
   # https://github.com/tensorflow/tensorflow/blob/v2.2.0-rc3/tensorflow/core/kernels/random_poisson_op.cc
   # https://github.com/numpy/numpy/blob/v1.18.3/numpy/random/src/distributions/distributions.c#L574
   # For lambda < 10, we use the Knuth algorithm; otherwise, we use transformed
   # rejection sampling.
-  use_knuth = _isnan(lam) | (lam < 10)
-  lam_knuth = lax.select(use_knuth, lam, lax.full_like(lam, 0.0))
+  use_knuth = ~jnp.isfinite(lam) | (lam < 10)
+  lam_knuth = lax.select(lam < 10, lam, lax.full_like(lam, 0.0))
   # The acceptance probability for rejection sampling maxes out at 89% as
   # λ -> ∞, so pick some arbitrary large value.
   lam_rejection = lax.select(use_knuth, lax.full_like(lam, 1e5), lam)
@@ -1833,11 +2254,164 @@ def _poisson(key, lam, shape, dtype) -> Array:
   return lax.select(lam == 0, jnp.zeros_like(result), result)
 
 
-def poisson(key: ArrayLike,
+# Below this mean, `_poisson_approx` samples by inverting the truncated cdf
+# directly; above, it inverts the Peizer-Pratt normal approximation of the cdf,
+# whose max cdf error at the split is ~6e-5 (chi-square-detectable only beyond
+# ~3e7 samples).
+_POISSON_SPLIT = 7.0
+
+# Number of pmf terms for the truncated cdf; the truncated tail mass
+# Pr[X > 19 | lam = 7] ~ 4e-5 keeps the truncated-branch total variation below
+# the Peizer-Pratt error at the split (~6e-5).
+_POISSON_NUM_TERMS = 20
+
+# Peizer-Pratt continuity correction constant (0 for simplicity, 0.02 for more
+# accuracy).
+_PEIZER_PRATT_EPS = 0.02
+
+
+@jit(static_argnums=(2, 3))
+def _poisson_approx(key: Key, lam, shape, dtype) -> Array:
+  r"""Loop-free approximate sampler for ``Poisson(lam)``.
+
+  Backs the ``method='approximate'`` path of :func:`poisson`. It avoids the
+  rejection loops of the exact sampler, trading a small bias for a fully
+  vectorized computation that is much faster.
+
+  The total variation distance from the exact distribution stays below 1e-4,
+  worst around ``lam == _POISSON_SPLIT``.
+
+  A standard normal draw is mapped monotonically to a count by inverting an
+  approximate cdf, in :func:`_poisson_from_normal`. Below `_POISSON_SPLIT` the
+  pmf is truncated to `_POISSON_NUM_TERMS` terms and the cdf inverted directly;
+  above, the sampler inverts the very accurate normal approximation of the cdf
+  by Peizer and Pratt (1968), as presented in Johnson, Kemp & Kotz (2005), page
+  168.
+
+  The computation runs in float32, or float64 if ``lam`` is a 64-bit float
+  array or ``dtype`` is a 64-bit type: above ``lam ~ 2**24`` the samples land
+  on the float32 integer lattice, so wider means need the wider compute dtype
+  to resolve them, and a 64-bit ``dtype`` is the only way to represent such
+  counts in the output.
+
+  References:
+    Peizer, D. B., & Pratt, J. W. (1968). A Normal Approximation for Binomial,
+    F, Beta, and other Common, Related Tail Probabilities, I. Journal of the
+    American Statistical Association, 63(324), 1416-1456.
+
+    Johnson, N. L., Kemp, A. W., & Kotz, S. (2005). Univariate discrete
+    distributions (3rd ed), page 168. Wiley.
+  """
+  # compute at least in float32; don't use dtypes.promote_types, fails in
+  # strict mode
+  lam_dtype = dtypes.dtype(lam)
+  lam_is_f64 = (dtypes.issubdtype(lam_dtype, np.floating)
+                and dtypes.finfo(lam_dtype).bits > 32)
+  if lam_is_f64 or np.dtype(dtype).itemsize > 4:
+    compute_dtype = np.dtype('float64')
+  else:
+    compute_dtype = np.dtype('float32')
+
+  lam = lax.convert_element_type(lam, compute_dtype)
+  lam = lax.expand_dims(lam, tuple(range(len(shape) - np.ndim(lam))))
+  key, (lam,) = random_insert_pvary('poisson', key, lam)
+  z = _normal(key, shape, compute_dtype)
+  return lax.convert_element_type(_poisson_from_normal(z, lam), dtype)
+
+
+def _poisson_from_normal(z, lam):
+  """Map a standard normal variate to an approximate Poisson(lam) variate."""
+  valid = (lam > 0) & jnp.isfinite(lam)
+  lam_safe = jnp.where(valid, lam, 1.0)
+  small = _poisson_cdf_inversion(ndtr(z), lam_safe)
+  large = _poisson_peizer_pratt(z, lam_safe)
+  out = jnp.where(lam_safe < _POISSON_SPLIT, small, large)
+  return jnp.where(lam == 0, 0.0, jnp.where(valid, out, -1.0))
+
+
+def _poisson_cdf_inversion(u, lam):
+  """Invert the cdf truncated to the first `_POISSON_NUM_TERMS` values."""
+  # unrolled pmf recurrence instead of cumsum(exp(logpmf(arange))): keeps every
+  # op elementwise at the broadcast shape, so xla fuses the inversion into one
+  # kernel instead of materializing shape x _POISSON_NUM_TERMS intermediates
+  pmf = lax.exp(-lam)
+  cdf = pmf
+  # if the final cdf >= 1 due to rounding, the last possible value is never
+  # selected, no overflow
+  count = lax.convert_element_type(cdf < u, u.dtype)
+  for k in range(1, _POISSON_NUM_TERMS - 1):
+    pmf *= lam / k
+    cdf += pmf
+    count += lax.convert_element_type(cdf < u, u.dtype)
+  return count
+
+
+def _poisson_peizer_pratt(z, lam):
+  """Invert the Peizer-Pratt cdf approximation Pr[X <= x] ~ ndtr(z(x)).
+
+  The sample is the smallest integer x with z(x) >= z, i.e., ceil of the real
+  root of z(x) = z. The exact z(x) is evaluated at 2 integers around an
+  analytical guess to select the right value, correcting the guess as long as
+  it falls within +/-1 of the root.
+  """
+  # the guess error stays within (-1 + 0.6, 1 + 0.6) of the root over
+  # lam >= _POISSON_SPLIT, |z| <= 8.4 (the float64 range of normal draws), so
+  # shifting by 0.6 centers it in the +/-1 window around ceil
+  x = _peizer_pratt_root(z, lam) + 0.6
+
+  # select the smallest integer c with z(c) >= z among {c-1, c, c+1},
+  # c = ceil(x); z at negative integers is -inf since Pr[X <= x] = 0 there
+  c = jnp.ceil(x)
+
+  def zint(c):
+    return jnp.where(c < 0, -np.inf, _peizer_pratt_z(jnp.maximum(c, 0.0), lam))
+
+  def root_ge(c):
+    return lax.convert_element_type(zint(c) >= z, x.dtype)
+
+  out = c + 1 - root_ge(c) - root_ge(c - 1)
+  return jnp.maximum(out, 0.0)
+
+
+def _peizer_pratt_root(z, lam):
+  """Cornish-Fisher approximation of the root of `_peizer_pratt_z(x, .) = z`."""
+  s = jnp.sqrt(lam)
+  return (
+      lam + s * z - 2 / 3 + jnp.square(z) / 6 + z * (1 - jnp.square(z)) / (72 * s))
+
+
+def _peizer_pratt_z(x, lam):
+  """Peizer-Pratt z(x) such that Pr[X <= x] ~ ndtr(z(x)), for x > -1/2."""
+  y = (x + 0.5) / lam
+  t = _peizer_pratt_t(y)
+  return (x - lam + 2 / 3 + _PEIZER_PRATT_EPS / (x + 1)) * jnp.sqrt((1 + t) / lam)
+
+
+def _peizer_pratt_t(y):
+  """T(y) = (1 - y^2 + 2 y log y) / (1 - y)^2, stable around y = 1."""
+  d = y - 1
+  small = jnp.abs(d) < 0.25
+
+  # series: T(1 + d) = sum_{k>=1} 2 (-1)^k d^k / ((k+1) (k+2)); 9 terms are the
+  # fewest that keep the truncation error at the cutoff (~2e-8) below float32
+  # resolution; in float64 the Peizer-Pratt error dominates anyway
+  coeffs = [2 * (-1) ** k / ((k + 1) * (k + 2)) for k in range(1, 10)]
+  series = d * lax.polynomial(d, coeffs, unroll=len(coeffs))
+
+  y_safe = jnp.where(small, 2.0, y)
+  d_safe = jnp.where(small, 1.0, d)
+  direct = (1 - jnp.square(y_safe) + 2 * y_safe * jnp.log(y_safe)) / jnp.square(
+      d_safe)
+
+  return jnp.where(small, series, direct)
+
+
+def poisson(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
             lam: RealArray,
             shape: Shape | None = None,
             dtype: DTypeLikeInt | None = None,
             *,
+            method: str = 'exact',
             out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Poisson random values with given shape and integer dtype.
 
@@ -1855,13 +2429,18 @@ def poisson(key: ArrayLike,
       shape. Default (None) produces a result shape equal to ``lam.shape``.
     dtype: optional, a integer dtype for the returned values (default int64 if
       jax_enable_x64 is true, otherwise int32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method uses rejection
+      sampling and supports only the threefry2x32 RNG. The ``'approximate'``
+      method is loop-free and faster but approximate: the total variation
+      distance from the exact distribution is below 1e-4.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1869,27 +2448,37 @@ def poisson(key: ArrayLike,
     ``shape is not None, or else by ``lam.shape``.
   """
   key, _ = _check_prng_key("poisson", key)
+  if method not in {'exact', 'approximate'}:
+    raise ValueError("method argument to `poisson` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       int if dtype is None else dtype)
+  if shape is not None:
+    shape = core.canonicalize_shape(shape)
+  else:
+    shape = np.shape(lam)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "poisson", shape)
+  if method == 'approximate':
+    # don't preemptively broadcast lam, if lower rank it may save some computation
+    if lax.broadcast_shapes(np.shape(lam), shape) != shape:
+      raise ValueError("lam shape must be broadcastable to shape argument; "
+                       f"got lam.shape {np.shape(lam)}, shape {shape}")
+    return maybe_auto_axes(_poisson_approx, out_sharding,
+                           shape=shape, dtype=dtype)(key, lam)
+  lam = jnp.broadcast_to(lam, shape)
   # TODO(frostig): generalize underlying poisson implementation and
   # remove this check
   keys_dtype = typing.cast(prng.KeyTy, key.dtype)
   key_impl = keys_dtype._impl
   if key_impl is not threefry2x32.threefry_prng_impl:
     raise NotImplementedError(
-        '`poisson` is only implemented for the threefry2x32 RNG, '
-        f'not {key_impl}')
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
-  else:
-    shape = np.shape(lam)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "poisson", shape)
-  lam = jnp.broadcast_to(lam, shape)
+        "`poisson` with method='exact' is only implemented for the "
+        f'threefry2x32 RNG, not {key_impl}')
   lam = lax.convert_element_type(lam, np.float32)
   return maybe_auto_axes(_poisson, out_sharding, shape=shape, dtype=dtype)(key, lam)
 
 
-def gumbel(key: ArrayLike,
+def gumbel(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
            shape: Shape = (),
            dtype: DTypeLikeFloat | None = None,
            mode: str | None = None,
@@ -1920,7 +2509,7 @@ def gumbel(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -1968,7 +2557,7 @@ def _safe_int_to_float(bits, dtype):
 
 
 @jit(static_argnums=(1, 2, 3))
-def _gumbel(key, shape, dtype, mode) -> Array:
+def _gumbel(key: Key, shape, dtype, mode) -> Array:
   _check_shape("gumbel", shape)
   info = dtypes.finfo(dtype)
   if dtype == np.float32 and mode == "highest":
@@ -1990,8 +2579,8 @@ def _gumbel(key, shape, dtype, mode) -> Array:
                          shape=(2,) + shape, dtype=dtype)
     # TODO(parkers): The condition is to protect against rounding up but
     # we should be able to add safely with the right addition operation.
-    x = jnp.where(high >= 0.5, high,
-        high + 2 ** -(info.nmant) * low + info.tiny)
+    x = jnp.where(high >= 0.5, high, high + 2 ** -(info.nmant) * low + max(
+        2 ** -(2 * info.nmant + 1), info.tiny))
     return -jnp.log(-jnp.log1p(-x))
   else:
     return -jnp.log(-jnp.log(
@@ -1999,7 +2588,7 @@ def _gumbel(key, shape, dtype, mode) -> Array:
 
 
 def categorical(
-  key: ArrayLike,
+  key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   logits: RealArray,
   axis: int = -1,
   shape: Shape | None = None,
@@ -2035,7 +2624,7 @@ def categorical(
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2062,7 +2651,7 @@ def categorical(
                          batch_shape=batch_shape, axis=axis,
                          replace=replace, mode=mode)(key, logits_arr)
 
-def _categorical(key, logits_arr, shape, batch_shape, axis, replace, mode) -> Array:
+def _categorical(key: Key, logits_arr, shape, batch_shape, axis, replace, mode) -> Array:
   shape_prefix = shape[:len(shape)-len(batch_shape)]
   if replace:
     if axis >= 0:
@@ -2093,7 +2682,7 @@ def _categorical(key, logits_arr, shape, batch_shape, axis, replace, mode) -> Ar
     return indices
 
 
-def laplace(key: ArrayLike,
+def laplace(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
             shape: Shape = (),
             dtype: DTypeLikeFloat | None = None,
             *,
@@ -2117,7 +2706,7 @@ def laplace(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2135,14 +2724,14 @@ def laplace(key: ArrayLike,
                          shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2))
-def _laplace(key, shape, dtype) -> Array:
+def _laplace(key: Key, shape, dtype) -> Array:
   _check_shape("laplace", shape)
   u = uniform(
       key, shape, dtype, minval=-1. + dtypes.finfo(dtype).epsneg, maxval=1.)
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
 
 
-def logistic(key: ArrayLike,
+def logistic(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
              shape: Shape = (),
              dtype: DTypeLikeFloat | None = None,
              *,
@@ -2166,7 +2755,7 @@ def logistic(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2184,13 +2773,13 @@ def logistic(key: ArrayLike,
                          shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2))
-def _logistic(key, shape, dtype):
+def _logistic(key: Key, shape, dtype):
   _check_shape("logistic", shape)
   x = uniform(key, shape, dtype, minval=dtypes.finfo(dtype).tiny, maxval=1.)
   return lax.sub(lax.log(x), lax.log1p(lax.neg(x)))
 
 
-def pareto(key: ArrayLike,
+def pareto(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
            b: RealArray,
            shape: Shape | None = None,
            dtype: DTypeLikeFloat | None = None,
@@ -2220,7 +2809,7 @@ def pareto(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2240,13 +2829,13 @@ def pareto(key: ArrayLike,
                          shape=shape, dtype=dtype)(key, b)
 
 @jit(static_argnums=(2, 3))
-def _pareto(key, b, shape, dtype) -> Array:
+def _pareto(key: Key, b, shape, dtype) -> Array:
   b = lax.convert_element_type(b, dtype)
   e = exponential(key, shape, dtype)
   return lax.exp(e / b)
 
 
-def t(key: ArrayLike,
+def t(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
       df: RealArray,
       shape: Shape | None = None,
       dtype: DTypeLikeFloat | None = None,
@@ -2276,7 +2865,7 @@ def t(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2296,7 +2885,7 @@ def t(key: ArrayLike,
                          shape=shape, dtype=dtype)(key, df)
 
 @jit(static_argnums=(2, 3))
-def _t(key, df, shape, dtype) -> Array:
+def _t(key: Key, df, shape, dtype) -> Array:
   if shape is None:
     shape = np.shape(df)
   else:
@@ -2311,11 +2900,12 @@ def _t(key, df, shape, dtype) -> Array:
   return n * jnp.sqrt(half_df / g)
 
 
-def chisquare(key: ArrayLike,
+def chisquare(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
               df: RealArray,
               shape: Shape | None = None,
               dtype: DTypeLikeFloat | None = None,
               *,
+              method: str = "exact",
               out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Chisquare random values with given shape and float dtype.
 
@@ -2336,13 +2926,18 @@ def chisquare(key: ArrayLike,
       produces a result shape equal to ``df.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method is a rejection
+      sampler. The ``'approximate'`` method is loop-free and faster but carries
+      a small bias. The gradient w.r.t. ``df`` differs between the two
+      methods because of the ambiguity in defining a gradient for random variates.
     out_sharding: optional, Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2350,6 +2945,9 @@ def chisquare(key: ArrayLike,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key("chisquare", key)
+  if method not in {"exact", "approximate"}:
+    raise ValueError("method argument to `chisquare` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -2358,19 +2956,21 @@ def chisquare(key: ArrayLike,
   shape = _check_broadcast_shapes("chisquare", shape, df)
   _check_all_safe_to_cast("chisquare", dtype, df)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "chisquare", shape)
-  return _chisquare(key, df, shape, dtype, out_sharding)
+  return maybe_auto_axes(_chisquare, out_sharding, method=method,
+                         shape=shape, dtype=dtype)(key, df)
+
 
 @jit(static_argnums=(2, 3, 4))
-def _chisquare(key, df, shape, dtype, out_sharding) -> Array:
+def _chisquare(key: Key, df, method, shape, dtype) -> Array:
   df = lax.convert_element_type(df, dtype)
   two = lax._const(df, 2)
   half_df = lax.div(df, two)
-  log_g = loggamma(key, a=half_df, shape=shape, dtype=dtype, out_sharding=out_sharding)
+  log_g = loggamma(key, a=half_df, shape=shape, dtype=dtype, method=method)
   chi2 = lax.mul(jnp.exp(log_g), two)
   return chi2
 
 
-def f(key: ArrayLike,
+def f(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
       dfnum: RealArray,
       dfden: RealArray,
       shape: Shape | None = None,
@@ -2407,7 +3007,7 @@ def f(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2426,19 +3026,19 @@ def f(key: ArrayLike,
   return _f(key, dfnum, dfden, shape, dtype, out_sharding)
 
 @jit(static_argnums=(3, 4, 5))
-def _f(key, dfnum, dfden, shape, dtype, out_sharding) -> Array:
+def _f(key: Key, dfnum, dfden, shape, dtype, out_sharding) -> Array:
   dfden = lax.convert_element_type(dfden, dtype)
   dfnum = lax.convert_element_type(dfnum, dtype)
   key_dfd, key_dfn = _split(key)
   chi2_dfn = chisquare(key_dfn, dfnum, shape, dtype, out_sharding=out_sharding)
   chi2_dfd = chisquare(key_dfd, dfden, shape, dtype, out_sharding=out_sharding)
-  num = lax.div(chi2_dfn, dfnum)
-  den = lax.div(chi2_dfd ,dfden)
+  num = chi2_dfn / dfnum
+  den = chi2_dfd / dfden
   f = lax.div(num, den)
   return f
 
 
-def rademacher(key: ArrayLike,
+def rademacher(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                shape: Shape = (),
                dtype: DTypeLikeInt | None = None,
                *,
@@ -2462,7 +3062,7 @@ def rademacher(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2479,13 +3079,13 @@ def rademacher(key: ArrayLike,
 
 
 @jit(static_argnums=(1, 2, 3))
-def _rademacher(key, shape, dtype, out_sharding) -> Array:
+def _rademacher(key: Key, shape, dtype, out_sharding) -> Array:
   bernoulli_samples = bernoulli(key=key, p=0.5, shape=shape,
                                 out_sharding=out_sharding).astype(dtype)
   return (2 * bernoulli_samples - 1).astype(dtype)
 
 
-def maxwell(key: ArrayLike,
+def maxwell(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
             shape: Shape = (),
             dtype: DTypeLikeFloat | None = None,
             *,
@@ -2510,7 +3110,7 @@ def maxwell(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2531,7 +3131,7 @@ def maxwell(key: ArrayLike,
 
 
 @jit(static_argnums=(1, 2, 3))
-def _maxwell(key, shape, dtype, out_sharding) -> Array:
+def _maxwell(key: Key, shape, dtype, out_sharding) -> Array:
   shape = shape + (3,)
   if out_sharding is not None:
     new_partitions = (*out_sharding.spec, None)
@@ -2541,7 +3141,7 @@ def _maxwell(key, shape, dtype, out_sharding) -> Array:
   return jnp_linalg.norm(norm_rvs, axis=-1)
 
 
-def double_sided_maxwell(key: ArrayLike,
+def double_sided_maxwell(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                          loc: RealArray,
                          scale: RealArray,
                          shape: Shape = (),
@@ -2578,7 +3178,7 @@ def double_sided_maxwell(key: ArrayLike,
 
 
 @jit(static_argnums=(3, 4))
-def _double_sided_maxwell(key, loc, scale, shape, dtype) -> Array:
+def _double_sided_maxwell(key: Key, loc, scale, shape, dtype) -> Array:
   params_shapes = lax.broadcast_shapes(np.shape(loc), np.shape(scale))
   if not shape:
     shape = params_shapes
@@ -2593,7 +3193,7 @@ def _double_sided_maxwell(key, loc, scale, shape, dtype) -> Array:
   return random_sign * maxwell_rvs * scale + loc
 
 
-def weibull_min(key: ArrayLike,
+def weibull_min(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                 scale: RealArray,
                 concentration: RealArray,
                 shape: Shape = (),
@@ -2630,7 +3230,7 @@ def weibull_min(key: ArrayLike,
 
 
 @jit(static_argnums=(3, 4))
-def _weibull_min(key, scale, concentration, shape, dtype) -> Array:
+def _weibull_min(key: Key, scale, concentration, shape, dtype) -> Array:
   random_uniform = uniform(
       key=key, shape=shape, minval=0, maxval=1, dtype=dtype)
 
@@ -2639,7 +3239,7 @@ def _weibull_min(key, scale, concentration, shape, dtype) -> Array:
 
 
 def orthogonal(
-  key: ArrayLike,
+  key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   n: int,
   shape: Shape = (),
   dtype: DTypeLikeFloat | None = None,
@@ -2670,7 +3270,7 @@ def orthogonal(
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2696,7 +3296,7 @@ def orthogonal(
   return maybe_auto_axes(_orthogonal, out_sharding, n=n, _m=_m, shape=shape, dtype=dtype)(key)
 
 @jit(static_argnums=(1, 2, 3, 4))
-def _orthogonal(key, n, _m, shape, dtype):
+def _orthogonal(key: Key, n, _m, shape, dtype):
   z = normal(key, (*shape, max(n, _m), min(n, _m)), dtype)
   q, r = jnp_linalg.qr(z)
   d = jnp_linalg.diagonal(r)
@@ -2708,8 +3308,8 @@ def _orthogonal(key, n, _m, shape, dtype):
     return x
 
 def generalized_normal(
-  key: ArrayLike,
-  p: float,
+  key: Key | ArrayLike,  # TODO(jakevdp): make this Key
+  p: RealArray,
   shape: Shape = (),
   dtype: DTypeLikeFloat | None = None,
   *,
@@ -2727,7 +3327,8 @@ def generalized_normal(
 
   Args:
     key: a PRNG key used as the random key.
-    p: a float representing the shape parameter.
+    p: a float or array of floats broadcast-compatible with ``shape``
+      representing the shape parameter.
     shape: optional, the batch dimensions of the result. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
@@ -2737,7 +3338,7 @@ def generalized_normal(
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2753,16 +3354,16 @@ def generalized_normal(
   return maybe_auto_axes(_generalized_normal, out_sharding, shape=shape, dtype=dtype)(key, p)
 
 @jit(static_argnums=(2, 3))
-def _generalized_normal(key, p, shape, dtype):
+def _generalized_normal(key: Key, p, shape, dtype):
   keys = split(key)
   g = gamma(keys[0], 1/p, shape, dtype)
   r = rademacher(keys[1], shape, dtype)
   return r * g ** (1 / p)
 
 def ball(
-  key: ArrayLike,
+  key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   d: int,
-  p: float = 2,
+  p: RealArray = 2,
   shape: Shape = (),
   dtype: DTypeLikeFloat | None = None,
   *,
@@ -2785,12 +3386,13 @@ def ball(
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
     A random array of shape `(*shape, d)` and specified dtype.
   """
+  check_arraylike("ball", p)
   shape = core.canonicalize_shape(shape)
   key, _ = _check_prng_key("ball", key)
   dtype = dtypes.check_and_canonicalize_user_dtype(
@@ -2801,14 +3403,14 @@ def ball(
   return maybe_auto_axes(_ball, out_sharding, d=d,  shape=shape, dtype=dtype)(key, p)
 
 @jit(static_argnums=(2, 3, 4))
-def _ball(key, p, d, shape, dtype):
+def _ball(key: Key, p, d, shape, dtype):
   k1, k2 = split(key)
   g = generalized_normal(k1, p, (*shape, d), dtype)
   e = exponential(k2, shape, dtype)
   return g / (((jnp.abs(g) ** p).sum(-1) + e) ** (1 / p))[..., None]
 
 
-def rayleigh(key: ArrayLike,
+def rayleigh(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
              scale: RealArray,
              shape: Shape | None = None,
              dtype: DTypeLikeFloat | None = None,
@@ -2839,7 +3441,7 @@ def rayleigh(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2859,7 +3461,7 @@ def rayleigh(key: ArrayLike,
                          shape=shape, dtype=dtype)(key, scale)
 
 @jit(static_argnums=(2, 3))
-def _rayleigh(key, scale, shape, dtype) -> Array:
+def _rayleigh(key: Key, scale, shape, dtype) -> Array:
   u = uniform(key, shape, dtype)
   scale = scale.astype(dtype)
   scale = jnp.broadcast_to(scale, shape)
@@ -2869,7 +3471,7 @@ def _rayleigh(key, scale, shape, dtype) -> Array:
   ray = lax.mul(scale, sqrt_u)
   return ray
 
-def wald(key: ArrayLike,
+def wald(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
          mean: RealArray,
          shape: Shape | None = None,
          dtype: DTypeLikeFloat | None = None,
@@ -2901,7 +3503,7 @@ def wald(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2920,7 +3522,7 @@ def wald(key: ArrayLike,
   return maybe_auto_axes(_wald, out_sharding, shape=shape, dtype=dtype)(key, mean)
 
 @jit(static_argnums=(2, 3))
-def _wald(key, mean, shape, dtype) -> Array:
+def _wald(key: Key, mean, shape, dtype) -> Array:
   k1, k2 = _split(key, 2)
   mean = mean.astype(dtype)
   mean = jnp.broadcast_to(mean, shape)
@@ -2934,7 +3536,7 @@ def _wald(key, mean, shape, dtype) -> Array:
   w = lax.select(lax.le(z,  mean / (mean + x)), x, mean_sq / x)
   return w
 
-def geometric(key: ArrayLike,
+def geometric(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
               p: RealArray,
               shape: Shape | None = None,
               dtype: DTypeLikeInt | None = None,
@@ -2964,7 +3566,7 @@ def geometric(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -2982,7 +3584,7 @@ def geometric(key: ArrayLike,
   return _geometric(key, p, shape, dtype, out_sharding)
 
 @jit(static_argnums=(2, 3, 4))
-def _geometric(key, p, shape, dtype, out_sharding) -> Array:
+def _geometric(key: Key, p, shape, dtype, out_sharding) -> Array:
   check_arraylike("geometric", p)
   p, = promote_dtypes_inexact(p)
   u = uniform(key, shape, p.dtype, out_sharding=out_sharding)
@@ -2997,7 +3599,7 @@ def _geometric(key, p, shape, dtype, out_sharding) -> Array:
   return g.astype(dtype)
 
 
-def triangular(key: ArrayLike,
+def triangular(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                left: RealArray,
                mode: RealArray,
                right: RealArray,
@@ -3036,7 +3638,7 @@ def triangular(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -3054,8 +3656,8 @@ def triangular(key: ArrayLike,
   _check_all_safe_to_cast("triangular", dtype, left, mode, right)
   return maybe_auto_axes(_triangular, out_sharding, shape=shape, dtype=dtype)(key, left, mode, right)
 
-@jit(static_argnums=(4, 5), inline=True)
-def _triangular(key, left, mode, right, shape, dtype) -> Array:
+@jit(static_argnums=(4, 5), inline=Inline.JAX_EARLY)
+def _triangular(key: Key, left, mode, right, shape, dtype) -> Array:
   # https://en.wikipedia.org/wiki/Triangular_distribution#Generating_triangular-distributed_random_variates
   left = jnp.broadcast_to(lax.convert_element_type(left, dtype), shape)
   right = jnp.broadcast_to(lax.convert_element_type(right, dtype), shape)
@@ -3068,7 +3670,7 @@ def _triangular(key, left, mode, right, shape, dtype) -> Array:
   return tri
 
 
-def lognormal(key: ArrayLike,
+def lognormal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
               sigma: RealArray = np.float32(1),
               shape: Shape | None = None,
               dtype: DTypeLikeFloat | None = None,
@@ -3097,7 +3699,7 @@ def lognormal(key: ArrayLike,
       (``P``), or ``None`` (default). When specified, the output will be sharded
       according to the given sharding specification. Primarily used in explicit
       sharding mode.
-      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/201/sharding.html#explicit-sharding-mode-makes-sharding-queryable-at-trace-time>`_
       for more details.
 
   Returns:
@@ -3113,8 +3715,8 @@ def lognormal(key: ArrayLike,
   _check_all_safe_to_cast("lognormal", dtype, sigma)
   return maybe_auto_axes(_lognormal, out_sharding, shape=shape, dtype=dtype)(key, sigma)
 
-@jit(static_argnums=(2, 3), inline=True)
-def _lognormal(key, sigma, shape, dtype) -> Array:
+@jit(static_argnums=(2, 3), inline=Inline.JAX_EARLY)
+def _lognormal(key: Key, sigma, shape, dtype) -> Array:
   sigma = lax.convert_element_type(sigma, dtype)
   scaled_norm = normal(key, shape, dtype) * sigma
   return lax.exp(scaled_norm)
@@ -3145,8 +3747,8 @@ def _stirling_approx_tail(k):
       use_tail_values, stirling_tail_vals[jnp.asarray(k, dtype='int32')], approx)
 
 
-@jit(static_argnums=(3, 4, 5), inline=True)
-def _binomial_inversion(key, count, prob, shape, dtype, max_iters):
+@jit(static_argnums=(3, 4, 5), inline=Inline.JAX_EARLY)
+def _binomial_inversion(key: Key, count, prob, shape, dtype, max_iters):
   if config.enable_checks.value:
     assert dtypes.issubdtype(prob.dtype, np.floating)
 
@@ -3172,8 +3774,8 @@ def _binomial_inversion(key, count, prob, shape, dtype, max_iters):
   return (k - 1).astype(dtype)
 
 
-@jit(static_argnums=(3, 4, 5), inline=True)
-def _btrs(key, count, prob, shape, dtype, max_iters):
+@jit(static_argnums=(3, 4, 5), inline=Inline.JAX_EARLY)
+def _btrs(key: Key, count, prob, shape, dtype, max_iters):
   # transforman-rejection algorithm
   # https://www.tandfonline.com/doi/abs/10.1080/00949659308811496
   stddev = jnp.sqrt(count * prob * (1 - prob))
@@ -3220,8 +3822,8 @@ def _btrs(key, count, prob, shape, dtype, max_iters):
   return lax_control_flow.while_loop(cond_fn, body_fn, carry)[1].astype(dtype)
 
 
-@jit(static_argnums=(3, 4), inline=True)
-def _binomial(key, count, prob, shape, dtype) -> Array:
+@jit(static_argnums=(3, 4), inline=Inline.JAX_EARLY)
+def _binomial(key: Key, count, prob, shape, dtype) -> Array:
   # The implementation matches TensorFlow and TensorFlow Probability:
   # https://github.com/tensorflow/tensorflow/blob/v2.2.0-rc3/tensorflow/core/kernels/random_binomial_op.cc
   # and tensorflow_probability.substrates.jax.distributions.Binomial
@@ -3280,7 +3882,7 @@ def _binomial(key, count, prob, shape, dtype) -> Array:
 
 
 def binomial(
-    key: Array,
+    key: Key | Array,  # TODO(jakevdp): make this Key
     n: RealArray,
     p: RealArray,
     shape: Shape | None = None,
@@ -3335,7 +3937,7 @@ mlir.register_lowering(random_clone_p, lambda _, k: [k])
 
 
 def multinomial(
-    key: Array,
+    key: Key | Array,  # TODO(jakevdp): make this Key
     n: RealArray,
     p: RealArray,
     *,
@@ -3373,9 +3975,12 @@ def multinomial(
   n, p = promote_dtypes_inexact(n, p)
 
   if shape is None:
-    shape = p.shape
-  n = jnp.broadcast_to(n, shape[:-1])
-  p = jnp.broadcast_to(p, shape)
+    shape = p.shape[:-1]
+  else:
+    shape = core.canonicalize_shape(shape)
+    _check_shape("multinomial", shape, np.shape(n), p.shape[:-1])
+  n = jnp.broadcast_to(n, shape)
+  p = jnp.broadcast_to(p, (*shape, p.shape[-1]))
 
   def f(remainder, ratio_key):
     ratio, key = ratio_key
@@ -3394,7 +3999,9 @@ def multinomial(
   return jnp.moveaxis(counts, 0, -1).astype(dtype)
 
 
-def clone(key):
+def clone(
+    key: Key | Array,  # TODO(jakevdp): make this Key
+) -> Array:  # TODO(jakevdp): make this Key
   """Clone a key for reuse
 
   Outside the context of key reuse checking (see :mod:`jax.experimental.key_reuse`)
@@ -3412,7 +4019,7 @@ def clone(key):
   return random_clone_p.bind(key)
 
 
-def random_insert_pvary(name, key, *args):
+def random_insert_pvary(name, key: Key, *args):
   if not config._check_vma.value or not config.auto_pcast.value:
     return key, args
   if not args:

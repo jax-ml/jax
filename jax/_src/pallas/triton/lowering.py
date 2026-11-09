@@ -19,12 +19,14 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import functools
+import inspect
 import math
-from typing import Any, TypeVar
+from typing import Any
 
 import jax
 from jax import lax
 from jax import tree_util
+from jax._src import flattree as ft
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api_util
@@ -32,7 +34,6 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import debugging
-from jax._src import linear_util as lu
 from jax._src import literals
 from jax._src import pjit
 from jax._src import source_info_util
@@ -40,6 +41,7 @@ from jax._src import state
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lax import lax as lax_internal
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import math as math_dialect
@@ -54,8 +56,6 @@ from jax._src.util import foreach
 from jax._src.util import split_list
 import jax.numpy as jnp
 import numpy as np
-
-_T = TypeVar("_T")
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -112,7 +112,7 @@ def _eval_index_map(
     ctx: ModuleContext, idx, block_mapping: BlockMapping
 ):
   block_indices = lower_jaxpr_to_triton_ir(
-      ctx, block_mapping.index_map_jaxpr.jaxpr, None, *idx
+      ctx, block_mapping.index_map_jaxpr, None, *idx
   )
   block_indices = tuple(
       _ensure_ir_value(i, jax_core.ShapedArray((), jnp.int32))
@@ -203,11 +203,11 @@ def _bcast(
   return x, y
 
 
-triton_lowering_rules = {}
+triton_lowering_rules: dict[jax_core.Primitive, Callable[..., Any]] = {}
 
 
-def register_lowering(primitive: jax_core.Primitive) -> Callable[[_T], _T]:
-  def wrapper(fn):
+def register_lowering(primitive: jax_core.Primitive) -> Callable[..., Any]:
+  def wrapper[T: Callable[..., Any]](fn: T) -> T:
     triton_lowering_rules[primitive] = fn
     return fn
   return wrapper
@@ -465,13 +465,17 @@ def lower_fun(
   fn = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
 
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
-    wrapped_fun = lu.wrap_init(
-        fn, params,
-        debug_info=api_util.debug_info("pallas triton lower_fun", fun,
-                                       args, params))
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in, lower=True)
-    jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
-    out = _closed_call_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
+    in_avals_ft = ft.flatten_static_argnums_argnames(
+        tuple(ctx.avals_in), params,
+        static_argnums=(), static_argnames=tuple(params.keys())
+    )
+    debug_info = api_util.debug_info("pallas triton lower_fun", fun,
+                                     args, params,
+                                     static_argnames=tuple(params.keys()))
+    jaxpr, _ = pe.trace_to_jaxpr(
+        fn, in_avals_ft, debug_info=debug_info, requires_low=True
+    )
+    out = _eval_jaxpr_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
     return out if multiple_results else out[0]
 
   return f_lowered
@@ -523,25 +527,21 @@ def _atomic_rmw(
 def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   flat_args = tree_util.tree_leaves(args)
   (axis,) = axes
-  dtype = ctx.avals_in[0].dtype
-  in_avals = [
-      jax_core.ShapedArray((), dtype=dtype),
-      jax_core.ShapedArray((), dtype=dtype),
-  ]
-  in_tree = tree_util.tree_structure((args, args))
-  flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(
-          body,
-          debug_info=api_util.debug_info("pallas triton associative_scan",
-                                         body, (args, args), {})),
-      in_tree
+
+  args_structure = tree_util.tree_structure(args)
+  avals_tree = tree_util.tree_unflatten(args_structure, ctx.avals_in)
+  mapped_avals_tree = tree_util.tree_map(
+      lambda aval: jax_core.ShapedArray((), aval.dtype), avals_tree
   )
-  combine_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      flat_fun, in_avals
+  in_avals_ft = ft.flatten(((mapped_avals_tree, mapped_avals_tree), {}))
+
+  debug_info = api_util.debug_info("pallas triton associative_scan",
+                                 body, (args, args), {})
+  combine_jaxpr, _ = pe.trace_to_jaxpr(
+      body, in_avals_ft, debug_info=debug_info
   )
-  out_tree = out_tree_thunk()
-  del out_tree  # Not needed
-  if consts:
+
+  if combine_jaxpr.consts:
     raise NotImplementedError("Associative scan with constants not supported.")
   element_types = [_element_type(arg.type) for arg in flat_args]
   scan_op = tt_dialect.ScanOp(flat_args, axis)
@@ -575,7 +575,7 @@ def _not_lowering_rule(ctx: LoweringRuleContext, x):
 class _Extern:
   arg_types: Sequence[jax.typing.DTypeLike]
   symbol: str
-  result_type: str
+  result_type: jax.typing.DTypeLike
 
   def matches(self, avals: Sequence[jax_core.ShapedArray]) -> bool:
     if len(avals) != len(self.arg_types):
@@ -747,6 +747,20 @@ log_dispatch_table = _make_dispatch_table(
         _Extern([jnp.float32], "__ocml_log_f32", jnp.float32),
         _Extern([jnp.float64], "__ocml_log_f64", jnp.float64),
         _Fallback([jnp.floating], math_dialect.log),
+    ],
+)
+
+log2_dispatch_table = _make_dispatch_table(
+    "log2",
+    cuda=[
+        _Extern([jnp.float32], "__nv_log2f", jnp.float32),
+        _Extern([jnp.float64], "__nv_log2", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.log2),
+    ],
+    rocm=[
+        _Extern([jnp.float32], "__ocml_log2_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_log2_f64", jnp.float64),
+        _Fallback([jnp.floating], math_dialect.log2),
     ],
 )
 
@@ -1073,9 +1087,13 @@ triton_lowering_rules.update({
     lax.exp2_p: exp2_dispatch_table,
     lax.expm1_p: expm1_dispatch_table,
     lax.log_p: log_dispatch_table,
+    lax.log2_p: log2_dispatch_table,
     lax.log1p_p: log1p_dispatch_table,
     lax.sqrt_p: sqrt_dispatch_table,
     lax.square_p: lambda ctx, x: _mul(x, x),
+    lax.one_minus_square_p: lambda ctx, x: _mul(
+        _add(_ones_like(x), x), _sub(_ones_like(x), x)
+    ),
     lax.pow_p: pow_dispatch_table,
     lax.cbrt_p: cbrt_dispatch_table,
     lax.rsqrt_p: rsqrt_dispatch_table,
@@ -1477,6 +1495,11 @@ register_lowering(lax.erf_inv_p)(
 )
 
 
+register_lowering(lax.polynomial_p)(
+    lower_fun(lax_internal.polynomial_lower, multiple_results=False)
+)
+
+
 @register_lowering(lax.iota_p)
 def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension,
                         sharding):
@@ -1750,9 +1773,15 @@ def _convert_element_type_lowering_rule(
 
 
 @register_lowering(lax.select_n_p)
-def select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, y):
-  pred_aval, a_aval, b_aval = ctx.avals_in
+def select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
+  pred_aval = ctx.avals_in[0]
+  if len(cases) != 2 or pred_aval.dtype != np.dtype(np.bool_):
+    return lower_fun(
+        pallas_utils.select_n_lowering_helper, multiple_results=False
+    )(ctx, pred, *cases)
+  _, a_aval, b_aval = ctx.avals_in
   [out_aval] = ctx.avals_out
+  x, y = cases
   pred, x = _bcast(pred, x, pred_aval, a_aval, out_aval)
   pred, y = _bcast(pred, y, pred_aval, b_aval, out_aval)
   return arith_dialect.select(pred, y, x)
@@ -1889,7 +1918,7 @@ def _split_lowering_rule(ctx: LoweringRuleContext, x, *, sizes, axis):
 
 def _compute_offsets_from_indices(
     block_info: BlockInfo, nd_indexer: NDIndexer
-) -> ir.Value:
+) -> tuple[ir.Value, ir.Value | None]:
   full_shape = block_info.full_shape_dtype.shape
   num_squeezed_dims = sum(isinstance(b, pallas_core.Squeezed)
                           for b in block_info.block_shape)
@@ -1912,9 +1941,20 @@ def _compute_offsets_from_indices(
   else:
     offsets = _ir_constant(0, offset_eltype)
 
+  bounds_mask: ir.Value | None = None
   indexer_iter = iter(indices)
-  for dim_stride, dim_block_size, start_offset in zip(
-      strides, block_info.block_shape, block_info.start_indices
+  for (
+      dim_size,
+      dim_stride,
+      dim_block_size,
+      start_offset,
+      start_align,
+  ) in zip(
+      full_shape,
+      strides,
+      block_info.block_shape,
+      block_info.start_indices,
+      block_info.start_indices_alignment,
   ):
     match dim_block_size:
       case pallas_core.Squeezed():
@@ -1974,18 +2014,30 @@ def _compute_offsets_from_indices(
       start_offset = _ir_cast(start_offset, offset_eltype, signed=False)
       dim_offsets = _add(dim_offsets, _bcast_to(start_offset, indexer_shape))
 
+    if isinstance(dim_block_size, int) and (
+        dim_size % dim_block_size != 0 or start_align % dim_block_size != 0
+    ):
+      dim_mask = _less_than(
+          dim_offsets, _full(dim_offsets.type, dim_size), signed=False
+      )
+      bounds_mask = (
+          dim_mask
+          if bounds_mask is None
+          else arith_dialect.andi(bounds_mask, dim_mask)
+      )
+
     dim_offsets = _mul(dim_offsets, _full(dim_offsets.type, dim_stride))
     offsets = _add(offsets, dim_offsets)
 
-  return offsets
+  return offsets, bounds_mask
 
 
 def _compute_pointers_from_indices(
     root_ptr: ir.Value, block_info: BlockInfo, nd_indexer: NDIndexer
-) -> ir.Value:
-  offsets = _compute_offsets_from_indices(block_info, nd_indexer)
+) -> tuple[ir.Value, ir.Value | None]:
+  offsets, bounds_mask = _compute_offsets_from_indices(block_info, nd_indexer)
   shape = nd_indexer.get_indexer_shape_static()
-  return _add(_bcast_to(root_ptr, shape), offsets)
+  return _add(_bcast_to(root_ptr, shape), offsets), bounds_mask
 
 
 @register_lowering(sp.get_p)
@@ -2006,7 +2058,27 @@ def _get_lowering_rule(ctx: LoweringRuleContext, ptr, *idx, tree):
 
 
 _STR_TO_EVICTION_POLICY = {str(e): e for e in tt_dialect.EvictionPolicy}
-_STR_TO_CACHE_MODIFIER = {str(c): c for c in tt_dialect.CacheModifier}
+_STR_TO_CACHE_MODIFIER = {
+    str(c).removeprefix("."): c for c in tt_dialect.CacheModifier
+}
+
+
+def _get_cache_policy(
+    cache: tt_dialect.CacheModifier,
+    evict: tt_dialect.EvictionPolicy,
+    *,
+    context: ir.Context | None = None,
+) -> ir.Attribute | None:
+  if (
+      cache == tt_dialect.CacheModifier.NONE
+      and evict == tt_dialect.EvictionPolicy.NORMAL
+  ):
+    return None
+  cache_str = str(cache).removeprefix(".")
+  return ir.Attribute.parse(
+      f"#tt.cache_policy<cache_modifier = {cache_str}, eviction_policy = {evict}>",
+      context=context,
+  )
 
 
 def _load(
@@ -2021,7 +2093,7 @@ def _load(
   if cache_modifier is None:
     cache = tt_dialect.CacheModifier.NONE
   elif cache_modifier == ".ca" or cache_modifier == ".cg":
-    cache = _STR_TO_CACHE_MODIFIER[cache_modifier]
+    cache = _STR_TO_CACHE_MODIFIER[cache_modifier.removeprefix(".")]
   else:
     raise ValueError(f"unsupported cache modifier: {cache_modifier}")
   if eviction_policy is None:
@@ -2064,14 +2136,25 @@ def _load(
   if other is not None:
     other = _ir_cast(other, pointee_type, signed=False)
 
-  result = tt_dialect.load(
-      ptr,
-      mask=mask,
-      other=other,
-      cache=cache,
-      evict=evict,
-      is_volatile=is_volatile,
-  )
+  params = inspect.signature(tt_dialect.load).parameters
+  if "cache_policy" in params:
+    cache_policy = _get_cache_policy(cache, evict, context=ptr.context)
+    result = tt_dialect.load(
+        ptr,
+        mask=mask,
+        other=other,
+        cache_policy=cache_policy,
+        is_volatile=is_volatile,
+    )
+  else:  # TODO(suvorovv): Remove this fallback once jax oss has been updated.
+    result = tt_dialect.load(
+        ptr,
+        mask=mask,
+        other=other,
+        cache=cache,  # pyrefly: ignore[unexpected-keyword]
+        evict=evict,  # pyrefly: ignore[unexpected-keyword]
+        is_volatile=is_volatile,
+    )
   return (
       result
       if not is_int1
@@ -2084,6 +2167,7 @@ def _is_contiguous_int4(block_info: BlockInfo, nd_indexer: NDIndexer) -> bool:
   # In order to loaded as `uint8` the index must be an aligned slice.
   return (
       block_info.full_shape_dtype.dtype in (jnp.int4, jnp.uint4)
+      and (block_info.full_shape_dtype.shape[-1] % 2 == 0)
       and bool(block_info.start_indices_alignment)
       and (block_info.start_indices_alignment[-1] % 2 == 0)
       and isinstance(slc := nd_indexer.indices[-1], indexing.Slice)
@@ -2111,10 +2195,19 @@ def _reinterpret_int4_as_uint8(
   start_idx = block_info.start_indices[-1]
   new_start_idx = _floordiv(start_idx, _full(start_idx.type, 2), signed=False)
   new_start_indices = (*block_info.start_indices[:-1], new_start_idx)
+  new_start_indices_alignment = (
+      *block_info.start_indices_alignment[:-1],
+      block_info.start_indices_alignment[-1] // 2,
+  )
+  last_block_dim = block_info.block_shape[-1]
+  assert isinstance(last_block_dim, int)
+  new_block_shape = (*block_info.block_shape[:-1], last_block_dim // 2)
   block_info = dataclasses.replace(
       block_info,
       full_shape_dtype=jax_core.ShapedArray(new_full_shape, jnp.uint8),
       start_indices=new_start_indices,
+      start_indices_alignment=new_start_indices_alignment,
+      block_shape=new_block_shape,
   )
   return block_info, idx
 
@@ -2155,7 +2248,7 @@ def _masked_load_lowering_rule(
     # Triton doesn't optimize as well.
     block_info, idx = _reinterpret_int4_as_uint8(block_info, idx)
 
-  offsets = _compute_offsets_from_indices(block_info, idx)
+  offsets, bounds_mask = _compute_offsets_from_indices(block_info, idx)
   ptr_offsets = offsets
 
   if is_int4 and not is_contiguous_int4:
@@ -2165,6 +2258,10 @@ def _masked_load_lowering_rule(
   ptr = _add(_bcast_to(ptr, shape), ptr_offsets)
   if mask is not None:
     mask = _bcast_to(_ensure_ir_value(mask, mask_aval), shape)
+  if bounds_mask is not None:
+    mask = (
+        bounds_mask if mask is None else arith_dialect.andi(mask, bounds_mask)
+    )
   if other is not None:
     other = _bcast_to(_ensure_ir_value(other, other_aval), shape)
   values = _load(
@@ -2219,7 +2316,7 @@ def _store(
   if cache_modifier is None:
     cache = tt_dialect.CacheModifier.NONE
   elif cache_modifier != ".ca":
-    cache = _STR_TO_CACHE_MODIFIER[cache_modifier]
+    cache = _STR_TO_CACHE_MODIFIER[cache_modifier.removeprefix(".")]
   else:
     raise ValueError(f"unsupported cache modifier: {cache_modifier}")
   if eviction_policy is None:
@@ -2257,7 +2354,23 @@ def _store(
     )
 
   value = _ir_cast(value, pointee_type, signed=False)
-  tt_dialect.store(ptr, value, mask=mask, cache=cache, evict=evict)
+  params = inspect.signature(tt_dialect.store).parameters
+  if "cache_policy" in params:
+    cache_policy = _get_cache_policy(cache, evict, context=ptr.context)
+    tt_dialect.store(
+        ptr,
+        value,
+        mask=mask,
+        cache_policy=cache_policy,
+    )
+  else:  # TODO(suvorovv): Remove this fallback once jax oss has been updated.
+    tt_dialect.store(
+        ptr,
+        value,
+        mask=mask,
+        cache=cache,  # pyrefly: ignore[unexpected-keyword]
+        evict=evict,  # pyrefly: ignore[unexpected-keyword]
+    )
 
 
 @register_lowering(primitives.swap_p)
@@ -2274,15 +2387,19 @@ def _masked_swap_lowering_rule(
     idx = NDIndexer.make_trivial_indexer(ref_aval.shape)
   else:
     idx = indexers[0]
-  ptr = _compute_pointers_from_indices(ptr, block_info, idx)
+  ptr, bounds_mask = _compute_pointers_from_indices(ptr, block_info, idx)
   other = None
+  shape = idx.get_indexer_shape_static()
   if value is not None:
-    value = _ensure_ir_value(value, value_aval)
+    value = _bcast_to(_ensure_ir_value(value, value_aval), shape)
   if mask is not None:
-    shape = idx.get_indexer_shape_static()
     mask = _bcast_to(_ensure_ir_value(mask, mask_aval), shape)
     if value is not None:
-      other = _bcast_to(value, shape)
+      other = value
+  if bounds_mask is not None:
+    mask = (
+        bounds_mask if mask is None else arith_dialect.andi(mask, bounds_mask)
+    )
 
   old_value = _load(ptr, mask=mask, other=other)
   _store(ptr, value, mask=mask, eviction_policy=eviction_policy)  # pyrefly: ignore[bad-argument-type]
@@ -2300,11 +2417,15 @@ def _addupdate_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
   if len(indexers) > 1:
     raise NotImplementedError("No support for multiple indexers yet.")
   indexer = indexers[0]
-  ptr = _compute_pointers_from_indices(ptr, block_info, indexer)
+  ptr, bounds_mask = _compute_pointers_from_indices(ptr, block_info, indexer)
+  value = _bcast_to(
+      _ensure_ir_value(value, ctx.avals_in[1]),
+      indexer.get_indexer_shape_static(),
+  )
   op = tt_dialect.RMWOp.FADD
   if isinstance(_element_type(value.type), ir.IntegerType):
     op = tt_dialect.RMWOp.ADD
-  _atomic_rmw(op, ptr, value)
+  _atomic_rmw(op, ptr, value, mask=bounds_mask)
   return []
 
 
@@ -2476,21 +2597,20 @@ def _dot_general_lowering(
 def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
   flat_args = tree_util.tree_leaves(a)
   (axis,) = axes
-  mapped_avals = [jax_core.ShapedArray((), aval.dtype) for aval in ctx.avals_in]
-  in_tree = tree_util.tree_structure((a, a))
-  flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(
-          body,
-          debug_info=api_util.debug_info("pallas triton reduction",
-                                         body, (a, a), {})),
-      in_tree
+
+  a_structure = tree_util.tree_structure(a)
+  avals_tree = tree_util.tree_unflatten(a_structure, ctx.avals_in)
+  mapped_avals_tree = tree_util.tree_map(
+      lambda aval: jax_core.ShapedArray((), aval.dtype), avals_tree
   )
-  combine_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      flat_fun, [*mapped_avals, *mapped_avals]
+  in_avals_ft = ft.flatten(((mapped_avals_tree, mapped_avals_tree), {}))
+
+  debug_info = api_util.debug_info("pallas triton reduction", body, (a, a), {})
+  combine_jaxpr, _ = pe.trace_to_jaxpr(
+      body, in_avals_ft, debug_info=debug_info
   )
-  out_tree = out_tree_thunk()
-  del out_tree  # Not needed
-  if consts:
+
+  if combine_jaxpr.consts:
     raise NotImplementedError("Reductions with constants not supported.")
   element_types = [_element_type(arg.type) for arg in flat_args]
   reduce_op = tt_dialect.ReduceOp(flat_args, axis)
@@ -2594,7 +2714,7 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   if jaxpr.consts:
     raise NotImplementedError
   return lower_jaxpr_to_triton_ir(
-      ctx.context, jaxpr.jaxpr, ctx.block_infos, *args
+      ctx.context, jaxpr, ctx.block_infos, *args
   )
 
 
@@ -2603,12 +2723,12 @@ def _reshard_lowering_rule(ctx, x, *, dst_sharding, concrete_mesh):
   return x
 
 
-@register_lowering(jax_core.closed_call_p)
+@register_lowering(pe.eval_jaxpr_p)
 @register_lowering(custom_derivatives.custom_jvp_call_p)
-def _closed_call_lowering_rule(
+def _eval_jaxpr_lowering_rule(
     ctx: LoweringRuleContext, *args, call_jaxpr, **_
 ):
-  jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
+  jaxpr, consts = call_jaxpr, call_jaxpr.consts
   if consts:
     raise NotImplementedError
   return lower_jaxpr_to_triton_ir(ctx.context, jaxpr, ctx.block_infos, *args)
@@ -2673,15 +2793,16 @@ def _scan_lowering_rule(
     length,
     reverse,
     unroll,
-    num_consts,
-    num_carry,
+    ft_in,
+    ft_out,
 ):
+  num_consts, num_carry, _ = (len(g) for g in ft_in.unpack())
   # Only implements fori_loop-like scans
   if reverse: raise NotImplementedError
   if unroll != 1: raise NotImplementedError
   del unroll, reverse
 
-  jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
+  jaxpr, jaxpr_consts = jaxpr, jaxpr.consts
   if jaxpr_consts: raise NotImplementedError
   del jaxpr_consts
 
@@ -2719,7 +2840,7 @@ def _maybe_pattern_match_fori_loop(
 ):
   if cond_nconsts:
     return None
-  _, cond_invars = split_list(cond_jaxpr.jaxpr.invars, [cond_nconsts])
+  _, cond_invars = split_list(cond_jaxpr.invars, [cond_nconsts])
   cond_in_avals = [v.aval for v in cond_invars]
   if len(cond_in_avals) < 2:
     return None
@@ -2731,11 +2852,11 @@ def _maybe_pattern_match_fori_loop(
     return None
   # Check that the only eqn in the cond checks the loop index condition
   v1, v2 = cond_invars[:2]
-  outvar = cond_jaxpr.jaxpr.outvars[0]
+  outvar = cond_jaxpr.outvars[0]
   assert outvar.aval.dtype == jnp.bool_
-  if len(cond_jaxpr.jaxpr.eqns) != 1:
+  if len(cond_jaxpr.eqns) != 1:
     return None
-  eqn = cond_jaxpr.jaxpr.eqns[0]
+  eqn = cond_jaxpr.eqns[0]
   if eqn.primitive != lax.lt_p:
     return None
   if eqn.outvars != [outvar]:
@@ -2743,14 +2864,14 @@ def _maybe_pattern_match_fori_loop(
   if eqn.invars != [v1, v2]:
     return None
   # Check that the carry is updated in the body appropriately
-  _, body_invars = split_list(body_jaxpr.jaxpr.invars, [body_nconsts])
+  _, body_invars = split_list(body_jaxpr.invars, [body_nconsts])
   v1, v2 = body_invars[:2]
-  vo1, vo2 = body_jaxpr.jaxpr.outvars[:2]
+  vo1, vo2 = body_jaxpr.outvars[:2]
   # Upper bound should be constant
   if v2 is not vo2:
     return None
   # Check that we increment the loop index in the body
-  for i, eqn in enumerate(body_jaxpr.jaxpr.eqns):
+  for i, eqn in enumerate(body_jaxpr.eqns):
     if eqn.primitive is lax.add_p:
       if eqn.invars[0] is v1:
         if isinstance(eqn.invars[1], jax_core.Literal):
@@ -2760,7 +2881,7 @@ def _maybe_pattern_match_fori_loop(
               break
   else:
     return None
-  jaxpr = body_jaxpr.jaxpr
+  jaxpr = body_jaxpr
   new_invars = (*jaxpr.invars[:body_nconsts],
                 jaxpr.invars[body_nconsts],
                 *jaxpr.invars[body_nconsts + 2:])
@@ -2830,7 +2951,7 @@ def _while_lowering_rule(
   with ir.InsertionPoint.at_block_begin(before_block):
     [cond] = lower_jaxpr_to_triton_ir(
         ctx.context,
-        cond_jaxpr.jaxpr,
+        cond_jaxpr,
         [*cond_const_block_infos, *carry_block_infos],
         *cond_args,
     )
@@ -2848,7 +2969,7 @@ def _while_lowering_rule(
   with ir.InsertionPoint.at_block_begin(after_block):
     loop_out = lower_jaxpr_to_triton_ir(
         ctx.context,
-        body_jaxpr.jaxpr,
+        body_jaxpr,
         [*body_const_block_infos, *carry_block_infos],
         *body_const_args,
         *carry_args
@@ -2884,7 +3005,7 @@ def _cond_lowering_rule(
   with ir.InsertionPoint.at_block_begin(if_op.then_block):
     outs0 = lower_jaxpr_to_triton_ir(
         ctx.context,
-        branches[0].jaxpr,
+        branches[0],
         block_infos[1:],
         *args)
     scf_dialect.yield_(outs0)
@@ -2901,7 +3022,7 @@ def _cond_lowering_rule(
     else:
       outs1 = lower_jaxpr_to_triton_ir(
           ctx.context,
-          branches[1].jaxpr,
+          branches[1],
           block_infos[1:],
           *args)
     scf_dialect.yield_(outs1)

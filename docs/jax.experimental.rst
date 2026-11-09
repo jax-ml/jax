@@ -25,3 +25,4 @@ Experimental Modules
     jax.experimental.random
     jax.experimental.serialize_executable
     jax.experimental.sparse
+    jax.experimental.xla_metadata

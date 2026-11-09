@@ -33,7 +33,7 @@ def logpdf(x: ArrayLike, mean: ArrayLike, cov: ArrayLike, allow_singular: None =
 
   .. math::
 
-     f(x) = \frac{1}{(2\pi)^k\det\Sigma}\exp\left(-\frac{(x-\mu)^T\Sigma^{-1}(x-\mu)}{2} \right)
+     f(x) = \frac{1}{\sqrt{(2\pi)^k\det\Sigma}}\exp\left(-\frac{(x-\mu)^T\Sigma^{-1}(x-\mu)}{2} \right)
 
   where :math:`\mu` is the ``mean``, :math:`\Sigma` is the covariance matrix (``cov``), and
   :math:`k` is the rank of :math:`\Sigma`.
@@ -83,7 +83,7 @@ def pdf(x: ArrayLike, mean: ArrayLike, cov: ArrayLike) -> Array:
 
   .. math::
 
-     f(x) = \frac{1}{(2\pi)^k\det\Sigma}\exp\left(-\frac{(x-\mu)^T\Sigma^{-1}(x-\mu)}{2} \right)
+     f(x) = \frac{1}{\sqrt{(2\pi)^k\det\Sigma}}\exp\left(-\frac{(x-\mu)^T\Sigma^{-1}(x-\mu)}{2} \right)
 
   where :math:`\mu` is the ``mean``, :math:`\Sigma` is the covariance matrix (``cov``), and
   :math:`k` is the rank of :math:`\Sigma`.

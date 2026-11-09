@@ -22,13 +22,12 @@ from typing import Any, Protocol
 from jax._src import api_util
 from jax._src import core
 from jax._src import custom_api_util
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.pallas.mosaic import lowering as mosaic_lowering
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.fuser import block_spec as block_spec_lib
 
@@ -46,6 +45,7 @@ CustomPushBlockSpecRuleFn = Callable[[tuple[pallas_core.BlockSpec, ...]],
 class CustomEvalContext:
   out_block_specs: tuple[pallas_core.BlockSpec, ...]
   out_block_indices: tuple[Any, ...]
+  scalar_prefetch: Any | None = None
 
 class CustomEvalRuleFn(Protocol):
 
@@ -59,6 +59,31 @@ class CustomEvalRuleFn(Protocol):
 
 @custom_api_util.register_custom_decorator_type
 class custom_fusion:
+  """Wraps a pure JAX function as a primitive with user-defined fuser rules.
+
+  ``custom_fusion`` allows defining custom block spec propagation and block-level
+  evaluation rules for an operation so that it can participate in input and
+  output fusions without decomposing into its constituent JAX primitives.
+  Effects are not supported.
+
+  Rule registration methods and expected callback signatures:
+    - ``def_eval_rule(fn)``: Required. ``fn(ctx: CustomEvalContext, *args) ->
+      Sequence[Any]`` evaluates the operation on a single block and must return
+      a sequence of flat output leaves (even for a single output).
+    - ``def_pull_block_spec(fn)``: Required. ``fn(out_block_transforms:
+      tuple[BlockIndexTransform, ...]) -> Sequence[BlockIndexTransform]``
+      propagates output block transforms backward to the inputs.
+    - ``def_push_block_spec(fn)``: Optional (only needed for output fusions).
+      ``fn(in_block_specs: tuple[BlockSpec, ...]) -> tuple[BlockSpec, ...]``
+      propagates input ``BlockSpecs`` forward to the outputs.
+    - ``def_pallas_impl(fn)``: Optional alternative implementation for use inside
+      a Pallas kernel; must produce the same output abstract values as ``fun``.
+
+  Args:
+    fun: The pure JAX function defining the operation's abstract evaluation and
+      default eager/lowering behavior outside of a fused Pallas kernel.
+  """
+
   fun: Callable[..., Any]
 
   eval_rule: CustomEvalRuleFn | None = None
@@ -99,9 +124,16 @@ class custom_fusion:
   def __call__(self, *args, **kwargs):
     debug_fun = api_util.debug_info("custom_fusion fun", self.fun, args, kwargs)
 
-    # TODO(jburnim): Better error messages here.
-    assert self.eval_rule is not None
-    assert self.pull_block_spec_rule is not None
+    if self.eval_rule is None:
+      raise ValueError(
+          f"custom_fusion-decorated function {debug_fun.func_name} is missing "
+          "an evaluation rule (use def_eval_rule to define one)."
+      )
+    if self.pull_block_spec_rule is None:
+      raise ValueError(
+          f"custom_fusion-decorated function {debug_fun.func_name} is missing "
+          "a pull_block_spec rule (use def_pull_block_spec to define one)."
+      )
 
     try:
       args = api_util.resolve_kwargs(self.fun, args, kwargs)
@@ -113,25 +145,25 @@ class custom_fusion:
       ) from e
 
     # flatten and get jaxpr
-    args_flat, in_tree = tree_util.tree_flatten(args)
-    in_avals = [core.typeof(x) for x in args_flat]
-    flat_fun, out_tree = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(self.fun, debug_info=debug_fun.with_unknown_names()),
-        in_tree)
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    args_flat = tree_util.tree_leaves(args)
+    args_avals = tree_util.tree_map(core.typeof, args)
+    in_avals_ft = ft.flatten((args_avals, {}))
+    closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+        self.fun, in_avals_ft, debug_fun.with_unknown_names()
+    )
+    jaxpr = closed_jaxpr
+    consts = closed_jaxpr.consts
+    out_tree_val = out_avals_ft.tree
 
     # if a Pallas implementation was provided, get its jaxpr
     if self.pallas_impl is not None:
       debug_pallas_impl = api_util.debug_info(
           "custom_fusion pallas_impl", self.pallas_impl, args, kwargs)
-
-      flat_pallas_impl, pallas_out_tree = api_util.flatten_fun_nokwargs(
-          lu.wrap_init(self.pallas_impl, debug_info=debug_pallas_impl),
-          in_tree)
-      # TODO(jburnim): Error if out_tree() and kernel_out_tree() are different?
-      del pallas_out_tree
-      pallas_jaxpr, _, pallas_consts = (
-          pe.trace_to_jaxpr_dynamic(flat_pallas_impl, in_avals))
+      pallas_closed_jaxpr, _ = pe.trace_to_jaxpr(
+          self.pallas_impl, in_avals_ft, debug_pallas_impl
+      )
+      pallas_jaxpr = pallas_closed_jaxpr
+      pallas_consts = pallas_closed_jaxpr.consts
     else:
       pallas_jaxpr = None
       pallas_consts = []
@@ -147,12 +179,9 @@ class custom_fusion:
         pull_block_spec_rule=self.pull_block_spec_rule,
         push_block_spec_rule=self.push_block_spec_rule,
         pallas_jaxpr=pallas_jaxpr,
-        pallas_num_consts=len(pallas_consts),
-        in_tree=in_tree,
-        out_tree=out_tree(),
-        kernel_out_tree=out_tree())
+        pallas_num_consts=len(pallas_consts))
 
-    return tree_util.tree_unflatten(out_tree(), out_flat)
+    return tree_util.tree_unflatten(out_tree_val, out_flat)
 
 
 @custom_fusion_p.def_impl
@@ -176,17 +205,25 @@ def _custom_fusion_effectful_abstract_eval(
     pallas_jaxpr: core.Jaxpr | None,
     **_):
   del args
-  # TODO(jburnim): Error if pallas_jaxpr has different number of outputs, or
-  # different shapes and types of outputs?
   if jaxpr.effects:
     raise NotImplementedError(
-        "custom_fusion-decorated function {jaxpr.debug_info.func_src_info} "
-        "has effects, which is not yet supported: {jaxpr.effects}")
-  if pallas_jaxpr is not None and pallas_jaxpr.effects:
-    raise NotImplementedError(
-        "custom_fusion-decorated function {jaxpr.debug_info.func_src_info} "
-        "has a pallas_impl with effects, which is not yet supported: "
-        f"{pallas_jaxpr.effects}")
+        f"custom_fusion-decorated function {jaxpr.debug_info.func_src_info} "
+        f"has effects, which is not yet supported: {jaxpr.effects}")
+  if pallas_jaxpr is not None:
+    if pallas_jaxpr.effects:
+      raise NotImplementedError(
+          f"custom_fusion-decorated function {jaxpr.debug_info.func_src_info} "
+          "has a pallas_impl with effects, which is not yet supported: "
+          f"{pallas_jaxpr.effects}")
+    if len(pallas_jaxpr.out_avals) != len(jaxpr.out_avals) or any(
+        p_aval.shape != j_aval.shape or p_aval.dtype != j_aval.dtype
+        for p_aval, j_aval in zip(pallas_jaxpr.out_avals, jaxpr.out_avals)
+    ):
+      raise ValueError(
+          f"custom_fusion-decorated function {jaxpr.debug_info.func_src_info} "
+          f"and its pallas_impl have mismatched output abstract values: "
+          f"{jaxpr.out_avals} vs {pallas_jaxpr.out_avals}"
+      )
   return jaxpr.out_avals, jaxpr.effects
 
 
@@ -202,28 +239,8 @@ def _custom_fusion_eval_rule(
   return eval_rule(CustomEvalContext(
       out_block_specs=ctx.out_block_specs,
       out_block_indices=ctx.get_out_block_indices(),
+      scalar_prefetch=ctx.scalar_prefetch,
   ), *args)
-
-
-# TODO(jburnim): Lowering rules for SC and Mosaic GPU.
-
-@mosaic_lowering.register_lowering_rule(custom_fusion_p)
-def _custom_fusion_mosaic_lowering_rule(
-    ctx: mosaic_lowering.LoweringRuleContext,
-    *args,
-    jaxpr: core.Jaxpr,
-    num_consts: int,
-    pallas_jaxpr: core.Jaxpr | None,
-    pallas_num_consts: int,
-    **_):
-  consts, pallas_consts, args = util.split_list(
-      args, [num_consts, pallas_num_consts])
-  if pallas_jaxpr is None:
-    pallas_jaxpr = jaxpr
-    pallas_consts = consts
-  lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
-  return mosaic_lowering.jaxpr_subcomp(
-      lowering_context, pallas_jaxpr, *pallas_consts, *args)
 
 
 @block_spec_lib.register_pull_block_spec_rule(custom_fusion_p)
@@ -242,11 +259,15 @@ def _custom_fusion_pull_block_spec_rule(
 def _custom_fusion_push_block_spec_rule(
     ctx : block_spec_lib.PushRuleContext,
     *block_specs : pallas_core.BlockSpec,
-    push_block_spec_rule : CustomPushBlockSpecRuleFn,
+    push_block_spec_rule : CustomPushBlockSpecRuleFn | None,
     **_
 ) -> tuple[pallas_core.BlockSpec, ...]:
   del ctx
-  # TODO(jburnim): Better error message if push_block_spec_rule is None.
+  if push_block_spec_rule is None:
+    raise ValueError(
+        "custom_fusion is missing a push_block_spec rule "
+        "(use def_push_block_spec to define one)."
+    )
   return push_block_spec_rule(block_specs)
 
 
@@ -259,6 +280,6 @@ def _custom_fusion_usage_rule(
     **_
 ) -> Sequence[set[block_spec_lib.Usage]]:
   del ctx
-  # TODO(jburnim): Error if jaxpr.jaxpr gives different usage than pallas_jaxpr?
+  # TODO(jburnim): Error if jaxpr gives different usage than pallas_jaxpr?
   read_usage_env = block_spec_lib.compute_usage(jaxpr, used_out)
   return util.safe_map(read_usage_env, jaxpr.invars)

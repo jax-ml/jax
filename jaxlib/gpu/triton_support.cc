@@ -18,8 +18,6 @@ limitations under the License.
 
 #include "jaxlib/gpu/triton_kernels.h"
 #include "jaxlib/gpu/vendor.h"
-#include "xla/ffi/api/c_api.h"
-#include "xla/ffi/api/ffi.h"
 #include "xla/service/custom_call_target_registry.h"
 
 namespace jax {
@@ -31,11 +29,12 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("triton_kernel_call", TritonKernelCall,
 
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "triton_kernel_call_ffi", "CUDA",
                          {
-                            /*instantiate=*/nullptr,
-                            /*prepare=*/nullptr,
-                            /*initialize=*/kTritonKernelCallFfiInitialize,
-                            /*execute=*/kTritonKernelCallFfi,
-                        });
+                             /*instantiate=*/kTritonKernelCallFfiInstantiate,
+                             /*prepare=*/kTritonKernelCallFfiPrepare,
+                             /*initialize=*/kTritonKernelCallFfiInitialize,
+                             /*execute=*/kTritonKernelCallFfi,
+                             /*record=*/kTritonKernelCallFfiRecord,
+                         });
 }  // namespace
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

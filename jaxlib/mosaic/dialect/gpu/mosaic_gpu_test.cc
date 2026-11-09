@@ -25,6 +25,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
@@ -68,9 +69,9 @@ absl::StatusOr<mlir::func::FuncOp> FromCppFunc(
   fn.addEntryBlock();
   b.setInsertionPointToStart(&fn.front());
 
-  TF_RETURN_IF_ERROR(f(b, mlir::cast<mlir::TypedValue<T1>>(fn.getArgument(0)),
-                       mlir::cast<mlir::TypedValue<T2>>(fn.getArgument(1)),
-                       varargs...));
+  ABSL_RETURN_IF_ERROR(f(b, mlir::cast<mlir::TypedValue<T1>>(fn.getArgument(0)),
+                         mlir::cast<mlir::TypedValue<T2>>(fn.getArgument(1)),
+                         varargs...));
 
   mlir::func::ReturnOp::create(b, b.getUnknownLoc());
 

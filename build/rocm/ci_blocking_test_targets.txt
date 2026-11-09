@@ -1,0 +1,8 @@
+# Blocking PR gate targets.
+# Edit this file to tune which tests gate PRs; no workflow YAML changes needed.
+# Use - prefix to exclude specific tests within a suite.
+# Keep only tests that are fast and reliably passing — flaky tests block all PRs.
+
+# Starting with simple test that can cover large breakage in pjrt
+# compatibility and also does well tested math ops.
+//tests:lax_vmap_op_test_gpu

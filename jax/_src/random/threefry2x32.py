@@ -58,7 +58,7 @@ def threefry_seed(seed: typing.Array) -> typing.Array:
   """
   return _threefry_seed(seed)
 
-@api.jit(inline=True)
+@api.jit(inline=api.Inline.JAX_EARLY)
 def _threefry_seed(seed: typing.Array) -> typing.Array:
   if seed.shape:
     raise TypeError(f"PRNG key seed must be a scalar; got {seed!r}.")
@@ -96,7 +96,9 @@ def _threefry2x32_abstract_eval(*args):
                     .format(args))
   if all(isinstance(arg, core.ShapedArray) for arg in args):
     shape = lax.broadcasting_shape_rule("threefry2x32", *args)
-    sharding = lax.broadcasting_sharding_rule("threefry2x32", *args)
+    sharding = lax.lax_utils.call_sharding_rule(
+        threefry2x32_p, partial(lax.broadcasting_sharding_rule, "threefry2x32"),
+        None, None, *args)
     aval = core.ShapedArray(shape, np.dtype('uint32'), sharding=sharding)
   else:
     raise TypeError(f"Arguments to threefry2x32 must all be arrays, got {args}")
@@ -216,8 +218,10 @@ threefry2x32_p.multiple_results = True
 threefry2x32_p.def_impl(partial(dispatch.apply_primitive, threefry2x32_p))
 threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
 batching.defbroadcasting(threefry2x32_p)
+
 mlir.register_lowering(
-    threefry2x32_p, _threefry2x32_lowering_rule, inline=False)
+    threefry2x32_p, _threefry2x32_lowering_rule, inline=False,
+    shard_map_collective_rule=lax._naryop_collective_rule)
 mlir.register_lowering(
     threefry2x32_p, _threefry2x32_cpu_lowering_rule, platform='cpu')
 mlir.register_lowering(
@@ -230,9 +234,14 @@ mlir.register_lowering(
     partial(_threefry2x32_gpu_lowering_rule, target_name_prefix='hip'),
     platform='rocm',
     inline=False)
+mlir.register_lowering(
+    threefry2x32_p,
+    partial(_threefry2x32_gpu_lowering_rule, target_name_prefix='oneapi'),
+    platform='oneapi',
+    inline=False)
 
 
-@api.jit(inline=True)
+@api.jit(inline=api.Inline.JAX_EARLY)
 def threefry_2x32(keypair, count):
   """Apply the Threefry 2x32 hash.
 
@@ -290,13 +299,13 @@ def _threefry_split(key, shape) -> typing.Array:
   else:
     return _threefry_split_original(key, shape)
 
-@api.jit(static_argnums=(1,), inline=True)
+@api.jit(static_argnums=(1,), inline=api.Inline.JAX_EARLY)
 def _threefry_split_original(key, shape) -> typing.Array:
   num = math.prod(shape)
   counts = lax.iota(np.uint32, num * 2)
   return lax.reshape(threefry_2x32(key, counts), (*shape, 2))
 
-@api.jit(static_argnums=(1,), inline=True)
+@api.jit(static_argnums=(1,), inline=api.Inline.JAX_EARLY)
 def _threefry_split_foldlike(key, shape) -> typing.Array:
   k1, k2 = key
   counts1, counts2 = prng.iota_2x32_shape(shape)
@@ -313,6 +322,31 @@ def _threefry_fold_in(key, data):
   return threefry_2x32(key, threefry_seed(data))
 
 
+def threefry_raw_bits(
+    key: typing.Array, shape: prng.Shape
+) -> tuple[typing.Array, ...]:
+  """Sample raw 32-bit uniform random bit streams using PRNG key."""
+  if not _is_threefry_prng_key(key):
+    raise TypeError("threefry_raw_bits got invalid prng key.")
+  if config.threefry_partitionable.value:
+    return _threefry_raw_bits_partitionable(key, shape)
+  else:
+    k0, k1 = _threefry_split_original(key, (2,))
+    return (
+        _threefry_random_bits_original(k0, 32, shape),
+        _threefry_random_bits_original(k1, 32, shape),
+    )
+
+def _threefry_raw_bits_partitionable(
+    key: typing.Array, shape: prng.Shape
+) -> tuple[typing.Array, ...]:
+  if all(core.is_constant_dim(d) for d in shape) and math.prod(shape) > 2 ** 64:
+    raise NotImplementedError('random bits array of size exceeding 2 ** 64')
+  k1, k2 = key
+  counts1, counts2 = prng.iota_2x32_shape(shape)
+  return tuple(threefry2x32_p.bind(k1, k2, counts1, counts2))
+
+
 def threefry_random_bits(key: typing.Array, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
   if not _is_threefry_prng_key(key):
@@ -321,29 +355,13 @@ def threefry_random_bits(key: typing.Array, bit_width, shape):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
 
   if config.threefry_partitionable.value:
-    return _threefry_random_bits_partitionable(key, bit_width, shape)
+    return prng._raw_bits_to_random_bits(
+        threefry_prng_impl, key, bit_width, shape
+    )[0]
   else:
     return _threefry_random_bits_original(key, bit_width, shape)
 
-def _threefry_random_bits_partitionable(key: typing.Array, bit_width, shape):
-  if all(core.is_constant_dim(d) for d in shape) and math.prod(shape) > 2 ** 64:
-    raise NotImplementedError('random bits array of size exceeding 2 ** 64')
-
-  k1, k2 = key
-  counts1, counts2 = prng.iota_2x32_shape(shape)
-  bits1, bits2 = threefry2x32_p.bind(k1, k2, counts1, counts2)
-
-  dtype = prng.UINT_DTYPES[bit_width]
-  if bit_width == 64:
-    bits_hi = lax.convert_element_type(bits1, dtype)
-    bits_lo = lax.convert_element_type(bits2, dtype)
-    return lax.shift_left(bits_hi, jnp.asarray(32, dtype=dtype)) | bits_lo
-  elif bit_width == 32:
-    return bits1 ^ bits2
-  else:
-    return lax.convert_element_type(bits1 ^ bits2, dtype)
-
-@api.jit(static_argnums=(1, 2), inline=True)
+@api.jit(static_argnums=(1, 2), inline=api.Inline.JAX_EARLY)
 def _threefry_random_bits_original(key: typing.Array, bit_width, shape):
   size = math.prod(shape)
   # Compute ceil(bit_width * size / 32) in a way that is friendly to shape
@@ -394,7 +412,10 @@ threefry_prng_impl = prng.PRNGImpl(
     random_bits=threefry_random_bits,
     fold_in=threefry_fold_in,
     name='threefry2x32',
-    tag='fry')
+    tag='fry',
+    raw_bits=threefry_raw_bits,
+    num_streams=2,
+    raw_dtype=np.dtype('uint32'))
 
 prng.register_prng(threefry_prng_impl)
 

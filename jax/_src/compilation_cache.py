@@ -14,8 +14,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import logging
 import threading
+from typing import Any
 import warnings
 import zlib
 
@@ -24,7 +26,7 @@ import numpy as np
 # If zstandard is installed, we use zstd compression, otherwise we use zlib.
 try:
   # compression.zstd should be present in Python 3.14+
-  from compression import zstd
+  from compression import zstd  # pyrefly: ignore[missing-import]
 except ImportError:
   zstd = None
 
@@ -142,7 +144,7 @@ class VerificationCache(CacheInterface):
     self.base_cache_hits: dict[str, int] = {}
 
   @property
-  def _path(self):  # pyrefly: ignore[bad-override]
+  def _path(self):
     return self._base_cache._path
 
   @_path.setter
@@ -195,7 +197,7 @@ def set_cache_dir(path) -> None:
   do not need be recompiled if the process is restarted or otherwise run again.
   This also tells Jax where to look for compiled functions before compiling.
 
-  For more information, see the :ref:`persistent compilation cache guide <persistent-compilation-cache>`.
+  For more information, see the :ref:`persistent compilation cache guide <jax-501-compilation-cache>`.
 
   .. warning::
      The compilation cache is considered trusted. Do not share a compilation
@@ -214,7 +216,7 @@ def initialize_cache(path) -> None:
   Set the path. To take effect, should be called prior to any calls to
   get_executable_and_time() and put_executable_and_time().
 
-  For more information, see the :ref:`persistent compilation cache guide <persistent-compilation-cache>`.
+  For more information, see the :ref:`persistent compilation cache guide <jax-501-compilation-cache>`.
 
   .. warning::
      The compilation cache is considered trusted. Do not share a compilation
@@ -322,7 +324,8 @@ def is_executable_in_cache(backend, cache_key: str) -> bool:
 
 
 def get_executable_and_time(
-    cache_key: str, compile_options, backend, executable_devices
+    cache_key: str, compile_options, backend, executable_devices,
+    host_callbacks: Sequence[Any] = (),
 ) -> tuple[xla_client.LoadedExecutable | None, int | None]:
   """Returns the cached executable and its compilation time if present, or None
   otherwise.
@@ -338,8 +341,17 @@ def get_executable_and_time(
   executable_and_time = decompress_executable(executable_and_time)
   serialized_executable, compile_time = extract_executable_and_time(
       executable_and_time)
-  xla_executable_deserialized = backend.deserialize_executable(
-      serialized_executable, executable_devices, compile_options)
+  if host_callbacks:
+    xla_executable_deserialized = backend.deserialize_executable(
+        serialized_executable,
+        executable_devices,
+        compile_options,
+        host_callbacks,
+    )
+  else:
+    xla_executable_deserialized = backend.deserialize_executable(
+        serialized_executable, executable_devices, compile_options
+    )
   return xla_executable_deserialized, compile_time
 
 
@@ -364,10 +376,7 @@ def put_executable_and_time(
                " since cache is disabled/not initialized", cache_key)
     return
 
-  if hasattr(executable, "serialize") or xla_client._version >= 389:
-    serialized_executable = executable.serialize()
-  else:
-    serialized_executable = backend.serialize_executable(executable)
+  serialized_executable = executable.serialize()
   executable_and_time = combine_executable_and_time(
       serialized_executable, compile_time)
   executable_and_time = compress_executable(executable_and_time)
@@ -393,7 +402,7 @@ def put_executable_and_time(
           f"PERSISTENT CACHE WRITE with key {cache_key}, this is unexpected because "
           "JAX_COMPILATION_CACHE_EXPECT_PGLE is set. The execution that populated the "
           "cache may lack coverage, "
-          "https://docs.jax.dev/en/latest/persistent_compilation_cache.html may "
+          "https://docs.jax.dev/en/latest/501/compilation-cache.html may "
           "help debug why this has happened")
 
     cache.put(cache_key, executable_and_time)
@@ -404,7 +413,7 @@ def get_cache_key(
     devices: np.ndarray,
     compile_options,
     backend,
-    ignore_callbacks: cache_key.IgnoreCallbacks = cache_key.IgnoreCallbacks.NO,
+    ignore_custom_partitioning: bool = False,
 ) -> str:
   return cache_key.get(
       module,
@@ -412,7 +421,7 @@ def get_cache_key(
       compile_options,
       backend,
       "zstandard" if zstandard is not None else "zlib",
-      ignore_callbacks,
+      ignore_custom_partitioning,
   )
 
 
@@ -430,7 +439,7 @@ def is_initialized() -> bool:
 def reset_cache() -> None:
   """Get back to pristine, uninitialized state.
 
-  For more information, see the :ref:`persistent compilation cache guide <persistent-compilation-cache>`.
+  For more information, see the :ref:`persistent compilation cache guide <jax-501-compilation-cache>`.
   """
   global _cache
   global _cache_initialized
@@ -457,7 +466,7 @@ def combine_executable_and_time(
             (big-endian int)
   """
   return (
-      int(compile_time).to_bytes(_TIME_BYTES, byteorder="big")
+      compile_time.to_bytes(_TIME_BYTES, byteorder="big")
       + serialized_executable
   )
 

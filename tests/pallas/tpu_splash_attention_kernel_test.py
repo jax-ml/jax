@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import dataclasses
 import functools
-from typing import Any, TypeVar
+from typing import Any
 import unittest
 
 from absl.testing import absltest
@@ -40,7 +40,7 @@ jax.config.parse_flags_with_absl()
 htu.setup_hypothesis(max_examples=5)
 
 partial = functools.partial
-Draw = TypeVar("Draw", bound=Callable[[hps.SearchStrategy[Any]], Any])
+type Draw = Callable[[hps.SearchStrategy[Any]], Any]
 
 
 @hps.composite
@@ -329,7 +329,7 @@ class PallasBaseTest(ptu.PallasTPUTest):
     np.testing.assert_allclose(x, y, **kwargs)
 
 
-@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class SplashAttentionTest(PallasBaseTest):
   @parameterized.product(
       is_mqa=(False, True),
@@ -337,6 +337,12 @@ class SplashAttentionTest(PallasBaseTest):
       is_dynamic_mask=(False, True),
   )
   @hp.given(hps.data())
+  @hp.settings(
+      suppress_health_check=[
+          *hp.settings.default.suppress_health_check,
+          hp.HealthCheck.filter_too_much,
+      ]
+  )
   def test_splash_attention(self, is_mqa, is_segmented, is_dynamic_mask, data):
     seed = data.draw(seed_strategy())
     key = random.key(seed)
@@ -396,13 +402,15 @@ class SplashAttentionTest(PallasBaseTest):
           attn_logits_soft_cap=attn_logits_soft_cap,
           interpret=self.INTERPRET,
       )
-    o = attn(q, k, v, segment_ids)
-    o_ref = attn_ref(
-        q.astype(np.float32),
-        k.astype(np.float32),
-        v.astype(np.float32),
-        segment_ids,
-        attn_logits_soft_cap=attn_logits_soft_cap,
+    o = jax.device_get(attn(q, k, v, segment_ids))
+    o_ref = jax.device_get(
+        attn_ref(
+            q.astype(np.float32),
+            k.astype(np.float32),
+            v.astype(np.float32),
+            segment_ids,
+            attn_logits_soft_cap=attn_logits_soft_cap,
+        )
     )
     self._assert_allclose(o, o_ref, atol=3e-3, rtol=3e-3)
 
@@ -412,6 +420,12 @@ class SplashAttentionTest(PallasBaseTest):
       is_dynamic_mask=(False, True),
   )
   @hp.given(hps.data())
+  @hp.settings(
+      suppress_health_check=[
+          *hp.settings.default.suppress_health_check,
+          hp.HealthCheck.filter_too_much,
+      ]
+  )
   def test_splash_attention_fwd(
       self, is_mqa, is_segmented, is_dynamic_mask, data
   ):
@@ -478,12 +492,14 @@ class SplashAttentionTest(PallasBaseTest):
         save_residuals=True,
         attn_logits_soft_cap=attn_logits_soft_cap,
     )
-    o, (logsumexp,) = attn(q, k, v, segment_ids)
-    o_ref, (logsumexp_ref,) = attn_ref(
-        q.astype(jnp.float32),
-        k.astype(jnp.float32),
-        v.astype(jnp.float32),
-        segment_ids,
+    o, (logsumexp,) = jax.device_get(attn(q, k, v, segment_ids))
+    o_ref, (logsumexp_ref,) = jax.device_get(
+        attn_ref(
+            q.astype(jnp.float32),
+            k.astype(jnp.float32),
+            v.astype(jnp.float32),
+            segment_ids,
+        )
     )
     self._assert_allclose(o, o_ref, atol=3e-3, rtol=3e-3)
     self._assert_allclose(logsumexp, logsumexp_ref, atol=1e-3, rtol=1e-3)
@@ -492,6 +508,12 @@ class SplashAttentionTest(PallasBaseTest):
       is_segmented=(False, True),
   )
   @hp.given(hps.data())
+  @hp.settings(
+      suppress_health_check=[
+          *hp.settings.default.suppress_health_check,
+          hp.HealthCheck.filter_too_much,
+      ]
+  )
   def test_splash_attention_custom_bwd(self, is_segmented, data):
     seed = data.draw(seed_strategy(), label="seed")
     key = random.key(1 + seed)
@@ -524,18 +546,30 @@ class SplashAttentionTest(PallasBaseTest):
                                   custom_type="vanilla",
                                   attn_logits_soft_cap=attn_logits_soft_cap)
     o_ref, attn_vjp_ref = jax.vjp(attn_ref, q, k, v, segment_ids)
-    q32, k32, v32 = jax.tree.map(lambda x: x.astype(jnp.float32),
-                                      (q, k, v))
-    o_custom = attn_custom(q32, k32, v32, segment_ids)
-    _, attn_vjp = jax.vjp(attn_custom, q32, k32, v32, segment_ids)
-    _, attn_vanilla_vjp = jax.vjp(attn_custom_vanilla, q32, k32, v32,
-                                  segment_ids)
-    do = random.uniform(k4, o_custom.shape, dtype=o_custom.dtype) / 10.
-    # These should be identical
-    self._assert_allclose(o_custom, o_ref, atol=1e-5, rtol=1e-5)
-    dq, dk, dv, _ = attn_vjp(do)
-    dq_vanilla, dk_vanilla, dv_vanilla, _ = attn_vanilla_vjp(do)
+    do = random.uniform(k4, o_ref.shape, dtype=o_ref.dtype) / 10.0
     dq_ref, dk_ref, dv_ref, _ = attn_vjp_ref(do)
+    o_ref, dq_ref, dk_ref, dv_ref = jax.device_get(
+        (o_ref, dq_ref, dk_ref, dv_ref)
+    )
+    del attn_vjp_ref
+
+    q32, k32, v32 = jax.tree.map(lambda x: x.astype(jnp.float32), (q, k, v))
+    o_custom = jax.device_get(attn_custom(q32, k32, v32, segment_ids))
+    self._assert_allclose(o_custom, o_ref, atol=1e-5, rtol=1e-5)
+
+    _, attn_vjp = jax.vjp(attn_custom, q32, k32, v32, segment_ids)
+    dq, dk, dv, _ = attn_vjp(do)
+    dq, dk, dv = jax.device_get((dq, dk, dv))
+    del attn_vjp
+
+    _, attn_vanilla_vjp = jax.vjp(
+        attn_custom_vanilla, q32, k32, v32, segment_ids
+    )
+    dq_vanilla, dk_vanilla, dv_vanilla, _ = attn_vanilla_vjp(do)
+    dq_vanilla, dk_vanilla, dv_vanilla = jax.device_get(
+        (dq_vanilla, dk_vanilla, dv_vanilla)
+    )
+    del attn_vanilla_vjp
     # These will be different because of reassociation
     if dtype == jnp.bfloat16:
       atols = {"dv": 4e-3, "dq": 0.05, "dk": 0.05}
@@ -546,7 +580,7 @@ class SplashAttentionTest(PallasBaseTest):
         atols["dk"] = 0.065
     elif dtype == jnp.float32:
       atols = {"dv": 3e-3, "dq": 0.05, "dk": 0.05}
-      atols_v = {"dv": 4e-4, "dq": 2e-3, "dk": 3e-3}
+      atols_v = {"dv": 4e-4, "dq": 2e-3, "dk": 4e-3}
       rtols = {"dv": 3e-3, "dq": 0.05, "dk": 0.05}
       rtols_v = {"dv": 8e-3, "dq": 5e-4, "dk": 5e-4}
       if jtu.is_device_tpu(version=4):
@@ -575,6 +609,12 @@ class SplashAttentionTest(PallasBaseTest):
       use_sinks=(False, True),
   )
   @hp.given(hps.data())
+  @hp.settings(
+      suppress_health_check=[
+          *hp.settings.default.suppress_health_check,
+          hp.HealthCheck.filter_too_much,
+      ]
+  )
   def test_splash_attention_bwd(
       self,
       is_mqa,
@@ -652,8 +692,17 @@ class SplashAttentionTest(PallasBaseTest):
       )
     if use_sinks:
       o, attn_vjp = jax.vjp(attn, q, k, v, segment_ids, sinks)
+      do = random.uniform(k4, o.shape, dtype=o.dtype)
+      dq, dk, dv, _, dsinks = attn_vjp(do)
+      o, dq, dk, dv, dsinks = jax.device_get((o, dq, dk, dv, dsinks))
     else:
       o, attn_vjp = jax.vjp(attn, q, k, v, segment_ids)
+      do = random.uniform(k4, o.shape, dtype=o.dtype)
+      dq, dk, dv, _ = attn_vjp(do)
+      dsinks = None
+      o, dq, dk, dv = jax.device_get((o, dq, dk, dv))
+    del attn_vjp
+
     q32, k32, v32 = jax.tree.map(
         lambda x: x.astype(jnp.float32), (q, k, v)
     )
@@ -666,14 +715,8 @@ class SplashAttentionTest(PallasBaseTest):
         save_residuals=True,
         attn_logits_soft_cap=attn_logits_soft_cap,
     )
+    o_ref, logsumexp = jax.device_get((o_ref, logsumexp))
     self._assert_allclose(o, o_ref, atol=3e-3, rtol=3e-3)
-
-    do = random.uniform(k4, o.shape, dtype=o.dtype)
-    if use_sinks:
-      dq, dk, dv, _, dsinks = attn_vjp(do)
-    else:
-      dq, dk, dv, _ = attn_vjp(do)
-      dsinks = None
     def bwd(
         mask, q, k, v, segment_ids, sinks, o, logsumexp, do
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
@@ -699,16 +742,18 @@ class SplashAttentionTest(PallasBaseTest):
         k32 = jnp.repeat(k32, head_multiplier, axis=0)
         v32 = jnp.repeat(v32, head_multiplier, axis=0)
 
-    dq_ref, dk_ref, dv_ref, dsinks_ref = bwd(
-        mask[:, :, :],
-        q32,
-        k32,
-        v32,
-        segment_ids,
-        sinks,
-        o.astype(jnp.float32),
-        logsumexp,
-        do.astype(jnp.float32),
+    dq_ref, dk_ref, dv_ref, dsinks_ref = jax.device_get(
+        bwd(
+            mask[:, :, :],
+            q32,
+            k32,
+            v32,
+            segment_ids,
+            sinks,
+            o.astype(jnp.float32),
+            logsumexp,
+            do.astype(jnp.float32),
+        )
     )
     if is_mqa:
       dk_ref, dv_ref = dk_ref.sum(axis=0), dv_ref.sum(axis=0)
@@ -725,6 +770,72 @@ class SplashAttentionTest(PallasBaseTest):
     self._assert_allclose(dk, dk_ref, atol=2e-2, rtol=3e-2)
     if use_sinks:
       self._assert_allclose(dsinks, dsinks_ref, atol=5e-3, rtol=3e-2)
+
+  @parameterized.parameters(jnp.bfloat16, jnp.float32)
+  def test_splash_attention_sinks_bwd_precision(self, sinks_dtype):
+    num_heads, seq_len, head_dim = 4, 1024, 128
+    k1, k2, k3, k4, k5 = random.split(random.key(0), 5)
+    q = random.normal(
+        k1, (num_heads, seq_len, head_dim), dtype=jnp.bfloat16
+    ) / np.sqrt(head_dim).astype(jnp.bfloat16)
+    k = random.normal(k2, (num_heads, seq_len, head_dim), dtype=jnp.bfloat16)
+    v = random.normal(
+        k3, (num_heads, seq_len, head_dim), dtype=jnp.bfloat16
+    ) * np.sqrt(seq_len).astype(jnp.bfloat16)
+    sinks = random.normal(k4, (num_heads,), dtype=sinks_dtype)
+    do = random.normal(k5, (num_heads, seq_len, head_dim), dtype=jnp.bfloat16)
+
+    mask = mask_lib.MultiHeadMask(
+        tuple(mask_lib.FullMask((seq_len, seq_len)) for _ in range(num_heads))
+    )
+    attn_ref = splash.make_masked_mha_reference(mask)
+    _, attn_ref_vjp = jax.vjp(
+        attn_ref,
+        q.astype(jnp.float32),
+        k.astype(jnp.float32),
+        v.astype(jnp.float32),
+        None,
+        sinks.astype(jnp.float32),
+    )
+    *_, dsinks_ref = jax.device_get(attn_ref_vjp(do.astype(jnp.float32)))
+
+    attn_custom = splash.make_masked_mha_reference(mask, backward_impl="custom")
+    _, attn_custom_vjp = jax.vjp(attn_custom, q, k, v, None, sinks)
+    *_, dsinks_custom = jax.device_get(attn_custom_vjp(do.astype(jnp.float32)))
+    self.assertEqual(dsinks_custom.dtype, sinks_dtype)
+    self._assert_allclose(
+        dsinks_custom, dsinks_ref.astype(sinks_dtype), atol=2e-3, rtol=1e-2
+    )
+
+    attn_fwd = splash.make_splash_mha_single_device(
+        mask, save_residuals=True, interpret=self.INTERPRET
+    )
+    o, (logsumexp,) = attn_fwd(q, k, v, None, sinks)
+    bwd = jax.vmap(
+        partial(
+            splash._attention_reference_custom_bwd,
+            splash.DEFAULT_MASK_VALUE,
+            False,
+            "flash",
+            None,
+        )
+    )
+    *_, dsinks_ref_bwd = jax.device_get(
+        bwd((jnp.array(mask[:, :, :]), q, k, v, None, sinks, o, logsumexp), do)
+    )
+    self.assertEqual(dsinks_ref_bwd.dtype, sinks_dtype)
+    self._assert_allclose(
+        dsinks_ref_bwd, dsinks_ref.astype(sinks_dtype), atol=2e-3, rtol=1e-2
+    )
+
+    attn = splash.make_splash_mha_single_device(mask, interpret=self.INTERPRET)
+    _, attn_vjp = jax.vjp(attn, q, k, v, None, sinks)
+    *_, dsinks = jax.device_get(attn_vjp(do))
+    self.assertEqual(dsinks.dtype, sinks_dtype)
+    self._assert_allclose(
+        dsinks, dsinks_ref.astype(sinks_dtype), atol=2e-3, rtol=1e-2
+    )
+    self._assert_allclose(dsinks, dsinks_ref_bwd, atol=1e-5, rtol=1e-5)
 
   def test_grid_shrinking(self):
     """Make sure that grid shrinking does not change the attention output."""

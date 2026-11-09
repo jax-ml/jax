@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence, Iterable
-from dataclasses import dataclass
 from functools import partial
 import logging
 from typing import Any
@@ -32,25 +31,24 @@ from jax._src import effects
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import api_util
-from jax._src import custom_derivatives
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters.remat import remat_transform
-from jax._src.hijax import VJPHiPrimitive, call_hi_primitive_p
+from jax._src.interpreters.remat import remat_transform, reduce_precision as remat_reduce_precision
+from jax._src.hijax import HiPrim, call_hi_primitive_p, Static
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.state import discharge
 from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
+from jax._src import flattree as ft
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
-    tree_map, tree_leaves, tree_leaves_checked, Partial, tracing_registry, FlatTree)
-from jax._src.typing import DeprecatedArg
+    tree_map, tree_leaves, tree_leaves_checked, Partial, tracing_registry)
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
-                           safe_zip, merge_lists, weakref_lru_cache)
+                           safe_zip, merge_lists, subs_list, weakref_lru_cache)
 from jax._src.core import typeof
 
 source_info_util.register_exclusion(__file__)
@@ -76,26 +74,24 @@ def nothing_saveable(*_, **__) -> bool:
   This is the effective policy when using jax.remat without explicit policy."""
   return False
 
-@dataclass(frozen=True)
-class DotsSaveable:
-  only_if_no_batch_dims: bool
-  def __call__(self, prim, *args, **params):
-    if self.only_if_no_batch_dims:
-      if prim is lax_internal.dot_general_p:
-        (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
-        if not lhs_b and not rhs_b:
-          return True
-      if prim.name == "scaled_matmul_wrapper":  # avoid importing cudnn
-        return args[0].shape[0] == 1  # Only save the dot if batch dim size 1
-      return False
-    else:
-      ps = {lax_internal.dot_general_p, lax_convolution.conv_general_dilated_p}
-      return prim in ps or prim.name == "scaled_matmul_wrapper"
+def dots_saveable(prim, *_, **__) -> bool:
+  return (prim in {lax_internal.dot_general_p,
+                   lax_convolution.conv_general_dilated_p} or
+          prim.name == "scaled_matmul_wrapper")  # avoid cudnn import
+checkpoint_dots = dots_saveable
 
-checkpoint_dots = dots_saveable = DotsSaveable(False)
-dots_with_no_batch_dims_saveable = DotsSaveable(True)
+def dots_with_no_batch_dims_saveable(prim, *args, **params) -> bool:
+  """This is a useful heuristic for transformers."""
+  if prim is lax_internal.dot_general_p:
+    (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
+    if not lhs_b and not rhs_b:
+      return True
 
-# TODO TODO memories_test.py
+  if prim.name == "scaled_matmul_wrapper":  # avoid cudnn import
+    return args[0].shape[0] == 1
+
+  return False
+
 def offload_dot_with_no_batch_dims(offload_src, offload_dst):
   """Same as ``dots_with_no_batch_dims_saveable``, but offload to CPU memory
   instead of recomputing.
@@ -121,27 +117,21 @@ def save_anything_except_these_names(*names_not_to_save):
 def save_any_names_but_these(*names_not_to_save):
   """Save only named values, i.e. any outputs of `checkpoint_name`, excluding
   the names given."""
-  return SaveAnyNamesButThese(frozenset(names_not_to_save))
-
-@dataclass(frozen=True)
-class SaveOnlyTheseNames:
-  saveable_names: frozenset[str]
-  def __call__(self, prim, *_, **params):
+  names_not_to_save = frozenset(names_not_to_save)
+  def policy(prim, *_, **params):
     if prim is name_p:
-      return params['name'] in self.saveable_names
-    return False  # not saveable unless it's in the allow-list
-
-@dataclass(frozen=True)
-class SaveAnyNamesButThese:
-  names: frozenset[str]
-  def __call__(self, prim, *_, **params):
-    if prim is name_p:
-      return params['name'] not in self.names
+      return params['name'] not in names_not_to_save
     return False  # only allow saving named values
+  return policy
 
 def save_only_these_names(*names_which_can_be_saved):
   """Save only named values, and only among the names given."""
-  return SaveOnlyTheseNames(frozenset(names_which_can_be_saved))
+  names_which_can_be_saved = set(names_which_can_be_saved)
+  def policy(prim, *_, **params):
+    if prim is name_p:
+      return params['name'] in names_which_can_be_saved
+    return False  # not saveable unless it's in the allow-list
+  return policy
 
 def save_and_offload_only_these_names(
     *, names_which_can_be_saved, names_which_can_be_offloaded,
@@ -156,8 +146,8 @@ def save_and_offload_only_these_names(
         "The names should be exclusive and should not intersect in"
         " `names_which_can_be_saved` and `names_which_can_be_offloaded`. Got"
         f" names_which_can_be_saved={names_which_can_be_saved},"
-        f" names_which_can_be_offloaded={names_which_can_be_offloaded} and the"
-        f" intersection={intersection}")
+        f" names_which_can_be_offloaded={names_which_can_be_offloaded} and"
+        f" the intersection={intersection}")
   def policy(prim, *_, **params):
     if prim is name_p and params['name'] in names_which_can_be_saved:
       return pe.Saveable
@@ -171,6 +161,12 @@ def save_from_both_policies(policy_1, policy_2):
   """Logical OR of the given policies.
 
   A residual is saveable iff it is saveable according to either policy."""
+  if policy_1 is everything_saveable or policy_2 is everything_saveable:
+    return everything_saveable
+  if policy_1 is nothing_saveable:
+    return policy_2
+  if policy_2 is nothing_saveable:
+    return policy_1
   def policy(prim, *args, **params):
     out1 = policy_1(prim, *args, **params)
     out2 = policy_2(prim, *args, **params)
@@ -206,8 +202,7 @@ checkpoint_policies = types.SimpleNamespace(
 def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
                policy: Callable[..., bool] | None = None,
                static_argnums: int | tuple[int, ...] = (),
-               static_argnames: str | Iterable[str] = (),
-               concrete: bool | DeprecatedArg = DeprecatedArg()) -> Callable:
+               static_argnames: str | Iterable[str] = ()) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
   The :func:`jax.checkpoint` decorator, aliased to :func:`jax.remat`, provides a
@@ -250,6 +245,13 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
       But in some settings, like when used inside a :func:`~jax.lax.scan`, this
       CSE prevention mechanism is unnecessary, in which case ``prevent_cse`` can
       be set to False.
+      ``prevent_cse`` may also be a pytree prefix of the arguments with bool
+      leaves — or equivalently a tuple-tree prefix (bools and tuples only,
+      with tuples matched against argument containers by their number of
+      children) — selecting which arguments' saved values to pin. Computed
+      (policy-saved) residuals are always pinned when any prevention is on.
+      Under ``jax_remat3``, cotangents are likewise pinned unless the
+      ``jax_remat_barrier_no_cotangents`` upgrade flag is enabled.
     static_argnums: Optional, int or sequence of ints, a keyword-only argument
       indicating which argument values on which to specialize for tracing and
       caching purposes. Specifying arguments as static can avoid
@@ -261,8 +263,6 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
       returns a boolean indicating whether the corresponding output value(s) can
       be saved as residuals (or instead must be recomputed in the (co)tangent
       computation if needed).
-    concrete: Optional boolean; deprecated. Will raise a DeprecationWarning if
-      used, and passing True will result in a NotImplementedError.
 
   Returns:
     A function (callable) with the same input/output behavior as ``fun`` but
@@ -350,17 +350,6 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
   ``jax.ensure_compile_time_eval``), it may be easier to compute some values
   outside the :func:`jax.checkpoint`-decorated function and then close over them.
   """
-  # TODO(jakevdp): Remove the concrete argument in JAX v0.11.0.
-  if not isinstance(concrete, DeprecatedArg):
-    concrete_msg = (
-        "The `concrete` option to `jax.checkpoint` was deprecated in JAX"
-        " v0.8.2, and removed in JAX v0.10.0."
-        " In its place please use `static_argnums`; for details refer to"
-        " https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html."
-    )
-    raise NotImplementedError(concrete_msg)
-  del concrete
-
   if isinstance(static_argnums, int):
     static_argnums = static_argnums,
   if isinstance(prevent_cse, Sequence):
@@ -369,14 +358,14 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
     raise TypeError("prevent_cse must be a bool or tuple of bools, got "
                     f"{type(prevent_cse)=}")
 
-  if config.remat3.value:
-    policy = None if policy is nothing_saveable else policy
-    return remat3(fun, policy=policy, static_argnums=static_argnums,
-                  static_argnames=static_argnames)
-
   @wraps(fun)
   @api_boundary
   def fun_remat(*args, **kwargs):
+    if config.remat3.value:
+      return remat3(fun, policy=None if policy is nothing_saveable else policy,
+                    static_argnums=static_argnums,
+                    static_argnames=static_argnames,
+                    prevent_cse=prevent_cse)(*args, **kwargs)
     debug = api_util.debug_info(
         "checkpoint / remat", fun,
         args, kwargs, static_argnums=static_argnums)
@@ -384,7 +373,11 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
     args_flat, in_tree = tracing_registry.flatten((args, kwargs))
     api_util.check_no_transformed_refs_args(lambda: debug, args_flat)
     in_avals = [core.shaped_abstractify(x) for x in args_flat]
+    if config.mutable_array_checks.value:
+      api_util.check_no_aliased_ref_args(lambda: debug, in_avals, args_flat)
     jaxpr, consts, out_tree = _trace_to_jaxpr(fun_, in_tree, tuple(in_avals), debug)
+    if config.mutable_array_checks.value:
+      api_util._check_no_aliased_closed_over_refs(debug, consts, args_flat)
     if isinstance(prevent_cse, tuple):
       cse_args = (tuple(args), kwargs) if kwargs else tuple(args)
       cse = (False,) * len(consts) + tuple(broadcast_prefix(prevent_cse, cse_args))
@@ -397,13 +390,12 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
   return fun_remat
 
 
-def remat(fun: Callable, *, prevent_cse: bool = True,
+def remat(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
           policy: Callable[..., bool] | None = None,
-          static_argnums: int | tuple[int, ...] = (),
-          concrete: bool | DeprecatedArg = DeprecatedArg()) -> Callable:
+          static_argnums: int | tuple[int, ...] = ()) -> Callable:
   """Alias of :func:`jax.checkpoint`."""
   return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
-                    static_argnums=static_argnums, concrete=concrete)
+                    static_argnums=static_argnums)
 
 # This function is similar to api_util.argnums_partial, except the error
 # messages are specific to jax.remat (and thus more actionable), the
@@ -435,49 +427,8 @@ def _remat_static_argnums(fun, static_argnums, args):
   new_fun = _dyn_args_fun(fun, static_argnums_, tuple(static_args), nargs)
   return new_fun, dyn_args
 
-class WrapHashably:
-  val: Any
-  hash: int
-  hashable: bool
-
-  def __init__(self, val):
-    self.val = val
-    try:
-      self.hash = hash(val)
-      self.hashable = True
-    except:
-      self.hash = id(val)
-      self.hashable = False
-  def __hash__(self):
-    return self.hash
-  def __eq__(self, other):
-    if isinstance(other, WrapHashably):
-      if self.hashable and other.hashable:
-        return self.val == other.val
-      else:
-        return self.val is other.val
-    return False
-
-# This caching is useful to avoid retracing even when static_argnums is used.
-# See api_benchmark.py:bench_remat_eager_retracing_overheads_static_argnums.
-# On that benchmark, including this caching makes a ~10x difference (which can
-# be made arbitrary large by involving larger functions to be traced).
-def _dyn_args_fun(fun: Callable, static_argnums: frozenset[int],
-                  static_args: tuple[WrapHashably, ...], nargs: int):
-  if any(isinstance(x.val, core.Tracer) for x in static_args):
-    return _dyn_args_fun_uncached(fun, static_argnums, static_args, nargs)
-  return _dyn_args_fun_cached(fun, static_argnums, static_args, nargs)
-
-def _dyn_args_fun_uncached(fun: Callable, static_argnums: frozenset[int],
-                           static_args: tuple[WrapHashably, ...], nargs: int):
-  def new_fun(*dyn_args, **kwargs):
-    static_args_, dyn_args_ = iter(static_args), iter(dyn_args)
-    full_args = [next(static_args_).val if i in static_argnums
-                 else next(dyn_args_) for i in range(nargs)]
-    return fun(*full_args, **kwargs)
-  return new_fun
-
-_dyn_args_fun_cached = weakref_lru_cache(_dyn_args_fun_uncached)
+WrapHashably = api_util.WrapHashably
+_dyn_args_fun = api_util.dyn_args_fun
 
 # This helper is similar to those in control_flow/common.py, but with
 # remat-specific errors.
@@ -487,7 +438,7 @@ def _trace_to_jaxpr(fun: Callable,
                     in_avals: Sequence[core.AbstractValue],
                     debug: core.DebugInfo
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
-  in_avals_flat_tree = FlatTree(in_avals, in_tree, False)
+  in_avals_flat_tree = ft.treedef_args_to_ft(in_tree, in_avals)
   try:
     closed_jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_avals_flat_tree, debug)
   except core.ConcretizationTypeError as e:
@@ -501,7 +452,7 @@ def _trace_to_jaxpr(fun: Callable,
           "\n")
       e.args = msg,
     raise
-  return pe.convert_constvars_jaxpr(closed_jaxpr.jaxpr), closed_jaxpr.consts, out_avals.tree
+  return pe.convert_constvars_jaxpr(closed_jaxpr), closed_jaxpr.consts, out_avals.tree
 
 
 ### Utilities
@@ -519,7 +470,7 @@ def saved_residuals(f: Callable,
                        return_shape=True)(*in_leaves)
   assert isinstance(out, tuple)
   jaxpr_, out_shape_ = out
-  jaxpr = jaxpr_.jaxpr
+  jaxpr = jaxpr_
   out_shape = out_shape_[1]
   num_res = tree_structure(out_shape).num_leaves
   jaxpr = jaxpr.replace(
@@ -536,7 +487,11 @@ def _saved_residuals(jaxpr: core.Jaxpr,
   # don't count reduce_precision_p as the producer, look through it instead
   subst = {e.outvars[0]: e.invars[0] for e in jaxpr.eqns
            if e.primitive is lax_internal.reduce_precision_p}
-  res_vars = {subst.get(v, v) for v in res_vars}
+  def look_through(v):
+    while v in subst:
+      v = subst[v]
+    return v
+  res_vars = {look_through(v) for v in res_vars}
 
   results = []
 
@@ -559,7 +514,8 @@ def _saved_residuals(jaxpr: core.Jaxpr,
     if eqn.primitive is name_p:
       return eqn.params['name']
     elif (eqn.primitive is call_hi_primitive_p
-          and isinstance(p := eqn.params['_prim'], CheckpointName)):
+          and isinstance(p := eqn.params['_prim'],
+                         (CheckpointName, CheckpointNameFwd))):
       return p.name
 
   # TODO(mattjj): actually we want to flag this case as problematic, ie some
@@ -612,11 +568,12 @@ def remat_abstract_eval(*args, jaxpr, prevent_cse, differentiated, policy):
 def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   assert not jaxpr.constvars
   in_nonzeros = [type(t) is not ad_util.Zero for t in tangents]
-  jaxpr_jvp_, out_nz = ad.jvp_jaxpr(pe.close_jaxpr(jaxpr), in_nonzeros, False)
+  jaxpr_jvp_, out_nz = ad.jvp_jaxpr(jaxpr, in_nonzeros, False)
   nonzero_tangents = [t for t in tangents if type(t) is not ad_util.Zero]
-  jaxpr_jvp = pe.convert_constvars_jaxpr(jaxpr_jvp_.jaxpr)
+  jaxpr_jvp = pe.convert_constvars_jaxpr(jaxpr_jvp_)
   if isinstance(prevent_cse, tuple):
-    prevent_cse += (True,) * len(nonzero_tangents)
+    prevent_cse = ((False,) * len(jaxpr_jvp_.consts) + prevent_cse +
+                   (True,) * len(nonzero_tangents))
   outs = remat_p.bind(
       *jaxpr_jvp_.consts, *primals, *nonzero_tangents, jaxpr=jaxpr_jvp,
       prevent_cse=prevent_cse, differentiated=differentiated, policy=policy)
@@ -633,8 +590,7 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
   disallowed_effects = effects.remat_allowed_effects.filter_not_in(jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
-        'Effects not supported in partial-eval of `checkpoint`/`remat`: '
-        f'{disallowed_effects}')
+        f'Effects not supported in AD of `checkpoint`/`remat`: {disallowed_effects}')
   policy = params['policy'] or nothing_saveable
   in_unknowns = [not t.is_known() for t in tracers]
   jaxpr_known, jaxpr_staged, out_unknowns, out_inst, num_res = \
@@ -756,114 +712,105 @@ pe.partial_eval_jaxpr_custom_rules[remat_p] = \
             remat_partial_eval_custom_params_updater)
 
 def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
-  # TODO(mattjj): avoid round-tripping into UndefinedPrimals
-  args_ = [ad.UndefinedPrimal(x.aval) if isinstance(x, ad.GradAccum) else x
-           for x in args]
-
   assert not jaxpr.constvars
-  in_linear = [ad.is_undefined_primal(x) for x in args_]
-  out_zeros = [type(ct) is ad_util.Zero for ct in out_cts]
-  transposed_jaxpr_, in_zeros = transpose_jaxpr(
-      pe.close_jaxpr(jaxpr), in_linear, out_zeros)
-  transposed_jaxpr, consts = transposed_jaxpr_.jaxpr, transposed_jaxpr_.consts
+  primals_refs, specs = ad.project_accums(args)
+  in_avals = tuple(map(core.typeof, primals_refs))
+  out_zeros = tuple(type(ct) is ad_util.Zero for ct in out_cts)
+  transposed_jaxpr_, out_tree = _transpose_jaxpr(
+      jaxpr, specs, in_avals, out_zeros)
+  transposed_jaxpr, consts = transposed_jaxpr_, transposed_jaxpr_.consts
   transposed_jaxpr = pe.convert_constvars_jaxpr(transposed_jaxpr)
-  flat_args, _ = tree_flatten((args_, out_cts))
+  out_cts_nz = [ct for ct in out_cts if type(ct) is not ad_util.Zero]
   if isinstance(prevent_cse, tuple):
-    prevent_cse_, _ = partition_list(in_linear, prevent_cse)
-    prevent_cse = tuple(prevent_cse_) + (True,) * (len(out_zeros) - sum(out_zeros))
-  in_cts_nz = remat_p.bind(*consts, *flat_args, jaxpr=transposed_jaxpr,
-                           prevent_cse=prevent_cse, **params)
-  in_cts_nz_, in_zeros_ = iter(in_cts_nz), iter(in_zeros)
-  for x in args:
-    if isinstance(x, ad.GradAccum) and not next(in_zeros_):
-      x.accum(next(in_cts_nz_))
+    _, prevent_cse_ = partition_list(
+        [k is None or k is ad.RefAccum for k, _ in specs], prevent_cse)
+    prevent_cse = ((False,) * len(consts) + tuple(prevent_cse_) +
+                   (True,) * len(out_cts_nz))
+  outs = remat_p.bind(*consts, *primals_refs, *out_cts_nz,
+                      jaxpr=transposed_jaxpr, prevent_cse=prevent_cse, **params)
+  cts, logs = tree_unflatten(out_tree, outs)
+  for x, ct in zip(args, cts):
+    if isinstance(x, ad.ValAccum):
+      x.accum(ct)
+  return logs
 ad.fancy_transposes[remat_p] = remat_transpose
 
-# TODO(mattjj): move this to ad.py
-def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: bool | Sequence[bool],
-                    out_zeros: bool | Sequence[bool],
-                    ) -> tuple[core.ClosedJaxpr, list[bool]]:
-  if isinstance(in_linear, bool):
-    in_linear = (in_linear,) * len(jaxpr.in_avals)
-  if isinstance(out_zeros, bool):
-    out_zeros = (out_zeros,) * len(jaxpr.out_avals)
-  return _transpose_jaxpr(jaxpr, tuple(in_linear), tuple(out_zeros))
-
 @weakref_lru_cache
-def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
-                     in_lin: Sequence[bool],
-                     out_zeros: Sequence[bool]):
-  in_avals = ([a for a,  lin in zip(jaxpr.in_avals,  in_lin   ) if not lin] +
-              [a.to_ct_aval() for a, zero in zip(jaxpr.out_avals, out_zeros)
-               if not zero])
+def _transpose_jaxpr(jaxpr: core.Jaxpr, specs, in_avals, out_zeros):
+  in_lin = [k is not None for k, _ in specs]
+  ct_avals = [a.to_ct_aval() for a, zero in zip(jaxpr.out_avals, out_zeros)
+              if not zero]
   cell = lambda: None
 
   def transposed(*args_flat):
-    ins_flat, out_cts_flat = split_list(args_flat, [len(in_lin) - sum(in_lin)])
+    primals_refs, out_cts_flat = split_list(args_flat, [len(in_avals)])
+    args = ad.unproject_accums(specs, primals_refs)
+    ins_flat, accums = partition_list(in_lin, args)
 
     # Evaluate nonlinear parts using partial evaluation to get a linear jaxpr.
-    # TODO(mattjj): revise not to require disabling checks
-    with config.mutable_array_checks(False):
-      jaxpr_rematted, lin_jaxpr, out_uk, res_avals = \
-          pe.partial_eval_jaxpr_nounits(jaxpr, in_lin, False)
+    jaxpr_rematted, lin_jaxpr, out_uk, res_avals, in_fwd_res = \
+        pe.partial_eval_jaxpr_nounits_fwd(jaxpr, in_lin, False)
     with source_info_util.extend_name_stack('rematted_computation'):
       consts = core.jaxpr_as_fun(jaxpr_rematted)(*ins_flat)
+    consts = subs_list(in_fwd_res, [*jaxpr.consts, *ins_flat], consts)
 
     # Transpose the linear jaxpr (which only has linear inputs).
     out_cts_iter = iter(out_cts_flat)
     out_cts = [ad_util.Zero(aval.to_ct_aval()) if zero else next(out_cts_iter)
                for aval, zero in zip(jaxpr.out_avals, out_zeros)]
     assert next(out_cts_iter, None) is None
-    dummy_args = [ad.UndefinedPrimal(aval.to_ct_aval())
-                  for aval in lin_jaxpr.in_avals[len(consts):]]
-    in_cts = ad.backward_pass(lin_jaxpr.jaxpr, False, lin_jaxpr.consts,
-                              [*consts, *dummy_args], out_cts)
-    in_cts = in_cts[len(consts):]
+    logs = ad.backward_pass3(lin_jaxpr, False, lin_jaxpr.consts,
+                             [*consts, *accums], out_cts)
+    cts = [x.freeze() if isinstance(x, ad.ValAccum) else None for x in args]
+    outs, cell.out_tree = tree_flatten((cts, logs))  # pyrefly: ignore[missing-attribute]
+    return outs
 
-    # Identify symbolic zeros in the resulting cotangents, and return nonzeros.
-    in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]  # pyrefly: ignore[missing-attribute]
-    in_cts_nz, _ = partition_list(in_zeros, in_cts)
-    return in_cts_nz
-
-  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  in_avals_flat_tree = FlatTree.flatten((tuple(in_avals), {}))
+  dbg = jaxpr.debug_info.with_unknown_names()
+  in_avals_flat_tree = ft.flatten(((*in_avals, *ct_avals), {}))
   transposed_closed_jaxpr, _ = pe.trace_to_jaxpr(
       transposed, in_avals_flat_tree, dbg)
-  return transposed_closed_jaxpr, cell.in_cts_zero  # pyrefly: ignore[missing-attribute]
+  return transposed_closed_jaxpr, cell.out_tree  # pyrefly: ignore[missing-attribute]
 
-def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
+def remat_vmap(axis_data, args, dims, *, jaxpr, prevent_cse, **params):
   assert not jaxpr.constvars
   jaxpr_batched_, out_batched = batching.batch_jaxpr_axes(
-      pe.close_jaxpr(jaxpr), axis_data, dims,
+      jaxpr, axis_data, dims,
       [batching.zero_if_mapped] * len(jaxpr.outvars))
-  jaxpr_batched, consts = jaxpr_batched_.jaxpr, jaxpr_batched_.consts
+  jaxpr_batched, consts = jaxpr_batched_, jaxpr_batched_.consts
   if consts:
     jaxpr_batched = pe.convert_constvars_jaxpr(jaxpr_batched)
+  if isinstance(prevent_cse, tuple):
+    prevent_cse = (False,) * len(consts) + prevent_cse
   out_dims = [0 if b else None for b in out_batched]
-  return remat_p.bind(*consts, *args, jaxpr=jaxpr_batched, **params), out_dims
+  return remat_p.bind(*consts, *args, jaxpr=jaxpr_batched,
+                      prevent_cse=prevent_cse, **params), out_dims
 batching.fancy_primitive_batchers[remat_p] = remat_vmap
 
 # TODO(mattjj,sharadmv): de-duplicate with pe.dce_jaxpr_call_rule
-def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
+def remat_dce(used_outputs: list[bool], live_ins: list[bool],
+              eqn: core.JaxprEqn
               ) -> tuple[list[bool], core.JaxprEqn | None]:
-  if not any(used_outputs) and not pe.has_effects(eqn):
+  if not any(used_outputs) and not pe.has_effects(eqn, live_ins):
     return [False] * len(eqn.invars), None
-  new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
+  new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs,
+                                        live_inputs=live_ins)
+  if (not any(used_inputs) and not any(used_outputs) and
+      not _has_effects(new_jaxpr.effects)):
+    return used_inputs, None
+  if (new_jaxpr is eqn.params['jaxpr'] and
+      all(used_inputs) and all(used_outputs)):
+    return used_inputs, eqn
   prevent_cse = eqn.params['prevent_cse']
   if isinstance(prevent_cse, tuple):
     prevent_cse = tuple(p for p, u in zip(prevent_cse, used_inputs) if u)
   new_params = dict(eqn.params, jaxpr=new_jaxpr, prevent_cse=prevent_cse)
-  if (not any(used_inputs) and not any(used_outputs) and
-      _has_effects(new_jaxpr.effects)):
-    return used_inputs, None
-  else:
-    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
-    new_eqn = pe.new_jaxpr_eqn(
-        new_invars,
-        [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, core.eqn_effects(new_jaxpr, new_invars),
-        eqn.source_info, eqn.ctx)
-    return used_inputs, new_eqn
+  new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+  new_eqn = pe.new_jaxpr_eqn(
+      new_invars,
+      [v for v, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, core.eqn_effects(new_jaxpr, new_invars),
+      eqn.source_info, eqn.ctx)
+  return used_inputs, new_eqn
 pe.dce_rules[remat_p] = remat_dce
 
 def _has_effects(effects) -> bool:
@@ -900,7 +847,7 @@ def _remat_lowering(
   ctx.set_tokens_out(tokens_out)
   return outs
 
-mlir.register_lowering(remat_p, _remat_lowering)
+mlir.register_lowering(remat_p, _remat_lowering, shard_map_passthrough=True)
 
 
 def _remat_is_high(*_, jaxpr, **__) -> bool:
@@ -908,14 +855,17 @@ def _remat_is_high(*_, jaxpr, **__) -> bool:
 remat_p.is_high = _remat_is_high
 
 
-def _remat_to_lojax(*hi_args, jaxpr, **kwds):
-  closed_lo_jaxpr = pe.lower_jaxpr2(pe.close_jaxpr(jaxpr))
-  lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
-             for lo_val in (aval.read_loval(x) if aval.has_qdd
-                            else aval.lower_val(x))]
-  lo_jaxpr = pe.convert_constvars_jaxpr(closed_lo_jaxpr.jaxpr)
-  lo_args = (*closed_lo_jaxpr.consts, *lo_args)
-  return remat_p.bind(*lo_args, jaxpr=lo_jaxpr, **kwds)
+def _remat_to_lojax(*hi_args, jaxpr, prevent_cse, **kwds):
+  closed_lo_jaxpr = pe.lower_jaxpr2(jaxpr)
+  lo_args_lol = [aval.lower_val(x) for aval, x in zip(jaxpr.in_avals, hi_args)]
+  lo_jaxpr = pe.convert_constvars_jaxpr(closed_lo_jaxpr)
+  if isinstance(prevent_cse, tuple):
+    prevent_cse = (
+        (False,) * len(closed_lo_jaxpr.consts) +
+        tuple(p for p, xs in zip(prevent_cse, lo_args_lol) for _ in xs))
+  lo_args = (*closed_lo_jaxpr.consts, *(x for xs in lo_args_lol for x in xs))
+  lo_outs = remat_p.bind(*lo_args, jaxpr=lo_jaxpr, prevent_cse=prevent_cse, **kwds)
+  return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
 remat_p.to_lojax = _remat_to_lojax
 
 
@@ -957,11 +907,16 @@ def checkpoint_name(x, name):
     >>> policy = jax.checkpoint_policies.save_only_these_names("my_intermediate")
     >>> f_checkpointed = jax.checkpoint(f, policy=policy)
 
-    For further examples, see the `remat example notebook
-    <https://docs.jax.dev/en/latest/notebooks/autodiff_remat.html>`_.
+    For further examples, see the `gradient checkpointing guide
+    <https://docs.jax.dev/en/latest/301/remat.html>`_.
   """
   if config.remat3.value:
     return tree_map(lambda x: checkpoint_name3(name, x), x)
+  return tree_map(partial(name_p.bind, name=name), x)
+
+def checkpoint_name_fwd(x, name):
+  if config.remat3.value:
+    return tree_map(lambda x: CheckpointNameFwd(name, typeof(x))(x), x)
   return tree_map(partial(name_p.bind, name=name), x)
 
 name_p.def_impl(lambda x, *, name: x)
@@ -972,7 +927,9 @@ def name_jvp(primals, tangents, *, name):
   return name_p.bind(x, name=name), xdot  # don't name the tangent value
 ad.primitive_jvps[name_p] = name_jvp
 
-mlir.register_lowering(name_p, lambda ctx, x, *, name: [x])
+mlir.register_lowering(
+    name_p, lambda ctx, x, *, name: [x], shard_map_passthrough=True
+)
 
 def name_batcher(args, dims, *, name):
   (x,), (d,) = args, dims
@@ -982,17 +939,17 @@ batching.primitive_batchers[name_p] = name_batcher
 
 @discharge.register_discharge_rule(remat_p)
 def _remat_state_discharge_rule(
-    in_avals, out_avals, *args, jaxpr, **params):
-  discharged_jaxpr = discharge.discharge_state(core.ClosedJaxpr(jaxpr, []))
+    ctx, *args, jaxpr, **params):
+  discharged_jaxpr = discharge.discharge_state(jaxpr, strip_memory_space=ctx.strip_memory_space)
   if discharged_jaxpr.consts:
     raise NotImplementedError
   out_vals_ref_vals = remat_p.bind(
-      *args, jaxpr=discharged_jaxpr.jaxpr, **params
+      *args, jaxpr=discharged_jaxpr, **params
   )
   out_vals, ref_vals = split_list(out_vals_ref_vals, [len(jaxpr.outvars)])
   ref_vals_ = iter(ref_vals)
   new_invals = [next(ref_vals_) if isinstance(a, AbstractRef) else None
-                for a in in_avals]
+                for a in ctx.in_avals]
   assert next(ref_vals_, None) is None
   return new_invals, out_vals
 
@@ -1005,91 +962,253 @@ def _remat_state_discharge_rule(
 def checkpoint_name3(name, x):
   return CheckpointName(name, typeof(x))(x)
 
-def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=()):
-  if f is None:
-    return partial(partial, _remat3, policy, static_argnums, static_argnames)
-  else:
-    return partial(_remat3, policy, static_argnums, static_argnames, f)
+def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=(),
+           prevent_cse=True):
+  """Rematerialization decorator (new implementation, ``jax_remat3``).
 
-def _remat3(policy, static_argnums, static_argnames, f, *args, **kwargs):
-  args_ft = FlatTree.flatten_static_argnums_argnames(
-      args, kwargs, static_argnums, static_argnames)
-  avals_ft = args_ft.map(typeof)
-  dbg = api_util.debug_info(
-      'remat3', f, args, kwargs, static_argnums=static_argnums,
-      static_argnames=static_argnames)
-  jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
-  jaxpr, consts = pe.separate_consts(jaxpr_)
-  out_flat = RematTraced(jaxpr, policy)(*consts, *args_ft)
-  return out_avals_ft.update(out_flat).unflatten()
+  Note on interaction with :func:`jax.custom_vjp`: when differentiating
+  rematted code, a custom_vjp application that appears *inside another
+  custom_vjp's fwd rule* is rematerialized as an opaque unit. For the
+  conventional idiom of a fwd rule calling its own custom_vjp-decorated
+  function to compute the primal output, that is exactly the intended
+  semantics. Values and gradients are unaffected at every order of
+  differentiation. The one observable consequence arises only under
+  higher-order AD: differentiating a second time runs the inner application's
+  own fwd rule (at first order it never runs, since the outer bwd rule
+  discharges the derivative), and values inside it (e.g.
+  ``checkpoint_name``-tagged intermediates) cannot be marked saveable by the
+  checkpoint ``policy`` there; they are always recomputed.
+  """
+  kwargs = dict(policy=policy, static_argnums=static_argnums,
+                static_argnames=static_argnames, prevent_cse=prevent_cse)
+  if f is None: return lambda g: _remat3(g, **kwargs)
+  return _remat3(f, **kwargs)
 
-def dce(traced):
-  jaxpr_, used = pe.dce_jaxpr(traced.jaxpr.jaxpr, True)
-  jaxpr = core.ClosedJaxpr(jaxpr_, traced.jaxpr.consts)
-  used_res, used_primals = split_list(used, [traced._num_consts])
-  res = [r for r, u in zip(traced._consts, used_res) if u]
-  return used_primals, Partial(partial(_dced, jaxpr, traced.out_tree), res)
+def _remat3(f, *, policy, static_argnums, static_argnames, prevent_cse=True):
+  if not isinstance(prevent_cse, bool) and (static_argnums or static_argnames):
+    raise NotImplementedError(
+        "non-bool prevent_cse together with static_argnums/static_argnames")
+  static_argnums = api_util._ensure_index_tuple(static_argnums)
+  static_argnames = api_util._ensure_str_tuple(static_argnames)
+  if static_argnames:
+    static_argnums = _static_argnums(f, static_argnums, static_argnames)
+  @wraps(f)
+  def decorator(*args, **kwargs):
+    args_ft = ft.flatten_static_argnums_argnames(
+        args, kwargs, static_argnums, static_argnames)
+    avals_ft = args_ft.map(typeof)
+    dbg = api_util.debug_info(
+        'remat3', f, args, kwargs, static_argnums=static_argnums,
+        static_argnames=static_argnames)
+    args_flat = list(args_ft)
+    if config.mutable_array_checks.value:
+      api_util.check_no_aliased_ref_args(lambda: dbg, list(avals_ft), args_flat)
+    jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
+    jaxpr, consts = pe.separate_consts(jaxpr_)
+    if config.mutable_array_checks.value:
+      api_util._check_no_aliased_closed_over_refs(dbg, consts, args_flat)
+    if isinstance(prevent_cse, bool):
+      prevent_cse_ = prevent_cse
+    else:
+      cse_args = (args, kwargs) if kwargs else args
+      prevent_cse_ = (False,) * len(consts) + tuple(api.tuptree_flags(
+          prevent_cse, tree_structure(cse_args), 'prevent_cse',
+          'the prevent_cse argument to jax.checkpoint'))
+    out_flat = RematTraced(jaxpr, policy, prevent_cse_)(*consts, *args_ft)
+    return out_avals_ft.update(out_flat).unflatten()
+  return decorator
+
+def _static_argnums(f, argnums, argnames) -> tuple[int, ...]:
+  argnums = set(argnums)
+  if argnames:
+    sig = api_util.fun_signature(f)
+    if sig is not None:
+      argnums |= set(api_util.infer_argnums_and_argnames(sig, None, argnames)[0])
+  return tuple(argnums)
+
+def dce(traced, policy):
+  jaxpr_, attached = pe.separate_consts(traced.jaxpr)
+  in_fwd = pe._jaxpr_forwarding(jaxpr_)
+  jaxpr = pe.prune_jaxpr_outputs(jaxpr_, [f is None for f in in_fwd])
+  for v in jaxpr.outvars:
+    if isinstance(v.aval, AbstractRef):
+      raise ValueError(
+          "the rematted computation's closure contains a mutable array "
+          f"reference of type {v.aval.str_short()} that is not one of the "
+          "rematted function's inputs, but such refs cannot be saved")
+  jaxpr, used = pe.dce_jaxpr(jaxpr, True)
+  keep = [u or i in {*in_fwd} for i, u in enumerate(used)]
+  kept_idx = {i: p for p, i in enumerate(i for i, k in enumerate(keep) if k)}
+  in_fwd = tuple(kept_idx[f] if f is not None else None for f in in_fwd)
+  take = tuple(kept_idx[i] for i, u in enumerate(used) if u)
+  keep_res, keep_primals = split_list(keep, [len(attached) + traced._num_consts])
+  res = [r for r, u in zip([*attached, *traced._consts], keep_res) if u]
+  return keep_primals, Partial(
+      partial(_dced, jaxpr, in_fwd, take, traced.out_tree, policy), res)
 
 @source_info_util.extend_name_stack('rematted_computation')
-def _dced(jaxpr, out_tree, res, *args):
-  out_flat = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *res, *args)
-  return tree_unflatten(out_tree, out_flat)
+def _dced(jaxpr, in_fwd, take, out_tree, policy, res, *args):
+  ins = [*res, *args]
+  outs = RematTraced(jaxpr, policy)(*[ins[i] for i in take])
+  return tree_unflatten(out_tree, subs_list(in_fwd, ins, outs))
 
-class RematTraced(VJPHiPrimitive):
-  jaxpr: core.ClosedJaxpr
+
+class RematTraced(HiPrim):
+  skip_linearization_on_zero_tangents = True
+  jaxpr: core.Jaxpr
   policy: Any
+  prevent_cse: bool | tuple[bool, ...]
 
-  def __init__(self, jaxpr, policy):
+  def __init__(self, jaxpr, policy, prevent_cse=True):
+    assert (isinstance(prevent_cse, bool) or
+            len(prevent_cse) == len(jaxpr.in_avals))
     self.in_avals = tuple(jaxpr.in_avals)
     self.out_aval = jaxpr.out_avals
-    self.params = dict(jaxpr=jaxpr, policy=policy)
+    self.params = dict(jaxpr=jaxpr, policy=policy, prevent_cse=prevent_cse)
+    self.effects = frozenset(core.positional_effects(jaxpr))
     super().__init__()
 
-  def expand(self, *args):
-    # TODO eval_jaxpr_p
-    return core.jaxpr_as_fun(self.jaxpr)(*args)
+  def _check_differentiable(self):
+    disallowed = effects.remat_allowed_effects.filter_not_in(self.jaxpr.effects)
+    if disallowed:
+      raise NotImplementedError(
+          'Effects not supported in partial-eval of `checkpoint`/`remat`: '
+          f'{disallowed}')
 
-  def vjp_fwd(self, _nzs_in, *primals):
-    # TODO we're not rebinding remat here... higher-order AD behavior change
-    # TODO propagate symbolic zeros
+  @source_info_util.extend_name_stack('checkpoint')
+  def expand(self, *args):
+    return core.eval_jaxpr_p.bind(*args, call_jaxpr=self.jaxpr)
+
+  def physicalize(self, ctx, *args):
+    new_jaxpr = ctx.physicalize_closed_jaxpr(self.jaxpr)
+    new_prim = RematTraced(new_jaxpr, self.policy, self.prevent_cse)
+    return call_hi_primitive_p.bind(*args, _prim=new_prim)
+
+  def vjp_fwd(self, nzs_in, *primals):
     # TODO eval_jaxpr_p trace time
+    self._check_differentiable()
     traced = core.jaxpr_as_fun(self.jaxpr)
-    primals_out, fwd2 = remat_transform(self.policy, traced, *primals)
-    used, rem = dce(api.jit(lambda *xs: api.vjp(fwd2, *xs)[1]).trace(*primals))
+    in_nzs = tuple(tree_leaves(nzs_in))
+    if self.policy is everything_saveable:
+      primals_out, f_vjp = api.vjp(traced, *primals, in_nzs=in_nzs)
+      out_nzs = f_vjp.out_nzs  # pyrefly: ignore[missing-attribute]
+      rem = Partial(lambda res, *_: res, f_vjp)
+      return primals_out, ([], Static(False), rem), list(out_nzs)
+    primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
+                                        custom_vjp_rules=True)
+    out_nzs_cell = []
+    def make_vjp(*xs):
+      _, f_vjp = api.vjp(fwd2, *xs, in_nzs=in_nzs)
+      out_nzs_cell.append(f_vjp.out_nzs)  # pyrefly: ignore[missing-attribute]
+      return f_vjp
+    with config.mutable_array_checks(False):
+      traced_vjp = api.jit(make_vjp).trace(*primals)
+    used, rem = dce(traced_vjp, self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
-    return primals_out, (primals_, rem)
+    if isinstance(self.prevent_cse, bool):
+      prevent_cse = self.prevent_cse
+    else:
+      prevent_cse = tuple(f for f, u in zip(self.prevent_cse, used) if u)
+    out_nzs, = out_nzs_cell
+    return primals_out, (primals_, Static(prevent_cse), rem), list(out_nzs)
 
   def vjp_bwd(self, primals_rem, outgrad, *arg_accums):
-    primals, rem = primals_rem
-    bwd = rem(*lax_internal.optimization_barrier(primals))
-    bwd.with_refs(*arg_accums)(outgrad)
+    if all(isinstance(x, (ad_util.Zero, ad_util.SymbolicZero))
+           for x in tree_leaves(outgrad)):
+      return None
+    primals, prevent_cse, rem = primals_rem
+    prevent_cse = prevent_cse.val
+    if prevent_cse is not False:
+      which = ([True] * len(primals) if prevent_cse is True else
+               list(prevent_cse))
+      unpinned, pinned = partition_list(which, primals)
+      res, = rem.args
+      if config.remat_barrier_no_cotangents.value:
+        if pinned or res:
+          pinned, res = lax_internal.optimization_barrier((pinned, res))
+      else:
+        pinned, res, outgrad = lax_internal.optimization_barrier(
+            (pinned, res, outgrad))
+      rem = Partial(rem.func, res)
+      primals = merge_lists(which, unpinned, pinned)
+    bwd = rem(*primals)
+    _, logs = bwd.with_logs.with_refs(*arg_accums)(outgrad)
+    return logs
 
   def jvp(self, primals, tangents):
     traced = core.jaxpr_as_fun(self.jaxpr)
-    tangents = tuple(map(ad_util.instantiate, tangents))  # TODO
+    tangents = tuple(map(ad_util.instantiate, tangents))  # TODO don't instantiate
     return api.jvp(traced, primals, tangents)
 
   def lin(self, nzs_in, *primals):
+    self._check_differentiable()
     traced = core.jaxpr_as_fun(self.jaxpr)
-    primals_out, fwd2 = remat_transform(self.policy, traced, *primals)
-    used, rem = dce(api.jit(lambda *xs: api.linearize(fwd2, *xs)[1]).trace(*primals))
+    in_nzs = tuple(tree_leaves(nzs_in))
+    if self.policy is everything_saveable:
+      primals_out, f_lin = api.linearize(traced, *primals, in_nzs=in_nzs)
+      out_nzs = f_lin.out_nzs  # pyrefly: ignore[missing-attribute]
+      rem = Partial(lambda res, *_: res, f_lin)
+      return primals_out, ([], rem, tuple(out_nzs)), list(out_nzs)
+    primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
+                                        custom_vjp_rules=True)
+    out_nzs_cell = []
+    def make_lin(*xs):
+      _, f_jvp = api.linearize(fwd2, *xs, in_nzs=in_nzs)
+      out_nzs_cell.append(f_jvp.out_nzs)  # pyrefly: ignore[missing-attribute]
+      return f_jvp
+    with config.mutable_array_checks(False):
+      traced_lin = api.jit(make_lin).trace(*primals)
+    used, rem = dce(traced_lin, self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
-    return primals_out, (primals_, rem)
+    out_nzs, = out_nzs_cell
+    return primals_out, (primals_, rem, tuple(out_nzs)), list(out_nzs)
 
   def linearized(self, primals_rem, *tangents):  # pyrefly: ignore[bad-param-name-override]
-    primals, rem = primals_rem
-    lin = rem(*lax_internal.optimization_barrier(primals))
+    primals, rem, out_nzs = primals_rem
+    if primals and self.prevent_cse is not False:
+      primals = lax_internal.optimization_barrier(primals)
+    lin = rem(*primals)
     tangents = map(ad_util.instantiate, tangents)  # TODO
-    return lin(*tangents)
+    outs = lin(*tangents)
+    return [o if nz else ad_util.Zero(typeof(o))
+            for o, nz in zip(outs, out_nzs)]
 
   def batch(self, axis_data, args, dims):
     jaxpr_batched, out_batched = batching.batch_jaxpr_axes(
         self.jaxpr, axis_data, dims,
         [batching.zero_if_mapped] * len(self.jaxpr.outvars))
     out_dims = [0 if b else None for b in out_batched]
-    return RematTraced(jaxpr_batched, self.policy)(*args), out_dims
+    return RematTraced(jaxpr_batched, self.policy,
+                       self.prevent_cse)(*args), out_dims
 
-class CheckpointName(VJPHiPrimitive):
+  def remat(self, trace, *args):  # pyrefly: ignore[bad-param-name-override]
+    traced = core.jaxpr_as_fun(self.jaxpr)
+    out, rem_ = remat_transform(trace.policy, traced, *args,
+                                custom_vjp_rules=trace.custom_vjp_rules)
+    (jaxpr, in_tree, out_tree), (res,) = rem_.func.args, rem_.args
+    def rem(res, *args_):
+      args_flat = tree_leaves_checked(in_tree, args_)
+      out_flat = RematTraced(jaxpr, trace.policy)(*res, *args_flat)
+      return tree_unflatten(out_tree, out_flat)
+    return out, res, rem
+
+  def dce(self, used_outs, live_ins):
+    used_outs_flat = tree_leaves_checked(self.out_tree, used_outs)
+    live_ins_flat = tree_leaves_checked(self.in_tree, live_ins)
+    if not any(used_outs_flat):
+      return False, False, None
+    new_jaxpr, used_ins = pe.dce_jaxpr(self.jaxpr, used_outs_flat,
+                                       live_inputs=live_ins_flat)
+    if new_jaxpr is self.jaxpr and all(used_ins) and all(used_outs_flat):
+      return True, True, self
+    if isinstance(self.prevent_cse, bool):
+      prevent_cse = self.prevent_cse
+    else:
+      prevent_cse = tuple(f for f, u in zip(self.prevent_cse, used_ins) if u)
+    return (tuple(used_ins), tuple(used_outs_flat),
+            RematTraced(new_jaxpr, self.policy, prevent_cse))
+
+class CheckpointName(HiPrim):
   name: str
 
   def __init__(self, name, aval):
@@ -1101,17 +1220,26 @@ class CheckpointName(VJPHiPrimitive):
   def expand(self, x):  # pyrefly: ignore[bad-override]
     return x
 
-  def remat(self, policy, x):  # pyrefly: ignore[bad-override]
+  def remat(self, trace, x):  # pyrefly: ignore[bad-override]
+    policy = trace.policy
     x = CheckpointName(self.name, self.in_avals[0])(x)
-    if isinstance(policy, (SaveOnlyTheseNames, SaveAnyNamesButThese)):
-      saveable = (self.name not in policy.names if isinstance(policy, SaveAnyNamesButThese)
-                  else self.name in policy.saveable_names)
-      rem = partial(primal_left_tangent_right, x) if saveable else lambda x: x
-      return x, rem
-    elif policy is everything_saveable:
-      return x, partial(primal_left_tangent_right, x)
+    if policy is None:
+      return x, (), lambda _, x: x  # full remat
+    case = pe.ensure_enum(policy(name_p, self.in_avals[0], name=self.name))
+    if isinstance(case, pe.SaveableType):
+      x = remat_reduce_precision(x)
+      return x, x, primal_left_tangent_right
+    elif isinstance(case, pe.Offloadable):
+      x = remat_reduce_precision(x)
+      x_host = api.device_put(x, core.mem_kind_to_space(case.dst),
+                              may_alias=False)
+      src_space = core.mem_kind_to_space(case.src)
+      def rem(x_host, x_rem):
+        x_dev = api.device_put(x_host, src_space, may_alias=False)
+        return primal_left_tangent_right(x_dev, x_rem)
+      return x, x_host, rem
     else:
-      return x, lambda x: x  # full remat
+      return x, (), lambda _, x: x  # full remat
 
   def jvp(self, primals, tangents):
     (x,), (xdot,) = primals, tangents
@@ -1129,63 +1257,89 @@ class CheckpointName(VJPHiPrimitive):
   def linearized(self, _, g):  # type: ignore
     return g
 
-@custom_derivatives.custom_jvp
-def primal_left_tangent_right(x, _x):
-  return x
-@primal_left_tangent_right.defjvp
-def _jvp(primals, tangents):
-  (x, _), (_, t) = primals, tangents
-  return x, t
+  def batch(self, axis_data, args, dims):
+    (x,), (d,) = args, dims
+    return CheckpointName(self.name, typeof(x))(x), d
 
+class CheckpointNameFwd(HiPrim):
+  name: str
 
-def custom_remat(f, f1, f2, fbwd, *, static_argnums=(), static_argnames=()):
-  helper = custom_derivatives.custom_vjp(lambda _, *args: f(*args))
-  helper.defvjp(f2, fbwd)
-  def call(*args, **kwargs):
-    args_ft = FlatTree.flatten_static_argnums_argnames(
-        args, kwargs, static_argnums, static_argnames)
-    avals_ft = args_ft.map(typeof)
-    dbg = api_util.debug_info(
-        'custom_remat', f, args, kwargs, static_argnums=static_argnums,
-        static_argnames=static_argnames)
-    jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
-    jaxpr, consts = pe.separate_consts(jaxpr_)
-    out_flat = CustomRemat(jaxpr, f1, helper, args_ft.tree, out_avals_ft.tree)(*consts, *args_ft)
-    return out_avals_ft.update(out_flat).unflatten()
-  return call
-
-class CustomRemat(VJPHiPrimitive):
-  f1: Callable
-  f2_fbwd: Callable
-
-  def __init__(self, jaxpr, f1, f2_fbwd, in_tree, out_tree):
-    self.in_avals = tuple(jaxpr.in_avals)
-    self.out_aval = jaxpr.out_avals
-    self.params = dict(jaxpr=jaxpr, f1=f1, f2_fbwd=f2_fbwd, _in_tree=in_tree,
-                       _out_tree=out_tree)
+  def __init__(self, name, aval):
+    self.in_avals = aval,
+    self.out_aval = aval
+    self.params = dict(name=name)
     super().__init__()
 
-  def expand(self, *args):
+  def expand(self, x):  # pyrefly: ignore[bad-override]
+    return x
+
+  def remat(self, trace, x):  # pyrefly: ignore[bad-override]
+    policy = trace.policy
+    x = CheckpointNameFwd(self.name, self.in_avals[0])(x)
+    if policy is None:
+      return x, (), lambda _, x: x  # full remat
+    case = pe.ensure_enum(policy(name_p, self.in_avals[0], name=self.name))
+    if isinstance(case, pe.SaveableType):
+      x = remat_reduce_precision(x)
+      return x, x, lambda x, _: x
+    elif isinstance(case, pe.Offloadable):
+      x = remat_reduce_precision(x)
+      x_host = api.device_put(x, core.mem_kind_to_space(case.dst),
+                              may_alias=False)
+      src_space = core.mem_kind_to_space(case.src)
+      return x, x_host, lambda x_host, _: api.device_put(x_host, src_space, may_alias=False)
+    else:
+      return x, (), lambda _, x: x  # full remat
+
+  def jvp(self, primals, tangents):
+    (x,), (xdot,) = primals, tangents
+    return CheckpointNameFwd(self.name, self.in_avals[0])(x), xdot
+
+  def vjp_fwd(self, _nzs_in, x):  # type: ignore
+    return CheckpointNameFwd(self.name, self.in_avals[0])(x), None
+
+  def vjp_bwd_retval(self, _, g):
+    return g,
+
+  def lin(self, nzs_in, x):  # type: ignore
+    return CheckpointNameFwd(self.name, self.in_avals[0])(x), None
+
+  def linearized(self, _, g):  # type: ignore
+    return g
+
+  def batch(self, axis_data, args, dims):
+    (x,), (d,) = args, dims
+    return CheckpointNameFwd(self.name, typeof(x))(x), d
+
+class PrimalLeftTangentRight(HiPrim):
+  def __init__(self, aval_x, aval__x):
+    self.in_avals = aval_x, aval__x
+    self.out_aval = aval_x
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x, _x):  # pyrefly: ignore[bad-override]
+    return x
+
+  def lin(self, nzs_in, x, _x):  # type: ignore
+    return x, None, nzs_in[1]
+
+  def linearized(self, _, xdot, _xdot):  # type: ignore
+    return _xdot
+
+  def vjp_fwd(self, nzs_in, x, _x):  # type: ignore
+    return x, None, nzs_in[1]
+
+  def vjp_bwd_retval(self, _, g):
+    return None, g
+
+  def jvp(self, primals, tangents):
     assert False
 
-  def remat(self, policy, *args_flat):  # type: ignore
-    args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore
-    out_primal, res = self.f1(*args, **kwargs)
-    out_primal_flat = tree_leaves_checked(self._out_tree, out_primal)  # type: ignore
-    def rem_flat(*args_flat):
-      args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore
-      out_primal = self.f2_fbwd(res, *args, **kwargs)
-      return tree_leaves_checked(self._out_tree, out_primal)  # type: ignore
-    return out_primal_flat, rem_flat
+  def batch(self, axis_data, args, dims):
+    (x, _x), (d1, d2) = args, dims
+    assert d1 == d2
+    return PrimalLeftTangentRight(typeof(x), typeof(_x))(x, _x), d1
 
-  def lin(self, nzs_in, *primals):
-    raise NotImplementedError  # TODO(mattjj)
-
-  def linearized(self, res, *tangents):  # pyrefly: ignore[bad-param-name-override]
-    raise NotImplementedError  # TODO(mattjj)
-
-  def vjp_fwd(self, in_nzs, *args_flat):  # type: ignore
-    raise NotImplementedError  # TODO(mattjj)
-
-  def vjp_bwd(self, res, ybar):  # type: ignore
-    raise NotImplementedError  # TODO(mattjj)
+def primal_left_tangent_right(x, _x):
+  return PrimalLeftTangentRight(typeof(x), typeof(_x))(x, _x)

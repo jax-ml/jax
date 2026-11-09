@@ -26,6 +26,7 @@ Operators
     abs
     acos
     acosh
+    acospi
     add
     after_all
     approx_max_k
@@ -34,9 +35,12 @@ Operators
     argmin
     asin
     asinh
+    asinpi
     atan
     atan2
+    atan2pi
     atanh
+    atanpi
     batch_matmul
     bessel_i0e
     bessel_i1e
@@ -72,6 +76,7 @@ Operators
     conv_with_general_padding
     cos
     cosh
+    cospi
     cumlogsumexp
     cummax
     cummin
@@ -98,6 +103,8 @@ Operators
     expm1
     fft
     floor
+    fma
+    fmuladd
     full
     full_like
     gather
@@ -116,6 +123,7 @@ Operators
     lgamma
     log
     log1p
+    log2
     logistic
     lt
     max
@@ -125,9 +133,11 @@ Operators
     ne
     neg
     nextafter
+    one_minus_square
     optimization_barrier
     pad
     platform_dependent
+    polynomial
     polygamma
     population_count
     pow
@@ -168,6 +178,7 @@ Operators
     sign
     sin
     sinh
+    sinpi
     slice
     slice_in_dim
     sort
@@ -181,6 +192,7 @@ Operators
     sub
     tan
     tanh
+    tanpi
     tile
     top_k
     transpose

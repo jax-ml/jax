@@ -23,18 +23,16 @@ import types
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
-import numpy as np
-
 import jax
 from jax import numpy as jnp
-from jax._src import earray
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import earray
 from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
+import numpy as np
 
 config.parse_flags_with_absl()
 
@@ -64,8 +62,11 @@ custom_float_dtypes = [np.dtype(dtypes.bfloat16)]
 
 fp8_dtypes = [np.dtype(dtypes.float8_e4m3b11fnuz), np.dtype(dtypes.float8_e4m3fn),
               np.dtype(dtypes.float8_e4m3fnuz), np.dtype(dtypes.float8_e5m2),
-              np.dtype(dtypes.float8_e5m2fnuz), np.dtype(dtypes.float8_e3m4),
-              np.dtype(dtypes.float8_e4m3), np.dtype(dtypes.float8_e8m0fnu)]
+              np.dtype(dtypes.float8_e5m2fnuz),
+              np.dtype(dtypes.float8_e3m4), np.dtype(dtypes.float8_e4m3),
+              np.dtype(dtypes.float8_e8m0fnu)]
+if dtypes.float8_e5m3fnu is not None:
+  fp8_dtypes.append(np.dtype(dtypes.float8_e5m3fnu))
 float_dtypes += fp8_dtypes
 custom_float_dtypes += fp8_dtypes
 
@@ -1172,8 +1173,8 @@ class TestPromotionTables(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/6051
     if dtype in intn_dtypes:
       self.skipTest('XLA support for int1, int2 and int4 is incomplete.')
-    if dtype in fp6_dtypes:
-      self.skipTest('XLA support for float6 is incomplete.')
+    if dtypes.float8_e5m3fnu is not None and dtype == dtypes.float8_e5m3fnu:
+      self.skipTest("XLA does not support float8_e5m3fnu.")
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest("TPU does not support float8_e8m0fnu.")
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
@@ -1183,36 +1184,51 @@ class TestPromotionTables(jtu.JaxTestCase):
     if weak_type:
       expected = dtypes.default_types[
           'f'
-          if x.dtype in ['bfloat16', *fp8_dtypes, *fp4_dtypes]
+          if x.dtype
+          in [
+              'bfloat16',
+              *fp8_dtypes,
+              *fp4_dtypes,
+              *fp6_dtypes,
+          ]
           else x.dtype.kind
       ]()
     else:
       expected = x.dtype
     self.assertEqual(dtypes.result_type(x), expected)
 
+  @parameterized.parameters(
+      [(dtype, 8) for dtype in fp8_dtypes]
+      + [(dtype, 4) for dtype in fp4_dtypes]
+      + [(dtype, 6) for dtype in fp6_dtypes]
+  )
   @jax.numpy_dtype_promotion('standard')
-  def testFloat8PromotionError(self):
-    for dtype in fp8_dtypes:
-      if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
-        # TPU does not support float8_e8m0fnu.
-        continue
-      x = jnp.array(1, dtype=dtype)
-      y = jnp.array(1, dtype='float32')
-      with self.assertRaisesRegex(jax.dtypes.TypePromotionError,
-                                  ".*8-bit floats do not support implicit promotion"):
-        x + y
+  def testFloatPromotionError(self, dtype, bit_width):
+    if dtypes.float8_e5m3fnu is not None and dtype == dtypes.float8_e5m3fnu:
+      self.skipTest('XLA does not support float8_e5m3fnu.')
+    if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
+      self.skipTest('TPU does not support float8_e8m0fnu.')
+    if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
+      self.skipTest('TPU does not support float4_e2m1fn.')
+    x = jnp.array(1, dtype=dtype)
+    y = jnp.array(1, dtype='float32')
+    with self.assertRaisesRegex(
+        jax.dtypes.TypePromotionError,
+        f'.*{bit_width}-bit floats do not support implicit promotion',
+    ):
+      x + y
 
-  @jax.numpy_dtype_promotion('standard')
-  def testFloat4PromotionError(self):
-    for dtype in fp4_dtypes:
-      if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
-        # TPU does not support float4_e2m1fn.
-        continue
-      x = jnp.array(1, dtype=dtype)
-      y = jnp.array(1, dtype='float32')
-      with self.assertRaisesRegex(jax.dtypes.TypePromotionError,
-                                  ".*4-bit floats do not support implicit promotion"):
-        x + y
+  @parameterized.parameters(float_dtypes)
+  @config.explicit_x64_dtypes('allow')
+  def testFloatArrayCreation(self, dtype):
+    if dtypes.float8_e5m3fnu is not None and dtype == dtypes.float8_e5m3fnu:
+      self.skipTest('XLA does not support float8_e5m3fnu.')
+    if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
+      self.skipTest('TPU does not support float8_e8m0fnu.')
+    if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
+      self.skipTest('TPU does not support float4_e2m1fn.')
+    x = jnp.array([1.0, 2.0], dtype=dtype)
+    self.assertEqual(x.dtype, dtype)
 
   @jax.numpy_dtype_promotion('standard')
   @jtu.run_on_devices('tpu')
@@ -1273,8 +1289,8 @@ class TestPromotionTables(jtu.JaxTestCase):
         self.skipTest('XLA support for int4 is incomplete.')
       if dtypes.iinfo(dtype).bits <= 2:
         self.skipTest('XLA support for int2 is incomplete.')
-    if dtype in fp6_dtypes:
-      self.skipTest('XLA support for float6 is incomplete.')
+    if dtypes.float8_e5m3fnu is not None and dtype == dtypes.float8_e5m3fnu:
+      self.skipTest('XLA does not support float8_e5m3fnu.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
@@ -1316,6 +1332,23 @@ class TestPromotionTables(jtu.JaxTestCase):
       else:
         self.assertEqual(dtypes.result_type(output_dtype) == result_dtype,
                          dtypes.safe_to_cast(input_dtype, output_dtype))
+
+  @parameterized.product(
+      dtype=intn_dtypes,
+      rng_factory=[
+          jtu.rand_default,
+          jtu.rand_nonzero,
+          jtu.rand_positive,
+          jtu.rand_not_small,
+          jtu.rand_some_equal,
+      ],
+  )
+  def testRandDtypeNarrowIntegers(self, dtype, rng_factory):
+    rng = rng_factory(self.rng())
+    with jtu.test_warning_util.raise_on_warnings():
+      x = rng((64,), dtype)
+    self.assertEqual(x.dtype, dtype)
+    self.assertEqual(x.shape, (64,))
 
 
 if __name__ == "__main__":

@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 (jax2tf)=
 
 ## Interoperation with TensorFlow

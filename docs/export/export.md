@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 <!--* freshness: { owner: "necula" reviewed: "2024-06-26" } *-->
 
 # Exporting and serializing staged-out computations
@@ -89,16 +93,16 @@ function cannot be differentiated):
 >>> rehydrated_f: Callable = export.deserialize(blob).call
 
 >>> rehydrated_f(0.1)  # 7 * 0.1^3
-Array(0.007, dtype=float32)
+Array(0.007, dtype=float32, weak_type=True)
 
 >>> jax.grad(rehydrated_f)(0.1)  # 7*3 * 0.1^2
-Array(0.21000001, dtype=float32)
+Array(0.21000001, dtype=float32, weak_type=True)
 
 >>> jax.grad(jax.grad(rehydrated_f))(0.1)  # 7*3*2 * 0.1
-Array(4.2, dtype=float32)
+Array(4.2, dtype=float32, weak_type=True)
 
 >>> jax.grad(jax.grad(jax.grad(rehydrated_f)))(0.1)  # 7*3*2
-Array(42., dtype=float32)
+Array(42., dtype=float32, weak_type=True)
 
 >>> jax.grad(jax.grad(jax.grad(jax.grad(rehydrated_f))))(0.1)  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
@@ -151,6 +155,18 @@ and then try to use it with a different build of JAX or jaxlib.
 Unlike direct lowering, the {class}`jax.export` module uses the
 [portable-artifact feature of StableHLO](https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md)
 to deal with the possible evolution of the StableHLO opset.
+
+If you try to deserialize a model that is older than the backwards-compatibility
+window you may get an error from the JAX deserializer, or may simply get
+obscure errors or crashes from JAX or XLA. If you get a deserialization
+error you can try to use the `--jax_export_deserialize_expired_versions=1`
+flag (or the `JAX_EXPORT_DESERIALIZE_EXPIRED_VERSIONS=1` environment variable).
+This may give you a small time window to continue your work while you work
+to refresh the old serialized artifact.
+
+**WARNING**: If you enable `--jax_export_deserialize_expired_versions=1` you
+accept that the deserialization behavior may change at any time. You take
+responsibility for refreshing the old serialized artifact ASAP.
 
 ### Compatibility guarantees for custom calls
 
@@ -356,7 +372,7 @@ devices in the mesh are ignored for tracing and lowering:
 >>> # and it knows the shardings for the inputs. These will be applied
 >>> # when the exported is called.
 >>> exp.in_shardings_jax(export_mesh)
-(NamedSharding(mesh=AbstractMesh('a': 4, axis_types=(Auto,)), spec=P('a',)),)
+(NamedSharding(mesh=AbstractMesh('a': 4, axis_types=(Explicit,)), spec=P('a',)),)
 
 >>> # You can also use a concrete set of devices for exporting
 >>> concrete_devices = jax.local_devices()[:4]

@@ -18,6 +18,7 @@ from jax._src.core import AxisName
 from jax._src.cudnn.scaled_matmul_stablehlo import BlockScaleConfig
 from jax._src.lax.lax import DotDimensionNumbers
 from jax._src.typing import Array, ArrayLike, DTypeLike
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 
 from jax.nn import initializers as initializers
 
@@ -60,7 +61,7 @@ def dot_product_attention(
 def elu(x: ArrayLike, alpha: ArrayLike = ...) -> Array: ...
 def gelu(x: ArrayLike, approximate: bool = ...) -> Array: ...
 def get_scaled_dot_general_config(
-    mode: Literal['nvfp4', 'mxfp8'],
+    mode: Literal['nvfp4', 'mxfp8', 'mxfp4'],
     global_scale: Array | None = ...,
   ) -> BlockScaleConfig: ...
 def glu(x: ArrayLike, axis: int = ...) -> Array: ...
@@ -116,7 +117,8 @@ def one_hot(
     num_classes: int,
     *,
     dtype: Any = ...,
-    axis: int | AxisName = ...
+    axis: int | AxisName = ...,
+    out_sharding: NamedSharding | P | None = ...,
   ) -> Array: ...
 def relu(x: ArrayLike) -> Array: ...
 def relu6(x: ArrayLike) -> Array: ...

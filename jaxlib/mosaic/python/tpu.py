@@ -98,6 +98,7 @@ def reinterpret_cast(
     dynamic_sizes=None,
     *,
     dynamic_offset=None,
+    dynamic_strides=None,
     loc=None,
     ip=None,
 ):
@@ -108,6 +109,7 @@ def reinterpret_cast(
       input,
       dynamic_offset=dynamic_offset,
       dynamic_sizes=dynamic_sizes,
+      dynamic_strides=dynamic_strides,
       loc=loc,
       ip=ip,
   ).result

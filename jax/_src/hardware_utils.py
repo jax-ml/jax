@@ -44,6 +44,10 @@ class TpuVersion(enum.IntEnum):
   v6e = 6
   # TPU7x
   tpu7x = 7
+  # TPU8i
+  tpu8i = 8
+  # TPU8t
+  tpu8t = 9
 
 
 _TPU_PCI_DEVICE_IDS = {
@@ -54,6 +58,8 @@ _TPU_PCI_DEVICE_IDS = {
     '0x0063': TpuVersion.v5e,
     '0x006f': TpuVersion.v6e,
     '0x0076': TpuVersion.tpu7x,
+    '0x0083': TpuVersion.tpu8i,
+    '0x007c': TpuVersion.tpu8t,
 }
 
 def num_available_tpu_chips_and_device_id():
@@ -61,6 +67,9 @@ def num_available_tpu_chips_and_device_id():
   num_chips = 0
   tpu_version = None
   for vendor_path in glob.glob('/sys/bus/pci/devices/*/vendor'):
+    pci_addr = os.path.basename(os.path.dirname(vendor_path))
+    if not pci_addr.endswith('.0'):
+      continue
     vendor_id = pathlib.Path(vendor_path).read_text().strip()
     if vendor_id != _GOOGLE_PCI_VENDOR_ID:
       continue
@@ -138,7 +147,7 @@ def num_available_amd_gpus(stop_at: int | None = None) -> int:
         if file_size <= 0 or file_size > 16 * 1024:
           continue
 
-        with open(node_props_path, "r", encoding="ascii") as f:
+        with open(node_props_path, encoding="ascii") as f:
           match = r_simd_count.search(f.read())
           if match:
             simd_count = int(match.group(1))
@@ -146,13 +155,13 @@ def num_available_amd_gpus(stop_at: int | None = None) -> int:
               gpu_count += 1
               if stop_at is not None and gpu_count >= stop_at:
                 return gpu_count
-      except Exception as e:  # pylint: disable=broad-exception-caught
+      except Exception as e:
         logger.debug(
           "Failed to read KFD node file '%s': %s", node_props_path, e
         )
         continue
 
-  except Exception as e:  # pylint: disable=broad-exception-caught
+  except Exception as e:
     logger.warning("Failed to count AMD GPUs: %s", e)
     return -1
   return gpu_count
@@ -176,6 +185,6 @@ def get_shm_size_in_mb():
 
     return shm_size_mb
 
-  except Exception as e:  # pylint: disable=broad-exception-caught
+  except Exception as e:
     logger.debug("Failed to check /dev/shm size: %s", e)
     return 0

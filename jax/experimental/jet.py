@@ -266,17 +266,6 @@ class JetTrace(core.Trace):
     else:
       return [JetTracer(self, p, ts) for p, ts in zip(primal_out, terms_out)]
 
-  def process_call(self, call_primitive, f, tracers, params, /):
-    primals_in, series_in = unzip2(map(self.to_primal_terms_pair, tracers))
-    primals_and_series, in_tree_def = tree_flatten((primals_in, series_in))
-    f_jet, out_tree_def = traceable(jet_subtrace(f, self.main), in_tree_def)
-    update_params = call_param_updaters.get(call_primitive)
-    new_params = (update_params(params, len(primals_and_series))
-                  if update_params else params)
-    result = call_primitive.bind(f_jet, *primals_and_series, **new_params)
-    primals_out, series_out = tree_unflatten(out_tree_def(), result)
-    return [JetTracer(self, p, ts) for p, ts in zip(primals_out, series_out)]
-
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *,
                               symbolic_zeros):
     # TODO(mattjj): don't just ignore custom jvp rules?
@@ -440,13 +429,32 @@ def def_comp(prim, comp, **kwargs):
   jet_rules[prim] = partial(jet2, comp, **kwargs)
 
 
+def_comp(lax.exp2_p, lambda x: lax.exp(x * np.log(2)))
 def_comp(lax.expm1_p, lambda x: lax.exp(x) - 1)
+def_comp(lax.log2_p, lambda x: lax.log(x) / np.log(2))
 def_comp(lax.log1p_p, lambda x: lax.log(1 + x))
 def_comp(lax.sqrt_p, lambda x: x ** 0.5)
 def_comp(lax.square_p, lambda x: x * x)
+
+def _one_minus_square_rule(primals_in, series_in):
+  x, = primals_in
+  _, series_out = jet_rules[lax.square_p](primals_in, series_in)
+  return lax.one_minus_square(x), [lax.neg(t) for t in series_out]
+jet_rules[lax.one_minus_square_p] = _one_minus_square_rule
+
+def _polynomial_jet_rule(primals_in, series_in, *, unroll=None):
+  del unroll
+  def _eval(x, *coeffs):
+    acc = coeffs[-1]
+    for c in reversed(coeffs[:-1]):
+      acc = lax.add(lax.mul(acc, x), c)
+    return acc
+  return jet2(_eval, primals_in, series_in)
+jet_rules[lax.polynomial_p] = _polynomial_jet_rule
+
 def_comp(lax.rsqrt_p, lambda x: x ** -0.5)
-def_comp(lax.asinh_p, lambda x: lax.log(x + lax.sqrt(lax.square(x) + 1)))
-def_comp(lax.acosh_p, lambda x: lax.log(x + lax.sqrt(lax.square(x) - 1)))
+def_deriv(lax.asinh_p, lambda x: lax_internal._asinh_jvp(lax_internal._ones(x), x))
+def_comp(lax.acosh_p, lambda x: lax.log(x + lax.sqrt(x - 1) * lax.sqrt(x + 1)))
 def_comp(lax.atanh_p, lambda x: 0.5 * lax.log(lax.div(1 + x, 1 - x)))
 def_comp(lax.erfc_p, lambda x: 1 - lax.erf(x))
 def_comp(lax.rem_p, lambda x, y: x - y * lax.floor(x / y))
@@ -628,6 +636,74 @@ jet_rules[lax.cos_p] = _get_ind(partial(_sinusoidal_rule, -1, (lax.sin, lax.cos)
 jet_rules[lax.sinh_p] = _get_ind(partial(_sinusoidal_rule, 1, (lax.sinh, lax.cosh)), 0)
 jet_rules[lax.cosh_p] = _get_ind(partial(_sinusoidal_rule, 1, (lax.sinh, lax.cosh)), 1)
 
+def _sinpi_cospi_rule(ind, primals_in, series_in, **_):
+  series, = series_in
+  scaled_series = [np.pi * s for s in series]
+  return _sinusoidal_rule(-1, (lax.sinpi, lax.cospi), primals_in, (scaled_series,))[ind]
+
+jet_rules[lax.sinpi_p] = partial(_sinpi_cospi_rule, 0)
+jet_rules[lax.cospi_p] = partial(_sinpi_cospi_rule, 1)
+
+def _tanpi_taylor(primals_in, series_in, **_):
+  x, = primals_in
+  series, = series_in
+  u = [x] + [np.pi * s for s in series]
+  v: list[Any] = [lax.tanpi(x)] + [None] * len(series)
+  e: list[Any] = [1.0 + v[0] * v[0]] + [None] * len(series)
+  for k in range(1, len(v)):
+    v[k] = sum(j * e[k - j] * u[j] for j in range(1, k + 1)) / k
+    e[k] = sum(v[j] * v[k - j] for j in range(0, k + 1))
+  primal_out, *series_out = v
+  return primal_out, series_out
+
+jet_rules[lax.tanpi_p] = _tanpi_taylor
+
+def_deriv(
+    lax.asinpi_p,
+    lambda x: lax.mul(
+        lax_internal._const(x, 1.0 / np.pi), lax.rsqrt(lax.one_minus_square(x))
+    ),
+)
+def_deriv(
+    lax.acospi_p,
+    lambda x: lax.mul(
+        lax_internal._const(x, -1.0 / np.pi), lax.rsqrt(lax.one_minus_square(x))
+    ),
+)
+def_deriv(
+    lax.atanpi_p,
+    lambda x: lax.div(lax_internal._const(x, 1.0 / np.pi), 1 + lax.square(x)),
+)
+
+
+def _atan2pi_taylor(primals_in, series_in):
+  x, y = primals_in
+  x_series, y_series = series_in
+  primal_out = lax.atan2pi(x, y)
+  if not x_series:
+    return primal_out, []
+  k_max = len(x_series)
+  dx_series = [(j + 1) * x_series[j] for j in range(k_max)]
+  dy_series = [(j + 1) * y_series[j] for j in range(k_max)]
+  num0, nums = jet2(
+      lambda x, y, dx, dy: lax.sub(lax.mul(y, dx), lax.mul(x, dy)),
+      (x, y, dx_series[0], dy_series[0]),
+      (x_series[:-1], y_series[:-1], dx_series[1:], dy_series[1:]),
+  )
+  den0, dens = jet2(
+      lambda x, y: lax.mul(
+          lax_internal._const(x, np.pi), lax.add(lax.square(x), lax.square(y))
+      ),
+      (x, y),
+      (x_series[:-1], y_series[:-1]),
+  )
+  q0, qs = jet2(lax.div, (num0, den0), (nums, dens))
+  series_out = [q / (j + 1) for j, q in enumerate([q0] + qs)]
+  return primal_out, series_out
+
+
+jet_rules[lax.atan2pi_p] = _atan2pi_taylor
+
 def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   x, y = primals_in
   x_terms, y_terms = series_in
@@ -642,6 +718,23 @@ def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
 jet_rules[lax.dot_general_p] = partial(_bilinear_taylor_rule, lax.dot_general_p)
 jet_rules[lax.mul_p] = partial(_bilinear_taylor_rule, lax.mul_p)
 jet_rules[lax.conv_general_dilated_p] = partial(_bilinear_taylor_rule, lax.conv_general_dilated_p)
+
+def _fma_taylor_rule(op, primals_in, series_in):
+  a, b, c = primals_in
+  a_terms, b_terms, c_terms = series_in
+  u = [a] + a_terms
+  w = [b] + b_terms
+  z = [c] + c_terms
+  v: list[Any] = []
+  for k in range(len(u)):
+    acc = z[k]
+    for j in range(k + 1):
+      acc = op(u[j], w[k - j], acc)
+    v.append(acc)
+  primal_out, *series_out = v
+  return primal_out, series_out
+jet_rules[lax.fma_p] = partial(_fma_taylor_rule, lax.fma)
+jet_rules[lax.fmuladd_p] = partial(_fma_taylor_rule, lax.fmuladd)
 
 def _gather_taylor_rule(primals_in, series_in, **params):
   operand, start_indices = primals_in
@@ -711,7 +804,7 @@ def _lax_max_taylor_rule(primal_in, series_in):
 jet_rules[lax.max_p] = _lax_max_taylor_rule
 
 def _lax_min_taylor_rule(primal_in, series_in):
-    x, y = primal_in
+    x, y = jnp.broadcast_arrays(*primal_in)
     xgy = x < y   # less than mask
     xey = x == y  # equal to mask
     primal_out = lax.select(xgy, x, y)
@@ -722,7 +815,7 @@ def _lax_min_taylor_rule(primal_in, series_in):
         min_i = lax.select(xey, (x_i + y_i)/2, min_i)
         return min_i
 
-    series_out = [select_min_and_avg_eq(*terms_in) for terms_in in zip(*series_in)]
+    series_out = [select_min_and_avg_eq(*jnp.broadcast_arrays(*terms_in)) for terms_in in zip(*series_in)]
     return primal_out, series_out
 jet_rules[lax.min_p] = _lax_min_taylor_rule
 
@@ -742,14 +835,14 @@ jet_rules[lax.scatter_add_p] = _scatter_add_rule
 
 @weakref_lru_cache
 def _jet_jaxpr(
-    jaxpr: core.ClosedJaxpr, order: int, primals_and_series_avals, in_tree_def
-) -> tuple[core.ClosedJaxpr, Any]:
+    jaxpr: core.Jaxpr, order: int, primals_and_series_avals, in_tree_def
+) -> tuple[core.Jaxpr, Any]:
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr),
-                   debug_info=jaxpr.jaxpr.debug_info.with_unknown_names())
+                   debug_info=jaxpr.debug_info.with_unknown_names())
   f_jet, out_tree_def = traceable(jet_fun(jet_subtrace(f), order), in_tree_def)
   jaxpr_jet, _, consts = pe.trace_to_jaxpr_dynamic(
       f_jet, primals_and_series_avals)
-  return core.ClosedJaxpr(jaxpr_jet, consts), out_tree_def
+  return jaxpr_jet.with_consts(consts), out_tree_def
 
 
 def _pjit_jet_rule(primals_in, series_in, **params):

@@ -27,12 +27,10 @@ import jax.experimental.pallas.mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
 from functools import partial
-from typing import Protocol, TypeVar
+from typing import Protocol
 
 
-T = TypeVar('T')
-
-class PipelineCallback(Protocol):
+class PipelineCallback[T](Protocol):
   """A callback that returns the same type as the input."""
   def __call__(self, arg: T, /) -> T: ...
 
@@ -167,7 +165,7 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
 
         # QK
         def compute_qk(acc_ref):
-          plgpu.wgmma(acc_ref, qo_smem, plgpu.transpose_ref(k_smem.at[slot], (1, 0)))
+          plgpu.wgmma(acc_ref, qo_smem, k_smem.at[slot].transpose((1, 0)))
           perform_schedule_barrier()
           return acc_ref[...]
         qk = pl.run_scoped(compute_qk, plgpu.ACC((block_q, block_kv), jnp.float32))
@@ -389,7 +387,12 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
   tiling = plgpu.TilingTransform((8, 64))
   swizzle = plgpu.SwizzleTransform(128)
 
-  delta = jnp.einsum('bqhd,bqhd->bhq', out.astype(jnp.float32), do.astype(jnp.float32))
+  delta = jnp.einsum(
+      "bqhd,bqhd->bhq",
+      out.astype(jnp.float32),
+      do.astype(jnp.float32),
+      precision="high",
+  )
   del out  # Not needed anymore.
 
   def kernel_dq(q_ref, k_ref, v_ref, do_ref, lse_ref, delta_ref, dq_ref,
@@ -419,8 +422,8 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       for buffer in buffer_barriers:
         plgpu.barrier_wait(buffer.at[wg_idx])
 
-      delta = plgpu.load(delta_smem, (), layout=plgpu.Layout.WGMMA.reduce(1))
-      lse = plgpu.load(lse_smem, (), layout=plgpu.Layout.WGMMA.reduce(1))
+      delta = plgpu.load(delta_smem, layout=plgpu.Layout.WGMMA.reduce(1))
+      lse = plgpu.load(lse_smem, layout=plgpu.Layout.WGMMA.reduce(1))
       dq_acc: jax.Array = plgpu.layout_cast(
           jnp.full((block_q, head_dim), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
       )
@@ -435,7 +438,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       (dq_acc, lse, delta) = carry
 
       def compute_s(acc_ref):
-        plgpu.wgmma(acc_ref, q_smem, plgpu.transpose_ref(k_smem, (1, 0)))
+        plgpu.wgmma(acc_ref, q_smem, k_smem.transpose((1, 0)))
         return acc_ref[...]
 
       s = pl.run_scoped(compute_s, plgpu.ACC((block_q, block_kv), jnp.float32))
@@ -444,7 +447,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
 
       # dP
       def compute_dp(acc_ref):
-        plgpu.wgmma(acc_ref, do_smem, plgpu.transpose_ref(v_smem, (1, 0)))
+        plgpu.wgmma(acc_ref, do_smem, v_smem.transpose((1, 0)))
         return acc_ref[...]
 
       dp = pl.run_scoped(compute_dp, plgpu.ACC((block_q, block_kv), jnp.float32))
@@ -534,12 +537,12 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       dk_acc, dv_acc = carry
 
       def _compute_sT(acc_ref):
-        plgpu.wgmma(acc_ref, k_smem, plgpu.transpose_ref(q_smem, (1, 0)))
+        plgpu.wgmma(acc_ref, k_smem, q_smem.transpose((1, 0)))
         return acc_ref[...]
       sT = pl.run_scoped(_compute_sT, plgpu.ACC((block_kv, block_q), jnp.float32))
       sT *= math.log2(math.e)
 
-      lse = plgpu.load(lse_smem, (), layout=plgpu.Layout.WGMMA.reduce(0))
+      lse = plgpu.load(lse_smem, layout=plgpu.Layout.WGMMA.reduce(0))
       plgpu.barrier_arrive(lse_consumed_barrier)
       pT = jnp.exp2(sT - lax.broadcast_in_dim(lse, (block_kv, block_q), [1]))
 
@@ -548,7 +551,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
         # synchronization from two `wgmma.wait_group` calls.
         dv_acc_ref, dpT_acc_ref = refs
         plgpu.wgmma(dv_acc_ref, pT.astype(dtype), do_smem)  # dV
-        plgpu.wgmma(dpT_acc_ref, v_smem, plgpu.transpose_ref(do_smem, (1, 0)))  # dpT
+        plgpu.wgmma(dpT_acc_ref, v_smem, do_smem.transpose((1, 0)))  # dpT
 
       zeros = plgpu.layout_cast(
           jnp.full((block_kv, block_q), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
@@ -556,7 +559,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       dv_acc, dpT = pl.run_state(_compute)((plgpu.ACC.init(dv_acc), plgpu.ACC.init(zeros)))
       plgpu.barrier_arrive(do_consumed_barrier)
 
-      delta = plgpu.load(delta_smem, (), layout=plgpu.Layout.WGMMA.reduce(0))
+      delta = plgpu.load(delta_smem, layout=plgpu.Layout.WGMMA.reduce(0))
       plgpu.barrier_arrive(delta_consumed_barrier)
 
       dsT = pT * (dpT - lax.broadcast_in_dim(delta, (block_kv, block_q), [1]))  # jax-operator-types
@@ -732,7 +735,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
       acc, m_i, l_i = carry
       qo_smem = qo_smem2.at[wg_idx]
       def compute_qk(acc_ref):
-        plgpu.wgmma(acc_ref, qo_smem, plgpu.transpose_ref(k_smem, (1, 0)))
+        plgpu.wgmma(acc_ref, qo_smem, k_smem.transpose((1, 0)))
         perform_schedule_barrier()
         return acc_ref[...]
       qk = pl.run_scoped(compute_qk, plgpu.ACC((block_q, block_kv), jnp.float32))
@@ -819,7 +822,7 @@ def attention_reference(q, k, v, causal=False, save_residuals=False):
   q_reshaped = q.reshape(
       batch_size, q_seq_len, num_kv_heads, num_q_heads // num_kv_heads, head_dim
   )
-  logits = jnp.einsum("bqHhc,bkHc->bqHhk", q_reshaped, k)
+  logits = jnp.einsum("bqHhc,bkHc->bqHhk", q_reshaped, k, precision="high")
 
   if causal:
     mask = jnp.arange(q_seq_len)[:, None] >= jnp.arange(kv_seq_len)[None, :]
@@ -830,7 +833,9 @@ def attention_reference(q, k, v, causal=False, save_residuals=False):
   unnormalized = jnp.exp(logits - m)
   l = unnormalized.sum(axis=-1, keepdims=True)
   weights = unnormalized / l
-  out = jnp.einsum("bqHhk,bkHc->bqHhc", weights, v).reshape(*q.shape)
+  out = jnp.einsum("bqHhk,bkHc->bqHhc", weights, v, precision="high").reshape(
+      *q.shape
+  )
 
   if save_residuals:
     log2e = math.log2(math.e)

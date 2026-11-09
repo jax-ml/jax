@@ -17,6 +17,636 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added `jax.lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3` and
+    `F8E4M3FN_F8E4M3FN_F32_X4` dot algorithm presets (requiring `jaxlib` >= 514)
+    for emulating `bfloat16` precision matmuls on `bfloat16` or `float32` inputs
+    using 3 or 4 `float8_e4m3fn` dot products accumulated in `float32`.
+  * When neither `XLA_CLIENT_MEM_FRACTION` nor its deprecated alias
+    `XLA_PYTHON_CLIENT_MEM_FRACTION` is set, the GPU client now selects XLA's
+    `0.75+` memory policy. The default preallocated spatial BFC pool starts at
+    75% of total GPU memory and can grow for ordinary buffers as needed, up to
+    available device memory. Set `XLA_CLIENT_MEM_FRACTION=0.75` to retain the
+    previous fixed limit. Explicit XLA memory-policy flags take precedence;
+    allocator modes that do not support growth retain their existing behavior.
+  * {func}`jax.dlpack.from_dlpack` now accepts `Format` in its `device` argument
+    to specify device-local layouts (such as linear layout `tiling=((1,),)` for
+    `kDLTPUHost` buffers) and supports `copy=None` fallback for `kDLTPUHost`.
+  * Added {func}`jax.scipy.special.gammaincinv` and
+    {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
+    incomplete gamma functions, with gradients with respect to both arguments.
+  * Added {func}`jax.scipy.special.jn` and {func}`jax.scipy.special.yn`,
+    providing accurate evaluation of integer-order Bessel functions of the first
+    and second kind.
+  * Added {func}`jax.lax.sinpi`, {func}`jax.lax.cospi`, and
+    {func}`jax.lax.tanpi`, which compute `sin(pi * x)`, `cos(pi * x)`, and
+    `tan(pi * x)` more accurately than multiplying by `pi` first. They return
+    exact values at integers and half-integers and stay accurate for large
+    inputs.
+  * Added {func}`jax.scipy.special.ndtri_exp`, the inverse of
+    {func}`jax.scipy.special.log_ndtr`, with custom forward- and reverse-mode
+    derivatives.
+  * Added {func}`jax.lax.asinpi`, {func}`jax.lax.acospi`,
+    {func}`jax.lax.atanpi`, and {func}`jax.lax.atan2pi`, which compute the
+    inverse trigonometric functions divided by `pi` (`asin(x) / pi`,
+    `acos(x) / pi`, `atan(x) / pi`, and `atan2(x, y) / pi`).
+
+* Breaking changes
+  * The `jax_use_simplified_jaxpr_constants` configuration flag is now `True`
+    by default. This changes the handling of closed-over constants in Jaxpr.
+    See [here](https://docs.jax.dev/en/latest/internals/constants.html) for
+    more details, including how to recognize a breakage and migrate your code.
+    The flag will be removed in a future release.
+
+* Deprecations
+  * `jax.sharding.SingleDeviceSharding` is deprecated; use
+    `jax.sharding.make_single_device_sharding` or
+    `jax.sharding.is_single_device_sharding` instead.
+  * The `jax_use_shardy_partitioner` configuration flag is deprecated and is now
+    a no-op. JAX always lowers to Shardy, and the flag will be removed in a
+    future release.
+  * The `jax.scipy.special.bessel_jn` function is deprecated; use the new
+    `jax.scipy.special.jn` instead, which is more accurate and provides
+    direct evaluation of only the nth bessel function.
+
+* Changes
+  * Mixed real and complex {func}`jax.numpy.add`, {func}`jax.numpy.subtract`,
+    {func}`jax.numpy.multiply`, and {func}`jax.numpy.true_divide`
+    (`complex / real`) no longer convert the real input to complex before
+    operating. This avoids unnecessary operations on zeros and fixes edge cases
+    with infinities and signed zeros (for example, `0.5 * (inf + 1j)` now
+    returns `inf + 0.5j` instead of `inf + nan*j`).
+  * JAX now uses Bazel 9.3.1 to build from source.
+  * On GPU and TPU, `accumulate` for {func}`jax.numpy.bitwise_and`,
+    {func}`jax.numpy.bitwise_or`, {func}`jax.numpy.bitwise_xor`,
+    {func}`jax.numpy.logical_and`, {func}`jax.numpy.logical_or`,
+    {func}`jax.numpy.logical_xor`, {func}`jax.numpy.maximum` and
+    {func}`jax.numpy.minimum` now uses a parallel prefix scan for integer and
+    boolean outputs, which is much faster for long axes ({jax-issue}`#28097`).
+
+* Bug fixes
+  * {func}`jax.scipy.linalg.polar` with `method="qdwh"` now honors
+    `max_iterations` and accepts `eps`, as documented; previously
+    `max_iterations` was silently ignored and any `eps` raised a `ValueError`.
+    Both arguments are now static, so passing a traced value for either raises
+    an error.
+  * Fixed {func}`jax.numpy.modf` returning `nan` as the fractional part for
+    infinite inputs; it now returns a signed zero, matching NumPy
+    ({jax-issue}`#41102`).
+  * Fixed {func}`jax.jit` instances of the same function that differ only in
+    `static_argnums`, `static_argnames` or `keep_unused` sharing C++ dispatch
+    cache entries, which could run the executable compiled for one instance
+    with the arguments of another and return wrong results.
+  * Fixed {func}`jax.numpy.interp` returning `nan` at and around knots whose
+    `fp` value is infinite; it now returns the knot value or the signed
+    infinity, matching NumPy. For complex `fp`, the real and imaginary parts
+    are now interpolated separately, as in NumPy.
+
+## JAX 0.12.0.1 (October 23, 2026)
+
+* Bug fixes
+  * Built C++-generated intrinsic LLVM IR on Windows with `clang-cl` instead of
+    emitting empty bitcode, enabling vectorized CPU intrinsics on Windows
+    (https://github.com/openxla/xla/commit/3af77b5776fbc41a65d54876cc837bdc57540005).
+
+## JAX 0.12.0 (October 19, 2026)
+
+* New features
+  * Added {func}`jax.scipy.special.erfcinv` for the inverse complementary
+    error function.
+  * Added {func}`jax.lax.polynomial` for polynomial evaluation. The polynomial
+    primitive is faster and uses less memory when computing gradients.
+  * Added {func}`jax.custom_vjp.defremat`, which customizes how a
+    {func}`jax.custom_vjp` function is rematerialized when it's differentiated
+    under {func}`jax.remat`. It requires the `jax_custom_vjp3` and `jax_remat3`
+    implementations.
+  * Added a `remat` option to {func}`jax.custom_gradient`, for writing
+    {func}`jax.custom_vjp.defremat` rules with closures.
+  * `arr.at[...].get()` now accepts a `strategy` argument that allows choosing
+    whether the operation lowers to `gather`, `dynamic_slice`, or `slice`.
+  * Added a `generic_batching` option to {func}`jax.custom_vjp.defvjp`, for
+    batching under {func}`jax.vmap` when a primal output is shared across the
+    batch. See {ref}`jax-301-vmap-shared-outputs`.
+  * {func}`jax.nn.get_scaled_dot_general_config` accepts `'mxfp4'`: E2M1
+    elements with one E8M0 scale per block of 32, for
+    {func}`jax.nn.scaled_dot_general`. The quantization is executed natively
+    on AMD gfx950 GPUs and by a dequantize-and-dot fallback elsewhere.
+  * JAX now registers a `proxy` backend, which connects to an IFRT Proxy server
+    such as [Pathways on Cloud](https://docs.cloud.google.com/ai-hypercomputer/docs/workloads/pathways-on-cloud/pathways-intro).
+    To use it, set `JAX_PLATFORMS=proxy` and set `JAX_BACKEND_TARGET` to the
+    server address, e.g. `grpc://localhost:29000`.
+  * Added {func}`jax.sharding.no_collectives`, a context manager that raises an
+    error at trace time in explicit sharding mode if an operation or
+    {func}`jax.sharding.reshard` introduces a collective across any specified
+    mesh axis.
+  * Added {func}`jax.custom_vjp.defremat_with_logs`, allowing
+    {func}`jax.custom_vjp.defremat` rules (and {func}`jax.custom_gradient` with
+    `remat=True` and `with_logs=True`) to log values from the backward pass
+    ({jax-issue}`#40956`).
+  * {func}`jax.scipy.linalg.eigh` now supports generalized Hermitian
+    eigenproblems (`b != None`) for problem types `type=1`, `2`, and `3`
+    ({jax-issue}`#41162`, {jax-issue}`#41197`).
+  * Added {class}`jax.profiler.ProfileSession` and
+    {func}`jax.profiler.export_profile_data` for session- and
+    context-manager-based profiling.
+  * Added {meth}`jax.experimental.layout.Layout.for_array` to query the default
+    device layout for an array.
+  * Added a `strict_in_out` argument to {func}`jax.experimental.program_order`
+    to place optimization barriers on the first input and/or last output of the
+    scope.
+  * Added {mod}`jax.experimental.thunky` for authoring, inspecting, splicing,
+    and executing XLA:GPU `ThunkExecutor` programs directly from Python.
+  * Added JVP rule for {func}`jax.lax.nextafter`, enabling forward- and
+    reverse-mode autodiff through `nextafter` ({jax-issue}`#38679`).
+  * Widened {func}`jax.random.ball`'s `p` parameter type from `float` to
+    `RealArray`, allowing array-valued norm orders ({jax-issue}`#41546`).
+  * Added support for DLPack 1.0 (`DLManagedTensorVersioned`) and read-only
+    DLPack tensors ({jax-issue}`#40789`).
+  * [oneAPI GPU] Added SYCL/oneMKL kernels for
+    {func}`jax.lax.linalg.lu_pivots_to_permutation`,
+    {func}`jax.lax.linalg.cholesky_update`,
+    {func}`jax.lax.linalg.tridiagonal_solve` (with `perturb_singular=True`),
+    {func}`jax.lax.linalg.tridiagonal` (`sytrd`/`hetrd`), symmetric rank-$k$
+    updates (`syrk`), and `scaled_matmul`, and set `jax_oneapi_visible_devices`
+    in {func}`jax.distributed.initialize`.
+  * [ROCm] Added `gfx1250` to the default target architectures in ROCm builds
+    ({jax-issue}`#40877`).
+
+* Breaking changes
+  * Removed `jax.custom_remat`. Use {func}`jax.custom_vjp.defremat` instead:
+    `custom_remat(f, f_fwd, f_rem, f_bwd)` becomes `f = jax.custom_vjp(f)`
+    followed by `f.defremat(f_fwd, f_rem, f_bwd)`.
+  * On x86-64, JAX and `jaxlib` now require an Intel Haswell or newer CPU
+    (roughly 2013 onwards, requiring AVX2 and FMA support). Older CPUs that
+    only support AVX are no longer supported, though you can still build from
+    source for older CPUs.
+  * {func}`jax.numpy.atleast_1d`, {func}`jax.numpy.atleast_2d`, and
+    {func}`jax.numpy.atleast_3d` now return tuples of arrays rather than
+    lists, matching the behavior in NumPy 2.0+.
+  * The `shape` argument of {func}`jax.random.multinomial` is now the batch
+    shape, as documented and as in NumPy: the result has shape
+    `(*shape, p.shape[-1])`. Previously `shape` had to include the outcome
+    axis. Code that passed the full output shape should drop its last entry.
+  * Under {func}`jax.vmap`, a {func}`jax.custom_vjp` function with a primal
+    output that doesn't depend on any batched input could get gradients that
+    counted that output's cotangent once per example. That case now raises an
+    error explaining how to resolve it, for example with the new
+    `generic_batching` option. See {ref}`jax-301-vmap-shared-outputs`.
+  * Dropped support for NumPy 2.1; JAX now requires NumPy 2.2 or newer.
+  * {func}`jax.numpy.cross` no longer accepts 2D vector inputs, completing a
+    deprecation started in JAX 0.11.0 ({jax-issue}`#40876`).
+  * The `copy`, `order`, and `ndmin` arguments to {func}`jax.numpy.array` are
+    now keyword-only, completing a deprecation started in an earlier release
+    ({jax-issue}`#40878`).
+  * {class}`jax.profiler.ProfileOptions` now raises `AttributeError` when
+    unknown attributes are assigned to it.
+  * {func}`jax.checkpoint`, {func}`jax.custom_vjp`, and {func}`jax.shard_map`
+    now raise an error if the same `Ref` is passed as more than one argument or
+    is both closed over and passed as an argument.
+
+* Deprecations
+  * {func}`jax.lax.psend` and {func}`jax.lax.precv` are deprecated.
+
+* Changes
+  * Improved the numerical accuracy of {func}`jax.scipy.special.ndtri` and its
+    derivatives by replacing the piecewise rational approximations with
+    minimax polynomial approximations and a custom JVP rule.
+  * JAX now uses Bazel 9.2.0 to build from source.
+  * Improved the numerical accuracy of complex {func}`jax.numpy.abs` and
+    {func}`jax.lax.abs` by lowering through power-of-two scaled `hypot`.
+  * Improved the numerical accuracy of {func}`jax.numpy.hypot` and its
+    derivatives by replacing the division-based formula with power-of-two
+    scaling and a custom JVP rule, avoiding rounding errors for large inputs.
+    The derivative at `(0, 0)` now returns `NaN` (previously `±0.5`).
+  * Improved the numerical accuracy of {func}`jax.numpy.sinc` across all
+    floating-point types (to $\le 0.5$ ULP for `bfloat16` and `float16`,
+    $\le 2.5\text{–}4.0$ ULPs for `float32`, and $\ge 2.0$ ULPs for `float64`).
+  * {func}`jax.numpy.ldexp` and {func}`jax.numpy.frexp` are now bit-exact for
+    normal floating-point numbers, replacing floating-point arithmetic with
+    bitwise operations. Subnormal inputs and underflowing outputs are flushed to
+    signed zero.
+  * Several {mod}`jax.numpy` functions are now implemented in terms of HiJax
+    primitives (see {ref}`jax-301-hijax-types`). This includes
+    {func}`~jax.numpy.searchsorted`, {func}`~jax.numpy.nonzero`,
+    {func}`~jax.numpy.ldexp`, {func}`jax.numpy.frexp`. Typical users should not
+    see any change in behavior, but you may notice more efficient batching
+    and autodiff, and more concise representations in jaxprs.
+  * The "web" debugger now defaults to hostname "localhost", which is a safer
+    default that avoids inadvertently opening a port to the world.
+  * {func}`jax.numpy.lexsort` with many keys now uses a batched approach by
+    default, controlled by the new `batch_size` parameter (which defaults to
+    16). This avoids long compile times for sorts with many keys. Fixes the
+    poor performance of {func}`jax.numpy.unique` for high-dimensional arrays
+    ({jax-issue}`#17370`).
+  * Reimplemented {func}`jax.scipy.special.erfcx` and added
+    `accuracy=jax.lax.AccuracyMode.HIGHEST` support for {func}`jax.lax.erfc`,
+    improving worst-case `float32` accuracy to $\le 3.5\text{–}5.5$ ULPs across
+    CPU, GPU, and TPU (and $\le 2.5\text{–}3.0$ ULPs in `float64`) with accurate
+    first- and higher-order derivatives.
+  * Improved `float32` accuracy of {func}`jax.lax.lgamma`
+    ({func}`jax.scipy.special.gammaln`) to $\le 4$ ULPs across CPU, GPU, and TPU
+    ({jax-issue}`#21284`).
+  * Improved `float32` and `float64` accuracy of {func}`jax.lax.expm1` on CPU to
+    $< 1$ ULP, and tightened `expm1` and `log1p` `float32` accuracy on TPU v5p,
+    v6e, and 7x (with `libtpu >= 0.0.50`).
+  * Improved precision of {func}`jax.lax.asin` fallback expansions near zero
+    under flush-to-zero mode.
+  * {func}`jax.scipy.special.betainc` now stops its continued fraction iteration
+    per element as each element converges rather than running until all batch
+    elements converge ({jax-issue}`#28547`).
+  * {func}`jax.pure_callback` and {func}`jax.experimental.io_callback` now clear
+    the caller's concrete and abstract mesh when invoking host callbacks,
+    matching {func}`jax.debug.callback`.
+  * {func}`jax.numpy.quantile` and {func}`jax.numpy.percentile` now use an
+    unstable sort when `weights=None`, avoiding a companion index sort.
+  * {func}`jax.numpy.minmax` now lowers via a single-pass {func}`jax.lax.reduce`.
+  * Implemented `__reversed__` on {class}`jax.Array` using chunked slicing,
+    matching `__iter__` for faster reverse iteration in eager mode.
+  * Updated minimum pinned `libtpu` version to `0.0.50`.
+  * When cache key equality comparison fails in `weakref_lru_cache`, JAX now
+    raises a descriptive `ValueError` reporting the non-comparable key types
+    ({jax-issue}`#21825`).
+
+* Type annotation improvements
+  * {obj}`jax.numpy.int32`, {obj}`jax.numpy.float32`, and other scalar constructors
+    now have proper type annotations; prior to v0.12.0 they were typed `Any`.
+    This may lead to new typecheck errors in cases where they were being misused;
+    for example, if they were assumed to be instances of `jnp.dtype` (which they
+    are not) or used as annotations for arrays of a given type (which is invalid).
+  * {func}`jax.Array.__iter__` and {func}`jax.Array.__reversed__` are now annotated
+    as returning `Iterator[Self]` rather than `Any`.
+  * {obj}`jax.random.Key` was introduced as an `Array` type alias. Starting in JAX
+    v0.13.0, this will be the return type for {func}`jax.random.key`,
+    {func}`jax.random.split`, and {func}`jax.random.fold_in`.
+  * Unary {class}`jax.Array` methods, {meth}`jax.Array.astype`, and
+    `arr.at[...].set()` now use `Self` return type annotations
+    ({jax-issue}`#41055`, {jax-issue}`#41324`).
+
+* Bug fixes
+  * Fixed the gradient of {func}`jax.numpy.ldexp` at `x = 0.0`, which previously
+    returned `1.0` instead of `2**n`.
+  * {func}`jax.nn.scaled_dot_general` keeps its FP8/FP4 quantization when XLA
+    expands the scaled matmul into a dequantize-and-dot (previously the
+    rounding could be folded away under `xla_allow_excess_precision`) and
+    computes MX block scales in float32 regardless of the input dtype.
+  * Fixed the derivative of {func}`jax.lax.sign` and {func}`jax.numpy.sign` for
+    complex inputs, which was previously always zero ({jax-issue}`#41000`).
+  * {func}`jax.scipy.linalg.lu` now accepts batched inputs of shape
+    `(..., M, N)`, as documented; previously it raised a `ValueError` for any
+    input with more than two dimensions.
+  * Fixed reverse-mode autodiff for {func}`jax.experimental.sparse.coo_matvec`,
+    {func}`jax.experimental.sparse.coo_matmat`,
+    {func}`jax.experimental.sparse.csr_matvec`, and
+    {func}`jax.experimental.sparse.csr_matmat` when `transpose=True`
+    ({jax-issue}`#40625`).
+  * Fixed {func}`jax.numpy.linalg.svd` with `hermitian=True` breaking unitarity
+    when a singular value is zero ({jax-issue}`#41547`).
+  * Fixed gradient cancellation in {func}`jax.lax.expm1`, {func}`jax.nn.elu`,
+    and {func}`jax.nn.selu` for large negative inputs ({jax-issue}`#39794`,
+    {jax-issue}`#39795`, {jax-issue}`#39796`).
+  * Fixed numerical overflow in {func}`jax.lax.asinh` gradients for large
+    inputs.
+  * Fixed precision, overflow, and `NaN`/`inf` handling in
+    {func}`jax.scipy.special.rel_entr` and {func}`jax.scipy.special.kl_div`
+    ({jax-issue}`#38239`, {jax-issue}`#38262`, {jax-issue}`#41200`).
+  * Fixed domain, boundary, and overflow issues in
+    {func}`jax.scipy.special.expn` and {func}`jax.scipy.special.expi` at `x = 0`
+    ({jax-issue}`#41221`).
+  * Fixed {func}`jax.scipy.special.betaln` Hessian when `a == b`.
+  * Fixed {func}`jax.scipy.special.zeta`'s JVP rule returning finite primal
+    values outside its domain (`x < 1`) where `zeta` returns `NaN`
+    ({jax-issue}`#40968`).
+  * Fixed {func}`jax.scipy.stats.norm.isf` losing precision and returning `inf`
+    for small tail probabilities ({jax-issue}`#41262`).
+  * Fixed {func}`jax.scipy.stats.expon.logcdf` returning `-inf` for small
+    positive inputs ({jax-issue}`#40965`).
+  * Fixed `NaN` gradients in {func}`jax.scipy.stats.laplace.cdf` in the tails
+    ({jax-issue}`#40966`) and in {func}`jax.scipy.stats.poisson.entropy`
+    ({jax-issue}`#40969`).
+  * Fixed domain handling and tail accuracy in {func}`jax.scipy.stats.cauchy.ppf`
+    and {func}`jax.scipy.stats.cauchy.isf` ({jax-issue}`#38318`).
+  * Fixed {func}`jax.scipy.stats.vonmises.logpdf` at `kappa = 0`
+    ({jax-issue}`#38621`) and {func}`jax.scipy.stats.chi2.logpdf` at `x = 0` and
+    `x = inf` for `df = 2` ({jax-issue}`#38316`).
+  * Fixed {func}`jax.scipy.stats.multinomial.logpmf` and `pmf` for batched `x`
+    and `n` ({jax-issue}`#38605`), {func}`jax.scipy.stats.poisson.logpmf` for
+    fractional `loc` ({jax-issue}`#41220`), {func}`jax.scipy.stats.pareto`
+    support checks when `scale` is below the floating-point resolution of `loc`
+    ({jax-issue}`#40964`), and `NaN` propagation in
+    {mod}`jax.scipy.stats.uniform` and {mod}`jax.scipy.stats.truncnorm`
+    ({jax-issue}`#38317`, {jax-issue}`#38606`).
+  * Fixed parameter broadcasting in {func}`jax.random.f`.
+  * Fixed {meth}`jax.Array.sum` to forward the `initial` parameter to
+    {func}`jax.numpy.sum` ({jax-issue}`#41137`).
+  * Fixed {meth}`jax.numpy.ufunc.reduceat` ignoring the specified `dtype` when
+    casting inputs before accumulation ({jax-issue}`#41247`).
+  * Fixed {func}`jax.numpy.partition`, {func}`jax.numpy.argpartition`, and
+    {func}`jax.lax.top_k` returning incorrect results for signed integer
+    minimum values (e.g. `INT_MIN`).
+  * Fixed transpose rule for {func}`jax.lax.select_n` with out-of-range integer
+    indices or a single case ({jax-issue}`#10993`).
+  * Propagated `mode`, `indices_are_sorted`, and `unique_indices` through
+    {func}`jax.lax.scatter_max` and {func}`jax.lax.scatter_min` JVP rules
+    ({jax-issue}`#40626`).
+  * Fixed input shape validation in {func}`jax.numpy.linalg.eigh`,
+    {func}`jax.scipy.linalg.eigh`, and {func}`jax.numpy.linalg.cholesky`, and
+    raised `NotImplementedError` for unimplemented JVP of
+    {func}`jax.lax.linalg.svd` with partial `subset_by_index` and
+    `compute_uv=True` ({jax-issue}`#41210`).
+  * Fixed handling of negative `static_argnums` and `donate_argnums` with named
+    parameters in {func}`jax.jit` ({jax-issue}`#40988`), and fixed keyword
+    argument forwarding in {func}`jax.fwd_and_bwd` ({jax-issue}`#41156`).
+  * Fixed indexing and iteration over fully replicated multi-device arrays and
+    out-of-bounds slice validation when `start = 0`.
+  * Fixed {func}`jax.vmap` of {func}`jax.lax.scan` closing over a `Ref` batched
+    on a non-leading axis.
+  * Fixed {mod}`jax.experimental.checkify` error code dtype mismatches under
+    nested `jax.enable_x64()` scopes ({jax-issue}`#40482`).
+  * Fixed a regression where cached host-transfer CPU buffers prevented buffer
+    donation, and prevented a failing ordered `io_callback` from permanently
+    poisoning effect tokens.
+
+
+## JAX 0.11.2 (September 17, 2026)
+
+* New features
+  * Added {func}`jax.numpy.minmax` (and `jnp.minmax`), which returns both the
+    minimum and maximum of an array, matching NumPy 2.3+ ({jax-issue}`#40089`).
+  * Added {func}`jax.lax.log2` and primitive {data}`jax.lax.log2_p`, making
+    `log2` a first-class primitive in JAX ({func}`jax.numpy.log2` now lowers via
+    `jax.lax.log2`).
+  * Added {func}`jax.lax.one_minus_square` primitive to accurately compute
+    `1 - x^2` near $\pm 1$ and provide accurate derivatives near $0$.
+  * Added {func}`jax.export.symbolic_dim_bounds` for querying conservative
+    bounds on symbolic dimension expressions ({jax-issue}`#40006`).
+  * Added {class}`frozendict` support to JAX pytrees for Python 3.15 (PEP 814).
+  * {func}`jax.distributed.initialize` can now secure the coordination service
+    with mutual TLS via the new `mtls_cert_file`, `mtls_key_file`,
+    `mtls_ca_file`, `mtls_peer_uri_prefix` and `verify_secure_credentials`
+    arguments (or the `JAX_MTLS_CERT_FILE`, `JAX_MTLS_KEY_FILE`,
+    `JAX_MTLS_CA_FILE`, `JAX_MTLS_PEER_URI_PREFIX` and
+    `JAX_DISTRIBUTED_VERIFY_SECURE_CREDENTIALS` environment variables).
+  * Added cluster detection support for Open MPI 5 in
+    {func}`jax.distributed.initialize` ({jax-issue}`#40512`).
+  * Added support for reading `TPU_PROCESS_ADDRESSES_PATH` in GKE TPU clusters.
+  * Widened {func}`jax.random.generalized_normal`'s `p` parameter type from
+    `float` to `RealArray`, allowing array-valued shape parameters ({jax-issue}`#40126`).
+  * Added `exclude_argnames` argument to {func}`jax.experimental.program_order`.
+  * [oneAPI GPU] Added oneMKL LAPACK solver kernels for QR decomposition
+    (`geqrf`, `orgqr`/`ungqr`, `ormqr`/`unmqr`), LU decomposition (`getrf`),
+    symmetric/Hermitian eigenvalue decomposition (`syevd`/`heevd`), SVD
+    (`gesvd`), and hybrid solver kernels (`geqp3`, `eig`)
+    ({jax-issue}`#40000`, {jax-issue}`#40186`, {jax-issue}`#40543`).
+  * `jaxlib` wheels now ship C++ FFI extension headers (`collectives.h`,
+    `record.h`) to support out-of-tree plugins ({jax-issue}`#40333`).
+
+* Breaking changes
+  * Removed deprecated `jax.experimental.shard_alike`. Use explicit sharding
+    mode instead (see {ref}`jax-201-sharding`).
+
+* Changes
+  * Optimized large JAX {class}`jax.sharding.Mesh` construction by avoiding
+    redundant device array allocations and copies.
+  * Thread-safety improvements across JAX and `jaxlib` for free-threaded Python
+    (Python 3.13t, 3.14t, 3.15t).
+  * `inline=True` in {func}`jax.jit` now corresponds to
+    {attr}`jax.Inline.JAX_LATE` instead of {attr}`jax.Inline.JAX_EARLY`.
+  * The minimum CuDNN version for CUDA 12 is v9.10.2.
+  * JAX now uses Bazel 8.7.0 to build from source.
+  * JAX now uses Bzlmod for its Bazel builds instead of WORKSPACE.
+  * On GPU, multi-dimensional inverse real FFTs ({func}`jax.numpy.fft.irfftn`,
+    {func}`jax.numpy.fft.irfft2` and {func}`jax.lax.fft` with `FftType.IRFFT`)
+    are again lowered to a single C2R transform, as before JAX 0.10.0, instead
+    of an IFFT over the outer axes and a 1-D IRFFT with two transposes. The
+    input is first made Hermitian-symmetric along the outer axes, which does
+    not change the result under NumPy's convention (only the last axis is
+    assumed symmetric), so results are unchanged while the transform is
+    ~1.4x faster at typical sizes.
+  * Re-enabled scan-based lowering of cumulative sums ({func}`jax.numpy.cumsum`)
+    on GPU, improving performance.
+  * {func}`jax.numpy.tri` now returns an array with the default float dtype
+    when the `dtype` argument is not specified. Previously it always returned
+    `float32` ({jax-issue}`#40242`).
+  * {func}`jax.numpy.unique` with `axis` specified now matches NumPy's output
+    shape for arrays that are empty along the given axis, instead of
+    fabricating a phantom slice for fully-empty inputs.
+  * Improved numerical accuracy of {func}`jax.numpy.log2` by pre-computing the
+    `1 / log(2)` constant factor ({jax-issue}`#40430`).
+  * Added `out_sharding` parameter to {func}`jax.numpy.histogram`.
+  * Updated {func}`jax.remat`'s `prevent_cse` argument signature to accept
+    `bool | Sequence[bool]`, matching {func}`jax.checkpoint`.
+  * Made {mod}`jax.experimental.checkify` error code assignment deterministic.
+
+* Bug fixes
+  * Fixed numerical overflow in {func}`jax.numpy.arccosh` and {func}`jax.lax.acosh`
+    gradients for large inputs ({jax-issue}`#40643`, {jax-issue}`#40634`).
+  * Fixed first-, second-, and higher-order autodiff gradients of
+    {func}`jax.lax.bessel_i0e` and {func}`jax.lax.bessel_i1e` at `0.0`
+    ({jax-issue}`#40640`, {jax-issue}`#40635`).
+  * Fixed {func}`jax.numpy.linalg.eigh` gradients producing NaN or incorrect
+    values for large eigenvalues ({jax-issue}`#40149`, {jax-issue}`#40141`).
+  * {func}`jax.numpy.sinc` now uses a Taylor series near zero, giving
+    accurate derivatives of all orders. Previously, autodiff of the
+    `sin(πx)/(πx)` quotient suffered catastrophic cancellation near zero
+    ({jax-issue}`#34139`, {jax-issue}`#10750`).
+  * Fixed {func}`jax.numpy.partition`, {func}`jax.numpy.argpartition` and
+    {func}`jax.numpy.top_k` with `mode='smallest'` on signed integer arrays
+    containing the smallest representable value, which was treated as the
+    largest element and dropped from the result.
+  * {func}`jax.numpy.partition` and {func}`jax.numpy.argpartition` now accept
+    boolean arrays, as {func}`jax.numpy.top_k` already did.
+  * Fixed a bug where {func}`jax.numpy.linalg.cond` returned NaN instead of
+    infinity for singular matrices when `p` is `None` or `2`, matching NumPy
+    and the other norms.
+  * Fixed {func}`jax.numpy.histogram` crashing on empty arrays
+    ({jax-issue}`#40025`, {jax-issue}`#40020`).
+  * Fixed {func}`jax.numpy.intersect1d` and {func}`jax.numpy.setxor1d` with
+    ``size=0``, which previously raised a ValueError; they now return empty
+    arrays of the natural result dtype.
+  * Fixed {func}`jax.numpy.setdiff1d` raising an `IndexError` when called with
+    ``size=0`` on non-empty inputs; it now returns an empty array.
+  * Fixed incorrect gradients for {func}`jax.scipy.linalg.cholesky` and
+    {func}`jax.numpy.linalg.cholesky` with `symmetrize_input=False` where
+    non-zero gradients leaked into the unused triangle of the input matrix
+    ({jax-issue}`#40421`).
+  * Fixed {func}`jax.numpy.median` on an input that is empty along the
+    reduction axis, which previously raised an internal error from ``gather``;
+    it now raises a ``ValueError``.
+  * Fixed a potential division-by-zero error in
+    {func}`jax.nn.initializers.variance_scaling` for zero-size inputs
+    ({jax-issue}`#35096`).
+  * Fixed {func}`jax.custom_root` tangents when auxiliary values are
+    integer-typed ({jax-issue}`#39913`, {jax-issue}`#24295`).
+  * Fixed color cycling in {func}`jax.debug.visualize_array_sharding`
+    ({jax-issue}`#39922`, {jax-issue}`#25695`).
+  * Adjusted JVP rule for {func}`jax.lax.min` and {func}`jax.lax.max` to not
+    depend on bitwise equivalence between forward and backward pass results
+    ({jax-issue}`#40578`).
+  * Fixed symbolic product bounds calculation in {mod}`jax.export` when
+    even-powered factor bounds cross zero or zero factors are paired with
+    infinite bounds ({jax-issue}`#40054`).
+  * Fixed state discharge accumulation (`ref_addupdate`) on indexed
+    `ReshapeTransform` views.
+  * [ROCm] Worked around a rocFFT twiddle cache bug in multi-dimensional real
+    FFTs ({jax-issue}`#40389`).
+  * Fixed {func}`jax.vmap` of a {func}`jax.lax.scan` whose body closes over
+    or scans over a Ref batched along a non-leading axis, which previously
+    failed with ``AttributeError: 'Ref' object has no attribute 'transpose'``
+    ({jax-issue}`#39288`).
+
+## JAX 0.11.1 (August 17, 2026)
+
+* New features
+  * Added an error check for trying to deserialize JAX exports that are older
+    than the backwards compatibility window. Without this check the
+    deserialization of expired artifacts may succeed and then result in
+    obscure downstream errors.
+    Added a configuration flag `--jax_export_deserialize_expired_versions` to
+    temporarily bypass the error check.
+    See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.
+  * Added {func}`jax.numpy.top_k`, which implements {func}`numpy.top_k`, added in
+    in NumPy v2.6.0 ({jax-issue}`#39729`).
+
+* Breaking changes
+  * The `exec_time_optimization_effort` and `memory_fitting_effort` flags have been
+    removed in favor of the `EffortLevel` enum.
+  * JAX does not support anymore deserialization of Exported modules from
+    before January 15th, 2026 because they are beyond the backwards compatibility
+    window. On that date we added support to serialize shardings as NamedSharding,
+    and now that is the only sharding serialization that is supported.
+  * jnp.take_along_axis now always defaults wrap_negative_indices to True.
+    It used to default to False for mode=promise_in_bounds and True otherwise.
+    (This also means None is no longer a valid value for wrap_negative_indices.)
+
+* Deprecations
+  * The fields `in_shardings_hlo` and `out_shardings_hlo` of
+    `jax.export.Exported` have been deprecated for a while. Now accessing them
+    raises a warning. Use `in_shardings_jax` and `out_shardings_jax` instead.
+
+* Changes
+  * The cuDNN fused attention backward pass (used by
+    {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) no
+    longer computes a bias gradient when the only attention bias comes from
+    a boolean `mask`, whose gradient no caller can request. Bias gradients
+    for an explicit `bias` or a non-boolean `mask` are unchanged
+    ({jax-issue}`#34685`).
+  * {func}`jax.numpy.meshgrid`, {obj}`jax.numpy.ogrid`, and
+    {func}`jax.numpy.broadcast_arrays` now return tuples rather than lists
+    in order to align with NumPy>2.0 and the Array API specification.
+    ({jax-issue}`#39783`, {jax-issue}`#39789`, {jax-issue}`#39802`)
+  * When {func}`jax.grad` or {func}`jax.value_and_grad` rejects a function with
+    a non-scalar output, the error message now suggests reducing the output
+    to a scalar (e.g. with `output.sum()`), using {func}`jax.jacobian`, or
+    reshaping size-1 outputs ({jax-issue}`#2303`).
+  * When indexing with non-static or traced slice indices, the error message
+    now suggests using {func}`jax.lax.dynamic_slice`,
+    {func}`jax.lax.dynamic_update_slice`, or `jax.ds`, and shows tracer
+    provenance ({jax-issue}`#7222`).
+  * PyTree metadata equality comparison failures now report the specific
+    registered pytree type that caused the error ({jax-issue}`#13027`).
+
+* Bug fixes
+  * {func}`jax.numpy.linalg.det` and {func}`jax.numpy.linalg.slogdet` now use a
+    closed-form LU decomposition with row pivoting for 2x2 and 3x3 matrices
+    instead of closed-form polynomial expansions to avoid numerical instability
+    and catastrophic cancellation ({jax-issue}`#39905`).
+  * Fixed a crash when `jax_explain_cache_misses` is enabled and a
+    `jax.custom_batching.custom_vmap`-decorated function (or
+    `custom_partitioning`, `custom_gradient`, `closure_convert`,
+    `linear_call`, or `run_state`) is retraced with different-shaped
+    arguments ({jax-issue}`#40110`).
+  * The batching rules of the cuDNN fused attention primitives (used by
+    {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) now
+    support operands that do not carry the vmap axis, including a shared
+    bias or `mask`. Previously `jax.jacobian`, `jax.vmap` with partial
+    `in_axes`, and `jax.vmap` of a VJP or of `jax.grad` failed with a
+    reshape `TypeError` ({jax-issue}`#38495`).
+  * `jax.vmap` of fp8 cuDNN fused attention now works: its batching rules
+    additionally mislabeled or dropped the amax outputs and restored output
+    shapes incorrectly, so previously no vmap of the fp8 path succeeded at
+    all. The amax outputs are whole-batch statistics and do not carry the
+    vmap axis; vmap over the scale/descale operands raises a clear
+    `NotImplementedError`.
+  * Setting `jax_compiler_enable_remat_pass` to `False` now adds
+    `rematerialization` to the set of disabled XLA passes instead of
+    overwriting it, so HLO passes disabled via
+    `XLA_FLAGS=--xla_disable_hlo_passes=...` stay disabled
+    ({jax-issue}`#37391`).
+  * {func}`jax.numpy.split`, {func}`jax.numpy.array_split`, and the
+    `hsplit`/`vsplit`/`dsplit` variants once again accept negative entries in
+    `indices_or_sections`, resolving them against the axis size as NumPy does
+    ({jax-issue}`#6599`). Out-of-bound indices are now clipped to the axis
+    bounds and produce empty sections, also matching NumPy, instead of raising
+    `ValueError: Sizes passed to split must be nonnegative`.
+  * Fixed abstract evaluation in {func}`jax.lax.scan` to only check `.mat`
+    equivalency when the abstract value is a `ShapedArray`
+    ({jax-issue}`#39700`).
+  * Fixed propagation of singleton sharded dimensions in {func}`jax.lax.reshape`
+    when reshaping arrays with sharding constraints ({jax-issue}`#39309`).
+  * Fixed {func}`jax.tree_util.flatten_one_level_with_keys` for `namedtuple`
+    instances ({jax-issue}`#39297`).
+  * Fixed `_get_prime_factors` in `jax.experimental.mesh_utils`
+    ({jax-issue}`#38286`).
+  * `PyTreeDef.deserialize_using_proto` now raises `ValueError` for a
+    malformed `PyTreeDefProto` instead of crashing the interpreter. A node
+    whose arity exceeds the subtrees preceding it is rejected, as is a dict
+    node whose arity disagrees with its key list, which previously segfaulted
+    later, when the structure was used to unflatten.
+    `PyTreeDef.compose` likewise raises `ValueError` rather than crashing when
+    an operand carries such an inconsistent arity, which is reachable from
+    `pickle.loads` ({jax-issue}`#37410`).
+
+## JAX 0.11.0 (July 16, 2026)
+
+* New features
+  * Added a doc on defining custom derivative rules with the experimental
+    hijax API ({ref}`hijax-custom-derivatives`), along with
+    `jax.experimental.hijax` helpers for deriving `HiPrim` autodiff
+    rules from a `jvp` or `lin` rule: `linearize_from_jvp` with
+    `apply_derived_linearization`, `vjp_fwd_from_jvp` with `transpose_jvp`,
+    `vjp_fwd_from_lin` with `transpose_linearized`, and `jvp_from_lin`.
+  * Added {func}`jax.custom_remat` to the top-level `jax` namespace, for
+    per-function control of rematerialization under the new `jax_remat3`
+    implementation.
+  * `jax.checkpoint_policies` is now a submodule rather than a namespace
+    object (so `from jax.checkpoint_policies import ...` now works; attribute
+    access is unchanged).
+  * Added {class}`jax.Inline` enum for specify inlining policies to
+    {func}`jax.jit`.
+
+* Breaking changes
+  * The deprecated module jax.cloud_tpu_init was removed. This did nothing and
+    references to it can be safely removed.
+  * Support for Python 3.11, NumPy 2.0, and SciPy 1.14 has been dropped, per the
+    [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
+  * Support for Python 3.13 free-threaded (`3.13t`) has been dropped. Python
+    3.13 free-threaded was an experimental build needed to bootstrap free
+    threading support. Now that Python 3.14t is stable, it is time to drop the
+    experimental build. Other parts of the Python ecosystem (e.g.
+    `cibuildwheel`, `scipy`) are making similar moves.
+  * {func}`jax.numpy.empty` and {func}`jax.numpy.empty_like` now produce
+    uninitialized arrays, similar to their NumPy counterparts. Prior to v0.11.0,
+    they produced arrays initialized to zeros. To recover the previous behavior,
+    use {func}`jax.numpy.zeros` or {func}`jax.numpy.zeros_like` instead.
+
+* Deprecations
+  * Passing 2-dimensional arrays (or mixed 2D and 3D arrays) to {func}`jax.numpy.cross` is deprecated and will be removed in JAX 0.12.0, aligning with NumPy 2.5 behavior.
+  * Several previously-deprecated APIs from {mod}`jax.core` have been removed, including
+    `CallPrimitive`, `DebugInfo`, `DropVar`, `Effect`, `Effects`, `InconclusiveDimensionOperation`,
+    `JaxprTypeError`, `abstract_token`, `check_jaxpr`, `concrete_or_error`, `find_top_trace`, `gensym`,
+    `get_opaque_trace_state`, `is_concrete`, `is_constant_dim`, `is_constant_shape`, `jaxprs_in_params`,
+    `new_jaxpr_eqn`, `no_effects`, `nonempty_axis_env_DO_NOT_USE`, `primal_dtype_to_tangent_dtype`,
+    `unsafe_am_i_under_a_jit_DO_NOT_USE`, `unsafe_am_i_under_a_vmap_DO_NOT_USE`,
+    `unsafe_get_axis_names_DO_NOT_USE`, `valid_jaxtype`, `JaxprPpContext`, `JaxprPpSettings`, `OutputType`,
+    `aval_mapping_handlers`, `call`, `concretization_function_error`, `custom_typechecks`,
+    `literalable_types`, `no_axis_name`, and `trace_ctx`.
+  * Several previously-deprecated APIs from {mod}`jax.interpreters.pxla` have been removed, including
+    `Index`, `MeshAxisName`, `MeshExecutable`, `global_aval_to_result_handler`, `global_result_handlers`,
+    `are_hlo_shardings_equal`, `is_hlo_sharding_replicated`, `ArrayMapping`, `_UNSPECIFIED`,
+    `array_mapping_to_axis_resources`, and `op_sharding_to_indices`.
+
+## JAX 0.10.2 (June 17, 2026)
+
+* New features
   * Added {func}`jax.scipy.linalg.invhilbert` for the closed-form inverse
     of the Hilbert matrix ({jax-issue}`#10144`).
   * Added {func}`jax.scipy.linalg.invpascal` for the inverse of the Pascal

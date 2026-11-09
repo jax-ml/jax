@@ -15,6 +15,8 @@
 from jax._src.ad_checkpoint import (
   checkpoint_policies as checkpoint_policies,
   checkpoint_name as checkpoint_name,
+  checkpoint_name_fwd as checkpoint_name_fwd,
+  name_p as name_p,
   print_saved_residuals as print_saved_residuals,
 )
 from jax._src.interpreters.partial_eval import (
@@ -22,25 +24,3 @@ from jax._src.interpreters.partial_eval import (
   Saveable as Saveable,
   Offloadable as Offloadable,
 )
-
-_deprecations = {
-  # Deprecated in v0.8.2; finalized in v0.10.0.
-  # TODO(jakevdp) remove entry in v0.11.0.
-  "checkpoint": (
-    "jax.ad_checkpoint.checkpoint was deprecated in JAX v0.8.2 and removed in"
-    " JAX v0.10.0; use jax.checkpoint instead.",
-    None,
-  ),
-  "remat": (
-    "jax.ad_checkpoint.remat was deprecated in JAX v0.8.2 and removed in"
-    " JAX v0.10.0; use jax.remat instead.",
-    None,
-  ),
-}
-
-import typing as _typing
-if not _typing.TYPE_CHECKING:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing

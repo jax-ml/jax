@@ -24,11 +24,11 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "llvm/Support/ExtensibleRTTI.h"
 #include "nanobind/nanobind.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/host_callback.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -39,14 +39,15 @@ namespace jax {
 using PyLoadedHostCallback = ::xla::ifrt::LoadedHostCallback;
 
 class PyFfiLoadedHostCallback final
-    : public llvm::RTTIExtends<PyFfiLoadedHostCallback,
-                               xla::ifrt::PjRtFfiLoadedHostCallback> {
+    : public xla::ifrt::RTTIExtends<PyFfiLoadedHostCallback,
+                                    xla::ifrt::PjRtFfiLoadedHostCallback> {
  public:
   PyFfiLoadedHostCallback(xla::ifrt::Client* ifrt_client,
                           nanobind::callable callable)
-      : llvm::RTTIExtends<PyFfiLoadedHostCallback,
-                          xla::ifrt::PjRtFfiLoadedHostCallback>(ifrt_client,
-                                                                callable.ptr()),
+      : xla::ifrt::RTTIExtends<PyFfiLoadedHostCallback,
+                               xla::ifrt::PjRtFfiLoadedHostCallback>(
+            ifrt_client, callable.ptr()),
+        ifrt_client_(ifrt_client),
         callable_(std::move(callable)) {}
   ~PyFfiLoadedHostCallback() override;
 
@@ -73,7 +74,7 @@ class PyFfiLoadedHostCallback final
 // TODO(hyeontaek): Update the comment ("compiler" to "client") after splitting
 // compilation and loading.
 class PyHostSendAndRecvLoadedHostCallback final
-    : public llvm::RTTIExtends<
+    : public xla::ifrt::RTTIExtends<
           PyHostSendAndRecvLoadedHostCallback,
           xla::ifrt::PjRtHostSendAndRecvLoadedHostCallback> {
  public:

@@ -31,6 +31,7 @@ exports_files([
     "plugin_pyproject.toml",
     "plugin_setup.py",
     "pyproject.toml",
+    "rocm_version.py",
     "setup.py",
 ])
 
@@ -43,6 +44,7 @@ rocm_cc_binary(
     linkshared = True,
     deps = [
         ":gpu_version_script.lds",
+        "//jaxlib/thunky:thunky_support",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_version_script.lds",
         "@xla//xla/service:gpu_plugin",

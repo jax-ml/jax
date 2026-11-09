@@ -68,16 +68,12 @@ A walkthrough on each of the components:
 
 Actual specs vary by TPU version. Here are some published TPU specs:
 
-| Attribute         | TPU v4 | TPU v5p | TPU v6e       | TPU 7x (Ironwood) |
-:                   :        :         : (Trillium)    :                   :
-| :---------------- | :----- | :------ | :------------ | :---------------- |
-| SparseCores /     | 4      | 4       | 2             | 2 (4 physical     |
-: Chip              :        :         :               : cores)            :
-| Vector subcores / | 16     | 16      | 16            | 16                |
-: SparseCore        :        :         :               :                   :
-| SIMD Width        | 8      | 8       | 8 (F32)<br>16 | 16                |
-:                   :        :         : (BF16)        : (F32)<br>32(BF16) :
-| HBM Capacity      | 32 GiB | 96 GiB  | 32 GiB        | 192 GB            |
+| Attribute | TPU v4 | TPU v5p | TPU v6e (Trillium) | TPU 7x (Ironwood) |
+| :-------- | :----- | :------ | :----------------- | :---------------- |
+| SparseCores / Chip | 4 | 4 | 2 | 2 (4 physical cores) |
+| Vector subcores / SparseCore | 16 | 16 | 16 | 16 |
+| SIMD Width | 8 | 8 | 8 (F32)<br>16 (BF16) | 16 (F32)<br>32 (BF16) |
+| HBM Capacity | 32 GB | 96 GB | 32 GB | 192 GB |
 
 You can also use `pltpu.get_tpu_info()` to quickly obtain specs for your current
 hardware.
@@ -176,6 +172,70 @@ x_shape = (sc_info.num_cores, sc_info.num_lanes)
 x = jax.random.randint(jax.random.key(0), x_shape, 0, 64, jnp.int32)
 np.testing.assert_array_equal(cumsum(x), jnp.cumsum(x, axis=1))
 ```
+
+## DMA semaphores on SparseCore
+
+On SparseCore, local copies between certain memory space pairs (including
+scatters and gathers) run as *streams* and differ slightly from the typical
+`pltpu.async_copy` semantics ({ref}`pallas_tpu_copy_semaphores`): on a
+**push stream**, the hardware individually tracks only the source read, while on
+a **pull stream**, it individually tracks only the destination write:
+
+*   **Push streams** (on the **vector subcore**, `plsc.VectorSubcoreMesh`):
+    *   `pltpu.VMEM` to `pltpu.HBM`
+    *   `pltpu.VMEM` to `pltpu.VMEM_SHARED`
+    *   `pltpu.VMEM` to `pltpu.SMEM`
+*   **Pull streams** (on the **vector subcore**, `plsc.VectorSubcoreMesh`):
+    *   `pltpu.HBM` to `pltpu.VMEM`
+    *   `pltpu.VMEM_SHARED` to `pltpu.VMEM`
+    *   `pltpu.SMEM` to `pltpu.VMEM`
+    *   `pltpu.VMEM_SHARED` to `pltpu.SMEM`
+
+Other copies on SparseCore (such as non-stream DMAs like in `cumsum` above, and
+remote copies) follow the standard `pltpu.async_copy` semantics and always
+require a semaphore (`sem=None` is not supported).
+
+### Push streams
+
+Tracking destination writes with an individual semaphore (`sem`) is **not
+supported** on push streams: the semaphore only tracks when the source buffer
+has been read, not when the destination write has completed. A `sem` is ignored
+when specified; pass `sem=None` instead.
+
+Calling `.wait()` or `.wait_write()` is the only way to wait for destination
+write completion on a push stream, and it **blocks until all in-flight
+push-stream writes to that destination memory space have completed**
+(implemented as a memory fence), not just the individual copy:
+
+```python
+# Pass sem=None; .wait() / .wait_write() blocks until all in-flight push-stream
+# writes to o_ref's memory space have completed.
+pltpu.async_copy(vmem_ref, o_ref, sem=None).wait()
+```
+
+Source read completion (so the source buffer is safe to overwrite) *can* be
+tracked per copy by passing `src_sem` and calling `.wait_read()`, which avoids
+blocking on all in-flight destination writes until you need the destination data
+(calling `.wait()` when `src_sem` is set runs `.wait_read()` followed by
+`.wait_write()`):
+
+```python
+copy = pltpu.async_copy(vmem_ref, o_ref, sem=None, src_sem=src_sem)
+copy.wait_read()   # Blocks only until vmem_ref has been read.
+copy.wait_write()  # Blocks until all push-stream writes to o_ref's space complete.
+```
+
+Passing `src_sem=None` on a push stream tracks source reads in bulk, so
+`.wait_read()` performs a bulk wait until all in-flight push streams without
+`src_sem` have finished reading their sources.
+
+### Pull streams
+
+Pull streams track destination writes with `sem` as usual (`src_sem` and
+`.wait_read()` are not supported, as `.wait()` or `.wait_write()` already
+guarantees both read and write completion). Passing `sem=None` tracks pull
+streams in bulk, so `.wait()` or `.wait_write()` performs a bulk wait until all
+in-flight pull streams without `sem` have completed.
 
 ## Pipelining in SparseCore kernels
 
@@ -338,7 +398,6 @@ def scatter(x, indices):
 gathered = jnp.take(x, indices, axis=0)
 out = scatter(gathered, indices)
 np.testing.assert_array_equal(out, x)
-
 ```
 
 ## Benchmark against TensorCore
@@ -359,4 +418,68 @@ gather_tc(x, indices).block_until_ready()
 ```
 4.05 ms ± 2.02 µs per loop (mean ± std. dev. of 7 runs, 100 loops each)
 18.1 ms ± 5.24 µs per loop (mean ± std. dev. of 7 runs, 100 loops each)
+```
+
+## Gathering and scattering 16-bit dtypes
+
+SparseCore DMA hardware natively supports only 32-bit transfers (`int32`, `float32`, `uint32`). You cannot directly gather 16-bit types like `bfloat16` or `float16`.
+
+To gather 16-bit data, you can pack pairs of rows into 32-bit words in HBM, issue the gather with halved indices, and unpack the target row in VMEM:
+
+1. Pair adjacent rows along the last dimension and view them as `int32`. A table of shape `(batch_size, value_dim)` in `bfloat16` becomes `(batch_size // 2, value_dim)` in `int32`.
+2. Gather using `index // 2` (via `pltpu.sync_copy`, or `pl.Indirect` on the data table). Each 32-bit row fetched contains both row `2*i` and row `2*i + 1`.
+3. In VMEM, view the buffer back as `bfloat16` and select the requested row based on whether the original index was even or odd (`index % 2`).
+
+Below is an example gathering `bfloat16` values with packed rows:
+
+```python
+x_bf16 = x.astype(jnp.bfloat16)
+
+
+@jax.jit
+def gather_bf16_packed(x, indices):
+  packing = 32 // 16  # 2
+  # Pack adjacent 16-bit rows (2*i, 2*i+1) into 32-bit int32 words on HBM
+  x_packed = x.reshape(batch_size // packing, packing * value_dim).view(
+      jnp.int32
+  )
+
+  @pl.kernel(
+      out_type=jax.ShapeDtypeStruct((num_indices, value_dim), x.dtype),
+      mesh=vector_mesh,
+      scratch_types=dict(
+          gather_vmem=pltpu.VMEM((gather_window_size, value_dim), jnp.int32)
+      ),
+  )
+  def kernel(x_packed_hbm, i_hbm, o_hbm, *, gather_vmem):
+    def body(idx_vmem, o_vmem):
+      # Issue indirect 32-bit DMA gather using halved index
+      pltpu.sync_copy(
+          x_packed_hbm.at[jax.lax.div(idx_vmem, packing)], gather_vmem
+      )
+      # Vectorized pair selection across the gathered window
+      pairs = gather_vmem.view(jnp.bfloat16).reshape(-1, packing, value_dim)
+      is_odd = (idx_vmem % 2)[:, None]
+      o_vmem[...] = jnp.where(is_odd == 1, pairs[:, 1], pairs[:, 0])
+
+    pltpu.emit_pipeline(
+        body,
+        grid=(num_indices // gather_window_size,),
+        in_specs=[
+            pl.BlockSpec((gather_window_size,), index_map=lambda i: (i,))
+        ],
+        out_specs=[
+            pl.BlockSpec(
+                (gather_window_size, value_dim), index_map=lambda i: (i, 0)
+            )
+        ],
+        core_axis_name='subcore',
+        dimension_semantics=(pltpu.PARALLEL,),
+    )(i_hbm, o_hbm)
+
+  return kernel(x_packed, indices)
+
+
+out = gather_bf16_packed(x_bf16, indices)
+np.testing.assert_array_equal(out, jnp.take(x_bf16, indices, axis=0))
 ```

@@ -579,6 +579,7 @@ def eigh(
   if sort_eigenvalues or compute_slice:
     sort_idxs = jnp.argsort(eig_vals)
     if compute_slice:
+      assert subset_by_index is not None
       sort_idxs = sort_idxs[subset_by_index[0] : subset_by_index[1]]
     eig_vals = eig_vals[sort_idxs]
     eig_vecs = eig_vecs[:, sort_idxs]

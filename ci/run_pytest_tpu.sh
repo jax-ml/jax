@@ -41,14 +41,15 @@ echo "Installed packages:"
 "$JAXCI_PYTHON" -c 'import sys; print("python version:", sys.version)'
 "$JAXCI_PYTHON" -c 'import jax; print("jax version:", jax.__version__)'
 "$JAXCI_PYTHON" -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
-# Free-threaded builds use "t" as the suffix for the binary
-strings /usr/local/lib/"${JAXCI_PYTHON}"/dist-packages/libtpu/libtpu.so | grep 'Built on'
 "$JAXCI_PYTHON" -c 'import jax.extend; print("libtpu version:",jax.extend.backend.get_backend().platform_version)'
 
 # Set up all common test environment variables
 export PY_COLORS=1
 export JAX_PLATFORMS=tpu,cpu
 export JAX_SKIP_SLOW_TESTS=true
+export JAX_ENABLE_X64="$JAXCI_ENABLE_X64"
+is_nogil=$("$JAXCI_PYTHON" -c "import sys; print('1' if getattr(sys, '_is_gil_enabled', lambda: True)() == False else '0')")
+export IS_JAXCI_PYTHON_NOGIL="$is_nogil"
 # End of common test environment variable setup
 
 echo "Running TPU tests..."
@@ -59,26 +60,19 @@ mkdir -p test-artifacts
 set +e
 
 if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
-  # We're deselecting all Pallas TPU tests in the oldest libtpu build. Mosaic
-  # TPU does not guarantee anything about forward compatibility (unless
-  # jax.export is used) and the 12 week compatibility window accumulates way
-  # too many failures.
-  IGNORE_FLAGS=""
-  if [ "${libtpu_version_type:-""}" == "oldest_supported_libtpu" ]; then
-    IGNORE_FLAGS="--ignore=tests/pallas"
-  fi
-
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
+    -o faulthandler_timeout=300 --durations=20 \
     --junitxml=test-artifacts/junit-single.xml \
     --deselect=tests/pallas/tpu_pallas_interpret_thread_map_test.py::InterpretThreadMapTest::test_thread_map \
-    --dist=loadfile --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
+    --dist=loadfile --maxfail=20 -m "not multiaccelerator" tests examples
 
   # Store the return value of the first command.
   first_cmd_retval=$?
 
   # Run multi-accelerator across all chips
   "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 \
+    -o faulthandler_timeout=300 --durations=20 \
     --junitxml=test-artifacts/junit-multi.xml \
     -m "multiaccelerator" tests
 
@@ -87,6 +81,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 else
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
+    -o faulthandler_timeout=300 --durations=20 \
     --junitxml=test-artifacts/junit-single.xml \
     --maxfail=20 -m "not multiaccelerator" \
     tests/pallas/ops_test.py \
@@ -103,6 +98,7 @@ else
 
   # Run multi-accelerator across all chips
   "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 \
+    -o faulthandler_timeout=300 --durations=20 \
     --junitxml=test-artifacts/junit-multi.xml \
     -m "multiaccelerator" \
     tests/pjit_test.py \

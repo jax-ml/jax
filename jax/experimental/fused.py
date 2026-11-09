@@ -13,12 +13,12 @@
 # limitations under the License.
 
 from jax._src import core
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src import dispatch
 from jax._src.core import typeof
 from jax._src.tree_util import tree_flatten, tree_unflatten
 from jax._src.util import safe_map, safe_zip, weakref_lru_cache, unzip2
-from jax._src.api_util import debug_info, flatten_fun_nokwargs
+from jax._src.api_util import debug_info
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -32,21 +32,15 @@ def fused(*, out_spaces):
   def wrap(f):
     def wrapped(*args):
       dbg = debug_info('fused', f, args, {})
-      args_flat, in_tree = tree_flatten(args)
+      args_flat, in_tree = tree_flatten((args, {}))
       in_avals = [typeof(x).update(memory_space=core.MemorySpace.Any)
                   for x in args_flat]
-      jaxpr, out_tree = _trace_to_jaxpr(f, in_tree, tuple(in_avals), dbg)
+      jaxpr, out_avals = pe.trace_to_jaxpr(
+          f, ft.treedef_args_to_ft(in_tree, tuple(in_avals)), dbg)
       outs_flat = fused_p.bind(*args_flat, jaxpr=jaxpr, out_spaces=out_spaces)
-      return tree_unflatten(out_tree, outs_flat)
+      return tree_unflatten(out_avals.tree, outs_flat)
     return wrapped
   return wrap
-
-@weakref_lru_cache
-def _trace_to_jaxpr(fun, in_tree, in_avals, dbg):
-  f = lu.wrap_init(fun, debug_info=dbg)
-  f, out_tree = flatten_fun_nokwargs(f, in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(f, in_avals)
-  return core.ClosedJaxpr(jaxpr, consts), out_tree()
 
 fused_p = core.Primitive('fused_call')
 fused_p.multiple_results = True
@@ -59,7 +53,7 @@ def _fused_abstract_eval(*in_avals, out_spaces, jaxpr):
 dispatch.simple_impl(fused_p)
 
 def _fused_lowering(ctx, *args, out_spaces, jaxpr):
-  const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
+  const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_arg_avals = unzip2(const_args_and_avals)
   const_arg_values, _ = mlir.ir_tree_registry.flatten([
       mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
@@ -108,13 +102,12 @@ def _fused_lin(_is_vjp, nzs, *primals, jaxpr, out_spaces):
   # TODO(mattjj): why did i do jvp + dce here, not ad.linearize_jaxpr?
   jaxpr_jvp, out_nzs = ad.jvp_jaxpr(jaxpr, nzs, False)
   lin_outs = [False] * len(out_nzs) + [True] * sum(out_nzs)
-  jaxpr_lin_, used_inputs = pe.dce_jaxpr(jaxpr_jvp.jaxpr, lin_outs, False)
-  jaxpr_lin = pe.close_jaxpr(jaxpr_lin_)
+  jaxpr_lin, used_inputs = pe.dce_jaxpr(jaxpr_jvp, lin_outs, False)
   spaces_lin = tuple(s for s, nz in zip(out_spaces, out_nzs) if nz)
   primals_out = fused_p.bind(*primals, jaxpr=jaxpr, out_spaces=out_spaces)
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
 
-  def fused_lin(primals, *tangents):
+  def fused_lin(primals, _, *tangents):
     nz_tangents = [t for t in tangents if not isinstance(t, ad.Zero)]
     inputs = [x for x, u in zip([*primals, *nz_tangents], used_inputs) if u]
     nz_outs = fused_p.bind(*inputs, jaxpr=jaxpr_lin, out_spaces=spaces_lin)
@@ -124,7 +117,7 @@ def _fused_lin(_is_vjp, nzs, *primals, jaxpr, out_spaces):
     assert next(nz_outs_, None) is None
     return outs
 
-  return primals_out, out_nzs, primals, fused_lin
+  return primals_out, out_nzs, primals, None, fused_lin
 ad.primitive_linearizations[fused_p] = _fused_lin
 
 def _fused_transpose(cts_in, *primals_in, jaxpr, out_spaces):
@@ -149,12 +142,24 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals):
         if type(p) is ad.UndefinedPrimal else p for p in primals_in)
     cts_in = [ad.Zero(ct.aval.update(memory_space=core.MemorySpace.Any))
               if type(ct) is ad.Zero else ct for ct in cts_in]
-    out = ad.backward_pass(jaxpr.jaxpr, False, jaxpr.consts, primals_in, cts_in)
+    out = ad.backward_pass(jaxpr, False, jaxpr.consts, primals_in, cts_in)
     out = [ct if not isinstance(ct, ad.Zero) else None for ct in out]
     cts_out, cell.out_tree = tree_flatten(out)  # pyrefly: ignore[missing-attribute]
     return cts_out
-  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
+  dbg = jaxpr.debug_info.with_unknown_names()
+  trans_jaxpr, _ = pe.trace_to_jaxpr(
+      transposed, ft.flatten_args(*in_avals), dbg)
+  return trans_jaxpr, cell.out_tree  # pyrefly: ignore[missing-attribute]
 ad.primitive_transposes[fused_p] = _fused_transpose
+
+
+def _fused_to_lojax(*hi_args, jaxpr, out_spaces):
+  lo_args_lol = [a.lower_val(x) for a, x in zip(jaxpr.in_avals, hi_args)]
+  lo_args = [x for xs in lo_args_lol for x in xs]
+  in_avals = ft.flatten(([[typeof(x) for x in xs] for xs in lo_args_lol], {}))
+  lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
+  lo_spaces = tuple(s for l, s in zip(out_avals.unpack(), out_spaces) for _ in l)
+  all_outs = fused_p.bind(*lo_args, jaxpr=lo_jaxpr, out_spaces=lo_spaces)
+  lo_outs = out_avals.update(all_outs)
+  return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
+fused_p.to_lojax = _fused_to_lojax

@@ -83,19 +83,19 @@ Other times, XLA's optimizations may lead to even more drastic differences.
 Consider the following example:
 
 >>> def f(x):
-...   return jnp.log(jnp.exp(x))
->>> x = 100.0
+...   return jnp.log(jnp.power(x, 100.0))
+>>> x = 10.0
 >>> print(f(x))
 inf
 
 >>> print(jit(f)(x))
-100.0
+230.25851
 
-In non-JIT-compiled op-by-op mode, the result is ``inf`` because ``jnp.exp(x)``
-overflows and returns ``inf``. Under JIT, however, XLA recognizes that ``log`` is
-the inverse of ``exp``, and removes the operations from the compiled function,
-simply returning the input. In this case, JIT compilation produces a more accurate
-floating point approximation of the real result.
+In non-JIT-compiled op-by-op mode, the result is ``inf`` because ``jnp.power(x, 100.0)``
+overflows and returns ``inf``, resulting in ``log(inf) = inf``. Under JIT,
+however, XLA simplifies the expression to ``100.0 * log(x)`` and computes the
+result ``230.25851`` without the intermediate overflow. In this case, JIT compilation
+produces a more accurate floating point approximation of the real result.
 
 Unfortunately the full list of XLA's algebraic simplifications is not well
 documented, but if you're familiar with C++ and curious about what types of
@@ -107,31 +107,7 @@ optimizations the XLA compiler makes, you can see them in the source code:
 ``jit`` decorated function is very slow to compile
 --------------------------------------------------
 
-If your ``jit`` decorated function takes tens of seconds (or more!) to run the
-first time you call it, but executes quickly when called again, JAX is taking a
-long time to trace or compile your code.
-
-This is usually a sign that calling your function generates a large amount of
-code in JAX's internal representation, typically because it makes heavy use of
-Python control flow such as ``for`` loops. For a handful of loop iterations,
-Python is OK, but if you need *many* loop iterations, you should rewrite your
-code to make use of JAX's
-`structured control flow primitives <https://docs.jax.dev/en/latest/control-flow.html#Structured-control-flow-primitives>`_
-(such as :func:`lax.scan`) or avoid wrapping the loop with ``jit`` (you can
-still use ``jit`` decorated functions *inside* the loop).
-
-If you're not sure if this is the problem, you can try running
-:func:`jax.make_jaxpr` on your function. You can expect slow compilation if the
-output is many hundreds or thousands of lines long.
-
-Sometimes it isn't obvious how to rewrite your code to avoid Python loops
-because your code makes use of many arrays with different shapes. The
-recommended solution in this case is to make use of functions like
-:func:`jax.numpy.where` to do your computation on padded arrays with fixed
-shape.
-
-If your functions are slow to compile for another reason, please open an issue
-on GitHub.
+Moved to :ref:`debugging-slow-tracing-compilation`.
 
 .. _faq-jit-class-methods:
 

@@ -15,11 +15,13 @@
 from functools import reduce, partial
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import numpy as np
 import unittest
 
 import jax
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 import jax.scipy.special
 from jax import random
@@ -284,6 +286,18 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_cos(self):        self.unary_check(jnp.cos)
   @jtu.skip_on_devices("tpu")
+  def test_sinpi(self):      self.unary_check(lax.sinpi)
+  @jtu.skip_on_devices("tpu")
+  def test_cospi(self):      self.unary_check(lax.cospi)
+  @jtu.skip_on_devices("tpu")
+  def test_tanpi(self):      self.unary_check(lax.tanpi, lims=[-0.35, 0.35], atol=5e-3, rtol=5e-3)
+  @jtu.skip_on_devices("tpu")
+  def test_asinpi(self):     self.unary_check(lax.asinpi, lims=[-0.8, 0.8])
+  @jtu.skip_on_devices("tpu")
+  def test_acospi(self):     self.unary_check(lax.acospi, lims=[-0.8, 0.8])
+  @jtu.skip_on_devices("tpu")
+  def test_atanpi(self):     self.unary_check(lax.atanpi, lims=[-40, 40])
+  @jtu.skip_on_devices("tpu")
   def test_sinh(self):       self.unary_check(jnp.sinh)
   @jtu.skip_on_devices("tpu")
   def test_cosh(self):       self.unary_check(jnp.cosh)
@@ -349,6 +363,13 @@ class JetTest(jtu.JaxTestCase):
   def test_pow(self):         self.binary_check(lambda x, y: x ** y, lims=([0.2, 500], [-500, 500]), finite=False)
   @jtu.skip_on_devices("tpu")
   def test_atan2(self):       self.binary_check(lax.atan2, lims=[-40, 40])
+  @jtu.skip_on_devices("tpu")
+  def test_atan2pi(self):
+    self.binary_check(lax.atan2pi, lims=[-40, 40])
+    self.binary_check(lax.atan2pi, lims=[0.8, 4.0], dtype=np.float32)
+    x = jnp.array(1.0, dtype=jnp.float16)
+    y = jnp.array(2.0, dtype=jnp.float16)
+    self.check_jet(lax.atan2pi, (x, y), ([x], [y]), atol=1e-2, rtol=1e-2)
 
   @jtu.skip_on_devices("tpu")
   def test_clamp(self):
@@ -463,6 +484,54 @@ class JetTest(jtu.JaxTestCase):
     self.check_jet(lambda x: lax.unstack(x, axis=0), primals, series_in, atol=1e-3, rtol=1e-3)
     self.check_jet(lambda x: lax.unstack(x, axis=1), primals, series_in, atol=1e-3, rtol=1e-3)
     self.check_jet(lambda x: lax.unstack(x, axis=-1), primals, series_in, atol=1e-3, rtol=1e-3)
+
+  def test_one_minus_square(self):
+    order = 3
+    rng = self.rng()
+    x = rng.randn(4, 3)
+    primals = (x,)
+    terms_in = [rng.randn(*x.shape) for _ in range(order)]
+    self.check_jet(lax.one_minus_square, primals, (terms_in,), atol=1e-3, rtol=1e-3)
+
+    # Verify first Taylor term near x=0 does not suffer catastrophic cancellation.
+    tiny = jnp.array(1e-20, dtype=jnp.float32)
+    _, (term1,) = jet(lax.one_minus_square, (tiny,), ([jnp.float32(1.0)],))
+    self.assertArraysAllClose(term1, jnp.array(-2e-20, dtype=jnp.float32))
+
+  def test_polynomial(self):
+    rng = self.rng()
+    x = rng.randn(4, 3)
+    coeffs = (1.0, -0.5, 0.25, -0.125, 0.0625)
+    for order in [2, 4, 6]:
+      terms_in = [rng.randn(*x.shape) for _ in range(order)]
+      self.check_jet(
+          lambda z: lax.polynomial(z, coeffs, unroll=2),
+          (x,),
+          (terms_in,),
+          atol=1e-3,
+          rtol=1e-3,
+      )
+
+  @parameterized.named_parameters(("fma", lax.fma), ("fmuladd", lax.fmuladd))
+  def test_fma_and_fmuladd(self, op):
+    if op is lax.fma and (
+        jaxlib_extension_version < 515
+        or not jtu.is_libtpu_at_least("0.0.52")
+        or not jtu.stablehlo_version_at_least("1.24.0")
+    ):
+      self.skipTest(
+          "fma requires jaxlib_extension_version >= 515, libtpu >= 0.0.52, "
+          "and StableHLO >= 1.24.0"
+      )
+    rng = jtu.rand_default(self.rng())
+    order = 4
+    for shapes in [((2, 3), (2, 3), (2, 3)), ((2, 1), (1, 3), ())]:
+      primals = tuple(rng(s, np.float32) for s in shapes)
+      series_in = tuple(
+          [rng(s, np.float32) for _ in range(order)]
+          for s in shapes
+      )
+      self.check_jet(op, primals, series_in, atol=1e-3, rtol=1e-3)
 
 
 if __name__ == '__main__':

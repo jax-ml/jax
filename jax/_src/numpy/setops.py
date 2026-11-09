@@ -165,7 +165,7 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     size = core.concrete_or_error(operator.index, size, "The error arose in setdiff1d()")
   fill_value = full_like(arr1, fill_value=(0 if fill_value is None else fill_value),
                          shape=())
-  if arr1.size == 0:
+  if arr1.size == 0 or size == 0:
     return full_like(arr1, fill_value, shape=size or 0)
   if not assume_unique:
     arr1 = cast(Array, unique(arr1, size=size and arr1.size))
@@ -277,7 +277,12 @@ def _setxor1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, *,
     vals = aux.at[indices].get(mode='fill', fill_value=0)
   else:
     vals = zeros(size, aux.dtype)
-  if fill_value is None:
+  if vals.size == 0:
+    # fill values are irrelevant in an empty array.
+    return vals
+  elif fill_value is None:
+    # launder the zero-filled padding through max() before taking the min,
+    # so unfilled slots are padded with the smallest real result.
     vals = where(arange(len(vals)) < num_results, vals, vals.max())
     return where(arange(len(vals)) < num_results, vals, vals.min())
   else:
@@ -404,7 +409,11 @@ def _intersect1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, as
   else:
     val_indices = arange(0)
     vals = zeros(size, aux.dtype)
-  if fill_value is None:
+  if vals.size == 0:
+    pass  # fill values are irrelevant in an empty array.
+  elif fill_value is None:
+    # launder the zero-filled padding through max() before taking the min,
+    # so unfilled slots are padded with the smallest real result.
     vals = where(arange(len(vals)) < num_results, vals, vals.max())
     vals = where(arange(len(vals)) < num_results, vals, vals.min())
   else:
@@ -586,8 +595,9 @@ def _unique_sorted_mask(ar: Array, axis: int, equal_nan: bool) -> tuple[Array, A
     aux = where(isnan(aux), lax._const(aux, np.nan), aux)
   size, *out_shape = aux.shape
   if math.prod(out_shape) == 0:
-    size = 1
-    perm = zeros(1, dtype=int)
+    # Empty slices are vacuously equal as in numpy, so keep at most one.
+    size = min(size, 1)
+    perm = zeros(size, dtype=int)
   else:
     perm = lexsort(aux.reshape(size, math.prod(out_shape)).T[::-1])
   aux = aux[perm]

@@ -19,11 +19,12 @@ from setuptools import setup, find_packages
 
 project_name = 'jax'
 
-_current_jaxlib_version = '0.10.1'
-# The following should be updated after each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.10.1'
+_current_jaxlib_version = '0.12.0.1'
 
-_libtpu_version = '0.0.41.*'
+# The following should be updated after each new jaxlib release.
+_latest_jaxlib_version_on_pypi = '0.12.0.1'
+
+_libtpu_version = '0.0.51.*'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -48,6 +49,18 @@ if _version_module._is_prerelease():
 with open('README.md', encoding='utf-8') as f:
   _long_description = f.read()
 
+# GPU targets for which TheRock publishes a rocm-sdk-device-gfx* wheel. The
+# same set is on the ROCm 7 and ROCm 10 indexes.
+_gfx_targets = (
+    "gfx908", "gfx90a", "gfx942", "gfx950",
+    "gfx1010", "gfx1011", "gfx1012",
+    "gfx1030", "gfx1031", "gfx1032", "gfx1033", "gfx1034", "gfx1035",
+    "gfx1036",
+    "gfx1100", "gfx1101", "gfx1102", "gfx1103",
+    "gfx1150", "gfx1151", "gfx1152", "gfx1153",
+    "gfx1200", "gfx1201", "gfx1250",
+)
+
 setup(
     name=project_name,
     version=__version__,
@@ -59,13 +72,13 @@ setup(
     author_email='jax-dev@google.com',
     packages=find_packages(include=["jax", "jax.*"]),
     package_data={'jax': ['py.typed', "*.pyi", "**/*.pyi"]},
-    python_requires='>=3.11',
+    python_requires='>=3.12',
     install_requires=[
         f'jaxlib >={_minimum_jaxlib_version}, <={_jax_version}',
         'ml_dtypes>=0.5.0',
-        'numpy>=2.0',
+        'numpy>=2.2',
         'opt_einsum',
-        'scipy>=1.14',
+        'scipy>=1.15',
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.
@@ -113,13 +126,48 @@ setup(
           f"jax-cuda13-plugin>={_current_jaxlib_version},<={_jax_version}",
         ],
 
-        # Target that does not depend on ROCm runtime pip wheels, until
-        # ROCm wheels are distributed.
-        # TODO(gulsumgudukbay): add rocm and rocm8 extras once they are
-        # distributed.
+        # TheRock ROCm wheels are not on PyPI; pass --extra-index-url for the
+        # stable AMD index of that ROCm line, alongside PyPI rather than
+        # replacing it:
+        #   rocm / rocm7: https://repo.amd.com/rocm/whl-multi-arch/
+        #   rocm10:       https://stable.repo.amd.com/rocm/whl-next/
+        # These three pull device code for every target. Naming one instead,
+        # as in jax[rocm10-device-gfx950], downloads only that target.
+        # TODO(gulsumgudukbay): add a rocm8 extra once those wheels ship.
+        'rocm': [
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-rocm7-plugin[with-rocm,device-all]=={_jax_version}.*",
+        ],
+
+        'rocm7': [
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-rocm7-plugin[with-rocm,device-all]=={_jax_version}.*",
+        ],
+
+        'rocm10': [
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-rocm10-plugin[with-rocm,device-all]=={_jax_version}.*",
+        ],
+
+        # The same, per GPU target: jax[rocm7-device-gfx950] and so on.
+        **{
+          f'rocm{line}-device-{target}': [
+            f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
+            f"jax-rocm{line}-plugin[with-rocm,device-{target}]"
+            f"=={_jax_version}.*",
+          ]
+          for line in ('7', '10') for target in _gfx_targets
+        },
+
+        # Preinstalled ROCm, typically /opt/rocm. Does not pull TheRock wheels.
         'rocm7-local': [
           f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
           f"jax-rocm7-plugin=={_jax_version}.*",
+        ],
+
+        'oneapi': [
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-oneapi-plugin[with-oneapi]>={_current_jaxlib_version},<={_jax_version}",
         ],
 
         # For automatic bootstrapping distributed jobs in Kubernetes
@@ -136,10 +184,10 @@ setup(
     license='Apache-2.0',
     classifiers=[
         "Development Status :: 5 - Production/Stable",
-        "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
         "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
         "Programming Language :: Python :: Free Threading :: 3 - Stable",
     ],
     zip_safe=False,

@@ -156,6 +156,16 @@ if TYPE_CHECKING:
   assert_type(vals, jax.Array)
   assert_type(mask, jax.Array)
 
+  symbolic_dim, = jax.export.symbolic_shape("symbolic_dim")
+  assert_type(
+      jax.export.symbolic_dim_bounds(symbolic_dim),
+      tuple[float, float],
+  )
+  assert_type(
+      jax.export.symbolic_dim_bounds(np.int32(7)),
+      tuple[float, float],
+  )
+
   # Functions with non-trivial typing overloads:
   # jnp.linspace
   assert_type(jnp.linspace(0, 10), jax.Array)

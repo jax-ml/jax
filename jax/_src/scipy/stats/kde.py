@@ -92,7 +92,7 @@ class gaussian_kde:
       )
 
     data_covariance = jnp.atleast_2d(
-        jnp.cov(dataset, rowvar=1, bias=False, aweights=weights))
+        jnp.cov(dataset, rowvar=True, bias=False, aweights=weights))
     data_inv_cov = jnp.linalg.inv(data_covariance)
     covariance = data_covariance * factor**2
     inv_cov = data_inv_cov / factor**2

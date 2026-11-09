@@ -29,11 +29,12 @@ limitations under the License.
 #include "absl/base/dynamic_annotations.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/statusor.h"
-#include "absl/synchronization/blocking_counter.h"
 #include "absl/types/span.h"
+#include "jaxlib/cpu/thread_pool.h"
 #include "jaxlib/ffi_helpers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
+#include "tsl/platform/platform.h"
 
 namespace ffi = xla::ffi;
 
@@ -75,6 +76,7 @@ void CopyIfDiffBuffer(ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out) {
 // cost_per_matrix is a FLOP estimate for each batch element.
 int64_t GetLapackBatchChunkSize(int64_t batch_size, int64_t cost_per_matrix,
                                 int64_t num_threads) {
+#ifdef PLATFORM_GOOGLE
   // We want the minimum chunk size to be at least as big as the cost of a
   // thread context switch. Let's assume that's about 2us and each core can do
   // 100 GFLOP/s. So our minimum chunk size is 2e-6 * 1e11 = 2e5 FLOP.
@@ -95,6 +97,13 @@ int64_t GetLapackBatchChunkSize(int64_t batch_size, int64_t cost_per_matrix,
       (kMinWorkPerTask + cost_per_matrix - 1) / cost_per_matrix;
 
   return std::max(chunk_for_even_division, chunk_for_min_work);
+#else
+  // Parallelizing LAPACK routines over a thread pool is disabled in open-source
+  // builds because it can lead to performance regressions or crashes due to
+  // interactions with external LAPACK/BLAS implementations (e.g.,
+  // OpenBLAS/MKL).
+  return batch_size;
+#endif  // PLATFORM_GOOGLE
 }
 
 // Divide batch_count elements into chunk_size pieces, and call run_chunk on
@@ -102,25 +111,16 @@ int64_t GetLapackBatchChunkSize(int64_t batch_size, int64_t cost_per_matrix,
 static ffi::Error ParallelBatchMap(
     ffi::ThreadPool thread_pool, int64_t batch_count, int64_t chunk_size,
     absl::FunctionRef<void(int64_t, int64_t)> run_chunk) {
-  if (chunk_size >= batch_count) {
-    run_chunk(0, batch_count);
-    return ffi::Error::Success();
-  } else {
-    int64_t num_tasks = (batch_count + chunk_size - 1) / chunk_size;
-    absl::BlockingCounter counter(num_tasks);
-
-    for (int64_t i = 0; i < batch_count; i += chunk_size) {
-      int64_t current_chunk_size = std::min(chunk_size, batch_count - i);
-
-      thread_pool.Schedule([run_chunk, &counter, i, current_chunk_size]() {
-        run_chunk(i, current_chunk_size);
-        counter.DecrementCount();
-      });
-    }
-
-    counter.Wait();
-    return ffi::Error::Success();
-  }
+#ifdef PLATFORM_GOOGLE
+  return ParallelFor(thread_pool, batch_count, chunk_size, run_chunk);
+#else
+  // Parallelizing LAPACK routines over a thread pool is disabled in open-source
+  // builds because it can lead to performance regressions or crashes due to
+  // interactions with external LAPACK/BLAS implementations (e.g.,
+  // OpenBLAS/MKL).
+  run_chunk(0, batch_count);
+  return ffi::Error::Success();
+#endif  // PLATFORM_GOOGLE
 }
 
 //== Triangular System Solver ==//
@@ -428,7 +428,7 @@ ffi::Error PivotingQrFactorization<dtype, IntType>::Kernel(
         auto* local_tau_data = tau_data + i * tau_step;
 
         auto work_data = AllocateScratchMemory<dtype>(work_size);
-        std::unique_ptr<ffi::NativeType<ffi::ToReal(dtype)>[]> rwork_data;
+        AlignedUniquePtr<ffi::NativeType<ffi::ToReal(dtype)>> rwork_data;
         if constexpr (is_complex_dtype) {
           rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(2 * x_cols);
         }
@@ -888,7 +888,7 @@ static ffi::Error SvdKernel(
         auto work_data = AllocateScratchMemory<dtype>(work_size);
         auto iwork_data =
             AllocateScratchMemory<LapackIntDtypeFor<IntType>>(iwork_size);
-        std::unique_ptr<ffi::NativeType<ffi::ToReal(dtype)>[]> rwork;
+        AlignedUniquePtr<ffi::NativeType<ffi::ToReal(dtype)>> rwork;
         if constexpr (ffi::IsComplexType<dtype>()) {
           rwork = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);
         }
@@ -1040,7 +1040,7 @@ static ffi::Error SvdQRKernel(
         auto* local_info_data = info_data + i;
 
         auto work_data = AllocateScratchMemory<dtype>(work_size);
-        std::unique_ptr<ffi::NativeType<ffi::ToReal(dtype)>[]> rwork;
+        AlignedUniquePtr<ffi::NativeType<ffi::ToReal(dtype)>> rwork;
         if constexpr (ffi::IsComplexType<dtype>()) {
           const auto rwork_size = svd::GetRealWorkspaceSizeQR(x_rows, x_cols);
           rwork = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);

@@ -49,58 +49,14 @@ union SparseConst {
 SparseConst ConstZero(gpuDataType type);
 absl::StatusOr<SparseConst> ConstOne(gpuDataType type);
 
-struct SparseMatDescriptor {
-  gpuDataType value_type;
-  gpusparseIndexType_t index_type;
-  int rows, cols, nnz;
-  int batch_count = 1;
-  int batch_stride = 0;
-};
-
-struct DenseMatDescriptor {
-  gpuDataType type;
-  int rows, cols;
-  int batch_count = 1;
-  int batch_stride = 0;
-};
-
-struct DenseVecDescriptor {
-  gpuDataType type;
-  int size;
-};
-
-struct CsrMatvecDescriptor {
-  SparseMatDescriptor A;
-  DenseVecDescriptor x, y;
-  gpusparseOperation_t op;
-};
-
-struct CsrMatmatDescriptor {
-  SparseMatDescriptor A;
-  DenseMatDescriptor B, C;
-  gpusparseOperation_t op_A;
-};
-
-struct CooMatvecDescriptor {
-  SparseMatDescriptor A;
-  DenseVecDescriptor x, y;
-  gpusparseOperation_t op;
-};
-
-struct CooMatmatDescriptor {
-  SparseMatDescriptor A;
-  DenseMatDescriptor B, C;
-  gpusparseOperation_t op_A;
-};
-
-XLA_FFI_DECLARE_HANDLER_SYMBOL(CsrToDenseFfi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(CsrFromDenseFfi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(CsrMatvecFfi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(CsrMatmatFfi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(CooToDenseFfi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(CooFromDenseFfi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(CooMatvecFfi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(CooMatmatFfi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kCsrToDense);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kCsrFromDense);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kCsrMatvec);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kCsrMatmat);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kCooToDense);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kCooFromDense);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kCooMatvec);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kCooMatmat);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kGtsv2);
 
 }  // namespace JAX_GPU_NAMESPACE

@@ -19,9 +19,9 @@ import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
-import scipy.stats
-
+import jax
+from jax import nn
+from jax import random
 from jax._src import ad_checkpoint
 from jax._src import config
 from jax._src import core
@@ -30,11 +30,10 @@ from jax._src import test_util as jtu
 from jax._src.cudnn.scaled_matmul_stablehlo import (
     quantize,
 )
-from jax.test_util import check_grads
-from jax import nn
-from jax import random
-import jax
 import jax.numpy as jnp
+from jax.test_util import check_grads
+import numpy as np
+import scipy.stats
 
 config.parse_flags_with_absl()
 
@@ -48,7 +47,7 @@ _cudnn_dbias_error = 'cuDNN only supports bias gradient'
 def quantize_to_qtype(x, q_dtype, compute_dtype, scale):
   # Explicitly cast the max values to the compute dtype to avoid unnecessary
   # casting to FP32 during the subsequent math operations."
-  assert q_dtype in (jnp.float8_e4m3fn, )
+  assert q_dtype in (jnp.float8_e4m3fn, jnp.float4_e2m1fn)
   dtype_max = jnp.finfo(q_dtype).max.astype(compute_dtype)
   scaled_x = x / jnp.broadcast_to(
       jnp.asarray(scale, dtype=compute_dtype), x.shape
@@ -93,31 +92,30 @@ def _generate_quantized_tensors(
 
   return a, b, a_q, b_q, a_scales, b_scales
 
-def create_mxfp8_configs_if_available():
+def create_mx_configs_if_available(mode):
   if _dtypes.float8_e8m0fnu is None:
     raise unittest.SkipTest("float8_e8m0fnu is not available.")
 
-  return [nn.get_scaled_dot_general_config("mxfp8") for _ in range(3)]
+  return [nn.get_scaled_dot_general_config(mode) for _ in range(3)]
 
 
 @jtu.with_config(jax_legacy_prng_key="allow",
                  jax_numpy_dtype_promotion="standard")
 class NNFunctionsTest(jtu.JaxTestCase):
+
   @parameterized.product(
+      mode=["mxfp8", "mxfp4"],
       contract=[160, 96],
       lhs_non_contract=[240, 100],
       dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
   )
-  def testScaledMatmul(self, contract, lhs_non_contract, dtype):
-    if not jtu.test_device_matches(["gpu"]):
-      raise unittest.SkipTest("Test requires GPU.")
+  def testScaledMatmul(self, mode, contract, lhs_non_contract, dtype):
+    if not jtu.test_device_matches(["gpu", "cpu"]):
+      raise unittest.SkipTest("Test requires GPU or CPU.")
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
-    # TODO: Re-enable once scaled dot is implemented for ROCm in XLA.
-    if jtu.is_device_rocm():
-      self.skipTest("Skipped on ROCm: scaled dot not yet supported in XLA.")
     # Check if float8_e8m0fnu is available
-    configs = create_mxfp8_configs_if_available()
+    configs = create_mx_configs_if_available(mode)
     batch, rhs_non_contract = 4, 256
     a, b, a_q, b_q, a_scales, b_scales = _generate_quantized_tensors(
         batch, lhs_non_contract, contract, rhs_non_contract,
@@ -132,20 +130,18 @@ class NNFunctionsTest(jtu.JaxTestCase):
     )
 
   @parameterized.product(
+      mode=["mxfp8", "mxfp4"],
       is_training=[True, False],
       output_type=[jnp.float16, jnp.bfloat16, jnp.float32],
   )
   def testScaledDotGeneral(
-      self, is_training, output_type):
+      self, mode, is_training, output_type):
     if not jtu.test_device_matches(["gpu"]):
       raise unittest.SkipTest("Test requires GPU.")
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
-    # TODO: Re-enable once scaled dot is implemented for ROCm in XLA.
-    if jtu.is_device_rocm():
-      self.skipTest("Skipped on ROCm: scaled dot not yet supported in XLA.")
 
-    configs = create_mxfp8_configs_if_available()
+    configs = create_mx_configs_if_available(mode)
     cast_to_representable = partial(
         quantize_dequantize,
         scale=jnp.ones((1,)),
@@ -168,9 +164,18 @@ class NNFunctionsTest(jtu.JaxTestCase):
         nn.scaled_dot_general, configs=configs
     )
     def fwd(a, b, is_ref=False):
-      fn = jax.lax.dot_general if is_ref else scaled_dot_general_fn
-      y = fn(a, b, dimension_numbers,
-             preferred_element_type=output_type)
+      if is_ref:
+        y = jax.lax.dot_general(
+            a,
+            b,
+            dimension_numbers,
+            preferred_element_type=output_type,
+            precision=jax.lax.Precision.HIGH,
+        )
+      else:
+        y = scaled_dot_general_fn(
+            a, b, dimension_numbers, preferred_element_type=output_type
+        )
       return jnp.sum(y)
 
     if is_training:
@@ -191,6 +196,107 @@ class NNFunctionsTest(jtu.JaxTestCase):
       out = j_inference(a, b)
       out_ref = j_inference_ref(a, b)
       self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
+
+  @parameterized.product(
+      mode=["mxfp8", "mxfp4"],
+      dtype=[jnp.bfloat16, jnp.float32],
+  )
+  def testMxQuantize(self, mode, dtype):
+    if not jtu.test_device_matches(["gpu"]):
+      raise unittest.SkipTest("Test requires GPU.")
+    config = create_mx_configs_if_available(mode)[0]
+    max_value = float(jnp.finfo(config.data_type).max)
+
+    # A block maximum of exactly `max_value * 2**k` selects the scale 2**k and
+    # keeps that element at `max_value` after scaling. Computing the ratio in
+    # the input dtype instead selects 2**(k+1) when the reciprocal of
+    # `max_value` rounds up in that dtype, as 1 / 6 does in bfloat16.
+    exponents = jnp.arange(-4, 4)
+    x = jnp.zeros((1, 8, config.block_size), dtype)
+    x = x.at[0, :, 0].set((max_value * 2.0 ** exponents).astype(dtype))
+    x_q, scales = jax.jit(partial(quantize, config=config))(x)
+    self.assertArraysEqual(scales.view(jnp.uint8).reshape(8),
+                           (127 + exponents).astype(jnp.uint8))
+    self.assertArraysEqual(x_q[0, :, 0].astype(jnp.float32),
+                           jnp.full((8,), max_value, dtype=jnp.float32))
+
+  @parameterized.product(mode=["mxfp8", "mxfp4"])
+  def testScaledDotGeneralKeepsQuantization(self, mode):
+    # Inputs that are not representable in the element format: the jitted
+    # scaled dot must match a dequantized reference and differ from the
+    # unquantized product. Under `xla_allow_excess_precision` (the default)
+    # XLA folds convert chains such as f32 -> e4m3 -> f32 on the
+    # dequantize-and-dot fallback, which would otherwise discard the
+    # quantization; `quantize` guards its outputs with a barrier.
+    if not jtu.test_device_matches(["gpu"]):
+      raise unittest.SkipTest("Test requires GPU.")
+    configs = create_mx_configs_if_available(mode)
+    k1, k2 = jax.random.split(jax.random.key(1), 2)
+    a = jax.random.normal(k1, (2, 64, 128), jnp.float32)
+    b = jax.random.normal(k2, (2, 96, 128), jnp.float32)
+    dimension_numbers = (([2], [2]), ([0], [0]))
+
+    def dequantize(x_q, scales, config):
+      blocks = x_q.astype(jnp.float32).reshape(
+          x_q.shape[:-1] + (-1, config.block_size))
+      return (blocks * scales.astype(jnp.float32)[..., None]).reshape(
+          x_q.shape)
+
+    a_q, a_scales = quantize(a, configs[0])
+    b_q, b_scales = quantize(b, configs[1])
+    dot = partial(jax.lax.dot_general, dimension_numbers=dimension_numbers,
+                  precision=jax.lax.Precision.HIGHEST)
+    out_ref = dot(dequantize(a_q, a_scales, configs[0]),
+                  dequantize(b_q, b_scales, configs[1]))
+    out_unquantized = dot(a, b)
+
+    def fwd(a, b):
+      return nn.scaled_dot_general(a, b, dimension_numbers, configs=configs)
+
+    out = jax.jit(fwd)(a, b)
+
+    self.assertArraysAllClose(out, out_ref, rtol=2e-2, atol=2e-2)
+    self.assertGreater(float(jnp.max(jnp.abs(out_ref - out_unquantized))),
+                       0.1)
+
+  def testScaledDotGeneralMixedConfigsGrad(self):
+    # The mixed mxfp4/mxfp8 configs from the scaled_dot_general docstring.
+    if not jtu.test_device_matches(["gpu", "cpu"]):
+      raise unittest.SkipTest("Test requires GPU or CPU.")
+    mxfp4 = create_mx_configs_if_available("mxfp4")[0]
+    mxfp8 = create_mx_configs_if_available("mxfp8")[0]
+    configs = [mxfp4, mxfp4, mxfp8]
+
+    # Inputs on the e2m1 grid are quantized losslessly, so the results must
+    # match an unquantized float32 reference.
+    cast_to_e2m1 = partial(quantize_dequantize, q_dtype=jnp.float4_e2m1fn,
+                           scale=jnp.ones((1,)), compute_dtype=jnp.float32)
+    uniform = partial(jax.random.uniform, dtype=jnp.float32, minval=-6.0,
+                      maxval=6.0)
+    k1, k2, k3 = jax.random.split(jax.random.key(2), 3)
+    a = cast_to_e2m1(uniform(k1, (2, 64, 128)))
+    b = cast_to_e2m1(uniform(k2, (2, 96, 128)))
+    # The cotangent w is exact in e4m3 but not in e2m1, so quantizing it with
+    # mxfp4 instead of the mxfp8 gradient config would change the gradients.
+    w = 1.25 * cast_to_e2m1(uniform(k3, (2, 64, 96)))
+    dimension_numbers = (([2], [2]), ([0], [0]))
+
+    def loss(a, b, is_ref=False):
+      if is_ref:
+        out = jax.lax.dot_general(a, b, dimension_numbers,
+                                  precision=jax.lax.Precision.HIGHEST)
+      else:
+        out = nn.scaled_dot_general(a, b, dimension_numbers, configs=configs)
+      return jnp.sum(out * w)
+
+    value, (a_grad, b_grad) = jax.jit(
+        jax.value_and_grad(loss, argnums=(0, 1)))(a, b)
+    value_ref, (a_grad_ref, b_grad_ref) = jax.jit(
+        jax.value_and_grad(partial(loss, is_ref=True), argnums=(0, 1)))(a, b)
+
+    self.assertAllClose(value, value_ref, rtol=1e-5, atol=1e-5)
+    self.assertAllClose(a_grad, a_grad_ref, rtol=1e-5, atol=1e-5)
+    self.assertAllClose(b_grad, b_grad_ref, rtol=1e-5, atol=1e-5)
 
   @parameterized.product(
       dtype=[jnp.bfloat16, jnp.float16],
@@ -408,6 +514,36 @@ class NNFunctionsTest(jtu.JaxTestCase):
     _, dbias_ans, _ = bwd_ans(x, bias, mask)
     self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
 
+  @jtu.sample_product(dtype=[jnp.bfloat16, jnp.float16])
+  def testDotProductAttentionJitGrad(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/pull/42168
+    if dtype == jnp.float16 and jtu.test_device_matches(["tpu"]):
+      raise unittest.SkipTest("F16_F16_F32 is not supported on TPU.")
+    if jtu.is_device_cuda():
+      if dtype == jnp.bfloat16 and not jtu.is_cuda_compute_capability_at_least("8.0"):
+        raise unittest.SkipTest("BF16_BF16_F32 requires CUDA compute capability >= 8.0.")
+      if dtype == jnp.float16 and not jtu.is_cuda_compute_capability_at_least("7.0"):
+        raise unittest.SkipTest("F16_F16_F32 requires CUDA compute capability >= 7.0.")
+    B, S, T, N, H = 2, 64, 64, 4, 32
+    keys = random.split(random.PRNGKey(0), 3)
+    Q = random.normal(keys[0], (B, T, N, H), dtype)
+    K = random.normal(keys[1], (B, S, N, H), dtype)
+    V = random.normal(keys[2], (B, S, N, H), dtype)
+
+    def loss(q, k, v):
+      out = nn.dot_product_attention(q, k, v, implementation='xla')
+      return jnp.sum(out.astype(jnp.float32) ** 2)
+
+    value_and_grad = jax.jit(jax.value_and_grad(loss, argnums=(0, 1, 2)))
+    value, grads = value_and_grad(Q, K, V)
+    value_ref, grads_ref = value_and_grad(
+        Q.astype(jnp.float32), K.astype(jnp.float32), V.astype(jnp.float32))
+
+    self.assertAllClose(value, value_ref, rtol=.01, atol=.01)
+    for g, g_ref in zip(grads, grads_ref):
+      self.assertEqual(g.dtype, dtype)
+      self.assertAllClose(g.astype(jnp.float32), g_ref, rtol=.02, atol=.02)
+
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,
                 rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None,
@@ -508,7 +644,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.relu, (1.,), order=3, rtol=rtol)
     check_grads(nn.relu, (-1.,), order=3, rtol=rtol)
     jaxpr = jax.make_jaxpr(jax.grad(nn.relu))(0.)
-    self.assertGreaterEqual(len(jaxpr.jaxpr.eqns), 2)
+    self.assertGreaterEqual(len(jaxpr.eqns), 2)
 
   def testReluGradAtZero(self):
     # https://dl.acm.org/doi/10.5555/3540261.3540297
@@ -526,6 +662,61 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testSoftSignValueAndGrad(self, dtype):
+    finfo = jnp.finfo(dtype)
+    infs = jnp.array([-jnp.inf, jnp.inf], dtype=dtype)
+    self.assertArraysEqual(
+        nn.soft_sign(infs), jnp.array([-1.0, 1.0], dtype=dtype)
+    )
+
+    d1_fn = jax.jit(jax.vmap(jax.grad(nn.soft_sign)))
+    d2_fn = jax.jit(jax.vmap(jax.grad(jax.grad(nn.soft_sign))))
+    d3_fn = jax.jit(jax.vmap(jax.grad(jax.grad(jax.grad(nn.soft_sign)))))
+    self.assertArraysEqual(d1_fn(infs), jnp.zeros_like(infs))
+    self.assertArraysEqual(d2_fn(infs), jnp.zeros_like(infs))
+    self.assertArraysEqual(d3_fn(infs), jnp.zeros_like(infs))
+    self.assertEqual(jax.grad(nn.soft_sign)(dtype(0.0)), dtype(1.0))
+
+    # Include |x| >= 1 / eps where |x| + 1 == |x| in working precision (where
+    # the quotient-rule JVP 1/(|x|+1) - |x|/(|x|+1)^2 cancels to 0) and
+    # |x| ~ 1 / sqrt(eps) where the quotient rule loses half the precision.
+    x_mid = 2.0 ** (finfo.nmant // 2 + 1)
+    x_tail = 2.0 ** (finfo.nmant + 1)
+    xs_f64 = np.array(
+        [-x_tail, -x_mid, -2.0, -0.5, 0.5, 2.0, x_mid, x_tail],
+        dtype=np.float64,
+    )
+    xs = jnp.array(xs_f64, dtype=dtype)
+    # For x_tail in float64, 1 / (|x| + 1)^k == 1 / |x|^k to > 53 bits.
+    inv = 1.0 / (np.abs(xs_f64) + 1.0)
+    is_tpu = jtu.test_device_matches(["tpu"])
+    tol = 2e-4 if is_tpu else 16 * float(finfo.eps)
+    self.assertAllClose(
+        np.asarray(d1_fn(xs), np.float64), inv**2, atol=0, rtol=tol
+    )
+    self.assertAllClose(
+        np.asarray(d2_fn(xs), np.float64),
+        -2.0 * np.sign(xs_f64) * inv**3,
+        atol=0,
+        rtol=tol,
+    )
+    self.assertAllClose(
+        np.asarray(d3_fn(xs), np.float64), 6.0 * inv**4, atol=0, rtol=tol
+    )
+
+    z_dtype = np.complex64 if dtype == np.float32 else np.complex128
+    if z_dtype in jtu.dtypes.complex:
+      z = jnp.array(1.5 - 2.0j, dtype=z_dtype)
+      check_grads(
+          nn.soft_sign,
+          (z,),
+          order=2,
+          modes=["fwd", "rev"],
+          rtol=1e-2 if (dtype == np.float32 or is_tpu) else None,
+          atol=1e-2 if (dtype == np.float32 or is_tpu) else None,
+      )
+
   def testSparseplusValue(self):
     val = nn.sparse_plus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
@@ -538,6 +729,33 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSquareplusValue(self):
     val = nn.squareplus(1e3)
     self.assertAllClose(val, 1e3, check_dtypes=False, atol=1e-3)
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  def testSquareplusValueAndGrad(self, dtype):
+    tol = {
+        np.float16: 1e-2,
+        _dtypes.bfloat16: 1e-2,
+        np.float32: 1e-4,
+        np.float64: 1e-4,
+    }
+
+    def ref_squareplus(x):
+      return np.where(
+          x < 0, 2.0 / (np.hypot(x, 2.0) - x), (x + np.hypot(x, 2.0)) / 2.0
+      )
+
+    def ref_grad(x):
+      return ref_squareplus(x) / np.hypot(x, 2.0)
+
+    x = jnp.array([-100.0, -10.0, 0.0, 10.0, 300.0], dtype=dtype)
+    expected = ref_squareplus(np.asarray(x, dtype=np.float64)).astype(dtype)
+
+    val = nn.squareplus(x)
+    self.assertAllClose(val, expected, atol=tol, rtol=tol)
+
+    grad_expected = ref_grad(np.asarray(x, dtype=np.float64)).astype(dtype)
+    grad_val = jax.vmap(jax.grad(nn.squareplus))(x)
+    self.assertAllClose(grad_val, grad_expected, atol=tol, rtol=tol)
 
   def testMishValue(self):
     val = nn.mish(1e3)
@@ -624,10 +842,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
     # TODO(mattjj): include log_softmax in these extra tests if/when we add a
     # custom_jvp rule for it (since otherwise it doesn't pass the numerical
     # checks below).
+    tol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
     if fn is nn.softmax and config.softmax_custom_jvp.value:
-      g_fun = lambda x: jnp.take(fn(x, where=m, initial=-jnp.inf),
-                                jnp.array([0, 2, 3]))
-      jtu.check_grads(g_fun, (x,), order=2)
+      g_fun = lambda x: jnp.take(fn(x, where=m), jnp.array([0, 2, 3]))
+      jtu.check_grads(g_fun, (x,), order=2, atol=tol, rtol=tol)
 
   @parameterized.parameters([nn.softmax, nn.log_softmax])
   def testSoftmaxWhereGrad(self, fn):
@@ -638,6 +856,27 @@ class NNFunctionsTest(jtu.JaxTestCase):
     f = lambda x, mask: fn(x, where=mask)[0]
 
     self.assertAllClose(jax.grad(f)(x, mask), jnp.zeros_like(x))
+
+  @parameterized.parameters([False, True])
+  def testSoftmaxWhereGradMaskedNan(self, custom_jvp):
+    x = jnp.array([36., 10000.])
+    mask = x < 1000
+
+    # Masked entropy/KL pattern: p == 0 at ~mask causes p * log(p) to evaluate
+    # 0 * (-inf) = NaN at ~mask, passing a NaN cotangent into softmax.
+    def entropy(x, mask):
+      p = nn.softmax(x, where=mask)
+      logp = nn.log_softmax(x, where=mask)
+      return jnp.sum(p * logp, where=mask)
+
+    with jax.softmax_custom_jvp(custom_jvp):
+      self.assertAllClose(jax.grad(entropy)(x, mask), jnp.zeros_like(x))
+      _, y_dot = jax.jvp(
+          lambda x: nn.softmax(x, where=mask),
+          (x,),
+          (jnp.where(mask, 1.0, jnp.nan),),
+      )
+      self.assertAllClose(y_dot, jnp.zeros_like(x))
 
   def testSoftmaxGrad(self):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
@@ -656,12 +895,63 @@ class NNFunctionsTest(jtu.JaxTestCase):
     with jax.softmax_custom_jvp(False):
       res = ad_checkpoint.saved_residuals(nn.softmax, x)
     self.assertLen(res, 3)
-    self.assertEqual(sum(a.size for a, _ in res), 6)
+    self.assertEqual(sum(a.size for a, _ in res), 9)
 
     with jax.softmax_custom_jvp(True):
       res = ad_checkpoint.saved_residuals(nn.softmax, x)
     self.assertLen(res, 1)
     self.assertEqual(sum(a.size for a, _ in res), 4)
+
+  def testLogSumExpGrad(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    jtu.check_grads(nn.logsumexp, (x,), order=2, atol=5e-3)
+    jtu.check_grads(
+        partial(nn.logsumexp, keepdims=True), (x,), order=2, atol=5e-3
+    )
+
+    x2 = jnp.array([[5.5, 1.3], [-4.2, 0.9]])
+    jtu.check_grads(partial(nn.logsumexp, axis=0), (x2,), order=2, atol=5e-3)
+    jtu.check_grads(partial(nn.logsumexp, axis=1), (x2,), order=2, atol=5e-3)
+    jtu.check_grads(
+        partial(nn.logsumexp, axis=-1, keepdims=True), (x2,), order=2, atol=5e-3
+    )
+
+  def testLogSumExpWhereGrad(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    m = jnp.array([True, False, True, True])
+    jtu.check_grads(partial(nn.logsumexp, where=m), (x,), order=2, atol=5e-3)
+
+  def testLogSumExpGradResiduals(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    res = ad_checkpoint.saved_residuals(nn.logsumexp, x)
+    self.assertLen(res, 1)
+    res_sign = ad_checkpoint.saved_residuals(
+        partial(nn.logsumexp, return_sign=True), x
+    )
+    self.assertLen(res_sign, 1)
+
+  def testLogSumExpReturnSignGrad(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    jtu.check_grads(
+        lambda x_: nn.logsumexp(x_, return_sign=True)[0], (x,), order=2,
+        atol=5e-3
+    )
+    # Gradient of sign should always be everywhere zero
+    _, sign_dot = jax.jvp(
+        lambda x_: nn.logsumexp(x_, return_sign=True)[1], (x,),
+        (jnp.ones_like(x),)
+    )
+    self.assertAllClose(sign_dot, jnp.zeros_like(sign_dot))
+    sign_grad = jax.grad(
+        lambda x_: nn.logsumexp(x_, return_sign=True)[1].sum()
+    )(x)
+    self.assertAllClose(sign_grad, jnp.zeros_like(sign_grad))
+
+  def testLogSumExpFallbackGrad(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    b = jnp.array([0.5, 1.0, 2.0, 0.1])
+    jtu.check_grads(partial(nn.logsumexp, b=b), (x,), order=2, atol=5e-3)
+    jtu.check_grads(lambda b_: nn.logsumexp(x, b=b_), (b,), order=1, atol=5e-3)
 
   def testStandardizeWhereMask(self):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
@@ -828,10 +1118,21 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(
         nn.log1mexp,
         (jnp.array([1e-2, 1e-1, 1e0, 1e1, 1e2]),),
-        order=1,
+        order=2,
         rtol=1e-2 if jtu.test_device_matches(["tpu"]) else 1e-3,
         atol=1e-3,
     )
+    zero = jnp.float32(0.0)
+    self.assertAllClose(
+        jax.grad(nn.log1mexp)(jnp.float32(100.0)), zero, atol=1e-43
+    )
+    self.assertAllClose(
+        jax.grad(jax.grad(nn.log1mexp))(jnp.float32(100.0)), zero, atol=1e-43
+    )
+    for x in [jnp.float32(110.0), jnp.float32(jnp.inf)]:
+      self.assertEqual(jax.grad(nn.log1mexp)(x), 0.0)
+      self.assertEqual(jax.grad(jax.grad(nn.log1mexp))(x), 0.0)
+    self.assertTrue(jnp.isnan(jax.grad(nn.log1mexp)(-1.0)))
 
   def testDotProductAttention_localWindowSizeWithoutMask(self):
     dtype = jnp.float32
@@ -933,8 +1234,8 @@ class NNInitializersTest(jtu.JaxTestCase):
     assert val.shape == (rows, cols)
     assert val.dtype == dtype
 
-    if jtu.test_device_matches(["tpu"]):
-      atol = 2e-3
+    if jtu.test_device_matches(["tpu", "gpu"]):
+      atol = 3e-3
       rtol = 1e-2
     else:
       atol = None
@@ -997,6 +1298,22 @@ class NNInitializersTest(jtu.JaxTestCase):
       " in_axis explicitly.",
     ):
       initializer(rng, shape)
+
+  @jtu.sample_product(
+    initializer=[
+      nn.initializers.he_normal(),
+      nn.initializers.lecun_normal(),
+      nn.initializers.glorot_normal(),
+    ],
+    shape=[
+      (8, 0),
+      (0, 8),
+      (0, 0),
+    ],
+  )
+  def testVarianceScalingDivisionByZero(self, initializer, shape):
+    rng = random.PRNGKey(0)
+    initializer(rng, shape)
 
   def testIdentity(self):
     x  = jnp.array([1., 2., 3.])

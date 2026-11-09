@@ -135,6 +135,7 @@ table AbstractValue {
   shape: [string];  // Support shape polymorphism
   dtype: DType;
   memory_space: MemorySpace;
+  weak_type: bool;  // Added 10/30/2026 (v13)
 }
 
 // Deprecated 3/17/2026
@@ -209,6 +210,8 @@ table Exported {
   // 1-based indices into unique_named_shardings, or 0 if unspecified (added 4/4/2026, v10)
   in_shardings_idxs: [uint32];
   out_shardings_idxs: [uint32];
+
+  jax_version: string;  // Added 7/29/2026
 }
 
 root_type Exported;

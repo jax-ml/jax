@@ -13,7 +13,7 @@
 # limitations under the License.
 """Shape polymorphism support.
 
-See documentation at https://docs.jax.dev/en/latest/export/shape_poly.html.
+See documentation at https://docs.jax.dev/en/latest/501/shape-polymorphism.html.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import io
 import copy
 import operator as op
 import tokenize
-from typing import Any, SupportsIndex, TypeAlias, TypeGuard, Union, overload
+from typing import Any, SupportsIndex, TypeAlias, TypeGuard, overload
 import warnings
 
 import numpy as np
@@ -46,7 +46,6 @@ from jax._src import typing
 from jax._src import util
 
 
-DimSize: TypeAlias = Union["_DimExpr", int]
 TfVal = Any
 DimVarEnv = dict[str, typing.Array]
 DType = Any
@@ -68,7 +67,7 @@ This error arises for comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a boolean value for all values of the symbolic dimensions involved.
 
-Please see https://docs.jax.dev/en/latest/export/shape_poly.html#comparison-of-symbolic-dimensions-is-partially-supported
+Please see https://docs.jax.dev/en/latest/501/shape-polymorphism.html#comparison-of-symbolic-dimensions-is-partially-supported
 for more details.
 """
 
@@ -82,6 +81,13 @@ class UnexpectedDimVar(Exception):
 class Comparator(Enum):
   EQ = 1
   GEQ = 2
+
+
+# TODO: Move all the _DimFactor string constants here and use this enum
+# instead.
+class _DivModOp(Enum):
+  FLOORDIV = 1
+  MOD = 2
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _SymbolicConstraint:
@@ -182,12 +188,21 @@ class _DimFactor:
     The comparison is done lexicographically (syntactic), to be used for sorting.
     The result is not related to the semantic value.
     """
-    if c := cmp_comparable(self._size, other._size): return c
-    if self.var is not None:
-      return cmp_comparable(self.var, other.var)
-    if c := cmp_comparable(self.operation, other.operation): return c
-    return cmp_sequence(self.operands, other.operands,
-                        lambda s_o, o_o: s_o._syntactic_cmp(o_o))
+    if self is other:
+      return 0
+    if self._size != other._size:
+      return -1 if self._size < other._size else 1
+    if (s_var := self.var) is not None:
+      assert (o_var := other.var) is not None
+      return -1 if s_var < o_var else (1 if s_var > o_var else 0)
+    if (s_op := self.operation) != (o_op := other.operation):
+      assert s_op is not None and o_op is not None
+      return -1 if s_op < o_op else 1
+    for s_o, o_o in zip(self.operands, other.operands):
+      if s_o is not o_o and (c := s_o._syntactic_cmp(o_o)):
+        return c
+    s_len, o_len = len(self.operands), len(other.operands)
+    return -1 if s_len < o_len else (1 if s_len > o_len else 0)
 
   def __eq__(self, other: Any):
     """Lexicographic comparison."""
@@ -227,7 +242,7 @@ class _DimFactor:
         err_msg = (
             f"Encountered dimension variable '{self.var}' that is not appearing in the shapes of the function arguments.\n"
             f"The following dimension variables are appearing in the shapes of the function arguments: {list(env.keys())}.\n"
-            "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
+            "Please see https://docs.jax.dev/en/latest/501/shape-polymorphism.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
         raise UnexpectedDimVar(err_msg)
     else:
       operand_values = [opnd._evaluate(env) for opnd in self.operands]
@@ -329,14 +344,19 @@ class _DimTerm:
     The comparison is done lexicographically (syntactic), to be used for sorting.
     The result is not related to the semantic value.
     """
-    if c := cmp_comparable(self._size, other._size): return c
-    def cmp_factor(s_f: tuple[_DimFactor, int], o_f: tuple[_DimFactor, int]) -> int:
-      if c := s_f[0]._syntactic_cmp(o_f[0]): return c
+    if self is other:
+      return 0
+    if self._size != other._size:
+      return -1 if self._size < other._size else 1
+    for (s_f, s_e), (o_f, o_e) in zip(self._factors, other._factors):
+      if s_f is not o_f and (c := s_f._syntactic_cmp(o_f)):
+        return c
       # Consider the terms with exponents to be expanded as multiplications.
       # Then a higher exponent for a "large" factor should lead to a "larger" term.
-      return cmp_comparable(s_f[1], o_f[1])
-
-    return cmp_sequence(self._factors, other._factors, cmp_factor)
+      if s_e != o_e:
+        return -1 if s_e < o_e else 1
+    s_len, o_len = len(self._factors), len(other._factors)
+    return -1 if s_len < o_len else (1 if s_len > o_len else 0)
 
   def __lt__(self, other: _DimTerm):
     """Lexicographic comparison"""
@@ -365,6 +385,10 @@ class _DimTerm:
     """
     Returns the product with another term. Example: (n^2*m) * n == n^3 * m.
     """
+    if not self._factors:
+      return other
+    if not other._factors:
+      return self
     return _DimTerm(_DimExpr._linear_combination_sorted_pairs(self._factors, 0, 1,
                                                               other._factors, 0, 1))
 
@@ -407,7 +431,7 @@ class _DimExpr:
   to the free integer coefficient of the expression.
 
   We overload integer operations, but we do that soundly, raising
-  :class:`InconclusiveDimensionOperation` when the result is not
+  :class:`~jax.errors.InconclusiveDimensionOperation` when the result is not
   representable as a _DimExpr.
   """
   __array_priority__ = 1000   # Same as tracer, for __radd__ and others on ndarray
@@ -522,15 +546,16 @@ class _DimExpr:
 
     Does not attempt to normalize the keys (terms) inside `terms`.
     """
-    for t, t_k in terms:
-      assert t_k != 0
-      if updates := _DimExpr._normalize_term(t, t_k, scope):
-        coeffs = dict(terms)
-        for t1, t1_k in updates:
-          _DimExpr._add_coeff(coeffs, t1, t1_k)
-        terms = _DimExpr._coeff_to_sorted_terms(coeffs)
-        # TODO: check the case when we need to apply multiple normalizations
-        break
+    if scope._normalization_rules:
+      for t, t_k in terms:
+        assert t_k != 0
+        if updates := _DimExpr._normalize_term(t, t_k, scope):
+          coeffs = dict(terms)
+          for t1, t1_k in updates:
+            _DimExpr._add_coeff(coeffs, t1, t1_k)
+          terms = _DimExpr._coeff_to_sorted_terms(coeffs)
+          # TODO: check the case when we need to apply multiple normalizations
+          break
 
     if not terms: return 0
     if terms[0][0].is_constant: return terms[0][1]
@@ -560,7 +585,7 @@ class _DimExpr:
     """Extract the constant from a symbolic expression.
     Returns None if the expression is not a single constant."""
     if not isinstance(e, _DimExpr):
-      return int(e)
+      return e
     m, m_c = e._leading_term
     return m_c if m.is_constant else None
 
@@ -632,13 +657,19 @@ class _DimExpr:
     The comparison is done lexicographically (syntactic), to be used for sorting.
     The result is not related to the semantic value.
     """
+    if self is other:
+      return 0
+    if self._size != other._size:
+      return -1 if self._size < other._size else 1
     s_terms = self._sorted_terms
     o_terms = other._sorted_terms
-    if c := cmp_comparable(self._size, other._size): return c
-    def cmp_factor(s_f: tuple[_DimTerm, int], o_f: tuple[_DimTerm, int]) -> int:
-      if c := s_f[0]._syntactic_cmp(o_f[0]): return c
-      return cmp_comparable(s_f[1], o_f[1])
-    return cmp_sequence(s_terms, o_terms, cmp_factor)
+    for (s_t, s_c), (o_t, o_c) in zip(s_terms, o_terms):
+      if s_t is not o_t and (c := s_t._syntactic_cmp(o_t)):
+        return c
+      if s_c != o_c:
+        return -1 if s_c < o_c else 1
+    s_len, o_len = len(s_terms), len(o_terms)
+    return -1 if s_len < o_len else (1 if s_len > o_len else 0)
 
   def _eq(self, other: _DimExpr) -> bool:
     # Equality is used very frequently because expressions are cached. We could
@@ -654,7 +685,7 @@ class _DimExpr:
       # Here we really ought to raise InconclusiveDimensionOperation, but __eq__
       # cannot raise exceptions, because it is used indirectly when hashing.
       # So, we say that the expressions are disequal, which is really unsound.
-      # See https://docs.jax.dev/en/latest/export/shape_poly.html#comparison-of-symbolic-dimensions-is-partially-supported
+      # See https://docs.jax.dev/en/latest/501/shape-polymorphism.html#comparison-of-symbolic-dimensions-is-partially-supported
       return False
 
     return diff == 0
@@ -777,10 +808,29 @@ class _DimExpr:
       raise NotImplementedError("__rpow__ modulo not implemented")
     return self.__jax_array__().__rpow__(other)
 
+  def _divmod_op(self, divisor: DimSize, mode: _DivModOp) -> DimSize:
+    op_name = (
+        _DimFactor.FLOORDIV if mode == _DivModOp.FLOORDIV else _DimFactor.MOD
+    )
+    mon, count = self._leading_term
+    if not mon.is_constant:
+      if isinstance(divisor, _DimExpr):
+        dterm, dcount = divisor._leading_term
+        if dcount != 0 and (
+            count % dcount != 0 or mon._size < dterm._size or
+            (mon._size == dterm._size and mon != dterm)):
+          return _DimExpr._from_operation(
+              op_name, self, divisor, scope=self.scope)
+      elif (d_int := op.index(divisor)) != 0 and count % d_int != 0:
+        return _DimExpr._from_operation(
+            op_name, self, divisor, scope=self.scope)
+    q, r = self._divmod(divisor)
+    return q if mode == _DivModOp.FLOORDIV else r
+
   def __floordiv__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__floordiv__(divisor)
-    return self._divmod(divisor)[0]
+    return self._divmod_op(divisor, _DivModOp.FLOORDIV)
 
   def __rfloordiv__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
@@ -798,7 +848,7 @@ class _DimExpr:
   def __mod__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__mod__(divisor)
-    return self._divmod(divisor)[1]
+    return self._divmod_op(divisor, _DivModOp.MOD)
 
   def __rmod__(self, dividend):
     if isinstance(dividend, core.Tracer) or not _convertible_to_poly(dividend):
@@ -841,7 +891,7 @@ class _DimExpr:
       # Here we really ought to raise InconclusiveDimensionOperation, but __eq__
       # cannot raise exceptions, because it is used indirectly when hashing.
       # So, we say that the expressions are disequal, which is really unsound.
-      # See https://docs.jax.dev/en/latest/export/shape_poly.html#comparison-of-symbolic-dimensions-is-partially-supported
+      # See https://docs.jax.dev/en/latest/501/shape-polymorphism.html#comparison-of-symbolic-dimensions-is-partially-supported
       return False
 
     return diff == 0
@@ -881,7 +931,7 @@ class _DimExpr:
           dterm, dcount = divisor._leading_term
           qterm = mon.divide(dterm)
         else:
-          qterm, dcount = mon, int(divisor)
+          qterm, dcount = mon, divisor
         qcount, rcount = divmod(count, dcount)
         if rcount != 0:
           raise InconclusiveDimensionOperation("")
@@ -896,7 +946,7 @@ class _DimExpr:
           raise InconclusiveDimensionOperation("")
         remainder = 0
       else:
-        q, r = divmod(dividend, int(divisor))
+        q, r = divmod(dividend, divisor)
         quotient += q
         remainder = r
 
@@ -962,19 +1012,7 @@ class _DimExpr:
         copy.deepcopy(self._scope, memo))
 
 
-def cmp_comparable(i1, i2) -> int:
-  if i1 < i2: return -1
-  if i1 > i2: return 1
-  return 0
-
-def cmp_sequence(s1, s2, elem_cmp) -> int:
-  """Compares two sequences using `elem_cmp`."""
-  l2 = len(s2)
-  for i, e1 in enumerate(s1):
-    if i >= l2: return 1
-    if c := elem_cmp(e1, s2[i]): return c
-  if len(s1) < l2: return -1
-  return 0
+DimSize: TypeAlias = _DimExpr | int
 
 
 class SymbolicScope:
@@ -986,7 +1024,7 @@ class SymbolicScope:
 
   Holds the constraints on symbolic expressions.
 
-  See [the README](https://docs.jax.dev/en/latest/export/shape_poly.html#user-specified-symbolic-constraints)
+  See [the README](https://docs.jax.dev/en/latest/501/shape-polymorphism.html#user-specified-symbolic-constraints)
   for more details.
 
   Args:
@@ -1113,7 +1151,7 @@ class SymbolicScope:
           f"Invalid mixing of symbolic scopes {when}.\n"
           f"Expected {self_descr}scope {self}\n"
           f"and found for '{other}' ({other_descr}) scope {other.scope}\n"
-          f"See https://docs.jax.dev/en/latest/export/shape_poly.html#user-specified-symbolic-constraints.")
+          f"See https://docs.jax.dev/en/latest/501/shape-polymorphism.html#user-specified-symbolic-constraints.")
 
   def _clear_caches(self):
     self._bounds_cache.clear()
@@ -1183,7 +1221,7 @@ def _geq_decision(e1: DimSize, e2: DimSize, cmp_str: Callable[[], str]) -> bool:
   elif isinstance(e2, _DimExpr):
     scope = e2.scope
   else:
-    return int(e1) >= int(e2)
+    return e1 >= e2
   lb, ub = _bounds_decision(e1 - e2, BoundsPrecision.FOR_GEQ0_OR_LT0)
   if lb >= 0:
     return True
@@ -1224,6 +1262,32 @@ def is_symbolic_dim(p: DimSize) -> TypeGuard[_DimExpr]:
   """Checks if a dimension is symbolic.
   """
   return isinstance(p, _DimExpr)
+
+
+def symbolic_dim_bounds(
+    dimension: DimSize | SupportsIndex,
+) -> tuple[float, float]:
+  """Returns inclusive bounds that JAX can prove for a dimension expression.
+
+  The returned bounds are conservative and may not be tight. Infinite bounds
+  mean that JAX could not establish a finite bound; they do not prove that the
+  dimension is unbounded.
+
+  Args:
+    dimension: An integer or symbolic dimension expression.
+
+  Returns:
+    A ``(lower_bound, upper_bound)`` pair. A lower bound of ``-inf`` or an
+    upper bound of ``inf`` means that JAX did not establish a finite bound.
+
+  Raises:
+    TypeError: If ``dimension`` is not an integer or symbolic dimension.
+    jax.errors.InconclusiveDimensionOperation: If the bounds cannot be computed because
+      JAX cannot prove that an operation in the expression is defined.
+  """
+  resolved_dimension: DimSize = core.concrete_dim_or_error(
+      dimension, "argument `dimension` of `symbolic_dim_bounds`")
+  return _bounds_decision(resolved_dimension, BoundsPrecision.BEST)
 
 dtypes.python_scalar_types.add(_DimExpr)
 dtypes.python_scalar_types_to_dtypes[_DimExpr] = dtypes.python_scalar_types_to_dtypes[int]
@@ -1386,7 +1450,7 @@ def symbolic_shape(shape_spec: str | None,
                    ) -> Sequence[DimSize]:
   """Constructs a symbolic shape from a string representation.
 
-  See https://docs.jax.dev/en/latest/export/shape_poly.html for examples.
+  See https://docs.jax.dev/en/latest/501/shape-polymorphism.html for examples.
 
   Args:
     shape_spec: a symbolic shape specification. None stands for "...".
@@ -1398,14 +1462,14 @@ def symbolic_shape(shape_spec: str | None,
       mod(e1, e2), max(e1, e2), or min(e1, e2).
     constraints: a sequence of constraints on symbolic dimension expressions, of
       the form `e1 >= e2` or `e1 <= e2`, or `e1 == e2`.
-      See [the documentation](https://docs.jax.dev/en/latest/export/shape_poly.html#user-specified-symbolic-constraints)
+      See [the documentation](https://docs.jax.dev/en/latest/501/shape-polymorphism.html#user-specified-symbolic-constraints)
       for usage.
     scope: optionally, you can specify that the parsed symbolic expressions
       be created in the given scope. If this is missing, then a new
       `SymbolicScope` is created with the given `constraints`.
       You cannot specify both a `scope` and `constraints` (cannot add new
       constraints to a `scope`).
-      See [the documentation](https://docs.jax.dev/en/latest/export/shape_poly.html#user-specified-symbolic-constraints)
+      See [the documentation](https://docs.jax.dev/en/latest/501/shape-polymorphism.html#user-specified-symbolic-constraints)
       for usage.
     like: when `shape_spec` contains placeholders ("_", "..."), use this
       shape to fill in the placeholders.
@@ -1440,7 +1504,7 @@ def symbolic_args_specs(
   """Constructs a pytree of jax.ShapeDtypeStruct arguments specs for `export`.
 
   See the documentation of :func:`jax.export.symbolic_shape` and
-  the [shape polymorphism documentation](https://docs.jax.dev/en/latest/export/shape_poly.html) for details.
+  the [shape polymorphism documentation](https://docs.jax.dev/en/latest/501/shape-polymorphism.html) for details.
 
   Args:
     args: a pytree of arguments. These can be jax.Array, or jax.ShapeDtypeStruct.
@@ -1453,7 +1517,7 @@ def symbolic_args_specs(
       applies to all arguments), or a pytree matching a prefix
       of the `args`.
       See [how optional parameters are matched to
-      arguments](https://docs.jax.dev/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+      arguments](https://docs.jax.dev/en/latest/101/pytrees.html#transformation-parameters-can-be-pytrees-too).
     constraints: as for :func:`jax.export.symbolic_shape`.
     scope: as for :func:`jax.export.symbolic_shape`.
 
@@ -1494,8 +1558,8 @@ def symbolic_args_specs(
   return args_tree.unflatten(args_specs_flat)
 
 def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
-  """Returns the shape and dtype of a jax.Array or a j"""
-  if isinstance(a, api.ShapeDtypeStruct):
+  """Returns the shape and dtype of a jax.Array or a jax.ShapeDtypeStruct."""
+  if hasattr(a, "shape") and hasattr(a, "dtype"):
     return a.shape, a.dtype
   aval = core.typeof(a)
   return aval.shape, aval.dtype
@@ -2048,7 +2112,7 @@ def _solve_dim_equations(
     " Using the following polymorphic shapes specifications: " +
     ",".join(f"{arg_name}.shape = {arg_spec}"
              for arg_name, arg_spec in polymorphic_shape_specs)) + "."
-  solution_err_msg_trailer_errors = ". Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
+  solution_err_msg_trailer_errors = ". Please see https://docs.jax.dev/en/latest/501/shape-polymorphism.html#shape-assertion-errors for more details."
 
   shape_constraints = ShapeConstraints()  # accumulate shape constraints
   scope: SymbolicScope | None = None
@@ -2182,6 +2246,6 @@ def _solve_dim_equations(
       " Unprocessed specifications: " +
       ", ".join(f"'{eqn.aval_dim_expr}' for dimension size {eqn.dim_name}"
                 for eqn in eqns) +
-      ". Please see https://docs.jax.dev/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
+      ". Please see https://docs.jax.dev/en/latest/501/shape-polymorphism.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
   )
   raise ValueError(err_msg)

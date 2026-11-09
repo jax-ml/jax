@@ -17,11 +17,12 @@ from __future__ import annotations
 from functools import partial
 import json
 import types
-from typing import Any, Union
+from typing import Any
 
 import numpy as np
 
 from jax._src import ad_util
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -33,6 +34,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import remat
 from jax._src.lax import lax
 from jax._src.state import indexing
 from jax._src.state.types import (
@@ -85,7 +87,7 @@ def _get_to_lojax(ref, *idx, tree):
   return val_ty.raise_val(*map(ref_get, val_ty.lower_val(ref._refs)))
 get_p.to_lojax = _get_to_lojax
 
-Indexer = Union[int, slice, Array, types.EllipsisType]
+Indexer = int | slice | Array | types.EllipsisType
 
 
 def get_ref_and_transforms(
@@ -150,7 +152,7 @@ def ref_get(
     >>> ref[...]
     Array([0, 1, 2, 3, 4], dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   if isinstance(ref, TransformedRef) and ref.multiref:
     raise NotImplementedError(
@@ -246,7 +248,7 @@ def ref_swap(
     >>> ref
     Ref(10, dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   if isinstance(ref, TransformedRef) and ref.multiref:
     raise NotImplementedError(
@@ -255,6 +257,7 @@ def ref_swap(
   if hasattr(ref, 'dtype'):
     value = _maybe_implicit_cast(ref.dtype, value)
   ref, transforms = get_ref_and_transforms(ref, idx, _function_name)
+  value = _insert_pvary_for_write(ref, value)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return swap_p.bind(ref, value, *flat_transforms, tree=tree)
 
@@ -316,7 +319,7 @@ def ref_set(
     >>> ref
     Ref(4, dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   ref_swap(ref, idx, value, _function_name="ref_set")
 
@@ -382,11 +385,23 @@ def ref_addupdate(
     >>> ref
     Ref(12, dtype=int32)
 
-  .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
+  .. _Ref guide: https://docs.jax.dev/en/latest/101/state.html#jax-101-refs
   """
   ref, transforms = get_ref_and_transforms(ref, idx, "ref_addupdate")
+  x = _insert_pvary_for_write(ref, x)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   addupdate_p.bind(ref, x, *flat_transforms, tree=tree)
+
+def _insert_pvary_for_write(ref, value):
+  if not (config._check_vma.value and config.auto_pcast.value):
+    return value
+  ref_aval, val_aval = core.typeof(ref), core.typeof(value)
+  if not (isinstance(ref_aval.inner_aval, core.ShapedArray) and
+          isinstance(val_aval, core.ShapedArray)):
+    return value
+  if names := ref_aval.inner_aval.mat.varying - val_aval.mat.varying:
+    value = core.pvary(value, tuple(names))
+  return value
 
 
 ## get/set/addupdate abstract evaluation rules
@@ -401,6 +416,7 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`get` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
+    _check_read_vma(ref_aval.inner_aval, args)
     out_aval = transform_type(transforms, ref_aval.inner_aval)
   else:
     if transforms:
@@ -408,6 +424,34 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
     out_aval = ref_aval.inner_aval
   return (out_aval, {ReadEffect(0)})
 get_p.def_effectful_abstract_eval(_get_abstract_eval)
+
+def _check_read_vma(inner_aval, idx_avals):
+  if not config._check_vma.value:
+    return
+  ref_vma = inner_aval.mat.varying
+  idx_vma = frozenset().union(*(a.mat.varying for a in idx_avals
+                                if isinstance(a, core.ShapedArray)))
+  if names := idx_vma - ref_vma:
+    raise ValueError(
+        f"Primitive get requires the index's varying manual axes to be a "
+        f"subset of the Ref's, but got {idx_vma} for the index and {ref_vma} "
+        f"for the Ref. To read at this index, read the whole Ref, mark it as "
+        f"varying, then index the resulting array, e.g. "
+        f"`jax.lax.pcast(r[...], {tuple(sorted(names))}, to='varying')[i]` "
+        f"instead of `r[i]`.")
+
+def _check_write_vma(name, inner_aval, val_aval, idx_avals):
+  if not config._check_vma.value:
+    return
+  ref_vma, val_vma = inner_aval.mat.varying, val_aval.mat.varying
+  idx_vma = frozenset().union(*(a.mat.varying for a in idx_avals
+                                if isinstance(a, core.ShapedArray)))
+  if val_vma != ref_vma or not idx_vma <= ref_vma:
+    raise ValueError(
+        f"Primitive {name} requires the value's varying manual axes to match "
+        f"the Ref's, and the index's varying manual axes to be a subset of "
+        f"them, but got {val_vma} for the value, {idx_vma} for the index, and "
+        f"{ref_vma} for the Ref.")
 
 def _swap_abstract_eval(ref_aval: AbstractRef,
                         val_aval: core.AbstractValue,
@@ -439,6 +483,7 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
           f"Ref dtype: {expected_out_ty.dtype}. "
           f"Value dtype: {val_aval.dtype}. "
       )
+    _check_write_vma('swap', ref_aval.inner_aval, val_aval, args)
     out_aval = expected_out_ty
   else:
     if transforms:
@@ -470,6 +515,7 @@ def _addupdate_abstract_eval(ref_aval: AbstractRef,
       raise ValueError("Invalid dtype for `addupdate`. "
                        f"Ref dtype: {ref_aval.dtype}. "
                        f"Value shape: {val_aval.dtype}. ")
+    _check_write_vma('addupdate', ref_aval.inner_aval, val_aval, args)
     out_sharding = expected_out_ty.sharding
     if ((out_sharding.mesh._any_axis_explicit or
          val_aval.sharding.mesh._any_axis_explicit) and
@@ -631,7 +677,8 @@ def _swap_transpose_fancy(g, ref_, x, *idx, **params):
     swap_p.bind(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
   else:
     x_bar = swap_p.bind(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
-    x.accum(x_bar)
+    if isinstance(x, ad.GradAccum):
+      x.accum(x_bar)  # if x is a constant, drop x_bar, but still zero the ref ct
 ad.fancy_transposes[swap_p] = _swap_transpose_fancy
 
 def addupdate_transpose_fancy(cts_in, ref_, x, *idx, **params):
@@ -654,16 +701,18 @@ def _array_ref_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     return eqn, eqn, [False], [True], res  # full remat
 pe.partial_eval_jaxpr_custom_rules[core.ref_p] = _array_ref_partial_eval_custom
 
-def _array_ref_batched(axis_data, vals_in, dims_in, memory_space, kind):
+def _array_ref_batched(axis_data, vals_in, dims_in, memory_space, kind, pin):
   val, = vals_in
   dim, = dims_in
   if dim is None:
     # We defensively batch the ref, b/c it could later be hit with a batched val
     val2 = batching.broadcast(val, axis_data.size, 0,
                               axis_data.explicit_mesh_axis)
-    return core.ref_p.bind(val2, memory_space=memory_space, kind=kind), 0
+    return core.ref_p.bind(val2, memory_space=memory_space, kind=kind,
+                           pin=pin), 0
   else:
-    return core.ref_p.bind(val, memory_space=memory_space, kind=kind), dim
+    return core.ref_p.bind(val, memory_space=memory_space, kind=kind,
+                           pin=pin), dim
 batching.fancy_primitive_batchers[core.ref_p] = _array_ref_batched
 
 def _freeze_batched(axis_data, vals_in, dims_in):
@@ -675,13 +724,27 @@ batching.fancy_primitive_batchers[core.freeze_p] = _freeze_batched
 def _state_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   del saveable  # ignored, always full remat state ops on known inputs
                 # (except for no_grad_no_remat)
-  ref_unk, *_ = unks_in
+  ref_unk, *val_unks = unks_in
   ref_inst, *inst_in = inst_in
   _, *val_vars = eqn.invars
   assert ref_inst
   res = [v for v, inst in zip(val_vars, inst_in) if not inst]
   if ref_unk:
     return None, eqn, [True], [True], res  # tangent operation
+  elif any(val_unks):
+    raise NotImplementedError(
+        "Mutating a reference with unknown/differentiated values is not"
+        " supported.\nIf this occurred under `jax.checkpoint` and"
+        " `jax.config.jax_remat3 == False`, consider one of the following"
+        " options:\n\n"
+        "  * Enabling `jax_remat3` via `jax.config.update('jax_remat3',"
+        " True)`.\n"
+        "  * Creating the Ref outside the function being rematerialized and"
+        " passing it as an input.\n"
+        "  * Creating the Ref in a data-dependent way from a value being"
+        " differentiated, e.g.:\n\n"
+        "      ref = jax.new_ref(x * 0.0)  # instead of zeros_like(x)"
+    )
   elif eqn.invars[0].aval.kind == "no_grad_no_remat":
     return eqn, None, [False], [False], res
   else:
@@ -691,16 +754,45 @@ pe.partial_eval_jaxpr_custom_rules[swap_p] = _state_partial_eval_custom
 
 def _addupdate_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   del saveable  # ignored, always full remat state ops on known inputs
-  ref_unk, *_ = unks_in
+  ref_unk, *val_unks = unks_in
   ref_inst, *inst_in = inst_in
   _, *val_vars = eqn.invars
   assert ref_inst
   res = [v for v, inst in zip(val_vars, inst_in) if not inst]
   if ref_unk:
     return None, eqn, [], [], res  # tangent operation
+  elif any(val_unks):
+    raise NotImplementedError(
+        "Mutating a reference with unknown/differentiated values is not"
+        " supported.\nIf this occurred under `jax.checkpoint` and"
+        " `jax.config.jax_remat3 == False`, consider one of the following"
+        " options:\n\n"
+        "  * Enabling `jax_remat3` via `jax.config.update('jax_remat3',"
+        " True)`.\n"
+        "  * Creating the Ref outside the function being rematerialized and"
+        " passing it as an input.\n"
+        "  * Creating the Ref in a data-dependent way from a value being"
+        " differentiated, e.g.:\n\n"
+        "      ref = jax.new_ref(x * 0.0)  # instead of zeros_like(x)"
+    )
   else:
     return eqn, eqn, [], [], res  # full remat
 pe.partial_eval_jaxpr_custom_rules[addupdate_p] = _addupdate_partial_eval_custom
+
+##  get/swap/addupdate remat rules
+
+def _state_remat(prim, trace, ref, *args, **params):
+  del trace
+  out = prim.bind(ref, *args, **params)
+  if core.typeof(ref).kind == "no_grad_no_remat":
+    # Run only in the fwd computation; any read value reaching the remnant
+    # computation is saved as a residual rather than re-read.
+    return out, out, lambda out, *_: out
+  return out, (), lambda _, ref_, *args_: prim.bind(ref_, *args_, **params)
+
+remat.rules[get_p] = partial(_state_remat, get_p)
+remat.rules[swap_p] = partial(_state_remat, swap_p)
+remat.rules[addupdate_p] = partial(_state_remat, addupdate_p)
 
 ##  get/swap/addupdate batching rules
 
@@ -876,6 +968,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
       else:
         # We only trigger this case when the int_indexer shape is empty,
         # so we don't need to account for int_indexer_shape.
+        assert ref_dim is not None  # https://github.com/facebook/pyrefly/issues/5255
         int_indexers_before_ref_dim = sum(is_new_int_indexing[:ref_dim])
         out_bdim = ref_dim - int_indexers_before_ref_dim
     else:
@@ -905,6 +998,9 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
     if ref_is_batched and not val_is_batched:
       val = batching.broadcast(val, axis_data.size, ref_dim,
                                axis_data.explicit_mesh_axis)
+    else:
+      assert ref_dim is not None  # https://github.com/facebook/pyrefly/issues/5255
+      val = batching.moveaxis(val, val_dim, ref_dim)
     return swap_p.bind(ref, val, *flat_idxs, tree=tree), ref_dim
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
@@ -1100,48 +1196,53 @@ mlir.register_lowering(
 
 # === AD rules for mutable arrays ===
 
-def _ref_jvp(primals, tangents, *, memory_space, kind):
+def _ref_jvp(primals, tangents, *, memory_space, kind, pin):
   (init_val,), (init_dot,) = primals, tangents
-  primal_out = core.ref_p.bind(init_val, memory_space=memory_space, kind=kind)
+  primal_out = core.ref_p.bind(init_val, memory_space=memory_space, kind=kind,
+                               pin=pin)
   if type(init_dot) is ad_util.Zero:
     zero = ad_util.zeros_like_aval(init_dot.aval)
-    tangent_out = core.ref_p.bind(zero, memory_space=memory_space, kind=kind)
+    tangent_out = core.ref_p.bind(zero, memory_space=memory_space, kind=kind,
+                                  pin=pin)
   else:
-    tangent_out = core.ref_p.bind(init_dot, memory_space=memory_space, kind=kind)
+    tangent_out = core.ref_p.bind(init_dot, memory_space=memory_space,
+                                  kind=kind, pin=pin)
   return primal_out, tangent_out
 
-def _ref_lin(_is_vjp, nzs, x, *, memory_space, kind):
+def _ref_lin(_is_vjp, nzs, x, *, memory_space, kind, pin):
   nz, = nzs
-  x_ref = core.ref_p.bind(x, memory_space=memory_space, kind=kind)
-  def mut_lin(_, x_dot):
+  x_ref = core.ref_p.bind(x, memory_space=memory_space, kind=kind, pin=pin)
+  def mut_lin(_, __, x_dot):
     if kind == 'no_grad_no_remat':
       aval = x_dot.aval if type(x_dot) is ad.Zero else core.typeof(x_dot)
       return ad.Zero(AbstractRef(aval))
     zero = ad_util.instantiate(x_dot)
-    return core.ref_p.bind(zero, memory_space=memory_space, kind=kind)
-  return x_ref, kind != 'no_grad_no_remat', None, mut_lin
+    return core.ref_p.bind(zero, memory_space=memory_space, kind=kind, pin=pin)
+  return x_ref, kind != 'no_grad_no_remat', None, None, mut_lin
 
 ad.primitive_jvps[core.ref_p] = _ref_jvp
 ad.primitive_linearizations[core.ref_p] = _ref_lin
+ad.linearize_on_zero_tangents.add(core.ref_p)
 # TODO(mattjj): lin rule for freeze and accum_grad_in_ref?
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
 ad.defjvp(core.accum_grad_in_ref_p, lambda g, _: core.accum_grad_in_ref_p.bind(g))
 
 
-def _empty_ref_jvp(primals, tangents, *, ty, memory_space):
-  primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space)
+def _empty_ref_jvp(primals, tangents, *, ty, memory_space, pin):
+  primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space, pin=pin)
   tangent_ref = core.empty_ref_p.bind(ty=ty.to_tangent_aval(),
-                                      memory_space=memory_space)
+                                      memory_space=memory_space, pin=pin)
   return primal_ref, tangent_ref
 ad.primitive_jvps[core.empty_ref_p] = _empty_ref_jvp
 
-def _empty_ref_lin(_is_vjp, nzs_in, *, ty, memory_space):
-  primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space)
-  def lin(_):
+def _empty_ref_lin(_is_vjp, nzs_in, *, ty, memory_space, pin):
+  primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space, pin=pin)
+  def lin(_, __):
     return core.empty_ref_p.bind(ty=ty.to_tangent_aval(),
-                                 memory_space=memory_space)
-  return primal_ref, True, None, lin
+                                 memory_space=memory_space, pin=pin)
+  return primal_ref, True, None, None, lin
 ad.primitive_linearizations[core.empty_ref_p] = _empty_ref_lin
+ad.linearize_on_zero_tangents.add(core.empty_ref_p)
 
 def _free_ref_jvp(primals, tangents):
   [primal_ref], [tangent_ref] = primals, tangents
@@ -1162,7 +1263,8 @@ def _create_linear_abstract_eval(*, ty, memory_space):
   if not isinstance(ty, core.ShapedArray): raise NotImplementedError(ty)
   return AbstractLinVal(ty, memory_space)
 
-def _lower_create_linear(ctx):
+def _lower_create_linear(ctx, *, ty, memory_space):
+  del ty, memory_space
   out_aval, = ctx.avals_out
   flat_res_types, _ = mlir.ir_tree_registry.flatten(mlir.aval_to_ir_types(ctx.module_context, out_aval))
   return mlir.custom_call(
@@ -1188,12 +1290,12 @@ def _lower_pin(ctx, x_op, *, to):
   if color is not None:
     backend_config = json.dumps({
         "custom_call_config": {
+            "input_memory_space_colors": [
+                {"operand_index": "0", "shape_index": [], "color": str(color)}
+            ],
             "output_memory_space_colors": [
-                {
-                    "shape_index": [],
-                    "color": str(color)
-                }
-            ]
+                {"shape_index": [], "color": str(color)}
+            ],
         }
     })
     config: dict[str, Any] = dict(backend_config=backend_config)
@@ -1238,3 +1340,64 @@ def _linval_to_mlir_type(a):
   return mlir.ir.MemRefType.get(a.shape, mlir.dtype_to_ir_type(a.dtype),
                                 memory_space=space)
 mlir.ir_type_handlers[AbstractLinVal] = _linval_to_mlir_type
+
+
+with_memory_space_constraint_p = core.Primitive(
+    'with_memory_space_constraint'
+)
+
+
+@with_memory_space_constraint_p.def_impl
+def _with_memory_space_constraint_impl(x, *, memory_space):
+  del memory_space
+  return x
+
+
+@with_memory_space_constraint_p.def_abstract_eval
+def _with_memory_space_constraint_abstract_eval(x, *, memory_space):
+  if not isinstance(x, core.ShapedArray):
+    raise NotImplementedError(
+        "with_memory_space_constraint only supports arrays."
+    )
+  return x.update(memory_space=memory_space)
+
+
+def _with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
+  del ctx, memory_space
+  return [x]
+
+
+mlir.register_lowering(
+    with_memory_space_constraint_p, _with_memory_space_constraint_lowering_rule
+)
+batching.defvectorized(with_memory_space_constraint_p)
+ad.deflinear2(
+    with_memory_space_constraint_p,
+    lambda ct, _, **params: (
+        with_memory_space_constraint_p.bind(ct, **params),
+    ),
+)
+
+
+def with_memory_space_constraint(
+    x: Array, memory_space: Any
+) -> Array:
+  """Constrains the memory space of an array.
+
+  This primitive does not change the value of ``x``, but it constrains the
+  memory space where it should be allocated. This is useful to force
+  Pallas to allocate an array in a specific memory space.
+
+  As of now, this only operates on the inputs pallas_calls, as in you can
+  apply this to the arguments of a pallas_call and it will constrain them, but
+  not on intermediate values inside a pallas_call or values after a pallas_call.
+
+  Args:
+    x: An array.
+    memory_space: The memory space to constrain ``x`` to.
+
+  Returns:
+    An array with the same value as ``x``, but with the memory space
+    constrained.
+  """
+  return with_memory_space_constraint_p.bind(x, memory_space=memory_space)

@@ -26,7 +26,7 @@ import json
 import logging
 import re
 import types
-from typing import Any, Union
+from typing import Any
 
 from jax._src import config
 from jax._src import core
@@ -116,7 +116,7 @@ def source_locations(jaxpr: core.Jaxpr):
     return source_info_util.summarize(eqn.source_info)
   return histogram(jaxpr, key)
 
-MaybeEqn = Union[core.JaxprEqn, None]
+MaybeEqn = core.JaxprEqn | None
 
 def var_defs_and_refs(jaxpr: core.Jaxpr):
   defs: dict[core.Var, MaybeEqn] = {}
@@ -289,10 +289,10 @@ def jaxpr_and_binder_in_params(params, index: int) -> Iterator[tuple[core.Jaxpr,
         if index >= len(v.invars):
           raise RuntimeError(f"Failed to find index {index} in jaxpr.invars while building report")
         yield v, v.invars[index]
-      elif isinstance(v, core.ClosedJaxpr):
-        if index >= len(v.jaxpr.invars):
+      elif isinstance(v, core.Jaxpr):
+        if index >= len(v.invars):
           raise RuntimeError(f"Failed to find index {index} in jaxpr.invars while building report")
-        yield v.jaxpr, v.jaxpr.invars[index]
+        yield v, v.invars[index]
 
 def eqns_using_var(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[core.JaxprEqn]:
   """Find the leaf equations using a variable"""

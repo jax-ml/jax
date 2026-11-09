@@ -19,6 +19,7 @@ import hypothesis
 from hypothesis import strategies as st
 import jax
 from jax._src import hypothesis_test_util as htu
+from jax._src import test_util as jtu
 from jax._src.pallas import einshape
 import numpy as np
 
@@ -146,4 +147,4 @@ class EinshapeParseTest(parameterized.TestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

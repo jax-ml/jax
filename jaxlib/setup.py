@@ -43,10 +43,6 @@ rocm_version = os.environ.get("JAX_ROCM_VERSION")
 if rocm_version:
     __version__ += f"+rocm{rocm_version.replace('.', '')}"
 
-oneapi_version = os.environ.get("JAX_ONEAPI_VERSION")
-if oneapi_version:
-    __version__ += f"+oneapi{oneapi_version.replace('.', '')}"
-
 class BinaryDistribution(Distribution):
   """This class makes 'bdist_wheel' include an ABI tag on the wheel."""
 
@@ -63,7 +59,7 @@ setup(
     author='JAX team',
     author_email='jax-dev@google.com',
     packages=['jaxlib'],
-    python_requires='>=3.11',
+    python_requires='>=3.12',
     install_requires=[
         'scipy>=1.14',
         'numpy>=2.0',
@@ -73,10 +69,10 @@ setup(
     license='Apache-2.0',
     classifiers=[
         "Development Status :: 5 - Production/Stable",
-        "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
         "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
         "Programming Language :: Python :: Free Threading :: 3 - Stable",
     ],
     package_data={
@@ -113,6 +109,9 @@ setup(
             'triton/*.pyi',
             'triton/*.pyd',
             'triton/*.so',
+            'thunky/*.py',
+            'thunky/dialect/*.py',
+            'thunky/python/*.py',
             'include/xla/ffi/api/*.h',
         ],
     },

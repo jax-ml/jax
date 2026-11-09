@@ -27,7 +27,7 @@ class XlaInterpreterTest(jtu.JaxTestCase):
 
     closed_jaxpr = jax.make_jaxpr(f)(*range(10))
     pruned_jaxpr, kept_const_idx, kept_var_idx = pxla.prune_unused_inputs(
-        closed_jaxpr.jaxpr)
+        closed_jaxpr)
     assert len(pruned_jaxpr.invars) == 1
     assert kept_const_idx == set()
     assert kept_var_idx == {0}

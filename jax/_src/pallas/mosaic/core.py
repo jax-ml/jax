@@ -21,19 +21,21 @@ from collections.abc import Mapping, Sequence
 import contextlib
 import dataclasses
 import enum
+import math
 from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
-from jax._src import deprecations
-from jax._src import linear_util as lu
+from jax._src import pretty_printer as pp
 from jax._src import state
+from jax._src import tpu_info
+from jax._src import tree_util
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
-from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
+from jax._src.state import types as state_types
+from jax._src.tpu_custom_call import OptLevel
 import jax.numpy as jnp
-import numpy as np
 
 
 map, unsafe_map = util.safe_map, map
@@ -122,6 +124,8 @@ class CompilerParams:
       flag is at the best-effort basis, and the fusion will only be performed
       when compilers determine it is feasible. Also, the fusion is not always
       profitable and therefore should be used sparingly.
+    opt_level: Optimization level. This flag is only used for ``SC_*_SUBCORE``
+      kernels and it implicitly defaults to O3.
   """
 
   dimension_semantics: tuple[DimensionSemantics, ...] | None = None
@@ -140,6 +144,7 @@ class CompilerParams:
   use_tc_tiling_on_sc: bool | None = None
   needs_layout_passes: bool = True
   fuse_transposed_lhs_in_matmul: bool = False
+  opt_level: OptLevel | None = None
 
   def __init__(
       self,
@@ -159,6 +164,7 @@ class CompilerParams:
       use_tc_tiling_on_sc: bool | None = None,
       needs_layout_passes: bool = True,
       fuse_transposed_lhs_in_matmul: bool = False,
+      opt_level: OptLevel | None = None,
   ):
     object.__setattr__(
         self,
@@ -200,9 +206,74 @@ class CompilerParams:
         "fuse_transposed_lhs_in_matmul",
         fuse_transposed_lhs_in_matmul,
     )
+    object.__setattr__(self, "opt_level", opt_level)
 
   # Replace is a method, not a field.
   replace = dataclasses.replace
+
+
+def check_accumulator_ref(shape: tuple[int, ...], dtype: jax.typing.DTypeLike, mxu_id: int):
+  if len(shape) < 2:
+    raise ValueError(f"Acc ref must be at least 2D, got shape {shape}")
+
+  if dtype not in (jnp.float32, jnp.int32):
+    raise ValueError(
+        f"Acc ref dtype must be float32 or int32, got {dtype}")
+
+  info = tpu_info.get_tpu_info()
+  if not info.num_accumulators:
+    raise ValueError(
+        f"Accumulators are not available on TPU {info.chip_version}"
+    )
+
+  if mxu_id < 0 or mxu_id >= info.num_mxus:
+    raise ValueError(f"mxu_id must be in [0, {info.num_mxus}), got {mxu_id=}")
+
+  m, n = math.prod(shape[:-1]), shape[-1]
+  if n != info.mxu_column_size:
+    raise ValueError(
+        f"The minor dimension size of an accumulator ref must be "
+        f"{info.mxu_column_size} but got {n}"
+    )
+  if m <= 0 or m % info.num_sublanes != 0:
+    raise ValueError(
+        f"The product of the major dimensions must be a multiple of "
+        f"{info.num_sublanes}, but got {m}"
+    )
+
+
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class AccessAssumption:
+  """Container holding access assumptions for Mosaic references."""
+
+  no_store: bool = jax.tree.static(default=False)
+  no_bank_conflict: bool = jax.tree.static(default=False)
+  no_hazard: bool = jax.tree.static(default=False)
+  no_hazard_no_deps: bool = jax.tree.static(default=False)
+
+  def __post_init__(self):
+    has_hazard = self.no_hazard or self.no_hazard_no_deps
+    if self.no_store and has_hazard:
+      raise ValueError(
+          "AccessAssumption contradiction: reference is marked 'no_store'"
+          " yet also specifies RAW hazard flags ('no_hazard' or"
+          " 'no_hazard_no_deps'). No-store memory slices cannot be written to."
+      )
+    if self.no_hazard and self.no_hazard_no_deps:
+      raise ValueError(
+          "AccessAssumption redundancy: reference specifies both 'no_hazard'"
+          " and 'no_hazard_no_deps'. 'no_hazard_no_deps' strictly subsumes"
+          " 'no_hazard'."
+      )
+
+  def union(self, other: AccessAssumption) -> AccessAssumption:
+    return AccessAssumption(
+        no_store=self.no_store or other.no_store,
+        no_bank_conflict=self.no_bank_conflict or other.no_bank_conflict,
+        no_hazard=self.no_hazard or other.no_hazard,
+        no_hazard_no_deps=self.no_hazard_no_deps or other.no_hazard_no_deps,
+    )
 
 
 class MemoryRef(pallas_core.MemoryRef):
@@ -221,16 +292,9 @@ class MemorySpace(enum.Enum):
   SEMAPHORE = "semaphore_mem"
   HBM = "hbm"
 
-  def __getattr__(self, name):
-    if name == "HOST":
-      # Deprecated on June 4, 2026.
-      deprecations.warn(
-          "pltpu-memory-space-host",
-          "pltpu.MemorySpace.HOST is deprecated. Use pl.HOST instead.",
-          stacklevel=2,
-      )
-      return pallas_core.MemorySpace.HOST
-    super().__getattr__(name)  # pyrefly: ignore[missing-attribute]
+  @property
+  def memory_kind(self) -> str:
+    return "device"
 
   def __str__(self) -> str:
     return self.value
@@ -241,7 +305,7 @@ class MemorySpace(enum.Enum):
   def from_type(self, ty):
     return MemoryRef(ty, memory_space=self)
 
-  def __call__(self, shape: Sequence[int], dtype: jnp.dtype[Any]):
+  def __call__(self, shape: Sequence[int], dtype: jax.typing.DTypeLike):
     # A convenience function for constructing MemoryRef types of ShapedArrays.
     return self.from_type(jax_core.ShapedArray(tuple(shape), dtype))
 
@@ -254,6 +318,27 @@ class MemorySpace(enum.Enum):
     if not isinstance(other, pallas_core.Mesh):
       return NotImplemented
     return pallas_core.CoreMemorySpace(self, other)
+
+
+@dataclasses.dataclass(frozen=True)
+class AccMemorySpace:
+  mxu_id: int
+
+  def __call__(self, shape: Sequence[int], dtype: jax.typing.DTypeLike):
+    shape = tuple(shape)
+    check_accumulator_ref(shape, dtype, self.mxu_id)
+    return MemoryRef(
+        jax_core.ShapedArray(shape, dtype),
+        memory_space=self,
+    )
+
+  def __matmul__(self, other, /):
+    if not isinstance(other, pallas_core.Mesh):
+      return NotImplemented
+    return pallas_core.CoreMemorySpace(self, other)
+
+  def __str__(self) -> str:
+    return f"ACC(mxu_id={self.mxu_id})"
 
 
 class dma_semaphore(pallas_core.semaphore_dtype):
@@ -323,28 +408,18 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
     )
 
 
-@dataclasses.dataclass(frozen=True)
-class TensorCore:
-  id: int
+def _get_default_num_cores() -> int:
+  return tpu_info.get_tpu_info().num_cores
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class TensorCoreMesh(pallas_core.Mesh):
   """A mesh of TensorCores."""
 
-  devices: np.ndarray
-  axis_names: Sequence[str]
-
-  def __init__(self, devices: np.ndarray, axis_names: Sequence[str]):
-    devices = np.copy(devices)
-    devices.setflags(write=False)
-    object.__setattr__(self, "devices", devices)
-    object.__setattr__(self, "axis_names", tuple(axis_names))
-
-  def __hash__(self) -> int:
-    return hash(
-        (self.devices.shape, tuple(np.ravel(self.devices)), self.axis_names)
-    )
+  axis_name: str
+  num_cores: int = dataclasses.field(
+      default_factory=_get_default_num_cores
+  )
 
   @property
   def core_type(self) -> CoreType:
@@ -356,7 +431,7 @@ class TensorCoreMesh(pallas_core.Mesh):
 
   @property
   def shape(self):
-    return collections.OrderedDict(zip(self.axis_names, self.devices.shape))
+    return collections.OrderedDict({self.axis_name: self.num_cores})
 
   @property
   def dimension_semantics(self) -> Sequence[DimensionSemantics]:
@@ -386,204 +461,6 @@ class TensorCoreMesh(pallas_core.Mesh):
     yield
 
 
-def create_tensorcore_mesh(
-    axis_name: str,
-    devices: Sequence[jax.Device] | None = None,
-    num_cores: int | None = None,
-) -> TensorCoreMesh:
-  if devices is not None and num_cores is not None:
-    raise ValueError("cannot specify both devices and num_cores")
-  if num_cores is None:
-    if devices is None:
-      abstract_device = jax.sharding.get_abstract_mesh().abstract_device
-      if abstract_device is None:
-        devices = [jax.devices()[0]]
-      else:
-        devices = [abstract_device]
-    num_cores = devices[0].num_cores
-  return TensorCoreMesh(
-      np.array([TensorCore(i) for i in range(num_cores)]),
-      [axis_name],
-  )
-
-
-def pass_scalars_as_refs(
-    jaxpr: jax_core.Jaxpr,
-    args: Sequence[Any],
-    in_avals: Sequence[jax_core.AbstractValue],
-    out_avals: Sequence[jax_core.AbstractValue],
-    mesh,
-    copy_to_smem: bool = False,
-) -> tuple[
-    jax_core.Jaxpr,
-    tuple[Any, ...],
-    tuple[jax_core.AbstractValue, ...],
-    tuple[jax_core.AbstractValue, ...],
-    tuple[bool, ...],
-]:
-  """Rewrites a jaxpr to pass scalars as refs instead of values."""
-  def allowed_aval(aval):
-    if isinstance(aval, state.AbstractRef):
-      return True
-    if isinstance(aval, jax_core.ShapedArray):
-      # Only scalars are allowed.
-      return not aval.shape
-    return False
-
-  assert all(allowed_aval(v.aval) for v in jaxpr.constvars + jaxpr.invars)
-
-  is_scalar_const = [
-      isinstance(v.aval, jax_core.ShapedArray) and not v.aval.shape
-      for v in jaxpr.constvars
-  ]
-  if not any(is_scalar_const):
-    return (
-        jaxpr,
-        tuple(in_avals),
-        tuple(out_avals),
-        tuple(args),
-        tuple(is_scalar_const),
-    )
-  non_scalar_const_avals, scalar_const_avals = util.partition_list(
-      is_scalar_const,
-      [v.aval for v in jaxpr.constvars],
-  )
-  non_scalar_consts, scalar_consts = util.partition_list(
-      is_scalar_const, args
-  )
-  if copy_to_smem:
-    smem_alloc = [
-        state.AbstractRef(
-            jax_core.ShapedArray((1,), aval.dtype),  # pyrefly: ignore[missing-attribute]
-            memory_space=MemorySpace.SMEM,
-        )
-        for aval in scalar_const_avals
-    ]
-  else:
-    smem_alloc = []
-
-  # Rewrite body jaxpr to take in scalar values as Refs.
-  def new_body(*args):
-    scalar_const_refs, non_scalar_const_refs, args = util.split_list(
-        args, [len(scalar_consts), len(non_scalar_consts)]
-    )
-    if copy_to_smem:
-      smem, args = util.split_list(args, [len(smem_alloc)])
-      assert len(smem) == len(scalar_const_refs)
-      from jax._src.pallas.mosaic.helpers import sync_copy  # pyrefly: ignore[missing-import]
-
-      sync_copy(scalar_const_refs, smem)
-    else:
-      smem = scalar_const_refs
-    scalar_const_values = [s[0] for s in smem]
-    new_consts = util.merge_lists(
-        is_scalar_const, non_scalar_const_refs, scalar_const_values
-    )
-    return jax_core.eval_jaxpr(jaxpr, new_consts, *args)
-
-  # TODO(sharadmv): Remove this once Mosaic support passing scalars as values.
-  scalar_const_trace_avals = [
-      state.AbstractRef(
-          jax_core.ShapedArray((1,), aval.dtype),  # pyrefly: ignore[missing-attribute]
-          memory_space=MemorySpace.HBM if copy_to_smem else MemorySpace.SMEM,
-      )
-      for aval in scalar_const_avals
-  ]
-  new_trace_avals = [
-      *scalar_const_trace_avals,
-      *non_scalar_const_avals,
-      *smem_alloc,
-      *[v.aval for v in jaxpr.invars],
-  ]
-  with (
-      pallas_core.tracing_grid_env(
-          tuple(mesh.shape.values()), mapped_dims=()
-      ),
-      jax_core.extend_axis_env_nd(mesh.shape.items()),
-  ):
-    new_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(
-            new_body, debug_info=jaxpr.debug_info.with_unknown_names()
-        ),
-        new_trace_avals,
-    )
-  jaxpr = new_jaxpr.replace(
-      constvars=new_jaxpr.invars[: len(jaxpr.constvars)],
-      invars=new_jaxpr.invars[len(jaxpr.constvars) :],
-  )
-  args = [
-      *[a[None] for a in scalar_consts],
-      *non_scalar_consts,
-  ]
-  in_avals, out_avals, _ = util.split_list(
-      new_trace_avals, [len(in_avals), len(out_avals)]
-  )
-  return jaxpr, tuple(in_avals), tuple(out_avals), tuple(args), tuple(is_scalar_const)
-
-
-def _tensorcore_mesh_discharge_rule(
-    in_avals,
-    out_avals,
-    *args,
-    mesh,
-    jaxpr,
-    compiler_params: Any | None,
-    interpret: Any,
-    debug: bool,
-    cost_estimate: pallas_core.CostEstimate | None,
-    name: str,
-    metadata: FrozenDict[str, str] | None,
-):
-  assert isinstance(mesh, TensorCoreMesh)
-  if compiler_params and not isinstance(compiler_params, CompilerParams):
-    raise ValueError("compiler_params must be a pltpu.CompilerParams")
-  if not compiler_params:
-    compiler_params = CompilerParams()
-  if len(mesh.shape) > 1:
-    raise NotImplementedError("Mesh must be 1D")
-  if compiler_params.dimension_semantics is not None:
-    raise ValueError("dimension_semantics must be None for TensorCoreMesh")
-  num_cores = len(mesh.devices)
-  if num_cores > 1:
-    # Since each core will have its own VMEM, we currently disallow VMEM inputs
-    # and outputs since other ops might not agree on how they are sharded across
-    # cores by the (core-mapped) kernel.
-    if any(
-        pallas_core.get_memory_space_aval(aval) == MemorySpace.VMEM
-        for aval in in_avals
-    ):
-      raise NotImplementedError(
-          "TensorCoreMesh does not support VMEM inputs/outputs when there are"
-          " >1 cores. Use HBM or ANY instead."
-      )
-  jaxpr, in_avals, out_avals, args, is_scalar_const = pass_scalars_as_refs(
-      jaxpr, args, in_avals, out_avals, mesh
-  )
-  refs_out, out = pallas_core.default_mesh_discharge_rule(
-      in_avals,
-      out_avals,
-      *args,
-      jaxpr=jaxpr,
-      mesh=mesh,
-      compiler_params=compiler_params,
-      debug=debug,
-      interpret=interpret,
-      cost_estimate=cost_estimate,
-      name=name,
-      metadata=metadata,
-  )
-  refs_out = [
-      a if not is_scalar else None
-      for is_scalar, a in zip(is_scalar_const, refs_out)
-  ]
-  return refs_out, out
-
-
-pallas_core._core_map_mesh_rules[TensorCoreMesh] = (
-    _tensorcore_mesh_discharge_rule
-)
-
-
 def _convert_semaphore_type_to_aval(
     out_shape: SemaphoreType,
 ) -> jax_core.AbstractValue:
@@ -600,10 +477,16 @@ def memory_space_to_tpu_memory_space(
         MemorySpace
         | pallas_core.MemorySpace
         | pallas_core.CoreMemorySpace
+        | jax_core.MemorySpace
         | None
     ),
     core_type: CoreType,
-) -> MemorySpace | pallas_core.MemorySpace | pallas_core.CoreMemorySpace:
+) -> (
+    MemorySpace
+    | pallas_core.MemorySpace
+    | pallas_core.CoreMemorySpace
+    | jax_core.MemorySpace
+):
   match memory_space:
     case None:
       match core_type:
@@ -619,7 +502,7 @@ def memory_space_to_tpu_memory_space(
           return MemorySpace.SMEM
         case _:
           raise ValueError(f"Unsupported core type: {core_type}")
-    case pallas_core.MemorySpace.ANY | pallas_core.MemorySpace.HOST:
+    case pallas_core.MemorySpace.ANY | jax_core.MemorySpace.Host:
       return memory_space
     case (
         pallas_core.MemorySpace.ERROR
@@ -633,7 +516,52 @@ def memory_space_to_tpu_memory_space(
           if memory_space.mesh.core_type is core_type
           else memory_space
       )
+    case acc if isinstance(acc, AccMemorySpace):
+      return acc
     case MemorySpace():
       return memory_space
     case _:
       raise ValueError(f"Invalid memory space: {memory_space!r}")
+
+
+def unwrap_core_memory_space(
+    memory_space: (
+        MemorySpace
+        | AccMemorySpace
+        | pallas_core.MemorySpace
+        | pallas_core.CoreMemorySpace
+        | jax_core.MemorySpace
+        | None
+    ),
+) -> (
+    MemorySpace
+    | AccMemorySpace
+    | pallas_core.MemorySpace
+    | jax_core.MemorySpace
+    | None
+):
+  """Extracts the inner memory space from a `CoreMemorySpace` if wrapped."""
+  if isinstance(memory_space, pallas_core.CoreMemorySpace):
+    return memory_space.memory_space
+  return memory_space
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class AccessAssumptionTransform(state_types.Transform):
+  """A TPU-specific ref transform attaching memory access assumptions to a TransformedRef."""
+
+  assumption: AccessAssumption
+
+  def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
+    return x
+
+  def transform_array(self, x: Any) -> Any:
+    return x
+
+  def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
+    return self
+
+  def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
+    del context
+    return pp.text(f"{{annotate({self.assumption})}}")

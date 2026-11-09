@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 # Advanced Automatic Differentiation
 
 ```{toctree}
@@ -8,4 +12,5 @@ higher-order
 jacobian-vector-products
 complex-differentiation
 notebooks/Custom_derivative_rules_for_Python_code
+hijax_custom_derivatives
 ```

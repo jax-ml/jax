@@ -141,6 +141,7 @@ def prepare_wheel_cuda(
       src_files=[
           f"{source_file_prefix}jaxlib/cuda/_solver.{pyext}",
           f"{source_file_prefix}jaxlib/cuda/_linalg.{pyext}",
+          f"{source_file_prefix}jaxlib/cuda/_math.{pyext}",
           f"{source_file_prefix}jaxlib/cuda/_prng.{pyext}",
           f"{source_file_prefix}jaxlib/cuda/_rnn.{pyext}",
           f"{source_file_prefix}jaxlib/cuda/_sparse.{pyext}",
@@ -184,6 +185,10 @@ def prepare_wheel_rocm(
       dst_dir=wheel_sources_path,
       dst_filename="setup.py",
   )
+  copy_files(
+      f"{source_file_prefix}jax_plugins/rocm/rocm_version.py",
+      dst_dir=wheel_sources_path,
+  )
   build_utils.update_setup_with_rocm_version(wheel_sources_path, rocm_version)
   write_setup_cfg(wheel_sources_path, cpu)
 
@@ -194,6 +199,7 @@ def prepare_wheel_rocm(
       dst_dir=plugin_dir,
       src_files=[
           f"{source_file_prefix}jaxlib/rocm/_linalg.{pyext}",
+          f"{source_file_prefix}jaxlib/rocm/_math.{pyext}",
           f"{source_file_prefix}jaxlib/rocm/_prng.{pyext}",
           f"{source_file_prefix}jaxlib/rocm/_solver.{pyext}",
           f"{source_file_prefix}jaxlib/rocm/_sparse.{pyext}",
@@ -207,17 +213,15 @@ def prepare_wheel_rocm(
 
 
 def prepare_wheel_oneapi(
-    wheel_sources_path: pathlib.Path, *, cpu, oneapi_version, wheel_sources
+    wheel_sources_path: pathlib.Path, *, cpu, wheel_sources
 ):
   """Assembles a source tree for the oneapi plugin wheel in `wheel_sources_path`."""
   source_file_prefix = build_utils.get_source_file_prefix(wheel_sources)
-  # Sanitize oneapi_version for package names (replace dots with underscores)
-  sanitized_version = oneapi_version.replace(".", "_")
   wheel_sources_map = build_utils.create_wheel_sources_map(
       wheel_sources,
       root_packages=[
           "jax_plugins",
-          f"jax_oneapi{sanitized_version}_plugin",
+          "jax_oneapi_plugin",
           "jaxlib",
       ],
   )
@@ -237,15 +241,22 @@ def prepare_wheel_oneapi(
       dst_dir=wheel_sources_path,
       dst_filename="setup.py",
   )
-  build_utils.update_setup_with_oneapi_version(wheel_sources_path, oneapi_version)
+  copy_files(
+      f"{source_file_prefix}jax_plugins/oneapi/README.md",
+      dst_dir=wheel_sources_path,
+  )
   write_setup_cfg(wheel_sources_path, cpu)
 
-  plugin_dir = wheel_sources_path / f"jax_oneapi{sanitized_version}_plugin"
+  plugin_dir = wheel_sources_path / "jax_oneapi_plugin"
   plugin_dir.mkdir(parents=True, exist_ok=True)
   (plugin_dir / "__init__.py").touch()
   copy_files(
       dst_dir=plugin_dir,
       src_files=[
+          f"{source_file_prefix}jaxlib/oneapi/_linalg.{pyext}",
+          f"{source_file_prefix}jaxlib/oneapi/_hybrid.{pyext}",
+          f"{source_file_prefix}jaxlib/oneapi/_prng.{pyext}",
+          f"{source_file_prefix}jaxlib/oneapi/_solver.{pyext}",
           f"{source_file_prefix}jaxlib/oneapi/oneapi_plugin_extension.{pyext}",
           f"{source_file_prefix}jaxlib/version.py",
       ],
@@ -283,7 +294,6 @@ try:
     prepare_wheel_oneapi(
         pathlib.Path(sources_path),
         cpu=args.cpu,
-        oneapi_version=args.platform_version,
         wheel_sources=args.srcs,
     )
     package_name = f"jax oneapi{args.platform_version} plugin"

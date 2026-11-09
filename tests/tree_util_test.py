@@ -12,19 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import builtins
 import collections
 from collections.abc import Hashable
 import dataclasses
 import functools
 import pickle
 import re
+import sys
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import flatten_util
 from jax import tree_util
+from jax._src import flattree as ft
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src.tree_util import (
     prefix_errors, broadcast_flattened_prefix_with_treedef,
     default_registry, dispatch_registry)
@@ -80,6 +84,19 @@ class AnObject:
 
 tree_util.register_pytree_node(AnObject, lambda o: ((o.x, o.y), o.z),
                                lambda z, xy: AnObject(xy[0], xy[1], z))
+
+class ArrayMetadataBox:
+  # A pytree whose metadata (aux_data) is an array, hence unhashable and not
+  # comparable with plain `==` semantics. Used to test that pytree equality
+  # errors name the offending registered type. See issue #13027.
+
+  def __init__(self, x):
+    self.x = x
+
+tree_util.register_pytree_node(
+    ArrayMetadataBox,
+    lambda obj: ((), (obj.x,)),
+    lambda aux_data, children: ArrayMetadataBox(aux_data[0]))
 
 class AnObject2(AnObject): pass
 
@@ -305,6 +322,8 @@ class TreeTest(jtu.JaxTestCase):
   def testIsTreeNode(self):
     self.assertTrue(tree_util.is_tree_node(list))
     self.assertTrue(tree_util.is_tree_node(dict))
+    if sys.version_info >= (3, 15):
+      self.assertTrue(tree_util.is_tree_node(getattr(builtins, "frozendict")))
     self.assertTrue(tree_util.is_tree_node(tuple))
     self.assertTrue(tree_util.is_tree_node(type(None)))
 
@@ -319,6 +338,31 @@ class TreeTest(jtu.JaxTestCase):
     self.assertFalse(tree_util.is_tree_node(int))
     self.assertFalse(tree_util.is_tree_node(str))
     self.assertFalse(tree_util.is_tree_node(float))
+
+  def testFrozenDict(self):
+    if sys.version_info < (3, 15):
+      self.skipTest("frozendict requires Python 3.15+")
+    frozendict = getattr(builtins, "frozendict")
+    fd = frozendict({"b": 2, "a": 1})
+    leaves, treedef = tree_util.tree_flatten(fd)
+    self.assertEqual(leaves, [1, 2])
+    self.assertEqual(tree_util.tree_unflatten(treedef, leaves), fd)
+    self.assertIsInstance(tree_util.tree_unflatten(treedef, leaves), frozendict)
+
+    mapped = tree_util.tree_map(lambda x: x * 10, fd)
+    self.assertEqual(mapped, frozendict({"b": 20, "a": 10}))
+    self.assertIsInstance(mapped, frozendict)
+
+    key_leaves, treedef2 = tree_util.tree_flatten_with_path(fd)
+    self.assertEqual(treedef, treedef2)
+    self.assertEqual(
+        key_leaves,
+        [((DictKey("a"),), 1), ((DictKey("b"),), 2)],
+    )
+
+    one_level_leaves, aux = tree_util.flatten_one_level(fd)
+    self.assertEqual(list(one_level_leaves), [1, 2])
+    self.assertEqual(aux, ("a", "b"))
 
   @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtripWithFlattenUpTo(self, inputs):
@@ -991,6 +1035,11 @@ class TreeTest(jtu.JaxTestCase):
                                        (SequenceKey(1), tree1["sub"][1])])
     self.assertIsNone(meta)
 
+    children, meta = tree_util.flatten_one_level_with_keys(tree1["sub"][1])
+    self.assertEqual(list(children), [(GetAttrKey("foo"), ()),
+                                      (GetAttrKey("bar"), [None])])
+    self.assertEqual(meta, ATuple)
+
     # Custom object with keys
     children, meta = tree_util.flatten_one_level_with_keys(tree1["obj"])
     self.assertEqual(list(children), [("x", EmptyTuple()), ("y", 0)])
@@ -1161,6 +1210,28 @@ class TreeKeyTest(absltest.TestCase):
     with self.assertRaisesRegex(ValueError, msg):
       f(Tree(jnp.arange(4)))
 
+  def testEqualityErrorNamesOffendingType(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/13027
+    a = ArrayMetadataBox(jnp.arange(3))
+    b = ArrayMetadataBox(jnp.arange(3))
+    _, treedef_a = tree_util.tree_flatten(a)
+    _, treedef_b = tree_util.tree_flatten(b)
+
+    # hash succeeds despite unhashable metadata (metadata isn't actually
+    # hashed); the error only appears once equality is checked.
+    hash(treedef_a)
+    hash(treedef_b)
+
+    with self.assertRaisesRegex(ValueError, "ArrayMetadataBox"):
+      treedef_a == treedef_b
+
+    # The same error, reached through jax.jit's dispatch cache, should also
+    # name the offending type.
+    f = jax.jit(lambda x: x)
+    f(a)
+    with self.assertRaisesRegex(ValueError, "ArrayMetadataBox"):
+      f(b)
+
 
 class StaticTest(parameterized.TestCase):
 
@@ -1229,6 +1300,67 @@ class StaticTest(parameterized.TestCase):
       serialized
     )
     self.assertEqual(tree_structure, new_structure)
+
+  def test_deserialize_malformed_treedef(self):
+    # A single list node claiming a child that no earlier node supplies.
+    # This used to segfault rather than raise.
+    with self.assertRaisesRegex(ValueError, "Malformed PyTreeDef"):
+      jax.tree_util.PyTreeDef.deserialize_using_proto(
+        jax.tree_util.default_registry,
+        bytes.fromhex("0a0408011002")
+      )
+
+  def test_unpickle_malformed_treedef(self):
+    if jaxlib_extension_version < 520:
+      self.skipTest("Requires jaxlib_extension_version >= 520")
+    registry = jax.tree_util.default_registry
+
+    def unpickle_treedef(state):
+      t = jax.tree_util.PyTreeDef.__new__(jax.tree_util.PyTreeDef)
+      t.__setstate__(state)
+      return t
+
+    # Failing mid-traversal after >1 nodes used to leak the partially
+    # constructed PyTreeDef under LeakSanitizer.
+    with self.assertRaises(RuntimeError):
+      unpickle_treedef((
+          registry,
+          [
+              (0, 0, None, None, 1, 1),
+              (0, 0, None, None, 1, 1),
+              (0,),
+          ],
+      ))
+
+    @dataclasses.dataclass
+    class DcNode:
+      x: int
+      tag: int = 0
+
+    tree_util.register_dataclass(DcNode, data_fields=["x"], meta_fields=["tag"])
+
+    malformed_traversals = [
+        [(99, 0, None, None, 0, 1)],  # invalid PyTreeKind
+        [(0, -1, None, None, 1, 1)],  # negative arity
+        [(0, 0, None, None, 1, 1), (0, 0, None, None, 1, 1)],  # forest
+        [(2, 1, None, None, 0, 1)],  # arity exceeds preceding subtrees
+        # Inconsistent num_nodes used to abort/segfault in Children().
+        [(0, 0, None, None, 1, -1), (2, 1, None, None, 1, 2)],
+        # Dict arity mismatch with sorted_dict_keys length used to abort in
+        # MakeNode().
+        [(0, 0, None, None, 1, 1), (5, 1, [], None, 1, 2)],
+        # Registration kind mismatch (kCustom pointing at non-kCustom, and
+        # kDataclass pointing at kCustom).
+        [(6, 0, None, tuple, 0, 1)],
+        [(0, 0, None, None, 1, 1), (7, 1, (1,), ATuple2, 1, 2)],
+        # kDataclass arity / meta_fields tuple mismatches.
+        [(7, 0, (7,), DcNode, 0, 1)],
+        [(0, 0, None, None, 1, 1), (7, 1, (), DcNode, 1, 2)],
+        [(0, 0, None, None, 1, 1), (7, 1, None, DcNode, 1, 2)],
+    ]
+    for traversal in malformed_traversals:
+      with self.assertRaises(ValueError):
+        unpickle_treedef((registry, traversal))
 
   def test_compare_pytreedef_with_registries(self):
     class MyCustomType:
@@ -1417,7 +1549,31 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
   def test_different_num_children_print_key_diff(self):
     e, = prefix_errors({'a': 1}, {'a': 2, 'b': 3})
     expected = ("so the symmetric difference on key sets is\n"
-                "    b")
+                r"    \['b'\]")
+    with self.assertRaisesRegex(ValueError, expected):
+      raise e('in_axes')
+
+  def test_different_num_children_custom_node_with_keys(self):
+    # https://github.com/jax-ml/jax/issues/25659
+    @tree_util.register_pytree_with_keys_class
+    class Foo:
+      def __init__(self, fields):
+        self.fields = dict(fields)
+
+      def tree_flatten_with_keys(self):
+        return ([(tree_util.GetAttrKey(k), v) for k, v in self.fields.items()],
+                tuple(self.fields))
+
+      @classmethod
+      def tree_unflatten(cls, keys, children):
+        return cls(zip(keys, children))
+
+    e, = prefix_errors(Foo({'a': 1}), Foo({'a': 2, 'b': 3}))
+    expected = ("(?s)pytree structure error: different numbers of pytree "
+                "children at key path\n"
+                "    in_axes\n"
+                ".*so the symmetric difference on key sets is\n"
+                r"    \.b")
     with self.assertRaisesRegex(ValueError, expected):
       raise e('in_axes')
 
@@ -1705,7 +1861,7 @@ class RegistrationTest(jtu.JaxTestCase):
     @dataclasses.dataclass
     class Foo:
       x: int
-      y: int = dataclasses.field(metadata=dict(static=True))
+      y: int = jax.tree.static()
 
     f = Foo(2, 3)
     self.assertLen(jax.tree.leaves(f), 1)
@@ -1789,6 +1945,19 @@ class RegistrationTest(jtu.JaxTestCase):
         Foo, data_fields=["x"], meta_fields=[], drop_fields=["y", "z"]
     )
 
+  def test_register_dataclass_init_false(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int = dataclasses.field(default=42)
+      z: int = dataclasses.field(default=42, init=False)
+
+    with self.assertRaises(ValueError):
+      # Requires explicit drop_fields
+      tree_util.register_dataclass(Foo)
+
+    tree_util.register_dataclass(Foo, drop_fields="z")
+
   def test_register_dataclass_invalid_plain_class(self):
     class Foo:
       x: int
@@ -1820,6 +1989,23 @@ class RegistrationTest(jtu.JaxTestCase):
       static = jax.tree.static(metadata={"static": False})
       self.assertEqual(static.metadata, {"static": False})
 
+
+class FlatTreeTest(jtu.JaxTestCase):
+
+  def test_filter_and_tupling_commute(self):
+    xs = ft.flatten({'a': 0, 'b': 1})
+    ys = ft.flatten({'c': 2, 'd': 3, 'e': 4})
+    x_mask = [True, False]
+    y_mask = [False, True, True]
+    xs_f1 = xs.filter_with_mask(x_mask)
+    ys_f1 = ys.filter_with_mask(y_mask)
+
+    zs = ft.pack((xs, ys))
+    zs_f = zs.filter_with_mask(x_mask + y_mask)
+    xs_f2, ys_f2 = zs_f.unpack()
+    print(xs_f2)
+    print(ys_f2)
+    self.assertEqual((xs_f1, ys_f1), (xs_f2, ys_f2))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

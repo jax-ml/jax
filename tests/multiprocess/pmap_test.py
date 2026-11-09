@@ -69,7 +69,7 @@ class PmapTestMultiHost(jt_multiprocess.MultiProcessTest):
     xs = jnp.ones(jax.local_device_count())
     pmapped_f = jax.pmap(lambda x: jax.lax.all_gather(x, "i"), axis_name="i")
     jaxpr = jax.make_jaxpr(pmapped_f)(xs)
-    jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, xs)  # does not crash
+    jax.core.eval_jaxpr(jaxpr, jaxpr.consts, xs)  # does not crash
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def test_array_device_size_mismatch_with_mesh(self):

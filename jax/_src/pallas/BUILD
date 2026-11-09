@@ -40,7 +40,6 @@ pytype_library(
         "primitives.py",
         "utils.py",
     ],
-    type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
     ] + jax_visibility("pallas"),
@@ -60,6 +59,7 @@ pytype_library(
         "//jax/_src:dtypes",
         "//jax/_src:effects",
         "//jax/_src:export",
+        "//jax/_src:flattree",
         "//jax/_src:frozen_dict",
         "//jax/_src:hijax",
         "//jax/_src:lax",
@@ -83,7 +83,6 @@ pytype_library(
     srcs = [
         "pallas_test_util.py",
     ],
-    type_checking = "pyrefly",
     deps = [
         ":pallas",
         "//jax/_src:test_util",

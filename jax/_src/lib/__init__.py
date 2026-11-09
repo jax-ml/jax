@@ -23,7 +23,6 @@ import os
 import pathlib
 import re
 from types import ModuleType
-from typing import TYPE_CHECKING
 
 
 try:
@@ -34,7 +33,7 @@ except ModuleNotFoundError as err:
     'https://github.com/jax-ml/jax#installation for installation instructions.'
     ) from err
 
-import jax.version
+import jax.version as jax_version
 from jax.version import _minimum_jaxlib_version as _minimum_jaxlib_version_str
 try:
   import jaxlib.version  # noqa: F401
@@ -77,9 +76,9 @@ def check_jaxlib_version(jax_version: str, jaxlib_version: str,
 
 version_str = jaxlib.version.__version__
 version = check_jaxlib_version(
-  jax_version=jax.version.__version__,
+  jax_version=jax_version.__version__,
   jaxlib_version=jaxlib.version.__version__,
-  minimum_jaxlib_version=jax.version._minimum_jaxlib_version)
+  minimum_jaxlib_version=jax_version._minimum_jaxlib_version)
 
 # Before importing any C compiled modules, first import the CPU
 # feature guard module to verify that jaxlib was compiled in a way that only
@@ -100,10 +99,7 @@ import jaxlib.lapack as lapack  # noqa: F401
 import jaxlib.utils as utils  # noqa: F401
 import jaxlib._jax as _jax  # noqa: F401
 
-try:
-  import jaxlib._xla as _xla  # noqa: F401
-except ImportError:
-  _xla = None
+import jaxlib._xla as _xla  # noqa: F401
 
 
 import jaxlib.mlir._mlir_libs._jax_mlir_ext as jax_mlir_ext  # noqa: F401
@@ -115,17 +111,22 @@ from jaxlib import _profiler as _profiler  # noqa: F401
 from jaxlib import _profile_data as _profile_data  # noqa: F401
 
 from jaxlib._jax import ffi as ffi  # noqa: F401
+import jaxlib.plugin_support as plugin_support
 import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
+cpu_math: ModuleType | None
+try:
+  import jaxlib.cpu._math as cpu_math  # noqa: F401
+except ImportError:
+  cpu_math = None
+cuda_math: ModuleType | None = plugin_support.import_from_plugin('cuda', '_math')
+hip_math: ModuleType | None = plugin_support.import_from_plugin('rocm', '_math')
 
 import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
 import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
 
 import jaxlib._ifrt_proxy as ifrt_proxy  # noqa: F401
 
-if jaxlib_extension_version >= 457 or TYPE_CHECKING:
-  from jaxlib import _hlo as hlo  # noqa: F401
-else:
-  hlo = _jax
+from jaxlib import _hlo as hlo  # noqa: F401
 
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882
@@ -153,6 +154,7 @@ import jaxlib.gpu_rnn as gpu_rnn  # noqa: F401
 import jaxlib.gpu_triton as gpu_triton  # noqa: F401
 
 import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # noqa: F401
+import jaxlib.thunky.python.thunky as thunky_dialect  # noqa: F401
 
 import jaxlib.mosaic.python.tpu as tpu  # noqa: F401
 
@@ -196,16 +198,18 @@ def _cuda_path() -> str | None:
     python_runfiles = os.environ.get('PYTHON_RUNFILES')
     if not python_runfiles:
       return None
-    cuda_nvcc_root = os.path.join(python_runfiles, 'cuda_nvcc')
-    if os.path.exists(cuda_nvcc_root):
-      return cuda_nvcc_root
+    for p in pathlib.Path(python_runfiles).glob('*cuda_nvcc*'):
+      if p.is_dir() and (
+          (p / 'bin' / 'ptxas').exists() or (p / 'bin' / 'nvdisasm').exists()
+      ):
+        return str(p)
     return None
 
   if (path := _try_cuda_root_environment_variable()) is not None:
     return path
-  elif (path := _try_cuda_nvcc_import()) is not None:
-    return path
   elif (path := _try_bazel_runfiles()) is not None:
+    return path
+  elif (path := _try_cuda_nvcc_import()) is not None:
     return path
 
   return None

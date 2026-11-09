@@ -31,7 +31,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.layout import Layout
-from jax._src.lib import lapack
+from jax._src.lib import ifrt_version, lapack
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lax import linalg as lax_linalg_internal
 from jax._src.shard_map import shard_map
@@ -150,7 +150,7 @@ class FfiTest(jtu.JaxTestCase):
   def test_token(self):
     def fun():
       token = lax.create_token()
-      return jax.ffi.ffi_call("test_ffi", core.abstract_token)(token)
+      return jax.ffi.ffi_call("test_ffi", jax.ffi.abstract_token)(token)
 
     # Ensure that token inputs and outputs are translated to the correct type
     module = jax.jit(fun).lower().compiler_ir("stablehlo")
@@ -166,6 +166,8 @@ class FfiTest(jtu.JaxTestCase):
       target_name = "lapack_sgetrf_ffi"
     elif jtu.test_device_matches(["rocm"]):
       target_name = "hipsolver_getrf_ffi"
+    elif jtu.test_device_matches(["oneapi"]):
+      target_name = "oneapisolver_getrf_ffi"
     elif jtu.test_device_matches(["cuda", "gpu"]):
       target_name = "cusolver_getrf_ffi"
     else:
@@ -337,6 +339,7 @@ def ffi_call_geqrf(x, **kwargs):
         cpu="lapack_sgeqrf_ffi",
         rocm="hipsolver_geqrf_ffi",
         cuda="cusolver_geqrf_ffi",
+        oneapi="oneapisolver_geqrf_ffi",
     )[platform]
     return jax.ffi.ffi_call(
         target_name, output_types, input_output_aliases={0: 0},
@@ -346,7 +349,7 @@ def ffi_call_geqrf(x, **kwargs):
 
   return lax.platform_dependent(
       x, cpu=partial(call, "cpu"), rocm=partial(call, "rocm"),
-      cuda=partial(call, "cuda"))
+      cuda=partial(call, "cuda"), oneapi=partial(call, "oneapi"))
 
 
 class BatchPartitioningTest(jtu.JaxTestCase):
@@ -355,7 +358,7 @@ class BatchPartitioningTest(jtu.JaxTestCase):
     # Register callbacks before checking the number of devices to make sure
     # that we're testing the registration path, even if we can't run the tests.
     for target_name in ["lapack_sgeqrf_ffi", "cusolver_geqrf_ffi",
-                        "hipsolver_geqrf_ffi"]:
+                        "hipsolver_geqrf_ffi", "oneapisolver_geqrf_ffi"]:
       jax.ffi.register_ffi_target_as_batch_partitionable(target_name)
     if jax.device_count() < 2:
       self.skipTest("Requires multiple devices")
@@ -390,6 +393,24 @@ class BatchPartitioningTest(jtu.JaxTestCase):
     f(x)  # eager mode doesn't crash
     f_jit(x)  # neither does JIT
     self.assertNotIn("all-gather", f_jit.lower(x).compile().as_text())
+
+  @jtu.run_on_devices("gpu", "cpu")
+  def test_batch_partitioning_multidim(self):
+    if ifrt_version < 81:
+      self.skipTest("Requires ifrt_version >= 81")
+    if jax.device_count() < 4:
+      self.skipTest("Requires at least 4 devices")
+    mesh = jtu.create_mesh((2, 2), ("i", "j"))
+    x_host = self.rng().randn(4, 4, 4, 5).astype(np.float32)
+    expected = batch_partitionable_ffi_call(x_host)
+
+    for spec in (P("i", "j"), P("i", None)):
+      sharding = jax.NamedSharding(mesh, spec)
+      x = jax.device_put(x_host, sharding)
+      f_jit = jax.jit(batch_partitionable_ffi_call, out_shardings=sharding)
+      actual = f_jit(x)
+      self.assertAllClose(actual, expected, atol=1e-5)
+      self.assertNotIn("all-gather", f_jit.lower(x).compile().as_text())
 
 
 def batch_partitionable_ffi_call(x):
@@ -430,6 +451,11 @@ mlir.register_lowering(
     batch_partitionable_p,
     partial(_batch_partitionable_lowering, "hipsolver_geqrf_ffi"),
     platform="rocm",
+)
+mlir.register_lowering(
+    batch_partitionable_p,
+    partial(_batch_partitionable_lowering, "oneapisolver_geqrf_ffi"),
+    platform="oneapi",
 )
 
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import enum
-from typing import Any, TypeAlias
+from typing import Any
 
 import jax
 from jax._src import core as jax_core
@@ -41,7 +41,7 @@ import jax.numpy as jnp
 import numpy as np
 
 
-Ref: TypeAlias = state.AbstractRef | state.TransformedRef
+type Ref = state.AbstractRef | state.TransformedRef
 
 Slice = indexing.Slice
 
@@ -111,7 +111,7 @@ def elementwise_inline_asm(
   )
 
 
-elementwise_inline_asm_p = jax_core.Primitive("elementwise_inline_asm_p")
+elementwise_inline_asm_p = jax_core.Primitive("elementwise_inline_asm")
 elementwise_inline_asm_p.multiple_results = True
 
 
@@ -225,7 +225,7 @@ pallas_core.kernel_local_effects.add_type(BarrierEffect)
 effects.control_flow_allowed_effects.add_type(BarrierEffect)
 
 
-debug_barrier_p = jax_core.Primitive("debug_barrier_p")
+debug_barrier_p = jax_core.Primitive("debug_barrier")
 debug_barrier_p.multiple_results = True
 
 
@@ -310,9 +310,8 @@ atomic_rmw_p = jax_core.Primitive("atomic_rmw")
 
 
 def _atomic_rmw_discharge_rule(
-    in_avals, out_avals, *args_flat, args_tree, atomic_type: AtomicOpType
+    ctx, *args_flat, args_tree, atomic_type: AtomicOpType
 ):
-  del out_avals  # Unused.
   ref, transforms, val, mask = args_tree.unflatten(args_flat)
   *prev_transforms, idx = transforms
   ref = state_discharge.transform_array(ref, prev_transforms)
@@ -348,7 +347,7 @@ def _atomic_rmw_discharge_rule(
     x_new = ref.at[idx.indices].set(monoid(out, val))
   else:
     raise NotImplementedError
-  return (x_new,) + (None,) * (len(in_avals) - 1), out
+  return (x_new,) + (None,) * (len(ctx.in_avals) - 1), out
 
 
 state_discharge.register_discharge_rule(atomic_rmw_p)(
@@ -461,19 +460,26 @@ def _atomic_lowering_rule(
   if len(indexers) != 1:
     raise NotImplementedError("Only single indexer is supported.")
   idx = indexers[0]
-  ptr = lowering._compute_pointers_from_indices(ptr, block_info, idx)
-  val = lowering._ensure_ir_value(val, value_aval)
+  ptr, bounds_mask = lowering._compute_pointers_from_indices(
+      ptr, block_info, idx
+  )
+  shape = idx.get_indexer_shape_static()
+  val = lowering._bcast_to(lowering._ensure_ir_value(val, value_aval), shape)
   if mask is not None:
-    mask = lowering._ensure_ir_value(mask, mask_aval)
+    mask = lowering._bcast_to(lowering._ensure_ir_value(mask, mask_aval), shape)
+  if bounds_mask is not None:
+    mask = (
+        bounds_mask if mask is None else arith_dialect.andi(mask, bounds_mask)
+    )
   if atomic_type == AtomicOpType.XCHG:
     op = tt_dialect.RMWOp.XCHG
   elif atomic_type == AtomicOpType.ADD:
-    if isinstance(val.type, ir.IntegerType):
+    if isinstance(lowering._element_type(val.type), ir.IntegerType):
       op = tt_dialect.RMWOp.ADD
     else:
       op = tt_dialect.RMWOp.FADD
   elif atomic_type == AtomicOpType.MIN:
-    if isinstance(val.type, ir.IntegerType):
+    if isinstance(lowering._element_type(val.type), ir.IntegerType):
       op = (
         tt_dialect.RMWOp.MIN
         if jnp.issubdtype(value_aval.dtype, jnp.signedinteger)
@@ -482,7 +488,7 @@ def _atomic_lowering_rule(
     else:
       return _expand_atomic_fp_min_max(atomic_type, ptr, val, mask=mask)
   elif atomic_type == AtomicOpType.MAX:
-    if isinstance(val.type, ir.IntegerType):
+    if isinstance(lowering._element_type(val.type), ir.IntegerType):
       op = (
         tt_dialect.RMWOp.MAX
         if jnp.issubdtype(value_aval.dtype, jnp.signedinteger)
@@ -648,8 +654,8 @@ def atomic_cas(ref, cmp, val):
 
 
 @state_discharge.register_discharge_rule(atomic_cas_p)
-def _atomic_cas_discharge_rule(in_avals, out_avals, ref, cmp, val):
-  del in_avals, out_avals
+def _atomic_cas_discharge_rule(ctx, ref, cmp, val):
+  del ctx
   new_val = jnp.where(ref == cmp, val, ref)
   return (new_val, None, None), ref
 

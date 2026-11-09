@@ -28,9 +28,9 @@ import numpy as np
 from . import fragmented_array as fa
 from . import mma_utils
 from . import utils
+from .mma import SUPPORTED_F8_TYPES
 
 
-c = utils.c
 bytewidth = utils.bytewidth
 
 
@@ -116,21 +116,21 @@ def _supported_wgmma_types(dtype, abtype) -> bool:
     return False
 
 
-def wgmma_m64(
+def _wgmma_m64(
     acc: np.ndarray,  # of register Values
-    a,
-    b_descriptor: ir.Value,
-    a_transpose: bool | None,
-    b_transpose: bool,
-    a_k_stride: int | None,
-    b_k_stride: int,
+    a: fa.FragmentedArray | mma_utils.SmemDescriptor,
+    b_desc: mma_utils.SmemDescriptor,
+    m_start: int,
     n: int,
-    swizzle: int,
-    element_type: ir.Type,
+    k: int,
+    a_element_type: ir.Type,
+    b_element_type: ir.Type,
 ):
   out_ty = ir.VectorType(acc.flat[0].type).element_type
-  if not _supported_wgmma_types(out_ty, element_type):
-    raise ValueError(f"Unsupported wgmma types {(out_ty, element_type)=}")
+  if not _supported_wgmma_types(out_ty, a_element_type):
+    raise ValueError(f"Unsupported wgmma types {(out_ty, a_element_type)=}")
+  if not _supported_wgmma_types(out_ty, b_element_type):
+    raise ValueError(f"Unsupported wgmma types {(out_ty, b_element_type)=}")
   if n % 8:
     raise ValueError
 
@@ -138,32 +138,22 @@ def wgmma_m64(
   f16 = ir.F16Type.get()
   i8 = ir.IntegerType.get_signless(8)
   i32 = ir.IntegerType.get_signless(32)
-  i64 = ir.IntegerType.get_signless(64)
   f8e5m2 = ir.Float8E5M2Type.get()
   f8e4m3fn = ir.Float8E4M3FNType.get()
-  if b_k_stride % 16:
-    raise ValueError
-  # Only 16-bit types support transposes
-  supports_transpose = bytewidth(element_type) == 2
-  if not supports_transpose and (a_transpose or b_transpose):
-    raise ValueError("Only f16 WGMMA supports transposes")
   if a_in_regs := isinstance(a, fa.FragmentedArray):
     if a.mlir_dtype not in {bf16, f16, i8, f8e5m2, f8e4m3fn}:
       raise ValueError(f"Unsupported A register array dtype: {a.mlir_dtype}")
-    # Column count must be equal to swizzle // bytewidth.
-    elt_bytewidth = utils.bytewidth(element_type)
-    swizzle_elems = swizzle // elt_bytewidth
-    if a.shape != (64, swizzle_elems):
-      raise ValueError("Unsupported A register array shape")
     if a.layout not in {fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_8BIT}:
       raise ValueError("Unsupported A register array layout")
-    if a_k_stride is not None or a_transpose is not None:
-      raise ValueError("Unsupported WGMMA features with A in registers")
+    a_transpose = None
   else:
-    if a_k_stride is None or a_k_stride % 16:
-      raise ValueError
-    if a_transpose is None:
-      raise ValueError
+    a_transpose = a.fastest_dim != mma_utils.Dim.K
+  b_transpose = b_desc.fastest_dim != mma_utils.Dim.K
+  assert bytewidth(a_element_type) == bytewidth(b_element_type)
+  # Only 16-bit types support transposes
+  supports_transpose = bytewidth(b_element_type) == 2
+  if not supports_transpose and (a_transpose or b_transpose):
+    raise ValueError("Only f16 WGMMA supports transposes")
 
   if isinstance(out_ty, ir.F32Type) or out_ty == i32:
     num_acc_regs = n // 2
@@ -222,24 +212,32 @@ def wgmma_m64(
   # Immediate regs (scale, ...).
   imm_regs = "".join(f", {r}" for r in take_regs(num_imm_regs))
   assert next(reg_count) == len(reg_constraints_list)
-  k_instr = 32 // bytewidth(element_type)
-  el_ty = str(element_type)
-  if isinstance(element_type, ir.Float8E5M2Type):
-    el_ty = "e5m2"
-  elif isinstance(element_type, ir.Float8E4M3FNType):
-    el_ty = "e4m3"
-  elif isinstance(element_type, ir.IntegerType):
-    # TODO(bchetioui): add u8 support in the future. Currently we always assume
-    # that 8-bit integers are s8, and we would need to change the signature of
-    # `wgmma` to indicate whether the input should be treated as signed or not.
-    el_ty = "s8"
+  k_instr = 32 // bytewidth(b_element_type)
+
+  def ptx_operand_type(ty):
+    if isinstance(ty, ir.Float8E5M2Type):
+      return "e5m2"
+    if isinstance(ty, ir.Float8E4M3FNType):
+      return "e4m3"
+    if isinstance(ty, ir.IntegerType):
+      # TODO(bchetioui): add u8 support in the future. Currently we always
+      # assume that 8-bit integers are s8, and we would need to change the
+      # signature of `wgmma` to indicate whether the input should be treated as
+      # signed or not.
+      return "s8"
+    return str(ty)
+
+  # `a` and `b` share an element type except for the FP8 e4m3/e5m2 pair, which
+  # may be mixed: PTX `wgmma` takes independent `.atype`/`.btype`.
+  a_el_ty = ptx_operand_type(a_element_type)
+  b_el_ty = ptx_operand_type(b_element_type)
 
   out_ty_str = str(out_ty)
   if out_ty == i32:
     out_ty_str = "s32"
 
   wgmma_instr = (
-      f"wgmma.mma_async.sync.aligned.m64n{n}k{k_instr}.{out_ty_str}.{el_ty}.{el_ty} "
+      f"wgmma.mma_async.sync.aligned.m64n{n}k{k_instr}.{out_ty_str}.{a_el_ty}.{b_el_ty} "
       f"{acc_reg_vector}, {a_regs}, {b_desc_reg}, p{imm_regs};"
   )
   ptx = f"{{ .reg .pred p; setp.ne.b32 p, {use_out_reg}, 0; {wgmma_instr} }}\n"
@@ -264,25 +262,16 @@ def wgmma_m64(
   expected_regs_per_tile = 4 if utils.bitwidth(out_ty) == 32 else 2
   if acc.ndim != expected_dim or acc.shape[0] != 1 or math.prod(acc.shape[2:]) != expected_regs_per_tile:
     raise ValueError(acc.shape)
-  for i in range((swizzle // bytewidth(element_type)) // k_instr):
-    # Slice out the relevant part of A or advance the A descriptor.
+  assert k % k_instr == 0
+  for k_offset in range(0, k, k_instr):
     if a_in_regs:
-      a_slice = a[:, (i * k_instr) : ((i + 1) * k_instr)]
+      assert isinstance(a, fa.FragmentedArray)
+      a_slice = a[m_start : m_start + 64, k_offset : k_offset + k_instr]
       a_args = [_as_i32_reg(v) for v in a_slice.registers.flat]
     else:
-      if i > 0:
-        assert a_k_stride is not None
-        a = _llvm_add(
-            a,
-            llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, a_k_stride >> 4)),
-        )
-      a_args = [a]
-    # Advance the B descriptor.
-    if i > 0:
-      b_descriptor = _llvm_add(
-          b_descriptor,
-          llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, b_k_stride >> 4)),
-      )
+      assert isinstance(a, mma_utils.SmemDescriptor)
+      a_args = [a.slice_i64(m_start, k_offset)]
+    b_descriptor = b_desc.slice_i64(0, k_offset)
     assert len(a_args) == len(a_reg_constraints)
     acc_struct = llvm.inline_asm(
         llvm.StructType.get_literal([out_ty_field] * len(acc_regs)),
@@ -291,6 +280,7 @@ def wgmma_m64(
         reg_constraints,
         asm_dialect=0,
         has_side_effects=True,
+        convergent=True,
     )
     assert isinstance(acc_struct, ir.Value)
     acc_regs = [
@@ -353,10 +343,17 @@ def wgmma(
         "WGMMA requires A and B to have the same contraction dimension (K),"
         f" got: {k2} and {k}"
     )
-  if element_type != element_type2:
+  both_fp8 = (
+      isinstance(element_type, SUPPORTED_F8_TYPES)
+      and isinstance(element_type2, SUPPORTED_F8_TYPES)
+  )
+  # A and B must share an element type, except that the e4m3/e5m2 FP8 pair may
+  # be mixed (PTX `wgmma` takes independent `.atype`/`.btype`). See
+  # https://docs.nvidia.com/cuda/parallel-thread-execution/#asynchronous-warpgroup-level-matrix-instructions-wgmma-mma
+  if element_type != element_type2 and not both_fp8:
     raise ValueError(
-        "WGMMA requires A and B to have the same element type, got:"
-        f" {element_type2} and {element_type}"
+        "WGMMA requires A and B to have the same element type (or be a mix of"
+        f" the e4m3/e5m2 FP8 types), got: {element_type2} and {element_type}"
     )
   if acc._value.shape != (m, n):
     raise ValueError(
@@ -400,83 +397,49 @@ def wgmma(
   if k % k_group_elems:
     raise ValueError(f"K must be a multiple of {k_group_elems}, got: {k}")
   m_groups = m // m_group_elems
-  k_groups = k // k_group_elems
   # TODO(apaszke): Require users to bitcast input refs to tf32 before WGMMA.
-  wgmma_element_type = (
+  b_wgmma_element_type = (
       ir.FloatTF32Type.get() if element_type == ir.F32Type.get() else element_type
+  )
+  # `a`'s PTX operand type, which differs from `b`'s only for the mixed FP8 case.
+  a_wgmma_element_type = (
+      ir.FloatTF32Type.get()
+      if element_type2 == ir.F32Type.get()
+      else element_type2
   )
 
   # Step 3. Compute the operand descriptors.
-  if a_in_regs:
-    a_desc_base = a_m_group_stride = a_k_group_stride = None
-    a_instr_params = dict(a_transpose=None, a_k_stride=None)
+  if isinstance(a, fa.FragmentedArray):
+    a_operand = wgmma_fence(a)  # Make sure the registers are ready.
   else:
-    assert isinstance(a, ir.Value)
-    (
-        (a_desc_base, a_k_instr_stride),
-        (a_m_group_stride, a_k_group_stride),
-        a_fastest,
-    ) = mma_utils.create_descriptor(
+    a_operand = mma_utils.create_descriptor(
         a,
         swizzle=swizzle,
-        large_tile=(m_group_elems, k_group_elems),
-        group_size=(m_group_elems, k_group_elems),
+        mn_size=m_group_elems,
         logical_k_major=False,
+        large_tile=(m_group_elems, k_group_elems),
     )
-    assert not a_k_instr_stride[0]  # We'd need separate a/b swizzles.
-    a_k_instr_stride = a_k_instr_stride[1][0]
-    a_instr_params = dict(a_transpose=a_fastest != mma_utils.Dim.K,
-                          a_k_stride=a_k_instr_stride)
-  (
-      (b_desc_base, b_k_instr_stride),
-      (b_n_group_stride, b_k_group_stride),
-      b_fastest,
-  ) = mma_utils.create_descriptor(
+  b_desc = mma_utils.create_descriptor(
       b,
       swizzle=swizzle,
-      large_tile=(k_group_elems,) * 2,  # It's not a typo that we use k for n.
-      group_size=(k_group_elems, n_group_elems),
+      mn_size=n_group_elems,
       logical_k_major=True,
+      large_tile=(k_group_elems,) * 2,  # It's not a typo that we use k for n.
   )
-  assert not b_k_instr_stride[0]  # We'd need separate a/b swizzles.
-  b_k_instr_stride = b_k_instr_stride[1][0]
-  del b_n_group_stride  # We only support one N group.
 
   # Step 4. Issue the instructions.
-  if a_in_regs:
-    assert isinstance(a, fa.FragmentedArray)
-    a = wgmma_fence(a)  # Make sure the registers are ready.
-
-  i64 = ir.IntegerType.get_signless(64)
   new_acc_regs = acc._value.registers.copy()
   for mi in range(m_groups):
-    for ki in range(k_groups):
-      if a_in_regs:
-        assert isinstance(a, fa.FragmentedArray)
-        a_mk = a[
-            mi * m_group_elems : (mi + 1) * m_group_elems,
-            ki * k_group_elems : (ki + 1) * k_group_elems,
-        ]
-      else:
-        assert a_m_group_stride is not None and a_k_group_stride is not None
-        a_group_offset = mi * a_m_group_stride + ki * a_k_group_stride
-        a_mk = _llvm_add(
-            a_desc_base, c(mma_utils.encode_addr(a_group_offset), i64),
-        )
-      b_k = _llvm_add(
-          b_desc_base, c(mma_utils.encode_addr(ki * b_k_group_stride), i64)
-      )
-      new_acc_regs[mi : mi + 1] = wgmma_m64(
-          new_acc_regs[mi : mi + 1],
-          a_mk,
-          b_k,
-          swizzle=swizzle,
-          n=n_group_elems,
-          element_type=wgmma_element_type,
-          b_transpose=b_fastest != mma_utils.Dim.K,
-          b_k_stride=b_k_instr_stride,
-          **a_instr_params,
-      )
+    new_acc_regs[mi : mi + 1] = _wgmma_m64(
+        new_acc_regs[mi : mi + 1],
+        a_operand,
+        b_desc,
+        m_start=mi * m_group_elems,
+        n=n_group_elems,
+        k=k,
+        a_element_type=a_wgmma_element_type,
+        b_element_type=b_wgmma_element_type,
+    )
   return WGMMAAccumulator(
       _value=fa.FragmentedArray(
           _registers=new_acc_regs,
@@ -510,10 +473,6 @@ def _as_i32_reg(v):
 def _lc(x):
   i32 = ir.IntegerType.get_signless(32)
   return llvm.ConstantOp(i32, ir.IntegerAttr.get(i32, x)).result
-
-
-def _llvm_add(x, y):
-  return llvm.add(x, y, overflow_flags=llvm.IntegerOverflowFlags.none)
 
 
 def _unpack_i32(vec_ty, r):

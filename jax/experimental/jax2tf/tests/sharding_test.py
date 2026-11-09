@@ -91,9 +91,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     self.devices = np.array(jax.devices()[:2])  # use 2 devices
 
   def get_xla_options(self):
-    return tf.tpu.XLAOptions(
-        use_shardy_partitioner=jax.config.jax_use_shardy_partitioner
-    )
+    return tf.tpu.XLAOptions(use_shardy_partitioner=True)
 
   def log_jax_hlo(self, f_jax, args: Sequence[Any], *,
                   num_replicas=1, num_partitions=2):
@@ -376,7 +374,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             # The output sharding
             (r"f32\[10,80\].*custom_call_target.*\"Sharding.*sharding.*replicated", 1),
             # No other annotations
-            (r"custom_call_target.*\"Sharding", 2 + count_inner_sharding + count_inner_replicated)
+            (r"custom_call_target.*\"Sharding",
+             2 + count_inner_sharding + count_inner_replicated)
         ])
 
   @jtu.parameterized_filterable(
@@ -479,6 +478,10 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
   def test_shmap_all_to_all(self):
     if jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("TODO(b/268295912): ShardingRemover crash")
+    if jtu.test_device_matches(["tpu"]) and (
+        not jtu.is_device_tpu_at_least(4) or
+        jtu.is_device_tpu_at_least(7)):
+      raise unittest.SkipTest("Shardy compilation error on TPU v3 and v7")
 
     mesh = Mesh(self.devices, axis_names=('x'))
     a = np.arange(4 * 4, dtype=np.float32).reshape((4, 4))

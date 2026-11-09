@@ -48,7 +48,7 @@ mesh = jax.make_mesh((jax.device_count(),), ('device',))
 print(mesh)
 
 # Mesh of cores, within a JAX device
-tc_mesh = pltpu.create_tensorcore_mesh('core')
+tc_mesh = pltpu.TensorCoreMesh(axis_name='core')
 print(tc_mesh)
 
 num_devices = mesh.size

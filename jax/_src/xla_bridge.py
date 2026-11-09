@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import atexit
 from collections.abc import Callable, Mapping
+from collections.abc import Sequence
 import dataclasses
 from functools import partial
 import importlib
@@ -31,8 +32,7 @@ import os
 import pkgutil
 import platform as py_platform
 import threading
-from typing import Any, Union
-from collections.abc import Sequence
+from typing import Any
 import warnings
 
 from jax._src import config
@@ -41,9 +41,10 @@ from jax._src import hardware_utils
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
-from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib import _profiler
+from jax._src.lib import ifrt_proxy
+from jax._src.lib import xla_client
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +171,7 @@ _at_fork_handler_installed = False
 
 # Backends
 
-_NameValueMapping = Mapping[str, Union[str, int, list[int], float, bool]]
+_NameValueMapping = Mapping[str, str | int | list[int] | float | bool]
 
 def _make_transfer_server_factory(
 ) -> _jax.TransferServerInterfaceFactory | None:
@@ -224,7 +225,7 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
     warnings.warn(
       f'TPU backend initialization is taking more than {timer_secs} seconds. '
       'Did you run your code on all TPU hosts? '
-      'See https://docs.jax.dev/en/latest/multi_process.html '
+      'See https://docs.jax.dev/en/latest/501/multiprocess.html '
       'for more information.')
 
   # Will log a warning after `timer_secs`.
@@ -247,8 +248,8 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
 # example, there could be multiple backends that provide the same kind of
 # device.
 
-BackendFactory = Callable[[], Union[xla_client.Client, None]]
-TopologyFactory = Callable[..., Union[xla_client.DeviceTopology, None]]
+BackendFactory = Callable[[], xla_client.Client | None]
+TopologyFactory = Callable[..., xla_client.DeviceTopology | None]
 
 @dataclasses.dataclass(slots=True)
 class BackendRegistration:
@@ -282,19 +283,6 @@ _plugin_lock = threading.Lock()
 _topology_factories: dict[str, TopologyFactory] = {}
 _plugin_callbacks: list[Any] = []
 _plugin_callback_lock = threading.Lock()
-
-_backend_initialization_hooks: list[Callable[[xla_client.Client], None]] = []
-
-
-def register_backend_initialization_hook(
-    hook: Callable[[xla_client.Client], None],
-) -> None:
-  """Registers a callback to run on all initialized and future backends."""
-  _backend_initialization_hooks.append(hook)
-  with _backend_lock:
-    for backend in _backends.values():
-      hook(backend)
-
 
 # The set of known non-experimental plugins.
 #
@@ -391,6 +379,30 @@ def get_num_nodes_from_gpu_topology(topology: str) -> int:
 register_backend_factory(
   'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300,
   fail_quietly=True)
+
+
+def make_ifrt_proxy_client() -> xla_client.Client:
+  """Returns a client for the IFRT Proxy server at ``jax_backend_target``.
+
+  IFRT Proxy lets JAX use devices that are managed by a remote IFRT runtime,
+  such as Pathways on Cloud. The server address has the form
+  ``<transport>://<address>``, e.g. ``grpc://localhost:29000``.
+  """
+  target = BACKEND_TARGET.value
+  if not target:
+    raise RuntimeError(
+        "The 'proxy' backend requires the address of an IFRT Proxy server. Set "
+        "it via the JAX_BACKEND_TARGET environment variable or the "
+        "jax_backend_target config option, e.g. "
+        "JAX_BACKEND_TARGET=grpc://localhost:29000.")
+  return ifrt_proxy.get_client(target, ifrt_proxy.ClientConnectionOptions())
+
+
+# The proxy backend fails fast, without making any RPCs, unless
+# `jax_backend_target` is set. Its negative priority means that it is never
+# chosen as the default backend over a local backend; select it explicitly with
+# JAX_PLATFORMS=proxy.
+register_backend_factory("proxy", make_ifrt_proxy_client, priority=-1)
 
 
 def _get_pjrt_plugin_names_and_library_paths(
@@ -881,7 +893,7 @@ def _suggest_missing_backends():
         warning_msg += (
           "This may be due to JAX pre-allocating too much device "
           "memory, leaving too little for CUDA library initialization. See "
-          "https://docs.jax.dev/en/latest/gpu_memory_allocation.html "
+          "https://docs.jax.dev/en/latest/201/gpu-memory.html "
           "for more details and potential workarounds."
         )
       warning_msg += "(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)"
@@ -934,8 +946,6 @@ def _init_backend(platform: str) -> xla_client.Client:
                              ("device_count", backend.device_count()),
                              ("local_devices", backend.local_devices()))
   logger.debug("Backend '%s' initialized", platform)
-  for hook in _backend_initialization_hooks:
-    hook(backend)
   return backend
 
 
@@ -1181,7 +1191,7 @@ def host_ids(
 
 
 def using_pjrt_c_api(backend=None):
-  return "PJRT C API" in get_backend(backend).platform_version
+  return get_backend(backend).is_c_api
 
 def make_pjrt_topology(platform: str, topology_name='', **kwargs):
   _discover_and_register_pjrt_plugins()

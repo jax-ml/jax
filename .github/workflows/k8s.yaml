@@ -28,20 +28,21 @@ defaults:
     shell: bash -ex -o pipefail {0}
 jobs:
   distributed-initialize:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         controller: [jobset, indexed-job]
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # ratchet:actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: jax
           persist-credentials: false
           
       - name: Start Minikube cluster
-        uses: medyagh/setup-minikube@cea33675329b799adccc9526aa5daccc26cd5052 # ratchet:medyagh/setup-minikube@v0.0.19
+        uses: medyagh/setup-minikube@cea33675329b799adccc9526aa5daccc26cd5052 # v0.0.19
 
       - name: Install K8s Jobset
         if: matrix.controller == 'jobset'
@@ -53,35 +54,54 @@ jobs:
       - name: Build image
         run: |
           cat > Dockerfile <<EOF
-          FROM ubuntu:22.04
+          FROM ubuntu:24.04
           ADD jax /opt/jax
-          RUN apt-get update && apt-get install -y python-is-python3 python3-pip
-          RUN pip install -e /opt/jax[k8s]
+          RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y --no-install-recommends python-is-python3 python3-pip
+          RUN pip install --break-system-packages -e '/opt/jax[ci,k8s]'
           EOF
 
           minikube image build -t local/jax:latest .
+          minikube image ls | grep -q 'local/jax:latest'
 
       - name: Create service account for K8s job introspection
         run: kubectl apply -f jax/examples/k8s/svc-acct.yaml
 
       - name: Submit test job
-        run: kubectl apply -f jax/ci/k8s/${{ matrix.controller }}.yaml
+        env:
+          CONTROLLER: ${{ matrix.controller }}
+        run: kubectl apply -f "jax/ci/k8s/${CONTROLLER}.yaml"
 
       - name: Check job status
         shell: bash -e -o pipefail {0}
         run: |
-          while true; do
-
+          max_attempts=100
+          for attempt in $(seq 1 "$max_attempts"); do
             completion_time=$(
               kubectl get jobs -o yaml | \
               yq '.items[] | select(.metadata.name | test("^jaxjob")) | .status.completionTime'
             )
+            failed=$(
+              kubectl get jobs -o yaml | \
+              yq '.items[] | select(.metadata.name | test("^jaxjob")) | .status.failed // 0'
+            )
             timestamp=$(date +"%Y-%m-%d %H:%M:%S")
-            echo "[$timestamp] Checking job status..."
+            echo "[$timestamp] Checking job status (attempt $attempt/$max_attempts)..."
 
-            if [ "$completion_time" == "null" ]; then
+            if [[ -n "$failed" && "$failed" != "0" && "$failed" != "null" ]]; then
+              echo "[$timestamp] Job reported $failed failed pod(s)!"
+              kubectl describe pods
+              exit 1
+            fi
+
+            if [ -z "$completion_time" ] || [ "$completion_time" == "null" ]; then
               echo "[$timestamp] Job is still running. Current pod status:"
-              kubectl get pods --no-headers
+              pod_status=$(kubectl get pods --no-headers || true)
+              echo "$pod_status"
+              if echo "$pod_status" | grep -Eq 'ErrImagePull|ImagePullBackOff|ErrImageNeverPull'; then
+                echo "[$timestamp] Pod image pull failed!"
+                kubectl describe pods
+                exit 1
+              fi
               echo "[$timestamp] Waiting for 3 seconds before checking again..."
               sleep 3
             else
@@ -93,15 +113,20 @@ jobs:
                 kubectl get jobs -o yaml | \
                 yq '.items[] | select(.metadata.name | test("^jaxjob")) | .spec.parallelism'
               )
-              if [ "$succeeded" == "$parallelism" ]; then
+              if [ -n "$succeeded" ] && [ "$succeeded" == "$parallelism" ]; then
                 echo "[$timestamp] Job has completed successfully!"
                 exit 0
               else
-                echo "[$timestamp] Job has failed!"
+                echo "[$timestamp] Job has failed (succeeded=$succeeded, parallelism=$parallelism)!"
+                kubectl describe pods
                 exit 1
               fi
             fi
           done
+
+          echo "Timed out waiting for K8s job to complete after $((max_attempts * 3))s."
+          kubectl describe pods
+          exit 1
 
       - name: Examine individual pod outputs
         if: ${{ !cancelled() }}

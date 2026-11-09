@@ -16,10 +16,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 import enum
 import functools
-import itertools
 import math
 import string
 from typing import Any
@@ -29,9 +28,10 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import debugging
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
@@ -47,7 +47,6 @@ from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
-from jax._src.state import types as state_types
 from jax.interpreters import mlir
 
 
@@ -262,12 +261,11 @@ _unpad_values_to_avoid_dynamic_slice_oob_shift = functools.partial(
 
 
 @state_discharge.register_discharge_rule(load_p)
-def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
-  del out_avals  # Unused.
+def _load_discharge_rule(ctx, *args_flat, args_tree, **_):
   ref, transforms, mask, other = args_tree.unflatten(args_flat)
   transforms = list(transforms)
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
-    ref_aval = state.transform_type(transforms, in_avals[0])
+    ref_aval = state.transform_type(transforms, ctx.in_avals[0])
     assert isinstance(ref_aval, state.AbstractRef)
     transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_aval.shape))
   *prev_transforms, idx = transforms
@@ -300,7 +298,7 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     raise NotImplementedError
   if mask is not None and other is not None:
     out = jnp.where(mask, out, other)
-  return (None,) * len(in_avals), out
+  return (None,) * len(ctx.in_avals), out
 
 
 swap_p = jax_core.Primitive('masked_swap')
@@ -386,12 +384,11 @@ ad.primitive_jvps[swap_p] = _swap_jvp
 
 
 @state_discharge.register_discharge_rule(swap_p)
-def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
-  del out_avals  # Unused.
+def _swap_discharge_rule(ctx, *args_flat, args_tree, **_):
   ref, transforms, val, mask = args_tree.unflatten(args_flat)
   transforms = list(transforms)
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
-    ref_aval = state.transform_type(transforms, in_avals[0])
+    ref_aval = state.transform_type(transforms, ctx.in_avals[0])
     assert isinstance(ref_aval, state.AbstractRef)
     transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_aval.shape))
   *prev_transforms, idx = transforms
@@ -432,7 +429,7 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     x_new = ref.at[idx.indices].set(val)
   else:
     raise NotImplementedError
-  return (x_new,) + (None,) * (len(in_avals) - 1), out
+  return (x_new,) + (None,) * (len(ctx.in_avals) - 1), out
 
 
 def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
@@ -606,8 +603,8 @@ def debug_print(fmt: str, *args: jax_typing.ArrayLike):
         conversions are not supported. If a single value is provided, the value
         may be an array. Otherwise, all values must be scalars.
       * On TPU, if all inputs are scalars: If ``fmt`` contains placeholders,
-        all values must be 32-bit integers. If there are no placeholders, the
-        values are printed after the format string.
+        all values must be 32-bit integers or floats. If there are no
+        placeholders, the values are printed after the format string.
       * On TPU, if the input is a single vector, the vector is printed after
         the format string. The format string must end with a single placeholder
         ``{}``.
@@ -639,19 +636,6 @@ def check_debug_print_format(
     )
 
 
-# All of those shenanigans are because we can't make TransformedRef a PyTree,
-# because they should appear as atomic JAX values to the users.
-# TODO(apaszke): This can be deleted once we make transforms in Mosaic GPU
-# inferred by the compiler.
-@lu.transformation2
-def wrap_with_transforms(f, transforms, *args):
-  new_args = tuple(
-      state_types.TransformedRef(a, t) if t else a
-      for a, t in zip(args, transforms)
-  )
-  return f(*new_args)
-
-
 run_scoped_p = jax_core.Primitive("run_scoped")
 run_scoped_p.multiple_results = True
 
@@ -661,10 +645,10 @@ def _run_scoped_is_high(*avals, jaxpr, **params):
 run_scoped_p.is_high = _run_scoped_is_high
 
 def _run_scoped_to_lojax(*args, jaxpr, **params):
-  closed_hi_jaxpr = jax_core.ClosedJaxpr(jaxpr, args)
+  closed_hi_jaxpr = jaxpr.with_consts(args)
   closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
   consts = closed_lo_jaxpr.consts
-  return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr.jaxpr, **params)
+  return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr, **params)
 run_scoped_p.to_lojax = _run_scoped_to_lojax
 
 def run_scoped(
@@ -686,37 +670,28 @@ def run_scoped(
   """
   if not isinstance(collective_axes, tuple):
     collective_axes = (collective_axes,)
-  flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
-  flat_fun, out_tree_thunk = api_util.flatten_fun(
-      lu.wrap_init(f,
-                   debug_info=api_util.debug_info("pallas run_scoped",
-                                                  f, types, kw_types)),
-      in_tree)
-  # We allow ref avals to be transformed references.
-  ref_avals = [t.get_ref_aval() for t in flat_types]
-  avals = [
-      t.ref if isinstance(t, state_types.TransformedRef) else t
-      for t in ref_avals
-  ]
-  # Note that only a subset of all transforms can be found here, and they are
-  # never expected to contain any arrays.
-  ref_transforms = tuple(
-      t.transforms if isinstance(t, state_types.TransformedRef) else ()
-      for t in ref_avals
-  )
-  flat_fun = wrap_with_transforms(flat_fun, ref_transforms)
+  flat_types = ft.flatten((types, kw_types),
+                          registry=tree_util.default_registry)
+  ref_avals = flat_types.map(lambda t: t.get_ref_aval())
   # Turn the function into a jaxpr. The body of run_scoped may have
   # effects (IO) on constvars (i.e. variables inherited from the
   # parent scope). Jax can't reason about effects to references that
   # are not in the invars of an operation so we just put them all
   # there.
   with config.mutable_array_checks(False):
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
-  out = run_scoped_p.bind(*consts,
+    jaxpr, out_avals = pe.trace_to_jaxpr_nocache(
+        f,
+        ref_avals,
+        api_util.debug_info("pallas run_scoped", f, types, kw_types))
+  ref_transforms = tuple(
+      s.get_ref_transforms() if hasattr(s, "get_ref_transforms") else ()
+      for s in flat_types.vals
+  )
+  out = run_scoped_p.bind(*jaxpr.consts,
                           jaxpr=jaxpr,
                           collective_axes=collective_axes,
                           ref_transforms=ref_transforms)
-  return tree_util.tree_unflatten(out_tree_thunk(), out)
+  return tree_util.tree_unflatten(out_avals.tree, out)
 
 
 @run_scoped_p.def_effectful_abstract_eval
@@ -738,41 +713,38 @@ def _run_scoped_abstract_eval(*args, jaxpr, collective_axes, **_):
 
 
 def _run_scoped_discharge_rule(
-    should_discharge,
-    in_avals,
-    out_avals,
+    ctx,
     *args_flat,
     jaxpr,
     collective_axes,
-    ref_transforms,
-    **_):
-  del out_avals
+    **params,
+):
   if collective_axes:
     raise NotImplementedError(
         "run_scoped discharge does not support collective_axes yet."
     )
-  num_consts = len(args_flat)
   # discharge_state only discharges invars, not consts, so in order to
   # discharge the requested refs we need to move them to the invar set.
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
   discharged_closed_body = state_discharge.discharge_state(
-      jax_core.ClosedJaxpr(jaxpr_noconst, ()),
-      should_discharge=should_discharge + [False] * len(jaxpr.invars),
+      jaxpr_noconst,
+      should_discharge=ctx.should_discharge + [False] * len(jaxpr.invars),
+      strip_memory_space=ctx.strip_memory_space,
   )
-  discharged_body, new_consts = discharged_closed_body.jaxpr, discharged_closed_body.consts
+  discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
     raise NotImplementedError(
         "Cannot handle new consts created by state discharge.")
 
   # Lowering expects that the jaxpr.consts to be the eqn.invals.
-  discharged_body = pe.convert_invars_to_constvars(discharged_body, num_consts)
+  discharged_body = discharged_body.with_consts(args_flat)
 
   # Run_scoped discharged the external variables but the scoped ones
   # are not discharged.
   out = run_scoped_p.bind(
       *args_flat, jaxpr=discharged_body, collective_axes=collective_axes,
-      ref_transforms=ref_transforms,
+      **params,
   )
   # Order of outputs:
   # (1) return values, (2) closed refs, (3) scoped refs.
@@ -782,12 +754,12 @@ def _run_scoped_discharge_rule(
   # body. For other values we leave them in place.
   updates = [
       ref_outputs.pop(0) if should and isinstance(aval, state.AbstractRef)
-      else None for should, aval in zip(should_discharge, in_avals)]
-  assert len(updates) == len(in_avals), f'{len(updates)} != {len(in_avals)}'
+      else None for should, aval in zip(ctx.should_discharge, ctx.in_avals)]
+  assert len(updates) == len(ctx.in_avals), f'{len(updates)} != {len(ctx.in_avals)}'
   return updates, return_values
 
 
-state_discharge.register_partial_discharge_rule(run_scoped_p)(
+state_discharge.register_discharge_rule(run_scoped_p)(
     _run_scoped_discharge_rule)
 
 
@@ -801,19 +773,18 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
   discharged_closed_body = state_discharge.discharge_state(
-      jax_core.ClosedJaxpr(jaxpr_noconst, ()), should_discharge=True)
-  discharged_body, new_consts = discharged_closed_body.jaxpr, discharged_closed_body.consts
+      jaxpr_noconst, should_discharge=True, strip_memory_space=True)
+  discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
     raise NotImplementedError(
         "Cannot handle new consts created by state discharge.")
 
   def _lower_fun(*lower_fun_args):
-    # Create inputs filled with uninitialized values to the body.
     num_consts = len(lower_fun_args)
     body_avals = [v.aval for v in discharged_body.invars[num_consts:]]
+    # Create inputs filled with uninitialized values to the body.
     init_vals = [
-        # pyrefly: ignore[missing-attribute]
-        uninitialized_value(aval.shape, aval.dtype) for aval in body_avals
+        uninitialized_value(aval.shape, aval.dtype) for aval in body_avals  # type: ignore
     ]
     out = jax_core.eval_jaxpr(discharged_body, [], *lower_fun_args, *init_vals)
     return out[:num_return_values]
@@ -851,8 +822,15 @@ def _get_global_abstract_eval(*, what):
   return what
 
 
-def _get_global_discharge_rule(in_avals, out_avals, *, what):
-  del in_avals, out_avals, what
+def _get_global_jvp(primals, tangents, *, what):
+  del primals, tangents
+  return get_global_p.bind(what=what), ad_util.Zero(what)
+
+ad.primitive_jvps[get_global_p] = _get_global_jvp
+
+
+def _get_global_discharge_rule(ctx, *, what):
+  del ctx, what
   raise NotImplementedError(
       "get_global discharge is not supported in interpret mode."
   )
@@ -941,15 +919,13 @@ def _semaphore_read_abstract_eval(
   del avals, args_tree
   return jax_core.ShapedArray((), jnp.dtype("int32"))
 
-def _semaphore_read_discharge_rule(in_avals,
-                                   out_avals,
+def _semaphore_read_discharge_rule(ctx,
                                    *flat_args,
                                    args_tree):
-  del out_avals
   [ref, transforms] = args_tree.unflatten(flat_args)
-  sem_value = _transform_semaphore(ref, transforms, in_avals[0])
+  sem_value = _transform_semaphore(ref, transforms, ctx.in_avals[0])
   sem_value = sem_value.astype(jnp.int32)
-  return (None,) * len(in_avals), sem_value
+  return (None,) * len(ctx.in_avals), sem_value
 state_discharge.register_discharge_rule(semaphore_read_p)(
     _semaphore_read_discharge_rule
 )
@@ -960,8 +936,27 @@ DeviceId = (
     | jax_typing.Array
     | None
     | tuple[int | jax_typing.Array, ...]
-    | dict[Any, int | jax_typing.Array]
+    | Mapping[Any, int | jax_typing.Array]
 )
+
+
+def canonicalize_device_id(device_id: DeviceId) -> DeviceId:
+  """Normalizes dict keys when single-axis and tuple keys are mixed."""
+  if (
+      isinstance(device_id, dict)
+      and any(isinstance(k, tuple) for k in device_id)
+      and not all(isinstance(k, tuple) for k in device_id)
+  ):
+    canonical = {
+        k if isinstance(k, tuple) else (k,): v for k, v in device_id.items()
+    }
+    if len(canonical) != len(device_id):
+      raise ValueError(
+          f"Duplicate axis key in device_id: {list(device_id.keys())}"
+      )
+    return canonical
+  return device_id
+
 
 class SemaphoreEffect(effects.Effect):
   pass
@@ -980,7 +975,7 @@ def semaphore_signal(
     inc: int | jax_typing.Array = 1,
     *,
     device_id: DeviceId = None,
-    device_id_type: DeviceIdType = DeviceIdType.MESH,
+    device_id_type: DeviceIdType | None = None,
     core_index: int | jax_typing.Array | None = None,
 ):
   """Increments the value of a semaphore.
@@ -1001,8 +996,17 @@ def semaphore_signal(
     core_index (optional): If on a multi-core device,
       specifies which core to signal.
   """
+  if device_id_type is not None:
+    deprecations.warn(
+        "jax-pallas-device-id-type",
+        "device_id_type is deprecated and will be removed in a future release.",
+        stacklevel=2,
+    )
+  else:
+    device_id_type = DeviceIdType.MESH
   ref, transforms = _get_ref_and_transforms(sem_or_view)
   inc = jnp.asarray(inc, dtype=jnp.int32)
+  device_id = canonicalize_device_id(device_id)
   args = [ref, transforms, inc, device_id, core_index]
   flat_args, args_tree = tree_util.tree_flatten(args)
   semaphore_signal_p.bind(
@@ -1102,23 +1106,22 @@ def _semaphore_signal_pp_eqn(eqn: jax_core.JaxprEqn,
 jax_core.pp_eqn_rules[semaphore_signal_p] = _semaphore_signal_pp_eqn
 
 
-def _semaphore_signal_discharge_rule(in_avals,
-                                     out_avals,
+def _semaphore_signal_discharge_rule(ctx,
                                      *flat_args,
                                      args_tree,
                                      device_id_type):
-  del out_avals, device_id_type
+  del device_id_type
   [ref, transforms, inc, device_id, core_index] = args_tree.unflatten(flat_args)
   if device_id is not None:
     raise NotImplementedError("Remote signal not implemented.")
   if core_index is not None:
     raise NotImplementedError("Multiple core support not implemented.")
-  sem_value = _transform_semaphore(ref, transforms, in_avals[0])
+  sem_value = _transform_semaphore(ref, transforms, ctx.in_avals[0])
   inc = inc.astype(pallas_core.SEMAPHORE_INTERPRET_DTYPE)
   _, new_sem_value = state_discharge.transform_swap_array(
       ref, transforms, sem_value + inc
   )
-  return (new_sem_value,) + (None,) * (len(in_avals) - 1), ()
+  return (new_sem_value,) + (None,) * (len(ctx.in_avals) - 1), ()
 state_discharge.register_discharge_rule(semaphore_signal_p)(
     _semaphore_signal_discharge_rule
 )
@@ -1181,13 +1184,11 @@ def _semaphore_wait_pp_eqn(eqn: jax_core.JaxprEqn,
   return pp.concat(parts)
 jax_core.pp_eqn_rules[semaphore_wait_p] = _semaphore_wait_pp_eqn
 
-def _semaphore_wait_discharge_rule(in_avals,
-                                     out_avals,
-                                     *flat_args,
-                                     args_tree):
-  del out_avals
+def _semaphore_wait_discharge_rule(ctx,
+                                   *flat_args,
+                                   args_tree):
   [ref, transforms, value, decrement] = args_tree.unflatten(flat_args)
-  sem_value = _transform_semaphore(ref, transforms, in_avals[0])
+  sem_value = _transform_semaphore(ref, transforms, ctx.in_avals[0])
   value = value.astype(pallas_core.SEMAPHORE_INTERPRET_DTYPE)
   if decrement:
     _, new_sem_value = state_discharge.transform_swap_array(
@@ -1195,7 +1196,7 @@ def _semaphore_wait_discharge_rule(in_avals,
     )
   else:
     new_sem_value = sem_value
-  return (new_sem_value,) + (None,) * (len(in_avals) - 1), ()
+  return (new_sem_value,) + (None,) * (len(ctx.in_avals) - 1), ()
 state_discharge.register_discharge_rule(semaphore_wait_p)(
     _semaphore_wait_discharge_rule
 )
@@ -1211,6 +1212,8 @@ def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo | None, device_i
   physical_axis_dict = {}
   # Handle joint axes (i.e., one logical axis over >1 physical axes)
   for axis_name, idx in device_id_dict.items():
+    if isinstance(axis_name, tuple) and len(axis_name) == 1:
+      axis_name = axis_name[0]
     if isinstance(axis_name, tuple) and any(
         a in mesh_axis_sizes for a in axis_name
     ):
@@ -1231,9 +1234,7 @@ def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo | None, device_i
           partial_device_idx = idx // inner_mesh_size
 
         if axis_size & (axis_size - 1) == 0:
-          device_idx = partial_device_idx & jnp.asarray(
-              axis_size - 1, dtype=partial_device_idx.dtype
-          )
+          device_idx = partial_device_idx & (axis_size - 1)
         else:
           device_idx = lax.rem(partial_device_idx, axis_size)
         physical_axis_dict[axis_name] = device_idx
@@ -1316,137 +1317,3 @@ def _delay_abstract_eval(nanos):
 def delay(nanos: int | jax_typing.Array) -> None:
   """Sleeps for the given number of nanoseconds."""
   delay_p.bind(nanos)
-
-
-jaxpr_call_p = jax_core.Primitive("jaxpr_call")
-jaxpr_call_p.multiple_results = True
-
-
-@jaxpr_call_p.def_effectful_abstract_eval
-def _jaxpr_call_abstract_eval(*args, jaxpr: jax_core.Jaxpr, **params):
-  del args, params  # Unused.
-  # Filter out input effects, since they are only relevant in the context
-  # of this ``jaxpr_call``.
-  out_effects = {
-      e for e in jaxpr.effects if not isinstance(e, effects.JaxprInputEffect)
-  }
-  return jaxpr.out_avals, out_effects
-
-
-def _jaxpr_call_pp_eqn(
-    eqn: jax_core.JaxprEqn,
-    context: jax_core.JaxprPpContext,
-    settings: jax_core.JaxprPpSettings,
-):
-  flat_args = eqn.invars
-  ref_treedefs = eqn.params["ref_treedefs"]
-  flat_refs, _ = util.split_list(
-      flat_args, [sum(treedef.num_leaves for treedef in ref_treedefs)]
-  )
-  flat_refs = util.split_list(
-      flat_refs,
-      [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
-  )
-  trailer = []
-  for treedef, flat_ref in zip(ref_treedefs, flat_refs):
-    ref = treedef.unflatten(flat_ref)
-    transforms = []
-    if isinstance(ref, tuple):
-      ref, transforms = ref
-    trailer.append(pp.text(" "))
-    trailer.append(sp.pp_ref_transforms(context, ref, transforms))
-  return pp.concat([
-      pp.text("jaxpr_call"),
-      pp.text("["),
-      jax_core.pp_kv_pair("jaxpr", eqn.params["jaxpr"], context, settings),
-      pp.text("]"),
-      pp.concat(trailer),
-  ])
-
-
-jax_core.pp_eqn_rules[jaxpr_call_p] = _jaxpr_call_pp_eqn
-
-
-@state_discharge.register_partial_discharge_rule(jaxpr_call_p)
-def _jaxpr_call_discharge(
-    flat_should_discharge,
-    in_avals,
-    out_avals,
-    *flat_args,
-    jaxpr,
-    ref_treedefs,
-    program_ids_treedef,
-):
-  del in_avals, out_avals  # Unused.
-  flat_should_discharge = util.split_list(
-      flat_should_discharge,
-      [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
-  )
-  should_discharge = [*map(any, flat_should_discharge)]
-  discharged_closed_jaxpr = state_discharge.discharge_state(
-      jax_core.ClosedJaxpr(jaxpr, ()), should_discharge=should_discharge
-  )
-  discharged_jaxpr, discharged_consts = discharged_closed_jaxpr.jaxpr, discharged_closed_jaxpr.consts
-  assert not discharged_consts
-  outs = jaxpr_call_p.bind(
-      *flat_args,
-      jaxpr=discharged_jaxpr,
-      ref_treedefs=tuple(ref_treedefs),
-      program_ids_treedef=program_ids_treedef,
-  )
-  discharged_outs_it = iter(outs[len(jaxpr.outvars) :])
-  new_in_vals = (
-      tuple(
-          itertools.chain.from_iterable(
-              [next(discharged_outs_it) if discharged else None]
-              * ref_treedefs[idx].num_leaves
-              for idx, discharged in enumerate(should_discharge)
-          )
-      )
-      + (None,) * program_ids_treedef.num_leaves
-  )
-  return new_in_vals, outs[: len(jaxpr.outvars)]
-
-
-def _jaxpr_call(
-    jaxpr: jax_core.Jaxpr,
-    *refs: state_types.AbstractRef | state_types.TransformedRef,
-    program_ids: Sequence[jax_typing.Array | None],
-) -> Sequence[jax_typing.Array]:
-  """Internal primitive for calling a kernel jaxpr inside ``emit_pipeline``.
-
-  This is *not* a general purpose primitive. In particular, it assumes that
-  the transformed references have been indexed.
-
-  Args:
-    jaxpr: The jaxpr to call.
-    *refs: The references to pass into the jaxpr.
-    program_ids: The loop-bound program IDs to pass into the jaxpr, or None if
-      the program ID corresponds to a parallel dimension.
-
-  Returns:
-    The outputs of the jaxpr.
-  """
-  assert not jaxpr.outvars
-  flat_refs = []
-  ref_treedefs = []
-  ref: Any
-  for ref in refs:
-    if isinstance(ref, state_types.TransformedRef):
-      if not isinstance(ref.transforms[-1], indexing.NDIndexer):
-        raise ValueError(
-            "TransformedRef must have been indexed before passing into"
-            f" jaxpr_call. Got {ref}."
-        )
-      ref = (ref.ref, ref.transforms)
-    flat_ref, treedef = tree_util.tree_flatten(ref)
-    flat_refs.extend(flat_ref)
-    ref_treedefs.append(treedef)
-  flat_program_ids, program_ids_treedef = tree_util.tree_flatten(program_ids)
-  return jaxpr_call_p.bind(
-      *flat_refs,
-      *flat_program_ids,
-      jaxpr=jaxpr,
-      ref_treedefs=tuple(ref_treedefs),
-      program_ids_treedef=program_ids_treedef,
-  )

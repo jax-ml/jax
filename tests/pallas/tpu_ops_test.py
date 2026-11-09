@@ -25,6 +25,7 @@ from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -90,10 +91,6 @@ class OpsTest(ptu.PallasTPUTest):
   def test_bitcast(
       self, from_dtype, to_dtype, is_ref_bitcast, use_primitive_io_op
   ):
-    affected_types = {jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz}
-    if from_dtype in affected_types or to_dtype in affected_types:
-      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-        self.skipTest("Requires libtpu built on or after 2026-05-26 for float8")
     if not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Run on TPUv4+ to have expected memory layout")
     if from_dtype == to_dtype:
@@ -136,10 +133,6 @@ class OpsTest(ptu.PallasTPUTest):
       to_dtype=_JAX_DTYPES,
   )
   def test_bitcast_scalar(self, from_dtype, to_dtype):
-    affected_types = {jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz}
-    if from_dtype in affected_types or to_dtype in affected_types:
-      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-        self.skipTest("Requires libtpu built on or after 2026-05-26 for float8")
     if from_dtype == to_dtype:
       self.skipTest("No bitcast needed")
     if dtypes.itemsize_bits(from_dtype) != dtypes.itemsize_bits(to_dtype):
@@ -197,11 +190,13 @@ class OpsTest(ptu.PallasTPUTest):
     inp = np.ascontiguousarray(
         expected.swapaxes(-1, -2)).view(np.uint32)[..., 0]
     assert inp.shape == (2, 16, 128), inp.shape
+    inp = np.moveaxis(inp, 0, axis)
+    expected = np.moveaxis(expected.reshape(2, 16 * 4, 128), 0, axis)
     out = self.pallas_call(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((2, 16 * 4, 128), jnp.uint8)
+        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.uint8)
     )(inp)
-    self.assertArraysEqual(out, expected.reshape(2, 16 * 4, 128))
+    self.assertArraysEqual(out, expected)
 
   @parameterized.parameters([jnp.int32, jnp.int16, jnp.int8, jnp.int4])
   def test_row_broadcast(self, dtype):
@@ -436,6 +431,173 @@ class OpsTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(result, expected)
 
   @parameterized.product(
+      in_shape=[(2, 29, 206), (12, 28), (32, 512)],
+      axis=[0, 1, 2],
+      reduce_func=[
+          jnp.argmax,
+          jnp.argmin,
+          functools.partial(lax.argmax, index_dtype=jnp.int16),
+          functools.partial(lax.argmin, index_dtype=jnp.int16),
+      ],
+  )
+  def test_bf16_input_reduce_index(self, in_shape, axis, reduce_func):
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+")
+    if axis >= len(in_shape):
+      self.skipTest("Requires axis < rank")
+
+    dtype = jnp.bfloat16
+    if reduce_func in (jnp.argmax, jnp.argmin):
+      index_dtype = jnp.int32
+    else:
+      index_dtype = jnp.int16
+    out_shape = list(in_shape)
+    del out_shape[axis]
+
+    def kernel(x, out):
+      out[:] = reduce_func(x[:], axis)
+
+    x = jnp.argsort(
+        jax.random.normal(jax.random.key(22), shape=in_shape),
+        axis=axis,
+    ).astype(dtype)
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype=index_dtype),
+    )(x)
+
+    np.testing.assert_array_equal(result, reduce_func(x, axis))
+
+  @parameterized.product(axis=[0, 1], reduce_func=[jnp.argmax, jnp.argmin])
+  def test_bf16_input_reduce_index_large_dim(self, axis, reduce_func):
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+")
+    # One extreme value per column / row, all >= 2^15, distinct (500 apart) and
+    # not aligned to a tile boundary (+7).
+    expected = jnp.arange(32775, 32775 + 16 * 500, 500, dtype=jnp.int32)
+    x = jax.nn.one_hot(expected, 40960, dtype=jnp.bfloat16, axis=axis)
+    if reduce_func is jnp.argmin:
+      x = -x
+
+    def kernel(x, out):
+      out[:] = reduce_func(x[:], axis)
+
+    result = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.int32)
+    )(x)
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(
+      k=[1, 2, 4, 8],
+      in_shape=[(13, 32, 512), (10, 16, 128)],
+      axis=[0, 1, 2, -1, -2, -3],
+      dtype=[jnp.float32, jnp.bfloat16],
+  )
+  def test_top_k(self, k, in_shape, axis, dtype):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Requires TPUv4+")
+    if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+ for bfloat16")
+
+    out_val_shape = list(in_shape)
+    out_val_shape[axis] = k
+
+    def kernel(x_ref, val_ref, idx_ref):
+      val_ref[...], idx_ref[...] = jax.lax.top_k(
+          x_ref[...], k=k, axis=axis, is_stable=False
+      )
+
+    # Ensure unique values in x so that no ties need to be broken.
+    idx = jnp.argsort(
+        jax.random.normal(jax.random.key(42), shape=in_shape), axis=axis
+    ).astype(jnp.float32)
+    x = (jnp.exp2(idx // 128.0) * (1.0 + (idx % 128.0) / 128.0)).astype(dtype)
+
+    res_v, res_i = self.pallas_call(
+        kernel,
+        out_shape=[
+            jax.ShapeDtypeStruct(out_val_shape, dtype),
+            jax.ShapeDtypeStruct(out_val_shape, jnp.int32),
+        ],
+    )(x)
+    exp_v, exp_i = jax.lax.top_k(x, k=k, axis=axis)
+    np.testing.assert_array_equal(res_v, exp_v)
+    np.testing.assert_array_equal(res_i, exp_i)
+
+  @parameterized.parameters(0, 1)
+  def test_bf16_top_k_large_dim(self, axis):
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+")
+    # Two extreme values per column / row, all >= 2^15, distinct (500 apart) and
+    # not aligned to a tile boundary (+7, +107).
+    idx0 = jnp.arange(32775, 32775 + 16 * 500, 500, dtype=jnp.int32)
+    idx1 = idx0 + 100
+    x = (
+        2 * jax.nn.one_hot(idx0, 40960, dtype=jnp.bfloat16, axis=axis)
+        + jax.nn.one_hot(idx1, 40960, dtype=jnp.bfloat16, axis=axis)
+    )
+    expected = jnp.stack([idx0, idx1], axis=axis)
+
+    def kernel(x, out):
+      _, out[:] = jax.lax.top_k(x[:], k=2, axis=axis, is_stable=False)
+
+    result = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.int32)
+    )(x)
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(
+      k=[1, 2, 4, 8],
+      in_shape=[(13, 32, 512), (10, 16, 1024), (9, 11, 300)],
+      axis=[0, 1, 2, -1, -2, -3],
+      dtype=[jnp.float32, jnp.bfloat16],
+      recall_target=[0.95, 0.99, 1.0],
+  )
+  def test_approx_max_k(self, k, in_shape, axis, dtype, recall_target):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Requires TPUv4+")
+    if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+ for bfloat16")
+
+    out_val_shape = list(in_shape)
+    out_val_shape[axis] = k
+
+    def kernel(x_ref, val_ref, idx_ref):
+      val_ref[...], idx_ref[...] = jax.lax.approx_max_k(
+          x_ref[...], k=k, reduction_dimension=axis, recall_target=recall_target
+      )
+
+    # Ensure unique values in x so that no ties need to be broken.
+    idx = jnp.argsort(
+        jax.random.normal(jax.random.key(42), shape=in_shape), axis=axis
+    ).astype(jnp.float32)
+    x = (jnp.exp2(idx // 128.0) * (1.0 + (idx % 128.0) / 128.0)).astype(dtype)
+
+    res_v, res_i = self.pallas_call(
+        kernel,
+        out_shape=[
+            jax.ShapeDtypeStruct(out_val_shape, dtype),
+            jax.ShapeDtypeStruct(out_val_shape, jnp.int32),
+        ],
+    )(x)
+
+    # Gather consistency: returned values must match elements at returned indices
+    gathered_v = np.take_along_axis(np.asarray(x), np.asarray(res_i), axis=axis)
+    np.testing.assert_array_equal(res_v, gathered_v)
+
+    # Descending sorted order
+    sorted_v = np.flip(np.sort(np.asarray(res_v), axis=axis), axis=axis)
+    np.testing.assert_array_equal(res_v, sorted_v)
+
+    # Statistical Recall check vs ground-truth exact top-k
+    _, gt_i = jax.lax.top_k(x, k=k, axis=axis)
+    res_i_flat = np.moveaxis(np.asarray(res_i), axis, -1).reshape(-1, k)
+    gt_i_flat = np.moveaxis(np.asarray(gt_i), axis, -1).reshape(-1, k)
+    hits = sum(len(set(r) & set(g)) for r, g in zip(res_i_flat, gt_i_flat))
+    recall = hits / gt_i_flat.size
+    self.assertGreaterEqual(recall, recall_target)
+
+  @parameterized.product(
       shape=[(129, 129), (1, 129), (2, 129), (4, 129)],
       msk_dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
       dtype=[jnp.float32, jnp.bfloat16],
@@ -569,20 +731,41 @@ class OpsTest(ptu.PallasTPUTest):
   @parameterized.product(
       idx_shape=[(8, 128), (2, 32, 256)],
       axis=[-2, -1],
+      dtype=[jnp.int32, jnp.int16, jnp.int8],
       mode=["promise_in_bounds", None],
+      wrap_negative_indices=[True, False],
   )
-  def test_dynamic_gather_along_axis(self, idx_shape, axis, mode):
+  def test_dynamic_gather_along_axis(
+      self, idx_shape, axis, dtype, mode, wrap_negative_indices
+  ):
     if (axis == -2 and not jtu.is_device_tpu_at_least(version=5)) or (
         axis == -1 and not jtu.is_device_tpu_at_least(version=4)
     ):
       self.skipTest("Requires TPUv5+ for axis=-2 and TPUv4+ for axis=-1")
-    dtype = jnp.int32
+    if dtype != jnp.int32:
+      if wrap_negative_indices:
+        self.skipTest(
+            "With wrap_negative_indices=True, jnp.take_along_axis will cast"
+            " indices to int32 causing a type mismatch for dynamic gather"
+        )
+      if (
+          dtype == jnp.int16 or (dtype == jnp.int8 and axis == -2)
+      ) and not jtu.is_device_tpu_at_least(version=6):
+        self.skipTest("Requires TPUv6+")
+
     x_shape = list(idx_shape)
     # Only a single vreg along the gather axis is supported
-    x_shape[axis] = (8, 128)[axis]
+    bitwidth = dtypes.itemsize_bits(dtype)
+    x_shape[axis] = (8 * 32 // bitwidth, 128)[axis]
 
     def kernel(x, indices, out):
-      out[...] = jnp.take_along_axis(x[...], indices[...], axis, mode=mode)
+      out[...] = jnp.take_along_axis(
+          x[...],
+          indices[...],
+          axis,
+          mode=mode,
+          wrap_negative_indices=wrap_negative_indices,
+      )
 
     x = np.arange(np.prod(x_shape), dtype=dtype).reshape(x_shape)
     idx = jax.random.randint(
@@ -590,7 +773,7 @@ class OpsTest(ptu.PallasTPUTest):
         shape=idx_shape,
         minval=0,
         maxval=x_shape[axis],
-        dtype=jnp.int32,
+        dtype=dtype,
     )
     actual = self.pallas_call(
         kernel, out_shape=jax.ShapeDtypeStruct(idx_shape, dtype)
@@ -675,12 +858,18 @@ class OpsTest(ptu.PallasTPUTest):
     tgt_shape = (16, 256)
 
     def kernel(src, tgt):
-      tgt[:] = src[tuple(pl.ds(d) for d in tgt.shape)]
+      tgt[:] = src[
+          tuple(
+              pl.ds(pl.program_id(0) * s, d)
+              for s, d in zip(src.shape, tgt.shape)
+          )
+      ]
 
     x = jnp.arange(np.prod(src_shape), dtype=jnp.float32).reshape(src_shape)
     run = pl.pallas_call(
         kernel,
         jax.ShapeDtypeStruct(tgt_shape, jnp.float32),
+        grid=(1,),
         compiler_params=pltpu.CompilerParams(disable_bounds_checks=True),
     )
     output = run(x)
@@ -804,9 +993,6 @@ class OpsTest(ptu.PallasTPUTest):
       [jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz]
   )
   def test_stochastic_round(self, target_dtype):
-    if target_dtype in {jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz}:
-      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-        self.skipTest("Requires libtpu built on or after 2026-05-26")
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Requires TPU v5+")
 
@@ -922,10 +1108,6 @@ class OpsTest(ptu.PallasTPUTest):
         version=5
     ):
       self.skipTest("Requires TPU v5+")
-    if dtypes.itemsize_bits(
-        unpacked_dtype
-    ) != 32 and not jtu.is_cloud_tpu_at_least(2026, 5, 27):
-      self.skipTest("Requires newer libtpu")
     if packed_dtype == jnp.int2:
       if not jtu.is_device_tpu_at_least(version=5):
         self.skipTest("Requires TPU v5+")
@@ -1141,6 +1323,35 @@ class OpsTest(ptu.PallasTPUTest):
         jnp.concatenate([x, y], axis=0),
     )
 
+  @parameterized.parameters(jnp.int16, jnp.uint16, jnp.bfloat16)
+  def test_concatenate_16bit_slices(self, dtype):
+    if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest(
+          "v4- does not have native vpackc support, so subnormals will be"
+          " flushed to zero."
+      )
+
+    b, r, l = np.ogrid[0:2, 0:8, 0:128]
+    x_i16 = (1000 * (r - 2) + 100 * b + l).astype(np.int16)
+    x_np = x_i16.view(dtype)
+    x = jnp.asarray(x_np)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((2, 2, 100), dtype),
+    )
+    def kernel(x_ref, o_ref):
+      x_val = x_ref[...]
+      o_ref[...] = jnp.concatenate(
+          [x_val[:, 0:1, 0:100], x_val[:, 2:3, 20:120]], axis=1
+      )
+
+    out = np.asarray(kernel(x))
+    expected = np.concatenate(
+        [x_np[:, 0:1, 0:100], x_np[:, 2:3, 20:120]], axis=1
+    )
+    np.testing.assert_array_equal(out.view(np.uint16), expected.view(np.uint16))
+
   def test_fuse_transposed_lhs_in_matmul(self):
 
     lhs_shape = (512, 128)
@@ -1178,9 +1389,6 @@ class OpsTest(ptu.PallasTPUTest):
       op=[lax.eq, lax.ne, lax.lt, lax.gt, lax.le, lax.ge],
   )
   def test_scalar_comparison(self, dtype, op):
-    if not jtu.is_cloud_tpu_at_least(2026, 6, 13):
-      self.skipTest("Requires libtpu built on or after 2026-06-13 ")
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((1,), jnp.bool_),
@@ -1206,6 +1414,914 @@ class OpsTest(ptu.PallasTPUTest):
     expected = op(x, y)
     self.assertAllClose(out, expected)
 
+  @parameterized.product(approx=[False, True], full_range=[False, True], dtype=[jnp.bfloat16, jnp.float32])
+  def test_reciprocal(self, approx, full_range, dtype):
+    if dtype == jnp.bfloat16:
+      if not jtu.is_device_tpu_at_least(6):
+        self.skipTest("BF16 reciprocal not supported before v6e.")
+      if approx:
+        self.skipTest("BF16 reciprocal does not support approx=True.")
+      if not full_range:
+        self.skipTest("BF16 reciprocal does not support full_range=False.")
+
+    shape = (32, 256)
+    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    if not full_range:
+      x = jnp.where(x == 0, -1.0, x)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = pltpu.reciprocal(
+          x_ref[...], approx=approx, full_range=full_range
+      )
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )(x)
+    kwargs = {}
+    if approx:
+      kwargs.update(dict(atol=2e-5, rtol=2e-5))
+    np.testing.assert_allclose(out, jax.lax.reciprocal(x), **kwargs)
+
+  @parameterized.product(
+      bits=[
+          (2,),
+          (4,),
+          (4, 2),
+      ]
+  )
+  def test_join_bits(self, bits):
+    if 2 in bits and not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    if 4 in bits and not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Requires TPU v4+")
+    shape = (256, 128)
+    i8_inputs = jax.random.randint(
+        jax.random.key(0),
+        shape,
+        0,
+        2**8,
+        dtype=jnp.uint8,
+    )
+    bit_inputs = []
+    shift = 0
+    for bit in bits:
+      mask = (1 << bit) - 1
+      dtype = getattr(jnp, f"int{bit}")
+      bit_inputs.append(((i8_inputs >> shift) & mask).astype(dtype))
+      shift += bit
+
+    kw_pairs = [(4, "four_bits"), (2, "two_bits")]
+
+    def kernel(*args):
+      *bit_args, o_ref = args
+      kwargs = {}
+      bit_args_list = list(bit_args)
+      for bit, kw in kw_pairs:
+        if bit in bits:
+          kwargs[kw] = bit_args_list.pop(0)[...]
+      o_ref[...] = pltpu.join_bits(**kwargs)
+
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int8),
+    )(*bit_inputs)
+    total_bits = sum(bits)
+    mask = (1 << total_bits) - 1
+    np.testing.assert_array_equal(result.astype(jnp.uint8) >> total_bits, 0)
+    np.testing.assert_array_equal(result & mask, i8_inputs & mask)
+
+  @parameterized.product(
+      bitwidths=[
+          (4, 2),
+          (2, 4),
+          (4,),
+          (2,),
+      ]
+  )
+  def test_split_bits(self, bitwidths):
+    if 2 in bitwidths and not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    if 4 in bitwidths and not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Requires TPU v4+")
+    shape = (256, 128)
+    i8_inputs = jax.random.randint(
+        jax.random.key(0),
+        shape,
+        0,
+        2**8,
+        dtype=jnp.uint8,
+    )
+
+    def kernel(x_ref, *o_refs):
+      outs = pltpu.split_bits(x_ref[...], bitwidths=bitwidths)
+      for o_ref, out in zip(o_refs, outs):
+        o_ref[...] = out
+
+    out_shapes = [
+        jax.ShapeDtypeStruct(shape, getattr(jnp, f"int{bw}"))
+        for bw in bitwidths
+    ]
+    if len(out_shapes) == 1:
+      result = self.pallas_call(
+          kernel,
+          out_shape=out_shapes[0],
+      )(i8_inputs)
+      results = [result]
+    else:
+      results = self.pallas_call(
+          kernel,
+          out_shape=tuple(out_shapes),
+      )(i8_inputs)
+
+    expected = []
+    shift = 0
+    for bw in bitwidths:
+      mask = (1 << bw) - 1
+      dtype = getattr(jnp, f"int{bw}")
+      expected.append(((i8_inputs >> shift) & mask).astype(dtype))
+      shift += bw
+
+    for res, exp in zip(results, expected):
+      np.testing.assert_array_equal(res, exp)
+
+  def test_fp6_unpack(self):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    shape = (256, 128)
+    two_bits_in = jax.random.randint(
+        jax.random.key(0), shape, -2, 2, dtype=jnp.int2
+    )
+    four_bits_in = jax.random.randint(
+        jax.random.key(1), shape, -8, 8, dtype=jnp.int4
+    )
+
+    def unpack_kernel(two_b_ref, four_b_ref, o_ref):
+      o_ref[...] = pltpu.unpack_fp6(two_b_ref[...], four_b_ref[...])
+
+    unpacked_fp6_out = self.pallas_call(
+        unpack_kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int8),
+    )(two_bits_in, four_bits_in)
+
+    # Validate that unpacking produces valid 6-bit containers (bits [7:6] are 0)
+    np.testing.assert_array_equal(unpacked_fp6_out.astype(jnp.uint8) >> 6, 0)
+    expected_unpacked = (
+        ((two_bits_in.astype(jnp.uint8) & 0x3) << 4)
+        | (four_bits_in.astype(jnp.uint8) & 0xF)
+    ).astype(jnp.int8)
+    np.testing.assert_array_equal(unpacked_fp6_out, expected_unpacked)
+
+  def test_fp6_pack(self):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    shape = (256, 128)
+    fp6_input = jax.random.randint(
+        jax.random.key(0), shape, 0, 64, dtype=jnp.uint8
+    )
+
+    def pack_kernel(fp6_ref, two_b_out_ref, four_b_out_ref):
+      two_b, four_b = pltpu.pack_fp6(fp6_ref[...])
+      two_b_out_ref[...] = two_b
+      four_b_out_ref[...] = four_b
+
+    two_bits_out, four_bits_out = self.pallas_call(
+        pack_kernel,
+        out_shape=(
+            jax.ShapeDtypeStruct(shape, jnp.int2),
+            jax.ShapeDtypeStruct(shape, jnp.int4),
+        ),
+    )(fp6_input)
+
+    expected_four_b = (fp6_input & 0xF).astype(jnp.int4)
+    expected_two_b = ((fp6_input >> 4) & 0x3).astype(jnp.int2)
+    np.testing.assert_array_equal(four_bits_out, expected_four_b)
+    np.testing.assert_array_equal(two_bits_out, expected_two_b)
+
+  def test_fp6_layout_roundtrip(self):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPU v5+")
+    shape = (256, 128)
+    two_bits_in = jax.random.randint(
+        jax.random.key(0), shape, -2, 2, dtype=jnp.int2
+    )
+    four_bits_in = jax.random.randint(
+        jax.random.key(1), shape, -8, 8, dtype=jnp.int4
+    )
+
+    def unpack_kernel(two_b_ref, four_b_ref, o_ref):
+      o_ref[...] = pltpu.unpack_fp6(two_b_ref[...], four_b_ref[...])
+
+    unpacked_fp6_out = self.pallas_call(
+        unpack_kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int8),
+    )(two_bits_in, four_bits_in)
+
+    def pack_kernel(fp6_ref, two_b_out_ref, four_b_out_ref):
+      two_b, four_b = pltpu.pack_fp6(fp6_ref[...])
+      two_b_out_ref[...] = two_b
+      four_b_out_ref[...] = four_b
+
+    two_bits_out, four_bits_out = self.pallas_call(
+        pack_kernel,
+        out_shape=(
+            jax.ShapeDtypeStruct(shape, jnp.int2),
+            jax.ShapeDtypeStruct(shape, jnp.int4),
+        ),
+    )(unpacked_fp6_out)
+
+    np.testing.assert_array_equal(two_bits_out, two_bits_in)
+    np.testing.assert_array_equal(four_bits_out, four_bits_in)
+
+  def test_load_transpose_with_sliced_leading_dim(self) -> None:
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPUv5+")
+
+    def kernel(in_ref, out_ref):
+      out_ref[...] = jnp.swapaxes(in_ref[:, 1:3], 2, 3)
+
+    in_shape = (2, 3, 8, 4, 128)
+    out_shape = (2, 2, 4, 8, 128)
+    inputs = np.arange(np.prod(in_shape), dtype=np.float32).reshape(in_shape)
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
+    )(inputs)
+    np.testing.assert_array_equal(result, np.swapaxes(inputs[:, 1:3], 2, 3))
+
+  def test_request_p_state(self):
+    if self.INTERPRET:
+      self.skipTest("Not implemented in interpret mode.")
+    # TODO(b/581748519): Remove once the minimum jaxlib and libtpu versions
+    # include tpu.request_p_state.
+    if not hasattr(tpu, "RequestPStateOp"):
+      self.skipTest("Test requires a jaxlib with tpu.request_p_state.")
+    if not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Test requires libtpu >= 0.0.52.")
+    with self.assertRaisesRegex(TypeError, "p_state must be an int"):
+      pltpu.request_p_state(jnp.int32(3))  # pytype: disable=wrong-arg-types
+
+    def negative_kernel(x_ref, y_ref):
+      pltpu.request_p_state(-1)
+      y_ref[...] = x_ref[...]
+
+    x = jnp.zeros((8, 128), jnp.float32)
+    with self.assertRaisesRegex(ValueError, "p_state must be non-negative"):
+      self.pallas_call(negative_kernel, out_shape=x)(x)
+
+    def kernel(x_ref, y_ref):
+      pltpu.request_p_state(3)
+      y_ref[...] = x_ref[...]
+
+    if not jtu.is_device_tpu_at_least(7):
+      with self.assertRaisesRegex(
+          NotImplementedError, r"request_p_state is only supported on TPU7x\+"
+      ):
+        self.pallas_call(kernel, out_shape=x)(x)
+      return
+
+    result = self.pallas_call(kernel, out_shape=x)(x)
+    np.testing.assert_array_equal(result, x)
+
+
+class ConvTest(ptu.PallasTPUTest):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Requires TPUv4+")
+    if not jtu.is_libtpu_at_least("0.1.0"):
+      self.skipTest("Mosaic TPU conv requires libtpu >= 0.1.0")
+
+  def test_conv_general_dilated_1d(self):
+    x = jax.random.normal(jax.random.key(0), (2, 16, 8), dtype=jnp.float32)
+    kernel = jax.random.normal(jax.random.key(1), (3, 8, 4), dtype=jnp.float32)
+
+    def conv_kernel(x_ref, k_ref, o_ref):
+      o_ref[...] = lax.conv_general_dilated(
+          x_ref[...],
+          k_ref[...],
+          window_strides=(1,),
+          padding=((1, 1),),
+          dimension_numbers=("NHC", "HIO", "NHC"),
+      )
+
+    out = pl.pallas_call(
+        conv_kernel,
+        out_shape=jax.ShapeDtypeStruct((2, 16, 4), jnp.float32),
+    )(x, kernel)
+    expected = lax.conv_general_dilated(
+        x,
+        kernel,
+        window_strides=(1,),
+        padding=((1, 1),),
+        dimension_numbers=("NHC", "HIO", "NHC"),
+    )
+    self.assertAllClose(out, expected, rtol=1e-5, atol=1e-5)
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="_basic",
+          lhs_shape=(1, 8, 8, 8),
+          rhs_shape=(3, 3, 8, 4),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+      ),
+      dict(
+          testcase_name="_rhs_non_contracting_spatial",
+          lhs_shape=(8, 1, 1, 128),
+          rhs_shape=(4, 8, 128, 128),
+          window_strides=(1, 1),
+          padding=((3, 3), (7, 7)),
+          window_reversal=(True, True),
+      ),
+      dict(
+          testcase_name="_padded_batch_spatial",
+          lhs_shape=(8, 4, 8, 128),
+          rhs_shape=(4, 8, 128, 128),
+          window_strides=(4, 8),
+          padding=((3, 3), (7, 7)),
+          lhs_dilation=(3, 7),
+          window_reversal=(True, True),
+      ),
+      dict(
+          testcase_name="_sliding_window_reversal",
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+          window_reversal=(True, False),
+      ),
+  )
+  def test_pltpu_conv_2d(
+      self,
+      *,
+      lhs_shape,
+      rhs_shape,
+      window_strides,
+      padding,
+      lhs_dilation=None,
+      window_reversal=None,
+  ):
+    x, kernel = self._conv_operands(lhs_shape, rhs_shape, jnp.float32)
+
+    def conv_kernel(x_ref, k_ref, o_ref):
+      o_ref[...] = pltpu.conv(
+          x_ref[...],
+          k_ref[...],
+          window_strides=window_strides,
+          padding=padding,
+          lhs_dilation=lhs_dilation,
+          window_reversal=window_reversal,
+          dimension_numbers=("NHWC", "HWIO", "NHWC"),
+      )
+
+    reversed_axes = tuple(i for i, r in enumerate(window_reversal or ()) if r)
+    ref_kernel = jnp.flip(kernel, axis=reversed_axes)
+    expected = lax.conv_general_dilated(
+        x,
+        ref_kernel,
+        window_strides=window_strides,
+        padding=padding,
+        lhs_dilation=lhs_dilation,
+        dimension_numbers=("NHWC", "HWIO", "NHWC"),
+    )
+    out = pl.pallas_call(
+        conv_kernel,
+        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+    )(x, kernel)
+    self.assertAllClose(out, expected, rtol=1e-5, atol=1e-5)
+
+  def test_conv_with_strides(self):
+    x = jax.random.normal(jax.random.key(4), (1, 10, 10, 8), dtype=jnp.float32)
+    kernel = jax.random.normal(
+        jax.random.key(5), (2, 2, 8, 4), dtype=jnp.float32
+    )
+
+    def conv_kernel(x_ref, k_ref, o_ref):
+      o_ref[...] = pltpu.conv(
+          x_ref[...],
+          k_ref[...],
+          window_strides=(2, 2),
+          padding=((0, 0), (0, 0)),
+          dimension_numbers=("NHWC", "HWIO", "NHWC"),
+      )
+
+    out = pl.pallas_call(
+        conv_kernel,
+        out_shape=jax.ShapeDtypeStruct((1, 5, 5, 4), jnp.float32),
+    )(x, kernel)
+    expected = lax.conv_general_dilated(
+        x,
+        kernel,
+        window_strides=(2, 2),
+        padding="VALID",
+        dimension_numbers=("NHWC", "HWIO", "NHWC"),
+    )
+    self.assertAllClose(out, expected, rtol=1e-5, atol=1e-5)
+
+  def test_conv_with_preferred_element_type(self):
+    x, kernel = self._conv_operands(
+        (1, 8, 8, 8), (3, 3, 8, 4), jnp.bfloat16, seed=6
+    )
+
+    def conv_kernel(x_ref, k_ref, o_ref):
+      o_ref[...] = pltpu.conv(
+          x_ref[...],
+          k_ref[...],
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          dimension_numbers=("NHWC", "HWIO", "NHWC"),
+          preferred_element_type=jnp.float32,
+      )
+
+    out = pl.pallas_call(
+        conv_kernel,
+        out_shape=jax.ShapeDtypeStruct((1, 8, 8, 4), jnp.float32),
+    )(x, kernel)
+    expected = lax.conv_general_dilated(
+        x,
+        kernel,
+        window_strides=(1, 1),
+        padding="SAME",
+        dimension_numbers=("NHWC", "HWIO", "NHWC"),
+        preferred_element_type=jnp.float32,
+    )
+    np.testing.assert_array_equal(out, expected)
+
+  def _conv_operands(self, lhs_shape, rhs_shape, dtype, seed=1234):
+    """Small integer-valued operands, so bf16 MXU passes stay exact."""
+    k1, k2 = jax.random.split(jax.random.key(seed))
+    lhs = jax.random.randint(
+        k1, lhs_shape, minval=-4, maxval=5, dtype=jnp.int32
+    ).astype(dtype)
+    rhs = jax.random.randint(
+        k2, rhs_shape, minval=-4, maxval=5, dtype=jnp.int32
+    ).astype(dtype)
+    return lhs, rhs
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="_1x1",
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(1, 1, 128, 256),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+      ),
+      dict(
+          testcase_name="_3x3_same",
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+      ),
+      dict(
+          testcase_name="_3x3_valid",
+          lhs_shape=(1, 10, 10, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+      ),
+      dict(
+          testcase_name="_3x3_strided",
+          lhs_shape=(1, 16, 16, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(2, 2),
+          padding=((1, 1), (1, 1)),
+      ),
+      dict(
+          testcase_name="_2x2_atrous",
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(2, 2, 128, 128),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+          rhs_dilation=(2, 2),
+      ),
+      dict(
+          testcase_name="_2x2_transposed",
+          lhs_shape=(1, 4, 4, 128),
+          rhs_shape=(2, 2, 128, 128),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          lhs_dilation=(2, 2),
+      ),
+      dict(
+          testcase_name="_3x5_transposed",
+          lhs_shape=(1, 4, 4, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          lhs_dilation=(3, 5),
+      ),
+      dict(
+          testcase_name="_3x3_negative_padding",
+          lhs_shape=(1, 12, 12, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(1, 1),
+          padding=((-1, -1), (-1, 2)),
+      ),
+      dict(
+          testcase_name="_batched",
+          lhs_shape=(4, 8, 8, 128),
+          rhs_shape=(3, 3, 128, 128),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+      ),
+      dict(
+          testcase_name="_feature_grouped_2x",
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(3, 3, 64, 128),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          feature_group_count=2,
+      ),
+      dict(
+          testcase_name="_feature_grouped_4x",
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(3, 3, 32, 128),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          feature_group_count=4,
+      ),
+      dict(
+          testcase_name="_depthwise",
+          lhs_shape=(1, 8, 8, 16),
+          rhs_shape=(3, 3, 1, 16),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          feature_group_count=16,
+      ),
+      dict(
+          testcase_name="_batch_grouped_2x",
+          lhs_shape=(4, 8, 8, 128),
+          rhs_shape=(3, 3, 128, 64),
+          window_strides=(1, 1),
+          padding=((1, 1), (1, 1)),
+          batch_group_count=2,
+      ),
+      dict(
+          testcase_name="_mixed_degenerate",
+          lhs_shape=(8, 1, 16, 128),
+          rhs_shape=(1, 3, 128, 128),
+          window_strides=(1, 1),
+          padding=((0, 0), (1, 1)),
+      ),
+      dict(
+          testcase_name="_lhs_non_contracting_spatial",
+          lhs_shape=(2, 1, 8, 128),
+          rhs_shape=(1, 1, 128, 128),
+          window_strides=(1, 1),
+          padding=((0, 0), (0, 0)),
+      ),
+      dict(
+          testcase_name="_unpadded_batch_spatial",
+          lhs_shape=(8, 4, 8, 128),
+          rhs_shape=(4, 8, 128, 128),
+          window_strides=(3, 7),
+          padding=((0, 0), (0, 0)),
+          lhs_dilation=(4, 8),
+      ),
+  )
+  def test_conv_general_dilated(
+      self,
+      *,
+      lhs_shape,
+      rhs_shape,
+      window_strides,
+      padding,
+      lhs_dilation=None,
+      rhs_dilation=None,
+      feature_group_count=1,
+      batch_group_count=1,
+  ):
+    dimension_numbers = ("NHWC", "HWIO", "NHWC")
+    conv = functools.partial(
+        jax.lax.conv_general_dilated,
+        window_strides=window_strides,
+        padding=padding,
+        lhs_dilation=lhs_dilation,
+        rhs_dilation=rhs_dilation,
+        dimension_numbers=dimension_numbers,
+        feature_group_count=feature_group_count,
+        batch_group_count=batch_group_count,
+    )
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = conv(x_ref[...], w_ref[...])
+
+    lhs, rhs = self._conv_operands(lhs_shape, rhs_shape, jnp.float32)
+    expected = conv(lhs, rhs)
+    out = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
+    result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="_nchw_hwio_nhwc",
+          dimension_numbers=("NCHW", "HWIO", "NHWC"),
+          lhs_shape=(1, 128, 8, 8),
+          rhs_shape=(3, 3, 128, 128),
+      ),
+      dict(
+          testcase_name="_nhwc_ihwo_nhwc",
+          dimension_numbers=("NHWC", "IHWO", "NHWC"),
+          lhs_shape=(1, 8, 8, 128),
+          rhs_shape=(128, 3, 3, 128),
+      ),
+      dict(
+          testcase_name="_nchw_hwio_nchw",
+          dimension_numbers=("NCHW", "HWIO", "NCHW"),
+          lhs_shape=(1, 128, 8, 8),
+          rhs_shape=(3, 3, 128, 128),
+      ),
+      dict(
+          testcase_name="_nhwc_hwio_hwnc",
+          dimension_numbers=("NHWC", "HWIO", "HWNC"),
+          lhs_shape=(2, 8, 8, 128),
+          rhs_shape=(3, 3, 128, 128),
+      ),
+  )
+  def test_conv_dimension_numbers(
+      self, *, dimension_numbers, lhs_shape, rhs_shape
+  ):
+    conv = functools.partial(
+        jax.lax.conv_general_dilated,
+        window_strides=(1, 1),
+        padding="SAME",
+        dimension_numbers=dimension_numbers,
+    )
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = conv(x_ref[...], w_ref[...])
+
+    lhs, rhs = self._conv_operands(lhs_shape, rhs_shape, jnp.float32)
+    expected = conv(lhs, rhs)
+    out = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
+    result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+    np.testing.assert_array_equal(result, expected)
+
+  def test_conv_0d(self):
+    conv = functools.partial(
+        jax.lax.conv_general_dilated,
+        window_strides=(),
+        padding=(),
+        dimension_numbers=("NC", "IO", "NC"),
+    )
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = conv(x_ref[...], w_ref[...])
+
+    lhs, rhs = self._conv_operands((8, 128), (128, 128), jnp.float32)
+    expected = conv(lhs, rhs)
+    out = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
+    result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+    np.testing.assert_array_equal(result, expected)
+
+  def test_conv_1d(self):
+    conv = functools.partial(
+        jax.lax.conv_general_dilated,
+        window_strides=(2,),
+        padding=((1, 1),),
+        rhs_dilation=(2,),
+        dimension_numbers=("NWC", "WIO", "NWC"),
+    )
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = conv(x_ref[...], w_ref[...])
+
+    lhs, rhs = self._conv_operands((8, 16, 128), (3, 128, 128), jnp.float32)
+    expected = conv(lhs, rhs)
+    out = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
+    result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+    np.testing.assert_array_equal(result, expected)
+
+  def test_conv_3d(self):
+    conv = functools.partial(
+        jax.lax.conv_general_dilated,
+        window_strides=(1, 1, 1),
+        padding="SAME",
+        dimension_numbers=("NDHWC", "DHWIO", "NDHWC"),
+    )
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = conv(x_ref[...], w_ref[...])
+
+    lhs, rhs = self._conv_operands(
+        (1, 2, 4, 8, 128), (2, 3, 3, 128, 128), jnp.float32
+    )
+    expected = conv(lhs, rhs)
+    out = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
+    result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.parameters(
+      (jnp.float32, None),
+      (jnp.bfloat16, jnp.float32),
+      (jnp.float32, jnp.float32),
+  )
+  def test_conv_dtypes(self, dtype, preferred_element_type):
+    conv = functools.partial(
+        jax.lax.conv_general_dilated,
+        window_strides=(1, 1),
+        padding="SAME",
+        dimension_numbers=("NHWC", "HWIO", "NHWC"),
+        preferred_element_type=preferred_element_type,
+    )
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = conv(x_ref[...], w_ref[...])
+
+    lhs, rhs = self._conv_operands((1, 8, 8, 128), (3, 3, 128, 128), dtype)
+    expected = conv(lhs, rhs)
+    out = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
+    result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+    self.assertEqual(result.dtype, expected.dtype)
+    np.testing.assert_array_equal(result, expected)
+
+  def _pallas_dot_supports(self, dtype, preferred_element_type):
+    """Whether a Pallas dot_general accepts these dtypes on this chip."""
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = jax.lax.dot_general(
+          x_ref[...],
+          w_ref[...],
+          (((1,), (0,)), ((), ())),
+          preferred_element_type=preferred_element_type,
+      )
+
+    lhs, rhs = self._conv_operands((128, 128), (128, 128), dtype)
+    out = jax.ShapeDtypeStruct(
+        (128, 128), jnp.dtype(preferred_element_type or dtype)
+    )
+    try:
+      self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+    except Exception:
+      return False
+    return True
+
+  # A convolution lowers to a chain of tpu.matmul, so it must accept exactly
+  # the dtype combinations a Pallas dot_general accepts on the same chip. The
+  # test probes dot_general first and only skips when it is unsupported too, so
+  # any combination where conv is more restrictive than matmul fails here.
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="_int8",
+          dtype=jnp.int8,
+          preferred_element_type=jnp.int32,
+      ),
+      dict(
+          testcase_name="_int8_f32_acc",
+          dtype=jnp.int8,
+          preferred_element_type=jnp.float32,
+      ),
+      dict(
+          testcase_name="_int4",
+          dtype=jnp.int4,
+          preferred_element_type=jnp.int32,
+      ),
+      dict(
+          testcase_name="_f8e5m2",
+          dtype=jnp.float8_e5m2,
+          preferred_element_type=jnp.float32,
+      ),
+      dict(
+          testcase_name="_f8e4m3fn",
+          dtype=jnp.float8_e4m3fn,
+          preferred_element_type=jnp.float32,
+      ),
+  )
+  def test_conv_narrow_dtypes(self, *, dtype, preferred_element_type):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("TPUv5+ needed for narrow dtype matmuls")
+    if not self._pallas_dot_supports(dtype, preferred_element_type):
+      self.skipTest(
+          f"dot_general does not support {dtype.__name__} with a"
+          f" {preferred_element_type.__name__} accumulator on this chip either"
+      )
+    conv = functools.partial(
+        jax.lax.conv_general_dilated,
+        window_strides=(1, 1),
+        padding="SAME",
+        dimension_numbers=("NHWC", "HWIO", "NHWC"),
+        preferred_element_type=preferred_element_type,
+    )
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = conv(x_ref[...], w_ref[...])
+
+    lhs, rhs = self._conv_operands((1, 8, 8, 128), (3, 3, 128, 128), dtype)
+    expected = conv(lhs, rhs)
+    out = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
+    result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+    self.assertEqual(result.dtype, expected.dtype)
+    np.testing.assert_array_equal(result, expected)
+
+  def test_conv_unsupported_dtype_reports_an_error(self):
+    # An unsupported operand dtype must surface as a lowering error rather than
+    # crashing the compiler inside canonicalize-mosaic.
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("TPUv5+ needed for narrow dtype matmuls")
+    if self._pallas_dot_supports(jnp.int8, jnp.float32):
+      self.skipTest("This chip supports an int8 matmul with a float32 acc")
+    conv = functools.partial(
+        jax.lax.conv_general_dilated,
+        window_strides=(1, 1),
+        padding="SAME",
+        dimension_numbers=("NHWC", "HWIO", "NHWC"),
+        preferred_element_type=jnp.float32,
+    )
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = conv(x_ref[...], w_ref[...])
+
+    lhs, rhs = self._conv_operands((1, 8, 8, 128), (3, 3, 128, 128), jnp.int8)
+    out = jax.ShapeDtypeStruct((1, 8, 8, 128), jnp.float32)
+    with self.assertRaises(Exception):
+      self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+
+  @parameterized.parameters(
+      jax.lax.Precision.DEFAULT,
+      jax.lax.Precision.HIGHEST,
+  )
+  def test_conv_precision(self, precision):
+    conv = functools.partial(
+        jax.lax.conv_general_dilated,
+        window_strides=(1, 1),
+        padding="SAME",
+        dimension_numbers=("NHWC", "HWIO", "NHWC"),
+        precision=precision,
+    )
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = conv(x_ref[...], w_ref[...])
+
+    lhs, rhs = self._conv_operands(
+        (1, 8, 8, 128), (3, 3, 128, 128), jnp.float32
+    )
+    expected = conv(lhs, rhs)
+    out = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
+    result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+    np.testing.assert_array_equal(result, expected)
+
+  def test_pltpu_conv(self):
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[...] = pltpu.conv(
+          x_ref[...],
+          w_ref[...],
+          window_strides=(1, 1),
+          padding="SAME",
+          dimension_numbers=("NHWC", "HWIO", "NHWC"),
+      )
+
+    lhs, rhs = self._conv_operands(
+        (1, 8, 8, 128), (3, 3, 128, 128), jnp.float32
+    )
+    expected = jax.lax.conv_general_dilated(
+        lhs,
+        rhs,
+        window_strides=(1, 1),
+        padding="SAME",
+        dimension_numbers=("NHWC", "HWIO", "NHWC"),
+    )
+    out = jax.ShapeDtypeStruct(expected.shape, expected.dtype)
+    result = self.pallas_call(kernel, out_shape=out)(lhs, rhs)
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.parameters(jnp.uint32, jnp.int32)
+  def test_mulhi(self, dtype):
+    shape = (8, 128)
+    rng = np.random.default_rng(42)
+    if dtype == jnp.uint32:
+      x_np = rng.integers(0, 2**32 - 1, size=shape, dtype=np.uint32, endpoint=True)
+      y_np = rng.integers(0, 2**32 - 1, size=shape, dtype=np.uint32, endpoint=True)
+      x_np.ravel()[:4] = [0, 1, 2**32 - 1, 2**31]
+      y_np.ravel()[:4] = [2**32 - 1, 2**32 - 1, 2**32 - 1, 2]
+    else:
+      x_np = rng.integers(-(2**31), 2**31 - 1, size=shape, dtype=np.int32, endpoint=True)
+      y_np = rng.integers(-(2**31), 2**31 - 1, size=shape, dtype=np.int32, endpoint=True)
+      x_np.ravel()[:4] = [0, 1, -1, -(2**31)]
+      y_np.ravel()[:4] = [-(2**31), 2**31 - 1, -1, -(2**31)]
+    x = jnp.asarray(x_np)
+    y = jnp.asarray(y_np)
+
+    def hi_kernel(x_ref, y_ref, hi_ref):
+      hi_ref[...] = jax.lax.mulhi(x_ref[...], y_ref[...])
+
+    out_spec = jax.ShapeDtypeStruct(shape, dtype)
+    hi_got = self.pallas_call(hi_kernel, out_shape=out_spec)(x, y)
+    np.testing.assert_array_equal(hi_got, jax.lax.mulhi(x, y))
+
+    def hilo_kernel(x_ref, y_ref, lo_ref, hi_ref):
+      a, b = x_ref[...], y_ref[...]
+      lo_ref[...] = a * b
+      hi_ref[...] = jax.lax.mulhi(a, b)
+
+    lo_got, hi_got = self.pallas_call(
+        hilo_kernel, out_shape=(out_spec, out_spec)
+    )(x, y)
+    np.testing.assert_array_equal(lo_got, x * y)
+    np.testing.assert_array_equal(hi_got, jax.lax.mulhi(x, y))
+
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

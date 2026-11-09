@@ -49,7 +49,7 @@ def matmul(
     *,
     block_shape,
     block_k: int = 256,
-    out_dtype: jnp.dtype | None = None,
+    out_dtype: jax.typing.DTypeLike | None = None,
     debug: bool = False,
 ) -> jax.Array:
   if out_dtype is None:

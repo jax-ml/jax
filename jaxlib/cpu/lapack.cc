@@ -29,6 +29,134 @@ namespace nb = nanobind;
 
 using ::xla::ffi::DataType;
 
+template <typename IntType>
+void RegisterBlasKernels(nb::dict blas_capi) {
+  auto blas_ptr = [&](const char* name) {
+    return nb::cast<nb::capsule>(blas_capi[name]).data();
+  };
+  AssignKernelFn<TriMatrixEquationSolver<DataType::F32, IntType>>(
+      blas_ptr("strsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::F64, IntType>>(
+      blas_ptr("dtrsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::C64, IntType>>(
+      blas_ptr("ctrsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::C128, IntType>>(
+      blas_ptr("ztrsm"));
+}
+
+template <typename IntType>
+void RegisterLapackKernels(nb::dict lapack_capi) {
+  auto lapack_ptr = [&](const char* name) {
+    return nb::cast<nb::capsule>(lapack_capi[name]).data();
+  };
+  AssignKernelFn<LuDecomposition<DataType::F32, IntType>>(lapack_ptr("sgetrf"));
+  AssignKernelFn<LuDecomposition<DataType::F64, IntType>>(lapack_ptr("dgetrf"));
+  AssignKernelFn<LuDecomposition<DataType::C64, IntType>>(lapack_ptr("cgetrf"));
+  AssignKernelFn<LuDecomposition<DataType::C128, IntType>>(
+      lapack_ptr("zgetrf"));
+
+  AssignKernelFn<QrFactorization<DataType::F32, IntType>>(lapack_ptr("sgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::F64, IntType>>(lapack_ptr("dgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::C64, IntType>>(lapack_ptr("cgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::C128, IntType>>(
+      lapack_ptr("zgeqrf"));
+
+  AssignKernelFn<PivotingQrFactorization<DataType::F32, IntType>>(
+      lapack_ptr("sgeqp3"));
+  AssignKernelFn<PivotingQrFactorization<DataType::F64, IntType>>(
+      lapack_ptr("dgeqp3"));
+  AssignKernelFn<PivotingQrFactorization<DataType::C64, IntType>>(
+      lapack_ptr("cgeqp3"));
+  AssignKernelFn<PivotingQrFactorization<DataType::C128, IntType>>(
+      lapack_ptr("zgeqp3"));
+
+  AssignKernelFn<OrthogonalQr<DataType::F32, IntType>>(lapack_ptr("sorgqr"));
+  AssignKernelFn<OrthogonalQr<DataType::F64, IntType>>(lapack_ptr("dorgqr"));
+  AssignKernelFn<OrthogonalQr<DataType::C64, IntType>>(lapack_ptr("cungqr"));
+  AssignKernelFn<OrthogonalQr<DataType::C128, IntType>>(lapack_ptr("zungqr"));
+
+  AssignKernelFn<OrthogonalQrMultiply<DataType::F32, IntType>>(
+      lapack_ptr("sormqr"));
+  AssignKernelFn<OrthogonalQrMultiply<DataType::F64, IntType>>(
+      lapack_ptr("dormqr"));
+  AssignKernelFn<OrthogonalQrMultiply<DataType::C64, IntType>>(
+      lapack_ptr("cunmqr"));
+  AssignKernelFn<OrthogonalQrMultiply<DataType::C128, IntType>>(
+      lapack_ptr("zunmqr"));
+
+  AssignKernelFn<CholeskyFactorization<DataType::F32, IntType>>(
+      lapack_ptr("spotrf"));
+  AssignKernelFn<CholeskyFactorization<DataType::F64, IntType>>(
+      lapack_ptr("dpotrf"));
+  AssignKernelFn<CholeskyFactorization<DataType::C64, IntType>>(
+      lapack_ptr("cpotrf"));
+  AssignKernelFn<CholeskyFactorization<DataType::C128, IntType>>(
+      lapack_ptr("zpotrf"));
+
+  AssignKernelFn<svd::SVDType<DataType::F32, IntType>>(lapack_ptr("sgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::F64, IntType>>(lapack_ptr("dgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::C64, IntType>>(lapack_ptr("cgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::C128, IntType>>(lapack_ptr("zgesdd"));
+  AssignKernelFn<svd::SVDQRType<DataType::F32, IntType>>(lapack_ptr("sgesvd"));
+  AssignKernelFn<svd::SVDQRType<DataType::F64, IntType>>(lapack_ptr("dgesvd"));
+  AssignKernelFn<svd::SVDQRType<DataType::C64, IntType>>(lapack_ptr("cgesvd"));
+  AssignKernelFn<svd::SVDQRType<DataType::C128, IntType>>(lapack_ptr("zgesvd"));
+
+  AssignKernelFn<EigenvalueDecompositionSymmetric<DataType::F32, IntType>>(
+      lapack_ptr("ssyevd"));
+  AssignKernelFn<EigenvalueDecompositionSymmetric<DataType::F64, IntType>>(
+      lapack_ptr("dsyevd"));
+  AssignKernelFn<EigenvalueDecompositionHermitian<DataType::C64, IntType>>(
+      lapack_ptr("cheevd"));
+  AssignKernelFn<EigenvalueDecompositionHermitian<DataType::C128, IntType>>(
+      lapack_ptr("zheevd"));
+
+  AssignKernelFn<EigenvalueDecomposition<DataType::F32, IntType>>(
+      lapack_ptr("sgeev"));
+  AssignKernelFn<EigenvalueDecomposition<DataType::F64, IntType>>(
+      lapack_ptr("dgeev"));
+  AssignKernelFn<EigenvalueDecompositionComplex<DataType::C64, IntType>>(
+      lapack_ptr("cgeev"));
+  AssignKernelFn<EigenvalueDecompositionComplex<DataType::C128, IntType>>(
+      lapack_ptr("zgeev"));
+
+  AssignKernelFn<SchurDecomposition<DataType::F32, IntType>>(
+      lapack_ptr("sgees"));
+  AssignKernelFn<SchurDecomposition<DataType::F64, IntType>>(
+      lapack_ptr("dgees"));
+  AssignKernelFn<SchurDecompositionComplex<DataType::C64, IntType>>(
+      lapack_ptr("cgees"));
+  AssignKernelFn<SchurDecompositionComplex<DataType::C128, IntType>>(
+      lapack_ptr("zgees"));
+
+  AssignKernelFn<HessenbergDecomposition<DataType::F32, IntType>>(
+      lapack_ptr("sgehrd"));
+  AssignKernelFn<HessenbergDecomposition<DataType::F64, IntType>>(
+      lapack_ptr("dgehrd"));
+  AssignKernelFn<HessenbergDecomposition<DataType::C64, IntType>>(
+      lapack_ptr("cgehrd"));
+  AssignKernelFn<HessenbergDecomposition<DataType::C128, IntType>>(
+      lapack_ptr("zgehrd"));
+
+  AssignKernelFn<TridiagonalReduction<DataType::F32, IntType>>(
+      lapack_ptr("ssytrd"));
+  AssignKernelFn<TridiagonalReduction<DataType::F64, IntType>>(
+      lapack_ptr("dsytrd"));
+  AssignKernelFn<TridiagonalReduction<DataType::C64, IntType>>(
+      lapack_ptr("chetrd"));
+  AssignKernelFn<TridiagonalReduction<DataType::C128, IntType>>(
+      lapack_ptr("zhetrd"));
+
+  AssignKernelFn<TridiagonalSolver<DataType::F32, IntType>>(
+      lapack_ptr("sgtsv"));
+  AssignKernelFn<TridiagonalSolver<DataType::F64, IntType>>(
+      lapack_ptr("dgtsv"));
+  AssignKernelFn<TridiagonalSolver<DataType::C64, IntType>>(
+      lapack_ptr("cgtsv"));
+  AssignKernelFn<TridiagonalSolver<DataType::C128, IntType>>(
+      lapack_ptr("zgtsv"));
+}
+
 void GetLapackKernelsFromScipy() {
   static xla::SafeStatic<bool> initialized;
   initialized.Get([]() {
@@ -43,135 +171,28 @@ void GetLapackKernelsFromScipy() {
         nb::module_::import_("scipy.linalg.cython_lapack");
 
     nb::dict blas_capi = cython_blas.attr("__pyx_capi__");
-    auto blas_ptr = [&](const char* name) {
-      return nb::cast<nb::capsule>(blas_capi[name]).data();
-    };
-
-    AssignKernelFn<TriMatrixEquationSolver<DataType::F32, int32_t>>(
-        blas_ptr("strsm"));
-    AssignKernelFn<TriMatrixEquationSolver<DataType::F64, int32_t>>(
-        blas_ptr("dtrsm"));
-    AssignKernelFn<TriMatrixEquationSolver<DataType::C64, int32_t>>(
-        blas_ptr("ctrsm"));
-    AssignKernelFn<TriMatrixEquationSolver<DataType::C128, int32_t>>(
-        blas_ptr("ztrsm"));
-
     nb::dict lapack_capi = cython_lapack.attr("__pyx_capi__");
-    auto lapack_ptr = [&](const char* name) {
-      return nb::cast<nb::capsule>(lapack_capi[name]).data();
-    };
-    AssignKernelFn<LuDecomposition<DataType::F32, int32_t>>(
-        lapack_ptr("sgetrf"));
-    AssignKernelFn<LuDecomposition<DataType::F64, int32_t>>(
-        lapack_ptr("dgetrf"));
-    AssignKernelFn<LuDecomposition<DataType::C64, int32_t>>(
-        lapack_ptr("cgetrf"));
-    AssignKernelFn<LuDecomposition<DataType::C128, int32_t>>(
-        lapack_ptr("zgetrf"));
 
-    AssignKernelFn<QrFactorization<DataType::F32, int32_t>>(
-        lapack_ptr("sgeqrf"));
-    AssignKernelFn<QrFactorization<DataType::F64, int32_t>>(
-        lapack_ptr("dgeqrf"));
-    AssignKernelFn<QrFactorization<DataType::C64, int32_t>>(
-        lapack_ptr("cgeqrf"));
-    AssignKernelFn<QrFactorization<DataType::C128, int32_t>>(
-        lapack_ptr("zgeqrf"));
+    int blas_int_size = 4;
+    if (nb::hasattr(cython_blas, "_blas_int_size")) {
+      blas_int_size = nb::cast<int>(cython_blas.attr("_blas_int_size")());
+    }
+    if (blas_int_size == 8) {
+      RegisterBlasKernels<int64_t>(blas_capi);
+    } else {
+      RegisterBlasKernels<int32_t>(blas_capi);
+    }
 
-    AssignKernelFn<PivotingQrFactorization<DataType::F32, int32_t>>(
-        lapack_ptr("sgeqp3"));
-    AssignKernelFn<PivotingQrFactorization<DataType::F64, int32_t>>(
-        lapack_ptr("dgeqp3"));
-    AssignKernelFn<PivotingQrFactorization<DataType::C64, int32_t>>(
-        lapack_ptr("cgeqp3"));
-    AssignKernelFn<PivotingQrFactorization<DataType::C128, int32_t>>(
-        lapack_ptr("zgeqp3"));
+    int lapack_int_size = 4;
+    if (nb::hasattr(cython_lapack, "_blas_int_size")) {
+      lapack_int_size = nb::cast<int>(cython_lapack.attr("_blas_int_size")());
+    }
+    if (lapack_int_size == 8) {
+      RegisterLapackKernels<int64_t>(lapack_capi);
+    } else {
+      RegisterLapackKernels<int32_t>(lapack_capi);
+    }
 
-    AssignKernelFn<OrthogonalQr<DataType::F32, int32_t>>(lapack_ptr("sorgqr"));
-    AssignKernelFn<OrthogonalQr<DataType::F64, int32_t>>(lapack_ptr("dorgqr"));
-    AssignKernelFn<OrthogonalQr<DataType::C64, int32_t>>(lapack_ptr("cungqr"));
-    AssignKernelFn<OrthogonalQr<DataType::C128, int32_t>>(lapack_ptr("zungqr"));
-
-    AssignKernelFn<OrthogonalQrMultiply<DataType::F32, int32_t>>(
-        lapack_ptr("sormqr"));
-    AssignKernelFn<OrthogonalQrMultiply<DataType::F64, int32_t>>(
-        lapack_ptr("dormqr"));
-    AssignKernelFn<OrthogonalQrMultiply<DataType::C64, int32_t>>(
-        lapack_ptr("cunmqr"));
-    AssignKernelFn<OrthogonalQrMultiply<DataType::C128, int32_t>>(
-        lapack_ptr("zunmqr"));
-
-    AssignKernelFn<CholeskyFactorization<DataType::F32, int32_t>>(
-        lapack_ptr("spotrf"));
-    AssignKernelFn<CholeskyFactorization<DataType::F64, int32_t>>(
-        lapack_ptr("dpotrf"));
-    AssignKernelFn<CholeskyFactorization<DataType::C64, int32_t>>(
-        lapack_ptr("cpotrf"));
-    AssignKernelFn<CholeskyFactorization<DataType::C128, int32_t>>(
-        lapack_ptr("zpotrf"));
-
-    AssignKernelFn<svd::SVDType<DataType::F32>>(lapack_ptr("sgesdd"));
-    AssignKernelFn<svd::SVDType<DataType::F64>>(lapack_ptr("dgesdd"));
-    AssignKernelFn<svd::SVDType<DataType::C64>>(lapack_ptr("cgesdd"));
-    AssignKernelFn<svd::SVDType<DataType::C128>>(lapack_ptr("zgesdd"));
-    AssignKernelFn<svd::SVDQRType<DataType::F32>>(lapack_ptr("sgesvd"));
-    AssignKernelFn<svd::SVDQRType<DataType::F64>>(lapack_ptr("dgesvd"));
-    AssignKernelFn<svd::SVDQRType<DataType::C64>>(lapack_ptr("cgesvd"));
-    AssignKernelFn<svd::SVDQRType<DataType::C128>>(lapack_ptr("zgesvd"));
-
-    AssignKernelFn<EigenvalueDecompositionSymmetric<DataType::F32, int32_t>>(
-        lapack_ptr("ssyevd"));
-    AssignKernelFn<EigenvalueDecompositionSymmetric<DataType::F64, int32_t>>(
-        lapack_ptr("dsyevd"));
-    AssignKernelFn<EigenvalueDecompositionHermitian<DataType::C64, int32_t>>(
-        lapack_ptr("cheevd"));
-    AssignKernelFn<EigenvalueDecompositionHermitian<DataType::C128, int32_t>>(
-        lapack_ptr("zheevd"));
-
-    AssignKernelFn<EigenvalueDecomposition<DataType::F32, int32_t>>(
-        lapack_ptr("sgeev"));
-    AssignKernelFn<EigenvalueDecomposition<DataType::F64, int32_t>>(
-        lapack_ptr("dgeev"));
-    AssignKernelFn<EigenvalueDecompositionComplex<DataType::C64, int32_t>>(
-        lapack_ptr("cgeev"));
-    AssignKernelFn<EigenvalueDecompositionComplex<DataType::C128, int32_t>>(
-        lapack_ptr("zgeev"));
-
-    AssignKernelFn<SchurDecomposition<DataType::F32, int32_t>>(
-        lapack_ptr("sgees"));
-    AssignKernelFn<SchurDecomposition<DataType::F64, int32_t>>(
-        lapack_ptr("dgees"));
-    AssignKernelFn<SchurDecompositionComplex<DataType::C64, int32_t>>(
-        lapack_ptr("cgees"));
-    AssignKernelFn<SchurDecompositionComplex<DataType::C128, int32_t>>(
-        lapack_ptr("zgees"));
-
-    AssignKernelFn<HessenbergDecomposition<DataType::F32, int32_t>>(
-        lapack_ptr("sgehrd"));
-    AssignKernelFn<HessenbergDecomposition<DataType::F64, int32_t>>(
-        lapack_ptr("dgehrd"));
-    AssignKernelFn<HessenbergDecomposition<DataType::C64, int32_t>>(
-        lapack_ptr("cgehrd"));
-    AssignKernelFn<HessenbergDecomposition<DataType::C128, int32_t>>(
-        lapack_ptr("zgehrd"));
-
-    AssignKernelFn<TridiagonalReduction<DataType::F32, int32_t>>(
-        lapack_ptr("ssytrd"));
-    AssignKernelFn<TridiagonalReduction<DataType::F64, int32_t>>(
-        lapack_ptr("dsytrd"));
-    AssignKernelFn<TridiagonalReduction<DataType::C64, int32_t>>(
-        lapack_ptr("chetrd"));
-    AssignKernelFn<TridiagonalReduction<DataType::C128, int32_t>>(
-        lapack_ptr("zhetrd"));
-
-    AssignKernelFn<TridiagonalSolver<DataType::F32, int32_t>>(
-        lapack_ptr("sgtsv"));
-    AssignKernelFn<TridiagonalSolver<DataType::F64, int32_t>>(
-        lapack_ptr("dgtsv"));
-    AssignKernelFn<TridiagonalSolver<DataType::C64, int32_t>>(
-        lapack_ptr("cgtsv"));
-    AssignKernelFn<TridiagonalSolver<DataType::C128, int32_t>>(
-        lapack_ptr("zgtsv"));
     lapack_kernels_initialized = true;
     return std::make_unique<bool>(true);
   });

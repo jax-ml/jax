@@ -68,7 +68,7 @@ runs:
             gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
           elif [[ ${INPUTS_JAXLIB_VERSION} == "pypi_latest" ]]; then
             PYTHON=python${INPUTS_PYTHON}
-            $PYTHON -m pip download jaxlib --dest $(pwd)/dist/
+            $PYTHON -m pip download jaxlib --dest $(pwd)/dist/ --no-deps
           else
             echo "Invalid jaxlib version: ${INPUTS_JAXLIB_VERSION}"
             exit 1

@@ -17,14 +17,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from functools import partial
 import operator
 import numpy as np
 from typing import Any, Literal, overload, SupportsIndex
 import warnings
 
 from jax._src import api
-from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import deprecations
@@ -43,9 +41,10 @@ from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import util as numpy_util
 from jax._src.numpy.reductions import _count
 from jax._src.numpy.reductions import Axis
-from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
+from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
+                                     canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
-from jax._src.ops.special import logsumexp as _logsumexp
+from jax._src.ops.special import logsumexp as _logsumexp, softmax as _softmax
 
 
 # activations
@@ -121,8 +120,11 @@ def squareplus(x: ArrayLike, b: ArrayLike = 4) -> Array:
     b : smoothness parameter
   """
   x, b = numpy_util.ensure_arraylike("squareplus", x, b)
-  y = x + jnp.sqrt(jnp.square(x) + b)
-  return y / 2
+  neginf = jnp.isneginf(x)
+  x = jnp.where(neginf, 0, x)
+  sqz = jnp.hypot(x, jnp.sqrt(b))
+  y = jnp.where(x < 0, b / (sqz - jnp.minimum(x, 0)), x + sqz) / 2
+  return jnp.where(neginf, 0, y)
 
 @api.jit
 def softplus(x: ArrayLike) -> Array:
@@ -163,6 +165,34 @@ def sparse_plus(x: ArrayLike) -> Array:
   x = numpy_util.ensure_arraylike("sparse_plus", x)
   return jnp.where(x <= -1.0, 0.0, jnp.where(x >= 1.0, x, (x + 1.0)**2/4))
 
+@custom_derivatives.custom_jvp
+def _soft_sign_and_scale(x: Array) -> tuple[Array, Array]:
+  """Returns (x / (|x| + 1), 1 / (|x| + 1)) for real x."""
+  denom = jnp.abs(x) + 1
+  # Handle x = +-inf explicitly so +-inf / inf does not produce NaN.
+  y = jnp.where(jnp.isinf(x), jnp.sign(x), x / denom)
+  return y, jnp.reciprocal(denom)
+
+
+@_soft_sign_and_scale.defjvp
+def _soft_sign_and_scale_jvp(primals, tangents):
+  # Differentiating y = x / (|x| + 1) via the quotient rule evaluates
+  #   1 / (|x| + 1) - |x| / (|x| + 1)^2,
+  # which cancels two ~1 / |x| terms to get 1 / (|x| + 1)^2: it loses half the
+  # precision by |x| ~ 1 / sqrt(eps) and collapses to 0 once |x| + 1 == |x|.
+  # Reconstructing 1 / (|x| + 1) as 1 - |y| has the same 1 - 1 cancellation.
+  #
+  # Returning d = 1 / (|x| + 1) alongside y gives a subtraction-free closed JVP:
+  #   dy = ((|x| + 1) - x * sign(x)) / (|x| + 1)^2 * dx = d^2 * dx
+  #   dd = -sign(x) / (|x| + 1)^2 * dx                  = -sign(x) * dy
+  # Since sign'(x) = 0, higher-order derivatives recurse through this rule
+  # (y'' = -2 * sign(x) * d^3, y''' = 6 * d^4, ...) without cancellation.
+  (x,), (x_dot,) = primals, tangents
+  y, d = _soft_sign_and_scale(x)
+  y_dot = lax.square(d) * x_dot
+  return (y, d), (y_dot, -jnp.sign(x) * y_dot)
+
+
 @api.jit
 def soft_sign(x: ArrayLike) -> Array:
   r"""Soft-sign activation function.
@@ -172,13 +202,19 @@ def soft_sign(x: ArrayLike) -> Array:
   .. math::
     \mathrm{soft\_sign}(x) = \frac{x}{|x| + 1}
 
+  For real inputs, :math:`\mathrm{soft\_sign}(\pm\infty) = \pm 1`.
+
   Args:
     x : input array
   """
-  x_arr = numpy_util.ensure_arraylike("soft_sign", x)
-  return x_arr / (jnp.abs(x_arr) + 1)
+  x_arr, = numpy_util.promote_args_inexact("soft_sign", x)
+  if dtypes.issubdtype(x_arr.dtype, np.complexfloating):
+    # For complex z, d(|z|) != (z / |z|) * dz in tangential directions, so
+    # d(z / (|z| + 1)) does not simplify to dz / (|z| + 1)^2.
+    return x_arr / (jnp.abs(x_arr) + 1)
+  return _soft_sign_and_scale(x_arr)[0]
 
-@api.jit(inline=True)
+@api.jit(inline=api.Inline.JAX_EARLY)
 def sigmoid(x: ArrayLike) -> Array:
   r"""Sigmoid activation function.
 
@@ -574,75 +610,7 @@ def log_softmax(x: ArrayLike,
   return result
 
 
-# TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-# @api.jit(static_argnames=("axis",))
-def softmax(x: ArrayLike,
-            axis: Axis = -1,
-            where: ArrayLike | None = None) -> Array:
-  r"""Softmax function.
-
-  Computes the function which rescales elements to the range :math:`[0, 1]`
-  such that the elements along :code:`axis` sum to :math:`1`.
-
-  .. math ::
-    \mathrm{softmax}(x) = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
-
-  Args:
-    x : input array
-    axis: the axis or axes along which the softmax should be computed. The
-      softmax output summed across these dimensions should sum to :math:`1`.
-      Either an integer, tuple of integers, or ``None`` (all axes).
-    where: Elements to include in the :code:`softmax`. The output for any
-      masked-out element is zero.
-
-  Returns:
-    An array.
-
-  Note:
-    If any input values are ``+inf``, the result will be all ``NaN``: this reflects the
-    fact that ``inf / inf`` is not well-defined in the context of floating-point math.
-
-  See also:
-    :func:`log_softmax`
-  """
-  if config.softmax_custom_jvp.value:
-    return _softmax(x, axis, where)
-  else:
-    return _softmax_deprecated(x, axis, where)
-
-# TODO(mattjj): replace softmax with _softmax when deprecation flag is removed
-@partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
-def _softmax(
-    x: ArrayLike,
-    axis: Axis = -1,
-    where: ArrayLike | None = None,
-    initial: ArrayLike = -np.inf) -> Array:
-  x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
-  x_safe = x if where is None else jnp.where(where, x, initial)
-  unnormalized = jnp.exp(x_safe - x_max)
-  result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
-  if where is not None:
-    result = jnp.where(where, result, 0)
-  return result
-
-@_softmax.defjvp
-def _softmax_jvp(axis, primals, tangents):
-  (x, where, initial), (x_dot, _, _) = primals, tangents
-  y = _softmax(x, axis, where, initial)
-  return y, y * (x_dot - (y * x_dot).sum(axis, where=where, keepdims=True))
-
-def _softmax_deprecated(
-    x: ArrayLike,
-    axis: Axis = -1,
-    where: ArrayLike | None = None,
-    initial: ArrayLike = -np.inf) -> Array:
-  x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
-  x_safe = x if where is None else jnp.where(where, x, initial)
-  unnormalized = jnp.exp(x_safe - lax.stop_gradient(x_max))
-  result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
-  if where is not None:
-    result = jnp.where(where, result, 0)
-  return result
+softmax = _softmax
 
 
 @api.jit(static_argnames=("axis", "algorithm"))
@@ -711,14 +679,15 @@ def standardize(x: ArrayLike,
   return jnp.subtract(x, mean) * lax.rsqrt(variance + epsilon)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
-@api.jit(static_argnames=("num_classes", "dtype", "axis"))
+@api.jit(static_argnames=("num_classes", "dtype", "axis", "out_sharding"))
 def _one_hot(x: Array, num_classes: int, *,
-             dtype: DTypeLike, axis: int | AxisName) -> Array:
+             dtype: DTypeLike, axis: int | AxisName,
+             out_sharding: NamedSharding | None) -> Array:
   num_classes = core.concrete_dim_or_error(
       num_classes,
       "The error arose in jax.nn.one_hot argument `num_classes`.")
   try:
-    output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)  # pyrefly: ignore[bad-argument-type]
+    out_axis = util.canonicalize_axis(axis, x.ndim + 1)  # pyrefly: ignore[bad-argument-type]
   except TypeError:
     axis_size = lax.axis_size(axis)
     if num_classes != axis_size:
@@ -730,16 +699,30 @@ def _one_hot(x: Array, num_classes: int, *,
   axis = operator.index(axis)
   lhs = lax.expand_dims(x, (axis,))
   rhs_shape = [1] * x.ndim
-  rhs_shape.insert(output_pos_axis, num_classes)
-  # TODO(yashkatariya): Maybe expose `out_sharding` on `one_hot` too?
-  rhs_sharding = NamedSharding(x.aval.sharding.mesh, P(*[None] * len(rhs_shape)))
-  rhs = lax.broadcasted_iota(x.dtype, rhs_shape, output_pos_axis,
-                             out_sharding=rhs_sharding)
+  rhs_shape.insert(out_axis, num_classes)
+  x_aval = core.typeof(x)
+  rhs_spec = [None] * len(rhs_shape)
+  if out_sharding is None:
+    rhs_sharding = NamedSharding(x_aval.sharding.mesh, P(*rhs_spec))
+  else:
+    if out_sharding.spec.unreduced or out_sharding.spec.reduced:
+      raise NotImplementedError
+    out_x_spec = out_sharding.spec[:out_axis] + out_sharding.spec[out_axis+1:]
+    out_x_spec = P(*out_x_spec)._normalized_spec_for_aval(x_aval.ndim)
+    if out_x_spec != x_aval.sharding.spec:
+      raise core.ShardingTypeError(
+          "The input part of spec in out_sharding should match the spec of"
+          f" `x`. Got typeof(x).spec={x_aval.sharding.spec} and"
+          f" out_sharding.spec={out_x_spec}")
+    rhs_spec[out_axis] = out_sharding.spec[out_axis]
+    rhs_sharding = out_sharding.update(spec=P(*rhs_spec))
+  rhs = lax.broadcasted_iota(x.dtype, rhs_shape, out_axis, out_sharding=rhs_sharding)
   return (lhs == rhs).astype(dtype)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 def one_hot(x: Any, num_classes: int, *,
-            dtype: Any | None = None, axis: int | AxisName = -1) -> Array:
+            dtype: Any | None = None, axis: int | AxisName = -1,
+            out_sharding: NamedSharding | P | None = None) -> Array:
   r"""One-hot encodes the given indices.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
@@ -774,7 +757,9 @@ def one_hot(x: Any, num_classes: int, *,
       f"jax.nn.one_hot input should be integer-typed; got dtype={x_arr.dtype}",
       stacklevel=1)
   dtype = dtypes.default_float_dtype() if dtype is None else dtype
-  return _one_hot(x_arr, num_classes, dtype=dtype, axis=axis)
+  out_sharding = canonicalize_sharding(out_sharding, 'jax.nn.one_hot')
+  return _one_hot(x_arr, num_classes, dtype=dtype, axis=axis,
+                  out_sharding=out_sharding)
 
 
 @custom_derivatives.custom_jvp
@@ -1044,7 +1029,8 @@ def dot_product_attention(
     local_window_size: int | tuple[int, int] | None = None,
     implementation: Literal['xla', 'cudnn'] | None = None,
     return_residual: Literal[False] = ...,
-) -> Array: ...
+) -> Array:
+  ...
 
 @overload
 def dot_product_attention(
@@ -1061,7 +1047,8 @@ def dot_product_attention(
     local_window_size: int | tuple[int, int] | None = None,
     implementation: Literal['xla', 'cudnn'] | None = None,
     return_residual: Literal[True] = ...,
-) -> tuple[Array, Array]: ...
+) -> tuple[Array, Array]:
+  ...
 
 def dot_product_attention(
     query: ArrayLike,
@@ -1137,7 +1124,7 @@ def dot_product_attention(
       to [3, 4, 5, c, 7, 8]. If a single int is given, it will be interpreted as
       a symmetric window (window_size, window_size).
     return_residual: Whether to return the logsumexp tensor of shape BTN
-      or BNT to users. See section 3.1.1 in the FlashAttention-2 paper:
+      or TN to users. See section 3.1.1 in the FlashAttention-2 paper:
       https://arxiv.org/pdf/2307.08691 to find the definition of logsumexp.
     implementation: A string to control which implementation backend to use.
       Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults
@@ -1373,7 +1360,7 @@ def scaled_matmul(
     )
     return out
 
-def get_scaled_dot_general_config(mode: Literal['nvfp4', 'mxfp8'],
+def get_scaled_dot_general_config(mode: Literal['nvfp4', 'mxfp8', 'mxfp4'],
                                   global_scale: Array | None = None):
     r"""Get quantization configs for scaled_dot_general.
 
@@ -1398,6 +1385,18 @@ def get_scaled_dot_general_config(mode: Literal['nvfp4', 'mxfp8'],
             mode='mxfp8',
             block_size=32,
             data_type=dtypes.float8_e4m3fn,
+            scale_type=dtypes.float8_e8m0fnu,
+            global_scale=None,
+            infer_only=False
+        )
+    elif mode == 'mxfp4':
+        if global_scale is not None:
+            raise ValueError("mxfp4 does not use a global_scale; its E8M0 "
+                             "block scales cover the whole range.")
+        return BlockScaleConfig(
+            mode='mxfp4',
+            block_size=32,
+            data_type=dtypes.float4_e2m1fn,
             scale_type=dtypes.float8_e8m0fnu,
             global_scale=None,
             infer_only=False
@@ -1435,8 +1434,8 @@ def scaled_dot_general(
       `jnp.bfloat16` and `jnp.float16`.
     configs (list of BlockScaleConfig, optional): Scaling configurations for
       lhs, rhs, and gradients. Users can obtain valid configurations via
-      `jax.nn.get_scaled_dot_general_config`. Currently, `nvfp4` and `mxfp8`
-      are supported. If `None`, falls back to `lax.dot_general`.
+      `jax.nn.get_scaled_dot_general_config`. Currently, `mxfp8`, `mxfp4` and
+      `nvfp4` are supported. If `None`, falls back to `lax.dot_general`.
     implementation: str
       (Deprecated) Backend selector, now ignored. The system chooses the backend
       automatically. Scheduled for removal in future releases.
@@ -1459,6 +1458,11 @@ def scaled_dot_general(
     Creating config for mxfp8:
 
     >>> configs = [jax.nn.get_scaled_dot_general_config('mxfp8')] * 3
+
+    Creating configs for mxfp4 operands with an mxfp8 gradient:
+
+    >>> mxfp4 = jax.nn.get_scaled_dot_general_config('mxfp4')
+    >>> configs = [mxfp4, mxfp4, jax.nn.get_scaled_dot_general_config('mxfp8')]
 
     Creating config for nvfp4:
 
@@ -1510,4 +1514,10 @@ def log1mexp(x: ArrayLike) -> Array:
       jnp.log1p(-jnp.exp(-x)),
   )
 
-log1mexp.defjvps(lambda g, ans, x: g / jnp.expm1(x))
+
+def _log1mexp_jvp(g: Array, ans: Array, x: Array) -> Array:
+  x_safe = jnp.where(x < 0, 1.0, x)
+  return g * jnp.where(x < 0, jnp.nan, -jnp.exp(-x_safe) / jnp.expm1(-x_safe))
+
+
+log1mexp.defjvps(_log1mexp_jvp)

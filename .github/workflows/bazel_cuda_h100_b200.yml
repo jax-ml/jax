@@ -24,7 +24,7 @@ on:
         description: 'XLA revision used by tests.'
         type: choice
         required: true
-        default: 'head'
+        default: 'pinned'
         options:
         - 'pinned'
         - 'head'
@@ -93,10 +93,10 @@ jobs:
                           'CI Optional GPU Presubmit'))
       }}
     runs-on: linux-x86-a4-224-b200-1gpu
-    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
+    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'  # zizmor: ignore[unpinned-images]
     name: "Bazel single B200 CUDA tests"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: Wait For Connection
@@ -106,7 +106,7 @@ jobs:
       - name: Run Bazel single B200 CUDA Tests
         env:
           JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
-          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'head' }}
+          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'pinned' }}
           JAXCI_XLA_COMMIT: ${{ github.event.inputs.xla_commit }}
           JAXCI_BAZEL_TARGETS: |
             //tests:cudnn_fusion_test_gpu
@@ -131,7 +131,7 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
         with:
-          artifact-name: bazel-cuda-h100-single
+          artifact-name: bazel-cuda-b200-single
           inputs_json: ${{ toJSON(inputs) }}
           matrix_json: ${{ toJSON(matrix) }}
   run_multiaccelerator_tests:
@@ -149,10 +149,10 @@ jobs:
           )
       }}
     runs-on: linux-x86-a3-8g-h100-8gpu
-    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
+    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'  # zizmor: ignore[unpinned-images]
     name: "Bazel multiple H100 CUDA tests"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: Wait For Connection
@@ -162,7 +162,7 @@ jobs:
       - name: Run Bazel multiple H100 CUDA Tests
         env:
           JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
-          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'head' }}
+          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'pinned' }}
           JAXCI_XLA_COMMIT: ${{ github.event.inputs.xla_commit }}
           JAXCI_BAZEL_TARGETS: |
             //tests/mosaic:gpu_tests
@@ -176,7 +176,9 @@ jobs:
             //tests/multiprocess:gpu_tests
             //jax/experimental/jax2tf/tests/multiprocess:gpu_tests
           JAXCI_TEST_TAG_FILTERS: 'multiaccelerator'
-          JAXCI_LOCAL_TEST_JOBS: '8'
+          # Limit to 4 concurrent jobs to reduce multi-GPU resource contention (OOMs and
+          # timeouts), since every test runs against all 8 H100s.
+          JAXCI_LOCAL_TEST_JOBS: '4'
           JAXCI_EXCLUDE_TEST_TARGETS: 'PmapTest.testSizeOverflow|.*InterpretTest.*'
           CUSTOM_BAZEL_TARGETS: ${{ github.event.inputs.bazel_targets }}
         run: |

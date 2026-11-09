@@ -1,3 +1,5 @@
+:nosearch:
+
 .. _export:
 
 Exporting and serialization
@@ -9,5 +11,3 @@ Exporting and serialization
 
    export
    shape_poly
-
-   jax2tf

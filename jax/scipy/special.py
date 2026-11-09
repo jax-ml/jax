@@ -17,7 +17,7 @@
 
 from jax._src.scipy.special import (
   bernoulli as bernoulli,
-  bessel_jn as bessel_jn,
+  bessel_jn as _deprecated_bessel_jn,
   beta as beta,
   betainc as betainc,
   betaln as betaln,
@@ -29,6 +29,7 @@ from jax._src.scipy.special import (
   entr as entr,
   erf as erf,
   erfc as erfc,
+  erfcinv as erfcinv,
   erfcx as erfcx,
   erfinv as erfinv,
   exp1 as exp1,
@@ -39,6 +40,8 @@ from jax._src.scipy.special import (
   gamma as gamma,
   gammainc as gammainc,
   gammaincc as gammaincc,
+  gammainccinv as gammainccinv,
+  gammaincinv as gammaincinv,
   gammaln as gammaln,
   gammasgn as gammasgn,
   hyp1f1 as hyp1f1,
@@ -47,6 +50,8 @@ from jax._src.scipy.special import (
   i0e as i0e,
   i1 as i1,
   i1e as i1e,
+  iv as iv,
+  jn as jn,
   kl_div as kl_div,
   log_ndtr as log_ndtr,
   log_softmax as log_softmax,
@@ -58,6 +63,7 @@ from jax._src.scipy.special import (
   multigammaln as multigammaln,
   ndtr as ndtr,
   ndtri as ndtri,
+  ndtri_exp as ndtri_exp,
   owens_t as owens_t,
   poch as poch,
   polygamma as polygamma,
@@ -69,6 +75,7 @@ from jax._src.scipy.special import (
   wofz as wofz,
   xlog1py as xlog1py,
   xlogy as xlogy,
+  yn as yn,
   zeta as zeta,
 )
 
@@ -77,6 +84,12 @@ from jax._src.third_party.scipy.special import (
 )
 
 _deprecations = {
+    # Added for JAX v0.12.1; Remove in JAX v0.14.0.
+    "bessel_jn": (
+        "jax.scipy.special.bessel_jn is deprecated; use jax.scipy.special.jn instead,"
+        "and note that unlike bessel_jn(), jn() returns results for a single n.",
+        _deprecated_bessel_jn
+    ),
     # Added Jan 3 2024
     "lpmn": (
         "jax.scipy.special.lpmn is deprecated; no replacement is planned.",
@@ -86,17 +99,11 @@ _deprecations = {
         "jax.scipy.special.lpmn_values is deprecated; no replacement is planned.",
         _deprecated_lpmn_values,
     ),
-    # Deprecated in v0.7.0, removed in v0.10.0.
-    # TODO(jakevdp): remove this entry in v0.11.0.
-    "sph_harm": (
-        "jax.scipy.special.sph_harm was deprecated in v0.7.0 and removed in"
-        " v0.10.0. Use jax.scipy.special.sph_harm_y instead.",
-        None
-    )
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
+  bessel_jn = _deprecated_bessel_jn
   lpmn = _deprecated_lpmn
   lpmn_values = _deprecated_lpmn_values
 else:

@@ -17,10 +17,13 @@
 """Registers upstream MLIR dialects used by JAX."""
 
 from collections.abc import Callable, Sequence
+
 from jax.jaxlib._jax import Traceback
 from mlir import ir
 
-def register_dialects(arg: ir.DialectRegistry, /) -> None: ...
+def register_dialects(
+    arg: ir.DialectRegistry, /, register_pipelines: bool = True
+) -> None: ...
 def enter_multi_threaded_execution(arg: ir.Context, /) -> None: ...
 def exit_multi_threaded_execution(arg: ir.Context, /) -> None: ...
 def inlined_func_call(

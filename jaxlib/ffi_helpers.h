@@ -21,6 +21,7 @@ limitations under the License.
 #include <functional>
 #include <limits>
 #include <memory>
+#include <new>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -191,12 +192,26 @@ inline ::xla::ffi::Error CheckShape(::xla::ffi::Span<const int64_t> dimensions,
   return ::xla::ffi::Error::Success();
 }
 
-template <::xla::ffi::DataType dtype>
+template <typename T, std::size_t Alignment = 64>
+struct AlignedDeleter {
+  void operator()(T* ptr) const {
+    ::operator delete[](ptr, std::align_val_t(Alignment));
+  }
+};
+
+template <typename T, std::size_t Alignment = 64>
+using AlignedUniquePtr = std::unique_ptr<T[], AlignedDeleter<T, Alignment>>;
+
+template <::xla::ffi::DataType dtype, std::size_t Alignment = 64>
 auto AllocateScratchMemory(std::size_t size)
-    -> std::unique_ptr<std::remove_extent_t<::xla::ffi::NativeType<dtype>>[]> {
-  // TODO(paruzelp): use std::make_unique_for_overwrite when C++20 is available.
+    -> AlignedUniquePtr<std::remove_extent_t<::xla::ffi::NativeType<dtype>>,
+                        Alignment> {
   using ValueType = std::remove_extent_t<::xla::ffi::NativeType<dtype>>;
-  return std::unique_ptr<ValueType[]>(new ValueType[size]);
+  static_assert(std::is_trivially_destructible_v<ValueType>,
+                "AllocateScratchMemory requires trivially destructible types");
+  auto* ptr = static_cast<ValueType*>(
+      ::operator new[](size * sizeof(ValueType), std::align_val_t(Alignment)));
+  return AlignedUniquePtr<ValueType, Alignment>(ptr);
 }
 
 template <typename T>

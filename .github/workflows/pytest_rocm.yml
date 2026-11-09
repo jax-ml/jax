@@ -6,7 +6,7 @@
 #
 # It consists of the following job:
 # run-tests:
-#    - Runs in ROCm team's container (ghcr.io/rocm/jax-base-ubu24-rocm*:latest)
+#    - Runs in the rocmless container and pip-installs TheRock ROCm for `rocm-tag`.
 #    - Downloads the JAX and jaxlib wheels from GCS, and ROCm plugins from S3.
 #    - Executes the `run_pytest_rocm.sh` script, which performs the following actions:
 #      - Installs the downloaded wheel artifacts.
@@ -19,30 +19,29 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: choice
-        default: "linux-x86-64-4gpu-amd"
+        default: "amd-do-linux.jax.gpu.gfx950.4"
         options:
-          - "linux-x86-64-1gpu-amd"
-          - "linux-x86-64-4gpu-amd"
-          - "linux-x86-64-8gpu-amd"
+          - "amd-do-linux.jax.gpu.gfx950.1"
+          - "amd-do-linux.jax.gpu.gfx950.4"
+          - "amd-do-linux.jax.gpu.gfx950.8"
       python:
         description: "Which Python version to use?"
         type: choice
-        default: "3.11"
+        default: "3.12"
         options:
-          - "3.11"
           - "3.12"
       rocm-version:
         description: "Which ROCm version to test?"
         type: choice
-        default: "7.2.0"
+        default: "10"
         options:
-          - "7.2.0"
+          - "10"
       rocm-tag:
-        description: "ROCm tag for container image (e.g., rocm720)"
+        description: "TheRock release to install: therock-<X.Y> or therock-latest"
         type: string
-        default: "rocm720"
+        default: "therock-10.1"
       rocm-release-version:
-        description: "Release version for S3 path resolution (e.g., 7.2.0 or therock-latest)"
+        description: "Release version for S3 path resolution (e.g., 10.1.0 or therock-latest)"
         type: string
         default: ""
       jaxlib-version:
@@ -76,21 +75,21 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        default: "linux-x86-64-4gpu-amd"
+        default: "amd-do-linux.jax.gpu.gfx950.4"
       python:
         description: "Which Python version to use?"
         type: string
-        default: "3.11"
+        default: "3.12"
       rocm-version:
         description: "Which ROCm version to test?"
         type: string
-        default: "7.2.0"
+        default: "10"
       rocm-tag:
-        description: "ROCm tag for container image (e.g., rocm720)"
+        description: "TheRock release to install: therock-<X.Y> or therock-latest"
         type: string
-        default: "rocm720"
+        default: "therock-10.1"
       rocm-release-version:
-        description: "Release version for S3 path resolution (e.g., 7.2.0 or therock-latest)"
+        description: "Release version for S3 path resolution (e.g., 10.1.0 or therock-latest)"
         type: string
         default: ""
       jaxlib-version:
@@ -109,6 +108,19 @@ on:
         description: "S3 URI for ROCm plugin/PJRT wheels (use 'latest' to resolve via LATEST pointer)"
         default: 'latest'
         type: string
+      jax-jaxlib-source:
+        description: "Where to take the base jax/jaxlib wheels from: 'upstream' (shared nightly bucket) or 'vendor' (the same store as the ROCm wheels)"
+        default: 'upstream'
+        type: string
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: string
+        default: 'no'
+      git_commit:
+        description: "Commit SHA to check out for running tests"
+        required: false
+        default: ""
+        type: string
 permissions:
   id-token: write
   contents: read
@@ -124,16 +136,17 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     continue-on-error: true
-    # Run in ROCm team's GHCR container with GPU access
+    # Run in the rocmless build container (no ROCm baked in); ROCm is installed
+    # per job from TheRock pip packages in the "Install TheRock" step below.
     container:
-      image: ghcr.io/rocm/jax-base-ubu24.${{ inputs.rocm-tag }}:latest  # zizmor: ignore[unpinned-images]
+      image: ghcr.io/rocm/jax-build-ubu24.rocmless@sha256:fe966c6f77ad7dcd279bad02833d4cd70f72a9cd87640912ae37b20b3de7edea
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-      options: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size 64G --env-file /etc/podinfo/gha-gpu-isolation-settings
-    name: "${{ (contains(inputs.runner, '1gpu') && '1gpu') ||
-        (contains(inputs.runner, '4gpu') && '4gpu') ||
-        (contains(inputs.runner, '8gpu') && '8gpu') }}, ROCm ${{ inputs.rocm-version }}, py${{ inputs.python }}"
+      options: --device=/dev/kfd --device=/dev/dri --group-add video --shm-size 64G --env-file /etc/podinfo/gha-gpu-isolation-settings
+    name: "${{ (contains(inputs.runner, 'gfx950.1') && 'gfx950 1-GPU') ||
+        (contains(inputs.runner, 'gfx950.4') && 'gfx950 4-GPU') ||
+        (contains(inputs.runner, 'gfx950.8') && 'gfx950 8-GPU') }}, ROCm ${{ inputs.rocm-release-version || inputs.rocm-version }}, py${{ inputs.python }}"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
@@ -146,8 +159,9 @@ jobs:
       HSA_NO_SCRATCH_RECLAIM: "1"
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.git_commit }}
           persist-credentials: false
       - name: Download JAX ROCm wheels
         uses: ./.github/actions/download-jax-rocm-wheels
@@ -159,9 +173,29 @@ jobs:
           skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
           s3_download_uri: ${{ inputs.s3_download_uri }}
+          jax-jaxlib-source: ${{ inputs.jax-jaxlib-source }}
+      - name: Install TheRock (ROCm via pip)
+        env:
+          ROCM_TAG: ${{ inputs.rocm-tag }}
+        run: |
+          set -euo pipefail
+          # Install the ROCm the jax-base-ubu24.<rocm-tag> image would carry
+          # (index and pin from ROCm/rocm-jax build-base-docker.yml).
+          case "${ROCM_TAG}" in
+            therock-latest) index=https://nightly.repo.amd.com/rocm/whl-next/; pin="" ;;
+            therock-7.14) index=https://repo.amd.com/rocm/whl-multi-arch/; pin=7.14 ;;
+            therock-*) index=https://stable.repo.amd.com/rocm/whl-next/; pin="${ROCM_TAG#therock-}" ;;
+            *) echo "::error::rocm-tag '${ROCM_TAG}' has no TheRock pip release"; exit 1 ;;
+          esac
+          # The runner's in-cluster mirror, when set, carries only the whl-next indexes.
+          if [[ "${index}" == *whl-next* ]]; then index="${ROCM_PIP_INDEX_URL:-${index}}"; fi
+          $JAXCI_PYTHON -m pip install --break-system-packages --pre --index-url "${index}" \
+            "rocm[libraries,devel,device-gfx950]${pin:+==}${pin}"
+          rocm-sdk init
+          rocm-sdk path --root
       - name: Install Python dependencies
         run: |
-          $JAXCI_PYTHON -m pip install uv~=0.11.2
+          $JAXCI_PYTHON -m pip install uv~=0.12.3
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
           $JAXCI_PYTHON -m pip install pytest-json-report
       # Halt for testing
@@ -172,14 +206,6 @@ jobs:
       - name: Run Pytest ROCm tests
         timeout-minutes: 120
         run: ./ci/run_pytest_rocm.sh
-      - name: Upload test artifacts
-        if: always()
-        continue-on-error: true
-        uses: ./.github/actions/upload-test-artifacts
-        with:
-          artifact-name: pytest-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-rocm${{ inputs.rocm-version }}
-          inputs_json: ${{ toJSON(inputs) }}
-          matrix_json: ${{ toJSON(matrix) }}
       - name: Archive test logs
         if: ${{ !cancelled() }}
         run: |
@@ -187,7 +213,7 @@ jobs:
           tar -czf logs.tar.gz logs
       - name: Configure AWS Credentials
         if: ${{ !cancelled() }}
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # ratchet:aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
           aws-region: us-east-1

@@ -23,6 +23,7 @@ from typing import Any, TypedDict, NotRequired, overload
 
 import numpy as np
 
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
@@ -349,12 +350,10 @@ def _result_avals(results: Sequence[ResultMetadata]) -> tuple[core.AbstractValue
         raise ValueError(
             "All elements of result_shape_dtypes must have 'shape' and 'dtype' "
             f"attributes. Got {result} at position {idx}.")
-      # Update the dtype because shaped_abstractify can canonicalize the dtype.
-      # We need to call shaped_abstractify here to handle sharding, vma and
-      # memory_kind bits.
-      # TODO(yashkatariya): Maybe add an option to shaped_abstractify/typeof
-      # to not canonicalize dtype.
-      avals.append(core.shaped_abstractify(result).update(dtype=result.dtype))
+      # We use explicit_x64_dtypes("allow") so shaped_abstractify does not
+      # canonicalize explicit 64-bit dtypes on result_shape_dtypes.
+      with config.explicit_x64_dtypes("allow"):
+        avals.append(core.shaped_abstractify(result))
   return tuple(avals)
 
 def _check_compatible_avals(a: core.AbstractValue, b: core.AbstractValue) -> bool:
@@ -426,17 +425,15 @@ def ffi_call(
 ) -> Callable[..., Array | Sequence[Array]]:
   """Call a foreign function interface (FFI) target.
 
-  See the :ref:`ffi-tutorial` tutorial for more information.
+  See the :ref:`jax-401-ffi` tutorial for more information.
 
   Like :func:`~jax.pure_callback`, the behavior of ``ffi_call`` under
   :func:`~jax.vmap` depends on the value of ``vmap_method``. See the
   :func:`~jax.pure_callback` documentation for more details about the allowed
   values and examples of their behavior.
 
-  The current default behavior is to use ``vmap_method="sequential"`` when
-  not specified, but this behavior is deprecated, and in the future, the
-  default will be to raise a ``NotImplementedError`` unless ``vmap_method`` is
-  explicitly specified.
+  If ``vmap_method`` is not specified, applying :func:`~jax.vmap` to an
+  ``ffi_call`` raises a ``NotImplementedError``.
 
   Args:
     target_name: the name of the XLA FFI custom call target that was registered
@@ -532,7 +529,6 @@ def ffi_call(
     static_input_output_aliases: list[tuple[int, int]] = []
     if input_output_aliases is not None:
       for i_idx, o_idx in sorted(input_output_aliases.items()):
-        i_idx, o_idx = int(i_idx), int(o_idx)
         if i_idx >= len(args):
           raise ValueError(
               f"input_output_aliases contains the mapping '{i_idx}:{o_idx}' "
@@ -625,6 +621,9 @@ class FfiEffect(effects.Effect):
 _FfiEffect = FfiEffect()
 effects.lowerable_effects.add_type(FfiEffect)
 effects.control_flow_allowed_effects.add_type(FfiEffect)
+effects.remat_allowed_effects.add_type(FfiEffect)
+effects.custom_derivatives_allowed_effects.add_type(FfiEffect)
+effects.partial_eval_kept_effects.add_type(FfiEffect)
 
 
 def ffi_call_abstract_eval(
@@ -645,14 +644,14 @@ def ffi_call_jvp(*args, target_name, **_):
   del args
   raise ValueError(
       f"The FFI call to `{target_name}` cannot be differentiated. "
-      "You can use `jax.custom_jvp` or `jax.custom_jvp` to add support.")
+      "You can use `jax.custom_jvp` or `jax.custom_vjp` to add support.")
 
 
 def ffi_call_transpose(*args, target_name, **_):
   del args
   raise ValueError(
       f"The FFI call to `{target_name}` cannot be differentiated. "
-      "You can use `jax.custom_jvp` or `jax.custom_jvp` to add support.")
+      "You can use `jax.custom_jvp` or `jax.custom_vjp` to add support.")
 
 
 def ffi_call_lowering(

@@ -16,8 +16,18 @@ import functools
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import core as jax_core
 from jax._src import test_util as jtu
-from jax._src.state.primitives import pin, unpin
+from jax._src.pallas import mpmd
+from jax._src.pallas.pallas_call import pallas_call_p
+from jax._src.state.discharge import discharge_state
+from jax._src.state.primitives import (
+    pin,
+    ref_addupdate,
+    unpin,
+    with_memory_space_constraint_p,
+)
+from jax._src.state.types import AbstractRef
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
@@ -145,8 +155,8 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
     m, k, n = 512, 512, 512
     bm, bk, bn = 128, 128, 128
 
-    def matmul_kernel(acc_ref, x_ref, y_ref, o_ref):
-      @pl.when(pl.program_id(2) == 0)
+    def matmul_kernel(acc_ref, step, x_ref, y_ref, o_ref):
+      @pl.when(step.index[2] == 0)
       def _():
         acc_ref[...] = jnp.zeros_like(acc_ref)
 
@@ -154,7 +164,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
           x_ref[...], y_ref[...], preferred_element_type=jnp.float32
       )
 
-      @pl.when(pl.program_id(2) == pl.num_programs(2) - 1)
+      @pl.when(step.index[2] == k // bk - 1)
       def _():
         o_ref[...] = acc_ref[...].astype(o_ref.dtype)
 
@@ -172,6 +182,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
                   pl.BlockSpec((bk, bn), lambda i, j, k: (k, j)),
               ],
               out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
+              _explicit_indices=True,
           )(x_ref, y_ref, o_ref)
 
         pl.pallas_call(
@@ -239,11 +250,8 @@ class PinnedBufferTest(jtu.JaxTestCase):
       f(x)
 
   def test_basic_vmem(self):
-    self.skipTest(
-        "TODO(b/507446729): test_basic_vmem has regressed and "
-        "does not test the intended behavior."
-    )
-
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Only supported on TPU v5+")
     @jax.jit
     def f(x):
       x_pinned = pin(x, to='vmem')
@@ -256,17 +264,20 @@ class PinnedBufferTest(jtu.JaxTestCase):
       return unpin(x_pinned)
 
     x = jnp.arange(3.)
+    self.assertAllClose(
+        jax.jit(lambda x: unpin(pin(x, to="vmem")))(x), x, check_dtypes=False
+    )
     y = f(x)
     self.assertAllClose(y, x, check_dtypes=False)
 
-    hlo = f.lower(x).compile().as_text()
-    self.assertRegex(
-        hlo,
-        r'output_memory_space_colors.*color.*1'
-    )
+    lowered_hlo = f.lower(x).as_text("hlo")
+    self.assertRegex(lowered_hlo, r"input_memory_space_colors.*color.*1")
+    self.assertRegex(lowered_hlo, r"output_memory_space_colors.*color.*1")
+    compiled_hlo = f.lower(x).compile().as_text()
+    self.assertRegex(compiled_hlo, r'S\(1\)\}.*custom_call_target="Pin"')
 
 
-class CoreMapTest(jtu.JaxTestCase):
+class KernelTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
@@ -274,10 +285,15 @@ class CoreMapTest(jtu.JaxTestCase):
       self.skipTest("Only supported on TPU v4+")
 
   def test_can_create_tensorcore_mesh(self):
-    _ = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
+    self.assertEqual(mesh.axis_name, "x")
+    self.assertEqual(mesh.num_cores, jax.devices()[0].num_cores)
+
+    mesh2 = pltpu.TensorCoreMesh(axis_name="x", num_cores=4)
+    self.assertEqual(mesh2.num_cores, 4)
 
   def test_kernel_helper_basic(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
     def body(x_ref, o_ref):
       pltpu.sync_copy(x_ref, o_ref)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
@@ -288,42 +304,27 @@ class CoreMapTest(jtu.JaxTestCase):
       result = pl.kernel(out_type=x, mesh=mesh)(body)(x)
       np.testing.assert_array_equal(result, x)
 
-  def test_empty_core_map_raises_error(self):
-    @jax.jit
-    def f(x):
-      y = jnp.zeros_like(x)
-      def inner(refs):
-        del refs  # Unused.
-        @pl.core_map(pltpu.create_tensorcore_mesh("x"))
-        def _():
-          pass
-      _, y = pl.run_state(inner)((x, y))
-      return y
-    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
-    with self.assertRaisesRegex(Exception,
-      "Attempted to lower core_map without discharging."):
-      f(x)
-
   def test_can_signal_cores(self):
     @jax.jit
     def f(x):
-      x_ref = jax.new_ref(x)
-      y_ref = jax.new_ref(jnp.empty_like(x))
-      @pl.core_map(pltpu.create_tensorcore_mesh("x"))
-      def _():
-        @functools.partial(pl.run_scoped, sem=pltpu.SemaphoreType.REGULAR)
-        def inner(sem):
-          s = jax.lax.axis_size("x")
-          for i in range(s):
-            pl.semaphore_signal(sem, device_id={"x": i})
-          pl.semaphore_wait(sem, s)
-          pltpu.sync_copy(x_ref, y_ref)
-      return jax.freeze(y_ref)
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name="x"),
+          out_type=x,
+          scratch_types=[pltpu.SemaphoreType.REGULAR],
+      )
+      def kernel(x_ref, y_ref, sem):
+        s = jax.lax.axis_size("x")
+        for i in range(s):
+          pl.semaphore_signal(sem, device_id={"x": i})
+        pl.semaphore_wait(sem, s)
+        pltpu.sync_copy(x_ref, y_ref)
+
+      return kernel(x)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     np.testing.assert_array_equal(f(x), x)
 
   def test_can_query_core_index(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
     slc_size = 16 // mesh.shape["x"]
 
     @jax.jit
@@ -365,7 +366,7 @@ class CoreMapTest(jtu.JaxTestCase):
       y = jnp.zeros_like(x)
 
       @pl.kernel(out_type=x,
-                 mesh=pltpu.create_tensorcore_mesh("x"),
+                 mesh=pltpu.TensorCoreMesh(axis_name="x"),
                  scratch_types=dict(tmp_ref=pltpu.VMEM(x.shape, x.dtype)))
       def kernel(x_ref, out_ref, tmp_ref):
         pltpu.sync_copy(x_ref, tmp_ref)
@@ -375,9 +376,20 @@ class CoreMapTest(jtu.JaxTestCase):
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     with self.assertRaisesRegex(
-        Exception, "captures non-Ref constants"
+        Exception, "You can only close over scalars and Refs"
     ):
       f(x)
+
+  def test_raises_on_write_to_array_input(self):
+    @pl.kernel(mesh=pltpu.TensorCoreMesh(axis_name="x"))
+    def kernel(x_ref, y_ref):
+      pltpu.sync_copy(x_ref, y_ref)
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    with self.assertRaisesRegex(
+        ValueError, "writes to input y_ref .* which was passed as an array"
+    ):
+      kernel(x, jnp.zeros_like(x))
 
   @parameterized.product(
       core_type=[*pltpu.CoreType], use_tc_tiling_on_sc=[True, False]
@@ -385,7 +397,7 @@ class CoreMapTest(jtu.JaxTestCase):
   def test_capture_scalar(self, core_type, use_tc_tiling_on_sc):
     match core_type:
       case pltpu.CoreType.TC:
-        mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+        mesh = pltpu.TensorCoreMesh(axis_name="x", num_cores=1)
         use_tc_tiling_on_sc = None
       case pltpu.CoreType.SC_SCALAR_SUBCORE:
         if pltpu.get_tpu_info().sparse_core is None:
@@ -427,7 +439,7 @@ class CoreMapTest(jtu.JaxTestCase):
       np.testing.assert_array_equal(out, x[i:i+2])
 
   def test_kernel_helper_with_scratch(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
     def body(x_ref, o_ref, scratch_ref):
       pltpu.sync_copy(x_ref, scratch_ref)
       scratch_ref[...] += 1
@@ -439,7 +451,7 @@ class CoreMapTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(result, x + 1)
 
   def test_kernel_helper_with_out_tree(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
     def body(x_ref, o1_ref, o2_ref, scratch_ref):
       pltpu.sync_copy(x_ref, o1_ref)
       pltpu.sync_copy(x_ref, scratch_ref)
@@ -461,7 +473,7 @@ class CoreMapTest(jtu.JaxTestCase):
   def test_kernel_with_output_memory_space(self, memory_space, color):
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest("Only supported on TPU v5+")
-    mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+    mesh = pltpu.TensorCoreMesh(axis_name="x", num_cores=1)
     def body(x_ref, o_ref):
       pltpu.sync_copy(x_ref, o_ref)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
@@ -476,6 +488,500 @@ class CoreMapTest(jtu.JaxTestCase):
         r".*output_memory_space_colors\\22: "
         r"\[{\\22color\\22:" + str(color) + r"}\].*",
     )
+
+  def test_discharge_get_with_memory_space(self):
+    def f(x):
+      ref = jax.new_ref(x, memory_space=pltpu.VMEM)
+      y = ref[...]
+      return y
+
+    x = jnp.empty((8, 128))
+    closed_jaxpr = jax.make_jaxpr(f)(x)
+    discharged_jaxpr = discharge_state(closed_jaxpr)
+    eqns = discharged_jaxpr.jaxpr.eqns
+    self.assertLen(eqns, 2)
+    self.assertEqual(eqns[0].primitive, with_memory_space_constraint_p)
+    self.assertEqual(eqns[0].params["memory_space"], pltpu.VMEM)
+    self.assertEqual(eqns[0].outvars[0].aval.memory_space, pltpu.VMEM)
+
+    self.assertEqual(eqns[1].primitive, with_memory_space_constraint_p)
+    self.assertEqual(eqns[1].params["memory_space"], jax_core.MemorySpace.Device)
+    self.assertEqual(
+        eqns[1].outvars[0].aval.memory_space, jax_core.MemorySpace.Device
+    )
+    self.assertEqual(
+        discharged_jaxpr.jaxpr.outvars[0].aval.memory_space,
+        jax_core.MemorySpace.Device,
+    )
+
+  def test_discharge_swap_with_memory_space(self):
+    def f(x, z):
+      ref = jax.new_ref(x, memory_space=pltpu.VMEM)
+      ref[...] = z
+      y = ref[...]
+      return y
+
+    x = jnp.empty((8, 128))
+    z = jnp.full((8, 128), 2.0)
+    closed_jaxpr = jax.make_jaxpr(f)(x, z)
+    discharged_jaxpr = discharge_state(closed_jaxpr)
+    eqns = discharged_jaxpr.jaxpr.eqns
+    wmsc_eqns = [
+        eqn
+        for eqn in eqns
+        if eqn.primitive == with_memory_space_constraint_p
+    ]
+    self.assertLen(wmsc_eqns, 4)
+
+    # new_ref constraints initial buffer to VMEM
+    self.assertEqual(wmsc_eqns[0].params["memory_space"], pltpu.VMEM)
+    self.assertEqual(wmsc_eqns[0].outvars[0].aval.memory_space, pltpu.VMEM)
+
+    # swap unconstrains old buffer to Device
+    self.assertEqual(
+        wmsc_eqns[1].params["memory_space"], jax_core.MemorySpace.Device
+    )
+    self.assertEqual(
+        wmsc_eqns[1].outvars[0].aval.memory_space, jax_core.MemorySpace.Device
+    )
+
+    # swap constrains updated buffer to VMEM
+    self.assertEqual(wmsc_eqns[2].params["memory_space"], pltpu.VMEM)
+    self.assertEqual(wmsc_eqns[2].outvars[0].aval.memory_space, pltpu.VMEM)
+
+    # get unconstrains read-out to Device
+    self.assertEqual(
+        wmsc_eqns[3].params["memory_space"], jax_core.MemorySpace.Device
+    )
+    self.assertEqual(
+        wmsc_eqns[3].outvars[0].aval.memory_space, jax_core.MemorySpace.Device
+    )
+
+    self.assertEqual(
+        discharged_jaxpr.jaxpr.outvars[0].aval.memory_space,
+        jax_core.MemorySpace.Device,
+    )
+
+  def test_discharge_addupdate_with_memory_space(self):
+    def f(x, z):
+      ref = jax.new_ref(x, memory_space=pltpu.VMEM)
+      ref_addupdate(ref, (), z)
+      y = ref[...]
+      return y
+
+    x = jnp.empty((8, 128))
+    z = jnp.full((8, 128), 2.0)
+    closed_jaxpr = jax.make_jaxpr(f)(x, z)
+    discharged_jaxpr = discharge_state(closed_jaxpr)
+    eqns = discharged_jaxpr.jaxpr.eqns
+    wmsc_eqns = [
+        eqn
+        for eqn in eqns
+        if eqn.primitive == with_memory_space_constraint_p
+    ]
+    self.assertLen(wmsc_eqns, 4)
+
+    # 1. new_ref constrains initial buffer to VMEM
+    self.assertEqual(wmsc_eqns[0].params["memory_space"], pltpu.VMEM)
+    self.assertEqual(wmsc_eqns[0].outvars[0].aval.memory_space, pltpu.VMEM)
+
+    # 2. addupdate unconstrains buffer to Device before addition
+    self.assertEqual(
+        wmsc_eqns[1].params["memory_space"], jax_core.MemorySpace.Device
+    )
+    self.assertEqual(
+        wmsc_eqns[1].outvars[0].aval.memory_space, jax_core.MemorySpace.Device
+    )
+
+    # 3. addupdate constrains updated buffer back to VMEM
+    self.assertEqual(wmsc_eqns[2].params["memory_space"], pltpu.VMEM)
+    self.assertEqual(wmsc_eqns[2].outvars[0].aval.memory_space, pltpu.VMEM)
+
+    # 4. get unconstrains read-out to Device
+    self.assertEqual(
+        wmsc_eqns[3].params["memory_space"], jax_core.MemorySpace.Device
+    )
+    self.assertEqual(
+        wmsc_eqns[3].outvars[0].aval.memory_space, jax_core.MemorySpace.Device
+    )
+
+    self.assertEqual(
+        discharged_jaxpr.jaxpr.outvars[0].aval.memory_space,
+        jax_core.MemorySpace.Device,
+    )
+
+  def test_discharge_freeze_with_memory_space(self):
+    def f(x):
+      ref = jax.new_ref(x, memory_space=pltpu.VMEM)
+      return jax.freeze(ref)
+
+    x = jnp.empty((8, 128))
+    closed_jaxpr = jax.make_jaxpr(f)(x)
+    discharged_jaxpr = discharge_state(closed_jaxpr)
+    eqns = discharged_jaxpr.jaxpr.eqns
+    wmsc_eqns = [
+        eqn
+        for eqn in eqns
+        if eqn.primitive == with_memory_space_constraint_p
+    ]
+    self.assertLen(wmsc_eqns, 2)
+
+    # 1. new_ref constrains initial buffer to VMEM
+    self.assertEqual(wmsc_eqns[0].params["memory_space"], pltpu.VMEM)
+    self.assertEqual(wmsc_eqns[0].outvars[0].aval.memory_space, pltpu.VMEM)
+
+    # 2. freeze unconstrains frozen buffer to Device
+    self.assertEqual(
+        wmsc_eqns[1].params["memory_space"], jax_core.MemorySpace.Device
+    )
+    self.assertEqual(
+        wmsc_eqns[1].outvars[0].aval.memory_space, jax_core.MemorySpace.Device
+    )
+
+    self.assertEqual(
+        discharged_jaxpr.jaxpr.outvars[0].aval.memory_space,
+        jax_core.MemorySpace.Device,
+    )
+
+  def test_pallas_call_raises_on_captured_ref_with_memory_space(self):
+    def kernel(x_ref):
+      x_ref[...] += 1.0
+
+    def f(x):
+      ref = jax.new_ref(x, memory_space=pltpu.VMEM)
+      pl.pallas_call(functools.partial(kernel, ref), out_shape=[])()
+      return ref[...]
+
+    x = jnp.empty((8, 128))
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "pallas_call does not support closing over Refs in memory space",
+    ):
+      discharge_state(jax.make_jaxpr(f)(x))
+
+  def test_mpmd_map_with_memory_space_and_input_output_aliases(self):
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def f(x):
+      ref = jax.new_ref(x, memory_space=pltpu.VMEM)
+      mpmd._mpmd_map(
+          [(mesh, kernel)],
+          out_types=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          input_output_aliases={0: 0},
+      )(ref)
+      return ref[...]
+
+    x = jnp.empty((8, 128))
+    closed_jaxpr = jax.make_jaxpr(f)(x)
+    discharged_jaxpr = discharge_state(closed_jaxpr)
+    eqns = discharged_jaxpr.jaxpr.eqns
+    mpmd_map_eqns = [
+        eqn for eqn in eqns if eqn.primitive == mpmd.mpmd_map_p
+    ]
+    self.assertLen(mpmd_map_eqns, 1)
+
+    wmsc_eqns = [
+        eqn
+        for eqn in eqns
+        if eqn.primitive == with_memory_space_constraint_p
+    ]
+    # Check that the aliased output has a memory space constraint to VMEM
+    aliased_wmsc = [
+        eqn for eqn in wmsc_eqns
+        if eqn.invars[0] == mpmd_map_eqns[0].outvars[0]
+    ]
+    self.assertLen(aliased_wmsc, 1)
+    self.assertEqual(aliased_wmsc[0].params["memory_space"], pltpu.VMEM)
+    self.assertEqual(aliased_wmsc[0].outvars[0].aval.memory_space, pltpu.VMEM)
+    self.assertIsInstance(
+        mpmd_map_eqns[0].params["out_avals"][0], jax_core.ShapedArray
+    )
+    self.assertEqual(
+        mpmd_map_eqns[0].params["out_avals"][0].memory_space, pltpu.VMEM
+    )
+
+  def test_mpmd_map_discharge_preserves_out_avals_memory_space(self):
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def f(x):
+      ref = jax.new_ref(x)
+      out = pl.kernel(
+          mesh=mesh,
+          out_type=pltpu.VMEM(x.shape, x.dtype),
+      )(kernel)(ref)
+      return out, ref[...]
+
+    x = jnp.empty((8, 128), dtype=jnp.float32)
+    closed_jaxpr = jax.make_jaxpr(f)(x)
+    discharged_jaxpr = discharge_state(closed_jaxpr)
+    mpmd_eqn = [
+        eqn for eqn in discharged_jaxpr.jaxpr.eqns
+        if eqn.primitive == mpmd.mpmd_map_p
+    ][0]
+    self.assertEqual(mpmd_eqn.params["out_avals"][0].memory_space, pltpu.VMEM)
+
+  def test_mpmd_map_array_input_output_aliases_not_constrained(self):
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def f(x):
+      x = pltpu.with_memory_space_constraint(x, memory_space=pltpu.VMEM)
+      dummy_ref = jax.new_ref(0)
+
+      @pl.kernel(mesh=mesh)
+      def side_effect():
+        dummy_ref[...] += 1
+
+      side_effect()
+      return mpmd._mpmd_map(
+          [(mesh, kernel)],
+          out_types=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          input_output_aliases={0: 0},
+      )(x), dummy_ref[...]
+
+    x = jnp.empty((8, 128))
+    closed_jaxpr = jax.make_jaxpr(f)(x)
+    discharged_jaxpr = discharge_state(closed_jaxpr)
+    eqns = discharged_jaxpr.jaxpr.eqns
+    mpmd_map_eqns = [
+        eqn for eqn in eqns if eqn.primitive == mpmd.mpmd_map_p
+    ]
+    # The output of mpmd_map aliased to array x should NOT have a wmsc equation
+    wmsc_eqns = [
+        eqn
+        for eqn in eqns
+        if eqn.primitive == with_memory_space_constraint_p
+        and eqn.invars[0] == mpmd_map_eqns[-1].outvars[0]
+    ]
+    self.assertEmpty(wmsc_eqns)
+    self.assertEqual(
+        mpmd_map_eqns[-1].outvars[0].aval.memory_space,
+        jax_core.MemorySpace.Device,
+    )
+
+  def test_pallas_call_array_input_output_aliases_not_constrained(self):
+    def f(x):
+      x = pltpu.with_memory_space_constraint(x, memory_space=pltpu.VMEM)
+      dummy_ref = jax.new_ref(jnp.zeros_like(x))
+
+      def copy_kernel(x_ref, o_ref):
+        dummy_ref[...] += 1.0
+        pltpu.sync_copy(x_ref, o_ref)
+
+      y = pl.pallas_call(
+          copy_kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          input_output_aliases={0: 0},
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+      )(x)
+      return y, dummy_ref[...]
+
+    x = jnp.empty((8, 128))
+    closed_jaxpr = jax.make_jaxpr(f)(x)
+    discharged_jaxpr = discharge_state(closed_jaxpr)
+    eqns = discharged_jaxpr.jaxpr.eqns
+    pallas_call_eqns = [
+        eqn for eqn in eqns if eqn.primitive == pallas_call_p
+    ]
+    self.assertLen(pallas_call_eqns, 1)
+    # The output of pallas_call aliased to array x should NOT have a wmsc equation
+    wmsc_eqns = [
+        eqn
+        for eqn in eqns
+        if eqn.primitive == with_memory_space_constraint_p
+        and eqn.invars[0] == pallas_call_eqns[0].outvars[1]
+    ]
+    self.assertEmpty(wmsc_eqns)
+    self.assertEqual(
+        pallas_call_eqns[0].outvars[1].aval.memory_space,
+        jax_core.MemorySpace.Device,
+    )
+
+  def test_mpmd_map_with_memory_space_and_captured_ref(self):
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+
+    def f(x):
+      ref = jax.new_ref(x, memory_space=pltpu.VMEM)
+
+      @pl.kernel(mesh=mesh)
+      def kernel():
+        ref[...] += 1.0
+
+      kernel()
+      return ref[...]
+
+    x = jnp.empty((8, 128))
+    closed_jaxpr = jax.make_jaxpr(f)(x)
+    discharged_jaxpr = discharge_state(closed_jaxpr)
+    eqns = discharged_jaxpr.jaxpr.eqns
+    mpmd_map_eqns = [
+        eqn for eqn in eqns if eqn.primitive == mpmd.mpmd_map_p
+    ]
+    self.assertLen(mpmd_map_eqns, 1)
+
+    wmsc_eqns = [
+        eqn
+        for eqn in eqns
+        if eqn.primitive == with_memory_space_constraint_p
+    ]
+    self.assertLen(wmsc_eqns, 4)
+
+    # 1. new_ref constrains initial buffer to VMEM
+    self.assertEqual(wmsc_eqns[0].params["memory_space"], pltpu.VMEM)
+    self.assertEqual(wmsc_eqns[0].outvars[0].aval.memory_space, pltpu.VMEM)
+
+    # 2. mpmd_map constrains its input ref buffer to VMEM
+    self.assertEqual(wmsc_eqns[1].params["memory_space"], pltpu.VMEM)
+    self.assertEqual(wmsc_eqns[1].outvars[0].aval.memory_space, pltpu.VMEM)
+
+    # 3. mpmd_map constrains the updated ref buffer back to VMEM (from new_invals)
+    self.assertEqual(wmsc_eqns[2].params["memory_space"], pltpu.VMEM)
+    self.assertEqual(wmsc_eqns[2].outvars[0].aval.memory_space, pltpu.VMEM)
+    self.assertEqual(wmsc_eqns[2].invars[0], mpmd_map_eqns[0].outvars[0])
+
+    # 4. get unconstrains read-out to Device
+    self.assertEqual(
+        wmsc_eqns[3].params["memory_space"], jax_core.MemorySpace.Device
+    )
+    self.assertEqual(
+        wmsc_eqns[3].outvars[0].aval.memory_space, jax_core.MemorySpace.Device
+    )
+
+    self.assertEqual(
+        discharged_jaxpr.jaxpr.outvars[0].aval.memory_space,
+        jax_core.MemorySpace.Device,
+    )
+
+  def test_kernel_in_scan(self):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Only supported on TPU v5+")
+    shape = (8, 128)
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+
+    @pl.kernel(out_type=pltpu.VMEM(shape, jnp.float32) @ mesh, mesh=mesh)
+    def init(o_ref):
+      o_ref[...] = jnp.zeros(shape, jnp.float32)
+
+    @pl.kernel(mesh=mesh)
+    def update(x_ref):
+      x_ref[...] += 1.0
+
+    @pl.kernel(mesh=mesh)
+    def copy_to_hbm(in_ref, o_ref):
+      pltpu.sync_copy(in_ref, o_ref)
+
+    def run():
+      ref = jax.new_ref(
+          init(),
+          memory_space=pltpu.VMEM @ mesh,
+      )
+
+      def body(c, _):
+        update(ref)
+        return c, None
+
+      jax.lax.scan(body, 0, length=4)
+
+      hbm_ref = jax.new_ref(jnp.zeros(shape, jnp.float32))
+      copy_to_hbm(ref, hbm_ref)
+      return jax.freeze(hbm_ref)
+
+    expected_memory_space = pltpu.VMEM @ mesh
+    jaxpr = jax.make_jaxpr(run)().jaxpr
+    ref_eqns = [eqn for eqn in jaxpr.eqns if eqn.primitive == jax_core.ref_p]
+    self.assertEqual(
+        ref_eqns[0].outvars[0].aval.memory_space, expected_memory_space
+    )
+    scan_eqns = [eqn for eqn in jaxpr.eqns if eqn.primitive.name == "scan"]
+    self.assertLen(scan_eqns, 1)
+    scan_jaxpr = scan_eqns[0].params["jaxpr"].jaxpr
+    scan_refs = [
+        v
+        for v in scan_jaxpr.invars + scan_jaxpr.constvars
+        if isinstance(v.aval, AbstractRef)
+    ]
+    self.assertNotEmpty(scan_refs)
+    for v in scan_refs:
+      self.assertEqual(v.aval.memory_space, expected_memory_space)
+
+    np.testing.assert_array_equal(jax.jit(run)(), np.full(shape, 4.0))
+
+  def test_kernel_in_scan_direct_output(self):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Only supported on TPU v5+")
+    shape = (8, 128)
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+
+    @pl.kernel(out_type=pltpu.VMEM(shape, jnp.float32) @ mesh, mesh=mesh)
+    def init(o_ref):
+      o_ref[...] = jnp.zeros(shape, jnp.float32)
+
+    @pl.kernel(mesh=mesh)
+    def update(x_ref):
+      x_ref[...] += 1.0
+
+    @jax.jit
+    def run():
+      ref = jax.new_ref(
+          init(),
+          memory_space=pltpu.VMEM @ mesh,
+      )
+
+      def body(c, _):
+        update(ref)
+        return c, None
+
+      jax.lax.scan(body, 0, length=4)
+      return jax.freeze(ref)
+
+    jaxpr = jax.make_jaxpr(run)()
+    self.assertEqual(
+        jaxpr.out_avals[0].memory_space, jax_core.MemorySpace.Device
+    )
+    np.testing.assert_array_equal(run(), np.full(shape, 4.0))
+
+  def test_kernel_memory_space_output(self):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Only supported on TPU v5+")
+    shape = (8, 128)
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+
+    @pl.kernel(out_type=pltpu.VMEM(shape, jnp.float32) @ mesh, mesh=mesh)
+    def init(o_ref):
+      o_ref[...] = jnp.zeros(shape, jnp.float32)
+
+    @pl.kernel(mesh=mesh)
+    def add1(ref):
+      ref[...] += 1
+
+    @pl.kernel(mesh=mesh)
+    def copy_to_hbm(in_ref, o_ref):
+      pltpu.sync_copy(in_ref, o_ref)
+
+    @jax.jit
+    def run():
+      x = init()
+      ref = jax.new_ref(
+          x,
+          memory_space=pltpu.VMEM @ mesh,
+      )
+      add1(ref)
+
+      hbm_ref = jax.new_ref(jnp.zeros(shape, jnp.float32))
+      copy_to_hbm(ref, hbm_ref)
+      return jax.freeze(hbm_ref)
+
+    x = run()
+    np.testing.assert_array_equal(x, np.full(shape, 1.0))
 
 
 if __name__ == "__main__":

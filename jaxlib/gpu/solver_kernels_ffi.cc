@@ -349,13 +349,13 @@ ffi::Error OrgqrImpl(int64_t batch, int64_t rows, int64_t cols, int64_t size,
       FFI_ASSIGN_OR_RETURN(
           auto out_tmp,
           AllocateWorkspace<T>(scratch, batch * m * n, "orgqr_tmp"));
-      JAX_FFI_RETURN_IF_GPU_ERROR(LaunchOrgqrSmallBatchedKernel<T>(
+      FFI_RETURN_IF_ERROR_STATUS(LaunchOrgqrSmallBatchedKernel<T>(
           stream, batch, m, n, k, m, a_stride, a_data, tau_data, out_tmp));
       JAX_FFI_RETURN_IF_GPU_ERROR(
           gpuMemcpyAsync(out_data, out_tmp, batch * m * n * sizeof(T),
                          gpuMemcpyDeviceToDevice, stream));
     } else {
-      JAX_FFI_RETURN_IF_GPU_ERROR(LaunchOrgqrSmallBatchedKernel<T>(
+      FFI_RETURN_IF_ERROR_STATUS(LaunchOrgqrSmallBatchedKernel<T>(
           stream, batch, m, n, k, m, a_stride, a_data, tau_data, out_data));
     }
     return ffi::Error::Success();
@@ -450,7 +450,7 @@ ffi::Error OrmqrImpl(int64_t batch, int64_t c_rows, int64_t c_cols, int64_t k,
 
   if (batch > 1 && m <= 128 && n <= 128) {
     int64_t a_stride = static_cast<int64_t>(lda) * a_cols;
-    JAX_FFI_RETURN_IF_GPU_ERROR(LaunchOrmqrSmallBatchedKernel<T>(
+    FFI_RETURN_IF_ERROR_STATUS(LaunchOrmqrSmallBatchedKernel<T>(
         stream, batch, m, n, k_v, lda, a_stride, a_data, tau_data, out_data,
         left, transpose));
     return ffi::Error::Success();

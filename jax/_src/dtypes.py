@@ -21,12 +21,11 @@
 
 from __future__ import annotations
 
-import abc
 from collections.abc import Callable
 import dataclasses
 import functools
 import types
-from typing import Any, Literal, Union, cast, overload, TYPE_CHECKING
+from typing import Any, Literal, cast, overload
 import warnings
 
 import ml_dtypes
@@ -36,8 +35,8 @@ from jax._src import config
 from jax._src import traceback_util
 from jax._src.lib import _jax
 from jax._src.typing import Array, DType, DTypeLike
-from jax._src.util import StrictABC, set_module
-from jax._src.lib import jaxlib_extension_version
+from jax._src.util import set_module, cache
+
 traceback_util.register_exclusion(__file__)
 
 try:
@@ -83,11 +82,11 @@ class prng_key(extended):
   """
 
 
-class ExtendedDType(StrictABC):
+class ExtendedDType:
   """Abstract Base Class for extended dtypes"""
   @property
-  @abc.abstractmethod
-  def type(self) -> type: ...
+  def type(self) -> type:
+      raise NotImplementedError
 
   _rules: Any = None
 
@@ -100,6 +99,7 @@ float8_e4m3fn: type[np.generic] = ml_dtypes.float8_e4m3fn
 float8_e4m3fnuz: type[np.generic] = ml_dtypes.float8_e4m3fnuz
 float8_e5m2: type[np.generic] = ml_dtypes.float8_e5m2
 float8_e5m2fnuz: type[np.generic] = ml_dtypes.float8_e5m2fnuz
+float8_e5m3fnu: type[np.generic] | None = None
 
 _float8_e3m4_dtype: np.dtype = np.dtype(float8_e3m4)
 _float8_e4m3_dtype: np.dtype = np.dtype(float8_e4m3)
@@ -109,6 +109,10 @@ _float8_e4m3fn_dtype: np.dtype = np.dtype(float8_e4m3fn)
 _float8_e4m3fnuz_dtype: np.dtype = np.dtype(float8_e4m3fnuz)
 _float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
 _float8_e5m2fnuz_dtype: np.dtype = np.dtype(float8_e5m2fnuz)
+_float8_e5m3fnu_dtype: np.dtype | None = None
+if hasattr(ml_dtypes, 'float8_e5m3fnu'):
+  float8_e5m3fnu = ml_dtypes.float8_e5m3fnu
+  _float8_e5m3fnu_dtype = np.dtype(float8_e5m3fnu)
 
 # fp6 support
 float6_e2m3fn: type[np.generic] = ml_dtypes.float6_e2m3fn
@@ -125,7 +129,7 @@ _float4_e2m1fn_dtype: np.dtype = np.dtype(float4_e2m1fn)
 def supports_inf(dtype: DTypeLike) -> bool:
   """Return true if the dtype supports infinity, else return False."""
   typ = np.dtype(dtype).type
-  if typ in {float8_e4m3b11fnuz, float8_e4m3fn, float8_e4m3fnuz, float8_e5m2fnuz}:
+  if typ in {float8_e4m3b11fnuz, float8_e4m3fn, float8_e4m3fnuz, float8_e5m2fnuz, float8_e5m3fnu}:
     return False
   return issubdtype(dtype, np.inexact)
 
@@ -145,6 +149,7 @@ _custom_float_scalar_types = [
     float8_e4m3fnuz,
     float8_e5m2,
     float8_e5m2fnuz,
+    *([float8_e5m3fnu] if float8_e5m3fnu is not None else []),
     bfloat16,
 ]
 _custom_float_dtypes = [
@@ -159,6 +164,7 @@ _custom_float_dtypes = [
     _float8_e4m3fnuz_dtype,
     _float8_e5m2_dtype,
     _float8_e5m2fnuz_dtype,
+    *([_float8_e5m3fnu_dtype] if _float8_e5m3fnu_dtype is not None else []),
     _bfloat16_dtype,
 ]
 _float8_dtypes = [
@@ -170,6 +176,7 @@ _float8_dtypes = [
     _float8_e4m3fnuz_dtype,
     _float8_e5m2_dtype,
     _float8_e5m2fnuz_dtype,
+    *([_float8_e5m3fnu_dtype] if _float8_e5m3fnu_dtype is not None else []),
 ]
 
 _float6_dtypes: list[np.dtype] = [
@@ -388,50 +395,21 @@ def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> DType 
 class InvalidInputException(TypeError):
   pass
 
-if jaxlib_extension_version >= 464 or TYPE_CHECKING:
-  _jax.set_invalid_input_exception(InvalidInputException)
+_jax.set_invalid_input_exception(InvalidInputException)
 
-  register_canonicalize_value_handler = _jax.register_canonicalize_value_handler
-  canonicalize_value = _jax.canonicalize_value
+register_canonicalize_value_handler = _jax.register_canonicalize_value_handler
+canonicalize_value = _jax.canonicalize_value
 
-  # Backward compatibility shim.
-  class _CanonicalizeValueHandlersDict:
+# Backward compatibility shim.
+class _CanonicalizeValueHandlersDict:
 
-    def __getitem__(self, key):
-      return lambda x: canonicalize_value(np.asarray(x))
+  def __getitem__(self, key):
+    return lambda x: canonicalize_value(np.asarray(x))
 
-    def __setitem__(self, key, value):
-      register_canonicalize_value_handler(key, value)
+  def __setitem__(self, key, value):
+    register_canonicalize_value_handler(key, value)
 
-  canonicalize_value_handlers = _CanonicalizeValueHandlersDict()
-
-else:
-  canonicalize_value_handlers: dict[Any, Callable] = {}
-
-  def register_canonicalize_value_handler(type_, handler):
-    if handler is None:
-      handler = lambda x: x
-    canonicalize_value_handlers[type_] = handler
-
-  def canonicalize_value(x):
-    typ = type(x)
-    handler = canonicalize_value_handlers.get(typ)
-    if handler:
-      return handler(x)
-    for typ in typ.__mro__:
-      handler = canonicalize_value_handlers.get(typ)
-      if handler:
-        return handler(x)
-    if getattr(x, '__jax_array__', None) is not None:
-      raise ValueError(
-          'Triggering __jax_array__() during abstractification is no longer'
-          ' supported. To avoid this error, either explicitly convert your'
-          ' object using jax.numpy.array(), or register your object as a'
-          ' pytree.'
-      )
-    raise InvalidInputException(
-        f"Argument '{x}' of type {type(x)} is not a valid JAX type."
-    )
+canonicalize_value_handlers = _CanonicalizeValueHandlersDict()
 
 
 # The list of all known Python scalar types.
@@ -550,7 +528,7 @@ def issubdtype(a: DTypeLike | ExtendedDType | None,
   )
 
 
-@functools.lru_cache(512)  # don't use util.memoize because there is no X64 dependence.
+@cache(max_size=512, trace_context_in_key=False)  # don't use util.memoize because there is no X64 dependence.
 def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
                        b: type | np.dtype | ExtendedDType) -> bool:
   # First handle extended dtypes, which require their own logic.
@@ -582,11 +560,11 @@ def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
     return b_sctype in {a_sctype, np.unsignedinteger, np.integer, np.number, np.generic}
 
   # Otherwise, fall back to numpy.issubdtype
-  return bool(np.issubdtype(a_sctype, b_sctype))
+  return np.issubdtype(a_sctype, b_sctype)
 
 can_cast = np.can_cast
 
-JAXType = Union[type, DType]
+JAXType = type | DType
 
 # Enumeration of all valid JAX types in order.
 _weak_types: list[JAXType] = [int, float, complex]
@@ -647,8 +625,7 @@ _jax_dtype_set = {
     *_complex_types,
 }
 
-if jaxlib_extension_version >= 465:
-  _jax.set_valid_dtypes(_jax_dtype_set)
+_jax.set_valid_dtypes(_jax_dtype_set)
 
 _jax_types = (_bool_types + _int_types + _float_types + _complex_types)
 
@@ -1131,7 +1108,9 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
     dtype = default_types['f' if dtype in _custom_float_dtypes else dtype.kind]()
   return (dtype, weak_type) if return_weak_type_flag else dtype
 
-def check_and_canonicalize_user_dtype(dtype, fun_name=None) -> DType:
+def check_and_canonicalize_user_dtype(
+    dtype, fun_name=None, *, allow_non_jax_dtypes: bool = False
+) -> DType:
   """Checks validity of a user-provided dtype, and returns its canonical form.
 
   For Python scalar types this function returns the corresponding default dtype.
@@ -1148,6 +1127,8 @@ def check_and_canonicalize_user_dtype(dtype, fun_name=None) -> DType:
     return f()
   np_dtype = np.dtype(dtype)
   if np_dtype not in _jax_dtype_set:
+    if allow_non_jax_dtypes:
+      return np_dtype
     msg = (
         f'JAX only supports number, bool, and string dtypes, got dtype {dtype}'
     )

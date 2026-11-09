@@ -144,6 +144,9 @@ def cholesky(a: ArrayLike, *, upper: bool = False, symmetrize_input: bool = True
     Array(True, dtype=bool)
   """
   a = ensure_arraylike("jnp.linalg.cholesky", a)
+  if a.ndim < 2 or a.shape[-1] != a.shape[-2]:
+    raise ValueError(
+      f"Argument to linalg.cholesky must have shape [..., n, n], got {a.shape}.")
   a, = promote_dtypes_inexact(a)
   L = lax_linalg.cholesky(a, symmetrize_input=symmetrize_input)
   return L.mT.conj() if upper else L
@@ -298,7 +301,7 @@ def svd(
     w, v = lax_linalg.eigh(a, subset_by_index=subset_by_index)
     s = lax.abs(v)
     if compute_uv:
-      sign = lax.sign(v)
+      sign = jnp.where(v < 0, -1, 1)
       idx_dtype = lax_utils.int_dtype_for_dim(
           s.shape[s.ndim - 1], signed=False)
       idxs = lax.broadcasted_iota(idx_dtype, s.shape, dimension=s.ndim - 1)
@@ -730,20 +733,6 @@ def _cofactor_solve(a: ArrayLike, b: ArrayLike) -> tuple[Array, Array]:
   return partial_det[..., -1], x
 
 
-def _det_2x2(a: Array) -> Array:
-  return (a[..., 0, 0] * a[..., 1, 1] -
-           a[..., 0, 1] * a[..., 1, 0])
-
-
-def _det_3x3(a: Array) -> Array:
-  return (a[..., 0, 0] * a[..., 1, 1] * a[..., 2, 2] +
-          a[..., 0, 1] * a[..., 1, 2] * a[..., 2, 0] +
-          a[..., 0, 2] * a[..., 1, 0] * a[..., 2, 1] -
-          a[..., 0, 2] * a[..., 1, 1] * a[..., 2, 0] -
-          a[..., 0, 0] * a[..., 1, 2] * a[..., 2, 1] -
-          a[..., 0, 1] * a[..., 1, 0] * a[..., 2, 2])
-
-
 @custom_jvp
 def _det(a):
   sign, logdet = slogdet(a)
@@ -756,6 +745,63 @@ def _det_jvp(primals, tangents):
   g, = tangents
   y, z = _cofactor_solve(x, g)
   return y, jnp.trace(z, axis1=-1, axis2=-2)
+
+
+@custom_jvp
+def _det_2x2(a: Array) -> Array:
+  # Closed-form 2x2 LU with row pivoting (PA = LU).
+  # Direct a00*a11 - a01*a10 loses precision in float32 when a00*a11 ~ a01*a10.
+  # Swapping rows so |r0[0]| >= |r1[0]| keeps multiplier |l10| <= 1.
+  swap = ufuncs.abs(a[..., 1, 0]) > ufuncs.abs(a[..., 0, 0])
+  r0 = jnp.where(swap[..., None], a[..., 1, :], a[..., 0, :])
+  r1 = jnp.where(swap[..., None], a[..., 0, :], a[..., 1, :])
+
+  safe_r00 = jnp.where(r0[..., 0] == 0, 1, r0[..., 0])
+  l10 = jnp.where(r0[..., 0] == 0, 0, r1[..., 0] / safe_r00)
+  u11 = r1[..., 1] - l10 * r0[..., 1]
+
+  return jnp.where(swap, -1, 1) * r0[..., 0] * u11
+
+
+_det_2x2.defjvp(_det_jvp)
+
+
+@custom_jvp
+def _det_3x3(a: Array) -> Array:
+  # Closed-form 3x3 LU with row pivoting (PA = LU).
+  # Eliminates column by column while keeping row swap multipliers <= 1.
+
+  # Step 1: Pivot column 0 so row 0 gets the largest magnitude element.
+  s01 = ufuncs.abs(a[..., 1, 0]) > ufuncs.abs(a[..., 0, 0])
+  r0 = jnp.where(s01[..., None], a[..., 1, :], a[..., 0, :])
+  r1 = jnp.where(s01[..., None], a[..., 0, :], a[..., 1, :])
+  r2 = a[..., 2, :]
+  sign = jnp.where(s01, -1, 1)
+
+  s02 = ufuncs.abs(r2[..., 0]) > ufuncs.abs(r0[..., 0])
+  r0, r2 = jnp.where(s02[..., None], r2, r0), jnp.where(s02[..., None], r0, r2)
+  sign = jnp.where(s02, -sign, sign)
+
+  # Eliminate column 0 entries in rows 1 and 2.
+  safe_r00 = jnp.where(r0[..., 0] == 0, 1, r0[..., 0])
+  l10 = jnp.where(r0[..., 0] == 0, 0, r1[..., 0] / safe_r00)
+  l20 = jnp.where(r0[..., 0] == 0, 0, r2[..., 0] / safe_r00)
+  r1 = r1 - l10[..., None] * r0
+  r2 = r2 - l20[..., None] * r0
+
+  # Step 2: Pivot column 1 across rows 1 and 2, then eliminate row 2.
+  s12 = ufuncs.abs(r2[..., 1]) > ufuncs.abs(r1[..., 1])
+  r1, r2 = jnp.where(s12[..., None], r2, r1), jnp.where(s12[..., None], r1, r2)
+  sign = jnp.where(s12, -sign, sign)
+
+  safe_r11 = jnp.where(r1[..., 1] == 0, 1, r1[..., 1])
+  l21 = jnp.where(r1[..., 1] == 0, 0, r2[..., 1] / safe_r11)
+  u22 = r2[..., 2] - l21 * r1[..., 2]
+
+  return sign * r0[..., 0] * r1[..., 1] * u22
+
+
+_det_3x3.defjvp(_det_jvp)
 
 
 @export
@@ -777,9 +823,9 @@ def det(a: ArrayLike) -> Array:
 
   Examples:
     >>> a = jnp.array([[1, 2],
-    ...                [3, 4]])
+    ...                [2, 3]])
     >>> jnp.linalg.det(a)
-    Array(-2., dtype=float32)
+    Array(-1., dtype=float32)
   """
   a = ensure_arraylike("jnp.linalg.det", a)
   a, = promote_dtypes_inexact(a)
@@ -928,6 +974,9 @@ def eigh(a: ArrayLike, UPLO: str | None = None,
            [ 0.   +0.707j,  0.   -0.707j]], dtype=complex64)
   """
   a = ensure_arraylike("jnp.linalg.eigh", a)
+  if a.ndim < 2 or a.shape[-1] != a.shape[-2]:
+    raise ValueError(
+      f"Argument to linalg.eigh must have shape [..., n, n], got {a.shape}.")
   if UPLO is None or UPLO == "L":
     lower = True
   elif UPLO == "U":
@@ -1034,7 +1083,7 @@ def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
   return _pinv(a, rtol, hermitian)
 
 
-@partial(custom_jvp, nondiff_argnums=(1, 2))
+@partial(custom_jvp, nondiff_argnums=(2,))
 @api.jit(static_argnames=('hermitian'))
 def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) -> Array:
   # Uses same algorithm as
@@ -1062,13 +1111,13 @@ def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) 
 
 @_pinv.defjvp
 @config.default_matmul_precision("float32")
-def _pinv_jvp(rtol, hermitian, primals, tangents):
+def _pinv_jvp(hermitian, primals, tangents):
   # The Differentiation of Pseudo-Inverses and Nonlinear Least Squares Problems
   # Whose Variables Separate. Author(s): G. H. Golub and V. Pereyra. SIAM
   # Journal on Numerical Analysis, Vol. 10, No. 2 (Apr., 1973), pp. 413-432.
   # (via https://en.wikipedia.org/wiki/Moore%E2%80%93Penrose_inverse#Derivative)
-  a, = primals  # m x n
-  a_dot, = tangents
+  a, rtol = primals  # m x n
+  a_dot, _ = tangents
   p = pinv(a, rtol=rtol, hermitian=hermitian)  # n x m
   if hermitian:
     # svd(..., hermitian=True) symmetrizes its input, and the JVP must match.
@@ -1151,7 +1200,7 @@ def inv(a: ArrayLike) -> Array:
 
 @export
 @api.jit(static_argnames=('ord', 'axis', 'keepdims'))
-def norm(x: ArrayLike, ord: int | str | None = None,
+def norm(x: ArrayLike, ord: int | str | float | None = None,
          axis: None | tuple[int, ...] | int = None,
          keepdims: bool = False) -> Array:
   """Compute the norm of a matrix or vector.
@@ -1691,7 +1740,7 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
 
 @export
 def vector_norm(x: ArrayLike, /, *, axis: int | tuple[int, ...] | None = None, keepdims: bool = False,
-                ord: int | str = 2) -> Array:
+                ord: int | str | float = 2) -> Array:
   """Compute the vector norm of a vector or batch of vectors.
 
   JAX implementation of :func:`numpy.linalg.vector_norm`.
@@ -1892,6 +1941,8 @@ def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
     preferred_element_type: either ``None`` (default), which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     array containing the tensor dot product of the inputs
@@ -2170,7 +2221,7 @@ def multi_dot(arrays: Sequence[ArrayLike], *, precision: lax.PrecisionLike = Non
   >>> jnp.allclose(result1, result3, atol=1E-4)
   Array(True, dtype=bool)
 
-  We can use JAX's :ref:`ahead-of-time-lowering` tools to estimate the total flops
+  We can use JAX's :ref:`ahead-of-time lowering <jax-201-aot>` tools to estimate the total flops
   of each approach, and confirm that ``multi_dot`` is choosing the more efficient
   option:
 
@@ -2248,7 +2299,7 @@ def cond(x: ArrayLike, p=None):
     raise ValueError(f"jnp.linalg.cond: input array must not be empty; got {arr.shape=}")
   if p is None or p == 2:
     s = svdvals(x)
-    return s[..., 0] / s[..., -1]
+    r = s[..., 0] / s[..., -1]
   elif p == -2:
     s = svdvals(x)
     r = s[..., -1] / s[..., 0]

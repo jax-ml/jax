@@ -14,8 +14,11 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "py_binary",
     "py_deps",
     "py_library",
+    "py_test",
+    "pytype_strict_library",
 )
 
 licenses(["notice"])
@@ -54,4 +57,30 @@ py_library(
         "//jax",
         "//jax/experimental/jax2tf",
     ] + py_deps("absl-all") + py_deps("tensorflow_core"),
+)
+
+pytype_strict_library(
+    name = "evaluate_sampler_bias_lib",
+    srcs = ["evaluate_sampler_bias.py"],
+    deps = [
+        "//jax",
+    ] + py_deps("absl-all") + py_deps("numpy") + py_deps("scipy"),
+)
+
+py_binary(
+    name = "evaluate_sampler_bias",
+    srcs = ["evaluate_sampler_bias.py"],
+    deps = [
+        ":evaluate_sampler_bias_lib",
+        "//jax",
+    ] + py_deps("absl-all") + py_deps("numpy") + py_deps("scipy"),
+)
+
+py_test(
+    name = "evaluate_sampler_bias_test",
+    srcs = ["evaluate_sampler_bias_test.py"],
+    deps = [
+        ":evaluate_sampler_bias_lib",
+        "//jax",
+    ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("scipy"),
 )

@@ -43,7 +43,10 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
             # Runner OS and Python values need to match the matrix stategy in the CPU tests job
-            runner: ["linux-x86-n4-16", "linux-arm64-c4a-16", "windows-x86-n2-16"]
+            # Commented out "windows-x86-n2-16" because it is slow (~10 minutes). Re-enable if
+            # Windows breakages increase in CI/CD.
+            # runner: ["linux-x86-n4-16", "linux-arm64-c4a-16", "windows-x86-n2-16"]
+            runner: ["linux-x86-n4-16", "linux-arm64-c4a-16"]
             artifact: ["jaxlib"]
             python: ["3.14"]
     # Note: For reasons unknown, Github actions groups jobs with the same top-level name in the
@@ -63,25 +66,24 @@ jobs:
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
       matrix:
-        python: ["3.11", "3.14"]
-        runner: ["linux-x86-n4-16", "linux-arm64-c4a-16", "windows-x86-n2-16"]
-        enable-x64: [1, 0]
-        enable-bzlmod: [1, 0]
-        exclude:
-            # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have
-            # coverage for one of each, we don't need to run both.
-            - python: "3.11"
-              enable-x64: 1
-            - python: "3.14"
-              enable-x64: 0
-            # Only test a single Python version on Arm64 and Windows as we don't run the tests.
-            - python: "3.11"
-              runner: "linux-arm64-c4a-16"
-            - python: "3.11"
-              runner: "windows-x86-n2-16"
-            # TODO: Just test against Python 3.11 with Bzlmod to avoid adding too much CI load.
-            - python: "3.14"
-              enable-bzlmod: 1
+        include:
+          # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have
+          # coverage for one of each, we don't need to run both.
+          - runner: "linux-x86-n4-16"
+            python: "3.12"
+            enable-x64: 0
+          - runner: "linux-x86-n4-16"
+            python: "3.15"
+            enable-x64: 1
+          # Only test a single Python version on Arm64 and Windows as we don't run the tests.
+          - runner: "linux-arm64-c4a-16"
+            python: "3.14"
+            enable-x64: 1
+          # Commented out because it is slow (~10 minutes). Re-enable if Windows breakages
+          # increase in CI/CD.
+          # - runner: "windows-x86-n2-16"
+          #   python: "3.14"
+          #   enable-x64: 1
     name: "${{ (contains(matrix.runner, 'linux-x86') && 'Test' || 'Build') }}"
 # End Presubmit Naming Check github-cpu-presubmits
     with:
@@ -89,7 +91,6 @@ jobs:
       python: ${{ matrix.python }}
       halt-for-connection: ${{ inputs.halt-for-connection }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      enable-bzlmod:  ${{ matrix.enable-bzlmod }}
       build_jaxlib: ${{ 'true' }}
       build_jax: ${{ 'true' }}
       bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}

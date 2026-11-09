@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import datetime
+import logging
 import os
 import re
 import warnings
 
 from jax._src import config
 from jax._src import hardware_utils
+
+logger = logging.getLogger(__name__)
 
 running_in_cloud_tpu_vm: bool = False
 
@@ -126,18 +128,64 @@ def cloud_tpu_init() -> None:
     )
 
 
-def is_cloud_tpu_older_than(year: int, month: int, day: int, backend):
-  if 'TFRT TPU' not in backend.platform_version:
-    return False
-  # The format of Cloud TPU platform_version is like:
-  # PJRT C API
-  # TFRT TPU v2
-  # Built on Oct 30 2023 03:04:42 (1698660263) cl/577737722
-  platform_version = backend.platform_version.split('\n')[-1]
-  results = re.findall(r'\(.*?\)', platform_version)
-  if len(results) != 1:
+_version_regex = re.compile(r'([0-9]+(?:\.[0-9]+)*)(?:(rc|dev).*)?')
+
+
+def _parse_version(v: str) -> tuple[int, ...]:
+  m = _version_regex.match(v)
+  if m is None:
+    raise ValueError(f"Unable to parse version '{v}'")
+  return tuple(int(x) for x in m.group(1).split('.'))
+
+
+def is_libtpu_at_least(version_str: str) -> bool:
+  """Returns True if not running on Cloud TPU.
+
+  If running on Cloud TPU, returns True if the installed libtpu version
+  is at least `version_str`.
+
+  Note: This checks the version of the installed `libtpu` Python package.
+  If `TPU_LIBRARY_PATH` is set to a different path than the installed
+  package's default, a warning will be issued as the loaded library
+  might not match the package version we are checking.
+  """
+  if not running_in_cloud_tpu_vm:
     return True
-  date = datetime.date(year, month, day)
-  build_date = date.fromtimestamp(int(results[0][1:-1]))
-  # Filter out ridiculously old dates that some test builds get.
-  return build_date < date and build_date.year > 2010
+
+  tpu_library_path = get_tpu_library_path()
+  libtpu = maybe_import_libtpu()
+  if libtpu is None:
+    if tpu_library_path:
+      warnings.warn(
+          (
+              'libtpu Python package is not installed, but TPU_LIBRARY_PATH is'
+              f' set to {tpu_library_path}. Cannot determine libtpu version.'
+              f' Assuming it is newer than {version_str}.'
+          ),
+          stacklevel=2,
+      )
+    else:
+      warnings.warn(
+          (
+              'libtpu Python package is not installed, but we appear to be on a'
+              ' Cloud TPU VM. Cannot determine libtpu version. Assuming it is'
+              f' newer than {version_str}.'
+          ),
+          stacklevel=2,
+      )
+    return True
+
+  if tpu_library_path and tpu_library_path != libtpu.get_library_path():
+    logger.info(
+        'TPU_LIBRARY_PATH is set to %s, which differs from the installed'
+        ' package default (%s). Using the custom path set by TPU_LIBRARY_PATH'
+        ' and assuming the version of libtpu is head for version tests.',
+        tpu_library_path,
+        libtpu.get_library_path(),
+    )
+    return True
+
+  actual_version = _parse_version(libtpu.__version__)
+  required_version = _parse_version(version_str)
+
+  return actual_version >= required_version

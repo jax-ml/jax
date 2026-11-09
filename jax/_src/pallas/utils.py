@@ -17,13 +17,15 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, overload
+from typing import Any, Protocol, Self, overload
 
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import numpy as jnp
 from jax._src import typing as jax_typing
 from jax._src.lax import lax
+from jax._src.lax import special
 from jax._src.util import split_list
 import numpy as np
 
@@ -45,7 +47,7 @@ def cdiv(a: jax_typing.Array, b: jax_typing.Array) -> jax_typing.Array:
   ...
 
 def cdiv(a: int | jax_typing.Array, b: int | jax_typing.Array) -> int | jax_typing.Array:
-  """Computes the ceiling division of a divided by b.
+  """Computes the ceiling division of a divided by b, when a >= 0 and b > 0.
 
   Examples:
     >>> cdiv(8, 2)
@@ -54,7 +56,8 @@ def cdiv(a: int | jax_typing.Array, b: int | jax_typing.Array) -> int | jax_typi
     5
   """
   if jax_core.is_dim(a) and jax_core.is_dim(b):
-    return (a + b - 1) // b
+    # This expression is convoluted to match the semantics of lax.div below.
+    return -(-n // b) if ((n := a + b - 1) < 0) != (b < 0) else n // b
   return lax.div(a + (b - 1), b)
 
 
@@ -166,9 +169,9 @@ def pattern_match_scan_to_fori_loop(
 
 
 def pattern_match_while_to_fori_loop(
-    cond_jaxpr: jax_core.ClosedJaxpr,
+    cond_jaxpr: jax_core.Jaxpr,
     cond_nconsts: int,
-    body_jaxpr: jax_core.ClosedJaxpr,
+    body_jaxpr: jax_core.Jaxpr,
     body_nconsts: int,
 ) -> tuple[jax_core.Jaxpr | None, str | None]:
   # Try to pattern match to fori loop.
@@ -176,23 +179,23 @@ def pattern_match_while_to_fori_loop(
   # component of the return tuple to capture information about the failure.
   if cond_nconsts:
     return (None, "Conditional jaxpr can't contain consts.")
-  _, cond_invars = split_list(cond_jaxpr.jaxpr.invars, [cond_nconsts])
+  _, cond_invars = split_list(cond_jaxpr.invars, [cond_nconsts])
   cond_in_avals = [v.aval for v in cond_invars]
   if len(cond_in_avals) < 2:
     return (None, "Conditional jaxpr have only two carry args.")
   # Check that the first two carry values are scalar ints
   a1, a2 = cond_in_avals[:2]
-  if a1.shape or a1.dtype not in (jnp.int32, jnp.int64):
+  if a1.shape or a1.dtype not in (jnp.int32, jnp.int64):  # type: ignore
     return (None, "First conditional jaxpr carry arg is not a scalar int.")
-  if a2.shape or a2.dtype not in (jnp.int32, jnp.int64):
+  if a2.shape or a2.dtype not in (jnp.int32, jnp.int64):  # type: ignore
     return (None, "Second conditional jaxpr carry arg is not a scalar int.")
   # Check that the only eqn in the cond checks the loop index condition
   v1, v2 = cond_invars[:2]
-  outvar = cond_jaxpr.jaxpr.outvars[0]
-  assert outvar.aval.dtype == jnp.bool_
-  if len(cond_jaxpr.jaxpr.eqns) != 1:
+  outvar = cond_jaxpr.outvars[0]
+  assert outvar.aval.dtype == jnp.bool_  # type: ignore
+  if len(cond_jaxpr.eqns) != 1:
     return (None, "Non-trivial conditional jaxprs not supported.")
-  eqn = cond_jaxpr.jaxpr.eqns[0]
+  eqn = cond_jaxpr.eqns[0]
   if eqn.primitive != lax.lt_p:
     return (None, "Non-trivial conditional jaxprs not supported.")
   if eqn.outvars != [outvar]:
@@ -200,14 +203,14 @@ def pattern_match_while_to_fori_loop(
   if eqn.invars != [v1, v2]:
     return (None, "Non-trivial conditional jaxprs not supported.")
   # Check that the carry is updated in the body appropriately
-  _, body_invars = split_list(body_jaxpr.jaxpr.invars, [body_nconsts])
+  _, body_invars = split_list(body_jaxpr.invars, [body_nconsts])
   v1, v2 = body_invars[:2]
-  vo1, vo2 = body_jaxpr.jaxpr.outvars[:2]
+  vo1, vo2 = body_jaxpr.outvars[:2]
   # Upper bound should be constant
   if v2 is not vo2:
     return (None, "Loop upper bound is not constant.")
   # Check that we increment the loop index in the body
-  for i, eqn in enumerate(body_jaxpr.jaxpr.eqns):
+  for i, eqn in enumerate(body_jaxpr.eqns):
     if eqn.primitive is lax.add_p:
       if eqn.invars[0] is v1:
         if isinstance(eqn.invars[1], jax_core.Literal):
@@ -217,7 +220,7 @@ def pattern_match_while_to_fori_loop(
               break
   else:
     return (None, "Loop index not incremented in body.")
-  jaxpr = body_jaxpr.jaxpr
+  jaxpr = body_jaxpr
   new_invars = (
       *jaxpr.invars[:body_nconsts],
       jaxpr.invars[body_nconsts],
@@ -231,7 +234,7 @@ def pattern_match_while_to_fori_loop(
   else:
     new_arg_names = None
   if jaxpr.debug_info.result_paths is not None:
-    new_result_paths = jaxpr.debug_info.result_paths[2:]
+    new_result_paths = jaxpr.debug_info.result_paths[2:]  # type: ignore
   else:
     new_result_paths = None
 
@@ -342,6 +345,8 @@ def _erf_inv_64_lowering_helper(x):
 
 
 def erf_inv_lowering_helper(x):
+  if config.jax_accurate_erf_inv.value:
+    return special.erf_inv_impl(x)
   if x.dtype == jnp.float32:
     return _erf_inv_32_lowering_helper(x)
   if x.dtype == jnp.float64:
@@ -361,6 +366,20 @@ def sign_lowering_helper(x):
     return jnp.where(jnp.isnan(x), jnp.nan, out)
 
   raise NotImplementedError(f"sign_lowering_helper not implemented for {x.dtype}")
+
+
+def select_n_lowering_helper(which, *cases):
+  def _select(offset, cases):
+    if len(cases) == 1:
+      return cases[0]
+    mid = len(cases) // 2
+    return lax.select(
+        which < offset + mid,
+        _select(offset, cases[:mid]),
+        _select(offset + mid, cases[mid:]),
+    )
+
+  return _select(0, cases)
 
 
 # based on https://github.com/openxla/xla/blob/a7a09d56c3599123f8148bbf3e44c9ebc04624b9/xla/mlir_hlo/mhlo/transforms/chlo_legalize_to_hlo/chlo_legalize_to_hlo.cc#L1339-L1422
@@ -466,3 +485,23 @@ class MeshInfo:
     ))
     mesh_shape = tuple(mesh.shape.values())
     return MeshInfo(mesh_shape, mesh.axis_names, mesh_strides)
+
+
+# This is morally ``ShapedArray | state.AbstractRef``, but Pyrefly does not
+# allow calling methods on a union type, making ``update`` non-callable, so
+# we use a protocol instead of a union.
+class ShapedAbstractValue(Protocol):
+  shape: tuple[jax_core.DimSize, ...]
+  dtype: jnp.dtype
+  weak_type: bool
+
+  @property
+  def ndim(self) -> int:
+    ...
+
+  @property
+  def size(self) -> int:
+    ...
+
+  def update(self, **kwargs: Any) -> Self:
+    raise NotImplementedError

@@ -200,14 +200,14 @@ are described briefly in the sections below.
 
 JAX's CI builds rely on XLA, but use different versions depending on the type of
 build. To ensure stability and reproducibility, nightly and release builds use a
-pinned XLA version specified in the JAX workspace defined in [revision.bzl](https://github.com/jax-ml/jax/blob/b8b8c308a88060a3db63fa69c5cb7d8d7f1c5078/third_party/xla/revision.bzl#L23-L24).
+pinned XLA version defined in [MODULE.bazel](https://github.com/jax-ml/jax/blob/main/MODULE.bazel).
 
 However, to keep JAX compatible with the latest XLA developments, presubmit and
 postsubmit builds utilize the most recent XLA version. This is done by
 overriding the default XLA dependency with a local copy of the XLA repository.
-We do this by passing `--override_repository=xla=/path/to/local/xla` which
-instructs Bazel to depend on the XLA in the local system instead of the version
-in the workspace.
+We do this by passing `--override_module=xla=/path/to/local/xla` which
+instructs Bazel to depend on the XLA in the local system instead of the pinned
+version in `MODULE.bazel`.
 
 The CI system uses the `JAXCI` environment variables to manage this process.
 When running jobs that need to use XLA at head, we set `JAXCI_CLONE_MAIN_XLA=1`.

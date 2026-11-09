@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import types
-from typing import Any, TypeVar
+from typing import Any
 
 from jax._src import core
 from jax._src.core import typeof
@@ -26,8 +26,6 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map
 
 traceback_util.register_exclusion(__file__)
-
-T = TypeVar('T')
 
 map = safe_map
 
@@ -51,6 +49,21 @@ raw_jaxval_adders = {}
 def add_abstract(x, y):
   assert core.typematch(x, y), (x, y)
   return x
+
+def _add_jaxvals_is_high(x_aval, y_aval):
+  if x_aval.is_high != y_aval.is_high:
+    raise TypeError(
+        f"add_any requires matching is_high, got {x_aval} and {y_aval}")
+  return x_aval.is_high
+add_jaxvals_p.is_high = _add_jaxvals_is_high  # type: ignore
+
+def _add_jaxvals_to_lojax(hi_x, hi_y):
+  aval = typeof(hi_x)
+  lo_x, = aval.lower_val(hi_x)
+  lo_y, = typeof(hi_y).lower_val(hi_y)
+  assert core.typematch(lo_x, lo_y), (lo_x, lo_y)
+  return aval.raise_val(add_jaxvals_p.bind(lo_x, lo_y))
+add_jaxvals_p.to_lojax = _add_jaxvals_to_lojax  # type: ignore
 
 def zeros_like_aval(aval: core.AbstractValue) -> Array:
   from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
@@ -96,7 +109,7 @@ def a2tz(primal_aval):
   return Zero(primal_aval.to_tangent_aval())
 
 
-def _stop_gradient_impl(x: T) -> T:
+def _stop_gradient_impl[T](x: T) -> T:
   if not core.valid_jaxtype(x):
     raise TypeError("stop_gradient only works on valid JAX arrays, but "
                     f"input argument is: {x}")

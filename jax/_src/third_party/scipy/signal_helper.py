@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import Any
 import warnings
 
-import numpy as np
-
+from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
@@ -42,14 +41,14 @@ def _triage_segments(window: ArrayLike | str | tuple[Any, ...], nperseg: int | N
       256. If window is array_like, nperseg is set to the length of the window.
   """
   if isinstance(window, (str, tuple)):
-    nperseg_int = input_length if nperseg is None else int(nperseg)
+    nperseg_int = 256 if nperseg is None else nperseg
     if nperseg_int > input_length:
       warnings.warn(f'nperseg={nperseg_int} is greater than {input_length=},'
                     f' using nperseg={input_length}')
       nperseg_int = input_length
     if window == 'hann':
       # Implement the default case without scipy
-      win = jnp.array([1.0]) if nperseg_int == 1 else jnp.sin(jnp.linspace(0, np.pi, nperseg_int, endpoint=False)) ** 2
+      win = jnp.array([1.0]) if nperseg_int == 1 else lax.sinpi(jnp.linspace(0, 1, nperseg_int, endpoint=False)) ** 2
     else:
       # TODO(jakevdp): implement get_window() in JAX to remove optional scipy dependency
       try:
@@ -60,7 +59,7 @@ def _triage_segments(window: ArrayLike | str | tuple[Any, ...], nperseg: int | N
     win = jnp.array(win, dtype=dtype)
   else:
     win = jnp.asarray(window, dtype=dtype)
-    nperseg_int = win.size if nperseg is None else int(nperseg)
+    nperseg_int = win.size if nperseg is None else nperseg
     if win.ndim != 1:
       raise ValueError('window must be 1-D')
     if input_length < win.size:

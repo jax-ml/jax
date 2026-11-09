@@ -27,7 +27,6 @@ from jax import numpy as jnp
 from jax import scipy as jsp
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import version as jaxlib_version
 
 config.parse_flags_with_absl()
 
@@ -291,6 +290,23 @@ class EighTest(jtu.JaxTestCase):
     jtu.assert_dot_precision(
         lax.Precision.HIGHEST, partial(jvp, jnp.linalg.eigh), (a,), (a,))
 
+  def testEighGradLargeEigenvalues(self):
+    # At 2**24, float32 can no longer represent every consecutive integer.
+    a = jnp.diag(
+        jnp.array(
+            [2**24, 2**24 + 2, 2**24 + 4],
+            dtype=jnp.float32,
+        )
+    )
+
+    def eigenvectors(x):
+      return jnp.linalg.eigh(x)[1]
+
+    for jacobian in (jax.jacfwd, jax.jacrev):
+      with self.subTest(jacobian=jacobian.__name__):
+        jac = jacobian(eigenvectors)(a)
+        self.assertTrue(np.isfinite(np.asarray(jac)).all())
+
   def testEighGradRankPromotion(self):
     rng = jtu.rand_default(self.rng())
     a = rng((10, 3, 3), np.float32)
@@ -335,7 +351,7 @@ class LaxLinalgEighTest(jtu.JaxTestCase):
         continue
       if (
           implementation == lax.linalg.EighImplementation.JACOBI
-          and jtu.test_device_matches(["cpu"])
+          and jtu.test_device_matches(["cpu", "oneapi"])
       ):
         continue
       if (
@@ -386,8 +402,7 @@ class LaxLinalgEighTest(jtu.JaxTestCase):
 
     # TODO: The ROCm 0.10.0 plugin is not yet released. This will be
     # re-enabled for ROCm on the 0.10.0 ROCm plugin release.
-    if (jaxlib_version >= (0, 10) and
-        not jtu.test_device_matches(["tpu", "rocm"])):
+    if not jtu.test_device_matches(["tpu", "rocm"]):
       @jax.jit
       def solve(a, b):
         return jax.scipy.linalg.eigh_tridiagonal(a, b, eigvals_only=False)
@@ -400,8 +415,10 @@ class LaxLinalgEighTest(jtu.JaxTestCase):
 
         A = np.diag(np.real(alpha)) + np.diag(beta, 1) + np.diag(np.conj(beta), -1)
         self.assertAllClose(
-            A @ eigvecs, eigvecs * eigvals[None, :].astype(eigvecs.dtype),
-            atol=atol_eigvecs, rtol=rtol,
+            jnp.matmul(A, eigvecs, precision="high"),
+            eigvecs * eigvals[None, :].astype(eigvecs.dtype),
+            atol=atol_eigvecs,
+            rtol=rtol,
         )
 
   @jtu.sample_product(

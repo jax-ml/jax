@@ -20,10 +20,20 @@ import time
 import weakref
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from jax.jaxlib import weakref_lru_cache
+from jax.jaxlib import xla_client
 
 
-class WeakrefLRUCacheTest(absltest.TestCase):
+def _dummy_context_fn():
+  return None
+
+
+def _dummy_target_fn(x):
+  return x * 2
+
+
+class WeakrefLRUCacheTest(parameterized.TestCase):
 
   def testMultiThreaded(self):
     insert_evs = [threading.Event() for _ in range(2)]
@@ -188,6 +198,39 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     with self.assertRaises(ValueError):
       for _ in range(100):
         cache(wrkey, CrashingKey())
+
+  def testFailingEqKey(self):
+    class BadEqKey:
+
+      def __eq__(self, other):
+        raise RuntimeError("eq failed")
+
+      def __hash__(self):
+        return 42
+
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x, y: y, 2048
+    )
+
+    k1 = BadEqKey()
+    k2 = BadEqKey()
+    cache(k1, 1)
+    with self.assertRaisesRegex(
+        ValueError, r"(?s)should be comparable using __eq__.*eq failed"
+    ):
+      cache(k2, 1)
+
+    class WRKey:
+      pass
+
+    wrkey = WRKey()
+    s1 = BadEqKey()
+    s2 = BadEqKey()
+    cache(wrkey, s1)
+    with self.assertRaisesRegex(
+        ValueError, r"(?s)should be comparable using __eq__.*eq failed"
+    ):
+      cache(wrkey, s2)
 
   def testPrintingStats(self):
     class WRKey:
@@ -420,6 +463,31 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     b = A()
     cache(b)
 
+  def testExplainException(self):
+    should_raise = True
+
+    def raising_explain_factory():
+      if should_raise:
+        raise RuntimeError("explain factory error")
+      return None
+
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x: 42, explain=raising_explain_factory
+    )
+
+    class A:
+      pass
+
+    a = A()
+    with self.assertRaisesRegex(RuntimeError, "explain factory error"):
+      cache(a)
+
+    # Subsequent calls with the same key on the same thread or another thread
+    # must not raise RecursionError or deadlock.
+    should_raise = False
+    self.assertEqual(cache(a), 42)
+
+
   def testEvictionIsLRU(self):
     cache = weakref_lru_cache.weakref_lru_cache(lambda: None, lambda x, y: y, 2)
 
@@ -513,6 +581,25 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     del wk
     self.assertEqual(len(deleted_strong_keys), 10)
     self.assertEqual(set(deleted_strong_keys), set(range(10)))
+
+  @parameterized.named_parameters(
+      ("strong_lru_cache", weakref_lru_cache.StrongLRUCache),
+      ("weakref_lru_cache", weakref_lru_cache.WeakrefLRUCache),
+      ("multi_weakref_lru_cache", weakref_lru_cache.MultiWeakrefLRUCache),
+      ("weak_value_interner", weakref_lru_cache.WeakValueInterner),
+      ("weak_key_weak_value_cache", weakref_lru_cache.WeakKeyWeakValueCache),
+  )
+  def testCallUninitialized(self, cls):
+    if xla_client._version < 517:
+      self.skipTest("Requires jaxlib_extension_version >= 517")
+    cache = cls.__new__(cls)
+    with self.assertRaises(TypeError):
+      cache(object())
+
+    cycle = [cache]
+    cycle.append(cycle)
+    del cache, cycle
+    gc.collect()
 
 
 class WeakKeyWeakValueCacheTest(absltest.TestCase):
@@ -627,6 +714,138 @@ class WeakKeyWeakValueCacheTest(absltest.TestCase):
       t.start()
     for t in threads:
       t.join()
+
+
+class StrongLRUCacheTest(absltest.TestCase):
+
+  def testBasic(self):
+    call_count = 0
+    def f(x, y):
+      nonlocal call_count
+      call_count += 1
+      return x + y
+
+    cache = weakref_lru_cache.strong_lru_cache(f, lambda: None, 2048)
+
+    self.assertEqual(cache(1, 2), 3)
+    self.assertEqual(call_count, 1)
+
+    # Hit
+    self.assertEqual(cache(1, 2), 3)
+    self.assertEqual(call_count, 1)
+
+    # Miss
+    self.assertEqual(cache(2, 3), 5)
+    self.assertEqual(call_count, 2)
+
+    self.assertEqual(len(cache.cache_keys()), 2)
+    cache.cache_clear()
+    self.assertEqual(len(cache.cache_keys()), 0)
+
+  def testEvictionIsLRU(self):
+    cache = weakref_lru_cache.strong_lru_cache(
+        lambda x: x, lambda: None, 2, num_shards=1
+    )
+
+    cache(1)
+    cache(2)
+    cache(3)  # evicts 1
+
+    info = cache.cache_info()
+    self.assertEqual(info.misses, 3)
+    self.assertEqual(info.hits, 0)
+
+    cache(2)  # hit
+    info = cache.cache_info()
+    self.assertEqual(info.hits, 1)
+
+    cache(1)  # miss (evicted)
+    info = cache.cache_info()
+    self.assertEqual(info.misses, 4)
+
+  def testRecursiveFunction(self):
+    def recursive_fn(x):
+      return cache(x)
+
+    cache = weakref_lru_cache.strong_lru_cache(
+        recursive_fn, lambda: None, 2048
+    )
+
+    with self.assertRaisesRegex(RecursionError, "Recursively calling"):
+      cache(1)
+
+  def testMultiThreaded(self):
+    cache = weakref_lru_cache.strong_lru_cache(
+        lambda x: x, lambda: None, 2048
+    )
+    num_threads = 10
+    actions_per_thread = 100
+
+    def worker():
+      for i in range(actions_per_thread):
+        cache(i % 10)
+        cache.cache_info()
+
+    threads = [threading.Thread(target=worker) for _ in range(num_threads)]
+    for t in threads:
+      t.start()
+    for t in threads:
+      t.join()
+
+  def testShardedCache(self):
+    cache = weakref_lru_cache.strong_lru_cache(
+        lambda x: x, lambda: None, maxsize=12, num_shards=4
+    )
+    # Each shard has max size (12 + 3) / 4 = 3. Total max size is 12.
+    for i in range(20):
+      cache(i)
+
+    info = cache.cache_info()
+    self.assertLessEqual(info.currsize, 12)
+
+    cache.cache_clear()
+    info = cache.cache_info()
+    self.assertEqual(info.currsize, 0)
+
+  def testPickle(self):
+    import pickle
+
+    cache = weakref_lru_cache.strong_lru_cache(
+        _dummy_target_fn, _dummy_context_fn, maxsize=10, num_shards=2
+    )
+    self.assertEqual(cache(3), 6)
+    self.assertEqual(cache.cache_info().currsize, 1)
+
+    # Serialize and deserialize
+    serialized = pickle.dumps(cache)
+    cache_2 = pickle.loads(serialized)
+
+    # Verify the unpickled cache has the same config but is empty
+    self.assertEqual(cache_2.cache_info().maxsize, 10)
+    self.assertEqual(cache_2.cache_info().currsize, 0)
+
+    # Verify it still functions correctly
+    self.assertEqual(cache_2(3), 6)
+    self.assertEqual(cache_2.cache_info().currsize, 1)
+
+  def testInvalidNumShards(self):
+    for num_shards in (0, -1):
+      with self.assertRaisesRegex(ValueError, "num_shards must be positive"):
+        cache = weakref_lru_cache.StrongLRUCache.__new__(
+            weakref_lru_cache.StrongLRUCache
+        )
+        cache.__setstate__({
+            "version": 1,
+            "fn": _dummy_target_fn,
+            "cache_context_fn": _dummy_context_fn,
+            "maxsize": 10,
+            "explain": None,
+            "num_shards": num_shards,
+        })
+      with self.assertRaisesRegex(ValueError, "num_shards must be positive"):
+        weakref_lru_cache.strong_lru_cache(
+            _dummy_target_fn, _dummy_context_fn, num_shards=num_shards
+        )
 
 
 if __name__ == "__main__":

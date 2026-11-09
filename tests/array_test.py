@@ -12,31 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import concurrent.futures
 import contextlib
 import math
 import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
-import numpy as np
-
 import jax
-import jax.numpy as jnp
+from jax._src import array
 from jax._src import core
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import _jax
+from jax._src.lib import ifrt_version
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
-from jax._src.util import safe_zip
-from jax._src.mesh import AxisType, AbstractMesh, Mesh
-from jax._src.sharding import common_devices_indices_map, IndivisibleError
-from jax._src.sharding_impls import (
-    NamedSharding, GSPMDSharding, make_single_device_sharding,
-    SingleDeviceSharding)
-from jax.experimental import multihost_utils
-from jax.sharding import PartitionSpec as P
-from jax._src import array
+from jax._src.layout import Layout
+from jax._src.mesh import AbstractMesh, AxisType, Mesh
 from jax._src.random import threefry2x32
+from jax._src.sharding import IndivisibleError, common_devices_indices_map
+from jax._src.sharding_impls import (
+    GSPMDSharding,
+    NamedSharding,
+    SingleDeviceSharding,
+    make_single_device_sharding,
+)
+from jax._src.util import safe_zip
+from jax.experimental import multihost_utils
+import jax.numpy as jnp
+from jax.sharding import PartitionSpec as P
+import numpy as np
 
 
 jax.config.parse_flags_with_absl()
@@ -251,12 +258,25 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = jnp.empty(shape, dtype)
     self.assertEqual(repr(x), f"Array([], shape={shape}, dtype={dtype})")
 
+  def test_large_array_repr(self):
+    small = jnp.arange(10, dtype=jnp.int32)
+    self.assertEqual(small.nbytes, 40)
+    self.assertEqual(repr(small), 'Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], dtype=int32)')
+    self.assertEqual(str(small), '[0 1 2 3 4 5 6 7 8 9]')
+
+    large = jnp.arange(2 ** 20, dtype=jnp.int8)
+    self.assertEqual(large.nbytes, 2 ** 20)
+    self.assertEqual(repr(large), 'Array(shape=(1048576,), dtype=int8)')
+    self.assertEqual(str(large), 'Array(shape=(1048576,), dtype=int8)')
+
   def test_jnp_array(self):
     arr = jnp.array([1, 2, 3])
     self.assertIsInstance(arr, array.ArrayImpl)
     self.assertTrue(arr.sharding.num_devices == 1)
     self.assertEqual(arr._committed, False)
     self.assertFalse(arr.weak_type)
+    with self.assertRaises(AttributeError):
+      arr.aval = arr.aval
 
   def test_jnp_array_jit_add(self):
     a = jnp.array([1, 2, 3])
@@ -474,9 +494,12 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertIsInstance(i, array.ArrayImpl)
       self.assertArraysEqual(i, j)
 
-  def test_array_iter_replicated_multi_device(self):
+  @parameterized.parameters(
+      dict(input_shape=(8, 2)),  # < 100: single-chunk path in _chunk_iter
+      dict(input_shape=(150, 2)),  # >= 100: multi-chunk dynamic_slice path
+  )
+  def test_array_iter_replicated_multi_device(self, input_shape):
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
-    input_shape = (8, 2)
     arr, input_data = create_array(
         input_shape, jax.sharding.NamedSharding(global_mesh, P(None)))
 
@@ -777,6 +800,105 @@ class JaxArrayTest(jtu.JaxTestCase):
     x.copy_to_host_async()  # doesn't crash
     self.assertArraysEqual(np.arange(8.), x)
 
+  def test_array_copy_to_host_async_concurrent(self):
+    def worker(arr: jax.Array) -> None:
+      for _ in range(10):
+        arr.copy_to_host_async()
+        _ = np.asarray(arr)
+        _ = arr._single_device_array_to_np_array_did_copy()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+      for dtype in (jnp.float32, jnp.int4):
+        for _ in range(10):
+          arr = jnp.zeros((128,), dtype=dtype)
+          futures = [executor.submit(worker, arr) for _ in range(8)]
+          for f in futures:
+            f.result()
+
+  def test_array_concurrent_shards_and_transfers(self):
+    def worker_sharded(arr: jax.Array) -> None:
+      for _ in range(10):
+        _ = arr._arrays
+        arr.copy_to_host_async()
+        _ = np.asarray(arr)
+
+    def worker_replicated(arr: jax.Array) -> None:
+      for _ in range(10):
+        _ = arr._arrays
+        _ = arr._fully_replicated_shard()
+        arr.copy_to_host_async()
+        _ = np.asarray(arr)
+        _ = arr._single_device_array_to_np_array_did_copy()
+
+    global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+      for _ in range(5):
+        arr_sharded, _ = create_array(
+            (8, 4), jax.sharding.NamedSharding(global_mesh, P('x', 'y'))
+        )
+        futures = [
+            executor.submit(worker_sharded, arr_sharded) for _ in range(8)
+        ]
+        for f in futures:
+          f.result()
+
+        arr_replicated, _ = create_array(
+            (8, 4), jax.sharding.NamedSharding(global_mesh, P())
+        )
+        futures = [
+            executor.submit(worker_replicated, arr_replicated) for _ in range(8)
+        ]
+        for f in futures:
+          f.result()
+
+  def test_copy_to_host_async_fully_sharded(self):
+    global_mesh = jtu.create_mesh((2,), ('x',))
+    x = jax.jit(lambda: jnp.arange(16.).reshape((4, 4)),
+                out_shardings=jax.NamedSharding(global_mesh, P('x', None)))()
+    x.copy_to_host_async()
+    self.assertArraysEqual(np.arange(16.).reshape((4, 4)), x)
+
+  def test_copy_to_host_async_partially_replicated(self):
+    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    x = jax.jit(lambda: jnp.arange(8.),
+                out_shardings=jax.NamedSharding(global_mesh, P('x')))()
+    x.copy_to_host_async()
+    self.assertArraysEqual(np.arange(8.), x)
+
+  def test_copy_to_host_async_fully_replicated(self):
+    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    x = jax.jit(lambda: jnp.arange(8.),
+                out_shardings=jax.NamedSharding(global_mesh, P(None)))()
+    x.copy_to_host_async()
+    self.assertArraysEqual(np.arange(8.), x)
+
+  def test_copy_to_host_async_non_contiguous_sharding(self):
+    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    x = jax.jit(lambda: jnp.arange(16.).reshape((4, 4)),
+                out_shardings=jax.NamedSharding(global_mesh, P(None, 'y')))()
+    x.copy_to_host_async()
+    self.assertArraysEqual(np.arange(16.).reshape((4, 4)), x)
+
+  def test_copy_to_host_async_string_array(self):
+    cpu_devices = jax.devices('cpu')
+    if len(cpu_devices) < 4:
+      self.skipTest(
+          f'Need at least 4 CPU devices, got {len(cpu_devices)}'
+    )
+    global_mesh = jax.sharding.Mesh(
+        np.array(cpu_devices[:4]).reshape((2, 2)), ('x', 'y')
+    )
+    sharding = jax.sharding.NamedSharding(
+        global_mesh, jax.sharding.PartitionSpec('x', 'y')
+    )
+    np_strings = np.array(
+        [['foo', 'bar'], ['baz', 'qux']], dtype=np.dtypes.StringDType()
+    )
+    arr = jax.device_put(np_strings, sharding)
+    arr.copy_to_host_async()
+    self.assertEqual(arr.dtype, np.dtypes.StringDType())
+    np.testing.assert_array_equal(np_strings, np.asarray(arr))
+
   def test_array_fully_replicated_shard(self):
 
     global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
@@ -884,8 +1006,6 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unreduced_printing(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     x = jax.device_put(jnp.arange(8., dtype='float32'), P('x'))
     x = jax.lax.reduce_sum(x, [0], out_sharding=P(unreduced={'x'}))
     self.assertIn('nreduced', str(x.sharding))
@@ -933,6 +1053,109 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = jax.device_put(jnp.arange(8), NamedSharding(mesh, P('x')))
     with jax.set_mesh(mesh):
       f(x)
+
+  @jtu.sample_product(size=[50, 100, 150])  # _chunk_iter hard-codes size=100
+  def test_array_reversed(self, size):
+    x_numpy = np.arange(size, dtype='int32')
+    x_jax = jnp.array(x_numpy)
+    self.assertArraysEqual(list(reversed(x_jax)), list(reversed(x_numpy)))
+
+  @parameterized.parameters(iter, reversed)
+  def test_traced_iter_uses_unstack(self, iter_method):
+    def f(x):
+      return list(iter_method(x))
+    jaxpr = jax.make_jaxpr(f)(np.arange(3))
+    primitives = [eqn.primitive for eqn in jaxpr.eqns]
+    self.assertIn(jax.lax.unstack_p, primitives)
+
+  @parameterized.parameters(jnp.float32, jnp.bfloat16)
+  def test_donate_after_host_read(self, dtype):
+    if ifrt_version < 78:
+      self.skipTest('Requires ifrt_version >= 78')
+    f = jax.jit(lambda x: x + 1, donate_argnums=0)
+
+    for read_fn in [
+        jax.device_get,
+        str,
+        lambda a: a.copy_to_host_async(),
+        int,
+        np.asarray,
+    ]:
+      x = jnp.ones((), dtype=dtype)
+      read_fn(x)
+      y = f(x)
+      self.assertTrue(x.is_deleted())
+      self.assertArraysEqual(y, jnp.full((), 2, dtype=dtype))
+
+    if len(jax.devices()) >= 2:
+      mesh = jtu.create_mesh((2,), ('x',))
+      replicated = jax.sharding.NamedSharding(
+          mesh, jax.sharding.PartitionSpec()
+      )
+      sharded = jax.sharding.NamedSharding(
+          mesh, jax.sharding.PartitionSpec('x')
+      )
+      for sharding in [replicated, sharded]:
+        for read_fn in [
+            jax.device_get,
+            str,
+            lambda a: a.copy_to_host_async(),
+            np.asarray,
+        ]:
+          x = jax.device_put(jnp.ones((2,), dtype=dtype), sharding)
+          read_fn(x)
+          y = f(x)
+          self.assertTrue(x.is_deleted())
+          self.assertArraysEqual(y, jnp.full((2,), 2, dtype=dtype))
+
+  def test_donate_with_live_host_view(self):
+    if ifrt_version < 78:
+      self.skipTest('Requires ifrt_version >= 78')
+    f = jax.jit(lambda x: x + 1, donate_argnums=0)
+
+    x = jnp.ones((4,), dtype=jnp.float32)
+    view = np.asarray(x)
+    y = f(x)
+    self.assertTrue(x.is_deleted())
+    self.assertArraysEqual(y, jnp.full((4,), 2.0, dtype=jnp.float32))
+    np.testing.assert_array_equal(view, np.ones((4,), dtype=np.float32))
+
+    if len(jax.devices()) >= 2:
+      mesh = jtu.create_mesh((2,), ('x',))
+      replicated = jax.sharding.NamedSharding(
+          mesh, jax.sharding.PartitionSpec()
+      )
+      x = jax.device_put(jnp.ones((4,), dtype=jnp.float32), replicated)
+      view = jax.device_get(x)
+      y = f(x)
+      self.assertTrue(x.is_deleted())
+      self.assertArraysEqual(y, jnp.full((4,), 2.0, dtype=jnp.float32))
+      np.testing.assert_array_equal(view, np.ones((4,), dtype=np.float32))
+
+  @parameterized.named_parameters(
+      ('replicated', P()),
+      ('sharded', P('x')),
+  )
+  def test_donate_non_first_shard_marks_array_deleted(self, pspec):
+    if ifrt_version < 78:
+      self.skipTest('Requires ifrt_version >= 78')
+    if len(jax.devices()) < 2:
+      self.skipTest('Requires at least 2 devices')
+    mesh = jtu.create_mesh((2,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, pspec)
+    f = jax.jit(lambda x: x + 1, donate_argnums=0)
+
+    x = jax.device_put(jnp.ones((4,), dtype=jnp.float32), sharding)
+    shards = x.addressable_shards
+    self.assertFalse(x.is_deleted())
+
+    y = f(shards[1].data)
+    self.assertFalse(shards[0].data.is_deleted())
+    self.assertTrue(shards[1].data.is_deleted())
+    self.assertTrue(x.is_deleted())
+    self.assertArraysEqual(
+        y, jnp.full(shards[1].data.shape, 2.0, dtype=jnp.float32)
+    )
 
 
 class ShardingTest(jtu.JaxTestCase):
@@ -996,6 +1219,52 @@ class ShardingTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     mps = jax.sharding.NamedSharding(mesh, pspec)
     self.assertEqual(mps.shard_shape(shape), expected_shard_shape)
+
+  @parameterized.named_parameters(
+      ("x_y", (8, 4), P("x", "y"), (8, 2)),
+      ("none_y", (8, 4), P(None, "y"), (8, 2)),
+      ("x_none", (8, 4), P("x", None), (8, 4)),
+      ("y_none", (8, 4), P("y", None), (4, 4)),
+      ("xy", (8, 4), P(("x", "y")), (4, 4)),
+      ("replicated", (8, 4), P(), (8, 4)),
+      ("manual_dim_uneven", (3, 4), P("x", "y"), (3, 2)),
+      ("manual_dim_none_uneven", (3, 4), P(None, "y"), (3, 2)),
+  )
+  def test_shard_shape_partial_manual(self, shape, pspec, expected_shard_shape):
+    auto_types = (AxisType.Manual, AxisType.Auto)
+    mesh_auto = jtu.create_mesh((4, 2), ('x', 'y'), axis_types=auto_types)
+    abs_mesh_auto = AbstractMesh((4, 2), ('x', 'y'), axis_types=auto_types)
+    self.assertEqual(
+        NamedSharding(mesh_auto, pspec).shard_shape(shape),
+        expected_shard_shape)
+    self.assertEqual(
+        NamedSharding(abs_mesh_auto, pspec).shard_shape(shape),
+        expected_shard_shape)
+
+    exp_types = (AxisType.Manual, AxisType.Explicit)
+    mesh_exp = jtu.create_mesh((4, 2), ('x', 'y'), axis_types=exp_types)
+    abs_mesh_exp = AbstractMesh((4, 2), ('x', 'y'), axis_types=exp_types)
+    self.assertEqual(
+        NamedSharding(mesh_exp, pspec).shard_shape(shape),
+        expected_shard_shape)
+    self.assertEqual(
+        NamedSharding(abs_mesh_exp, pspec).shard_shape(shape),
+        expected_shard_shape)
+
+  def test_shard_shape_full_manual_and_uneven_error(self):
+    full_manual = jtu.create_mesh(
+        (4, 2), ('x', 'y'), axis_types=(AxisType.Manual, AxisType.Manual))
+    self.assertEqual(
+        NamedSharding(full_manual, P('x', 'y')).shard_shape((3, 5)), (3, 5))
+    self.assertEqual(
+        NamedSharding(full_manual, P()).shard_shape((3, 5)), (3, 5))
+
+    partial_manual = jtu.create_mesh(
+        (4, 2), ('x', 'y'), axis_types=(AxisType.Manual, AxisType.Explicit))
+    self.assertEqual(
+        NamedSharding(partial_manual, P(None, 'y')).shard_shape((3, 4)), (3, 2))
+    with self.assertRaises(IndivisibleError):
+      NamedSharding(partial_manual, P('x', 'y')).shard_shape((3, 3))
 
   def test_uneven_shard_error(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
@@ -1384,8 +1653,6 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding.spec, P('a', 'b', None, None))
 
   def test_aval_str_short(self):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     mesh = AbstractMesh(
         (2, 2, 2), ('a', 'b', 'c'),
         axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Manual))
@@ -1420,9 +1687,39 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaises(AttributeError):
       mt.varying = {'y'}
 
+  def test_aval_str_short_layout(self):
+    aval = core.ShapedArray((8, 4), jnp.float32)
+    self.assertEqual(aval.str_short(True), "f32[8,4]")
+
+    aval = core.ShapedArray((8, 4), jnp.float32, layout=Layout((1, 0)))
+    self.assertEqual(aval.str_short(True), "f32[8,4]L(1,0)")
+
+    aval = core.ShapedArray((8, 4), jnp.float32, layout=Layout((1, 0), ()))
+    self.assertEqual(aval.str_short(True), "f32[8,4]L(1,0)")
+
+    aval = core.ShapedArray(
+        (8, 4, 16), jnp.float32, layout=Layout((1, 0, 2), ((8, 128),)))
+    self.assertEqual(aval.str_short(True), "f32[8,4,16]L(1,0,2)T((8,128))")
+
+    mesh = jax.sharding.AbstractMesh(
+        (2, 2), ('x', 'y'),
+        axis_types=(jax.sharding.AxisType.Manual,
+                    jax.sharding.AxisType.Explicit))
+    s = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec(None, 'y', None))
+    aval = core.ShapedArray(
+        (8, 4, 16), jnp.float32, sharding=s,
+        manual_axis_type=core.ManualAxisType(varying=frozenset({'x'})),
+        layout=Layout((1, 0, 2), ((8, 128), (2, 1)),
+                      sub_byte_element_size_in_bits=4))
+    self.assertEqual(
+        aval.str_short(True),
+        "f32[8,4@y,16]{V:x}L(1,0,2)T((8,128),(2,1))E(4)")
+    self.assertEqual(
+        repr(aval),
+        "ShapedArray(float32[8,4@y,16]{V:x}L(1,0,2)T((8,128),(2,1))E(4))")
+
   def test_modify_spec_auto_unreduced(self):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     mesh = AbstractMesh(
         (2, 2, 2), ('a', 'b', 'c'),
         axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Auto))
@@ -1447,16 +1744,14 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(out, P(reduced={'a', 'b'}))
 
   def test_pspec_unreduced(self):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     pspec = P('a', 'b', None, unreduced={'c'}, reduced={'d'})
     self.assertEqual(
         repr(pspec),
-        "P('a', 'b', None, unreduced={'c'}, reduced={'d'})")
+        "P('a', 'b', None, unreduced={'c'}, reduced={'d'}, unreduced_kind=sum)")
 
     pspec1 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(repr(pspec1),
-                     "P('a', 'b', None, unreduced={'c'})")
+                     "P('a', 'b', None, unreduced={'c'}, unreduced_kind=sum)")
 
     pspec2 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(pspec1, pspec2)
@@ -1469,17 +1764,17 @@ class ShardingTest(jtu.JaxTestCase):
 
     pspec4 = P('x', unreduced={'y'})
     self.assertEqual(repr(pspec4),
-                     "P('x', unreduced={'y'})")
+                     "P('x', unreduced={'y'}, unreduced_kind=sum)")
 
     pspec5 = P(None, None, unreduced={'x'})
     self.assertEqual(repr(pspec5),
-                     "P(None, None, unreduced={'x'})")
+                     "P(None, None, unreduced={'x'}, unreduced_kind=sum)")
 
     pspec6 = P(None, unreduced={'x'})
-    self.assertEqual(repr(pspec6), "P(None, unreduced={'x'})")
+    self.assertEqual(repr(pspec6), "P(None, unreduced={'x'}, unreduced_kind=sum)")
 
     pspec7 = P(unreduced={'x'})
-    self.assertEqual(repr(pspec7), "P(unreduced={'x'})")
+    self.assertEqual(repr(pspec7), "P(unreduced={'x'}, unreduced_kind=sum)")
 
     with self.assertRaisesRegex(
         TypeError, 'unreduced in `__add__` of PartitionSpec'):
@@ -1498,8 +1793,6 @@ class ShardingTest(jtu.JaxTestCase):
       P('x', None, 'y', unreduced={'z', 'y'})
 
   def test_named_sharding_unreduced_error(self):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     mesh = jtu.create_mesh((1, 1, 1), ('x', 'y', 'z'))
 
     with self.assertRaisesRegex(
@@ -1584,6 +1877,32 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertTrue(s1 == s2)
     self.assertTrue(s1.is_equivalent_to(s2, 2))
 
+  def test_pspec_check(self):
+    def create_pspec(kind):
+      return P('x', unreduced={'y'}, unreduced_kind=kind)
+
+    create_pspec(None)
+    create_pspec(jax.sharding.UnreducedKind.min)
+    with self.assertRaisesRegex(
+        TypeError, "Expected unreduced_kind to be of type"):
+      create_pspec(frozenset())
+
+  @parameterized.named_parameters(
+      ('named_sharding', _jax.NamedSharding),
+      ('gspmd_sharding', _jax.GSPMDSharding),
+      ('single_device_sharding', _jax.SingleDeviceSharding),
+  )
+  @jtu.ignore_warning(
+      category=RuntimeWarning,
+      message='nanobind: attempted to access an uninitialized instance',
+  )
+  def test_uninitialized_sharding_rewrap(self, cls):
+    if jaxlib_extension_version < 517:
+      self.skipTest('Requires jaxlib_extension_version >= 517')
+    x = jnp.ones(1)
+    with self.assertRaises((TypeError, RuntimeError)):
+      x._rewrap_with_aval_and_sharding(x.aval, cls.__new__(cls))
+
 
 class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected
@@ -1667,6 +1986,72 @@ class RngShardingTest(jtu.JaxTestCase):
     abstract_mesh2 = jax.sharding.AbstractMesh((), ())
     self.assertTrue(abstract_mesh2.empty)
     self.assertEqual(abstract_mesh2.size, 0)
+
+  def test_replace_with(self):
+    a = jnp.array([1, 2, 3])
+    b = jnp.array([4, 5, 6])
+    a._replace_with(b)
+    self.assertArraysEqual(a, [4, 5, 6])
+
+    # weak_type mismatch
+    w1 = jnp.array(1.0)
+    w2 = jnp.array(1.0, dtype=w1.dtype)
+    self.assertTrue(w1.weak_type)
+    self.assertFalse(w2.weak_type)
+    self.assertEqual(w1.dtype, w2.dtype)
+    with self.assertRaisesRegex(RuntimeError, "different weak_type"):
+      w1._replace_with(w2)
+
+    # dtype mismatch
+    c = jnp.array([1.0, 2.0, 3.0], dtype=np.float32)
+    with self.assertRaisesRegex(RuntimeError, "different dtype"):
+      a._replace_with(c)
+
+    # shape mismatch
+    d = jnp.array([1, 2])
+    with self.assertRaisesRegex(RuntimeError, "different shape"):
+      a._replace_with(d)
+
+    # committed mismatch
+    committed_arr = jax.device_put(jnp.array([1, 2, 3]), jax.devices()[0])
+    uncommitted_arr = jnp.array([1, 2, 3])
+    self.assertTrue(committed_arr._committed)
+    self.assertFalse(uncommitted_arr._committed)
+    with self.assertRaisesRegex(RuntimeError, "different committed"):
+      committed_arr._replace_with(uncommitted_arr)
+
+    # new_ref buffer is committed
+    ref = jax.new_ref(jnp.zeros(3))
+    self.assertTrue(ref._refs._buf._committed)
+
+    # sharding mismatch
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ("x",))
+    s1 = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+    s2 = make_single_device_sharding(jax.devices()[0])
+    x1 = jax.device_put(jnp.array([1, 2, 3]), s1)
+    x2 = jax.device_put(jnp.array([1, 2, 3]), s2)
+    with self.assertRaisesRegex(RuntimeError, "different sharding"):
+      x1._replace_with(x2)
+
+    del_arr1 = jnp.array([1, 2, 3])
+    del_arr2 = jnp.array([4, 5, 6])
+    del_arr1.delete()
+    with self.assertRaises(Exception):
+      del_arr1._replace_with(del_arr2)
+    with self.assertRaises(Exception):
+      del_arr2._replace_with(del_arr1)
+
+  def test_deleted_array_accessors(self):
+    arr = jnp.arange(8)
+    arr.delete()
+    with self.assertRaises(Exception):
+      arr.unsafe_buffer_pointer()
+    with self.assertRaises(Exception):
+      arr.unsafe_raw_buffer()
+    with self.assertRaises(Exception):
+      jax.make_array_from_single_device_arrays(
+          arr.shape, arr.sharding, [arr]
+      )
 
 
 if __name__ == '__main__':

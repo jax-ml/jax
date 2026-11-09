@@ -43,7 +43,7 @@ def ravel_pytree(pytree: Any) -> tuple[Array, Callable[[Array], Any]]:
     component of the output.
 
   For details on dtype promotion, see
-  https://docs.jax.dev/en/latest/type_promotion.html.
+  https://docs.jax.dev/en/latest/101/type_promotion.html.
 
   """
   leaves, treedef = tree_flatten(pytree)

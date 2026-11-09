@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 (buffer-donation)=
 # Buffer donation
 

@@ -12,14 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
+
 from absl.testing import absltest
 import jax
+from jax._src.lib import _jax, jaxlib_extension_version
 from jax._src import test_util as jtu
+from jax._src.lib import xla_client as xc
 
 jax.config.parse_flags_with_absl()
 
 
 class DeviceTest(jtu.JaxTestCase):
+
+  def test_uninitialized_device_list(self):
+    if jaxlib_extension_version < 517:
+      self.skipTest('Requires jaxlib_extension_version >= 517')
+    dl = _jax.DeviceList.__new__(_jax.DeviceList)
+    with self.assertRaises(TypeError):
+      _ = dl.addressable_device_list
+    with self.assertRaises(TypeError):
+      _ = dl.memory_kinds
+    with self.assertRaises(TypeError):
+      _ = dl.default_memory_kind
+
+  def test_uninitialized_device_gc_clear(self):
+    if jaxlib_extension_version < 517:
+      self.skipTest('Requires jaxlib_extension_version >= 517')
+    dev = _jax.Device.__new__(_jax.Device)
+    cycle = [dev]
+    cycle.append(cycle)
+    del dev, cycle
+    gc.collect()
 
   def test_repr(self):
     device = jax.devices()[0]
@@ -36,8 +60,8 @@ class DeviceTest(jtu.JaxTestCase):
           repr(device),
           'TpuDevice(id=0, process_index=0, coords=(0,0,0), core_on_chip=0)',
       )
-    elif jtu.test_device_matches(['oneapi']):
-      self.assertEqual(device.platform, 'oneapi')
+    elif jtu.is_device_oneapi():
+      self.assertEqual(device.platform, 'gpu')
       self.assertEqual(repr(device), 'OneapiDevice(id=0)')
     elif jtu.test_device_matches(['cpu']):
       self.assertEqual(device.platform, 'cpu')
@@ -55,9 +79,16 @@ class DeviceTest(jtu.JaxTestCase):
     elif jtu.test_device_matches(['oneapi']):
       self.assertEqual(str(device), 'oneapi:0')
     elif jtu.test_device_matches(['cpu']):
-      # TODO(phawkins): remove TFRT_CPU_0 once jaxlib 0.10 is the minimum
-      # version.
-      self.assertIn(str(device), ['cpu:0', 'TFRT_CPU_0'])
+      self.assertEqual(str(device), 'cpu:0')
+
+  def test_empty_device_list_is_fully_addressable(self):
+    if jaxlib_extension_version < 518:
+      self.skipTest('Requires jaxlib_extension_version >= 518')
+    dl = xc.DeviceList(())
+    self.assertLen(dl, 0)
+    self.assertEqual(dl.process_indices, set())
+    self.assertTrue(dl.is_fully_addressable)
+    self.assertEqual(dl.addressable_device_list, dl)
 
 
 if __name__ == '__main__':

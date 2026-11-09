@@ -17,16 +17,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import os
 import time
+from typing import Any, cast
 import warnings
 
 import jax
 from jax._src import core as jax_core
-from jax._src import frozen_dict
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
-from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering
 from jax.experimental.mosaic import gpu as mgpu
@@ -34,67 +34,16 @@ import jax.numpy as jnp
 import numpy as np
 
 
-def pallas_call_lowering(
+def _emit_mosaic_gpu_custom_call(
     ctx: mlir.LoweringRuleContext,
-    *args,
-    jaxpr: jax_core.Jaxpr,
-    interpret: bool,
-    debug: bool,
+    args,
+    lowering_result: lowering.LoweringResult,
     input_output_aliases: tuple[tuple[int, int], ...],
-    grid_mapping: pallas_core.GridMapping,
-    mesh: pallas_core.Mesh | None,
-    compiler_params: pallas_core.CompilerParams | None,
-    cost_estimate: pallas_core.CostEstimate | None,
-    out_avals: tuple[jax_core.AbstractValue, ...],
-    metadata: frozen_dict.FrozenDict[str, str] | None,
-    name: str | None,
+    debug_info,
+    cost_estimate: Any = None,
+    skip_device_barrier: bool = False,
+    collective_id: int | None = None,
 ):
-  del metadata, name  # TODO(sharadmv): Add metadata to HLO.
-  debug_info = jaxpr.debug_info
-  del interpret, out_avals
-  if grid_mapping.num_dynamic_grid_bounds:
-    raise NotImplementedError(
-        "dynamic grid bounds not supported in the Mosaic GPU backend"
-    )
-
-  if mesh is not None and not isinstance(mesh, gpu_core.Mesh):
-    raise NotImplementedError(
-        f"Mesh {mesh} is not supported by the Mosaic GPU backend"
-    )
-
-  if debug:
-    print(f"\nThe kernel jaxpr for pallas_call {debug_info.func_src_info}:")
-    print(jaxpr)
-    print(f"The grid mapping for pallas_call {debug_info.func_src_info}:")
-    print(grid_mapping)
-
-  mgpu.dialect.register_dialect(ctx.module_context.context)
-
-  if compiler_params is None:
-    gpu_params = gpu_core.CompilerParams()
-  else:
-    assert isinstance(compiler_params, gpu_core.CompilerParams)
-    gpu_params = compiler_params
-
-  jax_mesh = None
-  axis_context = ctx.module_context.axis_context
-  if axis_context is not None:
-    if isinstance(axis_context, sharding_impls.SPMDAxisContext):
-      jax_mesh = axis_context.mesh
-
-  lowering_result = lowering.lower_pipelined_jaxpr_to_module(
-      grid_mapping,
-      mesh,
-      jax_mesh,
-      jaxpr,
-      gpu_params,
-      cost_estimate,
-      outer_traceback=ctx.traceback,
-  )
-  if debug:
-    print(f"\nThe Mosaic GPU module for pallas_call {debug_info.func_src_info}:")
-    print(lowering_result.module.operation)
-
   module = lowering_result.module
   new_avals_in = list(ctx.avals_in)
   new_avals_out = list(map(_as_shaped_array, lowering_result.new_out_shapes))
@@ -115,15 +64,24 @@ def pallas_call_lowering(
     scratch_args = mlir.lower_fun(
         zero_init_gmem_scratch, multiple_results=True
     )(ctx.replace(avals_in=()))
+
+  if lowering_result.use_barrier_semaphore and collective_id is None:
+    raise ValueError(
+        "collective_id has to be specified when using a custom barrier"
+    )
   outs = mgpu.core._mosaic_gpu_lowering_rule(
       ctx.replace(avals_in=new_avals_in, avals_out=new_avals_out),
-      *args, *scratch_args,
+      *args,
+      *scratch_args,
       module=module,
       out_types=lowering_result.new_out_shapes,
       inout_types=(),
       input_output_aliases=input_output_aliases,
-      # False until we add get_barrier_semaphore() feature.
-      use_custom_barrier=False,
+      cost_estimate=cost_estimate,
+      skip_device_barrier=skip_device_barrier,
+      collective_id=collective_id
+      if lowering_result.use_barrier_semaphore
+      else None,
   )
   if (prof_spec := lowering_result.profiler_spec) is not None:
     *outs, prof_buffer = outs
@@ -143,8 +101,8 @@ def pallas_call_lowering(
           )
       except FileExistsError:
         warnings.warn(
-            f"Failed to dump profile for pallas_call {debug_info.func_src_info}, "
-            f"profile already exists at {out_file}"
+            f"Failed to dump profile for {debug_info.func_src_info}, profile"
+            f" already exists at {out_file}"
         )
     def do_callback(prof_buffer):
       jax.debug.callback(dump_profile, prof_buffer)
@@ -161,4 +119,90 @@ def _as_shaped_array(t: jax.ShapeDtypeStruct) -> jax_core.ShapedArray:
   return jax_core.ShapedArray(t.shape, np.dtype(t.dtype))
 
 
-pallas_core.register_lowering_rule(gpu_core.CompilerParams, pallas_call_lowering, "gpu")
+def mpmd_map_mgpu_lowering_rule(
+    ctx: mlir.LoweringRuleContext,
+    *args,
+    meshes,
+    jaxprs,
+    out_avals,
+    input_output_aliases,
+    compiler_params,
+    interpret,
+    debug,
+    cost_estimate,
+    metadata,
+    name,
+    external_meshes,
+):
+  del interpret, metadata, name, out_avals  # Unused.
+
+  if len(jaxprs) != 1:
+    raise NotImplementedError(
+        "Lowering multiple mesh/function pairs is not supported by the Mosaic"
+        " GPU backend"
+    )
+  if external_meshes:
+    raise NotImplementedError(
+        "External meshes are not supported by the Mosaic GPU backend"
+    )
+  [jaxpr] = jaxprs
+  [mesh] = meshes
+  if not isinstance(mesh, gpu_core.Mesh):
+    raise NotImplementedError(
+        f"Mesh {mesh} is not supported by the Mosaic GPU backend"
+    )
+  # On GPU ``mpmd_map`` kernels never carry scratch operands -- scratch is
+  # handled separately by ``plgpu.kernel``. So the jaxpr invars are exactly the
+  # inputs followed by the outputs.
+  if len(jaxpr.invars) != len(args) + len(ctx.avals_out):
+    raise NotImplementedError(
+        "Scratch operands are not supported by the Mosaic GPU mpmd_map lowering"
+    )
+
+  if debug:
+    print(f"\nThe kernel jaxpr for mpmd_map {jaxpr.debug_info.func_src_info}:")
+    print(jaxpr)
+
+  mgpu.dialect.register_dialect(ctx.module_context.context)
+
+  if compiler_params is None:
+    gpu_params = gpu_core.CompilerParams()
+  else:
+    assert isinstance(compiler_params, gpu_core.CompilerParams)
+    gpu_params = compiler_params
+
+  jax_mesh = None
+  axis_context = ctx.module_context.axis_context
+  if axis_context is not None:
+    if isinstance(axis_context, sharding_impls.SPMDAxisContext):
+      jax_mesh = axis_context.mesh
+
+  # ``axis_index``/``program_id`` inside the kernel (including nested
+  # ``run_scoped`` traces during lowering) resolve mesh axes from the JAX core
+  # axis environment. The pipelined path binds them via ``grid_mapping.trace_env``;
+  # here we bind them straight from the mesh.
+  from jax._src.pallas import mpmd
+  with mpmd.mpmd_map_tracing_context(mesh, (*meshes, *external_meshes)):
+    lowering_result = lowering.lower_unpipelined_jaxpr_to_module(
+        mesh,
+        jax_mesh,
+        jaxpr,
+        cast(Sequence[jax_core.ShapedArray], ctx.avals_in),
+        cast(Sequence[jax_core.ShapedArray], ctx.avals_out),
+        gpu_params,
+        outer_traceback=ctx.traceback,
+    )
+  if debug:
+    print(f"\nThe Mosaic GPU module for mpmd_map {jaxpr.debug_info.func_src_info}:")
+    print(lowering_result.module.operation)
+
+  return _emit_mosaic_gpu_custom_call(
+      ctx,
+      args,
+      lowering_result,
+      tuple(input_output_aliases.items()),
+      jaxpr.debug_info,
+      cost_estimate=cost_estimate,
+      skip_device_barrier=gpu_params.skip_device_barrier,
+      collective_id=gpu_params.collective_id,
+  )

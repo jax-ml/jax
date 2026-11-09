@@ -16,7 +16,9 @@ import collections
 import contextlib
 import functools
 import logging
+import threading
 import time
+import traceback
 import unittest
 
 from absl.testing import absltest
@@ -28,10 +30,11 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
-from jax.experimental import io_callback
-from jax.experimental import pjit
+from jax._src.lib import xla_client
 from jax._src.shard_map import shard_map
 from jax._src.sharding_impls import make_single_device_sharding
+from jax.experimental import io_callback
+from jax.experimental import pjit
 import jax.numpy as jnp
 from jax.sharding import Mesh
 import numpy as np
@@ -73,6 +76,29 @@ class PythonCallbackTest(jtu.JaxTestCase):
 
     out = f(0.)
     self.assertEqual(out, 1.)
+
+  @with_pure_and_io_callbacks
+  def test_callback_computations_ignore_mesh_of_dispatching_thread(
+      self, *, callback
+  ):
+    if jax.device_count() < 2:
+      self.skipTest("Needs at least 2 devices.")
+
+    # A program can run on the thread that dispatched it, and so can its
+    # callback. The callback's arguments are on a CPU device, so its
+    # computations must not use the mesh that thread set.
+    def cb(x):
+      self.assertTrue(jax.sharding.get_abstract_mesh().empty)
+      return np.asarray(jnp.asarray(x) * 2.0 + 1.0)
+
+    f = jax.jit(
+        lambda x: callback(cb, jax.ShapeDtypeStruct(x.shape, x.dtype), x)
+    )
+    device = jax.devices()[1]
+    x = jax.device_put(jnp.zeros((8, 128), jnp.float32), device)
+    with jax.set_mesh(Mesh(np.array([device]), ("x",))):
+      y = f(x)
+    np.testing.assert_array_equal(y, np.ones((8, 128), np.float32))
 
   @parameterized.named_parameters(
       dict(
@@ -185,9 +211,11 @@ class PythonCallbackTest(jtu.JaxTestCase):
       return callback(lambda x: np.ones(4, np.float32),
                       core.ShapedArray((4,), np.float32))
 
-    with self.assertRaises(RuntimeError):
+    with self.assertRaises(Exception) as context:
       f()
       jax.effects_barrier()
+    self.assertIn("missing 1 required positional argument: 'x'",
+                  "".join(traceback.format_exception(context.exception)))
 
   @with_pure_and_io_callbacks
   def test_callback_with_wrong_number_of_returned_values(self, *, callback):
@@ -197,9 +225,11 @@ class PythonCallbackTest(jtu.JaxTestCase):
       # Calling a function with two return values that expects one return value
       return callback(lambda x: (x, np.ones(4, np.float32)), x, x)
 
-    with self.assertRaises(RuntimeError):
+    with self.assertRaises(Exception) as context:
       f(2.)
       jax.effects_barrier()
+    self.assertIn("Mismatched number of outputs from callback",
+                  "".join(traceback.format_exception(context.exception)))
 
     @jax.jit
     def g():
@@ -221,9 +251,11 @@ class PythonCallbackTest(jtu.JaxTestCase):
       return callback(lambda: np.float32(1.), core.ShapedArray((1,),
         np.float32))
 
-    with self.assertRaises(RuntimeError):
+    with self.assertRaises(Exception) as context:
       f()
       jax.effects_barrier()
+    self.assertIn("Incorrect output shape for return value #0",
+                  "".join(traceback.format_exception(context.exception)))
 
   @with_pure_and_io_callbacks
   def test_callback_with_wrong_dtype_outputs(self, *, callback):
@@ -571,6 +603,62 @@ class PythonCallbackTest(jtu.JaxTestCase):
       self.assertIn(f"jax.{api_name} failed", output)
       self.assertIn("Traceback (most recent call last)", output)
 
+  @jtu.thread_unsafe_test()
+  def test_sharded_ordered_callback_after_exception(self):
+    if jtu.test_device_matches(["cpu"]) and len(jax.devices()) < 2:
+      self.skipTest("Test requires 2 CPU devices.")
+
+    def fail(x):
+      raise RuntimeError("nope")
+
+    def add1(x):
+      return x + 1.0
+
+    num_devices = len(jax.devices())
+    mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
+
+    spec = jax.sharding.PartitionSpec('x')
+    sharding = jax.sharding.NamedSharding(mesh, spec)
+
+    @jax.jit(in_shardings=sharding, out_shardings=sharding)
+    @jax.shard_map(mesh=mesh, in_specs=spec, out_specs=spec)
+    def f(x):
+      return io_callback_ordered(fail, jax.ShapeDtypeStruct.like(x), x)
+
+    @jax.jit(in_shardings=sharding, out_shardings=sharding)
+    @jax.shard_map(mesh=mesh, in_specs=spec, out_specs=spec)
+    def g(x):
+      return io_callback_ordered(add1, jax.ShapeDtypeStruct.like(x), x)
+
+    x = jnp.zeros((num_devices, 4))
+    with self.assertRaises(Exception) as context:
+      f(x).block_until_ready()
+    self.assertIn("nope",
+                  "".join(traceback.format_exception(context.exception)))
+
+    with self.assertRaises(Exception) as context:
+      # The first attempt to run `g` after `f` will fail, re-raising the
+      # exception from running `f`.
+      g(x).block_until_ready()
+    self.assertIn("nope",
+                  "".join(traceback.format_exception(context.exception)))
+
+    np.testing.assert_array_equal(g(x), np.ones((num_devices, 4)))
+
+    with self.assertRaises(Exception) as context:
+      f(x).block_until_ready()
+    self.assertIn("nope",
+                  "".join(traceback.format_exception(context.exception)))
+
+    with self.assertRaises(Exception) as context:
+      # effects_barrier will re-raise the exception from running `f`.
+      jax.effects_barrier()
+      g(x).block_until_ready()
+    self.assertIn("nope",
+                  "".join(traceback.format_exception(context.exception)))
+
+    np.testing.assert_array_equal(g(x), np.ones((num_devices, 4)))
+
   @with_pure_and_io_callbacks
   @jtu.thread_unsafe_test()  # count_primitive_compiles isn't thread-safe
   def test_compilation_caching(self, *, callback):
@@ -614,7 +702,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(lambda: jax.vmap(f)(
         jnp.zeros(100, dtype=jnp.float32)))()
     with jax.ensure_compile_time_eval():
-      jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts)  # doesn't crash
+      jax.core.eval_jaxpr(jaxpr, jaxpr.consts)  # doesn't crash
 
   @parameterized.parameters("int2", "int4", "uint2", "uint4", "float4_e2m1fn")
   def test_subbyte_results(self, dtype: str):
@@ -668,6 +756,29 @@ class PythonCallbackTest(jtu.JaxTestCase):
 
     result = f(x)
     np.testing.assert_array_equal(x, result)
+
+  @with_pure_and_io_callbacks
+  def test_callback_preserves_subnormals(self, *, callback):
+    if jax._src.lib.ifrt_version < 85:
+      self.skipTest("Requires ifrt_version >= 85")
+
+    def cb(x):
+      # Test that multiplying to produce a subnormal float32 doesn't flush to zero
+      a = np.array([1e-38], dtype=np.float32)
+      b = np.array([0.1], dtype=np.float32)
+      self.assertNotEqual((a * b)[0], 0.0)
+
+      # Test that operating on an existing subnormal float32 preserves it
+      sub = np.nextafter(np.float32(0), np.float32(1))
+      c = np.array([sub], dtype=np.float32)
+      self.assertNotEqual((c * np.float32(1.0))[0], 0.0)
+      return x
+
+    f = jax.jit(
+        lambda x: callback(cb, jax.ShapeDtypeStruct(x.shape, x.dtype), x)
+    )
+    f(np.float32(1.0))
+    jax.effects_barrier()
 
 
 class PureCallbackTest(jtu.JaxTestCase):
@@ -831,6 +942,7 @@ class PureCallbackTest(jtu.JaxTestCase):
         ValueError, "Pure callbacks do not support JVP."):
       f(2.)
 
+  @jtu.thread_unsafe_test()
   def test_error_propagation(self):
     def throws_error_fn(x):
       raise RuntimeError("Errors should propagate.")
@@ -999,6 +1111,24 @@ class PureCallbackTest(jtu.JaxTestCase):
         out, np.arange(jax.local_device_count()) * 2
     )
 
+  def test_pure_callback_sharding_device_not_in_device_assignment(self):
+    if jax.device_count() < 2:
+      self.skipTest("Test requires at least 2 devices.")
+    mesh = Mesh(np.array(jax.devices()[:1]), axis_names=('x',))
+    sharding = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec('x'))
+    callback_device = jax.devices()[-1]
+
+    def f(x):
+      return jax.pure_callback(
+          lambda v: v * 2, x, x,
+          sharding=make_single_device_sharding(callback_device))
+
+    with self.assertRaisesRegex(
+        ValueError, "that is not in the device assignment"):
+      jax.jit(f, in_shardings=sharding, out_shardings=sharding)(
+          jnp.arange(1.0))
+
   def test_can_shard_pure_callback_maximally_with_sharding(self):
     mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
 
@@ -1024,18 +1154,22 @@ class PureCallbackTest(jtu.JaxTestCase):
         out, np.arange(jax.local_device_count()) * 2
     )
     stablehlo_ir = f_jit.lower(inp).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn(
-          "sdy.sharding ="
-          f" #sdy.sharding_per_value<[<@maximal_mesh_{callback_device_index},"
-          " []>]>",
-          stablehlo_ir)
-      self.assertIn(
-          f"sdy.mesh @maximal_mesh_{callback_device_index} = <[],"
-          f" device_ids=[{callback_device_index}]>",
-          stablehlo_ir)
-    else:
-      self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
+    mesh_name_prefix = (
+        "single_device"
+        if f"@single_device_{callback_device_index}" in stablehlo_ir
+        else "maximal_mesh"
+    )
+    self.assertIn(
+        "sdy.sharding ="
+        f" #sdy.sharding_per_value<[<@{mesh_name_prefix}_{callback_device_index},"
+        " []>]>",
+        stablehlo_ir,
+    )
+    self.assertIn(
+        f"sdy.mesh @{mesh_name_prefix}_{callback_device_index} = <[],"
+        f" device_ids=[{callback_device_index}]>",
+        stablehlo_ir,
+    )
 
   def test_can_shard_pure_callback_manually(self):
 
@@ -1249,8 +1383,7 @@ class IOCallbackTest(jtu.JaxTestCase):
       io_callback(lambda x: x, y, y)
       return x
 
-    with self.assertRaisesRegex(NotImplementedError,
-        "Effects not supported in partial-eval of `checkpoint`"):
+    with self.assertRaisesRegex(NotImplementedError, "Effects not supported in"):
       f(2., 3.)
 
   @parameterized.named_parameters(
@@ -1271,9 +1404,16 @@ class IOCallbackTest(jtu.JaxTestCase):
     mesh = jax.sharding.Mesh(np.array(devices), ['dev'])
 
     _collected: list[int] = []
+    # Unordered io_callbacks (ordered=False) do not return sequence tokens, meaning
+    # jax.effects_barrier() does not track or wait for them. We use a condition
+    # variable to safely await completion of background FFI callback CPU threads.
+    cond = threading.Condition()
+
     def _cb(x):
       nonlocal _collected
-      _collected.append(int(x.sum()))
+      with cond:
+        _collected.append(int(x.sum()))
+        cond.notify_all()
 
     io_callback_kwargs = dict(ordered=ordered)
     callback_device = devices[0]
@@ -1305,24 +1445,32 @@ class IOCallbackTest(jtu.JaxTestCase):
     if ordered:
       self.assertAllClose(_collected, expected)
     else:
+      # Await background FFI CPU threads before asserting, as jax.effects_barrier()
+      # only synchronizes ordered callbacks that emit effect tokens.
+      with cond:
+        cond.wait_for(lambda: len(_collected) >= len(expected), timeout=10)
       self.assertEqual(len(_collected), len(expected))
       for v in expected:
         self.assertIn(v, _collected)
 
     callback_device_index = in_spec._device_assignment.index(callback_device)
     stablehlo_ir = f.lower(x).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn(
-          "sdy.sharding ="
-          f" #sdy.sharding_per_value<[<@maximal_mesh_{callback_device_index},"
-          " []>]>",
-          stablehlo_ir)
-      self.assertIn(
-          f"sdy.mesh @maximal_mesh_{callback_device_index} = <[],"
-          f" device_ids=[{callback_device_index}]>",
-          stablehlo_ir)
-    else:
-      self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
+    mesh_name_prefix = (
+        "single_device"
+        if f"@single_device_{callback_device_index}" in stablehlo_ir
+        else "maximal_mesh"
+    )
+    self.assertIn(
+        "sdy.sharding ="
+        f" #sdy.sharding_per_value<[<@{mesh_name_prefix}_{callback_device_index},"
+        " []>]>",
+        stablehlo_ir,
+    )
+    self.assertIn(
+        f"sdy.mesh @{mesh_name_prefix}_{callback_device_index} = <[],"
+        f" device_ids=[{callback_device_index}]>",
+        stablehlo_ir,
+    )
 
   def test_ordered_io_callback_maximal_token(self):
     devices = jax.devices()
@@ -1475,6 +1623,10 @@ class IOCallbackTest(jtu.JaxTestCase):
     jax.vmap(f)(jnp.arange(3.))  # don't crash
     jax.effects_barrier()
 
+  def test_create_hlo_output_callback(self):
+    client = xla_client.make_cpu_client(asynchronous=False)
+    capsule = client.create_hlo_output_callback(123, 2, lambda *_args: None)
+    self.assertIsNotNone(capsule)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

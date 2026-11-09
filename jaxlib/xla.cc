@@ -24,21 +24,19 @@ limitations under the License.
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
-#include "jaxlib/nb_class_ptr.h"
-#include "jaxlib/py_client.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 #include "xla/pjrt/c/pjrt_c_api_xla_transform_extension.h"
-#include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
-#include "xla/pjrt/pjrt_api.h"
 #include "xla/python/version.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/xla_transform.h"
@@ -46,7 +44,6 @@ limitations under the License.
 
 namespace nb = nanobind;
 
-#if JAX_IFRT_VERSION_NUMBER >= 55
 namespace {
 
 // An HloXlaTransform that delegates to a Python callback.
@@ -170,7 +167,6 @@ void CApiTransformHloModuleCallback(PJRT_XlaTransform_Callbacks* callbacks,
 }
 
 }  // namespace
-#endif
 
 NB_MODULE(_xla, m) {
   // Register a transform directly via RegisterHloXlaTransform.
@@ -178,7 +174,6 @@ NB_MODULE(_xla, m) {
   m.def(
       "register_xla_transform",
       [](std::string name, int stage, nb::object callback) {
-#if JAX_IFRT_VERSION_NUMBER >= 55
         xla::HloXlaTransform::PipelineStage pipeline_stage;
         switch (stage) {
           case 0:
@@ -195,16 +190,12 @@ NB_MODULE(_xla, m) {
         auto transform = std::make_shared<PyHloXlaTransform>(
             std::move(name), std::move(callback));
         xla::RegisterHloXlaTransform(pipeline_stage, std::move(transform));
-#else
-        throw std::runtime_error("register_xla_transform is not implemented");
-#endif
       },
       nb::arg("name"), nb::arg("stage"), nb::arg("callback"));
 
   m.def(
       "clear_xla_transform",
       [](std::string name, int stage) {
-#if JAX_IFRT_VERSION_NUMBER >= 55
         xla::HloXlaTransform::PipelineStage pipeline_stage;
         switch (stage) {
           case 0:
@@ -218,9 +209,6 @@ NB_MODULE(_xla, m) {
             throw std::runtime_error("Invalid pipeline stage");
         }
         return xla::ClearHloXlaTransform(pipeline_stage, name);
-#else
-        throw std::runtime_error("clear_xla_transform is not implemented");
-#endif
       },
       nb::arg("name"), nb::arg("stage"));
 
@@ -228,31 +216,24 @@ NB_MODULE(_xla, m) {
   // This is used for plugin backends (e.g. TPU, GPU).
   m.def(
       "register_xla_transform_c_api",
-      [](nb::object client_obj, std::string name, int stage,
-         nb::object callback) {
-#if JAX_IFRT_VERSION_NUMBER >= 55
-        if (client_obj.is_none()) {
-          throw std::runtime_error(
-              "register_xla_transform_c_api: client cannot be None.");
+      [](nb::capsule c_api, std::string name, int stage, nb::object callback) {
+        if (std::string_view(c_api.name()) != "pjrt_c_api") {
+          throw nb::value_error(
+              "c_api argument to register_xla_transform_c_api is not a "
+              "pjrt_c_api capsule.");
         }
-        auto client = nb::cast<jax::nb_class_ptr<jax::PyClient>>(client_obj);
-        std::shared_ptr<xla::PjRtClient> pjrt_client =
-            client->shared_ptr_pjrt_client();
-        auto* c_api_client =
-            dynamic_cast<xla::PjRtCApiClient*>(pjrt_client.get());
-        if (c_api_client == nullptr) {
-          // Client is not a PJRT C API client; skip silently.
-          return;
-        }
-        const PJRT_Api* c_api_value = c_api_client->pjrt_c_api();
+        const PJRT_Api* c_api_value =
+            static_cast<const PJRT_Api*>(c_api.data());
 
         PJRT_Xla_Transform_Extension* extension =
             pjrt::FindExtension<PJRT_Xla_Transform_Extension>(
                 c_api_value,
                 PJRT_Extension_Type::PJRT_Extension_Type_XlaTransform);
         if (extension == nullptr) {
-          // Extension not available for this client; skip silently.
-          return;
+          throw std::runtime_error(
+              absl::StrCat("Cannot register XLA transform '", name,
+                           "': PJRT plugin does not support the XlaTransform "
+                           "extension."));
         }
 
         // Allocate callback state on the heap. Cleared via dtor if
@@ -280,31 +261,20 @@ NB_MODULE(_xla, m) {
           absl::Status status = pjrt::PjrtErrorToStatus(error);
           throw std::runtime_error(status.ToString());
         }
-#else
-        throw std::runtime_error(
-            "register_xla_transform_c_api is not implemented");
-#endif
       },
-      nb::arg("client"), nb::arg("name"), nb::arg("stage"),
+      nb::arg("c_api"), nb::arg("name"), nb::arg("stage"),
       nb::arg("callback"));
 
   m.def(
       "clear_xla_transform_c_api",
-      [](nb::object client_obj, std::string name, int stage) {
-#if JAX_IFRT_VERSION_NUMBER >= 55
-        if (client_obj.is_none()) {
-          throw std::runtime_error(
-              "clear_xla_transform_c_api: client cannot be None.");
+      [](nb::capsule c_api, std::string name, int stage) {
+        if (std::string_view(c_api.name()) != "pjrt_c_api") {
+          throw nb::value_error(
+              "c_api argument to clear_xla_transform_c_api is not a "
+              "pjrt_c_api capsule.");
         }
-        auto client = nb::cast<jax::nb_class_ptr<jax::PyClient>>(client_obj);
-        std::shared_ptr<xla::PjRtClient> pjrt_client =
-            client->shared_ptr_pjrt_client();
-        auto* c_api_client =
-            dynamic_cast<xla::PjRtCApiClient*>(pjrt_client.get());
-        if (c_api_client == nullptr) {
-          return false;
-        }
-        const PJRT_Api* c_api_value = c_api_client->pjrt_c_api();
+        const PJRT_Api* c_api_value =
+            static_cast<const PJRT_Api*>(c_api.data());
 
         PJRT_Xla_Transform_Extension* extension =
             pjrt::FindExtension<PJRT_Xla_Transform_Extension>(
@@ -327,10 +297,6 @@ NB_MODULE(_xla, m) {
           throw std::runtime_error(status.ToString());
         }
         return args.cleared;
-#else
-        throw std::runtime_error(
-            "clear_xla_transform_c_api is not implemented");
-#endif
       },
-      nb::arg("client"), nb::arg("name"), nb::arg("stage"));
+      nb::arg("c_api"), nb::arg("name"), nb::arg("stage"));
 }

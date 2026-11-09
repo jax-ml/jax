@@ -282,6 +282,7 @@ namespace; they are listed below.
     mgrid
     min
     minimum
+    minmax
     mod
     modf
     moveaxis
@@ -393,6 +394,7 @@ namespace; they are listed below.
     tanh
     tensordot
     tile
+    top_k
     trace
     trapezoid
     transpose

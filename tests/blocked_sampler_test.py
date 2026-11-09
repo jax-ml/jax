@@ -26,44 +26,66 @@ config.parse_flags_with_absl()
 
 
 def call_kernel(
-  kernel,
-  grid: tuple[int, int],
-  transpose_grid: bool,
-  key: jax.Array,
-  total_size: tuple[int, int],
-  block_size: tuple[int, int],
-  tile_size: tuple[int, int],
-  ):
+    kernel,
+    grid: tuple[int, int],
+    transpose_grid: bool,
+    key: jax.Array,
+    total_size: tuple[int, int],
+    block_size: tuple[int, int],
+    tile_size: tuple[int, int],
+):
   """Calls a kernel over a grid and concatenates results to a single array."""
   if transpose_grid:
     grid = (grid[1], grid[0])
   m, n = grid
-  samples = jnp.concatenate([
-              jnp.concatenate([
-                kernel((i, j), key, total_size, block_size, tile_size)
-                  for j in range(n)], axis=1)
-                    for i in range(m)], axis=0)
-  # Slice out the padding.
-  samples = samples[:total_size[0], :total_size[1]]
+
+  def eval_block(i, j):
+    return kernel((i, j), key, total_size, block_size, tile_size)
+
+  vmapped = jax.vmap(
+      jax.vmap(eval_block, in_axes=(None, 0), out_axes=1),
+      in_axes=(0, None),
+      out_axes=0,
+  )
+  blocks = vmapped(jnp.arange(m), jnp.arange(n))
+  samples = blocks.reshape(
+      m * blocks.shape[1], n * blocks.shape[3], *blocks.shape[4:]
+  )
+  # Slice out the padding.
+  samples = samples[: total_size[0], : total_size[1]]
   return samples
 
 
 def call_kernel_3d(
-  kernel,
-  grid: tuple[int, int],
-  *args
-  ):
+    kernel,
+    grid: tuple[int, int, int],
+    *args,
+):
   """Calls a kernel over a 3D grid and concatenates results to a single array."""
   depth, rows, cols = grid
-  return jnp.concatenate([
-          jnp.concatenate([
-            jnp.concatenate([
-              jnp.array(kernel((i, j, k), *args))
-                for k in range(cols)], axis=2)
-                  for j in range(rows)], axis=1)
-                    for i in range(depth)], axis=0)
+
+  def eval_block(i, j, k):
+    return jnp.array(kernel((i, j, k), *args))
+
+  vmapped = jax.vmap(
+      jax.vmap(
+          jax.vmap(eval_block, in_axes=(None, None, 0), out_axes=2),
+          in_axes=(None, 0, None),
+          out_axes=1,
+      ),
+      in_axes=(0, None, None),
+      out_axes=0,
+  )
+  blocks = vmapped(jnp.arange(depth), jnp.arange(rows), jnp.arange(cols))
+  return blocks.reshape(
+      depth * blocks.shape[1],
+      rows * blocks.shape[3],
+      cols * blocks.shape[5],
+      *blocks.shape[6:],
+  )
 
 
+@jax.jit(static_argnames=['total_size', 'block_size', 'tile_size'])
 def blocked_fold_in(block_index, key, total_size, block_size, tile_size):
   """Folds in block_index into global_key."""
   return blocked_sampler.blocked_fold_in(key,
@@ -155,4 +177,4 @@ class BlockedFoldInTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

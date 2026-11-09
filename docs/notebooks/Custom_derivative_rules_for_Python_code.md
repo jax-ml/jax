@@ -1,6 +1,7 @@
 ---
 jupytext:
   formats: ipynb,md:myst
+  notebook_metadata_filter: nosearch
   text_representation:
     extension: .md
     format_name: myst
@@ -9,6 +10,7 @@ jupytext:
 kernelspec:
   display_name: Python 3
   name: python3
+nosearch: true
 ---
 
 +++ {"id": "LqiaKasFjH82"}
@@ -26,6 +28,8 @@ There are two ways to define differentiation rules in JAX:
 2. defining new `core.Primitive` instances along with all their transformation rules, for example to call into functions from other systems like solvers, simulators, or general numerical computing systems.
 
 This notebook is about #1. To read instead about #2, see the [notebook on adding primitives](https://docs.jax.dev/en/latest/notebooks/How_JAX_primitives_work.html).
+
+There are also new experimental APIs that unify these two approaches: hijax primitives, which carry a JAX-traceable Python implementation along with custom rules for differentiation (and other transformations). Check out {ref}`hijax-custom-derivatives`, which mirrors this notebook's content.
 
 For an introduction to JAX's automatic differentiation API, see [The Autodiff Cookbook](https://docs.jax.dev/en/latest/notebooks/autodiff_cookbook.html). This notebook assumes some familiarity with [jax.jvp](https://docs.jax.dev/en/latest/_autosummary/jax.jvp.html) and [jax.grad](https://docs.jax.dev/en/latest/_autosummary/jax.grad.html), and the mathematical meaning of JVPs and VJPs.
 
@@ -805,39 +809,6 @@ Notice that `f_jvp` calls `f` to compute the primal outputs. In the context of h
 grad(grad(f))(3.)
 ```
 
-+++ {"id": "XNxAmFSsaaro"}
-
-You can use Python control flow with `jax.custom_jvp`:
-
-```{code-cell} ipython3
-:id: kkXlSJL6adU2
-
-@custom_jvp
-def f(x):
-  if x > 0:
-    return jnp.sin(x)
-  else:
-    return jnp.cos(x)
-
-@f.defjvp
-def f_jvp(primals, tangents):
-  x, = primals
-  x_dot, = tangents
-  ans = f(x)
-  if x > 0:
-    return ans, 2 * x_dot
-  else:
-    return ans, 3 * x_dot
-```
-
-```{code-cell} ipython3
-:id: QCHmJ56Na2G3
-:outputId: 1772d3b4-44ef-4745-edd3-553c6312c553
-
-print(grad(f)(1.))
-print(grad(f)(-1.))
-```
-
 +++ {"id": "9cVdgR7ilt8l"}
 
 ### Use `jax.custom_vjp` to define custom reverse-mode-only rules
@@ -880,7 +851,7 @@ print(grad(f)(3.))
 
 In words, we again start with a primal function `f` that takes inputs of type `a` and produces outputs of type `b`. We associate with it two functions, `f_fwd` and `f_bwd`, which describe how to perform the forward- and backward-passes of reverse-mode autodiff, respectively.
 
-The function `f_fwd` describes the forward pass, not only the primal computation but also what values to save for use on the backward pass. Its input signature is just like that of the primal function `f`, in that it takes a primal input of type `a`. But as output it produces a pair, where the first element is the primal output `b` and the second element is any "residual" data of type `c` to be stored for use by the backward pass. (This second output is analogous to [PyTorch's save_for_backward mechanism](https://pytorch.org/tutorials/beginner/examples_autograd/two_layer_net_custom_function.html).)
+The function `f_fwd` describes the forward pass, not only the primal computation but also what values to save for use on the backward pass. Its input signature is just like that of the primal function `f`, in that it takes a primal input of type `a`. But as output it produces a pair, where the first element is the primal output `b` and the second element is any "residual" data of type `c` to be stored for use by the backward pass. (This second output is analogous to [PyTorch's save_for_backward mechanism](https://docs.pytorch.org/tutorials/beginner/examples_autograd/polynomial_custom_function.html).)
 
 The function `f_bwd` describes the backward pass. It takes two inputs, where the first is the residual data of type `c` produced by `f_fwd` and the second is the output cotangents of type `CT b` corresponding to the output of the primal function. It produces an output of type `CT a` representing the cotangents corresponding to the input of the primal function. In particular, the output of `f_bwd` must be a sequence (e.g. a tuple) of length equal to the number of arguments to the primal function.
 

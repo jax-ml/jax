@@ -22,7 +22,7 @@ from . import wgmma as _wgmma  # noqa: F401
 from .core import (
     Barrier as Barrier,
     ClusterBarrier as ClusterBarrier,
-    TMABarrier as TMABarrier,
+    CtaBarrier as CtaBarrier,
     LoweringSemantics as LoweringSemantics,
     TMEM as TMEM,
     Union as Union,
@@ -79,9 +79,11 @@ from .fragmented_array import (
     copy_tiled as copy_tiled,
     optimization_barrier as optimization_barrier,
     Rounding as Rounding,
+    concatenate as concatenate,
 )
 from .utils import (
     BarrierRef as BarrierRef,
+    CtaBarrierRef as CtaBarrierRef,
     DialectBarrierRef as DialectBarrierRef,
     CollectiveBarrierRef as CollectiveBarrierRef,
     DynamicSlice as DynamicSlice,

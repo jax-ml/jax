@@ -21,20 +21,30 @@ from typing import overload
 class TritonKernel:
   def __init__(
       self,
-      arg0: str,
-      arg1: int,
-      arg2: int,
-      arg3: int,
-      arg4: str,
-      arg5: str,
-      arg6: int,
-      /,
+      kernel_name: str,
+      num_warps: int,
+      num_ctas: int,
+      shared_mem_bytes: int,
+      ptx: str,
+      ttir: str,
+      compute_capability: int,
+      global_scratch_size: int | None = ...,
+      global_scratch_align: int | None = ...,
   ) -> None: ...
 
 class TritonParameter:
   pass
 
 def create_array_parameter(arg0: int, arg1: int, /) -> TritonParameter: ...
+def create_tma_descriptor_parameter(
+    elem_type: int,
+    swizzle: int,
+    shape: Sequence[int],
+    strides: Sequence[int],
+    block_shape: Sequence[int],
+    oob_fill: int,
+) -> TritonParameter: ...
+
 @overload
 def create_scalar_parameter(arg0: bool, arg1: str, /) -> TritonParameter: ...
 @overload

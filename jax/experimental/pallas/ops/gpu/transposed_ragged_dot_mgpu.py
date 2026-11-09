@@ -134,7 +134,7 @@ def transposed_ragged_dot(
             lhs_smem[...] = lhs_reg
             plgpu.commit_smem()
 
-          plgpu.wgmma(acc_ref, plgpu.transpose_ref(lhs_smem, (1, 0)), rhs_smem)
+          plgpu.wgmma(acc_ref, lhs_smem.transpose((1, 0)), rhs_smem)
           if max_concurrent_steps == 1:
             # Without delayed release, we won't have at least two separate
             # smem blocks in flight. Therefore, we cannot rely on the implicit

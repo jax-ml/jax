@@ -18,19 +18,20 @@ from __future__ import annotations
 
 import io
 import json
-import zlib
+from typing import Final
 
-import jax
 from jax._src import core as jax_core
+from jax._src import deprecations
 from jax._src import frozen_dict
 from jax._src.interpreters import mlir
-from jax._src.lib import gpu_triton as triton_kernel_call_lib
-from jax._src.lib import triton
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
+from jax._src import gpu_info as gpu_info_lib
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.triton import core as triton_core
 from jax._src.pallas.triton import lowering
+
+
+CUSTOM_CALL_TARGET_NAME: Final = "__gpu$xla.gpu.triton"
 
 
 def normalize_grid(grid: pallas_core.StaticGrid) -> tuple[int, int, int]:
@@ -61,6 +62,16 @@ def pallas_call_lowering(
     name: str | None,
 ):
   del interpret, out_avals, cost_estimate, name
+
+  deprecations.warn(
+      "jax-pallas-triton",
+      "The Pallas Triton backend is deprecated and will be removed in"
+      " a future JAX version. To keep using Pallas on GPU, please migrate"
+      " to the Mosaic GPU backend. To keep using Triton, switch to"
+      " the official Triton bindings and jax_triton.",
+      stacklevel=2,
+  )
+
   debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
@@ -93,18 +104,15 @@ def pallas_call_lowering(
     print(grid_mapping)
 
   try:
-    gpu_device, *_ = jax.local_devices(backend="gpu")
-  except RuntimeError:
-    # GPU device is not available. Fall back to the minimum CC supported by Triton.
-    # TODO(slebedev): Make the fallback CC configurable.
-    arch_name = "9.0"
-    compute_capability = 90
+    gpu_info = gpu_info_lib.get_gpu_info()
+  except ValueError:
+    raise RuntimeError(
+        "No supported GPU devices found, please specify an abstract GPU "
+        "device using AbstractDevice. See jax.sharding.use_abstract_mesh "
+        "method for example."
+    ) from None
   else:
-    arch_name = str(gpu_device.compute_capability)
-    if lowering_platform == "rocm":
-      compute_capability = 0
-    else:
-      compute_capability = int(arch_name.replace(".", ""))
+    compute_capability = gpu_info.compute_capability
 
   # Sanitize the name to conform to NVPTX requirements. We do this here
   # to avoid the need to fetch the new name from PTX post compilation.
@@ -126,86 +134,33 @@ def pallas_call_lowering(
   if metadata is not None:
     serialized_metadata = json.dumps(dict(metadata))
 
-  # TODO(b/394629193): Remove this once the minimum jaxlib version is >0.10.1.
-  if jaxlib_version <= (0, 10, 2):
-    out_types = [
-      ir.RankedTensorType.get(bm.array_aval.shape,
-                              mlir.dtype_to_ir_type(bm.array_aval.dtype))
-      for bm in grid_mapping.block_mappings_output
-    ]
-    backend_config = dict(
-        name=ir.StringAttr.get(name),
-        ir=ir.StringAttr.get(buf.getvalue()),
-        num_stages=mlir.i32_attr(num_stages),
-        num_warps=mlir.i32_attr(num_warps),
-        grid_x=mlir.i32_attr(grid_x),
-        grid_y=mlir.i32_attr(grid_y),
-        grid_z=mlir.i32_attr(grid_z),
-        debug=ir.BoolAttr.get(debug),
-    )
-    if serialized_metadata is not None:
-      # This field is unstable and may be removed in the future.
-      backend_config["serialized_metadata"] = ir.StringAttr.get(
-          serialized_metadata
+  out_types = [
+      ir.RankedTensorType.get(
+          bm.array_aval.shape, mlir.dtype_to_ir_type(bm.array_aval.dtype)
       )
-    return mlir.custom_call(
-        call_target_name="__gpu$xla.gpu.triton",
-        result_types=out_types,
-        operands=in_nodes,
-        backend_config=backend_config,
-        api_version=4,
-        operand_layouts=avals_to_layouts(ctx.avals_in),
-        result_layouts=avals_to_layouts(ctx.avals_out),
-        operand_output_aliases=dict(input_output_aliases),
-    ).results
-
-  compilation_result = triton.compile(
-      lowering_platform,
-      buf.getvalue(),
-      arch_name,
-      num_warps=num_warps,
-      num_ctas=1,
-      num_stages=num_stages,
+      for bm in grid_mapping.block_mappings_output
+  ]
+  backend_config = dict(
+      name=ir.StringAttr.get(name),
+      ir=ir.StringAttr.get(buf.getvalue()),
+      num_stages=mlir.i32_attr(num_stages),
+      num_warps=mlir.i32_attr(num_warps),
+      grid_x=mlir.i32_attr(grid_x),
+      grid_y=mlir.i32_attr(grid_y),
+      grid_z=mlir.i32_attr(grid_z),
+      debug=ir.BoolAttr.get(debug),
   )
-  kernel = triton_kernel_call_lib.TritonKernel(
-      name,
-      num_warps,
-      1,
-      compilation_result.smem_bytes,
-      (
-          compilation_result.hsaco_path
-          if lowering_platform == "rocm"
-          else compilation_result.asm
-      ),
-      module_op.get_asm(enable_debug_info=True, pretty_debug_info=True),
-      compute_capability,
-  )
-  kernel_call = triton_kernel_call_lib.TritonKernelCall(
-      kernel,
-      grid_x,
-      grid_y,
-      grid_z,
-      [triton_kernel_call_lib.create_array_parameter(0, 16)]
-      * (len(ctx.avals_in) + len(ctx.avals_out)),
-  )
-  result_types, _ = mlir.ir_tree_registry.flatten([
-      mlir.aval_to_ir_type(ctx.module_context, aval)
-      for aval in ctx.avals_out
-  ])
+  if serialized_metadata is not None:
+    # This field is unstable and may be removed in the future.
+    backend_config["serialized_metadata"] = ir.StringAttr.get(
+        serialized_metadata
+    )
   return mlir.custom_call(
-      call_target_name="triton_kernel_call_ffi",
-      result_types=result_types,
+      call_target_name="__gpu$xla.gpu.triton",
+      result_types=out_types,
       operands=in_nodes,
-      backend_config=dict(
-          name=ir.StringAttr.get(name),
-          opaque=ir.StringAttr.get(
-              zlib.compress(
-                  kernel_call.to_proto(
-                      name, (serialized_metadata or "").encode()
-                  )
-              )
-          ),
-      ),
+      backend_config=backend_config,
+      api_version=4,
       operand_layouts=avals_to_layouts(ctx.avals_in),
       result_layouts=avals_to_layouts(ctx.avals_out),
       operand_output_aliases=dict(input_output_aliases),

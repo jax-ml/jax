@@ -27,6 +27,11 @@ different builds for different operating systems and accelerators.
   pip install -U "jax[tpu]"
   ```
 
+* **GPU (Intel, oneAPI)**
+  ```
+  pip install -U "jax[oneapi]"
+  ```
+
 (install-supported-platforms)=
 ## Supported platforms
 
@@ -149,20 +154,20 @@ JAX currently ships two CUDA wheel variants: CUDA 12 and CUDA 13:
 
 The CUDA 12 wheel is:
 
-| Built with | Compatible with    |
-|------------|--------------------|
-| CUDA 12.3  | CUDA >=12.1        |
-| CUDNN 9.8  | CUDNN >=9.8, <10.0 |
-| NCCL 2.19  | NCCL >=2.18        |
+| Built with | Compatible with       |
+|------------|-----------------------|
+| CUDA 12.3  | CUDA >=12.1           |
+| CUDNN 9.10 | CUDNN >=9.10.2, <10.0 |
+| NCCL 2.19  | NCCL >=2.18           |
 
 
 The CUDA 13 wheel is:
 
-| Built with | Compatible with    |
-|------------|--------------------|
-| CUDA 13.0  | CUDA >=13.0        |
-| CUDNN 9.8  | CUDNN >=9.8, <10.0 |
-| NCCL 2.19  | NCCL >=2.18        |
+| Built with | Compatible with     |
+|------------|---------------------|
+| CUDA 13.0  | CUDA >=13.0         |
+| CUDNN 9.12 | CUDNN >=9.12, <10.0 |
+| NCCL 2.19  | NCCL >=2.18         |
 
 
 JAX checks the versions of your libraries, and will report an error if they are
@@ -180,11 +185,11 @@ To install, run:
 pip install --upgrade pip
 
 
-# Installs the wheel compatible with NVIDIA CUDA 13 and cuDNN 9.8 or newer.
+# Installs the wheel compatible with NVIDIA CUDA 13 and cuDNN 9.12 or newer.
 # Note: wheels only available on linux.
 pip install --upgrade "jax[cuda13-local]"
 
-# Installs the wheel compatible with NVIDIA CUDA 12 and cuDNN 9.8 or newer.
+# Installs the wheel compatible with NVIDIA CUDA 12 and cuDNN 9.10 or newer.
 # Note: wheels only available on linux.
 # pip install --upgrade "jax[cuda12-local]"
 ```
@@ -241,38 +246,176 @@ JAX is not supported on Mac/OSX GPU; instead use the standard {ref}`CPU installa
 (install-amd-gpu)=
 ## AMD GPU (Linux)
 
-AMD GPU support is provided by a ROCm JAX plugin supported by AMD.
+AMD GPU support is provided by a ROCm JAX plugin supported by AMD. The [ROCm compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) lists the GPU SKUs supported by ROCm.
 
-### pip installation: AMD GPU (ROCm)
+There are two install paths:
 
-JAX supports a ROCm install via:
+* **ROCm from pip** (`jax[rocm7-device-gfx950]`, `jax[rocm10-device-gfx942]`,
+  and so on). TheRock wheels come from AMD's stable index, named with
+  `--extra-index-url`. ROCm 7: `https://repo.amd.com/rocm/whl-multi-arch/`.
+  ROCm 10: `https://stable.repo.amd.com/rocm/whl-next/`.
+* **System ROCm** (`jax[rocm7-local]`). ROCm is already installed, typically
+  under `/opt/rocm`. Follow the [ROCm installation guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html)
+  before installing JAX.
+
+### ROCm version compatibility
+
+Each JAX ROCm plugin release targets a specific ROCm version, so the installed
+ROCm must match the version the plugin was built against. AMD maintains the
+authoritative mapping in the
+[JAX on ROCm compatibility matrix](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/jax-install.html);
+consult it to confirm which ROCm version your target JAX release requires before
+installing. The `rocm7` plugin packages require a ROCm 7.x installation.
+The `rocm10` extra requires a ROCm 10.x installation from its own index.
+
+### pip installation: AMD GPU (ROCm, pre-installed)
+
+With a compatible ROCm already installed (see above), install JAX and the ROCm
+plugins via:
 
 ```bash
 pip install --upgrade "jax[rocm7-local]"
 ```
 
 ROCm-specific fixes are shipped as *post-releases* of the ROCm plugin/PJRT
-packages (for example, `jax-rocm7-plugin==0.9.1.post1`). Upgrading
+packages (for example, `jax-rocm7-plugin==X.Y.Z.post1`). Upgrading
 `jax[rocm7-local]` will pick up the newest compatible post-release available from
 your configured package indexes.
 
-For prerequisites (ROCm/Docker), and for ROCm-specific extras such as `jax[rocm7-local]`, please see [AMD's Instructions](https://github.com/jax-ml/jax/blob/main/build/rocm/README.md) for details.
+```bash
+python3 -c "import jax; print(jax.devices())"
+```
+
+If the installation is working, this lists your ROCm devices (for example,
+`[RocmDevice(id=0), RocmDevice(id=1), ...]`).
+
+To build the ROCm JAX wheels from source, see [Build ROCm JAX from Source](https://github.com/jax-ml/jax/blob/main/build/rocm/README.md).
+
+### pip installation: AMD GPU (ROCm, installed via pip)
+
+JAX can pull [TheRock](https://github.com/ROCm/TheRock) ROCm wheels from AMD's
+package index, so no system ROCm is needed. Those wheels are not on PyPI, so
+pass `--extra-index-url` for the index of the ROCm line you want.
+
+Name your GPU architecture in the extra. The ROCm math libraries
+(rocBLAS, MIOpen, and others) ship their GPU kernels in a separate
+per-architecture wheel, and pip does no hardware detection at install time, so
+the architecture has to come from the command line:
+
+```bash
+# ROCm 7, on gfx950 (MI350 series)
+pip install --upgrade "jax[rocm7-device-gfx950]" \
+  --extra-index-url https://repo.amd.com/rocm/whl-multi-arch/
+
+# ROCm 10, on gfx942 (MI300 series)
+pip install --upgrade "jax[rocm10-device-gfx942]" \
+  --extra-index-url https://stable.repo.amd.com/rocm/whl-next/
+```
+
+To find your architecture on a machine with ROCm installed:
+
+```bash
+rocminfo | grep -m1 -o 'gfx[0-9a-f]\+'
+```
+
+Without ROCm, AMD's `rocm-bootstrap` package on PyPI detects it instead:
+
+```bash
+pip install rocm-bootstrap && rocm-bootstrap-detect
+```
+
+`gfx908`, `gfx90a`, `gfx942`, and `gfx950` cover the Instinct accelerators;
+the `gfx10xx`, `gfx11xx`, and `gfx12xx` targets cover Radeon cards.
+
+If the GPU is not known at install time, the architecture-free extras need no
+architecture flag and pull the kernels for every supported target instead:
+
+```bash
+# any ROCm 7 target; jax[rocm] is an alias of jax[rocm7]
+pip install --upgrade "jax[rocm7]" \
+  --extra-index-url https://repo.amd.com/rocm/whl-multi-arch/
+
+# any ROCm 10 target
+pip install --upgrade "jax[rocm10]" \
+  --extra-index-url https://stable.repo.amd.com/rocm/whl-next/
+```
+
+
+
+As part of the same preview effort, the ROCm JAX fork
+([ROCm/jax](https://github.com/ROCm/jax)) publishes
+[TheRock](https://github.com/ROCm/TheRock)-based JAX wheels — built against
+TheRock ROCm — as downloadable release assets. Grab the
+`wheelhouse_*_theRock*.zip` archive from the
+[latest ROCm/jax release](https://github.com/ROCm/jax/releases/latest),
+unzip it, and `pip install` the contained `jax-rocm7-pjrt` and `jax-rocm7-plugin`
+wheels (the release notes give the exact commands for each version). This path is
+also a preview and intended for evaluation.
+
+When using these TheRock-based JAX wheels with a ROCm installation under
+`/opt/rocm`, `/opt/rocm` must also contain a TheRock-based ROCm distribution,
+including `lib/rocm_sysdeps/lib`. A classic ROCm installation does not provide
+the `librocm_sysdeps_*` libraries required by the plugin.
+
+For generally available releases, use the pre-installed-ROCm path
+[above](#pip-installation-amd-gpu-rocm-pre-installed).
+
+(docker-containers-amd-gpu)=
+### AMD GPU Docker containers
+
+AMD provides prebuilt ROCm JAX Docker images that bundle ROCm, JAX, and all
+required dependencies — the simplest way to get started, since you don't need to
+install ROCm yourself. Pull the latest image with:
+
+```bash
+docker pull rocm/jax:latest
+```
+
+See the [JAX on ROCm installation guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/jax-install.html)
+for the recommended `docker run` flags and for version-pinned image tags.
 
 **Note**: ROCm support on Windows WSL2 is experimental. For WSL installation, you may need to:
-1. Install [ROCm for WSL](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/tutorial/quick-start.html) following AMD's official guide
+1. Install [ROCm for WSL](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/) following AMD's official guide
 2. Follow the standard Linux ROCm JAX installation steps within your WSL environment
 3. Be aware that performance and stability may differ from native Linux installations
+
+### Getting help
+
+The ROCm JAX plugin is maintained by AMD. For ROCm-specific JAX issues — such as
+installation problems, ROCm/driver compatibility, or plugin/runtime errors —
+please report them on the [ROCm issue tracker](https://github.com/ROCm/ROCm/issues),
+which AMD monitors. For issues with JAX itself that are not ROCm-specific, use the
+[JAX issue tracker](https://github.com/jax-ml/jax/issues).
 
 (install-intel-gpu)=
 ## Intel GPU
 
-Intel provides an experimental OneAPI plugin: intel-extension-for-openxla for Intel GPU hardware. For more details and installation instructions, refer to one of the following two methods:
-1. Pip installation: [JAX acceleration on Intel GPU](https://github.com/intel/intel-extension-for-openxla/blob/main/docs/acc_jax.md).
-2. Using [Intel's XLA Docker container](https://hub.docker.com/r/intel/intel-optimized-xla).
+Intel provides experimental oneAPI PJRT and plugin wheels for JAX on PyPI. These enable JAX applications to run on Intel GPUs using XLA's SYCL platform support.
 
-Please report any issues related to:
-* JAX: [JAX issue tracker](https://github.com/jax-ml/jax/issues).
-* Intel's OpenXLA plugin: [Intel-extension-for-openxla issue tracker](https://github.com/intel/intel-extension-for-openxla/issues).
+Before installing JAX, install the `intel-gpu-compute` package in one of the following ways:
+
+- By following the [Intel GPU software installation guide](https://dgpu-docs.intel.com/installation-guides/installing-omix.html).
+- By using the [Intel Compute Runtime container](https://hub.docker.com/r/intel/compute-runtime) which already contains the
+  necessary driver components. Follow [Running the container](https://hub.docker.com/r/intel/compute-runtime#running-the-container) section
+  for more information.
+
+### pip installation: Intel GPU (oneAPI)
+
+Once the required GPU drivers are installed, the oneAPI PJRT and plugin wheels can be installed via:
+
+```bash
+pip install --upgrade "jax[oneapi]"
+```
+
+This automatically installs all required software dependencies. No further manual setup is needed beyond the GPU drivers installed above.
+
+```bash
+python3 -c "import jax; print(jax.devices())"
+```
+
+If the installation works correctly, this lists all the available oneAPI devices (e.g. `[OneapiDevice(id=0), OneapiDevice(id=1), ...]`).
+
+For supported platforms and required driver versions, see [oneAPI JAX release notes](https://github.com/Intel-tensorflow/jax/releases).
 
 ## Conda (community-supported)
 

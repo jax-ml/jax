@@ -33,14 +33,12 @@ pytype_strict_library(
         "__init__.py",
         "core.py",
     ],
-    type_checking = "pyrefly",
     deps = ["//jax/_src/pallas"],
 )
 
 pytype_strict_library(
     name = "primitives",
     srcs = ["primitives.py"],
-    type_checking = "pyrefly",
     deps = [
         ":lowering",
         "//jax",
@@ -62,7 +60,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "lowering",
     srcs = ["lowering.py"],
-    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:ad_util",
@@ -72,12 +69,14 @@ pytype_strict_library(
         "//jax/_src:core",
         "//jax/_src:custom_derivatives",
         "//jax/_src:debugging",
+        "//jax/_src:flattree",
         "//jax/_src:lax",
         "//jax/_src:literals",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",
         "//jax/_src:source_info_util",
         "//jax/_src:state_types",
+        "//jax/_src:tree_util",
         "//jax/_src:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
@@ -87,15 +86,13 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_call_registration",
     srcs = ["pallas_call_registration.py"],
-    type_checking = "pyrefly",
     deps = [
         ":core",
         ":lowering",
-        "//jax",
-        "//jax/_src:api",
         "//jax/_src:core",
+        "//jax/_src:deprecations",
         "//jax/_src:frozen_dict",
-        "//jax/_src:mesh",
+        "//jax/_src:gpu_info",
         "//jax/_src:mlir",
         "//jax/_src/lib",
         "//jax/_src/pallas",

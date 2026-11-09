@@ -23,11 +23,17 @@ from typing import Any
 
 import jax
 from jax._src import core as jax_core
+from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import tpu_info
+from jax._src.state import types as state_types
 import jax.numpy as jnp
+
+
+class SparseCorePushStreamWarning(UserWarning):
+  """Warns that destination semaphores are ignored for push streams."""
 
 
 def get_sparse_core_info() -> tpu_info.SparseCoreInfo:
@@ -91,9 +97,7 @@ class ScalarSubcoreMesh(pallas_core.Mesh):
       raise ValueError(f"{self} should have the same core axis name and number"
                        f" of cores as the VectorSubcoreMesh {other_mesh}.")
     elif isinstance(other_mesh, tpu_core.TensorCoreMesh):
-      assert len(other_mesh.axis_names) == 1
-      axis_name = other_mesh.axis_names[0]
-      if self.axis_name == axis_name:
+      if self.axis_name == other_mesh.axis_name:
         raise ValueError(
             f"{self} should have a different axis name from the TensorCoreMesh"
             f" {other_mesh}."
@@ -112,57 +116,6 @@ class ScalarSubcoreMesh(pallas_core.Mesh):
   @contextlib.contextmanager
   def tracing_context(self):
     yield
-
-
-def _scalar_subcore_mesh_discharge_rule(
-    in_avals,
-    out_avals,
-    *args,
-    mesh,
-    jaxpr,
-    compiler_params,
-    interpret,
-    debug,
-    cost_estimate,
-    name,
-    metadata,
-):
-  if not isinstance(mesh, ScalarSubcoreMesh):
-    raise TypeError(f"Mesh must be a ScalarSubcoreMesh, got {type(mesh)}")
-  assert len(mesh.shape) == 1
-  if compiler_params is None:
-    compiler_params = tpu_core.CompilerParams()
-  if compiler_params.dimension_semantics is not None:
-    raise ValueError("ScalarSubcoreMesh does not support dimension_semantics=")
-  jaxpr, in_avals, out_avals, args, is_scalar_const = tpu_core.pass_scalars_as_refs(
-      jaxpr, args, in_avals, out_avals, mesh,
-      # TODO(sharadmv): Delete this once we can pass into SMEM directly on
-      # SparseCore.
-      copy_to_smem=True,
-  )
-  refs_out, out = pallas_core.default_mesh_discharge_rule(
-      in_avals,
-      out_avals,
-      *args,
-      mesh=mesh,
-      jaxpr=jaxpr,
-      compiler_params=compiler_params,
-      interpret=interpret,
-      debug=debug,
-      cost_estimate=cost_estimate,
-      name=name,
-      metadata=metadata,
-  )
-  refs_out = [
-      a if not is_scalar else None
-      for is_scalar, a in zip(is_scalar_const, refs_out)
-  ]
-  return refs_out, out
-
-
-pallas_core._core_map_mesh_rules[ScalarSubcoreMesh] = (
-    _scalar_subcore_mesh_discharge_rule
-)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -229,14 +182,12 @@ class VectorSubcoreMesh(pallas_core.Mesh):
       raise ValueError(f"{self} should have the same core axis name and number"
                        f" of cores as the ScalarSubcoreMesh {other_mesh}.")
     elif isinstance(other_mesh, tpu_core.TensorCoreMesh):
-      assert len(other_mesh.axis_names) == 1
-      axis_name = other_mesh.axis_names[0]
-      if self.core_axis_name == axis_name:
+      if self.core_axis_name == other_mesh.axis_name:
         raise ValueError(
             f"{self} should have a different core axis name from the"
             f" TensorCoreMesh {other_mesh}."
         )
-      if self.subcore_axis_name == axis_name:
+      if self.subcore_axis_name == other_mesh.axis_name:
         raise ValueError(
             f"{self} should have a different subcore axis name from the"
             f" TensorCoreMesh {other_mesh}."
@@ -256,45 +207,6 @@ class VectorSubcoreMesh(pallas_core.Mesh):
   @contextlib.contextmanager
   def tracing_context(self):
     yield
-
-def _vector_subcore_mesh_discharge_rule(
-    in_avals,
-    out_avals,
-    *args,
-    mesh,
-    jaxpr,
-    compiler_params,
-    interpret,
-    debug,
-    cost_estimate,
-    name,
-    metadata,
-):
-  if not isinstance(mesh, VectorSubcoreMesh):
-    raise TypeError(f"Mesh must be a VectorSubcoreMesh, got {type(mesh)}")
-  assert len(mesh.shape) == 2
-  if compiler_params is None:
-    compiler_params = tpu_core.CompilerParams()
-  if compiler_params.dimension_semantics is not None:
-    raise ValueError("VectorSubcoreMesh does not support dimension_semantics=")
-  return pallas_core.default_mesh_discharge_rule(
-      in_avals,
-      out_avals,
-      *args,
-      mesh=mesh,
-      jaxpr=jaxpr,
-      compiler_params=compiler_params,
-      interpret=interpret,
-      debug=debug,
-      cost_estimate=cost_estimate,
-      name=name,
-      metadata=metadata,
-  )
-
-
-pallas_core._core_map_mesh_rules[VectorSubcoreMesh] = (
-    _vector_subcore_mesh_discharge_rule
-)
 
 
 def supported_shapes(dtype: jax.typing.DTypeLike) -> Sequence[tuple[int, ...]]:
@@ -321,9 +233,7 @@ class Indices:
   """
 
   values: Any
-  ignored_value: int | None = dataclasses.field(
-      default=None, metadata=dict(static=True)
-  )
+  ignored_value: int | None = jax.tree.static(default=None)
 
   def pretty_print(
       self, context: jax_core.JaxprPpContext, *, print_dtype: bool = True
@@ -332,3 +242,45 @@ class Indices:
     if self.ignored_value is None:
       return values
     return f"{values}~{self.ignored_value}"
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class SharedMemRefSliceTransform(state_types.Transform):
+  """Slices a VMEM_SHARED ref along its minor dimension into subcore VMEM."""
+
+  def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
+    match x:
+      case state_types.AbstractRef():
+        memory_space = x.memory_space
+        if isinstance(memory_space, pallas_core.CoreMemorySpace):
+          memory_space = memory_space.memory_space
+        if memory_space != tpu_core.MemorySpace.VMEM_SHARED:
+          raise ValueError(
+              "slice_subcore_vmem_from_shared requires a VMEM_SHARED"
+              f" reference, got memory space: {x.memory_space}"
+          )
+        return x.update(
+            inner_aval=self.transform_type(x.inner_aval),
+            memory_space=tpu_core.MemorySpace.VMEM,
+        )
+      case jax_core.ShapedArray():
+        if not x.shape:
+          raise ValueError(
+              "Cannot slice subcore VMEM from a 0D VMEM_SHARED reference."
+          )
+        num_subcores = get_sparse_core_info().num_subcores
+        if x.shape[-1] % num_subcores != 0:
+          raise ValueError(
+              f"VMEM_SHARED last dimension ({x.shape[-1]}) must be divisible "
+              "by the total number of physical subcores, including inactive "
+              f"ones ({num_subcores})."
+          )
+        new_shape = (*x.shape[:-1], x.shape[-1] // num_subcores)
+        return x.update(shape=new_shape)
+      case _:
+        raise TypeError(f"Cannot slice subcore VMEM from {x}")
+
+  def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
+    del context
+    return pp.text("{shared_memref_slice}")

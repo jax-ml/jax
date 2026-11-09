@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 (ahead-of-time-lowering)=
 
 # Ahead-of-time lowering and compilation

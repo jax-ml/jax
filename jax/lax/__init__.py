@@ -85,7 +85,6 @@ from jax._src.lax.lax import (
   convert_element_type_p as convert_element_type_p,
   copy_p as copy_p,
   cos as cos,
-  dce_sink_p as dce_sink_p,
   dce_sink as dce_sink,
   cos_p as cos_p,
   cosh as cosh,
@@ -110,6 +109,10 @@ from jax._src.lax.lax import (
   expm1_p as expm1_p,
   floor as floor,
   floor_p as floor_p,
+  fma as fma,
+  fma_p as fma_p,
+  fmuladd as fmuladd,
+  fmuladd_p as fmuladd_p,
   full as full,
   full_like as full_like,
   ge as ge,
@@ -130,6 +133,8 @@ from jax._src.lax.lax import (
   log as log,
   log1p as log1p,
   log1p_p as log1p_p,
+  log2 as log2,
+  log2_p as log2_p,
   log_p as log_p,
   logistic as logistic,
   logistic_p as logistic_p,
@@ -151,12 +156,16 @@ from jax._src.lax.lax import (
   nextafter as nextafter,
   nextafter_p as nextafter_p,
   not_p as not_p,
+  one_minus_square as one_minus_square,
+  one_minus_square_p as one_minus_square_p,
   optimization_barrier as optimization_barrier,
   optimization_barrier_p as optimization_barrier_p,
   or_p as or_p,
   pad as pad,
   pad_p as pad_p,
   padtype_to_pads as padtype_to_pads,
+  polynomial as polynomial,
+  polynomial_p as polynomial_p,
   population_count as population_count,
   population_count_p as population_count_p,
   pow as pow,
@@ -382,12 +391,13 @@ from jax._src.lax.parallel import (
   pmin_p as pmin_p,
   ppermute as ppermute,
   ppermute_p as ppermute_p,
-  psend as psend,
-  precv as precv,
+  psend as _deprecated_psend,
+  precv as _deprecated_precv,
   pshuffle as pshuffle,
   psum as psum,
   psum_p as psum_p,
   psum_scatter as psum_scatter,
+  psum_scatter_start as psum_scatter_start,
   pswapaxes as pswapaxes,
   ragged_all_to_all as ragged_all_to_all,
   ragged_all_to_all_p as ragged_all_to_all_p,
@@ -408,20 +418,43 @@ from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
 from jax._src.lax.scaled_dot import scaled_dot as scaled_dot
+from jax._src.lax.trig import (
+  acospi as acospi,
+  acospi_p as acospi_p,
+  asinpi as asinpi,
+  asinpi_p as asinpi_p,
+  atan2pi as atan2pi,
+  atan2pi_p as atan2pi_p,
+  atanpi as atanpi,
+  atanpi_p as atanpi_p,
+  cospi as cospi,
+  cospi_p as cospi_p,
+  sinpi as sinpi,
+  sinpi_p as sinpi_p,
+  tanpi as tanpi,
+  tanpi_p as tanpi_p,
+)
 
 _deprecations = {
-    # Deprecated in v0.8.2; finalized in v0.10.0.
-    # TODO(jakevdp) remove entry in v0.11.0.
-    "pvary": (
-        "jax.lax.pvary was deprecated in JAX v0.8.2 and removed in JAX v0.10.0;"
-        " use `jax.lax.pcast(..., to='varying')",
-        None,
+    # Added Oct 1, 2026
+    "psend": (
+        "jax.lax.psend is deprecated.",
+        _deprecated_psend,
+    ),
+    "precv": (
+        "jax.lax.precv is deprecated.",
+        _deprecated_precv,
     ),
 }
 
 import typing as _typing
-if not _typing.TYPE_CHECKING:
+if _typing.TYPE_CHECKING:
+  psend = _deprecated_psend
+  precv = _deprecated_precv
+else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
+  del _deprecated_psend
+  del _deprecated_precv
 del _typing

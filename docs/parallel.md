@@ -2,6 +2,7 @@
 jupytext:
   formats: ipynb,md:myst,py:light
   main_language: python
+  notebook_metadata_filter: nosearch
   text_representation:
     extension: .md
     format_name: myst
@@ -10,6 +11,7 @@ jupytext:
 kernelspec:
   display_name: Python 3
   name: python3
+nosearch: true
 ---
 
 ```{raw-cell}
@@ -569,6 +571,8 @@ of the compiler. We can think of the concrete array sharding being consistent
 with, but more specific than, the type-specified sharding. For example:
 
 ```{code-cell}
+jax.set_mesh(jax.make_mesh((4, 2), ('X', 'Y')))  # Explicit mode
+
 def compare_shardings(x):
   print(f"=== with mesh: {jax.sharding.get_abstract_mesh()} ===")
   print(f"Concrete value sharding: {x.sharding.spec}")

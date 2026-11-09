@@ -1,3 +1,7 @@
+---
+nosearch: true
+---
+
 # XLA compiler flags
 
 <!--* freshness: { reviewed: '2024-08-18' } *-->

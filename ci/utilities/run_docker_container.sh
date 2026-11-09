@@ -43,14 +43,9 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
   docker pull "$JAXCI_DOCKER_IMAGE" || sleep 15
   docker pull "$JAXCI_DOCKER_IMAGE"
 
-  # Docker on Windows doesn't support the `host` networking mode, and so
-  # port-forwarding is required for the container to detect it's running on GCE.
-  # This is needed for RBE configs to work.
-  if [[ "$(uname -s)" =~ "MSYS_NT" ]]; then
-    export IP_ADDR=$(powershell -command "(Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'vEthernet (nat)').IPAddress")
-    netsh interface portproxy add v4tov4 listenaddress=$IP_ADDR listenport=80 connectaddress=169.254.169.254 connectport=80
-    JAXCI_DOCKER_ARGS="$JAXCI_DOCKER_ARGS -e GCE_METADATA_HOST=$IP_ADDR"
-  fi
+  # Docker on Windows doesn't support the `host` networking mode.
+  # We will set up the routing for the GCE metadata server inside the container
+  # at runtime instead of using portproxy on the host.
 
   # Create a temporary file to pass any user defined JAXCI_ / JAX_ / JAXLIB_
   # variables to the container. Exclude host-specific path variables so they
@@ -76,8 +71,12 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
           bash
 
   if [[ "$(uname -s)" =~ "MSYS_NT" ]]; then
-    # Allow requests from the container.
-    CONTAINER_IP_ADDR=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' jax)
-    netsh advfirewall firewall add rule name="Allow Metadata Proxy" dir=in action=allow protocol=TCP localport=80 remoteip="$CONTAINER_IP_ADDR"
+    echo "Setting up routing for GCE metadata server inside the container..."
+    docker exec jax powershell -Command '
+      $gateway = (Get-NetRoute | Where { $_.DestinationPrefix -eq "0.0.0.0/0" } | Sort-Object RouteMetric | Select NextHop).NextHop;
+      $ifIndex = (Get-NetAdapter -InterfaceDescription "Hyper-V Virtual Ethernet*" | Sort-Object | Select ifIndex).ifIndex;
+      Remove-NetRoute -DestinationPrefix 169.254.169.254/32 -Confirm:$false -ErrorAction SilentlyContinue;
+      New-NetRoute -DestinationPrefix 169.254.169.254/32 -InterfaceIndex $ifIndex -NextHop $gateway;
+    '
   fi
 fi

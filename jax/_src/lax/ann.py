@@ -82,6 +82,7 @@ from jax._src.numpy.indexing import take_along_axis
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.lax import utils as lax_utils
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func
@@ -98,6 +99,11 @@ def approx_max_k(operand: Array,
   """Returns max ``k`` values and their indices of the ``operand`` in an approximate manner.
 
   See https://arxiv.org/abs/2206.14286 for the algorithm details.
+
+  **Note:** This algorithm does not guarantee stability. If there are tied values
+  in the operand, the returned indices may not preserve their original relative
+  order. In the event of a tie that crosses the top-k boundary, the exact subset
+  of indices returned is implementation-defined.
 
   Args:
     operand : Array to search for max-k. Must be a floating number type.
@@ -158,6 +164,11 @@ def approx_min_k(operand: Array,
 
   See https://arxiv.org/abs/2206.14286 for the algorithm details.
 
+  **Note:** This algorithm does not guarantee stability. If there are tied values
+  in the operand, the returned indices may not preserve their original relative
+  order. In the event of a tie that crosses the top-k boundary, the exact subset
+  of indices returned is implementation-defined.
+
   Args:
     operand : Array to search for min-k. Must be a floating number type.
     k : Specifies the number of min-k.
@@ -211,10 +222,9 @@ def approx_min_k(operand: Array,
       aggregate_to_topk=aggregate_to_topk)
 
 
-def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
-                                recall_target, is_max_k,
-                                reduction_input_size_override,
-                                aggregate_to_topk):
+def _approx_top_k_shape_rule(operand, *, k, reduction_dimension, recall_target,
+                             is_max_k, reduction_input_size_override,
+                             aggregate_to_topk):
   if k <= 0:
     raise ValueError(f'k must be positive, got {k}')
   if len(operand.shape) == 0:
@@ -225,8 +235,6 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
     raise ValueError(
         'k must be smaller than the size of reduction_dim {}, got {}'.format(
             dims[reduction_dimension], k))
-  if not dtypes.issubdtype(operand.dtype, np.floating):
-    raise ValueError('operand must be a floating type')
   reduction_input_size = dims[reduction_dimension]
   if aggregate_to_topk:
     dims[reduction_dimension] = k
@@ -239,17 +247,46 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
          "approx_top_k with aggregate_to_topk=False not yet implemented when "
          f"either the `k` ({k}) or the "
          f" reduction dimension size ({reduction_input_size}) are symbolic")
+  return (tuple(dims), tuple(dims))
+
+def _approx_top_k_dtype_rule(operand, *, k, reduction_dimension, recall_target,
+                             is_max_k, reduction_input_size_override,
+                             aggregate_to_topk):
+  if not dtypes.issubdtype(operand.dtype, np.floating):
+    raise ValueError('operand must be a floating type')
+  return (operand.dtype, np.dtype(np.int32))
+
+def _approx_top_k_weak_type_rule(operand, *, k, reduction_dimension,
+                                 recall_target, is_max_k,
+                                 reduction_input_size_override,
+                                 aggregate_to_topk):
+  return (operand.weak_type, False)
+
+def _approx_top_k_sharding_rule(operand, *, k, reduction_dimension,
+                                recall_target, is_max_k,
+                                reduction_input_size_override,
+                                aggregate_to_topk):
   operand_s = operand.sharding
-  if operand_s.spec[reduction_dimension] is not None:
+  if operand_s.spec.partitions[reduction_dimension] is not None:
     raise core.ShardingTypeError(
         f"reduction dimension {reduction_dimension} in operand"
         f" {operand.str_short()} should be unsharded i.e. the spec of that dim"
         " should be `None`.")
-  return (operand.update(shape=dims, dtype=operand.dtype,
-                         weak_type=operand.weak_type,
-                         manual_axis_type=operand.mat, sharding=operand_s),
-          operand.update(shape=dims, dtype=np.dtype(np.int32),
-                         manual_axis_type=operand.mat, sharding=operand_s))
+  return (operand_s, operand_s)
+
+def _approx_top_k_vma_rule(operand, *, k, reduction_dimension, recall_target,
+                           is_max_k, reduction_input_size_override,
+                           aggregate_to_topk):
+  return [core.standard_vma_rule('approx_top_k', operand)] * 2
+
+def _approx_top_k_ur_rule(operand, *, k, reduction_dimension, recall_target,
+                          is_max_k, reduction_input_size_override,
+                          aggregate_to_topk):
+  if core.getu(operand, kind=None)[0]:
+    raise core.ShardingTypeError(
+        'approx_top_k cannot accept unreduced inputs. Got'
+        f' {operand.str_short(mesh_axis_types=True)}')
+  return [frozenset()] * 2, [core.getr(operand), frozenset()], [None] * 2
 
 def _get_init_val_literal(op_type, is_max_k):
   return np.array(-np.inf if is_max_k else np.inf, dtype=op_type)
@@ -398,7 +435,11 @@ def _approx_top_k_jvp(primals, tangents, *, k, reduction_dimension,
 approx_top_k_p = core.Primitive('approx_top_k')
 approx_top_k_p.multiple_results = True
 approx_top_k_p.def_impl(partial(dispatch.apply_primitive, approx_top_k_p))
-approx_top_k_p.def_abstract_eval(_approx_top_k_abstract_eval)
+approx_top_k_p.def_abstract_eval(
+    partial(lax_utils.standard_multi_result_abstract_eval, approx_top_k_p,
+            _approx_top_k_shape_rule, _approx_top_k_dtype_rule,
+            _approx_top_k_weak_type_rule, _approx_top_k_sharding_rule,
+            _approx_top_k_vma_rule, _approx_top_k_ur_rule, None))
 mlir.register_lowering(approx_top_k_p,
                       partial(_approx_top_k_lowering, fallback=True))
 mlir.register_lowering(approx_top_k_p, _approx_top_k_lowering,

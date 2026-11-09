@@ -31,6 +31,7 @@ limitations under the License.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -44,7 +45,8 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/RegionUtils.h"
-#include "jaxlib/mosaic/pass_boilerplate.h"
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
+#include "xla/mosaic/pass_boilerplate.h"
 
 namespace mosaic {
 namespace gpu {
@@ -228,9 +230,9 @@ class LLVMAttrInsertionPass
   }
 };
 
-// Replaces all "pallas_call"/"mpmd_map" locations within a FuncOp with the
-// location of the first operation in the function that has a different
-// location. This provides more specific source information for debugging.
+// Replaces all "mpmd_map" locations within a FuncOp with the location of the
+// first operation in the function that has a different location. This provides
+// more specific source information for debugging.
 class ResolveTrivialLocationsPass
     : public jaxlib::mlir::Pass<ResolveTrivialLocationsPass, mlir::ModuleOp> {
  public:
@@ -247,7 +249,7 @@ class ResolveTrivialLocationsPass
     }
     llvm::StringRef name = name_loc.getName().getValue();
     name.consume_back(":");
-    if (name != "pallas_call" && name != "mpmd_map") {
+    if (name != "mpmd_map") {
       return false;
     }
     return mlir::isa<mlir::UnknownLoc>(name_loc.getChildLoc()) ||
@@ -346,6 +348,25 @@ class MosaicGpuSinkMemRefDescriptorsPass
   }
 };
 
+class LowerMosaicGPUBarriersPass
+    : public jaxlib::mlir::Pass<LowerMosaicGPUBarriersPass, mlir::ModuleOp> {
+ public:
+  using jaxlib::mlir::Pass<LowerMosaicGPUBarriersPass, mlir::ModuleOp>::Pass;
+  static constexpr llvm::StringLiteral kArgumentName =
+      "mosaic-gpu-lower-barriers";
+  static constexpr llvm::StringLiteral kPassName = "LowerMosaicGPUBarriersPass";
+
+  void runOnOperation() override {
+    mlir::AttrTypeReplacer replacer;
+    replacer.addReplacement([](mosaic_gpu::BarrierType barrier) {
+      return mlir::IntegerType::get(barrier.getContext(), 64);
+    });
+    replacer.recursivelyReplaceElementsIn(getOperation(), /*replaceAttrs=*/true,
+                                          /*replaceLocs=*/false,
+                                          /*replaceTypes=*/true);
+  }
+};
+
 }  // namespace
 
 void registerConvertGpuToLLVMPass() {
@@ -375,6 +396,12 @@ void registerResolveTrivialLocationsPass() {
 void registerGpuSinkMemRefDescriptorsPass() {
   ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
     return std::make_unique<MosaicGpuSinkMemRefDescriptorsPass>();
+  });
+}
+
+void registerLowerMosaicGPUBarriersPass() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return std::make_unique<LowerMosaicGPUBarriersPass>();
   });
 }
 

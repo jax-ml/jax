@@ -165,6 +165,7 @@ def prepare_rocm_plugin_wheel(
         src_files=[
           f"{source_file_prefix}jax_plugins/rocm/pyproject.toml",
           f"{source_file_prefix}jax_plugins/rocm/setup.py",
+          f"{source_file_prefix}jax_plugins/rocm/rocm_version.py",
       ],
   )
   build_utils.update_setup_with_rocm_version(wheel_sources_path, rocm_version)
@@ -183,7 +184,7 @@ def prepare_rocm_plugin_wheel(
   )
 
 def prepare_oneapi_plugin_wheel(
-    wheel_sources_path: pathlib.Path, *, cpu, oneapi_version, wheel_sources
+    wheel_sources_path: pathlib.Path, *, cpu, wheel_sources
 ):
   """Assembles a source tree for the ONEAPI wheel in `wheel_sources_path`."""
   source_file_prefix = build_utils.get_source_file_prefix(wheel_sources)
@@ -196,17 +197,15 @@ def prepare_oneapi_plugin_wheel(
       wheel_sources_map=wheel_sources_map,
   )
 
-  # Sanitize oneapi_version for directory names (replace dots with underscores)
-  sanitized_version = oneapi_version.replace(".", "_")
-  plugin_dir = wheel_sources_path / "jax_plugins" / f"xla_oneapi{sanitized_version}"
+  plugin_dir = wheel_sources_path / "jax_plugins" / "xla_oneapi"
   copy_files(
       dst_dir=wheel_sources_path,
         src_files=[
           f"{source_file_prefix}jax_plugins/oneapi/pyproject.toml",
           f"{source_file_prefix}jax_plugins/oneapi/setup.py",
+          f"{source_file_prefix}jax_plugins/oneapi/README-pjrt.md",
       ],
   )
-  build_utils.update_setup_with_oneapi_version(wheel_sources_path, oneapi_version)
   write_setup_cfg(wheel_sources_path, cpu)
   copy_files(
       dst_dir=plugin_dir,
@@ -252,7 +251,6 @@ try:
     prepare_oneapi_plugin_wheel(
         pathlib.Path(sources_path),
         cpu=args.cpu,
-        oneapi_version=args.platform_version,
         wheel_sources=args.srcs,
     )
     package_name = "jax oneapi plugin"

@@ -102,7 +102,7 @@ f_tf_graph = tf.function(f_tf, autograph=False)
 ```
 
 Note that when using the default native serialization, the target JAX function
-must be jittable (see [JAX - The Sharp Bits](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html)).
+must be jittable (see [transformations require traceable functions](https://docs.jax.dev/en/latest/101/transformations.html#consequence-1-transformations-require-traceable-functions)).
 In the native serialization mode, under TensorFlow eager
 the whole JAX function executes as one op.
 
@@ -425,7 +425,7 @@ presence of shape polymorphism, some dimensions may be dimension variables.
 The `polymorphic_shapes` parameter must be either `None`,
 or a pytree of shape specifiers corresponding to the pytree of arguments.
 (A value `None` for `polymorphic_shapes` is equivalent to a list of `None`.
-See [how optional parameters are matched to arguments](https://docs.jax.dev/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).)
+See [how optional parameters are matched to arguments](https://docs.jax.dev/en/latest/101/pytrees.html#transformation-parameters-can-be-pytrees-too).)
 A shape specifier is combined with a `TensorSpec` as follows:
 
   * A shape specifier of `None` means that the shape is given
@@ -989,7 +989,7 @@ always behaves like the JAX function.
 
 JAX interprets the type of Python scalars differently based on
 `JAX_ENABLE_X64` flag. (See
-[JAX - The Sharp Bits: Double (64bit) precision](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision).)
+[Default dtypes and the X64 flag](https://docs.jax.dev/en/latest/101/default_dtypes.html).)
 In the default configuration, the
 flag is unset, and JAX interprets Python constants as 32-bit,
 e.g., the type of `3.14` is `float32`. This is also what
@@ -1049,7 +1049,7 @@ jax2tf.convert(jax_fun)(tf.Variable(3.14, dtype=jax2tf.dtype_of_val(3.14)))
 
 `jax2tf` can lower functions with arguments and results that are nested
 collections (tuples, lists, dictionaries) of numeric values or JAX arrays
-([pytrees](https://docs.jax.dev/en/latest/pytrees.html)). The
+([pytrees](https://docs.jax.dev/en/latest/101/pytrees.html)). The
 resulting TensorFlow function will take the same kind of arguments except the
 leaves can be numeric values or TensorFlow tensors (`tf.Tensor`, `tf.TensorSpec`, `tf.Variable`).
 

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "jaxlib/mosaic/gpu/dump.h"
 
+#if !defined(_WIN32)
 #if defined(__APPLE__)
 // This is the fix recommended by
 // https://www.gnu.org/software/gnulib/manual/html_node/environ.html to make
@@ -25,6 +26,7 @@ limitations under the License.
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <cerrno>
@@ -65,6 +67,7 @@ namespace gpu {
 
 namespace {
 
+#if !defined(_WIN32)
 class TemporaryDirectory {
  private:
   TemporaryDirectory(std::string path) : path(std::move(path)) {}
@@ -196,7 +199,6 @@ std::string FormatSassCtrl(const std::string& sass) {
           uint64_t write_barrier = (ctrl >> 46) & 0x7;
           uint64_t read_barrier = (ctrl >> 49) & 0x7;
           uint64_t wait_barrier = (ctrl >> 52) & 0x3f;
-          std::string wait_barrier_str;
           if (wait_barrier == 0) {
             result += "   -";
           } else if (absl::has_single_bit(wait_barrier)) {
@@ -227,6 +229,7 @@ std::string FormatSassCtrl(const std::string& sass) {
   }
   return result;
 }
+#endif
 
 // The name of the attribute wrapping the module basename for dumping. See
 // `GetDumpOptionsForModule` for more details.
@@ -279,19 +282,24 @@ DumpOptions GetOrSetDumpOptionsForModule(mlir::ModuleOp module) {
       opts.dump_path = dump_to;
     }
 
+    opts.constraint_system = true;
     opts.mlir_passes = true;
     opts.ptx = true;
     opts.ptxas = true;
+    opts.resources = true;
     opts.sass = true;
     opts.sass_ctrl = true;
     return opts;
   }
 
+  opts.constraint_system =
+      getenv("MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM") != nullptr;
   opts.mlir_passes = getenv("MOSAIC_GPU_DUMP_MLIR_PASSES") != nullptr;
   opts.ptx = getenv("MOSAIC_GPU_DUMP_PTX") != nullptr;
   opts.ptxas = getenv("MOSAIC_GPU_DUMP_PTXAS") != nullptr;
   opts.sass_ctrl = getenv("MOSAIC_GPU_DUMP_SASS_CTRL") != nullptr;
   opts.sass = getenv("MOSAIC_GPU_DUMP_SASS") != nullptr || opts.sass_ctrl;
+  opts.resources = getenv("MOSAIC_GPU_DUMP_RESOURCES") != nullptr;
   return opts;
 }
 
@@ -315,6 +323,13 @@ void DumpToFileOrStdout(std::string_view content, std::string_view name,
 
 void DumpSass(mlir::gpu::BinaryOp binary, std::string_view path,
               std::string_view basename, bool include_sass_ctrl) {
+#if defined(_WIN32)
+  static_cast<void>(binary);
+  static_cast<void>(path);
+  static_cast<void>(basename);
+  static_cast<void>(include_sass_ctrl);
+  LOG(ERROR) << "SASS dumping is not supported on Windows.";
+#else
   auto objects = binary.getObjects();
   if (objects.size() != 1) {
     std::cerr << "Multiple objects per gpu.binary unsupported" << std::endl;
@@ -360,6 +375,7 @@ void DumpSass(mlir::gpu::BinaryOp binary, std::string_view path,
     mosaic::gpu::DumpToFileOrStdout(*result, absl::StrCat(basename, ".sass"),
                                     path);
   }
+#endif
 }
 
 }  // namespace gpu

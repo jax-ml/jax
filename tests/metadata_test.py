@@ -90,6 +90,17 @@ class MetadataTest(jtu.JaxTestCase):
     hlo = module_to_string(jax.jit(f).lower(jnp.arange(8.0)).compiler_ir())
     self.assertNotRegex(hlo, r'<.* at 0x[0-9a-fA-F]+>')
 
+  def test_hlo_op_name_without_full_tracebacks(self):
+    @jax.jit
+    def f(x):
+      return jnp.sin(x) + jnp.cos(x)
+
+    with jax_config.include_full_tracebacks_in_locations(False):
+      hlo = f.lower(1.).as_text("hlo", debug_info=True)
+    self.assertIn('op_name="jit(f)/sin"', hlo)
+    self.assertIn('op_name="jit(f)/cos"', hlo)
+    self.assertIn('op_name="jit(f)/add"', hlo)
+
   @unittest.skip('b/352539562')
   def test_source_file_prefix_removal(self):
 

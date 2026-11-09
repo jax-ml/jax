@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 
@@ -38,6 +39,11 @@ namespace internal {
 llvm::LogicalResult LowerGpuModuleToAssembly(
     mlir::gpu::GPUModuleOp gpu_module,
     const std::vector<std::string>& libraries_to_link);
+
+// Removes .loc directives from inline asm blocks in PTX. This is exposed for
+// testing only.
+std::string FixInlineAsmLocInfoInPTX(llvm::StringRef ptx);
+
 }  // namespace internal
 
 }  // namespace gpu

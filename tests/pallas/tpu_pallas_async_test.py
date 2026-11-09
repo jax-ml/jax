@@ -467,7 +467,7 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
         axis_types=(jax.sharding.AxisType.Auto,),
     )
     ddim = jax.device_count()
-    tcmesh = pltpu.create_tensorcore_mesh('core')
+    tcmesh = pltpu.TensorCoreMesh(axis_name='core')
     pspec = P('device', None)
     sharding = jax.sharding.NamedSharding(mesh, pspec)
 
@@ -478,62 +478,61 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
     )
     input_arr = jax.device_put(input_arr, sharding)
 
-    def core_copy(refs):
-      in_ref, out_ref = refs
+    @pl.kernel(
+        mesh=tcmesh,
+        out_type=jax.ShapeDtypeStruct((xlocal, ylocal), input_arr.dtype),
+        scratch_types=[
+            pltpu.VMEM(
+                (xlocal, ylocal // tcmesh.shape['core']), input_arr.dtype
+            ),
+            pltpu.SemaphoreType.DMA,
+            pltpu.SemaphoreType.DMA,
+            pltpu.SemaphoreType.DMA,
+        ],
+        compiler_params=pltpu.CompilerParams(collective_id=7),
+    )
+    def core_copy(in_ref, out_ref, out_vmem_ref, sem, send_sem, recv_sem):
+      # This runs on every core, for every vmem iterations
+      num_cores = jax.lax.axis_size('core')
+      slc_size = ylocal // num_cores
+      core_index = jax.lax.axis_index('core')
+      slc = pl.ds(core_index * slc_size, slc_size)
 
-      @pl.core_map(tcmesh, compiler_params=pltpu.CompilerParams(collective_id=7))
-      def _():
-        num_cores = jax.lax.axis_size('core')
-        slc_size = ylocal // num_cores
-        vmem_shape = (xlocal, slc_size)
-
-        # This runs on every core, for every vmem iterations
-        def alloc(out_vmem_ref, sem, send_sem, recv_sem):
-          core_index = jax.lax.axis_index('core')
-          slc = pl.ds(core_index * slc_size, slc_size)
-
-          # Make sure all cores have entered run_scoped.
-          sem0 = pltpu.get_barrier_semaphore()
-          for i in range(ddim):
-            for j in range(num_cores):
-              pl.semaphore_signal(
-                  sem0, 1, device_id={'device': i, 'core': j},
-                  device_id_type=pl.DeviceIdType.MESH)
-          pl.semaphore_wait(sem0, ddim * num_cores)
-
-          # Identity function by default
-          pltpu.async_copy(in_ref.at[:, slc], out_ref.at[:, slc], sem).wait()
-
-          copy_c0_to_c1 = pltpu.make_async_remote_copy(
-              src_ref=in_ref.at[:, slc],
-              dst_ref=out_vmem_ref,
-              send_sem=send_sem,
-              recv_sem=recv_sem,
-              device_id={'core': 1},
-              device_id_type=pl.DeviceIdType.MESH,
+      # Make sure all cores have entered run_scoped.
+      sem0 = pltpu.get_barrier_semaphore()
+      for i in range(ddim):
+        for j in range(num_cores):
+          pl.semaphore_signal(
+              sem0,
+              1,
+              device_id={'device': i, 'core': j},
           )
+      pl.semaphore_wait(sem0, ddim * num_cores)
 
-          @pl.when(core_index == 0)
-          def _():
-            copy_c0_to_c1.start()
-            copy_c0_to_c1.wait_send()
+      # Identity function by default
+      pltpu.async_copy(in_ref.at[:, slc], out_ref.at[:, slc], sem).wait()
 
-          @pl.when(core_index == 1)
-          def _():
-            copy_c0_to_c1.wait_recv()
-            pltpu.async_copy(out_vmem_ref, out_ref.at[:, slc], sem).wait()
+      copy_c0_to_c1 = pltpu.make_async_remote_copy(
+          src_ref=in_ref.at[:, slc],
+          dst_ref=out_vmem_ref,
+          send_sem=send_sem,
+          recv_sem=recv_sem,
+          device_id={'core': 1},
+      )
 
-        pl.run_scoped(
-            alloc,
-            pltpu.VMEM(vmem_shape, out_ref.dtype),
-            *([pltpu.SemaphoreType.DMA] * 3),
-        )
+      @pl.when(core_index == 0)
+      def _():
+        copy_c0_to_c1.start()
+        copy_c0_to_c1.wait_send()
+
+      @pl.when(core_index == 1)
+      def _():
+        copy_c0_to_c1.wait_recv()
+        pltpu.async_copy(out_vmem_ref, out_ref.at[:, slc], sem).wait()
 
     @partial(jax.shard_map, mesh=mesh, in_specs=pspec, out_specs=pspec, check_vma=False)
     def run_core_kernel(input):
-      output = jnp.zeros_like(input)
-      _, output = pl.run_state(core_copy)((input, output))
-      return output
+      return core_copy(input)
     pallas_out = jax.jit(run_core_kernel)(input_arr)
 
     # The device=0 core=1 slice was flushed with device=0 core=0 contents
@@ -564,10 +563,10 @@ def make_async_remote_copy(axis_name: str, direction: str = 'right',
         src_neighbor = right_neighbor
         dst_neighbor = left_neighbor
       barrier_sem = pltpu.get_barrier_semaphore()
-      pl.semaphore_signal(barrier_sem, device_id=src_neighbor)
+      pl.semaphore_signal(barrier_sem, device_id={axis_name: src_neighbor})
       pl.semaphore_wait(barrier_sem, 1)
       pltpu.make_async_remote_copy(
-          x_ref, o_ref, send_sem, recv_sem, device_id=dst_neighbor,
+          x_ref, o_ref, send_sem, recv_sem, device_id={axis_name: dst_neighbor},
       ).start()
 
     x, out, send_sem, recv_sem = pl.pallas_call(
@@ -652,8 +651,8 @@ def make_bidi_collective_permute(axis_name: str):
           jax.lax.axis_index(axis_name) + 1, axis_size
       )
       barrier_sem = pltpu.get_barrier_semaphore()
-      pl.semaphore_signal(barrier_sem, device_id=left_neighbor)
-      pl.semaphore_signal(barrier_sem, device_id=right_neighbor)
+      pl.semaphore_signal(barrier_sem, device_id={axis_name: left_neighbor})
+      pl.semaphore_signal(barrier_sem, device_id={axis_name: right_neighbor})
       pl.semaphore_wait(barrier_sem, 2)
       assert x.shape[0] % 2 == 0, x.shape
       pltpu.make_async_remote_copy(
@@ -661,14 +660,14 @@ def make_bidi_collective_permute(axis_name: str):
           o_ref.at[pl.ds(0, x.shape[0] // 2)],
           right_sems[0],
           right_sems[1],
-          device_id=right_neighbor,
+          device_id={axis_name: right_neighbor},
       ).start()
       pltpu.make_async_remote_copy(
           x_ref.at[pl.ds(x.shape[0] // 2, x.shape[0] // 2)],
           o_ref.at[pl.ds(x.shape[0] // 2, x.shape[0] // 2)],
           left_sems[0],
           left_sems[1],
-          device_id=left_neighbor,
+          device_id={axis_name: left_neighbor},
       ).start()
 
     x, out, left_sems, right_sems = pl.pallas_call(

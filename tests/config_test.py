@@ -124,9 +124,10 @@ class ConfigTest(jtu.JaxTestCase):
       self.assertEqual(config.jax_platforms.value, 'platform_A')
 
   def test_trace_context_names(self):
-    from jax._src.lib import jaxlib_extension_version  # type: ignore
-    if jaxlib_extension_version < 455: self.skipTest('jaxlib < 455')
     self.assertLen(config.trace_context_names(), len(config.trace_context()))
+
+  def test_jaxpr_eqn_ctx_names(self):
+    self.assertLen(config.jaxpr_eqn_ctx_names(), len(config.jaxpr_eqn_ctx_vals()))
 
   def test_config_decorator_reentrancy(self):
     cfg = jax_test_bool_config

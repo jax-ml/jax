@@ -33,7 +33,7 @@ from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import (
-    check_arraylike, promote_dtypes, promote_dtypes_inexact,
+    check_arraylike, ensure_arraylike, promote_dtypes, promote_dtypes_inexact,
     promote_dtypes_complex, promote_args_inexact)
 from jax._src.scipy.special import comb
 from jax._src.tpu.linalg import qdwh
@@ -199,7 +199,7 @@ def cho_solve(c_and_lower: tuple[ArrayLike, bool], b: ArrayLike,
     b: right-hand-side of linear system. Array of shape ``(N,)`` (for a
       1-dimensional right-hand-side) or ``(..., N, M)`` (for a batched
       2-dimensional right-hand-side).
-    overwrite_a: unused by JAX
+    overwrite_b: unused by JAX
     check_finite: unused by JAX
 
   Returns:
@@ -363,21 +363,46 @@ def det(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
     Determinant of a small 2D array:
 
     >>> x = jnp.array([[1., 2.],
-    ...                [3., 4.]])
+    ...                [2., 3.]])
     >>> jax.scipy.linalg.det(x)
-    Array(-2., dtype=float32)
+    Array(-1., dtype=float32)
 
     Batch-wise determinant of multiple 2D arrays:
 
     >>> x = jnp.array([[[1., 2.],
-    ...                 [3., 4.]],
-    ...                [[8., 5.],
-    ...                 [7., 9.]]])
+    ...                 [2., 3.]],
+    ...                [[8., 4.],
+    ...                 [2., 5.]]])
     >>> jax.scipy.linalg.det(x)
-    Array([-2., 37.], dtype=float32)
+    Array([-1., 32.], dtype=float32)
   """
   del overwrite_a, check_finite  # unused
   return jnp_linalg.det(a)
+
+
+def _eigh_generalized(a: Array, b: Array, *, lower: bool,
+                      eigvals_only: bool, type: int) -> Array | tuple[Array, Array]:
+  # Reduce the generalized problem using B = L L^H.
+  l = lax_linalg.cholesky(b)
+  a = (a + jnp.conj(a.mT)) / 2
+  if type == 1:
+    # A v = w B v: C = L^-1 A L^-H.
+    c = lax_linalg.triangular_solve(l, a, left_side=True, lower=True)
+    c = lax_linalg.triangular_solve(l, c, left_side=False, lower=True,
+                                    transpose_a=True, conjugate_a=True)
+  else:
+    # A B v = w v or B A v = w v: C = L^H A L.
+    c = jnp.matmul(jnp.conj(l.mT), a, precision=lax.Precision.HIGHEST)
+    c = jnp.matmul(c, l, precision=lax.Precision.HIGHEST)
+  v, w = lax_linalg.eigh(c, lower=lower)
+  if eigvals_only:
+    return w
+  if type == 3:
+    v = jnp.matmul(l, v, precision=lax.Precision.HIGHEST)
+  else:
+    v = lax_linalg.triangular_solve(l, v, left_side=True, lower=True,
+                                    transpose_a=True, conjugate_a=True)
+  return w, v
 
 
 @overload
@@ -395,17 +420,31 @@ def _eigh(a: ArrayLike, b: ArrayLike | None, lower: bool, eigvals_only: bool,
 @jit(static_argnames=('lower', 'eigvals_only', 'eigvals', 'type'))
 def _eigh(a: ArrayLike, b: ArrayLike | None, lower: bool, eigvals_only: bool,
           eigvals: None, type: int) -> Array | tuple[Array, Array]:
-  if b is not None:
-    raise NotImplementedError("Only the b=None case of eigh is implemented")
-  if type != 1:
-    raise NotImplementedError("Only the type=1 case of eigh is implemented.")
+  if type not in (1, 2, 3):
+    raise ValueError("type must be 1, 2, or 3.")
   if eigvals is not None:
     raise NotImplementedError(
         "Only the eigvals=None case of eigh is implemented.")
 
+  a = jnp.asarray(a)
+  if a.ndim < 2 or a.shape[-1] != a.shape[-2]:
+    raise ValueError(
+      f"Argument a to linalg.eigh must have shape [..., n, n], got {a.shape}.")
+
+  if b is not None:
+    a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
+    if b.ndim < 2 or b.shape[-1] != b.shape[-2]:
+      raise ValueError(
+        f"Argument b to linalg.eigh must have shape [..., n, n], got {b.shape}.")
+    signature = ("(n,n),(n,n)->(n)" if eigvals_only else
+                 "(n,n),(n,n)->(n),(n,n)")
+    return jnp_vectorize.vectorize(
+        partial(_eigh_generalized, lower=lower, eigvals_only=eigvals_only,
+                type=type),
+        signature=signature)(a, b)
+
   a, = promote_dtypes_inexact(jnp.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower)
-
   if eigvals_only:
     return w
   else:
@@ -443,18 +482,22 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
 
   JAX implementation of :func:`scipy.linalg.eigh`.
 
-  Only the standard eigenvalue problem is supported: ``a @ v = lambda * v``.
-    The parameter `b` must be None; the generalized problem (``a @ v = lambda * b @ v``)
-    is not implemented.
+  Solves the standard eigenvalue problem ``a @ v = lambda * v``, or the
+  generalized problem selected by ``type`` when `b` is specified.
 
   Args:
     a: Hermitian input array of shape ``(..., N, N)``
-    b: Must be None. The generalized eigenvalue problem is not supported.
-    lower: if True (default) access only the lower portion of the input matrix.
-      Otherwise access only the upper portion.
+    b: Optional positive-definite Hermitian array of shape ``(..., N, N)``.
+      Batch dimensions of `a` and `b` must be broadcast-compatible. If None,
+      the identity matrix is assumed.
+    lower: if True (default), use the lower triangle after symmetrization.
+      Otherwise use the upper triangle.
     eigvals_only: If True, compute only the eigenvalues. If False (default) compute
       both eigenvalues and eigenvectors.
-    type: Not used. Only type=1 is supported.
+    type: Specifies the generalized eigenvalue problem:
+      ``1`` corresponds to ``a @ v = lambda * b @ v``,
+      ``2`` to ``a @ b @ v = lambda * v``, and
+      ``3`` to ``b @ a @ v = lambda * v``.
 
     eigvals: Not used. Only eigvals=None is supported.
     overwrite_a: unused by JAX.
@@ -467,10 +510,15 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
     an array ``eigvals``.
 
     - ``eigvals``: array of shape ``(..., N)`` containing the eigenvalues.
-    - ``eigvecs``: array of shape ``(..., N, N)`` containing the eigenvectors.
+    - ``eigvecs``: array of shape ``(..., N, N)`` containing the eigenvectors,
+      normalized such that ``v.conj().T @ b @ v`` is the identity matrix for
+      ``type=1`` or ``type=2``, and ``v.conj().T @ inv(b) @ v`` for ``type=3``.
+      If `b` is None, ``v.conj().T @ v`` is the identity matrix.
 
-  Raise:
-    NotImplementedError: If `b` is not None.
+  Notes:
+    Inputs are symmetrized before computation, for correct autodiff behavior.
+    The generalized problem is solved using a Cholesky factorization of `b`.
+    If `b` is not positive definite, the result contains NaNs.
 
   See also:
     - :func:`jax.numpy.linalg.eigh`: NumPy-style eigh API.
@@ -498,6 +546,15 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
     Solution satisfies the eigenvalue problem:
 
     >>> jnp.allclose(a @ eigvecs, eigvecs @ jnp.diag(eigvals))
+    Array(True, dtype=bool)
+
+    Solve a generalized eigenvalue problem with a positive-definite matrix `b`:
+
+    >>> b = jnp.diag(jnp.array([2., 1.]))
+    >>> eigvals, eigvecs = jax.scipy.linalg.eigh(a, b)
+    >>> jnp.allclose(a @ eigvecs, (b @ eigvecs) * eigvals, atol=1E-5)
+    Array(True, dtype=bool)
+    >>> jnp.allclose(eigvecs.T @ b @ eigvecs, jnp.eye(2), atol=1E-5)
     Array(True, dtype=bool)
   """
   del overwrite_a, overwrite_b, turbo, check_finite  # unused
@@ -574,7 +631,7 @@ def schur(a: ArrayLike, output: str = 'real') -> tuple[Array, Array]:
   if output not in ('real', 'complex'):
     raise ValueError(
       f"Expected 'output' to be either 'real' or 'complex', got {output=}.")
-  return _schur(a, output)
+  return _schur(ensure_arraylike("scipy.schur", a), output)
 
 
 def inv(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> Array:
@@ -743,7 +800,8 @@ def lu_solve(lu_and_piv: tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
   lu, pivots = lu_and_piv
   lu, b = promote_dtypes_inexact(jnp.asarray(lu), jnp.asarray(b))
   m, _ = lu.shape[-2:]
-  perm = lax_linalg.lu_pivots_to_permutation(pivots, m)
+  perm = lax_linalg.lu_pivots_to_permutation(
+      jnp.asarray(pivots, dtype=np.int32), m)
   if b.ndim == 1:
     signature = "(n,n),(n),(n)->(n)"
   elif lu.ndim == b.ndim + 1 and lu.shape[-1] == b.shape[-1]:
@@ -775,14 +833,14 @@ def _lu(a: ArrayLike, permute_l: bool) -> tuple[Array, Array] | tuple[Array, Arr
   lu, _, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
   m, n = np.shape(a)
-  p = jnp.real(jnp.array(permutation[None, :] == jnp.arange(m, dtype=permutation.dtype)[:, None], dtype=dtype))
+  p = jnp.array(permutation[None, :] == jnp.arange(m, dtype=permutation.dtype)[:, None], dtype=dtype)
   k = min(m, n)
   l = jnp.tril(lu, -1)[:, :k] + jnp.eye(m, k, dtype=dtype)
   u = jnp.triu(lu)[:k, :]
   if permute_l:
     return jnp.matmul(p, l, precision=lax.Precision.HIGHEST), u
   else:
-    return p, l, u
+    return jnp.real(p), l, u
 
 @overload
 def lu(a: ArrayLike, permute_l: Literal[False] = False, overwrite_a: bool = False,
@@ -866,7 +924,9 @@ def lu(a: ArrayLike, permute_l: bool = False, overwrite_a: bool = False,
     Array(True, dtype=bool)
   """
   del overwrite_a, check_finite  # unused
-  return _lu(a, permute_l)
+  signature = "(m,n)->(m,k),(k,n)" if permute_l else "(m,n)->(m,m),(m,k),(k,n)"
+  return jnp_vectorize.vectorize(
+      partial(_lu, permute_l=permute_l), signature=signature)(a)
 
 
 @overload
@@ -1193,7 +1253,7 @@ def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
   custom_solve = partial(
       lax.custom_linear_solve,
       lambda x: lax_linalg._broadcasted_matvec(a, x),
-      solve=lambda _, x: cho_solve(factors, x),
+      solve=lambda _, x: cho_solve(factors, x[..., None]).squeeze(-1),
       symmetric=True)
   if a.ndim == b.ndim + 1:
     # b.shape == [..., m]
@@ -2012,7 +2072,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   eigenvectors = _compute_eigenvectors(alpha, beta, mid, key)
   return mid, eigenvectors.T
 
-@jit(static_argnames=('side', 'method'))
+@jit(static_argnames=('side', 'method', 'eps', 'max_iterations'))
 @config.default_matmul_precision("float32")
 def _polar_2d(a: Array, side: str, method: str, eps: float | None,
               max_iterations: int | None) -> tuple[Array, Array]:
@@ -2020,10 +2080,12 @@ def _polar_2d(a: Array, side: str, method: str, eps: float | None,
   if method == "qdwh":
     # TODO(phawkins): return info also if the user opts in?
     if m >= n and side == "right":
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps,
+                                         max_iterations=max_iterations)
     elif m < n and side == "left":
       a = a.T.conj()
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps,
+                                         max_iterations=max_iterations)
       posdef = posdef.T.conj()
       unitary = unitary.T.conj()
     else:
@@ -2043,7 +2105,7 @@ def _polar_2d(a: Array, side: str, method: str, eps: float | None,
   return unitary, posdef
 
 
-@jit(static_argnames=('side', 'method'))
+@jit(static_argnames=('side', 'method', 'eps', 'max_iterations'))
 def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float | None = None,
           max_iterations: int | None = None) -> tuple[Array, Array]:
   r"""Computes the polar decomposition.
@@ -2082,7 +2144,6 @@ def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float
       If ``side`` is ``"right"`` then :math:`a = up`. If ``side`` is ``"left"``
       then :math:`a = pu`. The default is ``"right"``.
     method: Determines the algorithm used, as described above.
-    precision: :class:`~jax.lax.Precision` object specifying the matmul precision.
     eps: The final result will satisfy
       :math:`\left|x_k - x_{k-1}\right| < \left|x_k\right| (4\epsilon)^{\frac{1}{3}}`,
       where :math:`x_k` are the QDWH iterates. Ignored if ``method`` is not
@@ -2169,7 +2230,7 @@ def _sqrtm_triu(T: Array) -> Array:
   return U
 
 @jit
-def _sqrtm(A: ArrayLike) -> Array:
+def _sqrtm(A: Array) -> Array:
   T, Z = schur(A, output='complex')
   sqrt_T = _sqrtm_triu(T)
   return jnp.matmul(jnp.matmul(Z, sqrt_T, precision=lax.Precision.HIGHEST),
@@ -2222,7 +2283,7 @@ def sqrtm(A: ArrayLike, blocksize: int = 1) -> Array:
   """
   if blocksize > 1:
       raise NotImplementedError("Blocked version is not implemented yet.")
-  return _sqrtm(A)
+  return _sqrtm(ensure_arraylike("scipy.sqrtm", A))
 
 
 @jit
@@ -2496,13 +2557,10 @@ def _toeplitz(c: Array, r: Array) -> Array:
   nrows, = r.shape
   if ncols == 0 or nrows == 0:
     return jnp.empty((ncols, nrows), dtype=jnp.promote_types(c.dtype, r.dtype))
-  nelems = ncols + nrows - 1
   elems = jnp.concatenate((c[::-1], r[1:]))
-  patches = lax.conv_general_dilated_patches(
-      elems.reshape((1, nelems, 1)),
-      (nrows,), (1,), 'VALID', dimension_numbers=('NTC', 'IOT', 'NTC'),
-      precision=lax.Precision.HIGHEST)[0]
-  return jnp.flip(patches, axis=0)
+  i = lax.broadcasted_iota(int, (ncols, 1), 0)
+  j = lax.broadcasted_iota(int, (1, nrows), 1)
+  return elems[ncols - 1 - i + j]
 
 def hankel(c: ArrayLike, r: ArrayLike | None = None) -> Array:
   r"""Construct a Hankel matrix.
@@ -2564,11 +2622,9 @@ def _hankel(c: Array, r: Array) -> Array:
   if ncols == 0 or nrows == 0:
     return jnp.empty((ncols, nrows), dtype=jnp.result_type(c, r))
   v = jnp.concatenate((c, r[1:]))
-  return lax.conv_general_dilated_patches(
-      v.reshape((1, ncols + nrows - 1, 1)),
-      (nrows,), (1,), 'VALID',
-      dimension_numbers=('NTC', 'IOT', 'NTC'),
-      precision=lax.Precision.HIGHEST)[0]
+  i = lax.broadcasted_iota(int, (ncols, 1), 0)
+  j = lax.broadcasted_iota(int, (1, nrows), 1)
+  return v[i + j]
 
 
 def circulant(c: ArrayLike) -> Array:

@@ -32,10 +32,8 @@ on:
         type: choice
         default: "3.12"
         options:
-        - "3.11"
         - "3.12"
         - "3.13"
-        - "3.13-ft"
         - "3.14"
         - "3.14-ft"
       cuda-version:
@@ -52,6 +50,10 @@ on:
         options:
         - "1"
         - "0"
+      xla_commit:
+        description: "XLA commit SHA to check out after cloning XLA."
+        type: string
+        required: false
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: choice
@@ -81,6 +83,10 @@ on:
         description: "Should latest XLA be used?"
         type: string
         default: "0"
+      xla_commit:
+        description: "XLA commit SHA to check out after cloning XLA."
+        type: string
+        default: ""
       upload_artifacts_to_gcs:
         description: "Should the artifacts be uploaded to a GCS bucket?"
         default: true
@@ -106,15 +112,13 @@ jobs:
         shell: bash
 
     runs-on: ${{ inputs.runner }}
-
-    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest') ||
-                   (contains(inputs.runner, 'linux-arm64') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-arm64:latest') ||
-                   (contains(inputs.runner, 'windows-x86') && null) }}
+    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest') || (contains(inputs.runner, 'linux-arm64') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-arm64:latest') || (contains(inputs.runner, 'windows-x86') && null) }}  # zizmor: ignore[unpinned-images]
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_CUDA_VERSION: "${{ inputs.cuda-version }}"
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
+      JAXCI_XLA_COMMIT: "${{ inputs.xla_commit }}"
 
     name: "${{ inputs.artifact }},
             ${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
@@ -126,7 +130,7 @@ jobs:
       gcs_upload_uri: ${{ steps.store-gcs-upload-uri.outputs.gcs_upload_uri }}
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Configure Build Environment

@@ -14,7 +14,6 @@
 
 import functools
 import os
-import sys
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
@@ -24,6 +23,7 @@ from jax import random
 from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -36,32 +36,7 @@ intx = dtypes.default_int_dtype()
 floatx = dtypes.default_float_dtype()
 
 
-@jtu.with_config(jax_traceback_filtering="off")
-class PallasBaseTest(jtu.JaxTestCase):
-  INTERPRET = False
-
-  def setUp(self):
-    if jtu.test_device_matches(["cpu"]) and not self.INTERPRET:
-      self.skipTest("On CPU the test works only in interpret mode")
-    if (jtu.test_device_matches(["cuda"]) and
-        not jtu.is_cuda_compute_capability_at_least("8.0")):
-      self.skipTest("Only works on GPU with capability >= sm80")
-    if sys.platform == "win32" and not self.INTERPRET:
-      self.skipTest("Only works on non-Windows platforms")
-
-    super().setUp()
-
-  def pallas_call(self, *args, **kwargs):
-    if jtu.test_device_matches(["gpu"]):
-      # TODO(bchetioui): Remove this once tests are all compatible with
-      # Pallas/Mosaic GPU.
-      from jax.experimental.pallas import triton as pltriton
-      assert "compiler_params" not in kwargs
-      kwargs["compiler_params"] = pltriton.CompilerParams()
-    return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
-
-
-class PallasCallVmapTest(PallasBaseTest):
+class PallasCallVmapTest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -257,4 +232,4 @@ class PallasCallVmapInterpretTest(PallasCallVmapTest):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

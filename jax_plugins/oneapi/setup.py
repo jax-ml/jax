@@ -17,9 +17,8 @@ import os
 from setuptools import setup, find_namespace_packages
 
 __version__ = None
-oneapi_version = 0  # placeholder
-project_name = f"jax-oneapi{oneapi_version}-pjrt"
-package_name = f"jax_plugins.xla_oneapi{oneapi_version}"
+project_name = "jax-oneapi-pjrt"
+package_name = "jax_plugins.xla_oneapi"
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -28,7 +27,7 @@ def load_version_module(pkg_path):
   spec.loader.exec_module(module)
   return module
 
-_version_module = load_version_module(f"jax_plugins/xla_oneapi{oneapi_version}")
+_version_module = load_version_module("jax_plugins/xla_oneapi")
 __version__ = _version_module._get_version_for_build()
 
 packages = find_namespace_packages(
@@ -38,14 +37,17 @@ packages = find_namespace_packages(
     ]
 )
 
+with open('README-pjrt.md', encoding='utf-8') as f:
+  _long_description = f.read()
+
 setup(
     name=project_name,
     version=__version__,
-    description=f"JAX XLA PJRT Plugin for Intel GPUs (OneAPI:{oneapi_version})",
-    long_description="",
+    description="JAX XLA PJRT Plugin for Intel GPUs",
+    long_description=_long_description,
     long_description_content_type="text/markdown",
-    author="MiniGoel",
-    author_email="mini.goel@intel.com",
+    author="oneAPI Jax Contributors",
+    author_email="oneapi-jax-contrib@intel.com",
     packages=packages,
     install_requires=[],
     url="https://github.com/jax-ml/jax",
@@ -60,7 +62,7 @@ setup(
     zip_safe=False,
     entry_points={
         "jax_plugins": [
-            f"xla_oneapi{oneapi_version} = {package_name}",
+            f"xla_oneapi = {package_name}",
         ],
     },
 )

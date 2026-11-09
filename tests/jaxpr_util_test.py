@@ -39,7 +39,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       s = jit(jnp.sin)(x)
       return jnp.sin(s) + jnp.cos(y)
 
-    hist = jaxpr_util.primitives(make_jaxpr(f)(1., 1.).jaxpr)
+    hist = jaxpr_util.primitives(make_jaxpr(f)(1., 1.))
 
     primitives = ['add', 'sin', 'cos', 'jit']
     for k in primitives:
@@ -52,7 +52,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       s = jnp.sin(x)
       return jnp.sin(s) + jnp.cos(y)
 
-    hist = jaxpr_util.primitives_by_source(make_jaxpr(f)(1., 1.).jaxpr)
+    hist = jaxpr_util.primitives_by_source(make_jaxpr(f)(1., 1.))
 
     sin_keys = [k for k in hist.keys() if k.startswith('sin @ ')]
     rem_keys = [k for k in hist.keys() if not k.startswith('sin @ ')]
@@ -67,7 +67,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       s = jit(sub)(x, y)
       return jnp.sin(s) + jnp.cos(y)
 
-    hist = jaxpr_util.primitives_by_shape(make_jaxpr(f)(1., 1.).jaxpr)
+    hist = jaxpr_util.primitives_by_shape(make_jaxpr(f)(1., 1.))
 
     t = '64' if config.enable_x64.value else '32'
     shapes = [
@@ -86,7 +86,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       s = jnp.sin(x)                  # sin
       return jnp.sin(s) + jnp.cos(y)  # sin, cos, add
 
-    hist = jaxpr_util.source_locations(make_jaxpr(f)(1., 1.).jaxpr)
+    hist = jaxpr_util.source_locations(make_jaxpr(f)(1., 1.))
     self.assertEqual(sum(hist.values()), 4)
 
   def test_source_locations_exclude_contextlib(self):
@@ -96,7 +96,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       # comes from contextlib.
       return jax.named_call(jnp.cos, name='test')(x)
 
-    hist = jaxpr_util.source_locations(make_jaxpr(f)(jnp.arange(8.)).jaxpr)
+    hist = jaxpr_util.source_locations(make_jaxpr(f)(jnp.arange(8.)))
     for filename in hist.keys():
       self.assertIn(os.path.basename(__file__), filename)
 
@@ -104,7 +104,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
     def f(x, y):
       s = jit(jnp.sin)(x)
       return jnp.sin(s) + jnp.cos(y)
-    profile_gz = jaxpr_util.pprof_equation_profile(make_jaxpr(f)(1., 1.).jaxpr)
+    profile_gz = jaxpr_util.pprof_equation_profile(make_jaxpr(f)(1., 1.))
     profile_proto = gzip.decompress(profile_gz)
     json_str = _jax.pprof_profile_to_json(profile_proto)
     profile = json.loads(json_str)
@@ -122,7 +122,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
 
     jaxpr = make_jaxpr(f)(1.)
 
-    eqns = list(jaxpr_util._all_eqns_with_traceback(jaxpr.jaxpr, None, set()))
+    eqns = list(jaxpr_util._all_eqns_with_traceback(jaxpr, None, set()))
 
     self.assertGreater(len(eqns), 1)
 
@@ -167,7 +167,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       return x + 2
     jaxpr = make_jaxpr(f)(42)
 
-    html_content = jaxpr_util.jaxpr_to_html(jaxpr.jaxpr)
+    html_content = jaxpr_util.jaxpr_to_html(jaxpr)
 
     self.assertIsInstance(html_content, str)
     self.assertIn("<!DOCTYPE html>", html_content)
@@ -203,4 +203,4 @@ class JaxprStatsTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

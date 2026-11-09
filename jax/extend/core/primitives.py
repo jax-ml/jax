@@ -27,6 +27,12 @@ from jax._src.core import (
   closed_call_p as closed_call_p
 )
 
+from jax._src.lax.eval_jaxpr import (
+  create_call_primitive as create_call_primitive,
+  eval_jaxpr_transpose as eval_jaxpr_transpose,
+  register_call_primitive_rules as register_call_primitive_rules,
+)
+
 from jax._src.custom_derivatives import (
   custom_jvp_call_p as custom_jvp_call_p,
   custom_vjp_call_p as custom_vjp_call_p,
@@ -75,6 +81,8 @@ from jax._src.lax.lax import (
   exp2_p as exp2_p,
   expm1_p as expm1_p,
   floor_p as floor_p,
+  fma_p as fma_p,
+  fmuladd_p as fmuladd_p,
   ge_p as ge_p,
   gt_p as gt_p,
   imag_p as imag_p,
@@ -84,6 +92,7 @@ from jax._src.lax.lax import (
   le_p as le_p,
   le_to_p as le_to_p,
   log1p_p as log1p_p,
+  log2_p as log2_p,
   log_p as log_p,
   logistic_p as logistic_p,
   lt_p as lt_p,
@@ -95,8 +104,10 @@ from jax._src.lax.lax import (
   neg_p as neg_p,
   nextafter_p as nextafter_p,
   not_p as not_p,
+  one_minus_square_p as one_minus_square_p,
   or_p as or_p,
   pad_p as pad_p,
+  polynomial_p as polynomial_p,
   population_count_p as population_count_p,
   pow_p as pow_p,
   real_p as real_p,
@@ -207,6 +218,16 @@ from jax._src.lax.parallel import (
 
 from jax._src.lax.ann import (
   approx_top_k_p as approx_top_k_p
+)
+
+from jax._src.lax.trig import (
+  acospi_p as acospi_p,
+  asinpi_p as asinpi_p,
+  atan2pi_p as atan2pi_p,
+  atanpi_p as atanpi_p,
+  cospi_p as cospi_p,
+  sinpi_p as sinpi_p,
+  tanpi_p as tanpi_p,
 )
 
 from jax._src.lax.linalg import (

@@ -15,6 +15,7 @@ MODULE.bazel.lock
 .mypy_cache/
 .pytype/
 /docs/build
+/docs/intersphinx_cache
 *_pb2.py
 /docs/notebooks/.ipynb_checkpoints/
 /docs/_autosummary

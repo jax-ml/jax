@@ -16,16 +16,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Sequence
 import copy
+import enum
 from functools import partial
 import logging
 import time
 from typing import Any
-from collections.abc import Callable
 import warnings
 
-from jax._src import cache_key as cache_key_type
 from jax._src import compilation_cache
 from jax._src import config as config
 from jax._src import distributed
@@ -37,12 +37,40 @@ from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
-from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 import numpy as np
 
 
+class CompilerEffortLevel(enum.Enum):
+  """Effort level enumeration for XLA.
+
+  Used to specify the degree to which the XLA compiler should optimize for
+  runtime performance or memory fitting, as described in
+  https://openxla.org/xla/effort_levels. Higher effort levels will expend
+  more compile time but should yield better results in the respective
+  dimension.
+  """
+
+  UNKNOWN = 0
+  O0 = 9
+  O1 = 19
+  O2 = 29
+  O3 = 39
+
+  @classmethod
+  def _missing_(cls, value: object) -> CompilerEffortLevel | None:
+    return _effort_from_string.get(value)
+
+
+_effort_from_string: dict[Any, CompilerEffortLevel] = {
+    "UNKNOWN": CompilerEffortLevel.UNKNOWN,
+    "O0": CompilerEffortLevel.O0,
+    "O1": CompilerEffortLevel.O1,
+    "O2": CompilerEffortLevel.O2,
+    "O3": CompilerEffortLevel.O3,
+}
 _DISABLE_MOST_OPTIMIZATIONS = config.bool_flag(
     'jax_disable_most_optimizations',
     config.bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
@@ -70,6 +98,19 @@ CompileOptions = xc.CompileOptions
 logger = logging.getLogger(__name__)
 
 
+def _add_disabled_hlo_pass(disabled_passes: str, pass_name: str) -> str:
+  """Adds a pass to a comma-separated pass list, preserving existing entries.
+
+  ``DebugOptions.xla_disable_hlo_passes`` may already hold passes the user
+  disabled via ``XLA_FLAGS=--xla_disable_hlo_passes=...``; those must not be
+  overwritten. Entries are stripped because XLA matches pass names exactly.
+  """
+  passes = [p.strip() for p in disabled_passes.split(",") if p.strip()]
+  if pass_name not in passes:
+    passes.append(pass_name)
+  return ",".join(passes)
+
+
 def _get_cross_compile_backend(compile_only_backend):
   """Returns a real backend for cross-compilation via a real client.
 
@@ -88,6 +129,13 @@ def _get_cross_compile_backend(compile_only_backend):
   # Don't use real backend if platform version is different, this can lead
   # to timeouts and hangs.
   if real_backend.platform_version != compile_only_backend.platform_version:
+    return None
+
+  # b/563485832: Consider if this check should be done for TPU accelerators.
+  # NOTE: compare global device_count() only. A compile-only client has no
+  # addressable devices, so its local_device_count() is always 0 and comparing
+  # it would disable this path unconditionally.
+  if real_backend.device_count() != compile_only_backend.device_count():
     return None
   return real_backend
 
@@ -140,7 +188,7 @@ def get_compile_options(
     num_replicas: int,
     num_partitions: int,
     device_assignment=None,
-    env_options_overrides: dict[str, str] | None = None,
+    env_options_overrides: dict[str, Any] | None = None,
     fdo_profile: bytes | None = None,
     detailed_logging: bool = True,
     backend: xc.Client | None = None,
@@ -166,7 +214,7 @@ def get_compile_options(
   compile_options.num_partitions = num_partitions
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = True
-  build_options.use_shardy_partitioner = config.use_shardy_partitioner.value
+  build_options.use_shardy_partitioner = True
   if fdo_profile is not None:
     build_options.fdo_profile = fdo_profile
   if device_assignment is not None:
@@ -195,27 +243,29 @@ def get_compile_options(
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
 
-  build_options.exec_time_optimization_effort = config.exec_time_optimization_effort.value
-  build_options.memory_fitting_effort = config.memory_fitting_effort.value
-  build_options.optimization_level = config.EffortLevel(
+  build_options.optimization_level = CompilerEffortLevel(
       config.optimization_level.value
   ).value
-  build_options.memory_fitting_level = config.EffortLevel(
+  build_options.memory_fitting_level = CompilerEffortLevel(
       config.memory_fitting_level.value
   ).value
 
   if env_options_overrides is not None:
-    # Some overrides are passed directly on build_options.
-    overrides_on_build_options = [
-        "exec_time_optimization_effort", "memory_fitting_effort"]
-    overrides_on_build_options.extend(
-        ["optimization_level", "memory_fitting_level"]
-    )
+    # Some overrides are passed directly on compile_options or build_options.
+    overrides_on_compile_options = ["individually_defined_output_indices"]
+    overrides_on_build_options = ["optimization_level", "memory_fitting_level"]
 
     env_options_overrides = dict(env_options_overrides)
+    for name in overrides_on_compile_options:
+      if name in env_options_overrides:
+        setattr(compile_options, name, env_options_overrides.pop(name))
     for name in overrides_on_build_options:
       if name in env_options_overrides:
-        setattr(build_options, name, env_options_overrides.pop(name))
+        setattr(
+            build_options,
+            name,
+            CompilerEffortLevel(env_options_overrides.pop(name)).value,
+        )
     compile_options.env_option_overrides = list(env_options_overrides.items())
 
   debug_options = compile_options.executable_build_options.debug_options
@@ -228,7 +278,8 @@ def get_compile_options(
     debug_options.xla_test_all_input_layouts = False
 
   if not config.enable_remat_opt_pass.value:
-    debug_options.xla_disable_hlo_passes = "rematerialization"
+    debug_options.xla_disable_hlo_passes = _add_disabled_hlo_pass(
+        debug_options.xla_disable_hlo_passes, "rematerialization")
 
   # XLA-AutoFDO profile version: precedence order is:
   # 1. Whatever --jax_xla_profile_version is set to.
@@ -271,8 +322,6 @@ def get_compile_options(
     if enabled_flags == "all" or "xla_gpu_kernel_cache_file" in enabled_flags:
       kernel_cache_path = path / "xla_gpu_kernel_cache_file"
       debug_options.xla_gpu_kernel_cache_file = str(kernel_cache_path)
-      # This option is required to use the kernel cache.
-      debug_options.xla_gpu_enable_llvm_module_compilation_parallelism = True
       logger.debug("Enabling XLA kernel cache at '%s'", kernel_cache_path)
 
     if enabled_flags == "all" or "xla_gpu_per_fusion_autotune_cache_dir" in enabled_flags:
@@ -427,7 +476,8 @@ def compile_or_get_cached(
 
   cache_retrieval_start = time.monotonic()
   retrieved_executable, retrieved_compile_time = _cache_read(
-      module_name, cache_key, compile_options, backend, executable_devices)
+      module_name, cache_key, compile_options, backend, executable_devices,
+      host_callbacks)
   cache_retrieval_time = time.monotonic() - cache_retrieval_start
 
   if retrieved_executable is not None:
@@ -448,9 +498,6 @@ def compile_or_get_cached(
       config.share_binary_between_hosts.value
       and is_multi_process
       and distributed.global_state.client is not None
-      # Host callbacks are currently baked into the HLO module so we can't share
-      # them.
-      and len(host_callbacks) == 0
   ):
     log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_share_module(
@@ -586,10 +633,6 @@ def _get_cache_key(
     override_fdo_profile: bytes | None = None) -> str | None:
   if not compilation_cache.is_cache_used(backend):
     return None
-  if config.remove_custom_partitioning_ptr_from_cache_key.value:
-    ignore_callbacks = cache_key_type.IgnoreCallbacks.CUSTOM_PARTITIONING
-  else:
-    ignore_callbacks = cache_key_type.IgnoreCallbacks.NO
   if override_fdo_profile is not None:
     options = copy.deepcopy(options)
     options.executable_build_options.fdo_profile = override_fdo_profile
@@ -599,7 +642,7 @@ def _get_cache_key(
         devices,
         options,
         backend,
-        ignore_callbacks,
+        config.remove_custom_partitioning_ptr_from_cache_key.value,
     )
   except _jax.JaxRuntimeError as ex:
     logger.error("compile_or_get_cached: unable to generate cache key, "
@@ -630,7 +673,7 @@ def _share_fdo_profiles(
             devices,
             compile_options,
             backend,
-            cache_key_type.IgnoreCallbacks.ALL,
+            ignore_custom_partitioning=True,
         )
         + "_fdo_sync"
     )
@@ -715,7 +758,8 @@ def _compile_and_share_module(
         serialized_executable
     )
     executable = backend.deserialize_executable(
-        serialized_executable, executable_devices, compile_options)
+        serialized_executable, executable_devices, compile_options,
+        host_callbacks)
 
   _compile_and_share_module.modules_cache[cache_key] = executable  # pyrefly: ignore[missing-attribute]
   return executable
@@ -738,9 +782,7 @@ def _compile_and_write_cache(
       backend, computation, executable_devices, compile_options, host_callbacks
   )
   compile_time = time.monotonic() - start_time
-  _cache_write(
-      cache_key, compile_time, module_name, backend, executable, host_callbacks
-  )
+  _cache_write(cache_key, compile_time, module_name, backend, executable)
   return executable
 
 
@@ -769,13 +811,15 @@ def _is_executable_in_cache(backend, cache_key) -> bool:
 def _cache_read(
     module_name: str, cache_key: str, compile_options: xc.CompileOptions,
     backend: xc.Client, executable_devices: xc.DeviceList,
+    host_callbacks: Sequence[Any],
 ) -> tuple[xc.LoadedExecutable | None, int | None]:
   """Looks up the `computation` and it's compilation time in the persistent
   compilation cache repository.
   """
   try:
     return compilation_cache.get_executable_and_time(
-        cache_key, compile_options, backend, executable_devices)
+        cache_key, compile_options, backend, executable_devices,
+        host_callbacks)
   except Exception as ex:
     if _should_raise_persistent_cache_error(ex):
       raise
@@ -788,8 +832,8 @@ def _cache_read(
 def _cache_write(cache_key: str,
                  compile_time_secs: float,
                  module_name: str,
-                 backend: xc.Client, executable: xc.LoadedExecutable,
-                 host_callbacks: Sequence[Any]) -> None:
+                 backend: xc.Client,
+                 executable: xc.LoadedExecutable) -> None:
   """Writes the `serialized_computation` and its compilation time to the
   persistent compilation cache repository.
   """
@@ -802,13 +846,6 @@ def _cache_write(cache_key: str,
   if distributed.global_state.process_id != 0:
     logger.log(log_priority,
                "Not writing persistent cache entry since process_id != 0")
-    return
-
-  if host_callbacks:
-    logger.log(
-        log_priority,
-        "Not writing persistent cache entry for '%s' because it uses host "
-        "callbacks (e.g. from jax.debug.print or breakpoint)", module_name)
     return
 
   min_compile_time = config.persistent_cache_min_compile_time_secs.value

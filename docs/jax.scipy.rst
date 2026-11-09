@@ -177,6 +177,7 @@ jax.scipy.special
    entr
    erf
    erfc
+   erfcinv
    erfcx
    erfinv
    exp1
@@ -188,6 +189,8 @@ jax.scipy.special
    gamma
    gammainc
    gammaincc
+   gammainccinv
+   gammaincinv
    gammaln
    gammasgn
    hyp1f1
@@ -196,6 +199,8 @@ jax.scipy.special
    i0e
    i1
    i1e
+   iv
+   jn
    kl_div
    log_ndtr
    log_softmax
@@ -207,6 +212,7 @@ jax.scipy.special
    multigammaln
    ndtr
    ndtri
+   ndtri_exp
    owens_t
    poch
    polygamma
@@ -218,6 +224,7 @@ jax.scipy.special
    wofz
    xlog1py
    xlogy
+   yn
    zeta
 
 

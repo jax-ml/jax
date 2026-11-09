@@ -172,7 +172,7 @@ def _get_prng_key_info(
     does not have a PRNG key dtype, it is not included in the dict.
   """
   return {
-      i: spec.dtype._impl.name  # pylint: disable=protected-access
+      i: spec.dtype._impl.name
       for i, spec in enumerate(specs)
       if is_prng_key_dtype(spec.dtype)
   }

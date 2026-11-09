@@ -13,6 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
+import gc
 import threading
 
 from absl.testing import absltest
@@ -23,14 +24,14 @@ from jax.jaxlib import xla_client
 config = _jax.config
 
 
+test_race_config = config.Config("test_race", 1)
+
+
 class ConfigTest(absltest.TestCase):
 
   def testBasic(self):
-    if xla_client._version >= 376:
-      c = config.Config("test", 1)
-      self.assertEqual(c.name, "test")
-    else:
-      c = config.Config(1)
+    c = config.Config("test", 1)
+    self.assertEqual(c.name, "test")
     self.assertEqual(c.value, 1)
     self.assertEqual(c.get_global(), 1)
     self.assertEqual(c.get_local(), config.unset)
@@ -56,10 +57,7 @@ class ConfigTest(absltest.TestCase):
     self.assertEqual(c.get_local(), config.unset)
 
   def testThreading(self):
-    if xla_client._version >= 376:
-      c = config.Config("test", 1)
-    else:
-      c = config.Config(1)
+    c = config.Config("test", 1)
 
     def Body():
       for i in range(100):
@@ -73,6 +71,41 @@ class ConfigTest(absltest.TestCase):
       t.start()
     for t in threads:
       t.join()
+
+  def testConcurrentGlobalStateRace(self):
+    def writer():
+      for _ in range(2000):
+        test_race_config.set_global(2)
+        test_race_config.set_global(1)
+
+    def reader():
+      for _ in range(2000):
+        _ = test_race_config.value
+
+    def collector():
+      for _ in range(50):
+        gc.collect()
+
+    threads = [
+        threading.Thread(target=writer),
+        threading.Thread(target=reader),
+        threading.Thread(target=reader),
+        threading.Thread(target=collector),
+    ]
+    for t in threads:
+      t.start()
+    for t in threads:
+      t.join()
+
+  def testUninitializedClear(self):
+    if xla_client._version < 517:
+      self.skipTest("Requires jaxlib_extension_version >= 517")
+    obj = config.Config.__new__(config.Config)
+    cycle = [obj]
+    cycle.append(cycle)
+    del obj, cycle
+    gc.collect()
+    self.assertEqual(test_race_config.value, 1)
 
 
 if __name__ == "__main__":

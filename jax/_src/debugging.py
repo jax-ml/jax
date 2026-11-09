@@ -22,7 +22,14 @@ import importlib.util
 import logging
 import string
 import sys
-from typing import Any, Union, overload
+from typing import Any, assert_never, overload
+
+if sys.version_info >= (3, 14):
+  from string.templatelib import Template, Interpolation
+
+  type _FormatStr = str | Template
+else:
+  type _FormatStr = str
 
 import numpy as np
 
@@ -172,26 +179,16 @@ def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params)
     elif set(axis_context.manual_axes) == set(axis_context.mesh.axis_names):
       # If we have fully manual sharding during lowering, that means the JAX
       # program has per-device semantics, so we run the callback on each device.
-      if config.use_shardy_partitioner.value:
-        sharding = cb._get_sdy_array_list_for_callbacks(ctx.avals_out)
-      else:
-        sharding = xc.OpSharding()
-        sharding.type = xc.OpSharding.Type.MANUAL
+      sharding = cb._get_sdy_array_list_for_callbacks(ctx.avals_out)
     else:
       assert False  # Unreachable
   elif isinstance(axis_context, sharding_impls.ShardingContext):
     # If we have fully automatic sharding during lowering, that means the JAX
     # program has bulk array semantics, so we run the callback with a MAXIMAL
     # sharding and hence execute it only once on the full logical value).
-    if config.use_shardy_partitioner.value:
-      sharding = sharding_impls.SdyArrayList((
-          sharding_impls.SdyArray(
-              mesh_shape=(), dim_shardings=(), logical_device_ids=(0,)),))
-    else:
-      sharding = xc.OpSharding()
-      sharding.type = xc.OpSharding.Type.MAXIMAL
-      sharding.tile_assignment_dimensions = [1]
-      sharding.tile_assignment_devices = [0]
+    sharding = sharding_impls.SdyArrayList((
+        sharding_impls.SdyArray(
+            mesh_shape=(), dim_shardings=(), logical_device_ids=(0,)),))
   else:
     # When there's no SPMD partitioning going on, don't annotate a sharding.
     sharding = None
@@ -264,9 +261,9 @@ pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = partial(
 
 @state_discharge.register_discharge_rule(debug_callback_p)
 def _debug_callback_state_discharge_rule(
-    in_avals, out_avals, *args, effect, partitioned, callback, **params
+    ctx, *args, effect, partitioned, callback, **params
 ):
-  del in_avals, out_avals  # Unused.
+  del ctx  # Unused.
   out = debug_callback_p.bind(
       *args, effect=effect, partitioned=partitioned, callback=callback, **params
   )
@@ -274,7 +271,9 @@ def _debug_callback_state_discharge_rule(
 
 
 def _split_callback_args(args, kwargs):
-  flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
+  # We use ``tracing_registry`` to flatten ``TransformedRef``s which are not
+  # pytrees.
+  flat_args, in_tree = tree_util.tracing_registry.flatten((args, kwargs))
   static_args, dyn_args = {}, []
   for i, a in enumerate(flat_args):
     try:
@@ -399,8 +398,8 @@ pe.partial_eval_jaxpr_custom_rules[debug_print_p] = partial(
 
 
 @state_discharge.register_discharge_rule(debug_print_p)
-def _debug_print_state_discharge_rule(in_avals, out_avals, *args, **kwargs):
-  del in_avals, out_avals  # Unused.
+def _debug_print_state_discharge_rule(ctx, *args, **kwargs):
+  del ctx  # Unused.
   out = debug_print_p.bind(*args, **kwargs)
   return args, out
 
@@ -480,7 +479,7 @@ def debug_callback(
     - :func:`jax.debug.print`: callback designed for printing.
 
   .. _External Callbacks:
-     https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
+     https://docs.jax.dev/en/latest/201/callbacks.html
   """
   def _debug_callback(
       callback: Callable[..., None], *c_args: Any, **c_kwargs: Any
@@ -577,6 +576,31 @@ def _make_logging_record(level):
       logger.name, level, file_name, line_no, "", args, None
   )
 
+if sys.version_info >= (3, 14):
+  def _template_to_format(template: Template) -> tuple[str, tuple[Any, ...]]:
+    parts: list[str] = []
+
+    for part in template:
+      match part:
+        case str():
+          parts.append(part.replace("{", "{{").replace("}", "}}"))
+
+        case Interpolation():
+          conversion = (
+              f"!{part.conversion}"
+              if part.conversion is not None else ""
+          )
+          spec = (
+              f":{part.format_spec}"
+              if part.format_spec else ""
+          )
+          parts.append(f"{{{conversion}{spec}}}")
+
+        case _:
+          assert_never(part)
+
+    return "".join(parts), template.values
+
 @overload
 def debug_print(
     fmt: str,
@@ -589,6 +613,17 @@ def debug_print(
 ) -> None:
   ...
 
+if sys.version_info >= (3, 14):
+  @overload
+  def debug_print(
+      fmt: Template,
+      ordered: bool = False,
+      partitioned: bool = False,
+      skip_format_check: bool = False,
+      _use_logging: bool = False,
+  ) -> None:
+    ...
+
 @overload
 def debug_print(
     *,
@@ -600,7 +635,7 @@ def debug_print(
   ...
 
 def debug_print(
-    fmt: str | None = None,
+    fmt: _FormatStr | None = None,
     *args,
     ordered: bool = False,
     partitioned: bool = False,
@@ -612,18 +647,22 @@ def debug_print(
 
   This function does *not* work with f-strings because formatting is delayed.
   So instead of ``jax.debug.print(f"hello {bar}")``, write
-  ``jax.debug.print("hello {bar}", bar=bar)``.
+  ``jax.debug.print("hello {bar}", bar=bar)``. If using Python 3.14 or later,
+  you can pass a `PEP 750  <https://peps.python.org/pep-0750/>`_ t-string:
+  ``jax.debug.print(t"hello {bar}")``.
 
   ``jax.debug.print`` supports two ways of being called:
 
   1. Two-call form (Recommended):
-     ``jax.debug.print(ordered=True)("hello {x}", x=42)``
+     ``jax.debug.print(ordered=True)("hello {x}", x=x)`` or
+     ``jax.debug.print(ordered=True)(t"hello {x}")`` (Python 3.14 or later)
      Options are passed in the first call. The format string and arguments are
      passed in the second call. No option arguments are accepted in the second
      call.
 
   2. Single-call form:
-     ``jax.debug.print("hello {x}", x=42, ordered=True)``
+     ``jax.debug.print("hello {x}", x=x, ordered=True)`` or
+     ``jax.debug.print(t"hello {x}", ordered=True)`` (Python 3.14 or later)
      (Soft deprecated) Mixing `ordered` and `partitioned` options with print
      ``kwargs`` is soft deprecated.
 
@@ -632,9 +671,11 @@ def debug_print(
       input arguments, like ``str.format``. See the Python docs on `string
       formatting <https://docs.python.org/3/library/stdtypes.html#str.format>`_
       and `format string syntax
-      <https://docs.python.org/3/library/string.html#formatstrings>`_.
+      <https://docs.python.org/3/library/string.html#formatstrings>`_. On
+      Python 3.14 or later, a `PEP 750  <https://peps.python.org/pep-0750/>`_
+      t-string can be passed instead.
     *args: A list of positional arguments to be formatted, as if passed to
-      ``fmt.format``.
+      ``fmt.format``. If ``fmt`` is a t-string, then ``args`` are not allowed.
     ordered: A keyword only argument used to indicate whether or not the staged
       out computation will enforce ordering of this ``jax.debug.print`` w.r.t.
       other ordered ``jax.debug.print`` calls.
@@ -645,9 +686,16 @@ def debug_print(
       when using the function from inside a Pallas TPU kernel, where scalars
       args will be printed after the format string.
     **kwargs: Additional keyword arguments to be formatted, as if passed to
-      ``fmt.format``.
+      ``fmt.format``. If ``fmt`` is a t-string, then ``kwargs`` are not allowed.
   """
-  def _debug_print(fmt: str, *c_args, **c_kwargs):
+  def _debug_print(fmt: _FormatStr, *c_args, **c_kwargs):
+    if sys.version_info >= (3, 14) and isinstance(fmt, Template):
+      if c_args or c_kwargs:
+        raise TypeError(
+            "debug_print received unexpected arguments when used with a PEP 750 t-string"
+        )
+      fmt, c_args = _template_to_format(fmt)
+    assert isinstance(fmt, str)
     if not skip_format_check:
       # Check that we provide the correct arguments to be formatted.
       formatter.format(fmt, *c_args, **c_kwargs)
@@ -784,7 +832,7 @@ def _raise_to_slice(slc: slice | int):
     return slice(slc, slc + 1)
   return slc
 
-Color = Union[tuple[float, float, float], str]
+Color = tuple[float, float, float] | str
 ColorMap = Callable[[float], tuple[float, float, float, float]]
 
 def _canonicalize_color(color: Color) -> str:
@@ -802,10 +850,13 @@ def _get_text_color(color: str) -> str:
 def make_color_iter(color_map, num_rows, num_cols):
   num_colors = num_rows * num_cols
   color_values = np.linspace(0, 1, num_colors)
+  # A step coprime to num_colors visits every color exactly once.
+  step = (num_colors // 2 + bool(num_colors % 2 == 0)
+          + bool(num_colors % 4 == 2))
   idx = 0
   for _ in range(num_colors):
     yield color_map(color_values[idx])
-    idx = (idx + num_colors // 2 + bool(num_colors % 2 == 0)) % num_colors
+    idx = (idx + step) % num_colors
 
 def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
                        use_color: bool = True, scale: float = 1.,

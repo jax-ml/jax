@@ -59,9 +59,6 @@ From now on, whenever we say "thread", we refer to the Pallas thread, not a CUDA
 This is very similar to a programming model popularized by [Triton](https://triton-lang.org/),
 but as you will see there are a few differences. Mosaic GPU tends to be more low level,
 which usually means you will have to put in more work, but it also puts you more in control.
-In our view both approaches have their merits and we encourage you to pick the backend that
-suits your needs the best! Pallas supports and will continue to support Triton as an alternative
-GPU backend.
 ```
 
 ### In-order execution & using multiple hardware units
@@ -261,7 +258,7 @@ The available transforms are:
   `x.reshape(128 // 8, 128 // 64, 8, 64).transpose(0, 2, 1, 3)` in row-major order.
 * `plgpu.SwizzleTransform(swizzle_in_bytes)`, which transforms the data as described in the
   [PTX docs](https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-swizzling-modes) and
-  [CUDA docs](https://docs.nvidia.com/cuda/cuda-c-programming-guide/#the-swizzle-modes).
+  [CUDA docs](https://docs.nvidia.com/cuda/cuda-programming-guide/).
   Swizzling is useful, because it allows transferring data in MMA-related layouts
   between register and shared memory without bank conflicts. The exact details
   of how the memory looks like after swizzling _are not that important_, since
@@ -359,7 +356,7 @@ input data. For example, the `A` reference is allowed to be of shape `(K, M)`, b
 has to be transposed before passing it into the mma function. For example:
 ```python
 assert acc_ref.shape == (M, N) and a_ref.shape == (K, M) and b_ref.shape == (K, N)
-a_ref_t = plgpu.transpose_ref(a_ref, (1, 0))
+a_ref_t = a_ref.transpose((1, 0))
 assert a_ref_t.shape == (M, K)  # The shape expected by plgpu.wgmma
 plgpu.wgmma(acc, a_ref_t, b_ref)
 ```
@@ -417,7 +414,9 @@ The supported MMA shapes are such that:
 * `N` is divisible by 8 and not greater than 256
 * `K` is a multiple of `swizzle` divided by the operand's element type bytewidth
 
-The currently supported data types are: `jnp.float32`, `jnp.bfloat16` and `jnp.float16`.
+The currently supported data types are: `jnp.float32`, `jnp.bfloat16`, `jnp.float16`,
+and the FP8 types `jnp.float8_e4m3fn` and `jnp.float8_e5m2` (which may be mixed across
+the two operands).
 The accumulator `D` must be a `jnp.float32`, with the exception of `jnp.float16` inputs,
 in which case it is allowed to be `jnp.float16` as well.
 
@@ -901,7 +900,7 @@ plgpu.wgmma(smem_ref, ...)
 This explicit synchronization is also required in the other direction, for
 example:
 ```python
-v = plgpu.load(smem_ref, ())
+v = plgpu.load(smem_ref)
 plgpu.commit_smem()
 plgpu.copy_gmem_to_smem(..., smem_ref, ...)
 ```
@@ -1138,7 +1137,7 @@ y = jax.jit(
 
 ## Cluster launch control
 
-[Cluster launch control](https://docs.nvidia.com/cutlass/media/docs/cpp/blackwell_cluster_launch_control.html#blackwell-cluster-launch-control)
+[Cluster launch control](https://docs.nvidia.com/cutlass/latest/media/docs/cpp/blackwell_cluster_launch_control.html#blackwell-cluster-launch-control)
 is a feature introduced in Blackwell GPUs (SM100A+) that enables work stealing
 or dynamic scheduling of the CUDA grid. This allows an SM
 (or cluster of SMs) that has finished its work to cancel the launch of block
@@ -1437,7 +1436,7 @@ has to be indexed with that array using the `.at` operator:
     scratch_shapes=[plgpu.Barrier()],
 )
 def kernel(x_ref_gmem, idx_ref, o_ref, barrier_ref):
-  idxs = plgpu.load(idx_ref, (), layout=plgpu.Layout.TMA_INDICES)
+  idxs = plgpu.load(idx_ref, layout=plgpu.Layout.TMA_INDICES)
   plgpu.copy_gmem_to_smem(x_ref_gmem.at[idxs], o_ref, barrier_ref)
   plgpu.barrier_wait(barrier_ref)
 ```
@@ -1455,7 +1454,7 @@ Asynchronous copies in either direction support GMEM references returned from
 def exchange_shards(x_ref, y_ref, smem_ref, local_barrier, done_sem):
   plgpu.copy_gmem_to_smem(x_ref, smem_ref, local_barrier)  # Local copy
   plgpu.barrier_wait(local_barrier)
-  other_dev_id = 1 - lax.axis_index("x")  # We assume two devices
+  other_dev_id = {"x": 1 - lax.axis_index("x")}  # We assume two devices
   neighbor_ref = plgpu.remote_ref(y_ref, other_dev_id)
   plgpu.copy_smem_to_gmem(smem_ref, neighbor_ref)
   plgpu.wait_smem_to_gmem(0)  # Wait for the asynchronous write to complete
@@ -1483,6 +1482,106 @@ TODO
 
 TODO
 
+### Profiling
+
+While developing a Mosaic GPU kernel, we may want to profile it to understand better what happens on the hardware. Mosaic GPU includes a built-in profiler for this purpose. Take the following example:
+
+```python
+import os
+from jax import lax
+import jax.experimental.pallas as pl
+import jax.experimental.pallas.mosaic_gpu as plgpu
+import jax
+import jax.numpy as jnp
+
+
+m, n = 1024, 1024
+tile_m, tile_n = 64, 64
+m_iters = m // tile_m
+n_iters = n // tile_n
+dtype = jnp.float32
+
+
+@plgpu.kernel(
+    out_type=jax.ShapeDtypeStruct((m, n), dtype),
+    grid=(m_iters, n_iters),
+    grid_names=("m", "n"),
+    scratch_types=dict(
+        a_smem=plgpu.SMEM((tile_m, tile_n), dtype),
+        b_smem=plgpu.SMEM((tile_m, tile_n), dtype),
+        out_smem=plgpu.SMEM((tile_m, tile_n), dtype),
+        load_barrier=plgpu.Barrier(num_arrivals=2),
+    ),
+    compiler_params=plgpu.CompilerParams(
+        profile_space=50,
+        profile_dir="./addition_kernel_profile",
+    )
+)
+def addition_kernel(
+    a_gmem,
+    b_gmem,
+    out_gmem,
+    a_smem,
+    b_smem,
+    out_smem,
+    load_barrier,
+):
+  mi = lax.axis_index("m")
+  ni = lax.axis_index("n")
+  m_slice = pl.ds(mi * tile_m, tile_m)
+  n_slice = pl.ds(ni * tile_n, tile_n)
+
+  # Annotate this block so it appears as a labeled scope in the profiling trace.
+  with jax.named_scope("Copy GMEM to SMEM"):
+    plgpu.copy_gmem_to_smem(
+        a_gmem.at[m_slice, n_slice], a_smem, load_barrier, oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS
+    )
+    plgpu.copy_gmem_to_smem(
+        b_gmem.at[m_slice, n_slice], b_smem, load_barrier, oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS
+    )
+
+  with jax.named_scope("Wait for copy"):
+    plgpu.barrier_wait(load_barrier)
+
+  with jax.named_scope("Computation"):
+    out_smem[...] = a_smem[...] + b_smem[...]
+
+  with jax.named_scope("Copy SMEM to GMEM"):
+    plgpu.commit_smem()
+    plgpu.copy_smem_to_gmem(out_smem, out_gmem.at[m_slice, n_slice])
+    plgpu.wait_smem_to_gmem(0)  # Wait for all copies to finish.
+
+os.makedirs("./addition_kernel_profile", exist_ok=True)
+k1, k2, = jax.random.split(jax.random.key(42), 2)
+a = jax.random.normal(k1, (m, n), dtype)
+b = jax.random.normal(k2, (m, n), dtype)
+c = addition_kernel(a, b)
+```
+
+Running this example will produce a trace stored as a JSON file in the addition_kernel_profile folder. We can visualize the trace using [https://ui.perfetto.dev](https://ui.perfetto.dev).
+
+
+<center><img alt="Profiling trace in Perfetto" src="../../_static/pallas/gpu/perfetto-profiling.png" style="width: 90%; min-width: 450px;"></center>
+
+Each "Process" in the trace corresponds to a SM, and each "Thread" by default corresponds to a warpgroup.
+
+
+Let's consider in detail the profiling parameters:
+- ``profile_space`` defines the number of profiling events to collect. Each profiling event costs us 16 bytes of SMEM, and each time we enter inside a ``named_scope`` counts as a profiling event.
+
+- ``profile_bounds_check`` controls the behaviour of the profiler when we attempt to store profiling events beyond the available ``profile_space``. If True, the trace is truncated (at the cost of higher profiling overhead); if False, it is undefined behavior. This flag defaults to False, in order to be as faithful to reality as possible.
+
+
+- ``profile_trace_scope`` defines the scope of collected traces: warp or warpgroup. If scope is ``plgpu.TraceScope.WARP`` the trace file will show the blocks executed on SMs and the warps running the block. This is helpful to investigate kernels with warp specialization. ``plgpu.TraceScope.WARP`` generates 4× more profiling events than ``plgpu.TraceScope.WARPGROUP`` and  exhausts ``profile_space`` much faster. Default value is ``plgpu.TraceScope.WARPGROUP``.
+
+- ``profile_dir`` defines the output folder which should exist where the trace file is written.
+
+
+When profiling, be aware of a few caveats to avoid misleading traces. Profiling does not come for free: placing ``jax.named_scope`` in your code can alter instruction scheduling and cause the compiler to miss optimizations. For example, placing named scopes around compute operations can disrupt pipelining and cause register spilling.
+
+As a best practice, place ``jax.named_scope`` around barrier waits instead, as this highlights when the kernel is idle without interfering with compute optimizations.
+
+
 ## Debugging
 
 Mosaic GPU exposes a number of environment variables to diagnose issues with the
@@ -1499,6 +1598,11 @@ generated low-level code:
 * `MOSAIC_GPU_DUMP_SASS_CTRL` allows dumping the SASS control codes following
   [NervanaSystems/maxas](https://github.com/NervanaSystems/maxas) to standard
   output;
+* `MOSAIC_GPU_DUMP_CONSTRAINT_SYSTEM` allows dumping the constraint system built
+  during layout inference to standard output, which is useful for debugging
+  layout inference failures;
+* `MOSAIC_GPU_DUMP_RESOURCES` allows dumping the estimated resources (such
+  as TMEM columns and SMEM bytes) to standard output;
 * `MOSAIC_GPU_DUMP_TO` allows specifying a directory path (that must exist)
   where all of the above will be dumped as files.
 * `MOSAIC_GPU_LLVM_DEBUG_ONLY` allows specifying a comma-separated list of

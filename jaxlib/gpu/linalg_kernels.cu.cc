@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 
+#include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/tridiagonal_solve_perturbed.h"
 
@@ -72,9 +73,9 @@ __global__ void CholeskyUpdateKernel(T* rMatrix, T* uVector, int nSize) {
 }  // namespace
 
 template <typename T>
-gpuError_t LaunchCholeskyUpdateFfiKernelBody(gpuStream_t stream, void* matrix,
-                                             void* vector, int grid_dim,
-                                             int block_dim, int nSize) {
+absl::Status LaunchCholeskyUpdateFfiKernelBody(gpuStream_t stream, void* matrix,
+                                               void* vector, int grid_dim,
+                                               int block_dim, int nSize) {
   T* rMatrix = reinterpret_cast<T*>(matrix);
   T* uVector = reinterpret_cast<T*>(vector);
 
@@ -83,20 +84,17 @@ gpuError_t LaunchCholeskyUpdateFfiKernelBody(gpuStream_t stream, void* matrix,
       reinterpret_cast<void*>(&uVector),
       reinterpret_cast<void*>(&nSize),
   };
-  return gpuLaunchCooperativeKernel((void*)CholeskyUpdateKernel<T>, grid_dim,
-                                    block_dim, arg_ptrs,
-                                    /*dynamic_shared_mem_bytes=*/0, stream);
+  return JAX_AS_STATUS(gpuLaunchCooperativeKernel(
+      (void*)CholeskyUpdateKernel<T>, grid_dim, block_dim, arg_ptrs,
+      /*dynamic_shared_mem_bytes=*/0, stream));
 }
 
-gpuError_t LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
-                                         void* vector, int size,
-                                         bool is_single_precision) {
+absl::Status LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
+                                           void* vector, int size,
+                                           bool is_single_precision) {
   int dev = 0;
   gpuDeviceProp deviceProp;
-  gpuError_t err = gpuGetDeviceProperties(&deviceProp, dev);
-  if (err != gpuSuccess) {
-    return err;
-  }
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuGetDeviceProperties(&deviceProp, dev)));
 
   int block_dim = deviceProp.maxThreadsPerBlock;
   int grid_dim = deviceProp.multiProcessorCount;

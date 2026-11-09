@@ -159,6 +159,7 @@ SKIPPED_APIS = [
  'float8_e4m3fnuz',
  'float8_e5m2',
  'float8_e5m2fnuz',
+ 'float8_e5m3fnu',
  'float8_e8m0fnu',
  'floating',
  'from_dlpack',
@@ -550,7 +551,11 @@ class JaxArrayTests(jtu.JaxTestCase):
     expected = fun(*args, **kwargs)
     wrapped = fun(*wrapped_args, **kwargs)
 
-    self.assertAllClose(wrapped, expected, atol=0, rtol=0)
+    if api.fun in [jnp.empty, jnp.empty_like]:
+      self.assertEqual(wrapped.shape, expected.shape)
+      self.assertEqual(wrapped.dtype, expected.dtype)
+    else:
+      self.assertAllClose(wrapped, expected, atol=0, rtol=0)
 
   @jtu.sample_product(
       api=['array', 'asarray'],

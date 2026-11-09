@@ -53,11 +53,28 @@ https://docs.jax.dev/en/latest/jep/10657-sequencing-effects.html.
 from __future__ import annotations
 
 from collections.abc import Iterable, Set
+import dataclasses
+import functools
 from typing import Any
 
 
 class Effect:
   """A generic side-effect."""
+
+
+@functools.total_ordering
+@dataclasses.dataclass(eq=True, frozen=True, slots=True)
+class ErrorEffect(Effect):
+  error_type: Any
+  shape_dtypes: tuple[Any, ...]
+
+  def __lt__(self, other):
+    shape_dtypes = lambda x: tuple(
+        (sd.shape, str(sd.dtype)) for sd in x.shape_dtypes
+    )
+    unpack = lambda x: (str(x.error_type), shape_dtypes(x))
+    return unpack(self) < unpack(other)
+
 
 Effects = Set[Effect]
 
@@ -126,5 +143,10 @@ lowerable_effects: EffectTypeSet = EffectTypeSet()
 control_flow_allowed_effects: EffectTypeSet = EffectTypeSet()
 custom_derivatives_allowed_effects: EffectTypeSet = EffectTypeSet()
 remat_allowed_effects: EffectTypeSet = EffectTypeSet()
+
+lowerable_effects.add_type(ErrorEffect)
+control_flow_allowed_effects.add_type(ErrorEffect)
+custom_derivatives_allowed_effects.add_type(ErrorEffect)
+remat_allowed_effects.add_type(ErrorEffect)
 
 partial_eval_kept_effects: EffectTypeSet = EffectTypeSet()

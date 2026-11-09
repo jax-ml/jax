@@ -19,6 +19,7 @@ import operator
 import numpy as np
 import jax
 import jax.numpy as jnp
+from jax._src import config
 from jax._src import core
 from jax._src.random import prng
 from jax._src import random
@@ -40,6 +41,7 @@ primitives_with_static_signatures = {
   consume_p: (consume, key),
   random.random_clone_p: (random.clone, key),
   prng.random_bits_p: (jax.random.bits, key),
+  prng.raw_bits_p: (partial(prng.raw_bits, shape=()), key),
   # prng.random_fold_in_p: (jax.random.fold_in, key, 2),
   prng.random_seed_p: (jax.random.key, 0),
   prng.random_split_p: (jax.random.split, key),
@@ -359,7 +361,7 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
     func, *args = primitives_with_static_signatures[primitive]
     signature = _core.key_reuse_signatures[primitive]
     jaxpr = jax.make_jaxpr(func)(*args)
-    self.assertEqual(signature, _core.jaxpr_type_signature(jaxpr.jaxpr))
+    self.assertEqual(signature, _core.jaxpr_type_signature(jaxpr))
 
   @parameterized.parameters(*primitives_with_static_signatures)
   def test_function_type_signature(self, primitive):
@@ -601,6 +603,11 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
 
   @jax.numpy_dtype_promotion('standard')
   def test_remat(self):
+    # TODO(mattjj,vanderplas): teach key reuse checking to see through
+    # remat3's RematTraced applications (and to skip rematted functions)
+    if config.remat3.value:
+      self.skipTest("key reuse checking doesn't support remat3")
+
     @jax.checkpoint
     def f_bad(x, key):
       return x * jax.random.bits(key) + jax.random.bits(key)

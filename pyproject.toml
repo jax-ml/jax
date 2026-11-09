@@ -29,6 +29,13 @@ filterwarnings = [
     # TODO(phawkins): Remove this once cloud_tpu_init is removed.
     "ignore:jax.cloud_tpu_init was deprecated",
 
+    # In mpmath 1.4.x, private/deprecated submodules define a module-level
+    # __getattr__ that emits a DeprecationWarning on any unknown attribute
+    # lookup. When unittest.TestCase.assertWarnsRegex inspects sys.modules
+    # and checks getattr(mod, '__warningregistry__', None), it triggers these
+    # warnings, which pytest's "error" filter promotes to exceptions.
+    "ignore:the (rational|math2).* module is deprecated.*:DeprecationWarning:mpmath.*",
+
     # NOTE: this is probably not where you want to add code to suppress a
     # warning. Only pytest tests look at this list, whereas Bazel tests also
     # check for warnings and do not check this list. Most likely, you should
@@ -38,7 +45,7 @@ doctest_optionflags = [
     "NUMBER",
     "NORMALIZE_WHITESPACE"
 ]
-addopts = "--doctest-glob='*.rst' --ignore='examples/ffi' --import-mode=importlib"
+addopts = "--doctest-glob='*.rst' --ignore='examples/ffi' --ignore='tests/numerics' --import-mode=importlib"
 
 [tool.pyrefly]
 python-version = "3.13"
@@ -84,6 +91,9 @@ ignore-missing-imports = [
 ]
 untyped-def-behavior = "check-and-infer-return-any"
 
+[tool.pyrefly.errors]
+redefinition = "ignore"
+
 [tool.ruff]
 preview = true
 exclude = [
@@ -93,7 +103,7 @@ exclude = [
 ]
 line-length = 80
 indent-width = 2
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 ignore = [
@@ -140,9 +150,14 @@ max-complexity = 18
 "docs/autodidax.py" = ["F811"]
 "docs/pallas/tpu/matmul.ipynb" = ["F811"]
 "docs/pallas/tpu/distributed.ipynb" = ["F811"]
-"docs/pallas/quickstart.ipynb" = ["F811"]
 "docs/notebooks/autodiff_cookbook.ipynb" = ["F811", "F821"]
 "docs/notebooks/autodiff_remat.ipynb" = ["F811", "F821"]
 "docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb" = ["F811"]
+"docs/hijax_custom_derivatives.py" = ["F811"]
+"docs/hijax_custom_derivatives.ipynb" = ["F811"]
 "docs/jep/9407-type-promotion.ipynb" = ["F811"]
 "docs/autodidax.ipynb" = ["F811"]
+
+# This looks like a false positive, but there is no upstream bug.
+# TODO(slebedev): Investigate this and remove the ignore.
+"*.ipynb" = ["E113"]

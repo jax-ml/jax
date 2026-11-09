@@ -103,7 +103,10 @@ def _philox4x32_abstract_eval(*args):
     raise TypeError(f"philox4x32_p expects 6 arguments, got {len(args)}.")
   if all(isinstance(arg, core.ShapedArray) for arg in args):
     shape = lax.broadcasting_shape_rule("philox4x32", *args)
-    sharding = lax.broadcasting_sharding_rule("philox4x32", *args)
+    sharding = lax.lax_utils.call_sharding_rule(
+        philox4x32_p,
+        functools.partial(lax.broadcasting_sharding_rule, "philox4x32"),
+        None, None, *args)
     aval = core.ShapedArray(shape, np.dtype("uint32"), sharding=sharding)
   else:
     raise TypeError(f"Arguments to philox4x32 must all be arrays, got {args}")
@@ -145,7 +148,7 @@ def philox4x32_seed(seed: typing.Array) -> typing.Array:
   return _philox4x32_seed(seed)
 
 
-@api.jit(inline=True)
+@api.jit(inline=api.Inline.JAX_EARLY)
 def _philox4x32_seed(seed: typing.Array) -> typing.Array:
   """Internal implementation of philox4x32_seed."""
   if seed.shape:
@@ -177,7 +180,7 @@ def philox4x32_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
   return _philox4x32_split(key, shape)
 
 
-@api.jit(static_argnums=(1,), inline=True)
+@api.jit(static_argnums=(1,), inline=api.Inline.JAX_EARLY)
 def _philox4x32_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
   """Internal implementation of philox4x32_split."""
   k0, k1 = key[0], key[1]
@@ -208,22 +211,20 @@ def _philox4x32_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:
   return jnp.array([out0, out1], dtype=np.uint32)
 
 
-def philox4x32_random_bits(
-    key: typing.Array, bit_width: int, shape: tuple[int, ...]
-) -> typing.Array:
-  """Sample uniform random bits using a Philox 4x32 key."""
+def philox4x32_raw_bits(
+    key: typing.Array, shape: tuple[int, ...]
+) -> tuple[typing.Array, ...]:
+  """Sample raw 32-bit uniform random bit streams using a Philox 4x32 key."""
   if not _is_philox4x32_key(key):
-    raise TypeError("philox4x32_random_bits got invalid prng key.")
-  if bit_width not in (8, 16, 32, 64):
-    raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
-  return _philox4x32_random_bits(key, bit_width, shape)
+    raise TypeError("philox4x32_raw_bits got invalid prng key.")
+  return _philox4x32_raw_bits(key, shape)
 
 
-@api.jit(static_argnums=(1, 2), inline=True)
-def _philox4x32_random_bits(
-    key: typing.Array, bit_width: int, shape: tuple[int, ...]
-) -> typing.Array:
-  """Internal implementation of philox4x32_random_bits."""
+@api.jit(static_argnums=(1,), inline=api.Inline.JAX_EARLY)
+def _philox4x32_raw_bits(
+    key: typing.Array, shape: tuple[int, ...]
+) -> tuple[typing.Array, ...]:
+  """Internal implementation of philox4x32_raw_bits."""
   if all(core.is_constant_dim(d) for d in shape) and math.prod(shape) > 2**64:
     raise NotImplementedError("random bits array of size exceeding 2 ** 64")
 
@@ -234,18 +235,20 @@ def _philox4x32_random_bits(
   out0, out1, out2, out3 = philox4x32_p.bind(
       k0, k1, counts1, counts2, zeros, zeros
   )
+  return (out0, out1, out2, out3)
 
-  dtype = prng.UINT_DTYPES[bit_width]
-  if bit_width == 64:
-    # Combine two 32-bit outputs into one 64-bit value.
-    bits_hi = lax.convert_element_type(out0, dtype)
-    bits_lo = lax.convert_element_type(out1, dtype)
-    return lax.shift_left(bits_hi, jnp.asarray(32, dtype=dtype)) | bits_lo
-  elif bit_width == 32:
-    # XOR all four outputs for maximum mixing.
-    return out0 ^ out1 ^ out2 ^ out3
-  else:
-    return lax.convert_element_type(out0 ^ out1 ^ out2 ^ out3, dtype)
+
+def philox4x32_random_bits(
+    key: typing.Array, bit_width: int, shape: tuple[int, ...]
+) -> typing.Array:
+  """Sample uniform random bits using a Philox 4x32 key."""
+  if not _is_philox4x32_key(key):
+    raise TypeError("philox4x32_random_bits got invalid prng key.")
+  if bit_width not in (8, 16, 32, 64):
+    raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
+  return prng._raw_bits_to_random_bits(
+      philox4x32_prng_impl, key, bit_width, shape
+  )[0]
 
 
 # -- PRNGImpl registration --
@@ -258,6 +261,9 @@ philox4x32_prng_impl = prng.PRNGImpl(
     fold_in=philox4x32_fold_in,
     name="philox4x32",
     tag="phx4",
+    raw_bits=philox4x32_raw_bits,
+    num_streams=4,
+    raw_dtype=np.dtype("uint32"),
 )
 
 prng.register_prng(philox4x32_prng_impl)

@@ -18,7 +18,7 @@
 # binary set in JAXCI_PYTHON. Use the absolute path to the `find` utility to
 # avoid using the Windows version of `find` on Msys.
 
-WHEELS=( $(/usr/bin/find "$JAXCI_OUTPUT_DIR/" -type f \(  -name "*jax*py3*"  -o -name "*jaxlib*" -o -name "*jax*cuda*pjrt*" -o -name "*jax*cuda*plugin*" -o -name "*jax*rocm*pjrt*" -o -name "*jax*rocm*plugin*" \)) )
+WHEELS=( $(/usr/bin/find "$JAXCI_OUTPUT_DIR/" -type f \(  -name "*jax*py3*"  -o -name "*jaxlib*" -o -name "*jax*cuda*pjrt*" -o -name "*jax*cuda*plugin*" -o -name "*jax*rocm*pjrt*" -o -name "*jax*rocm*plugin*" -o -name "*jax*oneapi*pjrt*" -o -name "*jax*oneapi*plugin*" \)) )
 
 for i in "${!WHEELS[@]}"; do
   if [[ "${WHEELS[$i]}" == *jax*py3*none*any.whl ]]; then
@@ -31,14 +31,14 @@ for i in "${!WHEELS[@]}"; do
   fi
 done
 
-if [[ -n "${WHEELS[@]}" ]]; then
+if (( ${#WHEELS[@]} > 0 )); then
   echo "Installing the following wheels:"
   echo "${WHEELS[@]}"
 
   # Install `uv` if it's not already installed. `uv` is much faster than pip for
   # installing Python packages.
   if ! command -v uv >/dev/null 2>&1; then
-    pip install uv~=0.11.2
+    pip install uv~=0.12.3
   fi
 
   # On Windows, convert MSYS Linux-like paths to Windows paths.

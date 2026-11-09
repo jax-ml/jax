@@ -8,7 +8,7 @@
 Tracing and time profiling
 --------------------------
 
-:doc:`profiling` describes how to make use of JAX's tracing and time profiling
+:doc:`/201/profiling` describes how to make use of JAX's tracing and time profiling
 features.
 
 .. autosummary::
@@ -22,12 +22,14 @@ features.
   TraceAnnotation
   StepTraceAnnotation
   register_subprocess
+  export_profile_data
+  ProfileSession
 
 
 Device memory profiling
 -----------------------
 
-See :doc:`device_memory_profiling` for an introduction to JAX's device memory
+See :ref:`jax-201-memory-profiling` for an introduction to JAX's device memory
 profiling features.
 
 .. autosummary::

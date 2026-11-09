@@ -40,12 +40,13 @@ jax_multiplatform_test(
     srcs = ["gpu_test.py"],
     enable_backends = [],
     enable_configs = [
+        "gpu_a100",
         "gpu_h100",
         "gpu_h100_x32",
         "gpu_b200",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
-    shard_count = 32,
+    shard_count = 16,
     tags = [
         "noasan",  # Times out.
     ],
@@ -71,7 +72,7 @@ jax_multiplatform_test(
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     tags = [
         "noasan",  # ASAN is unsupported.
-        "notap",  # TODO(b/477964663): Broken by PyTorch 2.10.0 upgrade.
+        "noassert",  # Times out.
     ],
     deps = if_cuda_is_configured([
         "//jax/experimental:mosaic_gpu",

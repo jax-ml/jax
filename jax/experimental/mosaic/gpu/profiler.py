@@ -20,7 +20,7 @@ import json
 import math
 import os
 import tempfile
-from typing import Literal, ParamSpec, TypeVar, overload
+from typing import Literal, overload
 import warnings
 
 import jax
@@ -41,16 +41,12 @@ except ImportError:
   mosaic_gpu_lib = None
 
 # ruff: noqa: F405
-
-T = TypeVar("T")
-P = ParamSpec("P")
-
-
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class Cupti:
   """CUPTI-based profiler."""
 
-  # If `True`, detach CUPTI from the process after measurement.
+  # Both API versions unsubscribe Mosaic's subscriber after measurement. When
+  # `True`, V1 also detaches global CUPTI state; V2 never finalizes globally.
   finalize: bool = True
 
   def measure(
@@ -100,7 +96,7 @@ class Cupti:
     return wrapper
 
 @overload
-def measure(
+def measure[T, **P](
     f: Callable[P, T],
     *,
     aggregate: Literal[True] = ...,
@@ -109,7 +105,7 @@ def measure(
   ...
 
 @overload
-def measure(
+def measure[T, **P](
     f: Callable[P, T],
     *,
     aggregate: Literal[False] = ...,
@@ -118,7 +114,7 @@ def measure(
   ...
 
 @overload
-def measure(
+def measure[T, **P](
     f: Callable[P, T],
     *,
     aggregate: Literal[True] = ...,
@@ -127,7 +123,7 @@ def measure(
   ...
 
 @overload
-def measure(
+def measure[T, **P](
     f: Callable[P, T],
     *,
     aggregate: Literal[False] = ...,
@@ -162,10 +158,12 @@ def measure(
   Notes:
     `CUPTI (CUDA Profiling Tools Interface)
     <https://docs.nvidia.com/cupti/index.html>`_ is a high-accuracy profiling
-    API used by Nsight Systems and Nsight Compute. The CUPTI API only allows a
-    single subscriber, so ``measure`` cannot be used with other CUPTI-based
-    tools like CUDA-GDB, Compute Sanitizer, Nsight Systems, or Nsight
-    Compute.
+    API used by Nsight Systems and Nsight Compute. On CUPTI 13.3+ with the
+    complete V2 API surface, ``measure`` uses per-subscriber APIs and can
+    coexist with JAX profiling. On older or partial CUPTI runtimes, it falls
+    back to the legacy APIs. The legacy CUPTI API only allows a single
+    subscriber, so ``measure`` cannot be used with other CUPTI-based tools
+    like Nsight Systems, or Nsight Compute.
   """  # fmt: skip
   if iterations < 1:
     raise ValueError(f"{iterations=} must be positive")
@@ -181,9 +179,23 @@ class ProfilerSpec:
       entries_per_warpgroup: int,
       dump_path: str = "sponge",
       trace_scope: ThreadSubset = ThreadSubset.WARPGROUP,
+      bounds_check: bool = False,
   ):
+    """Profiler configuration.
+
+    Args:
+      entries_per_warpgroup: The size of the profile buffer. Each begin/end
+        event costs 2 entries, and 3 entries are reserved for a header.
+      dump_path: Where to write the trace.
+      trace_scope: Whether one trace covers a warp or a warpgroup.
+      bounds_check: If True, events past the buffer capacity are dropped (the
+        trace is truncated) at the cost of a slightly higher per-event overhead.
+        If False (default), overflowing the buffer corrupts neighbouring SMEM,
+        which usually crashes the kernel.
+    """
     self.entries_per_warpgroup = entries_per_warpgroup
     self.interned_names: dict[str, int] = {}
+    self.bounds_check = bounds_check
     if dump_path == "sponge":
       self.dump_path = os.getenv(
           "TEST_UNDECLARED_OUTPUTS_DIR", tempfile.gettempdir()
@@ -226,7 +238,7 @@ class ProfilerSpec:
 
   def smem_i32_elements(self, block: tuple[int, ...]):
     num_traces = self._num_traces((), block)
-    return int(num_traces * self.entries_per_warpgroup)
+    return num_traces * self.entries_per_warpgroup
 
   def smem_bytes(self, block: tuple[int, ...]):
     bytes_per_entry = 4
@@ -311,6 +323,19 @@ class ProfilerSpec:
         })
       else:  # If we didn't break
         if block_events:
+          # Bounds-checked traces can be truncated mid-range, leaving events
+          # that were opened but never closed. Emit synthetic end events (at
+          # the last observed timestamp) so the trace stays balanced. On a
+          # complete trace the stack ends empty and this is a no-op.
+          open_stack = []
+          for event in block_events:
+            if event["ph"] == "B":
+              open_stack.append(event)
+            else:
+              open_stack.pop()
+          last_ts = block_events[-1]["ts"]
+          for event in reversed(open_stack):
+            block_events.append({**event, "ph": "E", "ts": last_ts})
           events.append(block_events)
     events = sorted(events, key=lambda x: x[0]["ts"])
     flat_events = list(itertools.chain.from_iterable(events))
@@ -407,19 +432,31 @@ class OnDeviceProfiler:
         # smem_buffer[offset + 1] = %clock
         # offset += 2
         offset = memref.load(ctx.offset, [])
+        new_offset = arith.addi(offset, c(2, index))
+        record_event = ctx.is_profiling_thread
+        if self.spec.bounds_check:
+          # The last 3 entries are reserved for the header written by
+          # `finalize`. Events past the capacity are dropped (the trace is
+          # truncated) instead of overrunning the buffer and corrupting
+          # neighbouring SMEM.
+          capacity = self.entries_per_wg - 3
+          in_bounds = arith.cmpi(
+              arith.CmpIPredicate.ule, new_offset, c(capacity, index)
+          )
+          record_event = arith.andi(record_event, in_bounds)
+          new_offset = arith.select(in_bounds, new_offset, offset)
         base_ref = memref_slice(ctx.smem_buffer, offset)
         i64 = ir.IntegerType.get_signless(64)
         base_addr = llvm.ptrtoint(i64, memref_ptr(base_ref))
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
-            [ctx.is_profiling_thread, base_addr, c(modifier | name_id, i32)],
+            [record_event, base_addr, c(modifier | name_id, i32)],
             """
             @$0 st.shared.v2.u32 [$1], {$2, %clock};
             """,
             "b,l,r",
             has_side_effects=True,
         )
-        new_offset = arith.addi(offset, c(2, index))
         memref.store(new_offset, ctx.offset, [])
 
     store(ProfilerSpec.ENTER)

@@ -26,3 +26,7 @@ from jax._src.ffi import (
     register_ffi_type as register_ffi_type,
     register_ffi_target_as_batch_partitionable as register_ffi_target_as_batch_partitionable,
 )
+
+from jax._src.core import (
+    abstract_token as abstract_token,
+)

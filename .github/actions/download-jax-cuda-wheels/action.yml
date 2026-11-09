@@ -38,7 +38,7 @@ runs:
         arch=$(uname -m)
 
         # Get the major and minor version of Python.
-        # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.11, then python_major_minor=311
+        # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.12, then python_major_minor=312
         # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13t, then python_major_minor=313t
         python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION}" | tr -d '.')
 
@@ -80,7 +80,7 @@ runs:
             gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jax*cuda${JAXCI_CUDA_VERSION}*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
           elif [[ ${INPUTS_JAXLIB_VERSION} == "pypi_latest" ]]; then
             PYTHON=python${INPUTS_PYTHON}
-            $PYTHON -m pip download jaxlib jax-cuda${JAXCI_CUDA_VERSION}-pjrt jax-cuda${JAXCI_CUDA_VERSION}-plugin --dest $(pwd)/dist/
+            $PYTHON -m pip download jaxlib jax-cuda${JAXCI_CUDA_VERSION}-pjrt jax-cuda${JAXCI_CUDA_VERSION}-plugin --dest $(pwd)/dist/ --no-deps
           else
             echo "Invalid jaxlib version: ${INPUTS_JAXLIB_VERSION}"
             exit 1
@@ -102,7 +102,7 @@ runs:
       if: steps.download-wheel-artifacts.outcome == 'failure'
       run: |
         echo "Failed to download wheel artifacts. Please check if the wheels were"
-        echo "built successfully by the artifact build jobs and are available in the GCS bucket if
+        echo "built successfully by the artifact build jobs and are available in the GCS bucket if"
         echo "downloading from GCS."
         echo "Skipping the test run."
         exit 1

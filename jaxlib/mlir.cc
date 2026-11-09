@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir-c/IR.h"
@@ -96,9 +97,9 @@ absl::StatusOr<nb::bytes> HloToStableHlo(const nb::bytes& hlo_module_proto) {
     return absl::InvalidArgumentError(
         "Failed to deserialize HloModuleProto");
   }
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      ConvertHloToStablehlo(context, &proto));
-  TF_ASSIGN_OR_RETURN(std::string bytecode, SerializeUsingBytecode(*module));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        ConvertHloToStablehlo(context, &proto));
+  ABSL_ASSIGN_OR_RETURN(std::string bytecode, SerializeUsingBytecode(*module));
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
@@ -110,20 +111,20 @@ absl::StatusOr<std::string> PyXlaComputationToMlirModule(
     const xla::XlaComputation& computation) {
   mlir::MLIRContext context;
   if (VLOG_IS_ON(3)) context.disableMultithreading();
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      ConvertHloToStablehlo(context, &computation.proto()));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        ConvertHloToStablehlo(context, &computation.proto()));
   return PrintModule(*module);
 }
 
 absl::StatusOr<xla::XlaComputation> PyMlirModuleToXlaComputation(
     std::string_view mlir_module, bool use_tuple_args, bool return_tuple) {
   mlir::MLIRContext context;
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      xla::ParseMlirModuleString(mlir_module, context));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        xla::ParseMlirModuleString(mlir_module, context));
   xla::XlaComputation computation;
-  TF_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation, use_tuple_args,
-                                          return_tuple,
-                                          /*exec_build_options=*/nullptr));
+  ABSL_RETURN_IF_ERROR(MlirToXlaComputation(*module, computation,
+                                            use_tuple_args, return_tuple,
+                                            /*exec_build_options=*/nullptr));
   return computation;
 }
 
@@ -137,17 +138,17 @@ absl::StatusOr<nb::bytes> PyMhloToStablehlo(std::string_view mlir_module) {
   // everything else unchanged.
   // In order to achieve that, we're allowing unregistered dialects here.
   context.allowUnregisteredDialects(true);
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      xla::ParseMlirModuleString(mlir_module, context));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        xla::ParseMlirModuleString(mlir_module, context));
   mlir::PassManager pm(&context);
   if (VLOG_IS_ON(3)) EnablePrintBeforeAndAfter(pm);
   pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
   if (!mlir::succeeded(pm.run(*module))) {
-    return tsl::errors::InvalidArgument("MHLO => StableHLO failed");
+    return absl::InvalidArgumentError("MHLO => StableHLO failed");
   }
   // Use bytecode, passing unregistered dialects with properties causes issues
   // when using textual assembly.
-  TF_ASSIGN_OR_RETURN(std::string bytecode, SerializeUsingBytecode(*module));
+  ABSL_ASSIGN_OR_RETURN(std::string bytecode, SerializeUsingBytecode(*module));
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
@@ -157,26 +158,18 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
   mlir::MLIRContext context;
   context.loadDialect<mlir::mpmd::MpmdDialect>();
   if (VLOG_IS_ON(3)) context.disableMultithreading();
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                      xla::ParseMlirModuleString(mlir_module, context));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        xla::ParseMlirModuleString(mlir_module, context));
 
   // Serialize portable artifact
   std::string bytecode;
   {
     nb::gil_scoped_release gil_release;
-#if JAX_IFRT_VERSION_NUMBER >= 54
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         bytecode, xla::SerializeUsingVersionedStablehlo(
                       *module, target, sdy_version,
                       /*inplace=*/true,
                       /*allow_mixed_serialization=*/use_mixed_serialization));
-#else
-    TF_ASSIGN_OR_RETURN(
-        bytecode, xla::SerializeUsingVersionedStablehlo(
-                      *module, target,
-                      /*inplace=*/true,
-                      /*allow_mixed_serialization=*/use_mixed_serialization));
-#endif
   }
   return nb::bytes(bytecode.data(), bytecode.size());
 }
@@ -188,19 +181,11 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
   std::string bytecode;
   {
     nb::gil_scoped_release gil_release;
-#if JAX_IFRT_VERSION_NUMBER >= 54
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         bytecode, xla::SerializeUsingVersionedStablehlo(
                       module_op, target, sdy_version,
                       /*inplace=*/false,
                       /*allow_mixed_serialization=*/use_mixed_serialization));
-#else
-    TF_ASSIGN_OR_RETURN(
-        bytecode, xla::SerializeUsingVersionedStablehlo(
-                      module_op, target,
-                      /*inplace=*/false,
-                      /*allow_mixed_serialization=*/use_mixed_serialization));
-#endif
   }
   return nb::bytes(bytecode.data(), bytecode.size());
 }
@@ -217,7 +202,7 @@ absl::StatusOr<nb::object> PyDeserializePortableArtifact(
     module = mlir::stablehlo::deserializePortableArtifact(bytecode, context);
   }
   if (!module)
-    return tsl::errors::InvalidArgument("Failed to deserialize StableHLO");
+    return absl::InvalidArgumentError("Failed to deserialize StableHLO");
   return PyModule::forModule(wrap(module.release())).releaseObject();
 }
 
@@ -283,13 +268,9 @@ void BuildMlirSubmodule(nb::module_& m) {
       "serialize_portable_artifact",
       [](nb::any mlir_module, std::string_view target,
          bool use_mixed_serialization) {
-#if JAX_IFRT_VERSION_NUMBER >= 54
         // TODO(hyeontaek): Take a Sdy version as an argument to
         // `serialize_portable_artifact()`.
         const std::string sdy_version = xla::GetDefaultSdyVersion();
-#else
-        const std::string sdy_version = "unused";
-#endif
         if (nb::isinstance<PyModule>(mlir_module)) {
           PyModule& module = nb::cast<PyModule&>(mlir_module);
           return xla::ValueOrThrow(PySerializePortableArtifact(

@@ -26,6 +26,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -36,6 +37,8 @@ limitations under the License.
 #include "include/dlpack/dlpack.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/ffi.h"
+#include "jaxlib/free_threading.h"
+#include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/pjrt/host_callback.h"
@@ -57,7 +60,8 @@ struct GpuTransposePlanCache {
   static xla::ffi::TypeInfo info;
 
   explicit GpuTransposePlanCache(int capacity) : cache(capacity) {}
-  xla::TransposePlanCache cache;
+  ft_mutex mu;
+  xla::TransposePlanCache cache ABSL_GUARDED_BY(mu);
 };
 
 xla::ffi::TypeId GpuTransposePlanCache::id =
@@ -115,22 +119,24 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     }
     host_input_buffers[i] = new char[size_bytes];
     // TODO(b/238441608): Use pinned memory here to speed up the transfer.
-    auto gpu_res =
+    auto status = JAX_AS_STATUS(
         gpuMemcpyAsync(host_input_buffers[i], arg.value().untyped_data(),
-                       size_bytes, gpuMemcpyDeviceToHost, stream);
-    CHECK_EQ(gpu_res, gpuSuccess) << "Failed to gpuMemcpyAsync";
+                       size_bytes, gpuMemcpyDeviceToHost, stream));
+    CHECK(status.ok()) << status.message();
   }
-  CHECK_EQ(gpuStreamSynchronize(stream), gpuSuccess)
-      << "Failed to gpuStreamSynchronize";
+  {
+    auto status = JAX_AS_STATUS(gpuStreamSynchronize(stream));
+    CHECK(status.ok()) << status.message();
+  }
   nb::gil_scoped_acquire gil;
   auto callback = nb::borrow<nb::callable>(
       static_cast<PyObject*>(callbacks->callbacks[index]));
-  nb::tuple host_input_arrays = nb::steal<nb::tuple>(PyTuple_New(arity));
+  nb::tuple_builder host_input_arrays(arity);
   for (size_t i = 0; i < arity; ++i) {
     auto arg = args.get<xla::ffi::AnyBuffer>(i);
     auto ptype = static_cast<xla::PrimitiveType>(arg->element_type());
     if (ptype == xla::TOKEN) {
-      PyTuple_SET_ITEM(host_input_arrays.ptr(), i, nb::none().inc_ref().ptr());
+      host_input_arrays.put(nb::none());
       continue;
     }
     auto maybe_dtype = PrimitiveTypeToNbDtype(ptype);
@@ -165,7 +171,7 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     auto array = xla::nb_numpy_ndarray(dtype, dims, std::nullopt,
                                        host_input_buffers[i], base);
     array.attr("flags").attr("writeable") = nb::bool_(false);
-    PyTuple_SET_ITEM(host_input_arrays.ptr(), i, array.inc_ref().ptr());
+    host_input_arrays.put(std::move(array));
   }
 
   // TODO(dsuo): Change this to use the Python vectorcall protocol, which allows
@@ -174,7 +180,8 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
   {
     xla::HostCallbackScope scope;
     try {
-      auto result_object = callback(*nb::borrow<nb::args>(host_input_arrays));
+      auto result_object =
+          callback(*nb::borrow<nb::args>(host_input_arrays.commit()));
       result_tuple = nb::cast<nb::tuple>(result_object);
     } catch (nb::python_error& e) {
       return xla::ffi::Error::Internal(
@@ -222,7 +229,11 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
                            reversed_layout.begin());
       options.permutation = reversed_layout;
       options.input_striding = xla::TransposePlan::Striding{strides};
-      auto maybe_plan = transpose_cache->cache.GetOrCreate(options);
+      absl::StatusOr<std::shared_ptr<xla::TransposePlan>> maybe_plan;
+      {
+        ft_lock_guard lock(transpose_cache->mu);
+        maybe_plan = transpose_cache->cache.GetOrCreate(options);
+      }
       if (!maybe_plan.ok()) {
         return xla::ffi::Error::Internal(maybe_plan.status().ToString());
       }
@@ -253,13 +264,15 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
       size_bytes = packed_size;
     }
 
-    auto gpu_res = gpuMemcpyAsync(ret->untyped_data(), data, size_bytes,
-                                  gpuMemcpyHostToDevice, stream);
-    CHECK_EQ(gpu_res, gpuSuccess) << "Failed to gpuMemcpyAsync";
+    auto status = JAX_AS_STATUS(gpuMemcpyAsync(
+        ret->untyped_data(), data, size_bytes, gpuMemcpyHostToDevice, stream));
+    CHECK(status.ok()) << status.message();
   }
   nb::gil_scoped_release release;
-  CHECK_EQ(gpuStreamSynchronize(stream), gpuSuccess)
-      << "Failed to gpuStreamSynchronize";
+  {
+    auto status = JAX_AS_STATUS(gpuStreamSynchronize(stream));
+    CHECK(status.ok()) << status.message();
+  }
   for (int i = 0; i < temp_buffers.size(); ++i) {
     delete[] static_cast<char*>(temp_buffers[i]);
   }
@@ -290,6 +303,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kXlaBufferPythonGpuCallback,
 #ifdef JAX_GPU_CUDA
     (jax::XlaBufferCallback<kDLCUDA>),
+#elif defined(JAX_GPU_ONEAPI)
+    (jax::XlaBufferCallback<kDLOneAPI>),
 #else
     (jax::XlaBufferCallback<kDLROCM>),
 #endif
@@ -305,6 +320,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kXlaBufferPythonGpuCallbackCmdBuffer,
 #ifdef JAX_GPU_CUDA
     (jax::XlaBufferCallback<kDLCUDA>),
+#elif defined(JAX_GPU_ONEAPI)
+    (jax::XlaBufferCallback<kDLOneAPI>),
 #else
     (jax::XlaBufferCallback<kDLROCM>),
 #endif

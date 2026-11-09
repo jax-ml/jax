@@ -37,9 +37,24 @@ on:
         required: false
         default: 'no'
         type: string
+      git_commit:
+        description: "Commit SHA to check out for running tests"
+        required: false
+        default: ""
+        type: string
+      artifact-type:
+        description: "Version scheme for the wheels this workflow builds: default, nightly or release."
+        required: false
+        default: 'default'
+        type: string
+      wheel-version-suffix:
+        description: "Custom wheel version suffix, e.g. rc1 (needs artifact-type release) or .post1. Empty for normal builds."
+        required: false
+        default: ''
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}-${{ inputs.gcs_download_uri }}
   cancel-in-progress: true
 permissions: {}
 
@@ -47,8 +62,98 @@ env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
 
 jobs:
-  run-pytest-cpu:
+  preflight-gcs-wheels:
     if: github.repository_owner == 'jax-ml'
+    name: "Preflight GCS wheels check"
+    runs-on: linux-x86-n4-4
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"  # zizmor: ignore[unpinned-images]
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      has_base_wheels: ${{ steps.check.outputs.has_base_wheels }}
+      has_cuda12_wheels: ${{ steps.check.outputs.has_cuda12_wheels }}
+      has_cuda13_wheels: ${{ steps.check.outputs.has_cuda13_wheels }}
+    steps:
+      - name: Check wheel availability in GCS
+        id: check
+        env:
+          CLOUDSDK_AUTH_DISABLE_CREDENTIALS: 1
+          GCS_URI: ${{ inputs.gcs_download_uri }}
+          SKIP_JAXLIB: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
+        run: |
+          set -uo pipefail
+          uri="${GCS_URI%/}"
+          listing=""
+          listing=$(gcloud storage ls "${uri}/" 2>&1) || listing=""
+
+          has_jax="false"
+          if grep -Eq '/jax[^/]*py3[^/]*none[^/]*any\.whl$' <<< "$listing"; then
+            has_jax="true"
+          fi
+
+          if [[ "$SKIP_JAXLIB" == "1" ]]; then
+            has_jaxlib="true"
+            has_cuda12="true"
+            has_cuda13="true"
+          else
+            has_jaxlib="false"
+            has_cuda12="false"
+            has_cuda13="false"
+            if grep -Eq '/jaxlib[^/]*\.whl$' <<< "$listing"; then
+              has_jaxlib="true"
+            fi
+            if grep -Eq '/jax[^/]*cuda12[^/]*plugin[^/]*\.whl$' <<< "$listing" && \
+               grep -Eq '/jax[^/]*cuda12[^/]*pjrt[^/]*\.whl$' <<< "$listing"; then
+              has_cuda12="true"
+            fi
+            if grep -Eq '/jax[^/]*cuda13[^/]*plugin[^/]*\.whl$' <<< "$listing" && \
+               grep -Eq '/jax[^/]*cuda13[^/]*pjrt[^/]*\.whl$' <<< "$listing"; then
+              has_cuda13="true"
+            fi
+          fi
+
+          has_base="false"
+          if [[ "$has_jax" == "true" && "$has_jaxlib" == "true" ]]; then
+            has_base="true"
+          fi
+          if [[ "$has_base" != "true" ]]; then
+            has_cuda12="false"
+            has_cuda13="false"
+          fi
+
+          {
+            echo "has_base_wheels=${has_base}"
+            echo "has_cuda12_wheels=${has_cuda12}"
+            echo "has_cuda13_wheels=${has_cuda13}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### GCS Wheel Preflight (\`${uri}\`)"
+            echo ""
+            echo "| Artifact group | Available |"
+            echo "| --- | --- |"
+            echo "| \`jax\` + \`jaxlib\` base wheels | \`${has_base}\` |"
+            echo "| CUDA 12 plugin + PJRT wheels | \`${has_cuda12}\` |"
+            echo "| CUDA 13 plugin + PJRT wheels | \`${has_cuda13}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail preflight if any expected wheel group is missing
+        env:
+          GCS_URI: ${{ inputs.gcs_download_uri }}
+          HAS_BASE: ${{ steps.check.outputs.has_base_wheels }}
+          HAS_CUDA12: ${{ steps.check.outputs.has_cuda12_wheels }}
+          HAS_CUDA13: ${{ steps.check.outputs.has_cuda13_wheels }}
+        run: |
+          if [[ "$HAS_BASE" != "true" || "$HAS_CUDA12" != "true" || "$HAS_CUDA13" != "true" ]]; then
+            echo "::error::Missing expected wheel artifacts under ${GCS_URI%/} (base=${HAS_BASE}, cuda12=${HAS_CUDA12}, cuda13=${HAS_CUDA13}). Affected downstream suites will be skipped."
+            exit 1
+          fi
+
+  run-pytest-cpu:
+    needs: [preflight-gcs-wheels]
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' && needs.preflight-gcs-wheels.outputs.has_base_wheels == 'true' }}
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -56,13 +161,13 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-n4-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
-          python: ["3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+          python: ["3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
           enable-x64: [0]
           exclude:
             - runner: "windows-x86-n2-64"
-              python: "3.13t"
-            - runner: "windows-x86-n2-64"
               python: "3.14t"
+            - runner: "windows-x86-n2-64"
+              python: "3.15t"
     name: "Pytest CPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.runner }}
@@ -74,9 +179,11 @@ jobs:
       # TODO(b/456203132): Increase to more than 16 processes if this works
       #  (56 prior to this).
       max-processes: ${{ contains(matrix.runner, 'windows-x86') && '16' || '' }}
+      git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-cpu:
-    if: github.repository_owner == 'jax-ml'
+    needs: [preflight-gcs-wheels]
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' && needs.preflight-gcs-wheels.outputs.has_base_wheels == 'true' }}
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -84,7 +191,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-n4-64", "linux-arm64-t2a-48"]
-          python: ["3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+          python: ["3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
           enable-x64: [0]
     name: "Bazel CPU tests with ${{ format('{0}', 'build_jaxlib=false') }}"
     with:
@@ -96,9 +203,19 @@ jobs:
       build_jaxlib: ${{ 'false' }}
       build_jax: ${{ 'false' }}
       clone_main_xla: 0
+      git_commit: ${{ inputs.git_commit }}
 
   run-pytest-cuda:
-    if: github.repository_owner == 'jax-ml'
+    needs: [preflight-gcs-wheels]
+    if: >-
+      ${{
+        !cancelled()
+        && github.repository_owner == 'jax-ml'
+        && (
+          needs.preflight-gcs-wheels.outputs.has_cuda12_wheels == 'true'
+          || needs.preflight-gcs-wheels.outputs.has_cuda13_wheels == 'true'
+        )
+      }}
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -106,7 +223,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-g2-48-l4-4gpu",  "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
-          python: ["3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+          python: ["3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
           cuda: [
             {cuda-version: "12.1", use-nvidia-pip-wheels: false},
             {cuda-version: "12.9", use-nvidia-pip-wheels: true},
@@ -114,30 +231,36 @@ jobs:
           ]
           enable-x64: [0]
           exclude:
+            - cuda:
+                cuda-version: ${{ needs.preflight-gcs-wheels.outputs.has_cuda12_wheels != 'true' && '12.1' || 'none' }}
+            - cuda:
+                cuda-version: ${{ needs.preflight-gcs-wheels.outputs.has_cuda12_wheels != 'true' && '12.9' || 'none' }}
+            - cuda:
+                cuda-version: ${{ needs.preflight-gcs-wheels.outputs.has_cuda13_wheels != 'true' && '13' || 'none' }}
             # H100 runs only CUDA 12.9 and min and max Python versions.
             - runner: "linux-x86-a3-8g-h100-8gpu"
               cuda:
                 cuda-version: "12.1"
             - runner: "linux-x86-a3-8g-h100-8gpu"
-              python: "3.12"
-            - runner: "linux-x86-a3-8g-h100-8gpu"
               python: "3.13"
             - runner: "linux-x86-a3-8g-h100-8gpu"
-              python: "3.13t"
+              python: "3.14"
             - runner: "linux-x86-a3-8g-h100-8gpu"
               python: "3.14t"
+            - runner: "linux-x86-a3-8g-h100-8gpu"
+              python: "3.15t"
             # B200 runs only CUDA 12.9 and min and max Python versions.
             - runner: "linux-x86-a4-224-b200-1gpu"
               cuda:
                 cuda-version: "12.1"
             - runner: "linux-x86-a4-224-b200-1gpu"
-              python: "3.12"
-            - runner: "linux-x86-a4-224-b200-1gpu"
               python: "3.13"
             - runner: "linux-x86-a4-224-b200-1gpu"
-              python: "3.13t"
+              python: "3.14"
             - runner: "linux-x86-a4-224-b200-1gpu"
               python: "3.14t"
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              python: "3.15t"
     name: "Pytest CUDA (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }}, CUDA Pip packages = ${{ matrix.cuda.use-nvidia-pip-wheels }})"
     with:
       runner: ${{ matrix.runner }}
@@ -148,9 +271,19 @@ jobs:
       skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
+      git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-cuda:
-    if: github.repository_owner == 'jax-ml'
+    needs: [preflight-gcs-wheels]
+    if: >-
+      ${{
+        !cancelled()
+        && github.repository_owner == 'jax-ml'
+        && (
+          needs.preflight-gcs-wheels.outputs.has_cuda12_wheels == 'true'
+          || needs.preflight-gcs-wheels.outputs.has_cuda13_wheels == 'true'
+        )
+      }}
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -158,9 +291,12 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-g2-48-l4-4gpu"]
-          python: ["3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+          python: ["3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
           cuda-version: [12, 13]
           enable-x64: [0]
+          exclude:
+            - cuda-version: ${{ needs.preflight-gcs-wheels.outputs.has_cuda12_wheels != 'true' && 12 || 0 }}
+            - cuda-version: ${{ needs.preflight-gcs-wheels.outputs.has_cuda13_wheels != 'true' && 13 || 0 }}
     name: "Bazel CUDA Non-RBE with ${{ format('{0}', 'build_jaxlib=false') }}"
     with:
       runner: ${{ matrix.runner }}
@@ -176,6 +312,7 @@ jobs:
       run_tests_with_rbe: ${{ 'false' }}
       build_artifacts_with_rbe: ${{ 'false' }}
       clone_main_xla: 0
+      git_commit: ${{ inputs.git_commit }}
 
   build-rocm-artifacts:
     if: github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'
@@ -187,34 +324,59 @@ jobs:
     strategy:
         fail-fast: false
         matrix:
-          runner: ["linux-x86-64-1gpu-amd"]
-          artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
-          python: ["3.11", "3.12", "3.13", "3.14"]
+          runner: ["amd-do-linux.jax.cpu"]
+          # Where the ROCm runners are the only build capacity available, build the base wheels
+          # here too, so the test legs below get all four wheels from one commit, stamped alike.
+          # The GCS nightlies they would otherwise use are whatever the last nightly published,
+          # and on a release branch cannot satisfy jax's exact jaxlib pin at all.
+          artifact: ${{ (github.repository_owner == 'ROCm' && fromJSON('["jax-rocm-plugin", "jax-rocm-pjrt", "jax", "jaxlib"]')) || fromJSON('["jax-rocm-plugin", "jax-rocm-pjrt"]') }}
+          python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", manylinux-image: ""},
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0"},
+            {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest"},
           ]
           exclude:
-            - artifact: "jax-rocm-pjrt"
-              python: "3.12"
+            # pjrt and jax are not per-Python; one build per ROCm variant covers every version.
             - artifact: "jax-rocm-pjrt"
               python: "3.13"
             - artifact: "jax-rocm-pjrt"
               python: "3.14"
-    name: "Build ROCm artifacts (${{ matrix.rocm.label }})"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.15"
+            - artifact: "jax"
+              python: "3.13"
+            - artifact: "jax"
+              python: "3.14"
+            - artifact: "jax"
+              python: "3.15"
+            # Release runs test only the ROCm that ships with them, not the moving pre-release.
+            - rocm:
+                release-version: ${{ (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'rocm-jaxlib-v') || inputs.artifact-type == 'release') && 'therock-latest' }}
+    name: "Build ROCm artifacts ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
       artifact: ${{ matrix.artifact }}
       python: ${{ matrix.python }}
       rocm-version: ${{ matrix.rocm.wheel-version }}
       rocm-release-version: ${{ matrix.rocm.release-version }}
-      manylinux-image: ${{ matrix.rocm.manylinux-image }}
       clone_main_xla: 0
       upload_artifacts_to_s3: true
       s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}'
+      git_commit: ${{ inputs.git_commit }}
+      artifact-type: ${{ inputs.artifact-type }}
+      wheel-version-suffix: ${{ inputs.wheel-version-suffix }}
 
   run-pytest-rocm:
-    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
-    needs: [build-rocm-artifacts]
+    if: >-
+      ${{
+        !cancelled()
+        && needs.build-rocm-artifacts.result == 'success'
+        && (
+          github.repository_owner == 'ROCm'
+          || (github.repository_owner == 'jax-ml' && needs.preflight-gcs-wheels.outputs.has_base_wheels == 'true')
+        )
+      }}
+    needs: [preflight-gcs-wheels, build-rocm-artifacts]
     permissions:
       id-token: write
       contents: read
@@ -223,12 +385,17 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          runner: ["linux-x86-64-1gpu-amd", "linux-x86-64-4gpu-amd", "linux-x86-64-8gpu-amd"]
-          python: ["3.11", "3.12", "3.13", "3.14"]
+          runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
+          python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", tag: "rocm720"},
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
+            {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
-    name: "Pytest ROCm (${{ matrix.rocm.label }})"
+          exclude:
+            # Release runs test only the ROCm that ships with them, not the moving pre-release.
+            - rocm:
+                release-version: ${{ (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'rocm-jaxlib-v') || inputs.artifact-type == 'release') && 'therock-latest' }}
+    name: "Pytest ROCm ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -239,10 +406,21 @@ jobs:
       skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}'
+      git_commit: ${{ inputs.git_commit }}
+      # Must match the artifact list of the build job above.
+      jax-jaxlib-source: ${{ github.repository_owner == 'ROCm' && 'vendor' || 'upstream' }}
 
   run-bazel-test-rocm:
-    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
-    needs: [build-rocm-artifacts]
+    if: >-
+      ${{
+        !cancelled()
+        && needs.build-rocm-artifacts.result == 'success'
+        && (
+          github.repository_owner == 'ROCm'
+          || (github.repository_owner == 'jax-ml' && needs.preflight-gcs-wheels.outputs.has_base_wheels == 'true')
+        )
+      }}
+    needs: [preflight-gcs-wheels, build-rocm-artifacts]
     permissions:
       id-token: write
       contents: read
@@ -250,13 +428,18 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          runner: ["linux-x86-64-1gpu-amd"]
-          python: ["3.11", "3.12", "3.13", "3.14"]
+          runner: ["amd-do-linux.jax.gpu.gfx950.1"]
+          python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", tag: "rocm720"},
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
+            {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
           enable-x64: [0]
-    name: "Bazel ROCm (${{ matrix.rocm.label }})"
+          exclude:
+            # Release runs test only the ROCm that ships with them, not the moving pre-release.
+            - rocm:
+                release-version: ${{ (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'rocm-jaxlib-v') || inputs.artifact-type == 'release') && 'therock-latest' }}
+    name: "Bazel ROCm ${{ matrix.rocm.label }}"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -273,14 +456,18 @@ jobs:
       write_to_bazel_remote_cache: 1
       run_multiaccelerator_tests: ${{ 'true' }}
       clone_main_xla: 0
+      git_commit: ${{ inputs.git_commit }}
+      # Must match the artifact list of the build job above.
+      jax-jaxlib-source: ${{ github.repository_owner == 'ROCm' && 'vendor' || 'upstream' }}
 
   run-pytest-tpu:
-    if: github.repository_owner == 'jax-ml'
+    needs: [preflight-gcs-wheels]
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' && needs.preflight-gcs-wheels.outputs.has_base_wheels == 'true' }}
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+          python: ["3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
@@ -291,41 +478,39 @@ jobs:
           exclude:
             # Exclude nightly for releases
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
-            # Exclude pinned for nightly releases
-            - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pinned' }}
             # Run Python versions in between min and max for v6e-8
             - tpu-specs:
                 type: "v6e-8"
-              python: "3.11"
+              python: "3.12"
             - tpu-specs:
                 type: "v6e-8"
-              python: "3.14"
+              python: "3.15"
             - tpu-specs:
                 type: "v6e-8"
-              python: "3.14t"
+              python: "3.15t"
             # Run max Python versions for v5e-8
             - tpu-specs:
                 type: "v5e-8"
-              python: "3.11"
-            - tpu-specs:
-                type: "v5e-8"
               python: "3.12"
             - tpu-specs:
                 type: "v5e-8"
               python: "3.13"
             - tpu-specs:
                 type: "v5e-8"
-              python: "3.13t"
+              python: "3.14"
+            - tpu-specs:
+                type: "v5e-8"
+              python: "3.14t"
             # Run min and max Python versions for v7x-8
             - tpu-specs:
                 type: "v7x-8"
-              python: "3.12"
-            - tpu-specs:
-                type: "v7x-8"
               python: "3.13"
             - tpu-specs:
                 type: "v7x-8"
-              python: "3.13t"
+              python: "3.14"
+            - tpu-specs:
+                type: "v7x-8"
+              python: "3.14t"
 
     name: "Pytest TPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
@@ -338,14 +523,16 @@ jobs:
       skip-download-jaxlib-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
+      git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-tpu:
-    if: github.repository_owner == 'jax-ml'
+    needs: [preflight-gcs-wheels]
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' && needs.preflight-gcs-wheels.outputs.has_base_wheels == 'true' }}
     uses: ./.github/workflows/bazel_test_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+          python: ["3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
@@ -356,47 +543,45 @@ jobs:
           exclude:
             # Exclude nightly for releases
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
-            # Exclude pinned for nightly releases
-            - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pinned' }}
             # Run a single Python version for v4-8
             - tpu-specs:
                 type: "v4-8"
-              python: "3.11"
-            - tpu-specs:
-                type: "v4-8"
               python: "3.12"
             - tpu-specs:
                 type: "v4-8"
               python: "3.13"
             - tpu-specs:
                 type: "v4-8"
-              python: "3.13t"
+              python: "3.14"
             - tpu-specs:
                 type: "v4-8"
               python: "3.14t"
+            - tpu-specs:
+                type: "v4-8"
+              python: "3.15t"
             # Run max Python versions for v5e-8
             - tpu-specs:
                 type: "v5e-8"
-              python: "3.11"
-            - tpu-specs:
-                type: "v5e-8"
               python: "3.12"
             - tpu-specs:
                 type: "v5e-8"
               python: "3.13"
             - tpu-specs:
                 type: "v5e-8"
-              python: "3.13t"
+              python: "3.14"
+            - tpu-specs:
+                type: "v5e-8"
+              python: "3.14t"
             # Run min and max Python versions for v7x-8
             - tpu-specs:
                 type: "v7x-8"
-              python: "3.12"
-            - tpu-specs:
-                type: "v7x-8"
               python: "3.13"
             - tpu-specs:
                 type: "v7x-8"
-              python: "3.13t"
+              python: "3.14"
+            - tpu-specs:
+                type: "v7x-8"
+              python: "3.14t"
 
     name: "Bazel tests TPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
@@ -413,6 +598,7 @@ jobs:
       build_jax: ${{ 'false' }}
       jaxlib-version: "head"
       clone_main_xla: 0
+      git_commit: ${{ inputs.git_commit }}
 
   verify-release-wheels-install:
     if: ${{ startsWith(github.ref_name, 'release/') && github.repository_owner == 'jax-ml' }}
@@ -424,9 +610,9 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.11", "3.13", "3.13-nogil"]
+          python: ["3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
           cuda-version: [12, 13]
-    container:  "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container:  "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"  # zizmor: ignore[unpinned-images]
 
     # Verifies that JAX's release wheels can be installed
     name: "Verify release wheels install (Python ${{ matrix.python }})"
@@ -441,8 +627,8 @@ jobs:
           final_gcs_download_uri="${INPUTS_GCS_DOWNLOAD_URI}"
 
           # Get the major and minor version of Python.
-          # E.g if python=3.11, then python_major_minor=311
-          # E.g if python=3.13-nogil, then python_major_minor=313t
+          # E.g if python=3.12, then python_major_minor=312
+          # E.g if python=3.14t, then python_major_minor=314t
           python_major_minor='${{ matrix.python }}'
           python_major_minor="$(echo "${python_major_minor//-nogil/t}" | tr -d '.')"
           python_major_minor="cp${python_major_minor%t}-cp${python_major_minor}-"

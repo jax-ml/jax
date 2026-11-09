@@ -86,6 +86,7 @@ class PRNGImpl(NamedTuple):
     fold_in :: K -> int[] -> K
     split[shape] :: K -> K[*shape]
     random_bits[shape, bit_width] :: K -> uint<bit_width>[*shape]
+    raw_bits[shape] :: K -> (raw_dtype[*shape],) * num_streams
 
   A PRNG implementation is adapted to an array-like object of keys
   ``K`` by the ``PRNGKeyArray`` class, which should be created via the
@@ -98,6 +99,9 @@ class PRNGImpl(NamedTuple):
   fold_in: Callable
   name: str = '<unnamed>'
   tag: str = '?'
+  raw_bits: Callable | None = None
+  num_streams: int = 1
+  raw_dtype: np.dtype = np.dtype('uint32')
 
   def __hash__(self) -> int:
     return hash(self.tag)
@@ -336,11 +340,6 @@ class PRNGKeyArray(Array):
                     " Use jax.random.key_data(arr) if you wish to extract the underlying"
                     " integer array.")
 
-  # Python 3.11 pickle doesn't find __getstate__ in the parent C class
-  # (See https://github.com/jax-ml/jax/issues/35065).
-  # TODO(jakevdp): remove this when we drop support for Python 3.11.
-  def __getstate__(self):
-    return super().__getstate__()
 
   # Overwritten immediately below
   @property
@@ -411,8 +410,8 @@ class KeyTyRules:
 
   @staticmethod
   def result_handler(sticky_device, aval):
+    del sticky_device
     def handler(_, buf):
-      buf.aval = core.ShapedArray(buf.shape, buf.dtype)
       return PRNGKeyArray(aval.dtype._impl, buf)
     return handler
 
@@ -450,7 +449,7 @@ class KeyTyRules:
     physical_buf = random_unwrap(val)
     phys_sharding = physical_sharding(aval, sharding)
     physical_result = pxla.batched_device_put(
-        physical_aval, phys_sharding, [physical_buf] * len(devices), devices)  # pyrefly: ignore[bad-argument-type]
+        physical_aval, phys_sharding, [physical_buf] * len(devices), devices)
     return random_wrap(physical_result, impl=aval.dtype._impl)
 
   @staticmethod
@@ -593,7 +592,9 @@ def random_seed_lowering(ctx, seeds, *, impl):
       ctx, seed_lowering, seeds,
       avals_out=map(core.physical_aval, ctx.avals_out))
 
-mlir.register_lowering(random_seed_p, random_seed_lowering)
+mlir.register_lowering(
+    random_seed_p, random_seed_lowering, shard_map_passthrough=True
+)
 
 
 def random_split(keys, shape: Shape):
@@ -603,15 +604,20 @@ random_split_p = core.Primitive('random_split')
 ad.defjvp_zero(random_split_p)
 batching.defvectorized(random_split_p)
 
+def _random_split_sharding_rule(keys_aval, *, shape):
+  if keys_aval.sharding.mesh.empty:
+    return core.get_cur_mesh_sharding()
+  else:
+    new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
+    return keys_aval.sharding.update(spec=new_spec)
+
 @random_split_p.def_abstract_eval
 def random_split_abstract_eval(keys_aval, *, shape):
   # TODO(yashkatariya): random_split should take sharding as an arg too so we
   # don't choose None here?
-  if keys_aval.sharding.mesh.empty:
-    out_sharding = core.get_cur_mesh_sharding()
-  else:
-    new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
-    out_sharding = keys_aval.sharding.update(spec=new_spec)
+  out_sharding = lax.lax_utils.call_sharding_rule(
+      random_split_p, _random_split_sharding_rule, None, None, keys_aval,
+      shape=shape)
   return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
                            out_sharding, keys_aval.mat)
 
@@ -635,7 +641,9 @@ def random_split_lowering(ctx, keys, *, shape):
       avals_in=[core.physical_aval(aval)],
       avals_out=map(core.physical_aval, ctx.avals_out))
 
-mlir.register_lowering(random_split_p, random_split_lowering)
+mlir.register_lowering(
+    random_split_p, random_split_lowering, shard_map_passthrough=True
+)
 
 
 def random_fold_in(keys, msgs):
@@ -651,8 +659,9 @@ batching.defbroadcasting(random_fold_in_p)
 def random_fold_in_abstract_eval(keys_aval, msgs_aval):
   shape = lax.broadcasting_shape_rule(
       'random_fold_in', keys_aval, msgs_aval)
-  sharding = lax.broadcasting_sharding_rule(
-      'random_fold_in', keys_aval, msgs_aval)
+  sharding = lax.lax_utils.call_sharding_rule(
+      random_fold_in_p, partial(lax.broadcasting_sharding_rule, 'random_fold_in'),
+      None, None, keys_aval, msgs_aval)
   vma = core.standard_vma_rule('random_fold_in', keys_aval, msgs_aval)
   out_mat = core.ManualAxisType(varying=vma)
   return core.ShapedArray(shape, keys_aval.dtype, sharding=sharding,
@@ -680,51 +689,184 @@ def random_fold_in_lowering(ctx, keys, msgs):
       avals_in=[core.physical_aval(keys_aval), msgs_aval],
       avals_out=map(core.physical_aval, ctx.avals_out))
 
-mlir.register_lowering(random_fold_in_p, random_fold_in_lowering)
+mlir.register_lowering(
+    random_fold_in_p, random_fold_in_lowering, shard_map_passthrough=True
+)
 
 
-def random_bits(keys, bit_width, shape):
-  return random_bits_p.bind(keys, bit_width=bit_width, shape=shape)
-
-random_bits_p = core.Primitive('random_bits')
-ad.defjvp_zero(random_bits_p)
-batching.defvectorized(random_bits_p)
-
-@random_bits_p.def_abstract_eval
-def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
-  out_shape = (*keys_aval.shape, *shape)
-  out_dtype = dtypes.dtype(f'uint{bit_width}')
-  # TODO(yashkatariya): random_bits should take an out_sharding argument.
-  if keys_aval.sharding.mesh.empty:
-    out_sharding = core.get_cur_mesh_sharding()
+def _call_impl_raw_bits(
+    impl: PRNGImpl, key: Array, shape: Shape
+) -> tuple[Array, ...]:
+  if impl.raw_bits is not None:
+    out = impl.raw_bits(key, shape)
   else:
-    new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
-    out_sharding = keys_aval.sharding.update(spec=new_spec)
-  return core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
-                          manual_axis_type=keys_aval.mat)
+    raw_bit_width = np.dtype(impl.raw_dtype).itemsize * 8
+    out = (impl.random_bits(key, raw_bit_width, shape),)
+  assert isinstance(out, tuple) and len(out) == impl.num_streams
+  return out
 
-@random_bits_p.def_impl
-def random_bits_impl(keys, *, bit_width, shape):
-  return random_bits_impl_base(keys._impl, keys._base_array, keys.ndim,
-                               bit_width=bit_width, shape=shape)
 
-def random_bits_impl_base(impl, base_arr, keys_ndim, *, bit_width, shape):
+def raw_bits(keys, shape: Sequence[int]) -> tuple[Array, ...]:
+  return tuple(raw_bits_p.bind(keys, shape=tuple(shape)))
+
+raw_bits_p = core.Primitive('raw_bits')
+raw_bits_p.multiple_results = True
+ad.defjvp_zero(raw_bits_p)
+batching.defvectorized(raw_bits_p)
+
+@raw_bits_p.def_abstract_eval
+def raw_bits_abstract_eval(keys_aval, *, shape):
+  impl = keys_aval.dtype._impl
+  out_shape = (*keys_aval.shape, *shape)
+  out_dtype = dtypes.dtype(impl.raw_dtype)
+  out_sharding = lax.lax_utils.call_sharding_rule(
+      raw_bits_p, _random_split_sharding_rule, None, None, keys_aval,
+      shape=shape)
+  out_aval = core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
+                              manual_axis_type=keys_aval.mat)
+  return (out_aval,) * impl.num_streams
+
+@raw_bits_p.def_impl
+def raw_bits_impl(keys, *, shape):
+  return raw_bits_impl_base(keys._impl, keys._base_array, keys.ndim,
+                            shape=shape)
+
+def raw_bits_impl_base(impl, base_arr, keys_ndim, *, shape):
   bits = iterated_vmap_unary(
-      keys_ndim, lambda k: impl.random_bits(k, bit_width, shape))
+      keys_ndim, lambda k: _call_impl_raw_bits(impl, k, shape))
   return bits(base_arr)
 
-def random_bits_lowering(ctx, keys, *, bit_width, shape):
+def raw_bits_lowering(ctx, keys, *, shape):
   aval, = ctx.avals_in
   impl = aval.dtype._impl
   bits = iterated_vmap_unary(
-      aval.ndim, lambda k: impl.random_bits(k, bit_width, shape))
-  bits_lowering = mlir.lower_fun(bits, multiple_results=False)
+      aval.ndim, lambda k: _call_impl_raw_bits(impl, k, shape))
+  bits_lowering = mlir.lower_fun(bits, multiple_results=True)
   ctx_new = ctx.replace(avals_in=[core.physical_aval(aval)])
   out = bits_lowering(ctx_new, keys)
   ctx.set_tokens_out(ctx_new.tokens_out)
   return out
 
-mlir.register_lowering(random_bits_p, random_bits_lowering)
+mlir.register_lowering(
+    raw_bits_p, raw_bits_lowering, shard_map_passthrough=True
+)
+
+
+def _raw_bits_to_random_bits(
+    impl: PRNGImpl,
+    key: Array,
+    bit_width: int,
+    shape: Shape,
+    num_streams: int = 1,
+) -> tuple[Array, ...]:
+  if bit_width not in (8, 16, 32, 64):
+    raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
+  raw_bit_width = np.dtype(impl.raw_dtype).itemsize * 8
+  if raw_bit_width != 32:
+    raise NotImplementedError(
+        "random_bits from raw_bits only implemented for 32-bit raw_dtype, "
+        f"got {impl.raw_dtype}"
+    )
+  words_per_stream = 2 if bit_width == 64 else 1
+  total_words = num_streams * words_per_stream
+  if total_words <= impl.num_streams:
+    raw = _call_impl_raw_bits(impl, key, shape)
+    step = impl.num_streams // total_words
+    words = tuple(
+        reduce(lax.bitwise_xor, raw[i * step : (i + 1) * step])
+        for i in range(total_words)
+    )
+  else:
+    assert total_words % impl.num_streams == 0
+    n_keys = total_words // impl.num_streams
+    subkeys = impl.split(key, (n_keys,))
+    words = tuple(
+        s
+        for i in range(n_keys)
+        for s in _call_impl_raw_bits(impl, subkeys[i], shape)
+    )
+  dtype = UINT_DTYPES[bit_width]
+  if bit_width == 64:
+    shift = jnp.asarray(32, dtype=dtype)
+    return tuple(
+        lax.shift_left(lax.convert_element_type(words[2 * i], dtype), shift)
+        | lax.convert_element_type(words[2 * i + 1], dtype)
+        for i in range(num_streams)
+    )
+  elif bit_width == 32:
+    return words
+  else:
+    return tuple(lax.convert_element_type(w, dtype) for w in words)
+
+
+def _call_impl_random_bits(
+    impl: PRNGImpl,
+    key: Array,
+    bit_width: int,
+    shape: Shape,
+    num_streams: int,
+) -> tuple[Array, ...]:
+  if num_streams == 1:
+    return (impl.random_bits(key, bit_width, shape),)
+  return _raw_bits_to_random_bits(impl, key, bit_width, shape, num_streams)
+
+
+def random_bits(
+    keys, bit_width: int, shape: Sequence[int], num_streams: int = 1
+) -> tuple[Array, ...]:
+  if isinstance(num_streams, bool) or num_streams not in (1, 2, 4):
+    raise ValueError(f"num_streams must be 1, 2, or 4, got {num_streams}")
+  return tuple(
+      random_bits_p.bind(
+          keys, bit_width=bit_width, shape=shape, num_streams=num_streams
+      )
+  )
+
+random_bits_p = core.Primitive('random_bits')
+random_bits_p.multiple_results = True
+ad.defjvp_zero(random_bits_p)
+batching.defvectorized(random_bits_p)
+
+@random_bits_p.def_abstract_eval
+def random_bits_abstract_eval(keys_aval, *, bit_width, shape, num_streams=1):
+  out_shape = (*keys_aval.shape, *shape)
+  out_dtype = dtypes.dtype(f'uint{bit_width}')
+  # TODO(yashkatariya): random_bits should take an out_sharding argument.
+  out_sharding = lax.lax_utils.call_sharding_rule(
+      random_bits_p, _random_split_sharding_rule, None, None, keys_aval,
+      shape=shape)
+  out_aval = core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
+                              manual_axis_type=keys_aval.mat)
+  return (out_aval,) * num_streams
+
+@random_bits_p.def_impl
+def random_bits_impl(keys, *, bit_width, shape, num_streams=1):
+  return random_bits_impl_base(keys._impl, keys._base_array, keys.ndim,
+                               bit_width=bit_width, shape=shape,
+                               num_streams=num_streams)
+
+def random_bits_impl_base(impl, base_arr, keys_ndim, *, bit_width, shape,
+                          num_streams=1):
+  bits = iterated_vmap_unary(
+      keys_ndim,
+      lambda k: _call_impl_random_bits(impl, k, bit_width, shape, num_streams))
+  return bits(base_arr)
+
+def random_bits_lowering(ctx, keys, *, bit_width, shape, num_streams=1):
+  aval, = ctx.avals_in
+  impl = aval.dtype._impl
+  bits = iterated_vmap_unary(
+      aval.ndim,
+      lambda k: _call_impl_random_bits(impl, k, bit_width, shape, num_streams))
+  bits_lowering = mlir.lower_fun(bits, multiple_results=True)
+  ctx_new = ctx.replace(avals_in=[core.physical_aval(aval)])
+  out = bits_lowering(ctx_new, keys)
+  ctx.set_tokens_out(ctx_new.tokens_out)
+  return out
+
+mlir.register_lowering(
+    random_bits_p, random_bits_lowering, shard_map_passthrough=True
+)
 
 
 # The following wrap/unwrap primitives are at least a stopgap for
@@ -773,7 +915,9 @@ def random_wrap_batch_rule(batched_args, batch_dims, *, impl):
   x = batching.bdim_at_front(x, d, 1)
   return random_wrap(x, impl=impl), 0
 
-mlir.register_lowering(random_wrap_p, random_wrap_lowering)
+mlir.register_lowering(
+    random_wrap_p, random_wrap_lowering, shard_map_passthrough=True
+)
 batching.primitive_batchers[random_wrap_p] = random_wrap_batch_rule
 
 
@@ -797,7 +941,9 @@ def random_unwrap_impl(keys):
 def random_unwrap_lowering(ctx, keys):
   return [keys]
 
-mlir.register_lowering(random_unwrap_p, random_unwrap_lowering)
+mlir.register_lowering(
+    random_unwrap_p, random_unwrap_lowering, shard_map_passthrough=True
+)
 
 
 def iota_2x32_shape(shape):
@@ -900,4 +1046,8 @@ def iota_2x32_shape_lowering(ctx, *, shape):
   counts_lo = mlir.hlo.convert(result_type, counts)
   counts_hi = mlir.hlo.convert(result_type, counts_shifted)
   return counts_hi, counts_lo
-mlir.register_lowering(iota_2x32_shape_p, iota_2x32_shape_lowering)
+
+mlir.register_lowering(
+    iota_2x32_shape_p, iota_2x32_shape_lowering,
+    shard_map_collective_rule=(
+        lambda in_avals, out_avals, **params: mlir.PartitioningRule()))

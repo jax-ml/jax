@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import collections
 import itertools
-from typing import Union, cast
+from typing import cast
 
 from jax._src import config
 from jax._src import dtypes
 from jax._src import lax
 from jax._src import test_util
+from jax._src.lib import jaxlib_extension_version
 from jax._src.util import safe_map, safe_zip
 
 import numpy as np
@@ -213,6 +214,9 @@ def lax_ops():
           "log", 1, float_dtypes + complex_dtypes, test_util.rand_positive
       ),
       op_record(
+          "log2", 1, float_dtypes + complex_dtypes, test_util.rand_positive
+      ),
+      op_record(
           "log1p", 1, float_dtypes + complex_dtypes, test_util.rand_positive
       ),
       # TODO(b/142975473): on CPU, tanh for complex128 is only accurate to
@@ -231,10 +235,13 @@ def lax_ops():
       op_record(
           "sin", 1, float_dtypes + complex_dtypes, test_util.rand_default
       ),
+      op_record("sinpi", 1, float_dtypes, test_util.rand_default),
       op_record(
           "cos", 1, float_dtypes + complex_dtypes, test_util.rand_default
       ),
+      op_record("cospi", 1, float_dtypes, test_util.rand_default),
       op_record("atan2", 2, float_dtypes, test_util.rand_default),
+      op_record("atan2pi", 2, float_dtypes, test_util.rand_default),
       op_record("sqrt", 1, float_dtypes, test_util.rand_positive),
       op_record("sqrt", 1, complex_dtypes, test_util.rand_default),
       op_record("rsqrt", 1, float_dtypes, test_util.rand_positive),
@@ -254,6 +261,13 @@ def lax_ops():
           1,
           float_dtypes + complex_dtypes,
           test_util.rand_default,
+          {np.float32: 3e-5, np.complex64: 3e-5},
+      ),
+      op_record(
+          "tanpi",
+          1,
+          float_dtypes,
+          test_util.rand_default,
           {np.float32: 3e-5},
       ),
       op_record(
@@ -264,7 +278,10 @@ def lax_ops():
           {np.complex128: 5e-12},
       ),
       op_record("acos", 1, float_dtypes + complex_dtypes, test_util.rand_small),
+      op_record("acospi", 1, float_dtypes, test_util.rand_small),
       op_record("atan", 1, float_dtypes + complex_dtypes, test_util.rand_small),
+      op_record("atanpi", 1, float_dtypes, test_util.rand_small),
+      op_record("asinpi", 1, float_dtypes, test_util.rand_small),
       op_record(
           "asinh",
           1,
@@ -372,6 +389,8 @@ def lax_ops():
           "mul", 2, default_dtypes + complex_dtypes, test_util.rand_small
       ),
       op_record("mulhi", 2, int_dtypes + uint_dtypes, test_util.rand_fullrange),
+      op_record("fma", 3, float_dtypes, test_util.rand_default, tol=0),
+      op_record("fmuladd", 3, float_dtypes, test_util.rand_default),
       op_record(
           "div", 2, default_dtypes + complex_dtypes, test_util.rand_nonzero
       ),
@@ -387,8 +406,36 @@ def lax_ops():
   ]
 
 
+def backend_supports_fma(dtype) -> bool:
+  if (
+      jaxlib_extension_version < 515
+      or not test_util.is_libtpu_at_least("0.0.52")
+      or not test_util.stablehlo_version_at_least("1.24.0")
+  ):
+    return False
+  dtype = np.dtype(dtype)
+  if dtype in (np.dtype(np.float32), np.dtype(np.float64)):
+    return True
+  if dtype == np.dtype(np.float16):
+    return (
+        test_util.test_device_matches(["tpu"])
+        or test_util.is_device_rocm()
+        or test_util.is_cuda_compute_capability_at_least("5.3")
+    )
+  if dtype == np.dtype(dtypes.bfloat16):
+    return (
+        test_util.test_device_matches(["tpu"])
+        or test_util.is_cuda_compute_capability_at_least("8.0")
+        or (
+            test_util.is_device_rocm()
+            and bool(test_util.device_kind_match("gfx1250"))
+        )
+    )
+  return False
+
+
 def all_bdims(*shapes):
-  bdims = (itertools.chain([cast(Union[int, None], None)],
+  bdims = (itertools.chain([cast(int | None, None)],
                            range(len(shape) + 1)) for shape in shapes)
   return (t for t in itertools.product(*bdims) if not all(e is None for e in t))
 

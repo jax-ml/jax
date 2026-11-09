@@ -25,6 +25,7 @@ from jax._src.interpreters.ad import (
   add_jaxvals as add_jaxvals,
   add_jaxvals_p as add_jaxvals_p,
   add_tangents as add_tangents,
+  backward_pass as backward_pass,
   defbilinear as defbilinear,
   defjvp as defjvp,
   defjvp2 as defjvp2,
@@ -34,28 +35,9 @@ from jax._src.interpreters.ad import (
   instantiate_zeros as instantiate_zeros,
   is_undefined_primal as is_undefined_primal,
   jvp as jvp,
+  jvp_jaxpr as jvp_jaxpr,
   linearize as linearize,
   primitive_jvps as primitive_jvps,
   primitive_transposes as primitive_transposes,
   zeros_like_aval as zeros_like_aval,
 )
-
-
-_deprecations = {
-    # Deprecated in v0.9.0; finalized in v0.10.0.
-    # TODO(jakevdp) remove entry in v0.11.0.
-    "reducing_transposes": (
-        (
-            "jax.interpreters.ad.reducing_transposes was deprecated in v0.9.0."
-            " and removed in v0.10.0. It has been unused since JAX v0.4.38."
-        ),
-        None,
-    ),
-}
-
-import typing
-if not typing.TYPE_CHECKING:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing

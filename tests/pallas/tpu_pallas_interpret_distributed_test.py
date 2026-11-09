@@ -26,13 +26,13 @@ import jax
 from jax import lax
 from jax._src import shard_map
 from jax._src import test_util as jtu
-from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_interpret
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
 
 jax.config.parse_flags_with_absl()
+
 jtu.request_cpu_devices(8)
 
 P = jax.sharding.PartitionSpec
@@ -44,12 +44,28 @@ P = jax.sharding.PartitionSpec
 class InterpretDistributedTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(
+            category=DeprecationWarning,
+            message='jax.experimental.pallas.DeviceIdType is deprecated',
+        )
+    )
 
     if not jtu.test_device_matches(['cpu']):
       self.skipTest('CPU-only test')
 
     if jax.device_count() < 4:
       self.skipTest(f'requires at least 4 devices, found {jax.device_count()}')
+
+  def tearDown(self):
+    super().tearDown()
+    try:
+      # If an exception was thrown by a jitted computation during the test,
+      # we observe/consume exception here to avoid propagating it to the
+      # next test.
+      jax.effects_barrier()
+    except:
+      pass
 
   @parameterized.product(
       dma_execution_mode=['eager', 'on_wait'],
@@ -72,14 +88,8 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       right_neighbor = lax.rem(my_id + 1, jnp.int32(num_devices))
 
       barrier_sem = pltpu.get_barrier_semaphore()
-      pl.semaphore_signal(
-          barrier_sem,
-          device_id=(left_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH)
-      pl.semaphore_signal(
-          barrier_sem,
-          device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH)
+      pl.semaphore_signal(barrier_sem, device_id=(left_neighbor,))
+      pl.semaphore_signal(barrier_sem, device_id=(right_neighbor,))
       pl.semaphore_wait(barrier_sem, 2)
 
       remote_copy_op = pltpu.make_async_remote_copy(
@@ -88,7 +98,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           send_sem=send_sem,
           recv_sem=recv_sem,
           device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
       )
       remote_copy_op.start()
       remote_copy_op.wait()
@@ -134,8 +143,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     )(input_arr)
 
     np.testing.assert_allclose(xla_result, pallas_result)
-    if detect_races:
-      self.assertFalse(mosaic_interpret.races.races_found)
 
   @parameterized.product(
       dma_execution_mode=['eager', 'on_wait'],
@@ -173,13 +180,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           barrier_sem,
           inc=1,
           device_id=(left_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         pl.semaphore_wait(barrier_sem, 2)
 
@@ -201,8 +206,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=send_sem,
         recv_sem=recv_sems.at[outer_step],
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
       remote_copy_op.start()
       remote_copy_op.wait()
 
@@ -257,8 +261,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     )(input_arr)
 
     np.testing.assert_allclose(xla_result, pallas_result)
-    if detect_races:
-      self.assertFalse(mosaic_interpret.races.races_found)
 
   @parameterized.product(
       dma_execution_mode=['eager', 'on_wait'],
@@ -300,13 +302,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           barrier_sem,
           inc=1,
           device_id=(left_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         pl.semaphore_wait(barrier_sem, 2)
 
@@ -319,7 +319,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           send_sem=remote_send_sem,
           recv_sem=remote_recv_sem,
           device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         initial_copy.start()
         initial_copy.wait()
@@ -331,8 +330,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         capacity_sem,
         inc=1,
         device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       # Copy the partial result our left neighbor sent to us into VMEM for
       # computation.
@@ -352,8 +350,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=remote_send_sem,
         recv_sem=remote_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
       remote_copy.start()
       # Finish local copy and accumulate while remote_copy is happening.
       local_copy.wait()
@@ -418,8 +415,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     )(input_arr)
 
     np.testing.assert_allclose(xla_result, pallas_result, atol=1e-5)
-    if detect_races:
-      self.assertFalse(mosaic_interpret.races.races_found)
 
   @parameterized.product(
       dma_execution_mode=['eager', 'on_wait'],
@@ -457,7 +452,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           semaphore,
           inc=1,
           device_id=(neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
       )
 
     def reduce_scatter_kernel(
@@ -500,13 +494,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           barrier_sem,
           inc=1,
           device_id=(left_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         pl.semaphore_signal(
           barrier_sem,
           inc=1,
           device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
         pl.semaphore_wait(barrier_sem, 2)
 
@@ -516,8 +508,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=left_send_sem,
         recv_sem=left_recv_sem,
         device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       initial_right_copy = pltpu.make_async_remote_copy(
         src_ref=x_ref.at[my_id, right_copy_slice],
@@ -525,8 +516,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=right_send_sem,
         recv_sem=right_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       left_copy = pltpu.make_async_remote_copy(
         src_ref=hbm_scratch.at[working_slot, left_copy_slice],
@@ -534,8 +524,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=left_send_sem,
         recv_sem=left_recv_sem,
         device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
       right_copy = pltpu.make_async_remote_copy(
         # Note: Right copy is flipped with regards to slots since we are copying
         # to the next outer_step iteration.
@@ -544,8 +533,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=right_send_sem,
         recv_sem=right_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       # --- Prologue ---
       @pl.when(is_start)
@@ -707,8 +695,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     )(input_arr)
 
     np.testing.assert_allclose(xla_result, pallas_result, atol=1e-5)
-    if detect_races:
-      self.assertFalse(mosaic_interpret.races.races_found)
 
   @parameterized.product(
       dma_execution_mode=['eager', 'on_wait'],
@@ -734,7 +720,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           barrier_sem,
           inc=1,
           device_id=(neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
         )
       pl.semaphore_wait(barrier_sem, 2)
       if double_barrier:
@@ -752,8 +737,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
               second_barrier,
               inc=1,
               device_id=(neighbor,),
-              device_id_type=pl.DeviceIdType.MESH,
-            )
+                )
           pl.semaphore_wait(second_barrier, 2)
 
     # We pick a large outer kernel block size that we do not want to place
@@ -798,7 +782,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           semaphore,
           inc=1,
           device_id=(neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
       )
 
     def reduce_scatter_kernel(
@@ -838,8 +821,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=left_send_sem,
         recv_sem=left_recv_sem,
         device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       initial_right_copy = pltpu.make_async_remote_copy(
         src_ref=x_ref.at[my_id, right_copy_slice],
@@ -847,8 +829,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=right_send_sem,
         recv_sem=right_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       left_copy = pltpu.make_async_remote_copy(
         src_ref=hbm_scratch.at[working_slot, left_copy_slice],
@@ -856,16 +837,14 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         send_sem=left_send_sem,
         recv_sem=left_recv_sem,
         device_id=(left_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
       right_copy = pltpu.make_async_remote_copy(
         src_ref=hbm_scratch.at[receiving_slot, right_copy_slice],
         dst_ref=hbm_scratch.at[working_slot, right_copy_slice],
         send_sem=right_send_sem,
         recv_sem=right_recv_sem,
         device_id=(right_neighbor,),
-        device_id_type=pl.DeviceIdType.MESH,
-      )
+    )
 
       # --- Prologue ---
       @pl.when(is_start)
@@ -900,7 +879,8 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           left_copy.start()
 
       # --- Body ---
-      def inner_kernel(input_ref, accum_in_ref, accum_out_ref):
+      def inner_kernel(step, input_ref, accum_in_ref, accum_out_ref):
+        del step  # Unused.
         accum_out_ref[...] = accum_in_ref[...] + input_ref[...]
 
       @pl.when(~last_iteration)
@@ -912,6 +892,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
             in_specs=[inner_block_spec, inner_block_spec],
             out_specs=inner_block_spec,
             grid=inner_grid,
+            _explicit_indices=True,
           )(
             x_ref.at[left_copy_device, left_copy_slice],
             hbm_scratch.at[working_slot, left_copy_slice],
@@ -925,6 +906,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
             in_specs=[inner_block_spec, inner_block_spec],
             out_specs=inner_block_spec,
             grid=inner_grid,
+            _explicit_indices=True,
           )(
             x_ref.at[right_copy_device, right_copy_slice],
             hbm_scratch.at[working_slot, right_copy_slice],
@@ -1038,8 +1020,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     )(input_arr)
 
     np.testing.assert_allclose(xla_result, pallas_result, atol=1e-5)
-    if detect_races:
-      self.assertFalse(mosaic_interpret.races.races_found)
 
   def test_race_detection(self):
     num_devices = 4
@@ -1065,8 +1045,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
               send_sem=send_sem,
               recv_sem=recv_sem,
               device_id=(dst_id,),
-              device_id_type=pl.DeviceIdType.MESH,
-          )
+              )
           dma.start()
           dma.wait_send()
         recv_count += jnp.where(dst_id == my_id, 1, 0)
@@ -1080,8 +1059,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
             send_sem=send_sem,
             recv_sem=recv_sem,
             device_id=(my_id,),
-            device_id_type=pl.DeviceIdType.MESH,
-        )
+          )
         fake_dma.wait_recv()
 
     @jax.jit
@@ -1108,11 +1086,12 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       )(src_dst_ids, input_arr)
 
     run(jnp.array([[0, 1], [1, 2], [2, 3]], jnp.int32)).block_until_ready()
-    self.assertFalse(mosaic_interpret.races.races_found)
 
     # Racing writes to device 2.
-    run(jnp.array([[0, 1], [1, 2], [3, 2], [3, 0]], jnp.int32)).block_until_ready()
-    self.assertTrue(mosaic_interpret.races.races_found)
+    with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
+      run(
+          jnp.array([[0, 1], [1, 2], [3, 2], [3, 0]], jnp.int32)
+      ).block_until_ready()
 
   def test_that_barrier_does_not_hang_after_exception(self):
     num_devices = jax.device_count()
@@ -1168,7 +1147,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     # TODO(jburnim): Check for 'o_ref[0, 0] = x_ref[100, 0]' and
     # 'Out-of-bounds read' in the error message once we can reliably propagate
     # the original exception.  (Currently, whether the final exception contains
-    # the original cause depends on the the thread order.)
+    # the original cause depends on the thread order.)
     with self.assertRaises(jax.errors.JaxRuntimeError):
       run(input_arr).block_until_ready()
 
@@ -1181,7 +1160,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((num_devices,), ('x',))
 
     @pl.kernel(
-        mesh=pltpu.create_tensorcore_mesh('core', num_cores=2),
+        mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=2),
         out_type=jax.ShapeDtypeStruct((16, 128), jnp.float32),
         scratch_types=[pltpu.VMEM((8, 128), jnp.float32),
                        pltpu.SemaphoreType.DMA(2)],
@@ -1202,7 +1181,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           dma_sems.at[0],
           dma_sems.at[1],
           device_id=(left_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
       ).wait()
 
     run = shard_map.shard_map(
@@ -1225,49 +1203,49 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       run(input_arr).block_until_ready()
 
   @parameterized.parameters(1, 2, 4)
-  def test_shard_map_of_core_map(self, num_cores):
+  def test_shard_map_of_mpmd_map(self, num_cores):
     num_devices = jax.device_count()
     partition = P('x', None)
     mesh = jtu.create_mesh((num_devices,), ('x',))
 
-    core_mesh = pltpu.create_tensorcore_mesh('core', num_cores=num_cores)
+    core_mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=num_cores)
     interpret = pltpu.InterpretParams(detect_races=True)
+
+    slc_size = 16 // core_mesh.shape['core']
 
     @jax.jit
     def f(x):
-      y = jnp.zeros_like(x)
-      def inner(refs):
-        x_ref, y_ref = refs
-        @pl.core_map(core_mesh, interpret=interpret)
-        def _():
-          num_cores = jax.lax.axis_size('core')
-          slc_size = 16 // num_cores
-          def alloc(x_vmem_ref, y_vmem_ref, dma_sem, sem):
-            # Barrier so we deadlock unless the core_map is actually parallel.
-            for i in range(num_cores):
-              pl.semaphore_signal(sem, 1, core_index=i)
-            pl.semaphore_wait(sem, num_cores)
-
-            core_index = jax.lax.axis_index('core')
-            slc = pl.ds(core_index * slc_size, slc_size)
-            pltpu.async_copy(
-                x_ref.at[slc],
-                x_vmem_ref,
-                dma_sem,
-            ).wait()
-            y = (x_vmem_ref[...] + num_cores * jax.lax.axis_index('x')
-                 + core_index + 1)
-            y_vmem_ref[...] = y
-            pltpu.async_copy(y_vmem_ref, y_ref.at[slc], dma_sem).wait()
-          pl.run_scoped(
-              alloc,
-              pltpu.VMEM((slc_size, 128), x_ref.dtype),
-              pltpu.VMEM((slc_size, 128), y_ref.dtype),
+      @pl.kernel(
+          out_type=x,
+          mesh=core_mesh,
+          scratch_types=[
+              pltpu.VMEM((slc_size, 128), x.dtype),
+              pltpu.VMEM((slc_size, 128), x.dtype),
               pltpu.SemaphoreType.DMA,
               pltpu.SemaphoreType.REGULAR,
-          )
-      _, y = pl.run_state(inner)((x, y))
-      return y
+          ],
+          interpret=interpret,
+      )
+      def kernel(x_ref, y_ref, x_vmem_ref, y_vmem_ref, dma_sem, sem):
+        num_cores = jax.lax.axis_size('core')
+        slc_size = 16 // num_cores
+        # Barrier so we deadlock unless the core_map is actually parallel.
+        for i in range(num_cores):
+          pl.semaphore_signal(sem, 1, core_index=i)
+        pl.semaphore_wait(sem, num_cores)
+
+        core_index = jax.lax.axis_index('core')
+        slc = pl.ds(core_index * slc_size, slc_size)
+        pltpu.async_copy(
+            x_ref.at[slc],
+            x_vmem_ref,
+            dma_sem,
+        ).wait()
+        y = (x_vmem_ref[...] + num_cores * jax.lax.axis_index('x')
+             + core_index + 1)
+        y_vmem_ref[...] = y
+        pltpu.async_copy(y_vmem_ref, y_ref.at[slc], dma_sem).wait()
+      return kernel(x)
 
     x = jnp.arange(num_devices * 16 * 128, dtype=jnp.int32).reshape((-1, 128))
     y = jax.jit(

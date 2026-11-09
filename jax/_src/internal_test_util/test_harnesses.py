@@ -42,7 +42,7 @@ from collections.abc import Callable, Iterable, Sequence
 import operator
 import os
 from functools import partial
-from typing import Any, NamedTuple, Union
+from typing import Any, NamedTuple
 
 from absl.testing import parameterized as absl_parameterized
 import numpy as np
@@ -100,7 +100,7 @@ class CustomArg(NamedTuple):
   make: Callable[[Rng], Any]  # Called with a Rng to make a tensor
 
 
-ArgDescriptor = Union[RandArg, StaticArg, CustomArg, Any]
+ArgDescriptor = RandArg | StaticArg | CustomArg | Any
 
 
 class Harness:
@@ -432,8 +432,10 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
   _make_unary_elementwise_harness(prim=lax.cos_p, dtype=dtype, accuracy=None)
   _make_unary_elementwise_harness(prim=lax.cosh_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.exp_p, dtype=dtype, accuracy=None)
+  _make_unary_elementwise_harness(prim=lax.exp2_p, dtype=dtype, accuracy=None)
   _make_unary_elementwise_harness(prim=lax.expm1_p, dtype=dtype, accuracy=None)
   _make_unary_elementwise_harness(prim=lax.log_p, dtype=dtype, accuracy=None)
+  _make_unary_elementwise_harness(prim=lax.log2_p, dtype=dtype, accuracy=None)
   _make_unary_elementwise_harness(prim=lax.log1p_p, dtype=dtype, accuracy=None)
   _make_unary_elementwise_harness(prim=lax.rsqrt_p, dtype=dtype, accuracy=None)
   _make_unary_elementwise_harness(prim=lax.sin_p, dtype=dtype, accuracy=None)
@@ -449,12 +451,18 @@ for dtype in jtu.dtypes.all_floating:
   _make_unary_elementwise_harness(prim=lax.ceil_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.erf_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.erf_inv_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.erfc_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.erfc_p, dtype=dtype, accuracy=None)
   _make_unary_elementwise_harness(prim=lax.floor_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.is_finite_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.lgamma_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.digamma_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.cbrt_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.acospi_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.asinpi_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.atanpi_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.cospi_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.sinpi_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.tanpi_p, dtype=dtype)
 
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
   _make_unary_elementwise_harness(prim=lax.neg_p, dtype=dtype)
@@ -984,6 +992,9 @@ _make_binary_elementwise_harnesses(
 
 _make_binary_elementwise_harnesses(
     prim=lax.atan2_p, dtypes=jtu.dtypes.all_floating)
+
+_make_binary_elementwise_harnesses(
+    prim=lax.atan2pi_p, dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
     prim=lax.igamma_p, dtypes=jtu.dtypes.all_floating)
@@ -1741,7 +1752,7 @@ def _make_cholesky_arg(shape, dtype, rng):
   return np.matmul(a, jnp.conj(np.swapaxes(a, -1, -2)))
 
 
-for dtype in jtu.dtypes.all_inexact:
+for dtype in jtu.dtypes.inexact:
   for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (1000, 0, 0)]:
     define(
         lax.linalg.cholesky_p,
@@ -1755,7 +1766,7 @@ for dtype in jtu.dtypes.all_inexact:
         shape=shape,
         dtype=dtype)
 
-for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
+for dtype in jtu.dtypes.inexact:
   for shape in [(1, 1), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]:
     for full_matrices in [False, True]:
       define(
@@ -1847,7 +1858,7 @@ for fft_type in list(map(lax.FftType, [0, 1, 2, 3])):
             fft_lengths=fft_lengths,
             dtype=dtype)
 
-for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
+for dtype in jtu.dtypes.inexact:
   for shape in [(2, 2), (2, 7), (29, 29), (2, 3, 53), (2, 3, 29, 7)]:
     for full_matrices in [False, True]:
       for compute_uv in [False, True]:
@@ -1880,7 +1891,7 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
             subset_by_index=subset_by_index,
         )
 
-for dtype in jtu.dtypes.all_inexact:
+for dtype in jtu.dtypes.inexact:
   for shape in [(0, 0), (5, 5), (2, 6, 6)]:
     for compute_left_eigenvectors in [False, True]:
       for compute_right_eigenvectors in [False, True]:
@@ -1914,7 +1925,7 @@ def _make_triangular_eigh_operand(shape, dtype, lower: bool, rng: Rng):
   return operand  # np.tril(operand) if lower else np.triu(operand)
 
 
-for dtype in jtu.dtypes.all_inexact:
+for dtype in jtu.dtypes.inexact:
   # The eigh implementation for TPU uses different lowering for n >= 256
   # TODO: add a test case for n=300. First attempt resulted in significant
   # numerical differences.
@@ -1944,7 +1955,7 @@ for dtype in jtu.dtypes.all_inexact:
           dtype=dtype,
           lower=lower)
 
-for dtype in jtu.dtypes.all_inexact:
+for dtype in jtu.dtypes.inexact:
   for shape in [
       (5, 5),  # square
       (3, 5, 5),  # batched

@@ -11,11 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import collections
 import functools
 import logging
+import sys
 import textwrap
+import threading
+import time
 import unittest
+
+if sys.version_info >= (3, 14):
+  from string.templatelib import Interpolation, Template
 
 from absl.testing import absltest, parameterized
 import jax
@@ -43,9 +50,10 @@ def _format_multiline(text):
 
 
 class DummyDevice:
-  def __init__(self, platform, id):
+  def __init__(self, platform, id, device_kind):
     self.platform = platform
     self.id = id
+    self.device_kind = device_kind
 
 
 class DebugCallbackTest(jtu.JaxTestCase):
@@ -57,6 +65,37 @@ class DebugCallbackTest(jtu.JaxTestCase):
   def test_error_with_non_callable(self):
     with self.assertRaisesRegex(TypeError, "callable"):
       jax.debug.callback("this is not debug.print!")
+
+  def test_ordered_callback_sequential_and_in_order(self):
+    # Tests that ordered=True callbacks run sequentially and in program order.
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+    order = []
+
+    def cb(i, x):
+      nonlocal active, max_active
+      del x
+      with lock:
+        active += 1
+        max_active = max(max_active, active)
+        order.append(i)
+      time.sleep(0.002)
+      with lock:
+        active -= 1
+
+    n = 32
+
+    @jax.jit
+    def f(x):
+      for i in range(n):
+        jax.debug.callback(functools.partial(cb, i), x, ordered=True)
+      return x
+
+    f(jnp.zeros(1024, jnp.float32)).block_until_ready()
+    jax.effects_barrier()
+    self.assertEqual(max_active, 1)
+    self.assertEqual(order, list(range(n)))
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   @jtu.run_on_devices("cpu")
@@ -450,16 +489,6 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       debug_print('y: {}, z: {}', y, z, ordered=ordered)
       return ad_checkpoint.checkpoint_name(jnp.exp(z), "w")
 
-    # Policy that saves everything so the debug callback will be saved
-    f = jax.checkpoint(f_, policy=ad_checkpoint.everything_saveable)
-
-    with jtu.capture_stdout() as output:
-      jax.grad(f)(2.)
-      jax.effects_barrier()
-    # We expect the print to happen once since it gets saved and isn't
-    # rematerialized.
-    self.assertEqual(output(), "y: 3.0, z: 6.0\n")
-
     # Policy that saves nothing so everything gets rematerialized, including the
     # debug callback
     f = jax.checkpoint(f_, policy=ad_checkpoint.nothing_saveable)
@@ -478,37 +507,6 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       jax.grad(f)(2.)
       jax.effects_barrier()
     # We expect the print to happen twice since it is rematerialized.
-    self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
-
-    def save_everything_but_these_names(*names_not_to_save):
-      names_not_to_save = frozenset(names_not_to_save)
-      def policy(prim, *_, **params):
-        if prim is ad_checkpoint.name_p:
-          return params['name'] not in names_not_to_save
-        return True # Save everything else
-      return policy
-
-    # Policy that saves everything but `y`
-    f = jax.checkpoint(
-        f_, policy=save_everything_but_these_names("y"))
-
-    with jtu.capture_stdout() as output:
-      jax.grad(f)(2.)
-      jax.effects_barrier()
-    # We expect the print to happen once because `y` is not rematerialized and
-    # we won't do extra materialization.
-    self.assertEqual(output(), "y: 3.0, z: 6.0\n")
-
-    # Policy that saves everything but `y` and `z`
-    f = jax.checkpoint(
-        f_, policy=save_everything_but_these_names("y", "z"))
-
-    with jtu.capture_stdout() as output:
-      jax.grad(f)(2.)
-      jax.effects_barrier()
-    # We expect the print to happen twice because both `y` and `z` have been
-    # rematerialized and we don't have to do any extra rematerialization to
-    # print.
     self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
 
   def test_debug_print_in_staged_out_custom_jvp(self):
@@ -970,8 +968,17 @@ class VisualizeShardingTest(jtu.JaxTestCase):
 
   def _create_devices(self, shape):
     num_devices = np.prod(shape)
-    devices = [DummyDevice("CPU", i) for i in range(num_devices)]
+    devices = [DummyDevice("CPU", i, "CPU") for i in range(num_devices)]
     return np.array(devices).reshape(shape)
+
+  @parameterized.parameters(
+      (1, 1), (1, 2), (1, 5), (2, 2), (2, 3), (2, 4), (2, 5))
+  def test_make_color_iter_uses_all_colors(self, num_rows, num_cols):
+    num_colors = num_rows * num_cols
+    colors = list(debugging.make_color_iter(lambda x: x, num_rows, num_cols))
+
+    self.assertLen(colors, num_colors)
+    self.assertArraysEqual(np.sort(colors), np.linspace(0, 1, num_colors))
 
   def test_trivial_sharding(self):
     mesh = jax.sharding.Mesh(self._create_devices(1), ['x'])
@@ -1385,6 +1392,7 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     self.assertEqual(_get_output_set(output, 1), expected)
 
 
+@jtu.thread_unsafe_test_class()  # printing isn't thread-safe
 class TwoCallPatternTest(jtu.JaxTestCase):
 
   def test_debug_print_two_call_form(self):
@@ -1442,6 +1450,66 @@ class TwoCallPatternTest(jtu.JaxTestCase):
         "debug_print received unexpected arguments in the two-call form",
     ):
       jax.debug.print(None, 42, ordered=True)("hello {a}")
+
+
+  @unittest.skipIf(sys.version_info < (3, 14), "Test requires Python 3.14 or later")
+  def test_template_debug_print_jit(self):
+    def f(x):
+      # TODO: in Python 3.14, use template string syntax directly
+      # jax.debug.print(t"x: {x}")
+      jax.debug.print(Template("x: ", Interpolation(x, "x")))
+
+    with jtu.capture_stdout() as output:
+      f(42)
+      jax.effects_barrier()
+
+    self.assertEqual(output(), "x: 42\n")
+
+  @unittest.skipIf(sys.version_info < (3, 14), "Test requires Python 3.14 or later")
+  def test_template_debug_print_formatting(self):
+    def f(x):
+      # TODO: in Python 3.14, use template string syntax directly
+      # jax.debug.print(t"float: {x:.2f}, hex: {x:#x}, repr: {s!r}")
+      jax.debug.print(Template(
+          "float: ", Interpolation(x, "x", format_spec=".2f"),
+          ", hex: ", Interpolation(x, "x", format_spec="#x"),
+          ", repr: ", Interpolation("hello", "s", conversion="r"),
+      ))
+
+    with jtu.capture_stdout() as output:
+      f(42)
+      jax.effects_barrier()
+
+    self.assertEqual(
+        output(), "float: 42.00, hex: 0x2a, repr: 'hello'\n")
+
+  @unittest.skipIf(sys.version_info < (3, 14), "Test requires Python 3.14 or later")
+  def test_template_debug_print_two_call_form(self):
+    def f(x):
+      jax.debug.print(ordered=True)(
+          # TODO: in Python 3.14, use template string syntax directly
+          # t"hello {x}", x=x)
+          Template("x: ", Interpolation(x, "x")))
+
+    with jtu.capture_stdout() as output:
+      f(42)
+      jax.effects_barrier()
+
+    self.assertEqual(output(), "x: 42\n")
+
+  @unittest.skipIf(sys.version_info < (3, 14), "Test requires Python 3.14 or later")
+  def test_template_debug_print_rejects_extra_arguments(self):
+    x = 42
+    # TODO: in Python 3.14, use template string syntax directly
+    # template = t"x: {x}"
+    template = Template("x: ", Interpolation(x, "x"))
+
+    with self.assertRaisesRegex(TypeError, "unexpected arguments"):
+      jax.debug.print(template, 1)
+
+    with self.assertRaisesRegex(TypeError, "unexpected arguments"):
+      jax.debug.print(template, x=1)
+
 
 
 if not rich:

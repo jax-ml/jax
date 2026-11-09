@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import contextlib
 import dataclasses
 from functools import partial
 from typing import Any
@@ -153,8 +154,7 @@ class BatchTracer(Tracer['BatchTrace']):
     elif type(batch_dim) is int:
       aval = core.mapped_aval(aval.shape[batch_dim], batch_dim, aval)
     elif isinstance(aval, hijax.HiType):
-      # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
-      aval = aval.dec_rank(trace.axis_data.size, batch_dim)
+      aval = aval.dec_rank(trace.axis_data.size, batch_dim)  # pyrefly: ignore[bad-argument-type]
     else:
       raise Exception("batch dim should be int or `None`")
 
@@ -175,7 +175,7 @@ class BatchTracer(Tracer['BatchTrace']):
   def _origin_msg(self):
     if self.source_info is None:
       return ""
-    return (f"\nThis BatchTracer with object id {id(self)} was created on line:"
+    return (f"\nThis VmapTracer with object id {id(self)} was created on line:"
             f"\n  {source_info_util.summarize(self.source_info)}")
 
   def _contents(self):
@@ -220,9 +220,13 @@ class AxisData:
 
 
 def get_sharding_for_vmap(axis_data, orig_sharding, axis):
+  assert axis >= 0
   val = axis_data.explicit_mesh_axis
+  partitions = orig_sharding.spec.partitions
+  if len(partitions) < axis:
+    partitions = partitions + (None,) * (axis - len(partitions))
   new_spec = orig_sharding.spec.update(
-      partitions=tuple_insert(orig_sharding.spec.partitions, axis, val))
+      partitions=tuple_insert(partitions, axis, val))
   return orig_sharding.update(spec=new_spec)
 
 
@@ -241,11 +245,6 @@ class BatchTrace(Trace):
       return val.val, val.batch_dim
     else:
       return val, None
-
-  def cur_qdd(self, x):
-    val, _ = self.to_batch_info(x)
-    with core.set_current_trace(self.parent_trace):
-      return core.cur_qdd(val)
 
   def stage_value(self, val):
     if isinstance(val, BatchTracer) and val._trace.tag is self.tag:
@@ -276,17 +275,6 @@ class BatchTrace(Trace):
     else:
       raise NotImplementedError(f"Batching rule for '{p}' not implemented")
 
-  def process_call(self, call_primitive, f, tracers, params, /):
-    assert call_primitive.multiple_results
-    params = dict(params, name=params.get('name', f.__name__))
-    vals, dims = unzip2(map(self.to_batch_info, tracers))
-    f_, dims_out = batch_subtrace(f, self.tag, self.axis_data, tuple(dims))
-
-    with core.set_current_trace(self.parent_trace):
-      vals_out = call_primitive.bind(*vals, subfuns=(f_,), **params)
-    src = source_info_util.current()
-    return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out())]
-
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))
     fun, out_dims1 = batch_subtrace(fun, self.tag, self.axis_data, in_dims)
@@ -312,7 +300,8 @@ class BatchTrace(Trace):
       full_dims = [next(pruned_dims) if f is None else in_dims[f] for f in input_fwds]
       return [*full_dims, *pruned_dims]
 
-    bwd = batch_custom_vjp_bwd(bwd, self.tag, self.axis_data, bwd_in_dims, in_dims)
+    bwd = batch_custom_vjp_bwd(bwd, self.tag, self.axis_data, bwd_in_dims, in_dims,
+                               lambda: len(out_trees()[2]), fun.debug_info.func_name)
     avals = tuple(core.typeof(x) for x in in_vals)
     out_vals = prim.bind_with_trace(self.parent_trace,
                                     tuple(in_vals), avals,
@@ -328,15 +317,18 @@ class BatchTrace(Trace):
 ### API for batching callables with vmappable inputs and outputs
 
 def batch(fun: lu.WrappedFun, axis_data,
-          in_dims, out_dim_dests, sum_match=False) -> lu.WrappedFun:
+          in_dims, out_dim_dests, sum_match=False,
+          transform_stack: bool = True) -> lu.WrappedFun:
   # we split up _batch_inner and _batch_outer for the leak checker
   f = _batch_inner(fun, axis_data, out_dim_dests, sum_match)
-  return _batch_outer(f, axis_data, in_dims)
+  return _batch_outer(f, axis_data, in_dims, transform_stack)
 
 @lu.transformation2
-def _batch_outer(f, axis_data, in_dims, *in_vals):
+def _batch_outer(f, axis_data, in_dims, transform_stack, *in_vals):
   tag = TraceTag()
-  with source_info_util.transform_name_stack('vmap'):
+  ctx = (source_info_util.transform_name_stack('vmap') if transform_stack
+         else contextlib.nullcontext())
+  with ctx:
     outs, out_dim_srcs, trace = f(tag, in_dims, *in_vals)
   with core.ensure_no_leaks(trace): del trace
   return outs, out_dim_srcs
@@ -349,7 +341,7 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, sum_match, tag, in_dims,
     idx = memoize(lambda: BatchTracer(trace, make_iota(axis_data.size), 0,
                                       source_info_util.current()))
     with core.set_current_trace(parent_trace):
-      in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)  # pyrefly#2385
     # TODO(yashkatariya): Instead of `add_explicit_mesh_axis_names`, we should
     # create a new mesh by removing the axis_data.explicit_mesh_axis from it.
     with (core.set_current_trace(trace),
@@ -360,7 +352,7 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, sum_match, tag, in_dims,
       out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
       out_vals, out_dim_srcs = unzip2(
           map(partial(from_elt, trace, axis_data.size, axis_data.explicit_mesh_axis, sum_match),
-              range(len(outs)), outs, out_dim_dests))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+              range(len(outs)), outs, out_dim_dests))  # pyrefly#2385
   return out_vals, out_dim_srcs, trace
 
 ### API for batching functions with jaxpr type inputs and outputs
@@ -373,7 +365,7 @@ def batch_subtrace_2(f, tag, axis_data, in_dims, in_vals):
     with core.set_current_trace(trace):
       in_dims = in_dims() if callable(in_dims) else in_dims
       in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
-                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]  # pyrefly#2385
       outs = f(*in_tracers)
     out_vals, out_dims = outs.map(trace.to_batch_info).unzip2()
   return out_vals, list(out_dims)
@@ -385,7 +377,7 @@ def batch_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
     with core.set_current_trace(trace):
       in_dims = in_dims() if callable(in_dims) else in_dims
       in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
-                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]  # pyrefly#2385
       outs = f(*in_tracers)
     out_vals, out_dims = unzip2(map(trace.to_batch_info, outs))
   store.store(out_dims)
@@ -394,20 +386,20 @@ def batch_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
 ### API for batching jaxprs
 
 def batch_jaxpr2(
-    closed_jaxpr: core.ClosedJaxpr,
+    closed_jaxpr: core.Jaxpr,
     axis_data,
     in_axes: tuple[int | NotMapped, ...],
-  ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
+  ) -> tuple[core.Jaxpr, tuple[int | NotMapped, ...]]:
   return _batch_jaxpr2(closed_jaxpr, axis_data, tuple(in_axes))
 
 @weakref_lru_cache
 def _batch_jaxpr2(
-    closed_jaxpr: core.ClosedJaxpr,
+    closed_jaxpr: core.Jaxpr,
     axis_data,
     in_axes: tuple[int | NotMapped, ...],
-  ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
+  ) -> tuple[core.Jaxpr, tuple[int | NotMapped, ...]]:
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr),
-                   debug_info=closed_jaxpr.jaxpr.debug_info)
+                   debug_info=closed_jaxpr.debug_info)
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
   avals_in2 = []
@@ -424,7 +416,7 @@ def _batch_jaxpr2(
           aval = aval.update(manual_axis_type=mat)
       avals_in2.append(aval)
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in2)
-  return core.ClosedJaxpr(jaxpr_out, consts), out_axes()
+  return jaxpr_out.with_consts(consts), out_axes()
 
 def batch_jaxpr(closed_jaxpr, axis_data, in_batched, instantiate):
   inst = tuple(instantiate) if isinstance(instantiate, list) else instantiate
@@ -444,11 +436,11 @@ def batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest):
   return _batch_jaxpr_axes(closed_jaxpr, axis_data, tuple(in_axes), tuple(out_axes_dest))
 
 @weakref_lru_cache
-def _batch_jaxpr_axes(closed_jaxpr: core.ClosedJaxpr,
+def _batch_jaxpr_axes(closed_jaxpr: core.Jaxpr,
                       axis_data: AxisData,
                       in_axes: Sequence[int], out_axes_dest: Sequence[int]):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr),
-                   debug_info=closed_jaxpr.jaxpr.debug_info)
+                   debug_info=closed_jaxpr.debug_info)
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f, out_batched = _match_axes_jaxpr(f, axis_data, out_axes_dest, out_axes)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
@@ -457,7 +449,7 @@ def _batch_jaxpr_axes(closed_jaxpr: core.ClosedJaxpr,
               if b is not None
               else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
-  return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
+  return jaxpr_out.with_consts(consts), out_batched()
 
 @lu.transformation_with_aux2
 def _batch_jaxpr_inner(f, store, axis_data, tag, in_axes, *in_vals):
@@ -496,7 +488,7 @@ def _match_axes_jaxpr(f, store, axis_data, out_axes_dest, out_axes, trace, in_ax
 def _batch_jaxpr_outer(f, axis_data, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
-             else ax for x, ax in unsafe_zip(in_vals, in_dims)]  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+             else ax for x, ax in unsafe_zip(in_vals, in_dims)]  # pyrefly#2385
   tag = TraceTag()
   return f(tag, in_dims, *in_vals)
 
@@ -539,25 +531,83 @@ def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
 def batch_custom_vjp_bwd(bwd: lu.WrappedFun, tag: core.TraceTag,
                          axis_data: AxisData,
                          in_dims: Callable[[], Sequence[int | None]],
-                         out_dim_dests: Sequence[int | None]) -> lu.WrappedFun:
+                         out_dim_dests: Sequence[int | None],
+                         num_res: Callable[[], int], name: str) -> lu.WrappedFun:
   def new_bwd(*args):
     in_dims_ = in_dims() if callable(in_dims) else in_dims
+    shared = any(d is None and type(x) is not SymbolicZero
+                 for x, d in list(zip(args, in_dims_))[num_res():])
     args = [SymbolicZero(core.mapped_aval(axis_data.size, dim, x.aval))
             if type(x) is SymbolicZero else x
             for x, dim in zip(args, in_dims_)]
     in_dims_ = [None if type(x) is SymbolicZero else d
                 for x, d in zip(args, in_dims_)]
-    bwd_, out_dims_thunk = batch_subtrace(bwd, tag, axis_data, in_dims_)
-    bwd_ = _match_axes_and_sum(bwd_, axis_data, out_dims_thunk, out_dim_dests)
-    return bwd_.call_wrapped(*args)
+    bwd_pair, pair_info_thunk = _flatten_cts_logs_pair(bwd)
+    bwd_, out_dims_thunk = batch_subtrace(bwd_pair, tag, axis_data, in_dims_)
+    all_dests = lambda: (*out_dim_dests, *(0,) * pair_info_thunk()[1].num_leaves)
+    bwd_ = _match_axes_and_sum(bwd_, axis_data, out_dims_thunk, all_dests,
+                               name if shared else None)
+    outs = bwd_.call_wrapped(*args)
+    num_cts, log_tree = pair_info_thunk()
+    cts, log_leaves = split_list(outs, [num_cts])
+    return cts, tree_unflatten(log_tree, log_leaves)
+  from jax._src.interpreters import ad
+  if not bwd.transforms and isinstance(bwd.f, ad.CustomBwdWithAccums):
+    rule = ad.CustomBwdWithValAccums(new_bwd, partial(ref_accum_error, name))
+    return lu.wrap_init(rule, debug_info=bwd.debug_info)
   return lu.wrap_init(new_bwd, debug_info=bwd.debug_info)
 
+@lu.transformation_with_aux2
+def _flatten_cts_logs_pair(f, store, *args):
+  cts, logs = f(*args)
+  log_leaves, log_tree = tree_flatten(logs)
+  store.store((len(cts), log_tree))
+  return [*cts, *log_leaves]
+
 @lu.transformation2
-def _match_axes_and_sum(f, axis_data, out_dims_thunk, out_dim_dests, *in_vals):
+def _match_axes_and_sum(f, axis_data, out_dims_thunk, out_dim_dests_thunk,
+                        shared_name, *in_vals):
   # this is like _match_axes, but we do reduce-sums as needed
   out_vals = f(*in_vals)
+  srcs, dsts = out_dims_thunk(), out_dim_dests_thunk()
+  if shared_name and any(s is not None and d is None and
+                         not isinstance(x, (Zero, SymbolicZero))
+                         for s, d, x in zip(srcs, dsts, out_vals)):
+    raise shared_cotangent_error(shared_name)
   return map(partial(_matchaxis_symzeros, axis_data, sum_match=True),
-             out_dims_thunk(), out_dim_dests, out_vals)
+             srcs, dsts, out_vals)
+
+SHARED_OUTPUTS_DOCS = ("https://docs.jax.dev/en/latest/301/custom-derivatives.html"
+                       "#jax-301-vmap-shared-outputs")
+
+def shared_cotangent_error(name):
+  return ValueError(
+      f"under vmap, the custom_vjp function {name} has a primal output that is "
+      "shared across the batch (unbatched) with a nonzero right cotangent, and "
+      "its bwd rule produced a batched left cotangent for an unbatched primal "
+      "input. Summing that left cotangent over the batch would count the "
+      "shared primal output's right cotangent once per example. To resolve "
+      "this, pass generic_batching=True to defvjp, which gives that whole "
+      "right cotangent to the first example before summing (right for a "
+      "correct bwd rule, but bwd's work on it then happens once per example), "
+      "or define the operation as a jax.experimental.hijax.HiPrim with an "
+      f"explicit `batch` rule. See {SHARED_OUTPUTS_DOCS}")
+
+REF_ACCUMS_DOCS = ("https://docs.jax.dev/en/latest/301/custom-derivatives.html"
+                   "#jax-301-vmap-ref-accums")
+
+def ref_accum_error(name):
+  return ValueError(
+      f"under vmap, the custom_vjp function {name} has a bwd rule that takes "
+      "gradient accumulators, and the caller passed a gradient ref for one of "
+      "its inputs (with a VJP's with_refs method), but vmap can't hand the "
+      "rule that ref, only accumulators for values, so the gradient can't be "
+      "accumulated in place. To accumulate it in place under vmap, define the "
+      "operation as a jax.experimental.hijax.HiPrim with an explicit `batch` "
+      "rule: the batched primitive's `vjp_bwd` gets the caller's refs. "
+      "Otherwise, apply vmap after differentiation, or, for a rule that also "
+      "takes a ValAccum, pass jax.ad.GradValue() in place of the ref to get "
+      f"the gradient as a value. See {REF_ACCUMS_DOCS}")
 
 def _matchaxis_symzeros(axis_data, src, dst, x, sum_match=False):
   # Just like `matchaxis`, but handles symbolic zeros using ad_util.py
@@ -611,11 +661,12 @@ def defvectorized(prim):
   fancy_primitive_batchers[prim] = partial(vectorized_batcher, prim)
 
 def vectorized_batcher(prim, axis_data, batched_args, batch_dims, **params):
-  assert not prim.multiple_results
   if all(d is None for d in batch_dims):
-    return prim.bind(*batched_args, **params), None
+    o = prim.bind(*batched_args, **params)
+    return (o, [None] * len(o)) if prim.multiple_results else (o, None)
   assert all(batch_dims[0] == bd for bd in batch_dims[1:]), batch_dims
-  return prim.bind(*batched_args, **params), batch_dims[0]
+  o = prim.bind(*batched_args, **params)
+  return (o, [batch_dims[0]] * len(o)) if prim.multiple_results else (o, batch_dims[0])
 
 def defbroadcasting(prim):
   fancy_primitive_batchers[prim] = partial(broadcast_batcher, prim)
@@ -659,7 +710,7 @@ def reducer_batcher(prim, axis_data, batched_args, batch_dims, axes,
   if all(d is None for d in batch_dims):
     return prim.bind(*batched_args, axes=axes, **params), None
   def out_axis(axes, axis):
-    return int(list(np.delete(np.arange(operand.ndim), axes)).index(axis))
+    return list(np.delete(np.arange(operand.ndim), axes)).index(axis)
   operand, = batched_args
   bdim, = batch_dims
   if isinstance(bdim, int):

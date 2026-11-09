@@ -1,6 +1,7 @@
 ---
 jupytext:
   formats: md:myst
+  notebook_metadata_filter: nosearch
   text_representation:
     extension: .md
     format_name: myst
@@ -10,6 +11,7 @@ kernelspec:
   display_name: Python 3
   language: python
   name: python3
+nosearch: true
 ---
 
 ```{code-cell}
@@ -28,7 +30,7 @@ kernelspec:
 JAX has built-in support for objects that look like dictionaries (dicts) of arrays, or lists of lists of dicts, or other nested structures — in JAX these are called pytrees.
 This section will explain how to use them, provide useful code examples, and point out common "gotchas" and patterns.
 
-For an explanation of how to create custom pytrees, see {doc}`custom_pytrees`.
+For an explanation of how to create custom pytrees, see {ref}`jax-101-custom-pytrees`.
 
 (pytrees-what-is-a-pytree)=
 ## What is a pytree?
@@ -68,7 +70,7 @@ Any tree-like structure built out of container-like Python objects can be treate
 Classes are considered container-like if they are in the pytree registry, which by default includes lists, tuples, and dicts. Any object whose type is *not* in the pytree container registry will be treated as a leaf node in the tree.
 
 The pytree registry can be extended to include user-defined container classes by registering the class
-with functions that specify how to flatten the tree; see {ref}`pytrees-custom-pytree-nodes` below.
+with functions that specify how to flatten the tree; see {ref}`jax-101-custom-pytrees`.
 
 (pytrees-common-pytree-functions)=
 ## Common pytree functions
@@ -296,7 +298,7 @@ jax.tree.leaves([None, None, None], is_leaf=lambda x: x is None)
 jax.tree.map(lambda x: x + 1, {1: 7, "y": 42})
 ```
 
-If you need a mapping whose keys can't be ordered, you can use `collections.OrderedDict`, which JAX flattens in insertion order without sorting the keys, or register a custom pytree node that defines its own flattening and unflattening (see {doc}`custom_pytrees`).
+If you need a mapping whose keys can't be ordered, you can use `collections.OrderedDict`, which JAX flattens in insertion order without sorting the keys, or register a custom pytree node that defines its own flattening and unflattening (see {ref}`jax-101-custom-pytrees`).
 
 (pytrees-common-pytree-patterns)=
 ## Common pytree patterns
@@ -334,4 +336,4 @@ jax.tree.transpose(
 (extending-pytrees)=
 ### Extending pytrees
 
-Material on extending pytrees has been moved to {ref}`pytrees-custom-pytree-nodes`.
+Material on extending pytrees has been moved to {ref}`jax-101-custom-pytrees`.

@@ -18,11 +18,11 @@ from __future__ import annotations
 import collections
 from collections.abc import Callable, Generator, Iterable, Sequence
 from contextlib import ExitStack, contextmanager
-import datetime
 import functools
 from functools import cached_property, partial
 import inspect
 
+import logging
 import math
 import os
 import platform
@@ -50,7 +50,10 @@ from jax._src import sharding_impls
 from jax._src import test_warning_util
 from jax._src import xla_bridge
 from jax._src import util
-from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
+from jax._src.cloud_tpu_init import (
+    is_libtpu_at_least as is_libtpu_at_least,
+    running_in_cloud_tpu_vm as running_in_cloud_tpu_vm,
+)
 from jax._src.interpreters import mlir
 from jax._src.lax import lax
 from jax._src.lib import cuda_versions
@@ -68,6 +71,8 @@ from jax._src.typing import ArrayLike, DTypeLike
 from jax._src.util import unzip2
 import numpy as np
 import numpy.random as npr
+
+logger = logging.getLogger(__name__)
 
 # When running tests, install the ABSL failure signal handler. This dumps a
 # C++ back trace on fatal signals, which is helpful for debugging.
@@ -187,7 +192,7 @@ def check_eq(xs: Any, ys: Any, err_msg: str = '') -> None:
 
 
 @contextmanager
-def _capture_output(fp: TextIO) -> Generator[Callable[[], str], None, None]:
+def _capture_output(fp: TextIO) -> Generator[Callable[[], str]]:
   """Context manager to capture all output written to a given file object.
 
   Unlike ``contextlib.redirect_stdout``, this context manager works for
@@ -291,6 +296,7 @@ count_jit_and_pmap_lowerings = count_events("lower_jaxpr_to_module")
 count_jit_compilation_cache_miss = count_events("pxla_cached_compilation")
 count_compilation_after_persistent_cache_miss = count_events("compile_after_persistent_compilation_miss")
 count_jax_array_shard_arg_calls = count_events("_array_shard_arg")
+count_infer_params_cache_miss = count_events("infer_params_cache_miss")
 
 
 @contextmanager
@@ -320,15 +326,13 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
 
 @contextmanager
 def collect_lowered_jaxprs() -> Generator[
-    Sequence[tuple[core.ClosedJaxpr, mlir.ir.Module]],
-    None,
-    None,
+    Sequence[tuple[core.Jaxpr, mlir.ir.Module]],
 ]:
   """
   Collects all the pairs of (jaxpr, mlir_module) that are lowered.
   """
   assert thread_local_state.collect_lowered_jaxprs is None
-  collection: list[tuple[core.ClosedJaxpr, mlir.ir.Module]] = []
+  collection: list[tuple[core.Jaxpr, mlir.ir.Module]] = []
   thread_local_state.collect_lowered_jaxprs = collection
   try:
     yield collection
@@ -392,6 +396,9 @@ def is_device_rocm() -> bool:
 def is_device_cuda() -> bool:
   return 'cuda' in xla_bridge.get_backend().platform_version
 
+def is_device_oneapi() -> bool:
+  return 'oneapi' in xla_bridge.get_backend().platform_version
+
 def is_cloud_tpu() -> bool:
   return running_in_cloud_tpu_vm
 
@@ -419,24 +426,6 @@ def is_test_rbe() -> bool:
       os.getenv("IS_JAX_RBE_TESTING", "").lower() in {"true", "1", "yes", "y"}
       )
 
-# Returns True if it is not cloud TPU. If it is cloud TPU, returns True if it is
-# built at least `date``.
-# TODO(b/327203806): after libtpu adds a XLA version and the oldest support
-# libtpu contains the XLA version, remove using built time to skip tests.
-def is_cloud_tpu_at_least(year: int, month: int, day: int) -> bool:
-  date = datetime.date(year, month, day)
-  if not is_cloud_tpu():
-    return True
-  # The format of Cloud TPU platform_version is like:
-  # PJRT C API
-  # TFRT TPU v2
-  # Built on Oct 30 2023 03:04:42 (1698660263) cl/577737722
-  platform_version = xla_bridge.get_backend().platform_version.split('\n')[-1]
-  results = re.findall(r'\(.*?\)', platform_version)
-  if len(results) != 1:
-    return True
-  build_date = date.fromtimestamp(int(results[0][1:-1]))
-  return build_date >= date
 
 def pjrt_c_api_version_at_least(major_version: int, minor_version: int) -> bool:
   pjrt_c_api_versions = xla_bridge.backend_pjrt_c_api_version()
@@ -445,12 +434,16 @@ def pjrt_c_api_version_at_least(major_version: int, minor_version: int) -> bool:
   return pjrt_c_api_versions >= (major_version, minor_version)
 
 def stablehlo_version_at_least(required_version: str) -> bool:
+  if (getattr(xla_bridge.get_backend(), "runtime_type", "") or "").startswith(
+      "proxy/"
+  ):
+    return False
   plugin_version = xla_bridge.backend_stablehlo_version()
   if plugin_version is None:
     return True
   return hlo.get_smaller_version(
       ".".join(map(str, plugin_version)), required_version
-  ) == plugin_version
+  ) == required_version
 
 def get_tpu_version() -> int:
   if device_under_test() != "tpu":
@@ -482,6 +475,8 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
     return device_kind.endswith("v5")
   elif expected_version == "v7x":
     return "TPU7x" in device_kind
+  elif expected_version == "v8i":
+    return "TPU8i" in device_kind
   return expected_version in device_kind
 
 def pattern_search(patterns: str | Sequence[str], string: str) -> str | None:
@@ -570,6 +565,8 @@ def _get_device_tags():
     return {device_under_test(), "rocm"}
   elif is_device_cuda():
     return {device_under_test(), "cuda"}
+  elif is_device_oneapi():
+    return {device_under_test(), "oneapi"}
   else:
     return {device_under_test()}
 
@@ -784,14 +781,19 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
     to rand but scaled, converted to the appropriate dtype, and post-processed.
   """
   if _dtypes.issubdtype(dtype, np.unsignedinteger):
-    r = lambda: np.asarray(scale * abs(rand(*_dims_of_shape(shape)))).astype(dtype)
+    r = lambda: np.asarray(scale * abs(rand(*_dims_of_shape(shape))), dtype=np.uint64).astype(dtype)
+  elif _dtypes.issubdtype(dtype, np.integer):
+    r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape)), dtype=np.int64).astype(dtype)
   else:
     r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape))).astype(dtype)
   if _dtypes.issubdtype(dtype, np.complexfloating):
     vals = r() + 1.0j * r()
   else:
     vals = r()
-  return _cast_to_shape(np.asarray(post(vals), dtype), shape, dtype)
+  vals = post(vals)
+  if _dtypes.issubdtype(dtype, np.integer) and _dtypes.issubdtype(np.asarray(vals).dtype, np.floating):
+    vals = np.asarray(vals, dtype=np.int64)
+  return _cast_to_shape(np.asarray(vals, dtype), shape, dtype)
 
 
 def rand_fullrange(rng, standardize_nans=False):
@@ -1044,7 +1046,7 @@ def iter_eqns(jaxpr):
 
 def assert_dot_precision(expected_precision, fun, *args):
   jaxpr = api.make_jaxpr(fun)(*args)
-  precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr.jaxpr)
+  precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr)
                 if eqn.primitive == lax.dot_general_p]
   for precision in precisions:
     msg = f"Unexpected precision: {expected_precision} != {precision}"
@@ -1056,7 +1058,7 @@ def assert_dot_precision(expected_precision, fun, *args):
 
 def assert_dot_preferred_element_type(expected, fun, *args, **kwargs):
   jaxpr = api.make_jaxpr(partial(fun, **kwargs))(*args)
-  pref_eltypes = [eqn.params['preferred_element_type'] for eqn in iter_eqns(jaxpr.jaxpr)
+  pref_eltypes = [eqn.params['preferred_element_type'] for eqn in iter_eqns(jaxpr)
                    if eqn.primitive == lax.dot_general_p]
   for pref_eltype in pref_eltypes:
     msg = f"Unexpected preferred_element_type: {expected} != {pref_eltype}"
@@ -1531,7 +1533,7 @@ ignore_warning = test_warning_util.ignore_warning
 MeshSpec = list[tuple[str, int]]
 
 @contextmanager
-def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
+def with_mesh(named_shape: MeshSpec) -> Generator[None]:
   """Test utility for setting up meshes given mesh data from `schedules`."""
   # This is similar to the `with_mesh` function above, but isn't a decorator.
   axis_names, shape = unzip2(named_shape)
@@ -1596,6 +1598,8 @@ class _LazyDtypes:
       _dtypes.float8_e8m0fnu,
       _dtypes.float4_e2m1fn,
     ]
+    if _dtypes.float8_e5m3fnu is not None:
+      float_dtypes.append(_dtypes.float8_e5m3fnu)
     return self.supported(float_dtypes)
 
   @cached_property
@@ -1672,7 +1676,7 @@ def numpy_version():
 
 def parameterized_filterable(*,
     kwargs: Sequence[dict[str, Any]],
-    testcase_name: Callable[[dict[str, Any]], str] | None = None,
+    testcase_name: Callable[[dict[str, Any]], Any] | None = None,
     one_containing: str | None = None,
 ):
   """Decorator for named parameterized tests, with filtering support.
@@ -2050,64 +2054,17 @@ class numpy_with_mpmath:
   def negative(self, x):
     return -x
 
-  def sqrt(self, x):
-    ctx = x.context
-    if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in sqrt(+-inf+-infj) evaluation (see mpmath/mpmath#776).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
-      if ctx.isinf(x.imag):
-        return ctx.make_mpc((ctx.inf._mpf_, x.imag._mpf_))
-    return ctx.sqrt(x)
-
   def expm1(self, x):
     return x.context.expm1(x)
-
-  def log1p(self, x):
-    ctx = x.context
-    if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in log(+-inf+-infj) evaluation (see mpmath/mpmath#774).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
-      if ctx.isinf(x.real) and ctx.isinf(x.imag):
-        pi = ctx.pi
-        if x.real > 0 and x.imag > 0:
-          return ctx.make_mpc((x.real._mpf_, (pi / 4)._mpf_))
-        if x.real > 0 and x.imag < 0:
-          return ctx.make_mpc((x.real._mpf_, (-pi / 4)._mpf_))
-        if x.real < 0 and x.imag < 0:
-          return ctx.make_mpc(((-x.real)._mpf_, (-3 * pi / 4)._mpf_))
-        if x.real < 0 and x.imag > 0:
-          return ctx.make_mpc(((-x.real)._mpf_, (3 * pi / 4)._mpf_))
-    return ctx.log1p(x)
 
   def tan(self, x):
     ctx = x.context
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in tan(+-inf+-infj) evaluation (see mpmath/mpmath#781).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
-      if ctx.isinf(x.imag) and (ctx.isinf(x.real) or ctx.isfinite(x.real)):
-        if x.imag > 0:
-          return ctx.make_mpc((ctx.zero._mpf_, ctx.one._mpf_))
-        return ctx.make_mpc((ctx.zero._mpf_, (-ctx.one)._mpf_))
+      # mpmath.mp.tan(+-inf + 0j) returns nan + 0j, whereas numpy.tan/C99 ctan
+      # returns nan + nanj.
       if ctx.isinf(x.real) and ctx.isfinite(x.imag):
         return ctx.make_mpc((ctx.nan._mpf_, ctx.nan._mpf_))
     return ctx.tan(x)
-
-  def tanh(self, x):
-    ctx = x.context
-    if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in tanh(+-inf+-infj) evaluation (see mpmath/mpmath#781).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
-      if ctx.isinf(x.imag) and (ctx.isinf(x.real) or ctx.isfinite(x.real)):
-        if x.imag > 0:
-          return ctx.make_mpc((ctx.zero._mpf_, ctx.one._mpf_))
-        return ctx.make_mpc((ctx.zero._mpf_, (-ctx.one)._mpf_))
-      if ctx.isinf(x.real) and ctx.isfinite(x.imag):
-        return ctx.make_mpc((ctx.nan._mpf_, ctx.nan._mpf_))
-    return ctx.tanh(x)
 
   def log2(self, x):
     return x.context.ln(x) / x.context.ln2
@@ -2121,21 +2078,6 @@ class numpy_with_mpmath:
   def arcsin(self, x):
     ctx = x.context
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in asin(+-inf+-infj) evaluation (see
-      # mpmath/mpmath#793).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      inf = ctx.inf
-      zero = ctx.zero
-      if ctx.isinf(x.real):
-        sign_real = -1 if x.real < 0 else 1
-        real = sign_real * pi / (4 if ctx.isinf(x.imag) else 2)
-        imag = -inf if x.imag < 0 else inf
-        return ctx.make_mpc((real._mpf_, imag._mpf_))
-      elif ctx.isinf(x.imag):
-        return ctx.make_mpc((zero._mpf_, x.imag._mpf_))
-
       # On branch cut, mpmath.mp.asin returns different value compared
       # to mpmath.fp.asin and numpy.arcsin (see
       # mpmath/mpmath#786). The following if-block ensures
@@ -2149,26 +2091,6 @@ class numpy_with_mpmath:
     ctx = x.context
 
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in acos(+-inf+-infj) evaluation (see
-      # mpmath/mpmath#793).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      inf = ctx.inf
-      zero = ctx.zero
-
-      if ctx.isinf(x.imag):
-        if ctx.isinf(x.real):
-          real = pi / 4 if x.real > 0 else 3 * pi / 4
-        else:
-          real = pi / 2
-        imag = inf if x.imag < 0 else -inf
-        return ctx.make_mpc((real._mpf_, imag._mpf_))
-      elif ctx.isinf(x.real):
-        inf = ctx.inf
-        sign_imag = -1 if x.imag < 0 else 1
-        real = zero if x.real > 0 else pi
-        return ctx.make_mpc((real._mpf_, (-sign_imag * inf)._mpf_))
       # On branch cut, mpmath.mp.acos returns different value
       # compared to mpmath.fp.acos and numpy.arccos. The
       # following if-block ensures compatibility with
@@ -2182,21 +2104,6 @@ class numpy_with_mpmath:
     ctx = x.context
 
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in asinh(+-inf+-infj) evaluation
-      # (see mpmath/mpmath#749).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      inf = ctx.inf
-      zero = ctx.zero
-      if ctx.isinf(x.imag):
-        sign_imag = -1 if x.imag < 0 else 1
-        real = -inf if x.real < 0 else inf
-        imag = sign_imag * pi / (4 if ctx.isinf(x.real) else 2)
-        return ctx.make_mpc((real._mpf_, imag._mpf_))
-      elif ctx.isinf(x.real):
-        return ctx.make_mpc((x.real._mpf_, zero._mpf_))
-
       # On branch cut, mpmath.mp.asinh returns different value
       # compared to mpmath.fp.asinh and numpy.arcsinh (see
       # mpmath/mpmath#786).  The following if-block ensures
@@ -2205,44 +2112,10 @@ class numpy_with_mpmath:
         return (-ctx.asinh(x)).conjugate()
     return ctx.asinh(x)
 
-  def arccosh(self, x):
-    ctx = x.context
-
-    if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in acosh(+-inf+-infj) evaluation
-      # (see mpmath/mpmath#749).
-      pi = ctx.pi
-      inf = ctx.inf
-      zero = ctx.zero
-      if ctx.isinf(x.real):
-        sign_imag = -1 if x.imag < 0 else 1
-        imag = (
-          (3 if x.real < 0 else 1) * sign_imag * pi / 4
-          if ctx.isinf(x.imag)
-          else (sign_imag * pi if x.real < 0 else zero)
-        )
-        return ctx.make_mpc((inf._mpf_, imag._mpf_))
-      elif ctx.isinf(x.imag):
-        sign_imag = -1 if x.imag < 0 else 1
-        imag = sign_imag * pi / 2
-        return ctx.make_mpc((inf._mpf_, imag._mpf_))
-    return ctx.acosh(x)
-
   def arctan(self, x):
     ctx = x.context
 
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in atan(+-inf+-infj) evaluation
-      # (see mpmath/mpmath#775 with the fix).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      zero = ctx.zero
-      if ctx.isinf(x.real) or ctx.isinf(x.imag):
-        if x.real < 0:
-          return ctx.make_mpc(((-pi / 2)._mpf_, zero._mpf_))
-        return ctx.make_mpc(((pi / 2)._mpf_, zero._mpf_))
-
       # On branch cut, mpmath.mp.atan returns different value compared
       # to mpmath.fp.atan and numpy.arctan (see mpmath/mpmath#865).
       # The following if-block ensures compatibility with
@@ -2255,17 +2128,6 @@ class numpy_with_mpmath:
     ctx = x.context
 
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in atanh(+-inf+-infj) evaluation
-      # (see mpmath/mpmath#775 with the fix).
-      # TODO(pearu): remove the if-block below when mpmath 1.4 or
-      # newer will be the required test dependency.
-      pi = ctx.pi
-      zero = ctx.zero
-      if ctx.isinf(x.real) or ctx.isinf(x.imag):
-        if x.imag < 0:
-          return ctx.make_mpc((zero._mpf_, (-pi / 2)._mpf_))
-        return ctx.make_mpc((zero._mpf_, (pi / 2)._mpf_))
-
       # On branch cut, mpmath.mp.atanh returns different value
       # compared to mpmath.fp.atanh and numpy.arctanh.  The following
       # if-block ensures compatibility with numpy.arctanh.
@@ -2338,7 +2200,7 @@ def runtime_environment() -> str | None:
   """Returns None, "bazel" or "pytest"."""
   if sys.executable is None:
     return None
-  elif 'bazel-out' in sys.executable:
+  elif "TEST_TMPDIR" in os.environ:
     return "bazel"
   else:
     return "pytest"

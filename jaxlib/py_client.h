@@ -27,13 +27,14 @@ limitations under the License.
 #include <string_view>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "llvm/Support/Casting.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/free_threading.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -44,6 +45,7 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/program.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/shape.h"
 
@@ -76,8 +78,9 @@ class PyClient {
   // Short-term escape hatch to get xla::PjRtClient from PyClient.
   // TODO(hyeontaek): Migrate all users of this method to be agnostic of PjRt.
   xla::PjRtClient* pjrt_client() const {
-    auto* pjrt_client = llvm::dyn_cast_or_null<xla::ifrt::PjRtCompatibleClient>(
-        ifrt_client_.get());
+    auto* pjrt_client =
+        xla::ifrt::dyn_cast_or_null<xla::ifrt::PjRtCompatibleClient>(
+            ifrt_client_.get());
     if (pjrt_client == nullptr) {
       throw xla::XlaRuntimeError(
           "This operation is implemented for a PjRt-compatible backend only.");
@@ -85,8 +88,9 @@ class PyClient {
     return pjrt_client->pjrt_client();
   }
   std::shared_ptr<xla::PjRtClient> shared_ptr_pjrt_client() {
-    auto* pjrt_client = llvm::dyn_cast_or_null<xla::ifrt::PjRtCompatibleClient>(
-        ifrt_client_.get());
+    auto* pjrt_client =
+        xla::ifrt::dyn_cast_or_null<xla::ifrt::PjRtCompatibleClient>(
+            ifrt_client_.get());
     if (pjrt_client == nullptr) {
       throw xla::XlaRuntimeError(
           "This operation is implemented for a PjRt-compatible backend only.");
@@ -105,7 +109,8 @@ class PyClient {
     // we haven't yet updated JAX clients that expect "gpu". Migrate users and
     // remove this code.
     if (ifrt_client_->platform_name() == "cuda" ||
-        ifrt_client_->platform_name() == "rocm") {
+        ifrt_client_->platform_name() == "rocm" ||
+        ifrt_client_->platform_name() == "oneapi") {
       return "gpu";
     } else {
       return ifrt_client_->platform_name();
@@ -220,6 +225,17 @@ class PyClient {
       absl::Span<uint16_t const> recv_channel_ids,
       nanobind::callable serializer);
 
+  // `CreateHloOutputCallback` creates an XLA HLO output callback capsule from a
+  // Python callable `callable`. `callable` receives as arguments the replica
+  // ID, partition ID, and a list of NumPy arrays (or None for missing operands)
+  // corresponding to the reconstructed operands of the HLO output callback.
+  // It returns the host callback as an opaque capsule object whose reference
+  // will keep the Python callable alive. The host callback can be passed to
+  // `PyClient::CompileAndLoad` or `PyClient::DeserializeExecutable` via the
+  // `host_callbacks` argument.
+  absl::StatusOr<nanobind::object> CreateHloOutputCallback(
+      int64_t callback_id, int64_t num_operands, nanobind::callable callable);
+
   std::vector<PyArray> LiveArrays() const;
 
   static void Register(nanobind::module_& m);
@@ -242,18 +258,18 @@ class PyClient {
   // to iterate over all known objects when heap profiling. The list structure
   // is protected by the GIL.
 
-  nanobind::ft_mutex executables_mutex_;
-  // List guarded by executables_mutex_.
-  PyLoadedExecutable* executables_ = nullptr;
+  ft_mutex executables_mutex_;
+  PyLoadedExecutable* executables_ ABSL_GUARDED_BY(executables_mutex_) =
+      nullptr;
 
-#ifdef NB_FREE_THREADING
+#ifdef NB_FREE_THREADED
   static constexpr size_t kNumArraysShards = 16;
 #else
   static constexpr size_t kNumArraysShards = 1;
 #endif
   struct ArraysShard {
-    mutable nanobind::ft_mutex mutex;
-    PyArray_Storage* arrays;
+    mutable ft_mutex mutex;
+    PyArray_Storage* arrays ABSL_GUARDED_BY(mutex);
   };
   std::array<ArraysShard, kNumArraysShards> arrays_;
 

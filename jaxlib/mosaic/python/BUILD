@@ -57,8 +57,8 @@ gentbl_filegroup(
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = ":tpu_python.td",
     deps = [
-        "//jaxlib/mosaic:tpu_ops_td_files",
         "@llvm-project//mlir:OpBaseTdFiles",
+        "@xla//xla/mosaic:tpu_td_files",
     ],
 )
 
@@ -96,7 +96,6 @@ pytype_strict_library(
     srcs = [
         "layout_defs.py",
     ],
-    type_checking = "pyrefly",
     visibility = [
         "//visibility:public",
     ],

@@ -35,107 +35,84 @@ fi
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
-OVERRIDE_XLA_REPO=""
-if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
-    OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR} --override_module=xla=${JAXCI_XLA_GIT_DIR}"
+OVERRIDE_XLA_REPO=()
+if [[ "${JAXCI_CLONE_MAIN_XLA}" == 1 ]]; then
+    OVERRIDE_XLA_REPO=(
+        "--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+        "--override_module=xla=${JAXCI_XLA_GIT_DIR}"
+    )
 fi
 
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
-TAG_FILTERS="jax_test_gpu,-config-cuda-only,-manual"
+TAG_FILTERS="-config-cuda-only,-manual"
 
-TESTS_TO_IGNORE=(
-    -//tests/pallas:pallas_test_gpu
-    -//tests/pallas:ops_test_gpu
-    -//tests/pallas:ops_test_mgpu_gpu
-    -//tests/pallas:pallas_shape_poly_test_gpu
-    -//tests/pallas:pallas_vmap_test_gpu
-    -//tests/pallas:triton_pallas_test_gpu
-    -//tests:export_harnesses_multi_platform_test_gpu
-    -//tests:jet_test_gpu
-    -//tests:lax_autodiff_test_gpu
-    -//tests:lax_numpy_setops_test_gpu
-    -//tests:lax_numpy_test_gpu
-    -//tests:lax_test_gpu
-    -//tests:linalg_test_gpu
-    -//tests:logging_test_gpu
-    -//tests:random_lax_test_gpu
-    -//tests:scipy_signal_test_gpu
-    -//tests:stax_test_gpu
-    -//tests:ode_test_gpu
-    -//tests:lobpcg_test_gpu
-    -//tests:scipy_stats_test_gpu
-    -//tests:nn_test_gpu
-    -//tests:lax_scipy_sparse_test_gpu
-    -//tests:lax_scipy_spectral_dac_test_gpu
-    -//tests:lax_scipy_special_functions_test_gpu
-    -//tests:cholesky_update_test_gpu
-    -//tests:api_test_gpu
-    -//tests:ann_test_gpu
-    -//tests:experimental_rnn_test_gpu
-    -//tests:lax_vmap_test_gpu
-    -//tests:qdwh_test_gpu
-    -//tests:scaled_dot_test_gpu
-    -//tests:scipy_spatial_test_gpu
-    -//tests:shape_poly_test_gpu
-    -//tests:sparsify_test_gpu
-    -//tests:lax_numpy_reducers_test_gpu
-    -//tests:scipy_optimize_test_gpu
-    #TODO(mgaonka-amd) re-enable these tests once this issue is fixed.
-    -//tests:lax_numpy_einsum_test_gpu
-    -//tests:lax_scipy_test_gpu
-    -//tests:sparse_test_gpu
-    -//tests:sparse_bcoo_bcsr_test_gpu
-    -//tests:svd_test_gpu
-    -//tests:eigh_test_gpu
-    -//tests:image_test_gpu
-)
+# JAXCI_GATE_TARGETS_FILE selects which Bazel target pattern file to use.
+# Defaults to the full CI suite; set to build/rocm/ci_blocking_test_targets.txt
+# for the PR blocking gate.
+TARGETS_FILE="${JAXCI_GATE_TARGETS_FILE:-build/rocm/ci_test_targets.txt}"
 
+EXTRA_BAZEL_ARGS=()
 for arg in "$@"; do
-    if [[ "$arg" == "--config=multi_gpu" ]]; then
-        TAG_FILTERS="${TAG_FILTERS},multiaccelerator"
+    [[ -z "${arg}" ]] && continue
+    if [[ "${arg}" == "--config=multi_gpu" ]]; then
+        TAG_FILTERS="jax_test_gpu,${TAG_FILTERS},multiaccelerator"
     fi
-    if [[ "$arg" == "--config=single_gpu" ]]; then
-        TAG_FILTERS="${TAG_FILTERS},gpu,-multiaccelerator"
+    if [[ "${arg}" == "--config=single_gpu" ]]; then
+        TAG_FILTERS="${TAG_FILTERS},-multiaccelerator"
     fi
-    if [[ "$arg" == "--//jax:build_jaxlib=false" ]]; then
-        # tests to ignore for pre-built plugin wheels
-        TESTS_TO_IGNORE+=(
-            -//tests:buffer_callback_test_gpu
-        )
+    if [[ "${arg}" == "--repo_env=HERMETIC_PYTHON_VERSION="* ]]; then
+        JAXCI_HERMETIC_PYTHON_VERSION="${arg#--repo_env=HERMETIC_PYTHON_VERSION=}"
+        continue
     fi
+    EXTRA_BAZEL_ARGS+=("${arg}")
 done
 
-TEST_ARTIFACTS_DIR="test-artifacts"
+if [[ "${JAXCI_HERMETIC_PYTHON_VERSION}" == *t ]]; then
+    JAXCI_HERMETIC_PYTHON_VERSION="${JAXCI_HERMETIC_PYTHON_VERSION%t}"
+    FREETHREADED_FLAG_VALUE="yes"
+else
+    FREETHREADED_FLAG_VALUE="no"
+fi
+
+TEST_ARTIFACTS_DIR="$JAXCI_TEST_ARTIFACTS_DIR"
 mkdir -p "$TEST_ARTIFACTS_DIR"
+
+# Point ROCM_PATH at the local TheRock installation. Tests find ROCm through
+# their runfiles, so they need no LD_LIBRARY_PATH.
+ROCM_SDK_FLAGS=()
+if command -v rocm-sdk >/dev/null 2>&1; then
+    ROCM_SDK_ROOT="$(rocm-sdk path --root)"
+    ROCM_SDK_FLAGS=(
+        "--repo_env=ROCM_PATH=${ROCM_SDK_ROOT}"
+    )
+fi
 echo "::endgroup::" >&2
 
 echo "::group::Bazel ROCm RBE tests" >&2
 bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --config=rocm_clang_hermetic \
+    --config=rocm_rbe \
     --config=rocm_rbe_dynamic \
-    $OVERRIDE_XLA_REPO \
+    "${OVERRIDE_XLA_REPO[@]}" \
+    "--repo_env=HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION}" \
+    "--@rules_python//python/config_settings:py_freethreaded=${FREETHREADED_FLAG_VALUE}" \
+    "--action_env=JAX_ENABLE_X64=${JAXCI_ENABLE_X64}" \
     --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
     --test_output=errors \
     --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
     --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-    --build_tag_filters=${TAG_FILTERS} \
-    --test_tag_filters=${TAG_FILTERS} \
+    "--build_tag_filters=${TAG_FILTERS}" \
+    "--test_tag_filters=${TAG_FILTERS}" \
     --remote_download_regex='.*test\.xml$' \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950" \
     --color=yes \
-    $@ \
-    --spawn_strategy=local \
-    -- \
-    //tests:gpu_tests \
-    //tests:backend_independent_tests \
-    //tests/pallas:gpu_tests \
-    //tests/pallas:backend_independent_tests \
-    //jaxlib/tools:check_gpu_wheel_sources_test \
-    "${TESTS_TO_IGNORE[@]}" || bazel_retval=$?
+    "${ROCM_SDK_FLAGS[@]}" \
+    "${EXTRA_BAZEL_ARGS[@]}" \
+    --target_pattern_file="${TARGETS_FILE}" || bazel_retval=$?
 echo "::endgroup::" >&2
 
 echo "::group::Cleanup" >&2

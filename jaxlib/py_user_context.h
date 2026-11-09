@@ -21,8 +21,8 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
-#include "llvm/Support/ExtensibleRTTI.h"
 #include "jaxlib/traceback.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/ifrt/user_context.h"
 
 namespace jax {
@@ -33,7 +33,7 @@ namespace jax {
 //
 // All methods are thread-safe.
 class PyUserContext
-    : public llvm::RTTIExtends<PyUserContext, xla::ifrt::UserContext> {
+    : public xla::ifrt::RTTIExtends<PyUserContext, xla::ifrt::UserContext> {
  public:
   // Creates a `PyUserContext` from a given Python traceback. If `traceback` is
   // `nullopt`, returns `nullptr`.

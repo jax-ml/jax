@@ -26,11 +26,9 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/ffi_helpers.h"
-#include "jaxlib/gpu/ffi_wrapper.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/handle_pool.h"
 #include "jaxlib/gpu/vendor.h"
-#include "jaxlib/kernel_helpers.h"
 #include "xla/ffi/api/ffi.h"
 
 #define JAX_FFI_RETURN_IF_GPU_ERROR(...) \
@@ -143,352 +141,609 @@ absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
   return c;
 }
 
+inline absl::StatusOr<gpuDataType> SparseDataType(ffi::DataType dataType) {
+  switch (dataType) {
+    case ffi::F16:
+      return GPU_R_16F;
+    case ffi::F32:
+      return GPU_R_32F;
+    case ffi::C64:
+      return GPU_C_32F;
+    case ffi::F64:
+      return GPU_R_64F;
+    case ffi::C128:
+      return GPU_C_64F;
+#ifdef JAX_GPU_CUDA
+    case ffi::S8:
+      return CUDA_R_8I;
+    case ffi::U8:
+      return CUDA_R_8U;
+    case ffi::S32:
+      return CUDA_R_32I;
+    case ffi::U32:
+      return CUDA_R_32U;
+    case ffi::BF16:
+      return CUDA_R_16BF;
+#endif  // JAX_GPU_CUDA
+    default:
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Unsupported sparse data dtype %s", absl::FormatStreamed(dataType)));
+  }
+}
+
+inline absl::StatusOr<gpusparseIndexType_t> SparseIndexType(
+    ffi::DataType dataType) {
+  switch (dataType) {
+    case ffi::U16:
+      return GPUSPARSE_INDEX_16U;
+    case ffi::S32:
+      return GPUSPARSE_INDEX_32I;
+    case ffi::S64:
+      return GPUSPARSE_INDEX_64I;
+    default:
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Unsupported sparse index dtype %s", absl::FormatStreamed(dataType)));
+  }
+}
+
 // CsrToDense: Convert CSR matrix to dense matrix
 
-static absl::Status CsrToDense_(gpuStream_t stream, void** buffers,
-                                const char* opaque, size_t opaque_len) {
-  auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const SparseMatDescriptor& d = **s;
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
+static ffi::Error CsrToDenseFfiV2(gpuStream_t stream,
+                                  ffi::ScratchAllocator scratch,
+                                  ffi::AnyBuffer csr_values,
+                                  ffi::AnyBuffer csr_col_ind,
+                                  ffi::AnyBuffer csr_row_offsets,
+                                  ffi::Result<ffi::AnyBuffer> out) {
+  FFI_ASSIGN_OR_RETURN(gpuDataType value_type,
+                       SparseDataType(csr_values.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpusparseIndexType_t index_type,
+                       SparseIndexType(csr_col_ind.element_type()));
+  int64_t rows = out->dimensions()[0];
+  int64_t cols = out->dimensions()[1];
+  int64_t nnz = csr_values.dimensions()[0];
+
+  FFI_ASSIGN_OR_RETURN(auto handle, SparseHandlePool::Borrow(stream));
 
   gpusparseSpMatDescr_t mat_a = 0;
   gpusparseDnMatDescr_t mat_b = 0;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseCreateCsr(&mat_a, d.rows, d.cols, d.nnz,
-                         /*csrRowOffsets=*/buffers[2],
-                         /*csrColInd=*/buffers[1],
-                         /*csrValues=*/buffers[0], d.index_type, d.index_type,
-                         GPUSPARSE_INDEX_BASE_ZERO, d.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
-      &mat_b, d.rows, d.cols,
-      /*ld=*/d.cols, buffers[3], d.value_type, GPUSPARSE_ORDER_ROW)));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateCsr(
+      &mat_a, rows, cols, nnz, csr_row_offsets.untyped_data(),
+      csr_col_ind.untyped_data(), csr_values.untyped_data(), index_type,
+      index_type, GPUSPARSE_INDEX_BASE_ZERO, value_type));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateDnMat(
+      &mat_b, rows, cols,
+      /*ld=*/cols, out->untyped_data(), value_type, GPUSPARSE_ORDER_ROW));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseSparseToDense(handle.get(), mat_a, mat_b,
-                             GPUSPARSE_SPARSETODENSE_ALG_DEFAULT, buffers[4])));
+  size_t buffer_size = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseSparseToDense_bufferSize(
+      handle.get(), mat_a, mat_b, GPUSPARSE_SPARSETODENSE_ALG_DEFAULT,
+      &buffer_size));
+  auto maybe_workspace = scratch.Allocate(buffer_size);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error::Internal("Unable to allocate workspace for csr_todense");
+  }
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
-  return absl::OkStatus();
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseSparseToDense(
+      handle.get(), mat_a, mat_b, GPUSPARSE_SPARSETODENSE_ALG_DEFAULT,
+      maybe_workspace.value()));
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroySpMat(mat_a));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroyDnMat(mat_b));
+  return ffi::Error::Success();
 }
 
-JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrToDenseFfi, CsrToDense_);
+XLA_FFI_DEFINE_HANDLER_SYMBOL(kCsrToDense, CsrToDenseFfiV2,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Arg<ffi::AnyBuffer>()  // csr_values
+                                  .Arg<ffi::AnyBuffer>()  // csr_col_ind
+                                  .Arg<ffi::AnyBuffer>()  // csr_row_offsets
+                                  .Ret<ffi::AnyBuffer>()  // out
+);
 
 // CsrFromDense: Convert dense matrix to CSR matrix
 
-static absl::Status CsrFromDense_(gpuStream_t stream, void** buffers,
-                                  const char* opaque, size_t opaque_len) {
-  auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const SparseMatDescriptor& d = **s;
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
+static ffi::Error CsrFromDenseFfiV2(
+    gpuStream_t stream, ffi::ScratchAllocator scratch, ffi::AnyBuffer dense,
+    ffi::Result<ffi::AnyBuffer> csr_values,
+    ffi::Result<ffi::AnyBuffer> csr_col_ind,
+    ffi::Result<ffi::AnyBuffer> csr_row_offsets) {
+  FFI_ASSIGN_OR_RETURN(gpuDataType value_type,
+                       SparseDataType(dense.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpusparseIndexType_t index_type,
+                       SparseIndexType(csr_col_ind->element_type()));
+  int64_t rows = dense.dimensions()[0];
+  int64_t cols = dense.dimensions()[1];
+  int64_t nnz = csr_values->dimensions()[0];
+
+  FFI_ASSIGN_OR_RETURN(auto handle, SparseHandlePool::Borrow(stream));
 
   gpusparseDnMatDescr_t mat_a = 0;
   gpusparseSpMatDescr_t mat_b = 0;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
-      &mat_a, d.rows, d.cols,
-      /*ld=*/d.cols, buffers[0], d.value_type, GPUSPARSE_ORDER_ROW)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseCreateCsr(&mat_b, d.rows, d.cols, d.nnz,
-                         /*csrRowOffsets=*/buffers[3],
-                         /*csrColInd=*/buffers[2],
-                         /*csrValues=*/buffers[1], d.index_type, d.index_type,
-                         GPUSPARSE_INDEX_BASE_ZERO, d.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDenseToSparse_analysis(
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateDnMat(
+      &mat_a, rows, cols,
+      /*ld=*/cols, dense.untyped_data(), value_type, GPUSPARSE_ORDER_ROW));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateCsr(
+      &mat_b, rows, cols, nnz, csr_row_offsets->untyped_data(),
+      csr_col_ind->untyped_data(), csr_values->untyped_data(), index_type,
+      index_type, GPUSPARSE_INDEX_BASE_ZERO, value_type));
+
+  size_t buffer_size = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDenseToSparse_bufferSize(
       handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      buffers[4])));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDenseToSparse_convert(
+      &buffer_size));
+  auto maybe_workspace = scratch.Allocate(buffer_size);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error::Internal(
+        "Unable to allocate workspace for csr_fromdense");
+  }
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDenseToSparse_analysis(
       handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      buffers[4])));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_b)));
-  return absl::OkStatus();
+      maybe_workspace.value()));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDenseToSparse_convert(
+      handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
+      maybe_workspace.value()));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroyDnMat(mat_a));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroySpMat(mat_b));
+  return ffi::Error::Success();
 }
 
-JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrFromDenseFfi, CsrFromDense_);
+XLA_FFI_DEFINE_HANDLER_SYMBOL(kCsrFromDense, CsrFromDenseFfiV2,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Arg<ffi::AnyBuffer>()  // dense
+                                  .Ret<ffi::AnyBuffer>()  // csr_values
+                                  .Ret<ffi::AnyBuffer>()  // csr_col_ind
+                                  .Ret<ffi::AnyBuffer>()  // csr_row_offsets
+);
 
 // CsrMatvec: Product of CSR matrix and dense vector.
 
-static absl::Status CsrMatvec_(gpuStream_t stream, void** buffers,
-                               const char* opaque, size_t opaque_len) {
-  auto s = UnpackDescriptor<CsrMatvecDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const CsrMatvecDescriptor& d = **s;
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
+static ffi::Error CsrMatvecFfiV2(
+    gpuStream_t stream, ffi::ScratchAllocator scratch,
+    ffi::AnyBuffer csr_values, ffi::AnyBuffer csr_col_ind,
+    ffi::AnyBuffer csr_row_offsets, ffi::AnyBuffer x,
+    ffi::Result<ffi::AnyBuffer> y, bool transpose) {
+  FFI_ASSIGN_OR_RETURN(gpuDataType value_type,
+                       SparseDataType(csr_values.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpusparseIndexType_t index_type,
+                       SparseIndexType(csr_col_ind.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpuDataType x_type, SparseDataType(x.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpuDataType y_type, SparseDataType(y->element_type()));
+  int64_t nnz = csr_values.dimensions()[0];
+  int64_t x_size = x.dimensions()[0];
+  int64_t y_size = y->dimensions()[0];
+  int64_t rows = transpose ? x_size : y_size;
+  int64_t cols = transpose ? y_size : x_size;
+  gpusparseOperation_t op = transpose ? GPUSPARSE_OPERATION_TRANSPOSE
+                                      : GPUSPARSE_OPERATION_NON_TRANSPOSE;
 
-  void* csr_values = buffers[0];
-  void* csr_col_ind = buffers[1];
-  void* csr_row_offsets = buffers[2];
-  void* xbuf = buffers[3];
-  void* ybuf = buffers[4];
-  void* buf = buffers[5];
+  FFI_ASSIGN_OR_RETURN(auto handle, SparseHandlePool::Borrow(stream));
 
   // TODO(jakevdp): alpha and beta should be user-specifiable, but constants
   // are sufficient for basic matvec operations.
   // Note that, contrary to cusparse docs, alpha and beta must be host pointers
   // or else the operation will segfault.
-  JAX_ASSIGN_OR_RETURN(SparseConst alpha, ConstOne(d.y.type));
-  SparseConst beta = ConstZero(d.y.type);
+  FFI_ASSIGN_OR_RETURN(SparseConst alpha, ConstOne(y_type));
+  SparseConst beta = ConstZero(y_type);
 
   gpusparseSpMatDescr_t mat_a = 0;
   gpusparseDnVecDescr_t vec_x = 0;
   gpusparseDnVecDescr_t vec_y = 0;
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCsr(
-      &mat_a, d.A.rows, d.A.cols, d.A.nnz, csr_row_offsets, csr_col_ind,
-      csr_values, d.A.index_type, d.A.index_type, GPUSPARSE_INDEX_BASE_ZERO,
-      d.A.value_type)));
-  JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(gpusparseCreateDnVec(&vec_x, d.x.size, xbuf, d.x.type)));
-  JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(gpusparseCreateDnVec(&vec_y, d.y.size, ybuf, d.y.type)));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateCsr(
+      &mat_a, rows, cols, nnz, csr_row_offsets.untyped_data(),
+      csr_col_ind.untyped_data(), csr_values.untyped_data(), index_type,
+      index_type, GPUSPARSE_INDEX_BASE_ZERO, value_type));
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      gpusparseCreateDnVec(&vec_x, x_size, x.untyped_data(), x_type));
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      gpusparseCreateDnVec(&vec_y, y_size, y->untyped_data(), y_type));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x, &beta, vec_y,
-                    d.y.type, GPUSPARSE_SPMV_CSR_ALG, buf)));
+  size_t buffer_size = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseSpMV_bufferSize(
+      handle.get(), op, &alpha, mat_a, vec_x, &beta, vec_y, y_type,
+      GPUSPARSE_SPMV_CSR_ALG, &buffer_size));
+  auto maybe_workspace = scratch.Allocate(buffer_size);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error::Internal("Unable to allocate workspace for csr_matvec");
+  }
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_x)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_y)));
-  return absl::OkStatus();
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      gpusparseSpMV(handle.get(), op, &alpha, mat_a, vec_x, &beta, vec_y,
+                    y_type, GPUSPARSE_SPMV_CSR_ALG, maybe_workspace.value()));
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroySpMat(mat_a));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroyDnVec(vec_x));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroyDnVec(vec_y));
+  return ffi::Error::Success();
 }
 
-JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrMatvecFfi, CsrMatvec_);
+XLA_FFI_DEFINE_HANDLER_SYMBOL(kCsrMatvec, CsrMatvecFfiV2,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Arg<ffi::AnyBuffer>()  // csr_values
+                                  .Arg<ffi::AnyBuffer>()  // csr_col_ind
+                                  .Arg<ffi::AnyBuffer>()  // csr_row_offsets
+                                  .Arg<ffi::AnyBuffer>()  // x
+                                  .Ret<ffi::AnyBuffer>()  // y
+                                  .Attr<bool>("transpose"));
 
 // CsrMatmat: Product of CSR matrix and dense matrix.
 
-static absl::Status CsrMatmat_(gpuStream_t stream, void** buffers,
-                               const char* opaque, size_t opaque_len) {
-  auto s = UnpackDescriptor<CsrMatmatDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const CsrMatmatDescriptor& d = **s;
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
+static ffi::Error CsrMatmatFfiV2(
+    gpuStream_t stream, ffi::ScratchAllocator scratch,
+    ffi::AnyBuffer csr_values, ffi::AnyBuffer csr_col_ind,
+    ffi::AnyBuffer csr_row_offsets, ffi::AnyBuffer B,
+    ffi::Result<ffi::AnyBuffer> C, bool transpose) {
+  FFI_ASSIGN_OR_RETURN(gpuDataType value_type,
+                       SparseDataType(csr_values.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpusparseIndexType_t index_type,
+                       SparseIndexType(csr_col_ind.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpuDataType B_type, SparseDataType(B.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpuDataType C_type, SparseDataType(C->element_type()));
+  int64_t nnz = csr_values.dimensions()[0];
+  int64_t B_rows = B.dimensions()[0];
+  int64_t B_cols = B.dimensions()[1];
+  int64_t C_rows = C->dimensions()[0];
+  int64_t C_cols = C->dimensions()[1];
+  int64_t rows = transpose ? B_rows : C_rows;
+  int64_t cols = transpose ? C_rows : B_rows;
+  gpusparseOperation_t op_A = transpose ? GPUSPARSE_OPERATION_TRANSPOSE
+                                        : GPUSPARSE_OPERATION_NON_TRANSPOSE;
 
-  void* csr_values = buffers[0];
-  void* csr_col_ind = buffers[1];
-  void* csr_row_offsets = buffers[2];
-  void* Bbuf = buffers[3];
-  void* Cbuf = buffers[4];
-  void* buf = buffers[5];
+  FFI_ASSIGN_OR_RETURN(auto handle, SparseHandlePool::Borrow(stream));
 
   // TODO(jakevdp): alpha and beta should be user-specifiable, but constants
   // are sufficient for basic matvec operations.
   // Note that, contrary to cusparse docs, alpha and beta must be host pointers
   // or else the operation will segfault.
-  JAX_ASSIGN_OR_RETURN(SparseConst alpha, ConstOne(d.C.type));
-  SparseConst beta = ConstZero(d.C.type);
+  FFI_ASSIGN_OR_RETURN(SparseConst alpha, ConstOne(C_type));
+  SparseConst beta = ConstZero(C_type);
 
   gpusparseSpMatDescr_t mat_a = 0;
   gpusparseDnMatDescr_t mat_b = 0;
   gpusparseDnMatDescr_t mat_c = 0;
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCsr(
-      &mat_a, d.A.rows, d.A.cols, d.A.nnz, csr_row_offsets, csr_col_ind,
-      csr_values, d.A.index_type, d.A.index_type, GPUSPARSE_INDEX_BASE_ZERO,
-      d.A.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
-      &mat_b, d.B.rows, d.B.cols,
-      /*ld=*/d.B.cols, Bbuf, d.B.type, GPUSPARSE_ORDER_ROW)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
-      &mat_c, d.C.rows, d.C.cols,
-      /*ld=*/d.C.cols, Cbuf, d.C.type, GPUSPARSE_ORDER_ROW)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseSpMM(
-      handle.get(), d.op_A, /*opB=*/GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-      mat_a, mat_b, &beta, mat_c, d.C.type, GPUSPARSE_SPMM_CSR_ALG, buf)));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateCsr(
+      &mat_a, rows, cols, nnz, csr_row_offsets.untyped_data(),
+      csr_col_ind.untyped_data(), csr_values.untyped_data(), index_type,
+      index_type, GPUSPARSE_INDEX_BASE_ZERO, value_type));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateDnMat(
+      &mat_b, B_rows, B_cols,
+      /*ld=*/B_cols, B.untyped_data(), B_type, GPUSPARSE_ORDER_ROW));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateDnMat(
+      &mat_c, C_rows, C_cols,
+      /*ld=*/C_cols, C->untyped_data(), C_type, GPUSPARSE_ORDER_ROW));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_c)));
-  return absl::OkStatus();
+  size_t buffer_size = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseSpMM_bufferSize(
+      handle.get(), op_A, /*opB=*/GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
+      mat_a, mat_b, &beta, mat_c, C_type, GPUSPARSE_SPMM_CSR_ALG,
+      &buffer_size));
+  auto maybe_workspace = scratch.Allocate(buffer_size);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error::Internal("Unable to allocate workspace for csr_matmat");
+  }
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseSpMM(
+      handle.get(), op_A, /*opB=*/GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
+      mat_a, mat_b, &beta, mat_c, C_type, GPUSPARSE_SPMM_CSR_ALG,
+      maybe_workspace.value()));
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroySpMat(mat_a));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroyDnMat(mat_b));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroyDnMat(mat_c));
+  return ffi::Error::Success();
 }
 
-JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrMatmatFfi, CsrMatmat_);
+XLA_FFI_DEFINE_HANDLER_SYMBOL(kCsrMatmat, CsrMatmatFfiV2,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Arg<ffi::AnyBuffer>()  // csr_values
+                                  .Arg<ffi::AnyBuffer>()  // csr_col_ind
+                                  .Arg<ffi::AnyBuffer>()  // csr_row_offsets
+                                  .Arg<ffi::AnyBuffer>()  // B
+                                  .Ret<ffi::AnyBuffer>()  // C
+                                  .Attr<bool>("transpose"));
 
 // CooToDense: Convert COO matrix to dense matrix
 
-static absl::Status CooToDense_(gpuStream_t stream, void** buffers,
-                                const char* opaque, size_t opaque_len) {
-  auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const SparseMatDescriptor& d = **s;
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
+static ffi::Error CooToDenseFfiV2(gpuStream_t stream,
+                                  ffi::ScratchAllocator scratch,
+                                  ffi::AnyBuffer coo_values,
+                                  ffi::AnyBuffer coo_row_ind,
+                                  ffi::AnyBuffer coo_col_ind,
+                                  ffi::Result<ffi::AnyBuffer> out) {
+  FFI_ASSIGN_OR_RETURN(gpuDataType value_type,
+                       SparseDataType(coo_values.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpusparseIndexType_t index_type,
+                       SparseIndexType(coo_row_ind.element_type()));
+  int64_t rows = out->dimensions()[0];
+  int64_t cols = out->dimensions()[1];
+  int64_t nnz = coo_values.dimensions()[0];
+
+  FFI_ASSIGN_OR_RETURN(auto handle, SparseHandlePool::Borrow(stream));
 
   gpusparseSpMatDescr_t mat_a = 0;
   gpusparseDnMatDescr_t mat_b = 0;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseCreateCoo(&mat_a, d.rows, d.cols, d.nnz,
-                         /*cooRowInd=*/buffers[1],
-                         /*cooColInd=*/buffers[2],
-                         /*cooValues=*/buffers[0], d.index_type,
-                         GPUSPARSE_INDEX_BASE_ZERO, d.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
-      &mat_b, d.rows, d.cols,
-      /*ld=*/d.cols, buffers[3], d.value_type, GPUSPARSE_ORDER_ROW)));
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      gpusparseCreateCoo(&mat_a, rows, cols, nnz, coo_row_ind.untyped_data(),
+                         coo_col_ind.untyped_data(), coo_values.untyped_data(),
+                         index_type, GPUSPARSE_INDEX_BASE_ZERO, value_type));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateDnMat(
+      &mat_b, rows, cols,
+      /*ld=*/cols, out->untyped_data(), value_type, GPUSPARSE_ORDER_ROW));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseSparseToDense(handle.get(), mat_a, mat_b,
-                             GPUSPARSE_SPARSETODENSE_ALG_DEFAULT, buffers[4])));
+  size_t buffer_size = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseSparseToDense_bufferSize(
+      handle.get(), mat_a, mat_b, GPUSPARSE_SPARSETODENSE_ALG_DEFAULT,
+      &buffer_size));
+  auto maybe_workspace = scratch.Allocate(buffer_size);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error::Internal("Unable to allocate workspace for coo_todense");
+  }
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
-  return absl::OkStatus();
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseSparseToDense(
+      handle.get(), mat_a, mat_b, GPUSPARSE_SPARSETODENSE_ALG_DEFAULT,
+      maybe_workspace.value()));
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroySpMat(mat_a));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroyDnMat(mat_b));
+  return ffi::Error::Success();
 }
 
-JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooToDenseFfi, CooToDense_);
+XLA_FFI_DEFINE_HANDLER_SYMBOL(kCooToDense, CooToDenseFfiV2,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Arg<ffi::AnyBuffer>()  // coo_values
+                                  .Arg<ffi::AnyBuffer>()  // coo_row_ind
+                                  .Arg<ffi::AnyBuffer>()  // coo_col_ind
+                                  .Ret<ffi::AnyBuffer>()  // out
+);
 
 // CooFromDense: Convert dense matrix to COO matrix
 
-static absl::Status CooFromDense_(gpuStream_t stream, void** buffers,
-                                  const char* opaque, size_t opaque_len) {
-  auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const SparseMatDescriptor& d = **s;
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
+static ffi::Error CooFromDenseFfiV2(gpuStream_t stream,
+                                    ffi::ScratchAllocator scratch,
+                                    ffi::AnyBuffer dense,
+                                    ffi::Result<ffi::AnyBuffer> coo_values,
+                                    ffi::Result<ffi::AnyBuffer> coo_row_ind,
+                                    ffi::Result<ffi::AnyBuffer> coo_col_ind) {
+  FFI_ASSIGN_OR_RETURN(gpuDataType value_type,
+                       SparseDataType(dense.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpusparseIndexType_t index_type,
+                       SparseIndexType(coo_row_ind->element_type()));
+  int64_t rows = dense.dimensions()[0];
+  int64_t cols = dense.dimensions()[1];
+  int64_t nnz = coo_values->dimensions()[0];
+
+  FFI_ASSIGN_OR_RETURN(auto handle, SparseHandlePool::Borrow(stream));
 
   gpusparseDnMatDescr_t mat_a = 0;
   gpusparseSpMatDescr_t mat_b = 0;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
-      &mat_a, d.rows, d.cols,
-      /*ld=*/d.cols, buffers[0], d.value_type, GPUSPARSE_ORDER_ROW)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseCreateCoo(&mat_b, d.rows, d.cols, d.nnz,
-                         /*cooRowInd=*/buffers[2],
-                         /*cooColInd=*/buffers[3],
-                         /*cooValues=*/buffers[1], d.index_type,
-                         GPUSPARSE_INDEX_BASE_ZERO, d.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDenseToSparse_analysis(
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateDnMat(
+      &mat_a, rows, cols,
+      /*ld=*/cols, dense.untyped_data(), value_type, GPUSPARSE_ORDER_ROW));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateCoo(
+      &mat_b, rows, cols, nnz, coo_row_ind->untyped_data(),
+      coo_col_ind->untyped_data(), coo_values->untyped_data(), index_type,
+      GPUSPARSE_INDEX_BASE_ZERO, value_type));
+
+  size_t buffer_size = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDenseToSparse_bufferSize(
       handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      buffers[4])));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDenseToSparse_convert(
+      &buffer_size));
+  auto maybe_workspace = scratch.Allocate(buffer_size);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error::Internal(
+        "Unable to allocate workspace for coo_fromdense");
+  }
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDenseToSparse_analysis(
       handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      buffers[4])));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_b)));
-  return absl::OkStatus();
+      maybe_workspace.value()));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDenseToSparse_convert(
+      handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
+      maybe_workspace.value()));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroyDnMat(mat_a));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroySpMat(mat_b));
+  return ffi::Error::Success();
 }
 
-JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooFromDenseFfi, CooFromDense_);
+XLA_FFI_DEFINE_HANDLER_SYMBOL(kCooFromDense, CooFromDenseFfiV2,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Arg<ffi::AnyBuffer>()  // dense
+                                  .Ret<ffi::AnyBuffer>()  // coo_values
+                                  .Ret<ffi::AnyBuffer>()  // coo_row_ind
+                                  .Ret<ffi::AnyBuffer>()  // coo_col_ind
+);
 
 // CooMatvec: Product of COO matrix and dense vector.
 
-static absl::Status CooMatvec_(gpuStream_t stream, void** buffers,
-                               const char* opaque, size_t opaque_len) {
-  auto s = UnpackDescriptor<CooMatvecDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const CooMatvecDescriptor& d = **s;
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
+static ffi::Error CooMatvecFfiV2(gpuStream_t stream,
+                                 ffi::ScratchAllocator scratch,
+                                 ffi::AnyBuffer coo_values,
+                                 ffi::AnyBuffer coo_row_ind,
+                                 ffi::AnyBuffer coo_col_ind, ffi::AnyBuffer x,
+                                 ffi::Result<ffi::AnyBuffer> y,
+                                 bool transpose) {
+  FFI_ASSIGN_OR_RETURN(gpuDataType value_type,
+                       SparseDataType(coo_values.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpusparseIndexType_t index_type,
+                       SparseIndexType(coo_row_ind.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpuDataType x_type, SparseDataType(x.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpuDataType y_type, SparseDataType(y->element_type()));
+  int64_t nnz = coo_values.dimensions()[0];
+  int64_t x_size = x.dimensions()[0];
+  int64_t y_size = y->dimensions()[0];
+  int64_t rows = transpose ? x_size : y_size;
+  int64_t cols = transpose ? y_size : x_size;
+  gpusparseOperation_t op = transpose ? GPUSPARSE_OPERATION_TRANSPOSE
+                                      : GPUSPARSE_OPERATION_NON_TRANSPOSE;
 
-  void* coo_values = buffers[0];
-  void* coo_row_ind = buffers[1];
-  void* coo_col_ind = buffers[2];
-  void* xbuf = buffers[3];
-  void* ybuf = buffers[4];
-  void* buf = buffers[5];
+  FFI_ASSIGN_OR_RETURN(auto handle, SparseHandlePool::Borrow(stream));
 
   // TODO(jakevdp): alpha and beta should be user-specifiable, but constants
   // are sufficient for basic matvec operations.
   // Note that, contrary to cusparse docs, alpha and beta must be host pointers
   // or else the operation will segfault.
-  JAX_ASSIGN_OR_RETURN(SparseConst alpha, ConstOne(d.y.type));
-  SparseConst beta = ConstZero(d.y.type);
+  FFI_ASSIGN_OR_RETURN(SparseConst alpha, ConstOne(y_type));
+  SparseConst beta = ConstZero(y_type);
 
   gpusparseSpMatDescr_t mat_a = 0;
   gpusparseDnVecDescr_t vec_x = 0;
   gpusparseDnVecDescr_t vec_y = 0;
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCoo(
-      &mat_a, d.A.rows, d.A.cols, d.A.nnz, coo_row_ind, coo_col_ind, coo_values,
-      d.A.index_type, GPUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
-  JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(gpusparseCreateDnVec(&vec_x, d.x.size, xbuf, d.x.type)));
-  JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(gpusparseCreateDnVec(&vec_y, d.y.size, ybuf, d.y.type)));
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      gpusparseCreateCoo(&mat_a, rows, cols, nnz, coo_row_ind.untyped_data(),
+                         coo_col_ind.untyped_data(), coo_values.untyped_data(),
+                         index_type, GPUSPARSE_INDEX_BASE_ZERO, value_type));
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      gpusparseCreateDnVec(&vec_x, x_size, x.untyped_data(), x_type));
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      gpusparseCreateDnVec(&vec_y, y_size, y->untyped_data(), y_type));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x, &beta, vec_y,
-                    d.y.type, GPUSPARSE_SPMV_COO_ALG, buf)));
+  size_t buffer_size = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseSpMV_bufferSize(
+      handle.get(), op, &alpha, mat_a, vec_x, &beta, vec_y, y_type,
+      GPUSPARSE_SPMV_COO_ALG, &buffer_size));
+  auto maybe_workspace = scratch.Allocate(buffer_size);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error::Internal("Unable to allocate workspace for coo_matvec");
+  }
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_x)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_y)));
-  return absl::OkStatus();
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      gpusparseSpMV(handle.get(), op, &alpha, mat_a, vec_x, &beta, vec_y,
+                    y_type, GPUSPARSE_SPMV_COO_ALG, maybe_workspace.value()));
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroySpMat(mat_a));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroyDnVec(vec_x));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroyDnVec(vec_y));
+  return ffi::Error::Success();
 }
 
-JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooMatvecFfi, CooMatvec_);
+XLA_FFI_DEFINE_HANDLER_SYMBOL(kCooMatvec, CooMatvecFfiV2,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Arg<ffi::AnyBuffer>()  // coo_values
+                                  .Arg<ffi::AnyBuffer>()  // coo_row_ind
+                                  .Arg<ffi::AnyBuffer>()  // coo_col_ind
+                                  .Arg<ffi::AnyBuffer>()  // x
+                                  .Ret<ffi::AnyBuffer>()  // y
+                                  .Attr<bool>("transpose"));
 
 // CooMatmat: Product of COO matrix and dense matrix.
 
-static absl::Status CooMatmat_(gpuStream_t stream, void** buffers,
-                               const char* opaque, size_t opaque_len) {
-  auto s = UnpackDescriptor<CooMatmatDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const CooMatmatDescriptor& d = **s;
-  auto h = SparseHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
+static ffi::Error CooMatmatFfiV2(gpuStream_t stream,
+                                 ffi::ScratchAllocator scratch,
+                                 ffi::AnyBuffer coo_values,
+                                 ffi::AnyBuffer coo_row_ind,
+                                 ffi::AnyBuffer coo_col_ind, ffi::AnyBuffer B,
+                                 ffi::Result<ffi::AnyBuffer> C,
+                                 bool transpose) {
+  FFI_ASSIGN_OR_RETURN(gpuDataType value_type,
+                       SparseDataType(coo_values.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpusparseIndexType_t index_type,
+                       SparseIndexType(coo_row_ind.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpuDataType B_type, SparseDataType(B.element_type()));
+  FFI_ASSIGN_OR_RETURN(gpuDataType C_type, SparseDataType(C->element_type()));
+  int64_t batch_count = 1;
+  int64_t B_rows, B_cols, C_rows, C_cols;
+  if (B.dimensions().size() == 2) {
+    B_rows = B.dimensions()[0];
+    B_cols = B.dimensions()[1];
+    C_rows = C->dimensions()[0];
+    C_cols = C->dimensions()[1];
+  } else if (B.dimensions().size() == 3) {
+    batch_count = B.dimensions()[0];
+    B_rows = B.dimensions()[1];
+    B_cols = B.dimensions()[2];
+    C_rows = C->dimensions()[1];
+    C_cols = C->dimensions()[2];
+  } else {
+    return ffi::Error::InvalidArgument(absl::StrFormat(
+        "Unsupported rank %d for B in coo_matmat", B.dimensions().size()));
+  }
+  int64_t nnz = coo_values.element_count() / batch_count;
+  int64_t rows = transpose ? B_rows : C_rows;
+  int64_t cols = transpose ? C_rows : B_rows;
+  gpusparseOperation_t op_A = transpose ? GPUSPARSE_OPERATION_TRANSPOSE
+                                        : GPUSPARSE_OPERATION_NON_TRANSPOSE;
+  int64_t lhs_batch_stride = nnz;
+  int64_t rhs_batch_stride = B_rows * B_cols;
+  int64_t c_batch_stride = C_rows * C_cols;
 
-  void* coo_values = buffers[0];
-  void* coo_row_ind = buffers[1];
-  void* coo_col_ind = buffers[2];
-  void* Bbuf = buffers[3];
-  void* Cbuf = buffers[4];
-  void* buf = buffers[5];
+  FFI_ASSIGN_OR_RETURN(auto handle, SparseHandlePool::Borrow(stream));
 
   // TODO(jakevdp): alpha and beta should be user-specifiable, but constants
   // are sufficient for basic matvec operations.
   // Note that, contrary to cusparse docs, alpha and beta must be host pointers
   // or else the operation will segfault.
-  JAX_ASSIGN_OR_RETURN(SparseConst alpha, ConstOne(d.C.type));
-  SparseConst beta = ConstZero(d.C.type);
+  FFI_ASSIGN_OR_RETURN(SparseConst alpha, ConstOne(C_type));
+  SparseConst beta = ConstZero(C_type);
 
   gpusparseSpMatDescr_t mat_a = 0;
   gpusparseDnMatDescr_t mat_b = 0;
   gpusparseDnMatDescr_t mat_c = 0;
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCoo(
-      &mat_a, d.A.rows, d.A.cols, d.A.nnz, coo_row_ind, coo_col_ind, coo_values,
-      d.A.index_type, GPUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseCooSetStridedBatch(mat_a, /*batchCount=*/d.A.batch_count,
-                                  /*batchStride=*/d.A.batch_stride)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
-      &mat_b, d.B.rows, d.B.cols,
-      /*ld=*/d.B.cols, Bbuf, d.B.type, GPUSPARSE_ORDER_ROW)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseDnMatSetStridedBatch(mat_b, /*batchCount=*/d.B.batch_count,
-                                    /*batchStride=*/d.B.batch_stride)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
-      &mat_c, d.C.rows, d.C.cols,
-      /*ld=*/d.C.cols, Cbuf, d.C.type, GPUSPARSE_ORDER_ROW)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpusparseDnMatSetStridedBatch(mat_c, /*batchCount=*/d.C.batch_count,
-                                    /*batchStride=*/d.C.batch_stride)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseSpMM(
-      handle.get(), d.op_A, /*opB=*/GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-      mat_a, mat_b, &beta, mat_c, d.C.type, GPUSPARSE_SPMM_COO_ALG, buf)));
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      gpusparseCreateCoo(&mat_a, rows, cols, nnz, coo_row_ind.untyped_data(),
+                         coo_col_ind.untyped_data(), coo_values.untyped_data(),
+                         index_type, GPUSPARSE_INDEX_BASE_ZERO, value_type));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCooSetStridedBatch(
+      mat_a, /*batchCount=*/batch_count, /*batchStride=*/lhs_batch_stride));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateDnMat(
+      &mat_b, B_rows, B_cols,
+      /*ld=*/B_cols, B.untyped_data(), B_type, GPUSPARSE_ORDER_ROW));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDnMatSetStridedBatch(
+      mat_b, /*batchCount=*/batch_count, /*batchStride=*/rhs_batch_stride));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseCreateDnMat(
+      &mat_c, C_rows, C_cols,
+      /*ld=*/C_cols, C->untyped_data(), C_type, GPUSPARSE_ORDER_ROW));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDnMatSetStridedBatch(
+      mat_c, /*batchCount=*/batch_count, /*batchStride=*/c_batch_stride));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_c)));
-  return absl::OkStatus();
+  size_t buffer_size = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseSpMM_bufferSize(
+      handle.get(), op_A, /*opB=*/GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
+      mat_a, mat_b, &beta, mat_c, C_type, GPUSPARSE_SPMM_COO_ALG,
+      &buffer_size));
+  auto maybe_workspace = scratch.Allocate(buffer_size);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error::Internal("Unable to allocate workspace for coo_matmat");
+  }
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseSpMM(
+      handle.get(), op_A, /*opB=*/GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
+      mat_a, mat_b, &beta, mat_c, C_type, GPUSPARSE_SPMM_COO_ALG,
+      maybe_workspace.value()));
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroySpMat(mat_a));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroyDnMat(mat_b));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpusparseDestroyDnMat(mat_c));
+  return ffi::Error::Success();
 }
 
-JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooMatmatFfi, CooMatmat_);
+XLA_FFI_DEFINE_HANDLER_SYMBOL(kCooMatmat, CooMatmatFfiV2,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Arg<ffi::AnyBuffer>()  // coo_values
+                                  .Arg<ffi::AnyBuffer>()  // coo_row_ind
+                                  .Arg<ffi::AnyBuffer>()  // coo_col_ind
+                                  .Arg<ffi::AnyBuffer>()  // B
+                                  .Ret<ffi::AnyBuffer>()  // C
+                                  .Attr<bool>("transpose"));
 
 template <typename T, typename BufferSizeF, typename KernelF>
 ffi::Error Gtsv2Impl(BufferSizeF getBufferSize, KernelF kernel, int64_t batch,

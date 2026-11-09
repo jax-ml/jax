@@ -17,6 +17,7 @@ import collections
 import functools
 from functools import partial
 import itertools
+import math
 import operator
 from typing import NamedTuple
 from unittest import SkipTest
@@ -264,7 +265,8 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("remainder", 2, default_dtypes, all_shapes, jtu.rand_some_zero, [],
               tolerance={np.float16: 1e-2}),
     op_record("mod", 2, default_dtypes, all_shapes, jtu.rand_some_zero, []),
-    op_record("modf", 1, float_dtypes, all_shapes, jtu.rand_default, []),
+    op_record("modf", 1, float_dtypes, all_shapes, jtu.rand_some_inf_and_nan,
+              []),
     op_record("modf", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
     op_record("rint", 1, inexact_dtypes, all_shapes, jtu.rand_some_inf_and_nan,
@@ -646,19 +648,6 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       self._CompileAndCheck(op, args_maker)
       self._CheckAgainstNumpy(np_op, op, args_maker)
 
-  # This test can be deleted once we test against NumPy 2.0.
-  @jtu.sample_product(
-      shape=all_shapes,
-      dtype=complex_dtypes
-  )
-  def testSignComplex(self, shape, dtype):
-    rng = jtu.rand_default(self.rng())
-    np_fun = np.sign
-    jnp_fun = jnp.sign
-    args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker)
-
   def testDeferToNamedTuple(self):
     class MyArray(NamedTuple):
       arr: jax.Array
@@ -673,10 +662,29 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self.assertIsInstance(b * a, MyArray)
     self.assertIsInstance(jax.jit(operator.mul)(b, a), MyArray)
 
-  def testI0Grad(self):
-    # Regression test for https://github.com/jax-ml/jax/issues/11479
-    dx = jax.grad(jax.numpy.i0)(0.0)
-    self.assertArraysEqual(dx, 0.0)
+  @jtu.sample_product(
+      order=range(1, 6),
+  )
+  def testI0Grad(self, order):
+    # Regression test for https://github.com/jax-ml/jax/issues/11479 & 40627
+    # Higher-order gradients at zero should match the Maclaurin series
+    expected = 0.0 if order % 2 else math.comb(order, order // 2) / (4 ** (order // 2))
+    f = jax.numpy.i0
+    for _ in range(order):
+      f = jax.grad(f)
+    self.assertAllClose(f(0.0), expected)
+    self.assertAllClose(jax.jit(f)(0.0), expected)
+
+    sub_eps = dtypes.finfo(dtypes.default_float_dtype()).eps * 0.1
+    x = jnp.array([-1.0, -sub_eps, 0.0, sub_eps, 1.0])
+    out = jax.vmap(f)(x)
+    self.assertAllClose(out[2], expected)
+    if order % 2:
+      self.assertAllClose(out[0], -out[4])
+      self.assertAllClose(out[1], -out[3])
+    else:
+      self.assertAllClose(out[0], out[4])
+      self.assertAllClose(out[1], out[3])
 
   @jtu.sample_product(
       shape=all_shapes,
@@ -731,6 +739,65 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     args_maker = lambda: [x[:, None], x[None, :]]
     self._CheckAgainstNumpy(np.heaviside, jnp.heaviside, args_maker)
     self._CompileAndCheck(jnp.heaviside, args_maker)
+
+  @jtu.sample_product(dtype=[
+      dtypes.bfloat16,
+      dtypes.float8_e4m3b11fnuz,
+      dtypes.float8_e4m3fn,
+      dtypes.float8_e4m3fnuz,
+      dtypes.float8_e5m2,
+      dtypes.float8_e5m2fnuz,
+      dtypes.float8_e3m4,
+      dtypes.float8_e4m3,
+      dtypes.float8_e8m0fnu,
+      dtypes.float4_e2m1fn,
+  ])
+  def testIsinfNonstandardDtypes(self, dtype):
+    # Regression test for https://github.com/jax-ml/ml_dtypes/issues/381
+    info = dtypes.finfo(dtype)
+
+    # By convention, "fn" in the dtype name means "finite", i.e. inf not representable.
+    lacks_inf = "fn" in dtype.__name__
+
+    # When inf is not representable, it will be converted to min, max or NaN.
+    values = [jnp.nan, info.min, 0, info.max, -jnp.inf, jnp.inf]
+    arr = jnp.array(values, dtype=dtype)
+
+    if lacks_inf:
+      expected_inf = expected_neginf = expected_posinf = np.array([False] * len(values))
+    else:
+      expected_inf = np.isinf(values)
+      expected_neginf = np.isneginf(values)
+      expected_posinf = np.isposinf(values)
+
+    self.assertArraysEqual(jnp.isinf(arr), expected_inf,
+                           err_msg=f"isinf check failed for {dtype}")
+    self.assertArraysEqual(jnp.isposinf(arr), expected_posinf,
+                           err_msg=f"isposinf check failed for {dtype}")
+    self.assertArraysEqual(jnp.isneginf(arr), expected_neginf,
+                           err_msg=f"isneginf check failed for {dtype}")
+
+  @jtu.sample_product(complex_dtype=complex_dtypes)
+  @jax.numpy_dtype_promotion("standard")
+  def testMixedRealComplexInfAndSignedZero(self, complex_dtype):
+    real_dtype = dtypes.to_floating_dtype(complex_dtype)
+    c, inf = complex, np.inf
+    z = jnp.array([c(inf, 1.0), c(1.0, inf), c(2.0, 0.0), c(2.0, -0.0)],
+                  dtype=complex_dtype)
+    r = jnp.array([0.5, 0.5, -2.0, 1.0], dtype=real_dtype)
+
+    def check(actual, expected):
+      expected = np.array(expected, dtype=complex_dtype)
+      self.assertArraysEqual(actual, expected)
+      self.assertArraysEqual(np.signbit(actual.imag), np.signbit(expected.imag))
+
+    check(r * z, [c(inf, 0.5), c(0.5, inf), c(-4.0, -0.0), c(2.0, -0.0)])
+    check(z * r, [c(inf, 0.5), c(0.5, inf), c(-4.0, -0.0), c(2.0, -0.0)])
+    check(r + z, [c(inf, 1.0), c(1.5, inf), c(0.0, 0.0), c(3.0, -0.0)])
+    check(z + r, [c(inf, 1.0), c(1.5, inf), c(0.0, 0.0), c(3.0, -0.0)])
+    check(r - z, [c(-inf, -1.0), c(-0.5, -inf), c(-4.0, -0.0), c(-1.0, 0.0)])
+    check(z - r, [c(inf, 1.0), c(0.5, inf), c(4.0, 0.0), c(1.0, -0.0)])
+    check(z / r, [c(inf, 2.0), c(2.0, inf), c(-1.0, -0.0), c(2.0, -0.0)])
 
 
 if __name__ == "__main__":

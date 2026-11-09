@@ -12,20 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ctypes
+import functools
+import mmap
 import unittest
 import warnings
+import weakref
 
 from absl.testing import absltest
-import numpy as np
-
 import jax
-import jax.dlpack
-import jax.numpy as jnp
-from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src.util import cache
+import jax.dlpack
+import jax.numpy as jnp
+from jax.sharding import PartitionSpec as P
+import numpy as np
+
+
+def alloc_and_map(c_type, np_dtype, size):
+  device = jax.devices("tpu")[0]
+  client = device.client
+
+  element_size = ctypes.sizeof(c_type)
+  requested_bytes = size * element_size
+  size_bytes = ((requested_bytes + 4095) // 4096) * 4096
+
+  buf = mmap.mmap(-1, size_bytes)
+
+  char_arr = (ctypes.c_char * size_bytes).from_buffer(buf)
+  addr = ctypes.addressof(char_arr)
+
+  client.dma_map(addr, size_bytes)
+
+  weakref.finalize(buf, client.dma_unmap, addr)
+
+  return np.frombuffer(buf, dtype=np_dtype, count=size)
+
 
 config.parse_flags_with_absl()
 
@@ -166,7 +191,7 @@ def _get_max_align_bits(dtype, device):
 class DLPackTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    if not jtu.test_device_matches(["cpu", "gpu"]):
+    if not jtu.test_device_matches(["cpu", "gpu", "tpu"]):
       self.skipTest(f"DLPack not supported on {jtu.device_under_test()}")
 
   @jtu.sample_product(
@@ -180,9 +205,10 @@ class DLPackTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
 
+    device_type = jtu.device_under_test()
     # Check if the source device is preserved
     x = jax.device_put(np, jax.devices("cpu")[0])
-    device = jax.devices("gpu")[0]
+    device = jax.devices(device_type)[0]
     y = jax.device_put(x, device)
     # TODO(parkers): Remove after setting 'stream' properly below.
     jax.block_until_ready(y)
@@ -192,17 +218,24 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertAllClose(np.astype(x.dtype), z)
 
   @jtu.sample_product(
-    shape=all_shapes,
-    dtype=dlpack_dtypes,
-    gpu=[False, True],
+      shape=all_shapes,
+      dtype=dlpack_dtypes,
+      device_type=[None, "cpu", "gpu"],
   )
-  def testJaxArrayRoundTrip(self, shape, dtype, gpu):
+  def testJaxArrayRoundTrip(self, shape, dtype, device_type):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
-    if gpu and jax.default_backend() == "cpu":
-      raise unittest.SkipTest("Skipping GPU test case on CPU")
-    device = jax.devices("gpu" if gpu else "cpu")[0]
+    if device_type is None:
+      device = jax.devices()[0]
+    else:
+      if device_type == "gpu" and not jtu.test_device_matches(["gpu"]):
+        raise unittest.SkipTest("GPU not available")
+      if device_type == "tpu" and not jtu.test_device_matches(["tpu"]):
+        raise unittest.SkipTest("TPU not available")
+      device = jax.devices(device_type)[0]
     x = jax.device_put(np, device)
+    if device.platform == "tpu":
+      raise unittest.SkipTest("TPU device memory not supported for DLPack")
     # TODO(parkers): Remove after setting 'stream' properly.
     jax.block_until_ready(x)
     y = jax.dlpack.from_dlpack(x)
@@ -212,6 +245,32 @@ class DLPackTest(jtu.JaxTestCase):
     z = jax.dlpack.from_dlpack(x)
     self.assertEqual(z.devices(), {device})
     self.assertAllClose(np.astype(x.dtype), z)
+
+  @jtu.run_on_devices("gpu", "tpu")
+  # DLPack has no kDLOneAPIHost device type to preserve pinned-host memory.
+  # Therefore skip the test on oneAPI devices.
+  # TODO(Intel-tf): Remove the skip once kDLOneAPIHost is added and supported.
+  @jtu.skip_on_devices("oneapi")
+  def testJaxPinnedHostRoundTrip(self):
+    device = jax.devices()[0]
+    if device.platform not in ["gpu", "tpu"]:
+      raise unittest.SkipTest("Test requires GPU or TPU")
+    try:
+      sharding = jax.sharding.make_single_device_sharding(
+          device, memory_kind="pinned_host"
+      )
+    except ValueError:
+      raise unittest.SkipTest("pinned_host memory kind not supported")
+
+    rng = jtu.rand_default(self.rng())
+    np_arr = rng((3, 4), jnp.float32)
+    x = jax.device_put(np_arr, sharding)
+    self.assertEqual(x.sharding.memory_kind, "pinned_host")
+
+    y = jax.dlpack.from_dlpack(x)
+    self.assertEqual(y.devices(), {device})
+    self.assertEqual(y.sharding.memory_kind, "pinned_host")
+    self.assertAllClose(np_arr, y)
 
   @jtu.sample_product(shape=all_shapes, dtype=dlpack_dtypes)
   @unittest.skipIf(not tf, "Test requires TensorFlow")
@@ -237,6 +296,7 @@ class DLPackTest(jtu.JaxTestCase):
       shape=all_shapes,
       dtype=dlpack_dtypes,
   )
+  @jtu.run_on_devices("cpu", "gpu")
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testJaxToTensorFlow(self, shape, dtype):
     if (not config.enable_x64.value and
@@ -295,6 +355,21 @@ class DLPackTest(jtu.JaxTestCase):
     x = np.arange(4).reshape(2, 2).T
     self.assertAllClose(x, jax.dlpack.from_dlpack(x))
 
+  def testNumpyReadonlyToJax(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40789
+    x_np = np.arange(5, dtype=np.float32)
+    x_np.flags.writeable = False
+    x_jax = jnp.from_dlpack(x_np)
+    self.assertAllClose(x_np, x_jax)
+
+  @jtu.run_on_devices("cpu")  # NumPy only accepts cpu DLPacks
+  def testJaxToNumpyAsarrayToJax(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40789
+    y_jax = jnp.arange(5, dtype=jnp.float32)
+    y_np = np.asarray(y_jax)
+    self.assertFalse(y_np.flags.writeable)
+    self.assertAllClose(y_jax, jnp.from_dlpack(y_np))
+
   @jtu.sample_product(shape=all_shapes, dtype=numpy_dtypes)
   @jtu.run_on_devices("cpu")  # NumPy only accepts cpu DLPacks
   def testJaxToNumpy(self, shape, dtype):
@@ -302,6 +377,292 @@ class DLPackTest(jtu.JaxTestCase):
     x_jax = jnp.array(rng(shape, dtype))
     x_np = np.from_dlpack(x_jax)
     self.assertAllClose(x_np, x_jax)
+
+  @jtu.run_on_devices("cpu")
+  def testJaxToNumpyReadonly(self):
+    x_jax = jnp.arange(5, dtype=jnp.float32)
+    x_np = np.from_dlpack(x_jax)
+    self.assertFalse(x_np.flags.writeable)
+    self.assertAllClose(x_np, x_jax)
+    self.assertIn("dltensor_versioned", str(x_jax.__dlpack__(max_version=(1, 0))))
+    self.assertIn('"dltensor"', str(x_jax.__dlpack__()))
+
+  @jtu.run_on_devices("tpu")
+  def testTpuHostBufferDmaMap(self):
+    from jax._src.typing import DLDeviceType
+
+    device = jax.devices("tpu")[0]
+
+    try:
+      np_array = alloc_and_map(ctypes.c_uint32, np.uint32, 1024)
+    except RuntimeError as e:
+      self.skipTest(str(e))
+
+    np_array[:] = 0
+
+    class DLPackWrapper:
+
+      def __init__(self, arr, device_type, device_id=0):
+        self.arr = arr
+        self.device_type = device_type
+        self.device_id = device_id
+
+      def __dlpack_device__(self):
+        return (self.device_type, self.device_id)
+
+      def __dlpack__(self, stream=None):
+        return self.arr.__dlpack__(stream=stream)
+
+    dev_id = device.local_hardware_id
+    if dev_id is None:
+      dev_id = 0
+
+    wrapper = DLPackWrapper(np_array, DLDeviceType.kDLTPUHost, dev_id)
+
+    jax_arr = jax.dlpack.from_dlpack(wrapper, device=device, copy=False)
+    jax.block_until_ready(jax_arr)
+
+    self.assertEqual(jax_arr.device, device)
+    self.assertEqual(jax_arr.sharding.memory_kind, "pinned_host")
+
+    # Fill data *after* import to verify zero-copy
+    np_array[:] = np.arange(1024, dtype=np.uint32)
+
+    host_sharding = jax.sharding.make_single_device_sharding(
+        device, memory_kind="pinned_host"
+    )
+    device_sharding = jax.sharding.make_single_device_sharding(
+        device, memory_kind="device"
+    )
+
+    @functools.partial(
+        jax.jit, in_shardings=host_sharding, out_shardings=device_sharding
+    )
+    def add_one(x):
+      return jax.device_put(x, device_sharding) + 1
+
+    result = add_one(jax_arr)
+    result_np = np.asarray(result)
+    expected = np.arange(1024, dtype=np.uint32) + 1
+    self.assertAllClose(result_np, expected)
+
+    if jaxlib_extension_version >= 510:
+      # Verify sub-32-bit (uint16) and 2D non-tile-aligned shapes
+      # can be imported with an explicit linear Format(..., copy=False) without
+      # changing the default tiled layout when Format is not specified.
+      from jax._src.layout import Format, Layout
+
+      test_cases = [
+          (ctypes.c_uint16, np.uint16, (1024,)),
+          (ctypes.c_uint16, np.uint16, (1024, 129)),
+          (ctypes.c_float, np.float32, (8, 256)),
+          (ctypes.c_uint16, np.uint16, (16, 129)),
+      ]
+      for c_type, np_dtype, shape in test_cases:
+        size = int(np.prod(shape))
+        raw = alloc_and_map(c_type, np_dtype, size)
+        arr_np = raw.reshape(shape)
+        arr_np[...] = np.arange(size, dtype=np_dtype).reshape(shape)
+        linear_fmt = Format(
+            Layout(major_to_minor=tuple(range(len(shape))), tiling=((1,),)),
+            host_sharding,
+        )
+        w_fmt = DLPackWrapper(arr_np, DLDeviceType.kDLTPUHost, dev_id)
+        imported_fmt = jax.dlpack.from_dlpack(
+            w_fmt, device=linear_fmt, copy=False
+        )
+        self.assertEqual(imported_fmt.format, linear_fmt)
+        self.assertArraysEqual(np.asarray(add_one(imported_fmt)), arr_np + 1)
+
+      # Verify default import without Format preserves the default tiled layout.
+      raw_default = alloc_and_map(
+          ctypes.c_float, np.float32, 8 * 256
+      ).reshape(8, 256)
+      imported_default = jax.dlpack.from_dlpack(
+          DLPackWrapper(raw_default, DLDeviceType.kDLTPUHost, dev_id),
+          device=host_sharding,
+          copy=False,
+      )
+      self.assertEqual(imported_default.format.layout.tiling, ((8, 128),))
+
+      # Verify 0-D scalar import works with Format(None, host_sharding).
+      scalar_np = alloc_and_map(ctypes.c_uint32, np.uint32, 1).reshape(())
+      scalar_np[...] = 41
+      scalar_fmt = Format(None, host_sharding)
+      imported_scalar = jax.dlpack.from_dlpack(
+          DLPackWrapper(scalar_np, DLDeviceType.kDLTPUHost, dev_id),
+          device=scalar_fmt,
+          copy=False,
+      )
+      self.assertArraysEqual(
+          np.asarray(add_one(imported_scalar)), scalar_np + 1
+      )
+
+      # Verify mismatched major_to_minor Format raises ValueError with
+      # copy=False and copies/transposes accurately with copy=None.
+      transposed_fmt = Format(
+          Layout(major_to_minor=(1, 0), tiling=((1,),)),
+          host_sharding,
+      )
+      raw_2d = alloc_and_map(ctypes.c_float, np.float32, 8 * 256).reshape(
+          8, 256
+      )
+      raw_2d[...] = np.arange(8 * 256, dtype=np.float32).reshape(8, 256)
+      with self.assertRaisesRegex(
+          ValueError, "requires a copy since the source format is"
+      ):
+        jax.dlpack.from_dlpack(
+            DLPackWrapper(raw_2d, DLDeviceType.kDLTPUHost, dev_id),
+            device=transposed_fmt,
+            copy=False,
+        )
+      imported_transposed = jax.dlpack.from_dlpack(
+          DLPackWrapper(raw_2d, DLDeviceType.kDLTPUHost, dev_id),
+          device=transposed_fmt,
+          copy=None,
+      )
+      self.assertEqual(imported_transposed.format, transposed_fmt)
+      self.assertArraysEqual(np.asarray(imported_transposed), raw_2d)
+
+      # Verify importing kDLTPUHost into HBM Format requires a copy.
+      hbm_fmt = Format(Layout(major_to_minor=(0,)), device_sharding)
+      with self.assertRaisesRegex(
+          ValueError, "requires a copy since the source format is"
+      ):
+        jax.dlpack.from_dlpack(
+            DLPackWrapper(np_array, DLDeviceType.kDLTPUHost, dev_id),
+            device=hbm_fmt,
+            copy=False,
+        )
+      imported_hbm = jax.dlpack.from_dlpack(
+          DLPackWrapper(np_array, DLDeviceType.kDLTPUHost, dev_id),
+          device=hbm_fmt,
+          copy=None,
+      )
+      self.assertEqual(imported_hbm.sharding.memory_kind, "device")
+      self.assertArraysEqual(np.asarray(imported_hbm), np_array)
+
+  @unittest.skipIf(jaxlib_extension_version < 510, "Requires jaxlib >= 510")
+  @jtu.run_on_devices("cpu")
+  def testFromDLPackWithFormat(self):
+    from jax._src.layout import Format, Layout
+
+    device = jax.devices("cpu")[0]
+    sharding = jax.sharding.make_single_device_sharding(device)
+    mesh = jax.sharding.Mesh([device], ("x",))
+    named_sharding = jax.sharding.NamedSharding(mesh, P())
+
+    x_np = _ensure_alignment(
+        np.arange(12, dtype=np.float32).reshape(3, 4),
+        desired_alignment=_get_max_align_bits(np.float32, device),
+    )
+
+    # Default tiling=None and NamedSharding work with copy=False.
+    row_major_fmt = Format(Layout(major_to_minor=(0, 1)), sharding)
+    arr = jax.dlpack.from_dlpack(x_np, device=row_major_fmt, copy=False)
+    self.assertEqual(arr.format.layout.major_to_minor, (0, 1))
+    self.assertArraysEqual(arr, x_np)
+
+    arr_named = jax.dlpack.from_dlpack(
+        x_np, device=Format(Layout(major_to_minor=(0, 1)), named_sharding),
+        copy=False,
+    )
+    self.assertArraysEqual(arr_named, x_np)
+
+    # Fortran-order array matches major_to_minor=(1, 0) with copy=False.
+    x_f = _ensure_alignment(
+        np.arange(12, dtype=np.float32).reshape(4, 3),
+        desired_alignment=_get_max_align_bits(np.float32, device),
+    ).T
+    col_major_fmt = Format(Layout(major_to_minor=(1, 0)), sharding)
+    arr_f = jax.dlpack.from_dlpack(x_f, device=col_major_fmt, copy=False)
+    self.assertEqual(arr_f.format.layout.major_to_minor, (1, 0))
+    self.assertArraysEqual(arr_f, x_f)
+
+    # Mismatched major_to_minor fails with copy=False and copies with copy=None.
+    with self.assertRaisesRegex(
+        ValueError, "requires a copy since the source format is"
+    ):
+      jax.dlpack.from_dlpack(x_np, device=col_major_fmt, copy=False)
+
+    arr_copied = jax.dlpack.from_dlpack(x_np, device=col_major_fmt, copy=None)
+    self.assertEqual(arr_copied.format.layout.major_to_minor, (1, 0))
+    self.assertArraysEqual(arr_copied, x_np)
+
+    # Capsule with strides == NULL (compact row-major per DLPack spec) must
+    # reject column-major Format with copy=False rather than reinterpreting.
+    class _DLDevice(ctypes.Structure):
+      _fields_ = [("device_type", ctypes.c_int), ("device_id", ctypes.c_int)]
+
+    class _DLDataType(ctypes.Structure):
+      _fields_ = [
+          ("code", ctypes.c_uint8),
+          ("bits", ctypes.c_uint8),
+          ("lanes", ctypes.c_uint16),
+      ]
+
+    class _DLTensor(ctypes.Structure):
+      _fields_ = [
+          ("data", ctypes.c_void_p),
+          ("device", _DLDevice),
+          ("ndim", ctypes.c_int),
+          ("dtype", _DLDataType),
+          ("shape", ctypes.POINTER(ctypes.c_int64)),
+          ("strides", ctypes.POINTER(ctypes.c_int64)),
+          ("byte_offset", ctypes.c_uint64),
+      ]
+
+    class _DLManagedTensorVersioned(ctypes.Structure):
+      _fields_ = [
+          ("version", ctypes.c_uint32 * 2),
+          ("manager_ctx", ctypes.c_void_p),
+          ("deleter", ctypes.c_void_p),
+          ("flags", ctypes.c_uint64),
+          ("dl_tensor", _DLTensor),
+      ]
+
+    class NullStridesWrapper:
+      def __init__(self, a):
+        self.a = a
+
+      def __dlpack_device__(self):
+        return self.a.__dlpack_device__()
+
+      def __dlpack__(self, stream=None, max_version=None):
+        cap = self.a.__dlpack__(stream=stream, max_version=max_version)
+        get_ptr = ctypes.pythonapi.PyCapsule_GetPointer
+        get_ptr.restype = ctypes.c_void_p
+        get_ptr.argtypes = [ctypes.py_object, ctypes.c_char_p]
+        ptr = get_ptr(cap, b"dltensor_versioned")
+        managed = _DLManagedTensorVersioned.from_address(ptr)
+        managed.dl_tensor.strides = ctypes.POINTER(ctypes.c_int64)()
+        return cap
+
+    with self.assertRaisesRegex(
+        ValueError, "requires a copy since the source format is"
+    ):
+      jax.dlpack.from_dlpack(
+          NullStridesWrapper(x_np), device=col_major_fmt, copy=False
+      )
+    arr_null_strides = jax.dlpack.from_dlpack(
+        NullStridesWrapper(x_np), device=col_major_fmt, copy=None
+    )
+    self.assertEqual(arr_null_strides.format.layout.major_to_minor, (1, 0))
+    self.assertArraysEqual(arr_null_strides, x_np)
+
+    # Layout.AUTO is rejected.
+    with self.assertRaisesRegex(
+        ValueError, "`Layout.AUTO` cannot be used in place of a device-local"
+    ):
+      jax.dlpack.from_dlpack(x_np, device=Format(Layout.AUTO, sharding))
+
+    # Mismatched layout rank is rejected.
+    with self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError, "does not match tensor rank"
+    ):
+      jax.dlpack.from_dlpack(
+          x_np, device=Format(Layout(major_to_minor=(0,)), sharding)
+      )
 
 
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
@@ -338,6 +699,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     dtype=cuda_array_interface_dtypes,
   )
   @jtu.run_on_devices("gpu")
+  @jtu.skip_on_devices("oneapi") # OneAPI does not support `__cuda_array_interface__`
   def testCudaArrayInterfaceWorks(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
@@ -348,6 +710,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     self.assertEqual(z.__array_interface__["typestr"], a["typestr"])
 
   @jtu.run_on_devices("gpu")
+  @jtu.skip_on_devices("oneapi") # OneAPI does not support `__cuda_array_interface__`
   def testCudaArrayInterfaceBfloat16Fails(self):
     rng = jtu.rand_default(self.rng())
     x = rng((2, 2), jnp.bfloat16)
@@ -393,6 +756,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.supported(cuda_array_interface_dtypes),
   )
   @jtu.run_on_devices("gpu")
+  @jtu.skip_on_devices("oneapi") # OneAPI does not support `__cuda_array_interface__`
   def testCaiToJax(self, shape, dtype):
     dtype = np.dtype(dtype)
 

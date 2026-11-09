@@ -415,12 +415,16 @@ class PrngTest(jtu.JaxTestCase):
       hlo_text = jax.jit(f).lower(jax.random.key(17)).as_text()
       if jtu.is_device_rocm():
         self.assertNotIn("hip_threefry2x32", hlo_text)
+      elif jtu.is_device_oneapi():
+        self.assertNotIn("oneapi_threefry2x32", hlo_text)
       else:
         self.assertNotIn("cu_threefry2x32", hlo_text)
     with jax._src.config.threefry_gpu_kernel_lowering(True):
       hlo_text = jax.jit(f).lower(jax.random.key(17)).as_text()
       if jtu.is_device_rocm():
         self.assertIn("hip_threefry2x32", hlo_text)
+      elif jtu.is_device_oneapi():
+        self.assertIn("oneapi_threefry2x32", hlo_text)
       else:
         self.assertIn("cu_threefry2x32", hlo_text)
 
@@ -439,6 +443,46 @@ class PrngTest(jtu.JaxTestCase):
       random.bits(make_key(0), (3, 4), np.dtype('int8'))
     with self.assertRaisesRegex(ValueError, msg):
       random.bits(make_key(0), (3, 4), np.dtype('float16'))
+    for bad_streams in [0, 3, 8, -1, True, False, '2']:
+      with self.assertRaisesRegex(
+          ValueError, 'num_streams must be None, 1, 2, or 4'
+      ):
+        random.bits(make_key(0), (3, 4), num_streams=bad_streams)  # type: ignore[arg-type]
+    for bad_streams in [None, 0, 3, 8, -1, True, False, '2']:
+      with self.assertRaisesRegex(ValueError, 'num_streams must be 1, 2, or 4'):
+        prng_internal.random_bits(
+            random.key(0), 32, (3, 4), num_streams=bad_streams  # type: ignore[arg-type]
+        )
+
+  @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
+  def test_random_bits_num_streams_threefry_partitionable(self, make_key):
+    for partitionable in [False, True]:
+      with config.threefry_partitionable(partitionable):
+        for num_streams in [1, 2, 4]:
+          streams = random.bits(
+              make_key(0), (10,), dtype='uint32', num_streams=num_streams
+          )
+          self.assertIsInstance(streams, tuple)
+          self.assertLen(streams, num_streams)
+          for i, s in enumerate(streams):
+            self.assertEqual(s.shape, (10,))
+            self.assertEqual(s.dtype, np.uint32)
+            for j in range(i + 1, num_streams):
+              self.assertFalse(np.array_equal(s, streams[j]))
+
+  def test_random_bits_num_streams_custom_prng(self):
+    for num_streams in [1, 2, 4]:
+      key = prng_internal.random_seed(0, impl=double_threefry_prng_impl)
+      streams = random.bits(
+          key, (10,), dtype='uint32', num_streams=num_streams
+      )
+      self.assertIsInstance(streams, tuple)
+      self.assertLen(streams, num_streams)
+      for i, s in enumerate(streams):
+        self.assertEqual(s.shape, (10,))
+        self.assertEqual(s.dtype, np.uint32)
+        for j in range(i + 1, num_streams):
+          self.assertFalse(np.array_equal(s, streams[j]))
 
   @skipIf(not config.threefry_partitionable.value, 'enable after upgrade')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
@@ -628,6 +672,18 @@ class PrngTest(jtu.JaxTestCase):
       # Invalid key error should take precedence.
       with self.assertRaisesRegex(TypeError, "JAX encountered invalid PRNG key data"):
         random.uniform(invalid_key)
+
+  def test_high_dynamic_range_gumbel_jit_key(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40609
+    key = random.key(0)
+    f = jax.jit(lambda k: random.gumbel(k, (4,)))
+    with config.use_high_dynamic_range_gumbel(False):
+      low = f(key)
+    with config.use_high_dynamic_range_gumbel(True):
+      high = f(key)
+    self.assertArraysEqual(low, random.gumbel(key, (4,), mode='low'))
+    self.assertArraysEqual(high, random.gumbel(key, (4,), mode='high'))
+    self.assertFalse(jnp.array_equal(low, high))
 
 
 class ThreefryPrngTest(jtu.JaxTestCase):
@@ -885,13 +941,13 @@ class KeyArrayTest(jtu.JaxTestCase):
   def test_eval_shape_keys_in(self):
     def f(key):
       return prng_internal.random_bits(key, bit_width=32, shape=(5,))
-    out = jax.eval_shape(f, self.make_keys())
+    out, = jax.eval_shape(f, self.make_keys())
     self.assertEqual(out.shape, (5,))
     self.assertEqual(out.dtype, np.dtype('uint32'))
 
     def f(key):
       return prng_internal.random_bits(key, bit_width=16, shape=(5,))
-    out = jax.eval_shape(f, self.make_keys())
+    out, = jax.eval_shape(f, self.make_keys())
     self.assertEqual(out.shape, (5,))
     self.assertEqual(out.dtype, np.dtype('uint16'))
 
@@ -919,7 +975,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   def test_scan_jaxpr(self):
     ks = self.make_keys(3, 4, 5)
     f = lambda ks: jax.lax.scan(lambda _, k: (None, k.T), None, ks)
-    jaxpr = jax.make_jaxpr(f)(ks).jaxpr
+    jaxpr = jax.make_jaxpr(f)(ks)
     # { lambda ; a:key<fry>[3,4,5]. let
     #     b:key<fry>[3,5,4] = scan[
     #       jaxpr={ lambda ; c:key<fry>[4,5]. let

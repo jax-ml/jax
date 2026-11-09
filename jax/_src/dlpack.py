@@ -20,10 +20,12 @@ from jax._src import array
 from jax._src import dtypes
 from jax._src import xla_bridge
 from jax._src.api import device_put
+from jax._src.interpreters import pxla
 from jax._src.lax.lax import _array_copy
+from jax._src.layout import AutoLayoutSingleton, Format
 from jax._src.lib import _jax
-from jax._src.lib import xla_client
 from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import xla_client
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import scalar_types as jnp_types
 from jax._src.sharding import Sharding
@@ -31,8 +33,7 @@ from jax._src.typing import Array, DLDeviceType, DTypeLike
 
 import numpy as np
 
-
-DLPACK_VERSION = (0, 8)
+DLPACK_VERSION = _jax.dlpack_version
 MIN_DLPACK_VERSION = (0, 5)
 
 # A set of dtypes that dlpack supports.
@@ -63,10 +64,12 @@ def is_supported_dtype(dtype: DTypeLike) -> bool:
 def _to_dlpack(x: Array, stream: int | Any | None,
                src_device: _jax.Device | None = None,
                device: _jax.Device | None = None,
-               copy: bool | None = None):
+               copy: bool | None = None,
+               max_version: tuple[int, int] | None = None):
 
   if src_device is None:
     src_device, = x.devices()
+  copied = False
   if device and (src_device is None or device != src_device):
     if copy is not None and not copy:
       raise ValueError(
@@ -76,10 +79,15 @@ def _to_dlpack(x: Array, stream: int | Any | None,
       )
     else:
       arr = device_put(x, device)
+      copied = True
+  elif copy:
+    arr = _array_copy(x)
+    copied = True
   else:
-    arr = _array_copy(x) if copy else x
+    arr = x
   return _jax.buffer_to_dlpack_managed_tensor(
-    arr.addressable_data(0), stream=stream
+    arr.addressable_data(0), stream=stream, max_version=max_version,
+    copied=copied
   )
 
 
@@ -88,6 +96,9 @@ _DL_DEVICE_TO_PLATFORM = {
     DLDeviceType.kDLCUDA: "cuda",
     DLDeviceType.kDLCUDAHost: "cuda",
     DLDeviceType.kDLROCM: "rocm",
+    DLDeviceType.kDLROCMHost: "rocm",
+    DLDeviceType.kDLTPUHost: "tpu",
+    DLDeviceType.kDLOneAPI: "oneapi",
 }
 
 
@@ -120,12 +131,12 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
     A DLPack PyCapsule object.
 
   Note:
-    While JAX arrays are always immutable, ``DLPackManagedTensor`` buffers
-    cannot be marked as immutable, and it is possible for processes external
-    to JAX to mutate them in-place. If a DLPack buffer derived from a JAX array
-    is mutated, it may lead to undefined behavior when using the associated JAX
-    array. When JAX eventually supports ``DLManagedTensorVersioned``
-    (DLPack 1.0), it will be possible to specify that a buffer is read-only.
+    JAX arrays are always immutable, but for DLPack version below v1.0, dlpack
+    buffers cannot be marked as immutable and it is possible for processes
+    external to JAX to mutate them in-place. If a DLPack buffer derived from a
+    JAX array is mutated, it may lead to undefined behavior when using the
+    associated JAX array. To prevent this, use DLPack version 1.0 or higher
+    (supported by JAX v0.12.0 and higher).
   """
   if not isinstance(x, array.ArrayImpl):
     raise TypeError("Argument to to_dlpack must be a jax.Array, "
@@ -148,16 +159,14 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
 
   # As new versions are adopted over time, we can maintain some legacy paths
   # for compatibility mediated through the max_version parameter.
-  # TODO(micky774): Deprecate default usage of DLPackManagedTensor when XLA
-  # supports DLManagedTensorVersioned (DLPack version 1.0) and repurpose the
-  # current _to_dlpack as a legacy path for (0,5) <= max_version < (1,0).
   if max_version is None or max_version >= DLPACK_VERSION:
     # Latest
     return _to_dlpack(
       x, stream=stream,
       src_device=src_device,
       device=device,
-      copy=copy
+      copy=copy,
+      max_version=max_version,
     )
   elif max_version >= MIN_DLPACK_VERSION:
     # Oldest supported
@@ -165,7 +174,8 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
       x, stream=stream,
       src_device=src_device,
       device=device,
-      copy=copy
+      copy=copy,
+      max_version=max_version,
     )
   else:
     raise BufferError(
@@ -182,12 +192,36 @@ def _check_device(device, dlpack_device, copy):
         "copy=None to perform the requested operation."
       )
 
-def _place_array(_arr, device, dlpack_device, copy):
+
+def _place_array(_arr, device, dlpack_device, copy, target_format=None):
+  if target_format is not None:
+    same_layout = (
+        target_format.layout is None
+        or (
+            _arr.format.layout is not None
+            and pxla.is_user_xla_layout_equal(
+                target_format.layout, _arr.format.layout
+            )
+        )
+    )
+    same_sharding = (
+        target_format.sharding is None
+        or target_format.sharding.is_equivalent_to(_arr.sharding, _arr.ndim)
+    )
+    if not (same_layout and same_sharding):
+      if copy is not None and not copy:
+        raise ValueError(
+            f"Specified device={target_format} which requires a copy since the "
+            f"source format is {_arr.format}, however copy=False. Set "
+            "copy=True or copy=None to perform the requested operation."
+        )
+      return device_put(_arr, target_format)
   if device and dlpack_device != device:
     return device_put(_arr, device)
   if copy:
     return jnp.array(_arr, copy=True)
   return _arr
+
 
 def _is_tensorflow_tensor(external_array):
   t = type(external_array)
@@ -196,9 +230,12 @@ def _is_tensorflow_tensor(external_array):
       and t.__module__.endswith("tensorflow.python.framework.ops")
   )
 
-def from_dlpack(external_array,
-                device: _jax.Device | Sharding | None = None,
-                copy: bool | None = None):
+
+def from_dlpack(
+    external_array,
+    device: _jax.Device | Sharding | Format | None = None,
+    copy: bool | None = None,
+):
   """Returns a :class:`~jax.Array` representation of a DLPack tensor.
 
   The returned :class:`~jax.Array` shares memory with ``external_array`` if no
@@ -207,17 +244,22 @@ def from_dlpack(external_array,
   Args:
     external_array: An array object that has ``__dlpack__`` and
       ``__dlpack_device__`` methods.
-    device: The (optional) :py:class:`Device`, representing the device on which
+    device: The (optional) :py:class:`Device`, :py:class:`Sharding` (spanning a
+      single device), or ``Format`` representing the device and layout on which
       the returned array should be placed. If given, then the result is
       committed to the device. If unspecified, the resulting array will be
-      unpacked onto the same device it originated from. Setting ``device`` to a
-      device different from the source of ``external_array`` will require a
-      copy, meaning ``copy`` must be set to either ``True`` or ``None``.
+      unpacked onto the same device it originated from. When a ``Format`` with
+      a concrete device-local ``Layout`` is specified on the same device and
+      memory space as ``external_array`` and its ``minor_to_major`` order
+      matches the DLPack tensor's strides, the layout is applied directly to the
+      imported buffer view; otherwise, or when setting ``device`` to a device or
+      format requiring a transfer, a copy will be performed (requiring ``copy``
+      to be ``True`` or ``None``). ``Layout.AUTO`` is not supported.
     copy: An (optional) boolean, controlling whether or not a copy is performed.
       If ``copy=True`` then a copy is always performed, even if unpacked onto
       the same device. If ``copy=False`` then the copy is never performed and
       will raise an error if necessary. When ``copy=None`` then a copy may be
-      performed if needed for a device transfer.
+      performed if needed for a device or format transfer.
 
   Returns:
     A jax.Array
@@ -229,7 +271,18 @@ def from_dlpack(external_array,
     is later modified in-place, it may lead to undefined behavior when using
     the associated JAX array.
   """
+  target_format = None
+  target_sharding = None
+  if isinstance(device, Format):
+    if isinstance(device.layout, AutoLayoutSingleton):
+      raise ValueError(
+          "`Layout.AUTO` cannot be used in place of a device-local layout when"
+          f" calling `jax.dlpack.from_dlpack`. Got {device}"
+      )
+    target_format = device
+    device = target_format.sharding
   if isinstance(device, Sharding):
+    target_sharding = device
     device_set = device.device_set
     if len(device_set) > 1:
       raise ValueError(
@@ -257,7 +310,11 @@ def from_dlpack(external_array,
   if _is_tensorflow_tensor(external_array):
     # TensorFlow does not support stream=.
     stream = None
-  elif dl_device_type == DLDeviceType.kDLCUDAHost:
+  elif dl_device_type in (
+      DLDeviceType.kDLCUDAHost,
+      DLDeviceType.kDLROCMHost,
+      DLDeviceType.kDLTPUHost,
+  ):
     # Some producers (e.g. torch.Tensor with is_pinned()) route pinned tensors
     # through their CPU __dlpack__, which rejects a non-None stream argument.
     stream = None
@@ -269,15 +326,37 @@ def from_dlpack(external_array,
         stream = None
       else:
         raise
-  dlpack = external_array.__dlpack__(stream=stream)
-
   try:
-    if jaxlib_extension_version >= 467:
-      arr = _jax.dlpack_managed_tensor_to_buffer(
-        dlpack, dlpack_device, stream, copy, int(dl_device_type))
-    else:
-      arr = _jax.dlpack_managed_tensor_to_buffer(
-        dlpack, dlpack_device, stream, copy)
+    dlpack = external_array.__dlpack__(stream=stream, max_version=DLPACK_VERSION)
+  except TypeError:
+    dlpack = external_array.__dlpack__(stream=stream)
+
+  is_pinned_host = dl_device_type in (
+      DLDeviceType.kDLCUDAHost,
+      DLDeviceType.kDLROCMHost,
+      DLDeviceType.kDLTPUHost,
+  )
+  same_device_and_memory = device is None or (
+      dlpack_device == device
+      and (
+          target_sharding is None
+          or (
+              target_sharding.memory_kind == "pinned_host"
+              if is_pinned_host
+              else target_sharding.memory_kind in (None, "device")
+          )
+      )
+  )
+  layout = (
+      target_format.layout
+      if target_format is not None and same_device_and_memory
+      else None
+  )
+  try:
+    layout_arg = (layout,) if jaxlib_extension_version >= 510 else ()
+    arr = _jax.dlpack_managed_tensor_to_buffer(
+        dlpack, dlpack_device, stream, copy, int(dl_device_type), *layout_arg
+    )
   except xla_client.XlaRuntimeError as e:
     se = str(e)
     if "is not aligned to" in se:
@@ -295,4 +374,4 @@ def from_dlpack(external_array,
   if copy:
     # copy was already handled by dlpack_managed_tensor_to_buffer.
     copy = None
-  return _place_array(arr, device, dlpack_device, copy)
+  return _place_array(arr, device, dlpack_device, copy, target_format)

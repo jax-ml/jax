@@ -241,8 +241,9 @@ Notebook](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 | CPU             | `pip install -U jax`                                                                                            |
 | NVIDIA GPU      | `pip install -U "jax[cuda13]"`                                                                                  |
 | Google TPU      | `pip install -U "jax[tpu]"`                                                                                     |
-| AMD GPU (Linux) | Follow [AMD's instructions](https://github.com/jax-ml/jax/blob/main/build/rocm/README.md).                      |
-| Intel GPU       | Follow [Intel's instructions](https://github.com/intel/intel-extension-for-openxla/blob/main/docs/acc_jax.md).  |
+| AMD GPU (Linux, ROCm from pip) | `pip install -U "jax[rocm7-device-gfx942]" --extra-index-url https://repo.amd.com/rocm/whl-multi-arch/` |
+| AMD GPU (Linux, system ROCm) | `pip install -U "jax[rocm7-local]"` |
+| Intel GPU       | `pip install -U "jax[oneapi]"`|
 
 See [the documentation](https://docs.jax.dev/en/latest/installation.html)
 for information on alternative installation strategies. These include compiling

@@ -30,7 +30,7 @@ config.parse_flags_with_absl()
 
 
 nonempty_array_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
-empty_array_shapes = [(0,), (0, 4), (3, 0),]
+empty_array_shapes = [(0,), (0, 4), (3, 0), (0, 0)]
 
 scalar_shapes = [jtu.NUMPY_SCALAR_SHAPE, jtu.PYTHON_SCALAR_SHAPE]
 array_shapes = nonempty_array_shapes + empty_array_shapes
@@ -42,21 +42,7 @@ inexact_dtypes = jtu.dtypes.all_floating + jtu.dtypes.complex
 number_dtypes = default_dtypes + jtu.dtypes.complex + jtu.dtypes.all_unsigned
 
 
-def np_unique_backport(ar, return_index=False, return_inverse=False, return_counts=False,
-                       axis=None, **kwds):
-  # Wrapper for np.unique, handling the change to inverse_indices in numpy 2.0
-  result = np.unique(ar, return_index=return_index, return_inverse=return_inverse,
-                     return_counts=return_counts, axis=axis, **kwds)
-  if jtu.numpy_version() >= (2, 0, 1) or np.ndim(ar) == 1 or not return_inverse:
-    return result
 
-  idx = 2 if return_index else 1
-  inverse_indices = result[idx]
-  if axis is None:
-    inverse_indices = inverse_indices.reshape(np.shape(ar))
-  elif jtu.numpy_version() == (2, 0, 0):
-    inverse_indices = inverse_indices.reshape(-1)
-  return (*result[:idx], inverse_indices, *result[idx + 1:])
 
 def arrays_with_overlapping_values(rng, shapes, dtypes, unique=False, overlap=0.5) -> list[jax.Array]:
   """Generate multiple arrays with some overlapping values.
@@ -146,6 +132,12 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
       self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testSetdiff1dSizeZero(self):
+    # regression test for zero-sized result raising IndexError
+    ar1 = np.arange(3)
+    ar2 = np.array([2])
+    self.assertEqual(jnp.setdiff1d(ar1, ar2, size=0).shape, (0,))
+
   @jtu.sample_product(
       shape1=all_shapes,
       shape2=all_shapes,
@@ -227,6 +219,11 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match([dtype1, dtype2]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
+  def testSetxor1dSizeZero(self):
+    ar1 = np.array([1, 3, 5])
+    ar2 = np.array([2, 3, 4])
+    self.assertEqual(jnp.setxor1d(ar1, ar2, size=0).shape, (0,))
+
   @jtu.sample_product(
     dtype1=[s for s in default_dtypes if s != jnp.bfloat16],
     dtype2=[s for s in default_dtypes if s != jnp.bfloat16],
@@ -267,6 +264,11 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match([dtype1, dtype2]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
+  def testIntersect1dSizeZero(self):
+    ar1 = np.array([1, 2, 3, 4])
+    ar2 = np.array([3, 4, 5])
+    self.assertEqual(jnp.intersect1d(ar1, ar2, size=0).shape, (0,))
+
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
       for shape in all_shapes
@@ -281,7 +283,7 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     extra_args = (return_index, return_inverse, return_counts)
     use_defaults =  (False, *(True for arg in extra_args if arg)) if any(extra_args) else False
-    np_fun = jtu.with_jax_dtype_defaults(lambda x: np_unique_backport(x, *extra_args, axis=axis), use_defaults)
+    np_fun = jtu.with_jax_dtype_defaults(lambda x: np.unique(x, *extra_args, axis=axis), use_defaults)
     jnp_fun = lambda x: jnp.unique(x, *extra_args, axis=axis)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
@@ -333,7 +335,7 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
 
     @partial(jtu.with_jax_dtype_defaults, use_defaults=(False, True, True, True))
     def np_fun(x, fill_value=fill_value):
-      u, ind, inv, counts = np_unique_backport(x, **kwds)
+      u, ind, inv, counts = np.unique(x, **kwds)
       axis = kwds['axis']
       if axis is None:
         x = x.ravel()

@@ -21,19 +21,18 @@ import pathlib
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
 
+logger = logging.getLogger(__name__)
+
 # oneapi_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
 # preinstalled jax oneapi plugin packages.
-for pkg_name in ['jax_oneapi2025_1_plugin', 'jaxlib.oneapi']:
-  try:
-    oneapi_plugin_extension = importlib.import_module(
-        f'{pkg_name}.oneapi_plugin_extension'
-    )
-  except ImportError:
-    oneapi_plugin_extension = None
-  else:
-    break
+def _load_oneapi_plugin_extension():
+  for pkg_name in ['jax_oneapi_plugin', 'jax_oneapi_pjrt', 'jaxlib.oneapi']:
+    try:
+      return importlib.import_module(f'{pkg_name}.oneapi_plugin_extension')
+    except ImportError:
+      continue
+  return None
 
-logger = logging.getLogger(__name__)
 
 def _get_library_path():
   base_path = pathlib.Path(__file__).resolve().parent
@@ -43,17 +42,20 @@ def _get_library_path():
   if installed_path.exists():
     return installed_path
 
-  local_path = (
-      base_path / 'pjrt_c_api_gpu_plugin.so'
+  local_path = os.path.join(
+      os.path.dirname(__file__), 'pjrt_c_api_gpu_plugin.so'
   )
-  if not local_path.exists():
+  if not os.path.exists(local_path):
     runfiles_dir = os.getenv('RUNFILES_DIR', None)
     if runfiles_dir:
       local_path = pathlib.Path(
-          os.path.join(runfiles_dir, 'xla/xla/pjrt/c/pjrt_c_api_gpu_plugin.so')
+        os.path.join(
+          runfiles_dir,
+          '__main__/jax_plugins/oneapi/pjrt_c_api_gpu_plugin.so',
+        )
       )
 
-  if local_path.exists():
+  if os.path.exists(local_path):
     logger.debug(
         'Native library %s does not exist. This most likely indicates an issue'
         ' with how %s was built or installed. Fallback to local test'
@@ -76,6 +78,8 @@ def _get_library_path():
 
 
 def initialize():
+  oneapi_plugin_extension = _load_oneapi_plugin_extension()
+
   path = _get_library_path()
   if path is None:
     return

@@ -34,6 +34,7 @@ def MosaicGPU_Dialect : Dialect {
   let cppNamespace = "::mosaic_gpu";
   let useDefaultTypePrinterParser = 1;
   let useDefaultAttributePrinterParser = 1;
+  let useStrictPropertiesInAssemblyFormat = 1;
 }
 
 class MosaicGPU_Type<string name, string mnemonic_, list<Trait> traits = []>
@@ -87,40 +88,26 @@ def MosaicGPU_ArriveOp : Op<MosaicGPU_Dialect, "arrive", []> {
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    BoolAttr:$orders_tensor_core);
+    BoolAttr:$orders_tensor_core,
+    PtxPredicate:$predicate
+  );
 }
 
 def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {
   let summary = "Executes an arrive.expect_tx operation on the given barrier.";
+  let description = [{
+     Executes an arrive.expect_tx operation on the given barrier.
+
+    `expect_tx` must be positive or 0. If `expect_tx` is negative, behavior is undefined.
+  }];
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    ConfinedAttr<I32Attr, [IntNonNegative]>:$expect_tx);
+    I32:$expect_tx);
 
   let assemblyFormat = [{
     `barrier` `(` $barrier `:` type($barrier) `)`
     $expect_tx
-    attr-dict
-  }];
-}
-
-def MosaicGPU_WaitOp : Op<MosaicGPU_Dialect, "wait", []> {
-  let summary = "Executes a wait operation on the given barrier.";
-  let description = [{
-    All threads in the warpgroup will block, waiting on the provided barrier
-    until:
-      - all pending threads have arrived on the barrier
-      - all expected byte transfers have been completed
-      - the barrier's parity matches the provided parity
-  }];
-
-  let arguments = (ins
-    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    I1:$parity
-  );
-  let assemblyFormat = [{
-    `barrier` `(` $barrier `:` type($barrier) `)`
-    `parity` `(` $parity `:` type($parity) `)`
     attr-dict
   }];
 }
@@ -269,6 +256,17 @@ def MosaicGPU_TMAReduction : I32EnumAttr<"TMAReduction",
   let cppNamespace = "::mosaic_gpu";
 }
 
+def MosaicGPU_TMEMLoadReduction : I32EnumAttr<"TMEMLoadReduction",
+    "Reduction operation for load reduce.",
+    [
+      I32EnumAttrCase<"Min", 0, "min">,
+      I32EnumAttrCase<"Max", 1, "max">,
+      I32EnumAttrCase<"AbsMin", 2, "absmin">,
+      I32EnumAttrCase<"AbsMax", 3, "absmax">
+    ]>{
+  let cppNamespace = "::mosaic_gpu";
+}
+
 def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
   let parameters = (ins "::mlir::DenseI32ArrayAttr":$tiling);
   let summary = "Specifies a transform that tiles suffix dimensions of a memref in SMEM.";
@@ -323,6 +321,19 @@ def MosaicGPU_OOBFillMode : I32EnumAttr<"OOBFillMode",
   let cppNamespace = "::mosaic_gpu";
 }
 
+def MosaicGPU_B6x16P32 : MosaicGPU_Type<"B6x16P32", "b6x16_p32", [MemRefElementTypeInterface]> {
+  let summary = "Packs 16x6-bit values along with 32-bit padding in a 128-bit element.";
+  let parameters = (ins "::mlir::Type":$element_type);
+  let assemblyFormat = "`<` $element_type `>`";
+  let genVerifyDecl = 1;
+}
+def MosaicGPU_P2B6 : MosaicGPU_Type<"P2B6", "p2b6", [MemRefElementTypeInterface]> {
+  let summary = "An 8-bit type that holds a 6-bit value in its low bits.";
+  let parameters = (ins "::mlir::Type":$element_type);
+  let assemblyFormat = "`<` $element_type `>`";
+  let genVerifyDecl = 1;
+}
+
 def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
       [AttrSizedOperandSegments]> {
   let summary = "Schedules an async load of a MemRef from GMEM to SMEM";
@@ -332,7 +343,15 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     contiguous.
 
     Upon completion of the copy, the `complete-tx(complete-count)` operation
-    will always be executed on the provided `barrier`.
+    will be executed on the provided `barrier`, if one is given.
+
+    The `barrier` is required on Hopper and newer GPUs, which use the TMA
+    implementation, and must be omitted on pre-Hopper GPUs, which use the
+    `cp.async` implementation. In that case, completion is tracked via cp.async
+    commit groups and has to be awaited with `nvvm.cp_async_wait_group` rather
+    than the barrier. When the `barrier` is omitted, `collective` and
+    `leader_tracked` must not be set, and `oob_fill_mode` must be
+    `promise_in_bounds`.
 
     The `indices` and `slice_lengths` inputs define what slice of the GMEM
     `source` corresponds to the SMEM `destination`. Both `indices` and
@@ -356,29 +375,93 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     a cluster will first load a slice from GMEM to SMEM and then the slices will
     be multicast to all other blocks in the cluster. In this way TMA multicast
     guarantees L2 cache hits. The `collective` attribute is the list of
-    cluster dimensions along which to partition the input data loads.
+    cluster dimensions along which to partition the input data loads. Only
+    supported with TMA (Hopper and newer).
 
     The `leader_tracked` attribute can be provided to only track the completion
     of the copy in the leader block in the cluster. If `CopyPartitioned(axis)`,
     performs a partitioned collective copy along the given axis. If
-    `CopyReplicated`, all blocks load the same data.
+    `CopyReplicated`, all blocks load the same data. Only supported with TMA
+    (Hopper and newer).
 
-    The `predicate` allows scheduling the transfer conditionally. The async copy
-   is always scheduled by at most a single lane in the warpgroup.
+    The `oob_fill_mode` attribute controls the behavior of out-of-bounds
+    accesses. `zeros` and `undefined` are only supported with TMA (Hopper and
+    newer); the `cp.async` implementation only supports `promise_in_bounds`.
+
+    The `predicate` allows scheduling the transfer conditionally.
+
+    The `gmem_peer_id` parameter specifies a particular device id to load from
+    in a multi-GPU setting.
   }];
 
   let arguments = (ins
     AnyMemRef:$source,
     AnyMemRef:$destination,
-    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    Optional<MemRefRankOf<[MosaicGPU_Barrier], [0]>>:$barrier,
     Variadic<AnyTypeOf<[I32, VectorOfRankAndType<[1], [I32, I16, I8]>]>>:$indices,
     OptionalAttr<MosaicGPU_CopyPartitionAttrInterface>:$leader_tracked,
     PtxPredicate:$predicate,
+    Optional<I32>:$gmem_peer_id,
 
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
     TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective,
     DefaultValuedAttr<MosaicGPU_OOBFillMode, "OOBFillMode::kZeros">:$oob_fill_mode
+  );
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_AsyncLoadIm2colOp : Op<MosaicGPU_Dialect, "async_load_im2col",
+      [AttrSizedOperandSegments]> {
+  let summary = "Schedules an async im2col load of a MemRef from GMEM to SMEM";
+  let description = [{
+    Schedules an async im2col copy of the contents of the `source` MemRef in
+    GMEM to the `destination` MemRef in SMEM. Each row of `destination` receives
+    the channels of one pixel of one window in `source`. The `destination`
+    MemRef in SMEM must be contiguous.
+
+    Upon completion of the copy, the `complete-tx(complete-count)` operation
+    will be executed on the provided `barrier`.
+
+    - `source` is a batch of channels-last images of shape `(N, W, C)`,
+      `(N, H, W, C)` or `(N, D, H, W, C)` (rank 3, 4 or 5) with an element
+      bitwidth of at least 8.
+    - `destination` has shape `(*rows, cols)` of rank at least 2. Its leading
+      dimensions are flattened into `prod(rows)` windows (in `[1, 1024]`) of
+      `cols` channels each (in `[1, 256]`), where `cols` has a bytewidth
+      divisible by 16.
+    - `window_lower_bounds` and `window_upper_bounds` give, for each spatial
+      dimension `i` of size `S`, the `(lo, hi)` bounds such that windows start
+      at positions `lo`, `lo + s`, `lo + 2 * s`, ... below `S + hi`, where `s`
+      is `window_strides[i]`, with the image implicitly zero-padded outside
+      `[0, S)`. Each bound must fit in a signed `16 / (rank - 2)`-bit integer.
+    - `indices` has length equal to the rank of `source` and specifies
+      `(n, *start, c)`: the batch index and start position of the window loaded
+      into the first row, and the first channel to load. Each subsequent row
+      takes the next window in row-major order over `(n, *start)`, so a copy can
+      span several images. Rows past the last image are zero-filled.
+    - `filter_offsets` has length `rank - 2` and selects the pixel to load
+      within each window as an offset in `[0, 2**(16 / (rank - 2)) - 1]` from
+      the window's start position.
+    - `window_strides` has length `rank - 2` and gives the step in `[1, 8]`
+      between consecutive window start positions along each spatial dimension.
+
+    The `predicate` allows scheduling the transfer conditionally.
+  }];
+
+  let arguments = (ins
+    AnyMemRef:$source,
+    AnyStaticShapeMemRef:$destination,
+    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    Variadic<I32>:$indices,
+    Variadic<I16>:$filter_offsets,
+    PtxPredicate:$predicate,
+
+    // Attributes
+    DenseI64ArrayAttr:$window_lower_bounds,
+    DenseI64ArrayAttr:$window_upper_bounds,
+    DenseI64ArrayAttr:$window_strides
   );
 
   let hasVerifier = 1;
@@ -443,8 +526,7 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     `source` data in SMEM needs to be contiguous, but the `destination` GMEM
     does not.
 
-    The `predicate` allows scheduling the transfer conditionally. The async copy
-    is always scheduled by at most a single lane in the warpgroup.
+    The `predicate` allows scheduling the transfer conditionally.
 
     The `reduction_op` attribute can be provided to perform a reduction when
     storing to GMEM. For example, using `add` will add the SMEM values to
@@ -482,8 +564,7 @@ def MosaicGPU_VectorLoadOp : Op<MosaicGPU_Dialect, "vector_load",
     non-contiguous memory.
 
     If `optimized` is true, raises an error if we cannot generate an optimised
-    transfer. If unset, fall back to a non-optimized transfer if unable to
-    generate an optimized transfer.
+    transfer. `optimized` defaults to true when unset.
   }];
 
   let arguments = (ins
@@ -556,8 +637,7 @@ def MosaicGPU_VectorStoreOp : Op<MosaicGPU_Dialect, "vector_store",
     non-contiguous memory.
 
     If `optimized` is true, raises an error if we cannot generate an optimised
-    transfer. If unset, fall back to a non-optimized transfer if unable to
-    generate an optimized transfer.
+    transfer. `optimized` defaults to true when unset.
 
     If `atomic_type` is set, performs an atomic store-(add|min|...) of the value.
 
@@ -572,6 +652,47 @@ def MosaicGPU_VectorStoreOp : Op<MosaicGPU_Dialect, "vector_store",
     OptionalAttr<MosaicGPU_AtomicOpType>:$atomic_type,
     DefaultValuedAttr<BoolAttr, "false">:$multimem
   );
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_CumulativeReductionKind : I32EnumAttr<"CumulativeReductionKind",
+    "Combining operation for a cumulative reduction.",
+    [
+      I32EnumAttrCase<"Add", 0, "add">,
+      I32EnumAttrCase<"Mul", 1, "mul">,
+      I32EnumAttrCase<"MaxSI", 2, "maxsi">,
+      I32EnumAttrCase<"MaxUI", 3, "maxui">,
+      I32EnumAttrCase<"MaximumF", 4, "maximumf">,
+      I32EnumAttrCase<"MinSI", 5, "minsi">,
+      I32EnumAttrCase<"MinUI", 6, "minui">,
+      I32EnumAttrCase<"MinimumF", 7, "minimumf">,
+      I32EnumAttrCase<"LogAddExp", 8, "logaddexp">
+    ]>{
+  let cppNamespace = "::mosaic_gpu";
+}
+
+def MosaicGPU_CumulativeReductionOp : Op<MosaicGPU_Dialect, "cumulative_reduction",
+      [Pure, SameOperandsAndResultType]> {
+  let summary = "Computes an inclusive cumulative reduction along a dimension.";
+  let description = [{
+    Cumulatively reduces `source` along `dimension`, combining elements with
+    `kind`. The result has the same shape, element type and layout as `source`.
+    For integer min/max, `kind` selects signed or unsigned comparison.
+
+    If `reverse` is true, the reduction runs from the highest index along
+    `dimension` to the lowest, so element i accumulates elements i..n-1 instead
+    of 0..i.
+  }];
+
+  let arguments = (ins
+    AnyFixedVectorOfNonZeroRank:$source,
+    MosaicGPU_CumulativeReductionKind:$kind,
+    I64Attr:$dimension,
+    DefaultValuedAttr<BoolAttr, "false">:$reverse
+  );
+
+  let results = (outs AnyFixedVectorOfNonZeroRank:$result);
 
   let hasVerifier = 1;
 }
@@ -606,9 +727,14 @@ def MosaicGPU_WGMMASupportedType : AnyTypeOf<[F16, BF16, F32],
     "A type supported by the WGMMA operation">;
 
 def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
-    [SameOperandsAndResultType]> {
+    [SameOperandsAndResultType, Pure]> {
   let summary = "Casts a vector to a new layout.";
-  let description = [{Casts a vector value to a new strided or tiled layout.}];
+  let description = [{
+    Casts a vector value to a new strided or tiled layout.
+
+    If `strict` is true, only allows relayouts that are free at runtime and
+    forces layout equality otherwise.
+  }];
   let arguments = (ins
     AnyVectorOfAnyRank:$x,
 
@@ -616,16 +742,17 @@ def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
     AnyAttrOf<[
       MosaicGPU_WGStridedFragLayout,
       MosaicGPU_TiledLayout
-    ]>:$new_layout
+    ]>:$new_layout,
+    DefaultValuedAttr<BoolAttr, "false">:$strict
   );
 
   let results = (outs AnyVectorOfAnyRank);
 
-  let assemblyFormat = "`x` `(` $x `:` type($x) `)` attr-dict";
+  let assemblyFormat = "`x` `(` $x `:` type($x) `)` prop-dict attr-dict";
 }
 
 def MosaicGPU_TmemLayoutCastOp : Op<MosaicGPU_Dialect, "tmem_layout_cast",
-    [SameOperandsAndResultType]> {
+    [SameOperandsAndResultType, Pure]> {
   let summary = "Casts a TMEM ref to a new TMEM layout.";
   let arguments = (ins
     MemRefRankOf<[AnyType], [2]>:$ref,
@@ -640,7 +767,7 @@ def MosaicGPU_TmemLayoutCastOp : Op<MosaicGPU_Dialect, "tmem_layout_cast",
 }
 
 
-def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", []> {
+def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", [Pure]> {
   let summary = "Broadcasts a vector to a new shape.";
   let description = [{
     The `operand` is broadcast to the shape described by the result type.
@@ -662,29 +789,33 @@ def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", []> {
 
   let results = (outs AnyVectorOfAnyRank);
   let assemblyFormat = [{
-    `(` $operand `:` type($operand) `)` attr-dict `->` type(results)
+    `(` $operand `:` type($operand) `)` prop-dict attr-dict `->` type(results)
   }];
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
-def MosaicGPU_ReinterpretCastOp : Op<MosaicGPU_Dialect, "reinterpret_cast",
-    [Pure]> {
-  let summary = "Reinterprets a memref without changing the underlying data.";
+def MosaicGPU_VectorConcatOp : Op<MosaicGPU_Dialect, "vector_concat",
+    [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "Concatenates vectors along a specified dimension.";
   let description = [{
-    Casts a memref to a new memref type with a potentially different shape but
-    the same total number of elements and the same element type. This is a
-    pure reinterpretation of the shape and layout; no data is moved or copied.
+    Concatenates a variadic list of operands along `dimension`.
 
-    Unlike `memref.reinterpret_cast`, this op does not take explicit offsets,
-    sizes, or strides. The result type fully determines the reinterpretation.
+    All operands must have the same rank and element type.
+    This op matches the semantics of `lax.concatenate`.
   }];
 
-  let arguments = (ins AnyMemRef:$source);
-  let results = (outs AnyMemRef:$result);
+  let arguments = (ins
+    Variadic<AnyVectorOfNonZeroRank>:$operands,
 
-  let hasFolder = 1;
-  let hasCanonicalizer = 1;
-  let hasVerifier = 1;
+    // Attributes
+    I32Attr:$dimension
+  );
+
+  let results = (outs AnyVectorOfNonZeroRank);
+  let assemblyFormat = [{
+    `(` $operands `:` type($operands) `)` prop-dict attr-dict `->` type(results)
+  }];
 }
 
 def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", [Pure]> {
@@ -696,7 +827,10 @@ def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", [Pure]> {
     differentiate between potentially aliasing allocations.
   }];
 
-  let arguments = (ins ConfinedAttr<I32Attr, [IntNonNegative]>:$offset, OptionalAttr<I32Attr>:$alias_id);
+  let arguments = (ins
+    ConfinedAttr<I32Attr, [IntNonNegative]>:$offset,
+    OptionalAttr<I64Attr>:$alias_id
+  );
   let results = (outs AnyMemRef);
 }
 
@@ -854,8 +988,8 @@ def MosaicGPU_TcGen05MMAOp : Op<MosaicGPU_Dialect, "tcgen05_mma", [AttrSizedOper
     MemRefRankOf<[MosaicGPU_TcGen05MMASupportedABType], [2]>:$b,
     I1:$accumulate,
     // TODO: allanrenucci - F8E4M3FNU (ue4m3) does not exist in MLIR. We use F8E4M3FN (e4m3) instead.
-    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$a_scale,
-    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>>:$b_scale,
+    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN, F8E5M3FNU], [2]>>:$a_scale,
+    Optional<MemRefRankOf<[F8E8M0FNU, F8E4M3FN, F8E5M3FNU], [2]>>:$b_scale,
     Optional<MemRefRankOf<[I<2>], [2]>>:$a_sparse_metadata,
     DefaultValuedAttr<BoolAttr, "false">:$collective
   );
@@ -874,21 +1008,25 @@ def MosaicGPU_OptimizationBarrierOp : Op<MosaicGPU_Dialect, "optimization_barrie
 }
 
 def MosaicGPU_ReturnOp : Op<MosaicGPU_Dialect, "return",
-    [Pure, ReturnLike, Terminator, HasParent<"CustomPrimitiveOp">]>
+    [Pure, ReturnLike, Terminator,
+     ParentOneOf<["CustomPrimitiveOp", "RunScopedOp"]>]>
 {
-  let summary = "Terminator for the region in a `CustomPrimitiveOp`";
+  let summary = "Terminator for a `CustomPrimitiveOp` or `RunScopedOp` region.";
   let description = [{
     The `return` op is a terminator that indicates the end of execution
-    within a `CustomPrimitiveOp`'s region. It can optionally return some values,
-    which become the results of the parent `CustomPrimitiveOp`.
+    within a `CustomPrimitiveOp` or `RunScopedOp` region. It can optionally
+    return some values, which become the results of the parent op.
 
-    The declared results of the parent `CustomPrimitiveOp` must match the
-    operand types of this op.
+    The declared results of the parent op must match the operand types of this
+    op.
   }];
 
-  // The operand's type must match the parent CustomPrimitiveOp's result type.
+  // The operand's type must match the parent op's result type.
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{ attr-dict ($operands^ `:` type($operands))? }];
+  let builders = [OpBuilder<(ins), [{
+    build($_builder, $_state, ::mlir::ValueRange());
+  }]>];
   let hasVerifier = 1;
 }
 
@@ -926,12 +1064,48 @@ def MosaicGPU_WarpMapOp : Op<MosaicGPU_Dialect, "warp_map",
   let arguments = (ins Variadic<AnyType>:$operands);
   let regions = (region SizedRegion<1>:$region);
 
-  let hasCanonicalizer = 1;
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_OptionalAlignmentParam :
+    OptionalParameter<"::mlir::IntegerAttr", "optional byte alignment">,
+    AttrConstraint<
+        Or<[IsNullAttr.predicate, IntValidAlignment<I64Attr>.predicate]>,
+        IntValidAlignment<I64Attr>.summary> {
+  let printer = "$_printer.printAttributeWithoutType($_self);";
+}
+
+def MosaicGPU_SmemAllocAttr : MosaicGPU_Attr<"SmemAlloc", "smem_alloc"> {
+  let summary = "Attributes for a scoped SMEM allocation.";
+  let parameters = (ins MosaicGPU_OptionalAlignmentParam:$alignment);
+  let assemblyFormat = "(`<` `alignment` `=` $alignment^ `>`)?";
+}
+
+def MosaicGPU_RunScopedOp : Op<MosaicGPU_Dialect, "run_scoped",
+    [SingleBlockImplicitTerminator<"ReturnOp">]> {
+  let summary = "Evaluates a region with scoped allocations.";
+  let description = [{
+    Evaluates a single-block region where block arguments represent scoped
+    allocations whose lifetimes are confined to the region.
+
+    Each block argument must be a statically shaped memref in SMEM, with a
+    corresponding `#mosaic_gpu.smem_alloc` entry in `buffer_attrs`.
+
+    The region may capture outer values and return non-memref results via
+    `mosaic_gpu.return`.
+  }];
+
+  let arguments = (ins
+    ArrayAttr:$buffer_attrs
+  );
+  let results = (outs Variadic<AnyType>:$results);
+  let regions = (region SizedRegion<1>:$region);
+
   let hasVerifier = 1;
 }
 
 def MosaicGPU_WithTransformsOp : Op<MosaicGPU_Dialect, "with_transforms",
-    [SameOperandsAndResultType]> {
+    [SameOperandsAndResultType, Pure]> {
   let summary = "A noop that allows manually setting transforms on a memref.";
   let description = [{
     This op enforces the provided transforms on the parameter memref.
@@ -983,7 +1157,7 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
 
   let assemblyFormat = [{
     `smem_ptr` `(` $smem_ptr `:` type($smem_ptr) `)`
-    attr-dict `->` type(results)
+    prop-dict attr-dict `->` type(results)
   }];
 
   let hasVerifier = 1;
@@ -1022,8 +1196,11 @@ def MosaicGPU_AsyncLoadTmemOp : Op<MosaicGPU_Dialect, "async_load_tmem",
     [DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "Copies TMEM to registers asynchronously.";
 
-  let arguments = (ins MemRefRankOf<[AnyType], [2]>:$source);
-  let results = (outs VectorOfRank<[2]>);
+  let arguments = (ins
+    MemRefRankOf<[AnyType], [2]>:$source,
+    OptionalAttr<MosaicGPU_TMEMLoadReduction>:$reduce
+  );
+  let results = (outs Variadic<AnyFixedVectorOfNonZeroRank>);
 
   let hasVerifier = 1;
 }
@@ -1095,7 +1272,7 @@ def MosaicGPU_AsyncStoreScalesSmemToTmemOp : Op<MosaicGPU_Dialect, "async_store_
     in SMEM to the `destination` MemRef in TMEM.
 
     The `source` and `destination` MemRefs must have the same element type
-    (F8E8M0FNU or F8E4M3FN).
+    (F8E8M0FNU, F8E4M3FN, or F8E5M3FNU).
 
     Given a destination shape [M, N], the source shape must be
     [M/128, N/4, 32, 16], and M % 128 == 0 and N % 4 == 0.
@@ -1106,25 +1283,29 @@ def MosaicGPU_AsyncStoreScalesSmemToTmemOp : Op<MosaicGPU_Dialect, "async_store_
   }];
 
   let arguments = (ins
-    MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [4]>:$source,
-    MemRefRankOf<[F8E8M0FNU, F8E4M3FN], [2]>:$destination,
+    MemRefRankOf<[F8E8M0FNU, F8E4M3FN, F8E5M3FNU], [4]>:$source,
+    MemRefRankOf<[F8E8M0FNU, F8E4M3FN, F8E5M3FNU], [2]>:$destination,
     DefaultValuedAttr<BoolAttr, "false">:$collective
   );
 
   let hasVerifier = 1;
 }
 
-def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", []> {
+def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", [Pure]> {
   let summary = "Constructs a TMEM MemRef with the requested type that begins at the specified TMEM column offset by the argument";
   let description = [{
     The principal use case for this op is to do a single TMEM allocation and
     slice it into multiple smaller TMEM references. `source` is the large TMEM
     allocation and `offset` is the number of columns to start slicing from.
+
+    `slice_tmem` may optionally carry an `alias_id` attribute that is used to
+    differentiate between potentially aliasing allocations.
   }];
 
   let arguments = (ins
     MemRefRankOf<[AnyType], [2]>:$source,
-    ConfinedAttr<I32Attr, [IntNonNegative]>:$offset
+    ConfinedAttr<I32Attr, [IntNonNegative]>:$offset,
+    OptionalAttr<I64Attr>:$alias_id
   );
 
   let results = (outs MemRefRankOf<[AnyType], [2]>);
@@ -1141,11 +1322,16 @@ def MosaicGPU_TcGen05CommitArriveOp : Op<MosaicGPU_Dialect, "tcgen05_commit_arri
 
     if `collective` is `true`, allow signaling on the `barrier` object of
     multiple CTAs within the cluster.
+
+    If `commit_a_read_only` is `true`, the `barrier` tracks only the completion of
+    SMEM reads of operand A of preceding `tcgen05_mma` operations.
   }];
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    DefaultValuedAttr<BoolAttr, "false">:$collective
+    DefaultValuedAttr<BoolAttr, "false">:$collective,
+    PtxPredicate:$predicate,
+    DefaultValuedAttr<BoolAttr, "false">:$commit_a_read_only
   );
 }
 
@@ -1159,7 +1345,7 @@ def MosaicGPU_DebugPrintOp : Op<MosaicGPU_Dialect, "debug_print", []> {
 }
 
 def MosaicGPU_PrintLayoutOp : Op<MosaicGPU_Dialect, "print_layout", []> {
-  let summary = "Prints the layout of the given array or TMEM reference.";
+  let summary = "Prints the layout of the given array, TMEM or SMEM reference.";
 
   let arguments = (ins
     StrAttr:$format,
@@ -1216,6 +1402,64 @@ def MosaicGPU_AssumeMultipleOp : Op<MosaicGPU_Dialect, "assume_multiple", [Pure,
   );
   let results = (outs AnyTypeOf<[Index, AnyInteger]>:$result);
   let assemblyFormat = [{$value `,` $multiple attr-dict `:` type($result)}];
+}
+
+def MosaicGPU_AllocSmemOp : Op<MosaicGPU_Dialect, "alloc_smem", []> {
+  let summary = "Allocates a statically shaped SMEM memref within an `alloca_scope`.";
+  let description = [{
+    Allocates a statically shaped SMEM memref that is valid for the duration of
+    the enclosing `alloca_scope` operation.
+
+    An optional `alignment` attribute specifies the minimum byte alignment for
+    the allocation and must be a positive power of 2.
+  }];
+
+  let arguments = (ins
+    OptionalAttr<IntValidAlignment<I64Attr>>:$alignment
+  );
+  let results = (outs AnyStaticShapeMemRef:$result);
+  let assemblyFormat = [{ prop-dict attr-dict `:` type($result) }];
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_AllocaScopeOp : Op<MosaicGPU_Dialect, "alloca_scope",
+    [AutomaticAllocationScope,
+     SingleBlockImplicitTerminator<"AllocaScopeReturnOp">,
+     NoRegionArguments]> {
+  let summary = "Defines a scoped allocation region.";
+  let description = [{
+    Defines a single-block allocation scope for scoped allocation operations
+    (such as `mosaic_gpu.alloc_smem`). Any scoped allocations inside this region
+    are valid only for the duration of the region and may not escape.
+
+    `alloca_scope` can capture outer values directly and optionally return
+    non-memref results via `mosaic_gpu.alloca_scope.return`.
+  }];
+
+  let results = (outs Variadic<AnyType>);
+  let regions = (region SizedRegion<1>:$region);
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_AllocaScopeReturnOp : Op<MosaicGPU_Dialect, "alloca_scope.return",
+    [Pure, ReturnLike, Terminator, HasParent<"AllocaScopeOp">]> {
+  let summary = "Terminator for the region in an `AllocaScopeOp`.";
+  let description = [{
+    The `alloca_scope.return` op is a terminator that indicates the end of
+    execution within an `AllocaScopeOp`'s region. It can optionally return some
+    values, which become the results of the parent `AllocaScopeOp`.
+
+    The declared results of the parent `AllocaScopeOp` must match the operand
+    types of this op.
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$operands);
+  let builders = [OpBuilder<(ins), [{ /*nothing to do */ }]>];
+  let assemblyFormat = [{ attr-dict ($operands^ `:` type($operands))? }];
+
+  let hasVerifier = 1;
 }
 
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_

@@ -17,6 +17,7 @@
 """Utilities for manipulating HloSharding."""
 
 from collections.abc import Sequence
+
 import jaxlib._hlo
 
 def PartiallyReplicateTiledShardingOnDims(

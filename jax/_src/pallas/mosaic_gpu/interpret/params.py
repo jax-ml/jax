@@ -39,17 +39,21 @@ class InterpretGPUParams(interpret_params.SharedInterpretParams):
   :func:`reset_gpu_interpret_mode_state` before using GPU interpret mode
   again in the same process.
 
-  Attrs:
+  Attributes:
     num_tma_threads_per_device: The number of threads that can be used for
       simulating memory transfers with the TMA unit. The interpreter does not
       in fact spawn separate threads for executing TMA memory transfers, but a
       separate vector clock is maintained for each TMA thread.
       Default: 1.
     logging_mode: Logging mode for GPU interpret mode.
+    inline_mgpu: control how interpret mode handles inline MGPU usage. Either
+      "error" or "ignore", since in general it's not possible to simulate MGPU
+      behavior in interpret mode. Default: "error".
   """
 
-  num_tma_threads_per_device: int = 1
+  num_tma_threads_per_device: int = 5
   logging_mode: interpret_params.LoggingMode | None = None
+  inline_mgpu: str = "error"
 
   def __post_init__(self):
     super().__post_init__()
@@ -77,11 +81,11 @@ def force_gpu_interpret_mode(params: InterpretGPUParams = InterpretGPUParams()):
 
   Args:
     params: an instance of :class:`InterpretGPUParams`.  Any call to
-       :func:`jax.experimental.pallas.mosaic_gpu.kernel`,
+      :func:`jax.experimental.pallas.mosaic_gpu.kernel`,
       :func:`jax.experimental.pallas.core_map`, or
       :func:`jax.experimental.pallas.pallas_call` that is traced under this
       context manager will be run with ``interpret=params``.  When ``params``
-      is not``None``, this will cause those calls to run with GPU
+      is not ``None``, this will cause those calls to run with GPU
       interpret mode.
   """
   # TODO(jburnim): Rename to config.pallas_interpret_mode_context_manager.

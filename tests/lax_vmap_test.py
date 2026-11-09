@@ -17,7 +17,7 @@ from __future__ import annotations
 from functools import partial
 import itertools
 import math
-from typing import Union, cast
+from typing import cast
 import unittest
 
 from absl.testing import absltest
@@ -72,8 +72,8 @@ class LaxVmapTest(jtu.JaxTestCase):
      for lhs_shape in [(b * batch_group_count, i * feature_group_count, 6, 7)]
      for rhs_shape in [(j * batch_group_count * feature_group_count, i, 1, 2)]],
     [dict(lhs_bdim=lhs_bdim, rhs_bdim=rhs_bdim)
-        for lhs_bdim in itertools.chain([cast(Union[int, None], None)], range(5))
-        for rhs_bdim in itertools.chain([cast(Union[int, None], None)], range(5))
+        for lhs_bdim in itertools.chain([cast(int | None, None)], range(5))
+        for rhs_bdim in itertools.chain([cast(int | None, None)], range(5))
         if (lhs_bdim, rhs_bdim) != (None, None)
     ],
     [dict(dimension_numbers=dim_nums, perms=perms)
@@ -226,7 +226,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     # Checks that batching didn't introduce any transposes or broadcasts.
     jaxpr = jax.make_jaxpr(dot)(np.zeros(lhs_shape, dtype),
                                 np.zeros(rhs_shape, dtype))
-    for eqn in jtu.iter_eqns(jaxpr.jaxpr):
+    for eqn in jtu.iter_eqns(jaxpr):
       self.assertFalse(eqn.primitive in ["transpose", "broadcast"])
 
   @jtu.sample_product(
@@ -369,6 +369,14 @@ class LaxVmapTest(jtu.JaxTestCase):
     op = lambda x, y: lax.stack([x, y], axis=0)
     for bdims in lax_test_util.all_bdims(shape, shape):
       self._CheckBatching(op, 5, bdims, (shape, shape), (dtype, dtype), rng)
+
+  def testStackNoTransposeOnVmap(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41794
+    # Ensure vmap of jnp.stack with axis=bdim does not emit a transpose.
+    f = jax.jit(jax.vmap(lambda a, b: lax.stack([a, b], axis=0)))
+    x = jnp.ones((8, 16))
+    hlo_text = f.lower(x, x).as_text()
+    self.assertNotIn("transpose", hlo_text)
 
   def testUnstack(self):
     shape = (2, 3)
@@ -844,6 +852,18 @@ class LaxVmapTest(jtu.JaxTestCase):
 
     actual = jax.vmap(op, in_axes=in_axes, out_axes=out_axes)(*batched_args)
     self.assertAllClose(expected, actual)
+
+  def test_vmap_scatter_sorted_indices_regression(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38005
+    batch, n = 1024, 8224
+    indices = jnp.full(batch, n - 1, dtype=jnp.int32).at[-1].set(0)
+
+    @jax.jit
+    @jax.vmap
+    def f(idx):
+      return jnp.zeros(n, dtype=jnp.bool_).at[idx].set(True).sum()
+
+    self.assertArraysEqual(f(indices), jnp.ones(batch, dtype=int))
 
 
 if __name__ == '__main__':

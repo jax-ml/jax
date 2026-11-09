@@ -1,0 +1,17 @@
+# Full CI test suite targets.
+# Edit this file to tune which tests run in the regular CI; no workflow YAML changes needed.
+# Use - prefix to exclude specific tests within a suite.
+
+//tests:gpu_tests
+//tests:backend_independent_tests
+//tests/pallas:gpu_tests
+//tests/pallas:backend_independent_tests
+//jaxlib/tools:check_gpu_wheel_sources_test
+
+-//tests/pallas:ops_test_mgpu_gpu
+
+# Flaky on the CI workers.
+-//tests:export_harnesses_multi_platform_test_gpu
+
+# Times out on the CI workers since #41867.
+-//tests:lax_scipy_special_functions_test_gpu
