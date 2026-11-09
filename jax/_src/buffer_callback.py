@@ -80,8 +80,9 @@ def buffer_callback(
       ...
 
   where ``ctx`` is an instance of
-  :class:`~jax.experimental.buffer_callback.ExecutionContext`, which mainly
-  provides access to XLA's computation stream when running on GPU, ``out`` is a
+  :class:`~jax.experimental.buffer_callback.ExecutionContext`, which provides
+  access to XLA's execution ``stage``, process-local ``device_ordinal``, and
+  (when running on GPU) computation ``stream``, ``out`` is a
   pytree of mutable :class:`~jax.experimental.buffer_callback.Buffer` objects,
   and the ``args`` arguments have the same pytree structure as the inputs, but
   each leaf is :class:`~jax.experimental.buffer_callback.Buffer`. This callback
