@@ -214,9 +214,11 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         functools.partial(jtu.rand_uniform, low=0.5, high=30), True,
         shapes=[(), (4,)],
     ),
+    # hyp2f1 gradients are tested in testHyp2f1ParameterDerivatives to avoid
+    # compiling 4-argument while_loop AD across every shape/dtype combination.
     op_record(
         "hyp2f1", 4, float_dtypes,
-        functools.partial(jtu.rand_uniform, low=0.1, high=0.9), True,
+        functools.partial(jtu.rand_uniform, low=0.1, high=0.9), False,
         shapes=[(), (4,)],
     ),
     op_record("log_softmax", 1, float_dtypes, jtu.rand_default, True),
@@ -2555,14 +2557,6 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         atol=tol,
         rtol=tol,
     )
-    jtu.check_grads(
-        lsp_special.betaln,
-        (a, b),
-        order=2,
-        modes=["fwd"],
-        atol=tol,
-        rtol=tol,
-    )
 
     # Gradients for large finite inputs exceeding sqrt(MAX_FLOAT) and near MAX_FLOAT,
     # where naive x / y differentiation overflows the denominator's square, and
@@ -2590,6 +2584,28 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(gb[:2], expected_grad, rtol=1e-5, atol=1e-5)
     self.assertFalse(np.any(np.isnan(ga[2:])))
     self.assertFalse(np.any(np.isnan(gb[2:])))
+
+  @jtu.sample_product(
+      dtype=float_dtypes,
+  )
+  def testBetalnSecondOrderGrads(self, dtype):
+    a = np.array(
+        [0.2, 0.2, 0.5, 2.5, 2.5, 12.0, 15.0, 10.0, -2.25, -2.25, -2.25, -2.25],
+        dtype=dtype,
+    )
+    b = np.array(
+        [0.2, 0.3, 2.5, 2.5, 12.0, 15.0, 15.0, 200.0, 1.5, 5.0, -1.5, -2.25],
+        dtype=dtype,
+    )
+    tol = 1e-2 if dtype == np.float32 else 1e-5
+    jtu.check_grads(
+        lsp_special.betaln,
+        (a, b),
+        order=2,
+        modes=["fwd"],
+        atol=tol,
+        rtol=tol,
+    )
 
 
 if __name__ == "__main__":
