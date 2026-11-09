@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -38,16 +39,43 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "mlir/AsmParser/AsmParser.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/gpu/target.h"
+#include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/command_buffer_requests.h"
+#include "xla/backends/gpu/runtime/custom_call_thunk.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/client/local_client.h"
+#include "xla/ffi/api/c_api.h"
+#include "xla/ffi/attribute_map.h"
+#include "xla/ffi/call_frame.h"
+#include "xla/ffi/ffi_api.h"
+#include "xla/ffi/invoke.h"
 #include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/pjrt/stream_executor_executable.h"
+#include "xla/runtime/device_id.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/service_executable_run_options.h"
+#include "xla/service/shaped_slice.h"
+#include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"  // IWYU pragma: keep
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 
 namespace {
@@ -59,11 +87,17 @@ using ::testing::HasSubstr;
 using ::testing::Not;
 using ::testing::SizeIs;
 
-absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable) {
+absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable,
+                         int32_t* out_value = nullptr) {
   std::vector<xla::PjRtBuffer*> no_buffers;
   ASSIGN_OR_RETURN(auto result,
                    executable->Execute({no_buffers}, /*options=*/{}));
   RETURN_IF_ERROR(result[0][0]->GetReadyFuture().Await());
+  if (out_value != nullptr) {
+    ASSIGN_OR_RETURN(std::shared_ptr<xla::Literal> literal,
+                     result[0][0]->ToLiteralSync());
+    *out_value = literal->GetFirstElement<int32_t>();
+  }
   // During `Execute()`, PJRT registers an `AndThen` cleanup callback on the
   // compute stream's definition event that holds a
   // `shared_ptr<LocalExecutable>` (which transitively owns
@@ -549,15 +583,21 @@ TEST_F(CustomCallTest, MosaicGpuRecordsIntoCommandBuffer) {
       ->set_xla_gpu_graph_min_graph_size(1);
   SetVLogLevel("custom_call", 5);
   SetVLogLevel("record_ffi", 3);
+  SetVLogLevel("command_buffer_thunk", 3);
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<xla::PjRtLoadedExecutable> executable,
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              std::move(compile_options)));
-  // Create.
+  // Create on the first execution (no warmup run).
   {
+    int32_t out_value = 0;
     InfoLogCollector collector;
-    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+    EXPECT_THAT(ExecuteSync(executable.get(), &out_value), IsOk());
+    EXPECT_EQ(out_value, 42);
     std::vector<std::string> logs = collector.Stop();
+    EXPECT_THAT(logs,
+                Not(Contains(HasSubstr(
+                    "Executing warm up iteration of command buffer thunk"))));
     EXPECT_THAT(
         logs, Contains(HasSubstr("MosaicGpuRecord called for "
                                  "kernel_mosaic_gpu_kernel with action=Create"))
@@ -588,11 +628,16 @@ TEST_F(CustomCallTest, MosaicGpuRecordsIntoCommandBuffer) {
     // XLA launches the graph directly.
     EXPECT_THAT(logs, Not(Contains(HasSubstr("MosaicGpuRecord"))));
     EXPECT_THAT(logs, Not(Contains(HasSubstr("MosaicGpuExecute"))));
+    ASSERT_OK_AND_ASSIGN(std::shared_ptr<xla::Literal> literal,
+                         held_result[0][0]->ToLiteralSync());
+    EXPECT_EQ(literal->GetFirstElement<int32_t>(), 42);
   }
   // Update.
   {
+    int32_t out_value = 0;
     InfoLogCollector collector;
-    EXPECT_OK(ExecuteSync(executable.get()));
+    EXPECT_OK(ExecuteSync(executable.get(), &out_value));
+    EXPECT_EQ(out_value, 42);
     std::vector<std::string> logs = collector.Stop();
     EXPECT_THAT(
         logs, Contains(HasSubstr("MosaicGpuRecord called for "
@@ -626,15 +671,21 @@ TEST_P(CollectiveCommandBufferTest,
   SetVLogLevel("custom_call", 6);
   SetVLogLevel("record_ffi", 3);
   SetVLogLevel("cuda_command_buffer", 2);
+  SetVLogLevel("command_buffer_thunk", 3);
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<xla::PjRtLoadedExecutable> executable,
       client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
                              std::move(compile_options)));
-  // Create.
+  // Create on the first execution (no warmup run).
   {
+    int32_t out_value = 0;
     InfoLogCollector collector;
-    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+    EXPECT_THAT(ExecuteSync(executable.get(), &out_value), IsOk());
+    EXPECT_EQ(out_value, 42);
     std::vector<std::string> logs = collector.Stop();
+    EXPECT_THAT(logs,
+                Not(Contains(HasSubstr(
+                    "Executing warm up iteration of command buffer thunk"))));
     EXPECT_THAT(
         logs, Contains(HasSubstr("MosaicGpuRecord called for "
                                  "kernel_mosaic_gpu_kernel with action=Create"))
@@ -700,6 +751,110 @@ TEST_F(CustomCallTest, AssemblyToBinaryCompilationProviderDisablesNvJitLink) {
   ASSERT_OK_AND_ASSIGN(stream_executor::cuda::CompilationProvider * provider,
                        mosaic::gpu::GetAssemblyToBinaryCompilationProvider());
   EXPECT_THAT(provider->name(), Not(HasSubstr("NvJitLinkCompilationProvider")));
+}
+
+TEST_F(CustomCallTest,
+       MosaicGpuPrepareHandlesNullAndNonNullCommandBufferRequests) {
+  std::string module_str = TestMGPUHloModule();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                       xla::ParseAndReturnUnverifiedModule(module_str));
+  const xla::HloInstruction* root =
+      module->entry_computation()->root_instruction();
+
+  mlir::MLIRContext mlir_context;
+  mlir::Attribute parsed_attr =
+      mlir::parseAttribute(root->raw_backend_config_string(), &mlir_context);
+  auto dict = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(parsed_attr);
+  ASSERT_NE(dict, nullptr);
+  ASSERT_OK_AND_ASSIGN(xla::ffi::AttributesMap attributes,
+                       xla::ffi::BuildAttributesMap(dict));
+
+  ASSERT_OK_AND_ASSIGN(
+      stream_executor::Platform * platform,
+      stream_executor::PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_OK_AND_ASSIGN(stream_executor::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  std::unique_ptr<stream_executor::ActivateContext> activation =
+      executor->Activate();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<stream_executor::Stream> stream,
+                       executor->CreateStream());
+
+  xla::BufferAllocation result_alloc(/*index=*/0, /*size=*/sizeof(int32_t),
+                                     /*color=*/0);
+  xla::ShapedSlice result_slice{
+      xla::BufferAllocation::Slice(&result_alloc, 0, sizeof(int32_t)),
+      root->shape()};
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::gpu::CustomCallThunk> thunk,
+      xla::gpu::CustomCallThunk::Create(
+          xla::gpu::Thunk::ThunkInfo(), "mosaic_gpu_v2", /*operands=*/{},
+          /*results=*/{result_slice}, std::move(attributes),
+          /*called_computation=*/nullptr, "CUDA",
+          executor->GetDeviceDescription().gpu_compute_capability()));
+  EXPECT_TRUE(thunk->requires_warmup());
+
+  xla::ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  ASSERT_OK_AND_ASSIGN(xla::gpu::CollectiveParams collective_params,
+                       xla::gpu::CollectiveParams::Create(
+                           run_options, /*async_streams=*/{},
+                           xla::LocalDeviceId(executor->device_ordinal())));
+
+  int32_t dummy_result = 0;
+  xla::gpu::BufferAllocations buffer_allocations(
+      {stream_executor::DeviceAddressBase(&dummy_result, sizeof(dummy_result))},
+      executor->device_ordinal(), /*memory_allocator=*/nullptr);
+
+  // 1. Standard Prepare populates CommandBufferRequests with
+  // requires_warmup == false.
+  {
+    xla::gpu::Thunk::ExecutionScopedState execution_scoped_state;
+    xla::gpu::CommandBufferRequests command_buffer_requests;
+    xla::gpu::Thunk::PrepareParams prepare_params(executor, &buffer_allocations,
+                                                  &command_buffer_requests);
+    prepare_params.collective_params = &collective_params;
+    prepare_params.execution_scoped_state = &execution_scoped_state;
+
+    EXPECT_THAT(thunk->Prepare(prepare_params), IsOk());
+    EXPECT_EQ(command_buffer_requests.requires_warmup(thunk.get()), false);
+  }
+
+  // 2. Direct FFI Prepare invocation with null CommandBufferRequests succeeds
+  // without dereferencing a null pointer.
+  {
+    ASSERT_TRUE(thunk->bundle().has_value());
+    ASSERT_NE(thunk->bundle()->prepare, nullptr);
+    ASSERT_TRUE(thunk->call_frame().has_value());
+    xla::ffi::CallFrame call_frame = *thunk->call_frame();
+
+    xla::ffi::InvokeContext context;
+    xla::ffi::InvokeContext::GpuContext gpu_context;
+    gpu_context.collective_params = &collective_params;
+    gpu_context.command_buffer_requests = nullptr;
+    context.backend_context = gpu_context;
+    context.state_context.instantiate = thunk->execution_state().get();
+
+    EXPECT_THAT(
+        xla::ffi::Invoke(xla::ffi::GetXlaFfiApi(), thunk->bundle()->prepare,
+                         call_frame, context, XLA_FFI_ExecutionStage_PREPARE),
+        IsOk());
+  }
+
+  // 3. Prepare with null CollectiveParams sets requires_warmup == false and
+  // returns a clean InternalError instead of dereferencing null.
+  {
+    xla::gpu::Thunk::ExecutionScopedState execution_scoped_state;
+    xla::gpu::CommandBufferRequests command_buffer_requests;
+    xla::gpu::Thunk::PrepareParams prepare_params(executor, &buffer_allocations,
+                                                  &command_buffer_requests);
+    prepare_params.collective_params = nullptr;
+    prepare_params.execution_scoped_state = &execution_scoped_state;
+
+    EXPECT_THAT(thunk->Prepare(prepare_params),
+                absl_testing::StatusIs(absl::StatusCode::kInternal,
+                                       HasSubstr("collective_params")));
+    EXPECT_EQ(command_buffer_requests.requires_warmup(thunk.get()), false);
+  }
 }
 
 }  // namespace
