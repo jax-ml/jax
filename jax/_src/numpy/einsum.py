@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import collections
+import math
 from typing import overload, Any
 from collections.abc import Callable, Sequence
 
@@ -20,13 +21,15 @@ import numpy as np
 import opt_einsum
 
 from jax._src import api
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src.export import shape_poly
 from jax._src.lax import lax
+from jax._src.named_sharding import flatten_spec_no_none
 from jax._src.numpy import util
-from jax._src.pjit import auto_axes
-from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
+from jax._src.pjit import reshard
+from jax._src.sharding_impls import canonicalize_sharding, NamedSharding, PartitionSpec as P
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import partition_list, set_module, unzip2
 
@@ -332,16 +335,14 @@ def einsum(
           ' `einsum` with more than 2 operands (multiple contractions). Please'
           ' decompose it into 2-operand `einsum`s. Got'
           f' out_sharding={out_sharding}')
-    return auto_axes(
-        jit_einsum,
-        axes=out_sharding.mesh.explicit_axes,
-        out_sharding=out_sharding,
-    )(operand_arrays, contractions=contractions, precision=precision,
-      preferred_element_type=preferred_element_type, _dot_general=_dot_general,
-      out_sharding=None)
-  else:
-    return jit_einsum(operand_arrays, contractions, precision,
-                      preferred_element_type, _dot_general, out_sharding)
+  return jit_einsum(
+      operand_arrays,
+      contractions,
+      precision,
+      preferred_element_type,
+      _dot_general,
+      out_sharding,
+  )
 
 
 # Enable other modules to override einsum_contact_path.
@@ -468,17 +469,18 @@ def _einsum(
     return operand, names
 
   def sum_repeats(operand, names, counts, keep_names, out_s=None):
-    for name, count in counts.items():
-      if count > 1:
-        axes = [i for i, n in enumerate(names) if n == name]
-        eye = lax._delta(np.dtype('bool'), operand.shape, axes)
-        operand = lax.select(eye, operand, lax.full_like(operand, 0))
-        if name not in keep_names:
-          operand = sum(operand, axes, out_s)
-          names = names.replace(name, '')
-        else:
-          operand = sum(operand, axes[:-1], out_s)
-          names = names.replace(name, '', count - 1)
+    repeated = [(name, count) for name, count in counts.items() if count > 1]
+    for idx, (name, count) in enumerate(repeated):
+      step_s = out_s if idx == len(repeated) - 1 else None
+      axes = [i for i, n in enumerate(names) if n == name]
+      eye = lax._delta(np.dtype('bool'), operand.shape, axes)
+      operand = lax.select(eye, operand, lax.full_like(operand, 0))
+      if name not in keep_names:
+        operand = sum(operand, axes, step_s)
+        names = names.replace(name, '')
+      else:
+        operand = sum(operand, axes[:-1], step_s)
+        names = names.replace(name, '', count - 1)
     return operand, names
 
   def filter_singleton_dims(operand, names, other_shape, other_names):
@@ -488,7 +490,15 @@ def _einsum(
     sqez_axes, keep_axes = partition_list(keep, list(range(operand.ndim)))
     return lax.squeeze(operand, sqez_axes), "".join(names[i] for i in keep_axes)
 
-  for operand_indices, contracted_names_set, einstr in contractions:
+  final_result_names = (
+      contractions[-1][2].split('->')[1] if contractions else ''
+  )
+  num_steps = len(contractions)
+  for step_idx, (operand_indices, contracted_names_set, einstr) in enumerate(
+      contractions
+  ):
+    is_last_step = step_idx == num_steps - 1
+    step_target_sharding = out_sharding if is_last_step else None
     contracted_names = sorted(contracted_names_set)
     input_str, result_names = einstr.split('->')
     input_names = input_str.split(',')
@@ -501,10 +511,38 @@ def _einsum(
       counts = collections.Counter(names)
       # sum out unique contracted indices with a single reduce-sum
       uniques = [name for name in contracted_names if counts[name] == 1]
-      operand, names = sum_uniques(operand, names, uniques, out_sharding)
+      has_repeats = any(c > 1 for c in counts.values())
+      uniques_out_s = None
+      if step_target_sharding is not None and uniques and not has_repeats:
+        post_names = _removechars(names, uniques)
+        uniques_out_s = (
+            _get_inverse_sharding(
+                step_target_sharding, post_names, result_names
+            )
+            if post_names != result_names
+            else step_target_sharding
+        )
+      operand, names = sum_uniques(operand, names, uniques, uniques_out_s)
       # for every repeated index, do a contraction against an identity matrix
-      operand, names = sum_repeats(operand, names, counts, result_names,
-                                   out_sharding)
+      repeats_out_s = None
+      if step_target_sharding is not None and has_repeats:
+        post_names = names
+        for name, count in counts.items():
+          if count > 1:
+            if name not in result_names:
+              post_names = post_names.replace(name, '')
+            else:
+              post_names = post_names.replace(name, '', count - 1)
+        repeats_out_s = (
+            _get_inverse_sharding(
+                step_target_sharding, post_names, result_names
+            )
+            if post_names != result_names
+            else step_target_sharding
+        )
+      operand, names = sum_repeats(
+          operand, names, counts, result_names, repeats_out_s
+      )
     elif len(operand_indices) == 2:
       lhs, rhs = map(operands.pop, operand_indices)
       lhs_names, rhs_names = input_names
@@ -566,22 +604,43 @@ def _einsum(
       names = batch_names_str + remaining_rhs_names + remaining_lhs_names
       if names == result_names:
         dimension_numbers = ((rhs_cont, lhs_cont), (rhs_batch, lhs_batch))
-        dot_out_sharding = ({} if out_sharding is None else
-                            {'out_sharding': out_sharding})
-        operand = _dot_general(rhs, lhs, dimension_numbers, precision,
-                               preferred_element_type=preferred_element_type,
-                               **dot_out_sharding)
+        dot_lhs, dot_rhs = rhs, lhs
+        dot_lhs_names, dot_rhs_names = rhs_names, lhs_names
       else:
         names = batch_names_str + remaining_lhs_names + remaining_rhs_names
         dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))
-        out_sharding = (_get_inverse_sharding(out_sharding, names, result_names)
-                        if out_sharding is not None and names != result_names
-                        else out_sharding)
-        dot_out_sharding = ({} if out_sharding is None else
-                            {'out_sharding': out_sharding})
-        operand = _dot_general(lhs, rhs, dimension_numbers, precision,
-                                preferred_element_type=preferred_element_type,
-                                **dot_out_sharding)
+        dot_lhs, dot_rhs = lhs, rhs
+        dot_lhs_names, dot_rhs_names = lhs_names, rhs_names
+      step_out_s = step_target_sharding
+      if (
+          step_out_s is None
+          and out_sharding is not None
+          and _needs_explicit_dot_sharding(
+              core.typeof(dot_lhs), core.typeof(dot_rhs), dimension_numbers
+          )
+      ):
+        step_out_s = _intermediate_einsum_sharding(
+            out_sharding,
+            final_result_names,
+            result_names,
+            dot_lhs_names,
+            core.typeof(dot_lhs),
+            dot_rhs_names,
+            core.typeof(dot_rhs),
+        )
+      if step_out_s is not None and names != result_names:
+        step_out_s = _get_inverse_sharding(step_out_s, names, result_names)
+      dot_out_sharding = (
+          {} if step_out_s is None else {'out_sharding': step_out_s}
+      )
+      operand = _dot_general(
+          dot_lhs,
+          dot_rhs,
+          dimension_numbers,
+          precision,
+          preferred_element_type=preferred_element_type,
+          **dot_out_sharding,
+      )
     else:
       raise NotImplementedError(
         "jax.numpy.einsum does not support simultaneous contraction of 3 or more"
@@ -595,9 +654,109 @@ def _einsum(
     if names != result_names:
       perm = tuple(names.index(name) for name in result_names)
       operand = lax.transpose(operand, perm)
+    if is_last_step and out_sharding is not None and len(operand_indices) == 1:
+      norm_out_s = out_sharding.update(
+          spec=out_sharding.spec._normalized_spec_for_aval(operand.ndim)
+      )
+      if core.typeof(operand).sharding != norm_out_s:
+        operand = reshard(operand, out_sharding)
     operands.append(operand)  # used in next iteration
   return lax._convert_element_type(operands[0], preferred_element_type,
                                    output_weak_type)
+
+
+def _needs_explicit_dot_sharding(lhs_aval, rhs_aval, dimension_numbers) -> bool:
+  if not (
+      lhs_aval.sharding.mesh._any_axis_explicit
+      or rhs_aval.sharding.mesh._any_axis_explicit
+  ):
+    return False
+  (lhs_cont, rhs_cont), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs_parts = lhs_aval.sharding.spec.partitions
+  rhs_parts = rhs_aval.sharding.spec.partitions
+  if tuple(lhs_parts[i] for i in lhs_batch) != tuple(
+      rhs_parts[i] for i in rhs_batch
+  ):
+    return True
+  for lc, rc in zip(lhs_cont, rhs_cont):
+    if lhs_parts[lc] is not None and rhs_parts[rc] is not None:
+      return True
+  out_parts = lax._dot_general_sharding_computation(
+      lhs_aval.sharding.spec, rhs_aval.sharding.spec, dimension_numbers
+  )
+  flat = flatten_spec_no_none(out_parts)
+  return len(flat) != len(set(flat))
+
+
+def _intermediate_einsum_sharding(
+    out_sharding: NamedSharding,
+    final_result_names: str,
+    step_result_names: str,
+    lhs_names: str,
+    lhs_aval,
+    rhs_names: str,
+    rhs_aval,
+) -> NamedSharding:
+  final_spec = out_sharding.spec._normalized_spec_for_aval(
+      len(final_result_names)
+  )
+  final_map = {
+      n: final_spec.partitions[i] for i, n in enumerate(final_result_names)
+  }
+  lhs_parts = lhs_aval.sharding.spec.partitions
+  rhs_parts = rhs_aval.sharding.spec.partitions
+  forbidden = frozenset(config.no_collectives.value or ())
+
+  step_shapes = [
+      lhs_aval.shape[lhs_names.index(n)]
+      if n in lhs_names
+      else rhs_aval.shape[rhs_names.index(n)]
+      for n in step_result_names
+  ]
+  assigned: list[Any] = [None] * len(step_result_names)
+  used_axes: set[Any] = set()
+
+  def _try_assign(idx: int, p: Any) -> bool:
+    ax = flatten_spec_no_none((p,))
+    if not ax or any(a in used_axes for a in ax):
+      return False
+    dim_size = step_shapes[idx]
+    if core.is_constant_dim(dim_size):
+      shard_size = math.prod(out_sharding.mesh.shape[a] for a in ax)
+      if dim_size % shard_size != 0:
+        return False
+    assigned[idx] = p
+    used_axes.update(ax)
+    return True
+
+  for i, n in enumerate(step_result_names):
+    p_l = lhs_parts[lhs_names.index(n)] if n in lhs_names else None
+    p_r = rhs_parts[rhs_names.index(n)] if n in rhs_names else None
+    p_f = final_map.get(n)
+    for cand in (p_l, p_r):
+      if cand is not None and any(
+          a in forbidden for a in flatten_spec_no_none((cand,))
+      ):
+        if _try_assign(i, cand):
+          break
+    if assigned[i] is not None:
+      continue
+    if p_l == p_r and p_l is not None:
+      _try_assign(i, p_l)
+    elif p_f is not None and p_f in (p_l, p_r):
+      _try_assign(i, p_f)
+
+  for i, n in enumerate(step_result_names):
+    if assigned[i] is not None:
+      continue
+    p_l = lhs_parts[lhs_names.index(n)] if n in lhs_names else None
+    p_r = rhs_parts[rhs_names.index(n)] if n in rhs_names else None
+    p_f = final_map.get(n)
+    for cand in (p_f, p_l, p_r):
+      if _try_assign(i, cand):
+        break
+
+  return NamedSharding(out_sharding.mesh, P(*assigned))
 
 
 def _get_inverse_sharding(out_sharding, names, result_names):

@@ -9000,6 +9000,71 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jnp.einsum('ab,bc,ac->c', AB, BC, AC, out_sharding=jax.P())
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_multi_operand_einsum_out_sharding_no_auto_axes(self, mesh):
+    rng = np.random.default_rng(0)
+    a_np = rng.normal(size=(4, 5, 3)).astype(np.float32)
+    b_np = rng.normal(size=(4, 3, 7)).astype(np.float32)
+    c_np = rng.normal(size=(4, 7, 4)).astype(np.float32)
+    a = jax.device_put(a_np, P('x', None, None))
+    b = jax.device_put(b_np, P('x', None, None))
+    c = jax.device_put(c_np, P('x', None, None))
+
+    f = jax.jit(
+        lambda u, v, w: jnp.einsum(
+            'bij,bjk,bkl->bil',
+            u,
+            v,
+            w,
+            precision=lax.Precision.HIGHEST,
+            out_sharding=P('x', None, 'y'),
+        )
+    )
+    self.assertNotIn('Auto', str(f.trace(a, b, c).jaxpr))
+    out = f(a, b, c)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None, 'y')))
+    self.assertAllClose(
+        out,
+        np.einsum('bij,bjk,bkl->bil', a_np, b_np, c_np),
+        atol=1e-4,
+        rtol=1e-4,
+    )
+    self.assertIn(
+        'sdy.sharding_constraint', f.lower(a, b, c).as_text('stablehlo')
+    )
+
+    ab = jnp.ones((8, 16), out_sharding=P('x', 'y'))
+    bc = jnp.ones((16, 4), out_sharding=P('y', None))
+    ac = jnp.ones((8, 4), out_sharding=P('x', None))
+    f_cont = jax.jit(
+        lambda u, v, w: jnp.einsum('ab,bc,ac->c', u, v, w, out_sharding=P())
+    )
+    self.assertNotIn('Auto', str(f_cont.trace(ab, bc, ac).jaxpr))
+    self.assertAllClose(f_cont(ab, bc, ac), jnp.full((4,), 8.0 * 16.0))
+
+    b_y = jax.device_put(
+        np.ones((4, 3, 6), dtype=np.float32), P(None, None, 'y')
+    )
+    c_rep = jax.device_put(
+        np.ones((4, 6, 4), dtype=np.float32), P(None, None, None)
+    )
+    with config.no_collectives({'x'}):
+      f_nc = jax.jit(
+          lambda u, v, w: jnp.einsum(
+              'bij,bjk,bkl->bil', u, v, w, out_sharding=P('x', None, None)
+          )
+      )
+      self.assertNotIn('Auto', str(f_nc.trace(a, b_y, c_rep).jaxpr))
+      self.assertEqual(
+          f_nc(a, b_y, c_rep).sharding, NamedSharding(mesh, P('x', None, None))
+      )
+
+    for bad_spec in [P(unreduced={'x'}), P(reduced={'x'})]:
+      with self.assertRaisesRegex(
+          ValueError, '`out_sharding` with `unreduced` or `reduced`'
+      ):
+        jnp.einsum('bij,bjk,bkl->bil', a, b, c, out_sharding=bad_spec)
+
   def test_auto_axes_no_op(self):
     mesh = jtu.create_mesh((1, 1), ('x', 'y'))
     with jax.set_mesh(mesh):
