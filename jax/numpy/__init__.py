@@ -64,6 +64,7 @@ from jax._src.numpy.lax_numpy import (
     copy as copy,
     corrcoef as corrcoef,
     correlate as correlate,
+    correlation_lags as correlation_lags,
     cov as cov,
     cross as cross,
     delete as delete,
