@@ -948,6 +948,8 @@ def take(
     unique_indices: builtins.bool = ...,
     indices_are_sorted: builtins.bool = ...,
     fill_value: StaticScalar | None = ...,
+    *,
+    out_sharding: NamedSharding | P | None = ...,
 ) -> Array: ...
 def take_along_axis(
     arr: ArrayLike,
