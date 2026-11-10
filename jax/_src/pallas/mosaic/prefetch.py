@@ -88,7 +88,7 @@ def emit_pipeline_with_async_prefetch(
     ) = None,
     trace_scopes: bool = True,
     no_pipelining: bool = False,
-    _explicit_indices: bool = False,
+    _explicit_indices: bool | None = None,
 ) -> tuple[Callable, Callable]:
 
   pipeline_fn = pipeline.emit_pipeline(
@@ -103,6 +103,10 @@ def emit_pipeline_with_async_prefetch(
       trace_scopes=trace_scopes,
       no_pipelining=no_pipelining,
       _explicit_indices=_explicit_indices,
+  )
+  # emit_pipeline has already warned about implicit indices.
+  _explicit_indices = pipeline._resolve_explicit_indices(
+      _explicit_indices, warn=False
   )
 
   def async_prefetch(*inputs):

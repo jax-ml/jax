@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 from typing import Any
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -29,6 +30,7 @@ from jax._src import hijax
 from jax._src import hypothesis_test_util as htu
 from jax._src import state
 from jax._src import test_util as jtu
+from jax._src import test_warning_util
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax.experimental import pallas as pl
@@ -948,6 +950,7 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     ):
       run(x)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_static_num_programs_in_index_map_and_body(self):
     def index_map(i):
       n = pl.num_programs(0)
@@ -1141,6 +1144,76 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
         out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(out, x + 5.0)
+
+  @parameterized.named_parameters(
+      ('emit_pipeline', pltpu.emit_pipeline),
+      (
+          'explicit_false',
+          functools.partial(pltpu.emit_pipeline, _explicit_indices=False),
+      ),
+      ('with_allocations', pltpu.emit_pipeline_with_allocations),
+      (
+          'with_async_prefetch',
+          functools.partial(
+              pltpu.emit_pipeline_with_async_prefetch,
+              mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+          ),
+      ),
+  )
+  def test_emit_pipeline_implicit_indices_warn_once_at_caller(self, emit_fn):
+    with (
+        config.pallas_tpu_pipeline_explicit_indices(False),
+        test_warning_util.record_warnings() as caught,
+    ):
+      emit_fn(lambda x_ref, o_ref: None, grid=(2,))
+
+    self.assertEqual(
+        [w.filename for w in caught if w.category is DeprecationWarning],
+        [__file__],
+    )
+
+  def test_emit_pipeline_explicit_indices_flag_hints_at_legacy_body(self):
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+        mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+    )
+    def kernel(x_hbm, o_hbm):
+      spec = pl.BlockSpec((8, 128), lambda i: (i, 0))
+      pltpu.emit_pipeline(
+          lambda x, o: None, grid=(2,), in_specs=(spec,), out_specs=(spec,)
+      )(x_hbm, o_hbm)
+
+    with (
+        config.pallas_tpu_pipeline_explicit_indices(True),
+        self.assertRaises(TypeError) as cm,
+    ):
+      kernel(jnp.zeros((16, 128), jnp.float32))
+
+    self.assertIn('PipelineStep', ''.join(cm.exception.__notes__))
+
+  @jtu.thread_unsafe_test()  # mocking isn't thread-safe
+  def test_emit_pipeline_legacy_allowlist_keeps_implicit_indices(self):
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+        mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+    )
+    def kernel(x_hbm, o_hbm):
+      spec = pl.BlockSpec((8, 128), lambda i: (i, 0))
+      pltpu.emit_pipeline(
+          lambda x_vmem, o_vmem: None,
+          grid=(2,),
+          in_specs=(spec,),
+          out_specs=(spec,),
+      )(x_hbm, o_hbm)
+
+    with (
+        config.pallas_tpu_pipeline_explicit_indices(True),
+        mock.patch.object(
+            config, 'pallas_tpu_emit_pipeline_legacy_files', (__file__,)
+        ),
+        self.assertNoWarnings(),
+    ):
+      kernel(jnp.zeros((16, 128), jnp.float32))
 
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
@@ -2038,6 +2111,7 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
 
     np.testing.assert_allclose(func(x, y), x @ y, atol=7e-5)
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_pipeline_axis_queries(self):
 
     mesh = pltpu.TensorCoreMesh(axis_name='core')
@@ -3109,6 +3183,7 @@ class EmitPipelineVmapTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out, expected)
 
   @parameterized.product(dynamic_grid=[True, False])
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_num_programs_vmap(self, dynamic_grid):
     if not jax.config.jax_use_emit_pipeline_primitive:
       self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
@@ -3138,6 +3213,7 @@ class EmitPipelineVmapTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out, jnp.full_like(out, grid_size))
 
   @parameterized.product(dynamic_grid=[True, False])
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_num_programs_index_map_vmap(self, dynamic_grid):
     if not jax.config.jax_use_emit_pipeline_primitive:
       self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
@@ -3177,6 +3253,7 @@ class EmitPipelineVmapTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out, expected_out)
 
   @parameterized.product(dynamic_grid=[True, False])
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_num_programs_index_map_and_body_vmap(self, dynamic_grid):
     if not jax.config.jax_use_emit_pipeline_primitive:
       self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
@@ -3261,6 +3338,7 @@ class EmitPipelineVmapTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out, expected_out)
 
   @parameterized.product(dynamic_grid=[True, False])
+  @jtu.ignore_warning(category=DeprecationWarning)
   def test_program_id_vmap(self, dynamic_grid):
     if not jax.config.jax_use_emit_pipeline_primitive:
       self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
