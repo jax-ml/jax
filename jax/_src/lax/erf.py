@@ -24,7 +24,7 @@ from jax._src.lax.double_word import (
 )
 from jax._src.lax.lax import (
     AccuracyMode, RoundingMethod, _const, asarray, bitcast_convert_type, clamp,
-    convert_element_type, exp, expm1, full_like, log, log1p, max as lax_max,
+    convert_element_type, exp, exp2, expm1, full_like, log, log1p, max as lax_max,
     min as lax_min, neg, polynomial, reciprocal, round as lax_round, select,
     select_n, shift_left, sqrt, square,
 )
@@ -579,6 +579,14 @@ _ERFC64_G_0_1 = (
 #   for i from 2 to 10 do print(coeff(p32, i));
 #   g64 = erfc(1/(x + 9/64) - 4) * exp((1/(x + 9/64) - 4)^2) / (x + 9/64);
 #   show("_ERFC64_P_COEFFS", fpminimax(g64, 22, [|D...|], [1/(27.25 + 4) - 9/64; 7/64], relative, floating), 22);
+_ERFC_F16_P_COEFFS = (
+    float.fromhex("0x1.1bd04p-1"),
+    float.fromhex("0x1.53a09ep0"),
+    float.fromhex("0x1.b86166p-2"),
+    float.fromhex("0x1.107e72p3"),
+    float.fromhex("-0x1.8eef68p2"),
+)
+
 _ERFC_BF16_P_COEFFS = (
     float.fromhex("0x1.20f88ap-1"),
     float.fromhex("0x1.1e4d82p0"),
@@ -587,6 +595,80 @@ _ERFC_BF16_P_COEFFS = (
     float.fromhex("0x1.5d5cccp3"),
     float.fromhex("-0x1.48ea3ep4"),
     float.fromhex("0x1.3ecb4cp3"),
+)
+
+# Sollya `fpminimax` tables for default-accuracy `erfc` (`erfc_default_impl`),
+# pinning `0.5 * P_8(0.5) == 1.0` (`float32`) and `0.25 * P_20(7/64) == 1.0`
+# (`float64`) so `erfc(+-0.0) == 1.0` is exact:
+#
+#   prec = 200!;
+#   display = hexadecimal!;
+#   g_f16 = erfc(1/x - 2) * exp((1/x - 2)^2) / x;
+#   p_f16 = fpminimax(g_f16, 4, [|SG...|], [1/6.125; 0.5], relative, floating);
+#   q_exp32 = fpminimax(exp(x), [|1, 2, 3, 4, 5|], [|SG...|], [-0.560; 0.0171],
+#                       relative, floating, 1);
+#   f_expm1 = (exp(x) - 1) / x;
+#   p_exp32 = fpminimax(f_expm1, 2, [|SG...|], [-0.0411; 0.0411],
+#                       relative, floating);
+#   c32 = 2 + 1b-24;
+#   w32 = (0.5 - x) / g_f16;
+#   q32 = remez(((g_f16 - c32) / (x - 0.5)) * w32, 7, [1/12.5; 0.5 - 1b-16], w32);
+#   p32_def = fpminimax(g_f16, 8, [|SG...|], [1/12.5; 0.5], relative, floating,
+#                       0, c32 + (x - 0.5) * q32);
+#   g64_def = erfc(1/(x + 9/64) - 4) * exp((1/(x + 9/64) - 4)^2) / (x + 9/64);
+#   w64 = (7/64 - x) / g64_def;
+#   q64 = remez(((g64_def - 4) / (x - 7/64)) * w64, 19,
+#               [1/31.5 - 9/64; 7/64 - 1b-12], w64);
+#   p64_def = fpminimax(g64_def, 20, [|D...|], [1/31.5 - 9/64; 7/64],
+#                       relative, floating, 0, 4 + (x - 7/64) * q64);
+_ERFC32_DEFAULT_EXPM1_COEFFS = (
+    float.fromhex("0x1.ffffdcp-1"),
+    float.fromhex("0x1.fff74cp-2"),
+    float.fromhex("0x1.54b96ap-3"),
+    float.fromhex("0x1.4c12fcp-5"),
+    float.fromhex("0x1.a1309cp-8"),
+)
+
+_ERFC32_DEFAULT_EXP_EXPM1_COEFFS = (
+    float.fromhex("0x1p0"),
+    float.fromhex("0x1.0006ecp-1"),
+    float.fromhex("0x1.55590ap-3"),
+)
+
+_ERFC32_DEFAULT_P_COEFFS = (
+    float.fromhex("0x1.20dbaap-1"),
+    float.fromhex("0x1.211dccp0"),
+    float.fromhex("0x1.f2899p0"),
+    float.fromhex("0x1.9be248p1"),
+    float.fromhex("-0x1.6b085cp-1"),
+    float.fromhex("0x1.14e918p4"),
+    float.fromhex("-0x1.eaf5dep5"),
+    float.fromhex("0x1.1f07a4p6"),
+    float.fromhex("-0x1.dbcdc2p4"),
+)
+
+_ERFC64_DEFAULT_P_COEFFS = (
+    float.fromhex("0x1.3b35b725c71c9p0"),
+    float.fromhex("0x1.32b1220caf326p3"),
+    float.fromhex("0x1.02bfff5f3feafp6"),
+    float.fromhex("0x1.792f364cf3722p8"),
+    float.fromhex("0x1.d671b460d2ca1p10"),
+    float.fromhex("0x1.eccbcbc614047p12"),
+    float.fromhex("0x1.a267a162a81dap14"),
+    float.fromhex("0x1.0a65e67f66f5fp16"),
+    float.fromhex("0x1.8c9813aae5362p16"),
+    float.fromhex("-0x1.cb16abe662d0ep15"),
+    float.fromhex("-0x1.69f6c43799811p19"),
+    float.fromhex("-0x1.483e78debce58p20"),
+    float.fromhex("0x1.0d057c73f122ep21"),
+    float.fromhex("0x1.9097e4bb63cfep23"),
+    float.fromhex("0x1.5046e1bd2b525p21"),
+    float.fromhex("-0x1.705b30825761bp26"),
+    float.fromhex("-0x1.b13dbfa6eae42p26"),
+    float.fromhex("0x1.3d91bca0a2241p29"),
+    float.fromhex("0x1.2cfaaf76308ddp30"),
+    float.fromhex("-0x1.9ffb97e2d173cp31"),
+    float.fromhex("-0x1.f04d8174da975p32"),
 )
 
 _ERFC32_EXP_COEFFS = (
@@ -651,6 +733,18 @@ _ERFC64_P_COEFFS = (
 )
 
 
+def _erfc_f16(x: Array) -> Array:
+  """Computes `erfc(x)` in `float16` to <= 1.0 ULP across all inputs."""
+  xf = convert_element_type(x, np.float32)
+  ax = abs(xf)
+  e = exp(-(ax * ax))
+  u = reciprocal(ax + 2.0)
+  p = polynomial(u, _ERFC_F16_P_COEFFS, unroll=len(_ERFC_F16_P_COEFFS))
+  res_pos = e * (u * p)
+  res = select(xf < 0.0, 2.0 - res_pos, res_pos)
+  return convert_element_type(res, np.float16)
+
+
 def _erfc_bf16(x: Array) -> Array:
   """Computes `erfc(x)` in `bfloat16` to <= 0.5 ULPs across all inputs."""
   xf = convert_element_type(x, np.float32)
@@ -661,6 +755,58 @@ def _erfc_bf16(x: Array) -> Array:
   res_pos = e * (u * p)
   res = select(xf < 0.0, 2.0 - res_pos, res_pos)
   return convert_element_type(res, dtypes.bfloat16)
+
+
+def _erfc_default_f32(x: Array, *, use_exp2: bool = True) -> Array:
+  """Computes default-accuracy `erfc(x)` in `float32`."""
+  # Round `safe_x` to ULP 2^-6 (`0x1.8p+17`) for `exp2` so `s_hi * (-23/16)` is
+  # exact in `float32`, or to ULP 2^-8 (`0x1.8p+15`) for `exp`.
+  magic = 196608.0 if use_exp2 else 49152.0
+  safe_x = lax_min(abs(x), _const(x, 10.5))
+  x_hi = (safe_x + magic) - magic
+  x_lo = safe_x - x_hi
+  s_hi = x_hi * x_hi
+  s_lo = x_lo * (safe_x + x_hi)
+  if use_exp2:
+    # `s_hi <= 110.25` is `m^2 * 2^-12` (`m <= 672`) and `-0x1.7p+0 = -23 * 2^-4`,
+    # so `s_hi * (-0x1.7p+0)` has numerator `<= 10,386,432 < 2^24` (exact in f32).
+    e_hi = exp2(s_hi * float.fromhex("-0x1.7p+0"))
+    # Remainder `-x^2 - (-s_hi * 0x1.7p+0 * ln(2))` in `[-0.560, 0.0171]`.
+    ns = s_hi * float.fromhex("-0x1.d7fb18p-9") - s_lo
+    expm1_coeffs = _ERFC32_DEFAULT_EXPM1_COEFFS
+  else:
+    e_hi = exp(-s_hi)
+    ns = -s_lo
+    expm1_coeffs = _ERFC32_DEFAULT_EXP_EXPM1_COEFFS
+  e_lo_m1 = ns * polynomial(ns, expm1_coeffs, unroll=len(expm1_coeffs))
+  u = reciprocal(safe_x + 2.0)
+  p = polynomial(
+      u, _ERFC32_DEFAULT_P_COEFFS, unroll=len(_ERFC32_DEFAULT_P_COEFFS)
+  )
+  up = u * p
+  res_pos = e_hi * (up + up * e_lo_m1)
+  return select(x < 0.0, 2.0 - res_pos, res_pos)
+
+
+def _erfc_default_f64(x: Array) -> Array:
+  """Computes default-accuracy `erfc(x)` in `float64`."""
+  magic = float.fromhex("0x1.8p+31")  # Rounds [0, 64) to ULP 2^-21.
+  safe_x = lax_min(abs(x), _const(x, 27.5))
+  x_hi = (safe_x + magic) - magic
+  x_lo = safe_x - x_hi
+  s_hi = x_hi * x_hi
+  s_lo = x_lo * (safe_x + x_hi)
+  e_hi = exp(-s_hi)
+  ns = -s_lo
+  e_lo_m1 = ns * polynomial(ns, (1.0, 0.5, 1.0 / 6.0), unroll=3)
+  u = reciprocal(safe_x + 4.0)
+  z = u - 9.0 / 64.0
+  p = polynomial(
+      z, _ERFC64_DEFAULT_P_COEFFS, unroll=len(_ERFC64_DEFAULT_P_COEFFS)
+  )
+  up = u * p
+  res_pos = e_hi * (up + up * e_lo_m1)
+  return select(x < 0.0, 2.0 - res_pos, res_pos)
 
 
 def _erfc_f32(x: Array) -> Array:
@@ -802,7 +948,7 @@ def _erfc_f64(x: Array) -> Array:
 
 
 def erfc_impl(x: Array) -> Array:
-  """Computes `erfc(x)` for `bfloat16`, `float32`, and `float64` inputs.
+  """Computes high-accuracy `erfc(x)` across floating-point dtypes.
 
   We evaluate `erfc(|x|) = exp(-x^2) * u * P(z)` in a single branch-free regime
   across all inputs via the Mobius transformation `u = 1 / (|x| + c)`
@@ -811,7 +957,8 @@ def erfc_impl(x: Array) -> Array:
   `float32` makes `x^2` exact and avoids double-word splitting; for `float32`
   and `float64`, we split `|x|` so `x_hi^2` is exact, reduce
   `exp(-x^2) = 2^-k * exp(r)` via Cody-Waite range reduction, and evaluate the
-  minimax polynomial `P(z)` in double-word precision.
+  minimax polynomial `P(z)` in double-word precision. Other floating-point
+  dtypes (such as `float16` and `float8_*`) are evaluated via `float32`.
   """
   if x.dtype == dtypes.bfloat16:
     return _erfc_bf16(x)
@@ -820,7 +967,36 @@ def erfc_impl(x: Array) -> Array:
   elif x.dtype == np.float64:
     return _erfc_f64(x)
   else:
-    raise TypeError(f"Unsupported dtype for erfc_impl: {x.dtype}")
+    return convert_element_type(
+        _erfc_f32(convert_element_type(x, np.float32)), x.dtype
+    )
+
+
+def erfc_default_impl(x: Array, *, use_exp2: bool = True) -> Array:
+  """Computes default-accuracy `erfc(x)` preserving subnormal outputs.
+
+  Evaluates `erfc(|x|) = exp(-x^2) * u * P(z)` via the single-branch Mobius
+  transformation `u = 1 / (|x| + c)` and single-word polynomial evaluation,
+  splitting only `x^2 = s_hi + s_lo` in `float32` and `float64` so rounding
+  `x^2` does not magnify error by `O(x^2)` ULPs. In `float32`, `use_exp2=True`
+  uses `exp2` with an exact `23 / 16` split of `log2(e)` to avoid `exp` range
+  reduction error on GPU, while `use_exp2=False` uses `exp` directly.
+  """
+  if x.dtype == np.float16:
+    return _erfc_f16(x)
+  elif x.dtype == dtypes.bfloat16:
+    return _erfc_bf16(x)
+  elif x.dtype == np.float32:
+    return _erfc_default_f32(x, use_exp2=use_exp2)
+  elif x.dtype == np.float64:
+    return _erfc_default_f64(x)
+  else:
+    return convert_element_type(
+        _erfc_default_f32(
+            convert_element_type(x, np.float32), use_exp2=use_exp2
+        ),
+        x.dtype,
+    )
 
 
 @custom_jvp

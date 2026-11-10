@@ -29,7 +29,13 @@ from jax._src.custom_partitioning_sharding_rule import (
 )
 from jax._src import ffi
 from jax._src.lax.bessel import bessel_i0e_impl, bessel_i1e_impl
-from jax._src.lax.erf import erf_inv_core, erf_inv_jvp_scale, erfc_impl, exp_neg_sq
+from jax._src.lax.erf import (
+    erf_inv_core,
+    erf_inv_jvp_scale,
+    erfc_default_impl,
+    erfc_impl,
+    exp_neg_sq,
+)
 from jax._src.lax.lax import (AccuracyMode, Tolerance, add, bitwise_and,
                               bitwise_not, bitwise_or, broadcast_in_dim,
                               broadcast_shapes, convert_element_type, div, eq,
@@ -875,14 +881,27 @@ ad.defjvp(
         _const(x, -2.0 / np.sqrt(np.pi)), mul(g, exp_neg_sq(x))
     ),
 )
-def _erfc_lowering(ctx, x, *, accuracy=None):
+def _erfc_lowering(ctx, x, *, accuracy=None, use_exp2=True):
   dtype = ctx.avals_in[0].dtype
+  if config.jax_accurate_default_erfc.value:
+    if accuracy is AccuracyMode.HIGHEST:
+      return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
+    return mlir.lower_fun(
+        partial(erfc_default_impl, use_exp2=use_exp2), multiple_results=False
+    )(ctx, x)
   if dtype == dtypes.bfloat16 or (
       accuracy is AccuracyMode.HIGHEST and dtype in (np.float32, np.float64)
   ):
     return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
   return _nary_lower_hlo(chlo.erfc, ctx, x)
 mlir.register_lowering(erfc_p, _erfc_lowering)
+# TODO(phawkins): Switch CPU to `erfc_default_impl` (`use_exp2=True`) once
+# XLA:CPU vectorizes and inlines `exp2` like `exp`.
+mlir.register_lowering(
+    erfc_p,
+    partial(_erfc_lowering, use_exp2=False),
+    platform='cpu',
+)
 core.pp_eqn_rules[erfc_p] = _unary_with_accuracy_pp_rule
 
 erf_inv_p = standard_unop(_float, 'erf_inv')

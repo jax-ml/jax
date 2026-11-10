@@ -2560,6 +2560,17 @@ jax_accurate_logistic = bool_state(
     include_in_trace_context=True,
 )
 
+jax_accurate_default_erfc = bool_state(
+    name='jax_accurate_default_erfc',
+    default=False,
+    help=(
+        'Temporary flag enabling single-branch polynomial default lowering'
+        ' for ``lax.erfc`` with subnormal support.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 shard_map_partitioning = bool_state(
     name='jax_shard_map_partitioning',
     default=False,
