@@ -124,10 +124,17 @@ def dct(x: Array, type: int = 2, n: int | None = None,
 
   N = x.shape[axis]
   v = _dct_interleave(x, axis)
-  V = jnp_fft.fft(v, axis=axis)
-  k = lax.expand_dims(jnp.arange(N, dtype=V.real.dtype), [a for a in range(x.ndim) if a != axis])
-  out = V * _W4(N, k)
-  out = 2 * out.real
+  # rfft accepts only float32/float64, so narrow and integer inputs are upcast.
+  dtype = dtypes.to_inexact_dtype(v.dtype)
+  v = v.astype(dtype if dtype in (np.float32, np.float64) else np.float32)
+  # The twiddled half spectrum carries the whole transform: the bins above
+  # N//2 are its negated imaginary part, read in reverse.
+  V = jnp_fft.rfft(v, axis=axis)
+  k_shape = tuple(s if i == axis else 1 for i, s in enumerate(V.shape))
+  k = lax.broadcasted_iota(V.real.dtype, k_shape, axis)
+  V = V * _W4(N, k)
+  tail = lax.rev(lax.slice_in_dim(-V.imag, 1, (N + 1) // 2, axis=axis), (axis,))
+  out = 2 * lax.concatenate([V.real, tail], axis)
   if norm == 'ortho':
     out = _dct_ortho_norm(out, axis)
   return out
