@@ -30,7 +30,7 @@ from jax._src.pallas.core import debug_check as debug_check
 from jax._src.pallas.core import Element as Element
 from jax._src.pallas.core import enable_debug_checks as enable_debug_checks
 from jax._src.pallas.core import enable_poison_buffers as enable_poison_buffers
-from jax._src.pallas.core import GridSpec as GridSpec
+from jax._src.pallas.core import GridSpec as _deprecated_GridSpec
 from jax._src.pallas.core import Indirect as Indirect
 from jax._src.pallas.core import lower_as_mlir as lower_as_mlir
 from jax._src.pallas.core import MemoryRef as MemoryRef
@@ -81,6 +81,14 @@ del _jax_core
 
 
 _deprecations = {
+    # Added November 9th, 2026
+    "GridSpec": (
+        (
+            "jax.pallas.GridSpec is deprecated, pass its arguments directly to"
+            " jax.pallas.pallas_call instead."
+        ),
+        _deprecated_GridSpec,
+    ),
     # Added November 6, 2026
     "pallas_call_p": (
         (
@@ -95,6 +103,7 @@ import typing
 
 if typing.TYPE_CHECKING:
   pallas_call_p = _deprecated_pallas_call_p
+  GridSpec = _deprecated_GridSpec
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
 

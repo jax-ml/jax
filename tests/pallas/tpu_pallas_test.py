@@ -6011,11 +6011,9 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       return self.pallas_call(
           body,
           out_shape=pltpu.SMEM((1,), dtype=jnp.int32),
-          grid_spec=pl.GridSpec(
               grid=(n,),
               in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
               out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
-          ),
       )(n)
 
     n = jax.random.randint(jax.random.key(0), (1,), 1, 10, dtype=jnp.int32)
