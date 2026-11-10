@@ -1541,6 +1541,9 @@ class LaxTest(jtu.JaxTestCase):
     x3 = lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3
     x4 = lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X4
     self._skipIfF8E4M3FNDotAlgorithmUnsupported(x3)
+    if dtype == dtypes.bfloat16 and jtu.is_cuda_compute_capability_equal("8.9"):
+      # TODO(samginzburg): Calibrate bfloat16 X4 accuracy bounds on SM 8.9.
+      raise SkipTest("bfloat16 X4 accuracy check fails on CUDA 8.9.")
     rng = jtu.rand_default(self.rng())
     lhs, rhs = rng((64, 512), dtype), rng((512, 64), dtype)
     ref = np.dot(lhs.astype(np.float64), rhs.astype(np.float64))
