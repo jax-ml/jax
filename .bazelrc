@@ -297,8 +297,10 @@ common:oneapi --@rules_ml_toolchain//common:enable_sycl=True
 common:oneapi --repo_env=TF_NEED_SYCL=1
 common:oneapi --define=tensorflow_mkldnn_contraction_kernel=0
 common:oneapi --repo_env=ENABLE_INTEL_XPU_TRITON=1
-common:oneapi --cxxopt=-std=c++17
-common:oneapi --host_cxxopt=-std=c++17
+common:oneapi --cxxopt=-std=c++20
+common:oneapi --host_cxxopt=-std=c++20
+# C++20 libstdc++ needs GCC 12 (glibc 2.35 sysroot).
+common:oneapi --repo_env=SYSROOT_DIST=linux_glibc_2_35
 
 # oneAPI Hermetic setup
 common:oneapi --repo_env=SYCL_BUILD_HERMETIC=1
