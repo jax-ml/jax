@@ -225,10 +225,10 @@ def _capture_output(fp: TextIO) -> Generator[Callable[[], str]]:
       # Python also has its own buffers, make sure everything is flushed.
       fp.flush()
       os.fsync(fp.fileno())
-      f.seek(0)
-      captured = f.read()
       os.dup2(original_fd, fp.fileno())
       os.close(original_fd)
+      f.seek(0)
+      captured = f.read()
 
 
 capture_stdout = partial(_capture_output, sys.stdout)
