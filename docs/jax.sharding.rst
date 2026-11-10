@@ -20,3 +20,9 @@ Classes
    :members:
 .. autoclass:: Mesh
    :members:
+.. autoclass:: AbstractMesh
+   :members:
+.. autoclass:: AbstractDevice
+   :members:
+.. autoclass:: use_abstract_mesh
+
