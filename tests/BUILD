@@ -1187,6 +1187,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "eigh_test",
     srcs = ["eigh_test.py"],
+    backend_tags = {
+        "cpu": ["nomsan"],  # Times out under msan.
+    },
     shard_count = 10,
     tags = [
         "noasan",  # Times out under asan.
@@ -2098,7 +2101,10 @@ jax_multiplatform_test(
     name = "mutable_array_test",
     srcs = ["mutable_array_test.py"],
     backend_tags = {
-        "cpu": ["noasan"],  # Test times out.
+        "cpu": [
+            "noasan",  # Test times out.
+            "nomsan",  # Test times out.
+        ],
     },
     shard_count = {
         "cpu": select({
