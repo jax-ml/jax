@@ -5644,12 +5644,13 @@ def _polynomial_jvp(primals, tangents, *, unroll=None):
   dot_x, *dot_coeffs = tangents
   kwargs = {} if unroll is None else {'unroll': unroll}
   y = polynomial_p.bind(x, *coeffs, **kwargs)
-  dot_y = ad.Zero(core.typeof(y).to_tangent_aval())
+  y_aval = core.typeof(y)
+  dot_y: Any = ad.Zero(y_aval.to_tangent_aval())
 
   if not isinstance(dot_x, ad.Zero):
     deriv_coeffs = [mul(_const(c, k), c) for k, c in enumerate(coeffs[1:], 1)]
     dy_dx = polynomial(x, deriv_coeffs, unroll=unroll)
-    dot_y = ad.add_tangents(dot_y, mul(dot_x, dy_dx))
+    dot_y = mul(dot_x, dy_dx)
 
   if any(not isinstance(dc, ad.Zero) for dc in dot_coeffs):
     concrete_dot_coeffs = [
@@ -5657,7 +5658,10 @@ def _polynomial_jvp(primals, tangents, *, unroll=None):
         for c, dc in zip(coeffs, dot_coeffs)
     ]
     dy_dc = polynomial(x, concrete_dot_coeffs, unroll=unroll)
-    dot_y = ad.add_tangents(dot_y, dy_dc)
+    dot_y = dy_dc if isinstance(dot_y, ad.Zero) else add(dot_y, dy_dc)
+
+  if not isinstance(dot_y, ad.Zero):
+    dot_y = _maybe_broadcast(y_aval.shape, dot_y, y_aval.sharding)
 
   return y, dot_y
 
