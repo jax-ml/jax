@@ -106,7 +106,7 @@ def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
                keepdims: bool = False, initial: ArrayLike | None = None,
                where_: ArrayLike | None = None,
                parallel_reduce: Callable[..., Array] | None = None,
-               promote_integers: bool = False) -> Array:
+               promote_integers: bool = False, reduction_order: Any = None) -> Array:
   bool_op = bool_op or op
   # Note: we must accept out=None as an argument, because numpy reductions delegate to
   # object methods. For example `np.sum(x)` will call `x.sum()` if the `sum()` method
@@ -149,9 +149,11 @@ def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
   if where_ is not None:
     a = _where(where_, a, init_val)
   if pos_dims is not dims:
-    if parallel_reduce is None:
+    if parallel_reduce is None or reduction_order is not None:
       raise NotImplementedError(f"Named reductions not implemented for jnp.{name}()")
     result = parallel_reduce(a, dims)
+  elif reduction_order is not None:
+    result = (lax.reduce_sum if name == "sum" else lax.reduce_max)(a, dims, reduction_order=reduction_order)
   else:
     result = lax.reduce(a, init_val, op, dims)
   if initial is not None:
@@ -227,22 +229,23 @@ def _ensure_optional_axes(x: Axis) -> Axis:
     force, x, "The axis argument must be known statically.")
 
 
-@api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=api.Inline.JAX_EARLY)
+@api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers', 'reduction_order'), inline=api.Inline.JAX_EARLY)
 def _reduce_sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                 out: None = None, keepdims: bool = False,
                 initial: ArrayLike | None = None, where: ArrayLike | None = None,
-                promote_integers: bool = True) -> Array:
+                promote_integers: bool = True, reduction_order: Any = None) -> Array:
   return _reduction(a, "sum", lax.add, 0, preproc=_cast_to_numeric,
                     bool_op=lax.bitwise_or, upcast_f16_for_computation=(dtype is None),
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                     initial=initial, where_=where, parallel_reduce=lax_parallel.psum,
-                    promote_integers=promote_integers)
+                    promote_integers=promote_integers, reduction_order=reduction_order)
 
 
 @export
 def sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
-        where: ArrayLike | None = None, promote_integers: bool = True) -> Array:
+        where: ArrayLike | None = None, promote_integers: bool = True,
+        *, reduction_order: Any = None) -> Array:
   r"""Sum of the elements of the array over a given axis.
 
   JAX implementation of :func:`numpy.sum`.
@@ -311,7 +314,7 @@ def sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   """
   return _reduce_sum(a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out,
                      keepdims=keepdims, initial=initial, where=where,
-                     promote_integers=promote_integers)
+                     promote_integers=promote_integers, reduction_order=lax._norm_order(reduction_order))
 
 
 @api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=api.Inline.JAX_EARLY)
@@ -401,19 +404,20 @@ def prod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                       promote_integers=promote_integers)
 
 
-@api.jit(static_argnames=('axis', 'keepdims'), inline=api.Inline.JAX_EARLY)
+@api.jit(static_argnames=('axis', 'keepdims', 'reduction_order'), inline=api.Inline.JAX_EARLY)
 def _reduce_max(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                 out: None = None, keepdims: bool = False,
-                initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+                initial: ArrayLike | None = None, where: ArrayLike | None = None,
+                reduction_order: Any = None) -> Array:
   return _reduction(a, "max", lax.max, -np.inf, has_identity=False,
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims,
-                    initial=initial, where_=where, parallel_reduce=lax_parallel.pmax)
+                    initial=initial, where_=where, parallel_reduce=lax_parallel.pmax, reduction_order=reduction_order)
 
 
 @export
 def max(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
-        where: ArrayLike | None = None) -> Array:
+        where: ArrayLike | None = None, *, reduction_order: Any = None) -> Array:
   r"""Return the maximum of the array elements along a given axis.
 
   JAX implementation of :func:`numpy.max`.
@@ -482,7 +486,7 @@ def max(a: ArrayLike, axis: Axis = None, out: None = None,
     Array([[0, 0, 0, 0]], dtype=int32)
   """
   return _reduce_max(a, axis=_ensure_optional_axes(axis), out=out,
-                     keepdims=keepdims, initial=initial, where=where)
+                     keepdims=keepdims, initial=initial, where=where, reduction_order=lax._norm_order(reduction_order))
 
 @api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=api.Inline.JAX_EARLY)
 def _reduce_min(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,

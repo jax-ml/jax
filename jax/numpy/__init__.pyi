@@ -370,7 +370,7 @@ def divmod(x: ArrayLike, y: ArrayLike, /) -> tuple[Array, Array]: ...
 def dot(
     a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = ...,
     preferred_element_type: DTypeLike | None = ...,
-    out_sharding: NamedSharding | P | None = ...) -> Array: ...
+    out_sharding: NamedSharding | P | None = ..., reduction_order: Any = ...) -> Array: ...
 double: _ScalarType
 def dsplit(
     ary: ArrayLike, indices_or_sections: int | ArrayLike
@@ -392,6 +392,7 @@ def einsum(
     preferred_element_type: DTypeLike | None = ...,
     _dot_general: Callable[..., Array] = ...,
     out_sharding: NamedSharding | P | None = ...,
+    reduction_order: Any = ...,
 ) -> Array: ...
 
 @overload
@@ -405,6 +406,7 @@ def einsum(
     preferred_element_type: DTypeLike | None = ...,
     _dot_general: Callable[..., Array] = ...,
     out_sharding: NamedSharding | P | None = ...,
+    reduction_order: Any = ...,
 ) -> Array: ...
 @overload
 def einsum(
@@ -416,6 +418,7 @@ def einsum(
     preferred_element_type: DTypeLike | None = ...,
     _dot_general: Callable[..., Array] = ...,
     out_sharding: NamedSharding | P | None = ...,
+    reduction_order: Any = ...,
 ) -> Array: ...
 
 @overload
@@ -678,12 +681,12 @@ def mask_indices(
 def matmul(
     a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = ...,
     preferred_element_type: DTypeLike | None = ...,
-    out_sharding: NamedSharding | P | None = ...) -> Array: ...
+    out_sharding: NamedSharding | P | None = ..., reduction_order: Any = ...) -> Array: ...
 def matrix_transpose(x: ArrayLike, /) -> Array: ...
 def matvec(x1: ArrayLike, x2: ArrayLike, /) -> Array: ...
 def max(a: ArrayLike, axis: _Axis = ..., out: None = ...,
         keepdims: builtins.bool = ..., initial: ArrayLike | None = ...,
-        where: ArrayLike | None = ...) -> Array: ...
+        where: ArrayLike | None = ..., *, reduction_order: Any = ...) -> Array: ...
 maximum: BinaryUfunc
 def mean(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike | None = ...,
          out: None = ..., keepdims: builtins.bool = ..., *,
@@ -933,7 +936,7 @@ def sum(
     keepdims: builtins.bool = ...,
     initial: ArrayLike | None = ...,
     where: ArrayLike | None = ...,
-    promote_integers: builtins.bool = ...,
+    promote_integers: builtins.bool = ..., *, reduction_order: Any = ...,
 ) -> Array: ...
 def swapaxes(a: ArrayLike, axis1: int, axis2: int) -> Array: ...
 def take(

@@ -877,6 +877,22 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "reduction_order_test",
+    srcs = ["reduction_order_test.py"],
+    shard_count = {
+        "cpu": 4,
+        "gpu": 4,
+        "tpu": 4,
+    },
+    deps = [
+        "//jax/_src:reduction_order",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "lax_numpy_setops_test",
     srcs = ["lax_numpy_setops_test.py"],
     backend_tags = {

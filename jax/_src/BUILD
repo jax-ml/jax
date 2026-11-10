@@ -1335,6 +1335,17 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "reduction_order",
+    srcs = ["reduction_order.py"],
+    deps = [
+        ":dtypes",
+        ":lax",
+        ":typing",
+        ":util",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
     name = "xla_metadata",
     srcs = ["xla_metadata.py"],
     deps = [

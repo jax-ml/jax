@@ -34,12 +34,12 @@ from jax._src.util import canonicalize_axis, set_module
 export = set_module('jax.numpy')
 
 @export
-@api.jit(static_argnames=('precision', 'preferred_element_type', 'out_sharding'),
+@api.jit(static_argnames=('precision', 'preferred_element_type', 'out_sharding', 'reduction_order'),
          inline=api.Inline.JAX_EARLY)
 def dot(a: ArrayLike, b: ArrayLike, *,
         precision: lax.PrecisionLike = None,
         preferred_element_type: DTypeLike | None = None,
-        out_sharding=None) -> Array:
+        out_sharding=None, reduction_order=None) -> Array:
   """Compute the dot product of two arrays.
 
   JAX implementation of :func:`numpy.dot`.
@@ -124,7 +124,7 @@ def dot(a: ArrayLike, b: ArrayLike, *,
   result = lax.dot_general(a, b, dimension_numbers=(contract_dims, batch_dims),
                            precision=precision,
                            preferred_element_type=preferred_element_type,
-                           out_sharding=out_sharding)
+                           out_sharding=out_sharding, reduction_order=reduction_order)
   return lax._convert_element_type(result, preferred_element_type,
                                    output_weak_type)
 
@@ -132,13 +132,13 @@ def dot(a: ArrayLike, b: ArrayLike, *,
 @export
 @partial(
     api.jit,
-    static_argnames=('precision', 'preferred_element_type', 'out_sharding'),
+    static_argnames=('precision', 'preferred_element_type', 'out_sharding', 'reduction_order'),
     inline=api.Inline.JAX_EARLY,
 )
 def matmul(a: ArrayLike, b: ArrayLike, *,
            precision: lax.PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None,
-           out_sharding: NamedSharding | P | None = None,
+           out_sharding: NamedSharding | P | None = None, reduction_order=None,
            ) -> Array:
   """Perform a matrix multiplication.
 
@@ -273,7 +273,7 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
   out = lax.dot_general(
     a, b, (((np.ndim(a) - 1,), (np.ndim(b) - 1 - b_is_mat,)), (a_batch, b_batch)),
     precision=precision, preferred_element_type=preferred_element_type,
-    out_sharding=out_sharding)
+    out_sharding=out_sharding, reduction_order=reduction_order)
   result = lax.transpose(out, perm)
   if both_squeeze:
     result = lax.expand_dims(result, tuple(both_squeeze))
