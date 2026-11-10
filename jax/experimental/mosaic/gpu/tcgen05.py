@@ -139,6 +139,7 @@ def _create_scaled_instr_descriptor(
     transpose_b: bool,
     scale_type: ir.Type,
     sparse: bool = False,
+    is_k96: bool = False,
 ) -> ir.Value:
   # Use .kind::mxf4 and .kind::mxf4nvf4 encoding for 4-bit types.
   is_fp4 = utils.bitwidth(a_type) == 4 and utils.bitwidth(b_type) == 4
@@ -195,7 +196,10 @@ def _create_scaled_instr_descriptor(
   # Bit 31 is the lowest bit of the encoded K dimension for .kind::mxf4,
   # .kind::mxf4nvf4, and .kind::mxf8f6f4. Zero means Dense K=64 / Sparse
   # K=128 for .kind::mxf4 and .kind::mxf4nvf4 and Dense K=32 / Sparse K=64
-  # for .kind::mxf8f6f4.
+  # for .kind::mxf8f6f4. One means Dense K=96 for .kind::mxf4 and
+  # .kind::mxf4nvf4 on sm_103a.
+  assert not (is_k96 and (not is_fp4 or sparse))
+  desc |= is_k96 << 31
   return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
@@ -596,6 +600,27 @@ def mma(
   else:
     a_scale_addr = b_scale_addr = None
     a_scale_m_stride = b_scale_n_stride = None
+  # On SM103, dense 4-bit block-scaled MMA can issue K=96 (48B) steps in
+  # addition to K=64 (32B) steps.
+  use_k96 = (
+      is_scaled
+      and isinstance(mma_a_element_type, ir.Float4E2M1FNType)
+      and not is_sparse
+      and utils.get_arch() == utils.Arch(10, 3)
+      # The K decomposition in `_do_mma` assumes 128B swizzle atoms.
+      and not isinstance(a, TMEMRef)
+      and a_swizzle == 128
+      and b_swizzle == 128
+      # M=64 (2-CTA only for block scaling) uses a different B scale TMEM
+      # layout, which is not supported.
+      and m == 128
+      # A single K=96 step reads consecutive 4-byte TMEM scale words using the
+      # hardware's fixed column stride, so scales must not be padded. A scales
+      # always have 128 rows (i.e. a column stride of 4). B scales have a
+      # multiple of 128 rows, so this also limits N_collective to 128 or 256.
+      and a_scale_m_stride == 4
+      and b_scale_n_stride == n_collective_group_elems // 32
+  )
   if is_sparse and n_groups != 1:
     raise NotImplementedError(
         "A sparse metadata address calculation for multiple tiles"
@@ -630,6 +655,7 @@ def mma(
         b_element_type=mma_b_element_type,
         scale_element_type=scale_element_type,
         scale_block=scale_block,
+        use_k96=use_k96,
     )
 
 
@@ -653,13 +679,14 @@ def _do_mma(
     d_type: ir.Type,
     accumulate: ir.Value,
     collective: bool,
+    use_k96: bool = False,
 ) -> None:
   """Issues the MMA instructions covering the full K extent of the operands.
 
   Every instruction has shape `instr_m x instr_n x instr_k`, where `instr_k` is
-  derived from the element type, and the instructions step through all `k`
-  elements of the K dimension. `n_start` is the N offset of this instruction
-  group in B.
+  derived from the element type (with `use_k96`, K=96 steps followed by up to
+  two trailing K=64 steps), and the instructions step through all `k` elements
+  of the K dimension. `n_start` is the N offset of this instruction group in B.
 
   `accumulate` only applies to the first instruction. All subsequent
   instructions always accumulate into D.
@@ -672,6 +699,7 @@ def _do_mma(
   num_cta = 2 if collective else 1
   if isinstance(a_desc_or_addr, ir.Value):
     assert a_desc_or_addr.type == i32
+    assert not use_k96
     a_in_tmem = True
     a_transpose = False
     a_addr_base = a_desc_or_addr
@@ -683,7 +711,7 @@ def _do_mma(
   b_addr_base = b_desc.addr_base
   elem_bitwidth = utils.bitwidth(a_element_type)
   # TODO: support larger K values on newer hardware
-  instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
+  base_instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
   packing = 8 * 4 // elem_bitwidth
 
   if is_scaled:
@@ -699,7 +727,12 @@ def _do_mma(
           scale_element_type,
           (ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType),
       )
-      scale_vec = "scale_vec::2X" if base_scale_block == 32 else "scale_vec::4X"
+      if use_k96:
+        scale_vec = f"block{base_scale_block}"
+      else:
+        scale_vec = (
+            "scale_vec::2X" if base_scale_block == 32 else "scale_vec::4X"
+        )
       kind = f"mxf4nvf4.block_scale.{scale_vec}"
     else:
       raise NotImplementedError(
@@ -730,8 +763,26 @@ def _do_mma(
   sparse_addr: tuple[Any, ...] = ()
   scales_addrs: tuple[Any, ...] = ()
 
-  assert k % instr_k == 0
-  for k_elem_offset in range(0, k, instr_k):
+  assert k % base_instr_k == 0
+  if use_k96:
+    # Every 3 K=64 steps (192 elems) fuse into 2 K=96 steps; any remaining 1 or
+    # 2 K=64 steps go at the end so they stay within the last 128B swizzle atom.
+    q, b = divmod(k // base_instr_k, 3)
+    instr_ks = [96] * (2 * q) + [base_instr_k] * b
+  else:
+    instr_ks = [base_instr_k] * (k // base_instr_k)
+
+  def _add_base_ptx(dst: str, base_reg: str, offset: int) -> str:
+    low = offset & 0xFFFFFFFF
+    # In LBO byte-address mode (bit 52), add `addr_base` to both 14-bit address
+    # fields at once. SMEM size limits keep each field from carrying into the
+    # other.
+    if (offset >> 52) & 1:
+      return f"mad.lo.u32 {dst}, {base_reg}, 0x10001, {low};"
+    return f"add.s32 {dst}, {base_reg}, {low};"
+
+  k_elem_offset = 0
+  for instr_k in instr_ks:
     if is_sparse:
       assert a_sparse_addr is not None
       # Sparse metadata is organised as 32-row columns of 32-bit cells in TMEM
@@ -765,6 +816,7 @@ def _do_mma(
           b_transpose,
           scale_element_type,
           sparse=is_sparse,
+          is_k96=(instr_k == 96),
       )
       assert (instr_m == 64 and collective) or instr_m == 128
       assert instr_n % (8 * num_cta) == 0
@@ -794,22 +846,24 @@ def _do_mma(
       )
     assert k_elem_offset % (1 + is_sparse) == 0
     a_k_offset = k_elem_offset // (1 + is_sparse)
+    a_instr_k = instr_k // (1 + is_sparse)
     if a_in_tmem:
       assert a_k_offset % packing == 0
       a_offset = a_k_offset // packing
     else:
       assert isinstance(a_desc_or_addr, mma_utils.SmemDescriptor)
-      a_offset = a_desc_or_addr.encoded_offset(0, a_k_offset)
-    b_offset = b_desc.encoded_offset(n_start, k_elem_offset)
-    a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
-    b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
+      a_offset = a_desc_or_addr.encoded_offset(0, a_k_offset, a_instr_k)
+    b_offset = b_desc.encoded_offset(n_start, k_elem_offset, instr_k)
+    k_elem_offset += instr_k
+    a_offset_high = a_offset >> 32
+    b_offset_high = b_offset >> 32
     utils.inline_ptx(
         f"""{{
             .reg .b32 a_desc_low, b_desc_low;
             .reg {".b32" if a_in_tmem else ".b64"} a_desc;
             .reg .b64 b_desc;
-            add.s32 a_desc_low, $1, {a_offset_low};
-            add.s32 b_desc_low, $2, {b_offset_low};
+            {_add_base_ptx("a_desc_low", "$1", a_offset)}
+            {_add_base_ptx("b_desc_low", "$2", b_offset)}
             mov.b64 b_desc, {{b_desc_low, {b_offset_high}}};
             {"mov.b32 a_desc, a_desc_low;" if a_in_tmem else f"mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"}
             tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
