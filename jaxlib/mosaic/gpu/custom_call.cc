@@ -57,6 +57,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "llvm/ADT/SmallVector.h"
@@ -1412,6 +1413,37 @@ void* SubtractOffset(void* ptrs, int64_t offset) {
   return reinterpret_cast<void*>(reinterpret_cast<uint64_t>(ptrs) - offset);
 }
 
+// Returns true if `device_state.metadata_bytes` already holds the same
+// metadata rank, `param_to_peers`, and `parameter_multimem_addresses`.
+bool HasMatchingCollectiveMetadata(
+    const DeviceState& device_state, size_t num_buffers, size_t num_devices,
+    xla::RankId rank, absl::Span<void* const> param_to_peers,
+    absl::Span<void* const> parameter_multimem_addresses) {
+  const size_t expected_size =
+      GetCollectiveMetadataSize(num_buffers, num_devices);
+  if (device_state.metadata_bytes.size() != expected_size) {
+    return false;
+  }
+  DCHECK_EQ(param_to_peers.size(), num_buffers * num_devices);
+  DCHECK_EQ(parameter_multimem_addresses.size(), num_buffers);
+  // `metadata_bytes` is not guaranteed to satisfy the alignment of
+  // `CollectiveKernelMetadata`, so copy it out instead of casting.
+  CollectiveKernelMetadata current_metadata;
+  std::memcpy(&current_metadata, device_state.metadata_bytes.data(),
+              sizeof(CollectiveKernelMetadata));
+  if (current_metadata.rank != static_cast<uint64_t>(rank.value())) {
+    return false;
+  }
+  void* const* current_peers = reinterpret_cast<void* const*>(
+      device_state.metadata_bytes.data() + sizeof(CollectiveKernelMetadata));
+  void* const* current_multimem = current_peers + (num_buffers * num_devices);
+  return absl::MakeConstSpan(current_peers, param_to_peers.size()) ==
+             param_to_peers &&
+         absl::MakeConstSpan(current_multimem,
+                             parameter_multimem_addresses.size()) ==
+             parameter_multimem_addresses;
+}
+
 DeviceState& GetDeviceState(CustomCallResources* resources,
                             int32_t device_ordinal) {
   CHECK(0 <= device_ordinal && device_ordinal < resources->device_states.size())
@@ -1681,6 +1713,14 @@ absl::Status MosaicGpuInitialize(
 
   DeviceState& device_state =
       GetDeviceState(resources, collective_params->local_device_id.value());
+  if (HasMatchingCollectiveMetadata(
+          device_state, num_metadata_buffers, clique_key.num_devices(), rank,
+          param_to_peers, parameter_multimem_addresses)) {
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "Skipping collective metadata copy since collective metadata is "
+           "unchanged.";
+    return absl::OkStatus();
+  }
 
   // Construct the collective kernel metadata information.
   CollectiveKernelMetadata metadata;
