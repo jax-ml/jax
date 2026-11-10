@@ -253,6 +253,117 @@ class Log1pTest(jtu.JaxTestCase):
     )
 
 
+def _log2p1_ref(x: np.ndarray) -> np.ndarray:
+  x64 = x.astype(np.float64)
+  small = np.abs(x64) <= 0.5
+  x_small = np.where(small, x64, 0.0)
+  x_large = np.where(small, 0.0, x64)
+  return np.where(
+      small, np.log1p(x_small) / np.log(2.0), np.log2(1.0 + x_large)
+  ).astype(np.float64)
+
+
+def _mpmath_log2p1(x):
+  if x < -1:
+    return mpmath.nan
+  if x == -1:
+    return -mpmath.inf
+  with mpmath.extraprec(40):
+    return mpmath.log1p(x) / mpmath.ln(2)
+
+
+@jtu.thread_unsafe_test_class()
+class Log2p1Test(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_log2p1_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0}),
+        ("gpu", {f16: 1.0, f32: 1.0, f64: 1.0}),
+        ("tpu", {f16: 1.0, f32: 1.0}),
+    ]
+    interesting_points = [
+        math.sqrt(0.5) - 1.0,
+        -0.29289321,
+        math.sqrt(2.0) - 1.0,
+        0.41421354,
+        float.fromhex("0x1.a5d8dd8e5ee0cp-2"),
+        -0.5,
+        -0.75,
+        1.0,
+        3.0,
+        7.0,
+    ]
+    util.check_unary_precision(
+        self,
+        lax.log2p1,
+        _log2p1_ref,
+        _mpmath_log2p1,
+        dtype,
+        bounds=bounds,
+        interesting_points=interesting_points,
+    )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_log2p1_special_values(self, dtype):
+    if dtype == f64 and (
+        not config.enable_x64.value or jtu.device_under_test() == "tpu"
+    ):
+      self.skipTest("Requires native float64")
+    udt = np.dtype(f"u{np.dtype(dtype).itemsize}")
+    finfo = jnp.finfo(dtype)
+    p = finfo.nmant + 1
+    max_exact_k = min(p, finfo.maxexp - 1)
+    cases = [
+        (0.0, 0.0),
+        (-0.0, -0.0),
+        (-1.0, -np.inf),
+        (np.inf, np.inf),
+        *((float(2**k - 1), float(k)) for k in range(1, max_exact_k + 1)),
+        *((float(2.0**-k - 1.0), float(-k)) for k in range(1, p + 1)),
+    ]
+    xs = np.array([c[0] for c in cases], dtype=dtype)
+    expected = np.array([c[1] for c in cases], dtype=dtype)
+    jitted = jax.jit(lax.log2p1)
+    actual = np.asarray(jitted(xs))
+    self.assertDtypesMatch(actual, expected)
+    self.assertArraysEqual(actual.view(udt), expected.view(udt))
+    nan_xs = np.array([-1.5, -2.0, -np.inf, np.nan], dtype=dtype)
+    self.assertTrue(np.all(np.isnan(np.asarray(jitted(nan_xs)))))
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_log2p1_grad_and_hessian(self, dtype):
+    if dtype == f64 and (
+        not config.enable_x64.value or jtu.device_under_test() == "tpu"
+    ):
+      self.skipTest("Requires native float64")
+    finfo = jnp.finfo(dtype)
+    e_hi = finfo.maxexp - 2
+    s_hi = 2.0**e_hi
+    jvp_fn = jax.jit(lambda x, dx: jax.jvp(lax.log2p1, (x,), (dx,))[1])
+    grad_fn = jax.jit(jax.grad(lax.log2p1))
+    hess_fn = jax.jit(jax.hessian(lax.log2p1))
+    tol = 8 * float(finfo.eps)
+    if jtu.device_under_test() == "tpu" and dtype == f32:
+      tol = max(tol, 2e-4)
+    x_hi = jnp.array(s_hi, dtype=dtype)
+    self.assertAllClose(
+        float(jvp_fn(x_hi, x_hi)), 1.0 / np.log(2.0), atol=0, rtol=tol
+    )
+    self.assertGreater(float(grad_fn(x_hi)), 0.0)
+    for s in (-0.75, 0.0, 2.0):
+      x = jnp.array(s, dtype=dtype)
+      self.assertAllClose(
+          float(grad_fn(x)), 1.0 / ((1.0 + s) * np.log(2.0)), atol=0, rtol=tol
+      )
+      self.assertAllClose(
+          float(hess_fn(x)),
+          -1.0 / (((1.0 + s) ** 2) * np.log(2.0)),
+          atol=0,
+          rtol=tol,
+      )
+
+
 def _mpmath_logit(x):
   if not (0 <= x <= 1):
     return mpmath.nan
@@ -299,6 +410,7 @@ class LogitTest(jtu.JaxTestCase):
 util.register_benchmark(jnp.log)
 util.register_benchmark(jnp.log2)
 util.register_benchmark(_log2_highest)
+util.register_benchmark(lax.log2p1)
 util.register_benchmark(jnp.log10)
 util.register_benchmark(jnp.log1p)
 util.register_benchmark(jsp.special.logit)

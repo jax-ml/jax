@@ -86,6 +86,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.exp` (`highest`) | 0.5 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp2` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp2` (`highest`) | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.lax.exp2m1` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.expm1` | 0.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.expm1` (`highest`) | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.lgamma` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
@@ -93,6 +94,7 @@ Maximum error in units in the last place (ULPs) for `bfloat16`:
 | {func}`~jax.lax.log1p` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.log2` | 0.5 | 0.5 | 1.0 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.log2` (`highest`) | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
+| {func}`~jax.lax.log2p1` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
 | {func}`~jax.lax.logistic` | 2.5 | 2.0 | 1.0 | 1.0 | 0.5 | 63.0 |
 | {func}`~jax.lax.logistic` (`highest`, `jax_accurate_logistic`) | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 0.5 |
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 | 1.0 | 1.0 | 0.5 | 0.5 |
@@ -148,6 +150,7 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.lax.exp` (`highest`) | 1.0 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.exp2` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.exp2` (`highest`) | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| {func}`~jax.lax.exp2m1` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.expm1` | 1.0 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.expm1` (`highest`) | 1.0 | 1.0 | 1.0 | 1.0 | 0.5 | 0.5 |
 | {func}`~jax.lax.lgamma` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
@@ -155,6 +158,7 @@ Maximum error in units in the last place (ULPs) for `float16`:
 | {func}`~jax.lax.log1p` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.log2` | 0.5 | 0.5 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.log2` (`highest`) | 0.5 | 0.5 | 0.5 | 0.5 | 1.0 | 1.0 |
+| {func}`~jax.lax.log2p1` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.logistic` | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.logistic` (`highest`, `jax_accurate_logistic`) | 2.0 | 2.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 |
@@ -213,6 +217,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.exp` (`highest`) | 1.5 | 2.0 | 1.5 | 1.5 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.exp2` | 0.5 | 2.5 | 61.0 | 65.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.exp2` (`highest`) | 0.5 | 2.5 | 1.5 | 1.5 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
+| {func}`~jax.lax.exp2m1` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.expm1` | 1.0 | 1.5 | 1772.0 | 1357.5 | 3.5 | 3.5 | |
 | {func}`~jax.lax.expm1` (`highest`) | 1.0 | 1.5 | 1.0 | 1.0 | 1.0 | 1.0 | `accuracy=lax.AccuracyMode.HIGHEST` |
 | {func}`~jax.lax.lgamma` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
@@ -220,6 +225,7 @@ Maximum error in units in the last place (ULPs) for `float32`:
 | {func}`~jax.lax.log1p` | 3.0 | 1.0 | 4034.0 | 63.0 | 3.0 | 3.0 | |
 | {func}`~jax.lax.log2` | 0.5 | 1.0 | 5159.0 | 56.5 | 1.5 | 1.5 | |
 | {func}`~jax.lax.log2` (`highest`) | 0.5 | 1.0 | 3.0 | 3.0 | 1.5 | 1.5 | `accuracy=lax.AccuracyMode.HIGHEST` |
+| {func}`~jax.lax.log2p1` | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | |
 | {func}`~jax.lax.logistic` | 2.5 | 4.0 | 243.0 | 124.0 | 65.5 | 64.0 | |
 | {func}`~jax.lax.logistic` (`highest`, `jax_accurate_logistic`) | 2.5 | 4.0 | 4.0 | 3.5 | 4.0 | 4.0 | `accuracy=lax.AccuracyMode.HIGHEST`, `jax.config.update('jax_accurate_logistic', True)` |
 | {func}`~jax.lax.reciprocal` | 0.5 | 1.0 | 198.0 | 40.0 | 1.5 | 1.5 | |
@@ -283,11 +289,13 @@ these are empirical bounds.
 | {func}`~jax.lax.erfc` (`highest`) | 2.0 | 2.0 |
 | {func}`~jax.lax.exp` | 2.0 | 1.5 |
 | {func}`~jax.lax.exp2` | 0.5 | 1.0 |
+| {func}`~jax.lax.exp2m1` | 1.0 | 1.0 |
 | {func}`~jax.lax.expm1` | 1.0 | 1.5 |
 | {func}`~jax.lax.lgamma` | 1.0 | 1.0 |
 | {func}`~jax.lax.log` | 0.5 | 1.5 |
 | {func}`~jax.lax.log1p` | 2.0 | 1.5 |
 | {func}`~jax.lax.log2` | 0.5 | 1.5 |
+| {func}`~jax.lax.log2p1` | 1.0 | 1.0 |
 | {func}`~jax.lax.logistic` | 3.5 | 2.5 |
 | {func}`~jax.lax.logistic` (`highest`, `jax_accurate_logistic`) | 2.5 | 2.5 |
 | {func}`~jax.lax.reciprocal` | 0.5 | 0.5 |

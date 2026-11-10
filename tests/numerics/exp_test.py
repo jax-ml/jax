@@ -278,6 +278,120 @@ class Expm1Test(jtu.JaxTestCase):
     )
 
 
+def _exp2m1_ref(x: np.ndarray) -> np.ndarray:
+  x64 = x.astype(np.float64)
+  small = np.abs(x64) <= 0.5
+  x_small = np.where(small, x64, 0.0)
+  x_large = np.where(small, 0.0, x64)
+  return np.where(
+      small, np.expm1(x_small * np.log(2.0)), np.exp2(x_large) - 1.0
+  ).astype(np.float64)
+
+
+def _mpmath_exp2m1(x):
+  with mpmath.extraprec(40):
+    if abs(x) < 0.5:
+      return mpmath.expm1(x * mpmath.ln(2))
+    return mpmath.power(2, x) - 1
+
+
+def _exp2m1_interesting_points(dtype):
+  p = jnp.finfo(dtype).nmant + 1
+  return [
+      float(-p),
+      float(-(p + 1)),
+      float(-(p + 2)),
+      float(p),
+      float(p + 1),
+      -1.5,
+      -0.5,
+      0.5,
+      float.fromhex("0x1.00000000007d7p-1"),
+      float.fromhex("0x1.18370b38c9be1p-1"),
+      1.5,
+  ]
+
+
+@jtu.thread_unsafe_test_class()
+class Exp2m1Test(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_exp2m1_accuracy(self, dtype):
+    bounds = [
+        ("cpu", {f16: 1.0, f32: 1.0, f64: 1.0}),
+        ("gpu", {f16: 1.0, f32: 1.0, f64: 1.0}),
+        ("tpu", {f16: 1.0, f32: 1.0}),
+    ]
+    util.check_unary_precision(
+        self,
+        lax.exp2m1,
+        _exp2m1_ref,
+        _mpmath_exp2m1,
+        dtype,
+        bounds=bounds,
+        interesting_points=_exp2m1_interesting_points(dtype),
+    )
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_exp2m1_special_values(self, dtype):
+    if dtype == f64 and (
+        not config.enable_x64.value or jtu.device_under_test() == "tpu"
+    ):
+      self.skipTest("Requires native float64")
+    udt = np.dtype(f"u{np.dtype(dtype).itemsize}")
+    finfo = jnp.finfo(dtype)
+    p = finfo.nmant + 1
+    max_exact_k = min(p - 1, finfo.maxexp - 1)
+    cases = [
+        (0.0, 0.0),
+        (-0.0, -0.0),
+        (-np.inf, -1.0),
+        (np.inf, np.inf),
+        *((float(k), float(2**k - 1)) for k in range(1, max_exact_k + 1)),
+        *((float(-k), float(2.0**-k - 1.0)) for k in range(1, p + 1)),
+        (float(-(p + 1)), -1.0),
+    ]
+    xs = np.array([c[0] for c in cases], dtype=dtype)
+    expected = np.array([c[1] for c in cases], dtype=dtype)
+    jitted = jax.jit(lax.exp2m1)
+    actual = np.asarray(jitted(xs))
+    self.assertDtypesMatch(actual, expected)
+    self.assertArraysEqual(actual.view(udt), expected.view(udt))
+    self.assertTrue(np.isnan(float(jitted(np.array(np.nan, dtype=dtype)))))
+
+  @parameterized.named_parameters(*DTYPE_PARAMS)
+  def test_exp2m1_grad_and_hessian(self, dtype):
+    if dtype == f64 and (
+        not config.enable_x64.value or jtu.device_under_test() == "tpu"
+    ):
+      self.skipTest("Requires native float64")
+    finfo = jnp.finfo(dtype)
+    p = finfo.nmant + 1
+    jvp_fn = jax.jit(lambda x, dx: jax.jvp(lax.exp2m1, (x,), (dx,))[1])
+    grad_fn = jax.jit(jax.grad(lax.exp2m1))
+    hess_fn = jax.jit(jax.hessian(lax.exp2m1))
+    tol = 8 * float(finfo.eps)
+    if jtu.device_under_test() == "tpu" and dtype == f32:
+      tol = max(tol, 2e-4)
+    e_max = finfo.maxexp - 1
+    x_max = jnp.array(float(e_max), dtype=dtype)
+    dx = jnp.array(2.5, dtype=dtype)
+    self.assertAllClose(
+        float(jvp_fn(x_max, dx)),
+        2.5 * np.log(2.0) * (2.0**e_max),
+        atol=0,
+        rtol=tol,
+    )
+    for s in (-2.0, 0.0, 1.5, float(-(p + 2))):
+      x = jnp.array(s, dtype=dtype)
+      self.assertAllClose(
+          float(grad_fn(x)), np.log(2.0) * (2.0**s), atol=0, rtol=tol
+      )
+      self.assertAllClose(
+          float(hess_fn(x)), (np.log(2.0) ** 2) * (2.0**s), atol=0, rtol=tol
+      )
+
+
 @jtu.thread_unsafe_test_class()
 class LogisticTest(jtu.JaxTestCase):
 
@@ -414,6 +528,7 @@ util.register_benchmark(jnp.exp)
 util.register_benchmark(_exp_highest)
 util.register_benchmark(jnp.exp2)
 util.register_benchmark(_exp2_highest)
+util.register_benchmark(lax.exp2m1)
 util.register_benchmark(jnp.expm1)
 util.register_benchmark(_expm1_highest)
 util.register_benchmark(lax.logistic)

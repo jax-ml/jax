@@ -280,7 +280,23 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_log1p(self):      self.unary_check(jnp.log1p, lims=[0, 4.])
   @jtu.skip_on_devices("tpu")
+  def test_log2p1(self):
+    self.unary_check(lax.log2p1, lims=[-0.5, 4.])
+    x = jnp.float32(1e-10)
+    self.check_jet(
+        lax.log2p1, (x,), ([jnp.ones_like(x), jnp.zeros_like(x)],),
+        atol=0, rtol=1e-6,
+    )
+  @jtu.skip_on_devices("tpu")
   def test_expm1(self):      self.unary_check(jnp.expm1)
+  @jtu.skip_on_devices("tpu")
+  def test_exp2m1(self):
+    self.unary_check(lax.exp2m1)
+    x = jnp.float32(1e-10)
+    self.check_jet(
+        lax.exp2m1, (x,), ([jnp.ones_like(x), jnp.zeros_like(x)],),
+        atol=0, rtol=1e-6,
+    )
   @jtu.skip_on_devices("tpu")
   def test_sin(self):        self.unary_check(jnp.sin)
   @jtu.skip_on_devices("tpu")

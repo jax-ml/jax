@@ -49,6 +49,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.lax.atanpi`, and {func}`jax.lax.atan2pi`, which compute the
     inverse trigonometric functions divided by `pi` (`asin(x) / pi`,
     `acos(x) / pi`, `atan(x) / pi`, and `atan2(x, y) / pi`).
+  * Added {func}`jax.lax.exp2m1` and {func}`jax.lax.log2p1`, which compute
+    `2**x - 1` and `log2(1 + x)` without losing precision near `x = 0`.
 
 * Breaking changes
   * The `jax_use_simplified_jaxpr_constants` configuration flag is now `True`

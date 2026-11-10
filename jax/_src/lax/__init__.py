@@ -249,6 +249,12 @@ from jax._src.lax.special import (
   zeta as zeta,
   zeta_p as zeta_p,
 )
+from jax._src.lax.exp_log import (
+  exp2m1 as exp2m1,
+  exp2m1_p as exp2m1_p,
+  log2p1 as log2p1,
+  log2p1_p as log2p1_p,
+)
 from jax._src.lax.trig import (
   acospi as acospi,
   acospi_p as acospi_p,

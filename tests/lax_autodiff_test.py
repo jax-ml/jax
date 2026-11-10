@@ -194,6 +194,11 @@ LAX_GRAD_OPS = [
                    dtypes=grad_float_dtypes),
     grad_test_spec(lax.atan2pi, nargs=2, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_float_dtypes),
+    grad_test_spec(lax.exp2m1, nargs=1, order=2, rng_factory=jtu.rand_small,
+                   dtypes=grad_float_dtypes),
+    grad_test_spec(lax.log2p1, nargs=1, order=2,
+                   rng_factory=partial(jtu.rand_uniform, low=-0.8, high=4.0),
+                   dtypes=grad_float_dtypes),
 ]
 
 GradSpecialValuesTestSpec = collections.namedtuple(
@@ -219,6 +224,8 @@ LAX_GRAD_SPECIAL_VALUE_TESTS = [
     grad_special_values_test_spec(lax.asinpi, [0.]),
     grad_special_values_test_spec(lax.acospi, [0.]),
     grad_special_values_test_spec(lax.atanpi, [0., 1000.]),
+    grad_special_values_test_spec(lax.exp2m1, [0.]),
+    grad_special_values_test_spec(lax.log2p1, [0.]),
 ]
 
 

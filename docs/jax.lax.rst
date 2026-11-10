@@ -99,6 +99,7 @@ Operators
     erf_inv
     exp
     exp2
+    exp2m1
     expand_dims
     expm1
     fft
@@ -124,6 +125,7 @@ Operators
     log
     log1p
     log2
+    log2p1
     logistic
     lt
     max
