@@ -1347,6 +1347,7 @@ def truncated_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                      shape: Shape | None = None,
                      dtype: DTypeLikeFloat | None = None,
                      *,
+                     mode: str = "low",
                      out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample truncated standard normal random values with given shape and dtype.
 
@@ -1369,6 +1370,9 @@ def truncated_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
       ``upper``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    mode: optional, "low" or "high" for the sampling precision mode (default
+      "low"). Set to "high" for accurate sampling in the tails and at narrow
+      truncation intervals.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -1385,6 +1389,10 @@ def truncated_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   """
   if shape is not None:
     shape = core.canonicalize_shape(shape)
+  if mode not in ("low", "high"):
+    raise ValueError(
+        f"Must provide valid mode for truncated_normal, got: {mode}"
+    )
   key, _ = _check_prng_key("truncated_normal", key)
   out_sharding = canonicalize_sharding(out_sharding, "truncated_normal")
   dtype = dtypes.check_and_canonicalize_user_dtype(
@@ -1392,31 +1400,111 @@ def truncated_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `truncated_normal` must be a float "
                      f"dtype, got {dtype}")
-  return maybe_auto_axes(_truncated_normal, out_sharding,
-                         shape=shape, dtype=dtype)(key, lower, upper)
+  return maybe_auto_axes(
+      _truncated_normal, out_sharding, shape=shape, dtype=dtype, mode=mode
+  )(key, lower, upper)
 
-@jit(static_argnums=(3, 4))
-def _truncated_normal(key: Key, lower, upper, shape, dtype) -> Array:
+
+def _ndtr_and_erf_shifted(
+    x: Array, dx: Array
+) -> tuple[Array, Array, Array]:
+  """Evaluates (2*ndtr(x+dx), 2*ndtr(-(x+dx)), erf((x+dx)/sqrt(2))) for tiny |dx|."""
+  x_fin = jnp.where(jnp.isfinite(x), x, 0.0)
+  xm = x + dx
+  rem = dx - ((x_fin + dx) - x_fin)
+  sqrt_2_over_pi = np.array(math.sqrt(2.0 / math.pi), dtype=x.dtype)
+  inv_sqrt2 = np.array(1.0 / math.sqrt(2.0), dtype=x.dtype)
+  corr = rem * sqrt_2_over_pi * jnp.exp(-0.5 * jnp.square(xm))
+  return (
+      2.0 * ndtr(xm) + corr,
+      2.0 * ndtr(-xm) - corr,
+      lax_special.erf(xm * inv_sqrt2) + corr,
+  )
+
+
+@jit(static_argnums=(3, 4, 5))
+def _truncated_normal(
+    key: Key, lower, upper, shape, dtype, mode: str = "low"
+) -> Array:
   if shape is None:
     shape = lax.broadcast_shapes(np.shape(lower), np.shape(upper))
   else:
     _check_shape("truncated_normal", shape, np.shape(lower), np.shape(upper))
-
-  sqrt2 = np.array(np.sqrt(2), dtype)
-  lower = lax.convert_element_type(lower, dtype)
-  upper = lax.convert_element_type(upper, dtype)
-  a = lax_special.erf(lower / sqrt2)
-  b = lax_special.erf(upper / sqrt2)
   if not dtypes.issubdtype(dtype, np.floating):
     raise TypeError("truncated_normal only accepts floating point dtypes.")
-  u = uniform(key, shape, dtype, minval=a, maxval=b)
-  out = sqrt2 * lax_special.erf_inv(u)
+
+  if mode == "low":
+    sqrt2 = np.array(np.sqrt(2), dtype)
+    lower = lax.convert_element_type(lower, dtype)
+    upper = lax.convert_element_type(upper, dtype)
+    a = lax_special.erf(lower / sqrt2)
+    b = lax_special.erf(upper / sqrt2)
+    u = uniform(key, shape, dtype, minval=a, maxval=b)
+    out = sqrt2 * lax_special.erf_inv(u)
+    # Clamp the value to the open interval (lower, upper) to make sure that
+    # rounding (or if we chose `a` for `u`) doesn't push us outside of the range.
+    return jnp.clip(
+        out,
+        lax.nextafter(lax.stop_gradient(lower), np.array(np.inf, dtype=dtype)),
+        lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
+
+  lower = lax.broadcast_to_rank(
+      lax.convert_element_type(lax.stop_gradient(lower), dtype), len(shape)
+  )
+  upper = lax.broadcast_to_rank(
+      lax.convert_element_type(lax.stop_gradient(upper), dtype), len(shape)
+  )
+  min_out = lax.nextafter(lower, np.array(np.inf, dtype=dtype))
+  max_out = lax.nextafter(upper, np.array(-np.inf, dtype=dtype))
+
+  # Compute in at least float32 so 16-bit dtypes get full 32-bit quantile
+  # resolution and avoid underflow/rounding in the tails.
+  compute_dtype = (
+      np.dtype("float32") if dtypes.finfo(dtype).bits < 32 else dtype
+  )
+  lo = lax.convert_element_type(lower, compute_dtype)
+  hi = lax.convert_element_type(upper, compute_dtype)
+
+  # Shift integration bounds inward by half a destination-dtype ULP so we
+  # truncate at the rounding-interval boundaries of [min_out, max_out] rather
+  # than folding [lower, lower + 0.5*ulp) onto min_out via jnp.clip.
+  lo_next = lax.convert_element_type(min_out, compute_dtype)
+  hi_prev = lax.convert_element_type(max_out, compute_dtype)
+  valid = lo_next <= hi_prev
+  d_lo = jnp.where(valid & jnp.isfinite(lo), 0.5 * (lo_next - lo), 0.0)
+  d_hi = jnp.where(valid & jnp.isfinite(hi), -0.5 * (hi - hi_prev), 0.0)
+
+  # Reflect intervals with positive midpoint so tail bounds lie in (-inf, 0],
+  # where ndtr(x) -> 0 retains full floating-point exponent precision.
+  flip = lo > -hi
+  a, da = jnp.where(flip, -hi, lo), jnp.where(flip, -d_hi, d_lo)
+  b, db = jnp.where(flip, -lo, hi), jnp.where(flip, -d_lo, d_hi)
+
+  finfo = dtypes.finfo(compute_dtype)
+  qa_l, qa_r, ea = _ndtr_and_erf_shifted(a, da)
+  qb_l, qb_r, eb = _ndtr_and_erf_shifted(b, db)
+  delta_q = jnp.where(b <= -1.0, qb_l - qa_l, eb - ea)
+
+  bits = lax.reshape(_random_bits(key, finfo.bits, shape), shape)
+  s, _, q_s = _signed_midpoint_and_complement(bits, compute_dtype, mode="high")
+  neg = s < 0
+  step = (0.5 * q_s) * delta_q
+
+  q_l = jnp.clip(jnp.where(neg, qa_l + step, qb_l - step), finfo.tiny, 2.0)
+  q_r = jnp.clip(jnp.where(neg, qa_r - step, qb_r + step), finfo.tiny, 2.0)
+  q_erf = jnp.minimum(q_l, q_r)
+
+  x_end = jnp.where(neg, ea + step, eb - step)
+  x_mid = jnp.where(q_s < 0.5, x_end, 0.5 * (ea + eb) + 0.5 * s * delta_q)
+  x_erf = jnp.where(
+      q_l < 0.5, q_l - 1.0, jnp.where(q_r < 0.5, 1.0 - q_r, x_mid)
+  )
+
+  z = erf_inv_core(x_erf, q_erf, has_far_tail=True, is_ndtri=True)
+  out = lax.convert_element_type(jnp.where(flip, -z, z), dtype)
   # Clamp the value to the open interval (lower, upper) to make sure that
-  # rounding (or if we chose `a` for `u`) doesn't push us outside of the range.
-  return jnp.clip(
-      out,
-      lax.nextafter(lax.stop_gradient(lower), np.array(np.inf, dtype=dtype)),
-      lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
+  # rounding doesn't push us outside of the range.
+  return jnp.clip(out, min_out, max_out)
 
 
 def bernoulli(key: Key | ArrayLike,  # TODO(jakevdp): make this Key

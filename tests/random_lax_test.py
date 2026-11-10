@@ -660,15 +660,128 @@ class DistributionsTest(RandomTestBase):
     expected_prob = 2.0 * scipy.stats.norm.sf(float(threshold))
     empirical_prob = high_hits / (num_chunks * chunk_size)
     self.assertAllClose(empirical_prob, expected_prob, rtol=0.15)
-  @jtu.sample_product(dtype=float_dtypes, use_jit=[False, True])
-  def testTruncatedNormal(self, dtype, use_jit):
+
+  @jtu.sample_product(
+      dtype=float_dtypes,
+      use_jit=[False, True],
+      mode=['low', 'high'],
+  )
+  def testTruncatedNormal(self, dtype, use_jit, mode):
     key = self.make_key(0)
     rand = random.truncated_normal if not use_jit else jax.jit(
-        random.truncated_normal, static_argnames=['shape', 'dtype'])
-    samples = rand(key, lower=-0.3, upper=0.3, shape=(10000,), dtype=dtype)
+        random.truncated_normal, static_argnames=['shape', 'dtype', 'mode'])
+    samples = rand(
+        key, lower=-0.3, upper=0.3, shape=(10000,), dtype=dtype, mode=mode
+    )
     self.assertTrue(np.min(samples) > -0.3)
     self.assertTrue(np.max(samples) < 0.3)
     self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.truncnorm(-0.3, 0.3).cdf)
+
+  def testLowProbabilityTruncatedNormal(self):
+    # Sensitive to fixed-point grid quantization and `floats == 0` clamping in
+    # `uniform(minval=a, maxval=b)` when sampling into the tails.
+    dtype = jnp.bfloat16
+    nmant = jnp.finfo(dtype).nmant
+    probs = [x * 2**-nmant for x in [0.125, 0.75, 1.25, 2.125]]
+    num_samples = 1024 * 128
+    num_groups = 64
+    key = self.make_key(0)
+    lower, upper = -10.0, 10.0
+    dist = scipy.stats.truncnorm(lower, upper)
+    upper_thresholds = np.array([[dist.isf(p) for p in probs]], dtype=dtype)
+    lower_thresholds = np.array([[dist.ppf(p) for p in probs]], dtype=dtype)
+
+    def compute_counts(key):
+      v = random.truncated_normal(
+          key,
+          lower=lower,
+          upper=upper,
+          shape=(num_samples, 1),
+          dtype=dtype,
+          mode='high',
+      )
+      return (v > upper_thresholds).sum(axis=0), (v < lower_thresholds).sum(
+          axis=0
+      )
+
+    upper_pts, lower_pts = jax.lax.map(
+        compute_counts, random.split(key, num_groups)
+    )
+    upper_probs = [
+        float(x) / (num_samples * num_groups) for x in upper_pts.sum(axis=0)
+    ]
+    lower_probs = [
+        float(x) / (num_samples * num_groups) for x in lower_pts.sum(axis=0)
+    ]
+    np.testing.assert_allclose(upper_probs, probs, rtol=0.25, atol=0)
+    np.testing.assert_allclose(lower_probs, probs, rtol=0.25, atol=0)
+
+  @jtu.sample_product(
+      dtype=float_dtypes,
+      sign=[-1, 1],
+  )
+  def testTruncatedNormalTailRounding(self, dtype, sign):
+    # Sensitive to rounding in `floats * (b - a) + a` inside `uniform`:
+    # When `a = erf(lower / sqrt(2))` is close to +/-1 (but not yet saturated),
+    # adding `a` loses mantissa precision and rounds `u` to +/-1.0 with
+    # probability ~ ulp(1.0) / (2 * (b - a)), which `erf_inv` maps to +/-inf and
+    # `clip` clamps to a point-mass spike at the far boundary.
+    key = self.make_key(0)
+    abs_lo, abs_hi = {
+        jnp.bfloat16: (2.0, 5.0),
+        jnp.float16: (2.5, 5.0),
+        jnp.float32: (4.5, 6.0),
+        jnp.float64: (7.5, 9.0),
+    }[dtype]
+    lower, upper = (abs_lo, abs_hi) if sign > 0 else (-abs_hi, -abs_lo)
+    n = 1000 if dtype == jnp.bfloat16 else 10000
+    samples = random.truncated_normal(
+        key, lower=lower, upper=upper, shape=(n,), dtype=dtype, mode='high'
+    )
+    far_bound = jnp.nextafter(
+        jnp.array(upper if sign > 0 else lower, dtype=dtype),
+        jnp.array(-jnp.inf if sign > 0 else jnp.inf, dtype=dtype),
+    )
+    # True probability of landing in the `far_bound` ULP is < 1e-5; samples
+    # should not pile up at `far_bound`.
+    self.assertEqual(int(jnp.sum(samples == far_bound)), 0)
+    self._CheckKolmogorovSmirnovCDF(
+        samples, scipy.stats.truncnorm(lower, upper).cdf
+    )
+
+  @jtu.sample_product(
+      dtype=float_dtypes,
+      sign=[-1, 1],
+      semi_infinite=[False, True],
+  )
+  def testTruncatedNormalExtremeBounds(self, dtype, sign, semi_infinite):
+    # Regression test for https://github.com/jax-ml/jax/issues/10951
+    # Beyond the threshold where `erf(x / sqrt(2))` rounds to +/-1.0, `a == b == +/-1`,
+    # causing `erf_inv(u)` to return +/-inf and clamping all samples to the
+    # wrong boundary (`upper` when sign > 0, `lower` when sign < 0).
+    key = self.make_key(0)
+    abs_lo = {
+        jnp.bfloat16: 3.5,
+        jnp.float16: 4.0,
+        jnp.float32: 5.5,
+        jnp.float64: 8.5,
+    }[dtype]
+    abs_hi = np.inf if semi_infinite else 100.0
+    lower, upper = (abs_lo, abs_hi) if sign > 0 else (-abs_hi, -abs_lo)
+    samples = random.truncated_normal(
+        key, lower=lower, upper=upper, shape=(1000,), dtype=dtype, mode='high'
+    )
+    # For a standard normal truncated to [abs_lo, abs_hi] in the far tail,
+    # E[|X|] = abs_lo + 1 / abs_lo - O(1 / abs_lo^3), and >99.9% of mass lies
+    # within [abs_lo, abs_lo + 2].
+    expected_abs_mean = abs_lo + 1.0 / abs_lo
+    self.assertAllClose(
+        jnp.abs(samples).mean(),
+        jnp.array(expected_abs_mean, dtype=dtype),
+        rtol=0.05,
+        atol=0.05,
+    )
+    self.assertTrue(jnp.all(jnp.abs(samples) < abs_lo + 3.0))
 
   @jtu.sample_product(
     [dict(shape=shape, replace=replace, axis=axis,
