@@ -2104,13 +2104,11 @@ jax_multiplatform_test(
         "cpu": [
             "noasan",  # Test times out.
             "nomsan",  # Test times out.
+            "notsan",  # Test times out.
         ],
     },
     shard_count = {
-        "cpu": select({
-            "//tests/config:is_tsan": 20,
-            "//conditions:default": 10,
-        }),
+        "cpu": 10,
     },
     deps = py_deps([
         "absl/testing",
