@@ -1582,16 +1582,24 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda a: lax.bitcast_convert_type(a, np.int32)).lower(bad_x16)
 
+  @parameterized.parameters(
+      ((4, 4), P('x', None), 1),
+      ((4, 4), P('x', None), 0),
+      ((4, 4), P('x', 'y'), 1),
+      ((2, 4, 2), P('x', 'y', None), 1),
+      ((16,), P(('x', 'y')), 0),
+      ((16,), P(('y', 'x')), 0),
+  )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_argmin_and_argmax(self, mesh):
-    x = jax.device_put(
-        np.array([[3, 1, 4, 0], [2, 9, 5, 1], [8, 0, 2, 7], [6, 4, 3, 5]],
-                 dtype=np.float32),
-        P('x', None))
+  def test_argmin_and_argmax(self, shape, spec, axis, mesh):
+    vals = np.array(
+        [3, 1, 9, 0, 2, 9, 5, 1, 8, 0, 9, 7, 6, 4, 3, 0], dtype=np.float32
+    ).reshape(shape)
+    x = jax.device_put(vals, spec)
 
     @jax.jit
     def f(a):
-      return jnp.argmin(a, axis=1), jnp.argmax(a, axis=1)
+      return jnp.argmin(a, axis=axis), jnp.argmax(a, axis=axis)
 
     with config.shard_map_partitioning(False):
       exp_min, exp_max = f(x)
@@ -1601,10 +1609,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out_max.sharding, exp_max.sharding)
     self.assertArraysEqual(out_min, exp_min)
     self.assertArraysEqual(out_max, exp_max)
-
-    for op in (jnp.argmin, jnp.argmax):
-      with self.assertRaises(NotImplementedError):
-        jax.jit(lambda a: op(a, axis=0)).lower(x)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_sort(self, mesh):

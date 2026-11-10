@@ -10487,13 +10487,44 @@ argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
 batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
 
-def _argminmax_collective_rule(in_avals, out_avals, *, axes, index_dtype):
-  del out_avals, index_dtype
+def _argminmax_collective_rule(
+    value_comparator, get_identity, reduce_fn,
+    in_avals, out_avals, *, axes, index_dtype,
+):
+  from jax._src.lax import parallel
+  del out_avals
   in_aval, = in_avals
   axis, = axes
-  if in_aval.sharding.spec.partitions[axis] is not None:
-    raise NotImplementedError
-  return mlir.PartitioningRule()
+  part = in_aval.sharding.spec.partitions[axis]
+
+  if part is None:
+    return mlir.PartitioningRule()
+
+  shard_size = in_aval.sharding.shard_shape(in_aval.shape)[axis]
+  local_val = None
+
+  def in_collective(x_shard):
+    nonlocal local_val
+    local_val = reduce_fn(x_shard, (axis,))
+    return (x_shard,)
+
+  def out_collective(local_idx):
+    offset = parallel.axis_index(part).astype(index_dtype) * shard_size
+    global_idx = local_idx + offset
+    vals, idxs = parallel.all_gather(
+        (local_val, global_idx), part, axis=0, tiled=False
+    )
+    _, out_idx = reduce(
+        [vals, idxs],
+        [get_identity(in_aval.dtype), np.array(0, index_dtype)],
+        _ArgMinMaxReducer(value_comparator),
+        (0,),
+    )
+    return out_idx
+
+  return mlir.PartitioningRule(
+      in_collective=in_collective, out_collective=out_collective
+  )
 
 mlir.register_lowering(
     argmin_p,
@@ -10502,7 +10533,9 @@ mlir.register_lowering(
         multiple_results=False,
     ),
     inline=False,
-    shard_map_collective_rule=_argminmax_collective_rule,
+    shard_map_collective_rule=partial(
+        _argminmax_collective_rule, lt, _get_min_identity, reduce_min
+    ),
 )
 
 mlir.register_lowering(
@@ -10512,7 +10545,9 @@ mlir.register_lowering(
         multiple_results=False,
     ),
     inline=False,
-    shard_map_collective_rule=_argminmax_collective_rule,
+    shard_map_collective_rule=partial(
+        _argminmax_collective_rule, gt, _get_max_identity, reduce_max
+    ),
 )
 
 def _reduce_logical_shape_rule(operand, *, axes):
