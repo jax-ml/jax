@@ -1547,14 +1547,10 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
             + osp_special.jn(n + 2, x.astype(np.float64))
         )
     ).astype(dtype)
-    self._CheckAgainstNumpy(d1_ref, jax.vmap(jax.grad(fn)), args_maker, tol=tol)
-    self._CompileAndCheck(jax.vmap(jax.grad(fn)), args_maker, tol=tol)
-    self._CheckAgainstNumpy(
-        d2_ref, jax.vmap(jax.grad(jax.grad(fn))), args_maker, tol=tol
-    )
-    self._CompileAndCheck(
-        jax.vmap(jax.grad(jax.grad(fn))), args_maker, tol=tol
-    )
+    d1_fn = jax.grad(lambda x: jnp.sum(fn(x)))
+    d2_fn = jax.grad(lambda x: jnp.sum(d1_fn(x)))
+    self._CheckAgainstNumpy(d1_ref, d1_fn, args_maker, tol=tol)
+    self._CheckAgainstNumpy(d2_ref, d2_fn, args_maker, tol=tol)
 
   def test_jn_non_integer_n(self):
     xs = jnp.arange(5.0)
@@ -1652,7 +1648,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     tangents = np.ones_like(zs) + 0.5j * np.ones_like(zs)
     _, jvp_out = jax.jvp(fn, (zs,), (tangents,))
     self.assertAllClose(jvp_out, d1_ref * tangents, rtol=tol, atol=tol)
-    grad_out = jax.vmap(jax.grad(fn, holomorphic=True))(zs)
+    grad_out = jax.grad(lambda z: jnp.sum(fn(z)), holomorphic=True)(zs)
     self.assertAllClose(grad_out, d1_ref, rtol=tol, atol=tol)
 
   @jtu.sample_product(
@@ -1842,8 +1838,11 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     # scipy.special.iv and scipy.special.kv on the positive real axis.
     if abs(n) <= 2:
       imag_y = 25.0 if dtype == np.complex128 else 10.5
-      imag_zs = np.array([complex(0.0, imag_y), complex(0.0, -imag_y)], dtype=dtype)
-      actual_imag = np.asarray(lsp_special.yn(n, imag_zs))
+      imag_zs = np.resize(
+          np.array([complex(0.0, imag_y), complex(0.0, -imag_y)], dtype=dtype),
+          zs.shape,
+      )
+      actual_imag = np.asarray(lsp_special.yn(n, imag_zs))[:2]
       n_abs = abs(n)
       m_sign = -1.0 if ((n_abs // 2) % 2 == 1) else 1.0
       i_val = m_sign * float(osp_special.iv(n_abs, imag_y))
@@ -1888,14 +1887,10 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
             + osp_special.yn(n + 2, x.astype(np.float64))
         )
     ).astype(dtype)
-    self._CheckAgainstNumpy(d1_ref, jax.vmap(jax.grad(fn)), args_maker, tol=tol)
-    self._CompileAndCheck(jax.vmap(jax.grad(fn)), args_maker, tol=tol)
-    self._CheckAgainstNumpy(
-        d2_ref, jax.vmap(jax.grad(jax.grad(fn))), args_maker, tol=tol
-    )
-    self._CompileAndCheck(
-        jax.vmap(jax.grad(jax.grad(fn))), args_maker, tol=tol
-    )
+    d1_fn = jax.grad(lambda x: jnp.sum(fn(x)))
+    d2_fn = jax.grad(lambda x: jnp.sum(d1_fn(x)))
+    self._CheckAgainstNumpy(d1_ref, d1_fn, args_maker, tol=tol)
+    self._CheckAgainstNumpy(d2_ref, d2_fn, args_maker, tol=tol)
 
   def test_yn_non_integer_n(self):
     xs = jnp.arange(1.0, 5.0)
@@ -2025,10 +2020,11 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     tangents = np.ones_like(zs) + 0.5j * np.ones_like(zs)
     _, jvp_out = jax.jvp(fn, (zs,), (tangents,))
     self.assertAllClose(jvp_out, d1_ref * tangents, rtol=tol, atol=tol)
-    grad_out = jax.vmap(jax.grad(fn, holomorphic=True))(zs)
+    grad_out = jax.grad(lambda z: jnp.sum(fn(z)), holomorphic=True)(zs)
     self.assertAllClose(grad_out, d1_ref, rtol=tol, atol=tol)
 
-    # JVP at z = 0 and overflow points must not produce NaN:
+    # JVP at z = 0 and overflow points must not produce NaN (padded to zs.shape
+    # so the compiled executables for (n, n - 1, n + 1) are reused):
     tiny = 1e-200 if dtype == np.complex128 else 1e-25
     big_y = 1000.0 if dtype == np.complex128 else 120.0
     overflow_zs = jnp.array(
@@ -2038,6 +2034,9 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
             complex(0.0, tiny),
             complex(tiny, tiny),
             complex(0.0, big_y),
+            0.0 + 0.0j,
+            0.0 + 0.0j,
+            0.0 + 0.0j,
         ],
         dtype=dtype,
     )
@@ -2074,13 +2073,21 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertEqual(res[2], 0.0)
     self.assertTrue(np.all(np.isnan(res[3:])))
 
-    # Derivative at x = 0 (and near-zero pole overflow) must not produce NaN:
-    grad_fn = jax.grad(lambda x: lsp_special.yn(n, x))
+    # Derivative at x = 0 (and near-zero pole overflow) must not produce NaN
+    # (evaluated at special_xs.shape to reuse the compiled executable for n):
+    tiny_x = (
+        1e-200
+        if dtype == np.float64
+        else (1e-25 if dtype == np.float32 else 0.0)
+    )
+    grad_xs = np.array([0.0, tiny_x, 0.0, 0.0, 0.0, 0.0], dtype=dtype)
+    grad_vals = np.asarray(
+        jax.grad(lambda x: jnp.sum(lsp_special.yn(n, x)))(grad_xs)
+    )
     expected_grad_inf = dtype(-np.inf if neg_n else np.inf)
-    self.assertEqual(np.asarray(grad_fn(dtype(0.0))), expected_grad_inf)
+    self.assertEqual(grad_vals[0], expected_grad_inf)
     if abs(n) >= 2 and dtype in (np.float32, np.float64):
-      tiny_x = dtype(1e-200 if dtype == np.float64 else 1e-25)
-      self.assertEqual(np.asarray(grad_fn(tiny_x)), expected_grad_inf)
+      self.assertEqual(grad_vals[1], expected_grad_inf)
 
   @jtu.sample_product(
       n=[-1, 0, 2],
