@@ -4048,7 +4048,9 @@ random_clone_p = core.Primitive("random_clone")
 dispatch.simple_impl(random_clone_p)
 random_clone_p.def_abstract_eval(lambda x: x)
 batching.defvectorized(random_clone_p)
-mlir.register_lowering(random_clone_p, lambda _, k: [k])
+mlir.register_lowering(
+    random_clone_p, lambda _, k: [k], shard_map_passthrough=True
+)
 
 
 def multinomial(

@@ -1316,12 +1316,18 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
+  @parameterized.parameters(
+      ((4, 3, 4), 1, np.int32, P('x', None, 'y')),
+      ((4, 4), 0, np.int32, P('x', 'y')),
+      ((4, 8), 1, np.float32, P(None, ('x', 'y'))),
+      ((4,), 0, np.int32, P('x', reduced={'y'})),
+      ((0, 4), 0, np.int32, P('x', 'y')),
+  )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_iota(self, mesh):
+  def test_iota(self, shape, dimension, dtype, spec, mesh):
     @jax.jit
     def f():
-      return lax.broadcasted_iota(
-          np.int32, (4, 3, 4), 1, out_sharding=P('x', None, 'y'))
+      return lax.broadcasted_iota(dtype, shape, dimension, out_sharding=spec)
 
     with config.shard_map_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower().as_text())
@@ -1332,10 +1338,6 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     out = f()
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
-
-    with self.assertRaises(NotImplementedError):
-      jax.jit(lambda: lax.broadcasted_iota(
-          np.int32, (4, 4), 0, out_sharding=P('x', 'y'))).lower()
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_top_k(self, mesh):
@@ -1457,7 +1459,7 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       x = checkpoint_name(lax.stop_gradient(x), 'act')
       x, y = lax.optimization_barrier((x, y))
       k1, k2 = jax.random.split(jax.random.key(0))
-      k1 = jax.random.fold_in(k1, 1)
+      k1 = jax.random.clone(jax.random.fold_in(k1, 1))
       bits = jax.random.bits(k2, (4,))
       return x, y, jax.random.key_data(k1), bits
 

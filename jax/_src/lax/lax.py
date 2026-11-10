@@ -11446,14 +11446,20 @@ def _iota_lower(ctx, dtype, shape, dimension, sharding):
   return [mlir.lower_with_explicit_types(ctx, out, aval_out)]
 
 def _iota_collective_rule(in_avals, out_avals, *, dimension, **_):
+  from jax._src.lax import parallel
   del in_avals
   out_aval, = out_avals
-  if out_aval.sharding.spec.partitions[dimension] is not None:
-    raise NotImplementedError
-  return mlir.PartitioningRule(per_shard_params={
-      'shape': out_aval.sharding.shard_shape(out_aval.shape),
-      'sharding': None,
-  })
+  shard_shape = out_aval.sharding.shard_shape(out_aval.shape)
+  out_collective = None
+  if (part := out_aval.sharding.spec.partitions[dimension]) is not None:
+    def out_collective(x_shard):
+      idx = parallel.axis_index(part).astype(dtypes.default_int_dtype())
+      offset = idx * shard_shape[dimension]
+      return x_shard + offset.astype(out_aval.dtype)
+  return mlir.PartitioningRule(
+      out_collective=out_collective,
+      per_shard_params={'shape': shard_shape, 'sharding': None},
+  )
 
 mlir.register_lowering(
     iota_p, _iota_lower, shard_map_collective_rule=_iota_collective_rule)
