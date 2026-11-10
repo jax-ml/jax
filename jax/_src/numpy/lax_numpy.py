@@ -5011,6 +5011,10 @@ def choose(a: ArrayLike, choices: Array | np.ndarray | Sequence[ArrayLike],
     raise ValueError("`a` array must be integer typed")
   N = len(choices)
 
+  # Ensure N is representable in a.dtype (jax-ml/jax#42464)
+  if N > iinfo(a.dtype).max:
+    a = a.astype(dtypes.default_int_dtype())
+
   if mode == 'raise':
     arr: Array = core.concrete_or_error(asarray, a,
       "The error occurred because jnp.choose was jit-compiled"
