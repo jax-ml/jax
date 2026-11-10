@@ -34,9 +34,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.scipy.special.gammaincinv` and
     {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
     incomplete gamma functions, with gradients with respect to both arguments.
-  * Added {func}`jax.scipy.special.jn` and {func}`jax.scipy.special.yn`,
-    providing accurate evaluation of integer-order Bessel functions of the first
-    and second kind.
+  * Added {func}`jax.scipy.special.jn`, {func}`jax.scipy.special.yn`,
+    {func}`jax.scipy.special.iv`, and {func}`jax.scipy.special.kn`,
+    providing accurate evaluation of integer-order Bessel functions and
+    modified Bessel functions of the first and second kind.
   * Added {func}`jax.lax.sinpi`, {func}`jax.lax.cospi`, and
     {func}`jax.lax.tanpi`, which compute `sin(pi * x)`, `cos(pi * x)`, and
     `tan(pi * x)` more accurately than multiplying by `pi` first. They return

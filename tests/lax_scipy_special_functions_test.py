@@ -2346,6 +2346,309 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         atol=tol,
     )
 
+  @jtu.sample_product(
+      n=[-2, -1, 0, 1, 2, 5, 15, 50],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_kn_orders_and_regimes(self, n, dtype):
+    """Tests real kn(n, x) across orders, regimes, and special values."""
+    if abs(n) == 50 and dtype != np.float64:
+      min_x = 30.0 if dtype == np.float16 else 8.0
+    elif abs(n) == 15 and dtype == np.float16:
+      min_x = 6.0
+    elif abs(n) >= 5 and dtype == np.float16:
+      min_x = 1.2
+    else:
+      min_x = 0.2
+    pts = [
+        p
+        for p in [
+            0.2, 0.5, 1.5, 2.0, 3.0, 3.5, 6.0, 8.0, 10.0, 15.0, 24.0, 30.0,
+            60.0, 150.0, 500.0,
+        ]
+        if p >= min_x
+    ]
+    x = np.array(pts, dtype=dtype)
+    args_maker = lambda: [x]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 5e-4 if jtu.test_device_matches(["tpu"]) else 3e-5,
+        np.float64: 1e-12,
+    }
+    osp_kn = lambda z: osp_special.kv(n, z.astype(np.float64)).astype(dtype)
+    lsp_kn = lambda z: lsp_special.kn(n, z)
+    self._CheckAgainstNumpy(osp_kn, lsp_kn, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_kn, args_maker, tol=tol)
+
+    special_xs = np.array(
+        [0.0, -0.0, np.inf, -np.inf, -1.5, np.nan], dtype=dtype
+    )
+    res = np.asarray(lsp_special.kn(n, special_xs))
+    self.assertArraysEqual(res[:2], np.full(2, np.inf, dtype=dtype))
+    self.assertEqual(res[2], 0.0)
+    self.assertFalse(np.signbit(res[2]))
+    self.assertTrue(np.all(np.isnan(res[3:])))
+
+    # Derivative at x = 0 (and near-zero pole overflow) must not produce NaN:
+    grad_fn = jax.grad(lambda x: lsp_special.kn(n, x))
+    self.assertEqual(np.asarray(grad_fn(dtype(0.0))), dtype(-np.inf))
+    if abs(n) >= 1 and dtype in (np.float32, np.float64):
+      tiny_x = dtype(1e-200 if dtype == np.float64 else 1e-25)
+      self.assertEqual(np.asarray(grad_fn(tiny_x)), dtype(-np.inf))
+
+  @jtu.sample_product(
+      n=[-2, -1, 0, 1, 2, 3, 15],
+      dtype=jtu.dtypes.complex,
+  )
+  def test_kn_complex(self, n, dtype):
+    """Tests complex kn(n, z) across quadrants and branch cuts."""
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    zs = np.array(
+        [0.3 + 0.4j, -0.3 + 0.4j, 0.3 - 0.4j, -0.3 - 0.4j, 2.0 + 1.5j,
+         0.0 + 2.001j, 0.0 - 2.001j, 0.0 + 2.5j, 0.0 - 2.5j, 20.0 + 0.0j,
+         -2.5 + 0.0j, 1.2 + 5.0j, -1.2 - 5.0j, 3.0 + 15.0j, 2.0 + 25.0j,
+         2.0 - 25.0j],
+        dtype=dtype,
+    )
+    args_maker = lambda: [zs]
+    tol = {np.complex64: 5e-5, np.complex128: 1e-12}
+    osp_kn = lambda z: osp_special.kv(n, z.astype(np.complex128)).astype(dtype)
+    lsp_kn = lambda z: lsp_special.kn(n, z)
+    self._CheckAgainstNumpy(osp_kn, lsp_kn, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_kn, args_maker, tol=tol)
+
+    # Check complex special values and overflow/underflow behavior.
+    big_x = 1000.0 if dtype == np.complex128 else 110.0
+    huge_x = 1e308 if dtype == np.complex128 else 1e38
+    special_zs = np.array(
+        [
+            # 0..4: x = +inf or y = +-inf with finite x -> 0 + 0j
+            complex(np.inf, 0.0), complex(np.inf, 1.5),
+            complex(0.0, np.inf), complex(1.0, -np.inf), complex(-2.5, np.inf),
+            # 5..9: x = -inf or (isinf(x) & isinf(y)) or NaN -> nan + nan*j
+            complex(-np.inf, 0.0), complex(-np.inf, 1.0),
+            complex(np.inf, np.inf),
+            complex(np.nan, 1.0), complex(1.0, np.nan),
+            # 10..12: large Re(z) underflow (including |z| > MAX_FLOAT / 8) and
+            # left-half-plane overflow (x < 0)
+            complex(big_x, 1.0), complex(huge_x, huge_x), complex(-big_x, 0.0),
+            # 13: negative real axis branch cut lower lip (-2.5 - 0.0j)
+            complex(-2.5, -0.0),
+            # 14..16: origin -> inf + 0j
+            complex(0.0, 0.0), complex(-0.0, 0.0), complex(0.0, -0.0),
+        ],
+        dtype=dtype,
+    )
+    res_spec = np.asarray(lsp_special.kn(n, special_zs))
+    self.assertArraysEqual(res_spec[:5], np.zeros(5, dtype=dtype))
+    self.assertTrue(np.all(np.isnan(res_spec[5:10].real)))
+    self.assertTrue(np.all(np.isnan(res_spec[5:10].imag)))
+    self.assertEqual(res_spec[10], 0.0 + 0.0j)
+    self.assertEqual(res_spec[11], 0.0 + 0.0j)
+    self.assertEqual(res_spec[12].real, 0.0)
+    self.assertEqual(res_spec[12].imag, -np.inf)
+    # Branch cut Schwarz reflection:
+    # kn(n, -2.5 - 0.0j) == conj(kn(n, -2.5 + 0.0j))
+    expected_lower_cut = np.conj(
+        osp_special.kv(n, complex(-2.5, 0.0))
+    ).astype(dtype)
+    self.assertAllClose(
+        res_spec[13], expected_lower_cut, rtol=tol[dtype], atol=tol[dtype]
+    )
+    expected_zero = np.full(3, complex(np.inf, 0.0), dtype=dtype)
+    self.assertArraysEqual(res_spec[14:], expected_zero)
+
+  @jtu.sample_product(
+      n=[-1, 0, 1, 2, 3],
+      dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
+  def test_kn_grad(self, n, dtype):
+    """Tests 1st, 2nd, and 3rd derivatives of real and complex kn(n, z)."""
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    is_complex = dtypes.issubdtype(dtype, np.complexfloating)
+    if is_complex:
+      pts = [
+          0.5 + 1.2j, -0.5 + 1.2j, 0.5 - 1.2j, -0.5 - 1.2j,
+          0.0 + 3.5j, 2.5 + 0.0j, -2.5 + 0.5j, 2.0 + 15.0j,
+      ]
+    elif dtype == np.float16:
+      pts = [0.6, 1.0, 1.5, 2.5, 4.0, 6.0]
+    else:
+      pts = [0.5, 1.0, 1.5, 2.5, 3.0, 6.0, 12.0, 30.0]
+    zs = np.array(pts, dtype=dtype)
+    args_maker = lambda: [zs]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 1e-4 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-12,
+        np.complex64: 1e-4,
+        np.complex128: 1e-12,
+    }
+    ref_dtype = np.complex128 if is_complex else np.float64
+    fn = lambda z: lsp_special.kn(n, z)
+    # By DLMF 10.29.5,
+    # d^k/dz^k K_n(z) = (-0.5)^k * sum_{j=0}^k comb(k, j) K_{n - k + 2j}(z).
+    for k in (1, 2, 3):
+      fn = jax.grad(lambda z, f=fn: jnp.sum(f(z)), holomorphic=is_complex)
+      dk_ref = lambda z, k=k: (
+          ((-0.5) ** k)
+          * sum(
+              math.comb(k, j)
+              * osp_special.kv(n - k + 2 * j, z.astype(ref_dtype))
+              for j in range(k + 1)
+          )
+      ).astype(dtype)
+      self._CheckAgainstNumpy(dk_ref, fn, args_maker, tol=tol)
+      if k == 1:
+        self._CompileAndCheck(fn, args_maker, tol=tol)
+
+    if is_complex:
+      tiny = 1e-200 if dtype == np.complex128 else 1e-25
+      overflow_zs = jnp.array(
+          [
+              0.0 + 0.0j,
+              complex(tiny, 0.0),
+              complex(0.0, tiny),
+              complex(tiny, tiny),
+          ],
+          dtype=dtype,
+      )
+      t_overflow = jnp.full_like(overflow_zs, 1.0 + 0.5j)
+      _, jvp_overflow = jax.jvp(
+          lambda z: lsp_special.kn(n, z), (overflow_zs,), (t_overflow,)
+      )
+      jvp_overflow = np.asarray(jvp_overflow)
+      self.assertEqual(jvp_overflow[0].real, -np.inf)
+      self.assertEqual(jvp_overflow[0].imag, -np.inf)
+      for idx in (0, 1, 2):
+        self.assertFalse(np.isnan(jvp_overflow[idx].real))
+        self.assertFalse(np.isnan(jvp_overflow[idx].imag))
+      if abs(n) >= 1:
+        self.assertTrue(
+            np.isinf(jvp_overflow[3].real) or np.isinf(jvp_overflow[3].imag)
+        )
+      t_real = jnp.full_like(overflow_zs, 1.0 + 0.0j)
+      _, jvp_real = jax.jvp(
+          lambda z: lsp_special.kn(n, z), (overflow_zs,), (t_real,)
+      )
+      jvp_real = np.asarray(jvp_real)
+      self.assertEqual(jvp_real[0].real, -np.inf)
+      self.assertEqual(jvp_real[0].imag, 0.0)
+      t_imag = jnp.full_like(overflow_zs, 0.0 + 1.0j)
+      _, jvp_imag = jax.jvp(
+          lambda z: lsp_special.kn(n, z), (overflow_zs,), (t_imag,)
+      )
+      jvp_imag = np.asarray(jvp_imag)
+      self.assertEqual(jvp_imag[0].real, 0.0)
+      self.assertEqual(jvp_imag[0].imag, -np.inf)
+      for idx in (0, 1, 2):
+        self.assertFalse(np.isnan(jvp_real[idx].real))
+        self.assertFalse(np.isnan(jvp_real[idx].imag))
+        self.assertFalse(np.isnan(jvp_imag[idx].real))
+        self.assertFalse(np.isnan(jvp_imag[idx].imag))
+      z0 = jnp.array(0.0 + 0.0j, dtype=dtype)
+      grad_re = jax.grad(lambda z: jnp.real(lsp_special.kn(n, z)))(z0)
+      self.assertEqual(grad_re.real, -np.inf)
+      self.assertEqual(grad_re.imag, 0.0)
+      grad_im = jax.grad(lambda z: jnp.imag(lsp_special.kn(n, z)))(z0)
+      self.assertEqual(grad_im.real, 0.0)
+      self.assertEqual(grad_im.imag, np.inf)
+
+  def test_kn_non_integer_n(self):
+    """Tests that kn(n, x) rejects non-integer or traced order n."""
+    xs = jnp.arange(1.0, 5.0)
+    with self.assertRaisesRegex(
+        TypeError, "'float' object cannot be interpreted as an integer"
+    ):
+      lsp_special.kn(0.5, xs)
+    with self.assertRaisesRegex(
+        jax.errors.ConcretizationTypeError,
+        "The 'n' argument of jax.scipy.special.kn must be a static integer.",
+    ):
+      jax.jit(lsp_special.kn)(1, xs)
+
+  @jtu.sample_product(
+      dtype=[np.float32, np.float64, np.complex64, np.complex128]
+  )
+  def test_kn_high_order_and_large_argument(self, dtype):
+    """Tests kn(n, z) for large n where exp(|Re(z)|) overflows."""
+    if dtype not in (*jtu.dtypes.floating, *jtu.dtypes.complex):
+      self.skipTest(f"Dtype {dtype} not enabled")
+    if (
+        dtype in (np.float64, np.complex128)
+        and jtu.test_device_matches(["tpu"])
+    ):
+      self.skipTest("64-bit on TPU is ef57")
+    if dtype == np.float32:
+      cases = [
+          (30, [86.0, 12.0]),
+          (50, [20.0, 90.0]),
+          (150, [150.0, 200.0]),
+          (300, [154.0, 400.0]),
+          (500, [290.0]),
+          (2000, [1334.0]),
+      ]
+      rtol, atol = 5e-5, 1e-15
+    elif dtype == np.float64:
+      cases = [
+          (100, [705.0, 50.0]),
+          (180, [19.5, 180.0]),
+          (500, [499.9, 750.0]),
+          (2000, [978.0, 1500.0, 1700.0]),
+      ]
+      rtol, atol = 1e-12, 1e-25
+    elif dtype == np.complex64:
+      cases = [
+          (30, [86.0 + 0.0j, 86.0 + 5.0j]),
+          (50, [90.0 + 0.0j, -90.0 + 0.0j, 90.0 + 5.0j, -90.0 - 5.0j]),
+          (150, [150.0 + 0.0j, -90.0 + 0.0j, 150.0 + 10.0j]),
+      ]
+      rtol, atol = 5e-5, 1e-15
+    else:
+      cases = [
+          (100, [705.0 + 0.0j, -705.0 + 0.0j, 705.0 + 5.0j]),
+          (180, [19.5 + 0.0j, 19.5 + 3.0j]),
+          (500, [499.9 + 0.0j, 750.0 + 0.0j, -750.0 + 0.0j, 750.0 + 20.0j]),
+          (700, [750.0 + 0.0j, 750.0 + 20.0j]),
+      ]
+      rtol, atol = 1e-12, 1e-25
+    is_complex = dtypes.issubdtype(dtype, np.complexfloating)
+    ref_dtype = np.complex128 if is_complex else np.float64
+    for n, pts in cases:
+      zs = np.array(pts, dtype=dtype)
+      z_ref = zs.astype(ref_dtype)
+      kv_ref = osp_special.kv(n, z_ref)
+      if is_complex:
+        # Above |Re(z)| ~ 700 in the left half-plane, scipy.special.kv (Amos
+        # cbesk_wrap) returns NaN when K_n(-z) underflows Amos's threshold even
+        # though K_n(z) = -/+i * pi * I_n(-z) is finite.
+        iv_asym_ref = (
+            np.where(np.signbit(z_ref.imag), 1j, -1j)
+            * np.pi
+            * osp_special.iv(n, -z_ref)
+        )
+        kv_ref = np.where(np.isnan(kv_ref), iv_asym_ref, kv_ref)
+      expected = kv_ref.astype(dtype)
+      actual = lsp_special.kn(n, zs)
+      self.assertAllClose(actual, expected, rtol=rtol, atol=atol)
+
+  @jtu.sample_product(dtype=jtu.dtypes.integer)
+  def test_kn_integer_input(self, dtype):
+    """Tests that integer inputs to kn(n, x) are promoted to floating-point."""
+    int_xs = jnp.array([0, 1, 3], dtype=dtype)
+    float_dt = dtypes.to_inexact_dtype(int_xs.dtype)
+    tol = 5e-5 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self.assertAllClose(
+        lsp_special.kn(1, int_xs),
+        osp_special.kv(1, np.array([0.0, 1.0, 3.0])).astype(float_dt),
+        rtol=tol,
+        atol=tol,
+    )
+
   @jtu.sample_product(dtype=jtu.dtypes.all_floating)
   def testFresnelHigherOrderDerivatives(self, dtype):
     # S'(x) = sin(pi * x^2 / 2), C'(x) = cos(pi * x^2 / 2)

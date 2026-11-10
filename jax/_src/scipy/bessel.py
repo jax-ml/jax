@@ -34,6 +34,7 @@ from jax._src.lax.double_word import (
     f2_recip,
     f2_square,
     fast_two_sum,
+    log_f2,
     scale_f2_pow2,
     split_half,
     split_half_mask,
@@ -52,6 +53,12 @@ from jax._src.typing import Array, ArrayLike
 
 _INV_SQRT_2PI_F32 = (0.3989422917366028, -1.1335170135851058e-08)
 _INV_SQRT_2PI_F64 = (0.3989422804014327, -2.49232720227773e-17)
+_SQRT_PI_OVER_2_F32 = (1.2533141374588013, -1.433010238249821e-10)
+_SQRT_PI_OVER_2_F64 = (1.2533141373155003, -9.164289990229583e-17)
+_EULER_GAMMA_F32 = (0.5772156715393066, -6.637773886097875e-09)
+_EULER_GAMMA_F64 = (0.5772156649015329, -4.942915152430645e-18)
+_HALF_MINUS_GAMMA_F32 = (-0.07721566408872604, -8.128068218482554e-10)
+_HALF_MINUS_GAMMA_F64 = (-0.07721566490153287, 4.942915152430645e-18)
 # 12 + 7 + 24 bit split of ln(2) for float32 so kf * hi and kf * mid are exact
 # single-word products for all |kf| <= 4096 (|w| <= 2839).
 _LN2_SPLIT_12_F32 = (
@@ -321,9 +328,9 @@ def _miller_norm(w_safe: Array, sum_even: Array, sum_odd: Array) -> Array:
 
 
 def _forward_recur_rescaled(
-    n: int, inv_w: Array, f0: Array, f1: Array
+    n: int, inv_w: Array, f0: Array, f1: Array, *, sign: float = -1.0
 ) -> tuple[Array, Array]:
-  """Steps f_{k+1} = (2k / w) * f_k - f_{k-1} up to order n without overflow."""
+  """Steps f_{k+1} = (2k / w) * f_k + sign * f_{k-1} up to order n."""
   real_dtype = jnp.real(inv_w).dtype
   scale_thresh = 2.0 ** (500 if real_dtype == np.float64 else 60)
   scale_step = 2.0 ** (-500 if real_dtype == np.float64 else -60)
@@ -335,7 +342,7 @@ def _forward_recur_rescaled(
   def fwd_body(k, state):
     f_km1, f_k, scale_exp = state
     kf = k.astype(real_dtype)
-    f_kp1 = (2.0 * kf * inv_w) * f_k - f_km1
+    f_kp1 = (2.0 * kf * inv_w) * f_k + (f_km1 if sign > 0 else -f_km1)
     big = jnp.abs(f_kp1) > scale_thresh
     f_kp1 = jnp.where(big, f_kp1 * scale_step, f_kp1)
     f_k = jnp.where(big, f_k * scale_step, f_k)
@@ -906,6 +913,7 @@ def jn(n: int, z: ArrayLike) -> Array:
     - :func:`jax.scipy.special.bessel_jn`
     - :func:`jax.scipy.special.yn`
     - :func:`jax.scipy.special.iv`
+    - :func:`jax.scipy.special.kn`
     - :func:`jax.scipy.special.i0`
     - :func:`jax.scipy.special.i1`
   """
@@ -923,11 +931,13 @@ def jn(n: int, z: ArrayLike) -> Array:
 
 
 def _yn_series(
-    n: int, w: Array, max_iter: int, r_max: float
+    n: int, w: Array, max_iter: int, r_max: float, *, modified: bool = False
 ) -> tuple[Array, Array]:
-  """Power series around w = 0 for (Y_n(w), J_n(w)) in the first quadrant.
+  """Power series around w = 0 for (Y_n(w), J_n(w)) or (K_n(w), 0) in Q1.
 
-  The second tuple element J_n(w) is populated for complex w and zeros for real w.
+  When `modified=False`, returns `(Y_n(w), J_n(w))` (with `J_n(w)` populated
+  for complex `w` and zeros for real `w`). When `modified=True`, evaluates
+  `(K_n(w), 0)` for complex `w` in the first quadrant.
   """
   real_dtype = jnp.real(w).dtype
   is_complex = dtypes.issubdtype(w.dtype, np.complexfloating)
@@ -935,19 +945,19 @@ def _yn_series(
   w_safe = jnp.where(
       jnp.isfinite(w) & (r > 0.0) & (r <= r_max), w, jnp.ones_like(w)
   )
-  z2_neg = -0.25 * (w_safe * w_safe)
+  z2_step = (0.25 if modified else -0.25) * (w_safe * w_safe)
 
-  # Near w = 0, Y_n(w) splits into a smooth series (multiplying J_n(w) by
-  # log(w/2) plus harmonic weights 1 + 1/2 + ... + 1/k) and, for n >= 1, a
-  # finite sum of negative powers (w/2)^(2k - n) that diverges as w -> 0.
-  # The loop below computes both the J_n series (sum_t) and the weighted series
-  # (sum_ht) in one pass.
+  # Near w = 0, Y_n(w) and K_n(w) split into a smooth series (multiplying
+  # J_n(w) or I_n(w) by log(w/2) plus harmonic weights 1 + 1/2 + ... + 1/k)
+  # and, for n >= 1, a finite sum of negative powers (w/2)^(2k - n) that
+  # diverges as w -> 0. The loop below computes both the unweighted series
+  # (sum_t) and the harmonic-weighted series (sum_ht) in one pass.
   h_n = math.fsum(1.0 / j for j in range(1, n + 1))
 
   def reg_body(k, state):
     term, sum_t, sum_ht, h_diff = state
     kf = k.astype(real_dtype)
-    term = term * (z2_neg / (kf * (n + kf)))
+    term = term * (z2_step / (kf * (n + kf)))
     h_diff = h_diff + 0.5 * (1.0 / kf + 1.0 / (n + kf))
     sum_t = sum_t + term
     sum_ht = sum_ht + h_diff * term
@@ -962,40 +972,45 @@ def _yn_series(
 
   log_w_over_2 = jnp.log(w_safe) - math.log(2.0)
   reg_bracket = (log_w_over_2 + (np.euler_gamma - 0.5 * h_n)) * sum_t - sum_ht
-
+  if modified:
+    reg_scale = 1.0 if (n & 1) else -1.0
+  else:
+    reg_scale = 2.0 / math.pi
   reg_part = _scale_by_w_half_pow_n_over_fact(
-      n, w_safe, (2.0 / math.pi) * reg_bracket
+      n, w_safe, reg_scale * reg_bracket
   )
   j_part = (
       _scale_by_w_half_pow_n_over_fact(n, w_safe, sum_t)
-      if is_complex
+      if (is_complex and not modified)
       else zero_w
   )
 
   if n == 0:
     res = reg_part
   else:
-    # Finite sum of negative powers: -((n - 1)! / pi) * (w / 2)^(-n) * sum_u.
+    # Finite sum of negative powers: c_n * (n - 1)! * (w / 2)^(-n) * sum_u,
+    # with c_n = -1 / pi for Y_n and c_n = 1 / 2 for K_n.
     # For large n, early terms dominate while the final terms are below machine
     # precision for |w| <= r_max, so we cap the loop at s1_iters steps.
-    z2_pos = -z2_neg
+    z2_s1 = -z2_step
     s1_iters = min(n - 1, max(30 if real_dtype == np.float64 else 24, max_iter))
 
     def s1_body(k, state):
       u, sum_u = state
       kf = k.astype(real_dtype)
-      u = u * (z2_pos / (kf * (n - kf)))
+      u = u * (z2_s1 / (kf * (n - kf)))
       sum_u = sum_u + u
       return u, sum_u
 
     _, sum_u = lax.fori_loop(1, s1_iters + 1, s1_body, (one_w, one_w))
 
-    # Factor (n - 1)! = d_n * pi * 2^m_exp and distribute the 2^m_exp across
-    # the n factors of 2 / w so that neither (n - 1)! nor (2 / w)^n overflows
+    # Factor (n - 1)! = f_n * 2^m_exp and distribute the 2^m_exp across the n
+    # factors of 2 / w so that neither (n - 1)! nor (2 / w)^n overflows
     # prematurely when n is large.
     fact_m1 = math.factorial(n - 1)
     m_exp = fact_m1.bit_length()
-    d_n = float(fractions.Fraction(fact_m1, 1 << m_exp)) / math.pi
+    f_n = float(fractions.Fraction(fact_m1, 1 << m_exp))
+    d_n = 0.5 * f_n if modified else -f_n / math.pi
     q_u, rem_u = divmod(m_exp, n)
     if is_complex:
       # Separate unit direction conj(w)/|w| from magnitude 1/|w| and scale the
@@ -1005,7 +1020,7 @@ def _yn_series(
       abs_w = jnp.abs(w_safe)
       unit_conj = jnp.conj(w_safe) / abs_w
       unit_conj_n = unit_conj if n == 1 else unit_conj**n
-      phase_u = (unit_conj_n * sum_u) * (-d_n)
+      phase_u = (unit_conj_n * sum_u) * d_n
       u1_r = float(2.0 ** (q_u + 1)) / abs_w
       if n == 1:
         r1 = u1_r
@@ -1026,7 +1041,7 @@ def _yn_series(
       s1 = lax.complex(re, im)
     else:
       u1 = float(2.0 ** (q_u + 1)) / w_safe
-      scaled_u = -sum_u * d_n
+      scaled_u = sum_u * d_n
       if n == 1:
         s1 = u1 * scaled_u
       elif rem_u == 0:
@@ -1038,17 +1053,18 @@ def _yn_series(
         s1 = ((u1 ** (n - rem_u)) * scaled_u) * (u2**rem_u)
     res = s1 + reg_part
 
-  neg_inf = (
+  pole_val = np.inf if modified else -np.inf
+  pole_w = (
       lax.complex(
-          jnp.full_like(jnp.real(w), -np.inf), jnp.zeros_like(jnp.imag(w))
+          jnp.full_like(jnp.real(w), pole_val), jnp.zeros_like(jnp.imag(w))
       )
       if is_complex
-      else jnp.full_like(w, -np.inf)
+      else jnp.full_like(w, pole_val)
   )
-  y_res = jnp.where(w == 0, neg_inf, res)
+  y_res = jnp.where(w == 0, pole_w, res)
   j_res = (
       jnp.where(w == 0, one_w if n == 0 else zero_w, j_part)
-      if is_complex
+      if (is_complex and not modified)
       else zero_w
   )
   return y_res, j_res
@@ -1612,6 +1628,7 @@ def yn(n: int, z: ArrayLike) -> Array:
   See Also:
     - :func:`jax.scipy.special.jn`
     - :func:`jax.scipy.special.iv`
+    - :func:`jax.scipy.special.kn`
     - :func:`jax.scipy.special.bessel_jn`
   """
   n = core.concrete_or_error(
@@ -1625,6 +1642,14 @@ def yn(n: int, z: ArrayLike) -> Array:
     z = z.astype(np.float32)
     return _yn(n, z).astype(orig_dtype)
   return _yn(n, z)
+
+
+def _f2_sqrt(w: Array) -> tuple[Array, Array]:
+  """Refines sqrt(w) to double-word precision via one Newton step."""
+  sw = jnp.sqrt(w)
+  sw2_0, sw2_1 = two_prod(sw, sw)
+  sw_rem = (w - sw2_0) - sw2_1
+  return fast_two_sum(sw, sw_rem / (2.0 * sw))
 
 
 def _iv_asymptotic_real(
@@ -1658,13 +1683,7 @@ def _iv_asymptotic_real(
     return f2_add(one, zero, t0, t1)
 
   tot0, tot1 = lax.fori_loop(0, max_terms, body, (one, zero))
-  # Refine sqrt(w_safe) to double-word precision (sw0, sw1) with one Newton step
-  # sqrt(w) ≈ sw + (w - sw^2) / (2 * sw), then divide by sqrt(2 * pi * w) and
-  # multiply by exp(w_safe).
-  sw = jnp.sqrt(w_safe)
-  sw2_0, sw2_1 = two_prod(sw, sw)
-  sw_rem = (w_safe - sw2_0) - sw2_1
-  sw0, sw1 = fast_two_sum(sw, sw_rem / (2.0 * sw))
+  sw0, sw1 = _f2_sqrt(w_safe)
   q0, q1 = f2_div(tot0, tot1, sw0, sw1)
   c2pi_hi, c2pi_lo = (
       _INV_SQRT_2PI_F64 if real_dtype == np.float64 else _INV_SQRT_2PI_F32
@@ -1818,6 +1837,42 @@ def _iv_real_nonneg(n: int, w: Array) -> Array:
   return res
 
 
+def _zero_iv_axes(n_abs: int, x: Array, y: Array, res: Array) -> Array:
+  """Zeroes exact zero real/imaginary components of I_n(x + i * y) on axes."""
+  if n_abs & 1:
+    res = jnp.where(
+        x == 0.0, lax.complex(jnp.zeros_like(x), lax.imag(res)), res
+    )
+  else:
+    res = jnp.where(
+        x == 0.0, lax.complex(lax.real(res), jnp.zeros_like(y)), res
+    )
+  return jnp.where(
+      y == 0.0, lax.complex(lax.real(res), jnp.zeros_like(y)), res
+  )
+
+
+def _iv_first_quadrant_complex(n_abs: int, x_abs: Array, y_abs: Array) -> Array:
+  """Evaluates I_{n_abs}(x_abs + i * y_abs) for x_abs >= 0 and y_abs >= 0."""
+  # By DLMF 10.27.6, I_n(z) = i^{-n} J_n(i * z). For x_abs >= 0 and y_abs >= 0,
+  # let w = y_abs + i * x_abs in the first quadrant; then
+  # I_n(x_abs + i * y_abs) = i^n * conj(J_n(y_abs + i * x_abs)).
+  w = lax.complex(y_abs, x_abs)
+  j_w = _jn_first_quadrant(n_abs, w)
+  jr = lax.real(j_w)
+  ji = lax.imag(j_w)
+  mod4 = n_abs & 3
+  if mod4 == 0:
+    res = lax.complex(jr, -ji)
+  elif mod4 == 1:
+    res = lax.complex(ji, jr)
+  elif mod4 == 2:
+    res = lax.complex(-jr, ji)
+  else:
+    res = lax.complex(-ji, -jr)
+  return _zero_iv_axes(n_abs, x_abs, y_abs, res)
+
+
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
 @partial(jit, static_argnums=(0,))
 def _iv(v: int, z: Array) -> Array:
@@ -1839,22 +1894,7 @@ def _iv_impl(v: int, z: Array) -> Array:
 
   x = lax.real(z)
   y = lax.imag(z)
-  # By DLMF 10.27.6, I_n(z) = i^{-n} J_n(i * z). For x >= 0 and y >= 0,
-  # let w = |y| + i * |x| in the first quadrant; then
-  # I_n(|x| + i * |y|) = i^n * conj(J_n(|y| + i * |x|)).
-  w = lax.complex(jnp.abs(y), jnp.abs(x))
-  j_w = _jn_first_quadrant(n_abs, w)
-  jr = lax.real(j_w)
-  ji = lax.imag(j_w)
-  mod4 = n_abs & 3
-  if mod4 == 0:
-    res = lax.complex(jr, -ji)
-  elif mod4 == 1:
-    res = lax.complex(ji, jr)
-  elif mod4 == 2:
-    res = lax.complex(-jr, ji)
-  else:
-    res = lax.complex(-ji, -jr)
+  res = _iv_first_quadrant_complex(n_abs, jnp.abs(x), jnp.abs(y))
 
   # Map from the first quadrant |x| + i * |y| back to z = x + i * y:
   # 1. If x < 0: I_n(-|x| + i * |y|) = (-1)^n * conj(I_n(|x| + i * |y|))
@@ -1865,17 +1905,7 @@ def _iv_impl(v: int, z: Array) -> Array:
   # 3. On the imaginary axis (x == 0), I_n(i * y) = i^n * J_n(y) is purely
   # imaginary for odd n and purely real for even n; on the real axis
   # (y == 0), I_n(x) is purely real.
-  if is_odd:
-    res = jnp.where(
-        x == 0.0, lax.complex(jnp.zeros_like(x), lax.imag(res)), res
-    )
-  else:
-    res = jnp.where(
-        x == 0.0, lax.complex(lax.real(res), jnp.zeros_like(y)), res
-    )
-  res = jnp.where(
-      y == 0.0, lax.complex(lax.real(res), jnp.zeros_like(y)), res
-  )
+  res = _zero_iv_axes(n_abs, x, y, res)
 
   nan_c = lax.complex(jnp.full_like(x, np.nan), jnp.full_like(y, np.nan))
   zero_c = jnp.zeros_like(z)
@@ -1931,6 +1961,7 @@ def iv(v: int, z: ArrayLike) -> Array:
     ``v`` cannot be traced or batched with :func:`jax.vmap`).
 
   See Also:
+    - :func:`jax.scipy.special.kn`
     - :func:`jax.scipy.special.i0`
     - :func:`jax.scipy.special.i0e`
     - :func:`jax.scipy.special.i1`
@@ -1951,3 +1982,639 @@ def iv(v: int, z: ArrayLike) -> Array:
     z = z.astype(np.float32)
     return _iv(v, z).astype(orig_dtype)
   return _iv(v, z)
+
+
+def _kn_series_01_real(
+    w: Array, max_iter: int, r_max: float, need_k0: bool, need_k1: bool
+) -> tuple[tuple[Array, Array], tuple[Array, Array], Array]:
+  """Evaluates (K_0(w), K_1(w)) on 0 < w <= r_max in double-word arithmetic."""
+  real_dtype = w.dtype
+  sub_thresh = 2.0 ** (-900 if real_dtype == np.float64 else -100)
+  sub_scale = 2.0 ** (900 if real_dtype == np.float64 else 100)
+  sub_bits = 900 if real_dtype == np.float64 else 100
+  gamma_hi, gamma_lo = (
+      _EULER_GAMMA_F64 if real_dtype == np.float64 else _EULER_GAMMA_F32
+  )
+  hmg_hi, hmg_lo = (
+      _HALF_MINUS_GAMMA_F64
+      if real_dtype == np.float64
+      else _HALF_MINUS_GAMMA_F32
+  )
+
+  w_safe = jnp.where(
+      jnp.isfinite(w) & (w > 0.0) & (w <= r_max), w, jnp.ones_like(w)
+  )
+  zero = jnp.zeros_like(w_safe)
+  one = jnp.ones_like(w_safe)
+  sub = w_safe < sub_thresh
+  w_norm = jnp.where(sub, w_safe * sub_scale, w_safe)
+  k_adj = jnp.where(
+      sub, _const(w_safe, -(sub_bits + 1.0)), _const(w_safe, -1.0)
+  )
+  ln0, ln1 = log_f2(w_norm, k_adj=k_adj)
+
+  half_w = 0.5 * w_safe
+  # Split half_w via bit-masking rather than two_prod(half_w, half_w) so t0 is
+  # an fadd rather than an fmul; otherwise LLVM on CPU contracts s - t0 in
+  # f2_mul into vfnmadd(half_w, half_w, s), corrupting the low word t1.
+  hw_hi, hw_lo = split_half_mask(half_w)
+  t0, t1 = two_sum(hw_hi * hw_hi, hw_lo * (half_w + hw_hi))
+  neg_gamma_hi = jnp.full_like(w_safe, -gamma_hi)
+  neg_gamma_lo = jnp.full_like(w_safe, -gamma_lo)
+  hmg_hi_v = jnp.full_like(w_safe, hmg_hi)
+  hmg_lo_v = jnp.full_like(w_safe, hmg_lo)
+
+  def body(k, state):
+    i0_0, i0_1, k0_0, k0_1, i1_0, i1_1, k1_0, k1_1, tm_0, tm_1, h0, h1 = state
+    kf = lax.convert_element_type(k, real_dtype)
+    kp1 = kf + 1.0
+    inv_kp1_0, inv_kp1_1 = f2_recip(kp1, zero)
+    c0_0, c0_1 = f2_add(h0, h1, neg_gamma_hi, neg_gamma_lo)
+    tm_0, tm_1 = f2_mul(tm_0, tm_1, t0, t1)
+    if need_k0:
+      tm_0, tm_1 = f2_div(tm_0, tm_1, kf * kf, zero)
+      i0_0, i0_1 = f2_add(i0_0, i0_1, tm_0, tm_1)
+      p0_0, p0_1 = f2_mul(tm_0, tm_1, c0_0, c0_1)
+      k0_0, k0_1 = f2_add(k0_0, k0_1, p0_0, p0_1)
+    if need_k1:
+      if need_k0:
+        tm1_0, tm1_1 = f2_mul(tm_0, tm_1, inv_kp1_0, inv_kp1_1)
+      else:
+        tm_0, tm_1 = f2_div(tm_0, tm_1, kf * kp1, zero)
+        tm1_0, tm1_1 = tm_0, tm_1
+      i1_0, i1_1 = f2_add(i1_0, i1_1, tm1_0, tm1_1)
+      c1_0, c1_1 = f2_add(c0_0, c0_1, 0.5 * inv_kp1_0, 0.5 * inv_kp1_1)
+      p1_0, p1_1 = f2_mul(tm1_0, tm1_1, c1_0, c1_1)
+      k1_0, k1_1 = f2_add(k1_0, k1_1, p1_0, p1_1)
+    h0, h1 = f2_add(h0, h1, inv_kp1_0, inv_kp1_1)
+    return (
+        i0_0,
+        i0_1,
+        k0_0,
+        k0_1,
+        i1_0,
+        i1_1,
+        k1_0,
+        k1_1,
+        tm_0,
+        tm_1,
+        h0,
+        h1,
+    )
+
+  init = (
+      one,
+      zero,
+      neg_gamma_hi,
+      neg_gamma_lo,
+      one,
+      zero,
+      hmg_hi_v,
+      hmg_lo_v,
+      one,
+      zero,
+      one,
+      zero,
+  )
+  i0_0, i0_1, k0_0, k0_1, i1_0, i1_1, k1_0, k1_1, *_ = lax.fori_loop(
+      1, max_iter + 1, body, init
+  )
+
+  if need_k0:
+    li0_0, li0_1 = f2_mul(-ln0, -ln1, i0_0, i0_1)
+    res0_0, res0_1 = f2_add(li0_0, li0_1, k0_0, k0_1)
+  else:
+    res0_0, res0_1 = zero, zero
+
+  if need_k1:
+    inv_w0, inv_w1 = f2_recip(w_norm, zero)
+    li1_0, li1_1 = f2_mul(ln0, ln1, i1_0, i1_1)
+    br_0, br_1 = f2_add(li1_0, li1_1, -k1_0, -k1_1)
+    br_0, br_1 = f2_mul(half_w, zero, br_0, br_1)
+    res1_0, res1_1 = f2_add(inv_w0, inv_w1, br_0, br_1)
+    res1_0 = jnp.where(sub, inv_w0, res1_0)
+    res1_1 = jnp.where(sub, inv_w1, res1_1)
+    k1_scale_exp = jnp.where(sub, np.int32(sub_bits), np.int32(0))
+  else:
+    res1_0, res1_1 = zero, zero
+    k1_scale_exp = jnp.zeros_like(w_safe, dtype=np.int32)
+
+  return (res0_0, res0_1), (res1_0, res1_1), k1_scale_exp
+
+
+def _kn_miller_01_real(
+    w: Array, m_steps: int, r_min: float, rl: float, need_k1: bool
+) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
+  """Evaluates sqrt(2w / pi) * exp(w) * (K_0, K_1) via Miller recurrence."""
+  real_dtype = w.dtype
+  w_safe = jnp.where(
+      jnp.isfinite(w) & (w > r_min) & (w < rl),
+      w,
+      jnp.full_like(w, 0.5 * (r_min + rl)),
+  )
+  zero = jnp.zeros_like(w_safe)
+  one = jnp.ones_like(w_safe)
+  scle = 2.0 ** (-500 if real_dtype == np.float64 else -60)
+  scale_limit = 2.0 ** (500 if real_dtype == np.float64 else 60)
+  scale_down = 2.0 ** (-500 if real_dtype == np.float64 else -60)
+
+  # Backward recurrence for the confluent hypergeometric representation
+  # U(1/2, 1, 2w) of sqrt(2w / pi) * exp(w) * K_0(w) (DLMF 10.39.2):
+  #   p_{k-1} = (k / (k - 0.5)^2) * (2 * (k + w) * p_k - (k + 1) * p_{k+1}),
+  # normalized by cs = sum_{j>=0} p_j.
+  def body(i, state):
+    p1_0, p1_1, p2_0, p2_1, cs_0, cs_1 = state
+    kf = lax.convert_element_type(m_steps - i, real_dtype)
+    kmh = kf - 0.5
+    denom = kmh * kmh
+    kw0, kw1 = two_sum(kf, w_safe)
+    t0, t1 = f2_mul(2.0 * kw0, 2.0 * kw1, p2_0, p2_1)
+    u0, u1 = f2_mul(kf + 1.0, zero, p1_0, p1_1)
+    d0, d1 = f2_add(t0, t1, -u0, -u1)
+    m0, m1 = f2_mul(kf, zero, d0, d1)
+    pn0, pn1 = f2_div(m0, m1, denom, zero)
+    cs_0, cs_1 = f2_add(cs_0, cs_1, pn0, pn1)
+    big = jnp.abs(pn0) > scale_limit
+    p1_0 = jnp.where(big, p2_0 * scale_down, p2_0)
+    p1_1 = jnp.where(big, p2_1 * scale_down, p2_1)
+    p2_0 = jnp.where(big, pn0 * scale_down, pn0)
+    p2_1 = jnp.where(big, pn1 * scale_down, pn1)
+    cs_0 = jnp.where(big, cs_0 * scale_down, cs_0)
+    cs_1 = jnp.where(big, cs_1 * scale_down, cs_1)
+    return p1_0, p1_1, p2_0, p2_1, cs_0, cs_1
+
+  scle_v = jnp.full_like(w_safe, scle)
+  p1_0, p1_1, p2_0, p2_1, cs_0, cs_1 = lax.fori_loop(
+      0, m_steps, body, (zero, zero, scle_v, zero, scle_v, zero)
+  )
+
+  q0_0, q0_1 = f2_div(p2_0, p2_1, cs_0, cs_1)
+  if need_k1:
+    r0, r1 = f2_div(p1_0, p1_1, p2_0, p2_1)
+    h0, h1 = f2_add(_const(w_safe, 0.5), zero, -r0, -r1)
+    hw0, hw1 = f2_div(h0, h1, w_safe, zero)
+    fac0, fac1 = f2_add(one, zero, hw0, hw1)
+    q1_0, q1_1 = f2_mul(q0_0, q0_1, fac0, fac1)
+  else:
+    q1_0, q1_1 = zero, zero
+
+  return (q0_0, q0_1), (q1_0, q1_1)
+
+
+def _kn_asym_01_real(
+    w: Array,
+    max_terms: int,
+    r_min: float,
+    underflow_w: float,
+    need_k0: bool,
+    need_k1: bool,
+) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
+  """Evaluates sqrt(2w / pi) * exp(w) * (K_0(w), K_1(w)) via 1/w expansion."""
+  real_dtype = w.dtype
+  w_safe = jnp.where(
+      jnp.isfinite(w) & (w >= r_min) & (w < underflow_w),
+      w,
+      jnp.full_like(w, r_min),
+  )
+  zero = jnp.zeros_like(w_safe)
+  one = jnp.ones_like(w_safe)
+  inv_8w0, inv_8w1 = f2_recip(8.0 * w_safe, zero)
+
+  # By DLMF 10.40.2,
+  # K_n(w) ~ sqrt(pi / (2w)) * exp(-w) * sum_{k>=0} a_k(n) / (8w)^k
+  # with consecutive term ratio (4n^2 - (2k - 1)^2) / (8 * k * w).
+  def body(i, state):
+    s0_0, s0_1, s1_0, s1_1 = state
+    kf = lax.convert_element_type(max_terms - i, real_dtype)
+    two_k_m1 = 2.0 * kf - 1.0
+    sq = two_k_m1 * two_k_m1
+    if need_k0:
+      c0_0, c0_1 = f2_div(-sq, zero, kf, zero)
+      f0_0, f0_1 = f2_mul(c0_0, c0_1, inv_8w0, inv_8w1)
+      t0_0, t0_1 = f2_mul(s0_0, s0_1, f0_0, f0_1)
+      s0_0, s0_1 = f2_add(one, zero, t0_0, t0_1)
+    if need_k1:
+      c1_0, c1_1 = f2_div(4.0 - sq, zero, kf, zero)
+      f1_0, f1_1 = f2_mul(c1_0, c1_1, inv_8w0, inv_8w1)
+      t1_0, t1_1 = f2_mul(s1_0, s1_1, f1_0, f1_1)
+      s1_0, s1_1 = f2_add(one, zero, t1_0, t1_1)
+    return s0_0, s0_1, s1_0, s1_1
+
+  s0_0, s0_1, s1_0, s1_1 = lax.fori_loop(
+      0, max_terms, body, (one, zero, one, zero)
+  )
+  return (
+      (s0_0, s0_1) if need_k0 else (zero, zero),
+      (s1_0, s1_1) if need_k1 else (zero, zero),
+  )
+
+
+def _kn_real_pos(n: int, w: Array) -> Array:
+  """Evaluates K_n(w) for static integer n >= 0 and real w > 0."""
+  real_dtype = w.dtype
+  r_ser = 2.0
+  underflow_w = max(1100.0 if real_dtype == np.float64 else 150.0, 2.0 * n)
+  if real_dtype == np.float64:
+    rl = 24.0
+    series_iters = 16
+    miller_steps = 95
+    asym_terms = 20
+  else:
+    rl = 10.0
+    series_iters = 9
+    miller_steps = 36
+    asym_terms = 10
+
+  need_k0 = n != 1
+  need_k1 = n >= 1
+  in_series = w <= r_ser
+  in_miller = (w > r_ser) & (w < rl)
+
+  (s0_0, s0_1), (s1_0, s1_1), k1_ser_exp = _kn_series_01_real(
+      w, series_iters, r_ser, need_k0=need_k0, need_k1=need_k1
+  )
+  (m0_0, m0_1), (m1_0, m1_1) = _kn_miller_01_real(
+      w, miller_steps, r_ser, rl, need_k1=need_k1
+  )
+  (a0_0, a0_1), (a1_0, a1_1) = _kn_asym_01_real(
+      w, asym_terms, rl, underflow_w, need_k0=need_k0, need_k1=need_k1
+  )
+
+  outer0_0 = jnp.where(in_miller, m0_0, a0_0)
+  outer0_1 = jnp.where(in_miller, m0_1, a0_1)
+  outer1_0 = jnp.where(in_miller, m1_0, a1_0)
+  outer1_1 = jnp.where(in_miller, m1_1, a1_1)
+
+  w_outer = jnp.where(
+      jnp.isfinite(w) & (w > r_ser) & (w < underflow_w),
+      w,
+      jnp.full_like(w, rl),
+  )
+  sw0, sw1 = _f2_sqrt(w_outer)
+  c_hi, c_lo = (
+      _SQRT_PI_OVER_2_F64 if real_dtype == np.float64 else _SQRT_PI_OVER_2_F32
+  )
+  amp0, amp1 = f2_div(_const(w, c_hi), _const(w, c_lo), sw0, sw1)
+  if need_k0:
+    outer0_0, outer0_1 = f2_mul(amp0, amp1, outer0_0, outer0_1)
+  if need_k1:
+    outer1_0, outer1_1 = f2_mul(amp0, amp1, outer1_0, outer1_1)
+
+  k0_0 = jnp.where(in_series, s0_0, outer0_0)
+  k0_1 = jnp.where(in_series, s0_1, outer0_1)
+  k1_0 = jnp.where(in_series, s1_0, outer1_0)
+  k1_1 = jnp.where(in_series, s1_1, outer1_1)
+
+  exp_arg = jnp.where(in_series, jnp.zeros_like(w), -w_outer)
+
+  if n == 0:
+    res = _scale_f2_exp_w(k0_0, k0_1, exp_arg)
+    return jnp.where(w >= underflow_w, 0.0, res)
+
+  if n == 1:
+    scale_exp = jnp.where(in_series, k1_ser_exp, np.int32(0))
+    res = _scale_f2_exp_w(k1_0, k1_1, exp_arg, scale_exp)
+    return jnp.where(w >= underflow_w, 0.0, res)
+
+  # For n >= 2 and w > 0, K_{k+1}(w) = (2k / w) * K_k(w) + K_{k-1}(w) is a sum
+  # of strictly positive terms, so forward recurrence in double-word arithmetic
+  # has zero subtractive cancellation across all w > 0 and all orders n >= 2.
+  max_log = (1024.0 if real_dtype == np.float64 else 128.0) * math.log(2.0)
+  rec_min_w = min(
+      r_ser,
+      0.95 * 2.0 * math.exp((math.lgamma(n) - math.log(2.0) - max_log) / n),
+  )
+  scale_bits_val = 400 if real_dtype == np.float64 else 50
+  scale_thresh = 2.0**scale_bits_val
+  scale_down = 2.0 ** (-scale_bits_val)
+  scale_bits = np.int32(scale_bits_val)
+
+  w_rec = jnp.where(
+      jnp.isfinite(w) & (w >= rec_min_w) & (w < underflow_w),
+      w,
+      jnp.ones_like(w),
+  )
+  inv_w0, inv_w1 = f2_recip(w_rec, jnp.zeros_like(w_rec))
+  inv_w_hi, inv_w_mid = split_half(inv_w0)
+
+  pre_scale = k1_0 > 1.0
+  k0_0 = jnp.where(pre_scale, k0_0 * scale_down, k0_0)
+  k0_1 = jnp.where(pre_scale, k0_1 * scale_down, k0_1)
+  k1_0 = jnp.where(pre_scale, k1_0 * scale_down, k1_0)
+  k1_1 = jnp.where(pre_scale, k1_1 * scale_down, k1_1)
+  init_scale_exp = jnp.where(
+      pre_scale,
+      jnp.full_like(w_rec, scale_bits, dtype=np.int32),
+      jnp.zeros_like(w_rec, dtype=np.int32),
+  )
+
+  def fwd_body(k, state):
+    km1_0, km1_1, k_0, k_1, scale_exp = state
+    two_kf = lax.convert_element_type(2 * k, real_dtype)
+    tk_p0, tk_e0 = fast_two_sum(two_kf * inv_w_hi, two_kf * inv_w_mid)
+    tk0, tk1 = fast_two_sum(tk_p0, tk_e0 + two_kf * inv_w1)
+    p0, p1 = f2_mul(tk0, tk1, k_0, k_1)
+    kp1_0, kp1_1 = f2_add(p0, p1, km1_0, km1_1)
+    big = kp1_0 > scale_thresh
+    kp1_0 = jnp.where(big, kp1_0 * scale_down, kp1_0)
+    kp1_1 = jnp.where(big, kp1_1 * scale_down, kp1_1)
+    k_0 = jnp.where(big, k_0 * scale_down, k_0)
+    k_1 = jnp.where(big, k_1 * scale_down, k_1)
+    scale_exp = jnp.where(big, scale_exp + scale_bits, scale_exp)
+    return k_0, k_1, kp1_0, kp1_1, scale_exp
+
+  init_fwd = (k0_0, k0_1, k1_0, k1_1, init_scale_exp)
+  _, _, kn_0, kn_1, scale_exp = lax.fori_loop(1, n, fwd_body, init_fwd)
+  res = _scale_f2_exp_w(kn_0, kn_1, exp_arg, scale_exp)
+  res = jnp.where(w < rec_min_w, np.inf, res)
+  return jnp.where(w >= underflow_w, 0.0, res)
+
+
+def _kn_miller_01_complex(
+    w: Array, m_steps: int, r_min: float, rl: float, need_k1: bool
+) -> tuple[Array, Array]:
+  """Evaluates sqrt(2w / pi) * exp(w) * (K_0, K_1) on r_min < |w| < rl."""
+  real_dtype = jnp.real(w).dtype
+  r = jnp.abs(w)
+  w_safe = jnp.where(
+      jnp.isfinite(w) & (r > r_min) & (r < rl),
+      w,
+      jnp.full_like(w, 0.5 * (r_min + rl)),
+  )
+  scle = 2.0 ** (-500 if real_dtype == np.float64 else -60)
+  scale_limit = 2.0 ** (500 if real_dtype == np.float64 else 60)
+  scale_down = 2.0 ** (-500 if real_dtype == np.float64 else -60)
+
+  def body(i, state):
+    p1, p2, cs = state
+    kf = (m_steps - i).astype(real_dtype)
+    fks = kf * kf
+    a1 = fks - kf
+    a2 = (fks + kf) / (a1 + 0.25)
+    rk = 2.0 / (kf + 1.0)
+    t = (w_safe + kf) * rk
+    pn = (p2 * t - p1) * a2
+    cs = cs + pn
+    big = jnp.abs(pn) > scale_limit
+    p1 = jnp.where(big, p2 * scale_down, p2)
+    p2 = jnp.where(big, pn * scale_down, pn)
+    cs = jnp.where(big, cs * scale_down, cs)
+    return p1, p2, cs
+
+  p1_init = jnp.zeros_like(w_safe)
+  p2_init = jnp.full_like(w_safe, scle)
+  p1, p2, cs = lax.fori_loop(0, m_steps, body, (p1_init, p2_init, p2_init))
+
+  abs_cs = jnp.abs(cs)
+  inv_cs = 1.0 / jnp.where(abs_cs == 0.0, 1.0, abs_cs)
+  q0 = (p2 * inv_cs) * (jnp.conj(cs) * inv_cs)
+  if not need_k1:
+    return q0, jnp.zeros_like(w_safe)
+  abs_p2 = jnp.abs(p2)
+  inv_p2 = 1.0 / jnp.where(abs_p2 == 0.0, 1.0, abs_p2)
+  pt = (p1 * inv_p2) * (jnp.conj(p2) * inv_p2)
+  q1 = q0 * (1.0 + (0.5 - pt) / w_safe)
+  return q0, q1
+
+
+def _kn_asym_01_complex(
+    w: Array, max_terms: int, r_min: float, need_k0: bool, need_k1: bool
+) -> tuple[Array, Array]:
+  """Evaluates sqrt(2w / pi) * exp(w) * (K_0(w), K_1(w)) for |w| >= r_min."""
+  real_dtype = jnp.real(w).dtype
+  w_safe = jnp.where(
+      jnp.isfinite(w) & (jnp.abs(w) >= r_min), w, jnp.full_like(w, r_min)
+  )
+  inv_8w = 0.125 / w_safe
+  one = jnp.ones_like(w_safe)
+
+  def body(i, state):
+    s0, s1 = state
+    kf = (max_terms - i).astype(real_dtype)
+    two_k_m1 = 2.0 * kf - 1.0
+    sq = two_k_m1 * two_k_m1
+    if need_k0:
+      s0 = one + s0 * ((-sq / kf) * inv_8w)
+    if need_k1:
+      s1 = one + s1 * (((4.0 - sq) / kf) * inv_8w)
+    return s0, s1
+
+  s0, s1 = lax.fori_loop(0, max_terms, body, (one, one))
+  zero = jnp.zeros_like(w_safe)
+  return (s0 if need_k0 else zero), (s1 if need_k1 else zero)
+
+
+def _kn_complex_first_quadrant(n: int, w: Array) -> Array:
+  """Evaluates K_n(w) in the first quadrant for static integer n >= 0."""
+  real_dtype = jnp.real(w).dtype
+  r = jnp.abs(w)
+  if real_dtype == np.float64:
+    rl = 24.0
+    series_iters = 20
+    miller_steps = 170
+    asym_terms = 20
+  else:
+    rl = 10.0
+    series_iters = 12
+    miller_steps = 45
+    asym_terms = 10
+
+  need_k0 = n != 1
+  need_k1 = n >= 1
+  underflow_x = max(1100.0 if real_dtype == np.float64 else 150.0, 2.0 * n)
+  underflow = lax.real(w) >= underflow_x
+  res_ser, _ = _yn_series(n, w, series_iters, 2.0, modified=True)
+
+  in_miller = (r > 2.0) & (r < rl)
+  q0_mil, q1_mil = _kn_miller_01_complex(
+      w, miller_steps, 2.0, rl, need_k1=need_k1
+  )
+  w_outer = jnp.where(
+      jnp.isfinite(w) & (r > 2.0) & ~underflow, w, jnp.full_like(w, rl)
+  )
+  q0_asy, q1_asy = _kn_asym_01_complex(
+      w_outer, asym_terms, rl, need_k0=need_k0, need_k1=need_k1
+  )
+  coef = jnp.sqrt((math.pi / 2.0) / w_outer)
+  k0e = coef * jnp.where(in_miller, q0_mil, q0_asy)
+  k1e = coef * jnp.where(in_miller, q1_mil, q1_asy)
+
+  if n == 0:
+    kne = k0e
+    scale_exp = jnp.zeros_like(r, dtype=np.int32)
+  elif n == 1:
+    kne = k1e
+    scale_exp = jnp.zeros_like(r, dtype=np.int32)
+  else:
+    inv_w = 1.0 / w_outer
+    kne, scale_exp = _forward_recur_rescaled(n, inv_w, k0e, k1e, sign=1.0)
+
+  x_exp = lax.real(w_outer)
+  y_exp = lax.imag(w_outer)
+  phase = lax.complex(jnp.cos(y_exp), -jnp.sin(y_exp))
+  res_outer = _scale_exp_y_and_exp2(kne * phase, x_exp, scale_exp, -1.0)
+  res_outer = jnp.where(underflow, jnp.zeros_like(w), res_outer)
+  return jnp.where(r <= 2.0, res_ser, res_outer)
+
+
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
+@partial(jit, static_argnums=(0,))
+def _kn(n: int, z: Array) -> Array:
+  with config.numpy_dtype_promotion("standard"):
+    return _kn_impl(n, z)
+
+
+def _kn_impl(n: int, z: Array) -> Array:
+  is_complex = dtypes.issubdtype(z.dtype, np.complexfloating)
+  is_odd = (n & 1) == 1
+
+  if not is_complex:
+    w = jnp.where(z > 0.0, z, 1.0)
+    res = _kn_real_pos(n, w)
+    # Boundary values for real inputs (for z < 0, K_n(z) is complex-valued so
+    # real-dtype inputs return NaN, matching scipy.special.kn).
+    res = jnp.where(z == np.inf, 0.0, res)
+    res = jnp.where(z == 0.0, np.inf, res)
+    res = jnp.where((z < 0.0) | jnp.isnan(z), np.nan, res)
+    return res
+
+  x = lax.real(z)
+  y = lax.imag(z)
+  x_abs = jnp.abs(x)
+  y_abs = jnp.abs(y)
+  z1 = lax.complex(x_abs, y_abs)
+  res = _kn_complex_first_quadrant(n, z1)
+
+  # Map from the first quadrant z1 = |x| + i * |y| back to arbitrary
+  # z = x + i * y:
+  # 1. Reflect across the imaginary axis when x < 0 (DLMF 10.34.2):
+  #    K_n(-|x| + i * |y|) = (-1)^n * conj(K_n(z1)) - i * pi * conj(I_n(z1)).
+  i_z1 = _iv_first_quadrant_complex(n, x_abs, y_abs)
+  neg_i_pi_conj_i = lax.complex(
+      -math.pi * lax.imag(i_z1), -math.pi * lax.real(i_z1)
+  )
+  k_reflected = -jnp.conj(res) if is_odd else jnp.conj(res)
+  res = jnp.where(x < 0.0, k_reflected + neg_i_pi_conj_i, res)
+  # 2. Reflect across the real axis when y < 0 (using signbit so y = -0.0
+  #    selects the lower side of the branch cut along the negative real axis):
+  #    K_n(x - i * |y|) = conj(K_n(x + i * |y|)).
+  res = jnp.where(jnp.signbit(y), jnp.conj(res), res)
+  # 3. On the positive real axis (x > 0, y == 0), K_n(x) is purely real.
+  res = jnp.where(
+      (y == 0.0) & (x > 0.0),
+      lax.complex(lax.real(res), jnp.zeros_like(y)),
+      res,
+  )
+
+  nan_c = lax.complex(jnp.full_like(x, np.nan), jnp.full_like(y, np.nan))
+  zero_c = jnp.zeros_like(z)
+  z_zero_c = lax.complex(jnp.full_like(x, np.inf), jnp.zeros_like(y))
+  res = jnp.where(z == 0, z_zero_c, res)
+  res = jnp.where((x == np.inf) | jnp.isinf(y), zero_c, res)
+  res = jnp.where(
+      jnp.isnan(x)
+      | jnp.isnan(y)
+      | (x == -np.inf)
+      | (jnp.isinf(x) & jnp.isinf(y)),
+      nan_c,
+      res,
+  )
+  return res
+
+
+def _complex_tangent_mul(dy_dz: Array, z_dot: Array) -> Array:
+  """Multiplies complex dy_dz * z_dot without 0.0 * inf -> NaN on axes."""
+  dr, di = lax.real(dy_dz), lax.imag(dy_dz)
+  tr, ti = lax.real(z_dot), lax.imag(z_dot)
+  max_val = float(np.finfo(dr.dtype).max)
+
+  def mul_part(c: Array, t1: Array, t2: Array) -> tuple[Array, Array]:
+    is_inf = jnp.isinf(c)
+    c_safe = jnp.where(is_inf, jnp.where(c > 0.0, max_val, -max_val), c)
+    scale = jnp.where(is_inf, max_val, 1.0)
+    return ((c_safe * t1) * scale) * scale, ((c_safe * t2) * scale) * scale
+
+  dr_tr, dr_ti = mul_part(dr, tr, ti)
+  di_ti, di_tr = mul_part(di, ti, tr)
+  return lax.complex(dr_tr - di_ti, dr_ti + di_tr)
+
+
+@_kn.defjvp
+def _kn_jvp(
+    n: int, primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
+  (z,) = primals
+  (z_dot,) = tangents
+  y = _kn(n, z)
+  is_complex = dtypes.issubdtype(z.dtype, np.complexfloating)
+  # DLMF 10.29.2: K_0'(z) = -K_1(z), and
+  # K_n'(z) = -0.5 * (K_{n-1}(z) + K_{n+1}(z)).
+  if n == 0:
+    dy_dz = -_kn(1, z)
+  else:
+    k_m1 = _kn(n - 1, z)
+    k_p1 = _kn(n + 1, z)
+    if is_complex:
+      k_m1 = jnp.where(
+          jnp.isfinite(k_m1) & jnp.isfinite(k_p1), k_m1, jnp.zeros_like(k_m1)
+      )
+      s = k_m1 + k_p1
+      dy_dz = lax.complex(-0.5 * lax.real(s), -0.5 * lax.imag(s))
+    else:
+      dy_dz = _const(z, -0.5) * (k_m1 + k_p1)
+  if is_complex:
+    return y, _complex_tangent_mul(dy_dz, z_dot)
+  return y, dy_dz * z_dot
+
+
+def kn(n: int, z: ArrayLike) -> Array:
+  r"""Modified Bessel function of the second kind of integer order `n`.
+
+  JAX implementation of :obj:`scipy.special.kn`.
+
+  .. math::
+
+     K_n(z) = \frac{1}{2} \sum_{k=0}^{n-1} \frac{(-1)^k (n - k - 1)!}{k!}
+     \left(\frac{z}{2}\right)^{2k - n}
+     + (-1)^{n+1} \ln\left(\frac{z}{2}\right) I_n(z)
+     + \frac{(-1)^n}{2} \sum_{k=0}^{\infty}
+     \frac{\psi(k + 1) + \psi(n + k + 1)}{k!\,(n + k)!}
+     \left(\frac{z^2}{4}\right)^k \left(\frac{z}{2}\right)^n
+
+  for integer order :math:`n \ge 0` (with :math:`K_{-n}(z) = K_n(z)`).
+
+  Args:
+    n: The integer order of the modified Bessel function (must be a static
+      integer).
+    z: The argument(s) at which to evaluate :math:`K_n(z)`. Real and complex
+      inputs are supported.
+
+  Returns:
+    An array containing the evaluated modified Bessel function values.
+
+  Notes:
+    Unlike :obj:`scipy.special.kn`, ``jax.scipy.special.kn`` requires ``n`` to
+    be a concrete integer order (so ``n`` cannot be traced or batched with
+    :func:`jax.vmap`), and supports complex inputs directly (matching
+    :obj:`scipy.special.kv` on the complex plane).
+
+  See Also:
+    - :func:`jax.scipy.special.iv`
+    - :func:`jax.scipy.special.i0`
+    - :func:`jax.scipy.special.i1`
+    - :func:`jax.scipy.special.jn`
+    - :func:`jax.scipy.special.yn`
+  """
+  n = abs(
+      core.concrete_or_error(
+          operator.index,
+          n,
+          "The 'n' argument of jax.scipy.special.kn must be a static integer.",
+      )
+  )
+  (z,) = promote_args_inexact("kn", z)
+  orig_dtype = z.dtype
+  if orig_dtype in (dtypes.bfloat16, np.float16):
+    z = z.astype(np.float32)
+    return _kn(n, z).astype(orig_dtype)
+  return _kn(n, z)

@@ -202,6 +202,7 @@ jax.scipy.special
    iv
    jn
    kl_div
+   kn
    log_ndtr
    log_softmax
    logit

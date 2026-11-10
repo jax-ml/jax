@@ -74,7 +74,7 @@ jax_multiplatform_test(
     name = "bessel_test",
     srcs = ["bessel_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 7,
+    shard_count = 12,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",

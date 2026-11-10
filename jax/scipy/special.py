@@ -53,6 +53,7 @@ from jax._src.scipy.special import (
   iv as iv,
   jn as jn,
   kl_div as kl_div,
+  kn as kn,
   log_ndtr as log_ndtr,
   log_softmax as log_softmax,
   loggamma as loggamma,
