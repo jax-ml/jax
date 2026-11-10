@@ -4142,6 +4142,30 @@ class LaxTest(jtu.JaxTestCase):
     np.testing.assert_equal(
         np.array(lax.dynamic_slice(x, np.uint8([128]), (1,))), [128])
 
+  def testDynamicSliceNarrowSignedNegativeIndex(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42354
+    x = jnp.arange(200, dtype=jnp.int32)
+    self.assertArraysEqual(
+        lax.dynamic_slice(x, (jnp.int8(-1),), (1,)),
+        np.array([199], dtype=np.int32),
+    )
+    self.assertArraysEqual(
+        lax.dynamic_slice(x, (np.int8(-1),), (1,)),
+        np.array([199], dtype=np.int32),
+    )
+    x2d = jnp.arange(2000, dtype=jnp.int32).reshape(200, 10)
+    self.assertArraysEqual(
+        lax.dynamic_slice_in_dim(x2d, jnp.int8(-1), 1, axis=0),
+        x2d[199:200],
+    )
+    updated = lax.dynamic_update_index_in_dim(
+        jnp.zeros((200, 2), dtype=jnp.int32),
+        jnp.array([7, 8], dtype=jnp.int32),
+        jnp.int8(-1),
+        axis=0,
+    )
+    self.assertArraysEqual(updated[199], np.array([7, 8], dtype=np.int32))
+
   def test_dot_general_batching_python_builtin_arg(self):
     # https://github.com/jax-ml/jax/issues/16805
     @jax.remat

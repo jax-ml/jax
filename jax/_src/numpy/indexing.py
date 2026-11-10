@@ -74,7 +74,10 @@ class IndexType(enum.Enum):
     elif isinstance(idx, slice):
       return cls.SLICE
     elif isinstance(idx, indexing.Slice):
-      if idx.is_dynamic_start or idx.is_dynamic_size:
+      if (idx.is_dynamic_start or idx.is_dynamic_size or
+          isinstance(idx.start, (Array, np.ndarray)) or
+          isinstance(idx.size, (Array, np.ndarray)) or
+          (core.is_constant_dim(idx.start) and operator.index(idx.start) < 0)):  # pyrefly: ignore[bad-argument-type]
         return cls.DYNAMIC_SLICE
       return cls.SLICE
     elif _is_integer_index(idx):
@@ -121,10 +124,11 @@ def _as_slice(idx: slice | indexing.Slice) -> slice:
   if isinstance(idx, slice):
     return idx
   elif isinstance(idx, indexing.Slice):
-    assert isinstance(idx.start, int)
-    assert isinstance(idx.size, int)
-    assert isinstance(idx.stride, int)
-    return slice(idx.start, idx.start + idx.size, idx.stride)
+    assert isinstance(idx.start, (int, np.integer))
+    assert isinstance(idx.size, (int, np.integer))
+    assert isinstance(idx.stride, (int, np.integer))
+    start, size, stride = int(idx.start), int(idx.size), int(idx.stride)
+    return slice(start, start + size, stride)
   raise RuntimeError(f"Internal: expected slice or Slice, got {type(idx)}")
 
 
@@ -356,27 +360,27 @@ class NDIndexer:
     new_indices: list[ParsedIndex] = []
     for idx in self.indices:
       if idx.typ == IndexType.INTEGER:
+        assert isinstance(idx.index, (int, np.integer))
         axis, = idx.consumed_axes
         size: ArrayLike = self.shape[axis]
         if isinstance(idx.index, np.unsignedinteger):
           normed_index: Index = idx.index
         else:
-          normed_index = idx.index + size if idx.index < 0 else idx.index  # pyrefly: ignore[bad-assignment, unsupported-operation]
+          i = operator.index(idx.index)
+          normed_index = i + size if i < 0 else i  # pyrefly: ignore[bad-assignment, unsupported-operation]
         new_indices.append(ParsedIndex(normed_index, typ=idx.typ, consumed_axes=idx.consumed_axes))
-      elif idx.typ in [IndexType.ARRAY, IndexType.INTEGER]:
+      elif idx.typ == IndexType.ARRAY:
         assert isinstance(idx.index, (Array, np.ndarray))
         axis, = idx.consumed_axes
-        if dtypes.issubdtype(idx.index.dtype, np.unsignedinteger):
-          normed_index = idx.index
-        else:
-          size = self.shape[axis]
-          if core.is_constant_dim(size):
-            size = lax._const(idx.index, size)
-          else:
-            size = lax.convert_element_type(core.dimension_as_value(size),
-                                            idx.index.dtype)
-          normed_index = lax.select(idx.index < 0, lax.add(idx.index, size), idx.index)
+        normed_index = _normalize_index(idx.index, self.shape[axis])
         new_indices.append(ParsedIndex(normed_index, typ=idx.typ, consumed_axes=idx.consumed_axes))
+      elif idx.typ == IndexType.DYNAMIC_SLICE:
+        assert isinstance(idx.index, indexing.Slice)
+        axis, = idx.consumed_axes
+        normed_start = _normalize_index(idx.index.start, self.shape[axis])
+        new_indices.append(ParsedIndex(
+            indexing.Slice(normed_start, idx.index.size, idx.index.stride),  # pyrefly: ignore[bad-argument-type]
+            typ=idx.typ, consumed_axes=idx.consumed_axes))
       else:
         new_indices.append(idx)
     return NDIndexer(indices=new_indices, shape=self.shape)
@@ -732,12 +736,29 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
   if mode is None or mode == "fill":
     gather_mode = slicing.GatherScatterMode.FILL_OR_DROP
     # lax.gather() does not support negative indices, so we wrap them here
-    indices = util._where(indices < 0, indices + a.shape[axis_idx], indices)
+    indices = _normalize_index(indices, a.shape[axis_idx])
   elif mode == "raise":
     # TODO(phawkins): we have no way to report out of bounds errors yet.
     raise NotImplementedError("The 'raise' mode to jnp.take is not supported.")
   elif mode == "wrap":
-    indices = ufuncs.mod(indices, lax._const(indices, a.shape[axis_idx]))
+    axis_size = a.shape[axis_idx]
+    if dtypes.issubdtype(indices.dtype, np.integer) and (
+        not core.is_constant_dim(axis_size)
+        or axis_size > dtypes.iinfo(indices.dtype).max
+    ):
+      signed = dtypes.issubdtype(indices.dtype, np.signedinteger)
+      target_dt = dtypes.canonicalize_dtype(
+          lax_utils.int_dtype_for_dim(axis_size, signed=signed)
+      )
+      if dtypes.iinfo(indices.dtype).bits < dtypes.iinfo(target_dt).bits:
+        indices = lax.convert_element_type(indices, target_dt)
+    if core.is_constant_dim(axis_size):
+      axis_size_val = lax._const(indices, axis_size)
+    else:
+      axis_size_val = lax.convert_element_type(
+          core.dimension_as_value(axis_size), indices.dtype
+      )
+    indices = ufuncs.mod(indices, axis_size_val)
     gather_mode = slicing.GatherScatterMode.PROMISE_IN_BOUNDS
   elif mode == "clip":
     gather_mode = slicing.GatherScatterMode.CLIP
@@ -771,13 +792,26 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
-  if dtypes.issubdtype(dtypes.dtype(index), np.unsignedinteger):
+  dt = dtypes.dtype(index)
+  if dtypes.issubdtype(dt, np.unsignedinteger):
     return index
+  if dtypes.issubdtype(dt, np.signedinteger) and (
+      not core.is_constant_dim(axis_size) or axis_size > dtypes.iinfo(dt).max
+  ):
+    target_dt = dtypes.canonicalize_dtype(
+        lax_utils.int_dtype_for_dim(axis_size, signed=True)
+    )
+    if dtypes.iinfo(dt).bits < dtypes.iinfo(target_dt).bits:
+      if isinstance(index, np.integer):
+        index = target_dt.type(int(index))
+      else:
+        index = lax.convert_element_type(index, target_dt)
+      dt = target_dt
   if core.is_constant_dim(axis_size):
     axis_size_val = lax._const(index, axis_size)
   else:
     axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
-                                             dtypes.dtype(index))
+                                             dt)
   if isinstance(index, (int, np.integer)):
     return lax.add(index, axis_size_val) if index < 0 else index
   else:
@@ -1760,6 +1794,16 @@ def put(a: ArrayLike, ind: ArrayLike, v: ArrayLike,
   v_arr = lax_numpy.ravel(v)
   if not arr.size or not ind_arr.size or not v_arr.size:
     return arr
+  if dtypes.issubdtype(ind_arr.dtype, np.integer) and (
+      not core.is_constant_dim(arr.size)
+      or arr.size > dtypes.iinfo(ind_arr.dtype).max
+  ):
+    signed = dtypes.issubdtype(ind_arr.dtype, np.signedinteger)
+    target_dt = dtypes.canonicalize_dtype(
+        lax_utils.int_dtype_for_dim(arr.size, signed=signed)
+    )
+    if dtypes.iinfo(ind_arr.dtype).bits < dtypes.iinfo(target_dt).bits:
+      ind_arr = lax.convert_element_type(ind_arr, target_dt)
   v_arr = lax_numpy._tile_to_size(v_arr, len(ind_arr))
   if mode is None:
     scatter_mode = "drop"
