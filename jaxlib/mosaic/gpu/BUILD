@@ -486,10 +486,15 @@ nanobind_extension(
 cc_binary(
     name = "libmosaic_gpu_runtime.so",
     srcs = ["runtime.cc"],
+    additional_linker_inputs = [":mosaic_gpu_runtime.lds"],
     copts = ["-fvisibility=default"],
+    linkopts = [
+        "-Wl,--version-script,$(execpath :mosaic_gpu_runtime.lds)",
+    ],
     linkshared = 1,
     tags = [
         "manual",
+        "no_mac",
         "notap",
     ],
     deps = [
