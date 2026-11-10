@@ -877,6 +877,10 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   }
 #endif
 
+  // The NVPTX target registers its LLVM command line options (such as
+  // -nvptx-prec-divf32) when it is initialized, so do that before the options
+  // below are parsed.
+  mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
   // Use `div.full` for float32 division---this generates better SASS.
   const std::vector<std::string> llvm_cl_options{"-nvptx-prec-divf32=1"};
   // Acquire a lock over the LLVM command line options here. XLA uses this
@@ -885,7 +889,6 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   // setting our own command line options makes compilation dependent on
   // outside state/non-deterministic.
   xla::llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_cl_options);
-  mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
 
   bool use_nvshmem = is_nvshmem_used(*module);
   bool multimem_used = is_multimem_used(*module);

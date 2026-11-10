@@ -696,7 +696,7 @@ def _broadcasted_iota_op_lowering_rule(
 def _vector_broadcast_op_lowering_rule(
     _: LoweringContext, op: vector.BroadcastOp
 ) -> Sequence[ir.Value]:
-  out_vec_ty = ir.VectorType(op.vector.type)
+  out_vec_ty = ir.VectorType(op.result.type)
   fragmented_array = fa.FragmentedArray.splat(
       op.source,
       tuple(out_vec_ty.shape),
