@@ -36,6 +36,7 @@ from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import flattree as ft
 from jax._src.interpreters import partial_eval as pe
+from jax._src.state import indexing
 from jax._src.state import types as state_types
 from jax._src.state.discharge import (
     discharged_aval,
@@ -44,6 +45,7 @@ from jax._src.state.discharge import (
     run_state_reference,
 )
 from jax._src.state.primitives import ( addupdate_p,get_p, pin,
+                                       pp_ref_transforms,
                                        ref_addupdate, ref_get, ref_set,
                                        ref_swap, swap_p, unpin,
                                        with_memory_space_constraint)
@@ -1662,6 +1664,33 @@ class StateControlFlowTest(jtu.JaxTestCase):
       ):
         _ = multi_ref.memory_space
     fn(0)
+
+  def test_pp_ref_transforms_nested_multiref(self):
+    v0 = core.Var(shaped_array_ref((2, 4, 8), jnp.float32))
+    v1 = core.Var(shaped_array_ref((5, 4, 8), jnp.float32))
+    zero_lit = core.Literal(np.int32(0), core.ShapedArray((), jnp.int32))
+    _, idx0_tree = jax.tree.flatten(
+        indexing.NDIndexer.from_indices_shape((0,), (2, 4, 8))
+    )
+    _, idx1_tree = jax.tree.flatten(
+        indexing.NDIndexer.from_indices_shape((0,), (5, 4, 8))
+    )
+    idx0 = jax.tree.unflatten(idx0_tree, [zero_lit])
+    idx1 = jax.tree.unflatten(idx1_tree, [zero_lit])
+    slice_idx = indexing.NDIndexer.from_indices_shape(
+        (slice(0, 2), slice(None)), (4, 8)
+    )
+    selected = state_types.TransformedRef(
+        ref=(
+            state_types.TransformedRef(v0, (idx0,)),
+            state_types.TransformedRef(v1, (idx1,)),
+        ),
+        transforms=(state_types.SelectTransform(zero_lit),),
+    )
+    nested = state_types.TransformedRef(selected, (slice_idx,))
+    printed = str(pp_ref_transforms(core.JaxprPpContext(), nested))
+    self.assertIn("(a[0,:,:], b[0,:,:]){select(self.idx=", printed)
+    self.assertTrue(printed.endswith(")}[:2,:]"), printed)
 
 
   @parameterized.named_parameters(

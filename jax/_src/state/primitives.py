@@ -548,8 +548,8 @@ def _pp_transforms(
 
 
 def pp_ref_transforms(context: core.JaxprPpContext, ref, transforms=()):
-  if isinstance(ref, TransformedRef):
-    transforms = ref.transforms
+  while isinstance(ref, TransformedRef):
+    transforms = (*ref.transforms, *transforms)
     ref = ref.ref
   if isinstance(ref, tuple):
     ref_doc = pp.concat([
