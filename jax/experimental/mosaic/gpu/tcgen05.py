@@ -139,7 +139,14 @@ def _create_scaled_instr_descriptor(
     transpose_b: bool,
     scale_type: ir.Type,
     sparse: bool = False,
+    a_scale_128_lane: bool = False,
 ) -> ir.Value:
+  arch = utils.get_arch()
+  is_sm107f = arch.major == 10 and arch.minor >= 7
+  if a_scale_128_lane and not is_sm107f:
+    raise ValueError(
+        "TMEM row-per-lane A scales layout supported only for sm107f."
+    )
   # Use .kind::mxf4 and .kind::mxf4nvf4 encoding for 4-bit types.
   is_fp4 = utils.bitwidth(a_type) == 4 and utils.bitwidth(b_type) == 4
   if not is_fp4 and (
@@ -186,7 +193,9 @@ def _create_scaled_instr_descriptor(
   else:
     raise NotImplementedError(f"Unsupported scale type: {scale_type}")
   desc |= scale_encoding << 23  # Scale matrix type
-  # Bits 24-26 are reserved
+  desc |= a_scale_128_lane << 26  # Matrix A scale factor layout
+  # Bits 24-25 are reserved.
+  # See: docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-instuction-desc-kind-mxf8f6f4
   if m not in (128, 256):
     raise ValueError(f"M must be 128 or 256, got: {m}")
   desc |= (m >> 7) << 27  # M >> 7, bits 27-28
@@ -444,6 +453,7 @@ def mma(
 
   # Check that the shapes and element types are correct for block scaling.
   scale_element_type = None
+  a_scale_128_lane = False
   if is_scaled:
     assert a_scale is not None and b_scale is not None
     scale_element_type = a_scale.dtype
@@ -453,6 +463,7 @@ def mma(
           f" got {b_scale.dtype}"
       )
     assert scale_block is not None
+    arch = utils.get_arch()
     base_scale_block = scale_block // (2 if is_sparse else 1)
     if isinstance(a_element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
       if not isinstance(scale_element_type, ir.Float8E8M0FNUType):
@@ -475,7 +486,6 @@ def mma(
             "Scale element type mismatch: expected f8e8m0fnu, f8e4m3fn, or"
             f" f8e5m3fnu, got {scale_element_type}"
         )
-      arch = utils.get_arch()
       if isinstance(scale_element_type, ir.Float8E5M3FNUType) and not (
           arch.major == 10 and arch.minor >= 7
       ):
@@ -507,8 +517,22 @@ def mma(
           f"A scale shape mismatch: expected ({TMEM_ROWS}, {k_scales}), got"
           f" {a_scale.shape}"
       )
-    if a_scale.layout != scales_layout():
+    a_scale_128_lane = a_scale.layout == scales_128_lane_layout()
+    if a_scale.layout != scales_layout() and not a_scale_128_lane:
       raise ValueError(f"A scale layout {a_scale.layout} is not supported")
+    if a_scale_128_lane:
+      if not (arch.major == 10 and arch.minor >= 7):
+        raise ValueError(
+            "128-lane A scale layout is only supported on sm_107f, got"
+            f" sm_{arch.major}{arch.minor}."
+        )
+      # TODO(olechwierowicz): Lift these restrictions once collective and
+      # sparse MMAs with 128-lane A scales are tested.
+      if collective or is_sparse:
+        raise NotImplementedError(
+            "128-lane A scale layout is only supported for dense, non-collective"
+            " MMA."
+        )
     if collective and m == 64:
       if b_scale.layout != b_scales_m64_collective_layout():
         raise ValueError(
@@ -630,6 +654,7 @@ def mma(
         b_element_type=mma_b_element_type,
         scale_element_type=scale_element_type,
         scale_block=scale_block,
+        a_scale_128_lane=a_scale_128_lane,
     )
 
 
@@ -653,6 +678,7 @@ def _do_mma(
     d_type: ir.Type,
     accumulate: ir.Value,
     collective: bool,
+    a_scale_128_lane: bool = False,
 ) -> None:
   """Issues the MMA instructions covering the full K extent of the operands.
 
@@ -765,6 +791,7 @@ def _do_mma(
           b_transpose,
           scale_element_type,
           sparse=is_sparse,
+          a_scale_128_lane=a_scale_128_lane,
       )
       assert (instr_m == 64 and collective) or instr_m == 128
       assert instr_n % (8 * num_cta) == 0
@@ -1176,6 +1203,30 @@ def scales_layout() -> TMEMLayout:
       lane_dims=(-2,),
       vector_dim=-3,
   )
+
+
+def scales_128_lane_layout() -> TMEMLayout:
+  """A 128-lane TMEM layout for A scales (sm_107f only).
+
+  Applies to A scales only; B scales always use ``scales_layout()`` (or
+  ``b_scales_m64_collective_layout()``). It is selected by bit 26 of the scaled
+  instruction descriptor, which is only available on sm_107f.
+
+  Row ``r`` of the ``(128, K // block_size)`` A scale matrix lives in TMEM lane
+  ``r``, with 4 consecutive k-scales packed into each 32-bit column. Unlike
+  ``scales_layout()``, nothing is replicated across the four 32-lane TMEM
+  sub-partitions, so it uses 4x fewer columns.
+
+  ``async_copy_scales_smem_to_tmem`` rejects this layout. Instead, copy the
+  scales from SMEM with ``async_copy_smem_to_tmem(..., swizzle=16)``, laid out
+  in unswizzled ``(8, 16)`` tiles like any other 8-bit operand, which requires
+  ``K // block_size`` to be a multiple of 16. Alternatively, fill it from
+  registers with ``TMEMRef.store`` (``tcgen05.st``) of an array in
+  ``fa.tmem_native_layout(4)``.
+
+  See https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-scale-factor-a
+  """
+  return tmem_default_layout(packing=4)
 
 
 def b_scales_m64_collective_layout() -> TMEMLayout:

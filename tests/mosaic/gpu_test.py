@@ -2480,6 +2480,52 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       swizzle,
       lhs_in_tmem,
   ):
+    self._run_mma_block_scaled(
+        m=m,
+        n=n,
+        in_jax_dtype=in_jax_dtype,
+        scale_jax_dtype=scale_jax_dtype,
+        block_size=block_size,
+        swizzle=swizzle,
+        lhs_in_tmem=lhs_in_tmem,
+        a_scale_128_lane=False,
+    )
+
+  def test_mma_block_scaled_128_lane_a_scales(self):
+    if not (
+        jtu.is_cuda_compute_capability_at_least("10.7")
+        and not jtu.is_cuda_compute_capability_at_least("11.0")
+    ):
+      self.skipTest("128-lane A scales are only supported on sm_107f.")
+    # With f4 inputs and swizzle=128, K=512, so A has 16 scales per row. That's
+    # exactly the 16 bytes per row that tcgen05.cp needs, so no padding is
+    # required.
+    self._run_mma_block_scaled(
+        m=128,
+        n=128,
+        in_jax_dtype=jnp.float4_e2m1fn,
+        scale_jax_dtype=jnp.float8_e8m0fnu,
+        block_size=32,
+        swizzle=128,
+        lhs_in_tmem=False,
+        a_scale_128_lane=True,
+    )
+
+  def _run_mma_block_scaled(
+      self,
+      m,
+      n,
+      in_jax_dtype,
+      scale_jax_dtype,
+      block_size,
+      swizzle,
+      lhs_in_tmem,
+      a_scale_128_lane,
+  ):
+    is_sm107f = (
+        jtu.is_cuda_compute_capability_at_least("10.7")
+        and not jtu.is_cuda_compute_capability_at_least("11.0")
+    )
     out_jax_dtype = jnp.float32
     # When swizzle is small, we need to take many steps to make it large enough
     # to make the scale count a multiple of 4.
@@ -2523,14 +2569,22 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         )
       ctx.async_copy(src_ref=lhs, dst_ref=lhs_smem, barrier=barriers[0], **operand_kwargs)
       ctx.async_copy(src_ref=rhs, dst_ref=rhs_smem, barrier=barriers[1], **operand_kwargs)
-      ctx.async_copy(src_ref=lhs_scales_gmem, dst_ref=lhs_scales_smem, barrier=barriers[2])
+      ctx.async_copy(
+          src_ref=lhs_scales_gmem,
+          dst_ref=lhs_scales_smem,
+          barrier=barriers[2],
+          **a_scales_copy_kwargs,
+      )
       ctx.async_copy(src_ref=rhs_scales_gmem, dst_ref=rhs_scales_smem, barrier=barriers[3])
       for i in range(4):
         barriers[i].wait()
       with mgpu.single_thread():
         if lhs_in_tmem:
           tcgen05.async_copy_smem_to_tmem(lhs_smem, lhs_tmem, swizzle=swizzle)
-        tcgen05.async_copy_scales_smem_to_tmem(lhs_scales_smem, lhs_scales)
+        if a_scale_128_lane:
+          tcgen05.async_copy_smem_to_tmem(lhs_scales_smem, lhs_scales, swizzle=16)
+        else:
+          tcgen05.async_copy_scales_smem_to_tmem(lhs_scales_smem, lhs_scales)
         tcgen05.async_copy_scales_smem_to_tmem(rhs_scales_smem, rhs_scales)
         tcgen05.mma(
             acc,
@@ -2556,25 +2610,28 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     gmem_scale_dtype = (
         jnp.uint8 if scale_jax_dtype == dtypes.float8_e5m3fnu else scale_jax_dtype
     )
+    k_scales = k // block_size
+    if a_scale_128_lane:
+      a_scales_smem_shape = tile_shape((m, k_scales), (8, 16))
+      a_scales_tmem_layout = tcgen05.scales_128_lane_layout()
+      a_scales_copy_kwargs = dict(gmem_transform=mgpu.TileTransform((8, 16)))
+    else:
+      a_scales_smem_shape = (m // 128, k_scales // 4, 32, 16)
+      a_scales_tmem_layout = tcgen05.scales_layout()
+      a_scales_copy_kwargs = {}
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
+        jax.ShapeDtypeStruct(a_scales_smem_shape, scale_jax_dtype),
         jax.ShapeDtypeStruct(
-            (m // 128, k // (block_size * 4), 32, 16), scale_jax_dtype
-        ),
-        jax.ShapeDtypeStruct(
-            ((n + 127) // 128, k // (block_size * 4), 32, 16), scale_jax_dtype
+            ((n + 127) // 128, k_scales // 4, 32, 16), scale_jax_dtype
         ),
         mgpu.Barrier(1, num_barriers=4),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
+        mgpu.TMEM((m, k_scales), scale_jax_dtype, layout=a_scales_tmem_layout),
         mgpu.TMEM(
-            (m, k // block_size),
-            scale_jax_dtype,
-            layout=tcgen05.scales_layout(),
-        ),
-        mgpu.TMEM(
-            ((n + 127) // 128 * 128, k // block_size),
+            ((n + 127) // 128 * 128, k_scales),
             scale_jax_dtype,
             layout=tcgen05.scales_layout(),
         ),
@@ -2594,12 +2651,13 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           .reshape(pad_mn // 128, k // 4, 32, 16)
           .view(gmem_scale_dtype)
       )
-    a_gpu_scales, b_gpu_scales = map(format_scales, (a_scales, b_scales))
-    args = (x, y, a_gpu_scales, b_gpu_scales)
-    is_sm107f = (
-        jtu.is_cuda_compute_capability_at_least("10.7")
-        and not jtu.is_cuda_compute_capability_at_least("11.0")
+    a_gpu_scales = (
+        np.asarray(a_scales).view(gmem_scale_dtype)
+        if a_scale_128_lane
+        else format_scales(a_scales)
     )
+    b_gpu_scales = format_scales(b_scales)
+    args = (x, y, a_gpu_scales, b_gpu_scales)
     if scale_jax_dtype == dtypes.float8_e5m3fnu and not is_sm107f:
       with self.assertRaisesRegex(
           ValueError, r"E5M3FNU scale factors are only supported on sm_107f"
