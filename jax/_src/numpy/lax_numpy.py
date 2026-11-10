@@ -8903,9 +8903,8 @@ def _gcd_cond_fn(xs: tuple[Array, Array]) -> Array:
 
 def _gcd_body_fn(xs: tuple[Array, Array]) -> tuple[Array, Array]:
   x1, x2 = xs
-  x1, x2 = (where(x2 != 0, x2, x1),
-            where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
-  return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
+  return (where(x2 != 0, x2, x1),
+          where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
 
 
 @export
@@ -8951,8 +8950,13 @@ def gcd(x1: ArrayLike, x2: ArrayLike) -> Array:
   if not issubdtype(x1.dtype, np.integer):
     raise ValueError("Arguments to jax.numpy.gcd must be integers.")
   x1, x2 = broadcast_arrays(x1, x2)
-  gcd, _ = control_flow.while_loop(_gcd_cond_fn, _gcd_body_fn, (ufuncs.abs(x1), ufuncs.abs(x2)))
-  return gcd
+  utype = np.dtype(f"uint{dtypes.itemsize_bits(x1.dtype)}")
+  u1 = lax._convert_element_type(ufuncs.abs(x1), utype)
+  u2 = lax._convert_element_type(ufuncs.abs(x2), utype)
+  out, _ = control_flow.while_loop(_gcd_cond_fn, _gcd_body_fn, (u1, u2))
+  return lax._convert_element_type(
+      out, x1.dtype, weak_type=dtypes.is_weakly_typed(x1)
+  )
 
 
 @export
@@ -8995,12 +8999,17 @@ def lcm(x1: ArrayLike, x2: ArrayLike) -> Array:
   """
   x1, x2 = util.ensure_arraylike("lcm", x1, x2)
   x1, x2 = util.promote_dtypes(x1, x2)
-  x1, x2 = ufuncs.abs(x1), ufuncs.abs(x2)
   if not issubdtype(x1.dtype, np.integer):
     raise ValueError("Arguments to jax.numpy.lcm must be integers.")
-  d = gcd(x1, x2)
-  return where(d == 0, lax._const(d, 0),
-               ufuncs.multiply(x1, ufuncs.floor_divide(x2, d)))
+  utype = np.dtype(f"uint{dtypes.itemsize_bits(x1.dtype)}")
+  u1 = lax._convert_element_type(ufuncs.abs(x1), utype)
+  u2 = lax._convert_element_type(ufuncs.abs(x2), utype)
+  d = gcd(u1, u2)
+  out = where(d == 0, lax._const(d, 0),
+              ufuncs.multiply(u1, ufuncs.floor_divide(u2, d)))
+  return lax._convert_element_type(
+      out, x1.dtype, weak_type=dtypes.is_weakly_typed(x1)
+  )
 
 
 @export
