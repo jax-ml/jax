@@ -2638,16 +2638,13 @@ def gumbel(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   return maybe_auto_axes(_gumbel, out_sharding, shape=shape, dtype=dtype,
                          mode=mode)(key)
 
-def _safe_int_to_float(
-    bits: Array | tuple[Array, Array], dtype: DTypeLike
-) -> Array:
-  """Converts bits: (hi, lo) tuple or u32[2,...] into f32[...] in (0,1)."""
-  hi, lo = bits
-  if hi.dtype != np.uint32 or lo.dtype != np.uint32 or dtype != np.float32:
+def _safe_int_to_float(bits, dtype):
+  """Converts bits: u32[2,...] into f32[...] in the range (0,1)."""
+  if bits.dtype != np.uint32 or dtype != np.float32:
     raise RuntimeError("_safe_int_to_float only works for u32 -> f32")
   finfo = dtypes.finfo(dtype)
-  hiclz = lax.clz(hi)
-  loclz = lax.clz(lo)
+  hiclz, loclz = lax.clz(bits)
+  hi, lo = bits
 
   mantissa = lax.bitwise_or(
       lax.shift_left(hi, hiclz),
@@ -2672,19 +2669,16 @@ def _gumbel(key: Key, shape, dtype, mode) -> Array:
   _check_shape("gumbel", shape)
   info = dtypes.finfo(dtype)
   if dtype == np.float32 and mode == "highest":
-    bits = _random_bits(key, info.bits, shape=(2,) + shape)
-    hi, lo = bits[0], bits[1]
-    neg_hi = lax.bitwise_not(hi)
-    neg_lo = lax.bitwise_not(lo)
+    finfo = dtypes.finfo(dtype)
+    bits = _random_bits(key, finfo.bits, shape=(2,) + shape)
+    neg = lax.bitwise_not(bits)
+    lo_bits = neg[1]
     # 1 - bits in u64 fixed point.
-    neg_hi = neg_hi + (
-        neg_lo == np.uint32((1 << info.bits) - 1)
-    ).astype(np.uint32)
-    neg_lo = neg_lo + np.uint32(1)
-    flip_mask = hi < np.uint32(1 << (info.bits - 1))
-    sel_hi = jnp.where(flip_mask, hi, neg_hi)
-    sel_lo = jnp.where(flip_mask, lo, neg_lo)
-    x = _safe_int_to_float((sel_hi, sel_lo), dtype=np.float32)
+    neg = neg + jnp.array([
+        lo_bits == np.array((1 << finfo.bits) - 1, dtype=np.uint32),
+        jnp.ones_like(lo_bits)], dtype=np.uint32)
+    flip_mask = bits[0] < np.array(1 << (finfo.bits - 1), dtype=np.uint32)
+    x = _safe_int_to_float(jnp.where(flip_mask, bits, neg), dtype=np.float32)
     # use log1p for (0,0.5) and log for [0.5, 1).
     return jnp.where(flip_mask,
         -jnp.log(-jnp.log1p(-x)), -jnp.log(-jnp.log(x)))

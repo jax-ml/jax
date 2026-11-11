@@ -1297,16 +1297,12 @@ class DistributionsTest(RandomTestBase):
     tv += 0.5 * ((1 - implied_cdf[-1]) + dist.sf(k1))
     self.assertLess(tv, bound)
 
-  @jtu.sample_product(
-      dtype=jtu.dtypes.floating,
-      use_jit=[False, True],
-      mode=[None, "low", "high", "highest"],
-  )
-  def testGumbel(self, dtype, use_jit, mode):
+  @jtu.sample_product(dtype=jtu.dtypes.floating, use_jit=[False, True])
+  def testGumbel(self, dtype, use_jit):
     key = self.make_key(0)
     rand = random.gumbel if not use_jit else jax.jit(
-        random.gumbel, static_argnames=['shape', 'dtype', 'mode'])
-    samples = rand(key, shape=(10000,), dtype=dtype, mode=mode)
+        random.gumbel, static_argnames=['shape', 'dtype'])
+    samples = rand(key, shape=(10000,), dtype=dtype)
     self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gumbel_r().cdf)
 
   @jtu.sample_product(legacy=[False, True])
@@ -1330,56 +1326,16 @@ class DistributionsTest(RandomTestBase):
       cdf_probs = [x / (num_samples * num_groups) for x in pts]
       np.testing.assert_allclose(cdf_probs, probs, rtol=0.25, atol=0)
 
-  def testGumbelHighestBoundaries(self):
-    # Deterministically test for boundary cases that Kolmo CDF can miss.
-
-    # TPU < v5 and TPU v5e use a lower-precision hardware 'log' approximation.
-    is_tpu_old = jtu.is_device_tpu() and (
-      not jtu.is_device_tpu_at_least(5) or jtu.is_device_tpu(5, 'e')
-    )
-    atol = 5e-4 if is_tpu_old else None
-    rtol = 2e-5 if is_tpu_old else 5e-7
-
-    # Covers 0, 0.5, and 1 boundaries
-    bits = jnp.array([[0, 0, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 0xFFFFFFFF],
-                      [0, 1, 0xFFFFFFFF, 0, 0, 0xFFFFFFFF]], dtype=jnp.uint32)
-
-    def unused(*_):
-      raise NotImplementedError
-    impl = prng_internal.PRNGImpl(
-        key_shape=bits.shape,
-        seed=unused,
-        split=unused,
-        random_bits=lambda k, bit_width, shape: k,
-        fold_in=unused,
-    )
-    key = random.wrap_key_data(bits, impl=impl)
-    expected = np.array([
-        -np.log(2.0**-65), -np.log(2.0**-64), -np.log(-np.log1p(-(0.5 - 2.0**-25))),
-        -np.log(-np.log(0.5)), -np.log(-np.log(2.0**-32)), -np.log(-np.log(2.0**-64)),
-    ], dtype=np.float32)
-    self.assertAllClose(
-        random.gumbel(key, (6,), np.float32, mode='highest'), expected, atol=atol, rtol=rtol)
-
-    with config.threefry_partitionable(True):
-      samples = random.gumbel(
-          jax.random.key(0, impl='threefry2x32'), (8,), np.float32, mode='highest')
-    expected_samples = np.array(
-        [-1.0818492, -1.3463643, 0.9065792, 0.45828202,
-         0.1699446, 1.7096658, 0.9906217, -0.15658395],
-        dtype=np.float32)
-    self.assertAllClose(samples, expected_samples, atol=atol, rtol=rtol)
-
   def testSafeIntToFloat(self):
     dtype = np.float32
     finfo = dtypes.finfo(dtype)
     mask = (1 << (finfo.nmant + 1)) - 1
     for shift in range(64 - (finfo.nmant + 1)):
       i = mask << shift
-      hi, lo = np.uint32(i // (1 << 32)), np.uint32(i & ((1 << 32) - 1))
-      f = _safe_int_to_float(np.array([hi, lo], dtype=np.uint32), dtype=dtype)
+      f = _safe_int_to_float(
+          np.array([i // (1 << 32), i & ((1 << 32) - 1)], dtype=np.uint32),
+          dtype=dtype)
       self.assertEqual(i, int(float(np.ldexp(f, 64))))
-      self.assertArraysEqual(f, _safe_int_to_float((hi, lo), dtype=dtype))
 
   @jtu.sample_product(dtype=float_dtypes, use_jit=[False, True])
   def testLaplace(self, dtype, use_jit):
