@@ -222,7 +222,7 @@ JAX_COMPOUND_OP_RECORDS = [
               inexact=True),
     op_record("hypot", 2, real_dtypes, all_shapes, jtu.rand_default, [],
               inexact=True),
-    op_record("kron", 2, number_dtypes, nonempty_shapes, jtu.rand_default, []),
+    op_record("kron", 2, all_dtypes, nonempty_shapes, jtu.rand_default, []),
     op_record("outer", 2, number_dtypes, all_shapes, jtu.rand_default, []),
     op_record("imag", 1, number_dtypes, all_shapes, jtu.rand_some_inf, []),
     op_record("iscomplex", 1, number_dtypes, all_shapes, jtu.rand_some_inf, []),
