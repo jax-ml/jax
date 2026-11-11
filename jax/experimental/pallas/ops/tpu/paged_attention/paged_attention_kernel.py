@@ -275,24 +275,27 @@ def paged_flash_attention_kernel(
       qk = capped_qk * attn_logits_soft_cap
 
     mask = i * bk + jax.lax.broadcasted_iota(jnp.int32, qk.shape, 1) < length
-    qk = qk + jnp.where(mask, 0.0, mask_value)
+    qk = jnp.where(mask, qk, mask_value)
     m_curr = qk.max(axis=-1)
+    m_curr_safe = jnp.where(m_curr <= mask_value, 0.0, m_curr)
 
-    s_curr = jnp.exp(qk - m_curr[..., None])
+    s_curr = jnp.exp(qk - m_curr_safe[..., None])
     m_prev, l_prev = m_ref[...], l_ref[...]
     l_curr = jax.lax.broadcast_in_dim(s_curr.sum(axis=-1), l_prev.shape, (0,))
     m_curr = jax.lax.broadcast_in_dim(m_curr, m_prev.shape, (0,))
     m_next = jnp.maximum(m_prev, m_curr)
-    alpha = jnp.exp(m_prev - m_next)
-    beta = jnp.exp(m_curr - m_next)
+    m_next_safe = jnp.where(m_next <= mask_value, 0.0, m_next)
+    alpha = jnp.exp(m_prev - m_next_safe)
+    beta = jnp.exp(m_curr - m_next_safe)
     l_next = alpha * l_prev + beta * l_curr
     m_ref[...], l_ref[...] = m_next, l_next
 
     v = async_copy_v.wait_and_get_loaded()
     o_curr = jnp.einsum("gt,td->gd", s_curr, v)
 
+    l_next_safe = jnp.where(l_next == 0.0, 1.0, l_next)
     o_ref[...] = (
-        (l_prev * alpha * o_ref[...] + beta * o_curr) / l_next
+        (l_prev * alpha * o_ref[...] + beta * o_curr) / l_next_safe
     ).astype(o_ref.dtype)
 
   if program_ids:
