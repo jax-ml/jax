@@ -13440,6 +13440,67 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     f(positions, mask)  # doesn't crash
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_histogram_out_sharding_no_auto_axes(self, mesh):
+    a_np = np.array(
+        [[0.5, 1.5, 2.5, 3.5], [4.0, 5.5, 7.0, 8.0],
+         [1.0, 3.0, 6.0, 7.5], [0.0, 2.0, 4.5, 8.0]],
+        dtype=np.float32)
+    w_np = np.arange(1, 17, dtype=np.float32).reshape(4, 4)
+    a_rep = jax.device_put(a_np, P())
+    a_sh = jax.device_put(a_np, P('x', 'y'))
+
+    c_rep, e_rep = jax.jit(lambda x: jnp.histogram(x, bins=4))(a_rep)
+    self.assertEqual(c_rep.sharding, NamedSharding(mesh, P(None)))
+    self.assertEqual(e_rep.sharding, NamedSharding(mesh, P(None)))
+
+    with self.assertRaises(core.ShardingTypeError):
+      jax.jit(lambda x: jnp.histogram(x, bins=4))(a_sh)
+
+    for rep_spec in (P(), P(None)):
+      f_inf = jax.jit(
+          lambda x, s=rep_spec: jnp.histogram(x, bins=4, out_sharding=s))
+      self.assertNotIn('Auto', str(f_inf.trace(a_sh).jaxpr))
+      c_inf, e_inf = f_inf(a_sh)
+      ref_c, ref_e = np.histogram(a_np, bins=4)
+      self.assertEqual(c_inf.sharding, NamedSharding(mesh, P(None)))
+      self.assertEqual(e_inf.sharding, NamedSharding(mesh, P(None)))
+      self.assertAllClose(c_inf, ref_c.astype(np.float32))
+      self.assertAllClose(e_inf, ref_e.astype(np.float32))
+
+    bins_np = np.array([0.0, 2.0, 4.0, 8.0], dtype=np.float32)
+    bins_sh = jax.device_put(bins_np, P('x'))
+    w_sh = jax.device_put(w_np, P('x', 'y'))
+    f_wd = jax.jit(lambda x, b, w: jnp.histogram(
+        x, bins=b, weights=w, density=True, out_sharding=P()))
+    self.assertNotIn('Auto', str(f_wd.trace(a_sh, bins_sh, w_sh).jaxpr))
+    c_wd, e_wd = f_wd(a_sh, bins_sh, w_sh)
+    ref_wd_c, ref_wd_e = np.histogram(
+        a_np, bins=bins_np, weights=w_np, density=True)
+    self.assertAllClose(
+        c_wd, ref_wd_c.astype(np.float32), atol=1e-5, rtol=1e-5)
+    self.assertAllClose(e_wd, ref_wd_e.astype(np.float32))
+
+    w_mismatch = jax.device_put(w_np, P('x', None))
+    with self.assertRaisesRegex(
+        ValueError, 'type of weights must match type of a'):
+      f_wd(a_sh, bins_sh, w_mismatch)
+
+    for bad_spec in (P('x'), P(unreduced={'x'}), P(unreduced={'x', 'y'})):
+      with self.assertRaisesRegex(
+          core.ShardingTypeError, 'can only be fully replicated'):
+        jax.jit(lambda x, s=bad_spec: jnp.histogram(
+            x, bins=4, range=(0.0, 8.0), out_sharding=s))(a_sh)
+
+    with self.assertRaisesRegex(ValueError, 'cannot be reduced'):
+      jax.jit(lambda x: jnp.histogram(
+          x, bins=4, out_sharding=P(reduced={'x'})))(a_sh)
+
+    c_0d, e_0d = jax.jit(lambda x: jnp.histogram(x, bins=2, out_sharding=P()))(
+        jax.device_put(np.float32(3.0), P()))
+    self.assertEqual(c_0d.sharding, NamedSharding(mesh, P(None)))
+    self.assertEqual(e_0d.sharding, NamedSharding(mesh, P(None)))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_jnp_zeros_out_sharding_partial_manual_unreduced_reduced(self, mesh):
     @jax.jit
     @jax.shard_map(in_specs=(), out_specs=P(), axis_names={'x'})

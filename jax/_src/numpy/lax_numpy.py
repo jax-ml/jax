@@ -69,7 +69,7 @@ from jax._src.util import (
     ceil_of_ratio, safe_zip, set_module, unzip2)
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
-from jax._src.pjit import auto_axes
+from jax._src.pjit import reshard
 from jax._src.tree_util import tree_flatten, tree_map
 
 export = set_module('jax.numpy')
@@ -873,6 +873,10 @@ def histogram(a: ArrayLike, bins: str | ArrayLike = 10,
     Array(True, dtype=bool)
   """
   sharding = canonicalize_sharding(out_sharding, 'jnp.histogram')
+  if sharding is not None and not sharding.is_fully_replicated:
+    raise core.ShardingTypeError(
+        "out_sharding passed to `jnp.histogram` can only be fully replicated."
+        f" Got {sharding.spec}")
   if isinstance(bins, str):
     if weights is not None:
       raise TypeError("Automated estimation of the number of "
@@ -886,23 +890,33 @@ def histogram(a: ArrayLike, bins: str | ArrayLike = 10,
     a, _, weights = util.ensure_arraylike("histogram", a, bins, weights)
     if np.shape(a) != np.shape(weights):
       raise ValueError("weights should have the same shape as a.")
+    ats = core.typeof(a).sharding
+    wts = core.typeof(weights).sharding
+    if not ats.mesh.empty and not wts.mesh.empty and ats != wts:
+      raise ValueError(
+          "type of weights must match type of a. Got"
+          f" typeof(a)={core.typeof(a).str_short(True, True)} and"
+          f" typeof(weights)={core.typeof(weights).str_short(True, True)}")
     a, weights = util.promote_dtypes_inexact(a, weights)
 
-  if sharding is not None:
-    return auto_axes(partial(_histogram, bins=bins, density=density),
-                     out_sharding=sharding,
-                     axes=sharding.mesh.explicit_axes
-                     )(a, range, weights)
-  else:
-    return _histogram(a, range, weights, bins, density)
+  return _histogram(a, range, weights, bins, density, out_sharding=sharding)
 
 
-def _histogram(a, range, weights, bins, density):
+def _histogram(a, range, weights, bins, density, out_sharding=None):
+  if (out_sharding is not None and range is None and np.ndim(bins) != 1
+      and np.size(a) != 0 and np.ndim(a) > 0):
+    axes = tuple(builtins.range(np.ndim(a)))
+    s = out_sharding.update(spec=out_sharding.spec.update(partitions=()))
+    range = (lax.reduce_min(a, axes, out_sharding=s),
+             lax.reduce_max(a, axes, out_sharding=s))
   bin_edges = histogram_bin_edges(a, bins, range, weights)
+  if (out_sharding is not None
+      and core.typeof(bin_edges).sharding != out_sharding):
+    bin_edges = reshard(bin_edges, out_sharding)
   bin_idx = searchsorted(bin_edges, a, side='right')
   bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
-  counts = array_creation.zeros(len(bin_edges), weights.dtype
-                                ).at[bin_idx].add(weights)[1:]
+  counts = array_creation.zeros(len(bin_edges), weights.dtype).at[bin_idx].add(
+      weights, out_sharding=out_sharding)[1:]
   if density:
     bin_widths = diff(bin_edges)
     counts = counts / bin_widths / counts.sum()
