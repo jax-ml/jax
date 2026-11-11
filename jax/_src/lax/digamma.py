@@ -88,7 +88,6 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
-from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src.api import jit
 from jax._src.lax import lax
@@ -388,17 +387,11 @@ def _shift4_f2(c0, c1):
   return f2_div(num0, num1, den0, den1)
 
 
-def _classify_and_reflect(x, cfg: _DigammaConfig, use_optimization_barrier: bool):
+def _classify_and_reflect(x, cfg: _DigammaConfig):
   """Classifies special regions and splits `x in (all_int_below, 0.5)` into `n + delta`."""
   one = lax.full_like(x, 1.0)
   inf = lax.full_like(x, np.inf)
   half_neg = lax.full_like(x, -0.5)
-  # Work around an older XLA:TPU constant-folding bug in libtpu < 0.0.51.
-  # TODO(phawkins): Remove once minimum libtpu version is at least 0.0.51.
-  if use_optimization_barrier and not cloud_tpu_init.is_libtpu_at_least(
-      "0.0.51"
-  ):
-    one = lax.optimization_barrier(one)
 
   # Substitute finite placeholders (`1.0` on the positive path, `-0.5` on the
   # reflection path) so inactive lanes never divide by zero or overflow
@@ -469,9 +462,7 @@ def _restore_special_outputs(
   return lax.select(x == inf, inf, res)
 
 
-def _digamma_cpu_f32(
-    x, *, use_optimization_barrier: bool = False, subnormals: bool = False
-):
+def _digamma_cpu_f32(x, *, subnormals: bool = False):
   """Computes float32 digamma(x) to <= 1 ULP on CPU using native float64."""
   x = lax.convert_element_type(x, np.float32)
   (
@@ -486,7 +477,7 @@ def _digamma_cpu_f32(
       n,
       _,
       delta_nz,
-  ) = _classify_and_reflect(x, _F32_CFG, use_optimization_barrier)
+  ) = _classify_and_reflect(x, _F32_CFG)
 
   xd = lax.convert_element_type(x_safe, np.float64)
   dd = lax.convert_element_type(delta_nz, np.float64)
@@ -533,7 +524,6 @@ def _digamma_f2(
     x,
     cfg: _DigammaConfig,
     *,
-    use_optimization_barrier: bool = False,
     subnormals: bool = False,
 ):
   """Computes float32 or float64 digamma(x) to <= 1 ULP using `(hi, lo)` pairs."""
@@ -552,7 +542,7 @@ def _digamma_f2(
       n,
       delta,
       delta_nz,
-  ) = _classify_and_reflect(x, cfg, use_optimization_barrier)
+  ) = _classify_and_reflect(x, cfg)
 
   # Since n <= 0 on all lanes and |n| <= -all_int_below, `1 - n >= 1 > 0.5 >=
   # |delta|` is an exact integer in `cfg.dtype`, so `fast_two_sum(1 - n, -delta)`
@@ -662,33 +652,16 @@ def _digamma_f2(
 
 
 @config.explicit_x64_dtypes("allow")
-@jit(
-    static_argnames=["use_f64_for_f32", "use_optimization_barrier", "subnormals"]
-)
+@jit(static_argnames=["use_f64_for_f32", "subnormals"])
 def digamma_impl(
     x,
     *,
     use_f64_for_f32: bool = False,
-    use_optimization_barrier: bool = False,
     subnormals: bool = False,
 ):
   """Computes float32 or float64 digamma(x) to <= 1 ULP."""
   if x.dtype == np.float64:
-    return _digamma_f2(
-        x,
-        _F64_CFG,
-        use_optimization_barrier=use_optimization_barrier,
-        subnormals=subnormals,
-    )
+    return _digamma_f2(x, _F64_CFG, subnormals=subnormals)
   if use_f64_for_f32:
-    return _digamma_cpu_f32(
-        x,
-        use_optimization_barrier=use_optimization_barrier,
-        subnormals=subnormals,
-    )
-  return _digamma_f2(
-      x,
-      _F32_CFG,
-      use_optimization_barrier=use_optimization_barrier,
-      subnormals=subnormals,
-  )
+    return _digamma_cpu_f32(x, subnormals=subnormals)
+  return _digamma_f2(x, _F32_CFG, subnormals=subnormals)

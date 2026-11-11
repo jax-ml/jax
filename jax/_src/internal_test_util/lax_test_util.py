@@ -417,7 +417,6 @@ def lax_ops():
 def backend_supports_fma(dtype) -> bool:
   if (
       jaxlib_extension_version < 515
-      or not test_util.is_libtpu_at_least("0.0.52")
       or not test_util.stablehlo_version_at_least("1.24.0")
   ):
     return False

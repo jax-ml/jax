@@ -226,11 +226,9 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
             jtu.get_tpu_version() >= 5
             and op in [lax.tanh, jnp.tanh, lax.log, jnp.log]
         )
-        or (jtu.get_tpu_version() >= 6 and op in [lax.expm1, jnp.expm1])
         or (
             jtu.get_tpu_version() >= 6
-            and jtu.is_libtpu_at_least("0.0.52")
-            and op in [lax.exp2, jnp.exp2]
+            and op in [lax.expm1, jnp.expm1, lax.exp2, jnp.exp2]
         )
     ):
       # From tpu version 5 and onwards, even with tighter tolerance, the high performant
@@ -266,11 +264,9 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
             jtu.get_tpu_version() >= 5
             and op in [lax.tanh, jnp.tanh, lax.log, jnp.log]
         )
-        or (jtu.get_tpu_version() >= 6 and op in [lax.expm1, jnp.expm1])
         or (
             jtu.get_tpu_version() >= 6
-            and jtu.is_libtpu_at_least("0.0.52")
-            and op in [lax.exp2, jnp.exp2]
+            and op in [lax.expm1, jnp.expm1, lax.exp2, jnp.exp2]
         )
     ):
       # From tpu version 5 and onwards, even with tighter tolerance, the high performant
@@ -304,11 +300,7 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
     # Accuracy should be carried through to the gradient causing
     # a large diff.
     diff = abs(f_default_grad(x) - f_accurate_grad(x))
-    if (
-        jtu.get_tpu_version() >= 6
-        and jtu.is_libtpu_at_least("0.0.52")
-        and op in [lax.exp2, jnp.exp2]
-    ):
+    if jtu.get_tpu_version() >= 6 and op in [lax.exp2, jnp.exp2]:
       self.assertTrue(jnp.all(diff == 0))
     else:
       self.assertTrue(jnp.any(diff > 0))

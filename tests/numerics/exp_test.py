@@ -159,7 +159,7 @@ class Exp2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp2_accuracy(self, dtype):
-    if ifrt_version >= 80 and jtu.is_libtpu_at_least("0.0.52"):
+    if ifrt_version >= 80:
       bounds = [
           ("cpu", {f16: 1.0}),
           ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),
@@ -209,8 +209,8 @@ class Exp2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_exp2_highest_accuracy(self, dtype):
-    if ifrt_version < 80 or not jtu.is_libtpu_at_least("0.0.52"):
-      self.skipTest("Requires ifrt_version >= 80 and libtpu >= 0.0.52")
+    if ifrt_version < 80:
+      self.skipTest("Requires ifrt_version >= 80")
     bounds = [
         ("cpu", {f16: 1.0}),
         ("gpu", {f16: 1.0, f32: 2.5, f64: 1.0}),
@@ -422,14 +422,7 @@ class LogisticTest(jtu.JaxTestCase):
         ("gpu", {bf16: 2.0, f16: 2.0, f32: 4.0, f64: 2.5}),
         ([*TPU_EUPV1, "tpu_v6e"], {bf16: 1.0, f16: 1.0, f32: 4.0}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 3.5}),
-        (
-            "tpu_7x",
-            {
-                bf16: 0.5 if jtu.is_libtpu_at_least("0.0.52") else 63.0,
-                f16: 1.0,
-                f32: 4.0,
-            },
-        ),
+        ("tpu_7x", {bf16: 0.5, f16: 1.0, f32: 4.0}),
     ]
     with jtu.global_config_context(jax_accurate_logistic=True):
       util.check_unary_precision(
@@ -454,14 +447,7 @@ class LogisticGradTest(jtu.JaxTestCase):
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 7.5}),
         ("tpu_v5p", {bf16: 0.5, f16: 1.0, f32: 7.5}),
         ("tpu_v6e", {bf16: 0.5, f16: 1.0, f32: 8.0}),
-        (
-            "tpu_7x",
-            {
-                bf16: 0.5 if jtu.is_libtpu_at_least("0.0.52") else 63.0,
-                f16: 1.0,
-                f32: 8.0,
-            },
-        ),
+        ("tpu_7x", {bf16: 0.5, f16: 1.0, f32: 8.0}),
     ]
     with jtu.global_config_context(jax_tanh_sech_jvp=True):
       util.check_unary_precision(

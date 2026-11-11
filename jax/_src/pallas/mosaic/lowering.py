@@ -1116,10 +1116,10 @@ def lower_jaxpr_into_pipelined_module(
 ) -> None:
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
-  if not is_libtpu_at_least("0.0.51"):
+  if not is_libtpu_at_least("0.0.52"):
     platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
-        "Pallas TPU requires a recent libtpu version (at least 0.0.51). Found"
+        "Pallas TPU requires a recent libtpu version (at least 0.0.52). Found"
         f" version string:\n{platform_version}"
     )
   debug_info = jaxpr.debug_info
@@ -1495,10 +1495,10 @@ def lower_jaxpr_into_unpipelined_module(
     )
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
-  if not is_libtpu_at_least("0.0.51"):
+  if not is_libtpu_at_least("0.0.52"):
     platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
-        "Pallas TPU requires a recent libtpu version (at least 0.0.51). Found"
+        "Pallas TPU requires a recent libtpu version (at least 0.0.52). Found"
         f" version string:\n{platform_version}"
     )
   sym_tab = ir.SymbolTable(module.operation)
@@ -2245,8 +2245,6 @@ def _pad_memref(
     padder: pallas_core.PadTransform,
     ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
 ) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
-  if not is_libtpu_at_least("0.0.52"):
-    raise NotImplementedError("pad_ref requires libtpu >= 0.0.52")
   ref_ty = ir.MemRefType(ref.type)
   padded_iter = iter(padder.shape)
   new_shape: list[int] = []
