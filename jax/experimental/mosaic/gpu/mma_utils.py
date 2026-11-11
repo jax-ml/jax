@@ -106,7 +106,7 @@ class SmemDescriptor:
       )
     return self._desc_const | encode_addr(bit_offset // 8)
 
-  def slice_i64(self, mn_idx: int = 0, k_idx: int = 0) -> ir.Value:
+  def slice_i64(self, mn_idx: int, k_idx: int) -> ir.Value:
     """Materializes the `i64` SMEM descriptor for slice `(mn_idx, k_idx)`."""
     i64 = ir.IntegerType.get_signless(64)
     offset = self.encoded_offset(mn_idx, k_idx)
