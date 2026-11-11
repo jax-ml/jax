@@ -973,7 +973,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           x.result, layouts.to_layout_attr(layout), strict=strict
       ).owner
 
-    ctx = layout_inference.DerivationContext()
+    ctx = layout_inference.DerivationContext(arch=mgpu.utils.HOPPER)
     _, x_mapping = _undef_constraint_system(ctx, x)
     lc_cs, lc_mapping = layout_inference._layout_cast_constraint_system(
         ctx, lcast
