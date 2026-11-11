@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable
 import functools
 import math
 from typing import NamedTuple
@@ -169,6 +168,164 @@ class _HashableNDArray:
     return np.array_equal(self.array, other.array, equal_nan=True)
 
 
+def _q_block_stats(
+    q_sequence: np.ndarray, q_blocks_count: int, q_block_size: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+  """Computes per-block min, max, and step-1 contiguity for `q_sequence`."""
+  q_seq = np.asarray(q_sequence).reshape(q_blocks_count, q_block_size)
+  q_min = q_seq.min(axis=1).astype(np.int64)
+  q_max = q_seq.max(axis=1).astype(np.int64)
+  q_contig = (q_seq[:, 1:] == q_seq[:, :-1] + 1).all(axis=1)
+  return q_min, q_max, q_contig
+
+
+def _classify_mask_blocks(
+    mask: mask_lib.Mask,
+    q_blocks_count: int,
+    kv_blocks_count: int,
+    q_block_size: int,
+    kv_block_size: int,
+) -> np.ndarray:
+  """Classifies mask blocks as 0 (empty), 1 (partial), 2 (full), or -1."""
+  # pylint: disable=unidiomatic-typecheck
+  blocked_shape = (q_blocks_count, kv_blocks_count)
+
+  if isinstance(mask, mask_lib.FullMask) and type(mask) is mask_lib.FullMask:
+    return np.full(blocked_shape, 2, dtype=np.int32)
+
+  if (
+      isinstance(mask, mask_lib.NumpyMask)
+      and type(mask) is mask_lib.NumpyMask
+      and mask.array.flags['C_CONTIGUOUS']
+  ):
+    blocks = mask.array.reshape(
+        q_blocks_count, q_block_size, kv_blocks_count, kv_block_size
+    ).swapaxes(1, 2)
+    return np.asarray(
+        blocks.any(axis=(2, 3)).astype(np.int32)
+        + blocks.all(axis=(2, 3)).astype(np.int32)
+    )
+
+  if isinstance(mask, mask_lib.LogicalOr) and type(mask) is mask_lib.LogicalOr:
+    left = _classify_mask_blocks(
+        mask.left, q_blocks_count, kv_blocks_count, q_block_size, kv_block_size
+    )
+    right = _classify_mask_blocks(
+        mask.right,
+        q_blocks_count,
+        kv_blocks_count,
+        q_block_size,
+        kv_block_size,
+    )
+    grid = np.full(blocked_shape, -1, dtype=np.int32)
+    grid[(left == 0) & (right == 0)] = 0
+    grid[((left == 1) & (right == 0)) | ((left == 0) & (right == 1))] = 1
+    grid[(left == 2) | (right == 2)] = 2
+    return grid
+
+  if (
+      isinstance(mask, mask_lib.LogicalAnd)
+      and type(mask) is mask_lib.LogicalAnd
+  ):
+    left = _classify_mask_blocks(
+        mask.left, q_blocks_count, kv_blocks_count, q_block_size, kv_block_size
+    )
+    right = _classify_mask_blocks(
+        mask.right,
+        q_blocks_count,
+        kv_blocks_count,
+        q_block_size,
+        kv_block_size,
+    )
+    grid = np.full(blocked_shape, -1, dtype=np.int32)
+    grid[(left == 0) | (right == 0)] = 0
+    grid[((left == 1) & (right == 2)) | ((left == 2) & (right == 1))] = 1
+    grid[(left == 2) & (right == 2)] = 2
+    return grid
+
+  kv_min = np.arange(kv_blocks_count, dtype=np.int64) * kv_block_size
+  kv_max = kv_min + (kv_block_size - 1)
+
+  if (
+      isinstance(mask, mask_lib.CausalMask)
+      and type(mask) is mask_lib.CausalMask
+  ):
+    q_min, q_max, _ = _q_block_stats(
+        mask.q_sequence, q_blocks_count, q_block_size
+    )
+    offset = mask.offset
+    grid = np.ones(blocked_shape, dtype=np.int32)
+    grid[(q_max + offset)[:, None] < kv_min[None, :]] = 0
+    grid[(q_min + offset)[:, None] >= kv_max[None, :]] = 2
+    return grid
+
+  if isinstance(mask, mask_lib.LocalMask) and type(mask) is mask_lib.LocalMask:
+    left_w, right_w = mask.window_size
+    if left_w is None and right_w is None:
+      return np.full(blocked_shape, 2, dtype=np.int32)
+
+    q_min, q_max, q_contig = _q_block_stats(
+        mask.q_sequence, q_blocks_count, q_block_size
+    )
+    offset = mask.offset
+    grid = np.full(blocked_shape, 1, dtype=np.int32)
+
+    if left_w is None:
+      assert right_w is not None
+      full = (q_min + offset + right_w)[:, None] >= kv_max[None, :]
+      empty = (q_max + offset + right_w)[:, None] < kv_min[None, :]
+    elif right_w is None:
+      full = (q_max + offset - left_w)[:, None] <= kv_min[None, :]
+      empty = (q_min + offset - left_w)[:, None] > kv_max[None, :]
+    else:
+      if left_w + right_w < 0:
+        return np.zeros(blocked_shape, dtype=np.int32)
+      full = ((q_max + offset - left_w)[:, None] <= kv_min[None, :]) & (
+          (q_min + offset + right_w)[:, None] >= kv_max[None, :]
+      )
+      empty = ((q_min + offset - left_w)[:, None] > kv_max[None, :]) | (
+          (q_max + offset + right_w)[:, None] < kv_min[None, :]
+      )
+      grid[~q_contig, :] = -1
+
+    grid[empty] = 0
+    grid[full] = 2
+    return grid
+
+  if (
+      isinstance(mask, mask_lib.ChunkedCausalMask)
+      and type(mask) is mask_lib.ChunkedCausalMask
+  ):
+    q_min, q_max, q_contig = _q_block_stats(
+        mask.q_sequence, q_blocks_count, q_block_size
+    )
+    chunk_size = mask.chunk_size
+    q_chunk_min = q_min // chunk_size
+    q_chunk_max = q_max // chunk_size
+    kv_chunk_min = kv_min // chunk_size
+    kv_chunk_max = kv_max // chunk_size
+
+    full = (
+        (q_chunk_min == q_chunk_max)[:, None]
+        & (kv_chunk_min == kv_chunk_max)[None, :]
+        & (q_chunk_min[:, None] == kv_chunk_min[None, :])
+        & (q_min[:, None] >= kv_max[None, :])
+    )
+    empty = (
+        (q_max[:, None] < kv_min[None, :])
+        | (q_chunk_max[:, None] < kv_chunk_min[None, :])
+        | (q_chunk_min[:, None] > kv_chunk_max[None, :])
+    )
+
+    grid = np.full(blocked_shape, 1, dtype=np.int32)
+    grid[~q_contig, :] = -1
+    grid[empty] = 0
+    grid[full] = 2
+    return grid
+
+  return np.full(blocked_shape, -1, dtype=np.int32)
+
+
 def _get_mask_info_for_shard(
     output_shape: tuple[int, int, int],
     has_mask_next: bool,
@@ -182,6 +339,8 @@ def _get_mask_info_for_shard(
     q_seq_shard_size: int,
     blocked_q_seq_start: int,
     is_dkv: bool,
+    block_mask_slice: np.ndarray | None = None,
+    partial_id_slice: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray | None]:
   """Process a slice of the mask to compute data_next and mask_next.
 
@@ -204,6 +363,10 @@ def _get_mask_info_for_shard(
     blocked_q_seq_start: Start index along the Q sequence for the current shard
       (in number of grid blocks)
     is_dkv: True if we are processing the dKV mask
+    block_mask_slice: Optional precomputed `(num_heads, q_block_count,
+      kv_block_count)` block classification slice (`0`, `1`, `2`).
+    partial_id_slice: Optional precomputed `(num_heads, q_block_count,
+      kv_block_count)` partial mask block index slice.
 
   Returns:
     Slice of data_next and mask_next (if required) that correspond to the
@@ -217,6 +380,66 @@ def _get_mask_info_for_shard(
 
   assert q_mod == 0
   assert kv_mod == 0
+
+  if block_mask_slice is not None:
+    if is_dkv:
+      bm_ordered = block_mask_slice.transpose(2, 0, 1)
+      d_lin = np.flatnonzero(bm_ordered > 0)
+      if d_lin.size == 0:
+        return (
+            np.zeros(output_shape, dtype=np.int32),
+            np.zeros(output_shape, dtype=np.int32) if has_mask_next else None,
+        )
+      a_lin = np.arange(bm_ordered.size, dtype=np.int64)
+      next_d = np.searchsorted(d_lin, a_lin, side='left') % d_lin.size
+      data_vals = (d_lin % q_block_count).astype(np.int32)
+      data_next = (
+          data_vals[next_d]
+          .reshape(kv_block_count, num_heads, q_block_count)
+          .transpose(1, 2, 0)
+          .copy()
+      )
+      mask_next = None
+      if has_mask_next:
+        m_lin = np.flatnonzero(bm_ordered == 1)
+        if m_lin.size == 0:
+          mask_next = np.zeros(output_shape, dtype=np.int32)
+        else:
+          assert partial_id_slice is not None
+          pid_ordered = partial_id_slice.transpose(2, 0, 1).ravel()
+          next_m = np.searchsorted(m_lin, a_lin, side='left') % m_lin.size
+          mask_next = (
+              pid_ordered[m_lin[next_m]]
+              .astype(np.int32)
+              .reshape(kv_block_count, num_heads, q_block_count)
+              .transpose(1, 2, 0)
+              .copy()
+          )
+      return data_next, mask_next
+
+    d_lin = np.flatnonzero(block_mask_slice > 0)
+    if d_lin.size == 0:
+      return (
+          np.zeros(output_shape, dtype=np.int32),
+          np.zeros(output_shape, dtype=np.int32) if has_mask_next else None,
+      )
+    a_lin = np.arange(block_mask_slice.size, dtype=np.int64)
+    next_d = np.searchsorted(d_lin, a_lin, side='left') % d_lin.size
+    data_vals = (d_lin % kv_block_count).astype(np.int32)
+    data_next = data_vals[next_d].reshape(output_shape)
+    mask_next = None
+    if has_mask_next:
+      m_lin = np.flatnonzero(block_mask_slice == 1)
+      if m_lin.size == 0:
+        mask_next = np.zeros(output_shape, dtype=np.int32)
+      else:
+        assert partial_id_slice is not None
+        pid_flat = partial_id_slice.ravel()
+        next_m = np.searchsorted(m_lin, a_lin, side='left') % m_lin.size
+        mask_next = (
+            pid_flat[m_lin[next_m]].astype(np.int32).reshape(output_shape)
+        )
+    return data_next, mask_next
 
   blocked_shape = (
       (kv_block_count, num_heads, q_block_count)
@@ -589,32 +812,41 @@ def _process_mask(
   # deduplicating the partial mask blocks information.
   # Assign a unique ID to every unique mask.
 
-  def assign_unique_ids(objects):
-    id_map = collections.defaultdict(lambda: len(id_map))
-    return {obj: id_map[obj] for obj in objects}
+  first_mask = mask.masks[0]
+  head_to_mask_id: list[int]
+  head_shard_to_mask_ids: list[set[int]]
+  mask_id_to_heads: list[list[int]]
+  mask_id_to_head_shards: list[set[int]]
+  unique_masks: list[mask_lib.Mask]
+  if all(head_mask is first_mask for head_mask in mask.masks[1:]):
+    unique_masks = [first_mask]
+    head_to_mask_id = [0] * head_count
+    head_shard_to_mask_ids = [{0} for _ in range(head_shards)]
+    mask_id_to_heads = [list(range(head_count))]
+    mask_id_to_head_shards = [set(range(head_shards))]
+  else:
+    def assign_unique_ids(objects):
+      id_map = collections.defaultdict(lambda: len(id_map))
+      return {obj: id_map[obj] for obj in objects}
 
-  unique_masks_dict: dict[mask_lib.Mask, int] = assign_unique_ids(
-      head_mask for head_mask in mask.masks
-  )
-
-  # Build a mapping of heads to unique masks and masks to unique masks.
-
-  head_to_mask_id: list[int] = [0] * head_count
-  head_shard_to_mask_ids: list[set[int]] = [set() for _ in range(head_shards)]
-  mask_id_to_heads: list[list[int]] = [
-      [] for _ in range(len(unique_masks_dict))
-  ]
-  mask_id_to_head_shards: list[set[int]] = [
-      set() for _ in range(len(unique_masks_dict))
-  ]
-
-  for head in range(head_count):
-    mask_id = unique_masks_dict[mask.masks[head]]
-    head_to_mask_id[head] = mask_id
-    head_shard = head // heads_per_shard
-    head_shard_to_mask_ids[head_shard].add(mask_id)
-    mask_id_to_heads[mask_id].append(head)
-    mask_id_to_head_shards[mask_id].add(head_shard)
+    unique_masks_dict: dict[mask_lib.Mask, int] = assign_unique_ids(
+        head_mask for head_mask in mask.masks
+    )
+    head_to_mask_id = [0] * head_count
+    head_shard_to_mask_ids = [set() for _ in range(head_shards)]
+    mask_id_to_heads = [[] for _ in range(len(unique_masks_dict))]
+    mask_id_to_head_shards = [set() for _ in range(len(unique_masks_dict))]
+    for head in range(head_count):
+      mask_id = unique_masks_dict[mask.masks[head]]
+      head_to_mask_id[head] = mask_id
+      head_shard = head // heads_per_shard
+      head_shard_to_mask_ids[head_shard].add(mask_id)
+      mask_id_to_heads[mask_id].append(head)
+      mask_id_to_head_shards[mask_id].add(head_shard)
+    unique_masks = [
+        pair[0]
+        for pair in sorted(unique_masks_dict.items(), key=lambda x: x[1])
+    ]
 
   # If we have at most one unique mask per each head shard, then we can broadcast
   # the mask to all the heads in the shard. This is the common case.
@@ -628,18 +860,11 @@ def _process_mask(
   max_masks_per_head_shard = max(len(x) for x in head_shard_to_mask_ids)
   masks_per_head_shard = 1 if max_masks_per_head_shard == 1 else heads_per_shard
 
-  unique_masks = [
-      pair[0] for pair in sorted(unique_masks_dict.items(), key=lambda x: x[1])
-  ]
-
   # TODO(amagni): checking the validity of the masks is slow for large masks.
   # Disable it for now, reevaluate in the future.
 
   partial_mask_block_ids: dict[_HashableNDArray, int] = collections.defaultdict(
       lambda: len(partial_mask_block_ids)
-  )
-  block_id_to_block_coords: dict[int, list[tuple[int, ...]]] = (
-      collections.defaultdict(list)
   )
 
   # Shape of the block_mask, mask_next and data_next fields of MaskInfo.
@@ -650,14 +875,6 @@ def _process_mask(
   )
 
   block_mask = np.zeros(block_mask_shape, dtype=np.int32)
-
-  def set_block_mask(mask_id: int, q_index: int, kv_index: int, value: int):
-    if masks_per_head_shard == 1:
-      for shard_index in mask_id_to_head_shards[mask_id]:
-        block_mask[shard_index, q_index, kv_index] = value
-    else:
-      for head_index in mask_id_to_heads[mask_id]:
-        block_mask[head_index, q_index, kv_index] = value
 
   q_sequence = None
   mask_function = None
@@ -688,45 +905,73 @@ def _process_mask(
   # partial blocks. This would reduce the amount of data each shard needs
   # from: num_unique_partial_block_blocks to
   # max(unique_partial_blocks_per_shard)
+  partial_id_grids = (
+      None
+      if mask_function is not None
+      else np.full(
+          (len(unique_masks), q_blocks_count, kv_blocks_count),
+          -1,
+          dtype=np.int32,
+      )
+  )
+  unique_partial_chunks: list[np.ndarray] = []
+
   for mask_id, unique_mask in enumerate(unique_masks):
-    for coords in np.ndindex((q_blocks_count, kv_blocks_count)):
-      (q_index, kv_index) = coords
-      chunk = unique_mask[(
-          slice(q_index * q_block_size, (q_index + 1) * q_block_size),
-          slice(kv_index * kv_block_size, (kv_index + 1) * kv_block_size),
-      )]
-      has_nonzero = chunk.any()
-      if has_nonzero:
-        all_nonzero = chunk.all()
-        if not all_nonzero:
-          set_block_mask(mask_id, q_index, kv_index, 1)
-          partial_mask_block_id = partial_mask_block_ids[
-              _HashableNDArray(chunk)
-          ]
-          for head_index in mask_id_to_heads[mask_id]:
-            block_id_to_block_coords[partial_mask_block_id].append(
-                (head_index,) + coords
-            )
+    state_grid = _classify_mask_blocks(
+        unique_mask,
+        q_blocks_count,
+        kv_blocks_count,
+        q_block_size,
+        kv_block_size,
+    )
+    if mask_function is not None:
+      unresolved = np.argwhere(state_grid == -1)
+      for q_index, kv_index in unresolved:
+        q_i, kv_i = int(q_index), int(kv_index)
+        chunk = unique_mask[(
+            slice(q_i * q_block_size, (q_i + 1) * q_block_size),
+            slice(kv_i * kv_block_size, (kv_i + 1) * kv_block_size),
+        )]
+        if chunk.any():
+          state_grid[q_i, kv_i] = 2 if chunk.all() else 1
         else:
-          set_block_mask(mask_id, q_index, kv_index, 2)
+          state_grid[q_i, kv_i] = 0
+    else:
+      coords_to_visit = np.argwhere((state_grid == -1) | (state_grid == 1))
+      for q_index, kv_index in coords_to_visit:
+        q_i, kv_i = int(q_index), int(kv_index)
+        chunk = unique_mask[(
+            slice(q_i * q_block_size, (q_i + 1) * q_block_size),
+            slice(kv_i * kv_block_size, (kv_i + 1) * kv_block_size),
+        )]
+        if state_grid[q_i, kv_i] == -1:
+          if not chunk.any():
+            state_grid[q_i, kv_i] = 0
+            continue
+          if chunk.all():
+            state_grid[q_i, kv_i] = 2
+            continue
+          state_grid[q_i, kv_i] = 1
+        key = _HashableNDArray(chunk)
+        partial_mask_block_id = partial_mask_block_ids[key]
+        assert partial_id_grids is not None
+        partial_id_grids[mask_id, q_i, kv_i] = partial_mask_block_id
+        if partial_mask_block_id == len(unique_partial_chunks):
+          unique_partial_chunks.append(chunk)
 
-  unique_partial_mask_blocks = [
-      pair[0]
-      for pair in sorted(partial_mask_block_ids.items(), key=lambda x: x[1])
-  ]
-
-  # For each position in the in q, kv grid that contains a partial mask block
-  # record the index of its partial mask block.
-  coords_to_partial_mask_block_index = {}
-  for partial_mask_block_id, coords in block_id_to_block_coords.items():
-    for coo in coords:
-      coords_to_partial_mask_block_index[coo] = partial_mask_block_id
+    if masks_per_head_shard == 1:
+      for shard_index in mask_id_to_head_shards[mask_id]:
+        block_mask[shard_index, :, :] = state_grid
+    else:
+      for head_index in mask_id_to_heads[mask_id]:
+        block_mask[head_index, :, :] = state_grid
 
   partial_mask_blocks = None
   has_mask_next = False
-  if len(unique_partial_mask_blocks) >= 1:
-    partial_mask_blocks = [x.array for x in unique_partial_mask_blocks]
-    partial_mask_blocks = np.stack(partial_mask_blocks, axis=0).astype(np.bool_)
+  if unique_partial_chunks:
+    partial_mask_blocks = np.stack(unique_partial_chunks, axis=0).astype(
+        np.bool_
+    )
     has_mask_next = True
   if is_dkv and partial_mask_blocks is not None:
     partial_mask_blocks = np.swapaxes(partial_mask_blocks, -1, -2)
@@ -766,13 +1011,33 @@ def _process_mask(
       )
 
       if masks_per_head_shard == 1:
-        unique_mask = unique_masks[head_to_mask_id[head_start]]
+        mask_id = head_to_mask_id[head_start]
+        unique_mask = unique_masks[mask_id]
         unique_mask = mask_lib.MultiHeadMask((unique_mask,))
         current_mask = unique_mask
         mask_head_slice = slice(head_shard, head_shard + 1)
+        bm_slice = block_mask[
+            head_shard : head_shard + 1, blocked_q_seq_len_slice, :
+        ]
+        pid_slice = (
+            partial_id_grids[mask_id : mask_id + 1, blocked_q_seq_len_slice, :]
+            if has_mask_next and partial_id_grids is not None
+            else None
+        )
       else:
         current_mask = mask
         mask_head_slice = slice(head_start, (head_shard + 1) * heads_per_shard)
+        bm_slice = block_mask[mask_head_slice, blocked_q_seq_len_slice, :]
+        if has_mask_next and partial_id_grids is not None:
+          head_mask_ids = [
+              head_to_mask_id[h]
+              for h in range(head_start, (head_shard + 1) * heads_per_shard)
+          ]
+          pid_slice = partial_id_grids[
+              head_mask_ids, blocked_q_seq_len_slice, :
+          ]
+        else:
+          pid_slice = None
 
       # The current iteration of the loop processes a slice of the mask info
       # tensors of this shape:
@@ -787,7 +1052,7 @@ def _process_mask(
           has_mask_next=has_mask_next,
           mask=current_mask,
           block_shape=block_shape,
-          coords_to_partial_mask_block_index=coords_to_partial_mask_block_index,  # pyrefly: ignore[bad-argument-type]
+          coords_to_partial_mask_block_index={},
           head_start=head_start,
           masks_per_head_shard=masks_per_head_shard,
           num_heads=1 if masks_per_head_shard == 1 else heads_per_shard,
@@ -795,6 +1060,8 @@ def _process_mask(
           q_seq_shard_size=q_seq_len_shard_size,
           blocked_q_seq_start=blocked_q_seq_len_start,
           is_dkv=is_dkv,
+          block_mask_slice=bm_slice,
+          partial_id_slice=pid_slice,
       )
       data_next_sequence_slices.append(data_next_slice)
       mask_next_sequence_slices.append(mask_next_slice)
@@ -936,7 +1203,11 @@ def _process_mask(
 
       block_mask = np.concatenate(padded_block_mask_shards, axis=1)
       data_next = np.concatenate(padded_data_next_shards, axis=1)
-      mask_next = np.concatenate(padded_mask_next_shards, axis=1)
+      mask_next = (
+          np.concatenate(padded_mask_next_shards, axis=1)
+          if padded_mask_next_shards
+          else None
+      )
 
   if downcast_smem_data:
     data_next = _downcast_to_small_type(data_next)
@@ -969,63 +1240,59 @@ def _shrink_mask_info(
     mask_next: np.ndarray | None,
     head_shards: int,
 ):
+  del head_shards
   assert block_mask.ndim == 3
   assert data_next.ndim == 3
   assert mask_next is None or mask_next.ndim == 3
 
   head_block_mask = block_mask[0]
+  nz = head_block_mask != 0
+  counts = nz.sum(axis=1)
+  max_non_zero_cols = int(counts.max()) if counts.size else 0
+  row_cnt = head_block_mask.shape[0]
+  assert row_cnt == block_mask.shape[1]
 
-  grouped_non_zero_cols = []
-  # Group non-zero columns based on which row they belong to.
-  for row_index in range(head_block_mask.shape[0]):
-    head_block_mask_row = head_block_mask[row_index, :]
-    non_zero_cols = np.nonzero(head_block_mask_row)[0]
-    grouped_non_zero_cols.append(non_zero_cols)
-
-  # Pad each row in the non-zero indices to match the width of the longest
-  # row. This avoids having jagged rows.
-  max_non_zero_cols = max(len(x) for x in grouped_non_zero_cols)
-  padded_non_zero_cols_list = []
-  padding = -1
-  for row in grouped_non_zero_cols:
-    padded_non_zero_cols_list.append(
-        np.pad(
-            row,
-            pad_width=(0, max_non_zero_cols - row.shape[0]),
-            constant_values=padding,
-        )
+  if max_non_zero_cols == 0:
+    empty_shape = (block_mask.shape[0], row_cnt, 0)
+    return (
+        np.empty(empty_shape, dtype=block_mask.dtype),
+        np.empty(empty_shape, dtype=data_next.dtype),
+        np.empty(empty_shape, dtype=mask_next.dtype)
+        if mask_next is not None
+        else None,
     )
 
-  padded_non_zero_cols = np.stack(padded_non_zero_cols_list, axis=0)
+  row_idx, col_idx = np.nonzero(nz)
+  offsets = np.zeros(row_cnt, dtype=np.int64)
+  offsets[1:] = np.cumsum(counts[:-1])
+  pos = np.arange(row_idx.size, dtype=np.int64) - np.repeat(offsets, counts)
 
-  assert padded_non_zero_cols.shape[0] == block_mask.shape[1], (
-      padded_non_zero_cols.shape,
-      block_mask.shape,
+  padded_non_zero_cols = np.full(
+      (row_cnt, max_non_zero_cols), -1, dtype=np.int64
   )
+  padded_non_zero_cols[row_idx, pos] = col_idx
 
-  # For each row of array, select the columns indices in padded_non_zero_cols,
-  # ignore padding.
-  def select_cols(array):
-    assert array.ndim == 2
-    assert padded_non_zero_cols.ndim == 2
-    assert array.shape[0] == padded_non_zero_cols.shape[0]
-    assert array.shape[1] >= padded_non_zero_cols.shape[1]
-    selected_rows = []
-    for row in range(array.shape[0]):
-      col = padded_non_zero_cols[row]
-      selected = array[row][col]
-      selected = np.where(col != padding, selected, 0)
-      selected_rows.append(selected)
+  valid = padded_non_zero_cols != -1
+  safe_cols = np.where(valid, padded_non_zero_cols, 0)
+  row_arange = np.arange(row_cnt, dtype=np.int64)[:, None]
+  valid_3d = valid[None, :, :]
 
-    return np.stack(selected_rows, axis=0)
-
-  return _slice_mask_info(
-      block_mask=block_mask,
-      data_next=data_next,
-      mask_next=mask_next,
-      head_shards=head_shards,
-      slice_function=select_cols,
+  new_block_mask = np.where(
+      valid_3d, block_mask[:, row_arange, safe_cols], block_mask.dtype.type(0)
   )
+  new_data_next = np.where(
+      valid_3d, data_next[:, row_arange, safe_cols], data_next.dtype.type(0)
+  )
+  new_mask_next = (
+      np.where(
+          valid_3d,
+          mask_next[:, row_arange, safe_cols],
+          mask_next.dtype.type(0),
+      )
+      if mask_next is not None
+      else None
+  )
+  return new_block_mask, new_data_next, new_mask_next
 
 
 def _shrink_mask_info_dkv(
@@ -1035,95 +1302,61 @@ def _shrink_mask_info_dkv(
     mask_next: np.ndarray | None,
     head_shards: int,
 ):
+  del head_shards
   assert block_mask.ndim == 3
   assert data_next.ndim == 3
   assert mask_next is None or mask_next.ndim == 3
 
   head_block_mask = block_mask[0]
-  grouped_non_zero_rows = []
-  # Group non-zero rows based on which column they belong to.
-  for col_index in range(head_block_mask.shape[1]):
-    col = head_block_mask[:, col_index]
-    non_zero_rows = np.nonzero(col)[0]
-    grouped_non_zero_rows.append(non_zero_rows)
+  nz = head_block_mask != 0
+  counts = nz.sum(axis=0)
+  max_non_zero_rows = int(counts.max()) if counts.size else 0
+  col_cnt = head_block_mask.shape[1]
+  assert col_cnt == block_mask.shape[2]
 
-  # Pad each col in the non-zero indices to match the height of the longest
-  # col. This avoids having jagged cols.
-  max_non_zero_rows = max(len(x) for x in grouped_non_zero_rows)
-  padded_non_zero_rows_list = []
-  padding = -1
-  for col in grouped_non_zero_rows:
-    padded_non_zero_rows_list.append(
-        np.pad(
-            col,
-            pad_width=(max_non_zero_rows - col.shape[0], 0),
-            constant_values=padding,
-        )
+  if max_non_zero_rows == 0:
+    empty_shape = (block_mask.shape[0], 0, col_cnt)
+    return (
+        np.empty(empty_shape, dtype=block_mask.dtype),
+        np.empty(empty_shape, dtype=data_next.dtype),
+        np.empty(empty_shape, dtype=mask_next.dtype)
+        if mask_next is not None
+        else None,
     )
 
-  padded_non_zero_rows = np.stack(padded_non_zero_rows_list, axis=1)
-
-  assert padded_non_zero_rows.shape[1] == block_mask.shape[2], (
-      padded_non_zero_rows.shape,
-      block_mask.shape,
+  col_idx, row_idx = np.nonzero(nz.T)
+  offsets = np.zeros(col_cnt, dtype=np.int64)
+  offsets[1:] = np.cumsum(counts[:-1])
+  pos = (max_non_zero_rows - np.repeat(counts, counts)) + (
+      np.arange(col_idx.size, dtype=np.int64) - np.repeat(offsets, counts)
   )
 
-  # For each col of array, select the rows indices in padded_non_zero_rows,
-  # ignore padding.
-  def select_rows(array):
-    assert array.ndim == 2
-    assert padded_non_zero_rows.ndim == 2
-    assert array.shape[1] == padded_non_zero_rows.shape[1]
-    assert array.shape[0] >= padded_non_zero_rows.shape[0]
-    selected_cols = []
-    for col in range(array.shape[1]):
-      row = padded_non_zero_rows[:, col]
-      selected = array[:, col][row]
-      selected = np.where(row != padding, selected, 0)
-      selected_cols.append(selected)
-
-    return np.stack(selected_cols, axis=1)
-
-  return _slice_mask_info(
-      block_mask=block_mask,
-      data_next=data_next,
-      mask_next=mask_next,
-      head_shards=head_shards,
-      slice_function=select_rows,
+  padded_non_zero_rows = np.full(
+      (max_non_zero_rows, col_cnt), -1, dtype=np.int64
   )
+  padded_non_zero_rows[pos, col_idx] = row_idx
 
+  valid = padded_non_zero_rows != -1
+  safe_rows = np.where(valid, padded_non_zero_rows, 0)
+  col_arange = np.arange(col_cnt, dtype=np.int64)[None, :]
+  valid_3d = valid[None, :, :]
 
-def _slice_mask_info(
-    *,
-    block_mask: np.ndarray,
-    data_next: np.ndarray,
-    mask_next: np.ndarray | None,
-    head_shards: int,
-    slice_function: Callable[[np.ndarray], np.ndarray],
-):
-  new_block_mask = []
-  new_data_next = []
-  new_mask_next = []
-  for head_shard in range(head_shards):
-    head_block_mask = block_mask[head_shard]
-    head_block_mask = slice_function(head_block_mask)
-    new_block_mask.append(head_block_mask)
-
-    head_data_next = data_next[head_shard]
-    head_data_next = slice_function(head_data_next)
-    new_data_next.append(head_data_next)
-
-    if mask_next is not None:
-      head_mask_next = mask_next[head_shard]
-      head_mask_next = slice_function(head_mask_next)
-      new_mask_next.append(head_mask_next)
-
-  block_mask = np.stack(new_block_mask, axis=0)
-  data_next = np.stack(new_data_next, axis=0)
-  if mask_next is not None:
-    mask_next = np.stack(new_mask_next, axis=0)
-
-  return block_mask, data_next, mask_next
+  new_block_mask = np.where(
+      valid_3d, block_mask[:, safe_rows, col_arange], block_mask.dtype.type(0)
+  )
+  new_data_next = np.where(
+      valid_3d, data_next[:, safe_rows, col_arange], data_next.dtype.type(0)
+  )
+  new_mask_next = (
+      np.where(
+          valid_3d,
+          mask_next[:, safe_rows, col_arange],
+          mask_next.dtype.type(0),
+      )
+      if mask_next is not None
+      else None
+  )
+  return new_block_mask, new_data_next, new_mask_next
 
 
 process_mask = functools.partial(_process_mask, is_dkv=False)
