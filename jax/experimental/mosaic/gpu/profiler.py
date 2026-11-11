@@ -446,16 +446,11 @@ class OnDeviceProfiler:
           record_event = arith.andi(record_event, in_bounds)
           new_offset = arith.select(in_bounds, new_offset, offset)
         base_ref = memref_slice(ctx.smem_buffer, offset)
-        i64 = ir.IntegerType.get_signless(64)
-        base_addr = llvm.ptrtoint(i64, memref_ptr(base_ref))
-        llvm.inline_asm(
-            ir.Type.parse("!llvm.void"),
-            [record_event, base_addr, c(modifier | name_id, i32)],
-            """
-            @$0 st.shared.v2.u32 [$1], {$2, %clock};
-            """,
-            "b,l,r",
-            has_side_effects=True,
+        inline_ptx(
+            "st.shared.v2.u32 [$0], {$1, %clock};",
+            memref_ptr(base_ref),
+            c(modifier | name_id, i32),
+            predicate=record_event,
         )
         memref.store(new_offset, ctx.offset, [])
 

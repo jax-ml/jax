@@ -891,13 +891,7 @@ def _launch(
       # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
       if utils.get_arch() >= utils.HOPPER:
-        llvm.inline_asm(
-            ir.Type.parse("!llvm.void"),
-            [],
-            "fence.mbarrier_init.release.cluster;",
-            "",
-            has_side_effects=True,
-        )
+        utils.inline_ptx("fence.mbarrier_init.release.cluster;")
       if math.prod(cluster) != 1:
         _cluster_arrive_relaxed_aligned()
         _cluster_wait_aligned()

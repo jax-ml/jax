@@ -82,6 +82,8 @@ def _ptx_constraint(t: ir.Type) -> str:
   if isinstance(t, ir.FloatType):
     width = ir.FloatType(t).width
     return {16: "h", 32: "f", 64: "d"}[width]
+  if isinstance(t, ir.VectorType):
+    return {16: "h", 32: "r", 64: "l"}[bitwidth(t)]
   if isinstance(t, llvm.PointerType):
     # Treat global memory pointers as 64-bit, and others as 32-bit. This is not
     # entirely correct, since SMEM pointers may also be using 64 bits unless in
@@ -2526,10 +2528,7 @@ def query_cluster_cancel(
 
   i32 = ir.IntegerType.get_signless(32)
   i1 = ir.IntegerType.get_signless(1)
-  struct_ty = llvm.StructType.get_literal([i32, i32, i32, i1])
-  desc = llvm.inline_asm(
-      struct_ty,
-      [memref_ptr(result_ref)],
+  cta_id_x, cta_id_y, cta_id_z, cancelled_launch = inline_ptx(
       """
     {
         .reg .b128 handle;
@@ -2537,14 +2536,10 @@ def query_cluster_cancel(
         clusterlaunchcontrol.query_cancel.is_canceled.pred.b128 $3, handle;
         @$3 clusterlaunchcontrol.query_cancel.get_first_ctaid.v4.b32.b128 {$0, $1, $2, _},  handle;
     }""",
-      "=r,=r,=r,=b,r",
+      memref_ptr(result_ref),
+      result_types=(i32, i32, i32, i1),
       has_side_effects=True,
   )
-  assert isinstance(desc, ir.Value)
-  cta_id_x = llvm.extractvalue(i32, desc, [0])
-  cta_id_y = llvm.extractvalue(i32, desc, [1])
-  cta_id_z = llvm.extractvalue(i32, desc, [2])
-  cancelled_launch = llvm.extractvalue(i1, desc, [3])
   return cta_id_x, cta_id_y, cta_id_z, cancelled_launch
 
 
