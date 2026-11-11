@@ -8021,6 +8021,97 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jnp.repeat(jnp.arange(4), 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jnp_repeat_out_sharding_no_auto_axes(self, mesh):
+    mat_np = np.arange(12, dtype=np.float32).reshape(4, 3)
+    mat = jax.device_put(mat_np, P('x', None))
+
+    @jax.jit
+    def rep_scalar(a):
+      return jnp.repeat(a, 2, axis=1, out_sharding=P('x', 'y'))
+
+    self.assertNotIn('Auto', str(rep_scalar.trace(mat).jaxpr))
+    out_sc = rep_scalar(mat)
+    self.assertEqual(out_sc.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertArraysEqual(out_sc, np.repeat(mat_np, 2, axis=1))
+
+    mat2_np = np.arange(16, dtype=np.float32).reshape(4, 4)
+    mat2 = jax.device_put(mat2_np, P('x', 'y'))
+    rep_flat = jax.jit(
+        lambda a: jnp.repeat(a, 2, axis=None, out_sharding=P(('x', 'y')))
+    )
+    self.assertNotIn('Auto', str(rep_flat.trace(mat2).jaxpr))
+    out_flat = rep_flat(mat2)
+    self.assertEqual(out_flat.sharding, NamedSharding(mesh, P(('x', 'y'))))
+    self.assertArraysEqual(out_flat, np.repeat(mat2_np, 2, axis=None))
+
+    reps_sh = jax.device_put(np.array([1, 3, 2, 2], dtype=np.int32), P('x'))
+    rep_dyn = jax.jit(
+        lambda a, r: jnp.repeat(
+            a, r, axis=0, total_repeat_length=8, out_sharding=P('x', 'y')
+        )
+    )
+    self.assertNotIn('Auto', str(rep_dyn.trace(mat2, reps_sh).jaxpr))
+    out_dyn = rep_dyn(mat2, reps_sh)
+    self.assertEqual(out_dyn.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertArraysEqual(out_dyn, np.repeat(mat2_np, [1, 3, 2, 2], axis=0))
+
+    with config.no_collectives({'x', 'y'}):
+      out_nc = jax.jit(lambda a, r: jnp.repeat(
+          a, r, axis=1, total_repeat_length=4, out_sharding=P('x', None)))(
+              mat, jnp.array([1, 2, 1], dtype=np.int32))
+    self.assertEqual(out_nc.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out_nc, np.repeat(mat_np, [1, 2, 1], axis=1))
+
+    v_out = jax.jit(
+        jax.vmap(lambda a: jnp.repeat(a, 2, axis=0, out_sharding=P('x')))
+    )(mat2.T)
+    self.assertEqual(v_out.sharding, NamedSharding(mesh, P('y', 'x')))
+    self.assertArraysEqual(v_out, np.repeat(mat2_np.T, 2, axis=1))
+
+    out_0d = jax.jit(lambda x: jnp.repeat(x, 4, out_sharding=P('x')))(
+        jnp.array(3.0, dtype=jnp.float32)
+    )
+    self.assertEqual(out_0d.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out_0d, np.full((4,), 3.0, dtype=np.float32))
+
+    out_zero = jax.jit(
+        lambda a: jnp.repeat(a, 0, axis=0, out_sharding=P(None, 'y'))
+    )(mat2)
+    self.assertEqual(out_zero.shape, (0, 4))
+    self.assertEqual(out_zero.sharding, NamedSharding(mesh, P(None, 'y')))
+
+    with self.assertRaises(core.ShardingTypeError):
+      jax.jit(lambda a: jnp.repeat(a, 2, axis=None, out_sharding=P('y')))(
+          jax.device_put(mat2_np, P(None, 'y'))
+      )
+
+  def test_jnp_repeat_wo_mesh_context(self):
+    mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit, AxisType.Explicit)
+    )
+    mat_np = np.arange(12, dtype=np.float32).reshape(4, 3)
+    mat = jax.device_put(mat_np, NamedSharding(mesh, P('x', None)))
+
+    out = jax.jit(lambda a: jnp.repeat(a, 2, axis=1))(mat)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out, np.repeat(mat_np, 2, axis=1))
+
+    f_axis0 = jax.jit(lambda a: jnp.repeat(a, 2, axis=0))
+    hlo = f_axis0.lower(mat).compile().as_text()
+    assert hlo is not None
+    self.assertNotIn('all-', hlo)
+    out0 = f_axis0(mat)
+    self.assertEqual(out0.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(out0, np.repeat(mat_np, 2, axis=0))
+
+    with self.assertRaises(core.ShardingTypeError):
+      jax.jit(
+          lambda a: jnp.repeat(
+              a, jnp.array([1, 2, 1, 2]), axis=0, total_repeat_length=6
+          )
+      )(mat)
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_scatter_gather(self, mesh):
     x = np.random.uniform(size=(mesh.size * 2, 3))
