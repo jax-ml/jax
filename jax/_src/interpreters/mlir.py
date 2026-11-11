@@ -1098,7 +1098,7 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
       with caching are fixed.
     shard_map_collective_rule: Optional rule returning ``PartitioningRule`` (or
       raising ``NotImplementedError`` if unsupported) to lower explicit-mesh
-      collectives via ``shard_map`` when ``jax_shard_map_partitioning`` is
+      collectives via ``shard_map`` when ``jax_partitioning`` is
       enabled.
     shard_map_passthrough: If ``True``, lower this primitive directly without
       wrapping it in ``shard_map`` (e.g. for identity primitives or primitives
@@ -2568,7 +2568,7 @@ def _maybe_lower_with_shard_map(
     _prim: core.Primitive, ctx: LoweringRuleContext, *args, **params):
   from jax._src import shard_map  # type: ignore
   from jax._src import pjit  # type: ignore
-  if (not config.shard_map_partitioning.value or
+  if (not config.jax_partitioning.value or
       _prim in shard_map_passthrough_primitives):
     return None
 

@@ -2571,8 +2571,8 @@ jax_accurate_default_erfc = bool_state(
     include_in_trace_context=True,
 )
 
-shard_map_partitioning = bool_state(
-    name='jax_shard_map_partitioning',
+jax_partitioning = bool_state(
+    name='jax_partitioning',
     default=False,
     help='Lower explicit-mesh collectives via shard_map instead of Shardy.',
     include_in_jit_key=True,
