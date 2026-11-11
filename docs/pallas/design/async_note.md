@@ -1,6 +1,12 @@
 (pallas_async)=
 # Pallas Async Operations
 
+<!--* freshness: { reviewed: '2026-11-11' } *-->
+
+```{note}
+**Design Note Context:** This document explores the XLA scheduling, buffer-lifetime, and aliasing trade-offs that motivated Pallas's stateful `Ref`-based async API. Today, decomposed asynchronous operations across kernels are expressed directly with {func}`@pl.kernel <jax.experimental.pallas.kernel>` (`out_type=(..., pltpu.SemaphoreType.DMA(()))`), `jax.new_ref(..., memory_space=...)`, and `jax.freeze(...)`—see the [Stateful Decomposed Async API](#revenge-of-the-state) section at the end of this note, {ref}`pallas_refs`, and {ref}`jax-101-refs`.
+```
+
 ## Background \+ Motivation
 
 We’d like to expose APIs in Pallas to explicitly overlap computation and communication *across multiple kernels*.
