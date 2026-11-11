@@ -526,15 +526,11 @@ def mma(
             "128-lane A scale layout is only supported on sm_107f, got"
             f" sm_{arch.major}{arch.minor}."
         )
-      # TODO(olechwierowicz): Lift these restrictions once collective M=128 and
-      # sparse MMAs with 128-lane A scales are tested.
+      # TODO(olechwierowicz): Lift this restriction once collective M=128 MMAs
+      # with 128-lane A scales are tested.
       if collective and m == 64:
         raise NotImplementedError(
             "128-lane A scale layout is not supported for collective M=128 MMA."
-        )
-      if is_sparse:
-        raise NotImplementedError(
-            "128-lane A scale layout is only supported for dense MMA."
         )
     if collective and m == 64:
       if b_scale.layout != b_scales_m64_collective_layout():

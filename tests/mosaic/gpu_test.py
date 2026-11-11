@@ -3601,6 +3601,42 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         and not jtu.is_cuda_compute_capability_equal("10.7")
     ):
       self.skipTest("e4m3fn scale with block size != 16 requires sm107a.")
+    self._run_mma_block_scaled_sparse_f4(
+        m=m,
+        n=n,
+        in_jax_dtype=in_jax_dtype,
+        scale_jax_dtype=scale_jax_dtype,
+        base_block_size=base_block_size,
+        swizzle=swizzle,
+        a_scale_128_lane=False,
+    )
+
+  def test_mma_block_scaled_sparse_128_lane_a_scales(self):
+    if not (
+        jtu.is_cuda_compute_capability_at_least("10.7")
+        and not jtu.is_cuda_compute_capability_at_least("11.0")
+    ):
+      self.skipTest("128-lane A scales are only supported on sm_107f.")
+    self._run_mma_block_scaled_sparse_f4(
+        m=128,
+        n=128,
+        in_jax_dtype=jnp.float4_e2m1fn,
+        scale_jax_dtype=jnp.float8_e8m0fnu,
+        base_block_size=16,
+        swizzle=128,
+        a_scale_128_lane=True,
+    )
+
+  def _run_mma_block_scaled_sparse_f4(
+      self,
+      m,
+      n,
+      in_jax_dtype,
+      scale_jax_dtype,
+      base_block_size,
+      swizzle,
+      a_scale_128_lane,
+  ):
     out_jax_dtype = jnp.float32
     sparse_meta_dtype = jnp.uint2
     block_size = base_block_size * 2
@@ -3625,13 +3661,21 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       ctx.async_copy(src_ref=lhs, dst_ref=lhs_smem, barrier=barriers[0], **operand_kwargs)
       ctx.async_copy(src_ref=rhs, dst_ref=rhs_smem, barrier=barriers[1], swizzle=swizzle, gmem_transform=mgpu.TileTransform(rhs_tiling))
       ctx.async_copy(src_ref=lhs_sparse_gmem, dst_ref=lhs_sparse_smem, barrier=barriers[2])
-      ctx.async_copy(src_ref=lhs_scales_gmem, dst_ref=lhs_scales_smem, barrier=barriers[3])
+      ctx.async_copy(
+          src_ref=lhs_scales_gmem,
+          dst_ref=lhs_scales_smem,
+          barrier=barriers[3],
+          **a_scales_copy_kwargs,
+      )
       ctx.async_copy(src_ref=rhs_scales_gmem, dst_ref=rhs_scales_smem, barrier=barriers[4])
       for i in range(5):
         barriers[i].wait()
       with mgpu.single_thread():
         tcgen05.async_copy_sparse_metadata_smem_to_tmem(lhs_sparse_smem, lhs_sparse)
-        tcgen05.async_copy_scales_smem_to_tmem(lhs_scales_smem, lhs_scales)
+        if a_scale_128_lane:
+          tcgen05.async_copy_smem_to_tmem(lhs_scales_smem, lhs_scales, swizzle=16)
+        else:
+          tcgen05.async_copy_scales_smem_to_tmem(lhs_scales_smem, lhs_scales)
         tcgen05.async_copy_scales_smem_to_tmem(rhs_scales_smem, rhs_scales)
         tcgen05.mma(
             acc,
@@ -3657,18 +3701,27 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     group_elems = tcgen05.sparse_group_elems(in_mlir_dtype)
     n_groups = k // group_elems
     meta_k = n_groups * 2
+    k_scales = k // block_size
+    if a_scale_128_lane:
+      a_scales_smem_shape = tile_shape((m, k_scales), (8, 16))
+      a_scales_tmem_layout = tcgen05.scales_128_lane_layout()
+      a_scales_copy_kwargs = dict(gmem_transform=mgpu.TileTransform((8, 16)))
+    else:
+      a_scales_smem_shape = (m // 128, k_scales // 4, 32, 16)
+      a_scales_tmem_layout = tcgen05.scales_layout()
+      a_scales_copy_kwargs = {}
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct((m // 128, meta_k // 64, 128, 64), sparse_meta_dtype),
-        jax.ShapeDtypeStruct((m // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
-        jax.ShapeDtypeStruct((n // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
+        jax.ShapeDtypeStruct(a_scales_smem_shape, scale_jax_dtype),
+        jax.ShapeDtypeStruct((n // 128, k_scales // 4, 32, 16), scale_jax_dtype),
         mgpu.Barrier(1, num_barriers=5),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM((m, n), out_jax_dtype),
         mgpu.TMEM((m, meta_k), sparse_meta_dtype, layout=tcgen05.sparse_meta_layout()),
-        mgpu.TMEM((m, k // block_size), scale_jax_dtype, layout=tcgen05.scales_layout()),
-        mgpu.TMEM((n, k // block_size), scale_jax_dtype, layout=tcgen05.scales_layout()),
+        mgpu.TMEM((m, k_scales), scale_jax_dtype, layout=a_scales_tmem_layout),
+        mgpu.TMEM((n, k_scales), scale_jax_dtype, layout=tcgen05.scales_layout()),
     ]
     index_pairs = np.asarray(np.meshgrid(range(4), range(4))).T.reshape(-1, 2)
     valid_pairs = index_pairs[index_pairs[:, 0] < index_pairs[:, 1]]
@@ -3697,7 +3750,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           .transpose(0, 3, 2, 1, 4)
           .reshape(mn // 128, k // 4, 32, 16)
       )
-    a_gpu_scales, b_gpu_scales = map(format_scales, (a_scales, b_scales))
+    a_gpu_scales = a_scales if a_scale_128_lane else format_scales(a_scales)
+    b_gpu_scales = format_scales(b_scales)
     args = (x, y, x_gpu_sparse, a_gpu_scales, b_gpu_scales)
     z = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), args, out_shape, scratch_shape
