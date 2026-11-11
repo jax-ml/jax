@@ -16,7 +16,7 @@ kernelspec:
 
 # Matrix Multiplication
 
-In this guide, we'll write a matrix multiplication routine using Pallas. We'll also go over how to think about matmul performance on TPU and how to template a matmul kernel to fuse in operations.
+In this guide, we'll write a matrix multiplication routine using Pallas (`pl.kernel` and `pltpu.emit_pipeline`). We'll also go over how to think about matmul performance on TPU and how to template a matmul kernel to fuse in operations.
 
 ```{code-cell} ipython3
 :id: ejAVO6ikUUuF
@@ -43,7 +43,7 @@ To effectively utilize TPUs for matrix multiplication, we'll need to cover a few
 
 ### Block Matrix Multiplication
 
-Let's say we want to implement `matmul(x, y)` which generically multiplies an `(m, k)` array with a `(k, n)` array, but with a twist. We're only allowed to use the primitive `matmul_small` which multiples small matrices (say `m, k, n <= 256`). How could we do it?
+Let's say we want to implement `matmul(x, y)` which generically multiplies an `(m, k)` array with a `(k, n)` array, but with a twist. We're only allowed to use the primitive `matmul_small` which multiplies small matrices (say `m, k, n <= 256`). How could we do it?
 
 A nice property of matrix multiplication is that each block of the output can be expressed as the sum of several smaller matrix multiplications of row blocks and column blocks of the inputs.
 Formally, if we have input arrays $x \in \mathbb{R}^{m \times k}$ and $y \in \mathbb{R}^{k \times n}$ and output $z \in \mathbb{R}^{m \times n}$, we decompose them into blocks along the dimensions of size $b_m, b_k, b_n$.
@@ -73,7 +73,7 @@ Therefore, each output block $z_{ij}$ is the sum of several smaller block matrix
 :id: PACqDMtQrMOL
 
 def matmul_small(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-  m, k, n = x.shape[0], x.shape[1], y.shape[0]
+  m, k, n = x.shape[0], x.shape[1], y.shape[1]
   assert m <= 256
   assert k <= 256
   assert n <= 256
@@ -128,7 +128,7 @@ TPUs and GPUs do matmuls just like this! They natively support small matrix mult
 
 In [the previous guide](pipelining), we covered how tiling up computations and pipelining in Pallas works. To make sure our compute units are always working and never stalled by memory transfers, we overlap the memory transfers for the next iteration of a kernel with the current one.
 
-In Pallas, we specify that via `BlockSpec`s and a `grid`. Note that we already have a nested for loop in the block matrix multiplication algorithm. We can specify that in Pallas via a `grid`. The slices in the block matrix multiplication can also be specified via `BlockSpec`s.
+In Pallas, we specify that via `pltpu.emit_pipeline`, `BlockSpec`s, and a `grid` inside `pl.kernel`. Note that we already have a nested for loop in the block matrix multiplication algorithm. We can specify that in Pallas via a `grid`, and the slices in the block matrix multiplication can be specified via `BlockSpec`s.
 
 +++ {"id": "FvYoyqlyIqo6"}
 
@@ -136,19 +136,19 @@ In Pallas, we specify that via `BlockSpec`s and a `grid`. Note that we already h
 
 +++ {"id": "umKZAlSvIt7x"}
 
-Putting it all together, here's an implementation of a block matrix multiplication kernel that pipelines the memory transfers with the compute. We create a 3-d grid, corresponding to the 3-nested loop in the NumPy code. Note that while MXUs are only capable of multiplying small blocks, Pallas will automatically take bigger blocks and automatically tile them over the MXUs.
+Putting it all together, here's an implementation of a block matrix multiplication kernel that pipelines the memory transfers with the compute. We create a 3-D grid corresponding to the 3-nested loop in the NumPy code, and partition the outer parallel grid dimensions across available TensorCores via `pltpu.TensorCoreMesh`. Note that while MXUs are only capable of multiplying small blocks, Pallas will automatically take bigger blocks and tile them over the MXUs.
 
-The last dimension of the grid corresponds to the contraction dimension of the matrix multiply and is a reduction dimension, so we need to be sure to initialize the accumulator.
+The last dimension of the grid corresponds to the contraction dimension of the matrix multiply and is a reduction dimension, so we need to be sure to initialize the accumulator on `pl.program_id(2) == 0`.
 
 ```{code-cell} ipython3
 :id: 75FBANKFbmQ5
 
-def matmul_kernel(x_ref, y_ref, z_ref):
+def matmul_body(x_vmem_ref, y_vmem_ref, z_vmem_ref):
   @pl.when(pl.program_id(2) == 0)
   def _():
-    z_ref[...] = jnp.zeros_like(z_ref)
+    z_vmem_ref[...] = jnp.zeros_like(z_vmem_ref)
 
-  z_ref[...] += x_ref[...] @ y_ref[...]
+  z_vmem_ref[...] += x_vmem_ref[...] @ y_vmem_ref[...]
 
 def matmul(
     x: jax.Array,
@@ -160,16 +160,23 @@ def matmul(
 ):
   m, k = x.shape
   _, n = y.shape
-  return pl.pallas_call(
-      matmul_kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
-      in_specs=[pl.BlockSpec((bm, bk), lambda i, j, k: (i, k)),
-                pl.BlockSpec((bk, bn), lambda i, j, k: (k, j))],
-      out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
-      grid=(m // bm, n // bn, k // bk),
-      compiler_params=pltpu.CompilerParams(
-          dimension_semantics=("parallel", "parallel", "arbitrary")),
-  )(x, y)
+  mesh = pltpu.TensorCoreMesh(axis_name='core')
+
+  @pl.kernel(out_type=jax.ShapeDtypeStruct((m, n), x.dtype), mesh=mesh)
+  def kernel(x_hbm_ref, y_hbm_ref, z_hbm_ref):
+    pltpu.emit_pipeline(
+        matmul_body,
+        grid=(m // bm, n // bn, k // bk),
+        in_specs=[
+            pl.BlockSpec((bm, bk), lambda i, j, k_idx: (i, k_idx)),
+            pl.BlockSpec((bk, bn), lambda i, j, k_idx: (k_idx, j)),
+        ],
+        out_specs=pl.BlockSpec((bm, bn), lambda i, j, k_idx: (i, j)),
+        core_axis_name='core',
+        dimension_semantics=('parallel', 'parallel', 'arbitrary'),
+    )(x_hbm_ref, y_hbm_ref, z_hbm_ref)
+
+  return kernel(x, y)
 ```
 
 ```{code-cell} ipython3
@@ -179,7 +186,7 @@ m, k, n = 4096, 4096, 4096
 k1, k2 = random.split(random.key(0), 2)
 x = random.normal(k1, (m, k), dtype=jnp.float32)
 y = random.normal(k2, (k, n), dtype=jnp.float32)
-np.testing.assert_array_equal(x @ y, matmul(x, y))
+np.testing.assert_allclose(x @ y, matmul(x, y), atol=1e-2, rtol=1e-2)
 ```
 
 +++ {"id": "DycJX_-PJnnB"}
@@ -276,26 +283,10 @@ We now have a matmul that is compute bound!
 
 Let's add `bf16` support to our matrix multiplication kernel.
 
-The native MXU `bf16` matmul routine takes two input `bf16` matrices and accumulates it in `f32`. We will trigger this routine by passing `preferred_element_type=jnp.float32` into `jnp.matmul`. We will also need a accumulator `Ref` that is in `f32`. We will then downcast the output back to `bf16` before writing it back to HBM. This way we don't lose any precision, don't do any extra casting, and still retain the `bf16` memory bandwidth savings.
-
-> Note that the only way of allocating scratch spaces right now is via `pltpu.PrefetchScalarGridSpec`. Don't worry about exactly what it does for now -- all you need to know for now is that it allows you to allocate scratch spaces in VMEM.
+The native MXU `bf16` matmul routine takes two input `bf16` matrices and accumulates in `f32`. We trigger this routine by passing `preferred_element_type=jnp.float32` into `jnp.dot`. We allocate a persistent `f32` accumulator `Ref` in VMEM via `scratch_types=[pltpu.VMEM((bm, bn), jnp.float32)]` on `pl.kernel`, and downcast the final result back to `bf16` on the last reduction step (`k == nsteps - 1`) before writing it out to HBM. This preserves `f32` accumulation precision while retaining the `bf16` memory bandwidth savings.
 
 ```{code-cell} ipython3
 :id: tyMcZtA6dWDP
-
-def matmul_kernel(x_ref, y_ref, z_ref, acc_ref, *, nsteps):
-  @pl.when(pl.program_id(2) == 0)
-  def _():
-    acc_ref[...] = jnp.zeros_like(acc_ref)
-
-  acc_ref[...] += jnp.dot(
-      x_ref[...], y_ref[...], preferred_element_type=jnp.float32
-  )
-
-  @pl.when(pl.program_id(2) == nsteps - 1)
-  def _():
-    z_ref[...] = acc_ref[...].astype(z_ref.dtype)
-
 
 @jax.jit(static_argnames=['bm', 'bk', 'bn'])
 def matmul(
@@ -308,22 +299,41 @@ def matmul(
 ):
   m, k = x.shape
   _, n = y.shape
-  return pl.pallas_call(
-      functools.partial(matmul_kernel, nsteps=k // bk),
-      grid_spec=pltpu.PrefetchScalarGridSpec(
-        num_scalar_prefetch=0,
+  nsteps = k // bk
+  mesh = pltpu.TensorCoreMesh(axis_name='core')
+
+  @pl.kernel(
+      out_type=jax.ShapeDtypeStruct((m, n), x.dtype),
+      mesh=mesh,
+      scratch_types=[pltpu.VMEM((bm, bn), jnp.float32)],
+  )
+  def kernel(x_hbm_ref, y_hbm_ref, z_hbm_ref, acc_ref):
+    def body(x_ref, y_ref, z_ref):
+      @pl.when(pl.program_id(2) == 0)
+      def _():
+        acc_ref[...] = jnp.zeros_like(acc_ref)
+
+      acc_ref[...] += jnp.dot(
+          x_ref[...], y_ref[...], preferred_element_type=jnp.float32
+      )
+
+      @pl.when(pl.program_id(2) == nsteps - 1)
+      def _():
+        z_ref[...] = acc_ref[...].astype(z_ref.dtype)
+
+    pltpu.emit_pipeline(
+        body,
+        grid=(m // bm, n // bn, nsteps),
         in_specs=[
-            pl.BlockSpec((bm, bk), lambda i, j, k: (i, k)),
-            pl.BlockSpec((bk, bn), lambda i, j, k: (k, j)),
+            pl.BlockSpec((bm, bk), lambda i, j, k_idx: (i, k_idx)),
+            pl.BlockSpec((bk, bn), lambda i, j, k_idx: (k_idx, j)),
         ],
-        out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
-        scratch_shapes=[pltpu.VMEM((bm, bn), jnp.float32)],
-        grid=(m // bm, n // bn, k // bk),
-      ),
-      out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
-      compiler_params=pltpu.CompilerParams(
-          dimension_semantics=("parallel", "parallel", "arbitrary")),
-  )(x, y)
+        out_specs=pl.BlockSpec((bm, bn), lambda i, j, k_idx: (i, j)),
+        core_axis_name='core',
+        dimension_semantics=('parallel', 'parallel', 'arbitrary'),
+    )(x_hbm_ref, y_hbm_ref, z_hbm_ref)
+
+  return kernel(x, y)
 ```
 
 ```{code-cell} ipython3
@@ -333,7 +343,12 @@ m, k, n = 4096, 4096, 4096
 k1, k2 = random.split(random.key(0), 2)
 x = random.normal(k1, (m, k), dtype=jnp.bfloat16)
 y = random.normal(k2, (k, n), dtype=jnp.bfloat16)
-np.testing.assert_array_equal(x @ y, matmul(x, y))
+np.testing.assert_allclose(
+    (x @ y).astype(jnp.float32),
+    matmul(x, y).astype(jnp.float32),
+    atol=1e-1,
+    rtol=1e-2,
+)
 ```
 
 +++ {"id": "fBL1NwXzVlWa"}
@@ -442,30 +457,6 @@ Accelerators often support native matrix multiplication routine that fuse a RHS 
 ```{code-cell} ipython3
 :id: 1_6S_QnMbHAQ
 
-def matmul_kernel(x_ref, y_ref, z_ref, acc_ref, *, nsteps, transpose_rhs):
-  @pl.when(pl.program_id(2) == 0)
-  def _():
-    acc_ref[...] = jnp.zeros_like(acc_ref)
-
-  # dot_general expects a data structure (contraction_dims, batch_dims),
-  # where contraction_dims are the set of dimensions for LHS and RHS that will
-  # be contracted (reduced) in the matmul; batch_dims, on the other hand, are
-  # looped over. The remaining dimensions will be the input and output dimension
-  # of the matmul.
-  if transpose_rhs:
-    dims = ((1,), (1,)), ((), ())
-  else:
-    dims = ((1,), (0,)), ((), ())
-
-  acc_ref[...] += jax.lax.dot_general(
-      x_ref[...], y_ref[...], dims, preferred_element_type=jnp.float32,
-  )
-
-  @pl.when(pl.program_id(2) == nsteps - 1)
-  def _():
-    z_ref[...] = acc_ref[...].astype(z_ref.dtype)
-
-
 @jax.jit(static_argnames=['bm', 'bk', 'bn', 'transpose_rhs'])
 def matmul(
     x: jax.Array,
@@ -476,35 +467,61 @@ def matmul(
     bn: int = 128,
     transpose_rhs: bool = False,
 ):
+  m, k = x.shape
   if transpose_rhs:
     y = y.swapaxes(0, 1)
-    y_block_spec = pl.BlockSpec((bn, bk), lambda i, j, k: (j, k))
+    n, _ = y.shape
+    y_block_spec = pl.BlockSpec((bn, bk), lambda i, j, k_idx: (j, k_idx))
+    dims = ((1,), (1,)), ((), ())
   else:
-    y_block_spec = pl.BlockSpec((bk, bn), lambda i, j, k: (k, j))
-  m, k = x.shape
-  _, n = y.shape
-  return pl.pallas_call(
-      functools.partial(matmul_kernel, nsteps=k // bk, transpose_rhs=transpose_rhs),
-      grid_spec=pltpu.PrefetchScalarGridSpec(
-        num_scalar_prefetch=0,
+    _, n = y.shape
+    y_block_spec = pl.BlockSpec((bk, bn), lambda i, j, k_idx: (k_idx, j))
+    dims = ((1,), (0,)), ((), ())
+
+  nsteps = k // bk
+  mesh = pltpu.TensorCoreMesh(axis_name='core')
+
+  @pl.kernel(
+      out_type=jax.ShapeDtypeStruct((m, n), x.dtype),
+      mesh=mesh,
+      scratch_types=[pltpu.VMEM((bm, bn), jnp.float32)],
+  )
+  def kernel(x_hbm_ref, y_hbm_ref, z_hbm_ref, acc_ref):
+    def body(x_ref, y_ref, z_ref):
+      @pl.when(pl.program_id(2) == 0)
+      def _():
+        acc_ref[...] = jnp.zeros_like(acc_ref)
+
+      # dot_general expects a data structure (contraction_dims, batch_dims),
+      # where contraction_dims are the dimensions for LHS and RHS contracted
+      # (reduced) in the matmul; batch_dims are looped over.
+      acc_ref[...] += jax.lax.dot_general(
+          x_ref[...], y_ref[...], dims, preferred_element_type=jnp.float32
+      )
+
+      @pl.when(pl.program_id(2) == nsteps - 1)
+      def _():
+        z_ref[...] = acc_ref[...].astype(z_ref.dtype)
+
+    pltpu.emit_pipeline(
+        body,
+        grid=(m // bm, n // bn, nsteps),
         in_specs=[
-            pl.BlockSpec((bm, bk), lambda i, j, k: (i, k)),
+            pl.BlockSpec((bm, bk), lambda i, j, k_idx: (i, k_idx)),
             y_block_spec,
         ],
-        out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
-        scratch_shapes=[pltpu.VMEM((bm, bn), jnp.float32)],
-        grid=(m // bm, n // bn, k // bk),
-      ),
-      out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
-      compiler_params=pltpu.CompilerParams(
-          dimension_semantics=("parallel", "parallel", "arbitrary")),
-  )(x, y)
+        out_specs=pl.BlockSpec((bm, bn), lambda i, j, k_idx: (i, j)),
+        core_axis_name='core',
+        dimension_semantics=('parallel', 'parallel', 'arbitrary'),
+    )(x_hbm_ref, y_hbm_ref, z_hbm_ref)
+
+  return kernel(x, y)
 ```
 
 +++ {"id": "eSmPJHSchuGX"}
 
 We do a transpose inside of the `matmul` function (`y = y.swapaxes(0, 1)`). This is because inside of a JIT-ted JAX computation, dimension ordering is purely *logical*, not physical, so rearranging dimensions does not imply a
-physical layout difference. However, when we pass an array into a `pallas_call`, we do enforce a major-to-minor dimension ordering constraint. By transposing `y` inside of the `matmul` function, we are requesting that `y` be in a
+physical layout difference. However, when we pass an array into a `pl.kernel`, Pallas enforces a major-to-minor dimension ordering constraint. By transposing `y` inside of the `matmul` function, we are requesting that `y` be in a
 transposed layout `(n, k)` instead of the usual `(k, n)`. The user will still pass in the array in the (logical) `(k, n)` dimension, however.
 
 Note: to benchmark the transpose, we actually want `y` to be in the physical transposed layout when we pass it into the kernel, so we don't measure relayout time. In the wrapper function, we will (logically) transpose it back to `(k, n)`
@@ -560,31 +577,7 @@ Fusing in an activation is also really common. This makes sure we don't follow a
 ```{code-cell} ipython3
 :id: SANr6fyBiso_
 
-def matmul_kernel(
-    x_ref, y_ref, z_ref, acc_ref, *, nsteps, transpose_rhs, activation
-):
-  @pl.when(pl.program_id(2) == 0)
-  def _():
-    acc_ref[...] = jnp.zeros_like(acc_ref)
-
-  if transpose_rhs:
-    dims = ((1,), (1,)), ((), ())
-  else:
-    dims = ((1,), (0,)), ((), ())
-
-  acc_ref[...] += jax.lax.dot_general(
-      x_ref[...],
-      y_ref[...],
-      dims,
-      preferred_element_type=jnp.float32,
-  )
-
-  @pl.when(pl.program_id(2) == nsteps - 1)
-  def _():
-    z_ref[...] = activation(acc_ref[...]).astype(z_ref.dtype)
-
-
-@jax.jit(static_argnames=['bm', 'bk', 'bn', 'activation'])
+@jax.jit(static_argnames=['bm', 'bk', 'bn', 'transpose_rhs', 'activation'])
 def matmul(
     x: jax.Array,
     y: jax.Array,
@@ -595,39 +588,60 @@ def matmul(
     transpose_rhs: bool = False,
     activation: Callable[[jax.Array], jax.Array] = lambda x: x,
 ):
+  m, k = x.shape
   if transpose_rhs:
     y = y.swapaxes(0, 1)
-    y_block_spec = pl.BlockSpec((bn, bk), lambda i, j, k: (j, k))
+    n, _ = y.shape
+    y_block_spec = pl.BlockSpec((bn, bk), lambda i, j, k_idx: (j, k_idx))
+    dims = ((1,), (1,)), ((), ())
   else:
-    y_block_spec = pl.BlockSpec((bk, bn), lambda i, j, k: (k, j))
-  m, k = x.shape
-  _, n = y.shape
-  return pl.pallas_call(
-      functools.partial(
-          matmul_kernel,
-          nsteps=k // bk,
-          transpose_rhs=transpose_rhs,
-          activation=activation,
-      ),
-      grid_spec=pltpu.PrefetchScalarGridSpec(
-          num_scalar_prefetch=0,
-          in_specs=[
-              pl.BlockSpec((bm, bk), lambda i, j, k: (i, k)),
-              y_block_spec,
-          ],
-          out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
-          scratch_shapes=[pltpu.VMEM((bm, bn), jnp.float32)],
-          grid=(m // bm, n // bn, k // bk),
-      ),
-      out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
-      compiler_params=pltpu.CompilerParams(
-          dimension_semantics=("parallel", "parallel", "arbitrary")),
-  )(x, y)
+    _, n = y.shape
+    y_block_spec = pl.BlockSpec((bk, bn), lambda i, j, k_idx: (k_idx, j))
+    dims = ((1,), (0,)), ((), ())
+
+  nsteps = k // bk
+  mesh = pltpu.TensorCoreMesh(axis_name='core')
+
+  @pl.kernel(
+      out_type=jax.ShapeDtypeStruct((m, n), x.dtype),
+      mesh=mesh,
+      scratch_types=[pltpu.VMEM((bm, bn), jnp.float32)],
+  )
+  def kernel(x_hbm_ref, y_hbm_ref, z_hbm_ref, acc_ref):
+    def body(x_ref, y_ref, z_ref):
+      @pl.when(pl.program_id(2) == 0)
+      def _():
+        acc_ref[...] = jnp.zeros_like(acc_ref)
+
+      acc_ref[...] += jax.lax.dot_general(
+          x_ref[...],
+          y_ref[...],
+          dims,
+          preferred_element_type=jnp.float32,
+      )
+
+      @pl.when(pl.program_id(2) == nsteps - 1)
+      def _():
+        z_ref[...] = activation(acc_ref[...]).astype(z_ref.dtype)
+
+    pltpu.emit_pipeline(
+        body,
+        grid=(m // bm, n // bn, nsteps),
+        in_specs=[
+            pl.BlockSpec((bm, bk), lambda i, j, k_idx: (i, k_idx)),
+            y_block_spec,
+        ],
+        out_specs=pl.BlockSpec((bm, bn), lambda i, j, k_idx: (i, j)),
+        core_axis_name='core',
+        dimension_semantics=('parallel', 'parallel', 'arbitrary'),
+    )(x_hbm_ref, y_hbm_ref, z_hbm_ref)
+
+  return kernel(x, y)
 ```
 
 ```{code-cell} ipython3
 :id: BOu7WBCBlHpN
-:outputId: 4b7f72c4-f562-4a49-cc48-17bf0c845434
+:outputId: 4b7f72c4-f562-4a49-cc48-17bf0c843434
 
 def analyze_matmul(m: int, k: int, n: int, dtype: np.dtype,
                    mm_func, transpose_rhs: bool = False,
@@ -677,5 +691,5 @@ In this guide, we covered how to write efficient matrix multiplications on TPU u
 
 Exercises left to the reader:
 * Add support for input fusions. Sometimes we want to fuse an operation into the inputs of the matmul. Try templating the matrix multiplication even more to support this.
-* Add support for `int8` matrix multiplication. TPU v5 supports native `int8` matrix multiplication at twice the FLOPs of `bf16`. Try adding support for that and see what utilization is possible.
+* Add support for `int8` matrix multiplication. TPU v5+ supports native `int8` matrix multiplication at twice the FLOPs of `bf16`. Try adding support for that and see what utilization is possible.
 * Add backwards pass support for the `matmul` function. You can do this with `jax.custom_vjp`.
