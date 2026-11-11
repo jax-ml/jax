@@ -931,12 +931,14 @@ def choice(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   arr = jnp.asarray(a)
   if arr.ndim == 0:
     n_inputs = core.concrete_or_error(int, a, "The error occurred in jax.random.choice()")
+    out_shape = tuple(shape)
   else:
     axis = canonicalize_axis(axis, arr.ndim)
     n_inputs = arr.shape[axis]
+    out_shape = (*arr.shape[:axis], *shape, *arr.shape[axis + 1:])
   n_draws = math.prod(shape)
   if n_draws == 0:
-    return jnp.zeros(shape, dtype=arr.dtype)
+    return jnp.zeros(out_shape, dtype=arr.dtype)
   if n_inputs <= 0:
     raise ValueError("a must be greater than 0 unless no samples are taken")
   if not replace and n_draws > n_inputs:
@@ -968,8 +970,7 @@ def choice(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
       ind = lax.top_k(g, k=n_draws)[1].astype(int)
     result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
 
-  return result.reshape(shape if arr.ndim == 0 else
-                        arr.shape[0:axis] + tuple(shape) + arr.shape[axis+1:])
+  return result.reshape(out_shape)
 
 
 def normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key

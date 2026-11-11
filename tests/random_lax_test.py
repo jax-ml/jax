@@ -786,7 +786,7 @@ class DistributionsTest(RandomTestBase):
   @jtu.sample_product(
     [dict(shape=shape, replace=replace, axis=axis,
           input_range_or_shape=input_range_or_shape)
-      for shape in [(), (5,), (4, 5)]
+      for shape in [(), (0,), (5,), (4, 0), (4, 5)]
       for replace in [True, False]
       for input_range_or_shape in [100, (10, 10), (10, 5, 2), 1, (1, 5)]
       for is_range in [type(input_range_or_shape) is int]
@@ -823,7 +823,7 @@ class DistributionsTest(RandomTestBase):
     self.assertEqual(expected_shape, sample.shape)
     expected_dtype = dtypes.result_type(int if is_range else x)
     self.assertEqual(expected_dtype, sample.dtype)
-    if not replace and shape:
+    if not replace and math.prod(shape) > 1:
       def lsort(x):
         if not math.prod(x.shape): return x
         ind = np.lexsort(np.swapaxes(x, axis, -1).reshape((-1, x.shape[axis])))
