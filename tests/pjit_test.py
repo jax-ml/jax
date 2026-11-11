@@ -11858,7 +11858,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return jnp.take(a, empty_2d, axis=1, out_sharding=P('y', None, 'x'))
 
     with (jax.sharding.no_collectives({'x', 'y'}),
-          config.shard_map_partitioning(True)):
+          config.jax_partitioning(True)):
       out_e = f_empty(x_empty)
     self.assertEqual(out_e.shape, (8, 0, 4))
     self.assertEqual(out_e.sharding, NamedSharding(mesh, P('y', None, 'x')))

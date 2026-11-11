@@ -28,7 +28,6 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
-from jax._src import mesh as mesh_lib
 from jax._src import numpy as jnp
 from jax._src.hijax import (
     linearize_from_jvp,
@@ -39,6 +38,7 @@ from jax._src.partition_spec import PartitionSpec as P
 from jax._src.interpreters import ad
 from jax._src.lax import control_flow
 from jax._src.lax import lax
+from jax._src.lax import utils as lax_utils
 from jax._src.numpy import util
 from jax._src.numpy.einsum import _einsum as einsum_impl, Unoptimized
 from jax._src.typing import Array, ArrayLike, DTypeLike
@@ -46,6 +46,7 @@ from jax._src.typing import Array, ArrayLike, DTypeLike
 
 class SearchSorted(HiPrim):
   """HiJAX primitive for binary search."""
+  name = "searchsorted"
   valid_methods = ("compare_all", "scan", "scan_unrolled", "sort")
 
   side: str
@@ -90,9 +91,9 @@ class SearchSorted(HiPrim):
     # Attempt this here to catch overflow errors early.
     if not core.is_symbolic_dim(sorted_arr_aval.shape[dimension]):
       out_dtype.type(sorted_arr_aval.shape[dimension])
-    out_sharding = self._sharding_rule(
-        sorted_arr_aval, query_aval, dimension=dimension, batch_dims=batch_dims
-    )
+    out_sharding = lax_utils.call_sharding_rule(
+        self, self._sharding_rule, None, None, sorted_arr_aval, query_aval,
+        dimension=dimension, batch_dims=batch_dims)
     out_vma = core.standard_vma_rule("searchsorted", *self.in_avals)
     self.out_aval = sorted_arr_aval.update(
         shape=out_shape,
@@ -145,19 +146,13 @@ class SearchSorted(HiPrim):
       dimension: int,
       batch_dims: int,
   ):
-    sa_mesh = sorted_arr_aval.sharding.mesh
-    q_mesh = query_aval.sharding.mesh
-    if not sa_mesh.empty and not q_mesh.empty and sa_mesh != q_mesh:
-      cur_mesh = mesh_lib.get_abstract_mesh()
-      if (
-          sa_mesh.are_all_axes_auto
-          and q_mesh.are_all_axes_auto
-          and (cur_mesh.empty or cur_mesh._are_all_axes_auto_or_manual)
-      ):
-        return sorted_arr_aval.sharding.update(mesh=cur_mesh, spec=P())
+    if (not sorted_arr_aval.sharding.mesh.empty
+        and not query_aval.sharding.mesh.empty
+        and sorted_arr_aval.sharding.mesh != query_aval.sharding.mesh):
       raise ValueError(
-          f"sharding meshes must match; got {sa_mesh} != {q_mesh}"
-      )
+          "sharding meshes must match; got"
+          f" {sorted_arr_aval.sharding.mesh} != {query_aval.sharding.mesh}")
+
     sa_spec = sorted_arr_aval.sharding.spec
     q_spec = query_aval.sharding.spec
     if sa_spec[:batch_dims] != q_spec[:batch_dims]:
@@ -194,6 +189,7 @@ class SearchSorted(HiPrim):
       batch_dims=self.batch_dims,
       side=self.side,
       dtype=self.out_aval.dtype,
+      out_sharding=self.out_aval.sharding,
       method=self.method)
 
   def batch(
@@ -672,7 +668,8 @@ def _nonzero_impl(a: ArrayLike, *fill_value: ArrayLike, size: int, axes: tuple[i
 
 
 def _searchsorted_impl(sorted_arr: ArrayLike, query: ArrayLike, *, dimension: int,
-                       batch_dims: int, side: str, dtype: np.dtype, method: str):
+                       batch_dims: int, side: str, dtype: np.dtype,
+                       out_sharding: Any, method: str):
   """Main implementation of searchsorted primitive."""
   sorted_arr = jnp.asarray(sorted_arr)
   query = jnp.asarray(query)
@@ -680,9 +677,6 @@ def _searchsorted_impl(sorted_arr: ArrayLike, query: ArrayLike, *, dimension: in
   if sorted_arr.size == 0 or query.size == 0:
     sa_aval, q_aval = core.typeof(sorted_arr), core.typeof(query)
     out_shape = SearchSorted._shape_rule(
-        sa_aval, q_aval, dimension=dimension, batch_dims=batch_dims
-    )
-    out_sharding = SearchSorted._sharding_rule(
         sa_aval, q_aval, dimension=dimension, batch_dims=batch_dims
     )
     vma = tuple(core.standard_vma_rule("searchsorted", sa_aval, q_aval))

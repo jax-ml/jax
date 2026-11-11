@@ -566,7 +566,7 @@ class SearchsortedTest(jtu.JaxTestCase):
           jnp.zeros((4, 6)), jax.sharding.NamedSharding(other_mesh, P("a", None))
       )
       with self.assertRaisesRegex(
-          ValueError, "sharding meshes must match"
+          ValueError, "Mesh for all inputs should be equal"
       ):
         hijax.searchsorted(sa, q, batch_dims=1, dimension=1)
 
@@ -625,6 +625,14 @@ class SearchsortedTest(jtu.JaxTestCase):
         return hijax.searchsorted(sa, q_ctx, side="right", method=method)
 
     self.assertArraysEqual(ref, f_ctx_q(sa))
+
+    @jax.jit
+    def f_ctx_empty_sa(q):
+      with jax.sharding.use_abstract_mesh(ctx_mesh):
+        sa_empty = jnp.zeros((0,), dtype=jnp.float32)
+        return hijax.searchsorted(sa_empty, q, side="right", method=method)
+
+    self.assertArraysEqual(np.zeros(16, dtype=np.int32), f_ctx_empty_sa(q))
 
   @jtu.sample_product(method=_METHODS)
   @jtu.with_explicit_mesh((2, 2), ("x", "y"))
