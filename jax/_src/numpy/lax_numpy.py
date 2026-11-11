@@ -8176,7 +8176,7 @@ def kron(a: ArrayLike, b: ArrayLike) -> Array:
   a_reshaped = expand_dims(a, range(1, 2 * np.ndim(a), 2))
   b_reshaped = expand_dims(b, range(0, 2 * np.ndim(b), 2))
   out_shape = tuple(np.multiply(np.shape(a), np.shape(b)))
-  return reshape(lax.mul(a_reshaped, b_reshaped), out_shape)
+  return reshape(ufuncs.multiply(a_reshaped, b_reshaped), out_shape)
 
 
 @export
@@ -8226,6 +8226,7 @@ def vander(
            [ 1,  4, 16, 64]], dtype=int32)
   """
   x = util.ensure_arraylike("vander", x)
+  x, = util.promote_dtypes_numeric(x)
   if x.ndim != 1:
     raise ValueError("x must be a one-dimensional array")
   N = x.shape[0] if N is None else core.concrete_or_error(

@@ -5258,7 +5258,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertArraysEqual(expected, actual)
 
   @jtu.sample_product(
-    dtype=inexact_dtypes,
+    dtype=all_dtypes,
     shape=[0, 5],
     n=[2, 4],
     increasing=[False, True],
@@ -5273,7 +5273,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # np.vander seems to return float64 for all floating types. We could obey
     # those semantics, but they seem like a bug.
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
-                            tol={np.float32: 1e-3, np.complex64: 1e-3})
+                            tol={np.float32: 1e-3, np.complex64: 1e-3,
+                                 np.complex128: 1e-14})
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=False)
 
   @jtu.sample_product(
