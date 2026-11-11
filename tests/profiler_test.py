@@ -51,12 +51,12 @@ jax.config.parse_flags_with_absl()
 
 
 # Worker function for subprocess profiling test.
-def _worker_func(port: int, started_queue):
+def _worker_func(port: int, started_queue, stop_event=None):
   try:
     jax.profiler.start_server(port=port, requires_backend=False)
     if started_queue is not None:
       started_queue.put(True)
-    while True:
+    while stop_event is None or not stop_event.is_set():
       with jax.profiler.TraceAnnotation("worker_step"):
         with jax.profiler.TraceAnnotation("work"):
           time.sleep(0.1)
@@ -166,7 +166,10 @@ class ProfilerTest(unittest.TestCase):
           "absl_spawn" if hasattr(mp, "handle_test_main") else "spawn"
       )
       sync_queue = ctx.Queue()
-      p = ctx.Process(target=_worker_func, args=(port, sync_queue), daemon=True)
+      stop_event = ctx.Event()
+      p = ctx.Process(
+          target=_worker_func, args=(port, sync_queue, stop_event), daemon=True
+      )
       p.start()
       self.assertTrue(sync_queue.get())
       unregister_fn = jax.profiler.register_subprocess(p.pid, port)
@@ -180,7 +183,11 @@ class ProfilerTest(unittest.TestCase):
           time.sleep(0.5)
       jax.profiler.stop_trace()
       unregister_fn()
-      p.terminate()
+      stop_event.set()
+      p.join(timeout=10)
+      if p.is_alive():
+        p.kill()
+        p.join()
       proto_path = glob.glob(
           os.path.join(tmpdir, "**/*.xplane.pb"), recursive=True
       )
