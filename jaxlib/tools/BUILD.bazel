@@ -163,6 +163,7 @@ wheel_sources(
     ],
     hdr_srcs = [
         "@xla//xla/ffi/api:ffi",
+        "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
     ],
     py_srcs = [
         "//jaxlib",

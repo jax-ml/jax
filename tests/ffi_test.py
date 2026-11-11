@@ -55,6 +55,11 @@ class FfiTest(jtu.JaxTestCase):
     for header in ["c_api.h", "api.h", "ffi.h"]:
       self.assertTrue(os.path.exists(os.path.join(base_dir, header)))
 
+  def test_pjrt_c_api_header_exists(self):
+    pjrt_header = os.path.join(
+        jax.ffi.include_dir(), "xla", "pjrt", "c", "pjrt_c_api.h")
+    self.assertTrue(os.path.exists(pjrt_header))
+
   @parameterized.parameters([
     (tuple(range(3)), tuple(range(3))),
     (None, tuple(reversed(range(3)))),
