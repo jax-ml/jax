@@ -910,12 +910,9 @@ def jn(n: int, z: ArrayLike) -> Array:
     :func:`jax.vmap`).
 
   See Also:
-    - :func:`jax.scipy.special.bessel_jn`
-    - :func:`jax.scipy.special.yn`
     - :func:`jax.scipy.special.iv`
     - :func:`jax.scipy.special.kn`
-    - :func:`jax.scipy.special.i0`
-    - :func:`jax.scipy.special.i1`
+    - :func:`jax.scipy.special.yn`
   """
   n = core.concrete_or_error(
       operator.index,
@@ -1626,10 +1623,9 @@ def yn(n: int, z: ArrayLike) -> Array:
     :obj:`scipy.special.yv` on the complex plane).
 
   See Also:
-    - :func:`jax.scipy.special.jn`
     - :func:`jax.scipy.special.iv`
+    - :func:`jax.scipy.special.jn`
     - :func:`jax.scipy.special.kn`
-    - :func:`jax.scipy.special.bessel_jn`
   """
   n = core.concrete_or_error(
       operator.index,
@@ -1961,13 +1957,13 @@ def iv(v: int, z: ArrayLike) -> Array:
     ``v`` cannot be traced or batched with :func:`jax.vmap`).
 
   See Also:
+    - :func:`jax.scipy.special.jn`
     - :func:`jax.scipy.special.kn`
+    - :func:`jax.scipy.special.yn`
     - :func:`jax.scipy.special.i0`
     - :func:`jax.scipy.special.i0e`
     - :func:`jax.scipy.special.i1`
     - :func:`jax.scipy.special.i1e`
-    - :func:`jax.scipy.special.jn`
-    - :func:`jax.scipy.special.yn`
   """
   v = abs(
       core.concrete_or_error(
@@ -2600,8 +2596,6 @@ def kn(n: int, z: ArrayLike) -> Array:
 
   See Also:
     - :func:`jax.scipy.special.iv`
-    - :func:`jax.scipy.special.i0`
-    - :func:`jax.scipy.special.i1`
     - :func:`jax.scipy.special.jn`
     - :func:`jax.scipy.special.yn`
   """
