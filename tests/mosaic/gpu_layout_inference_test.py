@@ -1068,6 +1068,39 @@ class LayoutInferenceTest(parameterized.TestCase):
     # order in the future.
     self.assertEqual(assignments, {v0: RL(mgpu.TCGEN05_LAYOUT)})
 
+  @parameterized.product(
+      bitwidth=(8, 16, 32),
+      tmem_and_reg_layouts=(
+          (tcgen05.tmem_default_layout(packing=1), fa.TCGEN05_LAYOUT),
+          (tcgen05.tmem_default_layout(packing=2), fa.TCGEN05_LAYOUT),
+          (
+              tcgen05.tmem_half_lane_layout(columns=128, packing=1),
+              fa.WGMMA_LAYOUT,
+          ),
+          (
+              tcgen05.tmem_m64_collective_layout(columns=128, packing=1),
+              tcgen05.fa_m64_collective_layout(columns=128),
+          ),
+      ),
+  )
+  def test_is_transferable_tmem_registers_requires_16_or_32_bit_types(
+      self, bitwidth, tmem_and_reg_layouts
+  ):
+    # `TMEMRef.load` and `TMEMRef.store` only lower these layout pairs for
+    # 16- and 32-bit types.
+    tmem_layout, reg_layout = tmem_and_reg_layouts
+    shape = (128, 128)
+    constraint = cs.IsTransferableTmemRegisters(
+        cs.TMEMLayout(tmem_layout),
+        cs.RegisterLayout(reg_layout),
+        shape,
+        bitwidth=bitwidth,
+    )
+    self.assertEqual(
+        constraint.is_valid_tmem_transfer(tmem_layout, reg_layout),
+        bitwidth in (16, 32),
+    )
+
   def test_cannot_find_assignments_for_unsatisfiable_constraint_system(self):
     with ir.InsertionPoint(self.module.body):
       x = llvm.UndefOp(ir.VectorType.get((64,), ir.BF16Type.get()))
@@ -1353,19 +1386,44 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkOutLayouts(op, [out_layout])
 
   @parameterized.product(
-      in_out_layouts=(
-          (tcgen05.tmem_default_layout(packing=1), fa.TCGEN05_LAYOUT),
-          (tcgen05.scales_layout(), tcgen05.scales_layout().as_tiled_layout()),
+      dtype_in_out_layouts=(
+          (
+              jnp.float32,
+              tcgen05.tmem_default_layout(packing=1),
+              fa.TCGEN05_LAYOUT,
+          ),
+          (
+              jnp.float16,
+              tcgen05.tmem_default_layout(packing=1),
+              fa.TCGEN05_LAYOUT,
+          ),
+          (
+              jnp.float16,
+              tcgen05.tmem_default_layout(packing=2),
+              fa.TCGEN05_LAYOUT,
+          ),
+          (
+              jnp.float8_e4m3fn,
+              tcgen05.scales_layout(),
+              tcgen05.scales_layout().as_tiled_layout(),
+          ),
+          (
+              jnp.float8_e4m3fn,
+              tcgen05.tmem_default_layout(packing=4),
+              tcgen05.tmem_default_layout(packing=4).as_tiled_layout(),
+          ),
       ),
       columns=(24, 128),
   )
   def test_infer_async_load_chooses_out_layouts_compatible_with_tmem_layout(
-      self, in_out_layouts, columns
+      self, dtype_in_out_layouts, columns
   ):
-    f8 = ir.Float8E4M3FNType.get()
-    in_layout, out_layout = in_out_layouts
+    dtype, in_layout, out_layout = dtype_in_out_layouts
+    element_type = mgpu.utils.dtype_to_ir_type(dtype)
     shape = (128, columns)
-    ref_type = ir.MemRefType.get(shape, f8, memory_space=mgpu.utils.tmem())
+    ref_type = ir.MemRefType.get(
+        shape, element_type, memory_space=mgpu.utils.tmem()
+    )
     in_layout = layouts.to_layout_attr(in_layout)
 
     with ir.InsertionPoint(self.module.body):
