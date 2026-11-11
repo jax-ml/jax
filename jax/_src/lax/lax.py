@@ -32,7 +32,6 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import array
-from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -5027,11 +5026,7 @@ ad.defjvp2(
 )
 
 def _exp2_lower(ctx, x, accuracy):
-  if (
-      ctx.is_forward_compat()
-      or xla_version < 80
-      or not cloud_tpu_init.is_libtpu_at_least('0.0.52')
-  ):
+  if ctx.is_forward_compat() or xla_version < 80:
     x_aval, = ctx.avals_in
     log2 = mlir.ir_constant(np.array(np.log(2), x_aval.dtype))
     log2 = mlir.broadcast_in_dim(ctx, log2, x_aval, broadcast_dimensions=())
@@ -5054,11 +5049,7 @@ log2_p = standard_unop(_float | _complex, 'log2')
 ad.defjvp(log2_p, lambda g, x, **kwargs: div(g, mul(x, log(_const(x, 2)))))
 
 def _log2_lower(ctx, x, accuracy):
-  if (
-      ctx.is_forward_compat()
-      or xla_version < 80
-      or not cloud_tpu_init.is_libtpu_at_least('0.0.52')
-  ):
+  if ctx.is_forward_compat() or xla_version < 80:
     x_aval, = ctx.avals_in
     log_x = hlo.log(x, result_accuracy=accuracy_attr(accuracy))
     if np.issubdtype(x_aval.dtype, np.complexfloating):
@@ -6054,11 +6045,7 @@ def _muladd_hlo(x, y, z):
 
 
 def _fmuladd_lower(ctx, a, b, c, *, native_dtypes):
-  if (
-      jaxlib_extension_version < 515
-      or ctx.is_forward_compat()
-      or not cloud_tpu_init.is_libtpu_at_least('0.0.52')
-  ):
+  if jaxlib_extension_version < 515 or ctx.is_forward_compat():
     return _nary_lower_hlo(_muladd_hlo, ctx, a, b, c)
   aval_out, = ctx.avals_out
   if aval_out.dtype in native_dtypes:
