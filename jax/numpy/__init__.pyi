@@ -277,14 +277,10 @@ character = _np.character
 def choose(a: ArrayLike, choices: Array | _np.ndarray | Sequence[ArrayLike],
            out: None = ..., mode: str = ...) -> Array: ...
 def clip(
-    x: ArrayLike | None = ...,
+    arr: ArrayLike | None = ...,
     /,
     min: ArrayLike | None = ...,
     max: ArrayLike | None = ...,
-    *,
-    a: ArrayLike | DeprecatedArg | None = ...,
-    a_min: ArrayLike | DeprecatedArg | None = ...,
-    a_max: ArrayLike | DeprecatedArg | None = ...
 ) -> Array: ...
 def column_stack(
     tup: _np.ndarray | Array | Sequence[ArrayLike]
