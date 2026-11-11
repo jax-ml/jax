@@ -329,8 +329,8 @@ class ErfcTest(jtu.JaxTestCase):
         [util.eval_mpmath(mp_d2, v.item(), dtype=dtype) for v in x_np],
         dtype=object if dtype == f64 else np.float64,
     )
-    self.assertLessEqual(np.max(util.ulp_diff(d1, ref_d1, dtype)), 3.0)
-    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), 4.0)
+    self.assertLessEqual(np.max(np.abs(util.ulp_diff(d1, ref_d1, dtype))), 3.0)
+    self.assertLessEqual(np.max(np.abs(util.ulp_diff(d2, ref_d2, dtype))), 4.0)
 
   @config.explicit_x64_dtypes("allow")
   def test_explicit_x64_dtypes(self):
@@ -479,8 +479,10 @@ class ErfcxGradTest(jtu.JaxTestCase):
         [util.eval_mpmath(mp_d3, v.item(), dtype=dtype) for v in x_np],
         dtype=object if dtype == f64 else np.float64,
     )
-    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), 35.0)
-    self.assertLessEqual(np.max(util.ulp_diff(d3, ref_d3, dtype)), 1500.0)
+    self.assertLessEqual(np.max(np.abs(util.ulp_diff(d2, ref_d2, dtype))), 35.0)
+    self.assertLessEqual(
+        np.max(np.abs(util.ulp_diff(d3, ref_d3, dtype))), 1500.0
+    )
 
   @parameterized.named_parameters(
       {"testcase_name": "_float32", "dtype": f32},
@@ -522,9 +524,9 @@ class ErfcxGradTest(jtu.JaxTestCase):
           [util.eval_mpmath(mp_d2, v.item(), dtype=dtype) for v in x],
           dtype=object if dtype == f64 else np.float64,
       )
-    ours = util.ulp_diff(np.asarray(ours_fn(x)), ref, dtype)
-    formula = util.ulp_diff(np.asarray(formula_fn(x)), ref, dtype)
-    plain_ad = util.ulp_diff(np.asarray(plain_ad_fn(x)), ref, dtype)
+    ours = np.abs(util.ulp_diff(np.asarray(ours_fn(x)), ref, dtype))
+    formula = np.abs(util.ulp_diff(np.asarray(formula_fn(x)), ref, dtype))
+    plain_ad = np.abs(util.ulp_diff(np.asarray(plain_ad_fn(x)), ref, dtype))
     for lo, hi in zip(edges[:-1], edges[1:]):
       m = (x >= lo) & (x < hi)
       best = min(np.max(formula[m]), np.max(plain_ad[m]))
@@ -792,8 +794,12 @@ class ErfinvTest(jtu.JaxTestCase):
       d2_bound, d3_bound = 100.0, 200.0
     else:
       d2_bound, d3_bound = 20.0, 35.0
-    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), d2_bound)
-    self.assertLessEqual(np.max(util.ulp_diff(d3, ref_d3, dtype)), d3_bound)
+    self.assertLessEqual(
+        np.max(np.abs(util.ulp_diff(d2, ref_d2, dtype))), d2_bound
+    )
+    self.assertLessEqual(
+        np.max(np.abs(util.ulp_diff(d3, ref_d3, dtype))), d3_bound
+    )
 
 
 def _erfcinv_reference(y: np.ndarray) -> np.ndarray:
@@ -960,8 +966,12 @@ class ErfcInvTest(jtu.JaxTestCase):
       d2_bound, d3_bound = 1000.0, 2000.0
     else:
       d2_bound, d3_bound = 50.0, 100.0
-    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), d2_bound)
-    self.assertLessEqual(np.max(util.ulp_diff(d3, ref_d3, dtype)), d3_bound)
+    self.assertLessEqual(
+        np.max(np.abs(util.ulp_diff(d2, ref_d2, dtype))), d2_bound
+    )
+    self.assertLessEqual(
+        np.max(np.abs(util.ulp_diff(d3, ref_d3, dtype))), d3_bound
+    )
 
 
 def _ndtri_reference(p: np.ndarray) -> np.ndarray:
@@ -1128,8 +1138,12 @@ class NdtriTest(jtu.JaxTestCase):
       d2_bound, d3_bound = 650.0, 2000.0
     else:
       d2_bound, d3_bound = 50.0, 100.0
-    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), d2_bound)
-    self.assertLessEqual(np.max(util.ulp_diff(d3, ref_d3, dtype)), d3_bound)
+    self.assertLessEqual(
+        np.max(np.abs(util.ulp_diff(d2, ref_d2, dtype))), d2_bound
+    )
+    self.assertLessEqual(
+        np.max(np.abs(util.ulp_diff(d3, ref_d3, dtype))), d3_bound
+    )
 
 
 _NDTRI_EXP_TAIL_CUT = -0.05
@@ -1419,8 +1433,10 @@ class NdtriExpTest(jtu.JaxTestCase):
     d3_vals = [util.eval_mpmath(mp_d3, v, dtype=dtype) for v in y_d3.tolist()]
     ref_d2 = np.array(d2_vals, dtype=ref_dtype)
     ref_d3 = np.array(d3_vals, dtype=ref_dtype)
-    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), 50.0)
-    self.assertLessEqual(np.max(util.ulp_diff(d3, ref_d3, dtype)), 150.0)
+    self.assertLessEqual(np.max(np.abs(util.ulp_diff(d2, ref_d2, dtype))), 50.0)
+    self.assertLessEqual(
+        np.max(np.abs(util.ulp_diff(d3, ref_d3, dtype))), 150.0
+    )
 
 
 def _mpmath_ndtr(x):
@@ -1562,8 +1578,8 @@ class NdtrTest(jtu.JaxTestCase):
         [util.eval_mpmath(mp_d2, v.item(), dtype=dtype) for v in x_np],
         dtype=object if dtype == f64 else np.float64,
     )
-    self.assertLessEqual(np.max(util.ulp_diff(d1, ref_d1, dtype)), 3.0)
-    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), 4.0)
+    self.assertLessEqual(np.max(np.abs(util.ulp_diff(d1, ref_d1, dtype))), 3.0)
+    self.assertLessEqual(np.max(np.abs(util.ulp_diff(d2, ref_d2, dtype))), 4.0)
 
 
 @jtu.thread_unsafe_test_class()
@@ -1700,11 +1716,13 @@ class LogNdtrTest(jtu.JaxTestCase):
         [util.eval_mpmath(mp_d3, v.item(), dtype=dtype) for v in np.asarray(x_d3)],
         dtype=object if dtype == f64 else np.float64,
     )
-    self.assertLessEqual(np.max(util.ulp_diff(d1, ref_d1, dtype)), 5.0)
+    self.assertLessEqual(np.max(np.abs(util.ulp_diff(d1, ref_d1, dtype))), 5.0)
     # Near `x = -sqrt(2)`, `x + r(x) ~= 0.45` cancels ~2 bits of `r(x) ~= 1.87`,
     # magnifying `r`'s ~2.4 ULP error by `1 + r / (x + r) ~= 5.1x` (~12.2 ULP).
-    self.assertLessEqual(np.max(util.ulp_diff(d2, ref_d2, dtype)), 15.0)
-    self.assertLessEqual(np.max(util.ulp_diff(d3, ref_d3, dtype)), 500.0)
+    self.assertLessEqual(np.max(np.abs(util.ulp_diff(d2, ref_d2, dtype))), 15.0)
+    self.assertLessEqual(
+        np.max(np.abs(util.ulp_diff(d3, ref_d3, dtype))), 500.0
+    )
 
 
 util.register_benchmark(lax.erf)

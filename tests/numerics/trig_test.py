@@ -508,7 +508,7 @@ class SincTest(jtu.JaxTestCase):
         ],
         dtype=object,
     )
-    ulps = np.abs(util.ulp_diff_mpmath(actual, expected, np.float64))
+    ulps = np.abs(util.ulp_diff(actual, expected, np.float64))
     self.assertLessEqual(np.max(ulps), 3.0)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
@@ -1112,7 +1112,7 @@ class AtanpiTest(jtu.JaxTestCase):
           ],
           dtype=object,
       )
-      ulps = np.abs(util.ulp_diff_mpmath(actual, expected, np_dtype))
+      ulps = np.abs(util.ulp_diff(actual, expected, np_dtype))
       self.assertLessEqual(float(np.max(ulps)), 1.0)
 
   @parameterized.named_parameters(*DTYPE_PARAMS)

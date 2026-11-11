@@ -189,10 +189,11 @@ def _ulp_diff_jax(computed, reference, dtype, ftz: bool = True):
       overflow threshold—either `computed = ±inf` below the threshold or finite
       `computed` (such as `±max_float`) at or above the threshold—is measured
       continuously by placing `±inf` at `±2^(emax + 1) = ±(max_float + 1 ULP)`.
-    - All other `NaN` or infinity mismatches (such as opposite-signed
-      infinities, finite `computed` for an actually infinite `reference`, or
-      infinite `computed` when `|reference| < 2^emax`) return `+inf` or `-inf`
-      according to the sign of `computed`.
+    - `NaN` mismatches (one `NaN` and one non-`NaN`) return `+inf`.
+    - All other infinity mismatches (such as opposite-signed infinities, finite
+      `computed` for an infinite `reference`, or infinite `computed` when
+      `|reference| < 2^emax`) return `+inf` if `computed > reference` and `-inf`
+      if `computed < reference`.
 
   Behavior with respect to subnormals:
     - When `ftz=False` (gradual underflow), subnormal values use the uncollapsed
@@ -236,21 +237,21 @@ def _ulp_diff_jax(computed, reference, dtype, ftz: bool = True):
   top_binade = float(np.ldexp(1.0, emax))
 
   # Check NaN and Inf conditions.
-  nan_comp = jnp.isnan(comp_f64)
-  nan_ref = jnp.isnan(ref_f64)
-  both_nan = nan_comp & nan_ref
+  computed_is_nan = jnp.isnan(comp_f64)
+  ref_is_nan = jnp.isnan(ref_f64)
+  both_nan = computed_is_nan & ref_is_nan
 
-  inf_comp = jnp.isinf(comp_f64)
+  computed_is_inf = jnp.isinf(comp_f64)
   # A reference value that overflows the target precision is treated as Inf.
-  inf_ref = jnp.isinf(ref_f64) | (jnp.abs(ref_f64) >= overflow_thresh)
-  sign_comp = jnp.signbit(comp_f64)
-  sign_ref = jnp.signbit(ref_f64)
-  same_sign = sign_comp == sign_ref
+  ref_is_inf = jnp.isinf(ref_f64) | (jnp.abs(ref_f64) >= overflow_thresh)
+  computed_is_neg = jnp.signbit(comp_f64)
+  ref_is_neg = jnp.signbit(ref_f64)
+  same_sign = computed_is_neg == ref_is_neg
 
   abs_comp = jnp.abs(comp_f64)
   abs_ref = jnp.abs(ref_f64)
 
-  both_inf = inf_comp & inf_ref
+  both_inf = computed_is_inf & ref_is_inf
   both_inf_same = both_inf & same_sign
   # When `ref` is finite in the top binade (`abs_ref >= 2^emax`) and `comp` has
   # the same sign, rounding across `overflow_thresh` (either `comp = ±inf` for
@@ -258,22 +259,15 @@ def _ulp_diff_jax(computed, reference, dtype, ftz: bool = True):
   # is measured continuously by placing `±inf` at `±2^(emax+1) = ±(max_float + 1 ULP)`.
   near_overflow = (
       ~jnp.isinf(ref_f64)
-      & ~nan_ref
-      & ~nan_comp
+      & ~ref_is_nan
+      & ~computed_is_nan
       & same_sign
       & (abs_ref >= top_binade)
   )
-  # Mismatch occurs when NaN/Inf status differs (outside near-overflow boundary
-  # rounding), or infinities have opposite signs.
-  mismatch = (
-      (nan_comp != nan_ref)
-      | ((inf_comp != inf_ref) & ~near_overflow)
-      | (both_inf & ~same_sign)
-  )
 
   comp_eff = jnp.where(
-      inf_comp & near_overflow,
-      jnp.where(sign_comp, -overflow_val, overflow_val),
+      computed_is_inf & near_overflow,
+      jnp.where(computed_is_neg, -overflow_val, overflow_val),
       comp_f64,
   )
 
@@ -311,11 +305,24 @@ def _ulp_diff_jax(computed, reference, dtype, ftz: bool = True):
   # Scale difference by ULP size; handle NaN/Inf identity and mismatches.
   signed_ulp = delta / ulp_size
   signed_ulp = jnp.where(both_nan | both_inf_same, 0.0, signed_ulp)
-  mismatch_inf = jnp.where(~sign_comp, jnp.inf, -jnp.inf)
-  return jnp.where(mismatch, mismatch_inf, signed_ulp)
+  # Return +inf on NaN disagreements, and ±inf matching sign(computed - reference)
+  # on infinity mismatches (treating overflowing references as ±inf).
+  inf_mismatch = ((computed_is_inf != ref_is_inf) & ~near_overflow) | (
+      both_inf & ~same_sign
+  )
+  inf_mismatch_val = jnp.where(
+      computed_is_inf,
+      jnp.where(computed_is_neg, -jnp.inf, jnp.inf),
+      jnp.where(ref_is_neg, jnp.inf, -jnp.inf),
+  )
+  return jnp.where(
+      computed_is_nan != ref_is_nan,
+      jnp.inf,
+      jnp.where(inf_mismatch, inf_mismatch_val, signed_ulp),
+  )
 
 
-def ulp_diff_mpmath(
+def _ulp_diff_mpmath(
     computed: np.ndarray, reference: np.ndarray, dtype, ftz: bool = True
 ) -> np.ndarray:
   """Computes signed real ULP differences `(computed - reference) / ulp(reference)` with mpmath.
@@ -352,42 +359,44 @@ def ulp_diff_mpmath(
         if isinstance(r, mpmath.mpf)
         else (mpmath.nan if np.isnan(r) else mpmath.mpf(float(r)))
     )
-    nan_comp = bool(np.isnan(c))
-    nan_ref = bool(mpmath.isnan(ref))
-    if nan_comp and nan_ref:
+    computed_is_nan = bool(np.isnan(c))
+    ref_is_nan = bool(mpmath.isnan(ref))
+    if computed_is_nan and ref_is_nan:
       return 0.0
 
-    inf_comp = bool(np.isinf(c))
-    abs_ref = abs(ref) if not nan_ref else mpmath.nan
+    computed_is_inf = bool(np.isinf(c))
+    abs_ref = abs(ref) if not ref_is_nan else mpmath.nan
     # A reference value that overflows the target precision is treated as Inf.
-    inf_ref = bool(mpmath.isinf(ref)) or (
-        not nan_ref and abs_ref >= overflow_thresh
+    ref_is_inf = bool(mpmath.isinf(ref)) or (
+        not ref_is_nan and abs_ref >= overflow_thresh
     )
 
-    sign_comp = bool(np.signbit(c))
-    sign_ref = bool(ref < 0) if not nan_ref else False
-    same_sign = sign_comp == sign_ref
+    computed_is_neg = bool(np.signbit(c))
+    ref_is_neg = bool(ref < 0) if not ref_is_nan else False
+    same_sign = computed_is_neg == ref_is_neg
 
-    if inf_comp and inf_ref and same_sign:
+    if computed_is_inf and ref_is_inf and same_sign:
       return 0.0
     near_overflow = (
         not bool(mpmath.isinf(ref))
-        and not nan_ref
-        and not nan_comp
+        and not ref_is_nan
+        and not computed_is_nan
         and same_sign
         and abs_ref >= top_binade
     )
-    # Mismatch occurs when NaN/Inf status differs (outside near-overflow boundary
-    # rounding), or infinities have opposite signs.
-    if (
-        (nan_comp != nan_ref)
-        or ((inf_comp != inf_ref) and not near_overflow)
-        or (inf_comp and inf_ref and not same_sign)
+    if computed_is_nan != ref_is_nan:
+      return math.inf
+    if ((computed_is_inf != ref_is_inf) and not near_overflow) or (
+        computed_is_inf and ref_is_inf and not same_sign
     ):
-      return float("-inf") if sign_comp else float("inf")
+      # Infinity mismatch: ±inf matching sign(computed - reference), treating
+      # overflowing references as ±inf.
+      if computed_is_inf:
+        return -math.inf if computed_is_neg else math.inf
+      return math.inf if ref_is_neg else -math.inf
 
-    if inf_comp and near_overflow:
-      mp_comp = -overflow_val if sign_comp else overflow_val
+    if computed_is_inf and near_overflow:
+      mp_comp = -overflow_val if computed_is_neg else overflow_val
     else:
       mp_comp = mpmath.mpf(c)
     abs_comp = abs(mp_comp)
@@ -487,20 +496,30 @@ def ulp_diff(
     dtype,
     ftz: bool | None = None,
 ) -> np.ndarray:
-  """Computes real float64 ULP distance between computed (in dtype) and reference."""
+  """Computes signed real float64 ULP error `(computed - reference) / ulp(reference)`.
+
+  Positive values indicate `computed > reference`; see `_ulp_diff_jax` for
+  subnormal/FTZ, overflow-boundary, and NaN/Inf mismatch conventions. For
+  `float64` or object-dtype references (such as `mpmath.mpf` arrays), evaluates
+  the error directly in `mpmath` without rounding `reference` to `float64`.
+  """
   if ftz is None:
     ftz = _default_ftz(dtype)
-  if np.dtype(dtype) == np.float64:
-    return np.abs(ulp_diff_mpmath(computed, reference, dtype, ftz=ftz))
+  dt = np.dtype(dtype)
+  ref_arr = np.asarray(reference)
+  if dt == np.float64 or ref_arr.dtype == object:
+    return _ulp_diff_mpmath(computed, ref_arr, dt, ftz=ftz)
   cpu_dev = jax.devices("cpu")[0]
   with jax.enable_x64(True), jax.default_device(cpu_dev):
-    signed_ulp = _ulp_diff_jax(
-        np.asarray(computed, dtype=dtype).astype(np.float64),
-        np.asarray(reference, dtype=np.float64),
-        dtype,
-        ftz,
+    return np.asarray(
+        _ulp_diff_jax(
+            np.asarray(computed, dtype=dt).astype(np.float64),
+            np.asarray(ref_arr, dtype=np.float64),
+            dt,
+            ftz,
+        ),
+        dtype=np.float64,
     )
-    return np.asarray(jnp.abs(signed_ulp), dtype=np.float64)
 
 
 def _flush_subnormals(x: np.ndarray, dtype) -> np.ndarray:
@@ -617,7 +636,7 @@ def eval_ulp_stats(
   comp_arr = np.asarray(computed, dtype=dtype).ravel()
   if np.dtype(dtype) == np.float64:
     ref_arr = np.asarray(reference).ravel()
-    signed_ulps = ulp_diff_mpmath(comp_arr, ref_arr, dtype, ftz=ftz)
+    signed_ulps = _ulp_diff_mpmath(comp_arr, ref_arr, dtype, ftz=ftz)
     ref_f64 = np.array([float(r) for r in ref_arr], dtype=np.float64)
     cpu_dev = jax.devices("cpu")[0]
     with jax.enable_x64(True), jax.default_device(cpu_dev):
@@ -1748,7 +1767,7 @@ def check_precision_at_points(
         ],
         dtype=object if is_f64 else np.float64,
     ).reshape(res.shape)
-  ulps = ulp_diff(res, ref, dtype, ftz=output_ftz)
+  ulps = np.abs(ulp_diff(res, ref, dtype, ftz=output_ftz))
   max_diff = float(np.max(ulps))
   if max_diff > max_ulp or np.isnan(max_diff):
     idx = int(np.nanargmax(ulps) if not np.all(np.isnan(ulps)) else 0)
