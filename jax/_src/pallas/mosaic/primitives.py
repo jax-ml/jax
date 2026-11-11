@@ -130,6 +130,13 @@ def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty, dim):
   def _bitcast(x):
     src_bitwidth = dtypes.itemsize_bits(x.dtype)
     dst_bitwidth = dtypes.itemsize_bits(ty)
+    if jnp.issubdtype(x.dtype, jnp.floating):
+      x = jax.lax.bitcast_convert_type(x, jnp.dtype(f"uint{src_bitwidth}"))
+    dst_int_ty = (
+        jnp.dtype(f"uint{dst_bitwidth}")
+        if jnp.issubdtype(ty, jnp.floating)
+        else ty
+    )
     # With the scaled dim in the minormost position, the bitcast has the same
     # semantics as numpy.ndarray.view.
     x = jnp.moveaxis(x, dim, -1)
@@ -137,14 +144,17 @@ def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty, dim):
       *leading, n = x.shape
       packing = dst_bitwidth // src_bitwidth
       x = x.reshape(*leading, n // packing, packing)
-      y = jax.lax.bitcast_convert_type(x, ty)
+      y = jax.lax.bitcast_convert_type(x, dst_int_ty)
     elif src_bitwidth > dst_bitwidth:
-      y = jax.lax.bitcast_convert_type(x, ty)
+      y = jax.lax.bitcast_convert_type(x, dst_int_ty)
       *leading, n, packing = y.shape
       y = y.reshape(*leading, n * packing)
     else:
-      y = jax.lax.bitcast_convert_type(x, ty)
-    return jnp.moveaxis(y, -1, dim)
+      y = jax.lax.bitcast_convert_type(x, dst_int_ty)
+    y = jnp.moveaxis(y, -1, dim)
+    if y.dtype != ty:
+      y = jax.lax.bitcast_convert_type(y, ty)
+    return y
 
   return mlir.lower_fun(_bitcast, multiple_results=False)(ctx, x)
 
