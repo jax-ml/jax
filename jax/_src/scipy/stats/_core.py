@@ -28,6 +28,17 @@ from jax._src.typing import ArrayLike, Array
 from jax._src.util import canonicalize_axis
 
 
+def log_with_complement(p: Array, q: Array) -> Array:
+  """Compute ``log(p)`` for probabilities ``p`` and ``q = 1 - p``.
+
+  ``log(p)`` is used for ``p < 0.5`` and ``log1p(-q)`` otherwise, so that the
+  result keeps its precision when ``p`` is close to one.
+  """
+  small = p < 0.5
+  return jnp.where(small, lax.log(jnp.where(small, p, 1)),
+                   lax.log1p(lax.neg(jnp.where(small, 0, q))))
+
+
 class ModeResult(NamedTuple):
   mode: Array
   count: Array

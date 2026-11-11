@@ -2422,5 +2422,42 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
            else {np.float32: 1e-3, np.float64: 1e-5})
     self.assertAllClose(actual, expected, check_dtypes=False, rtol=tol)
 
+  @jtu.sample_product(
+    case=[
+      ("gumbel_r", "sf", (), 20.0),
+      ("gumbel_l", "logcdf", (), 3.0),
+      ("gamma", "logcdf", (2.0,), 20.0),
+      ("gamma", "logsf", (2.0,), 1e-4),
+      ("chi2", "logcdf", (3.0,), 60.0),
+      ("chi2", "logsf", (3.0,), 1e-4),
+      ("beta", "logcdf", (2.0, 3.0), 0.999),
+      ("beta", "logsf", (2.0, 3.0), 1e-5),
+    ],
+    dtype=jtu.dtypes.floating,
+  )
+  def testTailsKeepPrecision(self, case, dtype):
+    # Quantities close to 0 (sf, or logcdf and logsf of a probability close to
+    # 1) must not be computed as a difference from 1.
+    name, method, params, x = case
+    args = [np.asarray(v, dtype) for v in (x, *params)]
+    scipy_fun = getattr(getattr(osp_stats, name), method)
+    lax_fun = getattr(getattr(lsp_stats, name), method)
+    expected = scipy_fun(*[a.astype(np.float64) for a in args])
+    rtol = 1e-3 if dtype == np.float32 else 1e-6
+    self.assertAllClose(lax_fun(*args), expected, atol=0, rtol=rtol,
+                        check_dtypes=False)
+
+  @jtu.sample_product(
+    fun=["gamma", "chi2", "beta"],
+    method=["logcdf", "logsf"],
+  )
+  def testLogCdfSfGradAtBoundaries(self, fun, method):
+    params = {"gamma": (2.0,), "chi2": (3.0,), "beta": (2.0, 3.0)}[fun]
+    lax_fun = getattr(getattr(lsp_stats, fun), method)
+    x = jnp.array([1e-30, 0.3, 0.7, 1 - 1e-7], dtype="float32")
+    grad = jax.vmap(jax.grad(lambda t: lax_fun(t, *params)))(x)
+    self.assertTrue(np.all(np.isfinite(np.asarray(grad)[1:3])))
+    self.assertFalse(np.any(np.isnan(np.asarray(grad))))
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

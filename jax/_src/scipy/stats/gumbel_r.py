@@ -223,8 +223,7 @@ def sf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   ok = lax.gt(scale, _lax_const(scale, 0))
   # sf = 1 - exp(-exp(-z))
   neg_z = lax.div(lax.sub(loc, x), scale)
-  t1 = lax.exp(lax.neg(lax.exp(neg_z)))
-  _sf = lax.sub(_lax_const(x, 1), t1)
+  _sf = lax.neg(lax.expm1(lax.neg(lax.exp(neg_z))))
   return jnp.where(ok, _sf, np.nan)
 
 

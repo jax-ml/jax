@@ -18,6 +18,7 @@ from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
+from jax._src.scipy.stats._core import log_with_complement
 from jax._src.scipy.special import gammainc, gammaincc, xlogy
 from jax._src.typing import Array, ArrayLike
 
@@ -184,7 +185,7 @@ def logcdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
     - :func:`jax.scipy.stats.chi2.logpdf`
     - :func:`jax.scipy.stats.chi2.logsf`
   """
-  return lax.log(cdf(x, df, loc, scale))
+  return log_with_complement(cdf(x, df, loc, scale), sf(x, df, loc, scale))
 
 
 def sf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -264,4 +265,4 @@ def logsf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1)
     - :func:`jax.scipy.stats.chi2.logcdf`
     - :func:`jax.scipy.stats.chi2.logpdf`
   """
-  return lax.log(sf(x, df, loc, scale))
+  return log_with_complement(sf(x, df, loc, scale), cdf(x, df, loc, scale))
