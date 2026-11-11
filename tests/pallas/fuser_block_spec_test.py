@@ -2144,6 +2144,40 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     run(ref)
     np.testing.assert_array_equal(ref[3, 4:8], update)
 
+  def test_get_and_swap_with_element_block_spec(self):
+    value = jnp.arange(640 * 1024, dtype=jnp.int32).reshape((640, 1024))
+    update = -jnp.arange(96 * 512, dtype=jnp.int32).reshape((96, 512))
+    val_full = jax.core.ShapedArray((512, 1024), jnp.int32)
+    handler = block_spec_lib.make_scalar_prefetch_handler()
+
+    def outer(refs):
+      ref, y_ref = refs
+      sliced_ref = ref.at[pl.ds(jnp.int32(5), 512), :]
+      bs = pl.BlockSpec((pl.Element(96), 512), lambda i, j: (i, j))
+      get_fn, (), _ = block_spec_lib.pull_block_spec(
+          sliced_ref.get, bs, grid_len=2, scalar_prefetch_handler=handler
+      )()
+      y_ref[...] = get_fn((128, 1), ())
+      swap_fn, _, _ = block_spec_lib.pull_block_spec(
+          sliced_ref.swap, bs, grid_len=2, scalar_prefetch_handler=handler
+      )(val_full)
+      _ = swap_fn((128, 1), (), update)
+
+    value_out, y = pl.run_state(outer)((value, jnp.zeros((96, 512), jnp.int32)))
+    np.testing.assert_array_equal(y, value[133:229, 512:1024])
+    np.testing.assert_array_equal(value_out[133:229, 512:1024], update)
+
+    ref_aval = state.AbstractRef(val_full)
+    padded_bs = pl.BlockSpec((pl.Element(96, (0, 16)), 512), lambda i, j: (i, j))
+    with self.assertRaises(NotImplementedError):
+      block_spec_lib.pull_block_spec(lambda r: r.get(), padded_bs, grid_len=2)(
+          ref_aval
+      )
+    with self.assertRaises(NotImplementedError):
+      block_spec_lib.pull_block_spec(
+          lambda r, v: r.swap(v), padded_bs, grid_len=2
+      )(ref_aval, val_full)
+
   def test_get_key_ref(self):
     """Tests get_p on a key ref (block_shape=None, MemorySpace.KEY).
 
