@@ -13,6 +13,7 @@
 # limitations under the License.
 """pytest configuration"""
 
+import inspect
 import os
 import pytest
 
@@ -160,3 +161,42 @@ def pytest_collection() -> None:
     os.environ.setdefault(
         "ZE_AFFINITY_MASK", str(xdist_worker_number % num_oneapi_devices)
     )
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+  """Records source location and unparameterized test name in JUnit XML."""
+  if not item.config.getoption("xmlpath", default=None):
+    return
+
+  existing_keys = {key for key, _ in item.user_properties}
+  file_path, line_num, _ = item.location
+  if file_path and "file" not in existing_keys:
+    item.user_properties.append(("file", file_path.replace("\\", "/")))
+  if line_num is not None and line_num >= 0 and "line" not in existing_keys:
+    item.user_properties.append(("line", str(line_num + 1)))
+
+  if "base_test_name" not in existing_keys:
+    orig_name = getattr(item, "originalname", None)
+    base_name: str | None = None
+    if orig_name and orig_name != item.name:
+      base_name = orig_name
+    else:
+      obj = getattr(item, "obj", None)
+      if obj is not None and hasattr(obj, "__wrapped__"):
+        func_name = getattr(obj, "__name__", None)
+        candidate = getattr(inspect.unwrap(obj), "__name__", None)
+        if (
+            candidate
+            and candidate != "<lambda>"
+            and item.name.startswith(candidate)
+            and (
+                func_name == item.name
+                or item.name[len(candidate) :].isdigit()
+            )
+        ):
+          base_name = candidate
+      if not base_name:
+        base_name = orig_name
+    if base_name:
+      item.user_properties.append(("base_test_name", base_name))
