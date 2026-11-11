@@ -2887,6 +2887,53 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         atol=tol,
         rtol=tol,
     )
+
+    # Gradients for large finite inputs exceeding sqrt(MAX_FLOAT) and near MAX_FLOAT,
+    # where naive x / y differentiation overflows the denominator's square, and
+    # at tiny normal and subnormal inputs where unselected branches must not
+    # leak NaNs. Pad to a.shape to reuse the compiled VJP from check_grads.
+    min_sub = np.nextafter(dtype(0.0), dtype(1.0))
+    tiny_norm = dtype(1e-30) if dtype == np.float32 else dtype(1e-200)
+    a_grad = np.resize(
+        np.array(
+            [1e30, 2e38, tiny_norm, min_sub, min_sub]
+            if dtype == np.float32
+            else [1e200, 1e308, tiny_norm, min_sub, min_sub],
+            dtype=dtype,
+        ),
+        a.shape,
+    )
+    b_grad = np.resize(
+        np.array(
+            [1e30, 2e38, 1.0, 1.0, 10.0]
+            if dtype == np.float32
+            else [1e200, 1e308, 1.0, 1.0, 10.0],
+            dtype=dtype,
+        ),
+        b.shape,
+    )
+    ga, gb = jax.grad(
+        lambda x, y: lsp_special.betaln(x, y).sum(), argnums=(0, 1)
+    )(a_grad, b_grad)
+    expected_grad = np.full((2,), -math.log(2.0), dtype=dtype)
+    self.assertAllClose(ga[:2], expected_grad, rtol=1e-5, atol=1e-5)
+    self.assertAllClose(gb[:2], expected_grad, rtol=1e-5, atol=1e-5)
+    self.assertFalse(np.any(np.isnan(ga[2:5])))
+    self.assertFalse(np.any(np.isnan(gb[2:5])))
+
+  @jtu.sample_product(
+      dtype=float_dtypes,
+  )
+  def testBetalnSecondOrderGrads(self, dtype):
+    a = np.array(
+        [0.2, 0.2, 0.5, 2.5, 2.5, 12.0, 15.0, 10.0, -2.25, -2.25, -2.25, -2.25],
+        dtype=dtype,
+    )
+    b = np.array(
+        [0.2, 0.3, 2.5, 2.5, 12.0, 15.0, 15.0, 200.0, 1.5, 5.0, -1.5, -2.25],
+        dtype=dtype,
+    )
+    tol = 1e-2 if dtype == np.float32 else 1e-5
     jtu.check_grads(
         lsp_special.betaln,
         (a, b),
@@ -2895,33 +2942,6 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         atol=tol,
         rtol=tol,
     )
-
-    # Gradients for large finite inputs exceeding sqrt(MAX_FLOAT) and near MAX_FLOAT,
-    # where naive x / y differentiation overflows the denominator's square, and
-    # at tiny normal and subnormal inputs where unselected branches must not
-    # leak NaNs.
-    min_sub = np.nextafter(dtype(0.0), dtype(1.0))
-    tiny_norm = dtype(1e-30) if dtype == np.float32 else dtype(1e-200)
-    a_grad = np.array(
-        [1e30, 2e38, tiny_norm, min_sub, min_sub]
-        if dtype == np.float32
-        else [1e200, 1e308, tiny_norm, min_sub, min_sub],
-        dtype=dtype,
-    )
-    b_grad = np.array(
-        [1e30, 2e38, 1.0, 1.0, 10.0]
-        if dtype == np.float32
-        else [1e200, 1e308, 1.0, 1.0, 10.0],
-        dtype=dtype,
-    )
-    ga, gb = jax.grad(
-        lambda x, y: lsp_special.betaln(x, y).sum(), argnums=(0, 1)
-    )(a_grad, b_grad)
-    expected_grad = np.full((2,), -math.log(2.0), dtype=dtype)
-    self.assertAllClose(ga[:2], expected_grad, rtol=1e-5, atol=1e-5)
-    self.assertAllClose(gb[:2], expected_grad, rtol=1e-5, atol=1e-5)
-    self.assertFalse(np.any(np.isnan(ga[2:])))
-    self.assertFalse(np.any(np.isnan(gb[2:])))
 
 
 if __name__ == "__main__":
