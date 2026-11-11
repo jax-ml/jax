@@ -223,30 +223,6 @@ class ErfcTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfc_accuracy(self, dtype):
-    bounds = [
-        ("cpu", {f16: 1.0, f32: 66.0, f64: 350.0}),
-        ("gpu", {f16: 1.0, f32: 66.5, f64: 350.0}),
-        (TPU_EUPV1, {f16: 1.0, f32: 145.0}),
-        ("tpu_v5p", {f16: 1.0, f32: 157.0}),
-        ("tpu_v6e", {f16: 1.0, f32: 124.5}),
-        ("tpu_7x", {f16: 1.0, f32: 125.0}),
-    ]
-    output_ftz = [
-        ("gpu", {bf16: True, f32: True, f64: True}),
-    ]
-    util.check_unary_precision(
-        self,
-        lax.erfc,
-        scipy.special.erfc,
-        _mpmath_erfc,
-        dtype,
-        bounds=bounds,
-        output_ftz=output_ftz,
-        interesting_points=_ERFC_INTERESTING_POINTS,
-    )
-
-  @parameterized.named_parameters(*DTYPE_PARAMS)
-  def test_erfc_accurate_default_accuracy(self, dtype):
     has_exp2 = ifrt_version >= 80 and jtu.is_libtpu_at_least("0.0.52")
     bounds = [
         ("cpu", {f16: 1.0, f32: 7.0, f64: 10.0}),
@@ -256,16 +232,15 @@ class ErfcTest(jtu.JaxTestCase):
         ("tpu_v6e", {f16: 1.0, f32: 9.5 if has_exp2 else 60.0}),
         ("tpu_7x", {f16: 1.0, f32: 9.0 if has_exp2 else 60.0}),
     ]
-    with jtu.global_config_context(jax_accurate_default_erfc=True):
-      util.check_unary_precision(
-          self,
-          lax.erfc,
-          scipy.special.erfc,
-          _mpmath_erfc,
-          dtype,
-          bounds=bounds,
-          interesting_points=_ERFC_INTERESTING_POINTS,
-      )
+    util.check_unary_precision(
+        self,
+        lax.erfc,
+        scipy.special.erfc,
+        _mpmath_erfc,
+        dtype,
+        bounds=bounds,
+        interesting_points=_ERFC_INTERESTING_POINTS,
+    )
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfc_highest_accuracy(self, dtype):
@@ -291,10 +266,7 @@ class ErfcTest(jtu.JaxTestCase):
       self.skipTest("float64 on TPU is ef57 double-double")
     zeros = jnp.array([0.0, -0.0], dtype=dtype)
     ones = np.ones(2, dtype=dtype)
-    with jtu.global_config_context(jax_accurate_default_erfc=False):
-      self.assertArraysEqual(jax.jit(lax.erfc)(zeros), ones)
-    with jtu.global_config_context(jax_accurate_default_erfc=True):
-      self.assertArraysEqual(jax.jit(lax.erfc)(zeros), ones)
+    self.assertArraysEqual(jax.jit(lax.erfc)(zeros), ones)
     self.assertArraysEqual(_erfc_highest(zeros), ones)
 
   @parameterized.named_parameters(
@@ -357,19 +329,18 @@ class ErfcTest(jtu.JaxTestCase):
         jax.vmap(jax.grad(jax.grad(jsp.special.ndtri_exp))),
     ]
     neg_pts = [-1e20, -1000.0, -100.0, -10.0, -2.0, -0.7, -0.1, -1e-4, -1e-25]
-    with jtu.global_config_context(jax_accurate_default_erfc=True):
-      with jax.enable_x64(True):
-        x_ref = jnp.array(pts, dtype=jnp.float64)
-        neg_ref = jnp.array(neg_pts, dtype=jnp.float64)
-        expected = [jax.jit(fn)(x_ref) for fn in fns] + [
-            jax.jit(fn)(neg_ref) for fn in neg_fns
-        ]
-      with jax.enable_x64(False):
-        x = jnp.array(pts, dtype=jnp.float64)
-        neg_x = jnp.array(neg_pts, dtype=jnp.float64)
-        actual = [jax.jit(fn)(x) for fn in fns] + [
-            jax.jit(fn)(neg_x) for fn in neg_fns
-        ]
+    with jax.enable_x64(True):
+      x_ref = jnp.array(pts, dtype=jnp.float64)
+      neg_ref = jnp.array(neg_pts, dtype=jnp.float64)
+      expected = [jax.jit(fn)(x_ref) for fn in fns] + [
+          jax.jit(fn)(neg_ref) for fn in neg_fns
+      ]
+    with jax.enable_x64(False):
+      x = jnp.array(pts, dtype=jnp.float64)
+      neg_x = jnp.array(neg_pts, dtype=jnp.float64)
+      actual = [jax.jit(fn)(x) for fn in fns] + [
+          jax.jit(fn)(neg_x) for fn in neg_fns
+      ]
     for exp_val, act_val in zip(expected, actual):
       self.assertArraysEqual(act_val, exp_val)
 
