@@ -428,6 +428,7 @@ def _tpu_custom_call_lowering(
     out_avals: Any,
     input_output_aliases: tuple[tuple[int, int], ...],
     metadata: Any | None,
+    require_row_major: Sequence[bool] | None = None,
 ) -> ir.OpResultList:
   result_types, _ = mlir.ir_tree_registry.flatten([mlir.aval_to_ir_types(ctx.module_context, aval) for aval in out_avals])
   axis_context = ctx.module_context.axis_context
@@ -493,6 +494,19 @@ def _tpu_custom_call_lowering(
   assert isinstance(has_side_effects, TpuSideEffectType)
   if has_side_effects == TpuSideEffectType.DATAFLOW_SIDE_EFFECTING:
     metadata_dict["xla_allow_dce_side_effecting_op"] = ir.StringAttr.get("true")
+  # Tells the compiler that the kernel uses none of its buffers, so it may
+  # drop their layout constraints. HLO constrains all layouts or none, hence
+  # the check of every buffer. SparseCore tiling flattens buffers in row major
+  # order, and peers may write a communicating kernel's buffers once it runs,
+  # so a relayout copy after it would race. Compilers that do not know the
+  # attribute ignore it.
+  if (
+      require_row_major
+      and not any(require_row_major)
+      and config.tiling is not Tiling.SPARSE_CORE
+      and not config.has_communication
+  ):
+    metadata_dict["xla_tpu_untouched_buffers"] = ir.StringAttr.get("true")
   if metadata_dict:
     call.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(metadata_dict)
   return call.results
@@ -902,6 +916,7 @@ def lower_module_to_custom_call(
     needs_layout_passes: bool | None = None,
     tiling: Tiling | None = None,
     opt_level: OptLevel | None = None,
+    require_row_major: Sequence[bool] | None = None,
 ) -> Sequence[ir.Value]:
   if isinstance(has_side_effects, bool):
     has_side_effects = (
@@ -941,6 +956,7 @@ def lower_module_to_custom_call(
       out_avals=out_type,
       input_output_aliases=input_output_aliases,
       metadata=metadata,
+      require_row_major=require_row_major,
   )
 
 

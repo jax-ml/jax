@@ -295,6 +295,7 @@ def _lower_to_custom_call(
     name: str,
     jax_mesh,
     collective_id_tag: Hashable | None = None,
+    require_row_major: Sequence[bool] | None = None,
 ):
   input_output_aliases = tuple(
       (a[0] + num_dynamic_grid_bounds, a[1]) for a in input_output_aliases
@@ -387,6 +388,7 @@ def _lower_to_custom_call(
       needs_layout_passes=mosaic_params.needs_layout_passes,
       tiling=_resolve_tiling(mosaic_params, kernel_type),
       opt_level=mosaic_params.opt_level,
+      require_row_major=require_row_major,
   )
   _maybe_cast_to_bool = (
       lambda x, aval: x.astype(jax.numpy.bool_)
@@ -609,6 +611,25 @@ def _rewrite_jaxpr_for_lowering(
   return new_jaxpr
 
 
+def _require_row_major(
+    jaxpr: jax_core.Jaxpr, num_buffers: int
+) -> tuple[bool, ...]:
+  """Returns, per operand and output buffer, whether the kernel uses it.
+
+  ``pltpu.touch`` only orders work around a ref, and lowers to nothing, so the
+  Mosaic argument of a buffer used only by it has no uses, and the SparseCore
+  emitter accepts such a buffer in any layout.
+  """
+  used = {
+      v
+      for eqn in jaxpr.eqns
+      if eqn.primitive is not tpu_primitives.touch_p
+      for v in eqn.invars
+      if isinstance(v, jax_core.Var)
+  }
+  return tuple(v in used for v in jaxpr.invars[:num_buffers])
+
+
 def mpmd_map_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
@@ -787,6 +808,19 @@ def mpmd_map_tpu_lowering_rule(
       ]
   )
 
+  # The TensorCore emitter verifies the tiling of every buffer, used or not.
+  require_row_major = None
+  if all(
+      mesh.core_type in (
+          tpu_core.CoreType.SC_SCALAR_SUBCORE,
+          tpu_core.CoreType.SC_VECTOR_SUBCORE,
+      )
+      for mesh in meshes
+  ):
+    num_buffers = len(in_nodes) + len(out_avals)
+    require_row_major = tuple(
+        map(any, zip(*(_require_row_major(j, num_buffers) for j in jaxprs)))
+    )
   return _lower_to_custom_call(
       ctx,
       *in_nodes,
@@ -802,6 +836,7 @@ def mpmd_map_tpu_lowering_rule(
       name=name,
       jax_mesh=jax_mesh,
       collective_id_tag=tag,
+      require_row_major=require_row_major,
   )
 
 
