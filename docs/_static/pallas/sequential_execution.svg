@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200" width="100%" height="100%">
+  <style>
+    .bg { fill: #f8f9fa; stroke: #dadce0; stroke-width: 2; rx: 8; }
+    .box-copy-in { fill: #e8f0fe; stroke: #1a73e8; stroke-width: 2; rx: 4; }
+    .box-compute { fill: #e6f4ea; stroke: #1e8e3e; stroke-width: 2; rx: 4; }
+    .box-copy-out { fill: #fce8e6; stroke: #d93025; stroke-width: 2; rx: 4; }
+    .text-title { font-family: sans-serif; font-size: 16px; font-weight: bold; fill: #202124; text-anchor: middle; }
+    .text-label { font-family: sans-serif; font-size: 12px; fill: #202124; text-anchor: middle; }
+    .axis { stroke: #5f6368; stroke-width: 2; }
+  </style>
+
+  <rect class="bg" x="10" y="10" width="780" height="180" />
+  <text x="400" y="35" class="text-title">Sequential Execution (No Pipelining)</text>
+
+  <!-- Timeline Axis -->
+  <line x1="50" y1="150" x2="750" y2="150" class="axis" />
+
+  <!-- Iteration 0 -->
+  <rect class="box-copy-in" x="50" y="60" width="120" height="40" />
+  <text x="110" y="85" class="text-label">Copy In (Block 0)</text>
+
+  <rect class="box-compute" x="170" y="60" width="80" height="40" />
+  <text x="210" y="85" class="text-label">Compute 0</text>
+
+  <rect class="box-copy-out" x="250" y="60" width="120" height="40" />
+  <text x="310" y="85" class="text-label">Copy Out (Block 0)</text>
+
+  <!-- Iteration 1 -->
+  <rect class="box-copy-in" x="390" y="60" width="120" height="40" />
+  <text x="450" y="85" class="text-label">Copy In (Block 1)</text>
+
+  <rect class="box-compute" x="510" y="60" width="80" height="40" />
+  <text x="550" y="85" class="text-label">Compute 1</text>
+
+  <rect class="box-copy-out" x="590" y="60" width="120" height="40" />
+  <text x="650" y="85" class="text-label">Copy Out (Block 1)</text>
+
+  <!-- Brackets for Iterations -->
+  <path d="M 50 110 L 50 120 L 370 120 L 370 110" fill="none" stroke="#5f6368" stroke-width="1" />
+  <text x="210" y="135" class="text-label" fill="#5f6368">Iteration 0</text>
+
+  <path d="M 390 110 L 390 120 L 710 120 L 710 110" fill="none" stroke="#5f6368" stroke-width="1" />
+  <text x="550" y="135" class="text-label" fill="#5f6368">Iteration 1</text>
+
+</svg>
