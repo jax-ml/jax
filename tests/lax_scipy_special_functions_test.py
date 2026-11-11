@@ -2381,21 +2381,17 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_kn, lsp_kn, args_maker, tol=tol)
     self._CompileAndCheck(lsp_kn, args_maker, tol=tol)
 
-    special_xs = np.array(
-        [0.0, -0.0, np.inf, -np.inf, -1.5, np.nan], dtype=dtype
+    # Pad special inputs to x.shape so the compiled executable for (n, dtype) is
+    # reused instead of triggering additional XLA compilations per order.
+    special_xs = np.resize(
+        np.array([0.0, -0.0, np.inf, -np.inf, -1.5, np.nan], dtype=dtype),
+        x.shape,
     )
-    res = np.asarray(lsp_special.kn(n, special_xs))
+    res = np.asarray(lsp_special.kn(n, special_xs))[:6]
     self.assertArraysEqual(res[:2], np.full(2, np.inf, dtype=dtype))
     self.assertEqual(res[2], 0.0)
     self.assertFalse(np.signbit(res[2]))
     self.assertTrue(np.all(np.isnan(res[3:])))
-
-    # Derivative at x = 0 (and near-zero pole overflow) must not produce NaN:
-    grad_fn = jax.grad(lambda x: lsp_special.kn(n, x))
-    self.assertEqual(np.asarray(grad_fn(dtype(0.0))), dtype(-np.inf))
-    if abs(n) >= 1 and dtype in (np.float32, np.float64):
-      tiny_x = dtype(1e-200 if dtype == np.float64 else 1e-25)
-      self.assertEqual(np.asarray(grad_fn(tiny_x)), dtype(-np.inf))
 
   @jtu.sample_product(
       n=[-2, -1, 0, 1, 2, 3, 15],
@@ -2407,9 +2403,9 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       self.skipTest("complex128 on TPU is ef57 double-double")
     zs = np.array(
         [0.3 + 0.4j, -0.3 + 0.4j, 0.3 - 0.4j, -0.3 - 0.4j, 2.0 + 1.5j,
-         0.0 + 2.001j, 0.0 - 2.001j, 0.0 + 2.5j, 0.0 - 2.5j, 20.0 + 0.0j,
-         -2.5 + 0.0j, 1.2 + 5.0j, -1.2 - 5.0j, 3.0 + 15.0j, 2.0 + 25.0j,
-         2.0 - 25.0j],
+         -2.0 - 1.5j, 0.0 + 2.001j, 0.0 - 2.001j, 0.0 + 2.5j, 0.0 - 2.5j,
+         20.0 + 0.0j, -2.5 + 0.0j, 1.2 + 5.0j, -1.2 - 5.0j, 3.0 + 15.0j,
+         2.0 + 25.0j, 2.0 - 25.0j],
         dtype=dtype,
     )
     args_maker = lambda: [zs]
@@ -2419,7 +2415,8 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_kn, lsp_kn, args_maker, tol=tol)
     self._CompileAndCheck(lsp_kn, args_maker, tol=tol)
 
-    # Check complex special values and overflow/underflow behavior.
+    # Check complex special values and overflow/underflow behavior using the
+    # same shape so the compiled executable for (n, dtype) is reused.
     big_x = 1000.0 if dtype == np.complex128 else 110.0
     huge_x = 1e308 if dtype == np.complex128 else 1e38
     special_zs = np.array(
@@ -2490,10 +2487,13 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     }
     ref_dtype = np.complex128 if is_complex else np.float64
     fn = lambda z: lsp_special.kn(n, z)
+    d1_fn = None
     # By DLMF 10.29.5,
     # d^k/dz^k K_n(z) = (-0.5)^k * sum_{j=0}^k comb(k, j) K_{n - k + 2j}(z).
     for k in (1, 2, 3):
       fn = jax.grad(lambda z, f=fn: jnp.sum(f(z)), holomorphic=is_complex)
+      if k == 1:
+        d1_fn = fn
       dk_ref = lambda z, k=k: (
           ((-0.5) ** k)
           * sum(
@@ -2503,10 +2503,10 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
           )
       ).astype(dtype)
       self._CheckAgainstNumpy(dk_ref, fn, args_maker, tol=tol)
-      if k == 1:
-        self._CompileAndCheck(fn, args_maker, tol=tol)
 
     if is_complex:
+      # Pad overflow_zs to zs.shape so the compiled executables for
+      # (n, n - 1, n + 1) are reused.
       tiny = 1e-200 if dtype == np.complex128 else 1e-25
       overflow_zs = jnp.array(
           [
@@ -2514,6 +2514,10 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
               complex(tiny, 0.0),
               complex(0.0, tiny),
               complex(tiny, tiny),
+              0.0 + 0.0j,
+              0.0 + 0.0j,
+              0.0 + 0.0j,
+              0.0 + 0.0j,
           ],
           dtype=dtype,
       )
@@ -2550,13 +2554,31 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         self.assertFalse(np.isnan(jvp_real[idx].imag))
         self.assertFalse(np.isnan(jvp_imag[idx].real))
         self.assertFalse(np.isnan(jvp_imag[idx].imag))
-      z0 = jnp.array(0.0 + 0.0j, dtype=dtype)
-      grad_re = jax.grad(lambda z: jnp.real(lsp_special.kn(n, z)))(z0)
+      grad_re = jax.grad(
+          lambda z: jnp.sum(jnp.real(lsp_special.kn(n, z)))
+      )(overflow_zs)[0]
       self.assertEqual(grad_re.real, -np.inf)
       self.assertEqual(grad_re.imag, 0.0)
-      grad_im = jax.grad(lambda z: jnp.imag(lsp_special.kn(n, z)))(z0)
+      grad_im = jax.grad(
+          lambda z: jnp.sum(jnp.imag(lsp_special.kn(n, z)))
+      )(overflow_zs)[0]
       self.assertEqual(grad_im.real, 0.0)
       self.assertEqual(grad_im.imag, np.inf)
+    else:
+      # Derivative at x = 0 (and near-zero pole overflow) must not produce NaN
+      # (evaluated at zs.shape to reuse the compiled executables for
+      # (n, n - 1, n + 1)):
+      tiny_x = (
+          1e-200
+          if dtype == np.float64
+          else (1e-25 if dtype == np.float32 else 0.0)
+      )
+      grad_xs = np.resize(np.array([0.0, tiny_x], dtype=dtype), zs.shape)
+      assert d1_fn is not None
+      grad_vals = np.asarray(d1_fn(grad_xs))
+      self.assertEqual(grad_vals[0], dtype(-np.inf))
+      if abs(n) >= 1 and dtype in (np.float32, np.float64):
+        self.assertEqual(grad_vals[1], dtype(-np.inf))
 
   def test_kn_non_integer_n(self):
     """Tests that kn(n, x) rejects non-integer or traced order n."""
