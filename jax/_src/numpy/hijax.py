@@ -28,6 +28,7 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
+from jax._src import mesh as mesh_lib
 from jax._src import numpy as jnp
 from jax._src.hijax import (
     linearize_from_jvp,
@@ -144,14 +145,18 @@ class SearchSorted(HiPrim):
       dimension: int,
       batch_dims: int,
   ):
-    if (
-        not sorted_arr_aval.sharding.mesh.empty
-        and not query_aval.sharding.mesh.empty
-        and sorted_arr_aval.sharding.mesh != query_aval.sharding.mesh
-    ):
+    sa_mesh = sorted_arr_aval.sharding.mesh
+    q_mesh = query_aval.sharding.mesh
+    if not sa_mesh.empty and not q_mesh.empty and sa_mesh != q_mesh:
+      cur_mesh = mesh_lib.get_abstract_mesh()
+      if (
+          sa_mesh.are_all_axes_auto
+          and q_mesh.are_all_axes_auto
+          and (cur_mesh.empty or cur_mesh._are_all_axes_auto_or_manual)
+      ):
+        return sorted_arr_aval.sharding.update(mesh=cur_mesh, spec=P())
       raise ValueError(
-          "sharding meshes must match; got"
-          f" {sorted_arr_aval.sharding.mesh} != {query_aval.sharding.mesh}"
+          f"sharding meshes must match; got {sa_mesh} != {q_mesh}"
       )
     sa_spec = sorted_arr_aval.sharding.spec
     q_spec = query_aval.sharding.spec

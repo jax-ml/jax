@@ -892,7 +892,9 @@ def histogram(a: ArrayLike, bins: str | ArrayLike = 10,
       raise ValueError("weights should have the same shape as a.")
     ats = core.typeof(a).sharding
     wts = core.typeof(weights).sharding
-    if not ats.mesh.empty and not wts.mesh.empty and ats != wts:
+    if (not ats.mesh.empty and not wts.mesh.empty
+        and (ats.mesh._any_axis_explicit or wts.mesh._any_axis_explicit)
+        and ats != wts):
       raise ValueError(
           "type of weights must match type of a. Got"
           f" typeof(a)={core.typeof(a).str_short(True, True)} and"

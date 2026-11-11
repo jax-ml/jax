@@ -13439,6 +13439,44 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     f(positions, mask)  # doesn't crash
 
+  @config.numpy_dtype_promotion('standard')
+  def test_histogram_out_sharding_auto_context_mesh(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'),
+                           axis_types=(AxisType.Auto,) * 2)
+    # Same axes as `mesh`, but without its device kind.
+    ctx_mesh = jax.sharding.AbstractMesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+    a_np = np.arange(16, dtype=np.int32).reshape(4, 4)
+    w_np = np.ones((4, 4), np.bool_)
+    a = jax.device_put(a_np, NamedSharding(mesh, P('x', 'y')))
+    w = jax.device_put(w_np, NamedSharding(mesh, P('x', None)))
+    ref_counts, ref_edges = np.histogram(
+        a_np.flatten(), bins=4, range=(0, 16),
+        weights=w_np.flatten().astype(np.float32))
+
+    for out_sharding in (P(), NamedSharding(mesh, P()), None):
+      for rng in ((0, 16), None):
+        @jax.jit
+        def f(a, w, s=out_sharding, r=rng):
+          with use_abstract_mesh(ctx_mesh):
+            c1, e1 = jnp.histogram(
+                a.flatten(), bins=4, range=r,
+                weights=w.flatten().astype(jnp.float32),
+                out_sharding=s)
+            # Also exercise `weights` allocated on `ctx_mesh` while `a` is on
+            # `mesh`.
+            w_ctx = jnp.ones(a.size, dtype=jnp.float32)
+            c2, e2 = jnp.histogram(
+                a.flatten(), bins=4, range=r, weights=w_ctx, out_sharding=s)
+            return (c1, e1), (c2, e2)
+
+        (c1, e1), (c2, e2) = f(a, w)
+        if rng is not None:
+          self.assertAllClose(c1, ref_counts.astype(np.float32))
+          self.assertAllClose(e1, ref_edges.astype(np.float32))
+          self.assertAllClose(c2, ref_counts.astype(np.float32))
+          self.assertAllClose(e2, ref_edges.astype(np.float32))
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_histogram_out_sharding_no_auto_axes(self, mesh):
     a_np = np.array(
@@ -13484,6 +13522,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, 'type of weights must match type of a'):
       f_wd(a_sh, bins_sh, w_mismatch)
+
+    auto_mesh = jtu.create_mesh(
+        (2, 2), ('a', 'b'), axis_types=(AxisType.Auto,) * 2)
+    w_auto = jax.device_put(w_np, NamedSharding(auto_mesh, P('a', 'b')))
+    with self.assertRaisesRegex(
+        ValueError, 'type of weights must match type of a'):
+      f_wd(a_sh, bins_sh, w_auto)
 
     for bad_spec in (P('x'), P(unreduced={'x'}), P(unreduced={'x', 'y'})):
       with self.assertRaisesRegex(

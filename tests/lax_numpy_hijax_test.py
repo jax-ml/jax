@@ -596,6 +596,37 @@ class SearchsortedTest(jtu.JaxTestCase):
         hijax.searchsorted(sa, q, batch_dims=0, dimension=1)
 
   @jtu.sample_product(method=_METHODS)
+  def test_mixed_auto_meshes(self, method):
+    mesh = jtu.create_mesh(
+        (2, 2), ("x", "y"), axis_types=(jax.sharding.AxisType.Auto,) * 2
+    )
+    ctx_mesh = jax.sharding.AbstractMesh(
+        (2, 2), ("x", "y"), axis_types=(jax.sharding.AxisType.Auto,) * 2
+    )
+    sa_np = np.array([0.0, 4.0, 8.0, 12.0, 16.0], dtype=np.float32)
+    q_np = np.arange(16, dtype=np.float32)
+    q = jax.device_put(q_np, jax.sharding.NamedSharding(mesh, P("x")))
+    ref = np.searchsorted(sa_np, q_np, side="right").astype(np.int32)
+
+    @jax.jit
+    def f_ctx_sa(q):
+      with jax.sharding.use_abstract_mesh(ctx_mesh):
+        sa_ctx = jnp.linspace(0.0, 16.0, 5, dtype=jnp.float32)
+        return hijax.searchsorted(sa_ctx, q, side="right", method=method)
+
+    self.assertArraysEqual(ref, f_ctx_sa(q))
+
+    sa = jax.device_put(sa_np, jax.sharding.NamedSharding(mesh, P(None)))
+
+    @jax.jit
+    def f_ctx_q(sa):
+      with jax.sharding.use_abstract_mesh(ctx_mesh):
+        q_ctx = jnp.arange(16, dtype=jnp.float32)
+        return hijax.searchsorted(sa, q_ctx, side="right", method=method)
+
+    self.assertArraysEqual(ref, f_ctx_q(sa))
+
+  @jtu.sample_product(method=_METHODS)
   @jtu.with_explicit_mesh((2, 2), ("x", "y"))
   def test_shard_map(self, mesh, method):
     sa_np = np.sort(self.rng().uniform(size=(4, 8)).astype(np.float32), axis=1)
