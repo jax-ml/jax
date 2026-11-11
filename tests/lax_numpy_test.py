@@ -5308,17 +5308,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_some_inf_and_nan(self.rng())
     dtype = np.dtype(dtypes.canonicalize_dtype(dtype)).type
     def np_fun(x):
-      if dtype == jnp.bfloat16:
-        isnan_mask = np.isnan(x)
-        isposinf_mask = np.isposinf(x)
-        isneginf_mask = np.isneginf(x)
-        res = x.astype(np.float32)
-        res = np.where(isnan_mask, np.inf, res)
-        res = np.where(isposinf_mask, 1.0, res)
-        res = np.where(isneginf_mask, 2.0, res)
-        return res.astype(dtype)
-      else:
-        return np.nan_to_num(x, nan=np.inf, posinf=1.0, neginf=2.0).astype(dtype)
+      with np.errstate(invalid='ignore'):
+        if dtype == jnp.bfloat16:
+          res = x.astype(np.float32)
+          isnan_mask = np.isnan(res)
+          isposinf_mask = np.isposinf(res)
+          isneginf_mask = np.isneginf(res)
+          res = np.where(isnan_mask, np.inf, res)
+          res = np.where(isposinf_mask, 1.0, res)
+          res = np.where(isneginf_mask, 2.0, res)
+          return res.astype(dtype)
+        else:
+          return np.nan_to_num(
+              x, nan=np.inf, posinf=1.0, neginf=2.0
+          ).astype(dtype)
 
     args_maker = lambda: [rng(shape, dtype)]
     jnp_fun = lambda x: jnp.nan_to_num(x, nan=np.inf, posinf=1.0, neginf=2.0)
