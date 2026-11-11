@@ -2222,20 +2222,26 @@ def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices, use_magma):
 
 def _qr_lowering(a, *, pivoting, full_matrices, use_magma):
   *batch_dims, m, n = a.shape
+  a_s = core.typeof(a).sharding
+  assert a_s.spec.partitions[-2:] == (None, None)
+  vec_s = a_s.update(spec=a_s.spec.update(partitions=a_s.spec.partitions[:-1]))
   if m == 0 or n == 0:
     k = m if full_matrices else core.min_dim(m, n)
     q = lax.broadcast_in_dim(lax._eye(a.dtype, (m, k)),
                              (*batch_dims, m, k),
-                             (len(batch_dims), len(batch_dims) + 1))
-    r = lax.full((*batch_dims, k, n), 0, dtype=a.dtype)
+                             (len(batch_dims), len(batch_dims) + 1),
+                             out_sharding=a_s)
+    r = lax.full((*batch_dims, k, n), 0, dtype=a.dtype, sharding=a_s)
     if pivoting:
-      p = lax.full((*batch_dims, n), 0, dtype=np.dtype(np.int32))
+      p = lax.full(
+          (*batch_dims, n), 0, dtype=np.dtype(np.int32), sharding=vec_s)
       return q, r, p
     return q, r
 
   p = None
   if pivoting:
-    jpvt = lax.full((*batch_dims, n), 0, dtype=np.dtype(np.int32))
+    jpvt = lax.full(
+        (*batch_dims, n), 0, dtype=np.dtype(np.int32), sharding=vec_s)
     r, p, taus = geqp3(a, jpvt, use_magma=use_magma)
     p -= 1  # Convert geqp3's 1-based indices to 0-based indices by subtracting 1.
   else:
@@ -3163,12 +3169,12 @@ def symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
 def _tril(m: Array, k:int = 0) -> Array:
   *_, N, M = m.shape
   mask = lax._tri(bool, (N, M), k)
-  return lax.select(lax.broadcast(mask, m.shape[:-2]), m, lax.full_like(m, 0))
+  return lax.select(lax.broadcast_like(mask, m), m, lax.full_like(m, 0))
 
 def _triu(m: Array, k:int = 0) -> Array:
   *_, N, M = m.shape
   mask = lax._tri(bool, (N, M), k - 1)
-  return lax.select(lax.broadcast(mask, m.shape[:-2]), lax.full_like(m, 0), m)
+  return lax.select(lax.broadcast_like(mask, m), lax.full_like(m, 0), m)
 
 def _construct_diagonal(s: Array) -> Array:
   """Construct a (batched) diagonal matrix"""
