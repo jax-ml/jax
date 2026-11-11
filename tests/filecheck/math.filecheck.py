@@ -206,7 +206,10 @@ def main(_):
   print_ir(np.float32(0))(lax.erf)
 
   # CHECK-LABEL: TEST: erfc float32[]
-  # CHECK: chlo.erfc
+  # CHECK-DAG: hlo.abs
+  # CHECK-DAG: hlo.exponential
+  # CHECK-DAG: hlo.divide
+  # CHECK-DAG: hlo.select
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.erfc)
 

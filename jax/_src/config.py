@@ -2562,7 +2562,7 @@ jax_accurate_logistic = bool_state(
 
 jax_accurate_default_erfc = bool_state(
     name='jax_accurate_default_erfc',
-    default=False,
+    default=True,
     help=(
         'Temporary flag enabling single-branch polynomial default lowering'
         ' for ``lax.erfc`` with subnormal support.'
