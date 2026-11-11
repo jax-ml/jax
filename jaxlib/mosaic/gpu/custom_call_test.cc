@@ -414,7 +414,10 @@ TEST_F(CustomCallTest, IgnoresUnknownAttributes) {
 TEST_F(CustomCallTest, SerializationAndDeduplication) {
   // Use a unique kernel hash to avoid cache hits from previous tests.
   std::string kernel_hash = "serdes_dedup_test_hash_012345678";
-  std::string module_str = TestMGPUHloModule();
+  std::string module_str = TestMGPUHloModule(
+      "uses_xla_collective_metadata = true, xla_replica_ids = \"0\", "
+      "symmetric_memory_parameters = \"0\", skip_device_barrier = true, "
+      "collective_id = 0");
   // Substitute the unique hash into the module.
   module_str = absl::StrReplaceAll(
       module_str, {{"6f8a2b1d5e9c0f4a3b7d8e2c1a6b0f9e", kernel_hash}});

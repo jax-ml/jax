@@ -410,6 +410,7 @@ cc_library(
         "@xla//xla/ffi:type_registry",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:record_api",
+        "@xla//xla/runtime:device_id",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "@xla//xla/service/llvm_ir:llvm_command_line_options",
         "@xla//xla/stream_executor:device_address_allocator",
