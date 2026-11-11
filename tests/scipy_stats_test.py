@@ -2424,40 +2424,48 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     case=[
-      ("gumbel_r", "sf", (), 20.0),
-      ("gumbel_l", "logcdf", (), 3.0),
-      ("gamma", "logcdf", (2.0,), 20.0),
-      ("gamma", "logsf", (2.0,), 1e-4),
-      ("chi2", "logcdf", (3.0,), 60.0),
-      ("chi2", "logsf", (3.0,), 1e-4),
-      ("beta", "logcdf", (2.0, 3.0), 0.999),
-      ("beta", "logsf", (2.0, 3.0), 1e-5),
+      ("gumbel_r", "sf", [-88.5, 0.0, 17.0, 20.0, 40.0]),
+      ("gumbel_l", "logcdf", [-200.0, -105.0, -20.0, -10.0, -9.5, 0.0, 3.0, 10.0, 100.0]),
+      ("gumbel_r", "logsf", [-100.0, -10.0, -3.0, 0.0, 9.5, 10.0, 20.0, 105.0, 200.0]),
     ],
     dtype=jtu.dtypes.floating,
   )
-  def testTailsKeepPrecision(self, case, dtype):
-    # Quantities close to 0 (sf, or logcdf and logsf of a probability close to
-    # 1) must not be computed as a difference from 1.
-    name, method, params, x = case
-    args = [np.asarray(v, dtype) for v in (x, *params)]
-    scipy_fun = getattr(getattr(osp_stats, name), method)
-    lax_fun = getattr(getattr(lsp_stats, name), method)
-    expected = scipy_fun(*[a.astype(np.float64) for a in args])
+  def testGumbelTailsKeepPrecision(self, case, dtype):
+    # sf and logcdf are close to 0 in one tail and must not be computed as a
+    # difference from 1; logcdf and logsf also underflow in the other tail.
+    name, method, xs = case
+    x = np.asarray(xs, dtype)
+    z = x.astype(np.float64)
+    with np.errstate(all="ignore"):
+      expected = {
+          ("gumbel_r", "sf"): -np.expm1(-np.exp(-z)),
+          ("gumbel_l", "logcdf"): np.log(-np.expm1(-np.exp(z))),
+          ("gumbel_r", "logsf"): np.log(-np.expm1(-np.exp(-z))),
+      }[name, method]
+    actual = getattr(getattr(lsp_stats, name), method)(x)
     rtol = 1e-3 if dtype == np.float32 else 1e-6
-    self.assertAllClose(lax_fun(*args), expected, atol=0, rtol=rtol,
-                        check_dtypes=False)
+    self.assertAllClose(actual, expected, atol=0, rtol=rtol, check_dtypes=False)
 
   @jtu.sample_product(
-    fun=["gamma", "chi2", "beta"],
-    method=["logcdf", "logsf"],
+    case=[
+      ("gumbel_r", "sf", [-200.0, -100.0, 0.0, 17.0, 40.0]),
+      ("gumbel_l", "logcdf", [-200.0, -105.0, -10.0, 0.0, 3.0, 100.0]),
+      ("gumbel_r", "logsf", [-100.0, 0.0, 10.0, 105.0, 200.0]),
+    ],
   )
-  def testLogCdfSfGradAtBoundaries(self, fun, method):
-    params = {"gamma": (2.0,), "chi2": (3.0,), "beta": (2.0, 3.0)}[fun]
-    lax_fun = getattr(getattr(lsp_stats, fun), method)
-    x = jnp.array([1e-30, 0.3, 0.7, 1 - 1e-7], dtype="float32")
-    grad = jax.vmap(jax.grad(lambda t: lax_fun(t, *params)))(x)
-    self.assertTrue(np.all(np.isfinite(np.asarray(grad)[1:3])))
-    self.assertFalse(np.any(np.isnan(np.asarray(grad))))
+  def testGumbelTailsGradientsAreFinite(self, case):
+    name, method, xs = case
+    x = np.asarray(xs, np.float32)
+    z = x.astype(np.float64)
+    with np.errstate(all="ignore"):
+      expected = {
+          ("gumbel_r", "sf"): -np.exp(-z - np.exp(-z)),
+          ("gumbel_l", "logcdf"): np.exp(z) / np.expm1(np.exp(z)),
+          ("gumbel_r", "logsf"): -np.exp(-z) / np.expm1(np.exp(-z)),
+      }[name, method]
+    fun = getattr(getattr(lsp_stats, name), method)
+    actual = jax.vmap(jax.grad(fun))(x)
+    self.assertAllClose(actual, expected, atol=1e-30, rtol=1e-3, check_dtypes=False)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -103,12 +103,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `fp` value is infinite; it now returns the knot value or the signed
     infinity, matching NumPy. For complex `fp`, the real and imaginary parts
     are now interpolated separately, as in NumPy.
-  * Improved the precision of {func}`jax.scipy.stats.gumbel_r.sf`,
-    {func}`jax.scipy.stats.gumbel_l.logcdf` and the `logcdf` and `logsf` of
-    {mod}`jax.scipy.stats.gamma`, {mod}`jax.scipy.stats.chi2` and
-    {mod}`jax.scipy.stats.beta` in the tail where the result is close to zero.
-    They previously returned `0` or lost most digits, because they were
-    computed as `1 - x` or `log(x)` with `x` close to one.
+  * Improved the tails of {func}`jax.scipy.stats.gumbel_r.sf`,
+    {func}`jax.scipy.stats.gumbel_l.logcdf` and
+    {func}`jax.scipy.stats.gumbel_r.logsf`. The first returned `0` instead of a
+    small positive value where `1 - exp(-exp(-z))` rounds to zero, and the
+    other two returned `-inf` for very negative arguments. Their gradients no
+    longer contain `nan` in the tails.
 
 ## JAX 0.12.0.1 (October 23, 2026)
 

@@ -19,7 +19,7 @@ from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
-from jax._src.nn.functions import log1mexp
+from jax._src.scipy.stats._core import log1m_exp_neg_exp
 from jax._src.scipy.special import xlogy, xlog1py
 
 
@@ -122,8 +122,7 @@ def logcdf(x: ArrayLike,
   x, loc, scale = promote_args_inexact("gumbel_l.logcdf", x, loc, scale)
   ok = lax.gt(scale, _lax_const(scale, 0))
   z = lax.div(lax.sub(x, loc), scale)
-  # log cdf = log(1 - exp(-exp(z)))
-  log_cdf = log1mexp(lax.exp(z))
+  log_cdf = log1m_exp_neg_exp(z)
   return jnp.where(ok, log_cdf, np.nan)
 
 
