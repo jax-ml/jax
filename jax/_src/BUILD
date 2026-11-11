@@ -273,6 +273,7 @@ pytype_strict_library(
         ":api_util",
         ":basearray",
         ":batching",
+        ":compilation_cache_internal",
         ":compiler",
         ":config",
         ":core",
@@ -1285,6 +1286,7 @@ pytype_strict_library(
         ":tree_util",
         ":typing",
         ":util",
+        "//jax:version",
         "//jax/_src/lib",
     ],
 )
