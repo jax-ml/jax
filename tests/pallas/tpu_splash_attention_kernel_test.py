@@ -903,5 +903,129 @@ class SplashAttentionTest(PallasBaseTest):
     np.testing.assert_array_equal(shrink_out, no_shrink_out)
 
 
+class SplashAttentionRingBufferTest(PallasBaseTest):
+
+  def setUp(self):
+    if jtu.test_device_matches(["cpu"]):
+      self.INTERPRET = True
+      self.enter_context(jax.enable_x64(False))
+    super().setUp()
+
+  @parameterized.parameters(
+      # kv_steps = 8 > 3, ring buffer, bkv == bkv_compute, float32
+      (1024, 1024, 2, 128, 128, jnp.float32, splash.QKVLayout.HEAD_DIM_MINOR),
+      # kv_steps = 4 > 3, ring buffer, bkv != bkv_compute, bfloat16 + SEQ_MINOR
+      (1024, 1024, 2, 256, 128, jnp.bfloat16, splash.QKVLayout.SEQ_MINOR),
+      # kv_steps = 3 == 3, exact ring-buffer threshold (unaliased)
+      (384, 384, 2, 128, 128, jnp.float32, splash.QKVLayout.HEAD_DIM_MINOR),
+      # kv_steps = 2 < 3, unaliased fallback, bkv != bkv_compute
+      (1024, 1024, 2, 512, 256, jnp.float32, splash.QKVLayout.HEAD_DIM_MINOR),
+      # num_heads = 1, q_seq_len = bq = 128: minimum 3-step pipeline revisit distance
+      (128, 1024, 1, 128, 128, jnp.float32, splash.QKVLayout.HEAD_DIM_MINOR),
+  )
+  def test_splash_attention_fused_bwd_ring_buffer(
+      self, q_seq_len, kv_seq_len, num_heads, bkv, bkv_compute, dtype, q_layout
+  ):
+    # Tests use_fused_bwd_kernel=True with causal mask:
+    # - When kv_steps > 3: exercises the 3-slot ring buffer dQ in/out aliasing.
+    #   Upper-triangular blocks test should_run == True followed by should_run == False
+    #   on the same slot, while lower-triangular blocks test multi-step accumulation.
+    # - When kv_steps <= 3: exercises the unaliased fallback path.
+    head_dim = 128
+    k_q, k_k, k_v, k_do = random.split(random.key(42), 4)
+    q = random.uniform(k_q, (num_heads, q_seq_len, head_dim), dtype=dtype)
+    k = random.uniform(k_k, (num_heads, kv_seq_len, head_dim), dtype=dtype)
+    v = random.uniform(k_v, (num_heads, kv_seq_len, head_dim), dtype=dtype)
+    do = (
+        random.uniform(k_do, (num_heads, q_seq_len, head_dim), dtype=dtype)
+        / 10.0
+    )
+
+    mask = mask_lib.MultiHeadMask(
+        [mask_lib.CausalMask((q_seq_len, kv_seq_len))] * num_heads
+    )
+    block_sizes = splash.BlockSizes(
+        block_q=128,
+        block_kv=bkv,
+        block_kv_compute=bkv_compute,
+        block_q_dkv=128,
+        block_kv_dkv=bkv,
+        block_kv_dkv_compute=bkv_compute,
+        use_fused_bwd_kernel=True,
+        q_layout=q_layout,
+    )
+    attn = splash.make_splash_mha_single_device(
+        mask,
+        block_sizes=block_sizes,
+        interpret=self.INTERPRET,
+    )
+    o, attn_vjp = jax.vjp(attn, q, k, v, None)
+    dq, dk, dv, _ = attn_vjp(do)
+
+    # Inspect the backward jaxpr to assert the HBM buffer dimensions and aliasing:
+    def _find_pallas_calls(jaxpr):
+      eqns = []
+      for eqn in jaxpr.eqns:
+        if eqn.primitive.name == "pallas_call":
+          eqns.append(eqn)
+        elif "jaxpr" in eqn.params:
+          eqns.extend(_find_pallas_calls(eqn.params["jaxpr"]))
+      return eqns
+
+    bwd_jaxpr = jax.make_jaxpr(attn_vjp)(do)
+    pallas_call_eqns = _find_pallas_calls(bwd_jaxpr)
+    self.assertNotEmpty(pallas_call_eqns)
+    dkv_eqn = pallas_call_eqns[0]
+    kv_steps = kv_seq_len // bkv
+    expected_slots = min(kv_steps, 3)
+    dq_unreduced_var = dkv_eqn.outvars[0]
+    self.assertEqual(
+        dq_unreduced_var.aval.shape,
+        (expected_slots, num_heads, q_seq_len, head_dim),
+    )
+    aliased_outputs = [
+        out_idx for _, out_idx in dkv_eqn.params["input_output_aliases"]
+    ]
+    if kv_steps > 3:
+      self.assertEqual(aliased_outputs, [0])
+    else:
+      self.assertEmpty(aliased_outputs)
+
+    # Compare against the unfused Pallas backward kernel (tight tolerance) and
+    # the float32 reference implementation (standard TPU MXU tolerance).
+    unfused_block_sizes = dataclasses.replace(
+        block_sizes,
+        block_q_dq=128,
+        block_kv_dq=bkv,
+        use_fused_bwd_kernel=False,
+    )
+    attn_unfused = splash.make_splash_mha_single_device(
+        mask,
+        block_sizes=unfused_block_sizes,
+        interpret=self.INTERPRET,
+    )
+    _, attn_unfused_vjp = jax.vjp(attn_unfused, q, k, v, None)
+    dq_unfused, dk_unfused, dv_unfused, _ = attn_unfused_vjp(do)
+    unfused_tol = 1e-2 if dtype == jnp.bfloat16 else 1e-4
+    self._assert_allclose(dq, dq_unfused, atol=unfused_tol, rtol=unfused_tol)
+    self._assert_allclose(dk, dk_unfused, atol=unfused_tol, rtol=unfused_tol)
+    self._assert_allclose(dv, dv_unfused, atol=unfused_tol, rtol=unfused_tol)
+
+    attn_ref = splash.make_masked_mha_reference(mask, backward_impl="custom")
+    o_ref, attn_ref_vjp = jax.vjp(
+        attn_ref,
+        q.astype(jnp.float32),
+        k.astype(jnp.float32),
+        v.astype(jnp.float32),
+        None,
+    )
+    dq_ref, dk_ref, dv_ref, _ = attn_ref_vjp(do.astype(jnp.float32))
+
+    self._assert_allclose(o, o_ref.astype(dtype), atol=3e-3, rtol=3e-3)
+    self._assert_allclose(dq, dq_ref.astype(dtype), atol=2e-2, rtol=3e-2)
+    self._assert_allclose(dk, dk_ref.astype(dtype), atol=2e-2, rtol=3e-2)
+    self._assert_allclose(dv, dv_ref.astype(dtype), atol=2e-2, rtol=3e-2)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
