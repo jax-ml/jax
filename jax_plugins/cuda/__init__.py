@@ -229,6 +229,13 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
         results.append(record)
     return version
 
+  # Initialize the driver before querying the CUDA libraries: without a driver,
+  # some library versions crash instead of returning an error (e.g. CUPTI 13.2
+  # segfaults in cuptiGetVersion).
+  compute_capabilities = [
+      cuda_versions.cuda_compute_capability(d)
+      for d in range(cuda_versions.cuda_device_count())
+  ]
   _version_check("CUDA", cuda_versions.cuda_runtime_get_version,
                  cuda_versions.cuda_runtime_build_version,
                  scale_for_comparison=10,
@@ -268,10 +275,6 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
                  scale_for_comparison=100,
                  min_supported_version=12100)
 
-  compute_capabilities = [
-      cuda_versions.cuda_compute_capability(d)
-      for d in range(cuda_versions.cuda_device_count())
-  ]
   # cuBLAS has a known issue whereby many kernels free Tensor Memory multiple
   # times between CUDA versions 12.8 and 13.1 inclusive---making them unsafe
   # to use in scenarios involving several concurrent streams of compute kernels.
