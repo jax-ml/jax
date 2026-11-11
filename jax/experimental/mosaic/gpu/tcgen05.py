@@ -36,6 +36,11 @@ from .launch_context import LaunchContext
 
 TMEM_ROWS = 128
 TMEM_MAX_COLS = 512
+# On sm_107f, TMEM has 576 columns per CTA. However, the columns past
+# `TMEM_MAX_COLS` can only be used through an exclusive allocation
+# (`tcgen05.alloc.exclusive`), which must be the only TMEM allocation that
+# exists at any point in time.
+TMEM_EXCLUSIVE_MAX_COLS = 576
 TCGEN05_SMEM_DESCRIPTOR_BIT = 1 << 46
 LAYOUT = fa.TCGEN05_LAYOUT
 TRANSPOSED_LAYOUT = fa.TCGEN05_TRANSPOSED_LAYOUT
@@ -913,26 +918,55 @@ def commit_arrive(
       )
 
 
+def supports_tmem_alloc_expanded_columns() -> bool:
+  arch = utils.get_arch()
+  return arch.major == utils.RUBIN.major and arch.minor >= utils.RUBIN.minor
+
+
 def tmem_alloc_exact_ncols(ncols: int, exact: bool) -> int:
   """Returns the exact number of columns to allocate in TMEM.
 
-  The number of columns is rounded up to the nearest power of 2.
+  If `exact` is false, `ncols` is rounded up to the nearest power of 2 that is
+  at least 32. On sm_107f, `ncols` within (512, 576] is instead rounded up to
+  `TMEM_EXCLUSIVE_MAX_COLS`, which requires an exclusive allocation. Since no
+  other TMEM allocation can coexist with an exclusive one, there is no point in
+  allocating fewer than all the TMEM columns in that case.
+
+  If `exact` is true, `ncols` is returned as is, provided that it is valid.
 
   Args:
     ncols: The number of columns to allocate.
     exact: If true, throws an error if the number of columns is not a power of 2
-      and within [32, 512].
+      within [32, 512] or, additionally on sm_107f, a multiple of 32 within
+      (512, 576].
   """
-  if exact:
-    if ncols.bit_count() != 1 or not 32 <= ncols <= 512:
-      raise ValueError(f"ncols must be a power of 2 and within [32, 512], got: {ncols}")
+  if supports_tmem_alloc_expanded_columns():
+    max_cols = TMEM_EXCLUSIVE_MAX_COLS
   else:
-    ncols = max(32, 1 << (ncols - 1).bit_length())
-    if ncols > 512:
-      raise ValueError(
-          f"After rounding up, got {ncols} columns, exceeding the limit of 512"
-      )
-  return ncols
+    max_cols = TMEM_MAX_COLS
+  alloc_alignment = 32
+  if exact:
+    if ncols.bit_count() == 1 and 32 <= ncols <= TMEM_MAX_COLS:
+      return ncols
+    if TMEM_MAX_COLS < ncols <= max_cols and ncols % alloc_alignment == 0:
+      return ncols  # Exclusive allocation.
+    exclusive_range = (
+        f" or a multiple of {alloc_alignment} within ({TMEM_MAX_COLS}, {max_cols}]"
+        if max_cols > TMEM_MAX_COLS
+        else ""
+    )
+    raise ValueError(
+        f"ncols must be a power of 2 and within [32, {TMEM_MAX_COLS}]"
+        f"{exclusive_range}, got: {ncols}"
+    )
+  if ncols <= TMEM_MAX_COLS:
+    return max(alloc_alignment, 1 << (ncols - 1).bit_length())
+  if ncols <= max_cols:
+    return TMEM_EXCLUSIVE_MAX_COLS  # Exclusive allocation.
+  raise ValueError(
+      f"After rounding up, got {1 << (ncols - 1).bit_length()} columns,"
+      f" exceeding the limit of {max_cols}"
+  )
 
 
 def tmem_alloc(
@@ -951,9 +985,21 @@ def tmem_alloc(
   elif tmem_addr.type != llvm.PointerType.get(address_space=3):
     raise ValueError(f"tmem_addr must be an SMEM pointer or a memref, got: {tmem_addr.type}")
   ncols = tmem_alloc_exact_ncols(ncols, exact)
+  # Exclusive allocations must be the only TMEM allocation of the CTA, and
+  # must be deallocated with `.exclusive` as well.
+  is_exclusive = ncols > TMEM_MAX_COLS
+  if is_exclusive and not supports_tmem_alloc_expanded_columns():
+    raise ValueError(
+        f"Trying to allocate {ncols} TMEM columns. Allocating > {TMEM_MAX_COLS}"
+        " requires exclusive allocation and sm_107f architecture."
+    )
+  exclusive = ".exclusive" if is_exclusive else ""
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
-  ptx = f"tcgen05.alloc.cta_group::{cta_group}.sync.aligned.shared::cta.b32 [$0], $1;"
+  ptx = (
+      f"tcgen05.alloc{exclusive}.cta_group::{cta_group}.sync.aligned"
+      ".shared::cta.b32 [$0], $1;"
+  )
   utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32), convergent=True)
   return ncols
 
@@ -962,9 +1008,10 @@ def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exac
   if tmem_addr.type != ir.IntegerType.get_signless(32):
     raise ValueError(f"tmem_addr must be an i32, got: {tmem_addr.type}")
   ncols = tmem_alloc_exact_ncols(ncols, exact)
+  exclusive = ".exclusive" if ncols > TMEM_MAX_COLS else ""
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
-  ptx = f"tcgen05.dealloc.cta_group::{cta_group}.sync.aligned.b32 $0, $1;"
+  ptx = f"tcgen05.dealloc{exclusive}.cta_group::{cta_group}.sync.aligned.b32 $0, $1;"
   utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32), convergent=True)
 
 

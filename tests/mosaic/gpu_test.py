@@ -217,6 +217,13 @@ def as_e5m3(ref: ir.Value) -> ir.Value:
     return new_ref
 
 
+def is_sm107f() -> bool:
+  """Returns whether the device belongs to the sm_107f family (sm_10x, x >= 7)."""
+  return jtu.is_cuda_compute_capability_at_least(
+      "10.7"
+  ) and not jtu.is_cuda_compute_capability_at_least("11.0")
+
+
 class TestCase(parameterized.TestCase):
 
   def setUp(self, *, artificial_shared_memory_limit=jtu._SMEM_SIZE_BOUND_FOR_TESTS, min_compute_capability="9.0"):
@@ -1676,6 +1683,83 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         kernel, (1, 1, 1), (128, 1, 1), x, x, mgpu.TMEM(x.shape, jax_dtype, packing=packing)
     )(x)
     np.testing.assert_array_equal(x, y)
+
+  @parameterized.named_parameters(
+      ("512_cols", 512, False, False),
+      ("544_cols", 544, True, False),
+      ("576_cols", 576, True, False),
+      ("512_cols_collective", 512, False, True),
+      ("576_cols_collective", 576, True, True),
+  )
+  def test_tmem_alloc_is_exclusive_only_above_512_cols(
+      self, num_cols, exclusive, collective
+  ):
+    if not is_sm107f():
+      self.skipTest("Exclusive TMEM allocations are only supported on sm_107f.")
+
+    def kernel(ctx, input, output, tmem):
+      del ctx
+      tmem.store(
+          fa.FragmentedArray.load_untiled(
+              input, layout=tcgen05.LAYOUT, optimized=False
+          )
+      )
+      tcgen05.commit_tmem()
+      tmem.load(tcgen05.LAYOUT).store_untiled(output, optimized=False)
+
+    dtype = jnp.float32
+    x = self.prng.uniform(-1, 1, (128, num_cols)).astype(dtype)
+    num_ctas = 2 if collective else 1
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as get_ptx:
+      y = mgpu.as_gpu_kernel(
+          kernel,
+          grid=(num_ctas, 1, 1),
+          block=(128, 1, 1),
+          in_shape=x,
+          out_shape=x,
+          smem_scratch_shape=mgpu.TMEM(x.shape, dtype, collective=collective),
+          cluster=(num_ctas, 1, 1),
+      )(x)
+    np.testing.assert_array_equal(x, y)
+    ptx = get_ptx()
+    expected = (".exclusive" if exclusive else "", str(num_ctas))
+    [alloc] = re.findall(
+        r"tcgen05\.alloc(\.exclusive)?\.cta_group::([12])\.", ptx
+    )
+    self.assertEqual(alloc, expected)
+    [dealloc] = re.findall(
+        r"tcgen05\.dealloc(\.exclusive)?\.cta_group::([12])\.", ptx
+    )
+    self.assertEqual(dealloc, expected)
+
+  @parameterized.named_parameters(
+      ("fit_individually", (512, 64)),
+      ("exclusive_and_regular", (544, 32)),
+  )
+  def test_tmem_multiple_allocs_are_limited_to_512_cols(self, num_cols):
+    def kernel(ctx, input, output, scratch):
+      del ctx, input, output, scratch
+
+    x = jnp.zeros((128, 128), dtype=jnp.float32)
+    with self.assertRaisesRegex(ValueError, "limit of 512"):
+      mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x,
+          [mgpu.TMEM((128, n), jnp.float32) for n in num_cols],
+      )(x).block_until_ready()
+
+  def test_tmem_alloc_more_than_512_cols_requires_sm107f(self):
+    if is_sm107f():
+      self.skipTest("sm_107f supports allocating more than 512 columns.")
+
+    def kernel(ctx, input, output, scratch):
+      del ctx, input, output, scratch
+
+    x = jnp.zeros((128, 128), dtype=jnp.float32)
+    with self.assertRaisesRegex(ValueError, "exceeding the limit of 512"):
+      mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x,
+          mgpu.TMEM((128, 576), jnp.float32),
+      )(x).block_until_ready()
 
   @parameterized.parameters([
       (jnp.float32, 1, tcgen05.LAYOUT),
