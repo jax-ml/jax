@@ -55,7 +55,10 @@ package_group(
 
 pytype_strict_library(
     name = "jaxlib",
-    data = [":ffi_headers"],
+    data = [
+        ":ffi_headers",
+        ":pjrt_headers",
+    ],
     deps = [
         ":_ifrt_proxy",
         ":_jax",
@@ -144,6 +147,13 @@ symlink_files(
     name = "ffi_headers",
     srcs = ["@xla//xla/ffi/api:all_headers"],
     dst = "include/xla/ffi/api",
+    flatten = True,
+)
+
+symlink_files(
+    name = "pjrt_headers",
+    srcs = ["@xla//xla/pjrt/c:pjrt_c_api.h"],
+    dst = "include/xla/pjrt/c",
     flatten = True,
 )
 
