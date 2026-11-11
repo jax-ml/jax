@@ -35,6 +35,20 @@ but provide distinct, hardware-specific APIs.
 
       Custom kernels for TensorCore and SparseCore on TPUs.
 
+   .. grid-item-card:: TPU Tutorial
+      :link: pallas-tpu-tutorial
+      :link-type: ref
+
+      A progressive multi-chapter walkthrough of TPU hardware, ``Ref``\s,
+      ``emit_pipeline``, matmul, dynamic SMEM indexing, async DMA, and SparseCore.
+
+   .. grid-item-card:: Core Concepts
+      :link: pallas_refs
+      :link-type: ref
+
+      Shared mental models across GPU and TPU: ``Ref``\s, grids &
+      ``BlockSpec``\s, and software pipelining.
+
 .. toctree::
    :caption: TPU backend guide
    :hidden:
