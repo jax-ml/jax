@@ -660,8 +660,63 @@ def _get_active_core_count(module: ir.Module) -> int | None:
   return core_parallel_dim_size
 
 
-def _lower_to_custom_call_config(
+@dataclasses.dataclass(frozen=True)
+class SerializedMosaicModule:
+  """Everything a TPU custom call needs from a lowered Mosaic module.
+
+  Producing this from an ``ir.Module`` is expensive for large kernels, so
+  callers that see structurally identical kernels can reuse it.
+  """
+
+  asm: bytes
+  ir_version: int | None
+  device_type: str | None
+  has_communication: bool
+  has_custom_barrier: bool
+  active_core_count: int | None
+  debug_locations: bytes | None
+
+  def __repr__(self):
+    return "SerializedMosaicModule(<omitted>)"
+
+
+def should_unzip_debug_locations(
+    ctx: mlir.LoweringRuleContext | None,
+) -> bool:
+  return config.jax_mosaic_unzip_debug_locations.value and (
+      ctx is None or not ctx.is_forward_compat()
+  )
+
+
+def serialize_mosaic_module(
     module: ir.Module,
+    *,
+    ir_version: int | None,
+    unzip_debug_locations: bool,
+) -> SerializedMosaicModule:
+  device_type = _get_device_type(module)
+  (
+      asm,
+      (has_communication, has_custom_barrier),
+      debug_locations,
+  ) = _lower_mosaic_module_to_asm(
+      module,
+      ir_version=ir_version,
+      unzip_debug_locations=unzip_debug_locations,
+  )
+  return SerializedMosaicModule(
+      asm=asm,
+      ir_version=ir_version,
+      device_type=device_type,
+      has_communication=has_communication,
+      has_custom_barrier=has_custom_barrier,
+      active_core_count=_get_active_core_count(module),
+      debug_locations=debug_locations,
+  )
+
+
+def _lower_to_custom_call_config(
+    module: ir.Module | SerializedMosaicModule,
     *,
     vmem_limit_bytes: int | None,
     cost_estimate: CostEstimate | None,
@@ -684,29 +739,24 @@ def _lower_to_custom_call_config(
     opt_level: OptLevel | None = None,
     ctx: mlir.LoweringRuleContext | None = None,
 ) -> CustomCallBackendConfig:
-  device_type = _get_device_type(module)
+  if isinstance(module, SerializedMosaicModule):
+    if module.ir_version != ir_version:
+      raise ValueError(
+          f"Mosaic module was serialized for IR version {module.ir_version},"
+          f" but IR version {ir_version} is required."
+      )
+    serialized = module
+  else:
+    serialized = serialize_mosaic_module(
+        module,
+        ir_version=ir_version,
+        unzip_debug_locations=should_unzip_debug_locations(ctx),
+    )
   needs_hlo_passes = config.jax_mosaic_allow_hlo.value
   # TC kernels always require layout passes.
-  needs_layout_passes = needs_layout_passes or not device_type
-  unzip_debug_locations = (
-      config.jax_mosaic_unzip_debug_locations.value
-      and (ctx is None or not ctx.is_forward_compat())
-  )
-  (
-      lowered_module_asm,
-      (
-          has_communication,
-          has_custom_barrier,
-      ),
-      debug_locations,
-  ) = _lower_mosaic_module_to_asm(
-      module,
-      ir_version=ir_version,
-      unzip_debug_locations=unzip_debug_locations,
-  )
-  active_core_count = _get_active_core_count(module)
+  needs_layout_passes = needs_layout_passes or not serialized.device_type
   return _lowered_to_custom_call_config(
-      lowered_module_asm,
+      serialized.asm,
       lowered_module_asm_version=ir_version,
       vmem_limit_bytes=vmem_limit_bytes,
       cost_estimate=cost_estimate,
@@ -715,16 +765,16 @@ def _lower_to_custom_call_config(
       internal_scratch_in_bytes=internal_scratch_in_bytes,
       collective_id=collective_id,
       collective_id_tag=collective_id_tag,
-      device_type=device_type,
+      device_type=serialized.device_type,
       serialization_format=serialization_format,
-      has_custom_barrier=has_custom_barrier,
-      has_communication=has_communication,
+      has_custom_barrier=serialized.has_custom_barrier,
+      has_communication=serialized.has_communication,
       needs_hlo_passes=needs_hlo_passes,
       needs_layout_passes=needs_layout_passes,
       output_memory_spaces=output_memory_spaces,
       disable_bounds_checks=disable_bounds_checks,
       disable_semaphore_checks=disable_semaphore_checks,
-      active_core_count=active_core_count,
+      active_core_count=serialized.active_core_count,
       input_memory_spaces=input_memory_spaces,
       skip_device_barrier=skip_device_barrier,
       allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
@@ -732,7 +782,7 @@ def _lower_to_custom_call_config(
       tiling=tiling,
       opt_level=opt_level,
       ctx=ctx,
-      debug_locations=debug_locations,
+      debug_locations=serialized.debug_locations,
   )
 
 
@@ -878,7 +928,7 @@ def _lowered_to_custom_call_config(
 def lower_module_to_custom_call(
     ctx: mlir.LoweringRuleContext,
     *in_nodes: ir.Value,
-    module: ir.Module,
+    module: ir.Module | SerializedMosaicModule,
     out_type: Any,
     kernel_name: str,
     cost_estimate: CostEstimate | None,

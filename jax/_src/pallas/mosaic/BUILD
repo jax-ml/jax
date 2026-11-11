@@ -91,6 +91,7 @@ pytype_library(
         "//jax/_src:config",
         "//jax/_src:core",
         "//jax/_src:dtypes",
+        "//jax/_src:effects",
         "//jax/_src:flattree",
         "//jax/_src:frozen_dict",
         "//jax/_src:lax",
