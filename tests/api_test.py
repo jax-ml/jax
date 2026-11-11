@@ -5590,6 +5590,35 @@ class APITest(jtu.JaxTestCase):
     self.assertTrue(any("at x, now f32[7] and before f32[3]" in msg
                         for msg in cm.output))
 
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_unknown_arg_names(self):
+    from jax._src import flattree as ft
+
+    def f(x):
+      return jnp.sin(x)
+
+    x1 = jnp.ones(3, 'float32')
+    x2 = jnp.ones(7, 'float32')
+    dbg1 = api_util.debug_info("test", f, (x1,), {}).with_unknown_names()
+    dbg2 = api_util.debug_info("test", f, (x2,), {}).with_unknown_names()
+    pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x1)), dbg1)
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x2)), dbg2)
+    self.assertTrue(any("at flat_arg[0], now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
+    dbg_empty = core.DebugInfo("test", "f", ("x", ""), None)
+    diff = pe.diff_types(
+        dbg_empty,
+        [core.typeof(x2), core.typeof(x2)],
+        [core.typeof(x1), core.typeof(x1)],
+    )
+    self.assertIsNotNone(diff)
+    _, _, explanation = diff
+    self.assertIn("at x, now f32[7] and before f32[3]", explanation)
+    self.assertIn("at flat_arg[1], now f32[7] and before f32[3]", explanation)
+
   @unittest.skip('TODO(mattjj): re-enable after updating cache miss explainer')
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_shape_explain_closest(self):
