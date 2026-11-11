@@ -2529,7 +2529,7 @@ distributed_verify_secure_credentials = bool_state(
 
 jax_accurate_erf_inv = bool_state(
     name='jax_accurate_erf_inv',
-    default=False,
+    default=True,
     help=(
         'Temporary flag enabling more accurate erf_inv lowering near'
         ' ``|x| = 1``.'

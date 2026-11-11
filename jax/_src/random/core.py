@@ -1270,7 +1270,7 @@ def multivariate_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
 
     >>> jax.random.multivariate_normal(key, mean, cov, shape=(4,))
     Array([[3.2947626 , 5.6278143 ],
-           [0.38680488, 1.5971162 ],
+           [0.386805  , 1.5971162 ],
            [1.2490301 , 0.93395376],
            [0.29954183, 2.2552586 ]], dtype=float32)
 
