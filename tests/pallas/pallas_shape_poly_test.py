@@ -130,6 +130,45 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       res_exp_2 = exp.call(x2)
       self.assertAllClose(res_exp_2, x2)
 
+  def test_multi_platform_export_with_platform_dependent_kernel(self):
+    # A TPU-only Pallas kernel in the `tpu` branch of a `platform_dependent`
+    # must only be lowered for TPU, so that the function can be exported for
+    # both CPU and TPU, with the `default` branch used on CPU.
+    block_shape = (8, 128)
+
+    def copy_kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    def tpu_branch(x):
+      return pl.pallas_call(
+          copy_kernel,
+          out_shape=jax.ShapeDtypeStruct.like(x),
+          in_specs=[pl.BlockSpec(block_shape, lambda i: (i, 0))],
+          out_specs=pl.BlockSpec(block_shape, lambda i: (i, 0)),
+          grid=(pl.cdiv(x.shape[0], block_shape[0]),),
+      )(x)
+
+    def f(x):
+      return jax.lax.platform_dependent(
+          x, tpu=tpu_branch, default=lambda x: x + 1
+      )
+
+    (w,) = export.symbolic_shape("w")
+    exp = export.export(jax.jit(f), platforms=["cpu", "tpu"])(
+        jax.ShapeDtypeStruct((w, block_shape[1]), jnp.int32)
+    )
+    self.assertIn("tpu_custom_call", exp.mlir_module())
+    cpu_exp = export.export(jax.jit(f), platforms=["cpu"])(
+        jax.ShapeDtypeStruct((w, block_shape[1]), jnp.int32)
+    )
+    self.assertNotIn("tpu_custom_call", cpu_exp.mlir_module())
+
+    if jtu.test_device_matches(["cpu", "tpu"]):
+      x = jnp.arange(4 * math.prod(block_shape), dtype=np.int32).reshape(
+          (4 * block_shape[0], block_shape[1])
+      )
+      self.assertAllClose(exp.call(x), x + 1)
+
   def test_block_sizes_must_be_static_no_grid(self):
     def f(x, *, eager=False):  # x: f32[w, h]
       def copy_one(x_ref, o_ref):
