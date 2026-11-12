@@ -2197,6 +2197,53 @@ class LayoutInferenceTest(parameterized.TestCase):
       a_layout = tcgen05._infer_tmem_layout((m, k), collective=False, packing=2)
       self.checkInTmemLayouts(mma, [acc_layout, a_layout, tcgen05.scales_layout(), tcgen05.scales_layout()])
 
+  def _build_tcgen05_mma_with_128_lane_a_scales(self):
+    m = n = k = 128
+    smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
+    with ir.InsertionPoint(self.module.body):
+      f16 = ir.F16Type.get()
+      f32 = ir.F32Type.get()
+      f8e8 = ir.Float8E8M0FNUType.get()
+      acc_ty = ir.MemRefType.get((m, n), f32, memory_space=tmem)
+      a_ty = ir.MemRefType.get((m, k), f16, memory_space=smem)
+      b_ty = ir.MemRefType.get((k, n), f16, memory_space=smem)
+      scale_a_ty = ir.MemRefType.get((m, 4), f8e8, memory_space=tmem)
+      scale_b_ty = ir.MemRefType.get((n, 4), f8e8, memory_space=tmem)
+      scale_a_reg_ty = ir.VectorType.get((m, 4), f8e8)
+      acc, a, b, scale_a, scale_b, scale_a_reg = undefs(
+          acc_ty, a_ty, b_ty, scale_a_ty, scale_b_ty, scale_a_reg_ty
+      )
+      scale_a = mgpu.dialect.tmem_layout_cast(
+          scale_a, layouts.to_layout_attr(tcgen05.scales_128_lane_layout())
+      )
+      store = mgpu.dialect.async_store_tmem(scale_a_reg, scale_a)
+      accumulate = mgpu.utils.c(1, ir.IntegerType.get_signless(1))
+      mma = mgpu.dialect.TcGen05MMAOp(
+          acc, a, b, accumulate, a_scale=scale_a, b_scale=scale_b
+      )
+    return store, mma
+
+  def test_infer_tmem_layout_for_tcgen05_mma_with_128_lane_a_scales(self):
+    store, mma = self._build_tcgen05_mma_with_128_lane_a_scales()
+
+    mgpu.infer_layout(self.module, arch=(10, 7))
+
+    a_scale_layout = tcgen05.scales_128_lane_layout()
+    self.checkInLayouts(store, [a_scale_layout.as_tiled_layout()])
+    self.checkInTmemLayouts(store, [a_scale_layout])
+    acc_layout = tcgen05._infer_tmem_layout((128, 128), collective=False, packing=1)
+    self.checkInTmemLayouts(
+        mma, [acc_layout, a_scale_layout, tcgen05.scales_layout()]
+    )
+
+  def test_infer_layout_rejects_128_lane_a_scales_before_sm107f(self):
+    self._build_tcgen05_mma_with_128_lane_a_scales()
+
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      mgpu.infer_layout(self.module, arch=(10, 0))
+
   @parameterized.product(
       m=(64, 128),
       scale_type=(
