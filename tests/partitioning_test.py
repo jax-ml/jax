@@ -1529,6 +1529,136 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
             jax.jit(lambda a, c=c: prng._mulhi_u32_const(a, c))(a),
             np.uint32((a.astype(np.uint64) * np.uint64(c)) >> np.uint64(32)))
 
+  @parameterized.parameters(
+      (lambda k, p: jax.random.uniform(
+          k, (4, 4), minval=p, maxval=2., out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.randint(
+          k, (4, 4), 0, 100, out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.normal(
+          k, (4, 4), mode='low', out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.normal(
+          k, (4, 4), mode='high', out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.normal(
+          k, (4, 4), mode='highest', out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.normal(
+          k, (4, 4), dtype=jnp.complex64, out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.truncated_normal(
+          k, -1., p, (4, 4), out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.truncated_normal(
+          k, -1., p, (4, 4), mode='high', out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.bernoulli(
+          k, p, (4, 4), mode='low', out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.bernoulli(
+          k, p, (4, 4), mode='high', out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.cauchy(k, (4, 4), out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.exponential(
+          k, (4, 4), out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.gumbel(
+          k, (4, 4), dtype=jnp.float32, mode='highest',
+          out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.gumbel(
+          k, (4, 4), mode='high', out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.gumbel(
+          k, (4, 4), mode='low', out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.laplace(k, (4, 4), out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.logistic(k, (4, 4), out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.pareto(k, p, (4, 4), out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.rayleigh(
+          k, p, (4, 4), out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.wald(k, p, (4, 4), out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.triangular(
+          k, 0., p, 1., (4, 4), out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.lognormal(
+          k, p, (4, 4), out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.rademacher(
+          k, (4, 4), out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.maxwell(k, (4, 4), out_sharding=P('x', 'y')),),
+      (lambda k, p: jax.random.geometric(
+          k, p, (4, 4), out_sharding=P('x', 'y')),),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_random_elementary_samplers_out_sharding(self, sampler, mesh):
+    key = jax.random.key(17)
+    p_sh = jax.device_put(
+        jnp.linspace(0.1, 0.9, 16).reshape(4, 4), P('x', None))
+
+    @jax.jit
+    def f(k, p):
+      return sampler(k, p)
+
+    with config.jax_partitioning(False):
+      expected = f(key, p_sh)
+
+    self.assertIn('sdy.manual_computation', f.lower(key, p_sh).as_text())
+    out = f(key, p_sh)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+    if jnp.issubdtype(out.dtype, jnp.inexact):
+      self.assertAllClose(out, expected, atol=1e-6, rtol=1e-6)
+    else:
+      self.assertArraysEqual(out, expected)
+
+  @config.numpy_dtype_promotion('standard')
+  def test_random_elementary_size_one_and_auto_context_mesh(self):
+    key = jax.random.key(31)
+    mesh_1slice = jtu.create_mesh(
+        (1, 2, 2), ('dcn', 'data', 'model'),
+        axis_types=(AxisType.Explicit,) * 3)
+    for s2 in (False, True):
+      with (config.jax_partitioning(s2),
+            jax.remove_size_one_mesh_axis_from_type(True),
+            jax.set_mesh(mesh_1slice)):
+        p_sh = jax.device_put(
+            jnp.linspace(0.5, 2.5, 16, dtype=jnp.float32).reshape(4, 4),
+            P(('dcn', 'data'), None))
+        spec_1s = P(('dcn', 'data'), 'model')
+        exp_1s = NamedSharding(mesh_1slice, P('data', 'model'))
+        self.assertEqual(
+            jax.jit(lambda k, p: jax.random.uniform(
+                k, (4, 4), minval=p, maxval=3.0, out_sharding=spec_1s)
+            )(key, p_sh).sharding, exp_1s)
+
+    auto_mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+    ctx_mesh = jax.sharding.AbstractMesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+    p_auto = jax.device_put(
+        jnp.linspace(0.5, 2.5, 16, dtype=jnp.float32).reshape(4, 4),
+        NamedSharding(auto_mesh, P('x', None)))
+    for out_s in (P(), NamedSharding(auto_mesh, P()), None):
+      @jax.jit
+      def f_auto(k, p, s=out_s):
+        with jax.sharding.use_abstract_mesh(ctx_mesh):
+          return (
+              jax.random.uniform(k, (4, 4), minval=p, maxval=3.0, out_sharding=s),
+              jax.random.truncated_normal(k, -1.0, p, (4, 4), out_sharding=s),
+          )
+      f_auto(key, p_auto)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_random_elementary_samplers_unsharded_1d_param(self, mesh):
+    key = jax.random.key(29)
+    p_1d = jnp.linspace(0.1, 0.9, 4)
+
+    @jax.jit
+    def f(k, p):
+      return (
+          jax.random.rayleigh(k, p, (4, 4), out_sharding=P('x', 'y')),
+          jax.random.wald(k, p, (4, 4), out_sharding=P('x', 'y')),
+          jax.random.triangular(k, 0., p, 1., (4, 4), out_sharding=P('x', 'y')),
+          jax.random.geometric(k, p, (4, 4), out_sharding=P('x', 'y')),
+      )
+
+    with config.jax_partitioning(False):
+      expected = f(key, p_1d)
+
+    outs = f(key, p_1d)
+    for out, exp in zip(outs, expected):
+      self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+      if jnp.issubdtype(out.dtype, jnp.inexact):
+        self.assertAllClose(out, exp, atol=1e-6, rtol=1e-6)
+      else:
+        self.assertArraysEqual(out, exp)
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_edtype_casts(self, mesh):
     dt = dtypes.primal_tangent_dtype(jnp.int8, jnp.float32)

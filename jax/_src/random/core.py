@@ -27,6 +27,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import mesh as mesh_lib
 from jax._src import numpy as jnp
 from jax._src.random import prng
 from jax._src.random import threefry2x32
@@ -44,7 +45,7 @@ from jax._src.lax import special as lax_special
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy.util import _arraylike, check_arraylike, promote_dtypes_inexact
-from jax._src.pjit import auto_axes
+from jax._src.pjit import auto_axes, reshard
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import canonicalize_axis
@@ -421,6 +422,129 @@ def _check_shape(name: str, shape: Shape, *param_shapes) -> None:
       raise ValueError(msg.format(name, shape_, shape))
 
 
+def _prepend_none_sharding(
+    out_sharding: NamedSharding | None,
+) -> NamedSharding | None:
+  if out_sharding is None:
+    return None
+  spec = out_sharding.spec
+  return out_sharding.update(
+      spec=spec.update(partitions=(None, *spec.partitions)))
+
+
+def _as_axis_tuple(spec_elem) -> tuple[typing.Any, ...]:
+  if spec_elem is None:
+    return ()
+  return spec_elem if isinstance(spec_elem, tuple) else (spec_elem,)
+
+
+def _is_sub_spec(ps, os) -> bool:
+  ps_t, os_t = _as_axis_tuple(ps), _as_axis_tuple(os)
+  return ps_t == os_t[:len(ps_t)]
+
+
+def _align_params(shape: Shape, out_sharding: NamedSharding | None, *params):
+  if out_sharding is None:
+    return params
+  out_s = core.get_sharding(out_sharding, shape)
+  out_parts = out_s.spec.partitions
+  aligned = []
+  for p in params:
+    aval = core.typeof(p)
+    s = aval.sharding
+    if s.mesh.empty or not aval.ndim or aval.ndim > len(shape):
+      aligned.append(p)
+      continue
+    out_tail = out_parts[len(shape) - aval.ndim:]
+    cur_parts = s.spec.partitions + (None,) * (
+        aval.ndim - len(s.spec.partitions))
+    new_parts = tuple(
+        os if (ps is not None and ps != os and not core.definitely_equal(d, 1))
+        else ps
+        for d, ps, os in zip(aval.shape, cur_parts, out_tail)
+    )
+    if new_parts != cur_parts:
+      p = reshard(p, out_s.update(spec=P(*new_parts)))
+    aligned.append(p)
+  return tuple(aligned)
+
+
+def _check_param_sharding(
+    name: str, shape: Shape, out_sharding: NamedSharding | None, *params
+) -> None:
+  if out_sharding is None:
+    return
+  out_s = core.get_sharding(out_sharding, shape)
+  out_parts = out_s.spec.partitions
+  for p in params:
+    aval = core.typeof(p)
+    s = aval.sharding
+    if s.mesh.empty or aval.ndim > len(shape):
+      continue
+    if (s.mesh != out_s.mesh and
+        (s.mesh._any_axis_explicit or out_s.mesh._any_axis_explicit)):
+      raise core.ShardingTypeError(
+          f"{name} parameter mesh {s.mesh} must match out_sharding mesh"
+          f" {out_s.mesh}.")
+    out_tail = out_parts[len(shape) - aval.ndim:]
+    if any(not _is_sub_spec(ps, os)
+           for ps, os in zip(s.spec.partitions, out_tail)):
+      raise core.ShardingTypeError(
+          f"{name} parameter sharding {s.spec} is incompatible with"
+          f" out_sharding {out_s.spec}.")
+
+
+def _sample_sharding(
+    name: str, shape: Shape, out_sharding: NamedSharding | None, *params
+) -> NamedSharding | None:
+  if out_sharding is not None:
+    _check_param_sharding(name, shape, out_sharding, *params)
+    return out_sharding
+  if core.trace_state_clean() and mesh_lib.get_concrete_mesh().empty:
+    return None
+  avals = []
+  for p in params:
+    aval = p if isinstance(p, core.ShapedArray) else core.typeof(p)
+    s = aval.sharding
+    if not s.mesh._any_axis_explicit or aval.ndim > len(shape):
+      continue
+    s = core.get_sharding(s, aval.shape)
+    if all(x is None for x in s.spec.partitions):
+      continue
+    pad = len(shape) - aval.ndim
+    spec = P(*((None,) * pad + s.spec.partitions))
+    avals.append(core.ShapedArray(
+        (1,) * pad + aval.shape, aval.dtype, sharding=s.update(spec=spec)))
+  if not avals:
+    return None
+  if len(avals) > 1:
+    specs = [a.sharding.spec.partitions + (None,) * (
+        len(shape) - len(a.sharding.spec.partitions)) for a in avals]
+    refined_specs = []
+    for dim_specs in zip(*specs):
+      non_none = [s for s in dim_specs if s is not None]
+      finest = max(
+          non_none, key=lambda s: len(_as_axis_tuple(s)), default=None)
+      if not non_none:
+        refined_specs.append(None)
+      elif finest is not None and all(_is_sub_spec(s, finest) for s in non_none):
+        refined_specs.append(finest)
+      else:
+        refined_specs = []
+        break
+    if refined_specs:
+      avals = [
+          a.update(sharding=a.sharding.update(spec=P(*(
+              rs if ps is not None else None
+              for ps, rs in zip(sp, refined_specs)))))
+          for a, sp in zip(avals, specs)
+      ]
+  try:
+    return lax.broadcasting_sharding_rule(name, *avals)
+  except lax.lax_utils.DuplicateSpecError as e:
+    raise core.ShardingTypeError(str(e)) from e
+
+
 def maybe_auto_axes(f, out_sharding, **hoist_kwargs):
   f_ = partial(f, **hoist_kwargs)
   if out_sharding is None:
@@ -548,22 +672,25 @@ def uniform(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "uniform", shape)
-
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
-  return maybe_auto_axes(_uniform, out_sharding,
-                         shape=shape, dtype=dtype)(key, minval, maxval)
+  out_sharding = canonicalize_sharding(out_sharding, "uniform")
+  return _uniform(key, minval, maxval, shape, dtype, out_sharding)
 
-@jit(static_argnums=(3, 4))
-def _uniform(key: Key, minval, maxval, shape, dtype) -> Array:
+
+@jit(static_argnums=(3, 4, 5))
+def _uniform(
+    key: Key, minval, maxval, shape, dtype, out_sharding=None
+) -> Array:
   _check_shape("uniform", shape)
   if not dtypes.issubdtype(dtype, np.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
 
   minval = lax.convert_element_type(minval, dtype)
   maxval = lax.convert_element_type(maxval, dtype)
+  sample_s = _sample_sharding("uniform", shape, out_sharding, minval, maxval)
+  minval, maxval = _align_params(shape, sample_s, minval, maxval)
   minval = lax.broadcast_to_rank(minval, len(shape))
   maxval = lax.broadcast_to_rank(maxval, len(shape))
 
@@ -578,7 +705,7 @@ def _uniform(key: Key, minval, maxval, shape, dtype) -> Array:
   rng_bits = nbits
   if nmant < 8:
     rng_bits = 8
-  bits = _random_bits(key, rng_bits, shape)
+  bits = _random_bits(key, rng_bits, shape, out_sharding=sample_s)
 
   if config.legacy_random_uniform.value:
     uint_dtype = UINT_DTYPES[nbits]
@@ -710,11 +837,10 @@ def randint(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   dtype = dtypes.check_and_canonicalize_user_dtype(
       int if dtype is None else dtype)
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "randint", shape)
-
   if not dtypes.issubdtype(dtype, np.integer):
     raise TypeError(f"randint only accepts integer dtypes, got {dtype}")
 
+  out_sharding = canonicalize_sharding(out_sharding, "randint")
   info = dtypes.iinfo(dtype)
   dtype_for_sampling = dtype
   if info.bits < 32:
@@ -723,12 +849,15 @@ def randint(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     minval = jnp.asarray(minval).astype('int32').clip(info.min, info.max)
     maxval = jnp.asarray(maxval).astype('int32').clip(info.min, info.max + 1)
 
-  return maybe_auto_axes(_randint, out_sharding, shape=shape, dtype=dtype_for_sampling)(
-      key, minval, maxval).astype(dtype)
+  return _randint(
+      key, minval, maxval, shape, dtype_for_sampling, out_sharding
+  ).astype(dtype)
 
 
-@jit(static_argnums=(3, 4))
-def _randint(key: Key, minval, maxval, shape, dtype) -> Array:
+@jit(static_argnums=(3, 4, 5))
+def _randint(
+    key: Key, minval, maxval, shape, dtype, out_sharding=None
+) -> Array:
   # We have three imperfect options for generating random integers in an arbitrary
   # user-specified range:
   #
@@ -753,6 +882,8 @@ def _randint(key: Key, minval, maxval, shape, dtype) -> Array:
   check_arraylike("randint", minval, maxval)
   minval = jnp.asarray(minval)
   maxval = jnp.asarray(maxval)
+  sample_s = _sample_sharding("randint", shape, out_sharding, minval, maxval)
+  minval, maxval = _align_params(shape, sample_s, minval, maxval)
   if not dtypes.issubdtype(minval.dtype, np.integer):
     minval = minval.astype(int)
   if not dtypes.issubdtype(maxval.dtype, np.integer):
@@ -776,7 +907,7 @@ def _randint(key: Key, minval, maxval, shape, dtype) -> Array:
   # We generate double the number of random bits required by the dtype so as to
   # reduce that bias.
   k1, k2 = _split(key)
-  rbits = lambda key: _random_bits(key, nbits, shape)
+  rbits = lambda key: _random_bits(key, nbits, shape, out_sharding=sample_s)
   higher_bits, lower_bits = rbits(k1), rbits(k2)
 
   unsigned_dtype = UINT_DTYPES[nbits]
@@ -1017,15 +1148,13 @@ def normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     mode = config.random_normal_mode.value
   if mode not in ("low", "high", "highest"):
     raise ValueError(f"Must provide valid mode for normal, got: {mode}")
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "normal", shape)
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `normal` must be a float or complex dtype, "
                      f"got {dtype}")
-  return maybe_auto_axes(
-      _normal, out_sharding, shape=shape, dtype=dtype, mode=mode
-  )(key)
+  out_sharding = canonicalize_sharding(out_sharding, "normal")
+  return _normal(key, shape, dtype, mode=mode, out_sharding=out_sharding)
 
 
 def _signed_midpoint_and_complement(
@@ -1146,27 +1275,36 @@ def _bits_to_normal(
   return lax.convert_element_type(z, dtype)
 
 
-@jit(static_argnums=(1, 2, 3))
-def _normal(key: Key, shape, dtype, mode: str = "low") -> Array:
+@jit(static_argnums=(1, 2, 3, 4))
+def _normal(
+    key: Key, shape, dtype, mode: str = "low", out_sharding=None
+) -> Array:
   if dtypes.issubdtype(dtype, np.complexfloating):
     sqrt2 = np.array(np.sqrt(2), dtype)
 
     key_re, key_im = _split(key)
     real_dtype = np.array(0, dtype).real.dtype
-    _re = _normal_real(key_re, shape, real_dtype, mode=mode).astype(dtype)
-    _im = _normal_real(key_im, shape, real_dtype, mode=mode).astype(dtype)
+    _re = _normal_real(
+        key_re, shape, real_dtype, mode=mode, out_sharding=out_sharding
+    ).astype(dtype)
+    _im = _normal_real(
+        key_im, shape, real_dtype, mode=mode, out_sharding=out_sharding
+    ).astype(dtype)
     return (_re + 1j * _im) / sqrt2
   else:
-    return _normal_real(key, shape, dtype, mode=mode)
+    return _normal_real(
+        key, shape, dtype, mode=mode, out_sharding=out_sharding)
 
 
-@jit(static_argnums=(1, 2, 3))
-def _normal_real(key: Key, shape, dtype, mode: str = "low") -> Array:
+@jit(static_argnums=(1, 2, 3, 4))
+def _normal_real(
+    key: Key, shape, dtype, mode: str = "low", out_sharding=None
+) -> Array:
   _check_shape("normal", shape)
   if mode == "low":
     lo = np.nextafter(np.array(-1.0, dtype), np.array(0.0, dtype), dtype=dtype)
     hi = np.array(1.0, dtype)
-    u = uniform(key, shape, dtype, lo, hi)
+    u = uniform(key, shape, dtype, lo, hi, out_sharding=out_sharding)
     return lax.mul(np.array(np.sqrt(2), dtype), lax_special.erf_inv(u))
   compute_dtype = (
       dtype if dtype in (np.float32, np.float64) else np.dtype(np.float32)
@@ -1174,11 +1312,11 @@ def _normal_real(key: Key, shape, dtype, mode: str = "low") -> Array:
   word_bits = dtypes.finfo(compute_dtype).bits
   if mode == "highest":
     hi_bits, lo_bits = prng.random_bits(
-        key, bit_width=word_bits, shape=shape, num_streams=2
-    )
+        key, bit_width=word_bits, shape=shape, num_streams=2,
+        out_sharding=out_sharding)
     bits: Array | tuple[Array, Array] = (hi_bits, lo_bits)
   else:
-    bits = _random_bits(key, word_bits, shape)
+    bits = _random_bits(key, word_bits, shape, out_sharding=out_sharding)
   return lax.reshape(_bits_to_normal(bits, dtype, mode=mode), shape)
 
 
@@ -1397,15 +1535,14 @@ def truncated_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
         f"Must provide valid mode for truncated_normal, got: {mode}"
     )
   key, _ = _check_prng_key("truncated_normal", key)
-  out_sharding = canonicalize_sharding(out_sharding, "truncated_normal")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `truncated_normal` must be a float "
                      f"dtype, got {dtype}")
-  return maybe_auto_axes(
-      _truncated_normal, out_sharding, shape=shape, dtype=dtype, mode=mode
-  )(key, lower, upper)
+  out_sharding = canonicalize_sharding(out_sharding, "truncated_normal")
+  return _truncated_normal(
+      key, lower, upper, shape, dtype, mode, out_sharding)
 
 
 def _ndtr_and_erf_shifted(
@@ -1425,9 +1562,9 @@ def _ndtr_and_erf_shifted(
   )
 
 
-@jit(static_argnums=(3, 4, 5))
+@jit(static_argnums=(3, 4, 5, 6))
 def _truncated_normal(
-    key: Key, lower, upper, shape, dtype, mode: str = "low"
+    key: Key, lower, upper, shape, dtype, mode: str = "low", out_sharding=None
 ) -> Array:
   if shape is None:
     shape = lax.broadcast_shapes(np.shape(lower), np.shape(upper))
@@ -1435,14 +1572,17 @@ def _truncated_normal(
     _check_shape("truncated_normal", shape, np.shape(lower), np.shape(upper))
   if not dtypes.issubdtype(dtype, np.floating):
     raise TypeError("truncated_normal only accepts floating point dtypes.")
+  lower = lax.convert_element_type(lower, dtype)
+  upper = lax.convert_element_type(upper, dtype)
+  sample_s = _sample_sharding(
+      "truncated_normal", shape, out_sharding, lower, upper)
+  lower, upper = _align_params(shape, sample_s, lower, upper)
 
   if mode == "low":
     sqrt2 = np.array(np.sqrt(2), dtype)
-    lower = lax.convert_element_type(lower, dtype)
-    upper = lax.convert_element_type(upper, dtype)
     a = lax_special.erf(lower / sqrt2)
     b = lax_special.erf(upper / sqrt2)
-    u = uniform(key, shape, dtype, minval=a, maxval=b)
+    u = uniform(key, shape, dtype, minval=a, maxval=b, out_sharding=sample_s)
     out = sqrt2 * lax_special.erf_inv(u)
     # Clamp the value to the open interval (lower, upper) to make sure that
     # rounding (or if we chose `a` for `u`) doesn't push us outside of the range.
@@ -1451,12 +1591,29 @@ def _truncated_normal(
         lax.nextafter(lax.stop_gradient(lower), np.array(np.inf, dtype=dtype)),
         lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
 
-  lower = lax.broadcast_to_rank(
-      lax.convert_element_type(lax.stop_gradient(lower), dtype), len(shape)
-  )
-  upper = lax.broadcast_to_rank(
-      lax.convert_element_type(lax.stop_gradient(upper), dtype), len(shape)
-  )
+  lower = lax.stop_gradient(lower)
+  upper = lax.stop_gradient(upper)
+  if np.ndim(lower) or np.ndim(upper):
+    lower = lax.broadcast_to_rank(lower, len(shape))
+    upper = lax.broadcast_to_rank(upper, len(shape))
+    lower, upper = (
+        lower + jnp.zeros_like(upper, dtype=dtype),
+        upper + jnp.zeros_like(lower, dtype=dtype),
+    )
+    if sample_s is not None:
+      s = core.get_sharding(sample_s, shape)
+      cur_parts = core.typeof(lower).sharding.spec.partitions
+      cur_parts = cur_parts + (None,) * (len(shape) - len(cur_parts))
+      bound_parts = tuple(
+          sp if core.definitely_equal(d, sd) else cp
+          for d, sd, sp, cp in zip(
+              lower.shape, shape, s.spec.partitions, cur_parts)
+      )
+      if any(p is not None for p in bound_parts):
+        bound_s = s.update(spec=P(*bound_parts))
+        if core.typeof(lower).sharding != bound_s:
+          lower = reshard(lower, bound_s)
+          upper = reshard(upper, bound_s)
   min_out = lax.nextafter(lower, np.array(np.inf, dtype=dtype))
   max_out = lax.nextafter(upper, np.array(-np.inf, dtype=dtype))
 
@@ -1488,7 +1645,8 @@ def _truncated_normal(
   qb_l, qb_r, eb = _ndtr_and_erf_shifted(b, db)
   delta_q = jnp.where(b <= -1.0, qb_l - qa_l, eb - ea)
 
-  bits = lax.reshape(_random_bits(key, finfo.bits, shape), shape)
+  bits = lax.reshape(
+      _random_bits(key, finfo.bits, shape, out_sharding=sample_s), shape)
   s, _, q_s = _signed_midpoint_and_complement(bits, compute_dtype, mode="high")
   neg = s < 0
   step = (0.5 * q_s) * delta_q
@@ -1504,6 +1662,8 @@ def _truncated_normal(
   )
 
   z = erf_inv_core(x_erf, q_erf, has_far_tail=True, is_ndtri=True)
+  if np.ndim(flip):
+    flip = flip | jnp.zeros_like(z, dtype=bool)
   out = lax.convert_element_type(jnp.where(flip, -z, z), dtype)
   # Clamp the value to the open interval (lower, upper) to make sure that
   # rounding doesn't push us outside of the range.
@@ -1555,27 +1715,32 @@ def bernoulli(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   if mode not in ['high', 'low']:
     raise ValueError(f"got {mode=}, expected 'high' or 'low'")
   key, _ = _check_prng_key("bernoulli", key)
-  out_sharding = canonicalize_sharding(out_sharding, "bernoulli")
   dtype = lax.dtype(p)
   if not dtypes.issubdtype(dtype, np.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
+  out_sharding = canonicalize_sharding(out_sharding, "bernoulli")
   p = lax.convert_element_type(p, dtype)
-  return maybe_auto_axes(_bernoulli, out_sharding,
-                         shape=shape, mode=mode)(key, p)
+  return _bernoulli(key, p, shape=shape, mode=mode, out_sharding=out_sharding)
 
 
-@jit(static_argnames=['shape', 'mode'])
-def _bernoulli(key: Key, p: Array, shape: Shape | None, mode: str) -> Array:
+@jit(static_argnames=['shape', 'mode', 'out_sharding'])
+def _bernoulli(
+    key: Key, p: Array, shape: Shape | None, mode: str, out_sharding=None
+) -> Array:
   if shape is None:
     # TODO: Use the named part of `p` as well
     shape = np.shape(p)
   else:
     _check_shape("bernoulli", shape, np.shape(p))
   dtype = lax.dtype(p)
+  sample_s = _sample_sharding("bernoulli", shape, out_sharding, p)
+  p, = _align_params(shape, sample_s, p)
 
   if mode == 'high':
-    u1, u2 = uniform(key, (2, *shape), dtype)
+    u1, u2 = lax.unstack(uniform(
+        key, (2, *shape), dtype,
+        out_sharding=_prepend_none_sharding(sample_s)))
     # resolution of uniform samples is 2 ** -n_bits
     n_bits = dtypes.finfo(dtype).nmant + (
         0 if config.legacy_random_uniform.value else 1
@@ -1583,7 +1748,7 @@ def _bernoulli(key: Key, p: Array, shape: Shape | None, mode: str) -> Array:
     u2 *= 2 ** -n_bits
     return u2 < p - u1
   else:
-    return uniform(key, shape, lax.dtype(p)) < p
+    return uniform(key, shape, dtype, out_sharding=sample_s) < p
 
 
 def beta(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
@@ -1710,14 +1875,15 @@ def cauchy(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise ValueError(f"dtype argument to `cauchy` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "cauchy", shape)
-  return maybe_auto_axes(_cauchy, out_sharding,
-                         shape=shape, dtype=dtype)(key)
+  out_sharding = canonicalize_sharding(out_sharding, "cauchy")
+  return _cauchy(key, shape, dtype, out_sharding)
 
-@jit(static_argnums=(1, 2))
-def _cauchy(key: Key, shape, dtype) -> Array:
+
+@jit(static_argnums=(1, 2, 3))
+def _cauchy(key: Key, shape, dtype, out_sharding=None) -> Array:
   _check_shape("cauchy", shape)
-  u = uniform(key, shape, dtype, minval=dtypes.finfo(dtype).eps, maxval=1.)
+  u = uniform(key, shape, dtype, minval=dtypes.finfo(dtype).eps, maxval=1.,
+              out_sharding=out_sharding)
   pi = lax._const(u, np.pi)
   return lax.tan(lax.mul(pi, lax.sub(u, lax._const(u, 0.5))))
 
@@ -1838,14 +2004,14 @@ def exponential(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise ValueError(f"dtype argument to `exponential` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "exponential", shape)
-  return maybe_auto_axes(_exponential, out_sharding,
-                         shape=shape, dtype=dtype)(key)
+  out_sharding = canonicalize_sharding(out_sharding, "exponential")
+  return _exponential(key, shape, dtype, out_sharding)
 
-@jit(static_argnums=(1, 2))
-def _exponential(key: Key, shape, dtype) -> Array:
+
+@jit(static_argnums=(1, 2, 3))
+def _exponential(key: Key, shape, dtype, out_sharding=None) -> Array:
   _check_shape("exponential", shape)
-  u = uniform(key, shape, dtype)
+  u = uniform(key, shape, dtype, out_sharding=out_sharding)
   # taking 1 - u to move the domain of log to (0, 1] instead of [0, 1)
   return lax.neg(lax.log1p(lax.neg(u)))
 
@@ -2637,17 +2803,20 @@ def gumbel(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     mode = "high" if config.use_high_dynamic_range_gumbel.value else "low"
   if mode not in ("highest", "high", "low"):
     raise ValueError("Must provide valid mode for gumbel got: %s" % mode)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "gumbel", shape)
-  return maybe_auto_axes(_gumbel, out_sharding, shape=shape, dtype=dtype,
-                         mode=mode)(key)
+  out_sharding = canonicalize_sharding(out_sharding, "gumbel")
+  return _gumbel(
+      key, shape=shape, dtype=dtype, mode=mode, out_sharding=out_sharding)
 
-def _safe_int_to_float(bits, dtype):
-  """Converts bits: u32[2,...] into f32[...] in the range (0,1)."""
-  if bits.dtype != np.uint32 or dtype != np.float32:
+def _safe_int_to_float(
+    bits: Array | tuple[Array, Array], dtype: DTypeLike
+) -> Array:
+  """Converts bits: (hi, lo) tuple or u32[2,...] into f32[...] in (0,1)."""
+  hi, lo = bits
+  if hi.dtype != np.uint32 or lo.dtype != np.uint32 or dtype != np.float32:
     raise RuntimeError("_safe_int_to_float only works for u32 -> f32")
   finfo = dtypes.finfo(dtype)
-  hiclz, loclz = lax.clz(bits)
-  hi, lo = bits
+  hiclz = lax.clz(hi)
+  loclz = lax.clz(lo)
 
   mantissa = lax.bitwise_or(
       lax.shift_left(hi, hiclz),
@@ -2667,27 +2836,33 @@ def _safe_int_to_float(bits, dtype):
   return lax.bitwise_or(exp, mantissa).view(dtype)
 
 
-@jit(static_argnums=(1, 2, 3))
-def _gumbel(key: Key, shape, dtype, mode) -> Array:
+@jit(static_argnums=(1, 2, 3, 4))
+def _gumbel(key: Key, shape, dtype, mode, out_sharding=None) -> Array:
   _check_shape("gumbel", shape)
   info = dtypes.finfo(dtype)
   if dtype == np.float32 and mode == "highest":
-    finfo = dtypes.finfo(dtype)
-    bits = _random_bits(key, finfo.bits, shape=(2,) + shape)
-    neg = lax.bitwise_not(bits)
-    lo_bits = neg[1]
+    bits = _random_bits(
+        key, info.bits, shape=(2,) + shape,
+        out_sharding=_prepend_none_sharding(out_sharding))
+    hi, lo = bits[0], bits[1]
+    neg_hi = lax.bitwise_not(hi)
+    neg_lo = lax.bitwise_not(lo)
     # 1 - bits in u64 fixed point.
-    neg = neg + jnp.array([
-        lo_bits == np.array((1 << finfo.bits) - 1, dtype=np.uint32),
-        jnp.ones_like(lo_bits)], dtype=np.uint32)
-    flip_mask = bits[0] < np.array(1 << (finfo.bits - 1), dtype=np.uint32)
-    x = _safe_int_to_float(jnp.where(flip_mask, bits, neg), dtype=np.float32)
+    neg_hi = neg_hi + (
+        neg_lo == np.uint32((1 << info.bits) - 1)
+    ).astype(np.uint32)
+    neg_lo = neg_lo + np.uint32(1)
+    flip_mask = hi < np.uint32(1 << (info.bits - 1))
+    sel_hi = jnp.where(flip_mask, hi, neg_hi)
+    sel_lo = jnp.where(flip_mask, lo, neg_lo)
+    x = _safe_int_to_float((sel_hi, sel_lo), dtype=np.float32)
     # use log1p for (0,0.5) and log for [0.5, 1).
     return jnp.where(flip_mask,
         -jnp.log(-jnp.log1p(-x)), -jnp.log(-jnp.log(x)))
   elif mode == "high" or mode == "highest":
-    high, low = _uniform(key, minval=0., maxval=1.,
-                         shape=(2,) + shape, dtype=dtype)
+    high, low = lax.unstack(_uniform(
+        key, minval=0., maxval=1., shape=(2,) + shape, dtype=dtype,
+        out_sharding=_prepend_none_sharding(out_sharding)))
     # TODO(parkers): The condition is to protect against rounding up but
     # we should be able to add safely with the right addition operation.
     n_bits = info.nmant + (0 if config.legacy_random_uniform.value else 1)
@@ -2696,7 +2871,8 @@ def _gumbel(key: Key, shape, dtype, mode) -> Array:
     return -jnp.log(-jnp.log1p(-x))
   else:
     return -jnp.log(-jnp.log(
-        _uniform(key, minval=info.tiny, maxval=1., shape=shape, dtype=dtype)))
+        _uniform(key, minval=info.tiny, maxval=1., shape=shape, dtype=dtype,
+                 out_sharding=out_sharding)))
 
 
 def categorical(
@@ -2831,15 +3007,15 @@ def laplace(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise ValueError(f"dtype argument to `laplace` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "laplace", shape)
-  return maybe_auto_axes(_laplace, out_sharding,
-                         shape=shape, dtype=dtype)(key)
+  out_sharding = canonicalize_sharding(out_sharding, "laplace")
+  return _laplace(key, shape, dtype, out_sharding)
 
-@jit(static_argnums=(1, 2))
-def _laplace(key: Key, shape, dtype) -> Array:
+
+@jit(static_argnums=(1, 2, 3))
+def _laplace(key: Key, shape, dtype, out_sharding=None) -> Array:
   _check_shape("laplace", shape)
-  u = uniform(
-      key, shape, dtype, minval=-1. + dtypes.finfo(dtype).epsneg, maxval=1.)
+  u = uniform(key, shape, dtype, minval=-1. + dtypes.finfo(dtype).epsneg,
+              maxval=1., out_sharding=out_sharding)
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
 
 
@@ -2880,14 +3056,15 @@ def logistic(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise ValueError(f"dtype argument to `logistic` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "logistic", shape)
-  return maybe_auto_axes(_logistic, out_sharding,
-                         shape=shape, dtype=dtype)(key)
+  out_sharding = canonicalize_sharding(out_sharding, "logistic")
+  return _logistic(key, shape, dtype, out_sharding)
 
-@jit(static_argnums=(1, 2))
-def _logistic(key: Key, shape, dtype):
+
+@jit(static_argnums=(1, 2, 3))
+def _logistic(key: Key, shape, dtype, out_sharding=None):
   _check_shape("logistic", shape)
-  x = uniform(key, shape, dtype, minval=dtypes.finfo(dtype).tiny, maxval=1.)
+  x = uniform(key, shape, dtype, minval=dtypes.finfo(dtype).tiny, maxval=1.,
+              out_sharding=out_sharding)
   return lax.sub(lax.log(x), lax.log1p(lax.neg(x)))
 
 
@@ -2936,14 +3113,16 @@ def pareto(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("pareto", shape, b)
   _check_all_safe_to_cast("pareto", dtype, b)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "pareto", shape)
-  return maybe_auto_axes(_pareto, out_sharding,
-                         shape=shape, dtype=dtype)(key, b)
+  out_sharding = canonicalize_sharding(out_sharding, "pareto")
+  return _pareto(key, b, shape, dtype, out_sharding)
 
-@jit(static_argnums=(2, 3))
-def _pareto(key: Key, b, shape, dtype) -> Array:
+
+@jit(static_argnums=(2, 3, 4))
+def _pareto(key: Key, b, shape, dtype, out_sharding=None) -> Array:
   b = lax.convert_element_type(b, dtype)
-  e = exponential(key, shape, dtype)
+  sample_s = _sample_sharding("pareto", shape, out_sharding, b)
+  b, = _align_params(shape, sample_s, b)
+  e = exponential(key, shape, dtype, out_sharding=sample_s)
   return lax.exp(e / b)
 
 
@@ -3186,12 +3365,12 @@ def rademacher(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   dtype = dtypes.check_and_canonicalize_user_dtype(
       int if dtype is None else dtype)
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "rademacher", shape)
+  out_sharding = canonicalize_sharding(out_sharding, "rademacher")
   return _rademacher(key, shape, dtype, out_sharding)
 
 
 @jit(static_argnums=(1, 2, 3))
-def _rademacher(key: Key, shape, dtype, out_sharding) -> Array:
+def _rademacher(key: Key, shape, dtype, out_sharding=None) -> Array:
   bernoulli_samples = bernoulli(key=key, p=0.5, shape=shape,
                                 out_sharding=out_sharding).astype(dtype)
   return (2 * bernoulli_samples - 1).astype(dtype)
@@ -3238,18 +3417,18 @@ def maxwell(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise ValueError(f"dtype argument to `maxwell` must be a float "
                      f"dtype, got {dtype}")
   shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "maxwell", shape)
+  out_sharding = canonicalize_sharding(out_sharding, "maxwell")
   return _maxwell(key, shape, dtype, out_sharding)
 
 
 @jit(static_argnums=(1, 2, 3))
-def _maxwell(key: Key, shape, dtype, out_sharding) -> Array:
-  shape = shape + (3,)
+def _maxwell(key: Key, shape, dtype, out_sharding=None) -> Array:
   if out_sharding is not None:
-    new_partitions = (*out_sharding.spec, None)
-    out_sharding = out_sharding.update(
-        spec=out_sharding.spec.update(partitions=new_partitions))
-  norm_rvs = normal(key=key, shape=shape, dtype=dtype, out_sharding=out_sharding)
+    out_s = core.get_sharding(out_sharding, shape)
+    out_sharding = out_s.update(
+        spec=out_s.spec.update(partitions=(*out_s.spec.partitions, None)))
+  norm_rvs = normal(
+      key=key, shape=shape + (3,), dtype=dtype, out_sharding=out_sharding)
   return jnp_linalg.norm(norm_rvs, axis=-1)
 
 
@@ -3567,15 +3746,17 @@ def rayleigh(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise ValueError("dtype argument to `rayleigh` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("rayleigh", shape, scale)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "rayleigh", shape)
   _check_all_safe_to_cast("rayleigh", dtype, scale)
-  return maybe_auto_axes(_rayleigh, out_sharding,
-                         shape=shape, dtype=dtype)(key, scale)
+  out_sharding = canonicalize_sharding(out_sharding, "rayleigh")
+  return _rayleigh(key, scale, shape, dtype, out_sharding)
 
-@jit(static_argnums=(2, 3))
-def _rayleigh(key: Key, scale, shape, dtype) -> Array:
-  u = uniform(key, shape, dtype)
-  scale = scale.astype(dtype)
+
+@jit(static_argnums=(2, 3, 4))
+def _rayleigh(key: Key, scale, shape, dtype, out_sharding=None) -> Array:
+  scale = lax.convert_element_type(scale, dtype)
+  sample_s = _sample_sharding("rayleigh", shape, out_sharding, scale)
+  scale, = _align_params(shape, sample_s, scale)
+  u = uniform(key, shape, dtype, out_sharding=sample_s)
   scale = jnp.broadcast_to(scale, shape)
   log_u = lax.log(u)
   n_two = lax._const(scale, -2)
@@ -3629,17 +3810,20 @@ def wald(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise ValueError("dtype argument to `wald` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("wald", shape, mean)
-  out_sharding = canonicalize_sharding(out_sharding, "wald")
   _check_all_safe_to_cast("wald", dtype, mean)
-  return maybe_auto_axes(_wald, out_sharding, shape=shape, dtype=dtype)(key, mean)
+  out_sharding = canonicalize_sharding(out_sharding, "wald")
+  return _wald(key, mean, shape, dtype, out_sharding)
 
-@jit(static_argnums=(2, 3))
-def _wald(key: Key, mean, shape, dtype) -> Array:
+
+@jit(static_argnums=(2, 3, 4))
+def _wald(key: Key, mean, shape, dtype, out_sharding=None) -> Array:
   k1, k2 = _split(key, 2)
-  mean = mean.astype(dtype)
+  mean = lax.convert_element_type(mean, dtype)
+  sample_s = _sample_sharding("wald", shape, out_sharding, mean)
+  mean, = _align_params(shape, sample_s, mean)
   mean = jnp.broadcast_to(mean, shape)
-  v = normal(k1, shape, dtype)
-  z = uniform(k2, shape, dtype)
+  v = normal(k1, shape, dtype, out_sharding=sample_s)
+  z = uniform(k2, shape, dtype, out_sharding=sample_s)
   y = lax.integer_pow(v, 2)
   y_sq = lax.integer_pow(y, 2)
   mean_sq = lax.integer_pow(mean, 2)
@@ -3692,21 +3876,23 @@ def geometric(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise ValueError("dtype argument to `geometric` must be an int "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("geometric", shape, p)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "geometric", shape)
+  out_sharding = canonicalize_sharding(out_sharding, "geometric")
   return _geometric(key, p, shape, dtype, out_sharding)
 
 @jit(static_argnums=(2, 3, 4))
-def _geometric(key: Key, p, shape, dtype, out_sharding) -> Array:
+def _geometric(key: Key, p, shape, dtype, out_sharding=None) -> Array:
   check_arraylike("geometric", p)
   p, = promote_dtypes_inexact(p)
-  u = uniform(key, shape, p.dtype, out_sharding=out_sharding)
+  sample_s = _sample_sharding("geometric", shape, out_sharding, p)
+  p, = _align_params(shape, sample_s, p)
+  u = uniform(key, shape, p.dtype, out_sharding=sample_s)
   # TODO(jakevdp): switch to log_u = lax.log1p(u - 1)
   # For now we map u=0 to u=1 to avoid inf in log_u without otherwise
   # changing samples produced for a given key.
   u = jnp.where(u == 0, 1, u)
   log_u = lax.log(u)
   log_one_minus_p = lax.log1p(-p)
-  log_one_minus_p = jnp.broadcast_to(log_one_minus_p, shape, out_sharding=out_sharding)
+  log_one_minus_p = jnp.broadcast_to(log_one_minus_p, shape)
   g = lax.floor(lax.div(log_u, log_one_minus_p)) + 1
   return g.astype(dtype)
 
@@ -3764,18 +3950,27 @@ def triangular(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise ValueError("dtype argument to `triangular` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("triangular", shape, left, mode, right)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "triangular", shape)
   _check_all_safe_to_cast("triangular", dtype, left, mode, right)
-  return maybe_auto_axes(_triangular, out_sharding, shape=shape, dtype=dtype)(key, left, mode, right)
+  out_sharding = canonicalize_sharding(out_sharding, "triangular")
+  return _triangular(key, left, mode, right, shape, dtype, out_sharding)
 
-@jit(static_argnums=(4, 5), inline=Inline.JAX_EARLY)
-def _triangular(key: Key, left, mode, right, shape, dtype) -> Array:
+
+@jit(static_argnums=(4, 5, 6), inline=Inline.JAX_EARLY)
+def _triangular(
+    key: Key, left, mode, right, shape, dtype, out_sharding=None
+) -> Array:
   # https://en.wikipedia.org/wiki/Triangular_distribution#Generating_triangular-distributed_random_variates
-  left = jnp.broadcast_to(lax.convert_element_type(left, dtype), shape)
-  right = jnp.broadcast_to(lax.convert_element_type(right, dtype), shape)
-  mode = jnp.broadcast_to(lax.convert_element_type(mode, dtype), shape)
+  left = lax.convert_element_type(left, dtype)
+  mode = lax.convert_element_type(mode, dtype)
+  right = lax.convert_element_type(right, dtype)
+  sample_s = _sample_sharding(
+      "triangular", shape, out_sharding, left, mode, right)
+  left, mode, right = _align_params(shape, sample_s, left, mode, right)
+  left = jnp.broadcast_to(left, shape)
+  right = jnp.broadcast_to(right, shape)
+  mode = jnp.broadcast_to(mode, shape)
   fc = (mode - left) / (right - left)
-  u = uniform(key, shape, dtype)
+  u = uniform(key, shape, dtype, out_sharding=sample_s)
   out1 = left + lax.sqrt(u * (right - left) * (mode - left))
   out2 = right - lax.sqrt((1 - u) * (right - left) * (right - mode))
   tri = lax.select(u < fc, out1, out2)
@@ -3823,14 +4018,17 @@ def lognormal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise ValueError(f"dtype argument to `lognormal` must be a float or complex dtype, "
                     f"got {dtype}")
   shape = _check_broadcast_shapes("lognormal", shape, sigma)
-  out_sharding = canonicalize_sharding(out_sharding, "lognormal")
   _check_all_safe_to_cast("lognormal", dtype, sigma)
-  return maybe_auto_axes(_lognormal, out_sharding, shape=shape, dtype=dtype)(key, sigma)
+  out_sharding = canonicalize_sharding(out_sharding, "lognormal")
+  return _lognormal(key, sigma, shape, dtype, out_sharding)
 
-@jit(static_argnums=(2, 3), inline=Inline.JAX_EARLY)
-def _lognormal(key: Key, sigma, shape, dtype) -> Array:
+
+@jit(static_argnums=(2, 3, 4), inline=Inline.JAX_EARLY)
+def _lognormal(key: Key, sigma, shape, dtype, out_sharding=None) -> Array:
   sigma = lax.convert_element_type(sigma, dtype)
-  scaled_norm = normal(key, shape, dtype) * sigma
+  sample_s = _sample_sharding("lognormal", shape, out_sharding, sigma)
+  sigma, = _align_params(shape, sample_s, sigma)
+  scaled_norm = normal(key, shape, dtype, out_sharding=sample_s) * sigma
   return lax.exp(scaled_norm)
 
 
