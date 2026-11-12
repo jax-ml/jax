@@ -292,6 +292,7 @@ pytype_strict_library(
         ":partial_eval",
         ":partition_spec",
         ":profiler",
+        ":reduction_order",
         ":remat",
         ":sharding",
         ":sharding_impls",
@@ -498,6 +499,7 @@ py_library_providing_imports_info(
         ":partial_eval",
         ":partition_spec",
         ":pretty_printer",
+        ":reduction_order",
         ":remat",
         ":sharding",
         ":sharding_impls",
@@ -1338,10 +1340,7 @@ pytype_strict_library(
     name = "reduction_order",
     srcs = ["reduction_order.py"],
     deps = [
-        ":dtypes",
-        ":lax",
         ":typing",
-        ":util",
     ] + py_deps("numpy"),
 )
 

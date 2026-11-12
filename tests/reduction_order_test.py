@@ -21,6 +21,7 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import reduction_order as ro
+from jax._src.interpreters import partial_eval as pe
 import jax._src.test_util as jtu
 import jax.numpy as jnp
 import numpy as np
@@ -29,7 +30,11 @@ jax.config.parse_flags_with_absl()
 
 
 def _eqns_by_name(closed_jaxpr, name: str):
-  return [e for e in jtu.iter_eqns(closed_jaxpr.jaxpr) if e.primitive.name == name]
+  jaxpr = closed_jaxpr.jaxpr if hasattr(closed_jaxpr, "jaxpr") else closed_jaxpr
+  return [e for e in jtu.iter_eqns(jaxpr) if e.primitive.name == name]
+
+def _lo_eqns(closed_jaxpr, name: str):
+  return _eqns_by_name(pe.lower_jaxpr2(closed_jaxpr.jaxpr), name)
 
 
 _MAT_DNUMS = (((1,), (0,)), ((), ()))
@@ -57,36 +62,57 @@ _REDUCTION_OP_CASES = [
 class ReductionOrderTest(jtu.JaxTestCase):
 
   @parameterized.parameters(
-      None,
-      "unordered",
-      "linear",
-      ro.Intrinsic("tpu_xlane_128"),
-      ro.Unordered(),
-      ro.Unordered(None),
-      ro.Unordered("xla"),
-      ro.Unordered("mosaic"),
+      (None, None),
+      ("unordered", ro.ReductionOrder.unordered),
+      ("linear", ro.ReductionOrder.linear),
+      ("unreduced", ro.ReductionOrder.unreduced),
+      (ro.Intrinsic("tpu_xlane_128"), ro.Intrinsic("tpu_xlane_128")),
+      (ro.Unordered(), ro.Unordered(None)),
+      (ro.Unordered("xla"), ro.Unordered("xla")),
+      (
+          ro.tiled(4, "linear", "unordered", split="lanes", pad="absent"),
+          ro.Tile(
+              4, ro.ReductionOrder.linear, ro.ReductionOrder.unordered,
+              ro.Split.strided, ro.PadVal.absent,
+          ),
+      ),
+      (
+          ro.padded(16, "linear"),
+          ro.Pad(16, ro.ReductionOrder.linear, ro.PadVal.zero),
+      ),
+      (
+          ro.cast("bfloat16", "linear"),
+          ro.Cast(np.dtype(jnp.bfloat16), ro.ReductionOrder.linear),
+      ),
+      (ro.ring(), ro.Ring(ro.RingDir.bidir, split_axis=None)),
+      (ro.ring("bidi", split_axis=0), ro.Ring(ro.RingDir.bidir, split_axis=0)),
   )
-  def test_normalize_order_valid(self, order):
-    self.assertEqual(ro.normalize_order(order), order)
+  def test_normalize_order_valid(self, order, expected):
+    self.assertEqual(ro.normalize_order(order), expected)
+    self.assertEqual(hash(ro.normalize_order(order)), hash(expected))
 
-  def test_unordered_equality(self):
-    self.assertEqual(ro.Unordered(), ro.Unordered(None))
+  def test_enums_and_leaf_classification(self):
+    self.assertEqual(repr(ro.ReductionOrder.linear), "linear")
+    self.assertEqual(repr(ro.RingDir.bidir), "bidir")
     self.assertNotEqual(ro.Unordered("xla"), ro.Unordered("mosaic"))
+    self.assertTrue(ro.is_leaf_order(ro.ReductionOrder.linear))
+    self.assertFalse(ro.is_leaf_order(ro.ReductionOrder.unreduced))
+    self.assertFalse(ro.is_leaf_order(ro.tiled(4)))
+    with self.assertRaises(TypeError):
+      getattr(ro, "ring")("asc", 0, "linear")
 
-  @parameterized.parameters(("",), ("tree",), (123,), (["linear"],))
+  @parameterized.parameters(
+      ("",), ("tree",), (123,), (["linear"],),
+      (lambda: ro.Intrinsic(""),), (lambda: ro.Intrinsic(42),),
+      (lambda: ro.Unordered(""),), (lambda: ro.Unordered(123),),
+      (lambda: ro.tiled(4, split="diagonal"),),
+      (lambda: ro.tiled(4, pad="bogus"),),
+      (lambda: ro.padded(4, pad=None),),
+      (lambda: ro.ring("clockwise"),),
+  )
   def test_normalize_order_invalid(self, bad_order):
     with self.assertRaises(ValueError):
-      ro.normalize_order(bad_order)
-
-  @parameterized.parameters(("",), (None,), (42,))
-  def test_intrinsic_invalid_name(self, bad_name):
-    with self.assertRaises(ValueError):
-      ro.Intrinsic(bad_name)
-
-  @parameterized.parameters(("",), (123,), (["xla"],))
-  def test_unordered_invalid_scope(self, bad_scope):
-    with self.assertRaises(ValueError):
-      ro.Unordered(bad_scope)
+      ro.normalize_order(bad_order() if callable(bad_order) else bad_order)
 
   @parameterized.named_parameters(*_REDUCTION_OP_CASES)
   def test_jaxpr_default_omits_reduction_order(self, prim, op_fn):
@@ -102,6 +128,8 @@ class ReductionOrderTest(jtu.JaxTestCase):
       reduction_order=[
           "unordered",
           "linear",
+          ro.ReductionOrder.unordered,
+          ro.ReductionOrder.linear,
           ro.Intrinsic("test_hw"),
           ro.Unordered(),
           ro.Unordered("xla"),
@@ -117,7 +145,12 @@ class ReductionOrderTest(jtu.JaxTestCase):
         jax.make_jaxpr(lambda a, b: op_fn(a, b, reduction_order=reduction_order))(x, w),
         prim,
     )
-    self.assertEqual(eqn.params["reduction_order"], reduction_order)
+    self.assertEqual(
+        eqn.params["reduction_order"], ro.normalize_order(reduction_order))
+    self.assertIsInstance(
+        eqn.params["reduction_order"],
+        (ro.ReductionOrder, ro.Intrinsic, ro.Unordered),
+    )
 
   @jtu.sample_product(
       op_case=_REDUCTION_OP_CASES,
@@ -254,7 +287,7 @@ class ReductionOrderTest(jtu.JaxTestCase):
     fn = lambda *xs: jnp.einsum(subscripts, *xs, reduction_order="linear")
     jaxpr = jax.make_jaxpr(fn)(*args)
     eqn, = _eqns_by_name(jaxpr, prim)
-    self.assertEqual(eqn.params["reduction_order"], "linear")
+    self.assertIs(eqn.params["reduction_order"], ro.ReductionOrder.linear)
     if binary:
       # Preserves user (arg0, arg1) operand order on dot_general even when output is transposed.
       self.assertEqual(eqn.invars, list(jaxpr.jaxpr.invars))
@@ -287,7 +320,9 @@ class ReductionOrderTest(jtu.JaxTestCase):
     )(x, dx)
     dot_eqns = _eqns_by_name(jvp_jaxpr, "dot_general")
     self.assertLen(dot_eqns, 2)
-    self.assertTrue(all(e.params["reduction_order"] == "linear" for e in dot_eqns))
+    self.assertTrue(
+        all(e.params["reduction_order"] is ro.ReductionOrder.linear
+            for e in dot_eqns))
 
   @jax.default_matmul_precision("float32")
   def test_grad_leaves_transpose_reductions_unordered(self):
@@ -311,7 +346,10 @@ class ReductionOrderTest(jtu.JaxTestCase):
     with jax.numpy_rank_promotion("allow"):
       grad_jaxpr = jax.make_jaxpr(jax.grad(loss))(params, batch)
       grad_dots = _eqns_by_name(grad_jaxpr, "dot_general")
-      self.assertEqual([e.params["reduction_order"] for e in grad_dots[:2]], ["linear", "linear"])
+      self.assertEqual(
+          [e.params["reduction_order"] for e in grad_dots[:2]],
+          [ro.ReductionOrder.linear, ro.ReductionOrder.linear],
+      )
       self.assertTrue(all(e.params.get("reduction_order") is None for e in grad_dots[2:]))
       grad_sums = _eqns_by_name(grad_jaxpr, "reduce_sum")
       self.assertIn(None, [e.params.get("reduction_order") for e in grad_sums])
@@ -353,9 +391,10 @@ class ReductionOrderTest(jtu.JaxTestCase):
             argnums=(0, 1),
         )
     )(x, w)
-    self.assertTrue(
-        all(e.params["reduction_order"] == "linear" for e in _eqns_by_name(cvjp_jaxpr, "dot_general"))
-    )
+    self.assertTrue(all(
+        e.params["reduction_order"] is ro.ReductionOrder.linear
+        for e in _eqns_by_name(cvjp_jaxpr, "dot_general")
+    ))
 
   @jtu.sample_product(
       [
@@ -364,7 +403,7 @@ class ReductionOrderTest(jtu.JaxTestCase):
           for axis in range(-len(shape), len(shape))
       ],
       tile=[2, 4],
-      split=["block", "lanes"],
+      split=["block", "lanes", "strided"],
       keepdims=[False, True],
       op=["sum", "max"],
       dtype=jtu.dtypes.floating,
@@ -372,199 +411,297 @@ class ReductionOrderTest(jtu.JaxTestCase):
   def test_tiled_sum_and_max(self, shape, axis, tile, split, keepdims, op, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    if op == "sum":
-      fn = lambda x: ro.tiled_sum(x, tile, axis=axis, split=split, keepdims=keepdims)
-      ref_fn = lambda x: jnp.sum(x, axis=axis, keepdims=keepdims)
-    else:
-      fn = lambda x: ro.tiled_max(x, tile, axis=axis, split=split, keepdims=keepdims)
-      ref_fn = lambda x: jnp.max(x, axis=axis, keepdims=keepdims)
+    order = ro.tiled(tile, split=split)
+    jnp_op = jnp.sum if op == "sum" else jnp.max
+    fn = lambda x: jnp_op(
+        x, axis=axis, keepdims=keepdims, reduction_order=order)
+    ref_fn = lambda x: jnp_op(x, axis=axis, keepdims=keepdims)
     x, = args_maker()
-    self.assertAllClose(fn(x), ref_fn(x), atol=_REASSOC_TOL, rtol=_REASSOC_TOL)
-    self._CompileAndCheck(fn, args_maker)
-
-  def test_tiled_max_unaligned_pad_false_raises(self):
-    rng = jtu.rand_default(self.rng())
-    x = rng((2, 5), np.float32)
-    with self.assertRaises(ValueError):
-      ro.tiled_max(x, 4, axis=1, pad=False)
-
-  @parameterized.named_parameters(
-      ("lt_128", 64, 1),
-      ("eq_128", 128, 1),
-      ("gt_128", 300, 2),
-  )
-  def test_xlane_jaxpr_structure(self, n, expected_eqns):
-    v = jnp.ones((2, n), dtype=jnp.float32)
-    j_xs = jax.make_jaxpr(lambda z: ro.xlane_sum(z, axis=1))(v)
-    s_eqns = _eqns_by_name(j_xs, "reduce_sum")
-    self.assertLen(s_eqns, expected_eqns)
-    self.assertEqual(s_eqns[-1].params["reduction_order"], ro.Intrinsic("tpu_xlane_128"))
-    j_xm = jax.make_jaxpr(lambda z: ro.xlane_max(z, axis=1))(v)
-    m_eqns = _eqns_by_name(j_xm, "reduce_max")
-    self.assertLen(m_eqns, expected_eqns)
-    self.assertEqual(m_eqns[-1].params["reduction_order"], ro.Intrinsic("tpu_xlane_128"))
-
-  @jtu.sample_product(
-      [
-          dict(lhs_shape=(4, 5), rhs_shape=(5, 3), dnums=None),
-          dict(lhs_shape=(2, 3, 5), rhs_shape=(5, 2, 4), dnums=(((2,), (0,)), ((0,), (1,)))),
-          dict(lhs_shape=(2, 8, 3), rhs_shape=(2, 8, 4), dnums=(((1,), (1,)), ((0,), (0,)))),
-      ],
-      bk=[2, 4],
-      dtype=jtu.dtypes.floating,
-  )
-  @jax.default_matmul_precision("float32")
-  def test_blocked_dot_multi_block(self, lhs_shape, rhs_shape, dnums, bk, dtype):
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
-    fn = lambda l, r: ro.blocked_dot(
-        l, r, bk, dimension_numbers=dnums, preferred_element_type=dtype
+    jaxpr = jax.make_jaxpr(fn)(x)
+    prim = "reduce_sum" if op == "sum" else "reduce_max"
+    self.assertEqual(
+        [e.params["reduction_order"] for e in _eqns_by_name(jaxpr, prim)],
+        [order],
     )
-    ref_fn = (
-        (lambda l, r: jnp.dot(l, r, preferred_element_type=dtype))
-        if dnums is None
-        else (lambda l, r: lax.dot_general(l, r, dnums, preferred_element_type=dtype))
-    )
-    lhs, rhs = args_maker()
-    bd_jaxpr = jax.make_jaxpr(fn)(lhs, rhs)
-    self.assertLen(_eqns_by_name(bd_jaxpr, "dot_general"), 1)
-    self.assertLen(_eqns_by_name(bd_jaxpr, "reduce_sum"), 1)
-    self.assertAllClose(fn(lhs, rhs), ref_fn(lhs, rhs), atol=_REASSOC_TOL, rtol=_REASSOC_TOL)
-    self._CompileAndCheck(fn, args_maker)
-
-  @parameterized.parameters(5, 8)
-  @jax.default_matmul_precision("float32")
-  def test_blocked_dot_single_block_skips_outer_reduce_sum(self, bk_single):
-    # 1-block blocked_dot (K <= bk) skips redundant 1-block reshape + outer reduce_sum.
-    rng = jtu.rand_default(self.rng())
-    lhs = rng((2, 3, 5), np.float32)
-    rhs = rng((5, 2, 4), np.float32)
-    dnums = (((2,), (0,)), ((0,), (1,)))
-    bd1_jaxpr = jax.make_jaxpr(
-        lambda l, r: ro.blocked_dot(
-            l, r, bk_single, dimension_numbers=dnums,
-            inner_order=ro.Intrinsic("tpu_matmul_bf16"),
-            outer_order=ro.Intrinsic("tpu_xlane_128"),
-        )
-    )(lhs, rhs)
-    self.assertLen(_eqns_by_name(bd1_jaxpr, "dot_general"), 1)
-    self.assertEmpty(_eqns_by_name(bd1_jaxpr, "reduce_sum"))
+    self.assertTrue(all(
+        ro.is_leaf_order(e.params.get("reduction_order"))
+        for e in _lo_eqns(jaxpr, prim)
+    ))
     self.assertAllClose(
-        ro.blocked_dot(lhs, rhs, bk_single, dimension_numbers=dnums),
-        lax.dot_general(lhs, rhs, dnums),
+        fn(x), ref_fn(x), atol=_REASSOC_TOL, rtol=_REASSOC_TOL)
+    self._CompileAndCheck(fn, args_maker)
+
+  @parameterized.parameters(
+      lambda a, _: jnp.sum(a, axis=1, reduction_order=ro.tiled(4, pad=None)),
+      lambda a, _: jnp.max(a, axis=1, reduction_order=ro.tiled(4, pad=None)),
+      lambda a, b: jnp.dot(a, b, reduction_order=ro.tiled(4, pad=None)),
+      lambda a, _: jnp.max(a, axis=0, reduction_order=ro.ring("asc")),
+      lambda a, _: lax.reduce_sum(
+          a, (1,), reduction_order=ro.tiled(4, pad=None)),
+      lambda a, _: lax.reduce_sum(a, (-1,), reduction_order=ro.tiled(4)),
+      lambda a, _: lax.reduce_max(a, (0, 1), reduction_order=ro.padded(8)),
+      lambda a, b: lax.dot(a, b, reduction_order=ro.tiled(4, pad=None)),
+      lambda a, _: jax.make_jaxpr(
+          lambda z: lax.reduce_sum(
+              z, (1,), reduction_order=ro.tiled(4, pad=None)))(a),
+      lambda a, _: jnp.sum(a, axis=1, reduction_order=ro.padded(-4)),
+  )
+  def test_invalid_composite_orders_raise(self, fn):
+    a, b = jnp.ones((4, 5), jnp.float32), jnp.ones((5, 3), jnp.float32)
+    with self.assertRaises(ValueError):
+      fn(a, b)
+
+  def test_vmap_unmapped_composite_order(self):
+    f = lambda _: jnp.sum(jnp.ones(8), reduction_order=ro.tiled(4))
+    self.assertAllClose(jax.vmap(f)(jnp.arange(3)), jnp.full(3, 8.0))
+
+  @parameterized.parameters(64, 128, 300)
+  def test_xlane_jaxpr_structure(self, n):
+    v = jnp.ones((2, n), dtype=jnp.float32)
+    xl = ro.xlane("linear", ro.Intrinsic("tpu_xlane_128"))
+    j_xs = jax.make_jaxpr(lambda z: jnp.sum(z, axis=1, reduction_order=xl))(v)
+    self.assertEqual(
+        [e.params["reduction_order"]
+         for e in _eqns_by_name(j_xs, "reduce_sum")],
+        [xl],
+    )
+    s_eqns = _lo_eqns(j_xs, "reduce_sum")
+    self.assertLen(s_eqns, 2)
+    self.assertEqual(
+        s_eqns[-1].params["reduction_order"], ro.Intrinsic("tpu_xlane_128"))
+    j_xm = jax.make_jaxpr(lambda z: jnp.max(z, axis=1, reduction_order=xl))(v)
+    self.assertEqual(
+        [e.params["reduction_order"]
+         for e in _eqns_by_name(j_xm, "reduce_max")],
+        [xl],
+    )
+    m_eqns = _lo_eqns(j_xm, "reduce_max")
+    self.assertLen(m_eqns, 2)
+    self.assertEqual(
+        m_eqns[-1].params["reduction_order"], ro.Intrinsic("tpu_xlane_128"))
+    self.assertAllClose(
+        jnp.sum(v, axis=1, reduction_order=ro.xlane()),
+        jnp.sum(v, axis=1),
         atol=_REASSOC_TOL,
         rtol=_REASSOC_TOL,
     )
 
+  @jtu.sample_product(
+      [
+          dict(lhs_shape=(4, 5), rhs_shape=(5, 3), dnums=None),
+          dict(lhs_shape=(5,), rhs_shape=(5, 3), dnums="matmul"),
+          dict(lhs_shape=(4, 5), rhs_shape=(5,), dnums="matmul"),
+          dict(lhs_shape=(2, 3, 5), rhs_shape=(5, 2, 4), dnums="bik,kbn->bin"),
+          dict(lhs_shape=(2, 8, 3), rhs_shape=(2, 8, 4), dnums="bki,bkn->bin"),
+      ],
+      bk=[2, 4],
+      split=["block", "strided"],
+      dtype=jtu.dtypes.floating,
+  )
   @jax.default_matmul_precision("float32")
-  def test_unordered_scoped_helpers(self):
+  def test_tiled_dot_multi_block(
+      self, lhs_shape, rhs_shape, dnums, bk, split, dtype
+  ):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+    order = ro.tiled(bk, split=split)
+    if dnums is None:
+      fn = lambda l, r: jnp.dot(
+          l, r, preferred_element_type=dtype, reduction_order=order)
+      ref_fn = lambda l, r: jnp.dot(l, r, preferred_element_type=dtype)
+    elif dnums == "matmul":
+      fn = lambda l, r: jnp.matmul(
+          l, r, preferred_element_type=dtype, reduction_order=order)
+      ref_fn = lambda l, r: jnp.matmul(l, r, preferred_element_type=dtype)
+    else:
+      fn = lambda l, r: jnp.einsum(
+          dnums, l, r, preferred_element_type=dtype, reduction_order=order
+      )
+      ref_fn = lambda l, r: jnp.einsum(
+          dnums, l, r, preferred_element_type=dtype)
+    lhs, rhs = args_maker()
+    bd_jaxpr = jax.make_jaxpr(fn)(lhs, rhs)
+    self.assertEqual(
+        [e.params["reduction_order"]
+         for e in _eqns_by_name(bd_jaxpr, "dot_general")],
+        [order],
+    )
+    dot_eqns = _lo_eqns(bd_jaxpr, "dot_general")
+    sum_eqns = _lo_eqns(bd_jaxpr, "reduce_sum")
+    self.assertLen(dot_eqns, 1)
+    self.assertLen(sum_eqns, 1)
+    self.assertTrue(all(
+        ro.is_leaf_order(e.params.get("reduction_order"))
+        for e in dot_eqns + sum_eqns
+    ))
+    self.assertAllClose(
+        fn(lhs, rhs), ref_fn(lhs, rhs), atol=_REASSOC_TOL, rtol=_REASSOC_TOL)
+    self._CompileAndCheck(fn, args_maker)
+
+  @jtu.sample_product(
+      op=["sum", "max", "dot"],
+      order=[
+          ro.tiled(2, "linear", ro.tiled(2, "linear", "linear")),
+          ro.padded(6, ro.tiled(3, "linear", "linear")),
+          ro.tiled(4, ro.cast(jnp.bfloat16, "linear"), "linear"),
+      ],
+  )
+  @jax.default_matmul_precision("float32")
+  def test_nested_combinators_leaf_only_jaxpr(self, op, order):
+    rng = jtu.rand_default(self.rng())
+    a = rng((2, 15), np.float32)
+    b = rng((15, 4), np.float32)
+    if op == "sum":
+      fn = lambda x, _: jnp.sum(x, axis=1, reduction_order=order)
+      ref = jnp.sum(a, axis=1)
+    elif op == "max":
+      fn = lambda x, _: jnp.max(x, axis=1, reduction_order=order)
+      ref = jnp.max(a, axis=1)
+    else:
+      fn = lambda x, y: jnp.dot(x, y, reduction_order=order)
+      ref = jnp.dot(a, b)
+    jaxpr = jax.make_jaxpr(fn)(a, b)
+    prim = {"sum": "reduce_sum", "max": "reduce_max", "dot": "dot_general"}[op]
+    self.assertEqual(
+        [e.params["reduction_order"] for e in _eqns_by_name(jaxpr, prim)],
+        [order],
+    )
+    prim_eqns = (
+        _lo_eqns(jaxpr, "reduce_sum")
+        + _lo_eqns(jaxpr, "reduce_max")
+        + _lo_eqns(jaxpr, "dot_general")
+    )
+    self.assertNotEmpty(prim_eqns)
+    self.assertTrue(all(
+        ro.is_leaf_order(e.params.get("reduction_order")) for e in prim_eqns
+    ))
+    has_cast = isinstance(order, ro.Tile) and isinstance(order.inner, ro.Cast)
+    tol = 2e-1 if has_cast else 1e-4
+    self.assertAllClose(fn(a, b), ref, atol=tol, rtol=tol)
+    with self.assertRaises(ValueError):
+      jnp.sum(a, axis=(0, 1), reduction_order=order)
+
+  @jax.default_matmul_precision("float32")
+  def test_unordered_scoped_combinators(self):
     rng = jtu.rand_default(self.rng())
     a = rng((4, 8), np.float32)
     b = rng((8, 3), np.float32)
     inner_u, outer_u = ro.Unordered("mosaic"), ro.Unordered("xla")
+    order = ro.tiled(4, inner=inner_u, outer=outer_u)
 
-    ts_fn = lambda x: ro.tiled_sum(x, 4, axis=1, inner_order=inner_u, outer_order=outer_u)
-    ts_eqns = _eqns_by_name(jax.make_jaxpr(ts_fn)(a), "reduce_sum")
-    self.assertEqual([e.params["reduction_order"] for e in ts_eqns], [inner_u, outer_u])
-    self.assertAllClose(ts_fn(a), jnp.sum(a, axis=1), atol=_REASSOC_TOL, rtol=_REASSOC_TOL)
+    ts_fn = lambda x: jnp.sum(x, axis=1, reduction_order=order)
+    ts_eqns = _lo_eqns(jax.make_jaxpr(ts_fn)(a), "reduce_sum")
+    self.assertEqual(
+        [e.params["reduction_order"] for e in ts_eqns], [inner_u, outer_u])
+    self.assertAllClose(
+        ts_fn(a), jnp.sum(a, axis=1), atol=_REASSOC_TOL, rtol=_REASSOC_TOL)
     self._CompileAndCheck(ts_fn, lambda: [a])
 
-    bd_fn = lambda x, y: ro.blocked_dot(x, y, 4, inner_order=inner_u, outer_order=outer_u)
+    bd_fn = lambda x, y: jnp.dot(x, y, reduction_order=order)
     bd_jaxpr = jax.make_jaxpr(bd_fn)(a, b)
-    self.assertEqual(_eqns_by_name(bd_jaxpr, "dot_general")[0].params["reduction_order"], inner_u)
-    self.assertEqual(_eqns_by_name(bd_jaxpr, "reduce_sum")[0].params["reduction_order"], outer_u)
-    self.assertAllClose(bd_fn(a, b), a @ b, atol=_REASSOC_TOL, rtol=_REASSOC_TOL)
+    self.assertEqual(
+        _lo_eqns(bd_jaxpr, "dot_general")[0].params["reduction_order"], inner_u)
+    self.assertEqual(
+        _lo_eqns(bd_jaxpr, "reduce_sum")[0].params["reduction_order"], outer_u)
+    self.assertAllClose(
+        bd_fn(a, b), a @ b, atol=_REASSOC_TOL, rtol=_REASSOC_TOL)
     self._CompileAndCheck(bd_fn, lambda: [a, b])
 
-  @parameterized.product(
-      dtype=[jnp.float32, jnp.bfloat16],
-      split=["block", "lanes"],
-      pad=["absent", "zero"],
-      jit=[False, True],
-  )
-  def test_tiled_sum_zero_vs_absent_signbit(self, dtype, split, pad, jit):
-    nz = jnp.full((2, 5), -0.0, dtype=dtype)
-    fn = lambda a: ro.tiled_sum(a, 4, axis=1, split=split, pad=pad)
-    out = (jax.jit(fn) if jit else fn)(nz)
-    self.assertEqual(out.dtype, dtype)
-    self.assertTrue(bool(jnp.all(out == 0)))
-    if pad == "absent":
-      self.assertTrue(bool(jnp.all(jnp.signbit(out))))
-    else:
-      self.assertFalse(bool(jnp.any(jnp.signbit(out))))
+  @jax.default_matmul_precision("float32")
+  def test_composite_ad_remat_and_vmap(self):
+    rng = jtu.rand_default(self.rng())
+    a = rng((3, 4, 8), np.float32)
+    w = rng((8, 5), np.float32)
+    order = ro.tiled(4, ro.cast(jnp.bfloat16, "linear"), "linear")
+    loss = lambda x, y: jnp.sum(
+        jax.checkpoint(lambda u, v: jnp.dot(u, v, reduction_order=order))(x, y))
+    jvp_jaxpr = jax.make_jaxpr(
+        lambda x, dx: jax.jvp(
+            lambda z: jnp.dot(z, w, reduction_order=order), (x,), (dx,))
+    )(a[0], a[0])
+    self.assertEqual(
+        [e.params.get("reduction_order")
+         for e in _eqns_by_name(jvp_jaxpr, "dot_general")],
+        [order, None],
+    )
+    grad_jaxpr = jax.make_jaxpr(jax.grad(loss, argnums=(0, 1)))(a[0], w)
+    self.assertEqual(
+        [e.params.get("reduction_order")
+         for e in _eqns_by_name(grad_jaxpr, "dot_general")],
+        [order, None, None],
+    )
+    got_g = jax.jit(jax.vmap(jax.grad(loss, argnums=(0, 1)), in_axes=(0, None)))
+    ref_g = jax.vmap(
+        jax.grad(lambda x, y: jnp.sum(jnp.dot(x, y)), argnums=(0, 1)),
+        in_axes=(0, None),
+    )
+    self.assertAllClose(got_g(a, w), ref_g(a, w), atol=1e-4, rtol=1e-4)
 
   @parameterized.product(
       dtype=[jnp.float32, jnp.bfloat16],
-      bk=[4, 8],
-      nz_side=["lhs", "rhs"],
+      mode=["sum_block", "sum_lanes", "dot_lhs", "dot_rhs"],
       pad=["absent", "zero"],
       jit=[False, True],
   )
-  def test_blocked_dot_zero_vs_absent_signbit(self, dtype, bk, nz_side, pad, jit):
-    lhs = jnp.full((2, 5), -0.0, dtype=dtype) if nz_side == "lhs" else jnp.ones((2, 5), dtype=dtype)
-    rhs = jnp.ones((5, 3), dtype=dtype) if nz_side == "lhs" else jnp.full((5, 3), -0.0, dtype=dtype)
-    fn = lambda x, y: ro.blocked_dot(x, y, bk, preferred_element_type=dtype, pad=pad)
-    out = (jax.jit(fn) if jit else fn)(lhs, rhs)
+  def test_tiled_zero_vs_absent_signbit(self, dtype, mode, pad, jit):
+    nz = jnp.full((2, 5), -0.0, dtype=dtype)
+    ones = jnp.ones((5, 3), dtype=dtype)
+    if mode.startswith("sum"):
+      split = "block" if mode == "sum_block" else "lanes"
+      fn = lambda: jnp.sum(
+          nz, axis=1, dtype=dtype,
+          reduction_order=ro.tiled(4, split=split, pad=pad))
+    elif mode == "dot_lhs":
+      fn = lambda: jnp.dot(
+          nz, ones, preferred_element_type=dtype,
+          reduction_order=ro.tiled(4, pad=pad))
+    else:
+      fn = lambda: jnp.dot(
+          jnp.ones((2, 5), dtype), jnp.full((5, 3), -0.0, dtype),
+          preferred_element_type=dtype, reduction_order=ro.tiled(8, pad=pad))
+    out = (jax.jit(fn) if jit else fn)()
     self.assertEqual(out.dtype, dtype)
     self.assertTrue(bool(jnp.all(out == 0)))
-    if pad == "absent":
-      self.assertTrue(bool(jnp.all(jnp.signbit(out))))
-    else:
-      self.assertFalse(bool(jnp.any(jnp.signbit(out))))
+    self.assertEqual(bool(jnp.all(jnp.signbit(out))), pad == "absent")
 
   @parameterized.named_parameters(
-      (
-          "large_blocked_dot_loop",
-          lambda: jax.jit(lambda x, y: ro.blocked_dot(x, y, 4, pad="absent"))(
-              jnp.full((64, 5), -0.0, dtype=jnp.float32),
-              jnp.ones((5, 32), dtype=jnp.float32),
-          ),
-      ),
-      (
-          "long_linear_dot_loop",
-          lambda: jax.jit(lambda x, y: jnp.dot(x, y, reduction_order="linear"))(
-              jnp.full((129, 17), -0.0, dtype=jnp.float32),
-              jnp.ones((17, 1), dtype=jnp.float32),
-          ),
-      ),
-      (
-          "mixed_int32_float32_blocked_dot",
-          lambda: jax.jit(lambda x, y: ro.blocked_dot(x, y, 4, pad="absent"))(
-              jnp.ones((2, 5), dtype=jnp.int32),
-              jnp.full((5, 3), -0.0, dtype=jnp.float32),
-          ),
-      ),
+      ("large_tiled_dot", lambda: jax.jit(
+          lambda x, y: jnp.dot(
+              x, y, reduction_order=ro.tiled(4, pad="absent")))(
+          jnp.full((64, 5), -0.0, jnp.float32),
+          jnp.ones((5, 32), jnp.float32))),
+      ("long_linear_dot", lambda: jax.jit(
+          lambda x, y: jnp.dot(x, y, reduction_order="linear"))(
+          jnp.full((129, 17), -0.0, jnp.float32),
+          jnp.ones((17, 1), jnp.float32))),
+      ("mixed_int_float_dot", lambda: jax.jit(
+          lambda x, y: jnp.dot(
+              x, y, preferred_element_type=jnp.float32,
+              reduction_order=ro.tiled(4, pad="absent")))(
+          jnp.ones((2, 5), jnp.int32), jnp.full((5, 3), -0.0, jnp.float32))),
+      ("padded_sum", lambda: jax.jit(
+          lambda x: jnp.sum(
+              x, axis=1, reduction_order=ro.padded(4, pad="absent")))(
+          jnp.full((2, 5), -0.0, jnp.float32))),
   )
   def test_absent_padding_loop_and_mixed_dtype_signbit(self, compute_fn):
     out = compute_fn()
-    self.assertTrue(bool(jnp.all(out == 0)))
-    self.assertTrue(bool(jnp.all(jnp.signbit(out))))
+    self.assertTrue(bool(jnp.all(out == 0) & jnp.all(jnp.signbit(out))))
 
   def test_absent_padding_int_and_complex(self):
-    rng = jtu.rand_default(self.rng())
-    int_lhs = rng((2, 5), np.int32)
+    int_lhs = jtu.rand_default(self.rng())((2, 5), np.int32)
     self.assertArraysEqual(
-        ro.tiled_sum(int_lhs, 4, axis=1, pad="absent"),
+        jnp.sum(
+            int_lhs, axis=1, dtype=jnp.int32,
+            reduction_order=ro.tiled(4, pad="absent")),
         jnp.sum(int_lhs, axis=1, dtype=jnp.int32),
     )
     c_nz = jnp.full((2, 5), complex(-0.0, -0.0), dtype=jnp.complex64)
-    c_out = jax.jit(lambda a: ro.tiled_sum(a, 4, axis=1, pad="absent"))(c_nz)
-    self.assertTrue(bool(jnp.all(jnp.signbit(jnp.real(c_out)) & jnp.signbit(jnp.imag(c_out)))))
-
-  @parameterized.product(
-      bad_pad=["bogus", "", False, True, None, 0],
-      call_fn=[
-          lambda p: ro.tiled_sum(jnp.ones((2, 8), jnp.float32), 4, axis=1, pad=p),
-          lambda p: ro.tiled_sum(jnp.ones((2, 5), jnp.float32), 4, axis=1, pad=p),
-          lambda p: ro.xlane_sum(jnp.ones((2, 128), jnp.float32), axis=1, pad=p),
-          lambda p: ro.xlane_sum(jnp.ones((2, 5), jnp.float32), axis=1, pad=p),
-          lambda p: ro.blocked_dot(jnp.ones((2, 8), jnp.float32), jnp.ones((8, 3), jnp.float32), 4, pad=p),
-          lambda p: ro.blocked_dot(jnp.ones((2, 5), jnp.float32), jnp.ones((5, 3), jnp.float32), 4, pad=p),
-      ],
-  )
-  def test_invalid_pad_raises(self, bad_pad, call_fn):
-    with self.assertRaises(ValueError):
-      call_fn(bad_pad)
+    c_out = jax.jit(
+        lambda a: jnp.sum(a, axis=1, reduction_order=ro.tiled(4, pad="absent"))
+    )(c_nz)
+    re_neg, im_neg = jnp.signbit(jnp.real(c_out)), jnp.signbit(jnp.imag(c_out))
+    self.assertTrue(bool(jnp.all(re_neg & im_neg)))
 
 
 @jtu.thread_unsafe_test_class()  # Mutates module-level ro._INTRINSIC_IMPLS registry.
@@ -620,7 +757,8 @@ class ReductionOrderIntrinsicRegistrationTest(jtu.JaxTestCase):
     )
     try:
       x_nz = jnp.full((2, k), -0.0, dtype=dtype)
-      fn = lambda a: ro.xlane_sum(a, axis=1, pad=pad)
+      xl = ro.xlane("linear", ro.Intrinsic("tpu_xlane_128"), pad=pad)
+      fn = lambda a: jnp.sum(a, axis=1, dtype=dtype, reduction_order=xl)
       out = (jax.jit(fn) if jit else fn)(x_nz)
       self.assertTrue(bool(jnp.all(out == 0)))
       if pad == "absent":

@@ -106,7 +106,9 @@ def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
                keepdims: bool = False, initial: ArrayLike | None = None,
                where_: ArrayLike | None = None,
                parallel_reduce: Callable[..., Array] | None = None,
-               promote_integers: bool = False, reduction_order: Any = None) -> Array:
+               promote_integers: bool = False,
+               out_sharding: NamedSharding | P | None = None,
+               reduction_order: Any = None) -> Array:
   bool_op = bool_op or op
   # Note: we must accept out=None as an argument, because numpy reductions delegate to
   # object methods. For example `np.sum(x)` will call `x.sum()` if the `sum()` method
@@ -116,6 +118,7 @@ def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
   a = ensure_arraylike(name, a)
   where_ = check_where(name, where_)
   axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
+  out_s = canonicalize_sharding(out_sharding, f"jnp.{name}")
 
   if initial is None and not has_identity and where_ is not None:
     raise ValueError(f"reduction operation {name} does not have an identity, so to use a "
@@ -148,14 +151,31 @@ def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
   init_val = _reduction_init_val(a, init_val)
   if where_ is not None:
     a = _where(where_, a, init_val)
+  # `out_sharding` specifies the final output sharding; `lax.reduce*` drops
+  # `pos_dims` before `lax.expand_dims` re-inserts size-1 `None` dims below.
+  red_out_s = out_s
+  if out_s is not None and keepdims:
+    parts = out_s.spec.partitions
+    if builtins.any(d < len(parts) and parts[d] is not None for d in pos_dims):
+      raise core.ShardingTypeError(
+          f"jnp.{name} with keepdims=True cannot shard reduced axes;"
+          f" got {out_s}.")
+    red_out_s = out_s.update(
+        spec=out_s.spec.update(partitions=lax.tuple_delete(parts, pos_dims)))
   if pos_dims is not dims:
-    if parallel_reduce is None or reduction_order is not None:
+    if (parallel_reduce is None or reduction_order is not None
+        or red_out_s is not None):
       raise NotImplementedError(f"Named reductions not implemented for jnp.{name}()")
     result = parallel_reduce(a, dims)
-  elif reduction_order is not None:
-    result = (lax.reduce_sum if name == "sum" else lax.reduce_max)(a, dims, reduction_order=reduction_order)
+  elif reduction_order is not None or (
+      red_out_s is not None and name in ("sum", "max")
+      and (name == "max" or computation_dtype != np.bool_)
+  ):
+    fn = lax.reduce_sum if name == "sum" else lax.reduce_max
+    result = fn(
+        a, dims, out_sharding=red_out_s, reduction_order=reduction_order)
   else:
-    result = lax.reduce(a, init_val, op, dims)
+    result = lax.reduce(a, init_val, op, dims, out_sharding=red_out_s)
   if initial is not None:
     initial_arr = lax.convert_element_type(initial, lax.asarray(a).dtype)
     if initial_arr.shape != ():
@@ -229,23 +249,31 @@ def _ensure_optional_axes(x: Axis) -> Axis:
     force, x, "The axis argument must be known statically.")
 
 
-@api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers', 'reduction_order'), inline=api.Inline.JAX_EARLY)
+@api.jit(
+    static_argnames=(
+        'axis', 'dtype', 'keepdims', 'promote_integers', 'out_sharding',
+        'reduction_order'),
+    inline=api.Inline.JAX_EARLY)
 def _reduce_sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                 out: None = None, keepdims: bool = False,
                 initial: ArrayLike | None = None, where: ArrayLike | None = None,
-                promote_integers: bool = True, reduction_order: Any = None) -> Array:
-  return _reduction(a, "sum", lax.add, 0, preproc=_cast_to_numeric,
-                    bool_op=lax.bitwise_or, upcast_f16_for_computation=(dtype is None),
-                    axis=axis, dtype=dtype, out=out, keepdims=keepdims,
-                    initial=initial, where_=where, parallel_reduce=lax_parallel.psum,
-                    promote_integers=promote_integers, reduction_order=reduction_order)
+                promote_integers: bool = True,
+                out_sharding: NamedSharding | P | None = None,
+                reduction_order: Any = None) -> Array:
+  return _reduction(
+      a, "sum", lax.add, 0, preproc=_cast_to_numeric, bool_op=lax.bitwise_or,
+      upcast_f16_for_computation=(dtype is None), axis=axis, dtype=dtype,
+      out=out, keepdims=keepdims, initial=initial, where_=where,
+      parallel_reduce=lax_parallel.psum, promote_integers=promote_integers,
+      out_sharding=out_sharding, reduction_order=reduction_order)
 
 
 @export
 def sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None, promote_integers: bool = True,
-        *, reduction_order: Any = None) -> Array:
+        *, out_sharding: NamedSharding | P | None = None,
+        reduction_order: Any = None) -> Array:
   r"""Sum of the elements of the array over a given axis.
 
   JAX implementation of :func:`numpy.sum`.
@@ -312,9 +340,11 @@ def sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
     >>> jnp.sum(x, axis=0, keepdims=True, where=where)
     Array([[0, 0, 0, 0]], dtype=int32)
   """
-  return _reduce_sum(a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out,
-                     keepdims=keepdims, initial=initial, where=where,
-                     promote_integers=promote_integers, reduction_order=lax._norm_order(reduction_order))
+  return _reduce_sum(
+      a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out,
+      keepdims=keepdims, initial=initial, where=where,
+      promote_integers=promote_integers, out_sharding=out_sharding,
+      reduction_order=lax._norm_order(reduction_order))
 
 
 @api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=api.Inline.JAX_EARLY)
@@ -404,20 +434,27 @@ def prod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                       promote_integers=promote_integers)
 
 
-@api.jit(static_argnames=('axis', 'keepdims', 'reduction_order'), inline=api.Inline.JAX_EARLY)
+@api.jit(
+    static_argnames=('axis', 'keepdims', 'out_sharding', 'reduction_order'),
+    inline=api.Inline.JAX_EARLY)
 def _reduce_max(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                 out: None = None, keepdims: bool = False,
                 initial: ArrayLike | None = None, where: ArrayLike | None = None,
+                out_sharding: NamedSharding | P | None = None,
                 reduction_order: Any = None) -> Array:
-  return _reduction(a, "max", lax.max, -np.inf, has_identity=False,
-                    axis=axis, dtype=dtype, out=out, keepdims=keepdims,
-                    initial=initial, where_=where, parallel_reduce=lax_parallel.pmax, reduction_order=reduction_order)
+  return _reduction(
+      a, "max", lax.max, -np.inf, has_identity=False, axis=axis, dtype=dtype,
+      out=out, keepdims=keepdims, initial=initial, where_=where,
+      parallel_reduce=lax_parallel.pmax, out_sharding=out_sharding,
+      reduction_order=reduction_order)
 
 
 @export
 def max(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
-        where: ArrayLike | None = None, *, reduction_order: Any = None) -> Array:
+        where: ArrayLike | None = None, *,
+        out_sharding: NamedSharding | P | None = None,
+        reduction_order: Any = None) -> Array:
   r"""Return the maximum of the array elements along a given axis.
 
   JAX implementation of :func:`numpy.max`.
@@ -485,8 +522,10 @@ def max(a: ArrayLike, axis: Axis = None, out: None = None,
     >>> jnp.max(x, axis=0, keepdims=True, initial=0, where=where)
     Array([[0, 0, 0, 0]], dtype=int32)
   """
-  return _reduce_max(a, axis=_ensure_optional_axes(axis), out=out,
-                     keepdims=keepdims, initial=initial, where=where, reduction_order=lax._norm_order(reduction_order))
+  return _reduce_max(
+      a, axis=_ensure_optional_axes(axis), out=out, keepdims=keepdims,
+      initial=initial, where=where, out_sharding=out_sharding,
+      reduction_order=lax._norm_order(reduction_order))
 
 @api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=api.Inline.JAX_EARLY)
 def _reduce_min(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,

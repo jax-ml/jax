@@ -42,6 +42,7 @@ from jax._src import ffi
 from jax._src import literals
 from jax._src import pjit
 from jax._src import pretty_printer as pp
+from jax._src import reduction_order as reduction_order_lib
 from jax._src import source_info_util
 from jax._src import flattree as ft
 from jax._src import tree_util
@@ -2732,14 +2733,12 @@ DotDimensionNumbers = tuple[tuple[Sequence[int], Sequence[int]],
                             tuple[Sequence[int], Sequence[int]]]
 
 
-def _norm_order(reduction_order: Any) -> Any:
-  if reduction_order is None:
-    return None
-  from jax._src import reduction_order as ro  # pyrefly: ignore[missing-import]
-  return ro.normalize_order(reduction_order)
+_norm_order = reduction_order_lib.normalize_order
+
 
 def _reduction_order_kw(reduction_order: Any) -> dict[str, Any]:
-  return {} if (norm := _norm_order(reduction_order)) is None else {'reduction_order': norm}
+  norm = _norm_order(reduction_order)
+  return {} if norm is None else {'reduction_order': norm}
 
 # TODO(jakevdp): consider deprecating jax.lax.dot_general.
 def dot_general(lhs: ArrayLike, rhs: ArrayLike,
@@ -6825,6 +6824,11 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
                                for i in lhs_contracting)
   rhs_contracting_spec = tuple(rhs.sharding.spec.partitions[i]
                                for i in rhs_contracting)
+  contract_axes = flatten_spec_no_none(
+      lhs_contracting_spec + rhs_contracting_spec)
+  _check_ordered_reduction_sharding(
+      'dot_general', reduction_order, contract_axes, out_sharding=out_sharding
+  )
   if out_sharding is not None:
     assert isinstance(out_sharding, NamedSharding)
     if forbidden_axes := config.no_collectives.value:
@@ -6833,10 +6837,9 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
       rhs_out_parts = _dot_general_sharding_computation(
           lhs.sharding.spec, rhs.sharding.spec, dimension_numbers,
           use_rhs_batch=True)
-      contract_axes = set(flatten_spec_no_none(
-          lhs_contracting_spec + rhs_contracting_spec))
+      contract_axes_set = set(contract_axes)
       for r in forbidden_axes:
-        if r in contract_axes and r not in out_sharding.spec.unreduced:
+        if r in contract_axes_set and r not in out_sharding.spec.unreduced:
           raise core.ForbiddenCollectiveError(
               f"Collective across axis '{r}' is forbidden by `no_collectives`,"
               f" but `dot_general` contracts over axis '{r}' without marking"
@@ -7050,6 +7053,10 @@ def _dot_batch_rule(
   if out_sharding is not None:
     out_sharding = batching.get_sharding_for_vmap(
         axis_data, out_sharding, result_batch_dim)
+  if not reduction_order_lib.is_leaf_order(reduction_order):
+    shifted = _reduction_order.shift_order_for_vmap(
+        reduction_order, result_batch_dim, len(result_shape) - 1)
+    reduction_order_kw = {'reduction_order': shifted}
 
   batched_out = invoke_prim(
       lhs,
@@ -7223,15 +7230,36 @@ dot_general_p = standard_primitive(
 )
 
 
-def _dot_general_is_high(*avals, out_sharding=None, **__):
-  return out_sharding is not None and bool(out_sharding.spec.unreduced)
+def _wrap_reduction_order_abstract_eval(prim):
+  # Composite reduction orders raise their (sharding) type errors at trace
+  # time: abstract_eval traces the same `to_lojax` lowering that runs later.
+  base_ae = prim.abstract_eval
+  def abstract_eval(*avals, **params):
+    out = base_ae(*avals, **params)
+    if not reduction_order_lib.is_leaf_order(params.get('reduction_order')):
+      dbg = api_util.debug_info(prim.name, prim.to_lojax, avals, {})
+      pe.abstract_eval_fun(prim.to_lojax, *avals, debug_info=dbg, **params)
+    return out
+  prim.def_effectful_abstract_eval(abstract_eval)
+_wrap_reduction_order_abstract_eval(dot_general_p)
+
+
+def _dot_general_is_high(
+    *avals, out_sharding=None, reduction_order=None, **__):
+  return ((out_sharding is not None and bool(out_sharding.spec.unreduced))
+          or not reduction_order_lib.is_leaf_order(reduction_order))
 dot_general_p.is_high = _dot_general_is_high  # type: ignore[method-assign]
 
 
 def _dot_general_to_lojax(lhs, rhs, *, dimension_numbers, precision,
-                          preferred_element_type, out_sharding, reduction_order=None):
-  assert out_sharding.spec.unreduced
+                          preferred_element_type, out_sharding,
+                          reduction_order=None):
+  if not reduction_order_lib.is_leaf_order(reduction_order):
+    return _reduction_order.dot_general(
+        lhs, rhs, dimension_numbers, precision, preferred_element_type,
+        out_sharding, reduction_order)
   from jax._src import shard_map  # pyrefly: ignore[missing-import]
+  assert out_sharding.spec.unreduced
   lhs_aval, rhs_aval = core.typeof(lhs), core.typeof(rhs)
   out_aval = dot_general_p.abstract_eval(
       lhs_aval, rhs_aval, dimension_numbers=dimension_numbers,
@@ -7245,10 +7273,11 @@ def _dot_general_to_lojax(lhs, rhs, *, dimension_numbers, precision,
   out_specs = P(*u_axes, *(None,) * out_aval.ndim)
 
   def _local_dot(l, r):
-    out = dot(
+    out = dot_general(
         l, r, dimension_numbers=dimension_numbers, precision=precision,
         preferred_element_type=preferred_element_type,
-        out_sharding=P(*out_sharding.spec.partitions), reduction_order=reduction_order)
+        out_sharding=P(*out_sharding.spec.partitions),
+        reduction_order=reduction_order)
     return expand_dims(out, tuple(range(len(u_axes))))
 
   lo_out = shard_map.shard_map(
@@ -7292,8 +7321,25 @@ def _dot_general_batch_unpack_dims(batch_dims):
   return (lbd, rbd)
 
 
+def _tangent_ro_kw(ans, kw: dict[str, Any]) -> dict[str, Any]:
+  if reduction_order_lib.is_leaf_order(kw.get('reduction_order')):
+    return kw
+  s = core.typeof(ans).sharding
+  inferred_s = s if s.mesh._any_axis_explicit else None
+  out_s = kw['out_sharding'] or inferred_s
+  base = {k: v for k, v in kw.items() if k != 'reduction_order'}
+  return base | {'out_sharding': out_s}
+
+
 ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
+ad.defjvp2(
+    dot_general_p,
+    lambda g, ans, x, y, **kw: dot_general_p.bind(
+        g, y, **_tangent_ro_kw(ans, kw)),
+    lambda g, ans, x, y, **kw: dot_general_p.bind(
+        x, g, **_tangent_ro_kw(ans, kw)),
+)
 _dot_general_batch_rule = functools.partial(
     _dot_batch_rule, _dot_general_batch_unpack_args,
     _dot_general_batch_unpack_dims, dot_general)
@@ -7450,19 +7496,55 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
 
 
 def _is_ordered(order: Any) -> bool:
-  if order in (None, "unordered"):
-    return False
-  from jax._src import reduction_order  # pyrefly: ignore[missing-import]
-  return not isinstance(order, reduction_order.Unordered)
+  return (order is not None
+          and order is not reduction_order_lib.ReductionOrder.unordered
+          and not isinstance(order, reduction_order_lib.Unordered))
+
+def _check_ordered_reduction_sharding(
+    name, reduction_order, sharded_axes, unreduced_axes=(), out_sharding=None
+):
+  if not reduction_order_lib.is_leaf_order(reduction_order):
+    return
+  if (
+      reduction_order is not None
+      and out_sharding is not None
+      and (u_overlap := set(sharded_axes) & set(out_sharding.spec.unreduced))
+  ):
+    raise core.ShardingTypeError(
+        f'{name} with explicit reduction_order={reduction_order!r} cannot leave'
+        f' reduced mesh axes {sorted(u_overlap)} unreduced in'
+        f' out_sharding={out_sharding}; use reduction_order="unreduced".'
+    )
+  if not _is_ordered(reduction_order):
+    return
+  if sharded_axes:
+    axes_tup = tuple(dict.fromkeys(sharded_axes))
+    raise core.ShardingTypeError(
+        f'{name} with ordered reduction_order={reduction_order!r} cannot reduce'
+        f' across Explicit-sharded mesh axes {axes_tup};'
+        " use reduction_order='unordered', ro.tiled(..., outer=ro.ring(...)),"
+        ' or jax.sharding.reshard first.'
+    )
+  if unreduced_axes:
+    raise core.ShardingTypeError(
+        f'{name} with ordered reduction_order={reduction_order!r} cannot'
+        f' operate on unreduced mesh axes {sorted(unreduced_axes)}; reduce via'
+        ' jax.sharding.reshard first.'
+    )
 
 def _lower_ordered(ctx, order, linear_fn, intr_kw, *args):
-  if order == "linear":
+  if order is reduction_order_lib.ReductionOrder.linear:
     fn = linear_fn
   else:
-    from jax._src import reduction_order  # pyrefly: ignore[missing-import]
-    if (impl := reduction_order._INTRINSIC_IMPLS.get(order.name)) is None:
+    if (impl := reduction_order_lib._INTRINSIC_IMPLS.get(order.name)) is None:
       raise NotImplementedError(f"No XLA lowering registered for {order!r}")
     fn = partial(impl, **intr_kw)
+  out_s = ctx.avals_out[0].sharding
+  # `_linear_dot` / intrinsic decompositions lower `dot_general` via broadcast +
+  # `mul`, where shared Explicit axes on free dims or `out_sharding` resharding
+  # would error in Explicit mode.
+  if (axes := out_s.mesh.explicit_axes):
+    fn = pjit.auto_axes(fn, out_sharding=out_s, axes=axes)
   return mlir.lower_fun(fn, multiple_results=False)(ctx, *args)
 
 _UINT_BY_BITS = {8: np.uint8, 16: np.uint16, 32: np.uint32, 64: np.uint64}
@@ -7509,8 +7591,11 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        out_sharding, reduction_order=None, platform: str = "default"):
   if _is_ordered(reduction_order):
     dt = ctx.avals_out[0].dtype
-    return _lower_ordered(ctx, reduction_order, partial(_linear_dot, dt, dimension_numbers=dimension_numbers),
-                          dict(dimension_numbers=dimension_numbers, preferred_element_type=dt), lhs, rhs)
+    return _lower_ordered(
+        ctx, reduction_order,
+        partial(_linear_dot, dt, dimension_numbers=dimension_numbers),
+        dict(dimension_numbers=dimension_numbers, preferred_element_type=dt),
+        lhs, rhs)
   del preferred_element_type  # Implied by the output aval
   lhs, rhs, accumulation_aval, algorithm_kwarg = _handle_dot_precision(
       ctx, lhs, rhs, precision, platform
@@ -10249,12 +10334,16 @@ def _reduce_op_sharding_rule_with_out_sharding(operand, *, axes, out_sharding, r
   axes = frozenset(axes)
   natural_parts = tuple(s for i, s in enumerate(operand.sharding.spec.partitions)
                         if i not in axes)
+  reduced_axes_list = flatten_spec_no_none(
+      s for i, s in enumerate(operand.sharding.spec.partitions) if i in axes
+  )
+  _check_ordered_reduction_sharding(
+      'reduce', reduction_order, reduced_axes_list, out_sharding=out_sharding
+  )
   if out_sharding is not None:
     assert isinstance(out_sharding, NamedSharding)
     if (forbidden_axes := config.no_collectives.value):
-      reduced_axes = set(flatten_spec_no_none(
-          s for i, s in enumerate(operand.sharding.spec.partitions) if i in axes
-      ))
+      reduced_axes = set(reduced_axes_list)
       for r in forbidden_axes:
         if r in reduced_axes and r not in out_sharding.spec.unreduced:
           raise core.ForbiddenCollectiveError(
@@ -10267,7 +10356,10 @@ def _reduce_op_sharding_rule_with_out_sharding(operand, *, axes, out_sharding, r
     return out_sharding
   return operand.sharding.update(spec=P(*natural_parts))
 
-def _reduce_op_unreduced_rule(operand, axes, out_sharding, out_kind, name):
+def _reduce_op_unreduced_rule(operand, axes, out_sharding, out_kind, name,
+                              reduction_order=None):
+  in_u, _ = getu(operand, out_kind)
+  _check_ordered_reduction_sharding(name, reduction_order, (), in_u)
   if out_sharding is not None and out_sharding.spec.unreduced:  # explicit mode
     if out_sharding.spec.unreduced_kind is not out_kind:
       raise core.ShardingTypeError(
@@ -10285,7 +10377,7 @@ def _reduce_op_unreduced_rule(operand, axes, out_sharding, out_kind, name):
           f' unreduced_spec={out_sharding.spec.unreduced}')
     out_u = out_sharding.spec.unreduced
   else:
-    out_u, _ = getu(operand, out_kind)
+    out_u = in_u
   return out_u, out_kind if out_u else None
 
 def _reduce_op_reduced_rule(operand, out_sharding, name):
@@ -10296,7 +10388,8 @@ def _reduce_op_reduced_rule(operand, out_sharding, name):
 
 def _reduce_sum_ur_rule(operand, *, axes, out_sharding, reduction_order=None):
   out_unreduced, kind = _reduce_op_unreduced_rule(
-      operand, axes, out_sharding, UnreducedKind.sum, 'reduce_sum')
+      operand, axes, out_sharding, UnreducedKind.sum, 'reduce_sum',
+      reduction_order)
   out_reduced = _reduce_op_reduced_rule(operand, out_sharding, 'reduce_sum')
   return out_unreduced, out_reduced, kind
 
@@ -10309,11 +10402,30 @@ def _reduce_sum_dtype_rule(operand, *, axes, **_):
                      "allowed when jax_allow_f16_reductions=False.")
   return dt
 
+def _reduce_sum_batcher(
+    axis_data, batched_args, batch_dims, *, axes, **params):
+  order = params.get('reduction_order')
+  bdim, = batch_dims
+  if bdim is not None and not reduction_order_lib.is_leaf_order(order):
+    out_bdim = bdim - sum(a < bdim for a in axes)
+    old_out_ndim = batched_args[0].ndim - 1 - len(axes)
+    shifted = _reduction_order.shift_order_for_vmap(
+        order, out_bdim, old_out_ndim, bool(axes and axes[0] < bdim))
+    params = params | {'reduction_order': shifted}
+  return batching.reducer_batcher(
+      reduce_sum_p, axis_data, batched_args, batch_dims, axes=axes, **params)
+
+
 def _reduce_op_to_lojax(prim, hi_operand, *, axes, out_sharding, **params):
+  order = params.get('reduction_order')
+  if not reduction_order_lib.is_leaf_order(order):
+    return _reduction_order.reduce_op(
+        prim, hi_operand, axes, out_sharding, order)
   from jax._src import shard_map  # pyrefly: ignore[missing-import]
 
   in_aval = core.typeof(hi_operand)
-  out_aval, _ = prim.abstract_eval(in_aval, axes=axes, out_sharding=out_sharding, **params)
+  out_aval, _ = prim.abstract_eval(
+      in_aval, axes=axes, out_sharding=out_sharding, **params)
   lo_in, = in_aval.lower_val(hi_operand)
   out_u_set = out_aval.sharding.spec.unreduced
   if not out_u_set:
@@ -10348,9 +10460,18 @@ reduce_sum_p = standard_primitive(
   'reduce_sum', sharding_rule=_reduce_op_sharding_rule_with_out_sharding,
   vma_rule=partial(core.standard_vma_rule, 'reduce_sum'),
   ur_rule=_reduce_sum_ur_rule)
+_unreduced_is_high = lax_utils.unreduced_is_high('out_sharding')
+def _reduce_op_is_high(*avals, reduction_order=None, **params):
+  return (_unreduced_is_high(*avals, **params)
+          or not reduction_order_lib.is_leaf_order(reduction_order))
+
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
-batching.defreducer(reduce_sum_p)
-reduce_sum_p.is_high = lax_utils.unreduced_is_high('out_sharding')  # type: ignore
+ad.defjvp2(
+    reduce_sum_p,
+    lambda g, ans, _, **kw: reduce_sum_p.bind(g, **_tangent_ro_kw(ans, kw)),
+)
+batching.fancy_primitive_batchers[reduce_sum_p] = _reduce_sum_batcher
+reduce_sum_p.is_high = _reduce_op_is_high  # type: ignore
 reduce_sum_p.to_lojax = partial(_reduce_op_to_lojax, reduce_sum_p)  # type: ignore
 
 def _reduce_prod_jvp_rule(primals, tangents, *, axes):
@@ -10384,7 +10505,8 @@ def _reduce_chooser_jvp_rule(g, ans, operand, *, axes, out_sharding, reduction_o
 
 def _reduce_max_ur_rule(operand, *, axes, out_sharding, reduction_order=None):
   out_unreduced, kind = _reduce_op_unreduced_rule(
-      operand, axes, out_sharding, UnreducedKind.max, 'reduce_max')
+      operand, axes, out_sharding, UnreducedKind.max, 'reduce_max',
+      reduction_order)
   out_reduced = _reduce_op_reduced_rule(operand, out_sharding, 'reduce_max')
   return out_unreduced, out_reduced, kind
 
@@ -10395,8 +10517,10 @@ reduce_max_p = standard_primitive(
     ur_rule=_reduce_max_ur_rule)
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_max_p)
-reduce_max_p.is_high = lax_utils.unreduced_is_high('out_sharding')  # type: ignore
+reduce_max_p.is_high = _reduce_op_is_high  # type: ignore
 reduce_max_p.to_lojax = partial(_reduce_op_to_lojax, reduce_max_p)  # type: ignore
+_wrap_reduction_order_abstract_eval(reduce_sum_p)
+_wrap_reduction_order_abstract_eval(reduce_max_p)
 
 
 def _reduce_min_ur_rule(operand, *, axes, out_sharding):
@@ -12057,3 +12181,5 @@ def _array_reduce_precision_handler(t, x):
     return reduce_precision(x, exponent_bits=finfo.nexp, mantissa_bits=finfo.nmant)
   return x
 remat.reduce_precision_handlers[core.ShapedArray] = _array_reduce_precision_handler
+
+from jax._src.lax import _reduction_order  # noqa: E402

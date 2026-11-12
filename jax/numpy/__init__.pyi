@@ -682,7 +682,9 @@ def matrix_transpose(x: ArrayLike, /) -> Array: ...
 def matvec(x1: ArrayLike, x2: ArrayLike, /) -> Array: ...
 def max(a: ArrayLike, axis: _Axis = ..., out: None = ...,
         keepdims: builtins.bool = ..., initial: ArrayLike | None = ...,
-        where: ArrayLike | None = ..., *, reduction_order: Any = ...) -> Array: ...
+        where: ArrayLike | None = ..., *,
+        out_sharding: NamedSharding | P | None = ...,
+        reduction_order: Any = ...) -> Array: ...
 maximum: BinaryUfunc
 def mean(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike | None = ...,
          out: None = ..., keepdims: builtins.bool = ..., *,
@@ -932,7 +934,9 @@ def sum(
     keepdims: builtins.bool = ...,
     initial: ArrayLike | None = ...,
     where: ArrayLike | None = ...,
-    promote_integers: builtins.bool = ..., *, reduction_order: Any = ...,
+    promote_integers: builtins.bool = ..., *,
+    out_sharding: NamedSharding | P | None = ...,
+    reduction_order: Any = ...,
 ) -> Array: ...
 def swapaxes(a: ArrayLike, axis1: int, axis2: int) -> Array: ...
 def take(
