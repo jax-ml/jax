@@ -1659,6 +1659,106 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       else:
         self.assertArraysEqual(out, exp)
 
+  @parameterized.parameters(
+      (lambda k, a: jax.random.gamma(
+          k, a, (4, 4), method='exact', out_sharding=P('x', 'y')),
+       P('x', 'y')),
+      (lambda k, a: jax.random.gamma(
+          k, a, (4, 4), method='approximate', out_sharding=P('x', 'y')),
+       P('x', 'y')),
+      (lambda k, a: jax.random.loggamma(
+          k, a, (4, 4), method='exact', out_sharding=P('x', 'y')),
+       P('x', 'y')),
+      (lambda k, a: jax.random.loggamma(
+          k, a, (4, 4), method='approximate', out_sharding=P('x', 'y')),
+       P('x', 'y')),
+      (lambda k, a: jax.random.beta(
+          k, a, 2.0, (4, 4), method='exact', out_sharding=P('x', 'y')),
+       P('x', 'y')),
+      (lambda k, a: jax.random.beta(
+          k, a, 2.0, (4, 4), method='approximate', out_sharding=P('x', 'y')),
+       P('x', 'y')),
+      (lambda k, a: jax.random.dirichlet(
+          k, jnp.ones(4), (4,), out_sharding=P('x', None)), P('x', None)),
+      (lambda k, a: jax.random.t(
+          k, a + 2.0, (4, 4), out_sharding=P('x', 'y')), P('x', 'y')),
+      (lambda k, a: jax.random.chisquare(
+          k, a, (4, 4), method='exact', out_sharding=P('x', 'y')),
+       P('x', 'y')),
+      (lambda k, a: jax.random.chisquare(
+          k, a, (4, 4), method='approximate', out_sharding=P('x', 'y')),
+       P('x', 'y')),
+      (lambda k, a: jax.random.f(
+          k, a + 2.0, 3.0, (4, 4), out_sharding=P('x', 'y')), P('x', 'y')),
+      (lambda k, a: jax.random.generalized_normal(
+          k, a, (4, 4), out_sharding=P('x', 'y')), P('x', 'y')),
+      (lambda k, a: jax.random.ball(
+          k, d=4, shape=(4,), out_sharding=P('x', None)), P('x', None)),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_random_gamma_samplers_out_sharding(self, sampler, spec, mesh):
+    key = jax.random.key(23)
+    a_sh = jax.device_put(
+        jnp.linspace(1.0, 5.0, 16).reshape(4, 4), P('x', None))
+    f = jax.jit(sampler)
+    with config.jax_partitioning(False):
+      expected = f(key, a_sh)
+    self.assertIn('sdy.manual_computation', f.lower(key, a_sh).as_text())
+    out = f(key, a_sh)
+    self.assertEqual(out.sharding, NamedSharding(mesh, spec))
+    self.assertAllClose(out, expected, atol=1e-6, rtol=1e-6)
+
+  @config.numpy_dtype_promotion('standard')
+  def test_random_gamma_size_one_and_auto_context_mesh(self):
+    key = jax.random.key(37)
+    mesh_1slice = jtu.create_mesh(
+        (1, 2, 2), ('dcn', 'data', 'model'),
+        axis_types=(AxisType.Explicit,) * 3)
+    for s2 in (False, True):
+      with (config.jax_partitioning(s2),
+            jax.remove_size_one_mesh_axis_from_type(True),
+            jax.set_mesh(mesh_1slice)):
+        a_sh = jax.device_put(
+            jnp.linspace(0.5, 2.5, 16, dtype=jnp.float32).reshape(4, 4),
+            P(('dcn', 'data'), None))
+        spec_1s = P(('dcn', 'data'), 'model')
+        exp_1s = NamedSharding(mesh_1slice, P('data', 'model'))
+        for fn in (
+            lambda k, a: jax.random.gamma(k, a, (4, 4), out_sharding=spec_1s),
+            lambda k, a: jax.random.gamma(
+                k, a, (4, 4), method='approximate', out_sharding=spec_1s),
+            lambda k, a: jax.random.beta(
+                k, a, 2.0, (4, 4), out_sharding=spec_1s),
+        ):
+          self.assertEqual(jax.jit(fn)(key, a_sh).sharding, exp_1s)
+        self.assertEqual(
+            jax.jit(lambda k, a: jax.random.dirichlet(
+                k, a, out_sharding=P(('dcn', 'data'), None))
+            )(key, a_sh).sharding,
+            NamedSharding(mesh_1slice, P('data', None)))
+
+    auto_mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+    ctx_mesh = jax.sharding.AbstractMesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+    a_auto = jax.device_put(
+        jnp.linspace(0.5, 2.5, 16, dtype=jnp.float32).reshape(4, 4),
+        NamedSharding(auto_mesh, P('x', None)))
+    for out_s in (P(), NamedSharding(auto_mesh, P()), None):
+      @jax.jit
+      def f_auto(k, a, s=out_s):
+        with jax.sharding.use_abstract_mesh(ctx_mesh):
+          return jax.random.gamma(k, a, (4, 4), out_sharding=s)
+      f_auto(key, a_auto)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_random_gamma_unsafe_rbg_stage2_not_implemented(self, mesh):
+    del mesh
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda k: jax.random.gamma(
+          k, 2.0, (4, 4), out_sharding=P('x', 'y'))
+      ).lower(jax.random.key(0, impl='unsafe_rbg'))
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_edtype_casts(self, mesh):
     dt = dtypes.primal_tangent_dtype(jnp.int8, jnp.float32)

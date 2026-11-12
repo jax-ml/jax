@@ -29,12 +29,12 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import mesh as mesh_lib
 from jax._src import numpy as jnp
+from jax._src import shard_map
 from jax._src.random import prng
 from jax._src.random import threefry2x32
-from jax._src import xla_bridge
-from jax._src.mesh import get_abstract_mesh
+from jax._src.mesh import get_abstract_mesh, use_abstract_mesh
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
-from jax._src.api import Inline, jit, vmap
+from jax._src.api import Inline, jit, jvp, vmap
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -44,7 +44,8 @@ from jax._src.lax import lax
 from jax._src.lax import special as lax_special
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import linalg as jnp_linalg
-from jax._src.numpy.util import _arraylike, check_arraylike, promote_dtypes_inexact
+from jax._src.numpy.util import (
+    _arraylike, check_arraylike, promote_dtypes_inexact)
 from jax._src.pjit import auto_axes, reshard
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
@@ -543,6 +544,58 @@ def _sample_sharding(
     return lax.broadcasting_sharding_rule(name, *avals)
   except lax.lax_utils.DuplicateSpecError as e:
     raise core.ShardingTypeError(str(e)) from e
+
+
+def _make_shard_slicer(mesh, in_aval, target_parts):
+  in_parts = in_aval.sharding.spec.partitions
+  in_parts = in_parts + (None,) * (in_aval.ndim - len(in_parts))
+  target_parts = target_parts + (None,) * (in_aval.ndim - len(target_parts))
+  rem_shape, rem_in, rem_target = [], [], []
+  for d, in_p, p in zip(in_aval.shape, in_parts, target_parts):
+    if core.definitely_equal(d, 1) or in_p == p:
+      rem_shape.append(d)
+      rem_in.append(in_p)
+      rem_target.append(in_p)
+    elif in_p is not None and _is_sub_spec(in_p, p):
+      in_t, out_t = _as_axis_tuple(in_p), _as_axis_tuple(p)
+      rem = out_t[len(in_t):]
+      rem_shape.append(d // math.prod(mesh.shape[a] for a in in_t))
+      rem_in.append(None)
+      rem_target.append(rem[0] if len(rem) == 1 else rem)
+    else:
+      rem_shape.append(d)
+      rem_in.append(in_p)
+      rem_target.append(p)
+  in_aval = in_aval.update(
+      shape=tuple(rem_shape), sharding=NamedSharding(mesh, P(*rem_in)))
+  target_aval = in_aval.update(sharding=NamedSharding(mesh, P(*rem_target)))
+  with use_abstract_mesh(mesh):
+    rule = lax._naryop_collective_rule([in_aval], [target_aval])
+  if rule.in_collective is None:
+    return lambda x: x
+  return lambda x: rule.in_collective(x)[0]
+
+
+def _check_unsharded_trailing_axis(
+    name: str, out_shape: Shape, out_sharding: NamedSharding | None, param,
+    *, param_has_trailing: bool,
+):
+  out_s = (core.get_sharding(out_sharding, out_shape)
+           if out_sharding is not None else
+           _sample_sharding(name, out_shape, None, param))
+  p_s = core.typeof(param).sharding
+  p_parts = p_s.spec.partitions + (None,) * (
+      np.ndim(param) - len(p_s.spec.partitions))
+  has_trail = param_has_trailing or np.ndim(param) == len(out_shape)
+  if ((out_s is not None and out_s.spec.partitions[-1] is not None) or
+      (not p_s.mesh.empty and has_trail and p_parts and
+       p_parts[-1] is not None)):
+    raise core.ShardingTypeError(
+        f"{name} cannot shard the trailing dimension.")
+  _check_param_sharding(name, out_shape, out_s, param)
+  batch_s = (None if out_s is None else out_s.update(
+      spec=out_s.spec.update(partitions=out_s.spec.partitions[:-1])))
+  return out_s, batch_s
 
 
 def maybe_auto_axes(f, out_sharding, **hoist_kwargs):
@@ -1808,13 +1861,14 @@ def beta(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                      f"dtype, got {dtype}")
   _check_all_safe_to_cast("beta", dtype, a, b)
   shape = _check_broadcast_shapes("beta", shape, a, b)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "beta", shape)
+  out_sharding = canonicalize_sharding(out_sharding, "beta")
+  return _beta(key, a, b, method, shape, dtype, out_sharding)
 
-  return maybe_auto_axes(_beta, out_sharding, method=method,
-                         shape=shape, dtype=dtype)(key, a, b)
 
-@jit(static_argnums=(3, 4, 5))
-def _beta(key: Key, a, b, method, shape, dtype) -> Array:
+@jit(static_argnums=(3, 4, 5, 6))
+def _beta(
+    key: Key, a, b, method, shape, dtype, out_sharding=None
+) -> Array:
   if shape is None:
     shape = lax.broadcast_shapes(np.shape(a), np.shape(b))
   else:
@@ -1824,11 +1878,13 @@ def _beta(key: Key, a, b, method, shape, dtype) -> Array:
 
   a = lax.convert_element_type(a, dtype)
   b = lax.convert_element_type(b, dtype)
+  sample_s = _sample_sharding("beta", shape, out_sharding, a, b)
+  a, b = _align_params(shape, sample_s, a, b)
   key_a, key_b = _split(key)
-  a = jnp.broadcast_to(a, shape)
-  b = jnp.broadcast_to(b, shape)
-  log_gamma_a = loggamma(key_a, a, shape, dtype, method=method)
-  log_gamma_b = loggamma(key_b, b, shape, dtype, method=method)
+  log_gamma_a = loggamma(
+      key_a, a, shape, dtype, method=method, out_sharding=sample_s)
+  log_gamma_b = loggamma(
+      key_b, b, shape, dtype, method=method, out_sharding=sample_s)
   # Compute gamma_a / (gamma_a + gamma_b) without losing precision.
   log_max = lax.max(log_gamma_a, log_gamma_b)
   gamma_a_scaled = jnp.exp(log_gamma_a - log_max)
@@ -1941,12 +1997,12 @@ def dirichlet(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "dirichlet", shape)
-  return maybe_auto_axes(_dirichlet, out_sharding,
-                         shape=shape, dtype=dtype)(key, alpha)
+  out_sharding = canonicalize_sharding(out_sharding, "dirichlet")
+  return _dirichlet(key, alpha, shape, dtype, out_sharding)
 
-@jit(static_argnums=(2, 3))
-def _dirichlet(key: Key, alpha, shape, dtype) -> Array:
+
+@jit(static_argnums=(2, 3, 4))
+def _dirichlet(key: Key, alpha, shape, dtype, out_sharding=None) -> Array:
   from jax._src.nn.functions import softmax  # pyrefly: ignore[missing-import]
 
   if not np.ndim(alpha) >= 1:
@@ -1959,9 +2015,12 @@ def _dirichlet(key: Key, alpha, shape, dtype) -> Array:
     _check_shape("dirichlet", shape, np.shape(alpha)[:-1])
 
   alpha = lax.convert_element_type(alpha, dtype)
-
+  out_shape = shape + np.shape(alpha)[-1:]
+  out_s, _ = _check_unsharded_trailing_axis(
+      "dirichlet", out_shape, out_sharding, alpha, param_has_trailing=True)
   # Compute gamma in log space, otherwise small alpha can lead to poor behavior.
-  log_gamma_samples = loggamma(key, alpha, shape + np.shape(alpha)[-1:], dtype)
+  log_gamma_samples = loggamma(
+      key, alpha, out_shape, dtype, out_sharding=out_s)
   return softmax(log_gamma_samples, -1)
 
 
@@ -2095,71 +2154,235 @@ def _gamma_one(key: Key, alpha, log_space) -> Array:
     return lax.mul(lax.mul(d, V), boost)
 
 
-def _gamma_grad(sample, a, *, log_space):
-  samples = jnp.reshape(sample, -1)
-  alphas = jnp.reshape(a, -1)
+def _gamma_grad_one_shard(a, x, *, use_map):
+  out_shape = lax.broadcast_shapes(np.shape(a), np.shape(x))
+  if 0 in out_shape:
+    return jnp.empty(out_shape, dtype=x.dtype)
+  if use_map and not get_abstract_mesh().auto_axes:
+    alphas = jnp.reshape(jnp.broadcast_to(a, out_shape), -1)
+    xs = jnp.reshape(jnp.broadcast_to(x, out_shape), -1)
+    return lax_control_flow.map(
+        lambda args: lax_special.random_gamma_grad(*args),
+        (alphas, xs)).reshape(out_shape)
+  return lax_special.random_gamma_grad(a, x)
+
+
+def _gamma_grad_lowering(ctx, a, x, *, use_map=False):
+  out_aval, = ctx.avals_out
+  out_s = out_aval.sharding
+  manual_axes = frozenset(out_s.mesh.explicit_axes)
+  out_parts = out_s.spec.partitions
+  one_shard = partial(_gamma_grad_one_shard, use_map=use_map)
+  def _lower_fn(a_val, x_val):
+    if not manual_axes or all(p is None for p in out_parts):
+      return one_shard(a_val, x_val)
+    slice_fns = [
+        _make_shard_slicer(
+            out_s.mesh, av,
+            out_parts[len(out_parts) - av.ndim:] if av.ndim else ())
+        for av in ctx.avals_in
+    ]
+    def _per_shard(local_a, local_x):
+      return one_shard(slice_fns[0](local_a), slice_fns[1](local_x))
+    return shard_map.shard_map(
+        _per_shard, mesh=out_s.mesh, out_specs=out_s.spec,
+        axis_names=manual_axes, check_vma=False)(a_val, x_val)
+  lowering = mlir.lower_fun(_lower_fn, multiple_results=False)
+  avals_in = [v.update(manual_axis_type=core.empty_mat) for v in ctx.avals_in]
+  avals_out = [out_aval.update(manual_axis_type=core.empty_mat)]
+  return mlir.delegate_lowering(
+      ctx, lowering, a, x, avals_in=avals_in, avals_out=avals_out)
+
+
+_gamma_grad_p = lax.standard_naryop([lax._float, lax._float],
+                                    'random_gamma_grad')
+mlir.register_lowering(
+    _gamma_grad_p, _gamma_grad_lowering, shard_map_passthrough=True)
+mlir.register_lowering(
+    _gamma_grad_p, partial(_gamma_grad_lowering, use_map=True),
+    platform='cpu', shard_map_passthrough=True)
+ad.primitive_jvps[_gamma_grad_p] = lambda primals, tangents: jvp(
+    lax_special.random_gamma_grad, primals,
+    tuple(map(ad.instantiate_zeros, tangents)))
+
+
+def _gamma_grad(sample, a, *, log_space, **_):
+  if np.shape(a) != np.shape(sample):
+    a = jnp.broadcast_to(a, np.shape(sample))
+  a = lax.convert_element_type(a, sample.dtype)
   if log_space:
     # d[log(sample)] = d[sample] / sample
-    # This requires computing exp(log_sample), which may be zero due to float roundoff.
-    # In this case, correct it to smallest representable float.
-    samples = lax.exp(samples)
-    zero = lax._const(sample, 0)
-    tiny = lax.full_like(samples, dtypes.finfo(samples.dtype).tiny)
-    samples = lax.select(lax.eq(samples, zero), tiny, samples)
-    gamma_grad = lambda alpha, sample: (
-        lax_special.random_gamma_grad(alpha, sample) / sample)
-  else:
-    gamma_grad = lax_special.random_gamma_grad
-  if xla_bridge.get_backend().platform == 'cpu':
-    grads = lax_control_flow.map(lambda args: gamma_grad(*args), (alphas, samples))
-  else:
-    grads = vmap(gamma_grad)(alphas, samples)
-  return grads.reshape(np.shape(a))
+    s = lax.exp(sample)
+    s = lax.select(lax.eq(s, lax._const(s, 0)),
+                   lax.full_like(s, dtypes.finfo(s.dtype).tiny), s)
+    return _gamma_grad_p.bind(a, s) / s
+  return _gamma_grad_p.bind(a, sample)
 
-def _gamma_impl(key: Key, a, *, log_space, use_vmap=False):
-  # split key to match the shape of a
+
+def _gamma_from_keys(keys, a, *, impl, log_space, use_vmap):
   a_shape = np.shape(a)
-  split_count = math.prod(a_shape[key.ndim:])
-  keys = key.flatten()
-  keys = vmap(_split, in_axes=(0, None))(keys, split_count)
-  keys = keys.flatten()
-  alphas = a.flatten()
-
-  if use_vmap and _key_impl(key) is threefry2x32.threefry_prng_impl:
+  alphas = a.reshape(-1)
+  if use_vmap and impl is threefry2x32.threefry_prng_impl:
     samples = vmap(partial(_gamma_one, log_space=log_space))(keys, alphas)
   else:
     samples = lax_control_flow.map(
         lambda args: _gamma_one(*args, log_space=log_space), (keys, alphas))
-
   return jnp.reshape(samples, a_shape)
 
-def _gamma_batching_rule(batched_args, batch_dims, *, log_space):
+
+def _gamma_impl_local(key: Key, a, *, log_space, use_vmap=False):
+  a_shape = np.shape(a)
+  if 0 in a_shape:
+    return jnp.empty_like(a)
+  split_count = math.prod(a_shape[key.ndim:])
+  keys = vmap(_split, in_axes=(0, None))(key.flatten(), split_count).flatten()
+  return _gamma_from_keys(
+      keys, a, impl=_key_impl(key), log_space=log_space, use_vmap=use_vmap)
+
+
+def _gamma_batching_rule(
+    axis_data, batched_args, batch_dims, *, log_space, out_sharding):
   k, a = batched_args
   bk, ba = batch_dims
-  size = next(
-      t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
-  k = batching.bdim_at_front(k, bk, size)
-  a = batching.bdim_at_front(a, ba, size)
-  return random_gamma_p.bind(k, a, log_space=log_space), 0
+  if bk is None and ba is None:
+    return random_gamma_p.bind(
+        k, a, log_space=log_space, out_sharding=out_sharding), None
+  mesh_axis = axis_data.explicit_mesh_axis
+  k = batching.bdim_at_front(k, bk, axis_data.size, mesh_axis=mesh_axis)
+  a = batching.bdim_at_front(a, ba, axis_data.size, mesh_axis=mesh_axis)
+  if out_sharding is not None:
+    out_sharding = batching.get_sharding_for_vmap(
+        axis_data, canonicalize_sharding(out_sharding, 'random_gamma'), 0)
+  return random_gamma_p.bind(
+      k, a, log_space=log_space, out_sharding=out_sharding), 0
+
 
 random_gamma_p = core.Primitive('random_gamma')
-random_gamma_p.def_impl(_gamma_impl)
+dispatch.simple_impl(random_gamma_p)
 
-def _random_gamma_abstract_eval(key, a, **_):
-  core.standard_vma_rule('random_gamma', key, a)
-  return a
+
+def _random_gamma_sharding_rule(key_aval, a_aval, *, out_sharding):
+  k_s, a_s = key_aval.sharding, a_aval.sharding
+  meshes = [s.mesh for s in (k_s, a_s, out_sharding)
+            if s is not None and not s.mesh.empty]
+  if len(set(meshes)) > 1:
+    raise core.ShardingTypeError(
+        f'Mismatched meshes in random_gamma: {meshes}.')
+  if out_sharding is not None:
+    out_s = core.get_sharding(out_sharding, a_aval.shape)
+    out_parts = out_s.spec.partitions
+    if (any(not _is_sub_spec(kp, op)
+            for kp, op in zip(k_s.spec.partitions, out_parts)) or
+        any(not _is_sub_spec(ap, op)
+            for ap, op in zip(a_s.spec.partitions, out_parts))):
+      raise core.ShardingTypeError(
+          f'Incompatible shardings {k_s.spec}, {a_s.spec} vs'
+          f' {out_s.spec}.')
+    return out_s
+  mesh = meshes[0] if meshes else get_abstract_mesh()
+  k_parts = k_s.spec.partitions + (None,) * (
+      a_aval.ndim - len(k_s.spec.partitions))
+  a_parts = a_s.spec.partitions + (None,) * (
+      a_aval.ndim - len(a_s.spec.partitions))
+  out_parts = []
+  for kp, ap in zip(k_parts, a_parts):
+    if _is_sub_spec(kp, ap):
+      out_parts.append(ap)
+    elif _is_sub_spec(ap, kp):
+      out_parts.append(kp)
+    else:
+      raise core.ShardingTypeError(
+          f'Incompatible key {k_s.spec} and param {a_s.spec} shardings.')
+  try:
+    return core.get_sharding(NamedSharding(mesh, P(*out_parts)), a_aval.shape)
+  except lax.lax_utils.DuplicateSpecError as e:
+    raise core.ShardingTypeError(str(e)) from e
+
+
+def _random_gamma_abstract_eval(key_aval, a_aval, *, log_space, out_sharding):
+  del log_space
+  if a_aval.shape[:key_aval.ndim] != key_aval.shape:
+    raise ValueError(
+        f'random_gamma leading shape of a {a_aval.shape} must match key shape'
+        f' {key_aval.shape}.')
+  out_sharding = canonicalize_sharding(out_sharding, 'random_gamma')
+  sharding = prng.resolve_random_sharding(
+      random_gamma_p, _random_gamma_sharding_rule,
+      key_aval, a_aval, out_sharding=out_sharding)
+  vma = core.standard_vma_rule('random_gamma', key_aval, a_aval)
+  return a_aval.update(
+      sharding=sharding, manual_axis_type=core.ManualAxisType(varying=vma))
+
+
 random_gamma_p.def_abstract_eval(_random_gamma_abstract_eval)
 
 ad.defjvp2(
     random_gamma_p, None,
     lambda tangent, ans, key, a, **kwds: tangent * _gamma_grad(ans, a, **kwds))
-mlir.register_lowering(random_gamma_p, mlir.lower_fun(
-    partial(_gamma_impl, use_vmap=True),
-    multiple_results=False))
-mlir.register_lowering(random_gamma_p, mlir.lower_fun(
-    partial(_gamma_impl, use_vmap=True),
-    multiple_results=False), platform='cpu')
-batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
+
+
+def _random_gamma_lowering(ctx, key, a, *, log_space, out_sharding):
+  key_aval, a_aval = ctx.avals_in
+  out_aval, = ctx.avals_out
+  impl = key_aval.dtype._impl
+  out_s = out_aval.sharding
+  manual_axes = frozenset(out_s.mesh.explicit_axes)
+  out_parts = out_s.spec.partitions
+  k_ndim = key_aval.ndim
+  trail_shape = a_aval.shape[k_ndim:]
+  trail_parts = out_parts[k_ndim:]
+
+  def _lower_fn(key_base, a_val):
+    if not manual_axes or all(p is None for p in out_parts):
+      return _gamma_impl_local(
+          prng.random_wrap(key_base, impl=impl), a_val,
+          log_space=log_space, use_vmap=True)
+    slice_a = _make_shard_slicer(out_s.mesh, a_aval, out_parts)
+    if all(p is None for p in trail_parts):
+      slice_k = _make_shard_slicer(
+          out_s.mesh, core.typeof(key_base), out_parts[:k_ndim])
+      def _per_shard_unsplit(local_k, local_a):
+        return _gamma_impl_local(
+            prng.random_wrap(slice_k(local_k), impl=impl), slice_a(local_a),
+            log_space=log_space, use_vmap=True)
+      return shard_map.shard_map(
+          _per_shard_unsplit, mesh=out_s.mesh, out_specs=out_s.spec,
+          axis_names=manual_axes, check_vma=False)(key_base, a_val)
+
+    k_lead = key_aval.sharding.spec.partitions
+    k_lead = k_lead + (None,) * (k_ndim - len(k_lead))
+    subkey_s = NamedSharding(out_s.mesh, P(*k_lead, *trail_parts))
+    subkeys = prng.random_unwrap(
+        prng.random_split(
+            prng.random_wrap(key_base, impl=impl),
+            shape=trail_shape, out_sharding=subkey_s))
+    slice_sub = _make_shard_slicer(
+        out_s.mesh, core.typeof(subkeys), out_parts)
+    def _per_shard(local_subkeys, local_a):
+      if 0 in local_a.shape:
+        return jnp.empty_like(local_a)
+      local_subkeys = slice_sub(local_subkeys)
+      local_a = slice_a(local_a)
+      keys = prng.random_wrap(
+          local_subkeys.reshape(-1, *impl.key_shape), impl=impl)
+      return _gamma_from_keys(
+          keys, local_a, impl=impl, log_space=log_space, use_vmap=True)
+    return shard_map.shard_map(
+        _per_shard, mesh=out_s.mesh, out_specs=out_s.spec,
+        axis_names=manual_axes, check_vma=False)(subkeys, a_val)
+
+  lowering = mlir.lower_fun(_lower_fn, multiple_results=False)
+  phys_key = core.physical_aval(key_aval).update(
+      manual_axis_type=core.empty_mat)
+  a_in = a_aval.update(manual_axis_type=core.empty_mat)
+  out_in = out_aval.update(manual_axis_type=core.empty_mat)
+  return mlir.delegate_lowering(
+      ctx, lowering, key, a, avals_in=[phys_key, a_in], avals_out=[out_in])
+
+
+mlir.register_lowering(
+    random_gamma_p, _random_gamma_lowering, shard_map_passthrough=True)
+batching.fancy_primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
 def gamma(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
           a: RealArray,
@@ -2224,11 +2447,11 @@ def gamma(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "gamma", shape)
+  out_sharding = canonicalize_sharding(out_sharding, "gamma")
   if method == 'approximate':
-    return maybe_auto_axes(_gamma_approx, out_sharding,
-                           shape=shape, dtype=dtype)(key, a)
-  return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype)(key, a)
+    return _gamma_approx(
+        key, a, shape=shape, dtype=dtype, out_sharding=out_sharding)
+  return _gamma(key, a, shape=shape, dtype=dtype, out_sharding=out_sharding)
 
 
 def loggamma(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
@@ -2237,7 +2460,7 @@ def loggamma(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
              dtype: DTypeLikeFloat | None = None,
              *,
              method: str = 'exact',
-             out_sharding: NamedSharding | P | None =None) -> Array:
+             out_sharding: NamedSharding | P | None = None) -> Array:
   """Sample log-gamma random values with given shape and float dtype.
 
   This function is implemented such that the following will hold for a
@@ -2291,23 +2514,30 @@ def loggamma(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding(out_sharding, "loggamma")
   if method == 'approximate':
-    return maybe_auto_axes(_gamma_approx, out_sharding, shape=shape,
-                           dtype=dtype, log_space=True)(key, a)
-  return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype, log_space=True)(key, a)
+    return _gamma_approx(
+        key, a, shape=shape, dtype=dtype, log_space=True,
+        out_sharding=out_sharding)
+  return _gamma(
+      key, a, shape=shape, dtype=dtype, log_space=True,
+      out_sharding=out_sharding)
 
 
-@jit(static_argnames=('shape', 'dtype', 'log_space'))
-def _gamma(key: Key, a, shape, dtype, log_space=False) -> Array:
+@jit(static_argnames=('shape', 'dtype', 'log_space', 'out_sharding'))
+def _gamma(
+    key: Key, a, shape, dtype, log_space=False, out_sharding=None
+) -> Array:
   if shape is None:
     shape = np.shape(a)
   else:
     _check_shape("gamma", shape, np.shape(a))
 
   a = lax.convert_element_type(a, dtype)
+  _check_param_sharding("gamma", shape, out_sharding, a)
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
   key, (a,) = random_insert_pvary('gamma', key, a)
-  return random_gamma_p.bind(key, a, log_space=log_space)
+  return random_gamma_p.bind(
+      key, a, log_space=log_space, out_sharding=out_sharding)
 
 
 # Coefficients of the chi-square quantile series used by `_gamma_approx` (see
@@ -2331,7 +2561,7 @@ _CHI2_QUANTILE_COEF = (
 _LOGGAMMA_NUM_BOOSTS = 4
 
 
-def _loggamma_chisquare(key: Key, a) -> Array:
+def _loggamma_chisquare(key: Key, a, out_sharding=None) -> Array:
   r"""Sample ``log(Gamma(a, 1))`` via the chi-square quantile series.
 
   Cubes a 6th-degree polynomial in a standard normal applied to the chi-square
@@ -2342,7 +2572,7 @@ def _loggamma_chisquare(key: Key, a) -> Array:
   :func:`_gamma_approx` for the references and overall algorithm.
   """
   nu = 2 * a
-  x = _normal(key, np.shape(a), a.dtype)
+  x = _normal(key, np.shape(a), a.dtype, out_sharding=out_sharding)
   u = 1 / nu
   # x^k nu^(-k/2) = t^k, so the series is a degree-6 Horner polynomial in t.
   t = x * lax.rsqrt(nu)
@@ -2357,8 +2587,10 @@ def _loggamma_chisquare(key: Key, a) -> Array:
   return jnp.log(a) + 3 * jnp.log(poly)
 
 
-@jit(static_argnames=('shape', 'dtype', 'log_space'))
-def _gamma_approx(key: Key, a, shape, dtype, log_space=False) -> Array:
+@jit(static_argnames=('shape', 'dtype', 'log_space', 'out_sharding'))
+def _gamma_approx(
+    key: Key, a, shape, dtype, log_space=False, out_sharding=None
+) -> Array:
   r"""Loop-free approximate sampler for ``Gamma(a, 1)``.
 
   Backs the ``method='approximate'`` path of :func:`gamma` and :func:`loggamma`,
@@ -2423,6 +2655,8 @@ def _gamma_approx(key: Key, a, shape, dtype, log_space=False) -> Array:
   compute_dtype = np.dtype('float32') if dtypes.finfo(dtype).bits < 32 else dtype
   shape = _check_broadcast_shapes("gamma", shape, a)
   a = lax.convert_element_type(a, compute_dtype)
+  sample_s = _sample_sharding("gamma", shape, out_sharding, a)
+  a, = _align_params(shape, sample_s, a)
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
   key, (a,) = random_insert_pvary('gamma', key, a)
@@ -2431,14 +2665,13 @@ def _gamma_approx(key: Key, a, shape, dtype, log_space=False) -> Array:
   n = _LOGGAMMA_NUM_BOOSTS
 
   # Base draw at the boosted shape a + n, where the series is accurate.
-  log_base = _loggamma_chisquare(key_base, a + n)
+  log_base = _loggamma_chisquare(key_base, a + n, out_sharding=sample_s)
 
-  # Boosting correction sum_k log(U_k) / (a + k), with log(U_k) = -Exp(1). The
-  # boost index k and a sample are stacked along a leading axis; both operands
-  # are reshaped to that rank so the divide needs no implicit rank promotion.
-  k = jnp.arange(n, dtype=compute_dtype).reshape((n,) + (1,) * len(shape))
-  log_u = -_exponential(key_boost, (n, *shape), compute_dtype)
-  log_sample = log_base + jnp.sum(log_u / (a[None, ...] + k), axis=0)
+  # Boosting correction sum_k log(U_k) / (a + k), with log(U_k) = -Exp(1).
+  log_u = -_exponential(
+      key_boost, (n, *shape), compute_dtype,
+      out_sharding=_prepend_none_sharding(sample_s))
+  log_sample = log_base + sum(log_u[i] / (a + i) for i in range(n))
 
   out = log_sample if log_space else lax.exp(log_sample)
   return lax.convert_element_type(out, dtype)
@@ -3170,24 +3403,26 @@ def t(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise ValueError(f"dtype argument to `t` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("t", shape, df)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "t", shape)
   _check_all_safe_to_cast("t", dtype, df)
-  return maybe_auto_axes(_t, out_sharding,
-                         shape=shape, dtype=dtype)(key, df)
+  out_sharding = canonicalize_sharding(out_sharding, "t")
+  return _t(key, df, shape, dtype, out_sharding)
 
-@jit(static_argnums=(2, 3))
-def _t(key: Key, df, shape, dtype) -> Array:
+
+@jit(static_argnums=(2, 3, 4))
+def _t(key: Key, df, shape, dtype, out_sharding=None) -> Array:
   if shape is None:
     shape = np.shape(df)
   else:
     _check_shape("t", shape, np.shape(df))
 
   df = lax.convert_element_type(df, dtype)
+  sample_s = _sample_sharding("t", shape, out_sharding, df)
+  df, = _align_params(shape, sample_s, df)
   key_n, key_g = _split(key)
-  n = normal(key_n, shape, dtype)
+  n = normal(key_n, shape, dtype, out_sharding=sample_s)
   two = lax._const(n, 2)
   half_df = lax.div(df, two)
-  g = gamma(key_g, half_df, shape, dtype)
+  g = gamma(key_g, half_df, shape, dtype, out_sharding=sample_s)
   return n * jnp.sqrt(half_df / g)
 
 
@@ -3246,19 +3481,20 @@ def chisquare(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("chisquare", shape, df)
   _check_all_safe_to_cast("chisquare", dtype, df)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "chisquare", shape)
-  return maybe_auto_axes(_chisquare, out_sharding, method=method,
-                         shape=shape, dtype=dtype)(key, df)
+  out_sharding = canonicalize_sharding(out_sharding, "chisquare")
+  return _chisquare(key, df, method, shape, dtype, out_sharding)
 
 
-@jit(static_argnums=(2, 3, 4))
-def _chisquare(key: Key, df, method, shape, dtype) -> Array:
+@jit(static_argnums=(2, 3, 4, 5))
+def _chisquare(key: Key, df, method, shape, dtype, out_sharding=None) -> Array:
   df = lax.convert_element_type(df, dtype)
+  sample_s = _sample_sharding("chisquare", shape, out_sharding, df)
+  df, = _align_params(shape, sample_s, df)
   two = lax._const(df, 2)
-  half_df = lax.div(df, two)
-  log_g = loggamma(key, a=half_df, shape=shape, dtype=dtype, method=method)
-  chi2 = lax.mul(jnp.exp(log_g), two)
-  return chi2
+  log_g = loggamma(
+      key, a=lax.div(df, two), shape=shape, dtype=dtype, method=method,
+      out_sharding=sample_s)
+  return lax.mul(jnp.exp(log_g), two)
 
 
 def f(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
@@ -3312,21 +3548,21 @@ def f(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise ValueError("dtype argument to `f` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("f", shape, dfnum, dfden)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "f", shape)
   _check_all_safe_to_cast("f", dtype, dfnum, dfden)
+  out_sharding = canonicalize_sharding(out_sharding, "f")
   return _f(key, dfnum, dfden, shape, dtype, out_sharding)
 
+
 @jit(static_argnums=(3, 4, 5))
-def _f(key: Key, dfnum, dfden, shape, dtype, out_sharding) -> Array:
+def _f(key: Key, dfnum, dfden, shape, dtype, out_sharding=None) -> Array:
   dfden = lax.convert_element_type(dfden, dtype)
   dfnum = lax.convert_element_type(dfnum, dtype)
+  sample_s = _sample_sharding("f", shape, out_sharding, dfnum, dfden)
+  dfnum, dfden = _align_params(shape, sample_s, dfnum, dfden)
   key_dfd, key_dfn = _split(key)
-  chi2_dfn = chisquare(key_dfn, dfnum, shape, dtype, out_sharding=out_sharding)
-  chi2_dfd = chisquare(key_dfd, dfden, shape, dtype, out_sharding=out_sharding)
-  num = chi2_dfn / dfnum
-  den = chi2_dfd / dfden
-  f = lax.div(num, den)
-  return f
+  chi2_dfn = chisquare(key_dfn, dfnum, shape, dtype, out_sharding=sample_s)
+  chi2_dfd = chisquare(key_dfd, dfden, shape, dtype, out_sharding=sample_s)
+  return lax.div(chi2_dfn / dfnum, chi2_dfd / dfden)
 
 
 def rademacher(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
@@ -3640,15 +3876,17 @@ def generalized_normal(
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   _check_shape("generalized_normal", shape)
-  out_sharding = canonicalize_sharding_for_samplers(
-      out_sharding, "generalized_normal", shape)
-  return maybe_auto_axes(_generalized_normal, out_sharding, shape=shape, dtype=dtype)(key, p)
+  out_sharding = canonicalize_sharding(out_sharding, "generalized_normal")
+  return _generalized_normal(key, p, shape, dtype, out_sharding)
 
-@jit(static_argnums=(2, 3))
-def _generalized_normal(key: Key, p, shape, dtype):
+
+@jit(static_argnums=(2, 3, 4))
+def _generalized_normal(key: Key, p, shape, dtype, out_sharding=None):
+  sample_s = _sample_sharding("generalized_normal", shape, out_sharding, p)
+  p, = _align_params(shape, sample_s, p)
   keys = split(key)
-  g = gamma(keys[0], 1/p, shape, dtype)
-  r = rademacher(keys[1], shape, dtype)
+  g = gamma(keys[0], 1 / p, shape, dtype, out_sharding=sample_s)
+  r = rademacher(keys[1], shape, dtype, out_sharding=sample_s)
   return r * g ** (1 / p)
 
 def ball(
@@ -3691,13 +3929,18 @@ def ball(
   _check_shape("ball", shape)
   d = core.concrete_or_error(index, d, "The error occurred in jax.random.ball()")
   out_sharding = canonicalize_sharding(out_sharding, "ball")
-  return maybe_auto_axes(_ball, out_sharding, d=d,  shape=shape, dtype=dtype)(key, p)
+  return _ball(key, p, d, shape, dtype, out_sharding)
 
-@jit(static_argnums=(2, 3, 4))
-def _ball(key: Key, p, d, shape, dtype):
+
+@jit(static_argnums=(2, 3, 4, 5))
+def _ball(key: Key, p, d, shape, dtype, out_sharding=None):
+  out_shape = (*shape, d)
+  out_s, batch_s = _check_unsharded_trailing_axis(
+      "ball", out_shape, out_sharding, p, param_has_trailing=False)
+  p, = _align_params(out_shape, out_s, p)
   k1, k2 = split(key)
-  g = generalized_normal(k1, p, (*shape, d), dtype)
-  e = exponential(k2, shape, dtype)
+  g = generalized_normal(k1, p, out_shape, dtype, out_sharding=out_s)
+  e = exponential(k2, shape, dtype, out_sharding=batch_s)
   return g / (((jnp.abs(g) ** p).sum(-1) + e) ** (1 / p))[..., None]
 
 

@@ -43,8 +43,10 @@ from jax._src.lax import lax as lax_internal
 from jax.lax import with_sharding_constraint
 from jax._src.xla_metadata import set_xla_metadata
 from jax._src.random import prng
+from jax._src.random import core as random_core
 from jax._src.random import threefry2x32
 from jax._src.random import rbg
+from jax._src.lax import special as lax_special
 from jax.sharding import (PartitionSpec as P, Mesh, auto_axes, explicit_axes,
                           AbstractDevice, UnreducedKind)
 from jax.experimental import multihost_utils
@@ -8196,6 +8198,331 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         with self.assertRaises(core.ShardingTypeError):
           jax.jit(lambda k, p, s=bad_spec: jax.random.rayleigh(
               k, p, (4, 4), out_sharding=s))(key, p_sh)
+
+  @parameterized.parameters(
+      (lambda k, a, s: jax.random.gamma(
+          k, a, (4, 4), method='exact', out_sharding=s), P('x', 'y')),
+      (lambda k, a, s: jax.random.gamma(
+          k, a, (4, 4), method='approximate', out_sharding=s), P('x', 'y')),
+      (lambda k, a, s: jax.random.loggamma(
+          k, a, (4, 4), method='exact', out_sharding=s), P('x', 'y')),
+      (lambda k, a, s: jax.random.loggamma(
+          k, a, (4, 4), method='approximate', out_sharding=s), P('x', 'y')),
+      (lambda k, a, s: jax.random.beta(
+          k, a, 2.0, (4, 4), method='exact', out_sharding=s), P('x', 'y')),
+      (lambda k, a, s: jax.random.beta(
+          k, a, 2.0, (4, 4), method='approximate', out_sharding=s),
+       P('x', 'y')),
+      (lambda k, a, s: jax.random.dirichlet(
+          k, jnp.ones(4), (4,), out_sharding=s), P('x', None)),
+      (lambda k, a, s: jax.random.t(
+          k, a + 2.0, (4, 4), out_sharding=s), P('x', 'y')),
+      (lambda k, a, s: jax.random.chisquare(
+          k, a, (4, 4), method='exact', out_sharding=s), P('x', 'y')),
+      (lambda k, a, s: jax.random.chisquare(
+          k, a, (4, 4), method='approximate', out_sharding=s), P('x', 'y')),
+      (lambda k, a, s: jax.random.f(
+          k, a + 2.0, 3.0, (4, 4), out_sharding=s), P('x', 'y')),
+      (lambda k, a, s: jax.random.generalized_normal(
+          k, a, (4, 4), out_sharding=s), P('x', 'y')),
+      (lambda k, a, s: jax.random.ball(
+          k, d=4, shape=(4,), out_sharding=s), P('x', None)),
+  )
+  def test_random_gamma_and_derived_out_sharding(self, sampler, spec):
+    mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
+    key = jax.random.key(23)
+    target_s = NamedSharding(mesh, spec)
+    a_unsh = jnp.linspace(1.0, 5.0, 16).reshape(4, 4)
+    a_sh = jax.device_put(a_unsh, NamedSharding(mesh, P('x', None)))
+    ref = sampler(key, a_unsh, None)
+
+    with jax.set_mesh(mesh):
+      out_eager = sampler(key, a_sh, target_s)
+      self.assertEqual(out_eager.sharding, target_s)
+      self.assertAllClose(out_eager, ref, atol=5e-5, rtol=5e-5)
+
+      f = jax.jit(lambda k, a: sampler(k, a, spec))
+      self.assertNotIn('Auto', str(f.trace(key, a_sh).jaxpr))
+      hlo = f.lower(key, a_sh).compile().as_text()
+      self.assertIsNotNone(hlo)
+      self.assertNotIn('all-', hlo)
+      out = f(key, a_sh)
+      self.assertEqual(out.sharding, target_s)
+      self.assertAllClose(out, ref, atol=5e-5, rtol=5e-5)
+
+  def test_random_gamma_family_modes_and_mixed_mesh(self):
+    mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
+    key = jax.random.key(23)
+    s2d = NamedSharding(mesh, P('x', 'y'))
+    s1d = NamedSharding(mesh, P('x', None))
+    a_unsh = jnp.linspace(1.0, 5.0, 16).reshape(4, 4)
+    a_sh = jax.device_put(a_unsh, s1d)
+
+    with jax.set_mesh(mesh), jax.disable_jit():
+      for out, exp_shape in (
+          (jax.random.gamma(key, 2.0), ()),
+          (jax.random.gamma(key, 2.0, method='approximate'), ()),
+          (jax.random.loggamma(key, 2.0), ()),
+          (jax.random.beta(key, 2.0, 3.0), ()),
+          (jax.random.dirichlet(key, jnp.ones(3)), (3,)),
+          (jax.random.t(key, 3.0), ()),
+          (jax.random.chisquare(key, 3.0), ()),
+          (jax.random.f(key, 3.0, 4.0), ()),
+          (jax.random.generalized_normal(key, 2.0), ()),
+          (jax.random.ball(key, d=3), (3,)),
+      ):
+        self.assertEqual(out.shape, exp_shape)
+
+    mixed_mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Auto, AxisType.Explicit))
+    with jax.set_mesh(mixed_mesh):
+      a_y = jax.device_put(a_unsh, P(None, 'y'))
+      a_xy = jax.device_put(a_unsh, P('x', 'y'))
+      a_x_auto = jax.device_put(a_unsh, P('x', None))
+      s_y = NamedSharding(mixed_mesh, P(None, 'y'))
+      s_xy = NamedSharding(mixed_mesh, P('x', 'y'))
+      f_mixed = jax.jit(lambda a: (
+          jax.random.gamma(key, a),
+          jax.random.gamma(key, a, method='approximate'),
+          jax.random.beta(key, a, 2.0),
+          jax.random.t(key, a),
+          jax.random.f(key, a, 3.0),
+          jax.random.generalized_normal(key, a, (4, 4)),
+          jax.grad(lambda z: jax.random.gamma(key, z).sum())(a),
+      ))
+      for arr in f_mixed(a_y):
+        self.assertEqual(arr.sharding, s_y)
+      f_mixed_xy = jax.jit(
+          lambda a: (
+              jax.random.gamma(key, a),
+              jax.random.gamma(key, a, method='approximate'),
+              jax.grad(lambda z: jax.random.gamma(key, z).sum())(a),
+          ),
+          out_shardings=(P('x', 'y'),) * 3)
+      for arr in f_mixed_xy(a_xy):
+        self.assertEqual(arr.sharding, s_xy)
+      out_cross = jax.jit(
+          lambda a: jax.random.gamma(key, a, out_sharding=P(None, 'y')),
+          out_shardings=P('x', 'y'))(a_x_auto)
+      self.assertEqual(out_cross.sharding, s_xy)
+
+    with jax.set_mesh(mesh), config.no_collectives({'x', 'y'}):
+      self.assertEqual(jax.jit(
+          lambda k, a: jax.random.gamma(
+              k, a, (4, 4), out_sharding=P('x', 'y'))
+      )(key, a_sh).sharding, s2d)
+
+  def test_random_gamma_family_ad(self):
+    mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
+    key = jax.random.key(23)
+    s2d = NamedSharding(mesh, P('x', 'y'))
+    a_unsh = jnp.linspace(1.0, 5.0, 16).reshape(4, 4)
+    a_2d = jax.device_put(a_unsh, s2d)
+    tangent = jnp.ones_like(a_unsh)
+    t_2d = jnp.ones_like(a_2d)
+
+    with jax.set_mesh(mesh):
+      for method in ('exact', 'approximate'):
+        ref_fn = lambda a, m=method: jax.random.gamma(key, a, method=m)
+        _, ref_jvp = jax.jvp(ref_fn, (a_unsh,), (tangent,))
+        grad_fn = lambda a, m=method: jax.grad(
+            lambda x: jax.random.gamma(key, x, method=m).sum())(a)
+        ref_g1 = grad_fn(a_unsh)
+        for s2 in (False, True):
+          with config.jax_partitioning(s2):
+            f_ad = jax.jit(lambda a, t, m=method: (
+                jax.jvp(lambda x: jax.random.gamma(key, x, method=m),
+                        (a,), (t,)),
+                jax.grad(
+                    lambda z: jax.random.gamma(key, z, method=m).sum())(a),
+            ))
+            hlo_ad = f_ad.lower(a_2d, t_2d).compile().as_text()
+            self.assertIsNotNone(hlo_ad)
+            self.assertNotIn('all-', hlo_ad)
+            (p_out, t_out), g1 = f_ad(a_2d, t_2d)
+            for arr in (p_out, t_out, g1):
+              self.assertEqual(arr.sharding, s2d)
+            self.assertAllClose(t_out, ref_jvp, atol=5e-5, rtol=5e-5)
+            self.assertAllClose(g1, ref_g1, atol=5e-5, rtol=5e-5)
+
+    # Forward-over-reverse AD through the gamma gradient.
+    self.assertTrue(np.all(np.isfinite(jax.hessian(
+        lambda a: jax.random.gamma(key, a).sum())(a_unsh[0]))))
+    grad_fn = jax.jit(random_core._gamma_grad_p.bind)
+    a0, x0, eps = jnp.float32(2.5), jnp.float32(1.7), 1e-2
+    _, dg = jax.jvp(grad_fn, (a0, x0), (jnp.float32(1.), jnp.float32(0.)))
+    self.assertAllClose(
+        dg, (grad_fn(a0 + eps, x0) - grad_fn(a0 - eps, x0)) / (2 * eps),
+        atol=1e-2, rtol=1e-2)
+
+    # Low-precision gradients are computed in float32 on every backend.
+    a_bf = jnp.array([0.5, 2.0, 7.0], jnp.bfloat16)
+    x_bf = jnp.array([0.3, 1.5, 6.0], jnp.bfloat16)
+    self.assertAllClose(
+        grad_fn(a_bf, x_bf),
+        lax_special.random_gamma_grad(
+            a_bf.astype(jnp.float32), x_bf.astype(jnp.float32)
+        ).astype(jnp.bfloat16),
+        atol=1e-3, rtol=1e-3)
+
+  def test_random_gamma_family_mixed_jvp_and_vmap(self):
+    mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
+    key = jax.random.key(23)
+    s2d = NamedSharding(mesh, P('x', 'y'))
+    s1d = NamedSharding(mesh, P('x', None))
+    a_unsh = jnp.linspace(1.0, 5.0, 16).reshape(4, 4)
+    a_sh = jax.device_put(a_unsh, s1d)
+    a_2d = jax.device_put(a_unsh, s2d)
+
+    mesh_1d = jtu.create_mesh((4,), ('x',), axis_types=(AxisType.Explicit,))
+    with jax.set_mesh(mesh_1d):
+      a_1d = jax.device_put(a_unsh, P('x', None))
+      v_1d = jax.jit(jax.vmap(
+          lambda a: jax.grad(lambda w: jax.random.gamma(key, w).sum())(a),
+          spmd_axis_name='x'))(a_1d)
+      self.assertEqual(v_1d.sharding, NamedSharding(mesh_1d, P('x', None)))
+
+    with jax.set_mesh(mesh):
+      t_sh = jnp.ones_like(a_sh)
+      f_mixed_pt = jax.jit(lambda a1, t1: jax.jvp(
+          lambda z: jax.random.gamma(
+              key, z, (4, 4), out_sharding=P('x', 'y')), (a1,), (t1,))[1])
+      self.assertNotIn(
+          'all-', f_mixed_pt.lower(a_sh, t_sh).compile().as_text())
+      self.assertEqual(f_mixed_pt(a_sh, t_sh).sharding, s2d)
+
+      vj_2d = jax.jit(jax.vmap(
+          lambda a: jax.grad(lambda w: jax.random.gamma(key, w).sum())(a),
+          spmd_axis_name='x'))(a_2d)
+      self.assertEqual(vj_2d.sharding, s2d)
+
+      keys_unsh = jax.random.split(key, 4)
+      keys_x = jax.device_put(keys_unsh, P('x'))
+      a_row = jnp.linspace(1.5, 4.5, 4)
+      a_row_y = jax.device_put(a_row, P('y'))
+      ref_vg = jax.vmap(
+          lambda k: jax.grad(
+              lambda x: jax.random.loggamma(k, x).sum())(a_row))(keys_unsh)
+      vg = jax.jit(jax.vmap(
+          lambda k: jax.grad(
+              lambda x: jax.random.loggamma(
+                  k, x, (4,), out_sharding=P('y')).sum())(a_row_y)))(keys_x)
+      self.assertEqual(vg.sharding, s2d)
+      self.assertAllClose(vg, ref_vg, atol=5e-5, rtol=5e-5)
+
+      keys_2d = jax.device_put(keys_unsh.reshape(2, 2), P('x', 'y'))
+      sh_out = jax.jit(jax.shard_map(
+          lambda k, a: jax.grad(
+              lambda x: jax.random.gamma(k[0, 0], x).sum())(a),
+          mesh=mesh, in_specs=(P('x', 'y'), P('x', 'y')),
+          out_specs=P('x', 'y'), check_vma=True))(keys_2d, a_2d)
+      self.assertEqual(sh_out.sharding, s2d)
+
+  def test_random_gamma_family_single_device_mesh(self):
+    mesh = jax.sharding.Mesh(
+        np.array(jax.devices()[:1]), ('x',), axis_types=(AxisType.Explicit,))
+    s1 = NamedSharding(mesh, P('x'))
+    key = jax.random.key(31)
+    a_1d = jax.device_put(jnp.array([2.0]), s1)
+    samplers = (
+        lambda k, s: jax.random.gamma(k, a=2.0, shape=(1,), out_sharding=s),
+        lambda k, s: jax.random.gamma(k, a=a_1d, shape=(1,), out_sharding=s),
+        lambda k, s: jax.random.loggamma(k, a=2.0, shape=(1,), out_sharding=s),
+        lambda k, s: jax.random.beta(k, 0.5, 0.5, shape=(1,), out_sharding=s),
+        lambda k, s: jax.random.chisquare(
+            k, df=1.0, shape=(1,), out_sharding=s),
+        lambda k, s: jax.random.dirichlet(
+            k, jnp.ones(3), shape=(1,), out_sharding=s),
+        lambda k, s: jax.random.f(
+            k, dfnum=2.0, dfden=3.0, shape=(1,), out_sharding=s),
+        lambda k, s: jax.random.t(k, df=10.0, shape=(1,), out_sharding=s),
+        lambda k, s: jax.random.generalized_normal(
+            k, 0.5, shape=(1,), out_sharding=s),
+        lambda k, s: jax.random.ball(k, d=3, shape=(1,), out_sharding=s),
+    )
+    with jax.set_mesh(mesh):
+      for fn in samplers:
+        eager_out = fn(key, s1)
+        jit_out = jax.jit(fn, static_argnums=1)(key, s1)
+        self.assertTrue(eager_out.sharding.is_equivalent_to(s1, eager_out.ndim))
+        self.assertAllClose(jit_out, eager_out, atol=1e-4, rtol=1e-4)
+      g = jax.jit(jax.grad(
+          lambda a: jax.random.gamma(key, a, (1,), out_sharding=s1).sum()
+      ))(a_1d)
+      self.assertEqual(g.sharding, s1)
+
+  def test_random_gamma_family_backends_and_errors(self):
+    mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
+    key = jax.random.key(23)
+    s2d = NamedSharding(mesh, P('x', 'y'))
+    s1d = NamedSharding(mesh, P('x', None))
+    a_unsh = jnp.linspace(1.0, 5.0, 16).reshape(4, 4)
+    a_sh = jax.device_put(a_unsh, s1d)
+    a_2d = jax.device_put(a_unsh, s2d)
+    keys_unsh = jax.random.split(key, 4)
+
+    with jax.set_mesh(mesh):
+      # PRNG backends and error checks.
+      rbg_k = jax.random.key(23, impl='rbg')
+      rbg_ref = jax.random.gamma(rbg_k, a_unsh, (4, 4))
+      f_rbg = jax.jit(
+          lambda k, a: jax.random.gamma(k, a, (4, 4), out_sharding=P('x', 'y')))
+      self.assertNotIn('all-', f_rbg.lower(rbg_k, a_sh).compile().as_text())
+      self.assertAllClose(f_rbg(rbg_k, a_sh), rbg_ref, atol=1e-5, rtol=1e-5)
+
+      urbg_k = jax.random.key(23, impl='unsafe_rbg')
+      urbg_ref = jax.random.gamma(urbg_k, a_unsh, (4, 4))
+      self.assertAllClose(f_rbg(urbg_k, a_sh), urbg_ref, atol=1e-5, rtol=1e-5)
+
+      with self.assertRaises(NotImplementedError):
+        jax.jit(lambda k: jax.random.gamma(
+            k, 2.0, (4, 4), out_sharding=P('x', 'y'))
+        )(jax.random.key(23, impl='threefry4x32'))
+      with config.threefry_partitionable(False):
+        with self.assertRaises(NotImplementedError):
+          jax.jit(lambda k: jax.random.gamma(
+              k, 2.0, (4, 4), out_sharding=P('x', 'y')))(key)
+      out_prim = jax.random.random_gamma_p.bind(
+          key, a_unsh, log_space=False, out_sharding=s2d)
+      self.assertEqual(out_prim.sharding, s2d)
+      self.assertAllClose(out_prim, jax.random.gamma(key, a_unsh),
+                          atol=1e-5, rtol=1e-5)
+      a_abbrev = jax.device_put(a_unsh, P('x'))
+      self.assertEqual(
+          jax.jit(jax.random.dirichlet)(key, a_abbrev).sharding,
+          NamedSharding(mesh, P('x', None)))
+      keys_2d = jax.device_put(jax.random.split(key, (4, 4)), P(None, 'y'))
+      self.assertEqual(
+          jax.jit(lambda k, a: jax.random.random_gamma_p.bind(
+              k, a, log_space=False, out_sharding=None))(keys_2d, a_abbrev).sharding,
+          s2d)
+      with jax.disable_jit():
+        out_nojit = jax.random.gamma(key, a_sh, out_sharding=P('x', 'y'))
+      self.assertEqual(out_nojit.sharding, s2d)
+      self.assertAllClose(out_nojit, jax.random.gamma(key, a_unsh),
+                          atol=1e-5, rtol=1e-5)
+
+      keys_y = jax.device_put(keys_unsh, P('y'))
+      with self.assertRaises(core.ShardingTypeError):
+        jax.jit(lambda k, a: jax.random.random_gamma_p.bind(
+            k, a, log_space=False, out_sharding=None))(keys_y, a_2d)
+      for bad_s in (P(None, 'y'), P('y', None), P(None, None)):
+        with self.assertRaises(core.ShardingTypeError):
+          jax.jit(lambda k, a, s=bad_s: jax.random.gamma(
+              k, a, (4, 4), out_sharding=s))(key, a_sh)
+      with self.assertRaises(core.ShardingTypeError):
+        jax.jit(lambda k: jax.random.dirichlet(
+            k, jnp.ones(4), (4,), out_sharding=P('x', 'y')))(key)
+      with self.assertRaises(core.ShardingTypeError):
+        jax.jit(lambda k, a: jax.random.dirichlet(k, a))(key, a_2d)
+      with self.assertRaises(core.ShardingTypeError):
+        jax.jit(lambda k: jax.random.ball(
+            k, d=4, shape=(4,), out_sharding=P('x', 'y')))(key)
 
   def test_auto_axes_no_context_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
