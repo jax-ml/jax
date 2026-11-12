@@ -1759,6 +1759,144 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           k, 2.0, (4, 4), out_sharding=P('x', 'y'))
       ).lower(jax.random.key(0, impl='unsafe_rbg'))
 
+  @parameterized.parameters(
+      (lambda k, d: jax.random.permutation(k, 4, out_sharding=P('x')),
+       P('x')),
+      (lambda k, d: jax.random.permutation(
+          k, d['arr_x'], axis=1, independent=False, out_sharding=P('x', 'y')),
+       P('x', 'y')),
+      (lambda k, d: jax.random.permutation(
+          k, d['arr_x'], axis=1, independent=True, out_sharding=P('x', 'y')),
+       P('x', 'y')),
+      (lambda k, d: jax.random.choice(
+          k, d['arr_y'], shape=(2,), replace=True, axis=0),
+       P(None, 'y')),
+      (lambda k, d: jax.random.choice(
+          k, d['arr_y'], shape=(2,), replace=False, axis=0),
+       P(None, 'y')),
+      (lambda k, d: jax.random.categorical(
+          k, d['logits_x'], shape=(2, 4), replace=True,
+          out_sharding=P('y', 'x')),
+       P('y', 'x')),
+      (lambda k, d: jax.random.categorical(
+          k, d['logits_x'], shape=(2, 4), replace=False,
+          out_sharding=P('y', 'x')),
+       P('y', 'x')),
+      (lambda k, d: jax.random.poisson(
+          k, d['lam_x'], (4, 4), method='exact', out_sharding=P('x', 'y')),
+       P('x', 'y')),
+      (lambda k, d: jax.random.poisson(
+          k, d['lam_x'], (4, 4), method='approximate',
+          out_sharding=P('x', 'y')),
+       P('x', 'y')),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_random_composite_samplers_out_sharding(self, sampler, spec, mesh):
+    key = jax.random.key(31)
+    data = {
+        'arr_x': jax.device_put(
+            jnp.arange(16, dtype=jnp.int32).reshape(4, 4), P('x', None)),
+        'arr_y': jax.device_put(
+            jnp.arange(16, dtype=jnp.int32).reshape(4, 4), P(None, 'y')),
+        'logits_x': jax.device_put(
+            jnp.linspace(0.0, 2.0, 24).reshape(4, 6), P('x', None)),
+        'lam_x': jax.device_put(
+            jnp.linspace(1.0, 18.0, 16).reshape(4, 4), P('x', None)),
+    }
+
+    @jax.jit
+    def f(k, d):
+      return sampler(k, d)
+
+    with config.jax_partitioning(False):
+      expected = f(key, data)
+
+    hlo = f.lower(key, data).compile().as_text()
+    assert hlo is not None
+    self.assertNotIn('all-', hlo)
+    out = f(key, data)
+    self.assertEqual(out.sharding, NamedSharding(mesh, spec))
+    self.assertArraysEqual(out, expected)
+
+  @config.numpy_dtype_promotion('standard')
+  def test_random_composite_size_one_and_auto_context_mesh(self):
+    key = jax.random.key(41)
+    mesh_1slice = jtu.create_mesh(
+        (1, 2, 2), ('dcn', 'data', 'model'),
+        axis_types=(AxisType.Explicit,) * 3)
+    for s2 in (False, True):
+      with (config.jax_partitioning(s2),
+            jax.remove_size_one_mesh_axis_from_type(True),
+            jax.set_mesh(mesh_1slice)):
+        p_sh = jax.device_put(
+            jnp.linspace(0.5, 2.5, 16, dtype=jnp.float32).reshape(4, 4),
+            P(('dcn', 'data'), None))
+        spec_1s = P(('dcn', 'data'), 'model')
+        exp_1s = NamedSharding(mesh_1slice, P('data', 'model'))
+        for fn in (
+            lambda k, l: jax.random.poisson(
+                k, l, (4, 4), method='exact', out_sharding=spec_1s),
+            lambda k, l: jax.random.poisson(
+                k, l, (4, 4), method='approximate', out_sharding=spec_1s),
+            lambda k, x: jax.random.permutation(
+                k, x, axis=1, out_sharding=spec_1s),
+        ):
+          self.assertEqual(jax.jit(fn)(key, p_sh).sharding, exp_1s)
+        self.assertEqual(
+            jax.jit(lambda k, l: jax.random.categorical(
+                k, l, shape=(2, 4), replace=False,
+                out_sharding=P('model', ('dcn', 'data')))
+            )(key, p_sh).sharding,
+            NamedSharding(mesh_1slice, P('model', 'data')))
+
+    auto_mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+    ctx_mesh = jax.sharding.AbstractMesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+    p_auto = jax.device_put(
+        jnp.linspace(0.5, 2.5, 16, dtype=jnp.float32).reshape(4, 4),
+        NamedSharding(auto_mesh, P('x', None)))
+    for out_s in (P(), NamedSharding(auto_mesh, P()), None):
+      @jax.jit
+      def f_auto(k, p, s=out_s):
+        with jax.sharding.use_abstract_mesh(ctx_mesh):
+          return (
+              jax.random.poisson(k, p, (4, 4), method='exact', out_sharding=s),
+              jax.random.poisson(
+                  k, p, (4, 4), method='approximate', out_sharding=s),
+              jax.random.categorical(k, p, out_sharding=s),
+              jax.random.permutation(k, p, axis=1, out_sharding=s),
+              jax.random.multivariate_normal(
+                  k, p[0], jnp.eye(4, dtype=jnp.float32), (4,), out_sharding=s),
+              jax.random.orthogonal(k, 4, (4,), out_sharding=s),
+          )
+      f_auto(key, p_auto)
+
+    exp_mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
+    with config.jax_partitioning(False), jax.set_mesh(exp_mesh):
+      urbg_k = jax.random.key(7, impl='unsafe_rbg')
+      self.assertEqual(
+          jax.jit(lambda k: prng.random_split(
+              k, (4, 4), out_sharding=P('x')))(urbg_k).sharding,
+          NamedSharding(exp_mesh, P('x', None)))
+      self.assertEqual(
+          jax.jit(lambda k: prng.random_split(
+              k, (4, 4), out_sharding=P('x', 'y')))(urbg_k).sharding,
+          NamedSharding(exp_mesh, P('x', 'y')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_random_linalg_samplers_stage2_not_implemented(self, mesh):
+    del mesh
+    key = jax.random.key(0)
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda k: jax.random.orthogonal(
+          k, 4, shape=(4,), out_sharding=P('x', None, None))).lower(key)
+    with self.assertRaises(NotImplementedError):
+      jax.jit(lambda k: jax.random.multivariate_normal(
+          k, jnp.zeros(4), jnp.eye(4), shape=(4,),
+          out_sharding=P('x', None))).lower(key)
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_edtype_casts(self, mesh):
     dt = dtypes.primal_tangent_dtype(jnp.int8, jnp.float32)

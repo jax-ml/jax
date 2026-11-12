@@ -42,11 +42,12 @@ from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax.erf import erf_inv_core, ndtr
 from jax._src.lax import lax
 from jax._src.lax import special as lax_special
+from jax._src.named_sharding import remove_size_one_mesh_axis_from_spec
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import linalg as jnp_linalg
 from jax._src.numpy.util import (
     _arraylike, check_arraylike, promote_dtypes_inexact)
-from jax._src.pjit import auto_axes, reshard
+from jax._src.pjit import reshard
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import canonicalize_axis
@@ -433,6 +434,24 @@ def _prepend_none_sharding(
       spec=spec.update(partitions=(None, *spec.partitions)))
 
 
+def canonicalize_sharding_for_samplers(
+    out_sharding: NamedSharding | P | None, name: str, shape: Shape
+) -> NamedSharding | None:
+  s = canonicalize_sharding(out_sharding, name)
+  if s is None:
+    return None
+  if s.spec.unreduced or s.spec.reduced:
+    raise NotImplementedError(
+        f"unreduced/reduced out_sharding for {name} is not implemented.")
+  if not s.mesh._any_axis_explicit:
+    return None
+  s.spec._check_compatible_wrt_shape(shape)
+  spec = s.spec._normalized_spec_for_aval(len(shape))
+  if config.remove_size_one_mesh_axis_from_type.value:
+    spec = remove_size_one_mesh_axis_from_spec(spec, s.mesh)
+  return s.update(spec=spec)
+
+
 def _as_axis_tuple(spec_elem) -> tuple[typing.Any, ...]:
   if spec_elem is None:
     return ()
@@ -598,15 +617,6 @@ def _check_unsharded_trailing_axis(
   return out_s, batch_s
 
 
-def maybe_auto_axes(f, out_sharding, **hoist_kwargs):
-  f_ = partial(f, **hoist_kwargs)
-  if out_sharding is None:
-    return f_
-  else:
-    return auto_axes(f_, out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes)
-
-
 @typing.overload
 def bits(key: Key | ArrayLike,
          shape: Shape = (),
@@ -681,15 +691,6 @@ def bits(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   num_s = 1 if num_streams is None else num_streams
   out = prng.random_bits(key, bit_width, shape, num_s, out_sharding)
   return out[0] if num_streams is None else out
-
-
-def canonicalize_sharding_for_samplers(out_sharding, name, shape):
-  out_sharding = canonicalize_sharding(out_sharding, name)
-  cur_mesh = get_abstract_mesh()
-  if cur_mesh.are_all_axes_explicit and out_sharding is None and not shape:
-    # when shape is empty i.e. scalar, we can choose a replicated sharding.
-    out_sharding = NamedSharding(cur_mesh, P())
-  return out_sharding
 
 
 def uniform(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
@@ -1021,25 +1022,57 @@ def permutation(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   key, _ = _check_prng_key("permutation", key)
   check_arraylike("permutation", x)
   axis = canonicalize_axis(axis, np.ndim(x) or 1)
-  out_sharding = canonicalize_sharding(out_sharding, "permutation")
   if not np.ndim(x):
     if not np.issubdtype(lax.dtype(x), np.integer):
       raise TypeError("x must be an integer or at least 1-dimensional")
-    r = core.concrete_or_error(int, x, "argument x of jax.random.permutation()")
-    return maybe_auto_axes(lambda key: _shuffle(key, jnp.arange(r), axis),
-                           out_sharding)(key)
-  return maybe_auto_axes(
-      _permutation, out_sharding, axis=axis, independent=independent)(key, x)
+    r = core.concrete_or_error(
+        int, x, "argument x of jax.random.permutation()")
+    out_s = canonicalize_sharding_for_samplers(out_sharding, "permutation", (r,))
+    out = _shuffle(key, jnp.arange(r), axis)
+    return reshard(out, out_s) if out_s is not None else out
+  return _permutation(
+      key, x, axis=axis, independent=independent, out_sharding=out_sharding)
 
-def _permutation(key: Key, x, axis, independent):
-  if independent or np.ndim(x) == 1:
-    return _shuffle(key, x, axis)
+
+def _permutation(key: Key, x, axis, independent, out_sharding=None):
+  x = jnp.asarray(x)
+  out_s = canonicalize_sharding_for_samplers(
+      out_sharding, "permutation", x.shape)
+  x_s = core.typeof(x).sharding
+  if not x_s.mesh.empty and x_s.spec.partitions[axis] is not None:
+    raise core.ShardingTypeError(
+        f"permutation cannot shuffle along sharded axis {axis}; got"
+        f" {x_s.spec}.")
+  _check_param_sharding("permutation", x.shape, out_s, x)
+  if independent or x.ndim == 1:
+    if out_s is not None:
+      sort_parts = (
+          *out_s.spec.partitions[:axis], None,
+          *out_s.spec.partitions[axis + 1:])
+      sort_sharding = out_s.update(spec=P(*sort_parts))
+      if core.typeof(x).sharding != sort_sharding:
+        x = reshard(x, sort_sharding)
+      out = _shuffle(key, x, axis, sort_sharding=sort_sharding)
+      return (reshard(out, out_s)
+              if out_s.spec.partitions[axis] is not None else out)
+    sort_sharding = _sample_sharding("permutation", x.shape, None, x)
+    return _shuffle(key, x, axis, sort_sharding=sort_sharding)
   ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)
-  return jnp.take(x, ind, axis, unique_indices=True)
+  if out_s is None:
+    return jnp.take(x, ind, axis, unique_indices=True)
+  x_parts = (
+      *out_s.spec.partitions[:axis], None, *out_s.spec.partitions[axis + 1:])
+  x_target_s = out_s.update(spec=P(*x_parts))
+  if core.typeof(x).sharding != x_target_s:
+    x = reshard(x, x_target_s)
+  if out_s.spec.partitions[axis] is not None:
+    ind = reshard(ind, out_s.update(spec=P(out_s.spec.partitions[axis])))
+  idx = (*((slice(None),) * axis), ind)
+  return x.at[idx].get(unique_indices=True, out_sharding=out_s)
 
 
-@jit(static_argnums=(2,))
-def _shuffle(key: Key, x, axis) -> Array:
+@jit(static_argnums=(2, 3))
+def _shuffle(key: Key, x, axis, sort_sharding=None) -> Array:
   # On parallel architectures, Fisher-Yates is more expensive than doing
   # multiple sorts. This algorithm is based on one developed and analyzed by
   # tjablin@. We sort according to randomly-generated 32bit keys, but those keys
@@ -1060,11 +1093,13 @@ def _shuffle(key: Key, x, axis) -> Array:
     raise NotImplementedError(
         "shape polymorphism for `permutation` or `shuffle`"
         f" for arrays of non-constant size: {x.size}")
-  num_rounds = int(np.ceil(exponent * np.log(max(1, x.size)) / np.log(uint32max)))
+  key, (x,) = random_insert_pvary("permutation", key, x)
+  num_rounds = int(
+      np.ceil(exponent * np.log(max(1, x.size)) / np.log(uint32max)))
 
   for _ in range(num_rounds):
     key, subkey = _split(key)
-    sort_keys = _random_bits(subkey, 32, x.shape)
+    sort_keys = _random_bits(subkey, 32, x.shape, out_sharding=sort_sharding)
     _, x = lax.sort_key_val(sort_keys, x, axis)
 
   return x
@@ -1494,16 +1529,21 @@ def multivariate_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
   else:
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
-    raise ValueError(f"dtype argument to `multivariate_normal` must be a float "
-                     f"dtype, got {dtype}")
+    raise ValueError(
+        "dtype argument to `multivariate_normal` must be a float dtype,"
+        f" got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "multivariate_normal", shape)
-  return maybe_auto_axes(_multivariate_normal, out_sharding,
-                         shape=shape, dtype=dtype)(key, mean, cov, method=method)
+  out_sharding = canonicalize_sharding(out_sharding, "multivariate_normal")
+  return _multivariate_normal(
+      key, mean, cov, shape=shape, dtype=dtype, method=method,
+      out_sharding=out_sharding)
 
-@jit(static_argnums=(3, 4, 5))
-def _multivariate_normal(key: Key, mean, cov, shape, dtype, method) -> Array:
+
+@jit(static_argnums=(3, 4, 5, 6))
+def _multivariate_normal(
+    key: Key, mean, cov, shape, dtype, method, out_sharding=None
+) -> Array:
   if not np.ndim(mean) >= 1:
     msg = "multivariate_normal requires mean.ndim >= 1, got mean.ndim == {}"
     raise ValueError(msg.format(np.ndim(mean)))
@@ -1521,18 +1561,70 @@ def _multivariate_normal(key: Key, mean, cov, shape, dtype, method) -> Array:
   else:
     _check_shape("normal", shape, mean.shape[:-1], cov.shape[:-2])
 
+  out_shape = (*shape, n)
+  out_s = canonicalize_sharding_for_samplers(
+      out_sharding, "multivariate_normal", out_shape)
+  mean_s = core.typeof(mean).sharding
+  cov_s = core.typeof(cov).sharding
+  if not mean_s.mesh.empty and mean_s.spec.partitions[-1] is not None:
+    raise core.ShardingTypeError(
+        "multivariate_normal mean trailing axis must be unsharded; got"
+        f" {mean_s.spec}.")
+  if (not cov_s.mesh.empty and
+      any(p is not None for p in cov_s.spec.partitions[-2:])):
+    raise core.ShardingTypeError(
+        "multivariate_normal cov matrix axes must be unsharded; got"
+        f" {cov_s.spec}.")
+
+  if out_s is not None:
+    batch_parts = out_s.spec.partitions[:-1]
+    sample_sharding = out_s.update(spec=P(*batch_parts, None))
+    cov_batch_s = out_s.update(spec=P(*batch_parts, None, None))
+    _check_param_sharding(
+        "multivariate_normal", out_shape, sample_sharding, mean)
+    _check_param_sharding(
+        "multivariate_normal", (*shape, n, n), cov_batch_s, cov)
+  else:
+    cov_lead = core.ShapedArray(
+        cov.shape[:-1], cov.dtype,
+        sharding=cov_s.update(spec=P(*cov_s.spec.partitions[:-1])))
+    sample_sharding = _sample_sharding(
+        "multivariate_normal", out_shape, None, mean, cov_lead)
+
+  key, (mean, cov) = random_insert_pvary(
+      "multivariate_normal", key, mean, cov)
+  if sample_sharding is not None and cov.ndim > 2:
+    n_batch = cov.ndim - 2
+    cov_tail = sample_sharding.spec.partitions[len(shape) - n_batch:-1]
+    shape_tail = shape[len(shape) - n_batch:]
+    cov_cur_s = core.typeof(cov).sharding
+    cov_cur_parts = (
+        (None,) * n_batch
+        if cov_cur_s.mesh.empty else cov_cur_s.spec.partitions[:-2])
+    cov_parts = tuple(
+        p if core.definitely_equal(d, sd) else cp
+        for p, d, sd, cp in zip(
+            cov_tail, cov.shape[:-2], shape_tail, cov_cur_parts))
+    cov_sharding = sample_sharding.update(spec=P(*cov_parts, None, None))
+    if cov_cur_s != cov_sharding:
+      cov = reshard(cov, cov_sharding)
+
   if method == 'svd':
     (u, s, _) = jnp_linalg.svd(cov)
     factor = u * jnp.sqrt(s[..., None, :])
   elif method == 'eigh':
     (w, v) = jnp_linalg.eigh(cov)
     factor = v * jnp.sqrt(jnp.maximum(w[..., None, :], 0))
-  else: # 'cholesky'
+  else:  # 'cholesky'
     factor = jnp_linalg.cholesky(cov)
-  normal_samples = normal(key, shape + mean.shape[-1:], dtype)
+  normal_samples = normal(
+      key, out_shape, dtype, out_sharding=sample_sharding)
+  einsum_sharding = out_s if out_s is not None else sample_sharding
+  mean, = _align_params(out_shape, einsum_sharding, mean)
   with config.numpy_rank_promotion('allow'):
-    result = mean + jnp_einsum.einsum('...ij,...j->...i', factor, normal_samples)
-  return result
+    return mean + jnp_einsum.einsum(
+        '...ij,...j->...i', factor, normal_samples,
+        out_sharding=einsum_sharding)
 
 
 def truncated_normal(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
@@ -2261,13 +2353,14 @@ random_gamma_p = core.Primitive('random_gamma')
 dispatch.simple_impl(random_gamma_p)
 
 
-def _random_gamma_sharding_rule(key_aval, a_aval, *, out_sharding):
+def _random_gamma_sharding_rule(key_aval, a_aval, *, out_sharding,
+                                name='random_gamma'):
   k_s, a_s = key_aval.sharding, a_aval.sharding
   meshes = [s.mesh for s in (k_s, a_s, out_sharding)
             if s is not None and not s.mesh.empty]
   if len(set(meshes)) > 1:
     raise core.ShardingTypeError(
-        f'Mismatched meshes in random_gamma: {meshes}.')
+        f'Mismatched meshes in {name}: {meshes}.')
   if out_sharding is not None:
     out_s = core.get_sharding(out_sharding, a_aval.shape)
     out_parts = out_s.spec.partitions
@@ -2677,17 +2770,36 @@ def _gamma_approx(
   return lax.convert_element_type(out, dtype)
 
 
+def _threefry_uniform_f32(subkey: Key, counts1: Array, counts2: Array) -> Array:
+  raw_k = prng.random_unwrap(subkey)
+  b0, b1 = threefry2x32.threefry2x32_p.bind(
+      raw_k[0], raw_k[1], counts1, counts2)
+  bits = lax.bitwise_xor(b0, b1)
+  if config.legacy_random_uniform.value:
+    float_bits = lax.bitwise_or(
+        lax.shift_right_logical(bits, np.uint32(32 - 23)),
+        np.uint32(np.float32(1.0).view(np.uint32)))
+    return lax.bitcast_convert_type(float_bits, np.float32) - np.float32(1.0)
+  float_bits = lax.shift_right_logical(bits, np.uint32(32 - 24))
+  return lax.convert_element_type(float_bits, np.float32) * np.float32(2.0**-24)
+
+
 @jit(static_argnums=(2, 3, 4))
-def _poisson_knuth(key: Key, lam, shape, dtype, max_iters) -> Array:
+def _poisson_knuth(
+    key: Key, lam, shape, dtype, max_iters, counts=None
+) -> Array:
   # Knuth's algorithm for generating Poisson random variates.
   # Reference:
   # https://en.wikipedia.org/wiki/Poisson_distribution#Generating_Poisson-distributed_random_variables
+  draw_u = ((lambda sk: uniform(sk, shape, np.float32))
+            if counts is None
+            else (lambda sk: _threefry_uniform_f32(sk, *counts)))
 
   def body_fn(carry):
     i, k, rng, log_prod = carry
     rng, subkey = _split(rng)
     k = lax.select(log_prod > -lam, k + 1, k)
-    u = uniform(subkey, shape, np.float32)
+    u = draw_u(subkey)
     return i + 1, k, rng, log_prod + jnp.log(u)
 
   def cond_fn(carry):
@@ -2696,12 +2808,15 @@ def _poisson_knuth(key: Key, lam, shape, dtype, max_iters) -> Array:
 
   k_init = lax.full_like(lam, 0, dtype, shape)
   log_rate_init = lax.full_like(lam, 0, np.float32, shape)
-  k = lax_control_flow.while_loop(cond_fn, body_fn, (0, k_init, key, log_rate_init))[1]
+  k = lax_control_flow.while_loop(
+      cond_fn, body_fn, (0, k_init, key, log_rate_init))[1]
   return (k - 1).astype(dtype)
 
 
 @jit(static_argnums=(2, 3, 4))
-def _poisson_rejection(key: Key, lam, shape, dtype, max_iters) -> Array:
+def _poisson_rejection(
+    key: Key, lam, shape, dtype, max_iters, counts=None
+) -> Array:
   # Transformed rejection due to Hormann.
   # Reference:
   # http://citeseer.ist.psu.edu/viewdoc/citations;jsessionid=1BEB35946CC807879F55D42512E5490C?doi=10.1.1.48.3054.
@@ -2710,13 +2825,16 @@ def _poisson_rejection(key: Key, lam, shape, dtype, max_iters) -> Array:
   a = -0.059 + 0.02483 * b
   inv_alpha = 1.1239 + 1.1328 / (b - 3.4)
   v_r = 0.9277 - 3.6224 / (b - 2)
+  draw_u = ((lambda sk: uniform(sk, shape, lam.dtype))
+            if counts is None
+            else (lambda sk: _threefry_uniform_f32(sk, *counts)))
 
   def body_fn(carry):
     i, k_out, accepted, key = carry
     key, subkey_0, subkey_1 = _split(key, 3)
 
-    u = uniform(subkey_0, shape, lam.dtype) - 0.5
-    v = uniform(subkey_1, shape, lam.dtype)
+    u = draw_u(subkey_0) - 0.5
+    v = draw_u(subkey_1)
     u_shifted = 0.5 - abs(u)
 
     k = lax.floor((2 * a / u_shifted + b) * u + lam + 0.43)
@@ -2728,7 +2846,7 @@ def _poisson_rejection(key: Key, lam, shape, dtype, max_iters) -> Array:
     accept2 = s <= t
     accept = accept1 | (~reject & accept2)
 
-    k_out = lax.select(accept, k, k_out)
+    k_out = lax.select(accept & ~accepted, k, k_out)
     accepted |= accept
 
     return i + 1, k_out, accepted, key
@@ -2739,12 +2857,12 @@ def _poisson_rejection(key: Key, lam, shape, dtype, max_iters) -> Array:
 
   k_init = lax.full_like(lam, -1, lam.dtype, shape)
   accepted = lax.full_like(lam, False, np.dtype('bool'), shape)
-  k = lax_control_flow.while_loop(cond_fn, body_fn, (0, k_init, accepted, key))[1]
+  k = lax_control_flow.while_loop(
+      cond_fn, body_fn, (0, k_init, accepted, key))[1]
   return k.astype(dtype)
 
 
-@jit(static_argnums=(2, 3))
-def _poisson(key: Key, lam, shape, dtype) -> Array:
+def _poisson_one_key(key: Key, lam, shape, dtype, counts=None) -> Array:
   # The implementation matches TensorFlow and NumPy:
   # https://github.com/tensorflow/tensorflow/blob/v2.2.0-rc3/tensorflow/core/kernels/random_poisson_op.cc
   # https://github.com/numpy/numpy/blob/v1.18.3/numpy/random/src/distributions/distributions.c#L574
@@ -2757,11 +2875,130 @@ def _poisson(key: Key, lam, shape, dtype) -> Array:
   lam_rejection = lax.select(use_knuth, lax.full_like(lam, 1e5), lam)
   max_iters = dtype.type(dtypes.iinfo(dtype).max)  # insanely conservative
   result = lax.select(
-    use_knuth,
-    _poisson_knuth(key, lam_knuth, shape, dtype, max_iters),
-    _poisson_rejection(key, lam_rejection, shape, dtype, max_iters),
+      use_knuth,
+      _poisson_knuth(key, lam_knuth, shape, dtype, max_iters, counts),
+      _poisson_rejection(key, lam_rejection, shape, dtype, max_iters, counts),
   )
   return lax.select(lam == 0, jnp.zeros_like(result), result)
+
+
+def _poisson_impl_local(key: Key, lam, *, dtype, counts=None) -> Array:
+  trail_shape = np.shape(lam)[key.ndim:]
+  if 0 in np.shape(lam):
+    return lax.full(np.shape(lam), 0, dtype)
+  fn = lambda k, l: _poisson_one_key(k, l, trail_shape, dtype, counts)
+  return prng.iterated_vmap_unary(key.ndim, fn)(key, lam)
+
+
+def _poisson_batching_rule(
+    axis_data, batched_args, batch_dims, *, dtype, out_sharding):
+  k, lam = batched_args
+  bk, bl = batch_dims
+  if bk is None and bl is None:
+    return _random_poisson_p.bind(
+        k, lam, dtype=dtype, out_sharding=out_sharding), None
+  mesh_axis = axis_data.explicit_mesh_axis
+  k = batching.bdim_at_front(k, bk, axis_data.size, mesh_axis=mesh_axis)
+  lam = batching.bdim_at_front(lam, bl, axis_data.size, mesh_axis=mesh_axis)
+  if out_sharding is not None:
+    out_sharding = batching.get_sharding_for_vmap(
+        axis_data, canonicalize_sharding(out_sharding, 'poisson'), 0)
+  return _random_poisson_p.bind(
+      k, lam, dtype=dtype, out_sharding=out_sharding), 0
+
+
+_random_poisson_p = core.Primitive('random_poisson')
+dispatch.simple_impl(_random_poisson_p)
+ad.defjvp_zero(_random_poisson_p)
+
+
+def _random_poisson_abstract_eval(key_aval, lam_aval, *, dtype, out_sharding):
+  if lam_aval.shape[:key_aval.ndim] != key_aval.shape:
+    raise ValueError(
+        f'random_poisson leading shape of lam {lam_aval.shape} must match key'
+        f' shape {key_aval.shape}.')
+  if not dtypes.issubdtype(dtype, np.integer):
+    raise ValueError(f'random_poisson requires an integer dtype, got {dtype}.')
+  out_sharding = canonicalize_sharding(out_sharding, 'poisson')
+  sharding = prng.resolve_random_sharding(
+      _random_poisson_p,
+      partial(_random_gamma_sharding_rule, name='random_poisson'),
+      key_aval, lam_aval, out_sharding=out_sharding)
+  vma = core.standard_vma_rule('random_poisson', key_aval, lam_aval)
+  return core.ShapedArray(
+      lam_aval.shape, dtype, sharding=sharding,
+      manual_axis_type=core.ManualAxisType(varying=vma))
+
+
+_random_poisson_p.def_abstract_eval(_random_poisson_abstract_eval)
+
+
+def _random_poisson_lowering(ctx, key, lam, *, dtype, out_sharding):
+  key_aval, lam_aval = ctx.avals_in
+  out_aval, = ctx.avals_out
+  impl = key_aval.dtype._impl
+  out_s = out_aval.sharding
+  manual_axes = frozenset(out_s.mesh.explicit_axes)
+  out_parts = out_s.spec.partitions
+  k_ndim = key_aval.ndim
+  trail_shape = lam_aval.shape[k_ndim:]
+  trail_parts = out_parts[k_ndim:]
+  trail_s = NamedSharding(out_s.mesh, P(*trail_parts))
+
+  def _lower_fn(key_base, lam_val):
+    if 0 in lam_aval.shape:
+      return lax.full(out_aval.shape, 0, dtype, sharding=out_s)
+    if not manual_axes or all(p is None for p in out_parts):
+      return _poisson_impl_local(
+          prng.random_wrap(key_base, impl=impl), lam_val, dtype=dtype)
+    slice_k = _make_shard_slicer(
+        out_s.mesh, core.typeof(key_base), out_parts[:k_ndim])
+    slice_lam = _make_shard_slicer(out_s.mesh, lam_aval, out_parts)
+    if trail_s.is_fully_replicated:
+      def _per_shard_unsplit(local_k, local_lam):
+        return _poisson_impl_local(
+            prng.random_wrap(slice_k(local_k), impl=impl),
+            slice_lam(local_lam), dtype=dtype)
+      return shard_map.shard_map(
+          _per_shard_unsplit, mesh=out_s.mesh, out_specs=out_s.spec,
+          axis_names=manual_axes, check_vma=False)(key_base, lam_val)
+
+    if not config.threefry_partitionable.value:
+      raise NotImplementedError(
+          'out_sharding requires jax_threefry_partitionable=True.')
+    counts1, counts2 = prng.iota_2x32_shape(trail_shape, out_sharding=trail_s)
+    def _per_shard(local_k, local_lam, local_c1, local_c2):
+      return _poisson_impl_local(
+          prng.random_wrap(slice_k(local_k), impl=impl),
+          slice_lam(local_lam), dtype=dtype,
+          counts=(local_c1, local_c2))
+    return shard_map.shard_map(
+        _per_shard, mesh=out_s.mesh, out_specs=out_s.spec,
+        axis_names=manual_axes, check_vma=False)(
+            key_base, lam_val, counts1, counts2)
+
+  lowering = mlir.lower_fun(_lower_fn, multiple_results=False)
+  phys_key = core.physical_aval(key_aval).update(
+      manual_axis_type=core.empty_mat)
+  lam_in = lam_aval.update(manual_axis_type=core.empty_mat)
+  out_in = out_aval.update(manual_axis_type=core.empty_mat)
+  return mlir.delegate_lowering(
+      ctx, lowering, key, lam, avals_in=[phys_key, lam_in], avals_out=[out_in])
+
+
+mlir.register_lowering(
+    _random_poisson_p, _random_poisson_lowering, shard_map_passthrough=True)
+batching.fancy_primitive_batchers[_random_poisson_p] = _poisson_batching_rule
+
+
+@jit(static_argnums=(2, 3, 4))
+def _poisson(key: Key, lam, shape, dtype, out_sharding=None) -> Array:
+  _check_param_sharding("poisson", shape, out_sharding, lam)
+  lam = lax.convert_element_type(lam, np.float32)
+  if np.shape(lam) != shape:
+    lam = jnp.broadcast_to(lam, shape)
+  key, (lam,) = random_insert_pvary('poisson', key, lam)
+  return _random_poisson_p.bind(key, lam, dtype=dtype, out_sharding=out_sharding)
 
 
 # Below this mean, `_poisson_approx` samples by inverting the truncated cdf
@@ -2780,8 +3017,8 @@ _POISSON_NUM_TERMS = 20
 _PEIZER_PRATT_EPS = 0.02
 
 
-@jit(static_argnums=(2, 3))
-def _poisson_approx(key: Key, lam, shape, dtype) -> Array:
+@jit(static_argnums=(2, 3, 4))
+def _poisson_approx(key: Key, lam, shape, dtype, out_sharding=None) -> Array:
   r"""Loop-free approximate sampler for ``Poisson(lam)``.
 
   Backs the ``method='approximate'`` path of :func:`poisson`. It avoids the
@@ -2822,10 +3059,16 @@ def _poisson_approx(key: Key, lam, shape, dtype) -> Array:
   else:
     compute_dtype = np.dtype('float32')
 
+  sample_sharding = _sample_sharding("poisson", shape, out_sharding, lam)
   lam = lax.convert_element_type(lam, compute_dtype)
-  lam = lax.expand_dims(lam, tuple(range(len(shape) - np.ndim(lam))))
+  if np.ndim(lam):
+    lam = lax.expand_dims(lam, tuple(range(len(shape) - np.ndim(lam))))
+    if (sample_sharding is not None and
+        any(p is not None for p in sample_sharding.spec.partitions) and
+        core.typeof(lam).sharding != sample_sharding):
+      lam = reshard(jnp.broadcast_to(lam, shape), sample_sharding)
   key, (lam,) = random_insert_pvary('poisson', key, lam)
-  z = _normal(key, shape, compute_dtype)
+  z = _normal(key, shape, compute_dtype, out_sharding=sample_sharding)
   return lax.convert_element_type(_poisson_from_normal(z, lam), dtype)
 
 
@@ -2967,15 +3210,13 @@ def poisson(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     shape = core.canonicalize_shape(shape)
   else:
     shape = np.shape(lam)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "poisson", shape)
+  if lax.broadcast_shapes(np.shape(lam), shape) != shape:
+    raise ValueError("lam shape must be broadcastable to shape argument; "
+                     f"got lam.shape {np.shape(lam)}, shape {shape}")
+  out_sharding = canonicalize_sharding_for_samplers(
+      out_sharding, "poisson", shape)
   if method == 'approximate':
-    # don't preemptively broadcast lam, if lower rank it may save some computation
-    if lax.broadcast_shapes(np.shape(lam), shape) != shape:
-      raise ValueError("lam shape must be broadcastable to shape argument; "
-                       f"got lam.shape {np.shape(lam)}, shape {shape}")
-    return maybe_auto_axes(_poisson_approx, out_sharding,
-                           shape=shape, dtype=dtype)(key, lam)
-  lam = jnp.broadcast_to(lam, shape)
+    return _poisson_approx(key, lam, shape, dtype, out_sharding)
   # TODO(frostig): generalize underlying poisson implementation and
   # remove this check
   keys_dtype = typing.cast(prng.KeyTy, key.dtype)
@@ -2984,8 +3225,7 @@ def poisson(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
     raise NotImplementedError(
         "`poisson` with method='exact' is only implemented for the "
         f'threefry2x32 RNG, not {key_impl}')
-  lam = lax.convert_element_type(lam, np.float32)
-  return maybe_auto_axes(_poisson, out_sharding, shape=shape, dtype=dtype)(key, lam)
+  return _poisson(key, lam, shape, dtype, out_sharding)
 
 
 def gumbel(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
@@ -3167,40 +3407,71 @@ def categorical(
   else:
     shape = core.canonicalize_shape(shape)
     _check_shape("categorical", shape, batch_shape)
-  out_sharding = canonicalize_sharding(out_sharding, "categorical")
-  return maybe_auto_axes(_categorical, out_sharding, shape=shape,
-                         batch_shape=batch_shape, axis=axis,
-                         replace=replace, mode=mode)(key, logits_arr)
+  out_sharding = canonicalize_sharding_for_samplers(
+      out_sharding, "categorical", shape)
+  return _categorical(
+      key, logits_arr, shape=shape, batch_shape=batch_shape, axis=axis,
+      replace=replace, mode=mode, out_sharding=out_sharding)
 
-def _categorical(key: Key, logits_arr, shape, batch_shape, axis, replace, mode) -> Array:
-  shape_prefix = shape[:len(shape)-len(batch_shape)]
+
+def _categorical(
+    key: Key, logits_arr, shape, batch_shape, axis, replace, mode,
+    out_sharding=None,
+) -> Array:
+  prefix_ndim = len(shape) - len(batch_shape)
+  axis = canonicalize_axis(axis, logits_arr.ndim)
+  out_s = out_sharding
+  logits_s = core.typeof(logits_arr).sharding
+  if not logits_s.mesh.empty and logits_s.spec.partitions[axis] is not None:
+    raise core.ShardingTypeError(
+        f"categorical cannot sample along sharded axis {axis}; got"
+        f" {logits_s.spec}.")
+  cat_axis = prefix_ndim + axis
+  g_out_shape = (
+      *shape[:cat_axis], logits_arr.shape[axis], *shape[cat_axis:])
+  out_g_s = (
+      None if out_s is None else out_s.update(
+          spec=P(*out_s.spec.partitions[:cat_axis], None,
+                 *out_s.spec.partitions[cat_axis:])))
+  _check_param_sharding("categorical", g_out_shape, out_g_s, logits_arr)
+  key, (logits_arr,) = random_insert_pvary("categorical", key, logits_arr)
+
   if replace:
-    if axis >= 0:
-      axis -= len(logits_arr.shape)
-
-    logits_shape = list(shape[len(shape) - len(batch_shape):])
-    logits_shape.insert(axis % len(logits_arr.shape), logits_arr.shape[axis])
+    gumbel_sharding = _sample_sharding(
+        "categorical", g_out_shape, out_g_s, logits_arr)
+    logits_arr, = _align_params(g_out_shape, gumbel_sharding, logits_arr)
+    g = gumbel(key, g_out_shape, logits_arr.dtype, mode=mode,
+               out_sharding=gumbel_sharding)
     return jnp.argmax(
-        gumbel(key, (*shape_prefix, *logits_shape), logits_arr.dtype, mode=mode) +
-        lax.expand_dims(logits_arr, tuple(range(len(shape_prefix)))),
-        axis=axis)
-  else:
-    logits_arr += gumbel(key, logits_arr.shape, logits_arr.dtype, mode=mode)
-    k = math.prod(shape_prefix)
-    if k > logits_arr.shape[axis]:
-      raise ValueError(
-        f"Number of samples without replacement ({k}) cannot exceed number of "
-        f"categories ({logits_arr.shape[axis]})."
-      )
+        g + jnp.broadcast_to(logits_arr, g_out_shape), axis=cat_axis)
 
-    _, indices = lax.top_k(jnp.moveaxis(logits_arr, axis, -1), k)
-    assert indices.shape == batch_shape + (k,)
-    assert shape == shape_prefix + batch_shape
-
-    dimensions = (indices.ndim - 1, *range(indices.ndim - 1))
-    indices = lax.reshape(indices, shape, dimensions)
-    assert indices.shape == shape
-    return indices
+  k = math.prod(shape[:prefix_ndim])
+  if k > logits_arr.shape[axis]:
+    raise ValueError(
+        f"Number of samples without replacement ({k}) cannot exceed number"
+        f" of categories ({logits_arr.shape[axis]}).")
+  logits_parts = (
+      (None,) * logits_arr.ndim
+      if logits_s.mesh.empty else logits_s.spec.partitions)
+  logits_target_s = (
+      None if out_g_s is None else core.get_sharding(
+          out_g_s.update(
+              spec=P(*(p if core.definitely_equal(d, gd) else lp
+                       for p, d, gd, lp in zip(
+                           out_g_s.spec.partitions[prefix_ndim:],
+                           logits_arr.shape,
+                           g_out_shape[prefix_ndim:],
+                           logits_parts)))),
+          logits_arr.shape))
+  gumbel_sharding = _sample_sharding(
+      "categorical", logits_arr.shape, logits_target_s, logits_arr)
+  logits_arr, = _align_params(
+      logits_arr.shape, gumbel_sharding, logits_arr)
+  logits_arr = logits_arr + gumbel(
+      key, logits_arr.shape, logits_arr.dtype, mode=mode,
+      out_sharding=gumbel_sharding)
+  _, indices = lax.top_k(jnp.moveaxis(logits_arr, axis, -1), k)
+  return lax.reshape(jnp.moveaxis(indices, -1, 0), shape, out_sharding=out_s)
 
 
 def laplace(key: Key | ArrayLike,  # TODO(jakevdp): make this Key
@@ -3817,22 +4088,30 @@ def orthogonal(
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   _check_shape("orthogonal", shape)
-  n = core.concrete_or_error(index, n, "The error occurred in jax.random.orthogonal()")
-  _m = core.concrete_or_error(index, _m, "The error occurred in jax.random.orthogonal()")
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "orthogonal", shape)
-  return maybe_auto_axes(_orthogonal, out_sharding, n=n, _m=_m, shape=shape, dtype=dtype)(key)
+  n = core.concrete_or_error(
+      index, n, "The error occurred in jax.random.orthogonal()")
+  _m = core.concrete_or_error(
+      index, _m, "The error occurred in jax.random.orthogonal()")
+  out_sharding = canonicalize_sharding_for_samplers(
+      out_sharding, "orthogonal", (*shape, n, _m))
+  return _orthogonal(key, n, _m, shape, dtype, out_sharding)
 
-@jit(static_argnums=(1, 2, 3, 4))
-def _orthogonal(key: Key, n, _m, shape, dtype):
-  z = normal(key, (*shape, max(n, _m), min(n, _m)), dtype)
+
+@jit(static_argnums=(1, 2, 3, 4, 5))
+def _orthogonal(key: Key, n, _m, shape, dtype, out_sharding=None):
+  out_s = out_sharding
+  z_sharding = (
+      None if out_s is None else
+      out_s.update(spec=P(*out_s.spec.partitions[:len(shape)], None, None)))
+  z = normal(
+      key, (*shape, max(n, _m), min(n, _m)), dtype, out_sharding=z_sharding)
   q, r = jnp_linalg.qr(z)
   d = jnp_linalg.diagonal(r)
   x = q * jnp.expand_dims(jnp.sign(d), -2)
-
-  if n < _m:
-    return x.mT
-  else:
-    return x
+  out = x.mT if n < _m else x
+  if out_s is not None and core.typeof(out).sharding != out_s:
+    out = reshard(out, out_s)
+  return out
 
 def generalized_normal(
   key: Key | ArrayLike,  # TODO(jakevdp): make this Key
