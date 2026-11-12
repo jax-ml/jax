@@ -21,7 +21,7 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import ifrt_version
+from jax._src.lib import xla_version
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax.tests.numerics import numerics_test_util as util
@@ -98,7 +98,7 @@ class Log2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_log2_accuracy(self, dtype):
-    if ifrt_version >= 80 and jtu.is_libtpu_at_least("0.0.52"):
+    if xla_version >= 80 and jtu.is_libtpu_at_least("0.0.52"):
       bounds = [
           ("gpu", {f32: 1.0, f64: 1.5}),
           (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 5159.0}),
@@ -146,8 +146,8 @@ class Log2Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_log2_highest_accuracy(self, dtype):
-    if ifrt_version < 80 or not jtu.is_libtpu_at_least("0.0.52"):
-      self.skipTest("Requires ifrt_version >= 80 and libtpu >= 0.0.52")
+    if xla_version < 80 or not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Requires xla_version >= 80 and libtpu >= 0.0.52")
     bounds = [
         ("gpu", {f32: 1.0, f64: 1.5}),
         ([*TPU_EUPV1, "tpu_v5p"], {f32: 3.0}),

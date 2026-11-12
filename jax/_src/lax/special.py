@@ -52,7 +52,7 @@ from jax._src.lax.lgamma import lgamma_impl
 from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
-from jax._src.lib import cpu_math, cuda_math, hip_math, ifrt_version
+from jax._src.lib import cpu_math, cuda_math, hip_math, xla_version
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.typing import Array, ArrayLike
 
@@ -889,7 +889,7 @@ def _erfc_lowering(ctx, x, *, accuracy=None, use_exp2=True):
       return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
     has_exp2 = (
         not ctx.is_forward_compat()
-        and ifrt_version >= 80
+        and xla_version >= 80
         and cloud_tpu_init.is_libtpu_at_least('0.0.52')
     )
     return mlir.lower_fun(

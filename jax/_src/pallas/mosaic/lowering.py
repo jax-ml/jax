@@ -52,7 +52,7 @@ from jax._src.lax import ann
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
-from jax._src.lib import ifrt_version
+from jax._src.lib import xla_version
 from jax._src.lib import jax_mlir_ext
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
@@ -3762,7 +3762,7 @@ def _reduce_index_helper(
   else:
     in_shape = x_aval.shape
 
-  keep_dims = ifrt_version >= 84
+  keep_dims = xla_version >= 84
   out_shape = (
       *in_shape[:axis],
       *((1,) if keep_dims else ()),

@@ -211,8 +211,8 @@ class BufferCallbackTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cpu")
   def test_callback_preserves_subnormals(self):
-    if jax._src.lib.ifrt_version < 85:
-      self.skipTest("Requires ifrt_version >= 85")
+    if jax._src.lib.xla_version < 85:
+      self.skipTest("Requires xla_version >= 85")
 
     def callback(ctx, out, arg):
       del ctx  # unused

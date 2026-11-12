@@ -61,7 +61,10 @@ constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // version in Mosaic GPU lowering in a month!
 constexpr int kVersion = 9;
 
-#if JAX_IFRT_VERSION_NUMBER >= 82
+// TODO(phawkins): Simplify to JAX_XLA_VERSION_NUMBER >= 82 once pinned XLA
+// defines JAX_XLA_VERSION_NUMBER.
+#if (defined(JAX_XLA_VERSION_NUMBER) && JAX_XLA_VERSION_NUMBER >= 82) || \
+    (defined(JAX_IFRT_VERSION_NUMBER) && JAX_IFRT_VERSION_NUMBER >= 82)
 using UpgradeRuleType = jaxlib::mosaic::UpgradeRuleType;
 using DowngradeRuleType = jaxlib::mosaic::DowngradeRuleType;
 #else

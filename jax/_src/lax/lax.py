@@ -68,7 +68,7 @@ from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive, standard_abstract_eval)
 from jax._src.core import typeof, getu, getr, stage_p
-from jax._src.lib import ifrt_version, jaxlib_extension_version
+from jax._src.lib import jaxlib_extension_version, xla_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -5020,7 +5020,7 @@ ad.defjvp2(
 def _exp2_lower(ctx, x, accuracy):
   if (
       ctx.is_forward_compat()
-      or ifrt_version < 80
+      or xla_version < 80
       or not cloud_tpu_init.is_libtpu_at_least('0.0.52')
   ):
     x_aval, = ctx.avals_in
@@ -5047,7 +5047,7 @@ ad.defjvp(log2_p, lambda g, x, **kwargs: div(g, mul(x, log(_const(x, 2)))))
 def _log2_lower(ctx, x, accuracy):
   if (
       ctx.is_forward_compat()
-      or ifrt_version < 80
+      or xla_version < 80
       or not cloud_tpu_init.is_libtpu_at_least('0.0.52')
   ):
     x_aval, = ctx.avals_in

@@ -759,8 +759,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
 
   @with_pure_and_io_callbacks
   def test_callback_preserves_subnormals(self, *, callback):
-    if jax._src.lib.ifrt_version < 85:
-      self.skipTest("Requires ifrt_version >= 85")
+    if jax._src.lib.xla_version < 85:
+      self.skipTest("Requires xla_version >= 85")
 
     def cb(x):
       # Test that multiplying to produce a subnormal float32 doesn't flush to zero

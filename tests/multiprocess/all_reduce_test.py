@@ -18,7 +18,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
-from jax._src.lib import ifrt_version
+from jax._src.lib import xla_version
 import numpy as np
 
 
@@ -184,8 +184,8 @@ class AllReduceTest(jt_multiprocess.MultiProcessTest):
           )
 
   def test_psum_in_cond_and_after_cond(self):
-    if ifrt_version < 79:
-      self.skipTest("Requires ifrt_version >= 79")
+    if xla_version < 79:
+      self.skipTest("Requires xla_version >= 79")
     n = jax.device_count()
     mesh = jtu.create_mesh((n,), ("x",))
     num_elements = 200_000
