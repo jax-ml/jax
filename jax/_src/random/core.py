@@ -1848,38 +1848,44 @@ def _exponential(key: Key, shape, dtype) -> Array:
 
 
 def _gamma_one(key: Key, alpha, log_space) -> Array:
+  key, subkey, boost_mask, d, c = _gamma_setup(key, alpha)
+  V = _gamma_rejection_loop(key, d, c)
+  return _gamma_finish(subkey, alpha, boost_mask, d, V, log_space)
+
+
+def _gamma_setup(key: Key, alpha):
   # Ref: A simple method for generating gamma variables, George Marsaglia and Wai Wan Tsang
   # The algorithm can also be founded in:
   # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
-  zero = lax._const(alpha, 0)
   one = lax._const(alpha, 1)
-  two = lax._const(alpha, 2)
-  minus_one = lax._const(alpha, -1)
-  one_over_two = lax._const(alpha, 0.5)
   one_over_three = lax._const(alpha, 1. / 3.)
-  squeeze_const = lax._const(alpha, 0.0331)
-  dtype = lax.dtype(alpha)
-
-  zero = core.pvary(zero, tuple(core.typeof(alpha).mat.varying))
   one = core.pvary(one, tuple(core.typeof(alpha).mat.varying))
-  minus_one = core.pvary(minus_one, tuple(core.typeof(alpha).mat.varying))
-  two = core.pvary(two, tuple(core.typeof(alpha).mat.varying))
 
   # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
   #   Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
-  # When alpha is very small, this boost can be problematic because it may result
-  # in floating point underflow; for this reason we compute it in log space if
-  # specified by the `log_space` argument:
-  #   log[Gamma(alpha)] ~ log[Gamma(alpha + 1)] + log[Uniform()] / alpha
-  # Note that log[Uniform()] ~ -Exponential(), but to avoid problems at x=0
-  # exponential is computed in terms of log[1 - Uniform()]; we must account for this
-  # so that log-space and non-log-space samples match.
+  # (see _gamma_finish).
   boost_mask = lax.ge(alpha, one)
-  alpha_orig = alpha
   alpha = lax.select(boost_mask, alpha, lax.add(alpha, one))
 
   d = lax.sub(alpha, one_over_three)
   c = lax.div(one_over_three, lax.sqrt(d))
+  key, subkey = _split(key)
+  return key, subkey, boost_mask, d, c
+
+
+def _gamma_rejection_loop(key: Key, d, c) -> Array:
+  zero = lax._const(d, 0)
+  one = lax._const(d, 1)
+  two = lax._const(d, 2)
+  minus_one = lax._const(d, -1)
+  one_over_two = lax._const(d, 0.5)
+  squeeze_const = lax._const(d, 0.0331)
+  dtype = lax.dtype(d)
+
+  zero = core.pvary(zero, tuple(core.typeof(d).mat.varying))
+  one = core.pvary(one, tuple(core.typeof(d).mat.varying))
+  minus_one = core.pvary(minus_one, tuple(core.typeof(d).mat.varying))
+  two = core.pvary(two, tuple(core.typeof(d).mat.varying))
 
   def _cond_fn(kXVU):
     _, X, V, U = kXVU
@@ -1911,18 +1917,34 @@ def _gamma_one(key: Key, alpha, log_space) -> Array:
     return key, X, V, U
 
   # initial state is chosen such that _cond_fn will return True
-  key, subkey = _split(key)
   _, _, V, _ = lax_control_flow.while_loop(
       _cond_fn, _body_fn, (key, zero, one, two))
+  return V
+
+
+def _gamma_finish(subkey: Key, alpha, boost_mask, d, V, log_space) -> Array:
+  zero = lax._const(alpha, 0)
+  one = lax._const(alpha, 1)
+  dtype = lax.dtype(alpha)
+  zero = core.pvary(zero, tuple(core.typeof(alpha).mat.varying))
+  one = core.pvary(one, tuple(core.typeof(alpha).mat.varying))
+
+  # When alpha is very small, the boost in _gamma_setup can be problematic
+  # because it may result in floating point underflow; for this reason we
+  # compute it in log space if specified by the `log_space` argument:
+  #   log[Gamma(alpha)] ~ log[Gamma(alpha + 1)] + log[Uniform()] / alpha
+  # Note that log[Uniform()] ~ -Exponential(), but to avoid problems at x=0
+  # exponential is computed in terms of log[1 - Uniform()]; we must account for this
+  # so that log-space and non-log-space samples match.
   if log_space:
     log_samples = lax.neg(exponential(subkey, (), dtype=dtype))
     log_boost = lax.select(boost_mask | (log_samples == 0), zero,
-                           lax.mul(log_samples, lax.div(one, alpha_orig)))
+                           lax.mul(log_samples, lax.div(one, alpha)))
     return lax.add(lax.add(lax.log(d), lax.log(V)), log_boost)
   else:
     samples = 1 - uniform(subkey, (), dtype=dtype)
     boost = lax.select(boost_mask, one,
-                       lax.pow(samples, lax.div(one, alpha_orig)))
+                       lax.pow(samples, lax.div(one, alpha)))
     return lax.mul(lax.mul(d, V), boost)
 
 
@@ -1947,7 +1969,14 @@ def _gamma_grad(sample, a, *, log_space):
     grads = vmap(gamma_grad)(alphas, samples)
   return grads.reshape(np.shape(a))
 
-def _gamma_impl(key: Key, a, *, log_space, use_vmap=False):
+# On CPU, the rejection loop runs in batches of this many elements. Under a
+# single vmap every element iterates until the slowest one in the whole array
+# is accepted, which on CPU costs much more than the loop overhead of smaller
+# batches (https://github.com/jax-ml/jax/issues/18984). Of the sizes tried
+# (8 to 4096), 16 was the fastest or close to it for 1e4 to 1e7 elements.
+_GAMMA_CPU_BATCH_SIZE = 16
+
+def _gamma_impl(key: Key, a, *, log_space, use_vmap=False, batch_size=None):
   # split key to match the shape of a
   a_shape = np.shape(a)
   split_count = math.prod(a_shape[key.ndim:])
@@ -1957,7 +1986,15 @@ def _gamma_impl(key: Key, a, *, log_space, use_vmap=False):
   alphas = a.flatten()
 
   if use_vmap and _key_impl(key) is threefry2x32.threefry_prng_impl:
-    samples = vmap(partial(_gamma_one, log_space=log_space))(keys, alphas)
+    if batch_size is None:
+      samples = vmap(partial(_gamma_one, log_space=log_space))(keys, alphas)
+    else:
+      keys, subkeys, boost_mask, d, c = vmap(_gamma_setup)(keys, alphas)
+      V = lax_control_flow.map(
+          lambda args: _gamma_rejection_loop(*args), (keys, d, c),
+          batch_size=batch_size)
+      samples = vmap(partial(_gamma_finish, log_space=log_space))(
+          subkeys, alphas, boost_mask, d, V)
   else:
     samples = lax_control_flow.map(
         lambda args: _gamma_one(*args, log_space=log_space), (keys, alphas))
@@ -1988,7 +2025,7 @@ mlir.register_lowering(random_gamma_p, mlir.lower_fun(
     partial(_gamma_impl, use_vmap=True),
     multiple_results=False))
 mlir.register_lowering(random_gamma_p, mlir.lower_fun(
-    partial(_gamma_impl, use_vmap=True),
+    partial(_gamma_impl, use_vmap=True, batch_size=_GAMMA_CPU_BATCH_SIZE),
     multiple_results=False), platform='cpu')
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 

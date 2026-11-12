@@ -41,6 +41,7 @@ from jax._src.random.core import (
 from jax._src import test_util as jtu
 from jax import vmap
 
+from jax._src.random import core as random_core
 from jax._src.random import prng as prng_internal
 from jax._src.random import threefry2x32 as threefry2x32_internal
 
@@ -1165,6 +1166,27 @@ class DistributionsTest(RandomTestBase):
       rtol, atol = 2e-3, 1e-4  # on cpu, to check on gpu
     jtu.check_grads(sampler, (a,), order=1, modes=["fwd", "rev"],
                     rtol=rtol, atol=atol, eps=1e-2 * alpha)
+
+  @jtu.sample_product(
+    log_space=[True, False],
+    shape=[(1,), (7,), (16,), (100,), (3, 50)],
+    dtype=jtu.dtypes.floating,
+  )
+  @jtu.run_on_devices("cpu")
+  def testGammaBatchedMatchesVmap(self, log_space, shape, dtype):
+    # On CPU the gamma sampler runs the rejection loop in batches
+    # (https://github.com/jax-ml/jax/issues/18984). Each element keeps its own
+    # key, so the samples must be identical to those of the single vmap used
+    # on other platforms.
+    key = random.key(0)
+    a = jnp.exp(random.normal(random.key(1), shape, dtype))
+    impl = partial(random_core._gamma_impl, log_space=log_space, use_vmap=True)
+    expected = jax.jit(impl)(key, a)
+    actual = jax.jit(partial(
+        impl, batch_size=random_core._GAMMA_CPU_BATCH_SIZE))(key, a)
+    self.assertArraysEqual(expected, actual)
+    sampler = random.loggamma if log_space else random.gamma
+    self.assertArraysEqual(expected, sampler(key, a, dtype=dtype))
 
   def testGammaGradType(self):
     # Regression test for https://github.com/jax-ml/jax/issues/2130
