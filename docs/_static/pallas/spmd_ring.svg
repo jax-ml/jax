@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200" width="100%" height="100%">
+  <style>
+    .device-box { fill: #e6f4ea; stroke: #1e8e3e; stroke-width: 2; rx: 8; }
+    .text-device { font-family: sans-serif; font-size: 16px; font-weight: bold; fill: #0d652d; text-anchor: middle; }
+    .arrow { stroke: #5f6368; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+    .text-label { font-family: sans-serif; font-size: 14px; fill: #5f6368; text-anchor: middle; }
+  </style>
+
+  <defs>
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5f6368" />
+    </marker>
+  </defs>
+
+  <!-- Device 0 -->
+  <rect class="device-box" x="50" y="70" width="120" height="60" />
+  <text x="110" y="105" class="text-device">Device 0</text>
+
+  <!-- Device 1 -->
+  <rect class="device-box" x="250" y="70" width="120" height="60" />
+  <text x="310" y="105" class="text-device">Device 1</text>
+
+  <!-- Device 2 -->
+  <rect class="device-box" x="450" y="70" width="120" height="60" />
+  <text x="510" y="105" class="text-device">Device 2</text>
+
+  <!-- Device 3 -->
+  <rect class="device-box" x="650" y="70" width="120" height="60" />
+  <text x="710" y="105" class="text-device">Device 3</text>
+
+  <!-- Arrows -->
+  <!-- 0 -> 1 -->
+  <path class="arrow" d="M 170 100 L 240 100" />
+  <text x="205" y="90" class="text-label">Send</text>
+
+  <!-- 1 -> 2 -->
+  <path class="arrow" d="M 370 100 L 440 100" />
+  <text x="405" y="90" class="text-label">Send</text>
+
+  <!-- 2 -> 3 -->
+  <path class="arrow" d="M 570 100 L 640 100" />
+  <text x="605" y="90" class="text-label">Send</text>
+
+  <!-- Wrap around 3 -> 0 -->
+  <path class="arrow" d="M 710 130 Q 710 180 400 180 Q 90 180 90 140" />
+  <text x="400" y="175" class="text-label">Wrap-around Send</text>
+
+</svg>
