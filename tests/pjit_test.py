@@ -12204,6 +12204,91 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
 
+  @parameterized.parameters([
+      (jnp.percentile, np.percentile, 50.0, 1, False, P(('x', 'y'), None),
+       False),
+      (jnp.quantile, np.quantile, [0.25, 0.75], 1, True,
+       P(None, 'x', None, 'y'), True),
+      (jnp.quantile, np.quantile, 0.5, 0, False, P(None, 'y'), False),
+      (jnp.quantile, np.quantile, [0.2, 0.8], (0, 1), False, P(None, 'y'),
+       False),
+      (jnp.nanquantile, np.nanquantile, [0.25, 0.75], 1, False,
+       P(None, 'x', 'y'), True),
+      (jnp.nanpercentile, np.nanpercentile, 50.0, None, False, P(), False),
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_quantile_percentile_out_sharding(
+      self, jnp_fn, np_fn, q_val, axis, keepdims, out_spec, zero_coll, mesh):
+    x_np = np.arange(4 * 7 * 4, dtype=np.float32).reshape(4, 7, 4)
+    if jnp_fn in (jnp.nanquantile, jnp.nanpercentile):
+      x_np[0, 2, 1] = np.nan
+    x = jax.device_put(x_np, P('x', None, 'y'))
+    q = jnp.array(q_val, dtype=np.float32)
+
+    @jax.jit
+    def f(z):
+      return jnp_fn(z, q, axis=axis, keepdims=keepdims, out_sharding=out_spec)
+
+    self.assertNotIn('Auto', str(f.trace(x).jaxpr))
+    if zero_coll:
+      with config.no_collectives({'x', 'y'}):
+        f.trace(x)
+      self.assertNotIn('all-', f.lower(x).compile().as_text())
+    out = f(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+    self.assertAllClose(
+        out, np_fn(x_np, q_val, axis=axis, keepdims=keepdims),
+        atol=1e-5, rtol=1e-5, check_dtypes=False)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_quantile_weights_and_errors(self, mesh):
+    x_np = np.arange(4 * 7 * 4, dtype=np.float32).reshape(4, 7, 4)
+    w_np = np.arange(1, 4 * 7 * 4 + 1, dtype=np.float32).reshape(4, 7, 4)
+    x = jax.device_put(x_np, P('x', None, 'y'))
+    w = jax.device_put(w_np, P('x', None, 'y'))
+
+    @jax.jit
+    def f_weighted(z, wt):
+      return (
+          jnp.quantile(z, np.float32(0.5), axis=1, weights=wt,
+                       method='inverted_cdf', out_sharding=P('x', 'y')),
+          jnp.quantile(z, np.float32(0.5), axis=(1,)),
+      )
+
+    with config.no_collectives({'x', 'y'}):
+      q_w, q_none = f_weighted(x, w)
+    self.assertEqual(q_w.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertEqual(q_none.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertAllClose(
+        q_w, np.quantile(x_np, 0.5, axis=1, weights=w_np,
+                         method='inverted_cdf'),
+        atol=1e-5, rtol=1e-5, check_dtypes=False)
+    self.assertAllClose(q_none, np.quantile(x_np, 0.5, axis=(1,)),
+                        atol=1e-5, rtol=1e-5, check_dtypes=False)
+
+    w_1d_np = np.arange(1, 8, dtype=np.float32)
+    w_1d = jax.device_put(w_1d_np, P(None))
+    q_sh = jax.device_put(np.array([0.25, 0.75], dtype=np.float32), P('x'))
+
+    @jax.jit
+    def f_bcast_w(z, qv, wt):
+      return jnp.quantile(z, qv, axis=1, weights=wt, method='inverted_cdf',
+                          out_sharding=P(None, 'x', 'y'))
+
+    out_bw = f_bcast_w(x, q_sh, w_1d)
+    w_3d_np = np.broadcast_to(w_1d_np[None, :, None], x_np.shape)
+    self.assertEqual(out_bw.sharding, NamedSharding(mesh, P(None, 'x', 'y')))
+    self.assertAllClose(
+        out_bw, np.quantile(x_np, [0.25, 0.75], axis=1, weights=w_3d_np,
+                            method='inverted_cdf'),
+        atol=1e-5, rtol=1e-5, check_dtypes=False)
+
+    with self.assertRaises(core.ShardingTypeError):
+      jax.jit(lambda z: jnp.quantile(z, 0.5, axis=0))(x)
+    with self.assertRaisesRegex(ValueError, 'unreduced'):
+      jax.jit(lambda z: jnp.quantile(
+          z, 0.5, axis=1, out_sharding=P(unreduced={'x'})))(x)
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_jnp_roll(self, mesh):
     arr = jax.device_put(jnp.arange(64).reshape(8, 4, 2), P('x', 'y', None))

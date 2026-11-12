@@ -39,7 +39,7 @@ from jax._src.lax import slicing as lax_slicing
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.sharding_impls import (canonicalize_sharding, NamedSharding,
                                      PartitionSpec as P)
-from jax._src.pjit import auto_axes
+from jax._src.pjit import reshard
 from jax._src.util import canonicalize_axis, canonicalize_axis_tuple, maybe_named_axis, set_module
 from jax._src.numpy import indexing
 
@@ -2572,10 +2572,12 @@ def cumulative_prod(
 # Quantiles
 
 @export
-@api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method'))
+@api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method',
+                          'out_sharding'))
 def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
              out: None = None, overwrite_input: bool = False, method: str = "linear",
-             keepdims: bool = False, *, weights: ArrayLike | None = None) -> Array:
+             keepdims: bool = False, *, weights: ArrayLike | None = None,
+             out_sharding: NamedSharding | P | None = None) -> Array:
   """Compute the quantile of the data along the specified axis.
 
   JAX implementation of :func:`numpy.quantile`.
@@ -2596,6 +2598,8 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
       Each value in ``a`` contributes to the quantile according to its
       associated weight. The weights array must be broadcastable to the same
       shape as ``a``. Only works with ``method="inverted_cdf"``.
+    out_sharding: optional sharding specification for the output. If not
+      specified, it will be determined automatically by the compiler.
 
   Returns:
     An array containing the specified quantiles along the specified axes.
@@ -2630,14 +2634,18 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
   if overwrite_input or out is not None:
     raise ValueError("jax.numpy.quantile does not support overwrite_input=True "
                      "or out != None")
-  return _quantile(a, q, axis, method, keepdims, False, weights)
+  sharding = canonicalize_sharding(out_sharding, "jnp.quantile")
+  return _quantile(a, q, axis, method, keepdims, False, weights,
+                   out_sharding=sharding)
 
 
 @export
-@api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method'))
+@api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method',
+                          'out_sharding'))
 def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
                 out: None = None, overwrite_input: bool = False, method: str = "linear",
-                keepdims: bool = False, *, weights: ArrayLike | None = None) -> Array:
+                keepdims: bool = False, *, weights: ArrayLike | None = None,
+                out_sharding: NamedSharding | P | None = None) -> Array:
   """Compute the quantile of the data along the specified axis, ignoring NaNs.
 
   JAX implementation of :func:`numpy.nanquantile`.
@@ -2659,6 +2667,8 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
       The weights array must be broadcastable to the shape of `a` along the specified axis.
       NaN values in `a` are ignored when computing the quantiles.
       Weighted quantiles are currently only supported when `method="inverted_cdf"`.
+    out_sharding: optional sharding specification for the output. If not
+      specified, it will be determined automatically by the compiler.
 
   Returns:
     An array containing the specified quantiles along the specified axes.
@@ -2695,12 +2705,30 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
     msg = ("jax.numpy.nanquantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
-  return _quantile(a, q, axis, method, keepdims, True, weights)
+  sharding = canonicalize_sharding(out_sharding, "jnp.nanquantile")
+  return _quantile(a, q, axis, method, keepdims, True, weights,
+                   out_sharding=sharding)
+
+def _unshard_axes(x: Array, axes: tuple[int, ...]) -> Array:
+  s = core.typeof(x).sharding
+  if builtins.any(s.spec.partitions[i] is not None for i in axes):
+    parts = tuple(None if i in axes else p
+                  for i, p in enumerate(s.spec.partitions))
+    return reshard(x, s.update(spec=s.spec.update(partitions=parts)))
+  return x
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
-              method: str, keepdims: bool, squash_nans: bool, weights: Array | None = None) -> Array:
+              method: str, keepdims: bool, squash_nans: bool,
+              weights: Array | None = None,
+              out_sharding: NamedSharding | None = None) -> Array:
   if method not in ["linear", "lower", "higher", "midpoint", "nearest", "inverted_cdf"]:
     raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', 'nearest' or 'inverted_cdf'")
+  if out_sharding is not None:
+    if out_sharding.spec.unreduced:
+      raise ValueError(f"out_sharding cannot be unreduced. Got {out_sharding}")
+    q_s = core.typeof(q).sharding
+    if not q_s.is_fully_replicated or q_s.spec.reduced:
+      q = reshard(q, out_sharding.update(spec=P()))
   if weights is not None:
     if dtypes.issubdtype(weights.dtype, np.complexfloating):
       raise ValueError("Weights cannot be complex types.")
@@ -2720,6 +2748,18 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   keepdim = []
   if dtypes.issubdtype(a.dtype, np.complexfloating):
     raise ValueError("quantile does not support complex input, as the operation is poorly defined.")
+  if out_sharding is not None:
+    red_axes = canonicalize_axis_tuple(axis, a.ndim)
+    a = _unshard_axes(a, red_axes)
+    if weights is not None:
+      weights = _unshard_axes(weights, red_axes)
+      a_s, w_s = core.typeof(a).sharding, core.typeof(weights).sharding
+      if not a_s.mesh.empty and w_s != a_s:
+        if a_s.spec.reduced - w_s.spec.reduced:
+          a_s = a_s.update(spec=a_s.spec.update(
+              reduced=a_s.spec.reduced & w_s.spec.reduced))
+          a = reshard(a, a_s)
+        weights = reshard(weights, a_s)
   if axis is None:
     if keepdims:
       keepdim = [1] * a.ndim
@@ -2743,14 +2783,14 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
       dimensions[i], dimensions[s] = dimensions[s], dimensions[i]
     do_not_touch_shape = tuple(x for idx,x in enumerate(a.shape) if idx not in axis)
     touch_shape = tuple(x for idx,x in enumerate(a.shape) if idx in axis)
-    a = lax.reshape(a, do_not_touch_shape + (math.prod(touch_shape),), dimensions)
+    new_shape = do_not_touch_shape + (math.prod(touch_shape),)
+    a = lax.reshape(lax.transpose(a, dimensions), new_shape)
     if weights is not None:
-      weights = lax.reshape(weights, do_not_touch_shape + (math.prod(touch_shape),), dimensions)
+      weights = lax.reshape(lax.transpose(weights, dimensions), new_shape)
     axis = canonicalize_axis(-1, a.ndim)
   else:
     axis = canonicalize_axis(axis, a.ndim)
 
-  q_shape = q.shape
   q_ndim = q.ndim
   if q_ndim > 1:
     raise ValueError(f"q must be have rank <= 1, got shape {q.shape}")
@@ -2769,7 +2809,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
         result_shape[axis] = 1
       else:
         result_shape.pop(axis)
-    return lax.full(tuple(result_shape), np.nan, dtype=a.dtype)
+    return lax.full(tuple(result_shape), np.nan, dtype=a.dtype,
+                    sharding=out_sharding)
 
   if squash_nans:
     a = _where(lax._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
@@ -2792,16 +2833,19 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     high = lax.max(lax._const(high, 0), lax.min(high, counts - 1))
     low = lax.convert_element_type(low, int)
     high = lax.convert_element_type(high, int)
-    out_shape = q_shape + shape_after_reduction
-    index = [lax.broadcasted_iota(int, out_shape, dim + q_ndim)
-             for dim in range(len(shape_after_reduction))]
-    if keepdims:
-      index[axis] = low
-    else:
-      index.insert(axis, low)
-    low_value = a[tuple(index)]
-    index[axis] = high
-    high_value = a[tuple(index)]
+    dnums = lax_slicing.GatherDimensionNumbers(
+      offset_dims=(),
+      collapsed_slice_dims=(axis,),
+      start_index_map=(axis,),
+      operand_batching_dims=(*range(axis), *range(axis + 1, len(a_shape))),
+      start_indices_batching_dims=(
+        (*range(q_ndim, q_ndim + axis), *range(q_ndim + axis + 1, low.ndim))
+        if keepdims else tuple(range(q_ndim, low.ndim))))
+    slice_sizes = tuple(builtins.min(1, d) for d in a_shape)
+    low_value = lax_slicing.gather(a, low[..., None], dimension_numbers=dnums,
+                                   slice_sizes=slice_sizes)
+    high_value = lax_slicing.gather(a, high[..., None], dimension_numbers=dnums,
+                                    slice_sizes=slice_sizes)
   else:
     with config.debug_nans(False):
       a = _where(any(lax._isnan(a), axis=axis, keepdims=True), np.nan, a)
@@ -2910,7 +2954,10 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     if q_ndim > 0:
       keepdim = [np.shape(q)[0], *keepdim]
     result = result.reshape(keepdim)
-  return lax.convert_element_type(result, a.dtype)
+  result = lax.convert_element_type(result, a.dtype)
+  if out_sharding is not None:
+    result = reshard(result, out_sharding)
+  return result
 
 
 @export
@@ -2975,24 +3022,21 @@ def percentile(a: ArrayLike, q: ArrayLike,
   if weights is not None:
     weights = ensure_arraylike("percentile", weights)
   q, = promote_dtypes_inexact(q)
-  def internal_quantile(x, y, w):
-    return quantile(x, y, axis=axis, out=out, overwrite_input=overwrite_input,
-                    method=method, keepdims=keepdims, weights=w)
-  if out_sharding is not None:
-    assert isinstance(out_sharding, (NamedSharding, P))
-    out_sharding = canonicalize_sharding(out_sharding, 'jnp.percentile')
-    return auto_axes(internal_quantile, out_sharding=out_sharding,
-                     axes=out_sharding.mesh.explicit_axes
-                     )(a, q / 100, weights)
-  return internal_quantile(a, q / 100, weights)
+  out_sharding = canonicalize_sharding(out_sharding, 'jnp.percentile')
+  return quantile(a, q / 100, axis=axis, out=out,
+                  overwrite_input=overwrite_input, method=method,
+                  keepdims=keepdims, weights=weights,
+                  out_sharding=out_sharding)
 
 
 @export
-@api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method'))
+@api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method',
+                          'out_sharding'))
 def nanpercentile(a: ArrayLike, q: ArrayLike,
                   axis: int | tuple[int, ...] | None = None,
                   out: None = None, overwrite_input: bool = False, method: str = "linear",
-                  keepdims: bool = False, *, weights: ArrayLike | None = None) -> Array:
+                  keepdims: bool = False, *, weights: ArrayLike | None = None,
+                  out_sharding: NamedSharding | P | None = None) -> Array:
   """Compute the percentile of the data along the specified axis, ignoring NaN values.
 
   JAX implementation of :func:`numpy.nanpercentile`.
@@ -3013,6 +3057,8 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
       Values with higher weights contribute more to the percentile calculation.
       The weights array must be broadcastable to the shape of `a` along the specified axis.
       NaN values in `a` are ignored. Weighted percentiles are currently only supported when `method="inverted_cdf"`.
+    out_sharding: optional sharding specification for the output. If not
+      specified, it will be determined automatically by the compiler.
   Returns:
     An array containing the specified percentiles along the specified axes.
 
@@ -3047,8 +3093,10 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
     weights = ensure_arraylike("nanpercentile", weights)
   q, = promote_dtypes_inexact(q)
   q = q / 100
+  out_sharding = canonicalize_sharding(out_sharding, "jnp.nanpercentile")
   return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
-                     method=method, weights=weights, keepdims=keepdims)
+                     method=method, weights=weights, keepdims=keepdims,
+                     out_sharding=out_sharding)
 
 
 @export

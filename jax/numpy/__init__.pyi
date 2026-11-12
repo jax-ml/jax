@@ -15,7 +15,7 @@ from jax._src.lib import Device
 from jax._src.numpy.index_tricks import _Mgrid, _Ogrid, CClass as _CClass, RClass as _RClass
 from jax._src.numpy.array_api_metadata import ArrayNamespaceInfo
 from jax._src.typing import (
-    Array, ArrayLike, DType, DTypeLike, DeprecatedArg,
+    Array, ArrayLike, DType, DTypeLike,
     DimSize, DuckTypedArray, Shape, StaticScalar, SupportsNdim, SupportsShape, SupportsSize,
 )
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
@@ -746,14 +746,18 @@ def nanmin(a: ArrayLike, axis: _Axis = ..., out: None = ...,
 def nanpercentile(a: ArrayLike, q: ArrayLike,
                   axis: int | tuple[int, ...] | None = ...,
                   out: None = ..., overwrite_input: builtins.bool = ..., method: str = ...,
-                  keepdims: builtins.bool = ..., *, interpolation: DeprecatedArg | str = ...) -> Array: ...
+                  keepdims: builtins.bool = ..., *,
+                  weights: ArrayLike | None = ...,
+                  out_sharding: NamedSharding | P | None = ...) -> Array: ...
 def nanprod(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike | None = ...,
             out: None = ...,
             keepdims: builtins.bool = ..., initial: ArrayLike | None = ...,
             where: ArrayLike | None = ...) -> Array: ...
 def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = ...,
                 out: None = ..., overwrite_input: builtins.bool = ..., method: str = ...,
-                keepdims: builtins.bool = ..., *, interpolation: DeprecatedArg | str = ...) -> Array: ...
+                keepdims: builtins.bool = ..., *,
+                weights: ArrayLike | None = ...,
+                out_sharding: NamedSharding | P | None = ...) -> Array: ...
 def nanstd(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike | None = ...,
            out: None = ..., ddof: int | None = ..., keepdims: builtins.bool = ...,
            where: ArrayLike | None = ..., mean: ArrayLike | None = ..., *,
@@ -800,7 +804,8 @@ def partition(a: ArrayLike, kth: int, axis: int = ...) -> Array: ...
 def percentile(a: ArrayLike, q: ArrayLike,
                axis: int | tuple[int, ...] | None = ...,
                out: None = ..., overwrite_input: builtins.bool = ..., method: str = ...,
-               keepdims: builtins.bool = ..., *, interpolation: DeprecatedArg | str = ...,
+               keepdims: builtins.bool = ..., *,
+               weights: ArrayLike | None = ...,
                out_sharding: NamedSharding | P | None = ...) -> Array: ...
 def permute_dims(x: ArrayLike, /, axes: tuple[int, ...]) -> Array: ...
 pi: float
@@ -837,7 +842,8 @@ def put_along_axis(arr: ArrayLike, indices: ArrayLike, values: ArrayLike,
         axis: int | None, inplace: builtins.bool = True, *, mode: str | None = None) -> Array: ...
 def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = ...,
              out: None = ..., overwrite_input: builtins.bool = ..., method: str = ...,
-             keepdims: builtins.bool = ..., *, interpolation: DeprecatedArg | str = ...) -> Array: ...
+             keepdims: builtins.bool = ..., *, weights: ArrayLike | None = ...,
+             out_sharding: NamedSharding | P | None = ...) -> Array: ...
 r_: _RClass
 def rad2deg(x: ArrayLike, /) -> Array: ...
 def radians(x: ArrayLike, /) -> Array: ...
