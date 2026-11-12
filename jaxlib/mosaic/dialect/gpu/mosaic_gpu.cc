@@ -50,6 +50,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
@@ -1022,8 +1023,30 @@ llvm::LogicalResult ReturnOp::verify() {
 }
 
 namespace {
-int kTmemMaxColumns = 512;
-int kTmemCellBitwidth = 32;
+constexpr int kTmemMaxColumns = 512;
+// On sm_107f, TMEM has 576 columns, but the columns past `kTmemMaxColumns` can
+// only be used through an exclusive allocation.
+constexpr int kTmemExclusiveMaxColumns = 576;
+constexpr int kTmemCellBitwidth = 32;
+
+// Returns the maximum number of TMEM columns that `op` can allocate, based on
+// the architecture of its enclosing module. Exclusive allocations are supported
+// on sm_107f, i.e. for major version 10 and minor version at least 7.
+int TmemMaxColumns(mlir::Operation* op) {
+  auto module = op->getParentOfType<mlir::ModuleOp>();
+  if (!module) {
+    return kTmemMaxColumns;
+  }
+  auto arch_major =
+      module->getAttrOfType<mlir::IntegerAttr>("mosaic_gpu.arch_major");
+  auto arch_minor =
+      module->getAttrOfType<mlir::IntegerAttr>("mosaic_gpu.arch_minor");
+  if (arch_major && arch_minor && arch_major.getInt() == 10 &&
+      arch_minor.getInt() >= 7) {
+    return kTmemExclusiveMaxColumns;
+  }
+  return kTmemMaxColumns;
+}
 
 llvm::LogicalResult VerifyTmemRefType(mlir::Operation* op,
                                       mlir::MemRefType tmem_ref_type) {
@@ -1209,10 +1232,11 @@ llvm::LogicalResult TmemAllocOp::verify() {
   }
 
   int num_allocated_columns = num_unpacked_columns / packing;
-  if (num_allocated_columns > kTmemMaxColumns) {
+  int max_columns = TmemMaxColumns(getOperation());
+  if (num_allocated_columns > max_columns) {
     return emitOpError()
            << "The number of allocated columns must be less than or equal to "
-           << kTmemMaxColumns << " but got: " << num_allocated_columns;
+           << max_columns << " but got: " << num_allocated_columns;
   }
 
   return llvm::success();

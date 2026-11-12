@@ -1141,6 +1141,10 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
     32 or not a power of two, then it will be rounded up to the nearest power of
     two larger or equal to 32.
 
+    On sm_107f, up to 576 columns can be allocated. Allocations of more than 512
+    columns are lowered to an exclusive allocation of 576 columns, which must
+    be the only TMEM allocation of the kernel.
+
     If `collective` is `true` 2 CTAs will perform the allocation collectively,
     otherwise, only one CTA will perform the allocation.
   }];

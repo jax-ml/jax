@@ -159,6 +159,13 @@ class MonkeyPatchTest(jtu.JaxTestCase):
       plgpu.kernel()
 
 
+def _is_sm107f() -> bool:
+  """Returns whether the device is in the sm_107f family (sm_10x, x >= 7)."""
+  return jtu.is_cuda_compute_capability_at_least(
+      "10.7"
+  ) and not jtu.is_cuda_compute_capability_at_least("11.0")
+
+
 def run_on_sm80(method):
   """A marker that allows a test case to run on Ampere GPUs."""
   method._min_capability = "8.0"
@@ -7062,6 +7069,42 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x = jax.random.uniform(
         jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
     np.testing.assert_array_equal(kernel(x), (x + 1)[:, 0:128])
+
+  @parameterized.parameters(False, True)
+  def test_tmem_max_col_alloc(self, collective):
+    # The two refs need 576 columns in total, which only fits on sm_107f, where
+    # all the TMEM refs are allocated with a single exclusive allocation.
+    @self.kernel(
+        out_type=(
+            jax.ShapeDtypeStruct((128, 64), jnp.float32),
+            jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        ),
+        scratch_types=[
+            plgpu.TMEM((128, 512), jnp.float32, collective=collective),
+            plgpu.TMEM((128, 64), jnp.float32, collective=collective),
+        ],
+        cluster=(2,) if collective else (),
+        cluster_names=("x",) if collective else (),
+    )
+    def kernel(x_ref, y1_ref, y2_ref, tmem_ref1, tmem_ref2):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.TCGEN05, optimized=False)
+      # `tmem_ref2` lives in the columns past 512. Write to the last columns of
+      # `tmem_ref1` as well, to check that the two refs don't overlap.
+      plgpu.async_store_tmem(tmem_ref1.at[:, 448:512], x_val + 1)
+      plgpu.async_store_tmem(tmem_ref2, x_val + 2)
+      plgpu.commit_tmem()
+      plgpu.store(y1_ref, plgpu.async_load_tmem(tmem_ref1.at[:, 448:512]), optimized=False)
+      plgpu.store(y2_ref, plgpu.async_load_tmem(tmem_ref2), optimized=False)
+
+    x = jax.random.uniform(
+        jax.random.key(0), shape=(128, 64), dtype=jnp.float32)
+    if not _is_sm107f():
+      with self.assertRaisesRegex(ValueError, "exceeding the limit of 512"):
+        kernel(x)
+      return
+    y1, y2 = jax.block_until_ready(kernel(x))
+    np.testing.assert_array_equal(y1, x + 1)
+    np.testing.assert_array_equal(y2, x + 2)
 
   def test_tmem_batch_dimension_indexing(self):
     b1, b2, m, n = 2, 3, 128, 4

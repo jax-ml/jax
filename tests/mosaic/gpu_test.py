@@ -9886,8 +9886,14 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       ("unpacked", (128, 77), jnp.bfloat16, 1, False),
       ("packed", (128, 128), jnp.bfloat16, 2, False),
       ("collective", (128, 64), jnp.bfloat16, 1, True),
+      ("exclusive", (128, 544), jnp.float32, 1, False),
+      ("exclusive_packed", (128, 1088), jnp.bfloat16, 2, False),
+      ("exclusive_collective", (128, 576), jnp.float32, 1, True),
   )
   def test_tmem_alloc_dealloc(self, shape, dtype, packing, collective):
+    exclusive = shape[1] // packing > tcgen05.TMEM_MAX_COLS
+    if exclusive and not is_sm107f():
+      self.skipTest("Only sm_107f supports allocating more than 512 columns.")
     tmem_type = ir.MemRefType.get(
         shape,
         utils.dtype_to_ir_type(dtype),
@@ -9921,21 +9927,23 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
           thread_semantics=mgpu.LoweringSemantics.Warpgroup,
       )()
     [alloc] = re.findall(
-        r"tcgen05.alloc.cta_group::([12]).sync.aligned.shared::cta.b32",
+        r"tcgen05.alloc(.exclusive)?.cta_group::([12]).sync.aligned.shared::cta.b32",
         ptx(),
     )
-    self.assertEqual(alloc[0], '2' if collective else '1')
+    self.assertEqual(alloc[0], ".exclusive" if exclusive else "")
+    self.assertEqual(alloc[1], '2' if collective else '1')
 
     [ld] = re.findall(
         r"ld.shared.b32\s+([%\w]+),\s+\[__dynamic_shmem__0\];",
         ptx(),
     )
     [dealloc] = re.findall(
-        r"tcgen05.dealloc.cta_group::([12]).sync.aligned.b32\s+([%\w]+),",
+        r"tcgen05.dealloc(.exclusive)?.cta_group::([12]).sync.aligned.b32\s+([%\w]+),",
         ptx(),
     )
-    self.assertEqual(dealloc[0], '2' if collective else '1')
-    self.assertEqual(dealloc[1], ld)
+    self.assertEqual(dealloc[0], ".exclusive" if exclusive else "")
+    self.assertEqual(dealloc[1], '2' if collective else '1')
+    self.assertEqual(dealloc[2], ld)
     [relinquish] = re.findall(
         r"tcgen05.relinquish_alloc_permit.cta_group::([12]).sync.aligned;",
         ptx(),
