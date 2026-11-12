@@ -5023,7 +5023,7 @@ def _eval_jaxpr_lowering_rule(ctx: LoweringRuleContext, *args, call_jaxpr, **_):
 
 @register_lowering_rule(pjit.reshard_p, kernel_types=[*tpu_core.CoreType])
 def _reshard_lowering_rule(ctx: LoweringRuleContext, x, *, dst_sharding,
-                           concrete_mesh):
+                           concrete_mesh, reduction_order):
   return x
 
 

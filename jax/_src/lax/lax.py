@@ -61,6 +61,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
+from jax._src.lax import _reduction_order
 from jax._src.layout import Layout
 from jax._src.mesh import get_abstract_mesh, get_concrete_mesh, use_abstract_mesh
 from jax._src.lax.utils import (
@@ -2733,11 +2734,8 @@ DotDimensionNumbers = tuple[tuple[Sequence[int], Sequence[int]],
                             tuple[Sequence[int], Sequence[int]]]
 
 
-_norm_order = reduction_order_lib.normalize_order
-
-
 def _reduction_order_kw(reduction_order: Any) -> dict[str, Any]:
-  norm = _norm_order(reduction_order)
+  norm = reduction_order_lib.normalize_order(reduction_order)
   return {} if norm is None else {'reduction_order': norm}
 
 # TODO(jakevdp): consider deprecating jax.lax.dot_general.
@@ -7260,11 +7258,12 @@ def _dot_general_to_lojax(lhs, rhs, *, dimension_numbers, precision,
         out_sharding, reduction_order)
   from jax._src import shard_map  # pyrefly: ignore[missing-import]
   assert out_sharding.spec.unreduced
+  assert reduction_order is None
   lhs_aval, rhs_aval = core.typeof(lhs), core.typeof(rhs)
-  out_aval = dot_general_p.abstract_eval(
+  out_aval, _ = dot_general_p.abstract_eval(
       lhs_aval, rhs_aval, dimension_numbers=dimension_numbers,
       precision=precision, preferred_element_type=preferred_element_type,
-      out_sharding=out_sharding, reduction_order=reduction_order)[0]
+      out_sharding=out_sharding)
   lo_lhs, = lhs_aval.lower_val(lhs)
   lo_rhs, = rhs_aval.lower_val(rhs)
 
@@ -7273,11 +7272,10 @@ def _dot_general_to_lojax(lhs, rhs, *, dimension_numbers, precision,
   out_specs = P(*u_axes, *(None,) * out_aval.ndim)
 
   def _local_dot(l, r):
-    out = dot_general(
+    out = dot(
         l, r, dimension_numbers=dimension_numbers, precision=precision,
         preferred_element_type=preferred_element_type,
-        out_sharding=P(*out_sharding.spec.partitions),
-        reduction_order=reduction_order)
+        out_sharding=P(*out_sharding.spec.partitions))
     return expand_dims(out, tuple(range(len(u_axes))))
 
   lo_out = shard_map.shard_map(
@@ -7321,24 +7319,18 @@ def _dot_general_batch_unpack_dims(batch_dims):
   return (lbd, rbd)
 
 
-def _tangent_ro_kw(ans, kw: dict[str, Any]) -> dict[str, Any]:
+def _tangent_ro_kw(kw: dict[str, Any]) -> dict[str, Any]:
   if reduction_order_lib.is_leaf_order(kw.get('reduction_order')):
     return kw
-  s = core.typeof(ans).sharding
-  inferred_s = s if s.mesh._any_axis_explicit else None
-  out_s = kw['out_sharding'] or inferred_s
-  base = {k: v for k, v in kw.items() if k != 'reduction_order'}
-  return base | {'out_sharding': out_s}
+  return {k: v for k, v in kw.items() if k != 'reduction_order'}
 
 
 ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
-ad.defjvp2(
+ad.defjvp(
     dot_general_p,
-    lambda g, ans, x, y, **kw: dot_general_p.bind(
-        g, y, **_tangent_ro_kw(ans, kw)),
-    lambda g, ans, x, y, **kw: dot_general_p.bind(
-        x, g, **_tangent_ro_kw(ans, kw)),
+    lambda g, x, y, **kw: dot_general_p.bind(g, y, **_tangent_ro_kw(kw)),
+    lambda g, x, y, **kw: dot_general_p.bind(x, g, **_tangent_ro_kw(kw)),
 )
 _dot_general_batch_rule = functools.partial(
     _dot_batch_rule, _dot_general_batch_unpack_args,
@@ -10460,15 +10452,17 @@ reduce_sum_p = standard_primitive(
   'reduce_sum', sharding_rule=_reduce_op_sharding_rule_with_out_sharding,
   vma_rule=partial(core.standard_vma_rule, 'reduce_sum'),
   ur_rule=_reduce_sum_ur_rule)
+
 _unreduced_is_high = lax_utils.unreduced_is_high('out_sharding')
+
 def _reduce_op_is_high(*avals, reduction_order=None, **params):
   return (_unreduced_is_high(*avals, **params)
           or not reduction_order_lib.is_leaf_order(reduction_order))
 
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
-ad.defjvp2(
+ad.defjvp(
     reduce_sum_p,
-    lambda g, ans, _, **kw: reduce_sum_p.bind(g, **_tangent_ro_kw(ans, kw)),
+    lambda g, _, **kw: reduce_sum_p.bind(g, **_tangent_ro_kw(kw)),
 )
 batching.fancy_primitive_batchers[reduce_sum_p] = _reduce_sum_batcher
 reduce_sum_p.is_high = _reduce_op_is_high  # type: ignore
@@ -12181,5 +12175,3 @@ def _array_reduce_precision_handler(t, x):
     return reduce_precision(x, exponent_bits=finfo.nexp, mantissa_bits=finfo.nmant)
   return x
 remat.reduce_precision_handlers[core.ShapedArray] = _array_reduce_precision_handler
-
-from jax._src.lax import _reduction_order  # noqa: E402

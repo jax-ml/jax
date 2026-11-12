@@ -1470,6 +1470,7 @@ py_library_providing_imports_info(
         ":lax",
         ":layout",
         ":mesh",
+        ":reduction_order",
         ":sharding",
         ":sharding_impls",
         ":tree_util",

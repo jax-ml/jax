@@ -27,6 +27,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import literals
+from jax._src import reduction_order as reduction_order_lib
 from jax._src.numpy.util import (
     _broadcast_to, ensure_arraylike,
     promote_dtypes_inexact, promote_dtypes_numeric, _where)
@@ -344,7 +345,7 @@ def sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
       a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out,
       keepdims=keepdims, initial=initial, where=where,
       promote_integers=promote_integers, out_sharding=out_sharding,
-      reduction_order=lax._norm_order(reduction_order))
+      reduction_order=reduction_order_lib.normalize_order(reduction_order))
 
 
 @api.jit(static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=api.Inline.JAX_EARLY)
@@ -525,7 +526,7 @@ def max(a: ArrayLike, axis: Axis = None, out: None = None,
   return _reduce_max(
       a, axis=_ensure_optional_axes(axis), out=out, keepdims=keepdims,
       initial=initial, where=where, out_sharding=out_sharding,
-      reduction_order=lax._norm_order(reduction_order))
+      reduction_order=reduction_order_lib.normalize_order(reduction_order))
 
 @api.jit(static_argnames=('axis', 'keepdims', 'dtype'), inline=api.Inline.JAX_EARLY)
 def _reduce_min(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,

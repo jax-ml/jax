@@ -22,6 +22,7 @@ import opt_einsum
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
+from jax._src import reduction_order as reduction_order_lib
 from jax._src.export import shape_poly
 from jax._src.lax import lax
 from jax._src.numpy import util
@@ -320,7 +321,7 @@ def einsum(
         "`out_sharding` argument of `einsum` only supports NamedSharding"
         " instances.")
 
-  reduction_order = lax._norm_order(reduction_order)
+  reduction_order = reduction_order_lib.normalize_order(reduction_order)
   jit_einsum = api.jit(_einsum, static_argnums=(1, 2, 3, 4, 5, 6), inline=api.Inline.JAX_EARLY)
   if spec is not None:
     jit_einsum = api.named_call(jit_einsum, name=spec)
