@@ -454,6 +454,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
         "xla/ffi/api/record_c_api.h",
         "xla/ffi/api/record_api.h",
     ]
+    pjrt_c_api_files = ["xla/pjrt/c/pjrt_c_api.h"]
   else:
     xla_ffi_files = [
         f"{source_file_prefix}jaxlib/include/xla/ffi/api/c_api.h",
@@ -466,11 +467,18 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
         f"{source_file_prefix}jaxlib/include/xla/ffi/api/record_c_api.h",
         f"{source_file_prefix}jaxlib/include/xla/ffi/api/record_api.h",
     ]
+    pjrt_c_api_files = [
+        f"{source_file_prefix}jaxlib/include/xla/pjrt/c/pjrt_c_api.h",
+    ]
 
   copy_files(
         dst_dir=jaxlib_dir / "include" / "xla" / "ffi" / "api",
         src_files=xla_ffi_files,
    )
+  copy_files(
+      dst_dir=jaxlib_dir / "include" / "xla" / "pjrt" / "c",
+      src_files=pjrt_c_api_files,
+  )
 
 tmpdir = None
 sources_path = args.sources_path
