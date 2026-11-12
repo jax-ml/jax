@@ -883,24 +883,17 @@ ad.defjvp(
     ),
 )
 def _erfc_lowering(ctx, x, *, accuracy=None, use_exp2=True):
-  dtype = ctx.avals_in[0].dtype
-  if config.jax_accurate_default_erfc.value:
-    if accuracy is AccuracyMode.HIGHEST:
-      return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
-    has_exp2 = (
-        not ctx.is_forward_compat()
-        and ifrt_version >= 80
-        and cloud_tpu_init.is_libtpu_at_least('0.0.52')
-    )
-    return mlir.lower_fun(
-        partial(erfc_default_impl, use_exp2=use_exp2 and has_exp2),
-        multiple_results=False,
-    )(ctx, x)
-  if dtype == dtypes.bfloat16 or (
-      accuracy is AccuracyMode.HIGHEST and dtype in (np.float32, np.float64)
-  ):
+  if accuracy is AccuracyMode.HIGHEST:
     return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
-  return _nary_lower_hlo(chlo.erfc, ctx, x)
+  has_exp2 = (
+      not ctx.is_forward_compat()
+      and ifrt_version >= 80
+      and cloud_tpu_init.is_libtpu_at_least('0.0.52')
+  )
+  return mlir.lower_fun(
+      partial(erfc_default_impl, use_exp2=use_exp2 and has_exp2),
+      multiple_results=False,
+  )(ctx, x)
 mlir.register_lowering(erfc_p, _erfc_lowering)
 # TODO(phawkins): Switch CPU to `erfc_default_impl` (`use_exp2=True`) once
 # XLA:CPU vectorizes and inlines `exp2` like `exp`.
