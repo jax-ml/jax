@@ -6100,7 +6100,8 @@ def random_seed_lowering(ctx: LoweringRuleContext, seeds, *, impl):
 
 @register_lowering_rule(prng.random_bits_p)
 def random_bits_lowering(ctx: LoweringRuleContext, keys, *, bit_width, shape,
-                         num_streams=1):
+                         num_streams, out_sharding):
+  del out_sharding
   assert bit_width == 32, "Only 32-bit PRNG supported."
   aval, = ctx.avals_in
   assert isinstance(aval.dtype, prng.KeyTy)
@@ -6213,7 +6214,10 @@ def _threefry2x32_lowering(ctx: LoweringRuleContext, k1, k2, m1, m2):
 
 
 @register_lowering_rule(prng.iota_2x32_shape_p)
-def _iota_2x32_shape_lowering(ctx: LoweringRuleContext, *, shape):
+def _iota_2x32_shape_lowering(
+    ctx: LoweringRuleContext, *, shape, out_sharding
+):
+  del out_sharding
   total_elements = math.prod(shape)
   if total_elements > np.iinfo(jnp.int32).max:
     raise NotImplementedError(f"Iota with >{np.iinfo(jnp.int32).max} items.")

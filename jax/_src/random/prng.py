@@ -39,6 +39,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import lax
+from jax._src.lax import parallel
 
 from jax._src.lib import gpu_prng
 from jax._src.lib import xla_client as xc
@@ -47,8 +48,9 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import (
     _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
 from jax._src.sharding_impls import (
+    NamedSharding, PartitionSpec as P, canonicalize_sharding,
     make_single_device_sharding, physical_sharding, logical_sharding)
-from jax._src.typing import Array
+from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map, safe_zip
 
 map, unsafe_map = safe_map, map
@@ -88,6 +90,9 @@ class PRNGImpl(NamedTuple):
     random_bits[shape, bit_width] :: K -> uint<bit_width>[*shape]
     raw_bits[shape] :: K -> (raw_dtype[*shape],) * num_streams
 
+  When ``supports_out_sharding`` is ``True``, ``split``, ``random_bits``,
+  and ``raw_bits`` also accept an optional ``out_sharding`` keyword argument.
+
   A PRNG implementation is adapted to an array-like object of keys
   ``K`` by the ``PRNGKeyArray`` class, which should be created via the
   ``random_seed`` function.
@@ -102,6 +107,7 @@ class PRNGImpl(NamedTuple):
   raw_bits: Callable | None = None
   num_streams: int = 1
   raw_dtype: np.dtype = np.dtype('uint32')
+  supports_out_sharding: bool = False
 
   def __hash__(self) -> int:
     return hash(self.tag)
@@ -597,32 +603,83 @@ mlir.register_lowering(
 )
 
 
-def random_split(keys, shape: Shape):
-  return random_split_p.bind(keys, shape=shape)
+def _call_impl_split(
+    impl: PRNGImpl, key: Array, shape: Shape, *,
+    out_sharding: NamedSharding | None = None,
+) -> Array:
+  if impl.supports_out_sharding:
+    return impl.split(key, shape, out_sharding=out_sharding)
+  if out_sharding is not None and not out_sharding.is_fully_replicated:
+    raise NotImplementedError(
+        f'out_sharding is not supported for PRNG {impl.name!r}.')
+  return impl.split(key, shape)
+
+def random_split(
+    keys, shape: Shape, *, out_sharding: NamedSharding | P | None = None
+):
+  out_sharding = canonicalize_sharding(out_sharding, 'random_split')
+  return random_split_p.bind(keys, shape=shape, out_sharding=out_sharding)
 
 random_split_p = core.Primitive('random_split')
 ad.defjvp_zero(random_split_p)
-batching.defvectorized(random_split_p)
 
-def _random_split_sharding_rule(keys_aval, *, shape):
+def _random_split_batcher(
+    axis_data, batched_args, batch_dims, *, shape, out_sharding
+):
+  keys, = batched_args
+  bd, = batch_dims
+  if bd is not None and out_sharding is not None:
+    out_sharding = batching.get_sharding_for_vmap(axis_data, out_sharding, bd)
+  return random_split_p.bind(
+      keys, shape=shape, out_sharding=out_sharding), bd
+
+batching.fancy_primitive_batchers[random_split_p] = _random_split_batcher
+
+def _random_split_sharding_rule(keys_aval, *, shape, out_sharding):
+  if out_sharding is not None:
+    if (not keys_aval.sharding.mesh.empty and
+        keys_aval.sharding.mesh != out_sharding.mesh):
+      raise core.ShardingTypeError(
+          f'Mesh of keys {keys_aval.sharding.mesh} and out_sharding'
+          f' {out_sharding.mesh} should match.')
+    out_s = core.get_sharding(out_sharding, (*keys_aval.shape, *shape))
+    lead_parts = out_s.spec.partitions[:keys_aval.ndim]
+    key_parts = keys_aval.sharding.spec.partitions
+    key_parts = key_parts + (None,) * (keys_aval.ndim - len(key_parts))
+    if any(kp != lp and not core.definitely_equal(d, 1)
+           for d, kp, lp in zip(keys_aval.shape, key_parts, lead_parts)):
+      raise core.ShardingTypeError(
+          f'Leading key partitions of out_sharding {out_s.spec} must'
+          f' match keys sharding {keys_aval.sharding.spec}.')
+    return out_s
   if keys_aval.sharding.mesh.empty:
     return core.get_cur_mesh_sharding()
-  else:
-    new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
-    return keys_aval.sharding.update(spec=new_spec)
+  new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
+  return keys_aval.sharding.update(spec=new_spec)
+
+def resolve_random_sharding(prim, sh_rule, *avals, out_sharding, **kwargs):
+  if out_sharding is not None and out_sharding.mesh._any_axis_explicit:
+    out_s = sh_rule(*avals, out_sharding=out_sharding, **kwargs)
+    lax.lax_utils.call_ur_rule(
+        prim, None, out_s, None, *avals, out_sharding=out_sharding, **kwargs)
+    lax.lax_utils._check_no_collectives(prim, [out_s], avals)
+    return out_s
+  return lax.lax_utils.call_sharding_rule(
+      prim, sh_rule, None, None, *avals, out_sharding=out_sharding, **kwargs)
 
 @random_split_p.def_abstract_eval
-def random_split_abstract_eval(keys_aval, *, shape):
-  # TODO(yashkatariya): random_split should take sharding as an arg too so we
-  # don't choose None here?
-  out_sharding = lax.lax_utils.call_sharding_rule(
-      random_split_p, _random_split_sharding_rule, None, None, keys_aval,
-      shape=shape)
+def random_split_abstract_eval(keys_aval, *, shape, out_sharding):
+  out_sharding = resolve_random_sharding(
+      random_split_p, _random_split_sharding_rule, keys_aval,
+      shape=shape, out_sharding=out_sharding)
   return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
                            out_sharding, keys_aval.mat)
 
 @random_split_p.def_impl
-def random_split_impl(keys, *, shape):
+def random_split_impl(keys, *, shape, out_sharding):
+  if out_sharding is not None:
+    return dispatch.apply_primitive(
+        random_split_p, keys, shape=shape, out_sharding=out_sharding)
   base_arr = random_split_impl_base(
       keys._impl, keys._base_array, keys.ndim, shape=shape)
   return PRNGKeyArray(keys._impl, base_arr)
@@ -631,14 +688,20 @@ def random_split_impl_base(impl, base_arr, keys_ndim, *, shape):
   split = iterated_vmap_unary(keys_ndim, lambda k: impl.split(k, shape))
   return split(base_arr)
 
-def random_split_lowering(ctx, keys, *, shape):
+def random_split_lowering(ctx, keys, *, shape, out_sharding):
   aval, = ctx.avals_in
+  out_aval, = ctx.avals_out
   impl = aval.dtype._impl
-  split = iterated_vmap_unary(aval.ndim, lambda k: impl.split(k, shape))
+  out_s = out_aval.sharding
+  trail_s = NamedSharding(out_s.mesh, P(*out_s.spec.partitions[aval.ndim:]))
+  split = iterated_vmap_unary(
+      aval.ndim,
+      lambda k: _call_impl_split(impl, k, shape, out_sharding=trail_s))
   split_lowering = mlir.lower_fun(split, multiple_results=False)
+  phys_in = core.physical_aval(aval).update(manual_axis_type=core.empty_mat)
   return mlir.delegate_lowering(
       ctx, split_lowering, keys,
-      avals_in=[core.physical_aval(aval)],
+      avals_in=[phys_in],
       avals_out=map(core.physical_aval, ctx.avals_out))
 
 mlir.register_lowering(
@@ -695,13 +758,19 @@ mlir.register_lowering(
 
 
 def _call_impl_raw_bits(
-    impl: PRNGImpl, key: Array, shape: Shape
+    impl: PRNGImpl, key: Array, shape: Shape, *,
+    out_sharding: NamedSharding | None = None,
 ) -> tuple[Array, ...]:
+  if (out_sharding is not None and not out_sharding.is_fully_replicated and
+      not impl.supports_out_sharding):
+    raise NotImplementedError(
+        f'out_sharding is not supported for PRNG {impl.name!r}.')
+  kw = {'out_sharding': out_sharding} if impl.supports_out_sharding else {}
   if impl.raw_bits is not None:
-    out = impl.raw_bits(key, shape)
+    out = impl.raw_bits(key, shape, **kw)
   else:
     raw_bit_width = np.dtype(impl.raw_dtype).itemsize * 8
-    out = (impl.random_bits(key, raw_bit_width, shape),)
+    out = (impl.random_bits(key, raw_bit_width, shape, **kw),)
   assert isinstance(out, tuple) and len(out) == impl.num_streams
   return out
 
@@ -758,6 +827,8 @@ def _raw_bits_to_random_bits(
     bit_width: int,
     shape: Shape,
     num_streams: int = 1,
+    *,
+    out_sharding: NamedSharding | None = None,
 ) -> tuple[Array, ...]:
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
@@ -770,7 +841,7 @@ def _raw_bits_to_random_bits(
   words_per_stream = 2 if bit_width == 64 else 1
   total_words = num_streams * words_per_stream
   if total_words <= impl.num_streams:
-    raw = _call_impl_raw_bits(impl, key, shape)
+    raw = _call_impl_raw_bits(impl, key, shape, out_sharding=out_sharding)
     step = impl.num_streams // total_words
     words = tuple(
         reduce(lax.bitwise_xor, raw[i * step : (i + 1) * step])
@@ -783,7 +854,8 @@ def _raw_bits_to_random_bits(
     words = tuple(
         s
         for i in range(n_keys)
-        for s in _call_impl_raw_bits(impl, subkeys[i], shape)
+        for s in _call_impl_raw_bits(
+            impl, subkeys[i], shape, out_sharding=out_sharding)
     )
   dtype = UINT_DTYPES[bit_width]
   if bit_width == 64:
@@ -805,45 +877,79 @@ def _call_impl_random_bits(
     bit_width: int,
     shape: Shape,
     num_streams: int,
+    *,
+    out_sharding: NamedSharding | None = None,
 ) -> tuple[Array, ...]:
   if num_streams == 1:
+    if impl.supports_out_sharding:
+      return (
+          impl.random_bits(key, bit_width, shape, out_sharding=out_sharding),)
+    if out_sharding is not None and not out_sharding.is_fully_replicated:
+      raise NotImplementedError(
+          f'out_sharding is not supported for PRNG {impl.name!r}.')
     return (impl.random_bits(key, bit_width, shape),)
-  return _raw_bits_to_random_bits(impl, key, bit_width, shape, num_streams)
+  return _raw_bits_to_random_bits(
+      impl, key, bit_width, shape, num_streams, out_sharding=out_sharding)
 
 
 def random_bits(
-    keys, bit_width: int, shape: Sequence[int], num_streams: int = 1
+    keys, bit_width: int, shape: Sequence[int], num_streams: int = 1,
+    out_sharding: NamedSharding | P | None = None,
 ) -> tuple[Array, ...]:
   if isinstance(num_streams, bool) or num_streams not in (1, 2, 4):
     raise ValueError(f"num_streams must be 1, 2, or 4, got {num_streams}")
-  return tuple(
-      random_bits_p.bind(
-          keys, bit_width=bit_width, shape=shape, num_streams=num_streams
-      )
-  )
+  out_sharding = canonicalize_sharding(out_sharding, 'random_bits')
+  return tuple(random_bits_p.bind(
+      keys, bit_width=bit_width, shape=shape, num_streams=num_streams,
+      out_sharding=out_sharding))
 
 random_bits_p = core.Primitive('random_bits')
 random_bits_p.multiple_results = True
 ad.defjvp_zero(random_bits_p)
-batching.defvectorized(random_bits_p)
+
+
+def _random_bits_batcher(
+    axis_data, batched_args, batch_dims, *, bit_width, shape, num_streams,
+    out_sharding
+):
+  keys, = batched_args
+  bd, = batch_dims
+  if bd is not None and out_sharding is not None:
+    out_sharding = batching.get_sharding_for_vmap(axis_data, out_sharding, bd)
+  out = random_bits_p.bind(
+      keys, bit_width=bit_width, shape=shape, num_streams=num_streams,
+      out_sharding=out_sharding)
+  return out, [bd] * len(out)
+
+batching.fancy_primitive_batchers[random_bits_p] = _random_bits_batcher
+
 
 @random_bits_p.def_abstract_eval
-def random_bits_abstract_eval(keys_aval, *, bit_width, shape, num_streams=1):
+def random_bits_abstract_eval(
+    keys_aval, *, bit_width, shape, num_streams, out_sharding
+):
   out_shape = (*keys_aval.shape, *shape)
   out_dtype = dtypes.dtype(f'uint{bit_width}')
-  # TODO(yashkatariya): random_bits should take an out_sharding argument.
-  out_sharding = lax.lax_utils.call_sharding_rule(
-      random_bits_p, _random_split_sharding_rule, None, None, keys_aval,
-      shape=shape)
-  out_aval = core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
-                              manual_axis_type=keys_aval.mat)
+  sharding = resolve_random_sharding(
+      random_bits_p, _random_split_sharding_rule, keys_aval,
+      shape=shape, out_sharding=out_sharding)
+  out_aval = core.ShapedArray(
+      out_shape, out_dtype, sharding=sharding, manual_axis_type=keys_aval.mat)
   return (out_aval,) * num_streams
 
+
 @random_bits_p.def_impl
-def random_bits_impl(keys, *, bit_width, shape, num_streams=1):
+def random_bits_impl(
+    keys, *, bit_width, shape, num_streams, out_sharding
+):
+  if out_sharding is not None:
+    return dispatch.apply_primitive(
+        random_bits_p, keys, bit_width=bit_width, shape=shape,
+        num_streams=num_streams, out_sharding=out_sharding)
   return random_bits_impl_base(keys._impl, keys._base_array, keys.ndim,
                                bit_width=bit_width, shape=shape,
                                num_streams=num_streams)
+
 
 def random_bits_impl_base(impl, base_arr, keys_ndim, *, bit_width, shape,
                           num_streams=1):
@@ -852,17 +958,23 @@ def random_bits_impl_base(impl, base_arr, keys_ndim, *, bit_width, shape,
       lambda k: _call_impl_random_bits(impl, k, bit_width, shape, num_streams))
   return bits(base_arr)
 
-def random_bits_lowering(ctx, keys, *, bit_width, shape, num_streams=1):
+
+def random_bits_lowering(
+    ctx, keys, *, bit_width, shape, num_streams, out_sharding
+):
   aval, = ctx.avals_in
+  out_aval, *_ = ctx.avals_out
   impl = aval.dtype._impl
+  out_s = out_aval.sharding
+  trail_s = NamedSharding(out_s.mesh, P(*out_s.spec.partitions[aval.ndim:]))
   bits = iterated_vmap_unary(
       aval.ndim,
-      lambda k: _call_impl_random_bits(impl, k, bit_width, shape, num_streams))
+      lambda k: _call_impl_random_bits(
+          impl, k, bit_width, shape, num_streams, out_sharding=trail_s))
   bits_lowering = mlir.lower_fun(bits, multiple_results=True)
-  ctx_new = ctx.replace(avals_in=[core.physical_aval(aval)])
-  out = bits_lowering(ctx_new, keys)
-  ctx.set_tokens_out(ctx_new.tokens_out)
-  return out
+  phys_in = core.physical_aval(aval).update(manual_axis_type=core.empty_mat)
+  return mlir.delegate_lowering(
+      ctx, bits_lowering, keys, avals_in=[phys_in])
 
 mlir.register_lowering(
     random_bits_p, random_bits_lowering, shard_map_passthrough=True
@@ -946,7 +1058,7 @@ mlir.register_lowering(
 )
 
 
-def iota_2x32_shape(shape):
+def iota_2x32_shape(shape, *, out_sharding: NamedSharding | P | None = None):
   """Reshaped ``uint64`` iota, as two parallel ``uint32`` arrays.
 
   Setting aside representation, this function essentially computes the
@@ -960,8 +1072,8 @@ def iota_2x32_shape(shape):
     ``uint64`` array. This renders it invariant under either setting of
     the system-wide ``jax_enable_x64`` configuration flag.
 
-  * It lowers in a way such that the compiler's automatic SPMD
-    partitioner recognizes its partitionability.
+  * It lowers in a way that is partitionable under both automatic SPMD
+    and explicit ``out_sharding``.
 
   For example::
 
@@ -987,23 +1099,29 @@ def iota_2x32_shape(shape):
 
   Args:
     shape: the output shape
+    out_sharding: optional output sharding
 
   Returns:
     A pair of ``uint32`` arrays ``(counts_hi, counts_lo)``, both of
     shape ``shape``, representing the higher-order and lower-order 32
     bits of the 64 bit unsigned iota.
   """
+  out_sharding = canonicalize_sharding(out_sharding, 'iota_2x32_shape')
   if len(shape) == 0:
-    return (jnp.zeros((), np.dtype('uint32')),) * 2
-  return iota_2x32_shape_p.bind(shape=shape)
+    return (jnp.zeros((), np.dtype('uint32'), out_sharding=out_sharding),) * 2
+  return iota_2x32_shape_p.bind(shape=shape, out_sharding=out_sharding)
 
 iota_2x32_shape_p = core.Primitive('iota_2x32_shape')
 iota_2x32_shape_p.multiple_results = True
 iota_2x32_shape_p.def_impl(partial(dispatch.apply_primitive, iota_2x32_shape_p))
 
 @iota_2x32_shape_p.def_abstract_eval
-def iota_2x32_shape_abstract_eval(*, shape):
-  return (core.ShapedArray(shape, np.dtype('uint32')),) * 2
+def iota_2x32_shape_abstract_eval(*, shape, out_sharding):
+  sharding = (
+      core.get_cur_mesh_sharding() if out_sharding is None else out_sharding
+  )
+  lax.lax_utils.call_ur_rule(iota_2x32_shape_p, None, sharding, None)
+  return (core.ShapedArray(shape, np.dtype('uint32'), sharding=sharding),) * 2
 
 def bcast_iotas_to_reshaped_iota(
     add: Callable[[ir.Value, ir.Value], ir.Value],
@@ -1013,9 +1131,9 @@ def bcast_iotas_to_reshaped_iota(
   strides: core.Shape = (*(np.cumprod(shape[1:][::-1])[::-1]), 1)
   return reduce(add, [mul(s, i) for i, s in zip(iotas, strides)])
 
-def iota_2x32_shape_lowering(ctx, *, shape):
+def iota_2x32_shape_lowering(ctx, *, shape, out_sharding):
   aval_out, _ = ctx.avals_out
-  aval_u64 = core.ShapedArray(shape, np.dtype('uint64'))
+  aval_u64 = aval_out.update(dtype=np.dtype('uint64'))
 
   def _add(x: ir.Value, y: ir.Value) -> ir.Value:
     return mlir.hlo.add(x, y)
@@ -1031,13 +1149,16 @@ def iota_2x32_shape_lowering(ctx, *, shape):
               mlir.dtype_to_ir_type(np.dtype('uint64'))), x_shape)  # pyrefly: ignore[bad-argument-type]
     x_bcast = mlir.broadcast_in_dim(ctx, x_const, aval_u64,
                                     broadcast_dimensions=[])
+    x_bcast = mlir.lower_with_sharding_in_types(ctx, x_bcast, aval_u64)
     return mlir.hlo.multiply(x_bcast, y)
 
   assert len(shape) > 0
 
-  iotas = [mlir.iota(ctx, aval_u64, dimension=dimension)
+  iotas = [mlir.lower_with_sharding_in_types(
+               ctx, mlir.iota(ctx, aval_u64, dimension=dimension), aval_u64)
            for dimension in range(len(shape))]
   counts = bcast_iotas_to_reshaped_iota(_add, _mul, shape, iotas)
+  counts = mlir.lower_with_sharding_in_types(ctx, counts, aval_u64)
   shift = mlir.ir_constant(np.array(32, np.dtype('uint64')))
   shift = mlir.broadcast_in_dim(ctx, shift, aval_u64,
                                 broadcast_dimensions=[])
@@ -1045,9 +1166,90 @@ def iota_2x32_shape_lowering(ctx, *, shape):
   result_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
   counts_lo = mlir.hlo.convert(result_type, counts)
   counts_hi = mlir.hlo.convert(result_type, counts_shifted)
-  return counts_hi, counts_lo
+  return (
+      mlir.lower_with_sharding_in_types(ctx, counts_hi, aval_out),
+      mlir.lower_with_sharding_in_types(ctx, counts_lo, aval_out),
+  )
+
+
+def _add_2x32(
+    a_hi: ArrayLike, a_lo: ArrayLike, b_hi: ArrayLike, b_lo: ArrayLike
+) -> tuple[Array, Array]:
+  lo = lax.add(a_lo, b_lo)
+  carry = lax.convert_element_type(lax.lt(lo, a_lo), np.uint32)
+  hi = lax.add(lax.add(a_hi, b_hi), carry)
+  return hi, lo
+
+
+def _mulhi_u32_const(a: ArrayLike, c: int) -> Array:
+  # High 32 bits of `a * c` from 16-bit limbs. Avoids `lax.mulhi`, whose
+  # `chlo.mulhi` lowering older PJRT plugins cannot compile.
+  c0, c1 = np.uint32(c & 0xFFFF), np.uint32(c >> 16)
+  a0 = lax.bitwise_and(a, np.uint32(0xFFFF))
+  a1 = lax.shift_right_logical(a, np.uint32(16))
+  p00, p01 = lax.mul(a0, c0), lax.mul(a0, c1)
+  p10, p11 = lax.mul(a1, c0), lax.mul(a1, c1)
+  lo16 = lambda x: lax.bitwise_and(x, np.uint32(0xFFFF))
+  hi16 = lambda x: lax.shift_right_logical(x, np.uint32(16))
+  mid = lax.add(lax.add(hi16(p00), lo16(p01)), lo16(p10))
+  return lax.add(lax.add(lax.add(p11, hi16(p01)), hi16(p10)), hi16(mid))
+
+
+def _mul_2x32_const(
+    a_hi: ArrayLike, a_lo: ArrayLike, c: int
+) -> tuple[Array, Array]:
+  c &= (1 << 64) - 1
+  c_lo = np.uint32(c & 0xFFFFFFFF)
+  c_hi = np.uint32(c >> 32)
+  lo = lax.mul(a_lo, c_lo)
+  hi = lax.add(_mulhi_u32_const(a_lo, int(c_lo)), lax.mul(a_hi, c_lo))
+  if c_hi != 0:
+    hi = lax.add(hi, lax.mul(a_lo, c_hi))
+  return hi, lo
+
+
+def _per_shard_iota_2x32(
+    local_shape: Shape, global_shape: Shape,
+    shard_indices: Sequence[Array | None],
+) -> list[Array]:
+  terms = []
+  for d, (local_d, shard_idx) in enumerate(zip(local_shape, shard_indices)):
+    stride_d = math.prod(global_shape[d + 1:])
+    if local_d < (1 << 32):
+      i_hi = lax.full((local_d,), 0, np.uint32)
+      i_lo = lax.iota(np.uint32, local_d)
+    else:
+      i_hi, i_lo = iota_2x32_shape_p.bind(shape=(local_d,), out_sharding=None)
+    if shard_idx is not None:
+      idx_u32 = lax.convert_element_type(shard_idx, np.uint32)
+      start_hi, start_lo = _mul_2x32_const(np.uint32(0), idx_u32, local_d)
+      i_hi, i_lo = _add_2x32(i_hi, i_lo, start_hi, start_lo)
+    t_hi, t_lo = _mul_2x32_const(i_hi, i_lo, stride_d)
+    terms.append((lax.broadcast_in_dim(t_hi, local_shape, (d,)),
+                  lax.broadcast_in_dim(t_lo, local_shape, (d,))))
+  return list(reduce(lambda a, b: _add_2x32(*a, *b), terms))
+
+
+def _iota_2x32_shape_collective_rule(
+    in_avals, out_avals, *, shape, out_sharding
+):
+  del in_avals, out_sharding
+  out_aval, _ = out_avals
+  parts = out_aval.sharding.spec.partitions
+  if all(p is None for p in parts):
+    return mlir.PartitioningRule(
+        per_shard_params={'shape': shape, 'out_sharding': None})
+  local_shape = out_aval.sharding.shard_shape(shape)
+  def out_collective(_):
+    shard_indices = [
+        None if p is None else parallel.axis_index(p) for p in parts]
+    return _per_shard_iota_2x32(local_shape, shape, shard_indices)
+  # Dummy 0-size per-shard op; `out_collective` computes the local counters.
+  return mlir.PartitioningRule(
+      per_shard_params={'shape': (0,), 'out_sharding': None},
+      out_collective=out_collective)
+
 
 mlir.register_lowering(
     iota_2x32_shape_p, iota_2x32_shape_lowering,
-    shard_map_collective_rule=(
-        lambda in_avals, out_avals, **params: mlir.PartitioningRule()))
+    shard_map_collective_rule=_iota_2x32_shape_collective_rule)
