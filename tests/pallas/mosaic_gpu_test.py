@@ -11185,6 +11185,17 @@ class ExamplesSm90AWGTest(
 
 class HelpersTest(PallasTest):
 
+  def _eval_planar_snake(self, m, n, shape, minor_dim, tile_width):
+    rows, cols = jax.jit(
+        lambda: lax.map(
+            lambda lin: plgpu.planar_snake(lin, shape, minor_dim, tile_width),
+            jnp.arange(m * n, dtype=jnp.int32),
+        )
+    )()
+    results = np.full((m, n), -1)
+    results[rows, cols] = np.arange(m * n)
+    return results
+
   @parameterized.product(
       m=[16],
       n=[7, 16],
@@ -11193,6 +11204,8 @@ class HelpersTest(PallasTest):
       dynamic_shape=(False, True),
   )
   def test_planar_snake(self, m, n, minor_dim, tile_width, dynamic_shape):
+    if self.is_wg_semantics():
+      self.skipTest("planar_snake does not depend on lowering semantics.")
     reference = np.full((m, n), -1)
     counter = itertools.count()
     minor_size, major_size = (m, n) if minor_dim == 0 else (n, m)
@@ -11204,20 +11217,16 @@ class HelpersTest(PallasTest):
           minor = minor_offset + minor_in_tile
           idx = (minor, major) if minor_dim == 0 else (major, minor)
           reference[idx] = next(counter)
-    results = np.full((m, n), -1)
-    for lin in range(m * n):
-      shape = (jnp.int32(m), jnp.int32(n)) if dynamic_shape else (m, n)
-      results[
-          plgpu.planar_snake(np.int32(lin), shape, minor_dim, tile_width)
-      ] = lin
+    shape = (jnp.int32(m), jnp.int32(n)) if dynamic_shape else (m, n)
+    results = self._eval_planar_snake(m, n, shape, minor_dim, tile_width)
     np.testing.assert_array_equal(results, reference)
 
   def test_planar_snake_golden_with_partial_tile(self):
+    if self.is_wg_semantics():
+      self.skipTest("planar_snake does not depend on lowering semantics.")
     m, n = 5, 5
     with self.subTest("minor_dim=0 tile_width=3"):
-      results = np.full((m, n), -1)
-      for lin in range(m * n):
-        results[plgpu.planar_snake(np.int32(lin), (m, n), 0, 3)] = lin
+      results = self._eval_planar_snake(m, n, (m, n), 0, 3)
       expected = np.array([
           [0, 3, 6, 9, 12],
           [1, 4, 7, 10, 13],
@@ -11226,9 +11235,7 @@ class HelpersTest(PallasTest):
           [24, 22, 20, 18, 16]])
       np.testing.assert_array_equal(results, expected)
     with self.subTest("minor_dim=1 tile_width=3"):
-      results = np.full((m, n), -1)
-      for lin in range(m * n):
-        results[plgpu.planar_snake(np.int32(lin), (m, n), 1, 3)] = lin
+      results = self._eval_planar_snake(m, n, (m, n), 1, 3)
       expected = np.array([
           [0, 1, 2, 23, 24],
           [3, 4, 5, 21, 22],
@@ -11238,11 +11245,11 @@ class HelpersTest(PallasTest):
       np.testing.assert_array_equal(results, expected)
 
   def test_planar_snake_golden(self):
+    if self.is_wg_semantics():
+      self.skipTest("planar_snake does not depend on lowering semantics.")
     m, n = 8, 8
     with self.subTest("minor_dim=0 tile_width=2"):
-      results = np.full((m, n), -1)
-      for lin in range(m * n):
-        results[plgpu.planar_snake(np.int32(lin), (m, n), 0, 2)] = lin
+      results = self._eval_planar_snake(m, n, (m, n), 0, 2)
       expected = np.array([
           [0, 2, 4, 6, 8, 10, 12, 14],
           [1, 3, 5, 7, 9, 11, 13, 15],
@@ -11255,9 +11262,7 @@ class HelpersTest(PallasTest):
       ])
       np.testing.assert_array_equal(results, expected)
     with self.subTest("minor_dim=1 tile_width=2"):
-      results = np.full((m, n), -1)
-      for lin in range(m * n):
-        results[plgpu.planar_snake(np.int32(lin), (m, n), 1, 2)] = lin
+      results = self._eval_planar_snake(m, n, (m, n), 1, 2)
       expected = np.array([
           [0, 1, 30, 31, 32, 33, 62, 63],
           [2, 3, 28, 29, 34, 35, 60, 61],
@@ -11270,9 +11275,7 @@ class HelpersTest(PallasTest):
       ])
       np.testing.assert_array_equal(results, expected)
     with self.subTest("minor_dim=0 tile_width=1"):
-      results = np.full((m, n), -1)
-      for lin in range(m * n):
-        results[plgpu.planar_snake(np.int32(lin), (m, n), 0, 1)] = lin
+      results = self._eval_planar_snake(m, n, (m, n), 0, 1)
       expected = np.array([
           [0, 1, 2, 3, 4, 5, 6, 7],
           [15, 14, 13, 12, 11, 10, 9, 8],
