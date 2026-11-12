@@ -2192,7 +2192,10 @@ def interpret_pallas_call(
       # is trivial.
       assert is_input ^ is_output
       if is_input:
-        kernel_buffer_ids.append(input_buffer_ids[i])
+        if not isinstance(var.aval, state.AbstractRef):
+          kernel_buffer_ids.append(input_args[i])
+        else:
+          kernel_buffer_ids.append(input_buffer_ids[i])
       if is_output:
         kernel_buffer_ids.append(output_buffer_ids[output_idx])
     else:
@@ -2423,6 +2426,8 @@ def interpret_pallas_call(
           return token
 
         for j, var in enumerate(input_vars):
+          if not isinstance(var.aval, state.AbstractRef):
+            continue
           if input_var_memory_spaces[j] is _HBM:
             if var.aval.shape != block_shapes[j]:
               raise ValueError(
