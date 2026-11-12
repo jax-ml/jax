@@ -149,6 +149,7 @@ export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 echo "Running oneAPI tests..."
 mkdir -p test-artifacts
 "$JAXCI_PYTHON" -m pytest -n $num_processes --tb=short --maxfail=20 \
+-o faulthandler_timeout=300 --durations=20 \
 --junitxml=test-artifacts/junit.xml \
 --ignore=jax_plugins \
 --ignore=tests/pallas \
