@@ -3961,7 +3961,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x @ params
 
     feature_dim = 3
-    batch_size_total = 8
+    batch_size_total = jax.device_count()
 
     # Get example data
     x = jnp.ones((batch_size_total, feature_dim))
@@ -4221,12 +4221,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if jax.device_count() < 8:
       self.skipTest('Requires >= 8 devices')
 
-    dev = jax.devices()
+    dev = jax.devices()[:8]
     mesh1 = jax.sharding.Mesh(
         np.asarray(dev).reshape([1, 2, 2, 2]),
         ('replica', 'data', 'seq', 'model'))
     mesh2 = jax.sharding.Mesh(
-        np.asarray(jax.devices())
+        np.asarray(dev)
         .reshape([1, 1, 2, 2, 2, 1])
         .swapaxes(2, 3)
         .reshape([1, 1, 4, 2, 1]),
@@ -4257,12 +4257,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if jax.device_count() < 8:
       self.skipTest('Requires >= 8 devices')
 
-    dev = jax.devices()
+    dev = jax.devices()[:8]
     mesh1 = jax.sharding.Mesh(
         np.asarray(dev).reshape([1, 2, 2, 2]),
         ('replica', 'data', 'seq', 'model'))
     mesh2 = jax.sharding.Mesh(
-        np.asarray(jax.devices())
+        np.asarray(dev)
         .reshape([1, 1, 2, 2, 2, 1])
         .swapaxes(2, 3)
         .reshape([1, 1, 4, 2, 1]),
