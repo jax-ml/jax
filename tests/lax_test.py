@@ -1523,13 +1523,10 @@ class LaxTest(jtu.JaxTestCase):
             "capability >= 8.9."
         )
     elif jtu.test_device_matches(["tpu"]):
-      # float8_e4m3fn dots require TPU v5+ and libtpu >= 0.0.52.
-      if not (
-          jtu.is_device_tpu_at_least(5) and jtu.is_libtpu_at_least("0.0.52")
-      ):
+      # float8_e4m3fn dots require TPU v5+.
+      if not jtu.is_device_tpu_at_least(5):
         raise SkipTest(
-            f"The dot algorithm '{algorithm}' requires TPU v5+ and libtpu >= "
-            "0.0.52."
+            f"The dot algorithm '{algorithm}' requires TPU v5+."
         )
     else:
       raise SkipTest(

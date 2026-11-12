@@ -24,7 +24,7 @@ _current_jaxlib_version = '0.12.0.1'
 # The following should be updated after each new jaxlib release.
 _latest_jaxlib_version_on_pypi = '0.12.0.1'
 
-_libtpu_version = '0.0.51.*'
+_libtpu_version = '0.0.52.*'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(

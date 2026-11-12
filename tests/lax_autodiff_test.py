@@ -278,12 +278,10 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
     if op is lax.fma and (
         jaxlib_extension_version < 515
-        or not jtu.is_libtpu_at_least("0.0.52")
         or not jtu.stablehlo_version_at_least("1.24.0")
     ):
       raise SkipTest(
-          "fma requires jaxlib_extension_version >= 515, libtpu >= 0.0.52, "
-          "and StableHLO >= 1.24.0"
+          "fma requires jaxlib_extension_version >= 515 and StableHLO >= 1.24.0"
       )
     rng = rng_factory(self.rng())
     if jtu.test_device_matches(["cpu", "gpu", "tpu"]):

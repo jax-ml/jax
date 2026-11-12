@@ -247,7 +247,7 @@ class ErfcTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_erfc_accurate_default_accuracy(self, dtype):
-    has_exp2 = ifrt_version >= 80 and jtu.is_libtpu_at_least("0.0.52")
+    has_exp2 = ifrt_version >= 80
     bounds = [
         ("cpu", {f16: 1.0, f32: 7.0, f64: 10.0}),
         ("gpu", {f16: 1.0, f32: 7.5, f64: 10.0}),
