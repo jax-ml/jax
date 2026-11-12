@@ -2252,6 +2252,37 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), np.cumsum(x))
 
+  @parameterized.parameters(jnp.int32, jnp.float32)
+  def test_cumsum_rows(self, dtype):
+    if jtu.is_device_tpu(8, "i"):
+      self.skipTest("scan is not supported on TPU v8i.")
+    if not self.USE_TC_TILING and jtu.is_device_tpu_at_least(8):
+      self.skipTest("SparseCore HBM layout is not supported on TPU v8+.")
+    rows = 32
+    shape = (rows, self.num_lanes)
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(shape, dtype),
+        mesh=plsc.VectorSubcoreMesh(
+            core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+        ),
+        scratch_types=dict(
+            x_s=pltpu.VMEM(shape, dtype), o_s=pltpu.VMEM(shape, dtype)
+        ),
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+    )
+    def kernel(x_ref, o_ref, x_s, o_s):
+      pltpu.sync_copy(x_ref, x_s)
+      for i in range(rows):
+        a = x_s[i]
+        b = x_s[(i + 1) % rows]
+        o_s[i] = jnp.cumsum(a) + b * 3 - a
+      pltpu.sync_copy(o_s, o_ref)
+
+    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    expected = np.cumsum(x, axis=1) + np.roll(x, -1, axis=0) * 3 - x
+    np.testing.assert_array_equal(kernel(jnp.asarray(x)), expected)
+
   @parameterized.product(dtype=[jnp.uint32, jnp.int32, jnp.float32],
                          op=[jnp.sum, jnp.max, jnp.min])
   def test_reductions(self, dtype, op):
