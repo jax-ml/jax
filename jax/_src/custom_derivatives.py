@@ -713,12 +713,14 @@ class custom_vjp[ReturnValue]:
     it must return a pair ``(in_cts, logs)``, where ``in_cts`` is the usual
     tuple of cotangents (one entry per primal argument), and ``logs`` is a
     dict of named pytrees to log out of the backward pass, or ``None`` to log
-    nothing. To receive the logs, apply the VJP function via its
-    ``with_logs`` method: ``f_vjp.with_logs(out_ct)`` returns a pair
-    ``(arg_cts, logs)``. Logging is drop-by-default: a plain ``f_vjp(out_ct)``
-    call ignores the logs, and under ``jit`` the logging computation is
-    dead-code-eliminated. Log keys must be unique within a backward pass;
-    repeated keys raise a ``ValueError``, even when the logs are ignored.
+    nothing. To receive the logs, pass ``with_logs=True`` to
+    :py:func:`jax.grad` or :py:func:`jax.value_and_grad`, or apply the VJP
+    function via its ``with_logs`` method (``f_vjp.with_logs(out_ct)`` returns a
+    pair ``(arg_cts, logs)``). Logging is drop-by-default: a plain
+    ``jax.grad`` or ``f_vjp(out_ct)`` call ignores the logs, and under ``jit``
+    the logging computation is dead-code-eliminated. Log keys must be unique
+    within a backward pass; repeated keys raise a ``ValueError``, even when the
+    logs are ignored.
     """
     self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
                 optimize_remat=optimize_remat, generic_batching=generic_batching)
@@ -1436,19 +1438,17 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False,
   (Array(4., dtype=float32, weak_type=True), Array(3., dtype=float32, weak_type=True))
 
   With ``with_logs=True``, the VJP function returns a pair of the cotangents
-  and a dict of backward-pass logs, received via the ``with_logs`` method of
-  the VJP function that :py:func:`jax.vjp` returns:
+  and a dict of backward-pass logs, received via ``jax.grad(..., with_logs=True)``
+  (or ``jax.value_and_grad(..., with_logs=True)``) or the ``with_logs`` method
+  of the VJP function that :py:func:`jax.vjp` returns:
 
   >>> @jax.custom_gradient(with_logs=True)
   ... def f(x):
   ...   return x ** 2, lambda g: ((g * 2 * x,), {'ct_out': g})
   ...
-  >>> print(jax.grad(f)(3.))
-  6.0
-  >>> _, f_vjp = jax.vjp(f, 3.)
-  >>> (x_ct,), logs = f_vjp.with_logs(1.)
-  >>> print(logs['ct_out'])
-  1.0
+  >>> g, logs = jax.grad(f, with_logs=True)(3.)
+  >>> print(g, logs['ct_out'])
+  6.0 1.0
 
   With ``remat=True``, ``fun`` returns a rematerialization function in place of
   the VJP function. Here, under :func:`jax.remat`, the cosine is saved rather

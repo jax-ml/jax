@@ -17,6 +17,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added a `with_logs` option to {func}`jax.grad` and
+    {func}`jax.value_and_grad`, returning backward-pass logs alongside
+    gradients without calling {func}`jax.vjp` directly.
   * Added `jax.lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3` and
     `F8E4M3FN_F8E4M3FN_F32_X4` dot algorithm presets (requiring `jaxlib` >= 514)
     for emulating `bfloat16` precision matmuls on `bfloat16` or `float32` inputs
