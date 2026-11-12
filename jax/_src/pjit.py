@@ -1551,7 +1551,8 @@ def _pjit_batcher_for_sharding(
     tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
     new_gs = GSPMDSharding(s._internal_device_list, new_op)
-    return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]
+    return pxla._get_out_sharding_from_orig_sharding(
+        [new_gs], [None], s, None, None)[0]
   else:
     if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
       return NamedSharding(

@@ -7060,6 +7060,63 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = hf(arr)  # doesn't crash
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
+  def test_explicit_axes_grad_constant_output(self):
+    mesh = jtu.create_mesh((1,), ('x',), axis_types=(AxisType.Auto,))
+
+    @partial(explicit_axes, in_sharding=P('x'))
+    def g(x):
+      return jnp.tanh(x)
+
+    @jax.jit
+    def f(x):
+      return jnp.sum(g(x)), 0.0
+
+    def loss(x):
+      y, c = f(x)
+      return y + c
+
+    with jax.sharding.use_abstract_mesh(mesh.abstract_mesh):
+      grad = jax.grad(loss)(jnp.ones((4,)))
+    self.assertAllClose(grad, 1 - np.tanh(np.ones((4,))) ** 2, rtol=1e-3)
+
+  def test_constant_output_with_explicit_mesh_output(self):
+    auto_mesh = jtu.create_mesh((1,), ('x',), axis_types=(AxisType.Auto,)).abstract_mesh
+    explicit_mesh = auto_mesh.update_axis_types({'x': AxisType.Explicit})
+
+    @jax.jit
+    def f(x):
+      with jax.sharding.use_abstract_mesh(explicit_mesh):
+        e = jnp.ones((4,))
+      return jnp.sin(x), 0.0, e
+
+    with jax.sharding.use_abstract_mesh(auto_mesh):
+      y, c, _ = f(jnp.ones((4,)))
+      out = y + c
+    self.assertAllClose(out, np.sin(np.ones((4,))))
+
+  def test_explicit_axes_grad_custom_vjp_optimize_remat(self):
+    mesh = jtu.create_mesh((2,), ('x',), axis_types=(AxisType.Auto,))
+
+    @jax.custom_vjp
+    def h(w):
+      return w.T
+
+    def h_fwd(w):
+      return w.T, None
+
+    def h_bwd(_, ct):
+      return (ct.T,)
+
+    h.defvjp(h_fwd, h_bwd, optimize_remat=True)
+
+    @partial(explicit_axes, in_sharding=P('x', None))
+    def g(w):
+      return jnp.argmax(h(w), axis=-1).astype(w.dtype).sum() + w.sum()
+
+    with jax.set_mesh(mesh):
+      grad = jax.grad(jax.jit(g))(jnp.ones((4, 2)))
+    self.assertAllClose(grad, jnp.ones((4, 2)))
+
   def test_compilation_cache_miss_when_devices_change(self):
     mesh1 = jtu.create_mesh((2, 2), ('x', 'y'))
     devs = jax.devices()[:4]

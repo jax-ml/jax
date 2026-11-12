@@ -1345,7 +1345,8 @@ def _get_in_shardings_from_xla(
 _orig_out_sharding_handlers: dict[Any, Any] = {}
 
 def _gspmd_to_named_sharding(
-    out_s: GSPMDSharding, out_aval, orig_in_s: NamedSharding) -> NamedSharding:
+    out_s: GSPMDSharding, out_aval, orig_in_s: NamedSharding,
+    ctx_mesh: Mesh | AbstractMesh | None = None) -> NamedSharding:
   assert isinstance(out_s, GSPMDSharding)
   assert isinstance(orig_in_s, NamedSharding)
   assert isinstance(orig_in_s.mesh, Mesh)
@@ -1353,14 +1354,20 @@ def _gspmd_to_named_sharding(
       not out_aval.sharding.mesh._any_axis_manual):
     mesh = _abstract_to_concrete_mesh(
         out_aval.sharding.mesh, out_s._device_assignment)
+  elif (ctx_mesh is not None and not ctx_mesh.empty and
+        not ctx_mesh._any_axis_manual and
+        ctx_mesh.size == len(out_s._device_assignment) and
+        not (ctx_mesh.are_all_axes_auto and orig_in_s.mesh.are_all_axes_auto)):
+    mesh = (ctx_mesh if isinstance(ctx_mesh, Mesh) else
+            _abstract_to_concrete_mesh(ctx_mesh, out_s._device_assignment))
   else:
     mesh = orig_in_s.mesh
   return sharding_impls._gspmd_to_named_sharding_via_mesh(out_s, mesh)
 _orig_out_sharding_handlers[NamedSharding] = _gspmd_to_named_sharding
 
 def _gspmd_to_single_device_sharding(
-    out_s: GSPMDSharding, out_aval, orig_in_s: SingleDeviceSharding
-    ) -> SingleDeviceSharding:
+    out_s: GSPMDSharding, out_aval, orig_in_s: SingleDeviceSharding,
+    ctx_mesh: Mesh | AbstractMesh | None = None) -> SingleDeviceSharding:
   assert isinstance(out_s, GSPMDSharding)
   assert isinstance(orig_in_s, SingleDeviceSharding)
   return SingleDeviceSharding(
@@ -1368,8 +1375,8 @@ def _gspmd_to_single_device_sharding(
 _orig_out_sharding_handlers[SingleDeviceSharding] = _gspmd_to_single_device_sharding
 
 
-def _get_out_sharding_from_orig_sharding(
-    out_shardings, out_avals, orig_in_s, orig_aval):
+def _get_out_sharding_from_orig_sharding(out_shardings, out_avals, orig_in_s,
+                                         orig_aval, ctx_mesh):
   out: list[JSharding] = []
   orig_handler = _orig_out_sharding_handlers[type(orig_in_s)]
   for o, out_aval in safe_zip(out_shardings, out_avals):
@@ -1385,7 +1392,7 @@ def _get_out_sharding_from_orig_sharding(
         out.append(orig_in_s)
       else:
         try:
-          out.append(orig_handler(o, out_aval, orig_in_s))
+          out.append(orig_handler(o, out_aval, orig_in_s, ctx_mesh))
         except IndivisibleError:
           raise
         except:
@@ -1397,26 +1404,30 @@ def _get_out_sharding_from_orig_sharding(
 
 def maybe_recover_user_shardings(
     old_shardings, new_shardings, old_avals, new_avals,
-    intermediate_shardings=None, context_mesh: Mesh | None = None):
+    intermediate_shardings=None,
+    context_mesh: Mesh | AbstractMesh | None = None):
   if all(not isinstance(o, sharding_impls.GSPMDSharding) for o in new_shardings):
     return new_shardings
+
+  ctx_mesh = (context_mesh if context_mesh is not None and not context_mesh.empty
+              else get_abstract_mesh())
 
   for oi, o_aval in safe_zip(old_shardings, old_avals):
     if oi is not None and type(oi) in _orig_out_sharding_handlers:
       return _get_out_sharding_from_orig_sharding(
-          new_shardings, new_avals, oi, o_aval)
+          new_shardings, new_avals, oi, o_aval, ctx_mesh)
 
   if intermediate_shardings is not None:
     for i in intermediate_shardings:
       if i is not None and type(i) in _orig_out_sharding_handlers:
         return _get_out_sharding_from_orig_sharding(
-            new_shardings, [None] * len(new_shardings), i, None)
+            new_shardings, [None] * len(new_shardings), i, None, ctx_mesh)
 
   # For nullary cases like: `jit(lambda: ..., out_shardings=(None, sharding))`
   for ns in new_shardings:
     if ns is not None and type(ns) in _orig_out_sharding_handlers:
       return _get_out_sharding_from_orig_sharding(
-          new_shardings, new_avals, ns, None)
+          new_shardings, new_avals, ns, None, ctx_mesh)
 
   if context_mesh is not None and not context_mesh.empty:
     return [sharding_impls._gspmd_to_named_sharding_via_mesh(n, context_mesh)
@@ -1707,7 +1718,7 @@ class UnloadedMeshExecutable:
                all_args_info: AllArgsInfo | None = None,
                pgle_profiler: profiler.PGLEProfiler | None = None,
                intermediate_shardings: Sequence[JSharding] | None = None,
-               context_mesh: Mesh | None = None,
+               context_mesh: Mesh | AbstractMesh | None = None,
                num_const_args: int = 0,
   ) -> MeshExecutable:
     if device_list is None:

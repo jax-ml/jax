@@ -2074,9 +2074,12 @@ def optimize_remat_of_custom_vjp_fwd[ReturnValue](
           "remat optimization for custom_vjp does not support forward "
           f"functions with these side effects: {disallowed_effects}")
 
+    eqn_ctx = core.current_jaxpr_eqn_context()
+
     @pe._memoize
     def fun_jaxpr_thunk():
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+      with eqn_ctx.manager:
+        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
       return jaxpr, consts
 
     out_flat = remat_opt_p.bind(*consts, *args_flat, num_consts=len(consts),
@@ -2129,13 +2132,15 @@ def _remat_opt_vmap(
   out_dims = [0 if b else None for b in out_batched]
 
   _, prim_batched = split_list(in_batched, [num_consts])
+  vmap_eqn_ctx = core.current_jaxpr_eqn_context()
 
   @pe._memoize
   def batched_fun_jaxpr_thunk():
     fun_jaxpr_, fun_consts_ = fun_jaxpr_thunk()
     fun_jaxpr = fun_jaxpr_.with_consts(fun_consts_)
-    batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
-        fun_jaxpr, axis_data, prim_batched, False)
+    with vmap_eqn_ctx.manager:
+      batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
+          fun_jaxpr, axis_data, prim_batched, False)
     return batched_fun_jaxpr, batched_fun_jaxpr.consts
 
   batched_outs = remat_opt_p.bind(*extra_consts, *args,
@@ -2168,13 +2173,15 @@ def _remat_opt_jvp(
       fwd_jaxpr_jvp_, [num_consts, len(primals)],
       [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])
   fwd_jaxpr_jvp = pe.convert_constvars_jaxpr(fwd_jaxpr_jvp_)
+  jvp_eqn_ctx = core.current_jaxpr_eqn_context()
 
   # @pe._memoize
   def fun_jvp_jaxpr_thunk():
     fun_jaxpr_, fun_consts_ = fun_jaxpr_thunk()
     fun_jaxpr = fun_jaxpr_.with_consts(fun_consts_)
     in_nz = [True] * len(primals)
-    fun_jvp_jaxpr, _ = ad.jvp_jaxpr(fun_jaxpr, in_nz, True)
+    with jvp_eqn_ctx.manager:
+      fun_jvp_jaxpr, _ = ad.jvp_jaxpr(fun_jaxpr, in_nz, True)
     return fun_jvp_jaxpr, fun_jvp_jaxpr.consts
 
   new_num_consts = len(fwd_jaxpr_jvp_.consts) + num_consts + len(consts_dot)
