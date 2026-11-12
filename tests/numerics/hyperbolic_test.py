@@ -20,8 +20,8 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import config
-from jax._src.lib import jaxlib_extension_version
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version, xla_version
 import jax.numpy as jnp
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
@@ -384,8 +384,12 @@ class AcoshTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_acosh_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {bf16: 2.0, f16: 2.0, f32: 3.5, f64: 3.5})
+    else:
+      cpu_bounds = ("cpu", {bf16: 2.0, f16: 2.0, f32: 4.5, f64: 3.5})
     bounds = [
-        ("cpu", {bf16: 2.0, f16: 2.0, f32: 4.5, f64: 3.5}),
+        cpu_bounds,
         ("gpu", {f16: 1.0, f32: 2.5, f64: 3.0}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4031.0}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 61.0}),
@@ -454,8 +458,12 @@ class AsinhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_asinh_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 2.5})
+    else:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.5, f64: 2.5})
     bounds = [
-        ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.5, f64: 2.5}),
+        cpu_bounds,
         ("gpu", {f16: 1.0, f32: 2.0, f64: 2.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4034.5}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 62.5}),
@@ -520,8 +528,12 @@ class AtanhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_atanh_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 2.5})
+    else:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 2.5})
     bounds = [
-        ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 2.5}),
+        cpu_bounds,
         ("gpu", {f32: 3.5, f64: 3.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 2183.5}),
         ("tpu_v5p", {f16: 1.0, f32: 43.0}),

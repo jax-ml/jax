@@ -54,8 +54,12 @@ class LogTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_log_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {f16: 1.0, f32: 1.5, f64: 1.5})
+    else:
+      cpu_bounds = ("cpu", {f16: 1.0, f32: 1.5})
     bounds = [
-        ("cpu", {f16: 1.0, f32: 1.5}),
+        cpu_bounds,
         ("gpu", {f16: 1.0, f32: 1.0, f64: 1.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4030.5}),
         ("tpu_v5p", {f16: 1.0, f32: 62.0}),
@@ -168,8 +172,12 @@ class Log10Test(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_log10_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {bf16: 2.0, f16: 1.5, f32: 2.5, f64: 2.0})
+    else:
+      cpu_bounds = ("cpu", {bf16: 2.0, f16: 1.5, f32: 3.0, f64: 2.0})
     bounds = [
-        ("cpu", {bf16: 2.0, f16: 1.5, f32: 3.0, f64: 2.0}),
+        cpu_bounds,
         ("gpu", {bf16: 2.0, f16: 1.5, f32: 2.5, f64: 2.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 6213.0}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 57.0}),
@@ -211,8 +219,12 @@ class Log1pTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_log1p_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {f16: 1.0, f32: 2.0, f64: 2.0})
+    else:
+      cpu_bounds = ("cpu", {f16: 1.0, f32: 3.0, f64: 2.0})
     bounds = [
-        ("cpu", {f16: 1.0, f32: 3.0, f64: 2.0}),
+        cpu_bounds,
         ("gpu", {f16: 1.0, f32: 1.0, f64: 1.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4034.0}),
         ("tpu_v5p", {f16: 1.0, f32: 63.0}),
@@ -380,8 +392,13 @@ class LogitTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_logit_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 1.5})
+    else:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 1.5})
     bounds = [
-        (["cpu", "gpu"], {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 1.5}),
+        cpu_bounds,
+        ("gpu", {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 1.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4032.5}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 64.0}),
         ("tpu_v6e", {bf16: 1.0, f16: 1.0, f32: 4.0}),
