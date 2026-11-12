@@ -517,10 +517,12 @@ jax.scipy.stats.truncnorm
   :toctree: _autosummary
 
    cdf
+   isf
    logcdf
    logpdf
    logsf
    pdf
+   ppf
    sf
 
 jax.scipy.stats.uniform
