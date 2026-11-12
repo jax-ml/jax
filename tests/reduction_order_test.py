@@ -703,6 +703,122 @@ class ReductionOrderTest(jtu.JaxTestCase):
     re_neg, im_neg = jnp.signbit(jnp.real(c_out)), jnp.signbit(jnp.imag(c_out))
     self.assertTrue(bool(jnp.all(re_neg & im_neg)))
 
+  @parameterized.product(
+      use_general=[False, True],
+      reduction_order=[
+          None,
+          "unordered",
+          "linear",
+          ro.Intrinsic("test_hw"),
+          ro.Unordered(),
+          ro.Unordered("xla"),
+      ],
+  )
+  def test_ragged_dot_jaxpr_and_lowering(self, use_general, reduction_order):
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng((4, 8), np.float32), rng((2, 8, 3), np.float32)
+    gs = jnp.array([1, 3], dtype=jnp.int32)
+    dnums = lax.RaggedDotDimensionNumbers((([1], [1]), ([], [])), [0], [0])
+    call = (functools.partial(lax.ragged_dot_general,
+                              ragged_dot_dimension_numbers=dnums)
+            if use_general else lax.ragged_dot)
+    fn = lambda l, r, s: call(l, r, s, reduction_order=reduction_order)
+    eqn, = _eqns_by_name(jax.make_jaxpr(fn)(lhs, rhs, gs), "ragged_dot_general")
+    self.assertEqual(eqn.params.get("reduction_order"),
+                     ro.normalize_order(reduction_order))
+    if reduction_order == "linear" or isinstance(reduction_order, ro.Intrinsic):
+      with self.assertRaisesRegex(NotImplementedError, "no XLA lowering"):
+        jax.jit(fn)(lhs, rhs, gs)
+    else:
+      self.assertAllClose(fn(lhs, rhs, gs), call(lhs, rhs, gs))
+      self._CompileAndCheck(fn, lambda: [lhs, rhs, gs])
+
+  @parameterized.parameters(
+      ro.tiled(4, "linear", "linear"),
+      ro.tiled(4, "linear", "linear", split="strided"),
+      ro.padded(6, "linear"),
+      ro.tiled(4, ro.cast(jnp.bfloat16, "linear"), "linear"),
+      ro.xlane("linear", "linear", num_lanes=4, pad="absent"),
+  )
+  def test_ragged_dot_composite_orders(self, order):
+    rng = jtu.rand_default(self.rng())
+    args = rng((5, 7), np.float32), rng((2, 7, 3), np.float32)
+    gs = jnp.array([2, 3], dtype=jnp.int32)
+    fn = lambda l, r, s: lax.ragged_dot(
+        l, r, s, preferred_element_type=jnp.float32, reduction_order=order)
+    jaxpr = jax.make_jaxpr(fn)(*args, gs)
+    self.assertEqual(
+        [e.params["reduction_order"]
+         for e in _eqns_by_name(jaxpr, "ragged_dot_general")],
+        [order],
+    )
+    lo_eqns = (
+        _lo_eqns(jaxpr, "ragged_dot_general") + _lo_eqns(jaxpr, "reduce_sum")
+    )
+    self.assertNotEmpty(lo_eqns)
+    self.assertTrue(all(
+        ro.is_leaf_order(e.params.get("reduction_order")) for e in lo_eqns
+    ))
+    with self.assertRaisesRegex(NotImplementedError, "no XLA lowering"):
+      jax.jit(fn)(*args, gs)
+
+  def test_ragged_dot_invalid_composite_orders(self):
+    gs = jnp.array([1, 1], dtype=jnp.int32)
+    with self.assertRaises(ValueError):
+      lax.ragged_dot(
+          jnp.ones((2, 5)), jnp.ones((2, 5, 2)), gs,
+          reduction_order=ro.tiled(4, pad=None))
+    rc_dnums = lax.RaggedDotDimensionNumbers((([1], [0]), ([], [])), [1], [])
+    with self.assertRaises(ValueError):
+      lax.ragged_dot_general(
+          jnp.ones((2, 4)), jnp.ones((4, 2)), jnp.array([2, 2], jnp.int32),
+          rc_dnums, reduction_order=ro.tiled(2))
+    mc_dnums = lax.RaggedDotDimensionNumbers(
+        (([1, 2], [1, 2]), ([], [])), [0], [0])
+    with self.assertRaises(ValueError):
+      lax.ragged_dot_general(
+          jnp.ones((2, 2, 2)), jnp.ones((2, 2, 2, 3)), gs,
+          mc_dnums, reduction_order=ro.tiled(2))
+
+  @parameterized.product(
+      use_general=[False, True],
+      order=["unreduced", ro.tiled(4, "unreduced", "linear"),
+             ro.tiled(4, "linear", "unreduced")],
+  )
+  def test_ragged_dot_unreduced_not_implemented(self, use_general, order):
+    lhs, rhs = jnp.ones((4, 8)), jnp.ones((2, 8, 3))
+    gs = jnp.array([1, 3], dtype=jnp.int32)
+    dnums = lax.RaggedDotDimensionNumbers((([1], [1]), ([], [])), [0], [0])
+    call = (functools.partial(lax.ragged_dot_general,
+                              ragged_dot_dimension_numbers=dnums)
+            if use_general else lax.ragged_dot)
+    with self.assertRaisesRegex(NotImplementedError, "unreduced"):
+      call(lhs, rhs, gs, reduction_order=order)
+
+  def test_ragged_dot_ad_remat_and_vmap_jaxprs(self):
+    rng = jtu.rand_default(self.rng())
+    a = rng((3, 4, 8), np.float32)
+    w = rng((3, 2, 8, 5), np.float32)
+    gs = jnp.array([1, 3], dtype=jnp.int32)
+    orders = lambda jaxpr: [e.params.get("reduction_order")
+                            for e in _eqns_by_name(jaxpr, "ragged_dot_general")]
+    jvp_orders = lambda o: orders(jax.make_jaxpr(lambda x, dx: jax.jvp(
+        lambda z: lax.ragged_dot(z, w[0], gs, reduction_order=o), (x,), (dx,))
+    )(a[0], a[0]))
+    lin = ro.ReductionOrder.linear
+    self.assertEqual(jvp_orders("linear"), [lin, lin])
+
+    order = ro.tiled(4, ro.cast(jnp.bfloat16, "linear"), "linear")
+    self.assertEqual(jvp_orders(order), [order, None])
+    loss = lambda x, y: jnp.sum(jax.checkpoint(
+        lambda u, v: lax.ragged_dot(u, v, gs, reduction_order=order))(x, y))
+    grad_jaxpr = jax.make_jaxpr(jax.grad(loss, argnums=(0, 1)))(a[0], w[0])
+    self.assertEqual(orders(grad_jaxpr), [order, None, None])
+    vmap_jaxpr = jax.make_jaxpr(jax.vmap(
+        lambda x, y, s: lax.ragged_dot(x, y, s, reduction_order=order)))(
+            a, w, jnp.broadcast_to(gs, (3, 2)))
+    self.assertEqual(orders(vmap_jaxpr), [order])
+
 
 @jtu.thread_unsafe_test_class()  # Mutates module-level ro._INTRINSIC_IMPLS registry.
 class ReductionOrderIntrinsicRegistrationTest(jtu.JaxTestCase):

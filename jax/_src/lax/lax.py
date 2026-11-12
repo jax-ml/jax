@@ -2849,7 +2849,9 @@ def ragged_dot(
     preferred_element_type: DTypeLike | None = None,
     group_offset: Array | None = None,
     out_sharding: NamedSharding | P | None = None,
-    ) -> Array:
+    *,
+    reduction_order: Any = None,
+) -> Array:
   """Ragged matrix multiplication.
 
   Args:
@@ -2872,6 +2874,7 @@ def ragged_dot(
       preferred_element_type=preferred_element_type,
       group_offset=group_offset,
       out_sharding=out_sharding,
+      reduction_order=reduction_order,
   )
 
 
@@ -2930,6 +2933,8 @@ def ragged_dot_general(
     preferred_element_type: DTypeLike | None = None,
     group_offset: Array | None = None,
     out_sharding: NamedSharding | P | None = None,
+    *,
+    reduction_order: Any = None,
 ) -> Array:
   """Ragged matrix multiplication.
 
@@ -2976,6 +2981,9 @@ def ragged_dot_general(
   """
   lhs, rhs, group_sizes = core.auto_insert_reshard(lhs, rhs, group_sizes)
   out_sharding = canonicalize_sharding(out_sharding, 'ragged_dot_general')
+  if preferred_element_type is not None:
+    preferred_element_type = dtypes.check_and_canonicalize_user_dtype(
+        preferred_element_type, 'ragged_dot_general')
   return ragged_dot_general_p.bind(
       lhs,
       rhs,
@@ -2985,6 +2993,7 @@ def ragged_dot_general(
       preferred_element_type=preferred_element_type,
       group_offset=group_offset,
       out_sharding=out_sharding,
+      **_reduction_order_kw(reduction_order),
   )
 
 
@@ -7729,7 +7738,9 @@ def _ragged_dot_general_shape_rule(
     preferred_element_type: DTypeLike | None,
     group_offset,
     out_sharding,
+    reduction_order=None,
 ):
+  del reduction_order
   def _check_in_range(dim, rank, dim_name, arg_name):
     if dim < 0 or dim >= rank:
       raise TypeError(
@@ -7828,7 +7839,9 @@ def _ragged_dot_general_dtype_rule(
     preferred_element_type: DTypeLike | None,
     group_offset,
     out_sharding,
+    reduction_order=None,
 ) -> np.dtype:
+  del reduction_order
   if not dtypes.issubdtype(group_sizes.dtype, np.integer):
     raise TypeError(
         'ragged_dot_general requires that '
@@ -7846,57 +7859,6 @@ def _ragged_dot_general_dtype_rule(
   )
 
 
-def _ragged_dot_general_jvp_rule(
-    primals, tangents, ragged_dot_dimension_numbers,
-    precision, preferred_element_type, group_offset, out_sharding
-):
-  # note - we could ostensibly just get this by passing on the
-  # value to ragged_dot below, but, this feels cleaner.
-  if group_offset is not None:
-    raise NotImplementedError('Unimplemented group_offset support.')
-  x, y, gs = primals
-  dx, dy, _ = tangents  # no tan on the gs
-
-  # primal
-  primal_out = ragged_dot_general(
-      x,
-      y,
-      gs,
-      ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
-      precision=precision,
-      preferred_element_type=preferred_element_type,
-  )
-
-  # tangent
-  dx_out = (
-      ragged_dot_general(
-          dx,
-          y,
-          gs,
-          ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
-          precision=precision,
-          preferred_element_type=preferred_element_type,
-      )
-      if type(dx) is not ad_util.Zero
-      else _zeros(primal_out)
-  )
-  dy_out = (
-      ragged_dot_general(
-          x,
-          dy,
-          gs,
-          ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
-          precision=precision,
-          preferred_element_type=preferred_element_type,
-      )
-      if type(dy) is not ad_util.Zero
-      else _zeros(primal_out)
-  )
-  tangent_out = add(dx_out, dy_out)
-
-  return primal_out, tangent_out
-
-
 def _ragged_dot_general_transpose_rule(
     ct,
     x,
@@ -7908,6 +7870,7 @@ def _ragged_dot_general_transpose_rule(
     preferred_element_type: DTypeLike | None,
     group_offset: Array | None,
     out_sharding: NamedSharding | P | None = None,
+    reduction_order=None,
 ):
   if group_offset is not None:
     raise NotImplementedError('Unimplemented group_offset support.')
@@ -7989,38 +7952,6 @@ def _ragged_dot_general_transpose_rule(
   return x_bar, y_bar, None
 
 
-def _ragged_dot_batch_unpack_args(batched_args):
-  lhs, rhs, _ = batched_args
-  return (lhs, rhs)
-
-
-def _ragged_dot_batch_unpack_dims(batch_dims):
-  if not all(dim == 0 for dim in batch_dims):
-    raise NotImplementedError('ragged_dot vmap over any dim but 0 - NYI')
-  lbd, rbd, _ = batch_dims
-  return (lbd, rbd)
-
-
-def _ragged_dot_general_invoke_prim(
-    group_sizes,
-    lhs,
-    rhs,
-    new_ragged_dot_dimension_numbers,
-    precision,
-    preferred_element_type,
-    out_sharding,
-):
-  del out_sharding
-  return ragged_dot_general(
-      lhs,
-      rhs,
-      group_sizes,
-      ragged_dot_dimension_numbers=new_ragged_dot_dimension_numbers,
-      precision=precision,
-      preferred_element_type=preferred_element_type,
-  )
-
-
 def _ragged_dot_general_batch_rule(
     axis_data,
     batched_args,
@@ -8031,29 +7962,29 @@ def _ragged_dot_general_batch_rule(
     preferred_element_type: DTypeLike | None,
     group_offset,
     out_sharding,
+    reduction_order=None,
 ):
-  invoke = partial(_ragged_dot_general_invoke_prim, batched_args[2])
+  if not all(dim == 0 for dim in batch_dims):
+    raise NotImplementedError('ragged_dot vmap over any dim but 0 - NYI')
+  lhs, rhs, gs = batched_args
+  invoke = lambda l, r, d, **kw: ragged_dot_general(l, r, gs, d, **kw)
   batched_out, result_batch_dim = _dot_batch_rule(
-      _ragged_dot_batch_unpack_args,
-      _ragged_dot_batch_unpack_dims,
-      invoke,
-      axis_data,
-      batched_args,
-      batch_dims,
+      lambda xs: xs, lambda ds: ds, invoke, axis_data, (lhs, rhs), (0, 0),
       dimension_numbers=ragged_dot_dimension_numbers,
       precision=precision,
       preferred_element_type=preferred_element_type,
       out_sharding=None,
+      reduction_order=reduction_order,
   )
-  if _is_ragged_contracting(batched_args[0].ndim - 1,
-                            ragged_dot_dimension_numbers):
+  if _is_ragged_contracting(lhs.ndim - 1, ragged_dot_dimension_numbers):
     result_batch_dim += 1
   return batched_out, result_batch_dim
 
 
 def _ragged_dot_general_sharding_rule(
     lhs, rhs, group_sizes, *, ragged_dot_dimension_numbers, precision,
-    preferred_element_type: DTypeLike | None, group_offset, out_sharding):
+    preferred_element_type: DTypeLike | None, group_offset, out_sharding,
+    reduction_order=None):
   mesh_set = {x.sharding.mesh for x in [lhs, rhs, group_sizes]
               if not x.sharding.mesh.empty}
   if len(mesh_set) > 1:
@@ -8061,6 +7992,14 @@ def _ragged_dot_general_sharding_rule(
       'All argument meshes must be the same or unspecified, but got'
       f' lhs mesh = {lhs.sharding.mesh}, rhs mesh = {rhs.sharding.mesh},'
       f' group_sizes mesh = {group_sizes.sharding.mesh}')
+  (lc, rc), _ = ragged_dot_dimension_numbers.dot_dimension_numbers
+  contract_axes = flatten_spec_no_none(
+      tuple(lhs.sharding.spec.partitions[i] for i in lc)
+      + tuple(rhs.sharding.spec.partitions[i] for i in rc))
+  # No out_sharding: ragged_dot_general has no unreduced rule, so unreduced
+  # out_shardings raise NotImplementedError instead.
+  _check_ordered_reduction_sharding(
+      'ragged_dot_general', reduction_order, contract_axes)
 
   if out_sharding is None:
     raise NotImplementedError(
@@ -8076,7 +8015,25 @@ ragged_dot_general_p = standard_primitive(
     vma_rule=partial(core.standard_vma_rule, 'ragged_dot'),
     sharding_rule=_ragged_dot_general_sharding_rule,
 )
-ad.primitive_jvps[ragged_dot_general_p] = _ragged_dot_general_jvp_rule
+_wrap_reduction_order_abstract_eval(ragged_dot_general_p)
+
+
+def _ragged_dot_general_is_high(*avals, reduction_order=None, **_):
+  return not reduction_order_lib.is_leaf_order(reduction_order)
+ragged_dot_general_p.is_high = (  # type: ignore[method-assign]
+    _ragged_dot_general_is_high)
+
+
+def _ragged_dot_general_to_lojax(lhs, rhs, group_sizes, **params):
+  return _reduction_order.ragged_dot_general(lhs, rhs, group_sizes, **params)
+ragged_dot_general_p.to_lojax = (  # type: ignore[method-assign]
+    _ragged_dot_general_to_lojax)
+ad.defjvp(
+    ragged_dot_general_p,
+    lambda g, x, y, gs, **kw: ragged_dot_general_p.bind(
+        g, y, gs, **_tangent_ro_kw(kw)),
+    lambda g, x, y, gs, **kw: ragged_dot_general_p.bind(
+        x, g, gs, **_tangent_ro_kw(kw)), None)
 ad.primitive_transposes[ragged_dot_general_p] = _ragged_dot_general_transpose_rule
 batching.fancy_primitive_batchers[ragged_dot_general_p] = _ragged_dot_general_batch_rule
 
@@ -8196,12 +8153,17 @@ def _ragged_dot_general_lower(
     preferred_element_type: np.dtype | None,
     group_offset: Array | None = None,
     out_sharding=None,
+    reduction_order=None,
     platform: str = 'default',
 ):
   if group_offset is not None:
     raise NotImplementedError('Unimplemented group_offset support.')
+  if _is_ordered(reduction_order):
+    raise NotImplementedError(
+        f'ragged_dot has no XLA lowering for {reduction_order=}.')
 
-  if not config.jax_ragged_dot_use_ragged_dot_instruction.value:
+  if (platform == 'default' or
+      not config.jax_ragged_dot_use_ragged_dot_instruction.value):
     return mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False)(
         ctx, lhs, rhs, group_sizes,
         ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
@@ -8245,10 +8207,7 @@ def _ragged_dot_general_lower(
   return [result]
 
 
-mlir.register_lowering(
-  ragged_dot_general_p,
-  mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False),
-)
+mlir.register_lowering(ragged_dot_general_p, _ragged_dot_general_lower)
 
 for platform in ['tpu', 'gpu']:
   mlir.register_lowering(

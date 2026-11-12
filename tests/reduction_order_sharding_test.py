@@ -446,6 +446,48 @@ class ReductionOrderShardingTest(jtu.JaxTestCase):
     finally:
       ro._INTRINSIC_IMPLS.pop("tpu_v7_mxu_256", None)
 
+  @jtu.with_explicit_mesh((2, 4), ("dp", "tp"))
+  def test_sharded_ragged_dot_orders(self, mesh):
+    rng = jtu.rand_default(self.rng())
+    a = jax.device_put(rng((4, 32), np.float32),
+                       NamedSharding(mesh, P("dp", "tp")))
+    b = jax.device_put(rng((2, 32, 8), np.float32),
+                       NamedSharding(mesh, P(None, "tp", None)))
+    gs = jax.device_put(np.array([1, 3], np.int32), NamedSharding(mesh, P()))
+    rd = lambda x, y, s, out_s=P("dp", None), **kw: lax.ragged_dot(
+        x, y, s, out_sharding=out_s, **kw)
+    with self.assertRaises(core.ShardingTypeError):
+      rd(a, b, gs, reduction_order="linear")
+    with self.assertRaises(core.ShardingTypeError):
+      rd(a, b, gs, reduction_order=ro.Intrinsic("test_hw"))
+
+    orders = lambda f: [e.params.get("reduction_order")
+                        for e in jax.make_jaxpr(f)(a, b, gs).eqns
+                        if e.primitive.name == "ragged_dot_general"]
+    xla = ro.Unordered("xla")
+    self.assertEqual(orders(lambda x, y, s: rd(x, y, s, reduction_order=xla)),
+                     [xla])
+    u_s = P("dp", None, unreduced={"tp"})
+    with self.assertRaises(NotImplementedError):
+      jax.eval_shape(lambda x, y, s: rd(x, y, s, out_s=u_s), a, b, gs)
+    with self.assertRaises(NotImplementedError):
+      jax.eval_shape(lambda x, y, s: rd(x, y, s, out_s=u_s,
+                                        reduction_order="unreduced"), a, b, gs)
+    with self.assertRaisesRegex(NotImplementedError, "unreduced"):
+      jax.eval_shape(lambda x, y, s: rd(x, y, s, reduction_order="unreduced"),
+                     a, b, gs)
+    tiled_u = ro.tiled(8, "linear", "unreduced")
+    with self.assertRaisesRegex(NotImplementedError, "unreduced"):
+      jax.eval_shape(lambda x, y, s: rd(x, y, s, reduction_order=tiled_u),
+                     a, b, gs)
+
+    order = ro.tiled(8, "linear", ro.ring("asc"))
+    ring = lambda x, y, s: rd(x, y, s, out_s=P("dp", "tp"),
+                              reduction_order=order)
+    self.assertEqual(orders(ring), [order])
+    with self.assertRaisesRegex(NotImplementedError, "no XLA lowering"):
+      jax.jit(ring)(a, b, gs)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

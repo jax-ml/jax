@@ -368,3 +368,98 @@ def _strip_axes(q: Any, axes: set[Any]) -> Any:
   tup = q if isinstance(q, tuple) else (q,)
   qs = tuple(x for x in tup if x not in axes)
   return None if not qs else (qs[0] if len(qs) == 1 else qs)
+
+
+### ragged_dot_general (kept separate from dot_general; no unreduced support)
+
+def ragged_dot_general(
+    lhs: Any, rhs: Any, gs: Any, *, ragged_dot_dimension_numbers: Any,
+    out_sharding: Any, reduction_order: ro.Order, **kw: Any) -> Any:
+  rd = ragged_dot_dimension_numbers
+  if _has_unreduced(reduction_order):
+    raise NotImplementedError(
+        "ragged_dot_general does not support reduction_order='unreduced'.")
+  (lc, rc), (lb, rb) = rd.dot_dimension_numbers
+  if len(lc) != 1 or len(rc) != 1:
+    raise ValueError(
+        "ragged_dot with composite reduction_order requires 1 contracting"
+        " axis.")
+  out_aval = lax.ragged_dot_general_p.abstract_eval(
+      core.typeof(lhs), core.typeof(rhs), core.typeof(gs),
+      ragged_dot_dimension_numbers=rd, out_sharding=out_sharding, **kw)[0]
+  res = _eval_ragged_dot(
+      lhs, rhs, gs, lc[0], rc[0], tuple(lb), tuple(rb),
+      tuple(rd.lhs_ragged_dimensions), tuple(rd.rhs_group_dimensions),
+      out_sharding, reduction_order, kw)
+  return _match_out_aval(res, out_aval)
+
+
+def _eval_ragged_dot(
+    a: Array, b: Array, gs: Array, ca: int, cb: int, lb: tuple[int, ...],
+    rb: tuple[int, ...], lr: tuple[int, ...], rg: tuple[int, ...],
+    out_s: Any, order: ro.OrderLike, kw: dict[str, Any],
+) -> Array:
+  rec = lambda a, b, o: _eval_ragged_dot(
+      a, b, gs, ca, cb, lb, rb, lr, rg, out_s, o, kw)
+  match order:
+    case ro.Cast(dt, body):
+      return lax.convert_element_type(rec(a, b, body), dt)
+    case _ if ca in lr and not ro.is_leaf_order(order):
+      raise ValueError("ragged_dot with composite reduction_order cannot"
+                       " reduce the ragged contracting axis.")
+    case ro.Pad(_, body):
+      return rec(*_pad_dot_operands(a, b, ca, cb, order), body)
+    case ro.Tile(bk, inner, outer, split):
+      a, b = _pad_dot_operands(a, b, ca, cb, order)
+      strided = split is ro.Split.strided
+      ps = _ragged_partials_sharding(
+          core.typeof(a), core.typeof(b), ca, cb, out_s, strided)
+      a, b = _tile(a, ca, bk), _tile(b, cb, bk)
+      shift = lambda ds, c: tuple(d + int(d > c) for d in ds)
+      ca_in, cb_in = (ca, cb) if strided else (ca + 1, cb + 1)
+      lb_in = (ca + int(strided), *shift(lb, ca))
+      rb_in = (cb + int(strided), *shift(rb, cb))
+      if gs.ndim > 1:
+        gs = lax.broadcast(gs, (a.shape[lb_in[0]],))
+      partials = _eval_ragged_dot(
+          a, b, gs, ca_in, cb_in, lb_in, rb_in, shift(lr, ca), shift(rg, cb),
+          ps, inner, kw)
+      return _eval_reduce(
+          lax.reduce_sum, "reduce_sum", partials, 0, out_s, outer)
+    case ro.Ring():
+      return rec(a, b, ro.Tile(1, ro.ReductionOrder.linear, order,
+                               ro.Split.block, None))
+    case _:
+      dnums = lax.RaggedDotDimensionNumbers(
+          (((ca,), (cb,)), (lb, rb)), lr, rg)
+      return lax.ragged_dot_general(
+          a, b, gs, dnums, out_sharding=out_s, reduction_order=order, **kw)
+
+
+def _has_unreduced(order: ro.OrderLike) -> bool:
+  match order:
+    case ro.Tile(_, inner, outer):
+      return _has_unreduced(inner) or _has_unreduced(outer)
+    case ro.Cast(_, body) | ro.Pad(_, body):
+      return _has_unreduced(body)
+    case _:
+      return order is ro.ReductionOrder.unreduced
+
+
+def _ragged_partials_sharding(
+    a_aval, b_aval, ca: int, cb: int, out_s: Any, strided: bool) -> Any:
+  sa = a_aval.sharding.spec.partitions[ca]
+  sb = b_aval.sharding.spec.partitions[cb]
+  if sa != sb and sa is not None and sb is not None:
+    raise core.ShardingTypeError(
+        f"ragged_dot requires matching contracting sharding; got {sa!r} and"
+        f" {sb!r}.")
+  if out_s is None:
+    return None
+  parts = out_s.spec.partitions
+  if strided:
+    return out_s.update(spec=out_s.spec.update(partitions=(None, *parts)))
+  blk_spec = sa or sb
+  blk_axes = set(lax.flatten_spec_no_none((blk_spec,)))
+  return out_s.update(
+      spec=P(blk_spec, *(_strip_axes(q, blk_axes) for q in parts)))
