@@ -8029,6 +8029,174 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         with self.assertRaises(NotImplementedError):
           f_bits.lower(key)
 
+  @parameterized.parameters(
+      (lambda k, p, s: jax.random.uniform(
+          k, (4, 4), minval=p, maxval=2., out_sharding=s),),
+      (lambda k, p, s: jax.random.randint(
+          k, (4, 4), 0, 100, out_sharding=s),),
+      (lambda k, p, s: jax.random.randint(
+          k, (4, 4), 0, 50, dtype=jnp.int8, out_sharding=s),),
+      (lambda k, p, s: jax.random.normal(
+          k, (4, 4), mode='low', out_sharding=s),),
+      (lambda k, p, s: jax.random.normal(
+          k, (4, 4), mode='high', out_sharding=s),),
+      (lambda k, p, s: jax.random.normal(
+          k, (4, 4), mode='highest', out_sharding=s),),
+      (lambda k, p, s: jax.random.normal(
+          k, (4, 4), dtype=jnp.complex64, out_sharding=s),),
+      (lambda k, p, s: jax.random.truncated_normal(
+          k, -1., p, (4, 4), out_sharding=s),),
+      (lambda k, p, s: jax.random.truncated_normal(
+          k, -1., p, (4, 4), mode='high', out_sharding=s),),
+      (lambda k, p, s: jax.random.bernoulli(
+          k, p, (4, 4), mode='low', out_sharding=s),),
+      (lambda k, p, s: jax.random.bernoulli(
+          k, p, (4, 4), mode='high', out_sharding=s),),
+      (lambda k, p, s: jax.random.cauchy(k, (4, 4), out_sharding=s),),
+      (lambda k, p, s: jax.random.exponential(k, (4, 4), out_sharding=s),),
+      (lambda k, p, s: jax.random.gumbel(
+          k, (4, 4), dtype=jnp.float32, mode='highest', out_sharding=s),),
+      (lambda k, p, s: jax.random.gumbel(
+          k, (4, 4), mode='high', out_sharding=s),),
+      (lambda k, p, s: jax.random.gumbel(
+          k, (4, 4), mode='low', out_sharding=s),),
+      (lambda k, p, s: jax.random.laplace(k, (4, 4), out_sharding=s),),
+      (lambda k, p, s: jax.random.logistic(k, (4, 4), out_sharding=s),),
+      (lambda k, p, s: jax.random.pareto(k, p, (4, 4), out_sharding=s),),
+      (lambda k, p, s: jax.random.rayleigh(k, p, (4, 4), out_sharding=s),),
+      (lambda k, p, s: jax.random.wald(k, p, (4, 4), out_sharding=s),),
+      (lambda k, p, s: jax.random.triangular(
+          k, 0., p, 1., (4, 4), out_sharding=s),),
+      (lambda k, p, s: jax.random.lognormal(k, p, (4, 4), out_sharding=s),),
+      (lambda k, p, s: jax.random.rademacher(k, (4, 4), out_sharding=s),),
+      (lambda k, p, s: jax.random.maxwell(k, (4, 4), out_sharding=s),),
+      (lambda k, p, s: jax.random.geometric(k, p, (4, 4), out_sharding=s),),
+  )
+  def test_random_elementary_samplers_out_sharding(self, sampler):
+    mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
+    key = jax.random.key(17)
+    s2d = NamedSharding(mesh, P('x', 'y'))
+    p_unsh = jnp.linspace(0.1, 0.9, 16).reshape(4, 4)
+    ref = sampler(key, p_unsh, None)
+    p_sh = jax.device_put(p_unsh, NamedSharding(mesh, P('x', None)))
+
+    with jax.set_mesh(mesh):
+      @jax.jit
+      def f(k, p):
+        return sampler(k, p, P('x', 'y'))
+
+      self.assertNotIn('Auto', str(f.trace(key, p_sh).jaxpr))
+      hlo = f.lower(key, p_sh).compile().as_text()
+      assert hlo is not None
+      self.assertNotIn('all-', hlo)
+      out = f(key, p_sh)
+      self.assertEqual(out.sharding, s2d)
+      if jnp.issubdtype(out.dtype, jnp.inexact):
+        self.assertAllClose(out, ref, atol=1e-5, rtol=1e-5)
+      else:
+        self.assertArraysEqual(out, ref)
+      with jax.disable_jit():
+        out_nojit = sampler(key, p_sh, P('x', 'y'))
+      self.assertEqual(out_nojit.sharding, s2d)
+      self.assertAllClose(out_nojit, ref, atol=1e-5, rtol=1e-5)
+
+  def test_random_elementary_samplers_sharding_cases(self):
+    mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
+    key = jax.random.key(19)
+    s2d = NamedSharding(mesh, P('x', 'y'))
+    p_unsh = jnp.linspace(0.1, 0.9, 16).reshape(4, 4)
+    p_sh = jax.device_put(p_unsh, NamedSharding(mesh, P('x', None)))
+
+    with jax.set_mesh(mesh), jax.disable_jit():
+      for out_scalar in (
+          jax.random.uniform(key),
+          jax.random.normal(key),
+          jax.random.bernoulli(key),
+          jax.random.truncated_normal(key, -1., 1.),
+          jax.random.cauchy(key),
+          jax.random.rayleigh(key, 1.),
+          jax.random.wald(key, 1.),
+          jax.random.rademacher(key),
+          jax.random.maxwell(key),
+          jax.random.geometric(key, 0.5),
+      ):
+        self.assertEqual(out_scalar.shape, ())
+
+    with jax.set_mesh(mesh):
+      out_eager = jax.random.uniform(key, (4, 4), out_sharding=P('x', 'y'))
+      self.assertEqual(out_eager.sharding, s2d)
+      sh_keys = jax.device_put(jax.random.split(key, 2), P('x'))
+
+      @jax.jit
+      @jax.vmap
+      def f_vmap(k):
+        return jax.random.normal(k, (4,), mode='highest', out_sharding=P('y'))
+
+      for s2 in (False, True):
+        with config.jax_partitioning(s2):
+          self.assertEqual(f_vmap(sh_keys).sharding, s2d)
+          p_col = jax.device_put(jnp.ones((4, 1)), P('x', None))
+          out_col = jax.jit(lambda k, p: jax.random.uniform(
+              k, (4, 4), minval=p, maxval=2., out_sharding=P('x', 'y')))(
+                  key, p_col)
+          self.assertEqual(out_col.sharding, s2d)
+          self.assertEqual(
+              jax.jit(jax.random.normal)(key).sharding,
+              NamedSharding(mesh, P()))
+          f_inferred = jax.jit(
+              lambda k, p: jax.random.uniform(k, (4, 4), minval=p, maxval=2.))
+          inferred_hlo = f_inferred.lower(key, p_sh).compile().as_text()
+          assert inferred_hlo is not None
+          self.assertNotIn('u32[4,4]', inferred_hlo)
+          self.assertIn('u32[2,4]', inferred_hlo)
+          out_inferred = f_inferred(key, p_sh)
+          self.assertEqual(
+              out_inferred.sharding, NamedSharding(mesh, P('x', None)))
+
+      with config.no_collectives({'x', 'y'}):
+        out_nc = jax.jit(lambda k, p: jax.random.uniform(
+            k, (4, 4), minval=p, maxval=2., out_sharding=P('x', 'y')))(
+                key, p_sh)
+        self.assertEqual(out_nc.sharding, s2d)
+        s_sub = NamedSharding(mesh, P(('x', 'y'), None))
+        p_sub_in = jax.device_put(jnp.full((4, 1), 0.5, jnp.float32), P('x', None))
+        for s2 in (False, True):
+          with config.jax_partitioning(s2):
+            out_b = jax.jit(lambda k, p: jax.random.bernoulli(
+                k, p, (4, 4), out_sharding=P(('x', 'y'), None)))(key, p_sub_in)
+            self.assertEqual(out_b.sharding, s_sub)
+            out_u = jax.jit(lambda k, p: jax.random.uniform(
+                k, (4, 4), minval=p, maxval=2.,
+                out_sharding=P(('x', 'y'), None)))(key, p_sub_in)
+            self.assertEqual(out_u.sharding, s_sub)
+            p_sub_xy = jax.device_put(
+                jnp.full((4, 1), 2.0, jnp.float32), P(('x', 'y'), None))
+            out_inf = jax.jit(lambda k, a, b: jax.random.uniform(
+                k, (4, 4), minval=a, maxval=b))(key, p_sub_in, p_sub_xy)
+            self.assertEqual(out_inf.sharding, s_sub)
+        p_y = jax.device_put(jnp.full((4, 1), 0.5, jnp.float32), P('y', None))
+        with self.assertRaises(core.ShardingTypeError):
+          jax.jit(lambda k, p: jax.random.bernoulli(
+              k, p, (4, 4), out_sharding=P(('x', 'y'), None)))(key, p_y)
+        p_xy = jax.device_put(
+            jnp.full((4, 1), 0.5, jnp.float32), P(('x', 'y'), None))
+        with self.assertRaises(core.ShardingTypeError):
+          jax.jit(lambda k, p: jax.random.bernoulli(
+              k, p, (4, 4), out_sharding=P('x', None)))(key, p_xy)
+
+      for bad_spec in (P(None, 'y'), P('y', None), P(None, None)):
+        with self.assertRaises(core.ShardingTypeError):
+          jax.jit(lambda k, p, s=bad_spec: jax.random.uniform(
+              k, (4, 4), minval=p, maxval=2., out_sharding=s))(key, p_sh)
+        with self.assertRaises(core.ShardingTypeError):
+          jax.jit(lambda k, p, s=bad_spec: jax.random.bernoulli(
+              k, p, (4, 4), out_sharding=s))(key, p_sh)
+        with self.assertRaises(core.ShardingTypeError):
+          jax.jit(lambda k, p, s=bad_spec: jax.random.rayleigh(
+              k, p, (4, 4), out_sharding=s))(key, p_sh)
+
   def test_auto_axes_no_context_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
     np_inp = np.arange(16.).reshape(8, 2)
