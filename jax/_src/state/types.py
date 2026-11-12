@@ -281,8 +281,9 @@ class SelectTransform(MultiRefTransform):
     raise NotImplementedError(type(self))
 
   def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
-    del context  # Unused.
-    return pp.text(f"{{select({self.idx=})}}")
+    assert isinstance(self.idx, (core.Var, core.Literal))
+    idx = core.pp_var(self.idx, context, print_literal_dtype=False)
+    return pp.concat([pp.text("{select("), idx, pp.text(")}")])
 
   def getattr(self, name: str, xs: Sequence[core.AbstractValue]) -> Any:
     attrs = [getattr(x, name) for x in xs]
@@ -301,13 +302,20 @@ class RefIndexer:
       slc = (slc,)
     from jax._src.state import indexing
     indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
-    if (
-        isinstance(self.ref_or_view, TransformedRef)
-        and not self.ref_or_view.multiref
-    ):
-      view = self.ref_or_view
-      return TransformedRef(view.ref, (*view.transforms, indexer))
-    return TransformedRef(self.ref_or_view, (indexer,))
+    return apply_transform(self.ref_or_view, indexer)
+
+
+def apply_transform(ref_or_view: Any, transform: Transform) -> TransformedRef:
+  if not isinstance(ref_or_view, TransformedRef):
+    return TransformedRef(ref_or_view, (transform,))
+  if not ref_or_view.multiref:
+    return TransformedRef(ref_or_view.ref, (*ref_or_view.transforms, transform))
+  t, = ref_or_view.transforms  # multiref enforces len(transforms) == 1.
+  # Single-ref views distribute over select, unlike general MultiRefTransforms.
+  if isinstance(t, SelectTransform):
+    refs = tuple(apply_transform(r, transform) for r in ref_or_view.ref)
+    return TransformedRef(refs, (t,))
+  raise NotImplementedError(type(t))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -322,6 +330,12 @@ class TransformedRef:
       )
     if any(isinstance(t, MultiRefTransform) for t in self.transforms):
       assert self.multiref and len(self.transforms) == 1
+    if isinstance(self.ref, TransformedRef):
+      raise ValueError(f"TransformedRef cannot wrap a TransformedRef: {self}")
+    num_casts = sum(
+        isinstance(t, MemorySpaceCastTransform) for t in self.transforms)
+    if num_casts > 1:
+      raise ValueError("Multiple memory_space_casts are not allowed.")
 
   @property
   def multiref(self) -> bool:
@@ -379,9 +393,7 @@ class TransformedRef:
           "Bitcast ref with dynamic size is not supported."
       )
     dtype = dtypes.dtype(dtype)
-    if self.multiref:
-      return TransformedRef(self, (BitcastTransform(dtype),))
-    return TransformedRef(self.ref, (*self.transforms, BitcastTransform(dtype)))
+    return apply_transform(self, BitcastTransform(dtype))
 
   def reshape(self, *shape):
     if self.is_dynamic_size:
@@ -392,28 +404,13 @@ class TransformedRef:
       shape = shape[0]
     input_shape = tuple(operator.index(s) for s in self.shape)
     shape = _canonicalize_reshape(input_shape, shape)
-    if self.multiref:
-      return TransformedRef(self, (ReshapeTransform(shape),))
-    return TransformedRef(self.ref, (*self.transforms, ReshapeTransform(shape)))
+    return apply_transform(self, ReshapeTransform(shape))
 
   def transpose(self, permutation: Sequence[int]):
-    if self.multiref:
-      raise NotImplementedError("Transpose with multiref is not supported.")
-    transposer = TransposeTransform(tuple(permutation))
-    if self.multiref:
-      return TransformedRef(self, (transposer,))
-    return TransformedRef(self.ref, (*self.transforms, transposer))
+    return apply_transform(self, TransposeTransform(tuple(permutation)))
 
   def memory_space_cast(self, memory_space: Any):
-    if self.multiref:
-      raise NotImplementedError(
-          "memory_space_cast with multiref is not supported."
-      )
-    if any(isinstance(t, MemorySpaceCastTransform) for t in self.transforms):
-      raise ValueError("Multiple memory_space_casts are not allowed.")
-    return TransformedRef(
-        self.ref, (*self.transforms, MemorySpaceCastTransform(memory_space))
-    )
+    return apply_transform(self, MemorySpaceCastTransform(memory_space))
 
   def set(self, value, idx=()):
     from jax._src.state.primitives import ref_set  # pyrefly: ignore[missing-import]

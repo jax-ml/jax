@@ -1811,10 +1811,11 @@ def annotate(
       no_hazard=no_hazard,
       no_hazard_no_deps=no_hazard_no_deps,
   )
-  if not isinstance(ref, state_types.TransformedRef):
-    if not isinstance(jax_core.typeof(ref), state.AbstractRef):
-      raise TypeError(f"ref must be a reference, got {ref}")
-    ref = state_types.TransformedRef(ref, transforms=())
+  if not isinstance(ref, state_types.TransformedRef) and not isinstance(
+      jax_core.typeof(ref), state.AbstractRef):
+    raise TypeError(f"ref must be a reference, got {ref}")
+  ref = state_types.apply_transform(
+      ref, tpu_core.AccessAssumptionTransform(assumption))
   if isinstance(memory_space := ref.memory_space, pl_core.CoreMemorySpace):
     memory_space = memory_space.memory_space
   if assumption.no_hazard or assumption.no_hazard_no_deps:
@@ -1823,15 +1824,7 @@ def annotate(
           "Hazard overrides ('no_hazard' or 'no_hazard_no_deps') are only"
           f" valid for VMEM references, but got memory space: {memory_space}"
       )
-  new_transforms = []
-  for transform in ref.transforms:
-    if isinstance(transform, tpu_core.AccessAssumptionTransform):
-      assumption = transform.assumption.union(assumption)
-    else:
-      new_transforms.append(transform)
-  return state_types.TransformedRef(
-      ref.ref, (*new_transforms, tpu_core.AccessAssumptionTransform(assumption))
-  )
+  return ref
 
 
 has_memory_space_p = jax_core.Primitive("has_memory_space")
