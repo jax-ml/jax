@@ -5710,6 +5710,7 @@ def polynomial_lower(x, *coeffs, unroll=None):
 mlir.register_lowering(
     polynomial_p,
     mlir.lower_fun(polynomial_lower, multiple_results=False),
+    shard_map_collective_rule=_naryop_collective_rule,
 )
 
 def _pow_dtype_rule(x, y):

@@ -3415,7 +3415,7 @@ def _make_iota_2x32_shape_harness(shape):
   define(
       prng.iota_2x32_shape_p,
       f"shape=({shapestr})",
-      lambda shape: prng.iota_2x32_shape_p.bind(shape=shape),
+      lambda shape: prng.iota_2x32_shape_p.bind(shape=shape, out_sharding=None),
       [StaticArg(shape)],
       dtype=np.uint32,
       shape=shape)
