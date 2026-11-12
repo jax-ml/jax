@@ -6044,7 +6044,11 @@ def _muladd_hlo(x, y, z):
 
 
 def _fmuladd_lower(ctx, a, b, c, *, native_dtypes):
-  if jaxlib_extension_version < 515 or ctx.is_forward_compat():
+  if (
+      jaxlib_extension_version < 515
+      or ctx.is_forward_compat()
+      or not cloud_tpu_init.is_libtpu_at_least('0.0.52')
+  ):
     return _nary_lower_hlo(_muladd_hlo, ctx, a, b, c)
   aval_out, = ctx.avals_out
   if aval_out.dtype in native_dtypes:
