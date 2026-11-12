@@ -171,6 +171,15 @@ if dtypes.int1 is not None:
       ir.IntegerType.get_unsigned, 1
   )
 
+if dtypes.bcomplex32 is not None:
+  _dtype_to_ir_type[np.dtype(dtypes.bcomplex32)] = (
+      lambda: ir.ComplexType.get(ir.BF16Type.get())
+  )
+if dtypes.complex32 is not None:
+  _dtype_to_ir_type[np.dtype(dtypes.complex32)] = (
+      lambda: ir.ComplexType.get(ir.F16Type.get())
+  )
+
 
 def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   if isinstance(dtype, core.bint):
@@ -396,7 +405,8 @@ for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.uint8, np.uint16, np.uint32, np.uint64,
                      np.float16, np.float32, np.float64,
                      np.complex64, np.complex128,
-                     np.bool_, np.longlong, dtypes.bfloat16]:
+                     np.bool_, np.longlong, dtypes.bfloat16,
+                     *dtypes._custom_complex_scalar_types]:
   register_constant_handler(_scalar_type, _ndarray_constant_handler)
 
 def _python_scalar_handler(val, aval: core.AbstractValue | None):
@@ -456,7 +466,8 @@ for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.uint8, np.uint16, np.uint32, np.uint64,
                      np.float16, np.float32, np.float64,
                      np.complex64, np.complex128,
-                     np.bool_, np.longlong, dtypes.bfloat16]:
+                     np.bool_, np.longlong, dtypes.bfloat16,
+                     *dtypes._custom_complex_scalar_types]:
   register_attribute_handler(_scalar_type, _numpy_array_attribute_handler)
 
 def _dtype_attribute_handler(dtype: np.dtype | np.generic) -> ir.Attribute:

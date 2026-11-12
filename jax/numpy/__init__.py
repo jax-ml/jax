@@ -259,6 +259,14 @@ try:
 except ImportError:
   pass
 
+try:
+  from jax._src.numpy.scalar_types import (
+      bcomplex32 as bcomplex32,
+      complex32 as complex32,
+  )
+except ImportError:
+  pass
+
 from jax._src.numpy.sorting import (
     argpartition as argpartition,
     argsort as argsort,

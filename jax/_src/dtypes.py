@@ -222,6 +222,26 @@ if hasattr(ml_dtypes, 'uint1'):
   _uint1_dtype = np.dtype(uint1)
   _intn_dtypes.append(_uint1_dtype)
 
+# 32-bit complex support
+bcomplex32: type[np.generic] | None = None
+complex32: type[np.generic] | None = None
+_bcomplex32_dtype: np.dtype | None = None
+_complex32_dtype: np.dtype | None = None
+_custom_complex_scalar_types: list[type[np.generic]] = []
+_custom_complex_dtypes: list[np.dtype] = []
+
+if hasattr(ml_dtypes, 'bcomplex32'):
+  bcomplex32 = ml_dtypes.bcomplex32
+  _bcomplex32_dtype = np.dtype(bcomplex32)
+  _custom_complex_scalar_types.append(ml_dtypes.bcomplex32)
+  _custom_complex_dtypes.append(np.dtype(bcomplex32))
+
+if hasattr(ml_dtypes, 'complex32'):
+  complex32 = ml_dtypes.complex32
+  _complex32_dtype = np.dtype(complex32)
+  _custom_complex_scalar_types.append(ml_dtypes.complex32)
+  _custom_complex_dtypes.append(np.dtype(complex32))
+
 # Default types.
 bool_ = np.bool_
 int_: type[Any] = np.int64
@@ -429,6 +449,8 @@ def scalar_type_of(x: Any) -> type:
   typ = dtype(x)
   if typ in _custom_float_dtypes:
     return float
+  elif typ in _custom_complex_dtypes:
+    return complex
   elif typ in _intn_dtypes:
     return int
   elif np.issubdtype(typ, np.bool_):
@@ -550,10 +572,12 @@ def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
   a_sctype = a if a_is_type and _issubclass(a, np.generic) else np.dtype(a).type
   b_sctype = b if b_is_type and _issubclass(b, np.generic) else np.dtype(b).type
 
-  # Now do special handling of custom float and int types, as they don't conform
-  # to the normal scalar type hierarchy.
+  # Now do special handling of custom float, complex, and int types, as they
+  # don't conform to the normal scalar type hierarchy.
   if a_sctype in _custom_float_scalar_types:
     return b_sctype in {a_sctype, np.floating, np.inexact, np.number, np.generic}
+  if a_sctype in _custom_complex_scalar_types:
+    return b_sctype in {a_sctype, np.complexfloating, np.inexact, np.number, np.generic}
   if a_sctype in [int2, int4] or (int1 is not None and a_sctype == int1):
     return b_sctype in {a_sctype, np.signedinteger, np.integer, np.number, np.generic}
   if a_sctype in [uint2, uint4] or (uint1 is not None and a_sctype == uint1):
@@ -603,6 +627,7 @@ _float_types: list[JAXType] = [
     np.dtype('float64'),
 ]
 _complex_types: list[JAXType] = [
+    *_custom_complex_dtypes,
     np.dtype('complex64'),
     np.dtype('complex128'),
 ]
@@ -655,7 +680,7 @@ def isdtype(dtype: DTypeLike, kind: str | DTypeLike | tuple[str | DTypeLike, ...
       - ``'unsigned integer'``: ``{uint4, uint8, uint16, uint32, uint64}``
       - ``'integral'``: shorthand for ``('signed integer', 'unsigned integer')``
       - ``'real floating'``: ``{float8_*, float16, bfloat16, float32, float64}``
-      - ``'complex floating'``: ``{complex64, complex128}``
+      - ``'complex floating'``: ``{bcomplex32, complex32, complex64, complex128}``
       - ``'numeric'``: shorthand for ``('integral', 'real floating', 'complex floating')``
 
       If ``kind`` is a tuple, then return True if dtype matches any entry of the tuple.
@@ -693,6 +718,8 @@ def _jax_type(dtype: DType, weak_type: bool) -> JAXType:
       return dtype
     if dtype in _custom_float_dtypes:
       return float
+    if dtype in _custom_complex_dtypes:
+      return complex
     return type(dtype.type(0).item())
   return dtype
 
@@ -717,7 +744,7 @@ def _type_promotion_lattice(strict: bool, x64: bool) -> dict[JAXType, list[JAXTy
   else:
     u2, u4, u8, u16, u32, u64, i2, i4, i8, i16, i32, i64 = _int_types
   *small_float_types, bf16, f16, f32, f64 = _float_types
-  c64, c128 = _complex_types
+  *small_complex_types, c64, c128 = _complex_types
   i_, f_, c_ = _weak_types
   if not strict:
     out: dict[JAXType, list[JAXType]] = {
@@ -741,7 +768,8 @@ def _type_promotion_lattice(strict: bool, x64: bool) -> dict[JAXType, list[JAXTy
         f16: [f32],
         f32: [f64, c64],
         f64: [c128],
-        c_: [c64],
+        c_: [*small_complex_types, c64],
+        **{t: [] for t in small_complex_types},
         c64: [c128],
         c128: [],
     }
@@ -870,6 +898,14 @@ def _least_upper_bound(jax_numpy_dtype_promotion: config.NumpyDtypePromotion,
           ' 1-bit, 2-bit and 4-bit integers do not support implicit promotion.'
           " If you'd like your inputs to be promoted to another type, you can"
           " do so explicitly using e.g. x.astype('int32')"
+      )
+    elif any(n in _custom_complex_dtypes for n in nodes):
+      msg = (
+          f'Input dtypes {tuple(str(n) for n in nodes)} have no available'
+          ' implicit dtype promotion path. To avoid unintended promotion,'
+          ' 32-bit complex floats do not support implicit promotion.'
+          " If you'd like your inputs to be promoted to another type, you can"
+          " do so explicitly using e.g. x.astype('complex64')"
       )
     else:
       msg = (
@@ -1105,7 +1141,13 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
   dtype: DType | ExtendedDType
   dtype, weak_type = lattice_result_type(*(default_float_dtype() if arg is None else arg for arg in args))
   if weak_type:
-    dtype = default_types['f' if dtype in _custom_float_dtypes else dtype.kind]()
+    if dtype in _custom_float_dtypes:
+      kind = 'f'
+    elif dtype in _custom_complex_dtypes:
+      kind = 'c'
+    else:
+      kind = dtype.kind
+    dtype = default_types[kind]()
   return (dtype, weak_type) if return_weak_type_flag else dtype
 
 def check_and_canonicalize_user_dtype(

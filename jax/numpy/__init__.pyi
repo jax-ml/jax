@@ -241,6 +241,7 @@ def average(a: ArrayLike, axis: _Axis = ..., weights: ArrayLike | None = ...,
             returned: builtins.bool = False, keepdims: builtins.bool = False) -> Array | tuple[Array, Array]: ...
 
 def bartlett(M: int) -> Array: ...
+bcomplex32: _ScalarType
 bfloat16: _ScalarType
 def bincount(x: ArrayLike, weights: ArrayLike | None = ...,
              minlength: int = ..., *, length: int | None = ...,
@@ -286,6 +287,7 @@ def column_stack(
     tup: _np.ndarray | Array | Sequence[ArrayLike]
 ) -> Array: ...
 complex128: _ScalarType
+complex32: _ScalarType
 complex64: _ScalarType
 complex_: _ScalarType
 complexfloating = _np.complexfloating
