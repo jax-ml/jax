@@ -217,13 +217,6 @@ def as_e5m3(ref: ir.Value) -> ir.Value:
     return new_ref
 
 
-def is_sm107f() -> bool:
-  """Returns whether the device belongs to the sm_107f family (sm_10x, x >= 7)."""
-  return jtu.is_cuda_compute_capability_at_least(
-      "10.7"
-  ) and not jtu.is_cuda_compute_capability_at_least("11.0")
-
-
 class TestCase(parameterized.TestCase):
 
   def setUp(self, *, artificial_shared_memory_limit=jtu._SMEM_SIZE_BOUND_FOR_TESTS, min_compute_capability="9.0"):
@@ -1694,8 +1687,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   def test_tmem_alloc_is_exclusive_only_above_512_cols(
       self, num_cols, exclusive, collective
   ):
-    if not is_sm107f():
-      self.skipTest("Exclusive TMEM allocations are only supported on sm_107f.")
+    self.skip_unless_sm107f()
 
     def kernel(ctx, input, output, tmem):
       del ctx
@@ -1748,7 +1740,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       )(x).block_until_ready()
 
   def test_tmem_alloc_more_than_512_cols_requires_sm107f(self):
-    if is_sm107f():
+    if jtu.is_sm107f():
       self.skipTest("sm_107f supports allocating more than 512 columns.")
 
     def kernel(ctx, input, output, scratch):
@@ -2606,10 +2598,6 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       lhs_in_tmem,
       a_scale_128_lane,
   ):
-    is_sm107f = (
-        jtu.is_cuda_compute_capability_at_least("10.7")
-        and not jtu.is_cuda_compute_capability_at_least("11.0")
-    )
     out_jax_dtype = jnp.float32
     # When swizzle is small, we need to take many steps to make it large enough
     # to make the scale count a multiple of 4.
@@ -2742,7 +2730,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     )
     b_gpu_scales = format_scales(b_scales)
     args = (x, y, a_gpu_scales, b_gpu_scales)
-    if scale_jax_dtype == dtypes.float8_e5m3fnu and not is_sm107f:
+    if scale_jax_dtype == dtypes.float8_e5m3fnu and not jtu.is_sm107f():
       with self.assertRaisesRegex(
           ValueError, r"E5M3FNU scale factors are only supported on sm_107f"
       ):
@@ -2753,7 +2741,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     if (
         scale_jax_dtype == jnp.float8_e4m3fn
         and block_size == 32
-        and not is_sm107f
+        and not jtu.is_sm107f()
     ):
       with self.assertRaisesRegex(ValueError, "Scale block size mismatch"):
         mgpu.as_gpu_kernel(
@@ -4155,10 +4143,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         mgpu.ClusterBarrier(collective_dims=(gpu.Dimension.x,)) if collective else (),
         mgpu.TMEM((block_tile, mn), out_dtype, collective=collective),
     ]
-    if not (
-        jtu.is_cuda_compute_capability_at_least("10.7")
-        and not jtu.is_cuda_compute_capability_at_least("11.0")
-    ):
+    if not jtu.is_sm107f():
       with self.assertRaisesRegex(
           NotImplementedError,
           "SMEM-read-only commit for operand A requires sm_107f",
@@ -5845,7 +5830,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(kernel(x), jnp.stack([x, x], axis=0))
 
 
-class FragmentedArrayTest(TestCase):
+class FragmentedArrayTest(TestCase, jtu.CudaArchSpecificTest):
 
   @parameterized.product(
       op=(
@@ -6068,12 +6053,8 @@ class FragmentedArrayTest(TestCase):
         jax_dtype_to,
     } and not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("f8e8m0fnu not supported on pre-Blackwell GPUs")
-    is_sm107f = (
-        jtu.is_cuda_compute_capability_at_least("10.7")
-        and not jtu.is_cuda_compute_capability_at_least("11.0")
-    )
-    if dtypes.float8_e5m3fnu in {jax_dtype_from, jax_dtype_to} and not is_sm107f:
-      self.skipTest("f8e5m3fnu only supported on sm_107f")
+    if dtypes.float8_e5m3fnu in {jax_dtype_from, jax_dtype_to}:
+      self.skip_unless_sm107f()
 
     # In this test we sample numerics from narrower type assuming they are
     # representable without rounding in the other type.
@@ -6307,11 +6288,7 @@ class FragmentedArrayTest(TestCase):
       )(values)
       np.testing.assert_array_equal(res, expected)
 
-    is_sm107f = (
-        jtu.is_cuda_compute_capability_at_least("10.7")
-        and not jtu.is_cuda_compute_capability_at_least("11.0")
-    )
-    if dst_dtype == dtypes.float8_e5m3fnu and not is_sm107f:
+    if dst_dtype == dtypes.float8_e5m3fnu and not jtu.is_sm107f():
       with self.assertRaisesRegex(
           ValueError, r"f8e5m3fnu type only supported on sm_107f GPUs"
       ):
@@ -9892,8 +9869,8 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
   )
   def test_tmem_alloc_dealloc(self, shape, dtype, packing, collective):
     exclusive = shape[1] // packing > tcgen05.TMEM_MAX_COLS
-    if exclusive and not is_sm107f():
-      self.skipTest("Only sm_107f supports allocating more than 512 columns.")
+    if exclusive:
+      self.skip_unless_sm107f()
     tmem_type = ir.MemRefType.get(
         shape,
         utils.dtype_to_ir_type(dtype),

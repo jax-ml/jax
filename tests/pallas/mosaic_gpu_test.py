@@ -159,13 +159,6 @@ class MonkeyPatchTest(jtu.JaxTestCase):
       plgpu.kernel()
 
 
-def _is_sm107f() -> bool:
-  """Returns whether the device is in the sm_107f family (sm_10x, x >= 7)."""
-  return jtu.is_cuda_compute_capability_at_least(
-      "10.7"
-  ) and not jtu.is_cuda_compute_capability_at_least("11.0")
-
-
 def run_on_sm80(method):
   """A marker that allows a test case to run on Ampere GPUs."""
   method._min_capability = "8.0"
@@ -7098,7 +7091,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
 
     x = jax.random.uniform(
         jax.random.key(0), shape=(128, 64), dtype=jnp.float32)
-    if not _is_sm107f():
+    if not jtu.is_sm107f():
       with self.assertRaisesRegex(ValueError, "exceeding the limit of 512"):
         kernel(x)
       return
@@ -8047,10 +8040,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     y = jax.random.uniform(
         jax.random.key(1), shape=(k, mn), dtype=in_dtype, minval=-1
     )
-    if not (
-        jtu.is_cuda_compute_capability_at_least("10.7")
-        and not jtu.is_cuda_compute_capability_at_least("11.0")
-    ):
+    if not jtu.is_sm107f():
       with self.assertRaisesRegex(
           NotImplementedError,
           "SMEM-read-only commit for operand A requires sm_107f",
