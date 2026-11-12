@@ -2162,6 +2162,7 @@ jax_multiplatform_test(
         "gpu",
         "tpu",
     ],
+    shard_count = 4,
     tags = [
         "multiaccelerator",
     ],
