@@ -8891,6 +8891,146 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertEqual(
           orth_abbr.sharding, NamedSharding(mesh, P('x', None, None)))
 
+  def test_random_out_sharding_review_fixes(self):
+    mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
+    key = jax.random.key(61)
+    s_x = NamedSharding(mesh, P('x', None))
+    s_rep = NamedSharding(mesh, P())
+    key_on_mesh = jax.device_put(key, s_rep)
+
+    # disable_jit() without set_mesh when key & param are on an Explicit Mesh.
+    upper_sh = jax.device_put(jnp.full((4, 4), 2.0, dtype=jnp.float32), s_x)
+    with jax.disable_jit():
+      tn_out = jax.random.truncated_normal(
+          key_on_mesh, -1.0, upper_sh, (4, 4), mode='high')
+    self.assertEqual(tn_out.sharding, s_x)
+
+    # Eager permutation & categorical without set_mesh preserve batch sharding.
+    arr_sh = jax.device_put(
+        jnp.linspace(0.0, 3.0, 16, dtype=jnp.float32).reshape(4, 4), s_x)
+    self.assertEqual(
+        jax.random.permutation(
+            key_on_mesh, arr_sh, axis=1, independent=True).sharding,
+        s_x)
+    self.assertEqual(
+        jax.random.categorical(key_on_mesh, arr_sh).sharding,
+        NamedSharding(mesh, P('x')))
+
+    # Non-partitionable PRNG impls with out_sharding=None and sharded params.
+    k_tf4 = jax.random.key(61, impl='threefry4x32')
+    with jax.set_mesh(mesh):
+      self.assertEqual(
+          jax.jit(lambda k, m: jax.random.uniform(k, (4, 4), minval=m))(
+              k_tf4, arr_sh).sharding,
+          s_x)
+      self.assertEqual(
+          jax.jit(jax.random.gamma)(k_tf4, arr_sh + 1.0).sharding, s_x)
+      with config.threefry_partitionable(False):
+        self.assertEqual(
+            jax.jit(lambda k, m: jax.random.uniform(k, (4, 4), minval=m))(
+                key, arr_sh).sharding,
+            s_x)
+        self.assertEqual(
+            jax.jit(jax.random.gamma)(key, arr_sh + 1.0).sharding, s_x)
+
+    # Size-1 broadcast dimension sharded on a size-1 explicit axis.
+    mesh_1s = jtu.create_mesh(
+        (1, 2, 2), ('dcn', 'data', 'model'),
+        axis_types=(AxisType.Explicit,) * 3)
+    with (jax.remove_size_one_mesh_axis_from_type(False),
+          jax.set_mesh(mesh_1s)):
+      p_1x4 = jax.device_put(
+          jnp.ones((1, 4), dtype=jnp.float32), P('dcn', 'model'))
+      p_4x4 = jax.device_put(
+          jnp.full((4, 4), 2.0, dtype=jnp.float32),
+          P(('dcn', 'data'), 'model'))
+      exp_1s = NamedSharding(mesh_1s, P(('dcn', 'data'), 'model'))
+      self.assertEqual(
+          jax.jit(lambda k, lo: jax.random.uniform(
+              k, (4, 4), minval=lo,
+              out_sharding=P(('dcn', 'data'), 'model')))(key, p_1x4).sharding,
+          exp_1s)
+      self.assertEqual(
+          jax.jit(lambda k, lo, hi: jax.random.uniform(
+              k, (4, 4), minval=lo, maxval=hi))(key, p_1x4, p_4x4).sharding,
+          exp_1s)
+
+    # ball under disable_jit() without set_mesh rejects trailing-sharded p.
+    p_1d_sh = jax.device_put(
+        jnp.full((4,), 2.0, dtype=jnp.float32), NamedSharding(mesh, P('x')))
+    p_2d_sh = jax.device_put(
+        jnp.full((4, 4), 2.0, dtype=jnp.float32),
+        NamedSharding(mesh, P(None, 'y')))
+    with jax.disable_jit():
+      for bad_p in (p_1d_sh, p_2d_sh):
+        with self.assertRaises(core.ShardingTypeError):
+          jax.random.ball(key_on_mesh, d=4, p=bad_p, shape=(4,))
+
+    # vmap over sharded unsafe_rbg keys with out_sharding on another axis.
+    with jax.set_mesh(mesh):
+      urbg_keys = jax.device_put(
+          jax.random.split(jax.random.key(7, impl='unsafe_rbg'), 4), P('x'))
+      vg = jax.jit(jax.vmap(
+          lambda k: jax.random.gamma(k, 2.0, (4,), out_sharding=P('y'))
+      ))(urbg_keys)
+      self.assertEqual(vg.sharding, NamedSharding(mesh, P('x', 'y')))
+
+      # grad of gamma, loggamma, and dirichlet with sub-sharded out_sharding.
+      s_sub = P(('x', 'y'), None)
+      a_pos = arr_sh + 1.5
+      for fn in (
+          lambda a: jax.random.gamma(key, a, (4, 4), out_sharding=s_sub).sum(),
+          lambda a: jax.random.loggamma(
+              key, a, (4, 4), out_sharding=s_sub).sum(),
+          lambda a: jax.random.dirichlet(key, a, out_sharding=s_sub).sum(),
+      ):
+        g_sub = jax.jit(jax.grad(fn))(a_pos)
+        self.assertEqual(g_sub.sharding, s_x)
+
+      # choice with n_draws == 0 preserves batch sharding; check_vma catches p.
+      c_zero = jax.jit(
+          lambda k, a: jax.random.choice(k, a, shape=(0,), axis=1)
+      )(key, arr_sh)
+      self.assertEqual(c_zero.shape, (4, 0))
+      self.assertEqual(c_zero.sharding, s_x)
+      p_probs = jax.device_put(
+          jnp.array([0.25, 0.25, 0.25, 0.25], dtype=jnp.float32), P('x'))
+      with self.assertRaisesRegex(
+          TypeError, 'choice requires all arguments to have matching type'):
+        jax.jit(jax.shard_map(
+            lambda p: jax.random.choice(key, 2, shape=(1,), p=p),
+            mesh=mesh, in_specs=P('x'), out_specs=P('x'),
+            check_vma=True))(p_probs)
+
+      # multivariate_normal(..., method='svd') grad wrt unsharded 3D cov.
+      if not jtu.test_device_matches(['tpu']):
+        b_np = np.linspace(0.1, 0.9, 64, dtype=np.float32).reshape(4, 4, 4)
+        cov_3d = jnp.asarray(
+            np.matmul(b_np, np.swapaxes(b_np, -1, -2))
+            + 2.0 * np.eye(4, dtype=jnp.float32))
+        g_cov = jax.jit(jax.grad(
+            lambda c: jax.random.multivariate_normal(
+                key, arr_sh, c, shape=(4,), method='svd',
+                out_sharding=P('x', None)).sum()))(cov_3d)
+        self.assertEqual(g_cov.shape, (4, 4, 4))
+
+    # Auto-sharded arrays in eager / disable_jit() composite samplers.
+    auto_mesh = jtu.create_mesh(
+        (2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+    logits_auto = jax.device_put(
+        jnp.ones((4, 4), dtype=jnp.float32),
+        NamedSharding(auto_mesh, P('x', 'y')))
+    self.assertEqual(jax.random.categorical(key, logits_auto).shape, (4,))
+    self.assertEqual(
+        jax.random.permutation(key, logits_auto, axis=1).shape, (4, 4))
+    cov_auto = jax.device_put(
+        jnp.eye(4, dtype=jnp.float32), NamedSharding(auto_mesh, P('x', 'y')))
+    with jax.disable_jit():
+      self.assertEqual(
+          jax.random.multivariate_normal(key, logits_auto, cov_auto).shape,
+          (4, 4))
+
   def test_auto_axes_no_context_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
     np_inp = np.arange(16.).reshape(8, 2)

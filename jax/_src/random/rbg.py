@@ -95,11 +95,7 @@ def _unsafe_rbg_split(
   _, keys = lax.rng_bit_generator(key, (10 * num, 4), dtype='uint32')
   sliced = lax_slicing.slice_in_dim(
       keys, start_index=None, limit_index=None, stride=10)
-  phys_s = (
-      None if out_sharding is None else out_sharding.update(
-          spec=out_sharding.spec.update(
-              partitions=(*out_sharding.spec.partitions, None))))
-  return lax.reshape(sliced, (*shape, 4), out_sharding=phys_s)
+  return lax.reshape(sliced, (*shape, 4), out_sharding=out_sharding)
 
 def _unsafe_rbg_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:
   assert not data.shape

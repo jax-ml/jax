@@ -862,6 +862,16 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
         batching.expand_dims_batcher, prim)
   return prim
 
+def _replicated_linalg_collective_rule(name, in_avals, out_avals, **params):
+  del params
+  if any(p is not None
+         for a in (*in_avals, *out_avals)
+         for p in a.sharding.spec.partitions):
+    raise NotImplementedError(
+        f"{name} with sharded batch dimensions is not implemented under"
+        " jax_partitioning.")
+  return mlir.PartitioningRule()
+
 standard_linalg_primitive = partial(linalg_primitive, lax.input_dtype)
 
 
@@ -940,7 +950,10 @@ def _cholesky_gpu_lowering(ctx, operand, *, target_name_prefix):
 cholesky_p = standard_linalg_primitive(
     (_float | _complex,), (2,), _cholesky_shape_rule, "cholesky")
 ad.primitive_jvps[cholesky_p] = _cholesky_jvp_rule
-mlir.register_lowering(cholesky_p, _cholesky_lowering)
+mlir.register_lowering(
+    cholesky_p, _cholesky_lowering,
+    shard_map_collective_rule=partial(
+        _replicated_linalg_collective_rule, "cholesky"))
 mlir.register_lowering(cholesky_p, _cholesky_cpu_lowering, platform="cpu")
 register_cpu_gpu_lowering(cholesky_p, _cholesky_gpu_lowering,
                           supported_platforms=("cuda", "rocm", "oneapi"))
@@ -1396,6 +1409,8 @@ eigh_p = linalg_primitive(
     _eigh_dtype_rule, (_float | _complex,), (2,), _eigh_shape_rule, "eigh",
     multiple_results=True)
 ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
+mlir.shard_map_collective_rules[eigh_p] = partial(
+    _replicated_linalg_collective_rule, "eigh")
 register_cpu_gpu_lowering(eigh_p, _eigh_cpu_gpu_lowering)
 register_cpu_gpu_lowering(eigh_p, _eigh_cpu_gpu_lowering, ("oneapi",))
 
@@ -2267,7 +2282,10 @@ qr_p = linalg_primitive(
     _qr_dtype_rule, (_float | _complex,), (2,), _qr_shape_rule, "qr",
     multiple_results=True)
 ad.primitive_jvps[qr_p] = qr_jvp_rule
-mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering))
+mlir.register_lowering(
+    qr_p, mlir.lower_fun(_qr_lowering),
+    shard_map_collective_rule=partial(
+        _replicated_linalg_collective_rule, "qr"))
 
 
 # Schur Decomposition
@@ -2674,6 +2692,8 @@ svd_p = linalg_primitive(
     _svd_dtype_rule, (_float | _complex,), (2,), _svd_shape_rule, "svd",
     multiple_results=True)
 ad.primitive_jvps[svd_p] = _svd_jvp_rule
+mlir.shard_map_collective_rules[svd_p] = partial(
+    _replicated_linalg_collective_rule, "svd")
 register_cpu_gpu_lowering(svd_p, _svd_cpu_gpu_lowering)
 register_cpu_gpu_lowering(svd_p, _svd_cpu_gpu_lowering, ("oneapi",))
 
