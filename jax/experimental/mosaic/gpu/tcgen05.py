@@ -1263,8 +1263,7 @@ def scales_128_lane_layout() -> TMEMLayout:
   ``scales_layout()``, nothing is replicated across the four 32-lane TMEM
   sub-partitions, so it uses 4x fewer columns.
 
-  ``async_copy_scales_smem_to_tmem`` rejects this layout. Instead, copy the
-  scales from SMEM with ``async_copy_smem_to_tmem(..., swizzle=16)``, laid out
+  Copy the scales from SMEM with ``async_copy_scales_smem_to_tmem``, laid out
   in unswizzled ``(8, 16)`` tiles like any other 8-bit operand, which requires
   ``K // block_size`` to be a multiple of 16. Alternatively, fill it from
   registers with ``TMEMRef.store`` (``tcgen05.st``) of an array in
@@ -1951,7 +1950,7 @@ def async_copy_scales_smem_to_tmem(
   on the chosen ``Barrier``. However, if TMEM reference is to be consumed by a
   MMA issued in the same thread, no additional synchronization is needed.
 
-  Two TMEM layouts are supported:
+  Three TMEM layouts are supported:
 
   **scales_layout()**: The standard layout for A and B scales. The ``smem_ref``
   must be contiguous with shape ``(MN // 128, K // 4, 32, 16)`` for 8-bit
@@ -1984,6 +1983,15 @@ def async_copy_scales_smem_to_tmem(
           .reshape(1, k // 4, 64, columns_per_cta * 4),
           ((0, 0), (0, 0), (0, 0), (0, 16 - columns_per_cta * 4)),
       )
+
+  **scales_128_lane_layout()**: Used for A scales in the 128-lane configuration
+  (sm_107f only). This is the standard fully packed TMEM layout, so the scales
+  are copied like any other 8-bit operand: the TMEM ref is expected to have
+  shape ``(128, K // block_size)`` and the ``smem_ref`` must have shape
+  ``(16, (K // block_size) // 16, 8, 16)``, i.e. the array of scales in
+  unswizzled ``(8, 16)`` tiles, which requires ``K // block_size`` to be a
+  multiple of 16. No host-side formatting is needed if the scales are loaded
+  with ``gmem_transform=TileTransform((8, 16))``.
   """
   i32 = ir.IntegerType.get_signless(32)
   smem_ty = ir.MemRefType(smem_ref.type)
@@ -1998,6 +2006,11 @@ def async_copy_scales_smem_to_tmem(
         f"Unsupported dtype: {dtype}, only f8e8m0fnu, f8e4m3fn, and f8e5m3fnu"
         " are supported"
     )
+  if tmem_ref.layout == scales_128_lane_layout():
+    # The 128-lane layout is the standard fully packed TMEM layout, so this is
+    # a regular unswizzled operand copy.
+    async_copy_smem_to_tmem(smem_ref, tmem_ref, swizzle=16, collective=collective)
+    return
   if tmem_ref.shape[0] % TMEM_ROWS:
     raise ValueError(f"TMEM reference must have a multiple of {TMEM_ROWS} rows, but got {tmem_ref.shape[0]}")
   if tmem_ref.shape[1] % 4:
@@ -2034,7 +2047,8 @@ def async_copy_scales_smem_to_tmem(
   if tmem_ref.layout != scales_layout():
     raise ValueError(
         f"TMEM layout {tmem_ref.layout} is not supported for scale copies. Only"
-        " scales_layout() and b_scales_m64_collective_layout() are supported."
+        " scales_layout(), b_scales_m64_collective_layout() and"
+        " scales_128_lane_layout() are supported."
     )
 
   expected_smem_shape = (tmem_ref.shape[0] // TMEM_ROWS, tmem_ref.shape[1] // 4, 32, 16)
