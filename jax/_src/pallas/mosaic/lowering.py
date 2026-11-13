@@ -3748,9 +3748,19 @@ def _reduce_index_helper(
     raise NotImplementedError("Only single axis reduction supported")
 
   axis = axes[0]
-  # TODO(b/460843515): Support 1D inputs in Mosaic.
+  keep_dims = xla_version >= 84
+  # Mosaic natively supports 1D inputs to tpu.reduce_index since XLA version
+  # 89. Older versions (and the forward compatible serialization format, which
+  # drops the reduced dimension) require reshaping the input to 2D first.
+  supports_1d = (
+      keep_dims
+      and xla_version >= 89
+      and ctx.is_libtpu_at_least("0.0.52")
+      and not ctx.forward_compatible
+  )
   is_1d = len(x_aval.shape) == 1
-  if is_1d:
+  reshape_1d = is_1d and not supports_1d
+  if reshape_1d:
     x = vector.shape_cast(
         ctx.aval_to_ir_type(
             jax_core.ShapedArray((1, *x_aval.shape), x_aval.dtype)
@@ -3762,7 +3772,6 @@ def _reduce_index_helper(
   else:
     in_shape = x_aval.shape
 
-  keep_dims = xla_version >= 84
   out_shape = (
       *in_shape[:axis],
       *((1,) if keep_dims else ()),
