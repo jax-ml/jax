@@ -388,8 +388,8 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       jax.jit(lambda x: lax.reduce_prod(x, axes=(0,))).lower(c_arr)
 
     if (lax_op is lax.reduce_xor and has_ar and
-        jtu.test_device_matches(['cpu'])):
-      # XLA:CPU AllReduce does not implement xor reductions.
+        jtu.test_device_matches(['cpu', 'gpu'])):
+      # XLA:CPU and XLA:GPU AllReduce do not implement xor reductions.
       return
 
     with config.jax_partitioning(False):
