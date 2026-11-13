@@ -21,9 +21,10 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import dtypes
-from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
+from jax._src import test_util as jtu
 from jax._src.pallas import pallas_test_util as ptu
+from jax.experimental import layout as jax_layout
 from jax.experimental import pallas as pl
 from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
@@ -1631,6 +1632,94 @@ class OpsTest(ptu.PallasTPUTest):
 
     np.testing.assert_array_equal(two_bits_out, two_bits_in)
     np.testing.assert_array_equal(four_bits_out, four_bits_in)
+
+  @parameterized.parameters(jnp.float6_e3m2fn, jnp.float6_e2m3fn)
+  def test_fp6_block_mapping_validation(self, fp6_dtype):
+    if self.INTERPRET:
+      self.skipTest("TPU Mosaic block mapping validation test")
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Requires TPUv5+")
+
+    def copy_kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+    with self.assertRaisesRegex(ValueError, "divisible by 16 and 128"):
+      jax.jit(
+          self.pallas_call(
+              copy_kernel,
+              out_shape=jax.ShapeDtypeStruct((32, 128), fp6_dtype),
+              in_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+              out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              grid=(4,),
+          )
+      ).lower(jax.ShapeDtypeStruct((32, 128), fp6_dtype))
+
+    with self.assertRaisesRegex(
+        ValueError, r"multiple of 2048.*tiling size \(2048 = 128 \* 16\)"
+    ):
+      jax.jit(
+          self.pallas_call(
+              copy_kernel,
+              out_shape=jax.ShapeDtypeStruct((4096,), fp6_dtype),
+              in_specs=[pl.BlockSpec((1024,), lambda i: (i,))],
+              out_specs=pl.BlockSpec((1024,), lambda i: (i,)),
+              grid=(4,),
+          )
+      ).lower(jax.ShapeDtypeStruct((4096,), fp6_dtype))
+
+    if not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Requires libtpu >= 0.0.52")
+
+    tpu_info = pltpu.get_tpu_info()
+    sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
+    container_2d_format = jax_layout.Format(
+        jax_layout.Layout(
+            major_to_minor=(0, 1),
+            tiling=((tpu_info.num_sublanes * 4, tpu_info.num_lanes), (4, 1)),
+        ),
+        sharding,
+    )
+    jax.jit(
+        self.pallas_call(
+            copy_kernel,
+            out_shape=jax.ShapeDtypeStruct((32, 128), fp6_dtype),
+            in_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+            out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            grid=(4,),
+        ),
+        in_shardings=container_2d_format,
+        out_shardings=container_2d_format,
+    ).lower(jax.ShapeDtypeStruct((32, 128), fp6_dtype))
+
+    container_1d_format = jax_layout.Format(
+        jax_layout.Layout(
+            major_to_minor=(0,),
+            tiling=((tpu_info.num_lanes * 4,), (tpu_info.num_lanes,), (4, 1)),
+        ),
+        sharding,
+    )
+    jax.jit(
+        self.pallas_call(
+            copy_kernel,
+            out_shape=jax.ShapeDtypeStruct((4096,), fp6_dtype),
+            in_specs=[pl.BlockSpec((1024,), lambda i: (i,))],
+            out_specs=pl.BlockSpec((1024,), lambda i: (i,)),
+            grid=(4,),
+        ),
+        in_shardings=container_1d_format,
+        out_shardings=container_1d_format,
+    ).lower(jax.ShapeDtypeStruct((4096,), fp6_dtype))
+
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(32, 128)).astype(fp6_dtype)
+    y = self.pallas_call(
+        copy_kernel,
+        out_shape=jax.ShapeDtypeStruct((32, 128), fp6_dtype),
+        in_specs=[pl.BlockSpec((16, 128), lambda i: (i, 0))],
+        out_specs=pl.BlockSpec((16, 128), lambda i: (i, 0)),
+        grid=(2,),
+    )(x)
+    np.testing.assert_array_equal(np.asarray(y), x)
 
   def test_load_transpose_with_sliced_leading_dim(self) -> None:
     if not jtu.is_device_tpu_at_least(version=5):
