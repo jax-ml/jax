@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 import contextlib
 import dataclasses
 import enum
@@ -699,10 +699,13 @@ class BufferedRef(BufferedRefBase):
       )
     if _window_aliases_source(spec.memory_space, source_memory_space):
       if buffer_memory_space is HBM:
-        if source_memory_space not in (ANY, HBM):
+        if not state_discharge.is_neutral_memory_space(
+            source_memory_space
+        ) and source_memory_space not in (ANY, HBM):
           raise ValueError(
-              "You cannot request HBM block spec for a non-HBM source for"
-              f"{spec=} and {source_memory_space=}")
+              "You cannot request HBM block spec for a non-HBM source for "
+              f"{spec=} and {source_memory_space=}"
+          )
       return cls(
           _spec=spec,
           _buffer_type=buffer_type,
@@ -2788,11 +2791,14 @@ def emit_pipeline_to_jaxpr(
     core_axis=None,
     core_axis_name=None,
     _explicit_indices=False,
+    arg_mapping: Sequence[int] | None = None,
     **params,
 ) -> jax_core.Jaxpr:
   del core_axis, core_axis_name
 
   def wrapped_pipeline_fun(*all_args, grid_mapping=grid_mapping):
+    if arg_mapping is not None:
+      all_args = tuple(all_args[i] for i in arg_mapping)
     all_args = args_tree.unflatten(all_args)
     grid_mapping = _rebind_grid_mapping_consts(
         grid_mapping, all_args.all_index_map_consts
@@ -2919,9 +2925,12 @@ def _emit_pipeline_lowering_rule(
 
 def _emit_pipeline_is_high(*avals, body_jaxpr, grid_mapping, args_tree, **_):
   # Check that the index_maps jaxpr or consts are not high.
-  if (any(bm.index_map_jaxpr.is_high for bm in grid_mapping.block_mappings)
-      or any(any(c.is_high for c in bm.index_map_jaxpr.consts)
-             for bm in grid_mapping.block_mappings)):
+  if any(
+      bm.index_map_jaxpr.is_high for bm in grid_mapping.block_mappings
+  ) or any(
+      any(jax_core.typeof(c).is_high for c in bm.index_map_jaxpr.consts)
+      for bm in grid_mapping.block_mappings
+  ):
     raise NotImplementedError("Grid mapping with hijax index maps are not"
                               f" currently supported. Got {grid_mapping=}")
 
@@ -3058,17 +3067,37 @@ batching.fancy_primitive_batchers[emit_pipeline_p] = (
     _emit_pipeline_batching_rule)
 
 
+def _dedup_by_key(keys: Iterable[int | None]) -> tuple[list[int], list[int]]:
+  kept, mapping, seen = [], [], {}
+  for i, key in enumerate(keys):
+    if key is None or (idx := seen.get(key)) is None:
+      idx = len(kept)
+      kept.append(i)
+      if key is not None:
+        seen[key] = idx
+    mapping.append(idx)
+  return kept, mapping
+
+
 def _emit_pipeline_discharge_rule(
     ctx: state_discharge.DischargeContext,
     *args_flat,
     grid_mapping,
     **params,
 ):
+  kept, mapping = _dedup_by_key(
+      id(aval) if should and isinstance(aval, state.AbstractRef) else None
+      for aval, should in zip(ctx.in_avals, ctx.should_discharge, strict=True)
+  )
+  dedup_avals = [ctx.in_avals[i] for i in kept]
+  dedup_should = tuple(ctx.should_discharge[i] for i in kept)
+  dedup_args = [args_flat[i] for i in kept]
   closed_jaxpr = emit_pipeline_to_jaxpr(
-      ctx.in_avals,
+      dedup_avals,
       grid_mapping=grid_mapping,
       grid_names=grid_mapping.grid_names,
       grid_sizes=grid_mapping.grid,
+      arg_mapping=mapping,
       **params,
   )
   phys_jaxpr, phys_consts = hlo_interpreter.resolve_physical_types(
@@ -3076,15 +3105,16 @@ def _emit_pipeline_discharge_rule(
   )
   discharged = state_discharge.discharge_state(
       phys_jaxpr.with_consts(phys_consts),
-      should_discharge=tuple(ctx.should_discharge),
+      should_discharge=dedup_should,
       strip_memory_space=ctx.strip_memory_space,
   )
   ref_vals = iter(
-      jax_core.eval_jaxpr(discharged.jaxpr, discharged.consts, *args_flat)
+      jax_core.eval_jaxpr(discharged.jaxpr, discharged.consts, *dedup_args)
   )
-  new_invals = [
-      next(ref_vals) if should else None for should in ctx.should_discharge
-  ]
+  new_invals = [None] * len(ctx.in_avals)
+  for i, should in zip(kept, dedup_should, strict=True):
+    if should:
+      new_invals[i] = next(ref_vals)
   return new_invals, ()
 
 

@@ -2115,6 +2115,181 @@ class InterpretTest(jtu.JaxTestCase):
               interpret=interpret,
           )(x)
 
+  def _enter_emit_pipeline_env(self, use_prim=True):
+    dev = jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu')
+    self.enter_context(config.use_emit_pipeline_primitive(use_prim))
+    self.enter_context(
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=dev)
+        )
+    )
+
+  @parameterized.parameters(
+      'interpret_true', 'interpret_params', 'tpu_lowering'
+  )
+  def test_emit_pipeline_discharge_aliased_refs(self, mode):
+    self._enter_emit_pipeline_env(True)
+    interpret = (
+        True
+        if mode == 'interpret_true'
+        else (pltpu.InterpretParams() if mode == 'interpret_params' else False)
+    )
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+    s0 = pl.BlockSpec((8, 128), lambda i: (i, 0))
+    s1 = pl.BlockSpec((8, 128), lambda i: (i + 1, 0))
+
+    # 1. Multiple output TransformedRef views into the same backing Ref.
+    def split_body(x_r, o0_r, o1_r):
+      o0_r[...] = x_r[...] + 1.0
+      o1_r[...] = x_r[...] * 2.0
+
+    split_pipe = pltpu.emit_pipeline(
+        split_body, grid=(2,), in_specs=s0, out_specs=(s0, s0)
+    )
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((2, 16, 128), jnp.float32),
+        mesh=mesh,
+        interpret=interpret,
+    )
+    def split_kernel(x_hbm, o_hbm):
+      split_pipe(x_hbm, o_hbm.at[jnp.int32(0)], o_hbm.at[jnp.int32(1)])
+
+    # 2. Sequential read-after-write across steps on the same backing Ref.
+    inplace_pipe = pltpu.emit_pipeline(
+        lambda a, b: b.__setitem__(..., a[...] + 10.0),
+        grid=(2,),
+        in_specs=s0,
+        out_specs=s1,
+        no_pipelining=True,
+    )
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((24, 128), jnp.float32),
+        mesh=mesh,
+        interpret=interpret,
+    )
+    def inplace_kernel(x_hbm, o_hbm):
+      pltpu.sync_copy(x_hbm, o_hbm)
+      inplace_pipe(o_hbm, o_hbm)
+
+    x = jnp.arange(16 * 128, dtype=jnp.float32).reshape(16, 128)
+    x0 = jnp.ones((24, 128), dtype=jnp.float32)
+    if mode == 'tpu_lowering':
+      jax.jit(split_kernel).trace(x).lower(
+          lowering_platforms=('tpu',)
+      ).compiler_ir()
+      jax.jit(inplace_kernel).trace(x0).lower(
+          lowering_platforms=('tpu',)
+      ).compiler_ir()
+    else:
+      split_out = split_kernel(x)
+      np.testing.assert_allclose(split_out[0], x + 1.0)
+      np.testing.assert_allclose(split_out[1], x * 2.0)
+
+      ip_out = inplace_kernel(x0)
+      np.testing.assert_allclose(ip_out[:8], 1.0)
+      np.testing.assert_allclose(ip_out[8:16], 11.0)
+      np.testing.assert_allclose(ip_out[16:], 21.0)
+
+  @parameterized.product(
+      use_prim=[False, True],
+      mode=['interpret_true', 'interpret_params', 'tpu_lowering'],
+  )
+  def test_emit_pipeline_hbm_block_spec_neutral_ref(self, use_prim, mode):
+    self._enter_emit_pipeline_env(use_prim)
+    interpret = (
+        True
+        if mode == 'interpret_true'
+        else (pltpu.InterpretParams() if mode == 'interpret_params' else False)
+    )
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+
+    def body(x_r, y_hbm_win, o_r):
+      pltpu.sync_copy(y_hbm_win, o_r)
+      o_r[...] = o_r[...] + x_r[...]
+
+    pipe = pltpu.emit_pipeline(
+        body,
+        grid=(2,),
+        in_specs=(
+            pl.BlockSpec((8, 128), lambda i: (i, 0)),
+            pl.BlockSpec((8, 128), lambda i: (i, 0), memory_space=pltpu.HBM),
+        ),
+        out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+    )
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+        mesh=mesh,
+        interpret=interpret,
+    )
+    def kernel(x_hbm, y_ref, o_hbm):
+      pipe(x_hbm, y_ref, o_hbm)
+
+    def run_staged(x, y):
+      y_ref = jax.new_ref(y)
+      return kernel(x, y_ref)
+
+    x = jnp.arange(16 * 128, dtype=jnp.float32).reshape(16, 128)
+    y = jnp.full((16, 128), 3.0, dtype=jnp.float32)
+    if mode == 'tpu_lowering':
+      jax.jit(run_staged).trace(x, y).lower(
+          lowering_platforms=('tpu',)
+      ).compiler_ir()
+    else:
+      np.testing.assert_allclose(jax.jit(run_staged)(x, y), x + y)
+      np.testing.assert_allclose(kernel(x, jax.new_ref(y)), x + y)
+
+  @parameterized.named_parameters(
+      ('interpret_params', pltpu.InterpretParams()),
+      ('interpret_true', True),
+  )
+  def test_emit_pipeline_index_map_concrete_consts(self, interpret):
+    self._enter_emit_pipeline_env(True)
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+    x = jnp.arange(16 * 128, dtype=jnp.float32).reshape(16, 128)
+
+    if interpret is True:
+      idx_ref = jax.new_ref(jnp.array([1, 0], dtype=jnp.int32))
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+          mesh=mesh,
+          interpret=interpret,
+      )
+      def kernel(x_hbm, o_hbm):
+        pltpu.emit_pipeline(
+            lambda a, b: b.__setitem__(..., a[...]),
+            grid=(2,),
+            in_specs=pl.BlockSpec((8, 128), lambda i: (idx_ref[i], 0)),
+            out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+        )(x_hbm, o_hbm)
+
+      out = kernel(x)
+      np.testing.assert_array_equal(out[:8], x[8:])
+      np.testing.assert_array_equal(out[8:], x[:8])
+
+    bad_lut = jnp.array([1, 0], dtype=jnp.int32)
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+        mesh=mesh,
+        interpret=interpret,
+    )
+    def bad_kernel(x_hbm, o_hbm):
+      pltpu.emit_pipeline(
+          lambda a, b: b.__setitem__(..., a[...]),
+          grid=(2,),
+          in_specs=pl.BlockSpec((8, 128), lambda i: (bad_lut[i], 0)),
+          out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+      )(x_hbm, o_hbm)
+
+    with self.assertRaisesRegex(
+        ValueError, 'captures non-scalar array constants'
+    ):
+      bad_kernel(x)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
