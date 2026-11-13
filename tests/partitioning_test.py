@@ -2118,6 +2118,25 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, expected)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_call_exported(self, mesh):
+    x = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(4, 4), P('x', 'y'))
+
+    @jax.jit
+    def g(a):
+      return jnp.sum(a * 2, axis=0)
+
+    with config.jax_partitioning(False):
+      ref_exported = jax.export.export(g)(x)
+      expected = ref_exported.call(x)
+
+    exported = jax.export.export(g)(x)
+    out = jax.jit(exported.call)(x)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertArraysEqual(out, expected)
+    self.assertArraysEqual(jax.jit(ref_exported.call)(x), expected)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_bitcast_convert_type(self, mesh):
     x32 = jax.device_put(
         np.arange(16, dtype=np.int32).reshape(4, 4), P('x', 'y'))

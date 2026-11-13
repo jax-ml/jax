@@ -1665,7 +1665,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
           results, out_avals, exported._out_named_shardings))
   return results
 
-mlir.register_lowering(call_exported_p, _call_exported_lowering)
+mlir.register_lowering(
+    call_exported_p, _call_exported_lowering, shard_map_passthrough=True)
 
 def _ensure_backends_initialized(platforms: tuple[str,...]):
   """Ensure FFI handlers are initialized for the given platforms"""
