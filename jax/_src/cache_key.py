@@ -308,6 +308,7 @@ xla_flags_to_exclude_from_cache_key = [
     "--xla_tpu_sdc_checker_no_logging_if_callbacks_are_present",
     "--xla_gpu_cuda_data_dir",
     "--xla_gpu_experimental_autotune_cache_mode",
+    "--xla_gpu_kernel_cache_file",
     "--xla_gpu_per_fusion_autotune_cache_dir",
     "--xla_tpu_compiler_variant",
 ]
@@ -357,6 +358,10 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj,
   # path changes across runs despite being the same version, so we clear it
   # here.
   debug_options.xla_gpu_cuda_data_dir = ""
+
+  # jax_persistent_cache_enable_xla_caches points these at files under the
+  # cache dir, so hashing them would tie every key to the cache dir's path.
+  debug_options.xla_gpu_kernel_cache_file = ""
   debug_options.xla_gpu_per_fusion_autotune_cache_dir = ""
   # LINT.ThenChange(:xla_flags)
 
