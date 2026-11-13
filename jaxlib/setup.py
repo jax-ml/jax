@@ -82,6 +82,7 @@ setup(
             '*.dll',
             '*.pyd*',
             'py.typed',
+            'protobuf_descriptor_set.pb',
             'cpu/*',
             'cuda/*',
             'cuda/nvvm/libdevice/libdevice*',

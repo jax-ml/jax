@@ -64,6 +64,7 @@ ignore-missing-imports = [
     "flatbuffers.*",
     "flax.*",
     "google.colab.*",
+    "google.protobuf.*",
     "hypothesis.*",
     "IPython.*",
     "jax_cuda12_plugin.*",

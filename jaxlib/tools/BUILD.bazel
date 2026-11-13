@@ -172,6 +172,7 @@ wheel_sources(
         "LICENSE.txt",
         "//jaxlib:setup.py",
         "//jaxlib:xla_client.py",
+        "//jaxlib:protobuf_descriptor_set",
         "//jaxlib/mlir/_mlir_libs:all_pyi",
     ],
     symlink_data_srcs = [
