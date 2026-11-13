@@ -1354,14 +1354,26 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, expected.sharding)
     self.assertArraysEqual(out, expected)
 
+  @parameterized.parameters(
+      ((4, 4), P('x', None), 1, 3),
+      ((4, 4), P('x', None), 0, 3),
+      ((4, 4), P('x', 'y'), -1, 2),
+      ((4, 4), P('x', 'y'), -1, 3),
+      ((4, 4), P('x', 'y'), -1, 0),
+      ((2, 4, 2), P('x', 'y', None), 1, 3),
+      ((16,), P(('x', 'y')), 0, 5),
+      ((16,), P(('y', 'x')), -1, 6),
+  )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_top_k(self, mesh):
-    x = jax.device_put(
-        np.arange(16, dtype=np.float32).reshape(4, 4), P('x', None))
+  def test_top_k(self, shape, spec, axis, k, mesh):
+    vals = np.array(
+        [5, 8, 5, 1, 8, 2, 5, 8, 3, 9, 3, 9, 4, 4, 4, 4], dtype=np.float32
+    ).reshape(shape)
+    x = jax.device_put(vals, spec)
 
     @jax.jit
     def f(a):
-      return lax.top_k(a, k=3, axis=1)
+      return lax.top_k(a, k=k, axis=axis)
 
     with config.jax_partitioning(False):
       exp_v, exp_i = f(x)
@@ -1372,8 +1384,41 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertArraysEqual(out_v, exp_v)
     self.assertArraysEqual(out_i, exp_i)
 
-    with self.assertRaises(core.ShardingTypeError):
-      jax.jit(lambda a: lax.top_k(a, k=2, axis=0)).lower(x)
+    distinct = np.array(
+        [3, 14, 9, 0, 2, 11, 5, 1, 8, 15, 6, 7, 12, 4, 13, 10],
+        dtype=np.float32).reshape(shape)
+    xd = jax.device_put(distinct, spec)
+    w_shape = [1] * len(shape)
+    w_shape[axis] = k
+    w = np.arange(1, k + 1, dtype=np.float32).reshape(w_shape)
+
+    def loss(a):
+      return (lax.top_k(a, k=k, axis=axis)[0] * w).sum()
+
+    exp_g = jax.grad(loss)(distinct)
+    with config.jax_partitioning(False):
+      sdy_g = jax.jit(jax.grad(loss))(xd)
+    self.assertEqual(sdy_g.sharding, xd.sharding)
+    self.assertArraysEqual(sdy_g, exp_g)
+
+    @jax.jit
+    def step_aux(a):
+      return jax.value_and_grad(
+          lambda z: ((z * z).sum(), lax.top_k(z, k=k, axis=axis)[0]),
+          has_aux=True)(a)
+
+    (_, aux), vag_g = step_aux(xd)
+    self.assertEqual(aux.sharding, exp_v.sharding)
+    self.assertEqual(vag_g.sharding, xd.sharding)
+    self.assertArraysEqual(vag_g, 2 * distinct)
+
+    if xd.sharding.spec.partitions[axis % len(shape)] is None:
+      out_g = jax.jit(jax.grad(loss))(xd)
+      self.assertEqual(out_g.sharding, xd.sharding)
+      self.assertArraysEqual(out_g, exp_g)
+    else:
+      with self.assertRaises(NotImplementedError):
+        jax.jit(jax.grad(loss)).lower(xd)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_precision(self, mesh):

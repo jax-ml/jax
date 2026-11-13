@@ -11095,11 +11095,10 @@ def _top_k_weak_type_rule(operand, *, k, axis, is_stable):
   return (operand.weak_type, False)
 
 def _top_k_sharding_rule(operand, *, k, axis, is_stable):
-  if operand.sharding.spec.partitions[axis] is not None:
-    raise core.ShardingTypeError(
-        'The input should be unsharded over the axis along which to compute the'
-        f' top_k values. Got input type={operand} and axis={axis}')
-  return (operand.sharding, operand.sharding)
+  parts = util.tuple_update(operand.sharding.spec.partitions, axis, None)
+  out_s = operand.sharding.update(
+      spec=operand.sharding.spec.update(partitions=parts))
+  return (out_s, out_s)
 
 def _top_k_vma_rule(operand, *, k, axis, is_stable):
   return [core.standard_vma_rule('top_k', operand)] * 2
@@ -11118,7 +11117,7 @@ def _top_k_jvp(primals, tangents, *, k, axis, is_stable):
   if type(tangent) is ad_util.Zero:
     tangent_out = ad_util.p2tz(primals_out[0])
   else:
-    _, k_idxs = primals_out
+    out_val, k_idxs = primals_out
     idx_shape = k_idxs.shape
     rank = len(idx_shape)
     gather_index_shape = idx_shape + (1,)
@@ -11130,7 +11129,10 @@ def _top_k_jvp(primals, tangents, *, k, axis, is_stable):
         operand_batching_dims=tuple(i for i in range(rank) if i != axis),
         start_indices_batching_dims=tuple(i for i in range(rank) if i != axis),
         start_index_map=(axis,))
-    tangent_out = slicing.gather(tangent, gather_indices, dnums, slice_sizes)
+    out_s = typeof(out_val).sharding
+    tangent_out = slicing.gather(
+        tangent, gather_indices, dnums, slice_sizes,
+        out_sharding=out_s if out_s.mesh.explicit_axes else None)
   return primals_out, (tangent_out, ad_util.p2tz(primals_out[1]))
 
 def _top_k_batch_rule(batched_args, batch_dims, *, k, axis, is_stable):
@@ -11190,8 +11192,44 @@ def _top_k_lower(ctx, operand, k, axis, is_stable):
                for result in results]
   return results
 
+def _top_k_collective_rule(in_avals, out_avals, *, k, axis, is_stable):
+  from jax._src.lax import parallel
+  del out_avals
+  in_aval, = in_avals
+  part = in_aval.sharding.spec.partitions[axis]
+  if part is None or k == 0:
+    return mlir.PartitioningRule()
+
+  shard_size = in_aval.sharding.shard_shape(in_aval.shape)[axis]
+  batch_dims = tuple(i for i in range(in_aval.ndim) if i != axis)
+  dnums = slicing.GatherDimensionNumbers(
+      offset_dims=(),
+      collapsed_slice_dims=(axis,),
+      operand_batching_dims=batch_dims,
+      start_indices_batching_dims=batch_dims,
+      start_index_map=(axis,),
+  )
+  slice_sizes = (1,) * in_aval.ndim
+
+  def out_collective(out):
+    local_vals, local_idxs = out
+    offset = parallel.axis_index(part).astype(np.int32) * shard_size
+    vals, idxs = parallel.all_gather(
+        (local_vals, local_idxs + offset), part, axis=axis, tiled=True
+    )
+    top_vals, pick = top_k(vals, k, axis=axis, is_stable=is_stable)
+    top_idxs = slicing.gather(
+        idxs, expand_dims(pick, (in_aval.ndim,)), dnums, slice_sizes
+    )
+    return [top_vals, top_idxs]
+
+  return mlir.PartitioningRule(
+      out_collective=out_collective,
+      per_shard_params={'k': _min(k, shard_size)},
+  )
+
 mlir.register_lowering(
-    top_k_p, _top_k_lower, shard_map_collective_rule=_unop_collective_rule)
+    top_k_p, _top_k_lower, shard_map_collective_rule=_top_k_collective_rule)
 
 ad.primitive_jvps[top_k_p] = _top_k_jvp
 batching.primitive_batchers[top_k_p] = _top_k_batch_rule

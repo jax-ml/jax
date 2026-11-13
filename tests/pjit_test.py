@@ -12160,6 +12160,42 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out_g = jax.jit(jax.grad(lambda x: f(x).mean()))(arr)
     self.assertEqual(out_g.sharding, NamedSharding(mesh, P('x', None, None)))
 
+    inp = np.arange(16, dtype=np.float32).reshape(4, 4)
+    sharded = jax.device_put(inp, P('x', 'y'))
+
+    @jax.jit
+    def f_sharded(w):
+      vals, idxs = jax.lax.top_k(w, 3)
+      self.assertEqual(vals.aval.sharding.spec, P('x', None))
+      self.assertEqual(idxs.aval.sharding.spec, P('x', None))
+      return vals, idxs
+
+    exp_vals, exp_idxs = jax.lax.top_k(inp, 3)
+    vals, idxs = f_sharded(sharded)
+    self.assertEqual(vals.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertEqual(idxs.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertArraysEqual(vals, exp_vals)
+    self.assertArraysEqual(idxs, exp_idxs)
+
+    bf16 = sharded.astype(jnp.bfloat16)
+
+    @jax.jit
+    def step(w):
+      def loss_fn(x):
+        return (x * x).sum(), jax.lax.top_k(x, 3)[0]
+      return jax.value_and_grad(loss_fn, has_aux=True)(w)
+
+    with config.allow_f16_reductions(False):
+      (_, aux), g = step(bf16)
+    self.assertEqual(aux.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertEqual(g.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertArraysEqual(aux, exp_vals.astype(jnp.bfloat16))
+    self.assertArraysEqual(g, 2 * bf16)
+
+    with self.assertRaises(core.ForbiddenCollectiveError):
+      with jax.sharding.no_collectives({'y'}):
+        jax.jit(lambda w: jax.lax.top_k(w, 2)).lower(sharded)
+
   @parameterized.named_parameters(
       ('top_k', lambda w: jax.lax.top_k(w, 1), [20.], [0., 1.]),
       ('approx_max_k', lambda w: jax.lax.approx_max_k(w, 1), [20.], [0., 1.]),
