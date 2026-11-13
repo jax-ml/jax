@@ -827,9 +827,8 @@ def _normalize_index(index, axis_size):
 
 
 @export
-@api.jit(
-    static_argnames=("axis", "mode", "fill_value", "wrap_negative_indices")
-)
+@api.jit(static_argnames=(
+    "axis", "mode", "fill_value", "wrap_negative_indices", "out_sharding"))
 def take_along_axis(
     arr: ArrayLike,
     indices: ArrayLike,
@@ -838,6 +837,7 @@ def take_along_axis(
     fill_value: StaticScalar | None = None,
     *,
     wrap_negative_indices: bool = True,
+    out_sharding: NamedSharding | PartitionSpec | None = None,
 ) -> Array:
   """Take elements from an array.
 
@@ -861,6 +861,8 @@ def take_along_axis(
       ``mode="fill"``. Ignored otherwise.
     wrap_negative_indices: Whether to wrap negative indices to positive like
       Numpy.
+    out_sharding: Optional :class:`~jax.sharding.NamedSharding` or
+      :class:`~jax.sharding.PartitionSpec` specifying the output sharding.
 
   Returns:
     Array of values extracted from ``arr``.
@@ -918,6 +920,7 @@ def take_along_axis(
            [2]], dtype=int32)
   """
   a, indices = util.ensure_arraylike("take_along_axis", arr, indices)
+  sharding = canonicalize_sharding(out_sharding, "take_along_axis")
   index_dtype = indices.dtype
   idx_shape = np.shape(indices)
   if not dtypes.issubdtype(index_dtype, np.integer):
@@ -944,7 +947,7 @@ def take_along_axis(
   arr_shape = replace(a.shape, 1)
   out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
   if axis_size == 0:
-    return lax.full(out_shape, 0, a.dtype)
+    return lax.full(out_shape, 0, a.dtype, sharding=sharding)
 
   index_dtype = lax_utils.index_dtype_for_axis_size(
       dtypes.dtype(indices), axis_size, wrap_negative_indices
@@ -959,7 +962,9 @@ def take_along_axis(
 
     hot = nn.one_hot(indices, axis_size, dtype=np.bool_)
     if a.ndim == 1:
-      return einsum.einsum("...b,b->...", hot, a, preferred_element_type=a.dtype)
+      return einsum.einsum(
+          "...b,b->...", hot, a, preferred_element_type=a.dtype,
+          out_sharding=sharding)
     if axis_int > len(string.ascii_letters) - 2:
       raise ValueError(
           "One Hot indexing is only supported for up to 50 leading dimensions."
@@ -972,6 +977,7 @@ def take_along_axis(
         a,
         precision=lax.Precision.HIGHEST,
         preferred_element_type=a.dtype,
+        out_sharding=sharding,
     )
 
   index_dims = [i for i, idx in enumerate(idx_shape) if i == axis_int or not core.definitely_equal(idx, 1)]
@@ -1029,8 +1035,10 @@ def take_along_axis(
     start_index_map=tuple(start_index_map),
     operand_batching_dims=tuple(operand_batching_dims),
     start_indices_batching_dims=tuple(start_indices_batching_dims))
-  return slicing.gather(a, gather_indices, dnums, tuple(slice_sizes),
-                        mode="fill" if mode is None else mode, fill_value=fill_value)
+  return slicing.gather(
+      a, gather_indices, dnums, tuple(slice_sizes),
+      mode="fill" if mode is None else mode, fill_value=fill_value,
+      out_sharding=sharding)
 
 
 def _make_along_axis_idx(shape, indices, axis):

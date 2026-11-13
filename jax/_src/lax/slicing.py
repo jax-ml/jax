@@ -2589,7 +2589,8 @@ def _gather_lower(ctx, operand, indices, *,
 
 def _gather_collective_rule(
     in_avals, out_avals, *, dimension_numbers, slice_sizes, out_sharding,
-    **params):
+    mode, fill_value, **params):
+  from jax._src.lax import parallel
   del params
   op_aval, idx_aval = in_avals
   out_aval, = out_avals
@@ -2597,9 +2598,19 @@ def _gather_collective_rule(
   idx_parts = idx_aval.sharding.spec.partitions
   dnums = dimension_numbers
 
-  # Sharded index vectors or collapsed dims need an all-gather across shards.
-  if (idx_parts[-1] is not None or
-      any(op_parts[i] is not None for i in dnums.collapsed_slice_dims)):
+  if idx_parts[-1] is not None:
+    raise NotImplementedError
+
+  sharded_collapsed = [
+      i for i in dnums.collapsed_slice_dims if op_parts[i] is not None]
+  reduced_axes = flatten_spec_no_none(op_parts[i] for i in sharded_collapsed)
+  zero_fill = False if out_aval.dtype == np.bool_ else 0
+  if sharded_collapsed and (
+      not set(sharded_collapsed).issubset(dnums.start_index_map) or
+      set(reduced_axes) & set(flatten_spec_no_none(idx_parts)) or
+      dtypes.issubdtype(out_aval.dtype, dtypes.extended) or
+      mode == GatherScatterMode.CLIP or
+      (mode == GatherScatterMode.FILL_OR_DROP and fill_value != zero_fill)):
     raise NotImplementedError
 
   # Propagation allows replicated-vs-sharded batch dims, which need a slice.
@@ -2628,8 +2639,34 @@ def _gather_collective_rule(
         out_batch_parts != idx_parts[:-1]):
       raise NotImplementedError
 
-  return mlir.PartitioningRule(per_shard_params={
-      'slice_sizes': tuple(shard_slice_sizes), 'out_sharding': None})
+  if not sharded_collapsed:
+    return mlir.PartitioningRule(per_shard_params={
+        'slice_sizes': tuple(shard_slice_sizes), 'out_sharding': None})
+
+  op_shard_shape = op_aval.sharding.shard_shape(op_aval.shape)
+  index_dtype = lax_utils.int_dtype_for_shape(op_aval.shape, signed=True)
+  reduce_fn = parallel.pmax if out_aval.dtype == np.bool_ else parallel.psum
+
+  def in_collective(op, idx):
+    idx = lax.convert_element_type(idx, index_dtype)
+    offsets = lax.stack([
+        lax.convert_element_type(parallel.axis_index(op_parts[d]), index_dtype)
+        * op_shard_shape[d]
+        if d in sharded_collapsed else np.array(0, dtype=index_dtype)
+        for d in dnums.start_index_map
+    ])
+    return op, idx - lax.broadcast_in_dim(offsets, idx.shape, (idx.ndim - 1,))
+
+  return mlir.PartitioningRule(
+      in_collective=in_collective,
+      out_collective=lambda y: reduce_fn(y, reduced_axes),
+      per_shard_params={
+          'slice_sizes': tuple(shard_slice_sizes),
+          'out_sharding': None,
+          'mode': GatherScatterMode.FILL_OR_DROP,
+          'fill_value': zero_fill,
+      },
+  )
 
 mlir.register_lowering(
     gather_p, _gather_lower, shard_map_collective_rule=_gather_collective_rule)

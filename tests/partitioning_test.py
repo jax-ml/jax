@@ -2302,18 +2302,28 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
         np.array([2, 0, 5, 1], dtype=np.int32), P('x'))
     idx = jax.device_put(np.array([2, 0], dtype=np.int32), P(None))
 
+    xy_vec = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(8, 2), P(('x', 'y'), None))
+
     @jax.jit
-    def f(a, tbl, s_idx, i):
+    def f(a, tbl, xy, s_idx, i):
       vds = jax.vmap(
           lambda r, j: lax.dynamic_slice(r, (j, np.int32(0)), (1, 4))
       )(a, s_idx)
       emb = tbl.at[s_idx].get(out_sharding=P('x', 'y'))
-      return vds, emb, tbl[i]
+      sh_col = a.at[i].get(out_sharding=P(None, None, 'y'))
+      sh_2d = a.at[i, i].get(out_sharding=P(None, 'y'))
+      sh_bool = (a > 20).at[i].get(out_sharding=P(None, None, 'y'))
+      sh_xy = xy.at[i].get(out_sharding=P(None, None))
+      taa = jnp.take_along_axis(
+          a, i[:, None, None], axis=0, mode='promise_in_bounds',
+          out_sharding=P(None, None, 'y'))
+      return vds, emb, tbl[i], sh_col, sh_2d, sh_bool, sh_xy, taa
 
     with config.jax_partitioning(False):
-      expected = f(x, table, sharded_idx, idx)
+      expected = f(x, table, xy_vec, sharded_idx, idx)
 
-    for out, exp in zip(f(x, table, sharded_idx, idx), expected):
+    for out, exp in zip(f(x, table, xy_vec, sharded_idx, idx), expected):
       self.assertEqual(out.sharding, exp.sharding)
       self.assertArraysEqual(out, exp)
 
@@ -2324,8 +2334,8 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with self.assertRaises(NotImplementedError):
       jax.jit(
-          lambda a: a.at[idx].get(out_sharding=P(None, None, 'y'))
-      ).lower(x)
+          lambda a, s_idx: a.at[s_idx].get(out_sharding=P('x', None, 'y'))
+      ).lower(x, sharded_idx)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_scatter(self, mesh):
