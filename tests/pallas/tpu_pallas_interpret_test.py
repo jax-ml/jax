@@ -2115,6 +2115,65 @@ class InterpretTest(jtu.JaxTestCase):
               interpret=interpret,
           )(x)
 
+  def _enter_emit_pipeline_env(self, use_prim=True):
+    dev = jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu')
+    self.enter_context(config.use_emit_pipeline_primitive(use_prim))
+    self.enter_context(
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=dev)
+        )
+    )
+
+  @parameterized.named_parameters(
+      ('interpret_params', pltpu.InterpretParams()),
+      ('interpret_true', True),
+  )
+  def test_emit_pipeline_index_map_concrete_consts(self, interpret):
+    self._enter_emit_pipeline_env(True)
+    mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=1)
+    x = jnp.arange(16 * 128, dtype=jnp.float32).reshape(16, 128)
+
+    if interpret is True:
+      idx_ref = jax.new_ref(jnp.array([1, 0], dtype=jnp.int32))
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+          mesh=mesh,
+          interpret=interpret,
+      )
+      def kernel(x_hbm, o_hbm):
+        pltpu.emit_pipeline(
+            lambda a, b: b.__setitem__(..., a[...]),
+            grid=(2,),
+            in_specs=pl.BlockSpec((8, 128), lambda i: (idx_ref[i], 0)),
+            out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+        )(x_hbm, o_hbm)
+
+      out = kernel(x)
+      np.testing.assert_array_equal(out[:8], x[8:])
+      np.testing.assert_array_equal(out[8:], x[:8])
+
+    bad_lut = jnp.array([1, 0], dtype=jnp.int32)
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+        mesh=mesh,
+        interpret=interpret,
+    )
+    def bad_kernel(x_hbm, o_hbm):
+      pltpu.emit_pipeline(
+          lambda a, b: b.__setitem__(..., a[...]),
+          grid=(2,),
+          in_specs=pl.BlockSpec((8, 128), lambda i: (bad_lut[i], 0)),
+          out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+      )(x_hbm, o_hbm)
+
+    with self.assertRaisesRegex(
+        ValueError, 'captures non-scalar array constants'
+    ):
+      bad_kernel(x)
+
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
