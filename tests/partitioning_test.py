@@ -1090,24 +1090,32 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
         np.arange(16, dtype=np.float32).reshape(4, 4), P('x', 'y'))
     row = jax.device_put(
         np.arange(4, dtype=np.float32).reshape(1, 4), P(None, 'y'))
+    rep = jax.device_put(
+        np.arange(16, dtype=np.float32).reshape(4, 4), P(None, 'x'))
+    vec = jax.device_put(np.arange(4, dtype=np.float32), P(None))
+    args = (x, row, rep, vec)
 
     @jax.jit
-    def f(a, r):
+    def f(x, row, rep, vec):
       b0 = lax.broadcast_in_dim(
-          r, (4, 3, 4), (0, 2), out_sharding=P('x', None, 'y'))
+          row, (4, 3, 4), (0, 2), out_sharding=P('x', None, 'y'))
       b1 = lax.broadcast_in_dim(
-          a, (4, 3, 4), (0, 2), out_sharding=P('x', None, 'y'))
-      return b0 + b1
+          x, (4, 3, 4), (0, 2), out_sharding=P('x', None, 'y'))
+      b2 = lax.broadcast_in_dim(
+          rep, (4, 3, 4), (2, 0), out_sharding=P('x', None, 'y'))
+      b3 = lax.broadcast_in_dim(
+          vec, (4, 2), (0,), out_sharding=P(('y', 'x'), None))
+      return b0, b1, b2, b3
 
     with config.jax_partitioning(False):
-      self.assertNotIn('sdy.manual_computation', f.lower(x, row).as_text())
-      expected = f(x, row)
+      self.assertNotIn('sdy.manual_computation', f.lower(*args).as_text())
+      expected = f(*args)
 
-    self.assertIn('sdy.manual_computation', f.lower(x, row).as_text())
+    self.assertIn('sdy.manual_computation', f.lower(*args).as_text())
 
-    out = f(x, row)
-    self.assertEqual(out.sharding, expected.sharding)
-    self.assertArraysEqual(out, expected)
+    for out, exp in zip(f(*args), expected):
+      self.assertEqual(out.sharding, exp.sharding)
+      self.assertArraysEqual(out, exp)
 
     for bad_spec in (P(None, None, 'y'), P(None, 'y', 'x')):
       with self.assertRaises(NotImplementedError):

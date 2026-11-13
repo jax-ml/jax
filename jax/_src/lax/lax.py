@@ -8457,19 +8457,38 @@ core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
 
 def _broadcast_in_dim_collective_rule(
     in_avals, out_avals, *, shape, broadcast_dimensions, sharding):
+  from jax._src.lax import parallel
   del shape, sharding
   in_aval, = in_avals
   out_aval, = out_avals
   out_parts = out_aval.sharding.spec.partitions
-  for in_size, in_s, out_dim in zip(
-      in_aval.shape, in_aval.sharding.spec.partitions, broadcast_dimensions):
+  out_shard_shape = out_aval.sharding.shard_shape(out_aval.shape)
+  per_shard_params = {'shape': out_shard_shape, 'sharding': None}
+
+  slice_dims = []
+  for i, (in_size, in_s, out_dim) in enumerate(zip(
+      in_aval.shape, in_aval.sharding.spec.partitions, broadcast_dimensions)):
     if in_s == out_parts[out_dim] or (in_s is None and in_size == 1):
       continue
-    raise NotImplementedError
-  return mlir.PartitioningRule(per_shard_params={
-      'shape': out_aval.sharding.shard_shape(out_aval.shape),
-      'sharding': None,
-  })
+    if in_s is not None:
+      raise NotImplementedError
+    assert in_s is None and out_parts[out_dim] is not None
+    slice_dims.append((i, out_dim))
+
+  if not slice_dims:
+    return mlir.PartitioningRule(per_shard_params=per_shard_params)
+  else:
+    def _slice_to_shard(x_shard):
+      starts = [np.int32(0)] * x_shard.ndim
+      sizes = list(x_shard.shape)
+      for i, out_dim in slice_dims:
+        sizes[i] = out_shard_shape[out_dim]
+        starts[i] = parallel.axis_index(out_parts[out_dim]) * sizes[i]
+      return [slicing.dynamic_slice(
+          x_shard, starts, sizes, allow_negative_indices=False)]
+
+    return mlir.PartitioningRule(
+        in_collective=_slice_to_shard, per_shard_params=per_shard_params)
 
 mlir.register_lowering(
     broadcast_in_dim_p, _broadcast_in_dim_lower,
