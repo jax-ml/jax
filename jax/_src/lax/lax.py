@@ -10769,10 +10769,9 @@ def _reduce_and_collective_rule(in_avals, out_avals, *, axes):
       parallel.pmin, None, in_avals, out_avals, axes)
 
 def _reduce_xor_collective_rule(in_avals, out_avals, *, axes):
-  in_aval, = in_avals
-  if flatten_spec_no_none(in_aval.sharding.spec.partitions[i] for i in axes):
-    raise NotImplementedError
-  return mlir.PartitioningRule()
+  from jax._src.lax import parallel
+  return _reduce_collective_rule(
+      parallel._pxor, None, in_avals, out_avals, axes)
 
 def _reduce_min_collective_rule(in_avals, out_avals, *, axes, out_sharding):
   from jax._src.lax import parallel

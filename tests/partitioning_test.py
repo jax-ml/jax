@@ -341,6 +341,12 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       (lax.reduce_or, np.any, np.bool_, P('x', 'y'), (0,), P('y'), True),
       (lax.reduce_xor, np.bitwise_xor.reduce, np.int32, P('x', None), (1,),
        P('x'), False),
+      (lax.reduce_xor, np.bitwise_xor.reduce, np.int32, P('x', 'y'), (0,),
+       P('y'), True),
+      (lax.reduce_xor, np.bitwise_xor.reduce, np.int32, P('x', 'y'), (0, 1),
+       P(), True),
+      (lax.reduce_xor, np.bitwise_xor.reduce, np.bool_, P('x', 'y'), (0,),
+       P('y'), True),
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_prod_and_bitwise(
@@ -363,20 +369,16 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with config.jax_partitioning(False):
       self.assertNotIn('sdy.manual_computation', f.lower(arr).as_text())
-      expected = f(arr)
 
     lowered = f.lower(arr).as_text()
     self.assertIn('sdy.manual_computation', lowered)
     self.assertEqual('all_reduce' in lowered, has_ar)
-
-    out = f(arr)
-    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
-    self.assertArraysEqual(out, np_op(np_inp, axis=axes).astype(dtype))
-    self.assertArraysEqual(out, expected)
+    if lax_op is lax.reduce_xor and has_ar:
+      self.assertIn('stablehlo.xor', lowered)
 
     int_arr = jax.device_put(np.ones((4, 4), dtype=np.int32), P('x', 'y'))
 
-    for op in (lax.reduce_prod, lax.reduce_and, lax.reduce_or, lax.reduce_xor):
+    for op in (lax.reduce_prod, lax.reduce_and, lax.reduce_or):
       with self.assertRaises(NotImplementedError):
         jax.jit(lambda x, op=op: op(x, axes=(0,))).lower(int_arr)
 
@@ -384,6 +386,18 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
 
     with self.assertRaises(NotImplementedError):
       jax.jit(lambda x: lax.reduce_prod(x, axes=(0,))).lower(c_arr)
+
+    if (lax_op is lax.reduce_xor and has_ar and
+        jtu.test_device_matches(['cpu'])):
+      # XLA:CPU AllReduce does not implement xor reductions.
+      return
+
+    with config.jax_partitioning(False):
+      expected = f(arr)
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+    self.assertArraysEqual(out, np_op(np_inp, axis=axes).astype(dtype))
+    self.assertArraysEqual(out, expected)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_per_shard_params(self, mesh):
