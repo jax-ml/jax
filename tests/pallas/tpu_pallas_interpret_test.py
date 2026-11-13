@@ -730,6 +730,79 @@ class InterpretTest(jtu.JaxTestCase):
           ),
       )(x).block_until_ready()
 
+  def test_race_detection_large_grid_and_non_monotonic_clocks(self):
+    def kernel(x_ref, o_ref, v_ref):
+      v_ref[...] = x_ref[...] + 1.0
+      o_ref[...] = v_ref[...] * 2.0
+
+    g = 128
+    x = jnp.ones((g * 8, 128), dtype=jnp.float32)
+    y = pl.pallas_call(
+        kernel,
+        grid=(g,),
+        out_shape=jax.ShapeDtypeStruct.like(x),
+        in_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+        out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+        scratch_shapes=[pltpu.VMEM((8, 128), jnp.float32)],
+        interpret=pltpu.InterpretParams(detect_races=True),
+    )(x).block_until_ready()
+    np.testing.assert_allclose(y, (x + 1.0) * 2.0)
+
+    # Verify monotone chain vs. non-monotonic unordered routing, seq tracking,
+    # seq-pruning breaks in both chain and unordered, lazy source formatting,
+    # and warn mode.
+    vc_cls = mosaic_interpret.memory.vector_clock.NpVectorClock
+    rds_cls = mosaic_interpret.RaceDetectionState
+    state = rds_cls(on_race='raise')
+    c0 = vc_cls(3)
+    c0.inc(0)
+    state.check_write(0, c0.copy(), 'buf', (slice(0, 8),))
+    self.assertEqual(state.next_seq, 1)
+    c0.inc(0)
+    state.check_write(0, c0.copy(), 'buf', (slice(8, 16),))
+    self.assertEqual(state.next_seq, 2)
+    # Non-monotonic (equal) clock on thread 0 goes to unordered fallback.
+    state.check_write(0, c0.copy(), 'buf', (slice(16, 24),))
+    self.assertEqual(state.next_seq, 3)
+    self.assertLen(state.writes['buf'][0][0], 2)
+    self.assertLen(state.writes['buf'][0][1], 1)
+
+    c1 = vc_cls(3)
+    c1.inc(1)
+    state.check_write(1, c1.copy(), 'buf', (slice(24, 32),))
+    self.assertEqual(state.next_seq, 4)
+
+    # Conflict on slice(10, 30) matches seq=1 in thread 0's chain first, then
+    # exercises `seq >= best[0]` early-break in thread 0's unordered (seq=2)
+    # and thread 1's chain (seq=3).
+    c2 = vc_cls(3)
+    c2.inc(2)
+    with self.assertRaisesRegex(
+        RuntimeError,
+        r'(?s)RACE DETECTED.*write of buf\[\(slice\(8, 16, None\),\)\] from 0,'
+        r' pallas_call',
+    ):
+      state.check_read(2, c2.copy(), 'buf', (slice(10, 30),))
+    self.assertEqual(state.next_seq, 5)
+
+    # Conflict on slice(18, 22) misses thread 0's chain (slices 0..8 and 8..16)
+    # and matches thread 0's unordered fallback (seq=2, slice 16..24).
+    with self.assertRaisesRegex(
+        RuntimeError,
+        r'(?s)RACE DETECTED.*write of buf\[\(slice\(16, 24, None\),\)\] from 0,'
+        r' pallas_call',
+    ):
+      state.check_read(2, c2.copy(), 'buf', (slice(18, 22),))
+    self.assertEqual(state.next_seq, 6)
+
+    warn_state = rds_cls(on_race='warn')
+    warn_state.check_read(0, c0.copy(), 'wbuf', (0,))
+    self.assertEqual(warn_state.next_seq, 1)
+    self.assertFalse(warn_state.races_found)
+    warn_state.check_write(1, c1.copy(), 'wbuf', (0,))
+    self.assertEqual(warn_state.next_seq, 2)
+    self.assertTrue(warn_state.races_found)
+
   def test_skip_floating_point_ops(self):
     def matmul_kernel(x_ref, y_ref, z_ref):
       z_ref[...] = x_ref[...] @ y_ref[...]
