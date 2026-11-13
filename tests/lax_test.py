@@ -1610,8 +1610,16 @@ class LaxTest(jtu.JaxTestCase):
     if dtype == dtypes.bfloat16:
       if jtu.test_device_matches(
           ["cuda"]
+      ) and not jtu.is_cuda_compute_capability_at_least("9.0"):
+        # Ada (SM 8.9) FP8 Tensor Cores always use a reduced-precision internal
+        # accumulator, even when fast accumulation is disabled via HIGHEST.
+        self.assertLess(err_x4, 1e-4)
+        self.assertLess(err_x4, err_x3 / 5)
+      elif jtu.test_device_matches(
+          ["cuda"]
       ) and not jtu.is_cuda_compute_capability_at_least("10.0"):
-        # Before Blackwell, cuBLASLt FP8 uses a reduced precision accumulator.
+        # Hopper (SM 9.0) disables WGMMA fast accumulation under HIGHEST, but
+        # still uses a reduced-precision internal adder within each MMA tile.
         self.assertLess(err_x4, 1e-4)
         self.assertLess(err_x4, err_x3 / 10)
       else:
