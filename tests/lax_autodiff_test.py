@@ -1520,6 +1520,25 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         rtol=1e-3,
     )
 
+  def testPolynomialBroadcast(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42480
+    x = jnp.array([0.5], dtype=jnp.float32)
+    a0 = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32)
+    jtu.check_grads(
+        lambda z: lax.polynomial(z, [a0, 2.0]),
+        (x,),
+        order=2,
+        atol=1e-3,
+        rtol=1e-3,
+    )
+    jtu.check_grads(
+        lambda z, c0: lax.polynomial(z, [c0, 2.0]),
+        (x, a0),
+        order=2,
+        atol=1e-3,
+        rtol=1e-3,
+    )
+
   @parameterized.named_parameters(
       dict(testcase_name="tanh", fn=lax.tanh, x=5.0,
            d1=lambda x: (1 - lax.tanh(x)) * (1 + lax.tanh(x)), d2=lambda t: -2 * t),
