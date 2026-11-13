@@ -330,6 +330,27 @@ LogicalResult nvvm_mbarrier_try_wait_parity_shared_upgrade(Operation* op,
   return success();
 }
 
+template <typename OpT = mlir::NVVM::MBarrierArriveExpectTxOp>
+OpT create_mbarrier_arrive_expect_tx(mlir::ImplicitLocOpBuilder& b,
+                                     mlir::TypeRange result_types,
+                                     mlir::Value addr, mlir::Value txcount,
+                                     mlir::Value predicate) {
+  // TODO(bchetioui): Remove the `else` branch once the minimum supported LLVM
+  // revision in OSS JAX includes
+  // https://github.com/llvm/llvm-project/pull/240753.
+  if constexpr (OpT::template hasTrait<
+                    mlir::OpTrait::AttrSizedOperandSegments>()) {
+    return OpT::create(b, result_types, addr, txcount,
+                       /*multicastMask=*/mlir::Value{},
+                       mlir::NVVM::MemScopeKind::CTA, /*relaxed=*/false,
+                       predicate);
+  } else {
+    return OpT::create(b, result_types, addr, txcount,
+                       mlir::NVVM::MemScopeKind::CTA, /*relaxed=*/false,
+                       predicate);
+  }
+}
+
 LogicalResult nvvm_mbarrier_arrive_expect_tx_shared_upgrade(Operation* op,
                                                             int version,
                                                             bool& erased) {
@@ -340,10 +361,8 @@ LogicalResult nvvm_mbarrier_arrive_expect_tx_shared_upgrade(Operation* op,
   if (version < 6) {
     mlir::ImplicitLocOpBuilder b(op->getLoc(), op->getParentRegion());
     b.setInsertionPointAfter(op);
-    auto new_op = mlir::NVVM::MBarrierArriveExpectTxOp::create(
+    auto new_op = create_mbarrier_arrive_expect_tx(
         b, op->getResultTypes(), op->getOperand(0), op->getOperand(1),
-        /*multicastMask=*/mlir::Value{}, mlir::NVVM::MemScopeKind::CTA,
-        /*relaxed=*/false,
         op->getNumOperands() < 3 ? mlir::Value{} : op->getOperand(2));
     op->replaceAllUsesWith(new_op);
     op->erase();
@@ -357,31 +376,35 @@ LogicalResult nvvm_mbarrier_arrive_expect_tx_upgrade(Operation* op, int version,
   if (failed(nvvm_attrs_upgrade(op, version, erased))) {
     return mlir::failure();
   }
-  // https://github.com/llvm/llvm-project/pull/240753 added an optional
-  // `multicastMask` operand between `txcount` and `predicate`, and made the op
-  // `AttrSizedOperandSegments`. Modules serialized before that change have no
-  // `operandSegmentSizes`, so their operands are `addr, txcount[, predicate]`.
-  // This is not keyed on `version`, since modules serialized at the current
-  // version now carry `operandSegmentSizes`.
-  auto sizes_attr =
-      op->getAttrOfType<mlir::DenseI32ArrayAttr>("operandSegmentSizes");
-  int64_t num_operands_in_segments = 0;
-  if (sizes_attr) {
-    for (int32_t size : sizes_attr.asArrayRef()) {
-      num_operands_in_segments += size;
+  if constexpr (mlir::NVVM::MBarrierArriveExpectTxOp::hasTrait<
+                    mlir::OpTrait::AttrSizedOperandSegments>()) {
+    // https://github.com/llvm/llvm-project/pull/240753 added an optional
+    // `multicastMask` operand between `txcount` and `predicate`, and made the
+    // op `AttrSizedOperandSegments`. Modules serialized before that change have
+    // no `operandSegmentSizes`, so their operands are
+    // `addr, txcount[, predicate]`. This is not keyed on `version`, since
+    // modules serialized at the current version now carry
+    // `operandSegmentSizes`.
+    auto sizes_attr =
+        op->getAttrOfType<mlir::DenseI32ArrayAttr>("operandSegmentSizes");
+    int64_t num_operands_in_segments = 0;
+    if (sizes_attr) {
+      for (int32_t size : sizes_attr.asArrayRef()) {
+        num_operands_in_segments += size;
+      }
     }
-  }
-  if (!sizes_attr || sizes_attr.getSize() != 4 ||
-      num_operands_in_segments != op->getNumOperands()) {
-    if (op->getNumOperands() < 2 || op->getNumOperands() > 3) {
-      return op->emitOpError("Unexpected number of operands: ")
-             << op->getNumOperands();
+    if (!sizes_attr || sizes_attr.getSize() != 4 ||
+        num_operands_in_segments != op->getNumOperands()) {
+      if (op->getNumOperands() < 2 || op->getNumOperands() > 3) {
+        return op->emitOpError("Unexpected number of operands: ")
+               << op->getNumOperands();
+      }
+      const int32_t num_predicates =
+          static_cast<int32_t>(op->getNumOperands()) - 2;
+      op->setAttr("operandSegmentSizes",
+                  mlir::DenseI32ArrayAttr::get(op->getContext(),
+                                               {1, 1, 0, num_predicates}));
     }
-    const int32_t num_predicates =
-        static_cast<int32_t>(op->getNumOperands()) - 2;
-    op->setAttr("operandSegmentSizes",
-                mlir::DenseI32ArrayAttr::get(op->getContext(),
-                                             {1, 1, 0, num_predicates}));
   }
   return success();
 }
