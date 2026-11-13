@@ -2584,9 +2584,14 @@ def _maybe_lower_with_shard_map(
     return None
 
   mesh = get_abstract_mesh()
-  if mesh.empty or mesh.are_all_axes_manual or mesh.auto_axes:
+  if mesh.empty or mesh.are_all_axes_manual:
     return None
-  assert mesh.explicit_axes and mesh.are_all_axes_explicit_or_manual
+  if not mesh.are_all_axes_explicit_or_manual:
+    raise NotImplementedError(
+        f'Cannot lower `{_prim}` with `jax_partitioning` when mesh has Auto'
+        f' axes: {mesh}'
+    )
+  assert mesh.explicit_axes
 
   if (rule := shard_map_collective_rules.get(_prim)) is None:
     raise NotImplementedError

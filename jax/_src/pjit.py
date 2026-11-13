@@ -2983,16 +2983,18 @@ def _auto_axes(fun, *, axes_, out_sharding):
         axes_, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_sharding)
     if mesh_info is None:
       return fun(*args, **kwargs)
+    if config.jax_partitioning.value:
+      raise ValueError(
+          '`auto_axes` is not supported when `jax_partitioning` is enabled.')
     if set(mesh_info.prev.auto_axes) == set(mesh_info.axes):
       return fun(*args, **kwargs)
     in_avals = [core.typeof(a) for a in tree_leaves(args)]
-    with config.jax_partitioning(False):
-      with mesh_lib.use_abstract_mesh(mesh_info.new):
-        in_specs = tree_map(
-            lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
-        args = reshard(args, in_specs)
-        out = fun(*args, **kwargs)
-      res = reshard(out, _out_sharding)
+    with mesh_lib.use_abstract_mesh(mesh_info.new):
+      in_specs = tree_map(
+          lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
+      args = reshard(args, in_specs)
+      out = fun(*args, **kwargs)
+    res = reshard(out, _out_sharding)
     if config.no_collectives.value:
       from jax._src.lax import utils as lax_utils  # type: ignore
       out_shardings = [core.typeof(o).sharding for o in tree_leaves(res)
@@ -3024,16 +3026,18 @@ def _explicit_axes(fun, *, axes, in_sharding):
       raise ValueError(
           'Context mesh cannot be empty. Please use `jax.set_mesh` API to enter'
           ' into a mesh context when using `explicit_axes` API.')
+    if (config.jax_partitioning.value and
+        not mesh_info.prev.are_all_axes_explicit_or_manual):
+      raise ValueError(
+          '`explicit_axes` is only supported on an all-Explicit mesh when'
+          f' `jax_partitioning` is enabled. Got mesh: {mesh_info.prev}')
     with mesh_lib.use_abstract_mesh(mesh_info.new):
-      # The input layout was chosen by Shardy, so let it reshard into explicit.
-      with config.jax_partitioning(False):
-        args = reshard(args, _in_sharding)
+      args = reshard(args, _in_sharding)
       out = fun(*args, **kwargs)
     out_specs = tree_map(
         lambda o: _modify_spec_for_auto_manual_hi(o, mesh_lib.get_abstract_mesh()),
         out)
-    with config.jax_partitioning(False):
-      return reshard(out, out_specs)
+    return reshard(out, out_specs)
   return decorator
 
 # -------------------- with_layout_constraint --------------------
