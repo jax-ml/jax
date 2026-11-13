@@ -498,12 +498,18 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "partitioning_test",
     srcs = ["partitioning_test.py"],
+    backend_tags = {
+        "cpu": ["noasan"],  # Times out.
+        "tpu": ["noasan"],  # Times out.
+    },
     enable_configs = [
         "tpu_v3_x4",
         "gpu_h100x2_full",
     ],
     shard_count = {
         "cpu": 5,
+        "gpu": 5,
+        "tpu": 5,
     },
     tags = ["multiaccelerator"],
     deps = py_deps([
@@ -516,6 +522,11 @@ jax_multiplatform_test(
     name = "pjit_test",
     srcs = ["pjit_test.py"],
     backend_tags = {
+        "cpu": [
+            "noasan",  # Times out.
+            "nomsan",  # Times out.
+            "notsan",  # Times out.
+        ],
         "tpu": [
             "notsan",  # Times out.
             "noasan",  # Times out.
@@ -529,7 +540,7 @@ jax_multiplatform_test(
     ],
     shard_count = {
         "cpu": 10,
-        "gpu": 2,
+        "gpu": 10,
         "tpu": 5,
     },
     tags = ["multiaccelerator"],
