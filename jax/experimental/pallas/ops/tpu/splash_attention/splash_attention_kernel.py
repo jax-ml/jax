@@ -627,9 +627,9 @@ def _apply_mask_and_soft_cap(
   masks = []
   if mask_ref is not None:
     if k_in_lanes:
-      mask = mask_ref[:, k_slice]
+      mask = mask_ref[:, k_slice].astype(jnp.bool_)
     else:
-      mask = mask_ref[k_slice, :]
+      mask = mask_ref[k_slice, :].astype(jnp.bool_)
 
     masks.append(
         jnp.bitwise_or(
