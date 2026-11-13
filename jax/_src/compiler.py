@@ -269,6 +269,14 @@ def get_compile_options(
     compile_options.env_option_overrides = list(env_options_overrides.items())
 
   debug_options = compile_options.executable_build_options.debug_options
+  if not config.cpu_flush_subnormals.value:
+    if lib.jaxlib_extension_version < 526 or lib.xla_version < 91:
+      raise RuntimeError(
+          "jax_cpu_flush_subnormals=False requires jaxlib_extension_version >="
+          f" 526 and xla_version >= 91 (got {lib.jaxlib_extension_version} and"
+          f" {lib.xla_version})."
+      )
+    debug_options.xla_cpu_ftz = False
   if lib.cuda_path is not None:
     debug_options.xla_gpu_cuda_data_dir = lib.cuda_path
 

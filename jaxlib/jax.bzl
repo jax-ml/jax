@@ -202,7 +202,14 @@ def nanobind_extension(
 def py_extension(name, srcs, copts, deps, linkopts = []):
     nanobind_extension(name, srcs = srcs, copts = copts, linkopts = linkopts, deps = deps, module_name = name)
 
-ALL_BACKENDS = ["cpu", "gpu", "tpu"]
+ALL_BACKENDS = ["cpu", "cpu_subnormals", "gpu", "tpu"]
+DEFAULT_DISABLED_BACKENDS = ["cpu_subnormals"]
+BACKEND_DUT = {
+    "cpu_subnormals": "cpu",
+}
+BACKEND_FLAGS = {
+    "cpu_subnormals": ["--jax_cpu_flush_subnormals=false"],
+}
 TEST_SUITE_SUFFIX = "_tests"
 BACKEND_INDEPENDENT_TESTS = "backend_independent_tests"
 
@@ -326,27 +333,34 @@ def jax_multiplatform_test(
     env.setdefault("PYTHONWARNINGS", "error")
 
     for backend in ALL_BACKENDS:
+        dut = BACKEND_DUT.get(backend, backend)
         test_shard_count = minimal_shard_count if USE_MINIMAL_SHARD_COUNT else shard_count
         if test_shard_count == None or type(test_shard_count) == type(0):
             test_shards = test_shard_count
         else:
-            test_shards = test_shard_count.get(backend, 1)
+            test_shards = test_shard_count.get(backend, test_shard_count.get(dut, 1))
         test_args = list(args) + [
-            "--jax_test_dut=" + backend,
-            "--jax_platform_name=" + backend,
-        ]
-        test_args += backend_variant_args.get(backend, [])
-        test_tags = list(tags) + ["jax_test_%s" % backend] + backend_tags.get(backend, [])
-        if enable_backends != None and backend not in enable_backends and not any([config.startswith(backend) for config in enable_configs]):
+            "--jax_test_dut=" + dut,
+            "--jax_platform_name=" + dut,
+        ] + BACKEND_FLAGS.get(backend, [])
+        test_args += backend_variant_args.get(backend, backend_variant_args.get(dut, []))
+        test_tags = list(tags) + ["jax_test_%s" % backend] + backend_tags.get(backend, backend_tags.get(dut, []))
+        if backend in DEFAULT_DISABLED_BACKENDS:
+            if backend not in enable_configs and (enable_backends == None or backend not in enable_backends):
+                test_tags.append("manual")
+        elif enable_backends != None and backend not in enable_backends and not any([config.startswith(backend) for config in enable_configs]):
             test_tags.append("manual")
+        if disable_configs != None and backend in disable_configs and backend not in enable_configs:
+            if "manual" not in test_tags:
+                test_tags.append("manual")
         test_deps = _cpu_test_deps() + _get_jax_test_deps([
             "//jax",
             "//jax/_src:test_util",
-        ] + deps + backend_deps.get(backend, []))
-        if backend == "gpu":
+        ] + deps + backend_deps.get(backend, backend_deps.get(dut, [])))
+        if dut == "gpu":
             test_deps += _gpu_test_deps()
             test_tags += tf_cuda_tests_tags()
-        elif backend == "tpu":
+        elif dut == "tpu":
             test_deps += ["@pypi//libtpu"]
         _py_test(
             name = name + "_" + backend,
@@ -375,7 +389,7 @@ def get_test_suite_list(paths, backends = []):
     """
     test_suite_list = []
     if not backends:
-        backends = ALL_BACKENDS
+        backends = [b for b in ALL_BACKENDS if b not in DEFAULT_DISABLED_BACKENDS]
     for path in paths:
         for backend in backends:
             test_suite_list.append("//{}:{}{}".format(path, backend, TEST_SUITE_SUFFIX))
@@ -391,9 +405,11 @@ def jax_generate_backend_suites(backends = []):
     if not backends:
         backends = ALL_BACKENDS
     for backend in backends:
+        suite_tags = ["jax_test_%s" % backend]
+        suite_tags.append("manual" if backend in DEFAULT_DISABLED_BACKENDS else "-manual")
         native.test_suite(
             name = backend + TEST_SUITE_SUFFIX,
-            tags = ["jax_test_%s" % backend, "-manual"],
+            tags = suite_tags,
             visibility = jax_visibility(backend + TEST_SUITE_SUFFIX),
         )
     native.test_suite(
