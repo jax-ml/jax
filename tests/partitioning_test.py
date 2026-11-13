@@ -2402,5 +2402,110 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
           a, jnp.array([0, 1], dtype=np.int32), full_upd, full_dnums,
           mode='fill')).lower(x)
 
+  @parameterized.parameters(
+      ((4, 4), P('x', None), 1, 3),
+      ((4, 4), P('x', None), 0, 3),
+      ((4, 4), P('x', 'y'), -1, 2),
+      ((4, 4), P('x', 'y'), -1, 3),
+      ((2, 4, 2), P('x', 'y', None), 1, 3),
+      ((16,), P(('x', 'y')), 0, 5),
+      ((16,), P(('y', 'x')), -1, 6),
+  )
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_approx_top_k(self, shape, spec, axis, k, mesh):
+    vals = np.array(
+        [3, 14, 9, 0, 2, 11, 5, 1, 8, 15, 6, 7, 12, 4, 13, 10],
+        dtype=np.float32,
+    ).reshape(shape)
+    x = jax.device_put(vals, spec)
+
+    @jax.jit
+    def f(a):
+      max_v, max_i = lax.approx_max_k(a, k=k, reduction_dimension=axis)
+      min_v, min_i = lax.approx_min_k(a, k=k, reduction_dimension=axis)
+      return max_v, max_i, min_v, min_i
+
+    with config.jax_partitioning(False):
+      expected = f(x)
+
+    for out, exp in zip(f(x), expected):
+      self.assertEqual(out.sharding, exp.sharding)
+      self.assertArraysEqual(out, exp)
+
+    w_shape = [1] * len(shape)
+    w_shape[axis] = k
+    w = np.arange(1, k + 1, dtype=np.float32).reshape(w_shape)
+
+    def loss(a):
+      max_v, _ = lax.approx_max_k(a, k=k, reduction_dimension=axis)
+      min_v, _ = lax.approx_min_k(a, k=k, reduction_dimension=axis)
+      return ((max_v - 2 * min_v) * w).sum()
+
+    exp_g = jax.grad(loss)(vals)
+    with config.jax_partitioning(False):
+      sdy_g = jax.jit(jax.grad(loss))(x)
+    self.assertEqual(sdy_g.sharding, x.sharding)
+    self.assertArraysEqual(sdy_g, exp_g)
+
+    @jax.jit
+    def step_aux(a):
+      return jax.value_and_grad(
+          lambda z: (
+              (z * z).sum(),
+              lax.approx_max_k(z, k=k, reduction_dimension=axis)[0],
+          ),
+          has_aux=True)(a)
+
+    (_, aux), vag_g = step_aux(x)
+    self.assertEqual(aux.sharding, expected[0].sharding)
+    self.assertEqual(vag_g.sharding, x.sharding)
+    self.assertArraysEqual(vag_g, 2 * vals)
+
+    if x.sharding.spec.partitions[axis % len(shape)] is None:
+      out_g = jax.jit(jax.grad(loss))(x)
+      self.assertEqual(out_g.sharding, x.sharding)
+      self.assertArraysEqual(out_g, exp_g)
+    else:
+      with self.assertRaises(NotImplementedError):
+        jax.jit(jax.grad(loss)).lower(x)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_approx_top_k_partial_reduce(self, mesh):
+    big = jax.device_put(
+        np.sin(np.arange(1, 2049, dtype=np.float32)).reshape(2, 1024),
+        P(None, ('x', 'y')))
+    f10 = jax.jit(lambda a: lax.approx_max_k(a, k=10))
+    with config.jax_partitioning(False):
+      exp_v, exp_i = f10(big)
+    out_v, out_i = f10(big)
+    self.assertArraysEqual(out_v, exp_v)
+    self.assertArraysEqual(out_i, exp_i)
+
+    # k=200 > per-shard cand_size=128 (shard_size=256, N=1024).
+    v200, i200 = jax.jit(lambda a: lax.approx_max_k(a, k=200))(big)
+    self.assertEqual(v200.shape, (2, 200))
+    self.assertEqual(i200.shape, (2, 200))
+
+    # k=400 > shard_size=256 with cand_size >= shard_size (exact branch).
+    f400 = jax.jit(lambda a: lax.approx_max_k(a, k=400, recall_target=0.5))
+    self.assertNotIn(
+        'PartialReduce',
+        f400.trace(big).lower(lowering_platforms=('tpu',)).as_text('hlo'))
+    with config.jax_partitioning(False):
+      exp400_v, exp400_i = f400(big)
+    out400_v, out400_i = f400(big)
+    self.assertArraysEqual(out400_v, exp400_v)
+    self.assertArraysEqual(out400_i, exp400_i)
+
+    # num_shards * cand_size (4 * 128 = 512) < k=600 uses exact branch.
+    f600 = jax.jit(lambda a: lax.approx_max_k(a, k=600, recall_target=0.1))
+    self.assertNotIn(
+        'PartialReduce',
+        f600.trace(big).lower(lowering_platforms=('tpu',)).as_text('hlo'))
+    exp600_v, exp600_i = lax.top_k(big, k=600)
+    out600_v, out600_i = f600(big)
+    self.assertArraysEqual(out600_v, exp600_v)
+    self.assertArraysEqual(out600_i, exp600_i)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
