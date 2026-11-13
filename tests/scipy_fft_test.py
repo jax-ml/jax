@@ -101,6 +101,8 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+    x, = args_maker()
+    self.assertEqual(jnp_fn(x).real.dtype, jnp.fft.fft(x).real.dtype)
 
   @jtu.sample_product(
     [dict(shape=shape, axes=axes, s=s)
