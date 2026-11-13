@@ -565,6 +565,7 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src:hypothesis_test_util",
         "//jax/_src/pallas:pallas_test_util",
+        "//jax/experimental:layout",
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",

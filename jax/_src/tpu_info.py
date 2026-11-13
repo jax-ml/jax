@@ -279,6 +279,10 @@ class TpuInfo:
     Note that this is a heurustic and depends on the settings of the XLA flags.
     """
     bitwidth = dtypes.itemsize_bits(dtype)
+    if bitwidth == 6:
+      packing = 16 if self.generation >= 5 else 4
+    else:
+      packing = 32 // bitwidth
     if self.generation < 7:
       # Caveat: before TPU7x, by default XLA does not use large 2nd minor tiling
       # but it can be enabled by setting the flag
@@ -287,10 +291,10 @@ class TpuInfo:
         return self.num_sublanes
       else:
         # Large 2nd minor tiling is enabled for other types.
-        return self.num_sublanes * (32 // bitwidth)
+        return self.num_sublanes * packing
     # XLA allows large 2nd minor tiling by default starting with TPU7x.
     if self.generation == 7 or self.generation == 8:
-      return self.num_sublanes * (32 // bitwidth)
+      return self.num_sublanes * packing
     raise NotImplementedError("TPU generation is not supported")
 
 
@@ -671,6 +675,16 @@ def infer_tiling(
     return (None,) * len(shape)
   if ty.dtype == dtypes.dtype("int4"):
     packing = 8
+  elif ty.dtype in (
+      dtypes.dtype("float6_e3m2fn"),
+      dtypes.dtype("float6_e2m3fn"),
+  ):
+    try:
+      packing = 16 if get_tpu_info().generation >= 5 else 4
+    except (ValueError, RuntimeError):
+      # When no TPU device or abstract mesh is active (e.g. CPU interpret mode),
+      # fall back to TPUv5+ 6-bit sub-byte packing (16).
+      packing = 16
   else:
     packing = 4 // ty.dtype.itemsize
 
