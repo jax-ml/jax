@@ -23,6 +23,7 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax import numpy as jnp
+import jax.scipy as jsp
 from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -245,6 +246,17 @@ class FftTest(jtu.JaxTestCase):
     matrix = build_matrix(func, 4)
     matrix2 = build_matrix(func_transpose, 4).T
     self.assertAllClose(matrix, matrix2)
+
+  def testJitGradIrfftAfterSolveTriangular(self):
+    # regression test for https://github.com/jax-ml/jax/issues/42548
+    a = jnp.array([[2., 1.], [0., 3.]])
+    x = jnp.array([[1., 2.], [3., 4.]])
+
+    def f(x):
+      y = jsp.linalg.solve_triangular(a, x, lower=False)
+      return jnp.sum(jnp.fft.irfft(y))
+
+    self.assertAllClose(jax.jit(jax.grad(f))(x), jax.grad(f)(x))
 
   @jtu.sample_product(
     inverse=[False, True],
