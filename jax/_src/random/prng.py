@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from functools import partial, reduce
+import contextlib
 import math
 from typing import Any, NamedTuple
 
@@ -26,8 +27,10 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import ffi
+from jax._src import mesh as mesh_lib
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
+from jax._src import shard_map
 from jax._src.sharding import Sharding
 from jax._src import source_info_util
 from jax._src import tree_util
@@ -654,18 +657,34 @@ def _random_split_sharding_rule(keys_aval, *, shape, out_sharding):
     return out_s
   if keys_aval.sharding.mesh.empty:
     return core.get_cur_mesh_sharding()
-  new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
-  return keys_aval.sharding.update(spec=new_spec)
+  return keys_aval.sharding
+
+def _random_ur_rule(prim, *avals, out_sharding=None, **kwargs):
+  del kwargs
+  if any(a.sharding.spec.unreduced or a.mat.unreduced for a in avals):
+    raise core.ShardingTypeError(
+        f'{prim.name} cannot accept inputs that are unreduced. Got {avals}')
+  if out_sharding is not None and out_sharding.spec.unreduced:
+    raise NotImplementedError(
+        f'unreduced rule for {prim.name} is not implemented.')
+  if out_sharding is not None:
+    return frozenset(), out_sharding.spec.reduced, None
+  reduced = lax.default_nary_reduced_rule(*avals) if avals else frozenset()
+  return frozenset(), reduced, None
 
 def resolve_random_sharding(prim, sh_rule, *avals, out_sharding, **kwargs):
+  ur_rule = partial(_random_ur_rule, prim)
   if out_sharding is not None and out_sharding.mesh._any_axis_explicit:
     out_s = sh_rule(*avals, out_sharding=out_sharding, **kwargs)
-    lax.lax_utils.call_ur_rule(
-        prim, None, out_s, None, *avals, out_sharding=out_sharding, **kwargs)
+    unreduced, reduced, u_kind = lax.lax_utils.call_ur_rule(
+        prim, ur_rule, out_s, None, *avals, out_sharding=out_sharding, **kwargs)
+    out_s = out_s.update(
+        spec=out_s.spec.update(
+            unreduced=unreduced, reduced=reduced, unreduced_kind=u_kind))
     lax.lax_utils._check_no_collectives(prim, [out_s], avals)
     return out_s
   return lax.lax_utils.call_sharding_rule(
-      prim, sh_rule, None, None, *avals, out_sharding=out_sharding, **kwargs)
+      prim, sh_rule, ur_rule, None, *avals, out_sharding=out_sharding, **kwargs)
 
 @random_split_p.def_abstract_eval
 def random_split_abstract_eval(keys_aval, *, shape, out_sharding):
@@ -688,19 +707,67 @@ def random_split_impl_base(impl, base_arr, keys_ndim, *, shape):
   split = iterated_vmap_unary(keys_ndim, lambda k: impl.split(k, shape))
   return split(base_arr)
 
+def _explicit_axes_in_parts(mesh, parts):
+  axes = []
+  for p in parts:
+    if p is None:
+      continue
+    for a in (p if isinstance(p, tuple) else (p,)):
+      if mesh._name_to_type[a] == mesh_lib.AxisType.Explicit:
+        axes.append(a)
+  return frozenset(axes)
+
+def _lower_with_out_mesh(ctx, out_s, fn, *args, multiple_results, **kw):
+  # An explicit `out_sharding` can carry a mesh even when inputs and the
+  # ambient context have an empty mesh.
+  mesh_ctx = (
+      mesh_lib.use_abstract_mesh(out_s.mesh.abstract_mesh)
+      if not out_s.mesh.empty and mesh_lib.get_abstract_mesh().empty
+      else contextlib.nullcontext()
+  )
+  with mesh_ctx:
+    lowering = mlir.lower_fun(fn, multiple_results=multiple_results)
+    return mlir.delegate_lowering(ctx, lowering, *args, **kw)
+
 def random_split_lowering(ctx, keys, *, shape, out_sharding):
   aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   impl = aval.dtype._impl
   out_s = out_aval.sharding
-  trail_s = NamedSharding(out_s.mesh, P(*out_s.spec.partitions[aval.ndim:]))
-  split = iterated_vmap_unary(
-      aval.ndim,
-      lambda k: _call_impl_split(impl, k, shape, out_sharding=trail_s))
-  split_lowering = mlir.lower_fun(split, multiple_results=False)
+  lead_parts = out_s.spec.partitions[:aval.ndim]
+  trail_parts = out_s.spec.partitions[aval.ndim:]
+  lead_axes = (
+      _explicit_axes_in_parts(out_s.mesh, lead_parts)
+      if aval.ndim and (impl.tag in ('rbg', 'urbg') or not impl.supports_out_sharding)
+      else frozenset()
+  )
+  if lead_axes:
+    key_pad = (None,) * len(impl.key_shape)
+    trail_pad = (None,) * len(trail_parts)
+    def _per_key_shard(local_k):
+      local_trail_s = NamedSharding(
+          mesh_lib.get_abstract_mesh(), P(*trail_parts))
+      fn = iterated_vmap_unary(
+          aval.ndim,
+          lambda k: _call_impl_split(impl, k, shape, out_sharding=local_trail_s))
+      return fn(local_k)
+    split = shard_map.shard_map(
+        _per_key_shard,
+        mesh=out_s.mesh,
+        in_specs=P(*lead_parts, *key_pad),
+        out_specs=P(*lead_parts, *trail_pad, *key_pad),
+        axis_names=lead_axes,
+        check_vma=False,
+    )
+  else:
+    trail_s = NamedSharding(out_s.mesh, P(*trail_parts))
+    split = iterated_vmap_unary(
+        aval.ndim,
+        lambda k: _call_impl_split(impl, k, shape, out_sharding=trail_s))
   phys_in = core.physical_aval(aval).update(manual_axis_type=core.empty_mat)
-  return mlir.delegate_lowering(
-      ctx, split_lowering, keys,
+  return _lower_with_out_mesh(
+      ctx, out_s, split, keys,
+      multiple_results=False,
       avals_in=[phys_in],
       avals_out=map(core.physical_aval, ctx.avals_out))
 
@@ -966,15 +1033,42 @@ def random_bits_lowering(
   out_aval, *_ = ctx.avals_out
   impl = aval.dtype._impl
   out_s = out_aval.sharding
-  trail_s = NamedSharding(out_s.mesh, P(*out_s.spec.partitions[aval.ndim:]))
-  bits = iterated_vmap_unary(
-      aval.ndim,
-      lambda k: _call_impl_random_bits(
-          impl, k, bit_width, shape, num_streams, out_sharding=trail_s))
-  bits_lowering = mlir.lower_fun(bits, multiple_results=True)
+  lead_parts = out_s.spec.partitions[:aval.ndim]
+  trail_parts = out_s.spec.partitions[aval.ndim:]
+  lead_axes = (
+      _explicit_axes_in_parts(out_s.mesh, lead_parts)
+      if aval.ndim and (impl.tag in ('rbg', 'urbg') or not impl.supports_out_sharding)
+      else frozenset()
+  )
+  if lead_axes:
+    key_pad = (None,) * len(impl.key_shape)
+    trail_pad = (None,) * len(trail_parts)
+    def _per_key_shard(local_k):
+      local_trail_s = NamedSharding(
+          mesh_lib.get_abstract_mesh(), P(*trail_parts))
+      fn = iterated_vmap_unary(
+          aval.ndim,
+          lambda k: _call_impl_random_bits(
+              impl, k, bit_width, shape, num_streams,
+              out_sharding=local_trail_s))
+      return fn(local_k)
+    bits = shard_map.shard_map(
+        _per_key_shard,
+        mesh=out_s.mesh,
+        in_specs=P(*lead_parts, *key_pad),
+        out_specs=(P(*lead_parts, *trail_pad),) * num_streams,
+        axis_names=lead_axes,
+        check_vma=False,
+    )
+  else:
+    trail_s = NamedSharding(out_s.mesh, P(*trail_parts))
+    bits = iterated_vmap_unary(
+        aval.ndim,
+        lambda k: _call_impl_random_bits(
+            impl, k, bit_width, shape, num_streams, out_sharding=trail_s))
   phys_in = core.physical_aval(aval).update(manual_axis_type=core.empty_mat)
-  return mlir.delegate_lowering(
-      ctx, bits_lowering, keys, avals_in=[phys_in])
+  return _lower_with_out_mesh(
+      ctx, out_s, bits, keys, multiple_results=True, avals_in=[phys_in])
 
 mlir.register_lowering(
     random_bits_p, random_bits_lowering, shard_map_passthrough=True
@@ -1120,7 +1214,12 @@ def iota_2x32_shape_abstract_eval(*, shape, out_sharding):
   sharding = (
       core.get_cur_mesh_sharding() if out_sharding is None else out_sharding
   )
-  lax.lax_utils.call_ur_rule(iota_2x32_shape_p, None, sharding, None)
+  unreduced, reduced, u_kind = lax.lax_utils.call_ur_rule(
+      iota_2x32_shape_p, partial(_random_ur_rule, iota_2x32_shape_p),
+      sharding, None, out_sharding=out_sharding)
+  sharding = sharding.update(
+      spec=sharding.spec.update(
+          unreduced=unreduced, reduced=reduced, unreduced_kind=u_kind))
   return (core.ShapedArray(shape, np.dtype('uint32'), sharding=sharding),) * 2
 
 def bcast_iotas_to_reshaped_iota(
@@ -1181,10 +1280,14 @@ def _add_2x32(
   return hi, lo
 
 
-def _mulhi_u32_const(a: ArrayLike, c: int) -> Array:
+def _mulhi_u32_const(a: ArrayLike, c: ArrayLike) -> Array:
   # High 32 bits of `a * c` from 16-bit limbs. Avoids `lax.mulhi`, whose
   # `chlo.mulhi` lowering older PJRT plugins cannot compile.
-  c0, c1 = np.uint32(c & 0xFFFF), np.uint32(c >> 16)
+  c_u32: ArrayLike = (
+      np.uint32(c) if isinstance(c, (int, np.integer))
+      else lax.convert_element_type(c, np.uint32))
+  c0 = lax.bitwise_and(c_u32, np.uint32(0xFFFF))
+  c1 = lax.shift_right_logical(c_u32, np.uint32(16))
   a0 = lax.bitwise_and(a, np.uint32(0xFFFF))
   a1 = lax.shift_right_logical(a, np.uint32(16))
   p00, p01 = lax.mul(a0, c0), lax.mul(a0, c1)
@@ -1196,14 +1299,22 @@ def _mulhi_u32_const(a: ArrayLike, c: int) -> Array:
 
 
 def _mul_2x32_const(
-    a_hi: ArrayLike, a_lo: ArrayLike, c: int
+    a_hi: ArrayLike, a_lo: ArrayLike, c: core.DimSize
 ) -> tuple[Array, Array]:
-  c &= (1 << 64) - 1
-  c_lo = np.uint32(c & 0xFFFFFFFF)
-  c_hi = np.uint32(c >> 32)
+  if core.is_constant_dim(c):
+    c_int = int(c) & ((1 << 64) - 1)
+    c_lo: ArrayLike = np.uint32(c_int & 0xFFFFFFFF)
+    c_hi: ArrayLike = np.uint32(c_int >> 32)
+    has_c_hi = int(c_int >> 32) != 0
+  else:
+    c_u64 = lax.convert_element_type(core.dimension_as_value(c), np.uint64)
+    c_lo = lax.convert_element_type(c_u64, np.uint32)
+    c_hi = lax.convert_element_type(
+        lax.shift_right_logical(c_u64, np.uint64(32)), np.uint32)
+    has_c_hi = True
   lo = lax.mul(a_lo, c_lo)
-  hi = lax.add(_mulhi_u32_const(a_lo, int(c_lo)), lax.mul(a_hi, c_lo))
-  if c_hi != 0:
+  hi = lax.add(_mulhi_u32_const(a_lo, c_lo), lax.mul(a_hi, c_lo))
+  if has_c_hi:
     hi = lax.add(hi, lax.mul(a_lo, c_hi))
   return hi, lo
 
@@ -1215,7 +1326,7 @@ def _per_shard_iota_2x32(
   terms = []
   for d, (local_d, shard_idx) in enumerate(zip(local_shape, shard_indices)):
     stride_d = math.prod(global_shape[d + 1:])
-    if local_d < (1 << 32):
+    if core.is_constant_dim(local_d) and local_d < (1 << 32):
       i_hi = lax.full((local_d,), 0, np.uint32)
       i_lo = lax.iota(np.uint32, local_d)
     else:

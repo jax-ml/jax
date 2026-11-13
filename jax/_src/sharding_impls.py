@@ -822,12 +822,11 @@ def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
   if isinstance(phys_sharding, NamedSharding):
     elt_aval = core.physical_element_aval(dtype)
     phys_shape = core.physical_shape(logical_shape, dtype)
-    if len(phys_sharding.spec) < len(phys_shape):
-      phys_spec = (*phys_sharding.spec,
-                   *[None] * (len(phys_shape) - len(phys_sharding.spec)))
-    else:
-      phys_spec = phys_sharding.spec
-    return phys_sharding.update(spec=phys_spec[:-elt_aval.ndim])
+    parts = phys_sharding.spec.partitions
+    if len(parts) < len(phys_shape):
+      parts = (*parts, *(None,) * (len(phys_shape) - len(parts)))
+    return phys_sharding.update(
+        spec=phys_sharding.spec.update(partitions=parts[:-elt_aval.ndim]))
   elif phys_sharding.num_devices == 1:
     return phys_sharding
   else:

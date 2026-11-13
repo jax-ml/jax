@@ -11449,8 +11449,22 @@ rng_bit_generator_p.def_abstract_eval(
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
             _rng_bit_generator_weak_type_rule, _rng_bit_generator_sharding_rule,
             _rng_bit_generator_vma_rule, None, None))
-mlir.register_lowering(rng_bit_generator_p,
-                       _rng_bit_generator_lowering)
+
+def _rng_bit_generator_collective_rule(in_avals, out_avals, **params):
+  del params
+  key_aval, = in_avals
+  _, out_vals_aval = out_avals
+  if (any(p is not None for p in key_aval.sharding.spec.partitions) or
+      any(p is not None for p in out_vals_aval.sharding.spec.partitions)):
+    raise NotImplementedError(
+        "rng_bit_generator with sharded inputs or outputs is not supported"
+        " under jax_partitioning.")
+  return mlir.PartitioningRule(per_shard_params={'out_sharding': None})
+
+mlir.register_lowering(
+    rng_bit_generator_p,
+    _rng_bit_generator_lowering,
+    shard_map_collective_rule=_rng_bit_generator_collective_rule)
 
 
 def _array_copy(arr: ArrayLike) -> Array:

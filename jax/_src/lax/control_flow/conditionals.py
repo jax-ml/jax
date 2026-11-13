@@ -1380,4 +1380,5 @@ def _platform_index_lowering(ctx: mlir.LoweringRuleContext,
     f"platform_index(platforms={platforms})",
     platform_rules, default_rule, effects.no_effects)
 
-mlir.register_lowering(platform_index_p, _platform_index_lowering)
+mlir.register_lowering(
+    platform_index_p, _platform_index_lowering, shard_map_passthrough=True)
