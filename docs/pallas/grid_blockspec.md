@@ -2,42 +2,43 @@
 
 # Grids and BlockSpecs
 
-<!--* freshness: { reviewed: '2026-10-22' } *-->
+<!--* freshness: { reviewed: '2026-11-11' } *-->
 
 (pallas_grid)=
 ## `grid`, a.k.a. kernels in a loop
 
-When using {func}`jax.experimental.pallas.pallas_call` the kernel function
-is executed multiple times on different inputs, as specified via the `grid`
-argument to `pallas_call`. Conceptually:
+When pipelining subproblems inside a Pallas kernel—via `pltpu.emit_pipeline` on
+TPU (inside {func}`jax.experimental.pallas.kernel`) or `plgpu.emit_pipeline` on
+Mosaic GPU (inside `plgpu.kernel`)—the pipeline body function is executed
+multiple times on different slices of the inputs and outputs, as specified via
+the `grid` argument. Conceptually, on TPU:
 ```python
-pl.pallas_call(some_kernel, grid=(n,))(...)
+pltpu.emit_pipeline(some_body, grid=(n,), ...)(...)
 ```
 maps to
 ```python
 for i in range(n):
-  some_kernel(...)
+  some_body(...)
 ```
+(and analogously `plgpu.emit_pipeline(some_body, grid=(n,), ...)` on GPU).
 Grids can be generalized to be multi-dimensional, corresponding to nested
 loops. For example,
 
 ```python
-pl.pallas_call(some_kernel, grid=(n, m))(...)
+pltpu.emit_pipeline(some_body, grid=(n, m), ...)(...)
 ```
 is equivalent to
 ```python
 for i in range(n):
   for j in range(m):
-    some_kernel(...)
+    some_body(...)
 ```
 This generalizes to any tuple of integers (a length `d` grid will correspond
 to `d` nested loops).
-The kernel is executed as many times
-as `prod(grid)`.
-The default grid value `()` results in one
-kernel invocation.
+The pipeline body is executed as many times as `prod(grid)`.
+The default grid value `()` results in one invocation.
 Each of these invocations is referred to as a "program".
-To access which program (i.e. which element of the grid) the kernel is currently
+To access which program (i.e. which element of the grid) the body is currently
 executing, we use {func}`jax.experimental.pallas.program_id`.
 For example, for invocation `(1, 2)`, `program_id(axis=0)` returns `1` and
 `program_id(axis=1)` returns `2`.
@@ -68,8 +69,9 @@ This is provided via {class}`jax.experimental.pallas.BlockSpec` objects.
 A visualization of a `BlockSpec`
 </center>
 
-`BlockSpec`s are provided to `pallas_call` via the
-`in_specs` and `out_specs`, one for each input and output respectively.
+`BlockSpec`s are provided to `emit_pipeline` (`pltpu.emit_pipeline` on TPU or
+`plgpu.emit_pipeline` on Mosaic GPU) via `in_specs` and `out_specs`, one for
+each pipelined input and output respectively.
 
 First, we discuss the semantics of `BlockSpec` when
 `indexing_mode == pl.Blocked()`.
@@ -92,7 +94,7 @@ Not all block shapes are supported.
 
   * On GPU, when using the Mosaic GPU backend, the size of the blocks is
     unrestricted. However, due to hardware limitations, the size of the minormost
-    array dimension must by such that it is a multiple of 16 bytes. For example,
+    array dimension must be such that it is a multiple of 16 bytes. For example,
     it must be a multiple of 8 if the input is `jnp.float16`.
 ```
 
@@ -107,11 +109,13 @@ be depended upon. Note that at least one of the
 elements in each block must be within bounds.
 
 More precisely, the slices for each axis of the input `x` of
-shape `x_shape` are computed as in the function `slice_for_invocation`
+shape `x_shape` are computed as in the function `slices_for_invocation`
 below:
 
 ```python
 >>> import jax
+>>> import jax.numpy as jnp
+>>> import numpy as np
 >>> from jax.experimental import pallas as pl
 >>> def slices_for_invocation(x_shape: tuple[int, ...],
 ...                           x_spec: pl.BlockSpec,
@@ -155,16 +159,35 @@ For example:
 
 ```
 
-The function `show_program_ids` defined below uses Pallas to show the
-invocation indices. The `iota_2D_kernel` will fill each output block
-with a decimal number where the first digit represents the invocation
-index over the first axis, and the second the invocation index
-over the second axis:
+On accelerator hardware, `grid`, `in_specs`, and `out_specs` are passed to
+`pltpu.emit_pipeline` inside `pl.kernel` (with TPU-aligned block shapes such as
+`(8, 128)`):
+
+```python
+@pl.kernel(out_type=jax.ShapeDtypeStruct((32, 256), jnp.float32), mesh=mesh)
+def tiled_kernel(x_hbm_ref, o_hbm_ref):
+  def body(x_vmem_ref, o_vmem_ref):
+    o_vmem_ref[...] = x_vmem_ref[...] + 1.0
+
+  pltpu.emit_pipeline(
+      body,
+      grid=(4, 2),
+      in_specs=[pl.BlockSpec((8, 128), lambda i, j: (i, j))],
+      out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
+  )(x_hbm_ref, o_hbm_ref)
+```
+
+To visualize invocation indices on small toy shapes like `(2, 3)` directly on
+CPU without hardware tiling constraints, `show_program_ids` below uses Pallas's
+CPU `interpret=True` mode (`pl.pallas_call(..., interpret=True)`). Each output
+block is filled with a decimal number where the first digit represents the
+invocation index over the first axis, and the second the invocation index over
+the second axis:
 
 ```python
 >>> def show_program_ids(x_shape, block_shape, grid,
 ...                      index_map=lambda i, j: (i, j)):
-...   def program_ids_kernel(o_ref):  # Fill the output block with 10*program_id(1) + program_id(0)
+...   def program_ids_kernel(o_ref):  # Fill block with 10*program_id(0) + program_id(1)
 ...     axes = 0
 ...     for axis in range(len(grid)):
 ...       axes += pl.program_id(axis) * 10**(len(grid) - 1 - axis)
@@ -240,7 +263,7 @@ A `None` value appearing as a dimension value in the `block_shape` behaves
 as the value `1`, except that the corresponding
 block axis is squeezed (you could also pass in `pl.Squeezed()` instead of
 `None`). In the example below, observe that the
-shape of the `o_ref` is (2,) when the block shape was specified as
+shape of `o_ref` is `(2,)` when the block shape was specified as
 `(None, 2)` (the leading dimension was squeezed).
 
 ```python
@@ -289,7 +312,7 @@ equivalent to passing in a `pl.Blocked(block_size)` object instead, e.g.
 `(pl.Blocked(4), pl.Blocked(8))`. Blocked indexing mode means the indices
 returned by `index_map` are *block indices*. We can pass in objects other than
 `pl.Blocked` to change the semantics of `index_map`, most notably,
-`pl.Element(block_size)`..
+`pl.Element(block_size)`.
 When using the `pl.Element` indexing mode the values returned by the
 index map function are used directly as the array indices, without first
 scaling them by the block size.
