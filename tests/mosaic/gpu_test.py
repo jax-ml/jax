@@ -4794,6 +4794,25 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(y[:, 0, :], x[:, 0, :])
     np.testing.assert_array_equal(y[:, 1, :], 0.0)
 
+  def test_tma_load_oob_slice_with_promise_in_bounds_raises(self):
+    src_shape = (64, 1, 64)
+    dst_shape = (64, 2, 64)
+    def kernel(ctx: launch_context.LaunchContext, src, dst, smem):
+      del dst
+      tmp, barrier = smem
+      ctx.async_copy(
+          src_ref=src, dst_ref=tmp, swizzle=None, barrier=barrier,
+          gmem_slice=(slice(None), slice(0, 2), slice(None)),
+          oob_mode=mgpu.OOBFillMode.PROMISE_IN_BOUNDS,
+      )
+    in_shape = jax.ShapeDtypeStruct(src_shape, jnp.float32)
+    out_shape = jax.ShapeDtypeStruct(dst_shape, jnp.float32)
+    smem = (out_shape, mgpu.Barrier(1))
+    with self.assertRaisesRegex(IndexError, "out of bounds"):
+      mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), in_shape, out_shape, smem
+      )
+
   def test_tma_load_unrecomputable_peer_without_num_peers_raises(self):
     # A block-derived peer id can't be replayed on the host and, without a
     # multi-device mesh, num_peers == 0, so the per-peer descriptor table
