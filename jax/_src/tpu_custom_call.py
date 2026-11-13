@@ -24,6 +24,8 @@ import enum
 import io
 import json
 import logging
+import os
+import sys
 from typing import Any, TypedDict
 
 from jax._src import api
@@ -502,6 +504,47 @@ mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
                        platform="tpu")
 
 
+def _make_paths_relative_to_sys_path(module_op: ir.Operation) -> None:
+  """Strips the longest `sys.path` prefix from file locations in `module_op`.
+
+  This keeps the serialized kernel independent of where the code that built it
+  is installed, e.g. /tmp/x/pkg/mod.py becomes pkg/mod.py.
+  """
+  roots = tuple(os.path.abspath(p) + os.sep for p in sys.path)
+  memo: dict[ir.Attribute, ir.Location] = {}
+
+  def canonicalize(loc: ir.Location) -> ir.Location:
+    if (new_loc := memo.get(loc.attr)) is not None:
+      return new_loc
+    new_loc = loc
+    if isinstance(loc, ir.FileLineColLoc):
+      f = loc.filename
+      if root := max((r for r in roots if f.startswith(r)), key=len, default=""):
+        new_loc = ir.FileLineColLoc.get(f[len(root):], loc.start_line,
+                                        loc.start_col, loc.end_line,
+                                        loc.end_col)
+    elif isinstance(loc, ir.NameLoc):
+      new_loc = ir.NameLoc.get(loc.name_str, canonicalize(loc.child_loc))
+    elif isinstance(loc, ir.CallSiteLoc):
+      new_loc = ir.CallSiteLoc.get(canonicalize(loc.callee),
+                                   [canonicalize(loc.caller)])
+    elif isinstance(loc, ir.FusedLoc):
+      locs = [canonicalize(l) for l in loc.locations]  # pyrefly: ignore[bad-argument-type]
+      new_loc = ir.Location.fused(locs, loc.metadata)
+    memo[loc.attr] = new_loc
+    return new_loc
+
+  def visit(op: ir.Operation) -> ir.WalkResult:
+    op.location = canonicalize(op.location)
+    for region in op.regions:
+      for block in region:
+        for arg in block.arguments:
+          arg.set_location(canonicalize(arg.location))
+    return ir.WalkResult.ADVANCE
+
+  module_op.walk(visit)
+
+
 def _lower_mosaic_module_to_asm(
     module: ir.Module,
     *,
@@ -526,6 +569,7 @@ def _lower_mosaic_module_to_asm(
       )
       pipeline.enable_verifier(config.enable_checks.value)
       pipeline.run(module_op)
+      _make_paths_relative_to_sys_path(module_op)
       if unzip_debug_locations and hasattr(
           tpu, "private_unzip_debug_locations"
       ):
