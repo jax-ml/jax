@@ -393,8 +393,8 @@ class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.product(
       axis=[0, 1, 2],
-      in_shape=[(2, 29, 206), (12, 28), (12,)],
-      reduce_func = [jnp.argmax, jnp.argmin],
+      in_shape=[(2, 29, 206), (12, 28), (12,), (300,)],
+      reduce_func=[jnp.argmax, jnp.argmin],
       keepdims=[False, True],
   )
   def test_reduce_index(self, axis, in_shape, reduce_func, keepdims):
