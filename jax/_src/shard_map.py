@@ -1314,10 +1314,14 @@ def _run_shmap(f, mesh, manual_axes, args, mats, check_vma):
     outs, outs_mat = ans.map(trace.to_val_mat_pair).unzip2()
   return outs, out_specs, list(outs_mat)
 
+@util.cache(max_size=4096, trace_context_in_key=False)
+def _eager_jit(f: HashablePartial, out_shardings=None):
+  return api.jit(f, out_shardings=out_shardings)
+
 def _unmatch_spec2(mesh, prev_manual, spec, x) -> JaxType:
   with (core.eval_context(), api.disable_jit(False),
         use_abstract_mesh(mesh.abstract_mesh)):
-    return api.jit(HashablePartial(_unmatch2, mesh, prev_manual, spec))(x)
+    return _eager_jit(HashablePartial(_unmatch2, mesh, prev_manual, spec))(x)
 
 def _unmatch2(mesh, prev_manual, spec, x):
   src = P(order_wrt_mesh(mesh, prev_manual), *spec)
@@ -1329,7 +1333,7 @@ def _unmatch2(mesh, prev_manual, spec, x):
 def _match_spec2(mesh, prev_manual, spec, x) -> JaxType:
   with (core.eval_context(), api.disable_jit(False),
         use_abstract_mesh(mesh.abstract_mesh)):
-    return api.jit(HashablePartial(_match2, mesh, prev_manual, spec))(x)
+    return _eager_jit(HashablePartial(_match2, mesh, prev_manual, spec))(x)
 
 def _match2(mesh, prev_manual, spec, x):
   newly_manual = _spec_to_vma(spec)
@@ -1343,8 +1347,8 @@ def _unmatch_spec(mesh: Mesh, check_vma, context_mesh, manual_axes, in_spec,
                   x: JaxType) -> JaxType:
   with (core.eval_context(), api.disable_jit(False),
         use_abstract_mesh(context_mesh)):
-    return api.jit(HashablePartial(_unmatch, mesh, check_vma, in_spec,
-                                   manual_axes))(x)
+    return _eager_jit(HashablePartial(_unmatch, mesh, check_vma, in_spec,
+                                      manual_axes))(x)
 
 def _unmatch(mesh, check_vma, in_spec, manual_axes, x):
   if check_vma:
@@ -1381,8 +1385,8 @@ def _match_spec(mesh: Mesh, check_vma, manual_axes, x: JaxType,
                        dst_pspec)
   with core.eval_context(), api.disable_jit(False):
     if set(mesh.axis_names) == manual_axes:
-      return api.jit(fn, out_shardings=NamedSharding(mesh, dst_pspec))(x)
-    return api.jit(fn)(x)
+      return _eager_jit(fn, out_shardings=NamedSharding(mesh, dst_pspec))(x)
+    return _eager_jit(fn)(x)
 
 def _match(mesh, check_vma, manual_axes, src_pspec, dst_pspec, x):
   return shard_map(_rem_singleton, mesh=mesh, in_specs=src_pspec,
@@ -1449,10 +1453,14 @@ class ShardMapTrace(core.Trace):
       f = HashablePartial(
           _prim_applier, prim, self.check, tuple(params.items()), self.mesh,
           self.manual_axes, in_specs, out_specs)
+      if prim.is_high(*map(typeof, tracers), **params):
+        jit_f = api.jit(f)
+      else:
+        jit_f = _eager_jit(f)
       with (core.eval_context(), api.disable_jit(False), config.debug_nans(False),
             config.debug_infs(False), use_abstract_mesh(self.amesh),
             sharding_impls._internal_use_concrete_mesh(self.mesh)):
-        out_vals = api.jit(f)(*in_vals)
+        out_vals = jit_f(*in_vals)
       _maybe_check_special(out_vals)
     if prim.multiple_results:
       out_mat = (out_mat if isinstance(out_mat, (list, tuple))
