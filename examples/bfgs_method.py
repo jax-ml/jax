@@ -18,7 +18,6 @@ def bfgs(fun: Callable,
          verbose: bool=False,
          epsilon: float=1e-6, 
          k: int=0):
-    x_0 = jnp.asarray(x_0)
     hessian = jax.hessian(fun)(x_0)
     hessian = h2h(hessian)
     while 1:
