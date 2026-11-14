@@ -286,7 +286,6 @@ absl::StatusOr<ifrt::ArrayRef> MakeIfrtArrayFromShardsInBatch(
     auto [it, insert_happened] = host_buffer_dedup_map.emplace(
         std::make_pair(&host_buffers.back().second, insert_idx));
     if (!insert_happened) {
-      std::move(host_buffers.back().second.on_done)();
       host_buffers.pop_back();
     }
     host_buffers[it->second].first.push_back(i);
