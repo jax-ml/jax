@@ -33,6 +33,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     (logged at `WARNING` when `jax_log_compiles` is enabled). Previously this
     raised a `ValueError`.
 * Bug fixes
+  * {func}`jax.numpy.logspace` now broadcasts a non-scalar `base` against
+    `start` and `stop` and expands it along `axis`, as NumPy does. Previously
+    it returned the wrong shape or values, or raised an error.
 
 ## JAX 0.12.1 (November 18, 2026)
 

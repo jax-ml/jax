@@ -730,6 +730,14 @@ def _logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   start, stop = util.ensure_arraylike("logspace", start, stop)
   start = start.astype(computation_dtype)
   stop = stop.astype(computation_dtype)
+  if np.ndim(base) > 0:
+    # As in NumPy, a non-scalar base is broadcast with start and stop, and is
+    # then expanded along the new axis.
+    base = util.ensure_arraylike("logspace", base)
+    ndim = len(lax.broadcast_shapes(start.shape, stop.shape, base.shape))
+    start, stop, base = (lax.broadcast_to_rank(x, ndim)
+                         for x in (start, stop, base))
+    base = lax.expand_dims(base, (axis,))
   lin = linspace(start, stop, num,
                  endpoint=endpoint, retstep=False, dtype=None, axis=axis)
   sharding = util.canonicalize_device_to_sharding(device)
