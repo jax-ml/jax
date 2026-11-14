@@ -225,10 +225,10 @@ def _capture_output(fp: TextIO) -> Generator[Callable[[], str]]:
       # Python also has its own buffers, make sure everything is flushed.
       fp.flush()
       os.fsync(fp.fileno())
-      f.seek(0)
-      captured = f.read()
       os.dup2(original_fd, fp.fileno())
       os.close(original_fd)
+      f.seek(0)
+      captured = f.read()
 
 
 capture_stdout = partial(_capture_output, sys.stdout)
@@ -521,6 +521,12 @@ def is_cuda_compute_capability_equal(capability: str) -> bool:
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current == target
 
+def is_sm107f() -> bool:
+  return (
+      is_cuda_compute_capability_at_least("10.7")
+      and not is_cuda_compute_capability_at_least("11.0")
+  )
+
 def is_cuda_version_at_least(major: int, minor: int) -> bool:
   assert 0 <= major
   assert 0 <= minor < 100
@@ -558,6 +564,11 @@ class CudaArchSpecificTest:
     if not any(map(is_cuda_compute_capability_equal, ("10.0", "10.1", "11.0"))):
       # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-instructions-mma-ws
       self.skipTest("tcgen05 in int8 only works on GPU with capability sm100a/sm101a/sm110a")
+
+  def skip_unless_sm107f(self):
+    self.skip_unless_tcgen05()
+    if not is_sm107f():
+      self.skipTest("Only works on GPU with capability sm_107f.")
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""

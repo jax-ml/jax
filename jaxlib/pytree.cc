@@ -1472,6 +1472,7 @@ nb::object PyTreeDef::ToPickle() const {
 }
 
 void PyTreeDef::FromPickle(nb::object pickle) {
+  std::vector<std::pair<int, int>> expected_counts;
   for (const auto& item : nb::cast<nb::list>(pickle)) {
     auto t = nb::cast<nb::tuple>(item);
     if (t.size() != 6) {
@@ -1487,16 +1488,28 @@ void PyTreeDef::FromPickle(nb::object pickle) {
       case PyTreeKind::kDict:
       case PyTreeKind::kFrozenDict:
         node.sorted_dict_keys = nb::cast<std::vector<nb::object>>(t[2]);
+        if (node.arity < 0 ||
+            node.sorted_dict_keys.size() != static_cast<size_t>(node.arity)) {
+          throw std::invalid_argument(absl::StrFormat(
+              "Malformed PyTreeDef: dict node has arity %d, which does not "
+              "match its number of keys %d.",
+              node.arity, node.sorted_dict_keys.size()));
+        }
         break;
       case PyTreeKind::kCustom:
       case PyTreeKind::kDataclass:
         node.node_data = t[2];
         break;
-      default:
+      case PyTreeKind::kLeaf:
+      case PyTreeKind::kNone:
+      case PyTreeKind::kTuple:
+      case PyTreeKind::kList:
         if (!t[2].is_none()) {
           throw xla::XlaRuntimeError("Malformed pickled PyTreeDef");
         }
         break;
+      default:
+        throw std::invalid_argument("Malformed PyTreeDef: invalid kind.");
     }
     if (node.kind == PyTreeKind::kCustom ||
         node.kind == PyTreeKind::kDataclass) {
@@ -1506,13 +1519,44 @@ void PyTreeDef::FromPickle(nb::object pickle) {
             absl::StrCat("Unknown custom type in pickled PyTreeDef: ",
                          nb::cast<std::string_view>(nb::repr(t[3]))));
       }
+      if (node.custom->kind != node.kind) {
+        throw std::invalid_argument(
+            "Malformed PyTreeDef: custom registration kind mismatch.");
+      }
+      if (node.kind == PyTreeKind::kDataclass) {
+        if (node.arity < 0 || node.custom->data_fields.size() !=
+                                  static_cast<size_t>(node.arity)) {
+          throw std::invalid_argument(
+              "Malformed PyTreeDef: dataclass arity does not match "
+              "data_fields.");
+        }
+        if (!nb::isinstance<nb::tuple>(node.node_data) ||
+            nb::borrow<nb::tuple>(node.node_data).size() !=
+                node.custom->meta_fields.size()) {
+          throw std::invalid_argument(
+              "Malformed PyTreeDef: dataclass metadata must be a tuple "
+              "matching meta_fields.");
+        }
+      }
     } else {
       if (!t[3].is_none()) {
         throw xla::XlaRuntimeError("Malformed pickled PyTreeDef");
       }
     }
-    node.num_leaves = nb::cast<int>(t[4]);
-    node.num_nodes = nb::cast<int>(t[5]);
+    expected_counts.emplace_back(nb::cast<int>(t[4]), nb::cast<int>(t[5]));
+  }
+  SetNumLeavesAndNumNodes();
+  if (!traversal_.empty() &&
+      traversal_.back().num_nodes != static_cast<int>(traversal_.size())) {
+    throw std::invalid_argument(
+        "Malformed PyTreeDef: traversal does not form a single tree.");
+  }
+  for (size_t i = 0; i < traversal_.size(); ++i) {
+    if (traversal_[i].num_leaves != expected_counts[i].first ||
+        traversal_[i].num_nodes != expected_counts[i].second) {
+      throw std::invalid_argument(
+          "Malformed PyTreeDef: inconsistent node or leaf counts.");
+    }
   }
 }
 
@@ -2010,8 +2054,9 @@ void BuildPytreeSubmodule(nb::module_& m) {
           "Malformed pickled PyTreeDef, expected 2-tuple");
     }
     auto registry = nb::cast<nb_class_ptr<PyTreeRegistry>>(pickle[0]);
-    new (&t) PyTreeDef(registry);
-    t.FromPickle(pickle[1]);
+    PyTreeDef temp(std::move(registry));
+    temp.FromPickle(pickle[1]);
+    new (&t) PyTreeDef(std::move(temp));
   });
 
   nb::class_<SequenceKey> sequence_key(

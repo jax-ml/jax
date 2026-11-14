@@ -72,13 +72,19 @@ jax_internal_test_harnesses_visibility = []
 jax_test_util_visibility = []
 loops_visibility = []
 
+# Keys: (OS, CPU, accelerator); "none" means CPU-only.
 PLATFORM_TAGS_DICT = {
-    ("Linux", "x86_64"): ("manylinux_2_27", "x86_64"),
-    ("Linux", "aarch64"): ("manylinux_2_27", "aarch64"),
-    ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
-    ("Darwin", "x86_64"): ("macosx_11_0", "x86_64"),
-    ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
-    ("Windows", "AMD64"): ("win", "amd64"),
+    ("Linux", "x86_64", "none"): ("manylinux_2_27", "x86_64"),
+    ("Linux", "x86_64", "cuda"): ("manylinux_2_27", "x86_64"),
+    ("Linux", "x86_64", "rocm"): ("manylinux_2_27", "x86_64"),
+    # oneAPI uses libstdc++ from the glibc 2.31 sysroot.
+    ("Linux", "x86_64", "oneapi"): ("manylinux_2_31", "x86_64"),
+    ("Linux", "aarch64", "none"): ("manylinux_2_27", "aarch64"),
+    ("Linux", "aarch64", "cuda"): ("manylinux_2_27", "aarch64"),
+    ("Linux", "ppc64le", "none"): ("manylinux2014", "ppc64le"),
+    ("Darwin", "x86_64", "none"): ("macosx_11_0", "x86_64"),
+    ("Darwin", "arm64", "none"): ("macosx_11_0", "arm64"),
+    ("Windows", "AMD64", "none"): ("win", "amd64"),
 }
 
 _py_deps = {
@@ -403,7 +409,8 @@ def _get_full_wheel_name(
         platform_name,
         cpu_name,
         wheel_version,
-        py_freethreaded):
+        py_freethreaded,
+        accelerator = "none"):
     if no_abi or platform_independent:
         wheel_name_template = "{package_name}-{wheel_version}-py{major_python_version}-none-{wheel_platform_tag}.whl"
     else:
@@ -415,7 +422,7 @@ def _get_full_wheel_name(
         major_python_version = python_version[0],
         wheel_version = wheel_version,
         wheel_platform_tag = "any" if platform_independent else "_".join(
-            PLATFORM_TAGS_DICT[platform_name, cpu_name],
+            PLATFORM_TAGS_DICT[platform_name, cpu_name, accelerator],
         ),
         free_threaded_suffix = "t" if py_freethreaded.lower() == "yes" else "",
     )
@@ -425,6 +432,15 @@ def _get_source_package_name(package_name, wheel_version):
         package_name = package_name,
         wheel_version = wheel_version,
     )
+
+def _get_accelerator(attr):
+    if attr.enable_cuda:
+        return "cuda"
+    if attr.enable_rocm:
+        return "rocm"
+    if attr.enable_oneapi:
+        return "oneapi"
+    return "none"
 
 def _jax_wheel_impl(ctx):
     include_cuda_libs = ctx.attr.include_cuda_libs[BuildSettingInfo].value
@@ -479,6 +495,7 @@ def _jax_wheel_impl(ctx):
                 cpu_name = cpu,
                 wheel_version = full_wheel_version,
                 py_freethreaded = py_freethreaded,
+                accelerator = _get_accelerator(ctx.attr),
             )
             wheel_file = ctx.actions.declare_file(output_path +
                                                   "/" + wheel_name)

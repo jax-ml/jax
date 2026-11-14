@@ -15,7 +15,7 @@
 """Precision testing utilities for elementary floating-point functions."""
 
 import collections
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 import concurrent.futures
 import functools
 import math
@@ -106,6 +106,8 @@ def get_hardware_variant() -> str:
 
 def _default_ftz(dtype) -> bool:
   """Returns whether subnormals flush to zero by default for `dtype`."""
+  if jtu.device_under_test() == "gpu":
+    return False
   if dtype is not None and np.dtype(dtype) == np.float16:
     return False
   return True
@@ -187,10 +189,11 @@ def _ulp_diff_jax(computed, reference, dtype, ftz: bool = True):
       overflow threshold—either `computed = ±inf` below the threshold or finite
       `computed` (such as `±max_float`) at or above the threshold—is measured
       continuously by placing `±inf` at `±2^(emax + 1) = ±(max_float + 1 ULP)`.
-    - All other `NaN` or infinity mismatches (such as opposite-signed
-      infinities, finite `computed` for an actually infinite `reference`, or
-      infinite `computed` when `|reference| < 2^emax`) return `+inf` or `-inf`
-      according to the sign of `computed`.
+    - `NaN` mismatches (one `NaN` and one non-`NaN`) return `+inf`.
+    - All other infinity mismatches (such as opposite-signed infinities, finite
+      `computed` for an infinite `reference`, or infinite `computed` when
+      `|reference| < 2^emax`) return `+inf` if `computed > reference` and `-inf`
+      if `computed < reference`.
 
   Behavior with respect to subnormals:
     - When `ftz=False` (gradual underflow), subnormal values use the uncollapsed
@@ -234,21 +237,21 @@ def _ulp_diff_jax(computed, reference, dtype, ftz: bool = True):
   top_binade = float(np.ldexp(1.0, emax))
 
   # Check NaN and Inf conditions.
-  nan_comp = jnp.isnan(comp_f64)
-  nan_ref = jnp.isnan(ref_f64)
-  both_nan = nan_comp & nan_ref
+  computed_is_nan = jnp.isnan(comp_f64)
+  ref_is_nan = jnp.isnan(ref_f64)
+  both_nan = computed_is_nan & ref_is_nan
 
-  inf_comp = jnp.isinf(comp_f64)
+  computed_is_inf = jnp.isinf(comp_f64)
   # A reference value that overflows the target precision is treated as Inf.
-  inf_ref = jnp.isinf(ref_f64) | (jnp.abs(ref_f64) >= overflow_thresh)
-  sign_comp = jnp.signbit(comp_f64)
-  sign_ref = jnp.signbit(ref_f64)
-  same_sign = sign_comp == sign_ref
+  ref_is_inf = jnp.isinf(ref_f64) | (jnp.abs(ref_f64) >= overflow_thresh)
+  computed_is_neg = jnp.signbit(comp_f64)
+  ref_is_neg = jnp.signbit(ref_f64)
+  same_sign = computed_is_neg == ref_is_neg
 
   abs_comp = jnp.abs(comp_f64)
   abs_ref = jnp.abs(ref_f64)
 
-  both_inf = inf_comp & inf_ref
+  both_inf = computed_is_inf & ref_is_inf
   both_inf_same = both_inf & same_sign
   # When `ref` is finite in the top binade (`abs_ref >= 2^emax`) and `comp` has
   # the same sign, rounding across `overflow_thresh` (either `comp = ±inf` for
@@ -256,22 +259,15 @@ def _ulp_diff_jax(computed, reference, dtype, ftz: bool = True):
   # is measured continuously by placing `±inf` at `±2^(emax+1) = ±(max_float + 1 ULP)`.
   near_overflow = (
       ~jnp.isinf(ref_f64)
-      & ~nan_ref
-      & ~nan_comp
+      & ~ref_is_nan
+      & ~computed_is_nan
       & same_sign
       & (abs_ref >= top_binade)
   )
-  # Mismatch occurs when NaN/Inf status differs (outside near-overflow boundary
-  # rounding), or infinities have opposite signs.
-  mismatch = (
-      (nan_comp != nan_ref)
-      | ((inf_comp != inf_ref) & ~near_overflow)
-      | (both_inf & ~same_sign)
-  )
 
   comp_eff = jnp.where(
-      inf_comp & near_overflow,
-      jnp.where(sign_comp, -overflow_val, overflow_val),
+      computed_is_inf & near_overflow,
+      jnp.where(computed_is_neg, -overflow_val, overflow_val),
       comp_f64,
   )
 
@@ -309,11 +305,24 @@ def _ulp_diff_jax(computed, reference, dtype, ftz: bool = True):
   # Scale difference by ULP size; handle NaN/Inf identity and mismatches.
   signed_ulp = delta / ulp_size
   signed_ulp = jnp.where(both_nan | both_inf_same, 0.0, signed_ulp)
-  mismatch_inf = jnp.where(~sign_comp, jnp.inf, -jnp.inf)
-  return jnp.where(mismatch, mismatch_inf, signed_ulp)
+  # Return +inf on NaN disagreements, and ±inf matching sign(computed - reference)
+  # on infinity mismatches (treating overflowing references as ±inf).
+  inf_mismatch = ((computed_is_inf != ref_is_inf) & ~near_overflow) | (
+      both_inf & ~same_sign
+  )
+  inf_mismatch_val = jnp.where(
+      computed_is_inf,
+      jnp.where(computed_is_neg, -jnp.inf, jnp.inf),
+      jnp.where(ref_is_neg, jnp.inf, -jnp.inf),
+  )
+  return jnp.where(
+      computed_is_nan != ref_is_nan,
+      jnp.inf,
+      jnp.where(inf_mismatch, inf_mismatch_val, signed_ulp),
+  )
 
 
-def ulp_diff_mpmath(
+def _ulp_diff_mpmath(
     computed: np.ndarray, reference: np.ndarray, dtype, ftz: bool = True
 ) -> np.ndarray:
   """Computes signed real ULP differences `(computed - reference) / ulp(reference)` with mpmath.
@@ -350,42 +359,44 @@ def ulp_diff_mpmath(
         if isinstance(r, mpmath.mpf)
         else (mpmath.nan if np.isnan(r) else mpmath.mpf(float(r)))
     )
-    nan_comp = bool(np.isnan(c))
-    nan_ref = bool(mpmath.isnan(ref))
-    if nan_comp and nan_ref:
+    computed_is_nan = bool(np.isnan(c))
+    ref_is_nan = bool(mpmath.isnan(ref))
+    if computed_is_nan and ref_is_nan:
       return 0.0
 
-    inf_comp = bool(np.isinf(c))
-    abs_ref = abs(ref) if not nan_ref else mpmath.nan
+    computed_is_inf = bool(np.isinf(c))
+    abs_ref = abs(ref) if not ref_is_nan else mpmath.nan
     # A reference value that overflows the target precision is treated as Inf.
-    inf_ref = bool(mpmath.isinf(ref)) or (
-        not nan_ref and abs_ref >= overflow_thresh
+    ref_is_inf = bool(mpmath.isinf(ref)) or (
+        not ref_is_nan and abs_ref >= overflow_thresh
     )
 
-    sign_comp = bool(np.signbit(c))
-    sign_ref = bool(ref < 0) if not nan_ref else False
-    same_sign = sign_comp == sign_ref
+    computed_is_neg = bool(np.signbit(c))
+    ref_is_neg = bool(ref < 0) if not ref_is_nan else False
+    same_sign = computed_is_neg == ref_is_neg
 
-    if inf_comp and inf_ref and same_sign:
+    if computed_is_inf and ref_is_inf and same_sign:
       return 0.0
     near_overflow = (
         not bool(mpmath.isinf(ref))
-        and not nan_ref
-        and not nan_comp
+        and not ref_is_nan
+        and not computed_is_nan
         and same_sign
         and abs_ref >= top_binade
     )
-    # Mismatch occurs when NaN/Inf status differs (outside near-overflow boundary
-    # rounding), or infinities have opposite signs.
-    if (
-        (nan_comp != nan_ref)
-        or ((inf_comp != inf_ref) and not near_overflow)
-        or (inf_comp and inf_ref and not same_sign)
+    if computed_is_nan != ref_is_nan:
+      return math.inf
+    if ((computed_is_inf != ref_is_inf) and not near_overflow) or (
+        computed_is_inf and ref_is_inf and not same_sign
     ):
-      return float("-inf") if sign_comp else float("inf")
+      # Infinity mismatch: ±inf matching sign(computed - reference), treating
+      # overflowing references as ±inf.
+      if computed_is_inf:
+        return -math.inf if computed_is_neg else math.inf
+      return math.inf if ref_is_neg else -math.inf
 
-    if inf_comp and near_overflow:
-      mp_comp = -overflow_val if sign_comp else overflow_val
+    if computed_is_inf and near_overflow:
+      mp_comp = -overflow_val if computed_is_neg else overflow_val
     else:
       mp_comp = mpmath.mpf(c)
     abs_comp = abs(mp_comp)
@@ -485,20 +496,30 @@ def ulp_diff(
     dtype,
     ftz: bool | None = None,
 ) -> np.ndarray:
-  """Computes real float64 ULP distance between computed (in dtype) and reference."""
+  """Computes signed real float64 ULP error `(computed - reference) / ulp(reference)`.
+
+  Positive values indicate `computed > reference`; see `_ulp_diff_jax` for
+  subnormal/FTZ, overflow-boundary, and NaN/Inf mismatch conventions. For
+  `float64` or object-dtype references (such as `mpmath.mpf` arrays), evaluates
+  the error directly in `mpmath` without rounding `reference` to `float64`.
+  """
   if ftz is None:
     ftz = _default_ftz(dtype)
-  if np.dtype(dtype) == np.float64:
-    return np.abs(ulp_diff_mpmath(computed, reference, dtype, ftz=ftz))
+  dt = np.dtype(dtype)
+  ref_arr = np.asarray(reference)
+  if dt == np.float64 or ref_arr.dtype == object:
+    return _ulp_diff_mpmath(computed, ref_arr, dt, ftz=ftz)
   cpu_dev = jax.devices("cpu")[0]
   with jax.enable_x64(True), jax.default_device(cpu_dev):
-    signed_ulp = _ulp_diff_jax(
-        np.asarray(computed, dtype=dtype).astype(np.float64),
-        np.asarray(reference, dtype=np.float64),
-        dtype,
-        ftz,
+    return np.asarray(
+        _ulp_diff_jax(
+            np.asarray(computed, dtype=dt).astype(np.float64),
+            np.asarray(ref_arr, dtype=np.float64),
+            dt,
+            ftz,
+        ),
+        dtype=np.float64,
     )
-    return np.asarray(jnp.abs(signed_ulp), dtype=np.float64)
 
 
 def _flush_subnormals(x: np.ndarray, dtype) -> np.ndarray:
@@ -531,7 +552,7 @@ def eval_mpmath(mpmath_fn, *vals, dtype=None, input_ftz: bool | None = None):
   if input_ftz and dtype is not None:
     vals = tuple(
         _flush_subnormals(np.array(v, dtype=dtype), dtype).item()
-        if np.issubdtype(np.dtype(dtype), np.floating)
+        if jnp.issubdtype(dtype, jnp.floating)
         else v
         for v in vals
     )
@@ -615,7 +636,7 @@ def eval_ulp_stats(
   comp_arr = np.asarray(computed, dtype=dtype).ravel()
   if np.dtype(dtype) == np.float64:
     ref_arr = np.asarray(reference).ravel()
-    signed_ulps = ulp_diff_mpmath(comp_arr, ref_arr, dtype, ftz=ftz)
+    signed_ulps = _ulp_diff_mpmath(comp_arr, ref_arr, dtype, ftz=ftz)
     ref_f64 = np.array([float(r) for r in ref_arr], dtype=np.float64)
     cpu_dev = jax.devices("cpu")[0]
     with jax.enable_x64(True), jax.default_device(cpu_dev):
@@ -917,6 +938,7 @@ def _common_interesting_points(dtype) -> tuple[float, ...]:
       | set(range(min_exp, max_exp + 1, exp_step))
       | {
           min_exp,
+          -finfo.maxexp,
           finfo.minexp - 1,
           finfo.minexp,
           finfo.minexp + 1,
@@ -981,12 +1003,178 @@ def _with_ulp_neighbors(
   return out
 
 
+class Domain:
+  """A set of floating-point bit patterns of a given `dtype`."""
+
+  # Floating-point dtype of the values in this domain (e.g. float16, float32).
+  dtype: np.dtype
+  # Unsigned integer dtype of the same bit width, used to view bit patterns.
+  bits_dtype: np.dtype
+  # Sorted, disjoint half-open `[start, stop)` unsigned bit-pattern intervals.
+  ranges: tuple[tuple[int, int], ...]
+
+  def __init__(self, dtype, ranges: Iterable[tuple[int, int]]):
+    self.dtype = np.dtype(dtype)
+    self.bits_dtype = np.dtype(f"u{self.dtype.itemsize}")
+    limit = 1 << (self.dtype.itemsize * 8)
+    merged: list[tuple[int, int]] = []
+    for s, e in sorted((s, e) for s, e in ranges if s < e):
+      if s < 0 or e > limit:
+        raise ValueError(
+            f"Bit range ({s}, {e}) out of bounds for {self.dtype.name}."
+        )
+      if merged and s <= merged[-1][1]:
+        merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+      else:
+        merged.append((s, e))
+    if not merged:
+      raise ValueError(f"Domain contains no {self.dtype.name} bit patterns.")
+    self.ranges = tuple(merged)
+
+  @property
+  def size(self) -> int:
+    """Returns the total number of distinct bit patterns in this domain."""
+    return sum(e - s for s, e in self.ranges)
+
+  @property
+  def is_all(self) -> bool:
+    """Returns True if this domain covers all bit patterns of `self.dtype`."""
+    return self.ranges == ((0, 1 << (self.dtype.itemsize * 8)),)
+
+  def __eq__(self, other: object) -> bool:
+    return (
+        isinstance(other, Domain)
+        and self.dtype == other.dtype
+        and self.ranges == other.ranges
+    )
+
+  def __or__(self, other: "Domain") -> "Domain":
+    """Returns a `Domain` representing the union of `self` and `other`."""
+    if self.dtype != other.dtype:
+      raise ValueError(
+          f"Cannot union Domains with dtypes {self.dtype} and {other.dtype}."
+      )
+    return Domain(self.dtype, (*self.ranges, *other.ranges))
+
+  def contains(self, a: np.ndarray) -> np.ndarray:
+    """Returns a boolean mask indicating which elements of `a` are in `self`."""
+    u = np.asarray(a, dtype=self.dtype).view(self.bits_dtype)
+    return np.logical_or.reduce([(u >= s) & (u < e) for s, e in self.ranges])
+
+  def at(self, idx: np.ndarray) -> np.ndarray:
+    """Maps 0-based indices `idx` into `self.ranges` as a `self.dtype` array."""
+    idx_u = np.asarray(idx, dtype=np.uint64)
+    out = np.empty(idx_u.shape, dtype=self.bits_dtype)
+    offset = 0
+    for s, e in self.ranges:
+      n = e - s
+      lo = np.uint64(offset)
+      hi = np.uint64(offset + n - 1)
+      m = (idx_u >= lo) & (idx_u <= hi)
+      out[m] = (np.uint64(s) + (idx_u[m] - lo)).astype(self.bits_dtype)
+      offset += n
+    return out.view(self.dtype)
+
+  def sample(self, rng: np.random.RandomState, n: int) -> np.ndarray:
+    """Uniformly samples `n` values of `self.dtype` from `self.ranges`."""
+    if self.is_all:
+      return jtu.rand_fullrange(rng)((n,), self.dtype)
+    counts = np.array([e - s for s, e in self.ranges], dtype=np.float64)
+    which = rng.choice(len(self.ranges), size=n, p=counts / counts.sum())
+    out = np.empty(n, dtype=self.bits_dtype)
+    for r_idx, (s, e) in enumerate(self.ranges):
+      m = which == r_idx
+      k = rng.randint(0, np.uint64(e - s), size=int(m.sum()), dtype=np.uint64)
+      out[m] = (np.uint64(s) + k).astype(self.bits_dtype)
+    return out.view(self.dtype)
+
+  @staticmethod
+  def all(dtype) -> "Domain":
+    """Returns a `Domain` covering all bit patterns of `dtype`."""
+    dt = np.dtype(dtype)
+    return Domain(dt, [(0, 1 << (dt.itemsize * 8))])
+
+  @staticmethod
+  def interval(dtype, lo: float, hi: float) -> "Domain":
+    """Returns a `Domain` of all `dtype` floats `x` with `lo <= x <= hi`.
+
+    Includes both `-0.0` and `+0.0` whenever `0` lies in `[lo, hi]`.
+    """
+    lo, hi = float(lo), float(hi)
+    if math.isnan(lo) or math.isnan(hi) or lo > hi:
+      raise ValueError(f"Invalid interval [{lo}, {hi}]: expected lo <= hi.")
+    dt = np.dtype(dtype)
+    bits_dtype = np.dtype(f"u{dt.itemsize}")
+    fmax = float(np.finfo(dt).max)
+    to_bits = lambda x: int(np.asarray(x, dtype=dt).view(bits_dtype))
+    to_float = lambda u: float(np.asarray(u, dtype=bits_dtype).view(dt))
+    ranges = []
+    # Clamp finite bounds to [-fmax, fmax] and step by 1 ULP if rounding
+    # to `dt` stepped outside [lo, hi].
+    if hi >= 0:
+      lo_pos = np.inf if lo > fmax else max(0.0, lo)
+      hi_pos = hi if math.isinf(hi) else min(hi, fmax)
+      if lo_pos <= hi_pos:
+        u_lo = to_bits(lo_pos)
+        u_hi = to_bits(0.0 if hi_pos == 0 else hi_pos)
+        u_lo += to_float(u_lo) < lo
+        u_hi -= to_float(u_hi) > hi
+        if u_lo <= u_hi:
+          ranges.append((u_lo, u_hi + 1))
+    if lo <= 0:
+      hi_neg = -np.inf if hi < -fmax else (-0.0 if hi >= 0 else hi)
+      lo_neg = lo if math.isinf(lo) else max(lo, -fmax)
+      if lo_neg <= hi_neg:
+        u_hi = to_bits(hi_neg)
+        u_lo = to_bits(-0.0 if lo_neg == 0 else lo_neg)
+        u_hi += to_float(u_hi) > hi
+        u_lo -= to_float(u_lo) < lo
+        if u_hi <= u_lo:
+          ranges.append((u_hi, u_lo + 1))
+    return Domain(dt, ranges)
+
+  @staticmethod
+  def points(dtype, *values: float) -> "Domain":
+    """Returns a `Domain` containing specific `dtype` values."""
+    dt = np.dtype(dtype)
+    bits_dtype = np.dtype(f"u{dt.itemsize}")
+    ranges = []
+    with np.errstate(over="ignore"):
+      for v in values:
+        b = int(np.asarray(v, dtype=dt).view(bits_dtype))
+        ranges.append((b, b + 1))
+    return Domain(dt, ranges)
+
+  @staticmethod
+  def infs(dtype) -> "Domain":
+    """Returns a `Domain` containing `-inf` and `+inf` of `dtype`."""
+    return Domain.points(dtype, -np.inf, np.inf)
+
+  @staticmethod
+  def nans(dtype) -> "Domain":
+    """Returns a `Domain` containing all IEEE NaN bit patterns of `dtype`."""
+    dt = np.dtype(dtype)
+    sign = 1 << (dt.itemsize * 8 - 1)
+    bits_dtype = np.dtype(f"u{dt.itemsize}")
+    pos_inf = int(np.asarray(np.inf, dtype=dt).view(bits_dtype))
+    return Domain(dt, [(pos_inf + 1, sign), (sign + pos_inf + 1, sign << 1)])
+
+  @staticmethod
+  def infs_and_nans(dtype) -> "Domain":
+    """Returns a `Domain` containing `±inf` and all NaN bit patterns."""
+    return Domain.infs(dtype) | Domain.nans(dtype)
+
+
+DomainLike = Domain | Callable[[Any], Domain]
+
+
 def _make_interesting_samples(
     nargs: int,
     dtype,
     rng: np.random.RandomState,
     max_points: int,
     interesting_points: Sequence[Any] | None = None,
+    domains: Sequence[Domain] = (),
 ) -> tuple[np.ndarray, ...]:
   """Generates up to `max_points` test inputs at and near interesting values.
 
@@ -1014,6 +1202,8 @@ def _make_interesting_samples(
     max_points: Maximum number of test inputs to return.
     interesting_points: Optional extra test values. Each entry can be a scalar
       float or a tuple/list of `nargs` floats.
+    domains: Optional sequence of `nargs` `Domain`s restricting the generated
+      values for each argument.
 
   Returns:
     A tuple of `nargs` 1D arrays of `dtype`, each of length at most
@@ -1035,15 +1225,23 @@ def _make_interesting_samples(
     else:
       custom_scalars.append(float(item))
 
+  # Include the finite start and end values of each domain range so sampled runs
+  # probe at and within 3 ULPs of domain boundaries.
+  domains = domains or (Domain.all(dtype),) * nargs
+  for d in domains:
+    boundary_bits = [b for start, stop in d.ranges for b in (start, stop - 1)]
+    boundary_vals = np.array(boundary_bits, dtype=d.bits_dtype).view(d.dtype)
+    custom_scalars.extend(float(x) for x in boundary_vals if np.isfinite(x))
+
   # Put caller-supplied scalars first so they are kept if `max_points` is small.
   vals_1d = _with_ulp_neighbors(
       (*custom_scalars, *_common_interesting_points(dtype)),
       dtype,
       radius=3,
-      max_points=max_points if nargs == 1 else max(256, max_points // (2 * nargs)),
+      max_points=None if nargs == 1 else max(256, max_points // (2 * nargs)),
   )
   if nargs == 1:
-    return (vals_1d,)
+    return (vals_1d[domains[0].contains(vals_1d)][:max_points],)
 
   finfo = np.finfo(dtype)
   fmax = float(finfo.max)
@@ -1093,12 +1291,19 @@ def _make_interesting_samples(
           coords[i].append(sign * shifted)
 
   # 4. Tuples where one argument is an interesting 1D value and the rest are random.
-  rand_gen = jtu.rand_fullrange(rng)
   for fixed_axis in range(nargs):
+    fixed_vals = vals_1d[domains[fixed_axis].contains(vals_1d)]
     for i in range(nargs):
-      coords[i].append(vals_1d if i == fixed_axis else rand_gen((len(vals_1d),), dtype))
+      coords[i].append(
+          fixed_vals
+          if i == fixed_axis
+          else domains[i].sample(rng, len(fixed_vals))
+      )
 
   out = [np.concatenate(c) for c in coords]
+  valid = np.logical_and.reduce([d.contains(a) for a, d in zip(out, domains)])
+  tier1_len = int(np.sum(valid[:tier1_len]))
+  out = [a[valid] for a in out]
   if len(out[0]) > max_points:
     if tier1_len < max_points:
       perm = tier1_len + rng.permutation(len(out[0]) - tier1_len)
@@ -1110,29 +1315,27 @@ def _make_interesting_samples(
 
 
 def _make_exhaustive_chunk(
-    start: int, count: int, nargs: int, dtype
+    start: int,
+    count: int,
+    nargs: int,
+    dtype,
+    domains: Sequence[Domain] = (),
 ) -> tuple[np.ndarray, ...]:
-  """Generates `count` exhaustive n-ary bit-pattern tuples starting at flat index `start`."""
-  itemsize = np.dtype(dtype).itemsize
-  bits_per_arg = itemsize * 8
-  udt = np.dtype(f"u{itemsize}")
-  if nargs == 1:
-    return (np.arange(start, start + count, dtype=udt).view(dtype),)
-  radix = 1 << bits_per_arg
-  if nargs == 2 and start % radix == 0 and count % radix == 0:
-    n_rows = count // radix
-    row_start = start // radix
-    arg0 = np.tile(np.arange(radix, dtype=udt).view(dtype), n_rows)
-    arg1 = np.repeat(
-        np.arange(row_start, row_start + n_rows, dtype=udt).view(dtype), radix
+  """Generates `count` exhaustive n-ary bit-pattern tuples from `start`."""
+  domains = domains or (Domain.all(dtype),) * nargs
+  radices = tuple(d.size for d in domains)
+  r0 = radices[0]
+  if nargs == 2 and start % r0 == 0 and count % r0 == 0:
+    n_rows = count // r0
+    row0 = domains[0].at(np.arange(r0, dtype=np.intp))
+    col1 = domains[1].at(
+        np.arange(start // r0, start // r0 + n_rows, dtype=np.intp)
     )
-    return (arg0, arg1)
-  arg_mask = np.uint64(radix - 1)
-  idx = np.arange(start, start + count, dtype=np.uint64)
-  return tuple(
-      ((idx >> np.uint64(i * bits_per_arg)) & arg_mask).astype(udt).view(dtype)
-      for i in range(nargs)
+    return (np.tile(row0, n_rows), np.repeat(col1, r0))
+  coords = np.unravel_index(
+      np.arange(start, start + count, dtype=np.intp), radices, order="F"
   )
+  return tuple(d.at(idx) for idx, d in zip(coords, domains))
 
 
 def check_nary_precision(
@@ -1150,6 +1353,7 @@ def check_nary_precision(
     ref_dtype: object | None = None,
     max_samples: int | None = None,
     interesting_points: Sequence[Any] | None = None,
+    domains: Sequence[DomainLike | None] | None = None,
 ):
   """Checks precision of n-ary `jax_fn` against reference implementations.
 
@@ -1187,12 +1391,12 @@ def check_nary_precision(
       different tight bounds. Defaults to 0.5 ULP (correctly rounded) if a
       platform/dtype combination is not listed.
     input_ftz: Whether subnormal inputs are flushed to zero before reference
-      evaluation (bool or per-variant override list). Defaults to False for
-      float16 (which does not flush subnormals on CPU, GPU, or TPU) and True
-      for other dtypes.
+      evaluation (bool or per-variant override list). Defaults to False on GPU
+      and for float16 (which does not flush subnormals on CPU, GPU, or TPU),
+      and True otherwise.
     output_ftz: Whether subnormal outputs are flushed to zero when computing ULP
-      distances (bool or per-variant override list). Defaults to False for
-      float16 and True for other dtypes.
+      distances (bool or per-variant override list). Defaults to False on GPU
+      and for float16, and True otherwise.
     ignore_inputs: Optional per-variant list of callable predicates
       `ignore_fn(*args: np.ndarray) -> np.ndarray[bool]` where True indicates
       that the input should be excluded from accuracy checking.
@@ -1208,6 +1412,9 @@ def check_nary_precision(
     interesting_points: Optional sequence of additional function-specific
       test points (scalars, or `nargs`-tuples for n-ary functions) to sample at
       and near during non-exhaustive runs.
+    domains: Optional sequence of `nargs` `Domain`s, `dtype -> Domain`
+      callables, or `None` (for `Domain.all(dtype)`) restricting the bit
+      patterns tested for each argument.
   """
   if dtype is None:
     dtype = mpmath_fn
@@ -1231,13 +1438,30 @@ def check_nary_precision(
 
   is_f64 = dtype == jnp.float64 or dtype == np.float64
   itemsize = np.dtype(dtype).itemsize
-  bits_per_arg = itemsize * 8
   udt = np.dtype(f"u{itemsize}")
+
+  def _resolve_domain(d: DomainLike | None) -> Domain:
+    if d is None:
+      return Domain.all(dtype)
+    resolved = d(dtype) if callable(d) else d
+    if resolved.dtype != np.dtype(dtype):
+      raise ValueError(
+          f"Domain dtype {resolved.dtype} does not match {np.dtype(dtype)}."
+      )
+    return resolved
+
+  if domains is not None and len(domains) != nargs:
+    raise ValueError(
+        f"Expected len(domains) == nargs ({nargs}), got {len(domains)}."
+    )
+  resolved_domains = tuple(
+      _resolve_domain(d) for d in (domains or (None,) * nargs)
+  )
 
   if max_samples is None:
     max_samples = MAX_F64_SAMPLES.value if is_f64 else MAX_SAMPLES.value
 
-  total_elements = 1 << (bits_per_arg * nargs)
+  total_elements = math.prod(d.size for d in resolved_domains)
   is_exhaustive = total_elements <= max_samples
   total_points = min(total_elements, max_samples)
 
@@ -1272,7 +1496,7 @@ def check_nary_precision(
     label = "exhaustive"
     chunks = [
         lambda s=start, c=min(chunk_size, total_points - start): (
-            _make_exhaustive_chunk(s, c, nargs, dtype)
+            _make_exhaustive_chunk(s, c, nargs, dtype, resolved_domains)
         )
         for start in range(0, total_points, chunk_size)
     ]
@@ -1291,18 +1515,22 @@ def check_nary_precision(
         if first:
           interesting_budget = min(max_interesting_cap, c // 2)
           int_samples = _make_interesting_samples(
-              nargs, dtype, rng, interesting_budget, interesting_points
+              nargs,
+              dtype,
+              rng,
+              interesting_budget,
+              interesting_points,
+              resolved_domains,
           )
-          n_int = len(int_samples[0])
-          n_rand = c - n_int
+          n_rand = c - len(int_samples[0])
           rand_samples = tuple(
-              jtu.rand_fullrange(rng)((n_rand,), dtype) for _ in range(nargs)
+              d.sample(rng, n_rand) for d in resolved_domains
           )
           return tuple(
               np.concatenate([int_a, rand_a])
               for int_a, rand_a in zip(int_samples, rand_samples)
           )
-        return tuple(jtu.rand_fullrange(rng)((c,), dtype) for _ in range(nargs))
+        return tuple(d.sample(rng, c) for d in resolved_domains)
 
       chunks.append(_make_chunk)
 
@@ -1467,6 +1695,7 @@ def check_unary_precision(
     check_signed_zeros: bool | list = True,
     max_samples: int | None = None,
     interesting_points: Sequence[Any] | None = None,
+    domain: DomainLike | None = None,
 ):
   """Checks unary precision of `jax_fn` against reference implementations.
 
@@ -1491,6 +1720,7 @@ def check_unary_precision(
       check_signed_zeros=check_signed_zeros,
       max_samples=max_samples,
       interesting_points=interesting_points,
+      domains=(domain,) if domain is not None else None,
   )
 
 
@@ -1515,9 +1745,9 @@ def check_precision_at_points(
     max_ulp: The maximum allowed real ULP distance between the computed JAX
       output and the `mpmath` reference.
     input_ftz: Whether to flush subnormal inputs to zero before evaluating
-      `mpmath_fn`. Defaults to False for float16 and True for other dtypes.
+      `mpmath_fn`. Defaults to False on GPU and for float16, and True otherwise.
     output_ftz: Whether to flush subnormal outputs to zero when computing ULP
-      distances. Defaults to False for float16 and True for other dtypes.
+      distances. Defaults to False on GPU and for float16, and True otherwise.
   """
   res = np.asarray(jax_fn(*args))
   dtype = res.dtype.type
@@ -1537,7 +1767,7 @@ def check_precision_at_points(
         ],
         dtype=object if is_f64 else np.float64,
     ).reshape(res.shape)
-  ulps = ulp_diff(res, ref, dtype, ftz=output_ftz)
+  ulps = np.abs(ulp_diff(res, ref, dtype, ftz=output_ftz))
   max_diff = float(np.max(ulps))
   if max_diff > max_ulp or np.isnan(max_diff):
     idx = int(np.nanargmax(ulps) if not np.all(np.isnan(ulps)) else 0)

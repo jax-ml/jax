@@ -2959,25 +2959,45 @@ class InterpretTest(jtu.JaxTestCase):
     output = kernel(a)
     self.assertArraysEqual(output, a)
 
-  def test_async_store_load_3d_tmem(self):
+  def test_3d_tmem(self):
     @functools.partial(
         plgpu.kernel,
-        out_type=jax.ShapeDtypeStruct((2, 128, 64), jnp.int32),
+        out_type=(
+            jax.ShapeDtypeStruct((2, 128, 64), jnp.int32),
+            jax.ShapeDtypeStruct((128, 64), jnp.int32),
+            jax.ShapeDtypeStruct((128, 128), jnp.int32),
+        ),
         scratch_types=dict(
             tmem_ref=plgpu.TMEM((2, 128, 64), jnp.int32),
+            union=plgpu.RefUnion(
+                plgpu.TMEM((2, 128, 64), jnp.int32),
+                plgpu.TMEM((128, 128), jnp.int32),
+            ),
         ),
-        interpret=InterpretParams(),
+        interpret=InterpretParams(detect_races=True),
     )
-    def kernel(in_ref, out_ref, tmem_ref):
+    def kernel(in_ref, out0_ref, out1_ref, out2_ref, tmem_ref, union):
+      aliased_3d, aliased_2d = union
+      plgpu.async_store_tmem(
+          aliased_2d, jnp.concatenate([in_ref[0], in_ref[1]], axis=1)
+      )
+      plgpu.commit_tmem()
+      out2_ref[...] = plgpu.async_load_tmem(aliased_2d)
+      plgpu.wait_load_tmem()
+
       plgpu.async_store_tmem(tmem_ref.at[0], in_ref[0])
       plgpu.async_store_tmem(tmem_ref.at[1], in_ref[1])
+      plgpu.async_store_tmem(aliased_3d, in_ref[...] + 1)
       plgpu.commit_tmem()
-      out_ref[0] = plgpu.async_load_tmem(tmem_ref.at[0])
-      out_ref[1] = plgpu.async_load_tmem(tmem_ref.at[1])
+      out0_ref[0] = plgpu.async_load_tmem(tmem_ref.at[0])
+      out0_ref[1] = plgpu.async_load_tmem(tmem_ref.at[1])
+      out1_ref[...] = plgpu.async_load_tmem(aliased_3d.at[0])
 
     a = jnp.arange(2 * 128 * 64, dtype=jnp.int32).reshape((2, 128, 64))
-    output = kernel(a)
-    self.assertArraysEqual(output, a)
+    out0, out1, out2 = kernel(a)
+    self.assertArraysEqual(out0, a)
+    self.assertArraysEqual(out1, a[0] + 1)
+    self.assertArraysEqual(out2, jnp.concatenate([a[0], a[1]], axis=1))
 
   @jtu.parameterized.product(grid=[(4,), (2, 3)])
   def test_dynamic_scheduling_loop(self, grid):

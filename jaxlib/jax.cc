@@ -1197,7 +1197,13 @@ NB_MODULE(_jax, m) {
   m.def("check_and_canonicalize_memory_kind", &CheckAndCanonicalizeMemoryKind,
         nb::arg("memory_kind").none(), nb::arg("device_list"));
 
-  m.attr("ifrt_version_number") = JAX_IFRT_VERSION_NUMBER;
+  // TODO(phawkins): Remove the JAX_IFRT_VERSION_NUMBER fallback once pinned XLA
+  // defines JAX_XLA_VERSION_NUMBER.
+#ifdef JAX_XLA_VERSION_NUMBER
+  m.attr("xla_version_number") = JAX_XLA_VERSION_NUMBER;
+#else
+  m.attr("xla_version_number") = JAX_IFRT_VERSION_NUMBER;
+#endif
 
   m.def("approx_top_k_reduction_output_size",
         xla::ValueOrThrowWrapper(xla::ApproxTopKReductionOutputSize),

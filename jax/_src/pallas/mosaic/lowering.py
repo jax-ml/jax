@@ -52,7 +52,7 @@ from jax._src.lax import ann
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
-from jax._src.lib import ifrt_version
+from jax._src.lib import xla_version
 from jax._src.lib import jax_mlir_ext
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
@@ -3762,7 +3762,7 @@ def _reduce_index_helper(
   else:
     in_shape = x_aval.shape
 
-  keep_dims = ifrt_version >= 84
+  keep_dims = xla_version >= 84
   out_shape = (
       *in_shape[:axis],
       *((1,) if keep_dims else ()),
@@ -5023,7 +5023,7 @@ def _eval_jaxpr_lowering_rule(ctx: LoweringRuleContext, *args, call_jaxpr, **_):
 
 @register_lowering_rule(pjit.reshard_p, kernel_types=[*tpu_core.CoreType])
 def _reshard_lowering_rule(ctx: LoweringRuleContext, x, *, dst_sharding,
-                           concrete_mesh):
+                           concrete_mesh, reduction_order):
   return x
 
 
@@ -6100,7 +6100,8 @@ def random_seed_lowering(ctx: LoweringRuleContext, seeds, *, impl):
 
 @register_lowering_rule(prng.random_bits_p)
 def random_bits_lowering(ctx: LoweringRuleContext, keys, *, bit_width, shape,
-                         num_streams=1):
+                         num_streams, out_sharding):
+  del out_sharding
   assert bit_width == 32, "Only 32-bit PRNG supported."
   aval, = ctx.avals_in
   assert isinstance(aval.dtype, prng.KeyTy)
@@ -6213,7 +6214,10 @@ def _threefry2x32_lowering(ctx: LoweringRuleContext, k1, k2, m1, m2):
 
 
 @register_lowering_rule(prng.iota_2x32_shape_p)
-def _iota_2x32_shape_lowering(ctx: LoweringRuleContext, *, shape):
+def _iota_2x32_shape_lowering(
+    ctx: LoweringRuleContext, *, shape, out_sharding
+):
+  del out_sharding
   total_elements = math.prod(shape)
   if total_elements > np.iinfo(jnp.int32).max:
     raise NotImplementedError(f"Iota with >{np.iinfo(jnp.int32).max} items.")

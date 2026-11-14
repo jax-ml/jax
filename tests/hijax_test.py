@@ -2077,6 +2077,14 @@ class HijaxTest(jtu.JaxTestCase):
                         check_dtypes=False)
     self.assertAllClose(f_vjp(1.0)[0], 6.0)  # plain call drops the logs
     self.assertAllClose(jax.grad(square)(3.0), 6.0)
+    self.assertAllClose(jax.grad(square, with_logs=True)(3.0), (6.0, logs),
+                        check_dtypes=False)
+    self.assertAllClose(jax.value_and_grad(square, with_logs=True)(3.0),
+                        (9.0, (6.0, logs)), check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(lambda x: (square(x), x + 1.0), has_aux=True,
+                 with_logs=True)(3.0),
+        (6.0, 4.0, logs), check_dtypes=False)
 
     # distinct keys are both present; a repeated key is an error
     f2 = lambda x: square(square(x, 'inner'), 'outer')
@@ -2113,6 +2121,11 @@ class HijaxTest(jtu.JaxTestCase):
     for log in logss.values():
       self.assertArraysEqual(log['x'], xs)
       self.assertEqual(log['ct_in'].shape, xs.shape)
+    gs, glogss = jax.jit(jax.grad(f_scan, with_logs=True))(xs)
+    self.assertAllClose(gs, 4.0 * xs)
+    self.assertEqual(set(glogss), {'carry', 'ys'})
+    for log in glogss.values():
+      self.assertArraysEqual(log['x'], xs)
 
   @parameterized.product(
       transform=['eager', 'jit', 'jit_pullback', 'checkpoint', 'scan',

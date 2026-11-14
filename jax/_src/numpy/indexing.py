@@ -74,7 +74,10 @@ class IndexType(enum.Enum):
     elif isinstance(idx, slice):
       return cls.SLICE
     elif isinstance(idx, indexing.Slice):
-      if idx.is_dynamic_start or idx.is_dynamic_size:
+      if (idx.is_dynamic_start or idx.is_dynamic_size or
+          isinstance(idx.start, (Array, np.ndarray)) or
+          isinstance(idx.size, (Array, np.ndarray)) or
+          (core.is_constant_dim(idx.start) and operator.index(idx.start) < 0)):  # pyrefly: ignore[bad-argument-type]
         return cls.DYNAMIC_SLICE
       return cls.SLICE
     elif _is_integer_index(idx):
@@ -121,10 +124,11 @@ def _as_slice(idx: slice | indexing.Slice) -> slice:
   if isinstance(idx, slice):
     return idx
   elif isinstance(idx, indexing.Slice):
-    assert isinstance(idx.start, int)
-    assert isinstance(idx.size, int)
-    assert isinstance(idx.stride, int)
-    return slice(idx.start, idx.start + idx.size, idx.stride)
+    assert isinstance(idx.start, (int, np.integer))
+    assert isinstance(idx.size, (int, np.integer))
+    assert isinstance(idx.stride, (int, np.integer))
+    start, size, stride = int(idx.start), int(idx.size), int(idx.stride)
+    return slice(start, start + size, stride)
   raise RuntimeError(f"Internal: expected slice or Slice, got {type(idx)}")
 
 
@@ -356,27 +360,27 @@ class NDIndexer:
     new_indices: list[ParsedIndex] = []
     for idx in self.indices:
       if idx.typ == IndexType.INTEGER:
+        assert isinstance(idx.index, (int, np.integer))
         axis, = idx.consumed_axes
         size: ArrayLike = self.shape[axis]
         if isinstance(idx.index, np.unsignedinteger):
           normed_index: Index = idx.index
         else:
-          normed_index = idx.index + size if idx.index < 0 else idx.index  # pyrefly: ignore[bad-assignment, unsupported-operation]
+          i = operator.index(idx.index)
+          normed_index = i + size if i < 0 else i  # pyrefly: ignore[bad-assignment, unsupported-operation]
         new_indices.append(ParsedIndex(normed_index, typ=idx.typ, consumed_axes=idx.consumed_axes))
-      elif idx.typ in [IndexType.ARRAY, IndexType.INTEGER]:
+      elif idx.typ == IndexType.ARRAY:
         assert isinstance(idx.index, (Array, np.ndarray))
         axis, = idx.consumed_axes
-        if dtypes.issubdtype(idx.index.dtype, np.unsignedinteger):
-          normed_index = idx.index
-        else:
-          size = self.shape[axis]
-          if core.is_constant_dim(size):
-            size = lax._const(idx.index, size)
-          else:
-            size = lax.convert_element_type(core.dimension_as_value(size),
-                                            idx.index.dtype)
-          normed_index = lax.select(idx.index < 0, lax.add(idx.index, size), idx.index)
+        normed_index = _normalize_index(idx.index, self.shape[axis])
         new_indices.append(ParsedIndex(normed_index, typ=idx.typ, consumed_axes=idx.consumed_axes))
+      elif idx.typ == IndexType.DYNAMIC_SLICE:
+        assert isinstance(idx.index, indexing.Slice)
+        axis, = idx.consumed_axes
+        normed_start = _normalize_index(idx.index.start, self.shape[axis])
+        new_indices.append(ParsedIndex(
+            indexing.Slice(normed_start, idx.index.size, idx.index.stride),  # pyrefly: ignore[bad-argument-type]
+            typ=idx.typ, consumed_axes=idx.consumed_axes))
       else:
         new_indices.append(idx)
     return NDIndexer(indices=new_indices, shape=self.shape)
@@ -635,6 +639,8 @@ def take(
     unique_indices: bool = False,
     indices_are_sorted: bool = False,
     fill_value: StaticScalar | None = None,
+    *,
+    out_sharding: NamedSharding | PartitionSpec | None = None,
 ) -> Array:
   """Take elements from an array.
 
@@ -663,6 +669,8 @@ def take(
       sorted in ascending order after normalization of negative indices, which can lead
       to more efficient execution on some backends. If set to True and normalized indices
       are not sorted, the output is implementation-defined.
+    out_sharding: optional sharding specification for the output. If not
+      specified, it will be determined automatically by the compiler.
 
   Returns:
     Array of values extracted from ``a``.
@@ -712,16 +720,21 @@ def take(
            [1., 2., 3.]], dtype=float32)
   """
   return _take(a, indices, None if axis is None else operator.index(axis), out,
-               mode, unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
-               fill_value=fill_value)
+               mode, unique_indices=unique_indices,
+               indices_are_sorted=indices_are_sorted, fill_value=fill_value,
+               out_sharding=out_sharding)
 
 
-@api.jit(static_argnames=('axis', 'mode', 'unique_indices', 'indices_are_sorted', 'fill_value'))
+@api.jit(static_argnames=(
+    'axis', 'mode', 'unique_indices', 'indices_are_sorted', 'fill_value',
+    'out_sharding'))
 def _take(a, indices, axis: int | None = None, out=None, mode=None,
-          unique_indices=False, indices_are_sorted=False, fill_value=None):
+          unique_indices=False, indices_are_sorted=False, fill_value=None,
+          out_sharding=None):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.take is not supported.")
   a, indices = util.ensure_arraylike("take", a, indices)
+  sharding = canonicalize_sharding(out_sharding, "take")
 
   if axis is None:
     a = a.ravel()
@@ -732,12 +745,29 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
   if mode is None or mode == "fill":
     gather_mode = slicing.GatherScatterMode.FILL_OR_DROP
     # lax.gather() does not support negative indices, so we wrap them here
-    indices = util._where(indices < 0, indices + a.shape[axis_idx], indices)
+    indices = _normalize_index(indices, a.shape[axis_idx])
   elif mode == "raise":
     # TODO(phawkins): we have no way to report out of bounds errors yet.
     raise NotImplementedError("The 'raise' mode to jnp.take is not supported.")
   elif mode == "wrap":
-    indices = ufuncs.mod(indices, lax._const(indices, a.shape[axis_idx]))
+    axis_size = a.shape[axis_idx]
+    if dtypes.issubdtype(indices.dtype, np.integer) and (
+        not core.is_constant_dim(axis_size)
+        or axis_size > dtypes.iinfo(indices.dtype).max
+    ):
+      signed = dtypes.issubdtype(indices.dtype, np.signedinteger)
+      target_dt = dtypes.canonicalize_dtype(
+          lax_utils.int_dtype_for_dim(axis_size, signed=signed)
+      )
+      if dtypes.iinfo(indices.dtype).bits < dtypes.iinfo(target_dt).bits:
+        indices = lax.convert_element_type(indices, target_dt)
+    if core.is_constant_dim(axis_size):
+      axis_size_val = lax._const(indices, axis_size)
+    else:
+      axis_size_val = lax.convert_element_type(
+          core.dimension_as_value(axis_size), indices.dtype
+      )
+    indices = ufuncs.mod(indices, axis_size_val)
     gather_mode = slicing.GatherScatterMode.PROMISE_IN_BOUNDS
   elif mode == "clip":
     gather_mode = slicing.GatherScatterMode.CLIP
@@ -746,15 +776,13 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
 
   index_dims = len(np.shape(indices))
   slice_sizes = list(np.shape(a))
-  if slice_sizes[axis_idx] == 0:
-    if indices.size != 0:
-      raise IndexError("Cannot do a non-empty jnp.take() from an empty axis.")
-    return a
+  if slice_sizes[axis_idx] == 0 and indices.size != 0:
+    raise IndexError("Cannot do a non-empty jnp.take() from an empty axis.")
 
   if indices.size == 0:
     out_shape = (slice_sizes[:axis_idx] + list(indices.shape) +
                  slice_sizes[axis_idx + 1:])
-    return lax.full_like(a, 0, shape=out_shape)
+    return lax.full_like(a, 0, shape=out_shape, sharding=sharding)
 
   slice_sizes[axis_idx] = 1
   dnums = slicing.GatherDimensionNumbers(
@@ -766,18 +794,32 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
   return slicing.gather(a, indices[..., None], dimension_numbers=dnums,
                         slice_sizes=tuple(slice_sizes),
                         mode=gather_mode, unique_indices=unique_indices,
-                        indices_are_sorted=indices_are_sorted, fill_value=fill_value)
+                        indices_are_sorted=indices_are_sorted,
+                        fill_value=fill_value, out_sharding=sharding)
 
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
-  if dtypes.issubdtype(dtypes.dtype(index), np.unsignedinteger):
+  dt = dtypes.dtype(index)
+  if dtypes.issubdtype(dt, np.unsignedinteger):
     return index
+  if dtypes.issubdtype(dt, np.signedinteger) and (
+      not core.is_constant_dim(axis_size) or axis_size > dtypes.iinfo(dt).max
+  ):
+    target_dt = dtypes.canonicalize_dtype(
+        lax_utils.int_dtype_for_dim(axis_size, signed=True)
+    )
+    if dtypes.iinfo(dt).bits < dtypes.iinfo(target_dt).bits:
+      if isinstance(index, np.integer):
+        index = target_dt.type(int(index))
+      else:
+        index = lax.convert_element_type(index, target_dt)
+      dt = target_dt
   if core.is_constant_dim(axis_size):
     axis_size_val = lax._const(index, axis_size)
   else:
     axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
-                                             dtypes.dtype(index))
+                                             dt)
   if isinstance(index, (int, np.integer)):
     return lax.add(index, axis_size_val) if index < 0 else index
   else:
@@ -785,9 +827,8 @@ def _normalize_index(index, axis_size):
 
 
 @export
-@api.jit(
-    static_argnames=("axis", "mode", "fill_value", "wrap_negative_indices")
-)
+@api.jit(static_argnames=(
+    "axis", "mode", "fill_value", "wrap_negative_indices", "out_sharding"))
 def take_along_axis(
     arr: ArrayLike,
     indices: ArrayLike,
@@ -796,6 +837,7 @@ def take_along_axis(
     fill_value: StaticScalar | None = None,
     *,
     wrap_negative_indices: bool = True,
+    out_sharding: NamedSharding | PartitionSpec | None = None,
 ) -> Array:
   """Take elements from an array.
 
@@ -819,6 +861,8 @@ def take_along_axis(
       ``mode="fill"``. Ignored otherwise.
     wrap_negative_indices: Whether to wrap negative indices to positive like
       Numpy.
+    out_sharding: Optional :class:`~jax.sharding.NamedSharding` or
+      :class:`~jax.sharding.PartitionSpec` specifying the output sharding.
 
   Returns:
     Array of values extracted from ``arr``.
@@ -876,6 +920,7 @@ def take_along_axis(
            [2]], dtype=int32)
   """
   a, indices = util.ensure_arraylike("take_along_axis", arr, indices)
+  sharding = canonicalize_sharding(out_sharding, "take_along_axis")
   index_dtype = indices.dtype
   idx_shape = np.shape(indices)
   if not dtypes.issubdtype(index_dtype, np.integer):
@@ -902,7 +947,7 @@ def take_along_axis(
   arr_shape = replace(a.shape, 1)
   out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
   if axis_size == 0:
-    return lax.full(out_shape, 0, a.dtype)
+    return lax.full(out_shape, 0, a.dtype, sharding=sharding)
 
   index_dtype = lax_utils.index_dtype_for_axis_size(
       dtypes.dtype(indices), axis_size, wrap_negative_indices
@@ -917,7 +962,9 @@ def take_along_axis(
 
     hot = nn.one_hot(indices, axis_size, dtype=np.bool_)
     if a.ndim == 1:
-      return einsum.einsum("...b,b->...", hot, a, preferred_element_type=a.dtype)
+      return einsum.einsum(
+          "...b,b->...", hot, a, preferred_element_type=a.dtype,
+          out_sharding=sharding)
     if axis_int > len(string.ascii_letters) - 2:
       raise ValueError(
           "One Hot indexing is only supported for up to 50 leading dimensions."
@@ -930,6 +977,7 @@ def take_along_axis(
         a,
         precision=lax.Precision.HIGHEST,
         preferred_element_type=a.dtype,
+        out_sharding=sharding,
     )
 
   index_dims = [i for i, idx in enumerate(idx_shape) if i == axis_int or not core.definitely_equal(idx, 1)]
@@ -987,8 +1035,10 @@ def take_along_axis(
     start_index_map=tuple(start_index_map),
     operand_batching_dims=tuple(operand_batching_dims),
     start_indices_batching_dims=tuple(start_indices_batching_dims))
-  return slicing.gather(a, gather_indices, dnums, tuple(slice_sizes),
-                        mode="fill" if mode is None else mode, fill_value=fill_value)
+  return slicing.gather(
+      a, gather_indices, dnums, tuple(slice_sizes),
+      mode="fill" if mode is None else mode, fill_value=fill_value,
+      out_sharding=sharding)
 
 
 def _make_along_axis_idx(shape, indices, axis):
@@ -1760,6 +1810,16 @@ def put(a: ArrayLike, ind: ArrayLike, v: ArrayLike,
   v_arr = lax_numpy.ravel(v)
   if not arr.size or not ind_arr.size or not v_arr.size:
     return arr
+  if dtypes.issubdtype(ind_arr.dtype, np.integer) and (
+      not core.is_constant_dim(arr.size)
+      or arr.size > dtypes.iinfo(ind_arr.dtype).max
+  ):
+    signed = dtypes.issubdtype(ind_arr.dtype, np.signedinteger)
+    target_dt = dtypes.canonicalize_dtype(
+        lax_utils.int_dtype_for_dim(arr.size, signed=signed)
+    )
+    if dtypes.iinfo(ind_arr.dtype).bits < dtypes.iinfo(target_dt).bits:
+      ind_arr = lax.convert_element_type(ind_arr, target_dt)
   v_arr = lax_numpy._tile_to_size(v_arr, len(ind_arr))
   if mode is None:
     scatter_mode = "drop"

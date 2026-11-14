@@ -1815,6 +1815,46 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  @parameterized.parameters(
+      (7, 576, 576),
+      (7, 608, 576),
+      (9, 576, 576),
+      (3, 576, 512),
+  )
+  def test_tmem_alloc_op_column_count_limit_on_sm107f(
+      self, arch_minor, num_columns, max_columns
+  ):
+    i32 = ir.IntegerType.get_signless(32)
+    self.module.operation.attributes["mosaic_gpu.arch_major"] = (
+        ir.IntegerAttr.get(i32, 10)
+    )
+    self.module.operation.attributes["mosaic_gpu.arch_minor"] = (
+        ir.IntegerAttr.get(i32, arch_minor)
+    )
+    has_enough_columns = num_columns <= max_columns
+    with ir.InsertionPoint(self.module.body):
+      (smem_ptr,) = undefs(
+          ir.MemRefType.get([], i32, memory_space=mgpu_utils.smem())
+      )
+      mgpu.dialect.tmem_alloc(
+          result=ir.MemRefType.get(
+              [128, num_columns], i32, memory_space=mgpu_utils.tmem()
+          ),
+          smem_ptr=smem_ptr,
+          collective=False,
+          packing=1,
+      )
+
+    if has_enough_columns:
+      self.assertTrue(self.module.operation.verify())
+    else:
+      with self.assertRaisesRegex(
+          ir.MLIRError,
+          "The number of allocated columns must be less than or equal to"
+          f" {max_columns} but got: {num_columns}",
+      ):
+        self.module.operation.verify()
+
   def test_tmem_alloc_op_bad_packing(self):
     with ir.InsertionPoint(self.module.body):
       (smem_ptr,) = undefs(
@@ -2420,16 +2460,22 @@ ir.MLIRError,
     self.assertEqual(ref2.owner.opview.alignment.value, 64)
     self.assertLen(scope.results, 2)
 
-  def test_alloc_smem_requires_alloca_scope_ancestor(self):
+  def test_alloc_smem_requires_alloca_scope_parent(self):
+    ref_ty = ir.MemRefType.get(
+        (8, 16), ir.F32Type.get(), memory_space=mgpu_utils.smem()
+    )
     with ir.InsertionPoint(self.module.body):
-      ref_ty = ir.MemRefType.get(
-          (8, 16), ir.F32Type.get(), memory_space=mgpu_utils.smem()
-      )
-      mgpu.dialect.alloc_smem(ref_ty)
+      # `alloc_smem` is nested in an `alloca_scope`, but not directly.
+      scope = mgpu.dialect.alloca_scope()
+      with ir.InsertionPoint(scope.body):
+        [cond] = undefs(ir.IntegerType.get_signless(1))
+        with mgpu_utils.when(cond):
+          mgpu.dialect.alloc_smem(ref_ty)
+        mgpu.dialect.alloca_scope_return([])
 
     with self.assertRaisesRegex(
         ir.MLIRError,
-        r"requires an ancestor `mosaic_gpu\.alloca_scope` op",
+        r"expects parent op 'mosaic_gpu\.alloca_scope'",
     ):
       self.module.operation.verify()
 
@@ -3270,6 +3316,19 @@ class DialectLoweringTest(MosaicGpuTest):
         )
       files = os.listdir(dump_dir)
       self.assertTrue(any(f.endswith(".constraint_system.txt") for f in files))
+
+  def test_wgmma_nonsquare_large_tile_mn_fastest_raises(self):
+    with self.kernel():
+      f16 = ir.F16Type.get()
+      smem = mgpu_utils.smem()
+      a, b = undefs(
+          ir.MemRefType.get((1, 1, 32, 64), f16, memory_space=smem),
+          ir.MemRefType.get((1, 1, 32, 32), f16, memory_space=smem),
+      )
+      a = mgpu_utils.memref_transpose(a, (0, 1, 3, 2))
+      acc = mgpu.WGMMAAccumulator.zero(64, 32, ir.F32Type.get())
+      with self.assertRaisesRegex(ValueError, "when the tiling is square"):
+        mgpu.wgmma(acc, a, b, swizzle=64)
 
 
 if hp is not None:

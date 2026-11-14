@@ -81,6 +81,10 @@ if _dtypes.uint1 is not None:
   _default_tolerance[np.dtype(_dtypes.uint1)] = 0
 if _dtypes.float8_e5m3fnu is not None:
   _default_tolerance[np.dtype(_dtypes.float8_e5m3fnu)] = 1e-1
+if _dtypes.bcomplex32 is not None:
+  _default_tolerance[np.dtype(_dtypes.bcomplex32)] = 1e-2
+if _dtypes.complex32 is not None:
+  _default_tolerance[np.dtype(_dtypes.complex32)] = 1e-3
 
 
 def default_tolerance():
@@ -106,6 +110,10 @@ default_gradient_tolerance: ToleranceDict = {
 }
 if _dtypes.float8_e5m3fnu is not None:
   default_gradient_tolerance[np.dtype(_dtypes.float8_e5m3fnu)] = 1e-1
+if _dtypes.bcomplex32 is not None:
+  default_gradient_tolerance[np.dtype(_dtypes.bcomplex32)] = 1e-1
+if _dtypes.complex32 is not None:
+  default_gradient_tolerance[np.dtype(_dtypes.complex32)] = 1e-2
 
 
 def is_python_scalar(val: Any) -> bool:
@@ -134,6 +142,8 @@ def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
   def maybe_upcast(x):
     if x.dtype in custom_float_dtypes:
       return x.astype(np.float32)
+    if x.dtype in _dtypes._custom_complex_dtypes:
+      return x.astype(np.complex64)
     # TODO(reedwm): Upcasting int2/int4 to int8 will no longer be necessary once
     # JAX depends on a version of ml_dtypes which contains
     # https://github.com/jax-ml/ml_dtypes/commit/348fd3704306cae97f617c38045cee6bc416bf10.

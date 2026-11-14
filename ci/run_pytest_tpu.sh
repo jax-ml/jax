@@ -47,6 +47,9 @@ echo "Installed packages:"
 export PY_COLORS=1
 export JAX_PLATFORMS=tpu,cpu
 export JAX_SKIP_SLOW_TESTS=true
+export JAX_ENABLE_X64="$JAXCI_ENABLE_X64"
+is_nogil=$("$JAXCI_PYTHON" -c "import sys; print('1' if getattr(sys, '_is_gil_enabled', lambda: True)() == False else '0')")
+export IS_JAXCI_PYTHON_NOGIL="$is_nogil"
 # End of common test environment variable setup
 
 echo "Running TPU tests..."

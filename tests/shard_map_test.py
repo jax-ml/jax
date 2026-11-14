@@ -46,7 +46,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.remat import remat_transform
 from jax._src import linear_util as lu
 from jax._src import tree_util
-from jax._src.lib import ifrt_version, jaxlib_extension_version
+from jax._src.lib import jaxlib_extension_version, xla_version
 from jax.custom_derivatives import SymbolicZero
 import jax.numpy as jnp
 
@@ -409,8 +409,8 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(c[1, :], a[0, :])
 
   def test_collective_permute_in_loop_and_after_loop(self):
-    if ifrt_version < 79:
-      self.skipTest('Requires ifrt_version >= 79')
+    if xla_version < 79:
+      self.skipTest('Requires xla_version >= 79')
     n = jax.device_count()
     if n < 2:
       self.skipTest('Requires at least 2 devices')
@@ -456,8 +456,8 @@ class ShardMapTest(jtu.JaxTestCase):
         self.assertArraysEqual(c, np.roll(b_np, shift=k + 1, axis=0))
 
   def test_psum_in_cond_and_after_cond(self):
-    if ifrt_version < 79:
-      self.skipTest('Requires ifrt_version >= 79')
+    if xla_version < 79:
+      self.skipTest('Requires xla_version >= 79')
     n = jax.device_count()
     if n < 2:
       self.skipTest('Requires at least 2 devices')

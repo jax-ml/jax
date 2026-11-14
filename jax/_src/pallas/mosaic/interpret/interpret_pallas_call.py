@@ -2171,7 +2171,7 @@ def interpret_pallas_call(
     aval = var.aval
     if is_input or is_output:
       memory_space = _forward_any_to_hbm(
-          grid_mapping.block_mappings[i].transformed_block_aval.memory_space)
+          grid_mapping.block_mappings[i].block_aval.memory_space)
     else:
       memory_space = _forward_any_to_hbm(aval.memory_space)  # pyrefly: ignore[missing-attribute]
     if memory_space is _SEMAPHORE:
@@ -2192,7 +2192,10 @@ def interpret_pallas_call(
       # is trivial.
       assert is_input ^ is_output
       if is_input:
-        kernel_buffer_ids.append(input_buffer_ids[i])
+        if not isinstance(var.aval, state.AbstractRef):
+          kernel_buffer_ids.append(input_args[i])
+        else:
+          kernel_buffer_ids.append(input_buffer_ids[i])
       if is_output:
         kernel_buffer_ids.append(output_buffer_ids[output_idx])
     else:
@@ -2221,7 +2224,7 @@ def interpret_pallas_call(
   input_vars, output_vars = split_list(
       jaxpr.invars[grid_mapping.slice_block_ops], [num_inputs])
   input_var_memory_spaces, output_var_memory_spaces = split_list(
-      [_forward_any_to_hbm(bm.transformed_block_aval.memory_space)
+      [_forward_any_to_hbm(bm.block_aval.memory_space)
        for bm in grid_mapping.block_mappings],
       [num_inputs])
   if grid:
@@ -2423,6 +2426,8 @@ def interpret_pallas_call(
           return token
 
         for j, var in enumerate(input_vars):
+          if not isinstance(var.aval, state.AbstractRef):
+            continue
           if input_var_memory_spaces[j] is _HBM:
             if var.aval.shape != block_shapes[j]:
               raise ValueError(

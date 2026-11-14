@@ -2095,6 +2095,55 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     y = kernel(*xs)
     np.testing.assert_array_equal(y[:, :128], x[:, :128])
 
+  @parameterized.named_parameters(
+      ("at", lambda r: r.at[8:]),
+      ("reshape", lambda r: r.reshape(2, 8, 128).at[1]),
+      ("bitcast", lambda r: r.bitcast(jnp.int16).at[16:].bitcast(jnp.int32)),
+      ("pad_ref", lambda r: pl.pad_ref(r.at[8:], (8, 128)), pltpu.VMEM, 100),
+      ("annotate", lambda r: pltpu.annotate(r.at[8:], no_hazard=True),
+       pltpu.VMEM),
+      ("memory_space_cast", lambda r: r.at[8:].memory_space_cast(pltpu.HBM)))
+  def test_select_ref_transformed(
+      self, transform, mem_space=pltpu.HBM, cols=128):
+    if cols < 128 and not jtu.is_libtpu_at_least("0.0.52"):
+      self.skipTest("Requires libtpu >= 0.0.52")
+
+    @partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)]
+        + [pl.BlockSpec(memory_space=mem_space)] * 2,
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+        scratch_shapes=[pltpu.SemaphoreType.DMA])
+    def kernel(idx_ref, x0_ref, x1_ref, y_ref, sem):
+      ref = pl.select_ref(idx_ref[...], x0_ref, x1_ref)
+      pltpu.async_copy(transform(ref), y_ref, sem).wait()
+
+    x0, x1 = jnp.split(jnp.arange(2 * 16 * cols).reshape((32, cols)), 2)
+    jaxpr_str = str(jax.make_jaxpr(kernel)(jnp.int32(0), x0, x1))
+    self.assertRegex(jaxpr_str, r"\{select\([a-z]+\)\}")
+    for idx, x in enumerate((x0, x1)):
+      out = kernel(jnp.int32(idx), x0, x1)
+      np.testing.assert_array_equal(out[:, :cols], x[8:])
+
+  def test_select_ref_nested_imbalanced(self):
+    @partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)] * 2
+        + [pl.BlockSpec(memory_space=pltpu.HBM)] * 3,
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+        scratch_shapes=[pltpu.SemaphoreType.DMA])
+    def kernel(i_ref, j_ref, a_ref, b_ref, c_ref, out_ref, sem):
+      inner = pl.select_ref(j_ref[...], a_ref, b_ref)
+      src = pl.select_ref(i_ref[...], inner, c_ref).at[8:]
+      pltpu.async_copy(src, out_ref, sem).wait()
+
+    a, b, c = jnp.split(jnp.arange(3 * 16 * 128).reshape((48, 128)), 3)
+    for (i, j), expected in [((0, 0), a), ((0, 1), b), ((1, 0), c)]:
+      out = kernel(jnp.int32(i), jnp.int32(j), a, b, c)
+      np.testing.assert_array_equal(out, expected[8:])
+
   def test_select_ref_dst(self):
     num_refs = 4
 
@@ -6011,11 +6060,9 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       return self.pallas_call(
           body,
           out_shape=pltpu.SMEM((1,), dtype=jnp.int32),
-          grid_spec=pl.GridSpec(
               grid=(n,),
               in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
               out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
-          ),
       )(n)
 
     n = jax.random.randint(jax.random.key(0), (1,), 1, 10, dtype=jnp.int32)

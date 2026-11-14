@@ -31,7 +31,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.layout import Layout
-from jax._src.lib import ifrt_version, lapack
+from jax._src.lib import lapack, xla_version
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lax import linalg as lax_linalg_internal
 from jax._src.shard_map import shard_map
@@ -396,8 +396,8 @@ class BatchPartitioningTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("gpu", "cpu")
   def test_batch_partitioning_multidim(self):
-    if ifrt_version < 81:
-      self.skipTest("Requires ifrt_version >= 81")
+    if xla_version < 81:
+      self.skipTest("Requires xla_version >= 81")
     if jax.device_count() < 4:
       self.skipTest("Requires at least 4 devices")
     mesh = jtu.create_mesh((2, 2), ("i", "j"))

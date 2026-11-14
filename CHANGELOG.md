@@ -17,6 +17,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## Unreleased
 
 * New features
+  * Added a `with_logs` option to {func}`jax.grad` and
+    {func}`jax.value_and_grad`, returning backward-pass logs alongside
+    gradients without calling {func}`jax.vjp` directly.
   * Added `jax.lax.DotAlgorithmPreset.F8E4M3FN_F8E4M3FN_F32_X3` and
     `F8E4M3FN_F8E4M3FN_F32_X4` dot algorithm presets (requiring `jaxlib` >= 514)
     for emulating `bfloat16` precision matmuls on `bfloat16` or `float32` inputs
@@ -34,9 +37,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.scipy.special.gammaincinv` and
     {func}`jax.scipy.special.gammainccinv`, the inverses of the regularized
     incomplete gamma functions, with gradients with respect to both arguments.
-  * Added {func}`jax.scipy.special.jn` and {func}`jax.scipy.special.yn`,
-    providing accurate evaluation of integer-order Bessel functions of the first
-    and second kind.
+  * Added {func}`jax.scipy.special.jn`, {func}`jax.scipy.special.yn`,
+    {func}`jax.scipy.special.iv`, and {func}`jax.scipy.special.kn`,
+    providing accurate evaluation of integer-order Bessel functions and
+    modified Bessel functions of the first and second kind.
   * Added {func}`jax.lax.sinpi`, {func}`jax.lax.cospi`, and
     {func}`jax.lax.tanpi`, which compute `sin(pi * x)`, `cos(pi * x)`, and
     `tan(pi * x)` more accurately than multiplying by `pi` first. They return
@@ -55,6 +59,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.distributed.initialize`. ``detected_cluster`` reports which
     cluster no-argument ``initialize`` would auto-detect, without starting
     the coordination service.
+  * Added {func}`jax.lax.exp2m1` and {func}`jax.lax.log2p1`, which compute
+    `2**x - 1` and `log2(1 + x)` without losing precision near `x = 0`.
 
 * Breaking changes
   * The `jax_use_simplified_jaxpr_constants` configuration flag is now `True`
@@ -98,6 +104,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fixed {func}`jax.numpy.modf` returning `nan` as the fractional part for
     infinite inputs; it now returns a signed zero, matching NumPy
     ({jax-issue}`#41102`).
+  * Fixed {func}`jax.jit` instances of the same function that differ only in
+    `static_argnums`, `static_argnames` or `keep_unused` sharing C++ dispatch
+    cache entries, which could run the executable compiled for one instance
+    with the arguments of another and return wrong results.
+  * Fixed {func}`jax.numpy.interp` returning `nan` at and around knots whose
+    `fp` value is infinite; it now returns the knot value or the signed
+    infinity, matching NumPy. For complex `fp`, the real and imaginary parts
+    are now interpolated separately, as in NumPy.
 
 ## JAX 0.12.0.1 (October 23, 2026)
 

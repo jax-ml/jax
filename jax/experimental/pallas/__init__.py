@@ -29,7 +29,10 @@ from jax._src.pallas.primitives import DeviceIdType as _deprecated_DeviceIdType
 from jax._src.pallas.primitives import reciprocal as _deprecated_reciprocal
 
 
+import jax.pallas as _pallas
 _deprecations = {
+    **_pallas._deprecations,
+
     # Added September 28, 2026
     "DeviceIdType": (
         (
@@ -74,6 +77,7 @@ _deprecations = {
         None,
     ),
 }
+del _pallas
 
 import typing
 if typing.TYPE_CHECKING:

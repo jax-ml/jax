@@ -18,6 +18,7 @@ import numpy as np
 
 import jax
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax.experimental import buffer_callback
 import jax.numpy as jnp
 
@@ -41,6 +42,8 @@ class BufferCallbackTest(jtu.JaxTestCase):
         ctx.stream
 
       self.assertEqual(ctx.stage, buffer_callback.ExecutionStage.EXECUTE)
+      if jaxlib_extension_version >= 522:
+        self.assertEqual(ctx.device_ordinal, out.__dlpack_device__()[1])
       self.assertEqual(arg.shape, shape)
       self.assertEqual(arg.dtype, dtype)
       self.assertEqual(out.shape, shape)
@@ -103,6 +106,8 @@ class BufferCallbackTest(jtu.JaxTestCase):
       ctx.stream  # doesn't crash
 
       self.assertEqual(ctx.stage, buffer_callback.ExecutionStage.EXECUTE)
+      if jaxlib_extension_version >= 522:
+        self.assertEqual(ctx.device_ordinal, out.__dlpack_device__()[1])
       self.assertEqual(arg.shape, shape)
       self.assertEqual(arg.dtype, dtype)
       self.assertEqual(out.shape, shape)
@@ -203,6 +208,28 @@ class BufferCallbackTest(jtu.JaxTestCase):
         callback, jax.ShapeDtypeStruct((), jnp.float32), has_side_effect=True)
     jax.block_until_ready(fun())
     self.assertTrue(called)
+
+  @jtu.run_on_devices("cpu")
+  def test_callback_preserves_subnormals(self):
+    if jax._src.lib.xla_version < 85:
+      self.skipTest("Requires xla_version >= 85")
+
+    def callback(ctx, out, arg):
+      del ctx  # unused
+      a = np.array([1e-38], dtype=np.float32)
+      b = np.array([0.1], dtype=np.float32)
+      self.assertNotEqual((a * b)[0], 0.0)
+
+      sub = np.nextafter(np.float32(0), np.float32(1))
+      c = np.array([sub], dtype=np.float32)
+      self.assertNotEqual((c * np.float32(1.0))[0], 0.0)
+      np.asarray(out)[...] = np.asarray(arg)
+
+    data = np.array([1.0], dtype=np.float32)
+    fun = buffer_callback.buffer_callback(
+        callback, jax.ShapeDtypeStruct.like(data)
+    )
+    jax.block_until_ready(jax.jit(fun)(data))
 
 
 if __name__ == "__main__":

@@ -1523,6 +1523,42 @@ class JitTest(jtu.BufferDonationTestCase):
       python_should_be_executing = False
       self.assertEqual(x, f(x))
 
+  def test_jit_static_argnums_not_shared_between_jit_instances(self):
+    # The C++ dispatch cache is shared between jit instances of the same
+    # function. Instances that differ in which arguments are static must not
+    # share entries, even when the dynamic avals and the static values match.
+    def f(a, b):
+      return a * 10 + b
+
+    x = jnp.float32(2.)
+    self.assertEqual(jit(f, static_argnums=0)(1, x), 12.)
+    self.assertEqual(jit(f, static_argnums=1)(x, 1), 21.)
+
+    def g(a, b):
+      return a * 10 + b
+
+    self.assertEqual(jit(g, static_argnames='a')(1, x), 12.)
+    self.assertEqual(jit(g, static_argnames='b')(x, 1), 21.)
+
+  @jtu.thread_unsafe_test()  # count_pjit_cpp_cache_miss is not thread-safe
+  def test_jit_options_not_shared_between_jit_instances(self):
+    def f(x, y):
+      return x + 1
+
+    x = jnp.arange(3.)
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      jit(f)(x, x)
+      jit(f)(x, x)
+      self.assertEqual(count(), 1)
+      jit(f, keep_unused=True)(x, x)
+      self.assertEqual(count(), 2)
+      jit(f, donate_argnums=1)(x, jnp.arange(3.))
+      self.assertEqual(count(), 3)
+      jit(f, static_argnums=1)(x, 1)
+      self.assertEqual(count(), 4)
+      jit(f, static_argnames='y')(x, 1)
+      self.assertEqual(count(), 4)
+
   def test_caches_depend_on_axis_env(self):
     # https://github.com/jax-ml/jax/issues/9187
     f = lambda: lax.axis_size("i")
@@ -5553,6 +5589,35 @@ class APITest(jtu.JaxTestCase):
                           requires_low=True)
     self.assertTrue(any("at x, now f32[7] and before f32[3]" in msg
                         for msg in cm.output))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_unknown_arg_names(self):
+    from jax._src import flattree as ft
+
+    def f(x):
+      return jnp.sin(x)
+
+    x1 = jnp.ones(3, 'float32')
+    x2 = jnp.ones(7, 'float32')
+    dbg1 = api_util.debug_info("test", f, (x1,), {}).with_unknown_names()
+    dbg2 = api_util.debug_info("test", f, (x2,), {}).with_unknown_names()
+    pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x1)), dbg1)
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x2)), dbg2)
+    self.assertTrue(any("at flat_arg[0], now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
+    dbg_empty = core.DebugInfo("test", "f", ("x", ""), None)
+    diff = pe.diff_types(
+        dbg_empty,
+        [core.typeof(x2), core.typeof(x2)],
+        [core.typeof(x1), core.typeof(x1)],
+    )
+    self.assertIsNotNone(diff)
+    _, _, explanation = diff
+    self.assertIn("at x, now f32[7] and before f32[3]", explanation)
+    self.assertIn("at flat_arg[1], now f32[7] and before f32[3]", explanation)
 
   @unittest.skip('TODO(mattjj): re-enable after updating cache miss explainer')
   @jtu.thread_unsafe_test()  # logging is not thread-safe

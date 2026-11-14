@@ -34,6 +34,7 @@ common --http_timeout_scaling=3
 common:clang_local --noincompatible_enable_cc_toolchain_resolution
 common:clang_local --@rules_ml_toolchain//common:enable_hermetic_cc=False
 common:clang_local --repo_env USE_HERMETIC_CC_TOOLCHAIN=0
+common:clang_local --@llvm-project//llvm:use_libunwind_for_eh_frame_registration=False
 
 # Toolchains for CUDA non-hermetic builds.
 common:cuda_clang_local --config=clang_local
@@ -72,7 +73,8 @@ common:linux --copt=-Wno-register
 common:linux --repo_env=LLVM_VERSION=22
 common:linux --repo_env=SYSROOT_DIST=linux_glibc_2_27
 common:linux --@rules_ml_toolchain//common:stdlib=libc++
-common:linux --@rules_ml_toolchain//common:static_libcxx=true
+common:linux --@rules_ml_toolchain//common:static_libcxx=True
+common:linux --@llvm-project//llvm:use_libunwind_for_eh_frame_registration=True
 common:linux --cxxopt=-std=c++20
 common:linux --host_cxxopt=-std=c++20
 
@@ -278,6 +280,15 @@ common:asan_shared --copt=-shared-libasan
 common:asan_shared --linkopt=-shared-libasan
 
 # TSan common config
+# rules_ml_toolchain's prebuilt static libc++ is not TSan-instrumented, so use
+# libstdc++ instead.
+common:tsan --@rules_ml_toolchain//common:stdlib=libstdc++
+common:tsan --@rules_ml_toolchain//common:static_libcxx=False
+common:tsan --@llvm-project//llvm:use_libunwind_for_eh_frame_registration=False
+# Select the glibc 2.35 hermetic sysroot (which bundles GCC 12 libstdc++);
+# common:linux's linux_glibc_2_27 sysroot only bundles GCC 8 libstdc++, which
+# lacks C++20 headers/features required by --cxxopt=-std=c++20.
+common:tsan --repo_env=SYSROOT_DIST=linux_glibc_2_35
 common:tsan --features=tsan
 common:tsan --strip=never
 common:tsan --copt=-g
@@ -290,12 +301,15 @@ common:tsan_shared --linkopt=-shared-libsan
 # Build with oneAPI support
 common:oneapi --@rules_ml_toolchain//common:stdlib=libstdc++
 common:oneapi --@rules_ml_toolchain//common:static_libcxx=False
+common:oneapi --@llvm-project//llvm:use_libunwind_for_eh_frame_registration=False
 common:oneapi --@rules_ml_toolchain//common:enable_sycl=True
 common:oneapi --repo_env=TF_NEED_SYCL=1
 common:oneapi --define=tensorflow_mkldnn_contraction_kernel=0
 common:oneapi --repo_env=ENABLE_INTEL_XPU_TRITON=1
-common:oneapi --cxxopt=-std=c++17
-common:oneapi --host_cxxopt=-std=c++17
+common:oneapi --cxxopt=-std=c++20
+common:oneapi --host_cxxopt=-std=c++20
+# C++20 with GCC 10 libstdc++ from glibc 2.31.
+common:oneapi --repo_env=SYSROOT_DIST=linux_glibc_2_31
 
 # oneAPI Hermetic setup
 common:oneapi --repo_env=SYCL_BUILD_HERMETIC=1

@@ -21,6 +21,7 @@ from enum import Enum
 import numpy as np
 from functools import partial, reduce as _reduce
 
+from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src import core
 from jax._src.custom_partitioning_sharding_rule import (
@@ -29,7 +30,13 @@ from jax._src.custom_partitioning_sharding_rule import (
 )
 from jax._src import ffi
 from jax._src.lax.bessel import bessel_i0e_impl, bessel_i1e_impl
-from jax._src.lax.erf import erf_inv_core, erf_inv_jvp_scale, erfc_impl, exp_neg_sq
+from jax._src.lax.erf import (
+    erf_inv_core,
+    erf_inv_jvp_scale,
+    erfc_default_impl,
+    erfc_impl,
+    exp_neg_sq,
+)
 from jax._src.lax.lax import (AccuracyMode, Tolerance, add, bitwise_and,
                               bitwise_not, bitwise_or, broadcast_in_dim,
                               broadcast_shapes, convert_element_type, div, eq,
@@ -45,7 +52,7 @@ from jax._src.lax.lgamma import lgamma_impl
 from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
-from jax._src.lib import cpu_math, cuda_math, hip_math
+from jax._src.lib import cpu_math, cuda_math, hip_math, xla_version
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.typing import Array, ArrayLike
 
@@ -366,6 +373,8 @@ class IgammaMode(Enum):
   SAMPLE_DERIVATIVE = 3
 
 def _any(predicates: Array) -> Array:
+  if not predicates.shape:
+    return predicates
   f = _const(predicates, False)
   predicates_shape = predicates.shape
   all_dimensions = tuple(range(len(predicates_shape)))
@@ -666,7 +675,9 @@ ad.defjvp(regularized_incomplete_beta_p,
   betainc_gradx)
 
 
-def _lgamma_lowering(ctx, x, *, use_f64_for_f32=False):
+def _lgamma_lowering(
+    ctx, x, *, use_f64_for_f32=False, subnormals=False
+):
   aval = ctx.avals_in[0]
   def _impl(v):
     if aval.dtype not in (np.float32, np.float64):
@@ -674,10 +685,13 @@ def _lgamma_lowering(ctx, x, *, use_f64_for_f32=False):
           lgamma_impl(
               convert_element_type(v, np.float32),
               use_f64_for_f32=use_f64_for_f32,
+              subnormals=subnormals,
           ),
           aval.dtype,
       )
-    return lgamma_impl(v, use_f64_for_f32=use_f64_for_f32)
+    return lgamma_impl(
+        v, use_f64_for_f32=use_f64_for_f32, subnormals=subnormals
+    )
   return mlir.lower_fun(_impl, multiple_results=False)(ctx, x)
 
 
@@ -708,9 +722,11 @@ def _unary_math_ffi_lowering(target_name: str, fallback_lowering):
 
 
 _cpu_lgamma_lowering = partial(_lgamma_lowering, use_f64_for_f32=True)
+_gpu_lgamma_lowering = partial(_lgamma_lowering, subnormals=True)
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
 mlir.register_lowering(lgamma_p, _lgamma_lowering, inline=False)
+mlir.register_lowering(lgamma_p, _gpu_lgamma_lowering, platform='gpu', inline=False)
 # TODO(phawkins): Make this unconditional after jax 0.12.1 is released.
 if cpu_math is not None:
   mlir.register_lowering(
@@ -731,18 +747,23 @@ else:
 if cuda_math is not None:
   mlir.register_lowering(
       lgamma_p,
-      _unary_math_ffi_lowering('cu_lgamma_ffi', _lgamma_lowering),
+      _unary_math_ffi_lowering('cu_lgamma_ffi', _gpu_lgamma_lowering),
       platform='cuda',
   )
 if hip_math is not None:
   mlir.register_lowering(
       lgamma_p,
-      _unary_math_ffi_lowering('hip_lgamma_ffi', _lgamma_lowering),
+      _unary_math_ffi_lowering('hip_lgamma_ffi', _gpu_lgamma_lowering),
       platform='rocm',
   )
 
 def _digamma_lowering(
-    ctx, x, *, use_f64_for_f32=False, use_optimization_barrier=False
+    ctx,
+    x,
+    *,
+    use_f64_for_f32=False,
+    use_optimization_barrier=False,
+    subnormals=False,
 ):
   aval = ctx.avals_in[0]
   def _impl(v):
@@ -752,6 +773,7 @@ def _digamma_lowering(
               convert_element_type(v, np.float32),
               use_f64_for_f32=use_f64_for_f32,
               use_optimization_barrier=use_optimization_barrier,
+              subnormals=subnormals,
           ),
           aval.dtype,
       )
@@ -759,14 +781,19 @@ def _digamma_lowering(
         v,
         use_f64_for_f32=use_f64_for_f32,
         use_optimization_barrier=use_optimization_barrier,
+        subnormals=subnormals,
     )
   return mlir.lower_fun(_impl, multiple_results=False)(ctx, x)
 
 
 _cpu_digamma_lowering = partial(_digamma_lowering, use_f64_for_f32=True)
+_gpu_digamma_lowering = partial(_digamma_lowering, subnormals=True)
 digamma_p = standard_unop(_float, 'digamma')
 ad.defjvp(digamma_p, lambda g, x: mul(g, polygamma(_const(x, 1), x)))
 mlir.register_lowering(digamma_p, _digamma_lowering, inline=False)
+mlir.register_lowering(
+    digamma_p, _gpu_digamma_lowering, platform='gpu', inline=False
+)
 # TODO(phawkins): Make this unconditional after jax 0.12.1 is released.
 if cpu_math is not None:
   mlir.register_lowering(
@@ -784,13 +811,13 @@ else:
 if cuda_math is not None:
   mlir.register_lowering(
       digamma_p,
-      _unary_math_ffi_lowering('cu_digamma_ffi', _digamma_lowering),
+      _unary_math_ffi_lowering('cu_digamma_ffi', _gpu_digamma_lowering),
       platform='cuda',
   )
 if hip_math is not None:
   mlir.register_lowering(
       digamma_p,
-      _unary_math_ffi_lowering('hip_digamma_ffi', _digamma_lowering),
+      _unary_math_ffi_lowering('hip_digamma_ffi', _gpu_digamma_lowering),
       platform='rocm',
   )
 mlir.register_lowering(
@@ -857,14 +884,33 @@ ad.defjvp(
         _const(x, -2.0 / np.sqrt(np.pi)), mul(g, exp_neg_sq(x))
     ),
 )
-def _erfc_lowering(ctx, x, *, accuracy=None):
+def _erfc_lowering(ctx, x, *, accuracy=None, use_exp2=True):
   dtype = ctx.avals_in[0].dtype
+  if config.jax_accurate_default_erfc.value:
+    if accuracy is AccuracyMode.HIGHEST:
+      return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
+    has_exp2 = (
+        not ctx.is_forward_compat()
+        and xla_version >= 80
+        and cloud_tpu_init.is_libtpu_at_least('0.0.52')
+    )
+    return mlir.lower_fun(
+        partial(erfc_default_impl, use_exp2=use_exp2 and has_exp2),
+        multiple_results=False,
+    )(ctx, x)
   if dtype == dtypes.bfloat16 or (
       accuracy is AccuracyMode.HIGHEST and dtype in (np.float32, np.float64)
   ):
     return mlir.lower_fun(erfc_impl, multiple_results=False)(ctx, x)
   return _nary_lower_hlo(chlo.erfc, ctx, x)
 mlir.register_lowering(erfc_p, _erfc_lowering)
+# TODO(phawkins): Switch CPU to `erfc_default_impl` (`use_exp2=True`) once
+# XLA:CPU vectorizes and inlines `exp2` like `exp`.
+mlir.register_lowering(
+    erfc_p,
+    partial(_erfc_lowering, use_exp2=False),
+    platform='cpu',
+)
 core.pp_eqn_rules[erfc_p] = _unary_with_accuracy_pp_rule
 
 erf_inv_p = standard_unop(_float, 'erf_inv')

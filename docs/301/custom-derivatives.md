@@ -1512,11 +1512,13 @@ to exploit the sparsity, or clean them up with `instantiate_zeros`.
 
 Backward rules get an output channel of their own: a `vjp_bwd` rule can
 return a dict of named pytrees to log out of the backward pass. To receive
-the logs, apply the VJP function via its `with_logs` method: `f_vjp.with_logs(out_ct)` returns a pair
-`(arg_cts, logs)`, where `logs` merges the dicts returned by all the rules
-that ran. Logging is drop-by-default: a plain `f_vjp(out_ct)` call ignores
-the logs, and under `jit` the logging computation is dead-code-eliminated,
-so it costs nothing unless asked for. That makes it a lightweight way to
+the logs, pass `with_logs=True` to `jax.grad` or `jax.value_and_grad`, or
+apply a VJP function via its `with_logs` method: `f_vjp.with_logs(out_ct)`
+returns a pair `(arg_cts, logs)`. Either way, `logs` merges the dicts returned
+by all the rules that ran. Logging is drop-by-default: a plain `jax.grad` or
+`f_vjp(out_ct)` call ignores the logs, and under `jit` the logging computation
+is dead-code-eliminated, so it costs nothing unless asked for. That makes it a
+lightweight way to
 observe a backward pass (cotangent values, their norms, where a `nan`
 first appears) without changing any function signatures:
 
@@ -1540,6 +1542,9 @@ class Square(HiPrim):
 
 def square(x, tag='sq'):
   return Square(jax.typeof(x), tag)(x)
+
+g, logs = jax.grad(square, with_logs=True)(3.)
+print(g, logs)
 
 y, f_vjp = jax.vjp(square, 3.)
 arg_cts, logs = f_vjp.with_logs(1.)

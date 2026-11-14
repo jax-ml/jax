@@ -91,12 +91,12 @@ class UlpDiffTest(jtu.JaxTestCase):
     expected_no_ftz = np.array([e for _, _, _, e in cases], dtype=np.float64)
 
     np.testing.assert_allclose(
-        util.ulp_diff(x_arr, y_arr, dtype, ftz=True),
+        np.abs(util.ulp_diff(x_arr, y_arr, dtype, ftz=True)),
         expected_ftz,
         rtol=1e-12,
     )
     np.testing.assert_allclose(
-        util.ulp_diff(x_arr, y_arr, dtype, ftz=False),
+        np.abs(util.ulp_diff(x_arr, y_arr, dtype, ftz=False)),
         expected_no_ftz,
         rtol=1e-12,
     )
@@ -299,7 +299,7 @@ class UlpDiffTest(jtu.JaxTestCase):
           )
       )
 
-    ulp_mp = util.ulp_diff_mpmath(c_arr, r_arr, dt, ftz=ftz)
+    ulp_mp = util._ulp_diff_mpmath(c_arr, r_arr, dt, ftz=ftz)
 
     np.testing.assert_allclose(ulp_jax, ulp_mp, rtol=1e-12, atol=1e-12)
 
@@ -376,6 +376,15 @@ class UlpDiffTest(jtu.JaxTestCase):
     )
     self.assertTrue(
         util.eval_mpmath(lambda x: bool(np.signbit(float(x))), neg_nan)
+    )
+    bf16_sub = np.uint16(0x0001).view(jnp.bfloat16)
+    self.assertEqual(
+        util.eval_mpmath(lambda x: x, bf16_sub, dtype=jnp.bfloat16, input_ftz=True),
+        mpmath.mpf(0.0),
+    )
+    self.assertNotEqual(
+        util.eval_mpmath(lambda x: x, bf16_sub, dtype=jnp.bfloat16, input_ftz=False),
+        mpmath.mpf(0.0),
     )
 
   def test_check_nary_precision_binary(self):
@@ -570,6 +579,30 @@ class UlpDiffTest(jtu.JaxTestCase):
         max_samples=100,
     )
 
+  def test_ulp_diff_mismatch_signs(self):
+    cases = [
+        # (computed, ref_f32, ref_mpf, expected)
+        (-1.0, np.nan, np.nan, np.inf),
+        (np.nan, -1.0, -1.0, np.inf),
+        (np.nan, np.nan, np.nan, 0.0),
+        (1.0, np.inf, np.inf, -np.inf),
+        (1.0, -np.inf, -np.inf, np.inf),
+        (np.inf, 1.0, 1.0, np.inf),
+        (-np.inf, 1.0, 1.0, -np.inf),
+        (-np.inf, np.inf, np.inf, -np.inf),
+        (np.inf, -np.inf, -np.inf, np.inf),
+        (-1.0, 2.0**128, mpmath.mpf(2) ** 1024, -np.inf),
+        (np.inf, -(2.0**128), -(mpmath.mpf(2) ** 1024), np.inf),
+    ]
+    c = np.array([row[0] for row in cases], dtype=np.float64)
+    r_f32 = np.array([row[1] for row in cases], dtype=np.float64)
+    r_mpf = np.array([row[2] for row in cases], dtype=object)
+    expected = np.array([row[3] for row in cases], dtype=np.float64)
+    jax_err = util.ulp_diff(c.astype(np.float32), r_f32, np.float32, ftz=False)
+    mp_err = util.ulp_diff(c, r_mpf, np.float64, ftz=False)
+    np.testing.assert_array_equal(jax_err, expected)
+    np.testing.assert_array_equal(mp_err, expected)
+
   def test_register_benchmark_nary(self):
     util.register_benchmark(jnp.add, nargs=2, name="test_add_nary")
 
@@ -697,13 +730,14 @@ class UlpDiffTest(jtu.JaxTestCase):
       )
 
   def test_f16_default_non_ftz(self):
-    # float16 defaults to non-FTZ mode across all platforms, while other
-    # floating-point dtypes default to FTZ.
+    # float16 defaults to non-FTZ mode across all platforms, and GPU defaults to
+    # non-FTZ mode across all floating-point dtypes.
     self.assertFalse(util._default_ftz(jnp.float16))
     self.assertFalse(util._default_ftz(np.float16))
-    self.assertTrue(util._default_ftz(jnp.bfloat16))
-    self.assertTrue(util._default_ftz(jnp.float32))
-    self.assertTrue(util._default_ftz(jnp.float64))
+    expected_non_f16 = jtu.device_under_test() != "gpu"
+    self.assertEqual(util._default_ftz(jnp.bfloat16), expected_non_f16)
+    self.assertEqual(util._default_ftz(jnp.float32), expected_non_f16)
+    self.assertEqual(util._default_ftz(jnp.float64), expected_non_f16)
 
     # _resolve_override falls back to _default_ftz for float16 when omitted.
     self.assertFalse(
@@ -725,6 +759,122 @@ class UlpDiffTest(jtu.JaxTestCase):
             True, "tpu", jnp.float16, util._default_ftz(jnp.float16)
         )
     )
+
+  def test_domain_bounds(self):
+    # Full interval unioned with infs_and_nans equals all bit patterns.
+    for dt in (jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64):
+      full = util.Domain.interval(
+          dt, -np.inf, np.inf
+      ) | util.Domain.infs_and_nans(dt)
+      self.assertEqual(full, util.Domain.all(dt))
+    self.assertEqual(util.Domain.nans(jnp.bfloat16).size, 2 * 127)
+
+    # Pure finite interval: zero non-finite values, covers -0.0 and +0.0.
+    seen_finite = []
+    util.check_unary_precision(
+        self,
+        jnp.negative,
+        lambda x: (seen_finite.append(x.copy()), -x)[1],
+        dtype=jnp.bfloat16,
+        bounds=0.5,
+        domain=util.Domain.interval(jnp.bfloat16, -1.0, 1.0),
+    )
+    arr = np.concatenate(seen_finite)
+    self.assertEqual(len(arr), 2 * (0x3F80 + 1))
+    self.assertTrue(np.all((arr >= -1.0) & (arr <= 1.0)))
+    self.assertTrue(np.any((arr == 0) & np.signbit(arr.astype(float))))
+    self.assertTrue(np.any((arr == 0) & ~np.signbit(arr.astype(float))))
+
+    # Union with infs_and_nans via callable (exhaustive bf16, sampled f32/f64).
+    dom = lambda dt: (
+        util.Domain.interval(dt, -1.0, 1.0) | util.Domain.infs_and_nans(dt)
+    )
+    cases = (
+        (jnp.bfloat16, {}),
+        (jnp.float32, {"max_samples": 2048}),
+        (jnp.float64, {"max_samples": 2048}),
+    )
+    for dt, kwargs in cases:
+      seen = []
+      util.check_unary_precision(
+          self,
+          jnp.negative,
+          lambda x, s=seen: (s.append(x.copy()), -x)[1],
+          dtype=dt,
+          bounds=0.5,
+          domain=dom,
+          **kwargs,
+      )
+      vals = np.concatenate(seen)
+      fin = vals[np.isfinite(vals)]
+      self.assertTrue(np.all((fin >= -1.0) & (fin <= 1.0)))
+      self.assertTrue(np.any(vals == -np.inf))
+      self.assertTrue(np.any(vals == np.inf))
+      self.assertTrue(np.any(np.isnan(vals)))
+      if dt == jnp.bfloat16:
+        self.assertEqual(int(np.isnan(vals).sum()), 2 * 127)
+
+    # Binary domains (exhaustive).
+    seen_xy = []
+    util.check_nary_precision(
+        self,
+        jnp.add,
+        lambda x, y: (seen_xy.append((x.copy(), y.copy())), x + y)[1],
+        dtype=jnp.bfloat16,
+        nargs=2,
+        bounds=0.5,
+        domains=[
+            lambda dt: util.Domain.interval(dt, 0.0, 0.0),
+            lambda dt: (
+                util.Domain.interval(dt, -1.0, -1.0) | util.Domain.infs(dt)
+            ),
+        ],
+    )
+    xs = np.concatenate([x for x, _ in seen_xy])
+    ys = np.concatenate([y for _, y in seen_xy])
+    self.assertEqual(len(xs), 2 * (1 + 2))
+    self.assertTrue(np.all(xs == 0.0))
+    self.assertTrue(np.all((ys == -1.0) | np.isinf(ys)))
+
+    with self.assertRaises(ValueError):
+      util.Domain.interval(jnp.float32, 2.0, 1.0)
+    with self.assertRaises(ValueError):
+      util.check_nary_precision(
+          self, jnp.add, np.add, dtype=jnp.bfloat16, nargs=2, domains=[dom]
+      )
+
+    # Negative float64 bit patterns (>= 1 << 63) and 2^64-sized Domain.at.
+    d_neg_f64 = util.Domain.interval(jnp.float64, -1.0, -1.0)
+    np.testing.assert_array_equal(
+        d_neg_f64.at(np.array([0])), np.array([-1.0])
+    )
+    np.testing.assert_array_equal(
+        util.Domain.all(jnp.float64).at(np.array([0])), np.array([0.0])
+    )
+
+    # Finite bounds exceeding fmax clamp rather than overflowing to ±inf.
+    d_f16 = util.Domain.interval(jnp.float16, -1e5, 1e5)
+    self.assertEqual(
+        d_f16, util.Domain.interval(jnp.float16, -65504.0, 65504.0)
+    )
+    self.assertEqual(
+        util.Domain.interval(jnp.float16, 1e5, np.inf),
+        util.Domain.points(jnp.float16, np.inf),
+    )
+    with self.assertRaises(ValueError):
+      util.Domain.interval(jnp.float16, 1e5, 2e5)
+    with self.assertRaises(ValueError):
+      util.Domain.interval(jnp.float16, -2e5, -1e5)
+
+    # Inexact bounds round inward to [lo, hi].
+    d_inexact = util.Domain.interval(jnp.bfloat16, -0.9999, 0.9999)
+    v_in = d_inexact.at(np.arange(d_inexact.size)).astype(float)
+    self.assertTrue(np.all((v_in >= -0.9999) & (v_in <= 0.9999)))
+    d_neg = util.Domain.interval(jnp.bfloat16, -1.0, -1e-45)
+    v_neg = d_neg.at(np.arange(d_neg.size)).astype(float)
+    self.assertTrue(np.all((v_neg >= -1.0) & (v_neg <= -1e-45)))
+    with self.assertRaises(ValueError):
+      util.Domain.interval(jnp.bfloat16, 0.3, 0.3001)
 
 
 if __name__ == "__main__":

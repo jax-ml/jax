@@ -409,7 +409,8 @@ def disable_jit(disable: bool = True):
 def grad(fun: Callable, argnums: int | Sequence[int] = 0,
          has_aux: bool = False, holomorphic: bool = False,
          allow_int: bool = False,
-         reduce_axes: Sequence[AxisName] = ()) -> Callable:
+         reduce_axes: Sequence[AxisName] = (), *,
+         with_logs: bool = False) -> Callable:
   """Creates a function that evaluates the gradient of ``fun``.
 
   Args:
@@ -429,6 +430,8 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
     allow_int: Optional, bool. Whether to allow differentiating with
       respect to integer valued inputs. The gradient of an integer input will
       have a trivial vector-space dtype (float0). Default False.
+    with_logs: Optional, bool. Indicates whether to also return the dict of
+      backward-pass logs (as from ``jax.vjp(...)[1].with_logs``). Default False.
 
   Returns:
     A function with the same arguments as ``fun``, that evaluates the gradient
@@ -436,7 +439,9 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
     shape and type as the positional argument indicated by that integer. If
     argnums is a tuple of integers, the gradient is a tuple of values with the
     same shapes and types as the corresponding arguments. If ``has_aux`` is True
-    then a pair of (gradient, auxiliary_data) is returned.
+    then a pair of (gradient, auxiliary_data) is returned. If ``with_logs`` is
+    True then (gradient, logs) is returned, or (gradient, auxiliary_data, logs)
+    if ``has_aux`` is also True.
 
   For example:
 
@@ -451,7 +456,8 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
   del reduce_axes
   value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux,
                                     holomorphic=holomorphic,
-                                    allow_int=allow_int)
+                                    allow_int=allow_int,
+                                    with_logs=with_logs)
 
   docstr = ("Gradient of {fun} with respect to positional argument(s) "
             "{argnums}. Takes the same arguments as {fun} but returns the "
@@ -468,6 +474,9 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
   @api_boundary
   def grad_f_aux(*args, **kwargs):
     (_, aux), g = value_and_grad_f(*args, **kwargs)
+    if with_logs:
+      g, logs = g
+      return g, aux, logs
     return g, aux
 
   return grad_f_aux if has_aux else grad_f
@@ -476,7 +485,8 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
 @partial(api_boundary, repro_api_name="jax.value_and_grad")
 def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
                    has_aux: bool = False, holomorphic: bool = False,
-                   allow_int: bool = False, reduce_axes: Sequence[AxisName] = ()
+                   allow_int: bool = False, reduce_axes: Sequence[AxisName] = (),
+                   *, with_logs: bool = False
   ) -> Callable[..., tuple[Any, Any]]:
   """Create a function that evaluates both ``fun`` and the gradient of ``fun``.
 
@@ -495,6 +505,8 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     allow_int: Optional, bool. Whether to allow differentiating with
       respect to integer valued inputs. The gradient of an integer input will
       have a trivial vector-space dtype (float0). Default False.
+    with_logs: Optional, bool. Indicates whether to also return the dict of
+      backward-pass logs (as from ``jax.vjp(...)[1].with_logs``). Default False.
 
   Returns:
     A function with the same arguments as ``fun`` that evaluates both ``fun``
@@ -503,7 +515,9 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     and type as the positional argument indicated by that integer. If argnums is
     a sequence of integers, the gradient is a tuple of values with the same
     shapes and types as the corresponding arguments. If ``has_aux`` is True
-    then a tuple of ((value, auxiliary_data), gradient) is returned.
+    then a tuple of ((value, auxiliary_data), gradient) is returned. If
+    ``with_logs`` is True then the gradient is replaced by a pair
+    (gradient, logs).
   """
   from jax._src.lax import lax as lax_internal  # pyrefly: ignore[missing-import]
 
@@ -534,10 +548,12 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     ans, vjp_py, *maybe_aux = vjp(f_partial, *dyn_args, has_aux=has_aux)
     _check_scalar(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
-    g = vjp_py(lax_internal._one_vjp(ans))
+    one = lax_internal._one_vjp(ans)
+    g, *maybe_logs = (vjp_py.with_logs(one) if with_logs  # pyrefly: ignore[missing-attribute]
+                      else (vjp_py(one),))
     g = g[0] if isinstance(argnums, int) else g
     ans_aux = (ans, *maybe_aux) if has_aux else ans
-    return ans_aux, g
+    return ans_aux, ((g, *maybe_logs) if with_logs else g)
 
   return value_and_grad_f
 

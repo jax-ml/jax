@@ -20,8 +20,8 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import config
-from jax._src.lib import jaxlib_extension_version
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version, xla_version
 import jax.numpy as jnp
 from jax.tests.numerics import numerics_test_util as util
 import mpmath
@@ -135,9 +135,6 @@ class SinhTest(jtu.JaxTestCase):
       check_signed_zeros = [
           ("tpu", False),
       ]
-    input_ftz = [
-        ("gpu", False),
-    ]
     interesting_points = [
         *_sinh_cosh_interesting_points(dtype),
         # Worst-case inputs across math libraries from Gladman et al.:
@@ -164,7 +161,6 @@ class SinhTest(jtu.JaxTestCase):
         mpmath.sinh,
         dtype,
         bounds=bounds,
-        input_ftz=input_ftz,
         ignore_inputs=ignore_inputs,
         check_signed_zeros=check_signed_zeros,
         interesting_points=interesting_points,
@@ -244,7 +240,6 @@ class TanhTest(jtu.JaxTestCase):
     ]
     input_ftz = [
         ("cpu", {bf16: False, f32: False}),
-        ("gpu", False),
     ]
     util.check_unary_precision(
         self,
@@ -302,27 +297,35 @@ class TanhGradTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_tanh_grad_highest_accuracy(self, dtype):
-    # With accuracy=AccuracyMode.HIGHEST, grad(tanh)(x) is evaluated as
-    # (2 * exp(-|x|) / (1 + exp(-2 * |x|)))^2, avoiding both 1 - tanh(x)^2
-    # cancellation for large |x| and premature underflow/overflow when 2 * |x|
-    # exceeds the normal exponent range.
+    # With accuracy=AccuracyMode.HIGHEST and jax_tanh_sech_jvp=True,
+    # grad(tanh)(x) is evaluated as (2 * exp(-|x|) / (1 + exp(-2 * |x|)))^2,
+    # avoiding both 1 - tanh(x)^2 cancellation for large |x| and premature
+    # underflow/overflow when 2 * |x| exceeds the normal exponent range.
     bounds = [
         ("cpu", {bf16: 3.5, f16: (4.0, 4.5), f32: 6.0, f64: 6.0}),
         ("gpu", {bf16: 3.5, f16: 4.5, f32: 8.5, f64: 5.0}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 7.5}),
         ("tpu_v5p", {bf16: 0.5, f16: 1.0, f32: 7.5}),
         ("tpu_v6e", {bf16: 0.5, f16: 1.0, f32: 8.0}),
-        ("tpu_7x", {bf16: 0.5, f16: 1.0, f32: 8.0}),
+        (
+            "tpu_7x",
+            {
+                bf16: 0.5 if jtu.is_libtpu_at_least("0.0.52") else 63.0,
+                f16: 1.0,
+                f32: 8.0,
+            },
+        ),
     ]
-    util.check_unary_precision(
-        self,
-        tanh_grad_highest,
-        lambda x: np.square(np.reciprocal(np.cosh(x))),
-        lambda x: 1 / mpmath.cosh(x) ** 2,
-        dtype,
-        bounds=bounds,
-        interesting_points=_tanh_interesting_points(dtype),
-    )
+    with jtu.global_config_context(jax_tanh_sech_jvp=True):
+      util.check_unary_precision(
+          self,
+          tanh_grad_highest,
+          lambda x: np.square(np.reciprocal(np.cosh(x))),
+          lambda x: 1 / mpmath.cosh(x) ** 2,
+          dtype,
+          bounds=bounds,
+          interesting_points=_tanh_interesting_points(dtype),
+      )
 
   @parameterized.named_parameters(("_float32", f32), ("_float64", f64))
   def test_tanh_higher_order_highest_accuracy(self, dtype):
@@ -350,11 +353,12 @@ class TanhGradTest(jtu.JaxTestCase):
       s = 1 / mpmath.cosh(v) ** 2
       return -2 * s * (s - 2 * t * t)
 
-    util.check_precision_at_points(self, d2_fn, mp_d2, xs, max_ulp=8.0)
-    util.check_precision_at_points(self, d3_fn, mp_d3, xs, max_ulp=16.0)
-    infs = jnp.array([-jnp.inf, jnp.inf], dtype=dtype)
-    self.assertArraysEqual(d2_fn(infs), jnp.zeros_like(infs))
-    self.assertArraysEqual(d3_fn(infs), jnp.zeros_like(infs))
+    with jtu.global_config_context(jax_tanh_sech_jvp=True):
+      util.check_precision_at_points(self, d2_fn, mp_d2, xs, max_ulp=8.0)
+      util.check_precision_at_points(self, d3_fn, mp_d3, xs, max_ulp=16.0)
+      infs = jnp.array([-jnp.inf, jnp.inf], dtype=dtype)
+      self.assertArraysEqual(d2_fn(infs), jnp.zeros_like(infs))
+      self.assertArraysEqual(d3_fn(infs), jnp.zeros_like(infs))
 
   @parameterized.named_parameters(
       ("_complex64", jnp.complex64), ("_complex128", jnp.complex128)
@@ -366,12 +370,13 @@ class TanhGradTest(jtu.JaxTestCase):
     xs = jnp.array(
         [-2.0 + 0.5j, -0.1 - 0.3j, 0.1 + 0.3j, 2.0 - 0.5j], dtype=dtype
     )
-    jtu.check_grads(f, (xs,), order=2, modes=["fwd", "rev"])
-    # Also verify large |Re(x)| doesn't produce NaNs from overflow.
-    x_tail = 15.0 if dtype == jnp.complex64 else 30.0
-    xs_tail = jnp.array([-x_tail + 1j, x_tail + 1j], dtype=dtype)
-    _, jvps = jax.jvp(f, (xs_tail,), (jnp.ones_like(xs_tail),))
-    self.assertAllClose(jvps, jnp.zeros_like(jvps), atol=1e-10)
+    with jtu.global_config_context(jax_tanh_sech_jvp=True):
+      jtu.check_grads(f, (xs,), order=2, modes=["fwd", "rev"])
+      # Also verify large |Re(x)| doesn't produce NaNs from overflow.
+      x_tail = 15.0 if dtype == jnp.complex64 else 30.0
+      xs_tail = jnp.array([-x_tail + 1j, x_tail + 1j], dtype=dtype)
+      _, jvps = jax.jvp(f, (xs_tail,), (jnp.ones_like(xs_tail),))
+      self.assertAllClose(jvps, jnp.zeros_like(jvps), atol=1e-10)
 
 
 @jtu.thread_unsafe_test_class()
@@ -379,8 +384,12 @@ class AcoshTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_acosh_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {bf16: 2.0, f16: 2.0, f32: 3.5, f64: 3.5})
+    else:
+      cpu_bounds = ("cpu", {bf16: 2.0, f16: 2.0, f32: 4.5, f64: 3.5})
     bounds = [
-        ("cpu", {bf16: 2.0, f16: 2.0, f32: 4.5, f64: 3.5}),
+        cpu_bounds,
         ("gpu", {f16: 1.0, f32: 2.5, f64: 3.0}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4031.0}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 61.0}),
@@ -449,8 +458,12 @@ class AsinhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_asinh_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 2.5})
+    else:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.5, f64: 2.5})
     bounds = [
-        ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.5, f64: 2.5}),
+        cpu_bounds,
         ("gpu", {f16: 1.0, f32: 2.0, f64: 2.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 4034.5}),
         ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 62.5}),
@@ -515,8 +528,12 @@ class AtanhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_atanh_accuracy(self, dtype):
+    if xla_version >= 88:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 2.0, f64: 2.5})
+    else:
+      cpu_bounds = ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 2.5})
     bounds = [
-        ("cpu", {bf16: 1.5, f16: 1.5, f32: 3.0, f64: 2.5}),
+        cpu_bounds,
         ("gpu", {f32: 3.5, f64: 3.5}),
         (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 2183.5}),
         ("tpu_v5p", {f16: 1.0, f32: 43.0}),
@@ -558,16 +575,10 @@ class AtanhGradTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(*DTYPE_PARAMS)
   def test_atanh_grad_accuracy(self, dtype):
-    # In float16 on CPU/GPU, (1 - x) * (1 + x) overflows to -inf for |x| >= 256,
-    # causing the reciprocal to evaluate to -0.0 while the true value is
-    # subnormal (~256 ULPs).
     bounds = [
-        ("cpu", {bf16: 2.5, f16: 256.5, f32: 2.5, f64: 3.5}),
-        ("gpu", {bf16: 2.5, f16: 256.5, f32: 3.0, f64: 3.5}),
-        (TPU_EUPV1, {bf16: 1.0, f16: 1.0, f32: 190.0}),
-        ("tpu_v5p", {bf16: 1.0, f16: 1.0, f32: 37.5}),
-        ("tpu_v6e", {f16: 1.0, f32: 3.5}),
-        ("tpu_7x", {bf16: 2.5, f16: 1.0, f32: 3.5}),
+        (["cpu", "gpu"], {bf16: 2.5, f16: 2.0, f32: 2.5, f64: 3.5}),
+        ([*TPU_EUPV1, "tpu_v5p", "tpu_v6e"], {f16: 1.0, f32: 3.0}),
+        ("tpu_7x", {bf16: 2.5, f16: 1.0, f32: 3.0}),
     ]
     util.check_unary_precision(
         self,
@@ -576,6 +587,9 @@ class AtanhGradTest(jtu.JaxTestCase):
         lambda x: mpmath.inf if abs(x) == 1 else 1 / (1 - x * x),
         dtype,
         bounds=bounds,
+        domain=lambda dt: (
+            util.Domain.interval(dt, -1.0, 1.0) | util.Domain.infs_and_nans(dt)
+        ),
     )
 
 

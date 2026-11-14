@@ -222,7 +222,7 @@ JAX_COMPOUND_OP_RECORDS = [
               inexact=True),
     op_record("hypot", 2, real_dtypes, all_shapes, jtu.rand_default, [],
               inexact=True),
-    op_record("kron", 2, number_dtypes, nonempty_shapes, jtu.rand_default, []),
+    op_record("kron", 2, all_dtypes, nonempty_shapes, jtu.rand_default, []),
     op_record("outer", 2, number_dtypes, all_shapes, jtu.rand_default, []),
     op_record("imag", 1, number_dtypes, all_shapes, jtu.rand_some_inf, []),
     op_record("iscomplex", 1, number_dtypes, all_shapes, jtu.rand_some_inf, []),
@@ -798,6 +798,24 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     check(r - z, [c(-inf, -1.0), c(-0.5, -inf), c(-4.0, -0.0), c(-1.0, 0.0)])
     check(z - r, [c(inf, 1.0), c(0.5, inf), c(4.0, 0.0), c(1.0, -0.0)])
     check(z / r, [c(inf, 2.0), c(2.0, inf), c(-1.0, -0.0), c(2.0, -0.0)])
+
+  @jtu.sample_product(
+      op=["gcd", "lcm"],
+      dtype=int_dtypes,
+  )
+  def testGcdLcmMinInt(self, op, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40840
+    np_op = getattr(np, op)
+    jnp_op = getattr(jnp, op)
+    info = np.iinfo(dtype)
+    q = -(info.min // 4)
+    vals = np.array(
+        [info.min, info.min + 1, -q * 3, -6, -1, 0, 1, 6, q * 3, info.max],
+        dtype=dtype,
+    )
+    args_maker = lambda: [vals[:, None], vals[None, :]]
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    self._CompileAndCheck(jnp_op, args_maker)
 
 
 if __name__ == "__main__":

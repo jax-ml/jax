@@ -2536,9 +2536,10 @@ def _bitcast_convert_type_pull_rule(
 
 @register_eval_rule(prng.random_bits_p)
 def _random_bits_eval_rule(
-    eval_ctx: KernelEvalContext, key, bit_width, shape, num_streams=1
+    eval_ctx: KernelEvalContext, key, bit_width, shape, num_streams,
+    out_sharding
 ):
-  del shape
+  del shape, out_sharding
   block_spec = eval_ctx.out_block_specs[0]
   indices = eval_ctx.get_out_block_indices()[0]
   block_shape = _ref_block_shape(block_spec.block_shape)

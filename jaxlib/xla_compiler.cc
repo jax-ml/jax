@@ -164,6 +164,10 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
            })
       .def("__setstate__",
            [](CompileOptions* self, nb::tuple t) {
+             if (t.size() != 1) {
+               throw XlaRuntimeError(
+                   "Malformed pickled CompileOptions, expected 1-tuple");
+             }
              CompileOptionsProto result;
              nb::bytes serialized = nb::cast<nb::bytes>(t[0]);
              result.ParseFromArray(serialized.c_str(), serialized.size());

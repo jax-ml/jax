@@ -52,10 +52,10 @@ repos:
         - opt-einsum~=3.4.0
         - tensorstore
         - scipy-stubs
-        - --pre
-        - --extra-index-url
-        - https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/
-        - jaxlib
+        # TODO(slebedev): Unpin (and remove the hlo.fma pyrefly suppressions in
+        # jax/_src/lax/lax.py) once a nightly jaxlib with the Triton dialect is
+        # published.
+        - jaxlib==0.12.0.1
 
 - repo: https://github.com/mwouts/jupytext
   rev: 8ed836db64ad5d304f2315e6bfd9049c9142e190  # frozen: v1.16.4

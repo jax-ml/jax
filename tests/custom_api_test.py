@@ -2860,6 +2860,55 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(x_ct, 6., check_dtypes=False)
     self.assertAllClose(logsg['ct'], 1., check_dtypes=False)
 
+  def test_grad_and_value_and_grad_with_logs(self):
+    @jax.custom_gradient(with_logs=True)
+    def f(x, y):
+      return x * y, lambda g: ((g * y, g * x), {'f': {'ct_out': g, 'x': x}})
+
+    def f_aux(x, y):
+      return f(x, y) * 2., {'sum': x + y}
+
+    logs = {'f': {'ct_out': 1., 'x': 3.}}
+    aux_logs = {'f': {'ct_out': 2., 'x': 3.}}
+    check = partial(self.assertAllClose, check_dtypes=False)
+
+    check(jax.grad(f, with_logs=True)(3., 4.), (4., logs))
+    check(jax.grad(f, argnums=1, with_logs=True)(3., 4.), (3., logs))
+    check(jax.grad(f, argnums=(0, 1), with_logs=True)(3., 4.),
+          ((4., 3.), logs))
+    check(jax.value_and_grad(f, with_logs=True)(3., 4.), (12., (4., logs)))
+    check(jax.value_and_grad(f, argnums=(0, 1), with_logs=True)(3., 4.),
+          (12., ((4., 3.), logs)))
+
+    check(jax.grad(f_aux, has_aux=True, with_logs=True)(3., 4.),
+          (8., {'sum': 7.}, aux_logs))
+    check(jax.value_and_grad(f_aux, has_aux=True, with_logs=True)(3., 4.),
+          ((24., {'sum': 7.}), (8., aux_logs)))
+    check(jax.value_and_grad(f_aux, argnums=(0, 1), has_aux=True,
+                             with_logs=True)(3., 4.),
+          ((24., {'sum': 7.}), ((8., 6.), aux_logs)))
+
+    # nothing logged
+    check(jax.grad(jnp.sin, with_logs=True)(1.), (jnp.cos(1.), {}))
+
+    # under jit and vmap
+    check(jax.jit(jax.grad(f, with_logs=True))(3., 4.), (4., logs))
+    check(jax.grad(jax.jit(f), with_logs=True)(3., 4.), (4., logs))
+    xs, ys = jnp.array([1., 2., 3.]), jnp.array([4., 5., 6.])
+    dxs, vmap_logs = jax.vmap(jax.grad(f, with_logs=True))(xs, ys)
+    check(dxs, ys)
+    check(vmap_logs['f']['x'], xs)
+
+    # logged values are differentiable and can be returned as aux
+    d2, inner_logs = jax.grad(
+        lambda x: jax.grad(lambda z: f(z ** 2, 4.), with_logs=True)(x),
+        has_aux=True)(3.)
+    check(d2, 8.)
+    check(inner_logs['f']['x'], 9.)
+
+    with self.assertRaisesRegex(ValueError, "Duplicate backward-pass log key 'f'"):
+      jax.grad(lambda x: f(f(x, 2.), 3.), with_logs=True)(1.)
+
   def test_custom_gradient_with_logs_bad_return_errors(self):
     @jax.custom_gradient(with_logs=True)
     def e(x):

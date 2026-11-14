@@ -60,5 +60,6 @@ fi
 echo "Running CPU tests..."
 mkdir -p test-artifacts
 "$JAXCI_PYTHON" -m pytest -n auto --tb=short $MAX_PROCESSES_ARG \
+ -o faulthandler_timeout=300 --durations=20 \
  --junitxml=test-artifacts/junit.xml \
  --maxfail=20 tests examples

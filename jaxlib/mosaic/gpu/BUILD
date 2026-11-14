@@ -337,6 +337,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:ExecutionEngine",
         "@llvm-project//llvm:MC",
@@ -401,6 +402,7 @@ cc_library(
         "@xla//xla/backends/gpu/runtime:collective_memory",
         "@xla//xla/backends/gpu/runtime:collective_memory_requests",
         "@xla//xla/backends/gpu/runtime:collective_params",
+        "@xla//xla/backends/gpu/runtime:command_buffer_requests",
         "@xla//xla/core/collectives:rank_id",
         "@xla//xla/core/collectives:symmetric_memory",
         "@xla//xla/ffi",
@@ -408,6 +410,7 @@ cc_library(
         "@xla//xla/ffi:type_registry",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:record_api",
+        "@xla//xla/runtime:device_id",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "@xla//xla/service/llvm_ir:llvm_command_line_options",
         "@xla//xla/stream_executor:device_address_allocator",
@@ -484,10 +487,15 @@ nanobind_extension(
 cc_binary(
     name = "libmosaic_gpu_runtime.so",
     srcs = ["runtime.cc"],
+    additional_linker_inputs = [":mosaic_gpu_runtime.lds"],
     copts = ["-fvisibility=default"],
+    linkopts = [
+        "-Wl,--version-script,$(execpath :mosaic_gpu_runtime.lds)",
+    ],
     linkshared = 1,
     tags = [
         "manual",
+        "no_mac",
         "notap",
     ],
     deps = [

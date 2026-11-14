@@ -973,7 +973,7 @@ class LayoutInferenceTest(parameterized.TestCase):
           x.result, layouts.to_layout_attr(layout), strict=strict
       ).owner
 
-    ctx = layout_inference.DerivationContext()
+    ctx = layout_inference.DerivationContext(arch=mgpu.utils.HOPPER)
     _, x_mapping = _undef_constraint_system(ctx, x)
     lc_cs, lc_mapping = layout_inference._layout_cast_constraint_system(
         ctx, lcast
@@ -1067,6 +1067,39 @@ class LayoutInferenceTest(parameterized.TestCase):
     # first. This may require updating if we decide to change the traversal
     # order in the future.
     self.assertEqual(assignments, {v0: RL(mgpu.TCGEN05_LAYOUT)})
+
+  @parameterized.product(
+      bitwidth=(8, 16, 32),
+      tmem_and_reg_layouts=(
+          (tcgen05.tmem_default_layout(packing=1), fa.TCGEN05_LAYOUT),
+          (tcgen05.tmem_default_layout(packing=2), fa.TCGEN05_LAYOUT),
+          (
+              tcgen05.tmem_half_lane_layout(columns=128, packing=1),
+              fa.WGMMA_LAYOUT,
+          ),
+          (
+              tcgen05.tmem_m64_collective_layout(columns=128, packing=1),
+              tcgen05.fa_m64_collective_layout(columns=128),
+          ),
+      ),
+  )
+  def test_is_transferable_tmem_registers_requires_16_or_32_bit_types(
+      self, bitwidth, tmem_and_reg_layouts
+  ):
+    # `TMEMRef.load` and `TMEMRef.store` only lower these layout pairs for
+    # 16- and 32-bit types.
+    tmem_layout, reg_layout = tmem_and_reg_layouts
+    shape = (128, 128)
+    constraint = cs.IsTransferableTmemRegisters(
+        cs.TMEMLayout(tmem_layout),
+        cs.RegisterLayout(reg_layout),
+        shape,
+        bitwidth=bitwidth,
+    )
+    self.assertEqual(
+        constraint.is_valid_tmem_transfer(tmem_layout, reg_layout),
+        bitwidth in (16, 32),
+    )
 
   def test_cannot_find_assignments_for_unsatisfiable_constraint_system(self):
     with ir.InsertionPoint(self.module.body):
@@ -1353,19 +1386,44 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkOutLayouts(op, [out_layout])
 
   @parameterized.product(
-      in_out_layouts=(
-          (tcgen05.tmem_default_layout(packing=1), fa.TCGEN05_LAYOUT),
-          (tcgen05.scales_layout(), tcgen05.scales_layout().as_tiled_layout()),
+      dtype_in_out_layouts=(
+          (
+              jnp.float32,
+              tcgen05.tmem_default_layout(packing=1),
+              fa.TCGEN05_LAYOUT,
+          ),
+          (
+              jnp.float16,
+              tcgen05.tmem_default_layout(packing=1),
+              fa.TCGEN05_LAYOUT,
+          ),
+          (
+              jnp.float16,
+              tcgen05.tmem_default_layout(packing=2),
+              fa.TCGEN05_LAYOUT,
+          ),
+          (
+              jnp.float8_e4m3fn,
+              tcgen05.scales_layout(),
+              tcgen05.scales_layout().as_tiled_layout(),
+          ),
+          (
+              jnp.float8_e4m3fn,
+              tcgen05.tmem_default_layout(packing=4),
+              tcgen05.tmem_default_layout(packing=4).as_tiled_layout(),
+          ),
       ),
       columns=(24, 128),
   )
   def test_infer_async_load_chooses_out_layouts_compatible_with_tmem_layout(
-      self, in_out_layouts, columns
+      self, dtype_in_out_layouts, columns
   ):
-    f8 = ir.Float8E4M3FNType.get()
-    in_layout, out_layout = in_out_layouts
+    dtype, in_layout, out_layout = dtype_in_out_layouts
+    element_type = mgpu.utils.dtype_to_ir_type(dtype)
     shape = (128, columns)
-    ref_type = ir.MemRefType.get(shape, f8, memory_space=mgpu.utils.tmem())
+    ref_type = ir.MemRefType.get(
+        shape, element_type, memory_space=mgpu.utils.tmem()
+    )
     in_layout = layouts.to_layout_attr(in_layout)
 
     with ir.InsertionPoint(self.module.body):
@@ -2138,6 +2196,53 @@ class LayoutInferenceTest(parameterized.TestCase):
     else:
       a_layout = tcgen05._infer_tmem_layout((m, k), collective=False, packing=2)
       self.checkInTmemLayouts(mma, [acc_layout, a_layout, tcgen05.scales_layout(), tcgen05.scales_layout()])
+
+  def _build_tcgen05_mma_with_128_lane_a_scales(self):
+    m = n = k = 128
+    smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
+    with ir.InsertionPoint(self.module.body):
+      f16 = ir.F16Type.get()
+      f32 = ir.F32Type.get()
+      f8e8 = ir.Float8E8M0FNUType.get()
+      acc_ty = ir.MemRefType.get((m, n), f32, memory_space=tmem)
+      a_ty = ir.MemRefType.get((m, k), f16, memory_space=smem)
+      b_ty = ir.MemRefType.get((k, n), f16, memory_space=smem)
+      scale_a_ty = ir.MemRefType.get((m, 4), f8e8, memory_space=tmem)
+      scale_b_ty = ir.MemRefType.get((n, 4), f8e8, memory_space=tmem)
+      scale_a_reg_ty = ir.VectorType.get((m, 4), f8e8)
+      acc, a, b, scale_a, scale_b, scale_a_reg = undefs(
+          acc_ty, a_ty, b_ty, scale_a_ty, scale_b_ty, scale_a_reg_ty
+      )
+      scale_a = mgpu.dialect.tmem_layout_cast(
+          scale_a, layouts.to_layout_attr(tcgen05.scales_128_lane_layout())
+      )
+      store = mgpu.dialect.async_store_tmem(scale_a_reg, scale_a)
+      accumulate = mgpu.utils.c(1, ir.IntegerType.get_signless(1))
+      mma = mgpu.dialect.TcGen05MMAOp(
+          acc, a, b, accumulate, a_scale=scale_a, b_scale=scale_b
+      )
+    return store, mma
+
+  def test_infer_tmem_layout_for_tcgen05_mma_with_128_lane_a_scales(self):
+    store, mma = self._build_tcgen05_mma_with_128_lane_a_scales()
+
+    mgpu.infer_layout(self.module, arch=(10, 7))
+
+    a_scale_layout = tcgen05.scales_128_lane_layout()
+    self.checkInLayouts(store, [a_scale_layout.as_tiled_layout()])
+    self.checkInTmemLayouts(store, [a_scale_layout])
+    acc_layout = tcgen05._infer_tmem_layout((128, 128), collective=False, packing=1)
+    self.checkInTmemLayouts(
+        mma, [acc_layout, a_scale_layout, tcgen05.scales_layout()]
+    )
+
+  def test_infer_layout_rejects_128_lane_a_scales_before_sm107f(self):
+    self._build_tcgen05_mma_with_128_lane_a_scales()
+
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      mgpu.infer_layout(self.module, arch=(10, 0))
 
   @parameterized.product(
       m=(64, 128),

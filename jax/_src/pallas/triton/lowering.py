@@ -1830,10 +1830,15 @@ def _reshape(a: ir.Value, shape: Sequence[int]) -> ir.Value:
     return _splat(a, shape)
 
   ty = ir.RankedTensorType(a.type)
+  res_ty = ir.RankedTensorType.get(shape, ty.element_type, ty.encoding)
+  params = inspect.signature(tt_dialect.reshape).parameters
+  if "allow_reorder" not in params:
+    return tt_dialect.reshape(res_ty, a)
+  # TODO(suvorovv): Remove this fallback once jax oss has been updated.
   return tt_dialect.reshape(
-      ir.RankedTensorType.get(shape, ty.element_type, ty.encoding),
+      res_ty,
       a,
-      allow_reorder=False,
+      allow_reorder=False,  # pyrefly: ignore[unexpected-keyword]
   )
 
 
@@ -2719,7 +2724,9 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
 
 
 @register_lowering(pjit.reshard_p)
-def _reshard_lowering_rule(ctx, x, *, dst_sharding, concrete_mesh):
+def _reshard_lowering_rule(
+    ctx, x, *, dst_sharding, concrete_mesh, reduction_order
+):
   return x
 
 

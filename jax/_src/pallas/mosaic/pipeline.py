@@ -2379,7 +2379,7 @@ def emit_pipeline(
               "PyTree window views must have one leaf per source ref."
           )
       else:
-        aval = bm.transformed_block_aval
+        aval = bm.block_aval
         aval = aval.update(memory_space=_buffer_memory_space(aval.memory_space))
       kernel_args.append(aval)
 
@@ -2926,7 +2926,7 @@ def _emit_pipeline_is_high(*avals, body_jaxpr, grid_mapping, args_tree, **_):
                               f" currently supported. Got {grid_mapping=}")
 
   return (body_jaxpr.is_high
-          or any(bm.transformed_block_aval.inner_aval.is_high
+          or any(bm.block_aval.inner_aval.is_high
                  for bm in grid_mapping.block_mappings))
 
 emit_pipeline_p.is_high = _emit_pipeline_is_high

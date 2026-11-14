@@ -61,7 +61,10 @@ constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // version in Mosaic GPU lowering in a month!
 constexpr int kVersion = 9;
 
-#if JAX_IFRT_VERSION_NUMBER >= 82
+// TODO(phawkins): Simplify to JAX_XLA_VERSION_NUMBER >= 82 once pinned XLA
+// defines JAX_XLA_VERSION_NUMBER.
+#if (defined(JAX_XLA_VERSION_NUMBER) && JAX_XLA_VERSION_NUMBER >= 82) || \
+    (defined(JAX_IFRT_VERSION_NUMBER) && JAX_IFRT_VERSION_NUMBER >= 82)
 using UpgradeRuleType = jaxlib::mosaic::UpgradeRuleType;
 using DowngradeRuleType = jaxlib::mosaic::DowngradeRuleType;
 #else
@@ -327,6 +330,27 @@ LogicalResult nvvm_mbarrier_try_wait_parity_shared_upgrade(Operation* op,
   return success();
 }
 
+template <typename OpT = mlir::NVVM::MBarrierArriveExpectTxOp>
+OpT create_mbarrier_arrive_expect_tx(mlir::ImplicitLocOpBuilder& b,
+                                     mlir::TypeRange result_types,
+                                     mlir::Value addr, mlir::Value txcount,
+                                     mlir::Value predicate) {
+  // TODO(bchetioui): Remove the `else` branch once the minimum supported LLVM
+  // revision in OSS JAX includes
+  // https://github.com/llvm/llvm-project/pull/240753.
+  if constexpr (OpT::template hasTrait<
+                    mlir::OpTrait::AttrSizedOperandSegments>()) {
+    return OpT::create(b, result_types, addr, txcount,
+                       /*multicastMask=*/mlir::Value{},
+                       mlir::NVVM::MemScopeKind::CTA, /*relaxed=*/false,
+                       predicate);
+  } else {
+    return OpT::create(b, result_types, addr, txcount,
+                       mlir::NVVM::MemScopeKind::CTA, /*relaxed=*/false,
+                       predicate);
+  }
+}
+
 LogicalResult nvvm_mbarrier_arrive_expect_tx_shared_upgrade(Operation* op,
                                                             int version,
                                                             bool& erased) {
@@ -337,14 +361,50 @@ LogicalResult nvvm_mbarrier_arrive_expect_tx_shared_upgrade(Operation* op,
   if (version < 6) {
     mlir::ImplicitLocOpBuilder b(op->getLoc(), op->getParentRegion());
     b.setInsertionPointAfter(op);
-    auto new_op = mlir::NVVM::MBarrierArriveExpectTxOp::create(
+    auto new_op = create_mbarrier_arrive_expect_tx(
         b, op->getResultTypes(), op->getOperand(0), op->getOperand(1),
-        mlir::NVVM::MemScopeKind::CTA,
-        /*relaxed=*/false,
         op->getNumOperands() < 3 ? mlir::Value{} : op->getOperand(2));
     op->replaceAllUsesWith(new_op);
     op->erase();
     erased = true;
+  }
+  return success();
+}
+
+LogicalResult nvvm_mbarrier_arrive_expect_tx_upgrade(Operation* op, int version,
+                                                     bool& erased) {
+  if (failed(nvvm_attrs_upgrade(op, version, erased))) {
+    return mlir::failure();
+  }
+  if constexpr (mlir::NVVM::MBarrierArriveExpectTxOp::hasTrait<
+                    mlir::OpTrait::AttrSizedOperandSegments>()) {
+    // https://github.com/llvm/llvm-project/pull/240753 added an optional
+    // `multicastMask` operand between `txcount` and `predicate`, and made the
+    // op `AttrSizedOperandSegments`. Modules serialized before that change have
+    // no `operandSegmentSizes`, so their operands are
+    // `addr, txcount[, predicate]`. This is not keyed on `version`, since
+    // modules serialized at the current version now carry
+    // `operandSegmentSizes`.
+    auto sizes_attr =
+        op->getAttrOfType<mlir::DenseI32ArrayAttr>("operandSegmentSizes");
+    int64_t num_operands_in_segments = 0;
+    if (sizes_attr) {
+      for (int32_t size : sizes_attr.asArrayRef()) {
+        num_operands_in_segments += size;
+      }
+    }
+    if (!sizes_attr || sizes_attr.getSize() != 4 ||
+        num_operands_in_segments != op->getNumOperands()) {
+      if (op->getNumOperands() < 2 || op->getNumOperands() > 3) {
+        return op->emitOpError("Unexpected number of operands: ")
+               << op->getNumOperands();
+      }
+      const int32_t num_predicates =
+          static_cast<int32_t>(op->getNumOperands()) - 2;
+      op->setAttr("operandSegmentSizes",
+                  mlir::DenseI32ArrayAttr::get(op->getContext(),
+                                               {1, 1, 0, num_predicates}));
+    }
   }
   return success();
 }
@@ -393,7 +453,7 @@ const llvm::StringMap<UpgradeRuleType>& upgrade_rules() {
        nvvm_attrs_upgrade},
       {::llvm::StringLiteral("nvvm.mbarrier.init"), nvvm_attrs_upgrade},
       {::llvm::StringLiteral("nvvm.mbarrier.arrive.expect_tx"),
-       nvvm_attrs_upgrade},
+       nvvm_mbarrier_arrive_expect_tx_upgrade},
       {::llvm::StringLiteral("nvvm.mbarrier.test.wait"), nvvm_attrs_upgrade},
       {::llvm::StringLiteral("nvvm.mbarrier.try_wait.parity"),
        nvvm_attrs_upgrade},

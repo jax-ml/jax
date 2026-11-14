@@ -195,11 +195,6 @@ jax.scipy.special
    gammasgn
    hyp1f1
    hyp2f1
-   i0
-   i0e
-   i1
-   i1e
-   jn
    kl_div
    log_ndtr
    log_softmax
@@ -223,8 +218,22 @@ jax.scipy.special
    wofz
    xlog1py
    xlogy
-   yn
    zeta
+
+Bessel functions
+~~~~~~~~~~~~~~~~
+
+.. autosummary::
+  :toctree: _autosummary
+
+   i0
+   i0e
+   i1
+   i1e
+   iv
+   jn
+   kn
+   yn
 
 
 jax.scipy.stats

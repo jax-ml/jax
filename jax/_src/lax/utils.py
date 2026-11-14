@@ -39,6 +39,12 @@ zip, unsafe_zip = safe_zip, zip
 
 
 def _axis_pos(partitions, axis) -> tuple[int, tuple] | None:
+  """Dim that `axis` is sharded on, and the axes before it on that dim.
+
+  E.g. _axis_pos((None, ('x', 'y')), 'y') == (1, ('x',)),
+       _axis_pos((None, ('x', 'y')), 'x') == (1, ()), and
+       _axis_pos((None, ('x', 'y')), 'z') is None.
+  """
   for i, p in enumerate(partitions):
     if p is None:
       continue

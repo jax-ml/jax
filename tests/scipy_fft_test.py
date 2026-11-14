@@ -18,6 +18,7 @@ import numpy as np
 from absl.testing import absltest
 
 import jax
+import jax.numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.scipy.fft as jsp_fft
@@ -64,6 +65,9 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+    # The result has the same precision as jnp.fft.fft of the same input.
+    x, = args_maker()
+    self.assertEqual(jnp_fn(x).real.dtype, jnp.fft.fft(x).real.dtype)
 
   @jtu.sample_product(
     [dict(shape=shape, axes=axes, s=s)
@@ -97,6 +101,8 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+    x, = args_maker()
+    self.assertEqual(jnp_fn(x).real.dtype, jnp.fft.fft(x).real.dtype)
 
   @jtu.sample_product(
     [dict(shape=shape, axes=axes, s=s)

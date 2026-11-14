@@ -292,6 +292,7 @@ pytype_strict_library(
         ":partial_eval",
         ":partition_spec",
         ":profiler",
+        ":reduction_order",
         ":remat",
         ":sharding",
         ":sharding_impls",
@@ -498,6 +499,7 @@ py_library_providing_imports_info(
         ":partial_eval",
         ":partition_spec",
         ":pretty_printer",
+        ":reduction_order",
         ":remat",
         ":sharding",
         ":sharding_impls",
@@ -1335,6 +1337,14 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "reduction_order",
+    srcs = ["reduction_order.py"],
+    deps = [
+        ":typing",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
     name = "xla_metadata",
     srcs = ["xla_metadata.py"],
     deps = [
@@ -1460,6 +1470,7 @@ py_library_providing_imports_info(
         ":lax",
         ":layout",
         ":mesh",
+        ":reduction_order",
         ":sharding",
         ":sharding_impls",
         ":tree_util",
@@ -1693,8 +1704,10 @@ pytype_strict_library(
         ":lax",
         ":mesh",
         ":mlir",
+        ":named_sharding",
         ":numpy",
         ":pretty_printer",
+        ":shard_map",
         ":sharding",
         ":sharding_impls",
         ":source_info_util",

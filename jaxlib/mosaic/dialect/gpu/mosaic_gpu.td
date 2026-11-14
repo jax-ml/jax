@@ -1141,6 +1141,10 @@ def MosaicGPU_TmemAllocOp : Op<MosaicGPU_Dialect, "tmem_alloc", []> {
     32 or not a power of two, then it will be rounded up to the nearest power of
     two larger or equal to 32.
 
+    On sm_107f, up to 576 columns can be allocated. Allocations of more than 512
+    columns are lowered to an exclusive allocation of 576 columns, which must
+    be the only TMEM allocation of the kernel.
+
     If `collective` is `true` 2 CTAs will perform the allocation collectively,
     otherwise, only one CTA will perform the allocation.
   }];
@@ -1404,11 +1408,13 @@ def MosaicGPU_AssumeMultipleOp : Op<MosaicGPU_Dialect, "assume_multiple", [Pure,
   let assemblyFormat = [{$value `,` $multiple attr-dict `:` type($result)}];
 }
 
-def MosaicGPU_AllocSmemOp : Op<MosaicGPU_Dialect, "alloc_smem", []> {
+def MosaicGPU_AllocSmemOp : Op<MosaicGPU_Dialect, "alloc_smem",
+    [HasParent<"AllocaScopeOp">]> {
   let summary = "Allocates a statically shaped SMEM memref within an `alloca_scope`.";
   let description = [{
     Allocates a statically shaped SMEM memref that is valid for the duration of
-    the enclosing `alloca_scope` operation.
+    the parent `alloca_scope` operation. `alloc_smem` must be directly nested in
+    the region of an `alloca_scope`.
 
     An optional `alignment` attribute specifies the minimum byte alignment for
     the allocation and must be a positive power of 2.

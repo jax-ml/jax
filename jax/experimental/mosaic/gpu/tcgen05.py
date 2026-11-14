@@ -18,7 +18,6 @@ from __future__ import annotations
 from collections.abc import Iterator
 import contextlib
 import dataclasses
-import itertools
 import math
 from typing import Any, Literal, cast, overload
 
@@ -37,6 +36,11 @@ from .launch_context import LaunchContext
 
 TMEM_ROWS = 128
 TMEM_MAX_COLS = 512
+# On sm_107f, TMEM has 576 columns per CTA. However, the columns past
+# `TMEM_MAX_COLS` can only be used through an exclusive allocation
+# (`tcgen05.alloc.exclusive`), which must be the only TMEM allocation that
+# exists at any point in time.
+TMEM_EXCLUSIVE_MAX_COLS = 576
 TCGEN05_SMEM_DESCRIPTOR_BIT = 1 << 46
 LAYOUT = fa.TCGEN05_LAYOUT
 TRANSPOSED_LAYOUT = fa.TCGEN05_TRANSPOSED_LAYOUT
@@ -140,7 +144,14 @@ def _create_scaled_instr_descriptor(
     transpose_b: bool,
     scale_type: ir.Type,
     sparse: bool = False,
+    a_scale_128_lane: bool = False,
 ) -> ir.Value:
+  arch = utils.get_arch()
+  is_sm107f = arch.major == 10 and arch.minor >= 7
+  if a_scale_128_lane and not is_sm107f:
+    raise ValueError(
+        "TMEM row-per-lane A scales layout supported only for sm107f."
+    )
   # Use .kind::mxf4 and .kind::mxf4nvf4 encoding for 4-bit types.
   is_fp4 = utils.bitwidth(a_type) == 4 and utils.bitwidth(b_type) == 4
   if not is_fp4 and (
@@ -187,7 +198,9 @@ def _create_scaled_instr_descriptor(
   else:
     raise NotImplementedError(f"Unsupported scale type: {scale_type}")
   desc |= scale_encoding << 23  # Scale matrix type
-  # Bits 24-26 are reserved
+  desc |= a_scale_128_lane << 26  # Matrix A scale factor layout
+  # Bits 24-25 are reserved.
+  # See: docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-instuction-desc-kind-mxf8f6f4
   if m not in (128, 256):
     raise ValueError(f"M must be 128 or 256, got: {m}")
   desc |= (m >> 7) << 27  # M >> 7, bits 27-28
@@ -370,14 +383,22 @@ def mma(
   else:
     raise NotImplementedError(f"Unsupported element type: {elem_type_str}")
 
-  # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
-  # instructions must be issued in groups that are a multiple of swizzle.
-  m_group_elems = m  # We have already verified M is supported above.
-  k_group_elems = 8 * max(a_swizzle * (1 + is_sparse), b_swizzle) // utils.bitwidth(a_element_type)
-  if is_sparse and k_group_elems < 64:
+  # Step 2. Decide on the instruction shapes we'll use.
+  # The code below relies on a single instruction covering all of M: we have
+  # already verified above that M is one of the supported instruction sizes.
+  # K is covered by a sequence of instructions issued in `_do_mma`, while N may
+  # be split into multiple instruction groups.
+  assert m in (64, 128)
+  # K must be a multiple of the swizzle (for both A and B).
+  required_k_multiple = (
+      8
+      * max(a_swizzle * (1 + is_sparse), b_swizzle)
+      // utils.bitwidth(a_element_type)
+  )
+  if is_sparse and required_k_multiple < 64:
     # This is a limitation of the implementation below. We could relax it if we
     # ever need to support k=32.
-    k_group_elems = 64
+    required_k_multiple = 64
   scale_block: int | None = None
   if is_scaled:
     assert a_scale is not None
@@ -387,7 +408,8 @@ def mma(
           f" {a_scale.shape[1]}"
       )
     scale_block = k // a_scale.shape[1]
-    k_group_elems = max(k_group_elems, 4 * scale_block)  # pyrefly: ignore[unsupported-operation]
+    # Each TMEM scale column holds 4 scales.
+    required_k_multiple = max(required_k_multiple, 4 * scale_block)  # pyrefly: ignore[unsupported-operation]
   required_multiple = (16 if collective else 8) * n_lane_groups
   mode_name = "2 CTA" if collective else "1 CTA"
   if d.dtype == s32:
@@ -421,14 +443,10 @@ def mma(
   elif n > 512:
     raise ValueError("Only N <= 512 are supported for MMA")
   n_group_elems = min(n // n_lane_groups, 256 // num_cta)
-  if m % m_group_elems:
-    raise ValueError(f"M must be a multiple of {m_group_elems}, got: {m}")
-  if k % k_group_elems:
-    raise ValueError(f"K must be a multiple of {k_group_elems}, got: {k}")
+  if k % required_k_multiple:
+    raise ValueError(f"K must be a multiple of {required_k_multiple}, got: {k}")
   if n % n_group_elems:
     raise ValueError(f"N must be a multiple of {n_group_elems}, got: {n}")
-  m_groups = m // m_group_elems
-  k_groups = k // k_group_elems
   n_groups = n // n_group_elems
   # TODO(apaszke): Require users to bitcast input refs to tf32 before MMA.
   mma_b_element_type = (
@@ -440,6 +458,7 @@ def mma(
 
   # Check that the shapes and element types are correct for block scaling.
   scale_element_type = None
+  a_scale_128_lane = False
   if is_scaled:
     assert a_scale is not None and b_scale is not None
     scale_element_type = a_scale.dtype
@@ -449,6 +468,7 @@ def mma(
           f" got {b_scale.dtype}"
       )
     assert scale_block is not None
+    arch = utils.get_arch()
     base_scale_block = scale_block // (2 if is_sparse else 1)
     if isinstance(a_element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
       if not isinstance(scale_element_type, ir.Float8E8M0FNUType):
@@ -471,7 +491,6 @@ def mma(
             "Scale element type mismatch: expected f8e8m0fnu, f8e4m3fn, or"
             f" f8e5m3fnu, got {scale_element_type}"
         )
-      arch = utils.get_arch()
       if isinstance(scale_element_type, ir.Float8E5M3FNUType) and not (
           arch.major == 10 and arch.minor >= 7
       ):
@@ -503,8 +522,21 @@ def mma(
           f"A scale shape mismatch: expected ({TMEM_ROWS}, {k_scales}), got"
           f" {a_scale.shape}"
       )
-    if a_scale.layout != scales_layout():
+    a_scale_128_lane = a_scale.layout == scales_128_lane_layout()
+    if a_scale.layout != scales_layout() and not a_scale_128_lane:
       raise ValueError(f"A scale layout {a_scale.layout} is not supported")
+    if a_scale_128_lane:
+      if not (arch.major == 10 and arch.minor >= 7):
+        raise ValueError(
+            "128-lane A scale layout is only supported on sm_107f, got"
+            f" sm_{arch.major}{arch.minor}."
+        )
+      # TODO(olechwierowicz): Lift this restriction once collective M=128 MMAs
+      # with 128-lane A scales are tested.
+      if collective and m == 64:
+        raise NotImplementedError(
+            "128-lane A scale layout is not supported for collective M=128 MMA."
+        )
     if collective and m == 64:
       if b_scale.layout != b_scales_m64_collective_layout():
         raise ValueError(
@@ -543,36 +575,22 @@ def mma(
       )
 
   # Step 3. Compute the operand descriptors.
-  if not isinstance(a, TMEMRef):
-    # Both dense and sparse matmul consume A with a K bytewidth of 32, only
-    # the group size is halved when it's sparse.
-    (
-        (a_desc_base, a_k_instr_strides),
-        (a_m_group_stride, a_k_group_stride),
-        a_fastest,
-    ) = mma_utils.create_descriptor(
+  if isinstance(a, TMEMRef):
+    a_operand = a.address
+    a_fastest = mma_utils.Dim.K
+  else:
+    a_operand = mma_utils.create_descriptor(
         a,
         swizzle=a_swizzle,
-        group_size=(m_group_elems, k_group_elems // (1 + is_sparse)),
+        mn_size=m,
         logical_k_major=False,
-        mma_bytewidth_k=32,
-        split_const=True,
     )
-  else:
-    a_fastest = mma_utils.Dim.K
-    a_k_instr_strides = None
-    a_m_group_stride = a_k_group_stride = a_desc_base = None
-  (
-      (b_desc_base, b_k_instr_strides),
-      (b_n_group_stride, b_k_group_stride),
-      b_fastest,
-  ) = mma_utils.create_descriptor(
+    a_fastest = a_operand.fastest_dim
+  b_desc = mma_utils.create_descriptor(
       b,
       swizzle=b_swizzle,
-      group_size=(k_group_elems, n_group_elems),
+      mn_size=n_group_elems,
       logical_k_major=True,
-      mma_bytewidth_k=64 if is_sparse else 32,
-      split_const=True,
   )
 
   if is_scaled and utils.bitwidth(mma_a_element_type) == 4:
@@ -580,120 +598,82 @@ def mma(
       raise ValueError(
           "4-bit block scaled MMA only supports K-fastest operands, but A is M-fastest"
       )
-    if b_fastest != mma_utils.Dim.K:
+    if b_desc.fastest_dim != mma_utils.Dim.K:
       raise ValueError(
           "4-bit block scaled MMA only supports K-fastest operands, but B is N-fastest"
       )
-  if is_sparse and b_swizzle == 32 and b_fastest == mma_utils.Dim.K:
+  if is_sparse and b_swizzle == 32 and b_desc.fastest_dim == mma_utils.Dim.K:
     raise NotImplementedError(
         "B tiling too small. Increase swizzle or transpose the input."
     )
 
   # Step 4. Issue the instructions.
-  true = arith.constant(ir.IntegerType.get_signless(1), 1)
   n_collective_group_elems = n_group_elems * num_cta
   n_col_groups = n_groups // n_lane_groups
   assert d.layout.base_tile_shape[0] % 4 == 0
   lanes_per_n_group = d.layout.base_tile_shape[0] // 4
-  a_sparse_addr_base = a_sparse_metadata.address if is_sparse else None
-  a_scale_addr_base = a_scale.address if is_scaled else None  # pyrefly: ignore[missing-attribute]
-  b_scale_addr_base = b_scale.address if is_scaled else None  # pyrefly: ignore[missing-attribute]
-  # B scales are padded when N is short, so it can't be derived from n_collective_group_elems.
-  # Same for A scales when M is short.
+  a_sparse_addr = a_sparse_metadata.address if is_sparse else None
   if is_scaled:
     assert isinstance(a_scale, TMEMRef) and isinstance(b_scale, TMEMRef)
+    a_scale_addr = a_scale.address
+    b_scale_addr = b_scale.address
+    # B scales are padded when N is short, so it can't be derived from n_collective_group_elems.
+    # Same for A scales when M is short.
     a_scale_m_stride = a_scale.layout.cols_in_shape((a_scale.shape[0], 4), bitwidth=8)
     b_scale_n_stride = b_scale.layout.cols_in_shape((b_scale.shape[0], 4), bitwidth=8)
   else:
+    a_scale_addr = b_scale_addr = None
     a_scale_m_stride = b_scale_n_stride = None
-  for mi, ni, ki in np.ndindex(m_groups, n_groups, k_groups):
-    if isinstance(a, TMEMRef):
-      if m_groups != 1:
-        raise NotImplementedError("A address calculation for multiple M tiles")
-      a_k_group_elems = k_group_elems // (1 + is_sparse)
-      a_mk = a.slice(slice(None), utils.ds(ki * a_k_group_elems, a_k_group_elems)).address
-    else:
-      assert a_desc_base is not None
-      a_offset = mi * a_m_group_stride + ki * a_k_group_stride
-      a_mk = (a_desc_base[0], a_desc_base[1] + mma_utils.encode_addr(a_offset))
-    b_offset = ni * b_n_group_stride + ki * b_k_group_stride
-    b_nk = (b_desc_base[0], b_desc_base[1] + mma_utils.encode_addr(b_offset))
-    if a_sparse_addr_base is not None:
-      if n_groups != 1 or m_groups != 1:
-        raise NotImplementedError("A sparse metadata address calculation for multiple tiles")
-      # Each sparse group has 2 entries, each TMEM column holds 16 i2 entries.
-      cols_per_k_group = k_group_elems // sparse_group_elems(mma_a_element_type) * 2 // 16
-      a_sparse_addr = arith.addi(a_sparse_addr_base, utils.c(ki * cols_per_k_group, i32))
-    else:
-      a_sparse_addr = None
-    if a_scale_addr_base is not None and b_scale_addr_base is not None:
-      if m_groups != 1:
-        raise NotImplementedError("A scale address calculation for multiple M tiles")
-      if n_groups != 1:
-        raise NotImplementedError("B scale address calculation for multiple N tiles")
-      assert scale_block is not None  # For type checkers.
-      assert k_group_elems % (scale_block * 4) == 0
-      assert m_group_elems % 32 == 0 and n_group_elems % (8 * num_cta) == 0
-      k_scales_per_group = k_group_elems // (scale_block * 4)
-      a_scale_addr = arith.addi(
-          a_scale_addr_base,
-          utils.c(ki * k_scales_per_group * a_scale_m_stride, i32),
-      )
-      b_scale_addr = arith.addi(
-          b_scale_addr_base,
-          utils.c(ki * k_scales_per_group * b_scale_n_stride, i32)
-      )
-    else:
-      a_scale_addr = b_scale_addr = None
-    acc = accumulate if ki == 0 else true
-    ni_lane_group, ni_col = ni // n_col_groups, ni % n_col_groups
+  if is_sparse and n_groups != 1:
+    raise NotImplementedError(
+        "A sparse metadata address calculation for multiple tiles"
+    )
+  if is_scaled and n_groups != 1:
+    raise NotImplementedError(
+        "B scale address calculation for multiple N tiles"
+    )
+  for ni in range(n_groups):
+    ni_lane_group, ni_col = divmod(ni, n_col_groups)
     d_offset = (
         ((ni_lane_group * lanes_per_n_group) << 16)
         + ni_col * n_collective_group_elems
     )
-    if m_groups != 1:
-      raise NotImplementedError("D address calculation for multiple M tiles")
     _do_mma(
         arith.addi(d.address, arith.constant(i32, d_offset)),
-        a_mk,
-        b_nk,
+        a_operand,
+        b_desc,
+        n_start=ni * n_group_elems,
         d_type=d.dtype,
-        m=m_group_elems,
-        n=n_group_elems,
-        k=k_group_elems,
+        instr_m=m,
+        instr_n=n_group_elems,
+        k=k,
         collective=collective,
-        a_transpose=a_fastest != mma_utils.Dim.K,
-        b_transpose=b_fastest != mma_utils.Dim.K,
-        a_k_strides=a_k_instr_strides,
-        b_k_strides=b_k_instr_strides,
         a_scale_addr=a_scale_addr,
         b_scale_addr=b_scale_addr,
         a_scale_m_stride=a_scale_m_stride,
         b_scale_n_stride=b_scale_n_stride,
         a_sparse_addr=a_sparse_addr,
-        accumulate=acc,
+        accumulate=accumulate,
         a_element_type=mma_a_element_type,
         b_element_type=mma_b_element_type,
         scale_element_type=scale_element_type,
         scale_block=scale_block,
+        a_scale_128_lane=a_scale_128_lane,
     )
 
 
 def _do_mma(
     d_addr: ir.Value,
-    a_desc_or_addr: tuple[ir.Value, int] | ir.Value,  # TMEM address if a_k_stride is None
-    b_desc: tuple[ir.Value, int],
-    a_transpose: bool,
-    b_transpose: bool,
-    a_k_strides: tuple[tuple[int, ...], tuple[int, ...]] | None,
-    b_k_strides: tuple[tuple[int, ...], tuple[int, ...]],
+    a_desc_or_addr: mma_utils.SmemDescriptor | ir.Value,
+    b_desc: mma_utils.SmemDescriptor,
+    n_start: int,
     a_scale_addr: ir.Value | None,
     b_scale_addr: ir.Value | None,
     a_scale_m_stride: int | None,
     b_scale_n_stride: int | None,
     a_sparse_addr: ir.Value | None,
-    m: int,
-    n: int,
+    instr_m: int,
+    instr_n: int,
     k: int,
     a_element_type: ir.Type,
     b_element_type: ir.Type,
@@ -702,30 +682,45 @@ def _do_mma(
     d_type: ir.Type,
     accumulate: ir.Value,
     collective: bool,
+    a_scale_128_lane: bool = False,
 ) -> None:
+  """Issues the MMA instructions covering the full K extent of the operands.
+
+  Every instruction has shape `instr_m x instr_n x instr_k`, where `instr_k` is
+  derived from the element type, and the instructions step through all `k`
+  elements of the K dimension. `n_start` is the N offset of this instruction
+  group in B.
+
+  `accumulate` only applies to the first instruction. All subsequent
+  instructions always accumulate into D.
+  """
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
-  a_k_idx_tiling, a_k_strides = a_k_strides or (None, None)  # pyrefly: ignore[bad-assignment]
-  b_k_idx_tiling, b_k_strides = b_k_strides  # pyrefly: ignore[bad-assignment]
-  assert all(
-      s % 16 == 0   # pyrefly: ignore[unsupported-operation]
-      for s in itertools.chain(a_k_strides or (), b_k_strides)
-  )
   assert (a_scale_addr is None) == (b_scale_addr is None)
   is_scaled = a_scale_addr is not None
   is_sparse = a_sparse_addr is not None
+  num_cta = 2 if collective else 1
+  if isinstance(a_desc_or_addr, ir.Value):
+    assert a_desc_or_addr.type == i32
+    a_in_tmem = True
+    a_transpose = False
+    a_addr_base = a_desc_or_addr
+  else:
+    a_in_tmem = False
+    a_transpose = a_desc_or_addr.fastest_dim != mma_utils.Dim.K
+    a_addr_base = a_desc_or_addr.addr_base
+  b_transpose = b_desc.fastest_dim != mma_utils.Dim.K
+  b_addr_base = b_desc.addr_base
   elem_bitwidth = utils.bitwidth(a_element_type)
   # TODO: support larger K values on newer hardware
   instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
   packing = 8 * 4 // elem_bitwidth
 
-  scale_steps = None
   if is_scaled:
     assert scale_block is not None and scale_element_type is not None
     if isinstance(a_element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
       assert isinstance(scale_element_type, ir.Float8E8M0FNUType)
       kind = "mxf8f6f4.block_scale.scale_vec::1X"
-      scale_steps = 4
     elif isinstance(a_element_type, ir.Float4E2M1FNType):
       assert not a_transpose and not b_transpose
       base_scale_block = scale_block // (2 if is_sparse else 1)
@@ -736,7 +731,6 @@ def _do_mma(
       )
       scale_vec = "scale_vec::2X" if base_scale_block == 32 else "scale_vec::4X"
       kind = f"mxf4nvf4.block_scale.{scale_vec}"
-      scale_steps = 2 if base_scale_block == 32 else 1
     else:
       raise NotImplementedError(
           f"Unsupported element type for block scaling: {a_element_type}"
@@ -759,45 +753,40 @@ def _do_mma(
       )
     extra_ptx = ""
 
-  num_cta = 2 if collective else 1
-  a_in_tmem = a_k_strides is None
   a_ptx = "[a_desc]" if a_in_tmem else "a_desc"
   sparse_mod = ".sp" if is_sparse else ""
   sparse_meta_ptx = f"[${5 + (2 if is_scaled else 0)}], " if is_sparse else ""
   sp_selector = None
   sparse_addr: tuple[Any, ...] = ()
   scales_addrs: tuple[Any, ...] = ()
-  def _get_offset(idx: int, idx_tiling: tuple[int, ...], strides: tuple[int, ...]):
-    assert len(idx_tiling) + 1 == len(strides)
-    idxs = []
-    for t in idx_tiling:
-      idxs.append(idx // t)
-      idx = idx % t
-    idxs.append(idx)
-    offset = sum(i * s for i, s in zip(idxs, strides, strict=True))
-    return offset >> 4
-  for k_step in range(k // instr_k):
+
+  assert k % instr_k == 0
+  for k_elem_offset in range(0, k, instr_k):
     if is_sparse:
       assert a_sparse_addr is not None
-      # Sparse metadata is organised as 32-row columns of 32-bit cells in TMEM; 4 bits
-      # of metadata map to 2 (1:2 sparsity), 4 (2:4 sparsity) or 8 (4:8 sparsity)
-      # of the `instr_k` columns in A consumed by each tcgen05.mma.sp instruction.
-      meta_cols_per_instr = instr_k // sparse_group_elems(a_element_type) * 2 // 16
+      # Sparse metadata is organised as 32-row columns of 32-bit cells in TMEM
+      # (8 4-bit metadata groups per column), where each 4-bit group maps to
+      # `sparse_group_elems(a_element_type)` elements along the K dimension
+      # (4 for 2:4 sparsity or 8 for 4:8 sparsity).
+      elems_per_meta_col = sparse_group_elems(a_element_type) * 8
+      assert k_elem_offset % elems_per_meta_col == 0
       # The metadata operand always names a column pair, and the descriptor's
       # sparsity selector picks which half of that pair to read if needed. This
       # selector is only non-zero for wider types (smaller instr_k) that only
       # have one metadata column per instruction (e.g. .kind::f16).
-      meta_col = k_step * meta_cols_per_instr
+      meta_col = k_elem_offset // elems_per_meta_col
       sp_selector = meta_col % 2
       sparse_addr = (arith.addi(a_sparse_addr, utils.c(meta_col // 2 * 2, i32)),)
     if is_scaled:
-      assert scale_steps is not None and scale_element_type is not None
-      scale_vec_width = 4 // scale_steps
-      scale_id = (k_step % scale_steps) * scale_vec_width
+      assert scale_block is not None and scale_element_type is not None
       assert sp_selector in {None, 0}  # Scaled instr descriptor has no selector
+      assert k_elem_offset % scale_block == 0
+      scale_offset = k_elem_offset // scale_block
+      scale_id = scale_offset % 4
+      scale_col_step = scale_offset // 4
       i_desc = _create_scaled_instr_descriptor(
-          m * num_cta,
-          n * num_cta,
+          instr_m * num_cta,
+          instr_n * num_cta,
           a_element_type,
           b_element_type,
           scale_id,
@@ -806,22 +795,27 @@ def _do_mma(
           b_transpose,
           scale_element_type,
           sparse=is_sparse,
+          a_scale_128_lane=a_scale_128_lane,
       )
-      assert (m == 64 and collective) or m == 128
-      assert n % (8 * num_cta) == 0
+      assert (instr_m == 64 and collective) or instr_m == 128
+      assert instr_n % (8 * num_cta) == 0
       assert a_scale_addr is not None and b_scale_addr is not None
       assert a_scale_m_stride is not None and b_scale_n_stride is not None
       # A scales are sharded, B scales are replicated across CTAs.
-      a_scale_addr_offset = arith.constant(i32, k_step // scale_steps * a_scale_m_stride)
-      b_scale_addr_offset = arith.constant(i32, k_step // scale_steps * b_scale_n_stride)
+      a_scale_addr_offset = arith.constant(
+          i32, scale_col_step * a_scale_m_stride
+      )
+      b_scale_addr_offset = arith.constant(
+          i32, scale_col_step * b_scale_n_stride
+      )
       scales_addrs = (
           arith.addi(a_scale_addr, a_scale_addr_offset),
           arith.addi(b_scale_addr, b_scale_addr_offset),
       )
     else:
       i_desc = create_instr_descriptor(
-          m * num_cta,
-          n * num_cta,
+          instr_m * num_cta,
+          instr_n * num_cta,
           d_type,
           a_element_type,
           b_element_type,
@@ -829,19 +823,15 @@ def _do_mma(
           b_transpose,
           sparsity_selector=sp_selector,
       )
+    assert k_elem_offset % (1 + is_sparse) == 0
+    a_k_offset = k_elem_offset // (1 + is_sparse)
     if a_in_tmem:
-      cols_per_k_group = instr_k // packing // (1 + is_sparse)
-      a_offset = k_step * cols_per_k_group
-      assert isinstance(a_desc_or_addr, ir.Value)
-      assert a_desc_or_addr.type == ir.IntegerType.get_signless(32)
-      a_enc_addr_base = a_desc_or_addr
+      assert a_k_offset % packing == 0
+      a_offset = a_k_offset // packing
     else:
-      assert not isinstance(a_desc_or_addr, ir.Value)
-      assert a_k_idx_tiling is not None and a_k_strides is not None
-      a_enc_addr_base, a_offset = a_desc_or_addr
-      a_offset += _get_offset(k_step, a_k_idx_tiling, a_k_strides)  # pyrefly: ignore[bad-argument-type]
-    b_enc_addr_base, b_offset = b_desc
-    b_offset += _get_offset(k_step, b_k_idx_tiling, b_k_strides)  # pyrefly: ignore[bad-argument-type]
+      assert isinstance(a_desc_or_addr, mma_utils.SmemDescriptor)
+      a_offset = a_desc_or_addr.encoded_offset(0, a_k_offset)
+    b_offset = b_desc.encoded_offset(n_start, k_elem_offset)
     a_offset_low, a_offset_high = a_offset & 0xFFFFFFFF, a_offset >> 32
     b_offset_low, b_offset_high = b_offset & 0xFFFFFFFF, b_offset >> 32
     utils.inline_ptx(
@@ -855,7 +845,13 @@ def _do_mma(
             {"mov.b32 a_desc, a_desc_low;" if a_in_tmem else f"mov.b64 a_desc, {{a_desc_low, {a_offset_high}}};"}
             tcgen05.mma{sparse_mod}.cta_group::{num_cta}.kind::{kind} [$0], {a_ptx}, b_desc, {sparse_meta_ptx}$3, {extra_ptx}$4;
         }}""",
-        d_addr, a_enc_addr_base, b_enc_addr_base, i_desc, accumulate, *scales_addrs, *sparse_addr,
+        d_addr,
+        a_addr_base,
+        b_addr_base,
+        i_desc,
+        accumulate,
+        *scales_addrs,
+        *sparse_addr,
     )
     accumulate = arith.constant(i1, 1)
 
@@ -922,26 +918,55 @@ def commit_arrive(
       )
 
 
+def supports_tmem_alloc_expanded_columns() -> bool:
+  arch = utils.get_arch()
+  return arch.major == utils.RUBIN.major and arch.minor >= utils.RUBIN.minor
+
+
 def tmem_alloc_exact_ncols(ncols: int, exact: bool) -> int:
   """Returns the exact number of columns to allocate in TMEM.
 
-  The number of columns is rounded up to the nearest power of 2.
+  If `exact` is false, `ncols` is rounded up to the nearest power of 2 that is
+  at least 32. On sm_107f, `ncols` within (512, 576] is instead rounded up to
+  `TMEM_EXCLUSIVE_MAX_COLS`, which requires an exclusive allocation. Since no
+  other TMEM allocation can coexist with an exclusive one, there is no point in
+  allocating fewer than all the TMEM columns in that case.
+
+  If `exact` is true, `ncols` is returned as is, provided that it is valid.
 
   Args:
     ncols: The number of columns to allocate.
     exact: If true, throws an error if the number of columns is not a power of 2
-      and within [32, 512].
+      within [32, 512] or, additionally on sm_107f, a multiple of 32 within
+      (512, 576].
   """
-  if exact:
-    if ncols.bit_count() != 1 or not 32 <= ncols <= 512:
-      raise ValueError(f"ncols must be a power of 2 and within [32, 512], got: {ncols}")
+  if supports_tmem_alloc_expanded_columns():
+    max_cols = TMEM_EXCLUSIVE_MAX_COLS
   else:
-    ncols = max(32, 1 << (ncols - 1).bit_length())
-    if ncols > 512:
-      raise ValueError(
-          f"After rounding up, got {ncols} columns, exceeding the limit of 512"
-      )
-  return ncols
+    max_cols = TMEM_MAX_COLS
+  alloc_alignment = 32
+  if exact:
+    if ncols.bit_count() == 1 and 32 <= ncols <= TMEM_MAX_COLS:
+      return ncols
+    if TMEM_MAX_COLS < ncols <= max_cols and ncols % alloc_alignment == 0:
+      return ncols  # Exclusive allocation.
+    exclusive_range = (
+        f" or a multiple of {alloc_alignment} within ({TMEM_MAX_COLS}, {max_cols}]"
+        if max_cols > TMEM_MAX_COLS
+        else ""
+    )
+    raise ValueError(
+        f"ncols must be a power of 2 and within [32, {TMEM_MAX_COLS}]"
+        f"{exclusive_range}, got: {ncols}"
+    )
+  if ncols <= TMEM_MAX_COLS:
+    return max(alloc_alignment, 1 << (ncols - 1).bit_length())
+  if ncols <= max_cols:
+    return TMEM_EXCLUSIVE_MAX_COLS  # Exclusive allocation.
+  raise ValueError(
+      f"After rounding up, got {1 << (ncols - 1).bit_length()} columns,"
+      f" exceeding the limit of {max_cols}"
+  )
 
 
 def tmem_alloc(
@@ -960,9 +985,21 @@ def tmem_alloc(
   elif tmem_addr.type != llvm.PointerType.get(address_space=3):
     raise ValueError(f"tmem_addr must be an SMEM pointer or a memref, got: {tmem_addr.type}")
   ncols = tmem_alloc_exact_ncols(ncols, exact)
+  # Exclusive allocations must be the only TMEM allocation of the CTA, and
+  # must be deallocated with `.exclusive` as well.
+  is_exclusive = ncols > TMEM_MAX_COLS
+  if is_exclusive and not supports_tmem_alloc_expanded_columns():
+    raise ValueError(
+        f"Trying to allocate {ncols} TMEM columns. Allocating > {TMEM_MAX_COLS}"
+        " requires exclusive allocation and sm_107f architecture."
+    )
+  exclusive = ".exclusive" if is_exclusive else ""
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
-  ptx = f"tcgen05.alloc.cta_group::{cta_group}.sync.aligned.shared::cta.b32 [$0], $1;"
+  ptx = (
+      f"tcgen05.alloc{exclusive}.cta_group::{cta_group}.sync.aligned"
+      ".shared::cta.b32 [$0], $1;"
+  )
   utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32), convergent=True)
   return ncols
 
@@ -971,9 +1008,10 @@ def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exac
   if tmem_addr.type != ir.IntegerType.get_signless(32):
     raise ValueError(f"tmem_addr must be an i32, got: {tmem_addr.type}")
   ncols = tmem_alloc_exact_ncols(ncols, exact)
+  exclusive = ".exclusive" if ncols > TMEM_MAX_COLS else ""
   cta_group = "2" if collective else "1"
   i32 = ir.IntegerType.get_signless(32)
-  ptx = f"tcgen05.dealloc.cta_group::{cta_group}.sync.aligned.b32 $0, $1;"
+  ptx = f"tcgen05.dealloc{exclusive}.cta_group::{cta_group}.sync.aligned.b32 $0, $1;"
   utils.inline_ptx(ptx, tmem_addr, utils.c(ncols, i32), convergent=True)
 
 
@@ -1211,6 +1249,30 @@ def scales_layout() -> TMEMLayout:
       lane_dims=(-2,),
       vector_dim=-3,
   )
+
+
+def scales_128_lane_layout() -> TMEMLayout:
+  """A 128-lane TMEM layout for A scales (sm_107f only).
+
+  Applies to A scales only; B scales always use ``scales_layout()`` (or
+  ``b_scales_m64_collective_layout()``). It is selected by bit 26 of the scaled
+  instruction descriptor, which is only available on sm_107f.
+
+  Row ``r`` of the ``(128, K // block_size)`` A scale matrix lives in TMEM lane
+  ``r``, with 4 consecutive k-scales packed into each 32-bit column. Unlike
+  ``scales_layout()``, nothing is replicated across the four 32-lane TMEM
+  sub-partitions, so it uses 4x fewer columns.
+
+  ``async_copy_scales_smem_to_tmem`` rejects this layout. Instead, copy the
+  scales from SMEM with ``async_copy_smem_to_tmem(..., swizzle=16)``, laid out
+  in unswizzled ``(8, 16)`` tiles like any other 8-bit operand, which requires
+  ``K // block_size`` to be a multiple of 16. Alternatively, fill it from
+  registers with ``TMEMRef.store`` (``tcgen05.st``) of an array in
+  ``fa.tmem_native_layout(4)``.
+
+  See https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-scale-factor-a
+  """
+  return tmem_default_layout(packing=4)
 
 
 def b_scales_m64_collective_layout() -> TMEMLayout:

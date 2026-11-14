@@ -26,7 +26,7 @@ from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import _jax
-from jax._src.lib import ifrt_version
+from jax._src.lib import xla_version
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.layout import Layout
@@ -1070,8 +1070,8 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   @parameterized.parameters(jnp.float32, jnp.bfloat16)
   def test_donate_after_host_read(self, dtype):
-    if ifrt_version < 78:
-      self.skipTest('Requires ifrt_version >= 78')
+    if xla_version < 78:
+      self.skipTest('Requires xla_version >= 78')
     f = jax.jit(lambda x: x + 1, donate_argnums=0)
 
     for read_fn in [
@@ -1109,8 +1109,8 @@ class JaxArrayTest(jtu.JaxTestCase):
           self.assertArraysEqual(y, jnp.full((2,), 2, dtype=dtype))
 
   def test_donate_with_live_host_view(self):
-    if ifrt_version < 78:
-      self.skipTest('Requires ifrt_version >= 78')
+    if xla_version < 78:
+      self.skipTest('Requires xla_version >= 78')
     f = jax.jit(lambda x: x + 1, donate_argnums=0)
 
     x = jnp.ones((4,), dtype=jnp.float32)
@@ -1137,8 +1137,8 @@ class JaxArrayTest(jtu.JaxTestCase):
       ('sharded', P('x')),
   )
   def test_donate_non_first_shard_marks_array_deleted(self, pspec):
-    if ifrt_version < 78:
-      self.skipTest('Requires ifrt_version >= 78')
+    if xla_version < 78:
+      self.skipTest('Requires xla_version >= 78')
     if len(jax.devices()) < 2:
       self.skipTest('Requires at least 2 devices')
     mesh = jtu.create_mesh((2,), ('x',))
@@ -1219,6 +1219,52 @@ class ShardingTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     mps = jax.sharding.NamedSharding(mesh, pspec)
     self.assertEqual(mps.shard_shape(shape), expected_shard_shape)
+
+  @parameterized.named_parameters(
+      ("x_y", (8, 4), P("x", "y"), (8, 2)),
+      ("none_y", (8, 4), P(None, "y"), (8, 2)),
+      ("x_none", (8, 4), P("x", None), (8, 4)),
+      ("y_none", (8, 4), P("y", None), (4, 4)),
+      ("xy", (8, 4), P(("x", "y")), (4, 4)),
+      ("replicated", (8, 4), P(), (8, 4)),
+      ("manual_dim_uneven", (3, 4), P("x", "y"), (3, 2)),
+      ("manual_dim_none_uneven", (3, 4), P(None, "y"), (3, 2)),
+  )
+  def test_shard_shape_partial_manual(self, shape, pspec, expected_shard_shape):
+    auto_types = (AxisType.Manual, AxisType.Auto)
+    mesh_auto = jtu.create_mesh((4, 2), ('x', 'y'), axis_types=auto_types)
+    abs_mesh_auto = AbstractMesh((4, 2), ('x', 'y'), axis_types=auto_types)
+    self.assertEqual(
+        NamedSharding(mesh_auto, pspec).shard_shape(shape),
+        expected_shard_shape)
+    self.assertEqual(
+        NamedSharding(abs_mesh_auto, pspec).shard_shape(shape),
+        expected_shard_shape)
+
+    exp_types = (AxisType.Manual, AxisType.Explicit)
+    mesh_exp = jtu.create_mesh((4, 2), ('x', 'y'), axis_types=exp_types)
+    abs_mesh_exp = AbstractMesh((4, 2), ('x', 'y'), axis_types=exp_types)
+    self.assertEqual(
+        NamedSharding(mesh_exp, pspec).shard_shape(shape),
+        expected_shard_shape)
+    self.assertEqual(
+        NamedSharding(abs_mesh_exp, pspec).shard_shape(shape),
+        expected_shard_shape)
+
+  def test_shard_shape_full_manual_and_uneven_error(self):
+    full_manual = jtu.create_mesh(
+        (4, 2), ('x', 'y'), axis_types=(AxisType.Manual, AxisType.Manual))
+    self.assertEqual(
+        NamedSharding(full_manual, P('x', 'y')).shard_shape((3, 5)), (3, 5))
+    self.assertEqual(
+        NamedSharding(full_manual, P()).shard_shape((3, 5)), (3, 5))
+
+    partial_manual = jtu.create_mesh(
+        (4, 2), ('x', 'y'), axis_types=(AxisType.Manual, AxisType.Explicit))
+    self.assertEqual(
+        NamedSharding(partial_manual, P(None, 'y')).shard_shape((3, 4)), (3, 2))
+    with self.assertRaises(IndivisibleError):
+      NamedSharding(partial_manual, P('x', 'y')).shard_shape((3, 3))
 
   def test_uneven_shard_error(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
@@ -1845,6 +1891,10 @@ class ShardingTest(jtu.JaxTestCase):
       ('named_sharding', _jax.NamedSharding),
       ('gspmd_sharding', _jax.GSPMDSharding),
       ('single_device_sharding', _jax.SingleDeviceSharding),
+  )
+  @jtu.ignore_warning(
+      category=RuntimeWarning,
+      message='nanobind: attempted to access an uninitialized instance',
   )
   def test_uninitialized_sharding_rewrap(self, cls):
     if jaxlib_extension_version < 517:

@@ -17,7 +17,7 @@ import dataclasses
 import functools
 import inspect
 import math
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import jax
 from jax import lax
@@ -178,16 +178,6 @@ def _get_num_threads_sharing_collective_allocation(
 _SENTINEL = jnp.inf
 
 
-def apply_layout_transforms(
-    transforms: tuple[state_types.Transform, ...],
-    aval: jax_core.AbstractValue,
-) -> jax_core.AbstractValue:
-  """Returns the logical aval of a ref stored with `transforms`."""
-  if not all(isinstance(t, memory.LAYOUT_TRANSFORMS) for t in transforms):
-    raise ValueError("Unsupported transforms:", transforms)
-  return state_types.TransformedRef(aval, transforms).type
-
-
 def union_members(
     aval: mosaic_gpu_core.AbstractRefUnion,
 ) -> tuple[pallas_core.TransformedRef, ...]:
@@ -201,14 +191,9 @@ def union_members(
 
 def _member_inner_aval(member: pallas_core.TransformedRef) -> jax_core.ShapedArray:
   """The logical aval of a `RefUnion` member."""
-  extract, *layout_transforms = member.transforms
+  (extract,) = member.transforms
   assert isinstance(extract, mosaic_gpu_core.ExtractAliasedRef), extract
-  aval = apply_layout_transforms(
-      tuple(layout_transforms),
-      jax_core.ShapedArray(tuple(extract.shape), extract.dtype),
-  )
-  assert isinstance(aval, jax_core.ShapedArray), aval
-  return aval
+  return jax_core.ShapedArray(tuple(extract.shape), extract.dtype)
 
 
 def resolve_ref(
@@ -510,10 +495,6 @@ class JaxprInterpreter:
     def _allocate_for_aval(
         token,
         aval,
-        transforms: (
-            tuple[state_types.Transform, ...]
-            | tuple[tuple[state_types.Transform, ...], ...]
-        ),
         is_thread_block_axis_collective: bool,
     ):
       _raise_if_unsupported_memory_space(aval.memory_space)
@@ -552,30 +533,10 @@ class JaxprInterpreter:
       match aval:
         # Must precede the `AbstractRef` case below, which this subclasses.
         case mosaic_gpu_core.AbstractRefUnion():
-          if (
-              aval.memory_space == mosaic_gpu_core.MemorySpace.TMEM
-              and transforms
-          ):
-            raise NotImplementedError(
-                f"Unsupported transforms on a `RefUnion`: {transforms}"
-            )
           return allocate_ref_union(token, aval, _allocate_buffer)
         case state_types.AbstractRef(
             inner_aval=inner, memory_space=memory_space, kind=_
         ):
-          if (
-              memory_space == mosaic_gpu_core.MemorySpace.TMEM
-              and transforms
-          ):
-            # The invar/aval's shape in the jaxpr may be the physical shape
-            # (e.g. collapsed 2D shape for TMEM). The elements of `transforms`
-            # are applied any time the variable is used in the jaxpr; we apply
-            # them here to allocate a buffer with the logical shape. (SMEM
-            # invars already have their logical shape.)
-            assert not any(isinstance(t, tuple) for t in transforms)
-            inner = apply_layout_transforms(
-                cast(tuple[state_types.Transform, ...], transforms), inner
-            )
           match inner:
             case jax_core.ShapedArray(shape=shape, dtype=dtype):
               if isinstance(dtype, mosaic_gpu_core.BarrierType):
@@ -684,7 +645,6 @@ class JaxprInterpreter:
 
     assert eqn.primitive is primitives.run_scoped_p
     collective_axes = eqn.params["collective_axes"]
-    ref_transforms = eqn.params["ref_transforms"]
 
     # Allocate a buffer or barrier for each element of
     # `eqn.params['jaxpr'].invars`. It is assumed that each thread runs the same
@@ -707,11 +667,10 @@ class JaxprInterpreter:
           self.mesh, self.are_thread_cluster_axes_collective(collective_axes)
       )
 
-    for v, transforms in safe_zip(invars, ref_transforms):
+    for v in invars:
       token, alloc = _allocate_for_aval(
           token,
           v.aval,
-          transforms,
           self.is_thread_block_axis_collective(collective_axes),
       )
 

@@ -14,6 +14,10 @@
 
 """Multihost test for JAX2TF."""
 
+import contextlib
+import os
+import unittest
+import warnings
 import jax
 from jax import numpy as jnp
 from jax._src import pjit
@@ -21,8 +25,6 @@ from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
-import unittest
-import warnings
 
 try:
   # TODO(b/470156950): Remove this once a proper fix is in place
@@ -55,26 +57,43 @@ class Jax2TfMultiProcessTest(JaxToTfTestCase, jt_multiprocess.MultiProcessTest):
       jax_result = multihost_utils.process_allgather(
           pjit_matmul(w, x), tiled=True)
 
-      tf_model = tf.Module()
-      tf_model.w = tf.Variable(w)
-      tf_closure = tf.function(
-          lambda x: {"y": jax2tf.convert(pjit_matmul)(tf_model.w, x)},
-          autograph=False,
-      ).get_concrete_function(
-          tf.TensorSpec.from_tensor(tf.constant(x), name="x")
+      # Harnesses that run JAX on a separately loaded libtpu.so set
+      # JAX2TF_MULTIPROCESS_TF_ON_CPU=1: the TensorFlow TPU runtime linked into
+      # this process cannot share the TPU devices that plugin already opened,
+      # so every process then serializes and executes the exported SavedModel
+      # on CPU instead.
+      use_cpu_tf = os.environ.get("JAX2TF_MULTIPROCESS_TF_ON_CPU") == "1"
+      convert_kwargs = (
+          {"native_serialization_platforms": ("cpu",)} if use_cpu_tf else {}
       )
-
-      if jax.process_index() == 0:
-        export_dir = self.create_tempdir().full_path
-        tf.saved_model.save(
-            tf_model,
-            export_dir,
-            signatures={"serving_default": tf_closure},
+      tf_device_ctx = (
+          tf.device("/CPU:0") if use_cpu_tf else contextlib.nullcontext()
+      )
+      with tf_device_ctx:
+        tf_model = tf.Module()
+        tf_model.w = tf.Variable(w)
+        tf_closure = tf.function(
+            lambda x: {
+                "y": jax2tf.convert(pjit_matmul, **convert_kwargs)(
+                    tf_model.w, x
+                )
+            },
+            autograph=False,
+        ).get_concrete_function(
+            tf.TensorSpec.from_tensor(tf.constant(x), name="x")
         )
-        loaded = tf.saved_model.load(export_dir)
-        tf_result = loaded.signatures["serving_default"](x=x)["y"]
 
-        self.assertAllClose(tf_result.numpy(), jax_result)
+        if jax.process_index() == 0:
+          export_dir = self.create_tempdir().full_path
+          tf.saved_model.save(
+              tf_model,
+              export_dir,
+              signatures={"serving_default": tf_closure},
+          )
+          loaded = tf.saved_model.load(export_dir)
+          tf_result = loaded.signatures["serving_default"](x=x)["y"]
+
+          self.assertAllClose(tf_result.numpy(), jax_result)
 
 
 if __name__ == "__main__":

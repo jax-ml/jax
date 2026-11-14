@@ -28,6 +28,7 @@ import jax
 from jax import numpy as jnp
 from jax._src import literals
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import GSPMDSharding, make_single_device_sharding
 
@@ -75,6 +76,33 @@ class CloudpickleTest(jtu.JaxTestCase):
     g_unpickled = pickle.loads(s)
     actual = g_unpickled(32)
     self.assertEqual(expected, actual)
+
+  def test_uninitialized_pjit_function(self):
+    if jaxlib_extension_version < 519:
+      self.skipTest("Requires jaxlib_extension_version >= 519")
+    valid = jax.jit(lambda x: x)
+    valid(1)
+    pjit_cls = type(valid)
+    fn = pjit_cls.__new__(pjit_cls)
+    with self.assertRaises((RuntimeError, TypeError, ValueError)):
+      fn._cache_size()
+    with self.assertRaises((RuntimeError, TypeError, ValueError)):
+      fn._clear_cache()
+    with self.assertRaises((RuntimeError, TypeError, ValueError)):
+      fn.__getstate__()
+    with self.assertRaises(TypeError):
+      fn(1)
+
+    bad_state = dict(valid.__getstate__())
+    bad_state["global_cache_key"] = {}
+    with self.assertRaises(ValueError):
+      fn.__setstate__(bad_state)
+    del fn
+
+    with self.assertRaises(RuntimeError):
+      valid.__setstate__(valid.__getstate__())
+    jax.clear_caches()
+    self.assertEqual(valid._cache_size(), 0)
 
 
 class PickleTest(jtu.JaxTestCase):
@@ -212,6 +240,19 @@ class PickleTest(jtu.JaxTestCase):
       self.assertEqual(type(l), type(n))
       self.assertEqual(l, n)
       self.assertEqual(l.dtype, n.dtype)
+
+  def test_pickle_compile_options(self):
+    if jaxlib_extension_version < 521:
+      self.skipTest("Requires jaxlib_extension_version >= 521")
+    opts = xc.CompileOptions()
+    opts.num_replicas = 2
+    restored = pickle.loads(pickle.dumps(opts))
+    self.assertEqual(restored.num_replicas, 2)
+
+    for bad_state in ((), (b"", b"")):
+      with self.assertRaises(RuntimeError):
+        uninit = xc.CompileOptions.__new__(xc.CompileOptions)
+        uninit.__setstate__(bad_state)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

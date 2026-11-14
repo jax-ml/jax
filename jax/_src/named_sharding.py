@@ -18,6 +18,7 @@ from collections.abc import Sequence
 import collections
 import dataclasses
 import functools
+import math
 from typing import Any
 
 from jax._src.util import use_cpp_class, cache, use_cpp_method, unzip3
@@ -236,6 +237,9 @@ class NamedSharding(jsharding.Sharding):
         _logical_device_ids=kwargs.pop("_logical_device_ids",
                                        self._logical_device_ids))
 
+  def shard_shape(self, global_shape: Shape) -> Shape:
+    return _named_shard_shape(self, global_shape)
+
   def is_equivalent_to(self, other, ndim: int) -> bool:
     if (isinstance(self.mesh, mesh_lib.AbstractMesh) and
         isinstance(other.mesh, mesh_lib.AbstractMesh)):
@@ -265,6 +269,31 @@ class NamedSharding(jsharding.Sharding):
                                           modify_wrt_axis_types)
 
 NamedSharding.__module__ = 'jax.sharding'
+
+
+def strip_trailing_nones(spec):
+  while spec and spec[-1] is None:
+    spec.pop()
+  return tuple(spec)
+
+@cache(max_size=4096, trace_context_in_key=False)
+def _named_shard_shape(sharding: NamedSharding, shape: Shape) -> Shape:
+  mesh = sharding.mesh
+  if sharding.is_fully_replicated or mesh.are_all_axes_manual:
+    return shape
+  manual_axes = frozenset(mesh.manual_axes)
+  num_ways_dim_sharded = []
+  partitions = strip_trailing_nones(list(sharding.spec.partitions))
+  for dim_spec in partitions:
+    if dim_spec is None or dim_spec is PartitionSpec.UNCONSTRAINED:
+      num_ways_dim_sharded.append(1)
+    else:
+      axes = dim_spec if isinstance(dim_spec, tuple) else (dim_spec,)
+      num_ways_dim_sharded.append(
+          math.prod(1 if a in manual_axes else mesh.shape[a] for a in axes))
+  num_ways_dim_sharded.extend([1] * (len(shape) - len(partitions)))
+  return jsharding._divide_shape_by_partitions(
+      sharding, shape, num_ways_dim_sharded)
 
 
 def get_replicated_axes(spec, mesh):

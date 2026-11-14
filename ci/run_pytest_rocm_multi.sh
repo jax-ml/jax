@@ -42,6 +42,7 @@ echo "Running multi-accelerator ROCm tests..."
 unset JAX_ENABLE_ROCM_XDIST
 
 "$JAXCI_PYTHON" -m pytest --tb=short \
+-o faulthandler_timeout=300 --durations=20 \
 --json-report --json-report-file=${LOGS_DIR}/pytest_results_multi.json \
 --junitxml=test-artifacts/junit-multi.xml \
 -m "multiaccelerator" \

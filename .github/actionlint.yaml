@@ -10,6 +10,7 @@ self-hosted-runner:
     - "linux-x86-ct5lp-224-8tpu" # Linux X86 TPU runner using ct5lp-hightpu-8t machine with 2x4 topology.
     - "linux-arm64-c4a-16" # Linux ARM64 CPU Runner using the 16 vcpu c4a-standard-16 machine.
     - "linux-arm64-c4a-64" # Linux ARM64 CPU Runner using the 64 vcpu c4a-standard-64 machine.
+    - "linux-arm64-t2a-48" # Linux ARM64 CPU Runner using the 48 vcpu t2a-standard-48 machine.
     - "windows-x86-n2-16" # Windows X86 runner using n2-standard-16 machine.
     - "windows-x86-n2-64" # Windows X86 runner using n2-standard-64 machine.
     - "linux-x86-a4-224-b200-1gpu" # Linux X86 GPU runner using 1 B200 GPU and 1/8 the resources of a a4-highgpu-8g machine
@@ -18,4 +19,9 @@ self-hosted-runner:
     - "linux-x86-ct6e-180-4tpu" # Linux X86 TPU runner using ct6e-hightpu-4t machine with 2x2 topology.
     - "linux-x86-ct4p-240-4tpu" # Linux X86 TPU runner using ct4p-hightpu-4t machine with 2x2x1 topology.
     - "linux-x86-tpu7x-224-4tpu" # Linux X86 TPU runner using tpu7x-224 machine with 4 TPU chips (8 cores) and 2x2x1 topology.
-    - "linux-x86_64-cirrascale-64-8gpu-amd-mi250" # AMD runner
+
+    # AMD-supplied runners (dedicated to ROCm workflows; not Google-managed).
+    - "amd-do-linux.jax.cpu" # AMD ROCm CPU build runner.
+    - "amd-do-linux.jax.gpu.gfx950.1" # AMD ROCm 1x gfx950 GPU runner.
+    - "amd-do-linux.jax.gpu.gfx950.4" # AMD ROCm 4x gfx950 GPU runner.
+    - "amd-do-linux.jax.gpu.gfx950.8" # AMD ROCm 8x gfx950 GPU runner.

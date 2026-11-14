@@ -566,7 +566,7 @@ class SearchsortedTest(jtu.JaxTestCase):
           jnp.zeros((4, 6)), jax.sharding.NamedSharding(other_mesh, P("a", None))
       )
       with self.assertRaisesRegex(
-          ValueError, "sharding meshes must match"
+          ValueError, "Mesh for all inputs should be equal"
       ):
         hijax.searchsorted(sa, q, batch_dims=1, dimension=1)
 
@@ -594,6 +594,45 @@ class SearchsortedTest(jtu.JaxTestCase):
           "Cannot shard non-batch dimensions of both sorted_arr and query",
       ):
         hijax.searchsorted(sa, q, batch_dims=0, dimension=1)
+
+  @jtu.sample_product(method=_METHODS)
+  def test_mixed_auto_meshes(self, method):
+    mesh = jtu.create_mesh(
+        (2, 2), ("x", "y"), axis_types=(jax.sharding.AxisType.Auto,) * 2
+    )
+    ctx_mesh = jax.sharding.AbstractMesh(
+        (2, 2), ("x", "y"), axis_types=(jax.sharding.AxisType.Auto,) * 2
+    )
+    sa_np = np.array([0.0, 4.0, 8.0, 12.0, 16.0], dtype=np.float32)
+    q_np = np.arange(16, dtype=np.float32)
+    q = jax.device_put(q_np, jax.sharding.NamedSharding(mesh, P("x")))
+    ref = np.searchsorted(sa_np, q_np, side="right").astype(np.int32)
+
+    @jax.jit
+    def f_ctx_sa(q):
+      with jax.sharding.use_abstract_mesh(ctx_mesh):
+        sa_ctx = jnp.linspace(0.0, 16.0, 5, dtype=jnp.float32)
+        return hijax.searchsorted(sa_ctx, q, side="right", method=method)
+
+    self.assertArraysEqual(ref, f_ctx_sa(q))
+
+    sa = jax.device_put(sa_np, jax.sharding.NamedSharding(mesh, P(None)))
+
+    @jax.jit
+    def f_ctx_q(sa):
+      with jax.sharding.use_abstract_mesh(ctx_mesh):
+        q_ctx = jnp.arange(16, dtype=jnp.float32)
+        return hijax.searchsorted(sa, q_ctx, side="right", method=method)
+
+    self.assertArraysEqual(ref, f_ctx_q(sa))
+
+    @jax.jit
+    def f_ctx_empty_sa(q):
+      with jax.sharding.use_abstract_mesh(ctx_mesh):
+        sa_empty = jnp.zeros((0,), dtype=jnp.float32)
+        return hijax.searchsorted(sa_empty, q, side="right", method=method)
+
+    self.assertArraysEqual(np.zeros(16, dtype=np.int32), f_ctx_empty_sa(q))
 
   @jtu.sample_product(method=_METHODS)
   @jtu.with_explicit_mesh((2, 2), ("x", "y"))

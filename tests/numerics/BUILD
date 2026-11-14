@@ -74,7 +74,7 @@ jax_multiplatform_test(
     name = "bessel_test",
     srcs = ["bessel_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 2,
+    shard_count = 12,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
@@ -109,7 +109,7 @@ jax_multiplatform_test(
     name = "exp_test",
     srcs = ["exp_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 5,
+    shard_count = 6,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",
@@ -155,7 +155,7 @@ jax_multiplatform_test(
     name = "log_test",
     srcs = ["log_test.py"],
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 5,
+    shard_count = 6,
     tags = ["cpu:4"],
     deps = [
         ":numerics_test_util",

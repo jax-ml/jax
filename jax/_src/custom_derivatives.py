@@ -713,12 +713,14 @@ class custom_vjp[ReturnValue]:
     it must return a pair ``(in_cts, logs)``, where ``in_cts`` is the usual
     tuple of cotangents (one entry per primal argument), and ``logs`` is a
     dict of named pytrees to log out of the backward pass, or ``None`` to log
-    nothing. To receive the logs, apply the VJP function via its
-    ``with_logs`` method: ``f_vjp.with_logs(out_ct)`` returns a pair
-    ``(arg_cts, logs)``. Logging is drop-by-default: a plain ``f_vjp(out_ct)``
-    call ignores the logs, and under ``jit`` the logging computation is
-    dead-code-eliminated. Log keys must be unique within a backward pass;
-    repeated keys raise a ``ValueError``, even when the logs are ignored.
+    nothing. To receive the logs, pass ``with_logs=True`` to
+    :py:func:`jax.grad` or :py:func:`jax.value_and_grad`, or apply the VJP
+    function via its ``with_logs`` method (``f_vjp.with_logs(out_ct)`` returns a
+    pair ``(arg_cts, logs)``). Logging is drop-by-default: a plain
+    ``jax.grad`` or ``f_vjp(out_ct)`` call ignores the logs, and under ``jit``
+    the logging computation is dead-code-eliminated. Log keys must be unique
+    within a backward pass; repeated keys raise a ``ValueError``, even when the
+    logs are ignored.
     """
     self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
                 optimize_remat=optimize_remat, generic_batching=generic_batching)
@@ -1436,19 +1438,17 @@ def custom_gradient(fun=None, *, with_logs: bool = False, remat: bool = False,
   (Array(4., dtype=float32, weak_type=True), Array(3., dtype=float32, weak_type=True))
 
   With ``with_logs=True``, the VJP function returns a pair of the cotangents
-  and a dict of backward-pass logs, received via the ``with_logs`` method of
-  the VJP function that :py:func:`jax.vjp` returns:
+  and a dict of backward-pass logs, received via ``jax.grad(..., with_logs=True)``
+  (or ``jax.value_and_grad(..., with_logs=True)``) or the ``with_logs`` method
+  of the VJP function that :py:func:`jax.vjp` returns:
 
   >>> @jax.custom_gradient(with_logs=True)
   ... def f(x):
   ...   return x ** 2, lambda g: ((g * 2 * x,), {'ct_out': g})
   ...
-  >>> print(jax.grad(f)(3.))
-  6.0
-  >>> _, f_vjp = jax.vjp(f, 3.)
-  >>> (x_ct,), logs = f_vjp.with_logs(1.)
-  >>> print(logs['ct_out'])
-  1.0
+  >>> g, logs = jax.grad(f, with_logs=True)(3.)
+  >>> print(g, logs['ct_out'])
+  6.0 1.0
 
   With ``remat=True``, ``fun`` returns a rematerialization function in place of
   the VJP function. Here, under :func:`jax.remat`, the cosine is saved rather
@@ -1948,8 +1948,9 @@ linear_call_p.def_impl(_linear_call_impl)
 linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
 ad.primitive_jvps[linear_call_p] = _linear_call_jvp_rule
 ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule
-mlir.register_lowering(linear_call_p, mlir.lower_fun(
-    _linear_call_impl, multiple_results=True))
+mlir.register_lowering(
+    linear_call_p, mlir.lower_fun(_linear_call_impl, multiple_results=True),
+    shard_map_passthrough=True)
 
 
 # A stageable primitive that fails when evaluated
@@ -2073,9 +2074,12 @@ def optimize_remat_of_custom_vjp_fwd[ReturnValue](
           "remat optimization for custom_vjp does not support forward "
           f"functions with these side effects: {disallowed_effects}")
 
+    eqn_ctx = core.current_jaxpr_eqn_context()
+
     @pe._memoize
     def fun_jaxpr_thunk():
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+      with eqn_ctx.manager:
+        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
       return jaxpr, consts
 
     out_flat = remat_opt_p.bind(*consts, *args_flat, num_consts=len(consts),
@@ -2128,13 +2132,15 @@ def _remat_opt_vmap(
   out_dims = [0 if b else None for b in out_batched]
 
   _, prim_batched = split_list(in_batched, [num_consts])
+  vmap_eqn_ctx = core.current_jaxpr_eqn_context()
 
   @pe._memoize
   def batched_fun_jaxpr_thunk():
     fun_jaxpr_, fun_consts_ = fun_jaxpr_thunk()
     fun_jaxpr = fun_jaxpr_.with_consts(fun_consts_)
-    batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
-        fun_jaxpr, axis_data, prim_batched, False)
+    with vmap_eqn_ctx.manager:
+      batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
+          fun_jaxpr, axis_data, prim_batched, False)
     return batched_fun_jaxpr, batched_fun_jaxpr.consts
 
   batched_outs = remat_opt_p.bind(*extra_consts, *args,
@@ -2167,13 +2173,15 @@ def _remat_opt_jvp(
       fwd_jaxpr_jvp_, [num_consts, len(primals)],
       [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])
   fwd_jaxpr_jvp = pe.convert_constvars_jaxpr(fwd_jaxpr_jvp_)
+  jvp_eqn_ctx = core.current_jaxpr_eqn_context()
 
   # @pe._memoize
   def fun_jvp_jaxpr_thunk():
     fun_jaxpr_, fun_consts_ = fun_jaxpr_thunk()
     fun_jaxpr = fun_jaxpr_.with_consts(fun_consts_)
     in_nz = [True] * len(primals)
-    fun_jvp_jaxpr, _ = ad.jvp_jaxpr(fun_jaxpr, in_nz, True)
+    with jvp_eqn_ctx.manager:
+      fun_jvp_jaxpr, _ = ad.jvp_jaxpr(fun_jaxpr, in_nz, True)
     return fun_jvp_jaxpr, fun_jvp_jaxpr.consts
 
   new_num_consts = len(fwd_jaxpr_jvp_.consts) + num_consts + len(consts_dot)
@@ -2251,8 +2259,9 @@ remat_opt_p.is_high = lambda *_, fwd_jaxpr, **__: fwd_jaxpr.is_high
 remat_opt_p.to_lojax = _remat_opt_to_lojax
 remat_opt_p.def_impl(_remat_opt_impl)
 remat_opt_p.def_effectful_abstract_eval(_remat_opt_abstract_eval)
-mlir.register_lowering(remat_opt_p, mlir.lower_fun(
-    _remat_opt_impl, multiple_results=True))
+mlir.register_lowering(
+    remat_opt_p, mlir.lower_fun(_remat_opt_impl, multiple_results=True),
+    shard_map_passthrough=True)
 
 
 batching.fancy_primitive_batchers[remat_opt_p] = _remat_opt_vmap

@@ -9,9 +9,9 @@ on:
       - main
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
   # Don't cancel in-progress jobs for main branches.
-  cancel-in-progress: ${{ github.ref != 'main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 permissions: {}
 
 env:

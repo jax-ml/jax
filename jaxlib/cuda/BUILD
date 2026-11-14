@@ -610,6 +610,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@xla//xla/backends/gpu:ffi",
+        "@xla//xla/backends/gpu/runtime:command_buffer_requests",
         "@xla//xla/ffi",
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/ffi:record_ffi",

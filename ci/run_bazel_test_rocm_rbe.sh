@@ -35,9 +35,12 @@ fi
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
-OVERRIDE_XLA_REPO=""
-if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
-    OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR} --override_module=xla=${JAXCI_XLA_GIT_DIR}"
+OVERRIDE_XLA_REPO=()
+if [[ "${JAXCI_CLONE_MAIN_XLA}" == 1 ]]; then
+    OVERRIDE_XLA_REPO=(
+        "--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+        "--override_module=xla=${JAXCI_XLA_GIT_DIR}"
+    )
 fi
 
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
@@ -50,14 +53,28 @@ TAG_FILTERS="-config-cuda-only,-manual"
 # for the PR blocking gate.
 TARGETS_FILE="${JAXCI_GATE_TARGETS_FILE:-build/rocm/ci_test_targets.txt}"
 
+EXTRA_BAZEL_ARGS=()
 for arg in "$@"; do
-    if [[ "$arg" == "--config=multi_gpu" ]]; then
+    [[ -z "${arg}" ]] && continue
+    if [[ "${arg}" == "--config=multi_gpu" ]]; then
         TAG_FILTERS="jax_test_gpu,${TAG_FILTERS},multiaccelerator"
     fi
-    if [[ "$arg" == "--config=single_gpu" ]]; then
+    if [[ "${arg}" == "--config=single_gpu" ]]; then
         TAG_FILTERS="${TAG_FILTERS},-multiaccelerator"
     fi
+    if [[ "${arg}" == "--repo_env=HERMETIC_PYTHON_VERSION="* ]]; then
+        JAXCI_HERMETIC_PYTHON_VERSION="${arg#--repo_env=HERMETIC_PYTHON_VERSION=}"
+        continue
+    fi
+    EXTRA_BAZEL_ARGS+=("${arg}")
 done
+
+if [[ "${JAXCI_HERMETIC_PYTHON_VERSION}" == *t ]]; then
+    JAXCI_HERMETIC_PYTHON_VERSION="${JAXCI_HERMETIC_PYTHON_VERSION%t}"
+    FREETHREADED_FLAG_VALUE="yes"
+else
+    FREETHREADED_FLAG_VALUE="no"
+fi
 
 TEST_ARTIFACTS_DIR="$JAXCI_TEST_ARTIFACTS_DIR"
 mkdir -p "$TEST_ARTIFACTS_DIR"
@@ -79,19 +96,22 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --config=rocm_clang_hermetic \
     --config=rocm_rbe \
     --config=rocm_rbe_dynamic \
-    $OVERRIDE_XLA_REPO \
+    "${OVERRIDE_XLA_REPO[@]}" \
+    "--repo_env=HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION}" \
+    "--@rules_python//python/config_settings:py_freethreaded=${FREETHREADED_FLAG_VALUE}" \
+    "--action_env=JAX_ENABLE_X64=${JAXCI_ENABLE_X64}" \
     --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
     --test_output=errors \
     --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
     --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-    --build_tag_filters=${TAG_FILTERS} \
-    --test_tag_filters=${TAG_FILTERS} \
+    "--build_tag_filters=${TAG_FILTERS}" \
+    "--test_tag_filters=${TAG_FILTERS}" \
     --remote_download_regex='.*test\.xml$' \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950" \
     --color=yes \
     "${ROCM_SDK_FLAGS[@]}" \
-    $@ \
+    "${EXTRA_BAZEL_ARGS[@]}" \
     --target_pattern_file="${TARGETS_FILE}" || bazel_retval=$?
 echo "::endgroup::" >&2
 

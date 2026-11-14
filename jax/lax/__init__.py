@@ -418,6 +418,12 @@ from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
 from jax._src.lax.scaled_dot import scaled_dot as scaled_dot
+from jax._src.lax.exp_log import (
+  exp2m1 as exp2m1,
+  exp2m1_p as exp2m1_p,
+  log2p1 as log2p1,
+  log2p1_p as log2p1_p,
+)
 from jax._src.lax.trig import (
   acospi as acospi,
   acospi_p as acospi_p,

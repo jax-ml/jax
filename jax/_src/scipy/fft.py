@@ -26,7 +26,7 @@ from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src.numpy import fft as jnp_fft
 from jax._src.numpy.util import (
-    promote_dtypes_complex, promote_dtypes_inexact, ensure_arraylike)
+    promote_dtypes_complex, ensure_arraylike)
 from jax._src.util import canonicalize_axis, canonicalize_axis_tuple
 from jax._src.typing import Array
 
@@ -124,10 +124,17 @@ def dct(x: Array, type: int = 2, n: int | None = None,
 
   N = x.shape[axis]
   v = _dct_interleave(x, axis)
-  V = jnp_fft.fft(v, axis=axis)
-  k = lax.expand_dims(jnp.arange(N, dtype=V.real.dtype), [a for a in range(x.ndim) if a != axis])
-  out = V * _W4(N, k)
-  out = 2 * out.real
+  # rfft accepts only float32/float64, so narrow and integer inputs are upcast.
+  dtype = dtypes.to_inexact_dtype(v.dtype)
+  v = v.astype(dtype if dtype in (np.float32, np.float64) else np.float32)
+  # The twiddled half spectrum carries the whole transform: the bins above
+  # N//2 are its negated imaginary part, read in reverse.
+  V = jnp_fft.rfft(v, axis=axis)
+  k_shape = tuple(s if i == axis else 1 for i, s in enumerate(V.shape))
+  k = lax.broadcasted_iota(V.real.dtype, k_shape, axis)
+  V = V * _W4(N, k)
+  tail = lax.rev(lax.slice_in_dim(-V.imag, 1, (N + 1) // 2, axis=axis), (axis,))
+  out = 2 * lax.concatenate([V.real, tail], axis)
   if norm == 'ortho':
     out = _dct_ortho_norm(out, axis)
   return out
@@ -346,22 +353,28 @@ def idct(x: Array, type: int = 2, n: int | None = None,
                 [(0, n - x.shape[axis] if a == axis else 0, 0)
                  for a in range(x.ndim)])
   N = x.shape[axis]
-  x, = promote_dtypes_inexact(x)
-  if norm is None or norm == 'backward':
-    x = _dct_ortho_norm(x, axis)
-  x = _dct_ortho_norm(x, axis)
+  # The spectrum built below must be complex64/complex128, so upcast the
+  # real input to float32/float64 first.
+  dtype = dtypes.to_inexact_dtype(x.dtype)
+  x = x.astype(dtype if dtype in (np.float32, np.float64) else np.float32)
+  if norm == 'ortho':
+    k_shape = tuple(s if i == axis else 1 for i, s in enumerate(x.shape))
+    k = lax.broadcasted_iota(np.int32, k_shape, axis)
+    x = x * jnp.where(k == 0, x.dtype.type(math.sqrt(4 * N)),
+                      x.dtype.type(math.sqrt(2 * N)))
 
-  k = lax.expand_dims(jnp.arange(N, dtype=x.dtype), [a for a in range(x.ndim) if a != axis])
-  # everything is complex from here...
-  w4 = _W4(N,k)
-  x = x.astype(w4.dtype)
-  x = x / (_W4(N, k))
-  x = x * 2 * N
-
-  x = jnp_fft.ifft(x, axis=axis)
-  # convert back to reals..
-  out = _dct_deinterleave(x.real, axis)
-  return out
+  # The real part of the inverse FFT is the irfft of the Hermitian part of its
+  # input, which for real x is (x[k] - 1j * x[N - k]) / (2 * W4[k]).
+  num_bins = N // 2 + 1
+  re = lax.slice_in_dim(x, 0, num_bins, axis=axis)
+  im = lax.rev(lax.slice_in_dim(x, (N + 1) // 2, N, axis=axis), (axis,))
+  im = lax.pad(im, jnp.array(0, x.dtype),
+               [(1 if a == axis else 0, 0, 0) for a in range(x.ndim)])
+  k_shape = tuple(num_bins if i == axis else 1 for i in range(x.ndim))
+  k = lax.broadcasted_iota(x.dtype, k_shape, axis)
+  V = lax.complex(re, -im) * (0.5 * jnp.conj(_W4(N, k)))
+  v = jnp_fft.irfft(V, n=N, axis=axis)
+  return _dct_deinterleave(v, axis)
 
 
 def idctn(x: Array, type: int = 2,
@@ -483,20 +496,14 @@ def idctn(x: Array, type: int = 2,
 
 
 def _dct_deinterleave(x: Array, axis: int) -> Array:
-  empty_slice = slice(None, None, None)
-  ix0 = tuple(
-      slice(None, math.ceil(x.shape[axis]/2), 1) if i == axis else empty_slice
-      for i in range(len(x.shape)))
-  ix1  = tuple(
-      slice(math.ceil(x.shape[axis]/2), None, 1) if i == axis else empty_slice
-      for i in range(len(x.shape)))
-  v0 = x[ix0]
-  v1 = lax.rev(x[ix1], (axis,))
-  out = jnp.zeros(x.shape, dtype=x.dtype)
-  evens = tuple(
-      slice(None, None, 2) if i == axis else empty_slice for i in range(len(x.shape)))
-  odds = tuple(
-      slice(1, None, 2) if i == axis else empty_slice for i in range(len(x.shape)))
-  out =  out.at[evens].set(v0)
-  out = out.at[odds].set(v1)
-  return out
+  N = x.shape[axis]
+  num_even = (N + 1) // 2
+  v0 = lax.slice_in_dim(x, 0, num_even, axis=axis)
+  v1 = lax.rev(lax.slice_in_dim(x, num_even, N, axis=axis), (axis,))
+  if N % 2:
+    # Pad v1 to the length of v0; the padding is sliced off below.
+    v1 = lax.pad(v1, jnp.array(0, x.dtype),
+                 [(0, 1 if a == axis else 0, 0) for a in range(x.ndim)])
+  out = jnp.stack([v0, v1], axis=axis + 1)
+  out = lax.reshape(out, x.shape[:axis] + (2 * num_even,) + x.shape[axis + 1:])
+  return lax.slice_in_dim(out, 0, N, axis=axis)

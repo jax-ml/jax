@@ -45,13 +45,13 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 518  # Handle empty DeviceList in is_fully_addressable
+_version = 522  # Expose ExecutionContext.device_ordinal
 
 # An internal increasing version number for protecting jaxlib code against
-# ifrt changes.
+# xla changes.
 # lives in xla/python/version.h.
-# In JAX, reference this via jax._src.lib.ifrt_version.
-_ifrt_version = _xla.ifrt_version_number
+# In JAX, reference this via jax._src.lib.xla_version.
+_xla_version = _xla.xla_version_number
 
 xla_platform_names = {
     'cpu': 'Host',

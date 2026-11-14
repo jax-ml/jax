@@ -1873,7 +1873,8 @@ def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int],
 
   i1 = cuml_shape.searchsorted(batch_size, side='right')
   i2 = cuml_shape.searchsorted(batch_size * sparse_size, side='right')
-  new_batch_shape, new_sparse_shape, new_dense_shape = split_list(new_sizes, [int(i1), int(i2)])
+  new_batch_shape, new_sparse_shape, new_dense_shape = split_list(
+      new_sizes, [int(i1), int(i2 - i1)])
 
   # Reshape batch & dense dimensions: this is accomplished via a standard reshape.
   data = lax.reshape(

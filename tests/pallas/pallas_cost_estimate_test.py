@@ -186,11 +186,13 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
           + lax.asinpi(x)
           + lax.acospi(x)
           + lax.atanpi(x)
+          + lax.exp2m1(x)
+          + lax.log2p1(x)
       )
 
     cost = cost_estimate.estimate_cost(fn, jnp.ones(10, dtype=jnp.float32))
-    self.assertEqual(cost.flops, 50)
-    self.assertEqual(cost.transcendentals, 60)
+    self.assertEqual(cost.flops, 70)
+    self.assertEqual(cost.transcendentals, 80)
 
 
 if __name__ == "__main__":

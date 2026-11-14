@@ -220,6 +220,11 @@ from jax._src.lax.ann import (
   approx_top_k_p as approx_top_k_p
 )
 
+from jax._src.lax.exp_log import (
+  exp2m1_p as exp2m1_p,
+  log2p1_p as log2p1_p,
+)
+
 from jax._src.lax.trig import (
   acospi_p as acospi_p,
   asinpi_p as asinpi_p,

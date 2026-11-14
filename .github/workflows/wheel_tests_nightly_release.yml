@@ -54,7 +54,7 @@ on:
         type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}-${{ inputs.gcs_download_uri }}
   cancel-in-progress: true
 permissions: {}
 
@@ -62,8 +62,98 @@ env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
 
 jobs:
-  run-pytest-cpu:
+  preflight-gcs-wheels:
     if: github.repository_owner == 'jax-ml'
+    name: "Preflight GCS wheels check"
+    runs-on: linux-x86-n4-4
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"  # zizmor: ignore[unpinned-images]
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      has_base_wheels: ${{ steps.check.outputs.has_base_wheels }}
+      has_cuda12_wheels: ${{ steps.check.outputs.has_cuda12_wheels }}
+      has_cuda13_wheels: ${{ steps.check.outputs.has_cuda13_wheels }}
+    steps:
+      - name: Check wheel availability in GCS
+        id: check
+        env:
+          CLOUDSDK_AUTH_DISABLE_CREDENTIALS: 1
+          GCS_URI: ${{ inputs.gcs_download_uri }}
+          SKIP_JAXLIB: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
+        run: |
+          set -uo pipefail
+          uri="${GCS_URI%/}"
+          listing=""
+          listing=$(gcloud storage ls "${uri}/" 2>&1) || listing=""
+
+          has_jax="false"
+          if grep -Eq '/jax[^/]*py3[^/]*none[^/]*any\.whl$' <<< "$listing"; then
+            has_jax="true"
+          fi
+
+          if [[ "$SKIP_JAXLIB" == "1" ]]; then
+            has_jaxlib="true"
+            has_cuda12="true"
+            has_cuda13="true"
+          else
+            has_jaxlib="false"
+            has_cuda12="false"
+            has_cuda13="false"
+            if grep -Eq '/jaxlib[^/]*\.whl$' <<< "$listing"; then
+              has_jaxlib="true"
+            fi
+            if grep -Eq '/jax[^/]*cuda12[^/]*plugin[^/]*\.whl$' <<< "$listing" && \
+               grep -Eq '/jax[^/]*cuda12[^/]*pjrt[^/]*\.whl$' <<< "$listing"; then
+              has_cuda12="true"
+            fi
+            if grep -Eq '/jax[^/]*cuda13[^/]*plugin[^/]*\.whl$' <<< "$listing" && \
+               grep -Eq '/jax[^/]*cuda13[^/]*pjrt[^/]*\.whl$' <<< "$listing"; then
+              has_cuda13="true"
+            fi
+          fi
+
+          has_base="false"
+          if [[ "$has_jax" == "true" && "$has_jaxlib" == "true" ]]; then
+            has_base="true"
+          fi
+          if [[ "$has_base" != "true" ]]; then
+            has_cuda12="false"
+            has_cuda13="false"
+          fi
+
+          {
+            echo "has_base_wheels=${has_base}"
+            echo "has_cuda12_wheels=${has_cuda12}"
+            echo "has_cuda13_wheels=${has_cuda13}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### GCS Wheel Preflight (\`${uri}\`)"
+            echo ""
+            echo "| Artifact group | Available |"
+            echo "| --- | --- |"
+            echo "| \`jax\` + \`jaxlib\` base wheels | \`${has_base}\` |"
+            echo "| CUDA 12 plugin + PJRT wheels | \`${has_cuda12}\` |"
+            echo "| CUDA 13 plugin + PJRT wheels | \`${has_cuda13}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail preflight if any expected wheel group is missing
+        env:
+          GCS_URI: ${{ inputs.gcs_download_uri }}
+          HAS_BASE: ${{ steps.check.outputs.has_base_wheels }}
+          HAS_CUDA12: ${{ steps.check.outputs.has_cuda12_wheels }}
+          HAS_CUDA13: ${{ steps.check.outputs.has_cuda13_wheels }}
+        run: |
+          if [[ "$HAS_BASE" != "true" || "$HAS_CUDA12" != "true" || "$HAS_CUDA13" != "true" ]]; then
+            echo "::error::Missing expected wheel artifacts under ${GCS_URI%/} (base=${HAS_BASE}, cuda12=${HAS_CUDA12}, cuda13=${HAS_CUDA13}). Affected downstream suites will be skipped."
+            exit 1
+          fi
+
+  run-pytest-cpu:
+    needs: [preflight-gcs-wheels]
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' && needs.preflight-gcs-wheels.outputs.has_base_wheels == 'true' }}
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -92,7 +182,8 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-cpu:
-    if: github.repository_owner == 'jax-ml'
+    needs: [preflight-gcs-wheels]
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' && needs.preflight-gcs-wheels.outputs.has_base_wheels == 'true' }}
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -115,7 +206,16 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   run-pytest-cuda:
-    if: github.repository_owner == 'jax-ml'
+    needs: [preflight-gcs-wheels]
+    if: >-
+      ${{
+        !cancelled()
+        && github.repository_owner == 'jax-ml'
+        && (
+          needs.preflight-gcs-wheels.outputs.has_cuda12_wheels == 'true'
+          || needs.preflight-gcs-wheels.outputs.has_cuda13_wheels == 'true'
+        )
+      }}
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -131,6 +231,12 @@ jobs:
           ]
           enable-x64: [0]
           exclude:
+            - cuda:
+                cuda-version: ${{ needs.preflight-gcs-wheels.outputs.has_cuda12_wheels != 'true' && '12.1' || 'none' }}
+            - cuda:
+                cuda-version: ${{ needs.preflight-gcs-wheels.outputs.has_cuda12_wheels != 'true' && '12.9' || 'none' }}
+            - cuda:
+                cuda-version: ${{ needs.preflight-gcs-wheels.outputs.has_cuda13_wheels != 'true' && '13' || 'none' }}
             # H100 runs only CUDA 12.9 and min and max Python versions.
             - runner: "linux-x86-a3-8g-h100-8gpu"
               cuda:
@@ -168,7 +274,16 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-cuda:
-    if: github.repository_owner == 'jax-ml'
+    needs: [preflight-gcs-wheels]
+    if: >-
+      ${{
+        !cancelled()
+        && github.repository_owner == 'jax-ml'
+        && (
+          needs.preflight-gcs-wheels.outputs.has_cuda12_wheels == 'true'
+          || needs.preflight-gcs-wheels.outputs.has_cuda13_wheels == 'true'
+        )
+      }}
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -179,6 +294,9 @@ jobs:
           python: ["3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
           cuda-version: [12, 13]
           enable-x64: [0]
+          exclude:
+            - cuda-version: ${{ needs.preflight-gcs-wheels.outputs.has_cuda12_wheels != 'true' && 12 || 0 }}
+            - cuda-version: ${{ needs.preflight-gcs-wheels.outputs.has_cuda13_wheels != 'true' && 13 || 0 }}
     name: "Bazel CUDA Non-RBE with ${{ format('{0}', 'build_jaxlib=false') }}"
     with:
       runner: ${{ matrix.runner }}
@@ -214,7 +332,7 @@ jobs:
           artifact: ${{ (github.repository_owner == 'ROCm' && fromJSON('["jax-rocm-plugin", "jax-rocm-pjrt", "jax", "jaxlib"]')) || fromJSON('["jax-rocm-plugin", "jax-rocm-pjrt"]') }}
           python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0"},
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0"},
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest"},
           ]
           exclude:
@@ -249,8 +367,16 @@ jobs:
       wheel-version-suffix: ${{ inputs.wheel-version-suffix }}
 
   run-pytest-rocm:
-    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
-    needs: [build-rocm-artifacts]
+    if: >-
+      ${{
+        !cancelled()
+        && needs.build-rocm-artifacts.result == 'success'
+        && (
+          github.repository_owner == 'ROCm'
+          || (github.repository_owner == 'jax-ml' && needs.preflight-gcs-wheels.outputs.has_base_wheels == 'true')
+        )
+      }}
+    needs: [preflight-gcs-wheels, build-rocm-artifacts]
     permissions:
       id-token: write
       contents: read
@@ -262,7 +388,7 @@ jobs:
           runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
           python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", tag: "therock-10.0"},
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
           exclude:
@@ -285,8 +411,16 @@ jobs:
       jax-jaxlib-source: ${{ github.repository_owner == 'ROCm' && 'vendor' || 'upstream' }}
 
   run-bazel-test-rocm:
-    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
-    needs: [build-rocm-artifacts]
+    if: >-
+      ${{
+        !cancelled()
+        && needs.build-rocm-artifacts.result == 'success'
+        && (
+          github.repository_owner == 'ROCm'
+          || (github.repository_owner == 'jax-ml' && needs.preflight-gcs-wheels.outputs.has_base_wheels == 'true')
+        )
+      }}
+    needs: [preflight-gcs-wheels, build-rocm-artifacts]
     permissions:
       id-token: write
       contents: read
@@ -297,7 +431,7 @@ jobs:
           runner: ["amd-do-linux.jax.gpu.gfx950.1"]
           python: ["3.12", "3.13", "3.14", "3.15"]
           rocm: [
-            {label: "TheRock 10.0.0", wheel-version: "10", release-version: "10.0.0", tag: "therock-10.0"},
+            {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
             {label: "TheRock Next (pre-release)", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
           enable-x64: [0]
@@ -327,7 +461,8 @@ jobs:
       jax-jaxlib-source: ${{ github.repository_owner == 'ROCm' && 'vendor' || 'upstream' }}
 
   run-pytest-tpu:
-    if: github.repository_owner == 'jax-ml'
+    needs: [preflight-gcs-wheels]
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' && needs.preflight-gcs-wheels.outputs.has_base_wheels == 'true' }}
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -391,7 +526,8 @@ jobs:
       git_commit: ${{ inputs.git_commit }}
 
   run-bazel-test-tpu:
-    if: github.repository_owner == 'jax-ml'
+    needs: [preflight-gcs-wheels]
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' && needs.preflight-gcs-wheels.outputs.has_base_wheels == 'true' }}
     uses: ./.github/workflows/bazel_test_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
