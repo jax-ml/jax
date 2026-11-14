@@ -19,6 +19,7 @@ import logging
 import os
 import time
 from typing import Any
+import uuid
 import warnings
 
 filelock: Any | None = None
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 _CACHE_SUFFIX = "-cache"
 _ATIME_SUFFIX = "-atime"
+_TMP_SUFFIX = "-tmp"
 
 
 def _is_local_filesystem(path: str) -> bool:
@@ -123,8 +125,10 @@ class LRUCache(CacheInterface):
   def put(self, key: str, value: bytes) -> None:
     """Adds a new entry to the cache.
 
-    If a cache item with the same key already exists, no action
-    will be taken, even if the value is different.
+    On a local filesystem, the entry is written to a temporary file and
+    atomically renamed into place, replacing any existing entry with the same
+    key. On other filesystems, if a cache item with the same key already
+    exists, no action will be taken, even if the value is different.
 
     Args:
       key: The key under which the data will be stored.
@@ -146,12 +150,15 @@ class LRUCache(CacheInterface):
       self.lock.acquire(timeout=self.lock_timeout_secs)
 
     try:
-      if cache_path.exists():
+      if not self._is_local and cache_path.exists():
         return
 
       self._evict_if_needed(additional_size=len(value))
 
-      cache_path.write_bytes(value)
+      if self._is_local:
+        self._write_atomically(cache_path, value)
+      else:
+        cache_path.write_bytes(value)
 
       if self.eviction_enabled:
         timestamp = time.time_ns().to_bytes(8, "little")
@@ -161,6 +168,30 @@ class LRUCache(CacheInterface):
     finally:
       if self.eviction_enabled:
         self.lock.release()
+
+  def _write_atomically(self, cache_path, value: bytes) -> None:
+    """Writes ``value`` to ``cache_path`` via a temporary file and a rename.
+
+    The rename is atomic, so other processes sharing the cache directory never
+    read a partially written entry, and an interrupted write never leaves a
+    truncated entry behind. An existing entry is replaced, which also repairs
+    an entry that was left truncated.
+    """
+    # The temporary file must not end in `_CACHE_SUFFIX`, so that it is not
+    # seen as a cache entry while being written.
+    tmp_path = self.path / f"{uuid.uuid4().hex}{_TMP_SUFFIX}"
+    try:
+      with open(tmp_path, "xb") as f:
+        f.write(value)
+        f.flush()
+        os.fsync(f.fileno())
+      os.replace(tmp_path, cache_path)
+    except BaseException:
+      try:
+        os.remove(tmp_path)
+      except FileNotFoundError:
+        pass
+      raise
 
   def _evict_if_needed(self, *, additional_size: int = 0) -> None:
     """Evicts the least recently used items from the cache if necessary
