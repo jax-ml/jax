@@ -494,6 +494,10 @@ def conjure_assignment(
   # introducing splat layout candidate assignments often leads to a dead end in
   # practice---as opposed to tiled layouts, which are more likely to yield
   # solutions to the constraint system.
+  # Likewise, for TMEM scales, `scales_layout()` replicates scale factors across
+  # all four 32-lane sub-partitions (consuming 4x more TMEM columns than
+  # `scales_128_lane_layout()`), so we try the 128-lane layout first when both
+  # are valid candidates.
   low_priority_assignments: list[tuple[cs.Variable, cs.Constant]] = []
   for variable, constant in _extract_variable_assignments_from_constraints(
       constraint_system.constraints, arch
@@ -502,6 +506,8 @@ def conjure_assignment(
       case cs.RegisterLayout(value=value) if not isinstance(
           value, fa.TiledLayout
       ):
+        low_priority_assignments.append((variable, constant))
+      case cs.TMEMLayout(value=value) if value == tcgen05.scales_layout():
         low_priority_assignments.append((variable, constant))
       case _:
         yield variable, constant
@@ -1710,7 +1716,8 @@ def _tcgen05_mma_constraint_system(
     scale = ValueSite(op, VariableType.OPERAND, scale_index)
     scale_var = ctx.producer_ref(scale)
     arch = ctx.arch
-    if scale_operand == op.a_scale and arch.major == 10 and arch.minor >= 7:
+    is_sm107f = arch.major == 10 and arch.minor >= 7
+    if scale_operand == op.a_scale and is_sm107f and not (op.collective and M == 64):
       # On sm_107f, A scales support both the 32-lane `scales_layout()` and the
       # 128-lane `scales_128_lane_layout()`. Both lower correctly, so we let the
       # rest of the system (e.g. a `tmem_layout_cast`) decide. On other
