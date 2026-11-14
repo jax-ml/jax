@@ -1,8 +1,5 @@
 import jax
-from jax import jit
 from typing import Callable, Iterable
-
-is_float = lambda x: isinstance(x, (float, int))
 
 ini = [4.5, 3.5, 4.5, 3.5]
 
@@ -47,7 +44,6 @@ def wolfe(fun: Callable,
             break
     return alpha
 
-#@jit
 def newton(fun: Callable, 
            x_0: Iterable,
            verbose: bool=False, 
@@ -56,8 +52,7 @@ def newton(fun: Callable,
     '''
     Newton Method Updated by Hessian and Gradient.
     '''
-    assert all(list(map(is_float, x_0)))
-    x_0 = jax.numpy.array(x_0)
+    x_0 = jax.numpy.asarray(x_0)
     while 1:
         gradient = jax.grad(fun)(x_0)
         hessian = jax.hessian(fun)(x_0)
