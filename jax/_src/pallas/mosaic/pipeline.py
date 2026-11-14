@@ -147,10 +147,11 @@ def _create_bounded_slice(slice_start: jax.Array | int,
   # elements in the dimension. In all cases, we must round the size up to the
   # nearest multiple of the tiling.
   is_oob = slice_start + slice_size > dim_size
-  remaining = dim_size - slice_start
+  remaining = jnp.maximum(dim_size - slice_start, 0)
   rounded_size = jnp.where(is_oob, jnp.int32(remaining), jnp.int32(slice_size))
   rounded_size = align_to(rounded_size, tiling)
   rounded_size = multiple_of(rounded_size, tiling)
+  slice_start = jnp.where(slice_start < dim_size, slice_start, 0)
   return ds(slice_start, rounded_size)
 
 
@@ -542,11 +543,21 @@ def _buffer_memory_space(spec_memory_space):
   )
 
 
-def _window_aliases_source(spec_memory_space, source_memory_space) -> bool:
-  buffer_memory_space = _buffer_memory_space(spec_memory_space)
-  return (
-      buffer_memory_space is HBM or buffer_memory_space is source_memory_space
-  )
+def _window_aliases_source(spec, ms, ty: Any = None, tl=None) -> bool:
+  # Stage VMEM windows via clamped DMAs when compute_slice can access OOB.
+  m = _buffer_memory_space(getattr(spec, "block_aval", spec).memory_space)
+  b, eq = spec.block_shape or (), jax_core.definitely_equal
+  if not (m is ms is VMEM) or any(any(getattr(d, "padding", ())) for d in b):
+    return m is HBM or m is ms
+  t, z = getattr(spec, "array_aval", ty), [*map(pallas_core.get_block_size, b)]
+  sh, u = getattr(t, "shape", ()), {BoundedSlice, Indirect} & {*map(type, b)}
+  ok = not u and all(not eq(k, 0) and eq(n % k, 0) for k, n in zip(z, sh))
+  try:
+    tl = tpu_info.infer_tiling(t, tl) if ok and Element in map(type, b) else ()
+  except Exception:  # pylint: disable=broad-exception-caught
+    return True
+  f = lambda d, k, n, x: x and eq(k % x, 0) or eq(k, n) and d in (k, Blocked(k))
+  return ok and (not tl or not all(map(f, b, z, sh, tl)))
 
 
 def _ref_to_value_aval(ref):
@@ -697,7 +708,7 @@ class BufferedRef(BufferedRefBase):
           "use_lookahead=True requires input buffer_count >= 2, got"
           f" buffer_count={buffer_count!r} for {buffer_type}."
       )
-    if _window_aliases_source(spec.memory_space, source_memory_space):
+    if _window_aliases_source(spec, source_memory_space, dtype_or_type, tiling):
       if buffer_memory_space is HBM:
         if source_memory_space not in (ANY, HBM):
           raise ValueError(
@@ -1654,7 +1665,7 @@ def _make_pipeline_allocations(
     return BufferedRef.input(
         in_spec,
         in_aval,
-        buffer_count,
+        1 if not has_buffering and sms is VMEM else buffer_count,
         grid_rank=len(grid),
         use_lookahead=use_lookahead,
         source_memory_space=sms,
@@ -1688,7 +1699,7 @@ def _make_pipeline_allocations(
     return BufferedRef.output(
         out_spec,
         out_aval,
-        buffer_count,
+        1 if not has_buffering and sms is VMEM else buffer_count,
         source_memory_space=sms,
         tiling=tiling,
         is_trivial_windowing=is_trivial,
@@ -2536,9 +2547,7 @@ def _emit_pipeline_effectful_abstract_eval(
           aliased = not (bref.is_buffered or bref.has_allocated_buffer)
         else:
           bm = grid_mapping.block_mappings[ref_invar_idx]
-          aliased = _window_aliases_source(
-              bm.block_aval.memory_space, avals[ref_idx].memory_space
-          )
+          aliased = _window_aliases_source(bm, avals[ref_idx].memory_space)
         if not aliased:
           continue
       out_effects.add(e.replace(ref_idx))
