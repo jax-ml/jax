@@ -75,6 +75,15 @@ if command -v rocm-sdk >/dev/null 2>&1; then
   rocm_path_flags=("--bazel_options=--repo_env=ROCM_PATH=$(rocm-sdk path --root)")
 fi
 
+# Debug-symbol or ASAN variant of the wheels. ASAN instruments host code only.
+variant_flags=()
+case "${JAXCI_ROCM_WHEEL_VARIANT:-}" in
+  "") ;;
+  debug) variant_flags=("--bazel_options=--config=debug_symbols") ;;
+  asan) variant_flags=("--bazel_options=--config=asan_shared" "--bazel_options=--copt=-fno-gpu-sanitize") ;;
+  *) echo "Error: Invalid JAXCI_ROCM_WHEEL_VARIANT: ${JAXCI_ROCM_WHEEL_VARIANT}"; exit 1 ;;
+esac
+
 echo "Building $artifact..."
 
 python build/build.py build --wheels="$artifact" \
@@ -88,7 +97,8 @@ python build/build.py build --wheels="$artifact" \
   --output_path="$JAXCI_OUTPUT_DIR" \
   $artifact_tag_flags \
   $override_xla_repo \
-  "${rocm_path_flags[@]}"
+  "${rocm_path_flags[@]}" \
+  "${variant_flags[@]}"
 
 # Verify manylinux compliance. "jax" is pure Python, as in ci/build_artifacts.sh.
 if [[ "$artifact" != "jax" ]]; then

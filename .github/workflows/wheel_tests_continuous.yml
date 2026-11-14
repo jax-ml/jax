@@ -23,7 +23,8 @@
 # 9. run-bazel-test-tpu:    Calls the `bazel_test_tpu.yml` workflow which
 #                           runs Bazel TPU tests with py_import.
 # 10. build-rocm-artifacts: Calls the `build_rocm_artifacts.yml` workflow to build ROCm plugin/pjrt
-#                           wheels and uploads them to an S3 bucket.
+#                           wheels and uploads them to an S3 bucket. build-rocm-variant-artifacts
+#                           does the same for debug-symbol and ASAN builds, which are not tested.
 # 11. run-pytest-rocm:      Calls the `pytest_rocm.yml` workflow which downloads the jaxlib and
 #                           ROCm artifacts and runs the ROCm tests.
 # 12. run-bazel-test-rocm:  Calls the `bazel_rocm.yml` workflow which runs the ROCm Bazel tests
@@ -530,6 +531,37 @@ jobs:
       halt-for-connection: 'no'
       upload_artifacts_to_s3: true
       s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  # Debug-symbol and ASAN builds of the ROCm wheels, uploaded beside the regular ones. Not tested.
+  build-rocm-variant-artifacts:
+    needs: [select-jobs]
+    if: >-
+      ${{
+          fromJSON(needs.select-jobs.outputs.required_builds || '{}').build_rocm_artifacts == true
+          && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm')
+      }}
+    uses: ./.github/workflows/build_rocm_artifacts.yml
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    strategy:
+        fail-fast: false
+        matrix:
+          variant: ["debug", "asan"]
+          artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
+    name: "Build ROCm ${{ matrix.variant }} artifacts TheRock 10.1.0"
+    with:
+      runner: "amd-do-linux.jax.cpu"
+      artifact: ${{ matrix.artifact }}
+      python: "3.12"
+      rocm-version: "10"
+      rocm-release-version: "10.1.0"
+      clone_main_xla: 0
+      halt-for-connection: 'no'
+      upload_artifacts_to_s3: true
+      variant: ${{ matrix.variant }}
+      s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/10.1.0/${{ matrix.variant }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   # LINT.IfChange(run_pytest_rocm)
   run-pytest-rocm:
