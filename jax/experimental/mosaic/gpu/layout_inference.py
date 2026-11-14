@@ -1710,7 +1710,8 @@ def _tcgen05_mma_constraint_system(
     scale = ValueSite(op, VariableType.OPERAND, scale_index)
     scale_var = ctx.producer_ref(scale)
     arch = ctx.arch
-    if scale_operand == op.a_scale and arch.major == 10 and arch.minor >= 7:
+    is_sm107f = arch.major == 10 and arch.minor >= 7
+    if scale_operand == op.a_scale and is_sm107f and not (op.collective and M == 64):
       # On sm_107f, A scales support both the 32-lane `scales_layout()` and the
       # 128-lane `scales_128_lane_layout()`. Both lower correctly, so we let the
       # rest of the system (e.g. a `tmem_layout_cast`) decide. On other
