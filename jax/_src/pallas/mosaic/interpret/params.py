@@ -52,6 +52,11 @@ class SharedInterpretParams:
       If "warn", a warning will be printed when a race is detected, but
       interpretation will continue.
       Default: "raise".
+    on_kernel_exit_leftovers: If "print", non-zero semaphore counts and
+      uncompleted queued DMAs at kernel exit are printed and recorded in
+      `kernel_exit_leftovers`. If "raise", a `RuntimeError` is also raised on
+      TPU after the clean-up barrier completes.
+      Default: "print".
     out_of_bounds_reads: If "raise", an exception will be raised on any
       out-of-bounds read of a buffer.  If "uninitialized_value", any parts of
       the read that are out-of-bounds will return the value used to fill
@@ -87,6 +92,7 @@ class SharedInterpretParams:
 
   detect_races: bool = False
   on_race: Literal["raise", "warn"] = "raise"
+  on_kernel_exit_leftovers: Literal["print", "raise"] = "print"
   out_of_bounds_reads: Literal["raise", "uninitialized"] = "raise"
   skip_floating_point_ops: bool = False
   uninitialized_memory: Literal["nan", "zero"] = "nan"
