@@ -50,6 +50,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import xla_version
 from jax._src.numpy import ufuncs as jnp_ufuncs
 from jax._src.util import safe_zip, tuple_update
 
@@ -633,6 +634,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(dot_eqn.invars[0].aval.shape, (5, 4))
     self.assertEqual(dot_eqn.invars[1].aval.shape, (4, 3))
     self.assertEqual(dot_eqn.params['dimension_numbers'], (((1,), (0,)), ((), ())))
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testMatmulBroadcastOperandReduce(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41414
+    if jtu.test_device_matches(["cpu"]) and xla_version < 84:
+      self.skipTest("Requires xla_version >= 84")
+    x = jnp.ones((64, 8), dtype=dtype)
+    y = jax.jit(lambda x: (x @ jnp.ones((8, 64), dtype)).sum())(x)
+    tol = {np.float16: 1e-2, jnp.bfloat16: 2e-2}
+    self.assertAllClose(y, np.asarray(32768.0, dtype=dtype), atol=tol, rtol=tol)
+
+  def testMatmulBroadcastOperandGrad(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41414
+    if jtu.test_device_matches(["cpu"]) and xla_version < 84:
+      self.skipTest("Requires xla_version >= 84")
+    rng = jtu.rand_default(self.rng())
+    x = rng((1000, 16), np.float32)
+    grad_fn = jax.jit(jax.grad(lambda s, x: jnp.sum(x.T @ (s * x))))
+    actual = grad_fn(np.float32(1.0), x)
+    expected = np.sum(x.T @ x)
+    tol = 2e-2 if jtu.test_device_matches(["tpu"]) else 1e-3
+    self.assertAllClose(actual, expected, rtol=tol, atol=tol)
 
   @jtu.sample_product(
       lhs_batch=broadcast_compatible_shapes,
