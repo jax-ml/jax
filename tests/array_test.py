@@ -2053,6 +2053,22 @@ class RngShardingTest(jtu.JaxTestCase):
           arr.shape, arr.sharding, [arr]
       )
 
+  def test_batched_device_put_deduplicated_shards_force_copy(self):
+    if jax.device_count() < 4:
+      self.skipTest('Requires at least 4 devices')
+    devices = jax.devices()[:4]
+    mesh = Mesh(np.array(devices).reshape(2, 2), ('x', 'y'))
+    sharding = NamedSharding(mesh, P('x', None))
+    s0 = np.arange(4, dtype=np.int32).reshape(1, 4)
+    s1 = np.arange(4, 8, dtype=np.int32).reshape(1, 4)
+    aval = core.ShapedArray((2, 4), np.dtype(np.int32))
+    out = xc.batched_device_put(
+        aval, sharding, [s0, s0, s1, s1], list(devices), force_copy=True
+    )
+    np.testing.assert_array_equal(
+        np.asarray(out), np.arange(8, dtype=np.int32).reshape(2, 4)
+    )
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

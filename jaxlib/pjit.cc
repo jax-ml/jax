@@ -1520,9 +1520,7 @@ class NumpyHandler : public ShardArgsHandler {
         byte_strides[d] = ndarray.strides(d);
       }
 
-      std::function<void()> on_done = [py_buffer_ref]() {
-        // keeps py_buffer_ref alive
-      };
+      std::shared_ptr<const void> on_done = py_buffer_ref;
 
       xla::ifrt::Client::HostBuffer host_buffer = {
           .data = shard_ptr,
