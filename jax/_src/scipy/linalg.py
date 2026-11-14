@@ -3296,7 +3296,7 @@ def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:
   m, n = F.shape
   total = m * n
   if total == 0:
-    return jnp.zeros((m, n), dtype=F.dtype)
+    return F
   # scan the matrix from bottom-right to top-left
   flat_indices = jnp.arange(total - 1, -1, -1)
   Y0 = jnp.zeros((m * n,), dtype=F.dtype)

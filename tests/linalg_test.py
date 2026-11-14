@@ -2275,7 +2275,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp.linalg.schur, args_maker)
 
   @jtu.sample_product(
-    shape=[(1, 1), (4, 4), (15, 15), (50, 50), (100, 100)],
+    shape=[(0, 0), (1, 1), (4, 4), (15, 15), (50, 50), (100, 100)],
     dtype=float_types + complex_types,
   )
   @jtu.run_on_devices("cpu")
@@ -2287,17 +2287,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         osp.linalg.rsf2csf, jsp.linalg.rsf2csf, args_maker, tol=tol
     )
     self._CompileAndCheck(jsp.linalg.rsf2csf, args_maker)
-
-  @jtu.sample_product(
-    shape=[(0, 0), (3, 0, 0)],
-    dtype=float_types + complex_types,
-  )
-  @jtu.run_on_devices("cpu")
-  def testRsf2csfZeroSize(self, shape, dtype):
-    mat = np.zeros(shape, dtype)
-    T, Z = jsp.linalg.rsf2csf(mat, mat)
-    self.assertEqual(T.shape, shape)
-    self.assertEqual(Z.shape, shape)
 
   @jtu.sample_product(
     [dict(t_shape=t_shape, z_shape=z_shape)
@@ -2373,7 +2362,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, atol=2e-5)
 
   @jtu.sample_product(
-    shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
+    shape=[(0, 0), (4, 4), (15, 15), (50, 50), (100, 100)],
     dtype=float_types + complex_types,
   )
   @jtu.run_on_devices("cpu")
@@ -2428,13 +2417,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     root = jsp.linalg.sqrtm(mat)
 
     self.assertAllClose(root, expected, check_dtypes=False)
-
-  @jtu.sample_product(dtype=float_types + complex_types)
-  @jtu.run_on_devices("cpu")
-  def testSqrtmZeroSize(self, dtype):
-    mat = np.zeros((0, 0), dtype)
-    self.assertEqual(jsp.linalg.sqrtm(mat).shape, (0, 0))
-    self.assertEqual(jax.jit(jsp.linalg.sqrtm)(mat).shape, (0, 0))
 
   @jtu.sample_product(
     cshape=[(), (4,), (8,), (4, 7), (2, 1, 5)],
@@ -2670,7 +2652,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       jsp.linalg.convolution_matrix(jnp.array(5.0), 3)
 
   @jtu.sample_product(
-    shape=[(2, 3), (4, 6), (50, 7), (100, 110)],
+    shape=[(0, 0), (0, 3), (3, 0), (2, 3), (4, 6), (50, 7), (100, 110)],
     dtype = float_types + complex_types,
     method = ["schur", "eigen"]
   )
@@ -2698,21 +2680,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp.linalg.solve_sylvester, jnp_fun, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-
-  @jtu.sample_product(
-    shape=[(0, 0), (0, 3), (3, 0)],
-    dtype=float_types + complex_types,
-    method=["schur", "eigen"],
-  )
-  @jtu.run_on_devices("cpu")
-  def test_solve_sylvester_zero_size(self, shape, dtype, method):
-    m, n = shape
-    rng = jtu.rand_default(self.rng())
-    A = rng((m, m), dtype)
-    B = rng((n, n), dtype)
-    C = rng((m, n), dtype)
-    X = jsp.linalg.solve_sylvester(A, B, C, method=method)
-    self.assertEqual(X.shape, (m, n))
 
   @jtu.sample_product(
     n=[3, 6, 7, 100],
