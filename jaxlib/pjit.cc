@@ -88,6 +88,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
@@ -1520,9 +1521,13 @@ class NumpyHandler : public ShardArgsHandler {
         byte_strides[d] = ndarray.strides(d);
       }
 
+#if JAX_XLA_VERSION_NUMBER >= 89
+      std::shared_ptr<const void> on_done = py_buffer_ref;
+#else
       std::function<void()> on_done = [py_buffer_ref]() {
         // keeps py_buffer_ref alive
       };
+#endif
 
       xla::ifrt::Client::HostBuffer host_buffer = {
           .data = shard_ptr,

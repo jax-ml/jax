@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
@@ -286,7 +287,6 @@ absl::StatusOr<ifrt::ArrayRef> MakeIfrtArrayFromShardsInBatch(
     auto [it, insert_happened] = host_buffer_dedup_map.emplace(
         std::make_pair(&host_buffers.back().second, insert_idx));
     if (!insert_happened) {
-      std::move(host_buffers.back().second.on_done)();
       host_buffers.pop_back();
     }
     host_buffers[it->second].first.push_back(i);
@@ -511,12 +511,18 @@ absl::StatusOr<ShardFn> HandleNumpyScalar(nb::handle h, ifrt::Client* client,
           }
         },
         data);
-    ifrt::Client::HostBuffer ifrt_host_buffer{
-        ptr, ifrt_dtype, ifrt::Shape({}),
-        /*byte_strides=*/std::nullopt,
-        /*on_done_with_host_buffer=*/
-        [py_buffer_ref =
-             std::move(py_buffer_ref)]() { /* keeps py_buffer_ref alive */ }};
+    ifrt::Client::HostBuffer ifrt_host_buffer{ptr, ifrt_dtype, ifrt::Shape({}),
+                                              /*byte_strides=*/std::nullopt,
+    /*on_done=*/
+#if JAX_XLA_VERSION_NUMBER >= 89
+                                              std::move(py_buffer_ref)
+#else
+                                              [py_buffer_ref =
+                                                   std::move(py_buffer_ref)]() {
+                                                /* keeps py_buffer_ref alive */
+                                              }
+#endif
+    };
     return Shard(std::move(ifrt_host_buffer), /*weak_type=*/false,
                  ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall);
   };
@@ -529,9 +535,6 @@ absl::StatusOr<ShardFn> HandleStringNumpyArray(
   auto py_array_obj = reinterpret_cast<PyArrayObject*>(array.ptr());
   ABSL_ASSIGN_OR_RETURN(auto cords, StringDTypeArrayToCords(py_array_obj));
 
-  // Assemble all the parameters of MakeArrayFromHostBuffer
-  const void* data = cords.data();
-
   // Make an explicit copy of the shape elements so we won't run into complex
   // endianness and precision issues that might arise if we reinterpret-casted
   // from npy_intp, that can be just 32 bits-wide in some environments
@@ -543,7 +546,15 @@ absl::StatusOr<ShardFn> HandleStringNumpyArray(
   }
   ifrt::Shape shape(std::move(dims));
 
+#if JAX_XLA_VERSION_NUMBER >= 89
+  std::shared_ptr<std::vector<absl::Cord>> on_done_with_host_buffer =
+      std::make_shared<std::vector<absl::Cord>>(std::move(cords));
+  const void* data = on_done_with_host_buffer->data();
+#else
+  // Assemble all the parameters of MakeArrayFromHostBuffer
+  const void* data = cords.data();
   auto on_done_with_host_buffer = [cords = std::move(cords)] {};
+#endif
 
   return [data, shape = std::move(shape),
           on_done_with_host_buffer = std::move(
@@ -604,6 +615,14 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
               options.allow_zero_copy]() mutable -> absl::StatusOr<Shard> {
     ifrt::Client::HostBufferSemantics host_buffer_semantics =
         ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall;
+#if JAX_XLA_VERSION_NUMBER >= 89
+    std::shared_ptr<const void> on_done_with_host_buffer;
+    if (allow_zero_copy) {
+      on_done_with_host_buffer = std::move(py_buffer_ref);
+      host_buffer_semantics =
+          ifrt::Client::HostBufferSemantics::kImmutableZeroCopy;
+    }
+#else
     std::function<void()> on_done_with_host_buffer;
     if (allow_zero_copy) {
       on_done_with_host_buffer =
@@ -612,6 +631,7 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
       host_buffer_semantics =
           ifrt::Client::HostBufferSemantics::kImmutableZeroCopy;
     }
+#endif
 
     ifrt::Client::HostBuffer ifrt_host_buffer{
         data, ifrt_dtype, ifrt::Shape(dims), std::move(byte_strides),
