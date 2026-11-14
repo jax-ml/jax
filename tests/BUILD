@@ -330,6 +330,20 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "sdy_mpmd_test",
+    srcs = ["sdy_mpmd_test.py"],
+    enable_backends = ["cpu"],
+    deps = [
+        "//jax/_src:core",
+        "//jax/_src:mlir",
+        "//jaxlib:_sdy_mpmd",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "ffi_test",
     srcs = ["ffi_test.py"],
     enable_configs = [
