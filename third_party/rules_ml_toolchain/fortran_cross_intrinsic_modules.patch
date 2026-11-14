@@ -1,0 +1,12 @@
+diff --git a/fortran/impls/linux_x86_64_linux_aarch64/BUILD b/fortran/impls/linux_x86_64_linux_aarch64/BUILD
+index 8e54df3..a6ff5bf 100644
+--- a/fortran/impls/linux_x86_64_linux_aarch64/BUILD
++++ b/fortran/impls/linux_x86_64_linux_aarch64/BUILD
+@@ -49,6 +49,7 @@ filegroup(
+         "@llvm_linux_x86_64//:clang++",
+         "@llvm_linux_x86_64//:distro_libs",
+         "@llvm_linux_x86_64//:flang",
++        "@llvm_linux_x86_64//:flang_incs",
+         "@llvm_linux_x86_64//:ld",
+     ],
+ )

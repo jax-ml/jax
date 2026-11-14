@@ -1,0 +1,86 @@
+diff --git a/third_party/eigen3/eigen_archive.BUILD b/third_party/eigen3/eigen_archive.BUILD
+index b1fee8c6b0..45c43644d0 100644
+--- a/third_party/eigen3/eigen_archive.BUILD
++++ b/third_party/eigen3/eigen_archive.BUILD
+@@ -78,3 +78,81 @@ filegroup(
+     srcs = EIGEN_SOURCES,
+     visibility = ["//visibility:public"],
+ )
++
++# ==============================================================================
++# Eigen BLAS Library (:blas)
++# ==============================================================================
++
++EIGEN_BLAS_HDRS = glob([
++    "blas/*.h",
++    "blas/f2c/*.h",
++    "Eigen/**",
++    "unsupported/Eigen/**",
++])
++
++EIGEN_BLAS_SRCS = [
++    "blas/complex_double.cpp",
++    "blas/complex_single.cpp",
++    "blas/double.cpp",
++    "blas/single.cpp",
++    "blas/xerbla.cpp",
++    "blas/f2c/chbmv.c",
++    "blas/f2c/chpmv.c",
++    "blas/f2c/complexdots.c",
++    "blas/f2c/ctbmv.c",
++    "blas/f2c/drotm.c",
++    "blas/f2c/drotmg.c",
++    "blas/f2c/dsbmv.c",
++    "blas/f2c/dspmv.c",
++    "blas/f2c/dtbmv.c",
++    "blas/f2c/lsame.c",
++    "blas/f2c/srotm.c",
++    "blas/f2c/srotmg.c",
++    "blas/f2c/ssbmv.c",
++    "blas/f2c/sspmv.c",
++    "blas/f2c/stbmv.c",
++    "blas/f2c/zhbmv.c",
++    "blas/f2c/zhpmv.c",
++    "blas/f2c/ztbmv.c",
++]
++
++cc_library(
++    name = "blas",
++    srcs = EIGEN_BLAS_SRCS,
++    hdrs = EIGEN_BLAS_HDRS,
++    includes = [
++        ".",
++        "blas",
++        "blas/f2c",
++    ],
++    copts = select({
++        "@platforms//os:windows": [],
++        "//conditions:default": ["-O3"],
++    }),
++    visibility = ["//visibility:public"],
++)
++
++alias(
++    name = "single",
++    actual = ":blas",
++    visibility = ["//visibility:public"],
++)
++
++alias(
++    name = "double",
++    actual = ":blas",
++    visibility = ["//visibility:public"],
++)
++
++alias(
++    name = "complex",
++    actual = ":blas",
++    visibility = ["//visibility:public"],
++)
++
++alias(
++    name = "complex16",
++    actual = ":blas",
++    visibility = ["//visibility:public"],
++)
++

@@ -182,6 +182,7 @@ cc_library(
         ":oneapi_vendor",
         "//jaxlib:ffi_helpers",
         "//jaxlib/cpu:lapack_kernels",
+        "//jaxlib/cpu:lapack_kernels_using_lapack",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -210,11 +211,11 @@ oneapi_nanobind_extension(
         ":oneapi_vendor",
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cpu:lapack_kernels",
+        "//jaxlib/cpu:lapack_kernels_using_lapack",
         "@com_google_absl//absl/base",
         "@nanobind",
         "@oneapi//:headers",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/python:safe_static_init",
     ],
 )
 

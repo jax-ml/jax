@@ -59,10 +59,6 @@ _complex = {np.complex64, np.complex128}
 _any_complex = {np.complexfloating}
 
 
-def initialize_lapack():
-  lapack._lapack.initialize()
-
-
 def register_module_custom_calls(module):
   if hasattr(module, "registrations"):
     for platform, targets in module.registrations().items():
