@@ -53,6 +53,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.lax.atanpi`, and {func}`jax.lax.atan2pi`, which compute the
     inverse trigonometric functions divided by `pi` (`asin(x) / pi`,
     `acos(x) / pi`, `atan(x) / pi`, and `atan2(x, y) / pi`).
+  * Added {func}`jax.distributed.client` and
+    {func}`jax.distributed.detected_cluster`. ``client`` returns the
+    coordination client used as the key-value store and barrier after
+    {func}`jax.distributed.initialize`. ``detected_cluster`` reports which
+    cluster no-argument ``initialize`` would auto-detect, without starting
+    the coordination service.
   * Added {func}`jax.lax.exp2m1` and {func}`jax.lax.log2p1`, which compute
     `2**x - 1` and `log2(1 + x)` without losing precision near `x = 0`.
 
