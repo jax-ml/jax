@@ -322,6 +322,59 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
         rtol=rtol,
     )
 
+  @parameterized.product(
+      inline_seq_dim=(True, False),
+      megacore_mode=("batch", "kv_head", None),
+  )
+  def test_paged_attention_zero_length_sequences(
+      self, inline_seq_dim, megacore_mode
+  ):
+    # Empty sequences must produce an all-zero output block. With
+    # inline_seq_dim=False the accumulator reset used to live inside the
+    # `i * bk < length` guard, so an empty sequence never wrote its output and
+    # the previous grid step's VMEM output buffer leaked into HBM.
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Only supports TPU generation 4 or above")
+    if megacore_mode and not _megacore_enabled():
+      self.skipTest("Megacore is only available on TPU v4 or TPU v5p")
+    page_size, max_kv_len, num_kv_heads, q_kv_head_ratio, head_dim = (
+        16,
+        512,
+        2,
+        4,
+        128,
+    )
+    seq_lens = np.asarray([0, 0, 256, 256, 256, 256, 0, 0], np.int32)
+    q, k_pages, v_pages, page_indices = _generate_random_qkv(
+        seq_lens,
+        page_size,
+        max_kv_len,
+        num_kv_heads,
+        num_kv_heads * q_kv_head_ratio,
+        head_dim,
+        jax.random.key(0),
+        jnp.float32,
+    )
+    o = paged_attention.paged_attention(
+        q,
+        k_pages,
+        v_pages,
+        seq_lens,
+        page_indices,
+        pages_per_compute_block=8,
+        megacore_mode=megacore_mode,
+        inline_seq_dim=inline_seq_dim,
+    )
+    o = np.asarray(o)
+    k = _reconstruct_kv(page_indices, k_pages)
+    v = _reconstruct_kv(page_indices, v_pages)
+    o_ref = np.asarray(
+        util.grouped_query_attention_reference(q, k, v, seq_lens, None)
+    )
+    live = seq_lens > 0
+    np.testing.assert_allclose(o[live], o_ref[live], atol=1e-2, rtol=2e-2)
+    np.testing.assert_array_equal(o[~live], np.zeros_like(o[~live]))
+
 
 if __name__ == "__main__":
   jax.config.config_with_absl()
