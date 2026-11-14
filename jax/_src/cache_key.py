@@ -309,6 +309,8 @@ xla_flags_to_exclude_from_cache_key = [
     "--xla_gpu_cuda_data_dir",
     "--xla_gpu_experimental_autotune_cache_mode",
     "--xla_gpu_per_fusion_autotune_cache_dir",
+    "--xla_autotune_cache_mode",
+    "--xla_autotune_cache_dir",
     "--xla_tpu_compiler_variant",
 ]
 
@@ -347,7 +349,7 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj,
   debug_options.xla_dump_hlo_as_long_text = False
   debug_options.xla_dump_disable_metadata = False
   debug_options.xla_dump_hlo_pipeline_re = ""
-  debug_options.xla_gpu_experimental_autotune_cache_mode = 0
+  debug_options.xla_autotune_cache_mode = 0
 
   # Optional way to specify the cuda install path to be used by the compiler.
   # This could possibly affect the cuda version compiled with, but this should
@@ -357,7 +359,7 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj,
   # path changes across runs despite being the same version, so we clear it
   # here.
   debug_options.xla_gpu_cuda_data_dir = ""
-  debug_options.xla_gpu_per_fusion_autotune_cache_dir = ""
+  debug_options.xla_autotune_cache_dir = ""
   # LINT.ThenChange(:xla_flags)
 
   compile_options_copy.env_option_overrides = [
