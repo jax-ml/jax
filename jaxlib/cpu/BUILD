@@ -60,6 +60,7 @@ cc_library(
     name = "lapack_kernels_using_lapack",
     srcs = ["lapack_kernels_using_lapack.cc"],
     # compatible with libtpu
+    features = ["kcfi_opt_out"],
     deps = [":lapack_kernels"],
     alwayslink = 1,
 )
