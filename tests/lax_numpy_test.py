@@ -6173,6 +6173,46 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                               check_dtypes=False, atol=atol, rtol=tol)
 
   @jtu.sample_product(
+    [dict(start_shape=start_shape, stop_shape=stop_shape,
+          base_shape=base_shape)
+      for start_shape, stop_shape, base_shape in [
+        ((), (), (3,)),
+        ((2,), (), (2,)),
+        ((), (2,), (1,)),
+        ((2,), (2,), (3, 1)),
+        ((2, 3), (), (3,)),
+        ((), (), (2, 3)),
+        ((1, 3), (2, 1), (2, 1)),
+      ]
+    ],
+    num=[0, 1, 5],
+    endpoint=[True, False],
+    dtype=jtu.dtypes.floating + [None,],
+  )
+  def testLogspaceArrayBase(self, start_shape, stop_shape, base_shape, num,
+                            endpoint, dtype):
+    # A non-scalar base is broadcast with start and stop, and is expanded
+    # along the new axis.
+    rng = jtu.rand_default(self.rng())
+    base_rng = jtu.rand_uniform(self.rng(), low=0.5, high=2.0)
+    tol = {np.float32: 1e-3, np.float64: 1e-6}
+    def args_maker():
+      return [rng(start_shape, dtype or jnp.float_),
+              rng(stop_shape, dtype or jnp.float_),
+              base_rng(base_shape, dtype or jnp.float_)]
+    ndim = len(np.broadcast_shapes(start_shape, stop_shape, base_shape))
+    for axis in range(-ndim - 1, ndim + 1):
+      def jnp_op(start, stop, base):
+        return jnp.logspace(start, stop, num, endpoint=endpoint, base=base,
+                            dtype=dtype, axis=axis)
+      def np_op(start, stop, base):
+        return np.logspace(start, stop, num, endpoint=endpoint, base=base,
+                           dtype=dtype, axis=axis)
+      self._CheckAgainstNumpy(np_op, jnp_op, args_maker,
+                              check_dtypes=False, tol=tol)
+      self._CompileAndCheck(jnp_op, args_maker, check_dtypes=False, rtol=tol)
+
+  @jtu.sample_product(
     [dict(start_shape=start_shape, stop_shape=stop_shape, axis=axis)
       for start_shape in [(), (2,), (2, 2)]
       for stop_shape in [(), (2,), (2, 2)]
