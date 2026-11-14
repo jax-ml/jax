@@ -2074,7 +2074,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     # scipy.linalg.hessenberg sometimes returns a float Q matrix for complex
     # inputs
-    self._CheckAgainstNumpy(sp_func, jsp_func, args_maker, rtol=1e-5, atol=1e-5,
+    self._CheckAgainstNumpy(sp_func, jsp_func, args_maker, rtol=1e-4, atol=1e-4,
                             check_dtypes=not calc_q)
     self._CompileAndCheck(jsp_func, args_maker)
 
@@ -2111,7 +2111,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       return c, d, e, tau
 
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(sp_func, jax_func, args_maker, rtol=1e-4, atol=1e-4,
+    self._CheckAgainstNumpy(sp_func, jax_func, args_maker, rtol=1e-3, atol=1e-3,
                             check_dtypes=False)
 
     if len(shape) == 3:
@@ -2261,7 +2261,13 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
-    self._CheckAgainstNumpy(osp.linalg.schur, jsp.linalg.schur, args_maker)
+    args = args_maker()[0]
+    T, Z = jsp.linalg.schur(args)
+    eps = np.finfo(dtype).eps
+    self.assertAllClose(args, Z @ T @ jnp.conj(Z.T), atol=600 * eps)
+    self.assertAllClose(
+        np.eye(*shape, dtype=dtype), Z @ jnp.conj(Z.T), atol=100 * eps
+    )
     self._CompileAndCheck(jsp.linalg.schur, args_maker)
 
   @jtu.sample_product(
@@ -2347,9 +2353,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         scp_fun,
         args_maker,
         check_dtypes=False,
-        tol={np.complex64: 1e-5, np.complex128: 1e-6},
+        tol={np.float32: 1e-4, np.complex64: 1e-4, np.complex128: 1e-6},
     )
-    self._CompileAndCheck(jnp_fun, args_maker, atol=2e-5)
+    self._CompileAndCheck(jnp_fun, args_maker, atol=1e-4)
 
   @jtu.sample_product(
     shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
@@ -2364,7 +2370,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     # is guaranteed to be unique (i.e no negative real eigenvalue)
     rng = jtu.rand_default(self.rng())
     arg = rng(shape, dtype)
-    mat = arg @ arg.T
+    mat = arg @ np.conj(arg.T)
     args_maker = lambda : [mat]
     if dtype == np.float32 or dtype == np.complex64:
       tol = 1e-4

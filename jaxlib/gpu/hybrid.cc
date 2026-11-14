@@ -22,7 +22,6 @@ limitations under the License.
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/python/safe_static_init.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
@@ -30,60 +29,10 @@ namespace {
 namespace ffi = xla::ffi;
 namespace nb = nanobind;
 
-template <typename IntType>
-void RegisterAllHybridKernels(nb::dict lapack_capi) {
-  auto lapack_ptr = [&](const char* name) {
-    return nb::cast<nb::capsule>(lapack_capi[name]).data();
-  };
-  AssignKernelFn<EigenvalueDecomposition<ffi::F32, IntType>>(
-      lapack_ptr("sgeev"));
-  AssignKernelFn<EigenvalueDecomposition<ffi::F64, IntType>>(
-      lapack_ptr("dgeev"));
-  AssignKernelFn<EigenvalueDecompositionComplex<ffi::C64, IntType>>(
-      lapack_ptr("cgeev"));
-  AssignKernelFn<EigenvalueDecompositionComplex<ffi::C128, IntType>>(
-      lapack_ptr("zgeev"));
-  AssignKernelFn<PivotingQrFactorization<ffi::F32, IntType>>(
-      lapack_ptr("sgeqp3"));
-  AssignKernelFn<PivotingQrFactorization<ffi::F64, IntType>>(
-      lapack_ptr("dgeqp3"));
-  AssignKernelFn<PivotingQrFactorization<ffi::C64, IntType>>(
-      lapack_ptr("cgeqp3"));
-  AssignKernelFn<PivotingQrFactorization<ffi::C128, IntType>>(
-      lapack_ptr("zgeqp3"));
-}
-
-void GetLapackKernelsFromScipy() {
-  static xla::SafeStatic<bool> initialized;
-  initialized.Get([]() {
-    if (lapack_kernels_initialized) {
-      return std::make_unique<bool>(true);
-    }
-    // Technically these are Cython-internal APIs. However, it seems highly
-    // likely they will remain stable because Cython itself needs API stability
-    // for cross-package imports to work in the first place.
-    nb::module_ cython_lapack =
-        nb::module_::import_("scipy.linalg.cython_lapack");
-
-    nb::dict lapack_capi = cython_lapack.attr("__pyx_capi__");
-
-    int blas_int_size = 4;
-    if (nb::hasattr(cython_lapack, "_blas_int_size")) {
-      blas_int_size = nb::cast<int>(cython_lapack.attr("_blas_int_size")());
-    }
-    if (blas_int_size == 8) {
-      RegisterAllHybridKernels<int64_t>(lapack_capi);
-    } else {
-      RegisterAllHybridKernels<int32_t>(lapack_capi);
-    }
-
-    lapack_kernels_initialized = true;
-    return std::make_unique<bool>(true);
-  });
-}
+void Initialize() {}
 
 NB_MODULE(_hybrid, m) {
-  m.def("initialize", GetLapackKernelsFromScipy);
+  m.def("initialize", &Initialize);
   m.def("has_magma", []() { return MagmaLookup().FindMagmaInit().ok(); });
   m.def("registrations", []() {
     nb::dict dict;

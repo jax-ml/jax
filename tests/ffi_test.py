@@ -31,7 +31,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.layout import Layout
-from jax._src.lib import lapack, xla_version
+from jax._src.lib import xla_version
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lax import linalg as lax_linalg_internal
 from jax._src.shard_map import shard_map
@@ -325,9 +325,6 @@ class FfiTest(jtu.JaxTestCase):
 
 
 def ffi_call_geqrf(x, **kwargs):
-  if jtu.test_device_matches(["cpu"]):
-    lapack._lapack.initialize()
-
   assert x.dtype == np.float32
   ndim = x.ndim
   x_major_to_minor = tuple(range(ndim - 2)) + (ndim - 1, ndim - 2)
@@ -362,8 +359,6 @@ class BatchPartitioningTest(jtu.JaxTestCase):
       jax.ffi.register_ffi_target_as_batch_partitionable(target_name)
     if jax.device_count() < 2:
       self.skipTest("Requires multiple devices")
-    if jtu.test_device_matches(["cpu"]):
-      lapack._lapack.initialize()
 
   @jtu.run_on_devices("gpu", "cpu")
   def test_shard_map(self):

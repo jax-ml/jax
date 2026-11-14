@@ -1541,7 +1541,6 @@ jax_multiplatform_test(
     deps = py_deps([
         "absl/testing",
         "numpy",
-        "scipy",
     ]),
 )
 

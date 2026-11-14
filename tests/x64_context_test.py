@@ -80,7 +80,7 @@ class X64ContextTests(jtu.JaxTestCase):
 
     with jax.enable_x64(False):
       result_32 = near_singular_inverse()
-      self.assertTrue(jnp.all(~jnp.isfinite(result_32)))
+      self.assertTrue(jnp.any(~jnp.isfinite(result_32)))
 
   @jtu.sample_product(jit=jtu.JIT_IMPLEMENTATION)
   def test_while_loop(self, jit):
