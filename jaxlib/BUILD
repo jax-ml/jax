@@ -1023,6 +1023,7 @@ cc_library(
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:safe_static_init",
         "@xla//xla/python:types",
+        "@xla//xla/python:version",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:user_context",
         "@xla//xla/python/pjrt_ifrt:pjrt_dtype",
