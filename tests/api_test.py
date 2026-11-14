@@ -6581,6 +6581,44 @@ class RematTest(jtu.JaxTestCase):
     grad_ans = jax.grad(lambda x: rematted(x, True, extra=1.0))(3.0)
     self.assertEqual(grad_ans, 2.0)
 
+  def test_remat_static_argnums_called_with_kwargs(self):
+    @functools.partial(jax.checkpoint, static_argnums=1)
+    def f(x, flag=False):
+      if flag:
+        x = x + 1.0
+      return x
+
+    self.assertEqual(f(5.0, False), 5.0)
+    self.assertEqual(f(5.0, flag=False), 5.0)
+    self.assertEqual(f(5.0, flag=True), 6.0)
+    self.assertEqual(f(5.0), 5.0)
+    self.assertEqual(jax.grad(lambda x: f(x, flag=True))(5.0), 1.0)
+
+    @functools.partial(jax.jit, static_argnums=1)
+    @functools.partial(jax.checkpoint, static_argnums=1)
+    def f_jit(x, flag=False):
+      if flag:
+        x = x + 1.0
+      return x
+
+    self.assertEqual(f_jit(5.0, False), 5.0)
+    self.assertEqual(f_jit(5.0, flag=False), 5.0)
+    self.assertEqual(f_jit(5.0, flag=True), 6.0)
+    self.assertEqual(f_jit(5.0), 5.0)
+
+  def test_remat_static_argnames(self):
+    @functools.partial(jax.checkpoint, static_argnames="flag")
+    def f(x, flag=False):
+      if flag:
+        x = x + 2.0
+      return x
+
+    self.assertEqual(f(5.0, False), 5.0)
+    self.assertEqual(f(5.0, flag=False), 5.0)
+    self.assertEqual(f(5.0, flag=True), 7.0)
+    self.assertEqual(f(5.0), 5.0)
+    self.assertEqual(jax.grad(lambda x: f(x, flag=True))(5.0), 1.0)
+
   def test_remat_retracing(self):
     # This is *not* a very important behavior; remat doesn't need to provide
     # caching guarantees with the same importance as jit. But even so, in the

@@ -196,6 +196,16 @@ checkpoint_policies = types.SimpleNamespace(
     save_and_offload_only_these_names=save_and_offload_only_these_names)
 
 
+def _static_argnums(f, argnums, argnames) -> tuple[int, ...]:
+  argnums = set(argnums)
+  if argnames:
+    sig = api_util.fun_signature(f)
+    if sig is not None:
+      inferred, _ = api_util.infer_argnums_and_argnames(sig, None, argnames)
+      argnums |= set(inferred)
+  return tuple(argnums)
+
+
 ### Main API
 
 @partial(api_boundary, repro_api_name="jax.checkpoint")
@@ -357,10 +367,23 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
   if not isinstance(prevent_cse, (tuple, bool)):
     raise TypeError("prevent_cse must be a bool or tuple of bools, got "
                     f"{type(prevent_cse)=}")
+  static_argnums = api_util._ensure_index_tuple(static_argnums)
+  static_argnames = api_util._ensure_str_tuple(static_argnames)
+  sig = api_util.fun_signature(fun)
+  if static_argnames:
+    static_argnums = _static_argnums(fun, static_argnums, static_argnames)
 
   @wraps(fun)
   @api_boundary
   def fun_remat(*args, **kwargs):
+    if sig is not None and (kwargs or (static_argnums and any(
+        d >= len(args) or d < -len(args) for d in static_argnums))):
+      try:
+        ba = sig.bind(*args, **kwargs)
+        ba.apply_defaults()
+        args, kwargs = ba.args, dict(ba.kwargs)
+      except (TypeError, ValueError):
+        pass
     if config.remat3.value:
       return remat3(fun, policy=None if policy is nothing_saveable else policy,
                     static_argnums=static_argnums,
@@ -392,10 +415,12 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
 
 def remat(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
           policy: Callable[..., bool] | None = None,
-          static_argnums: int | tuple[int, ...] = ()) -> Callable:
+          static_argnums: int | tuple[int, ...] = (),
+          static_argnames: str | Iterable[str] = ()) -> Callable:
   """Alias of :func:`jax.checkpoint`."""
   return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
-                    static_argnums=static_argnums)
+                    static_argnums=static_argnums,
+                    static_argnames=static_argnames)
 
 # This function is similar to api_util.argnums_partial, except the error
 # messages are specific to jax.remat (and thus more actionable), the
@@ -990,10 +1015,19 @@ def _remat3(f, *, policy, static_argnums, static_argnames, prevent_cse=True):
         "non-bool prevent_cse together with static_argnums/static_argnames")
   static_argnums = api_util._ensure_index_tuple(static_argnums)
   static_argnames = api_util._ensure_str_tuple(static_argnames)
+  sig = api_util.fun_signature(f)
   if static_argnames:
     static_argnums = _static_argnums(f, static_argnums, static_argnames)
   @wraps(f)
   def decorator(*args, **kwargs):
+    if sig is not None and (kwargs or (static_argnums and any(
+        d >= len(args) or d < -len(args) for d in static_argnums))):
+      try:
+        ba = sig.bind(*args, **kwargs)
+        ba.apply_defaults()
+        args, kwargs = ba.args, dict(ba.kwargs)
+      except (TypeError, ValueError):
+        pass
     args_ft = ft.flatten_static_argnums_argnames(
         args, kwargs, static_argnums, static_argnames)
     avals_ft = args_ft.map(typeof)
@@ -1018,13 +1052,6 @@ def _remat3(f, *, policy, static_argnums, static_argnames, prevent_cse=True):
     return out_avals_ft.update(out_flat).unflatten()
   return decorator
 
-def _static_argnums(f, argnums, argnames) -> tuple[int, ...]:
-  argnums = set(argnums)
-  if argnames:
-    sig = api_util.fun_signature(f)
-    if sig is not None:
-      argnums |= set(api_util.infer_argnums_and_argnames(sig, None, argnames)[0])
-  return tuple(argnums)
 
 def dce(traced, policy):
   jaxpr_, attached = pe.separate_consts(traced.jaxpr)
