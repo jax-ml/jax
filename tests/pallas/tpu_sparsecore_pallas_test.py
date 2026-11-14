@@ -476,6 +476,18 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), op(x, 1))
 
+  def test_float_ne_nan(self):
+    x = jnp.resize(jnp.array([jnp.nan, 1.0, jnp.nan, 2.0]), self.num_lanes)
+    y = jnp.resize(jnp.array([jnp.nan, jnp.nan, 1.0, 2.0]), self.num_lanes)
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32)
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.where(x_ref[...] != y_ref[...], 1, 0)
+
+    np.testing.assert_array_equal(kernel(x, y), jnp.where(x != y, 1, 0))
+
   def test_add_one_block_specs(self):
     num_steps = 4
     size = 128 if self.USE_TC_TILING else self.num_lanes
