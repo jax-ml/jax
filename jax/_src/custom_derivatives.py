@@ -26,6 +26,7 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import flattree as ft
 from jax._src import linear_util as lu
+from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src.ad_util import (
     stop_gradient_p, SymbolicZero, Zero, zeros_like_aval, p2tz)
@@ -1050,9 +1051,10 @@ class _FlatBwdWithAccums(ad.CustomBwdWithAccums):
                  for x in cts_out]
     accums = [acc if isinstance(acc, ad.GradAccum) else ad.NullAccum(a)
               for a, acc in zip(self.ct_avals, accums)]
-    logs = self.bwd(tree_unflatten(res_tree, res),
-                    tree_unflatten(out_tree, cts_out),
-                    *tree_unflatten(self.in_tree, accums))
+    with source_info_util.reset_traceback():
+      logs = self.bwd(tree_unflatten(res_tree, res),
+                      tree_unflatten(out_tree, cts_out),
+                      *tree_unflatten(self.in_tree, accums))
     if logs is not None and type(logs) is not dict:
       raise TypeError(
           "Custom VJP bwd rule was registered with defvjp_with_accums, and so "
@@ -1084,7 +1086,11 @@ def _flatten_bwd(f: Callable,
                for x in cts_out]
   py_res = tree_unflatten(res_tree, res)
   py_cts_out = tree_unflatten(out_tree, cts_out)
-  py_cts_in = f(py_res, py_cts_out)
+  # User-written backward operations should carry their own source locations,
+  # rather than inheriting the forward call's traceback from the automatic
+  # differentiation (AD) interpreter.
+  with source_info_util.reset_traceback():
+    py_cts_in = f(py_res, py_cts_out)
   if with_logs:
     if not (isinstance(py_cts_in, (list, tuple)) and len(py_cts_in) == 2):
       raise TypeError(
