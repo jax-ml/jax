@@ -4421,7 +4421,7 @@ _cmpui_lowering_types = {
 # Mapping for floating point comparisons.
 _cmpf_lowering_types = {
     lax.eq_p: arith.CmpFPredicate.OEQ,
-    lax.ne_p: arith.CmpFPredicate.ONE,
+    lax.ne_p: arith.CmpFPredicate.UNE,
     lax.lt_p: arith.CmpFPredicate.OLT,
     lax.le_p: arith.CmpFPredicate.OLE,
     lax.gt_p: arith.CmpFPredicate.OGT,
@@ -4502,6 +4502,18 @@ def _cmp_lowering_rule(primitive, ctx: LoweringRuleContext, x, y):
 
   if jnp.issubdtype(dtype, jnp.floating):
     pred = _cmpf_lowering_types[primitive]
+    # Older TC compilers (libtpu < 0.0.53) reject UNE but lower ONE to the same
+    # unordered hardware compare.
+    if (
+        primitive == lax.ne_p
+        and ctx.lowering_context.kernel_type == tpu_core.CoreType.TC
+        and (
+            ctx.forward_compatible
+            or ctx.lowering_context.backend is None
+            or not ctx.is_libtpu_at_least("0.0.53")
+        )
+    ):
+      pred = arith.CmpFPredicate.ONE
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
     return arith.cmpf(predicate, x, y)
 

@@ -6549,6 +6549,28 @@ class MosaicLoweringForLoopTest(jtu.JaxTestCase):
     x = jax.ShapeDtypeStruct((8, 128), jnp.float32)
     jax.jit(f).trace(x).lower(lowering_platforms=('tpu',))
 
+  @jtu.thread_unsafe_test()
+  def test_tc_float_ne_cmpf_predicate_libtpu_fallback(self):
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[...] = jnp.where(x_ref[...] != y_ref[...], 1, 0)
+
+    x = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    f = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+        debug=True,
+    )
+    on_tpu = jtu.test_device_matches(['tpu'])
+    lower_kwargs = {} if on_tpu else {'lowering_platforms': ('tpu',)}
+    with jtu.capture_stdout() as get_ir:
+      jax.jit(f).trace(x, x).lower(**lower_kwargs)
+    expected = (
+        'arith.cmpf une'
+        if on_tpu and jtu.is_libtpu_at_least('0.0.53')
+        else 'arith.cmpf one'
+    )
+    self.assertIn(expected, get_ir())
+
 
 class PallasKernelMetadataTest(ptu.PallasTPUTest):
 
