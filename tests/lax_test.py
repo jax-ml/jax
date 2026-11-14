@@ -1648,6 +1648,120 @@ class LaxTest(jtu.JaxTestCase):
     lhs, rhs = rng(lhs_shape, np.float16), rng(rhs_shape, np.float16)
     self.assertEqual(fun(lhs, rhs).dtype, np.float16)
 
+  def _skipIfComplexDotAlgorithmUnsupported(self, algorithm):
+    if jtu.test_device_matches(["tpu"]):
+      if algorithm != lax.DotAlgorithmPreset.BF16_BF16_F32:
+        raise SkipTest(f"{algorithm} is not supported on TPU.")
+    if (
+        algorithm == lax.DotAlgorithmPreset.BF16_BF16_F32
+        and jtu.test_device_matches(["cuda"])
+        and not jtu.is_cuda_compute_capability_at_least("8.0")
+    ):
+      raise SkipTest(f"{algorithm} requires CUDA compute capability >= 8.0.")
+
+  @jtu.sample_product([
+      dict(algorithm=algorithm, dtype=dtype)
+      for algorithm, dtype in [
+          (lax.DotAlgorithmPreset.F32_F32_F32, np.complex64),
+          (lax.DotAlgorithmPreset.BF16_BF16_F32, np.complex64),
+          (lax.DotAlgorithmPreset.F64_F64_F64, np.complex128),
+      ]
+      if jtu.dtypes.supported([dtype])
+  ])
+  def testDotAlgorithmComplex(self, algorithm, dtype):
+    # https://github.com/jax-ml/jax/issues/42329
+    self._skipIfComplexDotAlgorithmUnsupported(algorithm)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng((3, 4), dtype), rng((4, 5), dtype)
+    tol = 5e-2 if algorithm == lax.DotAlgorithmPreset.BF16_BF16_F32 else None
+    check = partial(self.assertAllClose, rtol=tol, atol=tol)
+    dot = partial(lax.dot, precision=algorithm)
+    check(dot(lhs, rhs), np.dot(lhs, rhs))
+    check(dot(lhs.real, rhs), np.dot(lhs.real, rhs))
+    check(dot(lhs, rhs.real), np.dot(lhs, rhs.real))
+    real_dtype = np.finfo(dtype).dtype
+    check(
+        dot(lhs, rhs, preferred_element_type=real_dtype), np.dot(lhs, rhs).real
+    )
+    lhs_bf16 = lhs.real.astype(dtypes.bfloat16)
+    check(dot(lhs_bf16, rhs), np.dot(lhs_bf16.astype(real_dtype), rhs))
+    with jax.default_matmul_precision(algorithm.name):
+      check(jnp.matmul(lhs, rhs), np.matmul(lhs, rhs))
+
+  def testDotAlgorithmComplexAccumulationPrecision(self):
+    self._skipIfComplexDotAlgorithmUnsupported(
+        lax.DotAlgorithmPreset.F64_F64_F64
+    )
+
+    def dot(lhs_row, rhs_col, dtype, **kwargs):
+      # Each output element is 2 * (lhs_row @ rhs_col).
+      lhs = np.tile(np.array([lhs_row], dtype), (3, 2))
+      rhs = np.tile(np.array([rhs_col], dtype).T, (2, 3))
+      return lax.dot(
+          lhs, rhs, precision=lax.DotAlgorithmPreset.F64_F64_F64, **kwargs
+      )
+
+    # The real dots and their difference must be computed in float64.
+    out = dot([2.0**24 * (1 + 1j), 1.0], [1.0 + 1.0j, 1.0], np.complex64)
+    self.assertAllClose(out, np.full((3, 3), 2.0 + 2.0**26 * 1j, np.complex64))
+    if not jtu.dtypes.supported([np.complex128]):
+      return
+    # The inputs must not be cast to `preferred_element_type` before the dot.
+    args = (
+        [(1.0 + 2.0**-30) * (1 + 1j), -1 - 1j],
+        [2.0**30, 2.0**30],
+        np.complex128,
+    )
+    self.assertAllClose(
+        dot(*args, preferred_element_type=np.complex64),
+        np.full((3, 3), 2.0 + 2.0j, np.complex64),
+    )
+    self.assertAllClose(
+        dot(*args, preferred_element_type=np.float32),
+        np.full((3, 3), 2.0, np.float32),
+    )
+
+  def testDotAlgorithmComplexLowering(self):
+    lhs = jax.ShapeDtypeStruct((3, 4), np.complex64)
+    rhs = jax.ShapeDtypeStruct((4, 5), np.complex64)
+
+    def num_dots(precision, rhs=rhs):
+      hlo = (
+          jax.jit(partial(lax.dot, precision=precision))
+          .trace(lhs, rhs)
+          .lower(lowering_platforms=("tpu",))
+          .as_text()
+      )
+      return hlo.count("stablehlo.dot_general")
+
+    # Complex dots without an explicit algorithm remain a single complex dot.
+    for precision in [
+        None,
+        lax.Precision.HIGHEST,
+        lax.DotAlgorithmPreset.DEFAULT,
+    ]:
+      self.assertEqual(num_dots(precision), 1)
+    algorithm = lax.DotAlgorithm(
+        lhs_precision_type=np.float32,
+        rhs_precision_type=np.float32,
+        accumulation_type=np.float32,
+    )
+    self.assertEqual(num_dots(algorithm), 4)
+    # A real operand only needs two real dots.
+    self.assertEqual(
+        num_dots(algorithm, jax.ShapeDtypeStruct((4, 5), np.float32)), 2
+    )
+
+  def testRaggedDotAlgorithmComplexError(self):
+    lhs = jax.ShapeDtypeStruct((6, 4), np.complex64)
+    rhs = jax.ShapeDtypeStruct((2, 4, 3), np.complex64)
+    group_sizes = jax.ShapeDtypeStruct((2,), np.int32)
+    f = jax.jit(
+        partial(lax.ragged_dot, precision=lax.DotAlgorithmPreset.BF16_BF16_F32)
+    )
+    with self.assertRaisesRegex(ValueError, "does not support complex"):
+      f.trace(lhs, rhs, group_sizes).lower(lowering_platforms=("tpu",))
+
   def testDotAlgorithmAllowedOutputStorage(self):
     # see https://github.com/jax-ml/jax/issues/24794
     if not jtu.test_device_matches(["gpu"]):

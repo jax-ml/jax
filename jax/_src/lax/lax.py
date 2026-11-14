@@ -7460,6 +7460,13 @@ def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
     def maybe_convert_dtype(operand, operand_aval, target_dtype):
       if target_dtype is None or operand_aval.dtype == target_dtype:
         return operand
+      if dtypes.issubdtype(
+          operand_aval.dtype, np.complexfloating
+      ) and not dtypes.issubdtype(target_dtype, np.complexfloating):
+        raise ValueError(
+            f"The dot algorithm '{precision}' does not support complex "
+            f'operands, got {operand_aval.dtype}.'
+        )
       aval = core.ShapedArray(operand_aval.shape, target_dtype)
       return mlir.convert_hlo(ctx, operand, operand_aval, aval)
 
@@ -7592,6 +7599,53 @@ def _linear_dot(out_dtype, lhs, rhs, *, dimension_numbers):
   prod = lambda i: optimization_barrier(mul(la_at(i), ra_at(i)))
   return control_flow.fori_loop(1, k, lambda i, acc: add(acc, prod(i)), prod(0))
 
+
+def _complex_dot_general_via_real(lhs, rhs, *, out_dtype, precision, **params):
+  # Dot algorithms only support real operands, so compute complex dots from real
+  # dots that each use the requested algorithm. The real dots and their sums use
+  # the algorithm's accumulation type, and only the result is cast to out_dtype.
+  dot = partial(
+      dot_general_p.bind,
+      precision=precision,
+      preferred_element_type=np.dtype(precision.accumulation_type),
+      **params,
+  )
+  # Use the wider of the floating point input types for all real dots.
+  in_dtype = functools.reduce(
+      np.promote_types,
+      (
+          _real_dtype(x.dtype) if _iscomplex(x) else x.dtype
+          for x in (lhs, rhs)
+          if dtypes.issubdtype(x.dtype, np.inexact)
+      ),
+  )
+
+  def parts(x):
+    if not _iscomplex(x):
+      return convert_element_type(x, in_dtype), None
+    return (
+        convert_element_type(real(x), in_dtype),
+        convert_element_type(imag(x), in_dtype),
+    )
+
+  (lr, li), (rr, ri) = parts(lhs), parts(rhs)
+  re = dot(lr, rr)
+  if li is not None and ri is not None:
+    re = sub(re, dot(li, ri))
+  if not dtypes.issubdtype(out_dtype, np.complexfloating):
+    return convert_element_type(re, out_dtype)
+  if li is None:
+    im = dot(lr, ri)
+  elif ri is None:
+    im = dot(li, rr)
+  else:
+    im = add(dot(lr, ri), dot(li, rr))
+  real_dtype = _real_dtype(out_dtype)
+  return complex(
+      convert_element_type(re, real_dtype), convert_element_type(im, real_dtype)
+  )
+
+
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: np.dtype | None,
                        out_sharding, reduction_order=None, platform: str = "default"):
@@ -7603,6 +7657,24 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
         dict(dimension_numbers=dimension_numbers, preferred_element_type=dt),
         lhs, rhs)
   del preferred_element_type  # Implied by the output aval
+  # Algorithms with fixed input types would cast complex operands to real types.
+  if (
+      isinstance(precision, DotAlgorithm)
+      or isinstance(precision, DotAlgorithmPreset)
+      and precision.supported_lhs_types is not None
+  ) and any(
+      dtypes.issubdtype(a.dtype, np.complexfloating) for a in ctx.avals_in
+  ):
+    return mlir.lower_fun(
+        partial(
+            _complex_dot_general_via_real,
+            out_dtype=ctx.avals_out[0].dtype,
+            dimension_numbers=dimension_numbers,
+            precision=precision,
+            out_sharding=out_sharding,
+        ),
+        multiple_results=False,
+    )(ctx, lhs, rhs)
   lhs, rhs, accumulation_aval, algorithm_kwarg = _handle_dot_precision(
       ctx, lhs, rhs, precision, platform
   )
