@@ -1784,6 +1784,17 @@ class DistributionsTest(RandomTestBase):
     with self.assertRaises(TypeError):
       random.choice(key, 5, 2, replace=True)
 
+  def testChoiceDynamicNInputs(self):
+    @jax.jit
+    def f(key, a):
+      # JIT forces 'a' to be a Tracer, testing our bypass
+      return random.choice(key, a, shape=(3,))
+    key = self.make_key(0)
+    # Pass a JAX array to trigger the dynamic behavior
+    result = f(key, jnp.array(10))
+    # Verify XLA successfully compiled and returned the correct shape
+    self.assertEqual(result.shape, (3,))
+
   @jtu.sample_product(dtype=int_dtypes + uint_dtypes)
   def test_randint_bounds(self, dtype):
     min = np.iinfo(dtype).min
