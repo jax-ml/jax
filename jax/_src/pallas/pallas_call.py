@@ -820,6 +820,7 @@ def _trace_kernel_to_jaxpr(
       grid_mapping.trace_env(),
       config._check_vma(False),
       config.mutable_array_checks(False),
+      config.disable_jit(False),
       xla_metadata.clear_xla_metadata(),
   ):
     closed_jaxpr, out_avals = pe.trace_to_jaxpr(fun, kernel_avals, debug_info)
