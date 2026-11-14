@@ -286,7 +286,6 @@ absl::StatusOr<ifrt::ArrayRef> MakeIfrtArrayFromShardsInBatch(
     auto [it, insert_happened] = host_buffer_dedup_map.emplace(
         std::make_pair(&host_buffers.back().second, insert_idx));
     if (!insert_happened) {
-      std::move(host_buffers.back().second.on_done)();
       host_buffers.pop_back();
     }
     host_buffers[it->second].first.push_back(i);
@@ -369,10 +368,9 @@ absl::StatusOr<ShardFn> HandlePythonScalar(nb::handle obj, ifrt::Client* client,
   return [data, ifrt_dtype]() -> absl::StatusOr<Shard> {
     const void* ptr = std::visit(
         [](const auto& v) { return static_cast<const void*>(&v); }, data);
-    ifrt::Client::HostBuffer ifrt_host_buffer{
-        ptr, ifrt_dtype, ifrt::Shape({}),
-        /*byte_strides=*/std::nullopt,
-        /*on_done_with_host_buffer=*/nullptr};
+    ifrt::Client::HostBuffer ifrt_host_buffer{ptr, ifrt_dtype, ifrt::Shape({}),
+                                              /*byte_strides=*/std::nullopt,
+                                              /*on_done=*/nullptr};
     return Shard(std::move(ifrt_host_buffer), /*weak_type=*/true,
                  ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall);
   };
@@ -414,10 +412,9 @@ absl::StatusOr<ShardFn> HandlePythonInt(nb::handle obj, ifrt::Client* client,
   return [data, ifrt_dtype]() -> absl::StatusOr<Shard> {
     const void* ptr = std::visit(
         [](const auto& v) { return static_cast<const void*>(&v); }, data);
-    ifrt::Client::HostBuffer ifrt_host_buffer{
-        ptr, ifrt_dtype, ifrt::Shape({}),
-        /*byte_strides=*/std::nullopt,
-        /*on_done_with_host_buffer=*/nullptr};
+    ifrt::Client::HostBuffer ifrt_host_buffer{ptr, ifrt_dtype, ifrt::Shape({}),
+                                              /*byte_strides=*/std::nullopt,
+                                              /*on_done=*/nullptr};
     return Shard(std::move(ifrt_host_buffer), /*weak_type=*/true,
                  ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall);
   };
@@ -514,9 +511,7 @@ absl::StatusOr<ShardFn> HandleNumpyScalar(nb::handle h, ifrt::Client* client,
     ifrt::Client::HostBuffer ifrt_host_buffer{
         ptr, ifrt_dtype, ifrt::Shape({}),
         /*byte_strides=*/std::nullopt,
-        /*on_done_with_host_buffer=*/
-        [py_buffer_ref =
-             std::move(py_buffer_ref)]() { /* keeps py_buffer_ref alive */ }};
+        /*on_done=*/std::move(py_buffer_ref)};
     return Shard(std::move(ifrt_host_buffer), /*weak_type=*/false,
                  ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall);
   };
@@ -529,9 +524,6 @@ absl::StatusOr<ShardFn> HandleStringNumpyArray(
   auto py_array_obj = reinterpret_cast<PyArrayObject*>(array.ptr());
   ABSL_ASSIGN_OR_RETURN(auto cords, StringDTypeArrayToCords(py_array_obj));
 
-  // Assemble all the parameters of MakeArrayFromHostBuffer
-  const void* data = cords.data();
-
   // Make an explicit copy of the shape elements so we won't run into complex
   // endianness and precision issues that might arise if we reinterpret-casted
   // from npy_intp, that can be just 32 bits-wide in some environments
@@ -543,14 +535,16 @@ absl::StatusOr<ShardFn> HandleStringNumpyArray(
   }
   ifrt::Shape shape(std::move(dims));
 
-  auto on_done_with_host_buffer = [cords = std::move(cords)] {};
+  std::shared_ptr<std::vector<absl::Cord>> host_buffer_hold =
+      std::make_shared<std::vector<absl::Cord>>(std::move(cords));
+  const void* data = host_buffer_hold->data();
 
   return [data, shape = std::move(shape),
-          on_done_with_host_buffer = std::move(
-              on_done_with_host_buffer)]() mutable -> absl::StatusOr<Shard> {
+          host_buffer_hold =
+              std::move(host_buffer_hold)]() mutable -> absl::StatusOr<Shard> {
     ifrt::Client::HostBuffer ifrt_host_buffer{
         data, ifrt::DType(ifrt::DType::kString), std::move(shape),
-        /*byte_strides=*/std::nullopt, std::move(on_done_with_host_buffer)};
+        /*byte_strides=*/std::nullopt, std::move(host_buffer_hold)};
     return Shard(
         std::move(ifrt_host_buffer), /*weak_type=*/false,
         ifrt::Client::HostBufferSemantics::kImmutableUntilTransferCompletes);
@@ -604,18 +598,16 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
               options.allow_zero_copy]() mutable -> absl::StatusOr<Shard> {
     ifrt::Client::HostBufferSemantics host_buffer_semantics =
         ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall;
-    std::function<void()> on_done_with_host_buffer;
+    std::shared_ptr<const void> host_buffer_hold;
     if (allow_zero_copy) {
-      on_done_with_host_buffer =
-          [py_buffer_ref{
-              std::move(py_buffer_ref)}]() { /* keeps py_buffer_ref alive */ };
+      host_buffer_hold = std::move(py_buffer_ref);
       host_buffer_semantics =
           ifrt::Client::HostBufferSemantics::kImmutableZeroCopy;
     }
 
     ifrt::Client::HostBuffer ifrt_host_buffer{
         data, ifrt_dtype, ifrt::Shape(dims), std::move(byte_strides),
-        std::move(on_done_with_host_buffer)};
+        std::move(host_buffer_hold)};
     return Shard(std::move(ifrt_host_buffer), /*weak_type=*/false,
                  host_buffer_semantics);
   };
