@@ -100,6 +100,14 @@ class BufferCallbackTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("gpu")
   @jtu.skip_on_devices("oneapi")
+  # TODO: Re-enable once the jaxlib/ROCm plugin ABI mismatch is resolved.
+  @jtu.skip_on_devices(
+      "rocm",
+      skip_reason=(
+          "std::bad_cast due to an ABI mismatch between "
+          "jaxlib (libc++) and the ROCm plugin (libstdc++)"
+      ),
+  )
   def test_cuda_array_interface(self, dtype, command_buffer_compatible):
 
     def callback(ctx, out, arg):
@@ -198,6 +206,14 @@ class BufferCallbackTest(jtu.JaxTestCase):
         jnp.ones((32, 32)), jax.NamedSharding(mesh2, jax.P('x', 'y')))
     f(x, y)  # doesn't crash
 
+  # TODO: Re-enable once the jaxlib/ROCm plugin ABI mismatch is resolved.
+  @jtu.skip_on_devices(
+      "rocm",
+      skip_reason=(
+          "std::bad_cast due to an ABI mismatch between "
+          "jaxlib (libc++) and the ROCm plugin (libstdc++)"
+      ),
+  )
   def test_side_effect(self):
     def callback(*_):
       nonlocal called
