@@ -31,22 +31,30 @@ What is a TPU?
    :align: center
    :alt: A TPUv4 board
 
-TPU is a hardware accelerator developed at Google. You can think of TPUs as
-GPUs, but specialized for machine learning workloads specifically. As such,
-their architecture differs quite significantly. However, we believe that Pallas
-can make it easy to start writing TPU kernels, even without having a full
-understanding of the underlying hardware. Having said that, understanding the
-hardware well will certainly make it easier to write performant kernels.
+A Tensor Processing Unit (TPU) is a hardware accelerator developed at Google
+specifically for machine learning workloads. Unlike GPUs—which execute thousands
+of scalar threads concurrently under a SIMT model—TPUs are highly sequential
+machines built around wide 2D vector registers and systolic matrix units (closer
+in control flow to a vectorized CPU). At the same time, a TensorCore schedules
+key operations asynchronously in the background relative to its scalar
+instruction stream:
 
-In a nutshell, the main difference between TPUs and GPUs is that TPUs are
-sequential machines with a very wide vector register (kind of like a CPU!).
-At the same time, they allow the software to schedule certain operations in the
-background, making them execute asynchronously with respect to the main
-instruction stream. This includes things like HBM memory accesses
-(which cannot be issued directly, but instead have to be prefetched to
-lower levels of the memory hierarchy by the DMA subunits), matrix multiplies
-(supported by the MXU unit) or matrix transpositions and permutes (supported by
-the XLU unit).
+* **DMA subunits** transfer blocks asynchronously between off-chip High
+  Bandwidth Memory (``pltpu.HBM``) and fast on-chip SRAM—vector memory
+  (``pltpu.VMEM``) and scalar memory (``pltpu.SMEM``)—because compute units
+  cannot read or write ``HBM`` directly.
+* **Matrix Multiply Units (MXUs)** execute high-throughput systolic matrix
+  multiplications.
+* **Vector Processing Units (VPUs)** and **Cross-Lane Units (XLUs)** execute
+  2D vector arithmetic, reductions, transpositions, and lane permutations.
+* **Scalar Units** manage control flow, loop counters, and dynamic address
+  calculations out of ``SMEM``.
+
+Modern TPU chips (such as TPU v5p, v6e, and v7) contain one or more dense
+**TensorCores** and may also include **SparseCores** dedicated to irregular
+gather/scatter workloads. For per-generation capacities, peak FLOP/s, and
+runtime inspection via ``pltpu.get_tpu_info()``, see
+:ref:`pallas_tpu_hardware_reference`.
 
 If you're interested in learning more about the TPU architecture
 in detail, we recommend reading a collection of papers published over the
@@ -64,27 +72,28 @@ ideas described transfer to later generations as well.
 Noteworthy properties and restrictions
 --------------------------------------
 
-``BlockSpec``\s and grid iteration
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Memory spaces, ``emit_pipeline``, and grid iteration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-``BlockSpec``\s (see :ref:`pallas_blockspec`) generally behave as expected
-in Pallas --- every invocation of
-the kernel body gets access to slices of the inputs and is meant to initialize a slice
-of the output.
+Inputs and outputs of a ``@pl.kernel`` reside in ``pltpu.HBM`` by default (see
+:ref:`pallas_refs`), which compute units cannot access directly and which is
+much larger than on-chip ``pltpu.VMEM``. While small buffers can be staged with
+``scratch_types`` and ``pltpu.sync_copy``, processing tiled blocks sequentially
+stalls the TensorCore on high-latency ``HBM`` transfers, and writing a manual
+double-buffered loop with async DMAs and semaphores is verbose and error-prone.
+
+``pltpu.emit_pipeline`` automates software-pipelined double buffering (see
+:ref:`pallas_tpu_pipelining`): given a ``grid`` and
+:ref:`BlockSpecs <pallas_blockspec>`, every invocation of the pipeline body
+receives ``pltpu.VMEM`` ``Ref``\s for the current block slices while the DMA
+engine overlaps prefetching the next input blocks and draining completed output
+blocks with compute.
 
 .. note::
   Not all block shapes are supported. On TPU, only blocks with rank at least 1
     are supported. Furthermore, the last two dimensions of your block shape
     must be divisible by 8 and 128 respectively, or be equal to the respective
     dimensions of the overall array.
-
-One interesting aspect of Pallas TPU kernels is the way they handle memory spaces:
-Inputs and outputs of ``@pl.kernel`` reside in ``pltpu.HBM`` (the main TPU
-memory) by default, whereas when using ``pltpu.emit_pipeline``, the references
-passed in to the pipeline body point to buffers in lower levels of the memory
-hierarchy (``pltpu.VMEM``). This enables the kernel body to write and read them
-at very high speeds, while all the communication with HBM (which has very high
-latency) is handled by the compiler and overlapped with compute.
 
 What's more, compared to GPUs, TPUs are actually highly sequential machines.
 Ergo, the grid is generally not processed in parallel, but sequentially,
@@ -95,7 +104,7 @@ for exceptions). This unlocks some interesting capabilities:
   an input, the HBM transfer for the second iteration is skipped, as the data is
   already available.
 
-* Multiple invocations of the kernel body can write to the same slice of the
+* Multiple invocations of the pipeline body can write to the same slice of the
   output, without any risk of race conditions. However, we do require that all
   invocations that write to a particular slice are consecutive.
 
@@ -112,12 +121,11 @@ to be the last one, since the output window does not vary along this axis.
 The output reference can be then used as an accumulator for partial results.
 
 .. note::
-  VMEM is fairly large for such a low-level memory hierarchy (16MB+), making it
-  possible to use large window sizes. And, oftentimes, the larger the window
-  size, the better the eventual hardware utilization will be. However, it is possible to
-  specify a window size that (together with space necessary to hold
-  spilled vector registers) exceeds the size of VMEM. In this case, you will likely see a
-  low-level compiler error message complaining about an out-of-memory error.
+  VMEM is fairly large for such a low-level memory hierarchy (16 MiB+ per
+  TensorCore), making it possible to use large block sizes. Oftentimes, larger
+  block sizes improve hardware utilization. However, specifying block sizes
+  that (together with double-buffering slots and any spilled vector registers)
+  exceed VMEM capacity will produce a compiler out-of-memory error.
 
 Array Layouts
 ^^^^^^^^^^^^^
@@ -140,8 +148,10 @@ Here is a graphical example of how a 12x320 array can be tiled using 6 8x128
 tiles:
 
 .. image:: ../../_static/pallas/vector_layout_example.svg
+   :align: center
+   :alt: Example of tiling a 12x320 array into six 8x128 vector register tiles
 
-Tiled layouts have several import ramifications for kernel writers:
+Tiled layouts have several important ramifications for kernel writers:
 
 * The last two axes of an array are treated differently than other
   axes. For example, reductions, reshapes, and transposes are generally
@@ -154,7 +164,7 @@ Tiled layouts have several import ramifications for kernel writers:
   also potentially cause register spills into VMEM which degrades kernel
   performance.
 * Related to the above point, all vector computation is padded up to the tile
-  size. Adding a two 1x1 arrays costs as much as adding two 8x128 arrays, and
+  size. Adding two 1x1 arrays costs as much as adding two 8x128 arrays, and
   adding two 8x128x1x1 arrays will be 1024 times as expensive as adding two
   8x128 arrays, since the 8x128x1x1 array will be padded to 8x128x8x128.
 
@@ -192,7 +202,7 @@ partition parallel grid axes across that mesh axis (or partition manually via
         ),
     )(x_hbm, o_hbm)
 
-``dimension_semantics`` is a tuple, with as many entries as many axes there are in the
+``dimension_semantics`` is a tuple, with as many entries as there are axes in the
 grid. Only ``PARALLEL`` dimensions can be partitioned over cores. As a rule of
 thumb, the dimensions are ``PARALLEL``, unless the output window does not vary.
 As such, ``dimension_semantics`` is always a number of ``PARALLEL`` axes
@@ -213,13 +223,13 @@ Placing operands in SMEM
 Most of the compute on the TPU will happen on the vector unit. Still, there are
 many cases where it is useful to perform a number of scalar operations, e.g., to
 carry out control-flow. For that reason, TPUs come with a separate
-scalar unit, and a separate scalar memory (SMEM) attached to it.
+scalar unit, and a separate scalar memory (``pltpu.SMEM``) attached to it.
 As a rule of thumb, any data used to perform control-flow decisions should
 be placed in SMEM.
 
 SMEM is a low-latency memory that supports random access, but lets you only
 read and write 32-bit values with a single instruction (very small compared to
-the 4KBi granularity of VMEM transactions, but much more flexible due to lack
+the 4 KiB granularity of VMEM transactions, but much more flexible due to lack
 of alignment requirements!).
 
 The scalar memory is also very useful when implementing kernels that do not
@@ -261,7 +271,7 @@ At the moment Pallas TPU supports the following data types:
 
 * ``jnp.float32``
 * ``jnp.bfloat16``
-* ``jnp.int*``  (all precisions, except for ``jnp.int4``)
+* ``jnp.int*``  (all precisions, except for ``jnp.int4`` in general arithmetic)
 * ``jnp.uint*``  (all precisions)
 * ``jnp.bool_``
 
@@ -269,7 +279,7 @@ Computation placement
 ^^^^^^^^^^^^^^^^^^^^^
 
 All scalar (i.e. 0D) arrays will be stored in scalar registers, and operations
-on then will be executed on the scalar core.  All other operations (even on
+on them will be executed on the scalar core.  All other operations (even on
 single-element, but 1D+ arrays) will be executed on the vector core.
 
 Supported operations
@@ -354,9 +364,13 @@ expensive (🔴).
  ``jnp.cos``                   🔴
 ============================ ========
 
+* 🟢 **Cheap:** Native single-cycle or few-cycle vector ALU instructions.
+* 🌕 **Medium:** Multi-cycle or software-emulated division, power, and transcendental approximations.
+* 🔴 **Expensive:** Multi-cycle trigonometric approximations requiring polynomial evaluation.
+
 Many JAX functions are implemented in terms of other JAX primitives, so this
 list might not be comprehensive. For example, ``jax.nn.relu`` is implemented
-in terms of comparisons and ``jnp.where`` will work in Pallas kernels too.
+in terms of comparisons and ``jnp.where`` and works in Pallas kernels too.
 
 Array constructors
 ^^^^^^^^^^^^^^^^^^
@@ -389,7 +403,7 @@ As usual, reshapes in all dimensions but the last two dimensions are supported
 and free.
 
 The only two supported cases when a reshape can modify the last two dimensions
-of an array is when (1) some leading dimensions are flattened onto the second
+of an array are when (1) some leading dimensions are flattened onto the second
 to last dimension, or (2) it adds a dimension that was just removed by a
 reduction.
 
@@ -397,17 +411,16 @@ Random Number Generation
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
 Pallas supports the most commonly used functions from the ``jax.random`` module,
-such as ``uniform``, ``normal``, and ``bernoulli``. The key should be a ``threefry2x32`` key,
-which is the default setting in JAX. Keys can be directly passed into a kernel,
-or generated inside of a kernel.
+such as ``uniform``, ``normal``, and ``bernoulli``, using ``threefry2x32`` keys
+(which can be passed into or generated inside a kernel), as well as dedicated
+TPU hardware PRNG primitives. See :doc:`prng` for details and examples.
 
 Control flow
 ^^^^^^^^^^^^
 
-The TPU backend features limited support for control flow at the moment. The
-currently supported functions are ``cond``, ``fori_loop`` and ``for_loop``.
-However, loop primitives get fully unrolled during the compilation at the
-moment, so try to keep the loop trip count reasonably small.
+Supported control-flow primitives on TPU include ``jax.lax.cond`` (and the
+``@pl.when`` decorator), ``jax.lax.fori_loop`` (and the ``@pl.loop`` decorator,
+which accepts an optional ``unroll`` factor), and ``jax.lax.while_loop``.
 
 Overusing control flow can lead to significant regressions in low-level code
 generation, and it is recommended to try to squeeze as many computationally
