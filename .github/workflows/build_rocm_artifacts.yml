@@ -116,6 +116,11 @@ on:
         required: false
         default: ""
         type: string
+      variant:
+        description: "Wheel variant: empty for the regular build, debug or asan. Variant builds leave the LATEST pointer alone."
+        required: false
+        default: ""
+        type: string
     outputs:
       s3_upload_uri:
         description: "S3 location prefix to where the artifacts were uploaded"
@@ -149,6 +154,7 @@ jobs:
       JAXCI_OUTPUT_DIR: "${{ github.workspace }}/dist"
       JAXCI_ARTIFACT_TYPE: "${{ inputs.artifact-type }}"
       JAXCI_WHEEL_VERSION_SUFFIX: "${{ inputs.wheel-version-suffix }}"
+      JAXCI_ROCM_WHEEL_VARIANT: "${{ inputs.variant }}"
 
     name: "${{ inputs.artifact }}, py ${{ inputs.python }}, ROCm ${{ inputs.rocm-release-version || inputs.rocm-version }}"
 
@@ -204,6 +210,10 @@ jobs:
           aws s3 cp --only-show-errors --recursive "$JAXCI_OUTPUT_DIR"/ "${INPUTS_S3_UPLOAD_URI}"/
           echo "Upload complete."
 
+          # Consumers of LATEST expect the regular wheels.
+          if [[ -n "${JAXCI_ROCM_WHEEL_VARIANT}" ]]; then
+            exit 0
+          fi
           LATEST_KEY="rocm-wheels/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/${INPUTS_ROCM_RELEASE_VERSION}/LATEST"
           echo "${INPUTS_S3_UPLOAD_URI}" | \
             aws s3 cp --only-show-errors - "s3://jax-ci-amd/${LATEST_KEY}"
