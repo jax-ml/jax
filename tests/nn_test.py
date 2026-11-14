@@ -368,6 +368,31 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(dK_ref_lse, dK_ans_lse, rtol=.01, atol=.01)
     self.assertAllClose(dV_ref_lse, dV_ans_lse, rtol=.01, atol=.01)
 
+  @parameterized.product(dtype=[jnp.bfloat16, jnp.float16])
+  def testDotProductAttentionJitGrad(self, dtype):
+    # Under jit, an unsupported precision is only rejected at lowering time,
+    # where the fallback in _dot_product_attention_core can't catch it
+    # (float16 on CPU used to fail this way).
+    B, S, T, N, H = 2, 64, 64, 4, 32
+    keys = random.split(random.PRNGKey(0), 3)
+    Q = random.normal(keys[0], (B, T, N, H), dtype)
+    K = random.normal(keys[1], (B, S, N, H), dtype)
+    V = random.normal(keys[2], (B, S, N, H), dtype)
+
+    def loss(q, k, v):
+      out = nn.dot_product_attention(q, k, v, implementation='xla')
+      return jnp.sum(out.astype(jnp.float32) ** 2)
+
+    value_and_grad = jax.jit(jax.value_and_grad(loss, argnums=(0, 1, 2)))
+    value, grads = value_and_grad(Q, K, V)
+    value_ref, grads_ref = value_and_grad(
+        Q.astype(jnp.float32), K.astype(jnp.float32), V.astype(jnp.float32))
+
+    self.assertAllClose(value, value_ref, rtol=.01, atol=.01)
+    for g, g_ref in zip(grads, grads_ref):
+      self.assertEqual(g.dtype, dtype)
+      self.assertAllClose(g.astype(jnp.float32), g_ref, rtol=.02, atol=.02)
+
   @parameterized.product(
       mask_mode=['bias', 'causal', 'padding', 'custom', ('causal', 'padding'),
                  ('custom', 'padding'), ('bias', 'causal'),

@@ -30,6 +30,7 @@ from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
 from jax._src import util
+from jax._src import xla_bridge
 from jax._src.core import AxisName
 from jax._src.cudnn.fused_attention_stablehlo import (
     dot_product_attention as cudnn_dot_product_attention, MaskType)
@@ -917,7 +918,10 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
   # (see https://github.com/jax-ml/jax/issues/24047).
   if query.dtype == dtypes.bfloat16:
     precision = lax.DotAlgorithmPreset.BF16_BF16_F32
-  elif query.dtype == np.float16:
+  # CPU does not support F16_F16_F32. The error is raised when the einsum is
+  # lowered, not when it is traced, so under jit the try/except below can't
+  # catch it. Leave the precision unset on CPU instead.
+  elif query.dtype == np.float16 and xla_bridge.default_backend() != "cpu":
     precision = lax.DotAlgorithmPreset.F16_F16_F32
   # TODO(sbodenstein): Implement this fix for all dtypes.
   else:
