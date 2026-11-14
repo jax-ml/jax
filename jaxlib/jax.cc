@@ -114,6 +114,7 @@ limitations under the License.
 #include "jaxlib/py_device_list.h"
 #include "jaxlib/py_executable.h"
 #include "jaxlib/py_memory_space.h"
+#include "jaxlib/py_relocatable.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/pytree.h"
 #include "jaxlib/sharding.h"
@@ -692,6 +693,7 @@ NB_MODULE(_jax, m) {
   PyToken::Register(m);
   PyShardedToken::Register(m);
   PyExecutable::Register(m);
+  PyRelocatable::Register(m);
 
   m.attr("dlpack_version") = kDlPackVersion;
   m.def("buffer_to_dlpack_managed_tensor",

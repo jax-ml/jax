@@ -570,6 +570,42 @@ class Client:
   ) -> Executable: ...
 
   @overload
+  def compile_to_relocatable(
+      self,
+      computation: object,
+      executable_devices: DeviceList,
+      name: str,
+      is_entrypoint: bool,
+      compile_options: CompileOptions = ...,
+  ) -> Relocatable: ...
+  @overload
+  def compile_to_relocatable(
+      self,
+      computation: object,
+      topology: DeviceTopology,
+      name: str,
+      is_entrypoint: bool,
+      compile_options: CompileOptions = ...,
+  ) -> Relocatable: ...
+
+  @overload
+  def link_relocatables(
+      self,
+      entrypoint: Relocatable,
+      dependencies: Sequence[Relocatable],
+      executable_devices: DeviceList,
+      compile_options: CompileOptions = ...,
+  ) -> Executable: ...
+  @overload
+  def link_relocatables(
+      self,
+      entrypoint: Relocatable,
+      dependencies: Sequence[Relocatable],
+      topology: DeviceTopology,
+      compile_options: CompileOptions = ...,
+  ) -> Executable: ...
+
+  @overload
   def compile_and_load(
       self,
       computation: object,
@@ -1052,6 +1088,32 @@ class Executable:
   def cost_analysis(
       self,
   ) -> dict[str, str | bool | int | list[int] | float]: ...
+
+class Relocatable:
+  @property
+  def name(self) -> str: ...
+  @property
+  def build_id(self) -> str: ...
+  @property
+  def call_backend_config(self) -> bytes: ...
+  @property
+  def has_side_effects(self) -> bool: ...
+  def serialize(self) -> bytes: ...
+  def get_parameter_element_types(
+      self,
+  ) -> list[
+      jaxlib._hlo.PrimitiveType
+  ]: ...
+  def get_output_element_types(
+      self,
+  ) -> list[
+      jaxlib._hlo.PrimitiveType
+  ]: ...
+  def get_parameter_dimensions(self) -> list[list[int]]: ...
+  def get_output_dimensions(self) -> list[list[int]]: ...
+  def get_parameter_layouts(self) -> list[PjRtLayout]: ...
+  def get_output_layouts(self) -> list[PjRtLayout]: ...
+  def get_parameter_output_aliases(self) -> list[tuple[int, int]]: ...
 
 dlpack_version: tuple[int, int] = ...
 
