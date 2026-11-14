@@ -2090,6 +2090,10 @@ class Layout(SomeLayout, enum.Enum):
   MMA_RHS = enum.auto()
   #: Accumulator's layout for SM8x ``mma.sync``
   MMA_ACC = enum.auto()
+  #: LHS scales operand layout for SM8x ``mma.sync``
+  MMA_LHS_SCALES = enum.auto()
+  #: RHS scales operand layout for SM8x ``mma.sync``
+  MMA_RHS_SCALES = enum.auto()
 
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
@@ -2161,6 +2165,14 @@ class Layout(SomeLayout, enum.Enum):
         normalize_args = lambda dtype, *, m_warps=4: (dtype, m_warps)
         dtype, m_warps = normalize_args(*args, **kwargs)
         return mgpu.MMALayouts(dtype, m_warps=m_warps).acc
+      case Layout.MMA_LHS_SCALES:
+        normalize_args = lambda dtype, *, m_warps=4, block_size=None: (dtype, m_warps, block_size)
+        dtype, m_warps, block_size = normalize_args(*args, **kwargs)
+        return mgpu.MMALayouts(dtype, m_warps=m_warps, block_size=block_size).lhs_scales  # pyrefly: ignore[bad-return]
+      case Layout.MMA_RHS_SCALES:
+        normalize_args = lambda dtype, *, m_warps=4, block_size=None: (dtype, m_warps, block_size)
+        dtype, m_warps, block_size = normalize_args(*args, **kwargs)
+        return mgpu.MMALayouts(dtype, m_warps=m_warps, block_size=block_size).rhs_scales  # pyrefly: ignore[bad-return]
       case Layout.TMA_INDICES_4:
         return mgpu.TMA_INDICES_4_LAYOUT
 

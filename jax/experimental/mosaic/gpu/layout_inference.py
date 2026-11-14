@@ -1194,10 +1194,23 @@ def _wgmma_constraint_system(
 def _mma_constraint_system(
     ctx: DerivationContext, op: mgpu.MMAOp
 ) -> ConstraintSystemDerivationRuleResult:
-  del ctx
+  a_scale = op.a_scale  # pyrefly: ignore[missing-attribute]
+  b_scale = op.b_scale  # pyrefly: ignore[missing-attribute]
+  if (scaled := a_scale is not None) != (b_scale is not None):
+    raise ValueError(
+        f"Expecting neither or both scales to be present. Got {a_scale=},"
+        f" {b_scale=}"
+    )
+
   element_type = op.a.type.element_type
   m, n = op.accumulator.type.shape
-  layouts = MMALayouts.for_shape(element_type, m, n)
+  kwargs = {}
+  if scaled:
+    assert a_scale is not None
+    a_shape = op.a.type.shape  # M, K
+    a_scale_shape = a_scale.type.shape  # M, Kfs
+    kwargs["block_size"] = a_shape[-1] // a_scale_shape[-1]
+  layouts = MMALayouts.for_shape(element_type, m, n, **kwargs)
 
   assignments: dict[cs.Variable, cs.Constant] = {}
   value_sites_for_variable: ValueSitesForVariable = {}
@@ -1236,6 +1249,24 @@ def _mma_constraint_system(
     )
   assignments[b_var] = b_layout
   value_sites_for_variable[b_var] = [b_site]
+
+  def assign_scaled_layout(scale_operand, layout):
+    scale_index = list(op.operands).index(scale_operand)
+    scale = ValueSite(op, VariableType.OPERAND, scale_index)
+    scale_var = ctx.producer_ref(scale)
+    assignments[scale_var] = layout
+    if not cs.is_valid_assignment(scale_var, layout):
+      raise ValueError(
+          f"Cannot assign {layout} to {scale_operand=} with"
+          f" shape {scale.shape}."
+      )
+    value_sites_for_variable[scale_var] = [scale]
+
+  if scaled:
+    assert a_scale is not None and b_scale is not None
+    assert layouts.lhs_scales is not None and layouts.rhs_scales is not None
+    assign_scaled_layout(a_scale, cs.RegisterLayout(layouts.lhs_scales))
+    assign_scaled_layout(b_scale, cs.RegisterLayout(layouts.rhs_scales))
 
   return cs.ConstraintSystem(assignments, []), value_sites_for_variable
 
