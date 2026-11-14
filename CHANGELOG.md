@@ -106,6 +106,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `fp` value is infinite; it now returns the knot value or the signed
     infinity, matching NumPy. For complex `fp`, the real and imaginary parts
     are now interpolated separately, as in NumPy.
+  * Fixed {func}`jax.scipy.signal.stft`, {func}`jax.scipy.signal.csd` and
+    {func}`jax.scipy.signal.welch` passing transposed segments to a callable
+    `detrend`, which produced incorrect results; segments are now passed in the
+    same layout as in SciPy ({jax-issue}`#42599`).
 
 ## JAX 0.12.0.1 (October 23, 2026)
 
