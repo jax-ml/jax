@@ -1214,6 +1214,16 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fn, args_maker,
                           check_dtypes=False, rtol=1e-3)
 
+  @jtu.sample_product(
+    shape=[(0, 3), (2, 0), (0, 0), (3, 4, 0)],
+    dtype=float_types + complex_types,
+  )
+  def testMatrixRankZeroSize(self, shape, dtype):
+    # numpy.linalg.matrix_rank only handles these from NumPy 2.5 on.
+    rng = jtu.rand_default(self.rng())
+    rank = jnp.linalg.matrix_rank(rng(shape, dtype))
+    self.assertArraysEqual(rank, jnp.zeros(shape[:-2], dtype=rank.dtype))
+
   def testMatrixRankTol(self):
     x = jnp.ones((3, 3))
     with self.assertRaisesWithLiteralMatch(
@@ -2265,7 +2275,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp.linalg.schur, args_maker)
 
   @jtu.sample_product(
-    shape=[(1, 1), (4, 4), (15, 15), (50, 50), (100, 100)],
+    shape=[(0, 0), (1, 1), (4, 4), (15, 15), (50, 50), (100, 100)],
     dtype=float_types + complex_types,
   )
   @jtu.run_on_devices("cpu")
@@ -2352,7 +2362,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, atol=2e-5)
 
   @jtu.sample_product(
-    shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
+    shape=[(0, 0), (4, 4), (15, 15), (50, 50), (100, 100)],
     dtype=float_types + complex_types,
   )
   @jtu.run_on_devices("cpu")
@@ -2642,7 +2652,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       jsp.linalg.convolution_matrix(jnp.array(5.0), 3)
 
   @jtu.sample_product(
-    shape=[(2, 3), (4, 6), (50, 7), (100, 110)],
+    shape=[(0, 0), (0, 3), (3, 0), (2, 3), (4, 6), (50, 7), (100, 110)],
     dtype = float_types + complex_types,
     method = ["schur", "eigen"]
   )
