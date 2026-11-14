@@ -2391,6 +2391,126 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
       idx[axis] = slice(start, end)
       np.testing.assert_allclose(out[tuple(idx)], x[tuple(idx)])
 
+  def _run_vmem_pipeline_with_canary(self, x, spec, grid, no_pipelining):
+    shape, dtype = x.shape, x.dtype
+
+    def kernel(x_vmem_ref, o_hbm_ref, canary_hbm_ref):
+      def scoped(o_vmem_ref, canary_vmem_ref):
+        o_vmem_ref[...] = jnp.full(shape, -1, dtype=dtype)
+        canary_vmem_ref[...] = jnp.full(shape, 77, dtype=dtype)
+        pltpu.emit_pipeline(
+            lambda step, x_sub, o_sub: o_sub.set(
+                x_sub[...] + jnp.asarray(10, dtype=dtype)
+            ),
+            grid=grid,
+            in_specs=spec,
+            out_specs=spec,
+            no_pipelining=no_pipelining,
+            _explicit_indices=True,
+        )(x_vmem_ref, o_vmem_ref)
+        pltpu.sync_copy(o_vmem_ref, o_hbm_ref)
+        pltpu.sync_copy(canary_vmem_ref, canary_hbm_ref)
+
+      vmem_ty = pltpu.VMEM(shape, dtype)
+      pl.run_scoped(scoped, vmem_ty, vmem_ty)
+
+    out_ty = jax.ShapeDtypeStruct(shape, dtype)
+    hbm_spec = pl.BlockSpec(memory_space=pltpu.HBM)
+    out, canary = pl.pallas_call(
+        kernel,
+        out_shape=(out_ty, out_ty),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+        out_specs=(hbm_spec, hbm_spec),
+    )(x)
+    np.testing.assert_array_equal(
+        np.asarray(canary, dtype=np.float32),
+        np.full(shape, 77.0, dtype=np.float32),
+    )
+    return out
+
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.bfloat16, jnp.int32],
+      mode=['blocked', 'int', 'element', 'straddle', 'subtile'],
+      no_pipelining=[False, True],
+  )
+  def test_vmem_non_divisible_and_element_oob_preserves_canary(
+      self, dtype, mode, no_pipelining
+  ):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
+    rows = 64 if mode in ('straddle', 'subtile') else 48
+    cols = 64 if mode == 'subtile' else 128
+    x = (jnp.arange(rows * cols, dtype=jnp.int32) % 64 + 1).reshape(rows, cols)
+    x = x.astype(dtype)
+    if mode == 'blocked':
+      grid, spec = (2,), pl.BlockSpec(
+          (pl.Blocked(32), cols), lambda i: (i, 0), memory_space=pltpu.VMEM
+      )
+    elif mode == 'int':
+      grid, spec = (2,), pl.BlockSpec(
+          (32, cols), lambda i: (i, 0), memory_space=pltpu.VMEM
+      )
+    elif mode == 'element':
+      grid, spec = (3,), pl.BlockSpec(
+          (pl.Element(32), cols), lambda i: (i * 32, 0), memory_space=pltpu.VMEM
+      )
+    else:
+      grid, spec = (4,), pl.BlockSpec(
+          (pl.Element(32), cols), lambda i: (i * 16, 0), memory_space=pltpu.VMEM
+      )
+    out = self._run_vmem_pipeline_with_canary(x, spec, grid, no_pipelining)
+    np.testing.assert_array_equal(
+        np.asarray(out, dtype=np.float32),
+        np.asarray(x + jnp.asarray(10, dtype=dtype), dtype=np.float32),
+    )
+
+  def test_vmem_element_padding_and_symbolic_aliasing(self):
+    sym_n, sym_m = jax.export.symbolic_shape('n, 32*m')
+    blk = pl.BlockSpec((32, 128), lambda i: (i, 0), memory_space=pltpu.VMEM)
+    pad = pl.BlockSpec(
+        (pl.Element(16, padding=(0, 2)), 128),
+        lambda i: (i * 16, 0),
+        memory_space=pltpu.VMEM,
+    )
+    mk = lambda s, sh: pltpu.BufferedRef.input(
+        s,
+        jax._src.core.ShapedArray(sh, jnp.float32),
+        source_memory_space=pltpu.VMEM,
+    ).is_buffered
+    self.assertFalse(mk(pl.BlockSpec(memory_space=pltpu.VMEM), (32, 128)))
+    self.assertTrue(
+        mk(pl.BlockSpec((0, 128), memory_space=pltpu.VMEM), (32, 128))
+    )
+    self.assertFalse(mk(blk, (sym_m, 128)))
+    self.assertTrue(mk(blk, (sym_n, 128)))
+    self.assertFalse(mk(pad, (32, 128)))
+
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.bfloat16, jnp.int32],
+      no_pipelining=[False, True],
+  )
+  def test_vmem_bounded_slice_partial_and_empty_preserves_untouched_rows(
+      self, dtype, no_pipelining
+  ):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
+    x = (jnp.arange(3 * 16 * 128, dtype=jnp.int32) % 64 + 1).reshape(3, 16, 128)
+    x = x.astype(dtype)
+    spec = pl.BlockSpec(
+        (pl.BoundedSlice(2), 16, 128),
+        lambda i: (pl.ds(i * 2, jax.lax.select(i == 0, 1, 0)), 0, 0),
+        memory_space=pltpu.VMEM,
+    )
+    out = self._run_vmem_pipeline_with_canary(x, spec, (2,), no_pipelining)
+    np.testing.assert_array_equal(
+        np.asarray(out[0], dtype=np.float32),
+        np.asarray(x[0] + jnp.asarray(10, dtype=dtype), dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(out[1:], dtype=np.float32),
+        np.full((2, 16, 128), -1.0, dtype=np.float32),
+    )
+
 
 class PipelineHijaxTest(jtu.JaxTestCase):
 

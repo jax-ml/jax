@@ -2115,6 +2115,140 @@ class InterpretTest(jtu.JaxTestCase):
               interpret=interpret,
           )(x)
 
+  def test_vmem_window_aliasing_and_bounded_slice(self):
+    sym_n, sym_m = jax.export.symbolic_shape('n, 32*m')
+    aval = lambda sh: jax._src.core.ShapedArray(sh, jnp.float32)
+    mk = lambda s, sh: pltpu.BufferedRef.input(
+        s, aval(sh), source_memory_space=pltpu.VMEM
+    ).is_buffered
+    blk = pl.BlockSpec((32, 128), lambda i: (i, 0), memory_space=pltpu.VMEM)
+    el = pl.BlockSpec(
+        (pl.Element(16), 128), lambda i: (i * 16, 0), memory_space=pltpu.VMEM
+    )
+    pad = pl.BlockSpec(
+        (pl.Element(16, padding=(0, 2)), 128),
+        lambda i: (i * 16, 0),
+        memory_space=pltpu.VMEM,
+    )
+    # Exercise _window_aliases_source outside abstract TPU mesh (CPU fallback).
+    self.assertFalse(mk(pl.BlockSpec(memory_space=pltpu.VMEM), (32, 128)))
+    self.assertTrue(
+        mk(pl.BlockSpec((0, 128), memory_space=pltpu.VMEM), (32, 128))
+    )
+    self.assertFalse(mk(el, (32, 128)))
+    self.assertTrue(mk(el, (24, 128)))
+    self.assertFalse(mk(blk, (sym_m, 128)))
+    self.assertTrue(mk(blk, (sym_n, 128)))
+    self.assertFalse(mk(pad, (32, 128)))
+
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (),
+        (),
+        abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu'),
+    )
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      self.assertFalse(mk(pad, (32, 128)))
+      self.assertTrue(mk(el, (32, 128)))
+      self.assertTrue(mk(blk, (48, 128)))
+      self.assertFalse(mk(blk, (64, 128)))
+      self.assertFalse(
+          mk(
+              pl.BlockSpec(
+                  (pl.Element(4), 128),
+                  lambda i: (i * 4, 0),
+                  memory_space=pltpu.VMEM,
+              ),
+              (32, 128),
+          )
+      )
+      self.assertTrue(
+          mk(
+              pl.BlockSpec(
+                  (pl.Element(16), 64),
+                  lambda i: (i * 16, 0),
+                  memory_space=pltpu.VMEM,
+              ),
+              (32, 64),
+          )
+      )
+      self.assertTrue(
+          mk(
+              pl.BlockSpec(
+                  (pl.Element(16), pl.Blocked(64)),
+                  lambda i: (i * 16, 0),
+                  memory_space=pltpu.VMEM,
+              ),
+              (32, 64),
+          )
+      )
+      self.assertFalse(
+          mk(
+              pl.BlockSpec(
+                  (pl.Element(16), pl.Element(64)),
+                  lambda i: (i * 16, 0),
+                  memory_space=pltpu.VMEM,
+              ),
+              (32, 64),
+          )
+      )
+      self.assertTrue(
+          mk(
+              pl.BlockSpec(
+                  (pl.BoundedSlice(16), 128),
+                  lambda i: (pl.ds(0, 8), 0),
+                  memory_space=pltpu.VMEM,
+              ),
+              (32, 128),
+          )
+      )
+
+      # Exercise _create_bounded_slice clamping when slice_start + slice_size
+      # exceeds dim_size and when slice_start >= dim_size.
+      bref = pltpu.BufferedRef.input(
+          pl.BlockSpec(
+              (pl.Element(32), 128),
+              lambda i: (i * 32, 0),
+              memory_space=pltpu.VMEM,
+          ),
+          aval((48, 128)),
+          source_memory_space=pltpu.VMEM,
+      )
+      s0, _ = bref.get_dma_slice(aval((48, 128)), (0,))
+      s1, _ = bref.get_dma_slice(aval((48, 128)), (1,))
+      s2, _ = bref.get_dma_slice(aval((48, 128)), (2,))
+      self.assertEqual((int(s0.start), int(s0.size)), (0, 32))
+      self.assertEqual((int(s1.start), int(s1.size)), (32, 16))
+      self.assertEqual((int(s2.start), int(s2.size)), (0, 0))
+
+      # Exercise _make_pipeline_allocations and _pipeline_abstract_eval on VMEM.
+      spec = pl.BlockSpec((32, 128), lambda i: (i, 0), memory_space=pltpu.VMEM)
+
+      def body(x_sub, o_sub):
+        x_sub[...] = x_sub[...] + 1.0
+        o_sub[...] = x_sub[...]
+
+      def kernel(x_vmem, o_vmem):
+        pltpu.emit_pipeline(
+            body,
+            grid=(2,),
+            in_specs=(spec,),
+            out_specs=(spec,),
+        )(x_vmem, o_vmem)
+
+      for use_prim in (False, True):
+        for rows in (48, 64):
+          with config.use_emit_pipeline_primitive(use_prim):
+            fn = pl.pallas_call(
+                kernel,
+                in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+                out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+                out_shape=jax.ShapeDtypeStruct((rows, 128), jnp.float32),
+            )
+            x = jnp.ones((rows, 128), dtype=jnp.float32)
+            jax.jit(fn).trace(x).lower(
+                lowering_platforms=('tpu',)
+            ).compiler_ir()
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
