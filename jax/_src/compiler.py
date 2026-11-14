@@ -325,15 +325,17 @@ def get_compile_options(
       logger.debug("Enabling XLA kernel cache at '%s'", kernel_cache_path)
 
     if enabled_flags == "all" or "xla_gpu_per_fusion_autotune_cache_dir" in enabled_flags:
+      # The subdirectory keeps its historical name so that existing caches are
+      # reused.
       autotune_cache_path = path / "xla_gpu_per_fusion_autotune_cache_dir"
-      debug_options.xla_gpu_per_fusion_autotune_cache_dir = str(autotune_cache_path)
-      logger.debug("Enabling XLA autotuning cache at '%s'", autotune_cache_path)
-
       # Set caching mode so that only process 0 can write to the cache.
       if distributed.global_state.process_id == 0:
-        debug_options.xla_gpu_experimental_autotune_cache_mode = xc.AutotuneCacheMode.UPDATE
+        autotune_cache_mode = xc.AutotuneCacheMode.UPDATE
       else:
-        debug_options.xla_gpu_experimental_autotune_cache_mode = xc.AutotuneCacheMode.READ
+        autotune_cache_mode = xc.AutotuneCacheMode.READ
+      debug_options.xla_autotune_cache_dir = str(autotune_cache_path)
+      debug_options.xla_autotune_cache_mode = autotune_cache_mode
+      logger.debug("Enabling XLA autotuning cache at '%s'", autotune_cache_path)
 
   return compile_options
 

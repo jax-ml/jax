@@ -66,6 +66,19 @@ def msg_exists_in_logs(msg: str, records: list[logging.LogRecord],
              if level is None or level == record.levelno)
 
 
+# The autotune cache directory XLA will use.
+def _autotune_cache_dir(debug_options) -> str:
+  return debug_options.xla_autotune_cache_dir
+
+
+# The autotune cache mode XLA will use; XLA treats an unset mode as UPDATE.
+def _autotune_cache_mode(debug_options):
+  if (debug_options.xla_autotune_cache_mode ==
+      xc.AutotuneCacheMode.UNSPECIFIED):
+    return xc.AutotuneCacheMode.UPDATE
+  return debug_options.xla_autotune_cache_mode
+
+
 # Returns a tuple of (cleaned HLO string, list of backend configs).
 # Unfortunately, the order of the fields can be different, so we need to match them separately.
 def extract_and_normalize_backend_configs(hlo: str) -> tuple[str, list]:
@@ -677,29 +690,29 @@ class CompilationCacheTest(CompilationCacheTestCase):
           num_replicas=1, num_partitions=1
         )
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, "")
-        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, "")
-        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
+        self.assertEqual(_autotune_cache_dir(compile_options.executable_build_options.debug_options), "")
+        self.assertEqual(_autotune_cache_mode(compile_options.executable_build_options.debug_options), xc.AutotuneCacheMode.UPDATE)
       with config.persistent_cache_enable_xla_caches("all"):
         compile_options = compiler.get_compile_options(
           num_replicas=1, num_partitions=1
         )
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, f"jax-cache{s}xla_gpu_kernel_cache_file")
-        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, f"jax-cache{s}xla_gpu_per_fusion_autotune_cache_dir")
-        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
+        self.assertEqual(_autotune_cache_dir(compile_options.executable_build_options.debug_options), f"jax-cache{s}xla_gpu_per_fusion_autotune_cache_dir")
+        self.assertEqual(_autotune_cache_mode(compile_options.executable_build_options.debug_options), xc.AutotuneCacheMode.UPDATE)
       with config.persistent_cache_enable_xla_caches("xla_gpu_kernel_cache_file"):
         compile_options = compiler.get_compile_options(
           num_replicas=1, num_partitions=1
         )
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, f"jax-cache{s}xla_gpu_kernel_cache_file")
-        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, "")
-        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
+        self.assertEqual(_autotune_cache_dir(compile_options.executable_build_options.debug_options), "")
+        self.assertEqual(_autotune_cache_mode(compile_options.executable_build_options.debug_options), xc.AutotuneCacheMode.UPDATE)
       with config.persistent_cache_enable_xla_caches("xla_gpu_per_fusion_autotune_cache_dir"):
         compile_options = compiler.get_compile_options(
           num_replicas=1, num_partitions=1
         )
         self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, "")
-        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, f"jax-cache{s}xla_gpu_per_fusion_autotune_cache_dir")
-        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
+        self.assertEqual(_autotune_cache_dir(compile_options.executable_build_options.debug_options), f"jax-cache{s}xla_gpu_per_fusion_autotune_cache_dir")
+        self.assertEqual(_autotune_cache_mode(compile_options.executable_build_options.debug_options), xc.AutotuneCacheMode.UPDATE)
 
   @jtu.skip_on_devices("tpu") # TPU backend does not dump on deserialize
   def test_dump_on_cache_hit(self):
@@ -823,8 +836,8 @@ class CompilationCacheDisabledTest(CompilationCacheTestCase):
         num_replicas=1, num_partitions=1
       )
       self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, "")
-      self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, "")
-      self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
+      self.assertEqual(_autotune_cache_dir(compile_options.executable_build_options.debug_options), "")
+      self.assertEqual(_autotune_cache_mode(compile_options.executable_build_options.debug_options), xc.AutotuneCacheMode.UPDATE)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
