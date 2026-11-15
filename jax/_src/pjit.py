@@ -2377,6 +2377,7 @@ def _lower_shaped_reshard(
   removed_u = src_s.spec.unreduced - dst_s.spec.unreduced
   added_u = dst_s.spec.unreduced - src_s.spec.unreduced
   assert removed_u or added_u
+
   # Can't do this: src_u = ("x",) and dst_u = ("y",)
   if removed_u and added_u:
     raise NotImplementedError(
@@ -2401,6 +2402,31 @@ def _lower_shaped_reshard(
         UnreducedKind.max: lax.reduce_max,
         UnreducedKind.min: lax.reduce_min,
     }[src_s.spec.unreduced_kind]
+
+    # `lo_val` has one leading dim per unreduced axis, e.g. f32[4, 4]{U:x} is
+    # f32[2@x, 4, 4]. Before reducing, slice `lo_val` on any `dst_s` axis that
+    # it doesn't use yet, so the reduction collectives move less data:
+    #
+    #   f32[4, 4]{U:x} -> f32[4, 4@y]
+    #     f32[2@x, 4, 4] -> f32[2@x, 4, 4@y]  slice 'y' (no communication)
+    #                    -> f32[4, 4@y]       all_reduce 'x' on half the data
+    #
+    #   f32[4, 4]{U:x} -> f32[4@(y, x), 4]
+    #     f32[2@x, 4, 4] -> f32[2@x, 4@y, 4]  slice 'y'
+    #                    -> f32[4@(y, x), 4]  reduce_scatter 'x'
+    #
+    # An axis after a reduced axis can't be sliced first: for f32[4@(x, y), 4]
+    # 'y' would land before 'x', so `reduce_fn` raises NotImplementedError.
+    lo_s = typeof(lo_val).sharding
+    cur = [_tupleize_spec(p) for p in lo_s.spec.partitions]
+    # The leading unreduced dims stay as they are.
+    dst = cur[:len(src_u)] + [_tupleize_spec(p) for p in dst_s.spec.partitions]
+    if any(slice_axes := _free_slice_axes(cur, dst)):
+      pre_dst = lo_s.update(spec=lo_s.spec.update(
+          partitions=[c + s for c, s in zip(cur, slice_axes)]))
+      lo_val = reshard_p.bind(lo_val, dst_sharding=pre_dst,
+                              concrete_mesh=concrete_mesh, reduction_order=None)
+
     red_axes = tuple(i for i, a in enumerate(src_u) if a in removed_u)
     rem_s = dst_s.update(spec=P(*dst_u, *dst_s.spec.partitions))
     if reduction_order is not None:

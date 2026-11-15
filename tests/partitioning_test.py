@@ -138,6 +138,128 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_op(np_inp, axis=axes))
     self.assertArraysEqual(out, expected)
 
+  @parameterized.parameters(
+      (
+          P(None, None),
+          P(None, None, unreduced={'x'}),
+          P(None, 'y'),
+          ('dynamic_slice', 'all_reduce'),
+          ('all_gather', 'reduce_scatter'),
+      ),
+      (
+          P(None, None),
+          P(None, None, unreduced={'x'}),
+          P('x', 'y'),
+          ('dynamic_slice', 'reduce_scatter'),
+          ('all_gather', 'all_reduce'),
+      ),
+      (
+          P(None, None),
+          P(None, None, unreduced={'x', 'y'}),
+          P('z', None),
+          ('dynamic_slice', 'all_reduce'),
+          ('all_gather', 'reduce_scatter'),
+      ),
+      (
+          P('z', None),
+          P('z', None, unreduced={'x'}),
+          P('z', 'y'),
+          ('dynamic_slice', 'all_reduce'),
+          ('all_gather', 'reduce_scatter'),
+      ),
+      (
+          P('z', None),
+          P('z', None, unreduced={'x'}),
+          P(('z', 'y'), None),
+          ('dynamic_slice', 'all_reduce'),
+          ('all_gather', 'reduce_scatter'),
+      ),
+      (
+          P(None, None),
+          P(None, None, unreduced={'x'}),
+          P(('y', 'x'), None),
+          ('dynamic_slice', 'reduce_scatter'),
+          ('all_gather', 'all_reduce'),
+      ),
+  )
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_reshard_unreduced_with_free_slice(
+      self, arg_spec, unreduced_spec, out_spec, present_ops, absent_ops, mesh):
+    np_x = np.arange(16, dtype=np.float32).reshape(4, 4)
+    np_w = (np.arange(16, dtype=np.float32).reshape(4, 4) + 1.0) / 16.0
+    x = jax.device_put(np_x, arg_spec)
+    w = jax.device_put(np_w, out_spec)
+
+    @jax.jit
+    def make_unreduced(a):
+      return jax.reshard(a, unreduced_spec)
+
+    @jax.jit
+    def reshard_out(u):
+      y = jax.reshard(u, out_spec)
+      self.assertEqual(jax.typeof(y).sharding.spec, out_spec)
+      return y
+
+    def loss(a, weights):
+      u = jax.reshard(a, unreduced_spec)
+      y = jax.reshard(u, out_spec)
+      return (y * weights).sum()
+
+    grad_fn = jax.jit(jax.grad(loss))
+
+    u = make_unreduced(x)
+    lowered_text = reshard_out.lower(u).as_text()
+    self.assertIn('sdy.manual_computation', lowered_text)
+    for op_name in present_ops:
+      self.assertIn(op_name, lowered_text)
+    for op_name in absent_ops:
+      self.assertNotIn(op_name, lowered_text)
+
+    with config.jax_partitioning(False):
+      expected = reshard_out(u)
+      expected_grad = grad_fn(x, w)
+
+    out = reshard_out(u)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+    self.assertArraysEqual(out, np_x)
+    self.assertArraysEqual(out, expected)
+
+    grad_out = grad_fn(x, w)
+    self.assertEqual(grad_out.sharding, NamedSharding(mesh, arg_spec))
+    self.assertAllClose(grad_out, np_w)
+    self.assertAllClose(grad_out, expected_grad)
+
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_reshard_unreduced_partial_and_unsupported(self, mesh):
+    np_x = np.arange(16, dtype=np.float32).reshape(4, 4)
+    x = jax.device_put(np_x, P(None, None))
+
+    @jax.jit
+    def partial_reduce(a):
+      u = jax.reshard(a, P(None, None, unreduced={'x', 'z'}))
+      y = jax.reshard(u, P(None, 'y', unreduced={'z'}))
+      self.assertEqual(
+          jax.typeof(y).sharding.spec, P(None, 'y', unreduced={'z'}))
+      return jax.reshard(y, P(None, 'y'))
+
+    with config.jax_partitioning(False):
+      expected = partial_reduce(x)
+
+    out = partial_reduce(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'y')))
+    self.assertArraysEqual(out, np_x)
+    self.assertArraysEqual(out, expected)
+
+    x_z = jax.device_put(np_x, P('z', None))
+    for bad_out in (P(None, None), P(None, 'z'), P(('x', 'z'), None)):
+      @jax.jit
+      def f_bad(a, dst=bad_out):
+        u = jax.reshard(a, P('z', None, unreduced={'x'}))
+        return jax.reshard(u, dst)
+
+      with self.assertRaises(NotImplementedError):
+        f_bad.lower(x_z)
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_missing_rule_raises_not_implemented(self, mesh):
     arr = jax.device_put(np.ones((4, 8), dtype=np.float32), P('x', 'y'))
