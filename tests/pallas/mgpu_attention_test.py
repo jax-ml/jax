@@ -179,6 +179,6 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
     except ValueError as e:
       if "exceeds available shared memory" in e.args[0]:
         self.skipTest("Not enough SMEM for this configuration.")
-
+      raise
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
