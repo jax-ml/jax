@@ -2717,25 +2717,28 @@ def _next_move(cur: list[tuple], dst: list[tuple]) -> ReshardA2A | ReshardAG:
   """Takes axes off the end of a dim that isn't a prefix of its target.
 
   Prefers moving axes with an all_to_all over dropping them with an
-  all_gather, trying the whole dim's axes before falling back to its last axis.
+  all_gather, trying longer trailing suffixes first.
   """
   out_of_place = [i for i, (c, d) in enumerate(zip(cur, dst))
                   if not _dst_starts_with_cur(d, c)]
   for i in out_of_place:
-    for axes in (cur[i], cur[i][-1:]):
+    for k in range(len(cur[i])):
+      axes = cur[i][k:]
       target = _a2a_target(cur, dst, axes)
       if target is not None:
         return ReshardA2A(axes, i, target)
 
   # No all_to_all is possible, so all_gather on the first out-of-place dim.
-  # If none of its axes are in `dst`, gather them all at once, e.g.
-  # P(('x', 'y'), None) -> P(None, None) gathers ('x', 'y') together.
-  # Otherwise gather only its last axis, so the axes `dst` still needs stay
-  # sharded, e.g. P(('x', 'y'), None) -> P('x', None) gathers just 'y'
-  # instead of gathering ('x', 'y') and then slicing 'x' back in.
+  # Gather all trailing axes that `dst` doesn't need at once, so any leading
+  # axes `dst` still needs stay sharded, e.g. P(('x', 'y', 'z'), None) ->
+  # P('x', None) gathers ('y', 'z') together without gathering 'x'. If the last
+  # axis is still needed in `dst`, gather just that last axis.
   i = out_of_place[0]
   dst_axes = {a for d in dst for a in d}
-  axes = cur[i][-1:] if any(a in dst_axes for a in cur[i]) else cur[i]
+  k = len(cur[i])
+  while k > 0 and cur[i][k - 1] not in dst_axes:
+    k -= 1
+  axes = cur[i][-1:] if k == len(cur[i]) else cur[i][k:]
   return ReshardAG(axes, i)
 
 

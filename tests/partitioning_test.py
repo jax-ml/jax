@@ -455,14 +455,16 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       self.assertArraysEqual(expected, out)
 
   @parameterized.parameters(
-      # Both axes move together in one all_to_all.
+      # Axes move together in one all_to_all.
       (P(('x', 'y'), None), P(None, ('x', 'y')), (1, 0, 0)),
-      # Both axes are gathered together in one all_gather.
+      (P(('x', 'y', 'z'), None), P('x', ('y', 'z')), (1, 0, 0)),
+      # Axes are gathered together in one all_gather.
       (P(('x', 'y'), None), P(None, None), (0, 1, 0)),
+      (P(('x', 'y', 'z'), None), P('x', None), (0, 1, 0)),
   )
-  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
   def test_reshard_collective_counts(self, in_spec, out_spec, counts, mesh):
-    np_x = np.arange(16, dtype=np.float32).reshape(4, 4)
+    np_x = np.arange(64, dtype=np.float32).reshape(8, 8)
     x = jax.device_put(np_x, in_spec)
 
     @jax.jit
