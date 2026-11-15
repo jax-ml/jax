@@ -40,7 +40,7 @@ from jax._src.sharding_impls import (
     make_single_device_sharding,
 )
 from jax._src.util import safe_zip
-from jax.experimental import multihost_utils
+from jax.experimental import EArray, multihost_utils, primal_tangent_dtype
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -1159,6 +1159,66 @@ class JaxArrayTest(jtu.JaxTestCase):
 
 
 class ShardingTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f'{name}_{mode}', kind=kind, spec=spec, mode=mode)
+      for name, kind, spec, modes in [
+          ('named', 'named', P('x', None), ['metadata', 'eager', 'jit']),
+          ('named_short_spec', 'named', P('x'), ['metadata']),
+          ('named_replicated', 'named', P(), ['metadata']),
+          ('gspmd', 'gspmd', P('x'), ['metadata', 'jit']),
+          ('gspmd_replicated', 'gspmd', P(), ['metadata']),
+      ]
+      for mode in modes
+  )
+  def test_scalar_extended_dtype_sharding(self, kind, spec, mode):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    data = np.arange(24, dtype=np.uint32).reshape(8, 3)
+    sharding = NamedSharding(mesh, spec)
+    if kind == 'gspmd':
+      sharding = GSPMDSharding(
+          list(mesh.devices.flat), sharding._to_xla_hlo_sharding(data.ndim))
+    buffer = jax.device_put(data, sharding)
+    dtype = primal_tangent_dtype(np.uint32, np.float32)
+    extended = EArray(core.ShapedArray(data.shape, dtype), buffer)
+
+    if mode == 'metadata':
+      self.assertEqual(extended.shape, data.shape)
+      self.assertEqual(extended.dtype, dtype)
+      self.assertTrue(extended.sharding.is_equivalent_to(sharding, data.ndim))
+    else:
+      def convert(x):
+        return jax.lax.convert_element_type(x, np.uint32)
+
+      result = jax.jit(convert)(extended) if mode == 'jit' else convert(extended)
+      self.assertEqual(result.shape, data.shape)
+      self.assertTrue(result.sharding.is_equivalent_to(sharding, data.ndim))
+      self.assertArraysEqual(result, data)
+
+  @parameterized.named_parameters(
+      ('named_sharded_key_data', 'named', True),
+      ('gspmd_replicated_key_data', 'gspmd', False),
+      ('gspmd_sharded_key_data', 'gspmd', True),
+  )
+  def test_key_dtype_trailing_dimension_sharding(self, kind, shard_key_data):
+    mesh = jtu.create_mesh((2,), ('x',))
+    data = np.arange(48, dtype=np.uint32).reshape(8, 3, 2)
+    spec = P(None, None, 'x') if shard_key_data else P('x', None, None)
+    sharding = NamedSharding(mesh, spec)
+    if kind == 'gspmd':
+      sharding = GSPMDSharding(
+          list(mesh.devices.flat), sharding._to_xla_hlo_sharding(data.ndim))
+    buffer = jax.device_put(data, sharding)
+    if shard_key_data:
+      with self.assertRaisesRegex(
+          AssertionError, 'trailing dims of extended dtypes should be replicated'):
+        jax.random.wrap_key_data(buffer, impl='threefry2x32').sharding
+    else:
+      keys = jax.random.wrap_key_data(buffer, impl='threefry2x32')
+      self.assertEqual(keys.shape, data.shape[:-1])
+      expected = NamedSharding(mesh, P('x', None))
+      self.assertTrue(keys.sharding.is_equivalent_to(expected, keys.ndim))
+      self.assertArraysEqual(jax.random.key_data(keys), data)
 
   def test_mesh_pspec_sharding_interface(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
