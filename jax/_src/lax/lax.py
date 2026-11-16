@@ -5740,16 +5740,21 @@ def _pow_jvp_lhs(g, ans, x, y):
     result_dtype = 'int32'
   x = convert_element_type(x, result_dtype)
   y = convert_element_type(y, result_dtype)
+  if x.shape != y.shape:
+    shape = broadcast_shapes(x.shape, y.shape)
+    sharding = broadcast_shardings(typeof(x), typeof(y))
+    x = _maybe_broadcast(shape, x, sharding)
+    y = _maybe_broadcast(shape, y, sharding)
   if dtypes.issubdtype(y_dtype, np.integer):
-    if x.shape != y.shape:
-      shape = broadcast_shapes(x.shape, y.shape)
-      sharding = broadcast_shardings(typeof(x), typeof(y))
-      x = _maybe_broadcast(shape, x, sharding)
-      y = _maybe_broadcast(shape, y, sharding)
-    jac = select(eq(y, _const(y, 0)), _zeros(y),
-                 mul(_replace_zero(y), pow(x, sub(y, _ones(y)))))
+    is_zero_pow = eq(y, _const(y, 0))
+    safe_x = select(is_zero_pow, _ones(x), x)
+    jac = select(is_zero_pow, _zeros(y),
+                 mul(_replace_zero(y), pow(safe_x, sub(y, _ones(y)))))
   else:
-    jac = mul(y, pow(x, sub(y, _ones(y))))
+    is_zero_zero = bitwise_and(eq(x, _const(x, 0)), eq(y, _const(y, 0)))
+    safe_x = select(is_zero_zero, _ones(x), x)
+    jac = select(is_zero_zero, _zeros(y),
+                 mul(y, pow(safe_x, sub(y, _ones(y)))))
   return mul(g, jac)
 
 def _pow_jvp_rhs(g, ans, x, y):

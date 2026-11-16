@@ -652,10 +652,53 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
     with self.subTest("zero to the zero"):
       result = jax.grad(lax.pow)(0.0, 0.0)
-      # TODO(jakevdp) special-case zero in a way that doesn't break other cases
-      # See https://github.com/jax-ml/jax/pull/12041#issuecomment-1222766191
-      # self.assertEqual(result, 0.0)
-      self.assertAllClose(result, np.nan)
+      self.assertEqual(result, 0.0)
+
+  @jax.numpy_dtype_promotion('standard')
+  def testPowAtZeroHigherOrderGrad(self):
+    # https://github.com/jax-ml/jax/issues/20574
+    for exp, d2_expected in [
+        (jnp.array([0]), 0.0),
+        (jnp.array([0.0]), 0.0),
+        (jnp.array([1]), 0.0),
+        (jnp.array([1.0]), 0.0),
+        (jnp.array([2]), 2.0),
+        (jnp.array([2.0]), 2.0),
+    ]:
+      with self.subTest(exp=exp):
+        fn_arr = lambda x, e=exp: x ** e
+        self.assertAllClose(
+            jax.jacfwd(jax.jacfwd(fn_arr))(jnp.array([0.0])),
+            jnp.array([[[d2_expected]]]),
+        )
+        self.assertAllClose(
+            jax.jacrev(jax.jacrev(fn_arr))(jnp.array([0.0])),
+            jnp.array([[[d2_expected]]]),
+        )
+
+        fn_scalar = lambda x, e=exp: jnp.sum(x ** e)
+        self.assertAllClose(jax.grad(jax.grad(fn_scalar))(0.0), d2_expected)
+        self.assertAllClose(jax.grad(jax.grad(jax.grad(fn_scalar)))(0.0), 0.0)
+
+    # Shape broadcasting in _pow_jvp_lhs when x.shape != y.shape.
+    for y in [jnp.array(0), jnp.array(1), jnp.array(0.0), jnp.array(1.0)]:
+      with self.subTest(broadcast_y=y):
+        fn_bcast = lambda x, e=y: lax.pow(x, e)
+        self.assertAllClose(
+            jax.jacfwd(jax.jacfwd(fn_bcast))(jnp.zeros((2,))),
+            jnp.zeros((2, 2, 2)),
+        )
+        self.assertAllClose(
+            jax.jacrev(jax.jacrev(fn_bcast))(jnp.zeros((2,))),
+            jnp.zeros((2, 2, 2)),
+        )
+        self.assertAllClose(
+            jax.grad(lambda z, e=y: jnp.sum(
+                jax.grad(lambda x: jnp.sum(lax.pow(x, e)))(z)))(
+                jnp.zeros((2, 3))
+            ),
+            jnp.zeros((2, 3)),
+        )
 
   def testPowIntPowerAtZero(self):
     # https://github.com/jax-ml/jax/issues/14397
