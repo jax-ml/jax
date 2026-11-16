@@ -20,6 +20,7 @@ from collections.abc import Callable
 import functools
 import math
 from typing import NamedTuple
+import inspect
 
 import jax
 from jax._src import util as jax_util
@@ -162,10 +163,6 @@ class _HashableNDArray:
     self.array = array
 
   def __hash__(self):
-    if isinstance(self.array, Tracer):
-      # Content hashing on tracers leads to materialization errors
-      # Fall back to identity hashing.
-      return hash(id(self.array))
     return hash(self.array.tobytes())
 
   def __eq__(self, other: object) -> bool:
@@ -495,7 +492,15 @@ def _process_dynamic_mask(
       .swapaxes(-2, -3)
       .astype(jnp.int8)
   )
-
+  _check_smem_limit(leading_dim=head_count,
+                    q_blocks_count=q_blocks_per_shard,
+                    kv_blocks_count=kv_blocks_count,
+                    q_block_size=q_block_size,
+                    kv_block_size=kv_block_size,
+                    has_mask_next=True,
+                    is_dkv=is_dkv,
+                    max_mask_next=heads_per_shard * q_blocks_per_shard * kv_blocks_count,
+                    max_data_next=None)
   # The block mask is 2 for all blocks with all entries set to True and 1 for
   # blocks with a mix of True and False entries.
   is_full_mask = jnp.all(partial_mask_blocks, axis=(-1, -2))
@@ -676,47 +681,7 @@ def _process_mask(
   if mod != 0:
     raise ValueError(f'{head_shards=} should divide {head_count=}.')
 
-  def _is_numpy_mask_with_traced_arrays(mask):
-    """Check if mask is a MultiHeadMask of NumpyMasks with traced arrays."""
-    if not isinstance(mask, mask_lib.MultiHeadMask):
-      return False
-    return all(isinstance(m, mask_lib.NumpyMask)
-           and isinstance(m.array, Tracer)
-            for m in mask.masks)
 
-  if _is_numpy_mask_with_traced_arrays(mask) and q_seq_shards == 1:
-    # Sequence sharding (q_seq_shards > 1) is not supported for materialized
-    # NumpyMask in this path: full masks crash in _process_mask's per-shard
-    # np.concatenate, and causal/random numpy masks produce wrong output for
-    # shards. Unlike _ComputableMask, NumpyMask has no mask_function to
-    # evaluate per shard -- it's a materialized array -- so there's no
-    # shard-agnostic rule to re-slice correctly. See the q_seq_shards > 1 branch
-    # below, which rejects that case explicitly.
-    _check_smem_limit(leading_dim=head_count,
-                      q_blocks_count=q_blocks_per_shard,
-                      kv_blocks_count=kv_blocks_count,
-                      q_block_size=q_block_size,
-                      kv_block_size=kv_block_size,
-                      has_mask_next=True,
-                      is_dkv=is_dkv,
-                      max_mask_next=heads_per_shard * q_blocks_per_shard * kv_blocks_count,
-                      max_data_next=None)
-    jax_mask = jnp.stack([m.array for m in mask.masks if isinstance(m, mask_lib.NumpyMask)])
-    return _process_dynamic_mask(
-          jax_mask,
-          block_shape,
-          is_dkv,
-          downcast_smem_data=downcast_smem_data,
-          head_shards=head_shards,
-          q_seq_shards=q_seq_shards,
-          shrink_grid=shrink_grid,
-      )
-  elif _is_numpy_mask_with_traced_arrays(mask) and q_seq_shards > 1:
-    raise ValueError("Sequence sharding (q_seq_shards > 1) is not supported for "
-                      "materialized NumpyMask under JIT. Unlike _ComputableMask, NumpyMask has no "
-                      "mask_function to evaluate per shard, so it cannot be sharded "
-                      "correctly along the sequence dimension. Use a computable mask "
-                      "(e.g. LocalMask, CausalMask), disable JIT, or set q_seq_shards == 1.")
   # Uniquify the masks.
   # Create a collection of the unique head masks in the input multi-head mask.
   # This avoids processing the same mask multiple times and it enables
@@ -812,17 +777,7 @@ def _process_mask(
     ):
       q_sequence = unique_mask.q_sequence
       mask_function = unique_mask.mask_function
-      _check_smem_limit(
-            leading_dim=block_mask_shape[0],
-            q_blocks_count=q_blocks_per_shard,
-            kv_blocks_count=kv_blocks_count,
-            q_block_size=q_block_size,
-            kv_block_size=kv_block_size,
-            has_mask_next=False,
-            is_dkv=is_dkv,
-            max_mask_next=None,
-            max_data_next=None,
-                )
+
   # Identify the partial mask blocks and the value of the block mask for each
   # block.
   # The partial mask blocks are "global", meaning it is a collection of such
@@ -977,27 +932,11 @@ def _process_mask(
     if has_mask_next:
       mask_next = np.concatenate(mask_next_per_head_list, axis=head_axis)
 
-  shrink_width_conditional = (
+  # Shrink the width of the mask info when possible.
+  if (
       shrink_grid
       and block_mask.shape[0] == head_shards
       and len(unique_masks) == 1
-      )
-  if not shrink_width_conditional:
-    smem_mask_next = has_mask_next and mask_function is None
-    _check_smem_limit(
-        leading_dim=block_mask.shape[0],
-        q_blocks_count=block_mask.shape[1],
-        kv_blocks_count=kv_blocks_count,
-        q_block_size=q_block_size,
-        kv_block_size=kv_block_size,
-        has_mask_next=smem_mask_next,
-        is_dkv=is_dkv,
-        max_mask_next= np.max(mask_next) if smem_mask_next and mask_next is not None else None,
-        max_data_next= np.max(data_next) if data_next.size > 0 else None
-    )
-  # Shrink the width of the mask info when possible.
-  if (
-      shrink_width_conditional
   ):
     rows_per_q_shard = block_mask.shape[1] // q_seq_shards
     block_mask_shards = []
@@ -1046,18 +985,6 @@ def _process_mask(
       block_mask = block_mask_shards[0]
       data_next = data_next_shards[0]
       mask_next = mask_next_shards[0]
-      smem_mask_next = has_mask_next and mask_function is None
-      _check_smem_limit(
-          leading_dim=block_mask.shape[0],
-          q_blocks_count=q_blocks_count,
-          kv_blocks_count=kv_blocks_count,
-          q_block_size=q_block_size,
-          kv_block_size=kv_block_size,
-          has_mask_next=smem_mask_next,
-          is_dkv=is_dkv,
-          max_mask_next=np.max(mask_next) if smem_mask_next and mask_next is not None else None,
-          max_data_next=np.max(data_next) if data_next.size > 0 else None
-      )
     else:
       # Since shrinking happens independently for each shard along Q we might
       # end up with uneven mask info shards. Insert padding where necessary to
@@ -1109,18 +1036,7 @@ def _process_mask(
       block_mask = np.concatenate(padded_block_mask_shards, axis=1)
       data_next = np.concatenate(padded_data_next_shards, axis=1)
       mask_next = np.concatenate(padded_mask_next_shards, axis=1)
-      smem_mask_next = has_mask_next and mask_function is None
-      _check_smem_limit(
-          leading_dim=block_mask.shape[0],
-          q_blocks_count=block_mask.shape[1],
-          kv_blocks_count=block_mask.shape[2],
-          q_block_size=q_block_size,
-          kv_block_size=kv_block_size,
-          has_mask_next=smem_mask_next,
-          is_dkv=is_dkv,
-          max_mask_next=np.max(mask_next) if smem_mask_next and mask_next is not None else None,
-          max_data_next=np.max(data_next) if data_next.size > 0 else None
-      )
+
   if downcast_smem_data:
     data_next = _downcast_to_small_type(data_next)
     block_mask = _downcast_to_small_type(block_mask)
@@ -1308,9 +1224,74 @@ def _slice_mask_info(
 
   return block_mask, data_next, mask_next
 
+def _route_mask(*args, **kwargs):
+  """
+  Dispatches mask processing to the static or dynamic implementation.
 
-process_mask = functools.partial(_process_mask, is_dkv=False)
-process_mask_dkv = functools.partial(_process_mask, is_dkv=True)
+  Callers use the signature of _process_dynamic_mask. The target is chosen
+  from the type of mask:
+
+  Only the arguments that the chosen function accepts are forwarded.
+
+  Returns:
+    The apt mask processing function returns.
+
+  Raises:
+    ValueError: If the mask is a traced NumpyMask and q_seq_shards > 1.
+  """
+
+  given = dict(_DYNAMIC_SIG.bind(*args, **kwargs).arguments)
+  mask = given["mask"]
+
+  def _is_numpy_mask_with_traced_arrays(mask) -> bool:
+    """
+    Returns True if mask is a MultiHeadMask made only of traced NumpyMasks.
+
+    A NumpyMask wraps a materialized array. When that array is a JAX tracer (for
+    example, the mask is an argument of a jitted function), its values are not
+    known at trace time. The static mask-processing path can't handle it,
+    because that path inspects concrete values to build block-sparsity info.
+
+    Args:
+      mask: Any mask object accepted by the splash attention entry points.
+
+    Returns:
+      True if every per-head mask is a NumpyMask whose array is a Tracer.
+      False otherwise, including for an empty MultiHeadMask.
+    """
+    return (
+        isinstance(mask, mask_lib.MultiHeadMask)
+        and len(mask.masks) > 0
+        and all(
+            isinstance(m, mask_lib.NumpyMask) and isinstance(m.array, Tracer)
+            for m in mask.masks
+        )
+    )
+
+  if _is_numpy_mask_with_traced_arrays(mask):
+    if given.get("q_seq_shards",1) > 1:
+      raise ValueError(
+          "Sequence sharding (q_seq_shards > 1) is not supported for "
+          "materialized NumpyMask under JIT. Unlike _ComputableMask, "
+          "NumpyMask has no mask_function to evaluate per shard, so it "
+          "cannot be sharded correctly along the sequence dimension. Use a "
+          "computable mask (e.g. LocalMask, CausalMask), disable JIT, or "
+          "set q_seq_shards == 1."
+      )
+    target, target_sig = _process_dynamic_mask, _DYNAMIC_SIG
+    given["mask"] = jnp.stack([m.array for m in mask.masks if isinstance(m, mask_lib.NumpyMask)])
+  else:
+    target, target_sig = _process_mask, _STATIC_SIG
+
+  accepted = target_sig.parameters
+  call = target_sig.bind(**{k: v for k, v in given.items() if k in accepted})
+  return target(*call.args, **call.kwargs)
+
+_STATIC_SIG = inspect.signature(_process_mask)
+_DYNAMIC_SIG = inspect.signature(_process_dynamic_mask)
+
+process_mask = functools.partial(_route_mask, is_dkv=False)
+process_mask_dkv = functools.partial(_route_mask, is_dkv=True)
 
 process_dynamic_mask = functools.partial(_process_dynamic_mask, is_dkv=False)
 process_dynamic_mask_dkv = functools.partial(_process_dynamic_mask, is_dkv=True)

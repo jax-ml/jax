@@ -2471,8 +2471,54 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
                     in_specs=(P(None,'heads',None,None),)*3 + (P(),),
                     out_specs=P(None,'heads',None,None), check_vma=False)(q, k, v, dense_mask)
 
-
     self.assertArraysEqual(static_out, dynamic_out)
+
+  @parameterized.named_parameters(
+    ("traced", True),
+    ("concrete", False),
+    )
+  def test_numpy_mask_info_is_traced_only_when_mask_is_traced(self, traced):
+    n, seq_len = 8, 256
+    mask = jnp.tril(jnp.ones((seq_len, seq_len), dtype=jnp.bool_))
+    captured = {}
+
+    def build(mask_array):
+      mhm = mask_lib.MultiHeadMask(
+          masks=(mask_lib.NumpyMask(array=mask_array),) * n)
+      kernel = splash_attention_kernel.make_splash_mha(
+          mask=mhm, head_shards=1, q_seq_shards=1)
+      captured["leaves"] = jax.tree.leaves(kernel.fwd_mask_info)
+
+    if traced:
+      jax.jit(build)(mask)
+    else:
+      build(np.asarray(mask))
+
+    has_tracer = any(isinstance(x, jax.core.Tracer) for x in captured["leaves"])
+    self.assertEqual(has_tracer, traced)
+
+  @parameterized.named_parameters(
+    ("traced_raises", True),
+    ("concrete_ok", False),
+    )
+  def test_numpy_mask_q_seq_shards(self, traced):
+    n, seq_len, head_dim = 8, 256, 128
+    q = k = v = jnp.ones((n, seq_len, head_dim))
+    mask = jnp.tril(jnp.ones((seq_len, seq_len), dtype=jnp.bool_))
+
+    def run(q, k, v, mask_array):
+      mhm = mask_lib.MultiHeadMask(
+          masks=(mask_lib.NumpyMask(array=mask_array),) * n)
+      return splash_attention_kernel.make_splash_mha(
+          mask=mhm, head_shards=1, q_seq_shards=2)(q, k, v)
+
+    if traced:
+      with self.assertRaisesRegex(ValueError, "q_seq_shards"):
+        jax.jit(run)(q, k, v, mask)
+    else:
+      run(q, k, v, np.asarray(mask))
+
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
