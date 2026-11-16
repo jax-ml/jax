@@ -1523,9 +1523,14 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(
       pack_format=[*plsc.PackFormat],
-      dtype=[jnp.float32, jnp.int32],
+      dtypes=[
+          (jnp.float32, None),
+          (jnp.int32, None),
+          (jnp.uint32, jnp.uint16),
+      ],
   )
-  def test_pack_unpack(self, pack_format, dtype):
+  def test_pack_unpack(self, pack_format, dtypes):
+    dtype, packed_dtype = dtypes
     shape = (self.num_lanes,)
 
     @self.vector_subcore_kernel(
@@ -1533,12 +1538,24 @@ class VectorSubcoreTest(PallasSCTest):
         compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(a_ref, b_ref, oa_ref, ob_ref):
-      ab = plsc.pack(a_ref[...], b_ref[...], format=pack_format)
-      oa_ref[...], ob_ref[...] = plsc.unpack(ab, format=pack_format)
+      ab = plsc.pack(
+          a_ref[...],
+          b_ref[...],
+          format=pack_format,
+          preferred_element_type=packed_dtype,
+      )
+      oa_ref[...], ob_ref[...] = plsc.unpack(
+          ab,
+          format=pack_format,
+          preferred_element_type=dtype if packed_dtype is not None else None,
+      )
 
     a = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     b = -a
     out_a, out_b = kernel(a, b)
+    if packed_dtype is not None:
+      a = a.astype(packed_dtype).astype(dtype)
+      b = b.astype(packed_dtype).astype(dtype)
     np.testing.assert_array_equal(out_a, a)
     np.testing.assert_array_equal(out_b, b)
 
