@@ -56,9 +56,16 @@ for wheel in $WHEELS; do
     # For oneapi wheels check for manylinux_2_31 compliance also"
     elif [[ "${wheel##*/}" =~ oneapi ]] && $(echo "$OUTPUT" | grep -q "manylinux_2_31") ; then
         printf "\n$wheel_name is manylinux_2_31 compliant.\n"
+    # For rocm wheels check for manylinux_2_35 (or 2_34/2_31) compliance also
+    elif [[ "${wheel##*/}" =~ rocm ]] && $(echo "$OUTPUT" | grep -q "manylinux_2_35") ; then
+        printf "\n$wheel_name is manylinux_2_35 compliant.\n"
+    elif [[ "${wheel##*/}" =~ rocm ]] && $(echo "$OUTPUT" | grep -q "manylinux_2_34") ; then
+        printf "\n$wheel_name is manylinux_2_34 compliant.\n"
+    elif [[ "${wheel##*/}" =~ rocm ]] && $(echo "$OUTPUT" | grep -q "manylinux_2_31") ; then
+        printf "\n$wheel_name is manylinux_2_31 compliant.\n"
     else
         echo "$OUTPUT_FULL"
-        printf "\n$wheel_name is NOT  manylinux 2_31(oneapi), manylinux_2_28, manylinux_2_27, manylinux_2_26, manylinux_2_24, or manylinux2014 compliant.\n"
+        printf "\n$wheel_name is NOT manylinux_2_35(rocm), manylinux_2_31(oneapi), manylinux_2_28, manylinux_2_27, manylinux_2_26, manylinux_2_24, or manylinux2014 compliant.\n"
         exit 1
     fi
 done

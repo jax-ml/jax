@@ -34,8 +34,10 @@ common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_cuda=False
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_sycl=False
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_hermetic_cc=True
 common:rocm_clang_hermetic --strategy=CppLink=local
-common:rocm_clang_hermetic --cxxopt=-std=c++17
-common:rocm_clang_hermetic --host_cxxopt=-std=c++17
+common:rocm_clang_hermetic --cxxopt=-std=c++20
+common:rocm_clang_hermetic --host_cxxopt=-std=c++20
+# C++20 libstdc++ (e.g. std::bit_cast in Triton) needs GCC 12 (glibc 2.35 sysroot).
+common:rocm_clang_hermetic --repo_env=SYSROOT_DIST=linux_glibc_2_35
 
 # ROCm with hermetic clang but local (system) sysroot
 # Use this when ROCm libraries are built against system libstdc++ to avoid ABI mismatches

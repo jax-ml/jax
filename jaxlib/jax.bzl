@@ -76,7 +76,8 @@ loops_visibility = []
 PLATFORM_TAGS_DICT = {
     ("Linux", "x86_64", "none"): ("manylinux_2_27", "x86_64"),
     ("Linux", "x86_64", "cuda"): ("manylinux_2_27", "x86_64"),
-    ("Linux", "x86_64", "rocm"): ("manylinux_2_27", "x86_64"),
+    # ROCm needs GCC 12 libstdc++ from the glibc 2.35 sysroot (GLIBCXX_3.4.30).
+    ("Linux", "x86_64", "rocm"): ("manylinux_2_35", "x86_64"),
     # oneAPI uses libstdc++ from the glibc 2.31 sysroot.
     ("Linux", "x86_64", "oneapi"): ("manylinux_2_31", "x86_64"),
     ("Linux", "aarch64", "none"): ("manylinux_2_27", "aarch64"),
