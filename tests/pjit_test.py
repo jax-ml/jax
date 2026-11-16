@@ -3027,6 +3027,37 @@ class ArrayPjitTest(jtu.JaxTestCase):
         out2.sharding._to_xla_hlo_sharding(out2.ndim))
     self.assertListEqual(ns2, [2, 2, 1, 1])
 
+  @parameterized.parameters('root', 'tuple', 'dict')
+  def test_jit_nondivisible_output_error_path(self, output_kind):
+    mesh = jtu.create_mesh((2,), ('x',))
+    s = NamedSharding(mesh, P('x'))
+    def f(x):
+      if output_kind == 'tuple':
+        return (x,)
+      if output_kind == 'dict':
+        return {'value': x}
+      return x
+
+    with self.assertRaises(IndivisibleError) as error:
+      jax.jit(f, out_shardings=s)(jnp.arange(5))
+    message = str(error.exception)
+    if output_kind == 'root':
+      self.assertNotIn('pytree key path', message)
+      self.assertIn('One of pjit outputs was given the sharding', message)
+    else:
+      path = 'result[0]' if output_kind == 'tuple' else "result['value']"
+      self.assertIn(f'with pytree key path {path}', message)
+
+  def test_jit_nondivisible_input_named_result_error_path(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    s = NamedSharding(mesh, P('x'))
+    def f(result):
+      return result
+
+    with self.assertRaises(IndivisibleError) as error:
+      jax.jit(f, in_shardings=s)(jnp.arange(5))
+    self.assertIn('with pytree key path result', str(error.exception))
+
   def test_device_put_sharding_nondivisible_sharding_error(self):
     mesh = jtu.create_mesh((2,), ('x',))
     s = NamedSharding(mesh, P('x'))
