@@ -24,7 +24,7 @@ from jax._src.numpy.util import promote_dtypes_inexact
 from jax._src.typing import Array, ArrayLike
 
 
-def logpdf(x: ArrayLike, mean: ArrayLike, cov: ArrayLike, allow_singular: None = None) -> ArrayLike:
+def logpdf(x: ArrayLike, mean: ArrayLike, cov: ArrayLike, allow_singular: None = None) -> Array:
   r"""Multivariate normal log probability distribution function.
 
   JAX implementation of :obj:`scipy.stats.multivariate_normal` ``logpdf``.
