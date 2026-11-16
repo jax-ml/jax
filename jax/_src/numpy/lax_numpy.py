@@ -2693,21 +2693,39 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
   xp_left, xp_right = xp_arr[i - 1], xp_arr[i]
   df = fp_right - fp_left
   dx = xp_right - xp_left
-  delta = x_arr - xp_left
+  x_clamped = x_arr
+  if period is None:
+    if not extrapolate_left:
+      x_clamped = where(x_clamped < xp_arr[0], xp_arr[0], x_clamped)
+    if not extrapolate_right:
+      x_clamped = where(x_clamped > xp_arr[-1], xp_arr[-1], x_clamped)
 
-  epsilon = np.spacing(np.finfo(xp_arr.dtype).eps)
-  dx0 = lax.abs(dx) <= epsilon  # Prevent NaN gradients when `dx` is small.
+  dx0 = dx == 0  # Prevent NaN gradients when `dx` is zero.
   dx_safe = where(dx0, 1, dx)
-  f = where(dx0, fp_left, fp_left + (delta / dx_safe) * df)
+  df_safe = where(dx0, 0, df)
+  subnormal_dx = lax.abs(dx_safe) < dtypes.finfo(xp_arr.dtype).tiny
+
+  def _interp_from(x_ref: Array, fp_ref: Array) -> Array:
+    delta_ref = x_clamped - x_ref
+    dx_denom = where(subnormal_dx & (delta_ref == 0),
+                     lax.stop_gradient(dx_safe), dx_safe)
+    t = delta_ref / dx_denom
+    t = where(subnormal_dx & (df_safe == 0), lax.stop_gradient(t), t)
+    return fp_ref + t * df_safe
+
+  f = where(dx0,
+            where(ufuncs.isnan(x_arr), np.nan,
+                  where(x_arr >= xp_right, fp_right, fp_left)),
+            _interp_from(xp_left, fp_left))
   # `f` is NaN at and around an infinite knot (inf - inf, 0 * inf). Like
   # numpy.interp, return the knot value at an exact knot; elsewhere re-evaluate
   # from the other end of the interval, and fall back to the shared value when
   # both ends are equal. Only entries that are already NaN are replaced.
-  other = fp_right + ((x_arr - xp_right) / dx_safe) * df
+  other = _interp_from(xp_right, fp_right)
   other = where(ufuncs.isnan(other) & (fp_left == fp_right), fp_left, other)
-  f_alt = where(x_arr == xp_left, fp_left,
-                where(x_arr == xp_right, fp_right, other))
-  f = where(ufuncs.isnan(f) & ~ufuncs.isnan(x_arr), f_alt, f)
+  f_alt = where(x_arr == xp_right, fp_right,
+                where(x_arr == xp_left, fp_left, other))
+  f = where(ufuncs.isnan(f) & ~ufuncs.isnan(x_arr) & ~dx0, f_alt, f)
 
   if not extrapolate_left:
     assert not isinstance(left, str)
