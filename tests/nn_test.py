@@ -314,7 +314,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
     if impl == 'cudnn' and jtu.is_cuda_version_at_least(13, 0):
       raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
-    B, S, T, N, H, G = 2, 128, 128, 4, 32, group_num
+    S = T = 128 if impl == 'cudnn' else 32
+    B, N, H, G = 2, 4, 32, group_num
     keys = random.split(random.PRNGKey(0), 5)
     Q = random.normal(keys[0], (B, T, N, H), dtype)
     K = random.normal(keys[1], (B, S, N // G, H), dtype)
@@ -385,7 +386,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
         raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
     dtype = jnp.bfloat16
-    B, S, T, N, H = 2, 128, 128, 4, 32
+    S = T = 128 if use_cudnn else 32
+    B, N, H = 2, 4, 32
     keys = random.split(random.PRNGKey(0), 4)
     Q = random.normal(keys[0], (B, T, N, H), dtype)
     K = random.normal(keys[1], (B, S, N, H), dtype)
@@ -470,7 +472,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
         raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
     dtype = jnp.bfloat16
-    B, S, N, H = batch_size, 128, 4, 32
+    S = 128 if use_cudnn else 32
+    B, N, H = batch_size, 4, 32
     keys = random.split(random.PRNGKey(0), 2)
     x = random.normal(keys[0], (B, S, N, H), dtype)
     bias = random.normal(keys[1], (B, N, S, S), dtype=dtype)
@@ -1207,18 +1210,21 @@ INITIALIZER_RECS = [
 
 @jtu.with_config(jax_legacy_prng_key="allow")
 class NNInitializersTest(jtu.JaxTestCase):
-  @parameterized.parameters(itertools.chain.from_iterable(
-    jtu.sample_product_testcases(
-      [dict(initializer=rec.initializer())],
-      shape=rec.shapes,
-      dtype=rec.dtypes
-    )
-    for rec in INITIALIZER_RECS
-  ))
-  def testInitializer(self, initializer, shape, dtype):
+  @jtu.sample_product(
+      [
+          dict(initializer_provider=rec.initializer, shape=shape, dtype=dtype)
+          for rec in INITIALIZER_RECS
+          for shape in rec.shapes
+          for dtype in rec.dtypes
+      ]
+  )
+  def testInitializer(self, initializer_provider, shape, dtype):
     rng = random.PRNGKey(0)
-    val = initializer(rng, shape, dtype)
+    val = initializer_provider()(rng, shape, dtype)
+    self.assertEqual(shape, jnp.shape(val))
+    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), val.dtype)
 
+    val = initializer_provider(dtype=dtype)(rng, shape)
     self.assertEqual(shape, jnp.shape(val))
     self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), val.dtype)
 
@@ -1248,22 +1254,6 @@ class NNInitializersTest(jtu.JaxTestCase):
     if cols <= rows:
       m = val.T @ val
       self.assertAllClose(m, jnp.eye(cols, dtype=dtype), atol=atol, rtol=rtol)
-
-  @parameterized.parameters(itertools.chain.from_iterable(
-    jtu.sample_product_testcases(
-      [dict(initializer_provider=rec.initializer)],
-      shape=rec.shapes,
-      dtype=rec.dtypes
-    )
-    for rec in INITIALIZER_RECS
-  ))
-  def testInitializerProvider(self, initializer_provider, shape, dtype):
-    rng = random.PRNGKey(0)
-    initializer = initializer_provider(dtype=dtype)
-    val = initializer(rng, shape)
-
-    self.assertEqual(shape, jnp.shape(val))
-    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), val.dtype)
 
   def testVarianceScalingMultiAxis(self):
     rng = random.PRNGKey(0)
