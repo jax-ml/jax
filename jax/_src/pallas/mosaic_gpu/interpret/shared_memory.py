@@ -557,6 +557,7 @@ class GPUSharedMemory(
         clocks=clocks,
         barrier=barrier,
         clean_up_barrier=clean_up_barrier,
+        allocation_barrier=threading.Barrier(num_devices),
         buffer_bounds=buffer_bounds,
         logging_mode=logging_mode,
     )
