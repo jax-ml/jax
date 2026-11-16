@@ -1716,9 +1716,13 @@ def _tcgen05_mma_constraint_system(
       # 128-lane `scales_128_lane_layout()`. Both lower correctly, so we let the
       # rest of the system (e.g. a `tmem_layout_cast`) decide. On other
       # architectures, only `scales_layout()` is supported.
+      # The order of the candidates matters: `OneOf` candidates are tried in
+      # order. `scales_layout()` replicates scale factors across all four
+      # 32-lane sub-partitions (consuming 4x more TMEM columns than
+      # `scales_128_lane_layout()`), so we prefer the 128-lane layout.
       candidate_layouts = (
-          cs.TMEMLayout(tcgen05.scales_layout()),
           cs.TMEMLayout(tcgen05.scales_128_lane_layout()),
+          cs.TMEMLayout(tcgen05.scales_layout()),
       )
       valid_layouts = tuple(
           l for l in candidate_layouts if cs.is_valid_assignment(scale_var, l)

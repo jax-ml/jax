@@ -894,7 +894,13 @@ class IsSupportedBroadcast(_BaseConstraint):
 
 @dataclasses.dataclass(frozen=True)
 class OneOf(_BaseConstraint):
-  """States that `expr` evaluates to one of the given constants."""
+  """States that `expr` evaluates to one of the given constants.
+
+  The order of `allowed` is significant: earlier constants are preferred, as
+  layout inference tries them in order when conjuring assignments. Merging two
+  `OneOf` constraints on the same expression that disagree on the relative order
+  of their common constants raises an error.
+  """
 
   expr: Expression
   allowed: tuple[Constant, ...]
@@ -1337,9 +1343,18 @@ def _merge_one_of_constraints(o0: OneOf, o1: OneOf) -> OneOf | Unsatisfiable:
     raise ValueError("OneOf constraints must apply to the same expression.")
   allowed_set = set(o1.allowed)
   # Preserve order from o0 while intersecting with o1.
-  merged_allowed = tuple(c for c in o0.allowed if c in allowed_set)
+  merged_allowed = tuple(c for c in dict.fromkeys(o0.allowed) if c in allowed_set)
   if not merged_allowed:
     return Unsatisfiable()
+  merged_set = set(merged_allowed)
+  o1_merged_order = tuple(c for c in dict.fromkeys(o1.allowed) if c in merged_set)
+  # `merged_allowed` is basically "o0_merged_order", we check if they agree on
+  # the order.
+  if merged_allowed != o1_merged_order:
+    raise ValueError(
+        f"Cannot merge {o0} and {o1}: they disagree on the order of their"
+        " common allowed constants."
+    )
   return OneOf(o0.expr, merged_allowed)
 
 

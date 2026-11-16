@@ -819,6 +819,21 @@ class ConstraintSystemTest(parameterized.TestCase):
         cs.saturate_one_of_constraints_for_equal_vars(s), cs.Unsatisfiable
     )
 
+  def test_saturate_one_of_raises_on_conflicting_order_for_equal_vars(self):
+    v0, v1 = cs.Variable(0), cs.Variable(1)
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    layout3 = RL(mgpu.WGMMA_COL_LAYOUT)
+    s = cs.ConstraintSystem(
+        constraints=[
+            cs.Equals(v0, v1),
+            cs.OneOf(v0, (layout1, layout2, layout3)),
+            cs.OneOf(v1, (layout3, layout1)),
+        ],
+    )
+    with self.assertRaisesRegex(ValueError, "disagree on the order"):
+      cs.saturate_one_of_constraints_for_equal_vars(s)
+
   @parameterized.parameters(
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, 8),
       (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, 8),
