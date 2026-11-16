@@ -5211,6 +5211,43 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     q1 = np.take_along_axis( h, g, axis=-1)
     np.testing.assert_equal(q0, q1)
 
+  @parameterized.parameters(np.uint8, np.uint16)
+  def testTakeAlongAxisOneHotWithNarrowUnsignedIndices(self, dtype):
+    max_index = np.iinfo(dtype).max
+    x = jnp.arange(max_index + 2, dtype=jnp.float32)
+    idx = jnp.array([0, max_index], dtype=dtype)
+    self.assertArraysEqual(
+        jnp.take_along_axis(x, idx, axis=0, mode='one_hot'),
+        np.array([0, max_index], dtype=np.float32))
+
+  @parameterized.product(
+      use_x64=[False, True],
+      operation=['take', 'take_along_axis_fill', 'take_along_axis_clip',
+                 'put_along_axis'],
+  )
+  def testUnsignedIndexOutOfBounds(self, use_x64, operation):
+    # Regression test for https://github.com/jax-ml/jax/issues/42657
+    with jax.enable_x64(use_x64):
+      x = jnp.arange(10, dtype=jnp.float32)
+      idx = jnp.array([2**31, 2**32 - 1], dtype=jnp.uint32)
+      expected = np.array([9, 9], dtype=np.float32)
+      if operation == 'take':
+        fun = lambda x, i: jnp.take(x, i, mode='clip')
+        self.assertArraysEqual(
+            np.take(np.asarray(x), np.asarray(idx), mode='clip'), expected)
+      elif operation == 'take_along_axis_fill':
+        fun = lambda x, i: jnp.take_along_axis(x, i, axis=0)
+        expected = np.full(2, np.nan, dtype=np.float32)
+      elif operation == 'take_along_axis_clip':
+        fun = lambda x, i: jnp.take_along_axis(x, i, axis=0, mode='clip')
+      else:
+        fun = lambda x, i: jnp.put_along_axis(
+            x, i, -1, axis=0, mode='clip', inplace=False)
+        expected = np.arange(10, dtype=np.float32)
+        expected[-1] = -1
+      self.assertArraysEqual(fun(x, idx), expected)
+      self.assertArraysEqual(jax.jit(fun)(x, idx), expected)
+
   def testTakeAlongAxisInputTensorHasSingletonDimension(self):
     h = jtu.rand_default(self.rng())((2, 1, 5, 7, 13), np.float32)
     g = jtu.rand_int(self.rng(), 0, 7)((2, 3, 5, 11, 1), np.uint8)

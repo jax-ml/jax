@@ -503,4 +503,9 @@ def index_dtype_for_axis_size(
   # whenever wrapping negative indices. This could be changed in the future.
   if not wrap_negative_indices:
     return indices_dtype
-  return int_dtype_for_dim(axis_size, signed=True)
+  dtype = int_dtype_for_dim(axis_size, signed=True)
+  # Unsigned indices need no wrapping, and must not overflow the signed dtype.
+  if (dtypes.issubdtype(indices_dtype, np.unsignedinteger)
+      and dtypes.iinfo(indices_dtype).max > dtypes.iinfo(dtype).max):
+    return indices_dtype
+  return dtype

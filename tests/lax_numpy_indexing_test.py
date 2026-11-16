@@ -842,7 +842,10 @@ class IndexingTest(jtu.JaxTestCase):
     primitives = [eqn.primitive for eqn in jaxpr.eqns]
     if np.issubdtype(dtype, np.unsignedinteger):
       # Unsigned integers should not require lt, add, and select.
-      self.assertEqual(primitives, [lax.convert_element_type_p, lax.broadcast_in_dim_p, lax.gather_p])
+      expected = [lax.convert_element_type_p, lax.broadcast_in_dim_p, lax.gather_p]
+      if np.iinfo(dtype).max > np.iinfo(np.int32).max:
+        expected.insert(0, lax.min_p)
+      self.assertEqual(primitives, expected)
     else:
       # May or may not contain convert_element_type.
       self.assertIn(len(primitives), [5, 6])
@@ -2000,6 +2003,53 @@ class IndexedUpdateTest(jtu.JaxTestCase):
 
     c = a.at[0].set(val)
     self.assertEqual(int(c[0]), val)
+
+  @parameterized.product(
+      use_x64=[False, True],
+      scalar=[False, True],
+      operation=['getitem', 'get_clip', 'get_fill', 'set_clip', 'set_drop'],
+  )
+  def testUnsignedIndexOutOfBounds(self, use_x64, scalar, operation):
+    # Regression test for https://github.com/jax-ml/jax/issues/42657
+    with jax.enable_x64(use_x64):
+      x = jnp.arange(10, dtype=jnp.float32)
+      idx = jnp.array(2**32 - 1 if scalar else [2**31, 2**32 - 1],
+                      dtype=jnp.uint32)
+      if operation == 'getitem':
+        fun = lambda x, i: x[i]
+        expected = np.full(idx.shape, 9, dtype=np.float32)
+      elif operation.startswith('get_'):
+        mode = operation.removeprefix('get_')
+        fun = lambda x, i: x.at[i].get(mode=mode)
+        expected = np.full(idx.shape, 9 if mode == 'clip' else np.nan,
+                           dtype=np.float32)
+      else:
+        mode = operation.removeprefix('set_')
+        fun = lambda x, i: x.at[i].set(-1, mode=mode)
+        expected = np.arange(10, dtype=np.float32)
+        if mode == 'clip':
+          expected[-1] = -1
+      self.assertArraysEqual(fun(x, idx), expected)
+      self.assertArraysEqual(jax.jit(fun)(x, idx), expected)
+
+  @parameterized.product(use_x64=[False, True], scalar=[False, True])
+  def testMixedSignedUnsignedIndexOutOfBounds(self, use_x64, scalar):
+    with jax.enable_x64(use_x64):
+      x = jnp.arange(30, dtype=jnp.float32).reshape(3, 10)
+      rows = jnp.array(-1 if scalar else [-4, -1], dtype=jnp.int32)
+      cols = jnp.array(2**32 - 1 if scalar else [2**31, 2**32 - 1],
+                       dtype=jnp.uint32)
+      expected = np.array(29 if scalar else [9, 29], dtype=np.float32)
+      fun = lambda x, i, j: x[i, j]
+      self.assertArraysEqual(fun(x, rows, cols), expected)
+      self.assertArraysEqual(jax.jit(fun)(x, rows, cols), expected)
+      self.assertArraysEqual(
+          x.at[rows, cols].get(mode='fill'),
+          np.full(cols.shape, np.nan, dtype=np.float32))
+      expected_set = np.arange(30, dtype=np.float32).reshape(3, 10)
+      expected_set[2 if scalar else [0, 2], -1] = -1
+      self.assertArraysEqual(
+          x.at[rows, cols].set(-1, mode='clip'), expected_set)
 
   def testGradOfVmapOfScatter(self):
     # Regression test for https://github.com/jax-ml/jax/issues/25878

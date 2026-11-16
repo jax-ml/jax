@@ -588,7 +588,7 @@ class NDIndexer:
       # We must be careful with dtypes because dynamic_slice requires all
       # start indices to have matching types.
       dt = lax_utils.int_dtype_for_shape(self.shape, signed=True)
-      start_indices = [lax.convert_element_type(i, dt) for i in start_indices]
+      start_indices = [_convert_index_dtype(i, dt) for i in start_indices]
 
     return _DynamicSliceIndexer(
       start_indices=start_indices,
@@ -796,6 +796,18 @@ def _take(a, indices, axis: int | None = None, out=None, mode=None,
                         mode=gather_mode, unique_indices=unique_indices,
                         indices_are_sorted=indices_are_sorted,
                         fill_value=fill_value, out_sharding=sharding)
+
+
+def _convert_index_dtype(index, dtype):
+  """Convert indices without turning large unsigned values into negative ones."""
+  index_dtype = dtypes.dtype(index)
+  dtype = dtypes.canonicalize_dtype(dtype)
+  if (dtypes.issubdtype(index_dtype, np.unsignedinteger)
+      and dtypes.iinfo(index_dtype).max > dtypes.iinfo(dtype).max):
+    # The target dtype can represent the axis size, so saturated indices remain
+    # out of bounds and retain the correct clip/fill/drop behavior.
+    index = lax.min(index, lax._const(index, dtypes.iinfo(dtype).max))
+  return lax.convert_element_type(index, dtype)
 
 
 def _normalize_index(index, axis_size):
@@ -1486,7 +1498,7 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
 
       start_dim = len(gather_indices_shape)
       gather_indices.extend(
-          (lax.convert_element_type(a, index_dtype), start_dim)
+          (_convert_index_dtype(a, index_dtype), start_dim)
           for a in advanced_index_arrs
       )
       gather_indices_shape += shape
@@ -1510,7 +1522,7 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
       if core.definitely_equal(indexer.shape[x_axis], 0):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
-      i_converted = lax.convert_element_type(index.index, index_dtype)  # pyrefly: ignore[bad-argument-type]
+      i_converted = _convert_index_dtype(index.index, index_dtype)
       gather_indices.append((i_converted, len(gather_indices_shape)))
       collapsed_slice_dims.append(x_axis)
       gather_slice_shape.append(1)
@@ -1538,7 +1550,7 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
       if core.definitely_equal(step, 1):
         # Optimization: avoid generating trivial gather.
         if not core.definitely_equal(slice_size, indexer.shape[x_axis]):
-          gather_indices.append((lax.convert_element_type(start, index_dtype),
+          gather_indices.append((_convert_index_dtype(start, index_dtype),
                                 len(gather_indices_shape)))
           start_index_map.append(x_axis)
         gather_slice_shape.append(slice_size)
