@@ -1207,26 +1207,38 @@ class PallasCallRemoteDMATest(TestCase):
     if jax.process_index() > 2:
       return  # Only 2 processes needed.
 
-    def kernel(y_ref, sem, sem2):
-      other_dev_id = {'x': 1 - lax.axis_index('x')}
-      plgpu.semaphore_signal_parallel(
-          plgpu.SemaphoreSignal(sem, device_id=other_dev_id),
-          plgpu.SemaphoreSignal(sem2, device_id=other_dev_id),
-      )
-      pl.semaphore_wait(sem)
-      pl.semaphore_wait(sem2)
-      y_ref[...] = jnp.ones_like(y_ref)
+    def kernel(y_ref, x_ref, sem, sem2):
+      b = lax.axis_index('b')
+      dev_id = lax.axis_index('x')
+      other_dev_id = {'x': 1 - dev_id}
+
+      @pl.when(dev_id == 1)
+      def _():
+        plgpu.remote_ref(x_ref, other_dev_id)[b] = jnp.ones_like(x_ref[b])
+        plgpu.semaphore_signal_parallel(
+            plgpu.SemaphoreSignal(sem, device_id=other_dev_id),
+            plgpu.SemaphoreSignal(sem2, device_id=other_dev_id),
+        )
+        y_ref[b] = jnp.ones_like(y_ref[b])
+
+      @pl.when(dev_id == 0)
+      def _():
+        pl.semaphore_wait(sem)
+        y_ref[b] = x_ref[b]
+        pl.semaphore_wait(sem2)
 
     kernel_call = self.kernel(
         kernel,
-        out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        out_type=[jax.ShapeDtypeStruct((128, 64, 128), jnp.float32)] * 2,
+        grid=(128,),
+        grid_names=('b',),
         scratch_types=[plgpu.SemaphoreType.REGULAR] * 2,
         compiler_params=plgpu.CompilerParams(),
     )
 
     devices = jax.devices()[:2]
     mesh = jax.sharding.Mesh(devices, ['x'])
-    y = jax.jit(
+    y, _ = jax.jit(
         jax.shard_map(
             kernel_call, mesh=mesh, in_specs=(), out_specs=P(None), check_vma=False,
         )

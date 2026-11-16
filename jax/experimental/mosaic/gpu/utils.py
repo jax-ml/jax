@@ -1857,8 +1857,8 @@ class SemaphoreRef:
       raise ValueError(f"Unsupported scope: {scope}")
 
 
-def fence_release_sys():
-  inline_ptx("fence.release.sys;")
+def fence_release_sys(predicate: ir.Value | None = None):
+  inline_ptx("fence.release.sys;", predicate=predicate)
 
 
 class Partition:

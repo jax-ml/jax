@@ -4990,6 +4990,17 @@ def _semaphore_signal_lowering_rule(
       raise NotImplementedError(f"Unhandled transforms for semaphore_signal_parallel: {sem_transforms}")
     transformed_sems.append(sem)
   del sems, transforms  # Use transformed_sems instead.
+  with lowering._wrap_in_custom_primitive_if_wg(ctx, []):
+    # TODO(apaszke): Narrow the scope from .sys to .gpu when the semaphore is local.
+    # We only signal the semaphore from a single lane, which does not guarantee
+    # anything about the state of the other three warps in the warpgroup (they
+    # might still be e.g. reading memory that someone will overwrite once they
+    # receive a signal).
+    if ctx.module_ctx.auto_barriers:
+      mgpu.utils.warpgroup_barrier()
+    mgpu_utils.fence_release_sys(
+        predicate=ctx.module_ctx.single_wg_lane_predicate
+    )
   for sem, value, device_id, device_id_aval in zip(
       transformed_sems, values, device_ids, device_id_avals, strict=True
   ):
@@ -5002,17 +5013,9 @@ def _semaphore_signal_lowering_rule(
     val = lowering._ir_constant(value, i32)
     with lowering._wrap_in_custom_primitive_if_wg(ctx, [sem, val]) as [sem, val]:
       sem_ptr = mgpu.utils.memref_ptr(sem)
-      # TODO(apaszke): Narrow the scope from .sys to .gpu when the semaphore is local.
-      # We only signal the semaphore from a single lane, which does not guarantee
-      # anything about the state of the other three warps in the warpgroup (they
-      # might still be e.g. reading memory that someone will overwrite once they
-      # receive a signal).
-      if ctx.module_ctx.auto_barriers:
-        mgpu.utils.warpgroup_barrier()
       mgpu_utils.SemaphoreRef(sem_ptr).signal(
           val, predicate=ctx.module_ctx.single_wg_lane_predicate, relaxed=True,
       )
-      mgpu_utils.fence_release_sys()
   return ()
 
 try_cluster_cancel_p = jax_core.Primitive('try_cluster_cancel')
