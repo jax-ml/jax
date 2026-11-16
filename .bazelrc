@@ -23,6 +23,7 @@ common --enable_platform_specific_config
 
 common --experimental_cc_shared_library
 
+common --toolchain_resolution_debug=.*
 common --incompatible_enable_cc_toolchain_resolution
 common --incompatible_default_to_explicit_init_py
 common --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
@@ -100,8 +101,6 @@ common:macos --host_crosstool_top=@local_config_apple_cc//:toolchain
 # have layering check violations.
 common:macos --repo_env=APPLE_SUPPORT_LAYERING_CHECK_BETA=0
 
-common:windows --config=clang_local
-
 # Windows has a relatively short command line limit, which JAX has begun to hit.
 # See https://docs.bazel.build/versions/main/windows.html
 common:windows --features=compiler_param_file
@@ -119,8 +118,8 @@ common:windows --host_copt=-DNOGDI
 # https://devblogs.microsoft.com/cppblog/announcing-full-support-for-a-c-c-conformant-preprocessor-in-msvc/
 # otherwise, there will be some compiling error due to preprocessing.
 common:windows --copt=/Zc:preprocessor
-common:windows --cxxopt=/std:c++17
-common:windows --host_cxxopt=/std:c++17
+common:windows --cxxopt=/std:c++20
+common:windows --host_cxxopt=/std:c++20
 # Generate PDB files, to generate useful PDBs, in opt compilation_mode
 # --copt /Z7 is needed.
 common:windows --linkopt=/DEBUG
@@ -130,6 +129,8 @@ common:windows --host_linkopt=/OPT:REF
 common:windows --linkopt=/OPT:ICF
 common:windows --host_linkopt=/OPT:ICF
 common:windows --incompatible_strict_action_env=true
+# LLVM for toolchain
+common:windows --repo_env=LLVM_VERSION=22
 
 # #############################################################################
 # Feature-specific configurations. These are used by the CI configs below
@@ -419,13 +420,10 @@ common:ci_darwin_arm64 --verbose_failures=true
 common:ci_darwin_arm64 --color=yes
 
 # Windows x86 CI configs
-common:ci_windows_amd64 --config=clang_local
 common:ci_windows_amd64 --config=avx_windows
 common:ci_windows_amd64 --compiler=clang-cl --config=clang --verbose_failures=true
 # Error on struct/class mismatches, which cause link failures on Windows.
 common:ci_windows_amd64 --copt=-Werror=mismatched-tags
-common:ci_windows_amd64 --crosstool_top="@xla//tools/toolchains/win2022/t20260812:toolchain"
-common:ci_windows_amd64 --extra_toolchains="@xla//tools/toolchains/win2022/t20260812:cc-toolchain-x64_windows-clang-cl"
 common:ci_windows_amd64 --host_linkopt=/FORCE:MULTIPLE --linkopt=/FORCE:MULTIPLE
 common:ci_windows_amd64 --color=yes
 
@@ -520,14 +518,12 @@ common:rbe_linux_x86_64_cuda13 --config=ci_linux_x86_64_cuda13
 # Set the remote worker pool
 common:rbe_windows_amd64 --remote_instance_name=projects/tensorflow-testing/instances/windows
 
-common:rbe_windows_amd64 --config=clang_local
 common:rbe_windows_amd64 --config=rbe
 
 # Set the host, execution, and target platform
 common:rbe_windows_amd64 --host_platform="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_ml_actions"
 common:rbe_windows_amd64 --extra_execution_platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_ml_actions"
 common:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang_ml_actions"
-
 common:rbe_windows_amd64 --shell_executable=C:\\tools\\msys64\\usr\\bin\\bash.exe
 common:rbe_windows_amd64 --enable_runfiles
 common:rbe_windows_amd64 --define=override_eigen_strong_inline=true

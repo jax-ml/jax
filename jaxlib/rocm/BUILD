@@ -468,6 +468,7 @@ cc_library(
         ":hip_vendor",
         "//jaxlib:ffi_helpers",
         "//jaxlib/cpu:lapack_kernels",
+        "//jaxlib/cpu:lapack_kernels_using_lapack",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -496,11 +497,11 @@ rocm_nanobind_extension(
         ":hip_vendor",
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cpu:lapack_kernels",
+        "//jaxlib/cpu:lapack_kernels_using_lapack",
         "@local_config_rocm//rocm:hip_runtime",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/python:safe_static_init",
     ],
 )
 

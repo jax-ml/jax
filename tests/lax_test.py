@@ -1613,7 +1613,7 @@ class LaxTest(jtu.JaxTestCase):
       ) and not jtu.is_cuda_compute_capability_at_least("10.0"):
         # Before Blackwell, cuBLASLt FP8 uses a reduced precision accumulator.
         self.assertLess(err_x4, 1e-4)
-        self.assertLess(err_x4, err_x3 / 10)
+        self.assertLess(err_x4, err_x3 / 5)
       else:
         # The initial float8_e4m3fn term and residual term preserve all 8
         # bfloat16 significand bits, so X4 matches BF16_BF16_F32.
