@@ -59,8 +59,13 @@ class GPURaceDetectionState(race_detection_state.RaceDetectionState):
       buffer_key,
       rnge: interpret_utils.Access,
       source_info=None,
+      *,
+      boundary_copy: bool = False,
   ):
-    super().check_read(thread, clock, buffer_key, rnge.range, source_info)
+    super().check_read(
+        thread, clock, buffer_key, rnge.range, source_info,
+        boundary_copy=boundary_copy,
+    )
     self._check_ref_union(thread, clock, buffer_key, False, source_info)
 
   def check_write(
@@ -70,8 +75,13 @@ class GPURaceDetectionState(race_detection_state.RaceDetectionState):
       buffer_key,
       rnge: interpret_utils.Access,
       source_info=None,
+      *,
+      cross_kernel_dma: bool = False,
   ):
-    super().check_write(thread, clock, buffer_key, rnge.range, source_info)
+    super().check_write(
+        thread, clock, buffer_key, rnge.range, source_info,
+        cross_kernel_dma=cross_kernel_dma,
+    )
     self._check_ref_union(thread, clock, buffer_key, True, source_info)
 
   def _check_ref_union(self, thread, clock, buffer_key, is_write, source_info):
