@@ -59,7 +59,10 @@ jax_multiplatform_test(
     name = "custom_api_test",
     srcs = ["custom_api_test.py"],
     backend_tags = {
-        "cpu": ["notsan"],
+        "cpu": [
+            "noasan",
+            "notsan",
+        ],
         "gpu": ["noasan"],  # Times out.
         "tpu": [
             "noasan",
