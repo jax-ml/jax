@@ -1458,7 +1458,7 @@ def _pbroadcast_batcher(axis_data, vals_in, dims_in, axis_name, source):
     return pbroadcast_p.bind(v, source=source, axis_name=remaining_axes), d
   if d is None:
     return v, d
-  return v.take([source] * axis_size, d), d
+  return v.take(np.array([source] * axis_size), d), d
 
 def _pbroadcast_lowering(ctx, x, *, axis_name, source):
   replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name, None)
