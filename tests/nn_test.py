@@ -796,6 +796,23 @@ class NNFunctionsTest(jtu.JaxTestCase):
         atol=atol,
     )
 
+  def testGeluApproximateNegativeTail(self):
+    x = jnp.float32(-6.0)
+    val = nn.gelu(x, approximate=True)
+    self.assertNotEqual(float(val), 0.0)
+    self.assertAllClose(val, jnp.float32(-8.44e-11), rtol=2e-2, atol=0.0)
+
+    grad = jax.grad(lambda value: nn.gelu(value, approximate=True))(x)
+    self.assertNotEqual(float(grad), 0.0)
+
+    x = jnp.array([-4.0, -3.0, -2.0], dtype=jnp.bfloat16)
+    val = nn.gelu(x, approximate=True)
+    expected = jnp.array(
+        [-7.00951e-05, -0.00363159, -0.0454102], dtype=jnp.bfloat16
+    )
+    self.assertTrue(np.all(np.asarray(val) != 0))
+    self.assertAllClose(val, expected, rtol=3e-2, atol=0.0)
+
   @parameterized.parameters(*itertools.product(
       (jnp.float32, jnp.bfloat16, jnp.float16),
       (partial(nn.gelu, approximate=False),
