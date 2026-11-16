@@ -162,13 +162,14 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
     def f_ref(q, k, v):
       return attention_mgpu.attention_reference(q, k, v).sum()
 
+    # TODO(pobudzey): Replace with `jtu.check_grads` when it's fixed.
+    dq_ref, dk_ref, dv_ref = jax.grad(f_ref, argnums=(0, 1, 2))(q, k, v)
+    dq_ref_host = np.array(dq_ref)
+    dk_ref_host = np.array(dk_ref)
+    dv_ref_host = np.array(dv_ref)
+    del dq_ref, dk_ref, dv_ref
     try:
-      # TODO(pobudzey): Replace with `jtu.check_grads` when it's fixed.
-      dq_ref, dk_ref, dv_ref = jax.grad(f_ref, argnums=(0, 1, 2))(q, k, v)
-      dq_ref_host = np.array(dq_ref)
-      dk_ref_host = np.array(dk_ref)
-      dv_ref_host = np.array(dv_ref)
-      del dq_ref, dk_ref, dv_ref
+
 
       dq, dk, dv = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
 
@@ -180,5 +181,6 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
       if "exceeds available shared memory" in e.args[0]:
         self.skipTest("Not enough SMEM for this configuration.")
       raise
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
