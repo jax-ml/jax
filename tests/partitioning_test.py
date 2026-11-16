@@ -2415,5 +2415,36 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertArraysEqual(out600_v, exp600_v)
     self.assertArraysEqual(out600_i, exp600_i)
 
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
+  def test_reduce_and_gather_all_reduce_axis_order(self, mesh):
+    expected_axes = (
+        'axes = [#stablehlo.axis_ref<name = "x">,'
+        ' #stablehlo.axis_ref<name = "y">, #stablehlo.axis_ref<name = "z">]'
+    )
+    np_f32 = np.arange(64, dtype=np.float32).reshape(4, 2, 8)
+    np_bool = (np_f32 % 7) == 0
+    arr_f32 = jax.device_put(np_f32, P(('y', 'x'), 'z', None))
+    arr_bool = jax.device_put(np_bool, P(('y', 'x'), 'z', None))
+
+    sum_fn = jax.jit(jnp.sum)
+    self.assertIn(expected_axes, sum_fn.lower(arr_f32).as_text())
+    self.assertAllClose(sum_fn(arr_f32), np_f32.sum())
+
+    any_fn = jax.jit(jnp.any)
+    self.assertIn(expected_axes, any_fn.lower(arr_bool).as_text())
+    self.assertArraysEqual(any_fn(arr_bool), np_bool.any())
+
+    @jax.jit
+    def gather_fn(a, rows, cols):
+      return a.at[rows, cols].get(
+          mode='promise_in_bounds', out_sharding=P(None, None))
+
+    rows = np.array([0, 3, 1], dtype=np.int32)
+    cols = np.array([1, 0, 1], dtype=np.int32)
+    for arr, ref in ((arr_f32, np_f32), (arr_bool, np_bool)):
+      self.assertIn(expected_axes, gather_fn.lower(arr, rows, cols).as_text())
+      self.assertArraysEqual(gather_fn(arr, rows, cols), ref[rows, cols])
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

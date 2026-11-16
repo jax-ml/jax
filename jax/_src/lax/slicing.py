@@ -2603,7 +2603,9 @@ def _gather_collective_rule(
 
   sharded_collapsed = [
       i for i in dnums.collapsed_slice_dims if op_parts[i] is not None]
-  reduced_axes = flatten_spec_no_none(op_parts[i] for i in sharded_collapsed)
+  reduced_axes = core.order_wrt_mesh(
+      mesh_lib.get_abstract_mesh(),
+      flatten_spec_no_none(op_parts[i] for i in sharded_collapsed))
   zero_fill = False if out_aval.dtype == np.bool_ else 0
   if sharded_collapsed and (
       not set(sharded_collapsed).issubset(dnums.start_index_map) or

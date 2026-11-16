@@ -10744,7 +10744,8 @@ def _reduce_collective_rule(
     scatters.append((dim, scatter_axes))
     scattered_axes.update(scatter_axes)
 
-  all_reduce_axes = tuple(a for a in reduced_axes if a not in scattered_axes)
+  all_reduce_axes = core.order_wrt_mesh(
+      get_abstract_mesh(), set(reduced_axes) - scattered_axes)
   if not all_reduce_axes and not scatters:
     return mlir.PartitioningRule(per_shard_params=per_shard_params)
 
