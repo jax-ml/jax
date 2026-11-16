@@ -55,6 +55,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `acos(x) / pi`, `atan(x) / pi`, and `atan2(x, y) / pi`).
   * Added {func}`jax.lax.exp2m1` and {func}`jax.lax.log2p1`, which compute
     `2**x - 1` and `log2(1 + x)` without losing precision near `x = 0`.
+  * Added {func}`jax.scipy.stats.truncnorm.ppf` and
+    {func}`jax.scipy.stats.truncnorm.isf` with custom forward- and reverse-mode
+    derivatives, and improved the accuracy of {mod}`jax.scipy.stats.truncnorm`
+    functions and their derivatives on narrow intervals, in the tails, and in
+    `bfloat16`/`float16`.
 
 * Breaking changes
   * The `jax_use_simplified_jaxpr_constants` configuration flag is now `True`
@@ -106,6 +111,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `fp` value is infinite; it now returns the knot value or the signed
     infinity, matching NumPy. For complex `fp`, the real and imaginary parts
     are now interpolated separately, as in NumPy.
+  * Fixed {mod}`jax.scipy.stats.truncnorm` functions not returning `nan` when
+    `scale <= 0` (matching SciPy) or `logpdf` returning `-inf` when `scale**2`
+    underflows, and fixed second-order differentiation of
+    {func}`jax.scipy.special.erfcx` on non-scalar arrays.
 
 ## JAX 0.12.0.1 (October 23, 2026)
 

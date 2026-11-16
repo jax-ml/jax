@@ -197,6 +197,22 @@ jax_multiplatform_test(
     ]),
 )
 
+jax_multiplatform_test(
+    name = "truncnorm_test",
+    srcs = ["truncnorm_test.py"],
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 12,
+    tags = ["cpu:4"],
+    deps = [
+        ":numerics_test_util",
+    ] + py_deps([
+        "absl/testing",
+        "mpmath",
+        "numpy",
+        "scipy",
+    ]),
+)
+
 jax_py_test(
     name = "numerics_test_util_test",
     srcs = ["numerics_test_util_test.py"],

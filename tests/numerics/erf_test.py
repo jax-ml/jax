@@ -484,6 +484,13 @@ class ErfcxGradTest(jtu.JaxTestCase):
         np.max(np.abs(util.ulp_diff(d3, ref_d3, dtype))), 1500.0
     )
 
+    # Also check 2nd-order JVP directly on a 1D array (without vmap).
+    t = jnp.ones_like(x)
+    d1_jvp = lambda u: jax.jvp(jsp.special.erfcx, (u,), (t,))[1]
+    _, d2_jvp = jax.jvp(d1_jvp, (x,), (t,))
+    d2_jvp_ulp = np.abs(util.ulp_diff(np.asarray(d2_jvp), ref_d2, dtype))
+    self.assertLessEqual(np.max(d2_jvp_ulp), 35.0)
+
   @parameterized.named_parameters(
       {"testcase_name": "_float32", "dtype": f32},
       {"testcase_name": "_float64", "dtype": f64},
