@@ -2244,6 +2244,39 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module, arch=(10, 0))
 
+  def test_infer_layout_infers_pre_vr_scales_layout_for_collective_m64(self):
+    m, n, k = 64, 128, 128
+    smem, tmem = mgpu.utils.smem(), mgpu.utils.tmem()
+    with ir.InsertionPoint(self.module.body):
+      f16 = ir.F16Type.get()
+      f32 = ir.F32Type.get()
+      f8e8 = ir.Float8E8M0FNUType.get()
+      acc_ty = ir.MemRefType.get((m, n), f32, memory_space=tmem)
+      a_ty = ir.MemRefType.get((m, k), f16, memory_space=smem)
+      b_ty = ir.MemRefType.get((k, n), f16, memory_space=smem)
+      scale_a_ty = ir.MemRefType.get((128, 4), f8e8, memory_space=tmem)
+      scale_b_ty = ir.MemRefType.get((256, 4), f8e8, memory_space=tmem)
+      acc, a, b, scale_a, scale_b = undefs(
+          acc_ty, a_ty, b_ty, scale_a_ty, scale_b_ty
+      )
+      accumulate = mgpu.utils.c(1, ir.IntegerType.get_signless(1))
+      mma = mgpu.dialect.TcGen05MMAOp(
+          acc,
+          a,
+          b,
+          accumulate,
+          a_scale=scale_a,
+          b_scale=scale_b,
+          collective=True,
+      )
+
+    mgpu.infer_layout(self.module, arch=(10, 7))
+
+    acc_layout = tcgen05._infer_tmem_layout((m, n), collective=True, packing=1)
+    a_scales_layout = tcgen05.scales_layout()
+    b_scales_layout = tcgen05.b_scales_m64_collective_layout()
+    self.checkInTmemLayouts(mma, [acc_layout, a_scales_layout, b_scales_layout])
+
   @parameterized.product(
       m=(64, 128),
       scale_type=(
