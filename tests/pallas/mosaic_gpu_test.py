@@ -4392,6 +4392,26 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         make_kernel(op)(x)
 
   @parameterized.product(
+      dtype=(jnp.float16, jnp.bfloat16),
+      op=("plgpu.sum", "lax.reduce_sum"),
+  )
+  def test_f16_reductions_disallowed(self, dtype, op):
+    reduce_fn = {
+        "plgpu.sum": lambda x: plgpu.sum(x, axis=-1),
+        "lax.reduce_sum": lambda x: lax.reduce_sum(x, axes=(1,)),
+    }[op]
+
+    x_shape = jax.ShapeDtypeStruct((128, 128,), dtype)
+    @self.kernel(out_type=jax.ShapeDtypeStruct((128,), dtype))
+    def kernel(x_ref, y_ref):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      plgpu.store(y_ref, reduce_fn(x_val), optimized=False)
+
+    with config.allow_f16_reductions(False):
+      with self.assertRaisesRegex(ValueError, "is not allowed"):
+        jax.eval_shape(kernel, x_shape)
+
+  @parameterized.product(
       op_info=(
           (plgpu.sum, jnp.sum),
           (plgpu.max, jnp.max),
