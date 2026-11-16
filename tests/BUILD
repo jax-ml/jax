@@ -1622,11 +1622,11 @@ jax_multiplatform_test(
         "gpu_h100",  # TODO(phawkins): numerical failure on h100
     ],
     env = {
-        "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
     },
     shard_count = {
         "cpu": 20,
-        "gpu": 30,
+        "gpu": 20,
         "tpu": 30,
     },
     deps = py_deps([
