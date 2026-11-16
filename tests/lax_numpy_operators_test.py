@@ -733,6 +733,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.floor_divide, args_maker)
 
   @jtu.sample_product(dtype=float_dtypes)
+  @jtu.ignore_warning(category=RuntimeWarning, message="invalid value*")
   def test_heaviside_nan(self, dtype):
     # Regression test for https://github.com/jax-ml/jax/issues/38105
     x = np.array([np.nan, -np.inf, -1, 0, 1, np.inf], dtype=dtype)
