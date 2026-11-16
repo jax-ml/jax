@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 522  # Expose ExecutionContext.device_ordinal
+_version = 523  # Bind the new autotune cache DebugOptions fields
 
 # An internal increasing version number for protecting jaxlib code against
 # xla changes.
