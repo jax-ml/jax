@@ -55,8 +55,14 @@ def _slices_overlap(slice_or_idx1: slice | int, slice_or_idx2: slice | int):
   assert slice_or_idx2.start is not None
   assert slice_or_idx2.stop is not None
 
+  # A zero-length slice (e.g. a DMA of 0 rows) touches no memory, so it cannot
+  # overlap anything.
+  if (slice_or_idx1.start >= slice_or_idx1.stop) or (
+      slice_or_idx2.start >= slice_or_idx2.stop
+  ):
+    return False
+
   # NOTE: We are only comparing slices with known stops (and sizes).
-  # Do we need to handle zero-length slices?
   return (slice_or_idx1.start <= slice_or_idx2.start < slice_or_idx1.stop) | (
       slice_or_idx2.start <= slice_or_idx1.start < slice_or_idx2.stop
   )
@@ -96,6 +102,8 @@ class RaceDetectionState[ThreadKey]:
       buffer_key,
       rnge,
       source_info=None,
+      *,
+      boundary_copy: bool = False,
   ):
     if source_info is not None:
       user_frame = source_info_util.summarize(source_info)
@@ -106,7 +114,7 @@ class RaceDetectionState[ThreadKey]:
       writes = self.writes[buffer_key]
       num_writes = len(writes)
       self.reads[buffer_key].append(
-          (thread, clock, rnge, user_frame)
+          (thread, clock, rnge, user_frame, boundary_copy)
       )
 
     for i in range(num_writes):
@@ -141,6 +149,8 @@ class RaceDetectionState[ThreadKey]:
       buffer_key,
       rnge,
       source_info=None,
+      *,
+      cross_kernel_dma: bool = False,
   ):
     if source_info is not None:
       user_frame = source_info_util.summarize(source_info)
@@ -183,9 +193,16 @@ class RaceDetectionState[ThreadKey]:
       break
 
     for i in range(num_reads):
-      read_thread, read_clock, read_range, read_frame = (
+      read_thread, read_clock, read_range, read_frame, read_boundary_copy = (
           reads[i]
       )
+      # A boundary copy is the interpreter copying a kernel output out of its
+      # kernel buffer when the pallas_call ends. A DMA whose receive semaphore
+      # escaped that pallas_call lands in the kernel buffer, which persists
+      # into the later kernel that waits on the semaphore, so the copy is not
+      # part of the protocol.
+      if cross_kernel_dma and read_boundary_copy:
+        continue
       if read_clock.ordered(clock):
         continue
       if not _ranges_overlap(rnge, read_range):

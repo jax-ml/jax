@@ -195,8 +195,8 @@ class Semaphore:
           )
           if self.detect_races:
             clock = self.clocks[global_core_id]
-            assert clock is not None
-            clock = clock.copy()
+            if clock is not None:
+              clock = clock.copy()
         elif len(self.tasks[global_core_id]) > 0:
           task = self.tasks[global_core_id].pop()
         else:
@@ -386,6 +386,7 @@ class GenericSharedMemory[
   clocks: dict[ThreadKey, VectorClock]
   barrier: threading.Barrier
   clean_up_barrier: threading.Barrier
+  allocation_barrier: threading.Barrier
 
   buffer_bounds: Literal["logical", "padded"] | None = None
 
@@ -395,10 +396,16 @@ class GenericSharedMemory[
       default_factory=dict
   )
 
-  lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
+  lock: threading.RLock = dataclasses.field(default_factory=threading.RLock)
 
   next_buffer_id: dict[ThreadKey, int] = dataclasses.field(
       default_factory=lambda: collections.defaultdict(lambda: 100)
+  )
+  buffer_id_to_logical_key: dict[tuple[int, int, int], Any] = dataclasses.field(
+      default_factory=dict
+  )
+  logical_key_to_buffer_id: dict[tuple[int, int, Any], int] = dataclasses.field(
+      default_factory=dict
   )
   deallocated_bytes: int = 0
 
@@ -412,6 +419,11 @@ class GenericSharedMemory[
   # messages, so subclasses may record any object with an informative `repr`
   # (e.g. a device, if the thread is not known).
   _failed_thread: Any = None
+  # Set when a clean-up barrier cycle completes while `_failure` is recorded.
+  # A device that fails after that point is already running a later kernel
+  # (e.g. in a chain of pallas_calls that share escaped semaphores) which the
+  # failed devices will never reach, so it must not wait on the barrier.
+  _failure_cleaned_up: bool = False
 
   @property
   def enable_logging(self) -> bool:
@@ -440,6 +452,43 @@ class GenericSharedMemory[
       self.clocks[thread].inc(pos)
       return self.clocks[thread].copy()
 
+  def register_logical_buffer(
+      self, device_id: int, local_core_id: int, buffer_id: int, logical_key: Any
+  ) -> None:
+    if logical_key is not None:
+      with self.lock:
+        self.buffer_id_to_logical_key[(int(device_id), int(local_core_id), int(buffer_id))] = logical_key
+        self.logical_key_to_buffer_id[(int(device_id), int(local_core_id), logical_key)] = int(buffer_id)
+
+  def translate_remote_buffer_id(
+      self, src_device_id: int, src_local_core_id: int, src_buffer_id: int,
+      dst_device_id: int, dst_local_core_id: int
+  ) -> int:
+    with self.lock:
+      logical_key = self.buffer_id_to_logical_key.get(
+          (int(src_device_id), int(src_local_core_id), int(src_buffer_id))
+      )
+      if logical_key is not None:
+        peer_id = self.logical_key_to_buffer_id.get(
+            (int(dst_device_id), int(dst_local_core_id), logical_key)
+        )
+        if peer_id is not None:
+          return peer_id
+      if int(src_device_id) != int(dst_device_id):
+        # The raw ID can name an unrelated buffer on the destination device.
+        reason = (
+            'the buffer has no logical key'
+            if logical_key is None
+            else f'no buffer there has logical key {logical_key!r}'
+        )
+        raise ValueError(
+            f'Cannot translate buffer {src_buffer_id} on device'
+            f' {src_device_id} (core {src_local_core_id}) to device'
+            f' {dst_device_id} (core {dst_local_core_id}) for a remote DMA:'
+            f' {reason}.'
+        )
+      return int(src_buffer_id)
+
   def get_next_buffer_id(self, key: ThreadKey) -> int:
     """Returns the next buffer ID for the given device and thread."""
     with self.lock:
@@ -462,6 +511,7 @@ class GenericSharedMemory[
       self._abort_waiters()
 
     self.barrier.abort()
+    self.allocation_barrier.abort()
 
     # If we are interpreting a kernel over N devices, we must wait N times
     # on the clean-up barrier.  As the computation on this device has failed
@@ -475,8 +525,21 @@ class GenericSharedMemory[
     # The thread_map will detect that one or more of its threads failed and,
     # once all of its threads have completed (successfully or with an error),
     # it will call `set_failed` with `top_level=True`.
+    #
+    # If a clean-up cycle already completed after the failure was recorded,
+    # this device has moved on to a later kernel that the failed devices will
+    # never reach, so waiting here would block forever.
     if top_level:
-      self.clean_up_barrier.wait()
+      with self.lock:
+        failure_cleaned_up = self._failure_cleaned_up
+      if not failure_cleaned_up:
+        self.clean_up_barrier.wait()
+
+  def note_clean_up_barrier_passed(self):
+    """Records that all devices passed the clean-up barrier."""
+    with self.lock:
+      if self._failure is not None:
+        self._failure_cleaned_up = True
 
   def _abort_waiters(self):
     """Wakes up all threads that are waiting on other threads.
@@ -833,6 +896,7 @@ class SharedMemory(
       vector_clock_size: int,
       barrier: threading.Barrier,
       clean_up_barrier: threading.Barrier,
+      allocation_barrier: threading.Barrier,
       buffer_bounds: Literal["logical", "padded"] | None = None,
       logging_mode: params.LoggingMode | None = None,
       num_cores_per_device: int,
@@ -852,6 +916,7 @@ class SharedMemory(
         clocks=clocks,
         barrier=barrier,
         clean_up_barrier=clean_up_barrier,
+        allocation_barrier=allocation_barrier,
         buffer_bounds=buffer_bounds,
         logging_mode=logging_mode,
     )
@@ -859,6 +924,57 @@ class SharedMemory(
     self.sem = {}
     self.next_semaphore_id = collections.defaultdict(lambda: 2000)
     self.fixed_id_sem = {}
+    self.escaped_semaphore_ids = set()
+    self.active_cross_kernel_dmas = set()
+    self.cross_kernel_dma_sem_ids = {}
+    self.escaped_dma_dst_buffers = {}
+    self.escaped_dma_dst_buffer_keys = set()
+    # (dst device id, dst semaphore id) -> ids of the HBM buffers on the device
+    # that DMAs were started into, while the semaphore had escaped its
+    # pallas_call, and that have not been waited for yet.
+    self.escaped_hbm_dma_dst_buffers = {}
+    # (device id, buffer id) -> value of a buffer in
+    # `escaped_hbm_dma_dst_buffers` when a pallas_call last returned it.
+    self.escaped_hbm_dma_dst_snapshots = {}
+    # (memory space, buffer id, device id, local core id) of a buffer (not in
+    # HBM) -> {DMA id: (destination range, receive semaphore id)} for the DMAs
+    # into the buffer that started while their receive semaphore had escaped
+    # its pallas_call, and whose receive semaphore has not been waited for yet.
+    self.escaped_dma_dst_pending = {}
+    # Same key -> value that a pallas_call last returned the buffer as, while
+    # DMAs into it were pending (see `_get_output`).
+    self.escaped_dma_dst_snapshots = {}
+    # Same key -> id of the HBM buffer that the pending DMAs into the buffer
+    # also write to (see `_mirror_escaped_dma_dst`).
+    self.escaped_dma_dst_mirrors = {}
+    # (device id, shape, dtype) -> codes (see `_pending_dst_fill_value`) of the
+    # buffers in `escaped_dma_dst_pending` on the device with that shape and
+    # dtype; buffer key -> ((device id, shape, dtype), code).
+    self.pending_dst_fill_codes = collections.defaultdict(set)
+    self.pending_dst_fill_code_of = {}
+    # device_id -> number of pallas_calls started on the device.
+    self.pallas_call_seq = collections.defaultdict(int)
+
+  def start_pallas_call(self, device_id: int):
+    with self.lock:
+      self.pallas_call_seq[device_id] += 1
+
+  def register_escaped_semaphore_id(self, sem_id: int):
+    with self.lock:
+      self.escaped_semaphore_ids.add(int(sem_id))
+
+  def has_escaped_semaphores_or_pending_dmas(self) -> bool:
+    with self.lock:
+      if self.active_cross_kernel_dmas:
+        return True
+      if self.escaped_semaphore_ids:
+        return True
+      # Also check if any semaphores have pending tasks
+      for sem in list(self.sem.values()) + list(self.fixed_id_sem.values()):
+        with sem.cv:
+          if any(len(tasks) > 0 for tasks in sem.tasks):
+            return True
+      return False
 
   @property
   def num_cores(self) -> int:
@@ -981,13 +1097,16 @@ class SharedMemory(
     return sems, clock
 
   def get_sempahores_with_nonzero_count(
-      self, device_id: int
+      self, device_id: int, include_escaped: bool = False
   ) -> list[tuple[Semaphore, int]]:
     """Returns tuples (semaphore, global_core_id) for all semaphores with a nonzero count for the core with `global_core_id`."""
     result = []
     with self.lock:
-      sems = self.sem.items() | self.fixed_id_sem.items()
-    for _, sem in sems:
+      sems = list(self.sem.items()) + list(self.fixed_id_sem.items())
+      escaped_ids = set(self.escaped_semaphore_ids)
+    for sem_id, sem in sems:
+      if not include_escaped and sem_id in escaped_ids:
+        continue
       with sem.cv:
         for gci in self.get_global_core_ids(device_id):
           if sem.count_by_core[gci] != 0:
@@ -998,6 +1117,8 @@ class SharedMemory(
     """Returns the next semaphore ID and ensures that the next `num_semaphores` are allocated."""
     with self.lock:
       semaphore_id = self.next_semaphore_id[key]
+      while any((semaphore_id + j) in self.fixed_id_sem for j in range(num_semaphores)):
+        semaphore_id += num_semaphores
       self.next_semaphore_id[key] = semaphore_id + num_semaphores
 
       for i in range(semaphore_id, semaphore_id + num_semaphores):
