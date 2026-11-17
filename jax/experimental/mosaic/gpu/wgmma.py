@@ -270,8 +270,8 @@ def _wgmma_m64(
       a_args = [_as_i32_reg(v) for v in a_slice.registers.flat]
     else:
       assert isinstance(a, mma_utils.SmemDescriptor)
-      a_args = [a.slice_i64(m_start, k_offset)]
-    b_descriptor = b_desc.slice_i64(0, k_offset)
+      a_args = [a.slice_i64(m_start, k_offset, k_instr)]
+    b_descriptor = b_desc.slice_i64(0, k_offset, k_instr)
     assert len(a_args) == len(a_reg_constraints)
     acc_struct = llvm.inline_asm(
         llvm.StructType.get_literal([out_ty_field] * len(acc_regs)),

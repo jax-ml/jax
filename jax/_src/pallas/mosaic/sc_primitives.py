@@ -1120,6 +1120,7 @@ def _pack_lowering_rule(
       [a, b],
       [0, 1],
       _format_to_ir_attribute(format),
+      unsigned_integers=jnp.issubdtype(out_aval.dtype, jnp.unsignedinteger),
   )
 
 
@@ -1208,11 +1209,18 @@ def _unpack_lowering_rule(
         "plsc.unpack is not supported with needs_layout_passes=True. Use"
         " jax.lax.convert_element_type or jax.Array.astype instead."
     )
+  [in_aval] = ctx.avals_in
   out_aval, _ = ctx.avals_out
   out_type = ctx.aval_to_ir_type(out_aval)
+  ir_format = _format_to_ir_attribute(format)
+  is_unsigned = jnp.issubdtype(in_aval.dtype, jnp.unsignedinteger)
   return (
-      tpu.unpack_subelements(out_type, ab, 0, _format_to_ir_attribute(format)),
-      tpu.unpack_subelements(out_type, ab, 1, _format_to_ir_attribute(format)),
+      tpu.unpack_subelements(
+          out_type, ab, 0, ir_format, unsigned_integers=is_unsigned
+      ),
+      tpu.unpack_subelements(
+          out_type, ab, 1, ir_format, unsigned_integers=is_unsigned
+      ),
   )
 
 

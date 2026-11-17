@@ -49,6 +49,7 @@ limitations under the License.
 #include "mlir/Target/LLVM/ModuleToObject.h"
 #include "xla/mosaic/pass_boilerplate.h"
 #include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
+#include "xla/service/llvm_ir/llvm_command_line_options.h"
 
 namespace mosaic {
 namespace gpu {
@@ -69,8 +70,16 @@ class ModuleToAssembly : public mlir::LLVM::ModuleToObject {
   ModuleToAssembly(gpu::GPUModuleOp gpu_module,
                    ::mlir::NVVM::NVVMTargetAttr target,
                    std::vector<std::string> libraries_to_link)
-      : ModuleToObject(*gpu_module, target.getTriple(), target.getChip(),
-                       target.getFeatures(), target.getO()),
+      // Read LLVM library options (e.g. -nvptx-prec-divf32=1, set by
+      // custom_call.cc) from the context that XLA's options lock parses them
+      // into, so that we match XLA's codegen. They are no longer parsed into
+      // global option storage.
+      : ModuleToObject(
+            *gpu_module, target.getTriple(), target.getChip(),
+            target.getFeatures(), target.getO(),
+            /*initialLlvmIRCallback=*/{}, /*linkedLlvmIRCallback=*/{},
+            /*optimizedLlvmIRCallback=*/{}, /*isaCallback=*/{},
+            &xla::llvm_ir::LLVMCommandLineOptionsLock::GetLibraryOptions()),
         libraries_to_link_(std::move(libraries_to_link)) {};
 
   // Serializes the LLVM module to PTX.

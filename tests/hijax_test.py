@@ -1343,6 +1343,43 @@ class HijaxTest(jtu.JaxTestCase):
           in (f,) }
         """).strip())
 
+  def test_hiprim_hash_and_eq(self):
+    class CustomOp(HiPrim):
+      def __init__(self, in_aval, out_aval, *, k=1):
+        self.in_avals = (in_aval,)
+        self.out_aval = out_aval
+        self.params = dict(k=k)
+        super().__init__()
+
+      def expand(self, x):
+        return x
+
+    f32_4_8 = core.ShapedArray((4, 8), jnp.dtype('float32'))
+    f32_4_0 = core.ShapedArray((4, 0), jnp.dtype('float32'))
+    q_2_4 = QArrayTy((2, 4))
+    q_2_8 = QArrayTy((2, 8))
+
+    p1 = CustomOp(f32_4_8, [f32_4_8], k=1)
+    p1_dup = CustomOp(f32_4_8, [f32_4_8], k=1)
+    p_diff_in = CustomOp(f32_4_0, [f32_4_8], k=1)
+    p_diff_out = CustomOp(f32_4_8, [f32_4_0], k=1)
+    p_diff_tree = CustomOp(f32_4_8, (f32_4_8,), k=1)
+    p_diff_param = CustomOp(f32_4_8, [f32_4_8], k=2)
+
+    self.assertEqual(p1, p1_dup)
+    self.assertEqual(hash(p1), hash(p1_dup))
+    self.assertNotEqual(p1, p_diff_in)
+    self.assertNotEqual(p1, p_diff_out)
+    self.assertNotEqual(p1, p_diff_tree)
+    self.assertNotEqual(p1, p_diff_param)
+
+    q1 = CustomOp(q_2_4, {'q': q_2_4}, k=1)
+    q1_dup = CustomOp(q_2_4, {'q': q_2_4}, k=1)
+    q_diff = CustomOp(q_2_8, {'q': q_2_8}, k=1)
+    self.assertEqual(q1, q1_dup)
+    self.assertEqual(hash(q1), hash(q1_dup))
+    self.assertNotEqual(q1, q_diff)
+
   @parameterized.parameters([False, True])
   def test_newstyle_hiprimitive_retval(self, jit):
 

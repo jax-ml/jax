@@ -32,7 +32,6 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import array
-from jax._src import cloud_tpu_init
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -1837,6 +1836,21 @@ def convert_element_type(operand: ArrayLike,
   new_dtype = dtypes.check_and_canonicalize_user_dtype(
       new_dtype, 'convert_element_type')
   return _convert_element_type(operand, new_dtype, weak_type=False)
+
+
+def _clamp_and_cast_index(x: ArrayLike, dtype: DTypeLike) -> Array:
+  """Casts `x` to `dtype`, clamping unsigned values that exceed `dtype`'s max."""
+  x_dtype = dtypes.dtype(x)
+  if (
+      dtypes.issubdtype(x_dtype, np.unsignedinteger)
+      and dtypes.iinfo(x_dtype).max > dtypes.iinfo(dtype).max
+  ):
+    max_val = dtypes.iinfo(dtype).max
+    if isinstance(x, (int, np.integer)):
+      x = _min(int(x), max_val)
+    else:
+      x = min(x, _const(x, max_val))
+  return convert_element_type(x, dtype)
 
 def _convert_element_type(
     operand: ArrayLike | literals.TypedNdArray,
@@ -4807,27 +4821,31 @@ def broadcasting_layout_rule(name, out_aval, *avals, **kwargs):
 
 def _naryop_collective_rule(in_avals, out_avals, **params):
   from jax._src.lax import parallel
-  out_aval, *_ = out_avals
-  out_parts = out_aval.sharding.spec.partitions
-  if all(not a.ndim or a.sharding.spec.partitions == out_parts
+
+  out_aval, *rest = out_avals
+  out_partitions = out_aval.sharding.spec.partitions
+  assert all(o.sharding.spec.partitions == out_partitions for o in rest)
+
+  if all(not a.ndim or a.sharding.spec.partitions == out_partitions
          for a in in_avals):
     return mlir.PartitioningRule()
+
   for a in in_avals:
     if a.ndim and any(s not in (out_s, None) for s, out_s in
-                      zip(a.sharding.spec.partitions, out_parts)):
+                      zip(a.sharding.spec.partitions, out_partitions)):
       raise NotImplementedError
 
   mesh = get_abstract_mesh()
 
-  def _slice_to_shard(x_shard, outer_in_aval):
-    if (not outer_in_aval.ndim or
-        outer_in_aval.sharding.spec.partitions == out_parts):
+  def _slice_to_shard(x_shard, global_in_aval):
+    if (not global_in_aval.ndim or
+        global_in_aval.sharding.spec.partitions == out_partitions):
       return x_shard
 
     starts, sizes, needs_slice = [], [], False
-    for d, s, out_s in safe_zip(
-        x_shard.shape, outer_in_aval.sharding.spec.partitions, out_parts):
-      if s == out_s or d == 1:
+    for d, in_s, out_s in safe_zip(
+        x_shard.shape, global_in_aval.sharding.spec.partitions, out_partitions):
+      if in_s == out_s or d == 1:
         starts.append(np.int32(0))
         sizes.append(d)
       else:
@@ -4842,9 +4860,10 @@ def _naryop_collective_rule(in_avals, out_avals, **params):
           x_shard, starts, sizes, allow_negative_indices=False)
     return x_shard
 
-  return mlir.PartitioningRule(
-      in_collective=lambda *xs: tuple(
-          _slice_to_shard(x, a) for x, a in safe_zip(xs, in_avals)))
+  def in_collective(*xs):
+    return tuple(_slice_to_shard(x, a) for x, a in safe_zip(xs, in_avals))
+
+  return mlir.PartitioningRule(in_collective=in_collective)
 
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
@@ -5027,11 +5046,7 @@ ad.defjvp2(
 )
 
 def _exp2_lower(ctx, x, accuracy):
-  if (
-      ctx.is_forward_compat()
-      or xla_version < 80
-      or not cloud_tpu_init.is_libtpu_at_least('0.0.52')
-  ):
+  if ctx.is_forward_compat() or xla_version < 80:
     x_aval, = ctx.avals_in
     log2 = mlir.ir_constant(np.array(np.log(2), x_aval.dtype))
     log2 = mlir.broadcast_in_dim(ctx, log2, x_aval, broadcast_dimensions=())
@@ -5054,11 +5069,7 @@ log2_p = standard_unop(_float | _complex, 'log2')
 ad.defjvp(log2_p, lambda g, x, **kwargs: div(g, mul(x, log(_const(x, 2)))))
 
 def _log2_lower(ctx, x, accuracy):
-  if (
-      ctx.is_forward_compat()
-      or xla_version < 80
-      or not cloud_tpu_init.is_libtpu_at_least('0.0.52')
-  ):
+  if ctx.is_forward_compat() or xla_version < 80:
     x_aval, = ctx.avals_in
     log_x = hlo.log(x, result_accuracy=accuracy_attr(accuracy))
     if np.issubdtype(x_aval.dtype, np.complexfloating):
@@ -6000,10 +6011,87 @@ ad.defbilinear(mul_p, _mul_transpose_left, _mul_transpose_right)
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 core.pp_eqn_rules[mul_p] = _binary_with_out_dtype_pp_rule
 lax_utils.register_unreduced_lojax(mul_p)
+
+
+def _mulhi_u64_hlo(ctx, lhs, rhs, u64_aval):
+  c32 = mlir.full_like_aval(ctx, np.uint64(32), u64_aval)
+  mask_lo = mlir.full_like_aval(ctx, np.uint64(0xFFFFFFFF), u64_aval)
+  a_hi = hlo.shift_right_logical(lhs, c32)
+  b_hi = hlo.shift_right_logical(rhs, c32)
+  a_lo = hlo.and_(lhs, mask_lo)
+  b_lo = hlo.and_(rhs, mask_lo)
+  p0 = hlo.multiply(a_lo, b_lo)
+  p1 = hlo.multiply(a_lo, b_hi)
+  p2 = hlo.multiply(a_hi, b_lo)
+  p3 = hlo.multiply(a_hi, b_hi)
+  mid1 = hlo.add(p1, hlo.shift_right_logical(p0, c32))
+  mid2 = hlo.add(p2, hlo.and_(mid1, mask_lo))
+  return hlo.add(
+      hlo.add(p3, hlo.shift_right_logical(mid1, c32)),
+      hlo.shift_right_logical(mid2, c32),
+  )
+
+
+def _mulhi_lower(ctx, x, y):
+  # HloFunctionImporter (used by ShardyXLA) added HloOpcode::kMulhi support in
+  # xla_version 84; decompose to StableHLO on older jaxlib or forward-compat.
+  if not ctx.is_forward_compat() and xla_version >= 84:
+    return _nary_lower_hlo(chlo.mulhi, ctx, x, y)
+  aval_out, = ctx.avals_out
+  dtype = aval_out.dtype
+  nbits = dtypes.iinfo(dtype).bits
+  is_signed = dtypes.issubdtype(dtype, np.signedinteger)
+  out_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
+  if nbits < 64:
+    widen_bits = _max(nbits * 2, 8)
+    widen_dtype = np.dtype(f"{'i' if is_signed else 'u'}{widen_bits // 8}")
+    widen_aval = core.ShapedArray(aval_out.shape, widen_dtype)
+    widen_type = mlir.aval_to_ir_type(ctx.module_context, widen_aval)
+    shift_op = (
+        hlo.shift_right_arithmetic if is_signed else hlo.shift_right_logical
+    )
+
+    def _mulhi_narrow(lhs, rhs):
+      shift = mlir.full_like_aval(ctx, nbits, widen_aval)
+      prod = hlo.multiply(
+          hlo.convert(widen_type, lhs), hlo.convert(widen_type, rhs)
+      )
+      return hlo.convert(out_type, shift_op(prod, shift))
+
+    return _nary_lower_hlo(_mulhi_narrow, ctx, x, y)
+
+  u64_aval = core.ShapedArray(aval_out.shape, np.dtype(np.uint64))
+  u64_type = mlir.aval_to_ir_type(ctx.module_context, u64_aval)
+  if not is_signed:
+    return _nary_lower_hlo(
+        lambda a, b: _mulhi_u64_hlo(ctx, a, b, u64_aval), ctx, x, y
+    )
+
+  s64_aval = core.ShapedArray(aval_out.shape, np.dtype(np.int64))
+
+  def _mulhi_s64(lhs, rhs):
+    zero_s64 = mlir.full_like_aval(ctx, np.int64(0), s64_aval)
+    zero_u64 = mlir.full_like_aval(ctx, np.uint64(0), u64_aval)
+    u_lhs = hlo.convert(u64_type, lhs)
+    u_rhs = hlo.convert(u64_type, rhs)
+    hi = _mulhi_u64_hlo(ctx, u_lhs, u_rhs, u64_aval)
+    hi = hlo.subtract(
+        hi,
+        hlo.select(mlir.compare_hlo(lhs, zero_s64, 'LT'), u_rhs, zero_u64),
+    )
+    hi = hlo.subtract(
+        hi,
+        hlo.select(mlir.compare_hlo(rhs, zero_s64, 'LT'), u_lhs, zero_u64),
+    )
+    return hlo.convert(out_type, hi)
+
+  return _nary_lower_hlo(_mulhi_s64, ctx, x, y)
+
+
 mulhi_p = naryop(input_dtype, [{np.integer}, {np.integer}], 'mulhi')
 dispatch.simple_impl(mulhi_p)
 ad.defjvp_zero(mulhi_p)
-mlir.register_lowering(mulhi_p, partial(_nary_lower_hlo, chlo.mulhi))
+mlir.register_lowering(mulhi_p, _mulhi_lower)
 
 
 def _fma_jvp(prim, primals, tangents):
@@ -6054,11 +6142,7 @@ def _muladd_hlo(x, y, z):
 
 
 def _fmuladd_lower(ctx, a, b, c, *, native_dtypes):
-  if (
-      jaxlib_extension_version < 515
-      or ctx.is_forward_compat()
-      or not cloud_tpu_init.is_libtpu_at_least('0.0.52')
-  ):
+  if jaxlib_extension_version < 515 or ctx.is_forward_compat():
     return _nary_lower_hlo(_muladd_hlo, ctx, a, b, c)
   aval_out, = ctx.avals_out
   if aval_out.dtype in native_dtypes:
@@ -6597,7 +6681,8 @@ ad.primitive_transposes[to_edtype_p] = \
     lambda ct, x, edtype: [from_edtype_p.bind(ct, dtype=x.aval.dtype)]
 batching.defvectorized(to_edtype_p)
 mlir.register_lowering(
-    to_edtype_p, lambda _, x, **__: [x], shard_map_passthrough=True)
+    to_edtype_p, lambda _, x, **__: [x],
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _from_edtype_abstract_eval(x, *, dtype):
@@ -6640,7 +6725,8 @@ ad.primitive_transposes[from_edtype_p] = \
     lambda ct, x, dtype: [to_edtype_p.bind(ct, edtype=x.dtype)]
 batching.defvectorized(from_edtype_p)
 mlir.register_lowering(
-    from_edtype_p, lambda _, x, **__: [x], shard_map_passthrough=True)
+    from_edtype_p, lambda _, x, **__: [x],
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
@@ -8778,12 +8864,9 @@ def _concatenate_lower(ctx, *xs, dimension):
 
 def _concatenate_collective_rule(in_avals, out_avals, *, dimension):
   out_aval, = out_avals
-  out_spec = out_aval.sharding.spec
-  # _concatenate_sharding_rule skips empty-mesh constants.
-  if (out_spec.partitions[dimension] is not None or
-      any(a.sharding.spec != out_spec for a in in_avals)):
+  if out_aval.sharding.spec.partitions[dimension] is not None:
     raise NotImplementedError
-  return mlir.PartitioningRule()
+  return _naryop_collective_rule(in_avals, out_avals)
 
 
 mlir.register_lowering(
@@ -8900,11 +8983,14 @@ stack_p = standard_primitive(
 ad.deflinear2(stack_p, _stack_transpose_rule)
 
 def _stack_collective_rule(in_avals, out_avals, *, axis):
-  del out_avals, axis
-  # _stack_sharding_rule skips empty-mesh constants.
-  if len({a.sharding.spec for a in in_avals}) > 1:
+  out_aval, = out_avals
+  out_partitions = out_aval.sharding.spec.partitions
+  if out_partitions[axis] is not None:
     raise NotImplementedError
-  return mlir.PartitioningRule()
+  elem_spec = out_aval.sharding.spec.update(
+      partitions=out_partitions[:axis] + out_partitions[axis + 1:])
+  elem_aval = in_avals[0].update(sharding=out_aval.sharding.update(spec=elem_spec))
+  return _naryop_collective_rule(in_avals, [elem_aval])
 
 mlir.register_lowering(
     stack_p, _stack_lower, shard_map_collective_rule=_stack_collective_rule)
@@ -9850,7 +9936,25 @@ def _rev_lower(ctx, x, *, dimensions):
   aval_out, = ctx.avals_out
   out = hlo.reverse(x, mlir.dense_int_array(dimensions))
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
-mlir.register_lowering(rev_p, _rev_lower)
+
+def _rev_collective_rule(in_avals, out_avals, *, dimensions):
+  from jax._src.lax import parallel
+  in_aval, = in_avals
+  mesh = get_abstract_mesh()
+  rev_axes = set(flatten_spec_no_none(in_aval.sharding.spec.partitions[d]
+                                      for d in dimensions))
+  rev_axes = core.order_wrt_mesh(mesh, rev_axes)
+
+  n = math.prod(mesh.shape[a] for a in rev_axes)
+  if n == 1:
+    return mlir.PartitioningRule()
+
+  perm = tuple((i, n - 1 - i) for i in range(n))
+  def in_collective(x):
+    return [parallel.ppermute(x, rev_axes, perm)]
+  return mlir.PartitioningRule(in_collective=in_collective)
+mlir.register_lowering(rev_p, _rev_lower,
+                       shard_map_collective_rule=_rev_collective_rule)
 
 
 def _transpose_shape_rule(operand, *, permutation):
@@ -10744,7 +10848,8 @@ def _reduce_collective_rule(
     scatters.append((dim, scatter_axes))
     scattered_axes.update(scatter_axes)
 
-  all_reduce_axes = tuple(a for a in reduced_axes if a not in scattered_axes)
+  all_reduce_axes = core.order_wrt_mesh(
+      get_abstract_mesh(), set(reduced_axes) - scattered_axes)
   if not all_reduce_axes and not scatters:
     return mlir.PartitioningRule(per_shard_params=per_shard_params)
 
@@ -10894,6 +10999,8 @@ def _sort_sharding_rule(*avals, dimension, is_stable, num_keys):
   non_empty_s = [
       a.sharding for a in avals
       if not a.sharding.mesh.empty and a.sharding.mesh._any_axis_explicit]
+  if not non_empty_s:
+    return [core.get_cur_mesh_sharding()] * len(avals)
   for s in non_empty_s:
     if s.spec[dimension] is not None:
       raise core.ShardingTypeError(
@@ -10903,7 +11010,7 @@ def _sort_sharding_rule(*avals, dimension, is_stable, num_keys):
       shardings = " ".join(str(s) for s in non_empty_s)
       raise core.ShardingTypeError(
           f'Arguments to sort must have equal shardings, got: {shardings}')
-  return [a.sharding for a in avals]
+  return [non_empty_s[0]] * len(avals)
 
 def _sort_abstract_eval(*avals, dimension, is_stable, num_keys):
   avals = tuple(avals)
@@ -11068,12 +11175,10 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
   return [mlir.lower_with_sharding_in_types(ctx, op, aval)
           for op, aval in zip(sort.results, ctx.avals_out)]
 
-def _sort_collective_rule(in_avals, out_avals, **params):
-  del out_avals, params
-  # _sort_sharding_rule skips empty-mesh constants.
-  if len({a.sharding.spec for a in in_avals}) > 1:
+def _sort_collective_rule(in_avals, out_avals, *, dimension, **params):
+  if out_avals[0].sharding.spec.partitions[dimension] is not None:
     raise NotImplementedError
-  return mlir.PartitioningRule()
+  return _naryop_collective_rule(in_avals, out_avals)
 
 mlir.register_lowering(
     sort_p, _sort_lower, shard_map_collective_rule=_sort_collective_rule)
@@ -11283,7 +11388,9 @@ create_token_p.def_abstract_eval(lambda *_: abstract_token)
 def _create_token_lowering(ctx, *operands):
   aval_out, = ctx.avals_out
   return [hlo.create_token()]
-mlir.register_lowering(create_token_p, _create_token_lowering)
+mlir.register_lowering(
+    create_token_p, _create_token_lowering,
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def after_all(*operands):
@@ -11491,7 +11598,8 @@ copy_p.def_abstract_eval(lambda x: x)
 def _copy_lowering(ctx, x):
   out_aval, = ctx.avals_out
   return [mlir.lower_with_sharding_in_types(ctx, x, out_aval)]
-mlir.register_lowering(copy_p, _copy_lowering, shard_map_passthrough=True)
+mlir.register_lowering(
+    copy_p, _copy_lowering, shard_map_collective_rule=lambda *_, **__: None)
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
 batching.defvectorized(copy_p)
 copy_p.is_high = lambda x: x.is_high  # type: ignore
@@ -12136,10 +12244,16 @@ def _optimization_barrier_lowering_rule(ctx, *args):
          if isinstance(aval, core.ShapedArray) else op
          for op, aval in zip(barrier_op.results, ctx.avals_out)]
   return treedef.unflatten(out)
+
+def _optimization_barrier_collective_rule(in_avals, out_avals):
+  if not all(isinstance(a, core.ShapedArray) for a in in_avals):
+    return None
+  return mlir.PartitioningRule()
+
 mlir.register_lowering(
     optimization_barrier_p,
     _optimization_barrier_lowering_rule,
-    shard_map_passthrough=True,
+    shard_map_collective_rule=_optimization_barrier_collective_rule,
 )
 
 def _optimization_barrier_batcher(batched_args, batch_dims, **params):

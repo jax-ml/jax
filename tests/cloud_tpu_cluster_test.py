@@ -27,12 +27,13 @@ class CloudTpuClusterTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.orig_env = os.environ.copy()
-
-  def tearDown(self):
-    os.environ.clear()
-    os.environ.update(self.orig_env)
-    super().tearDown()
+    self.enterContext(
+        jtu.set_env(
+            TPU_PROCESS_ADDRESSES_PATH=None,
+            TPU_PROCESS_ADDRESSES=None,
+            TPU_WORKER_HOSTNAMES=None,
+        )
+    )
 
   def test_read_from_valid_file(self):
     with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:

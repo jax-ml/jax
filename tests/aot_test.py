@@ -52,10 +52,11 @@ class JaxAotTest(jtu.JaxTestCase):
     def fun(x):
       return x * x
 
+    n = jax.device_count()
     with jax.set_mesh(jax.sharding.Mesh(np.array(jax.devices()), ('data',))):
       lowered = jax.jit(
           fun, in_shardings=P('data'), out_shardings=P(None, 'data')
-      ).lower(core.ShapedArray(shape=(8, 8), dtype=np.float32))
+      ).lower(core.ShapedArray(shape=(n, n), dtype=np.float32))
 
     def verify_serialization(lowered):
       serialized, in_tree, out_tree = serialize(lowered.compile())

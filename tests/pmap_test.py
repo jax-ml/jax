@@ -1103,7 +1103,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = np.roll(np.pi + np.arange(device_count), -1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    jtu.check_grads(g, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2)
+    jtu.check_grads(g, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
 
   def testCollectivePermuteCyclicWithPShuffle(self):
     device_count = jax.device_count()
@@ -1162,7 +1162,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       enlarged_board_slice = jnp.concatenate([left, board_slice, right])
       return update_board(enlarged_board_slice)
 
-    board = np.zeros(40, dtype=bool)
+    board = np.zeros(math.lcm(40, device_count), dtype=bool)
     board[board.shape[0] // 2] = True
     reshaped_board = board.reshape((device_count, -1))
 
@@ -1176,7 +1176,8 @@ class PythonPmapTest(jtu.JaxTestCase):
       print_board(reshaped_board)
 
     ans = '\n'.join(boards)
-    expected = '\n'.join((
+    pad = ' ' * ((board.shape[0] - 40) // 2)
+    expected = '\n'.join(pad + row + pad for row in (
         '                    *                   ',
         '                   ***                  ',
         '                  **  *                 ',
@@ -1621,7 +1622,7 @@ class PythonPmapTest(jtu.JaxTestCase):
         res = fv(x)
       return res
 
-    x = random.normal(random.PRNGKey(1), (40, 5))
+    x = random.normal(random.PRNGKey(1), (5 * jax.device_count(), 5))
     y = random.normal(random.PRNGKey(1), (5, 5))
 
     result1 = vmap(lambda b: matrix_vector(x, b, True))(y)       # vmap + pmap

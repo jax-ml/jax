@@ -47,7 +47,7 @@ from jax._src.api_util import InternalFloatingPointError
 from jax._src.layout import Layout, Format
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
-from jax._src.mesh import AbstractMesh, Mesh
+from jax._src.mesh import AbstractMesh, Mesh, get_abstract_mesh
 from jax._src.monitoring import record_scalar, record_event_duration_secs, record_event_time_span
 from jax._src.partition_spec import PartitionSpec, UnreducedKind
 from jax._src.sharding import Sharding
@@ -815,12 +815,32 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
     return x
   return list(map(lower, xs, devices, ctx.avals_in, ctx.avals_out))
 
+def _device_put_collective_rule(
+    in_avals, out_avals, *, devices, srcs, copy_semantics):
+  mesh = get_abstract_mesh()
+  for in_aval, out_aval, d in zip(in_avals, out_avals, devices):
+    if d is None or isinstance(d, core.MemorySpace):
+      continue
+    if (not isinstance(d, NamedSharding) or
+        not isinstance(in_aval, core.ShapedArray)):
+      raise NotImplementedError()
+    in_s, out_s = in_aval.sharding, out_aval.sharding
+    if ((not in_s.mesh.empty and in_s.mesh != mesh) or
+        out_s.mesh != mesh or in_s.spec != out_s.spec):
+      raise NotImplementedError(
+          f'Resharding via `jax.device_put` from {in_s} to {out_s} is not'
+          ' supported under `jax_partitioning`; use `jax.reshard` instead.')
+  return None
+
 mlir.register_lowering(
-  device_put_p, _tpu_gpu_device_put_lowering, platform='tpu')
+    device_put_p, _tpu_gpu_device_put_lowering, platform='tpu',
+    shard_map_collective_rule=_device_put_collective_rule)
 mlir.register_lowering(
-  device_put_p, _tpu_gpu_device_put_lowering, platform='gpu')
+    device_put_p, _tpu_gpu_device_put_lowering, platform='gpu',
+    shard_map_collective_rule=_device_put_collective_rule)
 
 
 def _common_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
   return xs
-mlir.register_lowering(device_put_p, _common_device_put_lowering)
+mlir.register_lowering(device_put_p, _common_device_put_lowering,
+                       shard_map_collective_rule=_device_put_collective_rule)

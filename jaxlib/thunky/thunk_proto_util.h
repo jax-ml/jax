@@ -18,11 +18,14 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "xla/backends/gpu/codegen/gpu_kernel_spec.pb.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.pb.h"
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.pb.h"
 #include "xla/backends/gpu/runtime/collective_thunk.pb.h"
 #include "xla/backends/gpu/runtime/convolution_filter_thunk.pb.h"
 #include "xla/backends/gpu/runtime/copy_thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/codegen/emitters/kernel_arguments.pb.h"
 #include "xla/service/buffer_assignment.pb.h"
 #include "xla/service/shaped_slice.pb.h"
 
@@ -43,6 +46,16 @@ absl::Status ForEachBufferSlice(ThunkProto* thunk, Callback&& cb) {
       auto* ckt = thunk->mutable_custom_kernel_thunk();
       for (int i = 0; i < ckt->args_size(); ++i) {
         cb(ckt->mutable_args(i)->mutable_slice());
+      }
+      if (ckt->custom_kernel().has_spec()) {
+        auto* kernel_args = ckt->mutable_custom_kernel()
+                                ->mutable_spec()
+                                ->mutable_kernel_arguments();
+        for (int i = 0; i < kernel_args->args_size(); ++i) {
+          if (kernel_args->args(i).has_slice()) {
+            cb(kernel_args->mutable_args(i)->mutable_slice());
+          }
+        }
       }
       return absl::OkStatus();
     }

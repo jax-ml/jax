@@ -452,7 +452,7 @@ def _custom_jvp_vjp_call_lowering(ctx: mlir.LoweringRuleContext, *args,
   return out
 mlir.register_lowering(
     custom_jvp_call_p, _custom_jvp_vjp_call_lowering,
-    shard_map_passthrough=True)
+    shard_map_collective_rule=lambda *_, **__: None)
 
 def _custom_jvp_call_transpose_fancy(cts, *args, call_jaxpr, **_):
   return ad.backward_pass3(call_jaxpr, False, call_jaxpr.consts, args, cts)
@@ -1245,7 +1245,7 @@ custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
 # TODO(phawkins,mattjj): make this primitive cacheable.
 mlir.register_lowering(
     custom_vjp_call_p, _custom_jvp_vjp_call_lowering, cacheable=False,
-    shard_map_passthrough=True)
+    shard_map_collective_rule=lambda *_, **__: None)
 
 def _custom_vjp_call_typecheck(_, *in_avals, call_jaxpr, **kwargs):
   core.check_distinct_refs(custom_vjp_call_p, in_avals)
@@ -1950,7 +1950,7 @@ ad.primitive_jvps[linear_call_p] = _linear_call_jvp_rule
 ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule
 mlir.register_lowering(
     linear_call_p, mlir.lower_fun(_linear_call_impl, multiple_results=True),
-    shard_map_passthrough=True)
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 # A stageable primitive that fails when evaluated
@@ -2261,7 +2261,7 @@ remat_opt_p.def_impl(_remat_opt_impl)
 remat_opt_p.def_effectful_abstract_eval(_remat_opt_abstract_eval)
 mlir.register_lowering(
     remat_opt_p, mlir.lower_fun(_remat_opt_impl, multiple_results=True),
-    shard_map_passthrough=True)
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 batching.fancy_primitive_batchers[remat_opt_p] = _remat_opt_vmap

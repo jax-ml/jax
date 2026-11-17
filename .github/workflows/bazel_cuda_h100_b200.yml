@@ -117,7 +117,10 @@ jobs:
             //tests/mosaic:gpu_tests
           JAXCI_TEST_TAG_FILTERS: '-multiaccelerator'
           JAXCI_USE_PARALLEL_ACCELERATOR_RUNNER: '1'
-          JAXCI_LOCAL_TEST_JOBS: '8'
+          # Limit to 4 concurrent jobs to reduce single-GPU resource contention and
+          # timeouts, since every test shares the single B200 GPU.
+          JAXCI_LOCAL_TEST_JOBS: '4'
+          JAXCI_TESTS_PER_ACCELERATOR: '4'
           JAXCI_EXCLUDE_TEST_TARGETS: 'PmapTest.testSizeOverflow|.*InterpretTest.*'
           JAXCI_TEST_TIMEOUT: '420'
           CUSTOM_BAZEL_TARGETS: ${{ github.event.inputs.bazel_targets }}

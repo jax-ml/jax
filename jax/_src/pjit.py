@@ -1416,7 +1416,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   key = (jit_p, name, jaxpr, num_devices,
          pxla.SemanticallyEqualShardings(in_shardings, jaxpr.in_avals),
          pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),
-         in_layouts, out_layouts, is_jax_late)
+         in_layouts, out_layouts, tuple(mod_ctx.platforms), is_jax_late)
 
   result = mod_ctx.cached_primitive_lowerings.get(key, None)
   if result is None:
@@ -1463,7 +1463,8 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
 # because the cache breaks jaxpr metadata like source locations. We should fix
 # the metadata problem and consolidate the caches.
 mlir.register_lowering(
-    jit_p, _pjit_lowering, cacheable=False, shard_map_passthrough=True)
+    jit_p, _pjit_lowering, cacheable=False,
+    shard_map_collective_rule=lambda *_, **__: None)
 
 def const_args_shardings(
     const_args: Sequence[Array | np.ndarray],
@@ -2377,6 +2378,7 @@ def _lower_shaped_reshard(
   removed_u = src_s.spec.unreduced - dst_s.spec.unreduced
   added_u = dst_s.spec.unreduced - src_s.spec.unreduced
   assert removed_u or added_u
+
   # Can't do this: src_u = ("x",) and dst_u = ("y",)
   if removed_u and added_u:
     raise NotImplementedError(
@@ -2401,6 +2403,31 @@ def _lower_shaped_reshard(
         UnreducedKind.max: lax.reduce_max,
         UnreducedKind.min: lax.reduce_min,
     }[src_s.spec.unreduced_kind]
+
+    # `lo_val` has one leading dim per unreduced axis, e.g. f32[4, 4]{U:x} is
+    # f32[2@x, 4, 4]. Before reducing, slice `lo_val` on any `dst_s` axis that
+    # it doesn't use yet, so the reduction collectives move less data:
+    #
+    #   f32[4, 4]{U:x} -> f32[4, 4@y]
+    #     f32[2@x, 4, 4] -> f32[2@x, 4, 4@y]  slice 'y' (no communication)
+    #                    -> f32[4, 4@y]       all_reduce 'x' on half the data
+    #
+    #   f32[4, 4]{U:x} -> f32[4@(y, x), 4]
+    #     f32[2@x, 4, 4] -> f32[2@x, 4@y, 4]  slice 'y'
+    #                    -> f32[4@(y, x), 4]  reduce_scatter 'x'
+    #
+    # An axis after a reduced axis can't be sliced first: for f32[4@(x, y), 4]
+    # 'y' would land before 'x', so `reduce_fn` raises NotImplementedError.
+    lo_s = typeof(lo_val).sharding
+    cur = [_tupleize_spec(p) for p in lo_s.spec.partitions]
+    # The leading unreduced dims stay as they are.
+    dst = cur[:len(src_u)] + [_tupleize_spec(p) for p in dst_s.spec.partitions]
+    if any(slice_axes := _free_slice_axes(cur, dst)):
+      pre_dst = lo_s.update(spec=lo_s.spec.update(
+          partitions=[c + s for c, s in zip(cur, slice_axes)]))
+      lo_val = reshard_p.bind(lo_val, dst_sharding=pre_dst,
+                              concrete_mesh=concrete_mesh, reduction_order=None)
+
     red_axes = tuple(i for i, a in enumerate(src_u) if a in removed_u)
     rem_s = dst_s.update(spec=P(*dst_u, *dst_s.spec.partitions))
     if reduction_order is not None:
@@ -2717,25 +2744,28 @@ def _next_move(cur: list[tuple], dst: list[tuple]) -> ReshardA2A | ReshardAG:
   """Takes axes off the end of a dim that isn't a prefix of its target.
 
   Prefers moving axes with an all_to_all over dropping them with an
-  all_gather, trying the whole dim's axes before falling back to its last axis.
+  all_gather, trying longer trailing suffixes first.
   """
   out_of_place = [i for i, (c, d) in enumerate(zip(cur, dst))
                   if not _dst_starts_with_cur(d, c)]
   for i in out_of_place:
-    for axes in (cur[i], cur[i][-1:]):
+    for k in range(len(cur[i])):
+      axes = cur[i][k:]
       target = _a2a_target(cur, dst, axes)
       if target is not None:
         return ReshardA2A(axes, i, target)
 
   # No all_to_all is possible, so all_gather on the first out-of-place dim.
-  # If none of its axes are in `dst`, gather them all at once, e.g.
-  # P(('x', 'y'), None) -> P(None, None) gathers ('x', 'y') together.
-  # Otherwise gather only its last axis, so the axes `dst` still needs stay
-  # sharded, e.g. P(('x', 'y'), None) -> P('x', None) gathers just 'y'
-  # instead of gathering ('x', 'y') and then slicing 'x' back in.
+  # Gather all trailing axes that `dst` doesn't need at once, so any leading
+  # axes `dst` still needs stay sharded, e.g. P(('x', 'y', 'z'), None) ->
+  # P('x', None) gathers ('y', 'z') together without gathering 'x'. If the last
+  # axis is still needed in `dst`, gather just that last axis.
   i = out_of_place[0]
   dst_axes = {a for d in dst for a in d}
-  axes = cur[i][-1:] if any(a in dst_axes for a in cur[i]) else cur[i]
+  k = len(cur[i])
+  while k > 0 and cur[i][k - 1] not in dst_axes:
+    k -= 1
+  axes = cur[i][-1:] if k == len(cur[i]) else cur[i][k:]
   return ReshardAG(axes, i)
 
 
@@ -2983,16 +3013,18 @@ def _auto_axes(fun, *, axes_, out_sharding):
         axes_, mesh_lib.AxisType.Auto, 'auto_axes', shardings=_out_sharding)
     if mesh_info is None:
       return fun(*args, **kwargs)
+    if config.jax_partitioning.value:
+      raise ValueError(
+          '`auto_axes` is not supported when `jax_partitioning` is enabled.')
     if set(mesh_info.prev.auto_axes) == set(mesh_info.axes):
       return fun(*args, **kwargs)
     in_avals = [core.typeof(a) for a in tree_leaves(args)]
-    with config.jax_partitioning(False):
-      with mesh_lib.use_abstract_mesh(mesh_info.new):
-        in_specs = tree_map(
-            lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
-        args = reshard(args, in_specs)
-        out = fun(*args, **kwargs)
-      res = reshard(out, _out_sharding)
+    with mesh_lib.use_abstract_mesh(mesh_info.new):
+      in_specs = tree_map(
+          lambda a: _modify_spec_for_auto_manual_hi(a, mesh_info.new), args)
+      args = reshard(args, in_specs)
+      out = fun(*args, **kwargs)
+    res = reshard(out, _out_sharding)
     if config.no_collectives.value:
       from jax._src.lax import utils as lax_utils  # type: ignore
       out_shardings = [core.typeof(o).sharding for o in tree_leaves(res)
@@ -3024,16 +3056,18 @@ def _explicit_axes(fun, *, axes, in_sharding):
       raise ValueError(
           'Context mesh cannot be empty. Please use `jax.set_mesh` API to enter'
           ' into a mesh context when using `explicit_axes` API.')
+    if (config.jax_partitioning.value and
+        not mesh_info.prev.are_all_axes_explicit_or_manual):
+      raise ValueError(
+          '`explicit_axes` is only supported on an all-Explicit mesh when'
+          f' `jax_partitioning` is enabled. Got mesh: {mesh_info.prev}')
     with mesh_lib.use_abstract_mesh(mesh_info.new):
-      # The input layout was chosen by Shardy, so let it reshard into explicit.
-      with config.jax_partitioning(False):
-        args = reshard(args, _in_sharding)
+      args = reshard(args, _in_sharding)
       out = fun(*args, **kwargs)
     out_specs = tree_map(
         lambda o: _modify_spec_for_auto_manual_hi(o, mesh_lib.get_abstract_mesh()),
         out)
-    with config.jax_partitioning(False):
-      return reshard(out, out_specs)
+    return reshard(out, out_specs)
   return decorator
 
 # -------------------- with_layout_constraint --------------------
