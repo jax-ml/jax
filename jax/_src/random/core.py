@@ -3317,10 +3317,15 @@ def _gumbel(key: Key, shape, dtype, mode, out_sharding=None) -> Array:
   _check_shape("gumbel", shape)
   info = dtypes.finfo(dtype)
   if dtype == np.float32 and mode == "highest":
-    bits = _random_bits(
-        key, info.bits, shape=(2,) + shape,
-        out_sharding=_prepend_none_sharding(out_sharding))
-    hi, lo = bits[0], bits[1]
+    if _key_impl(key).num_streams >= 2:
+      hi, lo = prng.random_bits(
+          key, info.bits, shape=shape, num_streams=2,
+          out_sharding=out_sharding)
+    else:
+      bits = _random_bits(
+          key, info.bits, shape=(2,) + shape,
+          out_sharding=_prepend_none_sharding(out_sharding))
+      hi, lo = bits[0], bits[1]
     neg_hi = lax.bitwise_not(hi)
     neg_lo = lax.bitwise_not(lo)
     # 1 - bits in u64 fixed point.
@@ -3333,8 +3338,8 @@ def _gumbel(key: Key, shape, dtype, mode, out_sharding=None) -> Array:
     sel_lo = jnp.where(flip_mask, lo, neg_lo)
     x = _safe_int_to_float((sel_hi, sel_lo), dtype=np.float32)
     # use log1p for (0,0.5) and log for [0.5, 1).
-    return jnp.where(flip_mask,
-        -jnp.log(-jnp.log1p(-x)), -jnp.log(-jnp.log(x)))
+    inner = jnp.where(flip_mask, -jnp.log1p(-x), -jnp.log(x))
+    return -jnp.log(inner)
   elif mode == "high" or mode == "highest":
     high, low = lax.unstack(_uniform(
         key, minval=0., maxval=1., shape=(2,) + shape, dtype=dtype,
