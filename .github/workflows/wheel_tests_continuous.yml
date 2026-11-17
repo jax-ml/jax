@@ -584,7 +584,7 @@ jobs:
     strategy:
         fail-fast: false
         matrix:
-          runner: ["amd-do-linux.jax.gpu.gfx950.4"]
+          runner: ["amd-do-linux-jax-bzl-gpu-gfx950-1"]
           python: ["3.12"]
           rocm: [
             {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
@@ -624,7 +624,7 @@ jobs:
     strategy:
         fail-fast: false
         matrix:
-          runner: ["amd-do-linux.jax.gpu.gfx950.4"]
+          runner: ["amd-do-linux-jax-bzl-gpu-gfx950-1"]
           python: ["3.12"]
           rocm: [
             {label: "TheRock 10.1.0", wheel-version: "10", release-version: "10.1.0", tag: "therock-10.1"},
