@@ -5381,7 +5381,8 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag')
 
     elif name == 'exp':
-      regions_with_inaccuracies_keep('pos.imag', 'pinf.imag', 'mpos.imag')
+      # TODO(b/586593072): Update once supported XLA has openxla/stablehlo#3039.
+      regions_with_inaccuracies_keep('pos.imag', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
 
     elif name == 'exp2':
       # TODO: Remove 'ninfj' and 'pinfj' from the list once all supported XLA
@@ -5399,17 +5400,19 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
                                      'ninf', 'pinf', 'ninfj', 'pinfj')
 
     elif name == 'sinh':
+      # TODO(b/586593072): Update once supported XLA has openxla/stablehlo#3039.
       if is_cuda:
         regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'neg', 'pos',
-                                       'ninf.imag', 'pinf.imag', 'mq1.real', 'mq2.real', 'mq3.real', 'mq4.real', 'mneg', 'mpos',
+                                       'ninf', 'pinf', 'mq1.real', 'mq2.real', 'mq3.real', 'mq4.real', 'mneg', 'mpos',
                                        'ninfj.real', 'pinfj.real')
       if is_cpu:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj.imag', 'posj.imag', 'ninf.imag', 'pinf.imag',
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj.imag', 'posj.imag', 'ninf', 'pinf',
                                        'mq1.real', 'mq2.real', 'mq3.real', 'mq4.real', 'mneg', 'mpos',
                                        'ninfj.real', 'pinfj.real')
     elif name == 'cosh':
-      regions_with_inaccuracies_keep('neg.imag', 'pos.imag', 'ninf.imag', 'pinf.imag', 'mneg.imag', 'mpos.imag',
-                                     'ninfj.imag', 'pinfj.imag')
+      # TODO(b/586593072): Update once supported XLA has openxla/stablehlo#3039.
+      regions_with_inaccuracies_keep('neg.imag', 'pos.imag', 'ninf', 'pinf', 'mneg.imag', 'mpos.imag',
+                                     'ninfj', 'pinfj')
 
     elif name == 'tanh':
       regions_with_inaccuracies_keep('ninf', 'pinf', 'ninfj', 'pinfj')
