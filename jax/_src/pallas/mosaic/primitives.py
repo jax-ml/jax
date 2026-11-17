@@ -923,8 +923,6 @@ def async_remote_copy(
 
 
 get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
-get_barrier_semaphore_p.ref_primitive = True
-get_barrier_semaphore_p.ref_allocating = True
 
 @get_barrier_semaphore_p.def_abstract_eval
 def _get_barrier_semaphore_abstract_eval(*, tag: Hashable | None = None):

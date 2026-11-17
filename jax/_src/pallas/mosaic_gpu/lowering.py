@@ -967,9 +967,7 @@ def lower_jaxpr_to_module(
       in_shapes=tuple(
           _to_physical_shape(s) for s in (*in_shapes, *scoped_semaphores_shape)
       ),
-      out_shape=tuple(
-          _to_physical_shape(s) for s in (*out_shapes, *scoped_semaphores_shape)
-      ),
+      out_shape=(*out_shapes, *scoped_semaphores_shape),
       inout_shape=(),
       smem_scratch_shape=scratch_buffers,
       lowering_semantics=lowering_semantics,
