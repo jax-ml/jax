@@ -337,18 +337,16 @@ def _mpmd_map_discharge_rule(
   ans, updated_refs = util.split_list(res, [num_out_orig])
   new_invals = [None] * len(ctx.in_avals)
   for out_idx, in_idx in enumerate(write_indices):
-    ms = in_memory_spaces[in_idx]
+    ms = pallas_core.get_memory_space_aval(ctx.in_avals[in_idx])
     new_invals[in_idx] = state_discharge.constrain(
-        updated_refs[out_idx], ms, ctx.strip_memory_space,
-        neutral_ms=(default_memory_space,),
+        updated_refs[out_idx], ms, ctx.strip_memory_space
     )
   # constrain aliased outputs
   for in_idx, out_idx in input_output_aliases.items():
     if isinstance(ctx.in_avals[in_idx], state.AbstractRef):
-      ms = in_memory_spaces[in_idx]
+      ms = pallas_core.get_memory_space_aval(ctx.in_avals[in_idx])
       ans[out_idx] = state_discharge.constrain(
-          ans[out_idx], ms, ctx.strip_memory_space,
-          neutral_ms=(default_memory_space,),
+          ans[out_idx], ms, ctx.strip_memory_space
       )
 
   return new_invals, ans
