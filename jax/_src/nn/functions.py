@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from functools import lru_cache
 import operator
 import os
 import numpy as np
@@ -1015,6 +1016,34 @@ def _dot_product_attention_xla(
   return encoded
 
 
+@lru_cache(maxsize=128)
+def _cudnn_python_frontend_attention(forward_op, backward_op, scale, causal,
+                                    window):
+  options = dict(scale=scale, is_causal=causal, local_window_size=window)
+
+  def forward(q, k, v, bias, mask, q_lengths, kv_lengths):
+    output, stats = forward_op(
+        q, k, v, bias, mask, query_seq_lengths=q_lengths,
+        key_value_seq_lengths=kv_lengths, **options)
+    return (output, stats), (q, k, v, bias, mask, q_lengths, kv_lengths,
+                             output, stats)
+
+  @custom_derivatives.custom_vjp
+  def attention(q, k, v, bias, mask, q_lengths, kv_lengths):
+    return forward(q, k, v, bias, mask, q_lengths, kv_lengths)[0]
+
+  def backward(saved, cotangents):
+    q, k, v, bias, mask, q_lengths, kv_lengths, output, stats = saved
+    dq, dk, dv, dbias = backward_op(
+        q, k, v, output, cotangents[0], stats, bias, mask,
+        query_seq_lengths=q_lengths, key_value_seq_lengths=kv_lengths,
+        **options)
+    return dq, dk, dv, dbias, None, None, None
+
+  attention.defvjp(forward, backward)
+  return attention
+
+
 @overload
 def dot_product_attention(
     query: ArrayLike,
@@ -1204,17 +1233,22 @@ def dot_product_attention(
         raise ValueError('JAX_CUDNN_SDPA_USE_PYTHON_FRONTEND must be 0 or 1')
       if use_frontend == '1':
         try:
-          from cudnn import sdpa_jax
+          from cudnn.ops import sdpa_forward_jax, sdpa_backward_jax
         except ImportError as error:
           raise ImportError(
               'The Python frontend route requires nvidia-cudnn-frontend '
-              'with sdpa_jax support.') from error
-        return sdpa_jax(
-            query, key, value, bias, mask, scale=scale_val,
-            is_causal=is_causal, query_seq_lengths=query_seq_lengths,
-            key_value_seq_lengths=key_value_seq_lengths,
-            local_window_size=local_window_size,
-            return_residual=return_residual)
+              'with sdpa_forward_jax and sdpa_backward_jax support.') from error
+        attention = _cudnn_python_frontend_attention(
+            sdpa_forward_jax, sdpa_backward_jax, scale_val, is_causal,
+            local_window_size)
+        output, stats = attention(
+            query_arr, key_arr, value_arr, bias, mask, query_seq_lengths,
+            key_value_seq_lengths)
+        output = jnp.reshape(output, output_shape)
+        if return_residual:
+          residual = lax.stop_gradient(stats.astype(output.dtype))
+          return output, jnp.reshape(residual, residual_shape)
+        return output
       use_padding = (
            query_seq_lengths is not None or key_value_seq_lengths is not None
       )
