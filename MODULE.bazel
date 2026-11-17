@@ -35,9 +35,9 @@ git_override(
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-8RvOtf9gz3gNg4siv4xTTR6ldHopU/Hw16V7nzQPgO4=",
-    strip_prefix = "rules_ml_toolchain-327ec4d6896bb1f37d84fe1e83c93d6a23872be6",
-    urls = ["https://github.com/yuriivcs/rules_ml_toolchain/archive/327ec4d6896bb1f37d84fe1e83c93d6a23872be6.tar.gz"],
+    integrity = "sha256-ff9Z2VrHTgUubl0jr7uPmXTV+bapNRjIl05ObTbbrmQ=",
+    strip_prefix = "rules_ml_toolchain-3e4a60ed9b5709528f1f8279a10e548bafef9935",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/3e4a60ed9b5709528f1f8279a10e548bafef9935.tar.gz"],
 )
 
 bazel_dep(name = "xla")
