@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -38,6 +39,22 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/raw_ostream.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"  // IWYU pragma: keep
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // IWYU pragma: keep
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"  // IWYU pragma: keep
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // IWYU pragma: keep
+#include "mlir/Dialect/MemRef/IR/MemRef.h"  // IWYU pragma: keep
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OperationSupport.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/Parser/Parser.h"
+#include "mlir/Pass/PassManager.h"
+#include "jaxlib/mosaic/gpu/serde.h"
 #include "jaxlib/mosaic/gpu/target.h"
 #include "xla/client/local_client.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -478,6 +495,118 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
     EXPECT_THAT(logs,
                 Not(Contains("Successfully JIT-linked Mosaic GPU kernel")));
   }
+}
+
+// Converts a textual Mosaic GPU module into the serialized form that the
+// custom call expects.
+absl::StatusOr<std::string> SerializeMosaicGpuModule(absl::string_view text) {
+  mlir::MLIRContext context;
+  // Serialized ops use unregistered (mangled) names.
+  context.allowUnregisteredDialects(true);
+  mlir::DialectRegistry registry;
+  // NOLINTBEGIN(misc-include-cleaner): TableGen dialect classes come from .inc.
+  registry.insert<mlir::arith::ArithDialect, mlir::func::FuncDialect,
+                  mlir::gpu::GPUDialect, mlir::LLVM::LLVMDialect,
+                  mlir::memref::MemRefDialect>();
+  // NOLINTEND(misc-include-cleaner)
+  context.appendDialectRegistry(registry);
+  mlir::OwningOpRef<mlir::ModuleOp> module =
+      mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+  if (!module) {
+    return absl::InvalidArgumentError("Failed to parse Mosaic GPU module");
+  }
+  std::string diagnostics;
+  mlir::ScopedDiagnosticHandler handler(&context, [&](mlir::Diagnostic& diag) {
+    absl::StrAppend(&diagnostics, diag.str(), "\n");
+    return llvm::success();
+  });
+  mlir::PassManager pm(&context);
+  // Version 9 is the serde version this module was written against. Newer
+  // runtimes upgrade it on load.
+  pm.addPass(mosaic::gpu::createSerdePass(
+      mosaic::gpu::SerdePassOptions{.serialize = true, .target_version = 9}));
+  if (pm.run(*module).failed()) {
+    return absl::InternalError(
+        absl::StrCat("Failed to serialize Mosaic GPU module: ", diagnostics));
+  }
+  std::string serialized;
+  llvm::raw_string_ostream os(serialized);
+  module->print(os, mlir::OpPrintingFlags().printGenericOpForm());
+  return serialized;
+}
+
+// A Mosaic GPU module that writes 42 to its output and is marked as using
+// Programmatic Dependent Launch (PDL).
+absl::StatusOr<std::string> TestPdlHloModule() {
+  constexpr absl::string_view kModule = R"mlir(
+module @kernel attributes {mosaic_gpu.uses_pdl} {
+  func.func private @mosaic_gpu_init_tma_desc(!llvm.ptr, !llvm.ptr, i64, i64, !llvm.ptr, !llvm.ptr, i64, !llvm.ptr)
+  llvm.mlir.global external @global_scratch() {addr_space = 4 : i32} : !llvm.array<0 x i8>
+  func.func @kernel_mosaic_gpu(%stream: !llvm.ptr, %buffers: !llvm.ptr) attributes {llvm.emit_c_interface} {
+    %c42_i32 = arith.constant 42 : i32
+    %c0_i32 = arith.constant 0 : i32
+    %c128 = arith.constant 128 : index
+    %c1 = arith.constant 1 : index
+    %c0_i64 = llvm.mlir.constant(0 : i64) : i64
+    %undef = llvm.mlir.undef : !llvm.struct<(ptr, ptr, i64)>
+    %token = builtin.unrealized_conversion_cast %stream : !llvm.ptr to !gpu.async.token
+    %out_ptr = llvm.load %buffers : !llvm.ptr -> !llvm.ptr
+    %desc0 = llvm.insertvalue %out_ptr, %undef[0] : !llvm.struct<(ptr, ptr, i64)>
+    %desc1 = llvm.insertvalue %out_ptr, %desc0[1] : !llvm.struct<(ptr, ptr, i64)>
+    %desc2 = llvm.insertvalue %c0_i64, %desc1[2] : !llvm.struct<(ptr, ptr, i64)>
+    %out = builtin.unrealized_conversion_cast %desc2 : !llvm.struct<(ptr, ptr, i64)> to memref<i32>
+    %done = gpu.launch async [%token] blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) dynamic_shared_memory_size %c0_i32 {
+      memref.store %c42_i32, %out[] : memref<i32>
+      gpu.terminator
+    }
+    return
+  }
+}
+)mlir";
+  ASSIGN_OR_RETURN(std::string serialized, SerializeMosaicGpuModule(kModule));
+  return absl::Substitute(
+      R"hlo(
+    HloModule test
+
+    ENTRY main {
+      ROOT result = s32[] custom-call(), custom_call_target="mosaic_gpu_v2", api_version=API_VERSION_TYPED_FFI, backend_config={kernel_hash = "pdl_serdes_test_hash_0123456789a", module = "$0", use_custom_barrier = false}
+    }
+  )hlo",
+      absl::StrReplaceAll(serialized, {{"\\", "\\5C"},
+                                       {"\"", "\\22"},
+                                       {"{", "\\7B"},
+                                       {"}", "\\7D"},
+                                       {"\n", " "}}));
+}
+
+TEST_F(CustomCallTest, UsesPdlSurvivesSerialization) {
+  ASSERT_OK_AND_ASSIGN(std::string hlo, TestPdlHloModule());
+  ASSERT_OK_AND_ASSIGN(auto module, xla::ParseAndReturnUnverifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  SetVLogLevel("custom_call", 5);
+
+  std::string serialized;
+  {
+    InfoLogCollector collector;
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+        client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                               xla::CompileOptions()));
+    EXPECT_OK(ExecuteSync(executable.get()));
+    ASSERT_OK_AND_ASSIGN(serialized,
+                         executable->GetExecutable()->SerializeExecutable());
+  }
+
+  // Clear the cache so the kernel comes from the serialized proto.
+  MosaicGpuClearKernelCache();
+  InfoLogCollector collector;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->LoadSerializedExecutable(serialized, std::nullopt, {}));
+  EXPECT_OK(ExecuteSync(executable.get()));
+  std::vector<std::string> logs = collector.Stop();
+  EXPECT_THAT(logs, Contains("Successfully JIT-linked Mosaic GPU kernel"));
 }
 
 TEST_F(CustomCallTest, UnloadGPUModule) {
