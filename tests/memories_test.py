@@ -36,7 +36,6 @@ from jax._src.sharding_impls import (
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.xla_metadata import set_xla_metadata
 from jax._src.shard_map import shard_map
-from jax.experimental import localization
 from jax.experimental.compute_on import compute_on
 import jax.numpy as jnp
 import numpy as np
@@ -64,17 +63,17 @@ def _create_inputs(shape, pspec, mem_kind=None):
   return mesh, s, np_inp, inp
 
 
+LD0 = "locality_domain:0"
+LD1 = "locality_domain:1"
+
+
 class LocalityDomainTest(jtu.JaxTestCase):
-  max_locality_domain_id = ((1 << 63) - 1) - 16
 
   def _locality_devices(self, count=1):
     if not jtu.is_device_cuda():
       self.skipTest("Locality domains are only supported on CUDA.")
 
-    required_kinds = {
-        localization.LocalityDomain(0).memory_kind,
-        localization.LocalityDomain(1).memory_kind,
-    }
+    required_kinds = {LD0, LD1}
     locality_devices = []
     for device in jax.local_devices():
       try:
@@ -107,49 +106,6 @@ class LocalityDomainTest(jtu.JaxTestCase):
           shard.data.sharding.memory_kind, expected_sharding.memory_kind
       )
 
-  def test_locality_domain_api(self):
-    ld0 = localization.LocalityDomain(0)
-    ld0_again = localization.LocalityDomain(0)
-    ld1 = localization.LocalityDomain(1)
-
-    self.assertEqual(ld0.memory_kind, "locality_domain:0")
-    self.assertEqual(ld1.memory_kind, "locality_domain:1")
-    self.assertEqual(ld0, ld0_again)
-    self.assertNotEqual(ld0, ld1)
-    self.assertEqual(hash(ld0), hash(ld0_again))
-    self.assertLen({ld0, ld0_again, ld1}, 2)
-    self.assertRegex(repr(ld0), r"^LocalityDomain\(.*0.*\)$")
-    with self.assertRaises((AttributeError, TypeError)):
-      ld0.id = 1
-
-    max_domain = localization.LocalityDomain(self.max_locality_domain_id)
-    self.assertEqual(
-        max_domain.memory_kind,
-        f"locality_domain:{self.max_locality_domain_id}",
-    )
-
-  def test_locality_domain_rejects_invalid_ids(self):
-    for domain_id in (True, False, 1.0, "1", np.int64(1), None):
-      with self.subTest(domain_id=domain_id):
-        with self.assertRaises(TypeError):
-          localization.LocalityDomain(domain_id)
-
-    for domain_id in (-1, self.max_locality_domain_id + 1):
-      with self.subTest(domain_id=domain_id):
-        with self.assertRaises(ValueError):
-          localization.LocalityDomain(domain_id)
-
-  def test_locality_memory_kind_round_trip(self):
-    for domain_id in (0, 1, 256):
-      with self.subTest(domain_id=domain_id):
-        memory_kind = f"locality_domain:{domain_id}"
-        memory_space = core.mem_kind_to_space(memory_kind)
-        self.assertEqual(memory_space, localization.LocalityDomain(domain_id))
-        self.assertEqual(core.mem_space_to_kind(memory_space), memory_kind)
-        aval = core.ShapedArray((1,), np.dtype(np.float32),
-                                memory_space=memory_space)
-        self.assertIn(f"<{memory_kind}>", aval.str_short())
-
   def test_cuda_discovers_locality_domain_memories(self):
     device = self._locality_devices()[0]
     memory_kinds = {
@@ -162,13 +118,11 @@ class LocalityDomainTest(jtu.JaxTestCase):
   def test_single_device_put_and_cross_domain_copies(self):
     device = self._locality_devices()[0]
     values = np.arange(12, dtype=np.float32).reshape(3, 4)
-    ld0 = localization.LocalityDomain(0)
-    ld1 = localization.LocalityDomain(1)
     s0 = make_single_device_sharding(
-        device, memory_kind=ld0.memory_kind
+        device, memory_kind=LD0
     )
     s1 = make_single_device_sharding(
-        device, memory_kind=ld1.memory_kind
+        device, memory_kind=LD1
     )
 
     arr0 = jax.device_put(values, s0)
@@ -184,10 +138,8 @@ class LocalityDomainTest(jtu.JaxTestCase):
     devices = self._locality_devices(count=2)
     mesh = jax.sharding.Mesh(np.asarray(devices), ("x",))
     values = np.arange(16, dtype=np.float32).reshape(8, 2)
-    ld0 = localization.LocalityDomain(0)
-    ld1 = localization.LocalityDomain(1)
-    s0 = NamedSharding(mesh, P("x"), memory_kind=ld0.memory_kind)
-    s1 = NamedSharding(mesh, P("x"), memory_kind=ld1.memory_kind)
+    s0 = NamedSharding(mesh, P("x"), memory_kind=LD0)
+    s1 = NamedSharding(mesh, P("x"), memory_kind=LD1)
 
     arr0 = jax.device_put(values, s0)
     self._check_locality_array(arr0, values, s0)
@@ -198,150 +150,46 @@ class LocalityDomainTest(jtu.JaxTestCase):
     arr0_again = jax.device_put(arr1, s0)
     self._check_locality_array(arr0_again, values, s0)
 
-  def test_device_put_memory_space_composes_with_destinations(self):
-    device = self._locality_devices()[0]
-    mesh = jax.sharding.Mesh(np.asarray([device]), ("data",))
-    values = np.arange(8, dtype=np.float32)
-    ld0 = localization.LocalityDomain(0)
-
-    out_device = jax.device_put(
-        values, device=device, memory_space=ld0
-    )
-    expected_single = make_single_device_sharding(
-        device, memory_kind=ld0.memory_kind
-    )
-    self._check_locality_array(out_device, values, expected_single)
-
-    sharding = NamedSharding(mesh, P("data"))
-    out_sharding = jax.device_put(
-        values, device=sharding, memory_space=ld0
-    )
-    self._check_locality_array(
-        out_sharding, values, sharding.with_memory_kind(ld0.memory_kind)
-    )
-
-    with jax.set_mesh(mesh):
-      out_pspec = jax.device_put(
-          values, device=P("data"), memory_space=ld0
-      )
-    self._check_locality_array(
-        out_pspec,
-        values,
-        NamedSharding(mesh, P("data"), memory_kind=ld0.memory_kind),
-    )
-
-  def test_device_put_memory_only_preserves_sharding(self):
-    devices = self._locality_devices(count=2)
-    mesh = jax.sharding.Mesh(np.asarray(devices), ("data",))
-    values = np.arange(16, dtype=np.float32).reshape(8, 2)
-    ld0 = localization.LocalityDomain(0)
-    ld1 = localization.LocalityDomain(1)
-    s0 = NamedSharding(mesh, P("data"), memory_kind=ld0.memory_kind)
-    arr0 = jax.device_put(values, s0)
-
-    out = jax.device_put(arr0, memory_space=ld1)
-
-    expected_sharding = s0.with_memory_kind(ld1.memory_kind)
-    self._check_locality_array(out, values, expected_sharding)
-
-  def test_device_put_memory_only_host_value_uses_default_device(self):
+  def test_device_put_locality_memory_kind_under_jit(self):
     device = self._locality_devices()[0]
     values = np.arange(8, dtype=np.float32)
-    ld0 = localization.LocalityDomain(0)
+    s0 = make_single_device_sharding(device, memory_kind=LD0)
+    arr = jax.device_put(values, device)
+    placement = '_xla_buffer_placement = "locality_domain:0"'
 
-    with jax.default_device(device):
-      out = jax.device_put(values, memory_space=ld0)
+    # A jit output's memory kind comes from out_shardings: the aval memory
+    # space of a locality-domain array is Device.
+    @jax.jit(out_shardings=s0)
+    def place_with_sharding(x):
+      return jax.device_put(x, s0)
 
-    expected = make_single_device_sharding(
-        device, memory_kind=ld0.memory_kind
-    )
-    self._check_locality_array(out, values, expected)
-    self.assertTrue(out.committed)
+    self.assertIn(placement, place_with_sharding.lower(arr).as_text())
+    self._check_locality_array(place_with_sharding(arr), values, s0)
 
-  def test_device_put_memory_space_pytree_prefix(self):
-    device = self._locality_devices()[0]
-    values = {
-        "a": np.arange(4, dtype=np.float32),
-        "b": (
-            np.arange(4, dtype=np.float32) + 10,
-            np.arange(4, dtype=np.float32) + 20,
-        ),
-    }
-    ld0 = localization.LocalityDomain(0)
-    ld1 = localization.LocalityDomain(1)
-
-    out = jax.device_put(
-        values,
-        device={"a": device, "b": device},
-        memory_space={"a": ld0, "b": ld1},
-    )
-
-    s0 = make_single_device_sharding(
-        device, memory_kind=ld0.memory_kind
-    )
-    s1 = make_single_device_sharding(
-        device, memory_kind=ld1.memory_kind
-    )
-    self._check_locality_array(out["a"], values["a"], s0)
-    self._check_locality_array(out["b"][0], values["b"][0], s1)
-    self._check_locality_array(out["b"][1], values["b"][1], s1)
-
-  def test_device_put_memory_space_conflicts(self):
-    device = self._locality_devices()[0]
-    values = np.arange(8, dtype=np.float32)
-    ld0 = localization.LocalityDomain(0)
-    ld1 = localization.LocalityDomain(1)
-    s0 = make_single_device_sharding(
-        device, memory_kind=ld0.memory_kind
-    )
-
-    with self.assertRaisesRegex(
-        ValueError, "destination sharding already has non-default memory kind"
-    ):
-      jax.device_put(values, device=s0, memory_space=ld1)
-
-    with self.assertRaisesRegex(
-        ValueError, "destination sharding already has non-default memory kind"
-    ):
-      jax.device_put(values, device=s0, memory_space=ld0)
-
-    with self.assertRaisesRegex(
-        ValueError, "memory_space cannot be combined with a `Format`"
-    ):
-      jax.device_put(
-          values,
-          device=Format(DLL((0,)), make_single_device_sharding(device)),
-          memory_space=ld1,
-      )
-
-  def test_device_put_locality_memory_space_under_jit(self):
-    device = self._locality_devices()[0]
-    values = np.arange(8, dtype=np.float32)
-    ld0 = localization.LocalityDomain(0)
-    s0 = make_single_device_sharding(
-        device, memory_kind=ld0.memory_kind
-    )
-
+    # The placement of an intermediate value must not be dropped, even though
+    # no jit input or output uses a non-default memory kind.
     @jax.jit
-    def place_in_ld0(x):
-      return jax.device_put(x, memory_space=ld0)
+    def place_intermediate(x):
+      return jax.device_put(x * 2, s0) + 1
 
-    out = place_in_ld0(jax.device_put(values, device))
-    self._check_locality_array(out, values, s0)
+    self.assertIn(placement, place_intermediate.lower(arr).as_text())
+    self.assertArraysEqual(place_intermediate(arr), values * 2 + 1)
 
   def test_jit_locality_shardings_and_executable_memory_kind(self):
     device = self._locality_devices()[0]
     values = np.arange(8, dtype=np.float32)
-    ld0 = localization.LocalityDomain(0)
-    ld1 = localization.LocalityDomain(1)
     mesh = jax.sharding.Mesh(np.asarray([device]), ("x",))
-    s0 = NamedSharding(mesh, P(), memory_kind=ld0.memory_kind)
-    s1 = NamedSharding(mesh, P(), memory_kind=ld1.memory_kind)
+    s0 = NamedSharding(mesh, P(), memory_kind=LD0)
+    s1 = NamedSharding(mesh, P(), memory_kind=LD1)
     arr0 = jax.device_put(values, s0)
 
-    @compute_on(compute_type="device", out_memory_spaces=ld1)
-    def on_device_with_ld1_output(x):
+    @compute_on(compute_type="device",
+                out_memory_spaces=jax.memory.Space.Device)
+    def on_device(x):
       return x * 2 + 1
+
+    def on_device_with_ld1_output(x):
+      return jax.device_put(on_device(x), s1)
 
     f = jax.jit(
         on_device_with_ld1_output, in_shardings=s0, out_shardings=s1
@@ -350,7 +198,7 @@ class LocalityDomainTest(jtu.JaxTestCase):
 
     self._check_locality_array(out, values * 2 + 1, s1)
     executable_kinds = get_memory_kinds_from_executable(f, [arr0])
-    self.assertEqual(executable_kinds[0], ld1.memory_kind)
+    self.assertEqual(executable_kinds[0], LD1)
 
   def test_locality_compute_lowering_annotation(self):
     @compute_on(
@@ -414,33 +262,34 @@ class LocalityDomainTest(jtu.JaxTestCase):
   def test_cross_domain_compute_with_localized_output(self):
     device = self._locality_devices()[0]
     values = np.arange(8, dtype=np.float32)
-    ld0 = localization.LocalityDomain(0)
     mesh = jax.sharding.Mesh(np.asarray([device]), ("x",))
-    s0 = NamedSharding(mesh, P(), memory_kind=ld0.memory_kind)
+    s0 = NamedSharding(mesh, P(), memory_kind=LD0)
     arr0 = jax.device_put(values, s0)
 
     @compute_on(
         compute_type="gpu_stream:locality_domain:1",
-        out_memory_spaces=ld0,
+        out_memory_spaces=jax.memory.Space.Device,
     )
     def on_ld1(x):
       return jnp.sin(x) * 2
 
-    f = jax.jit(on_ld1, in_shardings=s0, out_shardings=s0)
+    def on_ld1_with_ld0_output(x):
+      return jax.device_put(on_ld1(x), s0)
+
+    f = jax.jit(on_ld1_with_ld0_output, in_shardings=s0, out_shardings=s0)
     out = f(arr0)
 
     self.assertArraysAllClose(out, np.sin(values) * 2)
     self.assertEqual(out.sharding, s0)
     executable_kinds = get_memory_kinds_from_executable(f, [arr0])
-    self.assertEqual(executable_kinds[0], ld0.memory_kind)
+    self.assertEqual(executable_kinds[0], LD0)
 
   @parameterized.parameters(False, True)
   def test_multi_output_locality_compute(self, localize_workspaces):
     device = self._locality_devices()[0]
     values = np.arange(8, dtype=np.float32)
-    ld0 = localization.LocalityDomain(0)
     mesh = jax.sharding.Mesh(np.asarray([device]), ("x",))
-    s0 = NamedSharding(mesh, P(), memory_kind=ld0.memory_kind)
+    s0 = NamedSharding(mesh, P(), memory_kind=LD0)
     arr0 = jax.device_put(values, s0)
 
     @compute_on(
@@ -449,19 +298,23 @@ class LocalityDomainTest(jtu.JaxTestCase):
             "locality_domain": 0,
             "localize_workspaces": localize_workspaces,
         },
-        out_memory_spaces=(ld0, ld0),
+        out_memory_spaces=(jax.memory.Space.Device, jax.memory.Space.Device),
     )
     def on_ld0(x):
       return x + 1, x * 2
 
-    f = jax.jit(on_ld0, in_shardings=s0, out_shardings=(s0, s0))
+    def on_ld0_with_ld0_outputs(x):
+      return jax.device_put(on_ld0(x), (s0, s0))
+
+    f = jax.jit(on_ld0_with_ld0_outputs, in_shardings=s0,
+                out_shardings=(s0, s0))
     a, b = f(arr0)
 
     self._check_locality_array(a, values + 1, s0)
     self._check_locality_array(b, values * 2, s0)
     executable_kinds = get_memory_kinds_from_executable(f, [arr0])
     self.assertEqual(
-        list(executable_kinds), [ld0.memory_kind, ld0.memory_kind]
+        list(executable_kinds), [LD0, LD0]
     )
 
     compiled_text = f.lower(arr0).compile().as_text()
@@ -474,18 +327,20 @@ class LocalityDomainTest(jtu.JaxTestCase):
     devices = self._locality_devices(count=2)
     mesh = jax.sharding.Mesh(np.asarray(devices), ("data",))
     values = np.arange(16, dtype=np.float32)
-    ld0 = localization.LocalityDomain(0)
-    s0 = NamedSharding(mesh, P("data"), memory_kind=ld0.memory_kind)
+    s0 = NamedSharding(mesh, P("data"), memory_kind=LD0)
     arr0 = jax.device_put(values, s0)
 
     @compute_on(
         compute_type="gpu_stream:locality_domain:1",
-        out_memory_spaces=ld0,
+        out_memory_spaces=jax.memory.Space.Device,
     )
     def on_ld1(x):
       return x * 2 + 1
 
-    f = jax.jit(on_ld1, in_shardings=s0, out_shardings=s0)
+    def on_ld1_with_ld0_output(x):
+      return jax.device_put(on_ld1(x), s0)
+
+    f = jax.jit(on_ld1_with_ld0_output, in_shardings=s0, out_shardings=s0)
     lowered = f.lower(arr0)
     lowered_text = lowered.as_text()
     self.assertEqual(
@@ -498,7 +353,7 @@ class LocalityDomainTest(jtu.JaxTestCase):
     self.assertLen(out.addressable_shards, 2)
     self.assertEqual(
         compiled.runtime_executable().get_output_memory_kinds()[0],
-        [ld0.memory_kind],
+        [LD0],
     )
 
   def test_collective_over_locality_backed_shards(self):
@@ -506,12 +361,11 @@ class LocalityDomainTest(jtu.JaxTestCase):
     mesh = jax.sharding.Mesh(np.asarray(devices), ("data",))
     values = np.arange(8, dtype=np.float32)
     expected = values.reshape(2, -1).sum(axis=0)
-    ld0 = localization.LocalityDomain(0)
     input_sharding = NamedSharding(
-        mesh, P("data"), memory_kind=ld0.memory_kind
+        mesh, P("data"), memory_kind=LD0
     )
     output_sharding = NamedSharding(
-        mesh, P(), memory_kind=ld0.memory_kind
+        mesh, P(), memory_kind=LD0
     )
     arr0 = jax.device_put(values, input_sharding)
 
@@ -537,25 +391,24 @@ class LocalityDomainTest(jtu.JaxTestCase):
     self.assertTrue(out.sharding.is_fully_replicated)
     self.assertEqual(
         compiled.runtime_executable().get_output_memory_kinds()[0],
-        [ld0.memory_kind],
+        [LD0],
     )
 
   def test_collective_inside_locality_compute_fails(self):
     devices = self._locality_devices(count=2)
     mesh = jax.sharding.Mesh(np.asarray(devices), ("data",))
     values = np.arange(8, dtype=np.float32)
-    ld0 = localization.LocalityDomain(0)
     input_sharding = NamedSharding(
-        mesh, P("data"), memory_kind=ld0.memory_kind
+        mesh, P("data"), memory_kind=LD0
     )
     output_sharding = NamedSharding(
-        mesh, P(), memory_kind=ld0.memory_kind
+        mesh, P(), memory_kind=LD0
     )
     arr0 = jax.device_put(values, input_sharding)
 
     @compute_on(
         compute_type="gpu_stream:locality_domain:0",
-        out_memory_spaces=ld0,
+        out_memory_spaces=jax.memory.Space.Device,
     )
     def invalid_locality_compute(x):
       return lax.psum(x, "data")
@@ -583,19 +436,21 @@ class LocalityDomainTest(jtu.JaxTestCase):
     devices = self._locality_devices(count=2)
     mesh = jax.sharding.Mesh(np.asarray(devices), ("data",))
     values = np.arange(16, dtype=np.float32)
-    ld0 = localization.LocalityDomain(0)
-    s0 = NamedSharding(mesh, P("data"), memory_kind=ld0.memory_kind)
+    s0 = NamedSharding(mesh, P("data"), memory_kind=LD0)
     arr0 = jax.device_put(values, s0)
 
     @compute_on(
         compute_type="gpu_stream:locality_domain:0",
-        out_memory_spaces=ld0,
+        out_memory_spaces=jax.memory.Space.Device,
     )
     def on_ld0(x):
       return x * 2 + 1
 
+    def on_ld0_with_ld0_output(x):
+      return jax.device_put(on_ld0(x), s0)
+
     f = jax.jit(
-        on_ld0,
+        on_ld0_with_ld0_output,
         in_shardings=s0,
         out_shardings=s0,
         donate_argnums=(0,),
@@ -608,7 +463,7 @@ class LocalityDomainTest(jtu.JaxTestCase):
     self.assertTrue(arr0.is_deleted())
     self.assertEqual(
         compiled.runtime_executable().get_output_memory_kinds()[0],
-        [ld0.memory_kind],
+        [LD0],
     )
 
   def test_locality_compute_type_validation(self):
@@ -727,10 +582,6 @@ class LocalityDomainTest(jtu.JaxTestCase):
         {"locality_domain": 0, "localize_workspaces": 1},
         {"locality_domain": 0, "localize_workspaces": "true"},
         {"stream_id": 0, "localize_workspaces": True},
-        {
-            "locality_domain": self.max_locality_domain_id + 1,
-            "localize_workspaces": True,
-        },
     ):
       with self.subTest(compiler_options=compiler_options):
         with self.assertRaises((TypeError, ValueError)):
@@ -760,20 +611,21 @@ class LocalityDomainTest(jtu.JaxTestCase):
   def test_locality_compute_jit_vmap_grad(self):
     device = self._locality_devices()[0]
     values = np.linspace(0.1, 0.8, 8, dtype=np.float32)
-    ld0 = localization.LocalityDomain(0)
     mesh = jax.sharding.Mesh(np.asarray([device]), ("x",))
-    s0 = NamedSharding(mesh, P(), memory_kind=ld0.memory_kind)
+    s0 = NamedSharding(mesh, P(), memory_kind=LD0)
     arr0 = jax.device_put(values, s0)
 
     @compute_on(
         compute_type="gpu_stream:locality_domain:1",
-        out_memory_spaces=ld0,
+        out_memory_spaces=jax.memory.Space.Device,
     )
     def on_ld1(x):
       return jnp.sin(x)
 
     vmapped = jax.jit(
-        jax.vmap(on_ld1), in_shardings=s0, out_shardings=s0
+        lambda x: jax.device_put(jax.vmap(on_ld1)(x), s0),
+        in_shardings=s0,
+        out_shardings=s0,
     )
     self.assertArraysAllClose(vmapped(arr0), np.sin(values))
 

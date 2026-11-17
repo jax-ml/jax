@@ -445,7 +445,6 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax/experimental:compute_on",
-        "//jax/experimental:localization",
         "//jax/experimental:pallas_mosaic_gpu",
     ] + py_deps([
         "absl/testing",
