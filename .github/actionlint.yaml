@@ -23,5 +23,6 @@ self-hosted-runner:
     # AMD-supplied runners (dedicated to ROCm workflows; not Google-managed).
     - "amd-do-linux.jax.cpu" # AMD ROCm CPU build runner.
     - "amd-do-linux.jax.gpu.gfx950.1" # AMD ROCm 1x gfx950 GPU runner.
+    - "amd-do-linux-jax-bzl-gpu-gfx950-1" # AMD ROCm 1x gfx950 GPU Bazel runner.
     - "amd-do-linux.jax.gpu.gfx950.4" # AMD ROCm 4x gfx950 GPU runner.
     - "amd-do-linux.jax.gpu.gfx950.8" # AMD ROCm 8x gfx950 GPU runner.
