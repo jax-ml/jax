@@ -428,6 +428,381 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     result = kernel_fn((0, 0, 0), scalar_prefetch_inputs, new_values, x)
     np.testing.assert_array_equal(result, x * 2.0 + 5.0)
 
+  def test_custom_fusion_pull_block_spec_with_array_prefetch(self):
+    group_ids = jnp.array([2, 0, 3, 1], dtype=jnp.int32)
+    x = jnp.ones((512, 128), dtype=jnp.float32)
+    w = jnp.arange(4 * 128 * 256, dtype=jnp.float32).reshape(4, 128, 256)
+    seen_ctx = []
+
+    def make_gated(pid_axis: int = 1):
+      @custom_fusion_lib.custom_fusion
+      def gated(x_in, w_in, gids_in):
+        return x_in @ w_in[gids_in[0]]
+
+      @gated.def_usage_rule
+      def usage_rule(used_out):
+        return [
+            used_out[0],
+            used_out[0],
+            {block_spec_lib.Usage.SCALAR_PREFETCH},
+        ]
+
+      @gated.def_pull_block_spec_with_ctx
+      def pull_rule(ctx, out_bts):
+        seen_ctx.append(ctx)
+        (out,) = out_bts
+        idx = out.block_index_transform
+
+        def w_idx(*i):
+          (gids,) = ctx.get_scalar_prefetch()
+          gid = gids[ctx.program_ids[pid_axis]]
+          return (gid, 0, idx(*i)[1])
+
+        return (
+            out.replace(
+                block_shape=(out.block_shape[0], 128),
+                block_index_transform=lambda *i: (idx(*i)[0], 0),
+            ),
+            out.replace(
+                block_shape=(pl.Squeezed(), 128, out.block_shape[1]),
+                block_index_transform=w_idx,
+            ),
+            None,
+        )
+
+      gated.def_push_block_spec(lambda bss: (bss[0],))
+      gated.def_eval_rule(lambda ctx, x_blk, w_blk, gids: [x_blk @ w_blk])
+      return gated
+
+    gated = make_gated(pid_axis=1)
+
+    def f():
+      return gated(x, w, group_ids)
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertLen(new_values, 2)
+    self.assertLen(scalar_prefetch_values, 1)
+    np.testing.assert_array_equal(scalar_prefetch_values[0], group_ids)
+
+    block_spec = pl.BlockSpec((128, 64), lambda j, i, k, *_: (i, k))
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(0),
+        grid_len=3,
+    )(new_values)
+    self.assertLen(kernel_fn.scalar_prefetch, 1)
+    self.assertIsInstance(seen_ctx[0], custom_fusion_lib.CustomPullContext)
+    self.assertFalse(hasattr(seen_ctx[0], 'invars'))
+    self.assertFalse(hasattr(seen_ctx[0], 'out_usages'))
+
+    sp_wrapped = (jax.tree.map(lambda a: a[None], scalar_prefetch_values),)
+    x_bs, w_bs = value_block_specs
+    self.assertEqual(x_bs.index_map(0, 2, 1, *sp_wrapped), (2, 0))
+    self.assertEqual(w_bs.index_map(0, 2, 1, *sp_wrapped), (3, 0, 1))
+
+    x_blk = np.ones((128, 128), dtype=np.float32)
+    w_blk = np.asarray(w[3, :, 64:128])
+    res = kernel_fn((0, 2, 1), sp_wrapped, (x_blk, w_blk))
+    np.testing.assert_allclose(res, x_blk @ w_blk)
+
+    # DAG with matching program_ids[1] succeeds under strict_mode=True.
+    def f_dag_ok():
+      return make_gated(1)(x, w, group_ids) + make_gated(1)(x, w, group_ids)
+
+    f_dag_ok_fn, dag_ok_vals, _ = block_spec_lib.get_fusion_values(f_dag_ok)
+    block_spec_lib.pull_block_spec(
+        f_dag_ok_fn,
+        block_spec,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(0),
+        grid_len=3,
+    )(dag_ok_vals)
+
+    # DAG with conflicting program_ids[0] vs program_ids[1] fails strict check.
+    def f_dag_bad():
+      return make_gated(0)(x, w, group_ids) + make_gated(1)(x, w, group_ids)
+
+    f_dag_bad_fn, dag_bad_vals, _ = block_spec_lib.get_fusion_values(f_dag_bad)
+    with self.assertRaisesRegex(ValueError, 'Fusion contains a DAG'):
+      block_spec_lib.pull_block_spec(
+          f_dag_bad_fn,
+          block_spec,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(
+              0
+          ),
+          grid_len=3,
+      )(dag_bad_vals)
+
+  def test_custom_fusion_array_prefetch_ref_check_vma(self):
+    group_ids = jnp.array([2, 0, 3, 1], dtype=jnp.int32)
+    x = jnp.ones((512, 128), dtype=jnp.float32)
+    w = jnp.arange(4 * 128 * 256, dtype=jnp.float32).reshape(4, 128, 256)
+
+    @custom_fusion_lib.custom_fusion
+    def gated(x_in, w_in, gids_in):
+      return x_in @ w_in[gids_in[0]]
+
+    gated.def_usage_rule(
+        lambda used_out: [
+            used_out[0],
+            used_out[0],
+            {block_spec_lib.Usage.SCALAR_PREFETCH},
+        ]
+    )
+
+    @gated.def_pull_block_spec_with_ctx
+    def pull_rule(ctx, out_bts):
+      (out,) = out_bts
+      idx = out.block_index_transform
+
+      def w_idx(*i):
+        (gids,) = ctx.get_scalar_prefetch()
+        gid = gids[ctx.program_ids[1]]
+        return (gid, 0, idx(*i)[1])
+
+      return (
+          out.replace(
+              block_shape=(out.block_shape[0], 128),
+              block_index_transform=lambda *i: (idx(*i)[0], 0),
+          ),
+          out.replace(
+              block_shape=(pl.Squeezed(), 128, out.block_shape[1]),
+              block_index_transform=w_idx,
+          ),
+          None,
+      )
+
+    gated.def_eval_rule(lambda ctx, x_blk, w_blk, gids: [x_blk @ w_blk])
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        lambda: gated(x, w, group_ids)
+    )
+    block_spec = pl.BlockSpec((128, 64), lambda j, i, k, *_: (i, k))
+    kernel_fn, _, _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(0),
+        grid_len=3,
+    )(new_values)
+    x_blk = jnp.ones((128, 128), dtype=jnp.float32)
+    w_blk = w[3, :, 64:128]
+    with config._check_vma(True):
+      sp_ref = jax.new_ref(scalar_prefetch_values[0][None])
+      res = kernel_fn((0, 2, 1), ((sp_ref,),), (x_blk, w_blk))
+    np.testing.assert_allclose(res, x_blk @ w_blk)
+
+  def test_custom_fusion_array_prefetch_with_literal_and_pallas_impl(self):
+    group_ids = jnp.array([2, 0, 3, 1], dtype=jnp.int32)
+    x = jnp.ones((512, 128), dtype=jnp.float32)
+    w = jnp.arange(4 * 128 * 256, dtype=jnp.float32).reshape(4, 128, 256)
+
+    @custom_fusion_lib.custom_fusion
+    def gated(x_in, w_in, scale, gids_in):
+      return (x_in @ w_in[gids_in[0]]) * scale
+
+    gated.def_pallas_impl(
+        lambda x_in, w_in, scale, gids_in: (x_in @ w_in[group_ids[0]]) * scale
+    )
+    gated.def_usage_rule(
+        lambda used_out: [
+            used_out[0],
+            used_out[0],
+            used_out[0],
+            {block_spec_lib.Usage.SCALAR_PREFETCH},
+        ]
+    )
+
+    @gated.def_pull_block_spec_with_ctx
+    def pull_rule(ctx, out_bts):
+      (out,) = out_bts
+      idx = out.block_index_transform
+
+      def w_idx(*i):
+        (gids,) = ctx.get_scalar_prefetch()
+        gid = gids[ctx.program_ids[1]]
+        return (gid, 0, idx(*i)[1])
+
+      return (
+          out.replace(
+              block_shape=(out.block_shape[0], 128),
+              block_index_transform=lambda *i: (idx(*i)[0], 0),
+          ),
+          out.replace(
+              block_shape=(pl.Squeezed(), 128, out.block_shape[1]),
+              block_index_transform=w_idx,
+          ),
+          None,
+          None,
+      )
+
+    gated.def_eval_rule(
+        lambda ctx, x_blk, w_blk, scale, gids: [(x_blk @ w_blk) * scale]
+    )
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        lambda: gated(x, w, 2.0, group_ids)
+    )
+    self.assertLen(scalar_prefetch_values, 1)
+    block_spec = pl.BlockSpec((128, 64), lambda j, i, k, *_: (i, k))
+    _, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(0),
+        grid_len=3,
+    )(new_values)
+    sp_wrapped = (jax.tree.map(lambda a: a[None], scalar_prefetch_values),)
+    _, w_bs = value_block_specs
+    self.assertEqual(w_bs.index_map(0, 2, 1, *sp_wrapped), (3, 0, 1))
+
+  def test_non_custom_fusion_gather_in_dynamic_slice_index_error(self):
+    idx_arr = jnp.array([0, 128], dtype=jnp.int32)
+    i = jnp.array([0], dtype=jnp.int32)
+    x = jnp.ones((512, 128), dtype=jnp.float32)
+
+    def f():
+      start = lax.gather(
+          idx_arr,
+          i,
+          dimension_numbers=lax.GatherDimensionNumbers(
+              offset_dims=(),
+              collapsed_slice_dims=(0,),
+              start_index_map=(0,),
+          ),
+          slice_sizes=(1,),
+      )
+      return lax.dynamic_slice(x, (start, 0), (128, 128))
+
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f)
+    block_spec = pl.BlockSpec((128, 128), lambda i, j, *_: (i, j))
+    with self.assertRaisesRegex(
+        ValueError, 'computes a block index from non-scalar values'
+    ):
+      block_spec_lib.pull_block_spec(f2, block_spec, grid_len=2)(new_values)
+
+  def test_custom_fusion_program_ids_without_grid_len_raises_value_error(self):
+    x = jnp.ones((512, 128), dtype=jnp.float32)
+
+    @custom_fusion_lib.custom_fusion
+    def shift(x_in):
+      return x_in
+
+    @shift.def_pull_block_spec_with_ctx
+    def pull_rule(ctx, out_bts):
+      (out,) = out_bts
+      idx = out.block_index_transform
+      return (
+          out.replace(
+              block_index_transform=lambda *i: (ctx.program_ids[0], idx(*i)[1]),
+          ),
+      )
+
+    shift.def_eval_rule(lambda ctx, x_blk: [x_blk])
+    f2, new_values, _ = block_spec_lib.get_fusion_values(lambda: shift(x))
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    _, (value_block_specs,), _ = block_spec_lib.pull_block_spec(f2, block_spec)(
+        new_values
+    )
+    (x_bs,) = value_block_specs
+    with self.assertRaisesRegex(ValueError, 'Grid must be provided'):
+      x_bs.index_map(0, 0)
+
+  def test_sp_context_nested_program_ids_not_leaked(self):
+    with block_spec_lib._sp_context(program_ids=(1, 2)):
+      with block_spec_lib._sp_context():
+        self.assertIsNone(block_spec_lib._sp_env.program_ids)
+
+  def test_custom_fusion_get_scalar_prefetch_guards(self):
+    x = jnp.ones((512, 128), dtype=jnp.float32)
+    gids = jnp.arange(4, dtype=jnp.int32)
+
+    @custom_fusion_lib.custom_fusion
+    def shift_outside_transform(x_in, group_ids):
+      return x_in + jnp.sum(group_ids).astype(x_in.dtype)
+
+    shift_outside_transform.def_usage_rule(
+        lambda used_out: [
+            {block_spec_lib.Usage.REGULAR},
+            {block_spec_lib.Usage.SCALAR_PREFETCH},
+        ]
+    )
+
+    @shift_outside_transform.def_pull_block_spec_with_ctx
+    def pull_outside(ctx, out_bts):
+      # Calling get_scalar_prefetch() eagerly in pull_rule (outside a
+      # block_index_transform) should raise a clear ValueError.
+      ctx.get_scalar_prefetch()
+      return (out_bts[0], None)
+
+    shift_outside_transform.def_eval_rule(lambda ctx, x_blk, _: [x_blk])
+    f2, new_values, _ = block_spec_lib.get_fusion_values(
+        lambda: shift_outside_transform(x, gids)
+    )
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    with self.assertRaisesRegex(
+        ValueError,
+        r'get_scalar_prefetch\(\) can only be called inside a'
+        r' block_index_transform',
+    ):
+      block_spec_lib.pull_block_spec(
+          f2,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(new_values)
+
+    with self.assertRaisesRegex(ValueError, 'Grid must be provided'):
+      block_spec_lib.pull_block_spec(f2, block_spec)(new_values)
+
+  def test_load_scalar_prefetch_invalid_shape_raises(self):
+    aval = jax.core.ShapedArray((4,), jnp.int32)
+    for bad_shape in ((2, 4), (1, 1, 4), (8,), (1, 8)):
+      with self.assertRaisesRegex(
+          ValueError, 'Expected scalar prefetch array of shape'
+      ):
+        block_spec_lib._load_scalar_prefetch(
+            jnp.zeros(bad_shape, jnp.int32), aval
+        )
+
+  def test_custom_fusion_duplicate_rule_raises(self):
+    pull_rule = lambda bss: bss
+    pull_ctx_rule = lambda ctx, bss: bss
+
+    for first, second in [
+        (
+            ('def_pull_block_spec', pull_rule),
+            ('def_pull_block_spec_with_ctx', pull_ctx_rule),
+        ),
+        (
+            ('def_pull_block_spec_with_ctx', pull_ctx_rule),
+            ('def_pull_block_spec', pull_rule),
+        ),
+        (
+            ('def_pull_block_spec', pull_rule),
+            ('def_pull_block_spec', pull_rule),
+        ),
+        (
+            ('def_pull_block_spec_with_ctx', pull_ctx_rule),
+            ('def_pull_block_spec_with_ctx', pull_ctx_rule),
+        ),
+    ]:
+      @custom_fusion_lib.custom_fusion
+      def f_pull(x):
+        return x
+
+      getattr(f_pull, first[0])(first[1])
+      with self.assertRaisesRegex(
+          ValueError, 'pull_block_spec rule has already been defined'
+      ):
+        getattr(f_pull, second[0])(second[1])
+
+    @custom_fusion_lib.custom_fusion
+    def f_usage(x):
+      return x
+
+    f_usage.def_usage_rule(lambda used_out: used_out)
+    with self.assertRaisesRegex(
+        ValueError, 'usage_rule has already been defined'
+    ):
+      f_usage.def_usage_rule(lambda used_out: used_out)
+
   @parameterized.product(
       fn=[
           lax.mul,
