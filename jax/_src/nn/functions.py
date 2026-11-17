@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import operator
+import os
 import numpy as np
 from typing import Any, Literal, overload, SupportsIndex
 import warnings
@@ -1127,6 +1128,9 @@ def dot_product_attention(
       or TN to users. See section 3.1.1 in the FlashAttention-2 paper:
       https://arxiv.org/pdf/2307.08691 to find the definition of logsumexp.
     implementation: A string to control which implementation backend to use.
+      Set ``JAX_CUDNN_SDPA_USE_PYTHON_FRONTEND=1`` before tracing to use the
+      optional cuDNN Python frontend for the ``cudnn`` implementation. ``0``
+      or unset retains the existing route. Compiled calls retain their route.
       Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults
       to `None`, which currently falls back to `xla`.
       Note, `cudnn` supports only a subset of shapes/dtypes, and an exception
@@ -1195,6 +1199,22 @@ def dot_product_attention(
           return_residual=return_residual,
       )
     case 'cudnn':
+      use_frontend = os.environ.get('JAX_CUDNN_SDPA_USE_PYTHON_FRONTEND', '0')
+      if use_frontend not in ('0', '1'):
+        raise ValueError('JAX_CUDNN_SDPA_USE_PYTHON_FRONTEND must be 0 or 1')
+      if use_frontend == '1':
+        try:
+          from cudnn import sdpa_jax
+        except ImportError as error:
+          raise ImportError(
+              'The Python frontend route requires nvidia-cudnn-frontend '
+              'with sdpa_jax support.') from error
+        return sdpa_jax(
+            query, key, value, bias, mask, scale=scale_val,
+            is_causal=is_causal, query_seq_lengths=query_seq_lengths,
+            key_value_seq_lengths=key_value_seq_lengths,
+            local_window_size=local_window_size,
+            return_residual=return_residual)
       use_padding = (
            query_seq_lengths is not None or key_value_seq_lengths is not None
       )
