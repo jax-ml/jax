@@ -79,8 +79,8 @@ common:linux --cxxopt=-std=c++20
 common:linux --host_cxxopt=-std=c++20
 
 common:macos --config=posix
-common:macos --cxxopt=-std=c++17
-common:macos --host_cxxopt=-std=c++17
+common:macos --cxxopt=-std=c++20
+common:macos --host_cxxopt=-std=c++20
 common:macos --apple_platform_type=macos
 
 # Bazel 7.0.0 no longer supports dynamic symbol lookup on macOS. To resolve
