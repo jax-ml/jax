@@ -706,17 +706,22 @@ class ShapePolyLoweringState:
   # index argument.
   uses_dim_vars: bool
 
-  # If the first dimension variable is a platform index argument
+  # If the first dimension variable is a platform index argument, the
+  # module-level lowering platforms that `_platform_index` indexes into.
   has_platform_index_argument: bool
+  lowering_platforms: tuple[str, ...] | None
 
   def __init__(self,
                dim_vars: tuple[str, ...],
-               lowering_platforms: tuple[str, ...] | None):
+               lowering_platforms: Sequence[str] | None):
     if lowering_platforms is not None and len(lowering_platforms) > 1:
       dim_vars = ("_platform_index",) + tuple(dim_vars)
       self.has_platform_index_argument = True
     else:
       self.has_platform_index_argument = False
+    self.lowering_platforms = (
+        None if lowering_platforms is None else tuple(lowering_platforms)
+    )
     self.uses_dim_vars = (len(dim_vars) > 0)
     self.dim_vars = dim_vars
 
@@ -2770,8 +2775,10 @@ def lower_per_platform(ctx: LoweringRuleContext,
 
   assert len(platforms) > 1 and len(kept_rules) >= 2, (platforms, kept_rules)
   assert len(ctx.dim_var_values) >= 1, "Must have a platform_index variable"
+  module_platforms = ctx.module_context.shape_poly_state.lowering_platforms
+  assert module_platforms is not None and len(module_platforms) > 1
 
-  # The first dim_var_values is the platform index
+  # The first dim_var_values is the platform index into module_platforms.
   current_platform_idx = ctx.dim_var_values[0]
   # Compute the rule index based on the current platform
   i32_type = aval_to_ir_type(ctx.module_context, core.ShapedArray((), dtype=np.int32))
@@ -2779,11 +2786,11 @@ def lower_per_platform(ctx: LoweringRuleContext,
     current_platform_idx = hlo.convert(i32_type, current_platform_idx)
   rule_idx_op = hlo.CaseOp([i32_type],
                            index=current_platform_idx,
-                           num_branches=len(platforms))
-  for i, p in enumerate(platforms):
+                           num_branches=len(module_platforms))
+  for i, p in enumerate(module_platforms):
     branch = rule_idx_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
-      hlo.return_([ir_constant(np.int32(platform_to_kept_rules_idx[p]))])
+      hlo.return_([ir_constant(np.int32(platform_to_kept_rules_idx.get(p, 0)))])
   ordered_effects = effects_lib.ordered_effects.filter_in(effects)
   rule_out_avals = [core.abstract_token] * len(ordered_effects) + ctx.avals_out
   output_types = [_aval_to_ir_types(ctx.module_context, a) for a in rule_out_avals]
@@ -2886,7 +2893,7 @@ def _lower_jaxpr_to_fun_cached(
   assert num_const_args + len(call_jaxpr.in_avals) == len(in_avals)
   if arg_names is result_names is None:
     # Cacheable.
-    key = (fn_name, call_jaxpr, tuple(effects), detached)
+    key = (fn_name, call_jaxpr, tuple(effects), tuple(ctx.platforms), detached)
     try:
       func_op = ctx.cached_primitive_lowerings[key]
     except KeyError:

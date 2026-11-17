@@ -1589,15 +1589,14 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   submodule_args: list[ir.Value] = []
   # All the platforms for the current lowering must be among the platforms
   # for which the callee was lowered.
-  lowering_platforms = ctx.module_context.platforms
+  lowering_platforms = mlir._platforms_for_eqn(ctx)
 
-  callee_lowering_platform_index: list[int] = []
+  platform_to_callee_idx: dict[str, int] = {}
   for platform in lowering_platforms:
     if platform in exported.platforms:
-      callee_lowering_platform_index.append(
-        exported.platforms.index(platform))
+      platform_to_callee_idx[platform] = exported.platforms.index(platform)
     elif DisabledSafetyCheck.platform() in exported.disabled_safety_checks:
-      callee_lowering_platform_index.append(0)
+      platform_to_callee_idx[platform] = 0
     else:
       raise ValueError(
           f"Function '{exported.fun_name}' was exported for "
@@ -1607,21 +1606,27 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   if len(exported.platforms) > 1:
     # The exported module takes a platform index argument
     if len(lowering_platforms) > 1:
+      module_platforms = (
+          ctx.module_context.shape_poly_state.lowering_platforms
+      )
+      assert module_platforms is not None and len(module_platforms) > 1
       current_platform_idx = ctx.dim_var_values[0]
+      case_platforms: Sequence[str] = module_platforms
     else:
       current_platform_idx = cast(ir.Value, mlir.ir_constant(np.int32(0)))
+      case_platforms = lowering_platforms
     # Compute the rule index based on the current platform
     i32_type = mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray((), dtype=np.int32))
     if current_platform_idx.type != i32_type:
       current_platform_idx = hlo.convert(i32_type, current_platform_idx)
     callee_platform_idx = hlo.CaseOp([i32_type],
                                      index=current_platform_idx,
-                                     num_branches=len(lowering_platforms))
-    for i in range(len(lowering_platforms)):
+                                     num_branches=len(case_platforms))
+    for i, p in enumerate(case_platforms):
       branch = callee_platform_idx.regions[i].blocks.append()
       with ir.InsertionPoint(branch):
         hlo.return_([mlir.ir_constant(
-          np.int32(callee_lowering_platform_index[i]))])
+          np.int32(platform_to_callee_idx.get(p, 0)))])
     if callee_platform_idx.result.type != callee_type.inputs[0]:
       callee_platform_idx = hlo.ConvertOp(callee_type.inputs[0],
                                           callee_platform_idx.result)

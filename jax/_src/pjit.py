@@ -1416,7 +1416,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   key = (jit_p, name, jaxpr, num_devices,
          pxla.SemanticallyEqualShardings(in_shardings, jaxpr.in_avals),
          pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),
-         in_layouts, out_layouts, is_jax_late)
+         in_layouts, out_layouts, tuple(mod_ctx.platforms), is_jax_late)
 
   result = mod_ctx.cached_primitive_lowerings.get(key, None)
   if result is None:
