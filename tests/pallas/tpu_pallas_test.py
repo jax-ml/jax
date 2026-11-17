@@ -1466,9 +1466,6 @@ class PallasCallDMATest(ptu.PallasTPUTest):
 
   @parameterized.parameters(((),), ((2,),), ((2, 2),))
   def test_output_dma_semaphore_ref(self, sem_shape):
-    if len(sem_shape) > 1 and not jtu.is_libtpu_at_least('0.0.52'):
-      self.skipTest('Requires libtpu >= 0.0.52')
-
     idx = (0,) * len(sem_shape)
 
     def kernel(x_hbm_ref, y_hbm_ref, sem_out):
@@ -2105,9 +2102,6 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       ("memory_space_cast", lambda r: r.at[8:].memory_space_cast(pltpu.HBM)))
   def test_select_ref_transformed(
       self, transform, mem_space=pltpu.HBM, cols=128):
-    if cols < 128 and not jtu.is_libtpu_at_least("0.0.52"):
-      self.skipTest("Requires libtpu >= 0.0.52")
-
     @partial(
         pl.pallas_call,
         in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)]
@@ -2199,9 +2193,6 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       np.testing.assert_array_equal(fn(x), x)
 
   def test_dma_stride_2gib(self):
-    if not jtu.is_libtpu_at_least('0.0.52'):
-      self.skipTest('Requires libtpu >= 0.0.52')
-
     def kernel(x_ref, o_ref):
       pltpu.sync_copy(x_ref.at[:, pl.ds(0, 1)], o_ref)
 
@@ -2264,8 +2255,6 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       ),
   )
   def test_sub_512b_dma(self, shape, src_slc, dst_slc):
-    if not jtu.is_libtpu_at_least('0.0.52'):
-      self.skipTest('Requires libtpu >= 0.0.52')
     if not (
         jtu.is_device_tpu(version=5, variant='p')
         or jtu.is_device_tpu_at_least(6)
@@ -3202,11 +3191,6 @@ class PallasCallTest(ptu.PallasTPUTest):
 
 
 class PallasPadRefTest(ptu.PallasTPUTest):
-
-  def setUp(self):
-    super().setUp()
-    if not jtu.is_libtpu_at_least('0.0.52'):
-      self.skipTest('Requires libtpu >= 0.0.52')
 
   def test_pad_ref_block_arg(self):
     def kernel(x_ref, out_ref):
@@ -6564,11 +6548,7 @@ class MosaicLoweringForLoopTest(jtu.JaxTestCase):
     lower_kwargs = {} if on_tpu else {'lowering_platforms': ('tpu',)}
     with jtu.capture_stdout() as get_ir:
       jax.jit(f).trace(x, x).lower(**lower_kwargs)
-    expected = (
-        'arith.cmpf une'
-        if on_tpu and jtu.is_libtpu_at_least('0.0.53')
-        else 'arith.cmpf one'
-    )
+    expected = 'arith.cmpf une' if on_tpu else 'arith.cmpf one'
     self.assertIn(expected, get_ir())
 
 

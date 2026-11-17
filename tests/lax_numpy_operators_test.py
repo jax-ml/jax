@@ -738,7 +738,8 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/38105
     x = np.array([np.nan, -np.inf, -1, 0, 1, np.inf], dtype=dtype)
     args_maker = lambda: [x[:, None], x[None, :]]
-    self._CheckAgainstNumpy(np.heaviside, jnp.heaviside, args_maker)
+    with np.errstate(invalid="ignore"):
+      self._CheckAgainstNumpy(np.heaviside, jnp.heaviside, args_maker)
     self._CompileAndCheck(jnp.heaviside, args_maker)
 
   @jtu.sample_product(dtype=[

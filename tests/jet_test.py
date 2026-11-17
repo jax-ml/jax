@@ -532,12 +532,10 @@ class JetTest(jtu.JaxTestCase):
   def test_fma_and_fmuladd(self, op):
     if op is lax.fma and (
         jaxlib_extension_version < 515
-        or not jtu.is_libtpu_at_least("0.0.52")
         or not jtu.stablehlo_version_at_least("1.24.0")
     ):
       self.skipTest(
-          "fma requires jaxlib_extension_version >= 515, libtpu >= 0.0.52, "
-          "and StableHLO >= 1.24.0"
+          "fma requires jaxlib_extension_version >= 515 and StableHLO >= 1.24.0"
       )
     rng = jtu.rand_default(self.rng())
     order = 4
