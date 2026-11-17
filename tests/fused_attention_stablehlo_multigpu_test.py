@@ -281,8 +281,9 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     super().setUp()
     if not jtu.is_cuda_compute_capability_at_least("8.0"):
       self.skipTest("Requires at least Ampere arch")
-    if jtu.is_cuda_version_at_least(13, 0):
-      self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
+    if (jtu.is_cuda_version_at_least(13, 0)
+        and check_cudnn_version() < 92700):
+      self.skipTest("CUDA 13 SDPA tests require cuDNN 9.27 or newer.")
     self.enter_context(jtu.ignore_warning(
         category=DeprecationWarning, message='`with mesh:` context manager'))
 
