@@ -2122,6 +2122,8 @@ def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices, use_magma):
                        use_magma=use_magma)
   *_, m, n = x.shape
   if pivoting:
+    # With pivoting, Q R = X P: work with the column-permuted X and dX.
+    x = x[..., p[0]]
     dx = dx[..., p[0]]
 
   if m < n:
