@@ -788,6 +788,7 @@ nanobind_extension(
     ],
     module_name = "cuda_plugin_extension",
     deps = [
+        ":cuda_gpu_kernel_helpers",
         ":py_client_gpu",
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/gpu:gpu_plugin_extension",
@@ -796,6 +797,7 @@ nanobind_extension(
         "@local_config_cuda//cuda:cuda_headers",
         "@nanobind",
         "@xla//xla/pjrt:status_casters",
+        "@xla//xla/tsl/cuda",
         "@xla//xla/tsl/cuda:cublas",
         "@xla//xla/tsl/cuda:cudart",
     ],
