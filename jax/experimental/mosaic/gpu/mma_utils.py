@@ -66,12 +66,8 @@ class SmemDescriptor:
   _k_tiling_stride: int
   _element_bitwidth: int
 
-  def encoded_offset(self, mn_idx: int, k_idx: int) -> int:
-    """Returns the 64-bit constant to add to `addr_base` for `(mn_idx, k_idx)`.
-
-    Packs the static descriptor metadata (LBO, SBO, swizzle) in bits [16:63]
-    with the 16-byte encoded slice byte offset in bits [0:13].
-    """
+  def _slice_addr_offset(self, mn_idx: int, k_idx: int) -> int:
+    """Returns the 16-byte encoded byte offset of slice `(mn_idx, k_idx)`."""
     mn_tile, mn_rem = divmod(mn_idx, self._mn_tiling)
     if mn_rem:
       raise ValueError(
@@ -104,14 +100,51 @@ class SmemDescriptor:
           f"Slice ({mn_idx}, {k_idx}) offset ({bit_offset} bits) must be"
           " byte-aligned"
       )
-    return self._desc_const | encode_addr(bit_offset // 8)
+    return encode_addr(bit_offset // 8)
 
-  def slice_i64(self, mn_idx: int, k_idx: int) -> ir.Value:
-    """Materializes the `i64` SMEM descriptor for slice `(mn_idx, k_idx)`."""
+  def encoded_offset(
+      self, mn_idx: int, k_idx: int, instr_k: int
+  ) -> tuple[int, int]:
+    """Returns how to compute the SMEM descriptor for an MMA slice.
+
+    The slice starts at `(mn_idx, k_idx)` and spans the `instr_k` elements along
+    K consumed by a single MMA instruction.
+
+    Returns:
+      `(base_scale, offset)` such that the 64-bit descriptor of the slice is
+      `addr_base * base_scale + offset`.
+    """
+    # Static descriptor metadata (LBO, SBO, swizzle) in bits [16:63] and the
+    # 16-byte encoded slice byte offset, relative to `addr_base`, in bits
+    # [0:13].
+    offset = self._desc_const | self._slice_addr_offset(mn_idx, k_idx)
+    next_tile_k = (k_idx // self._k_tiling + 1) * self._k_tiling
+    if self.fastest_dim == Dim.K and k_idx + instr_k > next_tile_k:
+      # The slice crosses a K swizzle tile boundary (e.g. SM103 `K=96` MMA). In
+      # LBO absolute-address mode (bit 52), bits [16:30) hold the address of the
+      # next tile (see
+      # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-leading-dimension-byte-offset-absolute-address).
+      # This mode is only supported on sm_103a (see
+      # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-shared-memory-descriptor).
+      if utils.get_arch() != utils.Arch(10, 3):
+        raise ValueError("MMA slices crossing K swizzle tiles require sm_103a")
+      if k_idx + instr_k > next_tile_k + self._k_tiling:
+        raise ValueError("MMA slice cannot span more than 2 K swizzle tiles")
+      next_tile = self._slice_addr_offset(mn_idx, next_tile_k)
+      # Both 14-bit address fields are relative to `addr_base`, and scaling
+      # `addr_base` by 0x10001 adds it to both at once, e.g. for
+      # addr_base=0x100: 0x100 * 0x10001 + 0x0040_0010 = 0x0140_0110. SMEM size
+      # limits keep each field from carrying into the other.
+      return 0x10001, offset | (next_tile << 16) | (1 << 52)
+    return 1, offset
+
+  def slice_i64(self, mn_idx: int, k_idx: int, instr_k: int) -> ir.Value:
+    """Materializes the `i64` SMEM descriptor for an MMA slice."""
     i64 = ir.IntegerType.get_signless(64)
-    offset = self.encoded_offset(mn_idx, k_idx)
+    base_scale, offset = self.encoded_offset(mn_idx, k_idx, instr_k)
+    # Only `tcgen05.mma` supports slices crossing K swizzle tiles.
+    assert base_scale == 1
     return arith.addi(arith.extui(i64, self.addr_base), _i64_const(offset))
-
 
 def create_descriptor(
     ref: ir.Value,
@@ -239,7 +272,7 @@ def create_descriptor(
       stride_byte_offset=stride_byte_offset,
       swizzle=swizzle,
   )
-  assert (desc_const & 0xFFFF) == 0
+  assert (desc_const & (0xFFFFFFFF if fastest_dim == Dim.K else 0xFFFF)) == 0
 
   return SmemDescriptor(
       addr_base=addr_base,
