@@ -31,7 +31,7 @@ import numpy as np
 from jax._src import config as jax_config
 from jax._src import xla_bridge as xb
 from jax._src.util import (safe_zip, cache, tuple_delete, weak_value_interner,
-                           immutable)
+                           immutable, set_module)
 from jax._src.lib import _jax
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
@@ -212,6 +212,10 @@ class BaseMesh:
   @functools.cached_property
   def _name_to_type(self):
     return dict(safe_zip(self.axis_names, self.axis_types))
+
+  @functools.cached_property
+  def axes(self) -> tuple[MeshAxis, ...]:
+    return tuple(MeshAxis(n) for n in self.axis_names)
 
 
 class _HashableDeviceArray:
@@ -677,3 +681,21 @@ def get_abstract_mesh() -> AbstractMesh:
 
 def get_concrete_mesh() -> Mesh:
   return device_context.value
+
+
+@set_module('jax.avals')
+@dataclasses.dataclass(frozen=True, slots=True)
+class MeshAxis:
+  name: MeshAxisName
+  def __rmatmul__(self, size: Any) -> ShardedMeshAxis:
+    return ShardedMeshAxis(size, (self.name,))
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ShardedMeshAxis:
+  size: Any
+  names: tuple[MeshAxisName, ...]
+  def __matmul__(self, other: Any) -> ShardedMeshAxis:
+    if not isinstance(other, MeshAxis):
+      return NotImplemented
+    return ShardedMeshAxis(self.size, (*self.names, other.name))

@@ -326,7 +326,7 @@ def emit_pipeline[T](
   # Shrink ``max_concurrent_steps`` if the total number of steps is lower to
   # reduce the size of the refs allocated in SMEM.
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
-    max_concurrent_steps = int(num_steps)
+    max_concurrent_steps = num_steps
 
   if is_cp_async := mgpu_utils._infer_arch() < (9, 0):
     if out_specs:
@@ -815,7 +815,7 @@ def emit_pipeline_warp_specialized(
   # Shrink ``max_concurrent_steps`` if the total number of steps is lower to
   # reduce the size of the refs allocated in SMEM.
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
-    max_concurrent_steps = int(num_steps)
+    max_concurrent_steps = num_steps
 
   def _get_scoped_allocs(*gmem_refs: AbstractRefPytree):
     in_gmem_refs = gmem_refs[:len(in_specs)]

@@ -104,7 +104,15 @@ def matmul_kernel(a, b, config: TuningConfig):
     cluster_idx = lax.axis_index("x")
     is_lead_block = cluster_idx == 0
 
-    @plgpu.dynamic_scheduling_loop(grid_names=("mn_linear",), thread_axis="wg")
+    # With collective MMAs both CTAs of a cluster must work on the same tile, so
+    # the cluster has to fetch work as a unit (cluster_axes). Otherwise each
+    # CTA cancels a different cluster, and the pair deadlocks on its shared
+    # barriers as soon as a cluster processes a second tile.
+    @plgpu.dynamic_scheduling_loop(
+        grid_names=("mn_linear",),
+        thread_axis="wg",
+        cluster_axes=("x",) if collective else (),
+    )
     def mn_loop(loop_info: plgpu.NDLoopInfo):
       (lin_idx,) = loop_info.index
       local_index = loop_info.local_index

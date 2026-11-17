@@ -302,7 +302,7 @@ def _make_run_kernel(**kwargs):
   return lambda fn: pl.kernel(**kwargs)(fn)()
 
 
-class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
+class TPUKernelMemorySpaceTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()

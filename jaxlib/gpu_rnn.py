@@ -28,16 +28,14 @@ _hip_rnn = import_from_plugin("rocm", "_rnn")
 
 if _cuda_rnn:
   for _name, _value in _cuda_rnn.registrations().items():
-    api_version = 1 if _name.endswith("_ffi") else 0
     xla_client.register_custom_call_target(_name, _value, platform='CUDA',
-                                           api_version=api_version)
+                                           api_version=1)
   compute_rnn_workspace_reserve_space_sizes = _cuda_rnn.compute_rnn_workspace_reserve_space_sizes
 
 if _hip_rnn:
   for _name, _value in _hip_rnn.registrations().items():
-    api_version = 1 if _name.endswith("_ffi") else 0
     xla_client.register_custom_call_target(_name, _value, platform='ROCM',
-                                           api_version=api_version)
+                                           api_version=1)
   compute_rnn_workspace_reserve_space_sizes = _hip_rnn.compute_rnn_workspace_reserve_space_sizes
 
 

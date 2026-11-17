@@ -77,7 +77,7 @@ jobs:
           export PATH="${GITHUB_WORKSPACE}/cpython-tsan/bin:$PATH"
 
           python3 -m pip install uv~=0.12.3
-          python3 -m uv pip install -r requirements/build_requirements.txt
+          python3 -m uv pip install -r requirements/build_requirements.txt "Cython<3.3"
 
           CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Db_lundef=false -Csetup-args=-Dbuildtype=debugoptimized
 

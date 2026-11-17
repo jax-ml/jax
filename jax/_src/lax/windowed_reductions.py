@@ -380,9 +380,15 @@ def _reduce_window_abstract_eval_rule(
   vma = core.standard_vma_rule('reduce_window', *operand_avals)
   if any(core.getu(a)[0] or core.getr(a) for a in operand_avals):
     raise NotImplementedError
-  return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding,
+  out_avals = [ShapedArray(out_shape, op.dtype, sharding=out_sharding,
                            manual_axis_type=op.mat.update(varying=vma))
-               for op in operand_avals)
+               for op in operand_avals]
+  out_layouts = lax.lax_utils.call_layout_rule(
+      reduce_window_p, None, avals, out_avals,
+      jaxpr=jaxpr, consts=consts, window_dimensions=window_dimensions,
+      window_strides=window_strides, padding=padding,
+      base_dilation=base_dilation, window_dilation=window_dilation)
+  return tuple(o.update(layout=l) for o, l in zip(out_avals, out_layouts))
 
 
 def _generic_reduce_window_batch_rule(

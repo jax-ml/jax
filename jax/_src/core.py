@@ -60,7 +60,7 @@ import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding, get_replicated_axes
 from jax._src import named_sharding as ns
 from jax._src.sharding import Sharding
-from jax._src.layout import Format, AutoLayout, AutoLayoutSingleton
+from jax._src.layout import Format, Layout, AutoLayout, AutoLayoutSingleton
 from jax._src.lib import _jax
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
@@ -1853,10 +1853,10 @@ class AbstractValue:
     return add_jaxvals(x, y)
 
   def raise_val2(self, lo_vals_ft):
-    return self.raise_val(*lo_vals_ft.unflatten())  # pyrefly: ignore[missing-attribute]
+    return self.raise_val(*lo_vals_ft.unflatten())
 
   def lower_val2(self, hi_val):
-    return ft.flatten(self.lower_val(hi_val))  # pyrefly: ignore[missing-attribute]
+    return ft.flatten(self.lower_val(hi_val))
 
 InputType = tuple[AbstractValue, ...]
 OutputType = tuple[AbstractValue, ...]
@@ -1900,13 +1900,15 @@ def mem_space_to_kind(mem_space: Any) -> str:
 
 @cache(max_size=4096,
        trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
-def update_aval_with_sharding(aval, sharding, mat=None):
+def update_aval_with_sharding(aval, sharding, mat=None, memory_space=None):
   if isinstance(sharding, NamedSharding):
     s = NamedSharding(sharding.mesh.abstract_mesh,
                       sharding.spec._normalized_spec_for_aval(aval.ndim))
+    mem_space = (mem_kind_to_space(sharding.memory_kind)
+                 if memory_space is None else memory_space)
     return aval.update(
         sharding=s, manual_axis_type=(aval.mat if mat is None else mat),
-        memory_space=mem_kind_to_space(sharding.memory_kind))
+        memory_space=mem_space)
   return aval if mat is None else aval.update(manual_axis_type=mat)
 
 
@@ -2295,7 +2297,10 @@ def _check_mat(varying, unreduced, reduced, unreduced_kind):
     raise ValueError(
         "varying and reduced cannot have common mesh axes. Got"
         f" varying={varying} and reduced={reduced}")
-  assert not (varying & unreduced & reduced)
+  if unreduced & reduced:
+    raise ValueError(
+        "`unreduced` and `reduced` argument to ManualAxisType cannot overlap. "
+        f"Got unreduced: {unreduced} and reduced: {reduced}")
 
   if unreduced_kind is not None and not isinstance(unreduced_kind, UnreducedKind):
     raise TypeError(
@@ -2489,7 +2494,8 @@ class ShapedArray(AbstractValue):
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
         self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
-        self.mat, self.memory_space, short_dtypes, mesh_axis_types)
+        self.mat, self.memory_space, short_dtypes, mesh_axis_types,
+        self.layout)
 
   def __repr__(self):
     wt_str = ", weak_type=True" if self.weak_type else ""
@@ -2557,6 +2563,49 @@ class ShapedArray(AbstractValue):
             if sh_names else
             P(unreduced=u_names, reduced=r_names, unreduced_kind=u_kind))
 
+  @property
+  def is_high(self) -> bool:
+    return bool(self.sharding.spec.unreduced or self.mat.unreduced)
+
+  def lo_ty(self) -> list[AbstractValue]:
+    if not self.is_high:
+      return [self]
+    shape, sharding, mat, layout = self.shape, self.sharding, self.mat, self.layout
+    if sharding.spec.unreduced:
+      mesh, spec = sharding.mesh, sharding.spec
+      u_axes = order_wrt_mesh(mesh, spec.unreduced)
+      u_shape = tuple(mesh.shape[a] for a in u_axes)
+      shape = (*u_shape, *shape)
+      lo_spec = P(*u_axes, *spec.partitions, reduced=spec.reduced)
+      sharding = self.sharding.update(spec=lo_spec)
+      if isinstance(layout, Layout):
+        k = len(u_axes)
+        layout = layout.update(
+            major_to_minor=(*range(k), *(m + k for m in layout.major_to_minor)))
+    if mat.unreduced:
+      mat = ManualAxisType(varying=mat.varying | mat.unreduced,
+                           reduced=mat.reduced)
+    out = self.update(shape=shape, sharding=sharding, manual_axis_type=mat,
+                      layout=layout)
+    assert not out.sharding.spec.unreduced and not out.mat.unreduced
+    assert out.sharding.spec.unreduced_kind is None
+    return [out]
+
+  def lower_val(self, hi_val: Any, /) -> list[Any]:
+    if not self.is_high:
+      return [hi_val]
+    from jax._src.array import UnreducedArray  # pyrefly: ignore[missing-import]
+    assert isinstance(hi_val, UnreducedArray)
+    return [hi_val._lo_val]
+
+  def raise_val(self, *lo_vals) -> Any:
+    lo_val, = lo_vals
+    if not self.is_high:
+      return lo_val
+    from jax._src.array import UnreducedArray  # pyrefly: ignore[missing-import]
+    assert not isinstance(lo_val, UnreducedArray)
+    return UnreducedArray(self, lo_val)
+
   _bool    = concretization_function_error(bool)
   _int     = concretization_function_error(int, True)
   _float   = concretization_function_error(float, True)
@@ -2587,17 +2636,32 @@ def _axis_types_dict(mesh):
     d[t].append(n)
   return {t: tuple(n) for t, n in d.items()}
 
+def _layout_str(layout) -> str:
+  if not isinstance(layout, Layout):
+    return ''
+  m2m = ','.join(str(d) for d in layout.major_to_minor)
+  out = f'L({m2m})'
+  if layout.tiling:
+    tiles = ','.join(f"({','.join(str(t) for t in tile)})"
+                     for tile in layout.tiling)
+    out += f'T({tiles})'
+  if layout.sub_byte_element_size_in_bits != 0:
+    out += f'E({layout.sub_byte_element_size_in_bits})'
+  return out
+
 def str_short_aval(shape, dtype, mesh, spec, mat, memory_space,
-                   short_dtypes=False, mesh_axis_types=False) -> str:
+                   short_dtypes=False, mesh_axis_types=False,
+                   layout=AutoLayout) -> str:
   dt_str = dtypes.short_dtype_name(dtype) if short_dtypes else dtype.name
   dt_str = dt_str.replace('void', 'float0')
   shapestr = _get_shape_sharding_str(shape, spec)
   mesh_axes = f'({_axis_types_dict(mesh)})' if mesh_axis_types else ''
   vma_ur = _vma_ur_str(mat, spec.unreduced, spec.reduced, spec.unreduced_kind,
                        mesh)
+  layout_s = _layout_str(layout)
   ms_str = ("" if memory_space == MemorySpace.Device else
             f"<{memory_space.name.lower()}>")
-  return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
+  return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{layout_s}{mesh_axes}'
 
 def _create_str(x, prefix):
   x_str = f"{','.join(i for i in x)}"
@@ -3545,7 +3609,8 @@ def cmp_shape_shd_mat_memsp(t1, t2):
   else:
     shd_eq = True
   return (shd_eq and definitely_equal_shape(t1.shape, t2.shape) and
-          t1.mat == t2.mat and t1.memory_space == t2.memory_space)
+          t1.mat == t2.mat and t1.memory_space == t2.memory_space and
+          t1.layout == t2.layout)
 
 def aval_mismatch_extra(a1: AbstractValue, a2: AbstractValue) -> str:
   assert not typematch(a1, a2)
@@ -3557,6 +3622,8 @@ def aval_mismatch_extra(a1: AbstractValue, a2: AbstractValue) -> str:
       mismatches.append('the shapes do not match')
     if a1.mat != a2.mat:
       mismatches.append('the manual axis types do not match')
+    if a1.layout != a2.layout:
+      mismatches.append('the layouts do not match')
     # TODO(yashkatariya,mattjj): add check for sharding-in-types mismatch
 
     if len(mismatches) == 0:
@@ -3827,6 +3894,26 @@ def positional_effects(jaxpr) -> Effects:
   return out_effs
 
 
+# ------------------- Inline -------------------
+
+@set_module("jax")
+class Inline(enum.Enum):
+  """Enumeration specifying inlining behavior for nested jitted functions.
+
+  Values:
+    JAX_EARLY: Inlined during JAX tracing into enclosing JAXPRs.
+    JAX_LATE: Inlined during JAX to MLIR lowering.
+    XLA_EARLY: Preserved in MLIR and marked for early inlining by the XLA compiler.
+    XLA_LATE: Preserved in MLIR and marked for late inlining by the XLA compiler.
+    AUTO: Automatic inlining policy determined by JAX and XLA.
+  """
+  JAX_EARLY = "jax_early"
+  JAX_LATE = "jax_late"
+  XLA_EARLY = "xla_early"
+  XLA_LATE = "xla_late"
+  AUTO = "auto"
+
+
 # ------------------- ShapeDtypeStruct -------------------
 
 def _check_sharding(sharding, shape):
@@ -4011,10 +4098,15 @@ class ShapeDtypeStruct:
 def _sds_aval_mapping(x):
   dtype = dtypes.check_and_canonicalize_user_dtype(
       x.dtype, "ShapeDtypeStruct", allow_non_jax_dtypes=True)
-  memory_space = getattr(x, "_memory_space", None) or MemorySpace.Device
+  memory_space = getattr(x, "_memory_space", None)
+  if memory_space is None:
+    memory_space = (mem_kind_to_space(x.sharding.memory_kind)
+                    if isinstance(x.sharding, NamedSharding) else
+                    MemorySpace.Device)
   aval = ShapedArray(x.shape, dtype, weak_type=x.weak_type,
                      memory_space=memory_space)
-  aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type)
+  aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type,
+                                   memory_space=memory_space)
   if x.is_ref:
     from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     return AbstractRef(aval)

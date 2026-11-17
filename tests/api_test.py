@@ -1523,6 +1523,42 @@ class JitTest(jtu.BufferDonationTestCase):
       python_should_be_executing = False
       self.assertEqual(x, f(x))
 
+  def test_jit_static_argnums_not_shared_between_jit_instances(self):
+    # The C++ dispatch cache is shared between jit instances of the same
+    # function. Instances that differ in which arguments are static must not
+    # share entries, even when the dynamic avals and the static values match.
+    def f(a, b):
+      return a * 10 + b
+
+    x = jnp.float32(2.)
+    self.assertEqual(jit(f, static_argnums=0)(1, x), 12.)
+    self.assertEqual(jit(f, static_argnums=1)(x, 1), 21.)
+
+    def g(a, b):
+      return a * 10 + b
+
+    self.assertEqual(jit(g, static_argnames='a')(1, x), 12.)
+    self.assertEqual(jit(g, static_argnames='b')(x, 1), 21.)
+
+  @jtu.thread_unsafe_test()  # count_pjit_cpp_cache_miss is not thread-safe
+  def test_jit_options_not_shared_between_jit_instances(self):
+    def f(x, y):
+      return x + 1
+
+    x = jnp.arange(3.)
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      jit(f)(x, x)
+      jit(f)(x, x)
+      self.assertEqual(count(), 1)
+      jit(f, keep_unused=True)(x, x)
+      self.assertEqual(count(), 2)
+      jit(f, donate_argnums=1)(x, jnp.arange(3.))
+      self.assertEqual(count(), 3)
+      jit(f, static_argnums=1)(x, 1)
+      self.assertEqual(count(), 4)
+      jit(f, static_argnames='y')(x, 1)
+      self.assertEqual(count(), 4)
+
   def test_caches_depend_on_axis_env(self):
     # https://github.com/jax-ml/jax/issues/9187
     f = lambda: lax.axis_size("i")
@@ -3389,7 +3425,7 @@ class APITest(jtu.JaxTestCase):
   def test_constants_not_in_lowering_jit(self):
     if not config.use_simplified_jaxpr_constants.value:
       self.skipTest("Works only with simplified Jaxpr consts")
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
 
@@ -3415,7 +3451,7 @@ class APITest(jtu.JaxTestCase):
   def test_constants_not_in_lowering_scan(self):
     if not config.use_simplified_jaxpr_constants.value:
       self.skipTest("Works only with simplified Jaxpr consts")
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
     def f():
@@ -3437,7 +3473,7 @@ class APITest(jtu.JaxTestCase):
   def test_constants_not_in_lowering_cond(self):
     if not config.use_simplified_jaxpr_constants.value:
       self.skipTest("Works only with simplified Jaxpr consts")
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
 
@@ -4457,7 +4493,7 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(fun([jnp.float32(10.)], jnp.float32(3.)),
                         jnp.float32(90.))
     consts2, traced2 = traced.with_consts_as_arg()
-    self.assertAllClose(traced2(consts2, jnp.float32(3.)), jnp.float32(18.))
+    self.assertAllClose(traced2(consts2, jnp.float32(3.)), [jnp.float32(18.)])
 
   def test_traced_with_consts_as_arg_cache_hit(self):
     f = lambda y: y ** 2 * jnp.float32(2.)
@@ -4839,12 +4875,73 @@ class APITest(jtu.JaxTestCase):
     # For xla_early and xla_late, we expect it not to be inlined by Jax.
     # For xla_early, we expect XLA to inline it early.
     self.assertNotIn("call(", get_hlo(jax.Inline.XLA_EARLY))
-    # For xla_late, we expect XLA to preserve the call on CPU/GPU, but it
-    # will be inlined/flattened on TPU during TPU compilation.
-    if jtu.device_under_test() == "tpu":
+    # For xla_late, we expect XLA to preserve the call on CPU, but it
+    # will be inlined/flattened on TPU and GPU.
+    if jtu.device_under_test() == 'tpu' or (
+        jtu.device_under_test() == 'gpu' and lib.jaxlib_extension_version >= 513
+    ):
       self.assertNotIn("call(", get_hlo(jax.Inline.XLA_LATE))
     else:
       self.assertIn("call(", get_hlo(jax.Inline.XLA_LATE))
+
+  def test_register_lowering_inline_mode(self):
+    prim = jax._src.core.Primitive("inline_mode_test")
+    prim.def_abstract_eval(lambda x: x)
+
+    def lowering(ctx, x):
+      return mlir.lower_fun(lambda v: v * 2, multiple_results=False)(ctx, x)
+
+    with self.assertRaisesRegex(ValueError, "JAX_EARLY is not supported"):
+      mlir.register_lowering(prim, lowering, inline=jax.Inline.JAX_EARLY)
+
+    def lower_and_compile(inline_mode):
+      mlir.register_lowering(prim, lowering, inline=inline_mode)
+      lowered = api.jit(lambda x: prim.bind(x) + 1.0).lower(1.0)
+      return lowered.as_text(), lowered.compile().as_text()
+
+    mlir_text, hlo_text = lower_and_compile(True)
+    self.assertNotIn("func.func private @inline_mode_test", mlir_text)
+    self.assertNotIn("call(", hlo_text)
+
+    mlir_text, _ = lower_and_compile(False)
+    self.assertIn("func.func private @inline_mode_test", mlir_text)
+    self.assertNotIn("inlineable", mlir_text)
+
+    mlir_text, hlo_text = lower_and_compile(jax.Inline.XLA_EARLY)
+    self.assertIn("func.func private @inline_mode_test", mlir_text)
+    self.assertIn('inlineable = "xla_early"', mlir_text)
+    self.assertNotIn("call(", hlo_text)
+
+    mlir_text, hlo_text = lower_and_compile(jax.Inline.XLA_LATE)
+    self.assertIn("func.func private @inline_mode_test", mlir_text)
+    self.assertIn('inlineable = "xla_late"', mlir_text)
+    if jtu.device_under_test() == 'tpu' or (
+        jtu.device_under_test() == 'gpu' and lib.jaxlib_extension_version >= 512
+    ):
+      self.assertNotIn("call(", hlo_text)
+    else:
+      self.assertIn("call(", hlo_text)
+
+    # A platform-specific rule's inline setting overrides the default rule's.
+    mlir.register_lowering(prim, lowering, inline=jax.Inline.XLA_EARLY)
+    mlir.register_lowering(
+        prim, lowering, platform=jtu.device_under_test(), inline=True
+    )
+    mlir_text = api.jit(lambda x: prim.bind(x) + 1.0).lower(1.0).as_text()
+    self.assertNotIn("func.func private @inline_mode_test", mlir_text)
+
+    # Conflicting inline modes across multi-platform export fall back to AUTO.
+    mlir.register_lowering(
+        prim, lowering, platform="cpu", inline=jax.Inline.XLA_EARLY
+    )
+    mlir.register_lowering(
+        prim, lowering, platform="cuda", inline=jax.Inline.XLA_LATE
+    )
+    exported_mlir = jax.export.export(
+        api.jit(lambda x: prim.bind(x) + 1.0), platforms=("cpu", "cuda")
+    )(1.0).mlir_module()
+    self.assertIn("func.func private @inline_mode_test", exported_mlir)
+    self.assertNotIn("inlineable", exported_mlir)
 
   # Repro for https://github.com/jax-ml/jax/issues/7229.
   def test_compute_with_large_transfer(self):
@@ -5471,6 +5568,56 @@ class APITest(jtu.JaxTestCase):
       with self.assertLogs(level="WARNING") as cm:
         run_state_reference(body)((jnp.ones(7), jnp.ones(7)))
     self.assertTrue(any("different input types" in msg for msg in cm.output))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_explain_cache_misses_kwarg_debug_info(self):
+    # https://github.com/jax-ml/jax/issues/41455
+    from jax._src import flattree as ft
+
+    def f(x):
+      return jnp.sin(x)
+
+    x1 = jnp.ones(3, 'float32')
+    x2 = jnp.ones(7, 'float32')
+    dbg1 = api_util.debug_info("test", f, (x1,), {})
+    dbg2 = api_util.debug_info("test", f, (x2,), {})
+    pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x1)), debug_info=dbg1,
+                      requires_low=True)
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x2)), debug_info=dbg2,
+                          requires_low=True)
+    self.assertTrue(any("at x, now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_unknown_arg_names(self):
+    from jax._src import flattree as ft
+
+    def f(x):
+      return jnp.sin(x)
+
+    x1 = jnp.ones(3, 'float32')
+    x2 = jnp.ones(7, 'float32')
+    dbg1 = api_util.debug_info("test", f, (x1,), {}).with_unknown_names()
+    dbg2 = api_util.debug_info("test", f, (x2,), {}).with_unknown_names()
+    pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x1)), dbg1)
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        pe.trace_to_jaxpr(f, ft.flatten_args(core.typeof(x2)), dbg2)
+    self.assertTrue(any("at flat_arg[0], now f32[7] and before f32[3]" in msg
+                        for msg in cm.output))
+
+    dbg_empty = core.DebugInfo("test", "f", ("x", ""), None)
+    diff = pe.diff_types(
+        dbg_empty,
+        [core.typeof(x2), core.typeof(x2)],
+        [core.typeof(x1), core.typeof(x1)],
+    )
+    self.assertIsNotNone(diff)
+    _, _, explanation = diff
+    self.assertIn("at x, now f32[7] and before f32[3]", explanation)
+    self.assertIn("at flat_arg[1], now f32[7] and before f32[3]", explanation)
 
   @unittest.skip('TODO(mattjj): re-enable after updating cache miss explainer')
   @jtu.thread_unsafe_test()  # logging is not thread-safe

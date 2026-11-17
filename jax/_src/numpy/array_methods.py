@@ -34,7 +34,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import literals
 from jax._src.api_util import _ensure_index_tuple
-from jax._src.array import ArrayImpl
+from jax._src.array import ArrayImpl, UnreducedArray
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lib import xla_client as xc
@@ -448,13 +448,16 @@ def _swapaxes(self: Array, axis1: int, axis2: int) -> Array:
 
 def _take(self: Array, indices: ArrayLike, axis: int | None = None, out: None = None,
           mode: str | None = None, unique_indices: bool = False, indices_are_sorted: bool = False,
-          fill_value: StaticScalar | None = None) -> Array:
+          fill_value: StaticScalar | None = None, *,
+          out_sharding: NamedSharding | PartitionSpec | None = None
+          ) -> Array:
   """Take elements from an array.
 
   Refer to :func:`jax.numpy.take` for full documentation.
   """
   return indexing.take(self, indices, axis=axis, out=out, mode=mode, unique_indices=unique_indices,
-                       indices_are_sorted=indices_are_sorted, fill_value=fill_value)
+                       indices_are_sorted=indices_are_sorted,
+                       fill_value=fill_value, out_sharding=out_sharding)
 
 def _to_device(self: Array, device: xc.Device | Sharding, *,
                stream: int | Any | None = None):
@@ -1595,6 +1598,7 @@ def register_jax_array_methods():
 
   _set_array_base_attributes(ArrayImpl, exclude={'__getitem__'})
   _set_tracer_aval_forwarding(core.Tracer, exclude={*_impl_only_array_methods, "at"})
+  _set_tracer_aval_forwarding(UnreducedArray, exclude=_impl_only_array_methods)
   _set_array_attributes(ArrayImpl)
 
   _set_array_abstract_methods(Array)

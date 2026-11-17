@@ -13,20 +13,24 @@
 # limitations under the License.
 
 import contextlib
+import functools
+import io
 import re
 import unittest
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 import jax
 from jax._src import compilation_cache
 from jax._src import config
 from jax._src import core
 from jax._src import monitoring
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.serialize_executable import (
     deserialize_and_load,
     serialize,
+    _JaxPjrtPickler,
 )
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
@@ -48,10 +52,11 @@ class JaxAotTest(jtu.JaxTestCase):
     def fun(x):
       return x * x
 
+    n = jax.device_count()
     with jax.set_mesh(jax.sharding.Mesh(np.array(jax.devices()), ('data',))):
       lowered = jax.jit(
           fun, in_shardings=P('data'), out_shardings=P(None, 'data')
-      ).lower(core.ShapedArray(shape=(8, 8), dtype=np.float32))
+      ).lower(core.ShapedArray(shape=(n, n), dtype=np.float32))
 
     def verify_serialization(lowered):
       serialized, in_tree, out_tree = serialize(lowered.compile())
@@ -129,7 +134,7 @@ class JaxAotTest(jtu.JaxTestCase):
         topo.platform_version, aot_topo.devices[0].client.platform_version
     )
     self.assertEqual(topo.platform_version, ref_topo.platform_version)
-    if jax.devices()[0].platform != "gpu":
+    if jax.devices()[0].platform != 'gpu' or jaxlib_extension_version >= 512:
       self.assertEqual(
           aot_topo.devices[0].client.platform_version,
           jax.devices()[0].client.platform_version,
@@ -218,7 +223,7 @@ class JaxAotTest(jtu.JaxTestCase):
     )
 
   def test_constants_in_lowering_in_aot(self):
-    const_size = 100
+    const_size = 500
     const = jax.random.uniform(jax.random.key(0), (const_size,),
                                dtype=np.float32)
 
@@ -236,7 +241,7 @@ class JaxAotTest(jtu.JaxTestCase):
       self.assertLen(lowered._lowering.const_args, 0)
 
   def test_with_constants(self):
-    const = jnp.arange(16.) + 42.  # A distinctive shape and value
+    const = jnp.arange(512.) + 42.  # A distinctive shape and value
 
     @jax.jit
     def f(x):
@@ -271,7 +276,7 @@ class JaxAotTest(jtu.JaxTestCase):
     self.assertIs(compiled._params.const_args[0], const2)
 
   def test_with_constants_and_dce(self):
-    const = jnp.arange(16.) + 42.  # A distinctive shape and value
+    const = jnp.arange(512.) + 42.  # A distinctive shape and value
 
     @jax.jit
     def f(x, y_dead):  # y is DCEed
@@ -311,7 +316,7 @@ class JaxAotTest(jtu.JaxTestCase):
     # execution can be run in 64-bit or 32-bit mode.
     with config.enable_x64(True):
       arange = np.arange if use_np else jnp.arange
-      const = arange(16, dtype=np.int64) + 42
+      const = arange(512, dtype=np.int64) + 42
 
       @jax.jit
       def f(x):
@@ -362,6 +367,98 @@ class JaxAotTest(jtu.JaxTestCase):
     f_lowered = f.lower(1)
     with self.assertRaisesRegex(ValueError, 'serialize with a closed-over'):
       serialized, in_tree, out_tree = serialize(f_lowered.compile())
+
+  def test_deserialize_version_1_legacy(self):
+    @jax.jit
+    def f(x, y):
+      return x * 2 + y
+
+    x = np.arange(4, dtype=np.int32)
+    y = np.arange(4, dtype=np.int32) * 3
+    compiled = f.lower(x, y).compile()
+    unloaded_executable = getattr(compiled._executable, '_unloaded_executable', None)
+    args_info_flat, in_tree = jax.tree_util.tree_flatten(compiled.args_info)
+    out_tree = compiled.out_tree
+
+    # Simulate legacy unversioned 3-tuple format (version 1)
+    with io.BytesIO() as file:
+      _JaxPjrtPickler(file).dump((unloaded_executable, args_info_flat,
+                                  compiled._no_kwargs))
+      legacy_serialized = file.getvalue()
+
+    with self.assertRaisesRegex(ValueError, "Unexpected serialized version"):
+      deserialize_and_load(legacy_serialized, in_tree, out_tree,
+                           execution_devices=jax.devices()[:1])
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f'hoist_{hoist_constants}_use_np_{use_np}',
+           hoist_constants=hoist_constants, use_np=use_np)
+      for hoist_constants in (True, False)
+      for use_np in (True, False)
+  )
+  def test_serialize_with_constants(self, hoist_constants, use_np):
+    from jax._src.interpreters import mlir
+    arange = np.arange if use_np else jnp.arange
+    const = arange(1024, dtype=np.float32) + 42.
+
+    @jax.jit
+    def f(x):
+      return const[0:512] + x
+
+    inp = arange(512, dtype=np.float32)
+    compiled = f.trace(inp).lower(_private_parameters=mlir.LoweringParameters(
+        hoist_constants_as_args=hoist_constants)).compile()
+    serialized, in_tree, out_tree = serialize(compiled)
+    reloaded = deserialize_and_load(
+        serialized, in_tree, out_tree, execution_devices=jax.devices()[:1]
+    )
+
+    if hoist_constants and config.use_simplified_jaxpr_constants.value:
+      self.assertLen(reloaded._params.const_args, 1)
+    else:
+      self.assertLen(reloaded._params.const_args, 0)
+
+    expected = const[0:512] + inp
+    out = reloaded(inp)
+    self.assertArraysEqual(out, expected)
+
+    # Test repeated invocation (cached execution path)
+    self.assertCacheMisses(lambda: reloaded(inp), cpp=0, aot_call=0)
+
+  def test_serialize_with_sharded_constants(self):
+    nr_devices = 2
+    if len(jax.devices()) < nr_devices:
+      self.skipTest(f"Need at least {nr_devices} devices")
+    devices = jax.devices()[:nr_devices]
+    mesh = jax.sharding.Mesh(devices, ("x",))
+    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+
+    const = jax.device_put(jnp.arange(512, dtype=np.float32) + 42., sharding)
+
+    @functools.partial(jax.jit, in_shardings=sharding, out_shardings=sharding)
+    def f(x):
+      return const + x
+
+    inp_np = np.arange(512, dtype=np.float32)
+    inp = jax.device_put(inp_np, sharding)
+
+    compiled = f.lower(inp).compile()
+    serialized, in_tree, out_tree = serialize(compiled)
+    reloaded = deserialize_and_load(
+        serialized, in_tree, out_tree, execution_devices=devices)
+
+    if config.use_simplified_jaxpr_constants.value:
+      self.assertLen(reloaded._params.const_args, 1)
+    else:
+      self.assertLen(reloaded._params.const_args, 0)
+
+    expected = const + inp_np
+    out = reloaded(inp)
+    self.assertEqual(out.sharding, sharding)
+    self.assertArraysEqual(out, expected)
+
+    # Test repeated invocation (cached execution path)
+    self.assertCacheMisses(lambda: reloaded(inp), cpp=0, aot_call=0)
 
   @jtu.run_on_devices('gpu', 'tpu')
   def test_mismatched_backends_raises(self):
@@ -515,6 +612,29 @@ class JaxAotTest(jtu.JaxTestCase):
     version_bytes = py_exec.get_executable_version()
     self.assertIsInstance(version_bytes, bytes)
     self.assertNotEmpty(version_bytes)
+
+  @jtu.run_on_devices('tpu')
+  def test_tpu_aot_memory_analysis_temp_size(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41166
+    topo = topologies.get_topology_desc(
+        platform='tpu',
+        topology_name='v6e:2x2',
+        chips_per_host_bounds=(2, 2, 1),
+        num_slices=1,
+    )
+    sharding = jax.sharding.NamedSharding(
+        jax.sharding.Mesh(topo.devices, ('x',)), P('x')
+    )
+    compiled = (
+        jax.jit(lambda a: jnp.tanh(a @ a.T).sum(), in_shardings=sharding)
+        .lower(jax.ShapeDtypeStruct((128, 128), jnp.float32, sharding=sharding))
+        .compile()
+    )
+    stats = compiled.memory_analysis()
+    self.assertIsNotNone(stats)
+    self.assertGreater(stats.temp_size_in_bytes, 0)
+    self.assertLessEqual(stats.temp_size_in_bytes, stats.total_allocation_bytes)
+    self.assertEqual(stats.temp_size_in_bytes % (16 * 1024), 0)
 
 
 if __name__ == '__main__':

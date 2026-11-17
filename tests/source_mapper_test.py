@@ -19,6 +19,7 @@ from jax import numpy as jnp
 from jax._src import test_util as jtu
 from jax.experimental import source_mapper
 from jax.experimental.source_mapper import hlo
+from jax.experimental.source_mapper import mlir
 
 
 HLO_EXAMPLE = r"""HloModule m, entry_computation_layout={()->pred[]}
@@ -140,6 +141,63 @@ class HLOParserTest(jtu.JaxTestCase):
     )  # "<embedded module>" is the first and only used source
     self.assertEqual(src_line, 152)  # 153 - 1
     self.assertEqual(gen_col, 2)
+
+
+class MLIRParserTest(jtu.JaxTestCase):
+
+  def test_callsite_fallback_and_chained_redirects(self):
+    mlir_dump = """module {
+  func.func @kernel(%arg0: f32) -> f32 {
+    %0 = arith.addf %arg0, %arg0 : f32 loc(#loc4)
+    %1 = arith.mulf %0, %arg0 : f32 loc(#loc7)
+    %2 = arith.subf %1, %arg0 : f32 loc(#loc9)
+    %3 = arith.divf %2, %arg0 : f32 loc(#loc3)
+    %4 = arith.maximumf %3, %arg0 : f32 loc(#loc10)
+    return %4 : f32 loc(#loc)
+  } loc(#loc)
+} loc(#loc)
+#loc = loc(unknown)
+#loc1 = loc("user_kernel.py":42:6 to :31)
+#loc2 = loc("helper.py":15:4)
+#loc3 = loc("add")
+#loc4 = loc(callsite(#loc2 at #loc1))
+#loc5 = loc("add:"(#loc3))
+#loc6 = loc("kernel_scope"(#loc1))
+#loc7 = loc(callsite(#loc5 at #loc6))
+#loc8 = loc(callsite(#loc3 at #loc7))
+#loc9 = loc(callsite(#loc3 at #loc8))
+#loc10 = loc(callsite(#loc11 at #loc10))
+#loc11 = loc(callsite(#loc10 at #loc1))"""
+    sm = mlir.create_mlir_sourcemap(mlir_dump)
+    self.assertEqual(sm.sources, ["helper.py", "user_kernel.py"])
+
+    # Decode cumulative VLQ state per line: (gen_col, file_idx, src_line, src_col)
+    abs_file = 0
+    abs_line = 0
+    abs_col = 0
+    decoded_by_line = {}
+    for line_idx, group in enumerate(sm.mappings[:-1]):
+      if not group:
+        continue
+      gen_col, d_file, d_line, d_col = group[0]
+      abs_file += d_file
+      abs_line += d_line
+      abs_col += d_col
+      decoded_by_line[line_idx] = (gen_col, abs_file, abs_line, abs_col)
+
+    # Line 2 (%0): callsite(#loc2 at #loc1) prefers callee #loc2 (helper.py:15:4).
+    self.assertEqual(decoded_by_line[2], (4, 0, 14, 4))
+    # Line 3 (%1): callsite(#loc5 at #loc6) falls back from scoped NameLoc #loc5
+    # to caller #loc6 -> #loc1 (user_kernel.py:42:6).
+    self.assertEqual(decoded_by_line[3], (4, 1, 41, 6))
+    # Line 4 (%2): chained callsite(#loc3 at callsite(#loc3 at #loc7)) resolves
+    # through multiple bare NameLoc frames to user_kernel.py:42:6.
+    self.assertEqual(decoded_by_line[4], (4, 1, 41, 6))
+    # Line 5 (%3): bare NameLoc (#loc3) has no FileLineColLoc and is skipped cleanly.
+    self.assertNotIn(5, decoded_by_line)
+    # Line 6 (%4): cyclic callsite graph terminates without infinite recursion
+    # and resolves via fallback branch to user_kernel.py:42:6.
+    self.assertEqual(decoded_by_line[6], (4, 1, 41, 6))
 
 
 if __name__ == "__main__":

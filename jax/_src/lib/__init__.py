@@ -93,7 +93,12 @@ import jaxlib.xla_client as xla_client  # noqa: F401
 # number that can be used to perform changes without breaking the main
 # branch on the Jax github.
 jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
-ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
+# TODO(phawkins): Simplify fallback and remove ifrt_version once the minimum
+# jaxlib version defines _xla_version.
+xla_version: int = getattr(
+    xla_client, '_xla_version', getattr(xla_client, '_ifrt_version', 0)
+)
+ifrt_version: int = xla_version
 
 import jaxlib.lapack as lapack  # noqa: F401
 import jaxlib.utils as utils  # noqa: F401
@@ -111,7 +116,15 @@ from jaxlib import _profiler as _profiler  # noqa: F401
 from jaxlib import _profile_data as _profile_data  # noqa: F401
 
 from jaxlib._jax import ffi as ffi  # noqa: F401
+import jaxlib.plugin_support as plugin_support
 import jaxlib.cpu_sparse as cpu_sparse  # noqa: F401
+cpu_math: ModuleType | None
+try:
+  import jaxlib.cpu._math as cpu_math  # noqa: F401
+except ImportError:
+  cpu_math = None
+cuda_math: ModuleType | None = plugin_support.import_from_plugin('cuda', '_math')
+hip_math: ModuleType | None = plugin_support.import_from_plugin('rocm', '_math')
 
 import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
 import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
@@ -146,10 +159,7 @@ import jaxlib.gpu_rnn as gpu_rnn  # noqa: F401
 import jaxlib.gpu_triton as gpu_triton  # noqa: F401
 
 import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # noqa: F401
-if jaxlib_extension_version >= 503:
-  import jaxlib.thunky.python.thunky as thunky_dialect  # noqa: F401
-else:
-  thunky_dialect = None  # noqa: F401
+import jaxlib.thunky.python.thunky as thunky_dialect  # noqa: F401
 
 import jaxlib.mosaic.python.tpu as tpu  # noqa: F401
 

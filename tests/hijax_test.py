@@ -253,6 +253,9 @@ class TupTy(HiType):
   def reshard(self, sharding):
     return TupTy(tuple(ty.reshard(s) for ty, s in zip(self.tys, sharding.val)))
 
+  def vspace_zero(self):
+    return make_tup(*map(ad.zeros_like_aval, self.tys))
+
   def vspace_add(self, x_tup, y_tup):
     n = len(self.tys)
     x_elts = [get_tuple_element(x_tup, i) for i in range(n)]
@@ -2074,6 +2077,14 @@ class HijaxTest(jtu.JaxTestCase):
                         check_dtypes=False)
     self.assertAllClose(f_vjp(1.0)[0], 6.0)  # plain call drops the logs
     self.assertAllClose(jax.grad(square)(3.0), 6.0)
+    self.assertAllClose(jax.grad(square, with_logs=True)(3.0), (6.0, logs),
+                        check_dtypes=False)
+    self.assertAllClose(jax.value_and_grad(square, with_logs=True)(3.0),
+                        (9.0, (6.0, logs)), check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(lambda x: (square(x), x + 1.0), has_aux=True,
+                 with_logs=True)(3.0),
+        (6.0, 4.0, logs), check_dtypes=False)
 
     # distinct keys are both present; a repeated key is an error
     f2 = lambda x: square(square(x, 'inner'), 'outer')
@@ -2110,6 +2121,11 @@ class HijaxTest(jtu.JaxTestCase):
     for log in logss.values():
       self.assertArraysEqual(log['x'], xs)
       self.assertEqual(log['ct_in'].shape, xs.shape)
+    gs, glogss = jax.jit(jax.grad(f_scan, with_logs=True))(xs)
+    self.assertAllClose(gs, 4.0 * xs)
+    self.assertEqual(set(glogss), {'carry', 'ys'})
+    for log in glogss.values():
+      self.assertArraysEqual(log['x'], xs)
 
   @parameterized.product(
       transform=['eager', 'jit', 'jit_pullback', 'checkpoint', 'scan',
@@ -2936,6 +2952,40 @@ class HijaxTest(jtu.JaxTestCase):
     f(x, y)
     jax.jit(jax.grad(f))(x, y)
 
+  def test_remat_hitype_in_and_out(self):
+    x = jnp.array([1.0, 2.0, 3.0, 4.0])
+    y = jnp.array([5.0, 6.0])
+    c = make_tup(jnp.full(4, 2.0), jnp.full(2, 3.0))
+
+    @jax.remat
+    def passthrough(tup):
+      return tup
+
+    pt = jax.jit(passthrough)(make_tup(x, y))
+    self.assertAllClose(get_tuple_element(pt, 0), x)
+    self.assertAllClose(get_tuple_element(pt, 1), y)
+
+    @partial(jax.remat, prevent_cse=(True, False))
+    def step(tup, scale):
+      x_ = get_tuple_element(tup, 0) * get_tuple_element(c, 0) * scale
+      y_ = get_tuple_element(tup, 1) + get_tuple_element(c, 1)
+      return make_tup(x_, y_)
+
+    def loss(x, y, scale):
+      out = step(make_tup(x, y), scale)
+      x_ = get_tuple_element(out, 0)
+      y_ = get_tuple_element(out, 1)
+      return jnp.sum(x_ + jnp.concatenate((y_, y_)))
+
+    out_tup = jax.jit(step)(make_tup(x, y), 2.0)
+    self.assertAllClose(get_tuple_element(out_tup, 0), x * 4.0)
+    self.assertAllClose(get_tuple_element(out_tup, 1), y + 3.0)
+
+    dx, dy, dscale = jax.jit(jax.grad(loss, argnums=(0, 1, 2)))(x, y, 2.0)
+    self.assertAllClose(dx, jnp.full(4, 4.0))
+    self.assertAllClose(dy, jnp.full(2, 2.0))
+    self.assertAllClose(dscale, jnp.sum(x * 2.0))
+
   @jtu.with_explicit_mesh((2,), 'x')
   def test_shmap_grad_hitype(self, mesh):
     class Mul(HiPrim):
@@ -3042,6 +3092,11 @@ class HijaxTest(jtu.JaxTestCase):
     x = jax.device_put(jnp.ones((8,), dtype=jnp.float32), jax.P('x'))
     f_vjp(MulH(x))  # doesn't crash
 
+  def test_instantiate_zeros_hipspec_sharding(self):
+    tup = HiTup((jnp.ones(2),))
+    _, f_vjp = jax.vjp(lambda x, t: x, 1.0, tup)
+    f_vjp(1.0)  # doesn't crash
+
   @parameterized.parameters([False, True])
   def test_ref_prim(self, jit):
     class Square(HiPrim):
@@ -3147,6 +3202,17 @@ class HijaxTest(jtu.JaxTestCase):
       traced_h = h.trace(jnp.float32(2.0), jnp.float32(3.0))
       self.assertIn('cos', str(traced_h.jaxpr))
       self.assertNotIn('cos', str(traced_h.lojax.jaxpr))
+
+      @jax.remat
+      def r_internal_dead(x):
+        _ = jnp.cos(x)
+        return jnp.sin(x)
+
+      jaxpr_r = jax.make_jaxpr(r_internal_dead)(jnp.float32(2.0)).jaxpr
+      dced_r, _ = pe.dce_jaxpr(jaxpr_r, True, instantiate=True)
+      self.assertNotIn('cos', str(dced_r))
+      dced_r2, _ = pe.dce_jaxpr(dced_r, True, instantiate=True)
+      self.assertIs(dced_r2, dced_r)
 
     @jax.jit
     def clean_fn(x):
@@ -3460,9 +3526,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
       return immutbox_new(immutbox_get(b2) * 2.0)
 
     lowered_text = f.lower(box).as_text()
-    self.assertIn(
-        'sdy.sharding_constraint' if config.use_shardy_partitioner.value else '@Sharding',
-        lowered_text)
+    self.assertIn('sdy.sharding_constraint', lowered_text)
 
     out, f_vjp = jax.vjp(f, box)
     self.assertEqual(jax.typeof(out).sharding.spec, jax.P(None, 'y'))
@@ -3489,9 +3553,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
         return b_resharded
 
       lowered_g = jax.jit(g).lower(box).as_text()
-      self.assertIn(
-          'sdy.sharding_constraint' if config.use_shardy_partitioner.value else '@Sharding',
-          lowered_g)
+      self.assertIn('sdy.sharding_constraint', lowered_g)
 
       out = jax.jit(g)(box)
       self.assertEqual(jax.typeof(out).sharding.spec, jax.P(None, None))
@@ -3514,9 +3576,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
         return immutbox_new(immutbox_get(b) * 2.0)
 
       lowered_h = jax.jit(h).lower(box).as_text()
-      self.assertIn(
-          'sdy.sharding_constraint' if config.use_shardy_partitioner.value else '@Sharding',
-          lowered_h)
+      self.assertIn('sdy.sharding_constraint', lowered_h)
 
       out = jax.jit(h)(box)
       self.assertEqual(jax.typeof(out).sharding.spec, jax.P(None, 'y'))
@@ -3584,12 +3644,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
         return q_resharded
 
       lowered = jax.jit(f).lower(q).as_text()
-      self.assertIn(
-          'sdy.sharding_constraint'
-          if config.use_shardy_partitioner.value
-          else '@Sharding',
-          lowered,
-      )
+      self.assertIn('sdy.sharding_constraint', lowered)
 
       out = jax.jit(f)(q)
       self.assertEqual(jax.typeof(out).arr_aval.sharding.spec, jax.P(None, None))

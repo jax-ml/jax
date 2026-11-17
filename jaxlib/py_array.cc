@@ -116,7 +116,6 @@ limitations under the License.
 #include "xla/python/safe_static_init.h"
 #include "xla/python/strides.h"
 #include "xla/python/types.h"
-#include "xla/python/version.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -168,14 +167,7 @@ ifrt::ArrayRef CreateIfRtArrayFromSingleDeviceShardedPyArrays(
   }
   ifrt::Device* device = sharding_device_list.value()->devices().front();
 
-#if JAX_IFRT_VERSION_NUMBER >= 64
   const ifrt::MemoryKind& canonical_dst_memory_kind = dst_memory_kind;
-#else
-  // TODO(hyeontaek): Canonicalize every `ifrt::MemoryKind` at creation time to
-  // skip canonicalization here once JAX begins to do it for JAX shardings.
-  const ifrt::MemoryKind canonical_dst_memory_kind =
-      ifrt::CanonicalizeMemoryKind(dst_memory_kind, device);
-#endif
   for (const auto& py_array : py_arrays) {
     if (py_array.num_shards() != 1) {
       throw nb::value_error(
@@ -637,14 +629,7 @@ PyArray PyArray::MakeFromSingleDeviceArray(nb_class_ptr<PyClient> py_client,
       xla::IfrtDtypeToDtypeWithTokenCanonicalization(key.dtype).value();
   const ifrt::MemoryKind memory_kind = ifrt_array->sharding().memory_kind();
   nb::object py_memory_kind =
-#if JAX_IFRT_VERSION_NUMBER >= 64
       nb::str(memory_kind.value().data(), memory_kind.value().size());
-#else
-      (memory_kind.memory_kind().has_value())
-          ? nb::object(nb::str(memory_kind.memory_kind()->data(),
-                               memory_kind.memory_kind()->size()))
-          : nb::none();
-#endif
   nb::object sharding = MakeSingleDeviceSharding(
       py_client->GetPyDevice(
           ifrt_array->sharding().devices()->devices().front()),
@@ -1408,17 +1393,9 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
           ifrt_array_ptr->sharding().devices();
       const ifrt::DeviceListRef& dst_devices = dst_device_lists[i];
 
-#if JAX_IFRT_VERSION_NUMBER >= 64
       const ifrt::MemoryKind& src_memory_kind =
           ifrt_array_ptr->sharding().memory_kind();
       ifrt::MemoryKind dst_memory_kind = GetMemoryKind(dst_sharding);
-#else
-      ifrt::MemoryKind src_memory_kind =
-          ifrt::CanonicalizeMemoryKind(ifrt_array_ptr->sharding().memory_kind(),
-                                       src_devices->devices().front());
-      ifrt::MemoryKind dst_memory_kind = ifrt::CanonicalizeMemoryKind(
-          GetMemoryKind(dst_sharding), dst_devices->devices().front());
-#endif
 
       if (*src_devices == *dst_devices && src_memory_kind == dst_memory_kind &&
           array_cs == ifrt::ArrayCopySemantics::kReuseInput) {

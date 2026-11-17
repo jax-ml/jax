@@ -83,7 +83,7 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
         cluster_names=("c",),
     )
 
-    scratch_init = jnp.zeros_like(x)
+    scratch_init = jax.new_ref(jnp.zeros_like(x))
     if with_race:
       with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
         kernel(x, scratch_init).block_until_ready()
@@ -135,7 +135,9 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
         cluster_names=("c",),
     )
 
-    scratch_init = jnp.zeros((num_barriers + 1, num_barriers, 16), dtype=jnp.int32)
+    scratch_init = jax.new_ref(
+        jnp.zeros((num_barriers + 1, num_barriers, 16), dtype=jnp.int32)
+    )
     if with_race_in_round is not None and num_barriers > 1:
       with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
         kernel(x, scratch_init).block_until_ready()
@@ -146,7 +148,7 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
 
   def test_cluster_barrier_differ_at_most_one_collective_axis(self):
     x = jnp.arange(64, dtype=jnp.int32).reshape(2, 2, 16)
-    s = jnp.zeros((2, 2, 16), dtype=jnp.int32)
+    s = jax.new_ref(jnp.zeros((2, 2, 16), dtype=jnp.int32))
 
     def _kernel(in_gmem, scratch_gmem, out_gmem, cluster_barrier):
       c0 = jax.lax.axis_index("c0")
@@ -237,7 +239,7 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
 
     in_shape = cluster_shape + (num_threads,)
     x = jnp.arange(math.prod(in_shape), dtype=jnp.int32).reshape(in_shape)
-    s = jnp.zeros(in_shape, dtype=jnp.int32)
+    s = jax.new_ref(jnp.zeros(in_shape, dtype=jnp.int32))
 
     def _kernel(in_gmem, scratch_gmem, out_gmem, cluster_barrier):
       cluster_idx_tuple = tuple(
@@ -358,7 +360,7 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
         cluster_names=("c",),
     )
 
-    scratch_init = jnp.zeros((2, 2, 16), dtype=jnp.int32)
+    scratch_init = jax.new_ref(jnp.zeros((2, 2, 16), dtype=jnp.int32))
     if with_race:
       with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
         kernel(x, scratch_init).block_until_ready()
@@ -398,7 +400,7 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
         cluster_names=("c",),
     )
 
-    scratch_init = jnp.zeros((2, 3, 2, 16), dtype=jnp.int32)
+    scratch_init = jax.new_ref(jnp.zeros((2, 3, 2, 16), dtype=jnp.int32))
     if with_race:
       with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
         kernel(x, scratch_init).block_until_ready()
@@ -439,7 +441,7 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
         cluster_names=("c",),
     )
 
-    scratch_init = jnp.zeros((2, 1, 3, 2, 16), dtype=jnp.int32)
+    scratch_init = jax.new_ref(jnp.zeros((2, 1, 3, 2, 16), dtype=jnp.int32))
     if with_race:
       with self.assertRaisesRegex(jax.errors.JaxRuntimeError, 'RACE DETECTED'):
         kernel(x, scratch_init).block_until_ready()

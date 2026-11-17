@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <cstddef>
-
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/pair.h"  // IWYU pragma: keep
 #include "jaxlib/absl_status_casters.h"
@@ -28,26 +26,16 @@ namespace {
 
 namespace nb = nanobind;
 
-nb::bytes BuildRnnDescriptor(int input_size, int hidden_size, int num_layers,
-                             int batch_size, int max_seq_length, float dropout,
-                             bool bidirectional, bool cudnn_allow_tf32,
-                             size_t workspace_size, size_t reserve_space_size) {
-  return PackDescriptor(RnnDescriptor{
-      input_size, hidden_size, num_layers, batch_size, max_seq_length, dropout,
-      bidirectional, cudnn_allow_tf32, workspace_size, reserve_space_size});
-}
-
 nb::dict Registrations() {
   nb::dict dict;
-  dict[JAX_GPU_PREFIX "dnn_rnn_ffi"] = EncapsulateFfiHandler(RNNForwardFfi);
-  dict[JAX_GPU_PREFIX "dnn_rnn_bwd_ffi"] =
-      EncapsulateFfiHandler(RNNBackwardFfi);
+  dict[JAX_GPU_PREFIX "dnn_rnn_ffi_v2"] = EncapsulateFfiHandler(kRNNForward);
+  dict[JAX_GPU_PREFIX "dnn_rnn_bwd_ffi_v2"] =
+      EncapsulateFfiHandler(kRNNBackward);
   return dict;
 }
 
 NB_MODULE(_rnn, m) {
   m.def("registrations", &Registrations);
-  m.def("build_rnn_descriptor", &BuildRnnDescriptor);
   m.def("compute_rnn_workspace_reserve_space_sizes",
         ValueOrThrowWrapper(RnnComputeWorkspaceReserveSpaceSizes));
 }

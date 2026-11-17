@@ -214,7 +214,7 @@ def get_compile_options(
   compile_options.num_partitions = num_partitions
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = True
-  build_options.use_shardy_partitioner = config.use_shardy_partitioner.value
+  build_options.use_shardy_partitioner = True
   if fdo_profile is not None:
     build_options.fdo_profile = fdo_profile
   if device_assignment is not None:

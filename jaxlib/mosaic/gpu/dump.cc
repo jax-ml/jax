@@ -199,7 +199,6 @@ std::string FormatSassCtrl(const std::string& sass) {
           uint64_t write_barrier = (ctrl >> 46) & 0x7;
           uint64_t read_barrier = (ctrl >> 49) & 0x7;
           uint64_t wait_barrier = (ctrl >> 52) & 0x3f;
-          std::string wait_barrier_str;
           if (wait_barrier == 0) {
             result += "   -";
           } else if (absl::has_single_bit(wait_barrier)) {

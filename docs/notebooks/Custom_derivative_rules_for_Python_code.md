@@ -809,39 +809,6 @@ Notice that `f_jvp` calls `f` to compute the primal outputs. In the context of h
 grad(grad(f))(3.)
 ```
 
-+++ {"id": "XNxAmFSsaaro"}
-
-You can use Python control flow with `jax.custom_jvp`:
-
-```{code-cell} ipython3
-:id: kkXlSJL6adU2
-
-@custom_jvp
-def f(x):
-  if x > 0:
-    return jnp.sin(x)
-  else:
-    return jnp.cos(x)
-
-@f.defjvp
-def f_jvp(primals, tangents):
-  x, = primals
-  x_dot, = tangents
-  ans = f(x)
-  if x > 0:
-    return ans, 2 * x_dot
-  else:
-    return ans, 3 * x_dot
-```
-
-```{code-cell} ipython3
-:id: QCHmJ56Na2G3
-:outputId: 1772d3b4-44ef-4745-edd3-553c6312c553
-
-print(grad(f)(1.))
-print(grad(f)(-1.))
-```
-
 +++ {"id": "9cVdgR7ilt8l"}
 
 ### Use `jax.custom_vjp` to define custom reverse-mode-only rules

@@ -254,7 +254,7 @@ class JaxprTrace(Trace):
     eqn = new_eqn_recipe(self, in_tracers, out_tracers, prim, params, effs,
                          source)
     if effects.partial_eval_kept_effects.filter_in(effs):
-      self.effect_handles.append(EffectHandle(in_tracers, eqn))  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
+      self.effect_handles.append(EffectHandle(in_tracers, eqn))  # pyrefly#2385
     for t in out_tracers: t.recipe = eqn
     return out_tracers
 
@@ -662,7 +662,7 @@ def tracers_to_jaxpr(
   outvars = map(get_atom, out_tracers)
   jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
   is_high |= any(x.aval.is_high for x in it.chain(const_vars, invars, outvars))
-  jaxpr = Jaxpr(const_vars, invars,  # pyrefly: ignore[bad-argument-type]
+  jaxpr = Jaxpr(const_vars, invars,
                 outvars, eqns, jaxpr_effects, debug_info, is_high)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
@@ -2058,8 +2058,12 @@ def diff_tracing_cache_keys(new_key, old_key) -> tuple[int, int, str]:
     A tuple of (severity, num_diffs, explanation) for the diff between the two
     keys. Severity is an int, where lower is better.
   """
-  new_ctx, (new_tree, new_dbg, *_), () = new_key
-  old_ctx, (old_tree, old_dbg, *_), () = old_key
+  new_ctx, new_pos, new_kw = new_key
+  old_ctx, old_pos, old_kw = old_key
+  new_tree = new_pos[0]
+  new_dbg = new_pos[1] if len(new_pos) > 1 else dict(new_kw).get('debug_info')
+  old_tree = old_pos[0]
+  old_dbg = old_pos[1] if len(old_pos) > 1 else dict(old_kw).get('debug_info')
   return (diff_tracing_ctx(new_ctx, old_ctx) or
           diff_trees(new_tree.tree, old_tree.tree) or
           diff_debug(new_dbg, old_dbg) or
@@ -2108,7 +2112,8 @@ def diff_types(dbg, new_leaves, old_leaves) -> tuple[int, int, str] | None:
   if new_leaves == old_leaves: return
   diffs = []
   add_weak_type_hint = False
-  for name, new_ty, old_ty in zip(dbg.arg_names, new_leaves, old_leaves):
+  arg_names = dbg.arg_names if dbg.arg_names is not None else ("",) * len(new_leaves)
+  for i, (name, new_ty, old_ty) in enumerate(zip(arg_names, new_leaves, old_leaves)):
     if new_ty != old_ty:
       new_str, old_str = new_ty.str_short(True), old_ty.str_short(True)
       if type(new_ty) is type(old_ty) is core.ShapedArray:
@@ -2118,7 +2123,8 @@ def diff_types(dbg, new_leaves, old_leaves) -> tuple[int, int, str] | None:
           add_weak_type_hint = True
           new_str += f'{{weak_type={new_ty.weak_type}}}'
           old_str += f'{{weak_type={old_ty.weak_type}}}'
-      diffs.append(f"  * at {name}, now {new_str} and before {old_str}")
+      loc = name or f"flat_arg[{i}]"
+      diffs.append(f"  * at {loc}, now {new_str} and before {old_str}")
   msg = 'different input types:\n' + '\n'.join(diffs)
   if add_weak_type_hint:
     msg += 'https://docs.jax.dev/en/latest/101/type_promotion.html#weak-types'

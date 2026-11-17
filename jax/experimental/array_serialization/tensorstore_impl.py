@@ -302,7 +302,7 @@ def get_tensorstore_spec(
   # optionally, if array is provided, we can add metadata to the spec
   if arr is not None:
     spec["metadata"] = _get_tensorstore_metadata(
-        arr, driver=str(spec["driver"]))
+        arr, driver=spec["driver"])
   return spec
 
 async def _create_async_array_from_callback(

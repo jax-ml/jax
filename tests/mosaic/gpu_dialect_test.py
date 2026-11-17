@@ -260,6 +260,9 @@ class DialectTest(MosaicGpuTest):
       )
       mgpu.dialect.tcgen05_commit_arrive(barrier)
       mgpu.dialect.tcgen05_commit_arrive(barrier, predicate=pred)
+      # TODO(bchetioui): remove `hasattr` check once minimum jaxlib version is >= 0.12.1.
+      if hasattr(mgpu.dialect.TcGen05CommitArriveOp, "commit_a_read_only"):
+        mgpu.dialect.tcgen05_commit_arrive(barrier, commit_a_read_only=True)
     self.assertTrue(self.module.operation.verify())
 
   def test_async_load_op_source_and_dest_must_have_same_element_type(self):
@@ -1157,6 +1160,26 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  @parameterized.parameters(
+      ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType
+  )
+  def test_tcgen05_mma_scales_element_type_ok(self, scale_dtype):
+    smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
+    f8 = scale_dtype.get()
+    with ir.InsertionPoint(self.module.body):
+      acc, a, b, accumulate, a_scale, b_scale = undefs(
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=tmem),
+          ir.MemRefType.get([128, 128], ir.F16Type.get(), memory_space=smem),
+          ir.MemRefType.get([128, 160], ir.F16Type.get(), memory_space=smem),
+          ir.IntegerType.get_signless(1),
+          ir.MemRefType.get([128, 4], f8, memory_space=tmem),
+          ir.MemRefType.get([160, 4], f8, memory_space=tmem),
+      )
+      mgpu.dialect.tcgen05_mma(
+          acc, a, b, accumulate, a_scale=a_scale, b_scale=b_scale
+      )
+    self.assertTrue(self.module.operation.verify())
+
   def test_tcgen05_mma_a_sparse_metadata_mem_space_is_tmem(self):
     smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
     i2 = ir.IntegerType.get_signless(2)
@@ -1792,6 +1815,46 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  @parameterized.parameters(
+      (7, 576, 576),
+      (7, 608, 576),
+      (9, 576, 576),
+      (3, 576, 512),
+  )
+  def test_tmem_alloc_op_column_count_limit_on_sm107f(
+      self, arch_minor, num_columns, max_columns
+  ):
+    i32 = ir.IntegerType.get_signless(32)
+    self.module.operation.attributes["mosaic_gpu.arch_major"] = (
+        ir.IntegerAttr.get(i32, 10)
+    )
+    self.module.operation.attributes["mosaic_gpu.arch_minor"] = (
+        ir.IntegerAttr.get(i32, arch_minor)
+    )
+    has_enough_columns = num_columns <= max_columns
+    with ir.InsertionPoint(self.module.body):
+      (smem_ptr,) = undefs(
+          ir.MemRefType.get([], i32, memory_space=mgpu_utils.smem())
+      )
+      mgpu.dialect.tmem_alloc(
+          result=ir.MemRefType.get(
+              [128, num_columns], i32, memory_space=mgpu_utils.tmem()
+          ),
+          smem_ptr=smem_ptr,
+          collective=False,
+          packing=1,
+      )
+
+    if has_enough_columns:
+      self.assertTrue(self.module.operation.verify())
+    else:
+      with self.assertRaisesRegex(
+          ir.MLIRError,
+          "The number of allocated columns must be less than or equal to"
+          f" {max_columns} but got: {num_columns}",
+      ):
+        self.module.operation.verify()
+
   def test_tmem_alloc_op_bad_packing(self):
     with ir.InsertionPoint(self.module.body):
       (smem_ptr,) = undefs(
@@ -2094,7 +2157,8 @@ ir.MLIRError,
       mgpu.dialect.async_store_scales_smem_to_tmem(smem, tmem)
     with self.assertRaisesRegex(
         ir.MLIRError,
-        r"operand #0 must be 4D memref of f8E8M0FNU type or f8E4M3FN type values",
+        r"operand #0 must be 4D memref of f8E8M0FNU type or f8E4M3FN type or"
+        r" f8E5M3FNU type values",
     ):
       self.module.operation.verify()
 
@@ -2163,7 +2227,9 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
-  @parameterized.parameters(ir.Float8E8M0FNUType, ir.Float8E4M3FNType)
+  @parameterized.parameters(
+      ir.Float8E8M0FNUType, ir.Float8E4M3FNType, ir.Float8E5M3FNUType
+  )
   def test_async_store_scales_smem_to_tmem_op_ok(self, valid_dtype):
     f8 = valid_dtype.get()
     with ir.InsertionPoint(self.module.body):
@@ -2321,115 +2387,6 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
-  def test_contiguous_reinterpret_cast_of_slice_smem_is_folded(self):
-
-    shape, new_shape = (4, 8), (16, 2)
-    ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu_utils.smem())
-    new_ty = ir.MemRefType.get(
-        new_shape,
-        ty.element_type,
-        layout=ir.StridedLayoutAttr.get(0, [1, 16]),
-        memory_space=ty.memory_space,
-    )
-    alias_id = 0x1337
-    with ir.InsertionPoint(self.module.body):
-      fn = func.FuncOp("test_fn", ir.FunctionType.get([], [new_ty]))
-      block = fn.add_entry_block()
-      with ir.InsertionPoint(block):
-        ref = mgpu.dialect.slice_smem(ty, 0, alias_id=alias_id)
-        result = mgpu.dialect.reinterpret_cast(new_ty, ref)
-        func.ReturnOp([result])
-
-    pm = mlir_interpreter.passmanager.PassManager.parse(
-        "builtin.module(canonicalize)", self.module.context
-    )
-    pm.run(self.module.operation)
-
-    [slice_smem_op] = self.find_ops(mgpu.dialect.SliceSMEMOp)
-    self.assertEqual(slice_smem_op.result.type, new_ty)
-    self.assertEqual(slice_smem_op.alias_id.value, alias_id)
-
-  def test_reinterpret_cast_inside_warp_map_is_hoisted(self):
-    with ir.InsertionPoint(self.module.body):
-      ref_ty0 = ir.MemRefType.get((4,), ir.F16Type.get())
-      ref_ty1 = ir.MemRefType.get((2, 2), ir.F16Type.get())
-      [ref] = undefs(ref_ty0)
-      warp_map = mgpu.dialect.WarpMapOp(operands=[ref])
-      with ir.InsertionPoint(warp_map.body):
-        mgpu.dialect.reinterpret_cast(ref_ty1, warp_map.body.arguments[0])
-    pm = mlir_interpreter.passmanager.PassManager.parse(
-        "builtin.module(canonicalize)", self.module.context
-    )
-    pm.run(self.module.operation)
-    [rc_op] = self.find_ops(mgpu.dialect.ReinterpretCastOp)
-    [use] = rc_op.result.uses
-    self.assertIsInstance(use.owner, mgpu.dialect.WarpMapOp)
-
-  def test_reinterpret_cast_inside_warp_map_is_hoisted_when_all_consumers_are_identical_reinterpret_casts(self):
-    with ir.InsertionPoint(self.module.body):
-      ref_ty0 = ir.MemRefType.get((4,), ir.F16Type.get())
-      ref_ty1 = ir.MemRefType.get((2, 2), ir.F16Type.get())
-      [ref] = undefs(ref_ty0)
-      warp_map = mgpu.dialect.WarpMapOp(operands=[ref])
-      with ir.InsertionPoint(warp_map.body):
-        mgpu.dialect.reinterpret_cast(ref_ty1, warp_map.body.arguments[0])
-        mgpu.dialect.reinterpret_cast(ref_ty1, warp_map.body.arguments[0])
-    pm = mlir_interpreter.passmanager.PassManager.parse(
-        "builtin.module(canonicalize)", self.module.context
-    )
-    pm.run(self.module.operation)
-    rc_ops = self.find_ops(mgpu.dialect.ReinterpretCastOp)
-    self.assertLen(rc_ops, 1)
-    [rc_op] = rc_ops
-    [use] = rc_op.result.uses
-    self.assertIsInstance(use.owner, mgpu.dialect.WarpMapOp)
-
-  def test_reinterpret_cast_inside_warp_map_is_not_hoisted_when_consumers_have_different_types(self):
-    with ir.InsertionPoint(self.module.body):
-      ref_ty0 = ir.MemRefType.get((4,), ir.F16Type.get())
-      ref_ty1 = ir.MemRefType.get((2, 2), ir.F16Type.get())
-      ref_ty2 = ir.MemRefType.get((4, 1), ir.F16Type.get())
-      [ref] = undefs(ref_ty0)
-      warp_map = mgpu.dialect.WarpMapOp(operands=[ref])
-      with ir.InsertionPoint(warp_map.body):
-        a = mgpu.dialect.reinterpret_cast(ref_ty1, warp_map.body.arguments[0])
-        b = mgpu.dialect.reinterpret_cast(ref_ty2, warp_map.body.arguments[0])
-        # Add an arbitrary side-effecting user in order to prevent the casts
-        # from being DCE'd.
-        mgpu.dialect.optimization_barrier([a, b])
-    pm = mlir_interpreter.passmanager.PassManager.parse(
-        "builtin.module(canonicalize)", self.module.context
-    )
-    pm.run(self.module.operation)
-    rc_ops = self.find_ops(mgpu.dialect.ReinterpretCastOp)
-    self.assertLen(rc_ops, 2)
-    [rc_op1, rc_op2] = rc_ops
-    self.assertEqual(rc_op1.parent, warp_map)
-    self.assertEqual(rc_op2.parent, warp_map)
-
-  def test_reinterpret_cast_of_reinterpret_cast_is_folded(self):
-
-    bf16 = ir.BF16Type.get()
-    smem = mgpu_utils.smem()
-    ty = ir.MemRefType.get((4, 8), bf16, memory_space=smem)
-    ty1 = ir.MemRefType.get((32,), bf16, memory_space=smem)
-    ty2 = ir.MemRefType.get((2, 16), bf16, memory_space=smem)
-    with ir.InsertionPoint(self.module.body):
-      fn = func.FuncOp("test_fn", ir.FunctionType.get([ty], [ty2]))
-      block = fn.add_entry_block()
-      with ir.InsertionPoint(block):
-        cast1 = mgpu.dialect.reinterpret_cast(ty1, block.arguments[0])
-        cast2 = mgpu.dialect.reinterpret_cast(ty2, cast1)
-        func.ReturnOp([cast2])
-
-    pm = mlir_interpreter.passmanager.PassManager.parse(
-        "builtin.module(canonicalize)", self.module.context
-    )
-    pm.run(self.module.operation)
-
-    [reinterpret_cast_op] = self.find_ops(mgpu.dialect.ReinterpretCastOp)
-    self.assertEqual(reinterpret_cast_op.result.type, ty2)
-
   def test_broadcast_in_dim_canonicalization(self):
     ty0 = ir.VectorType.get((64,), ir.F32Type.get())
     ty1 = ir.VectorType.get((64, 1), ir.F32Type.get())
@@ -2503,16 +2460,22 @@ ir.MLIRError,
     self.assertEqual(ref2.owner.opview.alignment.value, 64)
     self.assertLen(scope.results, 2)
 
-  def test_alloc_smem_requires_alloca_scope_ancestor(self):
+  def test_alloc_smem_requires_alloca_scope_parent(self):
+    ref_ty = ir.MemRefType.get(
+        (8, 16), ir.F32Type.get(), memory_space=mgpu_utils.smem()
+    )
     with ir.InsertionPoint(self.module.body):
-      ref_ty = ir.MemRefType.get(
-          (8, 16), ir.F32Type.get(), memory_space=mgpu_utils.smem()
-      )
-      mgpu.dialect.alloc_smem(ref_ty)
+      # `alloc_smem` is nested in an `alloca_scope`, but not directly.
+      scope = mgpu.dialect.alloca_scope()
+      with ir.InsertionPoint(scope.body):
+        [cond] = undefs(ir.IntegerType.get_signless(1))
+        with mgpu_utils.when(cond):
+          mgpu.dialect.alloc_smem(ref_ty)
+        mgpu.dialect.alloca_scope_return([])
 
     with self.assertRaisesRegex(
         ir.MLIRError,
-        r"requires an ancestor `mosaic_gpu\.alloca_scope` op",
+        r"expects parent op 'mosaic_gpu\.alloca_scope'",
     ):
       self.module.operation.verify()
 
@@ -2574,6 +2537,41 @@ ir.MLIRError,
         r" result type \('vector<128xf32>'\) in alloca_scope",
     ):
       self.module.operation.verify()
+
+  def test_cumulative_reduction_dimension_must_be_in_range(self):
+    with ir.InsertionPoint(self.module.body):
+      [source] = undefs(ir.VectorType.get([128, 128], ir.F32Type.get()))
+      mgpu.dialect.cumulative_reduction(
+          source,
+          kind=mgpu.dialect.CumulativeReductionKind.Add,
+          dimension=2,
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError, r"The reduction dimension must be in \[0, 2\) but got 2"
+    ):
+      self.module.operation.verify()
+
+  @parameterized.parameters(0, 1)
+  def test_cumulative_reduction_with_an_in_range_dimension_passes(self, dimension):
+    with ir.InsertionPoint(self.module.body):
+      [source] = undefs(ir.VectorType.get([128, 128], ir.F32Type.get()))
+      mgpu.dialect.cumulative_reduction(
+          source,
+          kind=mgpu.dialect.CumulativeReductionKind.Add,
+          dimension=dimension,
+      )
+    self.assertTrue(self.module.operation.verify())
+
+  def test_cumulative_reduction_accepts_a_rank_one_source(self):
+    with ir.InsertionPoint(self.module.body):
+      [source] = undefs(ir.VectorType.get([128], ir.F32Type.get()))
+      mgpu.dialect.cumulative_reduction(
+          source,
+          kind=mgpu.dialect.CumulativeReductionKind.LogAddExp,
+          dimension=0,
+      )
+    self.assertTrue(self.module.operation.verify())
 
 
 class DialectLoweringTest(MosaicGpuTest):
@@ -2803,6 +2801,52 @@ class DialectLoweringTest(MosaicGpuTest):
     # Avoid making a change detector, only validate that lowering runs as
     # expected.
     self.assertEmpty(self.find_ops(mgpu.dialect.SliceSMEMOp))
+
+  @parameterized.product(
+      dtype=(jnp.int4, jnp.int8, jnp.float8_e4m3fn, jnp.bfloat16),
+      splat_layout=(True, False),
+  )
+  def test_lowering_select_op_scalar_condition(self, dtype, splat_layout):
+    shape = (4, 128)
+    with self.kernel() as launch_ctx:
+      elt_ty = mgpu_utils.dtype_to_ir_type(dtype)
+      vec_ty = ir.VectorType.get(shape, elt_ty)
+      i1 = ir.IntegerType.get_signless(1)
+      if splat_layout:
+        layout = mgpu.WGSplatFragLayout(shape)
+      else:
+        layout = mgpu.WGStridedFragLayout.from_shaped_type(vec_ty)
+        assert layout is not None
+      layout_attr = layouts.to_layout_attr(layout)
+      if isinstance(elt_ty, ir.IntegerType):
+        zero = ir.IntegerAttr.get(elt_ty, 0)
+        one = ir.IntegerAttr.get(elt_ty, 1)
+      else:
+        zero = ir.FloatAttr.get(elt_ty, 0)
+        one = ir.FloatAttr.get(elt_ty, 1)
+      v_true = arith.ConstantOp(
+          vec_ty, ir.DenseElementsAttr.get_splat(vec_ty, one)
+      )
+      v_false = arith.ConstantOp(
+          vec_ty, ir.DenseElementsAttr.get_splat(vec_ty, zero)
+      )
+      v_true.attributes["out_layouts"] = ir.ArrayAttr.get([layout_attr])
+      v_false.attributes["out_layouts"] = ir.ArrayAttr.get([layout_attr])
+      cond = arith.constant(i1, 1)
+      select_op = arith.SelectOp(cond, v_true, v_false)
+      select_op.attributes["in_layouts"] = ir.ArrayAttr.get([layout_attr] * 2)
+      select_op.attributes["out_layouts"] = ir.ArrayAttr.get([layout_attr])
+
+    mgpu.lower_mgpu_dialect(self.module, launch_ctx)
+    self.assertTrue(self.module.operation.verify())
+    select_ops = self.find_ops(arith.SelectOp)
+    self.assertNotEmpty(select_ops)
+    for op in select_ops:
+      self.assertEqual(op.condition.type, i1)
+      if splat_layout:
+        self.assertEqual(op.result.type, elt_ty)
+      else:
+        self.assertIsInstance(op.result.type, ir.VectorType)
 
   @parameterized.parameters(
       (arith.ExtFOp, jnp.bfloat16, jnp.float32),
@@ -3272,6 +3316,19 @@ class DialectLoweringTest(MosaicGpuTest):
         )
       files = os.listdir(dump_dir)
       self.assertTrue(any(f.endswith(".constraint_system.txt") for f in files))
+
+  def test_wgmma_nonsquare_large_tile_mn_fastest_raises(self):
+    with self.kernel():
+      f16 = ir.F16Type.get()
+      smem = mgpu_utils.smem()
+      a, b = undefs(
+          ir.MemRefType.get((1, 1, 32, 64), f16, memory_space=smem),
+          ir.MemRefType.get((1, 1, 32, 32), f16, memory_space=smem),
+      )
+      a = mgpu_utils.memref_transpose(a, (0, 1, 3, 2))
+      acc = mgpu.WGMMAAccumulator.zero(64, 32, ir.F32Type.get())
+      with self.assertRaisesRegex(ValueError, "when the tiling is square"):
+        mgpu.wgmma(acc, a, b, swizzle=64)
 
 
 if hp is not None:

@@ -46,7 +46,7 @@ limitations under the License.
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
-#include "jaxlib/mosaic/pass_boilerplate.h"
+#include "xla/mosaic/pass_boilerplate.h"
 
 namespace mosaic {
 namespace gpu {

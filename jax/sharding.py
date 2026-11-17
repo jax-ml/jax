@@ -18,10 +18,11 @@
 from jax._src.sharding import Sharding as Sharding
 from jax._src.sharding_impls import (
     NamedSharding as NamedSharding,
-    SingleDeviceSharding as SingleDeviceSharding,
+    SingleDeviceSharding as _deprecated_SingleDeviceSharding,
     set_mesh as set_mesh,
     get_mesh as get_mesh,
     make_single_device_sharding as make_single_device_sharding,
+    is_single_device_sharding as is_single_device_sharding,
 )
 from jax._src.partition_spec import (
     PartitionSpec as PartitionSpec,
@@ -42,3 +43,25 @@ from jax._src.pjit import (
     auto_axes as auto_axes,
     explicit_axes as explicit_axes,
 )
+
+_deprecations = {
+    # Added for v0.12.1
+    "SingleDeviceSharding": (
+        (
+            "jax.sharding.SingleDeviceSharding is deprecated; use"
+            " jax.sharding.make_single_device_sharding or"
+            " jax.sharding.is_single_device_sharding instead."
+        ),
+        _deprecated_SingleDeviceSharding,
+    ),
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  SingleDeviceSharding = _deprecated_SingleDeviceSharding
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing
+del _deprecated_SingleDeviceSharding

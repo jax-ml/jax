@@ -404,7 +404,7 @@ class XlaMetadataTest(jtu.JaxTestCase):
       ("x*x", lambda x: x * x, "add"),
       ("sin(x)", jnp.sin, "cosine"),
       ("tanh(x)", jnp.tanh, "multiply"),
-      ("1/x", lambda x: 1 / x, "negate"),
+      ("1/x", lambda x: 1 / x, "divide"),
       ("sinc(x)", jnp.sinc, "call"),
   )
   def test_value_grad_tagging(self, name, fn, expected_tagged_op):
@@ -479,6 +479,24 @@ class XlaMetadataTest(jtu.JaxTestCase):
     inputs = (jnp.array(0.0), jnp.arange(1, 4, dtype=jnp.float32))
     text = jax.jit(scan_fn).lower(*inputs).as_text("hlo")
     self._assert_metadata_appears_once_per_op(text, ["multiply"], metadata)
+
+  def test_shard_map_mixed_mesh_value_tagging(self):
+    mesh = jtu.create_mesh((1, 1), ("stage", "fsdp"))
+    metadata = {"test_loop_metadata": "yes"}
+
+    @jax.jit
+    @jax.shard_map(
+        mesh=mesh,
+        in_specs=jax.P("stage", None),
+        out_specs=jax.P("stage", None),
+        axis_names=frozenset({"stage"}),
+    )
+    def f(x):
+      out = jax.lax.fori_loop(0, 2, lambda _, v: v + 1.0, x)
+      return set_xla_metadata(out, **metadata)
+
+    hlo_text = f.lower(np.ones((2, 2), dtype=np.float32)).as_text("hlo")
+    self._assert_metadata_appears_once_per_op(hlo_text, ["while"], metadata)
 
   def test_xla_metadata_call_nonstring_values(self):
     f = xla_metadata_call(lambda x: x + 1, flag=True, level=3, ratio=0.5)

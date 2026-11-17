@@ -792,6 +792,47 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Fusion contains a DAG"):
       block_spec_lib.pull_block_spec(f2, block_spec, grid_len=3)(new_values)
 
+  def test_input_needed_both_blocked_and_unblocked_raises(self):
+    i = jnp.array(1, dtype=jnp.int32)
+
+    def f(x):
+      # The subtraction reads a block of `x`, but `x[i, 5]` reads all of it.
+      return x - x[i, 5]
+
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    with self.assertRaisesRegex(ValueError, "Fusion contains a DAG"):
+      block_spec_lib.pull_block_spec(f2, block_spec, grid_len=2)(
+          new_values, in_type
+      )
+
+  def test_unblocked_operand_is_evaluated_unblocked(self):
+    i = jnp.array(1, dtype=jnp.int32)
+
+    def f(x, y):
+      return x - y[i, 5]
+
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        f, in_type, in_type
+    )
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    kernel_fn, (_, x_block_spec, y_block_spec), _ = (
+        block_spec_lib.pull_block_spec(f2, block_spec, grid_len=2)(
+            new_values, in_type, in_type
+        )
+    )
+    self.assertEqual(x_block_spec.index_map(0, 1), (0, 1))
+    self.assertIs(y_block_spec, pl.no_block_spec)
+
+    x, y = jax.random.normal(jax.random.key(0), (2, 512, 512), jnp.float32)
+    x_block = x[:128, 128:256]
+    np.testing.assert_array_equal(
+        kernel_fn((0, 1), scalar_prefetch_values, new_values, x_block, y),
+        x_block - y[1, 5],
+    )
+
   def test_dynamic_slice_derived_scalar_prefetch(self):
     x = jax.random.normal(jax.random.key(0), (3, 4, 512, 512), dtype=np.float32)
     i = jnp.array(1, dtype=jnp.int32)
@@ -2441,6 +2482,39 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       )
       del kernel_fn, value_block_specs, in_block_specs
 
+  @parameterized.named_parameters(
+      ('row_norm', lambda a: a / a.sum(-1, keepdims=True)),
+      ('row_center', lambda a: a - a.mean(-1, keepdims=True)),
+      (
+          'row_softmax',
+          lambda a: jnp.exp(a) / jnp.exp(a).sum(-1, keepdims=True),
+      ),
+  )
+  def test_dag_through_full_row_reduction_is_accepted(self, fn):
+    a = jax.random.normal(jax.random.key(0), (32, 128), dtype=jnp.float32)
+    block_spec = pl.BlockSpec((8, 128), lambda i: (i, 0))
+    kernel_fn, (a_spec,), _ = block_spec_lib.pull_block_spec(fn, block_spec)(a)
+    self.assertEqual(a_spec.index_map(2), (2, 0))
+    np.testing.assert_allclose(
+        kernel_fn((2,), (), a[16:24]), fn(a)[16:24], rtol=1e-5, atol=1e-5
+    )
+
+  def test_dag_through_full_row_reduction_with_scalar_prefetch_index_map(self):
+    a_type = jax.ShapeDtypeStruct((32, 128), jnp.float32)
+    block_spec = pl.BlockSpec((8, 128), lambda i, sp_ref: (sp_ref[i], 0))
+    _, (a_spec,), _ = block_spec_lib.pull_block_spec(
+        lambda a: a / a.sum(-1, keepdims=True), block_spec
+    )(a_type)
+    self.assertEqual(a_spec.index_map(1, np.array([3, 2])), (2, 0))
+
+  def test_dag_with_conflicting_column_blocks_is_rejected(self):
+    a_type = jax.ShapeDtypeStruct((8, 256), jnp.float32)
+    row_spec = pl.BlockSpec((8, 128), lambda i: (i, 0))
+    with self.assertRaisesRegex(ValueError, 'Fusion contains a DAG'):
+      block_spec_lib.pull_block_spec(
+          lambda a: a[:, :128] + a[:, 128:], row_spec
+      )(a_type)
+
   def test_dot_general_pull(self):
     lhs_type = jax.ShapeDtypeStruct((512, 256), jnp.float32)
     rhs_type = jax.ShapeDtypeStruct((256, 128), jnp.float32)
@@ -2756,6 +2830,106 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(
         kernel_fn((0, 0, 0, 0), scalar_prefetch_values, (), x), relu_x_x
     )
+
+  @parameterized.parameters(
+      'jit', 'custom_jvp', 'custom_jvp3', 'custom_vjp', 'custom_vjp3'
+  )
+  def test_higher_order_with_consts_raises(self, wrapper):
+    c = jnp.ones((512, 512), dtype=jnp.float32)
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+
+    with (
+        config.custom_jvp3(wrapper == 'custom_jvp3'),
+        config.custom_vjp3(wrapper == 'custom_vjp3'),
+    ):
+      if wrapper == 'jit':
+        fn = jax.jit(lambda x: x + c)
+      elif wrapper in ('custom_jvp', 'custom_jvp3'):
+        fn = jax.custom_jvp(lambda x: x + c)
+        fn.defjvp(lambda p, t: (fn(*p), *t))
+      elif wrapper in ('custom_vjp', 'custom_vjp3'):
+        fn = jax.custom_vjp(lambda x: x + c)
+        fn.defvjp(lambda x: (fn(x), ()), lambda _, g: (g,))
+
+      with self.assertRaisesRegex(
+          NotImplementedError, 'with consts not supported yet'
+      ):
+        block_spec_lib.pull_block_spec(fn, block_spec, grid_len=2)(in_type)
+      with self.assertRaisesRegex(
+          NotImplementedError, 'with consts not supported yet'
+      ):
+        block_spec_lib.push_block_spec(fn, block_spec)(in_type)
+
+  @parameterized.parameters(
+      'jit', 'custom_jvp', 'custom_jvp3', 'custom_vjp', 'custom_vjp3'
+  )
+  def test_higher_order_pull_and_eval_usage(self, wrapper):
+    def dus_pair(operand, update):
+      dus = jax.lax.dynamic_update_slice(operand + 1.0, update, (0, 0))
+      return dus, update * 2.0
+
+    with (
+        config.custom_jvp3(wrapper == 'custom_jvp3'),
+        config.custom_vjp3(wrapper == 'custom_vjp3'),
+    ):
+      if wrapper == 'jit':
+        dus_pair = jax.jit(dus_pair)
+      elif wrapper in ('custom_jvp', 'custom_jvp3'):
+        dus_pair = jax.custom_jvp(dus_pair)
+        dus_pair.defjvp(lambda p, t: (dus_pair(*p), t))
+      elif wrapper in ('custom_vjp', 'custom_vjp3'):
+        dus_pair = jax.custom_vjp(dus_pair)
+        dus_pair.defvjp(lambda *args: (dus_pair(*args), ()), lambda _, g: g)
+
+      def f(operand, update):
+        a, b = dus_pair(operand * 3.0, update)
+        return a + b
+
+      in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+      block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+      kernel_fn, (op_bs, up_bs), _ = block_spec_lib.pull_block_spec(
+          f, block_spec, grid_len=2
+      )(in_type, in_type)
+      self.assertIs(op_bs, pl.no_block_spec)
+      self.assertEqual(up_bs.block_shape, (128, 128))
+      update_blk = np.full((128, 128), 3.0, dtype=np.float32)
+      np.testing.assert_array_equal(
+          kernel_fn((0, 0), (), None, update_blk), update_blk + update_blk * 2.0
+      )
+
+  @parameterized.parameters(
+      'jit', 'custom_jvp', 'custom_jvp3', 'custom_vjp', 'custom_vjp3'
+  )
+  def test_higher_order_push_usage(self, wrapper):
+    def dus(operand, update, i, j):
+      return jax.lax.dynamic_update_slice(operand, update, (i, j))
+
+    with (
+        config.custom_jvp3(wrapper == 'custom_jvp3'),
+        config.custom_vjp3(wrapper == 'custom_vjp3'),
+    ):
+      if wrapper == 'jit':
+        dus = jax.jit(dus)
+      elif wrapper in ('custom_jvp', 'custom_jvp3'):
+        dus = jax.custom_jvp(dus)
+        dus.defjvp(lambda p, t: (dus(*p), t[0]))
+      elif wrapper in ('custom_vjp', 'custom_vjp3'):
+        dus = jax.custom_vjp(dus)
+        dus.defvjp(
+            lambda *args: (dus(*args), ()), lambda _, g: (g, None, None, None)
+        )
+
+      update = jnp.ones((128, 128), dtype=jnp.float32)
+      i, j = jnp.int32(128), jnp.int32(0)
+
+      def f(operand):
+        return dus(operand, update, i, j)
+
+      in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+      block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+      out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(in_type)
+      self.assertIs(out_block_spec, block_spec)
 
   def test_pull_block_spec_handles_closed_over_constants(self):
     x = jnp.ones((2, 512, 512))
@@ -3144,6 +3318,95 @@ class PushBlockSpecTest(parameterized.TestCase):
       block_spec_lib.push_block_spec(
           lambda x, y: (x + 1, y + 1), block_spec, pl.no_block_spec
       )(x_type, y_type)
+
+  @parameterized.parameters(
+      (lambda x, y: x + y, ValueError, 'Illegal binary push'),
+      (jax.jit(lambda x, y: x + y), ValueError, 'Illegal binary push'),
+      (
+          lambda x, y: jnp.where(x > 0, x, y),
+          NotImplementedError,
+          'select_n with multiple differing inputs',
+      ),
+      (
+          lambda x, y: jax.lax.clamp(x, x, y),
+          NotImplementedError,
+          'clamp with multiple differing inputs',
+      ),
+  )
+  def test_push_strict_mode(self, fn, err_type, err_regex):
+    x_type = jax.ShapeDtypeStruct((256, 256), jnp.float32)
+    bs1 = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+    bs2 = pl.BlockSpec((128, 128), lambda i, j: (j, i))
+
+    with self.assertRaisesRegex(err_type, err_regex):
+      block_spec_lib.push_block_spec(fn, bs1, bs2, strict_mode=True)(
+          x_type, x_type
+      )
+
+    out_spec = block_spec_lib.push_block_spec(fn, bs1, bs2, strict_mode=False)(
+        x_type, x_type
+    )
+    self.assertEqual(out_spec.block_shape, (128, 128))
+    self.assertEqual(out_spec.index_map(0, 1), (0, 1))
+
+  @parameterized.named_parameters(
+      ('read_arg', lambda v, x, y: jnp.sum(x + y, axis=0) + v),
+      ('unused_arg', lambda v, x, y: jnp.sum(x, axis=0) + v),
+      ('shape_only_arg', lambda v, x, y: jnp.sum(x + jnp.zeros_like(y), 0) + v),
+  )
+  def test_push_pull_accepts_matching_block_specs(self, f):
+    v, x = jnp.ones((4,)), jnp.arange(4.0).reshape(1, 4)
+    x_bs = pl.BlockSpec((1, 4), lambda i: (0, i))
+    kernel_fn, *_ = block_spec_lib.push_pull_block_spec(
+        f, x_bs, x_bs, grid_len=1
+    )(v, x, x)
+    np.testing.assert_array_equal(kernel_fn((0,), (), v, x, x), f(v, x, x))
+
+  @parameterized.named_parameters(
+      # Push keeps the squeezed dim of `x`, but pull rebuilds it as Blocked(1).
+      dict(
+          testcase_name='reduce_sum',
+          f=lambda v, x: jnp.sum(x, 0) + v,
+          v_shape=(4,),
+          x_shape=(1, 4),
+          block_shape=(None, 4),
+      ),
+      dict(
+          testcase_name='broadcast',
+          f=lambda v, x: jnp.broadcast_to(x, (2, 4)),
+          v_shape=(),
+          x_shape=(1, 4),
+          block_shape=(None, 4),
+      ),
+      # Push forwards the block spec of `x`, but pull gives it no_block_spec.
+      dict(
+          testcase_name='dus',
+          f=lambda v, x: lax.dynamic_update_slice(x, v, (0, 0)),
+          v_shape=(2, 2),
+          x_shape=(4, 4),
+          block_shape=(2, 2),
+      ),
+  )
+  def test_push_pull_rejects_mismatched_block_specs(
+      self, f, v_shape, x_shape, block_shape
+  ):
+    x_bs = pl.BlockSpec(block_shape, lambda i, j: (i, j))
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Inconsistent block specs in push_pull_block_spec:.*uses kernel'
+        r' output at path \[0\] with',
+    ):
+      block_spec_lib.push_pull_block_spec(f, x_bs, grid_len=2)(
+          jnp.zeros(v_shape), jnp.zeros(x_shape)
+      )
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Inconsistent block specs in push_pull_block_spec:.*uses kernel'
+        r" output at path \['x'\] with",
+    ):
+      block_spec_lib.push_pull_block_spec(
+          lambda v, *, x: f(v, x), x=x_bs, grid_len=2
+      )(jnp.zeros(v_shape), x=jnp.zeros(x_shape))
 
 
 if __name__ == '__main__':

@@ -245,7 +245,11 @@ def _barrier(token, device_id):
   del device_id
   shared_memory = _get_shared_memory()
   if shared_memory.num_devices > 1:
-    shared_memory.barrier.wait()
+    try:
+      shared_memory.barrier.wait()
+    except threading.BrokenBarrierError:
+      shared_memory.check_failed()
+      raise
   return token
 
 
@@ -1650,20 +1654,8 @@ def _interpret_jaxpr(
         all_args = eqn.params['in_tree'].unflatten(invals)
         ps, body_consts, refs = all_args
         ps_flat, _ = tree_util.tree_flatten(ps)
-        if eqn.params.get('_explicit_indices', False):
-          body_invals = (*body_consts, *ps_flat, *refs)
-        else:
-          body_invals = (*body_consts, *refs)
-        cur_env = pallas_core.current_grid_env() or ()
-        body_grid_env = tuple(
-            pallas_core.GridAxis(
-                idx,
-                cur_env[i].size if i < len(cur_env) else 0,
-            )
-            for i, idx in enumerate(ps.index)
-        ) + tuple(cur_env[len(ps.index) :])
-        with pallas_core.grid_env(body_grid_env):
-          token, _ = _interpret(eqn.params['jaxpr'], *body_invals, token=token)
+        body_invals = (*body_consts, *ps_flat, *refs)
+        token, _ = _interpret(eqn.params['jaxpr'], *body_invals, token=token)
         out = []
 
       elif prim is mosaic_primitives.dma_start_p:
@@ -2179,7 +2171,7 @@ def interpret_pallas_call(
     aval = var.aval
     if is_input or is_output:
       memory_space = _forward_any_to_hbm(
-          grid_mapping.block_mappings[i].transformed_block_aval.memory_space)
+          grid_mapping.block_mappings[i].block_aval.memory_space)
     else:
       memory_space = _forward_any_to_hbm(aval.memory_space)  # pyrefly: ignore[missing-attribute]
     if memory_space is _SEMAPHORE:
@@ -2200,7 +2192,10 @@ def interpret_pallas_call(
       # is trivial.
       assert is_input ^ is_output
       if is_input:
-        kernel_buffer_ids.append(input_buffer_ids[i])
+        if not isinstance(var.aval, state.AbstractRef):
+          kernel_buffer_ids.append(input_args[i])
+        else:
+          kernel_buffer_ids.append(input_buffer_ids[i])
       if is_output:
         kernel_buffer_ids.append(output_buffer_ids[output_idx])
     else:
@@ -2229,7 +2224,7 @@ def interpret_pallas_call(
   input_vars, output_vars = split_list(
       jaxpr.invars[grid_mapping.slice_block_ops], [num_inputs])
   input_var_memory_spaces, output_var_memory_spaces = split_list(
-      [_forward_any_to_hbm(bm.transformed_block_aval.memory_space)
+      [_forward_any_to_hbm(bm.block_aval.memory_space)
        for bm in grid_mapping.block_mappings],
       [num_inputs])
   if grid:
@@ -2431,6 +2426,8 @@ def interpret_pallas_call(
           return token
 
         for j, var in enumerate(input_vars):
+          if not isinstance(var.aval, state.AbstractRef):
+            continue
           if input_var_memory_spaces[j] is _HBM:
             if var.aval.shape != block_shapes[j]:
               raise ValueError(

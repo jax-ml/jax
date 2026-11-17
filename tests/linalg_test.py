@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
+import concurrent.futures
 from functools import partial
 import itertools
-from collections.abc import Iterator
 import numpy as np
 import scipy
 import scipy.linalg
@@ -1616,10 +1617,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     trans=[0, 1, 2],
     dtype=float_types + complex_types,
   )
-  @jtu.skip_on_devices("cpu")  # TODO(frostig): Test fails on CPU sometimes
   def testLuSolve(self, lhs_shape, rhs_shape, dtype, trans):
     rng = jtu.rand_default(self.rng())
-    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv), rhs, trans=trans)
+    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv.copy()), rhs, trans=trans)
     jsp_fun = lambda lu, piv, rhs: jsp.linalg.lu_solve((lu, piv), rhs, trans=trans)
 
     def args_maker():
@@ -1644,13 +1644,12 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     trans=[0, 1, 2],
     dtype=float_types + complex_types,
   )
-  @jtu.skip_on_devices("cpu")  # TODO(frostig): Test fails on CPU sometimes
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLuSolveBroadcast(self, lhs_shape, rhs_shape, dtype, trans):
     if scipy_version < (1, 16, 0):
       self.skipTest("scipy.linalg.lu_solve batch broadcasting requires scipy >= 1.16")
     rng = jtu.rand_default(self.rng())
-    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv), rhs, trans=trans)
+    osp_fun = lambda lu, piv, rhs: osp.linalg.lu_solve((lu, piv.copy()), rhs, trans=trans)
     jsp_fun = lambda lu, piv, rhs: jsp.linalg.lu_solve((lu, piv), rhs, trans=trans)
     lu_factor_vec = np.vectorize(osp.linalg.lu_factor,
                                   signature="(n,n)->(n,n),(n)")
@@ -1884,7 +1883,13 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         self.skipTest("Pivoting is only supported on CPU and GPU.")
     rng = jtu.rand_default(self.rng())
     jsp_func = partial(jax.scipy.linalg.qr, mode=mode, pivoting=pivoting)
-    sp_func = partial(scipy.linalg.qr, mode=mode, pivoting=pivoting)
+    def sp_func(a):
+      out = scipy.linalg.qr(a, mode=mode, pivoting=pivoting)
+      if pivoting:
+        # ILP64 SciPy returns int64 pivots, whereas JAX always returns int32.
+        *qr, p = out
+        return (*qr, p.astype(np.int32))
+      return out
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(sp_func, jsp_func, args_maker, rtol=1E-5, atol=1E-5)
     self._CompileAndCheck(jsp_func, args_maker)
@@ -2459,6 +2464,15 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       [1, 4, 5, 6],
       [2, 1, 4, 5],
       [3, 2, 1, 4]], dtype=np.float32))
+
+  def testToeplitzNaN(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38636
+    c = np.array([np.nan, np.inf, -0.0], dtype=np.float32)
+    r = np.array([np.nan, 2.0, 3.0], dtype=np.float32)
+    expected = scipy.linalg.toeplitz(c, r)
+    actual = jsp.linalg.toeplitz(c, r)
+    self.assertAllClose(actual, expected)
+
   def testHankelConstructionWithKnownCases(self):
     # r=None should default to zeros_like(c)
     c = np.array([1, 2, 3], dtype=np.float32)
@@ -2472,6 +2486,14 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     out1 = jsp.linalg.hankel(c, r1)
     out2 = jsp.linalg.hankel(c, r2)
     self.assertAllClose(out1, out2)
+
+  def testHankelNaN(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38635
+    c = np.array([np.nan, 2.0, 3.0], dtype=np.float32)
+    r = np.array([3.0, np.nan, 5.0], dtype=np.float32)
+    expected = scipy.linalg.hankel(c, r)
+    actual = jsp.linalg.hankel(c, r)
+    self.assertAllClose(actual, expected)
 
   @jtu.sample_product(
      cshape = [(3,), (0,), (2, 3), (1, 2, 3)],
@@ -3069,6 +3091,31 @@ class LaxLinalgTest(jtu.JaxTestCase):
     x = jnp.zeros((1, 4))
     with self.assertRaisesRegex(ValueError, f"The input to linalg.{func.__name__} must have shape"):
       _ = func(x)
+
+  @jtu.run_on_devices("cpu")
+  def test_concurrent_batched_lapack_does_not_deadlock(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41265:
+    # multiple independent batched LAPACK calls becoming ready simultaneously
+    # inside a loop on the CPU intra-op thread pool must not deadlock.
+    def body(_, xs):
+      p = sum(xs)
+      return tuple(jnp.linalg.cholesky(x + p) for x in xs[:-1]) + (
+          jnp.linalg.cholesky(p),
+      )
+
+    k = 8
+    xs = tuple(
+        jnp.broadcast_to(
+            jnp.eye(32, dtype=jnp.float32) * (i + 2.0), (256, 32, 32)
+        )
+        for i in range(k)
+    )
+    run = jax.jit(lambda xs: jax.lax.fori_loop(0, 50, body, xs))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+      futures = [executor.submit(run, xs) for _ in range(16)]
+      for f in futures:
+        for out in jax.block_until_ready(f.result()):
+          self.assertTrue(jnp.all(jnp.isfinite(out)))
 
 
 if __name__ == "__main__":

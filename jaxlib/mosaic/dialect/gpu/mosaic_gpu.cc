@@ -50,6 +50,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
@@ -60,7 +61,6 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/OperationSupport.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Types.h"
@@ -1023,8 +1023,30 @@ llvm::LogicalResult ReturnOp::verify() {
 }
 
 namespace {
-int kTmemMaxColumns = 512;
-int kTmemCellBitwidth = 32;
+constexpr int kTmemMaxColumns = 512;
+// On sm_107f, TMEM has 576 columns, but the columns past `kTmemMaxColumns` can
+// only be used through an exclusive allocation.
+constexpr int kTmemExclusiveMaxColumns = 576;
+constexpr int kTmemCellBitwidth = 32;
+
+// Returns the maximum number of TMEM columns that `op` can allocate, based on
+// the architecture of its enclosing module. Exclusive allocations are supported
+// on sm_107f, i.e. for major version 10 and minor version at least 7.
+int TmemMaxColumns(mlir::Operation* op) {
+  auto module = op->getParentOfType<mlir::ModuleOp>();
+  if (!module) {
+    return kTmemMaxColumns;
+  }
+  auto arch_major =
+      module->getAttrOfType<mlir::IntegerAttr>("mosaic_gpu.arch_major");
+  auto arch_minor =
+      module->getAttrOfType<mlir::IntegerAttr>("mosaic_gpu.arch_minor");
+  if (arch_major && arch_minor && arch_major.getInt() == 10 &&
+      arch_minor.getInt() >= 7) {
+    return kTmemExclusiveMaxColumns;
+  }
+  return kTmemMaxColumns;
+}
 
 llvm::LogicalResult VerifyTmemRefType(mlir::Operation* op,
                                       mlir::MemRefType tmem_ref_type) {
@@ -1210,10 +1232,11 @@ llvm::LogicalResult TmemAllocOp::verify() {
   }
 
   int num_allocated_columns = num_unpacked_columns / packing;
-  if (num_allocated_columns > kTmemMaxColumns) {
+  int max_columns = TmemMaxColumns(getOperation());
+  if (num_allocated_columns > max_columns) {
     return emitOpError()
            << "The number of allocated columns must be less than or equal to "
-           << kTmemMaxColumns << " but got: " << num_allocated_columns;
+           << max_columns << " but got: " << num_allocated_columns;
   }
 
   return llvm::success();
@@ -1374,6 +1397,16 @@ llvm::LogicalResult MultimemLoadReduceOp::verify() {
   return mlir::success();
 }
 
+llvm::LogicalResult CumulativeReductionOp::verify() {
+  mlir::VectorType src_type = getSource().getType();
+  int64_t dimension = getDimension();
+  if (dimension < 0 || dimension >= src_type.getRank()) {
+    return emitOpError() << "The reduction dimension must be in [0, "
+                         << src_type.getRank() << ") but got " << dimension;
+  }
+  return llvm::success();
+}
+
 llvm::LogicalResult VectorStoreOp::verify() {
   mlir::VectorType src_type = getValueToStore().getType();
   mlir::MemRefType dst_type = getDestination().getType();
@@ -1490,72 +1523,6 @@ llvm::LogicalResult RunScopedOp::verify() {
   return llvm::success();
 }
 
-llvm::LogicalResult ReinterpretCastOp::verify() {
-  auto source_type = getSource().getType();
-  auto result_type = getResult().getType();
-
-  if (source_type.getElementType() != result_type.getElementType()) {
-    return emitOpError(
-        "source and result memrefs must have the same element type");
-  }
-
-  int64_t source_num_elements = source_type.getNumElements();
-  int64_t result_num_elements = result_type.getNumElements();
-
-  if (source_num_elements != result_num_elements) {
-    return emitOpError(llvm::formatv(
-        "source and result memrefs must have the same number of elements, "
-        "but got {0} and {1}",
-        source_num_elements, result_num_elements));
-  }
-
-  return llvm::success();
-}
-
-mlir::OpFoldResult ReinterpretCastOp::fold(FoldAdaptor) {
-  // Eliminate no-op casts: if source and result types are identical, return the
-  // source directly.
-  if (getSource().getType() == getResult().getType()) {
-    return getSource();
-  }
-
-  // Fold chains: reinterpret_cast(reinterpret_cast(x)) -> reinterpret_cast(x).
-  if (auto parent_cast = getSource().getDefiningOp<ReinterpretCastOp>()) {
-    getSourceMutable().assign(parent_cast.getSource());
-    return getResult();
-  }
-
-  return {};
-}
-
-namespace {
-
-// Rewrites `mgpu.reinterpret_cast(ty, mgpu.slice_smem(...))` to
-// `mgpu.slice_smem(ty, ...)`.
-struct FoldMGPUReinterpretCastOfSliceSMEM
-    : public mlir::OpRewritePattern<ReinterpretCastOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult matchAndRewrite(
-      ReinterpretCastOp op, mlir::PatternRewriter& rewriter) const override {
-    auto slice_op = op.getSource().getDefiningOp<SliceSMEMOp>();
-    if (!slice_op) {
-      return mlir::failure();
-    }
-
-    MemRefType result_type = op.getResult().getType();
-    rewriter.replaceOpWithNewOp<SliceSMEMOp>(
-        op, result_type, slice_op.getOffsetAttr(), slice_op.getAliasIdAttr());
-    return mlir::success();
-  }
-};
-}  // namespace
-
-void ReinterpretCastOp::getCanonicalizationPatterns(
-    mlir::RewritePatternSet& patterns, mlir::MLIRContext* context) {
-  patterns.add<FoldMGPUReinterpretCastOfSliceSMEM>(context);
-}
-
 mlir::OpFoldResult BroadcastInDimOp::fold(FoldAdaptor) {
   // Fold chains: broadcast_in_dim(broadcast_in_dim(x)) -> broadcast_in_dim(x).
   auto parent_bcast = getOperand().getDefiningOp<BroadcastInDimOp>();
@@ -1576,56 +1543,6 @@ mlir::OpFoldResult BroadcastInDimOp::fold(FoldAdaptor) {
   return getResult();
 }
 
-namespace {
-
-struct HoistReinterpretCastOutOfWarpMap
-    : public mlir::OpRewritePattern<WarpMapOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult matchAndRewrite(
-      WarpMapOp op, mlir::PatternRewriter& rewriter) const override {
-    bool modified = false;
-    mlir::Block& body = op.getRegion().front();
-    for (auto [i, operand, body_operand] :
-        llvm::enumerate(op->getOperands(), body.getArguments())) {
-      Type user_type = nullptr;
-      // It is only safe to rewrite the type of the argument if all of its uses
-      // are reinterpret_cast operations producing the same return type.
-      if (body_operand.hasNUsesOrMore(1) &&
-          absl::c_all_of(
-              body_operand.getUsers(), [&user_type](mlir::Operation* user) {
-                if (auto rc_op = llvm::dyn_cast<ReinterpretCastOp>(user)) {
-                  if (!user_type) {
-                    user_type = rc_op.getType();
-                  }
-                  return rc_op.getType() == user_type;
-                }
-                return false;
-              })) {
-        auto new_cast = ReinterpretCastOp::create(rewriter, op.getLoc(),
-                                                  user_type, operand);
-        rewriter.modifyOpInPlace(op, [&]() {
-          op->setOperand(i, new_cast);
-          body_operand.setType(user_type);
-        });
-        // Copy the users of the body operand to a vector to avoid invalidating
-        // the iterator while erasing them.
-        for (auto user : llvm::to_vector(body_operand.getUsers())) {
-          rewriter.replaceOp(user, body_operand);
-        }
-        modified = true;
-      }
-    }
-    return modified ? mlir::success() : mlir::failure();
-  }
-};
-}  // namespace
-
-void WarpMapOp::getCanonicalizationPatterns(mlir::RewritePatternSet& patterns,
-                                            mlir::MLIRContext* context) {
-  patterns.add<HoistReinterpretCastOutOfWarpMap>(context);
-}
-
 llvm::LogicalResult GetClusterRefOp::inferReturnTypes(
     mlir::MLIRContext* context, std::optional<mlir::Location> location,
     mlir::ValueRange operands, mlir::DictionaryAttr attributes,
@@ -1643,9 +1560,6 @@ llvm::LogicalResult GetClusterRefOp::inferReturnTypes(
 }
 
 llvm::LogicalResult AllocSmemOp::verify() {
-  if (!(*this)->getParentOfType<AllocaScopeOp>()) {
-    return emitOpError("requires an ancestor `mosaic_gpu.alloca_scope` op");
-  }
   mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
       getContext(), mlir::gpu::AddressSpace::Workgroup);
   if (getResult().getType().getMemorySpace() != smem) {

@@ -22,21 +22,19 @@ from typing import Any
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
-import numpy as np
-
 import jax
 from jax import lax
 from jax import numpy as jnp
 from jax import ops
-
 from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.lax import lax as lax_internal
-from jax._src.numpy import indexing
 from jax._src.indexing import Slice
+from jax._src.lax import lax as lax_internal
+from jax._src.lib import jaxlib_extension_version
+from jax._src.numpy import indexing
+import numpy as np
 
 config.parse_flags_with_absl()
 
@@ -1873,7 +1871,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     self.assertAllClose(val, np.array(0., np.float32))
     self.assertAllClose(grad, np.array([0., 0.], np.float32))
 
-
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(reducer=reducer, op=op, identity=identity)],
@@ -1912,7 +1909,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     if num_segments is not None:
       self._CompileAndCheck(jnp_fun, args_maker)
-
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
@@ -2016,6 +2012,131 @@ class IndexedUpdateTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(jax.jacrev(f)(x, i), expected)
     self.assertArraysEqual(jax.jacrev(jax.vmap(f, (None, 0)))(x, i), expected)
+
+  def testFullSliceSetFollowedByReverse(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41497
+    if jaxlib_extension_version < 510:
+      self.skipTest("Requires jaxlib_extension_version >= 510")
+    x = jnp.arange(4)
+    f1 = jax.jit(lambda x: jnp.zeros_like(x).at[:].set(x)[::-1])
+    self.assertArraysEqual(f1(x), x[::-1])
+
+    f2 = jax.jit(lambda x: x.at[:].set(0)[::-1])
+    self.assertArraysEqual(f2(x), jnp.zeros_like(x))
+
+  @jtu.sample_product(
+      [
+          dict(dtype=np.int8, size=128),
+          dict(dtype=np.int8, size=200),
+          dict(dtype=np.int8, size=300),
+          dict(dtype=np.int16, size=40000),
+      ],
+      idx=[-1, -10, -128],
+  )
+  def testNarrowNegativeIndexLargeAxis(self, dtype, size, idx):
+    # Regression test for https://github.com/jax-ml/jax/issues/42354
+    x = jnp.arange(size, dtype=jnp.int32)
+    np_x = np.arange(size, dtype=np.int32)
+    jnp_idx = jnp.array(idx, dtype=dtype)
+    np_idx = dtype(idx)
+    expected = np_x[np_idx]
+
+    self.assertArraysEqual(x[jnp_idx], expected)
+    self.assertArraysEqual(jax.jit(lambda a, i: a[i])(x, jnp_idx), expected)
+    self.assertArraysEqual(x[np_idx], expected)
+
+    for strategy in ["auto", "dynamic_slice", "gather"]:
+      self.assertArraysEqual(
+          x.at[jnp_idx].get(strategy=strategy), expected
+      )
+      self.assertArraysEqual(
+          x.at[np_idx].get(strategy=strategy), expected
+      )
+    self.assertArraysEqual(
+        x.at[np_idx].get(strategy="static_slice"), expected
+    )
+
+    # 1D array index (gather path)
+    arr_idx = jnp.array([idx, 0, -1], dtype=dtype)
+    np_arr_idx = np.array([idx, 0, -1], dtype=dtype)
+    self.assertArraysEqual(x[arr_idx], np_x[np_arr_idx])
+    self.assertArraysEqual(
+        jax.jit(lambda a, i: a[i])(x, arr_idx), np_x[np_arr_idx]
+    )
+
+    # Dynamic slice via jax.ds
+    ds_expected = np_x[size + idx : size + idx + 1]
+    for strategy in ["auto", "dynamic_slice", "gather"]:
+      self.assertArraysEqual(
+          x.at[jax.ds(jnp_idx, 1)].get(strategy=strategy), ds_expected
+      )
+      self.assertArraysEqual(
+          jax.jit(lambda a, i: a.at[jax.ds(i, 1)].get(strategy=strategy))(
+              x, jnp_idx
+          ),
+          ds_expected,
+      )
+
+    # Scatter updates (.at[...].set / .add)
+    expected_set = np_x.copy()
+    expected_set[np_idx] = -999
+    self.assertArraysEqual(x.at[jnp_idx].set(-999), expected_set)
+    self.assertArraysEqual(x.at[np_idx].set(-999), expected_set)
+    self.assertArraysEqual(
+        jax.jit(lambda a, i: a.at[i].set(-999))(x, jnp_idx), expected_set
+    )
+
+    # jnp.take and jnp.put
+    for mode in [None, "wrap"]:
+      self.assertArraysEqual(
+          jnp.take(x, jnp_idx, mode=mode), np.take(np_x, np_idx, mode=mode)
+      )
+      expected_put = np_x.copy()
+      np.put(expected_put, np_idx, -999, mode=mode or "raise")
+      self.assertArraysEqual(
+          jnp.put(x, jnp_idx, -999, mode=mode, inplace=False), expected_put
+      )
+
+  def testNarrowNegativeIndexOutOfBoundsFill(self):
+    # Ensure out-of-bounds negative narrow indices stay negative after
+    # normalization when axis_size > iinfo(dtype).max.
+    x = jnp.arange(40000, dtype=jnp.int32)
+    # No negative int16 is OOB for size 40000, so test int8 on size 100 and
+    # int16 on size 200 as well as wrap_negative_indices=False on size 200.
+    x200 = jnp.arange(200, dtype=jnp.int32)
+    self.assertArraysEqual(
+        x200.at[jnp.int16(-201)].get(mode="fill", fill_value=-42),
+        jnp.int32(-42),
+    )
+    self.assertArraysEqual(
+        x200.at[jnp.int8(-1)].get(
+            mode="fill", fill_value=-42, wrap_negative_indices=False
+        ),
+        jnp.int32(-42),
+    )
+    self.assertArraysEqual(
+        x.at[jnp.int16(-32768)].get(mode="fill", fill_value=-42),
+        jnp.int32(40000 - 32768),
+    )
+
+  @parameterized.parameters(
+      (4, 237_501, 237_500),
+      (16, 200_001, 6_641),
+      (16, 200_001, 20_000),
+  )
+  def testFloat64ColumnScatterSet(self, rows, width, count):
+    # Regression test for https://github.com/jax-ml/jax/issues/41888
+    if jaxlib_extension_version < 524:
+      self.skipTest("Requires jaxlib_extension_version >= 524")
+    if not config.enable_x64.value:
+      self.skipTest("Requires jax_enable_x64=True")
+    out = np.zeros((rows, width), dtype=np.float64)
+    upd = np.arange(rows * count, dtype=np.float64).reshape(rows, count) + 1.0
+    idx = np.arange(1, count + 1, dtype=np.int32)
+    got = jax.jit(lambda o, u, i: o.at[:rows, i].set(u))(out, upd, idx)
+    want = out.copy()
+    want[:rows, idx] = upd
+    self.assertArraysEqual(got, want)
 
 @jtu.with_config(jax_check_static_indices=True)
 class ValidateIndicesTest(jtu.JaxTestCase):

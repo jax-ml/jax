@@ -100,7 +100,7 @@ def get(
       (
           "jax_lib version",
           lambda hash_obj: hash_obj.update(
-              bytes(jaxlib_version_str.encode("utf-8"))
+              jaxlib_version_str.encode("utf-8")
           ),
       ),
       (
@@ -369,7 +369,7 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj,
     replica_count = compile_options_copy.device_assignment.replica_count()
     computation_count = compile_options_copy.device_assignment.computation_count()
     compile_options_copy.device_assignment = xla_client.DeviceAssignment.create(
-        np.arange(replica_count * computation_count).reshape(  # pyrefly: ignore[bad-argument-type]
+        np.arange(replica_count * computation_count).reshape(
           [replica_count, computation_count])
     )
   return hash_obj.update(compile_options_copy.SerializeAsString())

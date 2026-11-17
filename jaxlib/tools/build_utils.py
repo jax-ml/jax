@@ -105,9 +105,9 @@ def copy_file(
       shutil.copy(src_file_loc, dst_file)
 
 
-def platform_tag(cpu: str) -> str:
+def platform_tag(cpu: str, accelerator: str = "none") -> str:
   platform_name, cpu_name = platform_tags.PLATFORM_TAGS_DICT[
-      (platform.system(), cpu)
+      (platform.system(), cpu, accelerator)
   ]
   return f"{platform_name}_{cpu_name}"
 

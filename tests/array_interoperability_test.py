@@ -31,8 +31,6 @@ import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
 
-jaxlib_version = jtu.parse_version(jax.lib.__version__)
-
 
 def alloc_and_map(c_type, np_dtype, size):
   device = jax.devices("tpu")[0]
@@ -258,7 +256,7 @@ class DLPackTest(jtu.JaxTestCase):
     if device.platform not in ["gpu", "tpu"]:
       raise unittest.SkipTest("Test requires GPU or TPU")
     try:
-      sharding = jax.sharding.SingleDeviceSharding(
+      sharding = jax.sharding.make_single_device_sharding(
           device, memory_kind="pinned_host"
       )
     except ValueError:
@@ -357,7 +355,6 @@ class DLPackTest(jtu.JaxTestCase):
     x = np.arange(4).reshape(2, 2).T
     self.assertAllClose(x, jax.dlpack.from_dlpack(x))
 
-  @unittest.skipIf(jaxlib_version < (0, 12, 0), "DLPack v1.0 not supported")
   def testNumpyReadonlyToJax(self):
     # Regression test for https://github.com/jax-ml/jax/issues/40789
     x_np = np.arange(5, dtype=np.float32)
@@ -365,7 +362,6 @@ class DLPackTest(jtu.JaxTestCase):
     x_jax = jnp.from_dlpack(x_np)
     self.assertAllClose(x_np, x_jax)
 
-  @unittest.skipIf(jaxlib_version < (0, 12, 0), "DLPack v1.0 not supported")
   @jtu.run_on_devices("cpu")  # NumPy only accepts cpu DLPacks
   def testJaxToNumpyAsarrayToJax(self):
     # Regression test for https://github.com/jax-ml/jax/issues/40789
@@ -382,7 +378,6 @@ class DLPackTest(jtu.JaxTestCase):
     x_np = np.from_dlpack(x_jax)
     self.assertAllClose(x_np, x_jax)
 
-  @unittest.skipIf(jaxlib_version < (0, 12, 0), "DLPack v1.0 not supported")
   @jtu.run_on_devices("cpu")
   def testJaxToNumpyReadonly(self):
     x_jax = jnp.arange(5, dtype=jnp.float32)
@@ -433,10 +428,10 @@ class DLPackTest(jtu.JaxTestCase):
     # Fill data *after* import to verify zero-copy
     np_array[:] = np.arange(1024, dtype=np.uint32)
 
-    host_sharding = jax.sharding.SingleDeviceSharding(
+    host_sharding = jax.sharding.make_single_device_sharding(
         device, memory_kind="pinned_host"
     )
-    device_sharding = jax.sharding.SingleDeviceSharding(
+    device_sharding = jax.sharding.make_single_device_sharding(
         device, memory_kind="device"
     )
 
@@ -461,9 +456,8 @@ class DLPackTest(jtu.JaxTestCase):
           (ctypes.c_uint16, np.uint16, (1024,)),
           (ctypes.c_uint16, np.uint16, (1024, 129)),
           (ctypes.c_float, np.float32, (8, 256)),
+          (ctypes.c_uint16, np.uint16, (16, 129)),
       ]
-      if jtu.is_libtpu_at_least("0.0.51"):
-        test_cases.append((ctypes.c_uint16, np.uint16, (16, 129)))
       for c_type, np_dtype, shape in test_cases:
         size = int(np.prod(shape))
         raw = alloc_and_map(c_type, np_dtype, size)
@@ -554,7 +548,7 @@ class DLPackTest(jtu.JaxTestCase):
     from jax._src.layout import Format, Layout
 
     device = jax.devices("cpu")[0]
-    sharding = jax.sharding.SingleDeviceSharding(device)
+    sharding = jax.sharding.make_single_device_sharding(device)
     mesh = jax.sharding.Mesh([device], ("x",))
     named_sharding = jax.sharding.NamedSharding(mesh, P())
 

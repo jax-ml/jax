@@ -44,6 +44,7 @@ from jax._src.state.discharge import (
     run_state_reference,
 )
 from jax._src.state.primitives import ( addupdate_p,get_p, pin,
+                                       pp_ref_transforms,
                                        ref_addupdate, ref_get, ref_set,
                                        ref_swap, swap_p, unpin,
                                        with_memory_space_constraint)
@@ -1663,6 +1664,44 @@ class StateControlFlowTest(jtu.JaxTestCase):
         _ = multi_ref.memory_space
     fn(0)
 
+  def test_transformed_multiref_pushes_transforms_into_branches(self):
+    def pp_ref(r):
+      var_ref = ft.flatten(r).map(
+          lambda v: core.Var(core.typeof(v))).unflatten()
+      return pp_ref_transforms(core.JaxprPpContext(), var_ref).format()
+
+    @jax.jit
+    def fn(i, j):
+      x, y, z = [jax.new_ref(jnp.zeros((4, 8), jnp.float32)) for _ in range(3)]
+      sel = state_types.TransformedRef(
+          (x, y), (state_types.SelectTransform(j),))
+      ref = sel.T.at[:4].bitcast(jnp.int32).reshape(16)
+      self.assertTrue(ref.multiref)
+      self.assertEqual((ref.shape, ref.dtype), ((16,), jnp.int32))
+      self.assertEqual([r.ref for r in ref.ref], [x, y])
+      self.assertEqual(
+          pp_ref(ref),
+          "(a{transpose([1, 0])}[:4,:]{bitcast(int32)}{reshape([16])}, "
+          "b{transpose([1, 0])}[:4,:]{bitcast(int32)}{reshape([16])})"
+          "{select(c)}")
+
+      nested = state_types.TransformedRef(
+          (sel, z), (state_types.SelectTransform(i),)).at[:2]
+      self.assertTrue(nested.multiref)
+      self.assertEqual(nested.shape, (2, 8))
+      self.assertEqual(
+          pp_ref(nested),
+          "((a[:2,:], b[:2,:]){select(c)}, d[:2,:]){select(e)}")
+
+      with self.assertRaises(ValueError):
+        state_types.TransformedRef(sel, ())
+      with self.assertRaises(ValueError):
+        host = core.MemorySpace.Host
+        ref.memory_space_cast(host).memory_space_cast(host)
+      with self.assertRaises(NotImplementedError):
+        _ = ref[...]
+
+    fn(0, 1)
 
   @parameterized.named_parameters(
     ("scan", "scan"), ("while_loop", "while_loop"))
@@ -2142,6 +2181,23 @@ class PinnedBuffersTest(jtu.JaxTestCase):
       y = f(x)
       self.assertAllClose(y, x)
 
+  @parameterized.parameters(("vmem", "1"), ("hbm", "0"))
+  def test_pin_memory_space_colors(self, to, expected_color):
+    @jax.jit
+    def f(x):
+      return unpin(pin(x, to=to))
+
+    x = jnp.arange(3.0)
+    txt = f.lower(x).as_text("hlo")
+    self.assertRegex(
+        txt,
+        rf"input_memory_space_colors.*operand_index.*0.*color.*{expected_color}",
+    )
+    self.assertRegex(
+        txt,
+        rf"output_memory_space_colors.*color.*{expected_color}",
+    )
+
   def test_new_ref_pinned(self):
     @jax.jit
     def f(x):
@@ -2206,6 +2262,32 @@ class PinnedBuffersTest(jtu.JaxTestCase):
   def test_new_ref_pinned_eager_error(self):
     with self.assertRaises(NotImplementedError):
       jax.new_ref(jnp.arange(3.), pin=True)
+
+  def test_new_ref_pinned_get_swap_addupdate(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/41846
+    def f(x):
+      ref = jax.new_ref(x, pin=True)
+      ref[...] = ref[...] + 1.0
+      ref[0] = ref[0] + 2.0
+      ref_addupdate(ref, (), jnp.full_like(x, 3.0))
+      return jax.ref.freeze(ref)
+
+    x = jnp.arange(6.0, dtype=jnp.float32).reshape(2, 3)
+    expected = (x + 1.0).at[0].add(2.0) + 3.0
+    jaxpr = jax.make_jaxpr(f)(x)
+    discharged = discharge_state(jaxpr)
+    prims = [e.primitive.name for e in discharged.eqns]
+    self.assertEqual(prims.count("pin"), 6)
+    self.assertEqual(prims.count("unpin"), 6)
+
+    jitted_f = jax.jit(f)
+    txt = jitted_f.lower(x).as_text("hlo")
+    self.assertEqual(txt.count('custom_call_target="Pin"'), 5)
+    self.assertEqual(txt.count('custom_call_target="Unpin"'), 5)
+
+    if jtu.test_device_matches(["gpu", "tpu"]):
+      y = jitted_f(x)
+      self.assertAllClose(y, expected)
 
   def test_discharged_aval_non_ref_preserves_memory_space(self):
     aval = core.ShapedArray((3,), jnp.float32, memory_space=core.MemorySpace.Host)
@@ -2511,6 +2593,13 @@ class RefTransformTest(jtu.JaxTestCase):
     ref = jax.new_ref(jnp.arange(4, dtype=jnp.int32))
     ref.at[1:3][...] += 10
     self.assertArraysEqual(ref[...], jnp.array([0, 11, 12, 3], dtype=jnp.int32))
+
+  @jtu.with_explicit_mesh((1,), ('x',))
+  def test_empty_ref_explicit_sharding(self, mesh):
+    del mesh
+    ty = jax.ShapeDtypeStruct((4,), jnp.float32, sharding=P('x'))
+    out = jax.jit(lambda: jax.freeze(jax.empty_ref(ty)))()
+    self.assertEqual(out.sharding.spec, P('x'))
 
 
 if __name__ == '__main__':

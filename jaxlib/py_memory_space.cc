@@ -26,7 +26,6 @@ limitations under the License.
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"  // IWYU pragma: keep
 #include "xla/python/ifrt/device.h"
-#include "xla/python/version.h"
 
 namespace ifrt = ::xla::ifrt;
 namespace nb = ::nanobind;
@@ -55,11 +54,7 @@ std::string_view PyMemorySpace::platform() const {
 }
 
 std::string_view PyMemorySpace::kind() const {
-#if JAX_IFRT_VERSION_NUMBER >= 64
   return memory_->Kind().value();
-#else
-  return *memory_->Kind().memory_kind();
-#endif
 }
 
 std::string_view PyMemorySpace::Str() const { return memory_->DebugString(); }
@@ -76,12 +71,19 @@ nb::typed<nb::list, PyDevice> PyMemorySpace::AddressableByDevices() const {
 
 /* static */ int PyMemorySpace::tp_traverse(PyObject* self, visitproc visit,
                                             void* arg) {
+  Py_VISIT(Py_TYPE(self));
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   PyMemorySpace* d = nb::inst_ptr<PyMemorySpace>(self);
   Py_VISIT(d->client().ptr());
   return 0;
 }
 
 /* static */ int PyMemorySpace::tp_clear(PyObject* self) {
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   PyMemorySpace* d = nb::inst_ptr<PyMemorySpace>(self);
   nb_class_ptr<PyClient> client;
   std::swap(client, d->client_);

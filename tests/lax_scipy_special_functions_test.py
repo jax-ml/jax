@@ -29,6 +29,8 @@ import jax.numpy as jnp
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import jaxlib_extension_version
+from jax._src.scipy import special as special_internal
 from jax.scipy import special as lsp_special
 
 jax.config.parse_flags_with_absl()
@@ -38,13 +40,14 @@ all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 
 OpRecord = collections.namedtuple(
     "OpRecord",
-    ["name", "nargs", "dtypes", "rng_factory", "test_autodiff", "nondiff_argnums", "test_name"])
+    ["name", "nargs", "dtypes", "rng_factory", "test_autodiff", "nondiff_argnums", "test_name", "shapes"])
 
 
-def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), test_name=None):
+def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), test_name=None, shapes=None):
   test_name = test_name or name
   nondiff_argnums = tuple(sorted(set(nondiff_argnums)))
-  return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name)
+  shapes = all_shapes if shapes is None else shapes
+  return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name, shapes)
 
 
 float_dtypes = jtu.dtypes.floating
@@ -97,6 +100,14 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     ),
     op_record(
         "gammaincc", 2, float_dtypes, jtu.rand_positive, True
+    ),
+    op_record(
+        "gammaincinv", 2, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=0.05, high=0.95), True
+    ),
+    op_record(
+        "gammainccinv", 2, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=0.05, high=0.95), True
     ),
     op_record(
         "gammasgn", 1, float_dtypes, jtu.rand_default, True
@@ -162,6 +173,13 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         functools.partial(jtu.rand_uniform, low=0.0, high=1.0), True,
     ),
     op_record(
+        "ndtri_exp",
+        1,
+        float_dtypes,
+        functools.partial(jtu.rand_uniform, low=-10.0, high=-0.05),
+        True,
+    ),
+    op_record(
         "ndtr", 1, float_dtypes, jtu.rand_default, True
     ),
     # TODO(phawkins): gradient of entr yields NaNs.
@@ -193,11 +211,13 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("poch", 2, float_dtypes, jtu.rand_positive, True),
     op_record(
         "hyp1f1", 3, float_dtypes,
-        functools.partial(jtu.rand_uniform, low=0.5, high=30), True
+        functools.partial(jtu.rand_uniform, low=0.5, high=30), True,
+        shapes=[(), (4,)],
     ),
     op_record(
         "hyp2f1", 4, float_dtypes,
-        functools.partial(jtu.rand_uniform, low=0.1, high=0.9), True
+        functools.partial(jtu.rand_uniform, low=0.1, high=0.9), True,
+        shapes=[(), (4,)],
     ),
     op_record("log_softmax", 1, float_dtypes, jtu.rand_default, True),
     op_record("softmax", 1, float_dtypes, jtu.rand_default, True),
@@ -223,7 +243,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       [dict(op=rec.name, rng_factory=rec.rng_factory,
             test_autodiff=rec.test_autodiff,
             nondiff_argnums=rec.nondiff_argnums)],
-      shapes=itertools.combinations_with_replacement(all_shapes, rec.nargs),
+      shapes=itertools.combinations_with_replacement(rec.shapes, rec.nargs),
       dtypes=(itertools.combinations_with_replacement(rec.dtypes, rec.nargs)
         if isinstance(rec.dtypes, list) else itertools.product(*rec.dtypes)),
     ))
@@ -327,6 +347,24 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       jtu.check_grads(lsp_special.exp1, (x,), order=2,
                       atol=tol, rtol=tol, eps=1e-3)
 
+  @jtu.sample_product(dtype=float_dtypes)
+  @jax.numpy_dtype_promotion('standard')  # polygamma mixes int n with float x.
+  def testZetaLargeQ(self, dtype):
+    if jaxlib_extension_version < 510:
+      self.skipTest("Requires jaxlib_extension_version >= 510")
+    # Regression test for https://github.com/jax-ml/jax/issues/38637,
+    # https://github.com/jax-ml/jax/issues/38608 and
+    # https://github.com/jax-ml/jax/issues/41366.
+    # For q_big, q**-4 underflows to zero but zeta(4, q) ~ q**-3 / 3 does not.
+    q_big = {np.float32: 1e12, np.float64: 1e100}[dtype]
+    x = np.array([2.0, 4.0, 4.0], dtype=dtype)
+    q = np.array([np.inf, np.inf, q_big], dtype=dtype)
+    expected = np.array([0.0, 0.0, osp_special.zeta(4.0, q_big)], dtype=dtype)
+    rtol = {np.float32: 1e-5, np.float64: 1e-12}
+    self.assertAllClose(lsp_special.zeta(x, q), expected, rtol=rtol)
+    self.assertAllClose(lsp_special.polygamma(np.array([1, 2]), q[:2]),
+                        np.zeros(2, dtype))
+
   def testWofzAccuracy(self):
     # Verify wofz agrees with scipy over the full complex plane (float32).
     rng = jtu.rand_default(np.random.RandomState(0))
@@ -409,6 +447,46 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         self.assertArraysEqual(out, osp_special.gammasgn(inp))
         self.assertAllClose(osp_special.gammasgn(inp),
                             lsp_special.gammasgn(inp))
+
+  @parameterized.parameters([True, False])
+  def testGammaDebugNans(self, with_jit):
+    finfo = jnp.finfo(dtypes.default_float_dtype())
+    # Cover all branches of gamma_real: small |x| (including +/-0.0 and
+    # subnormals), negative non-integers (reflection), positive integers,
+    # x > overflow, x < underflow, and +inf.
+    x = jnp.asarray(
+        [-1000.5, -100.5, -50.5, -5.5, -0.5, -float(finfo.tiny),
+         -0.5 * float(finfo.tiny), -0.0, 0.0, 0.5 * float(finfo.tiny),
+         float(finfo.tiny), 1e-5, 0.5, 1.0, 2.0, 10.0, 15.5, 35.0, 50.0, 100.0,
+         220.0, 1000.0, float(finfo.max), np.inf],
+        dtype=finfo.dtype)
+    x_grad = jnp.asarray([-50.5, -5.5, -0.5, 0.5, 1.0, 2.5, 10.0, 15.5],
+                         dtype=finfo.dtype)
+    f = lsp_special.gamma
+    df = jax.grad(lambda x: f(x).sum())
+    if with_jit:
+      f, df = jax.jit(f), jax.jit(df)
+    with jax.debug_nans(True), jax.disable_jit(not with_jit):
+      f(x)  # Doesn't crash
+      df(x_grad)
+      for nan_input in (-1.0, -2.0, -100.0, -float(finfo.max), -np.inf, np.nan):
+        with self.assertRaisesRegex(FloatingPointError,
+                                    "invalid value \\(nan\\)"):
+          f(jnp.asarray(nan_input, dtype=finfo.dtype))
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_log_ndtr_accuracy(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/41676:
+    # log_ndtr(x) for x > 0 must avoid precision loss from evaluating
+    # log(ndtr(x)) when ndtr(x) is close to 1.
+    upper = 8.0 if dtype == np.float64 else 5.0
+    x = np.linspace(0.1, upper, 200, dtype=dtype)
+    expected = osp_special.log_ndtr(x.astype(np.float64)).astype(dtype)
+    rtol = {
+        np.float32: 1e-3 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-13,
+    }
+    self.assertAllClose(lsp_special.log_ndtr(x), expected, atol=0, rtol=rtol)
 
   def testNdtriExtremeValues(self):
     # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
@@ -567,6 +645,20 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
   def testExpiZero(self):
     self.assertEqual(lsp_special.expi(0.0), -np.inf)
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def testExpiInf(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/38519
+    args_maker = lambda: [np.array([-np.inf, 0.0, np.inf, np.nan], dtype=dtype)]
+    # Note: scipy < 1.16 returned NaN for expi(+inf).
+    scipy_op = lambda x: np.where(
+        np.isposinf(x), np.inf, osp_special.expi(x.astype(np.float64))
+    ).astype(x.dtype)
+    self._CheckAgainstNumpy(scipy_op, lsp_special.expi, args_maker)
+    self._CompileAndCheck(lsp_special.expi, args_maker)
+    with jax.debug_nans(True):
+      x = jnp.array([-np.inf, -1.0, 0.0, 1.0, np.inf], dtype=dtype)
+      self.assertAllClose(lsp_special.expi(x), scipy_op(np.asarray(x)))
+
   def testGammaIncBoundaryValues(self):
     dtype = dtypes.default_float_dtype()
     nan = float('nan')
@@ -606,6 +698,106 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         osp_special.gammaincc, lsp_special.gammaincc, args_maker, rtol=rtol
     )
     self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
+
+  @jtu.sample_product(
+      op=["gammaincinv", "gammainccinv"],
+      dtype=jtu.dtypes.floating,
+  )
+  def testGammaIncInvAccuracy(self, op, dtype):
+    # Comprehensive accuracy tests are in tests/numerics/gamma_test.py; this
+    # checks a grid that spans the tails of the distribution.
+    finfo = jnp.finfo(dtype)
+    a = np.logspace(-3, 4, 29)
+    y = np.concatenate([
+        np.logspace(-30, -1, 30),
+        np.linspace(0.1, 0.9, 17)[1:-1],
+        1 - np.logspace(-1, np.log10(finfo.eps), 20),
+    ])
+    a, y = (v.astype(dtype).ravel() for v in np.meshgrid(a, y))
+    scipy_op = getattr(osp_special, op)
+    expected = scipy_op(a.astype(np.float64), y.astype(np.float64))
+    # Skip points whose result underflows or overflows in `dtype`.
+    keep = ((expected > 1e3 * float(finfo.tiny))
+            & (expected < float(finfo.max) / 10))
+    a, y = a[keep], y[keep]
+    args_maker = lambda: [a, y]
+    if jtu.test_device_matches(["cpu"]):
+      rtol = {dtypes.bfloat16: 1e-2, np.float16: 1e-3, np.float32: 3e-4,
+              np.float64: 1e-10}
+    else:
+      rtol = {dtypes.bfloat16: 1e-2, np.float16: 1e-3, np.float32: 1e-2,
+              np.float64: 1e-9}
+    self._CheckAgainstNumpy(
+        lambda a, y: scipy_op(a.astype(np.float64), y.astype(np.float64)),
+        getattr(lsp_special, op), args_maker, check_dtypes=False, atol=0,
+        rtol=rtol)
+    self._CompileAndCheck(getattr(lsp_special, op), args_maker, rtol=rtol)
+
+  @jtu.sample_product(
+      op=["gammaincinv", "gammainccinv"],
+      dtype=jtu.dtypes.floating,
+  )
+  def testGammaIncInvGrads(self, op, dtype):
+    a = np.array([0.05, 0.3, 0.9, 1.0, 1.7, 5.0, 40.0, 300.0], dtype=dtype)
+    y = np.array([0.6, 0.2, 0.5, 0.8, 0.99, 0.05, 0.3, 0.7], dtype=dtype)
+    lax_op = getattr(lsp_special, op)
+    tol = {dtypes.bfloat16: 2e-1, np.float16: 1e-1, np.float32: 5e-2,
+           np.float64: 1e-5}
+    eps = {dtypes.bfloat16: 1e-1, np.float16: 1e-2, np.float32: 1e-3,
+           np.float64: 1e-6}[dtype]
+    jtu.check_grads(lax_op, (a, y), order=1, modes=["fwd", "rev"],
+                    atol=tol, rtol=tol, eps=eps)
+    if dtype == np.float64:
+      # Finite differences of lower precision JVPs are too noisy for order 2.
+      jtu.check_grads(lambda y: lax_op(a, y), (y,), order=2,
+                      modes=["fwd", "rev"], atol=tol, rtol=tol, eps=eps)
+
+  @parameterized.product(op=["gammaincinv", "gammainccinv"],
+                         with_jit=[True, False])
+  def testGammaIncInvDebugNans(self, op, with_jit):
+    # Every branch of the initial approximation and of the refinement is
+    # evaluated for every element, so the branches that are not selected must
+    # not produce NaNs either. Without jit, debug_nans checks the result of
+    # every primitive, including those of the unselected branches.
+    finfo = jnp.finfo(dtypes.default_float_dtype())
+    # a < 1 and a >= 1, the thresholds of the initial approximation (0.3, 1,
+    # 500, 1e5), of the refinement (200 in float32, 1e6 in float64) and of the
+    # gradients (1e4 in float32, 1e6 in float64), and huge a.
+    a = [float(finfo.tiny), 1e-6, 0.05, 0.3, 0.5, 0.999, 1.0, 1.5, 5.0, 30.0,
+         150.0, 300.0, 600.0, 1e4, 2e5, 1e7, 1e30, float(finfo.max)]
+    # Both tails, the switch between them at 0.5, and the endpoints.
+    y = [0.0, float(finfo.tiny), 1e-30, 1e-5, 0.01, 0.15, 0.3, 0.5, 0.6, 0.9,
+         0.99, 1 - 1e-5, 1 - float(finfo.eps), 1.0]
+    a, y = (jnp.asarray(v.ravel(), dtype=finfo.dtype)
+            for v in np.meshgrid(a, y))
+    f = getattr(lsp_special, op)
+    # With jit disabled, only the gradient with respect to y is checked, since
+    # the one with respect to a uses lax.random_gamma_grad, which creates a NaN
+    # constant.
+    argnums = (0, 1) if with_jit else 1
+    df = jax.grad(lambda a, y: f(a, y).sum(), argnums=argnums)
+    if with_jit:
+      f, df = jax.jit(f), jax.jit(df)
+    with jax.debug_nans(True), jax.disable_jit(not with_jit):
+      f(a, y)  # Doesn't crash
+      df(a, y)
+      with self.assertRaisesRegex(FloatingPointError, "invalid value \\(nan\\)"):
+        f(2.0, 1.5)
+
+  @parameterized.parameters("gammaincinv", "gammainccinv")
+  def testGammaIncInvGradsAtEndpoints(self, op):
+    # The result is constant (0 or inf) at y in {0, 1}, so the gradient with
+    # respect to a is zero there.
+    lax_op = getattr(lsp_special, op)
+    a = jnp.array([0.5, 1.0, 2.0, 0.5, 1.0, 2.0])
+    y = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
+    da, dy = jax.grad(lambda a, y: lax_op(a, y).sum(), argnums=(0, 1))(a, y)
+    self.assertArraysEqual(da, jnp.zeros_like(a))
+    if op == "gammaincinv":
+      expected_dy = jnp.array([0.0, 1.0, np.inf, np.inf, np.inf, np.inf])
+    else:
+      expected_dy = jnp.array([-np.inf] * 3 + [0.0, -1.0, -np.inf])
+    self.assertAllClose(dy, expected_dy.astype(dy.dtype))
 
   @jtu.sample_product(dtype=float_dtypes)
   def testBetaIncResultDoesNotDependOnBatch(self, dtype):
@@ -650,18 +842,66 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_special.betainc, lsp_special.betainc, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.betainc, args_maker, rtol=rtol)
 
-  def testHyp2f1SpecialCases(self):
-    dtype = dtypes.default_float_dtype()
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp2f1SpecialCases(self, dtype):
+    eps = np.finfo(dtype).eps
 
-    a_samples = np.array([0, 1, 1, 1, 1, 5, 5, 0.245, 0.45, 0.45, 2, 0.4, 0.32, 4, 4], dtype=dtype)
-    b_samples = np.array([1, 0, 1, 1, 1, 1, 1, 3, 0.7, 0.7, 1, 0.7, 0.76, 2, 3], dtype=dtype)
-    c_samples = np.array([1, 1, 0, 1, -1, 3, 3, 3, 0.45, 0.45, 5, 0.3, 0.11, 7, 7], dtype=dtype)
-    x_samples = np.array([1, 1, 1, 0, 1, 0.5, 1, 0.35, 0.35, 1.5, 1, 0.4, 0.95, 0.95, 0.95], dtype=dtype)
+    a_samples = np.array([
+        0, 1, 1, 1, 1, 5, 5, 0.245, 0.45, 0.45, 2, 0.4, 0.32, 4, 4,
+        0.3, 1.5, 1.2, 2.5, 0.5, 2.1, 1e-4, 0.46,
+    ], dtype=dtype)
+    b_samples = np.array([
+        1, 0, 1, 1, 1, 1, 1, 3, 0.7, 0.7, 1, 0.7, 0.76, 2, 3,
+        0.7, 2.5, 1.8, 3.5, 22.5, 3.2, 0.9999, 0.54,
+    ], dtype=dtype)
+    c_samples = np.array([
+        1, 1, 0, 1, -1, 3, 3, 3, 0.45, 0.45, 5, 0.3, 0.11, 7, 7,
+        3.0, 7.0, 1.0, 3.0, 2.0, 2.1 + 3.2 + 3.0 + 10 * eps, 1.0, 1.0,
+    ], dtype=dtype)
+    x_samples = np.array([
+        1, 1, 1, 0, 1, 0.5, 1, 0.35, 0.35, 1.5, 1, 0.4, 0.95, 0.95, 0.95,
+        0.97, 0.95, 0.93, 0.95, 0.91, 0.95, 0.95, 0.95,
+    ], dtype=dtype)
 
     args_maker = lambda: (a_samples, b_samples, c_samples, x_samples)
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 5e-5
     self._CheckAgainstNumpy(osp_special.hyp2f1, lsp_special.hyp2f1, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.hyp2f1, args_maker, rtol=rtol)
+
+    with jax.debug_nans(True), jax.debug_infs(True):
+      a_dbg = jnp.array([4.0, 2.0, 1e-4], dtype=dtype)
+      b_dbg = jnp.array([2.0, 1.0, 0.9999], dtype=dtype)
+      c_dbg = jnp.array([7.0, 5.0, 1.0], dtype=dtype)
+      x_dbg = jnp.array([0.95, 1.0, 0.95], dtype=dtype)
+      out = lsp_special.hyp2f1(a_dbg, b_dbg, c_dbg, x_dbg)
+      self.assertAllClose(
+          out,
+          osp_special.hyp2f1(
+              np.array([4.0, 2.0, 1e-4], dtype=dtype),
+              np.array([2.0, 1.0, 0.9999], dtype=dtype),
+              np.array([7.0, 5.0, 1.0], dtype=dtype),
+              np.array([0.95, 1.0, 0.95], dtype=dtype),
+          ),
+          rtol=rtol,
+      )
+      # Run _hyp2f1_digamma_transform eagerly to check loop carries for NaN/Inf.
+      log_gamma_ratio = (
+          jax.lax.lgamma(c_dbg) - jax.lax.lgamma(a_dbg) - jax.lax.lgamma(b_dbg)
+      )
+      sgn_gamma_ratio = jnp.ones_like(c_dbg)
+      jax.vmap(special_internal._hyp2f1_digamma_transform)(
+          a_dbg, b_dbg, c_dbg, x_dbg, log_gamma_ratio, sgn_gamma_ratio
+      )
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testHyp2f1ParameterDerivatives(self, dtype):
+    a = np.array([0.15, 5.0], dtype=dtype)
+    b = np.array([0.25, 3.0], dtype=dtype)
+    c = np.array([0.8, 8.0], dtype=dtype)
+    x = np.array([0.4, 0.25], dtype=dtype)
+    tol = 1e-2 if jtu.test_device_matches(["tpu"]) else 1e-3
+    jtu.check_grads(lsp_special.hyp2f1, (a, b, c, x), order=1,
+                    atol=tol, rtol=tol, eps=1e-3)
 
   def testSiciEdgeCases(self):
     dtype = jnp.zeros(0).dtype
@@ -709,6 +949,22 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
     self.assertAllClose(lsp_special.gamma(z), osp_special.gamma(z),
                         atol=1e-5, rtol=rtol)
+
+  def testFactorialExact(self):
+    n32 = jnp.arange(35, dtype=jnp.float32)
+    ref32 = np.array([math.factorial(i) for i in range(35)], dtype=np.float32)
+    self.assertArraysEqual(lsp_special.factorial(n32), ref32)
+    if np.float64 in float_dtypes and not jtu.test_device_matches(["tpu"]):
+      n64 = jnp.arange(171, dtype=np.float64)
+      ref64 = np.array([math.factorial(i) for i in range(171)], dtype=np.float64)
+      self.assertArraysEqual(lsp_special.factorial(n64), ref64)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testFactorialNegativeGrad(self, dtype):
+    x = jnp.array([-0.5, -1.0, -1.5, -2.0, -5.0, -200.5, -jnp.inf], dtype=dtype)
+    grad_fn = jax.vmap(jax.grad(lsp_special.factorial))
+    self.assertArraysEqual(lsp_special.factorial(x), jnp.zeros_like(x))
+    self.assertArraysEqual(grad_fn(x), jnp.zeros_like(x))
 
   @parameterized.parameters(range(1, 5))
   def test_i0_gradients(self, order):
@@ -770,6 +1026,55 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(
         jnp.stack(derivs_small), expected_small, atol=1e-6, rtol=1e-5)
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_i0_i1_large_inputs(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/39770 & 39772
+    if dtype == np.float32:
+      x = np.array([-91.0, -90.0, -89.0, 89.0, 90.0, 91.0], dtype=dtype)
+      x_overflow = np.array([-95.0, 95.0], dtype=dtype)
+    else:
+      x = np.array(
+          [-713.0, -712.0, -711.0, -710.0, 710.0, 711.0, 712.0, 713.0],
+          dtype=dtype,
+      )
+      x_overflow = np.array([-720.0, 720.0], dtype=dtype)
+    half_exp = np.exp(np.abs(x) / dtype(2.0))
+    expected_i0 = (
+        (half_exp * osp_special.i0e(x).astype(dtype)) * half_exp
+    ).astype(dtype)
+    expected_i1 = (
+        (half_exp * osp_special.i1e(x).astype(dtype)) * half_exp
+    ).astype(dtype)
+    rtol = {np.float32: 1e-5, np.float64: 1e-12}
+    self.assertAllClose(jnp.i0(x), expected_i0, rtol=rtol)
+    self.assertAllClose(lsp_special.i0(x), expected_i0, rtol=rtol)
+    self.assertAllClose(lsp_special.i1(x), expected_i1, rtol=rtol)
+    self.assertAllClose(jax.vmap(jax.grad(jnp.i0))(x), expected_i1, rtol=rtol)
+    self.assertAllClose(
+        jax.vmap(jax.grad(lsp_special.i1))(x),
+        expected_i0 - expected_i1 / x,
+        rtol=rtol,
+    )
+    self.assertAllClose(
+        jax.vmap(jax.grad(jax.grad(jnp.i0)))(x),
+        expected_i0 - expected_i1 / x,
+        rtol=rtol,
+    )
+    self.assertAllClose(
+        jax.vmap(jax.grad(jax.grad(lsp_special.i1)))(x),
+        expected_i1 - expected_i0 / x + 2 * expected_i1 / (x * x),
+        rtol=rtol,
+    )
+    self._CompileAndCheck(jnp.i0, lambda: [x], rtol=rtol)
+    self._CompileAndCheck(lsp_special.i0, lambda: [x], rtol=rtol)
+    self._CompileAndCheck(lsp_special.i1, lambda: [x], rtol=rtol)
+    self.assertArraysEqual(
+        jnp.i0(x_overflow), np.array([np.inf, np.inf], dtype=dtype)
+    )
+    self.assertArraysEqual(
+        lsp_special.i1(x_overflow), np.array([-np.inf, np.inf], dtype=dtype)
+    )
+
   def testBetalnHessianAtZero(self):
     # Regression test for https://github.com/jax-ml/jax/issues/34353
     def f(log_a, log_b):
@@ -800,6 +1105,20 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     res_inf = np.asarray(lsp_special.gammaln(special_inf))
     self.assertTrue(np.all(np.isposinf(res_inf)), f"Expected +inf, got {res_inf}")
     self.assertTrue(np.isnan(float(lsp_special.gammaln(np.float32(np.nan)))))
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_digamma_special_values(self, dtype):
+    large_neg_int = -1e16 if dtype == np.float64 else -1e7
+    special_in = np.array(
+        [0.0, -0.0, np.inf, -np.inf, -1.0, -2.0, -10.0, large_neg_int, np.nan],
+        dtype=dtype,
+    )
+    expected = np.array(
+        [-np.inf, np.inf, np.inf, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+        dtype=dtype,
+    )
+    actual = np.asarray(lsp_special.digamma(special_in))
+    np.testing.assert_equal(actual, expected)
 
   def test_gammaln_grad(self):
     x_grad = np.array([0.25, 0.75, 1.5, 3.5, 12.0, -0.5, -1.5, -2.5], dtype=np.float32)
@@ -947,5 +1266,1683 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self.assertLessEqual(
         max_sweep_ulp, 3.6,
         f"Max ULP {max_sweep_ulp} at x={worst_sweep_x} exceeds 3.6")
+
+  @jtu.run_on_devices("cpu", "gpu")
+  def test_gammaln_f64_negative_roots_ulp(self):
+    # Certified 100-digit mpmath reference values (ref_hi, ref_lo) for the
+    # 3 nearest float64 values around all 29 roots of lgamma on (-17, -2).
+    certified_root_pts = [
+        (-2.457024738220801, -6.168712140884665e-16, -1.1724810400044292e-32),
+        (-2.4570247382208006, 5.619192358950097e-17, -2.1099251131628624e-33),
+        (-2.4570247382208, 7.292550612674704e-16, -2.3725667710553419e-32),
+        (-2.747682646727413, 1.0234931857070284e-15, -5.815475533689439e-32),
+        (-2.7476826467274127, 1.733509244024501e-16, -8.202386541675038e-33),
+        (-2.7476826467274122, -6.767913369021244e-16, 2.2103194612943698e-32),
+        (-3.1435808883499803, -1.7579854183617677e-15, -8.017668454538754e-32),
+        (-3.14358088834998, 1.6978655906121085e-15, -2.650245429739361e-32),
+        (-3.1435808883499794, 5.153716599585995e-15, -2.3656873247166562e-31),
+        (-4.039361839740538, -2.945930505051872e-14, 1.9926236539899832e-30),
+        (-4.039361839740537, -5.664578074060335e-15, -2.310104163553895e-31),
+        (-4.039361839740536, 1.8130148902398562e-14, -4.740941085166155e-31),
+        (-3.9552942848585984, 8.789393144349778e-15, 7.393596062340719e-31),
+        (-3.955294284858598, -4.14382750757705e-16, -1.484838516795255e-32),
+        (-3.9552942848585975, -9.618158645865089e-15, -9.273334773992607e-32),
+        (-5.008218168322594, -1.0414877920967533e-13, 3.890947542272188e-30),
+        (-5.0082181683225935, 5.4188509265538106e-15, -3.087697519452421e-31),
+        (-5.008218168322593, 1.1498648106279463e-13, -4.883302900304056e-30),
+        (-4.991544640560049, 1.2118818570529118e-13, 1.0087702419250904e-29),
+        (-4.991544640560048, 1.7683619350849613e-14, 6.802050189961466e-31),
+        (-4.991544640560047, -8.582094700358093e-14, 2.68903147487666e-30),
+        (-6.001385294453156, -6.892410931887324e-13, -7.79031942135438e-30),
+        (-6.001385294453155, -4.6433836942838004e-14, -2.8240401579926895e-30),
+        (-6.001385294453154, 5.963734193034675e-13, -3.5213040342279675e-30),
+        (-5.998607480080876, 3.9894309784344193e-13, 1.635251310128767e-31),
+        (-5.998607480080875, -2.3721063667118474e-13, 9.315898412228238e-30),
+        (-5.998607480080874, -8.733643711854045e-13, -3.897714828817849e-29),
+        (-7.000198333407326, -5.743202285494227e-12, -2.926203019341081e-28),
+        (-7.000198333407325, -1.263203743493977e-12, -1.668206597127877e-29),
+        (-7.000198333407324, 3.2167947985263277e-12, -7.074971754319108e-29),
+        (-6.999801507890639, 4.525967654362372e-12, -2.982850683385144e-28),
+        (-6.999801507890638, 5.313011065735902e-14, 1.2534571068034888e-30),
+        (-6.999801507890637, -4.419707433027631e-12, 2.4952644109448514e-29),
+        (-8.000024800270683, -5.407075634040359e-11, 1.8802317830174375e-27),
+        (-8.000024800270682, 1.75595561986039e-11, -5.938674806026605e-28),
+        (-8.00002480027068, 8.918986874274175e-11, -1.2081920453859645e-27),
+        (-7.9999751970958215, 3.36862440532578e-11, 2.0705321558877385e-27),
+        (-7.999975197095821, -2.1213071311827735e-12, -1.5609212852669594e-28),
+        (-7.99997519709582, -3.792885831434103e-11, -2.8476204873520135e-27),
+        (-9.000002755714824, -6.101697362085198e-10, 2.7288562265919278e-27),
+        (-9.000002755714823, 3.444263328391509e-11, 1.401161623436041e-27),
+        (-9.00000275571482, 6.790550031918699e-10, -1.3049928114642722e-26),
+        (-8.999997244250979, 5.640901896019856e-10, -3.4399603112744113e-26),
+        (-8.999997244250977, -8.050618056741812e-11, -4.5729198798458426e-27),
+        (-8.999997244250975, -7.251025503213122e-10, 3.8338878910221144e-26),
+        (-10.000000275573015, -5.179246902549113e-09, 3.162321103039447e-25),
+        (-10.000000275573013, 1.2668051387565237e-09, -7.873844332328773e-26),
+        (-10.000000275573012, 7.712857221613694e-09, -7.101547105269576e-26),
+        (-9.999999724426631, 8.217989771788738e-09, 5.381094078934247e-25),
+        (-9.99999972442663, 1.7719543958825935e-09, -2.1976305076693928e-26),
+        (-9.999999724426628, -4.674080938472126e-09, -3.18635354543402e-25),
+        (-11.000000025052108, -4.356008489074073e-08, -2.1579103722023138e-24),
+        (-11.000000025052106, 2.734640389948086e-08, 2.3951152444899338e-25),
+        (-11.000000025052104, 9.825289771743235e-08, -1.8531020431268426e-24),
+        (-10.999999974947892, 7.88275632625459e-08, 3.8984260769149134e-24),
+        (-10.99999997494789, 7.92108817813105e-09, -7.32695326610357e-25),
+        (-10.999999974947889, -6.298538187855533e-08, -3.1713846083955095e-24),
+        (-12.000000002087678, -9.094235653270309e-07, -3.54857283347055e-23),
+        (-12.000000002087676, -5.854619992113373e-08, 1.3602697451136098e-24),
+        (-12.000000002087674, 7.923318894776628e-07, 2.3303065926051062e-23),
+        (-11.999999997912326, 8.028787978744734e-07, -2.9788462795805954e-23),
+        (-11.999999997912324, -4.799928255018621e-08, -2.0823367332414347e-24),
+        (-11.999999997912322, -8.988766389819464e-07, -2.5143023704070188e-24),
+        (-13.000000000160592, -6.86068936352033e-06, -5.384108237655489e-23),
+        (-13.00000000016059, 4.200706921268597e-06, -4.641977741130562e-23),
+        (-13.000000000160588, 1.5262225561898617e-05, 8.52145242035022e-22),
+        (-12.999999999839412, 1.5263061556653325e-05, -5.968560127827181e-22),
+        (-12.99999999983941, 4.201542925270726e-06, -6.73236125478115e-24),
+        (-12.999999999839408, -6.8598533502707775e-06, -2.1953088975436652e-22),
+        (-14.000000000011472, -8.428665026119921e-05, 4.79949023045375e-21),
+        (-14.00000000001147, 7.057204149708364e-05, -5.007000228507924e-21),
+        (-14.000000000011468, 0.00022545471818410072, 9.750588614122606e-21),
+        (-13.999999999988532, 0.00022545477952377025, -1.3186084232934577e-20),
+        (-13.99999999998853, 7.057210284625434e-05, -1.770024227465518e-21),
+        (-13.999999999988528, -8.428658890252731e-05, -6.4474663886106704e-21),
+        (-15.000000000000766, -0.001167626509417739, 9.270547832399377e-21),
+        (-15.000000000000764, 0.0011552549067268103, -3.923735615601284e-20),
+        (-15.000000000000762, 0.0034835446663228154, -1.5679262683532767e-19),
+        (-14.999999999999238, 0.0034835446705004324, 7.247168913395353e-20),
+        (-14.999999999999236, 0.0011552549109141656, -7.834098153052744e-20),
+        (-14.999999999999234, -0.0011676265052206457, -8.136058438881012e-20),
+        (-16.00000000000005, -0.03985276881869601, 3.1350903422853657e-18),
+        (-16.000000000000046, 0.03425520333503583, 8.035076519752615e-19),
+        (-16.000000000000043, 0.11429791100858222, -3.2274129709007887e-18),
+        (-15.999999999999954, 0.03425520333529479, 3.36692029490901e-18),
+        (-15.999999999999952, -0.0034851246475472554, 1.6830914752443702e-20),
+        (-15.99999999999995, -0.03985276881841712, -2.644488539364109e-18),
+    ]
+    cert_xs = np.array([p[0] for p in certified_root_pts], dtype=np.float64)
+    cert_hi = np.array([p[1] for p in certified_root_pts], dtype=np.float64)
+    cert_lo = np.array([p[2] for p in certified_root_pts], dtype=np.float64)
+    with jax.enable_x64():
+      ys_f64 = np.asarray(lsp_special.gammaln(cert_xs), dtype=np.float64)
+    ulp = np.abs(np.spacing(cert_hi))
+    errs = np.abs((ys_f64 - cert_hi) - cert_lo) / ulp
+    idx = int(np.argmax(errs))
+    max_root_ulp, worst_root_x = float(errs[idx]), float(cert_xs[idx])
+    self.assertLessEqual(
+        max_root_ulp, 2.0,
+        f"Max ULP {max_root_ulp} at negative root x={worst_root_x} exceeds 2.0")
+
+  @jtu.sample_product(
+      dtype=[np.float32, np.float64],
+  )
+  def testLoggammaZero(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/38240
+    x = np.array([0.0, -0.0], dtype=dtype)
+    self._CheckAgainstNumpy(
+        osp_special.loggamma,
+        jax.scipy.special.loggamma,
+        args_maker=lambda: (x,),
+        check_dtypes=False,
+    )
+
+  @jtu.sample_product(
+      n=[-50, -25, -12, -5, -2, -1, 0, 1, 2, 5, 12, 25, 50],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_jn_orders_and_regimes(self, n, dtype):
+    x = np.array(
+        [-15.0, -2.5, 0.0, 0.2, 0.5, 1.5, 2.0, 3.5, 8.0, 10.0, 15.0, 24.0,
+         30.0, 60.0, 150.0],
+        dtype=dtype,
+    )
+    args_maker = lambda: [x]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 5e-4 if jtu.test_device_matches(["tpu"]) else 3e-5,
+        np.float64: 1e-12,
+    }
+    osp_jn = lambda z: osp_special.jn(n, z).astype(dtype)
+    lsp_jn = lambda z: lsp_special.jn(n, z)
+    self._CheckAgainstNumpy(osp_jn, lsp_jn, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_jn, args_maker, tol=tol)
+
+  @jtu.sample_product(
+      n=[-15, -5, -2, -1, 0, 1, 2, 5, 15],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_jn_envelope_precision(self, n, dtype):
+    finfo = jnp.finfo(dtype)
+    n_abs = abs(n)
+    # Smallest |x| where the leading series term (|x|/2)^|n| / |n|! stays above
+    # underflow in `dtype` and above scipy/Amos's float64 ZUCHK flush (~1e-289).
+    min_env = max(1e4 * float(finfo.tiny), 1e-288)
+    if n_abs == 0:
+      x_min = min_env
+    else:
+      x_min = 2.0 * (min_env * math.factorial(n_abs)) ** (1.0 / n_abs)
+    # Upper bound where scipy.special.jn in float64 retains full phase precision.
+    x_max = min(float(finfo.max) * 0.25, 1e4 if dtype == np.float64 else 1e6)
+    x_pos = np.unique(
+        np.concatenate([
+            np.geomspace(x_min, x_max, 500),
+            np.linspace(0.01, min(x_max, 100.0 + 0.5 * n_abs * n_abs), 500),
+            osp_special.jn_zeros(n_abs, 10),
+        ]).astype(dtype)
+    )
+    x_pos = x_pos[(x_pos >= x_min) & (x_pos <= x_max)]
+    x = np.concatenate([-x_pos[::-1], np.zeros(1, dtype=dtype), x_pos])
+
+    actual = np.asarray(lsp_special.jn(n, x), dtype=np.float64)
+    expected = osp_special.jn(n, x.astype(np.float64))
+
+    abs_x = np.abs(x.astype(np.float64))
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+      envelope = np.fmin(
+          (0.5 * abs_x) ** n_abs / math.factorial(n_abs),
+          np.abs(osp_special.hankel1(n_abs, abs_x)),
+      )
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 3e-3,
+        np.float32: 5e-5 if jtu.test_device_matches(["tpu"]) else 5e-6,
+        np.float64: 5e-12,
+    }[dtype]
+    eps = tol * np.where(envelope == 0.0, 1.0, envelope)
+    self.assertAllClose(
+        (actual - expected) / eps, np.zeros_like(actual), atol=1.0, rtol=0.0
+    )
+
+  @jtu.sample_product(
+      n=[-15, -3, -2, -1, 0, 1, 2, 3, 8, 15],
+      dtype=jtu.dtypes.complex,
+  )
+  def test_jn_complex(self, n, dtype):
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    zs = np.array(
+        [0.0 + 0.0j, 0.3 + 0.4j, -0.3 + 0.4j, 0.3 - 0.4j, -0.3 - 0.4j,
+         1.5 + 2.0j, -2.5 + 0.0j, 0.0 + 20.0j, 0.0 - 20.0j, 5.0 + 1.2j,
+         -5.0 - 1.2j, 15.0 + 3.0j, 25.0 + 2.0j, -25.0 + 2.0j],
+        dtype=dtype,
+    )
+    args_maker = lambda: [zs]
+    tol = {np.complex64: 5e-5, np.complex128: 1e-12}
+    osp_jn = lambda z: osp_special.jn(n, z.astype(np.complex128)).astype(dtype)
+    lsp_jn = lambda z: lsp_special.jn(n, z)
+    self._CheckAgainstNumpy(osp_jn, lsp_jn, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_jn, args_maker, tol=tol)
+
+    # Check complex special values and overflow behavior using the same shape
+    # so the compiled executable for (n, dtype) is reused.
+    big_y = 1000.0 if dtype == np.complex128 else 100.0
+    special_zs = np.array(
+        [
+            # 0..3: infinite real part with finite imaginary part -> 0 + 0j
+            complex(np.inf, 0.0),
+            complex(-np.inf, 0.0),
+            complex(np.inf, 1.0),
+            complex(-np.inf, -2.5),
+            # 4..8: infinite imaginary part or NaN -> nan + nan*j
+            complex(0.0, np.inf),
+            complex(1.0, -np.inf),
+            complex(np.inf, np.inf),
+            complex(np.nan, 1.0),
+            complex(1.0, np.nan),
+            # 9..10: large |Im(z)| overflow without inf - inf = NaN
+            complex(0.0, big_y),
+            complex(1.0, big_y),
+            # 11..13: origin
+            complex(0.0, 0.0),
+            complex(-0.0, 0.0),
+            complex(0.0, -0.0),
+        ],
+        dtype=dtype,
+    )
+    res_spec = np.asarray(lsp_special.jn(n, special_zs))
+    self.assertArraysEqual(res_spec[:4], np.zeros(4, dtype=dtype))
+    self.assertTrue(np.all(np.isnan(res_spec[4:9].real)))
+    self.assertTrue(np.all(np.isnan(res_spec[4:9].imag)))
+    if n % 2 == 0:
+      self.assertTrue(np.isinf(res_spec[9].real))
+      self.assertEqual(res_spec[9].imag, 0.0)
+    else:
+      self.assertEqual(res_spec[9].real, 0.0)
+      self.assertTrue(np.isinf(res_spec[9].imag))
+    self.assertFalse(np.isnan(res_spec[10].real))
+    self.assertFalse(np.isnan(res_spec[10].imag))
+    self.assertTrue(np.isinf(res_spec[10].real) or np.isinf(res_spec[10].imag))
+    expected_zero = np.ones(3, dtype=dtype) if n == 0 else np.zeros(3, dtype=dtype)
+    self.assertArraysEqual(res_spec[11:], expected_zero)
+
+  @jtu.sample_product(
+      n=[-2, -1, 0, 1, 2, 3],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_jn_grad(self, n, dtype):
+    xs = np.array(
+        [-12.0, -2.5, -0.5, 0.0, 0.5, 1.5, 2.5, 6.0, 12.0, 30.0], dtype=dtype
+    )
+    args_maker = lambda: [xs]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 1e-4 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-13,
+    }
+    fn = lambda x: lsp_special.jn(n, x)
+    d1_ref = lambda x: (
+        0.5
+        * (
+            osp_special.jn(n - 1, x.astype(np.float64))
+            - osp_special.jn(n + 1, x.astype(np.float64))
+        )
+    ).astype(dtype)
+    d2_ref = lambda x: (
+        0.25
+        * (
+            osp_special.jn(n - 2, x.astype(np.float64))
+            - 2.0 * osp_special.jn(n, x.astype(np.float64))
+            + osp_special.jn(n + 2, x.astype(np.float64))
+        )
+    ).astype(dtype)
+    d1_fn = jax.grad(lambda x: jnp.sum(fn(x)))
+    d2_fn = jax.grad(lambda x: jnp.sum(d1_fn(x)))
+    self._CheckAgainstNumpy(d1_ref, d1_fn, args_maker, tol=tol)
+    self._CheckAgainstNumpy(d2_ref, d2_fn, args_maker, tol=tol)
+
+  def test_jn_non_integer_n(self):
+    xs = jnp.arange(5.0)
+    with self.assertRaisesRegex(
+        TypeError, "'float' object cannot be interpreted as an integer"
+    ):
+      lsp_special.jn(0.5, xs)
+    with self.assertRaises(jax.errors.ConcretizationTypeError):
+      jax.jit(lsp_special.jn)(1, xs)
+
+  @jtu.sample_product(dtype=jtu.dtypes.complex)
+  def test_jn_complex_large_imag_moderate_order(self, dtype):
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    if dtype == np.complex64:
+      cases = [
+          (30, [86.0j, 5.0 + 86.0j]),
+          (50, [90.0j, -90.0j, 5.0 + 90.0j, -5.0 - 90.0j]),
+          (150, [90.0j, -90.0j, 10.0 + 90.0j]),
+      ]
+      rtol, atol = 5e-5, 1e-15
+    else:
+      cases = [
+          (100, [705.0j, -705.0j, 5.0 + 705.0j]),
+          (500, [750.0j, -750.0j, 20.0 + 750.0j]),
+          (700, [750.0j, 20.0 + 750.0j]),
+      ]
+      rtol, atol = 1e-12, 1e-25
+    for n, pts in cases:
+      zs = np.array(pts, dtype=dtype)
+      expected = osp_special.jn(n, zs.astype(np.complex128)).astype(dtype)
+      actual = lsp_special.jn(n, zs)
+      self.assertAllClose(actual, expected, rtol=rtol, atol=atol)
+
+  @jtu.sample_product(dtype=jtu.dtypes.complex)
+  def test_jn_complex_cf_pad_precision(self, dtype):
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    if dtype == np.complex64:
+      zs = np.array([1000.0 + 2.0j, -1000.0 + 2.0j], dtype=np.complex64)
+      expected = osp_special.jn(50, zs.astype(np.complex128)).astype(
+          np.complex64
+      )
+      self.assertAllClose(lsp_special.jn(50, zs), expected, rtol=5e-5, atol=1e-7)
+    else:
+      zs = np.array([2000.0 + 2.0j, 10000.0 + 2.0j], dtype=np.complex128)
+      # 80-digit exact Miller-recurrence references (scipy.special.jn/Amos loses
+      # ~4 digits of phase accuracy around Re(z) = 1e4).
+      expected = np.array(
+          [
+              -0.05845798218719446 + 0.031256755405349654j,
+              0.02388771103637864 - 0.017516735799281938j,
+          ],
+          dtype=np.complex128,
+      )
+      self.assertAllClose(
+          lsp_special.jn(150, zs), expected, rtol=1e-13, atol=1e-15
+      )
+
+  def test_jn_high_order_turning_point_precision(self):
+    if np.float64 not in jtu.dtypes.floating or jtu.test_device_matches(
+        ["tpu"]
+    ):
+      self.skipTest("Requires IEEE float64")
+    for n, x_val in [(500, 499.9), (1000, 999.9)]:
+      xs = np.array([-x_val, x_val], dtype=np.float64)
+      self.assertAllClose(
+          lsp_special.jn(n, xs),
+          osp_special.jn(n, xs),
+          rtol=1e-12,
+          atol=1e-15,
+      )
+
+  @jtu.sample_product(
+      n=[-3, -1, 0, 1, 2, 4],
+      dtype=jtu.dtypes.complex,
+  )
+  def test_jn_complex_grad(self, n, dtype):
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    zs = np.array(
+        [0.0 + 0.0j, 0.5 + 1.2j, -0.5 + 1.2j, 0.5 - 1.2j, -0.5 - 1.2j,
+         0.0 + 3.5j, -2.5 + 0.0j, 15.0 + 2.0j],
+        dtype=dtype,
+    )
+    tol = {np.complex64: 1e-4, np.complex128: 1e-12}[dtype]
+    fn = lambda z: lsp_special.jn(n, z)
+    d1_ref = (
+        0.5
+        * (
+            osp_special.jn(n - 1, zs.astype(np.complex128))
+            - osp_special.jn(n + 1, zs.astype(np.complex128))
+        )
+    ).astype(dtype)
+    tangents = np.ones_like(zs) + 0.5j * np.ones_like(zs)
+    _, jvp_out = jax.jvp(fn, (zs,), (tangents,))
+    self.assertAllClose(jvp_out, d1_ref * tangents, rtol=tol, atol=tol)
+    grad_out = jax.grad(lambda z: jnp.sum(fn(z)), holomorphic=True)(zs)
+    self.assertAllClose(grad_out, d1_ref, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+      n=[-3, -2, -1, 0, 1, 2, 3],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_jn_real_special_values(self, n, dtype):
+    special_xs = np.array([0.0, -0.0, np.inf, -np.inf, np.nan], dtype=dtype)
+    res = np.asarray(lsp_special.jn(n, special_xs))
+    if n == 0:
+      self.assertArraysEqual(res[:2], np.ones(2, dtype=dtype))
+    else:
+      self.assertArraysEqual(res[:2], np.zeros(2, dtype=dtype))
+      if n % 2 != 0:
+        neg_n = n < 0
+        self.assertEqual(np.signbit(res[0]), neg_n)
+        self.assertEqual(np.signbit(res[1]), not neg_n)
+    self.assertArraysEqual(res[2:4], np.zeros(2, dtype=dtype))
+    self.assertTrue(np.isnan(res[4]))
+
+  @jtu.sample_product(
+      n=[-1, 0, 2],
+      dtype=jtu.dtypes.integer,
+  )
+  def test_jn_integer_input(self, n, dtype):
+    int_xs = jnp.array([0, 1, 3], dtype=dtype)
+    float_dt = dtypes.to_inexact_dtype(int_xs.dtype)
+    self.assertAllClose(
+        lsp_special.jn(n, int_xs),
+        osp_special.jn(n, np.array([0.0, 1.0, 3.0])).astype(float_dt),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+
+  @jtu.sample_product(
+      n=[-50, -25, -12, -5, -2, -1, 0, 1, 2, 5, 12, 25, 50],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_yn_orders_and_regimes(self, n, dtype):
+    x = np.array(
+        [-2.5, 0.0, 0.2, 0.5, 1.5, 2.0, 3.5, 8.0, 10.0, 15.0, 24.0,
+         30.0, 60.0, 150.0],
+        dtype=dtype,
+    )
+    args_maker = lambda: [x]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 5e-4 if jtu.test_device_matches(["tpu"]) else 3e-5,
+        np.float64: 1e-12,
+    }
+    def osp_yn(z):
+      with np.errstate(over="ignore"):
+        return osp_special.yn(n, z).astype(dtype)
+
+    lsp_yn = lambda z: lsp_special.yn(n, z)
+    self._CheckAgainstNumpy(osp_yn, lsp_yn, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_yn, args_maker, tol=tol)
+
+  @jtu.sample_product(
+      n=[-15, -5, -2, -1, 0, 1, 2, 5, 15],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_yn_envelope_precision(self, n, dtype):
+    finfo = jnp.finfo(dtype)
+    n_abs = abs(n)
+    # Smallest x > 0 where the singular term (|n|-1)! / (pi * (x/2)^|n|) stays
+    # well below overflow in `dtype`.
+    max_env = min(1e-4 * float(finfo.max), 1e280)
+    if n_abs == 0:
+      x_min = max(1e4 * float(finfo.tiny), 1e-288)
+    else:
+      x_min = 2.0 * (math.factorial(n_abs - 1) / (math.pi * max_env)) ** (
+          1.0 / n_abs
+      )
+    x_max = min(float(finfo.max) * 0.25, 1e4 if dtype == np.float64 else 1e6)
+    x_pos = np.unique(
+        np.concatenate([
+            np.geomspace(x_min, x_max, 500),
+            np.linspace(max(x_min, 0.01), min(x_max, 100.0 + 0.5 * n_abs * n_abs), 500),
+            osp_special.yn_zeros(n_abs, 10),
+        ]).astype(dtype)
+    )
+    x_pos = x_pos[(x_pos >= x_min) & (x_pos <= x_max)]
+
+    actual = np.asarray(lsp_special.yn(n, x_pos), dtype=np.float64)
+    expected = osp_special.yn(n, x_pos.astype(np.float64))
+
+    abs_x = x_pos.astype(np.float64)
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+      envelope = np.abs(osp_special.hankel1(n_abs, abs_x))
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 3e-3,
+        np.float32: 5e-5 if jtu.test_device_matches(["tpu"]) else 5e-6,
+        np.float64: 5e-12,
+    }[dtype]
+    eps = tol * np.where(envelope == 0.0, 1.0, envelope)
+    self.assertAllClose(
+        (actual - expected) / eps, np.zeros_like(actual), atol=1.0, rtol=0.0
+    )
+
+  @jtu.sample_product(
+      n=[-15, -3, -2, -1, 0, 1, 2, 3, 8, 15],
+      dtype=jtu.dtypes.complex,
+  )
+  def test_yn_complex(self, n, dtype):
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    zs = np.array(
+        [0.0 + 0.0j, 0.3 + 0.4j, -0.3 + 0.4j, 0.3 - 0.4j, -0.3 - 0.4j,
+         1.5 + 2.0j, -2.5 + 0.0j, 0.0 + 20.0j, 0.0 - 20.0j, 5.0 + 1.2j,
+         -5.0 - 1.2j, 15.0 + 3.0j, 25.0 + 2.0j, -25.0 + 2.0j],
+        dtype=dtype,
+    )
+    args_maker = lambda: [zs]
+    tol = {np.complex64: 5e-5, np.complex128: 1e-12}
+    osp_yn = lambda z: osp_special.yv(n, z.astype(np.complex128)).astype(dtype)
+    lsp_yn = lambda z: lsp_special.yn(n, z)
+    self._CheckAgainstNumpy(osp_yn, lsp_yn, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_yn, args_maker, tol=tol)
+
+    # Check complex special values and overflow behavior using the same shape
+    # so the compiled executable for (n, dtype) is reused.
+    big_y = 1000.0 if dtype == np.complex128 else 120.0
+    tiny_neg_x = -1e-200 if dtype == np.complex128 else -1e-25
+    special_zs = np.array(
+        [
+            # 0..3: infinite real part with finite imaginary part -> 0 + 0j
+            complex(np.inf, 0.0),
+            complex(-np.inf, 0.0),
+            complex(np.inf, 1.0),
+            complex(-np.inf, -2.5),
+            # 4..8: infinite imaginary part or NaN -> nan + nan*j
+            complex(0.0, np.inf),
+            complex(1.0, -np.inf),
+            complex(np.inf, np.inf),
+            complex(np.nan, 1.0),
+            complex(1.0, np.nan),
+            # 9..10: large |Im(z)| overflow without inf - inf = NaN
+            complex(0.0, big_y),
+            complex(-1.0, big_y),
+            # 11: origin
+            complex(0.0, 0.0),
+            # 12: negative real axis branch cut lower lip (-2.5 - 0.0j)
+            complex(-2.5, -0.0),
+            # 13: near-origin pole on negative real axis (overflow sign check)
+            complex(tiny_neg_x, 0.0),
+        ],
+        dtype=dtype,
+    )
+    res_spec = np.asarray(lsp_special.yn(n, special_zs))
+    self.assertArraysEqual(res_spec[:4], np.zeros(4, dtype=dtype))
+    self.assertTrue(np.all(np.isnan(res_spec[4:9].real)))
+    self.assertTrue(np.all(np.isnan(res_spec[4:9].imag)))
+    if n % 2 == 0:
+      self.assertAllClose(res_spec[9].real, 0.0, atol=1e-40, check_dtypes=False)
+      self.assertTrue(np.isinf(res_spec[9].imag))
+    else:
+      self.assertTrue(np.isinf(res_spec[9].real))
+      self.assertAllClose(res_spec[9].imag, 0.0, atol=1e-40, check_dtypes=False)
+    self.assertFalse(np.isnan(res_spec[10].real))
+    self.assertFalse(np.isnan(res_spec[10].imag))
+    self.assertTrue(np.isinf(res_spec[10].real) or np.isinf(res_spec[10].imag))
+    neg_n = n < 0 and (n % 2 != 0)
+    self.assertEqual(
+        res_spec[11], complex(np.inf if neg_n else -np.inf, 0.0)
+    )
+    # Branch cut Schwarz reflection: yn(n, -2.5 - 0.0j) == conj(yn(n, -2.5 + 0.0j))
+    expected_lower_cut = np.conj(
+        osp_special.yv(n, complex(-2.5, 0.0))
+    ).astype(dtype)
+    self.assertAllClose(
+        res_spec[12], expected_lower_cut, rtol=tol[dtype], atol=tol[dtype]
+    )
+    # Near-origin pole overflow on negative real axis: for n != 0, Y_n(w) -> -inf
+    # while J_n(w) -> 0, so Y_n(-|x|) = (-1)^n * (-1)^(n<0 and odd) * (-inf).
+    if abs(n) >= 2:
+      expected_pole_inf = np.inf if (n > 0 and n % 2 != 0) else -np.inf
+      self.assertEqual(res_spec[13].real, expected_pole_inf)
+
+    # Pure imaginary axis (Stokes line arg(w) = pi/2) in the asymptotic regime:
+    # verify both the growing I_{|n|}(y) component and the decaying
+    # (2/pi)*K_{|n|}(y) component (DLMF 10.27.6, 10.27.8) componentwise.
+    # For n != 0, scipy.special.yv(n, i*y) leaks cos(n*pi/2) * I_n(y) ~ 3.5e-7
+    # into the decaying ~2e-12 component, so compute the exact reference from
+    # scipy.special.iv and scipy.special.kv on the positive real axis.
+    if abs(n) <= 2:
+      imag_y = 25.0 if dtype == np.complex128 else 10.5
+      imag_zs = np.resize(
+          np.array([complex(0.0, imag_y), complex(0.0, -imag_y)], dtype=dtype),
+          zs.shape,
+      )
+      actual_imag = np.asarray(lsp_special.yn(n, imag_zs))[:2]
+      n_abs = abs(n)
+      m_sign = -1.0 if ((n_abs // 2) % 2 == 1) else 1.0
+      i_val = m_sign * float(osp_special.iv(n_abs, imag_y))
+      k_val = m_sign * (2.0 / np.pi) * float(osp_special.kv(n_abs, imag_y))
+      y_pos = complex(-k_val, i_val) if (n_abs % 2 == 0) else complex(-i_val, k_val)
+      expected_imag = np.array([y_pos, np.conj(y_pos)], dtype=dtype)
+      if neg_n:
+        expected_imag = -expected_imag
+      self.assertAllClose(
+          actual_imag.real, expected_imag.real, rtol=tol[dtype], atol=0.0
+      )
+      self.assertAllClose(
+          actual_imag.imag, expected_imag.imag, rtol=tol[dtype], atol=0.0
+      )
+
+  @jtu.sample_product(
+      n=[-2, -1, 0, 1, 2, 3],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_yn_grad(self, n, dtype):
+    xs = np.array([0.5, 1.0, 1.5, 2.5, 4.0, 6.0, 12.0, 24.0, 30.0], dtype=dtype)
+    args_maker = lambda: [xs]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 1e-4 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-13,
+    }
+    fn = lambda x: lsp_special.yn(n, x)
+    d1_ref = lambda x: (
+        0.5
+        * (
+            osp_special.yn(n - 1, x.astype(np.float64))
+            - osp_special.yn(n + 1, x.astype(np.float64))
+        )
+    ).astype(dtype)
+    d2_ref = lambda x: (
+        0.25
+        * (
+            osp_special.yn(n - 2, x.astype(np.float64))
+            - 2.0 * osp_special.yn(n, x.astype(np.float64))
+            + osp_special.yn(n + 2, x.astype(np.float64))
+        )
+    ).astype(dtype)
+    d1_fn = jax.grad(lambda x: jnp.sum(fn(x)))
+    d2_fn = jax.grad(lambda x: jnp.sum(d1_fn(x)))
+    self._CheckAgainstNumpy(d1_ref, d1_fn, args_maker, tol=tol)
+    self._CheckAgainstNumpy(d2_ref, d2_fn, args_maker, tol=tol)
+
+  def test_yn_non_integer_n(self):
+    xs = jnp.arange(1.0, 5.0)
+    with self.assertRaisesRegex(
+        TypeError, "'float' object cannot be interpreted as an integer"
+    ):
+      lsp_special.yn(0.5, xs)
+    with self.assertRaises(jax.errors.ConcretizationTypeError):
+      jax.jit(lsp_special.yn)(1, xs)
+
+  @jtu.sample_product(dtype=jtu.dtypes.complex)
+  def test_yn_complex_large_imag_moderate_order(self, dtype):
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    if dtype == np.complex64:
+      cases = [
+          (30, [86.0j, 5.0 + 86.0j]),
+          (50, [90.0j, -90.0j, 5.0 + 90.0j, -5.0 - 90.0j]),
+          (150, [90.0j, -90.0j, 10.0 + 90.0j]),
+      ]
+      rtol, atol = 5e-5, 1e-15
+    else:
+      cases = [
+          (100, [705.0j, -705.0j, 5.0 + 705.0j]),
+          (500, [750.0j, -750.0j, 20.0 + 750.0j]),
+          (700, [750.0j, 20.0 + 750.0j]),
+      ]
+      rtol, atol = 1e-12, 1e-25
+    for n, pts in cases:
+      zs = np.array(pts, dtype=dtype)
+      z128 = zs.astype(np.complex128)
+      # Above |Im(z)| ~ 700, scipy.special.yv (Amos zbesy) returns NaN because
+      # H_n^(1) underflows float64 even though Y_n(z) = +/-i * J_n(z) is finite.
+      yv_ref = osp_special.yv(n, z128)
+      jn_asym_ref = np.where(z128.imag >= 0, 1j, -1j) * osp_special.jn(n, z128)
+      expected = np.where(np.isnan(yv_ref), jn_asym_ref, yv_ref).astype(dtype)
+      actual = lsp_special.yn(n, zs)
+      self.assertAllClose(actual, expected, rtol=rtol, atol=atol)
+
+  @jtu.sample_product(dtype=jtu.dtypes.complex)
+  def test_yn_complex_cf_pad_precision(self, dtype):
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    if dtype == np.complex64:
+      zs = np.array([1000.0 + 2.0j, -1000.0 + 2.0j], dtype=np.complex64)
+      expected = osp_special.yv(50, zs.astype(np.complex128)).astype(
+          np.complex64
+      )
+      self.assertAllClose(lsp_special.yn(50, zs), expected, rtol=5e-5, atol=1e-7)
+    else:
+      zs = np.array([2000.0 + 2.0j, 10000.0 + 2.0j], dtype=np.complex128)
+      # 80-digit exact reference values (scipy.special.yv/Amos loses ~4 digits
+      # of phase accuracy around Re(z) = 1e4).
+      expected = np.array(
+          [
+              -0.032434376577284693 - 0.056330552222093475j,
+              0.018170492412048048 + 0.023027903990634487j,
+          ],
+          dtype=np.complex128,
+      )
+      self.assertAllClose(
+          lsp_special.yn(150, zs), expected, rtol=1e-13, atol=1e-15
+      )
+
+  def test_yn_high_order_turning_point_precision(self):
+    if np.float64 not in jtu.dtypes.floating or jtu.test_device_matches(
+        ["tpu"]
+    ):
+      self.skipTest("Requires IEEE float64")
+    for n, x_val in [(500, 499.9), (1000, 999.9), (2005, 2004.9)]:
+      xs = np.array([x_val, x_val + 10.0], dtype=np.float64)
+      self.assertAllClose(
+          lsp_special.yn(n, xs),
+          osp_special.yn(n, xs),
+          rtol=1e-12,
+          atol=1e-15,
+      )
+    # Complex recurrence / Miller / power-series transition region (17 <= |w| < 24):
+    boundary_zs = np.array(
+        [
+            23.09 + 0.0j,
+            -23.09 + 0.0j,
+            23.95 + 0.1j,
+            -23.95 - 0.1j,
+            18.52 + 14.47j,
+            -18.52 + 14.47j,
+            18.83 + 14.71j,
+            -18.83 - 14.71j,
+            -18.49 + 14.81j,
+            18.49 - 14.81j,
+            -22.34 + 6.41j,
+            22.34 - 6.41j,
+            -23.5 + 4.14j,
+            23.5 - 4.14j,
+        ],
+        dtype=np.complex128,
+    )
+    for n in [2, 21, 22, 24, 26]:
+      self.assertAllClose(
+          lsp_special.yn(n, boundary_zs),
+          osp_special.yv(n, boundary_zs),
+          rtol=1e-13,
+          atol=1e-13,
+      )
+
+  @jtu.sample_product(
+      n=[-3, -1, 0, 1, 2, 4],
+      dtype=jtu.dtypes.complex,
+  )
+  def test_yn_complex_grad(self, n, dtype):
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    zs = np.array(
+        [0.5 + 1.2j, -0.5 + 1.2j, 0.5 - 1.2j, -0.5 - 1.2j,
+         0.0 + 3.5j, 2.5 + 0.0j, -2.5 + 0.5j, 15.0 + 2.0j],
+        dtype=dtype,
+    )
+    tol = {np.complex64: 1e-4, np.complex128: 1e-12}[dtype]
+    fn = lambda z: lsp_special.yn(n, z)
+    d1_ref = (
+        0.5
+        * (
+            osp_special.yv(n - 1, zs.astype(np.complex128))
+            - osp_special.yv(n + 1, zs.astype(np.complex128))
+        )
+    ).astype(dtype)
+    tangents = np.ones_like(zs) + 0.5j * np.ones_like(zs)
+    _, jvp_out = jax.jvp(fn, (zs,), (tangents,))
+    self.assertAllClose(jvp_out, d1_ref * tangents, rtol=tol, atol=tol)
+    grad_out = jax.grad(lambda z: jnp.sum(fn(z)), holomorphic=True)(zs)
+    self.assertAllClose(grad_out, d1_ref, rtol=tol, atol=tol)
+
+    # JVP at z = 0 and overflow points must not produce NaN (padded to zs.shape
+    # so the compiled executables for (n, n - 1, n + 1) are reused):
+    tiny = 1e-200 if dtype == np.complex128 else 1e-25
+    big_y = 1000.0 if dtype == np.complex128 else 120.0
+    overflow_zs = jnp.array(
+        [
+            0.0 + 0.0j,
+            complex(tiny, 0.0),
+            complex(0.0, tiny),
+            complex(tiny, tiny),
+            complex(0.0, big_y),
+            0.0 + 0.0j,
+            0.0 + 0.0j,
+            0.0 + 0.0j,
+        ],
+        dtype=dtype,
+    )
+    t_overflow = jnp.full_like(overflow_zs, 1.0 + 0.5j)
+    _, jvp_overflow = jax.jvp(fn, (overflow_zs,), (t_overflow,))
+    jvp_overflow = np.asarray(jvp_overflow)
+    neg_n = n < 0 and (n % 2 != 0)
+    expected_zero_inf = -np.inf if neg_n else np.inf
+    self.assertEqual(jvp_overflow[0].real, expected_zero_inf)
+    self.assertEqual(jvp_overflow[0].imag, expected_zero_inf)
+    # On-axis overflow points (0, tiny, tiny*j, big_y*j) have at most one
+    # infinite component in dy_dz, so neither JVP component is NaN; off-axis
+    # complex(tiny, tiny) overflows in both components of dy_dz for |n| >= 1,
+    # so at least one JVP component is infinite (whereas any NaN in dy_dz would
+    # make both JVP components NaN for tangent 1.0 + 0.5j).
+    for idx in (0, 1, 2, 4):
+      self.assertFalse(np.isnan(jvp_overflow[idx].real))
+      self.assertFalse(np.isnan(jvp_overflow[idx].imag))
+    if abs(n) >= 1:
+      self.assertTrue(
+          np.isinf(jvp_overflow[3].real) or np.isinf(jvp_overflow[3].imag)
+      )
+
+  @jtu.sample_product(
+      n=[-3, -2, -1, 0, 1, 2, 3],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_yn_real_special_values(self, n, dtype):
+    special_xs = np.array([0.0, -0.0, np.inf, -np.inf, -1.5, np.nan], dtype=dtype)
+    res = np.asarray(lsp_special.yn(n, special_xs))
+    neg_n = n < 0 and (n % 2 != 0)
+    expected_zero = np.full(2, np.inf if neg_n else -np.inf, dtype=dtype)
+    self.assertArraysEqual(res[:2], expected_zero)
+    self.assertEqual(res[2], 0.0)
+    self.assertTrue(np.all(np.isnan(res[3:])))
+
+    # Derivative at x = 0 (and near-zero pole overflow) must not produce NaN
+    # (evaluated at special_xs.shape to reuse the compiled executable for n):
+    tiny_x = (
+        1e-200
+        if dtype == np.float64
+        else (1e-25 if dtype == np.float32 else 0.0)
+    )
+    grad_xs = np.array([0.0, tiny_x, 0.0, 0.0, 0.0, 0.0], dtype=dtype)
+    grad_vals = np.asarray(
+        jax.grad(lambda x: jnp.sum(lsp_special.yn(n, x)))(grad_xs)
+    )
+    expected_grad_inf = dtype(-np.inf if neg_n else np.inf)
+    self.assertEqual(grad_vals[0], expected_grad_inf)
+    if abs(n) >= 2 and dtype in (np.float32, np.float64):
+      self.assertEqual(grad_vals[1], expected_grad_inf)
+
+  @jtu.sample_product(
+      n=[-1, 0, 2],
+      dtype=jtu.dtypes.integer,
+  )
+  def test_yn_integer_input(self, n, dtype):
+    int_xs = jnp.array([0, 1, 3], dtype=dtype)
+    float_dt = dtypes.to_inexact_dtype(int_xs.dtype)
+    tol = 5e-5 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self.assertAllClose(
+        lsp_special.yn(n, int_xs),
+        osp_special.yn(n, np.array([0.0, 1.0, 3.0])).astype(float_dt),
+        rtol=tol,
+        atol=tol,
+    )
+
+  @jtu.sample_product(
+      v=[-2, -1, 0, 1, 2, 5, 15, 50],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_iv_orders_and_regimes(self, v, dtype):
+    """Tests real iv(v, x) across orders, regimes, and special values."""
+    max_x = (
+        8.0
+        if dtype == np.float16
+        else (60.0 if dtype in (dtypes.bfloat16, np.float32) else 500.0)
+    )
+    pts = [
+        p
+        for p in [
+            -150.0, -60.0, -15.0, -8.0, -2.5, 0.0, 0.2, 0.5, 1.5, 2.0, 3.5,
+            6.0, 8.0, 10.0, 15.0, 24.0, 30.0, 60.0, 150.0, 500.0,
+        ]
+        if abs(p) <= max_x
+    ]
+    x = np.array(pts, dtype=dtype)
+    args_maker = lambda: [x]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 5e-4 if jtu.test_device_matches(["tpu"]) else 3e-5,
+        np.float64: 1e-12,
+    }
+    osp_iv = lambda z: osp_special.iv(v, z.astype(np.float64)).astype(dtype)
+    lsp_iv = lambda z: lsp_special.iv(v, z)
+    self._CheckAgainstNumpy(osp_iv, lsp_iv, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_iv, args_maker, tol=tol)
+
+    # Pad special inputs to x.shape so the compiled executable for (v, dtype) is
+    # reused instead of triggering additional XLA compilations per order.
+    special_xs = np.resize(
+        np.array([0.0, -0.0, np.inf, -np.inf, np.nan], dtype=dtype), x.shape
+    )
+    res = np.asarray(lsp_special.iv(v, special_xs))[:5]
+    expected_zero = (
+        np.ones(2, dtype=dtype)
+        if v == 0
+        else np.array([0.0, -0.0 if v % 2 else 0.0], dtype=dtype)
+    )
+    self.assertArraysEqual(res[:2], expected_zero)
+    if v % 2:
+      self.assertFalse(np.signbit(res[0]))
+      self.assertTrue(np.signbit(res[1]))
+    self.assertEqual(res[2], np.inf)
+    self.assertEqual(res[3], -np.inf if v % 2 else np.inf)
+    self.assertTrue(np.isnan(res[4]))
+    if v == 5 and dtype == np.float32:
+      tiny_xs = np.resize(np.array([1e-30, -1e-30], dtype=dtype), x.shape)
+      res_tiny = np.asarray(lsp_special.iv(v, tiny_xs))[:2]
+      self.assertArraysEqual(res_tiny, np.zeros(2, dtype=dtype))
+      self.assertFalse(np.signbit(res_tiny[0]))
+      self.assertTrue(np.signbit(res_tiny[1]))
+
+  @jtu.sample_product(
+      v=[-1, 0, 1, 2, 3, 15],
+      dtype=jtu.dtypes.complex,
+  )
+  def test_iv_complex(self, v, dtype):
+    """Tests complex iv(v, z) across quadrants, axes, and special values."""
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    zs = np.array(
+        [0.0 + 0.0j, 0.3 + 0.4j, -0.3 + 0.4j, 0.3 - 0.4j, -0.3 - 0.4j,
+         2.0 + 1.5j, 0.0 - 2.5j, 20.0 + 0.0j, -20.0 + 0.0j, 1.2 + 5.0j,
+         -1.2 - 5.0j, 3.0 + 15.0j, 2.0 + 25.0j, 2.0 - 25.0j],
+        dtype=dtype,
+    )
+    args_maker = lambda: [zs]
+    tol = {np.complex64: 5e-5, np.complex128: 1e-12}
+    osp_iv = lambda z: osp_special.iv(v, z.astype(np.complex128)).astype(dtype)
+    lsp_iv = lambda z: lsp_special.iv(v, z)
+    self._CheckAgainstNumpy(osp_iv, lsp_iv, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_iv, args_maker, tol=tol)
+
+    # Check complex special values and overflow behavior using the same shape
+    # so the compiled executable for (v, dtype) is reused.
+    big_x = 1000.0 if dtype == np.complex128 else 100.0
+    special_zs = np.array(
+        [
+            # 0..3: infinite imaginary part with finite real part -> 0 + 0j
+            complex(0.0, np.inf), complex(0.0, -np.inf),
+            complex(1.0, np.inf), complex(-2.5, -np.inf),
+            # 4..8: infinite real part or NaN -> nan + nan*j
+            complex(np.inf, 0.0), complex(-np.inf, 1.0),
+            complex(np.inf, np.inf), complex(np.nan, 1.0), complex(1.0, np.nan),
+            # 9..10: large |Re(z)| overflow without inf - inf = NaN;
+            # 11..13: origin
+            complex(big_x, 0.0), complex(big_x, 1.0),
+            complex(0.0, 0.0), complex(-0.0, 0.0), complex(0.0, -0.0),
+        ],
+        dtype=dtype,
+    )
+    res_spec = np.asarray(lsp_special.iv(v, special_zs))
+    self.assertArraysEqual(res_spec[:4], np.zeros(4, dtype=dtype))
+    self.assertTrue(np.all(np.isnan(res_spec[4:9].real)))
+    self.assertTrue(np.all(np.isnan(res_spec[4:9].imag)))
+    self.assertEqual(res_spec[9].real, np.inf)
+    self.assertEqual(res_spec[9].imag, 0.0)
+    self.assertFalse(np.isnan(res_spec[10].real))
+    self.assertFalse(np.isnan(res_spec[10].imag))
+    self.assertTrue(np.isinf(res_spec[10].real) or np.isinf(res_spec[10].imag))
+    expected_zero = (
+        np.ones(3, dtype=dtype) if v == 0 else np.zeros(3, dtype=dtype)
+    )
+    self.assertArraysEqual(res_spec[11:], expected_zero)
+
+  @jtu.sample_product(
+      v=[-1, 0, 1, 2, 3],
+      dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
+  def test_iv_grad(self, v, dtype):
+    """Tests 1st, 2nd, and 3rd derivatives of real and complex iv(v, z)."""
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    is_complex = dtypes.issubdtype(dtype, np.complexfloating)
+    if is_complex:
+      pts = [
+          0.0 + 0.0j, 0.5 + 1.2j, -0.5 + 1.2j, 0.5 - 1.2j, -0.5 - 1.2j,
+          0.0 + 3.5j, -2.5 + 0.0j, 2.0 + 15.0j,
+      ]
+    elif dtype == np.float16:
+      pts = [-8.0, -2.5, -0.5, 0.0, 0.5, 1.5, 2.5, 6.0, 8.0]
+    elif dtype in (dtypes.bfloat16, np.float32):
+      pts = [-12.0, -2.5, -0.5, 0.0, 1e-4, 0.5, 1.5, 2.5, 6.0, 12.0, 30.0]
+    else:
+      pts = [-12.0, -2.5, -0.5, 0.0, 1e-7, 0.5, 1.5, 2.5, 6.0, 12.0, 30.0]
+    zs = np.array(pts, dtype=dtype)
+    args_maker = lambda: [zs]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 1e-4 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-12,
+        np.complex64: 1e-4,
+        np.complex128: 1e-12,
+    }
+    ref_dtype = np.complex128 if is_complex else np.float64
+    fn = lambda z: lsp_special.iv(v, z)
+    # By DLMF 10.29.5,
+    # d^k/dz^k I_v(z) = 2^-k * sum_{j=0}^k comb(k, j) I_{v - k + 2j}(z).
+    for k in (1, 2, 3):
+      fn = jax.grad(lambda z, f=fn: jnp.sum(f(z)), holomorphic=is_complex)
+      dk_ref = lambda z, k=k: (
+          (0.5**k)
+          * sum(
+              math.comb(k, j)
+              * osp_special.iv(v - k + 2 * j, z.astype(ref_dtype))
+              for j in range(k + 1)
+          )
+      ).astype(dtype)
+      self._CheckAgainstNumpy(dk_ref, fn, args_maker, tol=tol)
+
+  def test_iv_non_integer_v(self):
+    """Tests that iv(v, x) rejects non-integer or traced order v."""
+    xs = jnp.arange(5.0)
+    with self.assertRaisesRegex(
+        TypeError, "'float' object cannot be interpreted as an integer"
+    ):
+      lsp_special.iv(0.5, xs)
+    with self.assertRaisesRegex(
+        jax.errors.ConcretizationTypeError,
+        "The 'v' argument of jax.scipy.special.iv must be a static integer.",
+    ):
+      jax.jit(lsp_special.iv)(1, xs)
+
+  @jtu.sample_product(
+      dtype=[np.float32, np.float64, np.complex64, np.complex128]
+  )
+  def test_iv_high_order_and_large_argument(self, dtype):
+    """Tests iv(v, z) for large v where exp(|Re(z)|) overflows."""
+    if dtype not in (*jtu.dtypes.floating, *jtu.dtypes.complex):
+      self.skipTest(f"Dtype {dtype} not enabled")
+    if (
+        dtype in (np.float64, np.complex128)
+        and jtu.test_device_matches(["tpu"])
+    ):
+      self.skipTest("64-bit on TPU is ef57")
+    if dtype == np.float32:
+      cases = [
+          (30, [86.0, -86.0]),
+          (50, [90.0, -90.0]),
+          (150, [90.0, -90.0]),
+          (720, [520.0, -520.0]),
+      ]
+      rtol, atol = 5e-5, 1e-15
+    elif dtype == np.float64:
+      cases = [
+          (100, [705.0, -705.0]),
+          (180, [19.5, -19.5]),
+          (500, [499.9, -499.9, 750.0, -750.0]),
+          (2000, [1500.0, -1500.0, 1700.0, -1700.0]),
+      ]
+      rtol, atol = 1e-12, 1e-25
+    elif dtype == np.complex64:
+      cases = [
+          (30, [86.0 + 0.0j, 86.0 + 5.0j]),
+          (50, [90.0 + 0.0j, -90.0 + 0.0j, 90.0 + 5.0j, -90.0 - 5.0j]),
+          (150, [90.0 + 0.0j, -90.0 + 0.0j, 90.0 + 10.0j]),
+      ]
+      rtol, atol = 5e-5, 1e-15
+    else:
+      cases = [
+          (100, [705.0 + 0.0j, -705.0 + 0.0j, 705.0 + 5.0j]),
+          (500, [750.0 + 0.0j, -750.0 + 0.0j, 750.0 + 20.0j]),
+          (700, [750.0 + 0.0j, 750.0 + 20.0j]),
+      ]
+      rtol, atol = 1e-12, 1e-25
+    ref_dtype = (
+        np.complex128
+        if dtypes.issubdtype(dtype, np.complexfloating)
+        else np.float64
+    )
+    for v, pts in cases:
+      zs = np.array(pts, dtype=dtype)
+      expected = osp_special.iv(v, zs.astype(ref_dtype)).astype(dtype)
+      actual = lsp_special.iv(v, zs)
+      self.assertAllClose(actual, expected, rtol=rtol, atol=atol)
+    if dtype == np.float64:
+      for v, x_overflow in [(1501, 1450.0), (2000, 1950.0)]:
+        xs = np.array([-x_overflow, x_overflow], dtype=np.float64)
+        expected_inf = np.array(
+            [-np.inf if (v & 1) else np.inf, np.inf], dtype=np.float64
+        )
+        self.assertArraysEqual(lsp_special.iv(v, xs), expected_inf)
+
+  @jtu.sample_product(dtype=jtu.dtypes.integer)
+  def test_iv_integer_input(self, dtype):
+    """Tests that integer inputs to iv(v, x) are promoted to floating-point."""
+    int_xs = jnp.array([0, 1, 3], dtype=dtype)
+    float_dt = dtypes.to_inexact_dtype(int_xs.dtype)
+    tol = 5e-5 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self.assertAllClose(
+        lsp_special.iv(1, int_xs),
+        osp_special.iv(1, np.array([0.0, 1.0, 3.0])).astype(float_dt),
+        rtol=tol,
+        atol=tol,
+    )
+
+  @jtu.sample_product(
+      n=[-2, -1, 0, 1, 2, 5, 15, 50],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_kn_orders_and_regimes(self, n, dtype):
+    """Tests real kn(n, x) across orders, regimes, and special values."""
+    if abs(n) == 50 and dtype != np.float64:
+      min_x = 30.0 if dtype == np.float16 else 8.0
+    elif abs(n) == 15 and dtype == np.float16:
+      min_x = 6.0
+    elif abs(n) >= 5 and dtype == np.float16:
+      min_x = 1.2
+    else:
+      min_x = 0.2
+    pts = [
+        p
+        for p in [
+            0.2, 0.5, 1.5, 2.0, 3.0, 3.5, 6.0, 8.0, 10.0, 15.0, 24.0, 30.0,
+            60.0, 150.0, 500.0,
+        ]
+        if p >= min_x
+    ]
+    x = np.array(pts, dtype=dtype)
+    args_maker = lambda: [x]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 5e-4 if jtu.test_device_matches(["tpu"]) else 3e-5,
+        np.float64: 1e-12,
+    }
+    osp_kn = lambda z: osp_special.kv(n, z.astype(np.float64)).astype(dtype)
+    lsp_kn = lambda z: lsp_special.kn(n, z)
+    self._CheckAgainstNumpy(osp_kn, lsp_kn, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_kn, args_maker, tol=tol)
+
+    # Pad special inputs to x.shape so the compiled executable for (n, dtype) is
+    # reused instead of triggering additional XLA compilations per order.
+    special_xs = np.resize(
+        np.array([0.0, -0.0, np.inf, -np.inf, -1.5, np.nan], dtype=dtype),
+        x.shape,
+    )
+    res = np.asarray(lsp_special.kn(n, special_xs))[:6]
+    self.assertArraysEqual(res[:2], np.full(2, np.inf, dtype=dtype))
+    self.assertEqual(res[2], 0.0)
+    self.assertFalse(np.signbit(res[2]))
+    self.assertTrue(np.all(np.isnan(res[3:])))
+
+  @jtu.sample_product(
+      n=[-2, -1, 0, 1, 2, 3, 15],
+      dtype=jtu.dtypes.complex,
+  )
+  def test_kn_complex(self, n, dtype):
+    """Tests complex kn(n, z) across quadrants and branch cuts."""
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    zs = np.array(
+        [0.3 + 0.4j, -0.3 + 0.4j, 0.3 - 0.4j, -0.3 - 0.4j, 2.0 + 1.5j,
+         -2.0 - 1.5j, 0.0 + 2.001j, 0.0 - 2.001j, 0.0 + 2.5j, 0.0 - 2.5j,
+         20.0 + 0.0j, -2.5 + 0.0j, 1.2 + 5.0j, -1.2 - 5.0j, 3.0 + 15.0j,
+         2.0 + 25.0j, 2.0 - 25.0j],
+        dtype=dtype,
+    )
+    args_maker = lambda: [zs]
+    tol = {np.complex64: 5e-5, np.complex128: 1e-12}
+    osp_kn = lambda z: osp_special.kv(n, z.astype(np.complex128)).astype(dtype)
+    lsp_kn = lambda z: lsp_special.kn(n, z)
+    self._CheckAgainstNumpy(osp_kn, lsp_kn, args_maker, tol=tol)
+    self._CompileAndCheck(lsp_kn, args_maker, tol=tol)
+
+    # Check complex special values and overflow/underflow behavior using the
+    # same shape so the compiled executable for (n, dtype) is reused.
+    big_x = 1000.0 if dtype == np.complex128 else 110.0
+    huge_x = 1e308 if dtype == np.complex128 else 1e38
+    special_zs = np.array(
+        [
+            # 0..4: x = +inf or y = +-inf with finite x -> 0 + 0j
+            complex(np.inf, 0.0), complex(np.inf, 1.5),
+            complex(0.0, np.inf), complex(1.0, -np.inf), complex(-2.5, np.inf),
+            # 5..9: x = -inf or (isinf(x) & isinf(y)) or NaN -> nan + nan*j
+            complex(-np.inf, 0.0), complex(-np.inf, 1.0),
+            complex(np.inf, np.inf),
+            complex(np.nan, 1.0), complex(1.0, np.nan),
+            # 10..12: large Re(z) underflow (including |z| > MAX_FLOAT / 8) and
+            # left-half-plane overflow (x < 0)
+            complex(big_x, 1.0), complex(huge_x, huge_x), complex(-big_x, 0.0),
+            # 13: negative real axis branch cut lower lip (-2.5 - 0.0j)
+            complex(-2.5, -0.0),
+            # 14..16: origin -> inf + 0j
+            complex(0.0, 0.0), complex(-0.0, 0.0), complex(0.0, -0.0),
+        ],
+        dtype=dtype,
+    )
+    res_spec = np.asarray(lsp_special.kn(n, special_zs))
+    self.assertArraysEqual(res_spec[:5], np.zeros(5, dtype=dtype))
+    self.assertTrue(np.all(np.isnan(res_spec[5:10].real)))
+    self.assertTrue(np.all(np.isnan(res_spec[5:10].imag)))
+    self.assertEqual(res_spec[10], 0.0 + 0.0j)
+    self.assertEqual(res_spec[11], 0.0 + 0.0j)
+    self.assertEqual(res_spec[12].real, 0.0)
+    self.assertEqual(res_spec[12].imag, -np.inf)
+    # Branch cut Schwarz reflection:
+    # kn(n, -2.5 - 0.0j) == conj(kn(n, -2.5 + 0.0j))
+    expected_lower_cut = np.conj(
+        osp_special.kv(n, complex(-2.5, 0.0))
+    ).astype(dtype)
+    self.assertAllClose(
+        res_spec[13], expected_lower_cut, rtol=tol[dtype], atol=tol[dtype]
+    )
+    expected_zero = np.full(3, complex(np.inf, 0.0), dtype=dtype)
+    self.assertArraysEqual(res_spec[14:], expected_zero)
+
+  @jtu.sample_product(
+      n=[-1, 0, 1, 2, 3],
+      dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
+  def test_kn_grad(self, n, dtype):
+    """Tests 1st, 2nd, and 3rd derivatives of real and complex kn(n, z)."""
+    if dtype == np.complex128 and jtu.test_device_matches(["tpu"]):
+      self.skipTest("complex128 on TPU is ef57 double-double")
+    is_complex = dtypes.issubdtype(dtype, np.complexfloating)
+    if is_complex:
+      pts = [
+          0.5 + 1.2j, -0.5 + 1.2j, 0.5 - 1.2j, -0.5 - 1.2j,
+          0.0 + 3.5j, 2.5 + 0.0j, -2.5 + 0.5j, 2.0 + 15.0j,
+      ]
+    elif dtype == np.float16:
+      pts = [0.6, 1.0, 1.5, 2.5, 4.0, 6.0]
+    else:
+      pts = [0.5, 1.0, 1.5, 2.5, 3.0, 6.0, 12.0, 30.0]
+    zs = np.array(pts, dtype=dtype)
+    args_maker = lambda: [zs]
+    tol = {
+        dtypes.bfloat16: 2e-2,
+        np.float16: 5e-3,
+        np.float32: 1e-4 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-12,
+        np.complex64: 1e-4,
+        np.complex128: 1e-12,
+    }
+    ref_dtype = np.complex128 if is_complex else np.float64
+    fn = lambda z: lsp_special.kn(n, z)
+    d1_fn = None
+    # By DLMF 10.29.5,
+    # d^k/dz^k K_n(z) = (-0.5)^k * sum_{j=0}^k comb(k, j) K_{n - k + 2j}(z).
+    for k in (1, 2, 3):
+      fn = jax.grad(lambda z, f=fn: jnp.sum(f(z)), holomorphic=is_complex)
+      if k == 1:
+        d1_fn = fn
+      dk_ref = lambda z, k=k: (
+          ((-0.5) ** k)
+          * sum(
+              math.comb(k, j)
+              * osp_special.kv(n - k + 2 * j, z.astype(ref_dtype))
+              for j in range(k + 1)
+          )
+      ).astype(dtype)
+      self._CheckAgainstNumpy(dk_ref, fn, args_maker, tol=tol)
+
+    if is_complex:
+      # Pad overflow_zs to zs.shape so the compiled executables for
+      # (n, n - 1, n + 1) are reused.
+      tiny = 1e-200 if dtype == np.complex128 else 1e-25
+      overflow_zs = jnp.array(
+          [
+              0.0 + 0.0j,
+              complex(tiny, 0.0),
+              complex(0.0, tiny),
+              complex(tiny, tiny),
+              0.0 + 0.0j,
+              0.0 + 0.0j,
+              0.0 + 0.0j,
+              0.0 + 0.0j,
+          ],
+          dtype=dtype,
+      )
+      t_overflow = jnp.full_like(overflow_zs, 1.0 + 0.5j)
+      _, jvp_overflow = jax.jvp(
+          lambda z: lsp_special.kn(n, z), (overflow_zs,), (t_overflow,)
+      )
+      jvp_overflow = np.asarray(jvp_overflow)
+      self.assertEqual(jvp_overflow[0].real, -np.inf)
+      self.assertEqual(jvp_overflow[0].imag, -np.inf)
+      for idx in (0, 1, 2):
+        self.assertFalse(np.isnan(jvp_overflow[idx].real))
+        self.assertFalse(np.isnan(jvp_overflow[idx].imag))
+      if abs(n) >= 1:
+        self.assertTrue(
+            np.isinf(jvp_overflow[3].real) or np.isinf(jvp_overflow[3].imag)
+        )
+      t_real = jnp.full_like(overflow_zs, 1.0 + 0.0j)
+      _, jvp_real = jax.jvp(
+          lambda z: lsp_special.kn(n, z), (overflow_zs,), (t_real,)
+      )
+      jvp_real = np.asarray(jvp_real)
+      self.assertEqual(jvp_real[0].real, -np.inf)
+      self.assertEqual(jvp_real[0].imag, 0.0)
+      t_imag = jnp.full_like(overflow_zs, 0.0 + 1.0j)
+      _, jvp_imag = jax.jvp(
+          lambda z: lsp_special.kn(n, z), (overflow_zs,), (t_imag,)
+      )
+      jvp_imag = np.asarray(jvp_imag)
+      self.assertEqual(jvp_imag[0].real, 0.0)
+      self.assertEqual(jvp_imag[0].imag, -np.inf)
+      for idx in (0, 1, 2):
+        self.assertFalse(np.isnan(jvp_real[idx].real))
+        self.assertFalse(np.isnan(jvp_real[idx].imag))
+        self.assertFalse(np.isnan(jvp_imag[idx].real))
+        self.assertFalse(np.isnan(jvp_imag[idx].imag))
+      grad_re = jax.grad(
+          lambda z: jnp.sum(jnp.real(lsp_special.kn(n, z)))
+      )(overflow_zs)[0]
+      self.assertEqual(grad_re.real, -np.inf)
+      self.assertEqual(grad_re.imag, 0.0)
+      grad_im = jax.grad(
+          lambda z: jnp.sum(jnp.imag(lsp_special.kn(n, z)))
+      )(overflow_zs)[0]
+      self.assertEqual(grad_im.real, 0.0)
+      self.assertEqual(grad_im.imag, np.inf)
+    else:
+      # Derivative at x = 0 (and near-zero pole overflow) must not produce NaN
+      # (evaluated at zs.shape to reuse the compiled executables for
+      # (n, n - 1, n + 1)):
+      tiny_x = (
+          1e-200
+          if dtype == np.float64
+          else (1e-25 if dtype == np.float32 else 0.0)
+      )
+      grad_xs = np.resize(np.array([0.0, tiny_x], dtype=dtype), zs.shape)
+      assert d1_fn is not None
+      grad_vals = np.asarray(d1_fn(grad_xs))
+      self.assertEqual(grad_vals[0], dtype(-np.inf))
+      if abs(n) >= 1 and dtype in (np.float32, np.float64):
+        self.assertEqual(grad_vals[1], dtype(-np.inf))
+
+  def test_kn_non_integer_n(self):
+    """Tests that kn(n, x) rejects non-integer or traced order n."""
+    xs = jnp.arange(1.0, 5.0)
+    with self.assertRaisesRegex(
+        TypeError, "'float' object cannot be interpreted as an integer"
+    ):
+      lsp_special.kn(0.5, xs)
+    with self.assertRaisesRegex(
+        jax.errors.ConcretizationTypeError,
+        "The 'n' argument of jax.scipy.special.kn must be a static integer.",
+    ):
+      jax.jit(lsp_special.kn)(1, xs)
+
+  @jtu.sample_product(
+      dtype=[np.float32, np.float64, np.complex64, np.complex128]
+  )
+  def test_kn_high_order_and_large_argument(self, dtype):
+    """Tests kn(n, z) for large n where exp(|Re(z)|) overflows."""
+    if dtype not in (*jtu.dtypes.floating, *jtu.dtypes.complex):
+      self.skipTest(f"Dtype {dtype} not enabled")
+    if (
+        dtype in (np.float64, np.complex128)
+        and jtu.test_device_matches(["tpu"])
+    ):
+      self.skipTest("64-bit on TPU is ef57")
+    if dtype == np.float32:
+      cases = [
+          (30, [86.0, 12.0]),
+          (50, [20.0, 90.0]),
+          (150, [150.0, 200.0]),
+          (300, [154.0, 400.0]),
+          (500, [290.0]),
+          (2000, [1334.0]),
+      ]
+      rtol, atol = 5e-5, 1e-15
+    elif dtype == np.float64:
+      cases = [
+          (100, [705.0, 50.0]),
+          (180, [19.5, 180.0]),
+          (500, [499.9, 750.0]),
+          (2000, [978.0, 1500.0, 1700.0]),
+      ]
+      rtol, atol = 1e-12, 1e-25
+    elif dtype == np.complex64:
+      cases = [
+          (30, [86.0 + 0.0j, 86.0 + 5.0j]),
+          (50, [90.0 + 0.0j, -90.0 + 0.0j, 90.0 + 5.0j, -90.0 - 5.0j]),
+          (150, [150.0 + 0.0j, -90.0 + 0.0j, 150.0 + 10.0j]),
+      ]
+      rtol, atol = 5e-5, 1e-15
+    else:
+      cases = [
+          (100, [705.0 + 0.0j, -705.0 + 0.0j, 705.0 + 5.0j]),
+          (180, [19.5 + 0.0j, 19.5 + 3.0j]),
+          (500, [499.9 + 0.0j, 750.0 + 0.0j, -750.0 + 0.0j, 750.0 + 20.0j]),
+          (700, [750.0 + 0.0j, 750.0 + 20.0j]),
+      ]
+      rtol, atol = 1e-12, 1e-25
+    is_complex = dtypes.issubdtype(dtype, np.complexfloating)
+    ref_dtype = np.complex128 if is_complex else np.float64
+    for n, pts in cases:
+      zs = np.array(pts, dtype=dtype)
+      z_ref = zs.astype(ref_dtype)
+      kv_ref = osp_special.kv(n, z_ref)
+      if is_complex:
+        # Above |Re(z)| ~ 700 in the left half-plane, scipy.special.kv (Amos
+        # cbesk_wrap) returns NaN when K_n(-z) underflows Amos's threshold even
+        # though K_n(z) = -/+i * pi * I_n(-z) is finite.
+        iv_asym_ref = (
+            np.where(np.signbit(z_ref.imag), 1j, -1j)
+            * np.pi
+            * osp_special.iv(n, -z_ref)
+        )
+        kv_ref = np.where(np.isnan(kv_ref), iv_asym_ref, kv_ref)
+      expected = kv_ref.astype(dtype)
+      actual = lsp_special.kn(n, zs)
+      self.assertAllClose(actual, expected, rtol=rtol, atol=atol)
+
+  @jtu.sample_product(dtype=jtu.dtypes.integer)
+  def test_kn_integer_input(self, dtype):
+    """Tests that integer inputs to kn(n, x) are promoted to floating-point."""
+    int_xs = jnp.array([0, 1, 3], dtype=dtype)
+    float_dt = dtypes.to_inexact_dtype(int_xs.dtype)
+    tol = 5e-5 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self.assertAllClose(
+        lsp_special.kn(1, int_xs),
+        osp_special.kv(1, np.array([0.0, 1.0, 3.0])).astype(float_dt),
+        rtol=tol,
+        atol=tol,
+    )
+
+  @jtu.sample_product(dtype=jtu.dtypes.all_floating)
+  def testFresnelHigherOrderDerivatives(self, dtype):
+    # S'(x) = sin(pi * x^2 / 2), C'(x) = cos(pi * x^2 / 2)
+    # S''(x) = pi * x * cos(pi * x^2 / 2), C''(x) = -pi * x * sin(pi * x^2 / 2)
+    # S'''(x) = pi * cos(pi * x^2 / 2) - pi^2 * x^2 * sin(pi * x^2 / 2)
+    # C'''(x) = -pi * sin(pi * x^2 / 2) - pi^2 * x^2 * cos(pi * x^2 / 2)
+    # Include x = 0 (where |x| previously zeroed S'''(0)), odd integers
+    # x = +-1, +-3 (where r = (x^2 / 2) % 2 == 0.5 previously zeroed C'' and
+    # C'''), and the Cephes branch threshold x^2 = 2.5625 (x = +-1.60078106).
+    pts = np.array(
+        [-3.0, -2.0, -1.60078106, -np.sqrt(2.0), -1.0, -0.5, 0.0, 0.5, 1.0,
+         np.sqrt(2.0), 1.60078106, np.sqrt(3.0), 2.0, 3.0],
+        dtype=dtype,
+    )
+    s_fn = lambda x: lsp_special.fresnel(x)[0]
+    c_fn = lambda x: lsp_special.fresnel(x)[1]
+    d1_s = jax.vmap(jax.grad(s_fn))(pts)
+    d2_s = jax.vmap(jax.grad(jax.grad(s_fn)))(pts)
+    d3_s = jax.vmap(jax.grad(jax.grad(jax.grad(s_fn))))(pts)
+    d1_c = jax.vmap(jax.grad(c_fn))(pts)
+    d2_c = jax.vmap(jax.grad(jax.grad(c_fn)))(pts)
+    d3_c = jax.vmap(jax.grad(jax.grad(jax.grad(c_fn))))(pts)
+
+    x64 = pts.astype(np.float64)
+    u = np.sin(0.5 * np.pi * x64 * x64)
+    v = np.cos(0.5 * np.pi * x64 * x64)
+    rtol = 1e-12 if dtype == np.float64 else (5e-2 if dtype in (np.float16, jnp.bfloat16) else 2e-3)
+    atol = 1e-12 if dtype == np.float64 else (1e-1 if dtype in (np.float16, jnp.bfloat16) else 5e-3)
+    self.assertAllClose(d1_s, u.astype(dtype), rtol=rtol, atol=atol)
+    self.assertAllClose(d1_c, v.astype(dtype), rtol=rtol, atol=atol)
+    self.assertAllClose(d2_s, (np.pi * x64 * v).astype(dtype), rtol=rtol, atol=atol)
+    self.assertAllClose(d2_c, (-np.pi * x64 * u).astype(dtype), rtol=rtol, atol=atol)
+    self.assertAllClose(
+        d3_s, (np.pi * v - (np.pi * x64) ** 2 * u).astype(dtype), rtol=rtol, atol=atol
+    )
+    self.assertAllClose(
+        d3_c, (-np.pi * u - (np.pi * x64) ** 2 * v).astype(dtype), rtol=rtol, atol=atol
+    )
+
+  @jtu.sample_product(
+      dtype=float_dtypes,
+  )
+  def testBetalnCornerCases(self, dtype):
+    # Regression tests for https://github.com/jax-ml/jax/issues/39106 and
+    # https://github.com/jax-ml/jax/issues/38243 (infinities, zeros, negative
+    # integers, negative non-integers, and extreme positive/negative arguments).
+    vals = np.array(
+        [
+            -np.inf,
+            -10.5,
+            -10.0,
+            -2.5,
+            -2.0,
+            -1.5,
+            -1.0,
+            -0.5,
+            -0.0,
+            0.0,
+            0.5,
+            1.0,
+            1.5,
+            2.0,
+            2.5,
+            5.0,
+            10.0,
+            10.5,
+            np.inf,
+        ],
+        dtype=dtype,
+    )
+    rtol = 1e-5 if dtype == np.float32 else 1e-12
+    atol = 1e-5 if dtype == np.float32 else 1e-12
+    grid_actual = lsp_special.betaln(vals[:, None], vals[None, :])
+    grid_expected = osp_special.betaln(
+        vals[:, None].astype(np.float64), vals[None, :].astype(np.float64)
+    ).astype(dtype)
+    self.assertAllClose(grid_actual, grid_expected, rtol=rtol, atol=atol)
+
+    nan_val = np.array(np.nan, dtype=dtype)
+    self.assertTrue(np.all(np.isnan(lsp_special.betaln(nan_val, vals))))
+    self.assertTrue(np.all(np.isnan(lsp_special.betaln(vals, nan_val))))
+    self.assertTrue(np.isnan(lsp_special.betaln(nan_val, nan_val)))
+
+    tiny = float(np.finfo(dtype).tiny)
+    pairs = [
+        # Negative integers where poles cancel vs do not cancel
+        (-10.0, 5.0),
+        (5.0, -10.0),
+        (-10.0, 10.0),
+        (-10.0, 11.0),
+        (-15.0, 10.0),
+        # Non-integer negative inputs whose sum is a non-positive integer
+        (10.5, -12.5),
+        (-1.25, -0.75),
+        # Negative non-integer inputs across reflection regimes
+        (-2.5, 1.25),
+        (1.25, -2.5),
+        (-2.5, 0.75),
+        (-10.5, 20.0),
+        (-100.25, 10.0),
+        (-100.25, 1e-30),
+        (1e-30, -100.25),
+        (-1e-30, 100.25),
+        (-2.5, -1.25),
+        (-1.25, -2.5),
+        (-10.5, -20.25),
+        (-0.5, -0.25),
+        # Extreme small and large positive inputs
+        (tiny, tiny),
+        (tiny, 1.0),
+        (tiny, 100.0),
+        (1e-30, 1e-30),
+        (1e-30, 0.25),
+        (1e-30, 1.0),
+        (1e-30, 100.0),
+        (1e-20, 1e20),
+        (1.0, 1e10),
+        (1e10, 1.0),
+        (1.0, 1e30),
+        (10.0, 1e30),
+        (1e30, 1e30),
+    ]
+    # Smallest positive and negative normal floats across all q and reflection regimes.
+    for signed_tiny in [tiny, -tiny]:
+      for other in [0.4, 0.6, 1.0, 10.0, -100.25, 100.25]:
+        pairs.append((signed_tiny, other))
+        pairs.append((other, signed_tiny))
+    min_sub = np.nextafter(dtype(0.0), dtype(1.0))
+    for sub_pair in [
+        (min_sub, -2.0 * float(min_sub)),
+        (-2.0 * float(min_sub), min_sub),
+        (min_sub, min_sub),
+        (min_sub, 1.0),
+    ]:
+      res_sub = np.asarray(
+          lsp_special.betaln(dtype(sub_pair[0]), dtype(sub_pair[1]))
+      )
+      self.assertFalse(np.isnan(res_sub))
+    if dtype == np.float64:
+      pairs.extend([
+          (-100.3, 1e-200),
+          (1e-200, -100.3),
+          (-1e-200, 100.3),
+          (1e-200, 1e-200),
+          (1e-200, 1.0),
+          (1e-200, 100.0),
+          (1.0, 1e300),
+          (1e300, 1.0),
+          (1e300, 1e300),
+      ])
+    a = np.array([p[0] for p in pairs], dtype=dtype)
+    b = np.array([p[1] for p in pairs], dtype=dtype)
+    expected = osp_special.betaln(a.astype(np.float64), b.astype(np.float64)).astype(dtype)
+    actual = lsp_special.betaln(a, b)
+    self.assertAllClose(actual, expected, rtol=rtol, atol=atol)
+
+    # Non-integer inputs whose floating-point sum a + b rounds to a non-positive
+    # integer must remain finite rather than falsely triggering a -inf pole.
+    b_near_half = np.nextafter(dtype(0.5), dtype(1.0))
+    eps_half = float(b_near_half) - 0.5
+    expected_near_pole = dtype(
+        osp_special.betaln(11.0, 0.5) + math.log(math.pi * eps_half)
+    )
+    self.assertAllClose(
+        lsp_special.betaln(dtype(-10.5), b_near_half),
+        expected_near_pole,
+        rtol=rtol,
+        atol=atol,
+    )
+    if dtype == np.float32:
+      a_big_neg = np.float32(-5000000.5)
+      b_big_neg = np.float32(-4000000.25)
+      self.assertAllClose(
+          lsp_special.betaln(a_big_neg, b_big_neg),
+          np.float32(osp_special.betaln(float(a_big_neg), float(b_big_neg))),
+          rtol=rtol,
+          atol=atol,
+      )
+
+    # Narrow float dtypes (float16, bfloat16) and complex error handling.
+    if dtype == np.float32:
+      for narrow_dtype in [np.float16, dtypes.bfloat16]:
+        narrow_vals = np.array(
+            [-np.inf, -2.5, -2.0, -0.5, 0.0, 0.5, 1.0, 2.5, 10.0, np.inf],
+            dtype=narrow_dtype,
+        )
+        narrow_actual = lsp_special.betaln(narrow_vals[:, None], narrow_vals[None, :])
+        narrow_expected = osp_special.betaln(
+            narrow_vals[:, None].astype(np.float64),
+            narrow_vals[None, :].astype(np.float64),
+        ).astype(narrow_dtype)
+        self.assertAllClose(narrow_actual, narrow_expected, rtol=1e-2, atol=1e-2)
+      with self.assertRaisesRegex(ValueError, "complex"):
+        lsp_special.betaln(np.complex64(1.0 + 1.0j), np.complex64(2.0))
+
+  @jtu.sample_product(
+      dtype=float_dtypes,
+  )
+  def testBetalnGrads(self, dtype):
+    a = np.array(
+        [0.2, 0.2, 0.5, 2.5, 2.5, 12.0, 15.0, 10.0, -2.25, -2.25, -2.25, -2.25],
+        dtype=dtype,
+    )
+    b = np.array(
+        [0.2, 0.3, 2.5, 2.5, 12.0, 15.0, 15.0, 200.0, 1.5, 5.0, -1.5, -2.25],
+        dtype=dtype,
+    )
+    tol = 1e-2 if dtype == np.float32 else 1e-5
+    jtu.check_grads(
+        lsp_special.betaln,
+        (a, b),
+        order=1,
+        modes=["fwd", "rev"],
+        atol=tol,
+        rtol=tol,
+    )
+
+    # Gradients for large finite inputs exceeding sqrt(MAX_FLOAT) and near MAX_FLOAT,
+    # where naive x / y differentiation overflows the denominator's square, and
+    # at tiny normal and subnormal inputs where unselected branches must not
+    # leak NaNs. Pad to a.shape to reuse the compiled VJP from check_grads.
+    min_sub = np.nextafter(dtype(0.0), dtype(1.0))
+    tiny_norm = dtype(1e-30) if dtype == np.float32 else dtype(1e-200)
+    a_grad = np.resize(
+        np.array(
+            [1e30, 2e38, tiny_norm, min_sub, min_sub]
+            if dtype == np.float32
+            else [1e200, 1e308, tiny_norm, min_sub, min_sub],
+            dtype=dtype,
+        ),
+        a.shape,
+    )
+    b_grad = np.resize(
+        np.array(
+            [1e30, 2e38, 1.0, 1.0, 10.0]
+            if dtype == np.float32
+            else [1e200, 1e308, 1.0, 1.0, 10.0],
+            dtype=dtype,
+        ),
+        b.shape,
+    )
+    ga, gb = jax.grad(
+        lambda x, y: lsp_special.betaln(x, y).sum(), argnums=(0, 1)
+    )(a_grad, b_grad)
+    expected_grad = np.full((2,), -math.log(2.0), dtype=dtype)
+    self.assertAllClose(ga[:2], expected_grad, rtol=1e-5, atol=1e-5)
+    self.assertAllClose(gb[:2], expected_grad, rtol=1e-5, atol=1e-5)
+    self.assertFalse(np.any(np.isnan(ga[2:5])))
+    self.assertFalse(np.any(np.isnan(gb[2:5])))
+
+  @jtu.sample_product(
+      dtype=float_dtypes,
+  )
+  def testBetalnSecondOrderGrads(self, dtype):
+    a = np.array(
+        [0.2, 0.2, 0.5, 2.5, 2.5, 12.0, 15.0, 10.0, -2.25, -2.25, -2.25, -2.25],
+        dtype=dtype,
+    )
+    b = np.array(
+        [0.2, 0.3, 2.5, 2.5, 12.0, 15.0, 15.0, 200.0, 1.5, 5.0, -1.5, -2.25],
+        dtype=dtype,
+    )
+    tol = 1e-2 if dtype == np.float32 else 1e-5
+    jtu.check_grads(
+        lsp_special.betaln,
+        (a, b),
+        order=2,
+        modes=["fwd"],
+        atol=tol,
+        rtol=tol,
+    )
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -410,8 +410,7 @@ def to_access(transforms, shape: Sequence[int]) -> Access:
 
   for transform in transforms:
     if isinstance(transform, state_types.TransposeTransform):
-      permutation = tuple(int(p) for p in transform.permutation)
-      visible = [visible[p] for p in permutation]
+      visible = [visible[p] for p in transform.permutation]
       continue
     dropped = []
     for position, index in enumerate(transform.indices):
@@ -449,8 +448,7 @@ def is_range_out_of_bounds_for_shape(
   """Returns whether `rnge` is at least partially out of bounds for `shape`."""
   for d, r in zip(shape, rnge, strict=True):
     if isinstance(r, int):
-      assert 0 <= r
-      if r >= d:
+      if r < 0 or r >= d:
         return True
     elif isinstance(r, slice):
       assert r.start is not None and 0 <= r.start
@@ -478,7 +476,7 @@ def clip_range_to_shape(
   result: list[slice | int] = []
   for r, l in zip(rnge, shape, strict=True):
     if isinstance(r, int):
-      if r >= l:
+      if r < 0 or r >= l:
         return None
       result.append(r)
     elif isinstance(r, slice):

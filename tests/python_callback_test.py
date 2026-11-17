@@ -757,6 +757,29 @@ class PythonCallbackTest(jtu.JaxTestCase):
     result = f(x)
     np.testing.assert_array_equal(x, result)
 
+  @with_pure_and_io_callbacks
+  def test_callback_preserves_subnormals(self, *, callback):
+    if jax._src.lib.xla_version < 85:
+      self.skipTest("Requires xla_version >= 85")
+
+    def cb(x):
+      # Test that multiplying to produce a subnormal float32 doesn't flush to zero
+      a = np.array([1e-38], dtype=np.float32)
+      b = np.array([0.1], dtype=np.float32)
+      self.assertNotEqual((a * b)[0], 0.0)
+
+      # Test that operating on an existing subnormal float32 preserves it
+      sub = np.nextafter(np.float32(0), np.float32(1))
+      c = np.array([sub], dtype=np.float32)
+      self.assertNotEqual((c * np.float32(1.0))[0], 0.0)
+      return x
+
+    f = jax.jit(
+        lambda x: callback(cb, jax.ShapeDtypeStruct(x.shape, x.dtype), x)
+    )
+    f(np.float32(1.0))
+    jax.effects_barrier()
+
 
 class PureCallbackTest(jtu.JaxTestCase):
 
@@ -1131,25 +1154,22 @@ class PureCallbackTest(jtu.JaxTestCase):
         out, np.arange(jax.local_device_count()) * 2
     )
     stablehlo_ir = f_jit.lower(inp).as_text()
-    if config.use_shardy_partitioner.value:
-      mesh_name_prefix = (
-          "single_device"
-          if f"@single_device_{callback_device_index}" in stablehlo_ir
-          else "maximal_mesh"
-      )
-      self.assertIn(
-          "sdy.sharding ="
-          f" #sdy.sharding_per_value<[<@{mesh_name_prefix}_{callback_device_index},"
-          " []>]>",
-          stablehlo_ir,
-      )
-      self.assertIn(
-          f"sdy.mesh @{mesh_name_prefix}_{callback_device_index} = <[],"
-          f" device_ids=[{callback_device_index}]>",
-          stablehlo_ir,
-      )
-    else:
-      self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
+    mesh_name_prefix = (
+        "single_device"
+        if f"@single_device_{callback_device_index}" in stablehlo_ir
+        else "maximal_mesh"
+    )
+    self.assertIn(
+        "sdy.sharding ="
+        f" #sdy.sharding_per_value<[<@{mesh_name_prefix}_{callback_device_index},"
+        " []>]>",
+        stablehlo_ir,
+    )
+    self.assertIn(
+        f"sdy.mesh @{mesh_name_prefix}_{callback_device_index} = <[],"
+        f" device_ids=[{callback_device_index}]>",
+        stablehlo_ir,
+    )
 
   def test_can_shard_pure_callback_manually(self):
 
@@ -1435,25 +1455,22 @@ class IOCallbackTest(jtu.JaxTestCase):
 
     callback_device_index = in_spec._device_assignment.index(callback_device)
     stablehlo_ir = f.lower(x).as_text()
-    if config.use_shardy_partitioner.value:
-      mesh_name_prefix = (
-          "single_device"
-          if f"@single_device_{callback_device_index}" in stablehlo_ir
-          else "maximal_mesh"
-      )
-      self.assertIn(
-          "sdy.sharding ="
-          f" #sdy.sharding_per_value<[<@{mesh_name_prefix}_{callback_device_index},"
-          " []>]>",
-          stablehlo_ir,
-      )
-      self.assertIn(
-          f"sdy.mesh @{mesh_name_prefix}_{callback_device_index} = <[],"
-          f" device_ids=[{callback_device_index}]>",
-          stablehlo_ir,
-      )
-    else:
-      self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
+    mesh_name_prefix = (
+        "single_device"
+        if f"@single_device_{callback_device_index}" in stablehlo_ir
+        else "maximal_mesh"
+    )
+    self.assertIn(
+        "sdy.sharding ="
+        f" #sdy.sharding_per_value<[<@{mesh_name_prefix}_{callback_device_index},"
+        " []>]>",
+        stablehlo_ir,
+    )
+    self.assertIn(
+        f"sdy.mesh @{mesh_name_prefix}_{callback_device_index} = <[],"
+        f" device_ids=[{callback_device_index}]>",
+        stablehlo_ir,
+    )
 
   def test_ordered_io_callback_maximal_token(self):
     devices = jax.devices()

@@ -40,13 +40,13 @@ from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.util import unzip2, split_list
 from jax import checkpoint_policies
+from jax import export
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 from jax._src import dispatch
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lib import ifrt_version
 
 jax.config.parse_flags_with_absl()
 
@@ -1069,6 +1069,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.switch(1, [lambda _: dict(a=jnp.array([1.], jnp.float32)),
                      lambda _: dict(a=jnp.float32(1.))],
                  1.)
+
+  def testCondTypeErrorsAuxDataFromLeaves(self):
+    # Aux data computed from the leaves makes the branches' treedefs differ even
+    # though their structures are the same; output types must still be checked.
+    @jax.tree_util.register_pytree_node_class
+    class Box:
+      def __init__(self, x):
+        self.x = x
+      def tree_flatten(self):
+        return (self.x,), getattr(self.x, 'shape', None)
+      @classmethod
+      def tree_unflatten(cls, aux, children):
+        del aux
+        return cls(*children)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"(?s)cond branches must have equal output types but they differ.*"
+        r"so the shapes do not match"):
+      lax.cond(True, lambda _: Box(jnp.zeros(2)), lambda _: Box(jnp.zeros(3)),
+               1.)
 
   def testCondOneBranchConstant(self):
     def fun(x):
@@ -2945,6 +2966,23 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       self.assertNotIn("stablehlo.sine", stablehlo)
       self.assertIn("stablehlo.cosine", stablehlo)
 
+  def test_platform_dependent_lowers_to_its_branch_without_a_conditional(self):
+    # A lowering whose platforms keep one branch lowers that branch alone: no
+    # conditional computes its index at run time, in the function, its
+    # gradient (AD's cotangent conditional) or its batching, where XLA keeps a
+    # conditional around a branch that holds collectives.
+    def f(x):
+      return lax.platform_dependent(x, cpu=jnp.sin, default=jnp.cos)
+
+    x = np.arange(3, dtype=np.float32)
+    for g, arg in ((f, x), (jax.grad(lambda x: f(x).sum()), x),
+                   (jax.vmap(f), x), (jax.grad(lambda y: f(y)), 1.)):
+      stablehlo = jax.jit(g).lower(arg).as_text()
+      self.assertNotIn("stablehlo.case", stablehlo)
+    self.assertAllClose(
+      jax.grad(lambda x: f(x).sum())(x),
+      np.cos(x) if jtu.device_under_test() == "cpu" else -np.sin(x))
+
   def test_platform_dependent_with_non_existent_custom_call(self):
     if not jtu.test_device_matches(["cpu"]):
       self.skipTest("Only for CPU")
@@ -3001,6 +3039,68 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                         lax.scan(lambda carry, x: (carry, f(x)),
                                  0., np.arange(8.)))
     self.assertAllClose(np.sin(np.arange(8.)), jax.vmap(f)(np.arange(8.)))
+
+  def test_platform_dependent_multi_platform_export_nested(self):
+    x = np.float32(5.0)
+    inner_exp = export.export(
+        jax.jit(
+            lambda y: lax.platform_dependent(
+                y,
+                cuda=lambda y: y * 100.0,
+                cpu=lambda y: y * 10.0,
+                default=lambda y: y * 1000.0,
+            )
+        ),
+        platforms=("cuda", "cpu", "rocm", "oneapi"),
+    )(x)
+
+    def f(x):
+      return lax.platform_dependent(
+          x,
+          tpu=lambda x: prim_with_lowering_error.bind(x, only_on="tpu"),
+          default=lambda x: (
+              lax.platform_dependent(
+                  x,
+                  cpu=lambda x: (
+                      prim_with_lowering_error.bind(x, only_on="cpu") + 1.0
+                  ),
+                  default=lambda x: x + 2.0,
+              )
+              + inner_exp.call(x)
+          ),
+      )
+
+    exp = export.export(
+        jax.jit(f), platforms=("tpu", "cpu", "cuda", "rocm", "oneapi")
+    )(x)
+    dut = jtu.device_under_test()
+    if dut == "tpu":
+      expected = np.float32(np.sin(x))
+    elif dut == "cpu":
+      expected = np.float32((np.sin(x) + 1.0) + x * 10.0)
+    elif jtu.is_device_cuda():
+      expected = np.float32((x + 2.0) + x * 100.0)
+    else:
+      expected = np.float32((x + 2.0) + x * 1000.0)
+    self.assertAllClose(exp.call(x), expected)
+
+  def test_platform_dependent_multi_platform_export_shared_jit(self):
+    @jax.jit
+    def g(x):
+      return lax.platform_dependent(
+          x, tpu=lambda x: x * 2.0, default=lambda x: x * 3.0
+      )
+
+    def f(x):
+      y = lax.platform_dependent(x, tpu=g, default=lambda x: x)
+      return g(y)
+
+    x = np.float32(5.0)
+    exp = export.export(
+        jax.jit(f), platforms=("cpu", "tpu", "cuda", "rocm", "oneapi")
+    )(x)
+    expected = np.float32(20.0 if jtu.device_under_test() == "tpu" else 15.0)
+    self.assertAllClose(exp.call(x), expected)
 
   def test_platform_dependent_multiple_identical_branches(self):
     x = np.arange(3, dtype=np.float32)
@@ -3509,9 +3609,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_scan_counter_where(self):
     # https://github.com/jax-ml/jax/issues/41027
-    if ifrt_version < 75:
-      self.skipTest('Requires ifrt_version >= 75')
-
     @jax.jit
     def gt_zero(x):
       def body(carry, _):

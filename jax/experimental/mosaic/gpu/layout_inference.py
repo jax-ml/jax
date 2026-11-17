@@ -616,6 +616,10 @@ def find_assignments_for(
 @dataclasses.dataclass()
 class DerivationContext:
   """Holds context information used for deriving an constraint system."""
+  # The architecture to infer layouts for. Allows derivation rules to make
+  # arch-dependent decisions.
+  arch: utils.Arch
+
   # A map of `ValueSite` to the variable that it is associated with.
   variable_for_value_site: dict[ValueSite, cs.Variable] = dataclasses.field(
       default_factory=dict, init=False
@@ -1077,10 +1081,11 @@ def _while_constraint_system(
   return cs.ConstraintSystem(), value_sites_for_variable
 
 
+@_add_constraint_system_derivation_rule(scf.IfOp)
 @_add_constraint_system_derivation_rule(scf.IndexSwitchOp)
-def _index_switch_constraint_system(
+def _branching_op_constraint_system(
     ctx: DerivationContext,
-    op: scf.IndexSwitchOp,
+    op: scf.IfOp | scf.IndexSwitchOp,
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
   value_sites_for_variable: ValueSitesForVariable = {
@@ -1704,17 +1709,42 @@ def _tcgen05_mma_constraint_system(
     scale_index = list(op.operands).index(scale_operand)
     scale = ValueSite(op, VariableType.OPERAND, scale_index)
     scale_var = ctx.producer_ref(scale)
-    if op.collective and scale_operand == op.b_scale and M == 64:
-      layout = tcgen05.b_scales_m64_collective_layout()
-    else:
-      layout = tcgen05.scales_layout()
-    layout = cs.TMEMLayout(layout)
-    assignments[scale_var] = layout
-    if not cs.is_valid_assignment(scale_var, layout):
-      raise ValueError(
-          f"Cannot assign {layout} to {scale_operand=} with"
-          f" shape {scale.shape}."
+    arch = ctx.arch
+    is_sm107f = arch.major == 10 and arch.minor >= 7
+    if scale_operand == op.a_scale and is_sm107f and not (op.collective and M == 64):
+      # On sm_107f, A scales support both the 32-lane `scales_layout()` and the
+      # 128-lane `scales_128_lane_layout()`. Both lower correctly, so we let the
+      # rest of the system (e.g. a `tmem_layout_cast`) decide. On other
+      # architectures, only `scales_layout()` is supported.
+      # The order of the candidates matters: `OneOf` candidates are tried in
+      # order. `scales_layout()` replicates scale factors across all four
+      # 32-lane sub-partitions (consuming 4x more TMEM columns than
+      # `scales_128_lane_layout()`), so we prefer the 128-lane layout.
+      candidate_layouts = (
+          cs.TMEMLayout(tcgen05.scales_128_lane_layout()),
+          cs.TMEMLayout(tcgen05.scales_layout()),
       )
+      valid_layouts = tuple(
+          l for l in candidate_layouts if cs.is_valid_assignment(scale_var, l)
+      )
+      if not valid_layouts:
+        raise ValueError(
+            f"Cannot assign any of {candidate_layouts} to {scale_operand=}"
+            f" with shape {scale.shape}."
+        )
+      constraints.append(cs.OneOf(scale_var, valid_layouts))
+    else:
+      if op.collective and scale_operand == op.b_scale and M == 64:
+        layout = tcgen05.b_scales_m64_collective_layout()
+      else:
+        layout = tcgen05.scales_layout()
+      layout = cs.TMEMLayout(layout)
+      assignments[scale_var] = layout
+      if not cs.is_valid_assignment(scale_var, layout):
+        raise ValueError(
+            f"Cannot assign {layout} to {scale_operand=} with"
+            f" shape {scale.shape}."
+        )
     operands_for_variable[scale_var] = [scale]
 
   if scaled:
@@ -2254,6 +2284,48 @@ def _async_load_store_constraint_system(
   value_sites_for_variable.update(value_sites)
   constraints.extend(extra_constraints)
   return cs.ConstraintSystem(constraints=constraints), value_sites_for_variable
+
+
+# TODO(slebedev): Remove ``hasattr`` once the minimum jaxlib version is >0.12.0.
+if hasattr(mgpu, "AsyncLoadIm2colOp"):
+  @_add_constraint_system_derivation_rule(mgpu.AsyncLoadIm2colOp)
+  def _async_load_im2col_constraint_system(
+      ctx: DerivationContext,
+      op: mgpu.AsyncLoadIm2colOp,
+  ) -> ConstraintSystemDerivationRuleResult:
+    dst_ty = ir.MemRefType(op.destination.type)
+    dst_strides, _ = dst_ty.get_strides_and_offset()
+    if any(
+        s != cs_stride and d != 1
+        for s, cs_stride, d in zip(
+            dst_strides,
+            utils.get_contiguous_strides(dst_ty.shape),
+            dst_ty.shape,
+            strict=True,
+        )
+    ):
+      raise ValueError(
+          "async_load_im2col requires the destination SMEM memref to be"
+          f" contiguous, got strides {dst_strides} for shape {dst_ty.shape}."
+      )
+    operand = ValueSite(op, VariableType.OPERAND, 1)
+    var = ctx.producer_ref(operand)
+    num_channels = dst_ty.shape[-1]
+    row_bytes = num_channels * utils.bitwidth(dst_ty.element_type) // 8
+    swizzle = (
+        cast(cs.Swizzle, row_bytes) if row_bytes in (32, 64, 128) else None
+    )
+    tiling: lc.TileTransform | None = None
+    if dst_ty.shape[-2] % 8 == 0:
+      tiling = lc.TileTransform((8, num_channels))
+    # The destination must have a single tile along the channel dimension.
+    # im2col TMA writes a row-major box, so the tiling must not reorder rows,
+    # and a swizzle must span exactly one row.
+    allowed = tuple(
+        cs.SMEMTransforms(t, s) for t in (tiling, None) for s in (swizzle, None)
+    )
+    constraints: list[cs.Constraint] = [cs.OneOf(expr=var, allowed=allowed)]
+    return cs.ConstraintSystem(constraints=constraints), {var: [operand]}
 
 
 @_add_constraint_system_derivation_rule(mgpu.AsyncPrefetchOp)
@@ -2844,7 +2916,7 @@ def infer_layout(
   """
   global_constraint_system: cs.ConstraintSystem | cs.Unsatisfiable
   global_constraint_system = cs.ConstraintSystem()
-  ctx = DerivationContext()
+  ctx = DerivationContext(arch=utils.Arch(*arch))
 
   def gather_constraints(op: Any):
     # Terminator ops are handled directly by the op whose region they belong to.
@@ -2927,7 +2999,7 @@ def infer_layout(
       global_constraint_system
   )
 
-  dump_options = mgpu.get_or_set_dump_options(module)  # pyrefly: ignore[missing-attribute]
+  dump_options = mgpu.get_or_set_dump_options(module)
   if dump_options.constraint_system:
     utils.dump_to_file_or_stdout(
         str(global_constraint_system),

@@ -38,7 +38,8 @@ from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
-    SdyArray, SdyDim, UnspecifiedValue, flatten_spec, NamedSharding,
+    SdyArray, SdyDim, UnspecifiedValue, flatten_spec, flatten_spec_no_none,
+    NamedSharding,
     _check_unique_resources, UNSPECIFIED,
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, get_array_mapping,
     array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding)
@@ -56,8 +57,6 @@ Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
 XLADeviceAssignment = tuple[Device, ...]
-# TODO(yashkatariya): Remove this after 3 months of deprecation.
-XLACompatibleSharding = jsharding.Sharding
 
 
 def hashed_index(x) -> int:
@@ -189,6 +188,15 @@ SingleDeviceSharding.__module__ = 'jax.sharding'
 
 def make_single_device_sharding(device, *, memory_kind=None):
   return SingleDeviceSharding(device, memory_kind=memory_kind)
+
+
+def is_single_device_sharding(sharding: jsharding.Sharding) -> bool:
+  """
+  Only to replace explicit checks for SingleDeviceSharding to avoid
+  deprecation warnings. Will return False once make_single_device_sharding
+  returns NamedSharding.
+  """
+  return isinstance(sharding, SingleDeviceSharding)
 
 
 def _unpickle_gspmd_sharding(devices, op_sharding, memory_kind):

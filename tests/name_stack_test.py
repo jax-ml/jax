@@ -649,6 +649,34 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
     self.assertIn('scan_body/mul', hlo_text)
     self.assertIn('vmap(transpose(jvp(foo)))/while/body', hlo_text)
 
+  def test_vjp_of_vmap_of_custom_vjp_does_not_double_vmap_name_stack(self):
+    @jax.custom_vjp
+    def inner(x):
+      with jax.named_scope('inner_kernel'):
+        return jnp.sin(x)
+
+    def inner_fwd(x):
+      return inner(x), x
+
+    def inner_bwd(res, g):
+      with jax.named_scope('inner_bwd'):
+        return (jnp.cos(res) * g,)
+
+    inner.defvjp(inner_fwd, inner_bwd)
+
+    def outer(x):
+      with jax.named_scope('outer_scope'):
+        return inner(x)
+
+    def run_vjp_fwd(xs):
+      y, vjp_fn = jax.vjp(jax.vmap(outer), xs)
+      return y, vjp_fn(jnp.ones_like(y))
+
+    hlo_text = _get_hlo(run_vjp_fwd)(jnp.arange(2.))
+    self.assertIn('jvp(vmap(outer_scope))/inner_kernel/sin', hlo_text)
+    self.assertNotIn('vmap(inner_kernel)', hlo_text)
+    self.assertNotIn('vmap(inner_bwd)', hlo_text)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

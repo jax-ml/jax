@@ -100,11 +100,17 @@ float8_e4m3fn = _make_scalar_type(dtypes.float8_e4m3fn)
 float8_e4m3fnuz = _make_scalar_type(dtypes.float8_e4m3fnuz)
 float8_e5m2 = _make_scalar_type(dtypes.float8_e5m2)
 float8_e5m2fnuz = _make_scalar_type(dtypes.float8_e5m2fnuz)
+if dtypes.float8_e5m3fnu is not None:
+  float8_e5m3fnu = _make_scalar_type(dtypes.float8_e5m3fnu)
 float8_e4m3b11fnuz = _make_scalar_type(dtypes.float8_e4m3b11fnuz)
 bfloat16 = _make_scalar_type(dtypes.bfloat16)
 float16 = _make_scalar_type(np.float16)
 float32 = single = _make_scalar_type(np.float32)
 float64 = double = _make_scalar_type(np.float64)
+if dtypes.bcomplex32 is not None:
+  bcomplex32 = _make_scalar_type(dtypes.bcomplex32)
+if dtypes.complex32 is not None:
+  complex32 = _make_scalar_type(dtypes.complex32)
 complex64 = csingle = _make_scalar_type(np.complex64)
 complex128 = cdouble = _make_scalar_type(np.complex128)
 

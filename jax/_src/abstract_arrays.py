@@ -28,12 +28,15 @@ AbstractToken = core.AbstractToken
 abstract_token = core.abstract_token
 canonicalize_shape = core.canonicalize_shape
 
-numpy_scalar_types: set[type] = {
-    dtypes.int4, np.int8, np.int16, np.int32, np.int64,
-    dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64,
-    np.complex64, np.complex128,
-    np.bool_, np.longlong, np.intc,
-} | {np.dtype(dt).type for dt in dtypes._float_types}
+numpy_scalar_types: set[type] = (
+    {
+        dtypes.int4, np.int8, np.int16, np.int32, np.int64,
+        dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64,
+        np.bool_, np.longlong, np.intc,
+    }
+    | {np.dtype(dt).type for dt in dtypes._float_types}
+    | {np.dtype(dt).type for dt in dtypes._complex_types}
+)
 
 if dtypes.int2 is not None:
   assert dtypes.uint2 is not None

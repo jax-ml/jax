@@ -800,7 +800,8 @@ def lu_solve(lu_and_piv: tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
   lu, pivots = lu_and_piv
   lu, b = promote_dtypes_inexact(jnp.asarray(lu), jnp.asarray(b))
   m, _ = lu.shape[-2:]
-  perm = lax_linalg.lu_pivots_to_permutation(pivots, m)
+  perm = lax_linalg.lu_pivots_to_permutation(
+      jnp.asarray(pivots, dtype=np.int32), m)
   if b.ndim == 1:
     signature = "(n,n),(n),(n)->(n)"
   elif lu.ndim == b.ndim + 1 and lu.shape[-1] == b.shape[-1]:
@@ -2071,7 +2072,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   eigenvectors = _compute_eigenvectors(alpha, beta, mid, key)
   return mid, eigenvectors.T
 
-@jit(static_argnames=('side', 'method'))
+@jit(static_argnames=('side', 'method', 'eps', 'max_iterations'))
 @config.default_matmul_precision("float32")
 def _polar_2d(a: Array, side: str, method: str, eps: float | None,
               max_iterations: int | None) -> tuple[Array, Array]:
@@ -2079,10 +2080,12 @@ def _polar_2d(a: Array, side: str, method: str, eps: float | None,
   if method == "qdwh":
     # TODO(phawkins): return info also if the user opts in?
     if m >= n and side == "right":
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps,
+                                         max_iterations=max_iterations)
     elif m < n and side == "left":
       a = a.T.conj()
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps,
+                                         max_iterations=max_iterations)
       posdef = posdef.T.conj()
       unitary = unitary.T.conj()
     else:
@@ -2102,7 +2105,7 @@ def _polar_2d(a: Array, side: str, method: str, eps: float | None,
   return unitary, posdef
 
 
-@jit(static_argnames=('side', 'method'))
+@jit(static_argnames=('side', 'method', 'eps', 'max_iterations'))
 def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float | None = None,
           max_iterations: int | None = None) -> tuple[Array, Array]:
   r"""Computes the polar decomposition.
@@ -2554,13 +2557,10 @@ def _toeplitz(c: Array, r: Array) -> Array:
   nrows, = r.shape
   if ncols == 0 or nrows == 0:
     return jnp.empty((ncols, nrows), dtype=jnp.promote_types(c.dtype, r.dtype))
-  nelems = ncols + nrows - 1
   elems = jnp.concatenate((c[::-1], r[1:]))
-  patches = lax.conv_general_dilated_patches(
-      elems.reshape((1, nelems, 1)),
-      (nrows,), (1,), 'VALID', dimension_numbers=('NTC', 'IOT', 'NTC'),
-      precision=lax.Precision.HIGHEST)[0]
-  return jnp.flip(patches, axis=0)
+  i = lax.broadcasted_iota(int, (ncols, 1), 0)
+  j = lax.broadcasted_iota(int, (1, nrows), 1)
+  return elems[ncols - 1 - i + j]
 
 def hankel(c: ArrayLike, r: ArrayLike | None = None) -> Array:
   r"""Construct a Hankel matrix.
@@ -2622,11 +2622,9 @@ def _hankel(c: Array, r: Array) -> Array:
   if ncols == 0 or nrows == 0:
     return jnp.empty((ncols, nrows), dtype=jnp.result_type(c, r))
   v = jnp.concatenate((c, r[1:]))
-  return lax.conv_general_dilated_patches(
-      v.reshape((1, ncols + nrows - 1, 1)),
-      (nrows,), (1,), 'VALID',
-      dimension_numbers=('NTC', 'IOT', 'NTC'),
-      precision=lax.Precision.HIGHEST)[0]
+  i = lax.broadcasted_iota(int, (ncols, 1), 0)
+  j = lax.broadcasted_iota(int, (1, nrows), 1)
+  return v[i + j]
 
 
 def circulant(c: ArrayLike) -> Array:

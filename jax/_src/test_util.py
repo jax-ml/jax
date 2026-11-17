@@ -225,10 +225,10 @@ def _capture_output(fp: TextIO) -> Generator[Callable[[], str]]:
       # Python also has its own buffers, make sure everything is flushed.
       fp.flush()
       os.fsync(fp.fileno())
-      f.seek(0)
-      captured = f.read()
       os.dup2(original_fd, fp.fileno())
       os.close(original_fd)
+      f.seek(0)
+      captured = f.read()
 
 
 capture_stdout = partial(_capture_output, sys.stdout)
@@ -434,6 +434,10 @@ def pjrt_c_api_version_at_least(major_version: int, minor_version: int) -> bool:
   return pjrt_c_api_versions >= (major_version, minor_version)
 
 def stablehlo_version_at_least(required_version: str) -> bool:
+  if (getattr(xla_bridge.get_backend(), "runtime_type", "") or "").startswith(
+      "proxy/"
+  ):
+    return False
   plugin_version = xla_bridge.backend_stablehlo_version()
   if plugin_version is None:
     return True
@@ -517,6 +521,12 @@ def is_cuda_compute_capability_equal(capability: str) -> bool:
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current == target
 
+def is_sm107f() -> bool:
+  return (
+      is_cuda_compute_capability_at_least("10.7")
+      and not is_cuda_compute_capability_at_least("11.0")
+  )
+
 def is_cuda_version_at_least(major: int, minor: int) -> bool:
   assert 0 <= major
   assert 0 <= minor < 100
@@ -554,6 +564,11 @@ class CudaArchSpecificTest:
     if not any(map(is_cuda_compute_capability_equal, ("10.0", "10.1", "11.0"))):
       # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-instructions-mma-ws
       self.skipTest("tcgen05 in int8 only works on GPU with capability sm100a/sm101a/sm110a")
+
+  def skip_unless_sm107f(self):
+    self.skip_unless_tcgen05()
+    if not is_sm107f():
+      self.skipTest("Only works on GPU with capability sm_107f.")
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
@@ -777,14 +792,19 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
     to rand but scaled, converted to the appropriate dtype, and post-processed.
   """
   if _dtypes.issubdtype(dtype, np.unsignedinteger):
-    r = lambda: np.asarray(scale * abs(rand(*_dims_of_shape(shape)))).astype(dtype)
+    r = lambda: np.asarray(scale * abs(rand(*_dims_of_shape(shape))), dtype=np.uint64).astype(dtype)
+  elif _dtypes.issubdtype(dtype, np.integer):
+    r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape)), dtype=np.int64).astype(dtype)
   else:
     r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape))).astype(dtype)
   if _dtypes.issubdtype(dtype, np.complexfloating):
     vals = r() + 1.0j * r()
   else:
     vals = r()
-  return _cast_to_shape(np.asarray(post(vals), dtype), shape, dtype)
+  vals = post(vals)
+  if _dtypes.issubdtype(dtype, np.integer) and _dtypes.issubdtype(np.asarray(vals).dtype, np.floating):
+    vals = np.asarray(vals, dtype=np.int64)
+  return _cast_to_shape(np.asarray(vals, dtype), shape, dtype)
 
 
 def rand_fullrange(rng, standardize_nans=False):
@@ -1589,6 +1609,8 @@ class _LazyDtypes:
       _dtypes.float8_e8m0fnu,
       _dtypes.float4_e2m1fn,
     ]
+    if _dtypes.float8_e5m3fnu is not None:
+      float_dtypes.append(_dtypes.float8_e5m3fnu)
     return self.supported(float_dtypes)
 
   @cached_property
@@ -1665,7 +1687,7 @@ def numpy_version():
 
 def parameterized_filterable(*,
     kwargs: Sequence[dict[str, Any]],
-    testcase_name: Callable[[dict[str, Any]], str] | None = None,
+    testcase_name: Callable[[dict[str, Any]], Any] | None = None,
     one_containing: str | None = None,
 ):
   """Decorator for named parameterized tests, with filtering support.

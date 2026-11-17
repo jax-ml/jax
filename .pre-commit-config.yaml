@@ -39,7 +39,7 @@ repos:
   - id: ruff
 
 - repo: https://github.com/facebook/pyrefly-pre-commit
-  rev: a77f80030f5102b796b8131f70959375ee0f4bea  # frozen: v1.3.2
+  rev: 442488886535c5e530391851a63d96c775477eda  # frozen: v1.4.0
   hooks:
     - id: pyrefly-check
       name: Pyrefly (type checking)
@@ -52,10 +52,10 @@ repos:
         - opt-einsum~=3.4.0
         - tensorstore
         - scipy-stubs
-        - --pre
-        - --extra-index-url
-        - https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/
-        - jaxlib
+        # TODO(slebedev): Unpin (and remove the hlo.fma pyrefly suppressions in
+        # jax/_src/lax/lax.py) once a nightly jaxlib with the Triton dialect is
+        # published.
+        - jaxlib==0.12.0.1
 
 - repo: https://github.com/mwouts/jupytext
   rev: 8ed836db64ad5d304f2315e6bfd9049c9142e190  # frozen: v1.16.4

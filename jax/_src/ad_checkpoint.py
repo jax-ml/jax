@@ -847,7 +847,8 @@ def _remat_lowering(
   ctx.set_tokens_out(tokens_out)
   return outs
 
-mlir.register_lowering(remat_p, _remat_lowering)
+mlir.register_lowering(
+    remat_p, _remat_lowering, shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _remat_is_high(*_, jaxpr, **__) -> bool:
@@ -855,13 +856,17 @@ def _remat_is_high(*_, jaxpr, **__) -> bool:
 remat_p.is_high = _remat_is_high
 
 
-def _remat_to_lojax(*hi_args, jaxpr, **kwds):
+def _remat_to_lojax(*hi_args, jaxpr, prevent_cse, **kwds):
   closed_lo_jaxpr = pe.lower_jaxpr2(jaxpr)
-  lo_args = [lo_val for aval, x in zip(jaxpr.in_avals, hi_args)
-             for lo_val in aval.lower_val(x)]
+  lo_args_lol = [aval.lower_val(x) for aval, x in zip(jaxpr.in_avals, hi_args)]
   lo_jaxpr = pe.convert_constvars_jaxpr(closed_lo_jaxpr)
-  lo_args = (*closed_lo_jaxpr.consts, *lo_args)
-  return remat_p.bind(*lo_args, jaxpr=lo_jaxpr, **kwds)
+  if isinstance(prevent_cse, tuple):
+    prevent_cse = (
+        (False,) * len(closed_lo_jaxpr.consts) +
+        tuple(p for p, xs in zip(prevent_cse, lo_args_lol) for _ in xs))
+  lo_args = (*closed_lo_jaxpr.consts, *(x for xs in lo_args_lol for x in xs))
+  lo_outs = remat_p.bind(*lo_args, jaxpr=lo_jaxpr, prevent_cse=prevent_cse, **kwds)
+  return pe.raise_lo_outs(jaxpr.out_avals, lo_outs)
 remat_p.to_lojax = _remat_to_lojax
 
 
@@ -923,7 +928,9 @@ def name_jvp(primals, tangents, *, name):
   return name_p.bind(x, name=name), xdot  # don't name the tangent value
 ad.primitive_jvps[name_p] = name_jvp
 
-mlir.register_lowering(name_p, lambda ctx, x, *, name: [x])
+mlir.register_lowering(
+    name_p, lambda ctx, x, *, name: [x],
+    shard_map_collective_rule=lambda *_, **__: None)
 
 def name_batcher(args, dims, *, name):
   (x,), (d,) = args, dims
@@ -1193,7 +1200,7 @@ class RematTraced(HiPrim):
       return False, False, None
     new_jaxpr, used_ins = pe.dce_jaxpr(self.jaxpr, used_outs_flat,
                                        live_inputs=live_ins_flat)
-    if all(used_ins) and all(used_outs_flat) and all(live_ins_flat):
+    if new_jaxpr is self.jaxpr and all(used_ins) and all(used_outs_flat):
       return True, True, self
     if isinstance(self.prevent_cse, bool):
       prevent_cse = self.prevent_cse

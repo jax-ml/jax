@@ -222,7 +222,7 @@ JAX_COMPOUND_OP_RECORDS = [
               inexact=True),
     op_record("hypot", 2, real_dtypes, all_shapes, jtu.rand_default, [],
               inexact=True),
-    op_record("kron", 2, number_dtypes, nonempty_shapes, jtu.rand_default, []),
+    op_record("kron", 2, all_dtypes, nonempty_shapes, jtu.rand_default, []),
     op_record("outer", 2, number_dtypes, all_shapes, jtu.rand_default, []),
     op_record("imag", 1, number_dtypes, all_shapes, jtu.rand_some_inf, []),
     op_record("iscomplex", 1, number_dtypes, all_shapes, jtu.rand_some_inf, []),
@@ -265,7 +265,8 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("remainder", 2, default_dtypes, all_shapes, jtu.rand_some_zero, [],
               tolerance={np.float16: 1e-2}),
     op_record("mod", 2, default_dtypes, all_shapes, jtu.rand_some_zero, []),
-    op_record("modf", 1, float_dtypes, all_shapes, jtu.rand_default, []),
+    op_record("modf", 1, float_dtypes, all_shapes, jtu.rand_some_inf_and_nan,
+              []),
     op_record("modf", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
     op_record("rint", 1, inexact_dtypes, all_shapes, jtu.rand_some_inf_and_nan,
@@ -732,11 +733,13 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.floor_divide, args_maker)
 
   @jtu.sample_product(dtype=float_dtypes)
+  @jtu.ignore_warning(category=RuntimeWarning, message="invalid value*")
   def test_heaviside_nan(self, dtype):
     # Regression test for https://github.com/jax-ml/jax/issues/38105
     x = np.array([np.nan, -np.inf, -1, 0, 1, np.inf], dtype=dtype)
     args_maker = lambda: [x[:, None], x[None, :]]
-    self._CheckAgainstNumpy(np.heaviside, jnp.heaviside, args_maker)
+    with np.errstate(invalid="ignore"):
+      self._CheckAgainstNumpy(np.heaviside, jnp.heaviside, args_maker)
     self._CompileAndCheck(jnp.heaviside, args_maker)
 
   @jtu.sample_product(dtype=[
@@ -775,6 +778,46 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
                            err_msg=f"isposinf check failed for {dtype}")
     self.assertArraysEqual(jnp.isneginf(arr), expected_neginf,
                            err_msg=f"isneginf check failed for {dtype}")
+
+  @jtu.sample_product(complex_dtype=complex_dtypes)
+  @jax.numpy_dtype_promotion("standard")
+  def testMixedRealComplexInfAndSignedZero(self, complex_dtype):
+    real_dtype = dtypes.to_floating_dtype(complex_dtype)
+    c, inf = complex, np.inf
+    z = jnp.array([c(inf, 1.0), c(1.0, inf), c(2.0, 0.0), c(2.0, -0.0)],
+                  dtype=complex_dtype)
+    r = jnp.array([0.5, 0.5, -2.0, 1.0], dtype=real_dtype)
+
+    def check(actual, expected):
+      expected = np.array(expected, dtype=complex_dtype)
+      self.assertArraysEqual(actual, expected)
+      self.assertArraysEqual(np.signbit(actual.imag), np.signbit(expected.imag))
+
+    check(r * z, [c(inf, 0.5), c(0.5, inf), c(-4.0, -0.0), c(2.0, -0.0)])
+    check(z * r, [c(inf, 0.5), c(0.5, inf), c(-4.0, -0.0), c(2.0, -0.0)])
+    check(r + z, [c(inf, 1.0), c(1.5, inf), c(0.0, 0.0), c(3.0, -0.0)])
+    check(z + r, [c(inf, 1.0), c(1.5, inf), c(0.0, 0.0), c(3.0, -0.0)])
+    check(r - z, [c(-inf, -1.0), c(-0.5, -inf), c(-4.0, -0.0), c(-1.0, 0.0)])
+    check(z - r, [c(inf, 1.0), c(0.5, inf), c(4.0, 0.0), c(1.0, -0.0)])
+    check(z / r, [c(inf, 2.0), c(2.0, inf), c(-1.0, -0.0), c(2.0, -0.0)])
+
+  @jtu.sample_product(
+      op=["gcd", "lcm"],
+      dtype=int_dtypes,
+  )
+  def testGcdLcmMinInt(self, op, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/40840
+    np_op = getattr(np, op)
+    jnp_op = getattr(jnp, op)
+    info = np.iinfo(dtype)
+    q = -(info.min // 4)
+    vals = np.array(
+        [info.min, info.min + 1, -q * 3, -6, -1, 0, 1, 6, q * 3, info.max],
+        dtype=dtype,
+    )
+    args_maker = lambda: [vals[:, None], vals[None, :]]
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    self._CompileAndCheck(jnp_op, args_maker)
 
 
 if __name__ == "__main__":

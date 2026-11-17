@@ -204,7 +204,7 @@ id: YkyIKN2thZ-V
 outputId: 26719bb9-87ff-46dd-af90-a114ce332417
 ---
 partition = P(None, 'x')
-mesh = jax.make_mesh((num_devices,), ('x',))
+mesh = jax.make_mesh((num_devices,), ('x',), axis_types=(jax.sharding.AxisType.Auto,))
 sharding = jax.sharding.NamedSharding(mesh, partition)
 
 # Create an input array that shards the last dimension across
@@ -304,7 +304,7 @@ id: ojQEZB5mBRqM
 outputId: 3a4373f8-1fb5-4a6b-b88e-3461c2609021
 ---
 partition = P('x', None)
-mesh = jax.make_mesh((num_devices,), ('x',))
+mesh = jax.make_mesh((num_devices,), ('x',), axis_types=(jax.sharding.AxisType.Auto,))
 sharding = jax.sharding.NamedSharding(mesh, partition)
 
 # Create an input array that shards the first dimension across
@@ -564,7 +564,7 @@ id: XrY5bMlvBroQ
 outputId: 9216e749-48d2-43ff-d64b-bd419acf3e11
 ---
 partition = P(None, 'x')
-mesh = jax.make_mesh((num_devices,), ('x',))
+mesh = jax.make_mesh((num_devices,), ('x',), axis_types=(jax.sharding.AxisType.Auto,))
 sharding = jax.sharding.NamedSharding(mesh, partition)
 
 input_arr = jax.random.uniform(jax.random.key(0), shape=(8, 128 * num_devices))
@@ -785,7 +785,7 @@ executionInfo:
 id: nRauUAxNHg28
 ---
 partition = P(None, 'x')
-mesh = jax.make_mesh((num_devices,), ('x',))
+mesh = jax.make_mesh((num_devices,), ('x',), axis_types=(jax.sharding.AxisType.Auto,))
 sharding = jax.sharding.NamedSharding(mesh, partition)
 
 # We need a block size of (16, 128) to ensure that a half-slice is at least
@@ -1142,13 +1142,10 @@ local_copy.wait()
 Our new kernel replaces it with the following `emit_pipeline` call:
 
 ```python
-def inner_kernel(input_ref, accum_ref):
-  @pl.when(pl.program_id(1) == 0)
-  def _():
-    accum_ref[...] = jnp.zeros_like(accum_ref)
-  accum_ref[...] += input_ref[...]
+def inner_kernel(input_ref, accum_in_ref, accum_out_ref):
+  accum_out_ref[...] = accum_in_ref[...] + input_ref[...]
 accum_pipeline = pltpu.emit_pipeline(inner_kernel,
-                                     in_specs=[inner_block_spec],
+                                     in_specs=[inner_block_spec, inner_block_spec],
                                      out_specs=inner_block_spec,
                                      grid=inner_grid)
 @pl.when(~last_iteration)
@@ -1157,13 +1154,17 @@ def _():
   def _():
     accum_pipeline(x_ref.at[left_copy_device, left_copy_slice],
                    hbm_scratch.at[working_slot, left_copy_slice],
+                   hbm_scratch.at[working_slot, left_copy_slice],
     )
   @pl.when(phase == RIGHT)
   def _():
     accum_pipeline(x_ref.at[right_copy_device, right_copy_slice],
                    hbm_scratch.at[working_slot, right_copy_slice],
+                   hbm_scratch.at[working_slot, right_copy_slice],
     )
 ```
+
+The accumulator in `hbm_scratch` is passed twice, as an input and as the output, so the pipeline reads each of its blocks into VMEM, adds the matching block of `x_ref`, and writes the sum back to the same block.
 
 The full kernel is as follows:
 
@@ -1180,7 +1181,7 @@ executionInfo:
 id: 27jni-pSartL
 ---
 partition = P(None, 'x')
-mesh = jax.make_mesh((num_devices,), ('x',))
+mesh = jax.make_mesh((num_devices,), ('x',), axis_types=(jax.sharding.AxisType.Auto,))
 sharding = jax.sharding.NamedSharding(mesh, partition)
 
 # We pick a large outer kernel block size that we do not want to place
@@ -1206,7 +1207,7 @@ inner_grid = (
 inner_block_spec = pl.BlockSpec(
     index_map=lambda i, j: (i, j),
     block_shape=inner_block_size,
-    memory_space=pltpu.TPUMemorySpace.VMEM,
+    memory_space=pltpu.VMEM,
 )
 
 
@@ -1305,15 +1306,12 @@ def reduce_scatter_kernel(
       left_copy.start()
 
   # --- Body ---
-  def inner_kernel(input_ref, accum_ref):
-    @pl.when(pl.program_id(1) == 0)
-    def _():
-      accum_ref[...] = jnp.zeros_like(accum_ref)
-    accum_ref[...] += input_ref[...]
+  def inner_kernel(input_ref, accum_in_ref, accum_out_ref):
+    accum_out_ref[...] = accum_in_ref[...] + input_ref[...]
 
   accum_pipeline = pltpu.emit_pipeline(
       inner_kernel,
-      in_specs=[inner_block_spec],
+      in_specs=[inner_block_spec, inner_block_spec],
       out_specs=inner_block_spec,
       grid=inner_grid,
   )
@@ -1325,12 +1323,14 @@ def reduce_scatter_kernel(
       accum_pipeline(
           x_ref.at[left_copy_device, left_copy_slice],
           hbm_scratch.at[working_slot, left_copy_slice],
+          hbm_scratch.at[working_slot, left_copy_slice],
       )
 
     @pl.when(phase == RIGHT)
     def _():
       accum_pipeline(
           x_ref.at[right_copy_device, right_copy_slice],
+          hbm_scratch.at[working_slot, right_copy_slice],
           hbm_scratch.at[working_slot, right_copy_slice],
       )
 

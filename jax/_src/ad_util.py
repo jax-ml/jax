@@ -50,6 +50,21 @@ def add_abstract(x, y):
   assert core.typematch(x, y), (x, y)
   return x
 
+def _add_jaxvals_is_high(x_aval, y_aval):
+  if x_aval.is_high != y_aval.is_high:
+    raise TypeError(
+        f"add_any requires matching is_high, got {x_aval} and {y_aval}")
+  return x_aval.is_high
+add_jaxvals_p.is_high = _add_jaxvals_is_high  # type: ignore
+
+def _add_jaxvals_to_lojax(hi_x, hi_y):
+  aval = typeof(hi_x)
+  lo_x, = aval.lower_val(hi_x)
+  lo_y, = typeof(hi_y).lower_val(hi_y)
+  assert core.typematch(lo_x, lo_y), (lo_x, lo_y)
+  return aval.raise_val(add_jaxvals_p.bind(lo_x, lo_y))
+add_jaxvals_p.to_lojax = _add_jaxvals_to_lojax  # type: ignore
+
 def zeros_like_aval(aval: core.AbstractValue) -> Array:
   from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
   if isinstance(aval, HiType):

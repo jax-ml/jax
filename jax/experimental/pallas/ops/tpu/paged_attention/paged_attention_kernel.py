@@ -82,7 +82,7 @@ class MultiPageAsyncCopyDescriptor:
           and self._scales_vmem_buffer is not None
       ):
         pltpu.make_async_copy(
-            scales_pages_hbm_ref.at[page_index],  # pyrefly: ignore[missing-attribute]
+            scales_pages_hbm_ref.at[page_index],
             self._scales_vmem_buffer.at[i],
             self._sem,
         ).start()

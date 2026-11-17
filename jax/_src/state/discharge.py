@@ -264,7 +264,7 @@ def _eval_jaxpr_discharge_state(
         aval = outvar.aval.inner_aval
         if not isinstance(aval, core.ShapedArray):
           raise NotImplementedError  # TODO(sergei)
-        ans = lax.empty(aval.shape, aval.dtype)
+        ans = lax.empty(aval.shape, aval.dtype, out_sharding=aval.sharding)
         if eqn.params['pin']:
           # TODO(mattjj,yashkatariya): switch to create_linear once the
           # CreateBuffer custom call is implemented in the runtime
@@ -500,8 +500,13 @@ def _get_discharge_rule(
     tree):
   ms = getattr(ctx.in_avals[0], 'memory_space', None)
   x = unconstrain(x, ms, ctx.strip_memory_space)
+  # TODO(mattjj): Revise this unpin/re-pin spelling to use analogous ops on
+  # AbstractLinVal types (lowering to analogous HLO ops on pinned buffers).
+  if is_lin := isinstance(x_aval := core.typeof(x), AbstractLinVal):
+    x = unpin(x)
   y = _get_discharge(x, idx, tree)
-  return (None,) * (len(idx) + 1), y
+  x_new = pin(x, to=x_aval.memory_space) if is_lin else None
+  return (x_new,) + (None,) * len(idx), y
 
 
 def _index_array(x, indexer: indexing.NDIndexer):
@@ -644,7 +649,13 @@ def _swap_discharge_rule(
     tree):
   ms = getattr(ctx.in_avals[0], 'memory_space', None)
   x = unconstrain(x, ms, ctx.strip_memory_space)
+  # TODO(mattjj): Revise this unpin/re-pin spelling to use analogous ops on
+  # AbstractLinVal types (lowering to analogous HLO ops on pinned buffers).
+  if is_lin := isinstance(x_aval := core.typeof(x), AbstractLinVal):
+    x = unpin(x)
   z, x_new = _swap_discharge(x, val, idx, tree)
+  if is_lin:
+    x_new = pin(x_new, to=x_aval.memory_space)
   x_new = constrain(x_new, ms, ctx.strip_memory_space)
   return (x_new, None) + (None,) * len(idx), z
 
@@ -658,7 +669,13 @@ def _addupdate_discharge_rule(
     tree):
   ms = getattr(ctx.in_avals[0], 'memory_space', None)
   x = unconstrain(x, ms, ctx.strip_memory_space)
+  # TODO(mattjj): Revise this unpin/re-pin spelling to use analogous ops on
+  # AbstractLinVal types (lowering to analogous HLO ops on pinned buffers).
+  if is_lin := isinstance(x_aval := core.typeof(x), AbstractLinVal):
+    x = unpin(x)
   ans = _addupdate_discharge(x, val, idx, tree)
+  if is_lin:
+    ans = pin(ans, to=x_aval.memory_space)
   ans = constrain(ans, ms, ctx.strip_memory_space)
   return (ans, None) + (None,) * len(idx), []
 

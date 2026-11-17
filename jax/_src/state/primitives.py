@@ -416,6 +416,7 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`get` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
+    _check_read_vma(ref_aval.inner_aval, args)
     out_aval = transform_type(transforms, ref_aval.inner_aval)
   else:
     if transforms:
@@ -423,6 +424,21 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
     out_aval = ref_aval.inner_aval
   return (out_aval, {ReadEffect(0)})
 get_p.def_effectful_abstract_eval(_get_abstract_eval)
+
+def _check_read_vma(inner_aval, idx_avals):
+  if not config._check_vma.value:
+    return
+  ref_vma = inner_aval.mat.varying
+  idx_vma = frozenset().union(*(a.mat.varying for a in idx_avals
+                                if isinstance(a, core.ShapedArray)))
+  if names := idx_vma - ref_vma:
+    raise ValueError(
+        f"Primitive get requires the index's varying manual axes to be a "
+        f"subset of the Ref's, but got {idx_vma} for the index and {ref_vma} "
+        f"for the Ref. To read at this index, read the whole Ref, mark it as "
+        f"varying, then index the resulting array, e.g. "
+        f"`jax.lax.pcast(r[...], {tuple(sorted(names))}, to='varying')[i]` "
+        f"instead of `r[i]`.")
 
 def _check_write_vma(name, inner_aval, val_aval, idx_avals):
   if not config._check_vma.value:
@@ -952,6 +968,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
       else:
         # We only trigger this case when the int_indexer shape is empty,
         # so we don't need to account for int_indexer_shape.
+        assert ref_dim is not None  # https://github.com/facebook/pyrefly/issues/5255
         int_indexers_before_ref_dim = sum(is_new_int_indexing[:ref_dim])
         out_bdim = ref_dim - int_indexers_before_ref_dim
     else:
@@ -982,6 +999,7 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
       val = batching.broadcast(val, axis_data.size, ref_dim,
                                axis_data.explicit_mesh_axis)
     else:
+      assert ref_dim is not None  # https://github.com/facebook/pyrefly/issues/5255
       val = batching.moveaxis(val, val_dim, ref_dim)
     return swap_p.bind(ref, val, *flat_idxs, tree=tree), ref_dim
   if len(indexers) > 1:
@@ -1272,12 +1290,12 @@ def _lower_pin(ctx, x_op, *, to):
   if color is not None:
     backend_config = json.dumps({
         "custom_call_config": {
+            "input_memory_space_colors": [
+                {"operand_index": "0", "shape_index": [], "color": str(color)}
+            ],
             "output_memory_space_colors": [
-                {
-                    "shape_index": [],
-                    "color": str(color)
-                }
-            ]
+                {"shape_index": [], "color": str(color)}
+            ],
         }
     })
     config: dict[str, Any] = dict(backend_config=backend_config)

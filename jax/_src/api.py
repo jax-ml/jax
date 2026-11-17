@@ -29,7 +29,6 @@ import atexit
 import collections
 from collections.abc import Callable, Hashable, Iterable, Sequence
 import dataclasses
-import enum
 from functools import partial
 import inspect
 from typing import Any, Literal, overload, cast, TYPE_CHECKING
@@ -64,8 +63,6 @@ from jax._src.api_util import (
   flatten_axes, _ensure_index, check_callable, debug_info, argnums_partial2)
 from jax._src.lib import jax_jit
 from jax._src.lib import _jax
-from jax._src.lib import ifrt_version
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.sharding import Sharding
 from jax._src.mesh import get_concrete_mesh, get_abstract_mesh, Mesh
@@ -97,22 +94,7 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 ShapeDtypeStruct = core.ShapeDtypeStruct
-
-class Inline(enum.Enum):
-  """Enumeration specifying inlining behavior for nested jitted functions.
-
-  Values:
-    JAX_EARLY: Inlined during JAX tracing into enclosing JAXPRs.
-    JAX_LATE: Inlined during during JAX to MLIR lowering.
-    XLA_EARLY: Preserved in MLIR and marked for early inlining by the XLA compiler.
-    XLA_LATE: Preserved in MLIR and marked for late inlining by the XLA compiler.
-    AUTO: Automatic inlining policy determined by JAX and XLA.
-  """
-  JAX_EARLY = "jax_early"
-  JAX_LATE = "jax_late"
-  XLA_EARLY = "xla_early"
-  XLA_LATE = "xla_late"
-  AUTO = "auto"
+Inline = core.Inline
 
 @api_boundary
 def _nan_check_posthook(fun, args, kwargs, output):
@@ -427,7 +409,8 @@ def disable_jit(disable: bool = True):
 def grad(fun: Callable, argnums: int | Sequence[int] = 0,
          has_aux: bool = False, holomorphic: bool = False,
          allow_int: bool = False,
-         reduce_axes: Sequence[AxisName] = ()) -> Callable:
+         reduce_axes: Sequence[AxisName] = (), *,
+         with_logs: bool = False) -> Callable:
   """Creates a function that evaluates the gradient of ``fun``.
 
   Args:
@@ -447,6 +430,8 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
     allow_int: Optional, bool. Whether to allow differentiating with
       respect to integer valued inputs. The gradient of an integer input will
       have a trivial vector-space dtype (float0). Default False.
+    with_logs: Optional, bool. Indicates whether to also return the dict of
+      backward-pass logs (as from ``jax.vjp(...)[1].with_logs``). Default False.
 
   Returns:
     A function with the same arguments as ``fun``, that evaluates the gradient
@@ -454,7 +439,9 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
     shape and type as the positional argument indicated by that integer. If
     argnums is a tuple of integers, the gradient is a tuple of values with the
     same shapes and types as the corresponding arguments. If ``has_aux`` is True
-    then a pair of (gradient, auxiliary_data) is returned.
+    then a pair of (gradient, auxiliary_data) is returned. If ``with_logs`` is
+    True then (gradient, logs) is returned, or (gradient, auxiliary_data, logs)
+    if ``has_aux`` is also True.
 
   For example:
 
@@ -469,7 +456,8 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
   del reduce_axes
   value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux,
                                     holomorphic=holomorphic,
-                                    allow_int=allow_int)
+                                    allow_int=allow_int,
+                                    with_logs=with_logs)
 
   docstr = ("Gradient of {fun} with respect to positional argument(s) "
             "{argnums}. Takes the same arguments as {fun} but returns the "
@@ -486,6 +474,9 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
   @api_boundary
   def grad_f_aux(*args, **kwargs):
     (_, aux), g = value_and_grad_f(*args, **kwargs)
+    if with_logs:
+      g, logs = g
+      return g, aux, logs
     return g, aux
 
   return grad_f_aux if has_aux else grad_f
@@ -494,7 +485,8 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
 @partial(api_boundary, repro_api_name="jax.value_and_grad")
 def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
                    has_aux: bool = False, holomorphic: bool = False,
-                   allow_int: bool = False, reduce_axes: Sequence[AxisName] = ()
+                   allow_int: bool = False, reduce_axes: Sequence[AxisName] = (),
+                   *, with_logs: bool = False
   ) -> Callable[..., tuple[Any, Any]]:
   """Create a function that evaluates both ``fun`` and the gradient of ``fun``.
 
@@ -513,6 +505,8 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     allow_int: Optional, bool. Whether to allow differentiating with
       respect to integer valued inputs. The gradient of an integer input will
       have a trivial vector-space dtype (float0). Default False.
+    with_logs: Optional, bool. Indicates whether to also return the dict of
+      backward-pass logs (as from ``jax.vjp(...)[1].with_logs``). Default False.
 
   Returns:
     A function with the same arguments as ``fun`` that evaluates both ``fun``
@@ -521,7 +515,9 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     and type as the positional argument indicated by that integer. If argnums is
     a sequence of integers, the gradient is a tuple of values with the same
     shapes and types as the corresponding arguments. If ``has_aux`` is True
-    then a tuple of ((value, auxiliary_data), gradient) is returned.
+    then a tuple of ((value, auxiliary_data), gradient) is returned. If
+    ``with_logs`` is True then the gradient is replaced by a pair
+    (gradient, logs).
   """
   from jax._src.lax import lax as lax_internal  # pyrefly: ignore[missing-import]
 
@@ -552,10 +548,12 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     ans, vjp_py, *maybe_aux = vjp(f_partial, *dyn_args, has_aux=has_aux)
     _check_scalar(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
-    g = vjp_py(lax_internal._one_vjp(ans))
+    one = lax_internal._one_vjp(ans)
+    g, *maybe_logs = (vjp_py.with_logs(one) if with_logs  # pyrefly: ignore[missing-attribute]
+                      else (vjp_py(one),))
     g = g[0] if isinstance(argnums, int) else g
     ans_aux = (ans, *maybe_aux) if has_aux else ans
-    return ans_aux, g
+    return ans_aux, ((g, *maybe_logs) if with_logs else g)
 
   return value_and_grad_f
 
@@ -1154,6 +1152,21 @@ def vmap[F: Callable](
 
   See the :py:func:`jax.pmap` docstring for more examples involving collectives.
   """
+  return _vmap(fun, in_axes=in_axes, out_axes=out_axes, axis_name=axis_name,
+               axis_size=axis_size, spmd_axis_name=spmd_axis_name,
+               sum_match=sum_match)
+
+
+def _vmap[F: Callable](
+    fun: F,
+    in_axes: int | None | Sequence[Any] = 0,
+    out_axes: Any = 0,
+    axis_name: AxisName | None = None,
+    axis_size: int | None = None,
+    spmd_axis_name: AxisName | tuple[AxisName, ...] | None = None,
+    sum_match: bool = False,
+    transform_stack: bool = True,
+    ) -> F:
   check_callable(fun)
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
             "but with additional array axes over which {fun} is mapped.")
@@ -1243,7 +1256,7 @@ def vmap[F: Callable](
       out_flat, inferred_out_axes = batching.batch(
           flat_fun, axis_data, in_axes_flat,
           lambda: _flatten_axes("vmap out_axes", out_tree(), out_axes),
-          sum_match=sum_match
+          sum_match=sum_match, transform_stack=transform_stack
       ).call_wrapped(*args_flat)
     except batching.SpecMatchError as e:
       out_axes_flat = _flatten_axes("vmap out_axes", out_tree(), out_axes)
@@ -2255,7 +2268,9 @@ def make_jaxpr(
 
   >>> import jax
   >>>
-  >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
+  >>> def f(x):
+  ...   y = jax.numpy.cos(x)
+  ...   return jax.numpy.sin(y)
   >>> print(f(3.0))
   -0.83602
   >>> jax.make_jaxpr(f)(3.0)
@@ -2270,6 +2285,20 @@ def make_jaxpr(
       f:f32[] = neg e
       g:f32[] = mul f c
     in (g,) }
+
+  To relate the operations in a jaxpr to the Python code that generated them,
+  call ``pretty_print(source_info=True)`` on the returned jaxpr. This adds
+  comments with the best-effort source location of each operation: the filename,
+  line and column numbers, and function name. The locations depend on where
+  ``f`` is defined and are abbreviated with ``...`` below. Setting ``width``
+  keeps the operations on separate lines:
+
+  >>> jaxpr = jax.make_jaxpr(f)(3.0)
+  >>> print(jaxpr.pretty_print(source_info=True, width=40))  # doctest: +ELLIPSIS
+  { lambda ; a:f32[]. let
+      b:f32[] = cos a     # ... (f)
+      c:f32[] = sin b     # ... (f)
+    in (c,) }
   """
   try:
     hash(fun)
@@ -2435,7 +2464,7 @@ def device_put(
 
     dst_avals = []
     for x_aval, d in zip(x_avals, device_flat):
-      if x_aval.is_high:
+      if x_aval.is_high and not isinstance(x_aval, core.ShapedArray):
         raise NotImplementedError(
             "jax.device_put does not yet support values of hijax type "
             f"{x_aval}. Instead, shard the value's components (e.g. before "
@@ -2874,11 +2903,7 @@ def copy_to_host_async(x):
   elif len(arrays) == 1:
     try_to_copy(arrays[0])
   else:
-    if jaxlib_extension_version >= 495 and ifrt_version >= 71:
-      _jax.batched_copy_to_host_async(arrays)
-    else:
-      for arr in arrays:
-        try_to_copy(arr)
+    _jax.batched_copy_to_host_async(arrays)
 
   return x
 

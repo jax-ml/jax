@@ -164,6 +164,10 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
            })
       .def("__setstate__",
            [](CompileOptions* self, nb::tuple t) {
+             if (t.size() != 1) {
+               throw XlaRuntimeError(
+                   "Malformed pickled CompileOptions, expected 1-tuple");
+             }
              CompileOptionsProto result;
              nb::bytes serialized = nb::cast<nb::bytes>(t[0]);
              result.ParseFromArray(serialized.c_str(), serialized.size());
@@ -378,11 +382,6 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                    &DebugOptions::xla_dump_hlo_pipeline_re,
                    [](DebugOptions* self, std::string value) {
                      self->set_xla_dump_hlo_pipeline_re(value);
-                   })
-      .def_prop_rw("xla_gpu_dump_autotune_logs_to",
-                   &DebugOptions::xla_gpu_dump_autotune_logs_to,
-                   [](DebugOptions* self, std::string value) {
-                     self->set_xla_gpu_dump_autotune_logs_to(value);
                    })
       .def_prop_rw("xla_gpu_kernel_cache_file",
                    &DebugOptions::xla_gpu_kernel_cache_file,

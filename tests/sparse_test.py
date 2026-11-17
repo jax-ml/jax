@@ -471,6 +471,26 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(primals[2], f(M)[2])
     self.assertArraysEqual(M_out, M)
 
+  def test_coo_fromdense_ad_with_padding(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/40624
+    M = jnp.array([[1., 0., 2.], [0., 0., 3.]])
+    nse = 5  # Two padded entries.
+    f = lambda M: sparse_coo._coo_fromdense(M, nse=nse)[0]
+    mask = (M != 0).astype(M.dtype)
+
+    # Forward-mode: padded entries have zero tangent.
+    _, data_dot = jax.jvp(f, [M], [jnp.ones_like(M)])
+    self.assertArraysEqual(data_dot, jnp.array([1., 1., 1., 0., 0.]))
+
+    # Reverse-mode: padded entries do not contribute to the gradient.
+    grad = jax.grad(lambda M: f(M).sum())(M)
+    self.assertArraysEqual(grad, mask)
+
+    # Second-order: padded entries do not contribute to the hessian.
+    hess = jax.hessian(lambda M: (f(M) ** 2).sum())(M)
+    self.assertArraysEqual(
+        hess, 2 * jnp.diag(mask.ravel()).reshape(M.shape + M.shape))
+
   @jtu.sample_product(
     [dict(shape=shape, bshape=bshape, transpose=transpose)
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]

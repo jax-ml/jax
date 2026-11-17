@@ -129,6 +129,19 @@ xla_metadata_value_p.def_abstract_eval(lambda aval, *, xla_metadata_kvs: aval)
 batching.defvectorized(xla_metadata_value_p)
 # TODO(nbasile): Implement tagging gradient ops with metadata.
 ad.deflinear2(xla_metadata_value_p, lambda ct, _, **kwargs: (ct,))
+xla_metadata_value_p.is_high = lambda aval, **_: aval.is_high  # type: ignore
+
+
+def _xla_metadata_value_to_lojax(hi_x, *, xla_metadata_kvs):
+  aval = core.typeof(hi_x)
+  lo_outs = [
+      xla_metadata_value_p.bind(lo_x, xla_metadata_kvs=xla_metadata_kvs)
+      for lo_x in aval.lower_val(hi_x)
+  ]
+  return aval.raise_val(*lo_outs)
+
+
+xla_metadata_value_p.to_lojax = _xla_metadata_value_to_lojax  # type: ignore
 
 
 def _xla_metadata_value_lowering_rule(
@@ -144,15 +157,18 @@ def _xla_metadata_value_lowering_rule(
 # If we leave `cacheable=True`, when we are in the lowering rule, the `val.owner`
 # becomes a cached `FuncOp`. FuncOp.owners are Blocks, which we can't tag.
 mlir.register_lowering(
-    xla_metadata_value_p, _xla_metadata_value_lowering_rule, cacheable=False
+    xla_metadata_value_p,
+    _xla_metadata_value_lowering_rule,
+    cacheable=False,
+    shard_map_collective_rule=lambda *_, **__: None,
 )
 
 
 def _target_op_to_attach_metadata(value_mlir: ir.Value) -> ir.Operation | None:
-  op = value_mlir.owner
+  op = mlir._get_owner(value_mlir)  # pylint: disable=protected-access
   if op is None or isinstance(op, ir.Block):
     return None
-  return op.operation
+  return op
 
 
 def _attach_xla_metadata_to_op(
@@ -341,7 +357,9 @@ def _xla_metadata_call_lowering(ctx, *args, jaxpr, xla_metadata, ad_metadata):
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))
   ctx.set_tokens_out(tokens_out)
   return out_nodes
-mlir.register_lowering(xla_metadata_call_p, _xla_metadata_call_lowering)
+mlir.register_lowering(
+    xla_metadata_call_p, _xla_metadata_call_lowering,
+    shard_map_collective_rule=lambda *_, **__: None)
 
 
 def _xla_metadata_call_batcher(axis_data, vals_in, dims_in, *, jaxpr,
@@ -505,15 +523,17 @@ def dce_jaxpr_xla_metadata_rule(used_outputs: list[bool], live_ins: list[bool],
     return [False] * len(eqn.invars), None
   dced_jaxpr, used_inputs = pe._cached_closed_call_dce(
       eqn.params['jaxpr'], tuple(used_outputs), tuple(live_ins))
-  new_params = dict(eqn.params, jaxpr=dced_jaxpr)
   if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
     return used_inputs, None
-  else:
-    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
-    new_effs = core.eqn_effects(dced_jaxpr, new_invars)
-    new_eqn = pe.new_jaxpr_eqn(
-        new_invars,
-        [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
-    return used_inputs, new_eqn
+  if (dced_jaxpr is eqn.params['jaxpr'] and
+      all(used_inputs) and all(used_outputs)):
+    return used_inputs, eqn
+  new_params = dict(eqn.params, jaxpr=dced_jaxpr)
+  new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+  new_effs = core.eqn_effects(dced_jaxpr, new_invars)
+  new_eqn = pe.new_jaxpr_eqn(
+      new_invars,
+      [v for v, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
+  return used_inputs, new_eqn
 pe.dce_rules[xla_metadata_call_p] = dce_jaxpr_xla_metadata_rule

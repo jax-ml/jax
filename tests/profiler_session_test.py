@@ -13,13 +13,12 @@
 # limitations under the License.
 
 import pathlib
-from unittest import mock
+import sys
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 
 _TEST_SESSION_ID = 'my_custom_session_123'
@@ -27,10 +26,16 @@ _TEST_SESSION_ID = 'my_custom_session_123'
 jax.config.parse_flags_with_absl()
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 @jtu.thread_unsafe_test_class()
 class ProfilerSessionTest(jtu.JaxTestCase):
 
   def setUp(self):
+    if hasattr(sys, '_is_gil_enabled') and not sys._is_gil_enabled():
+      self.skipTest(
+          'Profiler tests are not thread-safe under Python free threading'
+      )
+
     super().setUp()
     # Ensure that any running profiler is stopped before starting the test.
     # This is in setUp rather than tearDown to defend against previous tests
@@ -74,8 +79,6 @@ class ProfilerSessionTest(jtu.JaxTestCase):
     self.assertNotEmpty(pb_files, f'No .xplane.pb files found in {session_dir}')
 
   def test_trace_returns_profile_session_with_log_dir(self):
-    if jaxlib_extension_version < 501:
-      self.skipTest('Requires jaxlib_extension_version >= 501')
     tmpdir = pathlib.Path(self.create_tempdir())
     with jax.profiler.trace(tmpdir) as session:
       self.assertIsInstance(session, jax.profiler.ProfileSession)
@@ -128,8 +131,6 @@ class ProfilerSessionTest(jtu.JaxTestCase):
     self.assertIsNotNone(session.profile_data.find_plane_with_name('/host:CPU'))
 
   def test_start_and_stop_trace_return_values(self):
-    if jaxlib_extension_version < 501:
-      self.skipTest('Requires jaxlib_extension_version >= 501')
     tmpdir = pathlib.Path(self.create_tempdir())
     session = jax.profiler.start_trace(tmpdir)
     self.assertIsInstance(session, jax.profiler.ProfileSession)
@@ -145,8 +146,6 @@ class ProfilerSessionTest(jtu.JaxTestCase):
     self.assertNotEmpty(list(cpu_plane.lines))
 
   def test_start_and_stop_trace_with_log_dir(self):
-    if jaxlib_extension_version < 501:
-      self.skipTest('Requires jaxlib_extension_version >= 501')
     tmpdir = pathlib.Path(self.create_tempdir())
     # Ensure start_trace + stop_trace preserves custom
     # ProfileOptions.session_id rather than exporting to a timestamp directory.
@@ -170,8 +169,6 @@ class ProfilerSessionTest(jtu.JaxTestCase):
     self.assertNotEmpty(pb_files)
 
   def test_start_trace_stopped_via_session_stop(self):
-    if jaxlib_extension_version < 501:
-      self.skipTest('Requires jaxlib_extension_version >= 501')
     tmpdir = pathlib.Path(self.create_tempdir())
     options = jax.profiler.ProfileOptions()
     options.session_id = _TEST_SESSION_ID
@@ -188,8 +185,6 @@ class ProfilerSessionTest(jtu.JaxTestCase):
     self.assertNotEmpty(pb_files)
 
   def test_profile_session_explicit_export(self):
-    if jaxlib_extension_version < 501:
-      self.skipTest('Requires jaxlib_extension_version >= 501')
     tmpdir = pathlib.Path(self.create_tempdir())
     session = jax.profiler.ProfileSession()
     with self.assertRaises(RuntimeError):
@@ -209,8 +204,6 @@ class ProfilerSessionTest(jtu.JaxTestCase):
     self.assertNotEmpty(pb_files)
 
   def test_jax_profiler_export_function(self):
-    if jaxlib_extension_version < 501:
-      self.skipTest('Requires jaxlib_extension_version >= 501')
     tmpdir1 = pathlib.Path(self.create_tempdir())
     tmpdir2 = pathlib.Path(self.create_tempdir())
 
@@ -234,27 +227,6 @@ class ProfilerSessionTest(jtu.JaxTestCase):
         (tmpdir2 / 'plugins' / 'profile' / _TEST_SESSION_ID).glob('*.xplane.pb')
     )
     self.assertNotEmpty(pb_files2)
-
-  def test_legacy_jaxlib_extension_version_fallback(self):
-    tmpdir = pathlib.Path(self.create_tempdir())
-    options = jax.profiler.ProfileOptions()
-    options.session_id = _TEST_SESSION_ID
-    with mock.patch.object(jax._src.profiler, 'jaxlib_extension_version', 500):
-      with jax.profiler.trace(tmpdir, profiler_options=options) as session:
-        jax.jit(lambda x: x + 1)(jnp.ones((10, 10))).block_until_ready()
-
-      self.assertIsNone(session.profile_data)
-      session_dir = tmpdir / 'plugins' / 'profile' / _TEST_SESSION_ID
-      self.assertTrue(session_dir.exists())
-      pb_files = list(session_dir.glob('*.xplane.pb'))
-      self.assertNotEmpty(pb_files)
-
-      with jax.profiler.trace() as in_memory_session:
-        jax.jit(lambda x: x + 1)(jnp.ones((10, 10))).block_until_ready()
-      self.assertIsNotNone(in_memory_session.profile_data)
-
-      with self.assertRaisesRegex(RuntimeError, 'requires JAX 0.10.3 or newer'):
-        jax.profiler.export_profile_data(in_memory_session.profile_data, tmpdir)
 
   def test_trace_early_stop_and_get_fdo_profile(self):
     tmpdir = pathlib.Path(self.create_tempdir())

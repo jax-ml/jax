@@ -170,7 +170,7 @@ def _convolve_nd(in1: Array, in2: Array, mode: ModeString, *, precision: Precisi
 
   no_swap = all(s1 >= s2 for s1, s2 in zip(in1.shape, in2.shape))
   swap = all(s1 <= s2 for s1, s2 in zip(in1.shape, in2.shape))
-  if not (no_swap or swap):
+  if mode == 'valid' and not (no_swap or swap):
     raise ValueError("One input must be smaller than the other in every dimension.")
 
   shape_o = in2.shape
@@ -665,7 +665,8 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
     check_arraylike('spectral_helper', x, y)
     x, y_arr = promote_dtypes_inexact(x, y)
     if x.ndim != y_arr.ndim:
-      raise ValueError("two-arguments must have the same rank ({x.ndim} vs {y.ndim}).")
+      raise ValueError("two-arguments must have the same rank "
+                       f"({x.ndim} vs {y_arr.ndim}).")
     # Check if we can broadcast the outer axes together
     try:
       outershape = jnp.broadcast_shapes(tuple_delete(x.shape, axis),
@@ -1145,7 +1146,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   # Get window as array
   if isinstance(window, str) and window == 'hann':
     # Implement the default case without scipy
-    win = jnp.array([1.0]) if nperseg_int == 1 else jnp.sin(jnp.linspace(0, np.pi, nperseg_int, endpoint=False)) ** 2
+    win = jnp.array([1.0]) if nperseg_int == 1 else lax.sinpi(jnp.linspace(0, 1, nperseg_int, endpoint=False)) ** 2
     win = win.astype(xsubs.dtype)
   elif isinstance(window, (str, tuple)):
     # TODO(jakevdp): implement get_window() in JAX to remove optional scipy dependency

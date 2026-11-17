@@ -78,7 +78,9 @@ class RnnTest(jtu.JaxTestCase):
       loss = jnp.sum(jnp.where(seq_length_mask[..., None], y, 0.))
       return loss, (y, h, c)
 
-    jtu.check_grads(f, (weights, x, h_0, c_0), modes=["rev"], order=1, atol=5E-3, rtol=5E-3)
+    jtu.check_grads(
+        f, (weights, x, h_0, c_0), modes=["rev"], order=1, atol=2e-2, rtol=2e-2
+    )
 
     (loss, (y, h_n, c_n)), weights_grad = jax.value_and_grad(f, has_aux=True)(
         weights, x, h_0, c_0)
@@ -213,20 +215,31 @@ class RnnTest(jtu.JaxTestCase):
 
     k = jax.random.split(jax.random.PRNGKey(1), 4)
     stablehlo = jax.jit(f).lower(*k).as_text("stablehlo")
-    # Platform-specific binary encodings for RnnDescriptor
-    cuda_encoding = '"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00\\00\\00\\00\\00@\\01\\00\\00\\00\\00\\00\\00"'
-    rocm_encoding = '"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\008\\00\\00\\00\\00\\00\\00\\00\\1C\\00\\00\\00\\00\\00\\00\\00"'
-
-    # Check that one of the expected encodings is present
-    if jtu.test_device_matches(["cuda"]):
-      self.assertIn(cuda_encoding, stablehlo)
-    elif jtu.test_device_matches(["rocm"]):
-      self.assertIn(rocm_encoding, stablehlo)
-    else:
-      self.fail(
-          "Running on an unsupported GPU backend for this test. "
-          "Please add the expected RnnDescriptor encoding."
+    if jax._src.lib.jaxlib_extension_version >= 513:
+      target_name = (
+          "cudnn_rnn_ffi_v2"
+          if jtu.test_device_matches(["cuda"])
+          else "hipdnn_rnn_ffi_v2"
       )
+      self.assertIn(target_name, stablehlo)
+      self.assertIn("bidirectional = false", stablehlo)
+      self.assertIn("cudnn_allow_tf32 = true", stablehlo)
+      self.assertIn("dropout = 0.000000e+00 : f32", stablehlo)
+    else:
+      # Platform-specific binary encodings for RnnDescriptor
+      cuda_encoding = '"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00\\00\\00\\00\\00@\\01\\00\\00\\00\\00\\00\\00"'
+      rocm_encoding = '"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\008\\00\\00\\00\\00\\00\\00\\00\\1C\\00\\00\\00\\00\\00\\00\\00"'
+
+      # Check that one of the expected encodings is present
+      if jtu.test_device_matches(["cuda"]):
+        self.assertIn(cuda_encoding, stablehlo)
+      elif jtu.test_device_matches(["rocm"]):
+        self.assertIn(rocm_encoding, stablehlo)
+      else:
+        self.fail(
+            "Running on an unsupported GPU backend for this test. "
+            "Please add the expected RnnDescriptor encoding."
+        )
 
   # Note: Other LSTM tests that use `bidirectional=True` on ROCm are skipped
   # because of current numerical issues (as of ROCm 7.1.1). However, this

@@ -32,7 +32,8 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
                                      canonicalize_sharding)
 from jax._src.typing import (
-    Array, ArrayLike, DimSize, Shape, SupportsNdim, SupportsShape, SupportsSize)
+    Array, ArrayLike, DType, DimSize, Shape, SupportsNdim, SupportsShape,
+    SupportsSize)
 
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
@@ -75,7 +76,39 @@ def _rank_promotion_warning_or_error(fun_name: str, shapes: Sequence[Shape]):
     raise ValueError(msg.format(fun_name, ' '.join(map(str, shapes))))
 
 
-def promote_dtypes(*args: ArrayLike) -> list[Array]:
+# TODO(phawkins): Remove once XLA:CPU callbacks restore floating-point control
+# (FTZ/DAZ) flags before calling into Python. Pre-populate dtypes.finfo's
+# cache on the main thread so calling to_floating_dtype() inside CPU callbacks
+# does not construct finfo under FTZ and emit a smallest-subnormal warning.
+for _dt in (np.float32, np.float64, np.complex64, np.complex128):
+  dtypes.finfo(_dt)
+del _dt
+
+
+def _convert_mixed_real_complex(
+    args: Sequence[ArrayLike], complex_dtype: DType, weak_type: bool
+) -> list[Array]:
+  """Convert args to complex_dtype or its matching real floating-point dtype.
+
+  Complex arguments are converted to ``complex_dtype``, while non-complex
+  arguments (boolean, integer, or floating) are converted to the corresponding
+  real dtype (e.g. ``float32`` for ``complex64``).
+  """
+  real_dtype = dtypes.to_floating_dtype(complex_dtype)
+  return [
+      lax._convert_element_type(
+          x,
+          complex_dtype if dtypes.issubdtype(_dtype(x), np.complexfloating)
+          else real_dtype,
+          weak_type,
+      )
+      for x in args
+  ]
+
+
+def promote_dtypes(
+    *args: ArrayLike, allow_mixed_real_complex: bool = False
+) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion."""
   # TODO(dougalm,mattjj): This is a performance bottleneck. Consider memoizing.
   if len(args) < 2:
@@ -83,16 +116,24 @@ def promote_dtypes(*args: ArrayLike) -> list[Array]:
   else:
     to_dtype, weak_type = dtypes.lattice_result_type(*args)
     args = core.auto_insert_reshard(*args)
+    if (allow_mixed_real_complex and
+        dtypes.issubdtype(to_dtype, np.complexfloating)):
+      return _convert_mixed_real_complex(args, to_dtype, weak_type)
     return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
 
 
-def promote_dtypes_inexact(*args: ArrayLike) -> list[Array]:
+def promote_dtypes_inexact(
+    *args: ArrayLike, allow_mixed_real_complex: bool = False
+) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to an inexact type."""
   to_dtype, weak_type = dtypes.lattice_result_type(*args)
   to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)
   args = core.auto_insert_reshard(*args)
+  if (allow_mixed_real_complex and
+      dtypes.issubdtype(to_dtype_inexact, np.complexfloating)):
+    return _convert_mixed_real_complex(args, to_dtype_inexact, weak_type)
   return [lax._convert_element_type(x, to_dtype_inexact, weak_type)
           for x in args]
 
@@ -236,13 +277,17 @@ def check_for_prngkeys(fun_name: str, *args: Any):
       )
 
 
-def promote_args(fun_name: str, *args: ArrayLike) -> list[Array]:
+def promote_args(
+    fun_name: str, *args: ArrayLike, allow_mixed_real_complex: bool = False
+) -> list[Array]:
   """Convenience function to apply Numpy argument shape and dtype promotion."""
   check_arraylike(fun_name, *args)
   args = tuple(_check_jax_array_protocol(arg) for arg in args)
   _check_no_float0s(fun_name, *args)
   check_for_prngkeys(fun_name, *args)
-  return promote_shapes(fun_name, *promote_dtypes(*args))
+  return promote_shapes(
+      fun_name,
+      *promote_dtypes(*args, allow_mixed_real_complex=allow_mixed_real_complex))
 
 
 def promote_args_numeric(fun_name: str, *args: ArrayLike) -> list[Array]:
@@ -253,7 +298,9 @@ def promote_args_numeric(fun_name: str, *args: ArrayLike) -> list[Array]:
   return promote_shapes(fun_name, *promote_dtypes_numeric(*args))
 
 
-def promote_args_inexact(fun_name: str, *args: ArrayLike) -> list[Array]:
+def promote_args_inexact(
+    fun_name: str, *args: ArrayLike, allow_mixed_real_complex: bool = False
+) -> list[Array]:
   """Convenience function to apply Numpy argument shape and dtype promotion.
 
   Promotes non-inexact types to an inexact type."""
@@ -261,7 +308,10 @@ def promote_args_inexact(fun_name: str, *args: ArrayLike) -> list[Array]:
   args = tuple(_check_jax_array_protocol(arg) for arg in args)
   _check_no_float0s(fun_name, *args)
   check_for_prngkeys(fun_name, *args)
-  return promote_shapes(fun_name, *promote_dtypes_inexact(*args))
+  return promote_shapes(
+      fun_name,
+      *promote_dtypes_inexact(
+          *args, allow_mixed_real_complex=allow_mixed_real_complex))
 
 
 def promote_args_complex(fun_name: str, *args: ArrayLike) -> list[Array]:

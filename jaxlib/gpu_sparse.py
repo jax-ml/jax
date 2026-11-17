@@ -27,7 +27,7 @@ def registrations() -> dict[str, list[tuple[str, Any, int]]]:
   for platform, module in [("CUDA", _cusparse), ("ROCM", _hipsparse)]:
     if module:
       registrations[platform].extend(
-          (name, value, int(name.endswith("_ffi")))
+          (name, value, 1)
           for name, value in module.registrations().items()
       )
   return registrations

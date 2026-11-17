@@ -136,6 +136,7 @@ pytype_strict_library(
             ":typing",
             ":util",
             ":xla_bridge",
+            "//jax/_src/lib",
         ],
         if_not_building = [],
     ) + py_deps("numpy"),
@@ -229,6 +230,20 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "avals",
+    srcs = ["avals.py"],
+    deps = [
+        ":core",
+        ":dtypes",
+        ":mesh",
+        ":named_sharding",
+        ":partition_spec",
+        ":typing",
+        ":util",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
     name = "ad_util",
     srcs = ["ad_util.py"],
     deps = [
@@ -277,6 +292,7 @@ pytype_strict_library(
         ":partial_eval",
         ":partition_spec",
         ":profiler",
+        ":reduction_order",
         ":remat",
         ":sharding",
         ":sharding_impls",
@@ -466,6 +482,7 @@ py_library_providing_imports_info(
         ":api_util",
         ":batching",
         ":callback",
+        ":cloud_tpu_init",
         ":config",
         ":core",
         ":custom_batching",
@@ -482,6 +499,7 @@ py_library_providing_imports_info(
         ":partial_eval",
         ":partition_spec",
         ":pretty_printer",
+        ":reduction_order",
         ":remat",
         ":sharding",
         ":sharding_impls",
@@ -860,6 +878,16 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "gpu_info",
+    srcs = ["gpu_info.py"],
+    deps = [
+        ":api",
+        ":mesh",
+        ":util",
+    ],
+)
+
+pytype_strict_library(
     name = "hardware_utils",
     srcs = ["hardware_utils.py"],
 )
@@ -941,6 +969,7 @@ pytype_strict_library(
         ":dtypes",
         ":flattree",
         ":mesh",
+        ":named_sharding",
         ":partial_eval",
         ":source_info_util",
         ":state_types",
@@ -1247,6 +1276,7 @@ pytype_strict_library(
         ":core",
         ":flattree",
         ":layout",
+        ":literals",
         ":mesh",
         ":mlir",
         ":partial_eval",
@@ -1304,6 +1334,14 @@ pytype_strict_library(
         ":tree_util",
         ":util",
     ],
+)
+
+pytype_strict_library(
+    name = "reduction_order",
+    srcs = ["reduction_order.py"],
+    deps = [
+        ":typing",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -1430,7 +1468,9 @@ py_library_providing_imports_info(
         ":hijax",
         ":indexing",
         ":lax",
+        ":layout",
         ":mesh",
+        ":reduction_order",
         ":sharding",
         ":sharding_impls",
         ":tree_util",
@@ -1664,8 +1704,10 @@ pytype_strict_library(
         ":lax",
         ":mesh",
         ":mlir",
+        ":named_sharding",
         ":numpy",
         ":pretty_printer",
+        ":shard_map",
         ":sharding",
         ":sharding_impls",
         ":source_info_util",

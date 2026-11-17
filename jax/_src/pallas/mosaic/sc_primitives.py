@@ -29,7 +29,6 @@ from jax._src import effects
 from jax._src import flattree as ft
 from jax._src.api_util import check_no_transformed_refs_args
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lib import ifrt_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
@@ -632,20 +631,12 @@ def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
     x = arith.xori(x, sign_bit_vec)
     tpu_reduction_kind = "maxui" if tpu_reduction_kind == "maxsi" else "minui"
 
-  if ifrt_version < 76:
-    # Switch to the old enum names
-    match tpu_reduction_kind:
-      case "maxf" | "maxui":
-        tpu_reduction_kind = "max"
-      case "minf" | "minui":
-        tpu_reduction_kind = "min"
-
   result = tpu.scan(
       x.type,
       x,
       ir.Attribute.parse(f"#tpu.reduction_kind<{tpu_reduction_kind}>"),
       mask=mask,
-      dimension=x.type.rank - 1,  # pyrefly: ignore[unexpected-keyword]
+      dimension=x.type.rank - 1,
   )
   if sign_bit_vec is not None:  # Flip the sign bit back
     return arith.xori(result, sign_bit_vec)
@@ -743,7 +734,7 @@ def _cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axis,
       x,
       ir.Attribute.parse("#tpu.reduction_kind<sum>"),
       mask=c1v,
-      dimension=x.type.rank - 1,  # pyrefly: ignore[unexpected-keyword]
+      dimension=x.type.rank - 1,
   )
 
 
@@ -1129,6 +1120,7 @@ def _pack_lowering_rule(
       [a, b],
       [0, 1],
       _format_to_ir_attribute(format),
+      unsigned_integers=jnp.issubdtype(out_aval.dtype, jnp.unsignedinteger),
   )
 
 
@@ -1217,11 +1209,18 @@ def _unpack_lowering_rule(
         "plsc.unpack is not supported with needs_layout_passes=True. Use"
         " jax.lax.convert_element_type or jax.Array.astype instead."
     )
+  [in_aval] = ctx.avals_in
   out_aval, _ = ctx.avals_out
   out_type = ctx.aval_to_ir_type(out_aval)
+  ir_format = _format_to_ir_attribute(format)
+  is_unsigned = jnp.issubdtype(in_aval.dtype, jnp.unsignedinteger)
   return (
-      tpu.unpack_subelements(out_type, ab, 0, _format_to_ir_attribute(format)),
-      tpu.unpack_subelements(out_type, ab, 1, _format_to_ir_attribute(format)),
+      tpu.unpack_subelements(
+          out_type, ab, 0, ir_format, unsigned_integers=is_unsigned
+      ),
+      tpu.unpack_subelements(
+          out_type, ab, 1, ir_format, unsigned_integers=is_unsigned
+      ),
   )
 
 

@@ -566,7 +566,7 @@ class SearchsortedTest(jtu.JaxTestCase):
           jnp.zeros((4, 6)), jax.sharding.NamedSharding(other_mesh, P("a", None))
       )
       with self.assertRaisesRegex(
-          ValueError, "sharding meshes must match"
+          ValueError, "Mesh for all inputs should be equal"
       ):
         hijax.searchsorted(sa, q, batch_dims=1, dimension=1)
 
@@ -594,6 +594,45 @@ class SearchsortedTest(jtu.JaxTestCase):
           "Cannot shard non-batch dimensions of both sorted_arr and query",
       ):
         hijax.searchsorted(sa, q, batch_dims=0, dimension=1)
+
+  @jtu.sample_product(method=_METHODS)
+  def test_mixed_auto_meshes(self, method):
+    mesh = jtu.create_mesh(
+        (2, 2), ("x", "y"), axis_types=(jax.sharding.AxisType.Auto,) * 2
+    )
+    ctx_mesh = jax.sharding.AbstractMesh(
+        (2, 2), ("x", "y"), axis_types=(jax.sharding.AxisType.Auto,) * 2
+    )
+    sa_np = np.array([0.0, 4.0, 8.0, 12.0, 16.0], dtype=np.float32)
+    q_np = np.arange(16, dtype=np.float32)
+    q = jax.device_put(q_np, jax.sharding.NamedSharding(mesh, P("x")))
+    ref = np.searchsorted(sa_np, q_np, side="right").astype(np.int32)
+
+    @jax.jit
+    def f_ctx_sa(q):
+      with jax.sharding.use_abstract_mesh(ctx_mesh):
+        sa_ctx = jnp.linspace(0.0, 16.0, 5, dtype=jnp.float32)
+        return hijax.searchsorted(sa_ctx, q, side="right", method=method)
+
+    self.assertArraysEqual(ref, f_ctx_sa(q))
+
+    sa = jax.device_put(sa_np, jax.sharding.NamedSharding(mesh, P(None)))
+
+    @jax.jit
+    def f_ctx_q(sa):
+      with jax.sharding.use_abstract_mesh(ctx_mesh):
+        q_ctx = jnp.arange(16, dtype=jnp.float32)
+        return hijax.searchsorted(sa, q_ctx, side="right", method=method)
+
+    self.assertArraysEqual(ref, f_ctx_q(sa))
+
+    @jax.jit
+    def f_ctx_empty_sa(q):
+      with jax.sharding.use_abstract_mesh(ctx_mesh):
+        sa_empty = jnp.zeros((0,), dtype=jnp.float32)
+        return hijax.searchsorted(sa_empty, q, side="right", method=method)
+
+    self.assertArraysEqual(np.zeros(16, dtype=np.int32), f_ctx_empty_sa(q))
 
   @jtu.sample_product(method=_METHODS)
   @jtu.with_explicit_mesh((2, 2), ("x", "y"))
@@ -753,6 +792,46 @@ class NonzeroTest(jtu.JaxTestCase):
     for e, a_i in zip(expected, actual):
       self.assertArraysEqual(e, a_i)
 
+  @jtu.sample_product(
+      shape=[(0,), (4, 0), (0, 5)],
+      axes=[None, (0,), (1,), (0, 1)],
+      fill_value=[None, 99, (99, 98)],
+      jit=[False, True],
+  )
+  def test_empty_fill_value(self, shape, axes, fill_value, jit):
+    if axes is not None and any(ax >= len(shape) for ax in axes):
+      self.skipTest("axis out of bounds for shape")
+    actual_axes = tuple(range(len(shape))) if axes is None else axes
+    if isinstance(fill_value, tuple) and len(fill_value) != len(actual_axes):
+      self.skipTest("fill_value length must match number of axes")
+
+    a = np.zeros(shape, dtype=np.int32)
+    size = 3
+    fn = functools.partial(hijax.nonzero, size=size, axes=axes)
+    if jit:
+      fn = jax.jit(fn)
+
+    actual = fn(a, fill_value=fill_value)
+    expected = nonzero_reference(a, size=size, fill_value=fill_value, axes=axes)
+    self.assertEqual(len(expected), len(actual))
+    for e, a_i in zip(expected, actual):
+      self.assertArraysEqual(e, a_i)
+
+  def test_vmap_empty_fill_value_batched(self):
+    a = np.zeros((3, 4, 0), dtype=np.int32)
+    fill_val = jax.numpy.array([99, 98, 97])
+    size = 5
+
+    vmapped = jax.vmap(
+        lambda x, fv: hijax.nonzero(x, size=size, fill_value=fv, axes=(1,))[0]
+    )(a, fill_val)
+
+    expected = np.array([
+        nonzero_reference(sub_a, size=size, fill_value=int(fv), axes=(1,))[0]
+        for sub_a, fv in zip(a, fill_val)
+    ])
+    self.assertArraysEqual(expected, vmapped)
+
   def test_invalid_fill_value_shape(self):
     a = self.rng().randint(0, 2, size=(10, 20))
     size = 5
@@ -822,6 +901,13 @@ class NonzeroTest(jtu.JaxTestCase):
       self.assertEqual(jax.typeof(out[0]).sharding.spec, P("x", "y", None))
       self.assertEqual(out[0].shape, (4, 6, 0))
 
+    with self.subTest("empty_array_with_fill_value"):
+      a_empty = jax.device_put(np.zeros((4, 6, 0), dtype=np.int32), P("x", "y", None))
+      out = jax.jit(lambda x: hijax.nonzero(x, size=size, fill_value=99, axes=(2,)))(a_empty)
+      self.assertEqual(jax.typeof(out[0]).sharding.spec, P("x", "y", None))
+      expected = np.full((4, 6, size), 99, dtype=np.int32)
+      self.assertArraysEqual(expected, out[0])
+
   @jtu.with_explicit_mesh((2, 2), ("x", "y"))
   def test_explicit_sharding_errors(self, mesh):
     del mesh
@@ -855,6 +941,12 @@ class NonzeroTest(jtu.JaxTestCase):
     out = f(a, jnp.int32(99))
     expected = nonzero_reference(a_np, size=5, fill_value=99, axes=(1,))[0]
     self.assertArraysEqual(expected, out)
+
+    a_empty_np = np.zeros((4, 0), dtype=np.int32)
+    a_empty = jax.device_put(a_empty_np, P("x", None))
+    out_empty = f(a_empty, jnp.int32(99))
+    expected_empty = nonzero_reference(a_empty_np, size=5, fill_value=99, axes=(1,))[0]
+    self.assertArraysEqual(expected_empty, out_empty)
 
 class EinsumTest(jtu.JaxTestCase):
 

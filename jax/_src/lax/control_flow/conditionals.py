@@ -118,6 +118,7 @@ def switch(index, branches: Sequence[Callable], *operands: Any,
   if index_dtype.kind not in 'iu':
     raise TypeError(
         f"Index type must be an integer, got {index} as {index_dtype}")
+  _check_index_not_unreduced('switch', index)
 
   branches = tuple(branches)
 
@@ -258,6 +259,7 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   except TypeError as err:
     msg = ("Pred type must be either boolean or number, got {}.")
     raise TypeError(msg.format(pred)) from err
+  _check_index_not_unreduced('cond', pred)
 
   if pred_dtype.kind != 'b':
     if pred_dtype.kind in 'iuf':
@@ -346,15 +348,15 @@ def _check_branch_outputs(
     paths, _ = unzip2(leaves_and_paths)
     component = lambda p: f' at path {keystr(p)}' if p else ''
 
-  if out_avals1.tree != out_avals2.tree:
+  # Trees that differ only in aux data (e.g. computed from the leaves) have the
+  # same structure, so don't raise here and still compare the types below.
+  if out_avals1.tree != out_avals2.tree and (errs := list(
+      equality_errors_pytreedef(out_avals1.tree, out_avals2.tree))):
     diffs = [f'{name1} output{component(p)} is a {thing1} but '
              f'{name2} output{component(p)} is a {thing2}, so {expl}'
-             for p, thing1, thing2, expl
-             in equality_errors_pytreedef(out_avals1.tree, out_avals2.tree)]
+             for p, thing1, thing2, expl in errs]
 
-    if len(diffs) == 0:
-      return  # the trees may have different aux data, but structures are same
-    elif len(diffs) == 1:
+    if len(diffs) == 1:
       differences = f'{diffs[0]}.\n'
     else:
       differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
@@ -383,16 +385,17 @@ def _check_branch_outputs(
                      + f'\n  * {diffs[-1]}.\n')
 
     # TODO(rdyro): extend this to also cover reduced and unreduced.
-    pvary_applications = [
-        f"applying `jax.lax.pcast(..., "
-        f"{tuple(a1.mat.varying - a2.mat.varying)}, to='varying')` to the"
-        f" output of {n}{component(p)}"
-        for p, aval1, aval2 in zip(paths, out_avals1, out_avals2)
-        for n, a1, a2 in [(name1, aval2, aval1), (name2, aval1, aval2)]
-        if not core.typematch(a1, a2) and
-        isinstance(a1, core.ShapedArray) and isinstance(a2, core.ShapedArray)
-        and a1.mat.varying != a2.mat.varying
-        and a2.mat.varying - a1.mat.varying]
+    pvary_applications = []
+    for p, out1, out2 in zip(paths, out_avals1, out_avals2):
+      if not (isinstance(out1, core.ShapedArray) and
+              isinstance(out2, core.ShapedArray)):
+        continue
+      union = out1.mat.varying | out2.mat.varying
+      for name, out in [(name1, out1), (name2, out2)]:
+        if missing := union - out.mat.varying:
+          pvary_applications.append(
+              f"applying `jax.lax.pcast(..., {tuple(missing)}, "
+              f"to='varying')` to the output of {name}{component(p)}")
 
     if not pvary_applications:
       pvary_msg = ''
@@ -427,6 +430,14 @@ def _join_cond_effects(branches: Sequence[core.Jaxpr]) -> effects.Effects:
         eff = eff.replace(eff.input + 1)
       joined_effects.add(eff)
   return joined_effects
+
+def _check_index_not_unreduced(api_name, index):
+  # Each device would pick a branch from its partial sum, not the logical value.
+  idx_aval = core.typeof(index)
+  if core.getu(idx_aval, None)[0]:
+    raise core.ShardingTypeError(
+        f'{api_name} index/predicate cannot be unreduced. Got'
+        f' {idx_aval.str_short()}')
 
 def _cond_abstract_eval(*avals: core.AbstractValue,
                         branches: Sequence[core.Jaxpr], **_):
@@ -1113,10 +1124,29 @@ def _cond_to_lojax(pred, *hi_args, branches, **kwds):
 
 cond_p.to_lojax = _cond_to_lojax
 
+def _platform_branch_lowering(ctx, jaxpr, args):
+  """`jaxpr`, a platform_dependent conditional's one kept branch, lowered in
+  place of the conditional."""
+  ordered_effects = list(effects.ordered_effects.filter_in(jaxpr.effects))
+  tokens_in = ctx.tokens_in.subset(ordered_effects)
+  consts = mlir.ir_consts(jaxpr.consts, [v.aval for v in jaxpr.constvars])
+  out_vals, tokens_out = mlir.jaxpr_subcomp(
+      ctx.module_context, jaxpr, ctx.name_stack.extend('platform'), tokens_in,
+      consts, *args, dim_var_values=ctx.dim_var_values,
+      const_lowering=ctx.const_lowering, outer_traceback=ctx.traceback)
+  ctx.set_tokens_out(tokens_out)
+  return [mlir.lower_with_sharding_in_types(ctx, o, aval)
+          for o, aval in zip(out_vals, ctx.avals_out)]
+
+
 def _cond_lowering(ctx, index, *args, branches, **params):
+  # The lowering platforms of each branch, if this is a multi-platform
+  # lowering of a `platform_dependent` conditional.
+  branches_lowering_platforms: list[tuple[str, ...]] | None = None
   if (branches_platforms := params.get("branches_platforms", None)) is not None:
     branches_kept: list[core.Jaxpr] = []
     index_to_kept_index: dict[int, int] = {}
+    kept_platforms: list[list[str]] = []
     for p in mlir._platforms_for_eqn(ctx):
       # Each `p` must appear in exactly one branches_platforms, or in the
       # last default branch. Otherwise, platform_index lowering would have
@@ -1126,9 +1156,16 @@ def _cond_lowering(ctx, index, *args, branches, **params):
           if b_idx not in index_to_kept_index:
             index_to_kept_index[b_idx] = len(branches_kept)
             branches_kept.append(branches[b_idx])
+            kept_platforms.append([])
+          kept_platforms[index_to_kept_index[b_idx]].append(p)
           break
       else:
         assert False, p
+
+    if len(branches_kept) == 1:
+      # Inline the sole surviving branch: its index cannot affect execution on
+      # the selected platforms.
+      return _platform_branch_lowering(ctx, branches_kept[0], args)
 
     # Compute the new index into branches_keep
     i32_type = ir.RankedTensorType.get([], mlir.dtype_to_ir_type(dtypes.dtype(np.int32)))
@@ -1143,6 +1180,7 @@ def _cond_lowering(ctx, index, *args, branches, **params):
 
     index = kept_index_case_op
     branches = branches_kept
+    branches_lowering_platforms = [tuple(ps) for ps in kept_platforms]
     assert branches, "platform_index lowering should have failed first"
 
   joined_effects = core.join_effects(*(branch.effects for branch in branches))
@@ -1162,12 +1200,20 @@ def _cond_lowering(ctx, index, *args, branches, **params):
   name_stack = ctx.name_stack.extend('cond')
   for i, jaxpr in enumerate(branches):
     branch = case_op.regions[i].blocks.append()
+    # Lower each branch of a multi-platform `platform_dependent` only for the
+    # platforms it runs on, e.g. so that a TPU-only kernel in the 'tpu' branch
+    # is not lowered for CPU.
+    branch_module_context = (
+        ctx.module_context.replace(platforms=branches_lowering_platforms[i])
+        if branches_lowering_platforms is not None
+        else ctx.module_context
+    )
     with ir.InsertionPoint(branch):
       consts = mlir.ir_consts(
           jaxpr.consts, [v.aval for v in jaxpr.constvars],
           const_lowering=ctx.const_lowering)
       out_vals, tokens_out = mlir.jaxpr_subcomp(
-          ctx.module_context, jaxpr, name_stack.extend(f'branch_{i}_fun'),
+          branch_module_context, jaxpr, name_stack.extend(f'branch_{i}_fun'),
           tokens_in, consts, *args,
           dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
           outer_traceback=ctx.traceback)
@@ -1183,7 +1229,8 @@ def _cond_lowering(ctx, index, *args, branches, **params):
   ctx.set_tokens_out(mlir.TokenSet(dict(zip(ordered_effects, tokens))))
   return outputs
 
-mlir.register_lowering(cond_p, _cond_lowering)
+mlir.register_lowering(
+    cond_p, _cond_lowering, shard_map_collective_rule=lambda *_, **__: None)
 
 @register_discharge_rule(cond_p)
 def _cond_state_discharge_rule(ctx, index, *args,

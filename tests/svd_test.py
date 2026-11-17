@@ -65,7 +65,7 @@ class SvdTest(jtu.JaxTestCase):
   def testSvdWithRectangularInput(self, m, n, log_cond, full_matrices):
     """Tests SVD with rectangular input."""
     with jax.default_matmul_precision('float32'):
-      a = np.random.uniform(
+      a = self.rng().uniform(
           low=0.3, high=0.9, size=(m, n)).astype(_SVD_TEST_DTYPE)
       u, s, v = osp_linalg.svd(a, full_matrices=False)
       cond = 10**log_cond
@@ -95,7 +95,7 @@ class SvdTest(jtu.JaxTestCase):
       args_maker = lambda: [a]
 
       with self.subTest('Test JIT compatibility'):
-        self._CompileAndCheck(svd_fn, args_maker)
+        self._CompileAndCheck(svd_fn, args_maker, rtol=_SVD_RTOL, atol=1E-6)
 
       with self.subTest('Test unitary u.'):
         self.assertAllClose(np.eye(unitary_u_size), unitary_u, rtol=_SVD_RTOL,
@@ -174,7 +174,7 @@ class SvdTest(jtu.JaxTestCase):
   def testSingularValues(self, m, n, log_cond, full_matrices):
     """Tests singular values."""
     with jax.default_matmul_precision('float32'):
-      a = np.random.uniform(
+      a = self.rng().uniform(
           low=0.3, high=0.9, size=(m, n)).astype(_SVD_TEST_DTYPE)
       u, s, v = osp_linalg.svd(a, full_matrices=False)
       cond = 10**log_cond
@@ -197,7 +197,7 @@ class SvdTest(jtu.JaxTestCase):
       args_maker = lambda: [a]
 
       with self.subTest('Test JIT compatibility'):
-        self._CompileAndCheck(svd_fn, args_maker)
+        self._CompileAndCheck(svd_fn, args_maker, rtol=_SVD_RTOL, atol=1E-6)
 
       with self.subTest('Test s.'):
         self.assertAllClose(expected_s, actual_s, rtol=_SVD_RTOL, atol=1E-6)

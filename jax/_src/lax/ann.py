@@ -78,10 +78,13 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import util
 from jax._src.numpy.indexing import take_along_axis
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.lax import lax
+from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
@@ -222,31 +225,23 @@ def approx_min_k(operand: Array,
       aggregate_to_topk=aggregate_to_topk)
 
 
-def _approx_top_k_sharding_rule(operand, *, reduction_dimension):
-  operand_s = operand.sharding
-  if operand_s.spec[reduction_dimension] is not None:
-    raise core.ShardingTypeError(
-        f"reduction dimension {reduction_dimension} in operand"
-        f" {operand.str_short()} should be unsharded i.e. the spec of that dim"
-        " should be `None`.")
-  return (operand_s, operand_s)
-
-def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
-                                recall_target, is_max_k,
-                                reduction_input_size_override,
-                                aggregate_to_topk):
+def _approx_top_k_shape_rule(operand, *, k, reduction_dimension, recall_target,
+                             is_max_k, reduction_input_size_override,
+                             aggregate_to_topk):
   if k <= 0:
     raise ValueError(f'k must be positive, got {k}')
   if len(operand.shape) == 0:
     raise TypeError('approx_top_k operand must have >= 1 dimension, got {}'.format(
         operand.shape))
   dims = list(operand.shape)
-  if dims[reduction_dimension] < k:
+  effective_size = (
+      core.max_dim(dims[reduction_dimension], reduction_input_size_override)
+      if not aggregate_to_topk and reduction_input_size_override >= 0
+      else dims[reduction_dimension])
+  if effective_size < k:
     raise ValueError(
         'k must be smaller than the size of reduction_dim {}, got {}'.format(
-            dims[reduction_dimension], k))
-  if not dtypes.issubdtype(operand.dtype, np.floating):
-    raise ValueError('operand must be a floating type')
+            effective_size, k))
   reduction_input_size = dims[reduction_dimension]
   if aggregate_to_topk:
     dims[reduction_dimension] = k
@@ -259,14 +254,49 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
          "approx_top_k with aggregate_to_topk=False not yet implemented when "
          f"either the `k` ({k}) or the "
          f" reduction dimension size ({reduction_input_size}) are symbolic")
-  s0, s1 = lax_utils.call_sharding_rule(
-      approx_top_k_p, _approx_top_k_sharding_rule, None, 2, operand,
-      reduction_dimension=reduction_dimension)
-  return (operand.update(shape=dims, dtype=operand.dtype,
-                         weak_type=operand.weak_type,
-                         manual_axis_type=operand.mat, sharding=s0),
-          operand.update(shape=dims, dtype=np.dtype(np.int32),
-                         manual_axis_type=operand.mat, sharding=s1))
+  return (tuple(dims), tuple(dims))
+
+def _approx_top_k_dtype_rule(operand, *, k, reduction_dimension, recall_target,
+                             is_max_k, reduction_input_size_override,
+                             aggregate_to_topk):
+  if not dtypes.issubdtype(operand.dtype, np.floating):
+    raise ValueError('operand must be a floating type')
+  return (operand.dtype, np.dtype(np.int32))
+
+def _approx_top_k_weak_type_rule(operand, *, k, reduction_dimension,
+                                 recall_target, is_max_k,
+                                 reduction_input_size_override,
+                                 aggregate_to_topk):
+  return (operand.weak_type, False)
+
+def _approx_top_k_sharding_rule(operand, *, k, reduction_dimension,
+                                recall_target, is_max_k,
+                                reduction_input_size_override,
+                                aggregate_to_topk):
+  operand_s = operand.sharding
+  axis = reduction_dimension % operand.ndim
+  if not aggregate_to_topk and operand_s.spec.partitions[axis] is not None:
+    raise core.ShardingTypeError(
+        f"reduction dimension {reduction_dimension} in operand"
+        f" {operand.str_short()} should be unsharded when"
+        " `aggregate_to_topk=False`.")
+  parts = util.tuple_update(operand_s.spec.partitions, axis, None)
+  out_s = operand_s.update(spec=operand_s.spec.update(partitions=parts))
+  return (out_s, out_s)
+
+def _approx_top_k_vma_rule(operand, *, k, reduction_dimension, recall_target,
+                           is_max_k, reduction_input_size_override,
+                           aggregate_to_topk):
+  return [core.standard_vma_rule('approx_top_k', operand)] * 2
+
+def _approx_top_k_ur_rule(operand, *, k, reduction_dimension, recall_target,
+                          is_max_k, reduction_input_size_override,
+                          aggregate_to_topk):
+  if core.getu(operand, kind=None)[0]:
+    raise core.ShardingTypeError(
+        'approx_top_k cannot accept unreduced inputs. Got'
+        f' {operand.str_short(mesh_axis_types=True)}')
+  return [frozenset()] * 2, [core.getr(operand), frozenset()], [None] * 2
 
 def _get_init_val_literal(op_type, is_max_k):
   return np.array(-np.inf if is_max_k else np.inf, dtype=op_type)
@@ -357,7 +387,8 @@ def _approx_top_k_lowering(ctx, operand, *, k,
         backend_config=backend_config,
         result_shapes=result_shapes)
 
-  return out.results
+  return [mlir.lower_with_sharding_in_types(ctx, r, aval)
+          for r, aval in zip(out.results, ctx.avals_out)]
 
 def _approx_top_k_batch_rule(batch_operands, batch_axes, *, k,
                              reduction_dimension, recall_target, is_max_k,
@@ -408,16 +439,89 @@ def _approx_top_k_jvp(primals, tangents, *, k, reduction_dimension,
     rank = len(arg_shape)
     if reduction_dimension < 0:
       reduction_dimension += rank
-    tangent_out = take_along_axis(tangent, arg_out, axis=reduction_dimension)
+    dnums = slicing.GatherDimensionNumbers(
+        offset_dims=(),
+        collapsed_slice_dims=(reduction_dimension,),
+        operand_batching_dims=tuple(
+            i for i in range(rank) if i != reduction_dimension),
+        start_indices_batching_dims=tuple(
+            i for i in range(rank) if i != reduction_dimension),
+        start_index_map=(reduction_dimension,))
+    out_s = core.typeof(val_out).sharding
+    tangent_out = slicing.gather(
+        tangent, lax.expand_dims(arg_out, (rank,)), dnums, (1,) * rank,
+        out_sharding=out_s if out_s.mesh.explicit_axes else None)
   return (val_out, arg_out), (tangent_out, ad_util.p2tz(arg_out))
+
+
+def _approx_top_k_collective_rule(
+    in_avals, out_avals, *, k, reduction_dimension, recall_target, is_max_k,
+    reduction_input_size_override, aggregate_to_topk,
+):
+  from jax._src.lax import parallel
+  del out_avals, aggregate_to_topk
+  in_aval, = in_avals
+  part = in_aval.sharding.spec.partitions[reduction_dimension]
+  if part is None:
+    return mlir.PartitioningRule()
+
+  in_size = in_aval.shape[reduction_dimension]
+  if not core.is_constant_shape((in_size, k)):
+    raise NotImplementedError
+  shard_size = in_aval.sharding.shard_shape(in_aval.shape)[reduction_dimension]
+  override = (
+      in_size
+      if reduction_input_size_override < 0
+      else reduction_input_size_override
+  )
+  cand_size = _jax.approx_top_k_reduction_output_size(
+      shard_size, in_aval.ndim, k, recall_target, False, override)[0]
+
+  def out_collective(out):
+    local_vals, local_idxs = out
+    offset = parallel.axis_index(part).astype(np.int32) * shard_size
+    global_idxs = lax.select(
+        lax.lt(local_idxs, np.int32(0)), local_idxs, local_idxs + offset)
+    vals, idxs = parallel.all_gather(
+        (local_vals, global_idxs),
+        part,
+        axis=reduction_dimension,
+        tiled=True,
+    )
+    top_vals, pick = approx_top_k_p.bind(
+        vals,
+        k=k,
+        reduction_dimension=reduction_dimension,
+        recall_target=1.0,
+        is_max_k=is_max_k,
+        reduction_input_size_override=-1,
+        aggregate_to_topk=True,
+    )
+    return [top_vals, take_along_axis(idxs, pick, axis=reduction_dimension)]
+
+  if cand_size < shard_size and cand_size * (in_size // shard_size) >= k:
+    per_shard_params: dict[str, int | float | bool] = {
+        'aggregate_to_topk': False, 'reduction_input_size_override': override}
+  else:
+    # recall_target=1.0 disables PartialReduce, which may emit < k' rows.
+    per_shard_params = {'k': min(k, shard_size), 'recall_target': 1.0}
+  return mlir.PartitioningRule(
+      out_collective=out_collective,
+      per_shard_params=per_shard_params,
+  )
 
 
 approx_top_k_p = core.Primitive('approx_top_k')
 approx_top_k_p.multiple_results = True
 approx_top_k_p.def_impl(partial(dispatch.apply_primitive, approx_top_k_p))
-approx_top_k_p.def_abstract_eval(_approx_top_k_abstract_eval)
+approx_top_k_p.def_abstract_eval(
+    partial(lax_utils.standard_multi_result_abstract_eval, approx_top_k_p,
+            _approx_top_k_shape_rule, _approx_top_k_dtype_rule,
+            _approx_top_k_weak_type_rule, _approx_top_k_sharding_rule,
+            _approx_top_k_vma_rule, _approx_top_k_ur_rule, None))
 mlir.register_lowering(approx_top_k_p,
-                      partial(_approx_top_k_lowering, fallback=True))
+                      partial(_approx_top_k_lowering, fallback=True),
+                      shard_map_collective_rule=_approx_top_k_collective_rule)
 mlir.register_lowering(approx_top_k_p, _approx_top_k_lowering,
                         platform='tpu')
 batching.primitive_batchers[approx_top_k_p] = _approx_top_k_batch_rule

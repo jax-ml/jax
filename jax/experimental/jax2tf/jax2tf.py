@@ -34,7 +34,6 @@ from jax import export
 
 from jax._src import api
 from jax._src import api_util
-from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import op_shardings
@@ -621,9 +620,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
         call_module_attrs["platforms"] = ()  # No platform checking
 
   if version >= 10:
-    call_module_attrs["use_shardy_partitioner"] = (
-        config.use_shardy_partitioner.value
-    )
+    call_module_attrs["use_shardy_partitioner"] = True
 
   if logger.isEnabledFor(logging.DEBUG):
     # We already logged the MLIR module when we exported it.
@@ -858,18 +855,15 @@ def _shard_value(val: TfVal,
       last_tile_dims=sharding_proto.last_tile_dims,  # pyrefly: ignore [bad-argument-type]
   )
   # Shardy requires V2 sharding format.
-  if config.use_shardy_partitioner.value:
-    xla_sharding_v2_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
-        type=int(sharding_proto.type),  # pyrefly: ignore [bad-argument-type]
-        tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
-        tile_assignment_devices=sharding_proto.tile_assignment_devices,
-        iota_reshape_dims=sharding_proto.iota_reshape_dims,
-        iota_transpose_perm=sharding_proto.iota_transpose_perm,
-        replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
-        last_tile_dims=sharding_proto.last_tile_dims,  # pyrefly: ignore [bad-argument-type]
-    )
-  else:
-    xla_sharding_v2_proto = None  # pyrefly: ignore [bad-assignment]
+  xla_sharding_v2_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
+      type=int(sharding_proto.type),  # pyrefly: ignore [bad-argument-type]
+      tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
+      tile_assignment_devices=sharding_proto.tile_assignment_devices,
+      iota_reshape_dims=sharding_proto.iota_reshape_dims,
+      iota_transpose_perm=sharding_proto.iota_transpose_perm,
+      replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
+      last_tile_dims=sharding_proto.last_tile_dims,  # pyrefly: ignore [bad-argument-type]
+  )
   if tf_context.executing_eagerly():
     raise ValueError(
         "A jit function with sharded arguments or results must be used under a `tf.function` context. "

@@ -47,6 +47,9 @@ echo "Installed packages:"
 export PY_COLORS=1
 export JAX_PLATFORMS=tpu,cpu
 export JAX_SKIP_SLOW_TESTS=true
+export JAX_ENABLE_X64="$JAXCI_ENABLE_X64"
+is_nogil=$("$JAXCI_PYTHON" -c "import sys; print('1' if getattr(sys, '_is_gil_enabled', lambda: True)() == False else '0')")
+export IS_JAXCI_PYTHON_NOGIL="$is_nogil"
 # End of common test environment variable setup
 
 echo "Running TPU tests..."
@@ -59,6 +62,7 @@ set +e
 if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
+    -o faulthandler_timeout=300 --durations=20 \
     --junitxml=test-artifacts/junit-single.xml \
     --deselect=tests/pallas/tpu_pallas_interpret_thread_map_test.py::InterpretThreadMapTest::test_thread_map \
     --dist=loadfile --maxfail=20 -m "not multiaccelerator" tests examples
@@ -68,6 +72,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   # Run multi-accelerator across all chips
   "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 \
+    -o faulthandler_timeout=300 --durations=20 \
     --junitxml=test-artifacts/junit-multi.xml \
     -m "multiaccelerator" tests
 
@@ -76,6 +81,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 else
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
+    -o faulthandler_timeout=300 --durations=20 \
     --junitxml=test-artifacts/junit-single.xml \
     --maxfail=20 -m "not multiaccelerator" \
     tests/pallas/ops_test.py \
@@ -92,6 +98,7 @@ else
 
   # Run multi-accelerator across all chips
   "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 \
+    -o faulthandler_timeout=300 --durations=20 \
     --junitxml=test-artifacts/junit-multi.xml \
     -m "multiaccelerator" \
     tests/pjit_test.py \

@@ -155,8 +155,8 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
     m, k, n = 512, 512, 512
     bm, bk, bn = 128, 128, 128
 
-    def matmul_kernel(acc_ref, x_ref, y_ref, o_ref):
-      @pl.when(pl.program_id(2) == 0)
+    def matmul_kernel(acc_ref, step, x_ref, y_ref, o_ref):
+      @pl.when(step.index[2] == 0)
       def _():
         acc_ref[...] = jnp.zeros_like(acc_ref)
 
@@ -164,7 +164,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
           x_ref[...], y_ref[...], preferred_element_type=jnp.float32
       )
 
-      @pl.when(pl.program_id(2) == pl.num_programs(2) - 1)
+      @pl.when(step.index[2] == k // bk - 1)
       def _():
         o_ref[...] = acc_ref[...].astype(o_ref.dtype)
 
@@ -182,6 +182,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
                   pl.BlockSpec((bk, bn), lambda i, j, k: (k, j)),
               ],
               out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
+              _explicit_indices=True,
           )(x_ref, y_ref, o_ref)
 
         pl.pallas_call(
@@ -249,11 +250,8 @@ class PinnedBufferTest(jtu.JaxTestCase):
       f(x)
 
   def test_basic_vmem(self):
-    self.skipTest(
-        "TODO(b/507446729): test_basic_vmem has regressed and "
-        "does not test the intended behavior."
-    )
-
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Only supported on TPU v5+")
     @jax.jit
     def f(x):
       x_pinned = pin(x, to='vmem')
@@ -266,26 +264,23 @@ class PinnedBufferTest(jtu.JaxTestCase):
       return unpin(x_pinned)
 
     x = jnp.arange(3.)
+    self.assertAllClose(
+        jax.jit(lambda x: unpin(pin(x, to="vmem")))(x), x, check_dtypes=False
+    )
     y = f(x)
     self.assertAllClose(y, x, check_dtypes=False)
 
-    hlo = f.lower(x).compile().as_text()
-    self.assertRegex(
-        hlo,
-        r'output_memory_space_colors.*color.*1'
-    )
+    lowered_hlo = f.lower(x).as_text("hlo")
+    self.assertRegex(lowered_hlo, r"input_memory_space_colors.*color.*1")
+    self.assertRegex(lowered_hlo, r"output_memory_space_colors.*color.*1")
+    compiled_hlo = f.lower(x).compile().as_text()
+    self.assertRegex(compiled_hlo, r'S\(1\)\}.*custom_call_target="Pin"')
 
 
-class CoreMapTest(jtu.JaxTestCase):
+class KernelTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.enter_context(
-        jtu.ignore_warning(
-            category=DeprecationWarning,
-            message="jax.experimental.pallas.core_map is deprecated",
-        )
-    )
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Only supported on TPU v4+")
 
@@ -384,6 +379,17 @@ class CoreMapTest(jtu.JaxTestCase):
         Exception, "You can only close over scalars and Refs"
     ):
       f(x)
+
+  def test_raises_on_write_to_array_input(self):
+    @pl.kernel(mesh=pltpu.TensorCoreMesh(axis_name="x"))
+    def kernel(x_ref, y_ref):
+      pltpu.sync_copy(x_ref, y_ref)
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    with self.assertRaisesRegex(
+        ValueError, "writes to input y_ref .* which was passed as an array"
+    ):
+      kernel(x, jnp.zeros_like(x))
 
   @parameterized.product(
       core_type=[*pltpu.CoreType], use_tc_tiling_on_sc=[True, False]

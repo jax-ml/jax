@@ -16,8 +16,8 @@
 import google_benchmark as benchmark
 
 import jax
-from jax import core
 from jax import export
+from jax._src import core
 
 jax.config.parse_flags_with_absl()
 
@@ -49,7 +49,7 @@ def builder_linear_arith(state):
           for r_k in [1, 2, -2]:
             comb = l * l_k + r * r_k
             if not isinstance(comb, int):
-              _ = comb.leading_term  # Ensure we actually materialize
+              _ = comb._leading_term  # Ensure we actually materialize
 
 
 @benchmark.register

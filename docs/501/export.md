@@ -89,16 +89,16 @@ function cannot be differentiated):
 >>> rehydrated_f: Callable = export.deserialize(blob).call
 
 >>> rehydrated_f(0.1)  # 7 * 0.1^3
-Array(0.007, dtype=float32)
+Array(0.007, dtype=float32, weak_type=True)
 
 >>> jax.grad(rehydrated_f)(0.1)  # 7*3 * 0.1^2
-Array(0.21000001, dtype=float32)
+Array(0.21000001, dtype=float32, weak_type=True)
 
 >>> jax.grad(jax.grad(rehydrated_f))(0.1)  # 7*3*2 * 0.1
-Array(4.2, dtype=float32)
+Array(4.2, dtype=float32, weak_type=True)
 
 >>> jax.grad(jax.grad(jax.grad(rehydrated_f)))(0.1)  # 7*3*2
-Array(42., dtype=float32)
+Array(42., dtype=float32, weak_type=True)
 
 >>> jax.grad(jax.grad(jax.grad(jax.grad(rehydrated_f))))(0.1)  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):

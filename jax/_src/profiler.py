@@ -34,7 +34,6 @@ traceback_util.register_exclusion(__file__)
 from jax._src import xla_bridge
 from jax._src.lib import _profiler
 from jax._src.lib import _profile_data
-from jax._src.lib import jaxlib_extension_version
 from jax import version as jax_version_module
 from jax._src.lib import version as version_lib
 
@@ -214,28 +213,18 @@ class ProfileSession:
       if not self._is_running or self._raw_session is None:
         raise RuntimeError("No profile started")
 
-      if jaxlib_extension_version >= 501:
-        self._profile_data = self._raw_session.stop_and_get_profile_data()
-      elif self.log_dir is not None:
-        self._raw_session.stop_and_export(self.log_dir)
-      else:
-        self._profile_data = self._raw_session.stop_and_get_profile_data()
+      self._profile_data = self._raw_session.stop_and_get_profile_data()
       self._is_running = False
       self._raw_session = None
       _profile_state.reset()
       clear_metadata()
 
     if self.log_dir is not None:
-      if jaxlib_extension_version >= 501:
-        self.export_profile_data(
-            log_dir=self.log_dir,
-            create_perfetto_link=self.create_perfetto_link,
-            create_perfetto_trace=self.create_perfetto_trace,
-        )
-      elif self.create_perfetto_trace or self.create_perfetto_link:
-        abs_filename = _write_perfetto_trace_file(self.log_dir)
-        if self.create_perfetto_link:
-          _host_perfetto_trace_file(abs_filename)
+      self.export_profile_data(
+          log_dir=self.log_dir,
+          create_perfetto_link=self.create_perfetto_link,
+          create_perfetto_trace=self.create_perfetto_trace,
+      )
 
     return self._profile_data
 
@@ -421,10 +410,7 @@ def export_profile_data(
         f" {type(profile_data).__name__}"
     )
 
-  if jaxlib_extension_version >= 501:
-    _profiler.export_to_xprof(data, str(log_dir), session_id=session_id or "")
-  else:
-    raise RuntimeError("export_profile_data requires JAX 0.10.3 or newer.")
+  _profiler.export_to_xprof(data, str(log_dir), session_id=session_id or "")
   if create_perfetto_trace or create_perfetto_link:
     abs_filename = _write_perfetto_trace_file(str(log_dir))
     if create_perfetto_link:

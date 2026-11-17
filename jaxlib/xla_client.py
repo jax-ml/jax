@@ -45,13 +45,13 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 510  # Support custom layout in dlpack_managed_tensor_to_buffer.
+_version = 524  # GPU f64 atomic store lowering fix
 
 # An internal increasing version number for protecting jaxlib code against
-# ifrt changes.
+# xla changes.
 # lives in xla/python/version.h.
-# In JAX, reference this via jax._src.lib.ifrt_version.
-_ifrt_version = _xla.ifrt_version_number
+# In JAX, reference this via jax._src.lib.xla_version.
+_xla_version = _xla.xla_version_number
 
 xla_platform_names = {
     'cpu': 'Host',
@@ -208,6 +208,9 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
   options['allocator'] = allocator
   if memory_fraction:
     options['memory_fraction'] = float(memory_fraction)
+  else:
+    # Keep the initial reservation at 75%, but let the spatial BFC pool grow.
+    options['memory_fraction_policy'] = '0.75+'
   if preallocate:
     options['preallocate'] = preallocate not in ('false', 'False', '0')
   if collective_memory_size:

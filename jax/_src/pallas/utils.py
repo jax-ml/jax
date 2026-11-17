@@ -346,7 +346,7 @@ def _erf_inv_64_lowering_helper(x):
 
 def erf_inv_lowering_helper(x):
   if config.jax_accurate_erf_inv.value:
-    return special.erf_inv_impl(x, use_optimization_barrier=False)
+    return special.erf_inv_impl(x)
   if x.dtype == jnp.float32:
     return _erf_inv_32_lowering_helper(x)
   if x.dtype == jnp.float64:

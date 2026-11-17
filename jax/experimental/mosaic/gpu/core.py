@@ -80,12 +80,6 @@ def artificial_shared_memory_limit(limit):
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
 FWD_COMPAT_IR_VERSION = 9
 
-# jaxlib 0.12.0 changes the Mosaic GPU C API (MosaicGpuLaunch takes kernel and
-# device_ordinal arguments).
-# TODO(sohaibiftikhar): Remove conditioning once the minimum jaxlib version is
-# >= 0.12.0.
-_ABI_V2 = lib.version >= (0, 12, 0)
-
 c = utils.c  # This is too common to fully qualify.
 
 
@@ -204,7 +198,7 @@ _RESULTS_MEMORY_SPACES_ATTR = "results_memory_spaces"
 # Must be kept in sync with xla::gpu::MemorySpaceColor::kCollective. Buffers
 # in this memory space are allocated as symmetric memory, which is a
 # prerequisite for peer-to-peer and multimem accesses.
-_COLLECTIVE_MEMORY_SPACE = 1
+_COLLECTIVE_MEMORY_SPACE = 7
 
 
 def _memory_spaces_attr_value(indices: Sequence[int]) -> str:
@@ -222,8 +216,8 @@ def _mosaic_gpu_lowering_rule(
     inout_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     cost_estimate: Any = None,
-    use_custom_barrier: bool = False,
     skip_device_barrier: bool = False,
+    collective_id: int | None = None,
 ):
   axis_context = ctx.module_context.axis_context
   replica_ids = []
@@ -301,16 +295,28 @@ def _mosaic_gpu_lowering_rule(
   backend_config: dict[str, ir.Attribute] = dict(
       kernel_hash=ir.StringAttr.get(kernel_id),
       module=ir.StringAttr.get(module_asm),
-      use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
       skip_device_barrier=ir.BoolAttr.get(skip_device_barrier),
       uses_xla_collective_metadata=ir.BoolAttr.get(
           launch_context.uses_collective_metadata(module)
       ),
   )
+  # TODO(patrios): Remove once the minimum jaxlib version is >= 0.12.1.
+  if lib.version < (0, 12, 1):
+    backend_config["use_custom_barrier"] = ir.BoolAttr.get(False)
   if cost_estimate is not None:
     backend_config["cost_estimate_json"] = ir.StringAttr.get(
         json.dumps(dataclasses.asdict(cost_estimate))
     )
+  if collective_id is not None:
+    if not (0 <= collective_id < launch_context.MAX_COLLECTIVE_IDS):
+      raise ValueError(
+          f"collective_id must be in [0, {launch_context.MAX_COLLECTIVE_IDS}),"
+          f" got {collective_id}"
+      )
+    # The presence of collective_id enables the barrier semaphores in the
+    # custom call.
+    i64 = ir.IntegerType.get_signless(64)
+    backend_config["collective_id"] = ir.IntegerAttr.get(i64, collective_id)
 
   frontend_attributes: dict[str, ir.Attribute] = {}
 
@@ -376,6 +382,7 @@ def _mosaic_gpu_lowering_rule(
       api_version=4,
       extra_attributes=extra_attributes,
   ).results
+
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 
@@ -732,23 +739,11 @@ def _is_known_multihost_mesh(
 
 
 def _cluster_arrive_relaxed_aligned():
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      "barrier.cluster.arrive.relaxed.aligned;",
-      "",
-      has_side_effects=True,
-  )
+  utils.inline_ptx("barrier.cluster.arrive.relaxed.aligned;", convergent=True)
 
 
 def _cluster_wait_aligned():
-  llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [],
-      "barrier.cluster.wait.aligned;",
-      "",
-      has_side_effects=True,
-  )
+  utils.inline_ptx("barrier.cluster.wait.aligned;", convergent=True)
 
 
 # TODO(apaszke): Inline this
@@ -768,6 +763,7 @@ def _launch(
     num_params: int = 0,
     jax_mesh: mesh_lib.Mesh | None = None,
     is_multi_process: bool = False,
+    use_barrier_semaphore: bool = False,
 ):
   if (profiler_spec is None) != (maybe_prof_buffer is None):
     raise ValueError(
@@ -869,9 +865,8 @@ def _launch(
         prof,
         num_peers=num_peers,
         num_params=num_params,
-        multihost_kernel=is_multi_process or _is_known_multihost_mesh(
-            jax_mesh
-        ),
+        use_barrier_semaphore=use_barrier_semaphore,
+        multihost_kernel=is_multi_process or _is_known_multihost_mesh(jax_mesh),
     )
     with ctx.named_region("Init"):
       num_warpgroups = math.prod(block) // utils.WARPGROUP_SIZE
@@ -895,7 +890,7 @@ def _launch(
       )
       # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
-      if utils.get_arch().major >= 9:
+      if utils.get_arch() >= utils.HOPPER:
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
             [],
@@ -918,11 +913,22 @@ def _launch(
           cols_used = 0
           for alloc in tmem_allocs:
             cols_used += alloc.alloc()
-          if cols_used > tcgen05.TMEM_MAX_COLS:
+          # TODO(olechwierowicz): Alternatively we should be able to thread in
+          # `exclusive` parameter to tmem_alloc. Revisit this if there's a need
+          # to expose it in the API.
+          if len(tmem_allocs) == 1 and tcgen05.supports_tmem_alloc_expanded_columns():
+            # A single allocation can be exclusive, which gives access to all
+            # the TMEM columns.
+            max_cols = tcgen05.TMEM_EXCLUSIVE_MAX_COLS
+          else:
+            # Separate allocations cannot be exclusive, they have to fit in
+            # `tcgen05.TMEM_MAX_COLS`.
+            max_cols = tcgen05.TMEM_MAX_COLS
+          if cols_used > max_cols:
             raise ValueError(
                 "Total TMEM allocation exceeds memory limit. "
                 f"Requested {cols_used} columns which exceeds limit of "
-                f"{tcgen05.TMEM_MAX_COLS}."
+                f"{max_cols}."
             )
           collective_types = {alloc.collective for alloc in tmem_allocs}
           if len(collective_types) > 1:
@@ -980,6 +986,7 @@ def _lower_as_gpu_kernel(
     base_loc: ir.Location | None = None,
     uses_pdl: bool = False,
     is_multi_process: bool = False,
+    use_barrier_semaphore: bool = False,
 ):
   ptr_ty = llvm.PointerType.get()
   token_ty = gpu.AsyncTokenType.get()
@@ -1073,6 +1080,7 @@ def _lower_as_gpu_kernel(
           num_params,
           jax_mesh,
           is_multi_process=is_multi_process,
+          use_barrier_semaphore=use_barrier_semaphore,
       ) as (_launch_ctx, smem_refs):
         launch_ctx = _launch_ctx
         body(launch_ctx, *arg_refs, smem_refs)
@@ -1395,9 +1403,6 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
       ctypes.POINTER(ctypes.c_void_p), # arg_ptrs
       ctypes.c_int, # device_ordinal
   ]
-  if not _ABI_V2:
-    # Drop kernel and device_ordinal for ABI v1.
-    launch_arg_types = launch_arg_types[1:-1]
   launch_c = ctypes.CFUNCTYPE(None, *launch_arg_types)(launch_ptr)
 
   def launch(arg_ptrs, device):
@@ -1411,8 +1416,6 @@ def _compile_as_torch_gpu_kernel(module_asm: bytes):
         if device.index is not None
         else torch.cuda.current_device(),
     ]
-    if not _ABI_V2:
-      args = args[1:-1]
     launch_c(*args)
 
   return launch, functools.partial(unload_func, compiled)

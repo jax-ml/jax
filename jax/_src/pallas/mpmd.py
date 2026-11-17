@@ -118,10 +118,21 @@ def _mpmd_map_abstract_eval(
         # the kernel.
         assert not jaxpr.constvars
         index = jaxpr.invars.index(eff.input)
-        if index < len(in_avals) and isinstance(
-            in_avals[index], state.AbstractRef
-        ):
+        if index >= len(in_avals):
+          continue
+        if isinstance(in_avals[index], state.AbstractRef):
           effs.add(eff.replace(index))
+        elif (
+            isinstance(eff, (state.WriteEffect, state.AccumEffect))
+            and index not in input_output_aliases
+        ):
+          arg_name = jaxpr.debug_info.safe_arg_names(len(jaxpr.invars))[index]
+          raise ValueError(
+              f"The kernel {jaxpr.debug_info.func_src_info} writes to input"
+              f" {arg_name} of type {in_avals[index]}, which was passed as an"
+              " array. Pass a Ref (e.g. `jax.new_ref(x)`) to update it in"
+              " place, or return it as an output via `out_type`."
+          )
         continue
       if not isinstance(eff, jax_core.NamedAxisEffect):
         effs.add(eff)
@@ -137,10 +148,12 @@ def _mpmd_map_abstract_eval(
   #                    f"got {get_abstract_mesh().axis_types}")
 
   # NOTE(mattjj,yashkatariya): this doesn't catch auto-mode non-manual axes
-  if not (all(p is None for a in in_avals if isinstance(a, jax_core.ShapedArray)
-              for p in a.sharding.spec) and
-          all(p is None for a in out_avals if isinstance(a, jax_core.ShapedArray)
-              for p in a.sharding.spec)):
+  if not (all(not a.sharding.spec.unreduced and not a.sharding.spec.reduced and
+              all(p is None for p in a.sharding.spec)
+              for a in in_avals if isinstance(a, jax_core.ShapedArray)) and
+          all(not a.sharding.spec.unreduced and not a.sharding.spec.reduced and
+              all(p is None for p in a.sharding.spec)
+              for a in out_avals if isinstance(a, jax_core.ShapedArray))):
     raise ValueError(
         "mpmd_map requires all mesh axes to be Manual, got"
         f" {get_abstract_mesh().axis_types}"
@@ -641,9 +654,11 @@ def _mpmd_map_batching_rule(
 batching.fancy_primitive_batchers[mpmd_map_p] = _mpmd_map_batching_rule
 
 
-def _mpmd_map_is_high(*args, jaxprs, **params):
-  del args, params
-  return any(jaxpr.is_high for jaxpr in jaxprs)
+def _mpmd_map_is_high(*avals, jaxprs, out_avals, **params):
+  del params
+  return (any(jaxpr.is_high for jaxpr in jaxprs) or
+          any(a.is_high for a in avals) or
+          any(a.is_high for a in out_avals))
 
 
 mpmd_map_p.is_high = _mpmd_map_is_high
@@ -1158,7 +1173,12 @@ def _mpmd_map(
         (kernel_arg_avals, kernel_kwarg_avals),
         is_leaf=lambda x: isinstance(x, state.TransformedRef),
     )
-    in_avals_ft = ft.flatten(unflat_kernel_avals)
+    # Strip manual_axis_type unconditionally (wrappers like plgpu.kernel set
+    # _check_vma=False) so mat.unreduced doesn't mark kernel Refs high and
+    # trigger a to_lojax rewrite on the kernel (only custom HiTypes should).
+    in_avals_ft = ft.flatten(unflat_kernel_avals).map(
+        lambda a: a.update_manual_axis_type(jax_core.empty_mat)
+    )
     flat_kernel_avals = list(in_avals_ft.vals)
 
     jaxprs: list[jax_core.Jaxpr] = []

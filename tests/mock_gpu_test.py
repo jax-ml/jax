@@ -17,7 +17,6 @@ import math
 
 from absl.testing import absltest
 import jax
-from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 from jax.sharding import NamedSharding
@@ -59,17 +58,10 @@ class MockGPUTest(jtu.JaxTestCase):
     f_lowered = f.lower(x, y)
     hlo = f_lowered.compiler_ir()
 
-    mocked_count = NUM_SHARDS * jax.local_device_count()
-    if config.use_shardy_partitioner.value:
-      self.assertIn(
-          'sharding = #sdy.sharding<@mesh, [{"x"}, {}]>}',
-          str(hlo)
-      )
-    else:
-      self.assertIn(
-          f'sharding = "{{devices=[{mocked_count},1]<=[{mocked_count}]}}"',
-          str(hlo)
-      )
+    self.assertIn(
+        'sharding = #sdy.sharding<@mesh, [{"x"}, {}]>}',
+        str(hlo)
+    )
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
