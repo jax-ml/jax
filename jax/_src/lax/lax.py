@@ -5996,10 +5996,87 @@ ad.defbilinear(mul_p, _mul_transpose_left, _mul_transpose_right)
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 core.pp_eqn_rules[mul_p] = _binary_with_out_dtype_pp_rule
 lax_utils.register_unreduced_lojax(mul_p)
+
+
+def _mulhi_u64_hlo(ctx, lhs, rhs, u64_aval):
+  c32 = mlir.full_like_aval(ctx, np.uint64(32), u64_aval)
+  mask_lo = mlir.full_like_aval(ctx, np.uint64(0xFFFFFFFF), u64_aval)
+  a_hi = hlo.shift_right_logical(lhs, c32)
+  b_hi = hlo.shift_right_logical(rhs, c32)
+  a_lo = hlo.and_(lhs, mask_lo)
+  b_lo = hlo.and_(rhs, mask_lo)
+  p0 = hlo.multiply(a_lo, b_lo)
+  p1 = hlo.multiply(a_lo, b_hi)
+  p2 = hlo.multiply(a_hi, b_lo)
+  p3 = hlo.multiply(a_hi, b_hi)
+  mid1 = hlo.add(p1, hlo.shift_right_logical(p0, c32))
+  mid2 = hlo.add(p2, hlo.and_(mid1, mask_lo))
+  return hlo.add(
+      hlo.add(p3, hlo.shift_right_logical(mid1, c32)),
+      hlo.shift_right_logical(mid2, c32),
+  )
+
+
+def _mulhi_lower(ctx, x, y):
+  # HloFunctionImporter (used by ShardyXLA) added HloOpcode::kMulhi support in
+  # xla_version 84; decompose to StableHLO on older jaxlib or forward-compat.
+  if not ctx.is_forward_compat() and xla_version >= 84:
+    return _nary_lower_hlo(chlo.mulhi, ctx, x, y)
+  aval_out, = ctx.avals_out
+  dtype = aval_out.dtype
+  nbits = dtypes.iinfo(dtype).bits
+  is_signed = dtypes.issubdtype(dtype, np.signedinteger)
+  out_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
+  if nbits < 64:
+    widen_bits = _max(nbits * 2, 8)
+    widen_dtype = np.dtype(f"{'i' if is_signed else 'u'}{widen_bits // 8}")
+    widen_aval = core.ShapedArray(aval_out.shape, widen_dtype)
+    widen_type = mlir.aval_to_ir_type(ctx.module_context, widen_aval)
+    shift_op = (
+        hlo.shift_right_arithmetic if is_signed else hlo.shift_right_logical
+    )
+
+    def _mulhi_narrow(lhs, rhs):
+      shift = mlir.full_like_aval(ctx, nbits, widen_aval)
+      prod = hlo.multiply(
+          hlo.convert(widen_type, lhs), hlo.convert(widen_type, rhs)
+      )
+      return hlo.convert(out_type, shift_op(prod, shift))
+
+    return _nary_lower_hlo(_mulhi_narrow, ctx, x, y)
+
+  u64_aval = core.ShapedArray(aval_out.shape, np.dtype(np.uint64))
+  u64_type = mlir.aval_to_ir_type(ctx.module_context, u64_aval)
+  if not is_signed:
+    return _nary_lower_hlo(
+        lambda a, b: _mulhi_u64_hlo(ctx, a, b, u64_aval), ctx, x, y
+    )
+
+  s64_aval = core.ShapedArray(aval_out.shape, np.dtype(np.int64))
+
+  def _mulhi_s64(lhs, rhs):
+    zero_s64 = mlir.full_like_aval(ctx, np.int64(0), s64_aval)
+    zero_u64 = mlir.full_like_aval(ctx, np.uint64(0), u64_aval)
+    u_lhs = hlo.convert(u64_type, lhs)
+    u_rhs = hlo.convert(u64_type, rhs)
+    hi = _mulhi_u64_hlo(ctx, u_lhs, u_rhs, u64_aval)
+    hi = hlo.subtract(
+        hi,
+        hlo.select(mlir.compare_hlo(lhs, zero_s64, 'LT'), u_rhs, zero_u64),
+    )
+    hi = hlo.subtract(
+        hi,
+        hlo.select(mlir.compare_hlo(rhs, zero_s64, 'LT'), u_lhs, zero_u64),
+    )
+    return hlo.convert(out_type, hi)
+
+  return _nary_lower_hlo(_mulhi_s64, ctx, x, y)
+
+
 mulhi_p = naryop(input_dtype, [{np.integer}, {np.integer}], 'mulhi')
 dispatch.simple_impl(mulhi_p)
 ad.defjvp_zero(mulhi_p)
-mlir.register_lowering(mulhi_p, partial(_nary_lower_hlo, chlo.mulhi))
+mlir.register_lowering(mulhi_p, _mulhi_lower)
 
 
 def _fma_jvp(prim, primals, tangents):

@@ -19,7 +19,7 @@ import math
 import operator
 import types
 import unittest
-from unittest import SkipTest
+from unittest import mock, SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -410,6 +410,33 @@ class LaxTest(jtu.JaxTestCase):
         const_lowering={},
     )
     self.assertTrue(proxy_rule_ctx.is_forward_compat())
+
+  @jtu.sample_product(dtype=lax_test_util.int_dtypes + lax_test_util.uint_dtypes)
+  def testMulhiForwardCompatLowering(self, dtype):
+    info = dtypes.iinfo(dtype)
+    if not config.enable_x64.value and info.bits == 64:
+      self.skipTest("64-bit mode disabled")
+    half = 1 << (info.bits // 2)
+    if dtypes.issubdtype(dtype, np.signedinteger):
+      edge_vals = [info.min, info.min + 1, -half, -1, 0, 1, half, info.max - 1, info.max]
+    else:
+      edge_vals = [0, 1, half - 1, half, info.max - 1, info.max]
+    edge = np.array(edge_vals, dtype=dtype)
+    x_edge, y_edge = edge[:, None], edge[None, :]
+    rng = jtu.rand_fullrange(self.rng())
+    x_rand, y_rand = rng((3, 4), dtype), rng((3, 4), dtype)
+
+    for x, y in [(x_edge, y_edge), (x_rand, y_rand)]:
+      expected = lax_reference.mulhi(x, y)
+
+      exported = export.export(jax.jit(lax.mulhi))(x, y)
+      self.assertNotIn("chlo.mulhi", exported.mlir_module())
+      self.assertArraysEqual(exported.call(x, y), expected)
+
+      with mock.patch.object(lax_internal, "xla_version", 78):
+        f = jax.jit(lambda a, b: lax.mulhi(a, b))
+        self.assertNotIn("chlo.mulhi", f.trace(x, y).lower().as_text())
+        self.assertArraysEqual(f(x, y), expected)
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
