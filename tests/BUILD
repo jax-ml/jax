@@ -100,7 +100,10 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "device_test",
     srcs = ["device_test.py"],
-    deps = py_deps("absl/testing"),
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
