@@ -295,6 +295,7 @@ def _lower_to_custom_call(
     name: str,
     jax_mesh,
     collective_id_tag: Hashable | None = None,
+    unused_buffers: bool = False,
 ):
   input_output_aliases = tuple(
       (a[0] + num_dynamic_grid_bounds, a[1]) for a in input_output_aliases
@@ -387,6 +388,7 @@ def _lower_to_custom_call(
       needs_layout_passes=mosaic_params.needs_layout_passes,
       tiling=_resolve_tiling(mosaic_params, kernel_type),
       opt_level=mosaic_params.opt_level,
+      unused_buffers=unused_buffers,
   )
   _maybe_cast_to_bool = (
       lambda x, aval: x.astype(jax.numpy.bool_)
@@ -609,6 +611,34 @@ def _rewrite_jaxpr_for_lowering(
   return new_jaxpr
 
 
+def _uses_no_buffers(
+    jaxpr: jax_core.Jaxpr, num_scratch: int, core_type: tpu_core.CoreType
+) -> bool:
+  """Returns whether a kernel uses none of its operands and outputs.
+
+  ``pltpu.touch`` only orders work around a ref and lowers to nothing, so the
+  Mosaic argument of a buffer used only by it has no uses. Only HBM buffers
+  count: the kernel runs on them in place, while a buffer in another memory
+  space is copied into the core whether the kernel uses it or not.
+  """
+  used = {
+      v
+      for eqn in jaxpr.eqns
+      if eqn.primitive is not tpu_primitives.touch_p
+      for v in eqn.invars
+      if isinstance(v, jax_core.Var)
+  }
+  return all(
+      v not in used
+      and isinstance(v.aval, state.AbstractRef)
+      and tpu_core.memory_space_to_tpu_memory_space(
+          v.aval.memory_space, core_type
+      )
+      is tpu_core.MemorySpace.HBM
+      for v in jaxpr.invars[: len(jaxpr.invars) - num_scratch]
+  )
+
+
 def mpmd_map_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
@@ -676,6 +706,7 @@ def mpmd_map_tpu_lowering_rule(
       for v in some_jaxpr.invars
   ]
 
+  unused_buffers = True
   with mlir_ctx, ir.Location.unknown(mlir_ctx):
     mosaic_module = ir.Module.create()
     for mesh, jaxpr in zip(meshes, jaxprs, strict=True):
@@ -734,6 +765,9 @@ def mpmd_map_tpu_lowering_rule(
             jaxpr, mesh, (*meshes, *external_meshes)
         )
 
+      unused_buffers = unused_buffers and _uses_no_buffers(
+          jaxpr, num_scratch, mesh.core_type
+      )
       lowering.lower_jaxpr_into_unpipelined_module(
           ctx,
           mosaic_module,
@@ -802,6 +836,7 @@ def mpmd_map_tpu_lowering_rule(
       name=name,
       jax_mesh=jax_mesh,
       collective_id_tag=tag,
+      unused_buffers=unused_buffers,
   )
 
 

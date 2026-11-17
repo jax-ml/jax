@@ -425,6 +425,7 @@ def _tpu_custom_call_lowering(
     out_avals: Any,
     input_output_aliases: tuple[tuple[int, int], ...],
     metadata: Any | None,
+    unused_buffers: bool = False,
 ) -> ir.OpResultList:
   result_types, _ = mlir.ir_tree_registry.flatten([mlir.aval_to_ir_types(ctx.module_context, aval) for aval in out_avals])
   axis_context = ctx.module_context.axis_context
@@ -469,6 +470,21 @@ def _tpu_custom_call_lowering(
     config = config.downgrade_lowered_module_asm(ir_version)
   # TODO(b/536052236): Always use core_ids after 2026-11-06.
   use_core_ids = not ctx.is_forward_compat()
+  # Layouts do not matter to a kernel that uses none of its buffers, so they
+  # stay unconstrained and XLA does not copy the buffers to row major around
+  # the kernel. HLO constrains all layouts or none. Only SparseCore kernels set
+  # a tiling, and SparseCore tiling flattens buffers in row major order. Peers
+  # may write a communicating kernel's buffers once it runs, so a relayout copy
+  # after it could race.
+  # TODO(ptoulme): Remove the forward compatibility check after 2026-12-01.
+  # Compilers from before 2026-10-29 reject buffers that are not row major.
+  constrain_layouts = not (
+      unused_buffers
+      and config.tiling is Tiling.COMPACT
+      and not config.has_communication
+      and not ctx.is_forward_compat()
+      and ctx.module_context.get_backend(optional=True) is not None
+  )
   call = mlir.custom_call(
       "tpu_custom_call",
       result_types=result_types,
@@ -477,8 +493,12 @@ def _tpu_custom_call_lowering(
       api_version=1,
       has_side_effect=has_side_effects != TpuSideEffectType.PURE,
       operand_output_aliases=dict(input_output_aliases),
-      operand_layouts=_avals_to_layouts(ctx.avals_in),
-      result_layouts=_avals_to_layouts(ctx.avals_out),
+      operand_layouts=(
+          _avals_to_layouts(ctx.avals_in) if constrain_layouts else None
+      ),
+      result_layouts=(
+          _avals_to_layouts(ctx.avals_out) if constrain_layouts else None
+      ),
       result_shapes=result_shapes,
       extra_attributes=extra_attributes,
   )
@@ -899,6 +919,7 @@ def lower_module_to_custom_call(
     needs_layout_passes: bool | None = None,
     tiling: Tiling | None = None,
     opt_level: OptLevel | None = None,
+    unused_buffers: bool = False,
 ) -> Sequence[ir.Value]:
   if isinstance(has_side_effects, bool):
     has_side_effects = (
@@ -938,6 +959,7 @@ def lower_module_to_custom_call(
       out_avals=out_type,
       input_output_aliases=input_output_aliases,
       metadata=metadata,
+      unused_buffers=unused_buffers,
   )
 
 
