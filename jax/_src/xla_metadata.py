@@ -357,7 +357,9 @@ def _xla_metadata_call_lowering(ctx, *args, jaxpr, xla_metadata, ad_metadata):
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))
   ctx.set_tokens_out(tokens_out)
   return out_nodes
-mlir.register_lowering(xla_metadata_call_p, _xla_metadata_call_lowering)
+mlir.register_lowering(
+    xla_metadata_call_p, _xla_metadata_call_lowering,
+    shard_map_passthrough=True)
 
 
 def _xla_metadata_call_batcher(axis_data, vals_in, dims_in, *, jaxpr,

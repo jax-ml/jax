@@ -171,7 +171,8 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
   return [on if compute_type == 'tpu_sparsecore' and oms is core.MemorySpace.Device else
           mlir.wrap_with_memory_kind(ctx.module_context, on, core.mem_space_to_kind(oms), a)
           for on, a, oms in zip(out, ctx.avals_out, out_memory_spaces)]
-mlir.register_lowering(compute_on_p, _compute_on_lowering)
+mlir.register_lowering(
+    compute_on_p, _compute_on_lowering, shard_map_passthrough=True)
 
 
 def _compute_on_batcher(axis_data, vals_in, dims_in, *, jaxpr, compute_type,

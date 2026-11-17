@@ -2445,6 +2445,138 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
       self.assertIn(expected_axes, gather_fn.lower(arr, rows, cols).as_text())
       self.assertArraysEqual(gather_fn(arr, rows, cols), ref[rows, cols])
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_call_wrappers_and_token_passthrough(self, mesh):
+    from jax._src.compute_on import compute_on
+    from jax._src.program_order import program_order
+    from jax._src.xla_metadata import xla_metadata_call2
+
+    np_x = np.arange(16, dtype=np.float32).reshape(4, 4) / 16.0
+    np_y = (np.arange(16, dtype=np.float32).reshape(4, 4) + 1.0) / 16.0
+    x = jax.device_put(np_x, P('x', None))
+    y = jax.device_put(np_y, P(None, 'y'))
+
+    def inner_fn(a, b):
+      return jnp.sin(a) + (a @ b)
+
+    closed_jaxpr = jax.make_jaxpr(inner_fn)(x, y)
+
+    @jax.jit
+    def f_eval_jaxpr(a, b):
+      out, = core.eval_jaxpr_p.bind(a, b, call_jaxpr=closed_jaxpr)
+      return out
+
+    @jax.jit
+    @program_order(enforce=False)
+    def f_program_order_loose(a, b):
+      tok = lax.create_token()
+      _, a = lax.optimization_barrier((tok, a * 2.0))
+      return a @ (b + 1.0)
+
+    @jax.jit
+    @program_order(enforce=True, strict_in_out=True)
+    def f_program_order_strict(a, b):
+      u = a * 2.0
+      v = b + 1.0
+      return u @ v
+
+    @xla_metadata_call2({'scheduling_group': 'g1'})
+    def tagged(a, b):
+      return jnp.cos(a @ b) * 2.0
+
+    @jax.jit
+    def f_metadata(a, b):
+      return tagged(a, b)
+
+    @compute_on(
+        compute_type='device_host', out_memory_spaces=jax.memory.Space.Device)
+    def on_host(a):
+      return a * 3.0
+
+    @jax.jit
+    def f_compute_on(a, b):
+      return on_host(a) @ b
+
+    for name, fn in (
+        ('eval_jaxpr', f_eval_jaxpr),
+        ('program_order_loose', f_program_order_loose),
+        ('program_order_strict', f_program_order_strict),
+        ('xla_metadata_call', f_metadata),
+        ('compute_on', f_compute_on),
+    ):
+      with self.subTest(case=name):
+        with config.jax_partitioning(False):
+          expected = fn(x, y)
+        self.assertIn('sdy.manual_computation', fn.lower(x, y).as_text())
+        out = fn(x, y)
+        self.assertEqual(out.sharding, expected.sharding)
+        self.assertAllClose(out, expected)
+
+    @xla_metadata_call2({'scheduling_group': 'g2'})
+    def tagged_elem(a, b):
+      return jnp.cos(a) * b + a
+
+    def metadata_loss(a, b):
+      return tagged_elem(a, b).sum()
+
+    x_xy = jax.device_put(np_x, P('x', 'y'))
+    y_xy = jax.device_put(np_y, P('x', 'y'))
+    grad_fn = jax.jit(jax.grad(metadata_loss, argnums=(0, 1)))
+    with config.jax_partitioning(False):
+      exp_gx, exp_gy = grad_fn(x_xy, y_xy)
+    self.assertIn('sdy.manual_computation', grad_fn.lower(x_xy, y_xy).as_text())
+    out_gx, out_gy = grad_fn(x_xy, y_xy)
+    self.assertEqual(out_gx.sharding, exp_gx.sharding)
+    self.assertEqual(out_gy.sharding, exp_gy.sharding)
+    self.assertAllClose(out_gx, exp_gx)
+    self.assertAllClose(out_gy, exp_gy)
+
+  @parameterized.parameters('philox4x32', 'philox2x32', 'threefry4x32')
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_prng_4x32_and_philox(self, impl, mesh):
+    seeds = jax.device_put(np.arange(4, dtype=np.int32), P('x'))
+
+    def sample_one(seed):
+      key = jax.random.key(seed, impl=impl)
+      return jax.random.bits(key, (8,))
+
+    sample = jax.jit(jax.vmap(sample_one))
+
+    with config.jax_partitioning(False):
+      expected = sample(seeds)
+
+    self.assertIn('sdy.manual_computation', sample.lower(seeds).as_text())
+    out = sample(seeds)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertArraysEqual(out, expected)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_philox_and_threefry4x32_broadcast_bind(self, mesh):
+    from jax._src.random import philox2x32, philox4x32, threefry4x32
+
+    k = jax.device_put(
+        np.arange(4, dtype=np.uint32).reshape(4, 1), P('x', None))
+    c_xy = jax.device_put(
+        np.arange(16, dtype=np.uint32).reshape(4, 4), P('x', 'y'))
+    c_rep = np.uint32(7)
+
+    @jax.jit
+    def run_all(k_in, c_in):
+      p2 = philox2x32.philox2x32_p.bind(k_in, c_in, c_in + c_rep)
+      p4 = philox4x32.philox4x32_p.bind(
+          k_in, k_in + c_rep, c_in, c_in + np.uint32(1), c_rep, c_in)
+      t4 = threefry4x32.threefry4x32_p.bind(
+          k_in, k_in + np.uint32(1), c_rep, c_rep,
+          c_in, c_in + np.uint32(2), c_rep, c_in)
+      return p2[0] ^ p4[0] ^ t4[0]
+
+    with config.jax_partitioning(False):
+      expected = run_all(k, c_xy)
+
+    out = run_all(k, c_xy)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertArraysEqual(out, expected)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
