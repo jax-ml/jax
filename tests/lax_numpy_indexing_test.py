@@ -2119,6 +2119,24 @@ class IndexedUpdateTest(jtu.JaxTestCase):
         jnp.int32(40000 - 32768),
     )
 
+  @parameterized.parameters(
+      (4, 237_501, 237_500),
+      (16, 200_001, 6_641),
+      (16, 200_001, 20_000),
+  )
+  def testFloat64ColumnScatterSet(self, rows, width, count):
+    # Regression test for https://github.com/jax-ml/jax/issues/41888
+    if jaxlib_extension_version < 524:
+      self.skipTest("Requires jaxlib_extension_version >= 524")
+    if not config.enable_x64.value:
+      self.skipTest("Requires jax_enable_x64=True")
+    out = np.zeros((rows, width), dtype=np.float64)
+    upd = np.arange(rows * count, dtype=np.float64).reshape(rows, count) + 1.0
+    idx = np.arange(1, count + 1, dtype=np.int32)
+    got = jax.jit(lambda o, u, i: o.at[:rows, i].set(u))(out, upd, idx)
+    want = out.copy()
+    want[:rows, idx] = upd
+    self.assertArraysEqual(got, want)
 
 @jtu.with_config(jax_check_static_indices=True)
 class ValidateIndicesTest(jtu.JaxTestCase):
