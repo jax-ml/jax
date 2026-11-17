@@ -862,6 +862,25 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(u.conj().T @ u, eye)
     self.assertAllClose(vh @ vh.conj().T, eye)
 
+  def testSVDDegenerateSingularValuesSecondDerivative(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/42682
+    with jax.enable_x64():
+      x = jnp.ones((2, 2), dtype=jnp.float64)
+
+      def f(x):
+        a = lax.clamp(jnp.array(-1., x.dtype), x, jnp.array(0., x.dtype))
+        return jnp.linalg.svd(a, compute_uv=False).sum()
+
+      zero_hessian = jnp.zeros((2, 2, 2, 2), dtype=x.dtype)
+      hessians = (
+          jax.jacfwd(jax.jacfwd(f))(x),
+          jax.jacfwd(jax.jacrev(f))(x),
+          jax.jacrev(jax.jacfwd(f))(x),
+          jax.jacrev(jax.jacrev(f))(x),
+      )
+      for hessian in hessians:
+        self.assertArraysEqual(hessian, zero_hessian)
+
   @jtu.sample_product(
       shape=[(1, 1), (4, 4), (2, 5), (5, 2), (5, 5), (2, 5, 5)],
       dtype=float_types + complex_types,

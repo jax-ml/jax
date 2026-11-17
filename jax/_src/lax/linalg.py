@@ -2396,8 +2396,7 @@ def _svd_jvp_rule(
     return (s,), (ds,)
 
   s_diffs = (s_dim + _T(s_dim)) * (s_dim - _T(s_dim))
-  s_diffs_zeros = lax._eye(s.dtype, (s.shape[-1], s.shape[-1]))  # jnp.ones((), dtype=A.dtype) * (s_diffs == 0.)  # is 1. where s_diffs is 0. and is 0. everywhere else
-  s_diffs_zeros = lax.expand_dims(s_diffs_zeros, range(s_diffs.ndim - 2))
+  s_diffs_zeros = (s_diffs == 0).astype(s.dtype)
   F = 1 / (s_diffs + s_diffs_zeros) - s_diffs_zeros
   dSS = s_dim.astype(A.dtype) * dS  # dS.dot(jnp.diag(s))
   SdS = _T(s_dim.astype(A.dtype)) * dS  # jnp.diag(s).dot(dS)
