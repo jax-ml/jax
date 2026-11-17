@@ -2610,6 +2610,59 @@ class ShardMapPartitioningTest(jtu.JaxTestCase):
     self.assertEqual(out_grad.sharding, exp_grad.sharding)
     self.assertArraysEqual(out_grad, exp_grad)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_optimization_barrier(self, mesh):
+    np_x = np.arange(16, dtype=np.float32).reshape(4, 4) / 16.0
+    np_y = (np.arange(16, dtype=np.float32).reshape(4, 4) + 1.0) / 16.0
+    x = jax.device_put(np_x, P('x', 'y'))
+    y = jax.device_put(np_y, P('x', None))
+
+    @jax.jit
+    def f_arrays(a, b):
+      u, v = lax.optimization_barrier((a, b))
+      return u + v
+
+    with config.jax_partitioning(False):
+      expected = f_arrays(x, y)
+
+    lowered_text = f_arrays.lower(x, y).as_text()
+    self.assertIn('sdy.manual_computation', lowered_text)
+    self.assertIn('stablehlo.optimization_barrier', lowered_text)
+
+    out = f_arrays(x, y)
+    self.assertEqual(out.sharding, expected.sharding)
+    self.assertAllClose(out, expected)
+
+    def loss(a, b):
+      return f_arrays(a, b).sum()
+
+    grad_fn = jax.jit(jax.grad(loss, argnums=(0, 1)))
+
+    with config.jax_partitioning(False):
+      exp_gx, exp_gy = grad_fn(x, y)
+
+    out_gx, out_gy = grad_fn(x, y)
+    self.assertEqual(out_gx.sharding, exp_gx.sharding)
+    self.assertEqual(out_gy.sharding, exp_gy.sharding)
+    self.assertAllClose(out_gx, exp_gx)
+    self.assertAllClose(out_gy, exp_gy)
+
+    @jax.jit
+    def f_token(a):
+      tok = lax.create_token()
+      _, a2 = lax.optimization_barrier((tok, a))
+      return a2
+
+    with config.jax_partitioning(False):
+      exp_tok = f_token(x)
+
+    tok_lowered_text = f_token.lower(x).as_text()
+    self.assertIn('stablehlo.optimization_barrier', tok_lowered_text)
+    self.assertNotIn('sdy.manual_computation', tok_lowered_text)
+    out_tok = f_token(x)
+    self.assertEqual(out_tok.sharding, exp_tok.sharding)
+    self.assertAllClose(out_tok, exp_tok)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

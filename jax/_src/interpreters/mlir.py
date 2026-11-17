@@ -1082,7 +1082,7 @@ _lowerings: dict[core.Primitive, LoweringRuleEntry] = {}
 _platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRuleEntry]]
 _platform_specific_lowerings = collections.defaultdict(dict)
 shard_map_collective_rules: dict[
-    core.Primitive, Callable[..., PartitioningRule]] = {}
+    core.Primitive, Callable[..., PartitioningRule | None]] = {}
 shard_map_passthrough_primitives: set[core.Primitive] = {
     core.call_p,
     core.closed_call_p,
@@ -2598,14 +2598,21 @@ def _maybe_lower_with_shard_map(
         f' axes: {mesh}')
 
   assert mesh.explicit_axes
-  if (rule := shard_map_collective_rules.get(_prim)) is None:
-    raise NotImplementedError
+  rule = shard_map_collective_rules.get(_prim, None)
+  if rule is None:
+    raise NotImplementedError(
+        f'Partitioning rule for {_prim} is not implemented.')
 
   assert ctx.avals_out is not None
-  assert all(isinstance(a, core.ShapedArray) for a in ctx.avals_out)
 
   partitioning_rule = rule(ctx.avals_in, ctx.avals_out, **params)
+  if partitioning_rule is None:
+    return None
   assert isinstance(partitioning_rule, PartitioningRule)
+
+  assert all(isinstance(a, core.ShapedArray) for a in ctx.avals_in)
+  assert all(isinstance(a, core.ShapedArray) for a in ctx.avals_out)
+
   if partitioning_rule.per_shard_params:
     params = params | partitioning_rule.per_shard_params
 

@@ -12143,10 +12143,16 @@ def _optimization_barrier_lowering_rule(ctx, *args):
          if isinstance(aval, core.ShapedArray) else op
          for op, aval in zip(barrier_op.results, ctx.avals_out)]
   return treedef.unflatten(out)
+
+def _optimization_barrier_collective_rule(in_avals, out_avals):
+  if not all(isinstance(a, core.ShapedArray) for a in in_avals):
+    return None
+  return mlir.PartitioningRule()
+
 mlir.register_lowering(
     optimization_barrier_p,
     _optimization_barrier_lowering_rule,
-    shard_map_passthrough=True,
+    shard_map_collective_rule=_optimization_barrier_collective_rule,
 )
 
 def _optimization_barrier_batcher(batched_args, batch_dims, **params):
